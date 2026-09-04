@@ -173,8 +173,7 @@ pub fn write_last_vault(root: &Path) -> Result<(), CommandError> {
     if !value.is_object() {
         value = serde_json::json!({});
     }
-    value["version"] = serde_json::json!(config::SCHEMA_VERSION);
-    value["last_vault"] = serde_json::json!(root.display().to_string());
+    merge_last_vault(&mut value, root);
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir).map_err(|e| {
             CommandError::new(
@@ -200,6 +199,17 @@ pub fn write_last_vault(root: &Path) -> Result<(), CommandError> {
             format!("无法落盘配置 {}：{e}", path.display()),
         )
     })
+}
+
+/// 逐字段改写 last_vault 的纯函数部分（可测）。version 仅在缺失或不高于
+/// 当前 schema 时写入：更高版本说明配置由更新版本的应用写入，盲写会把
+/// 版本标记降回当前值（失真），保留原值让 config::load 继续按高版本 warning。
+fn merge_last_vault(value: &mut serde_json::Value, root: &Path) {
+    let version = value.get("version").and_then(|v| v.as_u64());
+    if version.is_none_or(|v| v <= u64::from(config::SCHEMA_VERSION)) {
+        value["version"] = serde_json::json!(config::SCHEMA_VERSION);
+    }
+    value["last_vault"] = serde_json::json!(root.display().to_string());
 }
 
 /// 调系统目录选择器打开 vault；用户取消返回 Ok(None)，不产生错误状态。
@@ -263,4 +273,41 @@ pub fn fs_read_attachment(
     path: &str,
 ) -> Result<String, CommandError> {
     fs_io::read_attachment(&state.root()?, path)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn merge_last_vault_sets_fields_and_preserves_unknown() {
+        let mut value = serde_json::json!({"version": 1, "future_field": true});
+        merge_last_vault(&mut value, Path::new("/tmp/vault"));
+        assert_eq!(value["version"], serde_json::json!(config::SCHEMA_VERSION));
+        assert_eq!(value["last_vault"], serde_json::json!("/tmp/vault"));
+        assert_eq!(value["future_field"], serde_json::json!(true));
+    }
+
+    #[test]
+    fn merge_last_vault_writes_version_when_missing_or_older() {
+        let mut missing = serde_json::json!({});
+        merge_last_vault(&mut missing, Path::new("/tmp/vault"));
+        assert_eq!(
+            missing["version"],
+            serde_json::json!(config::SCHEMA_VERSION)
+        );
+
+        let mut older = serde_json::json!({"version": 0});
+        merge_last_vault(&mut older, Path::new("/tmp/vault"));
+        assert_eq!(older["version"], serde_json::json!(config::SCHEMA_VERSION));
+    }
+
+    #[test]
+    fn merge_last_vault_preserves_newer_version() {
+        let mut value = serde_json::json!({"version": 99});
+        merge_last_vault(&mut value, Path::new("/tmp/vault"));
+        // 高版本配置由更新版本应用写入，不把 version 降回当前值
+        assert_eq!(value["version"], serde_json::json!(99));
+        assert_eq!(value["last_vault"], serde_json::json!("/tmp/vault"));
+    }
 }

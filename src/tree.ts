@@ -220,7 +220,12 @@ export function createFileTree(mount: HTMLElement, cb: FileTreeCallbacks): FileT
     },
 
     applyChanges(changes) {
-      for (const change of changes) {
+      // FSEvents 不保证同批内父先于子：按路径深度排序后再应用，
+      // 避免子事件先于父事件到达时被"父缺失"丢弃（条目要等全量重扫才回来）。
+      const sorted = [...changes].sort(
+        (a, b) => a.path.split("/").length - b.path.split("/").length,
+      );
+      for (const change of sorted) {
         const parentPath = parentOf(change.path);
         const parent = nodes.get(parentPath);
         if (!parent) continue; // 父目录已不在模型里（如整棵被删），跳过
@@ -231,7 +236,14 @@ export function createFileTree(mount: HTMLElement, cb: FileTreeCallbacks): FileT
           if (existing) {
             parent.children?.delete(name);
             existing.li?.remove();
-            nodes.delete(change.path);
+            // 连同子孙一起从模型删除（子孙 DOM 随 li 一并移除）：否则子孙残留
+            // 为孤儿，同路径重建时命中 existing 走 upsert 分支，永远不会被挂进
+            // 新建目录的 children——条目在树里消失，直到重启全量重扫。
+            for (const key of [...nodes.keys()]) {
+              if (key === change.path || key.startsWith(change.path + "/")) {
+                nodes.delete(key);
+              }
+            }
             pruneExpanded(change.path);
           }
           continue;

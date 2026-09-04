@@ -142,11 +142,16 @@ pub fn scan_workspace(root: &Path) -> Result<Vec<FsEntry>, CommandError> {
                 continue;
             }
             let path = item.path();
-            let meta = match item.metadata() {
-                Ok(m) => m,
+            // file_type() 不跟随 symlink：指向目录的 symlink 不递归展开。
+            // 否则循环 symlink 会沿链接重复枚举直至 ELOOP 让 open_vault 失败，
+            // 外部 symlink 会把 vault 外整棵树枚举进文件树（威胁 ADR 0002 §6
+            // 性能合同）。symlink 条目按文件列出，读取侧由 resolve_in_vault
+            // 兜底拒绝逃逸。
+            let ft = match item.file_type() {
+                Ok(ft) => ft,
                 Err(_) => continue, // 扫描期间被删的条目直接跳过
             };
-            let kind = if meta.is_dir() {
+            let kind = if ft.is_dir() {
                 FsEntryKind::Dir
             } else {
                 FsEntryKind::File
@@ -155,13 +160,16 @@ pub fn scan_workspace(root: &Path) -> Result<Vec<FsEntry>, CommandError> {
                 continue;
             };
             if kind == FsEntryKind::Dir {
-                stack.push(path);
+                stack.push(path.clone());
             }
+            // symlink_metadata 不跟随：symlink 条目取链接自身的元数据，
+            // 避免对循环 symlink follow 时撞 ELOOP。
+            let meta = std::fs::symlink_metadata(&path).ok();
             entries.push(FsEntry {
                 path: rel,
                 kind,
-                size: if meta.is_file() { meta.len() } else { 0 },
-                mtime_ms: mtime_ms(&meta),
+                size: meta.as_ref().filter(|m| m.is_file()).map_or(0, |m| m.len()),
+                mtime_ms: meta.as_ref().and_then(mtime_ms),
             });
         }
     }
@@ -377,7 +385,8 @@ fn refine_with_known(
 ) {
     for c in changes.iter_mut() {
         // entry_kind 在 flush 时按 metadata 填充（事件本身不带）；deleted 保持 null。
-        let meta = std::fs::metadata(root.join(&c.path)).ok();
+        // symlink_metadata 与 scan_workspace 一致（不跟随 symlink）。
+        let meta = std::fs::symlink_metadata(root.join(&c.path)).ok();
         c.entry_kind = meta.as_ref().map(|m| {
             if m.is_dir() {
                 FsEntryKind::Dir
@@ -586,6 +595,45 @@ mod tests {
         std::fs::write(&f, "x").unwrap();
         let err = scan_workspace(&f).unwrap_err();
         assert_eq!(err.code, "fs_root_not_dir");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn scan_does_not_follow_symlink_loop() {
+        let v = TempVault::with_fixture();
+        // 循环 symlink：sub/loop 指回 vault 根。跟随会沿链接重复枚举直至 ELOOP。
+        std::os::unix::fs::symlink(&v.0, v.0.join("sub/loop")).unwrap();
+        let entries = scan_workspace(&v.0).expect("symlink 循环不应导致扫描失败");
+        let paths: Vec<&str> = entries.iter().map(|e| e.path.as_str()).collect();
+        // symlink 条目按文件列出，不递归展开
+        assert!(paths.contains(&"sub/loop"));
+        assert_eq!(
+            entries.iter().find(|e| e.path == "sub/loop").unwrap().kind,
+            FsEntryKind::File
+        );
+        assert!(
+            !paths.iter().any(|p| p.starts_with("sub/loop/")),
+            "symlink 不应被展开枚举：{paths:?}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn scan_does_not_expand_external_symlink() {
+        let v = TempVault::with_fixture();
+        // Obsidian 常见模式：attachments 是指向 vault 外目录的 symlink
+        let outside = TempVault::new();
+        std::fs::create_dir_all(outside.0.join("attachments/deep")).unwrap();
+        std::fs::write(outside.0.join("attachments/deep/x.png"), [0u8; 4]).unwrap();
+        std::os::unix::fs::symlink(outside.0.join("attachments"), v.0.join("attachments")).unwrap();
+        let entries = scan_workspace(&v.0).expect("scan");
+        let paths: Vec<&str> = entries.iter().map(|e| e.path.as_str()).collect();
+        // symlink 本身作为条目出现，但 vault 外的内容不被枚举进树
+        assert!(paths.contains(&"attachments"));
+        assert!(
+            !paths.iter().any(|p| p.starts_with("attachments/")),
+            "外部 symlink 不应被展开枚举：{paths:?}"
+        );
     }
 
     #[test]
