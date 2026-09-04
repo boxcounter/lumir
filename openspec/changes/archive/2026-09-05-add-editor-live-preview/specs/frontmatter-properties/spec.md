@@ -4,7 +4,7 @@
 
 ### Requirement: frontmatter 解析为 properties 区块
 
-md 文件首部的 YAML frontmatter（`---` 包围块）SHALL 解析为 YAML（ADR 0003 §1；解析实现按 ⚠ 裁决点 E，推荐 `js-yaml`）并渲染为 properties 区块——键值表格形态，替换 frontmatter 源码原文在文档顶部的显示。无 frontmatter 的文档 SHALL 不显示该区块。嵌套值 SHALL 以 JSON 样式字符串展示，解析层 MUST NOT 自造 YAML 方言子集。
+md 文件首部的 YAML frontmatter（`---` 包围块）SHALL 解析为 YAML（ADR 0003 §1；解析实现按 ⚠ 裁决点 E，推荐 `js-yaml`）并渲染为 properties 区块——键值表格形态，替换 frontmatter 源码原文在文档顶部的显示。无 frontmatter 的文档 SHALL 不显示该区块。嵌套值 SHALL 以 JSON 样式字符串展示，解析层 MUST NOT 自造 YAML 方言子集。properties 区块为跨行 replace 装饰，CM6 视口插件装饰不支持跨行 replace（硬限制），其实现 SHALL 经 StateField 构建、仅在文档变更时重算、frontmatter 探测自文档首部扫描且有行数上限；该路径 MUST NOT 退化为全量文档装饰构建（与 editor-live-preview「live preview 装饰层」的视口增量策略同一性能意图：打开 1MB <100ms，ADR 0002 §6）。
 
 #### Scenario: properties 区块渲染
 
