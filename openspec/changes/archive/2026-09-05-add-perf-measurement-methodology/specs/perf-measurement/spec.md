@@ -20,7 +20,7 @@ CI SHALL 为 ADR 0002 第 6 条性能合同的四个数字（冷启动 <300ms、
 
 ### Requirement: 冷启动测量
 
-冷启动 SHALL 以 harness wall time 为主口径（门禁用）：从 spawn app 二进制之前到 stdout 出现 `LUMIR_READY ` 前缀行；app 自报的 setup 耗时为辅助口径（归因用），端点细节见 docs/specs/perf-measurement.md 第 1 节。采样 SHALL 为 1 次 warm-up（丢弃）+ N=20 次正式样本，每次均为全新进程；N MUST NOT 小于 20（nearest-rank p95 在 N=20 时截去最高 1 个样本，N=10 时退化为 max）。
+冷启动 SHALL 以 harness wall time 为主口径（门禁用）：从 spawn app 二进制之前到 stdout 出现 `LUMIR_READY ` 前缀行；app 自报的 setup 耗时为辅助口径（归因用），端点细节见 docs/specs/perf-measurement.md 第 1 节。采样 SHALL 为 1 次 warm-up（丢弃）+ N=20 次正式样本，每次均为全新进程；N MUST NOT 小于 20（nearest-rank p95 在 N=20 时截去最高 1 个样本，N=10 时退化为 max）。CI 门禁为相对回归模式（见「门禁模式与一次性校准」requirement）；绝对合同值 <300ms 保留，在标准化环境（裁决者本机）按 ADR 0002 第 6 条裁决。
 
 #### Scenario: 正式样本排除首轮一次性开销
 
@@ -29,7 +29,7 @@ CI SHALL 为 ADR 0002 第 6 条性能合同的四个数字（冷启动 <300ms、
 
 ### Requirement: keypress-to-paint 测量
 
-keypress-to-paint SHALL 定义为页面内 `keydown` 事件派发时刻到其后第二帧渲染完成时刻的差值，以 CDP `Input.dispatchKeyEvent` 驱动 headless Chrome 加载 release 前端产物近似测量，N=50、间隔 100ms，细节见 docs/specs/perf-measurement.md 第 2 节。该读数是结构下界：不含 OS 输入管道与合成器/vsync 开销、引擎为 Blink 而非产品的 WebKit、M0 空壳编辑器只读不触发文档更新路径。任何读数的引用（CI 输出、报告、校准讨论）MUST 附带下界声明，MUST NOT 将数值单独引用为真实按键延迟。
+keypress-to-paint SHALL 定义为页面内 `keydown` 事件派发时刻到其后第二帧渲染完成时刻的差值，以 CDP `Input.dispatchKeyEvent` 驱动 headless Chrome 加载 release 前端产物近似测量，N=50、间隔 100ms，细节见 docs/specs/perf-measurement.md 第 2 节。该读数是结构下界：不含 OS 输入管道与合成器/vsync 开销、引擎为 Blink 而非产品的 WebKit、M0 空壳编辑器只读不触发文档更新路径。任何读数的引用（CI 输出、报告、校准讨论）MUST 附带下界声明，MUST NOT 将数值单独引用为真实按键延迟。CI 门禁为相对回归模式（见「门禁模式与一次性校准」requirement）；绝对合同值 <16ms 保留，在标准化环境（裁决者本机）按 ADR 0002 第 6 条裁决。
 
 #### Scenario: 下界声明随读数输出
 
@@ -64,16 +64,26 @@ keypress-to-paint SHALL 定义为页面内 `keydown` 事件派发时刻到其后
 - **WHEN** 内存采样窗口内 5 个样本存在单调爬升
 - **THEN** 门禁取 max 而非 p95，爬升不被分位数掩盖
 
-### Requirement: 门禁两阶段启用与一次性校准
+### Requirement: 门禁模式与一次性校准
 
-阈值门禁 SHALL 分两阶段启用：校准前 CI 只测量并上报，超阈产生 `::warning::` 且 workflow 恒绿（`tests/perf/thresholds.json` 的 `enforce` 为 `false`）；M0 末四项指标首次全量实测后，按 ADR 0002 revisit 条款做一次性校准（修订 ADR 0002 的数字，仅此一次），随后将 `enforce` 置 `true`，超阈即 CI 红、拒合。M0 空壳阶段的绝对值 MUST NOT 作为达标判定，仅用于该次校准。
+阈值门禁 SHALL 以 `tests/perf/thresholds.json` 的 `enforce: true` 启用拒合，CI 门禁 SHALL 分两种模式（2026-09-05 一次性校准结论，ADR 0002 第 6 条）：**绝对模式**（打开 1MB 文件、常驻内存）超阈即 CI 红、拒合；**相对回归模式**（冷启动、keypress-to-paint）以滚动基线比较——基线取该指标最近 10 次 master 门禁值的 median（经 `actions/cache` 持久化，仅 master push 且测量全绿时写回），本次门禁值相对基线回退 >20% 即 CI 红、拒合，口径细节见 docs/specs/perf-measurement.md「相对回归门禁」一节。基线缺失时 SHALL 输出 `::warning::` 并跳过该项相对比较、不拒合；enforce 下任一指标本次结果文件缺失或不可读 SHALL exit 1 拒合（缺数据即红）。一次性校准额度已于 2026-09-05 使用（依据：CI 两次全量实测重指标噪声 3-4 倍、轻指标几乎一致），此后 MUST NOT 再次使用；四个绝对合同数字未改动。M0 空壳阶段的绝对值 MUST NOT 作为达标判定，仅用于该次校准。
 
-#### Scenario: 校准前超阈不拒合
+#### Scenario: 绝对模式超阈拒合
 
-- **WHEN** `enforce: false` 阶段某项指标 p95 超阈
-- **THEN** CI 输出 `::warning::` 并附全部样本，workflow 保持绿色，不阻塞合并
-
-#### Scenario: 校准后超阈拒合
-
-- **WHEN** M0 末一次性校准完成且 `enforce` 置 `true` 后某项指标超阈
+- **WHEN** `enforce: true` 下绝对模式指标（打开 1MB 文件、常驻内存）门禁值超阈
 - **THEN** CI 红、拒合，与 ADR 0002 第 6 条「回归即拒合」一致
+
+#### Scenario: 相对回归超 20% 拒合
+
+- **WHEN** 相对回归模式指标（冷启动、keypress-to-paint）门禁值相对滚动基线 median 回退超过 20%
+- **THEN** CI 红、拒合
+
+#### Scenario: 基线缺失不拒合
+
+- **WHEN** 基线文件不存在或该指标无历史（首次运行、cache 丢失重建期）
+- **THEN** CI 输出 `::warning::` 并跳过该项相对比较，不阻塞合并，由下一次 master 成功 run 重建基线
+
+#### Scenario: 结果缺失拒合
+
+- **WHEN** `enforce: true` 下任一指标的本次结果文件缺失或不可读
+- **THEN** `check-thresholds.mjs` exit 1，CI 红（缺数据即红，不得静默跳过）
