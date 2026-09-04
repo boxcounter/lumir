@@ -3,27 +3,47 @@ import type { Extension } from "@codemirror/state";
 import { EditorView, lineNumbers, highlightActiveLine } from "@codemirror/view";
 import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
 import { syntaxHighlighting, defaultHighlightStyle } from "@codemirror/language";
+import { GFM } from "@lezer/markdown";
 import type { EditorMode } from "./bindings/EditorMode";
+import { livePreview, previewRefresh } from "./preview/livePreview";
+import type { PreviewContext } from "./preview/livePreview";
+import { createInvokeAttachmentProvider } from "./preview/attachments";
+import type { AttachmentProvider } from "./preview/attachments";
 
-// 编辑器单内核双模式（ADR 0002 §2）的模式缝 —— M1 只建缝不建功能。
-//
-// 一个 CM6 内核、两种模式：md = 高亮 + live preview 装饰层；code = 仅高亮。
-// 模式差异收敛进一个 Compartment，setMode 用 reconfigure 热切换，
-// 不重建 EditorView、不丢文档状态。live preview 装饰层本身是后续波次的功能，
-// 这里只留挂载位置（mdLivePreviewDecorations 占位）。
+// 编辑器单内核双模式（ADR 0002 §2）：一个 CM6 内核、两种模式。
+// md = 高亮 + live preview 装饰层（src/preview/）；code = 仅高亮。
+// 模式差异收敛进一个 Compartment，setMode/openDocument 用 reconfigure 热切换，
+// 不重建 EditorView、不丢文档状态。M1 只读（ADR 0003 §3 铁律），装饰层不含编辑态逻辑。
 
 const SAMPLE = `\
-# Lumir skeleton
+---
+title: Lumir live preview 演示
+tags: [demo, m1]
+nested:
+  key: value
+---
 
-This is a **read-only** Markdown placeholder rendered by CodeMirror 6
-inside a Tauri 2 system webview.
+# 标题一
 
-- md 模式 = 高亮 + live preview 装饰层（ADR 0002 §2，后续波次实现装饰层）
-- code 模式 = 仅高亮
+## 标题二
+
+**加粗** *斜体* ~~删除线~~ \`inline code\`
+
+- 列表项一
+- 列表项二
+
+1. 有序一
+2. 有序二
+
+> 引用块
 
 \`\`\`rust
 fn main() { println!("lumir"); }
 \`\`\`
+
+![[demo.png]]
+
+![示例](./assets/shot.png)
 `;
 
 export interface EditorHandle {
@@ -31,23 +51,55 @@ export interface EditorHandle {
   /** 切换单内核双模式（Compartment 热切换，不重建 view）。 */
   setMode(mode: EditorMode): void;
   mode(): EditorMode;
+  /**
+   * 打开文档：替换内容并按文件类型选模式（spec「模式配置来源」）——
+   * .md/.markdown → md；已知代码扩展 → code；无类型线索（path 缺失或未知扩展）→ 保持配置默认。
+   */
+  openDocument(doc: string, path?: string): void;
+  /**
+   * 注入附件能力（add-vault-workspace 的 fs-io「二进制附件读取」，vault 波在装配处调用）。
+   * 未注入时附件引用显示占位；默认 provider 已按裁决 A 契约编码但无 vault 索引。
+   */
+  setAttachmentProvider(provider: AttachmentProvider): void;
 }
 
-/** live preview 装饰层占位：后续波次用 CM6 decoration 在此扩展位实现。 */
-const mdLivePreviewDecorations: Extension = [];
+// 已知代码文件扩展 → code 模式。未列出的扩展按「无类型线索」回落配置默认。
+const CODE_EXTENSIONS = new Set([
+  "rs", "ts", "tsx", "js", "jsx", "mjs", "cjs", "py", "go", "c", "h", "cpp", "cc",
+  "java", "rb", "sh", "json", "toml", "yaml", "yml", "css", "html", "xml",
+  "swift", "kt", "lua", "sql", "vue", "scss",
+]);
 
-function modeExtensions(mode: EditorMode) {
-  const highlight = [
-    markdown({ base: markdownLanguage }),
-    syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
-  ];
-  // md 模式 = 高亮 + 装饰层；code 模式 = 仅高亮。
-  return mode === "md" ? [...highlight, mdLivePreviewDecorations] : highlight;
+function modeForPath(path: string | undefined, fallback: EditorMode): EditorMode {
+  if (!path) return fallback;
+  const base = path.slice(path.lastIndexOf("/") + 1);
+  const dot = base.lastIndexOf(".");
+  if (dot < 0) return fallback;
+  const ext = base.slice(dot + 1).toLowerCase();
+  if (ext === "md" || ext === "markdown") return "md";
+  if (CODE_EXTENSIONS.has(ext)) return "code";
+  return fallback;
 }
 
 export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"): EditorHandle {
   const modeCompartment = new Compartment();
   let currentMode = initialMode;
+  let currentPath: string | undefined;
+  let provider: AttachmentProvider = createInvokeAttachmentProvider();
+
+  const previewContext: PreviewContext = {
+    currentFilePath: () => currentPath,
+    attachmentProvider: () => provider,
+  };
+
+  function modeExtensions(mode: EditorMode): Extension[] {
+    const highlight: Extension[] = [
+      markdown({ base: markdownLanguage, extensions: [GFM] }),
+      syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
+    ];
+    // md 模式 = 高亮 + 装饰层；code 模式 = 仅高亮。
+    return mode === "md" ? [...highlight, livePreview(previewContext)] : highlight;
+  }
 
   const state = EditorState.create({
     doc: SAMPLE,
@@ -70,5 +122,19 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
       view.dispatch({ effects: modeCompartment.reconfigure(modeExtensions(mode)) });
     },
     mode: () => currentMode,
+    openDocument(doc: string, path?: string) {
+      currentPath = path;
+      const next = modeForPath(path, currentMode);
+      currentMode = next;
+      view.dispatch({
+        changes: { from: 0, to: view.state.doc.length, insert: doc },
+        effects: modeCompartment.reconfigure(modeExtensions(next)),
+      });
+    },
+    setAttachmentProvider(next: AttachmentProvider) {
+      provider = next;
+      // doc/viewport 均未变化，派发专用 effect 强制装饰层重建。
+      view.dispatch({ effects: previewRefresh.of(null) });
+    },
   };
 }

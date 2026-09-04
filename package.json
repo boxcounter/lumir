@@ -13,9 +13,12 @@
     "@codemirror/language": "^6.12.4",
     "@codemirror/state": "^6.7.4",
     "@codemirror/view": "^6.43.11",
-    "@tauri-apps/api": "^2.11.1"
+    "@lezer/markdown": "^1.7.2",
+    "@tauri-apps/api": "^2.11.1",
+    "js-yaml": "^4.1.0"
   },
   "devDependencies": {
+    "@types/js-yaml": "^4.0.9",
     "typescript": "^5.9.3",
     "vite": "^8.2.2"
   }
