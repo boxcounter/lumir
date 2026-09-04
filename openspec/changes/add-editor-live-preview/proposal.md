@@ -43,7 +43,7 @@ Foundation（M16 已合并）已备好接缝：`src/editor.ts` 用 Compartment �
 - 不做 wikilink `[[note]]` 跳转与链接图——独立 change（其前置的 spec 冻结 + fixture 合成安排在 M1 第 1 周，ADR 0004 §4）。本 change 不解析 `[[...]]` 为链接。
 - 不做内容嵌入（`![[note]]` transclusion）、块引用 `[[note#^block]]`、Dataview、Canvas（ADR 0003 §2 声明不做）。
 - 不做 backlinks 面板（ADR 0004 §2 挤压预案明确可推迟）。
-- 不改 CSP（架构复查 P1-1，M1 第 1 周独立前置任务）；图片经 `data:` 或 `asset:` 进入 webview 所需的 `img-src` 放行由该任务承接。
+- 不涉及 CSP 变更：完整 CSP 策略（含 `img-src 'self' asset: data:`）已随 M16 落地于 tauri.conf.json，图片经 `data:` 或 `asset:` 进入 webview 均已放行。
 - 不做非图片附件（PDF、音视频）的内联预览。
 - 不做代码文件的 live preview（code 模式 = 仅高亮，ADR 0002 §2）；代码 fence 内的语言级着色复用 `@codemirror/lang-markdown` 既有能力，不为更多语言引入新 parser 依赖。
 

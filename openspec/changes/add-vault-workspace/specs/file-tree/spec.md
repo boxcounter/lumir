@@ -13,7 +13,7 @@
 
 ### Requirement: 点击打开文件
 
-点击文件树条目 SHALL 在编辑器 pane 打开对应文件：Markdown 走编辑器（模式由 `editor.mode` 决定，见 add-editor-live-preview）；其他文本文件 SHALL 只读显示原文；不支持的二进制 SHALL 显示"暂不支持预览"提示而非空白或报错弹窗。目录点击 SHALL 只切换折叠状态。
+点击文件树条目 SHALL 在编辑器 pane 打开对应文件：Markdown 走编辑器（模式按文件类型决定：md 文件用 md 模式、代码文件用 code 模式，`editor.mode` 配置仅作无类型线索时的默认，口径以 add-editor-live-preview 的「模式配置来源」requirement 为准）；其他文本文件 SHALL 只读显示原文；不支持的二进制 SHALL 显示"暂不支持预览"提示而非空白或报错弹窗。目录点击 SHALL 只切换折叠状态。
 
 #### Scenario: 不支持的二进制给出提示
 

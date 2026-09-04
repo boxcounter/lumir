@@ -5,7 +5,7 @@
 ## 1. fs_io 重写（旧 stub 签名废弃，架构复查 P2-5）
 
 - [ ] 1.1 `fs_scan_workspace`：vault 全类型递归枚举，返回条目清单（相对路径、文件/目录、大小、mtime），按裁决点 C 的忽略集过滤
-- [ ] 1.2 watch 增量事件流：vault 打开期间监听变更，`fs:entry_changed` 事件推送 created/modified/deleted 增量（100ms debounce 合并，见裁决点 B）
+- [ ] 1.2 watch 增量事件流：vault 打开期间监听变更，`fs:entry_changed` 事件推送 created/modified/deleted 增量（debounce 合并，初始 100ms 可随实测调整，见裁决点 B）
 - [ ] 1.3 `fs_read_file`：文本文件读取（UTF-8，非法编码返回人话错误 CommandError）
 - [ ] 1.4 `fs_read_attachment`：二进制附件读取，接口形态按裁决点 A 的裁决结果实现
 - [ ] 1.5 所有读取做 vault 内路径约束：拒绝 `..`、绝对路径、符号链接逃逸

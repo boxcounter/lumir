@@ -26,9 +26,9 @@ Foundation（M16 已合并）已备好本 change 的全部接缝，提案接口�
 
 **⚠ 裁决点 A——二进制附件读接口形态**：两个候选：
 - **invoke + base64**（推荐）：走既有 invoke/CommandError 契约，错误信封一致、实现直接；代价是体积膨胀约 33% 且经 serde 拷贝，大图片有开销。
-- **Tauri asset protocol**（`convertFileSrc`）：webview 原生加载、零拷贝、性能更好；代价是要配置 asset protocol scope 与 CSP `img-src`（架构复查 P1-1 已要求 M1 第 1 周设定 CSP，img-src 加 `asset:`/`data:`），多一条安全面要维护。
+- **Tauri asset protocol**（`convertFileSrc`）：webview 原生加载、零拷贝、性能更好；代价是要配置 asset protocol scope，并在 invoke 契约之外引入第二条数据通道（该通道的错误面不经 CommandError 信封）。CSP 不再是本选项的额外成本：M16 已把 `img-src 'self' asset: data:` 落地进 tauri.conf.json，两种形态在 CSP 侧均已放行。
 
-推荐 invoke + base64 的理由：M1 附件引用以图片为主、单张体积有限；契约单一来源（payload 类型 ts-rs 导出）不被第二条通道稀释；若 dogfood 期大图片成为性能痛点，再经 OpenSpec 循环切换 asset protocol，对消费方的接口语义（"按路径取附件字节"）不变。**该取舍请 Alex 裁决；add-editor-live-preview 只声明依赖"按路径读附件字节"这一能力，不绑定具体形态。**
+推荐 invoke + base64 的理由：M1 附件引用以图片为主、单张体积有限；契约单一来源（payload 类型 ts-rs 导出、错误走 CommandError 信封）不被第二条通道稀释；若 dogfood 期大图片成为性能痛点，再经 OpenSpec 循环切换 asset protocol，对消费方的接口语义（"按路径取附件字节"）不变。（r1 评审修正：原将"CSP 需配置"计为 asset protocol 的代价，该成本已随 M16 消失；修正后推荐项不变——推荐理由不依赖该项成本。）**该取舍请 Alex 裁决；add-editor-live-preview 只声明依赖"按路径读附件字节"这一能力，不绑定具体形态。**
 
 **⚠ 裁决点 B——watch 事件粒度**：逐条增量事件（created/modified/deleted 各一条，前端精确打补丁）vs 粗粒度"tree dirty"信号（前端 debounce 后重扫）。推荐逐条增量：真实 vault 条目数在千级，全量重扫在频繁变更（如 git 操作）下会造成文件树闪烁；代价是前端要维护一个小的增量应用逻辑。debounce 窗口建议 100ms 合并连续事件，具体值实现期可在 spec 允许的语义内调整。
 
@@ -41,7 +41,7 @@ Foundation（M16 已合并）已备好本 change 的全部接缝，提案接口�
 - 不做 wikilink 跳转与链接解析——那是独立 change（本 change 的 `fs_read_file` 只是它的读接口）。
 - 不做 `.gitignore` 解析与遵循；不做"显示隐藏文件/被忽略项"开关。
 - 不做非 md 文件的预览渲染（图片除外——图片显示在 add-editor-live-preview 的附件显示里）；其余类型点击后只读显示原文（文本）或"暂不支持预览"提示（二进制）。
-- 不改 CSP（架构复查 P1-1 的 M1 第 1 周前置条件，独立任务）；若裁决点 A 选择 asset protocol，CSP `img-src` 的 `asset:` 放行由该前置任务承接，本 change 只声明依赖。
+- 不涉及 CSP 变更：完整 CSP 策略（含 `img-src 'self' asset: data:`）已随 M16 落地于 tauri.conf.json，裁决点 A 的两种形态在 CSP 侧均已放行。
 
 ## Impact
 
