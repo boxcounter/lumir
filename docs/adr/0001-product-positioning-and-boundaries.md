@@ -1,6 +1,6 @@
 # ADR 0001: 定位与边界
 
-- 状态: proposed
+- 状态: accepted
 - 日期: 2026-09-04
 - 角色: Alex Lee（评审/裁决），AI agent（起草）
 
