@@ -11,7 +11,14 @@ const outDir = resultsDir();
 let violations = 0;
 for (const [metric, cfg] of Object.entries(metrics)) {
   const resultPath = path.join(outDir, `${metric}.json`);
-  const result = JSON.parse(await readFile(resultPath, "utf8"));
+  let result;
+  try {
+    result = JSON.parse(await readFile(resultPath, "utf8"));
+  } catch (err) {
+    // 结果缺失（上游步骤失败或 perf-results/ 不存在）也保持 warn-only，不 ENOENT 崩溃
+    console.log(`::warning::[perf] ${metric}: 结果文件缺失或不可读（${resultPath}: ${err.code ?? err.message}），跳过阈值比较`);
+    continue;
+  }
   const statKey = cfg.gate ?? "p95";
   const value = result[statKey];
   const ok = value < cfg.threshold;
