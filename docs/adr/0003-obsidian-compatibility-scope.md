@@ -6,7 +6,7 @@
 
 ## Context
 
-- wikilink `[[...]]` 语法是 wiki 时代的公共遗产（MediaWiki 等使用十余年），无知识产权问题；但它不属于 CommonMark，无任何正式规范。解析语义（短路径解析、大小写处理、标题引用格式）是 Obsidian 方言——其标题引用格式为 Obsidian 自创、无 slug 规则（官方人员公开承认），且行为随版本漂移。
+- wikilink `[[...]]` 语法是 wiki 时代的公共遗产（MediaWiki 等使用十余年），无知识产权问题；但它不属于 CommonMark，无任何正式规范。解析语义（短路径解析、大小写处理、标题引用格式）是 Obsidian 方言——其标题引用格式为 Obsidian 自创、无公开的 slug 规则，与 GFM（GitHub Flavored Markdown）锚点互不兼容（[官方论坛有记录](https://forum.obsidian.md/t/heading-link-compatibility/46988)），且行为随版本漂移。
 - frontmatter 是 Jekyll 时代普及的 YAML 惯例，开放无争议；Obsidian Properties 的类型系统是其 UI 层方言。
 - 作者拥有大量存量 Obsidian vault；项目承诺"零迁移成本"，但不继承 Obsidian 的哲学。
 
