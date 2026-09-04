@@ -44,9 +44,126 @@ body,
 
 .pane-editor {
   padding: 0;
+  position: relative;
 }
 
 .cm-editor {
   height: 100%;
   font-size: 14px;
+}
+
+/* 文件树（src/tree.ts） */
+.filetree {
+  font-family: -apple-system, "PingFang SC", sans-serif;
+  font-size: 13px;
+  white-space: normal;
+}
+
+.ft-header {
+  padding: 4px 4px 8px;
+  font-weight: 600;
+  color: #333;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ft-children {
+  list-style: none;
+  margin: 0;
+  padding-left: 14px;
+}
+
+.ft-root-list {
+  padding-left: 0;
+}
+
+.ft-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  padding: 2px 4px;
+  border: none;
+  background: none;
+  font: inherit;
+  color: #333;
+  text-align: left;
+  cursor: pointer;
+  border-radius: 4px;
+}
+
+.ft-row:hover {
+  background: #e8e8e8;
+}
+
+.ft-caret {
+  width: 12px;
+  flex: none;
+  color: #999;
+  font-size: 10px;
+  text-align: center;
+}
+
+.ft-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ft-md .ft-name {
+  color: #1a5fb4;
+}
+
+.ft-image .ft-name {
+  color: #2e7d32;
+}
+
+.ft-empty {
+  padding: 12px 4px;
+  font-family: -apple-system, "PingFang SC", sans-serif;
+  font-size: 13px;
+  white-space: normal;
+  color: #555;
+}
+
+.ft-notice {
+  margin: 0 0 8px;
+  color: #a33;
+}
+
+.ft-hint {
+  margin: 0 0 12px;
+}
+
+.ft-open-btn {
+  padding: 6px 14px;
+  border: 1px solid #ccc;
+  border-radius: 6px;
+  background: #fff;
+  font: inherit;
+  cursor: pointer;
+}
+
+.ft-open-btn:hover {
+  background: #f0f0f0;
+}
+
+/* 编辑器区域的提示覆盖层（暂不支持预览 / 读取错误） */
+.editor-notice {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  color: #888;
+  font-size: 14px;
+  text-align: center;
+  background: #fff;
+}
+
+/* author display:flex 会盖掉 UA 的 [hidden] 规则，显式补回 */
+.editor-notice[hidden] {
+  display: none;
 }
