@@ -1,10 +1,16 @@
 {
-  "_comment": "阈值本体是 ADR 0002 第 6 条，本文件是其机器可读镜像（口径见 docs/specs/perf-measurement.md）。enforce 置 true 即启用拒合——仅在 M0 末一次性校准（ADR 0002 revisit）后允许，且需同步修订 ADR 0002。gate 默认 p95；resident-memory 按 spec §4 例外取 max。",
-  "enforce": false,
+  "_comment": "阈值本体是 ADR 0002 第 6 条，本文件是其机器可读镜像（口径见 docs/specs/perf-measurement.md）。2026-09-05 一次性校准后 enforce=true：mode=absolute 超阈拒合；mode=relative 对照滚动基线（tests/perf 不入库，CI 经 actions/cache 持久化于 perf-results/baseline/baseline.json）回退超 regression.maxRegressionPct% 拒合。enforce 下任一指标本次结果缺失即 exit 1。gate 默认 p95；resident-memory 按 spec §4 例外取 max。",
+  "enforce": true,
+  "regression": {
+    "_comment": "相对回归模式参数：baselineFile 可由环境变量 PERF_BASELINE_FILE 覆盖；window 为基线滚动窗口（取最近 N 次 master 门禁值的 median 为基线值）；maxRegressionPct 为拒合回退阈值。",
+    "baselineFile": "perf-results/baseline/baseline.json",
+    "window": 10,
+    "maxRegressionPct": 20
+  },
   "metrics": {
-    "cold-start": { "threshold": 300, "unit": "ms", "gate": "p95" },
-    "keypress-to-paint": { "threshold": 16, "unit": "ms", "gate": "p95" },
-    "open-1mb-file": { "threshold": 100, "unit": "ms", "gate": "p95" },
-    "resident-memory": { "threshold": 200, "unit": "MB", "gate": "max" }
+    "cold-start": { "threshold": 300, "unit": "ms", "gate": "p95", "mode": "relative" },
+    "keypress-to-paint": { "threshold": 16, "unit": "ms", "gate": "p95", "mode": "relative" },
+    "open-1mb-file": { "threshold": 100, "unit": "ms", "gate": "p95", "mode": "absolute" },
+    "resident-memory": { "threshold": 200, "unit": "MB", "gate": "max", "mode": "absolute" }
   }
 }
