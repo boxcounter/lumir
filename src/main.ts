@@ -5,12 +5,14 @@ import { createFileTree } from "./tree";
 import {
   configGet,
   errorMessage,
+  fsReadAttachment,
   fsReadFile,
   onFsEntryChanged,
   vaultCurrent,
   vaultOpen,
 } from "./ipc";
-import type { EditorMode } from "./bindings/EditorMode";
+import type { FsEntry } from "./bindings/FsEntry";
+import { extensionOf, resolveByNameUnique } from "./preview/attachments";
 import "./style.css";
 
 const app = document.querySelector<HTMLElement>("#app");
@@ -19,10 +21,42 @@ if (!app) {
 }
 
 // M1 装配：app-shell 三栏 + 编辑器单内核 + 键位框架 + 全类型文件树
-//（add-vault-workspace）。editor.ts 导出 API 由 editor 波持有，此处只消费
-// createEditor / setMode / view，不改其签名。
+//（add-vault-workspace），M20 接上附件链路（add-editor-live-preview）。
+// editor.ts 的 EditorHandle 由 editor 波持有，此处只消费，不改其签名。
 const shell = createShell(app);
 const editor = createEditor(shell.editor);
+
+// 附件索引：vault 内全部文件（不含目录）的 vault 相对路径。provider 的
+// resolveByName 闭包活读它，vault 切换 / watch 增量就地更新数组，无需重注。
+let attachmentPaths: string[] = [];
+
+// data: URL 的 MIME 推断，与 attachments.ts 私有 MIME_BY_EXTENSION 同口径。
+// 该文件不在本 mission scope，对齐点（provider 工厂接受注入的读取函数 /
+// 抽出公共 MIME 表）已报 tower，此处就地维护一份。
+const IMAGE_MIME: Record<string, string> = {
+  png: "image/png",
+  jpg: "image/jpeg",
+  jpeg: "image/jpeg",
+  gif: "image/gif",
+  webp: "image/webp",
+  svg: "image/svg+xml",
+  avif: "image/avif",
+  bmp: "image/bmp",
+  ico: "image/x-icon",
+};
+
+// 附件 provider：文件名匹配走 vault 索引（add-vault-workspace 裁决点 F），
+// 字节读取走 ipc 的 fsReadAttachment 封装（裁决点 A，invoke + base64）。
+// 索引未命中 → livePreview 出「附件未找到」占位；读取失败 → ImageWidget
+// 原地换「图片读取失败」占位，都不抛错。
+editor.setAttachmentProvider({
+  resolveByName: (name) => resolveByNameUnique(attachmentPaths, name),
+  async readDataUrl(path) {
+    const base64 = await fsReadAttachment(path);
+    const mime = IMAGE_MIME[extensionOf(path)] ?? "application/octet-stream";
+    return `data:${mime};base64,${base64}`;
+  },
+});
 
 const keymap = new Keymap();
 keymap.attach(window, (command) => {
@@ -47,11 +81,9 @@ function showEditor() {
   editor.view.dom.style.display = "";
 }
 
-// 打开文件的模式裁决（spec file-tree「点击打开文件」）：md → md 模式，
-// 代码文件 → code 模式，无类型线索时用 editor.mode 配置默认值；
-// 不支持的二进制 → 提示而非报错弹窗。
-let defaultMode: EditorMode = "md";
-
+// 打开文件：读出文本交给 editor.openDocument——模式裁决（文件类型优先，
+// 无类型线索回落配置默认）和附件相对路径解析依赖的 currentFilePath 都在
+// 内核里完成（spec「模式配置来源」）。不支持的二进制 → 提示而非报错弹窗。
 async function openFile(path: string, kind: "md" | "code" | "text" | "binary") {
   if (kind === "binary") {
     showNotice(`暂不支持预览：${path}`);
@@ -59,10 +91,7 @@ async function openFile(path: string, kind: "md" | "code" | "text" | "binary") {
   }
   try {
     const text = await fsReadFile(path);
-    editor.view.dispatch({
-      changes: { from: 0, to: editor.view.state.doc.length, insert: text },
-    });
-    editor.setMode(kind === "text" ? defaultMode : kind);
+    editor.openDocument(text, path);
     showEditor();
   } catch (e) {
     // CommandError 的 message 是人话（如非法 UTF-8），直接展示
@@ -76,32 +105,55 @@ const tree = createFileTree(shell.fileTree, {
     vaultOpen()
       .then((info) => {
         // null = 用户在目录选择器取消，无错误状态（spec）
-        if (info) tree.setVault(info.root, info.entries);
+        if (info) loadVault(info.root, info.entries);
       })
       .catch((e) => tree.showEmpty(errorMessage(e)));
   },
 });
 
-// watch 增量事件流 → 文件树局部刷新（不全量重扫）。
+// vault 装载的两个入口（手动打开 / 启动恢复）共用：先换附件索引再装文件树。
+function loadVault(root: string, entries: FsEntry[]) {
+  attachmentPaths = entries.filter((e) => e.kind === "file").map((e) => e.path);
+  tree.setVault(root, entries);
+}
+
+// watch 增量事件流 → 附件索引与文件树同步打补丁（都不全量重扫）。
 // 无 Tauri 后端的环境（如纯浏览器预览）下 listen 会 reject，静默忽略。
-onFsEntryChanged((changes) => tree.applyChanges(changes)).catch(() => {});
+onFsEntryChanged((changes) => {
+  for (const change of changes) {
+    if (change.kind === "deleted") {
+      // 目录删除连同子孙一起出索引（与 tree.applyChanges 的级联删除同口径）
+      attachmentPaths = attachmentPaths.filter(
+        (p) => p !== change.path && !p.startsWith(`${change.path}/`),
+      );
+    } else if (
+      (change.entry_kind ?? "file") === "file" &&
+      !attachmentPaths.includes(change.path)
+    ) {
+      attachmentPaths.push(change.path);
+    }
+  }
+  tree.applyChanges(changes);
+}).catch(() => {});
 
 // 启动恢复：后端 setup 已按 last_vault 尝试自动打开；这里拉取结果。
 // 未打开 → 空态 + 打开入口；恢复失败 → 空态上人话提示。
 vaultCurrent()
   .then((status) => {
     if (status.vault) {
-      tree.setVault(status.vault.root, status.vault.entries);
+      loadVault(status.vault.root, status.vault.entries);
     } else {
       tree.showEmpty(status.notice);
     }
   })
   .catch((e) => tree.showEmpty(errorMessage(e)));
 
-// 契约链路探针：invoke config_get，取 editor.mode 默认值并渲染进面板 pane。
+// 契约链路探针：invoke config_get，把 editor.mode 经 setMode 锚定为编辑器的
+// 配置默认基线（openDocument 对无类型线索文件回落到这个基线），并把配置快照
+// 渲染进面板 pane。
 configGet()
   .then((snapshot) => {
-    defaultMode = snapshot.config.editor.mode;
+    editor.setMode(snapshot.config.editor.mode);
     const lines = [
       `config: ok (mode=${snapshot.config.editor.mode})`,
       `path: ${snapshot.path}`,
