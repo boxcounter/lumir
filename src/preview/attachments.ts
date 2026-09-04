@@ -7,6 +7,7 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import { WidgetType } from "@codemirror/view";
+import { errorMessage } from "../ipc";
 
 const IMAGE_EXTENSIONS = new Set(["png", "jpg", "jpeg", "gif", "webp", "svg", "avif", "bmp", "ico"]);
 
@@ -153,8 +154,7 @@ export class ImageWidget extends WidgetType {
         wrap.replaceChildren(img);
       },
       (e: unknown) => {
-        const reason = e instanceof Error ? e.message : String(e);
-        wrap.replaceChildren(errorChip(`图片读取失败：${this.rawRef}（${reason}）`));
+        wrap.replaceChildren(errorChip(`图片读取失败：${this.rawRef}（${errorMessage(e)}）`));
       },
     );
     return wrap;
