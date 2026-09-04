@@ -1,12 +1,31 @@
-// 阈值比较（spec §5）：对照 tests/perf/thresholds.json 检查 perf-results/*.json。
-// 校准前 enforce=false：超阈只发 ::warning::，退出码恒 0；M0 末校准后置 true，超阈即 CI 红。
+// 阈值比较（spec §5 + 总约定「相对回归门禁」）：对照 tests/perf/thresholds.json 检查 perf-results/*.json。
+// mode=absolute：门禁值 < threshold 即过；mode=relative：对照滚动基线（最近 window 次 master 门禁值
+// 的 median），回退 > maxRegressionPct% 拒合。enforce=true 时超阈/回退/结果缺失均 exit 1；
+// 基线缺失只 warning 不拒合（否则基线永远无法建立或重建）。
 import { readFile } from "node:fs/promises";
 import path from "node:path";
-import { repoRoot, resultsDir } from "./lib/stats.mjs";
+import { repoRoot, resultsDir, summarize } from "./lib/stats.mjs";
 
 const thresholdsPath = path.join(repoRoot(), "tests/perf/thresholds.json");
-const { enforce, metrics } = JSON.parse(await readFile(thresholdsPath, "utf8"));
+const { enforce, regression = {}, metrics } = JSON.parse(
+  await readFile(thresholdsPath, "utf8")
+);
 const outDir = resultsDir();
+const baselinePath =
+  process.env.PERF_BASELINE_FILE ??
+  path.join(repoRoot(), regression.baselineFile ?? "perf-results/baseline/baseline.json");
+const windowSize = regression.window ?? 10;
+const maxRegressionPct = regression.maxRegressionPct ?? 20;
+
+let baseline = null;
+try {
+  baseline = JSON.parse(await readFile(baselinePath, "utf8"));
+} catch (err) {
+  console.log(
+    `::warning::[perf] 滚动基线缺失或不可读（${baselinePath}: ${err.code ?? err.message}），` +
+      `相对回归指标本次跳过比较（不拒合）；基线由下一次 master 成功 run 重建`
+  );
+}
 
 let violations = 0;
 for (const [metric, cfg] of Object.entries(metrics)) {
@@ -15,12 +34,51 @@ for (const [metric, cfg] of Object.entries(metrics)) {
   try {
     result = JSON.parse(await readFile(resultPath, "utf8"));
   } catch (err) {
-    // 结果缺失（上游步骤失败或 perf-results/ 不存在）也保持 warn-only，不 ENOENT 崩溃
-    console.log(`::warning::[perf] ${metric}: 结果文件缺失或不可读（${resultPath}: ${err.code ?? err.message}），跳过阈值比较`);
+    // enforce 后缺数据即红（reviewer finding 20260905）：缺失不得静默跳过
+    if (enforce) {
+      violations++;
+      console.log(
+        `::error::[perf] ${metric}: 结果文件缺失或不可读（${resultPath}: ${err.code ?? err.message}），拒合`
+      );
+    } else {
+      console.log(
+        `::warning::[perf] ${metric}: 结果文件缺失或不可读（${resultPath}: ${err.code ?? err.message}），跳过阈值比较`
+      );
+    }
     continue;
   }
+
   const statKey = cfg.gate ?? "p95";
   const value = result[statKey];
+
+  if ((cfg.mode ?? "absolute") === "relative") {
+    const history = baseline?.metrics?.[metric]?.history ?? [];
+    if (history.length === 0) {
+      console.log(
+        `::warning::[perf] ${metric}: ${statKey}=${value.toFixed(2)}${result.unit}，` +
+          `基线无历史，跳过相对回归比较（不拒合）`
+      );
+      continue;
+    }
+    const recent = history.slice(-windowSize).map((h) => h.value);
+    const baselineValue = summarize(recent).median;
+    const regressionPct = ((value - baselineValue) / baselineValue) * 100;
+    const ok = regressionPct <= maxRegressionPct;
+    const line =
+      `${metric}: ${statKey}=${value.toFixed(2)}${result.unit} vs 基线 median=${baselineValue.toFixed(2)}${result.unit} ` +
+      `（最近 ${recent.length} 次 master），回退 ${regressionPct.toFixed(1)}% vs 容忍 ≤${maxRegressionPct}% ` +
+      (ok ? "通过" : "回退超阈");
+    if (ok) {
+      console.log(`[perf] ${line}`);
+    } else {
+      violations++;
+      console.log(
+        `::${enforce ? "error" : "warning"}::[perf] ${line}${enforce ? "，拒合" : "（enforce=false，warn-only）"}`
+      );
+    }
+    continue;
+  }
+
   const ok = value < cfg.threshold;
   const line =
     `${metric}: ${statKey}=${value.toFixed(2)}${result.unit} vs 阈值 <${cfg.threshold}${result.unit} ` +
@@ -29,13 +87,17 @@ for (const [metric, cfg] of Object.entries(metrics)) {
     console.log(`[perf] ${line}`);
   } else {
     violations++;
-    console.log(`::warning::[perf] ${line}${enforce ? "" : "（校准前 warn-only，不拒合）"}`);
+    console.log(
+      `::${enforce ? "error" : "warning"}::[perf] ${line}${enforce ? "，拒合" : "（enforce=false，warn-only）"}`
+    );
   }
 }
 
 if (!enforce) {
-  console.log("[perf] enforce=false：阈值拒合待 M0 末一次性校准后启用（ADR 0002 revisit / spec §5）");
+  console.log("[perf] enforce=false：warn-only 模式，不拒合");
 } else if (violations > 0) {
-  console.error(`[perf] ${violations} 项指标超阈，拒合`);
+  console.error(`[perf] ${violations} 项违规（超阈/回退超阈/结果缺失），拒合`);
   process.exit(1);
+} else {
+  console.log("[perf] 全部门禁通过");
 }
