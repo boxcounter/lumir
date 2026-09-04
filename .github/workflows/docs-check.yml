@@ -1,0 +1,127 @@
+name: docs-check
+
+# 制品门禁：ADR 与 OpenSpec 的结构与合法性校验。
+# 口径本体见 docs/process/adr-lifecycle.md 与 docs/process/openspec-workflow.md。
+
+on:
+  pull_request:
+    paths:
+      - "docs/**"
+      - "openspec/**"
+      - ".github/workflows/docs-check.yml"
+  push:
+    branches: [master]
+    paths:
+      - "docs/**"
+      - "openspec/**"
+      - ".github/workflows/docs-check.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  adr:
+    name: ADR 校验
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: 校验 ADR 文件结构与状态字段
+        run: |
+          set -euo pipefail
+          fail=0
+          shopt -s nullglob
+          files=(docs/adr/[0-9][0-9][0-9][0-9]-*.md)
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "::error::docs/adr/ 下没有任何 ADR 文件"
+            exit 1
+          fi
+          for f in "${files[@]}"; do
+            base=$(basename "$f")
+            num=${base:0:4}
+
+            # 标题格式，且编号与文件名一致
+            if ! head -1 "$f" | grep -qE "^# ADR ${num}: .+"; then
+              echo "::error file=${f}::首行须为 '# ADR ${num}: <标题>'"
+              fail=1
+            fi
+
+            # 状态字段合法
+            status=$(grep -m1 -E '^- 状态: ' "$f" | sed 's/^- 状态: //' || true)
+            if ! echo "$status" | grep -qE '^(proposed|accepted|deprecated|superseded by ADR-[0-9]{4})$'; then
+              echo "::error file=${f}::状态字段非法：'${status}'（合法值：proposed / accepted / deprecated / superseded by ADR-NNNN）"
+              fail=1
+            fi
+
+            # 日期字段
+            if ! grep -qE '^- 日期: [0-9]{4}-[0-9]{2}-[0-9]{2}$' "$f"; then
+              echo "::error file=${f}::缺少合法的 '- 日期: YYYY-MM-DD' 字段"
+              fail=1
+            fi
+
+            # 角色字段
+            if ! grep -qE '^- 角色: ' "$f"; then
+              echo "::error file=${f}::缺少 '- 角色: ' 字段"
+              fail=1
+            fi
+
+            # 必备章节
+            for section in '## Context' '## Decision' '## Consequences' '## Revisit 条件'; do
+              if ! grep -qF "$section" "$f"; then
+                echo "::error file=${f}::缺少章节 '${section}'"
+                fail=1
+              fi
+            done
+          done
+          exit $fail
+
+      - name: 校验 README 索引与 ADR 文件一致
+        run: |
+          set -euo pipefail
+          fail=0
+          shopt -s nullglob
+          for f in docs/adr/[0-9][0-9][0-9][0-9]-*.md; do
+            base=$(basename "$f")
+            if ! grep -qF "($base)" docs/adr/README.md; then
+              echo "::error::docs/adr/README.md 索引缺少条目：$base"
+              fail=1
+            fi
+          done
+          # 索引中引用的每个文件必须存在
+          for ref in $(grep -oE '\(([0-9]{4}-[a-z0-9-]+\.md)\)' docs/adr/README.md | tr -d '()'); do
+            if [ ! -f "docs/adr/$ref" ]; then
+              echo "::error::docs/adr/README.md 索引指向不存在的文件：$ref"
+              fail=1
+            fi
+          done
+          exit $fail
+
+  openspec:
+    name: OpenSpec 校验
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: 校验目录结构与 change 制品完整
+        run: |
+          set -euo pipefail
+          fail=0
+          [ -f openspec/config.yaml ] || { echo "::error::缺少 openspec/config.yaml"; fail=1; }
+          [ -d openspec/specs ] || { echo "::error::缺少 openspec/specs/"; fail=1; }
+          [ -d openspec/changes/archive ] || { echo "::error::缺少 openspec/changes/archive/"; fail=1; }
+          shopt -s nullglob
+          for d in openspec/changes/*/; do
+            name=$(basename "$d")
+            [ "$name" = "archive" ] && continue
+            for artifact in proposal.md tasks.md; do
+              if [ ! -f "$d$artifact" ]; then
+                echo "::error::change '$name' 缺少必填制品 $artifact（清单见 docs/process/openspec-workflow.md）"
+                fail=1
+              fi
+            done
+            if [ ! -d "${d}specs" ]; then
+              echo "::error::change '$name' 缺少 specs/ 增量目录"
+              fail=1
+            fi
+          done
+          exit $fail
+      - name: openspec validate --all --strict
+        run: npx --yes @fission-ai/openspec@1.12.0 validate --all --strict

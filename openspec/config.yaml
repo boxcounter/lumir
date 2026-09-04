@@ -1,0 +1,21 @@
+schema: spec-driven
+
+context: |
+  Language: zh
+  All artifacts must be written in zh.
+  Keep OpenSpec structural headings and SHALL/MUST keywords in English.
+
+# Per-artifact rules：与 docs/process/openspec-workflow.md 的制品清单一一对应
+rules:
+  proposal:
+    - 模板为 docs/process/templates/proposal.md，必须含 Why / What Changes / Non-goals 三节
+    - 评审标准是 Alex 不看代码即可裁决，proposal 不得依赖实现细节才能读懂
+    - 事实性断言须附信源
+  tasks:
+    - 模板为 docs/process/templates/tasks.md，任务原子化、可勾选
+    - 末尾须有验证分组，含 validate --all --strict 与该 change 的验收动作
+operations:
+  archive:
+    guidance:
+      - archive 前确认 Alex 归档评审（节点 2）已通过
+      - tasks 全部勾选或标注放弃原因后才可 archive
