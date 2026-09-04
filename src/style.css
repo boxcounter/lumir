@@ -5,6 +5,47 @@ body,
   height: 100%;
 }
 
+/* app-shell 布局骨架（src/shell.ts）：文件树 | 编辑器 | 面板 三栏。 */
+.app-shell {
+  display: grid;
+  grid-template-columns: 240px 1fr 280px;
+  height: 100%;
+}
+
+.pane {
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+}
+
+/* 空 pane 显示占位标签（data-empty-label），后续波次挂载真实内容后移除。 */
+.pane[data-empty-label]:not([data-empty-label=""]):empty::after {
+  content: attr(data-empty-label);
+  display: block;
+  padding: 12px;
+  color: #888;
+  font-size: 12px;
+}
+
+.pane-filetree,
+.pane-panel {
+  background: #f6f6f6;
+  border-right: 1px solid #e0e0e0;
+  white-space: pre-wrap;
+  font-family: monospace;
+  font-size: 12px;
+  padding: 8px;
+}
+
+.pane-panel {
+  border-right: none;
+  border-left: 1px solid #e0e0e0;
+}
+
+.pane-editor {
+  padding: 0;
+}
+
 .cm-editor {
   height: 100%;
   font-size: 14px;

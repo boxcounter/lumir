@@ -1,0 +1,48 @@
+name: rust
+
+# Rust 质量门禁（架构复查 P1-3）：AI-only 模式下 CI 是唯一防线（ADR 0004）。
+# fmt --check + clippy -D warnings + test 三个都必须绿；cargo test 同时是
+# ADR 0003 §4 fixture 测试集与 ts-rs bindings 导出（src/bindings/ 生成物入仓）的载体。
+
+on:
+  pull_request:
+    paths:
+      - "src-tauri/**"
+      - "src/bindings/**"
+      - ".github/workflows/rust.yml"
+  push:
+    branches: [master]
+    paths:
+      - "src-tauri/**"
+      - "src/bindings/**"
+      - ".github/workflows/rust.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  gate:
+    name: fmt + clippy + test
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: cargo fmt --check
+        run: cargo fmt --check --manifest-path src-tauri/Cargo.toml
+
+      - name: cargo clippy -D warnings
+        run: cargo clippy --all-targets --manifest-path src-tauri/Cargo.toml -- -D warnings
+
+      - name: cargo test
+        run: cargo test --manifest-path src-tauri/Cargo.toml
+
+      - name: ts-rs bindings 无漂移（cargo test 重导出后须与仓内一致）
+        run: git diff --exit-code -- src/bindings/

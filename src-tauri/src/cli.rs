@@ -9,7 +9,7 @@ pub enum Command {
     Open(std::path::PathBuf),
 }
 
-/// 解析 argv（空实现：目前一律视为打开当前目录）。
+/// 解析 argv（空实现：当前不识别任何参数，一律返回 None；M1 起充实）。
 pub fn parse(_args: &[String]) -> Option<Command> {
     None
 }
