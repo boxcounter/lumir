@@ -148,9 +148,9 @@ vaultCurrent()
   })
   .catch((e) => tree.showEmpty(errorMessage(e)));
 
-// 契约链路探针：invoke config_get，把 editor.mode 配置默认应用到编辑器
-//（openDocument 对无类型线索文件回落 currentMode，此处把它校准为配置值），
-// 并把配置快照渲染进面板 pane。
+// 契约链路探针：invoke config_get，把 editor.mode 经 setMode 锚定为编辑器的
+// 配置默认基线（openDocument 对无类型线索文件回落到这个基线），并把配置快照
+// 渲染进面板 pane。
 configGet()
   .then((snapshot) => {
     editor.setMode(snapshot.config.editor.mode);

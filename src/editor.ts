@@ -48,12 +48,17 @@ fn main() { println!("lumir"); }
 
 export interface EditorHandle {
   view: EditorView;
-  /** 切换单内核双模式（Compartment 热切换，不重建 view）。 */
+  /**
+   * 显式切换模式（配置加载 / 用户切换）：除热切换当前模式外，同时把该模式记为
+   * 配置默认基线，openDocument 对无类型线索文件的回落以此为锚。
+   * Compartment 热切换，不重建 view。
+   */
   setMode(mode: EditorMode): void;
   mode(): EditorMode;
   /**
    * 打开文档：替换内容并按文件类型选模式（spec「模式配置来源」）——
-   * .md/.markdown → md；已知代码扩展 → code；无类型线索（path 缺失或未知扩展）→ 保持配置默认。
+   * .md/.markdown → md；已知代码扩展 → code；无类型线索（path 缺失或未知扩展）
+   * → 回落配置默认基线（setMode 锚定，不随上一个打开文件的模式漂移）。
    */
   openDocument(doc: string, path?: string): void;
   /**
@@ -84,6 +89,9 @@ function modeForPath(path: string | undefined, fallback: EditorMode): EditorMode
 export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"): EditorHandle {
   const modeCompartment = new Compartment();
   let currentMode = initialMode;
+  // 配置默认基线：openDocument 的无类型线索回落锚在这里；只有 setMode
+  //（配置加载 / 用户显式切换）会移动它，openDocument 自身不改。
+  let defaultMode = initialMode;
   let currentPath: string | undefined;
   let provider: AttachmentProvider = createInvokeAttachmentProvider();
 
@@ -117,6 +125,9 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
   return {
     view,
     setMode(mode: EditorMode) {
+      // 显式切换即新的配置默认基线；即便与当前模式相同也要锚定（当前模式
+      // 可能是上一个文件经 openDocument 漂移来的）。
+      defaultMode = mode;
       if (mode === currentMode) return;
       currentMode = mode;
       view.dispatch({ effects: modeCompartment.reconfigure(modeExtensions(mode)) });
@@ -124,7 +135,7 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
     mode: () => currentMode,
     openDocument(doc: string, path?: string) {
       currentPath = path;
-      const next = modeForPath(path, currentMode);
+      const next = modeForPath(path, defaultMode);
       currentMode = next;
       view.dispatch({
         changes: { from: 0, to: view.state.doc.length, insert: doc },
