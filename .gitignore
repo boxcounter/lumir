@@ -1,0 +1,13 @@
+# dependencies
+node_modules/
+.pnpm-store/
+
+# build output
+dist/
+
+# tauri / rust
+src-tauri/target/
+
+# misc
+*.log
+.DS_Store

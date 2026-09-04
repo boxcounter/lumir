@@ -1,0 +1,23 @@
+[package]
+name = "lumir"
+version = "0.0.0"
+edition = "2021"
+description = "Lumir — skeleton shell (M0 harness)"
+license = "MIT"
+
+[lib]
+name = "lumir_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[profile.release]
+panic = "abort"
+lto = true
+opt-level = 3

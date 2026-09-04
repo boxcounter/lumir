@@ -1,0 +1,16 @@
+{
+  // TypeScript pin 5.x：npm latest 已到 7.x（native port），生态与 AI 语料尚新；
+  // ADR 0002 选 web 栈的核心论据是语料成熟度，故 pin 5.x，待 7.x 生态成熟时 revisit（tower 2026-09-04 版本策略）。
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "strict": true,
+    "noEmit": true,
+    "isolatedModules": true,
+    "skipLibCheck": true,
+    "useDefineForClassFields": true
+  },
+  "include": ["src"]
+}
