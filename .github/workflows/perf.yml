@@ -10,6 +10,10 @@ on:
     paths:
       - "src/**"
       - "src-tauri/**"
+      - "index.html"
+      - "vite.config.ts"
+      - "package.json"
+      - "pnpm-lock.yaml"
       - "scripts/perf/**"
       - "tests/perf/**"
       - ".github/workflows/perf.yml"
@@ -18,6 +22,10 @@ on:
     paths:
       - "src/**"
       - "src-tauri/**"
+      - "index.html"
+      - "vite.config.ts"
+      - "package.json"
+      - "pnpm-lock.yaml"
       - "scripts/perf/**"
       - "tests/perf/**"
       - ".github/workflows/perf.yml"

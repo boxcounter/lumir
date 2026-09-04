@@ -7,7 +7,9 @@ license = "MIT"
 
 [lib]
 name = "lumir_lib"
-crate-type = ["staticlib", "cdylib", "rlib"]
+# 只要 rlib：staticlib/cdylib 是 Tauri mobile 模板残留，移动端是 ADR 0001 非目标；
+# 多 crate-type 会让每次构建（含 perf CI 的 release 构建）白付链接时间。
+crate-type = ["rlib"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
@@ -16,6 +18,11 @@ tauri-build = { version = "2", features = [] }
 tauri = { version = "2", features = [] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# payload 类型单一来源选型：ts-rs（而非 specta / tauri-specta）。
+# 理由：单 crate、无运行时开销、bindings 由 cargo test 顺带导出（契合 rust.yml 门禁）；
+# specta 方案需同时引入 specta + tauri-specta 且强绑定其 builder，本阶段契约只是薄约定，
+# 只需要"类型一处定义、TS 自动生成"，不需要它生成的 invoke wrapper。取舍详见 commands.rs 模块文档。
+ts-rs = "11"
 
 [profile.release]
 panic = "abort"

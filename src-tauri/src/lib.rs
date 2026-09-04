@@ -8,16 +8,19 @@
 
 pub mod acp_client;
 pub mod cli;
+pub mod commands;
+pub mod config;
 pub mod fs_io;
 pub mod index;
 pub mod link_graph;
 pub mod mcp_server;
 pub mod ready;
 
-/// 启动 Tauri app（M0 空壳：一个窗口 + 静态前端，证明渲染链路通）。
+/// 启动 Tauri app。
 pub fn run() {
     let started = std::time::Instant::now();
     tauri::Builder::default()
+        .invoke_handler(tauri::generate_handler![commands::config_get])
         .setup(move |_app| {
             ready::emit_ready(started);
             Ok(())
