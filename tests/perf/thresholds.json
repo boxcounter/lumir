@@ -1,0 +1,10 @@
+{
+  "_comment": "阈值本体是 ADR 0002 第 6 条，本文件是其机器可读镜像（口径见 docs/specs/perf-measurement.md）。enforce 置 true 即启用拒合——仅在 M0 末一次性校准（ADR 0002 revisit）后允许，且需同步修订 ADR 0002。gate 默认 p95；resident-memory 按 spec §4 例外取 max。",
+  "enforce": false,
+  "metrics": {
+    "cold-start": { "threshold": 300, "unit": "ms", "gate": "p95" },
+    "keypress-to-paint": { "threshold": 16, "unit": "ms", "gate": "p95" },
+    "open-1mb-file": { "threshold": 100, "unit": "ms", "gate": "p95" },
+    "resident-memory": { "threshold": 200, "unit": "MB", "gate": "max" }
+  }
+}

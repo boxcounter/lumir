@@ -8,6 +8,9 @@ dist/
 # tauri / rust
 src-tauri/target/
 
+# perf 测量结果（scripts/perf/* 产出，CI 作为 artifact 上传）
+perf-results/
+
 # misc
 *.log
 .DS_Store

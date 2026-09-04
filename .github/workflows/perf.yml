@@ -1,0 +1,77 @@
+name: perf
+
+# 性能合同测量（ADR 0002 §6，方法学本体见 docs/specs/perf-measurement.md）。
+# 现阶段只测量并上报数值 artifact，超阈 warn-only；阈值拒合待 M0 末一次性校准后
+# 将 tests/perf/thresholds.json 的 enforce 置 true 启用。
+
+on:
+  pull_request:
+    paths:
+      - "src/**"
+      - "src-tauri/**"
+      - "scripts/perf/**"
+      - "tests/perf/**"
+      - ".github/workflows/perf.yml"
+  push:
+    branches: [master]
+    paths:
+      - "src/**"
+      - "src-tauri/**"
+      - "scripts/perf/**"
+      - "tests/perf/**"
+      - ".github/workflows/perf.yml"
+  workflow_dispatch: # 校准期手动跑数
+
+permissions:
+  contents: read
+
+jobs:
+  measure:
+    name: 四项指标测量
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22 # 全局 WebSocket（CDP client 用）需 >= 22.4
+          cache: pnpm
+
+      - name: 安装前端依赖
+        run: pnpm install --frozen-lockfile
+
+      - name: 构建前端产物（dist/，keypress-to-paint 的负载）
+        run: pnpm build
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: 构建 release 二进制（冷启动与内存测量的对象）
+        run: cargo build --release --manifest-path src-tauri/Cargo.toml
+
+      - name: 冷启动 <300ms
+        run: node scripts/perf/cold-start.mjs
+
+      - name: keypress-to-paint <16ms（headless 注入近似，下界）
+        run: node scripts/perf/keypress-to-paint.mjs
+
+      - name: 打开 1MB 文件 <100ms（占位口径）
+        run: node scripts/perf/open-file.mjs
+
+      - name: 常驻内存 <200MB
+        run: node scripts/perf/memory.mjs
+
+      - name: 阈值比较（校准前 warn-only）
+        if: always()
+        run: node scripts/perf/check-thresholds.mjs
+
+      - name: 上传数值 artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: perf-results
+          path: perf-results/
+          retention-days: 30
