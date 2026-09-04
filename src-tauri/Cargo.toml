@@ -23,6 +23,11 @@ serde_json = "1"
 # specta 方案需同时引入 specta + tauri-specta 且强绑定其 builder，本阶段契约只是薄约定，
 # 只需要"类型一处定义、TS 自动生成"，不需要它生成的 invoke wrapper。取舍详见 commands.rs 模块文档。
 ts-rs = "11"
+# vault watch（add-vault-workspace）：notify 8 稳定线（9.x 仍是 rc）。
+notify = "8"
+# 目录选择器：rfd 纯 Rust 原生 dialog，不需要 tauri-plugin-dialog 的
+# tauri.conf.json / capabilities 配置（那不在本 change 的改动面内）。
+rfd = "0.17"
 
 [profile.release]
 panic = "abort"

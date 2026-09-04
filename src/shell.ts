@@ -1,10 +1,10 @@
 // app-shell 布局骨架 —— M1 接缝（架构复查 P2-7）。
 // 只建容器：文件树 / 编辑器 / 面板三个 pane 的挂载点与网格布局。
-// 文件树与面板的内容是后续波次的功能，本波不实现。
+// 文件树由 src/tree.ts 挂载（add-vault-workspace）；面板内容是后续波次的功能。
 
 export interface AppShell {
   root: HTMLElement;
-  /** 文件树 pane（后续波次在此挂载全类型文件树）。 */
+  /** 文件树 pane（createFileTree 挂载点）。 */
   fileTree: HTMLElement;
   /** 编辑器 pane（CM6 单内核挂载点）。 */
   editor: HTMLElement;
@@ -24,7 +24,7 @@ export function createShell(mount: HTMLElement): AppShell {
   const root = document.createElement("div");
   root.className = "app-shell";
 
-  const fileTree = pane("pane-filetree", "文件树（后续波次）");
+  const fileTree = pane("pane-filetree", "");
   const editor = pane("pane-editor", "");
   const panel = pane("pane-panel", "面板（后续波次）");
 
