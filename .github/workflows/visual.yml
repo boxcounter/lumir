@@ -1,0 +1,75 @@
+name: visual
+
+# 视觉回归门禁：ADR 0001「极致美」的工程兜底（ADR 0004 M0）。
+# 门禁只守「不丑」——布局、配色、间距不回归即拒合；「美不美」的裁决权在 Alex 人肉。
+# 选型与口径见 tests/visual/README.md。
+
+on:
+  pull_request:
+    paths:
+      - "src/**"
+      - "index.html"
+      - "vite.config.ts"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "tests/visual/**"
+      - ".github/workflows/visual.yml"
+  push:
+    branches: [master]
+    paths:
+      - "src/**"
+      - "index.html"
+      - "vite.config.ts"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "tests/visual/**"
+      - ".github/workflows/visual.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  visual:
+    name: 视觉回归
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: 安装依赖并构建前端
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm build
+
+      - name: 缓存 Playwright 浏览器
+        uses: actions/cache@v4
+        with:
+          path: ~/Library/Caches/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('tests/visual/pnpm-lock.yaml') }}
+
+      - name: 安装视觉测试依赖与 chromium
+        # tests/visual 是自包含子项目（独立 lockfile，不进根 workspace）
+        run: |
+          pnpm --dir tests/visual install --ignore-workspace --frozen-lockfile
+          pnpm --dir tests/visual exec playwright install chromium
+
+      - name: 视觉回归对比（不通过即拒合）
+        run: pnpm --dir tests/visual test
+
+      - name: 失败时上传 diff 制品
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: visual-diff
+          path: |
+            tests/visual/test-results/
+            tests/visual/playwright-report/
+          retention-days: 14
