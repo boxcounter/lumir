@@ -16,6 +16,10 @@ export function summarize(samples) {
   return { median, p95, max: sorted[n - 1], min: sorted[0], mean };
 }
 
+export function resultsDir() {
+  return process.env.PERF_RESULTS_DIR ?? path.join(repoRoot(), "perf-results");
+}
+
 // 结果 schema 见 spec 总约定：metric/unit/contract/samples/统计量/meta。
 export async function writeResult({ metric, unit, contract, samples, meta = {} }) {
   const result = {
@@ -33,7 +37,7 @@ export async function writeResult({ metric, unit, contract, samples, meta = {} }
       ...meta,
     },
   };
-  const outDir = process.env.PERF_RESULTS_DIR ?? "perf-results";
+  const outDir = resultsDir();
   await mkdir(outDir, { recursive: true });
   const file = path.join(outDir, `${metric}.json`);
   await writeFile(file, JSON.stringify(result, null, 2) + "\n");

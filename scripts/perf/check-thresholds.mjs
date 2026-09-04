@@ -2,11 +2,11 @@
 // 校准前 enforce=false：超阈只发 ::warning::，退出码恒 0；M0 末校准后置 true，超阈即 CI 红。
 import { readFile } from "node:fs/promises";
 import path from "node:path";
-import { repoRoot } from "./lib/stats.mjs";
+import { repoRoot, resultsDir } from "./lib/stats.mjs";
 
 const thresholdsPath = path.join(repoRoot(), "tests/perf/thresholds.json");
 const { enforce, metrics } = JSON.parse(await readFile(thresholdsPath, "utf8"));
-const outDir = process.env.PERF_RESULTS_DIR ?? path.join(repoRoot(), "perf-results");
+const outDir = resultsDir();
 
 let violations = 0;
 for (const [metric, cfg] of Object.entries(metrics)) {
