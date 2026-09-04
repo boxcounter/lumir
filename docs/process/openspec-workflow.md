@@ -26,7 +26,7 @@ openspec archive（并入 living spec） ◄── Alex 确认 ◄────�
 
 两个节点都是硬门禁：**未经节点 1 通过的 change 不进入实现；未经节点 2 通过的 change 不 archive。** 这是"人不 review 代码"模式下意图层唯一的防线（ADR 0004）。
 
-评估性约定（ADR 0004 第 4 条）：自 M0 第 2 周首个全循环跑通起两周（第 4 周末），评估"评审制品是否真的让 Alex 不看代码也能裁决"。不达标则退化为 `docs/proposals/` + 模板自建约定，不留恋。
+评估性约定（ADR 0004 第 4 条）：自首个全循环跑通起算，跑满 ≥3 个全循环或满两周，先到为准，评估"评审制品是否真的让 Alex 不看代码也能裁决"。不达标则退化为 `docs/proposals/` + 模板自建约定，不留恋。
 
 ## 制品清单（每个 change）
 
@@ -41,7 +41,7 @@ spec 增量（delta）约定：change 目录下的 `specs/<capability>/spec.md` 
 
 ## AI agent 的操作指令
 
-1. **起草**：在 `openspec/changes/<change-id>/` 下创建制品。change-id 用 kebab-case 动词短语（如 `add-perf-methodology-spec`）。复制 `docs/process/templates/` 下的模板。
+1. **起草**：在 `openspec/changes/<change-id>/` 下创建制品。change-id 用 kebab-case 动词短语（如 `add-perf-measurement-methodology`）。复制 `docs/process/templates/` 下的模板。
 2. **自验**：`npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` 必须通过；CI 会重复此校验。
 3. **提案 PR**：提交并在 PR 描述中 @ Alex 请求节点 1 评审。未通过则按批注修订，保持 change 不进入实现。
 4. **实现**：按 `tasks.md` 逐项实现并勾选（`- [x]`）。发现 proposal 意图需要变更时，停下：更新 proposal 并重新走节点 1，不静默扩 scope。
