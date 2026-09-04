@@ -12,7 +12,8 @@ test("未打开 vault 的空态主界面", async ({ page }) => {
   await expect(openBtn).toBeVisible();
   // 等 CM 首帧内容就绪再截图（.cm-editor 可见 ≠ 首屏文本已绘制）；
   // 实测 headless 下文本进 DOM 后仍需一个绘制周期，waitForTimeout 兜住这个竞态。
-  await expect(page.locator(".cm-content")).toContainText("Lumir skeleton");
+  // SAMPLE 文档经 live preview 渲染：frontmatter 为 properties 区块，正文为装饰后形态。
+  await expect(page.locator(".cm-content")).toContainText("标题一");
   await page.waitForTimeout(400);
   await expect(page).toHaveScreenshot("app-main.png");
 });
