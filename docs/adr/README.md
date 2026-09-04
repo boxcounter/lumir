@@ -33,7 +33,7 @@
 
 | 编号 | 标题 | 状态 |
 |---|---|---|
-| [0001](0001-product-positioning-and-boundaries.md) | 定位与边界 | proposed |
-| [0002](0002-technical-route.md) | 技术路线 | proposed |
-| [0003](0003-obsidian-compatibility-scope.md) | Obsidian 兼容范围 | proposed |
-| [0004](0004-development-and-openness-strategy.md) | 开发与开放策略 | proposed |
+| [0001](0001-product-positioning-and-boundaries.md) | 定位与边界 | accepted |
+| [0002](0002-technical-route.md) | 技术路线 | accepted |
+| [0003](0003-obsidian-compatibility-scope.md) | Obsidian 兼容范围 | accepted |
+| [0004](0004-development-and-openness-strategy.md) | 开发与开放策略 | accepted |
