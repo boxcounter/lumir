@@ -1,0 +1,137 @@
+# Spec: 性能测量方法学（perf-measurement）
+
+- 状态: accepted（随 OpenSpec 首个全循环归档生效；change-id `add-perf-measurement-methodology`，capability `perf-measurement`）
+- 日期: 2026-09-05
+- 角色: Alex Lee（评审/裁决），AI agent（起草）
+- 上游依据: ADR 0002 第 6 条（性能合同四个数字，测量方法学委托 M0 定义）、ADR 0004 第 1 条（M0 出口：四项指标全部在 CI 被测量并产出数值）与第 4 条（本 spec 为 OpenSpec 首个全循环验证对象）、评审 finding `.tower/comms/findings/20260904-reviewer-executability-bug-ci.md`（四数字测量缺口清单）
+
+## 总约定
+
+### 门禁口径与校准条款
+
+- ADR 0002 第 6 条只锁定数字与阈值：冷启动 <300ms、keypress-to-paint <16ms、打开 1MB Markdown <100ms、常驻内存 <200MB。本 spec 定义这四个数字的**测量端点、工具链、采样口径、fixture 规格**。
+- **空壳 app 阶段（M0）的绝对值不代表达标**：keypress-to-paint 以 headless 注入近似测量，是下界；打开 1MB 文件以占位 fixture 计时。M0 末四项指标首次全量实测后允许一次性校准（修订 ADR 0002，仅此一次）。
+- **门禁分两阶段启用**：现阶段 CI 只测量、上报数值 artifact 并对超阈发出 warning；阈值拒合（CI 红）在 M0 末校准后通过 `tests/perf/thresholds.json` 的 `enforce` 开关启用。
+- 判定口径：四项指标的门禁比较值均为该次运行的 **p95**（样本分位数，定义见下）；其余统计量（median/max/min/mean）随 artifact 全量上报，用于校准期观察。
+
+### 运行环境
+
+- CI runner：`macos-15`（Apple Silicon，arm64）。四个数字仅在此环境定义；本地或其他机型的读数不可直接对阈值。
+- 前端构建：release 口径（`pnpm build` 产物 + `cargo build --release`）。
+- Node：>= 22.4（脚本使用内置全局 `WebSocket`，无新增 npm 依赖）。
+
+### 采样统计口径
+
+- 每项指标产出 `perf-results/<metric>.json`，schema：
+  `{"metric": string, "unit": "ms"|"MB", "contract": number, "samples": number[], "median": number, "p95": number, "max": number, "min": number, "mean": number, "meta": object}`。
+  `samples` 保留全部原始样本，供校准期复核分布形状；统计量由 `scripts/perf/lib/stats.mjs` 统一计算，各脚本不得自造。
+- p95 采用 nearest-rank 法：`sort(samples)[ceil(0.95 * N) - 1]`。
+
+### 目录与制品
+
+| 路径 | 内容 |
+|---|---|
+| `scripts/perf/cold-start.mjs` | 冷启动测量 |
+| `scripts/perf/keypress-to-paint.mjs` | keypress-to-paint 测量（headless 注入近似） |
+| `scripts/perf/open-file.mjs` | 打开 1MB 文件测量（占位口径） |
+| `scripts/perf/memory.mjs` | 常驻内存测量 |
+| `scripts/perf/check-thresholds.mjs` | 阈值比较（warn-only / enforce） |
+| `scripts/perf/lib/stats.mjs` | 统计与结果落盘 |
+| `tests/perf/fixtures/markdown-1mb.md` | 1MB Markdown fixture（提交入库） |
+| `tests/perf/fixtures/gen-fixture.mjs` | fixture 确定性再生成器 |
+| `tests/perf/thresholds.json` | 阈值与 enforce 开关 |
+| `perf-results/`（CI artifact） | 四项指标 JSON + 原始样本 |
+
+## 1. 冷启动 <300ms
+
+### 端点定义
+
+- **主口径（门禁用）**：harness wall time——从 harness `spawn` app 二进制之前打点时间戳，到 stdout 出现 `LUMIR_READY ` 前缀行的时间戳。
+- **辅口径（归因用）**：app 自报的 `elapsed_ms`（`src-tauri/src/ready.rs`：从 `run()` 入口到 Tauri setup 完成，即 webview 创建后、事件循环接管前）。两者之差 ≈ exec/动态链接/harness 调度开销，校准期用于判断瓶颈在进程装载还是 Tauri 初始化。
+- ready 信号契约见 `src-tauri/src/ready.rs` 文档注释：`LUMIR_READY {"event":"ready","elapsed_ms":<f64>,"pid":<u32>,"ts_unix_ms":<u64>}`，同时写 `$TMPDIR/lumir-ready-<pid>`。harness 匹配 stdout 行首 `LUMIR_READY ` 前缀。
+- 明确排除：前端首屏挂载（webview 侧 `performance.now()` 打点，见 `src/main.ts`）暂不入端点——headless CI 无法可靠读 webview console。首屏挂载纳入端点是校准期的候选修订项。
+
+### 工具链
+
+- `scripts/perf/cold-start.mjs`：spawn `src-tauri/target/release/lumir`，逐行读 stdout，命中 ready 行后记录两端时间戳并 kill 进程。单次运行 15s 未出现 ready 行记为失败样本并中止该轮。
+
+### 采样口径
+
+- N=10 次全新进程，连续执行。不清 OS page cache——第二次起磁盘页已热，测量的是"热缓存冷启动"，与真实用户首次启动有系统性正偏差，校准时按分布解读。
+- 上报全部 10 个样本；门禁取 p95。
+
+### Fixture
+
+- 无。空壳 app 打开固定窗口与内置示例文档。
+
+## 2. keypress-to-paint <16ms（headless 注入近似，下界）
+
+### 端点定义
+
+- **定义**：从页面内 `keydown` 事件派发时刻（`performance.now()`，capture 阶段记录），到其后**第二帧**渲染完成的时刻（双重 `requestAnimationFrame` 回调内再打点）。取差值为一次样本。
+- **注入方式**：CDP `Input.dispatchKeyEvent`（`rawKeyDown`，key=`a`）驱动 headless Chrome 加载 release 前端产物（`dist/`，由 harness 内嵌静态服务器提供）。
+- **下界声明（必须随读数一起引用）**：
+  1. 不含 OS 输入管道（IOHID → WindowServer → app 事件队列）与合成器/vsync 开销——真实按键路径在 macOS 上另有数毫秒到一帧的延迟；
+  2. CI 用 Chrome/Blink 测量，产品运行时是 WKWebView/WebKit，引擎差异不归零；
+  3. M0 空壳编辑器为只读，按键不触发文档更新路径，测得的是"事件 → 帧调度"的结构下界；M1 编辑器可写后本端点不变，读数自然覆盖文档更新开销。
+- 以上即评审 finding 第 2 条要求的"CDP 注入近似并注明是下界"。
+
+### 工具链
+
+- `scripts/perf/keypress-to-paint.mjs`：启动 Chrome（`--headless=new --remote-debugging-port=0`，二进制路径取 `$CHROME_PATH`，默认 `/Applications/Google Chrome.app/Contents/MacOS/Google Chrome`），经 DevToolsActivePort 文件发现 CDP 端口，用 Node 内置 `WebSocket` 直连 CDP；`Runtime.evaluate` 注入采样 hook，`Input.dispatchKeyEvent` 派发按键，取回 `window.__ktp` 样本数组。
+
+### 采样口径
+
+- N=50 次按键，间隔 100ms（避免事件合并与帧堆积）。上报全部样本；门禁取 p95。
+
+### Fixture
+
+- 无独立 fixture；负载即 release 前端产物的内置示例文档。
+
+## 3. 打开 1MB Markdown 文件 <100ms（占位口径）
+
+### 端点定义
+
+- **占位口径（M0）**：从 `fs.readFile` 开始，到文件内容完成 UTF-8 解码并可作为字符串使用。即纯磁盘 IO + 解码，**不含解析、不含渲染**。
+- 占位理由：M0 空壳尚无"打开文件"功能路径；ADR 0004 第 1 条明确此阶段"打开 1MB 文件以占位 fixture 计时"，绝对值仅用于校准。
+- 演进条款：M1 实现真实打开路径（Rust core `fs_io` 读文件 → webview 装载进 CodeMirror）后，本节端点修订为"打开请求发出 → 文档在编辑器完成首帧渲染"，修订走 OpenSpec 正常循环。
+
+### 工具链
+
+- `scripts/perf/open-file.mjs`：Node `fs/promises.readFile` + `TextDecoder`，先完整读一遍预热 page cache，再正式采样。
+
+### 采样口径
+
+- N=50 次，page cache 热。磁盘 IO 的真实冷读不在此口径内（CI runner 无办法可复现地制造冷缓存）；门禁取 p95。
+
+### Fixture 规格
+
+- `tests/perf/fixtures/markdown-1mb.md`：**恰好 1,048,576 字节**（ADR 0002 的"1MB"在此钉死为 1 MiB，避免 SI/IEC 歧义），UTF-8 纯 ASCII，确定性内容：循环节包含标题、列表、代码围栏、wikilink、frontmatter 片段，覆盖真实 Markdown 的混合结构；末段以注释行填充至精确字节数。
+- fixture 提交入库；内容变更只能通过 `tests/perf/fixtures/gen-fixture.mjs` 再生成（输出字节级确定），保证历史读数可比较。
+
+## 4. 常驻内存 <200MB
+
+### 端点定义
+
+- **"内存"**：app 全进程树的 **RSS 合计**（主进程 + WebContent/GPU/Networking 等所有归属进程），单位 MB（1 MB = 1,048,576 bytes）。
+- **进程归属**：WKWebView 的 `com.apple.WebKit.*` XPC 进程由 launchd 托管（ppid=1），不出现在 app 的 ppid 子树里。归因规则 = app 的 ppid 子孙进程 ∪ （当前 `com.apple.WebKit.*` 进程 − 启动前的基线快照）。CI runner 为独占 VM，测量窗口内无其他 WebKit 消费者，差集归因无串扰；本地运行窗口内若恰好有其他 app 打开 webview 会有少量虚计（虚高方向，偏保守，可接受）。
+- **"常驻"（settle 条件）**：ready 信号出现后 idle 10 秒（无输入、无窗口操作），随后进入采样窗口。
+- **口径缺陷声明**：RSS 含 shared pages，多进程合计会重复计数共享区，读数系统性偏高（虚高方向，即偏保守）；`vmmap -summary` 的 Physical footprint 是更准的口径，但单进程采样耗时数秒、不适合 CI 高频采样。校准期若发现 RSS 口径把 200MB 阈值顶死，允许以 OpenSpec 循环将口径修订为 phys_footprint——这属于测量方法学修订，不属于 ADR 0002 的一次性数字校准。
+
+### 工具链
+
+- `scripts/perf/memory.mjs`：spawn release 二进制，等 ready（读 stdout 前缀行），idle 10s 后每 2s 采样一次。每次采样用 `ps -axo pid=,ppid=,rss=,comm=` 取全量进程表，按上条归因规则求 RSS 合计。采样结束后 kill app 主进程（已验证 WebKit XPC 进程随主进程退出）。
+
+### 采样口径
+
+- 采样窗口内取 5 个样本（ready+10s 起，每 2s 一次）。上报全部样本；门禁取 **max**（内存是峰值敏感指标，p95 会漏掉单调爬升）。本条是"门禁比较值均为 p95"总约定的唯一例外。
+
+### Fixture
+
+- 无。空壳 app 常驻态 = 打开固定窗口 + 内置示例文档。
+
+## 5. CI 集成与门禁状态
+
+- 工作流 `.github/workflows/perf.yml`：`macos-15` runner，release 构建后依次跑四项脚本，`perf-results/` 整目录上传为 artifact（保留 30 天），随后 `check-thresholds.mjs` 对照 `tests/perf/thresholds.json` 比较。
+- **现阶段（校准前）**：阈值未启用拒合——超阈只产生 `::warning::`，workflow 恒绿。`thresholds.json` 的 `enforce` 为 `false`；M0 末一次性校准（ADR 0002 revisit）后将其置 `true`，自此超阈即 CI 红、拒合。
+- 触发路径：`src/**`、`src-tauri/**`、`scripts/perf/**`、`tests/perf/**`、workflow 自身的 PR 与 master push，外加 `workflow_dispatch`（校准期手动跑数）。
