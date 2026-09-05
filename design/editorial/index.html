@@ -841,6 +841,9 @@ const TREE = {
       { type:"dir", name:"协议", path:"研究/协议", children:[
         { type:"file", name:"ADR-0005-对象模型.md", path:"研究/协议/ADR-0005-对象模型.md" },
         { type:"file", name:"agent-协作协议草案.md", path:"研究/协议/agent-协作协议草案.md" },
+        { type:"dir", name:"历史版本", path:"研究/协议/历史版本", children:[
+          { type:"file", name:"协作协议-v0-废弃稿（已被 ADR-0005 取代）.md", path:"研究/协议/历史版本/协作协议-v0-废弃稿（已被 ADR-0005 取代）.md" },
+        ]},
       ]},
     ]},
     { type:"dir", name:"演讲", path:"演讲", children:[
@@ -863,6 +866,9 @@ const TREE = {
       { type:"dir", name:"protocol", path:"research/protocol", children:[
         { type:"file", name:"ADR-0005-object-model.md", path:"research/protocol/ADR-0005-object-model.md" },
         { type:"file", name:"agent-protocol-draft.md", path:"research/protocol/agent-protocol-draft.md" },
+        { type:"dir", name:"history", path:"research/protocol/history", children:[
+          { type:"file", name:"protocol-v0-deprecated-superseded-by-ADR-0005.md", path:"research/protocol/history/protocol-v0-deprecated-superseded-by-ADR-0005.md" },
+        ]},
       ]},
     ]},
     { type:"dir", name:"talks", path:"talks", children:[
@@ -1328,6 +1334,7 @@ function resolvePoint(p, accept) {
     else a.replaceWith(document.createTextNode(a.textContent));
   }
   p.st = "done";
+  renderNav();   // Thread 卡计数由运行态实时推导：裁决后立即刷新左栏
   const next = points.find(x=>x.st==="review");   // 逐点回看：裁决后焦点落到下一待回看点
   reviewFocus = next ? next.id : null;
   const sn = document.querySelector(`.sn[data-pt="${p.id}"]`);
