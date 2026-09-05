@@ -31,11 +31,12 @@
 use serde::Serialize;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
-use tauri::Emitter;
+use tauri::{Emitter, Manager};
 use ts_rs::TS;
 
 use crate::config::{self, ConfigSnapshot};
 use crate::fs_io::{self, FsChange, FsEntry, FsEntryChangedEvent, VaultWatcher};
+use crate::link_graph::{self, BacklinkItem, CreateNoteResult, LinkGraph, LinkResolveResult};
 
 /// command 错误信封（serde 序列化，前端可直接展示 `message`）。
 #[derive(Debug, Clone, Serialize, TS)]
@@ -108,6 +109,8 @@ struct VaultInner {
     watcher: Option<VaultWatcher>,
     /// 启动恢复失败的人话提示，前端经 vault_current 取走后仍保留（幂等）。
     notice: Option<String>,
+    /// wikilink 正反链索引（ADR 0002 §3）：vault 打开时建立，随 watch 增量维护。
+    graph: LinkGraph,
 }
 
 impl Default for VaultState {
@@ -132,6 +135,48 @@ impl VaultState {
             .clone()
             .ok_or_else(|| CommandError::new("vault_not_open", "尚未打开 vault，请先选择目录"))
     }
+
+    /// 全量枚举结果建链接索引（open_vault 与测试共用）。
+    fn build_graph(root: &Path, entries: &[FsEntry]) -> LinkGraph {
+        let mut graph = LinkGraph::new();
+        for e in entries {
+            if e.kind != fs_io::FsEntryKind::File {
+                continue;
+            }
+            let content = if link_graph::is_markdown(&e.path) {
+                // 单文件读取失败不阻塞建图：索引缺其派生信息，路径仍在候选全集
+                fs_io::read_text_file(root, &e.path).ok()
+            } else {
+                None
+            };
+            graph.upsert(&e.path, content.as_deref());
+        }
+        graph
+    }
+
+    /// watch 增量 → 链接索引就地更新（tasks 1.4：复用 fs:entry_changed 事件流）。
+    pub fn apply_fs_changes(&self, changes: &[FsChange]) {
+        let mut inner = self.inner.lock().expect("vault state poisoned");
+        let Some(root) = inner.root.clone() else {
+            return;
+        };
+        for c in changes {
+            match c.kind {
+                fs_io::FsChangeKind::Deleted => inner.graph.remove(&c.path),
+                _ => {
+                    if c.entry_kind == Some(fs_io::FsEntryKind::Dir) {
+                        continue; // 目录本身不进候选全集
+                    }
+                    if link_graph::is_markdown(&c.path) {
+                        let content = fs_io::read_text_file(&root, &c.path).ok();
+                        inner.graph.upsert(&c.path, content.as_deref());
+                    } else {
+                        inner.graph.upsert(&c.path, None);
+                    }
+                }
+            }
+        }
+    }
 }
 
 /// 打开 vault 的公共路径（vault_open command 与 lib.rs 启动恢复共用）：
@@ -146,16 +191,22 @@ pub fn open_vault(
     let app_for_watch = app.clone();
     let watch_root = root.clone();
     let watcher = fs_io::watch(&watch_root, move |changes: Vec<FsChange>| {
+        // 链接索引随事件流增量更新（先于 emit：前端收到事件时索引已新）
+        app_for_watch
+            .state::<VaultState>()
+            .apply_fs_changes(&changes);
         // webview 尚未就绪时 emit 失败无害：前端启动后经 vault_current 拉全量
         let _ = app_for_watch.emit("fs:entry_changed", FsEntryChangedEvent { changes });
     })?;
     let entries = fs_io::scan_workspace(&root)?;
     watcher.seed(entries.iter().map(|e| e.path.clone()));
+    let graph = VaultState::build_graph(&root, &entries);
     let mut inner = state.inner.lock().expect("vault state poisoned");
     // 先起好新 watcher 再替换；旧 watcher 随字段覆盖被 drop，监听停止
     inner.watcher = Some(watcher);
     inner.root = Some(root.clone());
     inner.notice = None;
+    inner.graph = graph;
     Ok(VaultInfo {
         root: root.display().to_string(),
         entries,
@@ -273,6 +324,63 @@ pub fn fs_read_attachment(
     path: &str,
 ) -> Result<String, CommandError> {
     fs_io::read_attachment(&state.root()?, path)
+}
+
+// ---------------------------------------------------------------------------
+// link graph / wikilink（add-wikilink）
+// ---------------------------------------------------------------------------
+
+/// 解析单条 wikilink（装饰三态与跳转共用）。`from` = 链接所在文件的 vault 相对路径，
+/// `link` = 链接原文（含 `[[`/`]]`，embed 含 `!` 前缀）。语义唯一实现见 link_graph。
+#[tauri::command]
+pub fn link_graph_resolve(
+    state: tauri::State<'_, VaultState>,
+    from: &str,
+    link: &str,
+) -> Result<LinkResolveResult, CommandError> {
+    let inner = state.inner.lock().expect("vault state poisoned");
+    if inner.root.is_none() {
+        return Err(CommandError::new(
+            "vault_not_open",
+            "尚未打开 vault，请先选择目录",
+        ));
+    }
+    inner.graph.resolve_link(from, link)
+}
+
+/// 未创建链接一键创建（spec §4.4，裁决点 I）：当前文件所在目录建空文件
+/// （from 在 vault 根时建于根；target 含 `/` 时按 vault 根相对并补中间目录）。
+/// MUST NOT 覆盖或改写任何既有文件（ADR 0003 §3 铁律）：目标已存在 = 索引过期，
+/// 报 wikilink_target_exists，前端重新解析。
+#[tauri::command]
+pub fn wikilink_create(
+    state: tauri::State<'_, VaultState>,
+    from: &str,
+    link: &str,
+) -> Result<CreateNoteResult, CommandError> {
+    let mut inner = state.inner.lock().expect("vault state poisoned");
+    let root = inner
+        .root
+        .clone()
+        .ok_or_else(|| CommandError::new("vault_not_open", "尚未打开 vault，请先选择目录"))?;
+    let created = inner.graph.create_note(&root, from, link)?;
+    Ok(CreateNoteResult { created })
+}
+
+/// 当前文件的反链（来源文件 + 行号 + 行级上下文），只读派生视图。
+#[tauri::command]
+pub fn link_graph_backlinks(
+    state: tauri::State<'_, VaultState>,
+    path: &str,
+) -> Result<Vec<BacklinkItem>, CommandError> {
+    let inner = state.inner.lock().expect("vault state poisoned");
+    if inner.root.is_none() {
+        return Err(CommandError::new(
+            "vault_not_open",
+            "尚未打开 vault，请先选择目录",
+        ));
+    }
+    Ok(inner.graph.backlinks(path))
 }
 
 #[cfg(test)]

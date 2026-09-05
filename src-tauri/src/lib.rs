@@ -30,6 +30,9 @@ pub fn run() {
             commands::fs_scan_workspace,
             commands::fs_read_file,
             commands::fs_read_attachment,
+            commands::link_graph_resolve,
+            commands::wikilink_create,
+            commands::link_graph_backlinks,
         ])
         .setup(move |app| {
             ready::emit_ready(started);
