@@ -58,7 +58,7 @@ body {
   overflow:hidden;
 }
 
-/* ============ 控制台（元界面，常驻；与产品界面的边界见 V0 注记） ============ */
+/* ============ 控制台（元界面，常驻；与产品界面的边界见 C0_boundary 注记） ============ */
 #console {
   display:flex; flex-wrap:wrap; align-items:center; gap:6px 16px;
   padding:7px 14px; border-bottom:1px solid var(--line);
@@ -115,14 +115,28 @@ body { display:flex; flex-direction:column; }
 .doc h3 { font-size:1em; font-weight:600; margin:2.4em 0 .8em; }
 .doc p { margin:.85em 0; }
 .doc a, .doc .lk { color:inherit; text-decoration:underline; text-underline-offset:3px; cursor:pointer; }
-.doc .lk-un { text-decoration:underline dashed; text-underline-offset:3px; }
+.doc .lk-un { text-decoration:underline dashed; text-underline-offset:3px; cursor:pointer; }
+
+/* 键盘可达性：焦点环全局可见（ADR 0001 §4 键盘优先） */
+.btn:focus-visible, .ft-row:focus-visible, .ck-row:focus-visible,
+.seg button:focus-visible, .rev-goto:focus-visible, #dotbar:focus-visible {
+  outline:2px solid var(--agent); outline-offset:2px;
+}
+[data-theme="eink"] .btn:focus-visible, [data-theme="eink"] .ft-row:focus-visible,
+[data-theme="eink"] .ck-row:focus-visible, [data-theme="eink"] .seg button:focus-visible,
+[data-theme="eink"] .rev-goto:focus-visible, [data-theme="eink"] #dotbar:focus-visible {
+  outline:3px double #000; outline-offset:1px;
+}
 
 /* ---- 编辑点锚点：正文内安静标记（虚线级，余光可及） ---- */
 .ep { border-bottom:1px dotted var(--agent); cursor:pointer; transition:background 150ms; }
 .ep:hover { background:var(--agent-soft); }
+.ep.review { border-bottom:1px solid var(--agent); }   /* 待裁决：虚线 → 实线 */
 .ep.working { border-bottom:1px solid var(--agent); animation:breathe 1.8s ease-in-out infinite; }
 @keyframes breathe { 0%,100% { background:transparent; } 50% { background:var(--agent-soft); } }
-[data-theme="eink"] .ep { border-bottom:3px double #000; }
+/* eink 状态语法分层：开放=1px 点线，待裁决=3px 双线，进行中=斜纹 */
+[data-theme="eink"] .ep { border-bottom:1px dotted #000; }
+[data-theme="eink"] .ep.review { border-bottom:3px double #000; }
 [data-theme="eink"] .ep.working {
   border-bottom:none; padding-bottom:3px;
   background:var(--pat-stripe) left bottom / 100% 5px no-repeat;
@@ -231,6 +245,7 @@ body { display:flex; flex-direction:column; }
   border-left:1px solid var(--line2); line-height:1.6;
 }
 .rev-label { font-size:11px; letter-spacing:.06em; color:var(--dim); margin:10px 0 3px; }
+.rev .rev-label:first-child { margin-top:0; }
 .rev-body { font-size:13px; line-height:1.7; }
 .rev-diff {
   font-size:13.5px; line-height:1.75; margin:4px 0 0;
@@ -473,6 +488,8 @@ const COPY = {
     K_openPrefix: "打开：",
     // toast
     T_pointCreated: "编辑点已留下 · 继续阅读",
+    L_uncreated: (raw) => `未创建的链接：${raw}（线型分工：虚线 = 未创建）`,
+    L_opened: (p) => `已打开：${p}（演示占位）`,
   },
   en: {
     C1_title: "“Void” direction walkthrough",
@@ -540,6 +557,8 @@ const COPY = {
     K_archive: "Archive this batch",
     K_openPrefix: "Open: ",
     T_pointCreated: "Edit point left · keep reading",
+    L_uncreated: (raw) => `Link not created yet: ${raw} (line-style split: dashed = uncreated)`,
+    L_opened: (p) => `Opened: ${p} (demo placeholder)`,
   },
 };
 
@@ -604,7 +623,7 @@ const ARTICLE = {
 <p>积累三四处之后，一次性委派。授权范围写在委派里：处理这几个点，允许修改相关段落，不要动文章结构。agent 像一位熟悉你的编辑，接过这批事务，逐条解释、逐条修改。</p>
 <h2>先读解释，再读新正文</h2>
 <p>回来时先读解释，再读新正文。每一处修改都能回答三个问题：改了什么，为什么改，代价是什么。有些编辑点最终只得到解释，不需要修改——困惑消解了，事务就可以关闭。</p>
-<p>归档之后，标记从正文消失。文件还是那叠普通文件，只是更好读了一点。阅读中的每一次卡顿，都是一次让文本变好的机会。</p>`,
+<p>归档之后，标记从正文消失。文件还是那叠普通文件，只是更好读了一点。相关的展开见 <span class="lk" data-open="methodology/委派的艺术.md">委派的艺术</span> 与 <span class="lk" data-open="reading/安静的技术.md">安静的技术</span>；<span class="lk-un" data-uncreated="编辑点术语表">编辑点术语表</span> 还没写，先把引用记下。阅读中的每一次卡顿，都是一次让文本变好的机会。</p>`,
     extra: `
 <h2>附记</h2>
 <p>这个流程最关键的改动，是把「提问」从一次打断变成一次立案。打断要求你立刻放下阅读去处理；立案只要求你用一句话记下意图，然后接着读。认知的连续性因此保住了。</p>
@@ -623,7 +642,7 @@ const ARTICLE = {
 <p>After three or four accumulate, delegate them in one batch. The mandate is spelled out in the delegation: handle these points, you may touch the paragraphs involved, do not restructure the article. The agent, an editor who knows you, takes the batch, explains each point, and revises.</p>
 <h2>Read the explanation before the new text</h2>
 <p>On return, read the explanation before the new text. Every change answers three questions: what changed, why, and at what cost. Some points earn only an explanation, no edit — the friction dissolved, and the transaction can close.</p>
-<p>Once archived, the marks vanish from the page. The files remain plain files, only a little more readable. Every stumble in reading is a chance to make the text better.</p>`,
+<p>Once archived, the marks vanish from the page. The files remain plain files, only a little more readable. Related threads live in <span class="lk" data-open="methodology/委派的艺术.md">委派的艺术</span> and <span class="lk" data-open="reading/安静的技术.md">安静的技术</span>; the <span class="lk-un" data-uncreated="edit-point glossary">edit-point glossary</span> is not written yet — the reference is filed first. Every stumble in reading is a chance to make the text better.</p>`,
     extra: `
 <h2>Postscript</h2>
 <p>The deepest change in this workflow is turning “asking” from an interruption into a filing. An interruption demands you drop the reading and deal with it now; a filing asks only for one sentence of intent, and you read on. Cognitive continuity survives.</p>
@@ -712,6 +731,7 @@ const state = {
   const l = q.get("lang"); if (["zh", "en"].includes(l)) state.lang = l;
   const w = q.get("view"); if (VIEWS.includes(w)) state.view = w;
   const s = q.get("step"); if (STEPS.includes(s)) state.step = s;
+  if (state.step === "review") state.surfaceOpen = true;   // 回看随状态自动浮现一次，Esc 可收
   const n = q.get("nav"); if (["hidden", "peek", "open"].includes(n)) state.nav = n;
   if (q.get("surface") === "open") state.surfaceOpen = true;
   if (q.get("annotate") === "on") state.annotate = true;
@@ -804,6 +824,15 @@ function renderDoc() {
   doc.append(el("p", "doc-meta dim", esc(a.meta)));
   const body = el("div"); body.innerHTML = a.body + (state.view === "long" ? a.extra : "");
   while (body.firstChild) doc.append(body.firstChild);
+  // wikilink 线型分工实例：实线=已创建（可打开），虚线=未创建（陈述事实不警告）
+  doc.querySelectorAll(".lk[data-open]").forEach((w) =>
+    w.addEventListener("click", () => {
+      currentFile = w.dataset.open;
+      renderDoc(); renderNav(); renderPeek();
+      toast(T().L_opened(currentFile));
+    }));
+  doc.querySelectorAll(".lk-un").forEach((w) =>
+    w.addEventListener("click", () => toast(T().L_uncreated(w.dataset.uncreated))));
   // step >= anchor 时预置编辑点
   const order = ["read", "anchor", "delegate", "working", "review", "conflict"];
   if (order.indexOf(state.step) >= 1) {
@@ -815,6 +844,7 @@ function renderDoc() {
 
 function setPointVisual(p) {
   p.span.classList.toggle("working", p.status === "working");
+  p.span.classList.toggle("review", p.status === "review");
   if (p.status === "review" && p.def.diff) p.span.innerHTML = p.def.diff;
   if (p.status === "accepted") {
     p.span.replaceWith(document.createTextNode(p.def.diff ? mergeDiffText(p.def.diff, true) : p.def.quote));
@@ -899,7 +929,7 @@ function setSurface(open) {
 }
 function renderSurface() {
   const host = document.getElementById("surface");
-  const show = state.view !== "empty" && state.step !== "conflict" && surfaceRelevant() && (state.surfaceOpen || state.step === "review");
+  const show = state.view !== "empty" && state.step !== "conflict" && surfaceRelevant() && state.surfaceOpen;
   host.classList.toggle("show", show);
   document.getElementById("edge-r").classList.toggle("live", surfaceRelevant() && !show && state.step !== "conflict");
   document.getElementById("agent-light").classList.toggle("on", surfaceRelevant());
@@ -937,6 +967,7 @@ function renderReview(host) {
   const t = T();
   for (const p of points) {
     const card = el("div", "rev"); card.dataset.card = p.def.id;
+    card.append(el("div", "rev-label dim", esc(t.R_yourQ)));
     card.append(el("div", "rev-q", esc(p.def.intent)));
     card.querySelector(".rev-q").dataset.anno = "V9";
     card.append(el("div", "rev-quote dim", esc(p.def.quote)));
@@ -1143,21 +1174,35 @@ function openCmdk() {
   const actions = [
     { label: t.K_nav, key: "⌘\\", run: () => { state.nav = state.nav === "open" ? "hidden" : "open"; } },
     { label: t.K_delegate, key: "⌘⏎", run: () => openDelegate() },
-    { label: t.K_archive, key: "", run: () => { if (points.every((p) => p.status === "accepted" || p.status === "rejected")) archiveBatch(); } },
+    { label: t.K_archive, key: "", run: () => { if (points.length && points.every((p) => p.status === "accepted" || p.status === "rejected")) archiveBatch(); } },
     ...VAULT.tree.flatMap(function flat(n) {
-      return n.kind === "dir" ? n.children.flatMap(flat) : [{ label: t.K_openPrefix + n.name, key: "", run: () => { currentFile = n.path; } }];
+      return n.kind === "dir" ? n.children.flatMap(flat) : [{ label: t.K_openPrefix + n.name, key: "", run: () => { currentFile = n.path; renderDoc(); } }];
     }),
   ];
+  let filtered = actions;
+  let selIdx = 0;
+  const runAction = (a) => { closeOverlays(); a.run(); renderNav(); renderPeek(); };
   const renderList = (filter) => {
+    filtered = actions.filter((a) => !filter || a.label.toLowerCase().includes(filter));
+    selIdx = 0;
     list.replaceChildren();
-    for (const a of actions.filter((a) => !filter || a.label.toLowerCase().includes(filter))) {
-      const row = el("button", "ck-row");
+    filtered.forEach((a, i) => {
+      const row = el("button", "ck-row" + (i === selIdx ? " sel" : ""));
       row.append(el("span", "", esc(a.label)));
       if (a.key) row.append(el("span", "ck-key dim", esc(a.key)));
-      row.addEventListener("click", () => { closeOverlays(); a.run(); renderNav(); renderPeek(); });
+      row.addEventListener("click", () => runAction(a));
+      row.addEventListener("mousemove", () => { if (selIdx !== i) { selIdx = i; markSel(); } });
       list.append(row);
-    }
+    });
   };
+  const markSel = () => {
+    [...list.children].forEach((r, i) => r.classList.toggle("sel", i === selIdx));
+  };
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "ArrowDown") { e.preventDefault(); selIdx = Math.min(selIdx + 1, filtered.length - 1); markSel(); }
+    else if (e.key === "ArrowUp") { e.preventDefault(); selIdx = Math.max(selIdx - 1, 0); markSel(); }
+    else if (e.key === "Enter" && filtered[selIdx]) { e.preventDefault(); runAction(filtered[selIdx]); }
+  });
   renderList("");
   input.addEventListener("input", () => renderList(input.value.trim().toLowerCase()));
   input.focus();
@@ -1200,7 +1245,7 @@ document.getElementById("scroll").addEventListener("mouseenter", () => {
 document.getElementById("edge-r").addEventListener("mouseenter", () => { if (surfaceRelevant()) setSurface(true); });
 
 document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape") { closeOverlays(); if (state.nav !== "hidden") { state.nav = "hidden"; renderNav(); renderPeek(); } if (state.surfaceOpen && state.step !== "review") setSurface(false); return; }
+  if (e.key === "Escape") { closeOverlays(); if (state.nav !== "hidden") { state.nav = "hidden"; renderNav(); renderPeek(); } if (state.surfaceOpen) setSurface(false); return; }
   if ((e.metaKey || e.ctrlKey) && e.key === "k") { e.preventDefault(); openCmdk(); }
   if ((e.metaKey || e.ctrlKey) && e.key === "\\") { e.preventDefault(); state.nav = state.nav === "open" ? "hidden" : "open"; renderNav(); renderPeek(); }
   if ((e.metaKey || e.ctrlKey) && e.key === "Enter") { e.preventDefault(); openDelegate(); }
