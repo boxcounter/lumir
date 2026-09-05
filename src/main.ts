@@ -7,6 +7,7 @@ import {
   errorMessage,
   fsReadAttachment,
   fsReadFile,
+  isCommandError,
   linkGraphResolve,
   onFsEntryChanged,
   vaultCurrent,
@@ -34,6 +35,8 @@ const editor = createEditor(shell.editor);
 // 附件索引：vault 内全部文件（不含目录）的 vault 相对路径。provider 的
 // resolveByName 闭包活读它，vault 切换 / watch 增量就地更新数组，无需重注。
 let attachmentPaths: string[] = [];
+/** 是否已有 vault 装载成功；onOpenVault 失败时据此决定空态还是浮条提示。 */
+let vaultLoaded = false;
 
 // data: URL 的 MIME 推断，与 attachments.ts 私有 MIME_BY_EXTENSION 同口径。
 // 该文件不在本 mission scope，对齐点（provider 工厂接受注入的读取函数 /
@@ -139,7 +142,7 @@ async function openFile(path: string, kind: "md" | "code" | "text" | "binary") {
   try {
     const text = await fsReadFile(path);
     currentPath = kind === "md" ? path : undefined;
-    resolveCache.clear(); // from 变更，按 from 键控的缓存整批失效
+    invalidateResolve(); // from 变更，按 from 键控的缓存整批失效
     editor.openDocument(text, path);
     backlinks.setFile(kind === "md" ? path : undefined);
     showEditor();
@@ -158,6 +161,25 @@ let currentPath: string | undefined;
 /** 解析结果缓存：键 = `${from}\n${raw}`。watch 增量 / 切文件 / 创建后整批失效。 */
 const resolveCache = new Map<string, LinkResolveResult>();
 const pendingResolve = new Set<string>();
+/** 业务错误降级集合：resolve 失败的键（与 resolveCache 同生命周期，随其整批失效）。 */
+const failedResolve = new Set<string>();
+/** vault 世代号：loadVault 自增，在途 resolve 回调据此丢弃旧 vault 的迟到响应。 */
+let resolveEpoch = 0;
+
+/** 解析失败分类：仅命令缺失 / 无后端（非 CommandError 信封）才整体降级。 */
+function handleResolveFailure(key: string, epoch: number, e: unknown): void {
+  if (epoch !== resolveEpoch) return; // 旧 vault 的迟到响应，直接丢弃
+  if (isCommandError(e)) {
+    // 业务错误（路径逃逸 / 目标不存在 / vault_not_open 等）：只降级该链接——
+    // 保持中性 pending 视觉，不拖垮其余链接的语义渲染；显式点击走
+    // followWikilink 的 catch 弹人话提示，此处被动渲染不打扰。
+    failedResolve.add(key);
+    editor.refreshPreview();
+  } else {
+    // invoke 层失败（命令未注册 / 无 Tauri 后端，如纯浏览器预览桩）：整体降级
+    editor.setWikilinkResolver(null);
+  }
+}
 
 const wikilinkResolver = {
   resolve(raw: string): LinkResolveResult | undefined {
@@ -166,22 +188,31 @@ const wikilinkResolver = {
     const key = `${from}\n${raw}`;
     const hit = resolveCache.get(key);
     if (hit) return hit;
+    if (failedResolve.has(key)) return undefined; // 该链接已知失败，保持中性渲染
     if (!pendingResolve.has(key)) {
       pendingResolve.add(key);
+      const epoch = resolveEpoch;
       linkGraphResolve(from, raw).then(
         (r) => {
+          if (epoch !== resolveEpoch) return;
           resolveCache.set(key, r);
           editor.refreshPreview();
         },
-        () => {
-          // 后端无 link graph（如纯浏览器预览桩）：装饰层整体回落降级渲染
-          editor.setWikilinkResolver(null);
-        },
+        (e) => handleResolveFailure(key, epoch, e),
       ).finally(() => pendingResolve.delete(key));
     }
     return undefined;
   },
 };
+
+/** 解析状态整批失效（from 变更 / watch 增量 / 一键创建后共用）。 */
+function invalidateResolve(): void {
+  resolveCache.clear();
+  failedResolve.clear();
+  // 在途标记一并清：被 epoch 丢弃的迟到响应不会重触发解析，不清会让同 key
+  // 链接卡在中性渲染；在途 promise 的 finally delete 对已清集合是 no-op。
+  pendingResolve.clear();
+}
 
 /** 激活链接（点击 / Mod-Enter）：按解析结果跳转、提示或给出一键创建入口。 */
 async function followWikilink(raw: string): Promise<void> {
@@ -227,13 +258,13 @@ async function followWikilink(raw: string): Promise<void> {
 async function createForWikilink(from: string, raw: string): Promise<void> {
   try {
     const { created } = await wikilinkCreate(from, raw);
-    resolveCache.clear();
+    invalidateResolve();
     editor.refreshPreview(); // 创建成功后链接转为正常态（spec §4.4）
     await openFile(created, "md");
     toast(`已创建：${created}`);
   } catch (e) {
     // 目标已存在 = 索引过期（spec §4.4）：清缓存重解析而非覆盖
-    resolveCache.clear();
+    invalidateResolve();
     editor.refreshPreview();
     toast(errorMessage(e));
   }
@@ -294,15 +325,32 @@ const tree = createFileTree(shell.fileTree, {
         // null = 用户在目录选择器取消，无错误状态（spec）
         if (info) loadVault(info.root, info.entries);
       })
-      .catch((e) => tree.showEmpty(errorMessage(e)));
+      .catch((e) => {
+        // 已有 vault 时打开失败（如改选了一个不可读目录）不得把既有树抹成
+        // 空态——空态只属于"尚无 vault"的启动路径；此处仅浮条提示。
+        if (vaultLoaded) toast(errorMessage(e));
+        else tree.showEmpty(errorMessage(e));
+      });
   },
 });
 
 // vault 装载的两个入口（手动打开 / 启动恢复）共用：先换附件索引再装文件树。
+// 换 vault 前必须全量复位旧上下文（reviewer-switcher high finding）：否则旧
+// 文件的 currentPath 会被当作新 vault 的 resolve/create from 基准，wikilink
+// 一键创建会把文件误建到新 vault 的同名相对路径下。
 function loadVault(root: string, entries: FsEntry[]) {
+  vaultLoaded = true;
   attachmentPaths = entries.filter((e) => e.kind === "file").map((e) => e.path);
-  // 链接索引已在后端随 vault 打开建立；换 vault 后解析缓存整批失效
-  resolveCache.clear();
+  // 链接索引已在后端随 vault 打开建立；世代号自增使旧 vault 的在途 resolve
+  // 回调全部作废，解析缓存与单链接降级集合整批失效
+  resolveEpoch += 1;
+  invalidateResolve();
+  // 三件套重置：清空编辑器文档（内部 currentFilePath 一并置空）、复位前端
+  // currentPath、清空反链面板；旧 vault 的「暂不支持预览」覆盖层一并撤下
+  editor.reset();
+  currentPath = undefined;
+  backlinks.setFile(undefined);
+  showEditor();
   editor.setWikilinkResolver(wikilinkResolver);
   tree.setVault(root, entries);
 }
@@ -324,7 +372,7 @@ onFsEntryChanged((changes) => {
     }
   }
   // 链接索引已由后端随事件流增量更新；前端清缓存重建装饰、重拉反链
-  resolveCache.clear();
+  invalidateResolve();
   editor.refreshPreview();
   backlinks.refresh();
   tree.applyChanges(changes);
