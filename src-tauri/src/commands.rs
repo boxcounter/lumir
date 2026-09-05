@@ -368,6 +368,9 @@ pub fn wikilink_create(
 }
 
 /// 当前文件的反链（来源文件 + 行号 + 行级上下文），只读派生视图。
+/// deprecated（2026-09-05 Alex 裁决：backlinks 面板砍掉，挤压预案推迟）：
+/// 保留仅为不打断面板现存调用点（先删会触发非信封 reject → 前端整体降级）；
+/// M35 删除 UI 调用点后由独立小提交删除本 command 与 LinkGraph::backlinks。
 #[tauri::command]
 pub fn link_graph_backlinks(
     state: tauri::State<'_, VaultState>,
