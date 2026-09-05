@@ -1,0 +1,1261 @@
+<!DOCTYPE html>
+<html lang="zh" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lumir · 编辑部方向 demo</title>
+<style>
+/* ============================================================================
+   「编辑部 Editorial」— 排印即界面
+   排印层：正文黑体 16px/1.75（CLReq ≥1.7）、默认行宽 480px ≈ 30 汉字
+          （CLReq 25–35 字/行）、两端对齐、首行缩进 2em、
+          标点悬挂与中西混排间距为渐进增强（不支持静默降级）。
+   展示面：标题大标宋（Songti SC），报刊「标题宋 + 正文黑」的版面传统。
+   chrome 层：趋近于零。报头一线，目次一栏，其余全部退入页边注记。
+   Context Surface = Tufte margin：默认不可见，编辑点出现时注记按锚点
+   纵向对齐落在页边，resolve 即消失。
+   eink：纯黑纯白、禁灰阶、无阴影无透明无动画；弱化走斜体，状态走
+   字重 / 边框 / 图案（斜纹 = 进行中，双线框 = 待裁决）。
+   ============================================================================ */
+[data-theme="light"] {
+  --bg:#f6f3ea;            /* 纸面：暖白，降眩光 */
+  --bg-nav:#efeadd;        /* 目次退半色阶 */
+  --bg-2:#ece6d5;          /* hover */
+  --bg-3:#e2d9c1;          /* active */
+  --bd-1:#e0d8c2; --bd-2:#cfc4a6; --bd-3:#b3a684;
+  --text:#262219; --dim:#8d8471;
+  --accent:#b23a2c;        /* 校对红：编辑的红铅笔 */
+  --accent-ink:#fdfbf6;
+  --sel:rgba(178,58,44,.16);
+  --radius:5px;
+  --pattern-stripes:none; --pattern-double:none;
+}
+[data-theme="dark"] {
+  --bg:#1a1917;            /* 暖黑，非纯黑 */
+  --bg-nav:#141312;
+  --bg-2:#211f1c; --bg-3:#2a2823;
+  --bd-1:#302d27; --bd-2:#413d33; --bd-3:#575142;
+  --text:#d6d0c0; --dim:#8d8676;
+  --accent:#d9755f;        /* 暗场朱砂，亮度抬一档 */
+  --accent-ink:#1a1917;
+  --sel:rgba(217,117,95,.28);
+  --radius:5px;
+  --pattern-stripes:none; --pattern-double:none;
+}
+[data-theme="eink"] {
+  --bg:#ffffff; --bg-nav:#ffffff; --bg-2:#ffffff; --bg-3:#ffffff;
+  --bd-1:#000000; --bd-2:#000000; --bd-3:#000000;
+  --text:#000000; --dim:#000000;   /* 禁灰阶：弱化只能走斜体/字重/图案 */
+  --accent:#000000; --accent-ink:#ffffff;
+  --sel:#000000;
+  --radius:0;
+  /* 图案原语：斜纹（进行中）、双线框（待裁决/选中），纯黑白条纹不是灰阶 */
+  --pattern-stripes:repeating-linear-gradient(135deg,#000 0 1px,#fff 1px 6px);
+  --pattern-double:3px double #000;
+}
+[data-theme="eink"] *, [data-theme="eink"] *::before, [data-theme="eink"] *::after {
+  box-shadow:none !important; text-shadow:none !important;
+  transition:none !important; animation:none !important;
+  backdrop-filter:none !important;
+}
+
+:root {
+  --font-body:-apple-system,"PingFang SC","Hiragino Sans GB","Noto Sans CJK SC","Noto Sans SC","Microsoft YaHei",sans-serif;
+  --font-mono:ui-monospace,"SF Mono",Menlo,monospace;
+  --measure:480px;
+}
+html[lang="zh"] { --font-disp:"Songti SC","STSong","Noto Serif CJK SC","Noto Serif SC",ui-serif,Georgia,serif; }
+html[lang="en"] { --font-disp:ui-serif,"New York",Georgia,"Songti SC","Noto Serif SC",serif; }
+
+* { box-sizing:border-box; }
+html,body { margin:0; height:100%; }
+body { font-family:var(--font-body); background:var(--bg); color:var(--text); font-size:13px; }
+::selection { background:var(--sel); }
+[data-theme="eink"] ::selection { color:#fff; }
+
+/* ============ 控制台（走查台，非产品界面） ============ */
+#console {
+  display:flex; flex-wrap:wrap; align-items:center; gap:8px 18px;
+  padding:8px 14px; border-bottom:1px solid var(--bd-1);
+  background:var(--bg-nav); font-size:12px; min-height:44px;
+}
+#console .c-title { font-weight:600; margin-right:4px; }
+.c-group { display:flex; align-items:center; gap:6px; }
+.c-label { color:var(--dim); }
+[data-theme="eink"] .c-label { font-style:italic; }
+.seg { display:inline-flex; border:1px solid var(--bd-1); border-radius:var(--radius); overflow:hidden; background:var(--bg); }
+.seg button {
+  border:none; background:none; color:var(--text); font:inherit; padding:3px 9px; cursor:pointer;
+  border-right:1px solid var(--bd-1); white-space:nowrap;
+}
+.seg button:last-child { border-right:none; }
+.seg button:hover:not(.active) { background:var(--bg-2); }
+.seg button.active { background:var(--bg-3); font-weight:600; box-shadow:inset 0 0 0 1px var(--bd-3); }
+[data-theme="eink"] .seg button.active { box-shadow:none; outline:var(--pattern-double); outline-offset:-3px; }
+.c-measure { min-width:140px; accent-color:var(--accent); }
+.c-measure-val { font-variant-numeric:tabular-nums; min-width:132px; }
+.c-note { color:var(--dim); flex-basis:100%; line-height:1.6; }
+[data-theme="eink"] .c-note { font-style:italic; }
+#intent {
+  flex-basis:100%; border-left:3px solid var(--accent); padding:6px 12px;
+  color:var(--text); line-height:1.7; max-width:1000px;
+}
+[data-theme="eink"] #intent { border-left:var(--pattern-double); }
+#intent b { color:var(--accent); }
+#stage.gray #page { filter:grayscale(1); }
+
+/* ============ 页面骨架：目次 | 版面 ============ */
+#stage { height:calc(100% - 0px); display:flex; flex-direction:column; }
+#page { display:flex; flex:1; min-height:0; }
+#nav {
+  flex:0 0 216px; background:var(--bg-nav); border-right:1px solid var(--bd-1);
+  padding:20px 16px; overflow:auto; font-size:12.5px; line-height:1.6;
+  display:flex; flex-direction:column;
+}
+#sheet { flex:1; min-width:0; overflow-y:auto; position:relative; background:var(--bg); }
+
+/* ---- 目次：Thread 组织的排版索引，不是文件树 ---- */
+.nav-kicker {
+  font-size:10.5px; letter-spacing:.35em; color:var(--dim); margin-bottom:10px;
+}
+[data-theme="eink"] .nav-kicker { font-style:italic; }
+.nav-thread { font-weight:650; font-size:13.5px; margin-bottom:2px; }
+.nav-thread-st { display:block; font-weight:400; font-size:11px; color:var(--dim); margin-bottom:6px; }
+[data-theme="eink"] .nav-thread-st { font-style:italic; }
+.nav-rule { border:none; border-top:1px solid var(--bd-1); margin:10px 0; }
+.nav-group {
+  font-size:10.5px; letter-spacing:.18em; color:var(--dim);
+  margin:12px 0 4px;
+}
+[data-theme="eink"] .nav-group { font-style:italic; }
+.nav-file {
+  display:flex; align-items:baseline; gap:7px; width:100%;
+  border:none; border-left:2px solid transparent; background:none;
+  padding:3px 6px; font:inherit; color:var(--text); text-align:left; cursor:pointer;
+}
+.nav-file:hover { background:var(--bg-2); }
+.nav-file .nf-role { color:var(--dim); font-size:10.5px; margin-left:auto; flex:none; }
+.nav-file.current { border-left-color:var(--accent); font-weight:600; }
+.nav-file.current::before { content:"¶"; color:var(--accent); font-size:11px; flex:none; }
+[data-theme="eink"] .nav-file.current { border-left:var(--pattern-double); }
+.nav-thread-other {
+  display:block; width:100%; border:none; background:none; padding:3px 6px;
+  font:inherit; color:var(--dim); text-align:left; cursor:pointer;
+}
+.nav-thread-other:hover { color:var(--text); background:var(--bg-2); }
+.nav-thread-other .nt-st { font-size:10.5px; margin-left:6px; }
+.nav-foot { margin-top:auto; padding-top:16px; color:var(--dim); font-size:11px; }
+[data-theme="eink"] .nav-foot { font-style:italic; }
+.nav-empty { color:var(--dim); line-height:1.8; }
+[data-theme="eink"] .nav-empty { font-style:italic; }
+.nav-open-btn {
+  margin-top:10px; padding:6px 14px; border:1px solid var(--bd-2); border-radius:var(--radius);
+  background:var(--bg); color:var(--text); font:inherit; cursor:pointer;
+}
+.nav-open-btn:hover { border-color:var(--bd-3); background:var(--bg-2); }
+[data-theme="eink"] .nav-open-btn:hover { border:var(--pattern-double); padding:4px 12px; }
+
+/* ---- 报头：窗口即期号 ---- */
+#masthead {
+  padding:22px 48px 0; font-size:11px; color:var(--dim);
+  display:flex; align-items:baseline; gap:10px; letter-spacing:.08em;
+}
+#masthead .mh-name {
+  font-family:var(--font-disp); font-size:15px; font-weight:700;
+  letter-spacing:.42em; color:var(--text);
+}
+#masthead .mh-sub { letter-spacing:.18em; }
+#masthead .mh-right { margin-left:auto; letter-spacing:.12em; text-align:right; }
+[data-theme="eink"] #masthead :is(.mh-sub,.mh-right) { font-style:italic; }
+.mh-rule { margin:10px 48px 0; border-top:3px solid var(--text); border-bottom:1px solid var(--text); height:3px; }
+
+/* ---- 版面：正文栏 + 页边栏 ---- */
+/* 版位稳定：正文栏永远居中于版面，页边栏绝对定位叠加在右侧留白上——
+   注记出现/消失不改变正文位置（阅读流不被打扰）。 */
+#spread { position:relative; padding:44px 48px 140px; }
+#body-col { width:min(var(--measure), 100%); margin:0 auto; }
+#margin {
+  position:absolute; top:0; bottom:0; width:248px;
+  left:min(calc(50% + min(var(--measure), calc(100% - 96px)) / 2 + 64px), calc(100% - 248px));
+}
+/* 窄视口降级：页边栏回落为文后附注（编号与锚点保留，失去纵向对齐） */
+@media (max-width:1100px) {
+  #nav { flex-basis:180px; }
+  #spread { padding:44px 24px 140px; }
+  #margin { position:static; width:auto; margin-top:40px; border-top:1px solid var(--bd-1); padding-top:16px; }
+  #margin .sn, #margin .delegate-bar { position:static !important; top:auto !important; }
+  #margin .sn { margin-bottom:16px; }
+}
+/* eink 走查台：range 滑块 UA 灰阶泄漏修复（产品本体零灰阶，走查台同纪律） */
+[data-theme="eink"] .c-measure { -webkit-appearance:none; appearance:none; background:transparent; height:16px; }
+[data-theme="eink"] .c-measure::-webkit-slider-runnable-track { background:#fff; border:1px solid #000; height:6px; }
+[data-theme="eink"] .c-measure::-webkit-slider-thumb { -webkit-appearance:none; width:12px; height:12px; background:#000; border-radius:0; margin-top:-4px; border:none; }
+[data-theme="eink"] .c-measure::-moz-range-track { background:#fff; border:1px solid #000; height:6px; }
+[data-theme="eink"] .c-measure::-moz-range-thumb { width:12px; height:12px; background:#000; border-radius:0; border:none; }
+
+/* ---- 文章排印（签名页） ---- */
+#doc {
+  font-size:16px; line-height:1.75; text-align:justify;
+  hanging-punctuation:first allow-end last;   /* 预览态精排，渐进增强 */
+  text-autospace:normal;                       /* 中西混排 1/4 间距，渐进增强 */
+  text-justify:inter-ideograph;
+  hyphens:auto;
+}
+.art-kicker {
+  font-size:11px; letter-spacing:.3em; color:var(--accent); margin-bottom:14px;
+  text-align:left; font-family:var(--font-body);
+}
+[data-theme="eink"] .art-kicker { font-weight:600; }
+#doc h1 {
+  font-family:var(--font-disp); font-size:1.78em; font-weight:700;
+  line-height:1.38; margin:0 0 .55em; text-align:left; letter-spacing:.01em;
+}
+.art-byline {
+  font-size:11.5px; color:var(--dim); letter-spacing:.06em;
+  border-top:1px solid var(--bd-2); border-bottom:1px solid var(--bd-2);
+  padding:6px 0; margin-bottom:2.2em; text-align:left;
+  display:flex; gap:0; justify-content:space-between;
+}
+[data-theme="eink"] .art-byline { font-style:italic; border-top:1px solid #000; border-bottom:1px solid #000; }
+#doc h2 {
+  font-family:var(--font-disp); font-size:1.12em; font-weight:700;
+  margin:2.9em 0 1.1em; text-align:left; letter-spacing:.06em;
+}
+#doc h2 .h2-no { color:var(--accent); margin-right:.5em; font-weight:700; }
+#doc p { margin:0; text-indent:2em; }
+#doc p.dropcap { text-indent:0; }
+#doc p.dropcap::first-letter {
+  font-family:var(--font-disp); font-weight:700; float:left;
+  font-size:4.35em; line-height:.78; padding:.09em .14em 0 0; color:var(--accent);
+}
+.colophon {
+  margin-top:3.5em; text-align:center; color:var(--dim); font-size:11.5px;
+  letter-spacing:.3em; text-indent:0 !important;
+}
+.colophon-arc { letter-spacing:.08em; }
+[data-theme="eink"] .colophon { font-style:italic; }
+
+/* ---- 编辑点锚点：正文内的安静在场（calmtech light 级） ---- */
+.qa { } /* 可锚定片段 */
+.ep-anchor {
+  text-decoration:underline dotted var(--accent);
+  text-underline-offset:4px; text-decoration-thickness:1px;
+  cursor:pointer;
+}
+.ep-anchor::after {
+  content:attr(data-mark); font-size:.62em; color:var(--accent);
+  vertical-align:super; margin-left:1px; font-weight:600; letter-spacing:0;
+}
+.ep-anchor[data-st="working"] { text-decoration-style:solid; }
+.ep-anchor[data-st="review"] { text-decoration-style:solid; text-decoration-thickness:1.5px; }
+.ep-flash { background:var(--sel); }
+[data-theme="eink"] .ep-anchor { text-decoration:none; border-bottom:var(--pattern-double); font-weight:600; }
+[data-theme="eink"] .ep-flash { background:none; outline:var(--pattern-double); outline-offset:2px; }
+
+/* ---- 页边注记（Tufte sidenote：与正文同视野，resolve 即消失） ---- */
+.margin-head {
+  font-size:10.5px; letter-spacing:.22em; color:var(--dim);
+  border-bottom:1px solid var(--bd-1); padding-bottom:6px; margin-bottom:14px;
+  display:flex; justify-content:space-between; align-items:baseline;
+}
+[data-theme="eink"] .margin-head { font-style:italic; }
+.margin-head .mh-count { color:var(--accent); font-weight:600; letter-spacing:0; }
+[data-theme="eink"] .margin-head .mh-count { font-style:normal; }
+.sn {
+  position:absolute; left:0; right:0;
+  font-size:12.5px; line-height:1.65; text-align:left;
+  transition:opacity .3s;
+}
+.sn-head { display:flex; align-items:baseline; gap:7px; margin-bottom:3px; }
+.sn-num { font-family:var(--font-disp); font-weight:700; color:var(--accent); font-size:13px; }
+.sn-st { font-size:10.5px; color:var(--dim); letter-spacing:.12em; }
+[data-theme="eink"] .sn-st { font-style:italic; }
+.sn-q { margin:0 0 2px; color:var(--text); }
+.sn-sec { margin-top:8px; }
+.sn-sec-t {
+  font-size:10.5px; letter-spacing:.18em; color:var(--dim); margin-bottom:3px;
+}
+[data-theme="eink"] .sn-sec-t { font-style:italic; }
+.sn-sec p { margin:0 0 4px; }
+.sn-diff {
+  border-top:1px solid var(--bd-1); border-bottom:1px solid var(--bd-1);
+  padding:7px 0; margin-top:8px; font-size:12.5px; line-height:1.75;
+}
+.sn-diff del { color:var(--dim); text-decoration:line-through; text-decoration-thickness:1px; }
+.sn-diff ins { color:var(--accent); text-decoration:underline; text-underline-offset:3px; }
+[data-theme="eink"] .sn-diff del { font-style:italic; }
+[data-theme="eink"] .sn-diff ins { text-decoration:none; border-bottom:var(--pattern-double); font-weight:600; }
+.sn-cost { color:var(--dim); margin-top:6px; }
+[data-theme="eink"] .sn-cost { font-style:italic; }
+.sn-jump {
+  border:none; background:none; padding:0; margin-top:6px; cursor:pointer;
+  color:var(--accent); font:inherit; font-size:11.5px; letter-spacing:.06em;
+}
+.sn-jump:hover { text-decoration:underline; }
+[data-theme="eink"] .sn-jump { font-weight:600; }
+.sn-actions { display:flex; gap:8px; margin-top:10px; }
+.sn-actions button {
+  flex:1; padding:4px 10px; border:1px solid var(--bd-2); border-radius:var(--radius);
+  background:var(--bg); color:var(--text); font:inherit; font-size:12px; cursor:pointer;
+}
+.sn-actions button:hover { background:var(--bg-2); border-color:var(--bd-3); }
+.sn-actions .accept { border-color:var(--accent); color:var(--accent); font-weight:600; }
+.sn-actions .accept:hover { background:var(--accent); color:var(--accent-ink); }
+[data-theme="eink"] .sn-actions .accept { background:#000; color:#fff; }
+.sn-progress { height:2px; background:var(--bd-1); margin-top:8px; overflow:hidden; }
+.sn-progress i { display:block; height:100%; width:40%; background:var(--accent); animation:indet 1.1s ease-in-out infinite alternate; }
+@keyframes indet { from { transform:translateX(-20%);} to { transform:translateX(220%);} }
+[data-theme="eink"] .sn-progress { height:7px; background:var(--pattern-stripes); border:1px solid #000; }
+[data-theme="eink"] .sn-progress i { display:none; }
+.sn[data-st="review"] { border:1px solid var(--bd-1); border-radius:var(--radius); padding:10px 12px; background:var(--bg); }
+.sn[data-st="review"] .sn-head { margin-bottom:5px; }
+[data-theme="eink"] .sn[data-st="review"] { border:var(--pattern-double); }
+.sn[data-st="collapsed"] .sn-q { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; color:var(--dim); }
+[data-theme="eink"] .sn[data-st="collapsed"] .sn-q { font-style:italic; }
+.sn[data-st="collapsed"]:hover .sn-q { color:var(--accent); }
+.sn.done { opacity:0; pointer-events:none; }
+.sn-note-demo { color:var(--dim); font-size:11px; margin-top:6px; }
+[data-theme="eink"] .sn-note-demo { font-style:italic; }
+
+/* ---- 委派条：页边底部，出现即安静 ---- */
+.delegate-bar {
+  position:absolute; left:0; right:0; bottom:auto;
+  border:1px solid var(--bd-2); border-radius:var(--radius);
+  background:var(--bg); padding:10px 12px; font-size:12px; line-height:1.6;
+}
+.delegate-bar p { margin:0 0 8px; }
+.delegate-bar .db-count { font-weight:650; }
+.delegate-bar button {
+  width:100%; padding:5px 10px; border:1px solid var(--accent); border-radius:var(--radius);
+  background:none; color:var(--accent); font:inherit; font-weight:600; cursor:pointer;
+}
+.delegate-bar button:hover { background:var(--accent); color:var(--accent-ink); }
+[data-theme="eink"] .delegate-bar { border:var(--pattern-double); }
+[data-theme="eink"] .delegate-bar button { background:#000; color:#fff; border-color:#000; }
+
+/* ---- 浮层：创建编辑点（瞬态，贴着选区） ---- */
+#creator {
+  position:fixed; z-index:30; width:300px;
+  border:1px solid var(--bd-3); border-radius:var(--radius); background:var(--bg);
+  box-shadow:0 8px 30px rgba(30,25,15,.18); padding:10px 12px; font-size:12.5px;
+}
+[data-theme="dark"] #creator { box-shadow:0 8px 30px rgba(0,0,0,.5); }
+#creator .cr-quote {
+  color:var(--dim); font-size:11.5px; line-height:1.5; margin-bottom:8px;
+  display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden;
+}
+#creator input {
+  width:100%; border:none; border-bottom:1px solid var(--bd-2); background:none;
+  color:var(--text); font:inherit; font-size:13px; padding:4px 0 6px; outline:none;
+}
+#creator input:focus { border-bottom-color:var(--accent); }
+#creator .cr-row { display:flex; align-items:center; gap:8px; margin-top:8px; }
+#creator .cr-hint { color:var(--dim); font-size:10.5px; flex:1; }
+[data-theme="eink"] #creator .cr-hint { font-style:italic; }
+#creator .cr-go {
+  border:1px solid var(--accent); border-radius:var(--radius); background:none;
+  color:var(--accent); font:inherit; font-weight:600; padding:3px 12px; cursor:pointer;
+}
+#creator .cr-go:hover { background:var(--accent); color:var(--accent-ink); }
+[data-theme="eink"] #creator .cr-go { background:#000; color:#fff; }
+
+/* ---- 委派确认 / 冲突 popup：仅这两种情况占据中心 ---- */
+#overlay {
+  position:fixed; inset:0; z-index:40; display:flex; align-items:center; justify-content:center;
+  background:color-mix(in srgb, var(--bg) 78%, transparent);
+}
+[data-theme="eink"] #overlay { background:none; }
+#overlay[hidden] { display:none; }
+.sheet {
+  width:min(430px,92vw); border:1px solid var(--bd-3); border-radius:var(--radius);
+  background:var(--bg); padding:20px 22px; font-size:13px; line-height:1.75;
+  box-shadow:0 12px 44px rgba(30,25,15,.2);
+}
+[data-theme="dark"] .sheet { box-shadow:0 12px 44px rgba(0,0,0,.55); }
+.sheet-kicker { font-size:10.5px; letter-spacing:.3em; color:var(--accent); margin-bottom:6px; }
+.sheet-title { font-family:var(--font-disp); font-size:1.3em; font-weight:700; margin-bottom:10px; }
+.sheet p { margin:.5em 0; }
+.sheet .dim { color:var(--dim); }
+[data-theme="eink"] .sheet .dim { font-style:italic; }
+.sheet-scope {
+  border-top:1px solid var(--bd-1); border-bottom:1px solid var(--bd-1);
+  padding:8px 0; margin:10px 0;
+}
+.sheet-actions { display:flex; gap:8px; margin-top:14px; }
+.sheet-actions button {
+  flex:1; padding:6px 10px; border:1px solid var(--bd-2); border-radius:var(--radius);
+  background:var(--bg); color:var(--text); font:inherit; cursor:pointer;
+}
+.sheet-actions button:hover { background:var(--bg-2); border-color:var(--bd-3); }
+.sheet-actions .primary { background:var(--accent); border-color:var(--accent); color:var(--accent-ink); font-weight:600; }
+[data-theme="eink"] .sheet { border:4px solid #000; }
+[data-theme="eink"] .sheet-actions .primary { background:#000; color:#fff; }
+
+/* ---- toast（右下，自动消隐） ---- */
+.lumir-toast {
+  position:fixed; bottom:20px; right:20px; z-index:50; max-width:70%;
+  padding:8px 14px; border:1px solid var(--bd-3); border-radius:var(--radius);
+  background:var(--text); color:var(--bg); font-size:12.5px; line-height:1.5;
+}
+[data-theme="eink"] .lumir-toast { background:#fff; color:#000; border:2px solid #000; }
+
+/* ---- 空态：半题名页 ---- */
+#half-title {
+  height:100%; display:flex; flex-direction:column; align-items:center; justify-content:center;
+  text-align:center; padding:40px;
+}
+#half-title .ht-name {
+  font-family:var(--font-disp); font-size:44px; font-weight:700; letter-spacing:.4em;
+  text-indent:.4em; margin-bottom:18px;
+}
+#half-title .ht-line { color:var(--dim); font-size:13px; letter-spacing:.12em; margin-bottom:34px; }
+[data-theme="eink"] #half-title .ht-line { font-style:italic; }
+#half-title button {
+  padding:8px 22px; border:1px solid var(--bd-2); border-radius:var(--radius);
+  background:none; color:var(--text); font:inherit; cursor:pointer; letter-spacing:.1em;
+}
+#half-title button:hover { border-color:var(--accent); color:var(--accent); }
+[data-theme="eink"] #half-title button:hover { border:var(--pattern-double); color:#000; }
+
+/* ---- 批注模式（走查用，非产品界面） ---- */
+.anno {
+  font-family:var(--font-body); font-size:10px; font-weight:600; color:var(--accent-ink);
+  background:var(--accent); border-radius:8px; padding:0 5px; margin-left:4px;
+  vertical-align:super; cursor:help; line-height:1.4; display:inline-block; letter-spacing:0;
+}
+[data-theme="eink"] .anno { border:1px solid #000; border-radius:0; }
+
+/* 窄视口降级见「版面」一节 */
+</style>
+</head>
+<body>
+<div id="stage">
+  <div id="console"></div>
+  <div id="page">
+    <aside id="nav"></aside>
+    <div id="sheet"></div>
+  </div>
+</div>
+<script>
+// ============================================================================
+// COPY：唯一文案数据源（探索期豁免登记 文案-Copy.md），render 只引用 key。
+// ============================================================================
+const COPY = {
+  zh: {
+    // 控制台
+    C1_title: "编辑部方向 · 走查台",
+    C2_theme: "主题", C2_light: "亮", C2_dark: "暗", C2_eink: "eink",
+    C3_state: "状态",
+    C3_empty: "空态", C3_clean: "阅读", C3_points: "编辑点", C3_delegate: "委派",
+    C3_working: "工作中", C3_review: "回看", C3_archived: "归档", C3_long: "长文", C3_conflict: "冲突",
+    C4_lang: "语言",
+    C5_measure: "行宽",
+    C5_measureVal: (m) => `${m}px · 约 ${Math.round(m/16)} 字/行`,
+    C6_annotate: "批注", C6_off: "关", C6_on: "开",
+    C7_gray: "灰度检查",
+    C8_intentTitle: "设计意图",
+    C9_note: "demo 说明：正文中真实选中文字即可创建编辑点（单段落内）；演示创建的编辑点无预设解释与 diff，回看时以演示注记代替。行宽依据 CLReq 中文 25–35 字/行，默认 480px ≈ 30 字。",
+    intent: "「编辑部」：排印即界面。正文按出版物级中文排印工程执行——黑体 16px/1.75、两端对齐、首行缩进 2em、标点悬挂与中西混排间距渐进增强；标题用大标宋，报纸「标题宋 + 正文黑」的版面传统，宋黑对比承担层级而非字号堆砌。chrome 趋近于零：报头一线、目次一栏，其余全部退入页边。编辑点与回看走 Tufte margin 传统：注记活在页边、与正文同视野、resolve 即消失。唯一强调色是校对红——编辑手里的红铅笔。",
+    // 报头 / 目次
+    N1_appName: "LUMIR",
+    N2_appSub: "本地文本工作台",
+    N3_threadRunning: (name) => `THREAD · ${name} · 进行中`,
+    N4_toc: "目 次",
+    N5_main: "主文档",
+    N6_ref: "参考材料",
+    N7_draft: "草稿",
+    N8_others: "其他 THREAD",
+    N9_workspace: "工作区 · ~/notes",
+    N10_emptyNav: "尚未打开工作区。目次将按 Thread 组织你的阅读集合，而不是按目录。",
+    N11_open: "打开工作区",
+    N12_paused: "暂停", N13_done: "完成",
+    N14_demoDoc: "（demo 仅两篇文档有正文）",
+    // 文章头部
+    A1_kicker: "方法与工具 · 编辑手记",
+    A2_byline1: "文 / Alex",
+    A2_byline2: "Agent 协作修订中",
+    A2_byline3: "2026 年 9 月",
+    A3_colophon: "— 完 —",
+    A4_colophonArc: "本次修订 2 处 · 编辑点已归档 · 正文即事实",
+    // 空态
+    E1_tagline: "把 Agent 变成可见协作者的文本工作台",
+    E2_open: "打开工作区",
+    // 创建浮层
+    F1_placeholder: "这个编辑点想解决什么？",
+    F2_hint: "回车留下编辑点 · Esc 取消",
+    F3_go: "记下",
+    F4_crossPara: "demo 暂不支持跨段落选区",
+    // 页边
+    M1_notes: "编辑点",
+    M2_reviewing: "回看 · 逐点进行",
+    M3_working: (done, total) => `AGENT 工作中 · ${done}/${total}`,
+    M4_open: "开放", M5_working: "处理中", M6_review: "待回看", M7_done: "已解决",
+    M8_secWhy: "解释",
+    M9_secDiff: "修改",
+    M10_secCost: "影响与代价",
+    M11_jump: "跳到正文 ↓",
+    M12_accept: "接受", M13_reject: "拒绝",
+    M14_noChange: "本点仅解释，未改动正文。",
+    M15_demoPoint: "演示创建的编辑点：未接入真实 Agent，无修改产生。",
+    M16_delegateBar: (n) => `${n} 个编辑点待处理`,
+    M17_delegateGo: "委派给 Agent",
+    M18_delegateEmpty: "阅读中选中文字即可留下编辑点",
+    M19_paused: "已暂停 · 版本冲突",
+    M20_expand: "展开这一点的解释与修改",
+    // 委派确认
+    D1_kicker: "委派 · DELEGATION",
+    D2_title: (n) => `把 ${n} 个编辑点交给 Agent`,
+    D3_scope: "授权范围",
+    D4_scopeBody: (n) => `处理当前 ${n} 个编辑点，允许修改相关段落；不改变文章结构，不触碰其他文件。`,
+    D5_note: "授权边界由委派声明决定，不由修改大小决定（ADR 0005 §5）。Agent 完成前你随时可以停下它。",
+    D6_go: "委派，我继续读",
+    D7_cancel: "再想想",
+    // 冲突
+    X1_kicker: "冲突 · CONFLICT",
+    X2_title: "文件在 Lumir 之外被修改",
+    X3_body: "委派基于的文件版本已变化。Agent 暂停了写入，没有覆盖任何内容。",
+    X4_reprocess: "基于当前文件重新处理",
+    X5_diff: "查看差异",
+    X6_keep: "保留外部修改，放弃本次变更",
+    X7_diffBody: "外部修改位于第 4 段（新增一句）；与本次变更不相交，可以安全地重新处理。",
+    // toast
+    T1_delegated: "已委派 · Agent 开始工作",
+    T2_reviewReady: (n) => `Agent 已完成 ${n} 个编辑点 · 可以回看`,
+    T3_archived: (n) => `${n} 个编辑点全部解决 · 已归档，正文即事实`,
+    T4_conflictReprocess: "已基于当前文件重新处理",
+    T5_conflictKeep: "已保留外部修改 · 本次变更已放弃",
+  },
+  en: {
+    C1_title: "Editorial direction · walkthrough",
+    C2_theme: "Theme", C2_light: "Light", C2_dark: "Dark", C2_eink: "e-ink",
+    C3_state: "State",
+    C3_empty: "Empty", C3_clean: "Reading", C3_points: "Points", C3_delegate: "Delegate",
+    C3_working: "Working", C3_review: "Review", C3_archived: "Archived", C3_long: "Long doc", C3_conflict: "Conflict",
+    C4_lang: "Language",
+    C5_measure: "Measure",
+    C5_measureVal: (m) => `${m}px · ~${Math.round(m/8)} chars/line`,
+    C6_annotate: "Annotate", C6_off: "Off", C6_on: "On",
+    C7_gray: "Grayscale",
+    C8_intentTitle: "Design intent",
+    C9_note: "Demo notes: select real text in the article (within one paragraph) to create an edit point; demo-created points carry no preset explanation or diff. Measure follows CLReq’s 25–35 CJK chars per line; 480px ≈ 30 chars.",
+    intent: "“Editorial”: typography is the interface. Body text is engineered to publication grade — sans 16px/1.75, justified, 2em first-line indent, hanging punctuation and CJK–Latin spacing as progressive enhancement. Headings use a display serif, the newspaper tradition of serif heads over a gothic body, so contrast of genre carries hierarchy instead of stacked font sizes. Chrome approaches zero: one masthead line, one index column, everything else retreats to the margin. Edit points and review follow the Tufte margin tradition: notes live at the page edge, share the field of view with the text, and vanish on resolve. The single accent is proofreader’s red — the editor’s pencil.",
+    N1_appName: "LUMIR",
+    N2_appSub: "Local text workbench",
+    N3_threadRunning: (name) => `THREAD · ${name} · active`,
+    N4_toc: "CONTENTS",
+    N5_main: "Main document",
+    N6_ref: "References",
+    N7_draft: "Drafts",
+    N8_others: "Other threads",
+    N9_workspace: "Workspace · ~/notes",
+    N10_emptyNav: "No workspace open. The index will organise your reading set by thread, not by folder.",
+    N11_open: "Open workspace",
+    N12_paused: "paused", N13_done: "done",
+    N14_demoDoc: "(only two documents have body text in this demo)",
+    A1_kicker: "METHODS & TOOLS · EDITOR’S NOTES",
+    A2_byline1: "By Alex",
+    A2_byline2: "Revising with an agent",
+    A2_byline3: "September 2026",
+    A3_colophon: "— END —",
+    A4_colophonArc: "2 edits this round · edit points archived · the text is the fact",
+    E1_tagline: "A local text workbench that makes agents visible collaborators",
+    E2_open: "Open workspace",
+    F1_placeholder: "What should this edit point resolve?",
+    F2_hint: "Return to note it · Esc to cancel",
+    F3_go: "Note it",
+    F4_crossPara: "Cross-paragraph selections are not supported in this demo",
+    M1_notes: "EDIT POINTS",
+    M2_reviewing: "REVIEW · POINT BY POINT",
+    M3_working: (done, total) => `AGENT WORKING · ${done}/${total}`,
+    M4_open: "open", M5_working: "working", M6_review: "to review", M7_done: "resolved",
+    M8_secWhy: "Explanation",
+    M9_secDiff: "Change",
+    M10_secCost: "Impact & cost",
+    M11_jump: "Jump to text ↓",
+    M12_accept: "Accept", M13_reject: "Reject",
+    M14_noChange: "Explanation only — the text was not touched.",
+    M15_demoPoint: "Demo-created point: no real agent attached, no change produced.",
+    M16_delegateBar: (n) => `${n} edit point${n>1?"s":""} open`,
+    M17_delegateGo: "Delegate to agent",
+    M18_delegateEmpty: "Select text while reading to leave an edit point",
+    M19_paused: "PAUSED · VERSION CONFLICT",
+    M20_expand: "Expand this point’s explanation and change",
+    D1_kicker: "DELEGATION",
+    D2_title: (n) => `Hand ${n} edit point${n>1?"s":""} to the agent`,
+    D3_scope: "Scope of mandate",
+    D4_scopeBody: (n) => `Handle the current ${n} edit points; the relevant paragraphs may be edited. Do not restructure the piece; do not touch other files.`,
+    D5_note: "The mandate, not the size of the edit, sets the boundary (ADR 0005 §5). You can stop the agent at any time.",
+    D6_go: "Delegate — I’ll keep reading",
+    D7_cancel: "Not yet",
+    X1_kicker: "CONFLICT",
+    X2_title: "The file was modified outside Lumir",
+    X3_body: "The file version this delegation was based on has changed. The agent paused its writes and overwrote nothing.",
+    X4_reprocess: "Reprocess against the current file",
+    X5_diff: "View the difference",
+    X6_keep: "Keep the external edit, drop this batch",
+    X7_diffBody: "The external edit is in paragraph 4 (one added sentence); it does not intersect this batch, so reprocessing is safe.",
+    T1_delegated: "Delegated · the agent is at work",
+    T2_reviewReady: (n) => `Agent finished ${n} edit points · ready for review`,
+    T3_archived: (n) => `All ${n} edit points resolved · archived; the text is the fact`,
+    T4_conflictReprocess: "Reprocessed against the current file",
+    T5_conflictKeep: "External edit kept · batch dropped",
+  },
+};
+
+// 批注模式：元素 data-deck → 设计意图条目（编号 + 位置 + 意图），悬停显示。
+const ANNOTATIONS = {
+  zh: {
+    E1: "E1 · 报头 · 窗口即期号：app 身份压成一线，chrome 趋零的第一步",
+    E2: "E2 · 目次导航 · Thread 组织的排版索引取代文件树：按文件角色分组（ADR 0005：Thread 是意图空间）",
+    E3: "E3 · 正文排印 · 黑体 16px/1.75、两端对齐、首行缩进 2em、标点悬挂与 text-autospace 渐进增强（CLReq）",
+    E4: "E4 · 大标宋标题 · 报刊「标题宋+正文黑」传统，宋黑对比承担层级",
+    E5: "E5 · 首字下沉 · 签名页修辞：一页愿意打印的版面",
+    E6: "E6 · 编辑点锚点 · 虚线+圈码，余光级在场（calmtech light），不打扰阅读流",
+    E7: "E7 · 页边注记 · Tufte sidenote：与锚点纵向对齐、与正文同视野、resolve 即消失",
+    E8: "E8 · 委派条 · 授权范围写在委派里（ADR 0005 §5），不进正文不占栏",
+    E9: "E9 · 解释优先回看 · 你的问题→解释→词级 diff→影响与代价→跳正文",
+    E10: "E10 · 动词收敛 · 仅 接受/拒绝，语义复用撤销（Cursor 五动词为反例）",
+    E11: "E11 · 冲突 popup · 版本变化即暂停、不静默覆盖；popup 只给不可静默处理的事（calmtech）",
+    E12: "E12 · 归档跋文 · 事务闭环的印刷式收尾：编辑点消失，正文即事实",
+  },
+  en: {
+    E1: "E1 · Masthead · the window as an issue: app identity compressed to one line",
+    E2: "E2 · Contents navigation · a typographic index organised by thread replaces the file tree (ADR 0005)",
+    E3: "E3 · Body typography · sans 16px/1.75, justified, 2em indent, hanging punctuation & text-autospace (CLReq)",
+    E4: "E4 · Display serif heads · the newspaper tradition: serif heads over a gothic body",
+    E5: "E5 · Drop cap · the signature page: a spread worth printing",
+    E6: "E6 · Edit-point anchor · dotted rule + circled number, presence at the edge of vision (calmtech light)",
+    E7: "E7 · Margin note · Tufte sidenote: aligned with its anchor, sharing the field of view, gone on resolve",
+    E8: "E8 · Delegation bar · the mandate is written into the delegation (ADR 0005 §5)",
+    E9: "E9 · Explanation-first review · your question → explanation → word-level diff → cost → jump to text",
+    E10: "E10 · Two verbs only · accept / reject, reusing undo semantics (Cursor’s five verbs are the anti-pattern)",
+    E11: "E11 · Conflict popup · a changed version pauses the write; popups only for what cannot be silent",
+    E12: "E12 · Archive colophon · a printed close to the transaction: points vanish, the text is the fact",
+  },
+};
+
+// ============================================================================
+// 数据：文章（真实中文写作为底，en 为布局弹性检查用译文）
+// 锚点：<span class="qa" data-pt="..."> 标记可承接编辑点的片段。
+// ============================================================================
+const ARTICLE = {
+  zh: {
+    title: "把卡顿变成正文",
+    thread: "把卡顿变成正文",
+    parts: [
+      { t:"p", cls:"dropcap", html:"读一篇长文，总会碰到几处卡顿。一个术语没有解释，一个论断缺少出处，一段语气忽然变得陌生。过去的做法是把它们记下来——记在本子上、脑子里，或者另一个应用的对话框里——然后继续读。" },
+      { t:"p", html:"更多时候，卡顿消失在搬运里：复制片段，粘贴到对话窗口，组织上下文，等待回答，再回到原文，人肉找到刚才的位置，判断那个回答值不值得变成修改。<span class=\"qa\" data-pt=\"ep1\">十次卡顿，大约三次走完了全程。</span>" },
+      { t:"h2", no:"一", html:"回路" },
+      { t:"p", html:"Lumir 想把这条回路拆掉。阅读中选中让你停下来的那句话，用自然语言写下你的问题，它就在原文处<span class=\"qa\" data-pt=\"ep2\">成为一个编辑点——不插入正文，不污染文件，只是一个安静的锚点</span>。你继续读，编辑点继续积累。" },
+      { t:"p", html:"读完一遍，把积累的编辑点一次性委派给 Agent。授权范围写在委派里：处理这几个编辑点，可以修改相关段落，不动文章结构。Agent 像一位熟悉你的编辑，先解释，再动笔。" },
+      { t:"h2", no:"二", html:"回看" },
+      { t:"p", html:"修改完成后，<span class=\"qa\" data-pt=\"ep3\">回来的是解释，不是答复</span>：它先回答你的问题，说明自己的判断和依据，再展示改了什么、代价是什么。你看完解释，再读新正文，然后决定接受，或者拒绝。" },
+      { t:"p", html:"动词只有两个：接受，或拒绝。接受的修改落进正文，编辑点随之消解；拒绝的正文原样不动，问题留给你自己。无论哪种，归档之后编辑点都从页面上消失——对话和修改历史还在，但它们不再占据你的视野。" },
+      { t:"p", html:"文件永远是事实。Agent 不绕开你的授权写文件，不静默覆盖你同期的编辑；版本对不上，它停下来等你裁决。安全地拒绝，优于聪明地覆盖。" },
+      { t:"p", html:"阅读中的每一次卡顿，都是一次让文本变好的机会。编辑部的工作方式从来如此：作者读，编辑改，页边的批注来来去去，最后留在纸上的只有正文。" },
+    ],
+  },
+  en: {
+    title: "Turning Friction into Text",
+    thread: "Turning Friction into Text",
+    parts: [
+      { t:"p", cls:"dropcap", html:"Reading a long piece, you always hit a few snags. A term left unexplained, a claim missing its source, a paragraph whose tone suddenly turns strange. The old habit is to note them down — in a notebook, in your head, or in another app’s chat box — and keep reading." },
+      { t:"p", html:"More often the snag disappears into carrying: copy the passage, paste it into a chat window, assemble the context, wait for an answer, then return to the text and hunt, by hand, for the spot you were at, and judge whether the answer deserves to become an edit. <span class=\"qa\" data-pt=\"ep1\">Of ten snags, maybe three complete the journey.</span>" },
+      { t:"h2", no:"I", html:"The loop" },
+      { t:"p", html:"Lumir wants to dismantle that loop. While reading, select the sentence that stopped you and write your question in plain language; it <span class=\"qa\" data-pt=\"ep2\">becomes an edit point right where the text is — nothing inserted, the file untouched, just a quiet anchor</span>. You keep reading; the edit points keep accumulating." },
+      { t:"p", html:"When you finish a pass, delegate the accumulated edit points to the agent in one go. The scope is written into the delegation: handle these edit points, you may touch the relevant paragraphs, do not restructure the piece. The agent works like an editor who knows you — it explains first, then writes." },
+      { t:"h2", no:"II", html:"The review" },
+      { t:"p", html:"When the work is done, <span class=\"qa\" data-pt=\"ep3\">what comes back is explanation, not verdict</span>: it answers your question, states its judgement and its grounds, then shows what changed and at what cost. You read the explanation, then the new text, and decide — accept, or reject." },
+      { t:"p", html:"There are only two verbs: accept and reject. Accepted edits fall into the text and the edit point dissolves; rejected ones leave the text untouched and the question with you. Either way, once archived, edit points vanish from the page — the conversations and the change history remain, but they no longer occupy your view." },
+      { t:"p", html:"The file is always the fact. The agent never writes outside your mandate, never silently overwrites your concurrent edits; when versions disagree, it stops and waits for your ruling. A safe refusal beats a clever overwrite." },
+      { t:"p", html:"Every snag in reading is a chance to make the text better. This is how an editorial office has always worked: the author reads, the editor revises, marginalia come and go, and in the end only the text stays on the page." },
+    ],
+  },
+};
+
+// 第二篇文档（目次切换用）：草稿短章。
+const LETTER = {
+  zh: { title: "写给读者的信", parts: [
+    { t:"p", cls:"dropcap", html:"这不是一封发布信，只是一次练习：把过去三个月在 Obsidian 与 Agent 之间来回搬运的动作，逐个写下来，看哪些其实不必由人来做。" },
+    { t:"p", html:"结论先放在这里：搬运全部不必由人做，判断全部必须由人做。" },
+  ]},
+  en: { title: "A Letter to Readers", parts: [
+    { t:"p", cls:"dropcap", html:"This is not a launch letter, only an exercise: write down, one by one, every carrying motion I made between Obsidian and an agent over the past three months, and see which of them never needed a human." },
+    { t:"p", html:"The conclusion, up front: none of the carrying needs a human; all of the judging does." },
+  ]},
+};
+
+// 编辑点：预设三枚（核验 / 压缩 / 改调），覆盖「只解释不修改」与「词级 diff」两类。
+// newHtml 为「接受」后落进正文的内容。
+const POINT_DEFS = [
+  {
+    id:"ep1",
+    q:{ zh:"「大约三次」有出处吗？还是我的感觉？",
+        en:"Is “maybe three” sourced, or just my impression?" },
+    explain:{ zh:"没有找到可引用的出处。这是你的经验估计，不是测量结果。两个方向：保留为经验陈述（现状即可，「大约」已经留了余地），或改写成可核验的表述。我没有改动正文——这是你的数字，由你决定。",
+              en:"No citable source found. This is your estimate from experience, not a measurement. Two options: keep it as anecdote (the “maybe” already hedges), or rewrite it into something checkable. I did not touch the text — it is your number, your call." },
+    diff:null,
+    cost:{ zh:"未改动正文。若日后找到出处，可在此位置补一条脚注。", en:"Text untouched. If a source turns up, a footnote can be added here." },
+    newHtml:null,
+  },
+  {
+    id:"ep2",
+    q:{ zh:"三连否定太硬，压缩一点。", en:"The triple negation reads stiff. Tighten it." },
+    explain:{ zh:"同意。「不插入正文，不污染文件」说的是同一件事的两面，保留其一即可。我把判断压进动词：用「落成」替换「成为」，让锚点的分量落在名词上。",
+              en:"Agreed. “Nothing inserted, the file untouched” says one thing twice; one side is enough. I pushed the judgement into the verb — “settles into” instead of “becomes” — so the weight lands on the noun." },
+    diff:{ zh:"它就在原文处<del>成为</del><ins>落成</ins>一个编辑点<del>——不插入正文，不污染文件，只是</del><ins>，</ins>一个安静的锚点<ins>，如此而已</ins>。",
+           en:"it <del>becomes</del><ins>settles into</ins> an edit point right where the text is<del> — nothing inserted, the file untouched, just</del><ins>,</ins> a quiet anchor<ins>, nothing more</ins>." },
+    cost:{ zh:"删掉一层语义强调（「不污染文件」）。该承诺在产品原则第 4 条已有，正文不必重复。", en:"One layer of emphasis (“the file untouched”) is dropped. Principle 4 already makes that promise; the text need not repeat it." },
+    newHtml:{ zh:"落成一个编辑点，一个安静的锚点，如此而已", en:"settles into an edit point right where the text is, a quiet anchor, nothing more" },
+  },
+  {
+    id:"ep3",
+    q:{ zh:"「回来的是解释，不是答复」——不像我的语气，太像在下定义。", en:"“What comes back is explanation, not verdict” — not my voice; it sounds like a definition." },
+    explain:{ zh:"对，这是说明书腔。你的习惯是把判断放进动作里而不是定义里。改成「先读到解释，再决定改不改」，主语从物回到你。",
+              en:"True — that is manual-speak. Your habit is to put judgement in the action, not in definitions. “Explanation arrives first; the verdict stays yours” moves the subject back to you." },
+    diff:{ zh:"修改完成后，<del>回来的是解释，不是答复</del><ins>先读到解释，再决定改不改</ins>：它先回答你的问题……",
+           en:"When the work is done, <del>what comes back is explanation, not verdict</del><ins>explanation arrives first; the verdict stays yours</ins>: it answers your question…" },
+    cost:{ zh:"「答复」一词丢失。它本来暗指聊天产品的回答流，删掉后这层对照只在上下文里成立。", en:"The word “verdict” is lost. It implied the chat-product answer stream; without it the contrast lives only in context." },
+    newHtml:{ zh:"先读到解释，再决定改不改", en:"explanation arrives first; the verdict stays yours" },
+  },
+];
+
+const FILES = {
+  zh: {
+    main: [{ name:"把卡顿变成正文.md", doc:"main" }],
+    ref: ["编辑点概念稿.md", "Tufte 边注传统.md", "ADR-0005-对象模型.md", "agent-协作协议草案.md"],
+    draft: [{ name:"写给读者的信.md", doc:"letter" }, { name:"发布笔记 v0.1.md", doc:null }],
+    others: [{ name:"整理成演讲稿", st:"N12_paused" }, { name:"2026 产品方向", st:"N13_done" }],
+  },
+  en: {
+    main: [{ name:"Turning Friction into Text.md", doc:"main" }],
+    ref: ["Edit-point concept.md", "The Tufte margin tradition.md", "ADR-0005-object-model.md", "agent-protocol-draft.md"],
+    draft: [{ name:"A Letter to Readers.md", doc:"letter" }, { name:"Release notes v0.1.md", doc:null }],
+    others: [{ name:"Reshape into a talk", st:"N12_paused" }, { name:"2026 product direction", st:"N13_done" }],
+  },
+};
+
+// ============================================================================
+// 状态与渲染
+// ============================================================================
+const STATES = ["empty","clean","points","delegate","working","review","archived","long","conflict"];
+const state = { theme:"light", view:"clean", lang:"zh", measure:480, annotate:false, gray:false, doc:"main" };
+{
+  const q = new URLSearchParams(location.search);
+  const v = q.get("theme"); if (["light","dark","eink"].includes(v)) state.theme = v;
+  const w = q.get("state"); if (STATES.includes(w)) state.view = w;
+  const l = q.get("lang"); if (["zh","en"].includes(l)) state.lang = l;
+  const m = parseInt(q.get("measure"),10); if (m>=400 && m<=1200) state.measure = m;
+  if (q.get("annotate")==="on") state.annotate = true;
+  if (q.get("gray")==="on") state.gray = true;
+}
+const T = () => COPY[state.lang];
+const el = (tag, cls, html) => { const e=document.createElement(tag); if(cls) e.className=cls; if(html!==undefined) e.innerHTML=html; return e; };
+const esc = (s) => s.replace(/&/g,"&amp;").replace(/</g,"&lt;");
+const CIRCLED = ["①","②","③","④","⑤","⑥","⑦","⑧","⑨","⑩"];
+const markOf = (i) => CIRCLED[i] || `${i+1}.`;
+
+// 运行态编辑点（预设播种或真实选中创建）
+let points = [];        // {id, q, explain, diff, cost, newHtml, st, live}
+let agentTimer = null;
+let reviewFocus = null; // 回看态当前展开的编辑点 id
+
+function seedPoints(view) {
+  const base = POINT_DEFS.map(d => ({ ...d, st:"open", live:false }));
+  if (["points","delegate","long"].includes(view)) return base;
+  if (view==="working")  return base.map((p,i)=> i===0?{...p,st:"review"} : i===1?{...p,st:"working"} : p);
+  if (view==="review")   return base.map(p=>({...p,st:"review"}));
+  if (view==="conflict") return base.map((p,i)=> i===0?{...p,st:"review"} : i===1?{...p,st:"working"} : p);
+  return [];
+}
+function applyArchivedEdits(doc) {
+  // 归档态：ep2/ep3 的修改已落进正文，ep1 仅解释。
+  for (const id of ["ep2","ep3"]) {
+    const a = doc.querySelector(`[data-pt="${id}"]`);
+    const def = POINT_DEFS.find(d=>d.id===id);
+    if (a && def?.newHtml) a.replaceWith(document.createTextNode(def.newHtml[state.lang]));
+  }
+}
+
+// ---- 目次 ----
+function renderNav() {
+  const host = document.getElementById("nav"); host.replaceChildren();
+  const t = T(), F = FILES[state.lang];
+  if (state.view === "empty") {
+    const d = el("div","nav-empty", esc(t.N10_emptyNav));
+    const b = el("button","nav-open-btn", esc(t.N11_open));
+    b.addEventListener("click", ()=>{ state.view="clean"; apply(); });
+    host.append(d, b); return;
+  }
+  host.append(el("div","nav-kicker", esc(t.N4_toc)));
+  const th = el("div","nav-thread", esc(ARTICLE[state.lang].thread)); th.dataset.deck="E2";
+  th.append(el("span","nav-thread-st", state.lang==="zh" ? "进行中 · 3 个文件角色" : "active · 3 file roles"));
+  host.append(th, el("hr","nav-rule"));
+
+  const addGroup = (label) => host.append(el("div","nav-group", esc(label)));
+  const addFile = (name, docKey) => {
+    const b = el("button","nav-file" + (docKey && docKey===state.doc ? " current":""));
+    b.append(el("span","nf-name", esc(name)));
+    if (docKey) b.addEventListener("click", ()=>{ state.doc=docKey; if(state.view==="empty") state.view="clean"; apply(); });
+    else b.addEventListener("click", ()=> showToast(esc(t.N14_demoDoc)));
+    host.append(b);
+  };
+  addGroup(t.N5_main); F.main.forEach(f=>addFile(f.name, f.doc));
+  addGroup(t.N6_ref);  F.ref.forEach(n=>addFile(n, null));
+  addGroup(t.N7_draft); F.draft.forEach(f=>addFile(f.name, f.doc));
+  host.append(el("hr","nav-rule"));
+  addGroup(t.N8_others);
+  for (const o of F.others) {
+    const b = el("button","nav-thread-other", esc(o.name));
+    b.append(el("span","nt-st", esc(t[o.st])));
+    b.addEventListener("click", ()=> showToast(esc(t.N14_demoDoc)));
+    host.append(b);
+  }
+  host.append(el("div","nav-foot", esc(t.N9_workspace)));
+}
+
+// ---- 文章 ----
+function buildDoc() {
+  const t = T();
+  const doc = el("article","");
+  doc.id = "doc"; doc.dataset.deck = "E3";
+  const data = state.doc==="letter" ? LETTER[state.lang] : ARTICLE[state.lang];
+  // 文章头
+  if (state.doc === "main") {
+    const k = el("div","art-kicker", esc(t.A1_kicker)); k.dataset.deck="E4";
+    const h1 = el("h1","", esc(data.title)); h1.dataset.deck="E4";
+    const bl = el("div","art-byline");
+    bl.append(el("span","",esc(t.A2_byline1)), el("span","",esc(t.A2_byline2)), el("span","",esc(t.A2_byline3)));
+    doc.append(k, h1, bl);
+  } else {
+    const h1 = el("h1","", esc(data.title));
+    doc.append(h1);
+  }
+  const parts = state.view==="long" ? longParts(data.parts) : data.parts;
+  for (const part of parts) {
+    if (part.t==="h2") {
+      const h = el("h2","", `<span class="h2-no">${esc(part.no)}</span>${esc(part.html)}`);
+      doc.append(h);
+    } else {
+      const p = el("p", part.cls||"", part.html);
+      if (part.cls==="dropcap") p.dataset.deck="E5";
+      doc.append(p);
+    }
+  }
+  const col = el("p","colophon", esc(t.A3_colophon));
+  if (state.view==="archived") {
+    col.append(el("span","colophon-arc", " · " + t.A4_colophonArc));
+    col.dataset.deck="E12";
+  }
+  doc.append(col);
+  return doc;
+}
+function longParts(parts) {
+  // 长文态：正文重复三节，制造滚动压力；只保留第一份里的锚点。
+  let out = [...parts];
+  for (let r=0; r<2; r++) {
+    for (const part of parts) {
+      const copy = { ...part, cls: undefined, html: part.html.replace(/<span class="qa"[^>]*>(.*?)<\/span>/g, "$1") };
+      out.push(copy);
+    }
+  }
+  return out;
+}
+
+// ---- 锚点与页边注记 ----
+function anchorize(doc) {
+  for (const p of points) {
+    const a = doc.querySelector(`[data-pt="${p.id}"]`);
+    if (!a) continue;
+    a.classList.add("ep-anchor");
+    a.dataset.st = p.st;
+    a.dataset.mark = markOf(points.indexOf(p));
+    a.dataset.deck = "E6";
+    a.addEventListener("click", ()=> {
+      const sn = document.querySelector(`.sn[data-pt="${p.id}"]`);
+      if (sn) { sn.style.outline = "1px solid var(--accent)"; setTimeout(()=> sn.style.outline="", 900); }
+    });
+  }
+}
+function renderMargin() {
+  const spread = document.getElementById("spread");
+  let margin = document.getElementById("margin");
+  if (margin) margin.remove();
+  const old = document.getElementById("delegate-bar"); if (old) old.remove();
+  if (!points.length) return;
+  margin = el("div"); margin.id = "margin";
+  const t = T();
+  const workingCount = points.filter(p=>p.st==="working").length;
+  const doneCount = points.filter(p=>p.st==="review"||p.st==="done").length;
+  const head = el("div","margin-head");
+  const mode = state.view==="conflict" ? t.M19_paused
+    : state.view==="working"||workingCount ? t.M3_working(doneCount, points.length)
+    : state.view==="review"||points.every(p=>p.st==="review") ? t.M2_reviewing : t.M1_notes;
+  head.append(el("span","",esc(mode)), el("span","mh-count", `${points.length}`));
+  margin.append(head);
+
+  // 回看分层：一次只展开一个点的完整卡（逐点回看），其余折叠为一行注记——
+  // 折叠层保住与锚点的纵向对齐；展开卡是瞬态，裁决后版位回落。
+  const firstReview = points.find(p=>p.st==="review");
+  if (!reviewFocus && firstReview) reviewFocus = firstReview.id;
+  for (const p of points) {
+    if (p.st==="done") continue;
+    const sn = el("div","sn"); sn.dataset.pt = p.id; sn.dataset.st = p.st;
+    const hd = el("div","sn-head");
+    hd.append(el("span","sn-num", markOf(points.indexOf(p))),
+              el("span","sn-st", esc(t[{open:"M4_open",working:"M5_working",review:"M6_review"}[p.st] || "M4_open"])));
+    sn.append(hd, el("p","sn-q", esc(typeof p.q==="string" ? p.q : p.q[state.lang])));
+    if (p.st==="working") { const pr = el("div","sn-progress"); pr.append(el("i")); sn.append(pr); }
+    if (p.st==="review" && p.id !== reviewFocus) {
+      sn.dataset.st = "collapsed";
+      sn.style.cursor = "pointer";
+      sn.title = t.M20_expand;
+      sn.addEventListener("click", ()=> { reviewFocus = p.id; renderMargin(); });
+    }
+    if (p.st==="review" && p.id === reviewFocus) {
+      const why = el("div","sn-sec");
+      why.append(el("div","sn-sec-t", esc(t.M8_secWhy)), el("p","", esc(p.explain[state.lang])));
+      sn.append(why);
+      if (p.diff) {
+        const dsec = el("div","sn-sec");
+        dsec.append(el("div","sn-sec-t", esc(t.M9_secDiff)));
+        const d = el("div","sn-diff", p.diff[state.lang]); d.dataset.deck="E9";
+        dsec.append(d); sn.append(dsec);
+      } else {
+        sn.append(el("p","sn-cost", esc(p.live ? t.M15_demoPoint : t.M14_noChange)));
+      }
+      const cost = el("div","sn-sec");
+      cost.append(el("div","sn-sec-t", esc(t.M10_secCost)), el("p","sn-cost", esc(p.cost[state.lang])));
+      sn.append(cost);
+      const jump = el("button","sn-jump", esc(t.M11_jump));
+      jump.addEventListener("click", ()=> jumpToAnchor(p.id));
+      sn.append(jump);
+      const acts = el("div","sn-actions"); acts.dataset.deck="E10";
+      const ok = el("button","accept", esc(t.M12_accept));
+      const no = el("button","", esc(t.M13_reject));
+      ok.addEventListener("click", ()=> resolvePoint(p, true));
+      no.addEventListener("click", ()=> resolvePoint(p, false));
+      acts.append(ok, no); sn.append(acts);
+    }
+    margin.append(sn);
+  }
+
+  // 委派条：存在开放编辑点时出现在页边（绝对定位，syncNotePositions 放在注记之后）
+  const open = points.filter(p=>p.st==="open").length;
+  if (open && state.view!=="working" && state.view!=="conflict") {
+    const bar = el("div"); bar.id="delegate-bar"; bar.className="delegate-bar"; bar.dataset.deck="E8";
+    bar.append(el("p","", `<span class="db-count">${esc(t.M16_delegateBar(open))}</span>`));
+    const go = el("button","", esc(t.M17_delegateGo));
+    go.addEventListener("click", ()=> openDelegateSheet());
+    bar.append(go); margin.append(bar);
+  }
+  spread.append(margin);
+  syncNotePositions();
+}
+function syncNotePositions() {
+  const spread = document.getElementById("spread");
+  const margin = document.getElementById("margin");
+  if (!spread || !margin) return;
+  if (window.matchMedia("(max-width:1100px)").matches) return;  // 窄视口：文后附注，不做绝对定位
+  const sRect = spread.getBoundingClientRect();
+  let prevBottom = 46;   // 让开 margin-head
+  const bar = document.getElementById("delegate-bar");
+  if (bar) {   // 委派条固定在注记列顶端：动作 affordance 永远可见
+    bar.style.top = prevBottom + "px";
+    prevBottom += bar.offsetHeight + 16;
+  }
+  margin.querySelectorAll(".sn").forEach(sn => {
+    const a = document.querySelector(`#doc [data-pt="${sn.dataset.pt}"]`);
+    if (!a) { sn.remove(); return; }
+    const r = a.getBoundingClientRect();
+    let top = r.top - sRect.top;
+    if (top < prevBottom) top = prevBottom;  // 拥挤时顺延，不重叠
+    sn.style.top = top + "px";
+    prevBottom = top + sn.offsetHeight + 18;
+  });
+}
+function jumpToAnchor(id) {
+  const a = document.querySelector(`#doc [data-pt="${id}"]`);
+  if (!a) return;
+  a.scrollIntoView({ behavior: state.theme==="eink" ? "auto" : "smooth", block:"center" });
+  a.classList.add("ep-flash"); setTimeout(()=> a.classList.remove("ep-flash"), 1200);
+}
+
+// ---- 编辑点生命周期 ----
+function resolvePoint(p, accept) {
+  const a = document.querySelector(`#doc [data-pt="${p.id}"]`);
+  if (a) {
+    if (accept && p.newHtml) a.replaceWith(document.createTextNode(p.newHtml[state.lang]));
+    else a.replaceWith(document.createTextNode(a.textContent));
+  }
+  p.st = "done";
+  const next = points.find(x=>x.st==="review");   // 逐点回看：裁决后焦点落到下一待回看点
+  reviewFocus = next ? next.id : null;
+  const sn = document.querySelector(`.sn[data-pt="${p.id}"]`);
+  if (sn && state.theme!=="eink") { sn.classList.add("done"); setTimeout(()=> renderMargin(), 320); }
+  else renderMargin();
+  if (points.every(x=>x.st==="done")) {
+    const n = points.length;
+    setTimeout(()=> {
+      points = []; state.view = "archived";
+      apply(); showToast(esc(T().T3_archived(n)));
+    }, state.theme==="eink" ? 0 : 400);
+  } else {
+    setTimeout(syncNotePositions, 340);
+  }
+}
+function openDelegateSheet() {
+  const t = T();
+  const open = points.filter(p=>p.st==="open");
+  const ov = document.getElementById("overlay") || el("div"); ov.id="overlay"; ov.hidden=false; ov.replaceChildren();
+  const sh = el("div","sheet"); sh.dataset.deck="E8";
+  sh.append(el("div","sheet-kicker", esc(t.D1_kicker)), el("div","sheet-title", esc(t.D2_title(open.length))));
+  const scope = el("div","sheet-scope");
+  scope.append(el("p","dim", esc(t.D3_scope)), el("p","", esc(t.D4_scopeBody(open.length))));
+  sh.append(scope, el("p","dim", esc(t.D5_note)));
+  const acts = el("div","sheet-actions");
+  const go = el("button","primary", esc(t.D6_go));
+  const cancel = el("button","", esc(t.D7_cancel));
+  go.addEventListener("click", ()=> { ov.hidden=true; runAgent(); });
+  cancel.addEventListener("click", ()=> { ov.hidden=true; });
+  acts.append(go, cancel); sh.append(acts); ov.append(sh);
+  document.body.append(ov);
+  if (state.annotate) injectAnnotations();
+}
+function runAgent() {
+  if (agentTimer) clearTimeout(agentTimer);
+  state.view = "working";
+  const queue = points.filter(p=>p.st!=="done" && p.st!=="review");
+  let i = 0;
+  showToast(esc(T().T1_delegated));
+  const step = () => {
+    if (i>0) queue[i-1].st = "review";
+    if (i >= queue.length) {
+      state.view = "review"; apply();
+      showToast(esc(T().T2_reviewReady(queue.length)));
+      return;
+    }
+    queue[i].st = "working"; i++;
+    apply();
+    agentTimer = setTimeout(step, 1500);
+  };
+  step();
+}
+
+// ---- 选中创建浮层 ----
+let creator = null, pendingRange = null;
+function closeCreator() { if (creator) { creator.remove(); creator=null; } pendingRange=null; }
+function onSelect() {
+  if (!["clean","points","long","archived"].includes(state.view)) return;
+  const sel = window.getSelection();
+  if (!sel || sel.isCollapsed || !sel.rangeCount) return;
+  const range = sel.getRangeAt(0);
+  const doc = document.getElementById("doc");
+  if (!doc || !doc.contains(range.commonAncestorContainer)) return;
+  const txt = sel.toString().trim();
+  if (txt.length < 2) return;
+  closeCreator(); pendingRange = range;
+  const t = T();
+  creator = el("div"); creator.id="creator";
+  creator.append(el("div","cr-quote", esc(txt.length>60 ? txt.slice(0,60)+"…" : txt)));
+  const input = el("input"); input.placeholder = t.F1_placeholder;
+  const row = el("div","cr-row");
+  row.append(el("span","cr-hint", esc(t.F2_hint)));
+  const go = el("button","cr-go", esc(t.F3_go));
+  const commit = () => {
+    const intent = input.value.trim() || t.F1_placeholder;
+    createLivePoint(range, txt, intent); closeCreator();
+  };
+  go.addEventListener("click", commit);
+  input.addEventListener("keydown", (e)=>{ if(e.key==="Enter") commit(); if(e.key==="Escape") closeCreator(); });
+  row.append(go); creator.append(input, row);
+  document.body.append(creator);
+  const r = range.getBoundingClientRect();
+  creator.style.left = Math.min(r.left, window.innerWidth-320) + "px";
+  creator.style.top = (r.bottom + 8) + "px";
+  input.focus();
+}
+function createLivePoint(range, quote, intent) {
+  const holder = range.commonAncestorContainer.nodeType===1 ? range.commonAncestorContainer : range.commonAncestorContainer.parentElement;
+  if (!holder.closest || !holder.closest("p")) { showToast(esc(T().F4_crossPara)); return; }
+  const id = "live" + Date.now();
+  const span = el("span","qa"); span.dataset.pt = id;
+  try { span.appendChild(range.extractContents()); }
+  catch(e) { showToast(esc(T().F4_crossPara)); return; }
+  range.insertNode(span);
+  points.push({
+    id, st:"open", live:true, quote,
+    q:{ zh:intent, en:intent },
+    explain:{ zh:"这是一条真实选中创建的编辑点。真实产品中 Agent 会在此回答你的问题、给出修改与代价。", en:"A genuinely created edit point. In the real product the agent would answer, propose a change, and state its cost here." },
+    diff:null, cost:{ zh:"未改动正文。", en:"Text untouched." }, newHtml:null,
+  });
+  state.view = "points"; apply();
+}
+// live 锚点在正文重建后按引用文本重新挂载（demo 的锚点漂移降级策略）
+function reattachLiveAnchors(doc) {
+  for (const p of points) {
+    if (!p.live || !p.quote || doc.querySelector(`[data-pt="${p.id}"]`)) continue;
+    const walker = document.createTreeWalker(doc, NodeFilter.SHOW_TEXT);
+    let n;
+    while ((n = walker.nextNode())) {
+      const i = n.nodeValue.indexOf(p.quote);
+      if (i === -1) continue;
+      const range = document.createRange();
+      range.setStart(n, i); range.setEnd(n, i + p.quote.length);
+      const span = el("span","qa"); span.dataset.pt = p.id;
+      span.appendChild(range.extractContents());
+      range.insertNode(span);
+      break;
+    }
+  }
+}
+
+// ---- 冲突 popup ----
+function renderConflictPopup() {
+  const t = T();
+  const ov = el("div"); ov.id="overlay";
+  const sh = el("div","sheet"); sh.dataset.deck="E11";
+  sh.append(el("div","sheet-kicker", esc(t.X1_kicker)), el("div","sheet-title", esc(t.X2_title)));
+  sh.append(el("p","", esc(t.X3_body)));
+  const diffBox = el("p","dim", esc(t.X7_diffBody)); diffBox.hidden = true;
+  sh.append(diffBox);
+  const acts = el("div","sheet-actions");
+  const re = el("button","primary", esc(t.X4_reprocess));
+  const df = el("button","", esc(t.X5_diff));
+  const kp = el("button","", esc(t.X6_keep));
+  re.addEventListener("click", ()=> { ov.remove(); state.view="review"; points.forEach(p=>{ if(p.st==="working") p.st="review"; }); apply(); showToast(esc(t.T4_conflictReprocess)); });
+  df.addEventListener("click", ()=> { diffBox.hidden = !diffBox.hidden; });
+  kp.addEventListener("click", ()=> { ov.remove(); points=[]; state.view="clean"; apply(); showToast(esc(t.T5_conflictKeep)); });
+  acts.append(re, df, kp); sh.append(acts); ov.append(sh);
+  document.body.append(ov);
+}
+
+// ---- toast ----
+let toastTimer = null;
+function showToast(html) {
+  document.querySelectorAll(".lumir-toast").forEach(t=>t.remove());
+  if (toastTimer) clearTimeout(toastTimer);
+  const t = el("div","lumir-toast", html);
+  document.body.append(t);
+  toastTimer = setTimeout(()=> t.remove(), 3200);
+}
+
+// ---- 空态：半题名页 ----
+function renderEmpty(sheet) {
+  const t = T();
+  const ht = el("div"); ht.id="half-title";
+  ht.append(el("div","ht-name", esc(t.N1_appName)), el("div","ht-line", esc(t.E1_tagline)));
+  const b = el("button","", esc(t.E2_open));
+  b.addEventListener("click", ()=> { state.view="clean"; apply(); });
+  ht.append(b); sheet.append(ht);
+}
+
+// ---- 版面装配 ----
+function renderSheet() {
+  const sheet = document.getElementById("sheet"); sheet.replaceChildren();
+  document.getElementById("overlay")?.remove();
+  if (state.view === "empty") { renderEmpty(sheet); return; }
+  const mh = el("div"); mh.id="masthead"; mh.dataset.deck="E1";
+  mh.append(el("span","mh-name", esc(T().N1_appName)), el("span","mh-sub", esc(T().N2_appSub)),
+            el("span","mh-right", esc(T().N3_threadRunning(ARTICLE[state.lang].thread))));
+  sheet.append(mh, el("div","mh-rule"));
+  const spread = el("div"); spread.id="spread";
+  const bodyCol = el("div"); bodyCol.id="body-col";
+  const doc = buildDoc();
+  if (state.view==="archived") applyArchivedEdits(doc);
+  bodyCol.append(doc); spread.append(bodyCol);
+  sheet.append(spread);
+  reattachLiveAnchors(doc);
+  anchorize(doc);
+  renderMargin();
+  if (state.view==="conflict") renderConflictPopup();
+}
+
+// ---- 控制台 ----
+function seg(options, current, onPick) {
+  const g = el("span","seg");
+  for (const [val,label] of options) {
+    const b = el("button","", esc(label)); b.type="button";
+    if (val===current) b.classList.add("active");
+    b.addEventListener("click", ()=> { onPick(val); apply(); });
+    g.append(b);
+  }
+  return g;
+}
+function renderConsole() {
+  const host = document.getElementById("console"); host.replaceChildren();
+  const t = T();
+  host.append(el("span","c-title", esc(t.C1_title)));
+  let g = el("span","c-group");
+  g.append(el("span","c-label", esc(t.C2_theme)),
+    seg([["light",t.C2_light],["dark",t.C2_dark],["eink",t.C2_eink]], state.theme, v=>state.theme=v));
+  host.append(g);
+  g = el("span","c-group");
+  g.append(el("span","c-label", esc(t.C3_state)),
+    seg([["empty",t.C3_empty],["clean",t.C3_clean],["points",t.C3_points],["delegate",t.C3_delegate],
+         ["working",t.C3_working],["review",t.C3_review],["archived",t.C3_archived],["long",t.C3_long],["conflict",t.C3_conflict]],
+        state.view, v=>setView(v)));
+  host.append(g);
+  g = el("span","c-group");
+  g.append(el("span","c-label", esc(t.C4_lang)), seg([["zh","中文"],["en","English"]], state.lang, v=>state.lang=v));
+  host.append(g);
+  g = el("span","c-group");
+  g.append(el("span","c-label", esc(t.C5_measure)));
+  const slider = el("input","c-measure"); slider.type="range"; slider.min=400; slider.max=1200; slider.step=10; slider.value=state.measure;
+  const val = el("span","c-measure-val", esc(t.C5_measureVal(state.measure)));
+  slider.addEventListener("input", ()=> { state.measure=+slider.value; document.documentElement.style.setProperty("--measure", state.measure+"px"); val.textContent=t.C5_measureVal(state.measure); requestAnimationFrame(syncNotePositions); });
+  slider.addEventListener("change", ()=> apply());
+  g.append(slider, val); host.append(g);
+  g = el("span","c-group");
+  g.append(el("span","c-label", esc(t.C6_annotate)), seg([["off",t.C6_off],["on",t.C6_on]], state.annotate?"on":"off", v=>state.annotate=v==="on"));
+  host.append(g);
+  g = el("span","c-group");
+  g.append(el("span","c-label", esc(t.C7_gray)), seg([["off",t.C6_off],["on",t.C6_on]], state.gray?"on":"off", v=>state.gray=v==="on"));
+  host.append(g);
+  const intent = el("div","intent");
+  intent.append(el("b","", esc(t.C8_intentTitle) + " · "));
+  intent.append(document.createTextNode(t.intent));
+  host.append(intent, el("div","c-note", esc(t.C9_note)));
+}
+
+// ---- 批注模式 ----
+function injectAnnotations() {
+  document.querySelectorAll(".anno").forEach(a=>a.remove());
+  if (!state.annotate) return;
+  const map = ANNOTATIONS[state.lang];
+  document.querySelectorAll("[data-deck]").forEach(elmt => {
+    const id = elmt.dataset.deck;
+    if (!id || !map[id] || elmt.querySelector(":scope > .anno")) return;
+    const a = el("span","anno", id); a.title = map[id];
+    elmt.append(a);
+  });
+}
+
+// ---- 总装 ----
+function stopAgent() { if (agentTimer) { clearTimeout(agentTimer); agentTimer = null; } }
+function setView(v) { stopAgent(); state.view = v; points = seedPoints(v); reviewFocus = null; }
+function apply() {
+  const root = document.documentElement;
+  root.dataset.theme = state.theme;
+  root.lang = state.lang;
+  root.style.setProperty("--measure", state.measure+"px");
+  document.getElementById("stage").classList.toggle("gray", state.gray);
+  renderConsole(); renderNav(); renderSheet();
+  if (state.view==="delegate") openDelegateSheet();
+  requestAnimationFrame(()=> {
+    syncNotePositions();
+    // 读数取实际栏宽：视口不足时滑块设定值会被版面夹断，读数必须说真话
+    const bc = document.getElementById("body-col");
+    const mv = document.querySelector(".c-measure-val");
+    if (bc && mv) mv.textContent = T().C5_measureVal(Math.round(bc.getBoundingClientRect().width));
+    if (state.annotate) injectAnnotations();
+  });
+}
+document.addEventListener("mouseup", ()=> setTimeout(onSelect, 0));
+document.addEventListener("mousedown", (e)=> { if (creator && !creator.contains(e.target)) closeCreator(); });
+window.addEventListener("resize", ()=> syncNotePositions());
+points = seedPoints(state.view);
+apply();
+</script>
+</body>
+</html>
