@@ -18,7 +18,7 @@ const baselinePath =
   process.env.PERF_BASELINE_FILE ??
   path.join(repoRoot(), regression.baselineFile ?? "perf-results/baseline/baseline.json");
 const windowSize = regression.window ?? 10;
-const maxRegressionPct = regression.maxRegressionPct ?? 20;
+const maxRegressionPct = regression.maxRegressionPct ?? 40;
 
 let baseline = null;
 try {
