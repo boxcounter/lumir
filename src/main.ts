@@ -209,6 +209,9 @@ const wikilinkResolver = {
 function invalidateResolve(): void {
   resolveCache.clear();
   failedResolve.clear();
+  // 在途标记一并清：被 epoch 丢弃的迟到响应不会重触发解析，不清会让同 key
+  // 链接卡在中性渲染；在途 promise 的 finally delete 对已清集合是 no-op。
+  pendingResolve.clear();
 }
 
 /** 激活链接（点击 / Mod-Enter）：按解析结果跳转、提示或给出一键创建入口。 */
