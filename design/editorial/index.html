@@ -11,7 +11,7 @@
           （CLReq 25–35 字/行）、两端对齐、首行缩进 2em、
           标点悬挂与中西混排间距为渐进增强（不支持静默降级）。
    展示面：标题大标宋（Songti SC），报刊「标题宋 + 正文黑」的版面传统。
-   chrome 层：趋近于零。报头一线，目次一栏，其余全部退入页边注记。
+   chrome 层：趋近于零。报头一线，目录一栏，其余全部退入页边注记。
    Context Surface = Tufte margin：默认不可见，编辑点出现时注记按锚点
    纵向对齐落在页边，resolve 即消失。
    eink：纯黑纯白、禁灰阶、无阴影无透明无动画；弱化走斜体，状态走
@@ -19,7 +19,7 @@
    ============================================================================ */
 [data-theme="light"] {
   --bg:#f6f3ea;            /* 纸面：暖白，降眩光 */
-  --bg-nav:#efeadd;        /* 目次退半色阶 */
+  --bg-nav:#efeadd;        /* 目录栏退半色阶 */
   --bg-2:#ece6d5;          /* hover */
   --bg-3:#e2d9c1;          /* active */
   --bd-1:#e0d8c2; --bd-2:#cfc4a6; --bd-3:#b3a684;
@@ -104,53 +104,138 @@ body { font-family:var(--font-body); background:var(--bg); color:var(--text); fo
 #intent b { color:var(--accent); }
 #stage.gray #page { filter:grayscale(1); }
 
-/* ============ 页面骨架：目次 | 版面 ============ */
+/* ============ 页面骨架：目录 | 版面 ============ */
 #stage { height:calc(100% - 0px); display:flex; flex-direction:column; }
 #page { display:flex; flex:1; min-height:0; }
 #nav {
-  flex:0 0 216px; background:var(--bg-nav); border-right:1px solid var(--bd-1);
-  padding:20px 16px; overflow:auto; font-size:12.5px; line-height:1.6;
+  flex:0 0 244px; background:var(--bg-nav); border-right:1px solid var(--bd-1);
+  padding:18px 12px 14px; overflow:auto; font-size:13px; line-height:1.6;
   display:flex; flex-direction:column;
 }
 #sheet { flex:1; min-width:0; overflow-y:auto; position:relative; background:var(--bg); }
 
-/* ---- 目次：Thread 组织的排版索引，不是文件树 ---- */
+/* ---- 左栏：目录（事实空间）× Threads（意图空间）同栏 ----
+   树的秩序（Alex 裁决）：层级 = 缩进节奏 + 字重 + 明度，禁止字号倒挂，
+   目录与文件统一 13px，行高 27px 给足呼吸，选中态 = ¶ + 朱红边线，克制。 */
 .nav-kicker {
-  font-size:10.5px; letter-spacing:.35em; color:var(--dim); margin-bottom:10px;
+  font-size:10.5px; letter-spacing:.35em; color:var(--dim); margin:2px 6px 9px;
 }
 [data-theme="eink"] .nav-kicker { font-style:italic; }
-.nav-thread { font-weight:650; font-size:13.5px; margin-bottom:2px; }
-.nav-thread-st { display:block; font-weight:400; font-size:11px; color:var(--dim); margin-bottom:6px; }
-[data-theme="eink"] .nav-thread-st { font-style:italic; }
-.nav-rule { border:none; border-top:1px solid var(--bd-1); margin:10px 0; }
-.nav-group {
-  font-size:10.5px; letter-spacing:.18em; color:var(--dim);
-  margin:12px 0 4px;
-}
-[data-theme="eink"] .nav-group { font-style:italic; }
-.nav-file {
-  display:flex; align-items:baseline; gap:7px; width:100%;
+.nav-rule { border:none; border-top:1px solid var(--bd-1); margin:14px 4px; flex:none; }
+/* 分区收缩策略（低视口）：目录区弹性收缩并自滚动（最短 4 行），
+   Threads 区与其余元素保持完整高度，仍不足时整栏 overflow:auto 滚动。 */
+.nav-sec { flex:none; min-height:0; }
+.nav-sec.grow { flex:0 1 auto; display:flex; flex-direction:column; min-height:128px; }
+.nav-sec.grow .nav-kicker { flex:none; }
+.nav-sec.grow .nav-tree, .nav-sec.grow .nav-threads { flex:0 1 auto; min-height:0; overflow:auto; }
+
+/* 目录树 */
+.tr-row {
+  display:flex; align-items:center; width:100%;
   border:none; border-left:2px solid transparent; background:none;
-  padding:3px 6px; font:inherit; color:var(--text); text-align:left; cursor:pointer;
+  font:inherit; color:var(--text); text-align:left; cursor:pointer;
+  height:27px; padding:0 6px 0 calc(4px + var(--i,0) * 13px);
+  border-radius:var(--radius);
 }
-.nav-file:hover { background:var(--bg-2); }
-.nav-file .nf-role { color:var(--dim); font-size:10.5px; margin-left:auto; flex:none; }
-.nav-file.current { border-left-color:var(--accent); font-weight:600; }
-.nav-file.current::before { content:"¶"; color:var(--accent); font-size:11px; flex:none; }
-[data-theme="eink"] .nav-file.current { border-left:var(--pattern-double); }
-.nav-thread-other {
-  display:block; width:100%; border:none; background:none; padding:3px 6px;
-  font:inherit; color:var(--dim); text-align:left; cursor:pointer;
+.tr-row:hover { background:var(--bg-2); }
+.tr-row:focus-visible { outline:1px solid var(--bd-3); outline-offset:-1px; }
+.tr-caret {
+  flex:none; width:15px; color:var(--dim); font-size:10px;
+  transition:transform .15s;
 }
-.nav-thread-other:hover { color:var(--text); background:var(--bg-2); }
-.nav-thread-other .nt-st { font-size:10.5px; margin-left:6px; }
-.nav-foot { margin-top:auto; padding-top:16px; color:var(--dim); font-size:11px; }
+.tr-row[aria-expanded="false"] .tr-caret { transform:rotate(-90deg); }
+.tr-name { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.tr-dir .tr-name { font-weight:600; }
+/* 明度按深度递减：向栏底色调和，亮暗主题同构；目录以字重锚住层级不降明度 */
+.tr-file[data-d="1"] .tr-name { color:color-mix(in srgb, var(--text) 96%, var(--bg-nav)); }
+.tr-file[data-d="2"] .tr-name { color:color-mix(in srgb, var(--text) 91%, var(--bg-nav)); }
+.tr-file[data-d="3"] .tr-name { color:color-mix(in srgb, var(--text) 86%, var(--bg-nav)); }
+.tr-file[data-d="4"] .tr-name { color:color-mix(in srgb, var(--text) 81%, var(--bg-nav)); }
+.tr-row.current { border-left-color:var(--accent); border-radius:0 var(--radius) var(--radius) 0; }
+.tr-row.current .tr-name { color:var(--text); font-weight:600; }
+.tr-row.current .tr-name::before { content:"¶ "; color:var(--accent); font-weight:400; }
+/* eink：禁灰阶 → 深度只靠缩进与字重；hover 走下划线；选中走双线框 */
+[data-theme="eink"] .tr-file[data-d] .tr-name { color:#000; }
+[data-theme="eink"] .tr-row:hover { background:none; }
+[data-theme="eink"] .tr-row:hover .tr-name { text-decoration:underline; }
+[data-theme="eink"] .tr-row.current {
+  border-left:var(--pattern-double);
+  padding-left:calc(3px + var(--i,0) * 13px);
+}
+/* 叠加式（c）的 Thread 标记：角色属于 Thread，文件归属不变 */
+.tr-marks { margin-left:auto; flex:none; display:flex; align-items:baseline; gap:6px; padding-left:8px; }
+.tr-tag { font-size:10.5px; color:var(--accent); letter-spacing:.06em; }
+.tr-multi { font-size:10.5px; color:var(--dim); }
+[data-theme="eink"] .tr-tag { font-weight:600; }
+[data-theme="eink"] .tr-multi { font-style:italic; }
+
+/* Threads 区（变体 a 分区 / b 视角共用） */
+.thr-card {
+  border:1px solid var(--bd-1); border-radius:var(--radius);
+  background:var(--bg); padding:9px 10px; margin:0 2px;
+}
+[data-theme="eink"] .thr-card { border:var(--pattern-double); }
+.thr-t { font-weight:650; }
+.thr-meta { font-size:11px; color:var(--dim); margin-top:3px; letter-spacing:.04em; }
+.thr-meta b { color:var(--accent); font-weight:600; }
+[data-theme="eink"] .thr-meta { font-style:italic; }
+[data-theme="eink"] .thr-meta b { font-style:normal; }
+.thr-roles { margin-top:8px; border-top:1px solid var(--bd-1); padding-top:5px; }
+.thr-role {
+  display:flex; align-items:baseline; gap:7px; width:100%;
+  border:none; background:none; font:inherit; font-size:12.5px; color:var(--text);
+  padding:3px 4px; text-align:left; cursor:pointer; border-radius:var(--radius);
+}
+.thr-role:hover { background:var(--bg-2); }
+[data-theme="eink"] .thr-role:hover { background:none; }
+[data-theme="eink"] .thr-role:hover .rl-name { text-decoration:underline; }
+.thr-role .rl-name { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.thr-role .rl-role { margin-left:auto; flex:none; font-size:10.5px; color:var(--dim); }
+[data-theme="eink"] .thr-role .rl-role { font-style:italic; }
+.thr-role.current .rl-name { font-weight:600; }
+.thr-role.current .rl-name::before { content:"¶ "; color:var(--accent); font-weight:400; }
+.thr-line {
+  display:block; width:100%; border:none; background:none; font:inherit;
+  text-align:left; cursor:pointer; padding:5px 6px; border-radius:var(--radius);
+  color:var(--text);
+}
+.thr-line:hover { background:var(--bg-2); }
+[data-theme="eink"] .thr-line:hover { background:none; text-decoration:underline; }
+.thr-line .tl-meta { display:block; font-size:11px; color:var(--dim); margin-top:1px; }
+[data-theme="eink"] .thr-line .tl-meta { font-style:italic; }
+.thr-line .tl-meta b { color:var(--accent); font-weight:600; }
+[data-theme="eink"] .thr-line .tl-meta b { font-style:normal; }
+
+/* 视角切换（变体 b）：栏内 lens tab，默认目录 */
+.nav-lens { display:flex; flex:none; border-bottom:1px solid var(--bd-1); margin:0 2px 12px; }
+.nav-lens button {
+  flex:1; border:none; background:none; font:inherit; font-size:12px;
+  letter-spacing:.18em; color:var(--dim); padding:6px 0 7px; cursor:pointer;
+  border-bottom:2px solid transparent; margin-bottom:-1px;
+}
+.nav-lens button:hover { color:var(--text); }
+.nav-lens button.active { color:var(--text); font-weight:600; border-bottom-color:var(--accent); }
+[data-theme="eink"] .nav-lens button { font-style:italic; }
+[data-theme="eink"] .nav-lens button.active { font-style:normal; border-bottom:var(--pattern-double); }
+
+/* 叠加式（变体 c）的当前 Thread 节记：浮于目录之上的意图层 */
+.thr-chip {
+  border:1px solid var(--bd-2); border-left:3px solid var(--accent);
+  border-radius:var(--radius); background:var(--bg);
+  padding:8px 10px; margin:0 2px 4px; cursor:pointer;
+}
+.thr-chip:hover { border-color:var(--bd-3); border-left-color:var(--accent); }
+[data-theme="eink"] .thr-chip { border:1px solid #000; border-left:var(--pattern-double); }
+.thr-chip .tc-k { font-size:10px; letter-spacing:.28em; color:var(--dim); margin-bottom:3px; }
+[data-theme="eink"] .thr-chip .tc-k { font-style:italic; }
+
+.nav-foot { margin-top:auto; flex:none; padding-top:16px; color:var(--dim); font-size:11px; padding-left:6px; }
 [data-theme="eink"] .nav-foot { font-style:italic; }
-.nav-empty { color:var(--dim); line-height:1.8; }
+.nav-empty { color:var(--dim); line-height:1.8; padding:0 6px; flex:none; }
 [data-theme="eink"] .nav-empty { font-style:italic; }
 .nav-open-btn {
-  margin-top:10px; padding:6px 14px; border:1px solid var(--bd-2); border-radius:var(--radius);
-  background:var(--bg); color:var(--text); font:inherit; cursor:pointer;
+  margin:10px 6px 0; padding:6px 14px; border:1px solid var(--bd-2); border-radius:var(--radius);
+  background:var(--bg); color:var(--text); font:inherit; cursor:pointer; flex:none;
 }
 .nav-open-btn:hover { border-color:var(--bd-3); background:var(--bg-2); }
 [data-theme="eink"] .nav-open-btn:hover { border:var(--pattern-double); padding:4px 12px; }
@@ -180,7 +265,7 @@ body { font-family:var(--font-body); background:var(--bg); color:var(--text); fo
 }
 /* 窄视口降级：页边栏回落为文后附注（编号与锚点保留，失去纵向对齐） */
 @media (max-width:1100px) {
-  #nav { flex-basis:180px; }
+  #nav { flex-basis:204px; }
   #spread { padding:44px 24px 140px; }
   #margin { position:static; width:auto; margin-top:40px; border-top:1px solid var(--bd-1); padding-top:16px; }
   #margin .sn, #margin .delegate-bar { position:static !important; top:auto !important; }
@@ -453,23 +538,30 @@ const COPY = {
     C5_measureVal: (m) => `${m}px · 约 ${Math.round(m/16)} 字/行`,
     C6_annotate: "批注", C6_off: "关", C6_on: "开",
     C7_gray: "灰度检查",
+    C10_nav: "导航", C10_a: "分区", C10_b: "视角", C10_c: "叠加",
     C8_intentTitle: "设计意图",
     C9_note: "demo 说明：正文中真实选中文字即可创建编辑点（单段落内）；演示创建的编辑点无预设解释与 diff，回看时以演示注记代替。行宽依据 CLReq 中文 25–35 字/行，默认 480px ≈ 30 字。",
-    intent: "「编辑部」：排印即界面。正文按出版物级中文排印工程执行——黑体 16px/1.75、两端对齐、首行缩进 2em、标点悬挂与中西混排间距渐进增强；标题用大标宋，报纸「标题宋 + 正文黑」的版面传统，宋黑对比承担层级而非字号堆砌。chrome 趋近于零：报头一线、目次一栏，其余全部退入页边。编辑点与回看走 Tufte margin 传统：注记活在页边、与正文同视野、resolve 即消失。唯一强调色是校对红——编辑手里的红铅笔。",
-    // 报头 / 目次
+    intent: "「编辑部」：排印即界面。正文按出版物级中文排印工程执行——黑体 16px/1.75、两端对齐、首行缩进 2em、标点悬挂与中西混排间距渐进增强；标题用大标宋，报纸「标题宋 + 正文黑」的版面传统，宋黑对比承担层级而非字号堆砌。chrome 趋近于零：报头一线、目录一栏，其余全部退入页边。编辑点与回看走 Tufte margin 传统：注记活在页边、与正文同视野、resolve 即消失。唯一强调色是校对红——编辑手里的红铅笔。",
+    // 报头 / 左栏（目录 × Threads）
     N1_appName: "LUMIR",
     N2_appSub: "本地文本工作台",
     N3_threadRunning: (name) => `THREAD · ${name} · 进行中`,
-    N4_toc: "目 次",
-    N5_main: "主文档",
-    N6_ref: "参考材料",
-    N7_draft: "草稿",
-    N8_others: "其他 THREAD",
+    N4_toc: "目 录",
+    N4b_threads: "THREADS",
     N9_workspace: "工作区 · ~/notes",
-    N10_emptyNav: "尚未打开工作区。目次将按 Thread 组织你的阅读集合，而不是按目录。",
+    N10_emptyNav: "尚未打开工作区。打开后，本栏上半是目录（事实空间），下半是 Threads（意图空间）——文件属于工作区，角色属于 Thread。",
+    N10b_emptyThreads: "打开工作区后，Threads 会列在这里。",
+    N10c_emptyOverlay: "打开工作区后，当前 Thread 的关联文件会在目录中带上角色标记。",
     N11_open: "打开工作区",
-    N12_paused: "暂停", N13_done: "完成",
     N14_demoDoc: "（demo 仅两篇文档有正文）",
+    N_roleMain: "主文档", N_roleRef: "参考", N_roleDraft: "草稿", N_roleSource: "来源",
+    N_stActive: "进行中", N_stPaused: "暂停", N_stDone: "完成",
+    N_cntOpen: (n) => `${n} 开放`, N_cntWorking: (n) => `${n} 处理中`, N_cntReview: (n) => `${n} 待回看`,
+    N_noPoints: "无待处理编辑点",
+    N_lensTree: "目录", N_lensThreads: "Threads",
+    N_curThread: "当前 THREAD",
+    N_multiRef: (n) => `×${n}`,
+    N_multiTitle: (n) => `被 ${n} 个 Thread 引用`,
     // 文章头部
     A1_kicker: "方法与工具 · 编辑手记",
     A2_byline1: "文 / Alex",
@@ -536,22 +628,29 @@ const COPY = {
     C5_measureVal: (m) => `${m}px · ~${Math.round(m/8)} chars/line`,
     C6_annotate: "Annotate", C6_off: "Off", C6_on: "On",
     C7_gray: "Grayscale",
+    C10_nav: "Nav", C10_a: "Split", C10_b: "Lens", C10_c: "Overlay",
     C8_intentTitle: "Design intent",
     C9_note: "Demo notes: select real text in the article (within one paragraph) to create an edit point; demo-created points carry no preset explanation or diff. Measure follows CLReq’s 25–35 CJK chars per line; 480px ≈ 30 chars.",
-    intent: "“Editorial”: typography is the interface. Body text is engineered to publication grade — sans 16px/1.75, justified, 2em first-line indent, hanging punctuation and CJK–Latin spacing as progressive enhancement. Headings use a display serif, the newspaper tradition of serif heads over a gothic body, so contrast of genre carries hierarchy instead of stacked font sizes. Chrome approaches zero: one masthead line, one index column, everything else retreats to the margin. Edit points and review follow the Tufte margin tradition: notes live at the page edge, share the field of view with the text, and vanish on resolve. The single accent is proofreader’s red — the editor’s pencil.",
+    intent: "“Editorial”: typography is the interface. Body text is engineered to publication grade — sans 16px/1.75, justified, 2em first-line indent, hanging punctuation and CJK–Latin spacing as progressive enhancement. Headings use a display serif, the newspaper tradition of serif heads over a gothic body, so contrast of genre carries hierarchy instead of stacked font sizes. Chrome approaches zero: one masthead line, one file-tree column, everything else retreats to the margin. Edit points and review follow the Tufte margin tradition: notes live at the page edge, share the field of view with the text, and vanish on resolve. The single accent is proofreader’s red — the editor’s pencil.",
     N1_appName: "LUMIR",
     N2_appSub: "Local text workbench",
     N3_threadRunning: (name) => `THREAD · ${name} · active`,
-    N4_toc: "CONTENTS",
-    N5_main: "Main document",
-    N6_ref: "References",
-    N7_draft: "Drafts",
-    N8_others: "Other threads",
+    N4_toc: "FILES",
+    N4b_threads: "THREADS",
     N9_workspace: "Workspace · ~/notes",
-    N10_emptyNav: "No workspace open. The index will organise your reading set by thread, not by folder.",
+    N10_emptyNav: "No workspace open. Once opened, this column shows the file tree (facts) above and threads (intents) below — files belong to the workspace; roles belong to the thread.",
+    N10b_emptyThreads: "Threads will appear here once a workspace is open.",
+    N10c_emptyOverlay: "Once a workspace is open, files referenced by the current thread will carry role marks in the tree.",
     N11_open: "Open workspace",
-    N12_paused: "paused", N13_done: "done",
     N14_demoDoc: "(only two documents have body text in this demo)",
+    N_roleMain: "main", N_roleRef: "reference", N_roleDraft: "draft", N_roleSource: "source",
+    N_stActive: "active", N_stPaused: "paused", N_stDone: "done",
+    N_cntOpen: (n) => `${n} open`, N_cntWorking: (n) => `${n} working`, N_cntReview: (n) => `${n} to review`,
+    N_noPoints: "no open edit points",
+    N_lensTree: "Files", N_lensThreads: "Threads",
+    N_curThread: "CURRENT THREAD",
+    N_multiRef: (n) => `×${n}`,
+    N_multiTitle: (n) => `referenced by ${n} threads`,
     A1_kicker: "METHODS & TOOLS · EDITOR’S NOTES",
     A2_byline1: "By Alex",
     A2_byline2: "Revising with an agent",
@@ -606,7 +705,7 @@ const COPY = {
 const ANNOTATIONS = {
   zh: {
     E1: "E1 · 报头 · 窗口即期号：app 身份压成一线，chrome 趋零的第一步",
-    E2: "E2 · 目次导航 · Thread 组织的排版索引取代文件树：按文件角色分组（ADR 0005：Thread 是意图空间）",
+    E2: "E2 · 左栏总构 · 目录（事实空间）与 Threads（意图空间）同栏共存、默认目录；结构变体 ?nav=a 分区 / b 视角 / c 叠加",
     E3: "E3 · 正文排印 · 黑体 16px/1.75、两端对齐、首行缩进 2em、标点悬挂与 text-autospace 渐进增强（CLReq）",
     E4: "E4 · 大标宋标题 · 报刊「标题宋+正文黑」传统，宋黑对比承担层级",
     E5: "E5 · 首字下沉 · 签名页修辞：一页愿意打印的版面",
@@ -617,10 +716,12 @@ const ANNOTATIONS = {
     E10: "E10 · 动词收敛 · 仅 接受/拒绝，语义复用撤销（Cursor 五动词为反例）",
     E11: "E11 · 冲突 popup · 版本变化即暂停、不静默覆盖；popup 只给不可静默处理的事（calmtech）",
     E12: "E12 · 归档跋文 · 事务闭环的印刷式收尾：编辑点消失，正文即事实",
+    E13: "E13 · 目录树 · 层级 = 缩进节奏 + 字重 + 明度，目录与文件统一字号；选中态 = ¶ + 朱红边线",
+    E14: "E14 · Threads · 标题/状态/开放编辑点/待回看数；文件角色属于 Thread，同一文件可被多 Thread 引用（ADR 0005）",
   },
   en: {
     E1: "E1 · Masthead · the window as an issue: app identity compressed to one line",
-    E2: "E2 · Contents navigation · a typographic index organised by thread replaces the file tree (ADR 0005)",
+    E2: "E2 · Left column · file tree (facts) and threads (intents) share one column, tree first; variants ?nav=a split / b lens / c overlay",
     E3: "E3 · Body typography · sans 16px/1.75, justified, 2em indent, hanging punctuation & text-autospace (CLReq)",
     E4: "E4 · Display serif heads · the newspaper tradition: serif heads over a gothic body",
     E5: "E5 · Drop cap · the signature page: a spread worth printing",
@@ -631,6 +732,8 @@ const ANNOTATIONS = {
     E10: "E10 · Two verbs only · accept / reject, reusing undo semantics (Cursor’s five verbs are the anti-pattern)",
     E11: "E11 · Conflict popup · a changed version pauses the write; popups only for what cannot be silent",
     E12: "E12 · Archive colophon · a printed close to the transaction: points vanish, the text is the fact",
+    E13: "E13 · File tree · hierarchy = indent rhythm + weight + brightness; one font size; selection = ¶ + red rule",
+    E14: "E14 · Threads · title/status/open points/pending reviews; roles belong to the thread, a file may serve many (ADR 0005)",
   },
 };
 
@@ -673,7 +776,7 @@ const ARTICLE = {
   },
 };
 
-// 第二篇文档（目次切换用）：草稿短章。
+// 第二篇文档（目录切换用）：草稿短章。
 const LETTER = {
   zh: { title: "写给读者的信", parts: [
     { t:"p", cls:"dropcap", html:"这不是一封发布信，只是一次练习：把过去三个月在 Obsidian 与 Agent 之间来回搬运的动作，逐个写下来，看哪些其实不必由人来做。" },
@@ -720,32 +823,111 @@ const POINT_DEFS = [
   },
 ];
 
-const FILES = {
-  zh: {
-    main: [{ name:"把卡顿变成正文.md", doc:"main" }],
-    ref: ["编辑点概念稿.md", "Tufte 边注传统.md", "ADR-0005-对象模型.md", "agent-协作协议草案.md"],
-    draft: [{ name:"写给读者的信.md", doc:"letter" }, { name:"发布笔记 v0.1.md", doc:null }],
-    others: [{ name:"整理成演讲稿", st:"N12_paused" }, { name:"2026 产品方向", st:"N13_done" }],
-  },
-  en: {
-    main: [{ name:"Turning Friction into Text.md", doc:"main" }],
-    ref: ["Edit-point concept.md", "The Tufte margin tradition.md", "ADR-0005-object-model.md", "agent-protocol-draft.md"],
-    draft: [{ name:"A Letter to Readers.md", doc:"letter" }, { name:"Release notes v0.1.md", doc:null }],
-    others: [{ name:"Reshape into a talk", st:"N12_paused" }, { name:"2026 product direction", st:"N13_done" }],
-  },
+// 目录树（事实空间）：文件属于 workspace，与 Thread 无关。
+// doc 非空的文件在 demo 中可打开；path 是 Thread 引用（角色）的锚。
+const TREE = {
+  zh: [
+    { type:"dir", name:"写作", path:"写作", children:[
+      { type:"file", name:"把卡顿变成正文.md", path:"写作/把卡顿变成正文.md", doc:"main" },
+      { type:"file", name:"写给读者的信.md", path:"写作/写给读者的信.md", doc:"letter" },
+      { type:"file", name:"发布笔记 v0.1.md", path:"写作/发布笔记 v0.1.md" },
+      { type:"dir", name:"存档", path:"写作/存档", children:[
+        { type:"file", name:"卡顿笔记汇总（2025-12-03 合并终版·勿删）.md", path:"写作/存档/卡顿笔记汇总（2025-12-03 合并终版·勿删）.md" },
+      ]},
+    ]},
+    { type:"dir", name:"研究", path:"研究", children:[
+      { type:"file", name:"编辑点概念稿.md", path:"研究/编辑点概念稿.md" },
+      { type:"file", name:"Tufte 边注传统.md", path:"研究/Tufte 边注传统.md" },
+      { type:"dir", name:"协议", path:"研究/协议", children:[
+        { type:"file", name:"ADR-0005-对象模型.md", path:"研究/协议/ADR-0005-对象模型.md" },
+        { type:"file", name:"agent-协作协议草案.md", path:"研究/协议/agent-协作协议草案.md" },
+        { type:"dir", name:"历史版本", path:"研究/协议/历史版本", children:[
+          { type:"file", name:"协作协议-v0-废弃稿（已被 ADR-0005 取代）.md", path:"研究/协议/历史版本/协作协议-v0-废弃稿（已被 ADR-0005 取代）.md" },
+        ]},
+      ]},
+    ]},
+    { type:"dir", name:"演讲", path:"演讲", children:[
+      { type:"file", name:"整理成演讲稿大纲.md", path:"演讲/整理成演讲稿大纲.md" },
+    ]},
+    { type:"file", name:"2026-产品方向.md", path:"2026-产品方向.md" },
+  ],
+  en: [
+    { type:"dir", name:"writing", path:"writing", children:[
+      { type:"file", name:"Turning Friction into Text.md", path:"writing/Turning Friction into Text.md", doc:"main" },
+      { type:"file", name:"A Letter to Readers.md", path:"writing/A Letter to Readers.md", doc:"letter" },
+      { type:"file", name:"Release notes v0.1.md", path:"writing/Release notes v0.1.md" },
+      { type:"dir", name:"archive", path:"writing/archive", children:[
+        { type:"file", name:"friction-notes-digest-2025-12-03-merged-final-do-not-delete.md", path:"writing/archive/friction-notes-digest-2025-12-03-merged-final-do-not-delete.md" },
+      ]},
+    ]},
+    { type:"dir", name:"research", path:"research", children:[
+      { type:"file", name:"Edit-point concept.md", path:"research/Edit-point concept.md" },
+      { type:"file", name:"The Tufte margin tradition.md", path:"research/The Tufte margin tradition.md" },
+      { type:"dir", name:"protocol", path:"research/protocol", children:[
+        { type:"file", name:"ADR-0005-object-model.md", path:"research/protocol/ADR-0005-object-model.md" },
+        { type:"file", name:"agent-protocol-draft.md", path:"research/protocol/agent-protocol-draft.md" },
+        { type:"dir", name:"history", path:"research/protocol/history", children:[
+          { type:"file", name:"protocol-v0-deprecated-superseded-by-ADR-0005.md", path:"research/protocol/history/protocol-v0-deprecated-superseded-by-ADR-0005.md" },
+        ]},
+      ]},
+    ]},
+    { type:"dir", name:"talks", path:"talks", children:[
+      { type:"file", name:"Talk outline.md", path:"talks/Talk outline.md" },
+    ]},
+    { type:"file", name:"2026-product-direction.md", path:"2026-product-direction.md" },
+  ],
+};
+
+// Threads（意图空间）：角色属于 Thread；同一文件可被多 Thread 引用——
+// 「把卡顿变成正文.md」在 ta 是主文档、在 tb 是来源，两处都是真的。
+// 当前 Thread（ta）的开放/待回看数由运行态编辑点实时推导；其余为静态演示值。
+const THREADS = {
+  zh: [
+    { id:"ta", title:"把卡顿变成正文", status:"active", current:true, roles:[
+      { path:"写作/把卡顿变成正文.md", role:"main", doc:"main" },
+      { path:"研究/编辑点概念稿.md", role:"ref" },
+      { path:"研究/Tufte 边注传统.md", role:"ref" },
+      { path:"写作/写给读者的信.md", role:"draft", doc:"letter" },
+    ]},
+    { id:"tb", title:"整理成演讲稿", status:"paused", open:0, review:1, roles:[
+      { path:"演讲/整理成演讲稿大纲.md", role:"main" },
+      { path:"写作/把卡顿变成正文.md", role:"source" },
+    ]},
+    { id:"tc", title:"2026 产品方向", status:"done", open:0, review:0, roles:[
+      { path:"2026-产品方向.md", role:"main" },
+    ]},
+  ],
+  en: [
+    { id:"ta", title:"Turning Friction into Text", status:"active", current:true, roles:[
+      { path:"writing/Turning Friction into Text.md", role:"main", doc:"main" },
+      { path:"research/Edit-point concept.md", role:"ref" },
+      { path:"research/The Tufte margin tradition.md", role:"ref" },
+      { path:"writing/A Letter to Readers.md", role:"draft", doc:"letter" },
+    ]},
+    { id:"tb", title:"Reshape into a talk", status:"paused", open:0, review:1, roles:[
+      { path:"talks/Talk outline.md", role:"main" },
+      { path:"writing/Turning Friction into Text.md", role:"source" },
+    ]},
+    { id:"tc", title:"2026 product direction", status:"done", open:0, review:0, roles:[
+      { path:"2026-product-direction.md", role:"main" },
+    ]},
+  ],
 };
 
 // ============================================================================
 // 状态与渲染
 // ============================================================================
 const STATES = ["empty","clean","points","delegate","working","review","archived","long","conflict"];
-const state = { theme:"light", view:"clean", lang:"zh", measure:480, annotate:false, gray:false, doc:"main" };
+const state = { theme:"light", view:"clean", lang:"zh", measure:480, annotate:false, gray:false, doc:"main", nav:"a", lens:"tree" };
+const collapsedDirs = new Set();   // 目录树折叠状态（path 集合），默认全展开
 {
   const q = new URLSearchParams(location.search);
   const v = q.get("theme"); if (["light","dark","eink"].includes(v)) state.theme = v;
   const w = q.get("state"); if (STATES.includes(w)) state.view = w;
   const l = q.get("lang"); if (["zh","en"].includes(l)) state.lang = l;
   const m = parseInt(q.get("measure"),10); if (m>=400 && m<=1200) state.measure = m;
+  const nv = q.get("nav"); if (["a","b","c"].includes(nv)) state.nav = nv;
+  const ln = q.get("lens"); if (["tree","threads"].includes(ln)) state.lens = ln;
   if (q.get("annotate")==="on") state.annotate = true;
   if (q.get("gray")==="on") state.gray = true;
 }
@@ -777,41 +959,204 @@ function applyArchivedEdits(doc) {
   }
 }
 
-// ---- 目次 ----
+// ---- 左栏：目录 × Threads，三个结构变体（?nav=a 分区 / b 视角 / c 叠加） ----
+const ROLE_KEY = { main:"N_roleMain", ref:"N_roleRef", draft:"N_roleDraft", source:"N_roleSource" };
+const ST_KEY = { active:"N_stActive", paused:"N_stPaused", done:"N_stDone" };
+
+// path → [{thread, role}]：同一文件被多 Thread 引用时全部列出，不合并不取舍
+function refsByPath() {
+  const m = new Map();
+  for (const th of THREADS[state.lang])
+    for (const r of th.roles) {
+      if (!m.has(r.path)) m.set(r.path, []);
+      m.get(r.path).push({ thread: th, role: r.role });
+    }
+  return m;
+}
+const basename = (p) => p.split("/").pop();
+
+// Thread 元信息行：状态 + 开放/处理中/待回看（当前 Thread 由运行态推导，三类点不隐身）
+function threadMetaHTML(th) {
+  const t = T();
+  let o, w, r;
+  if (th.current) {
+    o = points.filter(p=>p.st==="open").length;
+    w = points.filter(p=>p.st==="working").length;
+    r = points.filter(p=>p.st==="review").length;
+  } else { o = th.open; w = th.working || 0; r = th.review; }
+  const st = th.current && state.view==="conflict" ? t.N_stPaused : t[ST_KEY[th.status]];
+  const parts = [];
+  if (o) parts.push(t.N_cntOpen(o));
+  if (w) parts.push(t.N_cntWorking(w));
+  if (r) parts.push(t.N_cntReview(r));
+  const counts = parts.length ? `<b>${esc(parts.join(" · "))}</b>` : esc(t.N_noPoints);
+  return `${esc(st)} · ${counts}`;
+}
+function openDoc(docKey) {
+  return () => { state.doc = docKey; if (state.view==="empty") state.view="clean"; apply(); };
+}
+function demoToast() { showToast(esc(T().N14_demoDoc)); }
+
+// 目录树：层级 = 缩进（--i）+ 字重（目录 600）+ 明度（data-d），统一字号
+function buildTree(nodes, depth, host, overlay, refs) {
+  const t = T();
+  for (const n of nodes) {
+    if (n.type === "dir") {
+      const open = !collapsedDirs.has(n.path);
+      const b = el("button", "tr-row tr-dir");
+      b.style.setProperty("--i", depth);
+      b.dataset.d = depth;
+      b.setAttribute("aria-expanded", String(open));
+      b.title = n.path;
+      b.append(el("span", "tr-caret", "▾"), el("span", "tr-name", esc(n.name)));
+      b.addEventListener("click", () => {
+        if (collapsedDirs.has(n.path)) collapsedDirs.delete(n.path); else collapsedDirs.add(n.path);
+        apply();
+      });
+      host.append(b);
+      if (open) {
+        const kids = el("div", "tr-kids");
+        buildTree(n.children, depth + 1, kids, overlay, refs);
+        host.append(kids);
+      }
+    } else {
+      const isCur = n.doc && n.doc === state.doc;
+      const b = el("button", "tr-row tr-file" + (isCur ? " current" : ""));
+      b.style.setProperty("--i", depth);
+      b.dataset.d = depth;
+      b.title = n.path;
+      b.append(el("span", "tr-caret", ""), el("span", "tr-name", esc(n.name)));
+      if (overlay) {
+        // 叠加式：当前 Thread 的角色标记浮于目录之上；多 Thread 引用给计数
+        const rs = (refs.get(n.path) || []);
+        const mine = rs.filter(x => x.thread.current);
+        const others = rs.filter(x => !x.thread.current);
+        if (mine.length || others.length) {
+          const mk = el("span", "tr-marks");
+          for (const x of mine) mk.append(el("span", "tr-tag", esc(t[ROLE_KEY[x.role]])));
+          if (rs.length > 1) {
+            const mu = el("span", "tr-multi", esc(t.N_multiRef(rs.length)));
+            mu.title = t.N_multiTitle(rs.length);
+            mk.append(mu);
+          }
+          b.append(mk);
+        }
+      }
+      b.addEventListener("click", n.doc ? openDoc(n.doc) : demoToast);
+      host.append(b);
+    }
+  }
+}
+function treeSection(overlay, showKicker = true) {
+  const sec = el("div", "nav-sec grow");   // 目录区弹性收缩 + 自滚动（低视口策略）
+  if (showKicker) sec.append(el("div", "nav-kicker", esc(T().N4_toc)));
+  const tree = el("div", "nav-tree"); tree.dataset.deck = "E13";
+  buildTree(TREE[state.lang], 0, tree, overlay, refsByPath());
+  sec.append(tree);
+  return sec;
+}
+
+// Threads 区：当前 Thread 展开（标题/状态/计数/文件角色），其余紧凑行
+function threadsSection(showKicker = true, grow = false) {
+  const t = T();
+  const sec = el("div", "nav-sec" + (grow ? " grow" : ""));
+  if (showKicker) sec.append(el("div", "nav-kicker", esc(t.N4b_threads)));
+  const list = el("div", "nav-threads"); list.dataset.deck = "E14";
+  for (const th of THREADS[state.lang]) {
+    if (th.current) {
+      const card = el("div", "thr-card");
+      card.append(el("div", "thr-t", esc(th.title)), el("div", "thr-meta", threadMetaHTML(th)));
+      const roles = el("div", "thr-roles");
+      for (const r of th.roles) {
+        const isCur = r.doc && r.doc === state.doc;
+        const b = el("button", "thr-role" + (isCur ? " current" : ""));
+        b.title = r.path;
+        b.append(el("span", "rl-name", esc(basename(r.path))),
+                 el("span", "rl-role", esc(t[ROLE_KEY[r.role]])));
+        b.addEventListener("click", r.doc ? openDoc(r.doc) : demoToast);
+        roles.append(b);
+      }
+      card.append(roles);
+      list.append(card);
+    } else {
+      const b = el("button", "thr-line");
+      b.append(el("span", "tl-name", esc(th.title)),
+               el("span", "tl-meta", threadMetaHTML(th)));
+      b.addEventListener("click", demoToast);
+      list.append(b);
+    }
+  }
+  sec.append(list);
+  return sec;
+}
+
+// 叠加式的意图层节记：当前 Thread 摘要 + 其他 Thread 紧凑行，浮于目录之上
+function overlayHead() {
+  const t = T();
+  const sec = el("div", "nav-sec");
+  const cur = THREADS[state.lang].find(th => th.current);
+  const chip = el("div", "thr-chip"); chip.dataset.deck = "E14";
+  chip.append(el("div", "tc-k", esc(t.N_curThread)),
+              el("div", "thr-t", esc(cur.title)),
+              el("div", "thr-meta", threadMetaHTML(cur)));
+  chip.addEventListener("click", demoToast);
+  sec.append(chip);
+  for (const th of THREADS[state.lang]) {
+    if (th.current) continue;
+    const b = el("button", "thr-line");
+    b.append(el("span", "tl-name", esc(th.title)), el("span", "tl-meta", threadMetaHTML(th)));
+    b.addEventListener("click", demoToast);
+    sec.append(b);
+  }
+  return sec;
+}
+
+function lensTabs() {
+  const t = T();
+  const tabs = el("div", "nav-lens"); tabs.dataset.deck = "E2";
+  for (const [val, label] of [["tree", t.N_lensTree], ["threads", t.N_lensThreads]]) {
+    const b = el("button", state.lens === val ? "active" : "", esc(label));
+    b.addEventListener("click", () => { state.lens = val; apply(); });
+    tabs.append(b);
+  }
+  return tabs;
+}
+
 function renderNav() {
   const host = document.getElementById("nav"); host.replaceChildren();
-  const t = T(), F = FILES[state.lang];
-  if (state.view === "empty") {
-    const d = el("div","nav-empty", esc(t.N10_emptyNav));
-    const b = el("button","nav-open-btn", esc(t.N11_open));
-    b.addEventListener("click", ()=>{ state.view="clean"; apply(); });
-    host.append(d, b); return;
-  }
-  host.append(el("div","nav-kicker", esc(t.N4_toc)));
-  const th = el("div","nav-thread", esc(ARTICLE[state.lang].thread)); th.dataset.deck="E2";
-  th.append(el("span","nav-thread-st", state.lang==="zh" ? "进行中 · 3 个文件角色" : "active · 3 file roles"));
-  host.append(th, el("hr","nav-rule"));
-
-  const addGroup = (label) => host.append(el("div","nav-group", esc(label)));
-  const addFile = (name, docKey) => {
-    const b = el("button","nav-file" + (docKey && docKey===state.doc ? " current":""));
-    b.append(el("span","nf-name", esc(name)));
-    if (docKey) b.addEventListener("click", ()=>{ state.doc=docKey; if(state.view==="empty") state.view="clean"; apply(); });
-    else b.addEventListener("click", ()=> showToast(esc(t.N14_demoDoc)));
-    host.append(b);
+  const t = T();
+  const openBtn = () => {
+    const b = el("button", "nav-open-btn", esc(t.N11_open));
+    b.addEventListener("click", () => { state.view = "clean"; apply(); });
+    return b;
   };
-  addGroup(t.N5_main); F.main.forEach(f=>addFile(f.name, f.doc));
-  addGroup(t.N6_ref);  F.ref.forEach(n=>addFile(n, null));
-  addGroup(t.N7_draft); F.draft.forEach(f=>addFile(f.name, f.doc));
-  host.append(el("hr","nav-rule"));
-  addGroup(t.N8_others);
-  for (const o of F.others) {
-    const b = el("button","nav-thread-other", esc(o.name));
-    b.append(el("span","nt-st", esc(t[o.st])));
-    b.addEventListener("click", ()=> showToast(esc(t.N14_demoDoc)));
-    host.append(b);
+  // 空态：三个变体各自说明自己打开后的样子
+  if (state.view === "empty") {
+    if (state.nav === "b") {
+      host.append(lensTabs());
+      if (state.lens === "threads") host.append(el("div", "nav-empty", esc(t.N10b_emptyThreads)));
+      else host.append(el("div", "nav-empty", esc(t.N10_emptyNav)), openBtn());
+    } else if (state.nav === "c") {
+      host.append(el("div", "nav-empty", esc(t.N10_emptyNav)), openBtn(),
+                  el("div", "nav-empty", esc(t.N10c_emptyOverlay)));
+    } else {
+      host.append(el("div", "nav-kicker", esc(t.N4_toc)),
+                  el("div", "nav-empty", esc(t.N10_emptyNav)), openBtn(),
+                  el("hr", "nav-rule"),
+                  el("div", "nav-kicker", esc(t.N4b_threads)),
+                  el("div", "nav-empty", esc(t.N10b_emptyThreads)));
+    }
+    return;
   }
-  host.append(el("div","nav-foot", esc(t.N9_workspace)));
+  if (state.nav === "b") {
+    host.append(lensTabs());
+    host.append(state.lens === "threads" ? threadsSection(false, true) : treeSection(false, false));
+  } else if (state.nav === "c") {
+    host.append(overlayHead(), el("hr", "nav-rule"), treeSection(true));
+  } else {
+    host.append(treeSection(false), el("hr", "nav-rule"), threadsSection());
+  }
+  host.append(el("div", "nav-foot", esc(t.N9_workspace)));
 }
 
 // ---- 文章 ----
@@ -989,6 +1334,7 @@ function resolvePoint(p, accept) {
     else a.replaceWith(document.createTextNode(a.textContent));
   }
   p.st = "done";
+  renderNav();   // Thread 卡计数由运行态实时推导：裁决后立即刷新左栏
   const next = points.find(x=>x.st==="review");   // 逐点回看：裁决后焦点落到下一待回看点
   reviewFocus = next ? next.id : null;
   const sn = document.querySelector(`.sn[data-pt="${p.id}"]`);
@@ -1196,6 +1542,10 @@ function renderConsole() {
          ["working",t.C3_working],["review",t.C3_review],["archived",t.C3_archived],["long",t.C3_long],["conflict",t.C3_conflict]],
         state.view, v=>setView(v)));
   host.append(g);
+  g = el("span","c-group"); g.dataset.deck = "E2";
+  g.append(el("span","c-label", esc(t.C10_nav)),
+    seg([["a",t.C10_a],["b",t.C10_b],["c",t.C10_c]], state.nav, v=>state.nav=v));
+  host.append(g);
   g = el("span","c-group");
   g.append(el("span","c-label", esc(t.C4_lang)), seg([["zh","中文"],["en","English"]], state.lang, v=>state.lang=v));
   host.append(g);
@@ -1253,6 +1603,13 @@ function apply() {
 }
 document.addEventListener("mouseup", ()=> setTimeout(onSelect, 0));
 document.addEventListener("mousedown", (e)=> { if (creator && !creator.contains(e.target)) closeCreator(); });
+// 视角变体（b）快捷键：1 = 目录，2 = Threads
+document.addEventListener("keydown", (e)=> {
+  if (state.nav !== "b" || e.metaKey || e.ctrlKey || e.altKey) return;
+  if (/^(INPUT|TEXTAREA)$/.test(e.target.tagName)) return;
+  if (e.key === "1") { state.lens = "tree"; apply(); }
+  if (e.key === "2") { state.lens = "threads"; apply(); }
+});
 window.addEventListener("resize", ()=> syncNotePositions());
 points = seedPoints(state.view);
 apply();
