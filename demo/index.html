@@ -257,6 +257,7 @@ const COPY = {
     C7_state: "状态",
     C7_empty: "空态", C7_full: "满态", C7_long: "长文档",
     C8_annotate: "批注",
+    C8_off: "关", C8_on: "开",
     C9_role: "角色",
     C9_roleNote: "单一角色（作者本人，ADR 0001 自用定位），无可切换",
     C10_intentTitle: "设计意图",
@@ -292,6 +293,7 @@ const COPY = {
     C7_state: "State",
     C7_empty: "Empty", C7_full: "Full", C7_long: "Long doc",
     C8_annotate: "Annotate",
+    C8_off: "Off", C8_on: "On",
     C9_role: "Role",
     C9_roleNote: "Single role (the author, ADR 0001) — nothing to switch",
     C10_intentTitle: "Design intent",
@@ -595,7 +597,7 @@ function renderConsole() {
 
   g = el("span", "c-group");
   g.append(el("span", "c-label", esc(t.C8_annotate)));
-  g.append(seg([["off", "off"], ["on", "on"]], state.annotate ? "on" : "off", (v) => state.annotate = v === "on"));
+  g.append(seg([["off", t.C8_off], ["on", t.C8_on]], state.annotate ? "on" : "off", (v) => state.annotate = v === "on"));
   host.append(g);
 
   g = el("span", "c-group");

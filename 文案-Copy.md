@@ -74,10 +74,10 @@
 | C5 | 维度标签：密度（舒适/紧凑） | 作者 | 密度：舒适 / 紧凑 | Density: Comfortable / Compact | 密度独立于方向：同一气质下作者可能要写给读两种节奏。 | 草稿 |
 | C6 | 维度标签：语言 | 作者 | 语言 | Language | design-demo skill 要求语言 toggle 是结构而非翻译；同时承担英文布局弹性检查入口。 | 草稿 |
 | C7 | 维度标签：状态（空态/满态/长文档滚动） | 作者 | 状态：空态 / 满态 / 长文档 | State: Empty / Full / Long doc | 装饰层的问题常出在边界：空态是否塌、长文档滚动时标题与提示块是否稳定。 | 草稿 |
-| C8 | 维度标签：设计批注 | 作者 | 批注 | Annotate | 批注模式把界面元素与 deck 条目编号（D/C 系列）钉在一起，走查与评审时可直接引用编号裁决。 | 草稿 |
+| C8 | 维度标签：设计批注（含开关态文案） | 作者 | 批注；开关态：关 / 开 | Annotate; toggle: Off / On | 批注模式把界面元素与 deck 条目编号（D/C 系列）钉在一起，走查与评审时可直接引用编号裁决。 | 草稿 |
 | C9 | 角色视角维度（声明不做） | 作者 | 角色：单一角色（作者本人，ADR 0001 自用定位），无可切换 | Role: single role (the author, ADR 0001) — nothing to switch | design-demo skill 默认要求角色切换；Lumir 不涉及多角色，置灰并说明原因，避免评审者误以为遗漏。 | 草稿 |
 | C10 | 设计意图说明块标题 | 作者 | 设计意图 | Design intent | 每个方向一段意图说明随切换更新，走查时先读意图再看界面。 | 草稿 |
 | C11 | 演示文档来源注记 | 作者 | 正文内容：wikilink fixture Alpha.md（frontmatter 与「标题层级」一节为演示补充，fixture 原文无此两部分） | Content: wikilink fixture Alpha.md (frontmatter and the heading-level section are demo supplements — not in the original fixture) | 如实标注与 fixture 的偏差，评审时不把补充内容误认为现状。 | 草稿 |
-| C12 | 方向 A 意图段落 | 作者 | 见 demo 内 COPY.directionIntents | See COPY.directionIntents in the demo | 长段落文案集中放 demo 的 COPY 对象，deck 登记条目与位置，正文以 demo 为准。 | 草稿 |
-| C13 | 方向 B 意图段落 | 作者 | 同上 | Same as above | 同 C12。 | 草稿 |
-| C14 | 方向 C 意图段落 | 作者 | 同上 | Same as above | 同 C12。 | 草稿 |
+| C12 | 方向 A 意图段落 | 作者 | 见 demo 内 COPY key `intent_paper` | See demo COPY key `intent_paper` | 长段落文案集中放 demo 的 COPY 对象（扁平 key，key 名即方向），deck 登记条目与位置，正文以 demo 为准。 | 草稿 |
+| C13 | 方向 B 意图段落 | 作者 | 见 demo 内 COPY key `intent_graphite` | See demo COPY key `intent_graphite` | 同 C12。 | 草稿 |
+| C14 | 方向 C 意图段落 | 作者 | 见 demo 内 COPY key `intent_ink` | See demo COPY key `intent_ink` | 同 C12。 | 草稿 |
