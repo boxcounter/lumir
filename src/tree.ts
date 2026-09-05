@@ -55,7 +55,7 @@ export function openKind(path: string): OpenKind {
 export interface FileTreeCallbacks {
   /** 点击文件：按 openKind 分类交给装配层处理。 */
   onOpenFile(path: string, kind: OpenKind): void;
-  /** 空态里的"打开 vault"入口。 */
+  /** 「打开 vault」入口：空态按钮与树头部的常驻切换入口共用。 */
   onOpenVault(): void;
 }
 
@@ -197,7 +197,18 @@ export function createFileTree(mount: HTMLElement, cb: FileTreeCallbacks): FileT
     rootEl.replaceChildren();
     const header = document.createElement("div");
     header.className = "ft-header";
-    header.textContent = vaultName;
+    const name = document.createElement("span");
+    name.className = "ft-vault-name";
+    name.textContent = vaultName;
+    // 常驻切换入口：与空态「打开 vault」共用 onOpenVault（替换语义，见 commands.rs open_vault）
+    const switchBtn = document.createElement("button");
+    switchBtn.type = "button";
+    switchBtn.className = "ft-switch-btn";
+    switchBtn.textContent = "切换";
+    switchBtn.title = "切换 vault";
+    switchBtn.setAttribute("aria-label", "切换 vault");
+    switchBtn.addEventListener("click", () => cb.onOpenVault());
+    header.append(name, switchBtn);
     const ul = document.createElement("ul");
     ul.className = "ft-children ft-root-list";
     for (const child of sortedChildren(root)) mountNode(child, ul);
