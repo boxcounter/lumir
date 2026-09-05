@@ -284,33 +284,28 @@ pub async fn vault_open(
 }
 
 /// 启动后查询当前 vault 状态（含恢复失败的人话提示）。
-/// async（M33）：重扫全量离开主线程事件循环；锁内只取快照，扫描不持锁。
 #[tauri::command]
-pub async fn vault_current(
-    state: tauri::State<'_, VaultState>,
-) -> Result<VaultStatus, CommandError> {
-    let (root, notice) = {
-        let inner = state.inner.lock().expect("vault state poisoned");
-        (inner.root.clone(), inner.notice.clone())
-    };
-    let vault = match root {
+pub fn vault_current(state: tauri::State<'_, VaultState>) -> Result<VaultStatus, CommandError> {
+    let inner = state.inner.lock().expect("vault state poisoned");
+    let vault = match &inner.root {
         Some(root) => Some(VaultInfo {
             root: root.display().to_string(),
-            entries: fs_io::scan_workspace(&root)?,
+            entries: fs_io::scan_workspace(root)?,
         }),
         None => None,
     };
-    Ok(VaultStatus { vault, notice })
+    Ok(VaultStatus {
+        vault,
+        notice: inner.notice.clone(),
+    })
 }
 
 /// 全量重扫当前 vault（前端按需调用；watch 期间常规刷新走增量事件）。
-/// async（M33）：扫描可能耗时，不占用主线程；锁内只取根路径。
 #[tauri::command]
-pub async fn fs_scan_workspace(
+pub fn fs_scan_workspace(
     state: tauri::State<'_, VaultState>,
 ) -> Result<Vec<FsEntry>, CommandError> {
-    let root = state.root()?;
-    fs_io::scan_workspace(&root)
+    fs_io::scan_workspace(&state.root()?)
 }
 
 /// 读 vault 内文本文件（UTF-8）。
@@ -373,10 +368,11 @@ pub fn wikilink_create(
 }
 
 /// 当前文件的反链（来源文件 + 行号 + 行级上下文），只读派生视图。
-/// async（M33）：Tauri 2 同步 command 跑主线程事件循环，重计算会冻结全 app；
-/// 反链走后端 target→sources 倒排 O(1) 查表，锁内仅一次查表 + 克隆。
+/// deprecated（2026-09-05 Alex 裁决：backlinks 面板砍掉，挤压预案推迟）：
+/// 保留仅为不打断面板现存调用点（先删会触发非信封 reject → 前端整体降级）；
+/// M35 删除 UI 调用点后由独立小提交删除本 command 与 LinkGraph::backlinks。
 #[tauri::command]
-pub async fn link_graph_backlinks(
+pub fn link_graph_backlinks(
     state: tauri::State<'_, VaultState>,
     path: &str,
 ) -> Result<Vec<BacklinkItem>, CommandError> {

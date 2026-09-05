@@ -469,8 +469,7 @@ pub fn is_markdown(path: &str) -> bool {
 ///
 /// M33 性能重构（语义不变）：`files` 全集之上维护三组 HashMap 名称索引
 /// （完整路径 / 段边界尾部 / stem），`match_candidates` 由全文件线性扫描改
-/// O(1) 查桶；并维护 target→sources 反链倒排（upsert/remove 增量级联重解析），
-/// `backlinks` 由 O(全 vault 链接数×文件数) 改 O(1) 查表。
+/// O(1) 查桶——单条 resolve 在大 vault 由 O(文件数) 降为微秒级以下。
 pub struct LinkGraph {
     /// 全部非目录文件（vault 根相对，`/` 分隔），有序保证确定性。
     files: BTreeSet<String>,
@@ -483,15 +482,6 @@ pub struct LinkGraph {
     tail_index: HashMap<String, Vec<String>>,
     /// 小写 stem（去扩展名）→ `.md` 路径（§3.2 子步 b；仅 .md 文件入桶）。
     stem_index: HashMap<String, Vec<String>>,
-    /// 每个文档各链接的解析落点（Resolved/Ambiguous 的目标路径，其余 None），
-    /// 与 `docs[path].links` 等长同序。
-    resolved: HashMap<String, Vec<Option<String>>>,
-    /// target → 反链条目，按 (source, line) 有序（与原全量重算输出同口径）。
-    backlink_index: HashMap<String, Vec<BacklinkItem>>,
-    /// 链接匹配键 → 含该键链接的文档：文件增删改时据此级联重解析受影响文档。
-    watch_index: HashMap<String, BTreeSet<String>>,
-    /// 每个文档当前登记的匹配键（watch_index 的反向记录，供增量清除）。
-    doc_keys: HashMap<String, Vec<String>>,
 }
 
 impl LinkGraph {
@@ -502,17 +492,11 @@ impl LinkGraph {
             path_index: HashMap::new(),
             tail_index: HashMap::new(),
             stem_index: HashMap::new(),
-            resolved: HashMap::new(),
-            backlink_index: HashMap::new(),
-            watch_index: HashMap::new(),
-            doc_keys: HashMap::new(),
         }
     }
 
     /// 建立/增量更新一个文件条目。`.md` 且给了内容则重建派生信息；
     /// `.md` 无内容（读取失败）则丢弃旧派生信息（宁缺毋滥）。
-    /// 同步维护名称索引与反链倒排：重解析本文件链接，并级联重解析匹配键与
-    /// 本文件提供键相交的他文档（其链接的解析结果可能因本文件增改而变化）。
     pub fn upsert(&mut self, path: &str, content: Option<&str>) {
         if self.files.contains(path) {
             self.unregister_path(path);
@@ -529,9 +513,6 @@ impl LinkGraph {
                 }
             }
         }
-        self.reindex_doc_links(path);
-        self.refresh_doc_keys(path);
-        self.reindex_affected(path);
     }
 
     /// 移除文件；若 path 是目录前缀则连同子孙一起移除（与 watch 级联删除同口径）。
@@ -554,9 +535,6 @@ impl LinkGraph {
         for f in removed {
             self.unregister_path(&f);
             self.docs.remove(&f);
-            self.reindex_doc_links(&f); // docs 已无此文档 → 清除其反链贡献
-            self.clear_doc_keys(&f);
-            self.reindex_affected(&f);
         }
     }
 
@@ -583,112 +561,6 @@ impl LinkGraph {
         }
         if is_markdown(path) {
             index_remove(&mut self.stem_index, stem_of(file_name(&lower)), path);
-        }
-    }
-
-    /// 重解析单文档全部链接，同步 resolved / backlink_index（docs 须已是新值；
-    /// docs 无此文档 = 文档已删除，仅清除其既有反链贡献）。
-    fn reindex_doc_links(&mut self, path: &str) {
-        let new: Vec<Option<String>> = match self.docs.get(path) {
-            Some(doc) => doc
-                .links
-                .iter()
-                .map(|dl| {
-                    let res = self.resolve(path, &dl.link);
-                    match res.status {
-                        LinkStatus::Resolved | LinkStatus::Ambiguous => res.path,
-                        _ => None,
-                    }
-                })
-                .collect(),
-            None => Vec::new(),
-        };
-        let old = self.resolved.remove(path).unwrap_or_default();
-        let mut targets: BTreeSet<String> = BTreeSet::new();
-        for t in old.iter().chain(new.iter()).flatten() {
-            targets.insert(t.clone());
-        }
-        for t in targets {
-            let items: Vec<BacklinkItem> = match self.docs.get(path) {
-                Some(doc) => doc
-                    .links
-                    .iter()
-                    .zip(new.iter())
-                    .filter(|(_, r)| r.as_deref() == Some(t.as_str()))
-                    .map(|(dl, _)| BacklinkItem {
-                        source: path.to_string(),
-                        line: dl.line,
-                        context: dl.context.clone(),
-                    })
-                    .collect(),
-                None => Vec::new(),
-            };
-            let bucket = self.backlink_index.entry(t.clone()).or_default();
-            bucket.retain(|item| item.source != path);
-            bucket.extend(items);
-            bucket.sort_by(|a, b| (&a.source, a.line).cmp(&(&b.source, b.line)));
-            if bucket.is_empty() {
-                self.backlink_index.remove(&t);
-            }
-        }
-        if self.docs.contains_key(path) {
-            self.resolved.insert(path.to_string(), new);
-        }
-    }
-
-    /// 级联重解析：匹配键与本文件提供键相交的他文档（本文件增删改可能改变
-    /// 其链接解析：unresolved ↔ resolved、ambiguous 候选集与裁决点 G 的选择）。
-    fn reindex_affected(&mut self, path: &str) {
-        let mut affected = BTreeSet::new();
-        for key in provide_keys(path) {
-            if let Some(docs) = self.watch_index.get(&key) {
-                for d in docs {
-                    if d != path {
-                        affected.insert(d.clone());
-                    }
-                }
-            }
-        }
-        for d in affected {
-            self.reindex_doc_links(&d);
-        }
-    }
-
-    /// 重新登记文档链接的匹配键（docs 须已是新值）。
-    fn refresh_doc_keys(&mut self, path: &str) {
-        self.clear_doc_keys(path);
-        let Some(doc) = self.docs.get(path) else {
-            return;
-        };
-        let mut keys: Vec<String> = doc
-            .links
-            .iter()
-            .flat_map(|dl| link_keys(&dl.link))
-            .collect();
-        keys.sort();
-        keys.dedup();
-        for k in &keys {
-            self.watch_index
-                .entry(k.clone())
-                .or_default()
-                .insert(path.to_string());
-        }
-        if !keys.is_empty() {
-            self.doc_keys.insert(path.to_string(), keys);
-        }
-    }
-
-    fn clear_doc_keys(&mut self, path: &str) {
-        let Some(keys) = self.doc_keys.remove(path) else {
-            return;
-        };
-        for k in keys {
-            if let Some(set) = self.watch_index.get_mut(&k) {
-                set.remove(path);
-                if set.is_empty() {
-                    self.watch_index.remove(&k);
-                }
-            }
         }
     }
 
@@ -864,11 +736,31 @@ impl LinkGraph {
         }
     }
 
-    /// 反链（link graph 只读派生物）：target→sources 反向索引直查（M33：O(1) 查表，
-    /// 替代原"遍历全部文档重解析全部链接"的全量重算）。索引随 upsert/remove 增量
-    /// 维护；结果按 (source, line) 有序，与原全量重算输出同口径。
+    /// 反链（link graph 只读派生物）：解析全部文档内链接，命中 target 的列出。
+    /// 结果按来源路径字典序（确定性）。
+    /// deprecated（2026-09-05 Alex 裁决：backlinks 面板砍掉，挤压预案推迟）：
+    /// 唯一调用方 link_graph_backlinks command 待 M35 删完 UI 调用点后一并删除；
+    /// 在此之前不得新增调用方。全量重算成本已被名称索引压到 O(总链接数)。
     pub fn backlinks(&self, target: &str) -> Vec<BacklinkItem> {
-        self.backlink_index.get(target).cloned().unwrap_or_default()
+        let mut out = Vec::new();
+        for path in self.files.iter() {
+            let Some(doc) = self.docs.get(path) else {
+                continue;
+            };
+            for dl in &doc.links {
+                let res = self.resolve(path, &dl.link);
+                if matches!(res.status, LinkStatus::Resolved | LinkStatus::Ambiguous)
+                    && res.path.as_deref() == Some(target)
+                {
+                    out.push(BacklinkItem {
+                        source: path.clone(),
+                        line: dl.line,
+                        context: dl.context.clone(),
+                    });
+                }
+            }
+        }
+        out
     }
 
     /// 计算一键创建的目标路径（§4.4，裁决点 I）：path 段不含 `/` 时创建于
@@ -1017,48 +909,6 @@ fn stem_of(name: &str) -> &str {
         .filter(|(s, _)| !s.is_empty())
         .map(|(s, _)| s)
         .unwrap_or(name)
-}
-
-/// 链接的匹配键（统一小写键空间）：任一文件的提供键与此集合相交时，该链接的
-/// 解析结果可能随之变化（覆盖 §3.2 的精确路径 / 路径后缀 / 完整文件名 / stem
-/// 四种命中形态）。自引用（§3.4）、块引用（§6）、含 `..` / `.` 段（§3.2 恒
-/// unresolved）的链接不依赖他文件，无键。
-fn link_keys(link: &WikiLink) -> Vec<String> {
-    if link.block_ref {
-        return Vec::new();
-    }
-    let p = link.path.trim();
-    if p.is_empty() || p.split('/').any(|s| s == ".." || s == ".") {
-        return Vec::new();
-    }
-    let lower = p.to_lowercase();
-    if p.contains('/') {
-        if lower.ends_with(".md") {
-            vec![lower]
-        } else {
-            vec![lower.clone(), format!("{lower}.md")]
-        }
-    } else {
-        vec![lower]
-    }
-}
-
-/// 文件的提供键：完整路径与全部段边界尾部的小写形式，及各自去 `.md` 后缀的
-/// 变体（后者覆盖 stem 命中与"path 未带 .md 后缀时补拼"命中）。
-fn provide_keys(path: &str) -> Vec<String> {
-    let lower = path.to_lowercase();
-    let mut keys = Vec::new();
-    let mut push = |tail: &str| {
-        keys.push(tail.to_string());
-        if let Some(stripped) = tail.strip_suffix(".md") {
-            keys.push(stripped.to_string());
-        }
-    };
-    push(&lower);
-    for (i, _) in lower.match_indices('/') {
-        push(&lower[i + 1..]);
-    }
-    keys
 }
 
 /// 路径的最后一段（文件名）。

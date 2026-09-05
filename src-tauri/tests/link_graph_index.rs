@@ -1,9 +1,9 @@
-//! 链接图索引一致性差分测试（M33 性能重构的行为保障）。
+//! 链接图名称索引一致性差分测试（M33 性能重构的行为保障）。
 //!
 //! 语义本体仍由 wikilink_fixtures.rs（frozen spec cases.json 全量断言）保障；
-//! 本测试专防索引维护错误：在随机增删改序列后，增量维护的 LinkGraph 必须与
-//! 同内容全新重建的图产出完全一致的 backlinks / resolve 结果（历史敏感性差分，
-//! 捕获索引残留与级联遗漏）。
+//! 本测试专防索引维护错误：在随机增删改序列后，增量维护名称索引（path/tail/
+//! stem 三组 HashMap）的 LinkGraph 必须与同内容全新重建的图产出完全一致的
+//! resolve / backlinks 结果（历史敏感性差分，捕获索引残留）。
 
 use lumir_lib::link_graph::{parse_links, LinkGraph};
 use std::collections::BTreeMap;
@@ -171,10 +171,11 @@ fn incremental_index_matches_fresh_rebuild() {
     }
 }
 
-/// 反链倒排的针对性断言：新文件把既有 unresolved 链接变 resolved 后，
-/// 反链必须立即出现（级联重解析）；删除目标后反链必须消失。
+/// 反链（deprecated 的全量重算路径）针对性断言：新文件把既有 unresolved 链接
+/// 变 resolved 后反链必须出现；候选集变化（ambiguous 裁决点 G 抢占）与删除
+/// 目标后反链必须相应转移/消失。语义断言，与实现是否走索引无关。
 #[test]
-fn backlink_index_tracks_create_and_delete() {
+fn backlink_tracks_create_and_delete() {
     let mut g = LinkGraph::new();
     g.upsert("a.md", Some("指向 [[b]] 与 [[c]]。\n"));
     assert!(g.backlinks("b.md").is_empty());
