@@ -79,7 +79,7 @@ export interface EditorHandle {
   setWikilinkResolver(resolver: WikilinkResolver | null): void;
   /** 强制重建装饰（解析缓存更新 / watch 增量后调用）。 */
   refreshPreview(): void;
-  /** 滚动定位到 1-based 行号并把光标移到行首（wikilink 锚点 / 反链跳转用）。 */
+  /** 滚动定位到 1-based 行号并把光标移到行首（wikilink 锚点跳转用）。 */
   revealLine(line: number): void;
 }
 

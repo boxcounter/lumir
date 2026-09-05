@@ -36,7 +36,7 @@ use ts_rs::TS;
 
 use crate::config::{self, ConfigSnapshot};
 use crate::fs_io::{self, FsChange, FsEntry, FsEntryChangedEvent, VaultWatcher};
-use crate::link_graph::{self, BacklinkItem, CreateNoteResult, LinkGraph, LinkResolveResult};
+use crate::link_graph::{self, CreateNoteResult, LinkGraph, LinkResolveResult};
 
 /// command 错误信封（serde 序列化，前端可直接展示 `message`）。
 #[derive(Debug, Clone, Serialize, TS)]
@@ -365,25 +365,6 @@ pub fn wikilink_create(
         .ok_or_else(|| CommandError::new("vault_not_open", "尚未打开 vault，请先选择目录"))?;
     let created = inner.graph.create_note(&root, from, link)?;
     Ok(CreateNoteResult { created })
-}
-
-/// 当前文件的反链（来源文件 + 行号 + 行级上下文），只读派生视图。
-/// deprecated（2026-09-05 Alex 裁决：backlinks 面板砍掉，挤压预案推迟）：
-/// 保留仅为不打断面板现存调用点（先删会触发非信封 reject → 前端整体降级）；
-/// M35 删除 UI 调用点后由独立小提交删除本 command 与 LinkGraph::backlinks。
-#[tauri::command]
-pub fn link_graph_backlinks(
-    state: tauri::State<'_, VaultState>,
-    path: &str,
-) -> Result<Vec<BacklinkItem>, CommandError> {
-    let inner = state.inner.lock().expect("vault state poisoned");
-    if inner.root.is_none() {
-        return Err(CommandError::new(
-            "vault_not_open",
-            "尚未打开 vault，请先选择目录",
-        ));
-    }
-    Ok(inner.graph.backlinks(path))
 }
 
 #[cfg(test)]
