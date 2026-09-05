@@ -56,7 +56,7 @@
 }
 /* eink 斜纹只在显式声明的元素上恢复（上一条规则清了 background-image） */
 [data-theme="eink"] .stripes { background-image:var(--pattern-stripes) !important; }
-[data-theme="eink"] .dim, [data-theme="eink"] .c-label, [data-theme="eink"] .fm-key { font-style:italic; }
+[data-theme="eink"] .dim, [data-theme="eink"] .c-label { font-style:italic; }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { transition:none !important; animation:none !important; }
@@ -124,7 +124,7 @@ kbd {
 #intent-block b { color:var(--accent); }
 
 #stage { height:100%; display:flex; flex-direction:column; }
-#app { flex:1; min-height:0; display:flex; flex-direction:column; }
+#app { flex:1; min-height:0; display:flex; flex-direction:column; position:relative; }
 #app.gray { filter:grayscale(1); }
 
 /* ============ 工具栏（macOS toolbar：图标无 bezel、三段分组） ============ */
@@ -218,12 +218,12 @@ kbd {
   font-family:-apple-system,"PingFang SC","Helvetica Neue",sans-serif;
   font-size:15px; line-height:1.75; letter-spacing:0;
   hanging-punctuation:first allow-end last;   /* 渐进增强：不支持则静默忽略 */
-  text-autospace:normal;                       /* 中西混排 ≤1/4 字宽（CLReq） */
+  text-autospace:auto;                         /* 中西混排自动间距（CLReq ≤1/4 字宽）；不支持则静默忽略 */
 }
 /* 标题展示面：仅 h1 用衬线（作品铭牌），论证见 RATIONALE */
 .doc h1 {
   font-family:"Songti SC","STSong","Noto Serif SC",serif;
-  font-size:1.72em; font-weight:700; line-height:1.4; letter-spacing:0;
+  font-size:1.72em; font-weight:700; line-height:1.4; letter-spacing:-0.01em;
   margin:0 0 1.2em;
 }
 .doc h2 {
@@ -306,10 +306,10 @@ kbd {
 /* ============ Context Surface（右栏，默认隐藏，随状态出现） ============ */
 #surface {
   width:0; flex:none; overflow:hidden; background:var(--bg-nav);
-  border-left:1px solid transparent;
-  transition:width 220ms cubic-bezier(.2,.8,.2,1), border-color 220ms cubic-bezier(.2,.8,.2,1);
+  border-left:none;
+  transition:width 220ms cubic-bezier(.2,.8,.2,1);
 }
-#surface.open { width:304px; border-left-color:var(--bd-1); }
+#surface.open { width:304px; border-left:1px solid var(--bd-1); }
 #surface .surf-inner { width:304px; padding:12px; height:100%; overflow:auto; }
 .surf-card {
   border:1px solid var(--bd-1); border-radius:var(--radius); background:var(--bg-1);
@@ -386,20 +386,19 @@ kbd {
 .icon-btn:disabled { opacity:.35; cursor:default; }
 [data-theme="eink"] .icon-btn:disabled { opacity:1; font-style:italic; }
 
-/* tone 级完成横幅：从顶部落下，方向传达「来自上面的工作流」 */
+/* tone 级完成横幅：app 级横条（不进滚动容器），从顶部展开落下，方向传达「来自上面的工作流」 */
 #tone-banner {
-  position:absolute; top:0; left:0; right:0; z-index:20;
-  display:flex; align-items:center; justify-content:center; gap:10px;
-  padding:7px 14px; font-size:12.5px;
-  background:var(--bg-1); border-bottom:1px solid var(--bd-1); color:var(--text);
-  transform:translateY(-100%); transition:transform 220ms cubic-bezier(.2,.8,.2,1);
+  flex:none; display:flex; align-items:center; justify-content:center; gap:10px;
+  max-height:0; overflow:hidden; padding:0 14px; font-size:12.5px; opacity:0;
+  background:var(--bg-1); border-bottom:0 solid var(--bd-1); color:var(--text);
+  transition:max-height 220ms cubic-bezier(.2,.8,.2,1), padding 220ms cubic-bezier(.2,.8,.2,1), opacity 220ms, border-width 220ms;
 }
-#tone-banner.show { transform:none; }
+#tone-banner.show { max-height:40px; padding:7px 14px; opacity:1; border-bottom-width:1px; }
 #tone-banner .status-dot { width:7px; height:7px; }
 #tone-banner button { border:none; background:none; color:var(--accent); cursor:pointer; font:inherit; font-weight:600; padding:0; }
 [data-theme="eink"] #tone-banner button { text-decoration:underline; color:#000; }
 
-/* popup 级：仅文件冲突与破坏性确认（calmtech 谱顶端） */
+/* popup 级：app 级模态（不进滚动容器），仅文件冲突与破坏性确认（calmtech 谱顶端） */
 #popup-layer {
   position:absolute; inset:0; z-index:40; display:none; align-items:center; justify-content:center;
   background:rgba(20,22,26,.32); padding:24px;
@@ -424,9 +423,9 @@ kbd {
 [data-theme="eink"] .popup-title::before { border-radius:0; background:#000; }
 [data-theme="eink"] .popup { border:4px solid #000; }
 
-/* toast：右下角，自动消隐 */
+/* toast：app 级右下角（不进滚动容器），自动消隐 */
 .lumir-toast {
-  position:absolute; bottom:44px; right:16px; z-index:35;
+  position:absolute; bottom:36px; right:16px; z-index:35;
   display:flex; align-items:center; gap:10px; padding:8px 14px;
   border-radius:var(--radius); background:var(--text); color:var(--bg);
   font-size:12.5px; max-width:70%;
@@ -496,17 +495,17 @@ kbd {
   <div id="console"></div>
   <div id="app">
     <div id="toolbar"></div>
+    <div id="tone-banner"></div>
     <div id="main">
       <nav id="nav"><div class="nav-inner" id="nav-inner"></div></nav>
       <section id="editor">
-        <div id="tone-banner"></div>
         <div id="doc-host"></div>
         <div id="sel-pop"></div>
-        <div id="popup-layer"></div>
       </section>
       <aside id="surface"><div class="surf-inner" id="surf-inner"></div></aside>
     </div>
     <div id="statusbar"></div>
+    <div id="popup-layer"></div>
   </div>
 </div>
 <div id="palette-layer"><div id="palette"><input id="pal-input" type="text"><div id="pal-list"></div></div></div>
@@ -567,6 +566,7 @@ const COPY = {
     // 归档
     arc_toast: (n) => `已归档 ${n} 个编辑点 · 正文恢复干净（演示）`,
     arc_banner: "全部编辑点已处理",
+    arc_action: "归档",
     // 冲突 popup
     conf_micro: "Conflict",
     conf_title: "文件冲突",
@@ -658,6 +658,7 @@ const COPY = {
     rev_nextKbd: "⌘]", rev_prevKbd: "⌘[",
     arc_toast: (n) => `Archived ${n} edit point${n > 1 ? "s" : ""} · the text is clean again (demo)`,
     arc_banner: "All edit points handled",
+    arc_action: "Archive",
     conf_micro: "Conflict",
     conf_title: "File conflict",
     conf_body: "“方法论-笔记.md” was modified on disk by an external program and no longer matches this batch’s base version. Application paused — your call. External writes produce no batch and no fake collaboration state (ADR 0005 §5).",
@@ -720,7 +721,7 @@ const ANNOTATIONS = {
   I12: "I12 · 词级内联 diff：散文变更不满幅红绿；中文按字符/短语粒度；eink 删除=斜体划线、插入=双线下划",
   I13: "I13 · 裁决动词仅两个：接受 / 拒绝（Cursor 五动词长期混淆为反例；VS Code Keep/Undo 为先例）",
   I14: "I14 · 跳到正文：回看与原文互跳，闪烁定位用 background 脉冲（transform/opacity 之外的例外，≤700ms）",
-  I15: "I15 · popup 是分级谱顶端：仅文件冲突与破坏性确认；eink 下遮罩用纯白而非透明",
+  I15: "I15 · popup 是分级谱顶端：仅文件冲突与破坏性确认；eink 下遮罩全透明，保留正文上下文",
   I16: "I16 · 状态栏读数行：路径 / 字数 / 编辑点 / agent 状态 / 行宽，等宽数字对齐——仪器的仪表盘",
   I17: "I17 · tone 级完成横幅：从顶部落下（方向=来自工作流），可点入回看，数秒后自动退回余光",
   I18: "I18 · Context Surface 默认隐藏、随状态从右滑入（220ms）；归档后向右收回——动效方向即空间关系",
@@ -852,7 +853,8 @@ const state = {
   points: [],              // {…def, status: open|processing|review|resolved|rejected}
   reviewIndex: 0,
   paletteOpen: false, palIndex: 0,
-  selRect: null, selText: "", selRange: null,
+  selRect: null, selText: "", selRange: null, selInfo: null,
+  surfaceManual: undefined,  // 三态：undefined=随 flow 自动，true/false=手动覆盖
   accepted: {},            // paraId -> true（正文已落定新文本）
 };
 let pointSeq = 0;
@@ -878,6 +880,7 @@ function seedState(s) {
   stopWork();
   state.conflict = false; state.points = []; state.reviewIndex = 0; state.accepted = {};
   state.paletteOpen = false;
+  state.selInfo = null; state.selText = ""; state.selRect = null; state.surfaceManual = undefined;
   if (s === "empty") { state.view = "empty"; state.flow = "reading"; return; }
   state.view = s === "long" ? "long" : "full";
   state.flow = "reading";
@@ -1012,6 +1015,12 @@ function renderDoc(flashPara) {
     host.append(e); return;
   }
   const doc = el("div", "doc");
+  if (state.file !== "方法论-笔记.md") {
+    /* 占位文件：STUB_DOCS 一句话正文，签名流程只在主文档上演示 */
+    doc.append(el("h1", "", esc(state.file.replace(/\.md$/, ""))));
+    doc.append(el("p", "", esc(STUB_DOCS[state.file] || "")));
+    host.append(doc); return;
+  }
   for (const b of docBlocks()) {
     const node = el(b.t, "", "");
     node.dataset.bid = b.id;
@@ -1068,7 +1077,7 @@ function surfaceVisible() {
 function renderSurface() {
   const t = T();
   const surf = $("surface"); const host = $("surf-inner");
-  const vis = surfaceVisible() || state.surfaceManual;
+  const vis = state.surfaceManual !== undefined ? state.surfaceManual : surfaceVisible();
   surf.classList.toggle("open", !!vis);
   host.replaceChildren();
   if (!vis) return;
@@ -1140,7 +1149,9 @@ function renderReviewCard(host, t) {
   card.classList.add("review");
   const head = card.querySelector(".surf-head");
   const prog = el("span", "rev-progress mono");
-  prog.innerHTML = `<span class="cur">${pts.length ? state.reviewIndex + 1 : 0}</span> / ${pts.length}`;
+  const total = state.points.length;
+  const curNum = cur ? state.points.findIndex((p) => p.id === cur.id) + 1 : total;
+  prog.innerHTML = `<span class="cur">${curNum}</span> / ${total}`;
   head.append(prog);
   card.append(el("div", "surf-title", esc(t.rev_title)));
   const body = el("div", "surf-body");
@@ -1200,11 +1211,12 @@ function renderStatusbar() {
   if (state.selInfo) host.append(cell("", t.st_selInfo(state.selInfo.para, state.selInfo.chars)));
   const open = state.points.filter((p) => p.status === "open" || p.status === "processing").length;
   const rev = reviewPoints().length;
-  host.append(cell("", state.points.length ? t.st_points(open, rev) : t.st_pointsNone));
+  const idle = state.flow === "reading" && state.points.length === 0;
+  host.append(cell("", idle ? "—" : (state.points.length ? t.st_points(open, rev) : t.st_pointsNone)));
   const a = el("span", "cell");
   const dot = el("span", "status-dot" + (state.flow === "reading" || state.flow === "archived" ? " idle" : ""));
   a.append(dot);
-  let agentLabel = t.st_agentIdle;
+  let agentLabel = idle ? "—" : t.st_agentIdle;
   if (state.flow === "working") agentLabel = t.st_agentDoing(rev, state.points.length);
   else if (state.flow === "review") agentLabel = t.st_agentReview(rev);
   else if (state.flow === "archived") agentLabel = t.st_agentDone;
@@ -1310,11 +1322,11 @@ function injectAnnotations() {
 let toastTimer = null, toneTimer = null;
 
 function showToast(html) {
-  const editor = $("editor");
-  editor.querySelectorAll(".lumir-toast").forEach((x) => x.remove());
+  const app = $("app");
+  app.querySelectorAll(".lumir-toast").forEach((x) => x.remove());
   if (toastTimer) clearTimeout(toastTimer);
   const t = el("div", "lumir-toast", html);
-  editor.append(t);
+  app.append(t);
   toastTimer = setTimeout(() => t.remove(), 3600);
 }
 function showTone(text, actionLabel, onAction) {
@@ -1330,7 +1342,8 @@ function showTone(text, actionLabel, onAction) {
   }
   b.classList.add("show");
   if (toneTimer) clearTimeout(toneTimer);
-  toneTimer = setTimeout(hideTone, 4500);
+  /* 带动作的横幅（如「归档」）停留等用户显式触发，不自动消隐 */
+  toneTimer = onAction ? null : setTimeout(hideTone, 4500);
 }
 function hideTone() { $("tone-banner").classList.remove("show"); }
 
@@ -1408,7 +1421,7 @@ function createEditPoint(intent) {
   if (!state.selPara) return;
   const def = state.selQ ? POINT_DEFS.find((d) => d.q === state.selQ) : null;
   const dup = def && state.points.find((p) => p.q === def.q && p.status !== "rejected");
-  if (dup) return;
+  if (dup) { state.selInfo = null; state.selText = ""; state.selRect = null; renderStatusbar(); return; }
   const zh = state.lang === "zh";
   const p = def
     ? { ...def, intent: intent || def.intent, status: "open" }
@@ -1422,6 +1435,7 @@ function createEditPoint(intent) {
         diff: null, status: "open",
       };
   state.points.push(p);
+  state.selInfo = null; state.selText = ""; state.selRect = null;
   if (state.flow === "reading") state.flow = "points";
   apply();
   const anchor = document.querySelector(`[data-pid="${p.id}"]`);
@@ -1459,7 +1473,7 @@ function finishWork() {
   state.flow = "review"; state.reviewIndex = 0;
   apply();
   const t = T();
-  showTone(t.tone_done(reviewPoints().length), t.tone_open, () => {});
+  showTone(t.tone_done(reviewPoints().length), t.tone_open);
 }
 
 /* ---- 回看裁决 ---- */
@@ -1475,8 +1489,7 @@ function decide(accept) {
     state.reviewIndex = 0;
     apply(flashPara);
     const t = T();
-    showTone(t.arc_banner);
-    setTimeout(archiveAll, 1400);
+    showTone(t.arc_banner, t.arc_action, archiveAll);
     return;
   }
   state.reviewIndex = Math.min(state.reviewIndex, remaining.length - 1);
@@ -1500,9 +1513,10 @@ function jumpToText() {
   setTimeout(() => anchor.classList.remove("flash-anchor"), 1500);
 }
 
-/* ---- 归档：从正文消失 ---- */
+/* ---- 归档：全部裁决后的显式动作，已解决点从正文消失 ---- */
 function archiveAll() {
-  if (state.flow === "archived") return;
+  if (state.flow === "archived" || reviewPoints().length) return;
+  hideTone();
   state.flow = "archived"; state.surfaceManual = undefined;
   document.querySelectorAll(".ep").forEach((a) => a.classList.add("archiving"));
   setTimeout(() => {
@@ -1550,7 +1564,7 @@ function paletteActions() {
     { label: t.pa_jump, k: t.pa_jumpKbd, enabled: inReview, run: jumpToText },
     { label: t.pa_next, k: t.pa_nextKbd, enabled: inReview, run: () => stepReview(1) },
     { label: t.pa_prev, k: t.pa_prevKbd, enabled: inReview, run: () => stepReview(-1) },
-    { label: t.pa_archive, sub: t.pa_archiveSub, enabled: state.flow === "review" && state.points.length > 0, run: archiveAll },
+    { label: t.pa_archive, sub: t.pa_archiveSub, enabled: state.flow === "review" && state.points.length > 0 && reviewPoints().length === 0, run: archiveAll },
     { label: t.pa_theme, k: t.pa_themeKbd, enabled: true, run: cycleTheme },
     { label: t.pa_nav, k: t.pa_navKbd, enabled: true, run: toggleNav },
     { label: t.pa_surface, k: t.pa_surfaceKbd, enabled: true, run: toggleSurface },
@@ -1596,9 +1610,7 @@ function setupPalette() {
 /* ---- 工具栏动作 ---- */
 function toggleNav() { state.navOpen = !state.navOpen; apply(); }
 function toggleSurface() {
-  const eff = $("surface").classList.contains("open");
-  state.surfaceManual = !eff;
-  if (!state.surfaceManual && ["delegate", "working", "review"].includes(state.flow)) state.surfaceManual = false;
+  state.surfaceManual = !$("surface").classList.contains("open");
   renderSurface(); renderToolbar();
   if (state.annotate) injectAnnotations();
 }
