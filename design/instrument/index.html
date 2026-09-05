@@ -218,7 +218,7 @@ kbd {
   font-family:-apple-system,"PingFang SC","Helvetica Neue",sans-serif;
   font-size:15px; line-height:1.75; letter-spacing:0;
   hanging-punctuation:first allow-end last;   /* 渐进增强：不支持则静默忽略 */
-  text-autospace:auto;                         /* 中西混排自动间距（CLReq ≤1/4 字宽）；不支持则静默忽略 */
+  text-autospace:normal;                       /* 中西混排自动间距（初始值是 no-autospace；Chromium 153 实测 normal 生效 ≈1/4em，auto 反而回退 no-autospace） */
 }
 /* 标题展示面：仅 h1 用衬线（作品铭牌），论证见 RATIONALE */
 .doc h1 {

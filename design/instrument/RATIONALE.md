@@ -91,7 +91,7 @@ tone 横幅 / toast / popup 均为 app 级元素（toolbar 之下、状态栏之
 ## 五、可实现性（Tauri + 系统 webview + CodeMirror 6）
 
 - 无外部字体、无 WebGL、无动画库；全部 CSS transition/animation（transform/opacity/background-color），最长大于基线的只有 just-in 900ms 渐隐与 700ms 闪烁。
-- `text-autospace:auto`（Chromium 124+ 启用中西混排自动间距）/ `hanging-punctuation` 为渐进增强，老 webview 静默忽略。
+- `text-autospace:normal` 启用中西混排自动间距（初始值是 `no-autospace`；Chromium 153 实测 `normal` 产生 ≈1/4em 间距——同段宽度 104.52px vs 100.77px，`auto` 反而回退 no-autospace）/ `hanging-punctuation` 为渐进增强，老 webview 静默忽略。
 - 锚点、词级 diff、状态点在 CodeMirror 6 里对应 decoration mark/widget 的直接映射；读数行与 surface 是普通 DOM。
 - `prefers-reduced-motion` 下全部动效归零（与 eink 同一套约束路径）。
 
@@ -101,4 +101,4 @@ Playwright（headless chromium 151，1440×900@2x）全矩阵：3 主题 × 9 �
 
 - **第 1 轮发现**：创建后焦点留在隐藏输入框吞掉快捷键（blur 修复）；浮层 autofocus 触发编辑器跳滚（preventScroll 修复）；eink popup 白底遮罩丢失正文上下文（改全透明）；eink 委派/回看卡缺双线框、工作卡缺斜纹（补）；批注徽标在重复元素上刷屏（改为同编号只钉第一处）。
 - **第 2 轮复核**：全部修复生效，64 张截图无 page error、无 console error。
-- **第 3 轮（review r1 修复）**：tone 横幅/toast/popup 挪出正文滚动容器改为 app 级（滚动不失联，横幅改 max-height 展开保留落下方向感）；归档改显式动作（取消 1.4s 自动归档，横幅带「归档」按钮停留，⌘K 项在全部裁决前禁用）；回看进度分母固定为全集；创建/切换状态后选区读数清零、空闲态读数归零「—」；`text-autospace` 改 `auto` 真正生效；文件切换接 STUB_DOCS；⌘. 三态修复；I15 批注文案、surface 1px 漏色、死选择器等零碎项。
+- **第 3 轮（review r1 修复）**：tone 横幅/toast/popup 挪出正文滚动容器改为 app 级（滚动不失联，横幅改 max-height 展开保留落下方向感）；归档改显式动作（取消 1.4s 自动归档，横幅带「归档」按钮停留，⌘K 项在全部裁决前禁用）；回看进度分母固定为全集；创建/切换状态后选区读数清零、空闲态读数归零「—」；`text-autospace` 一度改 `auto`（r2 复审更正：`normal` 本就生效、`auto` 回退，已回退 `normal`）；文件切换接 STUB_DOCS；⌘. 三态修复；I15 批注文案、surface 1px 漏色、死选择器等零碎项。
