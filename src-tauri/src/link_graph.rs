@@ -5,7 +5,7 @@
 //! 双语义判别。前端只做 span 定位，语义一律经 invoke 查询本模块。
 //! 机器可执行判定集：tests/wikilink-fixtures/cases.json（由 src-tauri/tests 全量断言）。
 //!
-//! 职责见 ADR 0002 §3：wikilink 正反链图在 Rust core 维护；架构约束见 ADR 0002 §7：
+//! 职责见 ADR 0002 §3：wikilink 链接图在 Rust core 维护；架构约束见 ADR 0002 §7：
 //! 图结构不耦合 UI 层。本模块不依赖 tauri 类型。
 //!
 //! span 偏移按 Unicode code point 计数（fixture spanUnit 口径），Rust 侧即 chars() 下标。
@@ -96,19 +96,6 @@ pub struct LinkResolveResult {
 #[ts(export, export_to = "../../src/bindings/")]
 pub struct CreateNoteResult {
     pub created: String,
-}
-
-/// 反链条目：来源文件 + 行号 + 行级上下文（spec：反链面板只读派生视图）。
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
-#[ts(export, export_to = "../../src/bindings/")]
-pub struct BacklinkItem {
-    /// 来源文件（vault 根相对路径）。
-    pub source: String,
-    /// 链接所在行的 1-based 行号。
-    #[ts(type = "number")]
-    pub line: u32,
-    /// 链接所在行的原文（行级上下文）。
-    pub context: String,
 }
 
 // ---------------------------------------------------------------------------
@@ -411,60 +398,15 @@ fn drill<'a>(headings: &'a [Heading], segs: &[String]) -> Option<&'a Heading> {
 }
 
 // ---------------------------------------------------------------------------
-// 图：索引、解析（§3、§5）、反链、一键创建（§4.4）
+// 图：索引、解析（§3、§5）、一键创建（§4.4）
 // ---------------------------------------------------------------------------
-
-/// 文档派生信息：标题树 + 文档内链接（带行号与行级上下文）。
-struct DocInfo {
-    headings: Vec<Heading>,
-    links: Vec<DocLink>,
-}
-
-struct DocLink {
-    link: WikiLink,
-    line: u32,
-    context: String,
-}
-
-fn index_doc(content: &str) -> DocInfo {
-    let chars: Vec<char> = content.chars().collect();
-    // 行起点（char 下标），供 span → 行号二分。
-    let mut line_starts = vec![0usize];
-    for (i, &c) in chars.iter().enumerate() {
-        if c == '\n' {
-            line_starts.push(i + 1);
-        }
-    }
-    let line_of = |pos: usize| -> u32 { (line_starts.partition_point(|&s| s <= pos)) as u32 };
-    let links = parse_links(content)
-        .into_iter()
-        .map(|link| {
-            let no = line_of(link.span.0);
-            let s = line_starts[(no - 1) as usize];
-            let e = chars[s..]
-                .iter()
-                .position(|&c| c == '\n')
-                .map(|p| s + p)
-                .unwrap_or(chars.len());
-            DocLink {
-                link,
-                line: no,
-                context: chars[s..e].iter().collect(),
-            }
-        })
-        .collect();
-    DocInfo {
-        headings: extract_headings(content),
-        links,
-    }
-}
 
 /// 是否 Markdown 笔记（大小写不敏感）。
 pub fn is_markdown(path: &str) -> bool {
     path.to_lowercase().ends_with(".md")
 }
 
-/// 笔记链接图：vault 内全部文件路径 + `.md` 文档派生信息。
+/// 笔记链接图：vault 内全部文件路径 + `.md` 文档标题树。
 /// 解析全程只读（spec §3）；唯一写入动作是 [`LinkGraph::create_note`]（§4.4）。
 ///
 /// M33 性能重构（语义不变）：`files` 全集之上维护三组 HashMap 名称索引
@@ -473,8 +415,8 @@ pub fn is_markdown(path: &str) -> bool {
 pub struct LinkGraph {
     /// 全部非目录文件（vault 根相对，`/` 分隔），有序保证确定性。
     files: BTreeSet<String>,
-    /// `.md` 文件的派生信息。
-    docs: HashMap<String, DocInfo>,
+    /// `.md` 文件的标题树（锚点解析用）。
+    docs: HashMap<String, Vec<Heading>>,
     /// 小写完整路径 → 原始路径，桶内字典序（§3.2 第 1 步根相对精确匹配）。
     path_index: HashMap<String, Vec<String>>,
     /// 小写段边界尾部（含完整路径；末段即文件名）→ 原始路径
@@ -495,8 +437,8 @@ impl LinkGraph {
         }
     }
 
-    /// 建立/增量更新一个文件条目。`.md` 且给了内容则重建派生信息；
-    /// `.md` 无内容（读取失败）则丢弃旧派生信息（宁缺毋滥）。
+    /// 建立/增量更新一个文件条目。`.md` 且给了内容则重建标题树；
+    /// `.md` 无内容（读取失败）则丢弃旧标题树（宁缺毋滥）。
     pub fn upsert(&mut self, path: &str, content: Option<&str>) {
         if self.files.contains(path) {
             self.unregister_path(path);
@@ -506,7 +448,7 @@ impl LinkGraph {
         if is_markdown(path) {
             match content {
                 Some(c) => {
-                    self.docs.insert(path.to_string(), index_doc(c));
+                    self.docs.insert(path.to_string(), extract_headings(c));
                 }
                 None => {
                     self.docs.remove(path);
@@ -716,7 +658,7 @@ impl LinkGraph {
         }
         let last = heading_path.last().cloned();
         match self.docs.get(path) {
-            Some(doc) => match drill(&doc.headings, heading_path) {
+            Some(headings) => match drill(headings, heading_path) {
                 Some(h) => AnchorInfo {
                     status: AnchorStatus::Found,
                     heading: Some(h.text.clone()),
@@ -734,33 +676,6 @@ impl LinkGraph {
                 line: None,
             },
         }
-    }
-
-    /// 反链（link graph 只读派生物）：解析全部文档内链接，命中 target 的列出。
-    /// 结果按来源路径字典序（确定性）。
-    /// deprecated（2026-09-05 Alex 裁决：backlinks 面板砍掉，挤压预案推迟）：
-    /// 唯一调用方 link_graph_backlinks command 待 M35 删完 UI 调用点后一并删除；
-    /// 在此之前不得新增调用方。全量重算成本已被名称索引压到 O(总链接数)。
-    pub fn backlinks(&self, target: &str) -> Vec<BacklinkItem> {
-        let mut out = Vec::new();
-        for path in self.files.iter() {
-            let Some(doc) = self.docs.get(path) else {
-                continue;
-            };
-            for dl in &doc.links {
-                let res = self.resolve(path, &dl.link);
-                if matches!(res.status, LinkStatus::Resolved | LinkStatus::Ambiguous)
-                    && res.path.as_deref() == Some(target)
-                {
-                    out.push(BacklinkItem {
-                        source: path.clone(),
-                        line: dl.line,
-                        context: dl.context.clone(),
-                    });
-                }
-            }
-        }
-        out
     }
 
     /// 计算一键创建的目标路径（§4.4，裁决点 I）：path 段不含 `/` 时创建于

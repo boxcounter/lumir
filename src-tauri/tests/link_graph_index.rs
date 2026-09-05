@@ -3,9 +3,9 @@
 //! 语义本体仍由 wikilink_fixtures.rs（frozen spec cases.json 全量断言）保障；
 //! 本测试专防索引维护错误：在随机增删改序列后，增量维护名称索引（path/tail/
 //! stem 三组 HashMap）的 LinkGraph 必须与同内容全新重建的图产出完全一致的
-//! resolve / backlinks 结果（历史敏感性差分，捕获索引残留）。
+//! resolve 结果（历史敏感性差分，捕获索引残留）。
 
-use lumir_lib::link_graph::{parse_links, LinkGraph};
+use lumir_lib::link_graph::{parse_links, LinkGraph, LinkStatus};
 use std::collections::BTreeMap;
 
 /// 确定性 xorshift64（不引入 rand 依赖；种子固定，失败可复现）。
@@ -72,13 +72,9 @@ fn rebuild(state: &BTreeMap<String, Option<String>>) -> LinkGraph {
     g
 }
 
-/// 两图全口径一致：全部曾出现 target 的 backlinks + 全部文档全部链接的 resolve。
-fn assert_equivalent(a: &LinkGraph, b: &LinkGraph, state: &BTreeMap<String, Option<String>>, ghosts: &[String]) {
-    let mut targets: Vec<&str> = state.keys().map(|p| p.as_str()).collect();
-    targets.extend(ghosts.iter().map(|p| p.as_str()));
-    for t in targets {
-        assert_eq!(a.backlinks(t), b.backlinks(t), "backlinks 不一致：target={t}");
-    }
+/// 两图全口径一致：全部文档全部链接的 resolve（反链是 resolve 的逆视图，
+/// LinkGraph::backlinks 随 M36 删除后由本循环等价覆盖）。
+fn assert_equivalent(a: &LinkGraph, b: &LinkGraph, state: &BTreeMap<String, Option<String>>) {
     for (path, content) in state {
         let Some(content) = content else { continue };
         for link in parse_links(content) {
@@ -96,7 +92,6 @@ fn incremental_index_matches_fresh_rebuild() {
     let pool = file_pool();
     let mut rng = Rng(0x9E3779B97F4A7C15);
     let mut state: BTreeMap<String, Option<String>> = BTreeMap::new();
-    let mut removed: Vec<String> = Vec::new();
     let mut graph = LinkGraph::new();
     let mut tag = 0u64;
 
@@ -111,7 +106,7 @@ fn incremental_index_matches_fresh_rebuild() {
         graph.upsert(path, content.as_deref());
         state.insert(path.clone(), content);
     }
-    assert_equivalent(&graph, &rebuild(&state), &state, &removed);
+    assert_equivalent(&graph, &rebuild(&state), &state);
 
     for _step in 0..300 {
         match rng.below(10) {
@@ -146,7 +141,6 @@ fn incremental_index_matches_fresh_rebuild() {
                     let path = keys[rng.below(keys.len())].clone();
                     graph.remove(&path);
                     state.remove(&path);
-                    removed.push(path);
                 }
             }
             // 删除目录（级联移除子孙）
@@ -161,48 +155,46 @@ fn incremental_index_matches_fresh_rebuild() {
                     .collect();
                 for p in gone {
                     state.remove(&p);
-                    removed.push(p);
                 }
             }
             // 原地不动（对照组：等价性在无操作时也必须保持）
             _ => {}
         }
-        assert_equivalent(&graph, &rebuild(&state), &state, &removed);
+        assert_equivalent(&graph, &rebuild(&state), &state);
     }
 }
 
-/// 反链（deprecated 的全量重算路径）针对性断言：新文件把既有 unresolved 链接
-/// 变 resolved 后反链必须出现；候选集变化（ambiguous 裁决点 G 抢占）与删除
-/// 目标后反链必须相应转移/消失。语义断言，与实现是否走索引无关。
+/// 名称索引随增删改的正确性（原 backlink_tracks_create_and_delete，M36 随
+/// LinkGraph::backlinks 删除改写为 resolve 口径）：新文件把 unresolved 变 resolved；
+/// 候选集变化（ambiguous 裁决点 G 抢占）与删除目标后解析结果必须相应转移/回落。
+/// 语义断言，与实现是否走索引无关。
 #[test]
-fn backlink_tracks_create_and_delete() {
+fn resolution_tracks_create_and_delete() {
     let mut g = LinkGraph::new();
     g.upsert("a.md", Some("指向 [[b]] 与 [[c]]。\n"));
-    assert!(g.backlinks("b.md").is_empty());
+    let r = g.resolve_link("a.md", "[[b]]").expect("合法链接");
+    assert_eq!(r.status, LinkStatus::Unresolved);
 
     g.upsert("b.md", Some("# B\n"));
-    let items = g.backlinks("b.md");
-    assert_eq!(items.len(), 1);
-    assert_eq!(items[0].source, "a.md");
-    assert_eq!(items[0].line, 1);
+    let r = g.resolve_link("a.md", "[[b]]").expect("合法链接");
+    assert_eq!(r.status, LinkStatus::Resolved);
+    assert_eq!(r.path.as_deref(), Some("b.md"));
 
     // 短名 [[c]] 的 stem 候选初始只有 dir/c.md
     g.upsert("dir/c.md", Some("# C\n"));
-    assert_eq!(g.backlinks("dir/c.md").len(), 1);
+    let r = g.resolve_link("a.md", "[[c]]").expect("合法链接");
+    assert_eq!(r.path.as_deref(), Some("dir/c.md"));
 
     // 新增根级 c.md：候选变 ambiguous，裁决点 G 段数最少优先 → c.md 抢占
     g.upsert("c.md", Some("# 根级 C\n"));
-    assert_eq!(g.backlinks("dir/c.md").len(), 0, "c.md 应抢占 [[c]]");
-    assert_eq!(g.backlinks("c.md").len(), 1);
+    let r = g.resolve_link("a.md", "[[c]]").expect("合法链接");
+    assert_eq!(r.status, LinkStatus::Ambiguous);
+    assert_eq!(r.path.as_deref(), Some("c.md"));
 
     g.remove("c.md");
-    assert_eq!(g.backlinks("dir/c.md").len(), 1, "删除 c.md 后 [[c]] 回落到 dir/c.md");
+    let r = g.resolve_link("a.md", "[[c]]").expect("合法链接");
+    assert_eq!(r.path.as_deref(), Some("dir/c.md"), "删除 c.md 后 [[c]] 回落到 dir/c.md");
     g.remove("dir");
-    assert!(g.backlinks("dir/c.md").is_empty());
-
-    // 源文档内容改写：旧反链消失、新反链出现
-    g.upsert("a.md", Some("改指 [[b]]。\n"));
-    assert_eq!(g.backlinks("b.md").len(), 1);
-    g.upsert("a.md", Some("不再指向任何文件。\n"));
-    assert!(g.backlinks("b.md").is_empty());
+    let r = g.resolve_link("a.md", "[[c]]").expect("合法链接");
+    assert_eq!(r.status, LinkStatus::Unresolved);
 }
