@@ -1,6 +1,6 @@
 # backlinks-panel 增量规格
 
-> 可推迟标注：ADR 0004 §2 挤压预案明确 backlinks 可推迟。若实现期时间受挤压，本 capability 的 requirement 可整体标注放弃原因后随节点 2 评审归档。
+> **已推迟（2026-09-05 Alex 裁决）**：按 ADR 0004 §2 挤压预案，本 capability 整体推迟。原因：Alex 不用反链面板，且前端对 `link_graph_backlinks` 的调用是大 vault 冻结的根因调用方。已落地的面板实现（`src/backlinks.ts`、IPC 封装、视觉场景与基线）已随本标注一并移除；Rust 侧 `link_graph_backlinks` command 由后续 link_graph 波次删除。以下 requirement 留档不生效，v1+ 重建意向与 Alex 背书见 finding `20260905-tower-idea-v1-agent.md`。
 
 ## ADDED Requirements
 

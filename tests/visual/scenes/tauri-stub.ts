@@ -13,8 +13,6 @@ export interface VaultFixture {
   links?: Record<string, unknown>;
   /** wikilink_create 桩：链接原文 → 创建后的 vault 相对路径（同时写入 files）。 */
   creates?: Record<string, string>;
-  /** link_graph_backlinks 桩：文件路径 → BacklinkItem[]。 */
-  backlinks?: Record<string, unknown[]>;
   /** vault_open 桩：选择器"选中"的目标 vault（root + 完整 fixture）；缺省按用户取消应答 null。 */
   switchTo?: VaultFixture & { root: string };
 }
@@ -75,7 +73,6 @@ export async function stubTauri(page: Page, vault: VaultFixture | null): Promise
         if (current?.files) current.files[created] = "";
         return { created };
       },
-      link_graph_backlinks: (args) => current?.backlinks?.[args.path ?? ""] ?? [],
     };
 
     w.__TAURI_EVENT_PLUGIN_INTERNALS__ = {

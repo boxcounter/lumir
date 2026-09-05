@@ -74,15 +74,6 @@ const WIKI_VAULT: VaultFixture = {
     // [[missing]] 未收录 → 桩按 unresolved 应答
   },
   creates: { "[[missing]]": "missing.md" },
-  backlinks: {
-    "b.md": [
-      {
-        source: "a.md",
-        line: 3,
-        context: "链到 [[b]]，歧义 [[c]]，未创建 [[missing]]，带锚点 [[b#目标]]，锚点缺失 [[b#没有]]。",
-      },
-    ],
-  },
 };
 
 async function openA(page: import("@playwright/test").Page): Promise<void> {
@@ -145,17 +136,4 @@ test("未创建链接一键创建并转为正常态", async ({ page }) => {
   await expect(toastEl).toContainText("未创建的链接：[[missing]]");
   await toastEl.getByRole("button", { name: "创建并打开" }).click();
   await expect(page.locator(".lumir-toast")).toContainText("已创建：missing.md");
-});
-
-test("反链面板：只读列表与点击跳转来源行", async ({ page }) => {
-  await stubTauri(page, WIKI_VAULT);
-  await page.goto("/");
-  await page.locator('.ft-row[title="b.md"]').click();
-  const item = page.locator(".bl-item");
-  await expect(item).toHaveCount(1);
-  await expect(item).toContainText("a.md:3");
-  await expect(item).toContainText("链到 [[b]]");
-  await expect(page).toHaveScreenshot("backlinks-panel.png");
-  await item.click();
-  await expect(page.locator(".cm-content")).toContainText("链到");
 });
