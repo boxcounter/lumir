@@ -15,6 +15,8 @@ export interface VaultFixture {
   creates?: Record<string, string>;
   /** link_graph_backlinks 桩：文件路径 → BacklinkItem[]。 */
   backlinks?: Record<string, unknown[]>;
+  /** vault_open 桩：选择器"选中"的目标 vault（root + 完整 fixture）；缺省按用户取消应答 null。 */
+  switchTo?: VaultFixture & { root: string };
 }
 
 export async function stubTauri(page: Page, vault: VaultFixture | null): Promise<void> {
@@ -24,6 +26,10 @@ export async function stubTauri(page: Page, vault: VaultFixture | null): Promise
     const listeners = new Map<string, number[]>();
     let nextId = 1;
 
+    // 当前生效 vault：vault_open 切换后整体替换，后续 invoke 读新 vault 的数据
+    //（与真后端 open_vault 的替换语义对齐）。
+    let current = v;
+
     const handlers: Record<string, (args: { path?: string; from?: string; link?: string }) => unknown> = {
       config_get: () => ({
         config: { version: 1, last_vault: null, editor: { mode: "md" } },
@@ -31,11 +37,17 @@ export async function stubTauri(page: Page, vault: VaultFixture | null): Promise
         path: "/mock/config.json",
       }),
       vault_current: () =>
-        v
-          ? { vault: { root: "/Users/alex/demo-vault", entries: v.entries }, notice: null }
+        current
+          ? { vault: { root: "/Users/alex/demo-vault", entries: current.entries }, notice: null }
           : { vault: null, notice: null },
+      vault_open: () => {
+        const target = current?.switchTo;
+        if (!target) return null;
+        current = target;
+        return { root: target.root, entries: target.entries };
+      },
       fs_read_file: (args) => {
-        const text = v?.files?.[args.path ?? ""];
+        const text = current?.files?.[args.path ?? ""];
         if (text === undefined) {
           throw { code: "fs_not_found", message: `文件不存在：${args.path}` };
         }
@@ -44,7 +56,7 @@ export async function stubTauri(page: Page, vault: VaultFixture | null): Promise
       // link graph 桩：语义由场景 fixture 注入（前端不复制解析语义，
       // 桩也只查表不计算）；未收录的链接按 unresolved 应答。
       link_graph_resolve: (args) => {
-        const hit = v?.links?.[args.link ?? ""];
+        const hit = current?.links?.[args.link ?? ""];
         return (
           hit ?? {
             status: "unresolved",
@@ -56,14 +68,14 @@ export async function stubTauri(page: Page, vault: VaultFixture | null): Promise
         );
       },
       wikilink_create: (args) => {
-        const created = v?.creates?.[args.link ?? ""];
+        const created = current?.creates?.[args.link ?? ""];
         if (!created) {
           throw { code: "wikilink_invalid", message: `未配置创建桩：${args.link}` };
         }
-        if (v?.files) v.files[created] = "";
+        if (current?.files) current.files[created] = "";
         return { created };
       },
-      link_graph_backlinks: (args) => v?.backlinks?.[args.path ?? ""] ?? [],
+      link_graph_backlinks: (args) => current?.backlinks?.[args.path ?? ""] ?? [],
     };
 
     w.__TAURI_EVENT_PLUGIN_INTERNALS__ = {

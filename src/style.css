@@ -60,12 +60,39 @@ body,
 }
 
 .ft-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   padding: 4px 4px 8px;
   font-weight: 600;
   color: #333;
+}
+
+.ft-vault-name {
+  flex: 1;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* 常驻切换入口：弱化默认态（小一号、灰字、无边框），hover 才给反馈 */
+.ft-switch-btn {
+  flex: none;
+  padding: 1px 6px;
+  border: none;
+  border-radius: 4px;
+  background: none;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 400;
+  color: #888;
+  cursor: pointer;
+}
+
+.ft-switch-btn:hover {
+  background: #e8e8e8;
+  color: #333;
 }
 
 .ft-children {

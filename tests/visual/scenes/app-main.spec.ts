@@ -23,7 +23,7 @@ test("打开 vault 后的全类型文件树", async ({ page }) => {
   await page.goto("/");
 
   // 全类型混合展示：md / 目录 / PDF / 无扩展名文本都在（spec: 不只展示 Markdown）
-  await expect(page.locator(".ft-header")).toHaveText("demo-vault");
+  await expect(page.locator(".ft-vault-name")).toHaveText("demo-vault");
   for (const name of ["README.md", "docs", "src", "assets", "archive.pdf", "LICENSE"]) {
     await expect(page.locator(`.ft-row[title="${name}"]`)).toBeVisible();
   }
@@ -65,4 +65,39 @@ test("watch 增量刷新保持展开状态", async ({ page }) => {
   await expect(page.locator('.ft-row[title="scratch.md"]')).toBeVisible();
   await expect(page.locator('.ft-row[title="src/main.ts"]')).toBeVisible();
   await expect(page.locator('.ft-row[title="archive.pdf"]')).toHaveCount(0);
+});
+
+// 树头部常驻「切换 vault」入口（switcher-vault）：点击走与空态按钮相同的
+// vault_open 流程，树整体替换为目标 vault。
+const ALT_VAULT_ROOT = "/Users/alex/notes-vault";
+
+test("树头部切换入口切换到另一个 vault", async ({ page }) => {
+  await stubTauri(page, {
+    ...DEMO_VAULT,
+    switchTo: {
+      root: ALT_VAULT_ROOT,
+      entries: [
+        { path: "inbox.md", kind: "file", size: 64, mtime_ms: 1757000000000 },
+        { path: "projects", kind: "dir", size: 0, mtime_ms: 1757000000000 },
+        { path: "projects/plan.md", kind: "file", size: 256, mtime_ms: 1757000000000 },
+      ],
+      files: {
+        "inbox.md": "# Inbox\n\n第二个 vault 的收件箱。\n",
+      },
+    },
+  });
+  await page.goto("/");
+  await expect(page.locator(".ft-vault-name")).toHaveText("demo-vault");
+
+  await page.getByRole("button", { name: "切换 vault" }).click();
+
+  // 头部与树整体替换为新 vault；旧 vault 条目不残留
+  await expect(page.locator(".ft-vault-name")).toHaveText("notes-vault");
+  await expect(page.locator('.ft-row[title="inbox.md"]')).toBeVisible();
+  await expect(page.locator('.ft-row[title="projects"]')).toBeVisible();
+  await expect(page.locator('.ft-row[title="README.md"]')).toHaveCount(0);
+
+  // 新 vault 的文件可正常打开（附件索引 / fs_read_file 已指向新 vault）
+  await page.locator('.ft-row[title="inbox.md"]').click();
+  await expect(page.locator(".cm-content")).toContainText("Inbox");
 });
