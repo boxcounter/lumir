@@ -1,6 +1,10 @@
-# editor-live-preview 增量规格
+# editor-live-preview Specification
 
-## ADDED Requirements
+## Purpose
+
+定义编辑器单内核双模式（ADR 0002 §2）的落地口径：md 模式 = 高亮 + live preview 装饰层、code 模式 = 仅高亮、按文件类型选模式、配置 `editor.mode` 仅作无类型线索时的默认；装饰层视口增量构建以满足打开 1MB <100ms 性能合同（ADR 0002 §6）。M1 只读口径，不含编辑态行为。由 change `add-editor-live-preview` 归档并入（2026-09-05，实现 M19 + M20 接线；真实打开路径 perf 端点的演进义务见 perf-measurement spec）。
+
+## Requirements
 
 ### Requirement: 单内核双模式落地
 
@@ -13,7 +17,7 @@
 
 ### Requirement: live preview 装饰层
 
-md 模式下系统 SHALL 用 CM6 decoration 实现 live preview：标题按级别呈现字号/字重、加粗/斜体/删除线隐藏标记符并渲染字形、列表符号美化、引用块样式、行内代码与代码块背景。装饰层 SHALL 采用视口增量构建（⚠ 裁决点 D，推荐项：只为可见区域构建 decoration，滚动时增量更新），MUST NOT 在打开文档时全量构建——打开 1MB Markdown <100ms 是 CI 绝对阈值（ADR 0002 §6）。只读口径下 MUST NOT 实现光标所在行 reveal 源码的编辑态逻辑（无编辑即无此概念，推迟到有编辑能力的波次）。装饰 MUST NOT 改变文档源码（ADR 0003 §3 铁律，本 change 只读，天然满足）。
+md 模式下系统 SHALL 用 CM6 decoration 实现 live preview：标题按级别呈现字号/字重、加粗/斜体/删除线隐藏标记符并渲染字形、列表符号美化、引用块样式、行内代码与代码块背景。装饰层 SHALL 采用视口增量构建（⚠ 裁决点 D，推荐项：只为可见区域构建 decoration，滚动时增量更新），MUST NOT 在打开文档时全量构建——打开 1MB Markdown <100ms 是 CI 绝对阈值（ADR 0002 §6）。该视口增量义务不含 frontmatter properties 区块——跨行 replace 装饰受 CM6 视口插件硬限制，其构建策略见 frontmatter-properties spec（StateField + 文档变更时重算 + 首部扫描有界）。只读口径下 MUST NOT 实现光标所在行 reveal 源码的编辑态逻辑（无编辑即无此概念，推迟到有编辑能力的波次）。装饰 MUST NOT 改变文档源码（ADR 0003 §3 铁律，本 change 只读，天然满足）。
 
 #### Scenario: 标记符隐藏
 
