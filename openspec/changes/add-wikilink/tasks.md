@@ -23,9 +23,11 @@
 
 ## 3. backlinks 只读面板（backlinks-panel）
 
-- [x] 3.1 反链面板：当前文件的来源文件 + 行级上下文列表，数据来自 `link_graph_backlinks`，只读
-- [x] 3.2 点击反链跳转来源文件对应位置
-- [ ] 3.3 （可推迟标注）若实现期时间受挤压，按 ADR 0004 §2 挤压预案将 3.1–3.2 标注放弃原因后随节点 2 评审归档，不阻塞第 1、2 组
+> **已推迟（2026-09-05 Alex 裁决）**：按 ADR 0004 §2 挤压预案整组推迟——Alex 不用反链面板，且 `link_graph_backlinks` 调用方是大 vault 冻结的根因。3.1–3.2 曾实现，现前端已整体移除（面板、IPC 封装、视觉场景与基线）；Rust 侧 `link_graph_backlinks` command 随后由 link_graph 加速波次删除。v1+ 重建意向与 Alex 背书见 finding `20260905-tower-idea-v1-agent.md`。
+
+- [ ] ~~3.1 反链面板：当前文件的来源文件 + 行级上下文列表，数据来自 `link_graph_backlinks`，只读~~（按挤压预案推迟，已实现后移除）
+- [ ] ~~3.2 点击反链跳转来源文件对应位置~~（按挤压预案推迟，已实现后移除）
+- [x] 3.3 按 ADR 0004 §2 挤压预案将 3.1–3.2 标注放弃原因（2026-09-05 执行：Alex 不用 + 大 vault 冻结根因调用方；不阻塞第 1、2 组）
 
 ## 4. 提案评审（节点 1）
 
@@ -36,4 +38,4 @@
 
 - [x] 5.1 `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` 通过
 - [x] 5.2 fixture 双解析器纪律验收：Rust 单测全绿（含 resolveCases），前端 span 定位测试全绿（parseCases），两侧消费同一 cases.json
-- [ ] 5.3 用作者真实 vault 验收：`[[note]]` 跳转、`[[note#heading]]` 标题定位、未创建链接显示与一键创建、backlinks 面板（若未推迟）可见；perf.yml 与视觉门禁不回归
+- [ ] 5.3 用作者真实 vault 验收：`[[note]]` 跳转、`[[note#heading]]` 标题定位、未创建链接显示与一键创建（backlinks 面板已按挤压预案推迟，不在验收项内）；perf.yml 与视觉门禁不回归

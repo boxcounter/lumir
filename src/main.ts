@@ -18,7 +18,6 @@ import type { FsEntry } from "./bindings/FsEntry";
 import type { LinkResolveResult } from "./bindings/LinkResolveResult";
 import { extensionOf, resolveByNameUnique } from "./preview/attachments";
 import { findWikilinkSpans } from "./preview/wikilinks";
-import { createBacklinksPanel } from "./backlinks";
 import "./style.css";
 
 const app = document.querySelector<HTMLElement>("#app");
@@ -144,7 +143,6 @@ async function openFile(path: string, kind: "md" | "code" | "text" | "binary") {
     currentPath = kind === "md" ? path : undefined;
     invalidateResolve(); // from 变更，按 from 键控的缓存整批失效
     editor.openDocument(text, path);
-    backlinks.setFile(kind === "md" ? path : undefined);
     showEditor();
   } catch (e) {
     // CommandError 的 message 是人话（如非法 UTF-8），直接展示
@@ -304,18 +302,9 @@ keymap.attach(window, (command) => {
   }
 });
 
-// 面板区：反链面板（backlinks-panel，只读）+ 配置探针（M1 契约链路验证保留）。
-const backlinksMount = document.createElement("div");
+// 面板区：配置探针（M1 契约链路验证保留）。反链面板已按 ADR 0004 §2 挤压预案移除。
 const configProbe = document.createElement("div");
-configProbe.style.marginTop = "12px";
-configProbe.style.borderTop = "1px solid #e0e0e0";
-configProbe.style.paddingTop = "8px";
-shell.panel.append(backlinksMount, configProbe);
-const backlinks = createBacklinksPanel(backlinksMount, {
-  onJump: (source, line) => {
-    void openFile(source, openKind(source)).then(() => editor.revealLine(line));
-  },
-});
+shell.panel.append(configProbe);
 
 const tree = createFileTree(shell.fileTree, {
   onOpenFile: (path, kind) => void openFile(path, kind),
@@ -346,10 +335,9 @@ function loadVault(root: string, entries: FsEntry[]) {
   resolveEpoch += 1;
   invalidateResolve();
   // 三件套重置：清空编辑器文档（内部 currentFilePath 一并置空）、复位前端
-  // currentPath、清空反链面板；旧 vault 的「暂不支持预览」覆盖层一并撤下
+  // currentPath；旧 vault 的「暂不支持预览」覆盖层一并撤下
   editor.reset();
   currentPath = undefined;
-  backlinks.setFile(undefined);
   showEditor();
   editor.setWikilinkResolver(wikilinkResolver);
   tree.setVault(root, entries);
@@ -371,10 +359,9 @@ onFsEntryChanged((changes) => {
       attachmentPaths.push(change.path);
     }
   }
-  // 链接索引已由后端随事件流增量更新；前端清缓存重建装饰、重拉反链
+  // 链接索引已由后端随事件流增量更新；前端清缓存重建装饰
   invalidateResolve();
   editor.refreshPreview();
-  backlinks.refresh();
   tree.applyChanges(changes);
 }).catch(() => {});
 
@@ -392,7 +379,7 @@ vaultCurrent()
 
 // 契约链路探针：invoke config_get，把 editor.mode 经 setMode 锚定为编辑器的
 // 配置默认基线（openDocument 对无类型线索文件回落到这个基线），并把配置快照
-// 渲染进面板 pane 的配置探针区（反链面板下方）。
+// 渲染进面板 pane 的配置探针区。
 configGet()
   .then((snapshot) => {
     editor.setMode(snapshot.config.editor.mode);
