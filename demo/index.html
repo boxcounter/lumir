@@ -1,0 +1,645 @@
+<!DOCTYPE html>
+<html lang="zh" data-direction="paper" data-theme="light" data-density="comfortable">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lumir 视觉方向 demo</title>
+<style>
+/* ============ 方向变量：A 纸 / B 石墨（亮·暗）/ C 墨 ============ */
+[data-direction="paper"] {
+  --bg:#f6f1e7; --pane-bg:#f1ebdd; --border:#e2d9c6; --text:#3a3428; --dim:#8a7f68;
+  --accent:#b3551f; --link:#b3551f; --unresolved:#8a6a3b; --badge:#a04500;
+  --chip-bg:#f7ecd9; --chip-border:#d9b98a; --chip-text:#7d5310;
+  --code-bg:#efe7d5; --fm-bg:#faf5ea; --fm-key:#93876c; --tag-bg:#ece1c8; --tag-text:#6d5a2e;
+  --img-bg:#ece4d2; --quote-border:#d8cdb4; --caret:#a89a7e;
+  --font-body:Georgia,"Songti SC","STSong","Noto Serif SC",serif;
+  --font-ui:-apple-system,"PingFang SC","Helvetica Neue",sans-serif;
+  --font-mono:ui-monospace,"SF Mono",Menlo,monospace;
+  --maxw:640px; --lh:1.78; --radius:6px; --editor-pad:48px 56px;
+  --h1:1.95em; --h2:1.5em; --h3:1.22em;
+}
+[data-direction="graphite"][data-theme="light"] {
+  --bg:#fbfcfd; --pane-bg:#f4f6f8; --border:#e1e5e9; --text:#23272e; --dim:#7a8494;
+  --accent:#4a6fa5; --link:#3d6ba8; --unresolved:#9a7b2d; --badge:#8a6a1e;
+  --chip-bg:#f6f0df; --chip-border:#d8c9a0; --chip-text:#6d5a1a;
+  --code-bg:#eef1f4; --fm-bg:#f7f9fa; --fm-key:#7a8494; --tag-bg:#e8edf3; --tag-text:#3f5878;
+  --img-bg:#eceff2; --quote-border:#d4dae0; --caret:#9aa3ae;
+  --font-body:-apple-system,"PingFang SC","Helvetica Neue",sans-serif;
+  --font-ui:-apple-system,"PingFang SC","Helvetica Neue",sans-serif;
+  --font-mono:ui-monospace,"SF Mono",Menlo,monospace;
+  --maxw:780px; --lh:1.62; --radius:3px; --editor-pad:32px 40px;
+  --h1:1.55em; --h2:1.32em; --h3:1.15em;
+}
+[data-direction="graphite"][data-theme="dark"] {
+  --bg:#1e2126; --pane-bg:#23262c; --border:#33373f; --text:#d3d7dd; --dim:#8a919c;
+  --accent:#7d9cc4; --link:#8aa8cf; --unresolved:#c2a35a; --badge:#c2a35a;
+  --chip-bg:#2c2a20; --chip-border:#57503a; --chip-text:#cdb271;
+  --code-bg:#26292f; --fm-bg:#23262c; --fm-key:#8a919c; --tag-bg:#2b3038; --tag-text:#9ab0cc;
+  --img-bg:#26292f; --quote-border:#3a3f47; --caret:#6a727d;
+  --font-body:-apple-system,"PingFang SC","Helvetica Neue",sans-serif;
+  --font-ui:-apple-system,"PingFang SC","Helvetica Neue",sans-serif;
+  --font-mono:ui-monospace,"SF Mono",Menlo,monospace;
+  --maxw:780px; --lh:1.62; --radius:3px; --editor-pad:32px 40px;
+  --h1:1.55em; --h2:1.32em; --h3:1.15em;
+}
+[data-direction="ink"] {
+  --bg:#14161a; --pane-bg:#191c21; --border:#262a31; --text:#c9cdd3; --dim:#767d88;
+  --accent:#e0a458; --link:#5fb8ad; --unresolved:#d99a45; --badge:#e0a458;
+  --chip-bg:#262219; --chip-border:#54452a; --chip-text:#d99a45;
+  --code-bg:#1c1f24; --fm-bg:#1a1d22; --fm-key:#767d88; --tag-bg:#22262c; --tag-text:#7fb0a8;
+  --img-bg:#1c1f24; --quote-border:#33373f; --caret:#565d68;
+  --font-body:"Charter","Bitstream Charter",Georgia,"Songti SC",serif;
+  --font-ui:-apple-system,"PingFang SC","Helvetica Neue",sans-serif;
+  --font-mono:ui-monospace,"SF Mono",Menlo,monospace;
+  --maxw:680px; --lh:1.8; --radius:8px; --editor-pad:44px 52px;
+  --h1:1.7em; --h2:1.4em; --h3:1.18em;
+}
+/* 密度 */
+[data-density="compact"] { --lh-scale:0.88; --fs-ui:12px; --fs-body:13.5px; --tree-pad:1px 4px; --editor-pad-scale:0.7; }
+[data-density="comfortable"] { --lh-scale:1; --fs-ui:13px; --fs-body:15px; --tree-pad:3px 5px; --editor-pad-scale:1; }
+
+* { box-sizing:border-box; }
+html,body { margin:0; height:100%; }
+body { font-family:var(--font-ui); background:var(--bg); color:var(--text); font-size:var(--fs-ui); }
+
+/* ============ 控制台 ============ */
+#console {
+  display:flex; flex-wrap:wrap; align-items:center; gap:8px 18px;
+  padding:8px 14px; border-bottom:1px solid var(--border);
+  background:var(--pane-bg); font-size:12px; min-height:44px;
+}
+#console .c-title { font-weight:600; margin-right:4px; }
+.c-group { display:flex; align-items:center; gap:6px; }
+.c-label { color:var(--dim); }
+.seg { display:inline-flex; border:1px solid var(--border); border-radius:var(--radius); overflow:hidden; background:var(--bg); }
+.seg button {
+  border:none; background:none; color:var(--text); font:inherit; padding:3px 10px; cursor:pointer;
+  border-right:1px solid var(--border);
+}
+.seg button:last-child { border-right:none; }
+.seg button.active { background:var(--accent); color:var(--bg); }
+[data-direction="ink"] .seg button.active, [data-direction="graphite"][data-theme="dark"] .seg button.active { color:#14161a; }
+.seg button:disabled { opacity:.38; cursor:not-allowed; }
+.c-disabled-note { color:var(--dim); font-style:italic; }
+.c-note { color:var(--dim); flex-basis:100%; line-height:1.5; }
+#intent {
+  flex-basis:100%; border-left:3px solid var(--accent); padding:6px 10px;
+  color:var(--text); line-height:1.6; max-width:960px;
+}
+#intent b { color:var(--accent); }
+
+/* ============ app-shell 三栏（复刻 src/style.css：240px | 1fr | 280px） ============ */
+#stage { height:calc(100% - 0px); display:flex; flex-direction:column; }
+.app-shell { display:grid; grid-template-columns:240px 1fr 280px; flex:1; min-height:0; }
+.pane { min-width:0; min-height:0; overflow:auto; }
+.pane-filetree, .pane-panel {
+  background:var(--pane-bg); border-right:1px solid var(--border); padding:8px;
+  font-size:var(--fs-ui);
+}
+.pane-panel { border-right:none; border-left:1px solid var(--border); }
+.pane-editor { padding:0; position:relative; background:var(--bg); }
+
+/* 文件树（复刻 src/tree.ts DOM 结构） */
+.ft-header { display:flex; align-items:center; gap:6px; padding:4px 4px 8px; font-weight:600; }
+.ft-vault-name { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.ft-switch-btn {
+  flex:none; padding:1px 6px; border:none; border-radius:var(--radius); background:none;
+  font:inherit; font-size:.92em; font-weight:400; color:var(--dim); cursor:pointer;
+}
+.ft-switch-btn:hover { background:var(--code-bg); color:var(--text); }
+.ft-children { list-style:none; margin:0; padding-left:14px; }
+.ft-root-list { padding-left:0; }
+.ft-row {
+  display:flex; align-items:center; gap:4px; width:100%; padding:var(--tree-pad);
+  border:none; background:none; font:inherit; color:var(--text); text-align:left;
+  cursor:pointer; border-radius:var(--radius);
+}
+.ft-row:hover { background:var(--code-bg); }
+.ft-row.active { background:var(--code-bg); box-shadow:inset 2px 0 0 var(--accent); }
+.ft-caret { width:12px; flex:none; color:var(--caret); font-size:10px; text-align:center; }
+.ft-name { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.ft-md .ft-name { color:var(--link); }
+.ft-image .ft-name { color:#4c8a52; }
+[data-theme="dark"] .ft-image .ft-name, [data-direction="ink"] .ft-image .ft-name { color:#6fae74; }
+.ft-empty { padding:12px 4px; color:var(--dim); }
+.ft-hint { margin:0 0 12px; line-height:1.6; }
+.ft-open-btn {
+  padding:6px 14px; border:1px solid var(--border); border-radius:var(--radius);
+  background:var(--bg); color:var(--text); font:inherit; cursor:pointer;
+}
+.ft-open-btn:hover { border-color:var(--accent); color:var(--accent); }
+
+/* 编辑器正文 */
+.doc { max-width:var(--maxw); margin:0 auto; padding:var(--editor-pad);
+  font-family:var(--font-body); font-size:var(--fs-body); line-height:calc(var(--lh) * var(--lh-scale)); }
+.doc h1 { font-size:var(--h1); line-height:1.35; margin:.4em 0 .5em; }
+.doc h2 { font-size:var(--h2); line-height:1.35; margin:1.1em 0 .4em; }
+.doc h3 { font-size:var(--h3); line-height:1.35; margin:1em 0 .3em; }
+.doc h4, .doc h5, .doc h6 { font-size:1em; margin:.9em 0 .3em; }
+.doc h6 { color:var(--dim); }
+[data-direction="graphite"] .doc h1, [data-direction="graphite"] .doc h2 { border-bottom:1px solid var(--border); padding-bottom:.18em; }
+[data-direction="paper"] .doc h1 { color:var(--accent); }
+.doc p { margin:.45em 0; }
+
+/* wikilink 三态（spec §4.1 语义复刻，样式随方向） */
+.wl { color:var(--link); cursor:pointer; text-decoration:underline; text-underline-offset:2px; }
+.wl-unresolved { color:var(--unresolved); text-decoration:underline dashed; text-underline-offset:2px; }
+.wl-badge {
+  font-size:.62em; color:var(--badge); border:1px solid var(--chip-border); border-radius:3px;
+  padding:0 3px; margin-left:3px; vertical-align:super; font-family:var(--font-ui); white-space:nowrap;
+}
+
+/* 提示块（块引用不支持 / 内容嵌入不支持 / 附件未找到） */
+.notice-chip {
+  display:inline-block; border:1px dashed var(--chip-border); border-radius:var(--radius);
+  padding:3px 10px; margin:2px 0; color:var(--chip-text); background:var(--chip-bg);
+  font-size:.85em; font-family:var(--font-ui);
+}
+.notice-chip .raw { font-family:var(--font-mono); opacity:.75; margin-left:6px; }
+
+/* frontmatter properties 区块 */
+.fm {
+  border:1px solid var(--border); border-radius:var(--radius); padding:8px 12px; margin:4px 0 14px;
+  font-size:.86em; background:var(--fm-bg); font-family:var(--font-ui);
+}
+.fm table { border-collapse:collapse; }
+.fm-key { color:var(--fm-key); padding-right:14px; vertical-align:top; white-space:nowrap; user-select:none; }
+.fm-value { padding:1px 0; word-break:break-word; }
+.fm-tag {
+  display:inline-block; background:var(--tag-bg); color:var(--tag-text); border-radius:10px;
+  padding:0 8px; margin:1px 4px 1px 0; font-size:.92em;
+}
+
+/* 代码 */
+.doc code {
+  background:var(--code-bg); border-radius:3px; padding:0 3px; font-size:.92em;
+  font-family:var(--font-mono);
+}
+.doc pre {
+  background:var(--code-bg); border-radius:var(--radius); padding:10px 14px; overflow:auto;
+  font-family:var(--font-mono); font-size:.9em; line-height:1.5;
+}
+.doc pre code { background:none; padding:0; }
+
+/* 内联图片（fixture photo.png 的单文件替身：内联 SVG） */
+.embed-img { display:inline-block; margin:6px 0; }
+.embed-img svg { max-width:100%; border-radius:var(--radius); display:block; border:1px solid var(--border); }
+
+/* 编辑器覆盖层（暂不支持预览） */
+.editor-notice {
+  position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
+  padding:24px; color:var(--dim); font-size:14px; text-align:center; background:var(--bg);
+  font-family:var(--font-ui);
+}
+.editor-notice[hidden] { display:none; }
+
+/* 右侧面板：config 探针（复刻 main.ts：pre-wrap 等宽输出） */
+.probe { white-space:pre-wrap; font-family:var(--font-mono); font-size:12px; color:var(--text); line-height:1.6; }
+.panel-note { color:var(--dim); font-size:12px; margin-top:14px; line-height:1.6; }
+
+/* toast 浮条（复刻 main.ts：右下角、自动消隐） */
+.lumir-toast {
+  position:absolute; bottom:16px; right:16px; display:flex; align-items:center; gap:10px;
+  padding:8px 14px; border-radius:6px; background:#333; color:#fff; font-size:13px;
+  z-index:10; max-width:70%; font-family:var(--font-ui);
+}
+.lumir-toast button {
+  border:1px solid #888; border-radius:4px; background:transparent; color:#fff;
+  cursor:pointer; font:inherit; padding:2px 10px; flex:none;
+}
+
+/* 批注模式 */
+.anno {
+  font-family:var(--font-ui); font-size:10px; font-weight:600; color:#fff; background:var(--accent);
+  border-radius:8px; padding:0 5px; margin-left:4px; vertical-align:super; cursor:help;
+  line-height:1.4; display:inline-block;
+}
+</style>
+</head>
+<body>
+<div id="stage">
+  <div id="console"></div>
+  <div class="app-shell">
+    <section class="pane pane-filetree" id="filetree"></section>
+    <section class="pane pane-editor" id="editor"><div class="editor-notice" id="notice" hidden></div></section>
+    <section class="pane pane-panel" id="panel"></section>
+  </div>
+</div>
+<script>
+// ============================================================================
+// COPY：唯一文案数据源，key 即 文案-Copy.md 条目编号。render 只引用 key。
+// ============================================================================
+const COPY = {
+  zh: {
+    D1_switch: "切换",
+    D1_switchTitle: "切换 vault",
+    D2_emptyHint: "打开一个目录作为 vault，开始浏览全部文件。",
+    D3_openVault: "打开 vault",
+    D5_noPreview: (p) => `暂不支持预览：${p}`,
+    D8_uncreatedToast: (raw) => `未创建的链接：${raw}`,
+    D9_createOpen: "创建并打开",
+    D11_createdToast: (p) => `已创建：${p}`,
+    D12_badge: "歧义",
+    D12_hover: (cands) => `同名候选：\n${cands.join("\n")}`,
+    D13_unresolvedTitle: (raw) => `${raw}（未创建，点击创建）`,
+    D14_blockRef: "块引用不支持",
+    D15_attachMissing: "附件未找到",
+    D16_embedNote: "内容嵌入不支持",
+    C1_consoleTitle: "视觉方向走查台",
+    C2_direction: "方向",
+    C3_paper: "A「纸」", C3_graphite: "B「石墨」", C3_ink: "C「墨」",
+    C4_theme: "亮 / 暗",
+    C4_light: "亮", C4_dark: "暗",
+    C4_na: "该方向固定亮度",
+    C5_density: "密度",
+    C5_comfortable: "舒适", C5_compact: "紧凑",
+    C6_language: "语言",
+    C7_state: "状态",
+    C7_empty: "空态", C7_full: "满态", C7_long: "长文档",
+    C8_annotate: "批注",
+    C8_off: "关", C8_on: "开",
+    C9_role: "角色",
+    C9_roleNote: "单一角色（作者本人，ADR 0001 自用定位），无可切换",
+    C10_intentTitle: "设计意图",
+    C11_fixtureNote: "正文内容：wikilink fixture Alpha.md（frontmatter 与「标题层级」一节为演示补充，fixture 原文无此两部分）；文档与文件名是 fixture 数据，不随语言切换。",
+    intent_paper: "「纸」面向长时间阅读与写作：暖白底降低白屏眩光，衬线正文与 1.78 倍行高给出书页节奏，行宽收在 640px 的舒适阅读上限。强调色只用一种暖赭，链接、徽标、当前文件共用，保持纸面安静；边框退为暖色细线，左右面板不抢正文。",
+    intent_graphite: "「石墨」是工具取向：冷灰低饱和 + 系统 sans，信息密度优先。细线框划分区域，间距紧凑，路径与探针用等宽字体强化工作台感。它是唯一支持亮/暗切换的方向——工具应适配环境光，而不是强迫一种氛围。",
+    intent_ink: "「墨」为夜间长读设计：底色是带蓝灰的深灰而非纯黑，正文亮度压低一档避免刺眼。琥珀与青两种强调色分工——青指向可跟随的链接，琥珀标记需要处理的异常（未创建、不支持、歧义），黑暗中一眼分流。",
+  },
+  en: {
+    D1_switch: "Switch",
+    D1_switchTitle: "Switch vault",
+    D2_emptyHint: "Open a folder as a vault to start browsing all its files.",
+    D3_openVault: "Open vault",
+    D5_noPreview: (p) => `Preview not supported yet: ${p}`,
+    D8_uncreatedToast: (raw) => `Link not created yet: ${raw}`,
+    D9_createOpen: "Create & open",
+    D11_createdToast: (p) => `Created: ${p}`,
+    D12_badge: "ambiguous",
+    D12_hover: (cands) => `Same-name candidates:\n${cands.join("\n")}`,
+    D13_unresolvedTitle: (raw) => `${raw} (not created — click to create)`,
+    D14_blockRef: "Block references not supported",
+    D15_attachMissing: "Attachment not found",
+    D16_embedNote: "Note embed not supported",
+    C1_consoleTitle: "Visual direction walkthrough",
+    C2_direction: "Direction",
+    C3_paper: "A “Paper”", C3_graphite: "B “Graphite”", C3_ink: "C “Ink”",
+    C4_theme: "Light / Dark",
+    C4_light: "Light", C4_dark: "Dark",
+    C4_na: "Fixed brightness for this direction",
+    C5_density: "Density",
+    C5_comfortable: "Comfortable", C5_compact: "Compact",
+    C6_language: "Language",
+    C7_state: "State",
+    C7_empty: "Empty", C7_full: "Full", C7_long: "Long doc",
+    C8_annotate: "Annotate",
+    C8_off: "Off", C8_on: "On",
+    C9_role: "Role",
+    C9_roleNote: "Single role (the author, ADR 0001) — nothing to switch",
+    C10_intentTitle: "Design intent",
+    C11_fixtureNote: "Content: wikilink fixture Alpha.md (frontmatter and the heading-level section are demo supplements — not in the original fixture); documents and file names are fixture data and do not switch with language.",
+    intent_paper: "“Paper” is for long reading and writing sessions: a warm-white surface cuts glare, serif body text at 1.78 line-height sets a book-page rhythm, and the measure stays within a comfortable 640px. A single warm-ochre accent is shared by links, badges and the active file, keeping the page quiet; borders recede to warm hairlines so the side panes never compete with the text.",
+    intent_graphite: "“Graphite” is tool-oriented: cool desaturated grays with the system sans, information density first. Hairline frames divide regions, spacing is compact, and monospace for paths and the probe reinforces the workbench feel. It is the only direction with a light/dark switch — a tool should adapt to ambient light instead of imposing one mood.",
+    intent_ink: "“Ink” is designed for night reading: the surface is a blue-tinged dark gray rather than pure black, and body brightness is kept one notch lower to avoid glare. Amber and teal accents split duties — teal marks followable links, amber flags what needs handling (uncreated, unsupported, ambiguous) — so the two are told apart at a glance in the dark.",
+  },
+};
+
+// 批注模式：元素 data-deck → deck 条目（编号 + 位置 + 意图摘要），悬停展示。
+const ANNOTATIONS = {
+  D1: "D1 · 树头部切换按钮 · 低频动作常驻但弱化，消除「换 vault 要重开 app」的顾虑",
+  D2: "D2 · 空态提示语 · 一句话给动作与收益，「全部文件」呼应全类型一等公民",
+  D3: "D3 · 空态按钮 · 沿用 vault 一词，与 Obsidian 用户既有词汇对齐",
+  D5: "D5 · 二进制预览覆盖层 · 「暂」字声明能力边界而非故障（ADR 0003）",
+  D8: "D8 · 未创建链接 toast · unresolved 不是错误（spec §4.3）",
+  D9: "D9 · 创建并打开按钮 · 一键创建入口（spec §4.4），预告完整结果",
+  D11: "D11 · 已创建 toast · 确认动作并给出落地路径",
+  D12: "D12 · 歧义徽标 · 跳转前即可见同名候选（spec §4.1）",
+  D13: "D13 · 未创建悬停提示 · 悬停即预告点击结果",
+  D14: "D14 · 块引用不支持 · 正文原位声明兼容边界（ADR 0003 §2）",
+  D15: "D15 · 附件未找到 · 原地占位保留原文，区分「引用错」与「图片坏」",
+  D16: "D16 · 内容嵌入不支持 · Obsidian 特性，明确不做（ADR 0003 §2）",
+  D24: "D24 · 面板占位「面板（后续波次）」· 现网被 config 探针遮挡不显示，deck 登记为现状文案",
+  D25: "D25 · config 探针 · M1 契约链路验证保留，现状的一部分，双语同文",
+  C9: "C9 · 角色维度 · 单一角色产品，切换不做并说明原因",
+};
+
+// ============================================================================
+// 数据：wikilink fixture vault（tests/wikilink-fixtures/vault 真实结构与内容）
+// ============================================================================
+const VAULT = {
+  name: "vault",
+  tree: [
+    { name: "assets", kind: "dir", children: [
+      { name: "diagram.png", kind: "image", path: "assets/diagram.png" },
+      { name: "photo.png", kind: "image", path: "assets/photo.png" },
+    ]},
+    { name: "folder", kind: "dir", children: [
+      { name: "Beta.md", kind: "md", path: "folder/Beta.md" },
+      { name: "Gamma.md", kind: "md", path: "folder/Gamma.md" },
+    ]},
+    { name: "sub", kind: "dir", children: [
+      { name: "Deep Note.md", kind: "md", path: "sub/Deep Note.md" },
+    ]},
+    { name: "Alpha.md", kind: "md", path: "Alpha.md" },
+    { name: "Beta.md", kind: "md", path: "Beta.md" },
+    { name: "Case Note.md", kind: "md", path: "Case Note.md" },
+    { name: "中文笔记.md", kind: "md", path: "中文笔记.md" },
+  ],
+};
+
+// 各 fixture 文件正文（简化为装饰后的 HTML 片段；Alpha.md 是全形态样本）。
+// wikilink 三态标注基于 fixture 真实解析语义：[[Beta]] 根目录与 folder 各一 → 歧义。
+const DOCS = {
+  "Alpha.md": null, // 由 buildAlphaDoc() 生成
+  "Beta.md": `<h1>Beta（根目录）</h1><p>与 folder/Beta.md 同名，构成短路径歧义 fixture。</p><h2>概览</h2>`,
+  "folder/Beta.md": `<h1>Beta（folder 内）</h1><p>[[Beta]] 歧义候选之二。</p>`,
+  "folder/Gamma.md": `<h1>Gamma</h1><h2>设计</h2><h3>子点</h3><h2>实现</h2><h2>Overview</h2>`,
+  "中文笔记.md": `<h1>中文笔记</h1><h2>背景</h2>`,
+  "Case Note.md": `<h1>Case Note</h1><p>大小写不敏感文件名匹配的目标。</p>`,
+  "sub/Deep Note.md": `<h1>Deep Note</h1><p>子目录中唯一的短路径目标。</p>`,
+};
+
+const state = { direction: "paper", theme: "light", density: "comfortable", lang: "zh", view: "full", annotate: false };
+// URL 参数直达某个状态（走查 / 截图 / 分享链接用）：?direction=ink&view=long&lang=en
+for (const [k, vals] of [["direction", ["paper", "graphite", "ink"]], ["theme", ["light", "dark"]],
+  ["density", ["comfortable", "compact"]], ["lang", ["zh", "en"]], ["view", ["empty", "full", "long"]]]) {
+  const v = new URLSearchParams(location.search).get(k);
+  if (v && vals.includes(v)) state[k] = v;
+}
+if (new URLSearchParams(location.search).get("annotate") === "on") state.annotate = true;
+const T = () => COPY[state.lang];
+// ============================================================================
+// 渲染
+// ============================================================================
+const el = (tag, cls, html) => { const e = document.createElement(tag); if (cls) e.className = cls; if (html !== undefined) e.innerHTML = html; return e; };
+const esc = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;");
+
+let currentFile = "Alpha.md";
+let toastTimer = null;
+
+// ---- wikilink widget 构造（复刻 livePreview.ts 三态语义） ----
+function wlResolved(raw, label, target) {
+  return `<span class="wl" title="${esc(raw)}" data-open="${esc(target)}">${esc(label)}</span>`;
+}
+function wlAmbiguous(raw, label, candidates, target) {
+  const t = T();
+  return `<span class="wl" title="${esc(t.D12_hover(candidates))}" data-open="${esc(target)}">${esc(label)}<sup class="wl-badge" data-deck="D12">${esc(t.D12_badge)}</sup></span>`;
+}
+function wlUnresolved(raw) {
+  const t = T();
+  return `<span class="wl wl-unresolved" title="${esc(t.D13_unresolvedTitle(raw))}" data-unresolved="${esc(raw)}" data-deck="D13">${esc(raw.slice(2, -2))}</span>`;
+}
+const CHIP_COPY = { D14: "D14_blockRef", D15: "D15_attachMissing", D16: "D16_embedNote" };
+function noticeChip(deckId, raw) {
+  return `<span class="notice-chip" data-deck="${deckId}">${esc(T()[CHIP_COPY[deckId]])}<span class="raw">${esc(raw)}</span></span>`;
+}
+
+// fixture photo.png 的单文件替身（内联 SVG，示意图片附件渲染成功态）
+const PHOTO_SVG = `<span class="embed-img"><svg width="360" height="180" viewBox="0 0 360 180" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="photo.png"><defs><linearGradient id="g" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#b8c6d8"/><stop offset="1" stop-color="#7d93ad"/></linearGradient></defs><rect width="360" height="180" fill="url(#g)"/><circle cx="290" cy="42" r="20" fill="#f4e8c8"/><path d="M0 150 L90 80 L160 135 L230 95 L360 165 L360 180 L0 180 Z" fill="#5d7186"/><text x="12" y="170" font-family="monospace" font-size="12" fill="#eef">assets/photo.png</text></svg></span>`;
+
+function frontmatterBlock() {
+  // frontmatter 为演示补充（fixture Alpha.md 原文无），见控制台 C11 注记
+  return `<div class="fm"><table>
+    <tr><td class="fm-key">title</td><td class="fm-value">Alpha</td></tr>
+    <tr><td class="fm-key">tags</td><td class="fm-value"><span class="fm-tag">wikilink</span><span class="fm-tag">fixture</span><span class="fm-tag">测试</span></td></tr>
+    <tr><td class="fm-key">status</td><td class="fm-value">draft</td></tr>
+    <tr><td class="fm-key">related</td><td class="fm-value">["[[Beta]]"]</td></tr>
+  </table></div>`;
+}
+
+function buildAlphaDoc() {
+  return frontmatterBlock() + `
+<h1>Alpha</h1>
+<p>本笔记汇集各种 wikilink 形态，供 span 定位与端到端验证使用。</p>
+<p>基本形态：${wlAmbiguous("[[Beta]]", "Beta", ["Beta.md", "folder/Beta.md"], "Beta.md")}、${wlResolved("[[Gamma]]", "Gamma", "folder/Gamma.md")}、${wlResolved("[[中文笔记]]", "中文笔记", "中文笔记.md")}。</p>
+<p>带别名：${wlResolved("[[Gamma|伽马笔记]]", "伽马笔记", "folder/Gamma.md")}。</p>
+<p>带标题：${wlResolved("[[Gamma#设计]]", "Gamma#设计", "folder/Gamma.md")}、${wlResolved("[[Gamma#设计#子点]]", "Gamma#设计#子点", "folder/Gamma.md")}。</p>
+<p>未创建：${wlUnresolved("[[不存在的笔记]]")}。</p>
+<p>块引用（不支持）：${noticeChip("D14", "[[Gamma#^abc123]]")}</p>
+<p>附件与嵌入：${PHOTO_SVG}、${noticeChip("D16", "![[Beta]]")}</p>
+<p><code>[[code 里的不是链接]]</code></p>
+<pre><code>[[围栏里的也不是链接]]</code></pre>`;
+}
+
+function buildLongDoc() {
+  let extra = `
+<h2>标题层级（演示补充）</h2>
+<h3>三级标题样本</h3>
+<h4>四级标题样本</h4>
+<h5>五级标题样本</h5>
+<h6>六级标题样本</h6>
+<h2>长滚动压力段</h2>`;
+  for (let i = 1; i <= 10; i++) {
+    extra += `<p>第 ${i} 段：长文档滚动时装饰层应保持稳定——${wlResolved("[[Gamma]]", "Gamma", "folder/Gamma.md")} 正常、${wlUnresolved("[[不存在的笔记]]")} 未创建、${noticeChip("D15", "![[missing.png]]")} 原位提示，互不串扰。</p>`;
+  }
+  return buildAlphaDoc() + extra;
+}
+
+// ---- toast（复刻 main.ts：右下角浮条，自动消隐） ----
+function showToast(html, action, deckId) {
+  const editor = document.getElementById("editor");
+  editor.querySelectorAll(".lumir-toast").forEach((t) => t.remove());
+  if (toastTimer) clearTimeout(toastTimer);
+  const t = el("div", "lumir-toast");
+  t.dataset.deck = deckId || "";
+  const span = el("span"); span.innerHTML = html; t.append(span);
+  if (action) {
+    const btn = el("button"); btn.textContent = action.label; btn.dataset.deck = "D9";
+    btn.addEventListener("click", () => { t.remove(); action.run(); });
+    t.append(btn);
+  }
+  editor.append(t);
+  toastTimer = setTimeout(() => t.remove(), action ? 8000 : 3500);
+  if (state.annotate) injectAnnotations();
+}
+
+// ---- 文件树 ----
+function renderTree() {
+  const host = document.getElementById("filetree");
+  host.replaceChildren();
+  const t = T();
+  if (state.view === "empty") {
+    const empty = el("div", "ft-empty");
+    const hint = el("p", "ft-hint", esc(t.D2_emptyHint)); hint.dataset.deck = "D2";
+    const btn = el("button", "ft-open-btn", esc(t.D3_openVault)); btn.dataset.deck = "D3";
+    btn.addEventListener("click", () => { state.view = "full"; apply(); });
+    empty.append(hint, btn); host.append(empty);
+    return;
+  }
+  const wrap = el("div", "filetree");
+  const header = el("div", "ft-header");
+  header.append(el("span", "ft-vault-name", esc(VAULT.name)));
+  const sw = el("button", "ft-switch-btn", esc(t.D1_switch));
+  sw.title = t.D1_switchTitle; sw.setAttribute("aria-label", t.D1_switchTitle); sw.dataset.deck = "D1";
+  header.append(sw); wrap.append(header);
+  const rootUl = el("ul", "ft-children ft-root-list");
+  for (const node of VAULT.tree) rootUl.append(treeNode(node));
+  wrap.append(rootUl); host.append(wrap);
+}
+function treeNode(node) {
+  const li = el("li", "ft-item");
+  if (node.kind === "dir") {
+    const row = el("button", "ft-row ft-dir");
+    row.innerHTML = `<span class="ft-caret">▸</span><span class="ft-name">${esc(node.name)}</span>`;
+    const ul = el("ul", "ft-children"); ul.hidden = true;
+    row.addEventListener("click", () => {
+      ul.hidden = !ul.hidden;
+      row.querySelector(".ft-caret").textContent = ul.hidden ? "▸" : "▾";
+      if (!ul.hidden && !ul.children.length) for (const c of node.children) ul.append(treeNode(c));
+    });
+    li.append(row, ul);
+  } else {
+    const row = el("button", `ft-row ft-${node.kind}`);
+    if (node.path === currentFile) row.classList.add("active");
+    row.innerHTML = `<span class="ft-caret"></span><span class="ft-name">${esc(node.name)}</span>`;
+    row.title = node.path;
+    row.addEventListener("click", () => openFile(node.path, node.kind));
+    li.append(row);
+  }
+  return li;
+}
+
+// ---- 编辑器 ----
+function openFile(path, kind) {
+  const notice = document.getElementById("notice");
+  if (kind === "image") {
+    notice.textContent = T().D5_noPreview(path);
+    notice.dataset.deck = "D5"; notice.hidden = false;
+    currentFile = path; renderTree(); if (state.annotate) injectAnnotations();
+    return;
+  }
+  notice.hidden = true; currentFile = path; renderEditor(); renderTree();
+}
+function renderEditor() {
+  const editor = document.getElementById("editor");
+  editor.querySelectorAll(".doc").forEach((d) => d.remove());
+  document.getElementById("notice").hidden = true;
+  if (state.view === "empty") return;
+  const doc = el("div", "doc");
+  if (currentFile === "Alpha.md") doc.innerHTML = state.view === "long" ? buildLongDoc() : buildAlphaDoc();
+  else doc.innerHTML = DOCS[currentFile] || "";
+  editor.append(doc);
+  bindDocInteractions(doc);
+}
+function bindDocInteractions(doc) {
+  doc.querySelectorAll("[data-open]").forEach((w) =>
+    w.addEventListener("click", () => openFile(w.dataset.open, "md")));
+  doc.querySelectorAll("[data-unresolved]").forEach((w) =>
+    w.addEventListener("click", () => {
+      const raw = w.dataset.unresolved;
+      showToast(esc(T().D8_uncreatedToast(raw)), {
+        label: T().D9_createOpen,
+        run: () => showToast(esc(T().D11_createdToast(raw.slice(2, -2) + ".md")), null, "D11"),
+      }, "D8");
+    }));
+}
+
+// ---- 右侧面板：config 探针（现状保留） ----
+function renderPanel() {
+  const host = document.getElementById("panel");
+  host.replaceChildren();
+  const probe = el("div", "probe",
+    "config: ok (mode=md)\npath: /Users/alex/.config/lumir/config.json");
+  probe.dataset.deck = "D25";
+  host.append(probe);
+}
+
+// ---- 控制台 ----
+function seg(options, current, onPick, disabled) {
+  const g = el("span", "seg");
+  for (const [val, label] of options) {
+    const b = el("button", "", esc(label));
+    b.type = "button";
+    if (val === current) b.classList.add("active");
+    if (disabled) b.disabled = true;
+    b.addEventListener("click", () => { if (!disabled) { onPick(val); apply(); } });
+    g.append(b);
+  }
+  return g;
+}
+function renderConsole() {
+  const host = document.getElementById("console");
+  host.replaceChildren();
+  const t = T();
+  host.append(el("span", "c-title", esc(t.C1_consoleTitle)));
+
+  let g = el("span", "c-group");
+  g.append(el("span", "c-label", esc(t.C2_direction)));
+  g.append(seg([["paper", t.C3_paper], ["graphite", t.C3_graphite], ["ink", t.C3_ink]],
+    state.direction, (v) => {
+      state.direction = v;
+      if (v === "paper") state.theme = "light";
+      if (v === "ink") state.theme = "dark";
+    }));
+  host.append(g);
+
+  g = el("span", "c-group");
+  g.append(el("span", "c-label", esc(t.C4_theme)));
+  const themeFixed = state.direction !== "graphite";
+  g.append(seg([["light", t.C4_light], ["dark", t.C4_dark]], state.theme, (v) => state.theme = v, themeFixed));
+  if (themeFixed) g.append(el("span", "c-disabled-note", esc(t.C4_na)));
+  host.append(g);
+
+  g = el("span", "c-group");
+  g.append(el("span", "c-label", esc(t.C5_density)));
+  g.append(seg([["comfortable", t.C5_comfortable], ["compact", t.C5_compact]], state.density, (v) => state.density = v));
+  host.append(g);
+
+  g = el("span", "c-group");
+  g.append(el("span", "c-label", esc(t.C6_language)));
+  g.append(seg([["zh", "中文"], ["en", "English"]], state.lang, (v) => state.lang = v));
+  host.append(g);
+
+  g = el("span", "c-group");
+  g.append(el("span", "c-label", esc(t.C7_state)));
+  g.append(seg([["empty", t.C7_empty], ["full", t.C7_full], ["long", t.C7_long]], state.view, (v) => state.view = v));
+  host.append(g);
+
+  g = el("span", "c-group");
+  g.append(el("span", "c-label", esc(t.C8_annotate)));
+  g.append(seg([["off", t.C8_off], ["on", t.C8_on]], state.annotate ? "on" : "off", (v) => state.annotate = v === "on"));
+  host.append(g);
+
+  g = el("span", "c-group");
+  g.append(el("span", "c-label", esc(t.C9_role)));
+  const roleNote = el("span", "c-disabled-note", esc(t.C9_roleNote));
+  roleNote.dataset.deck = "C9";
+  g.append(roleNote);
+  host.append(g);
+
+  const intent = el("div", "intent");
+  intent.append(el("b", "", esc(t.C10_intentTitle) + " · "));
+  intent.append(document.createTextNode(t["intent_" + state.direction]));
+  host.append(intent);
+
+  host.append(el("div", "c-note", esc(t.C11_fixtureNote)));
+}
+
+// ---- 批注模式 ----
+function injectAnnotations() {
+  document.querySelectorAll(".anno").forEach((a) => a.remove());
+  if (!state.annotate) return;
+  document.querySelectorAll("[data-deck]").forEach((elmt) => {
+    const id = elmt.dataset.deck;
+    if (!id || !ANNOTATIONS[id] || elmt.querySelector(":scope > .anno")) return;
+    const a = el("span", "anno", id);
+    a.title = ANNOTATIONS[id];
+    elmt.append(a);
+  });
+}
+
+// ---- 总装 ----
+function apply() {
+  const root = document.documentElement;
+  root.dataset.direction = state.direction;
+  root.dataset.theme = state.direction === "graphite" ? state.theme
+    : state.direction === "paper" ? "light" : "dark";
+  root.dataset.density = state.density;
+  root.lang = state.lang === "zh" ? "zh" : "en";
+  renderConsole(); renderTree(); renderEditor(); renderPanel();
+  if (state.annotate) injectAnnotations();
+}
+apply();
+</script>
+</body>
+</html>
