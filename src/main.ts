@@ -243,16 +243,18 @@ async function createForWikilink(from: string, raw: string): Promise<void> {
 function wikilinkAt(pos: number): string | null {
   const text = editor.view.state.doc.toString();
   for (const span of findWikilinkSpans(text)) {
-    if (!span.embed && pos >= span.from && pos <= span.to) {
+    if (!span.embed && pos >= span.from && pos < span.to) {
       return text.slice(span.from, span.to);
     }
   }
   return null;
 }
 
-// 点击跳转（spec §4.2）：命中 wikilink span 时阻止选区落点，直接跟随链接。
+// 点击跳转（spec §4.2）：Mod-Click 命中 wikilink span 时阻止选区落点，直接跟随链接；
+// 裸点击不拦截，保持链接文本可正常落点编辑。
 editor.view.dom.addEventListener("mousedown", (e) => {
   if (e.button !== 0) return;
+  if (!(e.metaKey || e.ctrlKey)) return; // Mod-Click：macOS Cmd，跨平台兼容 Ctrl
   if (currentPath === undefined) return; // 无 vault 上下文：链接只是文本
   const pos = editor.view.posAtCoords({ x: e.clientX, y: e.clientY });
   if (pos === null) return;

@@ -716,7 +716,7 @@ impl LinkGraph {
                 "当前文件内锚点链接没有可创建的目标",
             ));
         }
-        if p.starts_with('/') || p.split('/').any(|s| s == ".." || s == ".") {
+        if p.starts_with('/') || p.split('/').any(|s| s.is_empty() || s == ".." || s == ".") {
             return Err(CommandError::new(
                 "wikilink_invalid_path",
                 format!("目标路径不合法：{p}"),
@@ -883,5 +883,13 @@ mod tests {
             drill(&headings, &[seg("A"), seg("B"), seg("B")]).map(|h| h.line),
             None
         );
+    }
+
+    #[test]
+    fn create_target_rejects_trailing_slash() {
+        let mut g = LinkGraph::new();
+        g.upsert("a.md", Some("[[foo/]]"));
+        let err = g.create_target("a.md", "[[foo/]]").unwrap_err();
+        assert_eq!(err.code, "wikilink_invalid_path");
     }
 }

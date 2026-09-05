@@ -105,19 +105,33 @@ test("链接三态显示（resolved / ambiguous / unresolved）", async ({ page 
   await expect(page).toHaveScreenshot("wikilink-states.png");
 });
 
-test("点击跳转：锚点命中定位，锚点缺失给提示", async ({ page }) => {
+test("点击跳转：Mod-Click 跟随，锚点命中定位，锚点缺失给提示", async ({ page }) => {
   await openA(page);
-  // 锚点命中：打开 b.md 并定位到标题行
+  // 裸点击不拦截：不跳转、无 toast，选区正常落点（编辑器当前全局只读，
+  // 「可编辑」以 selection 落进 .cm-content 为判定；修复前 preventDefault 会吞掉落点）
   const anchored = page.locator(".cm-lp-wikilink-resolved", { hasText: "b#目标" });
   await anchored.waitFor();
   await anchored.click();
+  await expect(page.locator(".cm-content")).toContainText("b#目标"); // 仍在 a.md
+  await expect(page.locator(".lumir-toast")).toHaveCount(0);
+  const selInEditor = await page.evaluate(() => {
+    const s = window.getSelection();
+    const content = document.querySelector(".cm-content");
+    return s !== null && content !== null && content.contains(s.anchorNode);
+  });
+  expect(selInEditor).toBe(true);
+  await page.locator('.ft-row[title="a.md"]').click(); // 还原现场
+
+  // Mod-Click 锚点命中：打开 b.md 并定位到标题行
+  await anchored.waitFor();
+  await anchored.click({ modifiers: ["Meta"] });
   await expect(page.locator(".cm-content")).toContainText("目标内容");
 
-  // 锚点缺失：打开文件并提示「标题未找到」，不静默停在顶部
+  // Mod-Click 锚点缺失：打开文件并提示「标题未找到」，不静默停在顶部
   await page.locator('.ft-row[title="a.md"]').click();
   const missingAnchor = page.locator(".cm-lp-wikilink-resolved", { hasText: "b#没有" });
   await missingAnchor.waitFor();
-  await missingAnchor.click();
+  await missingAnchor.click({ modifiers: ["Meta"] });
   await expect(page.locator(".cm-content")).toContainText("目标内容");
   await expect(page.locator(".lumir-toast")).toContainText("标题未找到：没有");
 });
@@ -126,7 +140,7 @@ test("未创建链接一键创建并转为正常态", async ({ page }) => {
   await openA(page);
   const unresolved = page.locator(".cm-lp-wikilink-unresolved");
   await unresolved.waitFor();
-  await unresolved.click();
+  await unresolved.click({ modifiers: ["Meta"] });
   const toastEl = page.locator(".lumir-toast");
   await expect(toastEl).toContainText("未创建的链接：[[missing]]");
   await toastEl.getByRole("button", { name: "创建并打开" }).click();
