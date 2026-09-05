@@ -16,16 +16,16 @@ M1 内容清单含 wikilink 跳转（[ADR 0004 §1](../../../docs/adr/0004-devel
 
 1. **Rust 单实现解析**（`wikilink-resolution`）：在 `link_graph` 模块（现为占位骨架）实现链接语义 spec §2–§5 的词法与解析：wikilink 识别（code/frontmatter 内不识别）、target 分解（alias/heading path/块引用标记）、名称→路径解析（根相对精确路径 → 短路径候选集，大小写不敏感，歧义按裁决点 G）、标题锚点逐段下钻（裁决点 H）、`![[...]]` 双语义判别。名称→路径索引随 vault 打开建立、随 `fs:entry_changed` 增量维护（复用 add-vault-workspace 的 watch 事件流）。对前端暴露 invoke contract：`link_graph_resolve`（单条链接解析，装饰与跳转用）、`link_graph_backlinks`（反链查询，backlinks 面板用）、`wikilink_create`（未创建链接一键创建）。
 2. **跳转与链接显示**（`wikilink-navigation`）：md 模式装饰层在视口内做链接 span 定位（只做词法范围识别，断言语义一律经 `link_graph_resolve` 取 Rust 结果），按解析三态显示（正常 / 歧义带标识 / 未创建）；点击与键位跳转到目标文件并定位标题行；锚点缺失时打开文件并提示"标题未找到"。键位走既有 keys.ts Keymap，**chorded 非 modal**（ADR 0001 §4）：注册 `Mod-Enter`（跳转光标/点击处链接）与鼠标 `Mod-Click`，具体 chord 在实现期定稿，不引入 mode。
-3. **未创建链接显示与一键创建**（`wikilink-navigation` + `wikilink-resolution`）：`unresolved` 链接区分显示（spec §4.1），提供一键创建入口；创建经 `wikilink_create` 在 vault 根（或 target 自带路径）建空文件（裁决点 I），创建后重解析转为正常链接。铁律约束：只创建新文件，MUST NOT 改写任何既有文件（ADR 0003 §3）。
+3. **未创建链接显示与一键创建**（`wikilink-navigation` + `wikilink-resolution`）：`unresolved` 链接区分显示（spec §4.1），提供一键创建入口；创建经 `wikilink_create` 在当前文件所在目录（当前文件在 vault 根时建于根；target 自带 `/` 路径时按 vault 根相对路径并补齐中间目录）建空文件（裁决点 I，已定稿），创建后重解析转为正常链接。铁律约束：只创建新文件，MUST NOT 改写任何既有文件（ADR 0003 §3）。
 4. **backlinks 只读面板**（`backlinks-panel`）：当前文件的反链列表（来源文件 + 行级上下文），点击跳转来源位置；数据来自 `link_graph_backlinks`，面板只读。**⚠ 可推迟标注**：ADR 0004 §2 挤压预案明确 backlinks 可推迟——若实现期时间受挤压，本 capability 整组任务可标注放弃原因后随节点 2 评审归档，不阻塞其余两项。
 
-**⚠ 裁决点 G——短路径歧义选取规则**（spec §3.2 已冻结推荐值）：候选按相对路径段数最少优先，并列取字典序第一；选中的 `chosen` 参与跳转但链接带歧义标识与候选列表。备选：Obsidian 式"最短路径优先"且不给歧义标识。**请 Alex 裁决。**
+**裁决点 G——短路径歧义选取规则**（2026-09-05 Alex 裁决：按推荐值定稿）：候选按相对路径段数最少优先，并列取字典序第一；选中的 `chosen` 参与跳转但链接带歧义标识与候选列表。备选（已否决）：Obsidian 式"最短路径优先"且不给歧义标识。
 
-**⚠ 裁决点 H——标题锚点大小写**（spec §3.3 已冻结推荐值）：大小写敏感精确匹配。备选：大小写不敏感。注意文件名匹配的大小写不敏感（spec §3.1）不在裁决范围——那是 Obsidian 方言的既定行为（[官方论坛](https://forum.obsidian.md/t/maintain-casing-of-text-when-using-link-autosuggestion/23041)）与文件系统现实。**请 Alex 裁决。**
+**裁决点 H——标题锚点大小写**（2026-09-05 Alex 裁决：按推荐值定稿）：大小写敏感精确匹配。备选（已否决）：大小写不敏感。文件名匹配的大小写不敏感（spec §3.1）不在裁决范围——那是 Obsidian 方言的既定行为（[官方论坛](https://forum.obsidian.md/t/maintain-casing-of-text-when-using-link-autosuggestion/23041)）与文件系统现实。
 
-**⚠ 裁决点 I——未创建链接的创建位置**（spec §4.4 已冻结推荐值）：vault 根目录；target 含路径时按 vault 根相对路径创建并补齐中间目录；内容为空文件。Obsidian 对此有设置项，本提案不引入设置。**请 Alex 裁决。**
+**裁决点 I——未创建链接的创建位置**（2026-09-05 Alex 改判定稿）：**当前文件所在目录**（当前文件在 vault 根时建于根），非推荐值"一律建于 vault 根"；target 含 `/` 路径时仍按 vault 根相对路径创建并补齐中间目录；内容为空文件。Obsidian 对此有设置项，本提案不引入设置。
 
-fixture 的 `pendingDecision` 字段已把依赖 G/H 的用例标出：裁决与推荐值相反时，翻转对应用例期望并同步修订 spec 与 fixture（spec §7 修订纪律）。
+裁决点已全部定稿并同步落地：spec 升至 v1.1，fixture 的 `pendingDecision` 标记全部移除（G/H 期望不变），并新增 `createCases` 锁定一键创建行为（spec §7 修订纪律）。
 
 ## Non-goals
 

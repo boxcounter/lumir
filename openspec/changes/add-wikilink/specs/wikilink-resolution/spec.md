@@ -55,13 +55,23 @@ wikilink 语义解析（spec §2–§5）SHALL 在 Rust core 实现且仅实现�
 #### Scenario: fixture 双喂
 
 - **WHEN** CI 运行 wikilink 测试
-- **THEN** Rust 单测断言 cases.json 全部解析与 resolve 用例，前端测试仅断言 parseCases 的 span/embed，两侧消费同一文件
+- **THEN** Rust 单测断言 cases.json 全部 parse/resolve/create 用例，前端测试仅断言 parseCases 的 span/embed，两侧消费同一文件
 
 ### Requirement: 未创建目标一键创建
 
-系统 SHALL 提供 `wikilink_create` command 创建 `unresolved` 链接的目标文件：位置按裁决点 I（vault 根或 target 自带路径，补齐中间目录），内容为空文件。该 command MUST NOT 覆盖或改写任何既有文件（ADR 0003 §3 铁律）；创建时发现目标已存在 SHALL 返回错误并触发重新解析。
+系统 SHALL 提供 `wikilink_create` command 创建 `unresolved` 链接的目标文件：位置按裁决点 I（已定稿）——path 段不含 `/` 时创建于当前文件所在目录（当前文件在 vault 根时建于根）；path 段含 `/` 时按 vault 根相对路径创建并补齐中间目录。内容为空文件。该 command MUST NOT 覆盖或改写任何既有文件（ADR 0003 §3 铁律）；创建时发现目标已存在 SHALL 返回错误并触发重新解析。
+
+#### Scenario: 从根文件创建
+
+- **WHEN** 在 `Alpha.md`（vault 根）中对 `[[不存在的笔记]]` 调用 `wikilink_create`
+- **THEN** vault 根新增空文件 `不存在的笔记.md`，既有文件零改动；随后该链接重解析为 `resolved`（fixture c01）
+
+#### Scenario: 从子目录文件创建
+
+- **WHEN** 在 `folder/Gamma.md` 中对 `[[新笔记]]` 调用 `wikilink_create`
+- **THEN** 新增空文件 `folder/新笔记.md`（当前文件所在目录，而非 vault 根），既有文件零改动（fixture c02）
 
 #### Scenario: 创建不覆盖
 
-- **WHEN** 对 `[[不存在的笔记]]` 调用 `wikilink_create`
-- **THEN** vault 根新增空文件 `不存在的笔记.md`，既有文件零改动；随后该链接重解析为 `resolved`
+- **WHEN** `wikilink_create` 的目标路径已存在文件（索引过期）
+- **THEN** 返回错误并触发重新解析，MUST NOT 覆盖既有文件
