@@ -1,0 +1,1390 @@
+<!DOCTYPE html>
+<html lang="zh" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lumir ·「空」方向走查台</title>
+<style>
+/* ============================================================================
+   「空」：界面消失。
+   默认只有正文。导航、状态栏、chrome 全部消隐，唤出路径固定且只有三个：
+   左缘热区（导航）、右缘热区（Context Surface，仅在有 agent 状态时存在）、
+   ⌘K 命令面板（一切可达的兜底）。Esc 恒等于关闭最上层。
+   色彩纪律：产品界面常态零色彩——链接靠线型、层级靠字重与留白；
+   agent 是全场唯一的色彩与动态元素，它出现时那一抹青就是全部界面。
+   eink 是本方向主场：纯黑纯白、禁灰阶、无阴影无透明无动画；
+   agent 的在场改由图案（斜纹=进行中、双线=待裁决）表达。
+   ============================================================================ */
+[data-theme="light"] {
+  --bg:#fcfcfa; --text:#1c1c19; --dim:#9b9b93; --faint:#cfcfc7;
+  --line:#e9e9e3; --line2:#d9d9d1;
+  --agent:#2e6e63;                          /* 全场唯一色彩：一抹沉着的青 */
+  --agent-soft:rgba(46,110,99,.07);
+  --veil:rgba(28,28,25,.16);                /* 浮层遮罩 */
+  --lift:0 12px 40px rgba(28,28,25,.10), 0 2px 6px rgba(28,28,25,.05);
+  --pat-stripe:none;
+}
+[data-theme="dark"] {
+  --bg:#161719; --text:#d7d5ce; --dim:#82847d; --faint:#494b47;
+  --line:#25272a; --line2:#34373b;
+  --agent:#7cc3b1;
+  --agent-soft:rgba(124,195,177,.09);
+  --veil:rgba(0,0,0,.42);
+  --lift:0 12px 40px rgba(0,0,0,.45), 0 2px 6px rgba(0,0,0,.3);
+  --pat-stripe:none;
+}
+[data-theme="eink"] {
+  /* 纯黑白：弱化不可用灰阶，只用 italic / 字重 / 图案 */
+  --bg:#ffffff; --text:#000000; --dim:#000000; --faint:#000000;
+  --line:#000000; --line2:#000000;
+  --agent:#000000;                          /* 色彩归零，图案即 agent */
+  --agent-soft:none;
+  --veil:transparent;                       /* 禁透明：浮层无遮罩 */
+  --lift:none;
+  --pat-stripe:repeating-linear-gradient(45deg,#000 0 1px,#fff 1px 5px);
+}
+[data-theme="eink"] *, [data-theme="eink"] *::before, [data-theme="eink"] *::after {
+  box-shadow:none !important; text-shadow:none !important;
+  transition:none !important; animation:none !important;
+  backdrop-filter:none !important; border-radius:0 !important;
+}
+[data-theme="eink"] .dim { font-style:italic; }
+
+* { box-sizing:border-box; }
+html,body { margin:0; height:100%; }
+body {
+  font-family:-apple-system,"PingFang SC","Helvetica Neue",sans-serif;
+  background:var(--bg); color:var(--text); font-size:13px;
+  overflow:hidden;
+}
+
+/* ============ 控制台（元界面，常驻；与产品界面的边界见 C0_boundary 注记） ============ */
+#console {
+  display:flex; flex-wrap:wrap; align-items:center; gap:6px 16px;
+  padding:7px 14px; border-bottom:1px solid var(--line);
+  font-size:12px; min-height:42px; background:var(--bg);
+}
+#console .c-title { font-weight:600; margin-right:2px; }
+.c-group { display:flex; align-items:center; gap:6px; }
+.c-label { color:var(--dim); }
+[data-theme="eink"] .c-label { font-style:italic; }
+.seg { display:inline-flex; border:1px solid var(--line2); overflow:hidden; background:var(--bg); }
+.seg button {
+  border:none; background:none; color:var(--text); font:inherit; padding:3px 9px; cursor:pointer;
+  border-right:1px solid var(--line);
+}
+.seg button:last-child { border-right:none; }
+.seg button:hover:not(.active) { color:var(--agent); }
+[data-theme="eink"] .seg button:hover:not(.active) { color:#000; text-decoration:underline; }
+.seg button.active { background:var(--text); color:var(--bg); font-weight:600; }
+[data-theme="eink"] .seg button.active { outline:3px double #fff; outline-offset:-3px; }
+.c-note { color:var(--dim); flex-basis:100%; line-height:1.5; }
+[data-theme="eink"] .c-note { font-style:italic; }
+.c-measure { min-width:140px; accent-color:var(--agent); }
+.c-measure-val { font-variant-numeric:tabular-nums; min-width:80px; }
+#intent {
+  flex-basis:100%; border-left:2px solid var(--agent); padding:6px 10px;
+  color:var(--text); line-height:1.65; max-width:980px;
+}
+[data-theme="eink"] #intent { border-left:3px double #000; }
+#intent b { color:var(--agent); }
+[data-theme="eink"] #intent b { font-weight:700; }
+
+#stage.gray { filter:grayscale(1); }        /* eink 灰阶泄漏检查 */
+
+/* ============ 产品舞台：控制台之下全是产品 ============ */
+#stage { position:relative; height:calc(100vh - 0px); overflow:hidden; }
+#stage { flex:1; }
+body { display:flex; flex-direction:column; }
+.doc-scroll { position:absolute; inset:0; overflow-y:auto; }
+
+/* ---- 正文排印：黑体正文（硬约束），细体标题 + 留白层级 ---- */
+.doc {
+  max-width:var(--measure,480px); margin:0 auto;
+  padding:14vh 24px 30vh;
+  font-size:15px; line-height:1.75;
+  hanging-punctuation:first allow-end last;   /* 渐进增强，不支持则静默忽略 */
+  text-autospace:normal;
+}
+.doc h1 {
+  font-size:1.7em; font-weight:300; letter-spacing:.015em;
+  line-height:1.45; margin:0 0 .5em;
+}
+.doc .doc-meta { font-size:.82em; color:var(--dim); margin:0 0 4.5em; }
+.doc h2 { font-size:1.12em; font-weight:400; margin:3.4em 0 1.1em; }
+.doc h3 { font-size:1em; font-weight:600; margin:2.4em 0 .8em; }
+.doc p { margin:.85em 0; }
+.doc a, .doc .lk { color:inherit; text-decoration:underline; text-underline-offset:3px; cursor:pointer; }
+.doc .lk-un { text-decoration:underline dashed; text-underline-offset:3px; cursor:pointer; }
+
+/* 键盘可达性：焦点环全局可见（ADR 0001 §4 键盘优先） */
+.btn:focus-visible, .ft-row:focus-visible, .ck-row:focus-visible,
+.seg button:focus-visible, .rev-goto:focus-visible, #dotbar:focus-visible {
+  outline:2px solid var(--agent); outline-offset:2px;
+}
+[data-theme="eink"] .btn:focus-visible, [data-theme="eink"] .ft-row:focus-visible,
+[data-theme="eink"] .ck-row:focus-visible, [data-theme="eink"] .seg button:focus-visible,
+[data-theme="eink"] .rev-goto:focus-visible, [data-theme="eink"] #dotbar:focus-visible {
+  outline:3px double #000; outline-offset:1px;
+}
+
+/* ---- 编辑点锚点：正文内安静标记（虚线级，余光可及） ---- */
+.ep { border-bottom:1px dotted var(--agent); cursor:pointer; transition:background 150ms; }
+.ep:hover { background:var(--agent-soft); }
+.ep.review { border-bottom:1px solid var(--agent); }   /* 待裁决：虚线 → 实线 */
+.ep.working { border-bottom:1px solid var(--agent); animation:breathe 1.8s ease-in-out infinite; }
+@keyframes breathe { 0%,100% { background:transparent; } 50% { background:var(--agent-soft); } }
+/* eink 状态语法分层：开放=1px 点线，待裁决=3px 双线，进行中=斜纹 */
+[data-theme="eink"] .ep { border-bottom:1px dotted #000; }
+[data-theme="eink"] .ep.review { border-bottom:3px double #000; }
+[data-theme="eink"] .ep.working {
+  border-bottom:none; padding-bottom:3px;
+  background:var(--pat-stripe) left bottom / 100% 5px no-repeat;
+}
+
+/* ---- 词级内联 diff：del/ins 克制呈现 ---- */
+.doc del, .rev del { color:var(--dim); text-decoration:line-through; text-decoration-color:var(--faint); }
+.doc ins, .rev ins {
+  color:var(--agent); text-decoration:none; font-weight:500;
+  border-bottom:1px solid var(--agent);
+}
+[data-theme="eink"] .doc del, [data-theme="eink"] .rev del { font-style:italic; }
+[data-theme="eink"] .doc ins, [data-theme="eink"] .rev ins {
+  color:#000; font-weight:700; border-bottom:3px double #000;
+}
+.flash { animation:flash 1.2s ease-out; }
+@keyframes flash { 0% { background:var(--agent-soft); } 100% { background:transparent; } }
+
+/* ---- 消隐层通用：固定 200ms，无随机、无滚动感知 ---- */
+.layer { transition:transform 200ms ease-out, opacity 200ms ease-out; }
+
+/* 左缘 / 右缘热区（恒定 12px，位置永不移动） */
+.edge { position:absolute; top:0; bottom:0; width:12px; z-index:40; }
+.edge-l { left:0; }
+.edge-r { right:0; display:none; }
+.edge-r.live { display:block; }             /* 仅 agent 在场时存在 */
+
+/* 1 级 · 方位条（余光）：只回答「我在哪」，不给操作 */
+#peek {
+  position:absolute; left:0; top:0; bottom:0; width:208px; z-index:50;
+  background:var(--bg); border-right:1px solid var(--line);
+  padding:22px 18px; transform:translateX(-100%);
+  font-size:12px; line-height:1.7;
+}
+#peek.show { transform:translateX(0); }
+#peek .pk-vault { font-weight:600; margin-bottom:2px; }
+#peek .pk-path { color:var(--dim); word-break:break-all; }
+#peek .pk-stats { margin-top:14px; color:var(--dim); }
+#peek .pk-hint {
+  position:absolute; bottom:18px; left:18px; right:18px; color:var(--dim); font-size:11px;
+}
+
+/* 2 级 · 导航树（焦点）：覆盖而非分栏，正文位置恒定 */
+#nav {
+  position:absolute; left:0; top:0; bottom:0; width:264px; z-index:60;
+  background:var(--bg); border-right:1px solid var(--line2);
+  transform:translateX(-100%); padding:14px 8px; overflow-y:auto;
+}
+#nav.show { transform:translateX(0); }
+.nv-head { display:flex; align-items:baseline; gap:8px; padding:4px 10px 12px; }
+.nv-vault { font-weight:600; }
+.nv-close { margin-left:auto; color:var(--dim); font-size:11px; }
+.ft-children { list-style:none; margin:0; padding-left:14px; }
+.ft-root { padding-left:0; }
+.ft-row {
+  display:flex; align-items:center; gap:6px; width:100%; padding:4px 10px;
+  border:none; background:none; font:inherit; color:var(--text); text-align:left;
+  cursor:pointer;
+}
+.ft-row:hover { background:var(--agent-soft); }
+[data-theme="eink"] .ft-row:hover { text-decoration:underline; }
+.ft-row.active { font-weight:600; box-shadow:inset 2px 0 0 var(--text); }
+[data-theme="eink"] .ft-row.active { box-shadow:inset 3px 0 0 #000; }
+.ft-dir > .ft-name { font-weight:500; }
+.ft-caret { width:10px; flex:none; color:var(--dim); font-size:10px; text-align:center; }
+.ft-name { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+
+/* ---- Context Surface：按需浮现的临时层，用完即走 ---- */
+#surface {
+  position:absolute; right:0; top:0; bottom:0; width:360px; z-index:60;
+  background:var(--bg); border-left:1px solid var(--line2);
+  transform:translateX(100%); overflow-y:auto; padding:18px 20px 40px;
+}
+#surface.show { transform:translateX(0); }
+.sf-head { margin-bottom:14px; }
+.sf-title { font-size:12px; font-weight:600; letter-spacing:.04em; color:var(--dim); }
+.sf-batch { font-size:12px; color:var(--dim); margin-top:4px; line-height:1.6; }
+
+/* agent 状态灯：右缘一道青色竖线——全场唯一色彩的最低剂量 */
+#agent-light {
+  position:absolute; right:0; top:18%; bottom:18%; width:3px; z-index:45;
+  background:var(--agent); opacity:0; transition:opacity 200ms;
+}
+#agent-light.on { opacity:1; }
+[data-theme="eink"] #agent-light { width:5px; background:var(--pat-stripe); border-left:1px solid #000; }
+
+/* 工作进度（surface 内） */
+.prog { margin:4px 0 10px; }
+.prog-row { display:flex; gap:8px; align-items:baseline; padding:5px 0; font-size:12.5px; }
+.prog-row .prog-intent { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.prog-dot { width:7px; height:7px; border-radius:50%; flex:none; align-self:center; }
+.prog-dot.done { background:var(--agent); }
+.prog-dot.doing { background:var(--agent); animation:breathe 1.8s ease-in-out infinite; }
+.prog-dot.wait { border:1px solid var(--faint); }
+[data-theme="eink"] .prog-dot { border-radius:0; border:1px solid #000; }
+[data-theme="eink"] .prog-dot.done { background:#000; }
+[data-theme="eink"] .prog-dot.doing { background:var(--pat-stripe); }
+.prog-quote { color:var(--dim); flex:none; }
+
+/* 回看卡片：解释优先——你的问题 → 解释 → diff → 代价 → 跳正文 */
+.rev { border-top:1px solid var(--line); padding:14px 0 16px; }
+.rev.decided { }
+.rev-q { font-size:13.5px; font-weight:600; line-height:1.6; }
+.rev-quote {
+  font-size:12px; color:var(--dim); margin:6px 0 10px; padding-left:10px;
+  border-left:1px solid var(--line2); line-height:1.6;
+}
+.rev-label { font-size:11px; letter-spacing:.06em; color:var(--dim); margin:10px 0 3px; }
+.rev .rev-label:first-child { margin-top:0; }
+.rev-body { font-size:13px; line-height:1.7; }
+.rev-diff {
+  font-size:13.5px; line-height:1.75; margin:4px 0 0;
+  padding:8px 10px; border:1px solid var(--line);
+}
+.rev-goto {
+  display:inline-block; margin-top:8px; font-size:12px; color:var(--dim);
+  text-decoration:underline; text-underline-offset:3px; cursor:pointer;
+  border:none; background:none; padding:0; font-family:inherit;
+}
+.rev-goto:hover { color:var(--text); }
+.rev-actions { display:flex; gap:8px; margin-top:12px; }
+.btn {
+  padding:5px 14px; border:1px solid var(--line2); background:var(--bg);
+  color:var(--text); font:inherit; font-size:12.5px; cursor:pointer;
+}
+.btn:hover { border-color:var(--text); }
+.btn.primary { background:var(--text); border-color:var(--text); color:var(--bg); font-weight:600; }
+[data-theme="eink"] .btn.primary:hover { outline:3px double #fff; outline-offset:-3px; }
+.rev-verdict { font-size:12px; color:var(--dim); margin-top:12px; }
+.sf-archive { margin-top:18px; border-top:1px solid var(--line); padding-top:16px; }
+.sf-archive p { font-size:12.5px; color:var(--dim); line-height:1.6; margin:0 0 10px; }
+
+/* ---- 委派提示条（余光级入口，位置恒定在底部中央） ---- */
+#dotbar {
+  position:absolute; left:50%; bottom:22px; transform:translateX(-50%); z-index:45;
+  font-size:12px; color:var(--dim); cursor:pointer; padding:6px 14px;
+  border:1px solid var(--line); background:var(--bg); white-space:nowrap;
+  opacity:0; pointer-events:none;
+}
+#dotbar.show { opacity:1; pointer-events:auto; }
+#dotbar:hover { color:var(--text); border-color:var(--line2); }
+#dotbar kbd { font:inherit; color:var(--agent); }
+[data-theme="eink"] #dotbar kbd { font-weight:700; }
+
+/* ---- 浮层：创建 / 委派 / 命令面板 / 冲突 ---- */
+.veil {
+  position:absolute; inset:0; z-index:70; background:var(--veil);
+  opacity:0; pointer-events:none;
+}
+.veil.show { opacity:1; pointer-events:auto; }
+
+#pop-create {
+  position:absolute; z-index:72; width:320px; background:var(--bg);
+  border:1px solid var(--line2); box-shadow:var(--lift); padding:10px 12px;
+}
+#pop-create .pc-quote {
+  font-size:12px; color:var(--dim); margin-bottom:8px; line-height:1.5;
+  display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden;
+}
+#pop-create input {
+  width:100%; border:none; border-bottom:1px solid var(--line2); background:none;
+  color:var(--text); font:inherit; font-size:13.5px; padding:4px 0 6px; outline:none;
+}
+#pop-create input:focus { border-bottom-color:var(--agent); }
+[data-theme="eink"] #pop-create input:focus { border-bottom:3px double #000; }
+#pop-create .pc-actions { display:flex; justify-content:flex-end; gap:8px; margin-top:10px; }
+
+#sheet {
+  position:absolute; left:50%; top:16%; transform:translateX(-50%); z-index:75;
+  width:min(520px,92%); background:var(--bg);
+  border:1px solid var(--line2); box-shadow:var(--lift);
+  padding:18px 22px 20px;
+}
+#sheet .sh-title { font-size:14px; font-weight:600; margin-bottom:4px; }
+#sheet .sh-sub { font-size:12px; color:var(--dim); line-height:1.6; margin-bottom:12px; }
+.sh-list { border-top:1px solid var(--line); }
+.sh-row { padding:9px 0; border-bottom:1px solid var(--line); font-size:13px; line-height:1.6; }
+.sh-row .sh-intent { color:var(--dim); font-size:12px; margin-top:2px; }
+.sh-scope {
+  font-size:12.5px; line-height:1.7; border-left:2px solid var(--agent);
+  padding:6px 10px; margin:14px 0;
+}
+[data-theme="eink"] .sh-scope { border-left:3px double #000; }
+#sheet .sh-actions { display:flex; justify-content:flex-end; gap:8px; margin-top:6px; }
+
+/* 命令面板：一切可达的兜底 */
+#cmdk {
+  position:absolute; left:50%; top:15%; transform:translateX(-50%); z-index:80;
+  width:min(480px,90%); background:var(--bg);
+  border:1px solid var(--line2); box-shadow:var(--lift);
+}
+#cmdk input {
+  width:100%; border:none; border-bottom:1px solid var(--line); background:none;
+  color:var(--text); font:inherit; font-size:15px; padding:12px 16px; outline:none;
+}
+.ck-list { max-height:280px; overflow-y:auto; padding:6px 0; }
+.ck-row {
+  display:flex; gap:10px; width:100%; padding:7px 16px; border:none; background:none;
+  color:var(--text); font:inherit; font-size:13px; text-align:left; cursor:pointer;
+}
+.ck-row:hover, .ck-row.sel { background:var(--agent-soft); }
+[data-theme="eink"] .ck-row:hover, [data-theme="eink"] .ck-row.sel { text-decoration:underline; }
+.ck-key { margin-left:auto; color:var(--dim); font-size:11px; }
+
+/* 冲突 popup：分级谱顶端，仅破坏性/不可静默处理的情况 */
+#conflict[hidden], #empty[hidden] { display:none; }
+#conflict {
+  position:absolute; inset:0; z-index:85; display:flex; align-items:center; justify-content:center;
+  background:var(--veil);
+}
+.cf-box {
+  width:min(420px,90%); background:var(--bg); border:1px solid var(--line2);
+  box-shadow:var(--lift); padding:18px 22px 20px; font-size:13px; line-height:1.7;
+}
+[data-theme="eink"] .cf-box { border:2px solid #000; }
+.cf-title { font-weight:650; font-size:14px; margin-bottom:6px; }
+.cf-actions { display:flex; gap:8px; margin-top:14px; }
+
+/* 空态：第一打开是招牌——几乎无物，一句话加一个动作 */
+#empty {
+  position:absolute; inset:0; display:flex; flex-direction:column;
+  align-items:center; justify-content:center; text-align:center; padding:24px;
+}
+#empty .e-line { font-size:20px; font-weight:300; letter-spacing:.02em; line-height:1.8; max-width:26em; }
+#empty .e-act { margin-top:34px; }
+#empty .e-keys { position:absolute; bottom:26px; font-size:11.5px; color:var(--dim); }
+
+/* 安静 toast：底部一行细字，说完即走（避开恒定在 bottom:22px 的委派提示条） */
+#toast {
+  position:absolute; left:50%; bottom:48px; transform:translateX(-50%); z-index:90;
+  font-size:12px; color:var(--dim); background:var(--bg); padding:2px 10px;
+  opacity:0; transition:opacity 200ms;
+  pointer-events:none; white-space:nowrap;
+}
+#toast.show { opacity:1; }
+
+/* 批注模式 */
+.anno {
+  font-family:-apple-system,"PingFang SC",sans-serif;
+  font-size:10px; font-weight:600; color:var(--bg); background:var(--agent);
+  padding:0 5px; margin-left:4px; vertical-align:super; cursor:help;
+  line-height:1.4; display:inline-block;
+}
+[data-theme="eink"] .anno { border:1px solid #000; background:#fff; color:#000; }
+.anno-fixed {
+  position:absolute; z-index:95; font-size:10px; font-weight:600;
+  color:var(--bg); background:var(--agent); padding:0 5px; cursor:help;
+}
+[data-theme="eink"] .anno-fixed { border:1px solid #000; background:#fff; color:#000; }
+</style>
+</head>
+<body>
+<div id="console"></div>
+<div id="stage">
+  <div class="doc-scroll" id="scroll"><div class="doc" id="doc"></div></div>
+  <div class="edge edge-l" id="edge-l"></div>
+  <div class="edge edge-r" id="edge-r"></div>
+  <div id="agent-light"></div>
+  <div id="peek" class="layer"></div>
+  <div id="nav" class="layer"></div>
+  <div id="surface" class="layer"></div>
+  <div id="dotbar"></div>
+  <div class="veil" id="veil"></div>
+  <div id="pop-create" class="layer" hidden></div>
+  <div id="sheet" class="layer" hidden></div>
+  <div id="cmdk" class="layer" hidden></div>
+  <div id="conflict" hidden></div>
+  <div id="empty" hidden></div>
+  <div id="toast"></div>
+</div>
+<script>
+// ============================================================================
+// COPY：唯一文案数据源（探索期豁免登记 文案-Copy.md）。zh/en 全量双语。
+// ============================================================================
+const COPY = {
+  zh: {
+    // 控制台（元界面）
+    C1_title: "「空」方向走查台",
+    C0_boundary: "控制台为走查工具，非产品界面。产品界面在下方舞台内——默认只有正文，无顶栏、无侧栏、无状态栏。",
+    C_theme: "主题", C_light: "亮", C_dark: "暗", C_eink: "电子墨水",
+    C_measure: "行宽", C_full: "近满宽",
+    C_measureNote: "默认 480px ≈ 32 汉字/行（CLReq 推荐正文 25–35 字/行）；右端近满宽只留必要页边距。",
+    C_lang: "语言",
+    C_view: "视图", C_empty: "空态", C_fullView: "正文", C_long: "长文档",
+    C_step: "时刻",
+    C_read: "干净阅读", C_anchor: "编辑点积累", C_delegate: "委派",
+    C_working: "agent 工作", C_review: "回看裁决", C_conflict: "冲突",
+    C_nav: "导航", C_navHidden: "消隐", C_navPeek: "方位条", C_navOpen: "展开",
+    C_annotate: "批注", C_off: "关", C_on: "开",
+    C_gray: "灰度模拟",
+    C_intentTitle: "设计意图",
+    intent_light: "「空」：界面消失。默认只有正文——导航、状态栏、chrome 全部消隐，唤出路径固定且只有三个（左缘热区 / ⌘K / 右缘热区），Esc 恒等于关闭。产品界面常态零色彩：链接靠线型、层级靠字重与留白；agent 是全场唯一的色彩与动态元素。亮主题用近白底（#fcfcfa）与一抹沉着的青（#2e6e63）。",
+    intent_dark: "暗主题是同一副骨架的夜间约束集：蓝灰深底而非纯黑（#161719），正文亮度压一档；agent 青提亮为 #7cc3b1。消隐逻辑、热区、动效时长与亮主题完全一致——暗的是环境，不是规则。",
+    intent_eink: "电子墨水是本方向主场，也是约束最严的纸：纯黑纯白、禁灰阶、无阴影、无透明、无动画。弱化只用 italic；状态只用字重 / 边框 / 图案——斜纹 = agent 进行中，双线 = 待裁决。消隐退化为即时切换。「灰度模拟」检查灰阶泄漏：纯黑白主题在灰度滤镜下应无任何信息损失。",
+    // 空态
+    E_line: "阅读中的每一次卡顿，都是一次让文本变好的机会。",
+    E_open: "打开一个目录",
+    E_keys: "⌘K 命令面板 · 鼠标移至左缘唤出导航 · Esc 关闭一切",
+    // 导航
+    N_files: "个文件", N_points: "个编辑点",
+    N_peekHint: "点击或 ⌘\\ 展开导航",
+    N_close: "Esc 关闭",
+    // 创建浮层
+    P_placeholder: "这里怎么了？用一句话写下意图…",
+    P_create: "留下编辑点",
+    P_cancel: "取消",
+    // 委派
+    G_title: "委派给 agent",
+    G_sub: (n) => `本批次共 ${n} 个编辑点，逐点解释、逐点修改。`,
+    G_scope: "授权范围：处理当前编辑点，允许修改相关段落；不改变文章结构，不触碰其他文件。",
+    G_go: "委派",
+    G_back: "再想想",
+    D_bar: (n) => `${n} 个编辑点 · 委派`,
+    // 工作中
+    W_title: "AGENT 工作中",
+    W_batch: "批次：3 个编辑点 · 授权范围内改写正文",
+    W_note: "完成后进入逐点回看。你可以继续阅读——它会等。",
+    W_done: "已完成",
+    W_doing: "处理中",
+    W_wait: "排队中",
+    // 回看
+    R_title: "逐点回看",
+    R_batch: "解释优先：先读解释，再读新正文。",
+    R_yourQ: "你的问题",
+    R_explain: "解释",
+    R_diff: "修改（词级）",
+    R_noedit: "本次不修改正文",
+    R_cost: "影响与代价",
+    R_goto: "跳至正文",
+    R_accept: "接受",
+    R_reject: "拒绝",
+    R_accepted: "已接受 · 正文已更新",
+    R_rejected: "已拒绝 · 恢复原文",
+    R_archiveTitle: "本批次已裁决完毕",
+    R_archiveBody: "归档后编辑点从正文消失；对话、解释与修改历史保留可查。",
+    R_archive: "归档本批次",
+    T_archived: "已归档 · 正文归于安静",
+    // 冲突
+    F_title: "文件冲突",
+    F_body: "「阅读中的卡顿.md」在磁盘上被外部程序修改，与本批次的基准版本不一致。已暂停应用，由你裁决——不静默覆盖。",
+    F_diff: "查看差异",
+    F_reprocess: "重新处理",
+    F_keep: "保留磁盘版本",
+    // 命令面板
+    K_placeholder: "输入命令或文件名…",
+    K_nav: "展开 / 收起导航",
+    K_delegate: "委派当前编辑点",
+    K_archive: "归档本批次",
+    K_openPrefix: "打开：",
+    // toast
+    T_pointCreated: "编辑点已留下 · 继续阅读",
+    L_uncreated: (raw) => `未创建的链接：${raw}（线型分工：虚线 = 未创建）`,
+    L_opened: (p) => `已打开：${p}（演示占位）`,
+  },
+  en: {
+    C1_title: "“Void” direction walkthrough",
+    C0_boundary: "The console is a review tool, not product UI. The product lives in the stage below — by default there is only the text: no toolbar, no sidebar, no status bar.",
+    C_theme: "Theme", C_light: "Light", C_dark: "Dark", C_eink: "E-ink",
+    C_measure: "Measure", C_full: "near full",
+    C_measureNote: "Default 480px ≈ 32 CJK chars/line (CLReq recommends 25–35); the far end is near-full-width with only the necessary margin.",
+    C_lang: "Language",
+    C_view: "View", C_empty: "Empty", C_fullView: "Document", C_long: "Long doc",
+    C_step: "Moment",
+    C_read: "Clean reading", C_anchor: "Points accrue", C_delegate: "Delegate",
+    C_working: "Agent working", C_review: "Review", C_conflict: "Conflict",
+    C_nav: "Nav", C_navHidden: "Hidden", C_navPeek: "Bearing", C_navOpen: "Open",
+    C_annotate: "Annotate", C_off: "Off", C_on: "On",
+    C_gray: "Grayscale",
+    C_intentTitle: "Design intent",
+    intent_light: "“Void”: the interface disappears. By default there is only the text — navigation, status, chrome all recede, with exactly three fixed ways back (left-edge hot zone / ⌘K / right-edge hot zone); Esc always closes. The product surface is colorless at rest: links read by line style, hierarchy by weight and whitespace; the agent is the only color and the only motion. Light theme: near-white (#fcfcfa) and one composed teal (#2e6e63).",
+    intent_dark: "Dark is the same skeleton at night: blue-tinged deep gray rather than pure black (#161719), body brightness one notch lower; the agent teal lifts to #7cc3b1. The recede logic, hot zones and motion timing are identical — it is the room that darkens, not the rules.",
+    intent_eink: "E-ink is this direction’s home ground and its strictest paper: pure black on pure white, no grays, no shadows, no translucency, no animation. De-emphasis is italic only; state is weight / border / pattern — stripes mean the agent is working, double lines mean pending review. Recede degrades to instant switching. “Grayscale” checks for gray leaks: a pure black-and-white theme must lose zero information under a grayscale filter.",
+    E_line: "Every stumble in reading is a chance to make the text better.",
+    E_open: "Open a folder",
+    E_keys: "⌘K command palette · move to the left edge for navigation · Esc closes everything",
+    N_files: "files", N_points: "edit points",
+    N_peekHint: "Click or ⌘\\ to open navigation",
+    N_close: "Esc to close",
+    P_placeholder: "What’s wrong here? One sentence of intent…",
+    P_create: "Leave an edit point",
+    P_cancel: "Cancel",
+    G_title: "Delegate to the agent",
+    G_sub: (n) => `This batch holds ${n} edit points — explained and revised one by one.`,
+    G_scope: "Mandate: handle the current edit points; you may revise the paragraphs involved. Do not restructure the article. Do not touch other files.",
+    G_go: "Delegate",
+    G_back: "Not yet",
+    D_bar: (n) => `${n} edit points · delegate`,
+    W_title: "AGENT WORKING",
+    W_batch: "Batch: 3 edit points · revising within mandate",
+    W_note: "A point-by-point review follows. Keep reading — it will wait.",
+    W_done: "Done",
+    W_doing: "Working",
+    W_wait: "Queued",
+    R_title: "Point-by-point review",
+    R_batch: "Explanation first: read the why before the new text.",
+    R_yourQ: "Your question",
+    R_explain: "Explanation",
+    R_diff: "Change (word-level)",
+    R_noedit: "No edit this time",
+    R_cost: "Impact & cost",
+    R_goto: "Jump to text",
+    R_accept: "Accept",
+    R_reject: "Reject",
+    R_accepted: "Accepted · text updated",
+    R_rejected: "Rejected · original restored",
+    R_archiveTitle: "Batch fully reviewed",
+    R_archiveBody: "Once archived, edit points vanish from the text; the conversation, explanations and history remain on record.",
+    R_archive: "Archive this batch",
+    T_archived: "Archived · the page is quiet again",
+    F_title: "File conflict",
+    F_body: "“Friction in Reading.md” was modified on disk by an external program and no longer matches this batch’s base version. Application paused — your call. Nothing is silently overwritten.",
+    F_diff: "View diff",
+    F_reprocess: "Reprocess",
+    F_keep: "Keep disk version",
+    K_placeholder: "Type a command or file name…",
+    K_nav: "Toggle navigation",
+    K_delegate: "Delegate current edit points",
+    K_archive: "Archive this batch",
+    K_openPrefix: "Open: ",
+    T_pointCreated: "Edit point left · keep reading",
+    L_uncreated: (raw) => `Link not created yet: ${raw} (line-style split: dashed = uncreated)`,
+    L_opened: (p) => `Opened: ${p} (demo placeholder)`,
+  },
+};
+
+// ============================================================================
+// 批注：元素 data-anno → 设计意图（V 系列编号）
+// ============================================================================
+const ANNOTATIONS = {
+  V1: "V1 · 左缘热区（恒定 12px）· 消隐唤出的固定入口之一，位置永不移动——可预测性来自不变",
+  V2: "V2 · 方位条（1 级/余光）· 只回答「我在哪」：当前路径 + 文件数 + 编辑点数，不给操作",
+  V3: "V3 · 导航树（2 级/焦点）· 覆盖而非分栏：正文的行宽与位置在任何导航状态下恒定",
+  V4: "V4 · agent 状态灯 · 右缘一道青色竖线，全场唯一色彩的最低剂量（calmtech Status Light 级）",
+  V5: "V5 · Context Surface · 按需浮现的临时层：随 agent 状态出现，用完即走（右栏默认隐藏的极值）",
+  V6: "V6 · 编辑点锚点 · 虚线级安静标记：余光可及，不打扰阅读流；eink 下退化为双线下划线",
+  V7: "V7 · 创建浮层 · 选中即现、说完即走（浮层只属于创建时刻）",
+  V8: "V8 · 委派浮层 · 授权范围写在委派里（ADR 0005：授权边界由委派声明决定）",
+  V9: "V9 · 回看卡片 · 解释优先顺序：你的问题→解释→修改→代价→跳正文（ADR 0005 §5）",
+  V10: "V10 · 动词仅两个 · 接受/拒绝，语义复用撤销（Cursor 五动词为反例）",
+  V11: "V11 · 词级内联 diff · 中文按短语粒度；不满幅红绿，del 压暗、ins 一线青色",
+  V12: "V12 · 归档即消失 · 编辑点以事务为家，事务关闭即从正文消失（不是批注）",
+  V13: "V13 · 冲突 popup · 分级谱顶端，仅破坏性/不可静默处理的情况（calmtech：popup 只给 very important）",
+  V14: "V14 · 命令面板 · 一切可达的兜底：消隐 ≠ 隐藏，所有状态需要时必可达（iA 三分法）",
+  V15: "V15 · 空态首启 · 本方向招牌：几乎无物——一句话、一个动作、一行快捷键提示",
+  V16: "V16 · 行宽滑块 · 默认 480px ≈ 32 汉字/行（CLReq 25–35）；正文黑体是硬约束",
+  V17: "V17 · eink 约束集 · 纯黑白、禁灰阶、无动画；弱化=italic，状态=字重/边框/图案",
+  V18: "V18 · 灰度模拟 · eink 灰阶泄漏检查：纯黑白在灰度滤镜下应无信息损失",
+  V19: "V19 · 委派提示条 · 位置恒定的余光级入口：积累即出现，不追踪滚动方向",
+  V20: "V20 · 标题细体 · 层级靠字重（300/400/600）与留白，不靠色彩与装饰线",
+};
+
+// ============================================================================
+// 数据：vault 与文章（真实中文写作，知识创作场景；en 为对应版本）
+// ============================================================================
+const VAULT = {
+  name: "notes",
+  tree: [
+    { name: "methodology", kind: "dir", children: [
+      { name: "阅读中的卡顿.md", kind: "md", path: "methodology/阅读中的卡顿.md" },
+      { name: "委派的艺术.md", kind: "md", path: "methodology/委派的艺术.md" },
+    ]},
+    { name: "reading", kind: "dir", children: [
+      { name: "安静的技术.md", kind: "md", path: "reading/安静的技术.md" },
+      { name: "排版需求笔记.md", kind: "md", path: "reading/排版需求笔记.md" },
+    ]},
+    { name: "drafts", kind: "dir", children: [
+      { name: "Week 36 记录.md", kind: "md", path: "drafts/Week 36 记录.md" },
+    ]},
+    { name: "README.md", kind: "md", path: "README.md" },
+  ],
+};
+const countFiles = (nodes) => nodes.reduce((n, x) => n + (x.kind === "dir" ? countFiles(x.children) : 1), 0);
+
+// 文章正文。编辑点 quote 以纯文本形式存在，创建时用 DOM 查找并包裹。
+const ARTICLE = {
+  zh: {
+    title: "阅读中的卡顿，是文本的矿脉",
+    meta: "methodology/阅读中的卡顿.md · 2026-09-05",
+    body: `
+<p>读一段自己三周前写的文字，读到某处忽然慢下来——不是因为深刻，而是因为不通。这种卡顿我们通常皱一下眉就翻过去。但它是一种信号：读者，也就是未来的我，在这里被绊了一下。</p>
+<p>过去的做法是把疑问复制到另一个窗口，粘贴给 agent，等它回答，再回到原文找到那个位置，自己动手改。一趟下来，疑问消解了，文本却常常没动——搬运上下文耗费的心力，把「顺手改掉」变成了「下次再说」。</p>
+<h2>让标记落在卡顿发生的地方</h2>
+<p>换个思路：卡顿发生在哪儿，标记就落在哪儿。选中那段不通的文字，用一句话写下意图——这里的「访问」具体指什么——然后继续读。标记不插入正文，不污染文件，它只是一次认知事务的立案。</p>
+<p>积累三四处之后，一次性委派。授权范围写在委派里：处理这几个点，允许修改相关段落，不要动文章结构。agent 像一位熟悉你的编辑，接过这批事务，逐条解释、逐条修改。</p>
+<h2>先读解释，再读新正文</h2>
+<p>回来时先读解释，再读新正文。每一处修改都能回答三个问题：改了什么，为什么改，代价是什么。有些编辑点最终只得到解释，不需要修改——困惑消解了，事务就可以关闭。</p>
+<p>归档之后，标记从正文消失。文件还是那叠普通文件，只是更好读了一点。相关的展开见 <span class="lk" data-open="methodology/委派的艺术.md">委派的艺术</span> 与 <span class="lk" data-open="reading/安静的技术.md">安静的技术</span>；<span class="lk-un" data-uncreated="编辑点术语表">编辑点术语表</span> 还没写，先把引用记下。阅读中的每一次卡顿，都是一次让文本变好的机会。</p>`,
+    extra: `
+<h2>附记</h2>
+<p>这个流程最关键的改动，是把「提问」从一次打断变成一次立案。打断要求你立刻放下阅读去处理；立案只要求你用一句话记下意图，然后接着读。认知的连续性因此保住了。</p>
+<p>立案的另一个好处是可积累。单次提问的价值随对话结束而消散；立案的编辑点排成一列，构成这次阅读的地形图——哪里平坦，哪里泥泞，一目了然。</p>
+<p>委派是这道流程里唯一需要决断的地方。授权范围必须写在委派里：处理哪几个点，允许动哪些段落，什么是禁区。授权先于修改，这是信任的边界，也是撤销的边界。</p>
+<p>回看时正文仍是主画面。解释贴在编辑点上，而不是躺在某个聊天窗口里等你翻找。你读解释，看修改，裁决，然后标记消失——正文归于安静，像什么都没发生过，只是文本更好了。</p>`,
+  },
+  en: {
+    title: "Friction in reading is an ore",
+    meta: "methodology/friction-in-reading.md · 2026-09-05",
+    body: `
+<p>Re-reading something you wrote three weeks ago, you slow down at a certain sentence — not because it is profound, but because it does not parse. We usually frown and move on. Yet that stumble is a signal: a reader, your future self, tripped here.</p>
+<p>The old routine: copy the puzzling passage into another window, paste it to an agent, wait, then hunt down the original spot and edit by hand. By the end the doubt is resolved, but the text often has not moved — the effort of hauling context turns “fix it now” into “maybe later”.</p>
+<h2>Let the mark land where the stumble happened</h2>
+<p>Try the inversion: the mark lands exactly where the stumble occurred. Select the awkward passage, write the intent in one sentence — what does “access” mean here, exactly — and keep reading. The mark never enters the text; it is the filing of a one-time cognitive transaction.</p>
+<p>After three or four accumulate, delegate them in one batch. The mandate is spelled out in the delegation: handle these points, you may touch the paragraphs involved, do not restructure the article. The agent, an editor who knows you, takes the batch, explains each point, and revises.</p>
+<h2>Read the explanation before the new text</h2>
+<p>On return, read the explanation before the new text. Every change answers three questions: what changed, why, and at what cost. Some points earn only an explanation, no edit — the friction dissolved, and the transaction can close.</p>
+<p>Once archived, the marks vanish from the page. The files remain plain files, only a little more readable. Related threads live in <span class="lk" data-open="methodology/委派的艺术.md">委派的艺术</span> and <span class="lk" data-open="reading/安静的技术.md">安静的技术</span>; the <span class="lk-un" data-uncreated="edit-point glossary">edit-point glossary</span> is not written yet — the reference is filed first. Every stumble in reading is a chance to make the text better.</p>`,
+    extra: `
+<h2>Postscript</h2>
+<p>The deepest change in this workflow is turning “asking” from an interruption into a filing. An interruption demands you drop the reading and deal with it now; a filing asks only for one sentence of intent, and you read on. Cognitive continuity survives.</p>
+<p>Filing also compounds. A one-off question evaporates when the chat ends; filed edit points line up into a relief map of this reading session — where it was flat, where it was muddy, at a glance.</p>
+<p>Delegation is the only moment that asks for judgment. The mandate must be written into the delegation: which points, which paragraphs may move, what is off-limits. Mandate before modification — that is the boundary of trust, and the boundary of undo.</p>
+<p>In review, the text stays the main stage. Explanations sit on the edit points instead of lying in some chat window waiting to be dug out. You read, you see the change, you decide, and the mark disappears — the page goes quiet, as if nothing happened, except the text is better.</p>`,
+  },
+};
+
+// 预设编辑点：quote 必须能在 ARTICLE.body 中按文本找到。
+const EPS = {
+  zh: [
+    {
+      id: "ep1",
+      quote: "搬运上下文耗费的心力",
+      intent: "「心力」太口语，和全文克制的语气不一致。",
+      explain: "「心力」偏口语独白，全文用词偏书面。改为「消耗的精力」，保持动宾结构，语气与第五段「代价」一词对齐。",
+      diff: `搬运上下文<del>耗费的心力</del><ins>消耗的精力</ins>`,
+      cost: "仅本句；不动其他段落。",
+      noEdit: false,
+    },
+    {
+      id: "ep2",
+      quote: "积累三四处之后，一次性委派。授权范围写在委派里",
+      intent: "这段一句太长，读起来喘不上气，拆开。",
+      explain: "长句拆为两句，授权范围独立成句，读起来有一个停顿。信息无增删。",
+      diff: `积累三四处之后，<del>一次性委派。授权范围写在委派里</del><ins>再一次性交出去。委派时写清授权范围</ins>：`,
+      cost: "本段由两句变三句；无信息增删。",
+      noEdit: false,
+    },
+    {
+      id: "ep3",
+      quote: "agent 像一位熟悉你的编辑",
+      intent: "「熟悉你」有依据吗？还是只是修辞？",
+      explain: "是修辞，也有边界。记忆分层（个人偏好 / Workspace / Thread / Session）在当前版本标注为 v1+，不承诺跨 Session 记忆。「熟悉」目前只到「本次委派注入的上下文」为止。建议保留比喻，正文不动。",
+      diff: null,
+      cost: "无改动。若未来版本兑现记忆分层，此句自动成立。",
+      noEdit: true,
+    },
+  ],
+  en: [
+    {
+      id: "ep1",
+      quote: "the effort of hauling context",
+      intent: "“Effort” is too plain here — the rest of the piece is more measured.",
+      explain: "“Effort” reads colloquial against the piece’s register. Changed to “the labor of hauling context”, keeping the gerund structure and aligning with “cost” in section five.",
+      diff: `<del>the effort</del><ins>the labor</ins> of hauling context`,
+      cost: "This sentence only; no other paragraph touched.",
+      noEdit: false,
+    },
+    {
+      id: "ep2",
+      quote: "delegate them in one batch. The mandate is spelled out",
+      intent: "This sentence runs too long — split it.",
+      explain: "Split into two sentences so the mandate stands on its own; the reader gets a pause. No information added or removed.",
+      diff: `<del>delegate them in one batch. The mandate is spelled out</del><ins>hand them over in one batch. Spell the mandate out</ins>`,
+      cost: "The paragraph goes from two sentences to three; nothing else changes.",
+      noEdit: false,
+    },
+    {
+      id: "ep3",
+      quote: "an editor who knows you",
+      intent: "Is “knows you” substantiated, or just rhetoric?",
+      explain: "Rhetoric, with a boundary. Memory tiers (personal / workspace / thread / session) are marked v1+ — no cross-session memory is promised today. “Knows you” currently means no more than “the context injected with this delegation”. Keeping the metaphor; the text stands.",
+      diff: null,
+      cost: "No change. If memory tiers ship, the sentence becomes literally true.",
+      noEdit: true,
+    },
+  ],
+};
+
+// ============================================================================
+// 状态与 URL 参数直达（走查 / 截图 / 分享）：
+// ?theme=eink&view=full&step=review&lang=zh&measure=720&nav=open&annotate=on&gray=on
+// ============================================================================
+const VIEWS = ["empty", "full", "long"];
+const STEPS = ["read", "anchor", "delegate", "working", "review", "conflict"];
+const state = {
+  theme: "light", measure: 480, lang: "zh", view: "full", step: "read",
+  nav: "hidden", surfaceOpen: false, annotate: false, gray: false,
+};
+{
+  const q = new URLSearchParams(location.search);
+  const v = q.get("theme"); if (["light", "dark", "eink"].includes(v)) state.theme = v;
+  const m = parseInt(q.get("measure"), 10); if (m >= 480 && m <= 1200) state.measure = m;
+  const l = q.get("lang"); if (["zh", "en"].includes(l)) state.lang = l;
+  const w = q.get("view"); if (VIEWS.includes(w)) state.view = w;
+  const s = q.get("step"); if (STEPS.includes(s)) state.step = s;
+  if (state.step === "review") state.surfaceOpen = true;   // 回看随状态自动浮现一次，Esc 可收
+  const n = q.get("nav"); if (["hidden", "peek", "open"].includes(n)) state.nav = n;
+  if (q.get("surface") === "open") state.surfaceOpen = true;
+  if (q.get("annotate") === "on") state.annotate = true;
+  if (q.get("gray") === "on") state.gray = true;
+}
+const T = () => COPY[state.lang];
+const el = (tag, cls, html) => { const e = document.createElement(tag); if (cls) e.className = cls; if (html !== undefined) e.innerHTML = html; return e; };
+const esc = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;");
+
+// 编辑点运行时状态：status ∈ open → working → review → accepted/rejected
+let points = [];          // {def, status, span}
+let currentFile = null;   // 当前打开文件路径
+let workingTimer = null;
+let toastTimer = null;
+
+const ART = () => ARTICLE[state.lang];
+const docFile = () => state.lang === "zh" ? "methodology/阅读中的卡顿.md" : "methodology/friction-in-reading.md";
+
+// ---- 在正文 DOM 中按文本查找并包裹为编辑点锚点 ----
+function wrapQuote(quote, cls) {
+  const doc = document.getElementById("doc");
+  const walker = document.createTreeWalker(doc, NodeFilter.SHOW_TEXT);
+  let node;
+  while ((node = walker.nextNode())) {
+    const i = node.nodeValue.indexOf(quote);
+    if (i === -1) continue;
+    const range = document.createRange();
+    range.setStart(node, i);
+    range.setEnd(node, i + quote.length);
+    const span = el("span", cls);
+    try { range.surroundContents(span); } catch { return null; }
+    return span;
+  }
+  return null;
+}
+
+function createPointFromDef(def, status = "open") {
+  const span = wrapQuote(def.quote, "ep");
+  if (!span) return;
+  span.dataset.ep = def.id;
+  span.dataset.anno = "V6";
+  span.title = def.intent;
+  const p = { def, status, span };
+  span.addEventListener("click", () => {
+    if (p.status === "review" || p.status === "accepted" || p.status === "rejected") {
+      setSurface(true); scrollToReviewCard(def.id);
+    }
+  });
+  points.push(p);
+}
+
+// 任意选区创建（签名流程的创建时刻）
+function createPointFromSelection(quote, intent) {
+  const sel = window.getSelection();
+  if (!sel.rangeCount) return;
+  const span = el("span", "ep");
+  try { sel.getRangeAt(0).surroundContents(span); } catch { return; }
+  span.dataset.anno = "V6"; span.title = intent;
+  const def = {
+    id: "epx" + Date.now(), quote, intent,
+    explain: state.lang === "zh"
+      ? "演示数据：该意图由你即时创建，真实 agent 接入后将逐点生成解释。本点记录为开放事务，不修改正文。"
+      : "Demo data: this intent was created live; a real agent will produce per-point explanations. Recorded as an open transaction — no edit.",
+    diff: null, cost: state.lang === "zh" ? "无改动（演示降级）。" : "No change (demo fallback).",
+    noEdit: true,
+  };
+  const p = { def, status: "open", span };
+  span.addEventListener("click", () => { if (p.status !== "open") { setSurface(true); scrollToReviewCard(def.id); } });
+  points.push(p);
+  sel.removeAllRanges();
+  toast(T().T_pointCreated);
+  syncFlowUI();
+}
+
+// ---- 正文渲染 ----
+function renderDoc() {
+  const doc = document.getElementById("doc");
+  doc.innerHTML = "";
+  points = [];
+  if (state.view === "empty") return;
+  const a = ART();
+  if (currentFile && currentFile !== docFile()) {
+    // 演示内容仅主文档为全文；其他文件给最小占位，如实标注
+    doc.append(el("h1", "", esc(currentFile.split("/").pop().replace(/\.md$/, ""))));
+    doc.append(el("p", "doc-meta dim", esc(currentFile)));
+    doc.append(el("p", "dim", esc(state.lang === "zh" ? "（演示文档：走查内容以主文档为准）" : "(Demo placeholder — walkthrough content lives in the main document)")));
+    return;
+  }
+  doc.append(el("h1", "", esc(a.title)));
+  doc.append(el("p", "doc-meta dim", esc(a.meta)));
+  const body = el("div"); body.innerHTML = a.body + (state.view === "long" ? a.extra : "");
+  while (body.firstChild) doc.append(body.firstChild);
+  // wikilink 线型分工实例：实线=已创建（可打开），虚线=未创建（陈述事实不警告）
+  doc.querySelectorAll(".lk[data-open]").forEach((w) =>
+    w.addEventListener("click", () => {
+      currentFile = w.dataset.open;
+      renderDoc(); renderNav(); renderPeek();
+      toast(T().L_opened(currentFile));
+    }));
+  doc.querySelectorAll(".lk-un").forEach((w) =>
+    w.addEventListener("click", () => toast(T().L_uncreated(w.dataset.uncreated))));
+  // step >= anchor 时预置编辑点
+  const order = ["read", "anchor", "delegate", "working", "review", "conflict"];
+  if (order.indexOf(state.step) >= 1) {
+    const statusByStep = { anchor: "open", delegate: "open", working: "working", review: "review", conflict: "review" };
+    for (const def of EPS[state.lang]) createPointFromDef(def, statusByStep[state.step]);
+    for (const p of points) setPointVisual(p);
+  }
+}
+
+function setPointVisual(p) {
+  p.span.classList.toggle("working", p.status === "working");
+  p.span.classList.toggle("review", p.status === "review");
+  if (p.status === "review" && p.def.diff) p.span.innerHTML = p.def.diff;
+  if (p.status === "accepted") {
+    p.span.replaceWith(document.createTextNode(p.def.diff ? mergeDiffText(p.def.diff, true) : p.def.quote));
+  }
+  if (p.status === "rejected") p.span.replaceWith(document.createTextNode(p.def.quote));
+}
+// diff HTML → 纯文本（accept=true 取 ins，否则取 del 原文）
+function mergeDiffText(diffHtml, accept) {
+  const tmp = el("span", "", diffHtml);
+  const out = [];
+  for (const n of tmp.childNodes) {
+    if (n.nodeType === 3) out.push(n.nodeValue);
+    else if (n.tagName === "DEL" && !accept) out.push(n.textContent);
+    else if (n.tagName === "INS" && accept) out.push(n.textContent);
+  }
+  return out.join("");
+}
+
+// ---- 导航：1 级方位条 / 2 级树 ----
+function renderPeek() {
+  const host = document.getElementById("peek");
+  host.classList.toggle("show", state.nav === "peek" && state.view !== "empty");
+  if (state.view === "empty") return;
+  const t = T();
+  host.replaceChildren();
+  host.append(el("div", "pk-vault", esc(VAULT.name)));
+  host.append(el("div", "pk-path dim", esc(currentFile || docFile())));
+  const stats = el("div", "pk-stats dim",
+    `${countFiles(VAULT.tree)} ${t.N_files} · ${points.filter((p) => p.status === "open" || p.status === "working" || p.status === "review").length} ${t.N_points}`);
+  host.append(stats);
+  const hint = el("div", "pk-hint dim", esc(t.N_peekHint));
+  host.append(hint);
+  host.dataset.anno = "V2";
+}
+function renderNav() {
+  const host = document.getElementById("nav");
+  host.classList.toggle("show", state.nav === "open" && state.view !== "empty");
+  if (state.view === "empty") return;
+  host.replaceChildren();
+  const head = el("div", "nv-head"); head.dataset.anno = "V3";
+  head.append(el("span", "nv-vault", esc(VAULT.name)));
+  head.append(el("span", "nv-close dim", esc(T().N_close)));
+  host.append(head);
+  const rootUl = el("ul", "ft-children ft-root");
+  for (const n of VAULT.tree) rootUl.append(treeNode(n));
+  host.append(rootUl);
+}
+function treeNode(node) {
+  const li = el("li");
+  if (node.kind === "dir") {
+    const row = el("button", "ft-row ft-dir");
+    row.innerHTML = `<span class="ft-caret">▾</span><span class="ft-name">${esc(node.name)}</span>`;
+    const ul = el("ul", "ft-children");
+    for (const c of node.children) ul.append(treeNode(c));
+    row.addEventListener("click", () => {
+      const closed = ul.hidden;
+      ul.hidden = !closed;
+      row.querySelector(".ft-caret").textContent = closed ? "▾" : "▸";
+    });
+    li.append(row, ul);
+  } else {
+    const row = el("button", "ft-row");
+    if (node.path === (currentFile || docFile())) row.classList.add("active");
+    row.innerHTML = `<span class="ft-caret"></span><span class="ft-name">${esc(node.name)}</span>`;
+    row.title = node.path;
+    row.addEventListener("click", () => {
+      currentFile = node.path;
+      state.nav = "hidden";
+      renderDoc(); renderNav(); renderPeek(); renderDotbar();
+      if (state.annotate) injectAnnotations();
+    });
+    li.append(row);
+  }
+  return li;
+}
+
+// ---- Context Surface：随 agent 状态出现，用完即走 ----
+const surfaceRelevant = () => ["working", "review", "conflict"].includes(state.step);
+function setSurface(open) {
+  state.surfaceOpen = open;
+  renderSurface();
+}
+function renderSurface() {
+  const host = document.getElementById("surface");
+  const show = state.view !== "empty" && state.step !== "conflict" && surfaceRelevant() && state.surfaceOpen;
+  host.classList.toggle("show", show);
+  document.getElementById("edge-r").classList.toggle("live", surfaceRelevant() && !show && state.step !== "conflict");
+  document.getElementById("agent-light").classList.toggle("on", surfaceRelevant());
+  if (!show) return;
+  host.replaceChildren();
+  const t = T();
+  const head = el("div", "sf-head"); head.dataset.anno = "V5";
+  head.append(el("div", "sf-title", esc(state.step === "working" ? t.W_title : t.R_title)));
+  head.append(el("div", "sf-batch dim", esc(state.step === "working" ? t.W_batch : t.R_batch)));
+  host.append(head);
+  if (state.step === "working") renderProgress(host);
+  else renderReview(host);
+}
+function renderProgress(host) {
+  const t = T();
+  const prog = el("div", "prog"); prog.dataset.anno = "V4";
+  // URL 直达 working：静态中景——点1 完成、点2 处理中、点3 排队
+  const states = ["done", "doing", "wait"];
+  points.forEach((p, i) => {
+    const row = el("div", "prog-row");
+    row.append(el("span", "prog-dot " + (states[i] || "wait")));
+    const label = el("span", "prog-intent", esc(p.def.intent));
+    row.append(label);
+    const st = el("span", "prog-quote dim", "　" + (states[i] === "done" ? t.W_done : states[i] === "doing" ? t.W_doing : t.W_wait));
+    row.append(st);
+    prog.append(row);
+  });
+  host.append(prog, el("p", "dim", esc(t.W_note)));
+}
+function scrollToReviewCard(id) {
+  const c = document.getElementById("surface").querySelector(`[data-card="${id}"]`);
+  if (c) c.scrollIntoView({ block: "nearest" });
+}
+function renderReview(host) {
+  const t = T();
+  for (const p of points) {
+    const card = el("div", "rev"); card.dataset.card = p.def.id;
+    card.append(el("div", "rev-label dim", esc(t.R_yourQ)));
+    card.append(el("div", "rev-q", esc(p.def.intent)));
+    card.querySelector(".rev-q").dataset.anno = "V9";
+    card.append(el("div", "rev-quote dim", esc(p.def.quote)));
+    card.append(el("div", "rev-label dim", esc(t.R_explain)));
+    card.append(el("div", "rev-body", esc(p.def.explain)));
+    if (p.def.diff) {
+      card.append(el("div", "rev-label dim", esc(t.R_diff)));
+      const d = el("div", "rev-diff", p.def.diff); d.dataset.anno = "V11";
+      card.append(d);
+    } else {
+      card.append(el("div", "rev-label dim", esc(t.R_noedit)));
+    }
+    card.append(el("div", "rev-label dim", esc(t.R_cost)));
+    card.append(el("div", "rev-body", esc(p.def.cost)));
+    const gotoBtn = el("button", "rev-goto", esc(t.R_goto));
+    gotoBtn.addEventListener("click", () => {
+      p.span.scrollIntoView({ block: "center", behavior: state.theme === "eink" ? "auto" : "smooth" });
+      p.span.classList.remove("flash"); void p.span.offsetWidth; p.span.classList.add("flash");
+    });
+    card.append(gotoBtn);
+    if (p.status === "accepted" || p.status === "rejected") {
+      card.append(el("div", "rev-verdict dim", esc(p.status === "accepted" ? t.R_accepted : t.R_rejected)));
+    } else {
+      const actions = el("div", "rev-actions"); actions.dataset.anno = "V10";
+      const accept = el("button", "btn primary", esc(t.R_accept));
+      accept.addEventListener("click", () => decide(p, true));
+      const reject = el("button", "btn", esc(t.R_reject));
+      reject.addEventListener("click", () => decide(p, false));
+      actions.append(accept, reject);
+      card.append(actions);
+    }
+    host.append(card);
+  }
+  if (points.length && points.every((p) => p.status === "accepted" || p.status === "rejected")) {
+    const arch = el("div", "sf-archive"); arch.dataset.anno = "V12";
+    arch.append(el("p", "dim", esc(t.R_archiveTitle) + " — " + esc(t.R_archiveBody)));
+    const btn = el("button", "btn primary", esc(t.R_archive));
+    btn.addEventListener("click", archiveBatch);
+    arch.append(btn);
+    host.append(arch);
+  }
+}
+function decide(p, accept) {
+  p.status = accept ? "accepted" : "rejected";
+  setPointVisual(p);
+  renderSurface(); renderPeek();
+  if (state.annotate) injectAnnotations();
+}
+function archiveBatch() {
+  // 归档：编辑点从正文消失，surface 收回，正文归于安静（正文 DOM 保留裁决结果）
+  for (const p of points) {
+    if (p.span.isConnected) p.span.replaceWith(document.createTextNode(
+      p.def.noEdit || p.status === "rejected" ? p.def.quote
+        : p.def.diff ? mergeDiffText(p.def.diff, p.status === "accepted") : p.def.quote));
+  }
+  points = [];
+  state.step = "read"; state.surfaceOpen = false;
+  renderSurface(); renderDotbar(); renderPeek();
+  toast(T().T_archived);
+}
+
+// ---- 冲突 popup（分级谱顶端） ----
+function renderConflict() {
+  const layer = document.getElementById("conflict");
+  const show = state.step === "conflict";
+  layer.hidden = !show;
+  if (!show) return;
+  layer.replaceChildren();
+  const t = T();
+  const box = el("div", "cf-box"); box.dataset.anno = "V13";
+  box.append(el("div", "cf-title", esc(t.F_title)));
+  box.append(el("p", "", esc(t.F_body)));
+  const actions = el("div", "cf-actions");
+  for (const label of [t.F_diff, t.F_reprocess, t.F_keep]) {
+    const b = el("button", "btn", esc(label));
+    b.addEventListener("click", () => { state.step = "review"; apply(); });
+    actions.append(b);
+  }
+  box.append(actions);
+  layer.append(box);
+}
+
+// ---- 空态：第一打开是本方向招牌 ----
+function renderEmpty() {
+  const host = document.getElementById("empty");
+  const show = state.view === "empty";
+  host.hidden = !show;
+  if (!show) return;
+  host.replaceChildren();
+  const t = T();
+  const line = el("div", "e-line", esc(t.E_line)); line.dataset.anno = "V15";
+  const act = el("div", "e-act");
+  const btn = el("button", "btn", esc(t.E_open));
+  btn.addEventListener("click", () => { state.view = "full"; state.step = "read"; apply(); });
+  act.append(btn);
+  host.append(line, act, el("div", "e-keys dim", esc(t.E_keys)));
+}
+
+// ---- 委派提示条（位置恒定的余光级入口） ----
+function renderDotbar() {
+  const host = document.getElementById("dotbar");
+  const open = points.filter((p) => p.status === "open").length;
+  const show = state.view !== "empty" && open > 0 && state.step !== "delegate";
+  host.classList.toggle("show", show);
+  if (!show) return;
+  host.dataset.anno = "V19";
+  const t = T();
+  host.innerHTML = "";
+  host.append(document.createTextNode(t.D_bar(open) + " "));
+  const k = el("kbd", "", "⌘⏎"); host.append(k);
+}
+
+// ---- 浮层：创建 / 委派 / 命令面板 ----
+function openCreatePop() {
+  const sel = window.getSelection();
+  if (!sel.rangeCount || sel.isCollapsed) return;
+  const range = sel.getRangeAt(0);
+  const doc = document.getElementById("doc");
+  if (!doc.contains(range.commonAncestorContainer)) return;
+  const quote = sel.toString().trim();
+  if (quote.length < 2) return;
+  const t = T();
+  const pop = document.getElementById("pop-create");
+  pop.replaceChildren();
+  pop.dataset.anno = "V7";
+  pop.append(el("div", "pc-quote dim", esc(quote)));
+  const input = el("input"); input.placeholder = t.P_placeholder;
+  pop.append(input);
+  const actions = el("div", "pc-actions");
+  const cancel = el("button", "btn", esc(t.P_cancel));
+  cancel.addEventListener("click", closeOverlays);
+  const create = el("button", "btn primary", esc(t.P_create));
+  const submit = () => {
+    const intent = input.value.trim() || t.P_placeholder;
+    createPointFromSelection(quote, intent);
+    closeOverlays();
+  };
+  create.addEventListener("click", submit);
+  input.addEventListener("keydown", (e) => { if (e.key === "Enter") submit(); });
+  actions.append(cancel, create);
+  pop.append(actions);
+  // 定位：选区矩形下方，贴左不越界
+  const r = range.getBoundingClientRect();
+  const stage = document.getElementById("stage").getBoundingClientRect();
+  pop.style.left = Math.max(8, Math.min(r.left - stage.left, stage.width - 340)) + "px";
+  pop.style.top = (r.bottom - stage.top + 8) + "px";
+  pop.hidden = false;
+  input.focus();
+}
+function openDelegate() {
+  if (!points.filter((p) => p.status === "open").length) return;
+  state.step = "delegate";
+  renderDelegateSheet();
+}
+// 委派浮层：URL 直达（step=delegate）与交互路径共用
+function renderDelegateSheet() {
+  const open = points.filter((p) => p.status === "open");
+  if (!open.length) return;
+  const t = T();
+  document.getElementById("veil").classList.add("show");
+  const sheet = document.getElementById("sheet");
+  sheet.replaceChildren(); sheet.hidden = false; sheet.dataset.anno = "V8";
+  sheet.append(el("div", "sh-title", esc(t.G_title)));
+  sheet.append(el("div", "sh-sub dim", esc(t.G_sub(open.length))));
+  const list = el("div", "sh-list");
+  for (const p of open) {
+    const row = el("div", "sh-row");
+    row.append(el("div", "", esc(p.def.quote)));
+    row.append(el("div", "sh-intent dim", esc(p.def.intent)));
+    list.append(row);
+  }
+  sheet.append(list);
+  sheet.append(el("div", "sh-scope", esc(t.G_scope)));
+  const actions = el("div", "sh-actions");
+  const back = el("button", "btn", esc(t.G_back));
+  back.addEventListener("click", () => { state.step = "anchor"; closeOverlays(); renderDotbar(); });
+  const go = el("button", "btn primary", esc(t.G_go));
+  go.addEventListener("click", () => { closeOverlays(); startWorking(); });
+  actions.append(back, go);
+  sheet.append(actions);
+}
+function startWorking() {
+  state.step = "working";
+  for (const p of points) if (p.status === "open") { p.status = "working"; setPointVisual(p); }
+  renderSurface(); renderDotbar(); renderPeek();
+  // 演示推进：逐点完成 → 进入回看（URL 直达 working 不经此路径，保持静态）
+  clearTimeout(workingTimer);
+  workingTimer = setTimeout(() => {
+    for (const p of points) if (p.status === "working") { p.status = "review"; setPointVisual(p); }
+    state.step = "review"; state.surfaceOpen = true;
+    renderSurface(); renderDotbar(); renderPeek();
+    if (state.annotate) injectAnnotations();
+  }, 3200);
+}
+function openCmdk() {
+  const t = T();
+  document.getElementById("veil").classList.add("show");
+  const k = document.getElementById("cmdk");
+  k.replaceChildren(); k.hidden = false; k.dataset.anno = "V14";
+  const input = el("input"); input.placeholder = t.K_placeholder;
+  k.append(input);
+  const list = el("div", "ck-list");
+  k.append(list);
+  const actions = [
+    { label: t.K_nav, key: "⌘\\", run: () => { state.nav = state.nav === "open" ? "hidden" : "open"; } },
+    { label: t.K_delegate, key: "⌘⏎", run: () => openDelegate() },
+    { label: t.K_archive, key: "", run: () => { if (points.length && points.every((p) => p.status === "accepted" || p.status === "rejected")) archiveBatch(); } },
+    ...VAULT.tree.flatMap(function flat(n) {
+      return n.kind === "dir" ? n.children.flatMap(flat) : [{ label: t.K_openPrefix + n.name, key: "", run: () => { currentFile = n.path; renderDoc(); } }];
+    }),
+  ];
+  let filtered = actions;
+  let selIdx = 0;
+  const runAction = (a) => { closeOverlays(); a.run(); renderNav(); renderPeek(); };
+  const renderList = (filter) => {
+    filtered = actions.filter((a) => !filter || a.label.toLowerCase().includes(filter));
+    selIdx = 0;
+    list.replaceChildren();
+    filtered.forEach((a, i) => {
+      const row = el("button", "ck-row" + (i === selIdx ? " sel" : ""));
+      row.append(el("span", "", esc(a.label)));
+      if (a.key) row.append(el("span", "ck-key dim", esc(a.key)));
+      row.addEventListener("click", () => runAction(a));
+      row.addEventListener("mousemove", () => { if (selIdx !== i) { selIdx = i; markSel(); } });
+      list.append(row);
+    });
+  };
+  const markSel = () => {
+    [...list.children].forEach((r, i) => r.classList.toggle("sel", i === selIdx));
+  };
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "ArrowDown") { e.preventDefault(); selIdx = Math.min(selIdx + 1, filtered.length - 1); markSel(); }
+    else if (e.key === "ArrowUp") { e.preventDefault(); selIdx = Math.max(selIdx - 1, 0); markSel(); }
+    else if (e.key === "Enter" && filtered[selIdx]) { e.preventDefault(); runAction(filtered[selIdx]); }
+  });
+  renderList("");
+  input.addEventListener("input", () => renderList(input.value.trim().toLowerCase()));
+  input.focus();
+}
+function closeOverlays() {
+  document.getElementById("pop-create").hidden = true;
+  document.getElementById("sheet").hidden = true;
+  document.getElementById("cmdk").hidden = true;
+  document.getElementById("veil").classList.remove("show");
+  if (state.step === "delegate") state.step = "anchor";
+  renderDotbar();
+}
+
+// ---- toast（底部细字，说完即走） ----
+function toast(text) {
+  const host = document.getElementById("toast");
+  host.textContent = text;
+  host.classList.add("show");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => host.classList.remove("show"), 2200);
+}
+
+// ---- 消隐规则：固定入口，固定关闭 ----
+// 左缘：进入热区 → 方位条；点击/⌘\ → 树；移出即收回；Esc 恒关。
+let navHoverTimer = null;
+const edgeL = document.getElementById("edge-l");
+edgeL.addEventListener("mouseenter", () => { if (state.nav === "hidden") { state.nav = "peek"; renderPeek(); } });
+document.getElementById("peek").addEventListener("mouseenter", () => {
+  clearTimeout(navHoverTimer);
+  navHoverTimer = setTimeout(() => { if (state.nav === "peek") { state.nav = "open"; renderNav(); renderPeek(); } }, 350);
+});
+document.getElementById("peek").addEventListener("click", () => { state.nav = "open"; renderNav(); renderPeek(); });
+document.getElementById("nav").addEventListener("mouseleave", () => {
+  if (state.nav === "open") { state.nav = "hidden"; renderNav(); renderPeek(); }
+});
+document.getElementById("scroll").addEventListener("mouseenter", () => {
+  if (state.nav === "peek") { state.nav = "hidden"; renderPeek(); }
+});
+// 右缘：仅 agent 在场时存在
+document.getElementById("edge-r").addEventListener("mouseenter", () => { if (surfaceRelevant()) setSurface(true); });
+
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") { closeOverlays(); if (state.nav !== "hidden") { state.nav = "hidden"; renderNav(); renderPeek(); } if (state.surfaceOpen) setSurface(false); return; }
+  if ((e.metaKey || e.ctrlKey) && e.key === "k") { e.preventDefault(); openCmdk(); }
+  if ((e.metaKey || e.ctrlKey) && e.key === "\\") { e.preventDefault(); state.nav = state.nav === "open" ? "hidden" : "open"; renderNav(); renderPeek(); }
+  if ((e.metaKey || e.ctrlKey) && e.key === "Enter") { e.preventDefault(); openDelegate(); }
+});
+document.addEventListener("mouseup", () => {
+  const pop = document.getElementById("pop-create");
+  if (!pop.hidden) return;
+  const sel = window.getSelection();
+  if (sel && !sel.isCollapsed && sel.toString().trim().length >= 2) openCreatePop();
+});
+document.getElementById("veil").addEventListener("click", closeOverlays);
+document.getElementById("dotbar").addEventListener("click", openDelegate);
+
+// ---- 控制台（元界面） ----
+function seg(options, current, onPick) {
+  const g = el("span", "seg");
+  for (const [val, label] of options) {
+    const b = el("button", "", esc(label));
+    b.type = "button";
+    if (val === current) b.classList.add("active");
+    b.addEventListener("click", () => { onPick(val); apply(); });
+    g.append(b);
+  }
+  return g;
+}
+function renderConsole() {
+  const host = document.getElementById("console");
+  host.replaceChildren();
+  const t = T();
+  host.append(el("span", "c-title", esc(t.C1_title)));
+
+  let g = el("span", "c-group");
+  g.append(el("span", "c-label", esc(t.C_theme)));
+  g.append(seg([["light", t.C_light], ["dark", t.C_dark], ["eink", t.C_eink]], state.theme, (v) => state.theme = v));
+  host.append(g);
+
+  g = el("span", "c-group");
+  g.dataset.anno = "V16";
+  g.append(el("span", "c-label", esc(t.C_measure)));
+  const slider = el("input", "c-measure");
+  slider.type = "range"; slider.min = "480"; slider.max = "1200"; slider.step = "20";
+  slider.value = String(state.measure);
+  const val = el("span", "c-measure-val");
+  const renderVal = () => { val.textContent = state.measure >= 1200 ? t.C_full : state.measure + "px"; };
+  renderVal();
+  slider.addEventListener("input", () => { state.measure = parseInt(slider.value, 10); renderVal(); applyMeasure(); });
+  g.append(slider, val);
+  host.append(g);
+
+  g = el("span", "c-group");
+  g.append(el("span", "c-label", esc(t.C_lang)));
+  g.append(seg([["zh", "中文"], ["en", "English"]], state.lang, (v) => { state.lang = v; currentFile = null; }));
+  host.append(g);
+
+  g = el("span", "c-group");
+  g.append(el("span", "c-label", esc(t.C_view)));
+  g.append(seg([["empty", t.C_empty], ["full", t.C_fullView], ["long", t.C_long]], state.view, (v) => state.view = v));
+  host.append(g);
+
+  g = el("span", "c-group");
+  g.append(el("span", "c-label", esc(t.C_step)));
+  g.append(seg([
+    ["read", t.C_read], ["anchor", t.C_anchor], ["delegate", t.C_delegate],
+    ["working", t.C_working], ["review", t.C_review], ["conflict", t.C_conflict],
+  ], state.step, (v) => { state.step = v; state.surfaceOpen = v === "review"; }));
+  host.append(g);
+
+  g = el("span", "c-group");
+  g.append(el("span", "c-label", esc(t.C_nav)));
+  g.append(seg([["hidden", t.C_navHidden], ["peek", t.C_navPeek], ["open", t.C_navOpen]], state.nav, (v) => state.nav = v));
+  host.append(g);
+
+  g = el("span", "c-group");
+  g.append(el("span", "c-label", esc(t.C_annotate)));
+  g.append(seg([["off", t.C_off], ["on", t.C_on]], state.annotate ? "on" : "off", (v) => state.annotate = v === "on"));
+  host.append(g);
+
+  g = el("span", "c-group");
+  g.append(el("span", "c-label", esc(t.C_gray)));
+  const gseg = seg([["off", t.C_off], ["on", t.C_on]], state.gray ? "on" : "off", (v) => state.gray = v === "on");
+  gseg.dataset.anno = "V18";
+  g.append(gseg);
+  host.append(g);
+
+  const intent = el("div", "intent");
+  intent.append(el("b", "", esc(t.C_intentTitle) + " · "));
+  intent.append(document.createTextNode(t["intent_" + state.theme]));
+  host.append(intent);
+  host.append(el("div", "c-note", esc(t.C0_boundary)));
+  host.append(el("div", "c-note", esc(t.C_measureNote)));
+}
+
+// ---- 批注模式 ----
+function injectAnnotations() {
+  document.querySelectorAll(".anno").forEach((a) => a.remove());
+  if (!state.annotate) return;
+  document.querySelectorAll("[data-anno]").forEach((elmt) => {
+    const id = elmt.dataset.anno;
+    if (!id || !ANNOTATIONS[id] || elmt.querySelector(":scope > .anno")) return;
+    const a = el("span", "anno", id);
+    a.title = ANNOTATIONS[id];
+    elmt.append(a);
+  });
+  // 固定层元素（热区/状态灯等无法内嵌标签的）用浮动角标
+  const fixed = [["edge-l", "V1", 2, 60], ["agent-light", "V4", null, 60]];
+  for (const [id, anno, x, y] of fixed) {
+    const e = document.getElementById(id);
+    if (!e || (id === "agent-light" && !e.classList.contains("on"))) continue;
+    const a = el("span", "anno-fixed", anno);
+    a.title = ANNOTATIONS[anno];
+    a.style.left = (x === null ? "" : x + "px");
+    if (x === null) a.style.right = "8px";
+    a.style.top = y + "px";
+    document.getElementById("stage").append(a);
+  }
+}
+
+function applyMeasure() {
+  const full = state.measure >= 1200;
+  document.documentElement.style.setProperty("--measure", full ? "none" : state.measure + "px");
+}
+
+function syncFlowUI() { renderDotbar(); renderPeek(); renderSurface(); }
+
+// ---- 总装 ----
+function apply() {
+  const root = document.documentElement;
+  root.dataset.theme = state.theme;
+  root.lang = state.lang;
+  document.getElementById("stage").classList.toggle("gray", state.gray);
+  applyMeasure();
+  renderConsole(); renderDoc(); renderPeek(); renderNav(); renderSurface();
+  renderConflict(); renderEmpty(); renderDotbar();
+  const sheet = document.getElementById("sheet");
+  if (state.step === "delegate" && state.view !== "empty") renderDelegateSheet();
+  else if (sheet) { sheet.hidden = true; document.getElementById("veil").classList.remove("show"); }
+  if (state.annotate) injectAnnotations();
+}
+apply();
+</script>
+</body>
+</html>
