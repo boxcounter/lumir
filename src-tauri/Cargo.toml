@@ -29,6 +29,15 @@ notify = "8"
 # tauri.conf.json / capabilities 配置（那不在本 change 的改动面内）。
 rfd = "0.17"
 
+[features]
+# 生产构建开关（Tauri 2 官方模板约定，名称必须恰为 custom-protocol）：
+# tauri build 会自动带上 --features custom-protocol，此时 tauri::is_dev() == false，
+# webview 加载内嵌的 frontendDist；不带该 feature 的构建（含裸 cargo build）一律视为
+# dev，加载 tauri.conf.json 的 devUrl——vite dev server 不在时窗口就是白屏（空文档，
+# 控制台报 "Could not connect to the server http://127.0.0.1:1420/"），不弹任何错误。
+# 裸 debug 二进制直连 dist 的验证方式：cargo build --features custom-protocol。
+custom-protocol = ["tauri/custom-protocol"]
+
 [profile.release]
 panic = "abort"
 lto = true

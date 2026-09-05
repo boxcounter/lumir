@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "主窗口默认能力：前端经 listen 订阅 fs:entry_changed 等 app 事件（M26 真机 E2E 发现：无 capabilities 时 event.listen 被 ACL 拒绝，watch 事件流静默断开）",
+  "windows": ["main"],
+  "permissions": ["core:event:allow-listen", "core:event:allow-unlisten"]
+}
