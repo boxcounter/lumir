@@ -37,3 +37,4 @@
 | [0002](0002-technical-route.md) | 技术路线 | accepted |
 | [0003](0003-obsidian-compatibility-scope.md) | Obsidian 兼容范围 | accepted |
 | [0004](0004-development-and-openness-strategy.md) | 开发与开放策略 | accepted |
+| [0005](0005-product-ontology-object-model.md) | 产品本体对象模型 | proposed |
