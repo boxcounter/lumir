@@ -62,6 +62,12 @@ export interface EditorHandle {
    */
   openDocument(doc: string, path?: string): void;
   /**
+   * 清空文档并复位上下文（vault 切换 / 关闭时调用）：doc 清空、内部
+   * currentFilePath 置空、模式回到配置默认基线（defaultMode，与 openDocument
+   * 的无类型线索回落锚一致——不继承上一个文件漂移出的模式）。
+   */
+  reset(): void;
+  /**
    * 注入附件能力（add-vault-workspace 的 fs-io「二进制附件读取」，vault 波在装配处调用）。
    * 未注入时附件引用显示占位；默认 provider 已按裁决 A 契约编码但无 vault 索引。
    */
@@ -151,6 +157,14 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
       view.dispatch({
         changes: { from: 0, to: view.state.doc.length, insert: doc },
         effects: modeCompartment.reconfigure(modeExtensions(next)),
+      });
+    },
+    reset() {
+      currentPath = undefined;
+      currentMode = defaultMode;
+      view.dispatch({
+        changes: { from: 0, to: view.state.doc.length, insert: "" },
+        effects: modeCompartment.reconfigure(modeExtensions(defaultMode)),
       });
     },
     setAttachmentProvider(next: AttachmentProvider) {
