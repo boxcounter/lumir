@@ -2,7 +2,8 @@ name: perf
 
 # 性能合同测量（ADR 0002 §6，方法学本体见 docs/specs/perf-measurement.md）。
 # 2026-09-05 一次性校准后 enforce=true：绝对模式（open-1mb-file/resident-memory）超阈拒合；
-# 相对回归模式（cold-start/keypress-to-paint）对照 actions/cache 滚动基线，回退 >20% 拒合；
+# 相对回归模式（cold-start/keypress-to-paint）对照 actions/cache 滚动基线，回退超容忍线拒合
+# （统计口径与容忍线以 docs/specs/perf-measurement.md「相对回归门禁」为准，此处不重复数字）；
 # 结果缺失即 exit 1。基线仅 master push 全绿后由 update-baseline.mjs 写回。
 
 on:
@@ -83,7 +84,7 @@ jobs:
       - name: 常驻内存 <200MB
         run: node scripts/perf/memory.mjs
 
-      - name: 阈值比较（enforce：超阈/回退>20%/结果缺失即红）
+      - name: 阈值比较（enforce：超阈/相对回归超容忍线/结果缺失即红）
         if: always()
         run: node scripts/perf/check-thresholds.mjs
 
