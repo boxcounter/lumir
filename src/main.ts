@@ -1,18 +1,23 @@
 import { createShell } from "./shell";
 import { createEditor } from "./editor";
 import { Keymap } from "./keys";
-import { createFileTree } from "./tree";
+import { createFileTree, openKind } from "./tree";
 import {
   configGet,
   errorMessage,
   fsReadAttachment,
   fsReadFile,
+  linkGraphResolve,
   onFsEntryChanged,
   vaultCurrent,
   vaultOpen,
+  wikilinkCreate,
 } from "./ipc";
 import type { FsEntry } from "./bindings/FsEntry";
+import type { LinkResolveResult } from "./bindings/LinkResolveResult";
 import { extensionOf, resolveByNameUnique } from "./preview/attachments";
+import { findWikilinkSpans } from "./preview/wikilinks";
+import { createBacklinksPanel } from "./backlinks";
 import "./style.css";
 
 const app = document.querySelector<HTMLElement>("#app");
@@ -59,10 +64,6 @@ editor.setAttachmentProvider({
 });
 
 const keymap = new Keymap();
-keymap.attach(window, (command) => {
-  // M1 不绑定任何具体功能；分发骨架就位，后续波次在此接命令实现。
-  console.log(`lumir: unbound command dispatched: ${command}`);
-});
 
 // 编辑器区域的"暂不支持预览 / 错误提示"覆盖层：显示提示时藏起编辑器本体。
 const notice = document.createElement("div");
@@ -81,6 +82,52 @@ function showEditor() {
   editor.view.dom.style.display = "";
 }
 
+// 瞬时提示（锚点缺失 / 创建结果 / 解析错误）：编辑器右下角浮条，自动消隐。
+function toast(text: string, action?: { label: string; run(): void }): void {
+  const el = document.createElement("div");
+  el.className = "lumir-toast";
+  Object.assign(el.style, {
+    position: "absolute",
+    bottom: "16px",
+    right: "16px",
+    display: "flex",
+    alignItems: "center",
+    gap: "10px",
+    padding: "8px 14px",
+    borderRadius: "6px",
+    background: "#333",
+    color: "#fff",
+    fontSize: "13px",
+    zIndex: "10",
+    maxWidth: "70%",
+  });
+  const span = document.createElement("span");
+  span.textContent = text;
+  el.append(span);
+  if (action) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.textContent = action.label;
+    Object.assign(btn.style, {
+      border: "1px solid #888",
+      borderRadius: "4px",
+      background: "transparent",
+      color: "#fff",
+      cursor: "pointer",
+      font: "inherit",
+      padding: "2px 10px",
+      flex: "none",
+    });
+    btn.addEventListener("click", () => {
+      el.remove();
+      action.run();
+    });
+    el.append(btn);
+  }
+  shell.editor.append(el);
+  setTimeout(() => el.remove(), action ? 8000 : 3500);
+}
+
 // 打开文件：读出文本交给 editor.openDocument——模式裁决（文件类型优先，
 // 无类型线索回落配置默认）和附件相对路径解析依赖的 currentFilePath 都在
 // 内核里完成（spec「模式配置来源」）。不支持的二进制 → 提示而非报错弹窗。
@@ -91,13 +138,153 @@ async function openFile(path: string, kind: "md" | "code" | "text" | "binary") {
   }
   try {
     const text = await fsReadFile(path);
+    currentPath = kind === "md" ? path : undefined;
+    resolveCache.clear(); // from 变更，按 from 键控的缓存整批失效
     editor.openDocument(text, path);
+    backlinks.setFile(kind === "md" ? path : undefined);
     showEditor();
   } catch (e) {
     // CommandError 的 message 是人话（如非法 UTF-8），直接展示
     showNotice(errorMessage(e));
   }
 }
+
+// ---------------------------------------------------------------------------
+// wikilink：解析缓存、跳转、一键创建（语义全部经 invoke 取 Rust link_graph 结果）
+// ---------------------------------------------------------------------------
+
+/** 当前文件（md 模式）的 vault 相对路径；resolve 的 from 基准。 */
+let currentPath: string | undefined;
+/** 解析结果缓存：键 = `${from}\n${raw}`。watch 增量 / 切文件 / 创建后整批失效。 */
+const resolveCache = new Map<string, LinkResolveResult>();
+const pendingResolve = new Set<string>();
+
+const wikilinkResolver = {
+  resolve(raw: string): LinkResolveResult | undefined {
+    const from = currentPath;
+    if (from === undefined) return undefined;
+    const key = `${from}\n${raw}`;
+    const hit = resolveCache.get(key);
+    if (hit) return hit;
+    if (!pendingResolve.has(key)) {
+      pendingResolve.add(key);
+      linkGraphResolve(from, raw).then(
+        (r) => {
+          resolveCache.set(key, r);
+          editor.refreshPreview();
+        },
+        () => {
+          // 后端无 link graph（如纯浏览器预览桩）：装饰层整体回落降级渲染
+          editor.setWikilinkResolver(null);
+        },
+      ).finally(() => pendingResolve.delete(key));
+    }
+    return undefined;
+  },
+};
+
+/** 激活链接（点击 / Mod-Enter）：按解析结果跳转、提示或给出一键创建入口。 */
+async function followWikilink(raw: string): Promise<void> {
+  const from = currentPath;
+  if (from === undefined) return;
+  let result = resolveCache.get(`${from}\n${raw}`);
+  if (!result) {
+    try {
+      result = await linkGraphResolve(from, raw);
+      resolveCache.set(`${from}\n${raw}`, result);
+    } catch (e) {
+      toast(errorMessage(e));
+      return;
+    }
+  }
+  switch (result.status) {
+    case "resolved":
+    case "ambiguous": {
+      const path = result.path;
+      if (path === null) return;
+      await openFile(path, openKind(path));
+      // spec §4.2：锚点找到定位标题行；缺失时打开文件并提示，不静默停在顶部
+      if (result.anchor.status === "found" && result.anchor.line !== null) {
+        editor.revealLine(result.anchor.line);
+      } else if (result.anchor.status === "missing") {
+        toast(`标题未找到：${result.anchor.heading ?? ""}`);
+      }
+      break;
+    }
+    case "unresolved":
+      // spec §4.3：unresolved 不是错误；§4.4：提供一键创建入口
+      toast(`未创建的链接：${raw}`, {
+        label: "创建并打开",
+        run: () => void createForWikilink(from, raw),
+      });
+      break;
+    case "unsupported":
+      toast(`块引用不支持：${raw}`);
+      break;
+  }
+}
+
+async function createForWikilink(from: string, raw: string): Promise<void> {
+  try {
+    const { created } = await wikilinkCreate(from, raw);
+    resolveCache.clear();
+    editor.refreshPreview(); // 创建成功后链接转为正常态（spec §4.4）
+    await openFile(created, "md");
+    toast(`已创建：${created}`);
+  } catch (e) {
+    // 目标已存在 = 索引过期（spec §4.4）：清缓存重解析而非覆盖
+    resolveCache.clear();
+    editor.refreshPreview();
+    toast(errorMessage(e));
+  }
+}
+
+/** 光标/点击处的非 embed wikilink span（span 定位是前端唯一持有的词法逻辑）。 */
+function wikilinkAt(pos: number): string | null {
+  const text = editor.view.state.doc.toString();
+  for (const span of findWikilinkSpans(text)) {
+    if (!span.embed && pos >= span.from && pos < span.to) {
+      return text.slice(span.from, span.to);
+    }
+  }
+  return null;
+}
+
+// 点击跳转（spec §4.2）：Mod-Click 命中 wikilink span 时阻止选区落点，直接跟随链接；
+// 裸点击不拦截，保持链接文本可正常落点编辑。
+editor.view.dom.addEventListener("mousedown", (e) => {
+  if (e.button !== 0) return;
+  if (!(e.metaKey || e.ctrlKey)) return; // Mod-Click：macOS Cmd，跨平台兼容 Ctrl
+  if (currentPath === undefined) return; // 无 vault 上下文：链接只是文本
+  const pos = editor.view.posAtCoords({ x: e.clientX, y: e.clientY });
+  if (pos === null) return;
+  const raw = wikilinkAt(pos);
+  if (raw === null) return;
+  e.preventDefault();
+  void followWikilink(raw);
+});
+
+// 键位（ADR 0001 §4：chorded 非 modal）：Mod-Enter 跟随光标处链接。
+keymap.register("Mod-Enter", "wikilink.follow");
+keymap.attach(window, (command) => {
+  if (command === "wikilink.follow") {
+    const raw = wikilinkAt(editor.view.state.selection.main.head);
+    if (raw !== null) void followWikilink(raw);
+  }
+});
+
+// 面板区：反链面板（backlinks-panel，只读）+ 配置探针（M1 契约链路验证保留）。
+const backlinksMount = document.createElement("div");
+const configProbe = document.createElement("div");
+configProbe.style.marginTop = "12px";
+configProbe.style.borderTop = "1px solid #e0e0e0";
+configProbe.style.paddingTop = "8px";
+shell.panel.append(backlinksMount, configProbe);
+const backlinks = createBacklinksPanel(backlinksMount, {
+  onJump: (source, line) => {
+    void openFile(source, openKind(source)).then(() => editor.revealLine(line));
+  },
+});
 
 const tree = createFileTree(shell.fileTree, {
   onOpenFile: (path, kind) => void openFile(path, kind),
@@ -114,6 +301,9 @@ const tree = createFileTree(shell.fileTree, {
 // vault 装载的两个入口（手动打开 / 启动恢复）共用：先换附件索引再装文件树。
 function loadVault(root: string, entries: FsEntry[]) {
   attachmentPaths = entries.filter((e) => e.kind === "file").map((e) => e.path);
+  // 链接索引已在后端随 vault 打开建立；换 vault 后解析缓存整批失效
+  resolveCache.clear();
+  editor.setWikilinkResolver(wikilinkResolver);
   tree.setVault(root, entries);
 }
 
@@ -133,6 +323,10 @@ onFsEntryChanged((changes) => {
       attachmentPaths.push(change.path);
     }
   }
+  // 链接索引已由后端随事件流增量更新；前端清缓存重建装饰、重拉反链
+  resolveCache.clear();
+  editor.refreshPreview();
+  backlinks.refresh();
   tree.applyChanges(changes);
 }).catch(() => {});
 
@@ -150,7 +344,7 @@ vaultCurrent()
 
 // 契约链路探针：invoke config_get，把 editor.mode 经 setMode 锚定为编辑器的
 // 配置默认基线（openDocument 对无类型线索文件回落到这个基线），并把配置快照
-// 渲染进面板 pane。
+// 渲染进面板 pane 的配置探针区（反链面板下方）。
 configGet()
   .then((snapshot) => {
     editor.setMode(snapshot.config.editor.mode);
@@ -159,10 +353,10 @@ configGet()
       `path: ${snapshot.path}`,
       ...snapshot.warnings.map((w) => `warning: ${w}`),
     ];
-    shell.panel.textContent = lines.join("\n");
+    configProbe.textContent = lines.join("\n");
   })
   .catch((e: unknown) => {
-    shell.panel.textContent = `config 加载失败：${errorMessage(e)}`;
+    configProbe.textContent = `config 加载失败：${errorMessage(e)}`;
   });
 
 // ready 信号（前端一半）：webview 首屏挂载完成即打点。

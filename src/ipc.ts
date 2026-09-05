@@ -11,6 +11,9 @@ import type { FsEntry } from "./bindings/FsEntry";
 import type { FsEntryChangedEvent } from "./bindings/FsEntryChangedEvent";
 import type { VaultInfo } from "./bindings/VaultInfo";
 import type { VaultStatus } from "./bindings/VaultStatus";
+import type { LinkResolveResult } from "./bindings/LinkResolveResult";
+import type { CreateNoteResult } from "./bindings/CreateNoteResult";
+import type { BacklinkItem } from "./bindings/BacklinkItem";
 
 /** 判断 invoke 的 reject 值是否为 CommandError 信封。 */
 export function isCommandError(e: unknown): e is CommandError {
@@ -62,4 +65,22 @@ export function onFsEntryChanged(
   handler: (changes: FsChange[]) => void,
 ): Promise<() => void> {
   return listen<FsEntryChangedEvent>("fs:entry_changed", (e) => handler(e.payload.changes));
+}
+
+/**
+ * 解析单条 wikilink（from = 链接所在文件的 vault 相对路径，link = 链接原文）。
+ * 语义唯一来源是 Rust link_graph（双解析器纪律）。
+ */
+export function linkGraphResolve(from: string, link: string): Promise<LinkResolveResult> {
+  return invoke<LinkResolveResult>("link_graph_resolve", { from, link });
+}
+
+/** 未创建链接一键创建（spec §4.4：空内容、只建新文件、不覆盖既有文件）。 */
+export function wikilinkCreate(from: string, link: string): Promise<CreateNoteResult> {
+  return invoke<CreateNoteResult>("wikilink_create", { from, link });
+}
+
+/** 当前文件的反链列表（来源文件 + 行号 + 行级上下文），只读。 */
+export function linkGraphBacklinks(path: string): Promise<BacklinkItem[]> {
+  return invoke<BacklinkItem[]>("link_graph_backlinks", { path });
 }

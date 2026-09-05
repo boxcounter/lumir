@@ -18,9 +18,20 @@ import {
   resolveImagePath,
 } from "./attachments";
 import type { AttachmentProvider } from "./attachments";
+import { findWikilinkSpans } from "./wikilinks";
+import type { LinkResolveResult } from "../bindings/LinkResolveResult";
 
 /** 附件 provider 注入/变更时派发，强制重建装饰。 */
 export const previewRefresh = StateEffect.define<null>();
+
+/**
+ * wikilink 语义解析的查询口（唯一实现是 Rust link_graph，经 invoke 到达）。
+ * 命中缓存返回结果；未命中返回 undefined（pending），实现方负责后台解析
+ * 并在完成后派发 previewRefresh 触发装饰重建。
+ */
+export interface WikilinkResolver {
+  resolve(raw: string): LinkResolveResult | undefined;
+}
 
 /** 装饰层运行期上下文：可变引用，由编辑器装配处持有。 */
 export interface PreviewContext {
@@ -28,9 +39,51 @@ export interface PreviewContext {
   currentFilePath(): string | undefined;
   /** 附件能力提供者；未接线时所有附件引用走占位。 */
   attachmentProvider(): AttachmentProvider | null;
+  /** wikilink 解析器；未接线（无 vault / 后端无 link graph）时装饰层走降级渲染。 */
+  wikilinkResolver(): WikilinkResolver | null;
 }
 
 const CODE_NODE_NAMES = new Set(["FencedCode", "CodeBlock", "InlineCode", "HTMLBlock"]);
+
+/** wikilink 三态（spec §4.1）显示 widget：replace 整条链接，显示 alias 或 target。 */
+class WikilinkWidget extends WidgetType {
+  constructor(
+    readonly label: string,
+    readonly status: "resolved" | "ambiguous" | "unresolved",
+    readonly candidates: string[],
+    readonly raw: string,
+  ) {
+    super();
+  }
+
+  eq(other: WikilinkWidget): boolean {
+    return (
+      other.label === this.label &&
+      other.status === this.status &&
+      other.candidates.join("\n") === this.candidates.join("\n")
+    );
+  }
+
+  toDOM(): HTMLElement {
+    const el = document.createElement("span");
+    el.className = `cm-lp-wikilink cm-lp-wikilink-${this.status}`;
+    el.dataset.status = this.status;
+    el.textContent = this.label;
+    if (this.status === "ambiguous") {
+      // 歧义标识 + 悬停候选列表（spec §4.1：跳转前即可见）
+      el.title = `同名候选：\n${this.candidates.join("\n")}`;
+      const badge = document.createElement("sup");
+      badge.className = "cm-lp-wikilink-badge";
+      badge.textContent = "歧义";
+      el.append(badge);
+    } else if (this.status === "unresolved") {
+      el.title = `${this.raw}（未创建，点击创建）`;
+    } else {
+      el.title = this.raw;
+    }
+    return el;
+  }
+}
 
 class BulletWidget extends WidgetType {
   eq(): boolean {
@@ -44,8 +97,6 @@ class BulletWidget extends WidgetType {
   }
 }
 const BULLET = new BulletWidget();
-
-const WIKI_EMBED = /!\[\[([^\][\n]+)\]\]/g;
 
 export function livePreview(ctx: PreviewContext) {
   return [
@@ -108,7 +159,7 @@ function buildDecorations(view: EditorView, ctx: PreviewContext): DecorationSet 
 
   for (const vr of view.visibleRanges) {
     collectSyntaxDecorations(view, vr.from, vr.to, fm, ctx, decos);
-    collectWikiEmbeds(view, vr.from, vr.to, fm, ctx, decos);
+    collectWikilinks(view, vr.from, vr.to, fm, ctx, decos);
   }
   return Decoration.set(decos, true);
 }
@@ -290,8 +341,13 @@ function buildStandardImage(
   });
 }
 
-/** Obsidian 方言 ![[...]]：文本级扫描（markdown parser 不解析该语法），跳过代码与 frontmatter。 */
-function collectWikiEmbeds(
+/**
+ * wikilink span 定位 + 三态装饰：词法范围由 findWikilinkSpans 给出（span 定位
+ * 是前端唯一持有的逻辑，架构复查 P1-4），语义一律经 WikilinkResolver 取 Rust
+ * link_graph 结果。未命中缓存的链接按 pending 渲染，解析完成后经
+ * previewRefresh 重建；code/frontmatter 上下文排除沿用语法树与 frontmatter 检测。
+ */
+function collectWikilinks(
   view: EditorView,
   vrFrom: number,
   vrTo: number,
@@ -300,47 +356,97 @@ function collectWikiEmbeds(
   decos: Range<Decoration>[],
 ): void {
   const { doc } = view.state;
+  const resolver = ctx.wikilinkResolver();
   let line = doc.lineAt(vrFrom);
   while (line.from <= vrTo) {
-    WIKI_EMBED.lastIndex = 0;
-    let m: RegExpExecArray | null;
-    while ((m = WIKI_EMBED.exec(line.text)) !== null) {
-      const from = line.from + m.index;
-      const to = from + m[0].length;
+    for (const span of findWikilinkSpans(line.text)) {
+      const from = line.from + span.from;
+      const to = line.from + span.to;
       if (inFrontmatter(fm, from, to) || isInsideCode(view, from)) continue;
-      decos.push(buildWikiEmbed(m[0], m[1], ctx).range(from, to));
+      const raw = doc.sliceString(from, to);
+      decos.push(buildWikilink(raw, span.embed, ctx, resolver).range(from, to));
     }
     if (line.number >= doc.lines) break;
     line = doc.line(line.number + 1);
   }
 }
 
-function buildWikiEmbed(rawRef: string, inner: string, ctx: PreviewContext): Decoration {
-  // ![[target|alias/size]]：竖线后为显示参数，本波不消费，只取目标。
+/** 显示文本：alias 或 target（spec §2.1：alias 为空串时回落为按 target 显示）。 */
+function wikilinkLabel(raw: string, embed: boolean): string {
+  const inner = raw.slice(embed ? 3 : 2, -2);
+  const pipe = inner.indexOf("|");
+  const target = (pipe < 0 ? inner : inner.slice(0, pipe)).trim();
+  const alias = pipe < 0 ? null : inner.slice(pipe + 1);
+  return alias !== null && alias !== "" ? alias : target;
+}
+
+function buildWikilink(
+  raw: string,
+  embed: boolean,
+  ctx: PreviewContext,
+  resolver: WikilinkResolver | null,
+): Decoration {
+  // 降级路径：无解析器（未打开 vault / 后端无 link graph）。不做任何语义判断：
+  // embed 沿用既有附件占位路径，普通链接只加链接样式、保持原文。
+  if (!resolver) {
+    if (embed) {
+      return Decoration.replace({ widget: buildWikiEmbedWidget(raw, raw.slice(3, -2), ctx) });
+    }
+    return Decoration.mark({ class: "cm-lp-wikilink" });
+  }
+
+  const result = resolver.resolve(raw);
+  if (!result) {
+    return Decoration.mark({ class: "cm-lp-wikilink cm-lp-wikilink-pending" });
+  }
+  // spec §6：块引用不支持，显示原文与提示。
+  if (result.status === "unsupported") {
+    return Decoration.replace({ widget: new AttachmentNoticeWidget("块引用不支持", raw) });
+  }
+  if (embed) {
+    // spec §5 双语义判别：附件引用渲染 / 笔记嵌入提示 / 缺失占位。
+    if (result.status === "unresolved") {
+      return Decoration.replace({ widget: new AttachmentNoticeWidget("附件未找到", raw) });
+    }
+    if (result.embed_target === "note") {
+      return Decoration.replace({ widget: new AttachmentNoticeWidget("内容嵌入不支持", raw) });
+    }
+    const provider = ctx.attachmentProvider();
+    const path = result.path;
+    if (!provider || path === null) {
+      return Decoration.replace({ widget: new AttachmentNoticeWidget("附件读取未接线", raw) });
+    }
+    return Decoration.replace({
+      widget: new ImageWidget(path, () => provider.readDataUrl(path), raw),
+    });
+  }
+  return Decoration.replace({
+    widget: new WikilinkWidget(wikilinkLabel(raw, false), result.status, result.candidates, raw),
+  });
+}
+
+/**
+ * Obsidian 方言 ![[...]] 的降级渲染（无 wikilink 解析器时沿用 add-editor-live-preview
+ * 的临时口径：裁决点 F 文件名唯一匹配），不做三态。
+ */
+function buildWikiEmbedWidget(rawRef: string, inner: string, ctx: PreviewContext): WidgetType {
+  // ![[target|alias/size]]：竖线后为显示参数，不消费，只取目标。
   const target = inner.split("|")[0].trim();
 
   // ![[note]] 等笔记内容嵌入不做（ADR 0003 §2）：原文 + 人话提示。
   if (!isImageName(target)) {
-    return Decoration.replace({
-      widget: new AttachmentNoticeWidget("内容嵌入不支持", rawRef),
-    });
+    return new AttachmentNoticeWidget("内容嵌入不支持", rawRef);
   }
 
   const provider = ctx.attachmentProvider();
   if (!provider) {
-    return Decoration.replace({
-      widget: new AttachmentNoticeWidget("附件读取未接线", rawRef),
-    });
+    return new AttachmentNoticeWidget("附件读取未接线", rawRef);
   }
 
   // 带目录前缀按 vault 相对路径直接用；裸文件名按裁决点 F「文件名唯一匹配」解析。
   const path = target.includes("/") ? target.replace(/^\.?\//, "") : provider.resolveByName(target);
   if (path === null) {
-    return Decoration.replace({
-      widget: new AttachmentNoticeWidget("附件未找到", rawRef),
-    });
+    return new AttachmentNoticeWidget("附件未找到", rawRef);
   }
-  return Decoration.replace({
-    widget: new ImageWidget(path, () => provider.readDataUrl(path), rawRef),
-  });
+  return new ImageWidget(path, () => provider.readDataUrl(path), rawRef);
 }

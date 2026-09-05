@@ -9,6 +9,12 @@ export interface VaultFixture {
   entries: unknown[];
   files?: Record<string, string>;
   notice?: string | null;
+  /** link_graph_resolve 桩：链接原文 → LinkResolveResult。未命中按 unresolved 应答。 */
+  links?: Record<string, unknown>;
+  /** wikilink_create 桩：链接原文 → 创建后的 vault 相对路径（同时写入 files）。 */
+  creates?: Record<string, string>;
+  /** link_graph_backlinks 桩：文件路径 → BacklinkItem[]。 */
+  backlinks?: Record<string, unknown[]>;
 }
 
 export async function stubTauri(page: Page, vault: VaultFixture | null): Promise<void> {
@@ -18,7 +24,7 @@ export async function stubTauri(page: Page, vault: VaultFixture | null): Promise
     const listeners = new Map<string, number[]>();
     let nextId = 1;
 
-    const handlers: Record<string, (args: { path?: string }) => unknown> = {
+    const handlers: Record<string, (args: { path?: string; from?: string; link?: string }) => unknown> = {
       config_get: () => ({
         config: { version: 1, last_vault: null, editor: { mode: "md" } },
         warnings: [],
@@ -35,13 +41,39 @@ export async function stubTauri(page: Page, vault: VaultFixture | null): Promise
         }
         return text;
       },
+      // link graph 桩：语义由场景 fixture 注入（前端不复制解析语义，
+      // 桩也只查表不计算）；未收录的链接按 unresolved 应答。
+      link_graph_resolve: (args) => {
+        const hit = v?.links?.[args.link ?? ""];
+        return (
+          hit ?? {
+            status: "unresolved",
+            path: null,
+            candidates: [],
+            embed_target: null,
+            anchor: { status: "none", heading: null, line: null },
+          }
+        );
+      },
+      wikilink_create: (args) => {
+        const created = v?.creates?.[args.link ?? ""];
+        if (!created) {
+          throw { code: "wikilink_invalid", message: `未配置创建桩：${args.link}` };
+        }
+        if (v?.files) v.files[created] = "";
+        return { created };
+      },
+      link_graph_backlinks: (args) => v?.backlinks?.[args.path ?? ""] ?? [],
     };
 
     w.__TAURI_EVENT_PLUGIN_INTERNALS__ = {
       unregisterListener: (_event: string, id: number) => callbacks.delete(id),
     };
     w.__TAURI_INTERNALS__ = {
-      invoke: async (cmd: string, args: { event?: string; handler?: number; path?: string }) => {
+      invoke: async (
+        cmd: string,
+        args: { event?: string; handler?: number; path?: string; from?: string; link?: string },
+      ) => {
         if (cmd === "plugin:event|listen") {
           const ids = listeners.get(args.event ?? "") ?? [];
           ids.push(args.handler ?? 0);

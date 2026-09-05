@@ -6,7 +6,7 @@ import { syntaxHighlighting, defaultHighlightStyle } from "@codemirror/language"
 import { GFM } from "@lezer/markdown";
 import type { EditorMode } from "./bindings/EditorMode";
 import { livePreview, previewRefresh } from "./preview/livePreview";
-import type { PreviewContext } from "./preview/livePreview";
+import type { PreviewContext, WikilinkResolver } from "./preview/livePreview";
 import { createInvokeAttachmentProvider } from "./preview/attachments";
 import type { AttachmentProvider } from "./preview/attachments";
 
@@ -66,6 +66,15 @@ export interface EditorHandle {
    * 未注入时附件引用显示占位；默认 provider 已按裁决 A 契约编码但无 vault 索引。
    */
   setAttachmentProvider(provider: AttachmentProvider): void;
+  /**
+   * 注入 wikilink 解析器（add-wikilink；vault 打开后由装配处注入，关闭时置 null）。
+   * 装饰层据此做三态渲染；null 时走降级渲染（不做语义判断）。
+   */
+  setWikilinkResolver(resolver: WikilinkResolver | null): void;
+  /** 强制重建装饰（解析缓存更新 / watch 增量后调用）。 */
+  refreshPreview(): void;
+  /** 滚动定位到 1-based 行号并把光标移到行首（wikilink 锚点 / 反链跳转用）。 */
+  revealLine(line: number): void;
 }
 
 // 已知代码文件扩展 → code 模式。未列出的扩展按「无类型线索」回落配置默认。
@@ -94,10 +103,12 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
   let defaultMode = initialMode;
   let currentPath: string | undefined;
   let provider: AttachmentProvider = createInvokeAttachmentProvider();
+  let wikilinkResolver: WikilinkResolver | null = null;
 
   const previewContext: PreviewContext = {
     currentFilePath: () => currentPath,
     attachmentProvider: () => provider,
+    wikilinkResolver: () => wikilinkResolver,
   };
 
   function modeExtensions(mode: EditorMode): Extension[] {
@@ -146,6 +157,21 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
       provider = next;
       // doc/viewport 均未变化，派发专用 effect 强制装饰层重建。
       view.dispatch({ effects: previewRefresh.of(null) });
+    },
+    setWikilinkResolver(next: WikilinkResolver | null) {
+      wikilinkResolver = next;
+      view.dispatch({ effects: previewRefresh.of(null) });
+    },
+    refreshPreview() {
+      view.dispatch({ effects: previewRefresh.of(null) });
+    },
+    revealLine(line: number) {
+      const n = Math.max(1, Math.min(line, view.state.doc.lines));
+      const pos = view.state.doc.line(n).from;
+      view.dispatch({
+        selection: { anchor: pos },
+        effects: EditorView.scrollIntoView(pos, { y: "center" }),
+      });
     },
   };
 }

@@ -87,4 +87,28 @@ export const livePreviewTheme = EditorView.theme({
     backgroundColor: "#fdf8ef",
     fontSize: "0.85em",
   },
+
+  // wikilink 三态（spec §4.1）：resolved 正常链接 / ambiguous 加歧义标识 /
+  // unresolved 未创建样式（虚线下划线 + 暗色，与正常链接视觉可区分，不是错误色）。
+  ".cm-lp-wikilink": {
+    color: "#1a5fb4",
+    cursor: "pointer",
+    textDecoration: "underline",
+    textUnderlineOffset: "2px",
+  },
+  ".cm-lp-wikilink-pending": { opacity: "0.6" },
+  ".cm-lp-wikilink-unresolved": {
+    color: "#946300",
+    textDecoration: "underline dashed",
+    textUnderlineOffset: "2px",
+  },
+  ".cm-lp-wikilink-badge": {
+    fontSize: "0.65em",
+    color: "#b04500",
+    border: "1px solid #d0a060",
+    borderRadius: "3px",
+    padding: "0 3px",
+    marginLeft: "3px",
+    verticalAlign: "super",
+  },
 });
