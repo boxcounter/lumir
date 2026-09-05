@@ -14,8 +14,11 @@
 - **CI 门禁分两种模式**（校准结论，ADR 0002 第 6 条）：
   - **相对回归**（冷启动、keypress-to-paint）：CI runner 对这两项重指标的实测噪声达 3-4 倍（两次全量实测冷启动 p95 284ms vs 809ms、keypress-to-paint p95 70ms vs 255ms），绝对阈值在 CI 上不可执行。CI 门禁用滚动基线相对回归（口径见「相对回归门禁」一节）；绝对合同值（<300ms、<16ms）保留，在标准化环境（裁决者本机）按 ADR 0002 第 6 条既有口径裁决。
   - **绝对阈值**（打开 1MB 文件 <100ms、常驻内存 <200MB）：两项轻指标 CI 两次实测几乎一致（约 2.6ms、约 110MB），噪声未淹没信号，保持 CI 绝对阈值门禁，超阈即拒合。
-- **门禁已启用拒合**：`tests/perf/thresholds.json` 的 `enforce` 为 `true`；超阈（绝对模式）或回退超 20%（相对模式）即 CI 红。enforce 后任一指标的本次结果文件缺失或不可读同样拒合（exit 1，缺数据即红，不得静默跳过）。
-- 判定口径：四项指标的门禁比较值均为该次运行的 **p95**（样本分位数，定义见下；常驻内存取 max，见 §4）；其余统计量（median/max/min/mean）随 artifact 全量上报，用于观察分布。
+- **门禁已启用拒合**：`tests/perf/thresholds.json` 的 `enforce` 为 `true`；超阈（绝对模式）或回退超 40%（相对模式，2026-09-05 口径修正前为 20%，见「相对回归门禁」一节）即 CI 红。enforce 后任一指标的本次结果文件缺失或不可读同样拒合（exit 1，缺数据即红，不得静默跳过）。
+- 判定口径（门禁比较值的统计量，按模式区分）：
+  - **绝对模式**（打开 1MB 文件）：该次运行的 **p95**；常驻内存取 max（见 §4）。
+  - **相对回归模式**（冷启动、keypress-to-paint）：该次运行的 **median**（2026-09-05 口径修正，修正前为 p95；证据与声明见「相对回归门禁」一节）。
+  - 其余统计量随 artifact 全量上报，用于观察分布。ADR 0002 合同值在标准化环境（裁决者本机）的裁决口径不受此修正影响。
 
 ### 运行环境
 
@@ -33,10 +36,12 @@
 ### 相对回归门禁（冷启动、keypress-to-paint）
 
 - **基线来源**：仅 master 分支 push 触发的 perf workflow 在全部测量成功后，把当次相对模式指标的门禁值追加进滚动基线文件 `perf-results/baseline/baseline.json`，经 `actions/cache` 持久化（cache key `perf-baseline-<run_id>`，`restore-keys: perf-baseline-` 前缀匹配取最近一次）。PR 与 workflow_dispatch 只读基线、不写。
-- **比较方法**：对相对模式指标，取基线文件该指标**最近 10 次**（滚动窗口）master 门禁值的 **median** 作为基线值；本次门禁值相对基线值的回退幅度 = `(value - baseline) / baseline`，**> 20% 即拒合**。median + 滚动窗口是为抗 runner 单次抖动：3-4 倍噪声是整轮漂移而非单样本离群，窗口 median 跟随 runner 真实水平漂移，只拒合"显著差于近期常态"的运行。
-- **基线更新规则**：只进不出地追加、按窗口裁剪到最近 10 次；仅 master push 且测量全绿时更新——红了的 run 不污染基线。cache 因 GitHub 7 天未访问清理而丢失时，由下一次 master 成功 run 重建。
+- **比较方法**（2026-09-05 统计口径修正）：对相对模式指标，本次门禁值取当次运行的 **median**；基线值取基线文件该指标**最近 10 次**（滚动窗口）master 门禁值的 **median**——历史条目存的本身就是各次 master 运行的 median，基线值即 median of medians。回退幅度 = `(value - baseline) / baseline`，**> 40% 即拒合**。median + 滚动窗口是为抗 runner 整轮漂移与右尾噪声：3-4 倍噪声表现为整轮漂移和 p95 尾部爆量，median 对两者都稳健；窗口 median 跟随 runner 真实水平漂移，只拒合"显著差于近期常态"的运行。
+- **口径修正证据链（M37 调查，17 次 CI run 回放）**：修正前口径为"当次 p95 vs 基线窗口 p95 的 median、容忍 20%"，是结构性误报源——①基线窗口内 4 次绿 run 的 cold-start p95 自身散布 152.4–218.0ms（43%），已超 20% 容忍线；②两次代码逐字节相同（ea9e9e9 与 eac37a0 空 diff）的背靠背 run，cold-start p95 284.4 vs 808.9ms（2.8x 纯 runner 方差）；③连续两次红 run（33955998214、33957248396）的 cold-start median（180.9/195.0ms）≤ 基线 median 199.4ms，仅 p95 尾部越线；④keypress-to-paint 在 9 次 run 中 8 次红，同病因（p95 尾部噪声 vs median 基线混用）；⑤17 次 run 的 runner 镜像完全相同（macos-15-arm64 20260828.587），排除镜像漂移。本机双点同口径测量（M3 Pro，各 30 样本）确认基线绿代码到 master 之间零代码回归（Δmedian +1.7ms）。median 口径 + 40% 容忍线覆盖观测到的 runner 噪声幅度，同时仍能捕获真实回退（构造的 +100% 劣化在回放中仍被拒合）。
+- **性质声明：本条是门禁实现的统计口径修正，不是 ADR 0002 的合同校准**——合同数字（冷启动 <300ms、keypress-to-paint <16ms）不动，2026-09-05 一次性校准额度已用尽的状态不变，合同值在标准化环境的裁决口径不变；变更的仅是 CI 相对回归门禁用哪个统计量与多大容忍线判断"回退"。
+- **基线更新规则**：只进不出地追加、按窗口裁剪到最近 10 次；仅 master push 且测量全绿时更新——红了的 run 不污染基线。cache 因 GitHub 7 天未访问清理而丢失时，由下一次 master 成功 run 重建。**统计口径迁移**：基线条目的 `gate` 字段记录历史值的统计口径；与当前门禁 gate 不一致时（如 2026-09-05 修正前遗留的 p95 口径 cache），`check-thresholds.mjs` 跳过相对比较（warning，不拒合），`update-baseline.mjs` 在下一次 master 成功 run 丢弃旧口径历史、以新口径重建——旧条目存的是另一种统计量，混用会让窗口 median 系统性偏离（p95 历史配 median 当前值必出假阴性，反之必出假阳性）。
 - **基线缺失处理**：基线文件不存在或该指标无历史（首次运行、cache 丢失重建期）→ `::warning::` 并跳过该项的相对比较，**不拒合**（否则永远无法建立/重建基线）。注意区分：本次**测量结果**缺失（`perf-results/<metric>.json` 不存在或不可读）在 enforce 下是 exit 1 拒合；基线缺失只是无法比较。
-- **基线文件 schema**：`{"metrics": {"<metric>": {"unit": string, "gate": "p95"|"max", "history": [{"run_id": number, "ts": string, "value": number}, ...]}}}`，`history` 按时间升序、长度 ≤ 窗口。
+- **基线文件 schema**：`{"metrics": {"<metric>": {"unit": string, "gate": "p95"|"median"|"max", "history": [{"run_id": number, "ts": string, "value": number}, ...]}}}`，`history` 按时间升序、长度 ≤ 窗口；`gate` 必须与 thresholds.json 该指标当前 gate 一致（不一致的处理见「基线更新规则」的口径迁移），`value` 为该次运行的 gate 统计量（相对回归模式即 median）。
 - **存储选型 trade-off**：候选二选其一是仓库内 baseline 文件（随 master 提交）。放弃理由：需要 bot identity 提交回 master，引入写权限与并发冲突复杂度，且每次 perf run 污染 git 历史；`actions/cache` 天然跨 run 共享、branch 可读默认分支 cache、无需写权限，代价是 7 天未访问会被清理（可接受，重建成本为一次 master run）与不做强一致并发控制（master 串行 push 下无实际问题）。
 
 ### 目录与制品
@@ -72,8 +77,8 @@
 ### 采样口径
 
 - **1 次 warm-up 轮（丢弃）+ N=20 次正式样本**，每次均为全新进程，连续执行。warm-up 的理由：首轮启动含 dyld 绑定、TCC 授权弹窗检查等一次性开销，是系统性离群值（实测首轮可达后续轮的 5 倍）；丢弃后正式样本反映"热缓存冷启动"——不清 OS page cache，与真实用户首次启动仍有系统性正偏差，校准时按分布解读。
-- N=20 与总约定 nearest-rank p95 的配合：`ceil(0.95×20)-1 = 19`，即 p95 截去最高的 1 个样本——抗单次抖动但不掩盖分布右尾。N 若降至 10，p95 退化为 max（`ceil(9.5)-1 = 9`），任何一轮离群值都会成为门禁值；这是 N 不得小于 20 的硬约束。
-- 上报全部 20 个正式样本；门禁取 p95。CI 门禁为相对回归模式（口径见总约定「相对回归门禁」）；绝对合同值 <300ms 在标准化环境（裁决者本机）按 ADR 0002 第 6 条裁决。
+- N=20 与总约定 nearest-rank p95 的配合：`ceil(0.95×20)-1 = 19`，即 p95 截去最高的 1 个样本——抗单次抖动但不掩盖分布右尾。N 若降至 10，p95 退化为 max（`ceil(9.5)-1 = 9`），任何一轮离群值都会成为 p95 读数；p95 仍是合同裁决与分布观察口径，故 N 不得小于 20 的硬约束不变（CI 门禁比较值已改为 median，不受影响）。
+- 上报全部 20 个正式样本；CI 相对回归门禁取 **median**（口径见总约定「相对回归门禁」；2026-09-05 修正前为 p95，p95 只截 1 个最高样本、在 runner 右尾噪声下必然抖动）。绝对合同值 <300ms 在标准化环境（裁决者本机）按 ADR 0002 第 6 条裁决。
 
 ### Fixture
 
@@ -97,7 +102,7 @@
 
 ### 采样口径
 
-- N=50 次按键，间隔 100ms（避免事件合并与帧堆积）。上报全部样本；门禁取 p95。CI 门禁为相对回归模式（口径见总约定「相对回归门禁」）；绝对合同值 <16ms 在标准化环境（裁决者本机）按 ADR 0002 第 6 条裁决。
+- N=50 次按键，间隔 100ms（避免事件合并与帧堆积）。上报全部样本；CI 相对回归门禁取 **median**（口径见总约定「相对回归门禁」；2026-09-05 修正前为 p95——p95 在绿 run 间即有 3 倍以上散布，是 9 次 run 8 次红的结构性误报源）。绝对合同值 <16ms 在标准化环境（裁决者本机）按 ADR 0002 第 6 条裁决。
 
 ### Fixture
 
@@ -139,7 +144,7 @@
 
 ### 采样口径
 
-- 采样窗口内取 5 个样本（ready+10s 起，每 2s 一次）。上报全部样本；门禁取 **max**（内存是峰值敏感指标，p95 会漏掉单调爬升）。本条是"门禁比较值均为 p95"总约定的唯一例外。
+- 采样窗口内取 5 个样本（ready+10s 起，每 2s 一次）。上报全部样本；门禁取 **max**（内存是峰值敏感指标，p95 会漏掉单调爬升）。本条是绝对模式"p95 判定口径"的唯一例外。
 
 ### Fixture
 
@@ -148,6 +153,6 @@
 ## 5. CI 集成与门禁状态
 
 - 工作流 `.github/workflows/perf.yml`：`macos-15` runner，先经 `actions/cache/restore` 取回滚动基线（`perf-results/baseline/`，`restore-keys: perf-baseline-`），release 构建后依次跑四项脚本，`perf-results/` 整目录上传为 artifact（保留 30 天），随后 `check-thresholds.mjs` 对照 `tests/perf/thresholds.json` 比较。
-- **现阶段（2026-09-05 校准后）**：`thresholds.json` 的 `enforce` 为 `true`，门禁拒合已启用。绝对模式指标超阈即 CI 红；相对模式指标回退 >20% 即 CI 红；任一指标的本次结果文件缺失或不可读亦 CI 红（exit 1，缺数据即红）；基线缺失只 warning 不拒合。
+- **现阶段（2026-09-05 校准后）**：`thresholds.json` 的 `enforce` 为 `true`，门禁拒合已启用。绝对模式指标超阈即 CI 红；相对模式指标回退 >40%（口径修正前为 20%）即 CI 红；任一指标的本次结果文件缺失或不可读亦 CI 红（exit 1，缺数据即红）；基线缺失只 warning 不拒合。
 - **基线写回**：仅 `push` 到 master 且全部测量与阈值比较成功后，`update-baseline.mjs` 把当次相对模式指标门禁值追加进 `perf-results/baseline/baseline.json`（裁剪到最近 10 次），再由 `actions/cache/save` 以 `perf-baseline-<run_id>` 为 key 写回。
 - 触发路径：`src/**`、`src-tauri/**`、`scripts/perf/**`、`tests/perf/**`、workflow 自身的 PR 与 master push，外加 `workflow_dispatch`（手动跑数/验证门禁行为）。
