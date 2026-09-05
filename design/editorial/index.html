@@ -121,8 +121,13 @@ body { font-family:var(--font-body); background:var(--bg); color:var(--text); fo
   font-size:10.5px; letter-spacing:.35em; color:var(--dim); margin:2px 6px 9px;
 }
 [data-theme="eink"] .nav-kicker { font-style:italic; }
-.nav-rule { border:none; border-top:1px solid var(--bd-1); margin:14px 4px; }
-.nav-sec { min-height:0; }
+.nav-rule { border:none; border-top:1px solid var(--bd-1); margin:14px 4px; flex:none; }
+/* 分区收缩策略（低视口）：目录区弹性收缩并自滚动（最短 4 行），
+   Threads 区与其余元素保持完整高度，仍不足时整栏 overflow:auto 滚动。 */
+.nav-sec { flex:none; min-height:0; }
+.nav-sec.grow { flex:0 1 auto; display:flex; flex-direction:column; min-height:128px; }
+.nav-sec.grow .nav-kicker { flex:none; }
+.nav-sec.grow .nav-tree, .nav-sec.grow .nav-threads { flex:0 1 auto; min-height:0; overflow:auto; }
 
 /* 目录树 */
 .tr-row {
@@ -202,7 +207,7 @@ body { font-family:var(--font-body); background:var(--bg); color:var(--text); fo
 [data-theme="eink"] .thr-line .tl-meta b { font-style:normal; }
 
 /* 视角切换（变体 b）：栏内 lens tab，默认目录 */
-.nav-lens { display:flex; border-bottom:1px solid var(--bd-1); margin:0 2px 12px; }
+.nav-lens { display:flex; flex:none; border-bottom:1px solid var(--bd-1); margin:0 2px 12px; }
 .nav-lens button {
   flex:1; border:none; background:none; font:inherit; font-size:12px;
   letter-spacing:.18em; color:var(--dim); padding:6px 0 7px; cursor:pointer;
@@ -224,13 +229,13 @@ body { font-family:var(--font-body); background:var(--bg); color:var(--text); fo
 .thr-chip .tc-k { font-size:10px; letter-spacing:.28em; color:var(--dim); margin-bottom:3px; }
 [data-theme="eink"] .thr-chip .tc-k { font-style:italic; }
 
-.nav-foot { margin-top:auto; padding-top:16px; color:var(--dim); font-size:11px; padding-left:6px; }
+.nav-foot { margin-top:auto; flex:none; padding-top:16px; color:var(--dim); font-size:11px; padding-left:6px; }
 [data-theme="eink"] .nav-foot { font-style:italic; }
-.nav-empty { color:var(--dim); line-height:1.8; padding:0 6px; }
+.nav-empty { color:var(--dim); line-height:1.8; padding:0 6px; flex:none; }
 [data-theme="eink"] .nav-empty { font-style:italic; }
 .nav-open-btn {
   margin:10px 6px 0; padding:6px 14px; border:1px solid var(--bd-2); border-radius:var(--radius);
-  background:var(--bg); color:var(--text); font:inherit; cursor:pointer;
+  background:var(--bg); color:var(--text); font:inherit; cursor:pointer; flex:none;
 }
 .nav-open-btn:hover { border-color:var(--bd-3); background:var(--bg-2); }
 [data-theme="eink"] .nav-open-btn:hover { border:var(--pattern-double); padding:4px 12px; }
@@ -551,7 +556,7 @@ const COPY = {
     N14_demoDoc: "（demo 仅两篇文档有正文）",
     N_roleMain: "主文档", N_roleRef: "参考", N_roleDraft: "草稿", N_roleSource: "来源",
     N_stActive: "进行中", N_stPaused: "暂停", N_stDone: "完成",
-    N_counts: (o, r) => `${o} 开放 · ${r} 待回看`,
+    N_cntOpen: (n) => `${n} 开放`, N_cntWorking: (n) => `${n} 处理中`, N_cntReview: (n) => `${n} 待回看`,
     N_noPoints: "无待处理编辑点",
     N_lensTree: "目录", N_lensThreads: "Threads",
     N_curThread: "当前 THREAD",
@@ -640,7 +645,7 @@ const COPY = {
     N14_demoDoc: "(only two documents have body text in this demo)",
     N_roleMain: "main", N_roleRef: "reference", N_roleDraft: "draft", N_roleSource: "source",
     N_stActive: "active", N_stPaused: "paused", N_stDone: "done",
-    N_counts: (o, r) => `${o} open · ${r} to review`,
+    N_cntOpen: (n) => `${n} open`, N_cntWorking: (n) => `${n} working`, N_cntReview: (n) => `${n} to review`,
     N_noPoints: "no open edit points",
     N_lensTree: "Files", N_lensThreads: "Threads",
     N_curThread: "CURRENT THREAD",
@@ -964,16 +969,21 @@ function refsByPath() {
 }
 const basename = (p) => p.split("/").pop();
 
-// Thread 元信息行：状态 + 开放编辑点 + 待回看（当前 Thread 由运行态推导）
+// Thread 元信息行：状态 + 开放/处理中/待回看（当前 Thread 由运行态推导，三类点不隐身）
 function threadMetaHTML(th) {
   const t = T();
-  let o, r;
+  let o, w, r;
   if (th.current) {
     o = points.filter(p=>p.st==="open").length;
+    w = points.filter(p=>p.st==="working").length;
     r = points.filter(p=>p.st==="review").length;
-  } else { o = th.open; r = th.review; }
+  } else { o = th.open; w = th.working || 0; r = th.review; }
   const st = th.current && state.view==="conflict" ? t.N_stPaused : t[ST_KEY[th.status]];
-  const counts = (o || r) ? `<b>${esc(t.N_counts(o, r))}</b>` : esc(t.N_noPoints);
+  const parts = [];
+  if (o) parts.push(t.N_cntOpen(o));
+  if (w) parts.push(t.N_cntWorking(w));
+  if (r) parts.push(t.N_cntReview(r));
+  const counts = parts.length ? `<b>${esc(parts.join(" · "))}</b>` : esc(t.N_noPoints);
   return `${esc(st)} · ${counts}`;
 }
 function openDoc(docKey) {
@@ -1032,7 +1042,7 @@ function buildTree(nodes, depth, host, overlay, refs) {
   }
 }
 function treeSection(overlay, showKicker = true) {
-  const sec = el("div", "nav-sec");
+  const sec = el("div", "nav-sec grow");   // 目录区弹性收缩 + 自滚动（低视口策略）
   if (showKicker) sec.append(el("div", "nav-kicker", esc(T().N4_toc)));
   const tree = el("div", "nav-tree"); tree.dataset.deck = "E13";
   buildTree(TREE[state.lang], 0, tree, overlay, refsByPath());
@@ -1041,9 +1051,9 @@ function treeSection(overlay, showKicker = true) {
 }
 
 // Threads 区：当前 Thread 展开（标题/状态/计数/文件角色），其余紧凑行
-function threadsSection(showKicker = true) {
+function threadsSection(showKicker = true, grow = false) {
   const t = T();
-  const sec = el("div", "nav-sec");
+  const sec = el("div", "nav-sec" + (grow ? " grow" : ""));
   if (showKicker) sec.append(el("div", "nav-kicker", esc(t.N4b_threads)));
   const list = el("div", "nav-threads"); list.dataset.deck = "E14";
   for (const th of THREADS[state.lang]) {
@@ -1134,7 +1144,7 @@ function renderNav() {
   }
   if (state.nav === "b") {
     host.append(lensTabs());
-    host.append(state.lens === "threads" ? threadsSection(false) : treeSection(false, false));
+    host.append(state.lens === "threads" ? threadsSection(false, true) : treeSection(false, false));
   } else if (state.nav === "c") {
     host.append(overlayHead(), el("hr", "nav-rule"), treeSection(true));
   } else {
