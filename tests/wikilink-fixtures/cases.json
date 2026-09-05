@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 2,
   "spec": "docs/specs/wikilink/link-semantics.md",
   "vaultRoot": "vault",
   "spanUnit": "unicode-code-point",
@@ -36,7 +36,7 @@
     { "id": "link-heading-hash-boundary", "input": "[[Gamma#C# 入门]]", "expect": { "links": [ { "span": [0, 15], "embed": false, "path": "Gamma", "headingPath": ["C", "入门"], "alias": null, "blockRef": false } ] } }
   ],
   "resolveCases": [
-    { "id": "r01-short-path-ambiguous", "from": "Alpha.md", "link": "[[Beta]]", "pendingDecision": "G", "expect": { "status": "ambiguous", "path": "Beta.md", "candidates": ["Beta.md", "folder/Beta.md"], "anchor": { "status": "none" } } },
+    { "id": "r01-short-path-ambiguous", "from": "Alpha.md", "link": "[[Beta]]", "expect": { "status": "ambiguous", "path": "Beta.md", "candidates": ["Beta.md", "folder/Beta.md"], "anchor": { "status": "none" } } },
     { "id": "r02-path-exact", "from": "Alpha.md", "link": "[[folder/Beta]]", "expect": { "status": "resolved", "path": "folder/Beta.md", "anchor": { "status": "none" } } },
     { "id": "r03-short-path-unique", "from": "Alpha.md", "link": "[[Gamma]]", "expect": { "status": "resolved", "path": "folder/Gamma.md", "anchor": { "status": "none" } } },
     { "id": "r04-case-insensitive", "from": "Alpha.md", "link": "[[case note]]", "expect": { "status": "resolved", "path": "Case Note.md", "anchor": { "status": "none" } } },
@@ -47,17 +47,23 @@
     { "id": "r09-heading-nested-found", "from": "Alpha.md", "link": "[[Gamma#设计#子点]]", "expect": { "status": "resolved", "path": "folder/Gamma.md", "anchor": { "status": "found", "heading": "子点" } } },
     { "id": "r10-heading-nested-wrong-subtree", "from": "Alpha.md", "link": "[[Gamma#实现#子点]]", "expect": { "status": "resolved", "path": "folder/Gamma.md", "anchor": { "status": "missing" } } },
     { "id": "r11-heading-missing", "from": "Alpha.md", "link": "[[Gamma#不存在的标题]]", "expect": { "status": "resolved", "path": "folder/Gamma.md", "anchor": { "status": "missing" } } },
-    { "id": "r12-heading-case", "from": "Alpha.md", "link": "[[Gamma#overview]]", "pendingDecision": "H", "expect": { "status": "resolved", "path": "folder/Gamma.md", "anchor": { "status": "missing" } } },
+    { "id": "r12-heading-case", "from": "Alpha.md", "link": "[[Gamma#overview]]", "expect": { "status": "resolved", "path": "folder/Gamma.md", "anchor": { "status": "missing" } } },
     { "id": "r13-subdir-unique", "from": "Alpha.md", "link": "[[Deep Note]]", "expect": { "status": "resolved", "path": "sub/Deep Note.md", "anchor": { "status": "none" } } },
     { "id": "r14-current-file-heading", "from": "folder/Gamma.md", "link": "[[#设计]]", "expect": { "status": "resolved", "path": "folder/Gamma.md", "anchor": { "status": "found", "heading": "设计" } } },
     { "id": "r15-block-ref-unsupported", "from": "Alpha.md", "link": "[[Gamma#^abc123]]", "expect": { "status": "unsupported" } },
     { "id": "r16-embed-attachment", "from": "Alpha.md", "link": "![[photo.png]]", "expect": { "status": "resolved", "path": "assets/photo.png", "embedTarget": "attachment", "anchor": { "status": "none" } } },
-    { "id": "r17-embed-note-ambiguous", "from": "Alpha.md", "link": "![[Beta]]", "pendingDecision": "G", "expect": { "status": "ambiguous", "path": "Beta.md", "candidates": ["Beta.md", "folder/Beta.md"], "embedTarget": "note", "anchor": { "status": "none" } } },
-    { "id": "r18-embed-note-heading", "from": "Alpha.md", "link": "![[Beta#概览]]", "pendingDecision": "G", "expect": { "status": "ambiguous", "path": "Beta.md", "candidates": ["Beta.md", "folder/Beta.md"], "embedTarget": "note", "anchor": { "status": "found", "heading": "概览" } } },
+    { "id": "r17-embed-note-ambiguous", "from": "Alpha.md", "link": "![[Beta]]", "expect": { "status": "ambiguous", "path": "Beta.md", "candidates": ["Beta.md", "folder/Beta.md"], "embedTarget": "note", "anchor": { "status": "none" } } },
+    { "id": "r18-embed-note-heading", "from": "Alpha.md", "link": "![[Beta#概览]]", "expect": { "status": "ambiguous", "path": "Beta.md", "candidates": ["Beta.md", "folder/Beta.md"], "embedTarget": "note", "anchor": { "status": "found", "heading": "概览" } } },
     { "id": "r19-embed-unresolved", "from": "Alpha.md", "link": "![[missing.png]]", "expect": { "status": "unresolved" } },
-    { "id": "r20-explicit-extension-ambiguous", "from": "Alpha.md", "link": "[[Beta.md]]", "pendingDecision": "G", "expect": { "status": "ambiguous", "path": "Beta.md", "candidates": ["Beta.md", "folder/Beta.md"], "anchor": { "status": "none" } } },
+    { "id": "r20-explicit-extension-ambiguous", "from": "Alpha.md", "link": "[[Beta.md]]", "expect": { "status": "ambiguous", "path": "Beta.md", "candidates": ["Beta.md", "folder/Beta.md"], "anchor": { "status": "none" } } },
     { "id": "r21-path-subdir", "from": "Alpha.md", "link": "[[sub/Deep Note]]", "expect": { "status": "resolved", "path": "sub/Deep Note.md", "anchor": { "status": "none" } } },
     { "id": "r22-dotdot-unsupported", "from": "folder/Gamma.md", "link": "[[../Beta]]", "expect": { "status": "unresolved" } },
     { "id": "r23-embed-from-subdir", "from": "folder/Gamma.md", "link": "![[diagram.png]]", "expect": { "status": "resolved", "path": "assets/diagram.png", "embedTarget": "attachment", "anchor": { "status": "none" } } }
+  ],
+  "createCases": [
+    { "id": "c01-create-from-root", "from": "Alpha.md", "link": "[[不存在的笔记]]", "expect": { "created": "不存在的笔记.md" } },
+    { "id": "c02-create-from-subdir", "from": "folder/Gamma.md", "link": "[[新笔记]]", "expect": { "created": "folder/新笔记.md" } },
+    { "id": "c03-create-from-nested-subdir", "from": "sub/Deep Note.md", "link": "[[同级笔记]]", "expect": { "created": "sub/同级笔记.md" } },
+    { "id": "c04-create-explicit-path", "from": "folder/Gamma.md", "link": "[[newdir/Path Note]]", "expect": { "created": "newdir/Path Note.md" } }
   ]
 }

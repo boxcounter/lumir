@@ -9,8 +9,8 @@
 - [ ] 1.3 标题锚点逐段下钻（spec §3.3，大小写口径按裁决点 H）；`![[...]]` 双语义判别（spec §5）
 - [ ] 1.4 索引随 `fs:entry_changed` 增量维护（复用 add-vault-workspace watch 事件流），重建/增量的确定性由 fixture 回归保证
 - [ ] 1.5 invoke contract：`link_graph_resolve`、`link_graph_backlinks`、`wikilink_create`；payload 类型 ts-rs 单一来源导出，错误走 CommandError 信封
-- [ ] 1.6 `wikilink_create`：vault 根/按路径创建空文件（裁决点 I），MUST NOT 覆盖或改写既有文件，创建后重解析
-- [ ] 1.7 Rust 单测跑 `tests/wikilink-fixtures/cases.json` 全部 parseCases 解析字段与 resolveCases；`pendingDecision` 用例按裁决结果确定期望后转为硬断言
+- [ ] 1.6 `wikilink_create`：当前文件所在目录创建空文件（当前文件在 vault 根时建于根；target 自带 `/` 路径时按 vault 根相对路径并补齐中间目录；裁决点 I 已定稿），MUST NOT 覆盖或改写既有文件，创建后重解析
+- [ ] 1.7 Rust 单测跑 `tests/wikilink-fixtures/cases.json` 全部 parseCases 解析字段、resolveCases 与 createCases（裁决点 G/H/I 已定稿，全部期望为硬断言）
 
 ## 2. 跳转与链接显示（wikilink-navigation）
 
@@ -29,8 +29,8 @@
 
 ## 4. 提案评审（节点 1）
 
-- [ ] 4.1 Alex 评审通过：不看代码即可裁决——裁决点 G/H/I、Non-goals、backlinks 可推迟标注三者都答清楚
-- [ ] 4.2 裁决结果落地：G/H/I 按裁决值修订链接语义 spec 与 fixture（`pendingDecision` 用例翻转或保留），保持 spec 与 fixture 同步
+- [x] 4.1 Alex 评审通过（2026-09-05）：裁决点 G/H 按推荐值、I 改判为当前文件所在目录创建；Non-goals、backlinks 可推迟标注均确认
+- [x] 4.2 裁决结果落地（2026-09-05）：G/H/I 按裁决值修订链接语义 spec（升 v1.1）与 fixture（`pendingDecision` 标记全撤、新增 createCases），spec 与 fixture 保持同步
 
 ## 5. 验证
 

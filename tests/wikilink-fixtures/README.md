@@ -42,10 +42,17 @@ Wikilink 链接语义的**合成 fixture 集**——冻结 spec [docs/specs/wiki
 - `expect.candidates`：歧义时的全部候选（有序性不作要求，按集合比较）；
 - `expect.embedTarget`：`attachment` / `note`——`![[...]]` 双语义判别结果（spec §5）；
 - `expect.anchor`：`{ status: "found", heading }` / `{ status: "missing" }` / `{ status: "none" }`。`found` 时按 spec §3.3 逐段下钻后落点标题的文本等于 `heading`；
-- `pendingDecision`：该用例的期望值依赖 spec 中标注的 ⚠ 裁决点（`G` = 短路径歧义选取规则、`H` = 标题锚点大小写）。裁决结果与推荐值相反时，翻转该用例期望并更新 spec，fixture 与 spec 必须同步变更。
+- `pendingDecision`：该用例的期望值依赖 spec 中未定稿的裁决点时的临时标记；裁决落地后标记必须移除、期望转为硬断言。裁决点 G/H/I 已于 2026-09-05 全部定稿（G/H 按推荐值，I 改判为当前文件所在目录创建），当前用例集中无此标记。
+
+### createCases（一键创建用例，喂 Rust `wikilink_create`；spec §4.4，裁决点 I）
+
+每条：`{ id, from, link, expect }`。`from` / `link` 含义同 resolveCases；前提是该链接在 `from` 下解析为 `unresolved`。
+
+- `expect.created`：创建成功后新增文件的 vault 根相对路径——path 段不含 `/` 时创建于 `from` 所在目录（`from` 在 vault 根时建于根）；path 段含 `/` 时按 vault 根相对路径创建并补齐中间目录。文件内容必须为空，且执行用例时不得改动 vault 内任何既有文件；
+- "目标已存在"错误（索引过期时的运行时守卫，spec §4.4）无法在静态 vault 中建模——静态下创建路径被占用即意味着链接可解析、不属于 `unresolved`，故不设对应用例，由实现期单测直接构造。
 
 ## 消费纪律（双解析器纪律，架构复查 P1-4）
 
-- 语义解析只有一份实现：Rust core link graph。`parseCases` 的解析字段与全部 `resolveCases` 由 Rust 单测断言；
+- 语义解析只有一份实现：Rust core link graph。`parseCases` 的解析字段、全部 `resolveCases` 与 `createCases` 由 Rust 单测断言；
 - 前端只做 span 定位（装饰用途），断言语义前先经 invoke 取 Rust 结果；前端测试只断言 `parseCases` 的 `span`/`embed`；
 - 任一侧与 cases.json 不一致即缺陷；修改 spec 必须同步修改本 fixture（spec §7）。
