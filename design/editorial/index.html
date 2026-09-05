@@ -170,13 +170,28 @@ body { font-family:var(--font-body); background:var(--bg); color:var(--text); fo
 .mh-rule { margin:10px 48px 0; border-top:3px solid var(--text); border-bottom:1px solid var(--text); height:3px; }
 
 /* ---- 版面：正文栏 + 页边栏 ---- */
-#spread {
-  display:flex; justify-content:center; align-items:flex-start;
-  gap:64px; padding:44px 48px 140px;
+/* 版位稳定：正文栏永远居中于版面，页边栏绝对定位叠加在右侧留白上——
+   注记出现/消失不改变正文位置（阅读流不被打扰）。 */
+#spread { position:relative; padding:44px 48px 140px; }
+#body-col { width:min(var(--measure), 100%); margin:0 auto; }
+#margin {
+  position:absolute; top:0; bottom:0; width:248px;
+  left:min(calc(50% + min(var(--measure), calc(100% - 96px)) / 2 + 64px), calc(100% - 248px));
 }
-#body-col { flex:0 1 var(--measure); min-width:0; }
-#margin { flex:0 0 248px; position:relative; min-height:1px; }
-#margin.hidden { display:none; }
+/* 窄视口降级：页边栏回落为文后附注（编号与锚点保留，失去纵向对齐） */
+@media (max-width:1100px) {
+  #nav { flex-basis:180px; }
+  #spread { padding:44px 24px 140px; }
+  #margin { position:static; width:auto; margin-top:40px; border-top:1px solid var(--bd-1); padding-top:16px; }
+  #margin .sn, #margin .delegate-bar { position:static !important; top:auto !important; }
+  #margin .sn { margin-bottom:16px; }
+}
+/* eink 走查台：range 滑块 UA 灰阶泄漏修复（产品本体零灰阶，走查台同纪律） */
+[data-theme="eink"] .c-measure { -webkit-appearance:none; appearance:none; background:transparent; height:16px; }
+[data-theme="eink"] .c-measure::-webkit-slider-runnable-track { background:#fff; border:1px solid #000; height:6px; }
+[data-theme="eink"] .c-measure::-webkit-slider-thumb { -webkit-appearance:none; width:12px; height:12px; background:#000; border-radius:0; margin-top:-4px; border:none; }
+[data-theme="eink"] .c-measure::-moz-range-track { background:#fff; border:1px solid #000; height:6px; }
+[data-theme="eink"] .c-measure::-moz-range-thumb { width:12px; height:12px; background:#000; border-radius:0; border:none; }
 
 /* ---- 文章排印（签名页） ---- */
 #doc {
@@ -295,6 +310,9 @@ body { font-family:var(--font-body); background:var(--bg); color:var(--text); fo
 .sn[data-st="review"] { border:1px solid var(--bd-1); border-radius:var(--radius); padding:10px 12px; background:var(--bg); }
 .sn[data-st="review"] .sn-head { margin-bottom:5px; }
 [data-theme="eink"] .sn[data-st="review"] { border:var(--pattern-double); }
+.sn[data-st="collapsed"] .sn-q { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; color:var(--dim); }
+[data-theme="eink"] .sn[data-st="collapsed"] .sn-q { font-style:italic; }
+.sn[data-st="collapsed"]:hover .sn-q { color:var(--accent); }
 .sn.done { opacity:0; pointer-events:none; }
 .sn-note-demo { color:var(--dim); font-size:11px; margin-top:6px; }
 [data-theme="eink"] .sn-note-demo { font-style:italic; }
@@ -407,7 +425,7 @@ body { font-family:var(--font-body); background:var(--bg); color:var(--text); fo
 }
 [data-theme="eink"] .anno { border:1px solid #000; border-radius:0; }
 
-@media (max-width:1100px) { #margin { display:none; } #nav { flex-basis:180px; } }
+/* 窄视口降级见「版面」一节 */
 </style>
 </head>
 <body>
@@ -483,6 +501,7 @@ const COPY = {
     M17_delegateGo: "委派给 Agent",
     M18_delegateEmpty: "阅读中选中文字即可留下编辑点",
     M19_paused: "已暂停 · 版本冲突",
+    M20_expand: "展开这一点的解释与修改",
     // 委派确认
     D1_kicker: "委派 · DELEGATION",
     D2_title: (n) => `把 ${n} 个编辑点交给 Agent`,
@@ -560,6 +579,7 @@ const COPY = {
     M17_delegateGo: "Delegate to agent",
     M18_delegateEmpty: "Select text while reading to leave an edit point",
     M19_paused: "PAUSED · VERSION CONFLICT",
+    M20_expand: "Expand this point’s explanation and change",
     D1_kicker: "DELEGATION",
     D2_title: (n) => `Hand ${n} edit point${n>1?"s":""} to the agent`,
     D3_scope: "Scope of mandate",
@@ -738,6 +758,7 @@ const markOf = (i) => CIRCLED[i] || `${i+1}.`;
 // 运行态编辑点（预设播种或真实选中创建）
 let points = [];        // {id, q, explain, diff, cost, newHtml, st, live}
 let agentTimer = null;
+let reviewFocus = null; // 回看态当前展开的编辑点 id
 
 function seedPoints(view) {
   const base = POINT_DEFS.map(d => ({ ...d, st:"open", live:false }));
@@ -873,6 +894,10 @@ function renderMargin() {
   head.append(el("span","",esc(mode)), el("span","mh-count", `${points.length}`));
   margin.append(head);
 
+  // 回看分层：一次只展开一个点的完整卡（逐点回看），其余折叠为一行注记——
+  // 折叠层保住与锚点的纵向对齐；展开卡是瞬态，裁决后版位回落。
+  const firstReview = points.find(p=>p.st==="review");
+  if (!reviewFocus && firstReview) reviewFocus = firstReview.id;
   for (const p of points) {
     if (p.st==="done") continue;
     const sn = el("div","sn"); sn.dataset.pt = p.id; sn.dataset.st = p.st;
@@ -881,7 +906,13 @@ function renderMargin() {
               el("span","sn-st", esc(t[{open:"M4_open",working:"M5_working",review:"M6_review"}[p.st] || "M4_open"])));
     sn.append(hd, el("p","sn-q", esc(typeof p.q==="string" ? p.q : p.q[state.lang])));
     if (p.st==="working") { const pr = el("div","sn-progress"); pr.append(el("i")); sn.append(pr); }
-    if (p.st==="review") {
+    if (p.st==="review" && p.id !== reviewFocus) {
+      sn.dataset.st = "collapsed";
+      sn.style.cursor = "pointer";
+      sn.title = t.M20_expand;
+      sn.addEventListener("click", ()=> { reviewFocus = p.id; renderMargin(); });
+    }
+    if (p.st==="review" && p.id === reviewFocus) {
       const why = el("div","sn-sec");
       why.append(el("div","sn-sec-t", esc(t.M8_secWhy)), el("p","", esc(p.explain[state.lang])));
       sn.append(why);
@@ -925,6 +956,7 @@ function syncNotePositions() {
   const spread = document.getElementById("spread");
   const margin = document.getElementById("margin");
   if (!spread || !margin) return;
+  if (window.matchMedia("(max-width:1100px)").matches) return;  // 窄视口：文后附注，不做绝对定位
   const sRect = spread.getBoundingClientRect();
   let prevBottom = 46;   // 让开 margin-head
   const bar = document.getElementById("delegate-bar");
@@ -957,6 +989,8 @@ function resolvePoint(p, accept) {
     else a.replaceWith(document.createTextNode(a.textContent));
   }
   p.st = "done";
+  const next = points.find(x=>x.st==="review");   // 逐点回看：裁决后焦点落到下一待回看点
+  reviewFocus = next ? next.id : null;
   const sn = document.querySelector(`.sn[data-pt="${p.id}"]`);
   if (sn && state.theme!=="eink") { sn.classList.add("done"); setTimeout(()=> renderMargin(), 320); }
   else renderMargin();
@@ -1091,7 +1125,7 @@ function renderConflictPopup() {
   const kp = el("button","", esc(t.X6_keep));
   re.addEventListener("click", ()=> { ov.remove(); state.view="review"; points.forEach(p=>{ if(p.st==="working") p.st="review"; }); apply(); showToast(esc(t.T4_conflictReprocess)); });
   df.addEventListener("click", ()=> { diffBox.hidden = !diffBox.hidden; });
-  kp.addEventListener("click", ()=> { ov.remove(); points=[]; state.view="archived"; apply(); showToast(esc(t.T5_conflictKeep)); });
+  kp.addEventListener("click", ()=> { ov.remove(); points=[]; state.view="clean"; apply(); showToast(esc(t.T5_conflictKeep)); });
   acts.append(re, df, kp); sh.append(acts); ov.append(sh);
   document.body.append(ov);
 }
@@ -1199,7 +1233,7 @@ function injectAnnotations() {
 
 // ---- 总装 ----
 function stopAgent() { if (agentTimer) { clearTimeout(agentTimer); agentTimer = null; } }
-function setView(v) { stopAgent(); state.view = v; points = seedPoints(v); }
+function setView(v) { stopAgent(); state.view = v; points = seedPoints(v); reviewFocus = null; }
 function apply() {
   const root = document.documentElement;
   root.dataset.theme = state.theme;
@@ -1208,7 +1242,14 @@ function apply() {
   document.getElementById("stage").classList.toggle("gray", state.gray);
   renderConsole(); renderNav(); renderSheet();
   if (state.view==="delegate") openDelegateSheet();
-  requestAnimationFrame(()=> { syncNotePositions(); if (state.annotate) injectAnnotations(); });
+  requestAnimationFrame(()=> {
+    syncNotePositions();
+    // 读数取实际栏宽：视口不足时滑块设定值会被版面夹断，读数必须说真话
+    const bc = document.getElementById("body-col");
+    const mv = document.querySelector(".c-measure-val");
+    if (bc && mv) mv.textContent = T().C5_measureVal(Math.round(bc.getBoundingClientRect().width));
+    if (state.annotate) injectAnnotations();
+  });
 }
 document.addEventListener("mouseup", ()=> setTimeout(onSelect, 0));
 document.addEventListener("mousedown", (e)=> { if (creator && !creator.contains(e.target)) closeCreator(); });
