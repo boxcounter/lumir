@@ -111,9 +111,14 @@ pub fn reconcile_vault(path: &std::path::Path) -> Result<VaultWorkspace, Command
 #[tauri::command]
 pub fn vault_register(id: String, path: String) -> Result<VaultWorkspace, CommandError> {
     valid_id(&id)?;
+    let path = std::path::Path::new(&path)
+        .canonicalize()
+        .map_err(|_| CommandError::new("workspace_path", "无法规范化 vault 路径"))?
+        .display()
+        .to_string();
     let d = workspaces()?;
     fs::create_dir_all(&d)
-        .map_err(|_| CommandError::new("workspace_write", "操作失败".to_string()))?;
+        .map_err(|_| CommandError::new("workspace_write", "无法创建 workspace 注册表目录"))?;
     let v = VaultWorkspace { id, path };
     fs::write(
         d.join(format!("{}.json", v.id)),
