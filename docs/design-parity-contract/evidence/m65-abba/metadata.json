@@ -1,0 +1,26 @@
+{
+  "A": "c6cd5f8e38e1e4da94e75d1c2efab3bc849b243f",
+  "B": "73af31186cba554b9df36a5a246ed29e3d90d1fc",
+  "os": "ProductName:\t\tmacOS\nProductVersion:\t\t26.6.2\nBuildVersion:\t\t25G83\n",
+  "node": "v25.0.0",
+  "hardware": "Mac15,6\n19327352832\nApple M3 Pro\n",
+  "config": {
+    "identifier": "com.lumir.parity62",
+    "app": {
+      "windows": [
+        {
+          "label": "main",
+          "title": "Lumir M65 Paired Memory",
+          "width": 1200,
+          "height": 800,
+          "incognito": true
+        }
+      ]
+    }
+  },
+  "build": "pnpm install --frozen-lockfile && pnpm build && TAURI_CONFIG=<config> cargo build --release --features custom-protocol --manifest-path src-tauri/Cargo.toml",
+  "runtime": "XDG_CONFIG_HOME=<same-empty-config> PERF_RESULTS_DIR=<round> PERF_MEM_SETTLE_MS=10000 PERF_MEM_SAMPLES=5 node scripts/perf/memory.mjs",
+  "diagnostic": "Only baseline and per-sample process capture added in exported scripts; original attribute/statistics/10s+5x2s unchanged",
+  "visibility": "Native windows launched normally without GUI actions or minimization; not independently measured per frame",
+  "limitations": "Nonexclusive macOS26 host; isolated identifier/incognito; not macos15 CI"
+}
