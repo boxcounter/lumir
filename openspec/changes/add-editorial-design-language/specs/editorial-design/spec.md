@@ -32,6 +32,20 @@
 - **WHEN** 用户创建 Thread、为其关联文件角色并切换当前 Thread
 - **THEN** 新 Thread 写入持久化目录，列表显示标题与状态，切换后显示其角色关联
 
+### Requirement: Vault 引用稳定持久化
+Thread 与 workspace 的文件引用 MUST 同时存储稳定 id 与 vault 相对路径；`~/.config/lumir/workspaces/` 注册表 MUST 承载稳定 id 到当前 vault 路径的映射，Thread 注册表 MUST 保持在全局 `~/.config/lumir/threads/`。vault 路径变动 MUST 通过显式重映射流程更新引用，MUST NOT 静默断联或把路径变动当作新文件。
+
+#### Scenario: Vault 路径变动
+- **WHEN** vault 被移动或其路径发生变化
+- **THEN** 系统要求或执行重映射，更新 workspace 注册表及相关引用；在重映射完成前保留稳定 id 与原相对路径，并报告无法解析的引用
+
+### Requirement: Thread brief 文件来源
+Thread brief MUST 是 vault 内的真实文件，可由外部 Agent 写入、由人修改并由 git 跟踪；Thread 注册表 MUST 仅存 brief 的 vault 相对路径引用，不得复制或拥有 brief 内容。该引用约定 MUST 为 genesis 入站（外部 Agent 会话产物进入 Lumir 上下文）预留接口。
+
+#### Scenario: 外部 Agent 生成 brief
+- **WHEN** 外部 Agent 在 vault 中创建或更新 Thread brief
+- **THEN** Lumir 通过 Thread 注册表中的 vault 相对路径读取该真实文件，保留外部修改与 git 版本历史，并可将其作为 genesis 入站上下文
+
 ### Requirement: Threads 区不伪造编辑点计数
 
 Threads 区 MUST 预留状态与计数的结构位置，但本 change 不实现编辑点，因此 MUST 不渲染开放、处理中或待回看计数，也不得使用假数据。
