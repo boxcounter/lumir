@@ -16,7 +16,6 @@ export const livePreviewTheme = EditorView.theme({
   ".cm-lp-h6": { fontFamily: "var(--font-display)", fontSize: "1em", fontWeight: "600", fontStyle: "italic", lineHeight: "1.5", color: "var(--dim)" },
 
   ".cm-lp-paragraph": { textAlign: "justify", textJustify: "inter-ideograph", textAutospace: "normal", hyphens: "auto" },
-  ".cm-lp-paragraph-start": { textIndent: "2em" },
   ".cm-lp-opening": { minHeight: "1.75em" },
   ".cm-lp-opening-end::after": { content: '""', display: "block", clear: "both" },
   ".cm-lp-opening::first-letter": { fontFamily: "var(--font-display)", fontWeight: "700", float: "left", fontSize: "4.35em", lineHeight: ".78", padding: ".09em .14em .14em 0", color: "var(--text)" },
