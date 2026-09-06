@@ -60,6 +60,27 @@ pub fn vault_id(_path: &str) -> String {
         NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
     )
 }
+pub fn remap_candidates(path: &std::path::Path) -> Result<Vec<VaultWorkspace>, CommandError> {
+    let target = path
+        .canonicalize()
+        .unwrap_or_else(|_| path.to_path_buf())
+        .display()
+        .to_string();
+    let d = workspaces()?;
+    let mut out = Vec::new();
+    if let Ok(entries) = fs::read_dir(d) {
+        for entry in entries.flatten() {
+            if let Ok(v) = serde_json::from_str::<VaultWorkspace>(
+                &fs::read_to_string(entry.path()).unwrap_or_default(),
+            ) {
+                if !std::path::Path::new(&v.path).exists() && v.path != target {
+                    out.push(v);
+                }
+            }
+        }
+    }
+    Ok(out)
+}
 pub fn reconcile_vault(path: &std::path::Path) -> Result<(), CommandError> {
     let p = path
         .canonicalize()

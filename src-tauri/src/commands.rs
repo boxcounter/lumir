@@ -187,6 +187,15 @@ pub fn open_vault(
     state: &VaultState,
     root: PathBuf,
 ) -> Result<VaultInfo, CommandError> {
+    // Unknown paths with stale registrations require explicit remap confirmation.
+    let candidates = crate::threads::remap_candidates(&root)?;
+    if !candidates.is_empty() {
+        return Ok(VaultInfo {
+            root: root.display().to_string(),
+            entries: vec![],
+            remap_candidates: candidates,
+        });
+    }
     // Register/reconcile stable vault identity before opening.
     crate::threads::reconcile_vault(&root)?;
     // 顺序：先 watch（FSEvents 流起点在此刻）再全量枚举，消除 scan→watch 的
