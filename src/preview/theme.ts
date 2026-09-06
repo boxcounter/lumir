@@ -22,7 +22,7 @@ export const livePreviewTheme = EditorView.theme({
   ".cm-lp-opening::first-letter": { fontFamily: "var(--font-display)", fontWeight: "700", float: "left", fontSize: "4.35em", lineHeight: ".78", padding: ".09em .14em 0 0", color: "var(--text)" },
   ".cm-lp-dropcap-selected::first-letter": { backgroundColor: "var(--sel)", color: "var(--selection-ink)" },
   ".cm-lp-frontmatter.cm-lp-frontmatter-selected": { backgroundColor: "var(--sel)", color: "var(--selection-ink)" },
-  ".cm-lp-frontmatter-selected *": { backgroundColor: "transparent", color: "var(--selection-ink)" },
+  ".cm-lp-frontmatter.cm-lp-frontmatter-selected *": { backgroundColor: "transparent", color: "var(--selection-ink)" },
   ".cm-lp-strong": { fontWeight: "700" },
   ".cm-lp-em": { fontStyle: "italic" },
   ".cm-lp-strike": { textDecoration: "line-through" },
