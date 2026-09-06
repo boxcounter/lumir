@@ -189,14 +189,14 @@ fn save(t: &Thread) -> Result<(), CommandError> {
     fs::rename(tmp, p)
         .map_err(|_| CommandError::new("thread_write", "无法读取 Thread 注册表".to_string()))
 }
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub fn thread_list(vault_id: String) -> Result<Vec<Thread>, CommandError> {
     Ok(read_all()?
         .into_iter()
         .filter(|t| t.vault_id == vault_id)
         .collect())
 }
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub fn thread_create(title: String, vault_id: String) -> Result<Thread, CommandError> {
     let now = format!(
         "{}",
@@ -228,13 +228,13 @@ pub fn thread_create(title: String, vault_id: String) -> Result<Thread, CommandE
     save(&t)?;
     Ok(t)
 }
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub fn thread_update(thread: Thread) -> Result<Thread, CommandError> {
     valid_id(&thread.id)?;
     save(&thread)?;
     Ok(thread)
 }
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub fn thread_current(vault_id: String) -> Result<Option<Thread>, CommandError> {
     valid_id(&vault_id)?;
     let id = fs::read_to_string(dir()?.join(format!("current-{}.txt", vault_id))).ok();
@@ -242,7 +242,7 @@ pub fn thread_current(vault_id: String) -> Result<Option<Thread>, CommandError> 
         .into_iter()
         .find(|t| t.vault_id == vault_id && Some(t.id.clone()) == id))
 }
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub fn thread_switch(id: String, vault_id: String) -> Result<Thread, CommandError> {
     valid_id(&id)?;
     valid_id(&vault_id)?;
