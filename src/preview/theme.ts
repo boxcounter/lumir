@@ -28,7 +28,7 @@ export const livePreviewTheme = EditorView.theme({
     color: "var(--dim)",
   },
 
-  ".cm-lp-codeblock-line": { backgroundColor: "var(--bg-2)", fontFamily: "var(--font-mono)" },
+  ".cm-line.cm-lp-codeblock-line": { backgroundColor: "var(--bg-2)", fontFamily: "var(--font-mono)" },
   ".cm-lp-inline-code": {
     backgroundColor: "var(--bg-2)",
     fontFamily: "var(--font-mono)",
@@ -76,7 +76,7 @@ export const livePreviewTheme = EditorView.theme({
   ".cm-lp-fm-raw": {
     margin: "0",
     whiteSpace: "pre-wrap",
-    fontFamily: "monospace",
+    fontFamily: "var(--font-mono)",
     color: "var(--dim)",
   },
   ".cm-lp-fm-empty": { color: "var(--dim)" },
