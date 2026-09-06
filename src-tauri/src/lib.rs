@@ -71,7 +71,9 @@ fn restore_last_vault(app: &tauri::AppHandle) {
         return;
     }
     match commands::open_vault(app, &state, path, false) {
-        Ok(info) if !info.remap_candidates.is_empty() => state.set_notice("发现可能已移动的 vault，请确认重映射".into()),
+        Ok(info) if !info.remap_candidates.is_empty() => {
+            state.set_notice("发现可能已移动的 vault，请确认重映射".into())
+        }
         Ok(_) => {}
         Err(e) => state.set_notice(format!("恢复上次 vault 失败：{}", e.message)),
     }
