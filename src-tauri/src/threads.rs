@@ -41,6 +41,7 @@ pub struct VaultWorkspace {
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export, export_to = "../../src/bindings/")]
 pub struct Thread {
+    pub vault_id: String,
     pub id: String,
     pub title: String,
     pub status: ThreadStatus,
@@ -182,11 +183,11 @@ fn save(t: &Thread) -> Result<(), CommandError> {
     fs::rename(tmp, p).map_err(|_| CommandError::new("thread_write", "操作失败".to_string()))
 }
 #[tauri::command]
-pub fn thread_list() -> Result<Vec<Thread>, CommandError> {
-    read_all()
+pub fn thread_list(vault_id: String) -> Result<Vec<Thread>, CommandError> {
+    Ok(read_all()?.into_iter().filter(|t| t.vault_id == vault_id).collect())
 }
 #[tauri::command]
-pub fn thread_create(title: String) -> Result<Thread, CommandError> {
+pub fn thread_create(title: String, vault_id: String) -> Result<Thread, CommandError> {
     let now = format!(
         "{}",
         std::time::SystemTime::now()
@@ -204,6 +205,7 @@ pub fn thread_create(title: String) -> Result<Thread, CommandError> {
                 .unwrap()
                 .subsec_nanos()
         ),
+        vault_id: { valid_id(&vault_id)?; vault_id },
         title,
         status: ThreadStatus::Active,
         files: vec![],
@@ -220,13 +222,15 @@ pub fn thread_update(thread: Thread) -> Result<Thread, CommandError> {
     Ok(thread)
 }
 #[tauri::command]
-pub fn thread_current() -> Result<Option<Thread>, CommandError> {
-    Ok(read_all()?.into_iter().next())
+pub fn thread_current(vault_id: String) -> Result<Option<Thread>, CommandError> {
+    Ok(read_all()?.into_iter().find(|t| t.vault_id == vault_id))
 }
 #[tauri::command]
-pub fn thread_switch(id: String) -> Result<Thread, CommandError> {
+pub fn thread_switch(id: String, vault_id: String) -> Result<Thread, CommandError> {
+    valid_id(&id)?;
+    valid_id(&vault_id)?;
     read_all()?
         .into_iter()
-        .find(|t| t.id == id)
+        .find(|t| t.id == id && t.vault_id == vault_id)
         .ok_or_else(|| CommandError::new("thread_not_found", "找不到 Thread"))
 }

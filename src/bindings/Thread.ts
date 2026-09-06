@@ -2,4 +2,4 @@
 import type { ThreadFile } from "./ThreadFile";
 import type { ThreadStatus } from "./ThreadStatus";
 
-export type Thread = { id: string, title: string, status: ThreadStatus, files: Array<ThreadFile>, recent_activity: string, brief: string | null, };
+export type Thread = { vault_id: string, id: string, title: string, status: ThreadStatus, files: Array<ThreadFile>, recent_activity: string, brief: string | null, };
