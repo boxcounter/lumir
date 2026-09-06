@@ -35,7 +35,7 @@ function extensions() {
           row.slots.forEach((slot, i) => {
             if (cursor < slot.from) ranges.push(Decoration.replace({}).range(cursor, slot.from));
             if (slot.from === slot.to) ranges.push(Decoration.widget({widget: new Empty(), side: 1}).range(slot.from));
-            else ranges.push(Decoration.mark({class: 'cell', attributes: {role: row.header ? 'columnheader' : 'cell', 'aria-colindex': String(i + 1), style: `text-align:${table.align[i]}`}}).range(slot.from, slot.to));
+            else ranges.push(Decoration.mark({class: 'cell', attributes: {role: row.header ? 'columnheader' : 'cell', 'aria-colindex': String(i + 1), style: `text-align:${table.align[i]};grid-column:${i + 1};grid-row:1`}}).range(slot.from, slot.to));
             cursor = slot.to;
           });
           if (cursor < row.to) ranges.push(Decoration.replace({}).range(cursor, row.to));

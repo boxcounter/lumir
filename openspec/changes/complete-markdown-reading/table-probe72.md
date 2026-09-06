@@ -79,3 +79,20 @@ XDG_CONFIG_HOME="$run/config" "$binary" > "$run/native.log" 2>&1
 **恢复结果仍为 blocked。** 当前反例进一步说明不能只凭先前锁屏事实断言全部白屏的唯一原因，也不能据此宣告 BlockWrapper 路线失败。未修改生产、未采用全表 widget 或永久源码回退，没有把 r2 clean checkpoint 当作实验通过。
 
 已向 tower 提议一个最小追加诊断条件：由用户自行展示自有 `TableProbe72 static control` 窗口，检查静态正文是否恢复。该操作尚未验证，agent 不通过激活/切换前台代做，不改系统安全配置或反复构建。若展示后仍失败，应先诊断原生静态窗口绘制；若恢复，应从静态可见/AX gate 开始，再按原顺序完成真实表格前置门槛。此为验收恢复步骤的补充，不是产品表格方案修订。
+
+## 后续真实可见窗口与列布局定位
+
+用户随后提供两张图片。本 worker 的工具实际没有 ReadMediaFile，委派的只读 agent 也确认不可用，故未声称已读附件；已请 tower 提供实际图片观察。以下证据来自其后重新调用 kimi-cu 的 live 窗口观察，不是对附件或用户操作过程的推测。
+
+重新核实 ps 中 PID26790 存在后，static window24851 已真实显示黄色背景、`Static control sentinel72`、说明文字、按钮和 sentinel72 输入框，AX 有 WebArea/Heading/Button/TextField。同 PID 的 CM window24850 也有完整正文和 AX 表语义。未修改生命周期代码即恢复，尚不能从这些结果证明此前的唯一原因。
+
+此时首次实际发现实验布局 bug：Measure 回读首表每行四个 cell 的 x 均为762、width240，截图四列竖叠在最右槽。为此仅修改 `probe.ts` 中 cell mark 的公开 style 属性，显式设置 `grid-column: i+1; grid-row:1`，不直接修改 CM DOM。为验证这个已观察到的具体 bug 执行一次 fixture Vite 与增量 Tauri locked/offline 构建，然后用新自有 runtime 启动 PID27418；不是为白屏反复重建。
+
+修正后真实 WK Measure 结果：
+
+- 小表表头与两数据行 x 均为42/282/522/762，四列各240 CSS px；中间空格槽仍占第二列。引用表前两列 x42/282。内存 doc unchanged=true。
+- Large→Middle 按钮后屏幕显示 row7100 等中部行；文档1,058,760字符，viewport528870..529844，renderedRows/renderedLines均13，totalRows14001，未全量生成表DOM。中部四列 x42/282/522/762，各240px，高56px；metadata93ms，仍只是同步探针，不是生产性能通过。
+- 切窄布局后普通正文栏保持窄宽度。但 Focus table 后 Right/End、一次水平 wheel 尚未观察到可信位移，未标通过。小表首 wrapper 高285px，行间仍有明显多余空隙；显式列定位没有解决所有隐藏替换的布局影响。
+- Partial 按钮确实设置源码选区87..90，截图可见 `alp` 选中；这是公开API设置选区，不是人工鼠标选择或复制通过。
+
+尚须继续诊断行内替换所产生的额外布局项、wrapper 的实际焦点/scroll事件及复制保护。零宽空槽 widget 尚未随本次非空 cell style 修正验证，不能将空格槽通过推广到零宽槽。M73 释放 clipboard 后进行一次受控复制：先写自有 `M72_SENTINEL_OWN_20260907`，对已显示87..90的选区发送后台 Cmd+C，随后仅布尔比较是否为预期 `alp` 或自有 sentinel，两者均 false。未输出实际内容，立即停止后续未知 clipboard 读取/粘贴并通过 TowerSend 释放占用；不能宣称复制成功，也不能确定是CM映射失败还是后台事件/其他clipboard写入因素。静态显示阻塞已解除，但前置验收仍未完整通过，不做生产实施或全表 widget 替代。
