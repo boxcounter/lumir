@@ -7,6 +7,10 @@ import type { VaultWorkspace } from "./VaultWorkspace";
  */
 export type VaultInfo = { 
 /**
+ * 稳定 vault 身份。
+ */
+vault_id: string, 
+/**
  * vault 根目录绝对路径。
  */
 root: string, entries: Array<FsEntry>, remap_candidates: Array<VaultWorkspace>, };

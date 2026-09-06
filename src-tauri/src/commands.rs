@@ -82,6 +82,8 @@ pub fn config_get() -> Result<ConfigSnapshot, CommandError> {
 #[derive(Debug, Clone, Serialize, TS)]
 #[ts(export, export_to = "../../src/bindings/")]
 pub struct VaultInfo {
+    /// 稳定 vault 身份。
+    pub vault_id: String,
     /// vault 根目录绝对路径。
     pub root: String,
     pub entries: Vec<FsEntry>,
@@ -191,13 +193,14 @@ pub fn open_vault(
     let candidates = crate::threads::remap_candidates(&root)?;
     if !candidates.is_empty() {
         return Ok(VaultInfo {
+            vault_id: candidates[0].id.clone(),
             root: root.display().to_string(),
             entries: vec![],
             remap_candidates: candidates,
         });
     }
     // Register/reconcile stable vault identity before opening.
-    crate::threads::reconcile_vault(&root)?;
+    let workspace = crate::threads::reconcile_vault(&root)?;
     // 顺序：先 watch（FSEvents 流起点在此刻）再全量枚举，消除 scan→watch 的
     // 事件空窗；枚举结果随后播种进 watcher 的已知路径集（修正重放的误报 Create）。
     let app_for_watch = app.clone();
@@ -220,6 +223,7 @@ pub fn open_vault(
     inner.notice = None;
     inner.graph = graph;
     Ok(VaultInfo {
+        vault_id: workspace.id,
         root: root.display().to_string(),
         entries,
         remap_candidates: vec![],
@@ -302,6 +306,7 @@ pub fn vault_current(state: tauri::State<'_, VaultState>) -> Result<VaultStatus,
     let inner = state.inner.lock().expect("vault state poisoned");
     let vault = match &inner.root {
         Some(root) => Some(VaultInfo {
+            vault_id: crate::threads::reconcile_vault(root)?.id,
             root: root.display().to_string(),
             entries: fs_io::scan_workspace(root)?,
             remap_candidates: vec![],

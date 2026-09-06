@@ -84,7 +84,7 @@ pub fn remap_candidates(path: &std::path::Path) -> Result<Vec<VaultWorkspace>, C
     }
     Ok(out)
 }
-pub fn reconcile_vault(path: &std::path::Path) -> Result<(), CommandError> {
+pub fn reconcile_vault(path: &std::path::Path) -> Result<VaultWorkspace, CommandError> {
     let p = path
         .canonicalize()
         .map_err(|_| CommandError::new("workspace_path", "无法规范化 vault 路径"))?;
@@ -101,12 +101,12 @@ pub fn reconcile_vault(path: &std::path::Path) -> Result<(), CommandError> {
             &fs::read_to_string(entry.path()).unwrap_or_default(),
         ) {
             if v.path == ps {
-                return Ok(());
+                return Ok(v);
             }
         }
     }
     let id = vault_id(&ps);
-    vault_register(id, ps).map(|_| ())
+    vault_register(id, ps)
 }
 #[tauri::command]
 pub fn vault_register(id: String, path: String) -> Result<VaultWorkspace, CommandError> {

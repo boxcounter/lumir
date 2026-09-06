@@ -80,10 +80,10 @@ export function linkGraphResolve(from: string, link: string): Promise<LinkResolv
 export function wikilinkCreate(from: string, link: string): Promise<CreateNoteResult> {
   return invoke<CreateNoteResult>("wikilink_create", { from, link });
 }
-export const threadList = (): Promise<Thread[]> => invoke<Thread[]>("thread_list");
-export const threadCreate = (title: string): Promise<Thread> => invoke<Thread>("thread_create", { title });
+export const threadList = (vault_id: string): Promise<Thread[]> => invoke<Thread[]>("thread_list", { vault_id });
+export const threadCreate = (title: string, vault_id: string): Promise<Thread> => invoke<Thread>("thread_create", { title, vault_id });
 export const threadUpdate = (thread: Thread): Promise<Thread> => invoke<Thread>("thread_update", { thread });
-export const threadCurrent = (): Promise<Thread | null> => invoke<Thread | null>("thread_current");
-export const threadSwitch = (id: string): Promise<Thread> => invoke<Thread>("thread_switch", { id });
+export const threadCurrent = (vault_id: string): Promise<Thread | null> => invoke<Thread | null>("thread_current", { vault_id });
+export const threadSwitch = (id: string, vault_id: string): Promise<Thread> => invoke<Thread>("thread_switch", { id, vault_id });
 export const vaultRegister = (id: string, path: string): Promise<VaultWorkspace> => invoke<VaultWorkspace>("vault_register", { id, path });
 export const vaultRemap = (id: string, path: string): Promise<VaultWorkspace> => invoke<VaultWorkspace>("vault_remap", { id, path });
