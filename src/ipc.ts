@@ -37,8 +37,8 @@ export function configGet(): Promise<ConfigSnapshot> {
 }
 
 /** 调系统目录选择器打开 vault；用户取消 resolve 为 null（非错误）。 */
-export function vaultOpen(): Promise<VaultInfo | null> {
-  return invoke<VaultInfo | null>("vault_open");
+export function vaultOpen(force_new = false): Promise<VaultInfo | null> {
+  return invoke<VaultInfo | null>("vault_open", { force_new });
 }
 
 /** 启动后查询当前 vault 状态（含 last_vault 恢复失败的人话提示）。 */
