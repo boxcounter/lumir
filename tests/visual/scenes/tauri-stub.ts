@@ -34,6 +34,8 @@ export async function stubTauri(page: Page, vault: VaultFixture | null): Promise
         warnings: [],
         path: "/mock/config.json",
       }),
+      thread_list: () => [],
+      thread_current: () => null,
       vault_current: () =>
         current
           ? { vault: { root: "/Users/alex/demo-vault", entries: current.entries }, notice: null }

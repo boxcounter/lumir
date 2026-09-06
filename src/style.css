@@ -190,7 +190,7 @@ body { background:var(--bg); color:var(--text); font-family:var(--font-body); fo
   margin: 0;
   padding-left: 13px;
 }
-.ft-row { min-height:27px; line-height:27px; font-size:13px; font-family:var(--font-body); }
+.ft-row { min-height:27px; line-height:27px; font-size:13px; font-family:var(--font-body); color:var(--text); }
 .ft-row[data-depth="1"] { color: color-mix(in srgb, var(--text) 96%, var(--bg)); }
 .ft-row[data-depth="2"] { color: color-mix(in srgb, var(--text) 91%, var(--bg)); }
 .ft-row[data-depth="3"] { color: color-mix(in srgb, var(--text) 86%, var(--bg)); }
