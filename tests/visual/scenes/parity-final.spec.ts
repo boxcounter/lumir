@@ -1,0 +1,41 @@
+import { test, expect } from '@playwright/test';
+import { stubTauri } from './tauri-stub';
+import { readDocument, copyFresh, assertReachable } from './parity-checks';
+for (const theme of ['light','dark','eink']) test(`最终长文短段只读 ${theme}`, async ({page,context},info)=>{
+  await context.grantPermissions(['clipboard-read','clipboard-write']);
+  const text='# 标题\n\n短段。\n\n紧随下一段。\n\n'+Array.from({length:300},(_,i)=>`第${i}段 长文虚拟化与只读测试。`).join('\n\n');
+  await stubTauri(page,{entries:[{path:'long.md',kind:'file',size:text.length,mtime_ms:0}],files:{'long.md':text}});
+  await page.addInitScript(t=>localStorage.setItem('lumir-theme',t),theme);
+  await page.goto('/');await page.locator('.ft-row[title="long.md"]').click();
+  await expect(page.locator('.cm-content')).toContainText('短段。');
+  const lines=page.locator('.cm-line');
+  const short=lines.filter({hasText:'短段。'});const next=lines.filter({hasText:'紧随下一段。'});
+  const rect=await short.boundingBox();const nrect=await next.boundingBox();
+  expect(nrect!.y).toBeGreaterThan(rect!.y);
+  await page.locator('.cm-content').click();
+  expect(await copyFresh(page, `${theme}-before-cut`)).toBe(text);
+  await page.keyboard.press('Meta+x');
+  expect(await readDocument(page)).toBe(text);
+  expect(await copyFresh(page, `${theme}-after-cut`)).toBe(text);
+  await page.evaluate(()=>navigator.clipboard.writeText('INDEPENDENT_PASTE_PAYLOAD'));
+  await page.keyboard.press('Meta+v');
+  expect(await readDocument(page)).toBe(text);
+  expect(await copyFresh(page, `${theme}-after-paste`)).toBe(text);
+  await page.keyboard.type('NOT_WRITABLE');
+  expect(await readDocument(page)).toBe(text);
+  expect(await copyFresh(page, `${theme}-after-input`)).toBe(text);
+  await page.locator('.cm-scroller').evaluate(el=>el.scrollTop=el.scrollHeight);
+  await assertReachable(lines.filter({hasText:'第299段'}), '.cm-scroller');
+  await lines.filter({hasText:'第299段'}).click();
+  expect(await lines.count()).toBeLessThan(300);
+  await page.screenshot({path:info.outputPath('long-end.png')});
+});
+
+test('创建后切换失败保持原current并反馈',async({page})=>{
+  const old={vault_id:'fixture-vault',id:'old',title:'原Thread',status:'active' as const,files:[],recent_activity:'0',brief:null};
+  await stubTauri(page,{entries:[],threads:[old],currentThread:'old',failures:{thread_switch:{code:'thread_write',message:'无法保存当前 Thread'}}});
+  await page.goto('/');await page.getByRole('button',{name:'+ 新建'}).click();
+  await page.getByRole('textbox',{name:'Thread 名称'}).fill('新Thread');await page.getByRole('button',{name:'创建',exact:true}).click();
+  await expect(page.locator('.lumir-toast')).toContainText('无法保存当前 Thread');
+  await expect(page.locator('.thread-card.is-current .thread-select')).toContainText('原Thread');
+});

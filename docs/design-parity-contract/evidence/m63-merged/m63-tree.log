@@ -1,0 +1,39 @@
+$ tsc --noEmit && vite build
+vite v8.2.2 building client environment for production...
+transforming...
+✓ 39 modules transformed.
+rendering chunks...
+computing gzip size...
+dist/index.html                   0.39 kB │ gzip:   0.26 kB
+dist/assets/index-B4OGuzBf.css    9.16 kB │ gzip:   2.52 kB
+dist/assets/index-DRj_HX3X.js   557.58 kB │ gzip: 193.67 kB
+
+✓ built in 97ms
+[plugin builtin:vite-reporter] 
+(!) Some chunks are larger than 500 kB after minification. Consider:
+- Using dynamic import() to code-split the application
+- Use build.rolldownOptions.output.codeSplitting to improve chunking: https://rolldown.rs/reference/OutputOptions.codeSplitting
+- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.
+Already up to date
+Done in 161ms using pnpm v11.25.0
+$ playwright test scenes/parity-tree.spec.ts
+[WebServer] (node:87821) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] (node:87827) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+
+Running 9 tests using 1 worker
+
+(node:87833) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+  ✓  1 [chromium] › scenes/parity-tree.spec.ts:4:3 › 长目录深层颜色 light 900 (463ms)
+  ✓  2 [chromium] › scenes/parity-tree.spec.ts:4:3 › 长目录深层颜色 light 600 (292ms)
+  ✓  3 [chromium] › scenes/parity-tree.spec.ts:4:3 › 长目录深层颜色 light 480 (244ms)
+  ✓  4 [chromium] › scenes/parity-tree.spec.ts:4:3 › 长目录深层颜色 dark 900 (244ms)
+  ✓  5 [chromium] › scenes/parity-tree.spec.ts:4:3 › 长目录深层颜色 dark 600 (258ms)
+  ✓  6 [chromium] › scenes/parity-tree.spec.ts:4:3 › 长目录深层颜色 dark 480 (268ms)
+  ✓  7 [chromium] › scenes/parity-tree.spec.ts:4:3 › 长目录深层颜色 eink 900 (243ms)
+  ✓  8 [chromium] › scenes/parity-tree.spec.ts:4:3 › 长目录深层颜色 eink 600 (233ms)
+  ✓  9 [chromium] › scenes/parity-tree.spec.ts:4:3 › 长目录深层颜色 eink 480 (245ms)
+
+  9 passed (3.4s)

@@ -9,6 +9,11 @@ export interface VaultFixture {
   entries: unknown[];
   files?: Record<string, string>;
   notice?: string | null;
+  root?: string;
+  vault_id?: string;
+  threads?: import("../../../src/bindings/Thread").Thread[];
+  currentThread?: string;
+  failures?: Record<string, { code: string; message: string }>;
   /** link_graph_resolve 桩：链接原文 → LinkResolveResult。未命中按 unresolved 应答。 */
   links?: Record<string, unknown>;
   /** wikilink_create 桩：链接原文 → 创建后的 vault 相对路径（同时写入 files）。 */
@@ -28,23 +33,47 @@ export async function stubTauri(page: Page, vault: VaultFixture | null): Promise
     //（与真后端 open_vault 的替换语义对齐）。
     let current = v;
 
-    const handlers: Record<string, (args: { path?: string; from?: string; link?: string }) => unknown> = {
+    type Args = { path?: string; from?: string; link?: string; id?: string; title?: string; vault_id?: string; thread?: import("../../../src/bindings/Thread").Thread };
+    const checkVault = (args: Args) => {
+      if (args.vault_id !== (current?.vault_id ?? "fixture-vault")) throw { code: "fixture_contract", message: "vault_id mismatch" };
+    };
+    const handlers: Record<string, (args: Args) => unknown> = {
       config_get: () => ({
         config: { version: 1, last_vault: null, editor: { mode: "md" } },
         warnings: [],
         path: "/mock/config.json",
       }),
-      thread_list: () => [],
-      thread_current: () => null,
+      thread_list: (args) => { checkVault(args); return current?.threads ?? []; },
+      thread_current: (args) => { checkVault(args); return current?.threads?.find(t => t.id === current.currentThread) ?? null; },
+      thread_create: (args) => {
+        checkVault(args);
+        if (!args.title || !current) throw { code: "fixture_contract", message: "title required" };
+        const thread = { vault_id: args.vault_id!, id: `fixture-${nextId++}`, title: args.title, status: "active" as const, files: [], recent_activity: "2026-09-06T00:00:00Z", brief: null };
+        (current.threads ??= []).push(thread);
+        return thread;
+      },
+      thread_switch: (args) => {
+        checkVault(args);
+        const thread = current?.threads?.find(t => t.id === args.id);
+        if (!thread) throw { code: "thread_not_found", message: "Thread 不存在" };
+        current!.currentThread = thread.id;
+        return thread;
+      },
+      thread_update: (args) => {
+        const index = current?.threads?.findIndex(t => t.id === args.thread?.id) ?? -1;
+        if (index < 0 || !args.thread) throw { code: "thread_not_found", message: "Thread 不存在" };
+        current!.threads![index] = args.thread;
+        return args.thread;
+      },
       vault_current: () =>
         current
-          ? { vault: { root: "/Users/alex/demo-vault", entries: current.entries }, notice: null }
+          ? { vault: { root: current.root ?? "/Users/alex/demo-vault", entries: current.entries, vault_id: current.vault_id ?? "fixture-vault", remap_candidates: [] }, notice: current.notice ?? null }
           : { vault: null, notice: null },
       vault_open: () => {
         const target = current?.switchTo;
         if (!target) return null;
         current = target;
-        return { root: target.root, entries: target.entries };
+        return { root: target.root, entries: target.entries, vault_id: target.vault_id ?? "fixture-vault", remap_candidates: [] };
       },
       fs_read_file: (args) => {
         const text = current?.files?.[args.path ?? ""];
@@ -92,6 +121,7 @@ export async function stubTauri(page: Page, vault: VaultFixture | null): Promise
           return args.handler;
         }
         if (cmd === "plugin:event|unlisten") return null;
+        if (current?.failures?.[cmd]) throw current.failures[cmd];
         const handler = handlers[cmd];
         if (!handler) throw { code: "unknown_command", message: `未知命令：${cmd}` };
         return handler(args);

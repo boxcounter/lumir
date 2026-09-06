@@ -1,0 +1,72 @@
+$ tsc --noEmit && vite build
+vite v8.2.2 building client environment for production...
+transforming...
+✓ 39 modules transformed.
+rendering chunks...
+computing gzip size...
+dist/index.html                   0.39 kB │ gzip:   0.26 kB
+dist/assets/index-B4OGuzBf.css    9.16 kB │ gzip:   2.52 kB
+dist/assets/index-TEHMtKs5.js   558.11 kB │ gzip: 193.80 kB
+
+✓ built in 119ms
+[plugin builtin:vite-reporter] 
+(!) Some chunks are larger than 500 kB after minification. Consider:
+- Using dynamic import() to code-split the application
+- Use build.rolldownOptions.output.codeSplitting to improve chunking: https://rolldown.rs/reference/OutputOptions.codeSplitting
+- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.
+Already up to date
+Done in 174ms using pnpm v11.25.0
+$ playwright test
+[WebServer] (node:93299) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] (node:93305) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+
+Running 42 tests using 1 worker
+
+(node:93311) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+  ✓   1 [chromium] › scenes/app-main.spec.ts:8:1 › 未打开 vault 的空态主界面 (621ms)
+  ✓   2 [chromium] › scenes/app-main.spec.ts:21:1 › eink 选区保持反白 (124ms)
+  ✓   3 [chromium] › scenes/app-main.spec.ts:34:1 › 打开 vault 后的全类型文件树 (269ms)
+  ✓   4 [chromium] › scenes/app-main.spec.ts:65:1 › watch 增量刷新保持展开状态 (142ms)
+  ✓   5 [chromium] › scenes/app-main.spec.ts:87:1 › 树头部切换入口切换到另一个 vault (176ms)
+  ✓   6 [chromium] › scenes/parity-copy.spec.ts:7:3 › 真实键盘复制 frontmatter sequential=false (155ms)
+  ✓   7 [chromium] › scenes/parity-copy.spec.ts:7:3 › 真实键盘复制 frontmatter sequential=true (168ms)
+  ✓   8 [chromium] › scenes/parity-copy.spec.ts:26:1 › 短段与code切换不改源文 (161ms)
+  ✓   9 [chromium] › scenes/parity-final.spec.ts:3:46 › 最终长文短段只读 light (211ms)
+  ✓  10 [chromium] › scenes/parity-final.spec.ts:3:46 › 最终长文短段只读 dark (204ms)
+  ✓  11 [chromium] › scenes/parity-final.spec.ts:3:46 › 最终长文短段只读 eink (209ms)
+  ✓  12 [chromium] › scenes/parity-final.spec.ts:25:1 › 创建后切换失败保持原current并反馈 (165ms)
+  ✓  13 [chromium] › scenes/parity-tree.spec.ts:4:3 › 长目录深层颜色 light 900 (237ms)
+  ✓  14 [chromium] › scenes/parity-tree.spec.ts:4:3 › 长目录深层颜色 light 600 (233ms)
+  ✓  15 [chromium] › scenes/parity-tree.spec.ts:4:3 › 长目录深层颜色 light 480 (228ms)
+  ✓  16 [chromium] › scenes/parity-tree.spec.ts:4:3 › 长目录深层颜色 dark 900 (238ms)
+  ✓  17 [chromium] › scenes/parity-tree.spec.ts:4:3 › 长目录深层颜色 dark 600 (233ms)
+  ✓  18 [chromium] › scenes/parity-tree.spec.ts:4:3 › 长目录深层颜色 dark 480 (227ms)
+  ✓  19 [chromium] › scenes/parity-tree.spec.ts:4:3 › 长目录深层颜色 eink 900 (264ms)
+  ✓  20 [chromium] › scenes/parity-tree.spec.ts:4:3 › 长目录深层颜色 eink 600 (247ms)
+  ✓  21 [chromium] › scenes/parity-tree.spec.ts:4:3 › 长目录深层颜色 eink 480 (227ms)
+  ✓  22 [chromium] › scenes/parity.spec.ts:21:5 › 原型对照 light 1280x900 (295ms)
+  ✓  23 [chromium] › scenes/parity.spec.ts:21:5 › 原型对照 light 1440x900 (289ms)
+  ✓  24 [chromium] › scenes/parity.spec.ts:21:5 › 原型对照 light 1200x700 (268ms)
+  ✓  25 [chromium] › scenes/parity.spec.ts:21:5 › 原型对照 light 1000x600 (277ms)
+  ✓  26 [chromium] › scenes/parity.spec.ts:21:5 › 原型对照 light 640x480 (258ms)
+  ✓  27 [chromium] › scenes/parity.spec.ts:21:5 › 原型对照 dark 1280x900 (286ms)
+  ✓  28 [chromium] › scenes/parity.spec.ts:21:5 › 原型对照 dark 1440x900 (306ms)
+  ✓  29 [chromium] › scenes/parity.spec.ts:21:5 › 原型对照 dark 1200x700 (284ms)
+  ✓  30 [chromium] › scenes/parity.spec.ts:21:5 › 原型对照 dark 1000x600 (278ms)
+  ✓  31 [chromium] › scenes/parity.spec.ts:21:5 › 原型对照 dark 640x480 (267ms)
+  ✓  32 [chromium] › scenes/parity.spec.ts:21:5 › 原型对照 eink 1280x900 (285ms)
+  ✓  33 [chromium] › scenes/parity.spec.ts:21:5 › 原型对照 eink 1440x900 (288ms)
+  ✓  34 [chromium] › scenes/parity.spec.ts:21:5 › 原型对照 eink 1200x700 (285ms)
+  ✓  35 [chromium] › scenes/parity.spec.ts:21:5 › 原型对照 eink 1000x600 (277ms)
+  ✓  36 [chromium] › scenes/parity.spec.ts:21:5 › 原型对照 eink 640x480 (275ms)
+  ✓  37 [chromium] › scenes/parity.spec.ts:79:1 › Thread IPC 成功与失败反馈 (194ms)
+  ✓  38 [chromium] › scenes/parity.spec.ts:98:1 › Thread 创建失败保留输入并提示 (172ms)
+  ✓  39 [chromium] › scenes/wikilink.spec.ts:18:1 › parseCases：span/embed 与 cases.json 一致（双解析器纪律前端侧） (6ms)
+  ✓  40 [chromium] › scenes/wikilink.spec.ts:85:1 › 链接三态显示（resolved / ambiguous / unresolved） (198ms)
+  ✓  41 [chromium] › scenes/wikilink.spec.ts:99:1 › 点击跳转：Mod-Click 跟随，锚点命中定位，锚点缺失给提示 (232ms)
+  ✓  42 [chromium] › scenes/wikilink.spec.ts:130:1 › 未创建链接一键创建并转为正常态 (179ms)
+
+  42 passed (10.9s)

@@ -1,0 +1,14 @@
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { fileURLToPath, pathToFileURL } from "node:url";
+const runs = new URL("../../tests/visual/runtime/runs/", import.meta.url);
+await mkdir(runs, { recursive: true });
+const runPath = await mkdtemp(fileURLToPath(new URL("run-", runs)));
+const runtime = pathToFileURL(`${runPath}/`);
+const vault = new URL("vault/", runtime);
+const config = new URL("config/lumir/", runtime);
+await mkdir(vault, { recursive: true });
+await mkdir(config, { recursive: true });
+await writeFile(new URL("正文.md", vault), "# 隔离验收\n\n读一篇长文，总会碰到几处卡顿。一个术语没有解释，一个论断缺少出处，一段语气忽然变得陌生。\n\n" + Array.from({ length: 200 }, (_, i) => `第${i + 1}段。这是隔离测试 vault 的长文，用来验证滚动、坐标和选区，不触及用户文件。\n`).join("\n"));
+await writeFile(new URL("config.json", config), JSON.stringify({ version: 1, last_vault: fileURLToPath(vault).replace(/\/$/, ""), editor: { mode: "md" } }, null, 2));
+await writeFile(new URL("run.json", runtime), JSON.stringify({ schema: 1, createdAt: new Date().toISOString(), identifier: "com.lumir.parity62", incognito: true, fixture: "200-paragraph-vault" }, null, 2));
+console.log(runPath);

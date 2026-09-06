@@ -1,0 +1,33 @@
+--- /dev/fd/63	2026-09-06 19:14:40
++++ tests/visual/runtime/m65-abba/A/scripts/perf/memory.mjs	2026-09-06 19:12:58
+@@ -52,7 +52,10 @@
+   return { mb: totalKB / 1024, pids: [...seen] };
+ }
+ 
+-const webkitBaseline = new Set((await procTable()).filter(isWebKit).map((p) => p.pid));
++const baselineProcesses = (await procTable()).filter(isWebKit);
++const webkitBaseline = new Set(baselineProcesses.map((p) => p.pid));
++const baselineAt = new Date().toISOString();
++const diagnosticSamples = [];
+ 
+ const child = spawn(BIN, [], { stdio: ["ignore", "pipe", "inherit"] });
+ const appPid = child.pid;
+@@ -72,7 +75,9 @@
+   const samples = [];
+   let lastPids = [appPid];
+   for (let i = 0; i < SAMPLES; i++) {
+-    const { mb, pids } = attribute(await procTable(), appPid, webkitBaseline);
++    const table = await procTable();
++    const { mb, pids } = attribute(table, appPid, webkitBaseline);
++    diagnosticSamples.push({ capturedAt: new Date().toISOString(), processes: table.filter(p => pids.includes(p.pid)).map(p => ({ ...p, comm: p.comm.replace(/\/Users\/[^/]+/g, '<home>'), reason: isWebKit(p) && !webkitBaseline.has(p.pid) ? 'new-WebKit-difference' : 'app-descendant' })) });
+     lastPids = pids;
+     samples.push(mb);
+     console.log(`[perf] memory sample ${i + 1}/${SAMPLES}: ${mb.toFixed(1)}MB (${pids.length} processes attributed)`);
+@@ -87,6 +92,7 @@
+       settleMs: SETTLE_MS,
+       intervalMs: INTERVAL_MS,
+       attributedPids: lastPids,
++      baselineAt, baselineProcesses: baselineProcesses.map(p => ({ ...p, comm: p.comm.replace(/\/Users\/[^/]+/g, '<home>') })), diagnosticSamples,
+       note: "RSS 合计（app 子孙 + 基线差集归因的 WebKit XPC），含 shared pages（系统性偏高）；门禁比较值为 max",
+     },
+   });

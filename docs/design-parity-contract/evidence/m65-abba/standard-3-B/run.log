@@ -1,0 +1,6 @@
+[perf] memory sample 1/5: 221.8MB (4 processes attributed)
+[perf] memory sample 2/5: 221.6MB (4 processes attributed)
+[perf] memory sample 3/5: 221.6MB (4 processes attributed)
+[perf] memory sample 4/5: 221.6MB (4 processes attributed)
+[perf] memory sample 5/5: 221.5MB (4 processes attributed)
+[perf] resident-memory: p95=221.77MB median=221.56 max=221.77 (n=5, contract<200MB) -> <paired-run>/standard-3-B/resident-memory.json
