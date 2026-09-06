@@ -38,6 +38,8 @@ pub fn run() {
             threads::thread_update,
             threads::thread_current,
             threads::thread_switch,
+            threads::vault_register,
+            threads::vault_remap,
         ])
         .setup(move |app| {
             ready::emit_ready(started);
