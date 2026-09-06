@@ -1,0 +1,179 @@
+import { expect, test, type Page } from '@playwright/test';
+import { readFileSync } from 'node:fs';
+import { stubTauri } from './tauri-stub';
+import { copyFresh, readDocument } from './parity-checks';
+
+const source = readFileSync(new URL('../fixtures/lists/mixed.md', import.meta.url), 'utf8');
+async function open(page: Page, text = source) {
+  await stubTauri(page, { entries: [{ path: 'lists.md', kind: 'file', size: text.length, mtime_ms: 0 }], files: { 'lists.md': text } });
+  await page.goto('/');
+  await page.locator('.ft-row[title="lists.md"]').click();
+  await expect(page.locator('.cm-lp-list-marker').first()).toBeVisible();
+}
+async function geometry(page: Page, text: string) {
+  return page.locator('.cm-lp-list-line').filter({ hasText: text }).evaluate(el => {
+    const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+    const rects: { x: number; y: number }[] = [];
+    while (walker.nextNode()) {
+      const node = walker.currentNode;
+      if (node.parentElement?.closest('.cm-lp-list-marker')) continue;
+      for (let i = 0; i < (node.textContent?.length ?? 0); i++) {
+        const range = document.createRange(); range.setStart(node, i); range.setEnd(node, i + 1);
+        const rect = range.getBoundingClientRect();
+        if (rect.width > 0 && !rects.some(r => Math.abs(r.y - rect.y) < 1)) rects.push({ x: rect.x, y: rect.y });
+      }
+    }
+    return { rects, marker: el.querySelector('.cm-lp-list-marker')?.getBoundingClientRect().right, style: el.getAttribute('style') };
+  });
+}
+for (const theme of ['light', 'dark', 'eink']) {
+  for (const width of [1280, 640]) {
+    test(`列表对齐与源码 ${theme} ${width}`, async ({ page, context }) => {
+      await context.grantPermissions(['clipboard-read', 'clipboard-write']);
+      await page.setViewportSize({ width, height: 1600 });
+      await page.addInitScript(value => localStorage.setItem('lumir-theme', value), theme);
+      await open(page);
+      for (const names of [['Alpha', 'Beta', 'Gamma completed', 'Physical continuation'], ['Round ordinary', 'Round pending', 'Round completed'], ['Bullet ordinary', 'Bullet pending', 'Bullet completed', 'physical bullet'], ['Nested ordinary', 'Nested completed'], ['Plus ordinary', 'Plus pending'], ['Star ordinary', 'Star completed']]) {
+        const rows = await Promise.all(names.map(name => geometry(page, name)));
+        const x = rows[0].rects[0].x;
+        for (const row of rows) {
+          for (const rect of row.rects) expect(Math.abs(rect.x - x)).toBeLessThanOrEqual(1);
+          if (row.marker) expect(row.marker).toBeLessThanOrEqual(x + 1);
+        }
+      }
+      expect((await geometry(page, 'Nested ordinary')).rects[0].x).toBeGreaterThan((await geometry(page, 'Gamma completed')).rects[0].x);
+      expect((await geometry(page, 'Third level')).rects[0].x).toBeGreaterThan((await geometry(page, 'Nested ordinary')).rects[0].x);
+      await expect(page.locator('.cm-lp-list-marker').filter({ hasText: '100.' })).toHaveText('100.[x]');
+      await expect(page.locator('.cm-lp-codeblock-line.cm-lp-list-line')).toHaveCount(0);
+      await page.setViewportSize({ width: width === 640 ? 1280 : 640, height: 1600 });
+      expect(await readDocument(page)).toBe(source);
+      const resized = await geometry(page, 'Beta');
+      for (const rect of resized.rects) expect(Math.abs(rect.x - resized.rects[0].x)).toBeLessThanOrEqual(1);
+      await page.locator('.cm-lp-list-line').filter({ hasText: 'Alpha ordinary' }).evaluate(el => {
+        const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+        while (walker.nextNode()) {
+          const node = walker.currentNode;
+          if (!node.textContent?.startsWith('Alpha ordinary')) continue;
+          const range = document.createRange(); range.setStart(node, 0); range.setEnd(node, 5);
+          const selection = window.getSelection()!; selection.removeAllRanges(); selection.addRange(range);
+          break;
+        }
+      });
+      await page.evaluate(() => navigator.clipboard.writeText('partial-list-sentinel'));
+      await page.keyboard.press('Meta+c');
+      expect(await page.evaluate(() => navigator.clipboard.readText())).toBe('Alpha');
+      expect(await readDocument(page)).toBe(source);
+      await page.locator('.cm-content').click();
+      expect(await copyFresh(page, `lists-${theme}-${width}`)).toBe(source);
+      expect(await readDocument(page)).toBe(source);
+      for (const key of ['a', 'Backspace', 'Delete', 'Meta+x']) {
+        await page.keyboard.press(key);
+        expect(await readDocument(page)).toBe(source);
+      }
+      await page.evaluate(() => navigator.clipboard.writeText('paste-attempt'));
+      await page.keyboard.press('Meta+v');
+      expect(await readDocument(page)).toBe(source);
+      await page.locator('.cm-lp-task-marker').first().click();
+      expect(await readDocument(page)).toBe(source);
+    });
+  }
+}
+
+test('列表模式隔离与嵌套代码保护', async ({ page }) => {
+  const text = '- parent\n\n  ```\n  - fenced code\n  ```\n\n      - indented code\n\n- next\n';
+  await stubTauri(page, { entries: ['list.md', 'list.ts'].map(path => ({ path, kind: 'file', size: text.length, mtime_ms: 0 })), files: { 'list.md': text, 'list.ts': text } });
+  await page.goto('/');
+  await page.locator('.ft-row[title="list.md"]').click();
+  await expect(page.locator('.cm-lp-list-first')).toHaveCount(2);
+  await expect(page.locator('.cm-lp-codeblock-line.cm-lp-list-line')).toHaveCount(0);
+  expect(await readDocument(page)).toBe(text);
+  await page.locator('.ft-row[title="list.ts"]').click();
+  await expect(page.locator('.cm-lp-list-line')).toHaveCount(0);
+  expect(await readDocument(page)).toBe(text);
+  await page.locator('.ft-row[title="list.md"]').click();
+  await expect(page.locator('.cm-lp-list-first')).toHaveCount(2);
+  expect(await readDocument(page)).toBe(text);
+});
+
+test('partial组超出后台提前范围仍完成且末端标记不重叠', async ({ page }) => {
+  const large = Array.from({ length: 18000 }, (_, i) => `${i === 17999 ? '999999999. [x]' : `${i + 1}.`} Item ${i + 1} ${'long list content '.repeat(3)}`).join('\n');
+  await stubTauri(page, { entries: [{ path: 'lists.md', kind: 'file', size: large.length, mtime_ms: 0 }], files: { 'lists.md': large } });
+  await page.goto('/');
+  await page.evaluate(() => {
+    (window as any).listStages = [];
+    new MutationObserver(() => {
+      const content = document.querySelector('.cm-content');
+      if (!content?.textContent?.includes('Item 1 long')) return;
+      const stage = content.querySelector('.cm-lp-list-marker') ? 'complete' : 'source';
+      const stages = (window as any).listStages;
+      if (stages.at(-1) !== stage) stages.push(stage);
+    }).observe(document.querySelector('.cm-content')!, { childList: true, subtree: true });
+  });
+  await page.locator('.ft-row[title="lists.md"]').click();
+  await expect(page.locator('.cm-lp-list-marker').first()).toBeVisible({ timeout: 15000 });
+  expect(await page.evaluate(() => (window as any).listStages)).toEqual(['source', 'complete']);
+  expect(await page.locator('.cm-scroller').evaluate(el => el.scrollTop)).toBe(0);
+  const before = await geometry(page, 'Item 1 long');
+  const scroller = page.locator('.cm-scroller');
+  await scroller.evaluate(el => { el.scrollTop = el.scrollHeight; });
+  await expect(page.locator('.cm-lp-list-marker').filter({ hasText: '999999999.' })).toBeVisible();
+  const tail = await geometry(page, 'Item 18000');
+  expect(Math.abs(tail.rects[0].x - before.rects[0].x)).toBeLessThanOrEqual(1);
+  const box = await page.locator('.cm-lp-list-marker').filter({ hasText: '999999999.' }).evaluate(el => {
+    const outer = el.getBoundingClientRect();
+    return { left: outer.left, right: outer.right, spans: [...el.children].map(child => ({ left: child.getBoundingClientRect().left, right: child.getBoundingClientRect().right })) };
+  });
+  expect(box.spans[0].left).toBeGreaterThanOrEqual(box.left - 1);
+  expect(box.spans[0].right).toBeLessThan(box.spans[1].left);
+  expect(box.spans[1].right).toBeLessThan(tail.rects[0].x);
+  expect(await page.locator('.cm-lp-list-line').count()).toBeLessThan(300);
+  expect(await readDocument(page)).toBe(large);
+  await scroller.evaluate(el => { el.scrollTop = el.scrollHeight * .5; });
+  await page.waitForTimeout(100);
+  await page.locator('.cm-lp-list-line').first().click();
+  expect(await readDocument(page)).toBe(large);
+  await scroller.evaluate(el => { el.scrollTop = 0; });
+  await expect(page.locator('.cm-lp-list-line').filter({ hasText: 'Item 1 long' })).toBeVisible();
+  expect(Math.abs((await geometry(page, 'Item 1 long')).rects[0].x - before.rects[0].x)).toBeLessThanOrEqual(1);
+  expect(await page.evaluate(() => (window as any).listStages)).toEqual(['source', 'complete']);
+});
+
+test('100k密集项完整回调预算与最终标记', async ({ page }, info) => {
+  const text = Array.from({ length: 100000 }, (_, i) => `${i === 99999 ? '999999999. [x]' : `${i + 1}.`} z`).join('\n');
+  await page.addInitScript(() => {
+    const original = window.setTimeout;
+    (window as any).listCallbacks = [];
+    window.setTimeout = ((callback: TimerHandler, delay?: number, ...args: any[]) => original(() => {
+      const start = performance.now();
+      try { if (typeof callback === 'function') callback(...args); }
+      finally { if (delay === 16) (window as any).listCallbacks.push(performance.now() - start); }
+    }, delay)) as typeof window.setTimeout;
+  });
+  await stubTauri(page, { entries: [{ path: 'dense.md', kind: 'file', size: text.length, mtime_ms: 0 }], files: { 'dense.md': text } });
+  await page.goto('/');
+  await page.locator('.ft-row[title="dense.md"]').click();
+  await expect(page.locator('.cm-lp-list-marker').first()).toBeVisible({ timeout: 20000 });
+  const durations: number[] = await page.evaluate(() => (window as any).listCallbacks);
+  await info.attach('complete-callback-durations', { body: JSON.stringify({ max: Math.max(...durations), durations }), contentType: 'application/json' });
+  expect(durations.length).toBeGreaterThan(190);
+  expect(Math.max(...durations)).toBeLessThan(40);
+  await page.locator('.cm-scroller').evaluate(el => { el.scrollTop = el.scrollHeight; });
+  await expect(page.locator('.cm-lp-list-marker').filter({ hasText: '999999999.' })).toHaveText('999999999.[x]');
+  expect(await readDocument(page)).toBe(text);
+});
+
+test('短编号标记区紧凑而非语法最大容量', async ({ page }) => {
+  await page.setViewportSize({ width: 640, height: 800 });
+  await open(page, '1. Short one\n2. Short two\n');
+  const box = await page.locator('.cm-lp-list-line').first().evaluate(el => {
+    const marker = el.querySelector('.cm-lp-list-marker')!;
+    const text = marker.firstElementChild!.getBoundingClientRect();
+    const outer = marker.getBoundingClientRect();
+    return { marker: outer.width, text: text.width, gap: outer.right - text.right, available: el.getBoundingClientRect().width - parseFloat(getComputedStyle(el).paddingLeft) };
+  });
+  expect(box.marker - box.text).toBeCloseTo(box.gap, 0);
+  expect(box.gap).toBeGreaterThan(3);
+  expect(box.gap).toBeLessThan(12);
+  expect(box.marker).toBeLessThan(35);
+  expect(box.available).toBeGreaterThan(340);
+});

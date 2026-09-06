@@ -9,6 +9,7 @@ import { StateEffect, StateField } from "@codemirror/state";
 import type { EditorState, Range } from "@codemirror/state";
 import { syntaxTree } from "@codemirror/language";
 import { livePreviewTheme } from "./theme";
+import { listDecorations } from "./lists";
 import { detectFrontmatter, FrontmatterWidget } from "./frontmatter";
 import type { FrontmatterBlock } from "./frontmatter";
 import {
@@ -85,23 +86,11 @@ class WikilinkWidget extends WidgetType {
   }
 }
 
-class BulletWidget extends WidgetType {
-  eq(): boolean {
-    return true;
-  }
-  toDOM(): HTMLElement {
-    const el = document.createElement("span");
-    el.className = "cm-lp-bullet";
-    el.textContent = "•";
-    return el;
-  }
-}
-const BULLET = new BulletWidget();
-
 export function livePreview(ctx: PreviewContext) {
   return [
     livePreviewTheme,
     frontmatterDecorations,
+    listDecorations,
     ViewPlugin.fromClass(
       class {
         decorations: DecorationSet;
@@ -319,15 +308,6 @@ function collectSyntaxDecorations(
       if (name === "InlineCode") {
         decos.push(Decoration.mark({ class: "cm-lp-inline-code" }).range(ref.from, ref.to));
         return false;
-      }
-
-      if (name === "ListMark") {
-        const text = doc.sliceString(ref.from, ref.to);
-        // 有序列表保留编号；无序列表符号美化为 •。
-        if (!/^\d/.test(text)) {
-          decos.push(Decoration.replace({ widget: BULLET }).range(ref.from, ref.to));
-        }
-        return;
       }
 
       if (name === "Image") {
