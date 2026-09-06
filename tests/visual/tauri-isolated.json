@@ -1,0 +1,6 @@
+{
+  "identifier": "com.lumir.parity62",
+  "app": {
+    "windows": [{ "label": "main", "title": "Lumir M62 Isolated Acceptance", "width": 1280, "height": 900, "incognito": true }]
+  }
+}
