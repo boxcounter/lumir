@@ -1,0 +1,559 @@
+$ tsc --noEmit && vite build
+vite v8.2.2 building client environment for production...
+transforming...
+✓ 39 modules transformed.
+rendering chunks...
+computing gzip size...
+dist/index.html                   0.39 kB │ gzip:   0.26 kB
+dist/assets/index-B2pJIzOF.css    9.23 kB │ gzip:   2.54 kB
+dist/assets/index-6yYq4LEK.js   557.38 kB │ gzip: 193.57 kB
+
+✓ built in 103ms
+[plugin builtin:vite-reporter] 
+(!) Some chunks are larger than 500 kB after minification. Consider:
+- Using dynamic import() to code-split the application
+- Use build.rolldownOptions.output.codeSplitting to improve chunking: https://rolldown.rs/reference/OutputOptions.codeSplitting
+- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.
+Already up to date
+Done in 158ms using pnpm v11.25.0
+$ playwright test
+[WebServer] (node:72357) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] (node:72363) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+
+Running 29 tests using 1 worker
+
+(node:72369) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+  ✘   1 [chromium] › scenes/app-main.spec.ts:8:1 › 未打开 vault 的空态主界面 (1.0s)
+(node:72374) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+  ✓   2 [chromium] › scenes/app-main.spec.ts:21:1 › eink 选区保持反白 (129ms)
+  ✘   3 [chromium] › scenes/app-main.spec.ts:34:1 › 打开 vault 后的全类型文件树 (556ms)
+(node:72380) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+  ✓   4 [chromium] › scenes/app-main.spec.ts:65:1 › watch 增量刷新保持展开状态 (170ms)
+  ✓   5 [chromium] › scenes/app-main.spec.ts:87:1 › 树头部切换入口切换到另一个 vault (160ms)
+  ✘   6 [chromium] › scenes/parity-copy.spec.ts:7:3 › 真实键盘复制 frontmatter sequential=false (165ms)
+(node:72391) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+  ✘   7 [chromium] › scenes/parity-copy.spec.ts:7:3 › 真实键盘复制 frontmatter sequential=true (207ms)
+(node:72399) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+  ✓   8 [chromium] › scenes/parity-copy.spec.ts:26:1 › 短段与code切换不改源文 (183ms)
+  ✓   9 [chromium] › scenes/parity.spec.ts:21:5 › 原型对照 light 1280x900 (307ms)
+  ✓  10 [chromium] › scenes/parity.spec.ts:21:5 › 原型对照 light 1440x900 (293ms)
+  ✓  11 [chromium] › scenes/parity.spec.ts:21:5 › 原型对照 light 1200x700 (291ms)
+  ✘  12 [chromium] › scenes/parity.spec.ts:21:5 › 原型对照 light 1000x600 (300ms)
+(node:72412) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+  ✘  13 [chromium] › scenes/parity.spec.ts:21:5 › 原型对照 light 640x480 (320ms)
+(node:72418) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+  ✓  14 [chromium] › scenes/parity.spec.ts:21:5 › 原型对照 dark 1280x900 (326ms)
+  ✓  15 [chromium] › scenes/parity.spec.ts:21:5 › 原型对照 dark 1440x900 (293ms)
+  ✓  16 [chromium] › scenes/parity.spec.ts:21:5 › 原型对照 dark 1200x700 (291ms)
+  ✘  17 [chromium] › scenes/parity.spec.ts:21:5 › 原型对照 dark 1000x600 (287ms)
+(node:72430) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+  ✘  18 [chromium] › scenes/parity.spec.ts:21:5 › 原型对照 dark 640x480 (319ms)
+(node:72436) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+  ✓  19 [chromium] › scenes/parity.spec.ts:21:5 › 原型对照 eink 1280x900 (326ms)
+  ✓  20 [chromium] › scenes/parity.spec.ts:21:5 › 原型对照 eink 1440x900 (290ms)
+  ✓  21 [chromium] › scenes/parity.spec.ts:21:5 › 原型对照 eink 1200x700 (278ms)
+  ✘  22 [chromium] › scenes/parity.spec.ts:21:5 › 原型对照 eink 1000x600 (286ms)
+(node:72448) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+  ✘  23 [chromium] › scenes/parity.spec.ts:21:5 › 原型对照 eink 640x480 (313ms)
+(node:72454) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+  ✓  24 [chromium] › scenes/parity.spec.ts:79:1 › Thread IPC 成功与失败反馈 (225ms)
+  ✓  25 [chromium] › scenes/parity.spec.ts:92:1 › Thread 创建失败保留输入并提示 (178ms)
+  ✓  26 [chromium] › scenes/wikilink.spec.ts:18:1 › parseCases：span/embed 与 cases.json 一致（双解析器纪律前端侧） (5ms)
+  ✘  27 [chromium] › scenes/wikilink.spec.ts:85:1 › 链接三态显示（resolved / ambiguous / unresolved） (492ms)
+(node:72461) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+  ✓  28 [chromium] › scenes/wikilink.spec.ts:99:1 › 点击跳转：Mod-Click 跟随，锚点命中定位，锚点缺失给提示 (264ms)
+  ✓  29 [chromium] › scenes/wikilink.spec.ts:130:1 › 未创建链接一键创建并转为正常态 (189ms)
+
+
+  1) [chromium] › scenes/app-main.spec.ts:8:1 › 未打开 vault 的空态主界面 ───────────────────────────────────
+
+    Error: expect(page).toHaveScreenshot(expected) failed
+
+      19718 pixels (ratio 0.03 of all image pixels) are different.
+
+      Snapshot: app-main.png
+
+    Call log:
+      - Expect "toHaveScreenshot(app-main.png)" with timeout 5000ms
+        - verifying given screenshot expectation
+      - taking page screenshot
+        - disabled all CSS animations
+      - waiting for fonts to load...
+      - fonts loaded
+      - 19718 pixels (ratio 0.03 of all image pixels) are different.
+      - waiting 100ms before taking screenshot
+      - taking page screenshot
+        - disabled all CSS animations
+      - waiting for fonts to load...
+      - fonts loaded
+      - captured a stable screenshot
+      - 19718 pixels (ratio 0.03 of all image pixels) are different.
+
+
+      16 |   await expect(page.locator(".cm-content")).toContainText("标题一");
+      17 |   await page.waitForTimeout(400);
+    > 18 |   await expect(page).toHaveScreenshot("app-main.png");
+         |                      ^
+      19 | });
+      20 |
+      21 | test("eink 选区保持反白", async ({ page }) => {
+        at /Users/boxcounter/Code/Boxcounter/lumir/.tower/worktrees/wt-62/tests/visual/scenes/app-main.spec.ts:18:22
+
+    attachment #1: app-main (image/png) ────────────────────────────────────────────────────────────
+    Expected: baselines/app-main.spec.ts-snapshots/app-main-chromium-darwin.png
+    Received: test-results/app-main-未打开-vault-的空态主界面-chromium/app-main-actual.png
+    Diff:     test-results/app-main-未打开-vault-的空态主界面-chromium/app-main-diff.png
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    Error Context: test-results/app-main-未打开-vault-的空态主界面-chromium/error-context.md
+
+  2) [chromium] › scenes/app-main.spec.ts:34:1 › 打开 vault 后的全类型文件树 ─────────────────────────────────
+
+    Error: expect(page).toHaveScreenshot(expected) failed
+
+      15252 pixels (ratio 0.02 of all image pixels) are different.
+
+      Snapshot: filetree-open.png
+
+    Call log:
+      - Expect "toHaveScreenshot(filetree-open.png)" with timeout 5000ms
+        - verifying given screenshot expectation
+      - taking page screenshot
+        - disabled all CSS animations
+      - waiting for fonts to load...
+      - fonts loaded
+      - 15252 pixels (ratio 0.02 of all image pixels) are different.
+      - waiting 100ms before taking screenshot
+      - taking page screenshot
+        - disabled all CSS animations
+      - waiting for fonts to load...
+      - fonts loaded
+      - captured a stable screenshot
+      - 15252 pixels (ratio 0.02 of all image pixels) are different.
+
+
+      60 |   await expect(page.locator(".editor-notice")).toBeHidden();
+      61 |
+    > 62 |   await expect(page).toHaveScreenshot("filetree-open.png");
+         |                      ^
+      63 | });
+      64 |
+      65 | test("watch 增量刷新保持展开状态", async ({ page }) => {
+        at /Users/boxcounter/Code/Boxcounter/lumir/.tower/worktrees/wt-62/tests/visual/scenes/app-main.spec.ts:62:22
+
+    attachment #1: filetree-open (image/png) ───────────────────────────────────────────────────────
+    Expected: baselines/app-main.spec.ts-snapshots/filetree-open-chromium-darwin.png
+    Received: test-results/app-main-打开-vault-后的全类型文件树-chromium/filetree-open-actual.png
+    Diff:     test-results/app-main-打开-vault-后的全类型文件树-chromium/filetree-open-diff.png
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    Error Context: test-results/app-main-打开-vault-后的全类型文件树-chromium/error-context.md
+
+  3) [chromium] › scenes/parity-copy.spec.ts:7:3 › 真实键盘复制 frontmatter sequential=false ─────────────
+
+    Error: expect(received).toBe(expected) // Object.is equality
+
+    - Expected  -  6
+    + Received  + 24
+
+    - ---
+    - title: 测试属性
+    - tags: [one, two]
+    - ---
+    -
+    - # 正文标题
+    + demo-vault
+    + frontmatter.md
+    + 无当前 Thread
+    + —
+    + demo-vault
+    + 切换
+    +
+    + ¶
+    + frontmatter.md
+    +
+    + plain.md
+    + Threads
+    + + 新建
+    + 还没有 Thread。创建一个意图，开始工作。
+    +
+    + 5
+    + 6
+    + 7
+    + 8
+    + 9
+    + 测试属性
+    + onetwo
+    +
+    + 正文标题
+
+      完整正文不能丢失。
+      ↵
+
+      20 |     const copied = await page.evaluate(() => navigator.clipboard.readText());
+      21 |     await info.attach("copied", { body: JSON.stringify({ expected: frontmatter, copied }), contentType: "application/json" });
+    > 22 |     expect(copied).toBe(frontmatter);
+         |                    ^
+      23 |   });
+      24 | }
+      25 |
+        at /Users/boxcounter/Code/Boxcounter/lumir/.tower/worktrees/wt-62/tests/visual/scenes/parity-copy.spec.ts:22:20
+
+    Error Context: test-results/parity-copy-真实键盘复制-frontmatter-sequential-false-chromium/error-context.md
+
+  4) [chromium] › scenes/parity-copy.spec.ts:7:3 › 真实键盘复制 frontmatter sequential=true ──────────────
+
+    Error: expect(received).toBe(expected) // Object.is equality
+
+    - Expected  -  6
+    + Received  + 24
+
+    - ---
+    - title: 测试属性
+    - tags: [one, two]
+    - ---
+    -
+    - # 正文标题
+    + demo-vault
+    + frontmatter.md
+    + 无当前 Thread
+    + —
+    + demo-vault
+    + 切换
+    +
+    + ¶
+    + frontmatter.md
+    +
+    + plain.md
+    + Threads
+    + + 新建
+    + 还没有 Thread。创建一个意图，开始工作。
+    +
+    + 5
+    + 6
+    + 7
+    + 8
+    + 9
+    + 测试属性
+    + onetwo
+    +
+    + 正文标题
+
+      完整正文不能丢失。
+      ↵
+
+      20 |     const copied = await page.evaluate(() => navigator.clipboard.readText());
+      21 |     await info.attach("copied", { body: JSON.stringify({ expected: frontmatter, copied }), contentType: "application/json" });
+    > 22 |     expect(copied).toBe(frontmatter);
+         |                    ^
+      23 |   });
+      24 | }
+      25 |
+        at /Users/boxcounter/Code/Boxcounter/lumir/.tower/worktrees/wt-62/tests/visual/scenes/parity-copy.spec.ts:22:20
+
+    Error Context: test-results/parity-copy-真实键盘复制-frontmatter-sequential-true-chromium/error-context.md
+
+  5) [chromium] › scenes/parity.spec.ts:21:5 › 原型对照 light 1000x600 ─────────────────────────────────
+
+    Error: expect(received).toBe(expected) // Object.is equality
+
+    Expected: 204
+    Received: 244
+
+      60 |       const frozen = await geometry(reference, ["#nav", "#masthead", "#sheet", "#body-col", "#doc h1"]);
+      61 |       await info.attach("computed", { body: JSON.stringify({ production, prototype: frozen }, null, 2), contentType: "application/json" });
+    > 62 |       expect.soft(production[".pane-filetree"].width).toBe(frozen["#nav"].width);
+         |                                                       ^
+      63 |       expect.soft(production[".cm-content"].width).toBe(frozen["#body-col"].width);
+      64 |       expect.soft(production[".cm-content"].x).toBe(frozen["#body-col"].x);
+      65 |       expect.soft(production[".cm-line"].y).toBe(frozen["#doc h1"].y);
+        at /Users/boxcounter/Code/Boxcounter/lumir/.tower/worktrees/wt-62/tests/visual/scenes/parity.spec.ts:62:55
+
+    Error: expect(received).toBe(expected) // Object.is equality
+
+    Expected: 362
+    Received: 382
+
+      62 |       expect.soft(production[".pane-filetree"].width).toBe(frozen["#nav"].width);
+      63 |       expect.soft(production[".cm-content"].width).toBe(frozen["#body-col"].width);
+    > 64 |       expect.soft(production[".cm-content"].x).toBe(frozen["#body-col"].x);
+         |                                                ^
+      65 |       expect.soft(production[".cm-line"].y).toBe(frozen["#doc h1"].y);
+      66 |       const treeStyle = await page.locator('.ft-row[title="写作"]').evaluate(el => ({ height: el.getBoundingClientRect().height, weight: getComputedStyle(el.querySelector(".ft-name") ?? el).fontWeight }));
+      67 |       expect.soft(treeStyle.height).toBe(27);
+        at /Users/boxcounter/Code/Boxcounter/lumir/.tower/worktrees/wt-62/tests/visual/scenes/parity.spec.ts:64:48
+
+    Error Context: test-results/parity-原型对照-light-1000x600-chromium/error-context.md
+
+  6) [chromium] › scenes/parity.spec.ts:21:5 › 原型对照 light 640x480 ──────────────────────────────────
+
+    Error: expect(received).toBe(expected) // Object.is equality
+
+    Expected: 204
+    Received: 243.1875
+
+      60 |       const frozen = await geometry(reference, ["#nav", "#masthead", "#sheet", "#body-col", "#doc h1"]);
+      61 |       await info.attach("computed", { body: JSON.stringify({ production, prototype: frozen }, null, 2), contentType: "application/json" });
+    > 62 |       expect.soft(production[".pane-filetree"].width).toBe(frozen["#nav"].width);
+         |                                                       ^
+      63 |       expect.soft(production[".cm-content"].width).toBe(frozen["#body-col"].width);
+      64 |       expect.soft(production[".cm-content"].x).toBe(frozen["#body-col"].x);
+      65 |       expect.soft(production[".cm-line"].y).toBe(frozen["#doc h1"].y);
+        at /Users/boxcounter/Code/Boxcounter/lumir/.tower/worktrees/wt-62/tests/visual/scenes/parity.spec.ts:62:55
+
+    Error: expect(received).toBe(expected) // Object.is equality
+
+    Expected: 388
+    Received: 372
+
+      61 |       await info.attach("computed", { body: JSON.stringify({ production, prototype: frozen }, null, 2), contentType: "application/json" });
+      62 |       expect.soft(production[".pane-filetree"].width).toBe(frozen["#nav"].width);
+    > 63 |       expect.soft(production[".cm-content"].width).toBe(frozen["#body-col"].width);
+         |                                                    ^
+      64 |       expect.soft(production[".cm-content"].x).toBe(frozen["#body-col"].x);
+      65 |       expect.soft(production[".cm-line"].y).toBe(frozen["#doc h1"].y);
+      66 |       const treeStyle = await page.locator('.ft-row[title="写作"]').evaluate(el => ({ height: el.getBoundingClientRect().height, weight: getComputedStyle(el.querySelector(".ft-name") ?? el).fontWeight }));
+        at /Users/boxcounter/Code/Boxcounter/lumir/.tower/worktrees/wt-62/tests/visual/scenes/parity.spec.ts:63:52
+
+    Error: expect(received).toBe(expected) // Object.is equality
+
+    Expected: 228
+    Received: 268
+
+      62 |       expect.soft(production[".pane-filetree"].width).toBe(frozen["#nav"].width);
+      63 |       expect.soft(production[".cm-content"].width).toBe(frozen["#body-col"].width);
+    > 64 |       expect.soft(production[".cm-content"].x).toBe(frozen["#body-col"].x);
+         |                                                ^
+      65 |       expect.soft(production[".cm-line"].y).toBe(frozen["#doc h1"].y);
+      66 |       const treeStyle = await page.locator('.ft-row[title="写作"]').evaluate(el => ({ height: el.getBoundingClientRect().height, weight: getComputedStyle(el.querySelector(".ft-name") ?? el).fontWeight }));
+      67 |       expect.soft(treeStyle.height).toBe(27);
+        at /Users/boxcounter/Code/Boxcounter/lumir/.tower/worktrees/wt-62/tests/visual/scenes/parity.spec.ts:64:48
+
+    Error Context: test-results/parity-原型对照-light-640x480-chromium/error-context.md
+
+  7) [chromium] › scenes/parity.spec.ts:21:5 › 原型对照 dark 1000x600 ──────────────────────────────────
+
+    Error: expect(received).toBe(expected) // Object.is equality
+
+    Expected: 204
+    Received: 244
+
+      60 |       const frozen = await geometry(reference, ["#nav", "#masthead", "#sheet", "#body-col", "#doc h1"]);
+      61 |       await info.attach("computed", { body: JSON.stringify({ production, prototype: frozen }, null, 2), contentType: "application/json" });
+    > 62 |       expect.soft(production[".pane-filetree"].width).toBe(frozen["#nav"].width);
+         |                                                       ^
+      63 |       expect.soft(production[".cm-content"].width).toBe(frozen["#body-col"].width);
+      64 |       expect.soft(production[".cm-content"].x).toBe(frozen["#body-col"].x);
+      65 |       expect.soft(production[".cm-line"].y).toBe(frozen["#doc h1"].y);
+        at /Users/boxcounter/Code/Boxcounter/lumir/.tower/worktrees/wt-62/tests/visual/scenes/parity.spec.ts:62:55
+
+    Error: expect(received).toBe(expected) // Object.is equality
+
+    Expected: 362
+    Received: 382
+
+      62 |       expect.soft(production[".pane-filetree"].width).toBe(frozen["#nav"].width);
+      63 |       expect.soft(production[".cm-content"].width).toBe(frozen["#body-col"].width);
+    > 64 |       expect.soft(production[".cm-content"].x).toBe(frozen["#body-col"].x);
+         |                                                ^
+      65 |       expect.soft(production[".cm-line"].y).toBe(frozen["#doc h1"].y);
+      66 |       const treeStyle = await page.locator('.ft-row[title="写作"]').evaluate(el => ({ height: el.getBoundingClientRect().height, weight: getComputedStyle(el.querySelector(".ft-name") ?? el).fontWeight }));
+      67 |       expect.soft(treeStyle.height).toBe(27);
+        at /Users/boxcounter/Code/Boxcounter/lumir/.tower/worktrees/wt-62/tests/visual/scenes/parity.spec.ts:64:48
+
+    Error Context: test-results/parity-原型对照-dark-1000x600-chromium/error-context.md
+
+  8) [chromium] › scenes/parity.spec.ts:21:5 › 原型对照 dark 640x480 ───────────────────────────────────
+
+    Error: expect(received).toBe(expected) // Object.is equality
+
+    Expected: 204
+    Received: 243.1875
+
+      60 |       const frozen = await geometry(reference, ["#nav", "#masthead", "#sheet", "#body-col", "#doc h1"]);
+      61 |       await info.attach("computed", { body: JSON.stringify({ production, prototype: frozen }, null, 2), contentType: "application/json" });
+    > 62 |       expect.soft(production[".pane-filetree"].width).toBe(frozen["#nav"].width);
+         |                                                       ^
+      63 |       expect.soft(production[".cm-content"].width).toBe(frozen["#body-col"].width);
+      64 |       expect.soft(production[".cm-content"].x).toBe(frozen["#body-col"].x);
+      65 |       expect.soft(production[".cm-line"].y).toBe(frozen["#doc h1"].y);
+        at /Users/boxcounter/Code/Boxcounter/lumir/.tower/worktrees/wt-62/tests/visual/scenes/parity.spec.ts:62:55
+
+    Error: expect(received).toBe(expected) // Object.is equality
+
+    Expected: 388
+    Received: 372
+
+      61 |       await info.attach("computed", { body: JSON.stringify({ production, prototype: frozen }, null, 2), contentType: "application/json" });
+      62 |       expect.soft(production[".pane-filetree"].width).toBe(frozen["#nav"].width);
+    > 63 |       expect.soft(production[".cm-content"].width).toBe(frozen["#body-col"].width);
+         |                                                    ^
+      64 |       expect.soft(production[".cm-content"].x).toBe(frozen["#body-col"].x);
+      65 |       expect.soft(production[".cm-line"].y).toBe(frozen["#doc h1"].y);
+      66 |       const treeStyle = await page.locator('.ft-row[title="写作"]').evaluate(el => ({ height: el.getBoundingClientRect().height, weight: getComputedStyle(el.querySelector(".ft-name") ?? el).fontWeight }));
+        at /Users/boxcounter/Code/Boxcounter/lumir/.tower/worktrees/wt-62/tests/visual/scenes/parity.spec.ts:63:52
+
+    Error: expect(received).toBe(expected) // Object.is equality
+
+    Expected: 228
+    Received: 268
+
+      62 |       expect.soft(production[".pane-filetree"].width).toBe(frozen["#nav"].width);
+      63 |       expect.soft(production[".cm-content"].width).toBe(frozen["#body-col"].width);
+    > 64 |       expect.soft(production[".cm-content"].x).toBe(frozen["#body-col"].x);
+         |                                                ^
+      65 |       expect.soft(production[".cm-line"].y).toBe(frozen["#doc h1"].y);
+      66 |       const treeStyle = await page.locator('.ft-row[title="写作"]').evaluate(el => ({ height: el.getBoundingClientRect().height, weight: getComputedStyle(el.querySelector(".ft-name") ?? el).fontWeight }));
+      67 |       expect.soft(treeStyle.height).toBe(27);
+        at /Users/boxcounter/Code/Boxcounter/lumir/.tower/worktrees/wt-62/tests/visual/scenes/parity.spec.ts:64:48
+
+    Error Context: test-results/parity-原型对照-dark-640x480-chromium/error-context.md
+
+  9) [chromium] › scenes/parity.spec.ts:21:5 › 原型对照 eink 1000x600 ──────────────────────────────────
+
+    Error: expect(received).toBe(expected) // Object.is equality
+
+    Expected: 204
+    Received: 244
+
+      60 |       const frozen = await geometry(reference, ["#nav", "#masthead", "#sheet", "#body-col", "#doc h1"]);
+      61 |       await info.attach("computed", { body: JSON.stringify({ production, prototype: frozen }, null, 2), contentType: "application/json" });
+    > 62 |       expect.soft(production[".pane-filetree"].width).toBe(frozen["#nav"].width);
+         |                                                       ^
+      63 |       expect.soft(production[".cm-content"].width).toBe(frozen["#body-col"].width);
+      64 |       expect.soft(production[".cm-content"].x).toBe(frozen["#body-col"].x);
+      65 |       expect.soft(production[".cm-line"].y).toBe(frozen["#doc h1"].y);
+        at /Users/boxcounter/Code/Boxcounter/lumir/.tower/worktrees/wt-62/tests/visual/scenes/parity.spec.ts:62:55
+
+    Error: expect(received).toBe(expected) // Object.is equality
+
+    Expected: 362
+    Received: 382
+
+      62 |       expect.soft(production[".pane-filetree"].width).toBe(frozen["#nav"].width);
+      63 |       expect.soft(production[".cm-content"].width).toBe(frozen["#body-col"].width);
+    > 64 |       expect.soft(production[".cm-content"].x).toBe(frozen["#body-col"].x);
+         |                                                ^
+      65 |       expect.soft(production[".cm-line"].y).toBe(frozen["#doc h1"].y);
+      66 |       const treeStyle = await page.locator('.ft-row[title="写作"]').evaluate(el => ({ height: el.getBoundingClientRect().height, weight: getComputedStyle(el.querySelector(".ft-name") ?? el).fontWeight }));
+      67 |       expect.soft(treeStyle.height).toBe(27);
+        at /Users/boxcounter/Code/Boxcounter/lumir/.tower/worktrees/wt-62/tests/visual/scenes/parity.spec.ts:64:48
+
+    Error Context: test-results/parity-原型对照-eink-1000x600-chromium/error-context.md
+
+  10) [chromium] › scenes/parity.spec.ts:21:5 › 原型对照 eink 640x480 ──────────────────────────────────
+
+    Error: expect(received).toBe(expected) // Object.is equality
+
+    Expected: 204
+    Received: 243.1875
+
+      60 |       const frozen = await geometry(reference, ["#nav", "#masthead", "#sheet", "#body-col", "#doc h1"]);
+      61 |       await info.attach("computed", { body: JSON.stringify({ production, prototype: frozen }, null, 2), contentType: "application/json" });
+    > 62 |       expect.soft(production[".pane-filetree"].width).toBe(frozen["#nav"].width);
+         |                                                       ^
+      63 |       expect.soft(production[".cm-content"].width).toBe(frozen["#body-col"].width);
+      64 |       expect.soft(production[".cm-content"].x).toBe(frozen["#body-col"].x);
+      65 |       expect.soft(production[".cm-line"].y).toBe(frozen["#doc h1"].y);
+        at /Users/boxcounter/Code/Boxcounter/lumir/.tower/worktrees/wt-62/tests/visual/scenes/parity.spec.ts:62:55
+
+    Error: expect(received).toBe(expected) // Object.is equality
+
+    Expected: 388
+    Received: 372
+
+      61 |       await info.attach("computed", { body: JSON.stringify({ production, prototype: frozen }, null, 2), contentType: "application/json" });
+      62 |       expect.soft(production[".pane-filetree"].width).toBe(frozen["#nav"].width);
+    > 63 |       expect.soft(production[".cm-content"].width).toBe(frozen["#body-col"].width);
+         |                                                    ^
+      64 |       expect.soft(production[".cm-content"].x).toBe(frozen["#body-col"].x);
+      65 |       expect.soft(production[".cm-line"].y).toBe(frozen["#doc h1"].y);
+      66 |       const treeStyle = await page.locator('.ft-row[title="写作"]').evaluate(el => ({ height: el.getBoundingClientRect().height, weight: getComputedStyle(el.querySelector(".ft-name") ?? el).fontWeight }));
+        at /Users/boxcounter/Code/Boxcounter/lumir/.tower/worktrees/wt-62/tests/visual/scenes/parity.spec.ts:63:52
+
+    Error: expect(received).toBe(expected) // Object.is equality
+
+    Expected: 228
+    Received: 268
+
+      62 |       expect.soft(production[".pane-filetree"].width).toBe(frozen["#nav"].width);
+      63 |       expect.soft(production[".cm-content"].width).toBe(frozen["#body-col"].width);
+    > 64 |       expect.soft(production[".cm-content"].x).toBe(frozen["#body-col"].x);
+         |                                                ^
+      65 |       expect.soft(production[".cm-line"].y).toBe(frozen["#doc h1"].y);
+      66 |       const treeStyle = await page.locator('.ft-row[title="写作"]').evaluate(el => ({ height: el.getBoundingClientRect().height, weight: getComputedStyle(el.querySelector(".ft-name") ?? el).fontWeight }));
+      67 |       expect.soft(treeStyle.height).toBe(27);
+        at /Users/boxcounter/Code/Boxcounter/lumir/.tower/worktrees/wt-62/tests/visual/scenes/parity.spec.ts:64:48
+
+    Error Context: test-results/parity-原型对照-eink-640x480-chromium/error-context.md
+
+  11) [chromium] › scenes/wikilink.spec.ts:85:1 › 链接三态显示（resolved / ambiguous / unresolved） ────────
+
+    Error: expect(page).toHaveScreenshot(expected) failed
+
+      12939 pixels (ratio 0.02 of all image pixels) are different.
+
+      Snapshot: wikilink-states.png
+
+    Call log:
+      - Expect "toHaveScreenshot(wikilink-states.png)" with timeout 5000ms
+        - verifying given screenshot expectation
+      - taking page screenshot
+        - disabled all CSS animations
+      - waiting for fonts to load...
+      - fonts loaded
+      - 12939 pixels (ratio 0.02 of all image pixels) are different.
+      - waiting 100ms before taking screenshot
+      - taking page screenshot
+        - disabled all CSS animations
+      - waiting for fonts to load...
+      - fonts loaded
+      - captured a stable screenshot
+      - 12939 pixels (ratio 0.02 of all image pixels) are different.
+
+
+      94 |   // unresolved：未创建样式，区分显示但不是错误
+      95 |   await expect(page.locator(".cm-lp-wikilink-unresolved")).toContainText("missing");
+    > 96 |   await expect(page).toHaveScreenshot("wikilink-states.png");
+         |                      ^
+      97 | });
+      98 |
+      99 | test("点击跳转：Mod-Click 跟随，锚点命中定位，锚点缺失给提示", async ({ page }) => {
+        at /Users/boxcounter/Code/Boxcounter/lumir/.tower/worktrees/wt-62/tests/visual/scenes/wikilink.spec.ts:96:22
+
+    attachment #1: wikilink-states (image/png) ─────────────────────────────────────────────────────
+    Expected: baselines/wikilink.spec.ts-snapshots/wikilink-states-chromium-darwin.png
+    Received: test-results/wikilink-链接三态显示（resolved-ambiguous-unresolved）-chromium/wikilink-states-actual.png
+    Diff:     test-results/wikilink-链接三态显示（resolved-ambiguous-unresolved）-chromium/wikilink-states-diff.png
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    Error Context: test-results/wikilink-链接三态显示（resolved-ambiguous-unresolved）-chromium/error-context.md
+
+  11 failed
+    [chromium] › scenes/app-main.spec.ts:8:1 › 未打开 vault 的空态主界面 ────────────────────────────────────
+    [chromium] › scenes/app-main.spec.ts:34:1 › 打开 vault 后的全类型文件树 ──────────────────────────────────
+    [chromium] › scenes/parity-copy.spec.ts:7:3 › 真实键盘复制 frontmatter sequential=false ──────────────
+    [chromium] › scenes/parity-copy.spec.ts:7:3 › 真实键盘复制 frontmatter sequential=true ───────────────
+    [chromium] › scenes/parity.spec.ts:21:5 › 原型对照 light 1000x600 ──────────────────────────────────
+    [chromium] › scenes/parity.spec.ts:21:5 › 原型对照 light 640x480 ───────────────────────────────────
+    [chromium] › scenes/parity.spec.ts:21:5 › 原型对照 dark 1000x600 ───────────────────────────────────
+    [chromium] › scenes/parity.spec.ts:21:5 › 原型对照 dark 640x480 ────────────────────────────────────
+    [chromium] › scenes/parity.spec.ts:21:5 › 原型对照 eink 1000x600 ───────────────────────────────────
+    [chromium] › scenes/parity.spec.ts:21:5 › 原型对照 eink 640x480 ────────────────────────────────────
+    [chromium] › scenes/wikilink.spec.ts:85:1 › 链接三态显示（resolved / ambiguous / unresolved） ──────────
+  18 passed (13.3s)
+[ELIFECYCLE] Test failed. See above for more details.
