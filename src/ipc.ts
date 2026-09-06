@@ -84,3 +84,5 @@ export const threadCreate = (title: string): Promise<Thread> => invoke("thread_c
 export const threadUpdate = (thread: Thread): Promise<Thread> => invoke("thread_update", { thread });
 export const threadCurrent = (): Promise<Thread | null> => invoke("thread_current");
 export const threadSwitch = (id: string): Promise<Thread> => invoke("thread_switch", { id });
+export const vaultRegister = (id: string, path: string) => invoke("vault_register", { id, path });
+export const vaultRemap = (id: string, path: string) => invoke("vault_remap", { id, path });
