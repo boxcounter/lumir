@@ -133,7 +133,7 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
     extensions: [
       lineNumbers(),
       highlightActiveLine(),
-      EditorView.theme({ ".cm-gutters-before": { borderRight: "0" } }),
+      EditorView.theme({ ".cm-gutters-before": { border: "none" } }),
       modeCompartment.of(modeExtensions(initialMode)),
       EditorState.readOnly.of(true),
       EditorView.editable.of(false),

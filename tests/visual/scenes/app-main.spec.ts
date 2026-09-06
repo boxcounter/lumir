@@ -22,12 +22,13 @@ test("eink 选区保持反白", async ({ page }) => {
   await stubTauri(page, null);
   await page.goto("/");
   await page.evaluate(() => document.documentElement.dataset.theme = "eink");
-  const colors = await page.locator("body").evaluate(() => {
-    const root = getComputedStyle(document.documentElement);
-    return { selection: root.getPropertyValue("--selection-ink").trim(), background: root.getPropertyValue("--sel").trim() };
+  const colors = await page.locator(".cm-content").evaluate((element) => {
+    const selection = getComputedStyle(element, "::selection");
+    return { foreground: selection.color, background: selection.backgroundColor };
   });
-  expect(colors.selection).toBe("#fff");
-  expect(colors.background).toBe("#000");
+  expect(colors.foreground).not.toBe(colors.background);
+  expect(colors.foreground).toBe("rgb(255, 255, 255)");
+  expect(colors.background).toBe("rgb(0, 0, 0)");
 });
 
 test("打开 vault 后的全类型文件树", async ({ page }) => {
