@@ -8,7 +8,7 @@ export const livePreviewTheme = EditorView.theme({
   ".cm-gutters": { color: "var(--dim)", backgroundColor: "var(--bg-nav)", borderRight: "1px solid var(--bd-1)" },
   ".cm-activeLine": { backgroundColor: "var(--bg-2)" },
   ".cm-activeLineGutter": { backgroundColor: "var(--bg-2)", color: "var(--text)" },
-  ".cm-selectionBackground, ::selection": { backgroundColor: "var(--sel)" },
+  ".cm-selectionBackground, ::selection": { backgroundColor: "var(--sel)", color: "var(--selection-ink)" },
   ".cm-cursor, .cm-dropCursor": { borderLeftColor: "var(--text)" },
   ".ͼ4, .ͼ5, .ͼ6, .ͼ7, .ͼ8, .ͼ9, .ͼa, .ͼb, .ͼc, .ͼd, .ͼe, .ͼf": { color: "var(--text)" },
   ".cm-lp-h1": { fontFamily: "var(--font-display)", fontSize: "1.6em", fontWeight: "700", lineHeight: "1.4" },

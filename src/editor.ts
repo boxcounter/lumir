@@ -131,6 +131,7 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
     extensions: [
       lineNumbers(),
       highlightActiveLine(),
+      EditorView.theme({ ".cm-content": { fontFamily: "var(--font-body)" }, ".cm-line": { fontFamily: "var(--font-body)" }, ".cm-gutters-before": { borderRight: "0" } }),
       modeCompartment.of(modeExtensions(initialMode)),
       EditorState.readOnly.of(true),
       EditorView.editable.of(false),
