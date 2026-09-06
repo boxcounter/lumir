@@ -39,7 +39,8 @@ body { background:var(--bg); color:var(--text); font-family:var(--font-body); fo
 }
 .app-shell:has(.pane-panel:not([hidden])) { grid-template-columns: var(--nav-width) minmax(0, 1fr) minmax(220px, 280px); }
 .masthead {
-  grid-column: 1 / -1;
+  grid-column: 2 / -1;
+  grid-row: 1;
   display:flex;
   align-items:baseline;
   gap:10px;
@@ -56,17 +57,19 @@ body { background:var(--bg); color:var(--text); font-family:var(--font-body); fo
 .masthead-file { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .masthead-status { margin-left:auto; }
 .thread-files { flex-basis:100%; display:flex; flex-direction:column; gap:2px; margin-top:4px; }
-.thread-file { border:0; background:none; color:var(--dim); font:inherit; font-size:11px; text-align:left; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; cursor:pointer; }
+.thread-file { display:flex; align-items:baseline; gap:7px; width:100%; padding:3px 4px; border:0; background:none; color:var(--text); font:inherit; font-size:12.5px; text-align:left; cursor:pointer; }
+.thread-file-name { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.thread-file-role { margin-left:auto; flex:none; font-size:10.5px; color:var(--dim); }
+.thread-file[aria-current="true"] .thread-file-name { font-weight:600; }
+.thread-file[aria-current="true"] .thread-file-name::before { content:"¶ "; }
 .thread-file:hover { color:var(--text); text-decoration:underline; }
-.pane-filetree { display:flex; flex-direction:column; min-height:0; overflow:hidden; }
+.pane-filetree { grid-column:1; grid-row:1 / -1; display:flex; flex-direction:column; min-height:0; overflow:auto; }
+.pane-editor { grid-column:2; grid-row:2; }
+.pane-panel { grid-column:3; grid-row:2; }
 .tree-pane { flex:1 1 auto; min-height:128px; overflow:auto; }
-.threads-pane { flex:0 1 40%; min-height:120px; max-height:40%; overflow:auto; border-top:1px solid var(--bd-1); }
+.threads-pane { flex:none; overflow:visible; border-top:1px solid var(--bd-1); }
 .pane-panel[hidden] { display:none; }
-@media (max-height:560px) {
-  .masthead { min-height:44px; padding:12px 16px 7px; }
-  .tree-pane { min-height:108px; }
-  .threads-pane { min-height:108px; }
-}
+.masthead { min-height:57px; }
 @media (max-width:700px) {
   .app-shell { grid-template-columns: minmax(180px, 38vw) minmax(0, 1fr); }
   .masthead { padding-inline:16px; }
@@ -86,8 +89,11 @@ body { background:var(--bg); color:var(--text); font-family:var(--font-body); fo
 .thread-select strong { min-width:0; max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .thread-status, .thread-select time { color:var(--dim); font-size:11px; white-space:nowrap; }
 .thread-select time { max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.thread-actions { flex:none; display:flex; flex-wrap:wrap; justify-content:flex-end; gap:2px; }
-.thread-actions { margin-left:4px; }
+.thread-actions { font-size:11px; color:var(--dim); }
+.thread-actions summary { cursor:pointer; }
+.thread-actions time { display:block; }
+.thread-actions[open] { padding-top:4px; }
+.thread-card.is-current .thread-status { display:none; }
 .threads-empty { color:var(--dim); }
 .thread-create-form { display:flex; gap:4px; }
 .thread-create-input { min-width:0; width:120px; }
