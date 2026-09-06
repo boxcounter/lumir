@@ -2,6 +2,26 @@
 
 **结论：73af311 不通过最终验收。** 宽屏正文几何已接近原型，但阅读模式仍有明确视觉差异，窄窗几何和复制失败，真实新建 Thread 当前态不能重启恢复；本地内存原始值218.50MB高于200MB，但与指定macos-15 CI的可比性未确认，不据此宣布产品内存回归或通过。未更新任何既有视觉基线或容差。
 
+## 4565aed 合入后的补充验证
+
+M62已rebase到master `4565aedd86d2ae797712858488c0358b99a5ced6`（含M63/ADR）；未合并M64。下文旧矩阵与旧图是73af311历史证据，不是当前产品的最终签收。
+
+- `scripts/visual/run.sh scenes/parity-tree.spec.ts`：三主题×900/600/480高度共9项通过。覆盖100个长文件名滚动、0–4级文件颜色（100/96/91/86/81%及eink纯黑）、27px行高、400字重、末项和新建按钮可达。未把DOM可见等同实际逐图人审。
+- 唯一run `run-7Ju6wS` 实际WKWebView：87905创建Thread后正常退出；88171重启，报头恢复Thread且AXCheckBox Value=1。创建前空状态、创建后current文件、重启同id已脱敏归档于 [m63-merged](evidence/m63-merged/)。三份snapshot来自真实操作，不是合成测试。两个专用进程均已退出。
+- 本轮build、隔离release构建、Rust测试通过。目录日志 [m63-tree.log](evidence/m63-merged/m63-tree.log)。旧失败视觉基线未重录。
+
+### M65最终限定结论
+
+原218.50与ABBA四个max均高于200MB；A已超，说明超值不是B首次引入。B相对A4逐点正增量约1.34–1.41MB及3.40625MB，峰值主要差在WebContent/GPU，这是小正增量信号，不是代码因果结论，也不能宣布零回归。每版本两轮与非独占环境不足确定稳定增量。
+
+A1骤降26.984375MB，背景baseline RSS下降90.671875MB，原因未知。相关timeout任务管理器结束时间11:18:43.606Z晚于末样本11:18:05.121Z，但真实app/WebKit退出时间未知；不把任务结束当作子进程退出，不认定timeout导致骤降，不继续追索不可恢复历史。原1280×900与配对1200×800不同，保留全部原始数据，不选低值、不改200MB阈值。
+
+### 标准环境与人工待办
+
+只读GitHub查询：4565aed没有现成run；远端master当时为4bf544d，旧run不能代替当前SHA。现有perf.yml有workflow_dispatch，runner macos-15/Node22。要跑当前M62 tip，需要另行授权发布 `feat/parityacceptance62` 到origin并dispatch该ref，本轮未push/触发远端。现有workflow的cargo release命令未显式加custom-protocol，已向tower报告待核实负载有效性；未修改工作流。
+
+仍未完成：M64用户物理Cmd复制判别及hold裁决；M64合入后正文/短段/坐标/完整原型重验；真实WK窄窗和深层颜色精确矩阵；最终SHA的macos15标准全门禁。本机内存配对不代替标准环境。产品验收保持未完成。
+
 ## 依据与复跑
 
 基线 `73af311`，`git merge-base --is-ancestor 73af311 HEAD` 成功。目标仅为冻结 `design/editorial/index.html` 与 `RATIONALE.md`，不从生产截图反推目标，不合并历史 `feat/editorial`。

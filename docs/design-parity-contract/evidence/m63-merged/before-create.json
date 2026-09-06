@@ -1,0 +1,14 @@
+{
+  "stage": "before-create",
+  "capturedAt": "2026-09-06T11:37:17.489Z",
+  "manifest": {
+    "schema": 1,
+    "createdAt": "2026-09-06T11:37:02.605Z",
+    "identifier": "com.lumir.parity62",
+    "incognito": true,
+    "fixture": "200-paragraph-vault"
+  },
+  "threads": [],
+  "current": [],
+  "workspaces": []
+}
