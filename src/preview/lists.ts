@@ -29,6 +29,8 @@ class ListMarker extends WidgetType {
 }
 
 const measured = StateEffect.define<number>();
+const metadataReady = StateEffect.define<null>();
+interface GroupScan { item: Node | null; width: number; indent: number }
 
 class ListLayout {
   private unit = 0;
@@ -49,6 +51,7 @@ class ListLayout {
   decorations: DecorationSet = Decoration.none;
   private tree: ReturnType<typeof syntaxTree>;
   private groups = new Map<number, Group>();
+  private scans = new Map<number, GroupScan>();
   private timer: ReturnType<typeof setTimeout> | undefined;
   private pending = false;
   private destroyed = false;
@@ -74,21 +77,52 @@ class ListLayout {
     let resized = false;
     for (const tr of update.transactions) for (const effect of tr.effects) {
       if (effect.is(measured)) { this.unit = effect.value; resized = true; }
+      if (effect.is(metadataReady)) resized = true;
     }
-    if (update.docChanged || tree !== this.tree) this.groups.clear();
+    if (update.docChanged) {
+      this.groups.clear();
+      this.scans.clear();
+      clearTimeout(this.timer);
+      this.timer = undefined;
+    }
     this.tree = tree;
     if (update.geometryChanged) this.measure();
     if (resized || update.docChanged || tree !== syntaxTree(update.startState) || update.viewportChanged) this.build(update.view);
   }
 
   private schedule() {
-    if (this.timer !== undefined || !this.pending || this.destroyed) return;
+    if (this.timer !== undefined || (!this.pending && !this.scans.size) || this.destroyed) return;
     this.timer = setTimeout(() => {
       this.timer = undefined;
       if (this.destroyed) return;
-      const target = Math.min(this.view.state.doc.length, syntaxTree(this.view.state).length + 16384);
-      forceParsing(this.view, target, 5);
-      this.build(this.view);
+      if (this.scans.size) {
+        const deadline = performance.now() + 3;
+        let remaining = 512;
+        let published = false;
+        for (const [from, scan] of this.scans) {
+          while (scan.item && remaining-- > 0 && performance.now() < deadline) {
+            const item = scan.item;
+            const mark = item.getChild("ListMark");
+            if (mark) {
+              const label = this.view.state.doc.sliceString(mark.from, mark.to);
+              const task = item.getChild("Task")?.getChild("TaskMarker");
+              scan.width = Math.max(scan.width, (/^\d/.test(label) ? label.length : 1) + (task ? 3.5 : 0) + 1);
+            }
+            scan.item = item.nextSibling;
+          }
+          if (!scan.item) {
+            this.groups.set(from, { width: scan.width, body: scan.indent + scan.width });
+            this.scans.delete(from);
+            published = true;
+          }
+          if (remaining <= 0 || performance.now() >= deadline) break;
+        }
+        if (published) this.view.dispatch({ effects: metadataReady.of(null) });
+      } else {
+        const target = Math.min(this.view.state.doc.length, syntaxTree(this.view.state).length + 16384);
+        forceParsing(this.view, target, 5);
+        this.build(this.view);
+      }
       this.schedule();
     }, 16);
   }
@@ -109,18 +143,9 @@ class ListLayout {
     while (parent && !isList(parent)) parent = parent.parent;
     const ancestor = parent ? this.group(parent, state) : { body: 0 };
     if (!ancestor) return null;
-    let width = 0;
-    for (let item = list.firstChild; item; item = item.nextSibling) {
-      const mark = item.getChild("ListMark");
-      if (!mark) continue;
-      const label = state.doc.sliceString(mark.from, mark.to);
-      const task = item.getChild("Task")?.getChild("TaskMarker");
-      width = Math.max(width, (/^\d/.test(label) ? label.length : 1) + (task ? 3.5 : 0) + 1);
-    }
-    const body = ancestor.body + (parent ? 2 : 0) + width;
-    const result = { width, body };
-    this.groups.set(list.from, result);
-    return result;
+    if (!this.scans.has(list.from)) this.scans.set(list.from, { item: list.firstChild, width: 0, indent: ancestor.body + (parent ? 2 : 0) });
+    this.pending = true;
+    return null;
   }
 
   private build(view: EditorView) {

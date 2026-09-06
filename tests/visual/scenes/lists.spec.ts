@@ -138,6 +138,30 @@ test('partial组超出后台提前范围仍完成且末端标记不重叠', asyn
   expect(await page.evaluate(() => (window as any).listStages)).toEqual(['source', 'complete']);
 });
 
+test('100k密集项完整回调预算与最终标记', async ({ page }, info) => {
+  const text = Array.from({ length: 100000 }, (_, i) => `${i === 99999 ? '999999999. [x]' : `${i + 1}.`} z`).join('\n');
+  await page.addInitScript(() => {
+    const original = window.setTimeout;
+    (window as any).listCallbacks = [];
+    window.setTimeout = ((callback: TimerHandler, delay?: number, ...args: any[]) => original(() => {
+      const start = performance.now();
+      try { if (typeof callback === 'function') callback(...args); }
+      finally { if (delay === 16) (window as any).listCallbacks.push(performance.now() - start); }
+    }, delay)) as typeof window.setTimeout;
+  });
+  await stubTauri(page, { entries: [{ path: 'dense.md', kind: 'file', size: text.length, mtime_ms: 0 }], files: { 'dense.md': text } });
+  await page.goto('/');
+  await page.locator('.ft-row[title="dense.md"]').click();
+  await expect(page.locator('.cm-lp-list-marker').first()).toBeVisible({ timeout: 20000 });
+  const durations: number[] = await page.evaluate(() => (window as any).listCallbacks);
+  await info.attach('complete-callback-durations', { body: JSON.stringify({ max: Math.max(...durations), durations }), contentType: 'application/json' });
+  expect(durations.length).toBeGreaterThan(190);
+  expect(Math.max(...durations)).toBeLessThan(40);
+  await page.locator('.cm-scroller').evaluate(el => { el.scrollTop = el.scrollHeight; });
+  await expect(page.locator('.cm-lp-list-marker').filter({ hasText: '999999999.' })).toHaveText('999999999.[x]');
+  expect(await readDocument(page)).toBe(text);
+});
+
 test('短编号标记区紧凑而非语法最大容量', async ({ page }) => {
   await page.setViewportSize({ width: 640, height: 800 });
   await open(page, '1. Short one\n2. Short two\n');
