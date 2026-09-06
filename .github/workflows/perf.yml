@@ -70,7 +70,7 @@ jobs:
           workspaces: src-tauri
 
       - name: 构建 release 二进制（冷启动与内存测量的对象）
-        run: cargo build --release --manifest-path src-tauri/Cargo.toml
+        run: cargo build --release --features custom-protocol --manifest-path src-tauri/Cargo.toml
 
       - name: 冷启动 <300ms
         run: node scripts/perf/cold-start.mjs
