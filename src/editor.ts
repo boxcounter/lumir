@@ -147,7 +147,7 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
       ".cm-content": {
         fontFamily: "inherit", fontSize: "16px",
         flex: "0 1 var(--measure, 480px)", minWidth: "0",
-        marginInline: "auto", paddingBlock: "24px",
+        marginInline: "auto", paddingBlock: "44px",
         textAlign: "start", textIndent: "0", hangingPunctuation: "none", textAutospace: "no-autospace",
       },
       ".cm-line": { padding: "0" },
