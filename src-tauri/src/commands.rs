@@ -283,10 +283,11 @@ fn merge_last_vault(value: &mut serde_json::Value, root: &Path) {
 
 /// 调系统目录选择器打开 vault；用户取消返回 Ok(None)，不产生错误状态。
 /// 成功后写入 last_vault。
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub async fn vault_open(
     app: tauri::AppHandle,
     state: tauri::State<'_, VaultState>,
+    force_new: bool,
 ) -> Result<Option<VaultInfo>, CommandError> {
     let picked = rfd::AsyncFileDialog::new()
         .set_title("选择 vault 目录")
@@ -296,7 +297,7 @@ pub async fn vault_open(
         return Ok(None);
     };
     let root = handle.path().to_path_buf();
-    let info = open_vault(&app, &state, root, false)?;
+    let info = open_vault(&app, &state, root, force_new)?;
     write_last_vault(Path::new(&info.root))?;
     Ok(Some(info))
 }
