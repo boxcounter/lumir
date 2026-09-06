@@ -1,3 +1,5 @@
+//! Thread 与 vault 注册表的本地 JSON 持久化。
+//! 写入采用临时文件替换；应用进程内 command 调用串行，跨进程并发不在本阶段范围。
 use crate::{commands::CommandError, config};
 use serde::{Deserialize, Serialize};
 use std::{fs, path::PathBuf};
@@ -109,13 +111,14 @@ pub fn reconcile_vault(path: &std::path::Path) -> Result<(), CommandError> {
 pub fn vault_register(id: String, path: String) -> Result<VaultWorkspace, CommandError> {
     valid_id(&id)?;
     let d = workspaces()?;
-    fs::create_dir_all(&d).map_err(|e| CommandError::new("workspace_write", e.to_string()))?;
+    fs::create_dir_all(&d)
+        .map_err(|_| CommandError::new("workspace_write", "操作失败".to_string()))?;
     let v = VaultWorkspace { id, path };
     fs::write(
         d.join(format!("{}.json", v.id)),
         serde_json::to_vec_pretty(&v).unwrap(),
     )
-    .map_err(|e| CommandError::new("workspace_write", e.to_string()))?;
+    .map_err(|_| CommandError::new("workspace_write", "操作失败".to_string()))?;
     Ok(v)
 }
 #[tauri::command]
@@ -147,9 +150,11 @@ fn read_all() -> Result<Vec<Thread>, CommandError> {
     let d = dir()?;
     let _ = fs::create_dir_all(&d);
     let mut out = vec![];
-    for e in fs::read_dir(d).map_err(|e| CommandError::new("thread_read", e.to_string()))? {
+    for e in
+        fs::read_dir(d).map_err(|_| CommandError::new("thread_read", "操作失败".to_string()))?
+    {
         let p = e
-            .map_err(|e| CommandError::new("thread_read", e.to_string()))?
+            .map_err(|_| CommandError::new("thread_read", "操作失败".to_string()))?
             .path();
         if p.extension().and_then(|x| x.to_str()) != Some("json") {
             continue;
@@ -168,12 +173,13 @@ fn read_all() -> Result<Vec<Thread>, CommandError> {
 }
 fn save(t: &Thread) -> Result<(), CommandError> {
     let d = dir()?;
-    fs::create_dir_all(&d).map_err(|e| CommandError::new("thread_write", e.to_string()))?;
+    fs::create_dir_all(&d)
+        .map_err(|_| CommandError::new("thread_write", "操作失败".to_string()))?;
     let p = d.join(format!("{}.json", t.id));
     let tmp = p.with_extension("tmp");
     fs::write(&tmp, serde_json::to_vec_pretty(t).unwrap())
-        .map_err(|e| CommandError::new("thread_write", e.to_string()))?;
-    fs::rename(tmp, p).map_err(|e| CommandError::new("thread_write", e.to_string()))
+        .map_err(|_| CommandError::new("thread_write", "操作失败".to_string()))?;
+    fs::rename(tmp, p).map_err(|_| CommandError::new("thread_write", "操作失败".to_string()))
 }
 #[tauri::command]
 pub fn thread_list() -> Result<Vec<Thread>, CommandError> {
@@ -189,7 +195,15 @@ pub fn thread_create(title: String) -> Result<Thread, CommandError> {
             .as_secs()
     );
     let t = Thread {
-        id: format!("{}-{}", now.replace(':', ""), std::process::id()),
+        id: format!(
+            "{}-{}-{}",
+            now.replace(':', ""),
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .subsec_nanos()
+        ),
         title,
         status: ThreadStatus::Active,
         files: vec![],
