@@ -2,7 +2,8 @@ import { Compartment, EditorState } from "@codemirror/state";
 import type { Extension } from "@codemirror/state";
 import { EditorView, lineNumbers, highlightActiveLine } from "@codemirror/view";
 import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
-import { syntaxHighlighting, defaultHighlightStyle } from "@codemirror/language";
+import { HighlightStyle, syntaxHighlighting } from "@codemirror/language";
+import { tags } from "@lezer/highlight";
 import { GFM } from "@lezer/markdown";
 import type { EditorMode } from "./bindings/EditorMode";
 import { livePreview, previewRefresh } from "./preview/livePreview";
@@ -120,7 +121,16 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
   function modeExtensions(mode: EditorMode): Extension[] {
     const highlight: Extension[] = [
       markdown({ base: markdownLanguage, extensions: [GFM] }),
-      syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
+      syntaxHighlighting(
+        HighlightStyle.define([
+          { tag: tags.comment, color: "var(--dim)" },
+          { tag: [tags.keyword, tags.operator, tags.punctuation], color: "var(--text)" },
+          { tag: [tags.string, tags.regexp, tags.number], color: "var(--accent)" },
+          { tag: [tags.link, tags.url], color: "var(--accent)", textDecoration: "underline" },
+          { tag: [tags.heading, tags.strong], color: "var(--text)", fontWeight: "700" },
+        ]),
+        { fallback: true },
+      ),
     ];
     // CM6 的基础层必须跟随 shell 的三套主题；live preview 只增加 Markdown
     // 语义装饰，避免 code 模式落回默认白底、灰 gutter 或默认选区颜色。
@@ -144,7 +154,6 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
         color: "var(--selection-ink, var(--text))",
       },
       ".cm-cursor, .cm-dropCursor": { borderLeftColor: "var(--text)" },
-      ".cm-line span": { color: "inherit" },
       "&.cm-focused .cm-selectionBackground": { backgroundColor: "var(--sel)" },
     });
     return mode === "md"

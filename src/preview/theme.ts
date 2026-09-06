@@ -10,7 +10,6 @@ export const livePreviewTheme = EditorView.theme({
   ".cm-activeLineGutter": { backgroundColor: "var(--bg-2)", color: "var(--text)" },
   ".cm-selectionBackground, ::selection": { backgroundColor: "var(--sel)", color: "var(--selection-ink)" },
   ".cm-cursor, .cm-dropCursor": { borderLeftColor: "var(--text)" },
-  ".ͼ4, .ͼ5, .ͼ6, .ͼ7, .ͼ8, .ͼ9, .ͼa, .ͼb, .ͼc, .ͼd, .ͼe, .ͼf": { color: "var(--text)" },
   ".cm-lp-h1": { fontFamily: "var(--font-display)", fontSize: "1.78em", fontWeight: "700", lineHeight: "1.35" },
   ".cm-lp-h2": { fontFamily: "var(--font-display)", fontSize: "1.12em", fontWeight: "700", lineHeight: "1.45" },
   ".cm-lp-h3": { fontFamily: "var(--font-display)", fontSize: "1.08em", fontWeight: "700", lineHeight: "1.5" },
