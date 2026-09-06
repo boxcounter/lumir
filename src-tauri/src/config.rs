@@ -197,8 +197,18 @@ fn validate(raw: RawConfig) -> (AppConfig, Vec<String>) {
 
     let measure = match raw.editor.measure {
         None => defaults.editor.measure,
-        Some(serde_json::Value::Number(n)) => n.as_u64().filter(|v| (100..=2000).contains(v)).map(|v| v as u32).unwrap_or_else(|| { warnings.push("配置项 editor.measure 非法，已回退为 480".into()); defaults.editor.measure }),
-        _ => { warnings.push("配置项 editor.measure 应为 100-2000 的整数，已回退为 480".into()); defaults.editor.measure }
+        Some(serde_json::Value::Number(n)) => n
+            .as_u64()
+            .filter(|v| (100..=2000).contains(v))
+            .map(|v| v as u32)
+            .unwrap_or_else(|| {
+                warnings.push("配置项 editor.measure 非法，已回退为 480".into());
+                defaults.editor.measure
+            }),
+        _ => {
+            warnings.push("配置项 editor.measure 应为 100-2000 的整数，已回退为 480".into());
+            defaults.editor.measure
+        }
     };
     (
         AppConfig {
