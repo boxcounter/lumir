@@ -192,7 +192,7 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
       EditorView.theme({ ".cm-gutters-before": { border: "none" } }),
       modeCompartment.of(modeExtensions(initialMode)),
       EditorState.readOnly.of(true),
-      EditorView.editable.of(false),
+      EditorView.editable.of(true),
       EditorView.lineWrapping,
     ],
   });

@@ -117,6 +117,7 @@ export function livePreview(ctx: PreviewContext) {
           if (
             forced ||
             u.docChanged ||
+            u.selectionSet ||
             u.viewportChanged ||
             syntaxTree(u.state) !== syntaxTree(u.startState)
           ) {
@@ -130,14 +131,14 @@ export function livePreview(ctx: PreviewContext) {
 }
 
 // frontmatter 的 replace 跨行，而插件装饰不允许替换换行符（CM6 硬限制），
-// 故走 StateField：只在 docChanged 时重算，且 detectFrontmatter 从文档首部扫描、
+// 故走 StateField：文档或选区变化时重算，且 detectFrontmatter 从文档首部扫描、
 // 有行数上限（见 frontmatter.ts），与视口增量策略不冲突（不是全量装饰构建）。
 const frontmatterDecorations = StateField.define<DecorationSet>({
   create(state) {
     return frontmatterSet(state);
   },
   update(value, tr) {
-    return tr.docChanged ? frontmatterSet(tr.state) : value;
+    return tr.docChanged || tr.selection ? frontmatterSet(tr.state) : value;
   },
   provide: (f) => EditorView.decorations.from(f),
 });
@@ -146,7 +147,8 @@ function frontmatterSet(state: EditorState): DecorationSet {
   const fm = detectFrontmatter(state.doc);
   if (!fm) return Decoration.none;
   return Decoration.set([
-    Decoration.replace({ widget: new FrontmatterWidget(fm.inner), block: true }).range(
+    Decoration.replace({ widget: new FrontmatterWidget(fm.inner,
+      state.selection.ranges.some(range => range.from <= fm.from && range.to >= fm.to)), block: true }).range(
       fm.from,
       fm.to,
     ),
@@ -238,7 +240,12 @@ function collectSyntaxDecorations(
         const dropcap = isOpening && /^[\p{L}\p{N}]/u.test(doc.sliceString(ref.from, ref.from + 2));
         for (const line of lineRanges(view, Math.max(ref.from, vrFrom), Math.min(ref.to, vrTo))) {
           const classes = ["cm-lp-paragraph"];
-          if (line.from === first.from) classes.push(dropcap ? "cm-lp-opening" : "cm-lp-paragraph-start");
+          if (line.from === first.from) {
+            classes.push(dropcap ? "cm-lp-opening" : "cm-lp-paragraph-start");
+            if (dropcap && view.state.selection.ranges.some(range => range.from <= ref.from && range.to > ref.from)) {
+              classes.push("cm-lp-dropcap-selected");
+            }
+          }
           if (dropcap && line.from === doc.lineAt(ref.to).from) classes.push("cm-lp-opening-end");
           decos.push(Decoration.line({ class: classes.join(" ") }).range(line.from));
         }
