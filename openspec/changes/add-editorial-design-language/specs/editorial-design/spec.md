@@ -24,7 +24,21 @@
 - **WHEN** 两个 Thread 引用同一文件
 - **THEN** 文件在真实目录位置显示一次并带 `×2`，各 Thread 在自身角色列表显示该引用
 
-## MODIFIED Requirements
+### Requirement: Threads 最小模型
+
+系统 SHALL 支持 Thread 的标题、状态、角色化文件关联与最近活动。状态 MUST 仅为进行中、暂停、完成、归档。Thread MUST 持久化于 `~/.config/lumir/threads/`，并支持创建、切换与列表。Thread 不拥有文件，关联仅表达角色。
+
+#### Scenario: 创建与切换 Thread
+- **WHEN** 用户创建 Thread、为其关联文件角色并切换当前 Thread
+- **THEN** 新 Thread 写入持久化目录，列表显示标题与状态，切换后显示其角色关联
+
+### Requirement: Threads 区不伪造编辑点计数
+
+Threads 区 MUST 预留状态与计数的结构位置，但本 change 不实现编辑点，因此 MUST 不渲染开放、处理中或待回看计数，也不得使用假数据。
+
+#### Scenario: 尚未接入编辑点
+- **WHEN** 用户查看任一 Thread
+- **THEN** 只显示标题、四态状态、最近活动与文件角色，不显示编辑点计数
 
 ### Requirement: 性能与事实来源
 

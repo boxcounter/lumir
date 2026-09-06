@@ -1,5 +1,9 @@
 # Change: 落地 Editorial 设计语言与 Threads 最小模型
 
+- **Change ID**：`add-editorial-design-language`
+- **日期**：2026-09-06
+- **角色**：产品负责人、设计、前端与 Rust 实现者；Alex 负责节点 1 提案裁决
+
 ## Why
 
 Lumir 已由 Alex 裁决采用 Editorial（编辑部）方向：排印即界面，正文黑体、标题宋体、报头一线、目录与页边注记组成低 chrome 的工作台。现有实现仍是三栏壳层与调试期配置探针，缺少稳定的视觉 token、真实的左栏信息架构和 Thread 导航，导致设计参照无法成为产品契约。
@@ -18,6 +22,10 @@ Lumir 已由 Alex 裁决采用 Editorial（编辑部）方向：排印即界面�
 ## Not changing
 
 本 change 不实现编辑点交互、agent 流或 Session 管理，不实现完整可扩展主题系统，不做移动端布局。Thread 不拥有文件，不改变 workspace 目录事实；Session 将随 agent 接入波次处理。
+
+## Impact
+
+影响前端壳层、目录树、主题与配置读取，以及新增的 Threads 本地存储与导航呈现。现有 workspace 文件读写契约保持不变。实现阶段需要更新视觉回归基线，但不得削弱回归断言。
 
 ## Acceptance
 
