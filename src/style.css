@@ -5,9 +5,21 @@
   --sel: rgba(178,58,44,.16); --radius: 5px; --measure: 480px;
   --font-body: -apple-system, "PingFang SC", "Hiragino Sans GB", sans-serif;
   --font-display: "Songti SC", "STSong", ui-serif, Georgia, serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, monospace;
+  --line-height: 1.75;
+  --state-default-bg: var(--bg);
+  --state-hover-bg: var(--bg-2);
+  --state-active-bg: var(--bg-3);
+  --state-default-border: var(--bd-1);
+  --state-hover-border: var(--bd-2);
+  --state-active-border: var(--bd-3);
+  --pattern-stripes: none;
+  --pattern-double: none;
 }
 [data-theme="dark"] { --bg:#1a1917; --bg-nav:#141312; --bg-2:#211f1c; --bg-3:#2a2823; --bd-1:#302d27; --bd-2:#413d33; --bd-3:#575142; --text:#d6d0c0; --dim:#8d8676; --accent:#d9755f; --accent-ink:#1a1917; --sel:rgba(217,117,95,.28); }
-[data-theme="eink"] { --bg:#fff; --bg-nav:#fff; --bg-2:#fff; --bg-3:#fff; --bd-1:#000; --bd-2:#000; --bd-3:#000; --text:#000; --dim:#000; --accent:#000; --accent-ink:#fff; --sel:#000; --radius:0; }
+[data-theme="eink"] { --bg:#fff; --bg-nav:#fff; --bg-2:#fff; --bg-3:#fff; --bd-1:#000; --bd-2:#000; --bd-3:#000; --text:#000; --dim:#000; --accent:#000; --accent-ink:#fff; --sel:#000; --radius:0; --pattern-stripes: repeating-linear-gradient(135deg,#000 0 1px,#fff 1px 6px); --pattern-double: 3px double #000; }
+[data-theme="eink"] .ft-empty, [data-theme="eink"] .editor-notice { font-style: italic; }
+[data-theme="eink"] .ft-row[aria-current="true"], [data-theme="eink"] .ft-open-btn { font-weight: 700; border-style: double; }
 [data-theme="eink"] *, [data-theme="eink"] *::before, [data-theme="eink"] *::after { box-shadow:none !important; text-shadow:none !important; transition:none !important; animation:none !important; }
 * { box-sizing: border-box; }
 html,
@@ -41,14 +53,14 @@ body { background:var(--bg); color:var(--text); font-family:var(--font-body); fo
   content: attr(data-empty-label);
   display: block;
   padding: 12px;
-  color: #888;
+  color: var(--dim);
   font-size: 12px;
 }
 
 .pane-filetree,
 .pane-panel {
-  background: #f6f6f6;
-  border-right: 1px solid #e0e0e0;
+  background: var(--bg-nav);
+  border-right: 1px solid var(--bd-1);
   white-space: pre-wrap;
   font-family: monospace;
   font-size: 12px;
@@ -57,7 +69,7 @@ body { background:var(--bg); color:var(--text); font-family:var(--font-body); fo
 
 .pane-panel {
   border-right: none;
-  border-left: 1px solid #e0e0e0;
+  border-left: 1px solid var(--bd-1);
 }
 
 .pane-editor {
@@ -83,7 +95,7 @@ body { background:var(--bg); color:var(--text); font-family:var(--font-body); fo
   gap: 6px;
   padding: 4px 4px 8px;
   font-weight: 600;
-  color: #333;
+  color: var(--text);
 }
 
 .ft-vault-name {
@@ -104,13 +116,13 @@ body { background:var(--bg); color:var(--text); font-family:var(--font-body); fo
   font: inherit;
   font-size: 12px;
   font-weight: 400;
-  color: #888;
+  color: var(--dim);
   cursor: pointer;
 }
 
 .ft-switch-btn:hover {
-  background: #e8e8e8;
-  color: #333;
+  background: var(--bg-2);
+  color: var(--text);
 }
 
 .ft-children {
@@ -132,20 +144,20 @@ body { background:var(--bg); color:var(--text); font-family:var(--font-body); fo
   border: none;
   background: none;
   font: inherit;
-  color: #333;
+  color: var(--text);
   text-align: left;
   cursor: pointer;
   border-radius: 4px;
 }
 
 .ft-row:hover {
-  background: #e8e8e8;
+  background: var(--bg-2);
 }
 
 .ft-caret {
   width: 12px;
   flex: none;
-  color: #999;
+  color: var(--dim);
   font-size: 10px;
   text-align: center;
 }
@@ -157,11 +169,11 @@ body { background:var(--bg); color:var(--text); font-family:var(--font-body); fo
 }
 
 .ft-md .ft-name {
-  color: #1a5fb4;
+  color: var(--accent);
 }
 
 .ft-image .ft-name {
-  color: #2e7d32;
+  color: var(--text);
 }
 
 .ft-empty {
@@ -169,12 +181,12 @@ body { background:var(--bg); color:var(--text); font-family:var(--font-body); fo
   font-family: -apple-system, "PingFang SC", sans-serif;
   font-size: 13px;
   white-space: normal;
-  color: #555;
+  color: var(--dim);
 }
 
 .ft-notice {
   margin: 0 0 8px;
-  color: #a33;
+  color: var(--accent);
 }
 
 .ft-hint {
@@ -183,9 +195,9 @@ body { background:var(--bg); color:var(--text); font-family:var(--font-body); fo
 
 .ft-open-btn {
   padding: 6px 14px;
-  border: 1px solid #ccc;
+  border: 1px solid var(--bd-2);
   border-radius: 6px;
-  background: #fff;
+  background: var(--bg);
   font: inherit;
   cursor: pointer;
 }
@@ -202,10 +214,10 @@ body { background:var(--bg); color:var(--text); font-family:var(--font-body); fo
   align-items: center;
   justify-content: center;
   padding: 24px;
-  color: #888;
+  color: var(--dim);
   font-size: 14px;
   text-align: center;
-  background: #fff;
+  background: var(--bg);
 }
 
 /* author display:flex 会盖掉 UA 的 [hidden] 规则，显式补回 */
