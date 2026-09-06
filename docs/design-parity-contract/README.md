@@ -2,6 +2,15 @@
 
 **当前结论：最终组合2d853d3的本地标准visual全绿，标准macos15性能仍未验证；不自动归档。** 已rebase M63/M64/ADR，r5最终标准 `scripts/visual/run.sh` 不带ignore-snapshots：44项通过。build、Rust fmt/clippy/test、隔离release、隔离脚本自验通过。以下73af311与4565aed章节是历史结果，以本节为当前状态。
 
+## 2026-09-06 用户裁决：普通段落取消首行缩进（M70）
+
+用户批准普通阅读段落取消 `2em` 首行缩进。此项覆盖冻结原型的旧缩进设计；`design/editorial/index.html` 保持不变。唯一产品改动是删除 `src/preview/theme.ts` 的 `.cm-lp-paragraph-start` 缩进规则，不改 Markdown 源码、首字下沉字号与间距、两端对齐、列表层级或其他排版。
+
+- 新增 `tests/visual/scenes/paragraph.spec.ts`：light/dark/eink × 1280×900/640×480，共6项。用首字 Range 的实际横坐标与段落内容左边界比较，不能只凭 `text-indent:0` 宣称对齐。断言首字下沉比例4.35、float:left、右内距0.14em与左内距0，并检查段落真实可视交集。
+- 部分选区使用 DOM Range 选中普通段落前8字，再发真实 `Meta+C` 并核对复制文本；全选复制与 CodeMirror `state.doc` 均逐字等于含空行、多物理源码行、两级列表的 fixture。每次复制前写独立 sentinel，避免旧值假绿。测试运行于独立 Chromium headless context，不操作用户 vault/config 或系统剪贴板。
+- [本次6张截图](evidence/m70/index.html)来自受保护标准runner构建的生产前端 + IPC stub，不是原生WKWebView证据。通过专用 Chrome for Testing 临时profile（PID6991）和 KimiCU 实际逐主题观察宽窄图：普通段首齐左，首字下沉保留且相邻正文没有重叠，列表二级仍缩进，正文无裁切。没有把截图生成当作人工看图。
+- `scripts/visual/run.sh`：50/50通过（原44项+新增6项）；build通过，既有 >500KB chunk警告保留。**未更新任何既有基线、容差或ignore参数**。日志见 [m70/standard.log](evidence/m70/standard.log)。本节仅记录已批准缩进差异，不覆盖下文既有性能与原生专项验收限制。
+
 ## 最终组合证据（2d853d3）
 
 - [最终paired gallery](evidence/index.html)：3主题×5视口、同正文/导航/Thread fixture，15项几何断言通过。实际观察了最终dark配对及真实WK正文，确认行号、activeLine底色、空段距已去除。剩余导航差异：原型目录kicker、footer，生产vault标题、切换/新建按钮及Thread状态操作；不宣称逐像素相同。
