@@ -35,8 +35,34 @@
 
 未验证：真实可见列边界/空槽/行高、虚拟滚动中部、宽/窄与resize、最右列键盘/触控板可达、焦点进出、AX 表语义、鼠标/键盘局部/整表/跨表选择、Cmd+A/C 与纯文本粘贴、输入/剪切/粘贴/Delete/任务点击只读防护、真实 Markdown 文件打开及磁盘前后比对、三主题、1MB 多表和既有四项性能测量。没有用编译或 Node parser 成功替代这些验收。
 
+## r1 后只读复核（准确观测时间）
+
+针对 reviewer-tableprobe72 对 `8a326a9` 的 r1 `p2-1items / hold`，补充当前会话事实：
+
+- 2026-09-06T23:16:35.960449+08:00（UTC 15:16:35.960449），`ioreg -a -r -d 1 -c IOResources` 的 IOConsoleUsers 经 plist 解析并仅输出三个状态字段：`CGSSessionScreenIsLocked=True`、`kCGSSessionOnConsoleKey=True`、`kCGSessionLoginDoneKey=True`。**该时刻锁屏已证实。** 未保存用户名、会话标识等无关字段。
+- 2026-09-06T23:16:24.121742+08:00，`ps -axo pid=,comm=` 按命令路径末尾 `/table-probe72` 过滤结果为空；当前 probe 进程已退出，包括此前 PID14344。没有为本轮文档修订重新启动 GUI。
+- 同时只读确认现有 `scripts/visual/table-probe72/target/debug/table-probe72` 存在，SHA-256 为 `cc20abeddfa85c9de57b836016e757a7a78b9ee8d0b016fc3573e9f0aee3366a`。自有 runtime/native.log 和已提交诊断日志保留，未删除现有 binary/runtime。
+
+这些是后续时刻的当前状态证据，**不能追溯证明 PID14344 或此前所有白屏唯一由锁屏引起**。历史 native.log 没有精确墙钟时间，不补造时间戳。静态对照仍只排除 CM-only 假设；原生窗口历史白屏的唯一根因未证实。
+
 ## 恢复与后续
 
-最小外部条件是：自有 TableProbe72 窗口正文可见，kimi-cu 能获取真实 WebArea/控件与操作回读。若需用户手动展示该自有窗口，应由 tower 协调；不操作真实 vault。
+等待用户正常解锁会话。不执行解锁、唤醒用户、修改安全策略或重启服务，不重复构建或启动 GUI 排障。已通过 TowerSend 通知 worker-lists73 与 worker-paragraph70 当前锁屏事实，要求避免重复诊断。
 
-恢复后先完成最小表格几何与空槽，再验证大表中部虚拟化；若发现公开路线结构性失败，按 design34 停止扩展并另送设计修订。通过全部前置门槛后才提出 `src/preview/tables.ts` 纯模型/公开扩展、`livePreview.ts` 排除表内重复消费、`theme.ts` 局部样式、tests/visual 行为几何的生产拆分。该拆分当前仅为候选，不是实施授权或完成证据。
+正常会话恢复后先复用现有 custom-protocol 二进制，无须运行会重建的 `run.sh`。以下命令仅为恢复步骤，本轮未执行；从 wt-72 根目录启动，创建新的自有 runtime/XDG_CONFIG_HOME/native.log，保留此前记录：
+
+```bash
+root="$PWD"
+binary="$root/scripts/visual/table-probe72/target/debug/table-probe72"
+test -x "$binary"
+run="$(mktemp -d "$root/scripts/visual/table-probe72/runtime/run-XXXXXX")"
+mkdir -p "$run/config"
+date -Iseconds > "$run/started-at.txt"
+XDG_CONFIG_HOME="$run/config" "$binary" > "$run/native.log" 2>&1
+```
+
+1. 先用静态对照核实正文可见、窗口身份和尺寸、document visibility 与 AX WebArea/控件及操作回读。现有 binary 同时创建静态与 CM 窗口，但验收顺序先静态；若静态仍不可见，保持 blocked，不反复重建。
+2. 静态通过后再做 CM 小表列宽/空槽、宽窄/resize、宽表键盘及触控板横滚与焦点进出，再验证大表滚入中部虚拟化和列规则稳定。
+3. 接着完成真实鼠标/键盘局部/整表/跨表选择、Cmd+A/C 到自有纯文本接收端、只读内存与自有 Markdown 磁盘前后比对等既有门槛。不用 headless、DOM 内容或编译通过顶替真实 WK 验收；不勾未测项。
+
+若发现公开路线结构性失败，按 design34 停止扩展并另送设计修订。全部前置门槛通过前不实施生产表格；通过后才提出 `src/preview/tables.ts` 纯模型/公开扩展、`livePreview.ts` 排除表内重复消费、`theme.ts` 局部样式、tests/visual 行为几何的生产拆分。该拆分当前仅为候选，不是完成证据。
