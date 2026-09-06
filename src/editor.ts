@@ -143,15 +143,20 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
         backgroundColor: "var(--bg)",
         fontFamily: mode === "md" ? "var(--font-body)" : "var(--font-mono)",
       },
-      ".cm-scroller": { fontFamily: "inherit", lineHeight: "var(--line-height, 1.75)" },
+      ".cm-scroller": {
+        fontFamily: "inherit", lineHeight: "var(--line-height, 1.75)",
+        display: "grid !important", gridTemplateColumns: "minmax(max-content, 1fr) minmax(0, var(--measure, 480px)) minmax(0, 1fr)",
+        alignItems: "start",
+      },
       ".cm-content": {
         fontFamily: "inherit", fontSize: "16px",
-        flex: "0 1 var(--measure, 480px)", minWidth: "0",
-        marginInline: "auto", paddingBlock: "44px",
+        gridColumn: "2", gridRow: "1", minWidth: "0", width: "100%",
+        marginInline: "0", paddingBlock: "44px",
         textAlign: "start", textIndent: "0", hangingPunctuation: "none", textAutospace: "no-autospace",
       },
       ".cm-line": { padding: "0" },
       ".cm-gutters": {
+        gridColumn: "1", gridRow: "1", justifySelf: "start", alignSelf: "stretch",
         color: "var(--dim)",
         backgroundColor: "var(--bg-nav)",
         borderRight: "1px solid var(--bd-1)",
