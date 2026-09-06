@@ -88,21 +88,7 @@ function showEditor() {
 function toast(text: string, action?: { label: string; run(): void }): void {
   const el = document.createElement("div");
   el.className = "lumir-toast";
-  Object.assign(el.style, {
-    position: "absolute",
-    bottom: "16px",
-    right: "16px",
-    display: "flex",
-    alignItems: "center",
-    gap: "10px",
-    padding: "8px 14px",
-    borderRadius: "6px",
-    background: "#333",
-    color: "#fff",
-    fontSize: "13px",
-    zIndex: "10",
-    maxWidth: "70%",
-  });
+  el.className = "lumir-toast toast-surface";
   const span = document.createElement("span");
   span.textContent = text;
   el.append(span);
@@ -110,16 +96,7 @@ function toast(text: string, action?: { label: string; run(): void }): void {
     const btn = document.createElement("button");
     btn.type = "button";
     btn.textContent = action.label;
-    Object.assign(btn.style, {
-      border: "1px solid #888",
-      borderRadius: "4px",
-      background: "transparent",
-      color: "#fff",
-      cursor: "pointer",
-      font: "inherit",
-      padding: "2px 10px",
-      flex: "none",
-    });
+    btn.className = "toast-action";
     btn.addEventListener("click", () => {
       el.remove();
       action.run();
