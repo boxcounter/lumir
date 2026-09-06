@@ -61,9 +61,28 @@ pub fn vault_id(_path: &str) -> String {
     )
 }
 pub fn reconcile_vault(path: &std::path::Path) -> Result<(), CommandError> {
-    let p = path.display().to_string();
-    let id = vault_id(&p);
-    vault_register(id, p).map(|_| ())
+    let p = path
+        .canonicalize()
+        .map_err(|_| CommandError::new("workspace_path", "无法规范化 vault 路径"))?;
+    let ps = p.display().to_string();
+    let d = workspaces()?;
+    fs::create_dir_all(&d)
+        .map_err(|_| CommandError::new("workspace_write", "无法创建 workspace 注册表目录"))?;
+    for entry in fs::read_dir(&d)
+        .map_err(|_| CommandError::new("workspace_read", "无法读取 workspace 注册表"))?
+    {
+        let entry = entry
+            .map_err(|_| CommandError::new("workspace_read", "无法读取 workspace 注册表项"))?;
+        if let Ok(v) = serde_json::from_str::<VaultWorkspace>(
+            &fs::read_to_string(entry.path()).unwrap_or_default(),
+        ) {
+            if v.path == ps {
+                return Ok(());
+            }
+        }
+    }
+    let id = vault_id(&ps);
+    vault_register(id, ps).map(|_| ())
 }
 #[tauri::command]
 pub fn vault_register(id: String, path: String) -> Result<VaultWorkspace, CommandError> {
