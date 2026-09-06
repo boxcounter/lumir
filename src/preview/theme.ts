@@ -5,9 +5,7 @@ import { EditorView } from "@codemirror/view";
 
 export const livePreviewTheme = EditorView.theme({
   ".cm-editor": { color: "var(--text)", backgroundColor: "var(--bg)", fontFamily: "var(--font-body)" },
-  ".cm-gutters": { color: "var(--dim)", backgroundColor: "var(--bg-nav)", borderRight: "1px solid var(--bd-1)" },
-  ".cm-activeLine": { backgroundColor: "var(--bg-2)" },
-  ".cm-activeLineGutter": { backgroundColor: "var(--bg-2)", color: "var(--text)" },
+  ".cm-line.cm-lp-block-separator": { fontSize: "0", lineHeight: "0", height: "0", minHeight: "0" },
   ".cm-selectionBackground, ::selection": { backgroundColor: "var(--sel)", color: "var(--selection-ink)" },
   ".cm-cursor, .cm-dropCursor": { borderLeftColor: "var(--text)" },
   ".cm-lp-h1": { fontFamily: "var(--font-display)", fontSize: "1.78em", fontWeight: "700", lineHeight: "1.38", letterSpacing: ".01em" },
@@ -21,7 +19,10 @@ export const livePreviewTheme = EditorView.theme({
   ".cm-lp-paragraph-start": { textIndent: "2em" },
   ".cm-lp-opening": { minHeight: "1.75em" },
   ".cm-lp-opening-end::after": { content: '""', display: "block", clear: "both" },
-  ".cm-lp-opening::first-letter": { fontFamily: "var(--font-display)", fontWeight: "700", float: "left", fontSize: "4.35em", lineHeight: ".78", padding: ".09em .14em 0 0", color: "var(--text)" },
+  ".cm-lp-opening::first-letter": { fontFamily: "var(--font-display)", fontWeight: "700", float: "left", fontSize: "4.35em", lineHeight: ".78", padding: ".09em .14em .14em 0", color: "var(--text)" },
+  ".cm-lp-dropcap-selected::first-letter": { backgroundColor: "var(--sel)", color: "var(--selection-ink)" },
+  ".cm-lp-frontmatter.cm-lp-frontmatter-selected": { backgroundColor: "var(--sel)", color: "var(--selection-ink)" },
+  ".cm-lp-frontmatter.cm-lp-frontmatter-selected *": { backgroundColor: "transparent", color: "var(--selection-ink)" },
   ".cm-lp-strong": { fontWeight: "700" },
   ".cm-lp-em": { fontStyle: "italic" },
   ".cm-lp-strike": { textDecoration: "line-through" },

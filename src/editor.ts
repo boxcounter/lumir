@@ -145,7 +145,9 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
       },
       ".cm-scroller": {
         fontFamily: "inherit", lineHeight: "var(--line-height, 1.75)",
-        display: "grid !important", gridTemplateColumns: "minmax(max-content, 1fr) minmax(0, var(--measure, 480px)) minmax(0, 1fr)",
+        display: "grid !important", gridTemplateColumns: mode === "md"
+          ? "minmax(24px, 1fr) minmax(0, var(--measure, 480px)) minmax(24px, 1fr)"
+          : "minmax(max-content, 1fr) minmax(0, var(--measure, 480px)) minmax(0, 1fr)",
         alignItems: "start",
       },
       ".cm-content": {
@@ -172,18 +174,25 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
     });
     return mode === "md"
       ? [...highlight, baseTheme, livePreview(previewContext)]
-      : [...highlight, baseTheme];
+      : [...highlight, baseTheme, lineNumbers(), highlightActiveLine()];
   }
 
   const state = EditorState.create({
     doc: SAMPLE,
     extensions: [
-      lineNumbers(),
-      highlightActiveLine(),
+      EditorView.contentAttributes.of({ tabindex: "0", "aria-readonly": "true" }),
+      EditorView.domEventHandlers({
+        keydown(event, view) {
+          if (event.target !== view.contentDOM || event.altKey || event.shiftKey ||
+            event.key.toLowerCase() !== "a" || !(event.metaKey || event.ctrlKey)) return false;
+          view.dispatch({ selection: { anchor: 0, head: view.state.doc.length }, userEvent: "select" });
+          return true;
+        },
+      }),
       EditorView.theme({ ".cm-gutters-before": { border: "none" } }),
       modeCompartment.of(modeExtensions(initialMode)),
       EditorState.readOnly.of(true),
-      EditorView.editable.of(false),
+      EditorView.editable.of(true),
       EditorView.lineWrapping,
     ],
   });

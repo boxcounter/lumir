@@ -47,17 +47,17 @@ function tagList(v: unknown): string[] {
 }
 
 export class FrontmatterWidget extends WidgetType {
-  constructor(readonly inner: string) {
+  constructor(readonly inner: string, readonly selected = false) {
     super();
   }
 
   eq(other: FrontmatterWidget): boolean {
-    return other.inner === this.inner;
+    return other.inner === this.inner && other.selected === this.selected;
   }
 
   toDOM(): HTMLElement {
     const box = document.createElement("div");
-    box.className = "cm-lp-frontmatter";
+    box.className = `cm-lp-frontmatter${this.selected ? " cm-lp-frontmatter-selected" : ""}`;
 
     let value: unknown;
     try {

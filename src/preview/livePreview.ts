@@ -117,6 +117,7 @@ export function livePreview(ctx: PreviewContext) {
           if (
             forced ||
             u.docChanged ||
+            u.selectionSet ||
             u.viewportChanged ||
             syntaxTree(u.state) !== syntaxTree(u.startState)
           ) {
@@ -130,14 +131,14 @@ export function livePreview(ctx: PreviewContext) {
 }
 
 // frontmatter 的 replace 跨行，而插件装饰不允许替换换行符（CM6 硬限制），
-// 故走 StateField：只在 docChanged 时重算，且 detectFrontmatter 从文档首部扫描、
+// 故走 StateField：文档或选区变化时重算，且 detectFrontmatter 从文档首部扫描、
 // 有行数上限（见 frontmatter.ts），与视口增量策略不冲突（不是全量装饰构建）。
 const frontmatterDecorations = StateField.define<DecorationSet>({
   create(state) {
     return frontmatterSet(state);
   },
   update(value, tr) {
-    return tr.docChanged ? frontmatterSet(tr.state) : value;
+    return tr.docChanged || tr.selection ? frontmatterSet(tr.state) : value;
   },
   provide: (f) => EditorView.decorations.from(f),
 });
@@ -146,7 +147,8 @@ function frontmatterSet(state: EditorState): DecorationSet {
   const fm = detectFrontmatter(state.doc);
   if (!fm) return Decoration.none;
   return Decoration.set([
-    Decoration.replace({ widget: new FrontmatterWidget(fm.inner), block: true }).range(
+    Decoration.replace({ widget: new FrontmatterWidget(fm.inner,
+      state.selection.ranges.some(range => range.from <= fm.from && range.to >= fm.to)), block: true }).range(
       fm.from,
       fm.to,
     ),
@@ -162,12 +164,10 @@ function buildDecorations(view: EditorView, ctx: PreviewContext): DecorationSet 
     collectWikilinks(view, vr.from, vr.to, fm, ctx, decos);
     for (const { from } of lineRanges(view, vr.from, vr.to)) {
       const line = view.state.doc.lineAt(from);
-      if (line.text.trim() || line.number === 1 || isInsideCode(view, from) || inFrontmatter(fm, from, line.to)) continue;
-      const previous = view.state.doc.line(line.number - 1);
-      const heading = /^(#{1,2})\s/.exec(previous.text);
-      if (!heading) continue;
-      const height = heading[1].length === 1 ? 28.48 * .55 : 17.92 * 1.1;
-      decos.push(Decoration.line({ attributes: { style: `font-size:0;line-height:${height}px;height:${height}px` } }).range(from));
+      if (line.text.trim() || inFrontmatter(fm, from, line.to)) continue;
+      const node = syntaxTree(view.state).resolveInner(from, 0);
+      if (node.name !== "Document") continue;
+      decos.push(Decoration.line({ class: "cm-lp-block-separator" }).range(from));
     }
   }
   return Decoration.set(decos, true);
@@ -240,7 +240,12 @@ function collectSyntaxDecorations(
         const dropcap = isOpening && /^[\p{L}\p{N}]/u.test(doc.sliceString(ref.from, ref.from + 2));
         for (const line of lineRanges(view, Math.max(ref.from, vrFrom), Math.min(ref.to, vrTo))) {
           const classes = ["cm-lp-paragraph"];
-          if (line.from === first.from) classes.push(dropcap ? "cm-lp-opening" : "cm-lp-paragraph-start");
+          if (line.from === first.from) {
+            classes.push(dropcap ? "cm-lp-opening" : "cm-lp-paragraph-start");
+            if (dropcap && view.state.selection.ranges.some(range => range.from <= ref.from && range.to > ref.from)) {
+              classes.push("cm-lp-dropcap-selected");
+            }
+          }
           if (dropcap && line.from === doc.lineAt(ref.to).from) classes.push("cm-lp-opening-end");
           decos.push(Decoration.line({ class: classes.join(" ") }).range(line.from));
         }
@@ -249,11 +254,8 @@ function collectSyntaxDecorations(
       if (/^ATXHeading[1-6]$/.test(name)) {
         const level = name.slice(-1);
         const headingLine = doc.lineAt(ref.from);
-        const beforeBlank = headingLine.number > 1 && doc.line(headingLine.number - 1).text.trim() === "";
-        const afterBlank = headingLine.number < doc.lines && doc.line(headingLine.number + 1).text.trim() === "";
-        const top = level === "2" ? Math.max(0, 17.92 * 2.9 - (beforeBlank ? 28 : 0)) : 0;
-        const bottom = level === "1" ? Math.max(0, 28.48 * .55 - (afterBlank ? 28 : 0))
-          : level === "2" ? Math.max(0, 17.92 * 1.1 - (afterBlank ? 28 : 0)) : 0;
+        const top = level === "2" ? 17.92 * 2.9 : 0;
+        const bottom = level === "1" ? 28.48 * .55 : level === "2" ? 17.92 * 1.1 : 0;
         decos.push(
           Decoration.line({ class: `cm-lp-h${level}`, attributes: { style: `padding-top:${top}px;padding-bottom:${bottom}px` } }).range(headingLine.from),
         );
