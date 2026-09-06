@@ -1,6 +1,8 @@
 //! invoke / event 契约薄约定 —— M1 接缝（架构复查 P1-2）。
 //!
 //! M1 起所有 webview ↔ Rust core 通信遵守以下约定：
+//! Tauri 默认将参数名映射为 camelCase；本仓含下划线参数的 command 统一使用
+//! `#[tauri::command(rename_all = "snake_case")]`，前端 IPC 键与 Rust 保持一致。
 //!
 //! ## command 命名
 //!
