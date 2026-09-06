@@ -140,6 +140,42 @@ fn scenario_current_thread_persists_after_switch() {
 }
 
 #[test]
+fn scenario_remap_candidate_short_circuits_stale_vault_detection() {
+    let f = Fixture::new();
+    let old = f.vault("moved");
+    vault_register("stable".into(), old.clone()).unwrap();
+    fs::remove_dir_all(&old).unwrap();
+    let unknown = f.vault("new");
+    let candidates = remap_candidates(std::path::Path::new(&unknown)).unwrap();
+    assert_eq!(candidates.len(), 1);
+    assert_eq!(candidates[0].id, "stable");
+    assert!(!config::config_dir()
+        .unwrap()
+        .join("workspaces/stable-new.json")
+        .exists());
+    let fresh = vault_register("fresh".into(), unknown).unwrap();
+    assert_eq!(fresh.id, "fresh");
+}
+
+#[test]
+fn scenario_valid_id_rejects_path_escape_for_all_thread_and_vault_commands() {
+    let f = Fixture::new();
+    let t = Thread {
+        vault_id: "safe".into(),
+        id: "../config".into(),
+        title: "x".into(),
+        status: ThreadStatus::Active,
+        files: vec![],
+        recent_activity: "now".into(),
+        brief: None,
+    };
+    assert!(thread_update(t).is_err());
+    assert!(vault_register("../config".into(), f.vault("v")).is_err());
+    assert!(vault_remap("../config".into(), f.vault("v2")).is_err());
+    assert!(thread_current("../config".into()).is_err());
+}
+
+#[test]
 fn scenario_editor_measure_invalid_value_falls_back_with_warning() {
     let f = Fixture::new();
     let p = f.root.join("measure.json");
