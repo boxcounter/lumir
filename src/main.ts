@@ -287,11 +287,15 @@ shell.root.classList.add("panel-default-hidden");
 const mastheadVault = shell.root.querySelector<HTMLElement>(".masthead-vault")!;
 const mastheadThread = shell.root.querySelector<HTMLElement>(".masthead-thread")!;
 const mastheadStatus = shell.root.querySelector<HTMLElement>(".masthead-status")!;
+let tree!: ReturnType<typeof createFileTree>;
 const sessionThreads: Thread[] = [];
 let selectedThreadId: string | undefined;
 let currentVaultId = "";
 const threadStatusLabels: Record<string, string> = { active: "进行中", paused: "暂停", completed: "完成", archived: "归档" };
 function refreshThreads() {
+  const counts = new Map<string, number>();
+  for (const item of sessionThreads) for (const file of item.files) counts.set(file.path, (counts.get(file.path) ?? 0) + 1);
+  tree?.setReferenceCounts(counts);
   threads.setThreads(sessionThreads);
   threads.setCurrent(selectedThreadId);
   const selected = sessionThreads.find((item) => item.id === selectedThreadId);
@@ -304,7 +308,7 @@ const threads = createThreads(shell.threads, {
   onStatus: async (id, status) => { const item = sessionThreads.find((thread) => thread.id === id); if (item) { item.status = status; await threadUpdate(item); refreshThreads(); } },
 });
 refreshThreads();
-const tree = createFileTree(shell.treeMount, {
+tree = createFileTree(shell.treeMount, {
   onOpenFile: (path, kind) => void openFile(path, kind),
   onOpenVault: () => {
     vaultOpen()
