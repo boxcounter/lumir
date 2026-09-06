@@ -18,6 +18,18 @@ test("未打开 vault 的空态主界面", async ({ page }) => {
   await expect(page).toHaveScreenshot("app-main.png");
 });
 
+test("eink 选区保持反白", async ({ page }) => {
+  await stubTauri(page, null);
+  await page.goto("/");
+  await page.evaluate(() => document.documentElement.dataset.theme = "eink");
+  const colors = await page.locator("body").evaluate(() => {
+    const root = getComputedStyle(document.documentElement);
+    return { selection: root.getPropertyValue("--selection-ink").trim(), background: root.getPropertyValue("--sel").trim() };
+  });
+  expect(colors.selection).toBe("#fff");
+  expect(colors.background).toBe("#000");
+});
+
 test("打开 vault 后的全类型文件树", async ({ page }) => {
   await stubTauri(page, DEMO_VAULT);
   await page.goto("/");

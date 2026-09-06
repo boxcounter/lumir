@@ -28,9 +28,10 @@ export const livePreviewTheme = EditorView.theme({
     color: "var(--dim)",
   },
 
-  ".cm-lp-codeblock-line": { backgroundColor: "var(--bg-2)" },
+  ".cm-lp-codeblock-line": { backgroundColor: "var(--bg-2)", fontFamily: "var(--font-mono)" },
   ".cm-lp-inline-code": {
     backgroundColor: "var(--bg-2)",
+    fontFamily: "var(--font-mono)",
     borderRadius: "3px",
     padding: "0 3px",
     fontSize: "0.92em",

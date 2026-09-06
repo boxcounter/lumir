@@ -8,8 +8,8 @@
   --font-mono: ui-monospace, "SF Mono", Menlo, monospace;
   --line-height: 1.75;
 }
-[data-theme="dark"] { --bg:#1a1917; --bg-nav:#141312; --bg-2:#211f1c; --bg-3:#2a2823; --bd-1:#302d27; --bd-2:#413d33; --bd-3:#575142; --text:#d6d0c0; --dim:#8d8676; --accent:#d9755f; --accent-ink:#1a1917; --sel:rgba(217,117,95,.28); --selection-ink: var(--text); }
-[data-theme="eink"] { --bg:#fff; --bg-nav:#fff; --bg-2:#fff; --bg-3:#fff; --bd-1:#000; --bd-2:#000; --bd-3:#000; --text:#000; --dim:#000; --accent:#000; --accent-ink:#fff; --sel:#000; --selection-ink:#fff; --radius:0; --pattern-stripes: repeating-linear-gradient(135deg,#000 0 1px,#fff 1px 6px); --pattern-double: 3px double #000; }
+[data-theme="dark"] { --bg:#1a1917; --bg-nav:#141312; --bg-2:#211f1c; --bg-3:#2a2823; --bd-1:#302d27; --bd-2:#413d33; --bd-3:#575142; --text:#d6d0c0; --dim:#8d8676; --accent:#d9755f; --sel:rgba(217,117,95,.28); --selection-ink: var(--text); }
+[data-theme="eink"] { --bg:#fff; --bg-nav:#fff; --bg-2:#fff; --bg-3:#fff; --bd-1:#000; --bd-2:#000; --bd-3:#000; --text:#000; --dim:#000; --accent:#000; --sel:#000; --selection-ink:#fff; --radius:0; --pattern-stripes: repeating-linear-gradient(135deg,#000 0 1px,#fff 1px 6px); --pattern-double: 3px double #000; }
 [data-theme="eink"] .ft-empty, [data-theme="eink"] .editor-notice { font-style: italic; }
 [data-theme="eink"] .ft-row[aria-current="true"], [data-theme="eink"] .ft-open-btn { font-weight: 700; border-style: double; }
 [data-theme="eink"] *, [data-theme="eink"] *::before, [data-theme="eink"] *::after { box-shadow:none !important; text-shadow:none !important; transition:none !important; animation:none !important; }
@@ -25,6 +25,7 @@ body { background:var(--bg); color:var(--text); font-family:var(--font-body); fo
 .pane-editor { max-width:var(--measure); }
 .cm-content { font-size:16px; line-height:1.75; }
 .cm-content { text-autospace: normal; hanging-punctuation: first last; }
+/* Chromium currently ignores hanging-punctuation; WKWebView supports it. CM6 keeps defaults for cursor alignment. */
 .cm-content { /* 编辑态保留 CM6 光标与字符列对齐，不启用可能改变测量的排印特性。 */ }
 
 /* app-shell 布局骨架（src/shell.ts）：文件树 | 编辑器 | 面板 三栏。 */
