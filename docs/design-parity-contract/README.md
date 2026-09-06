@@ -1,11 +1,12 @@
 # 原型—生产一致性验收契约（M62）
 
-**当前结论：最终组合2d853d3的本地标准visual全绿，标准macos15性能仍未验证；不自动归档。** 已rebase M63/M64/ADR，最终标准 `scripts/visual/run.sh` 不带ignore-snapshots：42项通过。build、Rust fmt/clippy/test、隔离release、隔离脚本自验通过。以下73af311与4565aed章节是历史结果，以本节为当前状态。
+**当前结论：最终组合2d853d3的本地标准visual全绿，标准macos15性能仍未验证；不自动归档。** 已rebase M63/M64/ADR，r5最终标准 `scripts/visual/run.sh` 不带ignore-snapshots：44项通过。build、Rust fmt/clippy/test、隔离release、隔离脚本自验通过。以下73af311与4565aed章节是历史结果，以本节为当前状态。
 
 ## 最终组合证据（2d853d3）
 
 - [最终paired gallery](evidence/index.html)：3主题×5视口、同正文/导航/Thread fixture，15项几何断言通过。实际观察了最终dark配对及真实WK正文，确认行号、activeLine底色、空段距已去除。剩余导航差异：原型目录kicker、footer，生产vault标题、切换/新建按钮及Thread状态操作；不宣称逐像素相同。
-- 标准visual42项包括复制2路径、短段/code切换、三主题300段长文全选复制、CmdX/V/输入后源文不变、长文滚到底且渲染行数小于300、深目录9组合、Thread切换失败保留原current/错误提示。短段只断言下一段纵坐标更大；精细float避让依据用户确认后的82adf2b reviewer真实WK三主题宽窄多样本复验，不夸称此断言单独证明dropcap安全。
+- r5针对r4可靠性问题补强：每个Cut、Paste、输入动作后立即读取真实CodeMirror state.doc并逐步比较，不允许Cut/Paste抵消；每次Copy前写不同自有sentinel，确认剪贴板确实被替换。长文末段与目录末项同时检查真实scroll容器及viewport可视交集，实际点击末项并验证打开正文；新建入口实际填表提交并验证current。两个可控反例证明doc突变、blocked-copy保留sentinel、CSS可见但被裁剪的末项均能检测。反例仅修改测试页面运行态，不改产品源码。r5未改任何baseline/容差；[r5-standard.log](evidence/final-combined/r5-standard.log)记录44/44。
+- 原42项覆盖仍保留，包括复制2路径、短段/code切换、三主题300段长文全选复制、CmdX/V/输入后源文不变、长文滚到底且渲染行数小于300、深目录9组合、Thread切换失败保留原current/错误提示。短段只断言下一段纵坐标更大；精细float避让依据用户确认后的82adf2b reviewer真实WK三主题宽窄多样本复验，不夸称此断言单独证明dropcap安全。
 - toast用批准文案“已创建并切换到 Thread”，并断言UI当前卡及thread_current读回；stub不是后端。最终唯一run实际WK92969打开200段文件、创建Thread→退出；93057重启恢复相同current，三阶段脱敏JSON见 [final-combined](evidence/final-combined/)，两进程均正常退出。
 - 用户已物理确认正式原生源码复制、全选/部分高亮、CmdX/V只读符合预期；这是已确认事实，不再列为未验证。已知IME/drop未测单列，不扩大本轮承诺。
 - 仅更新3张既有基线：app-main/filetree-open/wikilink-states。依据冻结原型及最终paired确认，变化来自已批准的正文居中、阅读gutter/activeLine去除、段距与导航分区修复；没有改容差或跳过断言。更新后再次完整受保护runner42/42。完整日志在final-combined/final-standard.log。

@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { stubTauri } from './tauri-stub';
+import { readDocument, copyFresh, assertReachable } from './parity-checks';
 for (const theme of ['light','dark','eink']) test(`最终长文短段只读 ${theme}`, async ({page,context},info)=>{
   await context.grantPermissions(['clipboard-read','clipboard-write']);
   const text='# 标题\n\n短段。\n\n紧随下一段。\n\n'+Array.from({length:300},(_,i)=>`第${i}段 长文虚拟化与只读测试。`).join('\n\n');
@@ -11,13 +12,21 @@ for (const theme of ['light','dark','eink']) test(`最终长文短段只读 ${th
   const short=lines.filter({hasText:'短段。'});const next=lines.filter({hasText:'紧随下一段。'});
   const rect=await short.boundingBox();const nrect=await next.boundingBox();
   expect(nrect!.y).toBeGreaterThan(rect!.y);
-  await page.locator('.cm-content').click();await page.keyboard.press('Meta+a');await page.keyboard.press('Meta+c');
-  expect(await page.evaluate(()=>navigator.clipboard.readText())).toBe(text);
-  await page.keyboard.press('Meta+x');await page.keyboard.press('Meta+v');await page.keyboard.type('NOT_WRITABLE');
-  await page.keyboard.press('Meta+a');await page.keyboard.press('Meta+c');
-  expect(await page.evaluate(()=>navigator.clipboard.readText())).toBe(text);
+  await page.locator('.cm-content').click();
+  expect(await copyFresh(page, `${theme}-before-cut`)).toBe(text);
+  await page.keyboard.press('Meta+x');
+  expect(await readDocument(page)).toBe(text);
+  expect(await copyFresh(page, `${theme}-after-cut`)).toBe(text);
+  await page.evaluate(()=>navigator.clipboard.writeText('INDEPENDENT_PASTE_PAYLOAD'));
+  await page.keyboard.press('Meta+v');
+  expect(await readDocument(page)).toBe(text);
+  expect(await copyFresh(page, `${theme}-after-paste`)).toBe(text);
+  await page.keyboard.type('NOT_WRITABLE');
+  expect(await readDocument(page)).toBe(text);
+  expect(await copyFresh(page, `${theme}-after-input`)).toBe(text);
   await page.locator('.cm-scroller').evaluate(el=>el.scrollTop=el.scrollHeight);
-  await expect(page.locator('.cm-content')).toContainText('第299段');
+  await assertReachable(lines.filter({hasText:'第299段'}), '.cm-scroller');
+  await lines.filter({hasText:'第299段'}).click();
   expect(await lines.count()).toBeLessThan(300);
   await page.screenshot({path:info.outputPath('long-end.png')});
 });
