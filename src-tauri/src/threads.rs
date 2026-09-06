@@ -102,14 +102,24 @@ pub fn vault_remap(id: String, path: String) -> Result<VaultWorkspace, CommandEr
     valid_id(&id)?;
     let v = vault_register(id, path.clone())?;
     let p = config::config_dir()?.join("config.json");
-    let mut x = serde_json::json!({});
-    if let Ok(s) = fs::read_to_string(&p) {
-        x = serde_json::from_str(&s).unwrap_or(x)
+    let mut x = match fs::read_to_string(&p) {
+        Ok(s) => serde_json::from_str(&s).unwrap_or_else(|_| serde_json::json!({})),
+        Err(_) => serde_json::json!({}),
     };
+    if !x.is_object() {
+        x = serde_json::json!({});
+    }
     x["last_vault"] = serde_json::Value::String(path);
-    fs::create_dir_all(config::config_dir()?).ok();
-    fs::write(p, serde_json::to_vec_pretty(&x).unwrap())
-        .map_err(|e| CommandError::new("config_write", e.to_string()))?;
+    let d = config::config_dir()?;
+    fs::create_dir_all(&d).map_err(|_| CommandError::new("config_write", "无法创建配置目录"))?;
+    let tmp = p.with_extension("json.tmp");
+    fs::write(
+        &tmp,
+        serde_json::to_vec_pretty(&x)
+            .map_err(|_| CommandError::new("config_write", "无法序列化配置"))?,
+    )
+    .map_err(|_| CommandError::new("config_write", "无法写入配置"))?;
+    fs::rename(&tmp, &p).map_err(|_| CommandError::new("config_write", "无法落盘配置"))?;
     Ok(v)
 }
 fn read_all() -> Result<Vec<Thread>, CommandError> {
