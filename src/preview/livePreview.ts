@@ -162,12 +162,10 @@ function buildDecorations(view: EditorView, ctx: PreviewContext): DecorationSet 
     collectWikilinks(view, vr.from, vr.to, fm, ctx, decos);
     for (const { from } of lineRanges(view, vr.from, vr.to)) {
       const line = view.state.doc.lineAt(from);
-      if (line.text.trim() || line.number === 1 || isInsideCode(view, from) || inFrontmatter(fm, from, line.to)) continue;
-      const previous = view.state.doc.line(line.number - 1);
-      const heading = /^(#{1,2})\s/.exec(previous.text);
-      if (!heading) continue;
-      const height = heading[1].length === 1 ? 28.48 * .55 : 17.92 * 1.1;
-      decos.push(Decoration.line({ attributes: { style: `font-size:0;line-height:${height}px;height:${height}px` } }).range(from));
+      if (line.text.trim() || inFrontmatter(fm, from, line.to)) continue;
+      const node = syntaxTree(view.state).resolveInner(from, 0);
+      if (node.name !== "Document") continue;
+      decos.push(Decoration.line({ class: "cm-lp-block-separator" }).range(from));
     }
   }
   return Decoration.set(decos, true);
@@ -249,11 +247,8 @@ function collectSyntaxDecorations(
       if (/^ATXHeading[1-6]$/.test(name)) {
         const level = name.slice(-1);
         const headingLine = doc.lineAt(ref.from);
-        const beforeBlank = headingLine.number > 1 && doc.line(headingLine.number - 1).text.trim() === "";
-        const afterBlank = headingLine.number < doc.lines && doc.line(headingLine.number + 1).text.trim() === "";
-        const top = level === "2" ? Math.max(0, 17.92 * 2.9 - (beforeBlank ? 28 : 0)) : 0;
-        const bottom = level === "1" ? Math.max(0, 28.48 * .55 - (afterBlank ? 28 : 0))
-          : level === "2" ? Math.max(0, 17.92 * 1.1 - (afterBlank ? 28 : 0)) : 0;
+        const top = level === "2" ? 17.92 * 2.9 : 0;
+        const bottom = level === "1" ? 28.48 * .55 : level === "2" ? 17.92 * 1.1 : 0;
         decos.push(
           Decoration.line({ class: `cm-lp-h${level}`, attributes: { style: `padding-top:${top}px;padding-bottom:${bottom}px` } }).range(headingLine.from),
         );
