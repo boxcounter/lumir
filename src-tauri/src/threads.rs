@@ -82,6 +82,20 @@ pub fn remap_candidates(path: &std::path::Path) -> Result<Vec<VaultWorkspace>, C
             }
         }
     }
+    let mut activity = std::collections::HashMap::<String, u64>::new();
+    for thread in read_all()? {
+        let recent = thread.recent_activity.parse::<u64>().unwrap_or_default();
+        activity
+            .entry(thread.vault_id)
+            .and_modify(|value| *value = (*value).max(recent))
+            .or_insert(recent);
+    }
+    out.sort_by_key(|vault| {
+        (
+            std::cmp::Reverse(activity.get(&vault.id).copied().unwrap_or_default()),
+            vault.id.clone(),
+        )
+    });
     Ok(out)
 }
 pub fn reconcile_vault(path: &std::path::Path) -> Result<VaultWorkspace, CommandError> {
@@ -124,7 +138,7 @@ pub fn vault_register(id: String, path: String) -> Result<VaultWorkspace, Comman
         d.join(format!("{}.json", v.id)),
         serde_json::to_vec_pretty(&v).unwrap(),
     )
-    .map_err(|_| CommandError::new("workspace_write", "无法读取 Thread 注册表".to_string()))?;
+    .map_err(|_| CommandError::new("workspace_write", "无法写入 workspace 注册表".to_string()))?;
     Ok(v)
 }
 #[tauri::command]
@@ -180,14 +194,26 @@ fn read_all() -> Result<Vec<Thread>, CommandError> {
 }
 fn save(t: &Thread) -> Result<(), CommandError> {
     let d = dir()?;
-    fs::create_dir_all(&d)
-        .map_err(|_| CommandError::new("thread_write", "无法读取 Thread 注册表".to_string()))?;
+    fs::create_dir_all(&d).map_err(|e| {
+        CommandError::new(
+            "thread_write",
+            format!("无法创建 Thread 目录 {}：{e}", d.display()),
+        )
+    })?;
     let p = d.join(format!("{}.json", t.id));
     let tmp = p.with_extension("tmp");
-    fs::write(&tmp, serde_json::to_vec_pretty(t).unwrap())
-        .map_err(|_| CommandError::new("thread_write", "无法读取 Thread 注册表".to_string()))?;
-    fs::rename(tmp, p)
-        .map_err(|_| CommandError::new("thread_write", "无法读取 Thread 注册表".to_string()))
+    fs::write(&tmp, serde_json::to_vec_pretty(t).unwrap()).map_err(|e| {
+        CommandError::new(
+            "thread_write",
+            format!("无法写入 Thread 临时文件 {}：{e}", tmp.display()),
+        )
+    })?;
+    fs::rename(tmp, &p).map_err(|e| {
+        CommandError::new(
+            "thread_write",
+            format!("无法保存 Thread 文件 {}：{e}", p.display()),
+        )
+    })
 }
 #[tauri::command(rename_all = "snake_case")]
 pub fn thread_list(vault_id: String) -> Result<Vec<Thread>, CommandError> {
