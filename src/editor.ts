@@ -145,7 +145,9 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
       },
       ".cm-scroller": {
         fontFamily: "inherit", lineHeight: "var(--line-height, 1.75)",
-        display: "grid !important", gridTemplateColumns: "minmax(max-content, 1fr) minmax(0, var(--measure, 480px)) minmax(0, 1fr)",
+        display: "grid !important", gridTemplateColumns: mode === "md"
+          ? "minmax(24px, 1fr) minmax(0, var(--measure, 480px)) minmax(24px, 1fr)"
+          : "minmax(max-content, 1fr) minmax(0, var(--measure, 480px)) minmax(0, 1fr)",
         alignItems: "start",
       },
       ".cm-content": {
