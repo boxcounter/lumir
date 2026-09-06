@@ -186,6 +186,8 @@ pub fn open_vault(
     state: &VaultState,
     root: PathBuf,
 ) -> Result<VaultInfo, CommandError> {
+    // Register/reconcile stable vault identity before opening.
+    crate::threads::reconcile_vault(&root)?;
     // 顺序：先 watch（FSEvents 流起点在此刻）再全量枚举，消除 scan→watch 的
     // 事件空窗；枚举结果随后播种进 watcher 的已知路径集（修正重放的误报 Create）。
     let app_for_watch = app.clone();
