@@ -44,12 +44,14 @@ body { background:var(--bg); color:var(--text); font-family:var(--font-body); fo
   align-items:baseline;
   gap:10px;
   min-height:58px;
-  padding:20px 28px 9px;
-  border-bottom:3px double var(--text);
+  padding:22px 48px 14px;
+  position:relative;
+  border-bottom:0;
   font-size:11px;
   letter-spacing:.08em;
 }
-.masthead-vault { font-family:var(--font-display); font-size:15px; font-weight:700; letter-spacing:.2em; color:var(--text); }
+.masthead::after { content:""; position:absolute; left:48px; right:48px; bottom:0; border-top:3px solid var(--text); border-bottom:1px solid var(--text); }
+.masthead-vault { font-family:var(--font-display); font-size:15px; font-weight:700; letter-spacing:.42em; color:var(--text); }
 .masthead-file, .masthead-thread, .masthead-status { color:var(--dim); }
 .masthead-file { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .masthead-status { margin-left:auto; }
@@ -74,9 +76,13 @@ body { background:var(--bg); color:var(--text); font-family:var(--font-body); fo
 .threads-heading h2 { margin:0; font-size:13px; }
 .threads-add, .thread-action, .thread-create-submit { border:1px solid var(--bd-2); background:none; color:var(--text); cursor:pointer; font:inherit; }
 .threads-list { display:flex; flex-direction:column; gap:4px; }
-.thread-card { display:flex; gap:6px; align-items:flex-start; width:100%; padding:5px; border:0; background:none; color:var(--text); text-align:left; }
-.thread-card:hover, .thread-card.is-current { background:var(--bg-2); }
-.thread-select { min-width:0; flex:1; display:flex; flex-wrap:wrap; gap:2px 6px; border:0; background:none; color:inherit; font:inherit; text-align:left; cursor:pointer; }
+.thread-card { display:flex; flex-direction:column; gap:6px; width:100%; padding:5px 6px; border:0; background:none; color:var(--text); text-align:left; }
+.thread-card:hover { background:var(--bg-2); }
+.thread-card.is-current { padding:9px 10px; border:1px solid var(--bd-1); border-radius:var(--radius); background:var(--bg); }
+.thread-card:not(.is-current) .thread-actions, .thread-files:empty { display:none; }
+.thread-card.is-current .thread-files { width:100%; border-top:1px solid var(--bd-1); padding-top:5px; }
+[data-theme="eink"] .thread-card.is-current { border:3px double var(--text); }
+.thread-select { min-width:0; width:100%; display:flex; flex-direction:column; gap:2px; border:0; padding:0; background:none; color:inherit; font:inherit; text-align:left; cursor:pointer; }
 .thread-select strong { min-width:0; max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .thread-status, .thread-select time { color:var(--dim); font-size:11px; white-space:nowrap; }
 .thread-select time { max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
@@ -108,10 +114,11 @@ body { background:var(--bg); color:var(--text); font-family:var(--font-body); fo
 .pane-panel {
   background: var(--bg-nav);
   border-right: 1px solid var(--bd-1);
-  white-space: pre-wrap;
-  font-family: monospace;
-  font-size: 12px;
-  padding: 8px;
+  white-space: normal;
+  font-family: var(--font-body);
+  font-size: 13px;
+  line-height:1.6;
+  padding:18px 12px 14px;
 }
 
 .pane-panel {
