@@ -122,10 +122,34 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
       markdown({ base: markdownLanguage, extensions: [GFM] }),
       syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
     ];
-    // md 正文优先阅读性黑体；code 模式保持等宽。
-    // 中文黑体字宽天然等宽，西文列宽不固定是阅读优先取舍。
-    const typography = EditorView.theme({ ".cm-content, .cm-line": { fontFamily: mode === "md" ? "var(--font-body)" : "var(--font-mono)" } });
-    return mode === "md" ? [...highlight, typography, livePreview(previewContext)] : [...highlight, typography];
+    // CM6 的基础层必须跟随 shell 的三套主题；live preview 只增加 Markdown
+    // 语义装饰，避免 code 模式落回默认白底、灰 gutter 或默认选区颜色。
+    const baseTheme = EditorView.theme({
+      ".cm-editor": {
+        color: "var(--text)",
+        backgroundColor: "var(--bg)",
+        fontFamily: mode === "md" ? "var(--font-body)" : "var(--font-mono)",
+      },
+      ".cm-scroller": { fontFamily: "inherit", lineHeight: "var(--line-height, 1.75)" },
+      ".cm-content, .cm-line": { fontFamily: "inherit", fontSize: "16px" },
+      ".cm-gutters": {
+        color: "var(--dim)",
+        backgroundColor: "var(--bg-nav)",
+        borderRight: "1px solid var(--bd-1)",
+      },
+      ".cm-activeLine": { backgroundColor: "var(--bg-2)" },
+      ".cm-activeLineGutter": { backgroundColor: "var(--bg-2)", color: "var(--text)" },
+      ".cm-selectionBackground, ::selection": {
+        backgroundColor: "var(--sel)",
+        color: "var(--selection-ink, var(--text))",
+      },
+      ".cm-cursor, .cm-dropCursor": { borderLeftColor: "var(--text)" },
+      ".cm-line span": { color: "var(--text)" },
+      "&.ͼ1 .cm-selectionBackground, &.ͼ1 ::selection": { backgroundColor: "var(--sel)" },
+    });
+    return mode === "md"
+      ? [...highlight, baseTheme, livePreview(previewContext)]
+      : [...highlight, baseTheme];
   }
 
   const state = EditorState.create({
