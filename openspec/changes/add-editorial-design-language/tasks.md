@@ -13,6 +13,8 @@
 - [ ] 按 ADR 0005 实现 Thread 最小对象：标题、状态、角色化文件关联、最近活动。
 - [ ] 实现进行中、暂停、完成、归档四态及状态转换约束。
 - [ ] 实现 Thread 创建、切换、列表；Thread 持久化到 `~/.config/lumir/threads/`。
+- [ ] 文件引用同时存储稳定 id 与 vault 相对路径；`~/.config/lumir/workspaces/` 注册表承载 id→路径映射，vault 路径变动走显式重映射，不静默断联。
+- [ ] Thread brief 作为 vault 内真实文件，注册表仅存其 vault 相对路径引用，支持外部 Agent、人或 git 管理。
 - [ ] 左栏默认显示目录，Threads 独立分区显示标题、四态状态、最近活动与角色文件；预留编辑点计数位置但不渲染开放/处理中/待回看计数或假数据；共享文件显示 `×n`，不让 Thread 冒充文件所有者。
 - [ ] 明确不实现编辑点、agent 流、Session 管理。
 
