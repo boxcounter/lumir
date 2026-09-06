@@ -1,9 +1,27 @@
+:root {
+  --bg: #f6f3ea; --bg-nav: #efeadd; --bg-2: #ece6d5; --bg-3: #e2d9c1;
+  --bd-1: #e0d8c2; --bd-2: #cfc4a6; --bd-3: #b3a684;
+  --text: #262219; --dim: #8d8471; --accent: #b23a2c; --accent-ink: #fdfbf6;
+  --sel: rgba(178,58,44,.16); --radius: 5px; --measure: 480px;
+  --font-body: -apple-system, "PingFang SC", "Hiragino Sans GB", sans-serif;
+  --font-display: "Songti SC", "STSong", ui-serif, Georgia, serif;
+}
+[data-theme="dark"] { --bg:#1a1917; --bg-nav:#141312; --bg-2:#211f1c; --bg-3:#2a2823; --bd-1:#302d27; --bd-2:#413d33; --bd-3:#575142; --text:#d6d0c0; --dim:#8d8676; --accent:#d9755f; --accent-ink:#1a1917; --sel:rgba(217,117,95,.28); }
+[data-theme="eink"] { --bg:#fff; --bg-nav:#fff; --bg-2:#fff; --bg-3:#fff; --bd-1:#000; --bd-2:#000; --bd-3:#000; --text:#000; --dim:#000; --accent:#000; --accent-ink:#fff; --sel:#000; --radius:0; }
+[data-theme="eink"] *, [data-theme="eink"] *::before, [data-theme="eink"] *::after { box-shadow:none !important; text-shadow:none !important; transition:none !important; animation:none !important; }
+* { box-sizing: border-box; }
 html,
 body,
 #app {
   margin: 0;
   height: 100%;
 }
+body { background:var(--bg); color:var(--text); font-family:var(--font-body); font-size:13px; }
+::selection { background:var(--sel); }
+.pane-editor { max-width:var(--measure); }
+.cm-content { font-size:16px; line-height:1.75; }
+.cm-content, .preview-content { text-autospace: normal; hanging-punctuation: first last; }
+.cm-content { /* 编辑态保留 CM6 光标与字符列对齐，不启用可能改变测量的排印特性。 */ }
 
 /* app-shell 布局骨架（src/shell.ts）：文件树 | 编辑器 | 面板 三栏。 */
 .app-shell {

@@ -9,21 +9,21 @@ export const livePreviewTheme = EditorView.theme({
   ".cm-lp-h3": { fontSize: "1.25em", fontWeight: "600", lineHeight: "1.4" },
   ".cm-lp-h4": { fontSize: "1.15em", fontWeight: "600", lineHeight: "1.4" },
   ".cm-lp-h5": { fontSize: "1.05em", fontWeight: "600", lineHeight: "1.4" },
-  ".cm-lp-h6": { fontSize: "1em", fontWeight: "600", lineHeight: "1.4", color: "#555" },
+  ".cm-lp-h6": { fontSize: "1em", fontWeight: "600", lineHeight: "1.4", color: "var(--dim)" },
 
   ".cm-lp-strong": { fontWeight: "700" },
   ".cm-lp-em": { fontStyle: "italic" },
   ".cm-lp-strike": { textDecoration: "line-through" },
 
   ".cm-lp-quote-line": {
-    borderLeft: "3px solid #d5d5d5",
+    borderLeft: "3px solid var(--bd-2)",
     paddingLeft: "10px",
-    color: "#555",
+    color: "var(--dim)",
   },
 
-  ".cm-lp-codeblock-line": { backgroundColor: "#f5f5f5" },
+  ".cm-lp-codeblock-line": { backgroundColor: "var(--bg-2)" },
   ".cm-lp-inline-code": {
-    backgroundColor: "#f0f0f0",
+    backgroundColor: "var(--bg-2)",
     borderRadius: "3px",
     padding: "0 3px",
     fontSize: "0.92em",
@@ -38,7 +38,7 @@ export const livePreviewTheme = EditorView.theme({
     padding: "8px 12px",
     margin: "4px 0 12px",
     fontSize: "0.85em",
-    backgroundColor: "#fafafa",
+    backgroundColor: "var(--bg-nav)",
   },
   ".cm-lp-fm-table": { borderCollapse: "collapse" },
   ".cm-lp-fm-key": {
