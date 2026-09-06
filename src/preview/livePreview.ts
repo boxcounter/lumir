@@ -241,6 +241,7 @@ function collectSyntaxDecorations(
         for (const line of lineRanges(view, Math.max(ref.from, vrFrom), Math.min(ref.to, vrTo))) {
           const classes = ["cm-lp-paragraph"];
           if (line.from === first.from) classes.push(dropcap ? "cm-lp-opening" : "cm-lp-paragraph-start");
+          if (dropcap && line.from === doc.lineAt(ref.to).from) classes.push("cm-lp-opening-end");
           decos.push(Decoration.line({ class: classes.join(" ") }).range(line.from));
         }
       }
