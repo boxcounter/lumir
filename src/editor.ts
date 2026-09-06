@@ -125,13 +125,13 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
     // CM6 的基础层必须跟随 shell 的三套主题；live preview 只增加 Markdown
     // 语义装饰，避免 code 模式落回默认白底、灰 gutter 或默认选区颜色。
     const baseTheme = EditorView.theme({
-      ".cm-editor": {
+      "&": {
         color: "var(--text)",
         backgroundColor: "var(--bg)",
         fontFamily: mode === "md" ? "var(--font-body)" : "var(--font-mono)",
       },
       ".cm-scroller": { fontFamily: "inherit", lineHeight: "var(--line-height, 1.75)" },
-      ".cm-content, .cm-line": { fontFamily: "inherit", fontSize: "16px" },
+      ".cm-content": { fontFamily: "inherit", fontSize: "16px" },
       ".cm-gutters": {
         color: "var(--dim)",
         backgroundColor: "var(--bg-nav)",
@@ -144,8 +144,8 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
         color: "var(--selection-ink, var(--text))",
       },
       ".cm-cursor, .cm-dropCursor": { borderLeftColor: "var(--text)" },
-      ".cm-line span": { color: "var(--text)" },
-      "&.ͼ1 .cm-selectionBackground, &.ͼ1 ::selection": { backgroundColor: "var(--sel)" },
+      ".cm-line span": { color: "inherit" },
+      "&.cm-focused .cm-selectionBackground": { backgroundColor: "var(--sel)" },
     });
     return mode === "md"
       ? [...highlight, baseTheme, livePreview(previewContext)]
