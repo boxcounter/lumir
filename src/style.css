@@ -203,7 +203,7 @@ body { background:var(--bg); color:var(--text); font-family:var(--font-body); fo
 }
 
 .ft-open-btn:hover {
-  background: #f0f0f0;
+  background: var(--bg-2);
 }
 
 /* 编辑器区域的提示覆盖层（暂不支持预览 / 读取错误） */

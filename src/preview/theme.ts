@@ -4,12 +4,19 @@
 import { EditorView } from "@codemirror/view";
 
 export const livePreviewTheme = EditorView.theme({
-  ".cm-lp-h1": { fontSize: "1.6em", fontWeight: "700", lineHeight: "1.4" },
-  ".cm-lp-h2": { fontSize: "1.4em", fontWeight: "700", lineHeight: "1.4" },
-  ".cm-lp-h3": { fontSize: "1.25em", fontWeight: "600", lineHeight: "1.4" },
-  ".cm-lp-h4": { fontSize: "1.15em", fontWeight: "600", lineHeight: "1.4" },
-  ".cm-lp-h5": { fontSize: "1.05em", fontWeight: "600", lineHeight: "1.4" },
-  ".cm-lp-h6": { fontSize: "1em", fontWeight: "600", lineHeight: "1.4", color: "var(--dim)" },
+  ".cm-editor": { color: "var(--text)", backgroundColor: "var(--bg)", fontFamily: "var(--font-body)" },
+  ".cm-gutters": { color: "var(--dim)", backgroundColor: "var(--bg-nav)", borderRight: "1px solid var(--bd-1)" },
+  ".cm-activeLine": { backgroundColor: "var(--bg-2)" },
+  ".cm-activeLineGutter": { backgroundColor: "var(--bg-2)", color: "var(--text)" },
+  ".cm-selectionBackground, ::selection": { backgroundColor: "var(--sel)" },
+  ".cm-cursor, .cm-dropCursor": { borderLeftColor: "var(--text)" },
+  ".ͼ4, .ͼ5, .ͼ6, .ͼ7, .ͼ8, .ͼ9, .ͼa, .ͼb, .ͼc, .ͼd, .ͼe, .ͼf": { color: "var(--text)" },
+  ".cm-lp-h1": { fontFamily: "var(--font-display)", fontSize: "1.6em", fontWeight: "700", lineHeight: "1.4" },
+  ".cm-lp-h2": { fontFamily: "var(--font-display)", fontSize: "1.4em", fontWeight: "700", lineHeight: "1.4" },
+  ".cm-lp-h3": { fontFamily: "var(--font-display)", fontSize: "1.25em", fontWeight: "600", lineHeight: "1.4" },
+  ".cm-lp-h4": { fontFamily: "var(--font-display)", fontSize: "1.15em", fontWeight: "600", lineHeight: "1.4" },
+  ".cm-lp-h5": { fontFamily: "var(--font-display)", fontSize: "1.05em", fontWeight: "600", lineHeight: "1.4" },
+  ".cm-lp-h6": { fontFamily: "var(--font-display)", fontSize: "1em", fontWeight: "600", lineHeight: "1.4", color: "var(--dim)" },
 
   ".cm-lp-strong": { fontWeight: "700" },
   ".cm-lp-em": { fontStyle: "italic" },
@@ -96,7 +103,7 @@ export const livePreviewTheme = EditorView.theme({
     textDecoration: "underline",
     textUnderlineOffset: "2px",
   },
-  ".cm-lp-wikilink-pending": { opacity: "0.6" },
+  ".cm-lp-wikilink-pending": { fontStyle: "italic", borderBottom: "1px dotted var(--bd-2)" },
   ".cm-lp-wikilink-unresolved": {
     color: "var(--text)",
     textDecoration: "underline dashed",
