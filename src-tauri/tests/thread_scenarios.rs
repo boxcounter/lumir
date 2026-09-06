@@ -11,12 +11,20 @@ struct Fixture {
 impl Fixture {
     fn new() -> Self {
         let guard = ENV.lock().unwrap_or_else(|e| e.into_inner());
-        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/thread-scenarios").join(format!("{}", std::process::id()));
-        if root.exists() { fs::remove_dir_all(&root).unwrap(); }
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("target/thread-scenarios")
+            .join(format!("{}", std::process::id()));
+        if root.exists() {
+            fs::remove_dir_all(&root).unwrap();
+        }
         fs::create_dir_all(&root).unwrap();
         let previous = std::env::var_os("XDG_CONFIG_HOME");
         std::env::set_var("XDG_CONFIG_HOME", &root);
-        Self { root, previous, _guard: guard }
+        Self {
+            root,
+            previous,
+            _guard: guard,
+        }
     }
     fn vault(&self, name: &str) -> String {
         let p = self.root.join(name);
@@ -26,7 +34,10 @@ impl Fixture {
 }
 impl Drop for Fixture {
     fn drop(&mut self) {
-        match &self.previous { Some(v) => std::env::set_var("XDG_CONFIG_HOME", v), None => std::env::remove_var("XDG_CONFIG_HOME") }
+        match &self.previous {
+            Some(v) => std::env::set_var("XDG_CONFIG_HOME", v),
+            None => std::env::remove_var("XDG_CONFIG_HOME"),
+        }
         fs::remove_dir_all(&self.root).unwrap();
     }
 }
@@ -35,7 +46,12 @@ impl Drop for Fixture {
 fn scenario_create_thread_persistence_roundtrip_and_four_states() {
     let _f = Fixture::new();
     let mut t = thread_create("研究".into(), "v".into()).unwrap();
-    for status in [ThreadStatus::Active, ThreadStatus::Paused, ThreadStatus::Completed, ThreadStatus::Archived] {
+    for status in [
+        ThreadStatus::Active,
+        ThreadStatus::Paused,
+        ThreadStatus::Completed,
+        ThreadStatus::Archived,
+    ] {
         t.status = status.clone();
         thread_update(t.clone()).unwrap();
         let loaded = thread_list("v".into()).unwrap();
@@ -69,7 +85,8 @@ fn scenario_reconcile_reuses_persisted_vault_identity() {
     reconcile_vault(std::path::Path::new(&path)).unwrap();
     let dir = config::config_dir().unwrap().join("workspaces");
     assert_eq!(fs::read_dir(&dir).unwrap().count(), 1);
-    let v: VaultWorkspace = serde_json::from_str(&fs::read_to_string(dir.join("persisted-id.json")).unwrap()).unwrap();
+    let v: VaultWorkspace =
+        serde_json::from_str(&fs::read_to_string(dir.join("persisted-id.json")).unwrap()).unwrap();
     assert_eq!(v.id, "persisted-id");
     assert_eq!(v.path, path);
 }
@@ -84,7 +101,10 @@ fn scenario_remap_preserves_identity_and_updates_last_vault() {
     let new = new.canonicalize().unwrap().display().to_string();
     fs::write(config::config_dir().unwrap().join("config.json"), "42").unwrap();
     vault_remap("stable".into(), new.clone()).unwrap();
-    let v: VaultWorkspace = serde_json::from_str(&fs::read_to_string(config::config_dir().unwrap().join("workspaces/stable.json")).unwrap()).unwrap();
+    let v: VaultWorkspace = serde_json::from_str(
+        &fs::read_to_string(config::config_dir().unwrap().join("workspaces/stable.json")).unwrap(),
+    )
+    .unwrap();
     assert_eq!(v.id, "stable");
     assert_eq!(v.path, new);
     assert_eq!(config::load().unwrap().config.last_vault, Some(new));
@@ -103,7 +123,20 @@ fn scenario_multiple_vault_threads_are_isolated() {
     let tb = thread_create("B".into(), "b".into()).unwrap();
     let visible = thread_list("b".into()).unwrap();
     assert!(visible.iter().any(|t| t.id == tb.id));
-    assert!(!visible.iter().any(|t| t.id == ta.id), "vault B 不得看到 vault A 的 Thread");
+    assert!(
+        !visible.iter().any(|t| t.id == ta.id),
+        "vault B 不得看到 vault A 的 Thread"
+    );
+}
+
+#[test]
+fn scenario_current_thread_persists_after_switch() {
+    let _f = Fixture::new();
+    let a = thread_create("A".into(), "v".into()).unwrap();
+    let b = thread_create("B".into(), "v".into()).unwrap();
+    thread_switch(b.id.clone(), "v".into()).unwrap();
+    assert_eq!(thread_current("v".into()).unwrap().unwrap().id, b.id);
+    assert_ne!(a.id, b.id);
 }
 
 #[test]

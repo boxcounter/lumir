@@ -184,7 +184,10 @@ fn save(t: &Thread) -> Result<(), CommandError> {
 }
 #[tauri::command]
 pub fn thread_list(vault_id: String) -> Result<Vec<Thread>, CommandError> {
-    Ok(read_all()?.into_iter().filter(|t| t.vault_id == vault_id).collect())
+    Ok(read_all()?
+        .into_iter()
+        .filter(|t| t.vault_id == vault_id)
+        .collect())
 }
 #[tauri::command]
 pub fn thread_create(title: String, vault_id: String) -> Result<Thread, CommandError> {
@@ -205,7 +208,10 @@ pub fn thread_create(title: String, vault_id: String) -> Result<Thread, CommandE
                 .unwrap()
                 .subsec_nanos()
         ),
-        vault_id: { valid_id(&vault_id)?; vault_id },
+        vault_id: {
+            valid_id(&vault_id)?;
+            vault_id
+        },
         title,
         status: ThreadStatus::Active,
         files: vec![],
@@ -223,14 +229,23 @@ pub fn thread_update(thread: Thread) -> Result<Thread, CommandError> {
 }
 #[tauri::command]
 pub fn thread_current(vault_id: String) -> Result<Option<Thread>, CommandError> {
-    Ok(read_all()?.into_iter().find(|t| t.vault_id == vault_id))
+    let id = fs::read_to_string(dir()?.join(format!("current-{}.txt", vault_id))).ok();
+    Ok(read_all()?
+        .into_iter()
+        .find(|t| t.vault_id == vault_id && Some(t.id.clone()) == id))
 }
 #[tauri::command]
 pub fn thread_switch(id: String, vault_id: String) -> Result<Thread, CommandError> {
     valid_id(&id)?;
     valid_id(&vault_id)?;
-    read_all()?
+    let thread = read_all()?
         .into_iter()
         .find(|t| t.id == id && t.vault_id == vault_id)
-        .ok_or_else(|| CommandError::new("thread_not_found", "找不到 Thread"))
+        .ok_or_else(|| CommandError::new("thread_not_found", "找不到 Thread"))?;
+    let d = dir()?;
+    fs::create_dir_all(&d)
+        .map_err(|_| CommandError::new("thread_write", "无法创建 Thread 目录"))?;
+    fs::write(d.join(format!("current-{vault_id}.txt")), &thread.id)
+        .map_err(|_| CommandError::new("thread_write", "无法保存当前 Thread"))?;
+    Ok(thread)
 }
