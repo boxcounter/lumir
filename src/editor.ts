@@ -122,8 +122,10 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
       markdown({ base: markdownLanguage, extensions: [GFM] }),
       syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
     ];
-    // md 模式 = 高亮 + 装饰层；code 模式 = 仅高亮。
-    return mode === "md" ? [...highlight, livePreview(previewContext)] : highlight;
+    // md 正文优先阅读性黑体；code 模式保持等宽。
+    // 中文黑体字宽天然等宽，西文列宽不固定是阅读优先取舍。
+    const typography = EditorView.theme({ ".cm-content, .cm-line": { fontFamily: mode === "md" ? "var(--font-body)" : "var(--font-mono)" } });
+    return mode === "md" ? [...highlight, typography, livePreview(previewContext)] : [...highlight, typography];
   }
 
   const state = EditorState.create({
@@ -131,7 +133,7 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
     extensions: [
       lineNumbers(),
       highlightActiveLine(),
-      EditorView.theme({ ".cm-content": { fontFamily: "var(--font-body)" }, ".cm-line": { fontFamily: "var(--font-body)" }, ".cm-gutters-before": { borderRight: "0" } }),
+      EditorView.theme({ ".cm-gutters-before": { borderRight: "0" } }),
       modeCompartment.of(modeExtensions(initialMode)),
       EditorState.readOnly.of(true),
       EditorView.editable.of(false),

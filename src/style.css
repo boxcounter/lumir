@@ -1,20 +1,12 @@
 :root {
   --bg: #f6f3ea; --bg-nav: #efeadd; --bg-2: #ece6d5; --bg-3: #e2d9c1;
   --bd-1: #e0d8c2; --bd-2: #cfc4a6; --bd-3: #b3a684;
-  --text: #262219; --dim: #8d8471; --accent: #b23a2c; --accent-ink: #fdfbf6;
+  --text: #262219; --dim: #8d8471; --accent: #b23a2c;
   --sel: rgba(178,58,44,.16); --selection-ink: var(--text); --radius: 5px; --measure: 480px;
   --font-body: -apple-system, "PingFang SC", "Hiragino Sans GB", sans-serif;
   --font-display: "Songti SC", "STSong", ui-serif, Georgia, serif;
   --font-mono: ui-monospace, "SF Mono", Menlo, monospace;
   --line-height: 1.75;
-  --state-default-bg: var(--bg);
-  --state-hover-bg: var(--bg-2);
-  --state-active-bg: var(--bg-3);
-  --state-default-border: var(--bd-1);
-  --state-hover-border: var(--bd-2);
-  --state-active-border: var(--bd-3);
-  --pattern-stripes: none;
-  --pattern-double: none;
 }
 [data-theme="dark"] { --bg:#1a1917; --bg-nav:#141312; --bg-2:#211f1c; --bg-3:#2a2823; --bd-1:#302d27; --bd-2:#413d33; --bd-3:#575142; --text:#d6d0c0; --dim:#8d8676; --accent:#d9755f; --accent-ink:#1a1917; --sel:rgba(217,117,95,.28); --selection-ink: var(--text); }
 [data-theme="eink"] { --bg:#fff; --bg-nav:#fff; --bg-2:#fff; --bg-3:#fff; --bd-1:#000; --bd-2:#000; --bd-3:#000; --text:#000; --dim:#000; --accent:#000; --accent-ink:#fff; --sel:#000; --selection-ink:#fff; --radius:0; --pattern-stripes: repeating-linear-gradient(135deg,#000 0 1px,#fff 1px 6px); --pattern-double: 3px double #000; }
@@ -29,7 +21,7 @@ body,
   height: 100%;
 }
 body { background:var(--bg); color:var(--text); font-family:var(--font-body); font-size:13px; }
-::selection { background:var(--sel); }
+::selection { background:var(--sel); color:var(--selection-ink); }
 .pane-editor { max-width:var(--measure); }
 .cm-content { font-size:16px; line-height:1.75; }
 .cm-content { text-autospace: normal; hanging-punctuation: first last; }
