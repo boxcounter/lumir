@@ -47,7 +47,7 @@ export function createThreads(mount: HTMLElement, cb: ThreadsCallbacks): Threads
     form.addEventListener("submit", async (event) => {
       event.preventDefault(); const name = input.value.trim(); if (!name || submit.disabled) return;
       submit.disabled = true;
-      try { await cb.onCreate(name); close(); } finally { submit.disabled = false; }
+      try { await cb.onCreate(name); close(); } catch {} finally { submit.disabled = false; }
     });
   });
   function render() {

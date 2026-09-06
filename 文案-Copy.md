@@ -35,6 +35,7 @@
 | D27 | Thread 创建取消 | 作者 | 取消 | Cancel | 允许作者退出命名而不产生空 Thread。 |
 | D28 | Thread 持久化提示 | 作者 | Thread 已保存 | Thread saved | Thread 使用 vault 持久化存储，创建和状态更新均可在重启后恢复。 |
 | D29 | Thread 创建 toast | 作者 | 已创建 Thread：{名称} | Thread created: {title} | 只在会话模型成功加入卡片后确认创建。 |
+| D40 | vault remap toast | 作者 | 发现 {数量} 个可映射的 vault 路径 | Found {count} remappable vault paths | 恢复时安静提示可选映射数量，不打断作者当前工作。 |
 | D31 | 附件未找到提示块 | 作者 | 附件未找到：{引用} | Attachment not found: {ref} | 原位说明引用缺失，不中断正文。 |
 | D32 | 附件读取未接线 | 作者 | 附件读取未接线 | Attachment pipeline not wired | 预览桩诚实表达后端尚未接入。 |
 | D33 | 内容嵌入不支持 | 作者 | 内容嵌入不支持 | Note embed not supported | 明确兼容边界，不伪装成加载失败。 |
