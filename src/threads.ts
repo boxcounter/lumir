@@ -67,6 +67,16 @@ export function createThreads(mount: HTMLElement, cb: ThreadsCallbacks): Threads
       const activity = document.createElement("time"); activity.textContent = COPY.recent + item.recent_activity;
       select.append(name, state, activity);
       select.addEventListener("click", () => { void cb.onSelect(item.id); });
+      const files = document.createElement("div");
+      files.className = "thread-files";
+      if (item.id === current) {
+        for (const file of item.files) {
+          const open = document.createElement("span");
+          open.className = "thread-file";
+          open.textContent = `${file.path} · ${file.role}`;
+          files.append(open);
+        }
+      }
       const actions = document.createElement("div"); actions.className = "thread-actions";
       for (const status of ["active", "paused", "completed", "archived"] as const) {
         if (status === item.status) continue;
@@ -78,7 +88,7 @@ export function createThreads(mount: HTMLElement, cb: ThreadsCallbacks): Threads
         });
         actions.append(action);
       }
-      card.append(select, actions); list.append(card);
+      card.append(select, files, actions); list.append(card);
     }
   }
   render();

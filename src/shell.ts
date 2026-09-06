@@ -28,7 +28,7 @@ export function createShell(mount: HTMLElement): AppShell {
 
   const masthead = document.createElement("header");
   masthead.className = "masthead";
-  masthead.innerHTML = '<span class="masthead-vault">未打开 vault</span><span class="masthead-thread">无当前 Thread</span><span class="masthead-status">—</span>';
+  masthead.innerHTML = '<span class="masthead-vault">未打开 vault</span><span class="masthead-file">无当前文件</span><span class="masthead-thread">无当前 Thread</span><span class="masthead-status">—</span>';
   root.append(masthead);
 
   const fileTree = pane("pane-filetree", "");

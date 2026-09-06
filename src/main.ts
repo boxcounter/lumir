@@ -119,6 +119,7 @@ async function openFile(path: string, kind: "md" | "code" | "text" | "binary") {
   try {
     const text = await fsReadFile(path);
     currentPath = kind === "md" ? path : undefined;
+    mastheadFile.textContent = path;
     invalidateResolve(); // from 变更，按 from 键控的缓存整批失效
     editor.openDocument(text, path);
     tree.setCurrentPath(path);
@@ -285,6 +286,7 @@ shell.panel.hidden = true;
 shell.root.classList.add("panel-default-hidden");
 
 const mastheadVault = shell.root.querySelector<HTMLElement>(".masthead-vault")!;
+const mastheadFile = shell.root.querySelector<HTMLElement>(".masthead-file")!;
 const mastheadThread = shell.root.querySelector<HTMLElement>(".masthead-thread")!;
 const mastheadStatus = shell.root.querySelector<HTMLElement>(".masthead-status")!;
 let tree!: ReturnType<typeof createFileTree>;
@@ -355,6 +357,7 @@ function loadVault(root: string, entries: FsEntry[], vaultId = root, remapCandid
   // currentPath；旧 vault 的「暂不支持预览」覆盖层一并撤下
   editor.reset();
   currentPath = undefined;
+  mastheadFile.textContent = "无当前文件";
   showEditor();
   editor.setWikilinkResolver(wikilinkResolver);
   mastheadVault.textContent = root.slice(root.lastIndexOf("/") + 1) || root;
