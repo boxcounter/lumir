@@ -32,8 +32,31 @@ body { background:var(--bg); color:var(--text); font-family:var(--font-body); fo
 .app-shell {
   display: grid;
   grid-template-columns: 240px 1fr 280px;
+  grid-template-rows: 42px 1fr;
   height: 100%;
 }
+.masthead { grid-column: 1 / -1; display:flex; align-items:center; gap:16px; padding:0 16px; border-bottom:1px solid var(--bd-1); font-size:13px; }
+.masthead-vault { font-weight:600; }
+.masthead-thread, .masthead-status { color:var(--dim); }
+.pane-filetree { display:flex; flex-direction:column; }
+.tree-pane { flex:1; min-height:0; overflow:auto; }
+.threads-pane { flex:none; min-height:120px; max-height:40%; overflow:auto; border-top:1px solid var(--bd-1); }
+.threads { padding:8px; font-family:var(--font-body); font-size:13px; }
+.threads-heading { display:flex; align-items:center; justify-content:space-between; }
+.threads-heading h2 { margin:0; font-size:13px; }
+.threads-add, .thread-action, .thread-create-submit { border:1px solid var(--bd-2); background:none; color:var(--text); cursor:pointer; font:inherit; }
+.threads-list { display:flex; flex-direction:column; gap:4px; }
+.thread-card { display:flex; gap:6px; align-items:center; width:100%; padding:5px; border:0; background:none; color:var(--text); text-align:left; cursor:pointer; }
+.thread-card:hover, .thread-card.is-current { background:var(--bg-2); }
+.thread-status, .thread-card time { color:var(--dim); font-size:11px; }
+.thread-card time { margin-left:auto; }
+.thread-actions { margin-left:4px; }
+.threads-empty { color:var(--dim); }
+.thread-create-form { display:flex; gap:4px; }
+.thread-create-input { min-width:0; width:120px; }
+.lumir-toast, .toast-surface { position:absolute; bottom:16px; right:16px; display:flex; align-items:center; gap:10px; padding:8px 14px; background:var(--text); color:var(--bg); font-size:13px; z-index:10; max-width:70%; }
+.toast-action { border:1px solid var(--bg); background:transparent; color:inherit; cursor:pointer; font:inherit; padding:2px 10px; }
+
 
 .pane {
   min-width: 0;
@@ -121,8 +144,17 @@ body { background:var(--bg); color:var(--text); font-family:var(--font-body); fo
 .ft-children {
   list-style: none;
   margin: 0;
-  padding-left: 14px;
+  padding-left: 13px;
 }
+.ft-row { min-height:27px; line-height:27px; font-size:13px; padding-left:calc(13px * var(--ft-depth, 0)); }
+.ft-row[data-depth="1"] { color: color-mix(in srgb, var(--text) 96%, var(--bg)); }
+.ft-row[data-depth="2"] { color: color-mix(in srgb, var(--text) 91%, var(--bg)); }
+.ft-row[data-depth="3"] { color: color-mix(in srgb, var(--text) 86%, var(--bg)); }
+.ft-row[data-depth="4"] { color: color-mix(in srgb, var(--text) 81%, var(--bg)); }
+.ft-dir { font-weight:600; }
+.ft-md, .ft-image, .ft-other { font-weight:400; }
+.ft-row.is-current { border-left:2px solid var(--text); font-weight:600; }
+.ft-current-mark { width:15px; flex:none; color:var(--text); }
 
 .ft-root-list {
   padding-left: 0;

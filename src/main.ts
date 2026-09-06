@@ -2,6 +2,7 @@ import { createShell } from "./shell";
 import { createEditor } from "./editor";
 import { Keymap } from "./keys";
 import { createFileTree, openKind } from "./tree";
+import { createThreads, type Thread } from "./threads";
 import {
   configGet,
   errorMessage,
@@ -120,6 +121,7 @@ async function openFile(path: string, kind: "md" | "code" | "text" | "binary") {
     currentPath = kind === "md" ? path : undefined;
     invalidateResolve(); // from 变更，按 from 键控的缓存整批失效
     editor.openDocument(text, path);
+    tree.setCurrentPath(path);
     showEditor();
   } catch (e) {
     // CommandError 的 message 是人话（如非法 UTF-8），直接展示
@@ -282,7 +284,16 @@ keymap.attach(window, (command) => {
 shell.panel.hidden = true;
 shell.root.classList.add("panel-default-hidden");
 
-const tree = createFileTree(shell.fileTree, {
+const mastheadVault = shell.root.querySelector<HTMLElement>(".masthead-vault")!;
+const mastheadThread = shell.root.querySelector<HTMLElement>(".masthead-thread")!;
+const mastheadStatus = shell.root.querySelector<HTMLElement>(".masthead-status")!;
+const threads = createThreads(shell.threads, {
+  onCreate: (title) => { toast(`已创建 Thread：${title}`); },
+  onSelect: (id) => { mastheadThread.textContent = id; mastheadStatus.textContent = "进行中"; },
+  onStatus: (_id, status) => { mastheadStatus.textContent = status; },
+});
+threads.setThreads([]);
+const tree = createFileTree(shell.treeMount, {
   onOpenFile: (path, kind) => void openFile(path, kind),
   onOpenVault: () => {
     vaultOpen()
@@ -316,6 +327,8 @@ function loadVault(root: string, entries: FsEntry[]) {
   currentPath = undefined;
   showEditor();
   editor.setWikilinkResolver(wikilinkResolver);
+  mastheadVault.textContent = root.slice(root.lastIndexOf("/") + 1) || root;
+  tree.setCurrentPath(undefined);
   tree.setVault(root, entries);
 }
 

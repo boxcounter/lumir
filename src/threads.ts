@@ -1,51 +1,87 @@
 export type ThreadStatus = "active" | "paused" | "completed" | "archived";
-
 export interface Thread { id: string; title: string; status: ThreadStatus; updatedAt: string; }
 export interface ThreadsCallbacks {
-  onCreate(): void;
-  onSelect(id: string): void;
-  onStatus(id: string, status: ThreadStatus): void;
+  onCreate(title: string): void | Promise<void>;
+  onSelect(id: string): void | Promise<void>;
+  onStatus(id: string, status: ThreadStatus): void | Promise<void>;
 }
-
 export const COPY = {
-  heading: "Threads",
-  create: "+ 新建",
-  placeholder: "Thread 名称",
-  empty: "还没有 Thread。创建一个意图，开始工作。",
-  confirm: "确认将 Thread 状态改为",
+  heading: "Threads", create: "+ 新建", placeholder: "Thread 名称", submit: "创建", cancel: "取消",
+  empty: "还没有 Thread。创建一个意图，开始工作。", confirm: "确认将 Thread 状态改为归档？",
+  recent: "最近活动：", session: "仅当前会话，尚未接入持久化存储。",
 };
-const STATUS: Record<ThreadStatus, string> = { active: "进行中", paused: "暂停", completed: "完成", archived: "归档" };
-
+export const STATUS: Record<ThreadStatus, string> = { active: "进行中", paused: "暂停", completed: "完成", archived: "归档" };
 export interface ThreadsView { setThreads(items: Thread[]): void; setCurrent(id?: string): void; }
 
 export function createThreads(mount: HTMLElement, cb: ThreadsCallbacks): ThreadsView {
-  const root = document.createElement("section"); root.className = "threads";
-  const heading = document.createElement("div"); heading.className = "threads-heading";
-  const title = document.createElement("h2"); title.textContent = COPY.heading;
-  const add = document.createElement("button"); add.type = "button"; add.className = "threads-add"; add.textContent = COPY.create;
-  add.addEventListener("click", () => {
-    const input = document.createElement("input"); input.className = "thread-create-input"; input.placeholder = COPY.placeholder;
-    const submit = document.createElement("button"); submit.type = "button"; submit.textContent = "创建"; submit.className = "thread-create-submit";
-    const form = document.createElement("form"); form.className = "thread-create-form"; form.append(input, submit); heading.append(form); input.focus();
-    form.addEventListener("submit", (event) => { event.preventDefault(); if (input.value.trim()) { cb.onCreate(); form.remove(); } });
-  }); heading.append(title, add);
-  const list = document.createElement("div"); list.className = "threads-list"; root.append(heading, list); mount.replaceChildren(root);
+  const root = document.createElement("section");
+  root.className = "threads";
+  const heading = document.createElement("div");
+  heading.className = "threads-heading";
+  const title = document.createElement("h2");
+  title.textContent = COPY.heading;
+  const add = document.createElement("button");
+  add.type = "button"; add.className = "threads-add"; add.textContent = COPY.create;
+  heading.append(title, add);
+  const session = document.createElement("p");
+  session.className = "threads-session"; session.textContent = COPY.session;
+  const list = document.createElement("div");
+  list.className = "threads-list";
+  root.append(heading, session, list); mount.replaceChildren(root);
   let current: string | undefined;
-  function render(items: Thread[]) {
+  let items: Thread[] = [];
+  let form: HTMLFormElement | undefined;
+  add.addEventListener("click", () => {
+    if (form) { form.querySelector("input")?.focus(); return; }
+    const input = document.createElement("input");
+    input.className = "thread-create-input"; input.placeholder = COPY.placeholder;
+    input.setAttribute("aria-label", COPY.placeholder); input.required = true; input.maxLength = 200;
+    const submit = document.createElement("button");
+    submit.type = "submit"; submit.textContent = COPY.submit; submit.className = "thread-create-submit";
+    const cancel = document.createElement("button");
+    cancel.type = "button"; cancel.textContent = COPY.cancel;
+    form = document.createElement("form"); form.className = "thread-create-form";
+    form.append(input, submit, cancel); heading.after(form); input.focus();
+    const close = () => { form?.remove(); form = undefined; add.focus(); };
+    cancel.addEventListener("click", close);
+    form.addEventListener("keydown", (event) => { if (event.key === "Escape") { event.preventDefault(); close(); } });
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault(); const name = input.value.trim(); if (!name || submit.disabled) return;
+      submit.disabled = true;
+      try { await cb.onCreate(name); close(); } finally { submit.disabled = false; }
+    });
+  });
+  function render() {
     list.replaceChildren();
-    if (!items.length) { const empty = document.createElement("p"); empty.className = "threads-empty"; empty.textContent = COPY.empty; list.append(empty); return; }
+    if (!items.length) {
+      const empty = document.createElement("p"); empty.className = "threads-empty"; empty.textContent = COPY.empty;
+      list.append(empty); return;
+    }
     for (const item of items) {
-      const card = document.createElement("button"); card.type = "button"; card.className = "thread-card"; card.classList.toggle("is-current", item.id === current);
-      card.dataset.threadId = item.id; card.title = item.title;
+      const card = document.createElement("article");
+      card.className = "thread-card"; card.classList.toggle("is-current", item.id === current); card.dataset.threadId = item.id;
+      const select = document.createElement("button");
+      select.type = "button"; select.className = "thread-select"; select.title = item.title;
+      select.setAttribute("aria-pressed", String(item.id === current));
       const name = document.createElement("strong"); name.textContent = item.title;
-      const state = document.createElement("span"); state.className = `thread-status thread-${item.status}`; state.textContent = STATUS[item.status];
-      const activity = document.createElement("time"); activity.textContent = item.updatedAt;
-      const actions = document.createElement("span"); actions.className = "thread-actions";
-      const next = item.status === "active" ? "paused" : item.status === "paused" ? "completed" : item.status === "completed" ? "archived" : "active";
-      if (item.status !== "archived") { const action = document.createElement("button"); action.type = "button"; action.className = "thread-action"; action.textContent = STATUS[next]; action.title = `${COPY.confirm} ${STATUS[next]}`; action.addEventListener("click", (e) => { e.stopPropagation(); if (next === "archived" && !window.confirm(`${COPY.confirm} ${STATUS[next]}？`)) return; cb.onStatus(item.id, next); }); actions.append(action); }
-      card.append(name, state, activity, actions); card.addEventListener("click", () => { current = item.id; cb.onSelect(item.id); render(items); });
-      list.append(card);
+      const state = document.createElement("span"); state.className = "thread-status"; state.textContent = STATUS[item.status];
+      const activity = document.createElement("time"); activity.textContent = COPY.recent + item.updatedAt;
+      select.append(name, state, activity);
+      select.addEventListener("click", () => { void cb.onSelect(item.id); });
+      const actions = document.createElement("div"); actions.className = "thread-actions";
+      for (const status of ["active", "paused", "completed", "archived"] as const) {
+        if (status === item.status) continue;
+        const action = document.createElement("button");
+        action.type = "button"; action.className = "thread-action"; action.textContent = STATUS[status];
+        action.addEventListener("click", () => {
+          if (status === "archived" && !window.confirm(COPY.confirm)) return;
+          void cb.onStatus(item.id, status);
+        });
+        actions.append(action);
+      }
+      card.append(select, actions); list.append(card);
     }
   }
-  return { setThreads: render, setCurrent(id) { current = id; list.querySelectorAll(".thread-card").forEach((el) => el.classList.toggle("is-current", (el as HTMLElement).dataset.threadId === id)); } };
+  render();
+  return { setThreads(value) { items = value; render(); }, setCurrent(id) { current = id; render(); } };
 }
