@@ -52,19 +52,18 @@ fn dir() -> Result<PathBuf, CommandError> {
 fn workspaces() -> Result<PathBuf, CommandError> {
     Ok(config::config_dir()?.join("workspaces"))
 }
-pub fn vault_id(path: &str) -> String {
-    let mut h: u64 = 1469598103934665603;
-    for b in path.as_bytes() {
-        h ^= *b as u64;
-        h = h.wrapping_mul(1099511628211)
-    }
-    format!("vault-{h:016x}")
+pub fn vault_id(_path: &str) -> String {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    format!(
+        "vault-{}-{}",
+        std::process::id(),
+        NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    )
 }
 pub fn reconcile_vault(path: &std::path::Path) -> Result<(), CommandError> {
     let p = path.display().to_string();
     let id = vault_id(&p);
-    let _ = vault_register(id, p);
-    Ok(())
+    vault_register(id, p).map(|_| ())
 }
 #[tauri::command]
 pub fn vault_register(id: String, path: String) -> Result<VaultWorkspace, CommandError> {
