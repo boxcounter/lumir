@@ -18,11 +18,13 @@
    | 阶段 | 周 | 内容 | 出口标准 |
    |---|---|---|---|
    | M0 harness | 1-2 | CI 性能门禁、视觉回归、ADR/spec 流程、repo 骨架、性能测量方法学 spec | 空壳 app 的四项性能指标（冷启动、keypress-to-paint、打开 1MB 文件、常驻内存）全部已在 CI 里被测量并产出数值 |
-   | M1 编辑器 | 3-6 | vault 打开、全类型文件树、md live preview、代码着色、wikilink 跳转、frontmatter properties、键位框架 | 能用 Lumir 只读浏览作者的整个真实 vault |
+   | M1 编辑器 | 3-6 | vault 打开、全类型文件树、md live preview、代码着色、wikilink 跳转、frontmatter properties、键位框架；收尾补齐列表文字对齐与基础 Markdown 表格阅读 | 能用 Lumir 只读浏览作者的整个真实 vault |
    | M2 编辑与 agent | 7-10 | 前段补齐基础手动编辑与安全保存；ACP 接入一个 agent、编辑状态可视化、选区发起对话、变更审批/回滚；MCP server + CLI | 同时满足：手动编辑→保存→重开内容正确，失败/冲突无静默丢数据；完成一次完整的"选区→对话→agent 改文件→审批/回滚"循环。为进入 M3 真实 dogfood 做好准备 |
    | M3 dogfood | 11-13 | 性能调到达标、键位打磨、迁移日常使用 | **连续两周用 Lumir 替代 Obsidian 完成真实工作**（唯一不可压缩的 wall-clock 窗口：真实使用证据无法加速产生） |
 
    注：表中周数是上限约束（防漂移保险），不是工时预估——AI-only 开发速度下各阶段可能提前完成，提前即进入下一阶段；例外是 M3 出口的"连续两周"，它度量的是真实使用的持续时间，无法压缩。
+
+   **列表与表格的阶段归属（2026-09-06 Alex 用户裁决）**：M1 收尾补齐列表文字对齐（含换行悬挂与嵌套）及基础 Markdown 表格阅读（含列对齐、宽表可达与源码复制保护），保持只读且不重写源码。列表与表格的 Markdown 源码编辑归 M2 基础手动编辑；专用单元格导航、增删行列等表格操作不是 M2 必须项。功能边界与验收由 [complete-markdown-reading 提案](../../openspec/changes/complete-markdown-reading/proposal.md) 进入 OpenSpec 节点 1 评审；阶段方向已批准，不代表新 spec 已通过或授权实现。该补齐不改变其他里程碑出口与下述架构 review。
 
    **M2 前段范围（2026-09-06 Alex 用户裁决）**：补齐 Markdown 正文输入、删除、剪切、粘贴及中文输入法（IME）、undo/redo、保存、未保存（dirty）状态与保存失败反馈；切换文件或退出时不静默丢失未保存内容；外部 Agent 并发修改时不静默覆盖任一方内容；支持 Markdown 编辑时源码显露与预览切换。手动编辑与 Agent 写入共享写入及版本检查基础，但手动修改不经过 Agent 审批。具体自动保存策略、冲突处理及合并算法留给后续 spec 裁决，不在此锁定，也不扩张为 IDE 或全部文件类型编辑。该补齐不挤掉 Agent 集成，不把 v1 全量目标带入 M2（见 [ADR 0005 §6](0005-product-ontology-object-model.md#6-分层m2-最小循环-vs-v1-mvp)）。锚点机制仍是 M2 第一个技术原型；先验证该原型，再在 M2 前段落实基础手动编辑与共享写入基础。
 
