@@ -321,8 +321,28 @@ const threads = createThreads(shell.threads, {
   onOpenFile: (path) => openFile(path, openKind(path)),
   onCreate: async (title) => {
     const epoch = resolveEpoch;
-    try { const item = await threadCreate(title, currentVaultId); if (epoch !== resolveEpoch) return; sessionThreads.push(item); selectedThreadId = item.id; refreshThreads(); toast(`已创建 Thread：${title}`); }
-    catch (error) { if (epoch === resolveEpoch) toast(errorMessage(error)); throw error; }
+    const vaultId = currentVaultId;
+    let created: Thread;
+    try {
+      created = await threadCreate(title, vaultId);
+    } catch (error) {
+      if (epoch === resolveEpoch) toast(errorMessage(error));
+      throw error;
+    }
+    if (epoch !== resolveEpoch) return;
+    sessionThreads.push(created);
+    refreshThreads();
+    const request = ++threadRequest;
+    try {
+      const current = await threadSwitch(created.id, vaultId);
+      if (epoch !== resolveEpoch || request !== threadRequest) return;
+      Object.assign(created, current);
+      selectedThreadId = current.id;
+      refreshThreads();
+      toast(`已创建并切换到 Thread：${title}`);
+    } catch (error) {
+      if (epoch === resolveEpoch) toast(`Thread 已创建，但切换失败；可点击该 Thread 重试：${errorMessage(error)}`);
+    }
   },
   onSelect: async (id) => {
     const epoch = resolveEpoch;
