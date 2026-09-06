@@ -7,6 +7,13 @@ export interface ThreadsCallbacks {
   onStatus(id: string, status: ThreadStatus): void;
 }
 
+export const COPY = {
+  heading: "Threads",
+  create: "+ 新建",
+  placeholder: "Thread 名称",
+  empty: "还没有 Thread。创建一个意图，开始工作。",
+  confirm: "确认将 Thread 状态改为",
+};
 const STATUS: Record<ThreadStatus, string> = { active: "进行中", paused: "暂停", completed: "完成", archived: "归档" };
 
 export interface ThreadsView { setThreads(items: Thread[]): void; setCurrent(id?: string): void; }
@@ -14,14 +21,19 @@ export interface ThreadsView { setThreads(items: Thread[]): void; setCurrent(id?
 export function createThreads(mount: HTMLElement, cb: ThreadsCallbacks): ThreadsView {
   const root = document.createElement("section"); root.className = "threads";
   const heading = document.createElement("div"); heading.className = "threads-heading";
-  const title = document.createElement("h2"); title.textContent = "Threads";
-  const add = document.createElement("button"); add.type = "button"; add.className = "threads-add"; add.textContent = "+ 新建";
-  add.addEventListener("click", () => cb.onCreate()); heading.append(title, add);
+  const title = document.createElement("h2"); title.textContent = COPY.heading;
+  const add = document.createElement("button"); add.type = "button"; add.className = "threads-add"; add.textContent = COPY.create;
+  add.addEventListener("click", () => {
+    const input = document.createElement("input"); input.className = "thread-create-input"; input.placeholder = COPY.placeholder;
+    const submit = document.createElement("button"); submit.type = "button"; submit.textContent = "创建"; submit.className = "thread-create-submit";
+    const form = document.createElement("form"); form.className = "thread-create-form"; form.append(input, submit); heading.append(form); input.focus();
+    form.addEventListener("submit", (event) => { event.preventDefault(); if (input.value.trim()) { cb.onCreate(); form.remove(); } });
+  }); heading.append(title, add);
   const list = document.createElement("div"); list.className = "threads-list"; root.append(heading, list); mount.replaceChildren(root);
   let current: string | undefined;
   function render(items: Thread[]) {
     list.replaceChildren();
-    if (!items.length) { const empty = document.createElement("p"); empty.className = "threads-empty"; empty.textContent = "还没有 Thread。创建一个意图，开始工作。"; list.append(empty); return; }
+    if (!items.length) { const empty = document.createElement("p"); empty.className = "threads-empty"; empty.textContent = COPY.empty; list.append(empty); return; }
     for (const item of items) {
       const card = document.createElement("button"); card.type = "button"; card.className = "thread-card"; card.classList.toggle("is-current", item.id === current);
       card.dataset.threadId = item.id; card.title = item.title;
