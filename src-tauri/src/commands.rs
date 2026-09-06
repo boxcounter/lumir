@@ -188,10 +188,11 @@ pub fn open_vault(
     app: &tauri::AppHandle,
     state: &VaultState,
     root: PathBuf,
+    force_new: bool,
 ) -> Result<VaultInfo, CommandError> {
     // Unknown paths with stale registrations require explicit remap confirmation.
     let candidates = crate::threads::remap_candidates(&root)?;
-    if !candidates.is_empty() {
+    if !force_new && !candidates.is_empty() {
         return Ok(VaultInfo {
             vault_id: candidates[0].id.clone(),
             root: root.display().to_string(),
@@ -295,7 +296,7 @@ pub async fn vault_open(
         return Ok(None);
     };
     let root = handle.path().to_path_buf();
-    let info = open_vault(&app, &state, root)?;
+    let info = open_vault(&app, &state, root, false)?;
     write_last_vault(Path::new(&info.root))?;
     Ok(Some(info))
 }

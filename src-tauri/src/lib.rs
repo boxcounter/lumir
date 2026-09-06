@@ -70,7 +70,7 @@ fn restore_last_vault(app: &tauri::AppHandle) {
         state.set_notice(format!("上次打开的 vault 已不可用：{last}，请重新选择目录"));
         return;
     }
-    if let Err(e) = commands::open_vault(app, &state, path) {
+    if let Err(e) = commands::open_vault(app, &state, path, false) {
         state.set_notice(format!("恢复上次 vault 失败：{}", e.message));
     }
 }
