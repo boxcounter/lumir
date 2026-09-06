@@ -46,10 +46,13 @@ body { background:var(--bg); color:var(--text); font-family:var(--font-body); fo
 .threads-heading h2 { margin:0; font-size:13px; }
 .threads-add, .thread-action, .thread-create-submit { border:1px solid var(--bd-2); background:none; color:var(--text); cursor:pointer; font:inherit; }
 .threads-list { display:flex; flex-direction:column; gap:4px; }
-.thread-card { display:flex; gap:6px; align-items:center; width:100%; padding:5px; border:0; background:none; color:var(--text); text-align:left; cursor:pointer; }
+.thread-card { display:flex; gap:6px; align-items:flex-start; width:100%; padding:5px; border:0; background:none; color:var(--text); text-align:left; }
 .thread-card:hover, .thread-card.is-current { background:var(--bg-2); }
-.thread-status, .thread-card time { color:var(--dim); font-size:11px; }
-.thread-card time { margin-left:auto; }
+.thread-select { min-width:0; flex:1; display:flex; flex-wrap:wrap; gap:2px 6px; border:0; background:none; color:inherit; font:inherit; text-align:left; cursor:pointer; }
+.thread-select strong { min-width:0; max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.thread-status, .thread-select time { color:var(--dim); font-size:11px; white-space:nowrap; }
+.thread-select time { max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.thread-actions { flex:none; display:flex; flex-wrap:wrap; justify-content:flex-end; gap:2px; }
 .thread-actions { margin-left:4px; }
 .threads-empty { color:var(--dim); }
 .thread-create-form { display:flex; gap:4px; }
