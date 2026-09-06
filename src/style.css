@@ -146,11 +146,12 @@ body { background:var(--bg); color:var(--text); font-family:var(--font-body); fo
   margin: 0;
   padding-left: 13px;
 }
-.ft-row { min-height:27px; line-height:27px; font-size:13px; padding-left:calc(13px * var(--ft-depth, 0)); }
+.ft-row { min-height:27px; line-height:27px; font-size:13px;  }
 .ft-row[data-depth="1"] { color: color-mix(in srgb, var(--text) 96%, var(--bg)); }
 .ft-row[data-depth="2"] { color: color-mix(in srgb, var(--text) 91%, var(--bg)); }
 .ft-row[data-depth="3"] { color: color-mix(in srgb, var(--text) 86%, var(--bg)); }
 .ft-row[data-depth="4"] { color: color-mix(in srgb, var(--text) 81%, var(--bg)); }
+[data-theme="eink"] .ft-row[data-depth] { color: var(--text); }
 .ft-dir { font-weight:600; }
 .ft-md, .ft-image, .ft-other { font-weight:400; }
 .ft-row.is-current { border-left:2px solid var(--text); font-weight:600; }

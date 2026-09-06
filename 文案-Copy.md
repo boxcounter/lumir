@@ -32,6 +32,18 @@
 | D24 | panel 空态 | 作者 | 面板暂无内容 | Panel is empty | 默认隐藏面板，出现时也不伪造内容。 |
 | D25 | 二进制覆盖层 | 作者 | 暂不支持预览：{路径} | Preview not supported yet: {path} | 明确能力边界并保留路径。 |
 | D26 | 主题入口 | 作者 | 亮 / 暗 / eink | Light / Dark / eink | 允许环境适配；eink 保留技术名称以避免误译。 |
+| D27 | Thread 创建取消 | 作者 | 取消 | Cancel | 允许作者退出命名而不产生空 Thread。 |
+| D28 | Thread 会话提示 | 作者 | 仅当前会话，尚未接入持久化存储。 | Current session only; persistent storage is not connected yet. | 明确当前模型可用范围，不把会话数据伪装成持久化数据。 |
+| D29 | Thread 创建 toast | 作者 | 已创建 Thread：{名称} | Thread created: {title} | 只在会话模型成功加入卡片后确认创建。 |
+| D30 | Thread 最近活动 | 作者 | 最近活动：{时间} | Recent activity: {time} | 说明更新时间来源，避免把原始时间值误当状态。 |
+| D31 | 附件未找到提示块 | 作者 | 附件未找到：{引用} | Attachment not found: {ref} | 原位说明引用缺失，不中断正文。 |
+| D32 | 附件读取未接线 | 作者 | 附件读取未接线 | Attachment pipeline not wired | 预览桩诚实表达后端尚未接入。 |
+| D33 | 内容嵌入不支持 | 作者 | 内容嵌入不支持 | Note embed not supported | 明确兼容边界，不伪装成加载失败。 |
+| D34 | wikilink 歧义 | 作者 | 歧义 | Ambiguous | 提醒作者存在多个候选，不替作者猜测。 |
+| D35 | 块引用不支持 | 作者 | 块引用不支持：{原文} | Block reference not supported: {raw} | 原样保留不支持语法，并解释原因。 |
+| D36 | frontmatter 解析失败 | 作者 | frontmatter 解析失败：{原因} | Frontmatter parse failed: {reason} | 原文回退并说明解析问题。 |
+| D37 | 空 frontmatter | 作者 | （空 frontmatter） | (empty frontmatter) | 说明检测到 frontmatter 但没有字段。 |
+| D38 | frontmatter 非键值结构 | 作者 | frontmatter 不是键值结构，按原文显示 | Frontmatter is not a key-value map; showing raw text | 解释回退决策而非制造错误感。 |
 
 ## 文案实现备注
 

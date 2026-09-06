@@ -88,7 +88,6 @@ function showEditor() {
 // 瞬时提示（锚点缺失 / 创建结果 / 解析错误）：编辑器右下角浮条，自动消隐。
 function toast(text: string, action?: { label: string; run(): void }): void {
   const el = document.createElement("div");
-  el.className = "lumir-toast";
   el.className = "lumir-toast toast-surface";
   const span = document.createElement("span");
   span.textContent = text;
@@ -287,12 +286,31 @@ shell.root.classList.add("panel-default-hidden");
 const mastheadVault = shell.root.querySelector<HTMLElement>(".masthead-vault")!;
 const mastheadThread = shell.root.querySelector<HTMLElement>(".masthead-thread")!;
 const mastheadStatus = shell.root.querySelector<HTMLElement>(".masthead-status")!;
+const sessionThreads: Thread[] = [];
+let selectedThreadId: string | undefined;
+const threadStatusLabels = { active: "进行中", paused: "暂停", completed: "完成", archived: "归档" };
+function refreshThreads() {
+  threads.setThreads(sessionThreads);
+  threads.setCurrent(selectedThreadId);
+  const selected = sessionThreads.find((item) => item.id === selectedThreadId);
+  mastheadThread.textContent = selected?.title ?? "无当前 Thread";
+  mastheadStatus.textContent = selected ? threadStatusLabels[selected.status] : "—";
+}
 const threads = createThreads(shell.threads, {
-  onCreate: (title) => { toast(`已创建 Thread：${title}`); },
-  onSelect: (id) => { mastheadThread.textContent = id; mastheadStatus.textContent = "进行中"; },
-  onStatus: (_id, status) => { mastheadStatus.textContent = status; },
+  onCreate: (title) => {
+    const item: Thread = { id: crypto.randomUUID(), title, status: "active", updatedAt: new Date().toLocaleString() };
+    sessionThreads.push(item);
+    selectedThreadId = item.id;
+    refreshThreads();
+    toast(`已创建 Thread：${title}`);
+  },
+  onSelect: (id) => { selectedThreadId = id; refreshThreads(); },
+  onStatus: (id, status) => {
+    const item = sessionThreads.find((thread) => thread.id === id);
+    if (item) { item.status = status; item.updatedAt = new Date().toLocaleString(); refreshThreads(); }
+  },
 });
-threads.setThreads([]);
+refreshThreads();
 const tree = createFileTree(shell.treeMount, {
   onOpenFile: (path, kind) => void openFile(path, kind),
   onOpenVault: () => {

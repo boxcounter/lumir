@@ -121,6 +121,7 @@ export function createFileTree(mount: HTMLElement, cb: FileTreeCallbacks): FileT
     row.title = node.entry.path;
     row.dataset.depth = String(node.entry.path ? node.entry.path.split("/").length - 1 : 0);
     row.setAttribute("aria-label", node.entry.path);
+    row.setAttribute("aria-current", currentPath === node.entry.path ? "true" : "false");
 
     const caret = document.createElement("span");
     caret.className = "ft-caret";
@@ -232,6 +233,7 @@ export function createFileTree(mount: HTMLElement, cb: FileTreeCallbacks): FileT
     rootEl.querySelectorAll<HTMLElement>(".ft-row").forEach((row) => {
       const active = row.closest<HTMLElement>(".ft-item")?.dataset.path === currentPath;
       row.classList.toggle("is-current", active);
+      row.setAttribute("aria-current", active ? "true" : "false");
       row.querySelector(".ft-current-mark")?.remove();
       if (active) {
         const mark = document.createElement("span");
