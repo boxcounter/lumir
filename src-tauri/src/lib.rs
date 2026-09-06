@@ -15,6 +15,7 @@ pub mod index;
 pub mod link_graph;
 pub mod mcp_server;
 pub mod ready;
+pub mod threads;
 
 use tauri::Manager;
 
@@ -32,6 +33,11 @@ pub fn run() {
             commands::fs_read_attachment,
             commands::link_graph_resolve,
             commands::wikilink_create,
+            threads::thread_list,
+            threads::thread_create,
+            threads::thread_update,
+            threads::thread_current,
+            threads::thread_switch,
         ])
         .setup(move |app| {
             ready::emit_ready(started);

@@ -5,4 +5,4 @@ export type EditorConfig = {
 /**
  * 编辑器模式（ADR 0002 §2 单内核双模式）。
  */
-mode: EditorMode, };
+mode: EditorMode, measure: number, };
