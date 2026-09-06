@@ -1,13 +1,13 @@
 # 原型—生产一致性验收契约（M62）
 
-**结论：73af311 不通过最终验收。** 宽屏正文几何已接近原型，但阅读模式仍有明确视觉差异，窄窗几何和复制失败，真实新建 Thread 当前态不能重启恢复，内存门禁超阈。未更新任何既有视觉基线或容差。
+**结论：73af311 不通过最终验收。** 宽屏正文几何已接近原型，但阅读模式仍有明确视觉差异，窄窗几何和复制失败，真实新建 Thread 当前态不能重启恢复；本地内存原始值218.50MB高于200MB，但与指定macos-15 CI的可比性未确认，不据此宣布产品内存回归或通过。未更新任何既有视觉基线或容差。
 
 ## 依据与复跑
 
 基线 `73af311`，`git merge-base --is-ancestor 73af311 HEAD` 成功。目标仅为冻结 `design/editorial/index.html` 与 `RATIONALE.md`，不从生产截图反推目标，不合并历史 `feat/editorial`。
 
 - `scripts/visual/run.sh`：标准构建与全部 Chromium visual tests，包含本轮红色回归。
-- `pnpm --dir tests/visual test scenes/parity.spec.ts scenes/parity-copy.spec.ts`：同 fixture 对照及真实键盘复制。
+- `scripts/visual/run.sh scenes/parity.spec.ts scenes/parity-copy.spec.ts`：同 fixture 对照及真实键盘复制。此入口检查4173归属、重新build，并禁止Playwright复用服务；不要用裸 `pnpm test` 绕过保护。
 - `node scripts/visual/gallery.mjs`：将最近一次对照 PNG 复制到本目录。
 - [打开成对截图](evidence/index.html)：15 组合、30 张图。左为冻结原型运行态，右为真实生产前端加 IPC stub。已用专用 Chrome for Testing 窗口实际观察三主题；并非只生成 PNG。
 
@@ -42,12 +42,24 @@
 `src-tauri/src/config.rs:98–110` 在macOS读取 `XDG_CONFIG_HOME` 后追加 `/lumir`；threads/workspaces复用该路径。`tests/visual/tauri-isolated.json` 将 identifier 改成 `com.lumir.parity62`，窗口开启 `incognito:true`。现有 Tauri CLI schema 确认 incognito 可用；macOS dataDirectory 不受支持，因此不能靠它隔离。incognito不验证主题跨进程持久化。
 
 ```bash
-node scripts/visual/prepare-isolated.mjs
+RUN_DIR="$(node scripts/visual/prepare-isolated.mjs)"
 TAURI_CONFIG="$(<tests/visual/tauri-isolated.json)" cargo build --manifest-path src-tauri/Cargo.toml --release --features custom-protocol
-XDG_CONFIG_HOME="$PWD/tests/visual/runtime/config" src-tauri/target/release/lumir
+node scripts/visual/snapshot-isolated.mjs "$RUN_DIR" before-create
+XDG_CONFIG_HOME="$RUN_DIR/config" src-tauri/target/release/lumir
+# 完成真实GUI创建并退出后：
+node scripts/visual/snapshot-isolated.mjs "$RUN_DIR" after-create
+# 重启必须沿用同一RUN_DIR，不再调用prepare：
+XDG_CONFIG_HOME="$RUN_DIR/config" src-tauri/target/release/lumir
+node scripts/visual/snapshot-isolated.mjs "$RUN_DIR" after-restart
 ```
 
 专用进程71616创建“M62 持久化验收”，文件 `runtime/config/lumir/threads/1788689809-71616-452272000.json`。退出后71798恢复列表但丢失当前态。显式选择Thread后再次退出，71845恢复当前态成功。通过KimiCU实际打开正文、切主题、滚动与观察。所有专用Tauri窗口已退出，未操作用户vault/config。真实窗口总尺寸1280×900，含原生标题栏；不把它误称为1280×900 CSS viewport。
+
+r1修订后每次prepare用mkdtemp创建唯一run目录，不覆盖旧数据。三个snapshot记录创建前/后/重启后的Thread/current/workspace状态，标题与绝对vault路径脱敏，证据不可覆盖；除目录不存在外的IO与JSON错误直接失败。旧PID叙述没有归档的前后状态，不能事后补造。本轮脚本自验不冒充新的GUI产品验收；完整真实状态证据待M63/M64合入后复跑归档。
+
+脚本自验：`node --test tests/visual/isolation.test.mjs`通过，覆盖两次prepare互不污染、脱敏、禁止覆盖、非法run路径与坏JSON失败。该测试写入的是合成状态，不是GUI证据。占用4173的自建服务下受保护入口在build前非零退出且不终止服务；空闲端口下 `scripts/visual/run.sh scenes/parity-copy.spec.ts`实跑build成功，3项测试1通过2复制失败，保持既有红色断言。
+
+M65源码调查指出方法学指定macos-15 arm64，而本机为macOS26.6.2；218.50MB保留为原始超值，不直接宣布产品内存回归或通过。相同配置、identifier、incognito与负载的对照实跑待后续统一进行，200MB阈值不变。原始JSON与完整隔离条件已通过TowerSend交worker-parity65。
 
 上述是实际Tauri使用系统WKWebView，不是Playwright WebKit。`tauri-stub.ts`仅模拟IPC JSON契约与错误信封，不实现磁盘持久化/文件选择器/真实watch。新增ThreadFile fixture包括vault_id，vault返回包括vault_id/remap_candidates；thread_create不会冒充后端保存current。
 
