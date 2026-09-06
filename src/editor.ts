@@ -141,7 +141,13 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
         fontFamily: mode === "md" ? "var(--font-body)" : "var(--font-mono)",
       },
       ".cm-scroller": { fontFamily: "inherit", lineHeight: "var(--line-height, 1.75)" },
-      ".cm-content": { fontFamily: "inherit", fontSize: "16px" },
+      ".cm-content": {
+        fontFamily: "inherit", fontSize: "16px",
+        flex: "0 1 var(--measure, 480px)", minWidth: "0",
+        marginInline: "auto", paddingBlock: "24px",
+        textAlign: "start", textIndent: "0", hangingPunctuation: "none", textAutospace: "no-autospace",
+      },
+      ".cm-line": { padding: "0" },
       ".cm-gutters": {
         color: "var(--dim)",
         backgroundColor: "var(--bg-nav)",
