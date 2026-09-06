@@ -279,9 +279,8 @@ keymap.attach(window, (command) => {
   }
 });
 
-// 面板区：配置探针（M1 契约链路验证保留）。反链面板已按 ADR 0004 §2 挤压预案移除。
-const configProbe = document.createElement("div");
-shell.panel.append(configProbe);
+shell.panel.hidden = true;
+shell.root.classList.add("panel-default-hidden");
 
 const tree = createFileTree(shell.fileTree, {
   onOpenFile: (path, kind) => void openFile(path, kind),
@@ -354,22 +353,19 @@ vaultCurrent()
   })
   .catch((e) => tree.showEmpty(errorMessage(e)));
 
-// 契约链路探针：invoke config_get，把 editor.mode 经 setMode 锚定为编辑器的
-// 配置默认基线（openDocument 对无类型线索文件回落到这个基线），并把配置快照
-// 渲染进面板 pane 的配置探针区。
-configGet()
-  .then((snapshot) => {
-    editor.setMode(snapshot.config.editor.mode);
-    const lines = [
-      `config: ok (mode=${snapshot.config.editor.mode})`,
-      `path: ${snapshot.path}`,
-      ...snapshot.warnings.map((w) => `warning: ${w}`),
-    ];
-    configProbe.textContent = lines.join("\n");
-  })
-  .catch((e: unknown) => {
-    configProbe.textContent = `config 加载失败：${errorMessage(e)}`;
-  });
+configGet().then((snapshot) => editor.setMode(snapshot.config.editor.mode)).catch(() => {});
+
+const themes = ["light", "dark", "eink"] as const;
+let themeIndex = Math.max(0, themes.indexOf((localStorage.getItem("lumir-theme") as typeof themes[number]) || "light"));
+document.documentElement.dataset.theme = themes[themeIndex];
+window.addEventListener("keydown", (event) => {
+  if ((event.metaKey || event.ctrlKey) && event.key === "\\") shell.panel.hidden = !shell.panel.hidden;
+  if ((event.metaKey || event.ctrlKey) && event.key === "t") {
+    themeIndex = (themeIndex + 1) % themes.length;
+    document.documentElement.dataset.theme = themes[themeIndex];
+    localStorage.setItem("lumir-theme", themes[themeIndex]);
+  }
+});
 
 // ready 信号（前端一半）：webview 首屏挂载完成即打点。
 // Rust core 启动完成后会打印 LUMIR_READY 结构化日志（见 src-tauri/src/lib.rs），
