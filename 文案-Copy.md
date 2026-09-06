@@ -33,7 +33,7 @@
 | D25 | 二进制覆盖层 | 作者 | 暂不支持预览：{路径} | Preview not supported yet: {path} | 明确能力边界并保留路径。 |
 | D26 | 主题入口 | 作者 | 亮 / 暗 / eink | Light / Dark / eink | 允许环境适配；eink 保留技术名称以避免误译。 |
 | D27 | Thread 创建取消 | 作者 | 取消 | Cancel | 允许作者退出命名而不产生空 Thread。 |
-| D28 | Thread 会话提示 | 作者 | 仅当前会话，尚未接入持久化存储。 | Current session only; persistent storage is not connected yet. | 明确当前模型可用范围，不把会话数据伪装成持久化数据。 |
+| D28 | Thread 持久化提示 | 作者 | Thread 已保存 | Thread saved | Thread 使用 vault 持久化存储，创建和状态更新均可在重启后恢复。 |
 | D29 | Thread 创建 toast | 作者 | 已创建 Thread：{名称} | Thread created: {title} | 只在会话模型成功加入卡片后确认创建。 |
 | D31 | 附件未找到提示块 | 作者 | 附件未找到：{引用} | Attachment not found: {ref} | 原位说明引用缺失，不中断正文。 |
 | D32 | 附件读取未接线 | 作者 | 附件读取未接线 | Attachment pipeline not wired | 预览桩诚实表达后端尚未接入。 |

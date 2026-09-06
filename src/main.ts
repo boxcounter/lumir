@@ -310,7 +310,7 @@ const tree = createFileTree(shell.treeMount, {
     vaultOpen()
       .then((info) => {
         // null = 用户在目录选择器取消，无错误状态（spec）
-        if (info) loadVault(info.root, info.entries);
+        if (info) loadVault(info.root, info.entries, info.vault_id, info.remap_candidates);
       })
       .catch((e) => {
         // 已有 vault 时打开失败（如改选了一个不可读目录）不得把既有树抹成
@@ -325,9 +325,10 @@ const tree = createFileTree(shell.treeMount, {
 // 换 vault 前必须全量复位旧上下文（reviewer-switcher high finding）：否则旧
 // 文件的 currentPath 会被当作新 vault 的 resolve/create from 基准，wikilink
 // 一键创建会把文件误建到新 vault 的同名相对路径下。
-function loadVault(root: string, entries: FsEntry[]) {
+function loadVault(root: string, entries: FsEntry[], vaultId = root, remapCandidates: Array<{ id: string; path: string }> = []) {
   vaultLoaded = true;
-  currentVaultId = root;
+  currentVaultId = vaultId;
+  if (remapCandidates.length) toast(`发现 ${remapCandidates.length} 个可映射的 vault 路径`);
   void threadList(currentVaultId).then((items) => { sessionThreads.splice(0, sessionThreads.length, ...items); return threadCurrent(currentVaultId); }).then((current) => { selectedThreadId = current?.id; refreshThreads(); });
   attachmentPaths = entries.filter((e) => e.kind === "file").map((e) => e.path);
   // 链接索引已在后端随 vault 打开建立；世代号自增使旧 vault 的在途 resolve
@@ -372,7 +373,7 @@ onFsEntryChanged((changes) => {
 vaultCurrent()
   .then((status) => {
     if (status.vault) {
-      loadVault(status.vault.root, status.vault.entries);
+      loadVault(status.vault.root, status.vault.entries, status.vault.vault_id, status.vault.remap_candidates);
     } else {
       tree.showEmpty(status.notice);
     }

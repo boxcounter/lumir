@@ -10,7 +10,7 @@ export interface ThreadsCallbacks {
 export const COPY = {
   heading: "Threads", create: "+ 新建", placeholder: "Thread 名称", submit: "创建", cancel: "取消",
   empty: "还没有 Thread。创建一个意图，开始工作。", confirm: "确认将 Thread 状态改为归档？",
-  recent: "最近活动：", session: "仅当前会话，尚未接入持久化存储。",
+  recent: "最近活动：",
 };
 export const STATUS: Record<ThreadStatus, string> = { active: "进行中", paused: "暂停", completed: "完成", archived: "归档" };
 export interface ThreadsView { setThreads(items: Thread[]): void; setCurrent(id?: string): void; }
@@ -25,11 +25,9 @@ export function createThreads(mount: HTMLElement, cb: ThreadsCallbacks): Threads
   const add = document.createElement("button");
   add.type = "button"; add.className = "threads-add"; add.textContent = COPY.create;
   heading.append(title, add);
-  const session = document.createElement("p");
-  session.className = "threads-session"; session.textContent = COPY.session;
   const list = document.createElement("div");
   list.className = "threads-list";
-  root.append(heading, session, list); mount.replaceChildren(root);
+  root.append(heading, list); mount.replaceChildren(root);
   let current: string | undefined;
   let items: Thread[] = [];
   let form: HTMLFormElement | undefined;
