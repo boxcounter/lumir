@@ -1,7 +1,6 @@
 export type ThreadStatus = "active" | "paused" | "completed" | "archived";
 import type { Thread as IpcThread } from "./bindings/Thread";
 export type Thread = IpcThread;
-export const threadView = (item: Thread) => ({ id: item.id, title: item.title, status: item.status, updatedAt: item.recent_activity });
 export interface ThreadsCallbacks {
   onCreate(title: string): void | Promise<void>;
   onSelect(id: string): void | Promise<void>;

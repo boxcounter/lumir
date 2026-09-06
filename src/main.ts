@@ -303,9 +303,21 @@ function refreshThreads() {
   mastheadStatus.textContent = selected ? threadStatusLabels[selected.status] : "—";
 }
 const threads = createThreads(shell.threads, {
-  onCreate: async (title) => { const item = await threadCreate(title, currentVaultId); sessionThreads.push(item); selectedThreadId = item.id; refreshThreads(); toast(`已创建 Thread：${title}`); },
-  onSelect: async (id) => { const item = await threadSwitch(id, currentVaultId); selectedThreadId = item.id; sessionThreads.splice(0, sessionThreads.length, ...(await threadList(currentVaultId))); refreshThreads(); },
-  onStatus: async (id, status) => { const item = sessionThreads.find((thread) => thread.id === id); if (item) { item.status = status; await threadUpdate(item); refreshThreads(); } },
+  onCreate: async (title) => {
+    try { const item = await threadCreate(title, currentVaultId); sessionThreads.push(item); selectedThreadId = item.id; refreshThreads(); toast(`已创建 Thread：${title}`); }
+    catch (error) { toast(errorMessage(error)); throw error; }
+  },
+  onSelect: async (id) => {
+    try { const item = await threadSwitch(id, currentVaultId); selectedThreadId = item.id; sessionThreads.splice(0, sessionThreads.length, ...(await threadList(currentVaultId))); refreshThreads(); }
+    catch (error) { toast(errorMessage(error)); throw error; }
+  },
+  onStatus: async (id, status) => {
+    const item = sessionThreads.find((thread) => thread.id === id);
+    if (!item) return;
+    const previous = { ...item };
+    try { const updated = await threadUpdate({ ...item, status }); Object.assign(item, updated); refreshThreads(); toast("Thread 已保存"); }
+    catch (error) { Object.assign(item, previous); refreshThreads(); toast(errorMessage(error)); throw error; }
+  },
 });
 refreshThreads();
 tree = createFileTree(shell.treeMount, {

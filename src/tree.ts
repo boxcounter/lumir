@@ -132,7 +132,7 @@ export function createFileTree(mount: HTMLElement, cb: FileTreeCallbacks): FileT
     name.textContent = nameOf(node.entry.path);
     row.append(caret, name);
     const count = referenceCounts.get(node.entry.path) ?? 0;
-    if (count > 1) { const refs = document.createElement("span"); refs.className = "ft-reference-count"; refs.textContent = `×${count}`; refs.setAttribute("aria-label", `${count} references`); row.append(refs); }
+    if (node.entry.kind !== "dir" && count > 1) { const refs = document.createElement("span"); refs.className = "ft-reference-count"; refs.textContent = `×${count}`; refs.setAttribute("aria-label", `${count} references`); row.append(refs); }
     li.append(row);
 
     if (node.entry.kind === "dir") {
