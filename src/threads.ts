@@ -40,8 +40,10 @@ export function createThreads(mount: HTMLElement, cb: ThreadsCallbacks): Threads
       const name = document.createElement("strong"); name.textContent = item.title;
       const state = document.createElement("span"); state.className = `thread-status thread-${item.status}`; state.textContent = STATUS[item.status];
       const activity = document.createElement("time"); activity.textContent = item.updatedAt;
-      card.append(name, state, activity); card.addEventListener("click", () => { current = item.id; cb.onSelect(item.id); render(items); });
-      card.addEventListener("contextmenu", (e) => { e.preventDefault(); const next: ThreadStatus = item.status === "active" ? "paused" : item.status === "paused" ? "completed" : item.status === "completed" ? "archived" : "active"; cb.onStatus(item.id, next); });
+      const actions = document.createElement("span"); actions.className = "thread-actions";
+      const next = item.status === "active" ? "paused" : item.status === "paused" ? "completed" : item.status === "completed" ? "archived" : "active";
+      if (item.status !== "archived") { const action = document.createElement("button"); action.type = "button"; action.className = "thread-action"; action.textContent = STATUS[next]; action.title = `${COPY.confirm} ${STATUS[next]}`; action.addEventListener("click", (e) => { e.stopPropagation(); if (next === "archived" && !window.confirm(`${COPY.confirm} ${STATUS[next]}？`)) return; cb.onStatus(item.id, next); }); actions.append(action); }
+      card.append(name, state, activity, actions); card.addEventListener("click", () => { current = item.id; cb.onSelect(item.id); render(items); });
       list.append(card);
     }
   }

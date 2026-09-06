@@ -8,6 +8,7 @@ export interface AppShell {
   fileTree: HTMLElement;
   /** 编辑器 pane（CM6 单内核挂载点）。 */
   editor: HTMLElement;
+  threads: HTMLElement;
   /** 面板 pane（agent 协作/属性等，后续波次填充）。 */
   panel: HTMLElement;
 }
@@ -32,8 +33,11 @@ export function createShell(mount: HTMLElement): AppShell {
   const fileTree = pane("pane-filetree", "");
   const editor = pane("pane-editor", "");
   const panel = pane("pane-panel", "面板（后续波次）");
+  const threads = document.createElement("section");
+  threads.className = "threads-pane";
+  fileTree.append(threads);
 
   root.append(fileTree, editor, panel);
   mount.replaceChildren(root);
-  return { root, fileTree, editor, panel };
+  return { root, fileTree, editor, panel, threads };
 }
