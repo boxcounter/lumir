@@ -2,7 +2,8 @@ import { Compartment, EditorState } from "@codemirror/state";
 import type { Extension } from "@codemirror/state";
 import { EditorView, lineNumbers, highlightActiveLine } from "@codemirror/view";
 import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
-import { syntaxHighlighting, defaultHighlightStyle } from "@codemirror/language";
+import { HighlightStyle, syntaxHighlighting } from "@codemirror/language";
+import { tags } from "@lezer/highlight";
 import { GFM } from "@lezer/markdown";
 import type { EditorMode } from "./bindings/EditorMode";
 import { livePreview, previewRefresh } from "./preview/livePreview";
@@ -120,12 +121,58 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
   function modeExtensions(mode: EditorMode): Extension[] {
     const highlight: Extension[] = [
       markdown({ base: markdownLanguage, extensions: [GFM] }),
-      syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
+      syntaxHighlighting(
+        HighlightStyle.define([
+          { tag: tags.comment, color: "var(--dim)" },
+          { tag: [tags.keyword, tags.operator, tags.punctuation], color: "var(--text)" },
+          { tag: [tags.string, tags.regexp, tags.number], color: "var(--accent)" },
+          { tag: [tags.link, tags.url], color: "var(--accent)", textDecoration: "underline" },
+          { tag: tags.heading, color: mode === "md" ? "inherit" : "var(--text)", fontWeight: mode === "md" ? "inherit" : "700" },
+          { tag: tags.strong, fontWeight: "700" },
+          { tag: tags.emphasis, fontStyle: "italic" },
+          { tag: tags.strikethrough, textDecoration: "line-through" },
+        ]),
+        { fallback: true },
+      ),
     ];
-    // md 正文优先阅读性黑体；code 模式保持等宽。
-    // 中文黑体字宽天然等宽，西文列宽不固定是阅读优先取舍。
-    const typography = EditorView.theme({ ".cm-content, .cm-line": { fontFamily: mode === "md" ? "var(--font-body)" : "var(--font-mono)" } });
-    return mode === "md" ? [...highlight, typography, livePreview(previewContext)] : [...highlight, typography];
+    // CM6 的基础层必须跟随 shell 的三套主题；live preview 只增加 Markdown
+    // 语义装饰，避免 code 模式落回默认白底、灰 gutter 或默认选区颜色。
+    const baseTheme = EditorView.theme({
+      "&": {
+        color: "var(--text)",
+        backgroundColor: "var(--bg)",
+        fontFamily: mode === "md" ? "var(--font-body)" : "var(--font-mono)",
+      },
+      ".cm-scroller": {
+        fontFamily: "inherit", lineHeight: "var(--line-height, 1.75)",
+        display: "grid !important", gridTemplateColumns: "minmax(max-content, 1fr) minmax(0, var(--measure, 480px)) minmax(0, 1fr)",
+        alignItems: "start",
+      },
+      ".cm-content": {
+        fontFamily: "inherit", fontSize: "16px",
+        gridColumn: "2", gridRow: "1", minWidth: "0", width: "100%",
+        marginInline: "0", paddingBlock: "44px",
+        textAlign: "start", textIndent: "0", hangingPunctuation: "none", textAutospace: "no-autospace",
+      },
+      ".cm-line": { padding: "0" },
+      ".cm-gutters": {
+        gridColumn: "1", gridRow: "1", justifySelf: "start", alignSelf: "stretch",
+        color: "var(--dim)",
+        backgroundColor: "var(--bg-nav)",
+        borderRight: "1px solid var(--bd-1)",
+      },
+      ".cm-activeLine": { backgroundColor: "var(--bg-2)" },
+      ".cm-activeLineGutter": { backgroundColor: "var(--bg-2)", color: "var(--text)" },
+      ".cm-selectionBackground, ::selection": {
+        backgroundColor: "var(--sel)",
+        color: "var(--selection-ink, var(--text))",
+      },
+      ".cm-cursor, .cm-dropCursor": { borderLeftColor: "var(--text)" },
+      "&.cm-focused .cm-selectionBackground": { backgroundColor: "var(--sel)" },
+    });
+    return mode === "md"
+      ? [...highlight, baseTheme, livePreview(previewContext)]
+      : [...highlight, baseTheme];
   }
 
   const state = EditorState.create({
