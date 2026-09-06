@@ -124,7 +124,7 @@ pub fn vault_register(id: String, path: String) -> Result<VaultWorkspace, Comman
         d.join(format!("{}.json", v.id)),
         serde_json::to_vec_pretty(&v).unwrap(),
     )
-    .map_err(|_| CommandError::new("workspace_write", "操作失败".to_string()))?;
+    .map_err(|_| CommandError::new("workspace_write", "无法读取 Thread 注册表".to_string()))?;
     Ok(v)
 }
 #[tauri::command]
@@ -157,11 +157,11 @@ fn read_all() -> Result<Vec<Thread>, CommandError> {
     let d = dir()?;
     let _ = fs::create_dir_all(&d);
     let mut out = vec![];
-    for e in
-        fs::read_dir(d).map_err(|_| CommandError::new("thread_read", "操作失败".to_string()))?
+    for e in fs::read_dir(d)
+        .map_err(|_| CommandError::new("thread_read", "无法读取 Thread 注册表".to_string()))?
     {
         let p = e
-            .map_err(|_| CommandError::new("thread_read", "操作失败".to_string()))?
+            .map_err(|_| CommandError::new("thread_read", "无法读取 Thread 注册表".to_string()))?
             .path();
         if p.extension().and_then(|x| x.to_str()) != Some("json") {
             continue;
@@ -181,12 +181,13 @@ fn read_all() -> Result<Vec<Thread>, CommandError> {
 fn save(t: &Thread) -> Result<(), CommandError> {
     let d = dir()?;
     fs::create_dir_all(&d)
-        .map_err(|_| CommandError::new("thread_write", "操作失败".to_string()))?;
+        .map_err(|_| CommandError::new("thread_write", "无法读取 Thread 注册表".to_string()))?;
     let p = d.join(format!("{}.json", t.id));
     let tmp = p.with_extension("tmp");
     fs::write(&tmp, serde_json::to_vec_pretty(t).unwrap())
-        .map_err(|_| CommandError::new("thread_write", "操作失败".to_string()))?;
-    fs::rename(tmp, p).map_err(|_| CommandError::new("thread_write", "操作失败".to_string()))
+        .map_err(|_| CommandError::new("thread_write", "无法读取 Thread 注册表".to_string()))?;
+    fs::rename(tmp, p)
+        .map_err(|_| CommandError::new("thread_write", "无法读取 Thread 注册表".to_string()))
 }
 #[tauri::command]
 pub fn thread_list(vault_id: String) -> Result<Vec<Thread>, CommandError> {
@@ -235,6 +236,7 @@ pub fn thread_update(thread: Thread) -> Result<Thread, CommandError> {
 }
 #[tauri::command]
 pub fn thread_current(vault_id: String) -> Result<Option<Thread>, CommandError> {
+    valid_id(&vault_id)?;
     let id = fs::read_to_string(dir()?.join(format!("current-{}.txt", vault_id))).ok();
     Ok(read_all()?
         .into_iter()
