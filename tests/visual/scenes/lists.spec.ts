@@ -95,19 +95,61 @@ test('列表模式隔离与嵌套代码保护', async ({ page }) => {
   expect(await readDocument(page)).toBe(text);
 });
 
-test('大列表跨视口编号槽稳定且装饰有界', async ({ page }) => {
-  const large = Array.from({ length: 18000 }, (_, i) => `${i + 1}. ${i === 15000 ? '[x] ' : ''}Item ${i + 1} ${'long list content '.repeat(3)}`).join('\n');
-  await open(page, large);
+test('partial组超出后台提前范围仍完成且末端标记不重叠', async ({ page }) => {
+  const large = Array.from({ length: 18000 }, (_, i) => `${i === 17999 ? '999999999. [x]' : `${i + 1}.`} Item ${i + 1} ${'long list content '.repeat(3)}`).join('\n');
+  await stubTauri(page, { entries: [{ path: 'lists.md', kind: 'file', size: large.length, mtime_ms: 0 }], files: { 'lists.md': large } });
+  await page.goto('/');
+  await page.evaluate(() => {
+    (window as any).listStages = [];
+    new MutationObserver(() => {
+      const content = document.querySelector('.cm-content');
+      if (!content?.textContent?.includes('Item 1 long')) return;
+      const stage = content.querySelector('.cm-lp-list-marker') ? 'complete' : 'source';
+      const stages = (window as any).listStages;
+      if (stages.at(-1) !== stage) stages.push(stage);
+    }).observe(document.querySelector('.cm-content')!, { childList: true, subtree: true });
+  });
+  await page.locator('.ft-row[title="lists.md"]').click();
+  await expect(page.locator('.cm-lp-list-marker').first()).toBeVisible({ timeout: 15000 });
+  expect(await page.evaluate(() => (window as any).listStages)).toEqual(['source', 'complete']);
+  expect(await page.locator('.cm-scroller').evaluate(el => el.scrollTop)).toBe(0);
   const before = await geometry(page, 'Item 1 long');
   const scroller = page.locator('.cm-scroller');
-  await scroller.evaluate(el => { el.scrollTop = el.scrollHeight * .8; });
-  await page.waitForTimeout(500);
-  const middle = await page.locator('.cm-lp-list-line').first().getAttribute('style');
-  expect(middle).toBe(before.style);
+  await scroller.evaluate(el => { el.scrollTop = el.scrollHeight; });
+  await expect(page.locator('.cm-lp-list-marker').filter({ hasText: '999999999.' })).toBeVisible();
+  const tail = await geometry(page, 'Item 18000');
+  expect(Math.abs(tail.rects[0].x - before.rects[0].x)).toBeLessThanOrEqual(1);
+  const box = await page.locator('.cm-lp-list-marker').filter({ hasText: '999999999.' }).evaluate(el => {
+    const outer = el.getBoundingClientRect();
+    return { left: outer.left, right: outer.right, spans: [...el.children].map(child => ({ left: child.getBoundingClientRect().left, right: child.getBoundingClientRect().right })) };
+  });
+  expect(box.spans[0].left).toBeGreaterThanOrEqual(box.left - 1);
+  expect(box.spans[0].right).toBeLessThan(box.spans[1].left);
+  expect(box.spans[1].right).toBeLessThan(tail.rects[0].x);
   expect(await page.locator('.cm-lp-list-line').count()).toBeLessThan(300);
+  expect(await readDocument(page)).toBe(large);
+  await scroller.evaluate(el => { el.scrollTop = el.scrollHeight * .5; });
+  await page.waitForTimeout(100);
+  await page.locator('.cm-lp-list-line').first().click();
   expect(await readDocument(page)).toBe(large);
   await scroller.evaluate(el => { el.scrollTop = 0; });
   await expect(page.locator('.cm-lp-list-line').filter({ hasText: 'Item 1 long' })).toBeVisible();
-  expect((await geometry(page, 'Item 1 long')).style).toBe(before.style);
-  expect(await readDocument(page)).toBe(large);
+  expect(Math.abs((await geometry(page, 'Item 1 long')).rects[0].x - before.rects[0].x)).toBeLessThanOrEqual(1);
+  expect(await page.evaluate(() => (window as any).listStages)).toEqual(['source', 'complete']);
+});
+
+test('短编号标记区紧凑而非语法最大容量', async ({ page }) => {
+  await page.setViewportSize({ width: 640, height: 800 });
+  await open(page, '1. Short one\n2. Short two\n');
+  const box = await page.locator('.cm-lp-list-line').first().evaluate(el => {
+    const marker = el.querySelector('.cm-lp-list-marker')!;
+    const text = marker.firstElementChild!.getBoundingClientRect();
+    const outer = marker.getBoundingClientRect();
+    return { marker: outer.width, text: text.width, gap: outer.right - text.right, available: el.getBoundingClientRect().width - parseFloat(getComputedStyle(el).paddingLeft) };
+  });
+  expect(box.marker - box.text).toBeCloseTo(box.gap, 0);
+  expect(box.gap).toBeGreaterThan(3);
+  expect(box.gap).toBeLessThan(12);
+  expect(box.marker).toBeLessThan(35);
+  expect(box.available).toBeGreaterThan(340);
 });

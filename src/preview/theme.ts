@@ -43,7 +43,7 @@ export const livePreviewTheme = EditorView.theme({
 
   ".cm-line.cm-lp-list-line": { paddingInlineStart: "var(--lp-list-body)", textIndent: "0" },
   ".cm-line.cm-lp-list-first": { textIndent: "calc(-1 * var(--lp-list-marker))" },
-  ".cm-lp-list-marker": { display: "inline-flex", inlineSize: "var(--lp-list-marker)", boxSizing: "border-box", paddingInlineEnd: ".75em", justifyContent: "flex-end", gap: ".5em", textIndent: "0", whiteSpace: "pre", color: "var(--dim)", fontVariantNumeric: "tabular-nums" },
+  ".cm-lp-list-marker": { display: "inline-flex", inlineSize: "var(--lp-list-marker)", boxSizing: "border-box", paddingInlineEnd: "1ch", justifyContent: "flex-end", gap: ".5ch", textIndent: "0", whiteSpace: "pre", color: "var(--dim)", fontFamily: "var(--font-mono)", fontSize: ".85em", fontVariantNumeric: "tabular-nums" },
   ".cm-lp-task-marker": { fontFamily: "var(--font-mono)" },
 
   // frontmatter properties 区块（块级 replace widget）。
