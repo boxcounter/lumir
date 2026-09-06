@@ -14,6 +14,7 @@ import type { VaultStatus } from "./bindings/VaultStatus";
 import type { LinkResolveResult } from "./bindings/LinkResolveResult";
 import type { CreateNoteResult } from "./bindings/CreateNoteResult";
 import type { Thread } from "./bindings/Thread";
+import type { VaultWorkspace } from "./bindings/VaultWorkspace";
 
 /** 判断 invoke 的 reject 值是否为 CommandError 信封。 */
 export function isCommandError(e: unknown): e is CommandError {
@@ -79,10 +80,10 @@ export function linkGraphResolve(from: string, link: string): Promise<LinkResolv
 export function wikilinkCreate(from: string, link: string): Promise<CreateNoteResult> {
   return invoke<CreateNoteResult>("wikilink_create", { from, link });
 }
-export const threadList = (): Promise<Thread[]> => invoke("thread_list");
-export const threadCreate = (title: string): Promise<Thread> => invoke("thread_create", { title });
-export const threadUpdate = (thread: Thread): Promise<Thread> => invoke("thread_update", { thread });
-export const threadCurrent = (): Promise<Thread | null> => invoke("thread_current");
-export const threadSwitch = (id: string): Promise<Thread> => invoke("thread_switch", { id });
-export const vaultRegister = (id: string, path: string) => invoke("vault_register", { id, path });
-export const vaultRemap = (id: string, path: string) => invoke("vault_remap", { id, path });
+export const threadList = (): Promise<Thread[]> => invoke<Thread[]>("thread_list");
+export const threadCreate = (title: string): Promise<Thread> => invoke<Thread>("thread_create", { title });
+export const threadUpdate = (thread: Thread): Promise<Thread> => invoke<Thread>("thread_update", { thread });
+export const threadCurrent = (): Promise<Thread | null> => invoke<Thread | null>("thread_current");
+export const threadSwitch = (id: string): Promise<Thread> => invoke<Thread>("thread_switch", { id });
+export const vaultRegister = (id: string, path: string): Promise<VaultWorkspace> => invoke<VaultWorkspace>("vault_register", { id, path });
+export const vaultRemap = (id: string, path: string): Promise<VaultWorkspace> => invoke<VaultWorkspace>("vault_remap", { id, path });
