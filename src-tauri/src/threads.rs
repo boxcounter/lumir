@@ -130,7 +130,8 @@ pub fn vault_register(id: String, path: String) -> Result<VaultWorkspace, Comman
 #[tauri::command]
 pub fn vault_remap(id: String, path: String) -> Result<VaultWorkspace, CommandError> {
     valid_id(&id)?;
-    let v = vault_register(id, path.clone())?;
+    let v = vault_register(id, path)?;
+    let path = v.path.clone();
     let p = config::config_dir()?.join("config.json");
     let mut x = match fs::read_to_string(&p) {
         Ok(s) => serde_json::from_str(&s).unwrap_or_else(|_| serde_json::json!({})),
