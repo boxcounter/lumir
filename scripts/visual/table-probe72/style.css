@@ -1,0 +1,19 @@
+body { margin: 12px; color: #202020; background: #fafafa; font: 15px/1.5 system-ui; }
+main { max-inline-size: 850px; margin: auto; }
+main.narrow { max-inline-size: 480px; }
+h1 { font-size: 18px; margin: 0; }
+button { margin: 3px; }
+:focus-visible { outline: 3px solid #2869ce; outline-offset: 1px; }
+#status { white-space: pre-wrap; min-height: 24px; }
+.cm-editor { height: 430px; border: 1px solid #888; }
+.cm-scroller { overflow: auto; }
+.cm-content { min-inline-size: 0; padding: 8px; }
+.cm-line { padding: 0; }
+.table-scroll { overflow-x: auto; max-inline-size: 100%; min-inline-size: 0; }
+.table-inner { inline-size: max-content; min-inline-size: 100%; }
+.cm-line.table-row { display: grid; grid-template-columns: repeat(var(--columns), 240px); white-space: pre-wrap; }
+.cell { box-sizing: border-box; min-inline-size: 0; overflow-wrap: anywhere; padding: 6px 10px; border: 1px solid #aaa; }
+[role=columnheader] { font-weight: bold; background: #e6edf5; }
+.cm-line.table-separator { height: 0; min-height: 0; line-height: 0; overflow: hidden; }
+textarea { display: block; box-sizing: border-box; width: 100%; height: 64px; }
+#report { max-height: 180px; overflow: auto; font-size: 11px; }

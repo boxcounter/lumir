@@ -1,10 +1,10 @@
 # Tasks: complete-markdown-reading
 
-本清单面向节点 1 通过后的实现。当前仅起草提案与规范，所有实现及流程节点保持未完成；方向批准不等于以下评审节点已通过。
+节点 1 已由 tower 依 Alex 授权于 2026-09-06 通过（M71 独立 r1 clean）；仅条件批准 BlockWrapper 候选路线。真实 WK 前置实验通过前不进入完整表格实现，节点 2 与后续验收保持未完成。
 
 ## 1. 提案评审与可行性
 
-- [ ] 1.1 向 Alex 展示 proposal、design 与 spec，取得节点 1 的明确裁决并记录结果。
+- [x] 1.1 向 Alex 展示 proposal、design 与 spec，取得节点 1 的明确裁决并记录结果。tower 代行批准三项边界，详见 proposal Review Decisions。
 - [ ] 1.2 使用现有 parser 固定列表/矩形表格范围 fixture；核实空槽、转义、非矩形、嵌套列表/引用等边界。
 - [ ] 1.3 在真实 Tauri WKWebView 验证公开 BlockWrapper/line/cell decoration 的宽表、虚拟视口、空槽、选择复制与可访问语义；不通过则停止并修订方案重新评审，不以全量 widget 绕过。
 
