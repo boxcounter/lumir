@@ -66,3 +66,16 @@ XDG_CONFIG_HOME="$run/config" "$binary" > "$run/native.log" 2>&1
 3. 接着完成真实鼠标/键盘局部/整表/跨表选择、Cmd+A/C 到自有纯文本接收端、只读内存与自有 Markdown 磁盘前后比对等既有门槛。不用 headless、DOM 内容或编译通过顶替真实 WK 验收；不勾未测项。
 
 若发现公开路线结构性失败，按 design34 停止扩展并另送设计修订。全部前置门槛通过前不实施生产表格；通过后才提出 `src/preview/tables.ts` 纯模型/公开扩展、`livePreview.ts` 排除表内重复消费、`theme.ts` 局部样式、tests/visual 行为几何的生产拆分。该拆分当前仅为候选，不是完成证据。
+
+## 2026-09-07 用户解锁后恢复尝试
+
+用户明确告知已解锁后，于 07:16:53+08:00 校验既有 binary，SHA-256 仍为上述 `cc20abed…3366a`。未重建，使用新自有 `runtime/run-vyauyW` 与 XDG_CONFIG_HOME 启动 PID26790。启动时间及原始页面诊断见 [table-probe72-resumed.log](table-probe72-resumed.log)。
+
+- 07:18:06.134030+08:00 只读 `ioreg` 复核返回 `kCGSSessionOnConsoleKey=True`、`kCGSessionLoginDoneKey=True`，本次 IOConsoleUsers 没有 `CGSSessionScreenIsLocked` 字段。不把字段缺失捏造为显式 false。
+- kimi-cu 已能识别真实 AXStandardWindow：static window_id24851、620×360；CM window_id24850、920×780。与此前锁定时 window_id0 不同。
+- 静态对照及 CM 截图的正文仍全白，AX 只含原生窗口按钮/标题与菜单，没有 WebArea。静态页面连无 CM 的标题/按钮正文也不可见。原始日志显示两页均 Finished、DOM 内容与非零尺寸存在，仍为 `visibility=hidden`、`focus=false`。
+- 因静态对照未通过，不执行后续几何、横滚、焦点、选择复制或磁盘只读验收。与 M73 协调的 clipboard 占用已释放，整个恢复尝试未读写任何 clipboard。
+
+**恢复结果仍为 blocked。** 当前反例进一步说明不能只凭先前锁屏事实断言全部白屏的唯一原因，也不能据此宣告 BlockWrapper 路线失败。未修改生产、未采用全表 widget 或永久源码回退，没有把 r2 clean checkpoint 当作实验通过。
+
+已向 tower 提议一个最小追加诊断条件：由用户自行展示自有 `TableProbe72 static control` 窗口，检查静态正文是否恢复。该操作尚未验证，agent 不通过激活/切换前台代做，不改系统安全配置或反复构建。若展示后仍失败，应先诊断原生静态窗口绘制；若恢复，应从静态可见/AX gate 开始，再按原顺序完成真实表格前置门槛。此为验收恢复步骤的补充，不是产品表格方案修订。
