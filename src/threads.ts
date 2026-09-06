@@ -1,5 +1,7 @@
 export type ThreadStatus = "active" | "paused" | "completed" | "archived";
-export interface Thread { id: string; title: string; status: ThreadStatus; updatedAt: string; }
+import type { Thread as IpcThread } from "./bindings/Thread";
+export type Thread = IpcThread;
+export const threadView = (item: Thread) => ({ id: item.id, title: item.title, status: item.status, updatedAt: item.recent_activity });
 export interface ThreadsCallbacks {
   onCreate(title: string): void | Promise<void>;
   onSelect(id: string): void | Promise<void>;
@@ -65,7 +67,7 @@ export function createThreads(mount: HTMLElement, cb: ThreadsCallbacks): Threads
       select.setAttribute("aria-pressed", String(item.id === current));
       const name = document.createElement("strong"); name.textContent = item.title;
       const state = document.createElement("span"); state.className = "thread-status"; state.textContent = STATUS[item.status];
-      const activity = document.createElement("time"); activity.textContent = COPY.recent + item.updatedAt;
+      const activity = document.createElement("time"); activity.textContent = COPY.recent + item.recent_activity;
       select.append(name, state, activity);
       select.addEventListener("click", () => { void cb.onSelect(item.id); });
       const actions = document.createElement("div"); actions.className = "thread-actions";

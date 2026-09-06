@@ -5,6 +5,7 @@ import { createFileTree, openKind } from "./tree";
 import { createThreads, type Thread } from "./threads";
 import {
   configGet,
+  threadList, threadCreate, threadUpdate, threadCurrent, threadSwitch,
   errorMessage,
   fsReadAttachment,
   fsReadFile,
@@ -288,7 +289,8 @@ const mastheadThread = shell.root.querySelector<HTMLElement>(".masthead-thread")
 const mastheadStatus = shell.root.querySelector<HTMLElement>(".masthead-status")!;
 const sessionThreads: Thread[] = [];
 let selectedThreadId: string | undefined;
-const threadStatusLabels = { active: "进行中", paused: "暂停", completed: "完成", archived: "归档" };
+let currentVaultId = "";
+const threadStatusLabels: Record<string, string> = { active: "进行中", paused: "暂停", completed: "完成", archived: "归档" };
 function refreshThreads() {
   threads.setThreads(sessionThreads);
   threads.setCurrent(selectedThreadId);
@@ -297,18 +299,9 @@ function refreshThreads() {
   mastheadStatus.textContent = selected ? threadStatusLabels[selected.status] : "—";
 }
 const threads = createThreads(shell.threads, {
-  onCreate: (title) => {
-    const item: Thread = { id: crypto.randomUUID(), title, status: "active", updatedAt: new Date().toLocaleString() };
-    sessionThreads.push(item);
-    selectedThreadId = item.id;
-    refreshThreads();
-    toast(`已创建 Thread：${title}`);
-  },
-  onSelect: (id) => { selectedThreadId = id; refreshThreads(); },
-  onStatus: (id, status) => {
-    const item = sessionThreads.find((thread) => thread.id === id);
-    if (item) { item.status = status; item.updatedAt = new Date().toLocaleString(); refreshThreads(); }
-  },
+  onCreate: async (title) => { const item = await threadCreate(title, currentVaultId); sessionThreads.push(item); selectedThreadId = item.id; refreshThreads(); toast(`已创建 Thread：${title}`); },
+  onSelect: async (id) => { const item = await threadSwitch(id, currentVaultId); selectedThreadId = item.id; sessionThreads.splice(0, sessionThreads.length, ...(await threadList(currentVaultId))); refreshThreads(); },
+  onStatus: async (id, status) => { const item = sessionThreads.find((thread) => thread.id === id); if (item) { item.status = status; await threadUpdate(item); refreshThreads(); } },
 });
 refreshThreads();
 const tree = createFileTree(shell.treeMount, {
@@ -334,6 +327,8 @@ const tree = createFileTree(shell.treeMount, {
 // 一键创建会把文件误建到新 vault 的同名相对路径下。
 function loadVault(root: string, entries: FsEntry[]) {
   vaultLoaded = true;
+  currentVaultId = root;
+  void threadList(currentVaultId).then((items) => { sessionThreads.splice(0, sessionThreads.length, ...items); return threadCurrent(currentVaultId); }).then((current) => { selectedThreadId = current?.id; refreshThreads(); });
   attachmentPaths = entries.filter((e) => e.kind === "file").map((e) => e.path);
   // 链接索引已在后端随 vault 打开建立；世代号自增使旧 vault 的在途 resolve
   // 回调全部作废，解析缓存与单链接降级集合整批失效
