@@ -2,8 +2,10 @@ import { createShell } from "./shell";
 import { createEditor } from "./editor";
 import { Keymap } from "./keys";
 import { createFileTree, openKind } from "./tree";
+import { createThreads, type Thread } from "./threads";
 import {
   configGet,
+  threadList, threadCreate, threadUpdate, threadCurrent, threadSwitch,
   errorMessage,
   fsReadAttachment,
   fsReadFile,
@@ -87,22 +89,7 @@ function showEditor() {
 // 瞬时提示（锚点缺失 / 创建结果 / 解析错误）：编辑器右下角浮条，自动消隐。
 function toast(text: string, action?: { label: string; run(): void }): void {
   const el = document.createElement("div");
-  el.className = "lumir-toast";
-  Object.assign(el.style, {
-    position: "absolute",
-    bottom: "16px",
-    right: "16px",
-    display: "flex",
-    alignItems: "center",
-    gap: "10px",
-    padding: "8px 14px",
-    borderRadius: "6px",
-    background: "#333",
-    color: "#fff",
-    fontSize: "13px",
-    zIndex: "10",
-    maxWidth: "70%",
-  });
+  el.className = "lumir-toast toast-surface";
   const span = document.createElement("span");
   span.textContent = text;
   el.append(span);
@@ -110,16 +97,7 @@ function toast(text: string, action?: { label: string; run(): void }): void {
     const btn = document.createElement("button");
     btn.type = "button";
     btn.textContent = action.label;
-    Object.assign(btn.style, {
-      border: "1px solid #888",
-      borderRadius: "4px",
-      background: "transparent",
-      color: "#fff",
-      cursor: "pointer",
-      font: "inherit",
-      padding: "2px 10px",
-      flex: "none",
-    });
+    btn.className = "toast-action";
     btn.addEventListener("click", () => {
       el.remove();
       action.run();
@@ -143,6 +121,7 @@ async function openFile(path: string, kind: "md" | "code" | "text" | "binary") {
     currentPath = kind === "md" ? path : undefined;
     invalidateResolve(); // from 变更，按 from 键控的缓存整批失效
     editor.openDocument(text, path);
+    tree.setCurrentPath(path);
     showEditor();
   } catch (e) {
     // CommandError 的 message 是人话（如非法 UTF-8），直接展示
@@ -302,17 +281,52 @@ keymap.attach(window, (command) => {
   }
 });
 
-// 面板区：配置探针（M1 契约链路验证保留）。反链面板已按 ADR 0004 §2 挤压预案移除。
-const configProbe = document.createElement("div");
-shell.panel.append(configProbe);
+shell.panel.hidden = true;
+shell.root.classList.add("panel-default-hidden");
 
-const tree = createFileTree(shell.fileTree, {
+const mastheadVault = shell.root.querySelector<HTMLElement>(".masthead-vault")!;
+const mastheadThread = shell.root.querySelector<HTMLElement>(".masthead-thread")!;
+const mastheadStatus = shell.root.querySelector<HTMLElement>(".masthead-status")!;
+let tree!: ReturnType<typeof createFileTree>;
+const sessionThreads: Thread[] = [];
+let selectedThreadId: string | undefined;
+let currentVaultId = "";
+const threadStatusLabels: Record<string, string> = { active: "进行中", paused: "暂停", completed: "完成", archived: "归档" };
+function refreshThreads() {
+  const counts = new Map<string, number>();
+  for (const item of sessionThreads) for (const file of item.files) counts.set(file.path, (counts.get(file.path) ?? 0) + 1);
+  tree?.setReferenceCounts(counts);
+  threads.setThreads(sessionThreads);
+  threads.setCurrent(selectedThreadId);
+  const selected = sessionThreads.find((item) => item.id === selectedThreadId);
+  mastheadThread.textContent = selected?.title ?? "无当前 Thread";
+  mastheadStatus.textContent = selected ? threadStatusLabels[selected.status] : "—";
+}
+const threads = createThreads(shell.threads, {
+  onCreate: async (title) => {
+    try { const item = await threadCreate(title, currentVaultId); sessionThreads.push(item); selectedThreadId = item.id; refreshThreads(); toast(`已创建 Thread：${title}`); }
+    catch (error) { toast(errorMessage(error)); throw error; }
+  },
+  onSelect: async (id) => {
+    try { const item = await threadSwitch(id, currentVaultId); selectedThreadId = item.id; sessionThreads.splice(0, sessionThreads.length, ...(await threadList(currentVaultId))); refreshThreads(); }
+    catch (error) { toast(errorMessage(error)); throw error; }
+  },
+  onStatus: async (id, status) => {
+    const item = sessionThreads.find((thread) => thread.id === id);
+    if (!item) return;
+    const previous = { ...item };
+    try { const updated = await threadUpdate({ ...item, status }); Object.assign(item, updated); refreshThreads(); toast("Thread 已保存"); }
+    catch (error) { Object.assign(item, previous); refreshThreads(); toast(errorMessage(error)); throw error; }
+  },
+});
+refreshThreads();
+tree = createFileTree(shell.treeMount, {
   onOpenFile: (path, kind) => void openFile(path, kind),
   onOpenVault: () => {
     vaultOpen()
       .then((info) => {
         // null = 用户在目录选择器取消，无错误状态（spec）
-        if (info) loadVault(info.root, info.entries);
+        if (info) loadVault(info.root, info.entries, info.vault_id, info.remap_candidates);
       })
       .catch((e) => {
         // 已有 vault 时打开失败（如改选了一个不可读目录）不得把既有树抹成
@@ -327,8 +341,11 @@ const tree = createFileTree(shell.fileTree, {
 // 换 vault 前必须全量复位旧上下文（reviewer-switcher high finding）：否则旧
 // 文件的 currentPath 会被当作新 vault 的 resolve/create from 基准，wikilink
 // 一键创建会把文件误建到新 vault 的同名相对路径下。
-function loadVault(root: string, entries: FsEntry[]) {
+function loadVault(root: string, entries: FsEntry[], vaultId = root, remapCandidates: Array<{ id: string; path: string }> = []) {
   vaultLoaded = true;
+  currentVaultId = vaultId;
+  if (remapCandidates.length) toast(`发现 ${remapCandidates.length} 个可映射的 vault 路径`);
+  void threadList(currentVaultId).then((items) => { sessionThreads.splice(0, sessionThreads.length, ...items); return threadCurrent(currentVaultId); }).then((current) => { selectedThreadId = current?.id; refreshThreads(); });
   attachmentPaths = entries.filter((e) => e.kind === "file").map((e) => e.path);
   // 链接索引已在后端随 vault 打开建立；世代号自增使旧 vault 的在途 resolve
   // 回调全部作废，解析缓存与单链接降级集合整批失效
@@ -340,6 +357,8 @@ function loadVault(root: string, entries: FsEntry[]) {
   currentPath = undefined;
   showEditor();
   editor.setWikilinkResolver(wikilinkResolver);
+  mastheadVault.textContent = root.slice(root.lastIndexOf("/") + 1) || root;
+  tree.setCurrentPath(undefined);
   tree.setVault(root, entries);
 }
 
@@ -370,29 +389,26 @@ onFsEntryChanged((changes) => {
 vaultCurrent()
   .then((status) => {
     if (status.vault) {
-      loadVault(status.vault.root, status.vault.entries);
+      loadVault(status.vault.root, status.vault.entries, status.vault.vault_id, status.vault.remap_candidates);
     } else {
       tree.showEmpty(status.notice);
     }
   })
   .catch((e) => tree.showEmpty(errorMessage(e)));
 
-// 契约链路探针：invoke config_get，把 editor.mode 经 setMode 锚定为编辑器的
-// 配置默认基线（openDocument 对无类型线索文件回落到这个基线），并把配置快照
-// 渲染进面板 pane 的配置探针区。
-configGet()
-  .then((snapshot) => {
-    editor.setMode(snapshot.config.editor.mode);
-    const lines = [
-      `config: ok (mode=${snapshot.config.editor.mode})`,
-      `path: ${snapshot.path}`,
-      ...snapshot.warnings.map((w) => `warning: ${w}`),
-    ];
-    configProbe.textContent = lines.join("\n");
-  })
-  .catch((e: unknown) => {
-    configProbe.textContent = `config 加载失败：${errorMessage(e)}`;
-  });
+configGet().then((snapshot) => editor.setMode(snapshot.config.editor.mode)).catch(() => {});
+
+const themes = ["light", "dark", "eink"] as const;
+let themeIndex = Math.max(0, themes.indexOf((localStorage.getItem("lumir-theme") as typeof themes[number]) || "light"));
+document.documentElement.dataset.theme = themes[themeIndex];
+window.addEventListener("keydown", (event) => {
+  if ((event.metaKey || event.ctrlKey) && event.key === "\\") shell.panel.hidden = !shell.panel.hidden;
+  if ((event.metaKey || event.ctrlKey) && event.key === "t") {
+    themeIndex = (themeIndex + 1) % themes.length;
+    document.documentElement.dataset.theme = themes[themeIndex];
+    localStorage.setItem("lumir-theme", themes[themeIndex]);
+  }
+});
 
 // ready 信号（前端一半）：webview 首屏挂载完成即打点。
 // Rust core 启动完成后会打印 LUMIR_READY 结构化日志（见 src-tauri/src/lib.rs），

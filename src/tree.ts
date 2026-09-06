@@ -57,11 +57,15 @@ export interface FileTreeCallbacks {
   onOpenFile(path: string, kind: OpenKind): void;
   /** 「打开 vault」入口：空态按钮与树头部的常驻切换入口共用。 */
   onOpenVault(): void;
+  onCurrentPathChanged?: (path: string | undefined) => void;
+  referenceCount?: (path: string) => number | undefined;
 }
 
 export interface FileTree {
   /** 打开 vault 成功：全量装载条目。 */
   setVault(root: string, entries: FsEntry[]): void;
+  setCurrentPath(path: string | undefined): void;
+  setReferenceCounts(counts: ReadonlyMap<string, number>): void;
   /** 消费 fs:entry_changed 增量：局部更新，保持展开状态。 */
   applyChanges(changes: FsChange[]): void;
   /** 未打开 vault 空态；notice 为 last_vault 恢复失败等的人话提示。 */
@@ -98,6 +102,7 @@ export function createFileTree(mount: HTMLElement, cb: FileTreeCallbacks): FileT
   const nodes = new Map<string, Node>();
   const expanded = new Set<string>();
   let vaultName = "";
+  let referenceCounts = new Map<string, number>();
 
   const rootEl = document.createElement("div");
   rootEl.className = "filetree";
@@ -116,6 +121,9 @@ export function createFileTree(mount: HTMLElement, cb: FileTreeCallbacks): FileT
     const kind = displayKind(node.entry);
     row.className = `ft-row ft-${kind}`;
     row.title = node.entry.path;
+    row.dataset.depth = String(node.entry.path ? node.entry.path.split("/").length - 1 : 0);
+    row.setAttribute("aria-label", node.entry.path);
+    row.setAttribute("aria-current", currentPath === node.entry.path ? "true" : "false");
 
     const caret = document.createElement("span");
     caret.className = "ft-caret";
@@ -123,6 +131,8 @@ export function createFileTree(mount: HTMLElement, cb: FileTreeCallbacks): FileT
     name.className = "ft-name";
     name.textContent = nameOf(node.entry.path);
     row.append(caret, name);
+    const count = referenceCounts.get(node.entry.path) ?? 0;
+    if (node.entry.kind !== "dir" && count > 1) { const refs = document.createElement("span"); refs.className = "ft-reference-count"; refs.textContent = `×${count}`; refs.setAttribute("aria-label", `${count} references`); row.append(refs); }
     li.append(row);
 
     if (node.entry.kind === "dir") {
@@ -222,7 +232,42 @@ export function createFileTree(mount: HTMLElement, cb: FileTreeCallbacks): FileT
     }
   }
 
+  let currentPath: string | undefined;
+  function syncCurrent() {
+    rootEl.querySelectorAll<HTMLElement>(".ft-row").forEach((row) => {
+      const active = row.closest<HTMLElement>(".ft-item")?.dataset.path === currentPath;
+      row.classList.toggle("is-current", active);
+      row.setAttribute("aria-current", active ? "true" : "false");
+      row.querySelector(".ft-current-mark")?.remove();
+      if (active) {
+        const mark = document.createElement("span");
+        mark.className = "ft-current-mark";
+        mark.textContent = "¶";
+        row.prepend(mark);
+      }
+    });
+  }
+
   return {
+    setCurrentPath(path) {
+      currentPath = path;
+      syncCurrent();
+    },
+    setReferenceCounts(counts) {
+      referenceCounts = new Map(counts);
+      for (const node of nodes.values()) {
+        const row = node.li?.querySelector<HTMLButtonElement>(":scope > .ft-row");
+        if (!row) continue;
+        row.querySelector(".ft-reference-count")?.remove();
+        const count = referenceCounts.get(node.entry.path) ?? 0;
+        if (node.entry.kind !== "dir" && count > 1) {
+          const refs = document.createElement("span");
+          refs.className = "ft-reference-count";
+          refs.textContent = `×${count}`;
+          row.append(refs);
+        }
+      }
+    },
     setVault(root, entries) {
       vaultName = root.slice(root.lastIndexOf("/") + 1) || root;
       expanded.clear();
