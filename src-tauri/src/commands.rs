@@ -85,6 +85,7 @@ pub struct VaultInfo {
     /// vault 根目录绝对路径。
     pub root: String,
     pub entries: Vec<FsEntry>,
+    pub remap_candidates: Vec<crate::threads::VaultWorkspace>,
 }
 
 /// 前端启动时查询的 vault 状态。
@@ -212,6 +213,7 @@ pub fn open_vault(
     Ok(VaultInfo {
         root: root.display().to_string(),
         entries,
+        remap_candidates: vec![],
     })
 }
 
@@ -293,6 +295,7 @@ pub fn vault_current(state: tauri::State<'_, VaultState>) -> Result<VaultStatus,
         Some(root) => Some(VaultInfo {
             root: root.display().to_string(),
             entries: fs_io::scan_workspace(root)?,
+            remap_candidates: vec![],
         }),
         None => None,
     };
