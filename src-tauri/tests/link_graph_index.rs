@@ -48,15 +48,31 @@ fn file_pool() -> Vec<String> {
 /// 生成文档内容：混合短名 / 带路径 / 带锚点 / 大小写变体 / 未创建 / embed 形态。
 fn gen_content(rng: &mut Rng, tag: u64) -> String {
     let mut s = format!("# 标题 {tag}\n\n## 第一节\n\n");
-    let stems = ["note-0", "note-1", "note-2", "foo", "Foo", "ghost", "assets/plain"];
+    let stems = [
+        "note-0",
+        "note-1",
+        "note-2",
+        "foo",
+        "Foo",
+        "ghost",
+        "assets/plain",
+    ];
     for i in 0..8 {
         let stem = stems[rng.below(stems.len())];
         match i % 5 {
             0 => s.push_str(&format!("短名 [[{stem}]]。\n")),
-            1 => s.push_str(&format!("带路径 [[dir-{}/{}.md]]。\n", rng.below(4), stems[rng.below(6)])),
+            1 => s.push_str(&format!(
+                "带路径 [[dir-{}/{}.md]]。\n",
+                rng.below(4),
+                stems[rng.below(6)]
+            )),
             2 => s.push_str(&format!("带锚点 [[{stem}#第一节]]。\n")),
             3 => s.push_str(&format!("附件 ![[assets/img-{}.png]]。\n", rng.below(2))),
-            _ => s.push_str(&format!("后缀 [[dir-{}/note-{}]] 无扩展名。\n", rng.below(4), rng.below(6))),
+            _ => s.push_str(&format!(
+                "后缀 [[dir-{}/note-{}]] 无扩展名。\n",
+                rng.below(4),
+                rng.below(6)
+            )),
         }
     }
     s.push_str("[[#第一节]] 自引用。[[a^b]] 非块引用词法。\n");
@@ -124,10 +140,7 @@ fn incremental_index_matches_fresh_rebuild() {
             }
             // md 读取失败口径（内容丢弃，路径保留在候选全集）
             5 => {
-                let md_files: Vec<&String> = state
-                    .keys()
-                    .filter(|p| p.ends_with(".md"))
-                    .collect();
+                let md_files: Vec<&String> = state.keys().filter(|p| p.ends_with(".md")).collect();
                 if !md_files.is_empty() {
                     let path = md_files[rng.below(md_files.len())].clone();
                     graph.upsert(&path, None);
@@ -193,7 +206,11 @@ fn resolution_tracks_create_and_delete() {
 
     g.remove("c.md");
     let r = g.resolve_link("a.md", "[[c]]").expect("合法链接");
-    assert_eq!(r.path.as_deref(), Some("dir/c.md"), "删除 c.md 后 [[c]] 回落到 dir/c.md");
+    assert_eq!(
+        r.path.as_deref(),
+        Some("dir/c.md"),
+        "删除 c.md 后 [[c]] 回落到 dir/c.md"
+    );
     g.remove("dir");
     let r = g.resolve_link("a.md", "[[c]]").expect("合法链接");
     assert_eq!(r.status, LinkStatus::Unresolved);

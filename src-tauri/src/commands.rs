@@ -1,6 +1,8 @@
 //! invoke / event 契约薄约定 —— M1 接缝（架构复查 P1-2）。
 //!
 //! M1 起所有 webview ↔ Rust core 通信遵守以下约定：
+//! Tauri 默认将参数名映射为 camelCase；本仓含下划线参数的 command 统一使用
+//! `#[tauri::command(rename_all = "snake_case")]`，前端 IPC 键与 Rust 保持一致。
 //!
 //! ## command 命名
 //!
@@ -82,9 +84,12 @@ pub fn config_get() -> Result<ConfigSnapshot, CommandError> {
 #[derive(Debug, Clone, Serialize, TS)]
 #[ts(export, export_to = "../../src/bindings/")]
 pub struct VaultInfo {
+    /// 稳定 vault 身份。
+    pub vault_id: String,
     /// vault 根目录绝对路径。
     pub root: String,
     pub entries: Vec<FsEntry>,
+    pub remap_candidates: Vec<crate::threads::VaultWorkspace>,
 }
 
 /// 前端启动时查询的 vault 状态。
@@ -185,7 +190,20 @@ pub fn open_vault(
     app: &tauri::AppHandle,
     state: &VaultState,
     root: PathBuf,
+    force_new: bool,
 ) -> Result<VaultInfo, CommandError> {
+    // Unknown paths with stale registrations require explicit remap confirmation.
+    let candidates = crate::threads::remap_candidates(&root)?;
+    if !force_new && !candidates.is_empty() {
+        return Ok(VaultInfo {
+            vault_id: candidates[0].id.clone(),
+            root: root.display().to_string(),
+            entries: vec![],
+            remap_candidates: candidates,
+        });
+    }
+    // Register/reconcile stable vault identity before opening.
+    let workspace = crate::threads::reconcile_vault(&root)?;
     // 顺序：先 watch（FSEvents 流起点在此刻）再全量枚举，消除 scan→watch 的
     // 事件空窗；枚举结果随后播种进 watcher 的已知路径集（修正重放的误报 Create）。
     let app_for_watch = app.clone();
@@ -208,8 +226,10 @@ pub fn open_vault(
     inner.notice = None;
     inner.graph = graph;
     Ok(VaultInfo {
+        vault_id: workspace.id,
         root: root.display().to_string(),
         entries,
+        remap_candidates: vec![],
     })
 }
 
@@ -265,10 +285,11 @@ fn merge_last_vault(value: &mut serde_json::Value, root: &Path) {
 
 /// 调系统目录选择器打开 vault；用户取消返回 Ok(None)，不产生错误状态。
 /// 成功后写入 last_vault。
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub async fn vault_open(
     app: tauri::AppHandle,
     state: tauri::State<'_, VaultState>,
+    force_new: bool,
 ) -> Result<Option<VaultInfo>, CommandError> {
     let picked = rfd::AsyncFileDialog::new()
         .set_title("选择 vault 目录")
@@ -278,7 +299,7 @@ pub async fn vault_open(
         return Ok(None);
     };
     let root = handle.path().to_path_buf();
-    let info = open_vault(&app, &state, root)?;
+    let info = open_vault(&app, &state, root, force_new)?;
     write_last_vault(Path::new(&info.root))?;
     Ok(Some(info))
 }
@@ -289,8 +310,10 @@ pub fn vault_current(state: tauri::State<'_, VaultState>) -> Result<VaultStatus,
     let inner = state.inner.lock().expect("vault state poisoned");
     let vault = match &inner.root {
         Some(root) => Some(VaultInfo {
+            vault_id: crate::threads::reconcile_vault(root)?.id,
             root: root.display().to_string(),
             entries: fs_io::scan_workspace(root)?,
+            remap_candidates: vec![],
         }),
         None => None,
     };

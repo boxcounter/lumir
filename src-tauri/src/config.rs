@@ -48,12 +48,14 @@ impl Default for AppConfig {
 pub struct EditorConfig {
     /// 编辑器模式（ADR 0002 §2 单内核双模式）。
     pub mode: EditorMode,
+    pub measure: u32,
 }
 
 impl Default for EditorConfig {
     fn default() -> Self {
         Self {
             mode: EditorMode::Md,
+            measure: 480,
         }
     }
 }
@@ -89,6 +91,7 @@ struct RawConfig {
 #[serde(default)]
 struct RawEditorConfig {
     mode: Option<String>,
+    measure: Option<serde_json::Value>,
 }
 
 /// 配置目录（ADR 0002 §5 路径规则）。无法确定 home 是唯一的致命错误。
@@ -192,11 +195,26 @@ fn validate(raw: RawConfig) -> (AppConfig, Vec<String>) {
         }
     };
 
+    let measure = match raw.editor.measure {
+        None => defaults.editor.measure,
+        Some(serde_json::Value::Number(n)) => n
+            .as_u64()
+            .filter(|v| (100..=2000).contains(v))
+            .map(|v| v as u32)
+            .unwrap_or_else(|| {
+                warnings.push("配置项 editor.measure 非法，已回退为 480".into());
+                defaults.editor.measure
+            }),
+        _ => {
+            warnings.push("配置项 editor.measure 应为 100-2000 的整数，已回退为 480".into());
+            defaults.editor.measure
+        }
+    };
     (
         AppConfig {
             version,
             last_vault,
-            editor: EditorConfig { mode },
+            editor: EditorConfig { mode, measure },
         },
         warnings,
     )

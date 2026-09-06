@@ -13,6 +13,8 @@ import type { VaultInfo } from "./bindings/VaultInfo";
 import type { VaultStatus } from "./bindings/VaultStatus";
 import type { LinkResolveResult } from "./bindings/LinkResolveResult";
 import type { CreateNoteResult } from "./bindings/CreateNoteResult";
+import type { Thread } from "./bindings/Thread";
+import type { VaultWorkspace } from "./bindings/VaultWorkspace";
 
 /** 判断 invoke 的 reject 值是否为 CommandError 信封。 */
 export function isCommandError(e: unknown): e is CommandError {
@@ -35,8 +37,8 @@ export function configGet(): Promise<ConfigSnapshot> {
 }
 
 /** 调系统目录选择器打开 vault；用户取消 resolve 为 null（非错误）。 */
-export function vaultOpen(): Promise<VaultInfo | null> {
-  return invoke<VaultInfo | null>("vault_open");
+export function vaultOpen(force_new = false): Promise<VaultInfo | null> {
+  return invoke<VaultInfo | null>("vault_open", { force_new });
 }
 
 /** 启动后查询当前 vault 状态（含 last_vault 恢复失败的人话提示）。 */
@@ -78,3 +80,10 @@ export function linkGraphResolve(from: string, link: string): Promise<LinkResolv
 export function wikilinkCreate(from: string, link: string): Promise<CreateNoteResult> {
   return invoke<CreateNoteResult>("wikilink_create", { from, link });
 }
+export const threadList = (vault_id: string): Promise<Thread[]> => invoke<Thread[]>("thread_list", { vault_id });
+export const threadCreate = (title: string, vault_id: string): Promise<Thread> => invoke<Thread>("thread_create", { title, vault_id });
+export const threadUpdate = (thread: Thread): Promise<Thread> => invoke<Thread>("thread_update", { thread });
+export const threadCurrent = (vault_id: string): Promise<Thread | null> => invoke<Thread | null>("thread_current", { vault_id });
+export const threadSwitch = (id: string, vault_id: string): Promise<Thread> => invoke<Thread>("thread_switch", { id, vault_id });
+export const vaultRegister = (id: string, path: string): Promise<VaultWorkspace> => invoke<VaultWorkspace>("vault_register", { id, path });
+export const vaultRemap = (id: string, path: string): Promise<VaultWorkspace> => invoke<VaultWorkspace>("vault_remap", { id, path });
