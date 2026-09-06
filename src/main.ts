@@ -111,20 +111,32 @@ function toast(text: string, action?: { label: string; run(): void }): void {
 // 打开文件：读出文本交给 editor.openDocument——模式裁决（文件类型优先，
 // 无类型线索回落配置默认）和附件相对路径解析依赖的 currentFilePath 都在
 // 内核里完成（spec「模式配置来源」）。不支持的二进制 → 提示而非报错弹窗。
+let fileRequest = 0;
+let displayedPath: string | undefined;
+function syncThreadFile() {
+  shell.threads.querySelectorAll<HTMLElement>(".thread-file").forEach((row) => {
+    row.setAttribute("aria-current", String(row.dataset.path === displayedPath));
+  });
+}
 async function openFile(path: string, kind: "md" | "code" | "text" | "binary") {
+  const request = ++fileRequest;
   if (kind === "binary") {
     showNotice(`暂不支持预览：${path}`);
     return;
   }
   try {
     const text = await fsReadFile(path);
+    if (request !== fileRequest) return;
+    displayedPath = path;
+    syncThreadFile();
     currentPath = kind === "md" ? path : undefined;
+    mastheadFile.textContent = path;
     invalidateResolve(); // from 变更，按 from 键控的缓存整批失效
     editor.openDocument(text, path);
     tree.setCurrentPath(path);
     showEditor();
   } catch (e) {
-    // CommandError 的 message 是人话（如非法 UTF-8），直接展示
+    if (request !== fileRequest) return;
     showNotice(errorMessage(e));
   }
 }
@@ -285,12 +297,14 @@ shell.panel.hidden = true;
 shell.root.classList.add("panel-default-hidden");
 
 const mastheadVault = shell.root.querySelector<HTMLElement>(".masthead-vault")!;
+const mastheadFile = shell.root.querySelector<HTMLElement>(".masthead-file")!;
 const mastheadThread = shell.root.querySelector<HTMLElement>(".masthead-thread")!;
 const mastheadStatus = shell.root.querySelector<HTMLElement>(".masthead-status")!;
 let tree!: ReturnType<typeof createFileTree>;
 const sessionThreads: Thread[] = [];
 let selectedThreadId: string | undefined;
 let currentVaultId = "";
+let threadRequest = 0;
 const threadStatusLabels: Record<string, string> = { active: "进行中", paused: "暂停", completed: "完成", archived: "归档" };
 function refreshThreads() {
   const counts = new Map<string, number>();
@@ -298,25 +312,37 @@ function refreshThreads() {
   tree?.setReferenceCounts(counts);
   threads.setThreads(sessionThreads);
   threads.setCurrent(selectedThreadId);
+  syncThreadFile();
   const selected = sessionThreads.find((item) => item.id === selectedThreadId);
   mastheadThread.textContent = selected?.title ?? "无当前 Thread";
   mastheadStatus.textContent = selected ? threadStatusLabels[selected.status] : "—";
 }
 const threads = createThreads(shell.threads, {
+  onOpenFile: (path) => openFile(path, openKind(path)),
   onCreate: async (title) => {
-    try { const item = await threadCreate(title, currentVaultId); sessionThreads.push(item); selectedThreadId = item.id; refreshThreads(); toast(`已创建 Thread：${title}`); }
-    catch (error) { toast(errorMessage(error)); throw error; }
+    const epoch = resolveEpoch;
+    try { const item = await threadCreate(title, currentVaultId); if (epoch !== resolveEpoch) return; sessionThreads.push(item); selectedThreadId = item.id; refreshThreads(); toast(`已创建 Thread：${title}`); }
+    catch (error) { if (epoch === resolveEpoch) toast(errorMessage(error)); throw error; }
   },
   onSelect: async (id) => {
-    try { const item = await threadSwitch(id, currentVaultId); selectedThreadId = item.id; sessionThreads.splice(0, sessionThreads.length, ...(await threadList(currentVaultId))); refreshThreads(); }
-    catch (error) { toast(errorMessage(error)); throw error; }
+    const epoch = resolveEpoch;
+    const vaultId = currentVaultId;
+    const request = ++threadRequest;
+    try {
+      const item = await threadSwitch(id, vaultId);
+      const items = await threadList(vaultId);
+      if (epoch !== resolveEpoch || request !== threadRequest) return;
+      selectedThreadId = item.id;
+      sessionThreads.splice(0, sessionThreads.length, ...items);
+      refreshThreads();
+    } catch (error) { if (epoch === resolveEpoch && request === threadRequest) toast(errorMessage(error)); }
   },
   onStatus: async (id, status) => {
     const item = sessionThreads.find((thread) => thread.id === id);
     if (!item) return;
-    const previous = { ...item };
-    try { const updated = await threadUpdate({ ...item, status }); Object.assign(item, updated); refreshThreads(); toast("Thread 已保存"); }
-    catch (error) { Object.assign(item, previous); refreshThreads(); toast(errorMessage(error)); throw error; }
+    const epoch = resolveEpoch;
+    try { const updated = await threadUpdate({ ...item, status }); if (epoch !== resolveEpoch) return; Object.assign(item, updated); refreshThreads(); toast("Thread 已保存"); }
+    catch (error) { if (epoch === resolveEpoch) toast(errorMessage(error)); }
   },
 });
 refreshThreads();
@@ -345,7 +371,18 @@ function loadVault(root: string, entries: FsEntry[], vaultId = root, remapCandid
   vaultLoaded = true;
   currentVaultId = vaultId;
   if (remapCandidates.length) toast(`发现 ${remapCandidates.length} 个可映射的 vault 路径`);
-  void threadList(currentVaultId).then((items) => { sessionThreads.splice(0, sessionThreads.length, ...items); return threadCurrent(currentVaultId); }).then((current) => { selectedThreadId = current?.id; refreshThreads(); });
+  ++fileRequest;
+  const request = ++threadRequest;
+  displayedPath = undefined;
+  sessionThreads.length = 0;
+  selectedThreadId = undefined;
+  refreshThreads();
+  void Promise.all([threadList(vaultId), threadCurrent(vaultId)]).then(([items, current]) => {
+    if (request !== threadRequest) return;
+    sessionThreads.splice(0, sessionThreads.length, ...items);
+    selectedThreadId = current?.id;
+    refreshThreads();
+  }).catch((error) => { if (currentVaultId === vaultId) toast(errorMessage(error)); });
   attachmentPaths = entries.filter((e) => e.kind === "file").map((e) => e.path);
   // 链接索引已在后端随 vault 打开建立；世代号自增使旧 vault 的在途 resolve
   // 回调全部作废，解析缓存与单链接降级集合整批失效
@@ -355,6 +392,7 @@ function loadVault(root: string, entries: FsEntry[], vaultId = root, remapCandid
   // currentPath；旧 vault 的「暂不支持预览」覆盖层一并撤下
   editor.reset();
   currentPath = undefined;
+  mastheadFile.textContent = "无当前文件";
   showEditor();
   editor.setWikilinkResolver(wikilinkResolver);
   mastheadVault.textContent = root.slice(root.lastIndexOf("/") + 1) || root;
@@ -402,7 +440,7 @@ const themes = ["light", "dark", "eink"] as const;
 let themeIndex = Math.max(0, themes.indexOf((localStorage.getItem("lumir-theme") as typeof themes[number]) || "light"));
 document.documentElement.dataset.theme = themes[themeIndex];
 window.addEventListener("keydown", (event) => {
-  if ((event.metaKey || event.ctrlKey) && event.key === "\\") shell.panel.hidden = !shell.panel.hidden;
+  if ((event.metaKey || event.ctrlKey) && event.key === "\\" && shell.panel.childElementCount > 0) { event.preventDefault(); shell.panel.hidden = !shell.panel.hidden; }
   if ((event.metaKey || event.ctrlKey) && event.key === "t") {
     themeIndex = (themeIndex + 1) % themes.length;
     document.documentElement.dataset.theme = themes[themeIndex];

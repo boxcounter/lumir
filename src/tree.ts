@@ -134,6 +134,8 @@ export function createFileTree(mount: HTMLElement, cb: FileTreeCallbacks): FileT
     const count = referenceCounts.get(node.entry.path) ?? 0;
     if (node.entry.kind !== "dir" && count > 1) { const refs = document.createElement("span"); refs.className = "ft-reference-count"; refs.textContent = `×${count}`; refs.setAttribute("aria-label", `${count} references`); row.append(refs); }
     li.append(row);
+    node.li = li;
+    row.classList.toggle("is-current", currentPath === node.entry.path);
 
     if (node.entry.kind === "dir") {
       const ul = document.createElement("ul");

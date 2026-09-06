@@ -5,6 +5,7 @@ export interface ThreadsCallbacks {
   onCreate(title: string): void | Promise<void>;
   onSelect(id: string): void | Promise<void>;
   onStatus(id: string, status: ThreadStatus): void | Promise<void>;
+  onOpenFile(path: string): void | Promise<void>;
 }
 export const COPY = {
   heading: "Threads", create: "+ 新建", placeholder: "Thread 名称", submit: "创建", cancel: "取消",
@@ -64,10 +65,33 @@ export function createThreads(mount: HTMLElement, cb: ThreadsCallbacks): Threads
       select.setAttribute("aria-pressed", String(item.id === current));
       const name = document.createElement("strong"); name.textContent = item.title;
       const state = document.createElement("span"); state.className = "thread-status"; state.textContent = STATUS[item.status];
+      select.title = `${item.title}\n${COPY.recent}${item.recent_activity}`;
+      select.append(name, state);
+      select.addEventListener("click", () => { void Promise.resolve(cb.onSelect(item.id)).catch(() => {}); });
+      const files = document.createElement("div");
+      files.className = "thread-files";
+      if (item.id === current) {
+        for (const file of item.files) {
+          const open = document.createElement("button");
+          open.type = "button";
+          open.className = "thread-file";
+          open.dataset.path = file.path;
+          open.title = file.path;
+          const label = document.createElement("span");
+          label.className = "thread-file-name";
+          label.textContent = file.path.split("/").pop() ?? file.path;
+          const role = document.createElement("span");
+          role.className = "thread-file-role";
+          role.textContent = ({ main: "主文档", ref: "参考", source: "来源", draft: "草稿" } as Record<string, string>)[file.role] ?? file.role;
+          open.append(label, role);
+          open.addEventListener("click", () => { void Promise.resolve(cb.onOpenFile(file.path)).catch(() => {}); });
+          files.append(open);
+        }
+      }
+      const actions = document.createElement("details"); actions.className = "thread-actions";
+      const summary = document.createElement("summary"); summary.textContent = STATUS[item.status]; summary.setAttribute("aria-label", "Thread 状态操作");
       const activity = document.createElement("time"); activity.textContent = COPY.recent + item.recent_activity;
-      select.append(name, state, activity);
-      select.addEventListener("click", () => { void cb.onSelect(item.id); });
-      const actions = document.createElement("div"); actions.className = "thread-actions";
+      actions.append(summary, activity);
       for (const status of ["active", "paused", "completed", "archived"] as const) {
         if (status === item.status) continue;
         const action = document.createElement("button");
@@ -78,7 +102,7 @@ export function createThreads(mount: HTMLElement, cb: ThreadsCallbacks): Threads
         });
         actions.append(action);
       }
-      card.append(select, actions); list.append(card);
+      card.append(select, files, actions); list.append(card);
     }
   }
   render();
