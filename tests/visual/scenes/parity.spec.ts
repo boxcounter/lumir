@@ -84,7 +84,13 @@ test("Thread IPC 成功与失败反馈", async ({ page }) => {
   await page.getByRole("button", { name: "+ 新建" }).click();
   await page.getByRole("textbox", { name: "Thread 名称" }).fill("验收 Thread");
   await page.getByRole("button", { name: "创建", exact: true }).click();
-  await expect(page.locator(".lumir-toast")).toContainText("已创建 Thread：验收 Thread");
+  await expect(page.locator(".lumir-toast")).toContainText("已创建并切换到 Thread：验收 Thread");
+  await expect(page.locator('.thread-card.is-current .thread-select')).toContainText('验收 Thread');
+  const persisted = await page.evaluate(async () => {
+    const api = (window as unknown as { __TAURI_INTERNALS__: { invoke: (command: string, args: object) => Promise<{ title: string }> } }).__TAURI_INTERNALS__;
+    return api.invoke('thread_current', { vault_id: 'fixture-vault' });
+  });
+  expect(persisted.title).toBe('验收 Thread');
   await page.locator('.ft-row[title="missing.md"]').click();
   await expect(page.locator(".editor-notice")).toContainText("文件不存在：missing.md");
 });

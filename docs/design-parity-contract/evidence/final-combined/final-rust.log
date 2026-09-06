@@ -1,0 +1,100 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.39s
+     Running unittests src/lib.rs (src-tauri/target/debug/deps/lumir_lib-791ca713bda34936)
+
+running 47 tests
+test commands::tests::merge_last_vault_preserves_newer_version ... ok
+test commands::tests::merge_last_vault_writes_version_when_missing_or_older ... ok
+test commands::tests::merge_last_vault_sets_fields_and_preserves_unknown ... ok
+test config::tests::missing_file_yields_defaults_without_warning ... ok
+test config::tests::newer_version_warns ... ok
+test config::tests::invalid_field_falls_back_per_field ... ok
+test config::tests::valid_file_is_loaded ... ok
+test config::tests::invalid_json_falls_back_entirely_with_warning ... ok
+test config::tests::wrong_type_field_falls_back_with_warning ... ok
+test config::export_bindings_editormode ... ok
+test commands::export_bindings_commanderror ... ok
+test fs_io::tests::base64_vectors ... ok
+test fs_io::export_bindings_fschangekind ... ok
+test fs_io::tests::read_attachment_ok_and_oversize_rejected_without_read ... ok
+test fs_io::tests::read_text_file_ok_and_invalid_utf8 ... ok
+test fs_io::tests::resolve_rejects_escape_and_absolute ... ok
+test fs_io::tests::resolve_rejects_symlink_escape ... ok
+test fs_io::export_bindings_fsentrykind ... ok
+test config::export_bindings_editorconfig ... ok
+test fs_io::export_bindings_fsentry ... ok
+test config::export_bindings_appconfig ... ok
+test fs_io::export_bindings_fsentrychangedevent ... ok
+test fs_io::export_bindings_fschange ... ok
+test commands::export_bindings_vaultinfo ... ok
+test fs_io::tests::scan_rejects_non_dir_root ... ok
+test link_graph::export_bindings_anchorstatus ... ok
+test config::export_bindings_configsnapshot ... ok
+test fs_io::tests::scan_does_not_expand_external_symlink ... ok
+test link_graph::tests::create_target_rejects_trailing_slash ... ok
+test link_graph::export_bindings_createnoteresult ... ok
+test link_graph::tests::drill_requires_subtree_for_nested_segments ... ok
+test link_graph::tests::headings_skip_code_and_strip_closing_hashes ... ok
+test link_graph::tests::tilde_fence_is_excluded ... ok
+test link_graph::tests::unmatched_backtick_run_is_literal ... ok
+test fs_io::tests::scan_does_not_follow_symlink_loop ... ok
+test link_graph::export_bindings_embedtarget ... ok
+test link_graph::export_bindings_anchorinfo ... ok
+test commands::export_bindings_vaultstatus ... ok
+test fs_io::tests::scan_lists_all_types_and_applies_ignore_set ... ok
+test link_graph::export_bindings_linkstatus ... ok
+test threads::export_bindings_threadfile ... ok
+test threads::export_bindings_threadstatus ... ok
+test threads::export_bindings_vaultworkspace ... ok
+test threads::export_bindings_thread ... ok
+test link_graph::export_bindings_linkresolveresult ... ok
+test fs_io::tests::watch_stops_when_dropped ... ok
+test fs_io::tests::watch_delivers_batched_changes_and_respects_ignore_set ... ok
+
+test result: ok. 47 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.47s
+
+     Running unittests src/main.rs (src-tauri/target/debug/deps/lumir-ce176590dcbf9e46)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/link_graph_index.rs (src-tauri/target/debug/deps/link_graph_index-f43ca44986a67225)
+
+running 2 tests
+test resolution_tracks_create_and_delete ... ok
+test incremental_index_matches_fresh_rebuild ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.23s
+
+     Running tests/thread_scenarios.rs (src-tauri/target/debug/deps/thread_scenarios-422a177d32bc268f)
+
+running 10 tests
+test scenario_valid_id_rejects_path_escape_for_all_thread_and_vault_commands ... ok
+test scenario_multiple_vault_threads_are_isolated ... ok
+test scenario_reconcile_reuses_persisted_vault_identity ... ok
+test scenario_remap_candidate_short_circuits_stale_vault_detection ... ok
+test scenario_current_thread_persists_after_switch ... ok
+test scenario_editor_measure_valid_value_has_no_warning ... ok
+test scenario_corrupt_thread_is_quarantined_without_blocking_load ... ok
+test scenario_create_thread_persistence_roundtrip_and_four_states ... ok
+test scenario_editor_measure_invalid_value_falls_back_with_warning ... ok
+test scenario_remap_preserves_identity_and_updates_last_vault ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/wikilink_fixtures.rs (src-tauri/target/debug/deps/wikilink_fixtures-945414d5dd0f8e68)
+
+running 4 tests
+test parse_cases_all ... ok
+test resolve_cases_all ... ok
+test create_never_overwrites_existing_file ... ok
+test create_cases_all ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+   Doc-tests lumir_lib
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

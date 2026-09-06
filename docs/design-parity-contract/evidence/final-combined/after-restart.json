@@ -1,0 +1,32 @@
+{
+  "stage": "after-restart",
+  "capturedAt": "2026-09-06T13:33:52.839Z",
+  "manifest": {
+    "schema": 1,
+    "createdAt": "2026-09-06T13:28:09.516Z",
+    "identifier": "com.lumir.parity62",
+    "incognito": true,
+    "fixture": "200-paragraph-vault"
+  },
+  "threads": [
+    {
+      "id": "1788701491-92969-416937000",
+      "vault_id": "vault-92969-1",
+      "title": "<redacted>",
+      "status": "active",
+      "fileCount": 0
+    }
+  ],
+  "current": [
+    {
+      "file": "current-vault-92969-1.txt",
+      "id": "1788701491-92969-416937000"
+    }
+  ],
+  "workspaces": [
+    {
+      "id": "vault-92969-1",
+      "path": "<run>/vault"
+    }
+  ]
+}

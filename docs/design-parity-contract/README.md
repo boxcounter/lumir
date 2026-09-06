@@ -1,6 +1,17 @@
 # 原型—生产一致性验收契约（M62）
 
-**结论：73af311 不通过最终验收。** 宽屏正文几何已接近原型，但阅读模式仍有明确视觉差异，窄窗几何和复制失败，真实新建 Thread 当前态不能重启恢复；本地内存原始值218.50MB高于200MB，但与指定macos-15 CI的可比性未确认，不据此宣布产品内存回归或通过。未更新任何既有视觉基线或容差。
+**当前结论：最终组合2d853d3的本地标准visual全绿，标准macos15性能仍未验证；不自动归档。** 已rebase M63/M64/ADR，最终标准 `scripts/visual/run.sh` 不带ignore-snapshots：42项通过。build、Rust fmt/clippy/test、隔离release、隔离脚本自验通过。以下73af311与4565aed章节是历史结果，以本节为当前状态。
+
+## 最终组合证据（2d853d3）
+
+- [最终paired gallery](evidence/index.html)：3主题×5视口、同正文/导航/Thread fixture，15项几何断言通过。实际观察了最终dark配对及真实WK正文，确认行号、activeLine底色、空段距已去除。剩余导航差异：原型目录kicker、footer，生产vault标题、切换/新建按钮及Thread状态操作；不宣称逐像素相同。
+- 标准visual42项包括复制2路径、短段/code切换、三主题300段长文全选复制、CmdX/V/输入后源文不变、长文滚到底且渲染行数小于300、深目录9组合、Thread切换失败保留原current/错误提示。短段只断言下一段纵坐标更大；精细float避让依据用户确认后的82adf2b reviewer真实WK三主题宽窄多样本复验，不夸称此断言单独证明dropcap安全。
+- toast用批准文案“已创建并切换到 Thread”，并断言UI当前卡及thread_current读回；stub不是后端。最终唯一run实际WK92969打开200段文件、创建Thread→退出；93057重启恢复相同current，三阶段脱敏JSON见 [final-combined](evidence/final-combined/)，两进程均正常退出。
+- 用户已物理确认正式原生源码复制、全选/部分高亮、CmdX/V只读符合预期；这是已确认事实，不再列为未验证。已知IME/drop未测单列，不扩大本轮承诺。
+- 仅更新3张既有基线：app-main/filetree-open/wikilink-states。依据冻结原型及最终paired确认，变化来自已批准的正文居中、阅读gutter/activeLine去除、段距与导航分区修复；没有改容差或跳过断言。更新后再次完整受保护runner42/42。完整日志在final-combined/final-standard.log。
+- M65原始218.50/ABBA与限定解释保留。macos15仍缺最终SHA正式负载证据；perf.yml裸cargo release缺custom-protocol（Cargo.toml无default且显式定义feature），已TowerFinding报告最小修法加feature，未擅改工作流。需要授权发布feat/parityacceptance62并在正确负载工作流dispatch最终ref；本轮未push/dispatch。
+
+节点2准备状态：本地功能/visual与用户原生确认已具备；剩余标准性能、导航剩余差异裁决、独立review确切tip。未经用户确认不archive。
 
 ## 4565aed 合入后的补充验证
 
