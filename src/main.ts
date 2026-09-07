@@ -113,6 +113,15 @@ function toast(text: string, action?: { label: string; run(): void }): void {
 // 内核里完成（spec「模式配置来源」）。不支持的二进制 → 提示而非报错弹窗。
 let fileRequest = 0;
 let displayedPath: string | undefined;
+
+function emitReadiness(name: string, detail: object = {}): void {
+  window.dispatchEvent(new CustomEvent(`lumir:${name}`, { detail }));
+}
+
+editor.onReady((event) => {
+  emitReadiness(event.phase, event);
+});
+
 function syncThreadFile() {
   shell.threads.querySelectorAll<HTMLElement>(".thread-file").forEach((row) => {
     row.setAttribute("aria-current", String(row.dataset.path === displayedPath));
@@ -120,6 +129,7 @@ function syncThreadFile() {
 }
 async function openFile(path: string, kind: "md" | "code" | "text" | "binary") {
   const request = ++fileRequest;
+  if (kind !== "binary") showNotice(`正在打开：${path}`);
   if (kind === "binary") {
     showNotice(`暂不支持预览：${path}`);
     return;
@@ -132,7 +142,7 @@ async function openFile(path: string, kind: "md" | "code" | "text" | "binary") {
     currentPath = kind === "md" ? path : undefined;
     mastheadFile.textContent = path;
     invalidateResolve(); // from 变更，按 from 键控的缓存整批失效
-    editor.openDocument(text, path);
+    editor.openDocument(text, path, request);
     tree.setCurrentPath(path);
     showEditor();
   } catch (e) {
@@ -387,8 +397,9 @@ tree = createFileTree(shell.treeMount, {
 // 换 vault 前必须全量复位旧上下文（reviewer-switcher high finding）：否则旧
 // 文件的 currentPath 会被当作新 vault 的 resolve/create from 基准，wikilink
 // 一键创建会把文件误建到新 vault 的同名相对路径下。
-function loadVault(root: string, entries: FsEntry[], vaultId = root, remapCandidates: Array<{ id: string; path: string }> = []) {
+function loadVault(root: string, entries: FsEntry[], vaultId = root, remapCandidates: Array<{ id: string; path: string }> = [], restored = false) {
   vaultLoaded = true;
+  emitReadiness("vault-ready", { root, vaultId, restored });
   currentVaultId = vaultId;
   if (remapCandidates.length) toast(`发现 ${remapCandidates.length} 个可映射的 vault 路径`);
   ++fileRequest;
@@ -447,7 +458,7 @@ onFsEntryChanged((changes) => {
 vaultCurrent()
   .then((status) => {
     if (status.vault) {
-      loadVault(status.vault.root, status.vault.entries, status.vault.vault_id, status.vault.remap_candidates);
+      loadVault(status.vault.root, status.vault.entries, status.vault.vault_id, status.vault.remap_candidates, true);
     } else {
       tree.showEmpty(status.notice);
     }
@@ -468,8 +479,7 @@ window.addEventListener("keydown", (event) => {
   }
 });
 
-// ready 信号（前端一半）：webview 首屏挂载完成即打点。
-// Rust core 启动完成后会打印 LUMIR_READY 结构化日志（见 src-tauri/src/lib.rs），
-// 两端时间戳合起来构成 perf mission 的测量终点（ADR 0002 §6 委托 M0 定义测量方法学）。
+// app-ready 只表示 webview/application shell 已挂载，不等价于 vault 恢复或编辑器首帧。
 const now = performance.now();
 console.log(`lumir: webview editor mounted at ${now.toFixed(1)}ms`);
+emitReadiness("app-ready", { time: now });

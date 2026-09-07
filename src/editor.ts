@@ -8,6 +8,7 @@ import { GFM } from "@lezer/markdown";
 import type { EditorMode } from "./bindings/EditorMode";
 import { livePreview, previewRefresh } from "./preview/livePreview";
 import type { PreviewContext, WikilinkResolver } from "./preview/livePreview";
+import { detectFrontmatter } from "./preview/frontmatter";
 import { createInvokeAttachmentProvider } from "./preview/attachments";
 import type { AttachmentProvider } from "./preview/attachments";
 
@@ -47,6 +48,22 @@ fn main() { println!("lumir"); }
 ![示例](./assets/shot.png)
 `;
 
+export type EditorReadyPhase =
+  | "source-ready"
+  | "decoration-ready"
+  | "frontmatter-ready"
+  | "paint";
+
+export interface EditorReadyEvent {
+  phase: EditorReadyPhase;
+  path: string | undefined;
+  requestId?: number;
+  frontmatter: "present" | "absent";
+  time: number;
+}
+
+export type EditorReadyListener = (event: EditorReadyEvent) => void;
+
 export interface EditorHandle {
   view: EditorView;
   /**
@@ -61,7 +78,9 @@ export interface EditorHandle {
    * .md/.markdown → md；已知代码扩展 → code；无类型线索（path 缺失或未知扩展）
    * → 回落配置默认基线（setMode 锚定，不随上一个打开文件的模式漂移）。
    */
-  openDocument(doc: string, path?: string): void;
+  openDocument(doc: string, path?: string, requestId?: number): void;
+  /** 监听文档装载、装饰和首个 paint 的可观测阶段。 */
+  onReady(listener: EditorReadyListener): () => void;
   /**
    * 清空文档并复位上下文（vault 切换 / 关闭时调用）：doc 清空、内部
    * currentFilePath 置空、模式回到配置默认基线（defaultMode，与 openDocument
@@ -111,6 +130,28 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
   let currentPath: string | undefined;
   let provider: AttachmentProvider = createInvokeAttachmentProvider();
   let wikilinkResolver: WikilinkResolver | null = null;
+  const readyListeners = new Set<EditorReadyListener>();
+  let readyPath: string | undefined;
+  let readyRequestId: number | undefined;
+  let readySerial = 0;
+
+  function emitReady(phase: EditorReadyPhase): void {
+    const event: EditorReadyEvent = {
+      phase,
+      path: readyPath,
+      requestId: readyRequestId,
+      frontmatter: detectFrontmatter(view.state.doc) ? "present" : "absent",
+      time: performance.now(),
+    };
+    readyListeners.forEach((listener) => listener(event));
+  }
+
+  function schedulePaint(serial: number): void {
+    requestAnimationFrame(() => {
+      if (serial !== readySerial || readyPath !== currentPath) return;
+      emitReady("paint");
+    });
+  }
 
   const previewContext: PreviewContext = {
     currentFilePath: () => currentPath,
@@ -209,17 +250,31 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
       view.dispatch({ effects: modeCompartment.reconfigure(modeExtensions(mode)) });
     },
     mode: () => currentMode,
-    openDocument(doc: string, path?: string) {
+    onReady(listener: EditorReadyListener) {
+      readyListeners.add(listener);
+      return () => readyListeners.delete(listener);
+    },
+    openDocument(doc: string, path?: string, requestId?: number) {
       currentPath = path;
+      readyPath = path;
+      readyRequestId = requestId;
+      const serial = ++readySerial;
       const next = modeForPath(path, defaultMode);
       currentMode = next;
       view.dispatch({
         changes: { from: 0, to: view.state.doc.length, insert: doc },
         effects: modeCompartment.reconfigure(modeExtensions(next)),
       });
+      emitReady("source-ready");
+      emitReady("decoration-ready");
+      emitReady("frontmatter-ready");
+      schedulePaint(serial);
     },
     reset() {
+      ++readySerial;
       currentPath = undefined;
+      readyPath = undefined;
+      readyRequestId = undefined;
       currentMode = defaultMode;
       view.dispatch({
         changes: { from: 0, to: view.state.doc.length, insert: "" },
