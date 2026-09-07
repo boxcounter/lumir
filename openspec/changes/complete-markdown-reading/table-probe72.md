@@ -2,7 +2,7 @@
 
 ## 结论
 
-**前置验收仍有pending，不进入完整产品实现。** 当前真实WK静态与CM窗口已可见，已取得列布局、虚拟化、键盘横滚、源码复制及自有磁盘只读证据。r4集中修复首次原生selection/焦点交接和fresh-page矩阵失败退出；纯鼠标拖选复制已补证，物理触控板反馈仍待确认，不勾tasks1.3或节点2。下文白屏记录是历史，不代表当前状态；完整结果与限制见末尾r4记录。
+**2026-09-07 tower批准表格前置可行性门槛通过。** 依据r4准确`ed2d732`独立clean、既有真实WK列布局/空槽/虚拟化/焦点/源码复制/自有磁盘只读证据，以及用户明确反馈“物理触控板横滚符合预期，表内横滚且表外正文不移”。仅勾tasks1.3，允许接续新mission生产实施；不是节点2、生产实现完成或性能承诺已兑现。下文pending与白屏记录保留为历史，当前最终裁决及文件拆分见文末。
 
 ## 实验与复现
 
@@ -133,4 +133,20 @@ r3 reviewer 对准确0c8feac指出：首次End的keydown之前，浏览器已从
 - 同一独立实例点击Disk fixture重建EditorState后，从按钮自然Tab进入editor，再Tab进入AXGroup Source table1；End到最右列，Tab进入Source table2，Escape离开。AX具有表/行/单元格与命名可聚焦区，未形成焦点陷阱。该项是在同app重新载入doc后进行，不冒称全新进程自然Tab首帧；fresh-page首帧覆盖由12组矩阵补充。
 - 修复后跨两表源码copy再次经可见receiver核对228/228 true；全选CmdX、CmdV、Delete后每步doc unchanged=true。自有Disk fixture前后hash仍为0113181961a42b7b4020b75f7d5fe2f4a0da5bb1fd1d5b6d5a2c2224e0d49f5b。整个补验键输入occluded=false，没有activate fallback或未知clipboard读取，M73占用已释放。
 
-物理触控板仍等待用户对原PID28558窗口反馈，不要求重复已确认项。r4自动补验已形成整体评审证据；fresh Chromium矩阵不是生产主题/真实WK的替代，既有原生证据按上述粒度保留。实验同步全量模型、每次视口遍历所有rows和240px列宽均不得进入生产；需缓存、预算、行索引及真实主题列宽。物理门槛未过前不勾完整前置完成或进入生产。
+物理触控板仍等待用户对原PID28558窗口反馈，不要求重复已确认项。r4自动补验已形成整体评审证据；fresh Chromium矩阵不是生产主题/真实WK的替代，既有原生证据按上述粒度保留。实验同步全量模型、每次视口遍历所有rows和240px列宽均不得进入生产；需缓存、预算、行索引及真实主题列宽。上述为收到人工反馈前的历史状态。
+
+## 最终收口与生产交接（2026-09-07）
+
+用户明确确认物理触控板横向滚动符合预期：表格可以左右滚动，表格外正文不横移。此为人工反馈，不冒称工具合成wheel曾通过，也不补造反馈秒级时间。tower在M72 note中依用户授权，结合r4准确`ed2d732`独立clean批准前置可行性门槛通过。tasks仅将1.3标记完成；1.2涉及完整列表/表格fixture组合，3.x涉及产品完整验收，均不因局部探针结果代勾。节点2与所有生产实施任务保持未完成。
+
+分支按授权rebase到最新master `2573b0f`（已包含M70/M73），无冲突；rebase引入的生产代码属于master既有成果，本mission没有编辑生产文件。r4历史提交ID保留作为评审时对象，最终r5只审收口及rebase差异。用户测试PID28558与独立r4实例暂保留，不做未经需要的关闭。
+
+接续生产mission建议scope：
+
+- `src/preview/tables.ts`：纯表范围/槽位/对齐模型与公开扩展。复用现有parser增量树，不同步parse全文件；缓存完整表元数据，记录版本/字体/主题失效，按行索引或二分查询只遍历可见交集，不复制probe每viewport遍历全部rows。元数据构建需有时间预算与继续推进机制，未完整时临时源码、完成后稳定切换，不能永久回退。
+- `src/preview/livePreview.ts`：接入受支持矩形表范围，避免emphasis/image/wikilink等重复消费；保留列表M73行为、源码copy、code模式隔离与公开API约束。
+- `src/preview/theme.ts`：局部表格样式、主题token、隐式Grid行规则、可见焦点；列宽按实际内容/字体/可用栏宽建立受限共享策略并用requestMeasure，不照搬固定240px。保留显式cell槽位及空槽可访问语义，不直接写CM管理DOM。
+- `tests/visual/scenes/tables.spec.ts`、`tests/visual/fixtures/tables/**`：parser矩形/异常/嵌套/空槽；三套真实主题宽窄、首次按钮与自然Tab、局部/整表/跨表/鼠标复制、只读反例、滚入中部/缓存失效、1MB多表及大单表预算。测试失败必须非零退出，保留fresh实例及fault反例。
+- `scripts/visual/table-probe72/**` 与本change文档保留为前置证据，不作为生产模块导入；必要产品原生补验辅助另划最小scope。
+
+交付条件仍为产品标准build/完整visual/perf合同与真实WK验收，不用probe93ms、固定列或颜色变体代替生产性能/主题结果。先实现/评审上述边界，再由tower按独立流程决定节点2；本次不合并、不push、不archive。

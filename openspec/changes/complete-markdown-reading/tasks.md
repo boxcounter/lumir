@@ -6,7 +6,7 @@
 
 - [x] 1.1 向 Alex 展示 proposal、design 与 spec，取得节点 1 的明确裁决并记录结果。tower 代行批准三项边界，详见 proposal Review Decisions。
 - [ ] 1.2 使用现有 parser 固定列表/矩形表格范围 fixture；核实空槽、转义、非矩形、嵌套列表/引用等边界。
-- [ ] 1.3 在真实 Tauri WKWebView 验证公开 BlockWrapper/line/cell decoration 的宽表、虚拟视口、空槽、选择复制与可访问语义；不通过则停止并修订方案重新评审，不以全量 widget 绕过。
+- [x] 1.3 在真实 Tauri WKWebView 验证公开 BlockWrapper/line/cell decoration 的宽表、虚拟视口、空槽、选择复制与可访问语义。2026-09-07 tower结合r4准确`ed2d732`独立clean及用户确认物理触控板表内横滚、表外正文不移，代行批准前置门槛通过。证据与生产边界见 [table-probe72.md](table-probe72.md)；这不是节点2或生产实现验收，后续生产任务保持未勾选。
 
 ## 2. 列表与表格阅读
 
