@@ -10,7 +10,7 @@
 
 ## 唯一保存序列
 
-后端以 `(vault_id, normalized_path)` 建立 per-path 临界区。临界区内先查询 result/intent，再校验 expected file revision。合法请求按以下顺序执行：分配并 durable 写入 revision ledger；写出带 operation_id/new revision/fingerprint 元数据的临时文件并 fsync；将 intent 设为 phase=`prepared`，完成 intent 临时文件 fsync、rename、intent 父目录 fsync；在调用 atomic replace 前将 phase durable 推进为 `replace_inflight`，再调用 replace；replace 返回成功后将 phase durable 推进为 `replaced`；目标 parent directory fsync 成功后将 phase durable 推进为 `parent_synced`；result 临时文件 fsync、rename、result 父目录 fsync 后推进为 `result_durable`；最后 durable 清理 intent。phase 只能按 `prepared → replace_inflight → replaced → parent_synced → result_durable` 前进。不同 path 可并行。intent、result 和 revision ledger 写在应用数据目录，不写入 vault。
+后端以 `(vault_id, normalized_path)` 建立 per-path 临界区。临界区内先查询 result/intent，再校验 expected file revision。`new_file_revision` 先在 durable revision ledger 中预留；ledger reservation 在 intent durable 前崩溃时标为 `released`，同 operation 重试复用原 revision，不生成第二 entry。正文和 operation/revision/fingerprint 元数据位于同一 atomic document container，原始 Markdown 保持为 container 内不透明 `content.md`，元数据位于独立 `metadata` 文件，不写入正文，也不采用独立 sidecar。合法请求按以下顺序执行：分别写入并 fsync container 内 content.md 与 metadata；fsync container 目录；将 intent 设为 phase=`prepared`，完成 intent 临时文件 fsync、rename、intent 父目录 fsync；在调用 container atomic replace 前将 phase durable 推进为 `replace_inflight`，再执行单次 container replace；replace 返回成功后将 phase durable 推进为 `replaced`；目标 parent directory fsync 成功后将 phase durable 推进为 `parent_synced`；result 临时文件 fsync、rename、result 父目录 fsync 后推进为 `result_durable`；最后 durable 清理 intent。phase 只能按 `prepared → replace_inflight → replaced → parent_synced → result_durable` 前进。不同 path 可并行。intent、result 和 revision ledger 写在应用数据目录，container 不把元数据暴露为 Markdown 正文。
 
 `operation_id` 绑定 path、expected revisions 和 content fingerprint。重复 id 原样返回既有结果。参数不一致不得被视为新保存。
 
@@ -18,7 +18,7 @@
 
 | 阶段 | 唯一恢复结果 | 同 id 行为 |
 |---|---|---|
-| intent durable 前 | `not-written` | 重新执行 CAS；CAS 失败返回 `document_conflict` |
+| intent durable 前 | `not-written`；ledger reservation 标为 `released` | 同 id 重试复用原 revision；CAS 失败返回 `document_conflict` |
 | intent durable 后、replace 前（phase=`prepared`） | old revision 仍可证明时 `not-written`，否则 `unknown` | 仅原 id 继续；不得新 id 重放 |
 | replace 调用前已 durable（phase=`replace_inflight`） | `unknown` | 只能查询原 id；不得再次 replace |
 | replace 已返回成功、parent fsync 前（phase=`replaced`） | `unknown` | 只能查询原 id；不得报告 success 或再次 replace |

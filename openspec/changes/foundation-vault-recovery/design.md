@@ -6,7 +6,9 @@
 
 Intent durable record 至少包含 `operation_id`、vault/path 身份、`expected_file_revision`、`expected_document_revision`、`new_file_revision`、`content_fingerprint`、phase 和创建时间。`phase` MUST 是枚举 `prepared`、`replace_inflight`、`replaced`、`parent_synced`、`result_durable`、`expired` 之一，禁止自由文本。正常 phase 只能按 `prepared → replace_inflight → replaced → parent_synced → result_durable` 前进，禁止回退或跳过 durable transition；任一未决 phase 仅在 retention 到期后才能 durable 转为终态 `expired`。磁盘 intent 中的 phase 是恢复判定依据。`replace_inflight` 是不可重试哨兵：replace 调用前先 durable 写入该 phase，因此重启时无法证明 replace 是否开始也必须返回 unknown，禁止再次 replace。Intent/result 均 MUST 只写入受保护的应用数据目录，不写入 vault 文档目录；每次 record 更新使用临时文件写入、文件 fsync、rename、父目录 fsync。实现必须能区分“没有本 operation 的 intent”与“intent 损坏/无法读取”，后者为 unknown。
 
-`new_file_revision` MUST 是由持久化 revision ledger（或等价、可校验的单调来源）在 intent 写入前分配的唯一值。ledger 分配记录必须包含 operation_id、path、expected revision、new revision 与 content fingerprint，并以文件 fsync、rename、父目录 fsync durable；intent 同时复制该记录的校验摘要。目标临时文件必须携带同一 operation_id、new revision 与 fingerprint 的 sidecar/封装元数据，并随临时文件 fsync 后才允许 replace。恢复只有在 ledger、intent、目标文件元数据三者一致且目标 parent fsync 已成功时，才可证明 new revision；普通 mtime/读取内容不能代替 revision 证明。
+`new_file_revision` MUST 是由持久化 revision ledger（或等价、可校验的单调来源）分配的 reservation。ledger entry 必须包含 operation_id、path、expected revision、new revision 与 content fingerprint，并以文件 fsync、rename、父目录 fsync durable。reservation 在 intent durable 前若崩溃，启动恢复必须将其标为 `released`（不得产生新的 ledger entry）；同 operation 重试必须复用原 `new_file_revision`，重新建立同一 reservation/intent，不得重新分配。reservation 只有进入 `result_durable` 才标为 `committed`；过期或确定 not-written 后标为 `released`，其 revision 永不复用。
+
+正文与绑定元数据 MUST 使用同一 atomic document container，而不是把元数据写进 Markdown 正文或依赖独立 sidecar：container 内有不透明的 `content.md`（原始 Markdown 字节）和 `metadata`（operation_id、new revision、fingerprint），二者在同一个临时 container 中分别 fsync，再 fsync container 目录，最后以单次 atomic replace container 目录完成绑定；目标路径解析到该 container 的 `content.md`。container rename 后，目标 parent directory fsync；不得先后替换正文和 sidecar。恢复只有在同一 container 的 metadata、ledger、intent 三者一致且 parent fsync 已成功时，才可证明 new revision；普通 mtime/读取内容不能代替 revision 证明。
 
 ## 固定保存序列
 
@@ -46,4 +48,4 @@ Intent durable record 至少包含 `operation_id`、vault/path 身份、`expecte
 
 ## 实现边界
 
-backend MUST 提供真实 fsync 能力和 fault-injection hooks，分别在 intent durable 前/后、replace 返回前/后、parent fsync 前/后、result durable 前/后暂停或崩溃。测试 MUST 覆盖同 path CAS 竞争、重复请求、unknown 查询/重试、损坏/过期 intent、不同 path 并行和旧 vault token。webview 只能消费结构化 `{ code, message, operation_id }`，不得通过 message 推断状态。产品 UI、后台 watcher、vault 切换和 Markdown parser 均不在此合同内。
+backend MUST 提供真实 fsync 能力和 fault-injection hooks，分别在 intent durable 前/后、replace 返回前/后、parent fsync 前/后、result durable 前/后暂停或崩溃。测试 MUST 覆盖同 path CAS 竞争、重复请求、unknown 查询/重试、损坏/过期 intent、不同 path 并行和旧 vault token。webview 只能消费统一错误信封 `{ code, message, operation_id, reason }`；`reason` 无值时也必须显式为 `null`，不得通过 message 推断状态。产品 UI、后台 watcher、vault 切换和 Markdown parser 均不在此合同内。
