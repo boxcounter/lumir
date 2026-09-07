@@ -18,7 +18,7 @@ const fixture = JSON.parse(
 
 function documentText(): string {
   const lines = Array.from({ length: fixture.frontmatterLineCount - 3 }, (_, index) =>
-    index + 2 === 201 ? `note: "${fixture.frontmatterLink}"` : `metadata_${index + 1}: value_${index + 1}`,
+    index + 2 === fixture.frontmatterLineCount - 2 ? `note: "${fixture.frontmatterLink}"` : `metadata_${index + 1}: value_${index + 1}`,
   );
   return `---\n${lines.join("\n")}\n---${fixture.body}`;
 }
@@ -30,7 +30,7 @@ const vault: VaultFixture = {
   files: { [fixture.path]: source },
 };
 
-test("512行frontmatter边界：隐藏区间不装饰、不触发查询，正文链接仍有效", async ({ page }) => {
+test("200行frontmatter边界：隐藏区间不装饰、不触发查询，正文链接仍有效", async ({ page }) => {
   await stubTauri(page, vault);
   await page.addInitScript(() => {
     const internals = (window as unknown as {
@@ -49,7 +49,7 @@ test("512行frontmatter边界：隐藏区间不装饰、不触发查询，正文
   await page.goto("/");
   await page.getByRole("button", { name: fixture.path }).click();
 
-  await expect(page.locator(".cm-content")).toBeVisible({ timeout: 15_000 });
+  await expect(page.locator(".cm-lp-frontmatter")).toBeVisible({ timeout: 15_000 });
   const bodyLink = page.locator(".cm-lp-wikilink");
   await page.locator(".cm-scroller").evaluate((element) => { element.scrollTop = element.scrollHeight; });
   await expect(bodyLink).toHaveCount(1);

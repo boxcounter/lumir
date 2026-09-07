@@ -1,6 +1,6 @@
 {
   "path": "boundary.md",
-  "frontmatterLineCount": 512,
+  "frontmatterLineCount": 200,
   "frontmatterLink": "[[hidden-frontmatter]]",
   "body": "\n正文合法链接：[[visible-body]]。\n",
   "expected": {
