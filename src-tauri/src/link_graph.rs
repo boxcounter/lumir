@@ -681,6 +681,12 @@ impl LinkGraph {
     /// 计算一键创建的目标路径（§4.4，裁决点 I）：path 段不含 `/` 时创建于
     /// from 所在目录；含 `/` 时按 vault 根相对路径。目标必须解析为 unresolved。
     pub fn create_target(&self, from: &str, raw: &str) -> Result<String, CommandError> {
+        validate_vault_relative(from).map_err(|message| {
+            CommandError::new(
+                "wikilink_invalid_path",
+                format!("来源路径不合法：{message}"),
+            )
+        })?;
         let link = parse_single(raw)?;
         if link.block_ref {
             return Err(CommandError::new(
@@ -702,7 +708,7 @@ impl LinkGraph {
                 "当前文件内锚点链接没有可创建的目标",
             ));
         }
-        if p.starts_with('/') || p.split('/').any(|s| s.is_empty() || s == ".." || s == ".") {
+        if validate_vault_relative(p).is_err() {
             return Err(CommandError::new(
                 "wikilink_invalid_path",
                 format!("目标路径不合法：{p}"),
@@ -733,29 +739,24 @@ impl LinkGraph {
         raw: &str,
     ) -> Result<String, CommandError> {
         let rel = self.create_target(from, raw)?;
-        let abs = root.join(&rel);
-        if let Some(parent) = abs.parent() {
-            std::fs::create_dir_all(parent).map_err(|e| {
+        let root_canonical = std::fs::canonicalize(root).map_err(|e| {
+            CommandError::new(
+                "wikilink_create_failed",
+                format!("无法定位 vault 根目录 {}：{e}", root.display()),
+            )
+        })?;
+        create_new_vault_file(&root_canonical, &rel).map_err(|e| {
+            if e.kind() == std::io::ErrorKind::AlreadyExists {
                 CommandError::new(
-                    "wikilink_create_failed",
-                    format!("无法创建目录 {}：{e}", parent.display()),
+                    "wikilink_target_exists",
+                    format!("目标已存在：{rel}（索引可能已过期），已改为重新解析"),
                 )
-            })?;
-        }
-        std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&abs)
-            .map_err(|e| {
-                if e.kind() == std::io::ErrorKind::AlreadyExists {
-                    CommandError::new(
-                        "wikilink_target_exists",
-                        format!("目标已存在：{rel}（索引可能已过期），已改为重新解析"),
-                    )
-                } else {
-                    CommandError::new("wikilink_create_failed", format!("无法创建 {rel}：{e}"))
-                }
-            })?;
+            } else if is_unsafe_creation_error(&e) {
+                CommandError::new("wikilink_invalid_path", format!("目标路径不安全：{e}"))
+            } else {
+                CommandError::new("wikilink_create_failed", format!("无法创建 {rel}：{e}"))
+            }
+        })?;
         self.upsert(&rel, Some(""));
         Ok(rel)
     }
@@ -765,6 +766,176 @@ impl Default for LinkGraph {
     fn default() -> Self {
         Self::new()
     }
+}
+
+#[cfg(unix)]
+fn create_new_vault_file(root: &Path, rel: &str) -> std::io::Result<std::fs::File> {
+    use std::ffi::CString;
+    use std::os::unix::io::{FromRawFd, RawFd};
+
+    const O_RDONLY: i32 = 0;
+    const O_WRONLY: i32 = 1;
+    #[cfg(target_os = "macos")]
+    const O_CREAT: i32 = 0x200;
+    #[cfg(not(target_os = "macos"))]
+    const O_CREAT: i32 = 0x40;
+    #[cfg(target_os = "macos")]
+    const O_EXCL: i32 = 0x800;
+    #[cfg(not(target_os = "macos"))]
+    const O_EXCL: i32 = 0x80;
+    #[cfg(target_os = "macos")]
+    const O_NOFOLLOW: i32 = 0x100;
+    #[cfg(not(target_os = "macos"))]
+    const O_NOFOLLOW: i32 = 0x20000;
+    #[cfg(target_os = "macos")]
+    const O_DIRECTORY: i32 = 0x00100000;
+    #[cfg(not(target_os = "macos"))]
+    const O_DIRECTORY: i32 = 0x00200000;
+
+    unsafe extern "C" {
+        fn open(path: *const std::ffi::c_char, flags: i32, ...) -> RawFd;
+        fn openat(dirfd: RawFd, path: *const std::ffi::c_char, flags: i32, ...) -> RawFd;
+        fn mkdirat(dirfd: RawFd, path: *const std::ffi::c_char, mode: u32) -> i32;
+    }
+
+    fn cstring(path: &str) -> std::io::Result<CString> {
+        CString::new(path)
+            .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidInput, "路径包含 NUL 字符"))
+    }
+    fn open_dir_at(fd: RawFd, name: &str, flags: i32) -> std::io::Result<std::fs::File> {
+        let name = cstring(name)?;
+        let next = unsafe { openat(fd, name.as_ptr(), flags, 0) };
+        if next < 0 {
+            Err(std::io::Error::last_os_error())
+        } else {
+            Ok(unsafe { std::fs::File::from_raw_fd(next) })
+        }
+    }
+
+    let root_name = cstring(root.to_str().ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "vault 根目录不是有效 UTF-8",
+        )
+    })?)?;
+    let root_fd = unsafe { open(root_name.as_ptr(), O_RDONLY | O_DIRECTORY | O_NOFOLLOW, 0) };
+    if root_fd < 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    let mut dir = unsafe { std::fs::File::from_raw_fd(root_fd) };
+    let components: Vec<&str> = rel.split('/').collect();
+    let file_name = components.last().expect("validated non-empty target");
+    for component in &components[..components.len() - 1] {
+        let flags = O_RDONLY | O_DIRECTORY | O_NOFOLLOW;
+        match open_dir_at(
+            std::os::unix::io::AsRawFd::as_raw_fd(&dir),
+            component,
+            flags,
+        ) {
+            Ok(next) => dir = next,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                let name = cstring(component)?;
+                let result = unsafe {
+                    mkdirat(
+                        std::os::unix::io::AsRawFd::as_raw_fd(&dir),
+                        name.as_ptr(),
+                        0o755,
+                    )
+                };
+                if result < 0 {
+                    let mkdir_error = std::io::Error::last_os_error();
+                    if mkdir_error.kind() != std::io::ErrorKind::AlreadyExists {
+                        return Err(mkdir_error);
+                    }
+                }
+                dir = open_dir_at(
+                    std::os::unix::io::AsRawFd::as_raw_fd(&dir),
+                    component,
+                    flags,
+                )?;
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    let name = cstring(file_name)?;
+    let fd = unsafe {
+        openat(
+            std::os::unix::io::AsRawFd::as_raw_fd(&dir),
+            name.as_ptr(),
+            O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW,
+            0o644,
+        )
+    };
+    if fd < 0 {
+        Err(std::io::Error::last_os_error())
+    } else {
+        Ok(unsafe { std::fs::File::from_raw_fd(fd) })
+    }
+}
+
+#[cfg(not(unix))]
+fn create_new_vault_file(_root: &Path, _rel: &str) -> std::io::Result<std::fs::File> {
+    Err(std::io::Error::new(
+        std::io::ErrorKind::Unsupported,
+        "当前平台不支持安全的 vault 文件创建",
+    ))
+}
+
+#[cfg(unix)]
+fn is_unsafe_creation_error(error: &std::io::Error) -> bool {
+    matches!(error.kind(), std::io::ErrorKind::PermissionDenied)
+        || [libc_errno_eloop(), libc_errno_enotdir()]
+            .contains(&error.raw_os_error().unwrap_or_default())
+}
+
+#[cfg(target_os = "linux")]
+const fn libc_errno_eloop() -> i32 {
+    40
+}
+
+#[cfg(target_os = "macos")]
+const fn libc_errno_eloop() -> i32 {
+    62
+}
+
+#[cfg(target_os = "linux")]
+const fn libc_errno_enotdir() -> i32 {
+    20
+}
+
+#[cfg(target_os = "macos")]
+const fn libc_errno_enotdir() -> i32 {
+    20
+}
+
+#[cfg(all(unix, not(any(target_os = "linux", target_os = "macos"))))]
+const fn libc_errno_eloop() -> i32 {
+    62
+}
+
+#[cfg(all(unix, not(any(target_os = "linux", target_os = "macos"))))]
+const fn libc_errno_enotdir() -> i32 {
+    20
+}
+
+#[cfg(not(unix))]
+fn is_unsafe_creation_error(_error: &std::io::Error) -> bool {
+    false
+}
+
+fn validate_vault_relative(path: &str) -> Result<(), String> {
+    if path.is_empty() || path.starts_with('/') || path.contains('\\') {
+        return Err("必须是非空的 vault 相对路径".to_string());
+    }
+    if path.split('/').any(|segment| segment.is_empty()) {
+        return Err("路径包含空段".to_string());
+    }
+    for component in Path::new(path).components() {
+        if !matches!(component, std::path::Component::Normal(_)) {
+            return Err("路径必须只包含普通相对路径段".to_string());
+        }
+    }
+    Ok(())
 }
 
 fn parse_single(raw: &str) -> Result<WikiLink, CommandError> {
@@ -907,6 +1078,17 @@ mod tests {
         let mut g = LinkGraph::new();
         g.upsert("a.md", Some("[[foo/]]"));
         let err = g.create_target("a.md", "[[foo/]]").unwrap_err();
+        assert_eq!(err.code, "wikilink_invalid_path");
+    }
+
+    #[test]
+    fn create_target_rejects_escaping_from_paths() {
+        let g = LinkGraph::new();
+        for from in ["../a.md", "/tmp/a.md", "dir/../a.md"] {
+            let err = g.create_target(from, "[[new]]").unwrap_err();
+            assert_eq!(err.code, "wikilink_invalid_path", "from={from}");
+        }
+        let err = g.create_target("a.md", "[[../../new]]").unwrap_err();
         assert_eq!(err.code, "wikilink_invalid_path");
     }
 }
