@@ -1,0 +1,11 @@
+{
+  "productName": "TableProbe72",
+  "version": "0.0.0",
+  "identifier": "com.lumir.tableprobe72",
+  "build": { "frontendDist": "dist" },
+  "app": {
+    "windows": [{ "title": "TableProbe72 isolated WK", "width": 920, "height": 780, "incognito": true }, { "label": "static", "title": "TableProbe72 static control", "url": "static.html", "width": 620, "height": 360, "incognito": true }],
+    "security": { "csp": "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'" }
+  },
+  "bundle": { "active": false }
+}

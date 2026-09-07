@@ -1,0 +1,993 @@
+{
+  "engine": "Supplemental Chromium, not native WK",
+  "freshPagePerCase": true,
+  "faultInjected": true,
+  "themeScope": "probe color variants only; fixed240px, not production themes/performance",
+  "passed": false,
+  "results": [
+    {
+      "route": "button",
+      "theme": "light",
+      "width": 850,
+      "geometry": [
+        [
+          {
+            "x": 42,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 282,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 522,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 762,
+            "width": 240,
+            "height": 35
+          }
+        ],
+        [
+          {
+            "x": 42,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 282,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 522,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 762,
+            "width": 240,
+            "height": 35
+          }
+        ],
+        [
+          {
+            "x": 42,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 282,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 522,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 762,
+            "width": 240,
+            "height": 35
+          }
+        ]
+      ],
+      "columnsAligned": true,
+      "focus": {
+        "active": "cm-content cm-lineWrapping",
+        "left": 0,
+        "max": 120
+      },
+      "lastColumnReachable": false,
+      "escapeToEditor": true,
+      "pass": false
+    },
+    {
+      "route": "button",
+      "theme": "light",
+      "width": 480,
+      "geometry": [
+        [
+          {
+            "x": 227,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 467,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 707,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 947,
+            "width": 240,
+            "height": 35
+          }
+        ],
+        [
+          {
+            "x": 227,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 467,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 707,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 947,
+            "width": 240,
+            "height": 35
+          }
+        ],
+        [
+          {
+            "x": 227,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 467,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 707,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 947,
+            "width": 240,
+            "height": 35
+          }
+        ]
+      ],
+      "columnsAligned": true,
+      "focus": {
+        "active": "cm-content cm-lineWrapping",
+        "left": 0,
+        "max": 490
+      },
+      "lastColumnReachable": false,
+      "escapeToEditor": true,
+      "pass": false
+    },
+    {
+      "route": "button",
+      "theme": "dark",
+      "width": 850,
+      "geometry": [
+        [
+          {
+            "x": 42,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 282,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 522,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 762,
+            "width": 240,
+            "height": 35
+          }
+        ],
+        [
+          {
+            "x": 42,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 282,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 522,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 762,
+            "width": 240,
+            "height": 35
+          }
+        ],
+        [
+          {
+            "x": 42,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 282,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 522,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 762,
+            "width": 240,
+            "height": 35
+          }
+        ]
+      ],
+      "columnsAligned": true,
+      "focus": {
+        "active": "cm-content cm-lineWrapping",
+        "left": 0,
+        "max": 120
+      },
+      "lastColumnReachable": false,
+      "escapeToEditor": true,
+      "pass": false
+    },
+    {
+      "route": "button",
+      "theme": "dark",
+      "width": 480,
+      "geometry": [
+        [
+          {
+            "x": 227,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 467,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 707,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 947,
+            "width": 240,
+            "height": 35
+          }
+        ],
+        [
+          {
+            "x": 227,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 467,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 707,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 947,
+            "width": 240,
+            "height": 35
+          }
+        ],
+        [
+          {
+            "x": 227,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 467,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 707,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 947,
+            "width": 240,
+            "height": 35
+          }
+        ]
+      ],
+      "columnsAligned": true,
+      "focus": {
+        "active": "cm-content cm-lineWrapping",
+        "left": 0,
+        "max": 490
+      },
+      "lastColumnReachable": false,
+      "escapeToEditor": true,
+      "pass": false
+    },
+    {
+      "route": "button",
+      "theme": "eink",
+      "width": 850,
+      "geometry": [
+        [
+          {
+            "x": 42,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 282,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 522,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 762,
+            "width": 240,
+            "height": 35
+          }
+        ],
+        [
+          {
+            "x": 42,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 282,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 522,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 762,
+            "width": 240,
+            "height": 35
+          }
+        ],
+        [
+          {
+            "x": 42,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 282,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 522,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 762,
+            "width": 240,
+            "height": 35
+          }
+        ]
+      ],
+      "columnsAligned": true,
+      "focus": {
+        "active": "cm-content cm-lineWrapping",
+        "left": 0,
+        "max": 120
+      },
+      "lastColumnReachable": false,
+      "escapeToEditor": true,
+      "pass": false
+    },
+    {
+      "route": "button",
+      "theme": "eink",
+      "width": 480,
+      "geometry": [
+        [
+          {
+            "x": 227,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 467,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 707,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 947,
+            "width": 240,
+            "height": 35
+          }
+        ],
+        [
+          {
+            "x": 227,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 467,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 707,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 947,
+            "width": 240,
+            "height": 35
+          }
+        ],
+        [
+          {
+            "x": 227,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 467,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 707,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 947,
+            "width": 240,
+            "height": 35
+          }
+        ]
+      ],
+      "columnsAligned": true,
+      "focus": {
+        "active": "cm-content cm-lineWrapping",
+        "left": 0,
+        "max": 490
+      },
+      "lastColumnReachable": false,
+      "escapeToEditor": true,
+      "pass": false
+    },
+    {
+      "route": "tab",
+      "theme": "light",
+      "width": 850,
+      "geometry": [
+        [
+          {
+            "x": 42,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 282,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 522,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 762,
+            "width": 240,
+            "height": 35
+          }
+        ],
+        [
+          {
+            "x": 42,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 282,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 522,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 762,
+            "width": 240,
+            "height": 35
+          }
+        ],
+        [
+          {
+            "x": 42,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 282,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 522,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 762,
+            "width": 240,
+            "height": 35
+          }
+        ]
+      ],
+      "columnsAligned": true,
+      "focus": {
+        "active": "table-scroll",
+        "left": 120,
+        "max": 120
+      },
+      "lastColumnReachable": true,
+      "escapeToEditor": true,
+      "pass": true
+    },
+    {
+      "route": "tab",
+      "theme": "light",
+      "width": 480,
+      "geometry": [
+        [
+          {
+            "x": 227,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 467,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 707,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 947,
+            "width": 240,
+            "height": 35
+          }
+        ],
+        [
+          {
+            "x": 227,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 467,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 707,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 947,
+            "width": 240,
+            "height": 35
+          }
+        ],
+        [
+          {
+            "x": 227,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 467,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 707,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 947,
+            "width": 240,
+            "height": 35
+          }
+        ]
+      ],
+      "columnsAligned": true,
+      "focus": {
+        "active": "table-scroll",
+        "left": 490,
+        "max": 490
+      },
+      "lastColumnReachable": true,
+      "escapeToEditor": true,
+      "pass": true
+    },
+    {
+      "route": "tab",
+      "theme": "dark",
+      "width": 850,
+      "geometry": [
+        [
+          {
+            "x": 42,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 282,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 522,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 762,
+            "width": 240,
+            "height": 35
+          }
+        ],
+        [
+          {
+            "x": 42,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 282,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 522,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 762,
+            "width": 240,
+            "height": 35
+          }
+        ],
+        [
+          {
+            "x": 42,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 282,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 522,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 762,
+            "width": 240,
+            "height": 35
+          }
+        ]
+      ],
+      "columnsAligned": true,
+      "focus": {
+        "active": "table-scroll",
+        "left": 120,
+        "max": 120
+      },
+      "lastColumnReachable": true,
+      "escapeToEditor": true,
+      "pass": true
+    },
+    {
+      "route": "tab",
+      "theme": "dark",
+      "width": 480,
+      "geometry": [
+        [
+          {
+            "x": 227,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 467,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 707,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 947,
+            "width": 240,
+            "height": 35
+          }
+        ],
+        [
+          {
+            "x": 227,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 467,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 707,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 947,
+            "width": 240,
+            "height": 35
+          }
+        ],
+        [
+          {
+            "x": 227,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 467,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 707,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 947,
+            "width": 240,
+            "height": 35
+          }
+        ]
+      ],
+      "columnsAligned": true,
+      "focus": {
+        "active": "table-scroll",
+        "left": 490,
+        "max": 490
+      },
+      "lastColumnReachable": true,
+      "escapeToEditor": true,
+      "pass": true
+    },
+    {
+      "route": "tab",
+      "theme": "eink",
+      "width": 850,
+      "geometry": [
+        [
+          {
+            "x": 42,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 282,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 522,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 762,
+            "width": 240,
+            "height": 35
+          }
+        ],
+        [
+          {
+            "x": 42,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 282,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 522,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 762,
+            "width": 240,
+            "height": 35
+          }
+        ],
+        [
+          {
+            "x": 42,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 282,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 522,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 762,
+            "width": 240,
+            "height": 35
+          }
+        ]
+      ],
+      "columnsAligned": true,
+      "focus": {
+        "active": "table-scroll",
+        "left": 120,
+        "max": 120
+      },
+      "lastColumnReachable": true,
+      "escapeToEditor": true,
+      "pass": true
+    },
+    {
+      "route": "tab",
+      "theme": "eink",
+      "width": 480,
+      "geometry": [
+        [
+          {
+            "x": 227,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 467,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 707,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 947,
+            "width": 240,
+            "height": 35
+          }
+        ],
+        [
+          {
+            "x": 227,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 467,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 707,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 947,
+            "width": 240,
+            "height": 35
+          }
+        ],
+        [
+          {
+            "x": 227,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 467,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 707,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 947,
+            "width": 240,
+            "height": 35
+          }
+        ]
+      ],
+      "columnsAligned": true,
+      "focus": {
+        "active": "table-scroll",
+        "left": 490,
+        "max": 490
+      },
+      "lastColumnReachable": true,
+      "escapeToEditor": true,
+      "pass": true
+    }
+  ]
+}
