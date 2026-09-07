@@ -324,3 +324,27 @@ fn create_rejects_symlink_parent_escape() {
     assert!(!outside.join("new.md").exists());
     let _ = std::fs::remove_dir_all(&outside);
 }
+
+#[cfg(unix)]
+#[test]
+fn create_repeatedly_rejects_parent_symlink() {
+    use std::os::unix::fs::symlink;
+
+    let src = fixture_dir().join(load_cases().vault_root);
+    for attempt in 0..32 {
+        let temp = TempVault::copy_of(&src, &format!("symlink-repeat-{attempt}"));
+        let outside = temp
+            .0
+            .with_file_name(format!("{}-outside-{attempt}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&outside);
+        std::fs::create_dir_all(&outside).expect("create outside");
+        symlink(&outside, temp.0.join("escape")).expect("plant symlink");
+        let mut graph = build_graph(&temp.0);
+        let err = graph
+            .create_note(&temp.0, "Alpha.md", "[[escape/new]]")
+            .expect_err("parent symlink must remain rejected");
+        assert_eq!(err.code, "wikilink_invalid_path");
+        assert!(!outside.join("new.md").exists());
+        let _ = std::fs::remove_dir_all(&outside);
+    }
+}

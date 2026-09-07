@@ -745,38 +745,21 @@ impl LinkGraph {
                 format!("无法定位 vault 根目录 {}：{e}", root.display()),
             )
         })?;
-        let abs = root_canonical.join(&rel);
-        let parent = abs.parent().expect("vault-relative target has a parent");
-        create_safe_parent_dirs(&root_canonical, parent)
-            .map_err(|message| CommandError::new("wikilink_invalid_path", message))?;
-        if !path_within(
-            &root_canonical,
-            &parent.canonicalize().map_err(|e| {
+        create_new_vault_file(&root_canonical, &rel).map_err(|e| {
+            if e.kind() == std::io::ErrorKind::AlreadyExists {
                 CommandError::new(
-                    "wikilink_create_failed",
-                    format!("无法定位目标目录 {}：{e}", parent.display()),
+                    "wikilink_target_exists",
+                    format!("目标已存在：{rel}（索引可能已过期），已改为重新解析"),
                 )
-            })?,
-        ) {
-            return Err(CommandError::new(
-                "wikilink_invalid_path",
-                "目标路径超出 vault 根目录",
-            ));
-        }
-        std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&abs)
-            .map_err(|e| {
-                if e.kind() == std::io::ErrorKind::AlreadyExists {
-                    CommandError::new(
-                        "wikilink_target_exists",
-                        format!("目标已存在：{rel}（索引可能已过期），已改为重新解析"),
-                    )
-                } else {
-                    CommandError::new("wikilink_create_failed", format!("无法创建 {rel}：{e}"))
-                }
-            })?;
+            } else if matches!(
+                e.raw_os_error(),
+                Some(1) | Some(13) | Some(20) | Some(62) | Some(63)
+            ) {
+                CommandError::new("wikilink_invalid_path", format!("目标路径不安全：{e}"))
+            } else {
+                CommandError::new("wikilink_create_failed", format!("无法创建 {rel}：{e}"))
+            }
+        })?;
         self.upsert(&rel, Some(""));
         Ok(rel)
     }
@@ -786,6 +769,123 @@ impl Default for LinkGraph {
     fn default() -> Self {
         Self::new()
     }
+}
+
+#[cfg(unix)]
+fn create_new_vault_file(root: &Path, rel: &str) -> std::io::Result<std::fs::File> {
+    use std::ffi::CString;
+    use std::os::unix::io::{FromRawFd, RawFd};
+
+    const O_RDONLY: i32 = 0;
+    const O_WRONLY: i32 = 1;
+    #[cfg(target_os = "macos")]
+    const O_CREAT: i32 = 0x200;
+    #[cfg(not(target_os = "macos"))]
+    const O_CREAT: i32 = 0x40;
+    #[cfg(target_os = "macos")]
+    const O_EXCL: i32 = 0x800;
+    #[cfg(not(target_os = "macos"))]
+    const O_EXCL: i32 = 0x80;
+    #[cfg(target_os = "macos")]
+    const O_NOFOLLOW: i32 = 0x100;
+    #[cfg(not(target_os = "macos"))]
+    const O_NOFOLLOW: i32 = 0x20000;
+    #[cfg(target_os = "macos")]
+    const O_DIRECTORY: i32 = 0x00100000;
+    #[cfg(not(target_os = "macos"))]
+    const O_DIRECTORY: i32 = 0x00200000;
+
+    unsafe extern "C" {
+        fn open(path: *const std::ffi::c_char, flags: i32, ...) -> RawFd;
+        fn openat(dirfd: RawFd, path: *const std::ffi::c_char, flags: i32, ...) -> RawFd;
+        fn mkdirat(dirfd: RawFd, path: *const std::ffi::c_char, mode: u32) -> i32;
+    }
+
+    fn cstring(path: &str) -> std::io::Result<CString> {
+        CString::new(path)
+            .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidInput, "路径包含 NUL 字符"))
+    }
+    fn open_dir_at(fd: RawFd, name: &str, flags: i32) -> std::io::Result<std::fs::File> {
+        let name = cstring(name)?;
+        let next = unsafe { openat(fd, name.as_ptr(), flags, 0) };
+        if next < 0 {
+            Err(std::io::Error::last_os_error())
+        } else {
+            Ok(unsafe { std::fs::File::from_raw_fd(next) })
+        }
+    }
+
+    let root_name = cstring(root.to_str().ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "vault 根目录不是有效 UTF-8",
+        )
+    })?)?;
+    let root_fd = unsafe { open(root_name.as_ptr(), O_RDONLY | O_DIRECTORY | O_NOFOLLOW, 0) };
+    if root_fd < 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    let mut dir = unsafe { std::fs::File::from_raw_fd(root_fd) };
+    let components: Vec<&str> = rel.split('/').collect();
+    let file_name = components.last().expect("validated non-empty target");
+    for component in &components[..components.len() - 1] {
+        let flags = O_RDONLY | O_DIRECTORY | O_NOFOLLOW;
+        match open_dir_at(
+            std::os::unix::io::AsRawFd::as_raw_fd(&dir),
+            component,
+            flags,
+        ) {
+            Ok(next) => dir = next,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                let name = cstring(component)?;
+                let result = unsafe {
+                    mkdirat(
+                        std::os::unix::io::AsRawFd::as_raw_fd(&dir),
+                        name.as_ptr(),
+                        0o755,
+                    )
+                };
+                if result < 0 {
+                    let mkdir_error = std::io::Error::last_os_error();
+                    if mkdir_error.kind() != std::io::ErrorKind::AlreadyExists {
+                        return Err(mkdir_error);
+                    }
+                }
+                dir = open_dir_at(
+                    std::os::unix::io::AsRawFd::as_raw_fd(&dir),
+                    component,
+                    flags,
+                )?;
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    let name = cstring(file_name)?;
+    let fd = unsafe {
+        openat(
+            std::os::unix::io::AsRawFd::as_raw_fd(&dir),
+            name.as_ptr(),
+            O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW,
+            0o644,
+        )
+    };
+    if fd < 0 {
+        Err(std::io::Error::last_os_error())
+    } else {
+        Ok(unsafe { std::fs::File::from_raw_fd(fd) })
+    }
+}
+
+#[cfg(not(unix))]
+fn create_new_vault_file(root: &Path, rel: &str) -> std::io::Result<std::fs::File> {
+    let abs = root.join(rel);
+    if let Some(parent) = abs.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(abs)
 }
 
 fn validate_vault_relative(path: &str) -> Result<(), String> {
@@ -798,44 +898,6 @@ fn validate_vault_relative(path: &str) -> Result<(), String> {
     for component in Path::new(path).components() {
         if !matches!(component, std::path::Component::Normal(_)) {
             return Err("路径必须只包含普通相对路径段".to_string());
-        }
-    }
-    Ok(())
-}
-
-fn path_within(root: &Path, candidate: &Path) -> bool {
-    candidate == root || candidate.starts_with(root)
-}
-
-fn create_safe_parent_dirs(root: &Path, parent: &Path) -> Result<(), String> {
-    let relative = parent
-        .strip_prefix(root)
-        .map_err(|_| "目标路径超出 vault 根目录".to_string())?;
-    let mut current = root.to_path_buf();
-    for component in relative.components() {
-        let std::path::Component::Normal(name) = component else {
-            return Err("目标路径包含非法目录段".to_string());
-        };
-        current.push(name);
-        match std::fs::symlink_metadata(&current) {
-            Ok(metadata) => {
-                if metadata.file_type().is_symlink() {
-                    return Err(format!("目标目录包含 symlink：{}", current.display()));
-                }
-                if !metadata.is_dir() {
-                    return Err(format!("目标路径不是目录：{}", current.display()));
-                }
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                std::fs::create_dir(&current)
-                    .map_err(|e| format!("无法创建目录 {}：{e}", current.display()))?;
-                let metadata = std::fs::symlink_metadata(&current)
-                    .map_err(|e| format!("无法检查目录 {}：{e}", current.display()))?;
-                if metadata.file_type().is_symlink() || !metadata.is_dir() {
-                    return Err(format!("目标目录不安全：{}", current.display()));
-                }
-            }
-            Err(error) => return Err(format!("无法检查目录 {}：{error}", current.display())),
         }
     }
     Ok(())
