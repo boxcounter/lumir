@@ -6,9 +6,9 @@
 
 Intent durable record 至少包含 `operation_id`、vault/path 身份、`expected_file_revision`、`expected_document_revision`、`new_file_revision`、`content_fingerprint`、phase 和创建时间。`phase` MUST 是枚举 `prepared`、`replace_inflight`、`replaced`、`parent_synced`、`result_durable`、`expired` 之一，禁止自由文本。正常 phase 只能按 `prepared → replace_inflight → replaced → parent_synced → result_durable` 前进，禁止回退或跳过 durable transition；任一未决 phase 仅在 retention 到期后才能 durable 转为终态 `expired`。磁盘 intent 中的 phase 是恢复判定依据。`replace_inflight` 是不可重试哨兵：replace 调用前先 durable 写入该 phase，因此重启时无法证明 replace 是否开始也必须返回 unknown，禁止再次 replace。Intent/result 均 MUST 只写入受保护的应用数据目录，不写入 vault 文档目录；每次 record 更新使用临时文件写入、文件 fsync、rename、父目录 fsync。实现必须能区分“没有本 operation 的 intent”与“intent 损坏/无法读取”，后者为 unknown。
 
-`new_file_revision` MUST 是由持久化 revision ledger（或等价、可校验的单调来源）分配的 reservation。ledger entry 必须包含 operation_id、path、expected revision、new revision 与 content fingerprint，并以文件 fsync、rename、父目录 fsync durable。reservation 在 intent durable 前若崩溃，启动恢复必须将其标为 `released`（不得产生新的 ledger entry）；同 operation 重试必须复用原 `new_file_revision`，重新建立同一 reservation/intent，不得重新分配。reservation 只有进入 `result_durable` 才标为 `committed`；过期或确定 not-written 后标为 `released`，其 revision 永不复用。
+`new_file_revision` MUST 是目标文件内容的加密 fingerprint（例如 SHA-256），而不是依赖写入文件的隐藏元数据；后端从目标普通文件字节重新计算即可验证 revision。revision ledger 是 operation 的 durable 状态记录，entry 至少包含 operation_id、path、expected revision、new fingerprint、reservation 状态和 content fingerprint，并以文件 fsync、rename、父目录 fsync durable。reservation 在 intent durable 前若崩溃，启动恢复必须将其标为 `released`（不得产生新的 ledger entry）；同 operation 重试必须复用原 fingerprint/revision，并重新建立同一 reservation/intent，不得重新分配。parent fsync 成功后 ledger 才能按 `reserved → committed` durable 推进；确定 not-written 或过期后只能按 `reserved → released` durable 推进，fingerprint 永不复用为其他 operation 的 revision。
 
-正文与绑定元数据 MUST 使用同一 atomic document container，而不是把元数据写进 Markdown 正文或依赖独立 sidecar：container 内有不透明的 `content.md`（原始 Markdown 字节）和 `metadata`（operation_id、new revision、fingerprint），二者在同一个临时 container 中分别 fsync，再 fsync container 目录，最后以单次 atomic replace container 目录完成绑定；目标路径解析到该 container 的 `content.md`。container rename 后，目标 parent directory fsync；不得先后替换正文和 sidecar。恢复只有在同一 container 的 metadata、ledger、intent 三者一致且 parent fsync 已成功时，才可证明 new revision；普通 mtime/读取内容不能代替 revision 证明。
+现有 vault 文件模型 MUST 保持不变：`path.md` 仍是普通 Markdown 文件，保存使用同目录临时普通文件写入后 fsync，再以单次 rename 替换原文件。不得把 operation、revision 或 fingerprint 写入 Markdown 正文，也不得引入 container、sidecar、迁移或改变读取/watch/备份路径。revision 与目标文件的可验证绑定由“目标文件完整字节 fingerprint == ledger/intent 的 new fingerprint”建立；仅在目标 parent directory fsync 已成功后，才可将此绑定用于恢复 success。
 
 ## 固定保存序列
 
@@ -17,13 +17,15 @@ Intent durable record 至少包含 `operation_id`、vault/path 身份、`expecte
 1. 查询已存在的 operation result；存在则原样返回，不触碰目标文件。
 2. 查询该 operation 的 intent；存在则先按恢复矩阵收敛，禁止直接重放。
 3. 读取当前 file revision 并校验 `expected_file_revision`。不匹配只在没有本 operation 写入痕迹时返回 `document_conflict`。
-4. 分配 `new_file_revision`，写出临时目标文件并 fsync 临时文件。
+4. 预留 ledger entry（`reserved`），写出同目录临时普通文件并 fsync。
 5. 写 intent phase=`prepared` 并完成 intent 文件 fsync、rename、intent 父目录 fsync。此点后 intent 为 durable。
-6. 在调用 atomic replace/rename 前，推进 phase=`replace_inflight` 并完成该 phase 的 intent 文件 fsync、rename、intent 父目录 fsync。此哨兵 durable 后才允许调用 replace；因此崩溃恢复不得再次调用 replace。
-7. 执行 atomic replace/rename。replace 返回成功只表示内核调用完成，不表示目录项已 durable；成功后推进 phase=`replaced` 并再次 durable intent。
-8. fsync 目标文件的 parent directory；成功后推进 phase=`parent_synced` 并再次 durable intent。
-9. 写 success result（含 operation_id、new revision、fingerprint），并完成 result 文件 fsync、rename、result 父目录 fsync；再将 intent 推进 phase=`result_durable` 并 durable。
-10. 删除 intent，并以同样的 durable record 删除序列 fsync 父目录。
+6. 在调用 rename 前，推进 phase=`replace_inflight` 并完成该 phase 的 intent 文件 fsync、rename、intent 父目录 fsync。此哨兵 durable 后才允许调用 rename；因此崩溃恢复不得再次调用 rename。
+7. 以单次 rename 将临时普通文件替换 `path.md`。rename 返回成功只表示内核调用完成，不表示目录项已 durable；成功后推进 phase=`replaced` 并再次 durable intent。
+8. fsync `path.md` 的 parent directory；成功后推进 phase=`parent_synced` 并再次 durable intent。
+9. 将 ledger entry 从 `reserved` 推进为 `committed`，完成 ledger 临时文件 fsync、rename、ledger 父目录 fsync；随后写 success result 并完成 result 文件 fsync、rename、result 父目录 fsync；再将 intent 推进 phase=`result_durable` 并 durable。
+10. 删除 intent，并以同样的 durable record 删除序列 fsync 父目录。若 ledger commit durable 前崩溃，即使目标内容匹配也只能 `unknown`；同 id 只查询/补写 ledger commit，不得再次 rename。
+
+所有 backend 错误 MUST 使用统一 `{ code, message, operation_id, reason }` 信封；`reason` 无值时序列化为 `null`。
 
 任何 replace 前失败都不得报告 success。replace/parent fsync/result durable 的错误语义由下表约束。result durable 后返回 success；intent 清理失败不得把已 durable result 变成 unknown，但必须保留可回收 intent 标记并阻止其影响其他 operation。
 

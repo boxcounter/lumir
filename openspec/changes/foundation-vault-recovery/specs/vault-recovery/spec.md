@@ -4,7 +4,7 @@
 
 ### Requirement: document save MUST use per-path durable CAS
 
-`document_save` SHALL 以 `(vault_id, normalized_path)` 为独立 CAS 命名空间。读取 expected revision、intent/result 查询、replace 与 file revision 分配 MUST 在同一 per-path 互斥临界区内完成；不同 path 不得被无关 intent 阻塞。`new_file_revision` MUST 来自 durable revision ledger reservation；intent 前崩溃时 reservation 标为 released，同 operation 重试复用原 revision，不得产生第二 ledger entry。正文和 operation/revision/fingerprint 元数据 MUST 位于同一 atomic document container，不得把元数据写入 Markdown 正文，也不得使用独立 sidecar。container 内文件分别 fsync 后才能执行单次 container replace，再 fsync 目标 parent directory；ledger、intent、container metadata 不一致不得判定 success。保存序列 MUST 依次完成 ledger durable、container 内容与 metadata fsync、intent phase durable、atomic container replace、目标父目录 fsync、result durable。任何 durable record 更新不得只依赖内存或 flush。
+`document_save` SHALL 以 `(vault_id, normalized_path)` 为独立 CAS 命名空间。读取 expected revision、intent/result 查询、replace 与 file revision 分配 MUST 在同一 per-path 互斥临界区内完成；不同 path 不得被无关 intent 阻塞。`new_file_revision` MUST 来自 durable revision ledger reservation；intent 前崩溃时 reservation 标为 released，同 operation 重试复用原 revision，不得产生第二 ledger entry。正文 MUST 保持现有 `path.md` 普通 Markdown 文件表示；operation/revision/fingerprint 元数据不得写入正文、container 或独立 sidecar。保存序列 MUST 依次完成 ledger reservation durable、同目录临时普通文件 fsync、intent phase durable、单次 rename 替换原文件、目标父目录 fsync、ledger commit durable、result durable。ledger/intent 与目标文件字节 fingerprint 不一致不得判定 success。任何 durable record 更新不得只依赖内存或 flush。
 
 #### Scenario: 同 path CAS 只允许一个写者
 
@@ -16,15 +16,15 @@
 - **WHEN** path A 有未决 unknown intent，path B 提交合法 save
 - **THEN** B 按自身 CAS 独立处理，不等待、读取或清理 A 的 intent
 
-#### Scenario: container 原子绑定正文与元数据
+#### Scenario: 普通文件单次 rename
 
-- **WHEN** O1 准备保存 Markdown 正文及其 operation_id、new revision、fingerprint 元数据
-- **THEN** 正文保持原始 Markdown 字节并与元数据写入同一临时 container，分别 fsync 后只执行一次 container replace；不得修改正文或先后替换独立 sidecar
+- **WHEN** O1 保存现有 `path.md` 普通 Markdown 文件
+- **THEN** 原始正文写入同目录临时普通文件并 fsync，随后只执行一次 rename 替换原文件；不得写入元数据或改变 path 表示
 
-#### Scenario: container 元数据不一致
+#### Scenario: fingerprint 不一致
 
-- **WHEN** parent fsync 已成功但恢复读取到的 container metadata 与 ledger 或 intent 不一致
-- **THEN** 返回 `document_write_unknown`，不补写 result，不再次 replace，且保留 intent 供同 operation_id 查询
+- **WHEN** parent fsync 已成功但目标文件字节 fingerprint 与 ledger 或 intent 不一致
+- **THEN** 返回 `document_write_unknown`，不补写 result，不再次 rename，且保留 intent 供同 operation_id 查询
 
 ### Requirement: 每个崩溃阶段 MUST 收敛到唯一结果
 
@@ -33,7 +33,7 @@
 #### Scenario: intent durable 前崩溃
 
 - **WHEN** O1 在 intent 文件 durable 之前崩溃，且 ledger reservation 已 durable
-- **THEN** 恢复返回 `not-written`，将该 reservation 标为 `released`；同 id 重试复用原 `new_file_revision`，不得新增 ledger entry，不返回 success 或 `document_write_unknown`
+- **THEN** 恢复返回 `not-written`，将该 reservation 按 ledger 的 durable 状态更新为 `released`；同 id 重试复用原 `new_file_revision`，不得新增 ledger entry，不返回 success 或 `document_write_unknown`
 
 #### Scenario: intent durable 后 replace 前崩溃
 
