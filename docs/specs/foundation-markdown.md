@@ -3,7 +3,7 @@
 - 状态：提案阶段合同（对应 change `foundation-markdown-quality`，须经 OpenSpec 节点 1；实现后须经节点 2）
 - 角色：Alex Lee（评审/裁决），AI agent（起草）
 - 范围：Markdown 本地打开、阅读渲染、编辑保存的基础质量；不定义产品定位或协作对象
-- 依据：[ADR 0004](../adr/0004-development-and-openness-strategy.md)、[性能测量方法学](perf-measurement.md)、M77 匿名画像与 M78 首帧/覆盖审计（两者作为本 change 的评审附件）
+- 依据：[ADR 0004](../adr/0004-development-and-openness-strategy.md)、[性能测量方法学](perf-measurement.md)；本合同按 M77 匿名调查摘要输入制定，完整统计不作为仓库制品。M78 首帧/覆盖审计结论已转化为本合同端点与验收要求，审计原文不作为仓库附件。
 
 ## 1. 质量边界
 
@@ -76,7 +76,7 @@ fixture 只使用匿名合成内容。不得写入真实 vault 原文、标题�
 | 层级 | 大小（UTF-8 bytes） | 代表性负载 | 必验内容 | 性能用途 |
 |---|---:|---|---|---|
 | tiny | ≤4 KiB | 单屏混合 Markdown | P0 核心组合、源码复制、首帧、空/错资源 | correctness 与冷路径校验 |
-| small | >4–16 KiB | 多段、多列表、多表、P1/P1.5 | P0 全组合、frontmatter、wikilink、图片失败、F0/F1 | 日常阅读；覆盖 M77 画像中约 94.7% 的规模区间（画像证据） |
+| small | >4–16 KiB | 多段、多列表、多表、P1/P1.5 | P0 全组合、frontmatter、wikilink、图片失败、F0/F1 | 日常阅读；small 优先级是当前计划假设，需后续匿名 fixture 验证 |
 | medium | >16–64 KiB | 长文、多级嵌套、宽/非矩形表 | 滚动增量、可访问性、selection、编辑保存/冲突 | 稳态与局部 settle |
 | large | >64–256 KiB | 多结构压力文档与大表 | 正确性不降级、无全量装饰、内存/滚动/settle | 压力边界；不等同 ADR 1 MiB 合同 |
 

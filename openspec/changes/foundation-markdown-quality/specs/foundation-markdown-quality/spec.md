@@ -45,7 +45,7 @@
 
 ### Requirement: 匿名分层 fixture 与验收矩阵
 
-Foundation fixture SHALL 使用确定性匿名合成内容，分为 tiny（≤4 KiB）、small（>4–16 KiB）、medium（>16–64 KiB）、large（>64–256 KiB），并携带大小、覆盖、资源状态和预期端点 manifest。small SHALL 作为 M77 画像约 94.7% 规模区间的代表。fixture MUST NOT 包含真实 vault 原文、标题、路径、实体、标签、URL 或可逆识别片段。验收矩阵 SHALL 区分必须项、延后项与测量边界，并覆盖真实渲染、源码复制、文件字节/版本、AX 语义和性能端点。
+Foundation fixture SHALL 使用确定性匿名合成内容，分为 tiny（≤4 KiB）、small（>4–16 KiB）、medium（>16–64 KiB）、large（>64–256 KiB），并携带大小、覆盖、资源状态和预期端点 manifest。small SHALL 作为当前计划优先级假设，并须由后续匿名 fixture 验证；M77 完整统计不作为仓库制品。fixture MUST NOT 包含真实 vault 原文、标题、路径、实体、标签、URL 或可逆识别片段。验收矩阵 SHALL 区分必须项、延后项与测量边界，并覆盖真实渲染、源码复制、文件字节/版本、AX 语义和性能端点。
 
 #### Scenario: 分层合成 fixture 可复验
 
