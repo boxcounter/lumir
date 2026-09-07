@@ -2,7 +2,7 @@
 
 ## 结论
 
-**Blocked，不是 BlockWrapper 可行性通过，也不是路线失败。** 不进入完整表格实现，不勾 tasks 1.3 或节点 2。当前无法通过 GUI 观察真实隔离 WK 的文档区域，不能执行真实选择复制/横滚验收。无需以此改写产品 spec；环境恢复后继续原设计前置门槛。
+**前置验收仍有pending，不进入完整产品实现。** 当前真实WK静态与CM窗口已可见，已取得列布局、虚拟化、键盘横滚、源码复制及自有磁盘只读证据。r4集中修复首次原生selection/焦点交接和fresh-page矩阵失败退出；物理触控板反馈、纯鼠标拖选复制仍待确认，不勾tasks1.3或节点2。下文白屏记录是历史，不代表当前状态；完整结果与限制见末尾r4记录。
 
 ## 实验与复现
 
@@ -118,4 +118,17 @@ PID28558进一步实测：鼠标从alpha首字拖到第三字得到87..90，Shif
 
 [矩阵原始数据](table-probe72-matrix.json) 包含六组包围盒/焦点失败，以及大表27/14001行DOM、metadata实测和5次加载/中部定位墙钟样本。样本包含100ms等待与测试驱动开销，仅诊断，不与生产阈值直接比较。固定240px列和同步全量元数据是probe假设，不是生产性能承诺，未改变原门禁。
 
-**整体结论仍有明确pending/失败项**：物理触控板等待用户一次验证；补充Chromium首次键盘焦点回退需评审定位；纯鼠标拖选copy未稳定。真实WK已通过的复制、只读及几何结果仍成立，但不能以这些部分成功宣布完整路线已通过。建议整体独立review当前代码和证据，先判断该焦点差异是否阻止候选路线，而不是开始生产实现或继续用局部checkpoint替代验收。
+**r3时结论**：物理触控板等待用户一次验证；补充Chromium首次键盘焦点回退需评审定位；纯鼠标拖选copy未稳定。真实WK已通过的复制、只读及几何结果仍成立，但不能以这些部分成功宣布完整路线已通过。
+
+## r4集中修订与复核
+
+r3 reviewer 对准确0c8feac指出：首次End的keydown之前，浏览器已从嵌套可聚焦wrapper转回contenteditable宿主；纯HTML也复现，因此不是简单的CM吞键。此前“CM消费方向键”的归因不适用于这一首例。无原生selection是关键边界。
+
+修复仅作用于自有wrapper focusin：原生selection尚不位于contentDOM时，先通过公开EditorView.focus及domAtPos获取当前EditorState选区对应DOM位置，再调用标准Selection.setBaseAndExtent建立原生selection，最后聚焦原wrapper。没有修改CM DOM内容/属性、没有更改contenteditable边界、没有把正文Home/End交给全局handler。既有严格event.target为wrapper的局部键盘处理保持不变。仅editor.focus和requestAnimationFrame曾在独立WK实例失败，未保留该临时方案。
+
+- 全新页面按钮与自然Tab各6组，当前 [fresh矩阵](table-probe72-matrix.json) 为12/12通过。每组单独page，异常或reach=false写报告后exit1。
+- 禁用首次selection交接的 `--fault-focus` [故障注入](table-probe72-matrix-fault.json) 为6/12失败，实测进程exit1；不把反例执行失败当环境错误。历史污染矩阵保存在 [r3证据](table-probe72-matrix-r3.json)，不覆盖失败记录。
+- 独立native PID29837使用r4 binary，原用户PID28558始终保留未修改/关闭。新实例首次Focus table→End显示Right/123/987，selection0..0不变；Home/Escape正常。这次修复没有读取任何用户clipboard。
+- 纯鼠标拖选在r4工具调用中两次分别仅得到87..87和91..91，未伪称非空范围，也没有为collapsed范围执行copy。仍pending，需要可靠物理拖选或工具投递证据。此前真实按钮/键盘copy和只读证据保留，但不是本次focus修复后的完整复制重验。
+
+物理触控板仍等待用户对原窗口反馈。fresh Chromium矩阵是补充而非原生WK自然Tab/完整copy的替代；r4原生自然Tab首帧、copy/AX/只读完整重验尚须补齐。实验同步全量模型、每次视口遍历所有rows和240px列宽均不得进入生产；需缓存、预算、行索引及真实主题列宽。r4可审修复与失败检测器，但不能据此勾完整前置完成。
