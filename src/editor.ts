@@ -102,7 +102,7 @@ function modeForPath(path: string | undefined, fallback: EditorMode): EditorMode
   return fallback;
 }
 
-export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"): EditorHandle {
+export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md", markdownConfig: Parameters<typeof markdown>[0] = { base: markdownLanguage, extensions: [GFM] }): EditorHandle {
   const modeCompartment = new Compartment();
   let currentMode = initialMode;
   // 配置默认基线：openDocument 的无类型线索回落锚在这里；只有 setMode
@@ -120,7 +120,7 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
 
   function modeExtensions(mode: EditorMode): Extension[] {
     const highlight: Extension[] = [
-      markdown({ base: markdownLanguage, extensions: [GFM] }),
+      markdown(markdownConfig),
       syntaxHighlighting(
         HighlightStyle.define([
           { tag: tags.comment, color: "var(--dim)" },
