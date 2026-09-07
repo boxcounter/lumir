@@ -5,7 +5,9 @@ import {tables} from './model';
 import './style.css';
 
 class Empty extends WidgetType {
-  toDOM() { const span = document.createElement('span'); span.className = 'cell'; span.setAttribute('role', 'cell'); return span; }
+  constructor(readonly column: number) { super(); }
+  eq(other: Empty) { return this.column === other.column; }
+  toDOM() { const span = document.createElement('span'); span.className = 'cell'; span.setAttribute('role', 'cell'); span.setAttribute('aria-colindex', String(this.column)); span.style.gridColumn = String(this.column); span.style.gridRow = '1'; return span; }
 }
 let source = small;
 let model = tables(source);
@@ -34,7 +36,7 @@ function extensions() {
           let cursor = line.from;
           row.slots.forEach((slot, i) => {
             if (cursor < slot.from) ranges.push(Decoration.replace({}).range(cursor, slot.from));
-            if (slot.from === slot.to) ranges.push(Decoration.widget({widget: new Empty(), side: 1}).range(slot.from));
+            if (slot.from === slot.to) ranges.push(Decoration.widget({widget: new Empty(i + 1), side: 1}).range(slot.from));
             else ranges.push(Decoration.mark({class: 'cell', attributes: {role: row.header ? 'columnheader' : 'cell', 'aria-colindex': String(i + 1), style: `text-align:${table.align[i]};grid-column:${i + 1};grid-row:1`}}).range(slot.from, slot.to));
             cursor = slot.to;
           });
@@ -49,7 +51,7 @@ function extensions() {
       return Decoration.set(ranges, true);
     }
   }, {decorations: v => v.decorations});
-  return [EditorState.readOnly.of(true), EditorView.lineWrapping, EditorView.blockWrappers.of(BlockWrapper.set(wrappers, true)), plugin, EditorView.updateListener.of(() => { status.textContent = `doc unchanged=${view?.state.doc.toString() === source}; selection=${view?.state.selection.main.from}..${view?.state.selection.main.to}`; })];
+  return [EditorState.readOnly.of(true), EditorView.domEventHandlers({wheel(event) { const target = event.target instanceof Element ? event.target.closest<HTMLElement>('.table-scroll') : null; if (!target || !event.deltaX) return false; target.scrollLeft += event.deltaX; event.preventDefault(); return true; }, keydown(event) { const target = event.target; if (!(target instanceof HTMLElement) || !target.matches('.table-scroll')) return false; if (['ArrowLeft','ArrowRight','Home','End'].includes(event.key)) { target.scrollLeft = event.key === 'Home' ? 0 : event.key === 'End' ? target.scrollWidth : target.scrollLeft + (event.key === 'ArrowRight' ? 120 : -120); event.preventDefault(); return true; } if (event.key === 'Escape') { view.focus(); event.preventDefault(); return true; } return false; }}), EditorView.lineWrapping, EditorView.blockWrappers.of(BlockWrapper.set(wrappers, true)), plugin, EditorView.updateListener.of(() => { status.textContent = `doc unchanged=${view?.state.doc.toString() === source}; selection=${view?.state.selection.main.from}..${view?.state.selection.main.to}`; })];
 }
 function load(text: string) {
   source = text; model = tables(source);
@@ -68,12 +70,12 @@ button('Narrow', () => document.querySelector('main')!.classList.toggle('narrow'
 button('Measure', () => {
   const rows = [...view.dom.querySelectorAll('.table-row')];
   const scrolls = [...view.dom.querySelectorAll<HTMLElement>('.table-scroll')];
-  report.textContent = JSON.stringify({userAgent: navigator.userAgent, docUnchanged: view.state.doc.toString() === source, length: source.length, metadataMs: model.metadataMs, viewport: view.viewport, visibleRanges: view.visibleRanges, renderedRows: rows.length, renderedLines: view.dom.querySelectorAll('.cm-line').length, totalRows: model.tables.reduce((sum,t) => sum+t.rows.length,0), scrollerWidth: view.scrollDOM.clientWidth, scrolls: scrolls.map(s => ({width:s.clientWidth, scrollWidth:s.scrollWidth, left:s.scrollLeft, rect:s.getBoundingClientRect().toJSON()})), firstRows: rows.slice(0,5).map(row => [...row.querySelectorAll('.cell')].map(cell => ({text:cell.textContent, x:cell.getBoundingClientRect().x,width:cell.getBoundingClientRect().width,height:cell.getBoundingClientRect().height})))}, null, 2);
+  report.textContent = JSON.stringify({activeElement: document.activeElement?.outerHTML.slice(0,300), rowChildren: rows.slice(0,1).map(row => [...row.childNodes].map(n => ({type:n.nodeType, text:n.textContent, html:n instanceof Element ? n.outerHTML : null, rect:n instanceof Element ? n.getBoundingClientRect().toJSON() : null}))), userAgent: navigator.userAgent, docUnchanged: view.state.doc.toString() === source, length: source.length, metadataMs: model.metadataMs, viewport: view.viewport, visibleRanges: view.visibleRanges, renderedRows: rows.length, renderedLines: view.dom.querySelectorAll('.cm-line').length, totalRows: model.tables.reduce((sum,t) => sum+t.rows.length,0), scrollerWidth: view.scrollDOM.clientWidth, scrolls: scrolls.map(s => ({width:s.clientWidth, scrollWidth:s.scrollWidth, left:s.scrollLeft, rect:s.getBoundingClientRect().toJSON()})), firstRows: rows.slice(0,5).map(row => [...row.querySelectorAll('.cell')].map(cell => ({text:cell.textContent, x:cell.getBoundingClientRect().x,width:cell.getBoundingClientRect().width,height:cell.getBoundingClientRect().height})))}, null, 2);
 });
 for (const kind of ['Partial','Table','Cross','All']) button(kind, () => {
   const table = model.tables[0];
   const from = kind === 'Partial' ? table.rows[1].slots[0].from + 1 : kind === 'Table' ? table.from : 0;
-  const to = kind === 'Partial' ? from + 3 : kind === 'All' ? source.length : kind === 'Table' ? table.to : Math.min(source.length, table.to + 20);
+  const to = kind === 'Partial' ? from + 3 : kind === 'All' ? source.length : kind === 'Table' ? table.to : (model.tables[1]?.to ?? table.to);
   expected = source.slice(from, to); receiver.value = '';
   view.dispatch({selection: {anchor: from, head: to}}); view.focus();
 });
@@ -81,3 +83,4 @@ button('Check paste', () => { status.textContent = `paste matches=${receiver.val
 button('Focus table', () => view.dom.querySelector<HTMLElement>('.table-scroll')?.focus());
 button('Focus editor', () => view.focus());
 load(small);
+button('Disk fixture', () => { import('@tauri-apps/api/core').then(({invoke}) => invoke<string>('fixture_read')).then(text => { if (text !== small) throw new Error('Own fixture differs'); load(text); status.textContent = 'Loaded own disk fixture; doc unchanged=true'; }).catch(error => { status.textContent = String(error); }); });

@@ -2,7 +2,7 @@ export const small = `Before sentinel72
 
 | Default | Left | Center | Right |
 | --- | :--- | :---: | ---: |
-| alpha | | middle | 123 |
+| alpha || middle | 123 |
 | escaped \\| pipe | left | center | 987 |
 
 Between sentinel72

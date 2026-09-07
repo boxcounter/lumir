@@ -11,7 +11,7 @@ button { margin: 3px; }
 .cm-line { padding: 0; }
 .table-scroll { overflow-x: auto; max-inline-size: 100%; min-inline-size: 0; }
 .table-inner { inline-size: max-content; min-inline-size: 100%; }
-.cm-line.table-row { display: grid; grid-template-columns: repeat(var(--columns), 240px); white-space: pre-wrap; }
+.cm-line.table-row { display: grid; grid-template-columns: repeat(var(--columns), 240px); grid-template-rows: auto; grid-auto-rows: 0; white-space: pre-wrap; }
 .cell { box-sizing: border-box; min-inline-size: 0; overflow-wrap: anywhere; padding: 6px 10px; border: 1px solid #aaa; }
 [role=columnheader] { font-weight: bold; background: #e6edf5; }
 .cm-line.table-separator { height: 0; min-height: 0; line-height: 0; overflow: hidden; }

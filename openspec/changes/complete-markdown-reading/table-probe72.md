@@ -96,3 +96,16 @@ XDG_CONFIG_HOME="$run/config" "$binary" > "$run/native.log" 2>&1
 - Partial 按钮确实设置源码选区87..90，截图可见 `alp` 选中；这是公开API设置选区，不是人工鼠标选择或复制通过。
 
 尚须继续诊断行内替换所产生的额外布局项、wrapper 的实际焦点/scroll事件及复制保护。零宽空槽 widget 尚未随本次非空 cell style 修正验证，不能将空格槽通过推广到零宽槽。M73 释放 clipboard 后进行一次受控复制：先写自有 `M72_SENTINEL_OWN_20260907`，对已显示87..90的选区发送后台 Cmd+C，随后仅布尔比较是否为预期 `alp` 或自有 sentinel，两者均 false。未输出实际内容，立即停止后续未知 clipboard 读取/粘贴并通过 TowerSend 释放占用；不能宣称复制成功，也不能确定是CM映射失败还是后台事件/其他clipboard写入因素。静态显示阻塞已解除，但前置验收仍未完整通过，不做生产实施或全表 widget 替代。
+
+## 继续验证：布局、焦点、复制与磁盘
+
+- 通过 Measure 的只读 rowChildren 回读，确认每个隐藏 replace 产生空 `span[contenteditable=false]` 与 widget buffer 图片，成为 CSS Grid 隐式行。使用标准 `grid-template-rows:auto; grid-auto-rows:0`，不选择内部class改写DOM，首表从285px收敛为105px，三行紧贴且cell内容高35px。零宽 `||` 槽的 Empty widget 增加公开列/行定位与aria-colindex，小表第二列为空、后两列不左移。fixture因此由430变为429字符。
+- CM 会消费滚动容器内的方向键；增加公开 `EditorView.domEventHandlers`，仅当目标为自有 `.table-scroll` 时处理Left/Right/Home/End，Escape回editor。PID28119实测Focus table→End后最右列Right/123/987完整可见，正文及相邻引用表位置未变；Tab进入Source table2，Escape后AX确认editor focused。不使用正tabindex或焦点陷阱。
+- 关闭已经验证的自有static窗口后，只保留CM窗口，避免仅按PID发送键盘事件时多窗口目标歧义。PID27916四项实际Cmd+C→可见纯文本receiver→Check paste均true：Partial 3字符、Table 133字符、Cross 172字符、All并真实Cmd+A 429字符。每项均doc unchanged=true。receiver用targeted输入自有M72，再Cmd+A/V替换；一次空文本clear留下1字符残留导致134/133，明确替换后133/133通过，不掩盖该接收端操作错误。所有调用occluded=false，未使用activate fallback；不把先前失败归唯一原因。
+- Cross按钮当前选区为0..首表末尾+20，实测包含首表及相邻正文，不覆盖第二张表；因此这证明跨表格/正文边界复制，不是跨两张表复制。Partial/Table/Cross由公开API设置选区，鼠标拖选和键盘扩选尚须单独验收。
+- 增加固定路径、无参数的只读 `fixture_read` 命令，仅读取实验目录 `runtime/readonly-fixture.md`；无保存命令、不使用产品vault/config命令。Disk fixture读取后与small逐字匹配才创建EditorState。自有文件前后SHA-256均为 `0113181961a42b7b4020b75f7d5fe2f4a0da5bb1fd1d5b6d5a2c2224e0d49f5b`。PID28220点击Disk fixture后，targeted键入与Delete未改变doc；状态Loaded短暂被update listener覆盖，最终doc unchanged=true。该结果只证明probe自有文件保持，不是实际产品读写验收。
+- 原生水平wheel在无handler时未观察到位移；增加自有wrapper局部deltaX handler后，工具scroll返回ok但截图仍未显示可信位移。不能据此称真实触控板通过，也不能据此认定公开API无法实现。需要用户最小一次物理触控板横滚验证或可靠的wheel事件投递观测。当前停止反复重建；键盘可达已单独验证。
+
+后续补验：最终紧凑行版本PID28374 Large→Middle显示row7098..7104连续无多余空白，Measure为27/14001行DOM；切480px窄栏后Focus table→End可访问最右两列。Cross已改为到第二张表末端，PID28558实测CmdC→receiver为228/228 true。固定自有fixture canonicalize限制在自身runtime；native.log记录 `own fixture read: 429 bytes`。全选后CmdX和CmdV每步doc unchanged=true，前后磁盘SHA256仍为0113181961a42b7b4020b75f7d5fe2f4a0da5bb1fd1d5b6d5a2c2224e0d49f5b。复制占用已释放M73。当前PID28558、runtime/run-we3tEb，旧PID均已退出。
+
+PID28558进一步实测：鼠标从alpha首字拖到第三字得到87..90，Shift+Right扩展到87..91，doc不变；滚动到底点击源码任务标记后selection395..395、doc不变，滚回顶部表列位置保持。该拖选/扩选本轮没有再复制比对，不替代此前按钮范围copy证据。当前剩余门槛：真实触控板横滚；鼠标/键盘自建选区的copy比对；三主题及完整性能合同（生产阶段完整矩阵未执行）。未勾1.3或节点2，不声称全部前置通过。生产若采用该路线，须保留显式cell定位/隐式行尺寸、公开局部键盘事件与源码copy测试，并把同步全量元数据探针改为受预算约束的缓存策略。没有证据要求改为全表widget或永久源码回退。
