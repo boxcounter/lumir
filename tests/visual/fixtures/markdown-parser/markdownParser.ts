@@ -28,42 +28,51 @@ export function createMarkdownParserExperiment(makeWorker = () => new Worker(
   }
 
   function cancel() {
+    clearTimeout(timer);
     if (worker) { worker.terminate(); worker = undefined; metrics.cancellations++; }
     settle?.();
     settle = undefined;
     pending = undefined;
   }
 
+  let timer: ReturnType<typeof setTimeout> | undefined;
   function request(doc: string) {
     const ownVersion = ++version;
     metrics.requests++;
     pending = new Promise<void>(resolve => { settle = resolve; });
+    const fail = (reason: string) => {
+      if (destroyed || ownVersion !== version) return;
+      clearTimeout(timer);
+      cancel();
+      if (++failures <= 2) { metrics.retries++; request(doc); }
+      else { fatal = new Error(reason); version++; }
+    };
     try {
       worker = makeWorker();
+      timer = setTimeout(() => fail('Markdown worker timeout'), 1500);
       worker.onmessage = event => {
         const start = performance.now();
-        if (destroyed || ownVersion !== version || event.data.version !== ownVersion) return;
-        packed = event.data.packed;
-        metrics.workerParseMs.push(event.data.parseMs);
-        metrics.workerPackMs.push(event.data.packMs);
-        worker?.terminate();
-        worker = undefined;
-        settle?.(); settle = undefined;
+        if (destroyed || ownVersion !== version) return;
+        try {
+          if (event.data.version !== ownVersion) return;
+          const value = event.data.packed as PackedTree;
+          if (!value || value.length !== doc.length || !Array.isArray(value.children) || !Array.isArray(value.positions) || !nodeSet.types[value.type])
+            throw new Error('Invalid serialized Markdown tree');
+          packed = value;
+          metrics.workerParseMs.push(event.data.parseMs);
+          metrics.workerPackMs.push(event.data.packMs);
+          clearTimeout(timer);
+          worker?.terminate(); worker = undefined;
+          settle?.(); settle = undefined;
+        } catch (error) { fail(String(error)); }
         metrics.messageMs.push(performance.now() - start);
       };
-      worker.onerror = () => {
-        if (destroyed || ownVersion !== version) return;
-        cancel();
-        if (++failures <= 2) { metrics.retries++; request(doc); }
-        else fatal = new Error("Markdown worker failed after two retries");
-      };
+      worker.onerror = event => { event.preventDefault(); fail('Markdown worker error'); };
+      worker.onmessageerror = () => fail('Markdown worker deserialization error');
       const start = performance.now();
       worker.postMessage({ version: ownVersion, doc });
       metrics.postMs.push(performance.now() - start);
-    } catch (error) {
-      cancel();
-      fatal = error instanceof Error ? error : new Error(String(error));
-    }
+    } catch (error) { fail(String(error)); }
   }
 
   const extension: MarkdownConfig = {
@@ -75,7 +84,7 @@ export function createMarkdownParserExperiment(makeWorker = () => new Worker(
       if (document !== doc) {
         cancel(); document = doc; packed = undefined; fatal = undefined; failures = 0; request(doc);
       }
-      if (fatal) throw fatal;
+      if (fatal) return ParseContext.getSkippingParser(pending).startParse(input, fragments, ranges);
       if (!packed) return ParseContext.getSkippingParser(pending).startParse(input, fragments, ranges);
       metrics.cacheHits++;
       const start = performance.now();
@@ -84,5 +93,5 @@ export function createMarkdownParserExperiment(makeWorker = () => new Worker(
       return { parsedPos: input.length, stoppedAt: null, stopAt() {}, advance: () => tree };
     },
   };
-  return { extension, metrics, bindNodeSet(set: typeof nodeSet) { nodeSet = set; }, destroy() { destroyed = true; version++; cancel(); packed = undefined; document = undefined; } };
+  return { extension, metrics, status() { return { fatal: fatal?.message, version }; }, bindNodeSet(set: typeof nodeSet) { nodeSet = set; }, destroy() { destroyed = true; version++; cancel(); packed = undefined; document = undefined; } };
 }

@@ -8,11 +8,26 @@ import { NodeProp } from '@lezer/common';
 import { createMarkdownParserExperiment } from './markdownParser';
 
 let failNext = false;
+let fault = '';
 let activeWorkers = 0;
+const queued: (() => void)[] = [];
 const experiment = createMarkdownParserExperiment(() => {
-  const worker = new Worker(new URL(failNext ? './failure.worker.ts' : './markdownParser.worker.ts', import.meta.url), { type: 'module' });
+  const url = new URL(failNext || fault ? './failure.worker.ts' : './markdownParser.worker.ts', import.meta.url);
+  url.searchParams.set('fault', fault);
+  const worker = new Worker(url, { type: 'module' });
+  if (fault === 'messageerror') setTimeout(() => worker.onmessageerror?.call(worker, new MessageEvent('messageerror')), 10);
   failNext = false;
   activeWorkers++;
+  const post = worker.postMessage.bind(worker);
+  worker.postMessage = ((message: any) => {
+    const onmessage = worker.onmessage;
+    const onerror = worker.onerror;
+    queued.push(() => {
+      onmessage?.call(worker, new MessageEvent('message', { data: { version: message.version, packed: null } }));
+      onerror?.call(worker, new ErrorEvent('error', { cancelable: true }));
+    });
+    post(message);
+  }) as typeof worker.postMessage;
   const terminate = worker.terminate.bind(worker);
   let stopped = false;
   worker.terminate = () => { if (!stopped) { stopped = true; activeWorkers--; } terminate(); };
@@ -35,9 +50,9 @@ const guard = { wrap(inner: any) { return { get parsedPos() { return inner.parse
 const base = new Language(markdownLanguage.data, (markdownLanguage.parser as any).configure(guard).configure(experiment.extension));
 const language = markdown({ base, extensions: [GFM, measure] });
 experiment.bindNodeSet((language.language.parser as any).nodeSet);
-const view = new EditorView({ parent: document.querySelector('#editor')!, state: EditorState.create({
-  doc: '', extensions: [compartment.of(language), EditorView.lineWrapping],
-}) });
+const { createEditor } = await import('../../../../src/editor');
+const editor = createEditor(document.querySelector('#editor')!, 'md', { base, extensions: [GFM, measure] });
+const view = editor.view;
 function snapshot(tree: any, state: EditorState) {
   const nodes: unknown[] = [];
   tree.iterate({ enter(node: any) {
@@ -51,7 +66,7 @@ function snapshot(tree: any, state: EditorState) {
   return { nodes, highlights, inner };
 }
 Object.assign(window, { experiment: {
-  open(doc: string) { const start = performance.now(); view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: doc } }); timings.push(performance.now() - start); },
+  open(doc: string) { const start = performance.now(); editor.openDocument(doc, 'experiment.md'); timings.push(performance.now() - start); },
   available() { const start = performance.now(); const result = forceParsing(view, view.state.doc.length, 10); timings.push(performance.now() - start); return result && syntaxTreeAvailable(view.state, view.state.doc.length); },
   compare() {
     const reference = EditorState.create({ doc: view.state.doc, extensions: markdown({ base: markdownLanguage, extensions: [GFM] }) });
@@ -59,7 +74,11 @@ Object.assign(window, { experiment: {
     return { actual: snapshot(syntaxTree(view.state), view.state), expected: snapshot(tree, reference) };
   },
   failNext() { failNext = true; },
-  mode(mode: string) { view.dispatch({ effects: compartment.reconfigure([language, EditorView.theme({ '&': { fontFamily: mode === 'md' ? 'serif' : 'monospace' } })]) }); },
+  fault(value: string) { fault = value; },
+  flushQueued(count = queued.length) { queued.splice(0, count).forEach(callback => callback()); },
+  status() { return experiment.status(); },
+  mode(mode: 'md' | 'code') { editor.setMode(mode); return editor.mode(); },
+  reset() { editor.reset(); },
   metrics() { return { ...experiment.metrics, activeWorkers, baseAdvances, outerAdvances, callbacks: timings }; },
   destroy() { view.destroy(); experiment.destroy(); },
 } });
