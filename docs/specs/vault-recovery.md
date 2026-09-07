@@ -10,7 +10,7 @@
 
 ## 唯一保存序列
 
-后端以 `(vault_id, normalized_path)` 建立 per-path 临界区。临界区内先查询 result/intent，再校验 expected file revision。合法请求按以下顺序执行：临时文件写入并 fsync；intent 临时文件 fsync、rename、intent 父目录 fsync；atomic replace；目标 parent directory fsync；result 临时文件 fsync、rename、result 父目录 fsync；最后 durable 清理 intent。不同 path 可并行。intent 和 result 写在应用数据目录，不写入 vault。
+后端以 `(vault_id, normalized_path)` 建立 per-path 临界区。临界区内先查询 result/intent，再校验 expected file revision。合法请求按以下顺序执行：分配并 durable 写入 revision ledger；写出带 operation_id/new revision/fingerprint 元数据的临时文件并 fsync；将 intent 设为 phase=`prepared`，完成 intent 临时文件 fsync、rename、intent 父目录 fsync；在调用 atomic replace 前将 phase durable 推进为 `replace_inflight`，再调用 replace；replace 返回成功后将 phase durable 推进为 `replaced`；目标 parent directory fsync 成功后将 phase durable 推进为 `parent_synced`；result 临时文件 fsync、rename、result 父目录 fsync 后推进为 `result_durable`；最后 durable 清理 intent。phase 只能按 `prepared → replace_inflight → replaced → parent_synced → result_durable` 前进。不同 path 可并行。intent、result 和 revision ledger 写在应用数据目录，不写入 vault。
 
 `operation_id` 绑定 path、expected revisions 和 content fingerprint。重复 id 原样返回既有结果。参数不一致不得被视为新保存。
 
@@ -19,9 +19,10 @@
 | 阶段 | 唯一恢复结果 | 同 id 行为 |
 |---|---|---|
 | intent durable 前 | `not-written` | 重新执行 CAS；CAS 失败返回 `document_conflict` |
-| intent durable 后、replace 前 | old revision 仍可证明时 `not-written`，否则 `unknown` | 仅原 id 继续；不得新 id 重放 |
-| replace 后、parent fsync 前 | `unknown` | 只能查询/重试原 id；不得报告 success |
-| parent fsync 后、result durable 前 | 指纹和 new revision 均匹配则 `success`，否则 `unknown` | 补写 result，不得再次 replace |
+| intent durable 后、replace 前（phase=`prepared`） | old revision 仍可证明时 `not-written`，否则 `unknown` | 仅原 id 继续；不得新 id 重放 |
+| replace 调用前已 durable（phase=`replace_inflight`） | `unknown` | 只能查询原 id；不得再次 replace |
+| replace 已返回成功、parent fsync 前（phase=`replaced`） | `unknown` | 只能查询原 id；不得报告 success 或再次 replace |
+| parent fsync 后、result durable 前（phase=`parent_synced`） | ledger、intent 与目标元数据一致则 `success`，否则 `unknown` | 补写 result，不得再次 replace |
 | result durable 后 | `success` | 永久返回原 result；intent 清理失败不改变结论 |
 
 其中 `unknown` 对外唯一错误码为 `document_write_unknown`。rename 已返回成功但 parent directory fsync 尚未成功或结果不确定时，必须保持 unknown，即使一次读取恰好观察到新内容。

@@ -4,7 +4,7 @@
 
 ### Requirement: document save MUST use per-path durable CAS
 
-`document_save` SHALL 以 `(vault_id, normalized_path)` 为独立 CAS 命名空间。读取 expected revision、intent/result 查询、replace 与 file revision 分配 MUST 在同一 per-path 互斥临界区内完成；不同 path 不得被无关 intent 阻塞。保存序列 MUST 依次完成临时文件 fsync、intent 文件 fsync+rename+父目录 fsync、atomic replace、目标父目录 fsync、result 文件 fsync+rename+父目录 fsync。任何 durable record 更新不得只依赖内存或 flush。
+`document_save` SHALL 以 `(vault_id, normalized_path)` 为独立 CAS 命名空间。读取 expected revision、intent/result 查询、replace 与 file revision 分配 MUST 在同一 per-path 互斥临界区内完成；不同 path 不得被无关 intent 阻塞。`new_file_revision` MUST 来自 durable revision ledger；ledger entry、intent 和目标临时文件 MUST 绑定同一 operation_id、path、new revision 与 content fingerprint，恢复时三者不一致不得判定 success。保存序列 MUST 依次完成 ledger durable、临时文件 fsync、intent phase durable、atomic replace、目标父目录 fsync、result durable。任何 durable record 更新不得只依赖内存或 flush。
 
 #### Scenario: 同 path CAS 只允许一个写者
 
@@ -18,7 +18,7 @@
 
 ### Requirement: 每个崩溃阶段 MUST 收敛到唯一结果
 
-系统 SHALL 只使用 `not-written`、`success`、`unknown` 三种恢复结论。intent durable 前崩溃 SHALL 收敛为 `not-written`；intent durable 后且 replace 尚未成功 SHALL 在目标仍为 old revision 时收敛为 `not-written`，否则为 `document_write_unknown`；replace 已完成但 parent directory fsync 尚未成功或结果不可知 SHALL 始终为 `unknown`，不得报告 success；parent directory fsync 成功且 result 尚未 durable 时，只有目标指纹与 new revision 均匹配才可补写 result 并收敛 success；result durable 后 SHALL 永久收敛 success。
+系统 SHALL 只使用 `not-written`、`success`、`unknown` 三种恢复结论。intent phase MUST 枚举为 `prepared`、`replace_inflight`、`replaced`、`parent_synced`、`result_durable`、`expired`；正常 phase 只能按 `prepared → replace_inflight → replaced → parent_synced → result_durable` 推进，`expired` 只能由 retention 到期的未决 phase 进入，并且每次推进均 MUST 通过临时记录 fsync、rename、父目录 fsync 后才生效。intent durable 前崩溃 SHALL 收敛为 `not-written`；phase=`prepared` 且 replace 尚未开始 SHALL 在目标仍为 old revision 时收敛为 `not-written`，否则为 `document_write_unknown`；phase=`replace_inflight` 表示 replace 调用前已 durable 记录但调用结果不可知，重启/同 id retry SHALL 始终为 `unknown` 且不得再次 replace；phase=`replaced` 代表 replace 已完成但 parent directory fsync 尚未成功，重启/同 id retry SHALL 始终为 `unknown` 且不得再次 replace；phase=`parent_synced` 且 result 尚未 durable 时，只有 revision ledger、intent 与目标文件绑定元数据一致才可补写 result 并收敛 success；phase=`result_durable` SHALL 永久收敛 success。
 
 #### Scenario: intent durable 前崩溃
 
@@ -29,6 +29,11 @@
 
 - **WHEN** O1 的 intent 已 durable，但 replace 尚未成功
 - **THEN** 目标仍为 old revision 时返回 `not-written` 并允许同 id 重试；目标状态无法证明为 old 时返回 `document_write_unknown`，不得使用新 id
+
+#### Scenario: replace 调用前哨兵阻止重复 replace
+
+- **WHEN** O1 已将 phase=`replace_inflight` durable，但 replace 调用前或调用返回前崩溃
+- **THEN** 恢复与同 id retry 均返回 `document_write_unknown`，且 replace 次数保持不变，不得再次调用 replace
 
 #### Scenario: replace 后 parent fsync 前崩溃
 
