@@ -16,7 +16,7 @@ export interface FrontmatterBlock {
 }
 
 /** 检测文档首部 frontmatter；无（或未闭合）返回 null。扫描上限防止未闭合的 --- 导致全文档扫描。 */
-const MAX_FRONTMATTER_LINES = 200;
+const MAX_FRONTMATTER_LINES = 512;
 
 export function detectFrontmatter(doc: Text): FrontmatterBlock | null {
   if (doc.lines < 2 || doc.line(1).text.trim() !== "---") return null;
