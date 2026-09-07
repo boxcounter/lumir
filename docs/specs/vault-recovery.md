@@ -22,7 +22,7 @@
 | intent durable 后、replace 前（phase=`prepared`） | old revision 仍可证明时 `not-written`，否则 `unknown` | 仅原 id 继续；不得新 id 重放 |
 | replace 调用前已 durable（phase=`replace_inflight`） | `unknown` | 只能查询原 id；不得再次 replace |
 | replace 已返回成功、parent fsync 前（phase=`replaced`） | `unknown` | 只能查询原 id；不得报告 success 或再次 replace |
-| parent fsync 后、result durable 前（phase=`parent_synced`） | ledger、intent 与目标元数据一致则 `success`，否则 `unknown` | 补写 result，不得再次 replace |
+| parent fsync 后、result durable 前（phase=`parent_synced`） | 普通 `path.md` 目标完整字节 fingerprint 与 ledger/intent 的 new fingerprint 一致且 parent fsync 已成功则 `success`，否则 `unknown` | 补写 result，不得再次 replace |
 | result durable 后 | `success` | 永久返回原 result；intent 清理失败不改变结论 |
 
 其中 `unknown` 对外唯一错误码为 `document_write_unknown`。rename 已返回成功但 parent directory fsync 尚未成功或结果不确定时，必须保持 unknown，即使一次读取恰好观察到新内容。
@@ -35,4 +35,4 @@
 
 ## 实现与验证边界
 
-未来 backend 实现必须支持故障注入点：intent durable 前/后、replace 调用前/后、parent directory fsync 前/后、result durable 前/后。验证至少覆盖同 path CAS 竞争、不同 path 隔离、重复/错误参数 id、损坏与过期 intent、启动恢复与同 id 查询一致性。webview 只消费结构化 `{ code, message, operation_id, reason }`，不得解析 message。此 change 不要求也不包含 Rust、TypeScript、UI、watcher、vault 切换或 parser 代码。
+未来 backend 实现必须支持故障注入点：intent durable 前/后、replace 调用前/后、parent directory fsync 前/后、result durable 前/后。验证至少覆盖同 path CAS 竞争、不同 path 隔离、重复/错误参数 id、损坏与过期 intent、启动恢复与同 id 查询一致性。webview 只消费统一错误信封 `{ code, message, operation_id, reason }`；无 reason 时也必须序列化为 `reason: null`，不得解析 message。此 change 不要求也不包含 Rust、TypeScript、UI、watcher、vault 切换或 parser 代码。
