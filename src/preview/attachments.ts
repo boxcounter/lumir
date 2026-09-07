@@ -150,8 +150,11 @@ export class ImageWidget extends WidgetType {
         img.onerror = () => {
           wrap.replaceChildren(errorChip(`图片解码失败：${this.rawRef}`));
         };
-        img.src = src;
         wrap.replaceChildren(img);
+        img.src = src;
+        if (img.complete && img.naturalWidth === 0) {
+          img.onerror(new Event("error"));
+        }
       },
       (e: unknown) => {
         wrap.replaceChildren(errorChip(`图片读取失败：${this.rawRef}（${errorMessage(e)}）`));
