@@ -751,10 +751,7 @@ impl LinkGraph {
                     "wikilink_target_exists",
                     format!("目标已存在：{rel}（索引可能已过期），已改为重新解析"),
                 )
-            } else if matches!(
-                e.raw_os_error(),
-                Some(1) | Some(13) | Some(20) | Some(62) | Some(63)
-            ) {
+            } else if is_unsafe_creation_error(&e) {
                 CommandError::new("wikilink_invalid_path", format!("目标路径不安全：{e}"))
             } else {
                 CommandError::new("wikilink_create_failed", format!("无法创建 {rel}：{e}"))
@@ -877,15 +874,53 @@ fn create_new_vault_file(root: &Path, rel: &str) -> std::io::Result<std::fs::Fil
 }
 
 #[cfg(not(unix))]
-fn create_new_vault_file(root: &Path, rel: &str) -> std::io::Result<std::fs::File> {
-    let abs = root.join(rel);
-    if let Some(parent) = abs.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(abs)
+fn create_new_vault_file(_root: &Path, _rel: &str) -> std::io::Result<std::fs::File> {
+    Err(std::io::Error::new(
+        std::io::ErrorKind::Unsupported,
+        "当前平台不支持安全的 vault 文件创建",
+    ))
+}
+
+#[cfg(unix)]
+fn is_unsafe_creation_error(error: &std::io::Error) -> bool {
+    matches!(error.kind(), std::io::ErrorKind::PermissionDenied)
+        || [libc_errno_eloop(), libc_errno_enotdir()]
+            .contains(&error.raw_os_error().unwrap_or_default())
+}
+
+#[cfg(target_os = "linux")]
+const fn libc_errno_eloop() -> i32 {
+    40
+}
+
+#[cfg(target_os = "macos")]
+const fn libc_errno_eloop() -> i32 {
+    62
+}
+
+#[cfg(target_os = "linux")]
+const fn libc_errno_enotdir() -> i32 {
+    20
+}
+
+#[cfg(target_os = "macos")]
+const fn libc_errno_enotdir() -> i32 {
+    20
+}
+
+#[cfg(all(unix, not(any(target_os = "linux", target_os = "macos"))))]
+const fn libc_errno_eloop() -> i32 {
+    62
+}
+
+#[cfg(all(unix, not(any(target_os = "linux", target_os = "macos"))))]
+const fn libc_errno_enotdir() -> i32 {
+    20
+}
+
+#[cfg(not(unix))]
+fn is_unsafe_creation_error(_error: &std::io::Error) -> bool {
+    false
 }
 
 fn validate_vault_relative(path: &str) -> Result<(), String> {
