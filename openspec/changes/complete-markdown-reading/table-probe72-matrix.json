@@ -1,0 +1,492 @@
+{
+  "engine": "Playwright Chromium supplemental, NOT native WK or product theme validation",
+  "themeScope": "probe color variants only; fixed 240px columns; no production typography",
+  "results": [
+    {
+      "theme": "light",
+      "width": 850,
+      "geometry": [
+        [
+          {
+            "x": 42,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 282,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 522,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 762,
+            "width": 240,
+            "height": 35
+          }
+        ],
+        [
+          {
+            "x": 42,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 282,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 522,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 762,
+            "width": 240,
+            "height": 35
+          }
+        ],
+        [
+          {
+            "x": 42,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 282,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 522,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 762,
+            "width": 240,
+            "height": 35
+          }
+        ]
+      ],
+      "lastColumnReachable": false,
+      "focusDiagnostic": {
+        "active": "cm-content cm-lineWrapping",
+        "scrollLeft": 0,
+        "max": 120
+      }
+    },
+    {
+      "theme": "light",
+      "width": 480,
+      "geometry": [
+        [
+          {
+            "x": 227,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 467,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 707,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 947,
+            "width": 240,
+            "height": 35
+          }
+        ],
+        [
+          {
+            "x": 227,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 467,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 707,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 947,
+            "width": 240,
+            "height": 35
+          }
+        ],
+        [
+          {
+            "x": 227,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 467,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 707,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 947,
+            "width": 240,
+            "height": 35
+          }
+        ]
+      ],
+      "lastColumnReachable": true,
+      "focusDiagnostic": {
+        "active": "table-scroll",
+        "scrollLeft": 490,
+        "max": 490
+      }
+    },
+    {
+      "theme": "dark",
+      "width": 850,
+      "geometry": [
+        [
+          {
+            "x": 42,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 282,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 522,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 762,
+            "width": 240,
+            "height": 35
+          }
+        ],
+        [
+          {
+            "x": 42,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 282,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 522,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 762,
+            "width": 240,
+            "height": 35
+          }
+        ],
+        [
+          {
+            "x": 42,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 282,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 522,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 762,
+            "width": 240,
+            "height": 35
+          }
+        ]
+      ],
+      "lastColumnReachable": true,
+      "focusDiagnostic": {
+        "active": "table-scroll",
+        "scrollLeft": 120,
+        "max": 120
+      }
+    },
+    {
+      "theme": "dark",
+      "width": 480,
+      "geometry": [
+        [
+          {
+            "x": 227,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 467,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 707,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 947,
+            "width": 240,
+            "height": 35
+          }
+        ],
+        [
+          {
+            "x": 227,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 467,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 707,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 947,
+            "width": 240,
+            "height": 35
+          }
+        ],
+        [
+          {
+            "x": 227,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 467,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 707,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 947,
+            "width": 240,
+            "height": 35
+          }
+        ]
+      ],
+      "lastColumnReachable": true,
+      "focusDiagnostic": {
+        "active": "table-scroll",
+        "scrollLeft": 490,
+        "max": 490
+      }
+    },
+    {
+      "theme": "eink",
+      "width": 850,
+      "geometry": [
+        [
+          {
+            "x": 42,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 282,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 522,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 762,
+            "width": 240,
+            "height": 35
+          }
+        ],
+        [
+          {
+            "x": 42,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 282,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 522,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 762,
+            "width": 240,
+            "height": 35
+          }
+        ],
+        [
+          {
+            "x": 42,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 282,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 522,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 762,
+            "width": 240,
+            "height": 35
+          }
+        ]
+      ],
+      "lastColumnReachable": true,
+      "focusDiagnostic": {
+        "active": "table-scroll",
+        "scrollLeft": 120,
+        "max": 120
+      }
+    },
+    {
+      "theme": "eink",
+      "width": 480,
+      "geometry": [
+        [
+          {
+            "x": 227,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 467,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 707,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 947,
+            "width": 240,
+            "height": 35
+          }
+        ],
+        [
+          {
+            "x": 227,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 467,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 707,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 947,
+            "width": 240,
+            "height": 35
+          }
+        ],
+        [
+          {
+            "x": 227,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 467,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 707,
+            "width": 240,
+            "height": 35
+          },
+          {
+            "x": 947,
+            "width": 240,
+            "height": 35
+          }
+        ]
+      ],
+      "lastColumnReachable": true,
+      "focusDiagnostic": {
+        "active": "table-scroll",
+        "scrollLeft": 490,
+        "max": 490
+      }
+    }
+  ],
+  "large": {
+    "length": 1058760,
+    "renderedRows": 27,
+    "totalRows": 14001,
+    "metadataMs": 84.5,
+    "viewport": {
+      "from": 528345,
+      "to": 530369
+    }
+  },
+  "loadAndMiddleIncluding100msWait": [
+    247.3008749999999,
+    240.99920799999995,
+    224.51774999999998,
+    224.399042,
+    217.6901670000002
+  ],
+  "performanceScope": "diagnostic samples, no production perf threshold claim"
+}

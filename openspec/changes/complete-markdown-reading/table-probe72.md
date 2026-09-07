@@ -109,3 +109,13 @@ XDG_CONFIG_HOME="$run/config" "$binary" > "$run/native.log" 2>&1
 后续补验：最终紧凑行版本PID28374 Large→Middle显示row7098..7104连续无多余空白，Measure为27/14001行DOM；切480px窄栏后Focus table→End可访问最右两列。Cross已改为到第二张表末端，PID28558实测CmdC→receiver为228/228 true。固定自有fixture canonicalize限制在自身runtime；native.log记录 `own fixture read: 429 bytes`。全选后CmdX和CmdV每步doc unchanged=true，前后磁盘SHA256仍为0113181961a42b7b4020b75f7d5fe2f4a0da5bb1fd1d5b6d5a2c2224e0d49f5b。复制占用已释放M73。当前PID28558、runtime/run-we3tEb，旧PID均已退出。
 
 PID28558进一步实测：鼠标从alpha首字拖到第三字得到87..90，Shift+Right扩展到87..91，doc不变；滚动到底点击源码任务标记后selection395..395、doc不变，滚回顶部表列位置保持。该拖选/扩选本轮没有再复制比对，不替代此前按钮范围copy证据。当前剩余门槛：真实触控板横滚；鼠标/键盘自建选区的copy比对；三主题及完整性能合同（生产阶段完整矩阵未执行）。未勾1.3或节点2，不声称全部前置通过。生产若采用该路线，须保留显式cell定位/隐式行尺寸、公开局部键盘事件与源码copy测试，并把同步全量元数据探针改为受预算约束的缓存策略。没有证据要求改为全表widget或永久源码回退。
+
+## 自动补充矩阵与整体评审边界
+
+保留PID28558及无timeout后台任务给用户物理横滚，不重建或重启。追加真实输入：鼠标定位到87后，以三次Shift+Right自建87..90，Cmd+C→可见receiver Check paste=true（3/3、doc不变）；不是再次按钮选区证明。鼠标drag本轮未稳定形成非空范围，故仅确认鼠标定位+键盘扩选copy，不能称独立纯拖选copy已过。clipboard已释放。
+
+`matrix.mjs` 在独立1472端口运行补充Playwright Chromium矩阵，不代替已执行的真实WK。六组为probe颜色变体light/dark/eink×850/480宽度，不加载生产排版主题，不冒称三套产品主题验收。六组四列边界/零宽空槽/固定240px宽度几何均通过。**首组light850的Focus table→End失败**：active变成cm-content、scrollLeft0/max120；后五组成功到末列。重复运行复现首例，保留失败，没有将脚本无异常退出等同于全部验收通过。短暂requestAnimationFrame延后焦点实验未改善，已移除，现有native binary不变。
+
+[矩阵原始数据](table-probe72-matrix.json) 包含六组包围盒/焦点失败，以及大表27/14001行DOM、metadata实测和5次加载/中部定位墙钟样本。样本包含100ms等待与测试驱动开销，仅诊断，不与生产阈值直接比较。固定240px列和同步全量元数据是probe假设，不是生产性能承诺，未改变原门禁。
+
+**整体结论仍有明确pending/失败项**：物理触控板等待用户一次验证；补充Chromium首次键盘焦点回退需评审定位；纯鼠标拖选copy未稳定。真实WK已通过的复制、只读及几何结果仍成立，但不能以这些部分成功宣布完整路线已通过。建议整体独立review当前代码和证据，先判断该焦点差异是否阻止候选路线，而不是开始生产实现或继续用局部checkpoint替代验收。
