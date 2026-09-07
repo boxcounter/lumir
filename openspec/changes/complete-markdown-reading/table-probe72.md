@@ -2,7 +2,7 @@
 
 ## 结论
 
-**前置验收仍有pending，不进入完整产品实现。** 当前真实WK静态与CM窗口已可见，已取得列布局、虚拟化、键盘横滚、源码复制及自有磁盘只读证据。r4集中修复首次原生selection/焦点交接和fresh-page矩阵失败退出；物理触控板反馈、纯鼠标拖选复制仍待确认，不勾tasks1.3或节点2。下文白屏记录是历史，不代表当前状态；完整结果与限制见末尾r4记录。
+**前置验收仍有pending，不进入完整产品实现。** 当前真实WK静态与CM窗口已可见，已取得列布局、虚拟化、键盘横滚、源码复制及自有磁盘只读证据。r4集中修复首次原生selection/焦点交接和fresh-page矩阵失败退出；纯鼠标拖选复制已补证，物理触控板反馈仍待确认，不勾tasks1.3或节点2。下文白屏记录是历史，不代表当前状态；完整结果与限制见末尾r4记录。
 
 ## 实验与复现
 
@@ -129,6 +129,8 @@ r3 reviewer 对准确0c8feac指出：首次End的keydown之前，浏览器已从
 - 全新页面按钮与自然Tab各6组，当前 [fresh矩阵](table-probe72-matrix.json) 为12/12通过。每组单独page，异常或reach=false写报告后exit1。
 - 禁用首次selection交接的 `--fault-focus` [故障注入](table-probe72-matrix-fault.json) 为6/12失败，实测进程exit1；不把反例执行失败当环境错误。历史污染矩阵保存在 [r3证据](table-probe72-matrix-r3.json)，不覆盖失败记录。
 - 独立native PID29837使用r4 binary，原用户PID28558始终保留未修改/关闭。新实例首次Focus table→End显示Right/123/987，selection0..0不变；Home/Escape正常。这次修复没有读取任何用户clipboard。
-- 纯鼠标拖选在r4工具调用中两次分别仅得到87..87和91..91，未伪称非空范围，也没有为collapsed范围执行copy。仍pending，需要可靠物理拖选或工具投递证据。此前真实按钮/键盘copy和只读证据保留，但不是本次focus修复后的完整复制重验。
+- 纯鼠标拖选前两次分别仅得到87..87和91..91，未执行collapsed范围copy。随后重新获取实际截图，alpha文本中心已是截图y264而非此前y270；用CU支持的drag从(61,264)至(90,264)、steps3，一次形成源码87..90。没有Shift或按钮设置选区。真实Cmd+C→targeted可见receiver后显示alp，独立源码slice(87,90)为alp，比较true。记录坐标和事件结果，不把此前工具折叠等同产品失败。
+- 同一独立实例点击Disk fixture重建EditorState后，从按钮自然Tab进入editor，再Tab进入AXGroup Source table1；End到最右列，Tab进入Source table2，Escape离开。AX具有表/行/单元格与命名可聚焦区，未形成焦点陷阱。该项是在同app重新载入doc后进行，不冒称全新进程自然Tab首帧；fresh-page首帧覆盖由12组矩阵补充。
+- 修复后跨两表源码copy再次经可见receiver核对228/228 true；全选CmdX、CmdV、Delete后每步doc unchanged=true。自有Disk fixture前后hash仍为0113181961a42b7b4020b75f7d5fe2f4a0da5bb1fd1d5b6d5a2c2224e0d49f5b。整个补验键输入occluded=false，没有activate fallback或未知clipboard读取，M73占用已释放。
 
-物理触控板仍等待用户对原窗口反馈。fresh Chromium矩阵是补充而非原生WK自然Tab/完整copy的替代；r4原生自然Tab首帧、copy/AX/只读完整重验尚须补齐。实验同步全量模型、每次视口遍历所有rows和240px列宽均不得进入生产；需缓存、预算、行索引及真实主题列宽。r4可审修复与失败检测器，但不能据此勾完整前置完成。
+物理触控板仍等待用户对原PID28558窗口反馈，不要求重复已确认项。r4自动补验已形成整体评审证据；fresh Chromium矩阵不是生产主题/真实WK的替代，既有原生证据按上述粒度保留。实验同步全量模型、每次视口遍历所有rows和240px列宽均不得进入生产；需缓存、预算、行索引及真实主题列宽。物理门槛未过前不勾完整前置完成或进入生产。
