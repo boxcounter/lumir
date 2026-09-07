@@ -16,7 +16,7 @@ export interface WikilinkSpan {
   embed: boolean;
 }
 
-const MAX_FRONTMATTER_LINES = 200;
+const MAX_FRONTMATTER_LINES = 512;
 
 interface CharRange {
   from: number;
