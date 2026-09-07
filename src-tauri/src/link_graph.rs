@@ -681,6 +681,12 @@ impl LinkGraph {
     /// 计算一键创建的目标路径（§4.4，裁决点 I）：path 段不含 `/` 时创建于
     /// from 所在目录；含 `/` 时按 vault 根相对路径。目标必须解析为 unresolved。
     pub fn create_target(&self, from: &str, raw: &str) -> Result<String, CommandError> {
+        validate_vault_relative(from).map_err(|message| {
+            CommandError::new(
+                "wikilink_invalid_path",
+                format!("来源路径不合法：{message}"),
+            )
+        })?;
         let link = parse_single(raw)?;
         if link.block_ref {
             return Err(CommandError::new(
@@ -702,7 +708,7 @@ impl LinkGraph {
                 "当前文件内锚点链接没有可创建的目标",
             ));
         }
-        if p.starts_with('/') || p.split('/').any(|s| s.is_empty() || s == ".." || s == ".") {
+        if validate_vault_relative(p).is_err() {
             return Err(CommandError::new(
                 "wikilink_invalid_path",
                 format!("目标路径不合法：{p}"),
@@ -733,14 +739,29 @@ impl LinkGraph {
         raw: &str,
     ) -> Result<String, CommandError> {
         let rel = self.create_target(from, raw)?;
-        let abs = root.join(&rel);
-        if let Some(parent) = abs.parent() {
-            std::fs::create_dir_all(parent).map_err(|e| {
+        let root_canonical = std::fs::canonicalize(root).map_err(|e| {
+            CommandError::new(
+                "wikilink_create_failed",
+                format!("无法定位 vault 根目录 {}：{e}", root.display()),
+            )
+        })?;
+        let abs = root_canonical.join(&rel);
+        let parent = abs.parent().expect("vault-relative target has a parent");
+        create_safe_parent_dirs(&root_canonical, parent)
+            .map_err(|message| CommandError::new("wikilink_invalid_path", message))?;
+        if !path_within(
+            &root_canonical,
+            &parent.canonicalize().map_err(|e| {
                 CommandError::new(
                     "wikilink_create_failed",
-                    format!("无法创建目录 {}：{e}", parent.display()),
+                    format!("无法定位目标目录 {}：{e}", parent.display()),
                 )
-            })?;
+            })?,
+        ) {
+            return Err(CommandError::new(
+                "wikilink_invalid_path",
+                "目标路径超出 vault 根目录",
+            ));
         }
         std::fs::OpenOptions::new()
             .write(true)
@@ -765,6 +786,59 @@ impl Default for LinkGraph {
     fn default() -> Self {
         Self::new()
     }
+}
+
+fn validate_vault_relative(path: &str) -> Result<(), String> {
+    if path.is_empty() || path.starts_with('/') || path.contains('\\') {
+        return Err("必须是非空的 vault 相对路径".to_string());
+    }
+    if path.split('/').any(|segment| segment.is_empty()) {
+        return Err("路径包含空段".to_string());
+    }
+    for component in Path::new(path).components() {
+        if !matches!(component, std::path::Component::Normal(_)) {
+            return Err("路径必须只包含普通相对路径段".to_string());
+        }
+    }
+    Ok(())
+}
+
+fn path_within(root: &Path, candidate: &Path) -> bool {
+    candidate == root || candidate.starts_with(root)
+}
+
+fn create_safe_parent_dirs(root: &Path, parent: &Path) -> Result<(), String> {
+    let relative = parent
+        .strip_prefix(root)
+        .map_err(|_| "目标路径超出 vault 根目录".to_string())?;
+    let mut current = root.to_path_buf();
+    for component in relative.components() {
+        let std::path::Component::Normal(name) = component else {
+            return Err("目标路径包含非法目录段".to_string());
+        };
+        current.push(name);
+        match std::fs::symlink_metadata(&current) {
+            Ok(metadata) => {
+                if metadata.file_type().is_symlink() {
+                    return Err(format!("目标目录包含 symlink：{}", current.display()));
+                }
+                if !metadata.is_dir() {
+                    return Err(format!("目标路径不是目录：{}", current.display()));
+                }
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                std::fs::create_dir(&current)
+                    .map_err(|e| format!("无法创建目录 {}：{e}", current.display()))?;
+                let metadata = std::fs::symlink_metadata(&current)
+                    .map_err(|e| format!("无法检查目录 {}：{e}", current.display()))?;
+                if metadata.file_type().is_symlink() || !metadata.is_dir() {
+                    return Err(format!("目标目录不安全：{}", current.display()));
+                }
+            }
+            Err(error) => return Err(format!("无法检查目录 {}：{error}", current.display())),
+        }
+    }
+    Ok(())
 }
 
 fn parse_single(raw: &str) -> Result<WikiLink, CommandError> {
@@ -907,6 +981,17 @@ mod tests {
         let mut g = LinkGraph::new();
         g.upsert("a.md", Some("[[foo/]]"));
         let err = g.create_target("a.md", "[[foo/]]").unwrap_err();
+        assert_eq!(err.code, "wikilink_invalid_path");
+    }
+
+    #[test]
+    fn create_target_rejects_escaping_from_paths() {
+        let g = LinkGraph::new();
+        for from in ["../a.md", "/tmp/a.md", "dir/../a.md"] {
+            let err = g.create_target(from, "[[new]]").unwrap_err();
+            assert_eq!(err.code, "wikilink_invalid_path", "from={from}");
+        }
+        let err = g.create_target("a.md", "[[../../new]]").unwrap_err();
         assert_eq!(err.code, "wikilink_invalid_path");
     }
 }
