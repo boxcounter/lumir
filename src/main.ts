@@ -8,7 +8,8 @@ import {
   threadList, threadCreate, threadUpdate, threadCurrent, threadSwitch,
   errorMessage,
   fsReadAttachment,
-  fsReadFile,
+  fsReadSnapshot,
+  documentSave,
   isCommandError,
   linkGraphResolve,
   onFsEntryChanged,
@@ -113,6 +114,15 @@ function toast(text: string, action?: { label: string; run(): void }): void {
 // 内核里完成（spec「模式配置来源」）。不支持的二进制 → 提示而非报错弹窗。
 let fileRequest = 0;
 let displayedPath: string | undefined;
+let displayedRevision: string | undefined;
+let documentGeneration = 0;
+let saveInFlight = false;
+
+function dirtyGuard(action: string): boolean {
+  if (!editor.isDirty()) return true;
+  toast(`当前 Markdown 有未保存修改，无法${action}`);
+  return false;
+}
 
 function emitReadiness(name: string, detail: object = {}): void {
   window.dispatchEvent(new CustomEvent(`lumir:${name}`, { detail }));
@@ -128,16 +138,21 @@ function syncThreadFile() {
   });
 }
 async function openFile(path: string, kind: "md" | "code" | "text" | "binary") {
+  if (!dirtyGuard("切换文件")) return;
   const request = ++fileRequest;
+  const generation = ++documentGeneration;
   if (kind !== "binary") showNotice(`正在打开：${path}`);
   if (kind === "binary") {
     showNotice(`暂不支持预览：${path}`);
     return;
   }
   try {
-    const text = await fsReadFile(path);
-    if (request !== fileRequest) return;
+    const snapshot = await fsReadSnapshot(path);
+    if (request !== fileRequest || generation !== documentGeneration || !dirtyGuard("切换文件")) return;
+    const text = snapshot.content;
+    const revision = kind === "md" ? snapshot.revision : undefined;
     displayedPath = path;
+    displayedRevision = revision;
     syncThreadFile();
     currentPath = kind === "md" ? path : undefined;
     mastheadFile.textContent = path;
@@ -150,6 +165,41 @@ async function openFile(path: string, kind: "md" | "code" | "text" | "binary") {
     showNotice(errorMessage(e));
   }
 }
+
+async function saveCurrentFile(): Promise<void> {
+  if (saveInFlight || !displayedPath || editor.mode() !== "md" || !editor.isDirty() || !displayedRevision) return;
+  const generation = documentGeneration;
+  const path = displayedPath;
+  const expectedRevision = displayedRevision;
+  const content = editor.view.state.doc.toString();
+  saveInFlight = true;
+  try {
+    const revision = await documentSave(path, expectedRevision, content);
+    if (generation !== documentGeneration || displayedPath !== path) return;
+    displayedRevision = revision;
+    if (editor.view.state.doc.toString() === content) {
+      editor.markClean();
+      toast("已保存");
+    } else {
+      toast("已保存当前快照，仍有未保存修改");
+    }
+  } catch (e) {
+    toast(errorMessage(e));
+  } finally { saveInFlight = false; }
+}
+
+window.addEventListener("keydown", (event) => {
+  if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "s") {
+    event.preventDefault();
+    void saveCurrentFile();
+  }
+});
+
+window.addEventListener("beforeunload", (event) => {
+  if (!editor.isDirty()) return;
+  event.preventDefault();
+  event.returnValue = "当前 Markdown 有未保存修改";
+});
 
 // ---------------------------------------------------------------------------
 // wikilink：解析缓存、跳转、一键创建（语义全部经 invoke 取 Rust link_graph 结果）
@@ -398,13 +448,16 @@ tree = createFileTree(shell.treeMount, {
 // 文件的 currentPath 会被当作新 vault 的 resolve/create from 基准，wikilink
 // 一键创建会把文件误建到新 vault 的同名相对路径下。
 function loadVault(root: string, entries: FsEntry[], vaultId = root, remapCandidates: Array<{ id: string; path: string }> = [], restored = false) {
+  if (!dirtyGuard("切换 vault")) return;
   vaultLoaded = true;
   emitReadiness("vault-ready", { root, vaultId, restored });
   currentVaultId = vaultId;
   if (remapCandidates.length) toast(`发现 ${remapCandidates.length} 个可映射的 vault 路径`);
   ++fileRequest;
+  ++documentGeneration;
   const request = ++threadRequest;
   displayedPath = undefined;
+  displayedRevision = undefined;
   sessionThreads.length = 0;
   selectedThreadId = undefined;
   refreshThreads();

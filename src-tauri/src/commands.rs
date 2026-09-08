@@ -38,6 +38,13 @@ use ts_rs::TS;
 
 use crate::config::{self, ConfigSnapshot};
 use crate::fs_io::{self, FsChange, FsEntry, FsEntryChangedEvent, VaultWatcher};
+
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export, export_to = "../../src/bindings/")]
+pub struct ReadSnapshot {
+    pub content: String,
+    pub revision: String,
+}
 use crate::link_graph::{self, CreateNoteResult, LinkGraph, LinkResolveResult};
 
 /// command 错误信封（serde 序列化，前端可直接展示 `message`）。
@@ -331,13 +338,12 @@ pub fn fs_scan_workspace(
     fs_io::scan_workspace(&state.root()?)
 }
 
-/// 读 vault 内文本文件（UTF-8）。
-#[tauri::command]
-pub fn fs_read_file(
-    state: tauri::State<'_, VaultState>,
-    path: &str,
-) -> Result<String, CommandError> {
-    fs_io::read_text_file(&state.root()?, path)
+/// 读 vault 内文本文件与绑定 revision 快照（UTF-8）。
+#[tauri::command(rename_all = "snake_case")]
+pub fn fs_read_snapshot(state: tauri::State<'_, VaultState>, path: &str) -> Result<ReadSnapshot, CommandError> {
+    let root = state.root()?;
+    let (content, revision) = fs_io::read_text_snapshot(&root, path)?;
+    Ok(ReadSnapshot { content, revision })
 }
 
 /// 读 vault 内二进制附件，返回 base64（裁决点 A：invoke + base64）。
@@ -347,6 +353,16 @@ pub fn fs_read_attachment(
     path: &str,
 ) -> Result<String, CommandError> {
     fs_io::read_attachment(&state.root()?, path)
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub fn fs_file_revision(state: tauri::State<'_, VaultState>, path: &str) -> Result<String, CommandError> {
+    fs_io::file_revision(&state.root()?, path)
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub fn document_save(state: tauri::State<'_, VaultState>, path: &str, expected_revision: &str, content: &str) -> Result<String, CommandError> {
+    fs_io::save_markdown(&state.root()?, path, expected_revision, content)
 }
 
 // ---------------------------------------------------------------------------
