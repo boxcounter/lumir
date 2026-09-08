@@ -73,7 +73,11 @@ function parseAlignment(source: string, separator: TableSlot, columns: number): 
   });
 }
 
+const modelCache = new WeakMap<object, { tree: object; tables: TableModel[] }>();
+
 export function findTables(source: string, tree: SyntaxTreeLike): TableModel[] {
+  const cached = modelCache.get(tree);
+  if (cached) return cached.tables;
   const tables: TableModel[] = [];
   tree.iterate({
     enter(ref) {
@@ -108,13 +112,36 @@ export function findTables(source: string, tree: SyntaxTreeLike): TableModel[] {
       return false;
     },
   });
+  modelCache.set(tree, { tree, tables });
   return tables;
 }
 
 export function tableAt(tables: readonly TableModel[], from: number, to = from): TableModel | undefined {
-  return tables.find((table) => from >= table.from && to <= table.to);
+  let low = 0;
+  let high = tables.length - 1;
+  while (low <= high) {
+    const mid = (low + high) >> 1;
+    const table = tables[mid];
+    if (from < table.from) high = mid - 1;
+    else if (from > table.to) low = mid + 1;
+    else return to <= table.to ? table : undefined;
+  }
+  return undefined;
+}
+
+export function tableRowsInRange(table: TableModel, from: number, to: number): TableRow[] {
+  let low = 0;
+  let high = table.rows.length;
+  while (low < high) {
+    const mid = (low + high) >> 1;
+    if (table.rows[mid].to < from) low = mid + 1;
+    else high = mid;
+  }
+  const start = low;
+  while (low < table.rows.length && table.rows[low].from <= to) low++;
+  return table.rows.slice(start, low);
 }
 
 export function tableLineAt(table: TableModel, from: number, to: number): TableRow | undefined {
-  return table.rows.find((row) => row.from <= to && row.to >= from);
+  return tableRowsInRange(table, from, to)[0];
 }

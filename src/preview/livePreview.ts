@@ -22,7 +22,7 @@ import type { AttachmentProvider } from "./attachments";
 import { findWikilinkSpans } from "./wikilinks";
 import type { LinkResolveResult } from "../bindings/LinkResolveResult";
 import { BlockWrapper } from "@codemirror/view";
-import { findTables, tableAt, type TableModel } from "./table";
+import { findTables, tableAt, tableRowsInRange, type TableModel } from "./table";
 
 /** 附件 provider 注入/变更时派发，强制重建装饰。 */
 export const previewRefresh = StateEffect.define<null>();
@@ -108,8 +108,14 @@ class EmptyTableCellWidget extends WidgetType {
   }
 }
 
+const tableMetadataCache = new WeakMap<EditorState, TableModel[]>();
+
 function tableModels(state: EditorState): TableModel[] {
-  return findTables(state.doc.toString(), syntaxTree(state));
+  const cached = tableMetadataCache.get(state);
+  if (cached) return cached;
+  const tables = findTables(state.doc.toString(), syntaxTree(state));
+  tableMetadataCache.set(state, tables);
+  return tables;
 }
 
 function tableWrappers(view: EditorView) {
@@ -148,6 +154,19 @@ export function livePreview(ctx: PreviewContext) {
     listDecorations,
     EditorView.blockWrappers.of(tableWrappers),
     EditorView.domEventHandlers({
+      focusin(event, view) {
+        const target = event.target;
+        if (!(target instanceof HTMLElement) || !target.matches(".cm-lp-table-scroll")) return false;
+        const selection = view.dom.ownerDocument.getSelection();
+        if (!selection?.anchorNode || !view.contentDOM.contains(selection.anchorNode)) {
+          view.focus();
+          const anchor = view.domAtPos(view.state.selection.main.anchor);
+          const head = view.domAtPos(view.state.selection.main.head);
+          selection?.setBaseAndExtent(anchor.node, anchor.offset, head.node, head.offset);
+          target.focus({ preventScroll: true });
+        }
+        return false;
+      },
       wheel(event) {
         const target = event.target instanceof Element ? event.target.closest<HTMLElement>(".cm-lp-table-scroll") : null;
         if (!target || !event.deltaX) return false;
@@ -228,8 +247,7 @@ function frontmatterSet(state: EditorState): DecorationSet {
 function collectTableDecorations(view: EditorView, tables: readonly TableModel[], from: number, to: number, decos: Range<Decoration>[]): void {
   for (const table of tables) {
     if (table.degraded || table.to < from || table.from > to) continue;
-    for (const row of table.rows) {
-      if (row.to < from || row.from > to) continue;
+    for (const row of tableRowsInRange(table, from, to)) {
       const line = view.state.doc.lineAt(row.from);
       decos.push(Decoration.line({ class: "cm-lp-table-row", attributes: { role: "row" } }).range(line.from));
       let cursor = line.from;
@@ -263,6 +281,11 @@ function buildDecorations(view: EditorView, ctx: PreviewContext): DecorationSet 
   const tables = tableModels(view.state);
 
   for (const vr of view.visibleRanges) {
+    for (const table of tables) {
+      if (!table.degraded || table.to < vr.from || table.from > vr.to) continue;
+      const line = view.state.doc.lineAt(table.from);
+      decos.push(Decoration.line({ class: "cm-lp-table-degraded", attributes: { "aria-label": "表格阅读降级，显示原始 Markdown" } }).range(line.from));
+    }
     collectTableDecorations(view, tables, vr.from, vr.to, decos);
     collectSyntaxDecorations(view, vr.from, vr.to, fm, ctx, decos, tables);
     collectWikilinks(view, vr.from, vr.to, fm, ctx, decos);

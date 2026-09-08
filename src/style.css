@@ -311,6 +311,7 @@ body { background:var(--bg); color:var(--text); font-family:var(--font-body); fo
 .cm-lp-table-scroll:focus-visible { outline: 2px solid var(--accent); }
 .cm-lp-table {
   display: grid;
+  grid-auto-rows: 0;
   grid-template-columns: repeat(var(--cm-lp-table-columns), minmax(max-content, 1fr));
   min-inline-size: max-content;
   border-block-start: 1px solid var(--bd-2);
@@ -336,3 +337,12 @@ body { background:var(--bg); color:var(--text); font-family:var(--font-body); fo
 .cm-lp-table-row:first-child .cm-lp-table-cell { font-weight: 700; background: var(--bg-2); }
 .cm-lp-table-cell-empty { min-block-size: 2em; }
 .cm-lp-table-separator { display: none; }
+.cm-lp-table-degraded {
+  color: var(--accent);
+  font-size: .82em;
+}
+.cm-lp-table-degraded::after {
+  content: "表格阅读降级：保留原始 Markdown";
+  display: block;
+  padding-block: 3px;
+}
