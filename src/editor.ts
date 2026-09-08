@@ -140,6 +140,16 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
   let cleanDoc = SAMPLE;
   const dirtyListeners = new Set<(dirty: boolean) => void>();
   let dirty = false;
+  let trustedTransaction = false;
+
+  function dispatchTrusted(spec: Parameters<EditorView["dispatch"]>[0]): void {
+    trustedTransaction = true;
+    try {
+      view.dispatch(spec);
+    } finally {
+      trustedTransaction = false;
+    }
+  }
 
   function updateDirty(next: boolean): void {
     if (dirty === next) return;
@@ -244,7 +254,7 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
       }),
       EditorView.theme({ ".cm-gutters-before": { border: "none" } }),
       modeCompartment.of(modeExtensions(initialMode)),
-      EditorState.changeFilter.of((tr) => tr.docChanged && currentMode !== "md" ? [] : true),
+      EditorState.changeFilter.of((tr) => tr.docChanged && currentMode !== "md" && !trustedTransaction ? [] : true),
       EditorView.updateListener.of((update) => {
         if (update.docChanged) updateDirty(update.state.doc.toString() !== cleanDoc);
       }),
@@ -277,7 +287,7 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
       const next = modeForPath(path, defaultMode);
       currentMode = next;
       cleanDoc = doc;
-      view.dispatch({
+      dispatchTrusted({
         changes: { from: 0, to: view.state.doc.length, insert: doc },
         effects: modeCompartment.reconfigure(modeExtensions(next)),
       });
@@ -294,7 +304,7 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
       readyRequestId = undefined;
       currentMode = defaultMode;
       cleanDoc = "";
-      view.dispatch({
+      dispatchTrusted({
         changes: { from: 0, to: view.state.doc.length, insert: "" },
         effects: modeCompartment.reconfigure(modeExtensions(defaultMode)),
       });
