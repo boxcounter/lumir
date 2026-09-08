@@ -268,8 +268,9 @@ function collectTableDecorations(view: EditorView, tables: readonly TableModel[]
           "aria-colindex": String(column + 1),
           style: `grid-column:${column + 1};text-align:${table.align[column] ?? "left"}`,
         };
-        if (slot.from === slot.to) {
-          decos.push(Decoration.widget({ widget: new EmptyTableCellWidget(column + 1, row.header, table.align[column] ?? "left"), side: 1 }).range(slot.from));
+        const empty = view.state.doc.sliceString(slot.from, slot.to).trim() === "";
+        if (empty) {
+          decos.push(Decoration.widget({ widget: new EmptyTableCellWidget(column + 1, row.header, table.align[column] ?? "left") }).range(slot.from, slot.to));
         } else {
           decos.push(Decoration.mark({ class: "cm-lp-table-cell", attributes: attrs }).range(slot.from, slot.to));
         }

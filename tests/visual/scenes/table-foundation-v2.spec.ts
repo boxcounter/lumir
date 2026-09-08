@@ -13,6 +13,13 @@ test("表格可见行、降级边界、AX、滚动和源码复制", async ({ pag
   await expect(page.locator(".cm-lp-table-scroll")).toHaveCount(1);
   await expect(page.locator(".cm-lp-table-cell")).toContainText(["Name", "alpha"]);
   await expect(page.locator(".cm-lp-table-cell-empty")).toHaveCount(1);
+  const emptyCell = await page.locator(".cm-lp-table-cell-empty").evaluate((cell) => {
+    const rect = cell.getBoundingClientRect();
+    return { width: rect.width, height: rect.height, text: cell.textContent };
+  });
+  expect(emptyCell.width).toBeGreaterThan(0);
+  expect(emptyCell.height).toBeGreaterThan(0);
+  expect(emptyCell.text).toBe("");
   const geometry = await page.locator(".cm-lp-table-row").evaluateAll((rows) => rows.map((row) => {
     const rect = row.getBoundingClientRect();
     return { top: rect.top, bottom: rect.bottom, height: rect.height };
