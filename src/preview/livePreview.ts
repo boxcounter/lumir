@@ -120,7 +120,7 @@ function tableModels(state: EditorState): TableModel[] {
 
 function tableWrappers(view: EditorView) {
   const wrappers = tableModels(view.state)
-    .filter((table) => !table.degraded)
+    .filter((table) => table.rectangular && !table.degraded)
     .flatMap((table, index) => {
       const start = view.state.doc.lineAt(table.from).from;
       const label = `Markdown 表格 ${index + 1}`;

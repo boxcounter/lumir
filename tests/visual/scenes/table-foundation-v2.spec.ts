@@ -13,10 +13,17 @@ test("表格可见行、降级边界、AX、滚动和源码复制", async ({ pag
   await expect(page.locator(".cm-lp-table-scroll")).toHaveCount(1);
   await expect(page.locator(".cm-lp-table-cell")).toContainText(["Name", "alpha"]);
   await expect(page.locator(".cm-lp-table-cell-empty")).toHaveCount(1);
+  const geometry = await page.locator(".cm-lp-table-row").evaluateAll((rows) => rows.map((row) => {
+    const rect = row.getBoundingClientRect();
+    return { top: rect.top, bottom: rect.bottom, height: rect.height };
+  }));
+  expect(geometry.every((row) => row.height > 0)).toBeTruthy();
+  for (let i = 1; i < geometry.length; i++) expect(geometry[i].top).toBeGreaterThanOrEqual(geometry[i - 1].bottom - 1);
   await expect(page.locator(".cm-lp-table-scroll")).toHaveAttribute("role", "region");
   await expect(page.locator(".cm-lp-table")).toHaveAttribute("role", "table");
   await expect(page.locator(".cm-lp-table-cell[role=columnheader]")).toHaveCount(3);
   await expect(page.locator(".cm-lp-table-degraded")).toHaveCount(1);
+  await expect(page.locator(".cm-lp-table-degraded")).toContainText("表格阅读降级：保留原始 Markdown");
   expect(await readDocument(page)).toBe(fixture);
   await page.locator(".cm-lp-table-scroll").focus();
   await page.keyboard.press("End");
