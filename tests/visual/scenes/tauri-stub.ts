@@ -33,7 +33,7 @@ export async function stubTauri(page: Page, vault: VaultFixture | null): Promise
     //（与真后端 open_vault 的替换语义对齐）。
     let current = v;
 
-    type Args = { path?: string; from?: string; link?: string; id?: string; title?: string; vault_id?: string; thread?: import("../../../src/bindings/Thread").Thread };
+    type Args = { path?: string; from?: string; link?: string; id?: string; title?: string; vault_id?: string; expected_revision?: string; content?: string; thread?: import("../../../src/bindings/Thread").Thread };
     const checkVault = (args: Args) => {
       if (args.vault_id !== (current?.vault_id ?? "fixture-vault")) throw { code: "fixture_contract", message: "vault_id mismatch" };
     };
@@ -75,12 +75,20 @@ export async function stubTauri(page: Page, vault: VaultFixture | null): Promise
         current = target;
         return { root: target.root, entries: target.entries, vault_id: target.vault_id ?? "fixture-vault", remap_candidates: [] };
       },
-      fs_read_file: (args) => {
+      fs_read_snapshot: (args) => {
         const text = current?.files?.[args.path ?? ""];
-        if (text === undefined) {
-          throw { code: "fs_not_found", message: `文件不存在：${args.path}` };
-        }
-        return text;
+        if (text === undefined) throw { code: "fs_not_found", message: `文件不存在：${args.path}` };
+        return { content: text, revision: `fixture-revision-${text}` };
+      },
+      document_save: (args) => {
+        const path = args.path ?? "";
+        const currentText = current?.files?.[path];
+        if (currentText === undefined) throw { code: "fs_not_found", message: `文件不存在：${path}` };
+        const revision = `fixture-revision-${currentText}`;
+        if (args.expected_revision !== revision) throw { code: "document_conflict", message: "文件已被外部修改，请先协调冲突" };
+        if (current?.failures?.document_save) throw current.failures.document_save;
+        current!.files![path] = args.content ?? "";
+        return `fixture-revision-${args.content ?? ""}`;
       },
       // link graph 桩：语义由场景 fixture 注入（前端不复制解析语义，
       // 桩也只查表不计算）；未收录的链接按 unresolved 应答。
