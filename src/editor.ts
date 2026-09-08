@@ -1,4 +1,4 @@
-import { Compartment, EditorState } from "@codemirror/state";
+import { Annotation, Compartment, EditorState } from "@codemirror/state";
 import type { Extension } from "@codemirror/state";
 import { EditorView, lineNumbers, highlightActiveLine } from "@codemirror/view";
 import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
@@ -140,15 +140,10 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
   let cleanDoc = SAMPLE;
   const dirtyListeners = new Set<(dirty: boolean) => void>();
   let dirty = false;
-  let trustedTransaction = false;
+  const trustedLoad = Annotation.define<boolean>();
 
   function dispatchTrusted(spec: Parameters<EditorView["dispatch"]>[0]): void {
-    trustedTransaction = true;
-    try {
-      view.dispatch(spec);
-    } finally {
-      trustedTransaction = false;
-    }
+    view.dispatch({ ...spec, annotations: [trustedLoad.of(true)] });
   }
 
   function updateDirty(next: boolean): void {
@@ -254,7 +249,7 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
       }),
       EditorView.theme({ ".cm-gutters-before": { border: "none" } }),
       modeCompartment.of(modeExtensions(initialMode)),
-      EditorState.changeFilter.of((tr) => tr.docChanged && currentMode !== "md" && !trustedTransaction ? [] : true),
+      EditorState.changeFilter.of((tr) => tr.docChanged && currentMode !== "md" && !tr.annotation(trustedLoad) ? [] : true),
       EditorView.updateListener.of((update) => {
         if (update.docChanged) updateDirty(update.state.doc.toString() !== cleanDoc);
       }),
