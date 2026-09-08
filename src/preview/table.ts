@@ -52,8 +52,9 @@ function readSource(source: SourceReader, from: number, to: number): string {
 function slotsForRow(row: { from: number; to: number; firstChild: any }, source: SourceReader): TableSlot[] | null {
   const delimiters = children(row).filter((child) => child.name === "TableDelimiter");
   const boundaries = [row.from, ...delimiters.flatMap((delimiter) => [delimiter.from, delimiter.to]), row.to];
-  const hasLeadingPipe = readSource(source, row.from, delimiters[0]?.from ?? row.to).trimStart().startsWith("|");
-  const hasTrailingPipe = readSource(source, delimiters.at(-1)?.to ?? row.from, row.to).trimEnd().endsWith("|");
+  const rowSource = readSource(source, row.from, row.to);
+  const hasLeadingPipe = rowSource.trimStart().startsWith("|");
+  const hasTrailingPipe = rowSource.trimEnd().endsWith("|");
   const slots: TableSlot[] = [];
   for (let i = 0; i < boundaries.length - 1; i += 2) {
     const from = boundaries[i] ?? 0;
