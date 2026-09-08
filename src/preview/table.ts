@@ -7,7 +7,7 @@ interface SyntaxNodeLike {
 }
 
 interface SyntaxTreeLike {
-  iterate(spec: { enter(ref: { name: string; from: number; to: number; node: SyntaxNodeLike }): boolean | void }): void;
+  iterate(spec: { from?: number; to?: number; enter(ref: { name: string; from: number; to: number; node: SyntaxNodeLike }): boolean | void }): void;
 }
 
 export type TableAlignment = "left" | "center" | "right";
@@ -43,11 +43,17 @@ function children(node: { firstChild: { name: string; from: number; to: number; 
   return result;
 }
 
-function slotsForRow(row: { from: number; to: number; firstChild: any }, source: string): TableSlot[] | null {
+type SourceReader = string | ((from: number, to: number) => string);
+
+function readSource(source: SourceReader, from: number, to: number): string {
+  return typeof source === "string" ? source.slice(from, to) : source(from, to);
+}
+
+function slotsForRow(row: { from: number; to: number; firstChild: any }, source: SourceReader): TableSlot[] | null {
   const delimiters = children(row).filter((child) => child.name === "TableDelimiter");
   const boundaries = [row.from, ...delimiters.flatMap((delimiter) => [delimiter.from, delimiter.to]), row.to];
-  const hasLeadingPipe = source.slice(row.from, delimiters[0]?.from ?? row.to).trimStart().startsWith("|");
-  const hasTrailingPipe = source.slice(delimiters.at(-1)?.to ?? row.from, row.to).trimEnd().endsWith("|");
+  const hasLeadingPipe = readSource(source, row.from, delimiters[0]?.from ?? row.to).trimStart().startsWith("|");
+  const hasTrailingPipe = readSource(source, delimiters.at(-1)?.to ?? row.from, row.to).trimEnd().endsWith("|");
   const slots: TableSlot[] = [];
   for (let i = 0; i < boundaries.length - 1; i += 2) {
     const from = boundaries[i] ?? 0;
@@ -59,9 +65,9 @@ function slotsForRow(row: { from: number; to: number; firstChild: any }, source:
   return slots;
 }
 
-function parseAlignment(source: string, separator: TableSlot, columns: number): TableAlignment[] | null {
+function parseAlignment(source: SourceReader, separator: TableSlot, columns: number): TableAlignment[] | null {
   if (!separator.to || separator.from >= separator.to) return null;
-  const line = source.slice(separator.from, separator.to);
+  const line = readSource(source, separator.from, separator.to);
   const cells = line.replace(/^\s*\|/, "").replace(/\|\s*$/, "").split("|");
   if (cells.length !== columns) return null;
   return cells.map((cell): TableAlignment => {
@@ -73,15 +79,13 @@ function parseAlignment(source: string, separator: TableSlot, columns: number): 
   });
 }
 
-const modelCache = new WeakMap<object, { tree: object; tables: TableModel[] }>();
-
-export function findTables(source: string, tree: SyntaxTreeLike): TableModel[] {
-  const cached = modelCache.get(tree);
-  if (cached) return cached.tables;
+export function findTables(source: SourceReader, sourceLength: number, tree: SyntaxTreeLike, from = 0, to = sourceLength): TableModel[] {
   const tables: TableModel[] = [];
   tree.iterate({
+    from,
+    to,
     enter(ref) {
-      if (ref.name !== "Table") return;
+      if (ref.name !== "Table" || ref.to < from || ref.from > to) return;
       const tableNode = ref.node;
       const rows: TableRow[] = [];
       let separator: TableSlot = { from: 0, to: 0 };
@@ -94,9 +98,11 @@ export function findTables(source: string, tree: SyntaxTreeLike): TableModel[] {
       const columns = rows[0]?.slots.length ?? 0;
       const align = parseAlignment(source, separator, columns);
       const complete = separator.to > separator.from && rows.length >= 1 && align !== null && rows.every((row) => row.slots.length === columns);
-      const sourceBytes = new TextEncoder().encode(source.slice(ref.from, ref.to)).byteLength;
+      const sourceBytes = ref.from >= from && ref.to <= to && ref.to - ref.from <= 64 * 1024
+        ? new TextEncoder().encode(readSource(source, ref.from, ref.to)).byteLength
+        : 0;
       const rectangular = columns > 0 && complete;
-      const reason = !complete ? "non-rectangular" : sourceBytes > 64 * 1024 ? "oversize" : undefined;
+      const reason = !complete ? "non-rectangular" : ref.to - ref.from > 64 * 1024 || sourceBytes > 64 * 1024 ? "oversize" : undefined;
       tables.push({
         from: ref.from,
         to: ref.to,
@@ -112,7 +118,6 @@ export function findTables(source: string, tree: SyntaxTreeLike): TableModel[] {
       return false;
     },
   });
-  modelCache.set(tree, { tree, tables });
   return tables;
 }
 

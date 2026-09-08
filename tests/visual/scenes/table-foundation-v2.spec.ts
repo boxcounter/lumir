@@ -35,12 +35,23 @@ test("表格可见行、降级边界、AX、滚动和源码复制", async ({ pag
   expect(await readDocument(page)).toBe(fixture);
 });
 
-test("超长表不全量物化可见表格行", async ({ page }) => {
+test("超长表安全源码降级且不全量物化可见表格行", async ({ page }) => {
   const source = `| key | value |\n| --- | --- |\n${Array.from({ length: 8000 }, (_, i) => `| row-${i} | ${"x".repeat(12)} |`).join("\n")}\n`;
   await stubTauri(page, { entries: [{ path: "long.md", kind: "file", size: source.length, mtime_ms: 0 }], files: { "long.md": source } });
   await page.goto("/");
   await page.locator('.ft-row[title="long.md"]').click();
   await expect(page.locator(".cm-lp-table-scroll")).toHaveCount(0);
   await expect(page.locator(".cm-content")).toContainText("row-0");
+  expect(await page.locator(".cm-line").count()).toBeLessThan(300);
+  expect(await readDocument(page)).toBe(source);
+});
+
+test("代码块边界不触发表格增强", async ({ page }) => {
+  const source = "```md\\n| code | source |\\n| --- | --- |\\n| one | two |\\n```\\n\\n| real | table |\\n| --- | --- |\\n| one | two |\\n";
+  await stubTauri(page, { entries: [{ path: "boundary.md", kind: "file", size: source.length, mtime_ms: 0 }], files: { "boundary.md": source } });
+  await page.goto("/");
+  await page.locator('.ft-row[title="boundary.md"]').click();
+  await expect(page.locator(".cm-lp-table-scroll")).toHaveCount(1);
+  await expect(page.locator(".cm-content")).toContainText("| code | source |");
   expect(await readDocument(page)).toBe(source);
 });

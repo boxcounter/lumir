@@ -108,18 +108,28 @@ class EmptyTableCellWidget extends WidgetType {
   }
 }
 
-const tableMetadataCache = new WeakMap<EditorState, TableModel[]>();
+const tableMetadataCache = new WeakMap<EditorState, Map<string, TableModel[]>>();
 
-function tableModels(state: EditorState): TableModel[] {
-  const cached = tableMetadataCache.get(state);
+function tableModels(state: EditorState, from: number, to: number): TableModel[] {
+  let ranges = tableMetadataCache.get(state);
+  if (!ranges) {
+    ranges = new Map();
+    tableMetadataCache.set(state, ranges);
+  }
+  const key = `${from}:${to}`;
+  const cached = ranges.get(key);
   if (cached) return cached;
-  const tables = findTables(state.doc.toString(), syntaxTree(state));
-  tableMetadataCache.set(state, tables);
+  const doc = state.doc;
+  const tables = findTables((start, end) => doc.sliceString(start, end), doc.length, syntaxTree(state), from, to);
+  ranges.set(key, tables);
   return tables;
 }
 
 function tableWrappers(view: EditorView) {
-  const wrappers = tableModels(view.state)
+  const margin = Math.max(view.state.doc.lineAt(view.viewport.from).length * 2, 2048);
+  const from = Math.max(0, view.viewport.from - margin);
+  const to = Math.min(view.state.doc.length, view.viewport.to + margin);
+  const wrappers = tableModels(view.state, from, to)
     .filter((table) => table.rectangular && !table.degraded)
     .flatMap((table, index) => {
       const start = view.state.doc.lineAt(table.from).from;
@@ -278,7 +288,7 @@ function collectTableDecorations(view: EditorView, tables: readonly TableModel[]
 function buildDecorations(view: EditorView, ctx: PreviewContext): DecorationSet {
   const decos: Range<Decoration>[] = [];
   const fm = detectFrontmatter(view.state.doc);
-  const tables = tableModels(view.state);
+  const tables = tableModels(view.state, view.viewport.from, view.viewport.to);
 
   for (const vr of view.visibleRanges) {
     for (const table of tables) {
