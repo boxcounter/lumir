@@ -101,6 +101,9 @@ export interface EditorHandle {
   refreshPreview(): void;
   /** 滚动定位到 1-based 行号并把光标移到行首（wikilink 锚点跳转用）。 */
   revealLine(line: number): void;
+  isDirty(): boolean;
+  markClean(): void;
+  onDirty(listener: (dirty: boolean) => void): () => void;
 }
 
 // 已知代码文件扩展 → code 模式。未列出的扩展按「无类型线索」回落配置默认。
@@ -134,6 +137,15 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
   let readyPath: string | undefined;
   let readyRequestId: number | undefined;
   let readySerial = 0;
+  let cleanDoc = SAMPLE;
+  const dirtyListeners = new Set<(dirty: boolean) => void>();
+  let dirty = false;
+
+  function updateDirty(next: boolean): void {
+    if (dirty === next) return;
+    dirty = next;
+    dirtyListeners.forEach((listener) => listener(dirty));
+  }
 
   function emitReady(phase: EditorReadyPhase): void {
     const event: EditorReadyEvent = {
@@ -232,7 +244,10 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
       }),
       EditorView.theme({ ".cm-gutters-before": { border: "none" } }),
       modeCompartment.of(modeExtensions(initialMode)),
-      EditorState.readOnly.of(true),
+      EditorState.changeFilter.of((tr) => tr.docChanged && currentMode !== "md" ? [] : true),
+      EditorView.updateListener.of((update) => {
+        if (update.docChanged) updateDirty(update.state.doc.toString() !== cleanDoc);
+      }),
       EditorView.editable.of(true),
       EditorView.lineWrapping,
     ],
@@ -261,10 +276,12 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
       const serial = ++readySerial;
       const next = modeForPath(path, defaultMode);
       currentMode = next;
+      cleanDoc = doc;
       view.dispatch({
         changes: { from: 0, to: view.state.doc.length, insert: doc },
         effects: modeCompartment.reconfigure(modeExtensions(next)),
       });
+      updateDirty(false);
       emitReady("source-ready");
       emitReady("decoration-ready");
       emitReady("frontmatter-ready");
@@ -276,11 +293,16 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
       readyPath = undefined;
       readyRequestId = undefined;
       currentMode = defaultMode;
+      cleanDoc = "";
       view.dispatch({
         changes: { from: 0, to: view.state.doc.length, insert: "" },
         effects: modeCompartment.reconfigure(modeExtensions(defaultMode)),
       });
+      updateDirty(false);
     },
+    isDirty: () => dirty,
+    markClean() { cleanDoc = view.state.doc.toString(); updateDirty(false); },
+    onDirty(listener) { dirtyListeners.add(listener); return () => dirtyListeners.delete(listener); },
     setAttachmentProvider(next: AttachmentProvider) {
       provider = next;
       // doc/viewport 均未变化，派发专用 effect 强制装饰层重建。

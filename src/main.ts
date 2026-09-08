@@ -9,6 +9,8 @@ import {
   errorMessage,
   fsReadAttachment,
   fsReadFile,
+  fsFileRevision,
+  documentSave,
   isCommandError,
   linkGraphResolve,
   onFsEntryChanged,
@@ -113,6 +115,8 @@ function toast(text: string, action?: { label: string; run(): void }): void {
 // 内核里完成（spec「模式配置来源」）。不支持的二进制 → 提示而非报错弹窗。
 let fileRequest = 0;
 let displayedPath: string | undefined;
+let displayedRevision: string | undefined;
+let saveInFlight = false;
 
 function emitReadiness(name: string, detail: object = {}): void {
   window.dispatchEvent(new CustomEvent(`lumir:${name}`, { detail }));
@@ -138,6 +142,7 @@ async function openFile(path: string, kind: "md" | "code" | "text" | "binary") {
     const text = await fsReadFile(path);
     if (request !== fileRequest) return;
     displayedPath = path;
+    displayedRevision = kind === "md" ? await fsFileRevision(path) : undefined;
     syncThreadFile();
     currentPath = kind === "md" ? path : undefined;
     mastheadFile.textContent = path;
@@ -150,6 +155,26 @@ async function openFile(path: string, kind: "md" | "code" | "text" | "binary") {
     showNotice(errorMessage(e));
   }
 }
+
+async function saveCurrentFile(): Promise<void> {
+  if (saveInFlight || !displayedPath || editor.mode() !== "md" || !editor.isDirty() || !displayedRevision) return;
+  saveInFlight = true;
+  try {
+    const revision = await documentSave(displayedPath, displayedRevision, editor.view.state.doc.toString());
+    displayedRevision = revision;
+    editor.markClean();
+    toast("已保存");
+  } catch (e) {
+    toast(errorMessage(e));
+  } finally { saveInFlight = false; }
+}
+
+window.addEventListener("keydown", (event) => {
+  if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "s") {
+    event.preventDefault();
+    void saveCurrentFile();
+  }
+});
 
 // ---------------------------------------------------------------------------
 // wikilink：解析缓存、跳转、一键创建（语义全部经 invoke 取 Rust link_graph 结果）

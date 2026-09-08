@@ -56,6 +56,14 @@ export function fsReadFile(path: string): Promise<string> {
   return invoke<string>("fs_read_file", { path });
 }
 
+export function fsFileRevision(path: string): Promise<string> {
+  return invoke<string>("fs_file_revision", { path });
+}
+
+export function documentSave(path: string, expected_revision: string, content: string): Promise<string> {
+  return invoke<string>("document_save", { path, expected_revision, content });
+}
+
 /** 读 vault 内二进制附件，返回 base64（裁决点 A：invoke + base64）。 */
 export function fsReadAttachment(path: string): Promise<string> {
   return invoke<string>("fs_read_attachment", { path });

@@ -5,7 +5,7 @@
 //! 类型——watch 以 `impl Fn(Vec<FsChange>)` 回调交付纯数据，由 commands 层
 //! 决定如何 emit 成 `fs:entry_changed` 事件。
 //!
-//! 本 change 为只读（M1 出口是只读浏览）：不写文件、不改名、不删除。
+//! Markdown 文档保存使用同目录临时文件替换目标；其它文件仍只读。
 
 use notify::{EventKind, RecursiveMode, Watcher};
 use serde::Serialize;
@@ -257,6 +257,42 @@ pub fn read_text_file(root: &Path, rel: &str) -> Result<String, CommandError> {
             format!("文件 {rel} 不是合法 UTF-8 编码（可能是 GBK 等其他编码），暂不支持读取"),
         )
     })
+}
+
+pub fn file_revision(root: &Path, rel: &str) -> Result<String, CommandError> {
+    use sha2::{Digest, Sha256};
+    let bytes = read_file_bytes(root, rel, ATTACHMENT_MAX_BYTES)?;
+    Ok(format!("{:x}", Sha256::digest(bytes)))
+}
+
+pub fn save_markdown(root: &Path, rel: &str, expected_revision: &str, content: &str) -> Result<String, CommandError> {
+    if !rel.to_ascii_lowercase().ends_with(".md") && !rel.to_ascii_lowercase().ends_with(".markdown") {
+        return Err(CommandError::new("fs_read_only", "仅支持保存 Markdown 文件"));
+    }
+    let target = resolve_in_vault(root, rel)?;
+    let actual = file_revision(root, rel)?;
+    if actual != expected_revision {
+        return Err(CommandError::new("document_conflict", "文件已被外部修改，请先协调冲突"));
+    }
+    let parent = target.parent().ok_or_else(|| CommandError::new("fs_path_invalid", "目标目录无效"))?;
+    let name = target.file_name().and_then(|n| n.to_str()).unwrap_or("document.md");
+    let tmp = parent.join(format!(".{name}.lumir-{}", std::process::id()));
+    let mut file = match std::fs::OpenOptions::new().write(true).create_new(true).open(&tmp) {
+        Ok(file) => file,
+        Err(e) => return Err(CommandError::new("document_write_failed", format!("无法创建临时文件：{e}"))),
+    };
+    use std::io::Write;
+    if let Err(e) = file.write_all(content.as_bytes()) {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(CommandError::new("document_write_failed", format!("无法写入文档：{e}")));
+    }
+    if let Err(e) = file.sync_all() {
+        return Err(CommandError::new("document_write_unknown", format!("文档写入结果未知：{e}")));
+    }
+    if let Err(e) = std::fs::rename(&tmp, &target) {
+        return Err(CommandError::new("document_write_unknown", format!("文档替换结果未知：{e}")));
+    }
+    file_revision(root, rel)
 }
 
 /// 读二进制附件：返回 base64（裁决点 A：invoke + base64 形态）。
@@ -747,6 +783,19 @@ mod tests {
         paths.sort_unstable();
         paths.dedup();
         assert_eq!(before, paths.len(), "batch: {batch:?}");
+    }
+
+    #[test]
+    fn markdown_save_checks_revision_and_replaces_atomically() {
+        let v = TempVault::with_fixture();
+        let revision = file_revision(&v.0, "note.md").unwrap();
+        let next = save_markdown(&v.0, "note.md", &revision, "# changed").unwrap();
+        assert_ne!(revision, next);
+        assert_eq!(read_text_file(&v.0, "note.md").unwrap(), "# changed");
+        let err = save_markdown(&v.0, "note.md", &revision, "stale").unwrap_err();
+        assert_eq!(err.code, "document_conflict");
+        let err = save_markdown(&v.0, "main.rs", &next, "nope").unwrap_err();
+        assert_eq!(err.code, "fs_read_only");
     }
 
     #[test]

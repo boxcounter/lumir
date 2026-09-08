@@ -349,6 +349,16 @@ pub fn fs_read_attachment(
     fs_io::read_attachment(&state.root()?, path)
 }
 
+#[tauri::command(rename_all = "snake_case")]
+pub fn fs_file_revision(state: tauri::State<'_, VaultState>, path: &str) -> Result<String, CommandError> {
+    fs_io::file_revision(&state.root()?, path)
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub fn document_save(state: tauri::State<'_, VaultState>, path: &str, expected_revision: &str, content: &str) -> Result<String, CommandError> {
+    fs_io::save_markdown(&state.root()?, path, expected_revision, content)
+}
+
 // ---------------------------------------------------------------------------
 // link graph / wikilink（add-wikilink）
 // ---------------------------------------------------------------------------
