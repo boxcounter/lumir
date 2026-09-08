@@ -265,6 +265,16 @@ pub fn file_revision(root: &Path, rel: &str) -> Result<String, CommandError> {
     Ok(format!("{:x}", Sha256::digest(bytes)))
 }
 
+pub fn read_text_snapshot(root: &Path, rel: &str) -> Result<(String, String), CommandError> {
+    use sha2::{Digest, Sha256};
+    let bytes = read_file_bytes(root, rel, ATTACHMENT_MAX_BYTES)?;
+    let revision = format!("{:x}", Sha256::digest(&bytes));
+    let content = String::from_utf8(bytes).map_err(|_| CommandError::new(
+        "fs_invalid_utf8", format!("文件 {rel} 不是合法 UTF-8 编码（可能是 GBK 等其他编码），暂不支持读取"),
+    ))?;
+    Ok((content, revision))
+}
+
 pub fn save_markdown(root: &Path, rel: &str, expected_revision: &str, content: &str) -> Result<String, CommandError> {
     if !rel.to_ascii_lowercase().ends_with(".md") && !rel.to_ascii_lowercase().ends_with(".markdown") {
         return Err(CommandError::new("fs_read_only", "仅支持保存 Markdown 文件"));

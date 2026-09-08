@@ -29,7 +29,7 @@ pub fn run() {
             commands::vault_open,
             commands::vault_current,
             commands::fs_scan_workspace,
-            commands::fs_read_file,
+            commands::fs_read_snapshot,
             commands::fs_read_attachment,
             commands::fs_file_revision,
             commands::document_save,

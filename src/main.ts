@@ -8,8 +8,7 @@ import {
   threadList, threadCreate, threadUpdate, threadCurrent, threadSwitch,
   errorMessage,
   fsReadAttachment,
-  fsReadFile,
-  fsFileRevision,
+  fsReadSnapshot,
   documentSave,
   isCommandError,
   linkGraphResolve,
@@ -148,10 +147,10 @@ async function openFile(path: string, kind: "md" | "code" | "text" | "binary") {
     return;
   }
   try {
-    const text = await fsReadFile(path);
-    if (request !== fileRequest) return;
-    const revision = kind === "md" ? await fsFileRevision(path) : undefined;
-    if (request !== fileRequest || generation !== documentGeneration) return;
+    const snapshot = await fsReadSnapshot(path);
+    if (request !== fileRequest || generation !== documentGeneration || !dirtyGuard("切换文件")) return;
+    const text = snapshot.content;
+    const revision = kind === "md" ? snapshot.revision : undefined;
     displayedPath = path;
     displayedRevision = revision;
     syncThreadFile();

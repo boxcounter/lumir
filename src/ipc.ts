@@ -5,6 +5,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import type { CommandError } from "./bindings/CommandError";
+import type { ReadSnapshot } from "./bindings/ReadSnapshot";
 import type { ConfigSnapshot } from "./bindings/ConfigSnapshot";
 import type { FsChange } from "./bindings/FsChange";
 import type { FsEntry } from "./bindings/FsEntry";
@@ -51,13 +52,9 @@ export function fsScanWorkspace(): Promise<FsEntry[]> {
   return invoke<FsEntry[]>("fs_scan_workspace");
 }
 
-/** 读 vault 内文本文件（UTF-8；非法编码 reject 人话 CommandError）。 */
-export function fsReadFile(path: string): Promise<string> {
-  return invoke<string>("fs_read_file", { path });
-}
-
-export function fsFileRevision(path: string): Promise<string> {
-  return invoke<string>("fs_file_revision", { path });
+/** 读 vault 内文本文件与绑定 revision 快照。 */
+export function fsReadSnapshot(path: string): Promise<ReadSnapshot> {
+  return invoke<ReadSnapshot>("fs_read_snapshot", { path });
 }
 
 export function documentSave(path: string, expected_revision: string, content: string): Promise<string> {
