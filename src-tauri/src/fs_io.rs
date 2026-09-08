@@ -287,12 +287,14 @@ pub fn save_markdown(root: &Path, rel: &str, expected_revision: &str, content: &
         return Err(CommandError::new("document_write_failed", format!("无法写入文档：{e}")));
     }
     if let Err(e) = file.sync_all() {
+        let _ = std::fs::remove_file(&tmp);
         return Err(CommandError::new("document_write_unknown", format!("文档写入结果未知：{e}")));
     }
     if let Err(e) = std::fs::rename(&tmp, &target) {
+        let _ = std::fs::remove_file(&tmp);
         return Err(CommandError::new("document_write_unknown", format!("文档替换结果未知：{e}")));
     }
-    file_revision(root, rel)
+    file_revision(root, rel).map_err(|e| CommandError::new("document_write_unknown", format!("文档替换后无法确认结果：{}", e.message)))
 }
 
 /// 读二进制附件：返回 base64（裁决点 A：invoke + base64 形态）。
