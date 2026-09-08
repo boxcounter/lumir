@@ -176,10 +176,14 @@ async function saveCurrentFile(): Promise<void> {
   saveInFlight = true;
   try {
     const revision = await documentSave(path, expectedRevision, content);
-    if (generation !== documentGeneration || displayedPath !== path || editor.view.state.doc.toString() !== content) return;
+    if (generation !== documentGeneration || displayedPath !== path) return;
     displayedRevision = revision;
-    editor.markClean();
-    toast("已保存");
+    if (editor.view.state.doc.toString() === content) {
+      editor.markClean();
+      toast("已保存");
+    } else {
+      toast("已保存当前快照，仍有未保存修改");
+    }
   } catch (e) {
     toast(errorMessage(e));
   } finally { saveInFlight = false; }
