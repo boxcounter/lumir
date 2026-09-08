@@ -21,6 +21,8 @@ import {
 import type { AttachmentProvider } from "./attachments";
 import { findWikilinkSpans } from "./wikilinks";
 import type { LinkResolveResult } from "../bindings/LinkResolveResult";
+import { BlockWrapper } from "@codemirror/view";
+import { findTables, tableAt, tableRowsInRange, type TableModel } from "./table";
 
 /** 附件 provider 注入/变更时派发，强制重建装饰。 */
 export const previewRefresh = StateEffect.define<null>();
@@ -86,11 +88,119 @@ class WikilinkWidget extends WidgetType {
   }
 }
 
+class EmptyTableCellWidget extends WidgetType {
+  constructor(readonly column: number, readonly header: boolean, readonly align: string) {
+    super();
+  }
+
+  eq(other: EmptyTableCellWidget): boolean {
+    return other.column === this.column && other.header === this.header && other.align === this.align;
+  }
+
+  toDOM(): HTMLElement {
+    const cell = document.createElement("span");
+    cell.className = "cm-lp-table-cell cm-lp-table-cell-empty";
+    cell.setAttribute("role", this.header ? "columnheader" : "cell");
+    cell.setAttribute("aria-colindex", String(this.column));
+    cell.setAttribute("aria-label", "空单元格");
+    cell.style.cssText = `grid-column:${this.column};text-align:${this.align}`;
+    return cell;
+  }
+}
+
+const tableMetadataCache = new WeakMap<EditorState, Map<string, TableModel[]>>();
+
+function tableModels(state: EditorState, from: number, to: number): TableModel[] {
+  let ranges = tableMetadataCache.get(state);
+  if (!ranges) {
+    ranges = new Map();
+    tableMetadataCache.set(state, ranges);
+  }
+  const key = `${from}:${to}`;
+  const cached = ranges.get(key);
+  if (cached) return cached;
+  const doc = state.doc;
+  const tables = findTables((start, end) => doc.sliceString(start, end), doc.length, syntaxTree(state), from, to);
+  ranges.set(key, tables);
+  return tables;
+}
+
+function tableWrappers(view: EditorView) {
+  const margin = Math.max(view.state.doc.lineAt(view.viewport.from).length * 2, 2048);
+  const from = Math.max(0, view.viewport.from - margin);
+  const to = Math.min(view.state.doc.length, view.viewport.to + margin);
+  const wrappers = tableModels(view.state, from, to)
+    .filter((table) => table.rectangular && !table.degraded)
+    .flatMap((table, index) => {
+      const start = view.state.doc.lineAt(table.from).from;
+      const label = `Markdown 表格 ${index + 1}`;
+      return [
+        BlockWrapper.create({
+          tagName: "div",
+          rank: 10,
+          attributes: { class: "cm-lp-table-scroll", role: "region", "aria-label": label, tabindex: "0" },
+        }).range(start, table.to),
+        BlockWrapper.create({
+          tagName: "div",
+          rank: 0,
+          attributes: {
+            class: "cm-lp-table",
+            role: "table",
+            "aria-label": label,
+            "aria-colcount": String(table.columns),
+            "aria-rowcount": String(table.rows.length),
+            style: `--cm-lp-table-columns:${table.columns}`,
+          },
+        }).range(start, table.to),
+      ];
+    });
+  return BlockWrapper.set(wrappers, true);
+}
+
 export function livePreview(ctx: PreviewContext) {
   return [
     livePreviewTheme,
     frontmatterDecorations,
     listDecorations,
+    EditorView.blockWrappers.of(tableWrappers),
+    EditorView.domEventHandlers({
+      focusin(event, view) {
+        const target = event.target;
+        if (!(target instanceof HTMLElement) || !target.matches(".cm-lp-table-scroll")) return false;
+        const selection = view.dom.ownerDocument.getSelection();
+        if (!selection?.anchorNode || !view.contentDOM.contains(selection.anchorNode)) {
+          view.focus();
+          const anchor = view.domAtPos(view.state.selection.main.anchor);
+          const head = view.domAtPos(view.state.selection.main.head);
+          selection?.setBaseAndExtent(anchor.node, anchor.offset, head.node, head.offset);
+          target.focus({ preventScroll: true });
+        }
+        return false;
+      },
+      wheel(event) {
+        const target = event.target instanceof Element ? event.target.closest<HTMLElement>(".cm-lp-table-scroll") : null;
+        if (!target || !event.deltaX) return false;
+        target.scrollLeft += event.deltaX;
+        event.preventDefault();
+        return true;
+      },
+      keydown(event, view) {
+        const target = event.target;
+        if (!(target instanceof HTMLElement) || !target.matches(".cm-lp-table-scroll")) return false;
+        if (event.key === "Escape") {
+          view.focus();
+          event.preventDefault();
+          return true;
+        }
+        const movement = event.key === "ArrowRight" ? 120 : event.key === "ArrowLeft" ? -120 : null;
+        if (movement !== null || event.key === "Home" || event.key === "End") {
+          target.scrollLeft = event.key === "Home" ? 0 : event.key === "End" ? target.scrollWidth : target.scrollLeft + (movement ?? 0);
+          event.preventDefault();
+          return true;
+        }
+        return false;
+      },
+    }),
     ViewPlugin.fromClass(
       class {
         decorations: DecorationSet;
@@ -144,12 +254,51 @@ function frontmatterSet(state: EditorState): DecorationSet {
   ]);
 }
 
+function collectTableDecorations(view: EditorView, tables: readonly TableModel[], from: number, to: number, decos: Range<Decoration>[]): void {
+  for (const table of tables) {
+    if (table.degraded || table.to < from || table.from > to) continue;
+    for (const row of tableRowsInRange(table, from, to)) {
+      const line = view.state.doc.lineAt(row.from);
+      decos.push(Decoration.line({ class: "cm-lp-table-row", attributes: { role: "row" } }).range(line.from));
+      let cursor = line.from;
+      row.slots.forEach((slot, column) => {
+        if (cursor < slot.from) decos.push(Decoration.replace({}).range(cursor, slot.from));
+        const attrs = {
+          role: row.header ? "columnheader" : "cell",
+          "aria-colindex": String(column + 1),
+          style: `grid-column:${column + 1};text-align:${table.align[column] ?? "left"}`,
+        };
+        const empty = view.state.doc.sliceString(slot.from, slot.to).trim() === "";
+        if (empty) {
+          decos.push(Decoration.widget({ widget: new EmptyTableCellWidget(column + 1, row.header, table.align[column] ?? "left") }).range(slot.from, slot.to));
+        } else {
+          decos.push(Decoration.mark({ class: "cm-lp-table-cell", attributes: attrs }).range(slot.from, slot.to));
+        }
+        cursor = slot.to;
+      });
+      if (cursor < row.to) decos.push(Decoration.replace({}).range(cursor, row.to));
+    }
+    const separator = view.state.doc.lineAt(table.separator.from);
+    if (separator.to >= from && separator.from <= to) {
+      decos.push(Decoration.line({ class: "cm-lp-table-separator", attributes: { "aria-hidden": "true" } }).range(separator.from));
+      decos.push(Decoration.replace({}).range(separator.from, separator.to));
+    }
+  }
+}
+
 function buildDecorations(view: EditorView, ctx: PreviewContext): DecorationSet {
   const decos: Range<Decoration>[] = [];
   const fm = detectFrontmatter(view.state.doc);
+  const tables = tableModels(view.state, view.viewport.from, view.viewport.to);
 
   for (const vr of view.visibleRanges) {
-    collectSyntaxDecorations(view, vr.from, vr.to, fm, ctx, decos);
+    for (const table of tables) {
+      if (!table.degraded || table.to < vr.from || table.from > vr.to) continue;
+      const line = view.state.doc.lineAt(table.from);
+      decos.push(Decoration.line({ class: "cm-lp-table-degraded", attributes: { "aria-label": "表格阅读降级，显示原始 Markdown" } }).range(line.from));
+    }
+    collectTableDecorations(view, tables, vr.from, vr.to, decos);
+    collectSyntaxDecorations(view, vr.from, vr.to, fm, ctx, decos, tables);
     collectWikilinks(view, vr.from, vr.to, fm, ctx, decos);
     for (const { from } of lineRanges(view, vr.from, vr.to)) {
       const line = view.state.doc.lineAt(from);
@@ -206,6 +355,7 @@ function collectSyntaxDecorations(
   fm: FrontmatterBlock | null,
   ctx: PreviewContext,
   decos: Range<Decoration>[],
+  tables: readonly TableModel[] = [],
 ): void {
   const { doc } = view.state;
   syntaxTree(view.state).iterate({
@@ -213,6 +363,7 @@ function collectSyntaxDecorations(
     to: vrTo,
     enter(ref) {
       if (inFrontmatter(fm, ref.from, ref.to)) return false;
+      if (tableAt(tables, ref.from, ref.to)) return false;
       const name = ref.name;
 
       if (name === "Paragraph" && ref.node.parent?.name === "Document") {

@@ -297,3 +297,52 @@ body { background:var(--bg); color:var(--text); font-family:var(--font-body); fo
 .editor-notice[hidden] {
   display: none;
 }
+
+.cm-lp-table-scroll {
+  display: block;
+  max-inline-size: 100%;
+  overflow-x: auto;
+  overflow-y: visible;
+  overscroll-behavior-inline: contain;
+  scrollbar-gutter: stable;
+  outline-offset: 3px;
+  margin-block: 12px;
+}
+.cm-lp-table-scroll:focus-visible { outline: 2px solid var(--accent); }
+.cm-lp-table {
+  display: grid;
+  grid-auto-rows: minmax(2em, max-content);
+  grid-template-columns: repeat(var(--cm-lp-table-columns), minmax(max-content, 1fr));
+  min-inline-size: max-content;
+  border-block-start: 1px solid var(--bd-2);
+  border-inline-start: 1px solid var(--bd-2);
+  font-size: .92em;
+  line-height: 1.5;
+}
+.cm-lp-table-row {
+  display: grid;
+  grid-template-columns: subgrid;
+  grid-column: 1 / -1;
+  min-block-size: 2em;
+}
+.cm-lp-table-cell {
+  display: block;
+  min-inline-size: 7ch;
+  padding: 5px 8px;
+  border-inline-end: 1px solid var(--bd-2);
+  border-block-end: 1px solid var(--bd-2);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.cm-lp-table-row:first-child .cm-lp-table-cell { font-weight: 700; background: var(--bg-2); }
+.cm-lp-table-cell-empty { min-block-size: 2em; }
+.cm-lp-table-separator { display: none; }
+.cm-lp-table-degraded {
+  color: var(--accent);
+  font-size: .82em;
+}
+.cm-lp-table-degraded::after {
+  content: "表格阅读降级：保留原始 Markdown";
+  display: block;
+  padding-block: 3px;
+}
