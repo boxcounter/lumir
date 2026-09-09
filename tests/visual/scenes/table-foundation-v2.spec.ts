@@ -181,3 +181,68 @@ test("窄窗口下编辑器主内容仍为窗格的 80%", async ({ page }) => {
     expect(Math.abs(sizes.contentWidth - sizes.paneWidth * 0.8)).toBeLessThan(1);
   }
 });
+
+test("列宽贴合内容：短内容表不拉满主栏，长内容列有上限并折行", async ({ page }) => {
+  // 回归（M103）：修复前轨道为 minmax(max-content, 1fr)，块级 grid 默认填满
+  // 80% 主栏后 1fr 把剩余空间平分给每列——短内容表的列被拉得过宽。
+  const shortSource = `| 名称 | 状态 | 备注 |\n| --- | --- | --- |\n| alpha | 上线 | 短备注 |\n| beta | 开发中 | 正常备注 |\n`;
+  await stubTauri(page, { entries: [{ path: "short.md", kind: "file", size: shortSource.length, mtime_ms: 0 }], files: { "short.md": shortSource } });
+  await page.goto("/");
+  await page.locator('.ft-row[title="short.md"]').click();
+  await expect(page.locator(".cm-lp-table-scroll")).toHaveCount(1);
+  const short = await page.evaluate(() => {
+    const rect = (sel: string) => document.querySelector(sel)!.getBoundingClientRect();
+    const tracks = getComputedStyle(document.querySelector(".cm-lp-table")!).gridTemplateColumns.split(" ").map((v) => parseFloat(v));
+    return { tableWidth: rect(".cm-lp-table").width, contentWidth: rect(".cm-content").width, tracks };
+  });
+  expect(short.tracks).toHaveLength(3);
+  // 贴合内容：表格明显窄于主内容列，不被 1fr 拉满
+  expect(short.tableWidth).toBeLessThan(short.contentWidth * 0.6);
+  // 每列贴合自身内容：列宽互不相等（等宽是 1fr 平分的特征）
+  expect(Math.abs(short.tracks[0] - short.tracks[2])).toBeGreaterThan(1);
+
+  // 单列上限：超长单元格内容被封顶（40ch ≈ 353px）并折行，而不是把列撑到内容全宽
+  const longSource = `| 名称 | 状态 | 备注 |\n| --- | --- | --- |\n| alpha | 上线 | ${"长".repeat(120)} |\n`;
+  await stubTauri(page, { entries: [{ path: "long.md", kind: "file", size: longSource.length, mtime_ms: 0 }], files: { "long.md": longSource } });
+  await page.goto("/");
+  await page.locator('.ft-row[title="long.md"]').click();
+  await expect(page.locator(".cm-lp-table-scroll")).toHaveCount(1);
+  const long = await page.evaluate(() => {
+    const tracks = getComputedStyle(document.querySelector(".cm-lp-table")!).gridTemplateColumns.split(" ").map((v) => parseFloat(v));
+    const heights = [...document.querySelectorAll(".cm-lp-table-row:last-child .cm-lp-table-cell")].map((c) => c.getBoundingClientRect().height);
+    return { tracks, heights, tableWidth: document.querySelector(".cm-lp-table")!.getBoundingClientRect().width, contentWidth: document.querySelector(".cm-content")!.getBoundingClientRect().width };
+  });
+  expect(long.tracks).toHaveLength(3);
+  // 上限：任何一列不超过 40ch（约 353px，留 10% 余量吸收字体差异）
+  for (const track of long.tracks) expect(track).toBeLessThan(400);
+  // 折行生效：超长单元格变高而非变宽
+  expect(Math.max(...long.heights)).toBeGreaterThan(60);
+  // 封顶后表格整体仍可窄于主栏
+  expect(long.tableWidth).toBeLessThan(long.contentWidth);
+});
+
+test("表格 cell 内 inline code 与强调渲染 live preview 样式", async ({ page }) => {
+  // 回归（M103）：修复前 collectSyntaxDecorations 对表格子树整棵剪枝，
+  // cell 里的 `code` / **粗体** 没有任何装饰。
+  const source = `| 名称 | 说明 |\n| --- | --- |\n| alpha | 使用 \`npm run build\` 构建，**必须** 成功 |\n`;
+  await stubTauri(page, { entries: [{ path: "inline.md", kind: "file", size: source.length, mtime_ms: 0 }], files: { "inline.md": source } });
+  await page.goto("/");
+  await page.locator('.ft-row[title="inline.md"]').click();
+  await expect(page.locator(".cm-lp-table-scroll")).toHaveCount(1);
+  const code = page.locator(".cm-lp-table-cell .cm-lp-inline-code");
+  await expect(code).toHaveCount(1);
+  // 反引号保留在源码与渲染中（与表外 inline code 行为一致：只加样式不隐藏标记）
+  await expect(code).toHaveText("`npm run build`");
+  const codeStyle = await code.evaluate((el) => {
+    const cs = getComputedStyle(el);
+    return { fontFamily: cs.fontFamily, background: cs.backgroundColor };
+  });
+  expect(codeStyle.fontFamily).toContain("mono");
+  expect(codeStyle.background).not.toBe("rgba(0, 0, 0, 0)");
+  // 强调：加粗装饰生效且 ** 标记被隐藏
+  const strong = page.locator(".cm-lp-table-cell .cm-lp-strong");
+  await expect(strong).toHaveCount(1);
+  await expect(strong).toHaveText("必须");
+  expect(await page.locator(".cm-lp-table-cell").last().textContent()).not.toContain("**");
+  expect(await readDocument(page)).toBe(source);
+});
