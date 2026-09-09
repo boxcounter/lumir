@@ -13,17 +13,13 @@ for (const theme of ['light','dark','eink']) test(`最终长文短段只读 ${th
   const rect=await short.boundingBox();const nrect=await next.boundingBox();
   expect(nrect!.y).toBeGreaterThan(rect!.y);
   await page.locator('.cm-content').click();
-  expect(await copyFresh(page, `${theme}-before-cut`)).toBe(text);
-  await page.keyboard.press('Meta+x');
-  expect(await readDocument(page)).toBe(text);
-  expect(await copyFresh(page, `${theme}-after-cut`)).toBe(text);
-  await page.evaluate(()=>navigator.clipboard.writeText('INDEPENDENT_PASTE_PAYLOAD'));
-  await page.keyboard.press('Meta+v');
-  expect(await readDocument(page)).toBe(text);
-  expect(await copyFresh(page, `${theme}-after-paste`)).toBe(text);
-  await page.keyboard.type('NOT_WRITABLE');
-  expect(await readDocument(page)).toBe(text);
-  expect(await copyFresh(page, `${theme}-after-input`)).toBe(text);
+  expect(await copyFresh(page, `${theme}-before-edit`)).toBe(text);
+  // md 自本地保存契约（f80ef8b）起可编辑：输入按设计进文档（旧断言来自 M1 只读时代）。
+  // copyFresh 的全选先折叠到文末再输入，后续虚拟化断言仍依赖完整文档。
+  await page.keyboard.press('ArrowRight');
+  await page.keyboard.type('EDITED');
+  expect(await readDocument(page)).not.toBe(text);
+  expect(await readDocument(page)).toContain('第299段');
   await page.locator('.cm-scroller').evaluate(el=>el.scrollTop=el.scrollHeight);
   await assertReachable(lines.filter({hasText:'第299段'}), '.cm-scroller');
   await lines.filter({hasText:'第299段'}).click();

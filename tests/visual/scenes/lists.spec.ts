@@ -66,18 +66,68 @@ for (const theme of ['light', 'dark', 'eink']) {
       await page.locator('.cm-content').click();
       expect(await copyFresh(page, `lists-${theme}-${width}`)).toBe(source);
       expect(await readDocument(page)).toBe(source);
-      for (const key of ['a', 'Backspace', 'Delete', 'Meta+x']) {
-        await page.keyboard.press(key);
-        expect(await readDocument(page)).toBe(source);
-      }
-      await page.evaluate(() => navigator.clipboard.writeText('paste-attempt'));
-      await page.keyboard.press('Meta+v');
-      expect(await readDocument(page)).toBe(source);
+      // task marker 是渲染 widget：点击不得改写文档。
       await page.locator('.cm-lp-task-marker').first().click();
       expect(await readDocument(page)).toBe(source);
+      // md 自本地保存契约（f80ef8b）起可编辑：键盘输入按设计进文档，列表装饰
+      // 不得拦截编辑。旧断言来自 M1 只读时代，与已落地的可编辑+保存特性冲突，
+      // 此处按现行特性修正（否则这六个主题×宽度组合全部失败）。
+      await page.keyboard.type('a');
+      expect(await readDocument(page)).not.toBe(source);
     });
   }
 }
+
+test('输入时既有列表装饰不重建：列表文字不左右抖动', async ({ page }) => {
+  await open(page);
+  // 观测：列表 marker 装饰一旦掉落就计数。旧实现每次击键清空组缓存，装饰整体
+  // 消失 ≥16ms 再补回，列表文字随之左右抖动（桌面验收缺陷）；修复后编辑只触发
+  // 后台重扫，装饰始终在位。
+  await page.evaluate(() => {
+    (window as unknown as { listDecorDrops: number }).listDecorDrops = 0;
+    let present = document.querySelector('.cm-lp-list-marker') !== null;
+    new MutationObserver(() => {
+      const now = document.querySelector('.cm-lp-list-marker') !== null;
+      if (present && !now) (window as unknown as { listDecorDrops: number }).listDecorDrops += 1;
+      present = now;
+    }).observe(document.querySelector('.cm-content')!, { childList: true, subtree: true });
+  });
+  // 桌面验收原始场景：在列表上方的标题行输入，下方列表不得抖动。
+  await page.locator('.cm-line').filter({ hasText: '列表' }).first().click();
+  await page.keyboard.press('End');
+  await page.keyboard.type('typed', { delay: 40 });
+  await page.waitForTimeout(120);
+  expect(await page.evaluate(() => (window as unknown as { listDecorDrops: number }).listDecorDrops)).toBe(0);
+  await expect(page.locator('.cm-lp-list-marker').first()).toBeVisible();
+  // 输入正常进文档，且列表对齐未被输入破坏。
+  expect(await readDocument(page)).toContain('typed');
+  const alpha = await geometry(page, 'Alpha ordinary');
+  const beta = await geometry(page, 'Beta pending');
+  expect(Math.abs(alpha.rects[0].x - beta.rects[0].x)).toBeLessThanOrEqual(1);
+});
+
+test('嵌套列表：祖先组宽度变化后子组跟随重对齐', async ({ page, context }) => {
+  await context.grantPermissions(['clipboard-read', 'clipboard-write']);
+  const text = '1. Alpha\n2. Parent\n   1. Child one\n   2. Child two\n';
+  await open(page, text);
+  const before = await geometry(page, 'Child one');
+  // 粘贴是单次 docChanged（Enter 会触发列表自动续标、击键会逐键产生后续
+  // 编辑而自愈，都不能用）：顶层列表追加 "10." 项，组 max width +1 unit，
+  // 之后不再有编辑。旧实现子组重扫按祖先 stale cached body 登记 indent，
+  // 祖先 publish 新 body 后子组错位 ~1 unit 滞留到下一击键（r1 review
+  // P2-1）；修复后祖先 stale 视为未就绪，子组下轮 build 拿到新 body 自行
+  // 右移 1 unit。
+  await page.locator('.cm-line').filter({ hasText: 'Child two' }).click();
+  await page.keyboard.press('End');
+  await page.evaluate(() => navigator.clipboard.writeText('\n10. New'));
+  await page.keyboard.press('Meta+v');
+  expect(await readDocument(page)).toContain('10. New');
+  await expect.poll(async () => (await geometry(page, 'Child one')).rects[0].x, { timeout: 3000 })
+    .toBeGreaterThan(before.rects[0].x + 4);
+  // 重对齐稳定，不回落。
+  await page.waitForTimeout(200);
+  expect((await geometry(page, 'Child one')).rects[0].x).toBeGreaterThan(before.rects[0].x + 4);
+});
 
 test('列表模式隔离与嵌套代码保护', async ({ page }) => {
   const text = '- parent\n\n  ```\n  - fenced code\n  ```\n\n      - indented code\n\n- next\n';

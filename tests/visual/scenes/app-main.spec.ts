@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { DEMO_VAULT, fireFsEvent, stubTauri } from "./tauri-stub";
+import { DEMO_VAULT, fireFsEvent, remapCalls, stubTauri } from "./tauri-stub";
 
 // 基线场景：主界面（文件树 + 编辑器 + 面板）。截图目标见 README.md 的选型说明——
 // 这是 webview 内容截图，不含原生窗口装饰。Tauri 后端用 __TAURI_INTERNALS__ 桩
@@ -113,4 +113,52 @@ test("树头部切换入口切换到另一个 vault", async ({ page }) => {
   // 新 vault 的文件可正常打开（附件索引 / fs_read_file 已指向新 vault）
   await page.locator('.ft-row[title="inbox.md"]').click();
   await expect(page.locator(".cm-content")).toContainText("Inbox");
+});
+
+// 重映射候选（M102 桌面验收缺陷）：目标路径未注册且存在失效注册时，
+// open_vault 按契约返回空 entries + candidates——旧实现直接装载空树
+//（vault 名已换、无任何条目，用户无出口）。修复后必须保持旧 vault，
+// 并给出「作为新 vault 打开 / 确认映射」两个显式出口。
+const COPY_VAULT_ROOT = "/Users/alex/Everything-copy";
+const COPY_VAULT = {
+  root: COPY_VAULT_ROOT,
+  entries: [{ path: "note.md", kind: "file", size: 8, mtime_ms: 1757000000000 }],
+  files: { "note.md": "# Note\n\n拷贝 vault 的内容。\n" },
+  remapCandidates: [{ id: "vault-old", path: "/Users/alex/Everything" }],
+};
+
+test("切换命中重映射候选：不装载空树，作为新 vault 打开后正常显示", async ({ page }) => {
+  await stubTauri(page, { ...DEMO_VAULT, switchTo: COPY_VAULT });
+  await page.goto("/");
+  await expect(page.locator(".ft-vault-name")).toHaveText("demo-vault");
+
+  await page.getByRole("button", { name: "切换 vault" }).click();
+
+  // 不得装载空树：保持旧 vault，sticky 提示给出出口。
+  const chooser = page.locator(".lumir-toast", { hasText: "尚未注册为 vault" });
+  await expect(chooser).toBeVisible();
+  await expect(chooser).toContainText("/Users/alex/Everything");
+  await expect(page.locator(".ft-vault-name")).toHaveText("demo-vault");
+  await expect(page.locator(".masthead-vault")).toHaveText("demo-vault");
+
+  await chooser.getByRole("button", { name: "作为新 vault 打开" }).click();
+  await expect(page.locator(".ft-vault-name")).toHaveText("Everything-copy");
+  await expect(page.locator('.ft-row[title="note.md"]')).toBeVisible();
+  // 未走映射路径。
+  expect(await remapCalls(page)).toEqual([]);
+});
+
+test("切换命中重映射候选：确认映射后按映射结果装载", async ({ page }) => {
+  await stubTauri(page, { ...DEMO_VAULT, switchTo: COPY_VAULT });
+  await page.goto("/");
+  await expect(page.locator(".ft-vault-name")).toHaveText("demo-vault");
+
+  await page.getByRole("button", { name: "切换 vault" }).click();
+  const chooser = page.locator(".lumir-toast", { hasText: "尚未注册为 vault" });
+  await chooser.getByRole("button", { name: "确认映射到此路径" }).click();
+
+  // 映射意图传给后端（id + 新路径），随后按映射结果全量装载。
+  await expect.poll(() => remapCalls(page)).toEqual([{ id: "vault-old", path: COPY_VAULT_ROOT }]);
+  await expect(page.locator(".ft-vault-name")).toHaveText("Everything-copy");
+  await expect(page.locator('.ft-row[title="note.md"]')).toBeVisible();
 });

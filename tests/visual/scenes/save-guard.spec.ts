@@ -100,6 +100,43 @@ test("保存冲突：可理解的冲突提示，修改保留，切换与退出�
   await expect(page.locator(".lumir-toast", { hasText: "无法退出" })).toBeVisible();
 });
 
+test("保存成功后所有 dirty 表现层一致清除，切换 vault 无未保存拦截", async ({ page }) => {
+  await stubTauri(page, {
+    ...VAULT,
+    switchTo: {
+      root: "/Users/alex/other-vault",
+      entries: [{ path: "other.md", kind: "file", size: 8, mtime_ms: 1757000000000 }],
+      files: { "other.md": "# Other\n" },
+    },
+  });
+  await page.goto("/");
+  await page.locator('.ft-row[title="README.md"]').click();
+  const content = page.locator(".cm-content");
+  await expect(content).toContainText("Demo Vault");
+
+  await content.click();
+  await page.keyboard.type("edited");
+  await expect(page.locator(".masthead-file")).toContainText("未保存");
+
+  // dirty 期间退出被拦截：sticky 提示不自动消隐（M101 设计）。
+  await fireQuitBlocked(page);
+  const blocked = page.locator(".lumir-toast", { hasText: "无法退出" });
+  await expect(blocked).toBeVisible();
+
+  // 保存成功：masthead / 后端镜像 / sticky 守卫提示必须一致清除
+  //（旧实现 sticky 提示在保存成功后仍残留右下角 —— 桌面验收缺陷）。
+  await page.keyboard.press("Meta+s");
+  await expect(page.locator(".lumir-toast", { hasText: "已保存" })).toBeVisible();
+  await expect(page.locator(".masthead-file")).not.toContainText("未保存");
+  await expect.poll(async () => (await dirtyReports(page)).at(-1)).toBe(false);
+  await expect(blocked).toHaveCount(0);
+
+  // 切换 vault 不再出现未保存拦截提示，新 vault 正常装载。
+  await page.locator(".ft-switch-btn").click();
+  await expect(page.locator(".masthead-vault")).toHaveText("other-vault");
+  await expect(page.locator(".lumir-toast", { hasText: "未保存" })).toHaveCount(0);
+});
+
 test("保存写入结果未知：提示核对内容且说明修改未丢失", async ({ page }) => {
   await stubTauri(page, {
     ...VAULT,

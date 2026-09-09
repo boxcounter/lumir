@@ -312,6 +312,21 @@ pub async fn vault_open(
     Ok(Some(info))
 }
 
+/// 按已知路径直接打开 vault（无目录选择器）：仅用于重映射确认后的重开——
+/// 路径来自用户刚刚在选择器里选中的 VaultInfo.root，确认动作（作为新 vault /
+/// 确认映射）不应再弹一次选择器让用户重选同一目录。
+#[tauri::command(rename_all = "snake_case")]
+pub fn vault_open_path(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, VaultState>,
+    path: &str,
+    force_new: bool,
+) -> Result<VaultInfo, CommandError> {
+    let info = open_vault(&app, &state, PathBuf::from(path), force_new)?;
+    write_last_vault(Path::new(&info.root))?;
+    Ok(info)
+}
+
 /// 启动后查询当前 vault 状态（含恢复失败的人话提示）。
 #[tauri::command]
 pub fn vault_current(state: tauri::State<'_, VaultState>) -> Result<VaultStatus, CommandError> {
