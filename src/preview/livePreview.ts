@@ -125,10 +125,16 @@ function tableModels(state: EditorState, from: number, to: number): TableModel[]
   return tables;
 }
 
-function tableWrappers(view: EditorView) {
+function tableDiscoveryRange(view: EditorView): { from: number; to: number } {
   const margin = Math.max(view.state.doc.lineAt(view.viewport.from).length * 2, 2048);
-  const from = Math.max(0, view.viewport.from - margin);
-  const to = Math.min(view.state.doc.length, view.viewport.to + margin);
+  return {
+    from: Math.max(0, view.viewport.from - margin),
+    to: Math.min(view.state.doc.length, view.viewport.to + margin),
+  };
+}
+
+function tableWrappers(view: EditorView) {
+  const { from, to } = tableDiscoveryRange(view);
   const wrappers = tableModels(view.state, from, to)
     .filter((table) => table.rectangular && !table.degraded)
     .flatMap((table, index) => {
@@ -270,7 +276,7 @@ function collectTableDecorations(view: EditorView, tables: readonly TableModel[]
         };
         const empty = view.state.doc.sliceString(slot.from, slot.to).trim() === "";
         if (empty) {
-          decos.push(Decoration.widget({ widget: new EmptyTableCellWidget(column + 1, row.header, table.align[column] ?? "left") }).range(slot.from, slot.to));
+          decos.push(Decoration.replace({ widget: new EmptyTableCellWidget(column + 1, row.header, table.align[column] ?? "left") }).range(slot.from, slot.to));
         } else {
           decos.push(Decoration.mark({ class: "cm-lp-table-cell", attributes: attrs }).range(slot.from, slot.to));
         }
@@ -289,13 +295,14 @@ function collectTableDecorations(view: EditorView, tables: readonly TableModel[]
 function buildDecorations(view: EditorView, ctx: PreviewContext): DecorationSet {
   const decos: Range<Decoration>[] = [];
   const fm = detectFrontmatter(view.state.doc);
-  const tables = tableModels(view.state, view.viewport.from, view.viewport.to);
+  const { from, to } = tableDiscoveryRange(view);
+  const tables = tableModels(view.state, from, to);
 
   for (const vr of view.visibleRanges) {
     for (const table of tables) {
       if (!table.degraded || table.to < vr.from || table.from > vr.to) continue;
       const line = view.state.doc.lineAt(table.from);
-      decos.push(Decoration.line({ class: "cm-lp-table-degraded", attributes: { "aria-label": "表格阅读降级，显示原始 Markdown" } }).range(line.from));
+      decos.push(Decoration.line({ class: "cm-lp-table-degraded", attributes: { "aria-label": "表格阅读降级：保留原始 Markdown" } }).range(line.from));
     }
     collectTableDecorations(view, tables, vr.from, vr.to, decos);
     collectSyntaxDecorations(view, vr.from, vr.to, fm, ctx, decos, tables);
