@@ -61,6 +61,16 @@ export function documentSave(path: string, expected_revision: string, content: s
   return invoke<string>("document_save", { path, expected_revision, content });
 }
 
+/** 同步编辑器 dirty 状态到后端（退出/关窗守卫据此拦截）。 */
+export function documentSetDirty(dirty: boolean): Promise<void> {
+  return invoke<void>("document_set_dirty", { dirty });
+}
+
+/** 订阅退出/关窗被 dirty 守卫拦截的通知；返回退订函数。 */
+export function onQuitBlocked(handler: () => void): Promise<() => void> {
+  return listen("app:quit_blocked", () => handler());
+}
+
 /** 读 vault 内二进制附件，返回 base64（裁决点 A：invoke + base64）。 */
 export function fsReadAttachment(path: string): Promise<string> {
   return invoke<string>("fs_read_attachment", { path });

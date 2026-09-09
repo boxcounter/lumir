@@ -230,15 +230,24 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
       ".cm-cursor, .cm-dropCursor": { borderLeftColor: "var(--text)" },
       "&.cm-focused .cm-selectionBackground": { backgroundColor: "var(--sel)" },
     });
+    // 可编辑性随模式收敛进 Compartment（M101 验收修复）：非 md 模式必须是
+    // 视图层只读——editable(false) 摘掉 contenteditable，readOnly(true) 让 CM6
+    // 在 DOM 输入入口（beforeinput / EditContext / drop / paste / 输入法组合）
+    // 直接拒收，不依赖 changeFilter 事后回滚 DOM（真实 WKWebView 的 AX 文本注入
+    // 与 IME 组合路径下回滚不可靠，文本会滞留内存并误标 dirty）。
+    const editability: Extension[] = [
+      EditorView.editable.of(mode === "md"),
+      EditorState.readOnly.of(mode !== "md"),
+      EditorView.contentAttributes.of({ tabindex: "0", "aria-readonly": String(mode !== "md") }),
+    ];
     return mode === "md"
-      ? [...highlight, baseTheme, livePreview(previewContext)]
-      : [...highlight, baseTheme, lineNumbers(), highlightActiveLine()];
+      ? [...editability, ...highlight, baseTheme, livePreview(previewContext)]
+      : [...editability, ...highlight, baseTheme, lineNumbers(), highlightActiveLine()];
   }
 
   const state = EditorState.create({
     doc: SAMPLE,
     extensions: [
-      EditorView.contentAttributes.of({ tabindex: "0", "aria-readonly": "true" }),
       EditorView.domEventHandlers({
         keydown(event, view) {
           if (event.target !== view.contentDOM || event.altKey || event.shiftKey ||
@@ -249,11 +258,12 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
       }),
       EditorView.theme({ ".cm-gutters-before": { border: "none" } }),
       modeCompartment.of(modeExtensions(initialMode)),
+      // 兜底防线：editability 已随模式在视图层拒收输入，changeFilter 再挡住任何
+      // 绕过 DOM 输入路径的程序化 dispatch（trustedLoad 标记的装载事务除外）。
       EditorState.changeFilter.of((tr) => tr.docChanged && currentMode !== "md" && !tr.annotation(trustedLoad) ? [] : true),
       EditorView.updateListener.of((update) => {
         if (update.docChanged) updateDirty(update.state.doc.toString() !== cleanDoc);
       }),
-      EditorView.editable.of(true),
       EditorView.lineWrapping,
     ],
   });

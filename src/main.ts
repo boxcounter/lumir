@@ -10,9 +10,11 @@ import {
   fsReadAttachment,
   fsReadSnapshot,
   documentSave,
+  documentSetDirty,
   isCommandError,
   linkGraphResolve,
   onFsEntryChanged,
+  onQuitBlocked,
   vaultCurrent,
   vaultOpen,
   wikilinkCreate,
@@ -88,7 +90,9 @@ function showEditor() {
 }
 
 // 瞬时提示（锚点缺失 / 创建结果 / 解析错误）：编辑器右下角浮条，自动消隐。
-function toast(text: string, action?: { label: string; run(): void }): void {
+// sticky 的提示（如退出被拦截）不自动消隐，点击浮条本体关闭——守卫类反馈
+// 不允许在用户看到之前消失。
+function toast(text: string, action?: { label: string; run(): void }, sticky = false): void {
   const el = document.createElement("div");
   el.className = "lumir-toast toast-surface";
   const span = document.createElement("span");
@@ -105,8 +109,9 @@ function toast(text: string, action?: { label: string; run(): void }): void {
     });
     el.append(btn);
   }
+  if (sticky) el.addEventListener("click", () => el.remove());
   shell.editor.append(el);
-  setTimeout(() => el.remove(), action ? 8000 : 3500);
+  if (!sticky) setTimeout(() => el.remove(), action ? 8000 : 3500);
 }
 
 // 打开文件：读出文本交给 editor.openDocument——模式裁决（文件类型优先，
@@ -120,8 +125,21 @@ let saveInFlight = false;
 
 function dirtyGuard(action: string): boolean {
   if (!editor.isDirty()) return true;
-  toast(`当前 Markdown 有未保存修改，无法${action}`);
+  toast(`当前 Markdown 有未保存修改，无法${action}；请先保存（Cmd+S）`);
   return false;
+}
+
+// 保存失败的界面反馈（M101 验收修复）：冲突 / 写入失败 / 结果未知都必须给出
+// 可理解的提示并说明修改仍保留在内存，不得静默或只剩技术化 message。
+const SAVE_ERROR_HINTS: Record<string, string> = {
+  document_conflict: "保存冲突：文件在磁盘上已被外部修改，内存中的修改未丢失；请核对后重新保存",
+  document_write_failed: "保存失败：无法写入文档，内存中的修改未丢失",
+  document_write_unknown: "保存结果未知：写入可能未生效，请核对文件内容，内存中的修改未丢失",
+};
+
+function saveErrorMessage(e: unknown): string {
+  if (isCommandError(e)) return SAVE_ERROR_HINTS[e.code] ?? `保存失败：${e.message}`;
+  return `保存失败：${errorMessage(e)}`;
 }
 
 function emitReadiness(name: string, detail: object = {}): void {
@@ -184,7 +202,7 @@ async function saveCurrentFile(): Promise<void> {
       toast("已保存当前快照，仍有未保存修改");
     }
   } catch (e) {
-    toast(errorMessage(e));
+    toast(saveErrorMessage(e));
   } finally { saveInFlight = false; }
 }
 
@@ -360,6 +378,26 @@ const mastheadVault = shell.root.querySelector<HTMLElement>(".masthead-vault")!;
 const mastheadFile = shell.root.querySelector<HTMLElement>(".masthead-file")!;
 const mastheadThread = shell.root.querySelector<HTMLElement>(".masthead-thread")!;
 const mastheadStatus = shell.root.querySelector<HTMLElement>(".masthead-status")!;
+
+// dirty 状态反馈（M101 验收修复）：toast 会消隐，dirty 期间 masthead 文件名旁
+// 常驻「未保存」标记；同时把 dirty 镜像给后端退出守卫（Cmd+Q / 关窗拦截）。
+function syncDirtyIndicator(): void {
+  if (displayedPath === undefined) return;
+  mastheadFile.textContent = editor.isDirty() ? `${displayedPath}（未保存）` : displayedPath;
+}
+
+editor.onDirty((dirty) => {
+  syncDirtyIndicator();
+  // 无 Tauri 后端（纯浏览器预览）时同步失败无害，静默忽略。
+  documentSetDirty(dirty).catch(() => {});
+});
+
+// 退出/关窗被 dirty 守卫拦截时必须可见（M101）：后端 prevent_exit/prevent_close
+// 本身无任何界面表现，前端收到事件要给出可理解的提示。sticky：拦截提示不得
+// 在用户看到前自动消隐（守卫反馈要持续可见，点击浮条关闭）。
+onQuitBlocked(() => {
+  toast("当前有未保存修改，无法退出；请先保存（Cmd+S）", undefined, true);
+}).catch(() => {});
 let tree!: ReturnType<typeof createFileTree>;
 const sessionThreads: Thread[] = [];
 let selectedThreadId: string | undefined;
