@@ -56,11 +56,16 @@ fn main() { println!("lumir"); }
 function moveCaretVertically(view: EditorView, forward: boolean): boolean {
   const main = view.state.selection.main;
   if (!main.empty) {
-    // 非空选区：与原生行为一致，先折叠到移动方向的一端，不再多走一行。
-    view.dispatch({ selection: { anchor: forward ? main.to : main.from }, userEvent: "select" });
+    // 非空选区：与原生行为一致，折叠到移动方向的一端；scrollIntoView 揭示光标
+    //（r1 review P2-1：否则 Cmd+A → ArrowDown 光标到文档末尾但不可见）。
+    view.dispatch({ selection: { anchor: forward ? main.to : main.from }, scrollIntoView: true, userEvent: "select" });
     return true;
   }
-  const target = view.moveVertically(main, forward);
+  const moved = view.moveVertically(main, forward);
+  // 文档边界兜底（r1 review P2-2，与官方 cursorByLine 同款）：moveVertically 在
+  // 末/首行原地不动时，改移行尾/行首——末行中段 ArrowDown 到行尾、首行到行首。
+  const target = moved.head !== main.head ? moved : view.moveToLineBoundary(main, forward);
+  if (target.head === main.head) return true; // 行首 ArrowUp / 行尾 ArrowDown：已无可移，仍视为已处理
   view.dispatch({
     selection: target,
     effects: EditorView.scrollIntoView(target.head, { y: "nearest" }),

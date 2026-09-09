@@ -80,3 +80,51 @@ test("垂直光标移动：ArrowDown/ArrowUp 与 Ctrl-N/P 越出视口时顺滑�
   // 只动选区，不动文档
   expect(await readDocument(page)).toBe(SOURCE);
 });
+
+test("边界行为：Cmd+A→ArrowDown 折叠选区并揭示光标，末/首行垂直移动兜底到行尾/行首", async ({ page }) => {
+  // r1 review P2：折叠分支缺 scrollIntoView（光标不可见）；文档边界缺
+  // moveToLineBoundary 兜底（末行中段 ArrowDown 无动作）。
+  await stubTauri(page, { entries: [{ path: "long.md", kind: "file", size: SOURCE.length, mtime_ms: 0 }], files: { "long.md": SOURCE } });
+  await page.goto("/");
+  await page.locator('.ft-row[title="long.md"]').click();
+  await expect(page.locator(".cm-content")).toContainText("第 1 行");
+  await page.locator(".cm-line").first().click({ position: { x: 4, y: 4 } });
+
+  // P2-1：Cmd+A 全选 → ArrowDown 折叠到文档末尾，滚动跟随、光标可见
+  await page.keyboard.press("Meta+a");
+  await page.keyboard.press("ArrowDown");
+  await page.waitForTimeout(80);
+  const collapsed = await sample(page);
+  expect(collapsed.head).toBe(collapsed.docLength);
+  expect(collapsed.scrollTop).toBeGreaterThan(0);
+  expect(collapsed.caretBottom).toBeLessThanOrEqual(collapsed.scrollerBottom + 1);
+  expect(collapsed.caretTop).toBeGreaterThanOrEqual(collapsed.scrollerTop - 1);
+
+  // P2-2：末行中段 ArrowDown → 兜底移到行尾（修复前原地不动）
+  await page.evaluate(() => {
+    const view = (document.querySelector(".cm-content") as unknown as { cmTile: { root: { view: any } } }).cmTile.root.view;
+    const lastLine = view.state.doc.line(view.state.doc.lines);
+    view.dispatch({ selection: { anchor: lastLine.from + 5 } });
+  });
+  await page.keyboard.press("ArrowDown");
+  await page.waitForTimeout(50);
+  const lineEnd = await sample(page);
+  expect(lineEnd.head).toBe(lineEnd.docLength);
+  // 再按一次：行尾 ArrowDown 仍原地，不报错不滚动
+  await page.keyboard.press("ArrowDown");
+  await page.waitForTimeout(50);
+  const atEnd = await sample(page);
+  expect(atEnd.head).toBe(atEnd.docLength);
+  expect(atEnd.scrollTop).toBe(lineEnd.scrollTop);
+
+  // P2-2 对称方向：首行中段 ArrowUp → 兜底移到行首
+  await page.evaluate(() => {
+    const view = (document.querySelector(".cm-content") as unknown as { cmTile: { root: { view: any } } }).cmTile.root.view;
+    view.dispatch({ selection: { anchor: 5 } });
+  });
+  await page.keyboard.press("ArrowUp");
+  await page.waitForTimeout(50);
+  expect((await sample(page)).head).toBe(0);
+
+  expect(await readDocument(page)).toBe(SOURCE);
+});
