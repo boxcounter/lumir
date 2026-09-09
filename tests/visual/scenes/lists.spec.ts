@@ -169,11 +169,13 @@ test('短编号标记区紧凑而非语法最大容量', async ({ page }) => {
     const marker = el.querySelector('.cm-lp-list-marker')!;
     const text = marker.firstElementChild!.getBoundingClientRect();
     const outer = marker.getBoundingClientRect();
-    return { marker: outer.width, text: text.width, gap: outer.right - text.right, available: el.getBoundingClientRect().width - parseFloat(getComputedStyle(el).paddingLeft) };
+    return { marker: outer.width, text: text.width, gap: outer.right - text.right, line: el.getBoundingClientRect().width, available: el.getBoundingClientRect().width - parseFloat(getComputedStyle(el).paddingLeft) };
   });
   expect(box.marker - box.text).toBeCloseTo(box.gap, 0);
   expect(box.gap).toBeGreaterThan(3);
   expect(box.gap).toBeLessThan(12);
   expect(box.marker).toBeLessThan(35);
-  expect(box.available).toBeGreaterThan(340);
+  // 行宽由 480px 定案改为窗格 80%（M100）后，可用文本宽不再对齐绝对像素阈值；
+  // 约束不变：短编号标记区占行宽不足一成，九成以上留给正文
+  expect(box.available).toBeGreaterThan(box.line * 0.9);
 });
