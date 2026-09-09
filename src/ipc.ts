@@ -66,7 +66,7 @@ export function documentSave(path: string, expected_revision: string, content: s
   return invoke<string>("document_save", { path, expected_revision, content });
 }
 
-/** 同步编辑器 dirty 状态到后端（退出/关窗守卫据此拦截）。 */
+/** 同步编辑器 dirty 状态到后端（退出/关窗守卫据此拦截）。前端启动时也会主动推送一次当前值，复位 webview 重载后可能滞留的 stale 镜像（M107）。 */
 export function documentSetDirty(dirty: boolean): Promise<void> {
   return invoke<void>("document_set_dirty", { dirty });
 }
