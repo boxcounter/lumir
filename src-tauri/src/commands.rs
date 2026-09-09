@@ -356,7 +356,10 @@ pub fn fs_scan_workspace(
 
 /// 读 vault 内文本文件与绑定 revision 快照（UTF-8）。
 #[tauri::command(rename_all = "snake_case")]
-pub fn fs_read_snapshot(state: tauri::State<'_, VaultState>, path: &str) -> Result<ReadSnapshot, CommandError> {
+pub fn fs_read_snapshot(
+    state: tauri::State<'_, VaultState>,
+    path: &str,
+) -> Result<ReadSnapshot, CommandError> {
     let root = state.root()?;
     let (content, revision) = fs_io::read_text_snapshot(&root, path)?;
     Ok(ReadSnapshot { content, revision })
@@ -372,18 +375,29 @@ pub fn fs_read_attachment(
 }
 
 #[tauri::command(rename_all = "snake_case")]
-pub fn fs_file_revision(state: tauri::State<'_, VaultState>, path: &str) -> Result<String, CommandError> {
+pub fn fs_file_revision(
+    state: tauri::State<'_, VaultState>,
+    path: &str,
+) -> Result<String, CommandError> {
     fs_io::file_revision(&state.root()?, path)
 }
 
 #[tauri::command(rename_all = "snake_case")]
-pub fn document_save(state: tauri::State<'_, VaultState>, path: &str, expected_revision: &str, content: &str) -> Result<String, CommandError> {
+pub fn document_save(
+    state: tauri::State<'_, VaultState>,
+    path: &str,
+    expected_revision: &str,
+    content: &str,
+) -> Result<String, CommandError> {
     fs_io::save_markdown(&state.root()?, path, expected_revision, content)
 }
 
 /// 编辑器未保存修改（dirty）的后端镜像（M101 退出守卫）：前端 onDirty 每次变化
 /// 经 document_set_dirty 同步；lib.rs 的退出/关窗守卫据此拦截。前端是唯一事实源，
 /// 后端只保存最近一次上报值，不做独立推导。
+/// 防滞留（M107）：镜像可能滞留 stale true——webview 重载后前端 dirty 复位为
+/// false，而后端仍保留重载前的 true，退出将被永久拦截。因此前端初始化后主动
+/// 推送一次当前 dirty 值（启动时必为 false，即复位镜像），见 src/main.ts。
 #[derive(Default)]
 pub struct DirtyState(AtomicBool);
 
@@ -398,7 +412,10 @@ impl DirtyState {
 }
 
 #[tauri::command]
-pub fn document_set_dirty(state: tauri::State<'_, DirtyState>, dirty: bool) -> Result<(), CommandError> {
+pub fn document_set_dirty(
+    state: tauri::State<'_, DirtyState>,
+    dirty: bool,
+) -> Result<(), CommandError> {
     state.set(dirty);
     Ok(())
 }

@@ -93,8 +93,14 @@ function showEditor() {
 
 // 瞬时提示（锚点缺失 / 创建结果 / 解析错误）：编辑器右下角浮条，自动消隐。
 // sticky 的提示（如退出被拦截）不自动消隐，点击浮条本体关闭——守卫类反馈
-// 不允许在用户看到之前消失。
+// 不允许在用户看到之前消失。sticky 提示按文案去重（M107）：连续触发同一守卫
+//（如连按 Cmd+Q）复用既有浮条，不堆叠；自动消隐的普通 toast 不受此限。
 function toast(text: string, actions: Array<{ label: string; run(): void }> = [], sticky = false): HTMLElement {
+  if (sticky) {
+    for (const el of shell.editor.querySelectorAll<HTMLElement>(".lumir-toast[data-sticky-text]")) {
+      if (el.dataset.stickyText === text) return el;
+    }
+  }
   const el = document.createElement("div");
   el.className = "lumir-toast toast-surface";
   const span = document.createElement("span");
@@ -111,7 +117,10 @@ function toast(text: string, actions: Array<{ label: string; run(): void }> = []
     });
     el.append(btn);
   }
-  if (sticky) el.addEventListener("click", () => el.remove());
+  if (sticky) {
+    el.dataset.stickyText = text;
+    el.addEventListener("click", () => el.remove());
+  }
   shell.editor.append(el);
   if (!sticky) setTimeout(() => el.remove(), actions.length ? 8000 : 3500);
   return el;
@@ -402,6 +411,12 @@ editor.onDirty((dirty) => {
   documentSetDirty(dirty).catch(() => {});
 });
 
+// DirtyState 防滞留（M107）：后端的 dirty 镜像在 webview 重载（开发者刷新 /
+// 崩溃重载）后可能滞留 stale true，退出守卫将永久拦截。前端是唯一事实源，
+// 初始化后主动推送一次当前值复位镜像（启动时必为 false）；重载后用户再次
+// 编辑仍走 onDirty 正常同步。无 Tauri 后端时失败无害，静默忽略。
+documentSetDirty(editor.isDirty()).catch(() => {});
+
 // 退出/关窗被 dirty 守卫拦截时必须可见（M101）：后端 prevent_exit/prevent_close
 // 本身无任何界面表现，前端收到事件要给出可理解的提示。sticky：拦截提示不得
 // 在用户看到前自动消隐（守卫反馈要持续可见，点击浮条关闭）。
@@ -594,6 +609,11 @@ vaultCurrent()
   })
   .catch((e) => tree.showEmpty(errorMessage(e)));
 
+// editor.mode：无类型线索时的默认模式（openFile 的模式裁决消费）。
+// editor.measure 前端不消费（M107 标注的废弃路径）：行宽由 CSS --measure
+//（style.css，默认 80% 百分比口径）控制，与 config.rs 的 100-2000px 整数
+// 口径不一致。在 Rust 侧字段正式废弃前，配置里的 editor.measure 只被解析
+// 校验，不影响任何界面行为。
 configGet().then((snapshot) => editor.setMode(snapshot.config.editor.mode)).catch(() => {});
 
 const themes = ["light", "dark", "eink"] as const;
