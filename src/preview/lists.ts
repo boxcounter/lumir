@@ -161,13 +161,18 @@ class ListLayout {
     return null;
   }
 
-  /** 登记一个组的宽度扫描；祖先组未就绪（嵌套列表）时不登记，返回 false。 */
+  /** 登记一个组的宽度扫描；祖先组未就绪或陈旧（嵌套列表）时不登记，返回 false。 */
   private enqueue(list: Node, state: EditorState): boolean {
     if (this.scans.has(list.from)) return true;
     let parent = list.parent;
     while (parent && !isList(parent)) parent = parent.parent;
+    // 祖先 cached body 未确认（stale 或重扫已登记未完成）时，用它登记 indent
+    // 会让子组在祖先 publish 后错位且不自愈；视为未就绪，pending 保活等下一轮
+    // build 重试。两处都要查：stale 在祖先扫描登记时即摘除，而 body 要等扫描
+    // 完成才更新——同一轮 build 里祖先行先于子行处理，仅查 stale 会漏。
+    const ancestorReady = parent === null || (!this.stale.has(parent.from) && !this.scans.has(parent.from));
     const ancestor = parent ? this.group(parent, state) : { body: 0 };
-    if (!ancestor) return false;
+    if (!ancestor || !ancestorReady) { this.pending = true; return false; }
     this.scans.set(list.from, { item: list.firstChild, width: 0, indent: ancestor.body + (parent ? 2 : 0) });
     this.pending = true;
     return true;

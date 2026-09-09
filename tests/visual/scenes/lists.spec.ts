@@ -106,6 +106,29 @@ test('输入时既有列表装饰不重建：列表文字不左右抖动', async
   expect(Math.abs(alpha.rects[0].x - beta.rects[0].x)).toBeLessThanOrEqual(1);
 });
 
+test('嵌套列表：祖先组宽度变化后子组跟随重对齐', async ({ page, context }) => {
+  await context.grantPermissions(['clipboard-read', 'clipboard-write']);
+  const text = '1. Alpha\n2. Parent\n   1. Child one\n   2. Child two\n';
+  await open(page, text);
+  const before = await geometry(page, 'Child one');
+  // 粘贴是单次 docChanged（Enter 会触发列表自动续标、击键会逐键产生后续
+  // 编辑而自愈，都不能用）：顶层列表追加 "10." 项，组 max width +1 unit，
+  // 之后不再有编辑。旧实现子组重扫按祖先 stale cached body 登记 indent，
+  // 祖先 publish 新 body 后子组错位 ~1 unit 滞留到下一击键（r1 review
+  // P2-1）；修复后祖先 stale 视为未就绪，子组下轮 build 拿到新 body 自行
+  // 右移 1 unit。
+  await page.locator('.cm-line').filter({ hasText: 'Child two' }).click();
+  await page.keyboard.press('End');
+  await page.evaluate(() => navigator.clipboard.writeText('\n10. New'));
+  await page.keyboard.press('Meta+v');
+  expect(await readDocument(page)).toContain('10. New');
+  await expect.poll(async () => (await geometry(page, 'Child one')).rects[0].x, { timeout: 3000 })
+    .toBeGreaterThan(before.rects[0].x + 4);
+  // 重对齐稳定，不回落。
+  await page.waitForTimeout(200);
+  expect((await geometry(page, 'Child one')).rects[0].x).toBeGreaterThan(before.rects[0].x + 4);
+});
+
 test('列表模式隔离与嵌套代码保护', async ({ page }) => {
   const text = '- parent\n\n  ```\n  - fenced code\n  ```\n\n      - indented code\n\n- next\n';
   await stubTauri(page, { entries: ['list.md', 'list.ts'].map(path => ({ path, kind: 'file', size: text.length, mtime_ms: 0 })), files: { 'list.md': text, 'list.ts': text } });
