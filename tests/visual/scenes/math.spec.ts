@@ -81,6 +81,10 @@ $$not_math$$
 \`\`\`
 
 行内代码 \`$x_0$\` 不渲染。
+
+| 公式 | 值 |
+| --- | --- |
+| $$y$$ | z |
 `;
 
 async function openMath(page: Page): Promise<void> {
@@ -119,6 +123,13 @@ test("行内与块级渲染，失败回落可读源码，代码上下文排除",
   // 代码上下文排除：fenced 内 $$ 与 inline code 内 $ 不渲染
   await expect(page.locator(".cm-lp-codeblock-line").nth(1)).toHaveText("$$not_math$$");
   await expect(page.locator(".cm-lp-inline-code")).toContainText("$x_0$");
+
+  // 表格上下文排除：单元格内 $$ 不做 replace，保留原文（r1 review P2-1）
+  const cell = page.locator('.cm-lp-table-cell:has-text("$$y$$")');
+  await expect(cell).toHaveCount(1);
+  await expect(page.locator(".cm-lp-table .katex")).toHaveCount(0);
+  await expect(page.locator(".cm-lp-table .cm-lp-math-block")).toHaveCount(0);
+
   await expect(page.locator(".katex")).toHaveCount(2); // 行内 1 + 块级 1，仅此而已
 
   await expect(page).toHaveScreenshot("math-rendering.png");

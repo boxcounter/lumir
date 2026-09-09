@@ -14,6 +14,8 @@ import type { EditorState, Range } from "@codemirror/state";
 import type { EditorView } from "@codemirror/view";
 import { syntaxTree } from "@codemirror/language";
 import { detectFrontmatter } from "./frontmatter";
+import { findTables, tableAt } from "./table";
+import type { TableModel } from "./table";
 
 export interface MathSpan {
   /** 整条公式的范围 `[from, to)`，含定界 `$` / `$$`。 */
@@ -272,18 +274,34 @@ export function collectInlineMath(
  * 与 frontmatter 同约束）。词法扫描是单趟字符循环，1MB 文档为毫秒级；
  * 渲染在 widget toDOM 惰性发生且有缓存，不阻塞 F0。选区进入公式范围时
  * 跳过装饰显示原文（编辑/选择可见源码，与 frontmatter 的 selected 口径一致）。
+ * 表格单元格内的 $$ 不做 replace（与行内路径 inTable 口径一致），保留原文。
  */
 export function mathBlockSet(state: EditorState): DecorationSet {
-  const text = state.doc.sliceString(0, state.doc.length);
-  if (!text.includes("$$")) return Decoration.none;
-  const fm = detectFrontmatter(state.doc);
+  // 廉价存在性检查先行（tr.selection 每次光标移动都触发本函数，全量
+  // sliceString 的大字符串分配只在确有 "$$" 时发生）。任何块级公式
+  // 都有一行包含开启 $$，逐行检查不会漏。
+  const { doc } = state;
+  let hasDisplay = false;
+  for (let n = 1; n <= doc.lines; n++) {
+    if (doc.line(n).text.includes("$$")) {
+      hasDisplay = true;
+      break;
+    }
+  }
+  if (!hasDisplay) return Decoration.none;
+  const text = doc.sliceString(0, doc.length);
+  const fm = detectFrontmatter(doc);
   const tree = syntaxTree(state);
+  let tables: TableModel[] | null = null;
   const decos: Range<Decoration>[] = [];
   for (const span of findMathSpans(text)) {
     if (!span.display) continue;
     if (fm !== null && span.from >= fm.from && span.to <= fm.to) continue;
     if (isInsideCodeContext(tree, span.from)) continue;
     if (state.selection.ranges.some((r) => r.from < span.to && r.to > span.from)) continue;
+    // 首个 display span 才做一次表格扫描（findTables 走语法树 Table 节点）。
+    tables ??= findTables((s, e) => doc.sliceString(s, e), doc.length, tree, 0, doc.length);
+    if (tableAt(tables, span.from, span.to)) continue;
     const raw = text.slice(span.from, span.to);
     decos.push(
       Decoration.replace({
