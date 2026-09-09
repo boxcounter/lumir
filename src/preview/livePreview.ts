@@ -21,6 +21,7 @@ import {
 import type { AttachmentProvider } from "./attachments";
 import { findWikilinkSpans } from "./wikilinks";
 import { collectInlineMath, isInsideCodeContext, mathBlockSet } from "./math";
+import { mermaidBlockSet, onMermaidSettled } from "./mermaid";
 import type { LinkResolveResult } from "../bindings/LinkResolveResult";
 import { BlockWrapper } from "@codemirror/view";
 import { findTables, tableAt, tableRowsInRange, type TableModel } from "./table";
@@ -167,6 +168,8 @@ export function livePreview(ctx: PreviewContext) {
     livePreviewTheme,
     frontmatterDecorations,
     mathBlockDecorations,
+    mermaidBlockDecorations,
+    mermaidSettleBridge,
     listDecorations,
     EditorView.blockWrappers.of(tableWrappers),
     EditorView.domEventHandlers({
@@ -259,6 +262,48 @@ function frontmatterSet(state: EditorState): DecorationSet {
     ),
   ]);
 }
+
+// ```mermaid 围栏块可跨行，与 frontmatter/块级公式同约束走 StateField。
+// 除 docChanged/selection 外，previewRefresh（渲染 settle / 主题切换）也触发
+// 重算：settle 后缓存状态对象变更，widget eq 不等，CM 重新调用 toDOM。
+const mermaidBlockDecorations = StateField.define<DecorationSet>({
+  create(state) {
+    return mermaidBlockSet(state);
+  },
+  update(value, tr) {
+    return tr.docChanged || tr.selection || tr.effects.some((e) => e.is(previewRefresh))
+      ? mermaidBlockSet(tr.state)
+      : value;
+  },
+  provide: (f) => EditorView.decorations.from(f),
+});
+
+// mermaid 异步 settle → previewRefresh 的桥（wikilink pending 范式的实现侧）：
+// 渲染完成或主题（data-theme）切换时强制装饰层重建。dispose 随 view 销毁。
+const mermaidSettleBridge = ViewPlugin.fromClass(
+  class {
+    private unsubscribe: () => void;
+    private themeObserver: MutationObserver | null = null;
+
+    constructor(view: EditorView) {
+      this.unsubscribe = onMermaidSettled(() => {
+        view.dispatch({ effects: previewRefresh.of(null) });
+      });
+      this.themeObserver = new MutationObserver(() => {
+        view.dispatch({ effects: previewRefresh.of(null) });
+      });
+      this.themeObserver.observe(document.documentElement, {
+        attributes: true,
+        attributeFilter: ["data-theme"],
+      });
+    }
+
+    destroy() {
+      this.unsubscribe();
+      this.themeObserver?.disconnect();
+    }
+  },
+);
 
 // 块级数学公式 $$...$$ 可跨行，与 frontmatter 同约束走 StateField（插件装饰
 // 不允许替换换行符）；词法扫描为单趟全文档字符循环，渲染在 widget toDOM

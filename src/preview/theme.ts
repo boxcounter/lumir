@@ -146,4 +146,30 @@ export const livePreviewTheme = EditorView.theme({
     marginBottom: "4px",
   },
   ".cm-lp-math-raw": { margin: "0", whiteSpace: "pre-wrap", color: "var(--dim)" },
+
+  // mermaid：SVG 居中容器 + 占位与失败降级（口径同 math 降级块）。图表配色
+  // 由 mermaid 按主题渲染（见 mermaid.ts themeConfig），此处只管容器。
+  ".cm-lp-mermaid": { padding: "4px 0", overflowX: "auto", textAlign: "center" },
+  ".cm-lp-mermaid svg": { maxWidth: "100%" },
+  ".cm-lp-mermaid-pending": { textAlign: "start", color: "var(--dim)", fontSize: "0.85em", padding: "6px 0" },
+  ".cm-lp-mermaid-fallback": {
+    textAlign: "start",
+    backgroundColor: "var(--bg-2)",
+    borderRadius: "4px",
+    padding: "6px 10px",
+    margin: "4px 0",
+  },
+  ".cm-lp-mermaid-error": {
+    fontFamily: "var(--font-body)",
+    color: "var(--accent)",
+    fontSize: "0.85em",
+    marginBottom: "4px",
+  },
+  ".cm-lp-mermaid-raw": {
+    margin: "0",
+    whiteSpace: "pre-wrap",
+    fontFamily: "var(--font-mono)",
+    color: "var(--dim)",
+    fontSize: "0.92em",
+  },
 });
