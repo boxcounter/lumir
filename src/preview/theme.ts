@@ -126,4 +126,24 @@ export const livePreviewTheme = EditorView.theme({
     marginLeft: "3px",
     verticalAlign: "super",
   },
+
+  // math（KaTeX）：公式本体样式走本地打包的 katex.min.css（继承 currentColor，
+  // 三套主题自动适配）；此处只补块级容器与失败降级（可读源码 + 明确失败态）。
+  ".cm-lp-math-block": { padding: "4px 0", overflowX: "auto" },
+  ".cm-lp-math-fallback": {
+    fontFamily: "var(--font-mono)",
+    backgroundColor: "var(--bg-2)",
+    color: "var(--accent)",
+    borderRadius: "4px",
+    padding: "0 4px",
+    fontSize: "0.92em",
+  },
+  ".cm-lp-math-block.cm-lp-math-fallback": { padding: "6px 10px", margin: "4px 0" },
+  ".cm-lp-math-error": {
+    fontFamily: "var(--font-body)",
+    color: "var(--accent)",
+    fontSize: "0.85em",
+    marginBottom: "4px",
+  },
+  ".cm-lp-math-raw": { margin: "0", whiteSpace: "pre-wrap", color: "var(--dim)" },
 });

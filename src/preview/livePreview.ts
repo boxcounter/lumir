@@ -20,6 +20,7 @@ import {
 } from "./attachments";
 import type { AttachmentProvider } from "./attachments";
 import { findWikilinkSpans } from "./wikilinks";
+import { collectInlineMath, isInsideCodeContext, mathBlockSet } from "./math";
 import type { LinkResolveResult } from "../bindings/LinkResolveResult";
 import { BlockWrapper } from "@codemirror/view";
 import { findTables, tableAt, tableRowsInRange, type TableModel } from "./table";
@@ -45,8 +46,6 @@ export interface PreviewContext {
   /** wikilink 解析器；未接线（无 vault / 后端无 link graph）时装饰层走降级渲染。 */
   wikilinkResolver(): WikilinkResolver | null;
 }
-
-const CODE_NODE_NAMES = new Set(["FencedCode", "CodeBlock", "InlineCode", "HTMLBlock"]);
 
 /** wikilink 三态（spec §4.1）显示 widget：replace 整条链接，显示 alias 或 target。 */
 class WikilinkWidget extends WidgetType {
@@ -167,6 +166,7 @@ export function livePreview(ctx: PreviewContext) {
   return [
     livePreviewTheme,
     frontmatterDecorations,
+    mathBlockDecorations,
     listDecorations,
     EditorView.blockWrappers.of(tableWrappers),
     EditorView.domEventHandlers({
@@ -260,6 +260,19 @@ function frontmatterSet(state: EditorState): DecorationSet {
   ]);
 }
 
+// 块级数学公式 $$...$$ 可跨行，与 frontmatter 同约束走 StateField（插件装饰
+// 不允许替换换行符）；词法扫描为单趟全文档字符循环，渲染在 widget toDOM
+// 惰性发生且有缓存（见 math.ts），docChanged/selection 变化时重算。
+const mathBlockDecorations = StateField.define<DecorationSet>({
+  create(state) {
+    return mathBlockSet(state);
+  },
+  update(value, tr) {
+    return tr.docChanged || tr.selection ? mathBlockSet(tr.state) : value;
+  },
+  provide: (f) => EditorView.decorations.from(f),
+});
+
 function collectTableDecorations(view: EditorView, tables: readonly TableModel[], from: number, to: number, decos: Range<Decoration>[]): void {
   for (const table of tables) {
     if (table.degraded || table.to < from || table.from > to) continue;
@@ -307,6 +320,8 @@ function buildDecorations(view: EditorView, ctx: PreviewContext): DecorationSet 
     collectTableDecorations(view, tables, vr.from, vr.to, decos);
     collectSyntaxDecorations(view, vr.from, vr.to, fm, ctx, decos, tables);
     collectWikilinks(view, vr.from, vr.to, fm, ctx, decos);
+    collectInlineMath(view, vr.from, vr.to, fm,
+      (f, t) => tableAt(tables, f, t) !== undefined, decos);
     for (const { from } of lineRanges(view, vr.from, vr.to)) {
       const line = view.state.doc.lineAt(from);
       if (line.text.trim() || inFrontmatter(fm, from, line.to)) continue;
@@ -488,17 +503,6 @@ function collectSyntaxDecorations(
   });
 }
 
-function isInsideCode(view: EditorView, pos: number): boolean {
-  let node: ReturnType<typeof syntaxTree>["topNode"] | null = syntaxTree(
-    view.state,
-  ).resolveInner(pos, 0);
-  while (node) {
-    if (CODE_NODE_NAMES.has(node.name)) return true;
-    node = node.parent;
-  }
-  return false;
-}
-
 /** 标准 ![alt](path)：外部 URL 直接渲染，否则相对当前文件解析并经 provider 读取。 */
 function buildStandardImage(
   target: string,
@@ -543,7 +547,7 @@ function collectWikilinks(
     for (const span of findWikilinkSpans(line.text)) {
       const from = line.from + span.from;
       const to = line.from + span.to;
-      if (inFrontmatter(fm, from, to) || isInsideCode(view, from)) continue;
+      if (inFrontmatter(fm, from, to) || isInsideCodeContext(syntaxTree(view.state), from)) continue;
       const raw = doc.sliceString(from, to);
       decos.push(buildWikilink(raw, span.embed, ctx, resolver).range(from, to));
     }
