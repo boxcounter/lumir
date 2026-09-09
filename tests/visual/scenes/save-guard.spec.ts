@@ -156,3 +156,31 @@ test("保存写入结果未知：提示核对内容且说明修改未丢失", as
   await expect(page.locator(".lumir-toast", { hasText: "保存结果未知" })).toContainText("未丢失");
   await expect(page.locator(".masthead-file")).toContainText("未保存");
 });
+
+// M107 遗留断言：行为在 feat/save-guard-follow-up-repairs（main.ts，本任务 scope 外），
+// 此处只补前端回归证据。
+
+test("退出拦截提示按文案去重：连续拦截不堆叠 sticky toast（M107）", async ({ page }) => {
+  await stubTauri(page, VAULT);
+  await page.goto("/");
+  await page.locator('.ft-row[title="README.md"]').click();
+  const content = page.locator(".cm-content");
+  await expect(content).toContainText("Demo Vault");
+  await content.click();
+  await page.keyboard.type("edited");
+  await expect(page.locator(".masthead-file")).toContainText("未保存");
+
+  // 连续 Cmd+Q 被后端守卫拦截（连续 app:quit_blocked）：sticky 提示复用既有浮条。
+  await fireQuitBlocked(page);
+  await fireQuitBlocked(page);
+  await fireQuitBlocked(page);
+  await expect(page.locator(".lumir-toast", { hasText: "无法退出" })).toHaveCount(1);
+});
+
+test("启动时主动推送一次 dirty 复位镜像（M107 DirtyState 防滞留）", async ({ page }) => {
+  await stubTauri(page, VAULT);
+  await page.goto("/");
+  // 前端是唯一事实源：初始化后主动推送一次当前 dirty（启动时必为 false），
+  // 复位 webview 重载后后端可能滞留的 stale true 镜像。
+  await expect.poll(() => dirtyReports(page)).toEqual([false]);
+});
