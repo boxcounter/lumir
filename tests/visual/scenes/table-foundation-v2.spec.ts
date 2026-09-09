@@ -53,6 +53,64 @@ test("超长表安全源码降级且不全量物化可见表格行", async ({ pa
   expect(await readDocument(page)).toBe(source);
 });
 
+interface CellRect { text: string; left: number; top: number; width: number; }
+
+async function tableGridGeometry(page: import("@playwright/test").Page): Promise<CellRect[][]> {
+  return page.locator(".cm-lp-table-row").evaluateAll((rows) => rows.map((row) =>
+    [...row.querySelectorAll<HTMLElement>(".cm-lp-table-cell")].map((cell) => {
+      const rect = cell.getBoundingClientRect();
+      return { text: cell.textContent ?? "", left: rect.left, top: rect.top, width: rect.width };
+    }),
+  ));
+}
+
+function expectVerticalColumns(grid: CellRect[][], columns: number) {
+  expect(grid.length).toBeGreaterThan(1);
+  for (const row of grid) {
+    expect(row).toHaveLength(columns);
+    for (let column = 1; column < columns; column++) {
+      expect(row[column].left).toBeGreaterThan(row[column - 1].left + row[column - 1].width - 1);
+      expect(Math.abs(row[column].top - row[0].top)).toBeLessThan(1);
+    }
+  }
+  for (let column = 0; column < columns; column++) {
+    for (let row = 1; row < grid.length; row++) {
+      expect(Math.abs(grid[row][column].left - grid[0][column].left)).toBeLessThan(1);
+      expect(grid[row][column].top).toBeGreaterThan(grid[row - 1][column].top);
+    }
+  }
+}
+
+test("截图结构回归：中文表头居首行、各列垂直对齐、空槽与转义 pipe 不占列", async ({ page }) => {
+  const source = readFileSync(new URL("../fixtures/table-header-layout/screenshot-repro.md", import.meta.url), "utf8");
+  await stubTauri(page, { entries: [{ path: "repro.md", kind: "file", size: source.length, mtime_ms: 0 }], files: { "repro.md": source } });
+  await page.goto("/");
+  await page.locator('.ft-row[title="repro.md"]').click();
+  await expect(page.locator(".cm-lp-table-scroll")).toHaveCount(1);
+  const grid = await tableGridGeometry(page);
+  expect(grid[0].map((cell) => cell.text)).toEqual([" 名称 ", " 状态 ", " 备注 "]);
+  expect(grid[1][2].text).toContain("a\\|b");
+  expect(grid[2][1].text).toBe("");
+  expectVerticalColumns(grid, 3);
+  const display = await page.locator(".cm-lp-table-row").first().evaluate((row) => getComputedStyle(row).display);
+  expect(display).toBe("grid");
+  await expect(page.locator(".cm-lp-table-separator")).toBeHidden();
+  expect(await readDocument(page)).toBe(source);
+});
+
+test("窄窗口下列网格结构保持且容器可横向滚动", async ({ page }) => {
+  await page.setViewportSize({ width: 480, height: 800 });
+  const source = readFileSync(new URL("../fixtures/table-header-layout/screenshot-repro.md", import.meta.url), "utf8");
+  await stubTauri(page, { entries: [{ path: "narrow.md", kind: "file", size: source.length, mtime_ms: 0 }], files: { "narrow.md": source } });
+  await page.goto("/");
+  await page.locator('.ft-row[title="narrow.md"]').click();
+  await expect(page.locator(".cm-lp-table-scroll")).toHaveCount(1);
+  const grid = await tableGridGeometry(page);
+  expect(grid[0].map((cell) => cell.text)).toEqual([" 名称 ", " 状态 ", " 备注 "]);
+  expectVerticalColumns(grid, 3);
+  expect(await readDocument(page)).toBe(source);
+});
+
 test("代码块边界不触发表格增强", async ({ page }) => {
   const source = "```md\n| code | source |\n| --- | --- |\n| one | two |\n```\n\n| real | table |\n| --- | --- |\n| one | two |\n";
   await stubTauri(page, { entries: [{ path: "boundary.md", kind: "file", size: source.length, mtime_ms: 0 }], files: { "boundary.md": source } });
