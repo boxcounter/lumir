@@ -9,10 +9,11 @@
 
 - [ ] 2.1 实现并记录 F0 正确路径、无源码闪现、可见 decoration/frontmatter ready 与 `requestAnimationFrame` paint 验收。
 - [ ] 2.2 实现 F1 图片/wikilink 成功、失败和有界降级，不阻塞 F0。
-- [ ] 2.3 建立 P0/P1/P1.5 组合 fixture 与 P2 延后项记录。
+- [ ] 2.3 建立 P0/P1/P1.5 组合与 math/mermaid fixture，并记录 dataview/canvas 延后项（需单独产品裁决）。
 - [ ] 2.4 完成源码不变、原始 Markdown 复制、编辑保存、失败保留和冲突保护验收。
 - [ ] 2.5 完成 AX、键盘、触控板宽表横滚和焦点路径验收。
 - [ ] 2.6 以真实 Tauri/WKWebView 测量 F0/F1，并与 IO 子指标、keypress 近似分开报告；提交预算裁决点，不伪造阈值。
+- [ ] 2.7 完成 Math（LaTeX）与 Mermaid 渲染、失败可读降级、源码复制不变与不阻塞 F0 的验收。
 
 ## 出口验证（节点 2 前）
 
