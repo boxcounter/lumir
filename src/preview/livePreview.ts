@@ -302,7 +302,7 @@ function buildDecorations(view: EditorView, ctx: PreviewContext): DecorationSet 
     for (const table of tables) {
       if (!table.degraded || table.to < vr.from || table.from > vr.to) continue;
       const line = view.state.doc.lineAt(table.from);
-      decos.push(Decoration.line({ class: "cm-lp-table-degraded", attributes: { "aria-label": "表格阅读降级，显示原始 Markdown" } }).range(line.from));
+      decos.push(Decoration.line({ class: "cm-lp-table-degraded", attributes: { "aria-label": "表格阅读降级：保留原始 Markdown" } }).range(line.from));
     }
     collectTableDecorations(view, tables, vr.from, vr.to, decos);
     collectSyntaxDecorations(view, vr.from, vr.to, fm, ctx, decos, tables);

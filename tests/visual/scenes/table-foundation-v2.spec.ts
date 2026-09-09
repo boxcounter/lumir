@@ -30,7 +30,7 @@ test("表格可见行、降级边界、AX、滚动和源码复制", async ({ pag
   await expect(page.locator(".cm-lp-table")).toHaveAttribute("role", "table");
   await expect(page.locator(".cm-lp-table-cell[role=columnheader]")).toHaveCount(3);
   await expect(page.locator(".cm-lp-table-degraded")).toHaveCount(1);
-  await expect(page.locator(".cm-lp-table-degraded")).toContainText("表格阅读降级：保留原始 Markdown");
+  await expect(page.locator(".cm-lp-table-degraded")).toHaveAttribute("aria-label", "表格阅读降级：保留原始 Markdown");
   expect(await readDocument(page)).toBe(fixture);
   await page.locator(".cm-lp-table-scroll").focus();
   await page.keyboard.press("End");
@@ -54,7 +54,7 @@ test("超长表安全源码降级且不全量物化可见表格行", async ({ pa
 });
 
 test("代码块边界不触发表格增强", async ({ page }) => {
-  const source = "```md\\n| code | source |\\n| --- | --- |\\n| one | two |\\n```\\n\\n| real | table |\\n| --- | --- |\\n| one | two |\\n";
+  const source = "```md\n| code | source |\n| --- | --- |\n| one | two |\n```\n\n| real | table |\n| --- | --- |\n| one | two |\n";
   await stubTauri(page, { entries: [{ path: "boundary.md", kind: "file", size: source.length, mtime_ms: 0 }], files: { "boundary.md": source } });
   await page.goto("/");
   await page.locator('.ft-row[title="boundary.md"]').click();
