@@ -3,6 +3,7 @@ import { StateEffect } from "@codemirror/state";
 import type { EditorState, Range } from "@codemirror/state";
 import { Decoration, EditorView, ViewPlugin, WidgetType } from "@codemirror/view";
 import type { DecorationSet, ViewUpdate } from "@codemirror/view";
+import { detectCallout } from "./callout";
 
 type Node = ReturnType<typeof syntaxTree>["topNode"];
 interface Group { width: number; body: number }
@@ -188,7 +189,22 @@ class ListLayout {
       while (line.from <= range.to) {
         if (!seen.has(line.from)) {
           seen.add(line.from);
-          const offset = line.text.search(/\S/);
+          let offset = line.text.search(/\S/);
+          if (offset >= 0 && line.text[offset] === ">") {
+            // callout（M109）内的列表：行首是引用标记时内容位置在标记之后，
+            // 仅当所属 blockquote 是 callout（首行 [!type]）才扫过标记解析；
+            // 普通引用保持原口径（列表装饰不进入 blockquote）。
+            let bq: Node | null = this.tree.resolveInner(line.from + offset, 1);
+            while (bq && bq.name !== "Blockquote") bq = bq.parent;
+            if (bq && detectCallout(doc, bq)) {
+              let content = offset;
+              while (line.text[content] === ">") {
+                content++;
+                while (content < line.text.length && line.text[content] === " ") content++;
+              }
+              if (content < line.text.length) offset = content;
+            }
+          }
           if (offset >= 0) {
             let node: Node | null = this.tree.resolveInner(line.from + offset, 1);
             let body = false;

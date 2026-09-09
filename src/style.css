@@ -18,6 +18,12 @@
 [data-theme="eink"] .ft-row[aria-current="true"], [data-theme="eink"] .ft-open-btn { font-weight: 700; border-style: double; }
 [data-theme="eink"] .ft-open-btn:hover { background: #fff; color: #000; border-color: #000; }
 [data-theme="eink"] *, [data-theme="eink"] *::before, [data-theme="eink"] *::after { box-shadow:none !important; text-shadow:none !important; transition:none !important; animation:none !important; }
+/* callout 类型色（M109，theme.ts 的 .cm-lp-callout-* 经 --callout-c 引用）：
+   --callout-tint 控制底色混色强度；eink 纯黑白不加底色（tint 0%、类型色全黑），
+   类型区分靠图标形状与标题字重。 */
+:root { --callout-tint:8%; --callout-note:#4f6f8f; --callout-abstract:#3d7a76; --callout-info:#4f6f8f; --callout-todo:#4f6f8f; --callout-tip:#5a7a3f; --callout-success:#5a7a3f; --callout-question:#8a6d1f; --callout-warning:#a05e1c; --callout-failure:#b23a2c; --callout-danger:#b23a2c; --callout-bug:#b23a2c; --callout-example:#715589; --callout-quote:#8d8471; --callout-unknown:#8d8471; }
+[data-theme="dark"] { --callout-note:#82a5c6; --callout-abstract:#63aaa5; --callout-info:#82a5c6; --callout-todo:#82a5c6; --callout-tip:#93b16e; --callout-success:#93b16e; --callout-question:#cba64c; --callout-warning:#d18d48; --callout-failure:#d9755f; --callout-danger:#d9755f; --callout-bug:#d9755f; --callout-example:#ab8fc2; --callout-quote:#8d8676; --callout-unknown:#8d8676; }
+[data-theme="eink"] { --callout-tint:0%; --callout-note:#000; --callout-abstract:#000; --callout-info:#000; --callout-todo:#000; --callout-tip:#000; --callout-success:#000; --callout-question:#000; --callout-warning:#000; --callout-failure:#000; --callout-danger:#000; --callout-bug:#000; --callout-example:#000; --callout-quote:#000; --callout-unknown:#000; }
 * { box-sizing: border-box; }
 html,
 body,

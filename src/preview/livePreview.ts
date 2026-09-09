@@ -22,6 +22,7 @@ import type { AttachmentProvider } from "./attachments";
 import { findWikilinkSpans } from "./wikilinks";
 import { collectInlineMath, isInsideCodeContext, mathBlockSet } from "./math";
 import { mermaidBlockSet, onMermaidSettled } from "./mermaid";
+import { calloutMarkerDecorations, calloutOnLine, detectCallout } from "./callout";
 import type { LinkResolveResult } from "../bindings/LinkResolveResult";
 import { BlockWrapper } from "@codemirror/view";
 import { findTables, tableAt, tableRowsInRange, type TableModel } from "./table";
@@ -372,7 +373,15 @@ function buildDecorations(view: EditorView, ctx: PreviewContext): DecorationSet 
       if (line.text.trim() || inFrontmatter(fm, from, line.to)) continue;
       const node = syntaxTree(view.state).resolveInner(from, 0);
       if (node.name !== "Document") continue;
-      decos.push(Decoration.line({ class: "cm-lp-block-separator" }).range(from));
+      // 与 callout 相邻的空行保留块间距：0 高分隔会让相邻 callout 的
+      // 底色连成一块，类型边界不可辨（M109）。
+      const tree = syntaxTree(view.state);
+      const gap =
+        (line.number > 1 && calloutOnLine(tree, view.state.doc, line.from - 1) !== null) ||
+        (line.number < view.state.doc.lines && calloutOnLine(tree, view.state.doc, line.to + 1) !== null);
+      decos.push(
+        Decoration.line({ class: gap ? "cm-lp-block-separator cm-lp-callout-gap" : "cm-lp-block-separator" }).range(from),
+      );
     }
   }
   return Decoration.set(decos, true);
@@ -508,17 +517,38 @@ function collectSyntaxDecorations(
       }
 
       if (name === "Blockquote") {
+        // callout（Obsidian [!type]，M109）：首行 [!type] 命中的 blockquote 整块
+        // 换 callout 行样式（类型色经行内 --callout-c 变量接线，token 在 style.css），
+        // 标记替换为图标 widget；未命中保持普通引用样式。标记/标题装饰只在首行
+        // 落入视口时添加（视口重建时补齐）。
+        const callout = detectCallout(doc, ref.node);
         for (const l of lineRanges(view, Math.max(ref.from, vrFrom), Math.min(ref.to, vrTo))) {
-          decos.push(Decoration.line({ class: "cm-lp-quote-line" }).range(l.from));
+          if (!callout) {
+            decos.push(Decoration.line({ class: "cm-lp-quote-line" }).range(l.from));
+            continue;
+          }
+          const classes = ["cm-lp-callout-line"];
+          if (l.from === callout.firstLineFrom) classes.push("cm-lp-callout-first");
+          if (doc.lineAt(l.from).to === callout.lastLineTo) classes.push("cm-lp-callout-last");
+          decos.push(
+            Decoration.line({
+              class: classes.join(" "),
+              attributes: { style: `--callout-c:var(--callout-${callout.canonical})` },
+            }).range(l.from),
+          );
         }
-        const cursor = ref.node.cursor();
-        if (cursor.firstChild()) {
-          do {
-            if (cursor.name === "QuoteMark") {
-              hideMark(view, cursor.from, cursor.to, decos, true, false);
-            }
-          } while (cursor.nextSibling());
+        if (callout && callout.firstLineTo >= vrFrom && callout.firstLineFrom <= vrTo) {
+          const { marker, title } = calloutMarkerDecorations(callout);
+          decos.push(marker);
+          if (title) decos.push(title);
         }
+        return;
+      }
+
+      // 续行 QuoteMark 嵌在 Paragraph 内（不是 Blockquote 直接子节点），
+      // 须靠节点级 case 统一隐藏（M109 修复：此前多行引用续行的 > 会漏出）。
+      if (name === "QuoteMark") {
+        hideMark(view, ref.from, ref.to, decos, true, false);
         return;
       }
 

@@ -32,6 +32,32 @@ export const livePreviewTheme = EditorView.theme({
     color: "var(--dim)",
   },
 
+  // callout（Obsidian [!type]，M109）：类型色 token --callout-{type} 在
+  // style.css 按三主题定义，行装饰经 --callout-c 变量接线；行级浅底色 +
+  // 类型色左边条构成整块观感（.cm-line 块级无缝），首/末行补圆角与块内边距。
+  // 标题与图标着类型色，正文保持正文色。eink 下 tint 为 0%、类型色全黑，
+  // 类型区分靠图标形状与标题字重。
+  ".cm-line.cm-lp-callout-line": {
+    backgroundColor: "color-mix(in srgb, var(--callout-c) var(--callout-tint), var(--bg))",
+    borderLeft: "3px solid var(--callout-c)",
+    paddingLeft: "10px",
+  },
+  ".cm-line.cm-lp-callout-first": { borderRadius: "var(--radius) var(--radius) 0 0", paddingTop: "3px" },
+  ".cm-line.cm-lp-callout-last": { borderRadius: "0 0 var(--radius) var(--radius)", paddingBottom: "3px" },
+  ".cm-lp-callout-icon": {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: "6px",
+    marginRight: "6px",
+    color: "var(--callout-c)",
+    fontWeight: "600",
+    userSelect: "none",
+  },
+  ".cm-lp-callout-icon svg": { width: "1em", height: "1em", flex: "none" },
+  ".cm-lp-callout-title": { fontWeight: "600", color: "var(--callout-c)" },
+  // 相邻 callout 之间的空行保留块间距（覆盖 0 高分隔，选择器更具体优先）。
+  ".cm-line.cm-lp-block-separator.cm-lp-callout-gap": { height: "10px", minHeight: "10px" },
+
   ".cm-line.cm-lp-codeblock-line": { backgroundColor: "var(--bg-2)", fontFamily: "var(--font-mono)" },
   ".cm-lp-inline-code": {
     backgroundColor: "var(--bg-2)",
