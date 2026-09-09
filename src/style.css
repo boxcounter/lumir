@@ -319,14 +319,17 @@ body { background:var(--bg); color:var(--text); font-family:var(--font-body); fo
   font-size: .92em;
   line-height: 1.5;
 }
-.cm-lp-table-row {
+/* 需压过 CodeMirror 基础主题 .cm-line（display:block，运行时注入、次序更靠后） */
+.cm-lp-table .cm-lp-table-row {
   display: grid;
   grid-template-columns: subgrid;
   grid-column: 1 / -1;
+  padding: 0;
   min-block-size: 2em;
 }
 .cm-lp-table-cell {
   display: block;
+  grid-row: 1;
   min-inline-size: 7ch;
   padding: 5px 8px;
   border-inline-end: 1px solid var(--bd-2);
@@ -336,7 +339,7 @@ body { background:var(--bg); color:var(--text); font-family:var(--font-body); fo
 }
 .cm-lp-table-row:first-child .cm-lp-table-cell { font-weight: 700; background: var(--bg-2); }
 .cm-lp-table-cell-empty { min-block-size: 2em; }
-.cm-lp-table-separator { display: none; }
+.cm-lp-table .cm-lp-table-separator { display: none; }
 .cm-lp-table-degraded {
   color: var(--accent);
   font-size: .82em;
