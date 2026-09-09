@@ -32,6 +32,9 @@ importers:
       js-yaml:
         specifier: ^4.1.0
         version: 4.3.2
+      katex:
+        specifier: 0.18.7
+        version: 0.18.7
     devDependencies:
       '@tauri-apps/cli':
         specifier: 2.11.4
@@ -286,6 +289,10 @@ packages:
   argparse@2.0.1:
     resolution: {integrity: sha512-8+9WqebbFzpX9OR+Wa6O29asIogeRMzcGtAINdpMHHyAg10f05aSFVBbcEqGf/PXw1EjAZ+q2/bEBg3DvurK3Q==}
 
+  commander@15.0.0:
+    resolution: {integrity: sha512-z67u4ZhzCL/Tydu1lJARtEZYWbWaN7oYLHbsuzocr6y4N6WZAagG3RQ4FW61V1/0+jImpj293XfrcYnd1qxtPg==}
+    engines: {node: '>=22.12.0'}
+
   crelt@1.0.7:
     resolution: {integrity: sha512-aK6BbWfhf4U/wCcLHKPJl/xa6VkVstRaPywWtMKGwuOLc/wZTyQYuoxgvZnNsBvv7Kg3YTBQYYBCggcviQczuA==}
 
@@ -309,6 +316,10 @@ packages:
 
   js-yaml@4.3.2:
     resolution: {integrity: sha512-SFNOvSJ+Dgf/9An904Yx+CgSlIPCkIpao4qo51lpee25TIRejdH3rhR4EZMGoNx3/TP3O+wzWuiTFl4sqbltzA==}
+    hasBin: true
+
+  katex@0.18.7:
+    resolution: {integrity: sha512-h+UCwkZ+4Jz8WQ7MLGfj7UVFrRCizGb912fwF4luGdYsC5paYG1vx+jy+KRcC/XkpjGva/P7nAWuxNnPzRvzHw==}
     hasBin: true
 
   lightningcss-android-arm64@1.33.0:
@@ -680,6 +691,8 @@ snapshots:
 
   argparse@2.0.1: {}
 
+  commander@15.0.0: {}
+
   crelt@1.0.7: {}
 
   detect-libc@2.1.2: {}
@@ -694,6 +707,10 @@ snapshots:
   js-yaml@4.3.2:
     dependencies:
       argparse: 2.0.1
+
+  katex@0.18.7:
+    dependencies:
+      commander: 15.0.0
 
   lightningcss-android-arm64@1.33.0:
     optional: true

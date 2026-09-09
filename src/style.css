@@ -1,3 +1,7 @@
+/* KaTeX 公式渲染样式与字体（M106 math/LaTeX）：本地打包资源，font 走 'self' 符合现有 CSP；
+   公式颜色继承 currentColor，三套主题（--text）自动适配。 */
+@import "katex/dist/katex.min.css";
+
 :root {
   --bg: #f6f3ea; --bg-nav: #efeadd; --bg-2: #ece6d5; --bg-3: #e2d9c1;
   --bd-1: #e0d8c2; --bd-2: #cfc4a6; --bd-3: #b3a684;
