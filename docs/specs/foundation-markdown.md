@@ -12,7 +12,7 @@ Foundation 的验收对象是用户从本地文件打开到阅读、编辑、保
 “打开完成”分为两个端点：
 
 - **基础首帧（F0）**：点击文件树条目后，已确认正确路径和文档；可见区域已完成 Markdown 基础 decoration，frontmatter（若存在）已就绪；完成一次 `requestAnimationFrame` paint。F0 不等待图片或 wikilink 的远程/跨文件资源 settle。
-- **资源稳定帧（F1）**：F0 后，图片和 wikilink 等异步资源在有限时间内成功、失败或明确降级，不得无限 pending。F1 可触发局部布局变化，但不得使基础正文永久处于 loading 或源码冒充状态。
+- **资源稳定帧（F1）**：F0 后，图片、wikilink、math（LaTeX）、mermaid 等异步资源在有限时间内成功、失败或明确降级，不得无限 pending。F1 可触发局部布局变化，但不得使基础正文永久处于 loading 或源码冒充状态。
 
 禁止把新文件的朴素源码闪现、错误路径的旧文档、或仅完成 IO/解码的结果当作 F0。旧文档不得在新路径确认前冒充当前文档。
 
@@ -28,7 +28,7 @@ F0 的 correctness gate 依次检查：
 4. frontmatter 若存在则显示最终约定的 properties/frontmatter 形态，若不存在则不能等待不存在的元数据；
 5. 页面完成一次 `requestAnimationFrame` paint。
 
-F1 必须为图片、wikilink、失败资源提供成功、失败占位或清晰源码/链接降级状态。任何异步资源均须有超时或取消路径。异步 settle 不得阻塞 F0。
+F1 必须为图片、wikilink、math、mermaid 等失败资源提供成功、失败占位或清晰源码/链接降级状态。任何异步资源均须有超时或取消路径。异步 settle 不得阻塞 F0。
 
 ## 3. 常见 Markdown 覆盖
 
@@ -37,9 +37,16 @@ F1 必须为图片、wikilink、失败资源提供成功、失败占位或清晰
 - P0：heading、段落、无序/有序/任务列表、嵌套列表、quote、fenced code、table、link；列表项目内的 strong、em、strike、inline code、link；
 - P1：wikilink、frontmatter、tags、callout；
 - P1.5：embed、image（含失败资源）；
-- P2：dataview、canvas、math、mermaid。
+- P2：dataview、canvas。
 
-P0 是 Foundation 的基础阅读必验。P1/P1.5 是 Foundation 内的实现顺序，不是永久不支持；其行为必须有稳定渲染或明确降级。P2 进入延后实现/兼容性裁决，不得以未实现的占位冒充已支持。
+P0 是 Foundation 的基础阅读必验。P1/P1.5 是 Foundation 内的实现顺序，不是永久不支持；其行为必须有稳定渲染或明确降级。P2 保持延后实现/兼容性裁决，需单独产品裁决，不得以未实现的占位冒充已支持。
+
+Math（LaTeX）与 Mermaid 按用户裁决为 Foundation 确定需求，不再属于 P2 延后项；其要求边界为：
+
+- **渲染义务**：行内与块级 LaTeX 数学、mermaid 代码块必须渲染为可读图形结果；
+- **失败降级**：解析或渲染失败时必须回退为可读源码或明确失败状态，不得伪装已支持、空白展示或无限 loading；
+- **源码保护**：阅读、选择、复制输出的原始 Markdown 源码保持不变；
+- **首帧边界**：math/mermaid 渲染不得阻塞基础首帧 F0，其成功、失败或降级 settle 纳入 F1 计时与降级合同。
 
 基础阅读必须保留原始编号、任务状态、嵌套层级、空表格槽位、表格列对齐、转义 pipe、链接目标和源码换行。非矩形或无法安全识别的表格整块回退为可读源码，不得猜测修复。
 
@@ -76,7 +83,7 @@ fixture 只使用匿名合成内容。不得写入真实 vault 原文、标题�
 | 层级 | 大小（UTF-8 bytes） | 代表性负载 | 必验内容 | 性能用途 |
 |---|---:|---|---|---|
 | tiny | ≤4 KiB | 单屏混合 Markdown | P0 核心组合、源码复制、首帧、空/错资源 | correctness 与冷路径校验 |
-| small | >4–16 KiB | 多段、多列表、多表、P1/P1.5 | P0 全组合、frontmatter、wikilink、图片失败、F0/F1 | 日常阅读；small 优先级是当前计划假设，需后续匿名 fixture 验证 |
+| small | >4–16 KiB | 多段、多列表、多表、P1/P1.5、math/mermaid | P0 全组合、frontmatter、wikilink、图片失败、math/mermaid 渲染与失败降级、F0/F1 | 日常阅读；small 优先级是当前计划假设，需后续匿名 fixture 验证 |
 | medium | >16–64 KiB | 长文、多级嵌套、宽/非矩形表 | 滚动增量、可访问性、selection、编辑保存/冲突 | 稳态与局部 settle |
 | large | >64–256 KiB | 多结构压力文档与大表 | 正确性不降级、无全量装饰、内存/滚动/settle | 压力边界；不等同 ADR 1 MiB 合同 |
 
@@ -84,8 +91,8 @@ fixture 只使用匿名合成内容。不得写入真实 vault 原文、标题�
 
 | 维度 | 必须项（Foundation 出口） | 延后项（明确不冒充完成） | 测量边界 |
 |---|---|---|---|
-| 打开 | F0 正确路径、无源码闪现、P0 decoration、F1 有限 settle | P2 原生 dataview/canvas/math/mermaid | F0/F1 真实 Tauri/WKWebView；IO 子指标另报 |
-| 阅读 | P0 组合、列表/表格/链接源码语义、滚动增量 | P2 高级渲染的完整交互 | 视觉 diff 不能替代源码/交互验收 |
+| 打开 | F0 正确路径、无源码闪现、P0 decoration、F1 有限 settle；math/mermaid 渲染不阻塞 F0 | P2 原生 dataview/canvas（需单独产品裁决） | F0/F1 真实 Tauri/WKWebView；IO 子指标另报 |
+| 阅读 | P0 组合、列表/表格/链接源码语义、滚动增量、math/mermaid 可读渲染与失败降级、源码复制不变 | dataview/canvas 高级渲染的完整交互 | 视觉 diff 不能替代源码/交互验收 |
 | 编辑保存 | 输入、中文 IME、undo/redo、dirty、成功重开 | 可视表格编辑、IDE、插件 | 真实文件前后字节/版本比对 |
 | 失败安全 | 资源失败提示、保存失败保留内容、冲突不覆盖 | 自动合并策略 | 注入可控失败并检查磁盘与内存文档 |
 | 可访问性 | 键盘、焦点、宽表横滚、名称和语义 | 高级语法专属语义 | AX 树 + 键盘/触控板真实验收 |

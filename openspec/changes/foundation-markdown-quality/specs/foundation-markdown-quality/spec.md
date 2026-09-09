@@ -4,7 +4,7 @@
 
 ### Requirement: 首帧与资源稳定帧
 
-打开 Markdown 文件时，系统 SHALL 在真实 Tauri/WKWebView 中以正确路径绑定文档，并在可见基础 decoration 与 frontmatter ready 后完成一次 `requestAnimationFrame` paint，形成 F0 首帧。系统 MUST NOT 以新文件朴素源码闪现、错误路径旧文档或仅 IO/解码完成作为 F0。图片、wikilink 等异步资源 SHALL 以独立 F1 端点在成功、失败或明确降级后 settle，MUST NOT 无限 pending 或阻塞 F0。
+打开 Markdown 文件时，系统 SHALL 在真实 Tauri/WKWebView 中以正确路径绑定文档，并在可见基础 decoration 与 frontmatter ready 后完成一次 `requestAnimationFrame` paint，形成 F0 首帧。系统 MUST NOT 以新文件朴素源码闪现、错误路径旧文档或仅 IO/解码完成作为 F0。图片、wikilink、math、mermaid 等异步资源 SHALL 以独立 F1 端点在成功、失败或明确降级后 settle，MUST NOT 无限 pending 或阻塞 F0。
 
 #### Scenario: 打开文件直接进入最终基础阅读帧
 
@@ -13,17 +13,31 @@
 
 #### Scenario: 资源失败不阻塞首帧
 
-- **WHEN** 文档含图片或 wikilink 且资源加载失败或目标不存在
+- **WHEN** 文档含图片、wikilink、math 或 mermaid 且资源加载、解析或渲染失败或目标不存在
 - **THEN** F0 仍可完成，F1 在有界时间内显示失败占位、链接或可读源码降级，不保持无限 loading
 
 ### Requirement: 常见 Markdown 组合与源码保护
 
-系统 SHALL 完整验收 P0 的 heading、list、quote、code、table、link，以及列表内 strong、em、strike、inline code、link；并按 Foundation 顺序覆盖 P1 wikilink/frontmatter/tags/callout 与 P1.5 embed/image。P2 dataview/canvas/math/mermaid SHALL 标为延后实现或兼容性裁决，不得冒充已支持。阅读、选择、复制和 decoration MUST 保持原始 Markdown 文本、换行、编号、任务标记、表格槽位、对齐冒号、转义 pipe 与链接目标不变。
+系统 SHALL 完整验收 P0 的 heading、list、quote、code、table、link，以及列表内 strong、em、strike、inline code、link；并按 Foundation 顺序覆盖 P1 wikilink/frontmatter/tags/callout 与 P1.5 embed/image。Math（LaTeX）与 Mermaid 按用户裁决为 Foundation 确定需求，其渲染与降级要求见独立 requirement。P2 仅含 dataview/canvas，SHALL 保持延后实现并需单独产品裁决，不得冒充已支持。阅读、选择、复制和 decoration MUST 保持原始 Markdown 文本、换行、编号、任务标记、表格槽位、对齐冒号、转义 pipe 与链接目标不变。
 
 #### Scenario: 组合语法保持源码语义
 
 - **WHEN** 用户打开含嵌套任务列表、列表内行内样式、引用、代码、矩形表格、链接和 frontmatter 的合成 fixture，并全选复制
 - **THEN** 视觉呈现覆盖基础组合，复制结果与 fixture 原始 Markdown 字节语义一致，不输出 HTML、TSV 或重新编号内容
+
+### Requirement: Math 与 Mermaid 渲染与降级
+
+系统 SHALL 将行内与块级 Math（LaTeX）及 Mermaid 代码块渲染为可读图形结果。解析或渲染失败时系统 MUST 回退为可读源码或明确失败状态，MUST NOT 伪装已支持、空白展示或无限 loading。对 math/mermaid 内容的阅读、选择、复制 MUST 输出保持不变的原始 Markdown 源码。Math/Mermaid 渲染 MUST NOT 阻塞 F0，其成功、失败或降级 settle SHALL 纳入 F1 端点计时与降级合同。
+
+#### Scenario: math/mermaid 正常渲染且源码不变
+
+- **WHEN** 用户打开含 LaTeX 数学与 mermaid 代码块的合成 fixture 并全选复制
+- **THEN** 数学与图表显示为渲染结果，复制结果与 fixture 原始 Markdown 字节语义一致
+
+#### Scenario: math/mermaid 渲染失败可读降级
+
+- **WHEN** LaTeX 或 mermaid 源码存在语法错误或渲染失败
+- **THEN** F0 不受影响，F1 在有界时间内显示可读源码或明确失败状态，不出现空白、无限 loading 或伪装成功
 
 ### Requirement: 编辑保存与失败保护
 
