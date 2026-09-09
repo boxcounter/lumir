@@ -2,7 +2,7 @@
   --bg: #f6f3ea; --bg-nav: #efeadd; --bg-2: #ece6d5; --bg-3: #e2d9c1;
   --bd-1: #e0d8c2; --bd-2: #cfc4a6; --bd-3: #b3a684;
   --text: #262219; --dim: #8d8471; --accent: #b23a2c;
-  --sel: rgba(178,58,44,.16); --selection-ink: var(--text); --radius: 5px; --measure: 480px; --nav-width: 244px;
+  --sel: rgba(178,58,44,.16); --selection-ink: var(--text); --radius: 5px; --measure: 80%; --nav-width: 244px;
   --font-body: -apple-system, "PingFang SC", "Hiragino Sans GB", sans-serif;
   --font-display: "Songti SC", "STSong", ui-serif, Georgia, serif;
   --font-mono: ui-monospace, "SF Mono", Menlo, monospace;
@@ -338,6 +338,9 @@ body { background:var(--bg); color:var(--text); font-family:var(--font-body); fo
   overflow-wrap: anywhere;
 }
 .cm-lp-table-row:first-child .cm-lp-table-cell { font-weight: 700; background: var(--bg-2); }
+/* 行内被 Decoration.replace 隐藏的管道符仍留有 CM6 的 img.cm-widgetBuffer / 占位 span；
+   它们是自动放置的 grid item，会各撑出一条隐式行（约 1em），实测行高 92px 远超单元格 33px */
+.cm-lp-table .cm-lp-table-row > :not(.cm-lp-table-cell) { display: none; }
 .cm-lp-table-cell-empty { min-block-size: 2em; }
 .cm-lp-table .cm-lp-table-separator { display: none; }
 .cm-lp-table-degraded {

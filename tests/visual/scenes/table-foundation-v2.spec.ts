@@ -26,6 +26,10 @@ test("表格可见行、降级边界、AX、滚动和源码复制", async ({ pag
   }));
   expect(geometry.every((row) => row.height > 0)).toBeTruthy();
   for (let i = 1; i < geometry.length; i++) expect(geometry[i].top).toBeGreaterThanOrEqual(geometry[i - 1].bottom - 1);
+  // 行高回归：行不得被隐藏管道符留下的 widgetBuffer 占位撑高——
+  // 修复前行高约 92px（单元格 33px + 2 条隐式 grid 行），修复后应与单元格同高。
+  const cellHeight = await page.locator(".cm-lp-table-cell").first().evaluate((cell) => cell.getBoundingClientRect().height);
+  for (const row of geometry) expect(row.height).toBeLessThan(cellHeight + 2);
   await expect(page.locator(".cm-lp-table-scroll")).toHaveAttribute("role", "region");
   await expect(page.locator(".cm-lp-table")).toHaveAttribute("role", "table");
   await expect(page.locator(".cm-lp-table-cell[role=columnheader]")).toHaveCount(3);
@@ -119,4 +123,61 @@ test("代码块边界不触发表格增强", async ({ page }) => {
   await expect(page.locator(".cm-lp-table-scroll")).toHaveCount(1);
   await expect(page.locator(".cm-content")).toContainText("| code | source |");
   expect(await readDocument(page)).toBe(source);
+});
+
+test("编辑器主内容宽度为可用区域的 80%，宽表仍可横向滚动", async ({ page }) => {
+  const longCell = "x".repeat(220);
+  const source = `# 宽度回归\n\n段落。\n\n| A | B | C |\n| --- | --- | --- |\n| ${longCell} | ${longCell} | ${longCell} |\n`;
+  await stubTauri(page, { entries: [{ path: "width.md", kind: "file", size: source.length, mtime_ms: 0 }], files: { "width.md": source } });
+  await page.goto("/");
+  await page.locator('.ft-row[title="width.md"]').click();
+  await expect(page.locator(".cm-lp-table-scroll")).toHaveCount(1);
+  const sizes = await page.evaluate(() => {
+    const rect = (sel: string) => document.querySelector(sel)!.getBoundingClientRect();
+    const pane = rect(".pane-editor");
+    const content = rect(".cm-content");
+    const tableScroll = document.querySelector(".cm-lp-table-scroll")!;
+    return {
+      paneWidth: pane.width,
+      contentWidth: content.width,
+      contentLeft: content.left,
+      paneLeft: pane.left,
+      paneRight: pane.right,
+      contentRight: content.right,
+      tableClientWidth: tableScroll.clientWidth,
+      tableScrollWidth: tableScroll.scrollWidth,
+      tableOverflowX: getComputedStyle(tableScroll).overflowX,
+    };
+  });
+  // 主内容列 = 编辑窗格的 80%（grid 轨道 minmax(0, 80%)，两侧 1fr 居中）
+  expect(Math.abs(sizes.contentWidth - sizes.paneWidth * 0.8)).toBeLessThan(1);
+  // 居中：左右留白大致相等
+  const leftGap = sizes.contentLeft - sizes.paneLeft;
+  const rightGap = sizes.paneRight - sizes.contentRight;
+  expect(Math.abs(leftGap - rightGap)).toBeLessThan(2);
+  // 宽表在自身滚动容器内横向滚动：内容宽于可视宽，且允许横向滚动
+  expect(sizes.tableScrollWidth).toBeGreaterThan(sizes.tableClientWidth);
+  expect(["auto", "scroll"]).toContain(sizes.tableOverflowX);
+  // 表格滚动容器不超出主内容列
+  expect(sizes.tableClientWidth).toBeLessThanOrEqual(sizes.contentWidth + 1);
+});
+
+test("窄窗口下编辑器主内容仍为窗格的 80%", async ({ page }) => {
+  await page.setViewportSize({ width: 480, height: 800 });
+  const source = "# 窄窗口\n\n段落。\n";
+  await stubTauri(page, { entries: [{ path: "narrow.md", kind: "file", size: source.length, mtime_ms: 0 }], files: { "narrow.md": source } });
+  await page.goto("/");
+  await page.locator('.ft-row[title="narrow.md"]').click();
+  await expect(page.locator(".cm-content")).toContainText("段落");
+  // 三主题（light/dark/eink）下 80% 行宽都应成立——主题只换 token，不改布局轨道
+  for (const theme of ["light", "dark", "eink"]) {
+    await page.evaluate((t) => { document.documentElement.dataset.theme = t; }, theme);
+    const sizes = await page.evaluate(() => {
+      const pane = document.querySelector(".pane-editor")!.getBoundingClientRect();
+      const content = document.querySelector(".cm-content")!.getBoundingClientRect();
+      return { paneWidth: pane.width, contentWidth: content.width };
+    });
+    expect(sizes.paneWidth).toBeGreaterThan(0);
+    expect(Math.abs(sizes.contentWidth - sizes.paneWidth * 0.8)).toBeLessThan(1);
+  }
 });

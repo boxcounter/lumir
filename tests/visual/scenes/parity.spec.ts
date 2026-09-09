@@ -60,8 +60,11 @@ for (const theme of ["light", "dark", "eink"]) {
       const frozen = await geometry(reference, ["#nav", "#masthead", "#sheet", "#body-col", "#doc h1"]);
       await info.attach("computed", { body: JSON.stringify({ production, prototype: frozen }, null, 2), contentType: "application/json" });
       expect.soft(production[".pane-filetree"].width).toBe(frozen["#nav"].width);
-      expect.soft(production[".cm-content"].width).toBe(frozen["#body-col"].width);
-      expect.soft(production[".cm-content"].x).toBe(frozen["#body-col"].x);
+      // 主内容行宽已由原型冻结的 480px 定案改为窗格的 80%（用户裁决，见 M100），
+      // 不再与原型 #body-col 比宽度/横坐标，改为断言 80% 与居中本身。
+      expect.soft(production[".cm-content"].width).toBeCloseTo(production[".pane-editor"].width * 0.8, 0);
+      expect.soft(production[".cm-content"].x - production[".pane-editor"].x).toBeCloseTo(
+        production[".pane-editor"].x + production[".pane-editor"].width - (production[".cm-content"].x + production[".cm-content"].width), 0);
       expect.soft(production[".cm-line"].y).toBe(frozen["#doc h1"].y);
       const treeStyle = await page.locator('.ft-row[title="写作"]').evaluate(el => ({ height: el.getBoundingClientRect().height, weight: getComputedStyle(el.querySelector(".ft-name") ?? el).fontWeight }));
       expect.soft(treeStyle.height).toBe(27);
