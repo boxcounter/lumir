@@ -60,8 +60,9 @@ test("A/B/A and same-length documents bind each ready event to its path", async 
     await page.locator(`.ft-row[title="${path}"]`).click();
     await expect(page.locator(".cm-content")).toContainText(path === "b.md" ? "Beta" : "Alpha");
   }
-  const paths = await page.evaluate(() => (window as unknown as { __paths: Array<{ type: string; path?: string }> }).__paths.filter((e) => e.type === "paint").map((e) => e.path));
-  expect(paths).toEqual(["a.md", "b.md", "a.md"]);
+  // paint 经 requestAnimationFrame 派发，最后一次打开的 paint 可能晚于 DOM 断言
+  // 完成——轮询等待事件流收齐，避免把时序竞态误判为产品缺陷。
+  await expect.poll(() => page.evaluate(() => (window as unknown as { __paths: Array<{ type: string; path?: string }> }).__paths.filter((e) => e.type === "paint").map((e) => e.path))).toEqual(["a.md", "b.md", "a.md"]);
 });
 
 test("read failure keeps the controlled notice and does not emit a document ready", async ({ page }) => {

@@ -51,6 +51,8 @@ class ListLayout {
   decorations: DecorationSet = Decoration.none;
   private tree: ReturnType<typeof syntaxTree>;
   private groups = new Map<number, Group>();
+  /** 编辑后待重扫确认的陈旧组（key 与 groups 同步映射）；重扫登记后即移除。 */
+  private stale = new Set<number>();
   private scans = new Map<number, GroupScan>();
   private timer: ReturnType<typeof setTimeout> | undefined;
   private pending = false;
@@ -80,7 +82,13 @@ class ListLayout {
       if (effect.is(metadataReady)) resized = true;
     }
     if (update.docChanged) {
-      this.groups.clear();
+      // 编辑不清掉已发布的组：键位经 changes 映射后旧宽度先顶着渲染，stale
+      // 驱动后台重扫，只有宽度真变了才 publish 重建（见 schedule）。直接清空
+      // 会让每次击键掉装饰 ≥16ms，列表文字左右抖动（桌面验收缺陷）。
+      const remapped = new Map<number, Group>();
+      for (const [from, group] of this.groups) remapped.set(update.changes.mapPos(from, 1), group);
+      this.groups = remapped;
+      this.stale = new Set(remapped.keys());
       this.scans.clear();
       clearTimeout(this.timer);
       this.timer = undefined;
@@ -111,9 +119,13 @@ class ListLayout {
             scan.item = item.nextSibling;
           }
           if (!scan.item) {
-            this.groups.set(from, { width: scan.width, body: scan.indent + scan.width });
+            const next = { width: scan.width, body: scan.indent + scan.width };
+            const previous = this.groups.get(from);
+            this.groups.set(from, next);
             this.scans.delete(from);
-            published = true;
+            // 重扫结果与已发布值一致不触发重建：陈旧组顶渲染期间宽度本就正确，
+            // 一致时还 dispatch 会多一轮无变化的全量 build。
+            if (!previous || previous.width !== next.width || previous.body !== next.body) published = true;
           }
           if (remaining <= 0 || performance.now() >= deadline) break;
         }
@@ -137,15 +149,28 @@ class ListLayout {
 
   private group(list: Node, state: EditorState): Group | null {
     const cached = this.groups.get(list.from);
-    if (cached) return cached;
+    if (cached) {
+      // 陈旧组先用旧宽度渲染（不掉装饰 = 不抖动），同时登记后台重扫；树不完整
+      // 或祖先未就绪时保留 stale，下一轮 build 重试。
+      if (this.stale.has(list.from) && this.complete(list, state) && this.enqueue(list, state)) this.stale.delete(list.from);
+      return cached;
+    }
     if (!this.complete(list, state)) { this.pending = true; return null; }
+    this.pending = true;
+    this.enqueue(list, state);
+    return null;
+  }
+
+  /** 登记一个组的宽度扫描；祖先组未就绪（嵌套列表）时不登记，返回 false。 */
+  private enqueue(list: Node, state: EditorState): boolean {
+    if (this.scans.has(list.from)) return true;
     let parent = list.parent;
     while (parent && !isList(parent)) parent = parent.parent;
     const ancestor = parent ? this.group(parent, state) : { body: 0 };
-    if (!ancestor) return null;
-    if (!this.scans.has(list.from)) this.scans.set(list.from, { item: list.firstChild, width: 0, indent: ancestor.body + (parent ? 2 : 0) });
+    if (!ancestor) return false;
+    this.scans.set(list.from, { item: list.firstChild, width: 0, indent: ancestor.body + (parent ? 2 : 0) });
     this.pending = true;
-    return null;
+    return true;
   }
 
   private build(view: EditorView) {

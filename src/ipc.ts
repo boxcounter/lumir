@@ -42,6 +42,11 @@ export function vaultOpen(force_new = false): Promise<VaultInfo | null> {
   return invoke<VaultInfo | null>("vault_open", { force_new });
 }
 
+/** 按已知路径直接打开 vault（无选择器）：仅用于重映射确认后的重开。 */
+export function vaultOpenPath(path: string, force_new = false): Promise<VaultInfo> {
+  return invoke<VaultInfo>("vault_open_path", { path, force_new });
+}
+
 /** 启动后查询当前 vault 状态（含 last_vault 恢复失败的人话提示）。 */
 export function vaultCurrent(): Promise<VaultStatus> {
   return invoke<VaultStatus>("vault_current");

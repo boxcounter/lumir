@@ -20,6 +20,8 @@ export interface VaultFixture {
   creates?: Record<string, string>;
   /** vault_open 桩：选择器"选中"的目标 vault（root + 完整 fixture）；缺省按用户取消应答 null。 */
   switchTo?: VaultFixture & { root: string };
+  /** vault_open 重映射候选桩：目标路径未注册且存在失效注册时，非 force_new 打开按契约返回空 entries + candidates。 */
+  remapCandidates?: Array<{ id: string; path: string }>;
 }
 
 export async function stubTauri(page: Page, vault: VaultFixture | null): Promise<void> {
@@ -33,12 +35,14 @@ export async function stubTauri(page: Page, vault: VaultFixture | null): Promise
     //（与真后端 open_vault 的替换语义对齐）。
     let current = v;
 
-    type Args = { path?: string; from?: string; link?: string; id?: string; title?: string; vault_id?: string; expected_revision?: string; content?: string; dirty?: boolean; thread?: import("../../../src/bindings/Thread").Thread };
+    type Args = { path?: string; from?: string; link?: string; id?: string; title?: string; vault_id?: string; expected_revision?: string; content?: string; dirty?: boolean; force_new?: boolean; thread?: import("../../../src/bindings/Thread").Thread };
     const checkVault = (args: Args) => {
       if (args.vault_id !== (current?.vault_id ?? "fixture-vault")) throw { code: "fixture_contract", message: "vault_id mismatch" };
     };
     // 退出守卫桩：document_set_dirty 的上报记录（场景断言 dirty 已镜像给后端）。
     w.__dirtyReports = [] as boolean[];
+    // vault_remap 的调用记录（场景断言前端把用户确认的映射传给后端）。
+    w.__remapCalls = [] as Array<{ id?: string; path?: string }>;
     const handlers: Record<string, (args: Args) => unknown> = {
       document_set_dirty: (args) => {
         (w.__dirtyReports as boolean[]).push(args.dirty ?? false);
@@ -75,11 +79,27 @@ export async function stubTauri(page: Page, vault: VaultFixture | null): Promise
         current
           ? { vault: { root: current.root ?? "/Users/alex/demo-vault", entries: current.entries, vault_id: current.vault_id ?? "fixture-vault", remap_candidates: [] }, notice: current.notice ?? null }
           : { vault: null, notice: null },
-      vault_open: () => {
+      vault_open: (args) => {
         const target = current?.switchTo;
         if (!target) return null;
+        // 重映射候选契约（commands.rs open_vault）：未注册路径 + 失效注册时，
+        // 非 force_new 打开返回空 entries + candidates，等前端显式确认。
+        if (!args.force_new && target.remapCandidates?.length) {
+          return { root: target.root, entries: [], vault_id: target.remapCandidates[0].id, remap_candidates: target.remapCandidates };
+        }
         current = target;
         return { root: target.root, entries: target.entries, vault_id: target.vault_id ?? "fixture-vault", remap_candidates: [] };
+      },
+      // 确认后直开（无选择器）：path 即用户刚选中的 root，语义同 force_new 打开。
+      vault_open_path: (args) => {
+        const target = current?.switchTo;
+        if (!target || args.path !== target.root) throw { code: "fs_not_found", message: `目录不存在：${args.path}` };
+        current = target;
+        return { root: target.root, entries: target.entries, vault_id: target.vault_id ?? "fixture-vault", remap_candidates: [] };
+      },
+      vault_remap: (args) => {
+        (w.__remapCalls as Array<{ id?: string; path?: string }>).push({ id: args.id, path: args.path });
+        return { id: args.id, path: args.path };
       },
       fs_read_snapshot: (args) => {
         const text = current?.files?.[args.path ?? ""];
@@ -181,6 +201,11 @@ export async function fireQuitBlocked(page: Page): Promise<void> {
 /** document_set_dirty 的上报记录（前端 dirty 镜像给后端的证据）。 */
 export async function dirtyReports(page: Page): Promise<boolean[]> {
   return page.evaluate(() => (window as unknown as { __dirtyReports: boolean[] }).__dirtyReports);
+}
+
+/** vault_remap 的调用记录（前端把用户确认的映射传给后端的证据）。 */
+export async function remapCalls(page: Page): Promise<Array<{ id?: string; path?: string }>> {
+  return page.evaluate(() => (window as unknown as { __remapCalls: Array<{ id?: string; path?: string }> }).__remapCalls);
 }
 
 /** 混合类型 vault fixture：md / 代码 / 图片 / PDF / 无扩展名文本 / 嵌套目录。 */

@@ -17,6 +17,8 @@ import {
   onQuitBlocked,
   vaultCurrent,
   vaultOpen,
+  vaultOpenPath,
+  vaultRemap,
   wikilinkCreate,
 } from "./ipc";
 import type { FsEntry } from "./bindings/FsEntry";
@@ -92,13 +94,13 @@ function showEditor() {
 // 瞬时提示（锚点缺失 / 创建结果 / 解析错误）：编辑器右下角浮条，自动消隐。
 // sticky 的提示（如退出被拦截）不自动消隐，点击浮条本体关闭——守卫类反馈
 // 不允许在用户看到之前消失。
-function toast(text: string, action?: { label: string; run(): void }, sticky = false): void {
+function toast(text: string, actions: Array<{ label: string; run(): void }> = [], sticky = false): HTMLElement {
   const el = document.createElement("div");
   el.className = "lumir-toast toast-surface";
   const span = document.createElement("span");
   span.textContent = text;
   el.append(span);
-  if (action) {
+  for (const action of actions) {
     const btn = document.createElement("button");
     btn.type = "button";
     btn.textContent = action.label;
@@ -111,8 +113,12 @@ function toast(text: string, action?: { label: string; run(): void }, sticky = f
   }
   if (sticky) el.addEventListener("click", () => el.remove());
   shell.editor.append(el);
-  if (!sticky) setTimeout(() => el.remove(), action ? 8000 : 3500);
+  if (!sticky) setTimeout(() => el.remove(), actions.length ? 8000 : 3500);
+  return el;
 }
+
+/** dirty 守卫提示（无法切换 / 无法退出）的标识类：dirty 清除时整批撤下。 */
+const GUARD_TOAST_CLASS = "toast-dirty-guard";
 
 // 打开文件：读出文本交给 editor.openDocument——模式裁决（文件类型优先，
 // 无类型线索回落配置默认）和附件相对路径解析依赖的 currentFilePath 都在
@@ -125,7 +131,7 @@ let saveInFlight = false;
 
 function dirtyGuard(action: string): boolean {
   if (!editor.isDirty()) return true;
-  toast(`当前 Markdown 有未保存修改，无法${action}；请先保存（Cmd+S）`);
+  toast(`当前 Markdown 有未保存修改，无法${action}；请先保存（Cmd+S）`).classList.add(GUARD_TOAST_CLASS);
   return false;
 }
 
@@ -311,10 +317,10 @@ async function followWikilink(raw: string): Promise<void> {
     }
     case "unresolved":
       // spec §4.3：unresolved 不是错误；§4.4：提供一键创建入口
-      toast(`未创建的链接：${raw}`, {
+      toast(`未创建的链接：${raw}`, [{
         label: "创建并打开",
         run: () => void createForWikilink(from, raw),
-      });
+      }]);
       break;
     case "unsupported":
       toast(`块引用不支持：${raw}`);
@@ -388,6 +394,10 @@ function syncDirtyIndicator(): void {
 
 editor.onDirty((dirty) => {
   syncDirtyIndicator();
+  // 保存成功（dirty→false）后所有 dirty 表现层必须一致清除：masthead 标记、
+  // 后端退出守卫镜像，以及 dirty 期间弹出的守卫提示。sticky 提示按设计不自动
+  // 消隐，不主动撤下会让「未保存」在保存成功后残留在右下角（桌面验收缺陷）。
+  if (!dirty) shell.editor.querySelectorAll(`.${GUARD_TOAST_CLASS}`).forEach((el) => el.remove());
   // 无 Tauri 后端（纯浏览器预览）时同步失败无害，静默忽略。
   documentSetDirty(dirty).catch(() => {});
 });
@@ -396,7 +406,7 @@ editor.onDirty((dirty) => {
 // 本身无任何界面表现，前端收到事件要给出可理解的提示。sticky：拦截提示不得
 // 在用户看到前自动消隐（守卫反馈要持续可见，点击浮条关闭）。
 onQuitBlocked(() => {
-  toast("当前有未保存修改，无法退出；请先保存（Cmd+S）", undefined, true);
+  toast("当前有未保存修改，无法退出；请先保存（Cmd+S）", undefined, true).classList.add(GUARD_TOAST_CLASS);
 }).catch(() => {});
 let tree!: ReturnType<typeof createFileTree>;
 const sessionThreads: Thread[] = [];
@@ -464,33 +474,61 @@ const threads = createThreads(shell.threads, {
   },
 });
 refreshThreads();
+// 目录选择器入口（空态按钮与树头部「切换」共用）。命中重映射候选时
+//（spec：未注册路径 + 失效注册需显式确认）open_vault 按契约返回空 entries，
+// 此时不得装载——否则用户看到 vault 名已换、树全空的死态（桌面验收缺陷）；
+// 改为 sticky 提示给出两个出口：作为新 vault 打开 / 确认映射到最近期候选。
+function pickVault(forceNew = false): void {
+  vaultOpen(forceNew)
+    .then((info) => {
+      // null = 用户在目录选择器取消，无错误状态（spec）
+      if (!info) return;
+      if (info.remap_candidates.length > 0) {
+        const top = info.remap_candidates[0];
+        const name = info.root.slice(info.root.lastIndexOf("/") + 1) || info.root;
+        // 确认动作用 vaultOpenPath 直开刚选中的路径，不再弹一次选择器。
+        const reopen = () => vaultOpenPath(info.root, true)
+          .then((opened) => loadVault(opened.root, opened.entries, opened.vault_id))
+          .catch((e) => toast(errorMessage(e)));
+        toast(
+          `「${name}」尚未注册为 vault；发现可能已移动的 vault：${top.path}`,
+          [
+            { label: "作为新 vault 打开", run: () => void reopen() },
+            {
+              label: "确认映射到此路径",
+              run: () => void vaultRemap(top.id, info.root)
+                .then(() => reopen())
+                .catch((e) => toast(errorMessage(e))),
+            },
+          ],
+          true,
+        );
+        return;
+      }
+      loadVault(info.root, info.entries, info.vault_id);
+    })
+    .catch((e) => {
+      // 已有 vault 时打开失败（如改选了一个不可读目录）不得把既有树抹成
+      // 空态——空态只属于"尚无 vault"的启动路径；此处仅浮条提示。
+      if (vaultLoaded) toast(errorMessage(e));
+      else tree.showEmpty(errorMessage(e));
+    });
+}
+
 tree = createFileTree(shell.treeMount, {
   onOpenFile: (path, kind) => void openFile(path, kind),
-  onOpenVault: () => {
-    vaultOpen()
-      .then((info) => {
-        // null = 用户在目录选择器取消，无错误状态（spec）
-        if (info) loadVault(info.root, info.entries, info.vault_id, info.remap_candidates);
-      })
-      .catch((e) => {
-        // 已有 vault 时打开失败（如改选了一个不可读目录）不得把既有树抹成
-        // 空态——空态只属于"尚无 vault"的启动路径；此处仅浮条提示。
-        if (vaultLoaded) toast(errorMessage(e));
-        else tree.showEmpty(errorMessage(e));
-      });
-  },
+  onOpenVault: () => pickVault(),
 });
 
 // vault 装载的两个入口（手动打开 / 启动恢复）共用：先换附件索引再装文件树。
 // 换 vault 前必须全量复位旧上下文（reviewer-switcher high finding）：否则旧
 // 文件的 currentPath 会被当作新 vault 的 resolve/create from 基准，wikilink
 // 一键创建会把文件误建到新 vault 的同名相对路径下。
-function loadVault(root: string, entries: FsEntry[], vaultId = root, remapCandidates: Array<{ id: string; path: string }> = [], restored = false) {
+function loadVault(root: string, entries: FsEntry[], vaultId = root, restored = false) {
   if (!dirtyGuard("切换 vault")) return;
   vaultLoaded = true;
   emitReadiness("vault-ready", { root, vaultId, restored });
   currentVaultId = vaultId;
-  if (remapCandidates.length) toast(`发现 ${remapCandidates.length} 个可映射的 vault 路径`);
   ++fileRequest;
   ++documentGeneration;
   const request = ++threadRequest;
@@ -549,7 +587,7 @@ onFsEntryChanged((changes) => {
 vaultCurrent()
   .then((status) => {
     if (status.vault) {
-      loadVault(status.vault.root, status.vault.entries, status.vault.vault_id, status.vault.remap_candidates, true);
+      loadVault(status.vault.root, status.vault.entries, status.vault.vault_id, true);
     } else {
       tree.showEmpty(status.notice);
     }

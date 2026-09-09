@@ -32,6 +32,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::config_get,
             commands::vault_open,
+            commands::vault_open_path,
             commands::vault_current,
             commands::fs_scan_workspace,
             commands::fs_read_snapshot,

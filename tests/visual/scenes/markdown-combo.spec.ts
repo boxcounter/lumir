@@ -37,12 +37,12 @@ for (const theme of ["light", "dark", "eink"] as const) {
       await expect(page.locator(".cm-scroller")).toHaveCSS("overflow-y", "auto");
       expect(await readDocument(page)).toBe(combo);
       await page.locator(".cm-content").click();
-      for (const key of ["a", "Backspace", "Delete", "Meta+x"]) {
-        await page.keyboard.press(key);
-        expect(await readDocument(page)).toBe(combo);
-      }
       await page.setViewportSize({ width: width === 640 ? 1280 : 640, height: 1000 });
       expect(await readDocument(page)).toBe(combo);
+      // md 自本地保存契约（f80ef8b）起可编辑：键盘输入按设计进文档，装饰层不得
+      // 拦截编辑。旧断言来自 M1 只读时代，与已落地特性冲突，按现行特性修正。
+      await page.keyboard.type("a");
+      expect(await readDocument(page)).not.toBe(combo);
     });
   }
 }
