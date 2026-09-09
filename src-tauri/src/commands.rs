@@ -32,6 +32,7 @@
 
 use serde::Serialize;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use tauri::{Emitter, Manager};
 use ts_rs::TS;
@@ -365,6 +366,28 @@ pub fn document_save(state: tauri::State<'_, VaultState>, path: &str, expected_r
     fs_io::save_markdown(&state.root()?, path, expected_revision, content)
 }
 
+/// 编辑器未保存修改（dirty）的后端镜像（M101 退出守卫）：前端 onDirty 每次变化
+/// 经 document_set_dirty 同步；lib.rs 的退出/关窗守卫据此拦截。前端是唯一事实源，
+/// 后端只保存最近一次上报值，不做独立推导。
+#[derive(Default)]
+pub struct DirtyState(AtomicBool);
+
+impl DirtyState {
+    pub fn set(&self, dirty: bool) {
+        self.0.store(dirty, Ordering::SeqCst);
+    }
+
+    pub fn is_dirty(&self) -> bool {
+        self.0.load(Ordering::SeqCst)
+    }
+}
+
+#[tauri::command]
+pub fn document_set_dirty(state: tauri::State<'_, DirtyState>, dirty: bool) -> Result<(), CommandError> {
+    state.set(dirty);
+    Ok(())
+}
+
 // ---------------------------------------------------------------------------
 // link graph / wikilink（add-wikilink）
 // ---------------------------------------------------------------------------
@@ -409,6 +432,16 @@ pub fn wikilink_create(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn dirty_state_mirrors_latest_report() {
+        let state = DirtyState::default();
+        assert!(!state.is_dirty());
+        state.set(true);
+        assert!(state.is_dirty());
+        state.set(false);
+        assert!(!state.is_dirty());
+    }
 
     #[test]
     fn merge_last_vault_sets_fields_and_preserves_unknown() {

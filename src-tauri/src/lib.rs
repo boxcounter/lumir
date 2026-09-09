@@ -17,13 +17,18 @@ pub mod mcp_server;
 pub mod ready;
 pub mod threads;
 
-use tauri::Manager;
+use tauri::{Emitter, Manager};
+
+/// 自定义退出菜单项 id（M101）：见 install_quit_guard_menu。
+#[cfg(target_os = "macos")]
+const QUIT_MENU_ID: &str = "lumir.quit";
 
 /// 启动 Tauri app。
 pub fn run() {
     let started = std::time::Instant::now();
     tauri::Builder::default()
         .manage(commands::VaultState::default())
+        .manage(commands::DirtyState::default())
         .invoke_handler(tauri::generate_handler![
             commands::config_get,
             commands::vault_open,
@@ -33,6 +38,7 @@ pub fn run() {
             commands::fs_read_attachment,
             commands::fs_file_revision,
             commands::document_save,
+            commands::document_set_dirty,
             commands::link_graph_resolve,
             commands::wikilink_create,
             threads::thread_list,
@@ -45,11 +51,75 @@ pub fn run() {
         ])
         .setup(move |app| {
             ready::emit_ready(started);
+            #[cfg(target_os = "macos")]
+            install_quit_guard_menu(app.handle())?;
             restore_last_vault(app.handle());
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("error while running lumir");
+        .on_menu_event(|app, event| {
+            // dirty 退出守卫（M101 验收修复）：macOS Cmd+Q 命中菜单键等价后走到这里。
+            // dirty 时不退出、通知前端弹提示；干净时显式退出（app.exit 会再经
+            // ExitRequested，此时守卫放行）。
+            #[cfg(target_os = "macos")]
+            if event.id().as_ref() == QUIT_MENU_ID {
+                if app.state::<commands::DirtyState>().is_dirty() {
+                    let _ = app.emit("app:quit_blocked", ());
+                } else {
+                    app.exit(0);
+                }
+            }
+        })
+        .build(tauri::generate_context!())
+        .expect("error while building lumir")
+        .run(|app, event| match event {
+            // 兜底：beforeunload 拦不住 Tauri 原生退出（macOS Cmd+Q 在 tao 层走
+            // applicationWillTerminate 直接结束事件循环，不产生 ExitRequested——
+            // 所以主守卫在上面的菜单拦截；此处覆盖 AppHandle::exit / 末窗销毁路径）。
+            // dirty 时阻止退出并通知前端弹提示；emit 失败（webview 已毁）无害。
+            tauri::RunEvent::ExitRequested { api, .. } => {
+                if app.state::<commands::DirtyState>().is_dirty() {
+                    api.prevent_exit();
+                    let _ = app.emit("app:quit_blocked", ());
+                }
+            }
+            // 关窗（红灯按钮 / Cmd+W）同理：单窗口应用关窗即丢 webview 内存文档。
+            tauri::RunEvent::WindowEvent {
+                event: tauri::WindowEvent::CloseRequested { api, .. },
+                ..
+            } => {
+                if app.state::<commands::DirtyState>().is_dirty() {
+                    api.prevent_close();
+                    let _ = app.emit("app:quit_blocked", ());
+                }
+            }
+            _ => {}
+        });
+}
+
+/// macOS 退出守卫菜单（M101）：Cocoa 默认 Quit 项直连 NSApp terminate:，不经
+/// tauri 事件（连 RunEvent::ExitRequested 都不产生），dirty 守卫拦不住。把默认
+/// 菜单 app 子菜单末尾的原生 Quit 换成自定义菜单项（同一 Cmd+Q 键等价），退出
+/// 决策回到 on_menu_event。菜单其余部分与 tauri 默认完全一致（Menu::default）。
+#[cfg(target_os = "macos")]
+fn install_quit_guard_menu(app: &tauri::AppHandle) -> tauri::Result<()> {
+    use tauri::menu::{Menu, MenuItemBuilder, MenuItemKind};
+    let menu = Menu::default(app)?;
+    let Some(MenuItemKind::Submenu(app_submenu)) = menu.items()?.into_iter().next() else {
+        return Ok(());
+    };
+    let items = app_submenu.items()?;
+    // Menu::default 的 app 子菜单末位即原生 Quit（见 tauri menu::Menu::default 源码）。
+    let Some(MenuItemKind::Predefined(quit)) = items.last() else {
+        return Ok(());
+    };
+    let text = quit.text().unwrap_or_else(|_| "Quit".to_string());
+    let guarded = MenuItemBuilder::with_id(QUIT_MENU_ID, text)
+        .accelerator("CmdOrCtrl+Q")
+        .build(app)?;
+    app_submenu.remove_at(items.len() - 1)?;
+    app_submenu.append(&guarded)?;
+    app.set_menu(menu)?;
+    Ok(())
 }
 
 /// 启动恢复（vault-workspace spec）：last_vault 存在且仍为合法目录则自动打开；
