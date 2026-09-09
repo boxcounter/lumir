@@ -312,8 +312,12 @@ body { background:var(--bg); color:var(--text); font-family:var(--font-body); fo
 .cm-lp-table {
   display: grid;
   grid-auto-rows: minmax(2em, max-content);
-  grid-template-columns: repeat(var(--cm-lp-table-columns), minmax(max-content, 1fr));
-  min-inline-size: max-content;
+  /* 列宽贴合内容：轨道 minmax(min-content, max-content) + 表格 inline-size:max-content，
+     不再被 1fr 拉满 80% 主栏；单列上限由 cell 的 max-inline-size 封顶（grid 的
+     max-content 贡献会被 grid item 的 max 尺寸钳制），长内容折行；
+     超出容器时由 .cm-lp-table-scroll 横向滚动。 */
+  grid-template-columns: repeat(var(--cm-lp-table-columns), minmax(min-content, max-content));
+  inline-size: max-content;
   border-block-start: 1px solid var(--bd-2);
   border-inline-start: 1px solid var(--bd-2);
   font-size: .92em;
@@ -331,6 +335,7 @@ body { background:var(--bg); color:var(--text); font-family:var(--font-body); fo
   display: block;
   grid-row: 1;
   min-inline-size: 7ch;
+  max-inline-size: 40ch;
   padding: 5px 8px;
   border-inline-end: 1px solid var(--bd-2);
   border-block-end: 1px solid var(--bd-2);

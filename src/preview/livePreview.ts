@@ -370,8 +370,14 @@ function collectSyntaxDecorations(
     to: vrTo,
     enter(ref) {
       if (inFrontmatter(fm, ref.from, ref.to)) return false;
-      if (tableAt(tables, ref.from, ref.to)) return false;
+      // 表格内放行 inline 装饰（InlineCode / 强调系，cell 里的 `code`、**粗体**
+      // 应有 live preview 样式）；块级与 replace 型装饰仍跳过，避免干扰 grid
+      // 布局。降级表格整棵剪枝，保留原始 Markdown。
+      const table = tableAt(tables, ref.from, ref.to);
+      if (table?.degraded) return false;
       const name = ref.name;
+      if (table && name !== "InlineCode" && name !== "Emphasis" &&
+          name !== "StrongEmphasis" && name !== "Strikethrough") return;
 
       if (name === "Paragraph" && ref.node.parent?.name === "Document") {
         const first = doc.lineAt(ref.from);

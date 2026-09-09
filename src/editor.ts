@@ -1,6 +1,6 @@
 import { Annotation, Compartment, EditorState } from "@codemirror/state";
 import type { Extension } from "@codemirror/state";
-import { EditorView, lineNumbers, highlightActiveLine } from "@codemirror/view";
+import { EditorView, keymap, lineNumbers, highlightActiveLine } from "@codemirror/view";
 import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
 import { HighlightStyle, syntaxHighlighting } from "@codemirror/language";
 import { tags } from "@lezer/highlight";
@@ -47,6 +47,35 @@ fn main() { println!("lumir"); }
 
 ![示例](./assets/shot.png)
 `;
+
+// 垂直光标移动交给 CM6 处理（M103）：编辑器未装 commands keymap，ArrowUp/Down 与
+// macOS Emacs 风格 Ctrl-P/N 原本全走原生 contenteditable 路径——光标越出视口时
+// 浏览器延迟揭示并与 CM6 视口重建叠加，实测 scrollTop 单次跳 ~388px（整屏突变）。
+// CM6 moveVertically 逐视觉行移动（支持软换行与 goal column），每次 dispatch 按
+// y:"nearest" 最小滚动，光标贴边时逐行顺滑跟随。
+function moveCaretVertically(view: EditorView, forward: boolean): boolean {
+  const main = view.state.selection.main;
+  if (!main.empty) {
+    // 非空选区：与原生行为一致，先折叠到移动方向的一端，不再多走一行。
+    view.dispatch({ selection: { anchor: forward ? main.to : main.from }, userEvent: "select" });
+    return true;
+  }
+  const target = view.moveVertically(main, forward);
+  view.dispatch({
+    selection: target,
+    effects: EditorView.scrollIntoView(target.head, { y: "nearest" }),
+    userEvent: forward ? "move.line.down" : "move.line.up",
+  });
+  return true;
+}
+
+// Ctrl-P/N 是 macOS 文本系统惯例，只绑 mac；ArrowUp/Down 全平台接管。
+const verticalMotionKeymap = keymap.of([
+  { key: "ArrowDown", run: (view) => moveCaretVertically(view, true) },
+  { key: "ArrowUp", run: (view) => moveCaretVertically(view, false) },
+  { mac: "Ctrl-n", run: (view) => moveCaretVertically(view, true) },
+  { mac: "Ctrl-p", run: (view) => moveCaretVertically(view, false) },
+]);
 
 export type EditorReadyPhase =
   | "source-ready"
@@ -248,6 +277,7 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
   const state = EditorState.create({
     doc: SAMPLE,
     extensions: [
+      verticalMotionKeymap,
       EditorView.domEventHandlers({
         keydown(event, view) {
           if (event.target !== view.contentDOM || event.altKey || event.shiftKey ||
