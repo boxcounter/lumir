@@ -71,6 +71,11 @@ test("解析：标题、默认名与标记范围", () => {
   const info = calloutsIn(src)[0];
   expect(src.slice(info.markerFrom, info.markerTo)).toBe("[!note]- ");
   expect(src.slice(info.titleFrom!, info.titleTo!)).toBe("标题");
+  // > 后 2-3 个空格：多余空格并入标记范围（QuoteMark 隐藏只吃一个空格，
+  // 其余随标记替换，不在图标前残留——M109 review 边角 1，M110 修复）
+  const spaced = ">  [!note] 标题\n> 正文。\n";
+  const spacedInfo = calloutsIn(spaced)[0];
+  expect(spaced.slice(spacedInfo.markerFrom, spacedInfo.markerTo)).toBe(" [!note] ");
 });
 
 test("解析：非 callout 的 blockquote 不误判", () => {
@@ -202,3 +207,39 @@ for (const theme of ["light", "dark", "eink"]) {
     await expect(page).toHaveScreenshot(`callout-theme-${theme}.png`);
   });
 }
+
+test("嵌套 callout：内层正文色与列表装饰（M109 review 边角 2/3，M110 修复）", async ({ page }) => {
+  const NESTED_MD = `\
+# 嵌套
+
+> 外层普通引用
+> > [!warning]
+> > 内层正文。
+> > - 嵌套列表项
+`;
+  await stubTauri(page, {
+    entries: [{ path: "nested.md", kind: "file", size: NESTED_MD.length, mtime_ms: 0 }],
+    files: { "nested.md": NESTED_MD },
+  });
+  await page.goto("/");
+  await page.locator('.ft-row[title="nested.md"]').click();
+  const inner = page.locator(".cm-line.cm-lp-callout-line", { hasText: "内层正文" });
+  await expect(inner).toHaveCount(1);
+  // 边角 2：内层 callout 行同时带外层 quote-line（color:var(--dim)），
+  // callout 必须以正文色覆盖，嵌套正文不偏灰
+  const probe = await inner.evaluate((el) => {
+    const resolve = (name: string) => {
+      const s = document.createElement("span");
+      s.style.color = `var(${name})`;
+      document.body.append(s);
+      const c = getComputedStyle(s).color;
+      s.remove();
+      return c;
+    };
+    return { line: getComputedStyle(el).color, text: resolve("--text"), dim: resolve("--dim") };
+  });
+  expect(probe.line).toBe(probe.text);
+  expect(probe.line).not.toBe(probe.dim);
+  // 边角 3：引用内嵌 callout（首个 > 属于外层普通引用）的列表装饰同样放开
+  await expect(page.locator(".cm-line.cm-lp-list-line", { hasText: "嵌套列表项" })).toHaveCount(1);
+});

@@ -194,16 +194,25 @@ class ListLayout {
             // callout（M109）内的列表：行首是引用标记时内容位置在标记之后，
             // 仅当所属 blockquote 是 callout（首行 [!type]）才扫过标记解析；
             // 普通引用保持原口径（列表装饰不进入 blockquote）。
-            let bq: Node | null = this.tree.resolveInner(line.from + offset, 1);
-            while (bq && bq.name !== "Blockquote") bq = bq.parent;
-            if (bq && detectCallout(doc, bq)) {
-              let content = offset;
-              while (line.text[content] === ">") {
-                content++;
-                while (content < line.text.length && line.text[content] === " ") content++;
-              }
-              if (content < line.text.length) offset = content;
+            // 嵌套口径（M110，M109 review 边角 3）：从内容位置沿 Blockquote
+            // 祖先链向上，任一 callout 即放开——引用内嵌 callout（首个 > 属于
+            // 外层普通引用）时内层列表同样生效；callout 内嵌普通引用维持既有
+            // 放开行为。
+            let content = offset;
+            while (line.text[content] === ">") {
+              content++;
+              while (content < line.text.length && line.text[content] === " ") content++;
             }
+            let bq: Node | null = this.tree.resolveInner(line.from + content, 1);
+            let callout = false;
+            while (bq) {
+              if (bq.name === "Blockquote" && detectCallout(doc, bq)) {
+                callout = true;
+                break;
+              }
+              bq = bq.parent;
+            }
+            if (callout && content < line.text.length) offset = content;
           }
           if (offset >= 0) {
             let node: Node | null = this.tree.resolveInner(line.from + offset, 1);
