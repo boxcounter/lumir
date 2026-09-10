@@ -179,19 +179,35 @@ export function mathRenderCacheSize(): number {
 // 表格同口径：点击即显露源码并把光标放到点击处。先把光标送入 span 内触发显露
 //（选区重叠口径，装饰同步重建），源码上屏后再用同一点位 posAtCoords 精确定位，
 // 钳制在 span 内部（落在边界会重新触发渲染态）。
-function enterMathSource(event: MouseEvent, view: EditorView, dom: HTMLElement, delimiter: number, rawLength: number): void {
+// M112 起与 mermaid 共用：preventDefault 同时挡住浏览器原生 caret 进入 widget
+// DOM——异步重建（如 mermaid settle）替换 widget 节点后，原生选区锚点若滞留在
+// 游离节点上，selectionchange 读取时 posFromDOM 会把它映射为 0（点击落点跳到
+// 文档起点）；preventDefault 后 CM 不再读取这条原生选区，该路径被掐断。
+// innerFrom/innerTo 是相对块起点的光标钳制区间（公式为定界符内侧，mermaid 为
+// 开围栏行之后到闭围栏行之前）。
+export function enterReplacedSource(
+  event: MouseEvent,
+  view: EditorView,
+  dom: HTMLElement,
+  innerFrom: number,
+  innerTo: number,
+): void {
   if (event.button !== 0) return;
   event.preventDefault();
   const from = view.posAtDOM(dom);
-  view.dispatch({ selection: { anchor: from + delimiter }, userEvent: "select.pointer" });
+  view.dispatch({ selection: { anchor: from + innerFrom }, userEvent: "select.pointer" });
   const exact = view.posAtCoords({ x: event.clientX, y: event.clientY });
   if (exact !== null) {
-    const clamped = Math.min(Math.max(exact, from + delimiter), from + rawLength - delimiter);
-    if (clamped !== from + delimiter) {
+    const clamped = Math.min(Math.max(exact, from + innerFrom), from + innerTo);
+    if (clamped !== from + innerFrom) {
       view.dispatch({ selection: { anchor: clamped }, userEvent: "select.pointer" });
     }
   }
   view.focus();
+}
+
+function enterMathSource(event: MouseEvent, view: EditorView, dom: HTMLElement, delimiter: number, rawLength: number): void {
+  enterReplacedSource(event, view, dom, delimiter, rawLength - delimiter);
 }
 
 /** 行内公式 widget：渲染成功显示公式；失败回落为完整原文 + 失败提示。 */

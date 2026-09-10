@@ -50,6 +50,10 @@ pnpm --dir tests/visual test
 失败时 diff 制品在 `tests/visual/test-results/`（actual / expected / diff 三张图），
 CI 会将其作为 artifact 上传。
 
+多 worktree 并行跑场景时默认端口 4173 会撞车（`reuseExistingServer` 可能错用别的
+worktree 的 dist）：用 `LUMIR_VISUAL_PORT=<端口>` 指定独立端口隔离，例如
+`LUMIR_VISUAL_PORT=4273 pnpm --dir tests/visual test`。
+
 ## 新增场景
 
 1. 在 `scenes/` 加一个 `.spec.ts`（或往现有 spec 加一条 `expect(page).toHaveScreenshot(...)`）；

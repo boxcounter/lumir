@@ -1,5 +1,9 @@
 import { defineConfig } from "@playwright/test";
 
+// 多 worktree 并行跑场景时 4173 会撞车（reuseExistingServer 会错用别的 worktree
+// 的 dist），LUMIR_VISUAL_PORT 指定独立端口即可隔离；缺省保持 4173 不变。
+const port = Number(process.env.LUMIR_VISUAL_PORT ?? 4173);
+
 // 容差集中在此处，全场景共享；单场景需要更严/更松时在断言上覆盖（见 README.md）。
 // - threshold：单个像素通道色差的容忍度（0-1），吸收抗锯齿/字体渲染的机器间抖动
 // - maxDiffPixelRatio：允许不同的像素占总像素的比例上限
@@ -18,7 +22,7 @@ export default defineConfig({
   retries: process.env.CI ? 1 : 0,
   reporter: [["list"], ["html", { open: "never", outputFolder: "./playwright-report" }]],
   use: {
-    baseURL: "http://127.0.0.1:4173",
+    baseURL: `http://127.0.0.1:${port}`,
     // 与 src-tauri/tauri.conf.json 的窗口尺寸一致。
     // 注：chromium headless shell 强制 deviceScaleFactor=1，截图为 1200x800 CSS 像素（见 README.md）。
     viewport: { width: 1200, height: 800 },
@@ -33,9 +37,9 @@ export default defineConfig({
   },
   projects: [{ name: "chromium", use: { browserName: "chromium" } }],
   webServer: {
-    command: "pnpm exec vite preview --port 4173 --strictPort",
+    command: `pnpm exec vite preview --port ${port} --strictPort`,
     cwd: "../..",
-    url: "http://127.0.0.1:4173",
+    url: `http://127.0.0.1:${port}`,
     reuseExistingServer: !process.env.CI && !process.env.LUMIR_VISUAL_FRESH_SERVER,
     timeout: 60_000,
   },
