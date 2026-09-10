@@ -76,11 +76,16 @@ export const livePreviewTheme = EditorView.theme({
   ".cm-lp-task-marker": { fontFamily: "var(--font-mono)" },
 
   // frontmatter properties 区块（块级 replace widget）。
+  // 纵向间距在 -outer 上用 padding 而非 widget 本体 margin：CM6 测量的 widget
+  // 高度是 border-box（不含 margin），margin 对 heightmap 不可见会导致其下
+  // 内容 posAtCoords 行映射累计错位（M110 缺陷 1）；外层透明 padding 视觉
+  // 等价且计入测量。
+  ".cm-lp-frontmatter-outer": { padding: "4px 0 12px" },
   ".cm-lp-frontmatter": {
     border: "1px solid var(--bd-1)",
     borderRadius: "6px",
     padding: "8px 12px",
-    margin: "4px 0 12px",
+    margin: "0",
     fontSize: "0.85em",
     backgroundColor: "var(--bg-nav)",
   },
@@ -167,7 +172,9 @@ export const livePreviewTheme = EditorView.theme({
     padding: "0 4px",
     fontSize: "0.92em",
   },
-  ".cm-lp-math-block.cm-lp-math-fallback": { padding: "6px 10px", margin: "4px 0" },
+  ".cm-lp-math-block.cm-lp-math-fallback": { padding: "6px 10px", margin: "0" },
+  // 降级块纵向间距走外层透明 padding（heightmap 不可测 margin，同 frontmatter）。
+  ".cm-lp-math-fallback-outer": { padding: "4px 0" },
   ".cm-lp-math-error": {
     fontFamily: "var(--font-body)",
     color: "var(--accent)",
@@ -186,8 +193,10 @@ export const livePreviewTheme = EditorView.theme({
     backgroundColor: "var(--bg-2)",
     borderRadius: "4px",
     padding: "6px 10px",
-    margin: "4px 0",
+    margin: "0",
   },
+  // 降级块纵向间距走外层透明 padding（heightmap 不可测 margin，同 frontmatter）。
+  ".cm-lp-mermaid-fallback-outer": { padding: "4px 0" },
   ".cm-lp-mermaid-error": {
     fontFamily: "var(--font-body)",
     color: "var(--accent)",

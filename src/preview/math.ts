@@ -226,6 +226,11 @@ class BlockMathWidget extends WidgetType {
       raw.className = "cm-lp-math-raw";
       raw.textContent = this.raw;
       box.append(err, raw);
+      // 降级块的纵向间距由 -outer padding 承载（widget margin 不计入 CM 测量）。
+      const outer = document.createElement("div");
+      outer.className = "cm-lp-math-fallback-outer";
+      outer.append(box);
+      return outer;
     }
     return box;
   }

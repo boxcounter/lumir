@@ -316,7 +316,11 @@ body { background:var(--bg); color:var(--text); font-family:var(--font-body); fo
   overscroll-behavior-inline: contain;
   scrollbar-gutter: stable;
   outline-offset: 3px;
-  margin-block: 12px;
+  /* 纵向间距必须用 padding 而非 margin（M110 缺陷 1）：CM6 经 getBoundingClientRect
+     测量块高度，border-box 不含 margin——块级 margin 对 heightmap 不可见，
+     其下所有内容的 posAtCoords y→行映射按 margin 累计错位（双击表头落到下行）。
+     wrapper 无背景/边框，padding 与 margin 视觉等价且可被测量（spaceAbove）。 */
+  padding-block: 12px;
 }
 .cm-lp-table-scroll:focus-visible { outline: 2px solid var(--accent); }
 .cm-lp-table {
