@@ -111,7 +111,7 @@ class EmptyTableCellWidget extends WidgetType {
 
 const tableMetadataCache = new WeakMap<EditorState, Map<string, TableModel[]>>();
 
-// 表格发现依赖语法树的 Table 节点。两个真实桌面缺陷根源（M111，03-事件词典.md
+// 表格发现依赖语法树的 Table 节点。两个真实桌面缺陷根源（M111 真实大文档
 // 实证 + WebKit 复现）：
 // 1) 后台解析在 WKWebView 走 500ms setTimeout 兜底（无 requestIdleCallback），
 //    视口进入未解析区域时表格停在裸露源码态数秒；
