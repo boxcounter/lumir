@@ -2,7 +2,7 @@ import { expect, test } from "@playwright/test";
 import { stubTauri } from "./tauri-stub";
 import { readDocument } from "./parity-checks";
 
-// M111 缺陷 3 回归（真实桌面 03-事件词典.md 实证，WebKit 引擎复现）：大文档表格
+// M111 缺陷 3 回归（真实桌面大文档实证，WebKit 引擎复现）：大文档表格
 // 首屏/滚动进入视口时渲染为裸露源码（管道符原文），滚动一段距离后才恢复 grid。
 // 根因有二：后台解析在 WKWebView 无 requestIdleCallback、走 500ms setTimeout 兜底，
 // 视口进入未解析区域时找不到 Table 节点；且 syntaxTree(state) 是事务快照，后台
