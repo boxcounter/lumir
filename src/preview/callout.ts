@@ -86,7 +86,10 @@ export function detectCallout(doc: Text, node: SyntaxNode): CalloutInfo | null {
   const m = MARKER_RE.exec(rest);
   if (!m) return null;
 
-  const markerFrom = quoteMark.to + m[1].length;
+  // 首行 QuoteMark 的隐藏装饰吃掉 > 后一个空格（livePreview hideMark），
+  // 标记范围从下一个字符起；> 后 2-3 个空格（MARKER_RE 的 ` {0,3}`）时多余
+  // 空格并入标记范围随标记一并隐藏，不在图标前残留（M110，M109 review 边角 1）。
+  const markerFrom = quoteMark.to + Math.min(m[1].length, 1);
   let markerTo = quoteMark.to + m[0].length;
   const entry = CALLOUT_TYPES.get(m[2].toLowerCase());
 

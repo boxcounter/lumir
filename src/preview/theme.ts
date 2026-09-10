@@ -41,6 +41,9 @@ export const livePreviewTheme = EditorView.theme({
     backgroundColor: "color-mix(in srgb, var(--callout-c) var(--callout-tint), var(--bg))",
     borderLeft: "3px solid var(--callout-c)",
     paddingLeft: "10px",
+    // 嵌套 callout（引用内嵌 callout）的行同时带外层 quote-line 的
+    // color:var(--dim)；callout 正文必须是正文色（M110，M109 review 边角 2）。
+    color: "var(--text)",
   },
   ".cm-line.cm-lp-callout-first": { borderRadius: "var(--radius) var(--radius) 0 0", paddingTop: "3px" },
   ".cm-line.cm-lp-callout-last": { borderRadius: "0 0 var(--radius) var(--radius)", paddingBottom: "3px" },

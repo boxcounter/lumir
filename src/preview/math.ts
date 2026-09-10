@@ -256,6 +256,9 @@ export function collectInlineMath(
         if (fm !== null && from >= fm.from && to <= fm.to) continue;
         if (isInsideCodeContext(tree, from)) continue;
         if (inTable(from, to)) continue;
+        // 选区进入公式范围时跳过装饰显示源码（与 mathBlockSet 同口径；
+        // M110：Ctrl-F 可逐字符进入 span，进入后即可编辑）。
+        if (view.state.selection.ranges.some((r) => r.from < to && r.to > from)) continue;
         const raw = doc.sliceString(from, to);
         decos.push(
           Decoration.replace({

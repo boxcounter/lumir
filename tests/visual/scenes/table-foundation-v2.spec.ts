@@ -201,7 +201,8 @@ test("列宽贴合内容：短内容表不拉满主栏，长内容列有上限�
   // 每列贴合自身内容：列宽互不相等（等宽是 1fr 平分的特征）
   expect(Math.abs(short.tracks[0] - short.tracks[2])).toBeGreaterThan(1);
 
-  // 单列上限：超长单元格内容被封顶（40ch ≈ 353px）并折行，而不是把列撑到内容全宽
+  // 单列上限：超长单元格内容被封顶（固定 352px——不用 ch：表头粗体的 ch 更宽，
+  // 会让轨道按表头撑宽、正文 cell 钳住错位，见 style.css 注释）并折行，而不是把列撑到内容全宽
   const longSource = `| 名称 | 状态 | 备注 |\n| --- | --- | --- |\n| alpha | 上线 | ${"长".repeat(120)} |\n`;
   await stubTauri(page, { entries: [{ path: "long.md", kind: "file", size: longSource.length, mtime_ms: 0 }], files: { "long.md": longSource } });
   await page.goto("/");
@@ -213,7 +214,7 @@ test("列宽贴合内容：短内容表不拉满主栏，长内容列有上限�
     return { tracks, heights, tableWidth: document.querySelector(".cm-lp-table")!.getBoundingClientRect().width, contentWidth: document.querySelector(".cm-content")!.getBoundingClientRect().width };
   });
   expect(long.tracks).toHaveLength(3);
-  // 上限：任何一列不超过 40ch（约 353px，留 10% 余量吸收字体差异）
+  // 上限：任何一列不超过 352px（留 10% 余量吸收字体差异）
   for (const track of long.tracks) expect(track).toBeLessThan(400);
   // 折行生效：超长单元格变高而非变宽
   expect(Math.max(...long.heights)).toBeGreaterThan(60);

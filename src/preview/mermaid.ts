@@ -20,11 +20,13 @@ import type { EditorState, Range } from "@codemirror/state";
 import { syntaxTree } from "@codemirror/language";
 import { detectFrontmatter } from "./frontmatter";
 
-/** 渲染结果三态：pending 占位 / ok SVG / error 降级（消息取首行）。 */
+/** 渲染结果三态：pending 占位 / ok SVG / error 降级（消息取首行）。
+ * error 带阶段：load = 渲染器（懒加载 chunk / initialize）失败，
+ * render = parse/render 失败，降级文案据此区分（load 失败提示可刷新重试）。 */
 export type MermaidRenderState =
   | { status: "pending" }
   | { status: "ok"; svg: string }
-  | { status: "error"; message: string };
+  | { status: "error"; message: string; stage: "load" | "render" };
 
 /** mermaid 默认导出的最小结构面（测试可注入假实现，Node 端无需 DOM）。 */
 export interface MermaidRenderer {
@@ -63,8 +65,47 @@ export function setMermaidLoaderForTests(loader: (() => Promise<MermaidRenderer>
   initializedTheme = null;
 }
 
+// 有界超时（M110）：懒加载 chunk 在异常网络/CSP/协议问题下可能永不 settle，
+// 渲染串行队列里一个永不 settle 的任务会堵死其后所有图表。两级超时保证任何
+// 路径都有限 settle：加载 20s、parse/render 各 30s（大型图允许慢，但不许挂死）。
+const LOAD_TIMEOUT_MS = 20_000;
+const RENDER_TIMEOUT_MS = 30_000;
+let loadTimeoutMs = LOAD_TIMEOUT_MS;
+let renderTimeoutMs = RENDER_TIMEOUT_MS;
+
+/** 测试钩子：覆盖两级超时（null 复位默认值）。 */
+export function setMermaidTimeoutsForTests(loadMs: number | null, renderMs: number | null): void {
+  loadTimeoutMs = loadMs ?? LOAD_TIMEOUT_MS;
+  renderTimeoutMs = renderMs ?? RENDER_TIMEOUT_MS;
+}
+
+function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(message)), ms);
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error) => {
+        clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
+}
+
 function renderer(): Promise<MermaidRenderer> {
-  rendererPromise ??= loadRenderer();
+  // 加载失败不缓存拒绝态：瞬时失败（如 dev server 重优化期间的过期 chunk）
+  // 复位 rendererPromise，下一次渲染重新尝试 import（M110：此前一次失败会
+  // 永久毒化后续所有渲染）。
+  rendererPromise ??= loadRenderer().then(
+    (mermaid) => mermaid,
+    (error) => {
+      rendererPromise = null;
+      throw error;
+    },
+  );
   return rendererPromise;
 }
 
@@ -100,19 +141,21 @@ function themeConfig(theme: ThemeKey): Record<string, unknown> {
 
 async function doRender(source: string, theme: ThemeKey): Promise<MermaidRenderState> {
   const id = `cm-lp-mermaid-${++renderSeq}`;
+  let stage: "load" | "render" = "load";
   try {
-    const mermaid = await renderer();
+    const mermaid = await withTimeout(renderer(), loadTimeoutMs, `渲染器加载超时（${Math.round(loadTimeoutMs / 1000)}s）`);
     if (initializedTheme !== theme) {
       mermaid.initialize(themeConfig(theme));
       initializedTheme = theme;
     }
-    await mermaid.parse(source); // 预校验：语法错误在此抛出，不进 render
-    const { svg } = await mermaid.render(id, source);
+    stage = "render";
+    await withTimeout(mermaid.parse(source), renderTimeoutMs, `渲染超时（${Math.round(renderTimeoutMs / 1000)}s）`); // 预校验：语法错误在此抛出，不进 render
+    const { svg } = await withTimeout(mermaid.render(id, source), renderTimeoutMs, `渲染超时（${Math.round(renderTimeoutMs / 1000)}s）`);
     return { status: "ok", svg };
   } catch (e) {
     // mermaid.render 失败时可能留下 id 为 d<id> 的临时节点，尽力清理。
     if (typeof document !== "undefined") document.getElementById(`d${id}`)?.remove();
-    return { status: "error", message: e instanceof Error ? e.message.split("\n")[0] : String(e) };
+    return { status: "error", message: e instanceof Error ? e.message.split("\n")[0] : String(e), stage };
   }
 }
 
@@ -205,7 +248,10 @@ class MermaidBlockWidget extends WidgetType {
     box.classList.add("cm-lp-mermaid-fallback");
     const err = document.createElement("div");
     err.className = "cm-lp-mermaid-error";
-    err.textContent = `图表解析失败：${this.state.message}`;
+    err.textContent =
+      this.state.stage === "load"
+        ? `图表渲染器加载失败：${this.state.message}（可尝试刷新页面重试）`
+        : `图表解析失败：${this.state.message}`;
     const raw = document.createElement("pre");
     raw.className = "cm-lp-mermaid-raw";
     raw.textContent = this.raw;

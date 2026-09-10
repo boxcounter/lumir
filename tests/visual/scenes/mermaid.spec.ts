@@ -9,6 +9,7 @@ import {
   mermaidRenderCacheSize,
   onMermaidSettled,
   setMermaidLoaderForTests,
+  setMermaidTimeoutsForTests,
 } from "../../../src/preview/mermaid";
 import { stubTauri } from "./tauri-stub";
 
@@ -71,8 +72,57 @@ test("渲染：pending → settle 成功/失败，缓存键含主题", async () 
 });
 
 // ---------------------------------------------------------------------------
-// 块定位：mermaidBlockSet 只认 CodeInfo 为 mermaid 的围栏块；选区进入显示原文
+// 有界超时与加载重试（M110）：加载永不 settle / 瞬时失败不得挂死或毒化队列
 // ---------------------------------------------------------------------------
+
+test("有界超时：加载永不 settle 转为 load 阶段错误，队列不堵死", async () => {
+  setMermaidTimeoutsForTests(50, 50);
+  setMermaidLoaderForTests(() => new Promise(() => {}));
+  clearMermaidRenderCache();
+  try {
+    const settled = settleOnce();
+    ensureMermaidRender("graph TD; A-->B", "light");
+    await settled;
+    const err = ensureMermaidRender("graph TD; A-->B", "light");
+    expect(err.status === "error" && err.stage).toBe("load");
+    expect(err.status === "error" && err.message).toContain("超时");
+    // 队列不堵死：恢复加载器后新任务照常完成
+    setMermaidLoaderForTests(() => Promise.resolve(fakeMermaid));
+    const settledOk = settleOnce();
+    ensureMermaidRender("graph TD; C-->D", "light");
+    await settledOk;
+    expect(ensureMermaidRender("graph TD; C-->D", "light").status).toBe("ok");
+  } finally {
+    setMermaidLoaderForTests(null);
+    setMermaidTimeoutsForTests(null, null);
+    clearMermaidRenderCache();
+  }
+});
+
+test("加载失败可重试：一次拒绝不毒化后续渲染", async () => {
+  let calls = 0;
+  setMermaidLoaderForTests(() => (++calls === 1 ? Promise.reject(new Error("chunk 404")) : Promise.resolve(fakeMermaid)));
+  clearMermaidRenderCache();
+  try {
+    const settled = settleOnce();
+    ensureMermaidRender("graph TD; A-->B", "light");
+    await settled;
+    const err = ensureMermaidRender("graph TD; A-->B", "light");
+    expect(err.status === "error" && err.stage).toBe("load");
+    // 失败结果按「主题 + 源码」缓存（不自动重渲染）；缓存失效后加载器会被重新调用
+    clearMermaidRenderCache();
+    const settledRetry = settleOnce();
+    ensureMermaidRender("graph TD; A-->B", "light");
+    await settledRetry;
+    expect(ensureMermaidRender("graph TD; A-->B", "light").status).toBe("ok");
+    expect(calls).toBe(2);
+  } finally {
+    setMermaidLoaderForTests(null);
+    clearMermaidRenderCache();
+  }
+});
+
+
 
 function blockCount(doc: string, selection?: { anchor: number; head: number }): number {
   const state = EditorState.create({
@@ -243,3 +293,26 @@ for (const theme of ["light", "dark", "eink"]) {
     await expect(page).toHaveScreenshot(`mermaid-theme-${theme}.png`);
   });
 }
+
+test("大文档：尾部围栏块在增量解析推进后渲染（M110 真实桌面回归）", async ({ page }) => {
+  // 文档大到 openDocument 调度时语法树必然未解析到尾部：StateField 初次算出
+  // Decoration.none；修复前字段不监听解析推进（Language.setState 事务），
+  // 装饰永久缺失、围栏停留源码样式——真实 WKWebView 大 vault 必现、headless
+  // 小 fixture 全绿的分歧点。
+  const filler = "这一段是填充文本，用来把文档撑大到真实知识库的量级，验证增量解析边界对装饰的影响。".repeat(3);
+  let big = "# 大文件\n\n";
+  for (let i = 0; i < 2000; i++) big += `第 ${i + 1} 节\n\n${filler}\n\n`;
+  big += "```mermaid\ngraph TD\n  A[尾部] --> B[图表]\n```\n";
+  await stubTauri(page, {
+    entries: [{ path: "big.md", kind: "file", size: big.length, mtime_ms: 0 }],
+    files: { "big.md": big },
+  });
+  await page.goto("/");
+  await page.locator('.ft-row[title="big.md"]').click();
+  // 块级 widget 只在视口内 materialize：先滚到文档尾，再等解析推进 → 装饰
+  // 重算 → 懒加载 → SVG。修复前此处永不出现 svg（也无占位）。
+  await page.evaluate(() => {
+    document.querySelector<HTMLElement>(".cm-scroller")!.scrollTop = Number.MAX_SAFE_INTEGER;
+  });
+  await expect(page.locator(".cm-lp-mermaid svg")).toBeVisible({ timeout: 20000 });
+});

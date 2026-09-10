@@ -345,7 +345,11 @@ body { background:var(--bg); color:var(--text); font-family:var(--font-body); fo
   display: block;
   grid-row: 1;
   min-inline-size: 7ch;
-  max-inline-size: 40ch;
+  /* 上限用固定 px 而非 ch（M110 真实 webview 缺陷）：ch 随字重变化，表头
+     font-weight:700 的 40ch（WebKit 实测 394.7px）宽于正文 40ch（362.5px），
+     轨道按表头贡献撑宽后正文 cell 被自身 max-inline-size 钳住、不再拉伸填充
+     轨道，表头/数据行边界错位 32px、列边线错乱。px 上限两行一致。 */
+  max-inline-size: 352px;
   padding: 5px 8px;
   border-inline-end: 1px solid var(--bd-2);
   border-block-end: 1px solid var(--bd-2);

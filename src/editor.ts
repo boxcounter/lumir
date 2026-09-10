@@ -1,14 +1,15 @@
-import { Annotation, Compartment, EditorState } from "@codemirror/state";
+import { Annotation, Compartment, EditorSelection, EditorState, findClusterBreak } from "@codemirror/state";
 import type { Extension } from "@codemirror/state";
 import { EditorView, keymap, lineNumbers, highlightActiveLine } from "@codemirror/view";
 import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
-import { HighlightStyle, syntaxHighlighting } from "@codemirror/language";
+import { HighlightStyle, syntaxHighlighting, syntaxTree } from "@codemirror/language";
 import { tags } from "@lezer/highlight";
 import { GFM } from "@lezer/markdown";
 import type { EditorMode } from "./bindings/EditorMode";
 import { livePreview, previewRefresh } from "./preview/livePreview";
 import type { PreviewContext, WikilinkResolver } from "./preview/livePreview";
 import { detectFrontmatter } from "./preview/frontmatter";
+import { findMathSpans } from "./preview/math";
 import { createInvokeAttachmentProvider } from "./preview/attachments";
 import type { AttachmentProvider } from "./preview/attachments";
 
@@ -53,6 +54,55 @@ fn main() { println!("lumir"); }
 // 浏览器延迟揭示并与 CM6 视口重建叠加，实测 scrollTop 单次跳 ~388px（整屏突变）。
 // CM6 moveVertically 逐视觉行移动（支持软换行与 goal column），每次 dispatch 按
 // y:"nearest" 最小滚动，光标贴边时逐行顺滑跟随。
+
+// 块级 replace widget（frontmatter / $$ 公式 / mermaid 围栏）的边界收集。
+// moveVertically 跨这类原子块时会把光标一步扔到块另一侧（M110 真实桌面缺陷：
+// 公式附近 Ctrl-N 落点错误），需钳制到行进方向的近端边界。数学 span 用词法
+// 口径（findMathSpans，与装饰层一致）；mermaid 围栏按语法树 FencedCode+CodeInfo。
+function blockWidgetBoundaries(state: EditorState, from: number, to: number): { starts: number[]; ends: number[] } {
+  const starts: number[] = [];
+  const ends: number[] = [];
+  const fm = detectFrontmatter(state.doc);
+  if (fm && fm.to > from && fm.from < to) {
+    starts.push(fm.from);
+    ends.push(fm.to);
+  }
+  const sliceFrom = Math.max(0, from - 4096);
+  const sliceTo = Math.min(state.doc.length, to + 8192);
+  for (const span of findMathSpans(state.doc.sliceString(sliceFrom, sliceTo))) {
+    if (!span.display) continue;
+    starts.push(sliceFrom + span.from);
+    ends.push(sliceFrom + span.to);
+  }
+  syntaxTree(state).iterate({
+    from,
+    to,
+    enter(ref) {
+      if (ref.name !== "FencedCode") return;
+      const info = ref.node.getChild("CodeInfo");
+      if (info && state.doc.sliceString(info.from, info.to).trim() === "mermaid") {
+        starts.push(ref.from);
+        ends.push(ref.to);
+      }
+    },
+  });
+  return { starts, ends };
+}
+
+/** 垂直移动跨越块级原子 widget 时，把落点钳制到近端边界；未跨越返回原落点。 */
+function clampAcrossBlockWidgets(state: EditorState, from: number, to: number, forward: boolean): number {
+  if (from === to) return to;
+  const { starts, ends } = blockWidgetBoundaries(state, Math.min(from, to), Math.max(from, to));
+  if (forward) {
+    let best = Infinity;
+    for (const s of starts) if (s > from && s < to && s < best) best = s;
+    return best === Infinity ? to : best;
+  }
+  let best = -1;
+  for (const e of ends) if (e < from && e > to && e > best) best = e;
+  return best === -1 ? to : best;
+}
+
 function moveCaretVertically(view: EditorView, forward: boolean): boolean {
   const main = view.state.selection.main;
   if (!main.empty) {
@@ -64,8 +114,10 @@ function moveCaretVertically(view: EditorView, forward: boolean): boolean {
   const moved = view.moveVertically(main, forward);
   // 文档边界兜底（r1 review P2-2，与官方 cursorByLine 同款）：moveVertically 在
   // 末/首行原地不动时，改移行尾/行首——末行中段 ArrowDown 到行尾、首行到行首。
-  const target = moved.head !== main.head ? moved : view.moveToLineBoundary(main, forward);
+  let target = moved.head !== main.head ? moved : view.moveToLineBoundary(main, forward);
   if (target.head === main.head) return true; // 行首 ArrowUp / 行尾 ArrowDown：已无可移，仍视为已处理
+  const clamped = clampAcrossBlockWidgets(view.state, main.head, target.head, forward);
+  if (clamped !== target.head) target = EditorSelection.cursor(clamped);
   view.dispatch({
     selection: target,
     effects: EditorView.scrollIntoView(target.head, { y: "nearest" }),
@@ -80,6 +132,51 @@ const verticalMotionKeymap = keymap.of([
   { key: "ArrowUp", run: (view) => moveCaretVertically(view, false) },
   { mac: "Ctrl-n", run: (view) => moveCaretVertically(view, true) },
   { mac: "Ctrl-p", run: (view) => moveCaretVertically(view, false) },
+]);
+
+// head 是否恰为某条 math span 的进入边界（forward 看 span.from，backward 看
+// span.to）。窗口扫 ±4KB 覆盖跨行 $$ 块；词法口径与装饰层一致（findMathSpans）。
+function mathSpanAtBoundary(state: EditorState, pos: number, forward: boolean): boolean {
+  const from = Math.max(0, pos - 4096);
+  const to = Math.min(state.doc.length, pos + 4096);
+  for (const span of findMathSpans(state.doc.sliceString(from, to))) {
+    if (forward && from + span.from === pos) return true;
+    if (!forward && from + span.to === pos) return true;
+  }
+  return false;
+}
+
+// 水平光标移动（M110 真实桌面缺陷修复）：macOS Emacs 风格 Ctrl-F/B 原本走原生
+// contenteditable 路径——原生 caret 无法进入 CM 的 replace 原子范围（公式
+// widget），在边界卡住后经 posAtDOM 回弹跳过，永远无法进入公式。改由 CM 派发：
+// 默认沿用 CM 语义（原子/隐藏装饰整体跳过）；唯一例外是数学公式——光标跨入
+// 即以源码显露（math.ts 的选区重叠口径），故允许逐字符进入 span 内部编辑。
+function moveCaretHorizontally(view: EditorView, forward: boolean): boolean {
+  const main = view.state.selection.main;
+  if (!main.empty) {
+    // 非空选区：与原生行为一致，折叠到移动方向的一端。
+    view.dispatch({ selection: { anchor: forward ? main.to : main.from }, scrollIntoView: true, userEvent: "select" });
+    return true;
+  }
+  let head = view.moveByChar(main, forward).head;
+  if (mathSpanAtBoundary(view.state, main.head, forward)) {
+    // findClusterBreak 接收 string；取 ±64 字符窗口避免大文档整篇 sliceString。
+    const winFrom = Math.max(0, main.head - 64);
+    const win = view.state.doc.sliceString(winFrom, Math.min(view.state.doc.length, main.head + 64));
+    head = winFrom + findClusterBreak(win, main.head - winFrom, forward);
+  }
+  if (head === main.head) return true;
+  view.dispatch({
+    selection: { anchor: head },
+    effects: EditorView.scrollIntoView(head, { y: "nearest" }),
+    userEvent: forward ? "move.char.forward" : "move.char.backward",
+  });
+  return true;
+}
+
+const horizontalMotionKeymap = keymap.of([
+  { mac: "Ctrl-f", run: (view) => moveCaretHorizontally(view, true) },
+  { mac: "Ctrl-b", run: (view) => moveCaretHorizontally(view, false) },
 ]);
 
 export type EditorReadyPhase =
@@ -210,6 +307,15 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
     wikilinkResolver: () => wikilinkResolver,
   };
 
+  // 编辑器失焦时 CM 不回写 DOM 选区（M110 真实桌面缺陷）：打开新文档替换整篇
+  // 内容后，旧文档的原生选区被浏览器节点钳制映射进新 DOM，用户看到"意外选中
+  // 一段内容"而 CM 态光标在 0。装载/清空后焦点不在编辑器时显式清空原生选区；
+  // 编辑器聚焦时 CM 自行同步，不干预。
+  function collapseDomSelectionIfBlurred(): void {
+    if (view.hasFocus) return;
+    view.dom.ownerDocument.getSelection()?.removeAllRanges();
+  }
+
   function modeExtensions(mode: EditorMode): Extension[] {
     const highlight: Extension[] = [
       markdown(markdownConfig),
@@ -283,6 +389,7 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
     doc: SAMPLE,
     extensions: [
       verticalMotionKeymap,
+      horizontalMotionKeymap,
       EditorView.domEventHandlers({
         keydown(event, view) {
           if (event.target !== view.contentDOM || event.altKey || event.shiftKey ||
@@ -329,9 +436,17 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
       cleanDoc = doc;
       dispatchTrusted({
         changes: { from: 0, to: view.state.doc.length, insert: doc },
+        // 显式复位选区与滚动（M110 真实桌面缺陷排查）：替换整篇文档后 CM 会把
+        // 旧选区映射进新文档、滚动位置也继承上一篇——新文件应从文档起点开始。
+        // 滚动复位用直接赋值而非 scrollIntoView 效果：后者带 scrollMargin，文档
+        // 溢出视口时会把 pos 0 对齐到视口顶而主动下滚，页首 padding 被顶出画。
+        selection: { anchor: 0 },
         effects: modeCompartment.reconfigure(modeExtensions(next)),
       });
+      view.scrollDOM.scrollTop = 0;
+      view.scrollDOM.scrollLeft = 0;
       updateDirty(false);
+      collapseDomSelectionIfBlurred();
       emitReady("source-ready");
       emitReady("decoration-ready");
       emitReady("frontmatter-ready");
@@ -349,6 +464,7 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
         effects: modeCompartment.reconfigure(modeExtensions(defaultMode)),
       });
       updateDirty(false);
+      collapseDomSelectionIfBlurred();
     },
     isDirty: () => dirty,
     markClean() { cleanDoc = view.state.doc.toString(); updateDirty(false); },
