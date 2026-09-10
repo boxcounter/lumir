@@ -10,6 +10,7 @@ import { livePreview, previewRefresh } from "./preview/livePreview";
 import type { PreviewContext, WikilinkResolver } from "./preview/livePreview";
 import { detectFrontmatter } from "./preview/frontmatter";
 import { findMathSpans } from "./preview/math";
+import type { MathSpan } from "./preview/math";
 import { createInvokeAttachmentProvider } from "./preview/attachments";
 import type { AttachmentProvider } from "./preview/attachments";
 
@@ -134,23 +135,32 @@ const verticalMotionKeymap = keymap.of([
   { mac: "Ctrl-p", run: (view) => moveCaretVertically(view, false) },
 ]);
 
-// head 是否恰为某条 math span 的进入边界（forward 看 span.from，backward 看
-// span.to）。窗口扫 ±4KB 覆盖跨行 $$ 块；词法口径与装饰层一致（findMathSpans）。
-function mathSpanAtBoundary(state: EditorState, pos: number, forward: boolean): boolean {
-  const from = Math.max(0, pos - 4096);
-  const to = Math.min(state.doc.length, pos + 4096);
-  for (const span of findMathSpans(state.doc.sliceString(from, to))) {
-    if (forward && from + span.from === pos) return true;
-    if (!forward && from + span.to === pos) return true;
-  }
-  return false;
-}
-
-// 水平光标移动（M110 真实桌面缺陷修复）：macOS Emacs 风格 Ctrl-F/B 原本走原生
+// 水平光标移动（M110/M111 真实桌面缺陷修复）：macOS Emacs 风格 Ctrl-F/B 原本走原生
 // contenteditable 路径——原生 caret 无法进入 CM 的 replace 原子范围（公式
 // widget），在边界卡住后经 posAtDOM 回弹跳过，永远无法进入公式。改由 CM 派发：
-// 默认沿用 CM 语义（原子/隐藏装饰整体跳过）；唯一例外是数学公式——光标跨入
-// 即以源码显露（math.ts 的选区重叠口径），故允许逐字符进入 span 内部编辑。
+// 默认沿用 CM 语义（原子/隐藏装饰整体跳过）；唯一例外是数学公式——moveByChar
+// 把隐藏 span 当原子一步跳过（落点在 span 另一侧边界）时，钳制为跨入 span 一个
+// 字符。选区落入 span 即触发装饰显露（math.ts 选区重叠口径），源码可见、可继续
+// 逐字符编辑；不会在隐藏源码长度上逐位空走。未装饰上下文（表格单元格/代码内的
+// $）不产生原子跳步，钳制条件（落点越过 span 边界）不成立，逐字符通行不受影响。
+function mathSpanCrossed(state: EditorState, from: number, to: number, forward: boolean): MathSpan | null {
+  const winFrom = Math.max(0, Math.min(from, to) - 4096);
+  const winTo = Math.min(state.doc.length, Math.max(from, to) + 4096);
+  let best: MathSpan | null = null;
+  for (const span of findMathSpans(state.doc.sliceString(winFrom, winTo))) {
+    const s: MathSpan = { from: winFrom + span.from, to: winFrom + span.to, display: span.display };
+    if (forward) {
+      // from 在 span 起点或其左（span 内部意味着已显露、正常逐字符），且落点越过起点
+      if (s.from < from || s.from >= to) continue;
+      if (best === null || s.from < best.from) best = s;
+    } else {
+      if (s.to > from || s.to <= to) continue;
+      if (best === null || s.to > best.to) best = s;
+    }
+  }
+  return best;
+}
+
 function moveCaretHorizontally(view: EditorView, forward: boolean): boolean {
   const main = view.state.selection.main;
   if (!main.empty) {
@@ -159,11 +169,13 @@ function moveCaretHorizontally(view: EditorView, forward: boolean): boolean {
     return true;
   }
   let head = view.moveByChar(main, forward).head;
-  if (mathSpanAtBoundary(view.state, main.head, forward)) {
+  const span = mathSpanCrossed(view.state, main.head, head, forward);
+  if (span !== null) {
     // findClusterBreak 接收 string；取 ±64 字符窗口避免大文档整篇 sliceString。
-    const winFrom = Math.max(0, main.head - 64);
-    const win = view.state.doc.sliceString(winFrom, Math.min(view.state.doc.length, main.head + 64));
-    head = winFrom + findClusterBreak(win, main.head - winFrom, forward);
+    const edge = forward ? span.from : span.to;
+    const winFrom = Math.max(0, edge - 64);
+    const win = view.state.doc.sliceString(winFrom, Math.min(view.state.doc.length, edge + 64));
+    head = winFrom + findClusterBreak(win, edge - winFrom, forward);
   }
   if (head === main.head) return true;
   view.dispatch({

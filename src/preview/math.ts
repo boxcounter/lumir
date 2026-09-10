@@ -174,6 +174,26 @@ export function mathRenderCacheSize(): number {
   return renderCache.size;
 }
 
+// 点击进入编辑态（M111 真实桌面缺陷）：replace widget 整体隐藏源码，CM 对 widget
+// 内事件默认 ignoreEvent、不放置光标，点击渲染态公式因此无处落点。与 callout/
+// 表格同口径：点击即显露源码并把光标放到点击处。先把光标送入 span 内触发显露
+//（选区重叠口径，装饰同步重建），源码上屏后再用同一点位 posAtCoords 精确定位，
+// 钳制在 span 内部（落在边界会重新触发渲染态）。
+function enterMathSource(event: MouseEvent, view: EditorView, dom: HTMLElement, delimiter: number, rawLength: number): void {
+  if (event.button !== 0) return;
+  event.preventDefault();
+  const from = view.posAtDOM(dom);
+  view.dispatch({ selection: { anchor: from + delimiter }, userEvent: "select.pointer" });
+  const exact = view.posAtCoords({ x: event.clientX, y: event.clientY });
+  if (exact !== null) {
+    const clamped = Math.min(Math.max(exact, from + delimiter), from + rawLength - delimiter);
+    if (clamped !== from + delimiter) {
+      view.dispatch({ selection: { anchor: clamped }, userEvent: "select.pointer" });
+    }
+  }
+  view.focus();
+}
+
 /** 行内公式 widget：渲染成功显示公式；失败回落为完整原文 + 失败提示。 */
 class InlineMathWidget extends WidgetType {
   constructor(readonly source: string, readonly raw: string) {
@@ -184,7 +204,7 @@ class InlineMathWidget extends WidgetType {
     return other.source === this.source;
   }
 
-  toDOM(): HTMLElement {
+  toDOM(view: EditorView): HTMLElement {
     const el = document.createElement("span");
     el.className = "cm-lp-math cm-lp-math-inline";
     const result = renderMath(this.source, false);
@@ -196,6 +216,7 @@ class InlineMathWidget extends WidgetType {
       el.textContent = this.raw;
       el.title = `公式解析失败：${result.error}`;
     }
+    el.addEventListener("mousedown", (event) => enterMathSource(event, view, el, 1, this.raw.length));
     return el;
   }
 }
@@ -210,7 +231,7 @@ class BlockMathWidget extends WidgetType {
     return other.source === this.source;
   }
 
-  toDOM(): HTMLElement {
+  toDOM(view: EditorView): HTMLElement {
     const box = document.createElement("div");
     box.className = "cm-lp-math cm-lp-math-block";
     const result = renderMath(this.source, true);
@@ -230,8 +251,10 @@ class BlockMathWidget extends WidgetType {
       const outer = document.createElement("div");
       outer.className = "cm-lp-math-fallback-outer";
       outer.append(box);
+      outer.addEventListener("mousedown", (event) => enterMathSource(event, view, outer, 2, this.raw.length));
       return outer;
     }
+    box.addEventListener("mousedown", (event) => enterMathSource(event, view, box, 2, this.raw.length));
     return box;
   }
 }
@@ -262,7 +285,7 @@ export function collectInlineMath(
         if (isInsideCodeContext(tree, from)) continue;
         if (inTable(from, to)) continue;
         // 选区进入公式范围时跳过装饰显示源码（与 mathBlockSet 同口径；
-        // M110：Ctrl-F 可逐字符进入 span，进入后即可编辑）。
+        // M110：Ctrl-F/B 跨入即显露；M111：点击 widget 亦直接进入编辑态）。
         if (view.state.selection.ranges.some((r) => r.from < to && r.to > from)) continue;
         const raw = doc.sliceString(from, to);
         decos.push(
