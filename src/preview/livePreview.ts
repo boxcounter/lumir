@@ -7,7 +7,7 @@ import { Decoration, EditorView, ViewPlugin, WidgetType } from "@codemirror/view
 import type { DecorationSet, ViewUpdate } from "@codemirror/view";
 import { StateEffect, StateField } from "@codemirror/state";
 import type { EditorState, Range } from "@codemirror/state";
-import { syntaxTree } from "@codemirror/language";
+import { ensureSyntaxTree, syntaxTree } from "@codemirror/language";
 import { livePreviewTheme } from "./theme";
 import { listDecorations } from "./lists";
 import { detectFrontmatter, FrontmatterWidget } from "./frontmatter";
@@ -111,6 +111,20 @@ class EmptyTableCellWidget extends WidgetType {
 
 const tableMetadataCache = new WeakMap<EditorState, Map<string, TableModel[]>>();
 
+// 表格发现依赖语法树的 Table 节点。两个真实桌面缺陷根源（M111，03-事件词典.md
+// 实证 + WebKit 复现）：
+// 1) 后台解析在 WKWebView 走 500ms setTimeout 兜底（无 requestIdleCallback），
+//    视口进入未解析区域时表格停在裸露源码态数秒；
+// 2) syntaxTree(state) 是事务落地时的快照——后台解析推进后、Language.setState
+//    落地前它是旧的；syntaxTreeAvailable 查的是 live context，不能用来决定信任
+//    哪个快照（实证：isDone 为真时快照树仍缺 Table 节点，重建出裸露源码）。
+// 因此一律取 ensureSyntaxTree 返回的 live context 最新树：已覆盖时 isDone 短路
+//（零解析开销），未覆盖时同步推进至多 25ms（增量续跑已有进度），超时兜底回退
+// 快照树。保证表格进入视口即正确渲染，不等后台调度。
+function parseCoveredTree(state: EditorState, upto: number): ReturnType<typeof syntaxTree> {
+  return ensureSyntaxTree(state, upto, 25) ?? syntaxTree(state);
+}
+
 function tableModels(state: EditorState, from: number, to: number): TableModel[] {
   let ranges = tableMetadataCache.get(state);
   if (!ranges) {
@@ -121,8 +135,11 @@ function tableModels(state: EditorState, from: number, to: number): TableModel[]
   const cached = ranges.get(key);
   if (cached) return cached;
   const doc = state.doc;
-  const tables = findTables((start, end) => doc.sliceString(start, end), doc.length, syntaxTree(state), from, to);
-  ranges.set(key, tables);
+  const tree = parseCoveredTree(state, to);
+  const tables = findTables((start, end) => doc.sliceString(start, end), doc.length, tree, from, to);
+  // 树未覆盖发现范围（25ms 推进超时）时结果不完整，不缓存——等覆盖后重算，
+  // 否则同状态同范围的后续重建会永久钉在残缺模型上。
+  if (tree.length >= Math.min(to, doc.length)) ranges.set(key, tables);
   return tables;
 }
 
