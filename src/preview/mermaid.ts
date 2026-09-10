@@ -16,9 +16,11 @@
 
 import { Decoration, WidgetType } from "@codemirror/view";
 import type { DecorationSet } from "@codemirror/view";
+import type { EditorView } from "@codemirror/view";
 import type { EditorState, Range } from "@codemirror/state";
 import { syntaxTree } from "@codemirror/language";
 import { detectFrontmatter } from "./frontmatter";
+import { enterReplacedSource } from "./math";
 
 /** 渲染结果三态：pending 占位 / ok SVG / error 降级（消息取首行）。
  * error 带阶段：load = 渲染器（懒加载 chunk / initialize）失败，
@@ -216,7 +218,12 @@ export function clearMermaidRenderCache(): void {
 //（编辑/选择可见源码，与 mathBlockSet 的 selected 口径一致）。
 // ---------------------------------------------------------------------------
 
-/** 占位 / 成功 SVG / 失败降级三态 widget；state 对象身份参与 eq，settle 后重建。 */
+/** 占位 / 成功 SVG / 失败降级三态 widget；state 对象身份参与 eq，settle 后重建。
+ * 三态都挂 mousedown 进入源码编辑（M112，复用 M111 公式口径）：replace widget
+ * 整体隐藏源码，CM 对 widget 内事件 ignoreEvent 不落光标；且 mermaid 渲染异步，
+ * 布局位移期原生落点若滞留被替换的 widget 节点会被 CM 映射为 0（落点跳文档
+ * 起点），preventDefault 一并掐断该路径。pending 态点击同样显露源码：后台渲染
+ * settle 后选区仍重叠块范围，装饰保持显露、不回弹渲染态。 */
 class MermaidBlockWidget extends WidgetType {
   constructor(
     readonly source: string,
@@ -230,37 +237,51 @@ class MermaidBlockWidget extends WidgetType {
     return other.source === this.source && other.state === this.state;
   }
 
-  toDOM(): HTMLElement {
+  // 光标钳制区间（相对块起点）：开围栏行之后到闭围栏行之前，与公式 delimiter
+  // 口径一致（落在边界会重新触发渲染态）。退化块（无换行 / 无正文）收缩为块内
+  // 单点，仅保证严格落在块范围内以触发显露。
+  private innerRange(): { from: number; to: number } {
+    const openEnd = this.raw.indexOf("\n");
+    const from = openEnd < 0 ? 1 : openEnd + 1;
+    const closeStart = this.raw.lastIndexOf("\n");
+    return { from, to: closeStart > openEnd ? closeStart : from };
+  }
+
+  toDOM(view: EditorView): HTMLElement {
     const box = document.createElement("div");
     box.className = "cm-lp-mermaid";
+    let root = box;
     if (this.state.status === "ok") {
       // securityLevel strict 下 mermaid 产出的 SVG 不含脚本/外链（与 KaTeX
       // innerHTML 同口径：信任渲染器产出，样式走 SVG 内联，CSP 无需改动）。
       box.innerHTML = this.state.svg;
       box.title = this.raw;
-      return box;
-    }
-    if (this.state.status === "pending") {
+    } else if (this.state.status === "pending") {
       box.classList.add("cm-lp-mermaid-pending");
       box.textContent = "Mermaid 图表渲染中…";
-      return box;
+    } else {
+      box.classList.add("cm-lp-mermaid-fallback");
+      const err = document.createElement("div");
+      err.className = "cm-lp-mermaid-error";
+      err.textContent =
+        this.state.stage === "load"
+          ? `图表渲染器加载失败：${this.state.message}（可尝试刷新页面重试）`
+          : `图表解析失败：${this.state.message}`;
+      const raw = document.createElement("pre");
+      raw.className = "cm-lp-mermaid-raw";
+      raw.textContent = this.raw;
+      box.append(err, raw);
+      // 降级块的纵向间距由 -outer padding 承载（widget margin 不计入 CM 测量）。
+      const outer = document.createElement("div");
+      outer.className = "cm-lp-mermaid-fallback-outer";
+      outer.append(box);
+      root = outer;
     }
-    box.classList.add("cm-lp-mermaid-fallback");
-    const err = document.createElement("div");
-    err.className = "cm-lp-mermaid-error";
-    err.textContent =
-      this.state.stage === "load"
-        ? `图表渲染器加载失败：${this.state.message}（可尝试刷新页面重试）`
-        : `图表解析失败：${this.state.message}`;
-    const raw = document.createElement("pre");
-    raw.className = "cm-lp-mermaid-raw";
-    raw.textContent = this.raw;
-    box.append(err, raw);
-    // 降级块的纵向间距由 -outer padding 承载（widget margin 不计入 CM 测量）。
-    const outer = document.createElement("div");
-    outer.className = "cm-lp-mermaid-fallback-outer";
-    outer.append(box);
-    return outer;
+    root.addEventListener("mousedown", (event) => {
+      const { from, to } = this.innerRange();
+      enterReplacedSource(event, view, root, from, to);
+    });
+    return root;
   }
 }
 
