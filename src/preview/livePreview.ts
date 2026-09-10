@@ -125,7 +125,7 @@ function parseCoveredTree(state: EditorState, upto: number): ReturnType<typeof s
   return ensureSyntaxTree(state, upto, 25) ?? syntaxTree(state);
 }
 
-function tableModels(state: EditorState, from: number, to: number): TableModel[] {
+function tableModels(state: EditorState, from: number, to: number): { models: TableModel[]; complete: boolean } {
   let ranges = tableMetadataCache.get(state);
   if (!ranges) {
     ranges = new Map();
@@ -133,14 +133,15 @@ function tableModels(state: EditorState, from: number, to: number): TableModel[]
   }
   const key = `${from}:${to}`;
   const cached = ranges.get(key);
-  if (cached) return cached;
+  if (cached) return { models: cached, complete: true };
   const doc = state.doc;
   const tree = parseCoveredTree(state, to);
   const tables = findTables((start, end) => doc.sliceString(start, end), doc.length, tree, from, to);
   // 树未覆盖发现范围（25ms 推进超时）时结果不完整，不缓存——等覆盖后重算，
   // 否则同状态同范围的后续重建会永久钉在残缺模型上。
-  if (tree.length >= Math.min(to, doc.length)) ranges.set(key, tables);
-  return tables;
+  const complete = tree.length >= Math.min(to, doc.length);
+  if (complete) ranges.set(key, tables);
+  return { models: tables, complete };
 }
 
 function tableDiscoveryRange(view: EditorView): { from: number; to: number } {
@@ -151,9 +152,37 @@ function tableDiscoveryRange(view: EditorView): { from: number; to: number } {
   };
 }
 
+// M115 真实桌面缺陷（双击表头选区漂到上方段落、视口上跳）：WKWebView 无
+// requestIdleCallback，后台解析走 500ms setTimeout 兜底；ensureSyntaxTree 25ms
+// 预算在 JSC 冷解析时不够，表格进入视口后停在裸露源码态、等 500ms tick 才翻转
+// grid。翻转改变视口上方内容高度，滚动锚定随之移动视口——用户瞄准后、点击前
+// 视口若移动，点击坐标便落在移位后的内容上。发现范围未覆盖时立即调度短延时
+// 重试（previewRefresh 触发重算，每次再推进 ≤25ms 解析），把裸露窗口从 ~500ms
+// 收敛到一两帧，让翻转在瞄准前完成；重试上限后仍回退后台 tick 兜底。
+const discoveryRetry = new WeakMap<EditorView, { pending: boolean; count: number }>();
+const DISCOVERY_RETRY_DELAY = 30;
+const DISCOVERY_RETRY_MAX = 40;
+
 function tableWrappers(view: EditorView) {
   const { from, to } = tableDiscoveryRange(view);
-  const wrappers = tableModels(view.state, from, to)
+  const { models, complete } = tableModels(view.state, from, to);
+  let retry = discoveryRetry.get(view);
+  if (!retry) {
+    retry = { pending: false, count: 0 };
+    discoveryRetry.set(view, retry);
+  }
+  if (complete) {
+    retry.count = 0;
+  } else if (!retry.pending && retry.count < DISCOVERY_RETRY_MAX) {
+    retry.pending = true;
+    retry.count++;
+    const token = retry;
+    setTimeout(() => {
+      token.pending = false;
+      if (view.dom.isConnected) view.dispatch({ effects: previewRefresh.of(null) });
+    }, DISCOVERY_RETRY_DELAY);
+  }
+  const wrappers = models
     .filter((table) => table.rectangular && !table.degraded)
     .flatMap((table, index) => {
       const start = view.state.doc.lineAt(table.from).from;
@@ -201,7 +230,7 @@ export function livePreview(ctx: PreviewContext) {
         const pos = view.posAtCoords({ x: event.clientX, y: event.clientY });
         if (pos === null) return false;
         const { from, to } = tableDiscoveryRange(view);
-        const table = tableAt(tableModels(view.state, from, to), pos);
+        const table = tableAt(tableModels(view.state, from, to).models, pos);
         if (!table || table.degraded) return false;
         const slot = tableRowsInRange(table, pos, pos)[0]?.slots.find((s) => pos >= s.from && pos <= s.to);
         if (!slot) return false;
@@ -408,7 +437,7 @@ function buildDecorations(view: EditorView, ctx: PreviewContext): DecorationSet 
   const decos: Range<Decoration>[] = [];
   const fm = detectFrontmatter(view.state.doc);
   const { from, to } = tableDiscoveryRange(view);
-  const tables = tableModels(view.state, from, to);
+  const tables = tableModels(view.state, from, to).models;
 
   for (const vr of view.visibleRanges) {
     for (const table of tables) {
