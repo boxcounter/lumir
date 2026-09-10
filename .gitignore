@@ -14,3 +14,6 @@ perf-results/
 # misc
 *.log
 .DS_Store
+
+# session handoff doc — never commit
+HANDOFF.md
