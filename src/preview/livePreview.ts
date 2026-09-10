@@ -419,7 +419,18 @@ function buildDecorations(view: EditorView, ctx: PreviewContext): DecorationSet 
     collectTableDecorations(view, tables, vr.from, vr.to, decos);
     collectSyntaxDecorations(view, vr.from, vr.to, fm, ctx, decos, tables);
     collectWikilinks(view, vr.from, vr.to, fm, ctx, decos);
-    collectInlineMath(view, vr.from, vr.to, fm, decos);
+    // 跨 slot 边界的词法配对 span（`| $a | b$ |`）跳过：pipe 被 replace 隐藏，
+    // 横跨它的 replace 装饰会吞并相邻 cell（M113 r1 review P2-1）；降级表保留
+    // 原始 Markdown，cell 内也不渲染。完全落在单个 slot 内的 span 正常渲染。
+    collectInlineMath(view, vr.from, vr.to, fm,
+      (f, t) => {
+        const table = tableAt(tables, f);
+        if (!table) return false;
+        if (table.degraded) return true;
+        const slot = tableRowsInRange(table, f, f)[0]?.slots.find((s) => f >= s.from && f < s.to);
+        return !slot || t > slot.to;
+      },
+      decos);
     for (const { from } of lineRanges(view, vr.from, vr.to)) {
       const line = view.state.doc.lineAt(from);
       if (line.text.trim() || inFrontmatter(fm, from, line.to)) continue;

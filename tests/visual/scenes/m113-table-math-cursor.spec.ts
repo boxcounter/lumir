@@ -192,6 +192,37 @@ test("表格 cell 内 $...$ 渲染为公式，点击进编辑、Ctrl+B 兼容", 
 });
 
 // ---------------------------------------------------------------------------
+// 缺陷 3 的边界（r1 review P2-1）：跨 cell 分隔管词法配对的 $...$ 不吞并 cell
+// ---------------------------------------------------------------------------
+
+test("跨 cell 分隔管词法配对的 $...$ 不吞并 cell（r1 review P2-1）", async ({ page }) => {
+  // 表头行 `| $a | b$ |`：词法上 $a ... b$ 配成一条 span，横跨被隐藏的 pipe——
+  // 若对其做 replace 装饰，两个表头 cell 会被吞并成一个幻影公式，第二个 cell
+  // 内容在视图中被静默隐藏。修复后此类 span 跳过、保留原文；同一表格内完全
+  // 落在单个 slot 的公式（数据行 $x+1$）不受影响。
+  const CROSS_PIPE = `| $a | b$ |
+| --- | --- |
+| $x+1$ | 2 |
+`;
+  await openDoc(page, "t.md", CROSS_PIPE);
+  await expect(page.locator(".cm-lp-table-scroll")).toHaveCount(1);
+
+  // 表头两个 cell 都按原文可见，无幻影公式吞并
+  const header = page.locator(".cm-lp-table-row").first();
+  await expect(header.locator(".cm-lp-table-cell")).toHaveCount(2);
+  await expect(header.locator(".cm-lp-table-cell").nth(0)).toContainText("$a");
+  await expect(header.locator(".cm-lp-table-cell").nth(1)).toContainText("b$");
+  await expect(header.locator(".cm-lp-math-inline")).toHaveCount(0);
+  await expect(header.locator(".katex")).toHaveCount(0);
+
+  // 窄口径：同一表格内单 slot 公式照常渲染
+  const dataRow = page.locator(".cm-lp-table-row").nth(1);
+  await expect(dataRow.locator(".cm-lp-math-inline")).toHaveCount(1);
+  await expect(dataRow.locator(".katex")).toHaveCount(1);
+  expect(await readDocument(page)).toBe(CROSS_PIPE);
+});
+
+// ---------------------------------------------------------------------------
 // 缺陷 4：公式之后 Ctrl+B 不再边界空走（块级 2 次、行内 1 次进入）
 // ---------------------------------------------------------------------------
 
