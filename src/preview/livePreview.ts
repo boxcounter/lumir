@@ -440,6 +440,11 @@ function collectSyntaxDecorations(
   tables: readonly TableModel[] = [],
 ): void {
   const { doc } = view.state;
+  // 光标/选区严格落入某范围时该处显露源码（M110：callout/引用行的编辑进入
+  // 路径——光标所在行显示 > 与 [!type] 原文，其余行保持渲染态）。严格重叠
+  // 口径与 math/mermaid 的选区显露一致（空光标在行首不触发）。
+  const touchesSelection = (from: number, to: number): boolean =>
+    view.state.selection.ranges.some((r) => r.from < to && r.to > from);
   syntaxTree(view.state).iterate({
     from: vrFrom,
     to: vrTo,
@@ -544,9 +549,12 @@ function collectSyntaxDecorations(
           );
         }
         if (callout && callout.firstLineTo >= vrFrom && callout.firstLineFrom <= vrTo) {
-          const { marker, title } = calloutMarkerDecorations(callout);
-          decos.push(marker);
-          if (title) decos.push(title);
+          // 首行有光标/选区时显露 [!type] 源码（类型与标题可编辑），否则替换为图标。
+          if (!touchesSelection(callout.firstLineFrom, callout.firstLineTo)) {
+            const { marker, title } = calloutMarkerDecorations(callout);
+            decos.push(marker);
+            if (title) decos.push(title);
+          }
         }
         return;
       }
@@ -554,7 +562,10 @@ function collectSyntaxDecorations(
       // 续行 QuoteMark 嵌在 Paragraph 内（不是 Blockquote 直接子节点），
       // 须靠节点级 case 统一隐藏（M109 修复：此前多行引用续行的 > 会漏出）。
       if (name === "QuoteMark") {
-        hideMark(view, ref.from, ref.to, decos, true, false);
+        const markLine = doc.lineAt(ref.from);
+        if (!touchesSelection(markLine.from, markLine.to)) {
+          hideMark(view, ref.from, ref.to, decos, true, false);
+        }
         return;
       }
 
