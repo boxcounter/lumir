@@ -307,6 +307,15 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
     wikilinkResolver: () => wikilinkResolver,
   };
 
+  // 编辑器失焦时 CM 不回写 DOM 选区（M110 真实桌面缺陷）：打开新文档替换整篇
+  // 内容后，旧文档的原生选区被浏览器节点钳制映射进新 DOM，用户看到"意外选中
+  // 一段内容"而 CM 态光标在 0。装载/清空后焦点不在编辑器时显式清空原生选区；
+  // 编辑器聚焦时 CM 自行同步，不干预。
+  function collapseDomSelectionIfBlurred(): void {
+    if (view.hasFocus) return;
+    view.dom.ownerDocument.getSelection()?.removeAllRanges();
+  }
+
   function modeExtensions(mode: EditorMode): Extension[] {
     const highlight: Extension[] = [
       markdown(markdownConfig),
@@ -427,9 +436,17 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
       cleanDoc = doc;
       dispatchTrusted({
         changes: { from: 0, to: view.state.doc.length, insert: doc },
+        // 显式复位选区与滚动（M110 真实桌面缺陷排查）：替换整篇文档后 CM 会把
+        // 旧选区映射进新文档、滚动位置也继承上一篇——新文件应从文档起点开始。
+        // 滚动复位用直接赋值而非 scrollIntoView 效果：后者带 scrollMargin，文档
+        // 溢出视口时会把 pos 0 对齐到视口顶而主动下滚，页首 padding 被顶出画。
+        selection: { anchor: 0 },
         effects: modeCompartment.reconfigure(modeExtensions(next)),
       });
+      view.scrollDOM.scrollTop = 0;
+      view.scrollDOM.scrollLeft = 0;
       updateDirty(false);
+      collapseDomSelectionIfBlurred();
       emitReady("source-ready");
       emitReady("decoration-ready");
       emitReady("frontmatter-ready");
@@ -447,6 +464,7 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
         effects: modeCompartment.reconfigure(modeExtensions(defaultMode)),
       });
       updateDirty(false);
+      collapseDomSelectionIfBlurred();
     },
     isDirty: () => dirty,
     markClean() { cleanDoc = view.state.doc.toString(); updateDirty(false); },
