@@ -191,6 +191,36 @@ export function livePreview(ctx: PreviewContext) {
     listDecorations,
     EditorView.blockWrappers.of(tableWrappers),
     EditorView.domEventHandlers({
+      // 表格 cell 内双击落在对齐填充空白上（M113 真实桌面缺陷）：cell slot 含
+      // 对齐 padding 空白，CM 双击的按类选词会把整段 padding 当「词」选中
+      //（wordAt 对空白返回 null，不能用它判定，直接按裁剪后内容区间判断）。
+      // 落点在 padding 上时拦截，改选裁剪后离点击处最近的实际词；落在实际内容
+      // 上时保持默认（选中该词），空 cell（无实际内容）不干预。
+      mousedown(event, view) {
+        if (event.button !== 0 || event.detail !== 2) return false;
+        const pos = view.posAtCoords({ x: event.clientX, y: event.clientY });
+        if (pos === null) return false;
+        const { from, to } = tableDiscoveryRange(view);
+        const table = tableAt(tableModels(view.state, from, to), pos);
+        if (!table || table.degraded) return false;
+        const slot = tableRowsInRange(table, pos, pos)[0]?.slots.find((s) => pos >= s.from && pos <= s.to);
+        if (!slot) return false;
+        const text = view.state.doc.sliceString(slot.from, slot.to);
+        const contentFrom = slot.from + (text.length - text.trimStart().length);
+        const contentTo = slot.from + text.trimEnd().length;
+        if (contentFrom >= contentTo) return false;
+        if (pos >= contentFrom && pos <= contentTo) return false;
+        const clamped = Math.min(Math.max(pos, contentFrom), contentTo - 1);
+        const target = view.state.wordAt(clamped);
+        event.preventDefault();
+        view.dispatch({
+          selection: target
+            ? { anchor: target.from, head: target.to }
+            : { anchor: contentFrom, head: contentTo },
+          userEvent: "select.pointer",
+        });
+        return true;
+      },
       focusin(event, view) {
         const target = event.target;
         if (!(target instanceof HTMLElement) || !target.matches(".cm-lp-table-scroll")) return false;
@@ -389,8 +419,18 @@ function buildDecorations(view: EditorView, ctx: PreviewContext): DecorationSet 
     collectTableDecorations(view, tables, vr.from, vr.to, decos);
     collectSyntaxDecorations(view, vr.from, vr.to, fm, ctx, decos, tables);
     collectWikilinks(view, vr.from, vr.to, fm, ctx, decos);
+    // 跨 slot 边界的词法配对 span（`| $a | b$ |`）跳过：pipe 被 replace 隐藏，
+    // 横跨它的 replace 装饰会吞并相邻 cell（M113 r1 review P2-1）；降级表保留
+    // 原始 Markdown，cell 内也不渲染。完全落在单个 slot 内的 span 正常渲染。
     collectInlineMath(view, vr.from, vr.to, fm,
-      (f, t) => tableAt(tables, f, t) !== undefined, decos);
+      (f, t) => {
+        const table = tableAt(tables, f);
+        if (!table) return false;
+        if (table.degraded) return true;
+        const slot = tableRowsInRange(table, f, f)[0]?.slots.find((s) => f >= s.from && f < s.to);
+        return !slot || t > slot.to;
+      },
+      decos);
     for (const { from } of lineRanges(view, vr.from, vr.to)) {
       const line = view.state.doc.lineAt(from);
       if (line.text.trim() || inFrontmatter(fm, from, line.to)) continue;

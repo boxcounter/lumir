@@ -2,7 +2,7 @@ import { Annotation, Compartment, EditorSelection, EditorState, findClusterBreak
 import type { Extension } from "@codemirror/state";
 import { EditorView, keymap, lineNumbers, highlightActiveLine } from "@codemirror/view";
 import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
-import { HighlightStyle, syntaxHighlighting, syntaxTree } from "@codemirror/language";
+import { HighlightStyle, syntaxHighlighting, syntaxTree, ensureSyntaxTree } from "@codemirror/language";
 import { tags } from "@lezer/highlight";
 import { GFM } from "@lezer/markdown";
 import type { EditorMode } from "./bindings/EditorMode";
@@ -11,6 +11,7 @@ import type { PreviewContext, WikilinkResolver } from "./preview/livePreview";
 import { detectFrontmatter } from "./preview/frontmatter";
 import { findMathSpans } from "./preview/math";
 import type { MathSpan } from "./preview/math";
+import { findTables, tableAt } from "./preview/table";
 import { createInvokeAttachmentProvider } from "./preview/attachments";
 import type { AttachmentProvider } from "./preview/attachments";
 
@@ -104,6 +105,33 @@ function clampAcrossBlockWidgets(state: EditorState, from: number, to: number, f
   return best === -1 ? to : best;
 }
 
+// 渲染为 grid 的表格（rectangular 且未降级）对垂直移动是原子块：两方向对称、
+// 一次按键跳过整张表（M113 用户裁决；修复前 Ctrl-N 恰好跳过而 Ctrl-P 逐行穿过，
+// 方向不对称）。落点仍在表内时，改从表在行进方向的远端边界重做一次
+// moveVertically——CM 自身的扫描会继续跳过 0 高空行（cm-lp-block-separator），
+// 落点与前进方向自然跨表时同口径；goal column 用原光标 x 传入，列位不丢。
+// 降级/非矩形表格保留逐行穿过（它们按原始 Markdown 逐行渲染）。
+function skipGridTable(
+  view: EditorView,
+  from: number,
+  target: ReturnType<EditorView["moveVertically"]>,
+  forward: boolean,
+): ReturnType<EditorView["moveVertically"]> {
+  const { doc } = view.state;
+  const lo = Math.min(from, target.head);
+  const hi = Math.max(from, target.head);
+  const tree = ensureSyntaxTree(view.state, hi, 25) ?? syntaxTree(view.state);
+  const tables = findTables((s, e) => doc.sliceString(s, e), doc.length, tree, lo, hi);
+  const table = tableAt(tables, target.head);
+  if (!table || table.degraded || !table.rectangular) return target;
+  const startX = view.coordsAtPos(from)?.left;
+  const goal = startX === undefined ? undefined : startX - view.contentDOM.getBoundingClientRect().left;
+  const boundary = forward ? table.to : table.from;
+  const moved = view.moveVertically(EditorSelection.cursor(boundary, undefined, undefined, goal), forward);
+  // 表已贴文档边界（行进方向无表外行）时 moveVertically 原地不动，保持原落点。
+  return moved.head === boundary ? target : moved;
+}
+
 function moveCaretVertically(view: EditorView, forward: boolean): boolean {
   const main = view.state.selection.main;
   if (!main.empty) {
@@ -119,6 +147,7 @@ function moveCaretVertically(view: EditorView, forward: boolean): boolean {
   if (target.head === main.head) return true; // 行首 ArrowUp / 行尾 ArrowDown：已无可移，仍视为已处理
   const clamped = clampAcrossBlockWidgets(view.state, main.head, target.head, forward);
   if (clamped !== target.head) target = EditorSelection.cursor(clamped);
+  target = skipGridTable(view, main.head, target, forward);
   view.dispatch({
     selection: target,
     effects: EditorView.scrollIntoView(target.head, { y: "nearest" }),
@@ -154,7 +183,14 @@ function mathSpanCrossed(state: EditorState, from: number, to: number, forward: 
       if (s.from < from || s.from >= to) continue;
       if (best === null || s.from < best.from) best = s;
     } else {
-      if (s.to > from || s.to <= to) continue;
+      if (s.to > from || s.to < to) continue;
+      if (s.to === to) {
+        // 跨行落点钉在 span 右边界是「边界空走」（M113 真实桌面缺陷）：块级公式
+        // 下方段落 / 行尾公式下一行行首按 Ctrl-B，光标停在不可见的边界位不进入，
+        // 需再按一次（实测共 3 次）。跨行到达时直接钳入 span；同一行内的边界
+        // 停靠保留（那是可见的可编辑位置，M111 既有行为）。
+        if (state.doc.lineAt(from).number === state.doc.lineAt(to).number) continue;
+      }
       if (best === null || s.to > best.to) best = s;
     }
   }

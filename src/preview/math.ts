@@ -277,15 +277,20 @@ class BlockMathWidget extends WidgetType {
 
 /**
  * 视口内行内公式装饰（ViewPlugin 侧，单行 replace 允许跨插件装饰）。
- * 代码/frontmatter/表格上下文排除：表格 grid 布局内不做 replace（与
- * collectSyntaxDecorations 的块级约束同口径），保留原文。
+ * 代码/frontmatter 上下文排除；表格 cell 内的行内公式照常渲染（M113：
+ * 行内 replace 是 cell 文本内的内联 widget，不干扰 grid 布局；块级 $$
+ * 仍由 mathBlockSet 在表格上下文排除——block replace 会拆散 grid 行）。
+ * crossesTableSlotBoundary：词法配对的 $...$ 可能横跨 cell 分隔管
+ *（`| $a | b$ |`），pipe 本身被 replace 隐藏，横跨它的 replace 装饰会把
+ * 两个 cell 吞并成一个幻影公式（r1 review P2-1 实测）——此类 span 跳过，
+ * 保持原文；完全落在单个 slot 内的 span 不受影响。
  */
 export function collectInlineMath(
   view: EditorView,
   vrFrom: number,
   vrTo: number,
   fm: { from: number; to: number } | null,
-  inTable: (from: number, to: number) => boolean,
+  crossesTableSlotBoundary: (from: number, to: number) => boolean,
   decos: Range<Decoration>[],
 ): void {
   const { doc } = view.state;
@@ -299,7 +304,7 @@ export function collectInlineMath(
         const to = line.from + span.to;
         if (fm !== null && from >= fm.from && to <= fm.to) continue;
         if (isInsideCodeContext(tree, from)) continue;
-        if (inTable(from, to)) continue;
+        if (crossesTableSlotBoundary(from, to)) continue;
         // 选区进入公式范围时跳过装饰显示源码（与 mathBlockSet 同口径；
         // M110：Ctrl-F/B 跨入即显露；M111：点击 widget 亦直接进入编辑态）。
         if (view.state.selection.ranges.some((r) => r.from < to && r.to > from)) continue;
@@ -321,7 +326,8 @@ export function collectInlineMath(
  * 与 frontmatter 同约束）。词法扫描是单趟字符循环，1MB 文档为毫秒级；
  * 渲染在 widget toDOM 惰性发生且有缓存，不阻塞 F0。选区进入公式范围时
  * 跳过装饰显示原文（编辑/选择可见源码，与 frontmatter 的 selected 口径一致）。
- * 表格单元格内的 $$ 不做 replace（与行内路径 inTable 口径一致），保留原文。
+ * 表格单元格内的 $$ 不做 replace（block replace 会拆散表格 grid 行），保留原文；
+ * cell 内的行内 $ 公式不受影响，由 collectInlineMath 正常渲染。
  */
 export function mathBlockSet(state: EditorState): DecorationSet {
   // 廉价存在性检查先行（tr.selection 每次光标移动都触发本函数，全量
