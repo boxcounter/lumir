@@ -256,7 +256,11 @@ class MermaidBlockWidget extends WidgetType {
     raw.className = "cm-lp-mermaid-raw";
     raw.textContent = this.raw;
     box.append(err, raw);
-    return box;
+    // 降级块的纵向间距由 -outer padding 承载（widget margin 不计入 CM 测量）。
+    const outer = document.createElement("div");
+    outer.className = "cm-lp-mermaid-fallback-outer";
+    outer.append(box);
+    return outer;
   }
 }
 

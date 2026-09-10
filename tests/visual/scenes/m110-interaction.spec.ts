@@ -232,3 +232,98 @@ test("打开文件后选区与滚动复位，点击落点即光标", async ({ pa
   expect(after.head).toBeGreaterThan(0);
   expect(await readDocument(page)).toBe(DOC_B);
 });
+
+// 缺陷 1 实证 fixture（/tmp/lumir-m102-acceptance/列表与保存.md）：frontmatter +
+// 两张表格的累计块级间距使 heightmap 漂移 54px（≈1.6 行）的场景。
+const ACCEPTANCE_DOC = `---
+title: M102/M103 复验
+---
+
+# 标题一
+
+## 标题二
+
+- 列表项一
+- 列表项二
+- 列表项三
+
+## 短内容表格
+
+| 名称 | 状态 |
+|------|------|
+| 表格 |s 正常 |
+
+## 含代码的表格
+
+| API | 说明 |
+|-----|------|
+| \`document_save\` | 保存文档 |
+| \`fs_read_snapshot\` | 读取快照 |
+`;
+
+test("缺陷1：物理节奏双击表头选中表头词（frontmatter+多表 heightmap 场景）", async ({ page }) => {
+  await stubTauri(page, {
+    entries: [{ path: "列表与保存.md", kind: "file", size: ACCEPTANCE_DOC.length, mtime_ms: 0 }],
+    files: { "列表与保存.md": ACCEPTANCE_DOC },
+  });
+  await page.goto("/");
+  await page.locator('.ft-row[title="列表与保存.md"]').click();
+  const api = page.locator(".cm-lp-table-cell", { hasText: "API" });
+  await api.waitFor();
+
+  // 几何不变量：每个表格行内任意点经 posAtCoords 必须映射回本行。
+  // 缺陷 1 根因——块级 margin（frontmatter widget / 表格 wrapper）对 CM6 的
+  // border-box 高度测量不可见，heightmap 按 margin 累计漂移，y→行映射下移 1-2 行。
+  const badRows = await page.evaluate(() => {
+    const view = (document.querySelector(".cm-content") as unknown as { cmTile: { root: { view: any } } }).cmTile.root.view;
+    const bad: string[] = [];
+    for (const row of Array.from(document.querySelectorAll(".cm-lp-table-row")) as HTMLElement[]) {
+      const cell = row.querySelector(".cm-lp-table-cell") as HTMLElement;
+      const r = cell.getBoundingClientRect();
+      const pos = view.posAtCoords({ x: r.x + r.width / 2, y: r.y + r.height / 2 });
+      const node = view.domAtPos(pos).node as Node;
+      const el = (node.nodeType === 1 ? node : node.parentElement) as HTMLElement | null;
+      if (el?.closest(".cm-line") !== row) bad.push(row.textContent ?? "?");
+    }
+    return bad;
+  });
+  expect(badRows).toEqual([]);
+
+  // 点击点取在 "API" 文本字形上（cell 中心落在尾随空白，wordAt 会取不到词；
+  // 表头 cell 文本被内层 span 包裹，用 TreeWalker 找深层文本节点）
+  const point = await page.evaluate(() => {
+    const cell = [...document.querySelectorAll(".cm-lp-table-cell")].find((c) => c.textContent?.trim() === "API")!;
+    const walker = document.createTreeWalker(cell, NodeFilter.SHOW_TEXT);
+    let textNode: Node | null = null;
+    while ((textNode = walker.nextNode())) if (textNode.textContent?.includes("API")) break;
+    const range = document.createRange();
+    const start = textNode!.textContent!.indexOf("API");
+    range.setStart(textNode!, start + 1);
+    range.setEnd(textNode!, start + 2);
+    const r = range.getBoundingClientRect();
+    return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
+  });
+
+  // 物理双击节奏：mousedown/mouseup 间隔 ~80ms，两次点击间隔 ~300ms，
+  // 第二次 clickCount=2（真实触控板双击的事件序列）。
+  await page.mouse.move(point.x, point.y);
+  await page.mouse.down();
+  await page.waitForTimeout(80);
+  await page.mouse.up();
+  // 第一次单击：光标必须落在表头行，不是下一行
+  const first = await page.evaluate(() => {
+    const view = (document.querySelector(".cm-content") as unknown as { cmTile: { root: { view: any } } }).cmTile.root.view;
+    return view.state.doc.lineAt(view.state.selection.main.head).text;
+  });
+  expect(first).toBe("| API | 说明 |");
+  await page.waitForTimeout(300);
+  await page.mouse.click(point.x, point.y, { clickCount: 2, delay: 80 });
+  // 双击：选中表头词 API（缺陷 1：曾选中下一行 document_save）
+  const word = await page.evaluate(() => {
+    const view = (document.querySelector(".cm-content") as unknown as { cmTile: { root: { view: any } } }).cmTile.root.view;
+    const m = view.state.selection.main;
+    return view.state.doc.sliceString(m.from, m.to);
+  });
+  expect(word).toBe("API");
+  expect(await readDocument(page)).toBe(ACCEPTANCE_DOC);
+});

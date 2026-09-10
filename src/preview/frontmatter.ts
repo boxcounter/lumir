@@ -56,6 +56,15 @@ export class FrontmatterWidget extends WidgetType {
   }
 
   toDOM(): HTMLElement {
+    // 纵向间距由 -outer 的 padding 承载（CM 测量的 widget 高度不含 margin），
+    // 视觉边框/背景/圆角保持在内层 .cm-lp-frontmatter 上。
+    const outer = document.createElement("div");
+    outer.className = "cm-lp-frontmatter-outer";
+    outer.append(this.buildBox());
+    return outer;
+  }
+
+  private buildBox(): HTMLElement {
     const box = document.createElement("div");
     box.className = `cm-lp-frontmatter${this.selected ? " cm-lp-frontmatter-selected" : ""}`;
 
