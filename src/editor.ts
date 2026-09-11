@@ -277,6 +277,13 @@ const verticalMotionKeymap = keymap.of([
 // 字符。选区落入 span 即触发装饰显露（math.ts 选区重叠口径），源码可见、可继续
 // 逐字符编辑；不会在隐藏源码长度上逐位空走。未装饰上下文（表格单元格/代码内的
 // $）不产生原子跳步，钳制条件（落点越过 span 边界）不成立，逐字符通行不受影响。
+/** display span 的收尾行在 span 之外是否有可见内容（全空白 = 该行随 widget 隐藏）。 */
+function closingLineVisible(state: EditorState, s: MathSpan): boolean {
+  const line = state.doc.lineAt(s.to);
+  const prefix = s.from >= line.from ? state.doc.sliceString(line.from, s.from) : "";
+  return (prefix + state.doc.sliceString(s.to, line.to)).trim() !== "";
+}
+
 function mathSpanCrossed(state: EditorState, from: number, to: number, forward: boolean): MathSpan | null {
   const winFrom = Math.max(0, Math.min(from, to) - 4096);
   const winTo = Math.min(state.doc.length, Math.max(from, to) + 4096);
@@ -288,13 +295,26 @@ function mathSpanCrossed(state: EditorState, from: number, to: number, forward: 
       if (s.from < from || s.from >= to) continue;
       if (best === null || s.from < best.from) best = s;
     } else {
-      if (s.to > from || s.to < to) continue;
-      if (s.to === to) {
+      // 光标已在 span 内（已显露，正常逐字符）不关涉
+      if (s.to > from) continue;
+      if (s.to < to) {
+        // 落点越过 span 右端：仅当 display span 的收尾行随 widget 隐藏（span 之外
+        // 全是空白）才算跨越——尾巴逐字符走过全是不可见空走（M118 真实桌面缺陷：
+        // `$$` 闭合行带两个尾随空格时 Ctrl+B 需 6 次才进入公式）。收尾行有可见
+        // 内容（如 `$$ 注释`）时尾巴照常逐字符通行。
+        if (!s.display) continue;
+        if (state.doc.lineAt(s.to).number !== state.doc.lineAt(to).number) continue;
+        if (closingLineVisible(state, s)) continue;
+      } else if (s.to === to) {
         // 跨行落点钉在 span 右边界是「边界空走」（M113 真实桌面缺陷）：块级公式
         // 下方段落 / 行尾公式下一行行首按 Ctrl-B，光标停在不可见的边界位不进入，
-        // 需再按一次（实测共 3 次）。跨行到达时直接钳入 span；同一行内的边界
-        // 停靠保留（那是可见的可编辑位置，M111 既有行为）。
-        if (state.doc.lineAt(from).number === state.doc.lineAt(to).number) continue;
+        // 需再按一次（实测共 3 次）。跨行到达时直接钳入 span。同一行内的边界
+        // 停靠：行内 span 保留（那是可见的可编辑位置，M111 既有行为）；display
+        // span 仅当收尾行有可见内容时保留——否则边界位随 widget 隐藏，停靠即空走。
+        if (state.doc.lineAt(from).number === state.doc.lineAt(to).number) {
+          if (!s.display) continue;
+          if (closingLineVisible(state, s)) continue;
+        }
       }
       if (best === null || s.to > best.to) best = s;
     }
