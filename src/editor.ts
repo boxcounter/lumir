@@ -1,5 +1,5 @@
 import { Annotation, Compartment, EditorSelection, EditorState, findClusterBreak } from "@codemirror/state";
-import type { Extension } from "@codemirror/state";
+import type { Extension, SelectionRange, Text } from "@codemirror/state";
 import { EditorView, keymap, lineNumbers, highlightActiveLine } from "@codemirror/view";
 import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
 import { HighlightStyle, syntaxHighlighting, syntaxTree, ensureSyntaxTree } from "@codemirror/language";
@@ -12,6 +12,7 @@ import { detectFrontmatter } from "./preview/frontmatter";
 import { findMathSpans } from "./preview/math";
 import type { MathSpan } from "./preview/math";
 import { findTables, tableAt } from "./preview/table";
+import type { TableModel, TableRow } from "./preview/table";
 import { createInvokeAttachmentProvider } from "./preview/attachments";
 import type { AttachmentProvider } from "./preview/attachments";
 
@@ -105,31 +106,137 @@ function clampAcrossBlockWidgets(state: EditorState, from: number, to: number, f
   return best === -1 ? to : best;
 }
 
-// 渲染为 grid 的表格（rectangular 且未降级）对垂直移动是原子块：两方向对称、
-// 一次按键跳过整张表（M113 用户裁决；修复前 Ctrl-N 恰好跳过而 Ctrl-P 逐行穿过，
-// 方向不对称）。落点仍在表内时，改从表在行进方向的远端边界重做一次
-// moveVertically——CM 自身的扫描会继续跳过 0 高空行（cm-lp-block-separator），
-// 落点与前进方向自然跨表时同口径；goal column 用原光标 x 传入，列位不丢。
-// 降级/非矩形表格保留逐行穿过（它们按原始 Markdown 逐行渲染）。
-function skipGridTable(
+// grid 表格（rectangular 且未降级）内/外的垂直移动路由（M118 tower 裁决，取代
+// M113 的「一次按键跳过整张表」——整表跳过矫枉过正，光标进不了表格）：
+// - 从表内出发：逐 cell 行移动（goal column 保留列位）；在首/末行再按即离开表格。
+// - 从表外相邻行出发（与表之间只隔空白行，即 0 高 block separator）：进入表格
+//   首/末行 cell（进入方向决定首/末）。
+// - 单步移动跨越整张表且不相邻：保持整表跳过（CM 单步移动实际不会走到这条，
+//   作为引擎差异兜底）。
+// 两方向对称。降级/非矩形表不参与（它们按原始 Markdown 逐行渲染）。
+//
+// 为什么向下要显式改落：CM6 moveVertically 的扫描在 posAtCoords 的 scanY 分支
+// 用行块尾部坐标（coordsAt(block.to, -1)）判断落点是否在线上；grid 表格的行尾
+// 是隐藏管道符 replace，该处坐标测量退化为 null，扫描不停止、继续向下逐行漏过
+// 直到表外（向上取行首坐标，不受此影响）。实证：向下从表上方行/表内任意行都
+// 一步跳到表下方，向上逐行正常——M113 观测到的方向不对称即源于此。
+
+/** 坐标测量退化（null 或全零 rect）：隐藏 replace 邻接位的典型症状。 */
+function coordsDegenerate(rect: { top: number; left: number; right: number; bottom: number } | null): boolean {
+  return rect === null || (rect.top === 0 && rect.left === 0 && rect.right === 0 && rect.bottom === 0);
+}
+
+/**
+ * 表行内落点吸附：隐藏管道符区（slot 间隙与行首尾）与空 cell 原子 widget 不可停靠。
+ * 返回落点及其可见侧 assoc——caret 绘制与 scrollIntoView 都按 `range.assoc || 1`
+ * 取 coordsAtPos 的 side，隐藏 replace 左缘用 side 1 测量会退化成全零 rect，
+ * 滚动揭示随之把整窗内容拉偏（M118 Ctrl-E 下挫的同族机制）。
+ */
+function snapIntoCell(doc: Text, row: TableRow, pos: number): { pos: number; assoc: -1 | 1 } {
+  const slots = row.slots;
+  if (slots.length === 0) return { pos, assoc: 1 };
+  const first = slots[0];
+  if (pos <= first.from) return { pos: first.from, assoc: 1 }; // 行首隐藏管道符区：可见侧在前
+  const last = slots[slots.length - 1];
+  // 行尾隐藏管道符区（含 row.to：管道符零宽，视觉同位但两侧坐标均退化）
+  if (pos >= last.to) return { pos: last.to, assoc: -1 };
+  for (let i = 0; i < slots.length; i++) {
+    const slot = slots[i];
+    if (pos < slot.from) {
+      // 相邻 slot 间的隐藏管道符区：吸附到较近的 cell 边缘
+      const prev = slots[i - 1];
+      return pos - prev.to <= slot.from - pos ? { pos: prev.to, assoc: -1 } : { pos: slot.from, assoc: 1 };
+    }
+    if (pos < slot.to) {
+      // 空 cell 整体是原子 widget，只能停靠其左缘（可见侧在前）
+      if (doc.sliceString(slot.from, slot.to).trim() === "") return { pos: slot.from, assoc: 1 };
+      return { pos, assoc: -1 };
+    }
+    if (pos === slot.to) return { pos, assoc: -1 }; // cell 右缘：可见侧在后
+  }
+  return { pos, assoc: -1 };
+}
+
+/** 改落到表格指定行：按原光标 x（goal column）取行内位置，吸附出隐藏原子区。 */
+function cursorInTableRow(
   view: EditorView,
-  from: number,
-  target: ReturnType<EditorView["moveVertically"]>,
-  forward: boolean,
-): ReturnType<EditorView["moveVertically"]> {
+  row: TableRow,
+  goalColumn: number | undefined,
+): SelectionRange {
   const { doc } = view.state;
+  let pos: number | null = null;
+  if (goalColumn !== undefined) {
+    const refPos = row.slots[0]?.from ?? row.from;
+    const ref = view.coordsAtPos(refPos, 1) ?? view.coordsAtPos(row.from, 1);
+    if (ref) {
+      const x = view.contentDOM.getBoundingClientRect().left + goalColumn;
+      pos = view.posAtCoords({ x, y: (ref.top + ref.bottom) / 2 }, false);
+    }
+  }
+  const snapped = snapIntoCell(doc, row, Math.min(Math.max(pos ?? row.from, row.from), row.to));
+  return EditorSelection.cursor(snapped.pos, snapped.assoc, undefined, goalColumn);
+}
+
+/** from 与表格在行进方向上是否相邻：之间没有非空白文本行（0 高空行不算间隔）。 */
+function tableAdjacent(doc: Text, from: number, table: TableModel, forward: boolean): boolean {
+  const fromLine = doc.lineAt(from).number;
+  const edgeLine = doc.lineAt(forward ? table.from : table.to).number;
+  const first = forward ? fromLine + 1 : edgeLine + 1;
+  const last = forward ? edgeLine - 1 : fromLine - 1;
+  for (let n = first; n <= last; n++) {
+    if (doc.line(n).text.trim() !== "") return false;
+  }
+  return true;
+}
+
+function routeGridTable(
+  view: EditorView,
+  main: SelectionRange,
+  target: SelectionRange,
+  forward: boolean,
+): SelectionRange {
+  const { doc } = view.state;
+  const from = main.head;
   const lo = Math.min(from, target.head);
   const hi = Math.max(from, target.head);
   const tree = ensureSyntaxTree(view.state, hi, 25) ?? syntaxTree(view.state);
-  const tables = findTables((s, e) => doc.sliceString(s, e), doc.length, tree, lo, hi);
-  const table = tableAt(tables, target.head);
-  if (!table || table.degraded || !table.rectangular) return target;
-  const startX = view.coordsAtPos(from)?.left;
-  const goal = startX === undefined ? undefined : startX - view.contentDOM.getBoundingClientRect().left;
-  const boundary = forward ? table.to : table.from;
-  const moved = view.moveVertically(EditorSelection.cursor(boundary, undefined, undefined, goal), forward);
-  // 表已贴文档边界（行进方向无表外行）时 moveVertically 原地不动，保持原落点。
-  return moved.head === boundary ? target : moved;
+  const tables = findTables((s, e) => doc.sliceString(s, e), doc.length, tree, lo, hi)
+    .filter((t) => t.rectangular && !t.degraded);
+  if (tables.length === 0) return target;
+  const goalColumn = main.goalColumn ?? (() => {
+    // 与 moveCaretVertically 的起点归一化同理：DOM 回读后 assoc 归 0，隐藏
+    // replace 左缘按 side 1 测量退化，需回退可见侧再取 x。
+    const side = main.assoc || 1;
+    const rect = view.coordsAtPos(from, side);
+    const good = rect && !coordsDegenerate(rect) ? rect : view.coordsAtPos(from, -side as -1 | 1);
+    return good ? good.left - view.contentDOM.getBoundingClientRect().left : undefined;
+  })();
+
+  const fromTable = tableAt(tables, from);
+  if (fromTable) {
+    if (tableAt(tables, target.head) === fromTable) {
+      // 表内自然移动（向上常态）落点同样吸附出隐藏原子区
+      const targetRow = fromTable.rows.find((r) => target.head >= r.from && target.head <= r.to);
+      if (!targetRow) return target; // 分隔线等边角：不干预
+      const snapped = snapIntoCell(doc, targetRow, target.head);
+      return EditorSelection.cursor(snapped.pos, snapped.assoc, undefined, target.goalColumn);
+    }
+    const rowIndex = fromTable.rows.findIndex((r) => from >= r.from && from <= r.to);
+    if (rowIndex < 0) return target; // 光标在分隔线等边角：不干预
+    const next = forward ? fromTable.rows[rowIndex + 1] : fromTable.rows[rowIndex - 1];
+    if (!next) return target; // 已在首/末行：离开表格
+    // 自然移动漏过行进方向的下一行（向下扫描在行尾坐标退化所致）、或落到起点
+    // 后方（起点坐标退化导致扫描起点错位）时，改落该行
+    const missed = forward ? target.head > next.to || target.head < from : target.head < next.from || target.head > from;
+    return missed ? cursorInTableRow(view, next, goalColumn) : target;
+  }
+
+  if (tableAt(tables, target.head)) return target; // 自然进入首/末行（向上常态）
+  // 一步跨越整张表（向下常态）：相邻行进入首/末行 cell；不相邻保持整表跳过
+  const crossed = tables.find((t) => (forward ? from < t.from && target.head > t.to : from > t.to && target.head < t.from));
+  if (!crossed || !tableAdjacent(doc, from, crossed, forward)) return target;
+  const row = forward ? crossed.rows[0] : crossed.rows[crossed.rows.length - 1];
+  return cursorInTableRow(view, row, goalColumn);
 }
 
 function moveCaretVertically(view: EditorView, forward: boolean): boolean {
@@ -140,17 +247,30 @@ function moveCaretVertically(view: EditorView, forward: boolean): boolean {
     view.dispatch({ selection: { anchor: forward ? main.to : main.from }, scrollIntoView: true, userEvent: "select" });
     return true;
   }
-  const moved = view.moveVertically(main, forward);
+  // 起点归一化：DOM 选区回读会把 assoc 归 0（实证：dispatch assoc=-1 的 cursor
+  // 后同步读回 assoc=0）。落点停在隐藏 replace 左缘（表格管道符边界）时，CM
+  // moveVertically 内部按 `start.assoc || (forward ? 1 : -1)` 取 side——空光标
+  // 向下即 side 1，测量退化为全零 rect，goal column/扫描起点随之算出垃圾落点
+  //（实测直接跳到文档开头）。退化则改用可见侧重建起点，CM 内部测量即恢复有效。
+  let start = main;
+  const startSide = (main.assoc || (forward ? 1 : -1)) as -1 | 1;
+  if (coordsDegenerate(view.coordsAtPos(main.head, startSide)) && !coordsDegenerate(view.coordsAtPos(main.head, -startSide as -1 | 1))) {
+    start = EditorSelection.cursor(main.head, -startSide, undefined, main.goalColumn);
+  }
+  const moved = view.moveVertically(start, forward);
   // 文档边界兜底（r1 review P2-2，与官方 cursorByLine 同款）：moveVertically 在
   // 末/首行原地不动时，改移行尾/行首——末行中段 ArrowDown 到行尾、首行到行首。
-  let target = moved.head !== main.head ? moved : view.moveToLineBoundary(main, forward);
-  if (target.head === main.head) return true; // 行首 ArrowUp / 行尾 ArrowDown：已无可移，仍视为已处理
-  const clamped = clampAcrossBlockWidgets(view.state, main.head, target.head, forward);
+  let target = moved.head !== start.head ? moved : view.moveToLineBoundary(start, forward);
+  if (target.head === start.head) return true; // 行首 ArrowUp / 行尾 ArrowDown：已无可移，仍视为已处理
+  const clamped = clampAcrossBlockWidgets(view.state, start.head, target.head, forward);
   if (clamped !== target.head) target = EditorSelection.cursor(clamped);
-  target = skipGridTable(view, main.head, target, forward);
+  target = routeGridTable(view, start, target, forward);
   view.dispatch({
     selection: target,
-    effects: EditorView.scrollIntoView(target.head, { y: "nearest" }),
+    // scrollIntoView 传 SelectionRange（而非裸 pos）：caret 绘制与滚动测量都按
+    // `range.assoc || 1` 取坐标 side，原子区邻接位必须带可见侧 assoc，否则测量
+    // 退化成全零 rect、揭示滚动把整窗内容拉偏（M118）。
+    effects: EditorView.scrollIntoView(target, { y: "nearest" }),
     userEvent: forward ? "move.line.down" : "move.line.up",
   });
   return true;
@@ -172,6 +292,13 @@ const verticalMotionKeymap = keymap.of([
 // 字符。选区落入 span 即触发装饰显露（math.ts 选区重叠口径），源码可见、可继续
 // 逐字符编辑；不会在隐藏源码长度上逐位空走。未装饰上下文（表格单元格/代码内的
 // $）不产生原子跳步，钳制条件（落点越过 span 边界）不成立，逐字符通行不受影响。
+/** display span 的收尾行在 span 之外是否有可见内容（全空白 = 该行随 widget 隐藏）。 */
+function closingLineVisible(state: EditorState, s: MathSpan): boolean {
+  const line = state.doc.lineAt(s.to);
+  const prefix = s.from >= line.from ? state.doc.sliceString(line.from, s.from) : "";
+  return (prefix + state.doc.sliceString(s.to, line.to)).trim() !== "";
+}
+
 function mathSpanCrossed(state: EditorState, from: number, to: number, forward: boolean): MathSpan | null {
   const winFrom = Math.max(0, Math.min(from, to) - 4096);
   const winTo = Math.min(state.doc.length, Math.max(from, to) + 4096);
@@ -183,13 +310,26 @@ function mathSpanCrossed(state: EditorState, from: number, to: number, forward: 
       if (s.from < from || s.from >= to) continue;
       if (best === null || s.from < best.from) best = s;
     } else {
-      if (s.to > from || s.to < to) continue;
-      if (s.to === to) {
+      // 光标已在 span 内（已显露，正常逐字符）不关涉
+      if (s.to > from) continue;
+      if (s.to < to) {
+        // 落点越过 span 右端：仅当 display span 的收尾行随 widget 隐藏（span 之外
+        // 全是空白）才算跨越——尾巴逐字符走过全是不可见空走（M118 真实桌面缺陷：
+        // `$$` 闭合行带两个尾随空格时 Ctrl+B 需 6 次才进入公式）。收尾行有可见
+        // 内容（如 `$$ 注释`）时尾巴照常逐字符通行。
+        if (!s.display) continue;
+        if (state.doc.lineAt(s.to).number !== state.doc.lineAt(to).number) continue;
+        if (closingLineVisible(state, s)) continue;
+      } else if (s.to === to) {
         // 跨行落点钉在 span 右边界是「边界空走」（M113 真实桌面缺陷）：块级公式
         // 下方段落 / 行尾公式下一行行首按 Ctrl-B，光标停在不可见的边界位不进入，
-        // 需再按一次（实测共 3 次）。跨行到达时直接钳入 span；同一行内的边界
-        // 停靠保留（那是可见的可编辑位置，M111 既有行为）。
-        if (state.doc.lineAt(from).number === state.doc.lineAt(to).number) continue;
+        // 需再按一次（实测共 3 次）。跨行到达时直接钳入 span。同一行内的边界
+        // 停靠：行内 span 保留（那是可见的可编辑位置，M111 既有行为）；display
+        // span 仅当收尾行有可见内容时保留——否则边界位随 widget 隐藏，停靠即空走。
+        if (state.doc.lineAt(from).number === state.doc.lineAt(to).number) {
+          if (!s.display) continue;
+          if (closingLineVisible(state, s)) continue;
+        }
       }
       if (best === null || s.to > best.to) best = s;
     }
@@ -214,9 +354,16 @@ function moveCaretHorizontally(view: EditorView, forward: boolean): boolean {
     head = winFrom + findClusterBreak(win, edge - winFrom, forward);
   }
   if (head === main.head) return true;
+  // assoc 决定 caret 绘制与 scrollIntoView 的测量侧（空 range 默认取 side 1）。
+  // 落点紧贴隐藏 replace（表格管道符等）时某一侧测量退化为全零 rect，会让
+  // scrollIntoView 把整窗内容下挫（同 Ctrl+E 缺陷机制）：优先按移动方向取侧，
+  // 退化则翻转到可见侧（正常文本两侧坐标一致，仅在 bidi/隐藏边界有差）。
+  let assoc: 1 | -1 = forward ? 1 : -1;
+  if (coordsDegenerate(view.coordsAtPos(head, assoc))) assoc = assoc === 1 ? -1 : 1;
+  const target = EditorSelection.cursor(head, assoc);
   view.dispatch({
-    selection: { anchor: head },
-    effects: EditorView.scrollIntoView(head, { y: "nearest" }),
+    selection: target,
+    effects: EditorView.scrollIntoView(target, { y: "nearest" }),
     userEvent: forward ? "move.char.forward" : "move.char.backward",
   });
   return true;
@@ -225,7 +372,41 @@ function moveCaretHorizontally(view: EditorView, forward: boolean): boolean {
 const horizontalMotionKeymap = keymap.of([
   { mac: "Ctrl-f", run: (view) => moveCaretHorizontally(view, true) },
   { mac: "Ctrl-b", run: (view) => moveCaretHorizontally(view, false) },
+  { mac: "Ctrl-e", run: (view) => moveCaretToLineEnd(view) },
 ]);
+
+// Ctrl-E（macOS 文本系统「移到行尾」）改由 CM 派发（M118 真实桌面缺陷：该键原本
+// 走原生 contenteditable 路径——原生 caret 在 grid 表格 cell 内落点失控，实测落在
+// 隐藏管道符边界上，落点坐标测量退化（coordsAtPos top≈0），揭示滚动随之把整窗
+// 内容下挫；与 M103 垂直移动、M111 水平移动同一修复口径）。
+// moveToLineBoundary 取文本行尾（硬边界，macOS Ctrl-E 语义即段落尾，不受软换行
+// 截断）；落点藏进隐藏 replace（如表格行尾管道符）时回退到行内最后可见位置——
+// 表格行即末 cell 尾部，正合「挪到 cell 尾部」的预期。
+function moveCaretToLineEnd(view: EditorView): boolean {
+  const main = view.state.selection.main;
+  if (!main.empty) {
+    // 非空选区：与原生行为一致，折叠到右端；scrollIntoView 揭示光标。
+    view.dispatch({ selection: { anchor: main.to }, scrollIntoView: true, userEvent: "select" });
+    return true;
+  }
+  let head = view.moveToLineBoundary(main, true, false).head;
+  if (head !== main.head) {
+    // 行尾藏进隐藏 replace（表格行尾管道符、标题尾部标记等）时坐标测量退化，
+    // 回退到行内最后可停靠位置（表格行即末 cell 尾部，正合「挪到 cell 尾部」）。
+    const line = view.state.doc.lineAt(head);
+    while (head > line.from && coordsDegenerate(view.coordsAtPos(head, -1))) head--;
+  }
+  if (head === main.head) return true; // 已在行尾：仍视为已处理
+  // assoc -1：落点紧贴隐藏内容左侧时按可见侧测量 caret 与滚动（隐藏 replace
+  // 左缘的 side 1 测量会退化成全零 rect，见 snapIntoCell 注释）。
+  const target = EditorSelection.cursor(head, -1);
+  view.dispatch({
+    selection: target,
+    effects: EditorView.scrollIntoView(target, { y: "nearest" }),
+    userEvent: "move.line.end",
+  });
+  return true;
+}
 
 export type EditorReadyPhase =
   | "source-ready"
