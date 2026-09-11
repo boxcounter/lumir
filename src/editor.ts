@@ -339,9 +339,16 @@ function moveCaretHorizontally(view: EditorView, forward: boolean): boolean {
     head = winFrom + findClusterBreak(win, edge - winFrom, forward);
   }
   if (head === main.head) return true;
+  // assoc 决定 caret 绘制与 scrollIntoView 的测量侧（空 range 默认取 side 1）。
+  // 落点紧贴隐藏 replace（表格管道符等）时某一侧测量退化为全零 rect，会让
+  // scrollIntoView 把整窗内容下挫（同 Ctrl+E 缺陷机制）：优先按移动方向取侧，
+  // 退化则翻转到可见侧（正常文本两侧坐标一致，仅在 bidi/隐藏边界有差）。
+  let assoc: 1 | -1 = forward ? 1 : -1;
+  if (coordsDegenerate(view.coordsAtPos(head, assoc))) assoc = assoc === 1 ? -1 : 1;
+  const target = EditorSelection.cursor(head, assoc);
   view.dispatch({
-    selection: { anchor: head },
-    effects: EditorView.scrollIntoView(head, { y: "nearest" }),
+    selection: target,
+    effects: EditorView.scrollIntoView(target, { y: "nearest" }),
     userEvent: forward ? "move.char.forward" : "move.char.backward",
   });
   return true;
@@ -350,7 +357,41 @@ function moveCaretHorizontally(view: EditorView, forward: boolean): boolean {
 const horizontalMotionKeymap = keymap.of([
   { mac: "Ctrl-f", run: (view) => moveCaretHorizontally(view, true) },
   { mac: "Ctrl-b", run: (view) => moveCaretHorizontally(view, false) },
+  { mac: "Ctrl-e", run: (view) => moveCaretToLineEnd(view) },
 ]);
+
+// Ctrl-E（macOS 文本系统「移到行尾」）改由 CM 派发（M118 真实桌面缺陷：该键原本
+// 走原生 contenteditable 路径——原生 caret 在 grid 表格 cell 内落点失控，实测落在
+// 隐藏管道符边界上，落点坐标测量退化（coordsAtPos top≈0），揭示滚动随之把整窗
+// 内容下挫；与 M103 垂直移动、M111 水平移动同一修复口径）。
+// moveToLineBoundary 取文本行尾（硬边界，macOS Ctrl-E 语义即段落尾，不受软换行
+// 截断）；落点藏进隐藏 replace（如表格行尾管道符）时回退到行内最后可见位置——
+// 表格行即末 cell 尾部，正合「挪到 cell 尾部」的预期。
+function moveCaretToLineEnd(view: EditorView): boolean {
+  const main = view.state.selection.main;
+  if (!main.empty) {
+    // 非空选区：与原生行为一致，折叠到右端；scrollIntoView 揭示光标。
+    view.dispatch({ selection: { anchor: main.to }, scrollIntoView: true, userEvent: "select" });
+    return true;
+  }
+  let head = view.moveToLineBoundary(main, true, false).head;
+  if (head !== main.head) {
+    // 行尾藏进隐藏 replace（表格行尾管道符、标题尾部标记等）时坐标测量退化，
+    // 回退到行内最后可停靠位置（表格行即末 cell 尾部，正合「挪到 cell 尾部」）。
+    const line = view.state.doc.lineAt(head);
+    while (head > line.from && coordsDegenerate(view.coordsAtPos(head, -1))) head--;
+  }
+  if (head === main.head) return true; // 已在行尾：仍视为已处理
+  // assoc -1：落点紧贴隐藏内容左侧时按可见侧测量 caret 与滚动（隐藏 replace
+  // 左缘的 side 1 测量会退化成全零 rect，见 snapIntoCell 注释）。
+  const target = EditorSelection.cursor(head, -1);
+  view.dispatch({
+    selection: target,
+    effects: EditorView.scrollIntoView(target, { y: "nearest" }),
+    userEvent: "move.line.end",
+  });
+  return true;
+}
 
 export type EditorReadyPhase =
   | "source-ready"
