@@ -1,5 +1,9 @@
 # Lumir Product Concept v0.1
 
+> **状态：deferred（2026-09-12，[ADR 0006](docs/adr/0006-agent-positioning-deferred.md)）**
+> 本文档描述的 Agent-first 定位已延后决策，不作为当前阶段的实现依据。
+> 文档原样保留，作为未来重启「AI 在产品里的定位」决策时的输入。
+
 ## 1. 产品定义
 
 > **Lumir 是一个把 Agent 变成可见协作者的本地文本工作台。**

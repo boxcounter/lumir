@@ -4,7 +4,7 @@
 
 ## 状态生命周期
 
-`proposed`（待 Alex 评审）→ `accepted` →（可选）`superseded by ADR-NNNN` / `deprecated`
+`proposed`（待 Alex 评审）→ `accepted` →（可选）`superseded by ADR-NNNN` / `deprecated` / `deferred`（搁置：决策本身未被推翻，但其实现前提当前不生效；文档保留为重启时的输入）
 
 ## 与 OpenSpec 的分工（详见 ADR 0004）
 
@@ -36,5 +36,6 @@
 | [0001](0001-product-positioning-and-boundaries.md) | 定位与边界 | accepted |
 | [0002](0002-technical-route.md) | 技术路线 | accepted |
 | [0003](0003-obsidian-compatibility-scope.md) | Obsidian 兼容范围 | accepted |
-| [0004](0004-development-and-openness-strategy.md) | 开发与开放策略 | accepted |
-| [0005](0005-product-ontology-object-model.md) | 产品本体对象模型 | accepted |
+| [0004](0004-development-and-openness-strategy.md) | 开发与开放策略 | accepted（M2 经 0006 deferred） |
+| [0005](0005-product-ontology-object-model.md) | 产品本体对象模型 | deferred（见 0006） |
+| [0006](0006-agent-positioning-deferred.md) | AI 定位延后与当前阶段重排 | proposed |
