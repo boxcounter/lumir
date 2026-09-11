@@ -2,7 +2,7 @@
 
 ## 项目
 
-Lumir：把 agent 当作可见协作者的文本工作台（定位见 ADR 0001）。技术路线 Tauri（Rust core + 系统 webview）+ CodeMirror 6 单内核编辑器（ADR 0002）。开发模式为 AI-only：AI agent 起草与实现一切制品，Alex 做需求裁决者与 ADR/spec reviewer，不写代码、不 review 代码（ADR 0004）。
+Lumir：本地文本工作台，当前阶段定位为 Emacs keybinding PKM（ADR 0006）。AI/Agent 定位 deferred，历史定位见 ADR 0001。技术路线 Tauri（Rust core + 系统 webview）+ CodeMirror 6 单内核编辑器（ADR 0002）。开发模式为 AI-only：AI agent 起草与实现一切制品，Alex 做需求裁决者与 ADR/spec reviewer，不写代码、不 review 代码（ADR 0004）。
 
 ## 制品读者
 
