@@ -22,12 +22,6 @@ for (const theme of ['light', 'dark', 'eink']) for (const height of [900, 600, 4
     await assertReachable(last,'.tree-pane');
     await last.click();
     await expect(page.locator('.cm-content')).toContainText('末项实际打开成功');
-    const add=page.getByRole('button',{name:'+ 新建'});
-    await assertReachable(add,'.pane-filetree');
-    await add.click();
-    await page.getByRole('textbox',{name:'Thread 名称'}).fill('可达性验收');
-    await page.getByRole('button',{name:'创建',exact:true}).click();
-    await expect(page.locator('.thread-card.is-current .thread-select')).toContainText('可达性验收');
     await info.attach('depth-styles',{body:JSON.stringify(styles,null,2),contentType:'application/json'});
     await page.screenshot({path:info.outputPath('long-tree.png')});
   });

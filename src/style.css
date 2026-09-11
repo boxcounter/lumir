@@ -63,49 +63,16 @@ body { background:var(--bg); color:var(--text); font-family:var(--font-body); fo
 }
 .masthead::after { content:""; position:absolute; left:48px; right:48px; bottom:0; border-top:3px solid var(--text); border-bottom:1px solid var(--text); }
 .masthead-vault { font-family:var(--font-display); font-size:15px; font-weight:700; letter-spacing:.42em; color:var(--text); }
-.masthead-file, .masthead-thread, .masthead-status { color:var(--dim); }
-.masthead-file { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.masthead-status { margin-left:auto; }
-.thread-files { flex-basis:100%; display:flex; flex-direction:column; gap:2px; margin-top:4px; }
-.thread-file { display:flex; align-items:baseline; gap:7px; width:100%; padding:3px 4px; border:0; background:none; color:var(--text); font:inherit; font-size:12.5px; text-align:left; cursor:pointer; }
-.thread-file-name { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.thread-file-role { margin-left:auto; flex:none; font-size:10.5px; color:var(--dim); }
-.thread-file[aria-current="true"] .thread-file-name { font-weight:600; }
-.thread-file[aria-current="true"] .thread-file-name::before { content:"¶ "; }
-.thread-file:hover { color:var(--text); text-decoration:underline; }
+.masthead-file { color:var(--dim); min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .pane-filetree { grid-column:1; grid-row:1 / -1; display:flex; flex-direction:column; min-height:0; overflow:auto; }
 .pane-editor { grid-column:2; grid-row:2; }
 .pane-panel { grid-column:3; grid-row:2; }
 .tree-pane { flex:0 1 auto; min-height:128px; overflow:auto; }
-.threads-pane { flex:none; overflow:visible; border-top:1px solid var(--bd-1); }
 .pane-panel[hidden] { display:none; }
 .masthead { min-height:57px; }
 @media (max-width:1100px) {
   :root { --nav-width:204px; }
 }
-.threads { padding:8px; font-family:var(--font-body); font-size:13px; }
-.threads-heading { display:flex; align-items:center; justify-content:space-between; }
-.threads-heading h2 { margin:0; font-size:13px; }
-.threads-add, .thread-action, .thread-create-submit { border:1px solid var(--bd-2); background:none; color:var(--text); cursor:pointer; font:inherit; }
-.threads-list { display:flex; flex-direction:column; gap:4px; }
-.thread-card { display:flex; flex-direction:column; gap:6px; width:100%; padding:5px 6px; border:0; background:none; color:var(--text); text-align:left; }
-.thread-card:hover { background:var(--bg-2); }
-.thread-card.is-current { padding:9px 10px; border:1px solid var(--bd-1); border-radius:var(--radius); background:var(--bg); }
-.thread-card:not(.is-current) .thread-actions, .thread-files:empty { display:none; }
-.thread-card.is-current .thread-files { width:100%; border-top:1px solid var(--bd-1); padding-top:5px; }
-[data-theme="eink"] .thread-card.is-current { border:3px double var(--text); }
-.thread-select { min-width:0; width:100%; display:flex; flex-direction:column; gap:2px; border:0; padding:0; background:none; color:inherit; font:inherit; text-align:left; cursor:pointer; }
-.thread-select strong { min-width:0; max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.thread-status, .thread-select time { color:var(--dim); font-size:11px; white-space:nowrap; }
-.thread-select time { max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.thread-actions { font-size:11px; color:var(--dim); }
-.thread-actions summary { cursor:pointer; }
-.thread-actions time { display:block; }
-.thread-actions[open] { padding-top:4px; }
-.thread-card.is-current .thread-status { display:none; }
-.threads-empty { color:var(--dim); }
-.thread-create-form { display:flex; gap:4px; }
-.thread-create-input { min-width:0; width:120px; }
 .lumir-toast, .toast-surface { position:absolute; bottom:16px; right:16px; display:flex; align-items:center; gap:10px; padding:8px 14px; background:var(--text); color:var(--bg); font-size:13px; z-index:10; max-width:70%; }
 .toast-action { border:1px solid var(--bg); background:transparent; color:inherit; cursor:pointer; font:inherit; padding:2px 10px; }
 
@@ -232,7 +199,6 @@ body { background:var(--bg); color:var(--text); font-family:var(--font-body); fo
 }
 .ft-row.is-current { border-radius:0 4px 4px 0; }
 .ft-name { min-width:0; flex:1; }
-.ft-reference-count { margin-left:auto; flex:none; color:var(--dim); font-size:11px; font-variant-numeric:tabular-nums; padding-left:8px; }
 
 .ft-row:hover {
   background: var(--bg-2);

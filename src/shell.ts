@@ -9,8 +9,7 @@ export interface AppShell {
   treeMount: HTMLElement;
   /** 编辑器 pane（CM6 单内核挂载点）。 */
   editor: HTMLElement;
-  threads: HTMLElement;
-  /** 面板 pane（agent 协作/属性等，后续波次填充）。 */
+  /** 面板 pane（属性等，后续波次填充）。 */
   panel: HTMLElement;
 }
 
@@ -28,7 +27,7 @@ export function createShell(mount: HTMLElement): AppShell {
 
   const masthead = document.createElement("header");
   masthead.className = "masthead";
-  masthead.innerHTML = '<span class="masthead-vault">未打开 vault</span><span class="masthead-file">无当前文件</span><span class="masthead-thread">无当前 Thread</span><span class="masthead-status">—</span>';
+  masthead.innerHTML = '<span class="masthead-vault">未打开 vault</span><span class="masthead-file">无当前文件</span>';
   root.append(masthead);
 
   const fileTree = pane("pane-filetree", "");
@@ -36,11 +35,9 @@ export function createShell(mount: HTMLElement): AppShell {
   const panel = pane("pane-panel", "面板（后续波次）");
   const treeMount = document.createElement("section");
   treeMount.className = "tree-pane";
-  const threads = document.createElement("section");
-  threads.className = "threads-pane";
-  fileTree.append(treeMount, threads);
+  fileTree.append(treeMount);
 
   root.append(fileTree, editor, panel);
   mount.replaceChildren(root);
-  return { root, fileTree, treeMount, editor, panel, threads };
+  return { root, fileTree, treeMount, editor, panel };
 }

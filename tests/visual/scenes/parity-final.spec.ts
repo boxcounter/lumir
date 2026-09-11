@@ -26,12 +26,3 @@ for (const theme of ['light','dark','eink']) test(`最终长文短段只读 ${th
   expect(await lines.count()).toBeLessThan(300);
   await page.screenshot({path:info.outputPath('long-end.png')});
 });
-
-test('创建后切换失败保持原current并反馈',async({page})=>{
-  const old={vault_id:'fixture-vault',id:'old',title:'原Thread',status:'active' as const,files:[],recent_activity:'0',brief:null};
-  await stubTauri(page,{entries:[],threads:[old],currentThread:'old',failures:{thread_switch:{code:'thread_write',message:'无法保存当前 Thread'}}});
-  await page.goto('/');await page.getByRole('button',{name:'+ 新建'}).click();
-  await page.getByRole('textbox',{name:'Thread 名称'}).fill('新Thread');await page.getByRole('button',{name:'创建',exact:true}).click();
-  await expect(page.locator('.lumir-toast')).toContainText('无法保存当前 Thread');
-  await expect(page.locator('.thread-card.is-current .thread-select')).toContainText('原Thread');
-});

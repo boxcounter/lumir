@@ -97,7 +97,7 @@ pub struct VaultInfo {
     /// vault 根目录绝对路径。
     pub root: String,
     pub entries: Vec<FsEntry>,
-    pub remap_candidates: Vec<crate::threads::VaultWorkspace>,
+    pub remap_candidates: Vec<crate::workspaces::VaultWorkspace>,
 }
 
 /// 前端启动时查询的 vault 状态。
@@ -201,7 +201,7 @@ pub fn open_vault(
     force_new: bool,
 ) -> Result<VaultInfo, CommandError> {
     // Unknown paths with stale registrations require explicit remap confirmation.
-    let candidates = crate::threads::remap_candidates(&root)?;
+    let candidates = crate::workspaces::remap_candidates(&root)?;
     if !force_new && !candidates.is_empty() {
         return Ok(VaultInfo {
             vault_id: candidates[0].id.clone(),
@@ -211,7 +211,7 @@ pub fn open_vault(
         });
     }
     // Register/reconcile stable vault identity before opening.
-    let workspace = crate::threads::reconcile_vault(&root)?;
+    let workspace = crate::workspaces::reconcile_vault(&root)?;
     // 顺序：先 watch（FSEvents 流起点在此刻）再全量枚举，消除 scan→watch 的
     // 事件空窗；枚举结果随后播种进 watcher 的已知路径集（修正重放的误报 Create）。
     let app_for_watch = app.clone();
@@ -333,7 +333,7 @@ pub fn vault_current(state: tauri::State<'_, VaultState>) -> Result<VaultStatus,
     let inner = state.inner.lock().expect("vault state poisoned");
     let vault = match &inner.root {
         Some(root) => Some(VaultInfo {
-            vault_id: crate::threads::reconcile_vault(root)?.id,
+            vault_id: crate::workspaces::reconcile_vault(root)?.id,
             root: root.display().to_string(),
             entries: fs_io::scan_workspace(root)?,
             remap_candidates: vec![],

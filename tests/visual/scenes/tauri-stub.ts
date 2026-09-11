@@ -11,8 +11,6 @@ export interface VaultFixture {
   notice?: string | null;
   root?: string;
   vault_id?: string;
-  threads?: import("../../../src/bindings/Thread").Thread[];
-  currentThread?: string;
   failures?: Record<string, { code: string; message: string }>;
   /** link_graph_resolve 桩：链接原文 → LinkResolveResult。未命中按 unresolved 应答。 */
   links?: Record<string, unknown>;
@@ -35,7 +33,7 @@ export async function stubTauri(page: Page, vault: VaultFixture | null): Promise
     //（与真后端 open_vault 的替换语义对齐）。
     let current = v;
 
-    type Args = { path?: string; from?: string; link?: string; id?: string; title?: string; vault_id?: string; expected_revision?: string; content?: string; dirty?: boolean; force_new?: boolean; thread?: import("../../../src/bindings/Thread").Thread };
+    type Args = { path?: string; from?: string; link?: string; id?: string; title?: string; vault_id?: string; expected_revision?: string; content?: string; dirty?: boolean; force_new?: boolean };
     const checkVault = (args: Args) => {
       if (args.vault_id !== (current?.vault_id ?? "fixture-vault")) throw { code: "fixture_contract", message: "vault_id mismatch" };
     };
@@ -53,28 +51,6 @@ export async function stubTauri(page: Page, vault: VaultFixture | null): Promise
         warnings: [],
         path: "/mock/config.json",
       }),
-      thread_list: (args) => { checkVault(args); return current?.threads ?? []; },
-      thread_current: (args) => { checkVault(args); return current?.threads?.find(t => t.id === current.currentThread) ?? null; },
-      thread_create: (args) => {
-        checkVault(args);
-        if (!args.title || !current) throw { code: "fixture_contract", message: "title required" };
-        const thread = { vault_id: args.vault_id!, id: `fixture-${nextId++}`, title: args.title, status: "active" as const, files: [], recent_activity: "2026-09-06T00:00:00Z", brief: null };
-        (current.threads ??= []).push(thread);
-        return thread;
-      },
-      thread_switch: (args) => {
-        checkVault(args);
-        const thread = current?.threads?.find(t => t.id === args.id);
-        if (!thread) throw { code: "thread_not_found", message: "Thread 不存在" };
-        current!.currentThread = thread.id;
-        return thread;
-      },
-      thread_update: (args) => {
-        const index = current?.threads?.findIndex(t => t.id === args.thread?.id) ?? -1;
-        if (index < 0 || !args.thread) throw { code: "thread_not_found", message: "Thread 不存在" };
-        current!.threads![index] = args.thread;
-        return args.thread;
-      },
       vault_current: () =>
         current
           ? { vault: { root: current.root ?? "/Users/alex/demo-vault", entries: current.entries, vault_id: current.vault_id ?? "fixture-vault", remap_candidates: [] }, notice: current.notice ?? null }

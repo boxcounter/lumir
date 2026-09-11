@@ -1,4 +1,4 @@
-use lumir_lib::{config, threads::*};
+use lumir_lib::{config, workspaces::*};
 use std::{fs, path::PathBuf, sync::Mutex};
 
 static ENV: Mutex<()> = Mutex::new(());
@@ -12,7 +12,7 @@ impl Fixture {
     fn new() -> Self {
         let guard = ENV.lock().unwrap_or_else(|e| e.into_inner());
         let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("target/thread-scenarios")
+            .join("target/workspace-scenarios")
             .join(format!("{}", std::process::id()));
         if root.exists() {
             fs::remove_dir_all(&root).unwrap();
@@ -40,40 +40,6 @@ impl Drop for Fixture {
         }
         fs::remove_dir_all(&self.root).unwrap();
     }
-}
-
-#[test]
-fn scenario_create_thread_persistence_roundtrip_and_four_states() {
-    let _f = Fixture::new();
-    let mut t = thread_create("研究".into(), "v".into()).unwrap();
-    for status in [
-        ThreadStatus::Active,
-        ThreadStatus::Paused,
-        ThreadStatus::Completed,
-        ThreadStatus::Archived,
-    ] {
-        t.status = status.clone();
-        thread_update(t.clone()).unwrap();
-        let loaded = thread_list("v".into()).unwrap();
-        assert_eq!(loaded.len(), 1);
-        assert_eq!(loaded[0].id, t.id);
-        assert_eq!(loaded[0].title, "研究");
-        assert_eq!(loaded[0].status, status);
-    }
-}
-
-#[test]
-fn scenario_corrupt_thread_is_quarantined_without_blocking_load() {
-    let _f = Fixture::new();
-    let t = thread_create("保留".into(), "v".into()).unwrap();
-    let bad = config::config_dir().unwrap().join("threads/broken.json");
-    fs::write(&bad, "{broken").unwrap();
-    let loaded = thread_list("v".into()).unwrap();
-    assert_eq!(loaded.len(), 1);
-    assert_eq!(loaded[0].id, t.id);
-    assert!(!bad.exists());
-    assert!(bad.with_extension("json.corrupt").exists());
-    assert_eq!(thread_list("v".into()).unwrap().len(), 1);
 }
 
 #[test]
@@ -111,35 +77,6 @@ fn scenario_remap_preserves_identity_and_updates_last_vault() {
 }
 
 #[test]
-fn scenario_multiple_vault_threads_are_isolated() {
-    let f = Fixture::new();
-    let a = f.vault("a");
-    let b = f.vault("b");
-    vault_register("a".into(), a.clone()).unwrap();
-    vault_register("b".into(), b.clone()).unwrap();
-    lumir_lib::commands::write_last_vault(std::path::Path::new(&a)).unwrap();
-    let ta = thread_create("A".into(), "a".into()).unwrap();
-    lumir_lib::commands::write_last_vault(std::path::Path::new(&b)).unwrap();
-    let tb = thread_create("B".into(), "b".into()).unwrap();
-    let visible = thread_list("b".into()).unwrap();
-    assert!(visible.iter().any(|t| t.id == tb.id));
-    assert!(
-        !visible.iter().any(|t| t.id == ta.id),
-        "vault B 不得看到 vault A 的 Thread"
-    );
-}
-
-#[test]
-fn scenario_current_thread_persists_after_switch() {
-    let _f = Fixture::new();
-    let a = thread_create("A".into(), "v".into()).unwrap();
-    let b = thread_create("B".into(), "v".into()).unwrap();
-    thread_switch(b.id.clone(), "v".into()).unwrap();
-    assert_eq!(thread_current("v".into()).unwrap().unwrap().id, b.id);
-    assert_ne!(a.id, b.id);
-}
-
-#[test]
 fn scenario_remap_candidate_short_circuits_stale_vault_detection() {
     let f = Fixture::new();
     let old = f.vault("moved");
@@ -154,21 +91,10 @@ fn scenario_remap_candidate_short_circuits_stale_vault_detection() {
 }
 
 #[test]
-fn scenario_valid_id_rejects_path_escape_for_all_thread_and_vault_commands() {
+fn scenario_valid_id_rejects_path_escape_for_vault_commands() {
     let f = Fixture::new();
-    let t = Thread {
-        vault_id: "safe".into(),
-        id: "../config".into(),
-        title: "x".into(),
-        status: ThreadStatus::Active,
-        files: vec![],
-        recent_activity: "now".into(),
-        brief: None,
-    };
-    assert!(thread_update(t).is_err());
     assert!(vault_register("../config".into(), f.vault("v")).is_err());
     assert!(vault_remap("../config".into(), f.vault("v2")).is_err());
-    assert!(thread_current("../config".into()).is_err());
 }
 
 #[test]

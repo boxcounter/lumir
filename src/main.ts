@@ -2,10 +2,8 @@ import { createShell } from "./shell";
 import { createEditor } from "./editor";
 import { Keymap } from "./keys";
 import { createFileTree, openKind } from "./tree";
-import { createThreads, type Thread } from "./threads";
 import {
   configGet,
-  threadList, threadCreate, threadUpdate, threadCurrent, threadSwitch,
   errorMessage,
   fsReadAttachment,
   fsReadSnapshot,
@@ -165,11 +163,6 @@ editor.onReady((event) => {
   emitReadiness(event.phase, event);
 });
 
-function syncThreadFile() {
-  shell.threads.querySelectorAll<HTMLElement>(".thread-file").forEach((row) => {
-    row.setAttribute("aria-current", String(row.dataset.path === displayedPath));
-  });
-}
 async function openFile(path: string, kind: "md" | "code" | "text" | "binary") {
   if (!dirtyGuard("切换文件")) return;
   const request = ++fileRequest;
@@ -186,7 +179,6 @@ async function openFile(path: string, kind: "md" | "code" | "text" | "binary") {
     const revision = kind === "md" ? snapshot.revision : undefined;
     displayedPath = path;
     displayedRevision = revision;
-    syncThreadFile();
     currentPath = kind === "md" ? path : undefined;
     mastheadFile.textContent = path;
     invalidateResolve(); // from 变更，按 from 键控的缓存整批失效
@@ -391,8 +383,6 @@ shell.root.classList.add("panel-default-hidden");
 
 const mastheadVault = shell.root.querySelector<HTMLElement>(".masthead-vault")!;
 const mastheadFile = shell.root.querySelector<HTMLElement>(".masthead-file")!;
-const mastheadThread = shell.root.querySelector<HTMLElement>(".masthead-thread")!;
-const mastheadStatus = shell.root.querySelector<HTMLElement>(".masthead-status")!;
 
 // dirty 状态反馈（M101 验收修复）：toast 会消隐，dirty 期间 masthead 文件名旁
 // 常驻「未保存」标记；同时把 dirty 镜像给后端退出守卫（Cmd+Q / 关窗拦截）。
@@ -424,71 +414,6 @@ onQuitBlocked(() => {
   toast("当前有未保存修改，无法退出；请先保存（Cmd+S）", undefined, true).classList.add(GUARD_TOAST_CLASS);
 }).catch(() => {});
 let tree!: ReturnType<typeof createFileTree>;
-const sessionThreads: Thread[] = [];
-let selectedThreadId: string | undefined;
-let currentVaultId = "";
-let threadRequest = 0;
-const threadStatusLabels: Record<string, string> = { active: "进行中", paused: "暂停", completed: "完成", archived: "归档" };
-function refreshThreads() {
-  const counts = new Map<string, number>();
-  for (const item of sessionThreads) for (const file of item.files) counts.set(file.path, (counts.get(file.path) ?? 0) + 1);
-  tree?.setReferenceCounts(counts);
-  threads.setThreads(sessionThreads);
-  threads.setCurrent(selectedThreadId);
-  syncThreadFile();
-  const selected = sessionThreads.find((item) => item.id === selectedThreadId);
-  mastheadThread.textContent = selected?.title ?? "无当前 Thread";
-  mastheadStatus.textContent = selected ? threadStatusLabels[selected.status] : "—";
-}
-const threads = createThreads(shell.threads, {
-  onOpenFile: (path) => openFile(path, openKind(path)),
-  onCreate: async (title) => {
-    const epoch = resolveEpoch;
-    const vaultId = currentVaultId;
-    let created: Thread;
-    try {
-      created = await threadCreate(title, vaultId);
-    } catch (error) {
-      if (epoch === resolveEpoch) toast(errorMessage(error));
-      throw error;
-    }
-    if (epoch !== resolveEpoch) return;
-    sessionThreads.push(created);
-    refreshThreads();
-    const request = ++threadRequest;
-    try {
-      const current = await threadSwitch(created.id, vaultId);
-      if (epoch !== resolveEpoch || request !== threadRequest) return;
-      Object.assign(created, current);
-      selectedThreadId = current.id;
-      refreshThreads();
-      toast(`已创建并切换到 Thread：${title}`);
-    } catch (error) {
-      if (epoch === resolveEpoch) toast(`Thread 已创建，但切换失败；可点击该 Thread 重试：${errorMessage(error)}`);
-    }
-  },
-  onSelect: async (id) => {
-    const epoch = resolveEpoch;
-    const vaultId = currentVaultId;
-    const request = ++threadRequest;
-    try {
-      const item = await threadSwitch(id, vaultId);
-      const items = await threadList(vaultId);
-      if (epoch !== resolveEpoch || request !== threadRequest) return;
-      selectedThreadId = item.id;
-      sessionThreads.splice(0, sessionThreads.length, ...items);
-      refreshThreads();
-    } catch (error) { if (epoch === resolveEpoch && request === threadRequest) toast(errorMessage(error)); }
-  },
-  onStatus: async (id, status) => {
-    const item = sessionThreads.find((thread) => thread.id === id);
-    if (!item) return;
-    const epoch = resolveEpoch;
-    try { const updated = await threadUpdate({ ...item, status }); if (epoch !== resolveEpoch) return; Object.assign(item, updated); refreshThreads(); toast("Thread 已保存"); }
-    catch (error) { if (epoch === resolveEpoch) toast(errorMessage(error)); }
-  },
-});
-refreshThreads();
 // 目录选择器入口（空态按钮与树头部「切换」共用）。命中重映射候选时
 //（spec：未注册路径 + 失效注册需显式确认）open_vault 按契约返回空 entries，
 // 此时不得装载——否则用户看到 vault 名已换、树全空的死态（桌面验收缺陷）；
@@ -543,21 +468,10 @@ function loadVault(root: string, entries: FsEntry[], vaultId = root, restored = 
   if (!dirtyGuard("切换 vault")) return;
   vaultLoaded = true;
   emitReadiness("vault-ready", { root, vaultId, restored });
-  currentVaultId = vaultId;
   ++fileRequest;
   ++documentGeneration;
-  const request = ++threadRequest;
   displayedPath = undefined;
   displayedRevision = undefined;
-  sessionThreads.length = 0;
-  selectedThreadId = undefined;
-  refreshThreads();
-  void Promise.all([threadList(vaultId), threadCurrent(vaultId)]).then(([items, current]) => {
-    if (request !== threadRequest) return;
-    sessionThreads.splice(0, sessionThreads.length, ...items);
-    selectedThreadId = current?.id;
-    refreshThreads();
-  }).catch((error) => { if (currentVaultId === vaultId) toast(errorMessage(error)); });
   attachmentPaths = entries.filter((e) => e.kind === "file").map((e) => e.path);
   // 链接索引已在后端随 vault 打开建立；世代号自增使旧 vault 的在途 resolve
   // 回调全部作废，解析缓存与单链接降级集合整批失效
