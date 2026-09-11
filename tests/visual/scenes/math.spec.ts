@@ -100,9 +100,9 @@ async function openMath(page: Page): Promise<void> {
 test("行内与块级渲染，失败回落可读源码，代码上下文排除", async ({ page }) => {
   await openMath(page);
 
-  // 行内：$E=mc^2$ 渲染为 .katex（非 display）
+  // 行内：正文 $E=mc^2$ 与表内 $$y$$（M119：cell 内同行 $$ 按行内渲染）均为 .katex（非 display）
   const inline = page.locator(".cm-lp-math-inline .katex");
-  await expect(inline).toHaveCount(1);
+  await expect(inline).toHaveCount(2);
   await expect(page.locator(".cm-lp-math-inline .katex-display")).toHaveCount(0);
 
   // 块级：跨行 $$ 渲染为块级 widget 内的 .katex-display
@@ -124,13 +124,13 @@ test("行内与块级渲染，失败回落可读源码，代码上下文排除",
   await expect(page.locator(".cm-lp-codeblock-line").nth(1)).toHaveText("$$not_math$$");
   await expect(page.locator(".cm-lp-inline-code")).toContainText("$x_0$");
 
-  // 表格上下文排除：单元格内 $$ 不做 replace，保留原文（r1 review P2-1）
-  const cell = page.locator('.cm-lp-table-cell:has-text("$$y$$")');
-  await expect(cell).toHaveCount(1);
-  await expect(page.locator(".cm-lp-table .katex")).toHaveCount(0);
+  // 表格 cell：同行 $$ 渲染为行内公式（M119 合同）；跨 slot 边界（$$a | b$$）不吞并
+  // cell 的回归见 m119-table-math.spec.ts
+  const cellMath = page.locator(".cm-lp-table-cell .cm-lp-math-inline .katex");
+  await expect(cellMath).toHaveCount(1);
   await expect(page.locator(".cm-lp-table .cm-lp-math-block")).toHaveCount(0);
 
-  await expect(page.locator(".katex")).toHaveCount(2); // 行内 1 + 块级 1，仅此而已
+  await expect(page.locator(".katex")).toHaveCount(3); // 行内 2（正文 + 表内）+ 块级 1，仅此而已
 
   await expect(page).toHaveScreenshot("math-rendering.png");
 });
@@ -160,7 +160,7 @@ for (const theme of ["light", "dark", "eink"]) {
     await page.addInitScript((value) => localStorage.setItem("lumir-theme", value), theme);
     await openMath(page);
     // KaTeX 继承 currentColor：公式颜色应与正文 --text 一致
-    const colors = await page.locator(".cm-lp-math-inline .katex").evaluate((el) => {
+    const colors = await page.locator(".cm-lp-math-inline .katex").first().evaluate((el) => {
       const mathColor = getComputedStyle(el).color;
       const bodyColor = getComputedStyle(el.closest(".cm-content")!).color;
       return { mathColor, bodyColor };

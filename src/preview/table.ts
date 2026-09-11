@@ -151,3 +151,52 @@ export function tableRowsInRange(table: TableModel, from: number, to: number): T
 export function tableLineAt(table: TableModel, from: number, to: number): TableRow | undefined {
   return tableRowsInRange(table, from, to)[0];
 }
+
+// ---------------------------------------------------------------------------
+// 宽度统一合同（M119，docs/specs/table-reading.md §3）的可执行表述
+// ---------------------------------------------------------------------------
+
+/** 单列度量：min = min-content（不可再压缩宽），max = max-content（自然宽）。 */
+export interface ColumnMeasure {
+  min: number;
+  max: number;
+}
+
+/**
+ * 表格宽度合同的纯函数：输入每列 min/max 度量与阅读栏宽，输出每列轨道宽度。
+ * 与 style.css 的声明式规则同构（grid `minmax(min-content, max-content)` 轨道 +
+ * 表框 `max-content / min-content / 100%` 三值钳制，cell 无固定像素上限）：
+ * - Σmax ≤ 栏宽：各列取 max——贴合内容，无折行，总宽 = 自然宽 ≤ 栏宽；
+ * - Σmax > 栏宽且 Σmin ≤ 栏宽：从 min 起向 max 均摊富余（water-filling，先到
+ *   max 的列退出分摊），总宽恰好 = 栏宽——折行只发生在栏宽用尽时；
+ * - Σmin > 栏宽：各列取 min，总宽 = Σmin > 栏宽——无法折行容纳，容器横滚承载。
+ * 运行时布局由 CSS grid 执行（声明式同构，避免测量回写引入 M110/M115 类
+ * 测量-布局反馈错位）；本函数供属性测试生成期望与 Node 侧钉死不变量。
+ */
+export function computeColumnWidths(columns: readonly ColumnMeasure[], columnWidth: number): number[] {
+  const mins = columns.map((c) => c.min);
+  const totalMin = mins.reduce((a, b) => a + b, 0);
+  const totalMax = columns.reduce((a, c) => a + c.max, 0);
+  if (totalMax <= columnWidth) return columns.map((c) => c.max);
+  if (totalMin >= columnWidth) return [...mins];
+  // water-filling：富余均摊给尚未到达 max 的列，封顶列退出后继续，直到栏宽用尽
+  const widths = [...mins];
+  let free = columnWidth - totalMin;
+  let open = columns.map((_, i) => i).filter((i) => columns[i].max > columns[i].min);
+  while (free > 1e-9 && open.length > 0) {
+    const share = free / open.length;
+    const stillOpen: number[] = [];
+    for (const i of open) {
+      const room = columns[i].max - widths[i];
+      if (room <= share) {
+        widths[i] = columns[i].max;
+      } else {
+        widths[i] += share;
+        stillOpen.push(i);
+      }
+    }
+    free = columnWidth - widths.reduce((a, b) => a + b, 0);
+    open = stillOpen;
+  }
+  return widths;
+}

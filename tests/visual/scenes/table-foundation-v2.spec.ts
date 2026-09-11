@@ -182,7 +182,7 @@ test("窄窗口下编辑器主内容仍为窗格的 80%", async ({ page }) => {
   }
 });
 
-test("列宽贴合内容：短内容表不拉满主栏，长内容列有上限并折行", async ({ page }) => {
+test("列宽贴合内容：短内容表不拉满主栏，长内容表保持自然宽并横向滚动", async ({ page }) => {
   // 回归（M103）：修复前轨道为 minmax(max-content, 1fr)，块级 grid 默认填满
   // 80% 主栏后 1fr 把剩余空间平分给每列——短内容表的列被拉得过宽。
   const shortSource = `| 名称 | 状态 | 备注 |\n| --- | --- | --- |\n| alpha | 上线 | 短备注 |\n| beta | 开发中 | 正常备注 |\n`;
@@ -201,8 +201,8 @@ test("列宽贴合内容：短内容表不拉满主栏，长内容列有上限�
   // 每列贴合自身内容：列宽互不相等（等宽是 1fr 平分的特征）
   expect(Math.abs(short.tracks[0] - short.tracks[2])).toBeGreaterThan(1);
 
-  // 单列上限：超长单元格内容被封顶（固定 352px——不用 ch：表头粗体的 ch 更宽，
-  // 会让轨道按表头撑宽、正文 cell 钳住错位，见 style.css 注释）并折行，而不是把列撑到内容全宽
+  // 长内容表（M119 合同）：无单列像素封顶，列保持内容自然宽；总宽超过栏宽时
+  // 由滚动容器横向滚动承载，cell 不折行、内容不裁切（Obsidian live preview 同款）
   const longSource = `| 名称 | 状态 | 备注 |\n| --- | --- | --- |\n| alpha | 上线 | ${"长".repeat(120)} |\n`;
   await stubTauri(page, { entries: [{ path: "long.md", kind: "file", size: longSource.length, mtime_ms: 0 }], files: { "long.md": longSource } });
   await page.goto("/");
@@ -211,15 +211,17 @@ test("列宽贴合内容：短内容表不拉满主栏，长内容列有上限�
   const long = await page.evaluate(() => {
     const tracks = getComputedStyle(document.querySelector(".cm-lp-table")!).gridTemplateColumns.split(" ").map((v) => parseFloat(v));
     const heights = [...document.querySelectorAll(".cm-lp-table-row:last-child .cm-lp-table-cell")].map((c) => c.getBoundingClientRect().height);
-    return { tracks, heights, tableWidth: document.querySelector(".cm-lp-table")!.getBoundingClientRect().width, contentWidth: document.querySelector(".cm-content")!.getBoundingClientRect().width };
+    const scroll = document.querySelector(".cm-lp-table-scroll")!;
+    return { tracks, heights, tableWidth: document.querySelector(".cm-lp-table")!.getBoundingClientRect().width, contentWidth: document.querySelector(".cm-content")!.getBoundingClientRect().width, scrollWidth: scroll.scrollWidth, clientWidth: scroll.clientWidth };
   });
   expect(long.tracks).toHaveLength(3);
-  // 上限：任何一列不超过 352px（留 10% 余量吸收字体差异）
-  for (const track of long.tracks) expect(track).toBeLessThan(400);
-  // 折行生效：超长单元格变高而非变宽
-  expect(Math.max(...long.heights)).toBeGreaterThan(60);
-  // 封顶后表格整体仍可窄于主栏
-  expect(long.tableWidth).toBeLessThan(long.contentWidth);
+  // 无单列封顶：长内容列轨道 = 内容自然宽，可超过栏宽
+  expect(long.tracks[2]).toBeGreaterThan(long.contentWidth);
+  // 不折行：长 cell 保持单行高度（约 33px），而非折行变高
+  expect(Math.max(...long.heights)).toBeLessThan(40);
+  // 表宽 = 自然宽 > 栏宽，超出部分由滚动容器横滚承载而非裁切
+  expect(long.tableWidth).toBeGreaterThan(long.contentWidth);
+  expect(long.scrollWidth).toBeGreaterThan(long.clientWidth);
 });
 
 test("表格 cell 内 inline code 与强调渲染 live preview 样式", async ({ page }) => {
