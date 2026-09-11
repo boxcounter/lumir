@@ -2,9 +2,24 @@ import { Annotation, Compartment, EditorSelection, EditorState, findClusterBreak
 import type { Extension, SelectionRange, Text } from "@codemirror/state";
 import { EditorView, keymap, lineNumbers, highlightActiveLine } from "@codemirror/view";
 import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
-import { HighlightStyle, syntaxHighlighting, syntaxTree, ensureSyntaxTree } from "@codemirror/language";
+import { HighlightStyle, StreamLanguage, syntaxHighlighting, syntaxTree, ensureSyntaxTree } from "@codemirror/language";
+import type { Language } from "@codemirror/language";
 import { tags } from "@lezer/highlight";
 import { GFM } from "@lezer/markdown";
+import { javascript, json, typescript } from "@codemirror/legacy-modes/mode/javascript";
+import { python } from "@codemirror/legacy-modes/mode/python";
+import { go } from "@codemirror/legacy-modes/mode/go";
+import { rust } from "@codemirror/legacy-modes/mode/rust";
+import { c, cpp, java, kotlin } from "@codemirror/legacy-modes/mode/clike";
+import { ruby } from "@codemirror/legacy-modes/mode/ruby";
+import { shell } from "@codemirror/legacy-modes/mode/shell";
+import { toml } from "@codemirror/legacy-modes/mode/toml";
+import { yaml } from "@codemirror/legacy-modes/mode/yaml";
+import { css, sCSS } from "@codemirror/legacy-modes/mode/css";
+import { html, xml } from "@codemirror/legacy-modes/mode/xml";
+import { swift } from "@codemirror/legacy-modes/mode/swift";
+import { lua } from "@codemirror/legacy-modes/mode/lua";
+import { standardSQL } from "@codemirror/legacy-modes/mode/sql";
 import type { EditorMode } from "./bindings/EditorMode";
 import { livePreview, previewRefresh } from "./preview/livePreview";
 import type { PreviewContext, WikilinkResolver } from "./preview/livePreview";
@@ -473,12 +488,70 @@ const CODE_EXTENSIONS = new Set([
   "swift", "kt", "lua", "sql", "vue", "scss",
 ]);
 
-function modeForPath(path: string | undefined, fallback: EditorMode): EditorMode {
-  if (!path) return fallback;
+// code 模式的语法高亮（M120）：按扩展名选 legacy-modes StreamParser，经
+// StreamLanguage 包成 CM6 Language——只读代码文件不再借 markdown 解析器着色。
+// 覆盖与 CODE_EXTENSIONS 对齐；同一 parser 多扩展共享一个 Language 实例。
+// vue 无对应 legacy mode，SFC 按 html 高亮兜底。
+const jsLanguage = StreamLanguage.define(javascript);
+const tsLanguage = StreamLanguage.define(typescript);
+const cLanguage = StreamLanguage.define(c);
+const cppLanguage = StreamLanguage.define(cpp);
+const yamlLanguage = StreamLanguage.define(yaml);
+const htmlLanguage = StreamLanguage.define(html);
+const CODE_LANGUAGES: Record<string, Language> = {
+  rs: StreamLanguage.define(rust),
+  ts: tsLanguage, tsx: tsLanguage,
+  js: jsLanguage, jsx: jsLanguage, mjs: jsLanguage, cjs: jsLanguage,
+  py: StreamLanguage.define(python),
+  go: StreamLanguage.define(go),
+  c: cLanguage, h: cLanguage, cpp: cppLanguage, cc: cppLanguage,
+  java: StreamLanguage.define(java),
+  rb: StreamLanguage.define(ruby),
+  sh: StreamLanguage.define(shell),
+  json: StreamLanguage.define(json),
+  toml: StreamLanguage.define(toml),
+  yaml: yamlLanguage, yml: yamlLanguage,
+  css: StreamLanguage.define(css),
+  scss: StreamLanguage.define(sCSS),
+  html: htmlLanguage, vue: htmlLanguage,
+  xml: StreamLanguage.define(xml),
+  swift: StreamLanguage.define(swift),
+  kt: StreamLanguage.define(kotlin),
+  lua: StreamLanguage.define(lua),
+  sql: StreamLanguage.define(standardSQL),
+};
+
+function fileExtension(path: string | undefined): string | null {
+  if (!path) return null;
   const base = path.slice(path.lastIndexOf("/") + 1);
   const dot = base.lastIndexOf(".");
-  if (dot < 0) return fallback;
-  const ext = base.slice(dot + 1).toLowerCase();
+  return dot < 0 ? null : base.slice(dot + 1).toLowerCase();
+}
+
+/** code 模式按扩展名取语言包；未知扩展/无路径返回 null（纯文本，不着色）。 */
+function codeLanguageFor(path: string | undefined): Language | null {
+  const ext = fileExtension(path);
+  return ext === null ? null : CODE_LANGUAGES[ext] ?? null;
+}
+
+// code 模式 token 配色：只用三主题（light/dark/eink）既有视觉 token
+//（--dim/--accent/--callout-*，M55 体系），eink 全黑时自然塌缩为单色。
+// legacy-modes token 经 StreamLanguage 默认 tokenTable 落到标准 tags。
+const codeHighlight = syntaxHighlighting(
+  HighlightStyle.define([
+    { tag: [tags.comment, tags.blockComment, tags.docComment], color: "var(--dim)" },
+    { tag: [tags.keyword, tags.definitionKeyword, tags.controlKeyword, tags.operatorKeyword, tags.moduleKeyword, tags.modifier], color: "var(--accent)" },
+    { tag: [tags.string, tags.docString, tags.character, tags.regexp, tags.special(tags.string)], color: "var(--callout-tip)" },
+    { tag: [tags.number, tags.atom, tags.bool, tags.null], color: "var(--callout-warning)" },
+    { tag: [tags.propertyName, tags.attributeName], color: "var(--callout-note)" },
+    { tag: [tags.typeName, tags.className, tags.namespace, tags.tagName], color: "var(--callout-abstract)" },
+  ]),
+  { fallback: true },
+);
+
+function modeForPath(path: string | undefined, fallback: EditorMode): EditorMode {
+  const ext = fileExtension(path);
+  if (ext === null) return fallback;
   if (ext === "md" || ext === "markdown") return "md";
   if (CODE_EXTENSIONS.has(ext)) return "code";
   return fallback;
@@ -545,23 +618,30 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
     view.dom.ownerDocument.getSelection()?.removeAllRanges();
   }
 
-  function modeExtensions(mode: EditorMode): Extension[] {
-    const highlight: Extension[] = [
-      markdown(markdownConfig),
-      syntaxHighlighting(
-        HighlightStyle.define([
-          { tag: tags.comment, color: "var(--dim)" },
-          { tag: [tags.keyword, tags.operator, tags.punctuation], color: "var(--text)" },
-          { tag: [tags.string, tags.regexp, tags.number], color: "var(--accent)" },
-          { tag: [tags.link, tags.url], color: "var(--accent)", textDecoration: "underline" },
-          { tag: tags.heading, color: mode === "md" ? "inherit" : "var(--text)", fontWeight: mode === "md" ? "inherit" : "700" },
-          { tag: tags.strong, fontWeight: "700" },
-          { tag: tags.emphasis, fontStyle: "italic" },
-          { tag: tags.strikethrough, textDecoration: "line-through" },
-        ]),
-        { fallback: true },
-      ),
-    ];
+  function modeExtensions(mode: EditorMode, path?: string): Extension[] {
+    // md 走 lezer markdown 解析器（高亮规则维持 M1 以来口径不动）；
+    // code 按扩展名选 legacy-modes StreamLanguage（M120），未知扩展纯文本不着色。
+    const highlight: Extension[] = mode === "md"
+      ? [
+          markdown(markdownConfig),
+          syntaxHighlighting(
+            HighlightStyle.define([
+              { tag: tags.comment, color: "var(--dim)" },
+              { tag: [tags.keyword, tags.operator, tags.punctuation], color: "var(--text)" },
+              { tag: [tags.string, tags.regexp, tags.number], color: "var(--accent)" },
+              { tag: [tags.link, tags.url], color: "var(--accent)", textDecoration: "underline" },
+              { tag: tags.heading, color: "inherit", fontWeight: "inherit" },
+              { tag: tags.strong, fontWeight: "700" },
+              { tag: tags.emphasis, fontStyle: "italic" },
+              { tag: tags.strikethrough, textDecoration: "line-through" },
+            ]),
+            { fallback: true },
+          ),
+        ]
+      : (() => {
+          const language = codeLanguageFor(path);
+          return language ? [language, codeHighlight] : [codeHighlight];
+        })();
     // CM6 的基础层必须跟随 shell 的三套主题；live preview 只增加 Markdown
     // 语义装饰，避免 code 模式落回默认白底、灰 gutter 或默认选区颜色。
     const baseTheme = EditorView.theme({
@@ -648,7 +728,7 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
       defaultMode = mode;
       if (mode === currentMode) return;
       currentMode = mode;
-      view.dispatch({ effects: modeCompartment.reconfigure(modeExtensions(mode)) });
+      view.dispatch({ effects: modeCompartment.reconfigure(modeExtensions(mode, currentPath)) });
     },
     mode: () => currentMode,
     onReady(listener: EditorReadyListener) {
@@ -670,7 +750,7 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
         // 滚动复位用直接赋值而非 scrollIntoView 效果：后者带 scrollMargin，文档
         // 溢出视口时会把 pos 0 对齐到视口顶而主动下滚，页首 padding 被顶出画。
         selection: { anchor: 0 },
-        effects: modeCompartment.reconfigure(modeExtensions(next)),
+        effects: modeCompartment.reconfigure(modeExtensions(next, path)),
       });
       view.scrollDOM.scrollTop = 0;
       view.scrollDOM.scrollLeft = 0;
