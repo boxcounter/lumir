@@ -151,3 +151,43 @@ export function tableRowsInRange(table: TableModel, from: number, to: number): T
 export function tableLineAt(table: TableModel, from: number, to: number): TableRow | undefined {
   return tableRowsInRange(table, from, to)[0];
 }
+
+// ---------------------------------------------------------------------------
+// 宽度统一合同（M119，docs/specs/table-reading.md §3）的可执行表述
+// ---------------------------------------------------------------------------
+
+/** 单列度量：min = min-content（不可再压缩宽），max = max-content（自然宽）。 */
+export interface ColumnMeasure {
+  min: number;
+  max: number;
+}
+
+/** 表格宽度合同的双态输出。 */
+export interface TableWidthPlan {
+  /** 每列轨道宽：恒为 max-content——任何栏宽下列不收缩、cell 不折行。 */
+  tracks: number[];
+  /** 表框宽 = Σmax = 内容自然宽。 */
+  tableWidth: number;
+  /** 表框可见宽 = min(自然宽, 栏宽)，超出部分由滚动容器横滚承载。 */
+  visibleWidth: number;
+  /** 自然宽 ≤ 栏宽 ⇒ fit（整表可见）；否则 scroll（横滚，零裁切）。 */
+  mode: "fit" | "scroll";
+}
+
+/**
+ * 表格宽度合同的纯函数：输入每列 min/max 度量与阅读栏宽，输出双态布局计划。
+ * 与 style.css 的声明式规则同构：表框 `inline-size: max-content` + 轨道
+ * `minmax(min-content, max-content)` ⇒ 轨道恒解析为 max-content；栏宽 clamp
+ * （`max-inline-size: 100%`）与 `overflow-x: auto` 都在滚动容器
+ * .cm-lp-table-scroll 上——栏宽只决定表框可见形态，不影响轨道宽度。
+ * 不存在折行收缩态（W 方案已被 tower 裁决否决）；min 度量无收缩路径可参与，
+ * 仅为度量完整性保留。
+ * 运行时布局由 CSS grid 执行（声明式同构，避免测量回写引入 M110/M115 类
+ * 测量-布局反馈错位）；本函数供属性测试生成期望与 Node 侧钉死不变量。
+ */
+export function planTableWidth(columns: readonly ColumnMeasure[], columnWidth: number): TableWidthPlan {
+  const tracks = columns.map((c) => c.max);
+  const tableWidth = tracks.reduce((sum, w) => sum + w, 0);
+  const visibleWidth = Math.min(tableWidth, columnWidth);
+  return { tracks, tableWidth, visibleWidth, mode: tableWidth <= columnWidth ? "fit" : "scroll" };
+}

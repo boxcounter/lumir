@@ -11,6 +11,7 @@
 |---|---|
 | [adr-lifecycle.md](adr-lifecycle.md) | ADR 生命周期与 Alex 评审操作（状态约定本体在 [docs/adr/README.md](../adr/README.md)） |
 | [openspec-workflow.md](openspec-workflow.md) | OpenSpec 提案→评审→实现→归档全流程、制品清单与模板 |
+| [rendering-defect-contract-first.md](rendering-defect-contract-first.md) | 渲染/交互缺陷修复的合同先行规则：先定位或补充不变量条款 + 属性测试，禁止只做案例级补丁 |
 
 ## 分工总原则（ADR 0004 第 5 条）
 

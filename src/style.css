@@ -312,7 +312,10 @@ body { background:var(--bg); color:var(--text); font-family:var(--font-body); fo
   display: block;
   max-inline-size: 100%;
   overflow-x: auto;
-  overflow-y: visible;
+  /* 纵向永不滚动（内容即表格本体，高度恰好贴合）：overflow-x:auto 与
+     overflow-y:visible 的组合在 WKWebView 下有裁切疑点（M119 宽表缺陷），
+     显式 hidden 让横滚容器语义在所有引擎一致。 */
+  overflow-y: hidden;
   overscroll-behavior-inline: contain;
   scrollbar-gutter: stable;
   outline-offset: 3px;
@@ -326,10 +329,11 @@ body { background:var(--bg); color:var(--text); font-family:var(--font-body); fo
 .cm-lp-table {
   display: grid;
   grid-auto-rows: minmax(2em, max-content);
-  /* 列宽贴合内容：轨道 minmax(min-content, max-content) + 表格 inline-size:max-content，
-     不再被 1fr 拉满 80% 主栏；单列上限由 cell 的 max-inline-size 封顶（grid 的
-     max-content 贡献会被 grid item 的 max 尺寸钳制），长内容折行；
-     超出容器时由 .cm-lp-table-scroll 横向滚动。 */
+  /* 宽度统一合同（M119，docs/specs/table-reading.md §3）：表框宽度 = 内容自然宽
+     （inline-size:max-content + 轨道 minmax(min-content, max-content)，cell 无固定
+     像素上限）；可见宽度 = min(自然宽, 栏宽)。自然宽不超过栏宽时整表贴合内容直接
+     可见——既不被拉满（M103），也不在栏宽仍有富余时折行收缩（M119 欠宽缺陷）；
+     自然宽超过栏宽时不收缩、不裁切，超出部分由 .cm-lp-table-scroll 横向滚动承载。 */
   grid-template-columns: repeat(var(--cm-lp-table-columns), minmax(min-content, max-content));
   inline-size: max-content;
   border-block-start: 1px solid var(--bd-2);
@@ -349,11 +353,10 @@ body { background:var(--bg); color:var(--text); font-family:var(--font-body); fo
   display: block;
   grid-row: 1;
   min-inline-size: 7ch;
-  /* 上限用固定 px 而非 ch（M110 真实 webview 缺陷）：ch 随字重变化，表头
-     font-weight:700 的 40ch（WebKit 实测 394.7px）宽于正文 40ch（362.5px），
-     轨道按表头贡献撑宽后正文 cell 被自身 max-inline-size 钳住、不再拉伸填充
-     轨道，表头/数据行边界错位 32px、列边线错乱。px 上限两行一致。 */
-  max-inline-size: 352px;
+  /* 无固定像素上限（M119 宽度合同）：352px 封顶会在栏宽未用尽时强行折行、
+     整表反而窄于栏宽（「折行却收缩」缺陷）；列宽回归内容自然宽，超宽整表横滚。
+     固定 px 上限曾是 M110 表头错位修复（ch 上限随字重变化）——取消上限后
+     max-content 轨道天然行列一致，错位向量随之消失。 */
   padding: 5px 8px;
   border-inline-end: 1px solid var(--bd-2);
   border-block-end: 1px solid var(--bd-2);

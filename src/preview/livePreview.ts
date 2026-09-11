@@ -27,6 +27,9 @@ import type { LinkResolveResult } from "../bindings/LinkResolveResult";
 import { BlockWrapper } from "@codemirror/view";
 import { findTables, tableAt, tableRowsInRange, type TableModel } from "./table";
 
+// @lezer/common 不是直接依赖（callout.ts 同口径），SyntaxNode 类型从 syntaxTree 推导。
+type SyntaxNode = ReturnType<typeof syntaxTree>["topNode"];
+
 /** 附件 provider 注入/变更时派发，强制重建装饰。 */
 export const previewRefresh = StateEffect.define<null>();
 
@@ -451,6 +454,8 @@ function buildDecorations(view: EditorView, ctx: PreviewContext): DecorationSet 
     // 跨 slot 边界的词法配对 span（`| $a | b$ |`）跳过：pipe 被 replace 隐藏，
     // 横跨它的 replace 装饰会吞并相邻 cell（M113 r1 review P2-1）；降级表保留
     // 原始 Markdown，cell 内也不渲染。完全落在单个 slot 内的 span 正常渲染。
+    // 同行 $$...$$ 只渲染完全落在单个 slot 内的（M119）；表外同行/跨行 $$
+    // 仍由 mathBlockSet 块级路径处理。
     collectInlineMath(view, vr.from, vr.to, fm,
       (f, t) => {
         const table = tableAt(tables, f);
@@ -458,6 +463,12 @@ function buildDecorations(view: EditorView, ctx: PreviewContext): DecorationSet 
         if (table.degraded) return true;
         const slot = tableRowsInRange(table, f, f)[0]?.slots.find((s) => f >= s.from && f < s.to);
         return !slot || t > slot.to;
+      },
+      (f, t) => {
+        const table = tableAt(tables, f);
+        if (!table || table.degraded) return false;
+        const slot = tableRowsInRange(table, f, f)[0]?.slots.find((s) => f >= s.from && f < s.to);
+        return slot !== undefined && t <= slot.to;
       },
       decos);
     for (const { from } of lineRanges(view, vr.from, vr.to)) {
@@ -531,6 +542,25 @@ function collectSyntaxDecorations(
   // 口径与 math/mermaid 的选区显露一致（空光标在行首不触发）。
   const touchesSelection = (from: number, to: number): boolean =>
     view.state.selection.ranges.some((r) => r.from < to && r.to > from);
+  // callout 内容行的 inline 格式源码显露（M119 真实桌面缺陷：光标进入 callout
+  // 行时该行「加粗」仍是渲染态而非编辑态）。口径同 M110 的行级显露：选区触及
+  // 节点所跨行即跳过样式与标记隐藏装饰，源码原样可见。仅 detectCallout 命中的
+  // blockquote 内的节点适用——普通引用与普通段落不受影响（保持渲染态）。
+  const calloutCache = new Map<number, boolean>();
+  const insideCallout = (node: SyntaxNode): boolean => {
+    for (let p = node.parent; p; p = p.parent) {
+      if (p.name !== "Blockquote") continue;
+      let hit = calloutCache.get(p.from);
+      if (hit === undefined) {
+        hit = detectCallout(doc, p) !== null;
+        calloutCache.set(p.from, hit);
+      }
+      if (hit) return true;
+    }
+    return false;
+  };
+  const revealInlineSource = (ref: { from: number; to: number; node: SyntaxNode }): boolean =>
+    touchesSelection(doc.lineAt(ref.from).from, doc.lineAt(ref.to).to) && insideCallout(ref.node);
   syntaxTree(view.state).iterate({
     from: vrFrom,
     to: vrTo,
@@ -594,6 +624,8 @@ function collectSyntaxDecorations(
       }
 
       if (name === "StrongEmphasis" || name === "Emphasis" || name === "Strikethrough") {
+        // callout 内容行选区显露：跳过样式与标记隐藏，该行显示 `**加粗**` 源码（M119）。
+        if (revealInlineSource(ref)) return false;
         const cls =
           name === "StrongEmphasis"
             ? "cm-lp-strong"
@@ -663,6 +695,8 @@ function collectSyntaxDecorations(
       }
 
       if (name === "InlineCode") {
+        // callout 内容行选区显露：跳过样式，反引号与内容按纯源码显示（M119）。
+        if (revealInlineSource(ref)) return false;
         decos.push(Decoration.mark({ class: "cm-lp-inline-code" }).range(ref.from, ref.to));
         return false;
       }

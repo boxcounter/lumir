@@ -210,14 +210,16 @@ function enterMathSource(event: MouseEvent, view: EditorView, dom: HTMLElement, 
   enterReplacedSource(event, view, dom, delimiter, rawLength - delimiter);
 }
 
-/** 行内公式 widget：渲染成功显示公式；失败回落为完整原文 + 失败提示。 */
+/** 行内公式 widget：渲染成功显示公式；失败回落为完整原文 + 失败提示。
+ *  display=true 仅用于同行 $$ 定界（点击进编辑态的光标钳制跳过 2 字符定界符），
+ *  渲染样式仍取行内（见 collectInlineMath 注释）。 */
 class InlineMathWidget extends WidgetType {
-  constructor(readonly source: string, readonly raw: string) {
+  constructor(readonly source: string, readonly raw: string, readonly display = false) {
     super();
   }
 
   eq(other: InlineMathWidget): boolean {
-    return other.source === this.source;
+    return other.source === this.source && other.display === this.display;
   }
 
   toDOM(view: EditorView): HTMLElement {
@@ -232,7 +234,7 @@ class InlineMathWidget extends WidgetType {
       el.textContent = this.raw;
       el.title = `公式解析失败：${result.error}`;
     }
-    el.addEventListener("mousedown", (event) => enterMathSource(event, view, el, 1, this.raw.length));
+    el.addEventListener("mousedown", (event) => enterMathSource(event, view, el, this.display ? 2 : 1, this.raw.length));
     return el;
   }
 }
@@ -278,12 +280,17 @@ class BlockMathWidget extends WidgetType {
 /**
  * 视口内行内公式装饰（ViewPlugin 侧，单行 replace 允许跨插件装饰）。
  * 代码/frontmatter 上下文排除；表格 cell 内的行内公式照常渲染（M113：
- * 行内 replace 是 cell 文本内的内联 widget，不干扰 grid 布局；块级 $$
- * 仍由 mathBlockSet 在表格上下文排除——block replace 会拆散 grid 行）。
- * crossesTableSlotBoundary：词法配对的 $...$ 可能横跨 cell 分隔管
- *（`| $a | b$ |`），pipe 本身被 replace 隐藏，横跨它的 replace 装饰会把
- * 两个 cell 吞并成一个幻影公式（r1 review P2-1 实测）——此类 span 跳过，
- * 保持原文；完全落在单个 slot 内的 span 不受影响。
+ * 行内 replace 是 cell 文本内的内联 widget，不干扰 grid 布局）。
+ * 同行 $$...$$（display span）：表外仍由 mathBlockSet 块级处理（StateField
+ * 全文档扫描，含跨行块）；完全落在单个 table slot 内的同行 $$ 按行内公式
+ * 渲染（M119 真实桌面缺陷：cell 内 $$y$$ 裸露原文——mathBlockSet 的 block
+ * replace 会拆散 grid 行，行内 replace 不会）。显示样式取 inline 而非
+ * display：.katex-display 的 block+居中+margin 在 cell 文本流/grid 行内
+ * 视觉打架，cell 是紧凑行内容器。
+ * crossesTableSlotBoundary：词法配对的 $...$（含 $$...$$）可能横跨 cell
+ * 分隔管（`| $a | b$ |`），pipe 本身被 replace 隐藏，横跨它的 replace
+ * 装饰会把两个 cell 吞并成一个幻影公式（r1 review P2-1 实测）——此类 span
+ * 跳过，保持原文；完全落在单个 slot 内的 span 不受影响。
  */
 export function collectInlineMath(
   view: EditorView,
@@ -291,6 +298,7 @@ export function collectInlineMath(
   vrTo: number,
   fm: { from: number; to: number } | null,
   crossesTableSlotBoundary: (from: number, to: number) => boolean,
+  insideTableSlot: (from: number, to: number) => boolean,
   decos: Range<Decoration>[],
 ): void {
   const { doc } = view.state;
@@ -299,9 +307,11 @@ export function collectInlineMath(
   while (line.from <= vrTo) {
     if (line.text.includes("$")) {
       for (const span of findMathSpans(line.text)) {
-        if (span.display) continue; // 块级由 StateField 全文档处理
         const from = line.from + span.from;
         const to = line.from + span.to;
+        // 同行 display span 只在 table slot 内由本层渲染；表外（普通段落、
+        // 引用行等）继续走 mathBlockSet 的块级路径，跨 slot/降级表不渲染。
+        if (span.display && !insideTableSlot(from, to)) continue;
         if (fm !== null && from >= fm.from && to <= fm.to) continue;
         if (isInsideCodeContext(tree, from)) continue;
         if (crossesTableSlotBoundary(from, to)) continue;
@@ -311,7 +321,7 @@ export function collectInlineMath(
         const raw = doc.sliceString(from, to);
         decos.push(
           Decoration.replace({
-            widget: new InlineMathWidget(raw.slice(1, -1), raw),
+            widget: new InlineMathWidget(raw.slice(span.display ? 2 : 1, span.display ? -2 : -1), raw, span.display),
           }).range(from, to),
         );
       }
