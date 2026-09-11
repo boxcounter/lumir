@@ -162,41 +162,32 @@ export interface ColumnMeasure {
   max: number;
 }
 
+/** 表格宽度合同的双态输出。 */
+export interface TableWidthPlan {
+  /** 每列轨道宽：恒为 max-content——任何栏宽下列不收缩、cell 不折行。 */
+  tracks: number[];
+  /** 表框宽 = Σmax = 内容自然宽。 */
+  tableWidth: number;
+  /** 表框可见宽 = min(自然宽, 栏宽)，超出部分由滚动容器横滚承载。 */
+  visibleWidth: number;
+  /** 自然宽 ≤ 栏宽 ⇒ fit（整表可见）；否则 scroll（横滚，零裁切）。 */
+  mode: "fit" | "scroll";
+}
+
 /**
- * 表格宽度合同的纯函数：输入每列 min/max 度量与阅读栏宽，输出每列轨道宽度。
- * 与 style.css 的声明式规则同构（grid `minmax(min-content, max-content)` 轨道 +
- * 表框 `max-content / min-content / 100%` 三值钳制，cell 无固定像素上限）：
- * - Σmax ≤ 栏宽：各列取 max——贴合内容，无折行，总宽 = 自然宽 ≤ 栏宽；
- * - Σmax > 栏宽且 Σmin ≤ 栏宽：从 min 起向 max 均摊富余（water-filling，先到
- *   max 的列退出分摊），总宽恰好 = 栏宽——折行只发生在栏宽用尽时；
- * - Σmin > 栏宽：各列取 min，总宽 = Σmin > 栏宽——无法折行容纳，容器横滚承载。
+ * 表格宽度合同的纯函数：输入每列 min/max 度量与阅读栏宽，输出双态布局计划。
+ * 与 style.css 的声明式规则同构：表框 `inline-size: max-content` + 轨道
+ * `minmax(min-content, max-content)` ⇒ 轨道恒解析为 max-content；栏宽 clamp
+ * （`max-inline-size: 100%`）与 `overflow-x: auto` 都在滚动容器
+ * .cm-lp-table-scroll 上——栏宽只决定表框可见形态，不影响轨道宽度。
+ * 不存在折行收缩态（W 方案已被 tower 裁决否决）；min 度量无收缩路径可参与，
+ * 仅为度量完整性保留。
  * 运行时布局由 CSS grid 执行（声明式同构，避免测量回写引入 M110/M115 类
  * 测量-布局反馈错位）；本函数供属性测试生成期望与 Node 侧钉死不变量。
  */
-export function computeColumnWidths(columns: readonly ColumnMeasure[], columnWidth: number): number[] {
-  const mins = columns.map((c) => c.min);
-  const totalMin = mins.reduce((a, b) => a + b, 0);
-  const totalMax = columns.reduce((a, c) => a + c.max, 0);
-  if (totalMax <= columnWidth) return columns.map((c) => c.max);
-  if (totalMin >= columnWidth) return [...mins];
-  // water-filling：富余均摊给尚未到达 max 的列，封顶列退出后继续，直到栏宽用尽
-  const widths = [...mins];
-  let free = columnWidth - totalMin;
-  let open = columns.map((_, i) => i).filter((i) => columns[i].max > columns[i].min);
-  while (free > 1e-9 && open.length > 0) {
-    const share = free / open.length;
-    const stillOpen: number[] = [];
-    for (const i of open) {
-      const room = columns[i].max - widths[i];
-      if (room <= share) {
-        widths[i] = columns[i].max;
-      } else {
-        widths[i] += share;
-        stillOpen.push(i);
-      }
-    }
-    free = columnWidth - widths.reduce((a, b) => a + b, 0);
-    open = stillOpen;
-  }
-  return widths;
+export function planTableWidth(columns: readonly ColumnMeasure[], columnWidth: number): TableWidthPlan {
+  const tracks = columns.map((c) => c.max);
+  const tableWidth = tracks.reduce((sum, w) => sum + w, 0);
+  const visibleWidth = Math.min(tableWidth, columnWidth);
+  return { tracks, tableWidth, visibleWidth, mode: tableWidth <= columnWidth ? "fit" : "scroll" };
 }

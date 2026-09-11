@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { computeColumnWidths } from "../../../src/preview/table";
+import { planTableWidth } from "../../../src/preview/table";
 import { stubTauri } from "./tauri-stub";
 import { readDocument } from "./parity-checks";
 
@@ -99,32 +99,33 @@ test("超宽方向：自然宽超栏宽的表格容器横滚，不裁切、不�
 });
 
 // ---------------------------------------------------------------------------
-// 纯函数不变量（Node 侧）：computeColumnWidths 是合同的可执行表述
+// 纯函数不变量（Node 侧）：planTableWidth 是合同的可执行表述
 // ---------------------------------------------------------------------------
 
-test("宽度纯函数 computeColumnWidths：fit / wrap / scroll 三态不变量", () => {
-  // fit：Σmax ≤ 栏宽 → 各列取 max，总宽 = 自然宽（无折行 ⇒ 总宽 ≤ 自然宽）
-  expect(computeColumnWidths([{ min: 50, max: 100 }, { min: 60, max: 200 }], 700)).toEqual([100, 200]);
-  expect(computeColumnWidths([{ min: 10, max: 764 }], 764)).toEqual([764]);
+test("宽度纯函数 planTableWidth：fit / scroll 双态不变量", () => {
+  const cols = [{ min: 50, max: 100 }, { min: 60, max: 200 }];
 
-  // wrap：Σmax > 栏宽 ≥ Σmin → 总宽恰好 = 栏宽（折行 ⇒ 总宽 = 栏宽），每列 ∈ [min, max]
-  const wrapped = computeColumnWidths([{ min: 80, max: 600 }, { min: 80, max: 120 }, { min: 80, max: 300 }], 500);
-  expect(wrapped.reduce((a, b) => a + b, 0)).toBeCloseTo(500, 6);
-  wrapped.forEach((w, i) => {
-    expect(w).toBeGreaterThanOrEqual(80);
-    expect(w).toBeLessThanOrEqual([600, 120, 300][i]);
-  });
-  // water-filling：先到 max 的列退出分摊，富余归未封顶列
-  expect(computeColumnWidths([{ min: 10, max: 12 }, { min: 10, max: 1000 }], 500)).toEqual([12, 488]);
-  // 等列均摊
-  const even = computeColumnWidths(Array.from({ length: 4 }, () => ({ min: 50, max: 400 })), 800);
-  expect(even).toEqual([200, 200, 200, 200]);
+  // 轨道恒为 max-content：与栏宽无关——栏宽收窄也不收缩、不折行（无 wrap 态）
+  expect(planTableWidth(cols, 700).tracks).toEqual([100, 200]);
+  expect(planTableWidth(cols, 120).tracks).toEqual([100, 200]);
+  expect(planTableWidth([{ min: 10, max: 764 }], 764).tracks).toEqual([764]);
+  // min 不参与轨道宽度：即使 Σmin > 栏宽也不回退 min（CSS 无此路径）
+  const dozen = Array.from({ length: 12 }, () => ({ min: 69, max: 800 }));
+  expect(planTableWidth(dozen, 765).tracks.every((w) => w === 800)).toBeTruthy();
 
-  // scroll：Σmin > 栏宽 → 各列取 min，总宽 = Σmin > 栏宽（超宽 ⇒ 横滚承载）
-  const mins = Array.from({ length: 12 }, () => ({ min: 69, max: 800 }));
-  const scrolled = computeColumnWidths(mins, 765);
-  expect(scrolled.reduce((a, b) => a + b, 0)).toBe(828);
-  expect(scrolled.every((w) => w === 69)).toBeTruthy();
+  // fit：自然宽 ≤ 栏宽 ⇒ 整表可见，可见宽 = 自然宽
+  const fit = planTableWidth(cols, 700);
+  expect(fit.tableWidth).toBe(300);
+  expect(fit.visibleWidth).toBe(300);
+  expect(fit.mode).toBe("fit");
+  // 边界：自然宽恰好 = 栏宽仍属 fit
+  expect(planTableWidth(cols, 300).mode).toBe("fit");
+
+  // scroll：自然宽 > 栏宽 ⇒ 表框保持自然宽，可见宽 = 栏宽，余量横滚零裁切
+  const scroll = planTableWidth(cols, 120);
+  expect(scroll.tableWidth).toBe(300);
+  expect(scroll.visibleWidth).toBe(120);
+  expect(scroll.mode).toBe("scroll");
 });
 
 // ---------------------------------------------------------------------------
