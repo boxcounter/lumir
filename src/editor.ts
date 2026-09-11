@@ -204,8 +204,12 @@ function routeGridTable(
     .filter((t) => t.rectangular && !t.degraded);
   if (tables.length === 0) return target;
   const goalColumn = main.goalColumn ?? (() => {
-    const x = view.coordsAtPos(from)?.left;
-    return x === undefined ? undefined : x - view.contentDOM.getBoundingClientRect().left;
+    // 与 moveCaretVertically 的起点归一化同理：DOM 回读后 assoc 归 0，隐藏
+    // replace 左缘按 side 1 测量退化，需回退可见侧再取 x。
+    const side = main.assoc || 1;
+    const rect = view.coordsAtPos(from, side);
+    const good = rect && !coordsDegenerate(rect) ? rect : view.coordsAtPos(from, -side as -1 | 1);
+    return good ? good.left - view.contentDOM.getBoundingClientRect().left : undefined;
   })();
 
   const fromTable = tableAt(tables, from);
@@ -221,8 +225,9 @@ function routeGridTable(
     if (rowIndex < 0) return target; // 光标在分隔线等边角：不干预
     const next = forward ? fromTable.rows[rowIndex + 1] : fromTable.rows[rowIndex - 1];
     if (!next) return target; // 已在首/末行：离开表格
-    // 自然移动漏过了行进方向的下一行（向下扫描在行尾坐标退化所致）时改落该行
-    const missed = forward ? target.head > next.to : target.head < next.from;
+    // 自然移动漏过行进方向的下一行（向下扫描在行尾坐标退化所致）、或落到起点
+    // 后方（起点坐标退化导致扫描起点错位）时，改落该行
+    const missed = forward ? target.head > next.to || target.head < from : target.head < next.from || target.head > from;
     return missed ? cursorInTableRow(view, next, goalColumn) : target;
   }
 
@@ -242,14 +247,24 @@ function moveCaretVertically(view: EditorView, forward: boolean): boolean {
     view.dispatch({ selection: { anchor: forward ? main.to : main.from }, scrollIntoView: true, userEvent: "select" });
     return true;
   }
-  const moved = view.moveVertically(main, forward);
+  // 起点归一化：DOM 选区回读会把 assoc 归 0（实证：dispatch assoc=-1 的 cursor
+  // 后同步读回 assoc=0）。落点停在隐藏 replace 左缘（表格管道符边界）时，CM
+  // moveVertically 内部按 `start.assoc || (forward ? 1 : -1)` 取 side——空光标
+  // 向下即 side 1，测量退化为全零 rect，goal column/扫描起点随之算出垃圾落点
+  //（实测直接跳到文档开头）。退化则改用可见侧重建起点，CM 内部测量即恢复有效。
+  let start = main;
+  const startSide = (main.assoc || (forward ? 1 : -1)) as -1 | 1;
+  if (coordsDegenerate(view.coordsAtPos(main.head, startSide)) && !coordsDegenerate(view.coordsAtPos(main.head, -startSide as -1 | 1))) {
+    start = EditorSelection.cursor(main.head, -startSide, undefined, main.goalColumn);
+  }
+  const moved = view.moveVertically(start, forward);
   // 文档边界兜底（r1 review P2-2，与官方 cursorByLine 同款）：moveVertically 在
   // 末/首行原地不动时，改移行尾/行首——末行中段 ArrowDown 到行尾、首行到行首。
-  let target = moved.head !== main.head ? moved : view.moveToLineBoundary(main, forward);
-  if (target.head === main.head) return true; // 行首 ArrowUp / 行尾 ArrowDown：已无可移，仍视为已处理
-  const clamped = clampAcrossBlockWidgets(view.state, main.head, target.head, forward);
+  let target = moved.head !== start.head ? moved : view.moveToLineBoundary(start, forward);
+  if (target.head === start.head) return true; // 行首 ArrowUp / 行尾 ArrowDown：已无可移，仍视为已处理
+  const clamped = clampAcrossBlockWidgets(view.state, start.head, target.head, forward);
   if (clamped !== target.head) target = EditorSelection.cursor(clamped);
-  target = routeGridTable(view, main, target, forward);
+  target = routeGridTable(view, start, target, forward);
   view.dispatch({
     selection: target,
     // scrollIntoView 传 SelectionRange（而非裸 pos）：caret 绘制与滚动测量都按
