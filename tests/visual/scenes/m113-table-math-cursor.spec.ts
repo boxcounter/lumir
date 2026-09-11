@@ -3,9 +3,10 @@ import { stubTauri } from "./tauri-stub";
 import { readDocument } from "./parity-checks";
 
 // M113 交互缺陷回归（pnpm dev:app 真实桌面截图实证，四项相互独立）：
-// 1) Ctrl+N/P 跨表格方向不对称——修复前 Ctrl-N 跳过整张表而 Ctrl-P 逐行穿过；
-//    用户裁决两方向对称、均一次按键跳过整张表（grid 渲染的表是垂直移动原子块，
-//    降级/非矩形表仍逐行穿过）。
+// 1) Ctrl+N/P 跨表格方向不对称——修复前 Ctrl-N 跳过整张表而 Ctrl-P 逐行穿过。
+//    M113 曾按「两方向对称整表跳过」修复，M118 用户裁决推翻为：表外相邻行
+//    进入首/末行 cell、表内逐 cell 行移动、末行再按离开（降级/非矩形表仍逐行
+//    穿过；跨整表且不相邻的单步移动保持跳过，作引擎差异兜底）。
 // 2) 表头 cell 双击选中大片空白——cell slot 的对齐 padding 空白被 CM 按类选词
 //    当作「词」；修复为落点在 padding 上时改选裁剪后最近的实际词。
 // 3) 表格 cell 内 $...$ 行内数学不渲染——M106 的表格上下文排除把行内 math 也
@@ -42,7 +43,7 @@ async function openDoc(page: import("@playwright/test").Page, name: string, doc:
 }
 
 // ---------------------------------------------------------------------------
-// 缺陷 1：Ctrl+N/P 跨表格方向对称，均一次跳过整张表
+// 缺陷 1：Ctrl+N/P 相邻行进入首/末行、表内逐 cell 行、末行再按离开（M118 裁决）
 // ---------------------------------------------------------------------------
 
 const TABLE_DOC = `上文段落。
@@ -53,46 +54,48 @@ const TABLE_DOC = `上文段落。
 
 下文段落。
 `;
-// 行锚点：1=上文段落。 3-5=表格 7=下文段落。
+// 行锚点：1=上文段落。 3=表头行 4=分隔行（隐藏） 5=数据行 7=下文段落。
 
-test("Ctrl+N/P 跨表格：两方向对称，一次按键跳过整张表", async ({ page }) => {
+test("Ctrl+N/P 跨表格：相邻行进首/末行、表内逐行、末行再按离开、两方向对称", async ({ page }) => {
   await openDoc(page, "t.md", TABLE_DOC);
   await expect(page.locator(".cm-lp-table-scroll")).toHaveCount(1);
 
-  // 前进方向（修复前即如此，保持）：表上方行 → 表下方行
+  // 前进：表上方相邻行 → 表头行 → 数据行 → 离开到表下方行
   await setCursor(page, 2);
+  await page.keyboard.press("Control+n");
+  expect((await cmSelection(page)).line).toBe(3);
+  await page.keyboard.press("Control+n");
+  expect((await cmSelection(page)).line).toBe(5);
   await page.keyboard.press("Control+n");
   expect((await cmSelection(page)).line).toBe(7);
 
-  // 后退方向（修复前逐行穿过：表下方 → 数据行 → 表头行 → 上文）：
-  // 一次 Ctrl-P 直接落在表上方行，与前进方向对称
+  // 后退方向对称：表下方相邻行 → 末行（数据行）→ 表头行 → 离开到表上方行
+  await page.keyboard.press("Control+p");
+  expect((await cmSelection(page)).line).toBe(5);
+  await page.keyboard.press("Control+p");
+  expect((await cmSelection(page)).line).toBe(3);
   await page.keyboard.press("Control+p");
   expect((await cmSelection(page)).line).toBe(1);
 
-  // 高表同样一次跳过（落点在表内时弹出到表外，而非停在中间行）
+  // 高表同样相邻进入表头行，而非一步跳到表下方
   const rows = Array.from({ length: 30 }, (_, i) => `| r${i} | v${i} |`).join("\n");
   const TALL = `表上一行。\n\n| h1 | h2 |\n| --- | --- |\n${rows}\n\n表下一行。\n`;
   await openDoc(page, "tall.md", TALL);
   await expect(page.locator(".cm-lp-table-scroll")).toHaveCount(1);
-  const lines = await page.evaluate(() => {
-    const view = (document.querySelector(".cm-content") as unknown as { cmTile: { root: { view: any } } }).cmTile.root.view;
-    for (let n = view.state.doc.lines; n >= 1; n--) {
-      if (view.state.doc.line(n).text === "表下一行。") return { below: n };
-    }
-    return { below: -1 };
-  });
-  expect(lines.below).toBeGreaterThan(30); // 30 行数据行之后
   await setCursor(page, 2);
   await page.keyboard.press("Control+n");
-  expect((await cmSelection(page)).line).toBe(lines.below);
+  expect((await cmSelection(page)).line).toBe(3); // 表头行
   await page.keyboard.press("Control+p");
-  expect((await cmSelection(page)).line).toBe(1);
+  expect((await cmSelection(page)).line).toBe(1); // 首行再按离开
 
-  // 光标在表格 cell 内：一次按键退出到表外（不逐行走完剩余行）
+  // 光标在表格 cell 内：逐行移动一步一行，而非弹出表外
   await page.locator(".cm-lp-table-cell", { hasText: "r10" }).first().click();
-  expect((await cmSelection(page)).empty).toBeTruthy();
+  const inTable = await cmSelection(page);
+  expect(inTable.empty).toBeTruthy();
   await page.keyboard.press("Control+p");
-  expect((await cmSelection(page)).line).toBe(1);
+  expect((await cmSelection(page)).line).toBe(inTable.line - 1);
+  await page.keyboard.press("Control+n");
+  expect((await cmSelection(page)).line).toBe(inTable.line);
   expect(await readDocument(page)).toBe(TALL);
 });
 
