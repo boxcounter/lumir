@@ -365,28 +365,19 @@ const mermaidBlockDecorations = StateField.define<DecorationSet>({
 });
 
 // mermaid 异步 settle → previewRefresh 的桥（wikilink pending 范式的实现侧）：
-// 渲染完成或主题（data-theme）切换时强制装饰层重建。dispose 随 view 销毁。
+// 渲染完成时强制装饰层重建。dispose 随 view 销毁。
 const mermaidSettleBridge = ViewPlugin.fromClass(
   class {
     private unsubscribe: () => void;
-    private themeObserver: MutationObserver | null = null;
 
     constructor(view: EditorView) {
       this.unsubscribe = onMermaidSettled(() => {
         view.dispatch({ effects: previewRefresh.of(null) });
       });
-      this.themeObserver = new MutationObserver(() => {
-        view.dispatch({ effects: previewRefresh.of(null) });
-      });
-      this.themeObserver.observe(document.documentElement, {
-        attributes: true,
-        attributeFilter: ["data-theme"],
-      });
     }
 
     destroy() {
       this.unsubscribe();
-      this.themeObserver?.disconnect();
     }
   },
 );

@@ -26,12 +26,10 @@ async function geometry(page: Page, text: string) {
     return { rects, marker: el.querySelector('.cm-lp-list-marker')?.getBoundingClientRect().right, style: el.getAttribute('style') };
   });
 }
-for (const theme of ['light', 'dark', 'eink']) {
-  for (const width of [1280, 640]) {
-    test(`列表对齐与源码 ${theme} ${width}`, async ({ page, context }) => {
+for (const width of [1280, 640]) {
+  test(`列表对齐与源码 ${width}`, async ({ page, context }) => {
       await context.grantPermissions(['clipboard-read', 'clipboard-write']);
       await page.setViewportSize({ width, height: 1600 });
-      await page.addInitScript(value => localStorage.setItem('lumir-theme', value), theme);
       await open(page);
       for (const names of [['Alpha', 'Beta', 'Gamma completed', 'Physical continuation'], ['Round ordinary', 'Round pending', 'Round completed'], ['Bullet ordinary', 'Bullet pending', 'Bullet completed', 'physical bullet'], ['Nested ordinary', 'Nested completed'], ['Plus ordinary', 'Plus pending'], ['Star ordinary', 'Star completed']]) {
         const rows = await Promise.all(names.map(name => geometry(page, name)));
@@ -64,18 +62,17 @@ for (const theme of ['light', 'dark', 'eink']) {
       expect(await page.evaluate(() => navigator.clipboard.readText())).toBe('Alpha');
       expect(await readDocument(page)).toBe(source);
       await page.locator('.cm-content').click();
-      expect(await copyFresh(page, `lists-${theme}-${width}`)).toBe(source);
+      expect(await copyFresh(page, `lists-${width}`)).toBe(source);
       expect(await readDocument(page)).toBe(source);
       // task marker 是渲染 widget：点击不得改写文档。
       await page.locator('.cm-lp-task-marker').first().click();
       expect(await readDocument(page)).toBe(source);
       // md 自本地保存契约（f80ef8b）起可编辑：键盘输入按设计进文档，列表装饰
       // 不得拦截编辑。旧断言来自 M1 只读时代，与已落地的可编辑+保存特性冲突，
-      // 此处按现行特性修正（否则这六个主题×宽度组合全部失败）。
+      // 此处按现行特性修正。
       await page.keyboard.type('a');
       expect(await readDocument(page)).not.toBe(source);
     });
-  }
 }
 
 test('输入时既有列表装饰不重建：列表文字不左右抖动', async ({ page }) => {

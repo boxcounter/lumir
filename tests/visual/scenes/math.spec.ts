@@ -4,7 +4,7 @@ import { stubTauri } from "./tauri-stub";
 
 // Math/LaTeX（foundation-markdown 用户裁决，M105 选型 KaTeX）：
 // 词法 span 定位单测（findMathSpans 是前端持有的词法逻辑）+ 渲染缓存 +
-// UI 场景（行内/块级/失败降级/代码上下文排除/货币不误判）+ 复制保真 + 三主题。
+// UI 场景（行内/块级/失败降级/代码上下文排除/货币不误判）+ 复制保真 + 排版基线视觉。
 
 // ---------------------------------------------------------------------------
 // 词法：findMathSpans span 定位
@@ -155,17 +155,14 @@ test("选区进入块级公式时显示原文（编辑/选择可见源码）", a
   await expect(page.locator(".cm-content")).toContainText("\\int_0^1");
 });
 
-for (const theme of ["light", "dark", "eink"]) {
-  test(`主题 ${theme}：公式跟随主题变量渲染`, async ({ page }) => {
-    await page.addInitScript((value) => localStorage.setItem("lumir-theme", value), theme);
-    await openMath(page);
-    // KaTeX 继承 currentColor：公式颜色应与正文 --text 一致
-    const colors = await page.locator(".cm-lp-math-inline .katex").first().evaluate((el) => {
-      const mathColor = getComputedStyle(el).color;
-      const bodyColor = getComputedStyle(el.closest(".cm-content")!).color;
-      return { mathColor, bodyColor };
-    });
-    expect(colors.mathColor).toBe(colors.bodyColor);
-    await expect(page).toHaveScreenshot(`math-theme-${theme}.png`);
+test("公式跟随正文 token 渲染", async ({ page }) => {
+  await openMath(page);
+  // KaTeX 继承 currentColor：公式颜色应与正文 --text 一致
+  const colors = await page.locator(".cm-lp-math-inline .katex").first().evaluate((el) => {
+    const mathColor = getComputedStyle(el).color;
+    const bodyColor = getComputedStyle(el.closest(".cm-content")!).color;
+    return { mathColor, bodyColor };
   });
-}
+  expect(colors.mathColor).toBe(colors.bodyColor);
+  await expect(page).toHaveScreenshot("math-theme.png");
+});

@@ -6,16 +6,14 @@ const opening = '读一篇长文，总会碰到几处卡顿。一个术语没有
 const ordinary = '普通段落不再缩进，首行与后续行从相同位置开始。保留两端对齐与自然换行，不改变阅读源码。';
 const source = `# 段落对齐\n\n${opening}\n\n${ordinary}\n这是同一段落的第二条源码行。\n\n短段。\n\n- 一级列表\n  - 二级列表\n`;
 
-for (const theme of ['light', 'dark', 'eink']) {
-  for (const viewport of [{ width: 1280, height: 900 }, { width: 640, height: 480 }]) {
-    test(`普通段首对齐 ${theme} ${viewport.width}`, async ({ page, context }, info) => {
+for (const viewport of [{ width: 1280, height: 900 }, { width: 640, height: 480 }]) {
+  test(`普通段首对齐 ${viewport.width}`, async ({ page, context }, info) => {
       await context.grantPermissions(['clipboard-read', 'clipboard-write']);
       await page.setViewportSize(viewport);
       await stubTauri(page, {
         entries: [{ path: 'paragraph.md', kind: 'file', size: source.length, mtime_ms: 0 }],
         files: { 'paragraph.md': source },
       });
-      await page.addInitScript(value => localStorage.setItem('lumir-theme', value), theme);
       await page.goto('/');
       await page.locator('.ft-row[title="paragraph.md"]').click();
       const paragraph = page.locator('.cm-lp-paragraph-start').filter({ hasText: ordinary });
@@ -41,7 +39,7 @@ for (const theme of ['light', 'dark', 'eink']) {
       expect(dropcap.paddingRight).toBeCloseTo(0.14, 2);
       expect(dropcap.paddingLeft).toBe('0px');
       await page.screenshot({ path: info.outputPath('paragraph.png') });
-      await info.attach('geometry', { body: JSON.stringify({ theme, viewport, geometry, dropcap }), contentType: 'application/json' });
+      await info.attach('geometry', { body: JSON.stringify({ viewport, geometry, dropcap }), contentType: 'application/json' });
       await paragraph.evaluate(el => {
         const node = document.createTreeWalker(el, NodeFilter.SHOW_TEXT).nextNode()!;
         const range = document.createRange(); range.setStart(node, 0); range.setEnd(node, 8);
@@ -55,5 +53,4 @@ for (const theme of ['light', 'dark', 'eink']) {
       expect(await copyFresh(page, 'paragraph-source-sentinel')).toBe(source);
       expect(await readDocument(page)).toBe(source);
     });
-  }
 }

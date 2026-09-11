@@ -15,10 +15,10 @@ import { stubTauri } from "./tauri-stub";
 
 // Mermaid 图表渲染（foundation-markdown 用户裁决，M105 选型 mermaid 官方包）：
 // Node 侧单测（缓存/降级/块定位，假 mermaid 注入，不依赖 DOM）+ UI 场景
-//（渲染成功/失败降级/懒加载 chunk 隔离/不阻塞 F0/复制保真/三主题）。
+//（渲染成功/失败降级/懒加载 chunk 隔离/不阻塞 F0/复制保真/排版基线视觉）。
 
 // ---------------------------------------------------------------------------
-// 渲染缓存：pending → settle，成功与失败都按「主题 + 源码」缓存
+// 渲染缓存：pending → settle，成功与失败都按源码缓存
 // ---------------------------------------------------------------------------
 
 const fakeMermaid = {
@@ -278,21 +278,15 @@ test("不阻塞 F0：chunk 未就绪时 paint 照常、占位先出，释放后 
   await expect(page.locator(".cm-lp-mermaid-pending")).toHaveCount(0);
 });
 
-for (const theme of ["light", "dark", "eink"]) {
-  test(`主题 ${theme}：图表按主题渲染`, async ({ page }) => {
-    await page.addInitScript((value) => localStorage.setItem("lumir-theme", value), theme);
-    await openDiagram(page);
-    const fill = await page
-      .locator(".cm-lp-mermaid svg .node rect, .cm-lp-mermaid svg .node polygon, .cm-lp-mermaid svg rect.basic")
-      .first()
-      .evaluate((el) => getComputedStyle(el).fill);
-    // 三主题给出可区分配色；eink 为纯黑白（白底节点）
-    if (theme === "eink") expect(fill).toBe("rgb(255, 255, 255)");
-    if (theme === "light") expect(fill).not.toBe("rgb(0, 0, 0)");
-    if (theme === "dark") expect(fill).not.toBe("rgb(255, 255, 255)");
-    await expect(page).toHaveScreenshot(`mermaid-theme-${theme}.png`);
-  });
-}
+test("图表按默认主题渲染", async ({ page }) => {
+  await openDiagram(page);
+  const fill = await page
+    .locator(".cm-lp-mermaid svg .node rect, .cm-lp-mermaid svg .node polygon, .cm-lp-mermaid svg rect.basic")
+    .first()
+    .evaluate((el) => getComputedStyle(el).fill);
+  expect(fill).not.toBe("rgb(0, 0, 0)");
+  await expect(page).toHaveScreenshot("mermaid-theme.png");
+});
 
 test("大文档：尾部围栏块在增量解析推进后渲染（M110 真实桌面回归）", async ({ page }) => {
   // 文档大到 openDocument 调度时语法树必然未解析到尾部：StateField 初次算出

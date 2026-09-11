@@ -530,16 +530,8 @@ vaultCurrent()
 // 校验，不影响任何界面行为。
 configGet().then((snapshot) => editor.setMode(snapshot.config.editor.mode)).catch(() => {});
 
-const themes = ["light", "dark", "eink"] as const;
-let themeIndex = Math.max(0, themes.indexOf((localStorage.getItem("lumir-theme") as typeof themes[number]) || "light"));
-document.documentElement.dataset.theme = themes[themeIndex];
 window.addEventListener("keydown", (event) => {
   if ((event.metaKey || event.ctrlKey) && event.key === "\\" && shell.panel.childElementCount > 0) { event.preventDefault(); shell.panel.hidden = !shell.panel.hidden; }
-  if ((event.metaKey || event.ctrlKey) && event.key === "t") {
-    themeIndex = (themeIndex + 1) % themes.length;
-    document.documentElement.dataset.theme = themes[themeIndex];
-    localStorage.setItem("lumir-theme", themes[themeIndex]);
-  }
 });
 
 // app-ready 只表示 webview/application shell 已挂载，不等价于 vault 恢复或编辑器首帧。

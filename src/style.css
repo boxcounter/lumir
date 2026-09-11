@@ -1,5 +1,5 @@
 /* KaTeX 公式渲染样式与字体（M106 math/LaTeX）：本地打包资源，font 走 'self' 符合现有 CSP；
-   公式颜色继承 currentColor，三套主题（--text）自动适配。 */
+   公式颜色继承 currentColor，随正文 token 适配。 */
 @import "katex/dist/katex.min.css";
 
 :root {
@@ -12,18 +12,9 @@
   --font-mono: ui-monospace, "SF Mono", Menlo, monospace;
   --line-height: 1.75;
 }
-[data-theme="dark"] { --bg:#1a1917; --bg-nav:#141312; --bg-2:#211f1c; --bg-3:#2a2823; --bd-1:#302d27; --bd-2:#413d33; --bd-3:#575142; --text:#d6d0c0; --dim:#8d8676; --accent:#d9755f; --sel:rgba(217,117,95,.28); --selection-ink: var(--text); }
-[data-theme="eink"] { --bg:#fff; --bg-nav:#fff; --bg-2:#fff; --bg-3:#fff; --bd-1:#000; --bd-2:#000; --bd-3:#000; --text:#000; --dim:#000; --accent:#000; --sel:#000; --selection-ink:#fff; --radius:0; }
-[data-theme="eink"] .ft-empty, [data-theme="eink"] .editor-notice { font-style: italic; }
-[data-theme="eink"] .ft-row[aria-current="true"], [data-theme="eink"] .ft-open-btn { font-weight: 700; border-style: double; }
-[data-theme="eink"] .ft-open-btn:hover { background: #fff; color: #000; border-color: #000; }
-[data-theme="eink"] *, [data-theme="eink"] *::before, [data-theme="eink"] *::after { box-shadow:none !important; text-shadow:none !important; transition:none !important; animation:none !important; }
 /* callout 类型色（M109，theme.ts 的 .cm-lp-callout-* 经 --callout-c 引用）：
-   --callout-tint 控制底色混色强度；eink 纯黑白不加底色（tint 0%、类型色全黑），
-   类型区分靠图标形状与标题字重。 */
+   --callout-tint 控制底色混色强度。 */
 :root { --callout-tint:8%; --callout-note:#4f6f8f; --callout-abstract:#3d7a76; --callout-info:#4f6f8f; --callout-todo:#4f6f8f; --callout-tip:#5a7a3f; --callout-success:#5a7a3f; --callout-question:#8a6d1f; --callout-warning:#a05e1c; --callout-failure:#b23a2c; --callout-danger:#b23a2c; --callout-bug:#b23a2c; --callout-example:#715589; --callout-quote:#8d8471; --callout-unknown:#8d8471; }
-[data-theme="dark"] { --callout-note:#82a5c6; --callout-abstract:#63aaa5; --callout-info:#82a5c6; --callout-todo:#82a5c6; --callout-tip:#93b16e; --callout-success:#93b16e; --callout-question:#cba64c; --callout-warning:#d18d48; --callout-failure:#d9755f; --callout-danger:#d9755f; --callout-bug:#d9755f; --callout-example:#ab8fc2; --callout-quote:#8d8676; --callout-unknown:#8d8676; }
-[data-theme="eink"] { --callout-tint:0%; --callout-note:#000; --callout-abstract:#000; --callout-info:#000; --callout-todo:#000; --callout-tip:#000; --callout-success:#000; --callout-question:#000; --callout-warning:#000; --callout-failure:#000; --callout-danger:#000; --callout-bug:#000; --callout-example:#000; --callout-quote:#000; --callout-unknown:#000; }
 * { box-sizing: border-box; }
 html,
 body,
@@ -171,7 +162,6 @@ body { background:var(--bg); color:var(--text); font-family:var(--font-body); fo
 .ft-row[data-depth="2"] { color: color-mix(in srgb, var(--text) 91%, var(--bg)); }
 .ft-row[data-depth="3"] { color: color-mix(in srgb, var(--text) 86%, var(--bg)); }
 .ft-row[data-depth="4"] { color: color-mix(in srgb, var(--text) 81%, var(--bg)); }
-[data-theme="eink"] .ft-row[data-depth] { color: var(--text); }
 .ft-dir { font-weight:600; }
 .ft-md, .ft-image, .ft-other { font-weight:400; }
 .ft-row.is-current { border-left:2px solid var(--text); font-weight:600; }
@@ -222,8 +212,7 @@ body { background:var(--bg); color:var(--text); font-family:var(--font-body); fo
 .ft-row:not(.ft-dir)[data-depth="2"] .ft-name { color:color-mix(in srgb, var(--text) 91%, var(--bg-nav)); }
 .ft-row:not(.ft-dir)[data-depth="3"] .ft-name { color:color-mix(in srgb, var(--text) 86%, var(--bg-nav)); }
 .ft-row:not(.ft-dir)[data-depth="4"] .ft-name { color:color-mix(in srgb, var(--text) 81%, var(--bg-nav)); }
-.ft-row.is-current .ft-name, [data-theme="eink"] .ft-row[data-depth] .ft-name { color:var(--text); }
-[data-theme="eink"] .ft-row:hover .ft-name { text-decoration:underline; }
+.ft-row.is-current .ft-name { color:var(--text); }
 
 .ft-empty {
   padding: 12px 4px;

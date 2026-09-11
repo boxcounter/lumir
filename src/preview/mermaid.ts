@@ -9,9 +9,8 @@
 // - 失败降级：parse() 预校验 + render catch，回落「提示 + 完整原文围栏块」，
 //   不伪装已支持；装饰只改视图，文档文本不动，选择/复制输出原始 Markdown
 // （与其他 replace 装饰同口径）；
-// - 三主题：渲染时按 documentElement data-theme 选 mermaid 主题（light→
-//   default、dark→dark、eink→黑白 base），缓存键含主题，主题切换经
-//   previewRefresh 重建后按新主题重渲染。
+// - 单一排版基线（ADR 0006，三主题已移除）：mermaid 固定 default 主题 +
+//   透明背景（MERMAID_CONFIG），不再随 data-theme 切换。
 // 本模块顶层不触 DOM、不静态 import mermaid，Node 端测试可直接 import。
 
 import { Decoration, WidgetType } from "@codemirror/view";
@@ -37,18 +36,17 @@ export interface MermaidRenderer {
   render(id: string, source: string): Promise<{ svg: string }>;
 }
 
-type ThemeKey = "light" | "dark" | "eink";
-
-/** 当前 shell 主题（data-theme）；非 DOM 环境（Node 测试）按 light。 */
-export function currentMermaidTheme(): ThemeKey {
-  if (typeof document === "undefined") return "light";
-  const value = document.documentElement.dataset.theme;
-  return value === "dark" || value === "eink" ? value : "light";
-}
+// mermaid 内置 default 主题，background 透明，避免自带底色与编辑器 --bg 打架。
+const MERMAID_CONFIG: Record<string, unknown> = {
+  startOnLoad: false,
+  securityLevel: "strict",
+  theme: "default",
+  themeVariables: { background: "transparent" },
+};
 
 // ---------------------------------------------------------------------------
 // 懒加载与渲染队列：dynamic import 隔离 chunk；initialize 与 render 必须成对
-// 串行（initialize 是全局态），所有渲染经 queue 排队，主题变化时重新 initialize。
+// 串行（initialize 是全局态），所有渲染经 queue 排队。
 // ---------------------------------------------------------------------------
 
 const defaultLoader = (): Promise<MermaidRenderer> =>
@@ -56,7 +54,7 @@ const defaultLoader = (): Promise<MermaidRenderer> =>
 
 let loadRenderer = defaultLoader;
 let rendererPromise: Promise<MermaidRenderer> | null = null;
-let initializedTheme: ThemeKey | null = null;
+let initialized = false;
 let queue: Promise<unknown> = Promise.resolve();
 let renderSeq = 0;
 
@@ -64,7 +62,7 @@ let renderSeq = 0;
 export function setMermaidLoaderForTests(loader: (() => Promise<MermaidRenderer>) | null): void {
   loadRenderer = loader ?? defaultLoader;
   rendererPromise = null;
-  initializedTheme = null;
+  initialized = false;
 }
 
 // 有界超时（M110）：懒加载 chunk 在异常网络/CSP/协议问题下可能永不 settle，
@@ -111,44 +109,14 @@ function renderer(): Promise<MermaidRenderer> {
   return rendererPromise;
 }
 
-// eink 是纯黑白高对比主题：base + 全黑白 themeVariables（网格 / 边框 / 文字
-// 全部纯黑，底透明落到编辑器 --bg 上）。light/dark 用 mermaid 内置主题，
-// background 透明，避免 mermaid 自带底色与编辑器 --bg 打架。
-function themeConfig(theme: ThemeKey): Record<string, unknown> {
-  const base = { startOnLoad: false, securityLevel: "strict" };
-  if (theme === "eink") {
-    return {
-      ...base,
-      theme: "base",
-      themeVariables: {
-        background: "transparent",
-        primaryColor: "#ffffff",
-        primaryTextColor: "#000000",
-        primaryBorderColor: "#000000",
-        secondaryColor: "#ffffff",
-        tertiaryColor: "#ffffff",
-        mainBkg: "#ffffff",
-        nodeBorder: "#000000",
-        clusterBkg: "#ffffff",
-        clusterBorder: "#000000",
-        edgeLabelBackground: "#ffffff",
-        lineColor: "#000000",
-        textColor: "#000000",
-        titleColor: "#000000",
-      },
-    };
-  }
-  return { ...base, theme: theme === "dark" ? "dark" : "default", themeVariables: { background: "transparent" } };
-}
-
-async function doRender(source: string, theme: ThemeKey): Promise<MermaidRenderState> {
+async function doRender(source: string): Promise<MermaidRenderState> {
   const id = `cm-lp-mermaid-${++renderSeq}`;
   let stage: "load" | "render" = "load";
   try {
     const mermaid = await withTimeout(renderer(), loadTimeoutMs, `渲染器加载超时（${Math.round(loadTimeoutMs / 1000)}s）`);
-    if (initializedTheme !== theme) {
-      mermaid.initialize(themeConfig(theme));
-      initializedTheme = theme;
+    if (!initialized) {
+      mermaid.initialize(MERMAID_CONFIG);
+      initialized = true;
     }
     stage = "render";
     await withTimeout(mermaid.parse(source), renderTimeoutMs, `渲染超时（${Math.round(renderTimeoutMs / 1000)}s）`); // 预校验：语法错误在此抛出，不进 render
@@ -161,14 +129,14 @@ async function doRender(source: string, theme: ThemeKey): Promise<MermaidRenderS
   }
 }
 
-function renderQueued(source: string, theme: ThemeKey): Promise<MermaidRenderState> {
-  const job = queue.then(() => doRender(source, theme));
+function renderQueued(source: string): Promise<MermaidRenderState> {
+  const job = queue.then(() => doRender(source));
   queue = job.catch(() => {});
   return job;
 }
 
 // ---------------------------------------------------------------------------
-// 渲染缓存：按「主题 + 源码」键控（含失败结果，避免装饰重建时重复渲染）。
+// 渲染缓存：按源码键控（含失败结果，避免装饰重建时重复渲染）。
 // 设上限，超限整批清空（重建成本是一次重新渲染），与 math.ts 同口径。
 // ---------------------------------------------------------------------------
 
@@ -185,18 +153,17 @@ export function onMermaidSettled(listener: () => void): () => void {
 }
 
 /**
- * 取「主题 + 源码」的渲染状态：命中缓存直接返回；未命中登记 pending 并
+ * 取源码的渲染状态：命中缓存直接返回；未命中登记 pending 并
  * 触发后台渲染，settle 后写入缓存并通知 onMermaidSettled。
  */
-export function ensureMermaidRender(source: string, theme: ThemeKey): MermaidRenderState {
-  const key = `${theme}\n${source}`;
-  const hit = renderCache.get(key);
+export function ensureMermaidRender(source: string): MermaidRenderState {
+  const hit = renderCache.get(source);
   if (hit) return hit;
   if (renderCache.size >= RENDER_CACHE_LIMIT) renderCache.clear();
   const pending: MermaidRenderState = { status: "pending" };
-  renderCache.set(key, pending);
-  void renderQueued(source, theme).then((result) => {
-    renderCache.set(key, result);
+  renderCache.set(source, pending);
+  void renderQueued(source).then((result) => {
+    renderCache.set(source, result);
     for (const listener of settleListeners) listener();
   });
   return pending;
@@ -302,7 +269,6 @@ export function mermaidBlockSet(state: EditorState): DecorationSet {
   if (!maybe) return Decoration.none;
   const tree = syntaxTree(state);
   const fm = detectFrontmatter(doc);
-  const theme = currentMermaidTheme();
   const decos: Range<Decoration>[] = [];
   tree.iterate({
     enter(ref) {
@@ -316,7 +282,7 @@ export function mermaidBlockSet(state: EditorState): DecorationSet {
       const raw = doc.sliceString(ref.from, ref.to);
       decos.push(
         Decoration.replace({
-          widget: new MermaidBlockWidget(source, raw, ensureMermaidRender(source, theme)),
+          widget: new MermaidBlockWidget(source, raw, ensureMermaidRender(source)),
           block: true,
         }).range(ref.from, ref.to),
       );

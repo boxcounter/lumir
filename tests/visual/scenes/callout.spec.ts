@@ -9,7 +9,7 @@ import { stubTauri } from "./tauri-stub";
 
 // Callout 渲染（foundation-markdown P1，M109）：Obsidian [!type] 语法。
 // Node 侧单测（类型表/别名/标记解析/未知类型降级，不依赖 DOM）+ UI 场景
-//（类型渲染/未知类型/嵌套 Markdown/复制保真/三主题）。
+//（类型渲染/未知类型/嵌套 Markdown/复制保真/排版基线视觉）。
 
 // ---------------------------------------------------------------------------
 // 解析：detectCallout 对 blockquote 首行 [!type] 的判定口径
@@ -192,21 +192,15 @@ test("复制保真：全选复制输出原始 Markdown（含 [!type] 标记）",
   expect(copied).toBe(CALLOUT_MD);
 });
 
-for (const theme of ["light", "dark", "eink"]) {
-  test(`主题 ${theme}：callout 按主题着色`, async ({ page }) => {
-    await page.addInitScript((value) => localStorage.setItem("lumir-theme", value), theme);
-    await openCallout(page);
-    const color = await page
-      .locator(".cm-line.cm-lp-callout-line")
-      .first()
-      .evaluate((el) => getComputedStyle(el).borderLeftColor);
-    // 三主题给出可区分配色；eink 为纯黑
-    if (theme === "eink") expect(color).toBe("rgb(0, 0, 0)");
-    if (theme === "light") expect(color).toBe("rgb(79, 111, 143)");
-    if (theme === "dark") expect(color).toBe("rgb(130, 165, 198)");
-    await expect(page).toHaveScreenshot(`callout-theme-${theme}.png`);
-  });
-}
+test("callout 按排版基线 token 着色", async ({ page }) => {
+  await openCallout(page);
+  const color = await page
+    .locator(".cm-line.cm-lp-callout-line")
+    .first()
+    .evaluate((el) => getComputedStyle(el).borderLeftColor);
+  expect(color).toBe("rgb(79, 111, 143)");
+  await expect(page).toHaveScreenshot("callout-theme.png");
+});
 
 test("嵌套 callout：内层正文色与列表装饰（M109 review 边角 2/3，M110 修复）", async ({ page }) => {
   const NESTED_MD = `\

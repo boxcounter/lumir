@@ -11,7 +11,7 @@
 //   折叠符随标记一并隐藏；
 // - 装饰只改视图：文档文本不动，选择/复制经 CM copy 通道输出原始 Markdown
 // （与其他 replace 装饰同口径，mermaid 已验证）。
-// 类型色 token（--callout-{type}）在 style.css 按三主题定义，本模块只管结构。
+// 类型色 token（--callout-{type}）在 style.css 单套排版基线定义，本模块只管结构。
 // 本模块顶层不触 DOM，Node 端测试可直接 import。
 
 import { Decoration, WidgetType } from "@codemirror/view";

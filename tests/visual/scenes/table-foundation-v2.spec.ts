@@ -169,17 +169,13 @@ test("窄窗口下编辑器主内容仍为窗格的 80%", async ({ page }) => {
   await page.goto("/");
   await page.locator('.ft-row[title="narrow.md"]').click();
   await expect(page.locator(".cm-content")).toContainText("段落");
-  // 三主题（light/dark/eink）下 80% 行宽都应成立——主题只换 token，不改布局轨道
-  for (const theme of ["light", "dark", "eink"]) {
-    await page.evaluate((t) => { document.documentElement.dataset.theme = t; }, theme);
-    const sizes = await page.evaluate(() => {
-      const pane = document.querySelector(".pane-editor")!.getBoundingClientRect();
-      const content = document.querySelector(".cm-content")!.getBoundingClientRect();
-      return { paneWidth: pane.width, contentWidth: content.width };
-    });
-    expect(sizes.paneWidth).toBeGreaterThan(0);
-    expect(Math.abs(sizes.contentWidth - sizes.paneWidth * 0.8)).toBeLessThan(1);
-  }
+  const sizes = await page.evaluate(() => {
+    const pane = document.querySelector(".pane-editor")!.getBoundingClientRect();
+    const content = document.querySelector(".cm-content")!.getBoundingClientRect();
+    return { paneWidth: pane.width, contentWidth: content.width };
+  });
+  expect(sizes.paneWidth).toBeGreaterThan(0);
+  expect(Math.abs(sizes.contentWidth - sizes.paneWidth * 0.8)).toBeLessThan(1);
 });
 
 test("列宽贴合内容：短内容表不拉满主栏，长内容表保持自然宽并横向滚动", async ({ page }) => {

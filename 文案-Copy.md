@@ -18,7 +18,6 @@
 | D23 | panel 唤出 | 作者 | 显示面板 | Show panel | 快捷键唤出上下文面板时提供可理解命名。 |
 | D24 | panel 空态 | 作者 | 面板（后续波次） | Panel (later waves) | 默认隐藏面板，出现时也不伪造内容。 |
 | D25 | 二进制覆盖层 | 作者 | 暂不支持预览：{路径} | Preview not supported yet: {path} | 明确能力边界并保留路径。 |
-| D26 | 主题入口 | 作者 | 亮 / 暗 / eink | Light / Dark / eink | 允许环境适配；eink 保留技术名称以避免误译。 |
 | D40 | vault remap toast | 作者 | 发现 {数量} 个可映射的 vault 路径 | Found {count} remappable vault paths | 恢复时安静提示可选映射数量，不打断作者当前工作。 |
 | D31 | 附件未找到提示块 | 作者 | 附件未找到：{引用} | Attachment not found: {ref} | 原位说明引用缺失，不中断正文。 |
 | D32 | 附件读取未接线 | 作者 | 附件读取未接线 | Attachment pipeline not wired | 预览桩诚实表达后端尚未接入。 |

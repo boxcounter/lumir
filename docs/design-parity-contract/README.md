@@ -1,5 +1,7 @@
 # 原型—生产一致性验收契约（M62）
 
+> **状态：失效（2026-09-12，ADR 0006）。** 本契约的比对基准 `design/editorial/index.html` 与三主题实现已删除，`parity.spec.ts` 随之移除。本文档与 evidence/ 保留为历史验收记录，不再构成当前产品的验收门禁。
+
 **当前结论：最终组合2d853d3的本地标准visual全绿，标准macos15性能仍未验证；不自动归档。** 已rebase M63/M64/ADR，r5最终标准 `scripts/visual/run.sh` 不带ignore-snapshots：44项通过。build、Rust fmt/clippy/test、隔离release、隔离脚本自验通过。以下73af311与4565aed章节是历史结果，以本节为当前状态。
 
 ## 2026-09-06 用户裁决：普通段落取消首行缩进（M70）

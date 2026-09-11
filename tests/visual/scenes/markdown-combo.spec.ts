@@ -21,11 +21,9 @@ async function open(page: Parameters<typeof stubTauri>[0], text = combo, path = 
   await page.locator(`.ft-row[title="${path}"]`).click();
 }
 
-for (const theme of ["light", "dark", "eink"] as const) {
-  for (const width of [1280, 640] as const) {
-    test(`Markdown组合首帧、宽窄与源码保护 ${theme} ${width}`, async ({ page }) => {
+for (const width of [1280, 640] as const) {
+  test(`Markdown组合首帧、宽窄与源码保护 ${width}`, async ({ page }) => {
       await page.setViewportSize({ width, height: 1000 });
-      await page.addInitScript((value) => localStorage.setItem("lumir-theme", value), theme);
       await open(page);
       await expect(page.locator(".cm-content")).toContainText("Combination heading");
       await expect(page.locator(".cm-lp-frontmatter")).toContainText("Combination fixture");
@@ -44,7 +42,6 @@ for (const theme of ["light", "dark", "eink"] as const) {
       await page.keyboard.type("a");
       expect(await readDocument(page)).not.toBe(combo);
     });
-  }
 }
 
 test("frontmatter空、非法、未闭合与超过200行边界稳定降级", async ({ page }) => {

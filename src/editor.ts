@@ -534,8 +534,8 @@ function codeLanguageFor(path: string | undefined): Language | null {
   return ext === null ? null : CODE_LANGUAGES[ext] ?? null;
 }
 
-// code 模式 token 配色：只用三主题（light/dark/eink）既有视觉 token
-//（--dim/--accent/--callout-*，M55 体系），eink 全黑时自然塌缩为单色。
+// code 模式 token 配色：只用单套排版基线的既有视觉 token
+//（--dim/--accent/--callout-*，M55 体系）。
 // legacy-modes token 经 StreamLanguage 默认 tokenTable 落到标准 tags。
 const codeHighlight = syntaxHighlighting(
   HighlightStyle.define([
