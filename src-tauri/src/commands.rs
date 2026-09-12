@@ -247,8 +247,12 @@ pub fn open_vault(
 /// last_vault 写回（配置即数据纪律，ADR 0002 §5）：
 /// 在既有配置 JSON 上逐字段改写（未知字段原样保留），tmp + rename 原子写入。
 pub fn write_last_vault(root: &Path) -> Result<(), CommandError> {
-    let path = config::config_dir()?.join("config.json");
-    let mut value: serde_json::Value = match std::fs::read_to_string(&path) {
+    write_last_vault_to(&config::config_dir()?.join("config.json"), root)
+}
+
+/// 指定配置文件路径的写回（可测：不依赖真实配置目录）。
+pub(crate) fn write_last_vault_to(path: &Path, root: &Path) -> Result<(), CommandError> {
+    let mut value: serde_json::Value = match std::fs::read_to_string(path) {
         Ok(text) => serde_json::from_str(&text).unwrap_or_else(|_| serde_json::json!({})),
         Err(_) => serde_json::json!({}),
     };
@@ -275,7 +279,7 @@ pub fn write_last_vault(root: &Path) -> Result<(), CommandError> {
             format!("无法写入配置 {}：{e}", tmp.display()),
         )
     })?;
-    std::fs::rename(&tmp, &path).map_err(|e| {
+    std::fs::rename(&tmp, path).map_err(|e| {
         CommandError::new(
             "config_write_failed",
             format!("无法落盘配置 {}：{e}", path.display()),
@@ -292,6 +296,33 @@ fn merge_last_vault(value: &mut serde_json::Value, root: &Path) {
         value["version"] = serde_json::json!(config::SCHEMA_VERSION);
     }
     value["last_vault"] = serde_json::json!(root.display().to_string());
+}
+
+/// 打开成功后的记忆写回：失败降级为 warning，MUST NOT 让整条打开失败（M127
+/// 修复 M121 reviewer 记录的既有分歧——打开成功却因记忆写失败返回 Err，前端
+/// 不装载已打开的 vault）。打开是主结果，记忆只影响下次启动的自动恢复。
+pub fn remember_last_vault(root: &Path) {
+    match config::config_dir() {
+        Ok(dir) => {
+            remember_last_vault_to(&dir.join("config.json"), root);
+        }
+        Err(e) => warn_last_vault_failed(&e),
+    }
+}
+
+/// 指定路径的记忆写回（可测）：写失败打 warning 并返回 false，不传播错误。
+pub(crate) fn remember_last_vault_to(path: &Path, root: &Path) -> bool {
+    match write_last_vault_to(path, root) {
+        Ok(()) => true,
+        Err(e) => {
+            warn_last_vault_failed(&e);
+            false
+        }
+    }
+}
+
+fn warn_last_vault_failed(e: &CommandError) {
+    eprintln!("lumir: 记录 last_vault 失败（vault 已打开，本次忽略）：{e}");
 }
 
 /// 调系统目录选择器打开 vault；用户取消返回 Ok(None)，不产生错误状态。
@@ -312,8 +343,9 @@ pub async fn vault_open(
     let root = handle.path().to_path_buf();
     let info = open_vault(&app, &state, root, force_new)?;
     // remap 候选短路返回（未实际打开）不写 last_vault：仅打开成功才记忆。
+    // 记忆写失败降级为 warning（M127）：不把已成功的打开报成失败。
     if info.remap_candidates.is_empty() {
-        write_last_vault(Path::new(&info.root))?;
+        remember_last_vault(Path::new(&info.root));
     }
     Ok(Some(info))
 }
@@ -330,8 +362,9 @@ pub fn vault_open_path(
 ) -> Result<VaultInfo, CommandError> {
     let info = open_vault(&app, &state, PathBuf::from(path), force_new)?;
     // remap 候选短路返回（未实际打开）不写 last_vault：仅打开成功才记忆。
+    // 记忆写失败降级为 warning（M127），同 vault_open。
     if info.remap_candidates.is_empty() {
-        write_last_vault(Path::new(&info.root))?;
+        remember_last_vault(Path::new(&info.root));
     }
     Ok(info)
 }
@@ -430,6 +463,47 @@ pub fn document_set_dirty(
 }
 
 // ---------------------------------------------------------------------------
+// 崩溃备份（M127，change save-hardening）
+// ---------------------------------------------------------------------------
+
+/// 编辑器 dirty 内容写崩溃备份（按当前 vault + vault 相对路径定位，见 recovery 模块）。
+/// 保存成功后前端调用 recovery_discard 清除；进程崩溃时残留项由前端启动时枚举并
+/// 给用户恢复入口。写失败返回人话错误，前端只当 warning（不打断编辑）。
+#[tauri::command(rename_all = "snake_case")]
+pub fn recovery_backup(
+    state: tauri::State<'_, VaultState>,
+    path: &str,
+    content: &str,
+) -> Result<(), CommandError> {
+    crate::recovery::backup(&state.root()?, path, content)
+}
+
+/// 读崩溃备份内容；无备份返回 null（不是错误）。
+#[tauri::command(rename_all = "snake_case")]
+pub fn recovery_load(
+    state: tauri::State<'_, VaultState>,
+    path: &str,
+) -> Result<Option<String>, CommandError> {
+    crate::recovery::load(&state.root()?, path)
+}
+
+/// 删除崩溃备份（保存成功 / 用户丢弃）；幂等。
+#[tauri::command(rename_all = "snake_case")]
+pub fn recovery_discard(
+    state: tauri::State<'_, VaultState>,
+    path: &str,
+) -> Result<(), CommandError> {
+    crate::recovery::discard(&state.root()?, path)
+}
+
+/// 当前 vault 的残留备份清单（vault 相对路径）：前端装载 vault 后据此决定是否
+/// 给恢复提示。无残留返回空表。
+#[tauri::command]
+pub fn recovery_list(state: tauri::State<'_, VaultState>) -> Result<Vec<String>, CommandError> {
+    crate::recovery::list(&state.root()?)
+}
+
+// ---------------------------------------------------------------------------
 // link graph / wikilink（add-wikilink）
 // ---------------------------------------------------------------------------
 
@@ -514,5 +588,27 @@ mod tests {
         // 高版本配置由更新版本应用写入，不把 version 降回当前值
         assert_eq!(value["version"], serde_json::json!(99));
         assert_eq!(value["last_vault"], serde_json::json!("/tmp/vault"));
+    }
+
+    /// M127：last_vault 写失败必须降级为 warning（返回 false、不 panic、不传播），
+    /// 打开成功不被记忆失败抹成失败。写成功路径同时验证字段落盘。
+    #[test]
+    fn remember_last_vault_degrades_write_failure_to_warning() {
+        let dir =
+            std::env::temp_dir().join(format!("lumir-last-vault-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("create temp dir");
+        let good = dir.join("config.json");
+        assert!(remember_last_vault_to(&good, Path::new("/tmp/vault")));
+        let saved: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&good).unwrap()).unwrap();
+        assert_eq!(saved["last_vault"], serde_json::json!("/tmp/vault"));
+
+        // 父路径是一个普通文件 → create_dir_all 必失败
+        let blocker = dir.join("not-a-dir");
+        std::fs::write(&blocker, "x").unwrap();
+        let bad = blocker.join("config.json");
+        assert!(!remember_last_vault_to(&bad, Path::new("/tmp/vault")));
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

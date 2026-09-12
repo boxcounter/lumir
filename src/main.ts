@@ -7,7 +7,6 @@ import {
   errorMessage,
   fsReadAttachment,
   fsReadSnapshot,
-  documentSave,
   documentSetDirty,
   isCommandError,
   linkGraphResolve,
@@ -19,8 +18,8 @@ import {
   vaultRemap,
   wikilinkCreate,
 } from "./ipc";
+import { createSaveController } from "./save-controller";
 import type { FsEntry } from "./bindings/FsEntry";
-import type { FsChangeKind } from "./bindings/FsChangeKind";
 import type { LinkResolveResult } from "./bindings/LinkResolveResult";
 import { extensionOf, resolveByNameUnique } from "./preview/attachments";
 import { findWikilinkSpans } from "./preview/wikilinks";
@@ -125,39 +124,18 @@ function toast(text: string, actions: Array<{ label: string; run(): void }> = []
   return el;
 }
 
-/** dirty 守卫提示（无法切换 / 无法退出）的标识类：dirty 清除时整批撤下。 */
-const GUARD_TOAST_CLASS = "toast-dirty-guard";
-
-// 打开文件：读出文本交给 editor.openDocument——模式裁决（文件类型优先，
-// 无类型线索回落配置默认）和附件相对路径解析依赖的 currentFilePath 都在
-// 内核里完成（spec「模式配置来源」）。不支持的二进制 → 提示而非报错弹窗。
-let fileRequest = 0;
-let displayedPath: string | undefined;
-let displayedRevision: string | undefined;
-let documentGeneration = 0;
-let saveInFlight = false;
-
-function dirtyGuard(action: string): boolean {
-  if (!editor.isDirty()) return true;
-  toast(`当前 Markdown 有未保存修改，无法${action}；请先保存（Cmd+S）`).classList.add(GUARD_TOAST_CLASS);
-  return false;
-}
-
-// 保存失败的界面反馈（M101 验收修复）：冲突 / 写入失败 / 结果未知都必须给出
-// 可理解的提示并说明修改仍保留在内存，不得静默或只剩技术化 message。
-// 冲突与「文件已被外部删除」另有带动作的恢复提示（M124，见 saveCurrentFile
-// 的 catch 分流），此处文案是两路共用的兜底与人话化映射。
-const SAVE_ERROR_HINTS: Record<string, string> = {
-  document_conflict: "保存冲突：文件在磁盘上已被外部修改，内存中的修改未丢失",
-  document_write_failed: "保存失败：无法写入文档，内存中的修改未丢失",
-  document_write_unknown: "保存结果未知：写入可能未生效，请核对文件内容，内存中的修改未丢失",
-  fs_not_found: "保存失败：文件已被外部删除或移动，内存中的修改未丢失",
-};
-
-function saveErrorMessage(e: unknown): string {
-  if (isCommandError(e)) return SAVE_ERROR_HINTS[e.code] ?? `保存失败：${e.message}`;
-  return `保存失败：${errorMessage(e)}`;
-}
+/** dirty 守卫提示的标识类与保存链路的其余决策都在 src/save-controller.ts；
+ *  main.ts 只装配（M127）。原 fileRequest 与 documentGeneration 恒同增同减，
+ *  已合并为 controller 的世代号，兼作 editor.openDocument 的 requestId。 */
+const save = createSaveController({
+  editor,
+  container: shell.editor,
+  toast,
+  openFile: (path, kind) => openFile(path, kind),
+  invalidateResolve: () => invalidateResolve(),
+  showEditor: () => showEditor(),
+  isNoticeHidden: () => notice.hidden,
+});
 
 function emitReadiness(name: string, detail: object = {}): void {
   window.dispatchEvent(new CustomEvent(`lumir:${name}`, { detail }));
@@ -167,10 +145,12 @@ editor.onReady((event) => {
   emitReadiness(event.phase, event);
 });
 
+// 打开文件：读出文本交给 editor.openDocument——模式裁决（文件类型优先，
+// 无类型线索回落配置默认）和附件相对路径解析依赖的 currentFilePath 都在
+// 内核里完成（spec「模式配置来源」）。不支持的二进制 → 提示而非报错弹窗。
 async function openFile(path: string, kind: "md" | "code" | "text" | "binary") {
-  if (!dirtyGuard("切换文件")) return;
-  const request = ++fileRequest;
-  const generation = ++documentGeneration;
+  if (!save.guard("切换文件")) return;
+  const request = save.beginSwitch();
   if (kind !== "binary") showNotice(`正在打开：${path}`);
   if (kind === "binary") {
     showNotice(`暂不支持预览：${path}`);
@@ -178,11 +158,10 @@ async function openFile(path: string, kind: "md" | "code" | "text" | "binary") {
   }
   try {
     const snapshot = await fsReadSnapshot(path);
-    if (request !== fileRequest || generation !== documentGeneration || !dirtyGuard("切换文件")) return;
+    if (!save.isCurrent(request) || !save.guard("切换文件")) return;
     const text = snapshot.content;
     const revision = kind === "md" ? snapshot.revision : undefined;
-    displayedPath = path;
-    displayedRevision = revision;
+    save.noteOpened(path, revision);
     currentPath = kind === "md" ? path : undefined;
     mastheadFile.textContent = path;
     invalidateResolve(); // from 变更，按 from 键控的缓存整批失效
@@ -190,154 +169,15 @@ async function openFile(path: string, kind: "md" | "code" | "text" | "binary") {
     tree.setCurrentPath(path);
     showEditor();
   } catch (e) {
-    if (request !== fileRequest) return;
+    if (!save.isCurrent(request)) return;
     showNotice(errorMessage(e));
   }
-}
-
-/** 重载当前展示文件：与 openFile 同序（读快照 → 校验世代 → openDocument），
- * 但不走 dirtyGuard——调用方自行承担处置语义（冲突放弃 / watch 外部修改）。
- * 不主动换代号：捕获当前世代并在应用前校验未被并发打开挤占，迟到响应自然丢弃。
- * onlyIfChanged：revision 未变即跳过（自身保存也触发 watch Modified，避免每次
- * 保存后重载闪烁、光标复位）；应用前发现用户已开始输入（dirty）也放弃。 */
-async function reloadDisplayedFile(path: string, opts: { onlyIfChanged?: boolean } = {}): Promise<boolean> {
-  if (displayedPath !== path || editor.mode() !== "md" || !notice.hidden) return false;
-  const request = fileRequest;
-  const generation = documentGeneration;
-  try {
-    const snapshot = await fsReadSnapshot(path);
-    if (request !== fileRequest || generation !== documentGeneration || displayedPath !== path) return false;
-    if (opts.onlyIfChanged && (snapshot.revision === displayedRevision || editor.isDirty())) return false;
-    if (editor.mode() !== "md") return false;
-    displayedRevision = snapshot.revision;
-    invalidateResolve(); // from 未变，但内容已换，按 from 键控的缓存整批失效
-    editor.openDocument(snapshot.content, path, request);
-    showEditor();
-    return true;
-  } catch (e) {
-    if (request !== fileRequest) return false;
-    toast(errorMessage(e));
-    return false;
-  }
-}
-
-/** 重新载入（放弃我的修改）：冲突处置与 watch 重载共用的入口，给出完成反馈。 */
-async function discardAndReload(path: string): Promise<void> {
-  if (await reloadDisplayedFile(path)) toast("已重新载入磁盘内容");
-}
-
-async function saveCurrentFile(): Promise<void> {
-  if (saveInFlight || !displayedPath || editor.mode() !== "md" || !editor.isDirty() || !displayedRevision) return;
-  const generation = documentGeneration;
-  const path = displayedPath;
-  const expectedRevision = displayedRevision;
-  const content = editor.view.state.doc.toString();
-  saveInFlight = true;
-  try {
-    const revision = await documentSave(path, expectedRevision, content);
-    if (generation !== documentGeneration || displayedPath !== path) return;
-    displayedRevision = revision;
-    if (editor.view.state.doc.toString() === content) {
-      editor.markClean();
-      toast("已保存");
-    } else {
-      toast("已保存当前快照，仍有未保存修改");
-    }
-  } catch (e) {
-    if (isCommandError(e) && e.code === "document_conflict") {
-      // CAS 失败：重试必败（revision 已变），纯文案会把用户修改锁死在内存——
-      // dirtyGuard 与退出守卫又堵死切换/退出，必须给逃生口（M124）。
-      showConflictPrompt(path);
-    } else if (isCommandError(e) && e.code === "fs_not_found") {
-      showNotFoundPrompt(path);
-    } else {
-      toast(saveErrorMessage(e));
-    }
-  } finally { saveInFlight = false; }
-}
-
-/** 保存冲突的恢复提示：两个动作分别对应「放弃本地」与「覆盖磁盘」。sticky：
- * 冲突在用户处置前不得自动消隐。 */
-function showConflictPrompt(path: string): void {
-  toast(SAVE_ERROR_HINTS.document_conflict, [
-    { label: "重新载入（放弃我的修改）", run: () => void discardAndReload(path) },
-    { label: "强制覆盖保存", run: () => showForceSaveConfirm(path) },
-  ], true);
-}
-
-/** 强制覆盖的二次确认：文案必须明示将覆盖磁盘上较新的内容（M124 裁决）。 */
-function showForceSaveConfirm(path: string): void {
-  toast("将覆盖磁盘上较新的内容，此操作不可撤销。确认强制覆盖保存？", [
-    { label: "覆盖保存", run: () => void forceSaveCurrentFile(path) },
-    { label: "取消", run: () => {} },
-  ], true);
-}
-
-/** 强制覆盖保存：先拉取磁盘当前 revision 作为新的 CAS 基准再写入（经既有
- * fsReadSnapshot 封装，revision 与 fs_file_revision 同 sha256 原文口径）。
- * 拉取与写入之间再有外部修改则仍报冲突，用户可重试——不静默吞。 */
-async function forceSaveCurrentFile(path: string): Promise<void> {
-  if (saveInFlight || displayedPath !== path || editor.mode() !== "md") return;
-  const content = editor.view.state.doc.toString();
-  saveInFlight = true;
-  try {
-    const snapshot = await fsReadSnapshot(path);
-    if (displayedPath !== path) return;
-    const revision = await documentSave(path, snapshot.revision, content);
-    displayedRevision = revision;
-    if (editor.view.state.doc.toString() === content) {
-      editor.markClean();
-      toast("已强制覆盖保存");
-    } else {
-      toast("已强制覆盖保存当前快照，仍有未保存修改");
-    }
-  } catch (e) {
-    if (isCommandError(e) && e.code === "fs_not_found") {
-      // 冲突处置期间文件又被外部删除：同样走另存出口。
-      showNotFoundPrompt(path);
-    } else {
-      toast(saveErrorMessage(e));
-    }
-  } finally { saveInFlight = false; }
-}
-
-/** 保存目标已被外部删除：内存修改是最后副本，给出另存入口（M124）。 */
-function showNotFoundPrompt(path: string): void {
-  toast(SAVE_ERROR_HINTS.fs_not_found, [
-    { label: "另存为新文件", run: () => void saveAsNewFile(path) },
-  ], true);
-}
-
-/** 另存为新文件：经 wikilink_create（后端 create_note，O_EXCL 语义不覆盖既有
- * 文件）在同目录建「原名-恢复.md」，把内存内容写入后切过去；撞名自动加序号
- * 重试。 */
-async function saveAsNewFile(fromPath: string): Promise<void> {
-  const stem = fromPath.slice(fromPath.lastIndexOf("/") + 1).replace(/\.(md|markdown)$/i, "");
-  const content = editor.view.state.doc.toString();
-  for (const suffix of ["", "-2", "-3", "-4", "-5"]) {
-    try {
-      const { created } = await wikilinkCreate(fromPath, `[[${stem}-恢复${suffix}]]`);
-      const snapshot = await fsReadSnapshot(created); // 空文件 revision 作 CAS 基准
-      await documentSave(created, snapshot.revision, content);
-      // 缓冲内容已落到新文件，本地 dirty 处置完毕——否则 openFile 的 dirtyGuard
-      // 会拦下这次切换，用户停在已删除文件上。
-      editor.markClean();
-      await openFile(created, "md");
-      toast(`已另存为：${created}`);
-      return;
-    } catch (e) {
-      if (isCommandError(e) && e.code === "wikilink_target_exists") continue;
-      toast(errorMessage(e));
-      return;
-    }
-  }
-  toast("另存为新文件失败：同名文件已存在，请手动导出");
 }
 
 window.addEventListener("keydown", (event) => {
   if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "s") {
     event.preventDefault();
-    void saveCurrentFile();
+    void save.save();
   }
 });
 
@@ -505,8 +345,9 @@ const mastheadFile = shell.root.querySelector<HTMLElement>(".masthead-file")!;
 // dirty 状态反馈（M101 验收修复）：toast 会消隐，dirty 期间 masthead 文件名旁
 // 常驻「未保存」标记；同时把 dirty 镜像给后端退出守卫（Cmd+Q / 关窗拦截）。
 function syncDirtyIndicator(): void {
-  if (displayedPath === undefined) return;
-  mastheadFile.textContent = editor.isDirty() ? `${displayedPath}（未保存）` : displayedPath;
+  const path = save.displayedPath();
+  if (path === undefined) return;
+  mastheadFile.textContent = editor.isDirty() ? `${path}（未保存）` : path;
 }
 
 editor.onDirty((dirty) => {
@@ -514,7 +355,7 @@ editor.onDirty((dirty) => {
   // 保存成功（dirty→false）后所有 dirty 表现层必须一致清除：masthead 标记、
   // 后端退出守卫镜像，以及 dirty 期间弹出的守卫提示。sticky 提示按设计不自动
   // 消隐，不主动撤下会让「未保存」在保存成功后残留在右下角（桌面验收缺陷）。
-  if (!dirty) shell.editor.querySelectorAll(`.${GUARD_TOAST_CLASS}`).forEach((el) => el.remove());
+  if (!dirty) save.clearGuardToasts();
   // 无 Tauri 后端（纯浏览器预览）时同步失败无害，静默忽略。
   documentSetDirty(dirty).catch(() => {});
 });
@@ -528,9 +369,7 @@ documentSetDirty(editor.isDirty()).catch(() => {});
 // 退出/关窗被 dirty 守卫拦截时必须可见（M101）：后端 prevent_exit/prevent_close
 // 本身无任何界面表现，前端收到事件要给出可理解的提示。sticky：拦截提示不得
 // 在用户看到前自动消隐（守卫反馈要持续可见，点击浮条关闭）。
-onQuitBlocked(() => {
-  toast("当前有未保存修改，无法退出；请先保存（Cmd+S）", undefined, true).classList.add(GUARD_TOAST_CLASS);
-}).catch(() => {});
+onQuitBlocked(() => save.showQuitBlocked()).catch(() => {});
 let tree!: ReturnType<typeof createFileTree>;
 // 目录选择器入口（空态按钮与树头部「切换」共用）。命中重映射候选时
 //（spec：未注册路径 + 失效注册需显式确认）open_vault 按契约返回空 entries，
@@ -583,13 +422,10 @@ tree = createFileTree(shell.treeMount, {
 // 文件的 currentPath 会被当作新 vault 的 resolve/create from 基准，wikilink
 // 一键创建会把文件误建到新 vault 的同名相对路径下。
 function loadVault(root: string, entries: FsEntry[], vaultId = root, restored = false) {
-  if (!dirtyGuard("切换 vault")) return;
+  if (!save.guard("切换 vault")) return;
   vaultLoaded = true;
   emitReadiness("vault-ready", { root, vaultId, restored });
-  ++fileRequest;
-  ++documentGeneration;
-  displayedPath = undefined;
-  displayedRevision = undefined;
+  save.noteVaultReset();
   attachmentPaths = entries.filter((e) => e.kind === "file").map((e) => e.path);
   // 链接索引已在后端随 vault 打开建立；世代号自增使旧 vault 的在途 resolve
   // 回调全部作废，解析缓存与单链接降级集合整批失效
@@ -605,6 +441,8 @@ function loadVault(root: string, entries: FsEntry[], vaultId = root, restored = 
   mastheadVault.textContent = root.slice(root.lastIndexOf("/") + 1) || root;
   tree.setCurrentPath(undefined);
   tree.setVault(root, entries);
+  // 残留崩溃备份的恢复入口（M127）：装载完成后才有 vault 上下文可定位备份。
+  void save.checkRecovery();
 }
 
 // watch 增量事件流 → 附件索引与文件树同步打补丁（都不全量重扫）。
@@ -624,39 +462,17 @@ onFsEntryChanged((changes) => {
     }
   }
   // 打开中文件被外部变更（Lumir ↔ Obsidian 来回编辑的高频路径，M124）：
-  // 附件索引与文件树照常吃增量，文档内容另行处置。
-  const openPath = displayedPath;
+  // 附件索引与文件树照常吃增量，文档内容另行处置（save 控制器内分流）。
+  const openPath = save.displayedPath();
   if (openPath) {
     const hit = changes.find((c) => c.path === openPath);
-    if (hit) handleExternalChange(openPath, hit.kind);
+    if (hit) save.handleExternalChange(openPath, hit.kind);
   }
   // 链接索引已由后端随事件流增量更新；前端清缓存重建装饰
   invalidateResolve();
   editor.refreshPreview();
   tree.applyChanges(changes);
 }).catch(() => {});
-
-/** watch 命中打开中文件的分流（M124）。保存进行中的批次跳过——自身保存也产生
- * 事件，由 reloadDisplayedFile 的 revision 比对丢弃；外部删除无法重载，只提示
- * 内容仍保留；dirty 时把选择权交给用户（sticky 浮条而非 modal，不打断打字）；
- * 未 dirty 自动重载并提示。仅 md 模式：展示中的 md 才有内存修改可丢失。 */
-function handleExternalChange(path: string, kind: FsChangeKind): void {
-  if (saveInFlight) return;
-  if (kind === "deleted") {
-    toast(`当前文件已被外部删除：${path}；编辑器中的内容未丢失`, [], true);
-    return;
-  }
-  if (editor.isDirty()) {
-    toast(`检测到外部修改：${path}`, [
-      { label: "重载（放弃我的修改）", run: () => void discardAndReload(path) },
-      { label: "保留我的版本", run: () => {} },
-    ], true);
-  } else {
-    void reloadDisplayedFile(path, { onlyIfChanged: true }).then((reloaded) => {
-      if (reloaded) toast("检测到外部修改，已自动重载");
-    });
-  }
-}
 
 // 启动恢复：后端 setup 已按 last_vault 尝试自动打开；这里拉取结果。
 // 未打开 → 空态 + 打开入口；恢复失败 → 空态上人话提示。

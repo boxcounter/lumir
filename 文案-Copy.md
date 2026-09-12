@@ -43,9 +43,17 @@
 | D52 | 外部修改 toast 动作 | 作者 | 重载（放弃我的修改） | Reload (discard my changes) | 动作自含代价说明。 |
 | D53 | 外部修改 toast 动作 | 作者 | 保留我的版本 | Keep my version | 中性确认本地优先，后续保存时再走冲突处置。 |
 | D54 | toast 打开中文件被外部删除 | 作者 | 当前文件已被外部删除：{路径}；编辑器中的内容未丢失 | The open file was deleted externally: {path}; the content is still in the editor | 坏消息配救生圈：删除不可挽回，但内容还在。 |
+| D55 | toast 自动保存成功 | 作者 | 已自动保存 | Auto-saved | 自动落盘必须留下可见痕迹，并与手动保存区分（后者是作者的主动动作）。 |
+| D56 | toast 自动保存部分快照 | 作者 | 已自动保存当前快照，仍有未保存修改 | Auto-saved the current snapshot; unsaved changes remain | 说明只落了快照、后续仍会继续写入，不制造「已全部保存」的错觉。 |
+| D57 | 崩溃备份发现提示 | 作者 | 发现未保存的崩溃备份：{路径} | Unsaved crash backup found: {path} | 上次异常退出留下内容，陈述可恢复的事实，不制造恐吓。 |
+| D58 | 崩溃备份 toast 动作 | 作者 | 恢复内容 | Restore content | 明确动作对象是备份内容本体。 |
+| D59 | 崩溃备份 toast 动作 | 作者 | 丢弃备份 | Discard backup | 给出不恢复的出口，避免提示常驻。 |
+| D60 | toast 崩溃备份已恢复 | 作者 | 已恢复未保存内容，请保存（Cmd+S） | Unsaved content restored; press Cmd+S to save | 恢复后内容仍在内存缓冲，说明下一步动作。 |
+| D61 | toast 崩溃备份已丢弃 | 作者 | 已丢弃崩溃备份 | Crash backup discarded | 确认清理完成，提示不再出现。 |
+| D62 | toast 崩溃备份不存在 | 作者 | 崩溃备份已不存在 | The crash backup no longer exists | 用户恢复前备份已被别处清理，说明原因而非报错。 |
 
-D30 已合并入 D18；D30 编号停用，不复用。D2–D3、D8–D18、D27–D29 随 Thread 特性删除（ADR 0006，2026-09-12）停用，不复用。D23–D24 随 panel 空壳清除（M124，2026-09-12）停用，不复用。
+D30 已合并入 D18；D30 编号停用，不复用。D2–D3、D8–D18、D27–D29 随 Thread 特性删除（ADR 0006，2026-09-12）停用，不复用。D23–D24 随 panel 空壳清除（M124，2026-09-12）停用，不复用。D55–D62 为保存链路加固新增（M127，2026-09-12）。
 
 ## 文案实现备注
 
-树、编辑器、toast 的动态错误由 `src/tree.ts` / `src/main.ts` 持有或透传；本 deck 收编其稳定可见部分。
+树、编辑器、toast 的动态错误由 `src/tree.ts` / `src/save-controller.ts` 持有或透传；本 deck 收编其稳定可见部分。保存链路的稳定文案（含守卫提示与冲突/备份动作）随 M127 的拆分集中在 `src/save-controller.ts`。
