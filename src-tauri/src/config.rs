@@ -28,7 +28,8 @@ pub const SCHEMA_VERSION: u32 = 1;
 #[ts(export, export_to = "../../src/bindings/")]
 pub struct AppConfig {
     pub version: u32,
-    /// 上次打开的 vault 路径（mid-M1 "记住上次 vault" 消费；本波只定义不消费）。
+    /// 上次打开的 vault 路径（启动时 `restore_last_vault` 恢复，vault 打开成功时
+    /// `write_last_vault` 写回）。
     pub last_vault: Option<String>,
     pub editor: EditorConfig,
 }

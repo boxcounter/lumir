@@ -30,15 +30,9 @@ const readDirectory = async name => {
     return { file, content: await readFile(resolved, "utf8") };
   }));
 };
-const threads = await readDirectory("threads");
 const workspaces = await readDirectory("workspaces");
 const snapshot = {
   stage, capturedAt: new Date().toISOString(), manifest,
-  threads: threads.filter(item => item.file.endsWith(".json")).map(item => {
-    const t = JSON.parse(item.content);
-    return { id: t.id, vault_id: t.vault_id, title: "<redacted>", status: t.status, fileCount: t.files.length };
-  }),
-  current: threads.filter(item => item.file.startsWith("current-")).map(item => ({ file: item.file, id: item.content })),
   workspaces: workspaces.map(item => { const w = JSON.parse(item.content); return { id: w.id, path: w.path === path.join(run, "vault") ? "<run>/vault" : "<redacted>" }; }),
 };
 try { await mkdir(path.join(run, "evidence")); } catch (error) { if (error.code !== "EEXIST") throw error; }

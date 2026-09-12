@@ -642,8 +642,8 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
           const language = codeLanguageFor(path);
           return language ? [language, codeHighlight] : [codeHighlight];
         })();
-    // CM6 的基础层必须跟随 shell 的三套主题；live preview 只增加 Markdown
-    // 语义装饰，避免 code 模式落回默认白底、灰 gutter 或默认选区颜色。
+    // CM6 的基础层必须继承 shell 的排版基线配色（ADR 0006，单一基线）；live
+    // preview 只增加 Markdown 语义装饰，避免 code 模式落回默认白底、灰 gutter 或默认选区颜色。
     const baseTheme = EditorView.theme({
       "&": {
         color: "var(--text)",

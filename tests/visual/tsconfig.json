@@ -1,0 +1,21 @@
+{
+  // 视觉测试代码的类型防线：scenes/** 全量 tsc --noEmit（CI 步骤见 .github/workflows/visual.yml，
+  // 本地在 tests/visual 下 npx tsc --noEmit）。口径对齐根 tsconfig（strict + bundler 解析，
+  // 可解析 @playwright/test 与 ../../../src/* 的引用）。include 覆盖本目录 *.mjs：
+  // allowJs 入程序但不 checkJs——node:test 脚本无 @types/node 可用，防线守 scenes/*.ts
+  // （mermaid 签名漂移靠 30s 超时暴露的缺口正在此处）。
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "strict": true,
+    "noEmit": true,
+    "isolatedModules": true,
+    "skipLibCheck": true,
+    "useDefineForClassFields": true,
+    "allowJs": true,
+    "checkJs": false
+  },
+  "include": ["scenes/**/*.ts", "*.mjs", "*.d.ts", "playwright.config.ts"]
+}

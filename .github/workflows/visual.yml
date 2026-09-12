@@ -61,6 +61,13 @@ jobs:
           pnpm --dir tests/visual install --ignore-workspace --frozen-lockfile
           pnpm --dir tests/visual exec playwright install chromium
 
+      - name: 视觉测试代码类型检查（堵签名漂移）
+        # scenes/*.ts 此前无类型检查——mermaid 渲染器签名漂移曾靠 30s 超时暴露。
+        # 复用根 typescript（上一步已随 pnpm install 装好），在 tests/visual 下做全量
+        # tsc --noEmit；用 ../../node_modules/.bin 直取，不依赖 pnpm exec 的解析。
+        working-directory: tests/visual
+        run: ../../node_modules/.bin/tsc --noEmit
+
       - name: 视觉回归对比（不通过即拒合）
         run: pnpm --dir tests/visual test
 

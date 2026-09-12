@@ -8,7 +8,6 @@ import type { CommandError } from "./bindings/CommandError";
 import type { ReadSnapshot } from "./bindings/ReadSnapshot";
 import type { ConfigSnapshot } from "./bindings/ConfigSnapshot";
 import type { FsChange } from "./bindings/FsChange";
-import type { FsEntry } from "./bindings/FsEntry";
 import type { FsEntryChangedEvent } from "./bindings/FsEntryChangedEvent";
 import type { VaultInfo } from "./bindings/VaultInfo";
 import type { VaultStatus } from "./bindings/VaultStatus";
@@ -49,11 +48,6 @@ export function vaultOpenPath(path: string, force_new = false): Promise<VaultInf
 /** 启动后查询当前 vault 状态（含 last_vault 恢复失败的人话提示）。 */
 export function vaultCurrent(): Promise<VaultStatus> {
   return invoke<VaultStatus>("vault_current");
-}
-
-/** 全量重扫当前 vault（watch 期间的常规刷新走 fs:entry_changed 增量）。 */
-export function fsScanWorkspace(): Promise<FsEntry[]> {
-  return invoke<FsEntry[]>("fs_scan_workspace");
 }
 
 /** 读 vault 内文本文件与绑定 revision 快照。 */
@@ -99,5 +93,4 @@ export function linkGraphResolve(from: string, link: string): Promise<LinkResolv
 export function wikilinkCreate(from: string, link: string): Promise<CreateNoteResult> {
   return invoke<CreateNoteResult>("wikilink_create", { from, link });
 }
-export const vaultRegister = (id: string, path: string): Promise<VaultWorkspace> => invoke<VaultWorkspace>("vault_register", { id, path });
 export const vaultRemap = (id: string, path: string): Promise<VaultWorkspace> => invoke<VaultWorkspace>("vault_remap", { id, path });

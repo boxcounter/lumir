@@ -5,30 +5,25 @@ import { mkdir, writeFile, readFile, symlink, unlink, readdir } from "node:fs/pr
 import path from "node:path";
 const prepare = () => execFileSync(process.execPath, ["scripts/visual/prepare-isolated.mjs"], { encoding: "utf8" }).trim();
 const snapshot = (run, stage) => JSON.parse(execFileSync(process.execPath, ["scripts/visual/snapshot-isolated.mjs", run, stage], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }));
-test("unique runs do not inherit Thread/current/workspace; evidence redacts and fails closed", async () => {
+test("unique runs do not inherit workspace; evidence redacts and fails closed", async () => {
   const old = prepare();
-  await mkdir(path.join(old, "config/lumir/threads"));
-  await writeFile(path.join(old, "config/lumir/threads/current-old.txt"), "old");
+  await mkdir(path.join(old, "config/lumir/workspaces"));
+  await writeFile(path.join(old, "config/lumir/workspaces/stale.json"), JSON.stringify({ id: "stale-vault", path: "/tmp/stale" }));
   const run = prepare();
   assert.notEqual(old, run);
-  assert.deepEqual(snapshot(run, "before-create").current, []);
-  await mkdir(path.join(run, "config/lumir/threads"));
+  assert.deepEqual(snapshot(run, "before-create").workspaces, []);
   await mkdir(path.join(run, "config/lumir/workspaces"));
-  await writeFile(path.join(run, "config/lumir/threads/test.json"), JSON.stringify({ id: "test", vault_id: "test-vault", title: "private title", status: "active", files: [] }));
   await writeFile(path.join(run, "config/lumir/workspaces/test.json"), JSON.stringify({ id: "test-vault", path: path.join(run, "vault") }));
   const after = snapshot(run, "after-create");
-  assert.equal(after.threads[0].title, "<redacted>");
   assert.equal(after.workspaces[0].path, "<run>/vault");
   const restart = snapshot(run, "after-restart");
-  assert.deepEqual(restart.threads, after.threads);
-  assert.deepEqual(restart.current, []);
+  assert.deepEqual(restart.workspaces, after.workspaces);
   assert.throws(() => snapshot(run, "after-restart"));
   assert.throws(() => snapshot(path.dirname(run), "before-create"));
   const bad = prepare();
-  await mkdir(path.join(bad, "config/lumir/threads"));
-  await writeFile(path.join(bad, "config/lumir/threads/bad.json"), "{");
+  await mkdir(path.join(bad, "config/lumir/workspaces"));
+  await writeFile(path.join(bad, "config/lumir/workspaces/bad.json"), "{");
   assert.throws(() => snapshot(bad, "before-create"));
-  assert.equal(await readFile(path.join(old, "config/lumir/threads/current-old.txt"), "utf8"), "old");
 });
 test("manifest and evidence symlinks fail without copying private fields or writing outside run", async () => {
   const target = prepare();

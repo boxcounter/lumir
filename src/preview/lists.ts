@@ -62,7 +62,7 @@ class ListLayout {
   constructor(private view: EditorView) {
     this.tree = syntaxTree(view.state);
     this.observer = new MutationObserver(this.measure);
-    this.observer.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme", "style", "class"] });
+    this.observer.observe(document.documentElement, { attributes: true, attributeFilter: ["style", "class"] });
     document.fonts.addEventListener("loadingdone", this.measure);
     this.measure();
     this.build(view);

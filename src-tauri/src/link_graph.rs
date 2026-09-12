@@ -102,7 +102,7 @@ pub struct CreateNoteResult {
 // §2 词法
 // ---------------------------------------------------------------------------
 
-/// frontmatter 扫描行数上限（与 src/preview/frontmatter.ts 同口径）。
+/// frontmatter 扫描行数上限（与 src/preview/wikilinks.ts 同口径）。
 const MAX_FRONTMATTER_LINES: usize = 200;
 
 /// 识别并分解文本中的全部 wikilink（spec §2）。span 为 code point 偏移。

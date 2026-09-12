@@ -157,7 +157,7 @@ export const livePreviewTheme = EditorView.theme({
   },
 
   // math（KaTeX）：公式本体样式走本地打包的 katex.min.css（继承 currentColor，
-  // 三套主题自动适配）；此处只补块级容器与失败降级（可读源码 + 明确失败态）。
+  // 随 shell 基线配色适配）；此处只补块级容器与失败降级（可读源码 + 明确失败态）。
   ".cm-lp-math-block": { padding: "4px 0", overflowX: "auto" },
   ".cm-lp-math-fallback": {
     fontFamily: "var(--font-mono)",
@@ -179,7 +179,7 @@ export const livePreviewTheme = EditorView.theme({
   ".cm-lp-math-raw": { margin: "0", whiteSpace: "pre-wrap", color: "var(--dim)" },
 
   // mermaid：SVG 居中容器 + 占位与失败降级（口径同 math 降级块）。图表配色
-  // 由 mermaid 按主题渲染（见 mermaid.ts themeConfig），此处只管容器。
+  // 由 mermaid.ts 固定渲染（default 主题 + 透明背景），此处只管容器。
   ".cm-lp-mermaid": { padding: "4px 0", overflowX: "auto", textAlign: "center" },
   ".cm-lp-mermaid svg": { maxWidth: "100%" },
   ".cm-lp-mermaid-pending": { textAlign: "start", color: "var(--dim)", fontSize: "0.85em", padding: "6px 0" },
