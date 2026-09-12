@@ -768,10 +768,76 @@ impl Default for LinkGraph {
     }
 }
 
+// vault 文件创建所需的系统调用窄封装：本模块只在此处声明并调用 C 接口，下面三个
+// 包装函数把「裸 fd 的所有权接管」与「C 字符串指针的生命周期」收敛在函数体内，
+// 调用方只见安全类型；每个 unsafe 的不安全前提在函数文档里逐条论证。
+#[cfg(unix)]
+unsafe extern "C" {
+    fn open(path: *const std::ffi::c_char, flags: i32, ...) -> std::os::fd::RawFd;
+    fn openat(
+        dirfd: std::os::fd::RawFd,
+        path: *const std::ffi::c_char,
+        flags: i32,
+        ...
+    ) -> std::os::fd::RawFd;
+    fn mkdirat(dirfd: std::os::fd::RawFd, path: *const std::ffi::c_char, mode: u32) -> i32;
+}
+
+/// `open(2)`：`path` 必须是 NUL 结尾的 C 字符串。
+///
+/// 不安全性收敛：内核只读取 `path` 指向的内存，`CStr` 保证 NUL 结尾且在调用期间
+/// 存活；返回 fd 非负时为本次调用新分配、此前无 owner，移交 `OwnedFd` 后由其独占
+/// close，不存在二次关闭。
+#[cfg(unix)]
+fn open_owned(path: &std::ffi::CStr, flags: i32) -> std::io::Result<std::os::fd::OwnedFd> {
+    use std::os::fd::{FromRawFd, OwnedFd};
+    let fd = unsafe { open(path.as_ptr(), flags, 0) };
+    if fd < 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    Ok(unsafe { OwnedFd::from_raw_fd(fd) })
+}
+
+/// 以 `dir` 为基准调用 `openat(2)`（目录 fd 相对，避免 TOCTOU 路径重解析）；
+/// 安全性前提同 `open_owned`。
+#[cfg(unix)]
+fn openat_owned(
+    dir: std::os::fd::BorrowedFd<'_>,
+    name: &std::ffi::CStr,
+    flags: i32,
+    mode: u32,
+) -> std::io::Result<std::os::fd::OwnedFd> {
+    use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
+    let fd = unsafe { openat(dir.as_raw_fd(), name.as_ptr(), flags, mode) };
+    if fd < 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    Ok(unsafe { OwnedFd::from_raw_fd(fd) })
+}
+
+/// 以 `dir` 为基准调用 `mkdirat(2)`；目录已存在视为成功（幂等），其余错误原样返回。
+/// 安全性前提同 `open_owned`（`name` 为 NUL 结尾 C 字符串，`dir` 为有效目录 fd）。
+#[cfg(unix)]
+fn mkdirat_checked(
+    dir: std::os::fd::BorrowedFd<'_>,
+    name: &std::ffi::CStr,
+    mode: u32,
+) -> std::io::Result<()> {
+    use std::os::fd::AsRawFd;
+    let result = unsafe { mkdirat(dir.as_raw_fd(), name.as_ptr(), mode) };
+    if result < 0 {
+        let error = std::io::Error::last_os_error();
+        if error.kind() != std::io::ErrorKind::AlreadyExists {
+            return Err(error);
+        }
+    }
+    Ok(())
+}
+
 #[cfg(unix)]
 fn create_new_vault_file(root: &Path, rel: &str) -> std::io::Result<std::fs::File> {
     use std::ffi::CString;
-    use std::os::unix::io::{FromRawFd, RawFd};
+    use std::os::fd::AsFd;
 
     const O_RDONLY: i32 = 0;
     const O_WRONLY: i32 = 1;
@@ -792,24 +858,9 @@ fn create_new_vault_file(root: &Path, rel: &str) -> std::io::Result<std::fs::Fil
     #[cfg(not(target_os = "macos"))]
     const O_DIRECTORY: i32 = 0x00200000;
 
-    unsafe extern "C" {
-        fn open(path: *const std::ffi::c_char, flags: i32, ...) -> RawFd;
-        fn openat(dirfd: RawFd, path: *const std::ffi::c_char, flags: i32, ...) -> RawFd;
-        fn mkdirat(dirfd: RawFd, path: *const std::ffi::c_char, mode: u32) -> i32;
-    }
-
     fn cstring(path: &str) -> std::io::Result<CString> {
         CString::new(path)
             .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidInput, "路径包含 NUL 字符"))
-    }
-    fn open_dir_at(fd: RawFd, name: &str, flags: i32) -> std::io::Result<std::fs::File> {
-        let name = cstring(name)?;
-        let next = unsafe { openat(fd, name.as_ptr(), flags, 0) };
-        if next < 0 {
-            Err(std::io::Error::last_os_error())
-        } else {
-            Ok(unsafe { std::fs::File::from_raw_fd(next) })
-        }
     }
 
     let root_name = cstring(root.to_str().ok_or_else(|| {
@@ -818,59 +869,31 @@ fn create_new_vault_file(root: &Path, rel: &str) -> std::io::Result<std::fs::Fil
             "vault 根目录不是有效 UTF-8",
         )
     })?)?;
-    let root_fd = unsafe { open(root_name.as_ptr(), O_RDONLY | O_DIRECTORY | O_NOFOLLOW, 0) };
-    if root_fd < 0 {
-        return Err(std::io::Error::last_os_error());
-    }
-    let mut dir = unsafe { std::fs::File::from_raw_fd(root_fd) };
+    let mut dir: std::fs::File =
+        open_owned(&root_name, O_RDONLY | O_DIRECTORY | O_NOFOLLOW)?.into();
     let components: Vec<&str> = rel.split('/').collect();
     let file_name = components.last().expect("validated non-empty target");
     for component in &components[..components.len() - 1] {
+        let name = cstring(component)?;
         let flags = O_RDONLY | O_DIRECTORY | O_NOFOLLOW;
-        match open_dir_at(
-            std::os::unix::io::AsRawFd::as_raw_fd(&dir),
-            component,
-            flags,
-        ) {
-            Ok(next) => dir = next,
+        match openat_owned(dir.as_fd(), &name, flags, 0) {
+            Ok(next) => dir = next.into(),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                let name = cstring(component)?;
-                let result = unsafe {
-                    mkdirat(
-                        std::os::unix::io::AsRawFd::as_raw_fd(&dir),
-                        name.as_ptr(),
-                        0o755,
-                    )
-                };
-                if result < 0 {
-                    let mkdir_error = std::io::Error::last_os_error();
-                    if mkdir_error.kind() != std::io::ErrorKind::AlreadyExists {
-                        return Err(mkdir_error);
-                    }
-                }
-                dir = open_dir_at(
-                    std::os::unix::io::AsRawFd::as_raw_fd(&dir),
-                    component,
-                    flags,
-                )?;
+                mkdirat_checked(dir.as_fd(), &name, 0o755)?;
+                dir = openat_owned(dir.as_fd(), &name, flags, 0)?.into();
             }
             Err(error) => return Err(error),
         }
     }
     let name = cstring(file_name)?;
-    let fd = unsafe {
-        openat(
-            std::os::unix::io::AsRawFd::as_raw_fd(&dir),
-            name.as_ptr(),
-            O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW,
-            0o644,
-        )
-    };
-    if fd < 0 {
-        Err(std::io::Error::last_os_error())
-    } else {
-        Ok(unsafe { std::fs::File::from_raw_fd(fd) })
-    }
+    let file: std::fs::File = openat_owned(
+        dir.as_fd(),
+        &name,
+        O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW,
+        0o644,
+    )?
+    .into();
+    Ok(file)
 }
 
 #[cfg(not(unix))]

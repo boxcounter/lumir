@@ -88,15 +88,15 @@ body { font-family:var(--font-ui); background:var(--bg); color:var(--text); font
 }
 #intent b { color:var(--accent); }
 
-/* ============ app-shell 三栏（复刻 src/style.css：240px | 1fr | 280px） ============ */
+/* ============ app-shell 三栏（demo 专属骨架：文件树 | 编辑器 | config 探针） ============ */
 #stage { height:calc(100% - 0px); display:flex; flex-direction:column; }
 .app-shell { display:grid; grid-template-columns:240px 1fr 280px; flex:1; min-height:0; }
 .pane { min-width:0; min-height:0; overflow:auto; }
-.pane-filetree, .pane-panel {
+.pane-filetree {
   background:var(--pane-bg); border-right:1px solid var(--border); padding:8px;
   font-size:var(--fs-ui);
 }
-.pane-panel { border-right:none; border-left:1px solid var(--border); }
+#panel { background:var(--pane-bg); border-left:1px solid var(--border); padding:8px; font-size:var(--fs-ui); }
 .pane-editor { padding:0; position:relative; background:var(--bg); }
 
 /* 文件树（复刻 src/tree.ts DOM 结构） */
@@ -222,7 +222,7 @@ body { font-family:var(--font-ui); background:var(--bg); color:var(--text); font
   <div class="app-shell">
     <section class="pane pane-filetree" id="filetree"></section>
     <section class="pane pane-editor" id="editor"><div class="editor-notice" id="notice" hidden></div></section>
-    <section class="pane pane-panel" id="panel"></section>
+    <section class="pane" id="panel"></section>
   </div>
 </div>
 <script>

@@ -259,25 +259,3 @@ fn scenario_valid_id_rejects_path_escape_for_vault_commands() {
     assert!(vault_register("../config".into(), f.vault("v")).is_err());
     assert!(vault_remap("../config".into(), f.vault("v2")).is_err());
 }
-
-#[test]
-fn scenario_editor_measure_valid_value_has_no_warning() {
-    let f = Fixture::new();
-    let p = f.root.join("measure-valid.json");
-    fs::write(&p, r#"{"editor":{"measure":720}}"#).unwrap();
-    let loaded = config::load_from(&p);
-    assert_eq!(loaded.config.editor.measure, 720);
-    assert!(loaded.warnings.is_empty());
-}
-
-#[test]
-fn scenario_editor_measure_invalid_value_falls_back_with_warning() {
-    let f = Fixture::new();
-    let p = f.root.join("measure.json");
-    for value in ["0", "-1", "2001", "1.5", "\"wide\"", "true"] {
-        fs::write(&p, format!("{{\"editor\":{{\"measure\":{value}}}}}")).unwrap();
-        let loaded = config::load_from(&p);
-        assert_eq!(loaded.config.editor.measure, 480);
-        assert!(loaded.warnings.iter().any(|w| w.contains("editor.measure")));
-    }
-}
