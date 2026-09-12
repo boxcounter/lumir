@@ -19,7 +19,9 @@ use crate::commands::CommandError;
 
 /// 硬编码忽略集（裁决点 C）：一等公民的是文件类型，不是 VCS 内部目录。
 /// `.git` 含数万对象文件，枚举它会直接威胁性能合同（ADR 0002 §6）。
-/// 枚举与 watch 共用此集合；本 change 内不可配置。
+/// 枚举与 watch 共用此集合；本 change 内不可配置。保存临时文件
+/// （`.{name}.lumir-{pid}`，见 [`save_markdown`]）经 `is_ignored` 的模式
+/// 规则一并忽略：进程崩溃会留下 ghost，ghost 不进文件树、不产生 watch 事件。
 pub const IGNORED_NAMES: [&str; 3] = [".git", ".DS_Store", "node_modules"];
 
 /// 单附件大小上限（spec：建议 50MB），防止误读大文件撑破常驻内存合同。
@@ -81,7 +83,16 @@ pub struct FsEntryChangedEvent {
 }
 
 fn is_ignored(name: &std::ffi::OsStr) -> bool {
-    IGNORED_NAMES.iter().any(|n| name == *n)
+    if IGNORED_NAMES.iter().any(|n| name == *n) {
+        return true;
+    }
+    // 保存临时文件 ghost：`.` 开头且含 `.lumir-`（如 `.note.md.lumir-123`）。
+    // 精确匹配模式而非全部点文件——vault 里合法的 `.obsidian` 配置目录等
+    // 仍须正常枚举。
+    match name.to_str() {
+        Some(s) => s.starts_with('.') && s.contains(".lumir-"),
+        None => false,
+    }
 }
 
 /// 把绝对路径转成相对 vault 根的 `/` 分隔字符串；在忽略集内或无法转换时返回 None。
@@ -287,9 +298,28 @@ pub fn save_markdown(root: &Path, rel: &str, expected_revision: &str, content: &
     let parent = target.parent().ok_or_else(|| CommandError::new("fs_path_invalid", "目标目录无效"))?;
     let name = target.file_name().and_then(|n| n.to_str()).unwrap_or("document.md");
     let tmp = parent.join(format!(".{name}.lumir-{}", std::process::id()));
+    // create_new 撞上同名文件 = 上次保存进程崩溃留下的 ghost（tmp 名含自身
+    // pid，活着的进程互不挡道）：删除 ghost 重试一次；再失败才是真错误。
     let mut file = match std::fs::OpenOptions::new().write(true).create_new(true).open(&tmp) {
         Ok(file) => file,
-        Err(e) => return Err(CommandError::new("document_write_failed", format!("无法创建临时文件：{e}"))),
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+            let _ = std::fs::remove_file(&tmp);
+            match std::fs::OpenOptions::new().write(true).create_new(true).open(&tmp) {
+                Ok(file) => file,
+                Err(e) => {
+                    return Err(CommandError::new(
+                        "document_write_failed",
+                        format!("无法创建临时文件：{e}"),
+                    ))
+                }
+            }
+        }
+        Err(e) => {
+            return Err(CommandError::new(
+                "document_write_failed",
+                format!("无法创建临时文件：{e}"),
+            ))
+        }
     };
     use std::io::Write;
     if let Err(e) = file.write_all(content.as_bytes()) {
@@ -808,6 +838,61 @@ mod tests {
         assert_eq!(err.code, "document_conflict");
         let err = save_markdown(&v.0, "main.rs", &next, "nope").unwrap_err();
         assert_eq!(err.code, "fs_read_only");
+    }
+
+    #[test]
+    fn scan_ignores_lumir_tmp_ghost_but_keeps_other_dotfiles() {
+        let v = TempVault::with_fixture();
+        // 崩溃残留的 ghost 与合法点文件并存：模式只吞 `.lumir-` tmp
+        std::fs::write(v.0.join(".note.md.lumir-4242"), "ghost").unwrap();
+        std::fs::write(v.0.join(".hidden.conf"), "cfg").unwrap();
+        let entries = scan_workspace(&v.0).expect("scan");
+        let paths: Vec<&str> = entries.iter().map(|e| e.path.as_str()).collect();
+        assert!(!paths.iter().any(|p| p.contains(".lumir-")), "paths: {paths:?}");
+        assert!(paths.contains(&".hidden.conf"), "paths: {paths:?}");
+    }
+
+    #[test]
+    fn markdown_save_recovers_from_stale_ghost_tmp() {
+        let v = TempVault::with_fixture();
+        // 预置与本次保存同名的 ghost（同 pid）：create_new 撞车须删除后重试成功
+        let ghost = v.0.join(format!(".note.md.lumir-{}", std::process::id()));
+        std::fs::write(&ghost, "stale ghost").unwrap();
+        let revision = file_revision(&v.0, "note.md").unwrap();
+        let next = save_markdown(&v.0, "note.md", &revision, "# recovered").unwrap();
+        assert_ne!(revision, next);
+        assert_eq!(read_text_file(&v.0, "note.md").unwrap(), "# recovered");
+        assert!(!ghost.exists(), "ghost 应已被删除重试清理");
+    }
+
+    #[test]
+    fn watch_does_not_emit_lumir_tmp_events() {
+        let v = TempVault::with_fixture();
+        std::thread::sleep(Duration::from_millis(700));
+        let (tx, rx) = mpsc::channel::<Vec<FsChange>>();
+        let watcher = watch(&v.0, move |batch| {
+            tx.send(batch).expect("send batch");
+        })
+        .expect("watch");
+        let entries = scan_workspace(&v.0).expect("scan");
+        watcher.seed(entries.iter().map(|e| e.path.clone()));
+
+        std::thread::sleep(Duration::from_millis(500));
+        // 一次完整保存 = tmp 创建 + rename 替换：事件流只许出现目标文件
+        let revision = file_revision(&v.0, "note.md").unwrap();
+        save_markdown(&v.0, "note.md", &revision, "# via save").unwrap();
+
+        let batch = rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("batch within 5s");
+        assert!(
+            batch.iter().any(|c| c.path == "note.md" && c.kind == FsChangeKind::Modified),
+            "batch: {batch:?}"
+        );
+        assert!(
+            !batch.iter().any(|c| c.path.contains(".lumir-")),
+            "tmp ghost 不得进入事件流：{batch:?}"
+        );
     }
 
     #[test]

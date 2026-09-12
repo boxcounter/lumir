@@ -131,6 +131,9 @@ export async function stubTauri(page: Page, vault: VaultFixture | null): Promise
           return args.handler;
         }
         if (cmd === "plugin:event|unlisten") return null;
+        // failures 为持续性注入：同一 command 的每次调用都抛（markdown-combo 的
+        // 多附件读取失败用例依赖此语义）。恢复动作的端到端走通改用 __externalWrite
+        // / __externalDelete 自然路径（见 save-recovery.spec）。
         if (current?.failures?.[cmd]) throw current.failures[cmd];
         const handler = handlers[cmd];
         if (!handler) throw { code: "unknown_command", message: `未知命令：${cmd}` };
@@ -157,6 +160,17 @@ export async function stubTauri(page: Page, vault: VaultFixture | null): Promise
         callbacks.get(id)?.({ event: "app:quit_blocked", id, payload: null });
       }
     };
+    // 测试钩子：模拟外部程序改/删文件（Lumir ↔ Obsidian 来回场景）。
+    // 不触发 watch 事件——事件由场景显式 fireFsEvent 送达，与真后端
+    // 「fs 变更 → debounce → emit」的时序解耦，断言更确定。
+    w.__externalWrite = (path: string, text: string) => {
+      if (current?.files) current.files[path] = text;
+    };
+    w.__externalDelete = (path: string) => {
+      if (current?.files) delete current.files[path];
+    };
+    // 磁盘内容探针：恢复动作（强制覆盖 / 另存为）是否真正落盘的证据。
+    w.__fileText = (path: string) => current?.files?.[path];
   }, vault);
 }
 
@@ -182,6 +196,30 @@ export async function dirtyReports(page: Page): Promise<boolean[]> {
 /** vault_remap 的调用记录（前端把用户确认的映射传给后端的证据）。 */
 export async function remapCalls(page: Page): Promise<Array<{ id?: string; path?: string }>> {
   return page.evaluate(() => (window as unknown as { __remapCalls: Array<{ id?: string; path?: string }> }).__remapCalls);
+}
+
+/** 模拟外部程序写入文件（Obsidian 侧保存；不自带 watch 事件）。 */
+export async function externalWrite(page: Page, path: string, text: string): Promise<void> {
+  await page.evaluate(
+    ([p, t]) => (window as unknown as { __externalWrite(p: string, t: string): void }).__externalWrite(p, t),
+    [path, text],
+  );
+}
+
+/** 模拟外部程序删除文件。 */
+export async function externalDelete(page: Page, path: string): Promise<void> {
+  await page.evaluate(
+    (p) => (window as unknown as { __externalDelete(p: string): void }).__externalDelete(p),
+    path,
+  );
+}
+
+/** 磁盘当前内容探针（恢复动作落盘的证据）。 */
+export async function fileText(page: Page, path: string): Promise<string | undefined> {
+  return page.evaluate(
+    (p) => (window as unknown as { __fileText(p: string): string | undefined }).__fileText(p),
+    path,
+  );
 }
 
 /** 混合类型 vault fixture：md / 代码 / 图片 / PDF / 无扩展名文本 / 嵌套目录。 */
