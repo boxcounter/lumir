@@ -200,15 +200,18 @@ pub fn open_vault(
     root: PathBuf,
     force_new: bool,
 ) -> Result<VaultInfo, CommandError> {
-    // Unknown paths with stale registrations require explicit remap confirmation.
-    let candidates = crate::workspaces::remap_candidates(&root)?;
-    if !force_new && !candidates.is_empty() {
-        return Ok(VaultInfo {
-            vault_id: candidates[0].id.clone(),
-            root: root.display().to_string(),
-            entries: vec![],
-            remap_candidates: candidates,
-        });
+    // 已注册路径直接打开，不受 remap 门影响（M121 修复：幽灵注册项曾拦停
+    // 已注册 vault）。门判定只读——reconcile_vault 对未注册路径有注册 side effect，
+    // 不能用来探测「目标未注册」。
+    if !force_new {
+        if let Some(candidates) = crate::workspaces::remap_gate(&root)? {
+            return Ok(VaultInfo {
+                vault_id: candidates[0].id.clone(),
+                root: root.display().to_string(),
+                entries: vec![],
+                remap_candidates: candidates,
+            });
+        }
     }
     // Register/reconcile stable vault identity before opening.
     let workspace = crate::workspaces::reconcile_vault(&root)?;
@@ -308,7 +311,10 @@ pub async fn vault_open(
     };
     let root = handle.path().to_path_buf();
     let info = open_vault(&app, &state, root, force_new)?;
-    write_last_vault(Path::new(&info.root))?;
+    // remap 候选短路返回（未实际打开）不写 last_vault：仅打开成功才记忆。
+    if info.remap_candidates.is_empty() {
+        write_last_vault(Path::new(&info.root))?;
+    }
     Ok(Some(info))
 }
 
@@ -323,7 +329,10 @@ pub fn vault_open_path(
     force_new: bool,
 ) -> Result<VaultInfo, CommandError> {
     let info = open_vault(&app, &state, PathBuf::from(path), force_new)?;
-    write_last_vault(Path::new(&info.root))?;
+    // remap 候选短路返回（未实际打开）不写 last_vault：仅打开成功才记忆。
+    if info.remap_candidates.is_empty() {
+        write_last_vault(Path::new(&info.root))?;
+    }
     Ok(info)
 }
 
