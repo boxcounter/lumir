@@ -280,31 +280,60 @@ pub fn read_text_snapshot(root: &Path, rel: &str) -> Result<(String, String), Co
     use sha2::{Digest, Sha256};
     let bytes = read_file_bytes(root, rel, ATTACHMENT_MAX_BYTES)?;
     let revision = format!("{:x}", Sha256::digest(&bytes));
-    let content = String::from_utf8(bytes).map_err(|_| CommandError::new(
-        "fs_invalid_utf8", format!("文件 {rel} 不是合法 UTF-8 编码（可能是 GBK 等其他编码），暂不支持读取"),
-    ))?;
+    let content = String::from_utf8(bytes).map_err(|_| {
+        CommandError::new(
+            "fs_invalid_utf8",
+            format!("文件 {rel} 不是合法 UTF-8 编码（可能是 GBK 等其他编码），暂不支持读取"),
+        )
+    })?;
     Ok((content, revision))
 }
 
-pub fn save_markdown(root: &Path, rel: &str, expected_revision: &str, content: &str) -> Result<String, CommandError> {
-    if !rel.to_ascii_lowercase().ends_with(".md") && !rel.to_ascii_lowercase().ends_with(".markdown") {
-        return Err(CommandError::new("fs_read_only", "仅支持保存 Markdown 文件"));
+pub fn save_markdown(
+    root: &Path,
+    rel: &str,
+    expected_revision: &str,
+    content: &str,
+) -> Result<String, CommandError> {
+    if !rel.to_ascii_lowercase().ends_with(".md")
+        && !rel.to_ascii_lowercase().ends_with(".markdown")
+    {
+        return Err(CommandError::new(
+            "fs_read_only",
+            "仅支持保存 Markdown 文件",
+        ));
     }
     let target = resolve_in_vault(root, rel)?;
     let actual = file_revision(root, rel)?;
     if actual != expected_revision {
-        return Err(CommandError::new("document_conflict", "文件已被外部修改，请先协调冲突"));
+        return Err(CommandError::new(
+            "document_conflict",
+            "文件已被外部修改，请先协调冲突",
+        ));
     }
-    let parent = target.parent().ok_or_else(|| CommandError::new("fs_path_invalid", "目标目录无效"))?;
-    let name = target.file_name().and_then(|n| n.to_str()).unwrap_or("document.md");
+    let parent = target
+        .parent()
+        .ok_or_else(|| CommandError::new("fs_path_invalid", "目标目录无效"))?;
+    let name = target
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("document.md");
     let tmp = parent.join(format!(".{name}.lumir-{}", std::process::id()));
     // create_new 撞上同名文件 = 上次保存进程崩溃留下的 ghost（tmp 名含自身
     // pid，活着的进程互不挡道）：删除 ghost 重试一次；再失败才是真错误。
-    let mut file = match std::fs::OpenOptions::new().write(true).create_new(true).open(&tmp) {
+    let mut file = match std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&tmp)
+    {
         Ok(file) => file,
         Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
             let _ = std::fs::remove_file(&tmp);
-            match std::fs::OpenOptions::new().write(true).create_new(true).open(&tmp) {
+            match std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&tmp)
+            {
                 Ok(file) => file,
                 Err(e) => {
                     return Err(CommandError::new(
@@ -324,17 +353,31 @@ pub fn save_markdown(root: &Path, rel: &str, expected_revision: &str, content: &
     use std::io::Write;
     if let Err(e) = file.write_all(content.as_bytes()) {
         let _ = std::fs::remove_file(&tmp);
-        return Err(CommandError::new("document_write_failed", format!("无法写入文档：{e}")));
+        return Err(CommandError::new(
+            "document_write_failed",
+            format!("无法写入文档：{e}"),
+        ));
     }
     if let Err(e) = file.sync_all() {
         let _ = std::fs::remove_file(&tmp);
-        return Err(CommandError::new("document_write_unknown", format!("文档写入结果未知：{e}")));
+        return Err(CommandError::new(
+            "document_write_unknown",
+            format!("文档写入结果未知：{e}"),
+        ));
     }
     if let Err(e) = std::fs::rename(&tmp, &target) {
         let _ = std::fs::remove_file(&tmp);
-        return Err(CommandError::new("document_write_unknown", format!("文档替换结果未知：{e}")));
+        return Err(CommandError::new(
+            "document_write_unknown",
+            format!("文档替换结果未知：{e}"),
+        ));
     }
-    file_revision(root, rel).map_err(|e| CommandError::new("document_write_unknown", format!("文档替换后无法确认结果：{}", e.message)))
+    file_revision(root, rel).map_err(|e| {
+        CommandError::new(
+            "document_write_unknown",
+            format!("文档替换后无法确认结果：{}", e.message),
+        )
+    })
 }
 
 /// 读二进制附件：返回 base64（裁决点 A：invoke + base64 形态）。
@@ -848,7 +891,10 @@ mod tests {
         std::fs::write(v.0.join(".hidden.conf"), "cfg").unwrap();
         let entries = scan_workspace(&v.0).expect("scan");
         let paths: Vec<&str> = entries.iter().map(|e| e.path.as_str()).collect();
-        assert!(!paths.iter().any(|p| p.contains(".lumir-")), "paths: {paths:?}");
+        assert!(
+            !paths.iter().any(|p| p.contains(".lumir-")),
+            "paths: {paths:?}"
+        );
         assert!(paths.contains(&".hidden.conf"), "paths: {paths:?}");
     }
 
@@ -886,7 +932,9 @@ mod tests {
             .recv_timeout(Duration::from_secs(5))
             .expect("batch within 5s");
         assert!(
-            batch.iter().any(|c| c.path == "note.md" && c.kind == FsChangeKind::Modified),
+            batch
+                .iter()
+                .any(|c| c.path == "note.md" && c.kind == FsChangeKind::Modified),
             "batch: {batch:?}"
         );
         assert!(
