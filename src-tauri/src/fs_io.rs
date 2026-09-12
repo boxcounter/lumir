@@ -6,13 +6,15 @@
 //! 决定如何 emit 成 `fs:entry_changed` 事件。
 //!
 //! Markdown 文档保存使用同目录临时文件替换目标；其它文件仍只读。
+//! 枚举路径顺带惰性清除超龄的跨进程保存 tmp ghost（磁盘隐形累积治理，
+//! 阈值见 [`GHOST_TMP_MAX_AGE`]，在途写入不受影响）。
 
 use notify::{EventKind, RecursiveMode, Watcher};
 use serde::Serialize;
 use std::path::{Component, Path, PathBuf};
 use std::sync::mpsc;
 use std::sync::Mutex;
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 use ts_rs::TS;
 
 use crate::commands::CommandError;
@@ -29,6 +31,12 @@ pub const ATTACHMENT_MAX_BYTES: u64 = 50 * 1024 * 1024;
 
 /// watch 事件 debounce 窗口（裁决点 B）：窗口内连续事件合并为一批推送。
 pub const DEBOUNCE: Duration = Duration::from_millis(100);
+
+/// 保存临时文件 ghost 的年龄阈值：超过此值的 `.lumir-` 残留由枚举路径惰性
+/// 清除（见 [`scan_workspace`]）。同进程保存的 tmp 生命周期是毫秒级
+/// （create → rename），在途写入远年轻于此阈值，不会被误删；只有进程崩溃
+/// 留下的跨进程 ghost 才会超龄。
+pub const GHOST_TMP_MAX_AGE: Duration = Duration::from_secs(24 * 60 * 60);
 
 /// 条目类型：文件 / 目录。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, TS)]
@@ -82,17 +90,38 @@ pub struct FsEntryChangedEvent {
     pub changes: Vec<FsChange>,
 }
 
-fn is_ignored(name: &std::ffi::OsStr) -> bool {
-    if IGNORED_NAMES.iter().any(|n| name == *n) {
-        return true;
-    }
-    // 保存临时文件 ghost：`.` 开头且含 `.lumir-`（如 `.note.md.lumir-123`）。
-    // 精确匹配模式而非全部点文件——vault 里合法的 `.obsidian` 配置目录等
-    // 仍须正常枚举。
+/// 保存临时文件模式：`.` 开头且含 `.lumir-`（如 `.note.md.lumir-123`）。
+/// 精确匹配模式而非全部点文件——vault 里合法的 `.obsidian` 配置目录等
+/// 仍须正常枚举。
+fn is_lumir_tmp(name: &std::ffi::OsStr) -> bool {
     match name.to_str() {
         Some(s) => s.starts_with('.') && s.contains(".lumir-"),
         None => false,
     }
+}
+
+fn is_ignored(name: &std::ffi::OsStr) -> bool {
+    IGNORED_NAMES.iter().any(|n| name == *n) || is_lumir_tmp(name)
+}
+
+/// 超龄 ghost tmp 惰性清除（best-effort）：仅删「名字命中 tmp 模式 + 是普通
+/// 文件 + mtime 早于 `now - GHOST_TMP_MAX_AGE`」的目标。合法点文件与符号
+/// 链接不动；删除失败（权限等）静默忽略——治理不得让枚举失败。
+fn remove_ghost_tmp_if_stale(path: &Path, now: SystemTime) -> bool {
+    let Ok(meta) = std::fs::symlink_metadata(path) else {
+        return false;
+    };
+    if !meta.is_file() {
+        return false;
+    }
+    let Ok(mtime) = meta.modified() else {
+        return false;
+    };
+    // 时钟回拨（mtime 晚于 now）时 duration_since 报错 → 一律视为未超龄
+    let Ok(age) = now.duration_since(mtime) else {
+        return false;
+    };
+    age >= GHOST_TMP_MAX_AGE && std::fs::remove_file(path).is_ok()
 }
 
 /// 把绝对路径转成相对 vault 根的 `/` 分隔字符串；在忽略集内或无法转换时返回 None。
@@ -125,7 +154,13 @@ fn mtime_ms(meta: &std::fs::Metadata) -> Option<i64> {
 
 /// 全类型递归枚举（不按扩展名过滤，按 [`IGNORED_NAMES`] 过滤）。
 /// 结果按路径排序，保证确定性；目录在前、同缀按名称的展示排序由文件树 UI 负责。
+/// 顺带做保存临时文件 ghost 的惰性清除（超龄才删，见 [`GHOST_TMP_MAX_AGE`]）。
 pub fn scan_workspace(root: &Path) -> Result<Vec<FsEntry>, CommandError> {
+    scan_workspace_at(root, SystemTime::now())
+}
+
+/// 枚举实现本体；`now` 可注入，使 ghost tmp 的年龄判定在测试中确定可控。
+fn scan_workspace_at(root: &Path, now: SystemTime) -> Result<Vec<FsEntry>, CommandError> {
     if !root.is_dir() {
         return Err(CommandError::new(
             "fs_root_not_dir",
@@ -150,6 +185,11 @@ pub fn scan_workspace(root: &Path) -> Result<Vec<FsEntry>, CommandError> {
             })?;
             let name = item.file_name();
             if is_ignored(&name) {
+                // 跨进程崩溃残留的 tmp ghost 在磁盘隐形累积：枚举路径顺带清除
+                // 超龄者；在途保存的 tmp（毫秒级）与合法点文件都不受影响
+                if is_lumir_tmp(&name) {
+                    remove_ghost_tmp_if_stale(&item.path(), now);
+                }
                 continue;
             }
             let path = item.path();
@@ -909,6 +949,40 @@ mod tests {
         assert_ne!(revision, next);
         assert_eq!(read_text_file(&v.0, "note.md").unwrap(), "# recovered");
         assert!(!ghost.exists(), "ghost 应已被删除重试清理");
+    }
+
+    #[test]
+    fn scan_sweeps_stale_ghost_tmps_only() {
+        let v = TempVault::with_fixture();
+        let ghost_root = v.0.join(".note.md.lumir-4242");
+        let ghost_nested = v.0.join("sub/.deep.md.lumir-4243");
+        let dotfile = v.0.join(".hidden.conf");
+        std::fs::write(&ghost_root, "ghost").unwrap();
+        std::fs::write(&ghost_nested, "ghost").unwrap();
+        std::fs::write(&dotfile, "cfg").unwrap();
+        // now 前拨过阈值（不依赖改 mtime 的额外依赖）：三个文件都「超龄」，
+        // 只有 lumir tmp 被清除，合法点文件必须留存
+        let aged = SystemTime::now() + GHOST_TMP_MAX_AGE + Duration::from_secs(1);
+        let entries = scan_workspace_at(&v.0, aged).expect("scan");
+        assert!(!ghost_root.exists(), "超龄 ghost tmp 应被清除");
+        assert!(!ghost_nested.exists(), "嵌套目录内的超龄 ghost 也应被清除");
+        assert!(dotfile.exists(), "合法点文件不得被清除");
+        let paths: Vec<&str> = entries.iter().map(|e| e.path.as_str()).collect();
+        assert!(
+            !paths.iter().any(|p| p.contains(".lumir-")),
+            "paths: {paths:?}"
+        );
+        assert!(paths.contains(&".hidden.conf"), "paths: {paths:?}");
+    }
+
+    #[test]
+    fn scan_keeps_fresh_ghost_tmp_in_flight() {
+        let v = TempVault::with_fixture();
+        let fresh = v.0.join(".note.md.lumir-4242");
+        std::fs::write(&fresh, "in-flight").unwrap();
+        // 未超龄：在途保存的 tmp 不得被清除（同进程 tmp 生命周期为毫秒级）
+        let _ = scan_workspace(&v.0).expect("scan");
+        assert!(fresh.exists(), "未超龄的 tmp 不删");
     }
 
     #[test]
