@@ -2,8 +2,8 @@
 // 字节来源契约（add-vault-workspace 裁决点 A，invoke+base64 形态）：
 //   invoke<string>("fs_read_attachment", { path }) → base64，错误走 CommandError 信封。
 // vault 波未合并前：默认 provider 已按该契约编码，调用会失败并自然走占位路径；
-// 渲染成功路径用 createStubAttachmentProvider 验证。vault 合并后由其在装配处
-// 经 EditorHandle.setAttachmentProvider 注入真实索引（全 vault 相对路径列表）。
+// vault 合并后由装配处经 EditorHandle.setAttachmentProvider 注入真实索引
+//（全 vault 相对路径列表）。
 
 import { invoke } from "@tauri-apps/api/core";
 import { WidgetType } from "@codemirror/view";
@@ -65,28 +65,6 @@ export function createInvokeAttachmentProvider(
       const base64 = await invoke<string>("fs_read_attachment", { path });
       const mime = MIME_BY_EXTENSION[extensionOf(path)] ?? "application/octet-stream";
       return `data:${mime};base64,${base64}`;
-    },
-  };
-}
-
-/**
- * 渲染路径验证用 stub：任意图片名解析为 stub/<name>，返回内联 SVG data URL。
- * vault 合并前自测用；生产装配不引用它。
- */
-export function createStubAttachmentProvider(): AttachmentProvider {
-  return {
-    resolveByName: (name) => (isImageName(name) ? `stub/${name}` : null),
-    readDataUrl(path) {
-      if (!path.startsWith("stub/")) {
-        return Promise.reject(new Error(`附件未找到：${path}（stub）`));
-      }
-      const label = path.slice("stub/".length);
-      const svg =
-        `<svg xmlns="http://www.w3.org/2000/svg" width="320" height="120">` +
-        `<rect width="320" height="120" fill="#dfe8f5"/>` +
-        `<text x="16" y="66" font-family="monospace" font-size="16" fill="#345">${label}</text>` +
-        `</svg>`;
-      return Promise.resolve(`data:image/svg+xml;base64,${btoa(svg)}`);
     },
   };
 }

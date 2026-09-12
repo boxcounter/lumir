@@ -344,7 +344,7 @@ function frontmatterSet(state: EditorState): DecorationSet {
 }
 
 // ```mermaid 围栏块可跨行，与 frontmatter/块级公式同约束走 StateField。
-// 除 docChanged/selection 外，previewRefresh（渲染 settle / 主题切换）也触发
+// 除 docChanged/selection 外，previewRefresh（渲染 settle）也触发
 // 重算：settle 后缓存状态对象变更，widget eq 不等，CM 重新调用 toDOM。
 // 语法树推进也必须触发重算（M110 真实桌面缺陷）：大文档 openDocument 调度时
 // 增量解析尚未覆盖尾部围栏块，字段算出 Decoration.none；后台解析经

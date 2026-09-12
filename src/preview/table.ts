@@ -148,10 +148,6 @@ export function tableRowsInRange(table: TableModel, from: number, to: number): T
   return table.rows.slice(start, low);
 }
 
-export function tableLineAt(table: TableModel, from: number, to: number): TableRow | undefined {
-  return tableRowsInRange(table, from, to)[0];
-}
-
 // ---------------------------------------------------------------------------
 // 宽度统一合同（M119，docs/specs/table-reading.md §3）的可执行表述
 // ---------------------------------------------------------------------------

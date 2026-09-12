@@ -128,7 +128,7 @@ function blockCount(doc: string, selection?: { anchor: number; head: number }): 
     extensions: [markdown({ base: markdownLanguage, extensions: [GFM] })],
   });
   let count = 0;
-  mermaidBlockSet(state).between(0, state.doc.length, () => count++);
+  mermaidBlockSet(state).between(0, state.doc.length, () => { count++; });
   return count;
 }
 

@@ -57,7 +57,6 @@ export interface FileTreeCallbacks {
   onOpenFile(path: string, kind: OpenKind): void;
   /** 「打开 vault」入口：空态按钮与树头部的常驻切换入口共用。 */
   onOpenVault(): void;
-  onCurrentPathChanged?: (path: string | undefined) => void;
 }
 
 export interface FileTree {
