@@ -18,6 +18,7 @@
 - [x] 3.1 强制覆盖保存再冲突时提示升级为带两个动作的 sticky 提示（不再退化为自动消隐的纯文案）
 - [x] 3.2 `last_vault` 写失败降级为 warning：打开成功不再被记忆写失败抹成整体错误（含单元测试）
 - [x] 3.3 另存为新文件的 `-2..-5` 撞名重试循环补 stub 级覆盖（成功路径 + 全部撞名后的人工出口）
+- [x] 3.4 恢复以备份记录的 `base_revision` 作 CAS 基准（评审 round 1 P2-1）：`recovery_backup` 记录备份写入时的磁盘 revision，新增 `recovery_base_revision` 供恢复侧对账；备份内容改为 JSON 信封（老格式 / 基准不可读按必定冲突处理，绝不静默覆盖），写入改 tmp + rename 原子替换
 
 ## 4. main.ts 拆分
 
@@ -30,4 +31,5 @@
 - [x] 5.1 `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` 通过
 - [x] 5.2 `pnpm build` 通过（含 `tsc --noEmit`）
 - [x] 5.3 `cargo test`（src-tauri）通过，含 recovery 模块用例与 `last_vault` 降级用例；`cargo clippy -D warnings` 与 `cargo fmt --check` 通过
-- [x] 5.4 `LUMIR_VISUAL_PORT=<空闲端口> scripts/visual/run.sh` 视觉全绿：153 passed = 既有 142 + 新增 save-hardening 11（自动保存落盘与 debounce 重置、冲突/外部修改暂停、备份生命周期、启动恢复/丢弃/多份提示、另存重试成功与用尽、强制覆盖再冲突带动作）。mission 指定的 4273 被并行 worktree 占用，改用空闲端口 4287，口径不变
+- [x] 5.4 `LUMIR_VISUAL_PORT=<空闲端口> scripts/visual/run.sh` 视觉全绿：154 passed = 既有 142 + 新增 save-hardening 12（自动保存落盘与 debounce 重置、冲突/外部修改暂停、备份生命周期、启动恢复/丢弃/多份提示、恢复遇外部修改报冲突、另存重试成功与用尽、强制覆盖再冲突带动作）。mission 指定的 4273 被并行 worktree 占用，改用空闲端口 4287，口径不变
+- [x] 5.5 评审 round 1 P2-1 的回归证据：新场景「备份后磁盘被外部修改 → 恢复 → 自动保存报冲突」在修复前实现下失败（探测性回退去掉 base_revision 赋值 → 该场景红），修复后绿

@@ -467,6 +467,8 @@ pub fn document_set_dirty(
 // ---------------------------------------------------------------------------
 
 /// 编辑器 dirty 内容写崩溃备份（按当前 vault + vault 相对路径定位，见 recovery 模块）。
+/// `base_revision` = 备份时编辑器已知的磁盘 revision，恢复侧据此对账（评审 round 1
+/// P2-1）：备份之后磁盘若被外部修改，恢复后的保存按 CAS 报冲突，不静默覆盖较新版本。
 /// 保存成功后前端调用 recovery_discard 清除；进程崩溃时残留项由前端启动时枚举并
 /// 给用户恢复入口。写失败返回人话错误，前端只当 warning（不打断编辑）。
 #[tauri::command(rename_all = "snake_case")]
@@ -474,8 +476,9 @@ pub fn recovery_backup(
     state: tauri::State<'_, VaultState>,
     path: &str,
     content: &str,
+    base_revision: &str,
 ) -> Result<(), CommandError> {
-    crate::recovery::backup(&state.root()?, path, content)
+    crate::recovery::backup(&state.root()?, path, content, base_revision)
 }
 
 /// 读崩溃备份内容；无备份返回 null（不是错误）。
@@ -484,7 +487,17 @@ pub fn recovery_load(
     state: tauri::State<'_, VaultState>,
     path: &str,
 ) -> Result<Option<String>, CommandError> {
-    crate::recovery::load(&state.root()?, path)
+    Ok(crate::recovery::load(&state.root()?, path)?.map(|entry| entry.content))
+}
+
+/// 备份记录的 CAS 基准 revision（恢复时作保存基准用）；无备份 / 老格式备份返回 null
+/// （null = 基准未知，恢复侧按必定冲突处理，不静默覆盖磁盘）。
+#[tauri::command(rename_all = "snake_case")]
+pub fn recovery_base_revision(
+    state: tauri::State<'_, VaultState>,
+    path: &str,
+) -> Result<Option<String>, CommandError> {
+    Ok(crate::recovery::load(&state.root()?, path)?.and_then(|entry| entry.base_revision))
 }
 
 /// 删除崩溃备份（保存成功 / 用户丢弃）；幂等。

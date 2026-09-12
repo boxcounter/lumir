@@ -40,6 +40,7 @@ pub fn run() {
             commands::document_set_dirty,
             commands::recovery_backup,
             commands::recovery_load,
+            commands::recovery_base_revision,
             commands::recovery_discard,
             commands::recovery_list,
             commands::link_graph_resolve,

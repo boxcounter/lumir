@@ -13,25 +13,59 @@
 //!   写成 `%XX`）——`/` 也在转义之列，故落盘恒为单层文件，`..` 与绝对路径都不可能
 //!   越出 `vault-key` 目录。
 //!
-//! 备份内容即内存文档原文（UTF-8），不做格式包装：用户可直接查看恢复目录里的文件。
+//! ## 存储格式
+//!
+//! 每个备份是一个 JSON 信封：`{"base_revision": "<rev>", "content": "<内存原文>"}`。
+//! `base_revision` 是备份写入时编辑器已知的磁盘 revision，恢复侧据此对账：恢复以
+//! 它（而非恢复时刻的磁盘 revision）作保存基准，备份之后磁盘若被外部修改，随后的
+//! 保存按 CAS 报冲突，MUST NOT 静默覆盖较新的磁盘版本（评审 round 1 P2-1 修复）。
+//! 信封解析失败（老格式备份 / 外部写坏的文件）按「原文即内容、基准未知」降级读取；
+//! 基准未知在恢复侧等价于必定冲突，同样不会静默覆盖。
+//!
+//! 写入是 tmp + rename 原子替换：备份是崩溃路径上的最后副本，半个信封等于内容全丢。
 
+use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
 use crate::commands::CommandError;
 use crate::config;
+
+/// 原子写入的临时文件名前缀。解码回来是含 NUL 的路径，`validate_rel` 必拒，
+/// 故 `list` 不会把写残的临时文件当成残留备份。
+const TMP_PREFIX: &str = "%00tmp%00";
+
+/// 单个备份的读取结果。
+pub struct BackupEntry {
+    /// 内存文档原文。
+    pub content: String,
+    /// 备份写入时的磁盘 revision（恢复侧的 CAS 基准）；老格式备份为 None。
+    pub base_revision: Option<String>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct BackupFile {
+    #[serde(default)]
+    base_revision: Option<String>,
+    content: String,
+}
 
 /// 恢复目录根：`<config_dir>/recovery`。
 pub fn backup_dir() -> Result<PathBuf, CommandError> {
     Ok(config::config_dir()?.join("recovery"))
 }
 
-/// 写崩溃备份（覆盖式；同 (vault, path) 只保留最新一份内存内容）。
-pub fn backup(root: &Path, rel: &str, content: &str) -> Result<(), CommandError> {
-    backup_in(&backup_dir()?, root, rel, content)
+/// 写崩溃备份（覆盖式；同 (vault, path) 只保留最新一份内存内容 + CAS 基准）。
+pub fn backup(
+    root: &Path,
+    rel: &str,
+    content: &str,
+    base_revision: &str,
+) -> Result<(), CommandError> {
+    backup_in(&backup_dir()?, root, rel, content, base_revision)
 }
 
-/// 读崩溃备份内容；无备份返回 `Ok(None)`（不是错误）。
-pub fn load(root: &Path, rel: &str) -> Result<Option<String>, CommandError> {
+/// 读崩溃备份；无备份返回 `Ok(None)`（不是错误）。
+pub fn load(root: &Path, rel: &str) -> Result<Option<BackupEntry>, CommandError> {
     load_in(&backup_dir()?, root, rel)
 }
 
@@ -45,7 +79,13 @@ pub fn list(root: &Path) -> Result<Vec<String>, CommandError> {
     list_in(&backup_dir()?, root)
 }
 
-fn backup_in(base: &Path, root: &Path, rel: &str, content: &str) -> Result<(), CommandError> {
+fn backup_in(
+    base: &Path,
+    root: &Path,
+    rel: &str,
+    content: &str,
+    base_revision: &str,
+) -> Result<(), CommandError> {
     let path = entry_path(base, root, rel)?;
     let dir = path.parent().expect("备份路径必有父目录");
     std::fs::create_dir_all(dir).map_err(|e| {
@@ -54,23 +94,53 @@ fn backup_in(base: &Path, root: &Path, rel: &str, content: &str) -> Result<(), C
             format!("无法创建恢复目录 {}：{e}", dir.display()),
         )
     })?;
-    std::fs::write(&path, content).map_err(|e| {
+    let file = BackupFile {
+        base_revision: Some(base_revision.to_string()),
+        content: content.to_string(),
+    };
+    let bytes = serde_json::to_vec(&file).expect("备份信封可序列化");
+    let name = path.file_name().expect("备份路径有文件名");
+    let tmp = dir.join(format!("{TMP_PREFIX}{}", name.to_string_lossy()));
+    std::fs::write(&tmp, bytes).map_err(|e| {
         CommandError::new(
             "recovery_write_failed",
-            format!("无法写入崩溃备份 {}：{e}", path.display()),
+            format!("无法写入崩溃备份 {}：{e}", tmp.display()),
+        )
+    })?;
+    std::fs::rename(&tmp, &path).map_err(|e| {
+        CommandError::new(
+            "recovery_write_failed",
+            format!("无法落盘崩溃备份 {}：{e}", path.display()),
         )
     })
 }
 
-fn load_in(base: &Path, root: &Path, rel: &str) -> Result<Option<String>, CommandError> {
+fn load_in(base: &Path, root: &Path, rel: &str) -> Result<Option<BackupEntry>, CommandError> {
     let path = entry_path(base, root, rel)?;
-    match std::fs::read_to_string(&path) {
-        Ok(text) => Ok(Some(text)),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(e) => Err(CommandError::new(
-            "recovery_read_failed",
-            format!("无法读取崩溃备份 {}：{e}", path.display()),
-        )),
+    let text = match std::fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => {
+            return Err(CommandError::new(
+                "recovery_read_failed",
+                format!("无法读取崩溃备份 {}：{e}", path.display()),
+            ))
+        }
+    };
+    Ok(Some(parse_backup(&text)))
+}
+
+/// 信封解析失败按老格式原文降级（基准未知）：宁可让恢复侧必定冲突，也不丢内容。
+fn parse_backup(text: &str) -> BackupEntry {
+    match serde_json::from_str::<BackupFile>(text) {
+        Ok(file) => BackupEntry {
+            content: file.content,
+            base_revision: file.base_revision,
+        },
+        Err(_) => BackupEntry {
+            content: text.to_string(),
+            base_revision: None,
+        },
     }
 }
 
@@ -102,9 +172,12 @@ fn list_in(base: &Path, root: &Path) -> Result<Vec<String>, CommandError> {
     for entry in entries.flatten() {
         let name = entry.file_name();
         let Some(name) = name.to_str() else { continue };
-        // 只认本模块编码规则产出的单层文件；外来名字跳过而非报错。
-        if entry.file_type().map(|t| t.is_file()).unwrap_or(false) {
-            if let Some(rel) = decode_path(name) {
+        if !entry.file_type().map(|t| t.is_file()).unwrap_or(false) {
+            continue;
+        }
+        // 只认本模块编码规则产出的备份；写残的临时文件与外来名字跳过而非报错。
+        if let Some(rel) = decode_path(name) {
+            if validate_rel(&rel).is_ok() {
                 out.push(rel);
             }
         }
@@ -215,6 +288,11 @@ mod tests {
         PathBuf::from("/tmp").join(name)
     }
 
+    /// 便利：读某个备份的正文（无备份返回 None）。
+    fn content_of(base: &Path, root: &Path, rel: &str) -> Option<String> {
+        load_in(base, root, rel).unwrap().map(|e| e.content)
+    }
+
     #[test]
     fn encode_is_single_segment_and_roundtrips() {
         let encoded = encode_path("docs/guide.md");
@@ -232,31 +310,69 @@ mod tests {
         let base = TempBase::new();
         let root = vault("vault-a");
         assert_eq!(list_in(&base.0, &root).unwrap(), Vec::<String>::new());
-        assert_eq!(load_in(&base.0, &root, "docs/guide.md").unwrap(), None);
+        assert!(load_in(&base.0, &root, "docs/guide.md").unwrap().is_none());
 
-        backup_in(&base.0, &root, "docs/guide.md", "# 内存版本\n").unwrap();
-        backup_in(&base.0, &root, "README.md", "top\n").unwrap();
-        assert_eq!(
-            load_in(&base.0, &root, "docs/guide.md").unwrap().as_deref(),
-            Some("# 内存版本\n")
-        );
+        backup_in(&base.0, &root, "docs/guide.md", "# 内存版本\n", "rev-1").unwrap();
+        backup_in(&base.0, &root, "README.md", "top\n", "rev-2").unwrap();
+        let guide = load_in(&base.0, &root, "docs/guide.md").unwrap().unwrap();
+        assert_eq!(guide.content, "# 内存版本\n");
+        assert_eq!(guide.base_revision.as_deref(), Some("rev-1"));
         // 枚举按字典序，且只含本模块写下的条目
         assert_eq!(
             list_in(&base.0, &root).unwrap(),
             vec!["README.md".to_string(), "docs/guide.md".to_string()]
         );
 
-        // 覆盖式写入：同键只留最新一份
-        backup_in(&base.0, &root, "docs/guide.md", "# 更新版本\n").unwrap();
-        assert_eq!(
-            load_in(&base.0, &root, "docs/guide.md").unwrap().as_deref(),
-            Some("# 更新版本\n")
-        );
+        // 覆盖式写入：同键只留最新一份（内容与基准一起换）
+        backup_in(&base.0, &root, "docs/guide.md", "# 更新版本\n", "rev-2").unwrap();
+        let updated = load_in(&base.0, &root, "docs/guide.md").unwrap().unwrap();
+        assert_eq!(updated.content, "# 更新版本\n");
+        assert_eq!(updated.base_revision.as_deref(), Some("rev-2"));
 
         discard_in(&base.0, &root, "docs/guide.md").unwrap();
-        assert_eq!(load_in(&base.0, &root, "docs/guide.md").unwrap(), None);
+        assert!(load_in(&base.0, &root, "docs/guide.md").unwrap().is_none());
         // 幂等：再删一次不报错
         discard_in(&base.0, &root, "docs/guide.md").unwrap();
+    }
+
+    #[test]
+    fn legacy_raw_backup_reads_content_without_base_revision() {
+        let base = TempBase::new();
+        let root = vault("vault-a");
+        backup_in(&base.0, &root, "note.md", "x\n", "rev-1").unwrap();
+        // 老格式（信封之前）的备份：原文即内容，无基准
+        let entry_path = entry_path(&base.0, &root, "note.md").unwrap();
+        std::fs::write(&entry_path, "裸文本内容\n").unwrap();
+        let entry = load_in(&base.0, &root, "note.md").unwrap().unwrap();
+        assert_eq!(entry.content, "裸文本内容\n");
+        assert_eq!(entry.base_revision, None);
+        assert_eq!(
+            list_in(&base.0, &root).unwrap(),
+            vec!["note.md".to_string()]
+        );
+
+        // 信封缺 base_revision（向前兼容）：内容仍可读，基准为 None
+        std::fs::write(&entry_path, "{\"content\":\"只有正文\"}").unwrap();
+        let entry = load_in(&base.0, &root, "note.md").unwrap().unwrap();
+        assert_eq!(entry.content, "只有正文");
+        assert_eq!(entry.base_revision, None);
+    }
+
+    #[test]
+    fn partial_write_leaves_no_pending_backup_entry() {
+        let base = TempBase::new();
+        let root = vault("vault-a");
+        let dir = base.0.join(vault_key(&root));
+        std::fs::create_dir_all(&dir).unwrap();
+        // 模拟 tmp + rename 中途崩溃：临时文件留在目录里
+        let entry_path = entry_path(&base.0, &root, "note.md").unwrap();
+        let name = entry_path
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .to_string();
+        std::fs::write(dir.join(format!("{TMP_PREFIX}{name}")), "{ 半个信封").unwrap();
+        assert_eq!(list_in(&base.0, &root).unwrap(), Vec::<String>::new());
     }
 
     #[test]
@@ -264,24 +380,18 @@ mod tests {
         let base = TempBase::new();
         let a = vault("vault-a");
         let b = vault("vault-b");
-        backup_in(&base.0, &a, "note.md", "a\n").unwrap();
-        backup_in(&base.0, &b, "note.md", "b\n").unwrap();
+        backup_in(&base.0, &a, "note.md", "a\n", "rev-a").unwrap();
+        backup_in(&base.0, &b, "note.md", "b\n", "rev-b").unwrap();
         assert_eq!(list_in(&base.0, &a).unwrap(), vec!["note.md".to_string()]);
-        assert_eq!(
-            load_in(&base.0, &a, "note.md").unwrap().as_deref(),
-            Some("a\n")
-        );
-        assert_eq!(
-            load_in(&base.0, &b, "note.md").unwrap().as_deref(),
-            Some("b\n")
-        );
+        assert_eq!(content_of(&base.0, &a, "note.md").as_deref(), Some("a\n"));
+        assert_eq!(content_of(&base.0, &b, "note.md").as_deref(), Some("b\n"));
     }
 
     #[test]
     fn foreign_names_are_skipped() {
         let base = TempBase::new();
         let root = vault("vault-a");
-        backup_in(&base.0, &root, "note.md", "x\n").unwrap();
+        backup_in(&base.0, &root, "note.md", "x\n", "rev-1").unwrap();
         let dir = base.0.join(vault_key(&root));
         std::fs::write(dir.join("%ZZ"), "外来文件").unwrap();
         std::fs::create_dir_all(dir.join("sub")).unwrap();
@@ -296,11 +406,11 @@ mod tests {
         let base = TempBase::new();
         let root = vault("vault-a");
         for bad in ["", "/etc/passwd", "a/../b", "../escape.md", "a//b", "a/./b"] {
-            let err = backup_in(&base.0, &root, bad, "x").unwrap_err();
+            let err = backup_in(&base.0, &root, bad, "x", "rev-1").unwrap_err();
             assert_eq!(err.code, "recovery_invalid_path", "输入：{bad}");
         }
         // 含 `..` 的文件名（非段）是合法的 vault 相对路径
-        backup_in(&base.0, &root, "a..b.md", "x").unwrap();
+        backup_in(&base.0, &root, "a..b.md", "x", "rev-1").unwrap();
         assert_eq!(
             list_in(&base.0, &root).unwrap(),
             vec!["a..b.md".to_string()]

@@ -20,7 +20,7 @@ import {
   isCommandError,
   wikilinkCreate,
 } from "./ipc";
-import { recoveryBackup, recoveryDiscard, recoveryLoad, recoveryList } from "./save-ipc";
+import { recoveryBackup, recoveryBaseRevision, recoveryDiscard, recoveryLoad, recoveryList } from "./save-ipc";
 
 /** dirty 守卫提示（无法切换 / 无法退出）的标识类：dirty 清除时整批撤下。 */
 export const SAVE_GUARD_TOAST_CLASS = "toast-dirty-guard";
@@ -29,6 +29,11 @@ export const SAVE_GUARD_TOAST_CLASS = "toast-dirty-guard";
  * 连续打字期间不落盘（避免半句内容触发一串 CAS 写入）；2s 是「短暂停顿不打扰、
  * 长停顿已落盘」的折中。 */
 export const AUTOSAVE_DEBOUNCE_MS = 2000;
+
+/** 备份元数据里没有 CAS 基准（老格式备份 / 元数据读取失败）时用的哨兵：它不等于
+ *  任何磁盘 revision，随后的保存必定按 CAS 报冲突，用户必须显式处置——宁可多一次
+ *  冲突提示，也不静默覆盖磁盘上可能较新的版本。 */
+const UNKNOWN_BASE_REVISION = "recovery-unknown-base";
 
 export interface ToastAction {
   label: string;
@@ -403,11 +408,13 @@ export function createSaveController(deps: SaveControllerDeps): SaveController {
     if (!(await saveDocument(true))) await backupDirty(path);
   }
 
-  /** 崩溃备份：写失败 / 无后端（纯浏览器预览桩）只作罢，不打断编辑。 */
+  /** 崩溃备份：写失败 / 无后端（纯浏览器预览桩）只作罢，不打断编辑。
+   *  基准 revision 取编辑器已知的磁盘 revision（reconcile 已保证非 undefined），
+   *  它是恢复侧判定「备份之后磁盘是否被外部修改」的唯一依据。 */
   async function backupDirty(path: string): Promise<void> {
-    if (!editor.isDirty()) return;
+    if (!editor.isDirty() || displayedRevision === undefined) return;
     const content = editor.view.state.doc.toString();
-    await recoveryBackup(path, content).catch(() => {});
+    await recoveryBackup(path, content, displayedRevision).catch(() => {});
   }
 
   // ---------------------------------------------------------------------------
@@ -443,22 +450,27 @@ export function createSaveController(deps: SaveControllerDeps): SaveController {
     recoveryPrompts.add(el);
   }
 
-  /** 恢复：打开该文件（拿到磁盘 revision 作 CAS 基准），再把备份内容放进编辑器
-   * 缓冲并保持 dirty——仍走保存链路，磁盘若已变则在保存时报冲突，不静默覆盖。 */
+  /** 恢复：把备份记录的 revision 作为保存基准（MUST NOT 吸收恢复时刻的磁盘
+   *  revision，见 spec「恢复不静默覆盖磁盘」），再把备份内容放进编辑器缓冲并保持
+   *  dirty——仍走保存链路：备份之后磁盘若被外部修改，随后的保存按 CAS 报冲突，
+   *  绝不静默覆盖较新的磁盘版本。 */
   async function restoreBackup(path: string): Promise<void> {
     let content: string | null;
+    let baseRevision: string | null;
     try {
       content = await recoveryLoad(path);
+      if (content === null) {
+        toast("崩溃备份已不存在");
+        return;
+      }
+      baseRevision = await recoveryBaseRevision(path).catch(() => null);
     } catch (e) {
       toast(errorMessage(e));
       return;
     }
-    if (content === null) {
-      toast("崩溃备份已不存在");
-      return;
-    }
     await deps.openFile(path, "md");
     if (displayedPath !== path || editor.mode() !== "md") return; // 切换被守卫拦下 / 未装载
+    displayedRevision = baseRevision ?? UNKNOWN_BASE_REVISION;
     editor.view.dispatch({
       changes: { from: 0, to: editor.view.state.doc.length, insert: content },
     });

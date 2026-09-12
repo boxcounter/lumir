@@ -10,9 +10,15 @@ import { DEMO_VAULT, dirtyReports, externalWrite, fileText, fireFsEvent, stubTau
 // addInitScript 包一层 __TAURI_INTERNALS__.invoke 实现（注册顺序保证 stub 先建）；
 // 真后端命令见 src-tauri/src/recovery.rs 与 commands.rs。
 
+/** 恢复目录里一条备份：正文 + 备份写入时的 CAS 基准 revision（null = 老格式无基准）。 */
+interface StoredBackup {
+  content: string;
+  baseRevision: string | null;
+}
+
 interface HardeningOpts {
   /** 预置的恢复目录内容（模拟上次异常退出留下的备份）。 */
-  seedRecovery?: Record<string, string>;
+  seedRecovery?: Record<string, StoredBackup>;
 }
 
 async function stubHardening(page: Page, opts: HardeningOpts = {}): Promise<void> {
@@ -23,7 +29,7 @@ async function stubHardening(page: Page, opts: HardeningOpts = {}): Promise<void
     w.__saveCalls = 0;
     w.__TAURI_INTERNALS__.invoke = async (cmd: string, args: any) => {
       if (cmd === "recovery_backup") {
-        w.__recoveryStore[args.path] = args.content;
+        w.__recoveryStore[args.path] = { content: args.content, baseRevision: args.base_revision };
         return null;
       }
       if (cmd === "recovery_discard") {
@@ -31,19 +37,38 @@ async function stubHardening(page: Page, opts: HardeningOpts = {}): Promise<void
         return null;
       }
       if (cmd === "recovery_list") return Object.keys(w.__recoveryStore);
-      if (cmd === "recovery_load") return w.__recoveryStore[args.path] ?? null;
+      if (cmd === "recovery_load") return w.__recoveryStore[args.path]?.content ?? null;
+      if (cmd === "recovery_base_revision") return w.__recoveryStore[args.path]?.baseRevision ?? null;
       if (cmd === "document_save") w.__saveCalls += 1;
       return invoke(cmd, args);
     };
   }, opts);
 }
 
-/** 恢复目录当前内容（崩溃备份落盘 / 清除的证据）。 */
-async function recoveryStore(page: Page): Promise<Record<string, string>> {
+/** 恢复目录当前内容（崩溃备份落盘 / 清除 / 基准的证据）。 */
+async function recoveryStore(page: Page): Promise<Record<string, StoredBackup>> {
   return page.evaluate(
-    () => (window as unknown as { __recoveryStore: Record<string, string> }).__recoveryStore,
+    () =>
+      (window as unknown as { __recoveryStore: Record<string, StoredBackup> }).__recoveryStore,
   );
 }
+
+/** 单条备份的正文（无备份 → undefined）。 */
+async function backupContent(page: Page, path: string): Promise<string | undefined> {
+  return (await recoveryStore(page))[path]?.content;
+}
+
+/** 单条备份记录的 CAS 基准 revision（无备份 → undefined）。 */
+async function backupBaseRevision(page: Page, path: string): Promise<string | null | undefined> {
+  return (await recoveryStore(page))[path]?.baseRevision;
+}
+
+/** 与 tauri-stub 的 fs_read_snapshot 同口径的 revision。 */
+function fixtureRevision(text: string): string {
+  return `fixture-revision-${text}`;
+}
+
+const README_ORIGINAL = DEMO_VAULT.files?.["README.md"] ?? "";
 
 /** document_save 的调用次数（自动保存是否真的发起过写入的证据）。 */
 async function saveCalls(page: Page): Promise<number> {
@@ -116,8 +141,11 @@ test("未解决冲突时自动保存暂停：不硬冲 CAS，dirty 内容落崩�
   expect(await fileText(page, "README.md")).toBe("# External version\n");
   await expect(page.locator(".masthead-file")).toContainText("未保存");
 
-  // 兜底：暂停期间 dirty 内容进了崩溃备份（进程崩溃仍有内容可恢复）。
-  await expect.poll(async () => (await recoveryStore(page))["README.md"] ?? "").toContain("MORE");
+  // 兜底：暂停期间 dirty 内容进了崩溃备份（进程崩溃仍有内容可恢复），
+  // 且基准 revision 是「最后一次与编辑器同步的磁盘版本」（外部修改前的那个），
+  // 不是外部修改后的版本——恢复侧据此才能判定磁盘已被改过。
+  await expect.poll(async () => backupContent(page, "README.md") ?? "").toContain("MORE");
+  expect(await backupBaseRevision(page, "README.md")).toBe(fixtureRevision(README_ORIGINAL));
 });
 
 test("外部修改待决（dirty）时自动保存暂停：等过 debounce 也无保存尝试", async ({ page }) => {
@@ -134,7 +162,8 @@ test("外部修改待决（dirty）时自动保存暂停：等过 debounce 也�
   expect(await saveCalls(page)).toBe(0);
   expect(await fileText(page, "README.md")).toBe("# External version\n");
   await expect(page.locator(".masthead-file")).toContainText("未保存");
-  await expect.poll(async () => (await recoveryStore(page))["README.md"] ?? "").toContain("ZZZ");
+  await expect.poll(async () => backupContent(page, "README.md") ?? "").toContain("ZZZ");
+  expect(await backupBaseRevision(page, "README.md")).toBe(fixtureRevision(README_ORIGINAL));
 });
 
 test("处置冲突后自动保存恢复，备份随保存成功清除", async ({ page }) => {
@@ -147,7 +176,7 @@ test("处置冲突后自动保存恢复，备份随保存成功清除", async ({
   const conflict = page.locator(".lumir-toast", { hasText: "保存冲突" });
   await expect(conflict).toBeVisible();
   // 暂停态下等一个 debounce：产生崩溃备份（下一步验证保存成功即清除）。
-  await expect.poll(async () => (await recoveryStore(page))["README.md"] ?? "").toContain("ZZZ");
+  await expect.poll(async () => backupContent(page, "README.md") ?? "").toContain("ZZZ");
 
   await conflict.getByRole("button", { name: "强制覆盖保存" }).click();
   await page
@@ -169,7 +198,15 @@ test("处置冲突后自动保存恢复，备份随保存成功清除", async ({
 
 test("启动发现残留崩溃备份：给出恢复入口，恢复后内容进编辑器并保持未保存", async ({ page }) => {
   await stubTauri(page, DEMO_VAULT);
-  await stubHardening(page, { seedRecovery: { "README.md": "# Recovered\n\n恢复的内容\n" } });
+  // 备份记录的基准 = 磁盘当前 revision（备份之后磁盘没被动过）→ 恢复后的保存不冲突。
+  await stubHardening(page, {
+    seedRecovery: {
+      "README.md": {
+        content: "# Recovered\n\n恢复的内容\n",
+        baseRevision: fixtureRevision(README_ORIGINAL),
+      },
+    },
+  });
   await page.goto("/");
 
   const prompt = page.locator(".lumir-toast", { hasText: "发现未保存的崩溃备份" });
@@ -188,9 +225,58 @@ test("启动发现残留崩溃备份：给出恢复入口，恢复后内容进�
   await expect.poll(async () => (await recoveryStore(page))).toEqual({});
 });
 
+test("备份后磁盘被外部修改：恢复按 CAS 报冲突，不静默覆盖较新版本", async ({ page }) => {
+  await stubTauri(page, DEMO_VAULT);
+  // 备份是崩溃前写的（基准 = 当时的磁盘版本）；崩溃之后 Obsidian 又改了同一个文件。
+  await stubHardening(page, {
+    seedRecovery: {
+      "README.md": {
+        content: "# Recovered\n\n恢复的内容\n",
+        baseRevision: fixtureRevision(README_ORIGINAL),
+      },
+    },
+  });
+  await page.goto("/");
+  await externalWrite(page, "README.md", "# External newer\n");
+
+  const content = page.locator(".cm-content");
+  await page
+    .locator(".lumir-toast", { hasText: "发现未保存的崩溃备份" })
+    .getByRole("button", { name: "恢复内容" })
+    .click();
+  await expect(page.locator(".lumir-toast", { hasText: "已恢复未保存内容" })).toBeVisible();
+  await expect(content).toContainText("恢复的内容");
+  await expect(page.locator(".masthead-file")).toContainText("未保存");
+
+  // 恢复时 MUST NOT 把磁盘当前 revision 吸为新基准：debounce 后的自动保存按 CAS
+  // 报冲突（进而不是静默覆盖），磁盘上较新的外部版本原样保留。
+  const conflict = page.locator(".lumir-toast", { hasText: "保存冲突" });
+  await expect(conflict).toBeVisible({ timeout: 6000 });
+  await expect(conflict).toContainText("未丢失");
+  await expect(conflict.getByRole("button", { name: "重新载入（放弃我的修改）" })).toBeVisible();
+  await expect(conflict.getByRole("button", { name: "强制覆盖保存" })).toBeVisible();
+  expect(await fileText(page, "README.md")).toBe("# External newer\n");
+  await expect(page.locator(".lumir-toast", { hasText: "已自动保存" })).toHaveCount(0);
+  await expect(content).toContainText("恢复的内容");
+
+  // 逃生口仍可达：用户显式选择强制覆盖后，恢复的内容才落盘，备份随之清除。
+  await conflict.getByRole("button", { name: "强制覆盖保存" }).click();
+  await page
+    .locator(".lumir-toast", { hasText: "将覆盖磁盘上较新的内容" })
+    .getByRole("button", { name: "覆盖保存" })
+    .click();
+  await expect(page.locator(".lumir-toast", { hasText: "已强制覆盖保存" })).toBeVisible();
+  await expect.poll(() => fileText(page, "README.md")).toContain("恢复的内容");
+  await expect.poll(async () => (await recoveryStore(page))).toEqual({});
+});
+
 test("启动发现残留崩溃备份：可丢弃，编辑器不被改动", async ({ page }) => {
   await stubTauri(page, DEMO_VAULT);
-  await stubHardening(page, { seedRecovery: { "README.md": "旧备份内容" } });
+  await stubHardening(page, {
+    seedRecovery: {
+      "README.md": { content: "旧备份内容", baseRevision: fixtureRevision(README_ORIGINAL) },
+    },
+  });
   await page.goto("/");
 
   const prompt = page.locator(".lumir-toast", { hasText: "发现未保存的崩溃备份" });
@@ -205,7 +291,12 @@ test("启动发现残留崩溃备份：可丢弃，编辑器不被改动", async
 
 test("多个残留备份逐个给出提示，处置互不影响", async ({ page }) => {
   await stubTauri(page, DEMO_VAULT);
-  await stubHardening(page, { seedRecovery: { "README.md": "a", "docs/guide.md": "b" } });
+  await stubHardening(page, {
+    seedRecovery: {
+      "README.md": { content: "a", baseRevision: fixtureRevision(README_ORIGINAL) },
+      "docs/guide.md": { content: "b", baseRevision: null },
+    },
+  });
   await page.goto("/");
 
   const prompts = page.locator(".lumir-toast", { hasText: "发现未保存的崩溃备份" });
