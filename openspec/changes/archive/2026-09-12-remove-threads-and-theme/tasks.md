@@ -16,7 +16,7 @@
 - [x] `main.ts` 删主题切换快捷键与 `lumir-theme` localStorage
 - [x] `mermaid.ts` 主题维度收敛为固定默认配置
 - [x] 删 `design/` 目录
-- [ ] 视觉测试收敛单主题并更新基线截图
+- [x] 视觉测试收敛单主题并更新基线截图
 
 ## 作废旧 change
 
@@ -25,6 +25,6 @@
 ## 验证与门禁
 
 - [x] `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` 通过
-- [ ] `pnpm build` 与 `cargo test`（src-tauri）通过
-- [ ] `LUMIR_VISUAL_PORT=4273` 视觉测试单主题基线通过
-- [ ] `pnpm dev:app` 冒烟：开 vault、编辑保存、wikilink 跳转、无 console 报错
+- [x] `pnpm build` 与 `cargo test`（src-tauri）通过
+- [x] `LUMIR_VISUAL_PORT=4273` 视觉测试单主题基线通过
+- [x] `pnpm dev:app` 冒烟：开 vault、编辑保存、wikilink 跳转、无 console 报错（2026-09-12 实证：渲染/dirty 追踪/落盘/wikilink 渲染正常；Mod+Click 跳转由 wikilink.spec 133 全绿覆盖；发现 remap 门拦已注册 vault 的存量 bug，记入 review findings）
