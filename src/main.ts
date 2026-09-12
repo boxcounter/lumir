@@ -20,6 +20,7 @@ import {
   wikilinkCreate,
 } from "./ipc";
 import type { FsEntry } from "./bindings/FsEntry";
+import type { FsChangeKind } from "./bindings/FsChangeKind";
 import type { LinkResolveResult } from "./bindings/LinkResolveResult";
 import { extensionOf, resolveByNameUnique } from "./preview/attachments";
 import { findWikilinkSpans } from "./preview/wikilinks";
@@ -144,10 +145,13 @@ function dirtyGuard(action: string): boolean {
 
 // 保存失败的界面反馈（M101 验收修复）：冲突 / 写入失败 / 结果未知都必须给出
 // 可理解的提示并说明修改仍保留在内存，不得静默或只剩技术化 message。
+// 冲突与「文件已被外部删除」另有带动作的恢复提示（M124，见 saveCurrentFile
+// 的 catch 分流），此处文案是两路共用的兜底与人话化映射。
 const SAVE_ERROR_HINTS: Record<string, string> = {
-  document_conflict: "保存冲突：文件在磁盘上已被外部修改，内存中的修改未丢失；请核对后重新保存",
+  document_conflict: "保存冲突：文件在磁盘上已被外部修改，内存中的修改未丢失",
   document_write_failed: "保存失败：无法写入文档，内存中的修改未丢失",
   document_write_unknown: "保存结果未知：写入可能未生效，请核对文件内容，内存中的修改未丢失",
+  fs_not_found: "保存失败：文件已被外部删除或移动，内存中的修改未丢失",
 };
 
 function saveErrorMessage(e: unknown): string {
@@ -191,6 +195,37 @@ async function openFile(path: string, kind: "md" | "code" | "text" | "binary") {
   }
 }
 
+/** 重载当前展示文件：与 openFile 同序（读快照 → 校验世代 → openDocument），
+ * 但不走 dirtyGuard——调用方自行承担处置语义（冲突放弃 / watch 外部修改）。
+ * 不主动换代号：捕获当前世代并在应用前校验未被并发打开挤占，迟到响应自然丢弃。
+ * onlyIfChanged：revision 未变即跳过（自身保存也触发 watch Modified，避免每次
+ * 保存后重载闪烁、光标复位）；应用前发现用户已开始输入（dirty）也放弃。 */
+async function reloadDisplayedFile(path: string, opts: { onlyIfChanged?: boolean } = {}): Promise<boolean> {
+  if (displayedPath !== path || editor.mode() !== "md" || !notice.hidden) return false;
+  const request = fileRequest;
+  const generation = documentGeneration;
+  try {
+    const snapshot = await fsReadSnapshot(path);
+    if (request !== fileRequest || generation !== documentGeneration || displayedPath !== path) return false;
+    if (opts.onlyIfChanged && (snapshot.revision === displayedRevision || editor.isDirty())) return false;
+    if (editor.mode() !== "md") return false;
+    displayedRevision = snapshot.revision;
+    invalidateResolve(); // from 未变，但内容已换，按 from 键控的缓存整批失效
+    editor.openDocument(snapshot.content, path, request);
+    showEditor();
+    return true;
+  } catch (e) {
+    if (request !== fileRequest) return false;
+    toast(errorMessage(e));
+    return false;
+  }
+}
+
+/** 重新载入（放弃我的修改）：冲突处置与 watch 重载共用的入口，给出完成反馈。 */
+async function discardAndReload(path: string): Promise<void> {
+  if (await reloadDisplayedFile(path)) toast("已重新载入磁盘内容");
+}
+
 async function saveCurrentFile(): Promise<void> {
   if (saveInFlight || !displayedPath || editor.mode() !== "md" || !editor.isDirty() || !displayedRevision) return;
   const generation = documentGeneration;
@@ -209,8 +244,94 @@ async function saveCurrentFile(): Promise<void> {
       toast("已保存当前快照，仍有未保存修改");
     }
   } catch (e) {
-    toast(saveErrorMessage(e));
+    if (isCommandError(e) && e.code === "document_conflict") {
+      // CAS 失败：重试必败（revision 已变），纯文案会把用户修改锁死在内存——
+      // dirtyGuard 与退出守卫又堵死切换/退出，必须给逃生口（M124）。
+      showConflictPrompt(path);
+    } else if (isCommandError(e) && e.code === "fs_not_found") {
+      showNotFoundPrompt(path);
+    } else {
+      toast(saveErrorMessage(e));
+    }
   } finally { saveInFlight = false; }
+}
+
+/** 保存冲突的恢复提示：两个动作分别对应「放弃本地」与「覆盖磁盘」。sticky：
+ * 冲突在用户处置前不得自动消隐。 */
+function showConflictPrompt(path: string): void {
+  toast(SAVE_ERROR_HINTS.document_conflict, [
+    { label: "重新载入（放弃我的修改）", run: () => void discardAndReload(path) },
+    { label: "强制覆盖保存", run: () => showForceSaveConfirm(path) },
+  ], true);
+}
+
+/** 强制覆盖的二次确认：文案必须明示将覆盖磁盘上较新的内容（M124 裁决）。 */
+function showForceSaveConfirm(path: string): void {
+  toast("将覆盖磁盘上较新的内容，此操作不可撤销。确认强制覆盖保存？", [
+    { label: "覆盖保存", run: () => void forceSaveCurrentFile(path) },
+    { label: "取消", run: () => {} },
+  ], true);
+}
+
+/** 强制覆盖保存：先拉取磁盘当前 revision 作为新的 CAS 基准再写入（经既有
+ * fsReadSnapshot 封装，revision 与 fs_file_revision 同 sha256 原文口径）。
+ * 拉取与写入之间再有外部修改则仍报冲突，用户可重试——不静默吞。 */
+async function forceSaveCurrentFile(path: string): Promise<void> {
+  if (saveInFlight || displayedPath !== path || editor.mode() !== "md") return;
+  const content = editor.view.state.doc.toString();
+  saveInFlight = true;
+  try {
+    const snapshot = await fsReadSnapshot(path);
+    if (displayedPath !== path) return;
+    const revision = await documentSave(path, snapshot.revision, content);
+    displayedRevision = revision;
+    if (editor.view.state.doc.toString() === content) {
+      editor.markClean();
+      toast("已强制覆盖保存");
+    } else {
+      toast("已强制覆盖保存当前快照，仍有未保存修改");
+    }
+  } catch (e) {
+    if (isCommandError(e) && e.code === "fs_not_found") {
+      // 冲突处置期间文件又被外部删除：同样走另存出口。
+      showNotFoundPrompt(path);
+    } else {
+      toast(saveErrorMessage(e));
+    }
+  } finally { saveInFlight = false; }
+}
+
+/** 保存目标已被外部删除：内存修改是最后副本，给出另存入口（M124）。 */
+function showNotFoundPrompt(path: string): void {
+  toast(SAVE_ERROR_HINTS.fs_not_found, [
+    { label: "另存为新文件", run: () => void saveAsNewFile(path) },
+  ], true);
+}
+
+/** 另存为新文件：经 wikilink_create（后端 create_note，O_EXCL 语义不覆盖既有
+ * 文件）在同目录建「原名-恢复.md」，把内存内容写入后切过去；撞名自动加序号
+ * 重试。 */
+async function saveAsNewFile(fromPath: string): Promise<void> {
+  const stem = fromPath.slice(fromPath.lastIndexOf("/") + 1).replace(/\.(md|markdown)$/i, "");
+  const content = editor.view.state.doc.toString();
+  for (const suffix of ["", "-2", "-3", "-4", "-5"]) {
+    try {
+      const { created } = await wikilinkCreate(fromPath, `[[${stem}-恢复${suffix}]]`);
+      const snapshot = await fsReadSnapshot(created); // 空文件 revision 作 CAS 基准
+      await documentSave(created, snapshot.revision, content);
+      // 缓冲内容已落到新文件，本地 dirty 处置完毕——否则 openFile 的 dirtyGuard
+      // 会拦下这次切换，用户停在已删除文件上。
+      editor.markClean();
+      await openFile(created, "md");
+      toast(`已另存为：${created}`);
+      return;
+    } catch (e) {
+      if (isCommandError(e) && e.code === "wikilink_target_exists") continue;
+      toast(errorMessage(e));
+      return;
+    }
+  }
+  toast("另存为新文件失败：同名文件已存在，请手动导出");
 }
 
 window.addEventListener("keydown", (event) => {
@@ -378,9 +499,6 @@ keymap.attach(window, (command) => {
   }
 });
 
-shell.panel.hidden = true;
-shell.root.classList.add("panel-default-hidden");
-
 const mastheadVault = shell.root.querySelector<HTMLElement>(".masthead-vault")!;
 const mastheadFile = shell.root.querySelector<HTMLElement>(".masthead-file")!;
 
@@ -505,11 +623,40 @@ onFsEntryChanged((changes) => {
       attachmentPaths.push(change.path);
     }
   }
+  // 打开中文件被外部变更（Lumir ↔ Obsidian 来回编辑的高频路径，M124）：
+  // 附件索引与文件树照常吃增量，文档内容另行处置。
+  const openPath = displayedPath;
+  if (openPath) {
+    const hit = changes.find((c) => c.path === openPath);
+    if (hit) handleExternalChange(openPath, hit.kind);
+  }
   // 链接索引已由后端随事件流增量更新；前端清缓存重建装饰
   invalidateResolve();
   editor.refreshPreview();
   tree.applyChanges(changes);
 }).catch(() => {});
+
+/** watch 命中打开中文件的分流（M124）。保存进行中的批次跳过——自身保存也产生
+ * 事件，由 reloadDisplayedFile 的 revision 比对丢弃；外部删除无法重载，只提示
+ * 内容仍保留；dirty 时把选择权交给用户（sticky 浮条而非 modal，不打断打字）；
+ * 未 dirty 自动重载并提示。仅 md 模式：展示中的 md 才有内存修改可丢失。 */
+function handleExternalChange(path: string, kind: FsChangeKind): void {
+  if (saveInFlight) return;
+  if (kind === "deleted") {
+    toast(`当前文件已被外部删除：${path}；编辑器中的内容未丢失`, [], true);
+    return;
+  }
+  if (editor.isDirty()) {
+    toast(`检测到外部修改：${path}`, [
+      { label: "重载（放弃我的修改）", run: () => void discardAndReload(path) },
+      { label: "保留我的版本", run: () => {} },
+    ], true);
+  } else {
+    void reloadDisplayedFile(path, { onlyIfChanged: true }).then((reloaded) => {
+      if (reloaded) toast("检测到外部修改，已自动重载");
+    });
+  }
+}
 
 // 启动恢复：后端 setup 已按 last_vault 尝试自动打开；这里拉取结果。
 // 未打开 → 空态 + 打开入口；恢复失败 → 空态上人话提示。
@@ -529,10 +676,6 @@ vaultCurrent()
 // 口径不一致。在 Rust 侧字段正式废弃前，配置里的 editor.measure 只被解析
 // 校验，不影响任何界面行为。
 configGet().then((snapshot) => editor.setMode(snapshot.config.editor.mode)).catch(() => {});
-
-window.addEventListener("keydown", (event) => {
-  if ((event.metaKey || event.ctrlKey) && event.key === "\\" && shell.panel.childElementCount > 0) { event.preventDefault(); shell.panel.hidden = !shell.panel.hidden; }
-});
 
 // app-ready 只表示 webview/application shell 已挂载，不等价于 vault 恢复或编辑器首帧。
 const now = performance.now();

@@ -29,8 +29,22 @@
 | D38 | frontmatter 非键值结构 | 作者 | frontmatter 不是键值结构，按原文显示 | Frontmatter is not a key-value map; showing raw text | 解释回退决策而非制造错误感。 |
 
 | D39 | 未创建链接 toast 动作 | 作者 | 创建并打开 | Create & open | 预告创建后立即打开，避免作者猜测下一步。 |
+| D41 | toast 保存冲突 | 作者 | 保存冲突：文件在磁盘上已被外部修改，内存中的修改未丢失 | Save conflict: the file was modified on disk; your changes are still in memory | 陈述冲突事实并先安作者的心：修改没丢。 |
+| D42 | 保存冲突 toast 动作 | 作者 | 重新载入（放弃我的修改） | Reload (discard my changes) | 动作自含代价说明，作者无需猜测后果。 |
+| D43 | 保存冲突 toast 动作 | 作者 | 强制覆盖保存 | Force save (overwrite) | 破坏性动作入口，措辞直接但不预设作者已理解后果。 |
+| D44 | 强制覆盖二次确认 | 作者 | 将覆盖磁盘上较新的内容，此操作不可撤销。确认强制覆盖保存？ | This will overwrite newer content on disk and cannot be undone. Force save anyway? | 覆盖前的最后防线：明示磁盘内容较新且不可撤销。 |
+| D45 | toast 强制覆盖成功 | 作者 | 已强制覆盖保存 | Force saved | 确认覆盖完成，与常规保存区分（动作带代价）。 |
+| D46 | toast 重新载入成功 | 作者 | 已重新载入磁盘内容 | Reloaded from disk | 确认本地修改已放弃、内容回到磁盘版本。 |
+| D47 | toast 保存目标丢失 | 作者 | 保存失败：文件已被外部删除或移动，内存中的修改未丢失 | Save failed: the file was deleted or moved elsewhere; your changes are still in memory | 区分「写不进」与「文件没了」，并强调最后副本仍在内存。 |
+| D48 | 保存目标丢失 toast 动作 | 作者 | 另存为新文件 | Save as new file | 给出明确出口：内存内容有地方可去。 |
+| D49 | toast 另存成功 | 作者 | 已另存为：{路径} | Saved as: {path} | 确认内容落地位置，作者可继续在新文件上工作。 |
+| D50 | toast 外部修改自动重载 | 作者 | 检测到外部修改，已自动重载 | External changes detected; reloaded | 自动行为必须留下可见痕迹，否则像界面自己跳动。 |
+| D51 | toast 外部修改选择 | 作者 | 检测到外部修改：{路径} | External changes detected: {path} |  dirty 时不替作者决定，把两条路摆出来。 |
+| D52 | 外部修改 toast 动作 | 作者 | 重载（放弃我的修改） | Reload (discard my changes) | 动作自含代价说明。 |
+| D53 | 外部修改 toast 动作 | 作者 | 保留我的版本 | Keep my version | 中性确认本地优先，后续保存时再走冲突处置。 |
+| D54 | toast 打开中文件被外部删除 | 作者 | 当前文件已被外部删除：{路径}；编辑器中的内容未丢失 | The open file was deleted externally: {path}; the content is still in the editor | 坏消息配救生圈：删除不可挽回，但内容还在。 |
 
-D30 已合并入 D18；D30 编号停用，不复用。D2–D3、D8–D18、D27–D29 随 Thread 特性删除（ADR 0006，2026-09-12）停用，不复用。
+D30 已合并入 D18；D30 编号停用，不复用。D2–D3、D8–D18、D27–D29 随 Thread 特性删除（ADR 0006，2026-09-12）停用，不复用。D23–D24 随 panel 空壳清除（M124，2026-09-12）停用，不复用。
 
 ## 文案实现备注
 
