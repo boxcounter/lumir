@@ -29,17 +29,8 @@ for (const viewport of [{ width: 1280, height: 900 }, { width: 640, height: 480 
       expect(geometry.indent).toBe('0px');
       expect(geometry.align).toBe('justify');
       expect(Math.abs(geometry.firstX - geometry.left)).toBeLessThan(0.5);
-      const dropcap = await page.locator('.cm-lp-opening').evaluate(el => {
-        const style = getComputedStyle(el, '::first-letter');
-        const base = parseFloat(getComputedStyle(el).fontSize);
-        return { scale: parseFloat(style.fontSize) / base, float: style.cssFloat, paddingRight: parseFloat(style.paddingRight) / parseFloat(style.fontSize), paddingLeft: style.paddingLeft };
-      });
-      expect(dropcap.scale).toBeCloseTo(4.35, 2);
-      expect(dropcap.float).toBe('left');
-      expect(dropcap.paddingRight).toBeCloseTo(0.14, 2);
-      expect(dropcap.paddingLeft).toBe('0px');
       await page.screenshot({ path: info.outputPath('paragraph.png') });
-      await info.attach('geometry', { body: JSON.stringify({ viewport, geometry, dropcap }), contentType: 'application/json' });
+      await info.attach('geometry', { body: JSON.stringify({ viewport, geometry }), contentType: 'application/json' });
       await paragraph.evaluate(el => {
         const node = document.createTreeWalker(el, NodeFilter.SHOW_TEXT).nextNode()!;
         const range = document.createRange(); range.setStart(node, 0); range.setEnd(node, 8);

@@ -568,25 +568,9 @@ function collectSyntaxDecorations(
 
       if (name === "Paragraph" && ref.node.parent?.name === "Document") {
         const first = doc.lineAt(ref.from);
-        let previous = ref.node.prevSibling;
-        let isOpening = true;
-        while (previous) {
-          if (previous.name === "Paragraph" && !inFrontmatter(fm, previous.from, previous.to)) {
-            isOpening = false;
-            break;
-          }
-          previous = previous.prevSibling;
-        }
-        const dropcap = isOpening && /^[\p{L}\p{N}]/u.test(doc.sliceString(ref.from, ref.from + 2));
         for (const line of lineRanges(view, Math.max(ref.from, vrFrom), Math.min(ref.to, vrTo))) {
           const classes = ["cm-lp-paragraph"];
-          if (line.from === first.from) {
-            classes.push(dropcap ? "cm-lp-opening" : "cm-lp-paragraph-start");
-            if (dropcap && view.state.selection.ranges.some(range => range.from <= ref.from && range.to > ref.from)) {
-              classes.push("cm-lp-dropcap-selected");
-            }
-          }
-          if (dropcap && line.from === doc.lineAt(ref.to).from) classes.push("cm-lp-opening-end");
+          if (line.from === first.from) classes.push("cm-lp-paragraph-start");
           decos.push(Decoration.line({ class: classes.join(" ") }).range(line.from));
         }
       }
