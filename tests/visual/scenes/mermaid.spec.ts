@@ -37,34 +37,31 @@ function settleOnce(): Promise<void> {
   });
 }
 
-test("渲染：pending → settle 成功/失败，缓存键含主题", async () => {
+test("渲染：pending → settle 成功/失败，按源码缓存", async () => {
   setMermaidLoaderForTests(() => Promise.resolve(fakeMermaid));
   clearMermaidRenderCache();
   try {
     // 未命中先 pending，settle 后命中同一结果对象
     const settled = settleOnce();
-    const pending = ensureMermaidRender("graph TD; A-->B", "light");
+    const pending = ensureMermaidRender("graph TD; A-->B");
     expect(pending.status).toBe("pending");
     await settled;
-    const ok = ensureMermaidRender("graph TD; A-->B", "light");
+    const ok = ensureMermaidRender("graph TD; A-->B");
     expect(ok.status === "ok" && ok.svg).toContain("graph TD; A-->B");
-    expect(ensureMermaidRender("graph TD; A-->B", "light")).toBe(ok); // 缓存命中同一对象
+    expect(ensureMermaidRender("graph TD; A-->B")).toBe(ok); // 缓存命中同一对象
     expect(mermaidRenderCacheSize()).toBe(1);
 
     // parse 预校验失败 → error 缓存，不重复渲染
     const settledBad = settleOnce();
-    ensureMermaidRender("BAD", "light");
+    ensureMermaidRender("BAD");
     await settledBad;
-    const bad = ensureMermaidRender("BAD", "light");
+    const bad = ensureMermaidRender("BAD");
     expect(bad.status === "error" && bad.message).toBe("Parse error on line 1:");
     expect(mermaidRenderCacheSize()).toBe(2);
 
-    // 主题是缓存键的一部分：同源码不同主题各自渲染
-    const settledDark = settleOnce();
-    ensureMermaidRender("graph TD; A-->B", "dark");
-    await settledDark;
-    expect(ensureMermaidRender("graph TD; A-->B", "dark").status).toBe("ok");
-    expect(mermaidRenderCacheSize()).toBe(3);
+    // 缓存键即源码（单排版基线，无主题维度）：同源码直接命中，不重复渲染
+    expect(ensureMermaidRender("graph TD; A-->B")).toBe(ok);
+    expect(mermaidRenderCacheSize()).toBe(2);
   } finally {
     setMermaidLoaderForTests(null);
     clearMermaidRenderCache();
@@ -81,17 +78,17 @@ test("有界超时：加载永不 settle 转为 load 阶段错误，队列不堵
   clearMermaidRenderCache();
   try {
     const settled = settleOnce();
-    ensureMermaidRender("graph TD; A-->B", "light");
+    ensureMermaidRender("graph TD; A-->B");
     await settled;
-    const err = ensureMermaidRender("graph TD; A-->B", "light");
+    const err = ensureMermaidRender("graph TD; A-->B");
     expect(err.status === "error" && err.stage).toBe("load");
     expect(err.status === "error" && err.message).toContain("超时");
     // 队列不堵死：恢复加载器后新任务照常完成
     setMermaidLoaderForTests(() => Promise.resolve(fakeMermaid));
     const settledOk = settleOnce();
-    ensureMermaidRender("graph TD; C-->D", "light");
+    ensureMermaidRender("graph TD; C-->D");
     await settledOk;
-    expect(ensureMermaidRender("graph TD; C-->D", "light").status).toBe("ok");
+    expect(ensureMermaidRender("graph TD; C-->D").status).toBe("ok");
   } finally {
     setMermaidLoaderForTests(null);
     setMermaidTimeoutsForTests(null, null);
@@ -105,16 +102,16 @@ test("加载失败可重试：一次拒绝不毒化后续渲染", async () => {
   clearMermaidRenderCache();
   try {
     const settled = settleOnce();
-    ensureMermaidRender("graph TD; A-->B", "light");
+    ensureMermaidRender("graph TD; A-->B");
     await settled;
-    const err = ensureMermaidRender("graph TD; A-->B", "light");
+    const err = ensureMermaidRender("graph TD; A-->B");
     expect(err.status === "error" && err.stage).toBe("load");
-    // 失败结果按「主题 + 源码」缓存（不自动重渲染）；缓存失效后加载器会被重新调用
+    // 失败结果按源码缓存（不自动重渲染）；缓存失效后加载器会被重新调用
     clearMermaidRenderCache();
     const settledRetry = settleOnce();
-    ensureMermaidRender("graph TD; A-->B", "light");
+    ensureMermaidRender("graph TD; A-->B");
     await settledRetry;
-    expect(ensureMermaidRender("graph TD; A-->B", "light").status).toBe("ok");
+    expect(ensureMermaidRender("graph TD; A-->B").status).toBe("ok");
     expect(calls).toBe(2);
   } finally {
     setMermaidLoaderForTests(null);
@@ -278,7 +275,7 @@ test("不阻塞 F0：chunk 未就绪时 paint 照常、占位先出，释放后 
   await expect(page.locator(".cm-lp-mermaid-pending")).toHaveCount(0);
 });
 
-test("图表按默认主题渲染", async ({ page }) => {
+test("图表按排版基线渲染", async ({ page }) => {
   await openDiagram(page);
   const fill = await page
     .locator(".cm-lp-mermaid svg .node rect, .cm-lp-mermaid svg .node polygon, .cm-lp-mermaid svg rect.basic")
