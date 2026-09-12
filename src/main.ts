@@ -487,10 +487,6 @@ vaultCurrent()
   .catch((e) => tree.showEmpty(errorMessage(e)));
 
 // editor.mode：无类型线索时的默认模式（openFile 的模式裁决消费）。
-// editor.measure 前端不消费（M107 标注的废弃路径）：行宽由 CSS --measure
-//（style.css，默认 80% 百分比口径）控制，与 config.rs 的 100-2000px 整数
-// 口径不一致。在 Rust 侧字段正式废弃前，配置里的 editor.measure 只被解析
-// 校验，不影响任何界面行为。
 configGet().then((snapshot) => editor.setMode(snapshot.config.editor.mode)).catch(() => {});
 
 // app-ready 只表示 webview/application shell 已挂载，不等价于 vault 恢复或编辑器首帧。
