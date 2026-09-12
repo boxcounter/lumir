@@ -91,6 +91,40 @@ fn scenario_remap_candidate_short_circuits_stale_vault_detection() {
 }
 
 #[test]
+fn scenario_registered_vault_not_blocked_by_ghost_registry_entries() {
+    let f = Fixture::new();
+    let registered = f.vault("registered");
+    vault_register("registered-id".into(), registered.clone()).unwrap();
+    // 幽灵项：注册路径已消失的其他 vault（冒烟实证 vault-60196-1 / vault-64466-1 形态）。
+    let ghost = f.vault("ghost");
+    vault_register("ghost-1".into(), ghost.clone()).unwrap();
+    fs::remove_dir_all(&ghost).unwrap();
+    // 打开已注册路径：remap 门不拦截，直接打开。
+    assert!(remap_gate(std::path::Path::new(&registered))
+        .unwrap()
+        .is_none());
+    assert!(is_registered(std::path::Path::new(&registered)).unwrap());
+}
+
+#[test]
+fn scenario_unregistered_path_hits_remap_gate_only_with_ghost_entries() {
+    let f = Fixture::new();
+    // 注册表干净（无失效项）时，未注册路径直接打开，无候选。
+    let unknown = f.vault("unknown");
+    assert!(remap_gate(std::path::Path::new(&unknown))
+        .unwrap()
+        .is_none());
+    // 出现幽灵项后，同一未注册路径才被 remap 门拦下并给出候选。
+    let ghost = f.vault("ghost");
+    vault_register("ghost-1".into(), ghost.clone()).unwrap();
+    fs::remove_dir_all(&ghost).unwrap();
+    let gate = remap_gate(std::path::Path::new(&unknown)).unwrap();
+    let candidates = gate.expect("未注册路径应出现 remap 候选");
+    assert_eq!(candidates.len(), 1);
+    assert_eq!(candidates[0].id, "ghost-1");
+}
+
+#[test]
 fn scenario_valid_id_rejects_path_escape_for_vault_commands() {
     let f = Fixture::new();
     assert!(vault_register("../config".into(), f.vault("v")).is_err());

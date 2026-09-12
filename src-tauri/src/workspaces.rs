@@ -1,5 +1,6 @@
 //! vault 注册表的本地 JSON 持久化。
-//! 写入采用临时文件替换；应用进程内 command 调用串行，跨进程并发不在本阶段范围。
+//! 注册表写入采用临时文件 + rename 原子替换（vault_register）；应用进程内
+//! command 调用串行，跨进程并发不在本阶段范围。
 use crate::{commands::CommandError, config};
 use serde::{Deserialize, Serialize};
 use std::{fs, path::PathBuf};
@@ -25,7 +26,7 @@ pub struct VaultWorkspace {
 fn workspaces() -> Result<PathBuf, CommandError> {
     Ok(config::config_dir()?.join("workspaces"))
 }
-pub fn vault_id(_path: &str) -> String {
+pub fn vault_id() -> String {
     static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
     format!(
         "vault-{}-{}",
@@ -55,14 +56,13 @@ pub fn remap_candidates(path: &std::path::Path) -> Result<Vec<VaultWorkspace>, C
     out.sort_by(|a, b| a.id.cmp(&b.id));
     Ok(out)
 }
-pub fn reconcile_vault(path: &std::path::Path) -> Result<VaultWorkspace, CommandError> {
-    let p = path
-        .canonicalize()
-        .map_err(|_| CommandError::new("workspace_path", "无法规范化 vault 路径"))?;
-    let ps = p.display().to_string();
+/// 只读查找注册表中路径匹配的项（canonicalized 字符串比对）。
+/// 不创建注册表目录、不注册新 id——reconcile_vault 与 remap 门判定共用。
+fn find_by_path(ps: &str) -> Result<Option<VaultWorkspace>, CommandError> {
     let d = workspaces()?;
-    fs::create_dir_all(&d)
-        .map_err(|_| CommandError::new("workspace_write", "无法创建 workspace 注册表目录"))?;
+    if !d.is_dir() {
+        return Ok(None);
+    }
     for entry in fs::read_dir(&d)
         .map_err(|_| CommandError::new("workspace_read", "无法读取 workspace 注册表"))?
     {
@@ -72,11 +72,46 @@ pub fn reconcile_vault(path: &std::path::Path) -> Result<VaultWorkspace, Command
             &fs::read_to_string(entry.path()).unwrap_or_default(),
         ) {
             if v.path == ps {
-                return Ok(v);
+                return Ok(Some(v));
             }
         }
     }
-    let id = vault_id(&ps);
+    Ok(None)
+}
+
+/// 目标路径是否已注册（只读）。open_vault 的 remap 门须先作此判断：
+/// reconcile_vault 对未注册路径有注册 side effect，不能用作探测。
+pub fn is_registered(path: &std::path::Path) -> Result<bool, CommandError> {
+    let p = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    Ok(find_by_path(&p.display().to_string())?.is_some())
+}
+
+/// remap 门判定：目标已注册或不存在失效注册项时返回 None（直接打开）；
+/// 仅目标未注册且存在失效注册项时返回 Some(候选)（短路，待用户显式确认）。
+pub fn remap_gate(path: &std::path::Path) -> Result<Option<Vec<VaultWorkspace>>, CommandError> {
+    if is_registered(path)? {
+        return Ok(None);
+    }
+    let candidates = remap_candidates(path)?;
+    if candidates.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(candidates))
+    }
+}
+
+pub fn reconcile_vault(path: &std::path::Path) -> Result<VaultWorkspace, CommandError> {
+    let p = path
+        .canonicalize()
+        .map_err(|_| CommandError::new("workspace_path", "无法规范化 vault 路径"))?;
+    let ps = p.display().to_string();
+    let d = workspaces()?;
+    fs::create_dir_all(&d)
+        .map_err(|_| CommandError::new("workspace_write", "无法创建 workspace 注册表目录"))?;
+    if let Some(v) = find_by_path(&ps)? {
+        return Ok(v);
+    }
+    let id = vault_id();
     vault_register(id, ps)
 }
 #[tauri::command]
@@ -91,11 +126,15 @@ pub fn vault_register(id: String, path: String) -> Result<VaultWorkspace, Comman
     fs::create_dir_all(&d)
         .map_err(|_| CommandError::new("workspace_write", "无法创建 workspace 注册表目录"))?;
     let v = VaultWorkspace { id, path };
-    fs::write(
-        d.join(format!("{}.json", v.id)),
-        serde_json::to_vec_pretty(&v).unwrap(),
-    )
-    .map_err(|_| CommandError::new("workspace_write", "无法写入 workspace 注册表".to_string()))?;
+    // tmp + rename 原子替换：直接写目标文件会在崩溃窗口留下半个 JSON，
+    // remap_candidates / find_by_path 的容忍解析虽能跳过，但注册项即身份，不冒失真风险。
+    let tmp = d.join(format!("{}.json.tmp", v.id));
+    fs::write(&tmp, serde_json::to_vec_pretty(&v).unwrap()).map_err(|_| {
+        CommandError::new("workspace_write", "无法写入 workspace 注册表".to_string())
+    })?;
+    fs::rename(&tmp, d.join(format!("{}.json", v.id))).map_err(|_| {
+        CommandError::new("workspace_write", "无法落盘 workspace 注册表".to_string())
+    })?;
     Ok(v)
 }
 #[tauri::command]
