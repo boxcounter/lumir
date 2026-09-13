@@ -25,7 +25,7 @@
 ## 4. 视觉与文案
 
 - [x] 4.1 `src/style.css`：面板样式只用既有排版基线与 CSS 变量（占位实现，不引入新视觉语言），补齐 `[hidden]` 的显式规则
-- [x] 4.2 `文案-Copy.md`：新增用户可见文案按编号追加（D63 标题 / D64 分组标题 / D65 未绑定标注 / D66 关闭提示）
+- [x] 4.2 `文案-Copy.md`：新增用户可见文案按编号追加（D63 标题 / D64 分组标题 / D65 未绑定标注 / D66 未绑定的行说明 / D67 关闭提示）
 
 ## 5. 回归场景与规格制品
 
@@ -41,3 +41,10 @@
 - [x] 6.3 `cargo test`（`src-tauri/`）通过
 - [x] 6.4 `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` 通过
 - [x] 6.5 自查：无真实 vault / 真实 `~/.config/lumir/` 读写（场景用桩）；无 scope 外文件改动
+
+## 7. 评审 round 1 修复（p2-2items → fix-then-merge）
+
+- [x] 7.1 P2-1：文案册编号引用错位一行——deck 实为 D63–D67 五条，proposal 的 What Changes #6 与 Impact、tasks 的 4.2 三处原文写「D63–D66」且把「关闭提示」映射到 D66（实为 D67，D66 是未绑定的行说明）。三处改为 D63–D67 并更正 4.2 的逐条映射
+- [x] 7.2 P2-2：spec delta 中「SHALL 就地消费」与「MUST NOT 在表外注册与表内绑定相同的物理组合」字面自相矛盾。措辞改为「SHALL 由面板在模态遮罩上就地消费，MUST NOT 为同一物理组合在统一键位表之外注册**第二条分发绑定**」，并补一句说明就地消费与表内分发互斥、不构成两份分发映射（实现与场景未动）
+- [x] 7.3 复跑 `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` 通过；本 round 只动 openspec 制品（无 `.ts` / `.css` 改动），故不再复跑 build / 视觉 / cargo
+
