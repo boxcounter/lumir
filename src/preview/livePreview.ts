@@ -26,6 +26,8 @@ import { calloutMarkerDecorations, calloutOnLine, detectCallout } from "./callou
 import type { LinkResolveResult } from "../bindings/LinkResolveResult";
 import { BlockWrapper } from "@codemirror/view";
 import { findTables, tableAt, tableRowsInRange, type TableModel } from "./table";
+import { TABLE_SCROLL_CLASS, WIDGET_SCROLL_STEP_PX } from "../keys";
+import type { CommandRunner, WidgetCommandId } from "../keys";
 
 // @lezer/common 不是直接依赖（callout.ts 同口径），SyntaxNode 类型从 syntaxTree 推导。
 type SyntaxNode = ReturnType<typeof syntaxTree>["topNode"];
@@ -194,7 +196,7 @@ function tableWrappers(view: EditorView) {
         BlockWrapper.create({
           tagName: "div",
           rank: 10,
-          attributes: { class: "cm-lp-table-scroll", role: "region", "aria-label": label, tabindex: "0" },
+          attributes: { class: TABLE_SCROLL_CLASS, role: "region", "aria-label": label, tabindex: "0" },
         }).range(start, table.to),
         BlockWrapper.create({
           tagName: "div",
@@ -211,6 +213,34 @@ function tableWrappers(view: EditorView) {
       ];
     });
   return BlockWrapper.set(wrappers, true);
+}
+
+/**
+ * 轨道 D 的 widget 命令实现（M132 收编进统一键位表）。
+ *
+ * 迁移前这些键由本文件的 domEventHandlers 手柄消费（焦点在滚动容器上时生效），键位因此
+ * 散在第二处；现在它们进 keys.ts 的 KEY_BINDINGS，命中条件由绑定的 `when` 表达（事件
+ * 目标是本容器），实现仍留在这里——要滚动的只有这个 widget 自己。步进与逃逸语义与原
+ * 手柄逐字一致：左右 120px、Home→最左、End→最右、Escape→焦点交还编辑器。
+ */
+export function widgetCommands(view: EditorView): Record<WidgetCommandId, CommandRunner> {
+  const containerOf = (event?: KeyboardEvent): HTMLElement | null => {
+    const target = event?.target;
+    if (!(target instanceof Element)) return null;
+    return target.closest<HTMLElement>(`.${TABLE_SCROLL_CLASS}`);
+  };
+  const onContainer = (event: KeyboardEvent | undefined, apply: (el: HTMLElement) => void): void => {
+    const el = containerOf(event);
+    if (el) apply(el);
+  };
+  return {
+    "editor.widget-scroll-left": (event) => onContainer(event, (el) => { el.scrollLeft -= WIDGET_SCROLL_STEP_PX; }),
+    "editor.widget-scroll-right": (event) => onContainer(event, (el) => { el.scrollLeft += WIDGET_SCROLL_STEP_PX; }),
+    "editor.widget-scroll-home": (event) => onContainer(event, (el) => { el.scrollLeft = 0; }),
+    "editor.widget-scroll-end": (event) => onContainer(event, (el) => { el.scrollLeft = el.scrollWidth; }),
+    // Escape 不滚动：把焦点交还编辑器（随后按键回到文本上下文），与原手柄同语义。
+    "editor.widget-escape": (event) => onContainer(event, () => { view.focus(); }),
+  };
 }
 
 export function livePreview(ctx: PreviewContext) {
@@ -255,7 +285,7 @@ export function livePreview(ctx: PreviewContext) {
       },
       focusin(event, view) {
         const target = event.target;
-        if (!(target instanceof HTMLElement) || !target.matches(".cm-lp-table-scroll")) return false;
+        if (!(target instanceof HTMLElement) || !target.matches(`.${TABLE_SCROLL_CLASS}`)) return false;
         const selection = view.dom.ownerDocument.getSelection();
         if (!selection?.anchorNode || !view.contentDOM.contains(selection.anchorNode)) {
           view.focus();
@@ -267,28 +297,15 @@ export function livePreview(ctx: PreviewContext) {
         return false;
       },
       wheel(event) {
-        const target = event.target instanceof Element ? event.target.closest<HTMLElement>(".cm-lp-table-scroll") : null;
+        const target = event.target instanceof Element ? event.target.closest<HTMLElement>(`.${TABLE_SCROLL_CLASS}`) : null;
         if (!target || !event.deltaX) return false;
         target.scrollLeft += event.deltaX;
         event.preventDefault();
         return true;
       },
-      keydown(event, view) {
-        const target = event.target;
-        if (!(target instanceof HTMLElement) || !target.matches(".cm-lp-table-scroll")) return false;
-        if (event.key === "Escape") {
-          view.focus();
-          event.preventDefault();
-          return true;
-        }
-        const movement = event.key === "ArrowRight" ? 120 : event.key === "ArrowLeft" ? -120 : null;
-        if (movement !== null || event.key === "Home" || event.key === "End") {
-          target.scrollLeft = event.key === "Home" ? 0 : event.key === "End" ? target.scrollWidth : target.scrollLeft + (movement ?? 0);
-          event.preventDefault();
-          return true;
-        }
-        return false;
-      },
+      // 焦点作用域的滚动键（Escape / Home / End / 左右方向键）不在此处：M132 已收编进
+      // keys.ts 的 KEY_BINDINGS（when 限定事件目标在本容器内），实现见 widgetCommands。
+      // 在这里留一份就是第二条键位旁路——本 change 的整个动因。
     }),
     ViewPlugin.fromClass(
       class {

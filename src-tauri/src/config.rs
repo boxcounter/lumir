@@ -7,6 +7,13 @@
 //!   整文件不是合法 JSON 时才整体落回默认配置。
 //! - 未知字段忽略（向前兼容：新版写入的字段旧版读取不报错）。
 //!
+//! ## keys 表（M132）：形状校验在此，命令 id 校验在前端
+//!
+//! `keys` 是键位覆盖表（单键重绑 / 解绑）。本模块只校验**形状**：键位非空且不含空白
+//!（含空白即多段 chord，本版不支持）、值是非空字符串（命令 id）或 null（解绑）。命令 id
+//! 是否**已知**由前端键位层判定：命令清单的单一来源是 src/keys.ts 的 COMMAND_IDS，在
+//! Rust 侧复制一份只会得到两份必然漂移的清单——正是 M131 要消灭的并列来源。
+//!
 //! ## 格式选型：JSON 而非 TOML
 //!
 //! 选 JSON：serde_json 已是依赖（零新增，契合本仓低依赖取向）；报错带行列号，
@@ -15,6 +22,7 @@
 //! 解析两行，对外契约不变）。
 
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use ts_rs::TS;
 
@@ -32,6 +40,10 @@ pub struct AppConfig {
     /// `write_last_vault` 写回）。
     pub last_vault: Option<String>,
     pub editor: EditorConfig,
+    /// 键位覆盖表（M132）：键位写法 → 命令 id；值为 null 表示解绑该键位。
+    /// 键位写法与前端键位 token 同源（如 `"Cmd-s"`、`"Ctrl-Alt-Minus"`、`"ArrowUp"`）；
+    /// 多段 chord（含空白）本版不支持。命令 id 的合法性由前端键位层判定（见模块头）。
+    pub keys: HashMap<String, Option<String>>,
 }
 
 impl Default for AppConfig {
@@ -40,6 +52,7 @@ impl Default for AppConfig {
             version: SCHEMA_VERSION,
             last_vault: None,
             editor: EditorConfig::default(),
+            keys: HashMap::new(),
         }
     }
 }
@@ -84,6 +97,9 @@ struct RawConfig {
     version: Option<u32>,
     last_vault: Option<serde_json::Value>,
     editor: RawEditorConfig,
+    /// [keys] 表整体收成 Value：形状（对象？键位合法？值类型？）逐项判定，非法项只丢
+    /// 自己并附 warning，不影响其余键位（与 editor.mode 的逐字段口径一致）。
+    keys: serde_json::Value,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -192,14 +208,59 @@ fn validate(raw: RawConfig) -> (AppConfig, Vec<String>) {
             defaults.editor.mode
         }
     };
+
+    let (keys, mut key_warnings) = validate_keys(raw.keys);
+    warnings.append(&mut key_warnings);
+
     (
         AppConfig {
             version,
             last_vault,
             editor: EditorConfig { mode },
+            keys,
         },
         warnings,
     )
+}
+
+/// [keys] 表的形状校验（M132）：逐项判定，非法项丢弃并附人话 warning，其余项照常生效。
+/// 只判形状——键位非空且不含空白（含空白即多段 chord，本版不支持）、值是非空字符串或
+/// null；命令 id 是否已知由前端键位层判定（模块头有理由）。
+fn validate_keys(raw: serde_json::Value) -> (HashMap<String, Option<String>>, Vec<String>) {
+    let mut keys = HashMap::new();
+    let mut warnings = Vec::new();
+    let map = match raw {
+        serde_json::Value::Null => return (keys, warnings),
+        serde_json::Value::Object(map) => map,
+        _ => {
+            warnings
+                .push("配置项 keys 应为对象（键位 → 命令 id，或 null 解绑），已忽略".to_string());
+            return (keys, warnings);
+        }
+    };
+    for (key, value) in map {
+        if key.trim().is_empty() || key.chars().any(char::is_whitespace) {
+            warnings.push(format!(
+                "配置项 keys 的键位 \"{key}\" 非法（空或含空白；多段 chord 暂不支持），已忽略"
+            ));
+            continue;
+        }
+        match value {
+            serde_json::Value::Null => {
+                keys.insert(key, None);
+            }
+            serde_json::Value::String(command) if !command.trim().is_empty() => {
+                keys.insert(key, Some(command));
+            }
+            serde_json::Value::String(_) => warnings.push(format!(
+                "配置项 keys.{key} 的命令为空，已忽略（解绑请写 null）"
+            )),
+            _ => warnings.push(format!(
+                "配置项 keys.{key} 的值应为命令 id 字符串或 null（解绑），已忽略"
+            )),
+        }
+    }
+    (keys, warnings)
 }
 
 #[cfg(test)]
@@ -289,5 +350,92 @@ mod tests {
         let snap = load_from(&f.0);
         assert_eq!(snap.config.version, SCHEMA_VERSION);
         assert!(snap.warnings[0].contains("v99"));
+    }
+
+    #[test]
+    fn missing_keys_field_yields_empty_overrides() {
+        // 老配置文件（M132 之前写入）没有 keys 字段：空表、无 warning（向前兼容）。
+        let f = TempFile::new(r#"{"version":1,"editor":{"mode":"md"}}"#);
+        let snap = load_from(&f.0);
+        assert!(snap.config.keys.is_empty());
+        assert!(snap.warnings.is_empty());
+    }
+
+    #[test]
+    fn keys_table_supports_rebind_and_unbind() {
+        let f = TempFile::new(
+            r#"{"keys":{"Ctrl-s":"document.save","Cmd-s":null,"Ctrl-Alt-Minus":"editor.redo"}}"#,
+        );
+        let snap = load_from(&f.0);
+        assert!(
+            snap.warnings.is_empty(),
+            "合法 keys 表不应产生 warning：{:?}",
+            snap.warnings
+        );
+        assert_eq!(
+            snap.config.keys.get("Ctrl-s").and_then(|v| v.as_deref()),
+            Some("document.save")
+        );
+        assert_eq!(snap.config.keys.get("Cmd-s"), Some(&None), "null = 解绑");
+        assert_eq!(
+            snap.config
+                .keys
+                .get("Ctrl-Alt-Minus")
+                .and_then(|v| v.as_deref()),
+            Some("editor.redo")
+        );
+    }
+
+    #[test]
+    fn keys_not_an_object_falls_back_with_warning() {
+        let f = TempFile::new(r#"{"keys":["Cmd-s"]}"#);
+        let snap = load_from(&f.0);
+        assert!(snap.config.keys.is_empty());
+        assert_eq!(snap.warnings.len(), 1);
+        assert!(snap.warnings[0].contains("keys"));
+        // 其余字段不受影响（逐字段口径）
+        assert_eq!(snap.config.editor.mode, EditorMode::Md);
+    }
+
+    #[test]
+    fn keys_invalid_entries_are_dropped_per_item() {
+        // 键位含空白（多段 chord）/ 值类型非法 / 命令为空：逐项丢弃并各自 warning，
+        // 合法项与解绑项照常生效。
+        let f = TempFile::new(
+            r#"{"keys":{"Cmd-s":"document.save","Ctrl-x u":"editor.undo","Ctrl-j":42,"Ctrl-k":"","Ctrl-y":null}}"#,
+        );
+        let snap = load_from(&f.0);
+        assert_eq!(
+            snap.config.keys.len(),
+            2,
+            "合法项应保留：{:?}",
+            snap.config.keys
+        );
+        assert_eq!(
+            snap.config.keys.get("Cmd-s").and_then(|v| v.as_deref()),
+            Some("document.save")
+        );
+        assert_eq!(snap.config.keys.get("Ctrl-y"), Some(&None));
+        assert_eq!(snap.warnings.len(), 3, "{:?}", snap.warnings);
+        for needle in ["Ctrl-x u", "Ctrl-j", "Ctrl-k"] {
+            assert!(
+                snap.warnings.iter().any(|w| w.contains(needle)),
+                "缺少 {needle} 的 warning：{:?}",
+                snap.warnings
+            );
+        }
+    }
+
+    #[test]
+    fn keys_unknown_command_is_passed_through_for_frontend_validation() {
+        // 命令 id 是否已知不在 Rust 侧判定（命令清单的唯一来源是前端键位层）：形状合法
+        // 即透传，前端在装配期给 warning 并忽略该条。
+        let f = TempFile::new(r#"{"keys":{"Ctrl-j":"editor.not-a-command"}}"#);
+        let snap = load_from(&f.0);
+        assert!(snap.warnings.is_empty());
+        assert_eq!(
+            snap.config.keys.get("Ctrl-j").and_then(|v| v.as_deref()),
+            Some("editor.not-a-command")
+        );
     }
 }

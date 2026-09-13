@@ -11,15 +11,21 @@
 //   - scope "global"：任意焦点都生效（轨道 E 的 ⌘S 与轨道 A 的 ⌘Enter 原样迁入）。
 //   - scope "editor"：事件目标落在编辑器内容区内才生效。判定用「目标在 contentDOM 内」
 //     而非「焦点在编辑器上」——轨道 D 的 widget（表格滚动容器）就在 contentDOM 里，
-//     焦点落在其中时 editor 作用域的命令照常委托到同一命令层，而 widget 自己的键
-//     （Escape / Home / End / 左右方向键）由 livePreview 的手柄先消费：本层入口检查
-//     event.defaultPrevented，被消费品的事件不改 chord 状态、直接让路。
-//   - 命令实现留在各自模块（editor.* 在 editor.ts，文档/链接命令在 main.ts），经
-//     attach 注入。CommandId 由 COMMAND_IDS 派生，Record<CommandId, CommandRunner> 把
-//     「表里每条绑定都有归属命令」变成编译期合同；构造函数再对重复键抛错、attach 再对
-//     缺实现抛错（运行期兜底）。
+//     焦点落在其中时 editor 作用域的命令照常委托到同一命令层。M132 起该 widget 自己的
+//     滚动键（Escape / Home / End / 左右方向键）也进了这张表：靠 KeyBinding.when 限定
+//     「事件目标是该容器才命中」，文本编辑中的同名键照旧走原生 caret 路径（只按 scope
+//     会把 Home/End/方向键从文本编辑里吞掉）。
+//   - 命令实现留在各自模块（editor.* 在 editor.ts；widget 组在 livePreview.ts，由 editor.ts
+//     统一装配；文档/链接命令在 main.ts），经 attach 注入。CommandId 由 COMMAND_IDS 派生，
+//     Record<CommandId, CommandRunner> 把「表里每条绑定都有归属命令」变成编译期合同；
+//     构造函数再对重复键抛错、attach 再对缺实现抛错（运行期兜底）。
+//   - 分发器入口仍检查 event.defaultPrevented：更靠近事件目标的处理器（CM domEvent 手柄、
+//     双击选词等）先消费的键不改 chord 状态、直接让路。
 // chorded + 非 modal（ADR 0001 §4）不变：多段 chord 的 trie 与超时清空机制照搬，只是
 // 建表来源从「各处 register 调用」换成 KEY_BINDINGS。当前表内没有多段 chord。
+//
+// M132：表可由 ~/.config/lumir 的 [keys] 覆盖（applyKeyOverrides：单键重绑 / 解绑；
+// 多段 chord 本版不支持）。覆盖只换「键 → 命令」的对应，命令实现与作用域口径不变。
 //
 // 平台口径（M131 评审 r1 F1 如实记录）：迁移后**表内绑定一律全平台无条件生效**，不再有
 // 平台门。两处与迁移前不同，均只在非 macOS 平台可观测：
@@ -32,8 +38,8 @@
 
 export type KeyScope = "global" | "editor";
 
-/** 编辑器侧命令 id（实现落在 editor.ts 的 commands 记录）。 */
-export const EDITOR_COMMAND_IDS = [
+/** 编辑器内核侧命令 id（实现落在 editor.ts 的 commands 记录）。 */
+const EDITOR_CORE_COMMAND_IDS = [
   "editor.cursor-up",
   "editor.cursor-down",
   "editor.cursor-forward",
@@ -43,7 +49,44 @@ export const EDITOR_COMMAND_IDS = [
   "editor.select-all",
   "editor.undo",
   "editor.redo",
+  // M132：Emacs 编辑键（档 1/2）
+  "editor.delete-char-forward",
+  "editor.delete-char-backward",
+  "editor.transpose-chars",
+  "editor.delete-word-forward",
+  "editor.delete-word-backward",
+  "editor.kill-line",
+  "editor.yank",
+  "editor.keyboard-quit",
+  "editor.scroll-page-down",
+  "editor.scroll-page-up",
+  "editor.recenter",
+  // M132：shift-extend 扩选（v0 不做 mark mode）
+  "editor.extend-char-forward",
+  "editor.extend-char-backward",
+  "editor.extend-line-down",
+  "editor.extend-line-up",
+  "editor.extend-line-start",
+  "editor.extend-line-end",
+  "editor.extend-word-forward",
+  "editor.extend-word-backward",
 ] as const;
+
+/** 轨道 D 的 widget 焦点作用域命令（M132 收编进统一表；实现在 livePreview.ts）。
+ *  归在 editor 组：作用域同为 editor（事件目标落在 contentDOM 内的 widget 里），由
+ *  editor.ts 的 commands 记录统一装配——分组只表达「谁提供实现」，不改变作用域语义。 */
+export const WIDGET_COMMAND_IDS = [
+  "editor.widget-scroll-left",
+  "editor.widget-scroll-right",
+  "editor.widget-scroll-home",
+  "editor.widget-scroll-end",
+  "editor.widget-escape",
+] as const;
+
+export type WidgetCommandId = (typeof WIDGET_COMMAND_IDS)[number];
+
+/** 编辑器侧全部命令 id（内核 + widget）。 */
+export const EDITOR_COMMAND_IDS = [...EDITOR_CORE_COMMAND_IDS, ...WIDGET_COMMAND_IDS] as const;
 
 /** 全局命令 id（实现落在装配层 main.ts）。 */
 export const GLOBAL_COMMAND_IDS = ["document.save", "wikilink.follow"] as const;
@@ -59,9 +102,29 @@ export interface KeyBinding {
   key: string;
   command: CommandId;
   scope: KeyScope;
+  /**
+   * 可选的命中条件（M132）：返回 false 时本绑定不接管、事件原样留给原生路径。
+   * 用于「同一个物理键在不同焦点下语义不同」的场景——轨道 D 的表格滚动容器键
+   *（Home / End / 左右方向键 / Escape）只在焦点落在该 widget 内时生效，文本编辑
+   * 中的同名按键必须照旧走原生 caret 路径。作用域（scope）只能表达「在不在编辑器
+   * 内容区内」，表达不了这一层，故单列一个条件。
+   */
+  when?: (event: KeyboardEvent) => boolean;
   /** 这条绑定的归属与来由——表即文档，新绑定必须写清为什么是它。 */
   doc: string;
 }
+
+/** 表格滚动容器（livePreview 的 grid 表格 widget）的 class：widget 键的命中条件用。 */
+export const TABLE_SCROLL_CLASS = "cm-lp-table-scroll";
+
+/** 事件目标是否落在表格滚动容器内（含其后代）。 */
+function isWidgetKeyTarget(event: KeyboardEvent): boolean {
+  const target = event.target;
+  return target instanceof Element && target.closest(`.${TABLE_SCROLL_CLASS}`) !== null;
+}
+
+/** 表格滚动容器内左右方向键的步进（原 livePreview 手柄口径，迁移不改行为）。 */
+export const WIDGET_SCROLL_STEP_PX = 120;
 
 /**
  * 唯一分发表（D1/D2/D3 落点见各条 doc）。键位 token 的口径：
@@ -101,13 +164,52 @@ export const KEY_BINDINGS: readonly KeyBinding[] = [
   { key: "Ctrl-_", command: "editor.undo", scope: "editor", doc: "Emacs 别名 C-_（mac 物理为 ⌃⇧-，token 口径见上）" },
   { key: "Ctrl-Alt-Minus", command: "editor.redo", scope: "editor", doc: "Emacs 系重做别名 ⌃⌥_（mac 键盘物理为 ⌃⌥⇧-；Alt 层把 - 换成 —，故按物理键 Minus 判定，见上）" },
 
+  // ── 编辑器内：翻屏与重定位（M132 档 1）
+  { key: "Ctrl-v", command: "editor.scroll-page-down", scope: "editor", doc: "Emacs C-v（scroll-up）：视口向后翻一屏，光标不动——阅读推进用，不给原生路径（原生滚动与 CM 视口重建叠加会整屏跳变，M103 同族）" },
+  { key: "Alt-KeyV", command: "editor.scroll-page-up", scope: "editor", doc: "Emacs M-v（scroll-down）；含 Alt 的组合按物理键判定（Alt 层把 v 换成 √，e.key 认不出，见文件头 token 口径）" },
+  { key: "Ctrl-l", command: "editor.recenter", scope: "editor", doc: "Emacs C-l：把光标行滚到视口居中（revealLine 同款 y:\"center\"；v0 不做 Emacs 的三段循环）" },
+
+  // ── 编辑器内：删除与转置（M132 档 1；表格 cell 内一律钳到 cell 边界，绝不跨过隐藏管道符）
+  { key: "Ctrl-d", command: "editor.delete-char-forward", scope: "editor", doc: "Emacs C-d；表格 cell 内钳到 cell 尾（M129 survey 实证：跨过隐藏管道符即破坏表格结构）" },
+  { key: "Ctrl-h", command: "editor.delete-char-backward", scope: "editor", doc: "Emacs C-h（macOS 文本系统的退格键位）；cell 边界同上" },
+  { key: "Ctrl-t", command: "editor.transpose-chars", scope: "editor", doc: "Emacs C-t：转置光标两侧字符并把光标移到两者之后（行尾时转置前两个）" },
+  { key: "Alt-KeyD", command: "editor.delete-word-forward", scope: "editor", doc: "Emacs M-d kill-word（Alt 层把 d 换成 ∂，按物理键判定）；cell 边界同 ⌃D" },
+  { key: "Alt-Backspace", command: "editor.delete-word-backward", scope: "editor", doc: "Emacs M-DEL backward-kill-word（真机 ⌥⌫）；cell 边界同上" },
+
+  // ── 编辑器内：kill / yank（M132 档 2；单槽 kill buffer，kill ring 后续）
+  { key: "Ctrl-k", command: "editor.kill-line", scope: "editor", doc: "Emacs C-k：kill 到行尾（已在行尾则连带换行，Emacs 口径）；表格 cell 内只到 cell 尾，绝不跨过隐藏管道符" },
+  { key: "Ctrl-y", command: "editor.yank", scope: "editor", doc: "Emacs C-y：插入 kill buffer（单槽；连续 ⌃K 的内容追加进同一槽，等价 Emacs 的连续 kill 合并）" },
+  { key: "Ctrl-g", command: "editor.keyboard-quit", scope: "editor", doc: "Emacs C-g keyboard-quit：撤下进行中的选择（折叠为光标）；多段 chord 的 pending 本就在无关键上自动清空" },
+
+  // ── 编辑器内：shift-extend 扩选（M132；v0 不做 mark mode，选区只有 anchor/head 两端）
+  { key: "Ctrl-Shift-f", command: "editor.extend-char-forward", scope: "editor", doc: "macOS 文本系统的 ⌃⇧F（⌃F 的扩选变体）：保持 anchor，head 逐字符前移（沿用 ⌃F 的硬化落点）" },
+  { key: "Ctrl-Shift-b", command: "editor.extend-char-backward", scope: "editor", doc: "同上，⌃⇧B" },
+  { key: "Ctrl-Shift-n", command: "editor.extend-line-down", scope: "editor", doc: "⌃⇧N：按垂直移动的硬化落点向下扩选（跨原子块钳制与表格行路由同 ⌃N，只多保留 anchor）" },
+  { key: "Ctrl-Shift-p", command: "editor.extend-line-up", scope: "editor", doc: "同上，⌃⇧P" },
+  { key: "Ctrl-Shift-a", command: "editor.extend-line-start", scope: "editor", doc: "⌃⇧A：扩选到行首（落点口径同 ⌃A，含隐藏 replace 退化回退）" },
+  { key: "Ctrl-Shift-e", command: "editor.extend-line-end", scope: "editor", doc: "⌃⇧E：扩选到行尾（落点口径同 ⌃E）" },
+  { key: "Alt-KeyF", command: "editor.extend-word-forward", scope: "editor", doc: "⌥⇧F：按词向后扩选；含 Alt 的组合按物理键且 Shift 不参与判定（M131 token 口径），故与 ⌥F 同 token——v0 未绑 ⌥F 的单词移动，见 spec 的已知限制" },
+  { key: "Alt-KeyB", command: "editor.extend-word-backward", scope: "editor", doc: "⌥⇧B：按词向前扩选；token 口径同 ⌥⇧F" },
+
+  // ── 编辑器内：轨道 D 的表格滚动容器（widget）焦点键（M132 从 livePreview 手柄收编）
+  // when 把命中限定在 widget 焦点内：文本编辑中的 Home / End / 左右方向键 / Escape
+  // 必须照旧走原生 caret 路径（连同名键一起绑会把这些键从文本编辑里吞掉）。
+  { key: "ArrowLeft", command: "editor.widget-scroll-left", scope: "editor", when: isWidgetKeyTarget, doc: "表格滚动容器焦点内的 ←（原手柄的 120px 步进）；when 保证文本编辑中的 ← 不受影响" },
+  { key: "ArrowRight", command: "editor.widget-scroll-right", scope: "editor", when: isWidgetKeyTarget, doc: "容器焦点内的 →（原手柄口径）" },
+  { key: "Home", command: "editor.widget-scroll-home", scope: "editor", when: isWidgetKeyTarget, doc: "容器焦点内的 Home：横向滚回最左" },
+  { key: "End", command: "editor.widget-scroll-end", scope: "editor", when: isWidgetKeyTarget, doc: "容器焦点内的 End：横向滚到最右" },
+  { key: "Escape", command: "editor.widget-escape", scope: "editor", when: isWidgetKeyTarget, doc: "容器焦点内的 Escape：焦点交还编辑器（view.focus()），随后按键回到文本上下文" },
+
   // ── 全局
   { key: "Cmd-s", command: "document.save", scope: "global", doc: "D3 裁决：⌘S 是唯一保存键；⌃S 解绑（预留给 isearch），不再触发保存" },
   { key: "Cmd-Enter", command: "wikilink.follow", scope: "global", doc: "轨道 A 原样迁入：迁移前挂在 window 上（任意焦点生效），作用域不变" },
 ];
 
-/** 命令实现：命中即已消费——分发器统一吞掉默认行为，命令本身无事可做也不放行原生路径。 */
-export type CommandRunner = () => void;
+/** 命令实现：命中即已消费——分发器统一吞掉默认行为，命令本身无事可做也不放行原生路径。
+ *  M132 起接收触发事件（可选）：widget 焦点键需要知道事件目标（焦点在哪个容器里），
+ *  「哪个元素被按到」属于事件本身，不该让命令去猜全局焦点。既有实现不带参数，不受影响；
+ *  菜单通道（无键盘事件）同样只是不传该参数。 */
+export type CommandRunner = (event?: KeyboardEvent) => void;
 
 /** 命令实现表：缺任何一条 command id 都是编译错误。 */
 export type CommandRuntime = Record<CommandId, CommandRunner>;
@@ -191,6 +293,64 @@ function segmentsOf(sequence: string): string[] {
   return sequence.trim().split(/\s+/).map(normalizeKey);
 }
 
+/** 一条键位覆盖的解析结果（`null` 值表示解绑）。 */
+export type KeyOverrides = Readonly<Record<string, string | null | undefined>>;
+
+/**
+ * 把 [keys] 配置覆盖应用到键位表（M132）：单键重绑 / 解绑，返回新表与人话 warning。
+ *
+ * 口径：
+ * - 覆盖**只换「键 → 命令」的对应**：作用域由命令的归属决定（editor 组 → editor，
+ *   其余 → global），不随配置漂移，也不允许把 editor 命令绑成 global（否则焦点在
+ *   别处时命令拿不到编辑器上下文）。
+ * - 未知命令 id：warning + 忽略该条（保留默认绑定），MUST NOT 抛错——配置文件打错
+ *   一个字不该让应用起不来。命令清单的单一来源是本文件的 COMMAND_IDS（Rust 侧只
+ *   校验形状，不复制这张清单，见 openspec change emacs-keys-pack 的分层说明）。
+ * - 空键位 / 多段 chord（含空白）：warning + 忽略（chord 后续版本才支持）。
+ * - 解绑一个本来就没有默认绑定的键：warning（多半是笔误），不影响其余项。
+ * - 解绑不删除命令实现：命令仍由运行期命令表提供，只是没有键指向它（M131 的
+ *   「每条命令至少一条绑定」只约束默认表本身）。
+ */
+export function applyKeyOverrides(
+  overrides: KeyOverrides,
+  bindings: readonly KeyBinding[] = KEY_BINDINGS,
+): { bindings: KeyBinding[]; warnings: string[] } {
+  const warnings: string[] = [];
+  const byToken = new Map<string, KeyBinding>();
+  for (const binding of bindings) byToken.set(normalizeKey(binding.key), binding);
+  for (const [rawKey, command] of Object.entries(overrides)) {
+    const raw = (rawKey ?? "").trim();
+    if (raw === "" || /\s/.test(raw)) {
+      warnings.push(`配置项 keys 里的键位 "${rawKey}" 非法（空或含空白；多段 chord 暂不支持），已忽略`);
+      continue;
+    }
+    let token: string;
+    try {
+      token = normalizeKey(raw);
+    } catch {
+      warnings.push(`配置项 keys 里的键位 "${rawKey}" 无法解析（缺键名），已忽略`);
+      continue;
+    }
+    if (command === null || command === undefined) {
+      if (byToken.delete(token)) continue;
+      warnings.push(`配置项 keys 解绑了 ${rawKey}，但它没有默认绑定，已忽略`);
+      continue;
+    }
+    if (!(COMMAND_IDS as readonly string[]).includes(command)) {
+      warnings.push(`配置项 keys.${rawKey} 的命令 "${command}" 未知，已忽略该覆盖（保留默认绑定）`);
+      continue;
+    }
+    const scope: KeyScope = (EDITOR_COMMAND_IDS as readonly string[]).includes(command) ? "editor" : "global";
+    byToken.set(token, {
+      key: raw,
+      command: command as CommandId,
+      scope,
+      doc: `用户配置重绑（~/.config/lumir 的 keys 表）：${raw} → ${command}`,
+    });
+  }
+  return { bindings: [...byToken.values()], warnings };
+}
+
 interface TrieNode {
   children: Map<string, TrieNode>;
   binding?: KeyBinding;
@@ -259,8 +419,10 @@ export class Keymap {
     if (binding) {
       this.reset();
       if (binding.scope === "editor" && !ctx.isEditorEvent(event)) return; // 作用域外：不消费
+      // 条件不满足（如表格容器键在文本里）：不消费、不 preventDefault，按键留给原生路径
+      if (binding.when !== undefined && !binding.when(event)) return;
       event.preventDefault();
-      runtime[binding.command]();
+      runtime[binding.command](event);
       return;
     }
 

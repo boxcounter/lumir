@@ -20,6 +20,8 @@ export interface VaultFixture {
   switchTo?: VaultFixture & { root: string };
   /** vault_open 重映射候选桩：目标路径未注册且存在失效注册时，非 force_new 打开按契约返回空 entries + candidates。 */
   remapCandidates?: Array<{ id: string; path: string }>;
+  /** config_get 桩（M132）：模式 / [keys] 覆盖表 / 配置 warning。缺省 md + 空覆盖 + 无 warning。 */
+  config?: { mode?: "md" | "code"; keys?: Record<string, string | null>; warnings?: string[] };
 }
 
 export async function stubTauri(page: Page, vault: VaultFixture | null): Promise<void> {
@@ -39,6 +41,8 @@ export async function stubTauri(page: Page, vault: VaultFixture | null): Promise
     };
     // 退出守卫桩：document_set_dirty 的上报记录（场景断言 dirty 已镜像给后端）。
     w.__dirtyReports = [] as boolean[];
+    // config_get 的调用计数（M132 场景用它等「配置已加载 → 键位覆盖已挂上」）。
+    w.__configGets = 0;
     // vault_remap 的调用记录（场景断言前端把用户确认的映射传给后端）。
     w.__remapCalls = [] as Array<{ id?: string; path?: string }>;
     const handlers: Record<string, (args: Args) => unknown> = {
@@ -46,11 +50,19 @@ export async function stubTauri(page: Page, vault: VaultFixture | null): Promise
         (w.__dirtyReports as boolean[]).push(args.dirty ?? false);
         return null;
       },
-      config_get: () => ({
-        config: { version: 1, last_vault: null, editor: { mode: "md" } },
-        warnings: [],
-        path: "/mock/config.json",
-      }),
+      config_get: () => {
+        w.__configGets = (w.__configGets as number) + 1;
+        return {
+          config: {
+            version: 1,
+            last_vault: null,
+            editor: { mode: current?.config?.mode ?? "md" },
+            keys: current?.config?.keys ?? {},
+          },
+          warnings: current?.config?.warnings ?? [],
+          path: "/mock/config.json",
+        };
+      },
       vault_current: () =>
         current
           ? { vault: { root: current.root ?? "/Users/alex/demo-vault", entries: current.entries, vault_id: current.vault_id ?? "fixture-vault", remap_candidates: [] }, notice: current.notice ?? null }
@@ -160,6 +172,13 @@ export async function stubTauri(page: Page, vault: VaultFixture | null): Promise
         callbacks.get(id)?.({ event: "app:quit_blocked", id, payload: null });
       }
     };
+    // 测试钩子：模拟后端 emit app:menu_command（原生 Edit 菜单的撤销/重做项点击后交回
+    // 前端同一命令层；M131 引入通道，M132 收进 ipc.ts 的 onMenuCommand）。
+    w.__fireMenuCommand = (command: string) => {
+      for (const id of listeners.get("app:menu_command") ?? []) {
+        callbacks.get(id)?.({ event: "app:menu_command", id, payload: command });
+      }
+    };
     // 测试钩子：模拟外部程序改/删文件（Lumir ↔ Obsidian 来回场景）。
     // 不触发 watch 事件——事件由场景显式 fireFsEvent 送达，与真后端
     // 「fs 变更 → debounce → emit」的时序解耦，断言更确定。
@@ -186,6 +205,19 @@ export async function fireFsEvent(page: Page, changes: unknown[]): Promise<void>
 /** 模拟后端 dirty 守卫拦截退出（app:quit_blocked 事件送达前端）。 */
 export async function fireQuitBlocked(page: Page): Promise<void> {
   await page.evaluate(() => (window as unknown as { __fireQuitBlocked: () => void }).__fireQuitBlocked());
+}
+
+/** 模拟原生菜单项点击（app:menu_command 事件送达前端；payload = undo / redo）。 */
+export async function fireMenuCommand(page: Page, command: string): Promise<void> {
+  await page.evaluate(
+    (c) => (window as unknown as { __fireMenuCommand: (command: string) => void }).__fireMenuCommand(c),
+    command,
+  );
+}
+
+/** config_get 的调用计数（等「配置已加载」用；M132 的 [keys] 覆盖在配置到位后生效）。 */
+export async function configGets(page: Page): Promise<number> {
+  return page.evaluate(() => (window as unknown as { __configGets: number }).__configGets);
 }
 
 /** document_set_dirty 的上报记录（前端 dirty 镜像给后端的证据）。 */

@@ -1,0 +1,143 @@
+# keymap-commands 增量规格
+
+## ADDED Requirements
+
+### Requirement: Emacs 编辑键（档 1 与档 2）
+
+编辑器 SHALL 提供下列 Emacs 编辑命令，且全部经统一键位表（M131 的 `KEY_BINDINGS` + 分发器）分发：`⌃V` / `⌥V` 视口翻屏、`⌃L` 居中（recenter）、`⌃D` 前删、`⌃H` 后删、`⌃T` 转置、`⌥D` 前删词、`⌥⌫` 后删词、`⌃K` kill 行、`⌃Y` yank、`⌃G` keyboard-quit。MUST NOT 换用 CM stock 命令，MUST NOT 把这些键留给原生 contenteditable 路径（M103/M110/M111/M113/M118 缺陷族同根因：原生 caret 与滚动在 widget / 隐藏 replace 边界上不可控）。
+
+命令 SHALL 建在既有硬化原语上：落点按可见侧取 assoc、`scrollIntoView` 传 SelectionRange 而非裸位置、坐标测量退化时回退可见侧、跨块级原子 widget 时钳制落点。命令 MUST NOT 把揭示滚动做成整窗内容偏移（隐藏 replace 邻接位的退化测量是同一缺陷族的机制）。
+
+编辑命令在只读模式（非 md 打开的文件为只读 code，M130 方向 A）SHALL 一律不动文档，MUST NOT 因新增编辑能力而放宽只读保证。
+
+删除 / 转置命令 SHALL 以字素簇为步长（不拆开代理对与组合序列）。`⌃K` SHALL 遵循 Emacs C-k 的两段语义：光标在行内时 kill 到行尾；光标已在行尾时 kill 掉换行（两行合并）。`⌃D` / `⌃H` / `⌥D` / `⌥⌫` SHALL 在有选区时删除整个选区。`⌃T` SHALL 转置光标两侧字素并把光标移到两者之后；光标在行尾时 SHALL 转置前两个字素且光标原地。`⌃G` SHALL 撤下进行中的选择（折叠为光标，点不回退），MUST NOT 改动文档。`⌃V` / `⌥V` SHALL 只滚动视口（翻一屏减去两行）且不移动光标。`⌃L` SHALL 把光标行滚到视口居中（本版不做 Emacs 的居中 / 页首 / 页尾三段循环）。
+
+#### Scenario: 字符删除与转置
+
+- **WHEN** 光标停在 `abcdef` 的 `b` 与 `c` 之间，依次按下 `⌃D`、`⌃H`
+- **THEN** 文档先变为 `abdef`（删掉 `c`）、再变为 `adef`（删掉光标前的 `b`）；随后选中一段再按 `⌃D`，该选区被删除
+
+#### Scenario: 词删除
+
+- **WHEN** 光标停在 `alpha beta gamma end` 的 `beta` 中间按下 `⌥D`，再在空格处按下 `⌥D`，再在 `gamma` 前按下 `⌥⌫`
+- **THEN** 依次得到 `alpha be gamma end`（杀到词尾）、`alpha gamma end`（跳过非词字符并杀掉下一个词）、`gamma end`（杀回词首）
+
+#### Scenario: 转置
+
+- **WHEN** 光标停在 `abcd` 的 `b` 与 `c` 之间按下 `⌃T`，随后把光标移到行尾再按 `⌃T`
+- **THEN** 文档先变为 `acbd` 且光标落在 `c` 之后（位置 3），再变为 `acdb` 且光标停在行尾
+
+#### Scenario: 翻屏与 recenter
+
+- **WHEN** 在长文档中按下 `⌃V`（再按 `⌥V`），或在光标行不在视口中央时按下 `⌃L`
+- **THEN** `⌃V` / `⌥V` 只把视口前后翻一屏且光标位置不变；`⌃L` 把光标行滚到视口中部附近（`scrollIntoView` 的 `y:"center"` 口径，与 wikilink 锚点跳转同款）
+
+#### Scenario: 只读模式下的编辑键
+
+- **WHEN** 以只读 code 模式（非 md 文件）打开文档，按下 `⌃D` / `⌃H` / `⌃K` / `⌃Y` / `⌃T` / `⌥D` / `⌥⌫`
+- **THEN** 文档内容与之前逐字节相同（只读保证不因编辑键而放宽）
+
+### Requirement: kill 与 yank（单槽）
+
+编辑器 SHALL 维护**单一** kill 槽：连续同向 kill 相接（上一次 kill 结束后的光标位置就是本次 kill 的起点）时 SHALL 合并进同一槽（Emacs 的连续 kill 合并口径，`⌃K ⌃K` 先杀行内容再杀换行即一次合并），否则 SHALL 覆盖该槽。`⌃Y` SHALL 把槽内容插入光标处（有选区时替换选区）并把光标落在插入内容之后；槽为空时 SHALL 什么都不做。本版 MUST NOT 提供多槽 kill ring。
+
+#### Scenario: 连续 kill 合并后 yank 还原
+
+- **WHEN** 在 `one\ntwo\nthree` 的行首依次按下 `⌃K`、`⌃K`、`⌃Y`
+- **THEN** 前两次 kill 把 `one` 与随后的换行合并进同一槽（文档变为 `two\nthree`），`⌃Y` 插回 `one\n`，文档恢复原状且光标落在插入内容之后
+
+### Requirement: 表格 cell 的删除边界
+
+删除 / 转置 / kill 命令 SHALL 把删除起点与步长钳制在光标所在 grid 表格 cell 的可见内容区间内，MUST NOT 删除隐藏管道符——隐藏管道符是零宽 replace 且承担表格结构，跨过去删除即破坏表格（M129 survey 实证：表格随即降级为原始 Markdown 呈现）。非矩形 / 降级表按原始 Markdown 渲染（管道符可见），不参与钳制。
+
+光标落在表格行内但不在 cell 内容区（管道符区：cell 间隙、行首尾）时，命令 SHALL 不动文档（前进方向可钳到最近的 cell 内容起点，但 MUST NOT 越过管道符）。
+
+#### Scenario: cell 内 kill 到 cell 尾
+
+- **WHEN** 光标在 grid 表格某 cell 内容中按下 `⌃K`
+- **THEN** 只 kill 到该 cell 的可见内容右缘，行内管道符一个不少，表格仍以 grid 呈现
+
+#### Scenario: cell 边界不删管道符
+
+- **WHEN** 光标停在末 cell 内容右缘（其后即隐藏管道符）按下 `⌃D` 或 `⌃K`；或光标停在行首管道符与首个 cell 之间按下 `⌃H`
+- **THEN** 文档逐字节不变；在 cell 内部按 `⌃H` 只可能吃掉 cell 内的对齐空白，MUST NOT 删除行首管道符
+
+### Requirement: shift-extend 扩选
+
+编辑器 SHALL 提供保持 anchor、只移动 head 的扩选命令：`⌃⇧F` / `⌃⇧B`（字符）、`⌃⇧N` / `⌃⇧P`（逐行）、`⌃⇧A` / `⌃⇧E`（行首 / 行尾）、`⌥⇧F` / `⌥⇧B`（词）。落点 SHALL 复用对应移动命令的硬化落点（数学原子跨入钳制、跨块级原子 widget 钳制、表格行路由与 cell 吸附、隐藏 replace 退化回退），MUST NOT 另写一套移动数学。扩选 SHALL 揭示滚动（`scrollIntoView` 传 SelectionRange）。本版 MUST NOT 引入 mark mode：选区仍只有 anchor / head 两端。
+
+#### Scenario: 各方向扩选端点
+
+- **WHEN** 在 `alpha beta gamma` 中，光标停在 `beta` 词首依次按下 `⌃⇧F`、`⌃⇧E`、`⌃⇧A`、`⌃⇧B`、`⌃⇧N`、`⌃⇧P`、`⌥⇧F`、`⌥⇧B`
+- **THEN** anchor 保持不变、head 依次落到：词首 +1 字符、行尾、行首、词首 −1 字符、下一行、上一行、`beta` 词尾、`gamma` 词首
+
+#### Scenario: 扩选跨表格行
+
+- **WHEN** 光标在 grid 表格行内按下 `⌃⇧N`
+- **THEN** head 落到下一表格行的可停靠位置（与 `⌃N` 同一路由与吸附口径），anchor 仍留在原处
+
+### Requirement: 轨道 D 的 widget 滚动键纳入统一键位表
+
+表格滚动容器（livePreview 的 grid 表格 widget，`tabindex=0`）的焦点作用域键——`←`、`→`、`Home`、`End`、`Escape`——SHALL 由统一键位表分发，MUST NOT 在 `livePreview.ts` 保留并列的 keydown 手柄（同一物理组合两处各写一份即 M131 要消灭的旁路形态）。
+
+这些物理键在文本编辑中另有语义（原生 caret / 行首尾 / 取消），故绑定 SHALL 带**命中条件**（事件目标落在该容器内才命中）；条件不满足时 SHALL NOT 消费事件（不 `preventDefault`），文本编辑中的同名键 SHALL 照旧走原生路径。命令 SHALL 接收触发事件以定位事件目标，MUST NOT 依赖全局焦点猜测。行为 SHALL 与迁移前一致：左右各 120px 步进、`Home` 横向回最左、`End` 横向到最右、`Escape` 把焦点交还编辑器。
+
+#### Scenario: 容器焦点内的滚动键
+
+- **WHEN** 焦点落在超宽表格的滚动容器上，依次按下 `→` 与 `End`
+- **THEN** 容器横向滚动 120px、随后滚到最右（右缘覆盖表格自然宽）；按 `Home` 回到最左；按 `Escape` 后焦点回到编辑器内容区
+
+#### Scenario: 文本中的方向键不受影响
+
+- **WHEN** 焦点在编辑器文本中（不在表格滚动容器里）按下 `←`
+- **THEN** 光标按原生路径左移一个字符（绑定条件不满足，事件未被消费）
+
+### Requirement: 键位配置覆盖（[keys]）
+
+配置 SHALL 支持 `keys` 表：键位写法 → 命令 id，值为 `null` 表示解绑，实现单键重绑与解绑。覆盖 SHALL 只替换「键 → 命令」的对应；作用域 SHALL 由命令归属决定（编辑器组命令 → `editor`，其余 → `global`），MUST NOT 允许配置指定作用域。缺 `keys` 字段或字段为空 SHALL 落回默认键位表。
+
+命令 id 的合法性 SHALL 由前端键位层判定（命令清单的单一来源是 `src/keys.ts` 的 `COMMAND_IDS`；Rust 侧 MUST NOT 复制该清单——两份并列清单必然漂移，是 M131 的整个动因）：未知命令 SHALL 产生人话 warning、忽略该条覆盖、保留默认绑定，MUST NOT 抛错或阻止应用启动。
+
+非法键位 SHALL 被忽略并 warning：键位为空、或含空白（多段 chord，本版不支持）。配置 warning SHALL 记入 `ConfigSnapshot.warnings` 或前端 console（沿用既有口径：本 change 不新增 UI 面）。
+
+配置的解析与测试 MUST NOT 读写真实的 `~/.config/lumir/`：Rust 侧单元测试一律用临时路径，前端场景用桩注入配置。
+
+#### Scenario: 单键重绑生效
+
+- **WHEN** 配置 `{"keys": {"Ctrl-s": "document.save"}}`（把 D3 预留的 ⌃S 接上保存）后启动应用，编辑文档并按下 `⌃S`
+- **THEN** 执行保存链路：落盘内容为当前缓冲、dirty 清除、出现保存成功提示；未配置时 `⌃S` 不保存
+
+#### Scenario: 解绑生效
+
+- **WHEN** 配置 `{"keys": {"Cmd-s": null}}` 后启动应用，编辑文档并按下 `⌘S`
+- **THEN** 不产生保存链路的任何动作（无写入、无保存提示、dirty 保持）；该键落回原生路径
+
+解绑的语义边界 SHALL 如实记录：解绑只解除**本应用**的绑定，不保证该键"I 不再做这件事"——macOS 文本系统自带一批 Emacs 惯例键位（自证阶段实测：`⌃K` 解绑后，按 `⌃K` 仍由原生 `deleteToEndOfLine:` 杀掉行内容），故解绑 `⌃` 系键的实际效果可能是「交给系统文本系统」。要真正禁用某能力，须把该键重绑到别的命令。
+
+#### Scenario: 未知命令不崩
+
+- **WHEN** 配置 `{"keys": {"Ctrl-j": "editor.nope"}}` 后启动应用
+- **THEN** 应用照常启动并可编辑；console 出现含 `editor.nope` 的 warning；该条覆盖被忽略，默认键位表照常分发（`⌘S` 仍保存）
+
+#### Scenario: 多段 chord 被拒绝
+
+- **WHEN** 配置里的键位含空白（如 `"Ctrl-x u"`）
+- **THEN** 该项被忽略并产生 warning 提示本版不支持多段 chord；其余配置项照常生效
+
+### Requirement: 鼠标路径的 ⌘ / ⌃ 拆分
+
+`⌘`-Click SHALL 跟随 wikilink（命中链接 span 时阻止选区落点并激活链接）；`⌃`-Click SHALL NOT 被当作链接激活——`⌃`-Click 在 macOS 是系统级次级点击（右键等价手势），MUST 让回系统；裸点击 SHALL 不拦截（链接文本可正常落点编辑）。该拆分与 D1 的键盘拆分同源：`⌘` 系归 mac 惯例、`⌃` 系归 Emacs / 系统手势。
+
+#### Scenario: ⌃-Click 不跳转、⌘-Click 跳转
+
+- **WHEN** 在含 `[[target]]` 的文档里先 `⌃`-Click 该链接，再 `⌘`-Click 该链接
+- **THEN** 第一次不跳转（仍在原文件、无提示，选区正常落点）；第二次跟随链接打开目标文件
+
+### Requirement: IPC 与事件通道单一入口
+
+前端所有 `invoke` 调用与后端事件订阅 SHALL 经 `src/ipc.ts` 进出；MUST NOT 在装配层或其它模块直连 `listen`。崩溃备份链路的 `recovery_*` 封装与菜单命令事件（`app:menu_command`）SHALL 属 `src/ipc.ts`（M127 / M131 遗留的两处例外在本次收编）。模块划分调整 MUST NOT 改变任何调用语义：菜单项的撤销 / 重做仍落到统一命令层的同一实现。
+
+#### Scenario: 菜单点击落到同一命令层
+
+- **WHEN** 后端发出 `app:menu_command` 事件（原生菜单的撤销项被点击），此前刚输入过文字
+- **THEN** 文档回退到输入前的内容——与按 `⌘Z` 走的是同一个 `editor.undo` 实现

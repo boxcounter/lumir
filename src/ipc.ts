@@ -1,6 +1,8 @@
 // invoke / event 契约的前端一半（薄封装，契约本体见 src-tauri/src/commands.rs）。
-// 所有 command 调用经此模块进出：类型来自 src/bindings/（ts-rs 由 Rust 单一来源导出），
-// 错误统一为 CommandError 信封，调用点不直接碰 invoke 的原始 reject 值。
+// 所有 command 调用与后端事件订阅经此模块进出：类型来自 src/bindings/（ts-rs 由 Rust
+// 单一来源导出），错误统一为 CommandError 信封，调用点不直接碰 invoke 的原始 reject 值，
+// 也不在别处直连 listen。M132 收编了两处例外：崩溃备份的 recovery_* 封装（原
+// src/save-ipc.ts）与菜单命令事件（原 main.ts 的直连 listen）。
 
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
@@ -94,3 +96,47 @@ export function wikilinkCreate(from: string, link: string): Promise<CreateNoteRe
   return invoke<CreateNoteResult>("wikilink_create", { from, link });
 }
 export const vaultRemap = (id: string, path: string): Promise<VaultWorkspace> => invoke<VaultWorkspace>("vault_remap", { id, path });
+
+// ---------------------------------------------------------------------------
+// 崩溃备份恢复链路（M127 引入；M132 从 src/save-ipc.ts 折回）
+//
+// 「所有 command 调用经此模块进出」此前对这五条不成立：M127 的 scope 不含 ipc.ts，
+// 封装暂居 save-ipc.ts 并在文件头记了待收编。M132 把 ipc.ts 纳入 scope，收回本模块
+//（错误信封与 unwrap 纪律与上面各条一致：调用点只拿 Promise，不碰 invoke 原始 reject）。
+// ---------------------------------------------------------------------------
+
+/** 写崩溃备份（覆盖式；按当前 vault + vault 相对路径定位）。
+ *  `baseRevision` = 备份时编辑器已知的磁盘 revision，恢复时作 CAS 基准对账。 */
+export function recoveryBackup(path: string, content: string, baseRevision: string): Promise<void> {
+  return invoke<void>("recovery_backup", { path, content, base_revision: baseRevision });
+}
+
+/** 读崩溃备份内容；无备份 resolve 为 null（不是错误）。 */
+export function recoveryLoad(path: string): Promise<string | null> {
+  return invoke<string | null>("recovery_load", { path });
+}
+
+/** 备份记录的 CAS 基准 revision；无备份 / 老格式备份 resolve 为 null（基准未知）。 */
+export function recoveryBaseRevision(path: string): Promise<string | null> {
+  return invoke<string | null>("recovery_base_revision", { path });
+}
+
+/** 删除崩溃备份（保存成功 / 用户丢弃）；幂等。 */
+export function recoveryDiscard(path: string): Promise<void> {
+  return invoke<void>("recovery_discard", { path });
+}
+
+/** 当前 vault 的残留备份清单（vault 相对路径）。 */
+export function recoveryList(): Promise<string[]> {
+  return invoke<string[]>("recovery_list");
+}
+
+// ---------------------------------------------------------------------------
+// 后端事件 → 前端订阅（listen 通道；与 invoke 通道同属本模块的对外契约）
+// ---------------------------------------------------------------------------
+
+/** 订阅原生菜单命令事件（lib.rs 的自定义项经 app:menu_command 交回前端；M132 从装配层
+ *  的直连 listen 收编）。返回退订函数。 */
+export function onMenuCommand(handler: (command: string) => void): Promise<() => void> {
+  return listen<string>("app:menu_command", (event) => handler(event.payload));
+}

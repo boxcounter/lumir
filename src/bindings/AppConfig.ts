@@ -9,4 +9,10 @@ export type AppConfig = { version: number,
  * 上次打开的 vault 路径（启动时 `restore_last_vault` 恢复，vault 打开成功时
  * `write_last_vault` 写回）。
  */
-last_vault: string | null, editor: EditorConfig, };
+last_vault: string | null, editor: EditorConfig, 
+/**
+ * 键位覆盖表（M132）：键位写法 → 命令 id；值为 null 表示解绑该键位。
+ * 键位写法与前端键位 token 同源（如 `"Cmd-s"`、`"Ctrl-Alt-Minus"`、`"ArrowUp"`）；
+ * 多段 chord（含空白）本版不支持。命令 id 的合法性由前端键位层判定（见模块头）。
+ */
+keys: { [key in string]?: string | null }, };

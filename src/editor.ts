@@ -22,7 +22,7 @@ import { swift } from "@codemirror/legacy-modes/mode/swift";
 import { lua } from "@codemirror/legacy-modes/mode/lua";
 import { standardSQL } from "@codemirror/legacy-modes/mode/sql";
 import type { EditorMode } from "./bindings/EditorMode";
-import { livePreview, previewRefresh } from "./preview/livePreview";
+import { livePreview, previewRefresh, widgetCommands } from "./preview/livePreview";
 import type { PreviewContext, WikilinkResolver } from "./preview/livePreview";
 import { detectFrontmatter } from "./preview/frontmatter";
 import { findMathSpans } from "./preview/math";
@@ -256,6 +256,30 @@ function routeGridTable(
   return cursorInTableRow(view, row, goalColumn);
 }
 
+/** 垂直移动的落点（不含「非空选区折叠」这类调用方语义）：从 `start` 出发走一步。
+ *  扩选命令与 ⌃N/⌃P 共用本函数——硬化口径只此一份（起点归一化 / 文档边界兜底 /
+ *  跨原子块钳制 / 表格行路由）。 */
+function verticalTarget(view: EditorView, start: SelectionRange, forward: boolean): SelectionRange {
+  // 起点归一化：DOM 选区回读会把 assoc 归 0（实证：dispatch assoc=-1 的 cursor
+  // 后同步读回 assoc=0）。落点停在隐藏 replace 左缘（表格管道符边界）时，CM
+  // moveVertically 内部按 `start.assoc || (forward ? 1 : -1)` 取 side——空光标
+  // 向下即 side 1，测量退化为全零 rect，goal column/扫描起点随之算出垃圾落点
+  //（实测直接跳到文档开头）。退化则改用可见侧重建起点，CM 内部测量即恢复有效。
+  let from = start;
+  const startSide = (start.assoc || (forward ? 1 : -1)) as -1 | 1;
+  if (coordsDegenerate(view.coordsAtPos(from.head, startSide)) && !coordsDegenerate(view.coordsAtPos(from.head, -startSide as -1 | 1))) {
+    from = EditorSelection.cursor(from.head, -startSide, undefined, from.goalColumn);
+  }
+  const moved = view.moveVertically(from, forward);
+  // 文档边界兜底（r1 review P2-2，与官方 cursorByLine 同款）：moveVertically 在
+  // 末/首行原地不动时，改移行尾/行首——末行中段 ArrowDown 到行尾、首行到行首。
+  let target = moved.head !== from.head ? moved : view.moveToLineBoundary(from, forward);
+  if (target.head === from.head) return target;
+  const clamped = clampAcrossBlockWidgets(view.state, from.head, target.head, forward);
+  if (clamped !== target.head) target = EditorSelection.cursor(clamped);
+  return routeGridTable(view, from, target, forward);
+}
+
 function moveCaretVertically(view: EditorView, forward: boolean): boolean {
   const main = view.state.selection.main;
   if (!main.empty) {
@@ -264,24 +288,8 @@ function moveCaretVertically(view: EditorView, forward: boolean): boolean {
     view.dispatch({ selection: { anchor: forward ? main.to : main.from }, scrollIntoView: true, userEvent: "select" });
     return true;
   }
-  // 起点归一化：DOM 选区回读会把 assoc 归 0（实证：dispatch assoc=-1 的 cursor
-  // 后同步读回 assoc=0）。落点停在隐藏 replace 左缘（表格管道符边界）时，CM
-  // moveVertically 内部按 `start.assoc || (forward ? 1 : -1)` 取 side——空光标
-  // 向下即 side 1，测量退化为全零 rect，goal column/扫描起点随之算出垃圾落点
-  //（实测直接跳到文档开头）。退化则改用可见侧重建起点，CM 内部测量即恢复有效。
-  let start = main;
-  const startSide = (main.assoc || (forward ? 1 : -1)) as -1 | 1;
-  if (coordsDegenerate(view.coordsAtPos(main.head, startSide)) && !coordsDegenerate(view.coordsAtPos(main.head, -startSide as -1 | 1))) {
-    start = EditorSelection.cursor(main.head, -startSide, undefined, main.goalColumn);
-  }
-  const moved = view.moveVertically(start, forward);
-  // 文档边界兜底（r1 review P2-2，与官方 cursorByLine 同款）：moveVertically 在
-  // 末/首行原地不动时，改移行尾/行首——末行中段 ArrowDown 到行尾、首行到行首。
-  let target = moved.head !== start.head ? moved : view.moveToLineBoundary(start, forward);
-  if (target.head === start.head) return true; // 行首 ArrowUp / 行尾 ArrowDown：已无可移，仍视为已处理
-  const clamped = clampAcrossBlockWidgets(view.state, start.head, target.head, forward);
-  if (clamped !== target.head) target = EditorSelection.cursor(clamped);
-  target = routeGridTable(view, start, target, forward);
+  const target = verticalTarget(view, main, forward);
+  if (target.head === main.head) return true; // 行首 ArrowUp / 行尾 ArrowDown：已无可移，仍视为已处理
   view.dispatch({
     selection: target,
     // scrollIntoView 传 SelectionRange（而非裸 pos）：caret 绘制与滚动测量都按
@@ -351,15 +359,16 @@ function mathSpanCrossed(state: EditorState, from: number, to: number, forward: 
   return best;
 }
 
-function moveCaretHorizontally(view: EditorView, forward: boolean): boolean {
-  const main = view.state.selection.main;
-  if (!main.empty) {
-    // 非空选区：与原生行为一致，折叠到移动方向的一端。
-    view.dispatch({ selection: { anchor: forward ? main.to : main.from }, scrollIntoView: true, userEvent: "select" });
-    return true;
-  }
-  let head = view.moveByChar(main, forward).head;
-  const span = mathSpanCrossed(view.state, main.head, head, forward);
+/** caret 落点的可见侧 assoc：优先按给定方向取侧，坐标测量退化（隐藏 replace 邻接位）
+ *  则翻转到另一侧——退化侧的 scrollIntoView 会把整窗内容下挫（M118 缺陷族机制）。 */
+function caretAssoc(view: EditorView, pos: number, preferred: -1 | 1): -1 | 1 {
+  return coordsDegenerate(view.coordsAtPos(pos, preferred)) ? (preferred === 1 ? -1 : 1) : preferred;
+}
+
+/** 水平移动的落点（不含选区形态处理）：扩选命令与 ⌃F/⌃B 共用同一原子块/数学公式口径。 */
+function horizontalTarget(view: EditorView, from: SelectionRange, forward: boolean): number {
+  let head = view.moveByChar(from, forward).head;
+  const span = mathSpanCrossed(view.state, from.head, head, forward);
   if (span !== null) {
     // findClusterBreak 接收 string；取 ±64 字符窗口避免大文档整篇 sliceString。
     const edge = forward ? span.from : span.to;
@@ -367,14 +376,20 @@ function moveCaretHorizontally(view: EditorView, forward: boolean): boolean {
     const win = view.state.doc.sliceString(winFrom, Math.min(view.state.doc.length, edge + 64));
     head = winFrom + findClusterBreak(win, edge - winFrom, forward);
   }
+  return head;
+}
+
+function moveCaretHorizontally(view: EditorView, forward: boolean): boolean {
+  const main = view.state.selection.main;
+  if (!main.empty) {
+    // 非空选区：与原生行为一致，折叠到移动方向的一端。
+    view.dispatch({ selection: { anchor: forward ? main.to : main.from }, scrollIntoView: true, userEvent: "select" });
+    return true;
+  }
+  const head = horizontalTarget(view, main, forward);
   if (head === main.head) return true;
-  // assoc 决定 caret 绘制与 scrollIntoView 的测量侧（空 range 默认取 side 1）。
-  // 落点紧贴隐藏 replace（表格管道符等）时某一侧测量退化为全零 rect，会让
-  // scrollIntoView 把整窗内容下挫（同 Ctrl+E 缺陷机制）：优先按移动方向取侧，
-  // 退化则翻转到可见侧（正常文本两侧坐标一致，仅在 bidi/隐藏边界有差）。
-  let assoc: 1 | -1 = forward ? 1 : -1;
-  if (coordsDegenerate(view.coordsAtPos(head, assoc))) assoc = assoc === 1 ? -1 : 1;
-  const target = EditorSelection.cursor(head, assoc);
+  // 落点 assoc 取可见侧（退化则翻转），理由见 caretAssoc。
+  const target = EditorSelection.cursor(head, caretAssoc(view, head, forward ? 1 : -1));
   view.dispatch({
     selection: target,
     effects: EditorView.scrollIntoView(target, { y: "nearest" }),
@@ -385,13 +400,31 @@ function moveCaretHorizontally(view: EditorView, forward: boolean): boolean {
 
 // 键位归统一层（M131）：⌃F/⌃B/⌃E 的绑定在 keys.ts 的 KEY_BINDINGS，命令实现不动。
 
-// Ctrl-E（macOS 文本系统「移到行尾」）改由 CM 派发（M118 真实桌面缺陷：该键原本
-// 走原生 contenteditable 路径——原生 caret 在 grid 表格 cell 内落点失控，实测落在
-// 隐藏管道符边界上，落点坐标测量退化（coordsAtPos top≈0），揭示滚动随之把整窗
-// 内容下挫；与 M103 垂直移动、M111 水平移动同一修复口径）。
-// moveToLineBoundary 取文本行尾（硬边界，macOS Ctrl-E 语义即段落尾，不受软换行
-// 截断）；落点藏进隐藏 replace（如表格行尾管道符）时回退到行内最后可见位置——
-// 表格行即末 cell 尾部，正合「挪到 cell 尾部」的预期。
+// Ctrl-E / Ctrl-A（macOS 文本系统的行尾 / 行首）改由 CM 派发（M118 真实桌面缺陷：这两个键
+// 原本走原生 contenteditable 路径——原生 caret 在 grid 表格 cell 内落点失控，实测落在隐藏
+// 管道符边界上，落点坐标测量退化（coordsAtPos top≈0），揭示滚动随之把整窗内容下挫；与 M103
+// 垂直移动、M111 水平移动同一修复口径）。M132 的扩选变体（⌃⇧E / ⌃⇧A）与它们共用同一落点
+// 计算，硬化口径只此一份。
+
+/** 行首 / 行尾落点（含隐藏 replace 退化回退）。
+ *  moveToLineBoundary 取文本行边界（硬边界，段落语义，不受软换行截断）；落点藏进隐藏
+ *  replace（表格管道符、标题尾部标记）时坐标测量退化，回退到行内最后一个 / 第一个可停靠
+ *  位置——表格行即末 / 首 cell 边界，正合「挪到 cell 尾 / 首」的预期。assoc 取可见侧
+ *  （行尾 -1、行首 1）：退化侧的 scrollIntoView 会把整窗内容拉偏（M118，实测 ⌃A 未修前
+ *  scrollTop 下挫 62px）。 */
+function lineBoundaryTarget(view: EditorView, from: SelectionRange, forward: boolean): { head: number; assoc: -1 | 1 } {
+  let head = view.moveToLineBoundary(from, forward, false).head;
+  if (head !== from.head) {
+    const line = view.state.doc.lineAt(head);
+    if (forward) {
+      while (head > line.from && coordsDegenerate(view.coordsAtPos(head, -1))) head--;
+    } else {
+      while (head < line.to && coordsDegenerate(view.coordsAtPos(head, 1))) head++;
+    }
+  }
+  return { head, assoc: forward ? -1 : 1 };
+}
+
 function moveCaretToLineEnd(view: EditorView): boolean {
   const main = view.state.selection.main;
   if (!main.empty) {
@@ -399,17 +432,9 @@ function moveCaretToLineEnd(view: EditorView): boolean {
     view.dispatch({ selection: { anchor: main.to }, scrollIntoView: true, userEvent: "select" });
     return true;
   }
-  let head = view.moveToLineBoundary(main, true, false).head;
-  if (head !== main.head) {
-    // 行尾藏进隐藏 replace（表格行尾管道符、标题尾部标记等）时坐标测量退化，
-    // 回退到行内最后可停靠位置（表格行即末 cell 尾部，正合「挪到 cell 尾部」）。
-    const line = view.state.doc.lineAt(head);
-    while (head > line.from && coordsDegenerate(view.coordsAtPos(head, -1))) head--;
-  }
+  const { head, assoc } = lineBoundaryTarget(view, main, true);
   if (head === main.head) return true; // 已在行尾：仍视为已处理
-  // assoc -1：落点紧贴隐藏内容左侧时按可见侧测量 caret 与滚动（隐藏 replace
-  // 左缘的 side 1 测量会退化成全零 rect，见 snapIntoCell 注释）。
-  const target = EditorSelection.cursor(head, -1);
+  const target = EditorSelection.cursor(head, assoc);
   view.dispatch({
     selection: target,
     effects: EditorView.scrollIntoView(target, { y: "nearest" }),
@@ -418,12 +443,6 @@ function moveCaretToLineEnd(view: EditorView): boolean {
   return true;
 }
 
-// ⌃A（macOS 文本系统「移到行首」= Emacs C-a；D2 裁决把全选让给 ⌘A）：与 ⌃E 同款口径，
-// 只是方向相反。moveToLineBoundary 取文本行首（硬边界，语义即段落首，不受软换行截断）；
-// 行首若紧贴隐藏 replace（表格行首管道符），两侧坐标测量都退化为全零 rect（实测：表格行
-// col0 两侧皆 DEGEN、col1 可见侧为 side 1），揭示滚动随之把整窗内容拉偏（M118 同族机制，
-// 实测未修前 scrollTop 下挫 62px），故与 ⌃E 镜像地把落点向前挪到行内第一个可停靠位置——
-// 表格行即首 cell 起点，与 ⌃E 的「末 cell 尾部」对称。
 function moveCaretToLineStart(view: EditorView): boolean {
   const main = view.state.selection.main;
   if (!main.empty) {
@@ -431,20 +450,343 @@ function moveCaretToLineStart(view: EditorView): boolean {
     view.dispatch({ selection: { anchor: main.from }, scrollIntoView: true, userEvent: "select" });
     return true;
   }
-  let head = view.moveToLineBoundary(main, false, false).head;
-  if (head !== main.head) {
-    const line = view.state.doc.lineAt(head);
-    while (head < line.to && coordsDegenerate(view.coordsAtPos(head, 1))) head++;
-  }
+  const { head, assoc } = lineBoundaryTarget(view, main, false);
   if (head === main.head) return true; // 已在行首：仍视为已处理
-  // assoc 1：可见内容在落点之后（与 ⌃E 的 assoc -1 镜像；探针已确认该侧测量非退化）。
-  const target = EditorSelection.cursor(head, 1);
+  const target = EditorSelection.cursor(head, assoc);
   view.dispatch({
     selection: target,
     effects: EditorView.scrollIntoView(target, { y: "nearest" }),
     userEvent: "move.line.start",
   });
   return true;
+}
+
+// ---------------------------------------------------------------------------
+// M132：编辑命令（删除 / 转置 / kill-yank / 翻屏 / 重定位 / keyboard-quit）与
+// shift-extend 扩选
+//
+// 全部建在上面的硬化原语上（先取落点、assoc 取可见侧、scrollIntoView 传 SelectionRange、
+// 退化测量回退、跨原子块钳制），不换用 CM stock 命令，也不把按键留给原生 contenteditable
+// 路径。另加一条 M132 硬纪律：**表格 cell 内不跨过隐藏管道符**——grid 表格的行内管道符是
+// 零宽 replace，跨过去删除即破坏表格结构（M129 survey 实证），故所有编辑命令先取所在 cell
+// 的可见内容区间，再在其中取步长。
+// ---------------------------------------------------------------------------
+
+/** 光标所在 grid 表格 cell 的可见内容区间；落点在行内但不在 cell 内容区（隐藏管道符区 /
+ *  行首尾）时 `inside` 为 false，命令据此不动文档。不在 grid 表格行内返回 null——非矩形与
+ *  降级表按原始 Markdown 渲染（管道符可见），不参与钳制。 */
+interface CellClamp {
+  from: number;
+  to: number;
+  inside: boolean;
+}
+
+function cellClamp(state: EditorState, pos: number): CellClamp | null {
+  const tree = ensureSyntaxTree(state, pos, 25) ?? syntaxTree(state);
+  const tables = findTables((s, e) => state.doc.sliceString(s, e), state.doc.length, tree, pos, pos)
+    .filter((t) => t.rectangular && !t.degraded);
+  const table = tableAt(tables, pos);
+  if (!table) return null;
+  const row = table.rows.find((r) => pos >= r.from && pos <= r.to);
+  if (!row || row.slots.length === 0) return null;
+  const slot = row.slots.find((s) => pos >= s.from && pos <= s.to)
+    ?? (pos < row.slots[0].from ? row.slots[0] : row.slots[row.slots.length - 1]);
+  return { from: slot.from, to: slot.to, inside: pos >= slot.from && pos <= slot.to };
+}
+
+/** 编辑命令的可见边界：表格 cell 内用 cell 内容区间，表格外用整篇文档。 */
+function editLimits(state: EditorState, pos: number): { from: number; to: number; clamp: CellClamp | null } {
+  const clamp = cellClamp(state, pos);
+  return { from: clamp?.from ?? 0, to: clamp?.to ?? state.doc.length, clamp };
+}
+
+/** 词字符（Emacs 词法口径的近似）：Unicode 字母 / 数字 / 下划线。 */
+const WORD_CHAR = /[\p{L}\p{N}_]/u;
+const isWordChar = (ch: string): boolean => WORD_CHAR.test(ch);
+
+/** 向前扫描同类码点（码点粒度，避免拆开代理对）；到 limit 或首个异类为止。 */
+function scanForward(state: EditorState, pos: number, limit: number, match: (ch: string) => boolean): number {
+  let i = pos;
+  while (i < limit) {
+    for (const ch of state.doc.sliceString(i, Math.min(limit, i + 256))) {
+      if (!match(ch)) return i;
+      i += ch.length;
+    }
+  }
+  return Math.min(i, limit);
+}
+
+/** 向后扫描同类码点；到 limit 或首个异类为止。 */
+function scanBackward(state: EditorState, pos: number, limit: number, match: (ch: string) => boolean): number {
+  let i = pos;
+  while (i > limit) {
+    const chars = [...state.doc.sliceString(Math.max(limit, i - 256), i)];
+    for (let k = chars.length - 1; k >= 0; k--) {
+      if (!match(chars[k])) return i;
+      i -= chars[k].length;
+    }
+  }
+  return Math.max(i, limit);
+}
+
+/** Emacs forward-word：先跳过非词字符，再走到当前词尾。 */
+function forwardWordEnd(state: EditorState, pos: number, limit: number): number {
+  return scanForward(state, scanForward(state, pos, limit, (ch) => !isWordChar(ch)), limit, isWordChar);
+}
+
+/** Emacs backward-word：反向跳过非词字符，再走到词首。 */
+function backwardWordStart(state: EditorState, pos: number, limit: number): number {
+  return scanBackward(state, scanBackward(state, pos, limit, (ch) => !isWordChar(ch)), limit, isWordChar);
+}
+
+/** 下一个字素簇；换行符也是合法步长（Emacs C-d 在行尾删掉换行、两行合并）。 */
+function nextCluster(state: EditorState, pos: number, limit: number): number {
+  if (pos >= limit) return limit;
+  const win = state.doc.sliceString(pos, Math.min(limit, pos + 64));
+  return pos + Math.min(findClusterBreak(win, 0, true), limit - pos);
+}
+
+/** 上一个字素簇。 */
+function prevCluster(state: EditorState, pos: number, limit: number): number {
+  if (pos <= limit) return limit;
+  const from = Math.max(limit, pos - 64);
+  const win = state.doc.sliceString(from, pos);
+  return from + findClusterBreak(win, win.length, false);
+}
+
+/** 删除一段并把光标落在删除起点：变更与落点同一事务（可见侧 assoc + 揭示滚动）。 */
+function deleteRange(view: EditorView, from: number, to: number, userEvent: string): void {
+  if (from >= to) return;
+  const target = EditorSelection.cursor(from, caretAssoc(view, from, -1));
+  view.dispatch({
+    changes: { from, to },
+    selection: target,
+    effects: EditorView.scrollIntoView(target, { y: "nearest" }),
+    userEvent,
+  });
+}
+
+/** Emacs C-d：删除光标后的一个字符；有选区则删除选区。 */
+function deleteCharForward(view: EditorView): void {
+  const state = view.state;
+  if (state.readOnly) return;
+  const main = state.selection.main;
+  if (!main.empty) {
+    deleteRange(view, main.from, main.to, "delete.selection");
+    return;
+  }
+  const limits = editLimits(state, main.head);
+  const start = Math.max(main.head, limits.from);
+  deleteRange(view, start, nextCluster(state, start, limits.to), "delete.char.forward");
+}
+
+/** Emacs C-h（macOS 退格键位）：删除光标前的一个字符；有选区则删除选区。 */
+function deleteCharBackward(view: EditorView): void {
+  const state = view.state;
+  if (state.readOnly) return;
+  const main = state.selection.main;
+  if (!main.empty) {
+    deleteRange(view, main.from, main.to, "delete.selection");
+    return;
+  }
+  const limits = editLimits(state, main.head);
+  const end = Math.min(main.head, limits.to);
+  deleteRange(view, prevCluster(state, end, limits.from), end, "delete.char.backward");
+}
+
+/** Emacs M-d kill-word：kill 到下一个词尾（先跳过非词字符）。 */
+function deleteWordForward(view: EditorView): void {
+  const state = view.state;
+  if (state.readOnly) return;
+  const main = state.selection.main;
+  if (!main.empty) {
+    killRange(view, main.from, main.to, true);
+    return;
+  }
+  const limits = editLimits(state, main.head);
+  const start = Math.max(main.head, limits.from);
+  killRange(view, start, forwardWordEnd(state, start, limits.to), true);
+}
+
+/** Emacs M-DEL backward-kill-word：kill 回上一个词首。 */
+function deleteWordBackward(view: EditorView): void {
+  const state = view.state;
+  if (state.readOnly) return;
+  const main = state.selection.main;
+  if (!main.empty) {
+    killRange(view, main.from, main.to, false);
+    return;
+  }
+  const limits = editLimits(state, main.head);
+  const end = Math.min(main.head, limits.to);
+  killRange(view, backwardWordStart(state, end, limits.from), end, false);
+}
+
+/** 单槽 kill buffer（kill ring 后续）：连续同向 kill 相接时合并，其余 kill 覆盖。 */
+let killSlot: { text: string; caret: number; forward: boolean } | null = null;
+
+/** kill 一段：并入 kill 槽后删除。相接判定用「上次 kill 结束后的光标位置 = 本次 kill
+ *  起点」——连续 ⌃K（含 C-k C-k 先杀行内容再杀换行）因此合成一条，与 Emacs 一致。
+ *  已知近似：kill 之后若在**同一位置**做别的编辑再 kill，会误判为连续 kill（kill ring
+ *  是后续版本的事，此处不为此引入全局命令序号）。 */
+function killRange(view: EditorView, from: number, to: number, forward: boolean): void {
+  if (from >= to) return;
+  const text = view.state.doc.sliceString(from, to);
+  const prev = killSlot;
+  const joins = prev !== null && prev.forward === forward && prev.caret === (forward ? from : to);
+  killSlot = {
+    text: joins ? (forward ? prev.text + text : text + prev.text) : text,
+    caret: forward ? from : to,
+    forward,
+  };
+  deleteRange(view, from, to, "delete.kill");
+}
+
+/** Emacs C-k：kill 到行尾；已在行尾则连带换行（合并两行）。表格 cell 内只到 cell 尾，
+ *  绝不跨过隐藏管道符；落点在管道符区（cell 间隙 / 行首尾）时不动文档。 */
+function killLine(view: EditorView): void {
+  const state = view.state;
+  if (state.readOnly) return;
+  const main = state.selection.main;
+  if (!main.empty) {
+    killRange(view, main.from, main.to, true);
+    return;
+  }
+  const clamp = cellClamp(state, main.head);
+  if (clamp) {
+    killRange(view, Math.max(main.head, clamp.from), clamp.to, true);
+    return;
+  }
+  const line = state.doc.lineAt(main.head);
+  if (main.head < line.to) {
+    killRange(view, main.head, line.to, true);
+    return;
+  }
+  if (line.number < state.doc.lines) killRange(view, line.to, line.to + 1, true);
+}
+
+/** Emacs C-y：把 kill 槽插入光标处（替换选区），光标落在插入内容之后。 */
+function yank(view: EditorView): void {
+  const state = view.state;
+  if (state.readOnly) return;
+  const text = killSlot?.text ?? "";
+  if (text === "") return;
+  const main = state.selection.main;
+  const head = main.from + text.length;
+  const target = EditorSelection.cursor(head, caretAssoc(view, head, 1));
+  view.dispatch({
+    changes: { from: main.from, to: main.to, insert: text },
+    selection: target,
+    effects: EditorView.scrollIntoView(target, { y: "nearest" }),
+    userEvent: "input.yank",
+  });
+}
+
+/** Emacs C-t：转置光标两侧字符并把光标移到两者之后；已在行尾 / cell 尾时转置前两个。
+ *  有选区时不插手（v0 无 mark mode）；落点在隐藏管道符区时不动文档。 */
+function transposeChars(view: EditorView): void {
+  const state = view.state;
+  if (state.readOnly) return;
+  const main = state.selection.main;
+  if (!main.empty) return;
+  const limits = editLimits(state, main.head);
+  if (limits.clamp && !limits.clamp.inside) return;
+  const line = state.doc.lineAt(main.head);
+  const from = Math.max(line.from, limits.from);
+  const to = Math.min(line.to, limits.to);
+  const pos = Math.min(Math.max(main.head, from), to);
+  const left = prevCluster(state, pos, from);
+  const next = nextCluster(state, pos, to);
+  if (left < pos && next > pos) {
+    const a = state.doc.sliceString(left, pos);
+    const b = state.doc.sliceString(pos, next);
+    const target = EditorSelection.cursor(next, caretAssoc(view, next, -1));
+    view.dispatch({
+      changes: { from: left, to: next, insert: b + a },
+      selection: target,
+      effects: EditorView.scrollIntoView(target, { y: "nearest" }),
+      userEvent: "move.transpose",
+    });
+    return;
+  }
+  const prev = prevCluster(state, left, from);
+  if (prev >= left) return;
+  const a = state.doc.sliceString(prev, left);
+  const b = state.doc.sliceString(left, pos);
+  view.dispatch({ changes: { from: prev, to: pos, insert: b + a }, userEvent: "move.transpose" });
+}
+
+/** Emacs C-v / M-v：视口翻屏。只滚视口、不移动光标（阅读推进用）；光标若被滚出视口，
+ *  后续移动命令自身的 scrollIntoView 会把它揭示回来。 */
+function scrollPage(view: EditorView, forward: boolean): void {
+  const scroller = view.scrollDOM;
+  const step = Math.max(scroller.clientHeight - 2 * view.defaultLineHeight, 24);
+  scroller.scrollTop += forward ? step : -step;
+}
+
+/** Emacs C-l：把光标行滚到视口居中（v0 只做居中，不做 Emacs 的居中/页首/页尾三段循环）。 */
+function recenter(view: EditorView): void {
+  const main = view.state.selection.main;
+  const target = EditorSelection.cursor(main.head, caretAssoc(view, main.head, main.assoc || 1));
+  view.dispatch({ effects: EditorView.scrollIntoView(target, { y: "center" }) });
+}
+
+/** Emacs C-g keyboard-quit：撤下进行中的选择（折叠为光标，保持点不动）。多段 chord 的
+ *  pending 由分发器自身在无关按键上清空，无需命令介入。 */
+function keyboardQuit(view: EditorView): void {
+  const main = view.state.selection.main;
+  if (main.empty) return;
+  const head = main.head;
+  view.dispatch({
+    selection: EditorSelection.cursor(head, caretAssoc(view, head, main.assoc || 1)),
+    userEvent: "select",
+  });
+}
+
+/** 扩选落点：保持 anchor，只把 head 移到目标位置（goalColumn 一并保留，列位不漂）。 */
+function extendSelection(view: EditorView, head: number, preferred: -1 | 1, goalColumn: number | undefined): void {
+  const anchor = view.state.selection.main.anchor;
+  const target = EditorSelection.cursor(head, caretAssoc(view, head, preferred), undefined, goalColumn);
+  view.dispatch({
+    selection: EditorSelection.create([EditorSelection.range(anchor, head, target.goalColumn)]),
+    effects: EditorView.scrollIntoView(target, { y: "nearest" }),
+    userEvent: "select",
+  });
+}
+
+/** ⌃⇧F / ⌃⇧B：逐字符扩选（落点口径同 ⌃F / ⌃B，含数学公式原子跨入钳制）。 */
+function extendHorizontally(view: EditorView, forward: boolean): void {
+  const main = view.state.selection.main;
+  const from = EditorSelection.cursor(main.head, main.assoc || (forward ? 1 : -1));
+  const head = horizontalTarget(view, from, forward);
+  if (head !== main.head) extendSelection(view, head, forward ? 1 : -1, main.goalColumn);
+}
+
+/** ⌃⇧N / ⌃⇧P：逐行扩选（落点口径同 ⌃N / ⌃P，含跨原子块钳制与表格行路由）。 */
+function extendVertically(view: EditorView, forward: boolean): void {
+  const main = view.state.selection.main;
+  const from = EditorSelection.cursor(main.head, main.assoc || (forward ? 1 : -1), undefined, main.goalColumn);
+  const target = verticalTarget(view, from, forward);
+  if (target.head !== main.head) extendSelection(view, target.head, (target.assoc || 1) as -1 | 1, target.goalColumn ?? main.goalColumn);
+}
+
+/** ⌃⇧A / ⌃⇧E：扩选到行首 / 行尾（落点口径同 ⌃A / ⌃E）。 */
+function extendToLineBoundary(view: EditorView, forward: boolean): void {
+  const main = view.state.selection.main;
+  const from = EditorSelection.cursor(main.head, main.assoc || 1);
+  const { head, assoc } = lineBoundaryTarget(view, from, forward);
+  if (head !== main.head) extendSelection(view, head, assoc, main.goalColumn);
+}
+
+/** ⌥⇧F / ⌥⇧B：按词扩选（词法口径与 ⌥D / ⌥⌫ 同一份扫描器；cell 内不跨过隐藏管道符）。 */
+function extendByWord(view: EditorView, forward: boolean): void {
+  const state = view.state;
+  const main = state.selection.main;
+  const limits = editLimits(state, main.head);
+  const head = forward
+    ? forwardWordEnd(state, Math.max(main.head, limits.from), limits.to)
+    : backwardWordStart(state, Math.min(main.head, limits.to), limits.from);
+  if (head !== main.head) extendSelection(view, head, forward ? 1 : -1, main.goalColumn);
 }
 
 export type EditorReadyPhase =
@@ -746,9 +1088,9 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
       // 键位分发在 window 层（keys.ts），但 CM 的 DOM 观察器只为「有插件注册 keydown」的
       // 事件挂监听，并在把事件交给手柄前 forceFlush 掉尚未读入的 DOM 变更（快速输入 /
       // 输入法 / 外部注入）。这条空手柄不处理任何键，只为让 keydown 留在观察列表里：
-      // 观察列表此前由本文件自己的 ⌘A 手柄维持，迁走后 md 模式靠 livePreview 的 widget
-      // 手柄、code 模式则没有任何 keydown 手柄——空手柄把两种模式的观察集拉回迁移前口径，
-      // 也让「命令读到的是 flush 过的 state」不再依赖别的模块恰好注册了 keydown。
+      // 观察列表此前由本文件自己的 ⌘A 手柄与 livePreview 的 widget 手柄维持，两者先后迁入
+      // 统一键位表（M131 / M132）后，两模式都不再有别的 keydown 手柄——空手柄是唯一让
+      // 「命令读到的是 flush 过的 state」不依赖别的模块恰好注册 keydown 的保证。
       EditorView.domEventHandlers({ keydown: () => false }),
       EditorView.theme({ ".cm-gutters-before": { border: "none" } }),
       modeCompartment.of(modeExtensions(initialMode)),
@@ -767,6 +1109,9 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
   // 全部返回 void——命中即已消费，分发器统一吞掉默认行为（命中但无事可做，例如历史
   // 为空的 ⌘Z，也必须吞掉，否则原生 contenteditable 撤销会插手 CM 管理的文档）。
   const commands: Record<EditorCommandId, CommandRunner> = {
+    // 轨道 D 的 widget 命令（M132）：实现在 livePreview.ts，在此与内核命令同一个记录里
+    // 装配——统一表的每条绑定都必须有归属实现，分组只表达「谁提供实现」。
+    ...widgetCommands(view),
     "editor.cursor-up": () => {
       moveCaretVertically(view, false);
     },
@@ -793,6 +1138,65 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
     },
     "editor.redo": () => {
       redo(view);
+    },
+    // M132：Emacs 编辑键（删除 / 转置 / kill-yank / 翻屏 / 重定位 / keyboard-quit）
+    "editor.delete-char-forward": () => {
+      deleteCharForward(view);
+    },
+    "editor.delete-char-backward": () => {
+      deleteCharBackward(view);
+    },
+    "editor.transpose-chars": () => {
+      transposeChars(view);
+    },
+    "editor.delete-word-forward": () => {
+      deleteWordForward(view);
+    },
+    "editor.delete-word-backward": () => {
+      deleteWordBackward(view);
+    },
+    "editor.kill-line": () => {
+      killLine(view);
+    },
+    "editor.yank": () => {
+      yank(view);
+    },
+    "editor.keyboard-quit": () => {
+      keyboardQuit(view);
+    },
+    "editor.scroll-page-down": () => {
+      scrollPage(view, true);
+    },
+    "editor.scroll-page-up": () => {
+      scrollPage(view, false);
+    },
+    "editor.recenter": () => {
+      recenter(view);
+    },
+    // M132：shift-extend 扩选
+    "editor.extend-char-forward": () => {
+      extendHorizontally(view, true);
+    },
+    "editor.extend-char-backward": () => {
+      extendHorizontally(view, false);
+    },
+    "editor.extend-line-down": () => {
+      extendVertically(view, true);
+    },
+    "editor.extend-line-up": () => {
+      extendVertically(view, false);
+    },
+    "editor.extend-line-start": () => {
+      extendToLineBoundary(view, false);
+    },
+    "editor.extend-line-end": () => {
+      extendToLineBoundary(view, true);
+    },
+    "editor.extend-word-forward": () => {
+      extendByWord(view, true);
+    },
+    "editor.extend-word-backward": () => {
+      extendByWord(view, false);
     },
   };
 
