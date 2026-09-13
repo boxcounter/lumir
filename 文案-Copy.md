@@ -51,9 +51,14 @@
 | D60 | toast 崩溃备份已恢复 | 作者 | 已恢复未保存内容，请保存（Cmd+S） | Unsaved content restored; press Cmd+S to save | 恢复后内容仍在内存缓冲，说明下一步动作。 |
 | D61 | toast 崩溃备份已丢弃 | 作者 | 已丢弃崩溃备份 | Crash backup discarded | 确认清理完成，提示不再出现。 |
 | D62 | toast 崩溃备份不存在 | 作者 | 崩溃备份已不存在 | The crash backup no longer exists | 用户恢复前备份已被别处清理，说明原因而非报错。 |
+| D63 | 键位面板标题 | 作者 | 键位（生效中） | Key bindings (active) | 明确列出的是当前生效的表（含配置覆盖），不是文档里的默认表。 |
+| D64 | 键位面板分组标题 | 作者 | 移动与选择 / 扩选 / 删除 / kill-yank / 翻屏 / 撤销 / widget / 全局 / 其他 | Movement & selection / Extend selection / Deletion / kill-yank / Scrolling / Undo / Widget / Global / Other | 按功能族分组便于扫读；「其他」是未归组命令的兜底，不让任何命令从视野里消失。 |
+| D65 | 键位面板未绑定标注 | 作者 | 未绑定 | Unbound | 被配置解绑的命令仍在面板里，标注它当前没有键位指向。 |
+| D66 | 键位面板未绑定的行说明 | 作者 | 当前没有键位指向它（配置解绑或尚未绑定） | No key is bound to it (unbound in config, or never bound) | 说明「未绑定」的两种成因，并指向下一步该去配置里找。 |
+| D67 | 键位面板关闭提示 | 作者 | Esc / ⌃G 或点击遮罩关闭 | Close with Esc / ⌃G or by clicking outside | 给出手不离键盘的出口，并说明鼠标路径。 |
 
-D30 已合并入 D18；D30 编号停用，不复用。D2–D3、D8–D18、D27–D29 随 Thread 特性删除（ADR 0006，2026-09-12）停用，不复用。D23–D24 随 panel 空壳清除（M124，2026-09-12）停用，不复用。D55–D62 为保存链路加固新增（M127，2026-09-12）。
+D30 已合并入 D18；D30 编号停用，不复用。D2–D3、D8–D18、D27–D29 随 Thread 特性删除（ADR 0006，2026-09-12）停用，不复用。D23–D24 随 panel 空壳清除（M124，2026-09-12）停用，不复用。D55–D62 为保存链路加固新增（M127，2026-09-12）。D63–D67 为键位查看面板新增（M133，2026-09-13）。
 
 ## 文案实现备注
 
-树、编辑器、toast 的动态错误由 `src/tree.ts` / `src/save-controller.ts` 持有或透传；本 deck 收编其稳定可见部分。保存链路的稳定文案（含守卫提示与冲突/备份动作）随 M127 的拆分集中在 `src/save-controller.ts`。
+树、编辑器、toast 的动态错误由 `src/tree.ts` / `src/save-controller.ts` 持有或透传；本 deck 收编其稳定可见部分。保存链路的稳定文案（含守卫提示与冲突/备份动作）随 M127 的拆分集中在 `src/save-controller.ts`。键位面板（D63–D67）的文案在 `src/main.ts` 的 `createBindingsPanel` 内；面板里逐条显示的**键位来由**不是本 deck 的条目——它来自 `src/keys.ts` 键位表的 `doc` 字段（表即文档，随绑定一起维护）。

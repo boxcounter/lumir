@@ -324,3 +324,63 @@ body { background:var(--bg); color:var(--text); font-family:var(--font-body); fo
   display: block;
   padding-block: 3px;
 }
+
+/* 键位查看面板（M133，app.describe-bindings）：dogfood 期自用查看器，theme 重做前的
+   占位实现——只用既有排版基线与 CSS 变量，不引入新视觉语言。 */
+.lumir-bindings-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 40px;
+  background: color-mix(in srgb, var(--text) 30%, transparent);
+}
+/* author 的 display:flex 会盖掉 UA 的 [hidden] 规则，显式补回（同 .editor-notice） */
+.lumir-bindings-overlay[hidden] { display: none; }
+.lumir-bindings-panel {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  max-width: 680px;
+  max-height: 100%;
+  padding: 20px 24px 16px;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--bd-2);
+  border-radius: var(--radius);
+  outline: none;
+}
+.lumir-bindings-title {
+  margin: 0 0 4px;
+  font-family: var(--font-display);
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: .18em;
+}
+.lumir-bindings-body { min-height: 0; overflow: auto; }
+.lumir-bindings-group-title {
+  margin: 14px 0 6px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: .08em;
+  color: var(--dim);
+}
+.lumir-bindings-row { display: flex; align-items: baseline; gap: 10px; padding: 2px 0; }
+.lumir-bindings-key {
+  flex: none;
+  min-width: 9em;
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+.lumir-bindings-command {
+  flex: none;
+  min-width: 13em;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--dim);
+}
+.lumir-bindings-doc { min-width: 0; font-size: 12px; color: var(--dim); }
+.lumir-bindings-row.is-unbound .lumir-bindings-key { color: var(--accent); }
+.lumir-bindings-hint { margin: 12px 0 0; font-size: 11px; color: var(--dim); }
