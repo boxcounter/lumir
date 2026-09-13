@@ -3,7 +3,7 @@ import { stubTauri } from "./tauri-stub";
 import { readDocument } from "./parity-checks";
 
 // M120：非 md 只读文件按扩展名获得语法高亮（@codemirror/legacy-modes →
-// StreamLanguage + HighlightStyle，editor.ts CODE_LANGUAGES），只读合同
+// StreamLanguage + HighlightStyle，editor.ts LANGUAGES），只读合同
 //（M97/M101：editable(false) + readOnly(true)）不动。
 // 颜色断言锚定默认 light 主题 token：--accent #b23a2c（关键字）、
 // --callout-tip #5a7a3f（字符串）、--callout-warning #a05e1c（数字/atom）。

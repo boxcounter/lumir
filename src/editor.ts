@@ -28,8 +28,8 @@ import { findMathSpans } from "./preview/math";
 import type { MathSpan } from "./preview/math";
 import { findTables, tableAt } from "./preview/table";
 import type { TableModel, TableRow } from "./preview/table";
-import { createInvokeAttachmentProvider } from "./preview/attachments";
-import type { AttachmentProvider } from "./preview/attachments";
+import { createInvokeAttachmentProvider, codeLanguage, extensionOf, fileClass } from "./preview/attachments";
+import type { AttachmentProvider, CodeLanguage } from "./preview/attachments";
 
 // 编辑器单内核双模式（ADR 0002 §2）：一个 CM6 内核、两种模式。
 // md = 高亮 + live preview 装饰层（src/preview/）；code = 仅高亮。
@@ -450,8 +450,9 @@ export interface EditorHandle {
   mode(): EditorMode;
   /**
    * 打开文档：替换内容并按文件类型选模式（spec「模式配置来源」）——
-   * .md/.markdown → md；已知代码扩展 → code；无类型线索（path 缺失或未知扩展）
-   * → 回落配置默认基线（setMode 锚定，不随上一个打开文件的模式漂移）。
+   * .md/.markdown → md；其余有扩展名线索的文件 → 只读 code（含未知扩展，M130
+   * 方向 A）；无扩展名线索（path 缺失或 basename 无点）→ 回落配置默认基线
+   *（setMode 锚定，不随上一个打开文件的模式漂移）。
    */
   openDocument(doc: string, path?: string, requestId?: number): void;
   /** 监听文档装载、装饰和首个 paint 的可观测阶段。 */
@@ -481,57 +482,47 @@ export interface EditorHandle {
   onDirty(listener: (dirty: boolean) => void): () => void;
 }
 
-// 已知代码文件扩展 → code 模式。未列出的扩展按「无类型线索」回落配置默认。
-const CODE_EXTENSIONS = new Set([
-  "rs", "ts", "tsx", "js", "jsx", "mjs", "cjs", "py", "go", "c", "h", "cpp", "cc",
-  "java", "rb", "sh", "json", "toml", "yaml", "yml", "css", "html", "xml",
-  "swift", "kt", "lua", "sql", "vue", "scss",
-]);
-
-// code 模式的语法高亮（M120）：按扩展名选 legacy-modes StreamParser，经
-// StreamLanguage 包成 CM6 Language——只读代码文件不再借 markdown 解析器着色。
-// 覆盖与 CODE_EXTENSIONS 对齐；同一 parser 多扩展共享一个 Language 实例。
-// vue 无对应 legacy mode，SFC 按 html 高亮兜底。
+// code 模式的语法高亮（M120）：扩展名 → 语言名的映射是注册表（preview/attachments.ts
+// 的 CODE_EXTENSIONS）的职责，这里只把语言名解析成 CM6 Language——legacy-modes 的
+// StreamParser 经 StreamLanguage 包成 CM6 Language，同一 parser 多扩展共享实例。
+// Record<CodeLanguage, Language> 是编译期合同：注册表新增语言名而此处未实现、
+// 或此处多出无人引用的实现，编译都会失败。vue/svelte 无对应 legacy mode（SFC 按
+// html 兜底）；php 无对应 mode，注册表标 null → 纯文本只读，不由近似 parser 冒充。
 const jsLanguage = StreamLanguage.define(javascript);
 const tsLanguage = StreamLanguage.define(typescript);
 const cLanguage = StreamLanguage.define(c);
 const cppLanguage = StreamLanguage.define(cpp);
 const yamlLanguage = StreamLanguage.define(yaml);
 const htmlLanguage = StreamLanguage.define(html);
-const CODE_LANGUAGES: Record<string, Language> = {
-  rs: StreamLanguage.define(rust),
-  ts: tsLanguage, tsx: tsLanguage,
-  js: jsLanguage, jsx: jsLanguage, mjs: jsLanguage, cjs: jsLanguage,
-  py: StreamLanguage.define(python),
+const LANGUAGES: Record<CodeLanguage, Language> = {
+  rust: StreamLanguage.define(rust),
+  typescript: tsLanguage,
+  javascript: jsLanguage,
+  python: StreamLanguage.define(python),
   go: StreamLanguage.define(go),
-  c: cLanguage, h: cLanguage, cpp: cppLanguage, cc: cppLanguage,
+  c: cLanguage,
+  cpp: cppLanguage,
   java: StreamLanguage.define(java),
-  rb: StreamLanguage.define(ruby),
-  sh: StreamLanguage.define(shell),
+  ruby: StreamLanguage.define(ruby),
+  shell: StreamLanguage.define(shell),
   json: StreamLanguage.define(json),
   toml: StreamLanguage.define(toml),
-  yaml: yamlLanguage, yml: yamlLanguage,
+  yaml: yamlLanguage,
   css: StreamLanguage.define(css),
   scss: StreamLanguage.define(sCSS),
-  html: htmlLanguage, vue: htmlLanguage,
+  html: htmlLanguage,
   xml: StreamLanguage.define(xml),
   swift: StreamLanguage.define(swift),
-  kt: StreamLanguage.define(kotlin),
+  kotlin: StreamLanguage.define(kotlin),
   lua: StreamLanguage.define(lua),
   sql: StreamLanguage.define(standardSQL),
 };
 
-function fileExtension(path: string | undefined): string | null {
-  if (!path) return null;
-  const base = path.slice(path.lastIndexOf("/") + 1);
-  const dot = base.lastIndexOf(".");
-  return dot < 0 ? null : base.slice(dot + 1).toLowerCase();
-}
-
-/** code 模式按扩展名取语言包；未知扩展/无路径返回 null（纯文本，不着色）。 */
+/** code 模式按扩展名取语言包；无扩展名线索或该扩展无语言包返回 null（纯文本，不着色）。 */
 function codeLanguageFor(path: string | undefined): Language | null {
-  const ext = fileExtension(path);
-  return ext === null ? null : CODE_LANGUAGES[ext] ?? null;
+  if (path === undefined) return null;
+  const name = codeLanguage(extensionOf(path));
+  return name === null ? null : LANGUAGES[name];
 }
 
 // code 模式 token 配色：只用单套排版基线的既有视觉 token
@@ -549,12 +540,17 @@ const codeHighlight = syntaxHighlighting(
   { fallback: true },
 );
 
+/** 打开文件时的模式裁决（M130 方向 A）：.md/.markdown → md；其余**有扩展名线索**的
+ *  文件一律 code（只读）——不再回落配置默认。旧口径把 .php/.svelte/.txt 等未收录
+ *  扩展交给 defaultMode，出厂为 md：文件可编辑、可 dirty，却没有磁盘 revision 可
+ *  保存（main.ts 只为 md 登记 revision），Cmd+S 静默失败，dirty 又锁死切换与退出。
+ *  只有「没有扩展名线索」才回落配置默认基线：path 缺失（空态 / 新建 / 复位），或
+ *  basename 无点（LICENSE、Makefile）。 */
 function modeForPath(path: string | undefined, fallback: EditorMode): EditorMode {
-  const ext = fileExtension(path);
-  if (ext === null) return fallback;
-  if (ext === "md" || ext === "markdown") return "md";
-  if (CODE_EXTENSIONS.has(ext)) return "code";
-  return fallback;
+  if (path === undefined) return fallback;
+  const ext = extensionOf(path);
+  if (ext === "") return fallback;
+  return fileClass(ext) === "md" ? "md" : "code";
 }
 
 export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md", markdownConfig: Parameters<typeof markdown>[0] = { base: markdownLanguage, extensions: [GFM] }): EditorHandle {
