@@ -21,7 +21,7 @@ import {
 import { createSaveController } from "./save-controller";
 import type { FsEntry } from "./bindings/FsEntry";
 import type { LinkResolveResult } from "./bindings/LinkResolveResult";
-import { extensionOf, resolveByNameUnique } from "./preview/attachments";
+import { extensionOf, mimeTypeOf, resolveByNameUnique } from "./preview/attachments";
 import { findWikilinkSpans } from "./preview/wikilinks";
 import "./style.css";
 
@@ -42,30 +42,16 @@ let attachmentPaths: string[] = [];
 /** 是否已有 vault 装载成功；onOpenVault 失败时据此决定空态还是浮条提示。 */
 let vaultLoaded = false;
 
-// data: URL 的 MIME 推断，与 attachments.ts 私有 MIME_BY_EXTENSION 同口径。
-// 该文件不在本 mission scope，对齐点（provider 工厂接受注入的读取函数 /
-// 抽出公共 MIME 表）已报 tower，此处就地维护一份。
-const IMAGE_MIME: Record<string, string> = {
-  png: "image/png",
-  jpg: "image/jpeg",
-  jpeg: "image/jpeg",
-  gif: "image/gif",
-  webp: "image/webp",
-  svg: "image/svg+xml",
-  avif: "image/avif",
-  bmp: "image/bmp",
-  ico: "image/x-icon",
-};
-
 // 附件 provider：文件名匹配走 vault 索引（add-vault-workspace 裁决点 F），
 // 字节读取走 ipc 的 fsReadAttachment 封装（裁决点 A，invoke + base64）。
 // 索引未命中 → livePreview 出「附件未找到」占位；读取失败 → ImageWidget
-// 原地换「图片读取失败」占位，都不抛错。
+// 原地换「图片读取失败」占位，都不抛错。MIME 取扩展名注册表（M130 收敛后
+// main.ts 不再自维护一份 IMAGE_MIME）。
 editor.setAttachmentProvider({
   resolveByName: (name) => resolveByNameUnique(attachmentPaths, name),
   async readDataUrl(path) {
     const base64 = await fsReadAttachment(path);
-    const mime = IMAGE_MIME[extensionOf(path)] ?? "application/octet-stream";
+    const mime = mimeTypeOf(extensionOf(path)) ?? "application/octet-stream";
     return `data:${mime};base64,${base64}`;
   },
 });
@@ -145,8 +131,9 @@ editor.onReady((event) => {
   emitReadiness(event.phase, event);
 });
 
-// 打开文件：读出文本交给 editor.openDocument——模式裁决（文件类型优先，
-// 无类型线索回落配置默认）和附件相对路径解析依赖的 currentFilePath 都在
+// 打开文件：读出文本交给 editor.openDocument——模式裁决（以扩展名注册表为唯一
+// 事实源：.md/.markdown → md 模式；其余已打开的文件一律只读 code，含未知扩展与
+// basename 无点的文件，M130 方向 A）和附件相对路径解析依赖的 currentFilePath 都在
 // 内核里完成（spec「模式配置来源」）。不支持的二进制 → 提示而非报错弹窗。
 async function openFile(path: string, kind: "md" | "code" | "text" | "binary") {
   if (!save.guard("切换文件")) return;
@@ -160,6 +147,9 @@ async function openFile(path: string, kind: "md" | "code" | "text" | "binary") {
     const snapshot = await fsReadSnapshot(path);
     if (!save.isCurrent(request) || !save.guard("切换文件")) return;
     const text = snapshot.content;
+    // 只有 md 进保存链路（登记磁盘 revision）；非 md 以只读 code 模式打开，不存在
+    // dirty，也不该被任何保存入口接受（M130）。currentPath 同理：wikilink 语义只对
+    // md 生效，非 md 打开时不作 resolve 的 from 基准。
     const revision = kind === "md" ? snapshot.revision : undefined;
     save.noteOpened(path, revision);
     currentPath = kind === "md" ? path : undefined;
@@ -486,7 +476,8 @@ vaultCurrent()
   })
   .catch((e) => tree.showEmpty(errorMessage(e)));
 
-// editor.mode：无类型线索时的默认模式（openFile 的模式裁决消费）。
+// editor.mode：只对没有文件上下文的文档（空态 / 新建）生效的默认模式；打开文件时
+// 一律按扩展名裁决（M130 方向 A：非 md 只读 code），该配置对文件打开不再有影响。
 configGet().then((snapshot) => editor.setMode(snapshot.config.editor.mode)).catch(() => {});
 
 // app-ready 只表示 webview/application shell 已挂载，不等价于 vault 恢复或编辑器首帧。

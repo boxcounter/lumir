@@ -5,6 +5,7 @@
 
 import type { FsChange } from "./bindings/FsChange";
 import type { FsEntry } from "./bindings/FsEntry";
+import { extensionOf, fileClass } from "./preview/attachments";
 
 /** 展示分类（spec：至少区分目录 / Markdown / 图片等可预览附件 / 其他）。 */
 export type DisplayKind = "dir" | "md" | "image" | "other";
@@ -12,44 +13,22 @@ export type DisplayKind = "dir" | "md" | "image" | "other";
 /** 点击打开的行为分类：md / code 进编辑器对应模式，text 只读原文，binary 给提示。 */
 export type OpenKind = "md" | "code" | "text" | "binary";
 
-const IMAGE_EXTS = new Set([
-  "png", "jpg", "jpeg", "gif", "webp", "svg", "avif", "bmp", "ico", "heic",
-]);
-const CODE_EXTS = new Set([
-  "rs", "ts", "tsx", "js", "jsx", "mjs", "cjs", "json", "toml", "yaml", "yml",
-  "css", "html", "py", "go", "java", "c", "h", "cpp", "hpp", "swift", "kt",
-  "sh", "bash", "zsh", "rb", "php", "lua", "sql", "xml", "vue", "svelte",
-]);
-// 明确二进制的扩展名：直接"暂不支持预览"，不浪费一次读取。
-const BINARY_EXTS = new Set([
-  "pdf", "zip", "gz", "tar", "rar", "7z", "dmg", "exe", "dll", "so", "dylib",
-  "app", "jar", "class", "wasm", "ttf", "otf", "woff", "woff2", "mp3", "mp4",
-  "mov", "avi", "mkv", "wav", "flac", "sqlite", "db", "icns", "doc", "docx",
-  "xls", "xlsx", "ppt", "pptx", "sketch", "fig",
-]);
-
-function extOf(path: string): string {
-  const name = path.slice(path.lastIndexOf("/") + 1);
-  const dot = name.lastIndexOf(".");
-  // 无扩展名或点开头（.gitignore 这类）按无扩展名处理
-  return dot > 0 ? name.slice(dot + 1).toLowerCase() : "";
-}
+// 扩展名集合（图片 / 二进制 / 代码 / Markdown）的唯一事实源在 preview/attachments.ts
+//（M130 收敛）；本文件只按分类消费，不再各自维护一套集合。
 
 export function displayKind(entry: FsEntry): DisplayKind {
   if (entry.kind === "dir") return "dir";
-  const ext = extOf(entry.path);
-  if (ext === "md" || ext === "markdown") return "md";
-  if (IMAGE_EXTS.has(ext)) return "image";
+  const cls = fileClass(extensionOf(entry.path));
+  if (cls === "md") return "md";
+  if (cls === "image") return "image";
   return "other";
 }
 
-/** 打开行为分类：binary 走"暂不支持预览"，其余尝试按文本读（含无扩展名）。 */
+/** 打开行为分类：image/binary 走"暂不支持预览"，其余尝试按文本读（含无扩展名）。 */
 export function openKind(path: string): OpenKind {
-  const ext = extOf(path);
-  if (ext === "md" || ext === "markdown") return "md";
-  if (IMAGE_EXTS.has(ext) || BINARY_EXTS.has(ext)) return "binary";
-  if (CODE_EXTS.has(ext)) return "code";
-  return "text";
+  const cls = fileClass(extensionOf(path));
+  if (cls === "md" || cls === "code" || cls === "text") return cls;
+  return "binary";
 }
 
 export interface FileTreeCallbacks {

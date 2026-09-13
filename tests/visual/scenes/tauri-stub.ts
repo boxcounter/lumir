@@ -240,5 +240,10 @@ export const DEMO_VAULT: VaultFixture = {
   files: {
     "README.md": "# Demo Vault\n\n这是 **示例** vault 的 README。\n\n- 全类型文件树\n- watch 增量刷新\n",
     "docs/guide.md": "# Guide\n\n指南内容。",
+    // M130：非 md 的既有条目也给出可读内容——非 md 打开的回归场景（只读 code /
+    // 无扩展名的保存兜底）要能点到真实文本，而不是 fs_read_snapshot 的 fs_not_found
+    // 提示。条目集合不变（不影响既有截图基线）。
+    "docs/notes.txt": "# 不是标题\n\n纯文本原文（非 Markdown 渲染对象）。\n",
+    LICENSE: "MIT License\n\nPermission is hereby granted, free of charge.\n",
   },
 };

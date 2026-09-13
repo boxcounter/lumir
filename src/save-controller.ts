@@ -67,13 +67,14 @@ export interface SaveController {
    * 恒同增同减，合并为一个计数器）。 */
   beginSwitch(): number;
   isCurrent(serial: number): boolean;
-  /** 读快照成功后登记当前展示文档（非 md 文档 revision 传 undefined）。 */
+  /** 读快照成功后登记当前展示文档（非 md 文档 revision 传 undefined——该文档随后
+   *  不可保存，见 saveBaseline）。 */
   noteOpened(path: string, revision: string | undefined): void;
   /** vault 装载 / 复位：清空展示状态、世代自增、撤下暂停态、定时器与恢复提示。 */
   noteVaultReset(): void;
   /** 编辑器文档内容变化（每次 docChanged）：重置自动保存 debounce。 */
   onDocChanged(): void;
-  /** 手动保存（Cmd+S）。 */
+  /** 手动保存（Cmd+S）；当前文档不可保存而又有修改时必须给出可见反馈，MUST NOT 静默。 */
   save(): Promise<void>;
   /** watch 命中打开中文件的处置（M124 分流 + M127 暂停自动保存）。 */
   handleExternalChange(path: string, kind: FsChangeKind): void;
@@ -131,8 +132,12 @@ export function createSaveController(deps: SaveControllerDeps): SaveController {
 
   function guard(action: string): boolean {
     if (!editor.isDirty()) return true;
-    toast(`当前 Markdown 有未保存修改，无法${action}；请先保存（Cmd+S）`)
-      .classList.add(SAVE_GUARD_TOAST_CLASS);
+    // 无落盘基准的 dirty（未打开文件 / 非 md / 未登记 revision，M130）不能沿用
+    // 「请先保存（Cmd+S）」——那是一条走不通的建议；改指撤销修改，给出真正的出口。
+    const blocked = saveBaseline() === null
+      ? `当前文档不支持保存，无法${action}；请按 Cmd+Z 撤销修改`
+      : `当前 Markdown 有未保存修改，无法${action}；请先保存（Cmd+S）`;
+    toast(blocked).classList.add(SAVE_GUARD_TOAST_CLASS);
     return false;
   }
 
@@ -169,13 +174,38 @@ export function createSaveController(deps: SaveControllerDeps): SaveController {
   // 保存：手动 / 自动共用同一条链路（dirty 清除语义与失败处置完全一致）
   // ---------------------------------------------------------------------------
 
+  /** 当前展示文档的落盘基准（CAS 用 revision）；不可保存返回 null——非 md 是只读
+   *  code 模式（M130 方向 A），无 revision 表示没有基准（非 md 未登记，或 md 尚未
+   *  读到快照），两者写回去都会失败或无从校验。 */
+  function saveBaseline(): string | null {
+    return editor.mode() === "md" ? displayedRevision ?? null : null;
+  }
+
+  /** 手动 Cmd+S 不可达时的人话反馈（M130 兜底）：dirty 却无法保存时 MUST NOT 静默
+   *  return——dirty 会锁死切换文件 / 切换 vault / 退出，静默失败把用户困在「提示让他
+   *  按 Cmd+S，而 Cmd+S 无效」的死态。提示必须给出脱离 dirty 的动作（Cmd+Z 撤销）。
+   *  当前可达的触发路径是「没有打开文件」（空态 / 新建文档）；方向 A 下非 md 文件一律
+   *  只读、不可能 dirty，第二个分支是防再犯的兜底（评审裁决后含无扩展名文件）。
+   *  自动保存路径不调用本函数（每 2s 一次会砸提示），其跳过口径见 reconcile。 */
+  function reportUnsaveable(): void {
+    if (!editor.isDirty()) return; // 无修改可保存：Cmd+S 无事发生，保持静默
+    toast(
+      displayedPath === undefined
+        ? "当前没有打开的文件，无法保存；修改仍在编辑器内（按 Cmd+Z 可撤销）"
+        : "当前文件不支持保存：Lumir 只保存 Markdown 文件；修改仍在编辑器内（按 Cmd+Z 可撤销）",
+    ).classList.add(SAVE_GUARD_TOAST_CLASS);
+  }
+
   /** 保存当前文档；返回「内存内容是否已完全落盘（dirty 已清除）」。 */
   async function saveDocument(auto: boolean): Promise<boolean> {
     const path = displayedPath;
-    if (saveInFlight || path === undefined || editor.mode() !== "md") return false;
-    if (!editor.isDirty() || displayedRevision === undefined) return false;
+    const expectedRevision = saveBaseline();
+    if (path === undefined || expectedRevision === null) {
+      if (!auto) reportUnsaveable();
+      return false;
+    }
+    if (saveInFlight || !editor.isDirty()) return false;
     const generation = serial;
-    const expectedRevision = displayedRevision;
     const content = editor.view.state.doc.toString();
     saveInFlight = true;
     try {
@@ -396,11 +426,12 @@ export function createSaveController(deps: SaveControllerDeps): SaveController {
   }
 
   /** debounce 到期：自动保存一次；无法保存（暂停 / 未完全落盘）时把 dirty 内容
-   * 落崩溃备份——进程崩溃 / 强杀后下次启动仍有内容可恢复。 */
+   * 落崩溃备份——进程崩溃 / 强杀后下次启动仍有内容可恢复。
+   * 无落盘基准（saveBaseline 为 null：非 md / 未登记 revision）直接返回：这类内容
+   * 没有任何保存路径能写回磁盘，备份只会在下次启动弹出一个无法闭环的恢复提示。 */
   async function reconcile(): Promise<void> {
     const path = displayedPath;
-    if (path === undefined || editor.mode() !== "md") return;
-    if (!editor.isDirty() || displayedRevision === undefined) return;
+    if (path === undefined || saveBaseline() === null || !editor.isDirty()) return;
     if (autosavePaused.size > 0 || saveInFlight) {
       await backupDirty(path);
       return;
@@ -409,12 +440,18 @@ export function createSaveController(deps: SaveControllerDeps): SaveController {
   }
 
   /** 崩溃备份：写失败 / 无后端（纯浏览器预览桩）只作罢，不打断编辑。
-   *  基准 revision 取编辑器已知的磁盘 revision（reconcile 已保证非 undefined），
-   *  它是恢复侧判定「备份之后磁盘是否被外部修改」的唯一依据。 */
+   *  基准 revision 取编辑器已知的磁盘 revision（saveBaseline 保证非 null），它是
+   *  恢复侧判定「备份之后磁盘是否被外部修改」的唯一依据。
+   *
+   *  M130 显式跳过无落盘基准的 dirty 内容（非 md / 未登记 revision）：备份的唯一用途
+   *  是经恢复入口把内容写回磁盘，而写回必须走保存链路（要求 md 模式 + CAS 基准）——
+   *  为这类内容写备份只会留下一个无法闭环的恢复提示。这是显式裁决，不是「静默没有
+   *  备份」：决策记录见 openspec change non-md-readonly-open。 */
   async function backupDirty(path: string): Promise<void> {
-    if (!editor.isDirty() || displayedRevision === undefined) return;
+    const revision = saveBaseline();
+    if (!editor.isDirty() || revision === null) return;
     const content = editor.view.state.doc.toString();
-    await recoveryBackup(path, content, displayedRevision).catch(() => {});
+    await recoveryBackup(path, content, revision).catch(() => {});
   }
 
   // ---------------------------------------------------------------------------
