@@ -111,14 +111,14 @@ const REGISTRY: ReadonlyMap<string, ExtensionInfo> = (() => {
   return map;
 })();
 
-/** 路径取扩展名（小写、不含点）；无扩展名线索返回空串 ""。
+/** 路径取扩展名（小写、不含点）；basename 无点（`LICENSE`/`Makefile`）返回空串 ""。
  *  口径（M130 收敛时统一，原先各模块不同）：只按 basename 里最后一个点切分——
- *  无点的 `LICENSE`/`Makefile` → ""（无线索）；dotfile `.gitignore` → "gitignore"
- *  （按「有扩展名线索」处理：文件树里仍是未收录扩展的 text 分类，但编辑器模式从
- *  回落配置默认变成只读 code 分支；tree.ts 旧口径把点开头视为无扩展名，收敛后不再
- *  如此，行为更安全）。
- *  注意 "" 与未收录扩展在消费侧不同：模式裁决对 "" 回落配置默认，对未收录扩展一律
- *  只读 code（见 editor.ts modeForPath）。 */
+ *  无点 basename → ""；dotfile `.gitignore` → "gitignore"（tree.ts 旧口径把点开头视为
+ *  无扩展名，收敛后不再如此）。
+ *  "" 与未收录扩展在分类上都是「未收录」（fileClass 返回 text）；模式裁决对两者的
+ *  处置也一致：**只读 code**（见 editor.ts modeForPath——非 md 一律只读，含无扩展名；
+ *  配置 `editor.mode` 只对没有文件上下文的文档有意义）。tree.ts 旧口径把 dotfile 视为
+ *  无扩展名、进编辑器回落 md，收敛后这类文件也走只读 code。 */
 export function extensionOf(path: string): string {
   const base = path.slice(path.lastIndexOf("/") + 1);
   const dot = base.lastIndexOf(".");

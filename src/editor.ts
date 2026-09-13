@@ -443,16 +443,16 @@ export interface EditorHandle {
   view: EditorView;
   /**
    * 显式切换模式（配置加载 / 用户切换）：除热切换当前模式外，同时把该模式记为
-   * 配置默认基线，openDocument 对无类型线索文件的回落以此为锚。
+   * 配置默认基线，openDocument 对无文件上下文（path 缺失）文档的回落以此为锚。
    * Compartment 热切换，不重建 view。
    */
   setMode(mode: EditorMode): void;
   mode(): EditorMode;
   /**
    * 打开文档：替换内容并按文件类型选模式（spec「模式配置来源」）——
-   * .md/.markdown → md；其余有扩展名线索的文件 → 只读 code（含未知扩展，M130
-   * 方向 A）；无扩展名线索（path 缺失或 basename 无点）→ 回落配置默认基线
-   *（setMode 锚定，不随上一个打开文件的模式漂移）。
+   * .md/.markdown → md；其余一切已打开的文件 → 只读 code（含未知扩展、dotfile 与
+   * basename 无点的文件，M130 方向 A）；只有没有文件上下文（path 缺失）的文档才
+   * 回落配置默认基线（setMode 锚定，不随上一个打开文件的模式漂移）。
    */
   openDocument(doc: string, path?: string, requestId?: number): void;
   /** 监听文档装载、装饰和首个 paint 的可观测阶段。 */
@@ -460,7 +460,7 @@ export interface EditorHandle {
   /**
    * 清空文档并复位上下文（vault 切换 / 关闭时调用）：doc 清空、内部
    * currentFilePath 置空、模式回到配置默认基线（defaultMode，与 openDocument
-   * 的无类型线索回落锚一致——不继承上一个文件漂移出的模式）。
+   * 对无文件上下文文档的回落锚一致——不继承上一个文件漂移出的模式）。
    */
   reset(): void;
   /**
@@ -540,24 +540,23 @@ const codeHighlight = syntaxHighlighting(
   { fallback: true },
 );
 
-/** 打开文件时的模式裁决（M130 方向 A）：.md/.markdown → md；其余**有扩展名线索**的
- *  文件一律 code（只读）——不再回落配置默认。旧口径把 .php/.svelte/.txt 等未收录
- *  扩展交给 defaultMode，出厂为 md：文件可编辑、可 dirty，却没有磁盘 revision 可
- *  保存（main.ts 只为 md 登记 revision），Cmd+S 静默失败，dirty 又锁死切换与退出。
- *  只有「没有扩展名线索」才回落配置默认基线：path 缺失（空态 / 新建 / 复位），或
- *  basename 无点（LICENSE、Makefile）。 */
+/** 打开文件时的模式裁决（M130 方向 A）：.md/.markdown → md；其余**一切已打开的文件**
+ *  一律 code（只读）——不再回落配置默认。旧口径把 .php/.svelte/.txt 等未收录扩展交给
+ *  defaultMode，出厂为 md：文件可编辑、可 dirty，却没有磁盘 revision 可保存（main.ts
+ *  只为 md 登记 revision），Cmd+S 静默失败，dirty 又锁死切换与退出。无扩展名线索的
+ *  文件（basename 无点如 LICENSE/Makefile）同样是「非 md」，一并只读（tower 裁决 M130
+ *  评审：D4「非 md 即只读」优先于任务书「ext 缺失保持 fallback」的字面）。
+ *  配置默认基线只对「没有文件上下文」的文档有意义：path 缺失（空态 / 新建 / reset）。 */
 function modeForPath(path: string | undefined, fallback: EditorMode): EditorMode {
   if (path === undefined) return fallback;
-  const ext = extensionOf(path);
-  if (ext === "") return fallback;
-  return fileClass(ext) === "md" ? "md" : "code";
+  return fileClass(extensionOf(path)) === "md" ? "md" : "code";
 }
 
 export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md", markdownConfig: Parameters<typeof markdown>[0] = { base: markdownLanguage, extensions: [GFM] }): EditorHandle {
   const modeCompartment = new Compartment();
   let currentMode = initialMode;
-  // 配置默认基线：openDocument 的无类型线索回落锚在这里；只有 setMode
-  //（配置加载 / 用户显式切换）会移动它，openDocument 自身不改。
+  // 配置默认基线：openDocument 对无文件上下文（path 缺失）文档的回落锚在这里；
+  // 只有 setMode（配置加载 / 用户显式切换）会移动它，openDocument 自身不改。
   let defaultMode = initialMode;
   let currentPath: string | undefined;
   let provider: AttachmentProvider = createInvokeAttachmentProvider();

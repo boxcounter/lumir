@@ -132,8 +132,8 @@ editor.onReady((event) => {
 });
 
 // 打开文件：读出文本交给 editor.openDocument——模式裁决（以扩展名注册表为唯一
-// 事实源：.md/.markdown → md 模式；其余有扩展名的文件 → 只读 code；只有无扩展名
-// 线索才回落配置默认，M130 方向 A）和附件相对路径解析依赖的 currentFilePath 都在
+// 事实源：.md/.markdown → md 模式；其余已打开的文件一律只读 code，含未知扩展与
+// basename 无点的文件，M130 方向 A）和附件相对路径解析依赖的 currentFilePath 都在
 // 内核里完成（spec「模式配置来源」）。不支持的二进制 → 提示而非报错弹窗。
 async function openFile(path: string, kind: "md" | "code" | "text" | "binary") {
   if (!save.guard("切换文件")) return;
@@ -476,7 +476,8 @@ vaultCurrent()
   })
   .catch((e) => tree.showEmpty(errorMessage(e)));
 
-// editor.mode：无类型线索时的默认模式（openFile 的模式裁决消费）。
+// editor.mode：只对没有文件上下文的文档（空态 / 新建）生效的默认模式；打开文件时
+// 一律按扩展名裁决（M130 方向 A：非 md 只读 code），该配置对文件打开不再有影响。
 configGet().then((snapshot) => editor.setMode(snapshot.config.editor.mode)).catch(() => {});
 
 // app-ready 只表示 webview/application shell 已挂载，不等价于 vault 恢复或编辑器首帧。

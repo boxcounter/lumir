@@ -184,6 +184,8 @@ export function createSaveController(deps: SaveControllerDeps): SaveController {
   /** 手动 Cmd+S 不可达时的人话反馈（M130 兜底）：dirty 却无法保存时 MUST NOT 静默
    *  return——dirty 会锁死切换文件 / 切换 vault / 退出，静默失败把用户困在「提示让他
    *  按 Cmd+S，而 Cmd+S 无效」的死态。提示必须给出脱离 dirty 的动作（Cmd+Z 撤销）。
+   *  当前可达的触发路径是「没有打开文件」（空态 / 新建文档）；方向 A 下非 md 文件一律
+   *  只读、不可能 dirty，第二个分支是防再犯的兜底（评审裁决后含无扩展名文件）。
    *  自动保存路径不调用本函数（每 2s 一次会砸提示），其跳过口径见 reconcile。 */
   function reportUnsaveable(): void {
     if (!editor.isDirty()) return; // 无修改可保存：Cmd+S 无事发生，保持静默

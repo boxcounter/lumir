@@ -18,15 +18,16 @@ D1–D4 经 Alex 裁决采纳，其中 **D4 = 方向 A：非 md 即只读 code �
 ## What Changes
 
 1. **单一扩展名注册表**：「扩展名 → 打开/展示分类 + code 语言名 + 附件 MIME」收敛为 `src/preview/attachments.ts` 一处声明与导出，tree.ts / editor.ts / main.ts 都改从这里消费（main.ts 自持的 `IMAGE_MIME` 删除）。落点理由：该模块已持有 `extensionOf` 与 MIME 表，且在依赖图上位于 editor 之下（editor → attachments），收敛不引入模块环，也无需新增文件。这同时清掉一条归档时记录的遗留项（`MIME_BY_EXTENSION` 未导出、main.ts 就地维护同口径副本，两处存在漂移风险——`openspec/changes/archive/2026-09-05-add-editor-live-preview/tasks.md` 第 68 行）。两套集合的差集逐项裁决：hpp → cpp 语言包、bash/zsh → shell、svelte → html（与既有 vue 同口径：SFC 按 html 兜底）、cc → cpp、scss → css(sCSS)、php → 无语言包（`@codemirror/legacy-modes` 实无 php mode，不用近似 parser 冒充高亮）；图片集合的 heic 原先只在文件树一侧，收敛后一并进入 MIME 与 `isImageName`。语言名的覆盖由编译期合同保证：注册表推导出的 `CodeLanguage` 联合类型即 editor.ts `LANGUAGES` 的键类型（缺一个实现或多一个无人引用的实现都会编译失败）。
-2. **方向 A 落地**：模式裁决对 `.md`/`.markdown` 返回 md，对**其余一切有扩展名线索的文件**（已知代码扩展、`.txt` 之类的未收录扩展、dotfile）返回**只读 code 模式**，不再回落配置默认；只有「无扩展名线索」（path 缺失，或 basename 无点如 `LICENSE`/`Makefile`）才回落配置默认基线。于是 `.php`/`.svelte`/`.txt` 等打开即只读，dirty 不可能产生，保存死态在两个方向（配置默认 md 或 code）下都不再出现。
-3. **不可保存态的可见反馈（兜底防再犯）**：dirty 且当前文档没有落盘能力（未打开文件 / 非 md 模式 / 未登记磁盘 revision）时，Cmd+S MUST 给出可见反馈并指出脱离 dirty 的动作（撤销修改），MUST NOT 静默 return；切换文件 / 切换 vault 的 dirty 守卫提示同样不再建议走不通的「请先保存（Cmd+S）」，改指撤销修改；崩溃备份对无落盘基准的 dirty 内容改为**显式跳过**并记录裁决（不写无法闭环的备份）。
-4. **回归证据**：新增 `tests/visual/scenes/m130-text-open-trap.spec.ts`——非 md 只读矩阵（未知扩展 / 差集扩展 / dotfile）、差集扩展的语言归属、两处 Cmd+S 兜底（无打开文件、无扩展名文件回落默认）；视觉 stub 为既有非 md 条目补最小内容能力，使这些场景能点到真实文本而非 `fs_not_found` 提示。
+2. **方向 A 落地**：模式裁决对 `.md`/`.markdown` 返回 md，对**其余一切已打开的文件**返回**只读 code 模式**（已知代码扩展、`.txt`/`.log` 之类的未收录扩展、dotfile，以及 basename 无点的 `LICENSE`/`Makefile`），MUST NOT 回落配置默认；配置 `editor.mode` 自此只对「没有文件上下文」的文档（空态 / 新建）有意义。于是 `.php`/`.svelte`/`.txt` 等打开即只读，dirty 不可能产生，保存死态在两个方向（配置默认 md 或 code）下都不再出现。
+   - 无扩展名文件是否也收归只读，是本次任务书里唯一自相矛盾处（task 2 既写「ext 非 md/markdown 时不 fallback」又写「ext 缺失/未知保持现状 fallback」）。M130 评审经 tower 裁决：**Context 里 Alex 的原话「非 md 即只读」（D4）优先**，任务书那句「保持现状 fallback」按笔误处理——无扩展名文件一并只读。
+3. **不可保存态的可见反馈（兜底防再犯）**：dirty 且当前文档没有落盘能力（未打开文件 / 非 md 模式 / 未登记磁盘 revision）时，Cmd+S MUST 给出可见反馈并指出脱离 dirty 的动作（撤销修改），MUST NOT 静默 return；切换文件 / 切换 vault 的 dirty 守卫提示同样不再建议走不通的「请先保存（Cmd+S）」，改指撤销修改；崩溃备份对无落盘基准的 dirty 内容改为**显式跳过**并记录裁决（不写无法闭环的备份）。方向 A 收口后该兜底当前可达的触发路径只剩「没有打开文件」（空态 / 新建文档）；非 md 只读分支保留为防再犯的防线。
+4. **回归证据**：新增 `tests/visual/scenes/m130-text-open-trap.spec.ts`——非 md 只读矩阵（未知扩展 / 差集扩展 / dotfile / 无扩展名文件）、差集扩展的语言归属、无落盘基准时的两处可见反馈（Cmd+S 与切换守卫）；视觉 stub 为既有非 md 条目补最小内容能力，使这些场景能点到真实文本而非 `fs_not_found` 提示。
 
 ## Non-goals
 
 - 不做方向 B（让非 md 文本文件可保存）：放开 `fs_io::save_markdown` 的 md-only 守卫后，CAS / 自动保存 / 崩溃备份 / 退出守卫全链路都要按非 md 重新验证（含 md 专属的 live preview 不该套在代码文件上），代价远超本次堵漏目标。
 - 不改 `fs_io::save_markdown` 的 md-only 守卫与其文案：方向 A 下它是后端防线（前端 `displayedRevision === undefined` 会提前短路，该文案因此当前不可达——见 Impact 的现状记录）。
-- 不改「无扩展名线索回落配置默认」这一边界（本次任务明文保留）：`LICENSE`/`Makefile` 仍按 `editor.mode` 打开；其不可保存由第 3 条的可见反馈兜底，而不是被本次收成只读。
+- 不改 `editor.mode` 配置项本身：它继续决定「没有文件上下文」文档（空态 / 新建）的模式，只是对打开文件不再有任何影响；`config.rs` 的字段、出厂值与校验逻辑本次不动（该文件不在本 mission scope）。
 - 不为非 md 文件引入编辑能力，也不做只读文档的另存 / 导出出口。
 - 不扩语言覆盖：只裁决两套既有集合的差集归属，不为未收录扩展新接 legacy mode。
 

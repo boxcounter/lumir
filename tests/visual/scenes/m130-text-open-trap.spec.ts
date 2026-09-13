@@ -10,9 +10,11 @@ import { DEMO_VAULT, dirtyReports, stubTauri } from "./tauri-stub";
 // 无任何反馈；而 dirty 又锁死切换文件 / 切换 vault（guard）与退出（后端 ExitRequested
 // 守卫），用户被困在「提示让他按 Cmd+S，而 Cmd+S 无效」的死态。
 //
-// 修复后（方向 A）：非 md 一律只读 code 模式，dirty 不可能产生；无扩展名文件
-// （LICENSE）按 mission 明文仍回落配置默认，其不可保存由可见提示兜底（见本文件
-// 后两个场景）。
+// 修复后（方向 A + tower 评审裁决）：一切非 md 文件——含未知扩展、dotfile 与
+// basename 无点的 LICENSE/Makefile——一律只读 code 模式，dirty 不可能产生；
+// 配置 `editor.mode` 只对没有文件上下文（空态 / 新建）的文档有意义。
+// 不可保存态仍留一条兜底（下述第 3 个场景）：没有打开文件时的 dirty 文档
+// Cmd+S 必须有可见反馈，切换守卫也不得建议走不通的「请先保存」。
 
 /** 默认 light 主题的语义 token 色（与 m120-code-highlight.spec.ts 同口径）。 */
 const LIGHT = { keyword: "rgb(178, 58, 44)" };
@@ -28,14 +30,14 @@ async function tokenColor(page: import("@playwright/test").Page, token: string):
 }
 
 /** 覆盖矩阵：未知扩展（txt/log/csv/xyz）、原两套注册表的差集（hpp/bash/zsh/php/
- *  svelte 与 cc/scss）、dotfile、无扩展名文件（LICENSE）与 md 对照。 */
+ *  svelte 与 cc/scss）、dotfile、无扩展名文件（LICENSE/Makefile）与 md 对照。 */
 const FILES: Record<string, string> = {
   "readme.md": "# 真 Markdown\n\n正文段落。\n",
   "notes.txt": "# 不是标题\n\n纯文本原文。\n",
   "app.log": "2026-09-13 10:00:00 INFO started\n",
   "data.csv": "name,count\nlumir,3\n",
   "mystery.xyz": "unknown extension payload\n",
-  ".secret": "dotfile 也按有扩展名线索处理\n",
+  ".secret": "dotfile 也按非 md 只读处理\n",
   "page.php": "<?php echo 1; ?>\n",
   "widget.svelte": "<script>let n = 1;</script>\n",
   "engine.hpp": "class Engine { public: int limit = 7; };\n",
@@ -44,6 +46,7 @@ const FILES: Record<string, string> = {
   "paint.cc": "class Painter { public: int width = 2; };\n",
   "theme.scss": "$ink: #333;\n.body { color: $ink; }\n",
   LICENSE: "MIT License\n\nPermission is hereby granted.\n",
+  Makefile: "all:\n\t@echo lumir\n",
 };
 
 const VAULT = {
@@ -51,8 +54,8 @@ const VAULT = {
   files: FILES,
 };
 
-/** 非 md 且「有扩展名线索」的文件：一律只读 code，M130 前全部是可编辑 md。 */
-const READ_ONLY = Object.keys(FILES).filter((path) => path !== "readme.md" && path !== "LICENSE");
+/** 除 Markdown 外的全部文件：一律只读 code（M130 前它们都是可编辑 md）。 */
+const READ_ONLY = Object.keys(FILES).filter((path) => path !== "readme.md");
 
 test("非 md 文本文件打开即只读 code 模式：不可编辑、不产生 dirty", async ({ page }) => {
   await stubTauri(page, VAULT);
@@ -124,40 +127,34 @@ test("没有打开文件时 Cmd+S 必须给出可见反馈（不得静默 return
   // dirty 会锁死切换与退出，保存入口的静默失败必须被可见反馈替代
   await page.keyboard.press("Meta+s");
   await expect(page.locator(".lumir-toast", { hasText: "无法保存" })).toBeVisible();
-});
 
-test("无扩展名文件回落配置默认：不可保存时 Cmd+S 给出可见反馈与脱困动作", async ({ page }) => {
-  await stubTauri(page, VAULT);
-  await page.goto("/");
-  const content = page.locator(".cm-content");
-  await page.locator('.ft-row[title="LICENSE"]').click();
-  await expect(content).toContainText("MIT License");
-
-  // 无扩展名线索（basename 无点）→ 回落配置默认基线（defaultMode = md）。这是
-  // mission 明文保留的边界（「ext 缺失/未知保持现状 fallback」），不是本次收紧的
-  // 对象；它不可保存（kind !== "md" 故没有磁盘 revision），由下面的兜底覆盖。
-  await expect(content).toHaveAttribute("contenteditable", "true");
-
-  await content.click();
-  await page.keyboard.type("edited");
-  await expect(content).toContainText("edited");
-  await expect(page.locator(".masthead-file")).toContainText("未保存");
-
-  await page.keyboard.press("Meta+s");
-  // 不得静默：说明该文件不支持保存，并给出脱离 dirty 的动作（Cmd+Z 撤销）
-  const notice = page.locator(".lumir-toast", { hasText: "不支持保存" });
-  await expect(notice).toBeVisible();
-  await expect(notice).toContainText("Cmd+Z");
-  // 内容没有被误标为已保存：仍留在 dirty
-  await expect(page.locator(".masthead-file")).toContainText("未保存");
-
-  // 切换文件的 dirty 守卫不得再建议「请先保存（Cmd+S）」这条走不通的动作：
-  // 无落盘基准时必须指向真正的出口（撤销修改）
+  // 切换文件的 dirty 守卫不得建议「请先保存（Cmd+S）」这条走不通的动作：
+  // 无落盘基准时必须指向真正的出口（撤销修改），且不真的切走
   await page.locator('.ft-row[title="readme.md"]').click();
   const blocked = page.locator(".lumir-toast", { hasText: "无法切换文件" });
   await expect(blocked).toContainText("Cmd+Z");
   await expect(blocked).not.toContainText("请先保存");
-  await expect(page.locator(".masthead-file")).toContainText("LICENSE");
+  await expect(page.locator(".masthead-file")).toHaveText("无当前文件");
+});
+
+test("无扩展名文件（LICENSE/Makefile）也一律只读 code：配置默认对文件打开不再生效", async ({ page }) => {
+  await stubTauri(page, VAULT);
+  await page.goto("/");
+  const content = page.locator(".cm-content");
+
+  // basename 无点 → 扩展名解析为空串，但「非 md」的判定不依赖有无扩展名：
+  // D4「非 md 即只读」优先于「无类型线索回落配置默认」的字面（tower 裁决 M130 评审）。
+  for (const path of ["LICENSE", "Makefile"]) {
+    await page.locator(`.ft-row[title="${path}"]`).click();
+    await expect(content).toContainText(FILES[path].split("\n")[0]);
+    await expect(content).toHaveAttribute("contenteditable", "false");
+    await expect(content).toHaveAttribute("aria-readonly", "true");
+    await expect(page.locator(".cm-gutters")).toHaveCount(1);
+    await content.click();
+    await page.keyboard.type("HACKED");
+    await expect(content).not.toContainText("HACKED");
+  }
+  expect(await dirtyReports(page)).not.toContain(true);
 });
 
 test("demo vault 的既有非 md 条目也可只读打开（stub 最小内容能力）", async ({ page }) => {
