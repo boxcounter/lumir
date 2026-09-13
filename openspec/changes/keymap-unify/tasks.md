@@ -45,3 +45,4 @@
 - [x] 6.3 `LUMIR_VISUAL_PORT=4273 scripts/visual/run.sh` 视觉全量通过（既有场景 + M131 新增场景）
 - [x] 6.4 `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` 通过
 - [x] 6.5 分阶段自证：先做拆分与迁移（既有场景全绿）→ 再加 history 与新键（新增场景绿）→ 最后全量门禁
+- [x] 6.6 评审 round 1 唯一 finding（p2：平台口径静默漂移）按建议补记：`src/keys.ts` 表头、本 change 的 proposal 与 spec delta 如实记录「迁移后绑定全平台无条件生效」及两处差异（⌃N/P/F/B/E 原 mac-only、`Mod-Enter` 的非 mac Ctrl-Enter 变体消失），并注明当前仅 macOS 目标无实害、跨平台时需重新引入平台门；改后复跑 `pnpm build` + `openspec validate --all --strict`（纯注释与文档改动，行为未变）

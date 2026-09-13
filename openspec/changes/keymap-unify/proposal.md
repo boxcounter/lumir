@@ -36,6 +36,7 @@
    - **dirty 与撤销解耦**：dirty 仍以「文本 vs cleanDoc 基线」比较，撤销回到已保存内容即收窄为 false，不依赖撤销栈位置；撤销/重做产生的文档变化照常进自动保存 debounce 与守卫链路。
 5. **原生菜单与命令层一致**：macOS Edit 子菜单的预置 Undo/Redo 换成自定义项——预置项是 `undo:` / `redo:` selector 直连原生 responder chain 的撤销栈，等于第二套撤销（文档状态的唯一持有者是 CM），换成自定义项后点击经 `app:menu_command` 事件交回前端统一命令层。自定义项**刻意不设 accelerator**：让 ⌘Z / ⌘⇧Z 留在 webview 的 keydown 路径上由统一键位层接管（菜单点击另有事件通道，两条路进同一命令实现）。改造与退出守卫合成一个菜单安装入口（两者都基于 `Menu::default()`，各自 set_menu 会互相覆盖）。
 6. **回归场景**：新增 `m131-keymap-behavior.spec.ts`（行为级：⌃A 行首 / ⌘A 全选、widget 焦点下 ⌃A 仍走同一命令层、⌘Z 与 ⌃/ 撤销且 dirty 收回、⌘⇧Z 与 ⌃⌥_ 重做、⌘S 唯一保存且 ⌃S 不保存、作用域不越界、撤销不跨文档）与 `m131-keymap-table.spec.ts`（表与 token 口径的不变量）。
+7. **平台口径（评审 r1 F1 如实记录）**：迁移后表内绑定一律**全平台无条件生效**，平台门消失，因此第 3 条的「零行为变化」严格说只在 macOS 成立。两处差异均只在非 mac 平台可观测：⌃N/P/F/B/E 迁移前是 CM keymap 的 `{ mac: "Ctrl-n" }`（只绑 mac），现在非 mac 也接管（⌃N 在部分桌面环境是系统级「新建」惯例）；轨道 A 的 `Mod-Enter` 迁为 `Cmd-Enter`，非 mac 的 Ctrl-Enter 变体不再存在。当前运行目标只有 macOS（Tauri 桌面；CI 的 rust/perf/visual 门禁均为 macos-*，原生菜单全部 `cfg(macos)`），无实害；将来跨平台需重新引入平台门（给 ⌃ 系绑定加平台维度，或把 ⌃N 一类让回系统惯例）。本次不做平台门（无跨平台目标，引入即无测试可覆盖的死分支）。
 
 ## Non-goals
 

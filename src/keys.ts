@@ -20,6 +20,15 @@
 //     缺实现抛错（运行期兜底）。
 // chorded + 非 modal（ADR 0001 §4）不变：多段 chord 的 trie 与超时清空机制照搬，只是
 // 建表来源从「各处 register 调用」换成 KEY_BINDINGS。当前表内没有多段 chord。
+//
+// 平台口径（M131 评审 r1 F1 如实记录）：迁移后**表内绑定一律全平台无条件生效**，不再有
+// 平台门。两处与迁移前不同，均只在非 macOS 平台可观测：
+//   - ⌃N/P/F/B/E 迁移前是 CM keymap 的 `{ mac: "Ctrl-n" }`（只绑 mac），现在非 mac 平台
+//     同样接管（⌃N 在部分桌面环境是系统级「新建」惯例，接管它是个潜在的坑）。
+//   - 轨道 A 的 `Mod-Enter` 迁为 `Cmd-Enter`：非 mac 平台原本匹配 Ctrl-Enter，该变体不再存在。
+// 当前运行目标只有 macOS（Tauri 桌面；CI 的 rust/perf/visual 门禁均为 macos-*，原生菜单
+// 全部 cfg(macos)），因此该口径变化无实害。将来若跨平台，需重新引入平台门（给 ⌃ 系绑定
+// 加平台维度，或把 ⌃N 一类让回系统惯例）。
 
 export type KeyScope = "global" | "editor";
 
