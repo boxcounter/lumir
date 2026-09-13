@@ -18,9 +18,13 @@ import {
   errorMessage,
   fsReadSnapshot,
   isCommandError,
+  recoveryBackup,
+  recoveryBaseRevision,
+  recoveryDiscard,
+  recoveryLoad,
+  recoveryList,
   wikilinkCreate,
 } from "./ipc";
-import { recoveryBackup, recoveryBaseRevision, recoveryDiscard, recoveryLoad, recoveryList } from "./save-ipc";
 
 /** dirty 守卫提示（无法切换 / 无法退出）的标识类：dirty 清除时整批撤下。 */
 export const SAVE_GUARD_TOAST_CLASS = "toast-dirty-guard";

@@ -1,8 +1,7 @@
-import { listen } from "@tauri-apps/api/event";
 import { createShell } from "./shell";
 import { createEditor } from "./editor";
-import { Keymap } from "./keys";
-import type { CommandRunner, CommandRuntime } from "./keys";
+import { applyKeyOverrides, Keymap } from "./keys";
+import type { CommandRunner, CommandRuntime, KeyOverrides } from "./keys";
 import { createFileTree, openKind } from "./tree";
 import {
   configGet,
@@ -13,6 +12,7 @@ import {
   isCommandError,
   linkGraphResolve,
   onFsEntryChanged,
+  onMenuCommand,
   onQuitBlocked,
   vaultCurrent,
   vaultOpen,
@@ -299,14 +299,14 @@ function wikilinkAt(pos: number): string | null {
   return null;
 }
 
-// 点击跳转（spec §4.2）：Mod-Click 命中 wikilink span 时阻止选区落点，直接跟随链接；
+// 点击跳转（spec §4.2）：⌘-Click 命中 wikilink span 时阻止选区落点，直接跟随链接；
 // 裸点击不拦截，保持链接文本可正常落点编辑。
-// 鼠标路径仍收 metaKey || ctrlKey（迁移前口径，未随 D1 的 ⌘/⌃ 拆分改动）：⌘ 与 ⌃ 的
-// 拆分裁决针对键盘族，⌃-Click 在 macOS 是系统级次级点击手势，两者是否一并收窄待裁决
-// （键位表只管键盘，此处不在表内）。
+// M132 收窄：鼠标路径与 D1 的 ⌘/⌃ 拆分对齐——只有 ⌘-Click 跟随链接；⌃-Click 让位给
+// macOS 的系统级次级点击（右键等价手势），不再被当作链接激活。键位表只管键盘，鼠标
+// 路径就地判定（收窄前是 e.metaKey || e.ctrlKey，与拆分前的键盘口径同源）。
 editor.view.dom.addEventListener("mousedown", (e) => {
   if (e.button !== 0) return;
-  if (!(e.metaKey || e.ctrlKey)) return; // Mod-Click：macOS Cmd，跨平台兼容 Ctrl
+  if (!e.metaKey) return;
   if (currentPath === undefined) return; // 无 vault 上下文：链接只是文本
   const pos = editor.view.posAtCoords({ x: e.clientX, y: e.clientY });
   if (pos === null) return;
@@ -334,26 +334,40 @@ const commands: CommandRuntime = {
   },
 };
 
-new Keymap().attach(window, commands, {
-  // editor 作用域判定：事件目标落在 contentDOM 内（含其中 widget 与表格滚动容器）。
-  // 用目标而非焦点，是因为轨道 D 的 widget 就在 contentDOM 里——焦点落在表格滚动
-  // 容器上时命令照常生效，而它自己的滚动键由 livePreview 的手柄先消费（分发器入口
-  // 检查 defaultPrevented 让路）。
-  isEditorEvent: (event) =>
+// editor 作用域判定：事件目标落在 contentDOM 内（含其中 widget 与表格滚动容器）。
+// 用目标而非焦点，是因为轨道 D 的 widget 就在 contentDOM 里——焦点落在表格滚动
+// 容器上时命令照常生效；容器自己的滚动键由表内绑定用 `when` 收窄（M132），
+// 分发器入口另对已消费事件（defaultPrevented）让路。
+const keymapContext = {
+  isEditorEvent: (event: KeyboardEvent) =>
     event.target instanceof Node && editor.view.contentDOM.contains(event.target),
-});
+};
+let detachKeymap = new Keymap().attach(window, commands, keymapContext);
+
+/** 应用配置里的 [keys] 覆盖（M132）：先挂默认表、配置到位后重挂，避免「启动瞬间按键
+ *  无响应」的竞态。覆盖只换「键 → 命令」的对应（作用域随命令归属，见 keys.ts）；
+ *  未知命令 / 非法键位 / 多段 chord 都给 warning 并忽略该条，MUST NOT 抛错打断启动。
+ *  warning 走 console（与 ConfigSnapshot.warnings 的既有口径一致：M1 以来配置 warning
+ *  没有 UI 出口，本 change 不新增 UI 面）。 */
+function applyKeyConfig(overrides: KeyOverrides | undefined): void {
+  const { bindings, warnings } = applyKeyOverrides(overrides ?? {});
+  for (const warning of warnings) console.warn(`lumir: ${warning}`);
+  if (Object.keys(overrides ?? {}).length === 0) return; // 无覆盖：默认表已在分发
+  detachKeymap();
+  detachKeymap = new Keymap(bindings).attach(window, commands, keymapContext);
+}
 
 // 原生 Edit 菜单的撤销 / 重做项（lib.rs 的自定义项，不带 accelerator）点击后经此事件
 // 回到前端——菜单与键盘走同一个命令层，不产生第二套撤销。取值口径见 lib.rs
 // MENU_COMMAND_EVENT：菜单只说 undo/redo，映射到命令 id 是前端的事。
-// ipc.ts 不在 M131 的改动范围，此通道在装配层直连 listen（无 invoke 语义）；下次动
-// ipc.ts 时应并入其 onXxx 族。
+// M132：该通道从装配层直连 listen 收进 ipc.ts 的 onMenuCommand（同类事件走同一模块，
+// M131 已把它记为待收编项）；ipc.ts 的这一族因此覆盖 invoke 与 listen 两条通道。
 const MENU_COMMANDS: Record<string, CommandRunner | undefined> = {
   undo: commands["editor.undo"],
   redo: commands["editor.redo"],
 };
-listen<string>("app:menu_command", (event) => {
-  MENU_COMMANDS[event.payload]?.();
+onMenuCommand((payload) => {
+  MENU_COMMANDS[payload]?.();
 }).catch(() => {}); // 无 Tauri 后端（纯浏览器预览）时静默忽略
 
 const mastheadVault = shell.root.querySelector<HTMLElement>(".masthead-vault")!;
@@ -505,7 +519,14 @@ vaultCurrent()
 
 // editor.mode：只对没有文件上下文的文档（空态 / 新建）生效的默认模式；打开文件时
 // 一律按扩展名裁决（M130 方向 A：非 md 只读 code），该配置对文件打开不再有影响。
-configGet().then((snapshot) => editor.setMode(snapshot.config.editor.mode)).catch(() => {});
+// keys：单键重绑 / 解绑（M132），覆盖到位后重挂分发器（见 applyKeyConfig）。
+configGet().then((snapshot) => {
+  editor.setMode(snapshot.config.editor.mode);
+  applyKeyConfig(snapshot.config.keys);
+  // 配置 warning（含 [keys] 的逐项回退）：M1 以来没有 UI 出口，如实记到 console，
+  // 不新增 UI 面（避免启动浮条与既有启动视觉冲突）。
+  for (const warning of snapshot.warnings) console.warn(`lumir: ${warning}`);
+}).catch(() => {});
 
 // app-ready 只表示 webview/application shell 已挂载，不等价于 vault 恢复或编辑器首帧。
 const now = performance.now();
