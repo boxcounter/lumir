@@ -188,7 +188,7 @@ export const KEY_BINDINGS: readonly KeyBinding[] = [
   { key: "Ctrl-Shift-p", command: "editor.extend-line-up", scope: "editor", doc: "同上，⌃⇧P" },
   { key: "Ctrl-Shift-a", command: "editor.extend-line-start", scope: "editor", doc: "⌃⇧A：扩选到行首（落点口径同 ⌃A，含隐藏 replace 退化回退）" },
   { key: "Ctrl-Shift-e", command: "editor.extend-line-end", scope: "editor", doc: "⌃⇧E：扩选到行尾（落点口径同 ⌃E）" },
-  { key: "Alt-KeyF", command: "editor.extend-word-forward", scope: "editor", doc: "⌥⇧F：按词向后扩选；含 Alt 的组合按物理键且 Shift 不参与判定（M131 token 口径），故与 ⌥F 同 token——v0 未绑 ⌥F 的单词移动，见 spec 的已知限制" },
+  { key: "Alt-KeyF", command: "editor.extend-word-forward", scope: "editor", doc: "⌥⇧F：按词向后扩选；含 Alt 的组合按物理键且 Shift 不参与判定（M131 token 口径），故与 ⌥F 同 token——v0 未绑 ⌥F 的单词移动，见 openspec change emacs-keys-pack 的 shift-extend requirement「本版已知限制」" },
   { key: "Alt-KeyB", command: "editor.extend-word-backward", scope: "editor", doc: "⌥⇧B：按词向前扩选；token 口径同 ⌥⇧F" },
 
   // ── 编辑器内：轨道 D 的表格滚动容器（widget）焦点键（M132 从 livePreview 手柄收编）

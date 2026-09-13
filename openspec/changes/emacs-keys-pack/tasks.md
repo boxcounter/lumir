@@ -61,10 +61,19 @@
 - [x] 7.5 openspec 制品：proposal（Why / What Changes / Non-goals / Impact，含已知限制与取代关系）/ spec delta（keymap-commands 七条 ADDED requirement）/ 本 tasks
 - [x] 7.6 文案：本 change 无新增用户可见文案（[keys] 是配置格式、warning 走 console），`文案-Copy.md` 不改动
 
-## 8. 验证
+## 9. 评审 round 1 修复（p2-2items → fix-then-merge）
 
-- [x] 8.1 `pnpm build`（tsc --noEmit + vite build）通过
-- [x] 8.2 `LUMIR_VISUAL_PORT=4273 scripts/visual/run.sh` 全量（既有 + M132 新增）通过，无基线更新（189 passed）
-- [x] 8.3 `cargo test`（`src-tauri/`）与 `cargo fmt --check` 通过（70 + 19 tests，0 failed）
-- [x] 8.4 `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` 通过（15 passed，0 failed）
-- [x] 8.5 自查：无真实 `~/.config/lumir/` 读写、无真实 vault 写入、无 scope 外文件改动
+- [x] 9.1 P2-1（`src/editor.ts`）：kill 槽的 `caret` 恒存 `from`——后向 kill 结束后光标落在 `from`，而相接端是本次 `to`（= 上次 kill 后的光标位置），原实现存 `to` 使后向相接判定恒假（⌥⌫⌥⌫ 只留下最后一次 kill）。补场景「后向连续 kill 合并：⌥⌫⌥⌫ → ⌃Y 一次插回两词」作回归
+- [x] 9.2 P2-2(a)：M131 取代关系从 proposal Impact 落进 ADDED requirement 正文（widget requirement），并写明 archive M131 时 MUST 按该 requirement 修订原句
+- [x] 9.3 P2-2(b)：Alt+Shift token 已知限制补进 spec delta 的 shift-extend requirement；`src/keys.ts` 的引用改指该处（不再悬空）
+- [x] 9.4 9.1 的回归场景又暴露第二个缺陷（自证阶段实测）：`⌃Y` 在**插入前**的文档里测量插入后的光标位置（`caretAssoc` → `coordsAtPos`），插入目标越出当前文档长度时（在文档末尾 yank 且槽内容比剩余文档长）`doc.lineAt` 抛 RangeError → 命令无声失败。已修：越界时退化为按插入起点取 assoc；补场景「⌃Y 在文档末尾插入」并把该行为写进 spec 的 kill/yank requirement
+- [x] 9.5 复跑全量门禁（pnpm build / 视觉全量 191 passed / cargo test + fmt / openspec validate --all --strict）并 push，向 tower 发 round 2 review request（注明新 tip）
+
+## 10. 验证
+
+- [x] 10.1 `pnpm build`（tsc --noEmit + vite build）通过
+- [x] 10.2 `LUMIR_VISUAL_PORT=4273 scripts/visual/run.sh` 全量（既有 + M132 新增）通过，无基线更新（首轮 189 passed；r1 修复后 191 passed——新增后向合并与 yank 越界两条回归场景）
+- [x] 10.3 `cargo test`（`src-tauri/`）与 `cargo fmt --check` 通过（70 + 19 tests，0 failed）
+- [x] 10.4 `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` 通过（15 passed，0 failed）
+- [x] 10.5 自查：无真实 `~/.config/lumir/` 读写、无真实 vault 写入、无 scope 外文件改动
+

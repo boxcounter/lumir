@@ -626,7 +626,9 @@ function deleteWordBackward(view: EditorView): void {
 let killSlot: { text: string; caret: number; forward: boolean } | null = null;
 
 /** kill 一段：并入 kill 槽后删除。相接判定用「上次 kill 结束后的光标位置 = 本次 kill
- *  起点」——连续 ⌃K（含 C-k C-k 先杀行内容再杀换行）因此合成一条，与 Emacs 一致。
+ *  的相接端」——连续同向 kill（含 C-k C-k 先杀行内容再杀换行、⌥⌫ ⌥⌫ 连续杀词）因此合并
+ *  成一条，与 Emacs 一致。**不变量**：deleteRange 把光标落在 `from`，故槽里记的 `caret`
+ *  恒为 `from`（后向 kill 亦然）——后向的相接端是本次的 `to`，即上一次 kill 后的光标位置。
  *  已知近似：kill 之后若在**同一位置**做别的编辑再 kill，会误判为连续 kill（kill ring
  *  是后续版本的事，此处不为此引入全局命令序号）。 */
 function killRange(view: EditorView, from: number, to: number, forward: boolean): void {
@@ -636,7 +638,7 @@ function killRange(view: EditorView, from: number, to: number, forward: boolean)
   const joins = prev !== null && prev.forward === forward && prev.caret === (forward ? from : to);
   killSlot = {
     text: joins ? (forward ? prev.text + text : text + prev.text) : text,
-    caret: forward ? from : to,
+    caret: from,
     forward,
   };
   deleteRange(view, from, to, "delete.kill");
@@ -666,6 +668,7 @@ function killLine(view: EditorView): void {
 }
 
 /** Emacs C-y：把 kill 槽插入光标处（替换选区），光标落在插入内容之后。 */
+/** Emacs C-y：把 kill 槽插入光标处（替换选区），光标落在插入内容之后。 */
 function yank(view: EditorView): void {
   const state = view.state;
   if (state.readOnly) return;
@@ -673,7 +676,12 @@ function yank(view: EditorView): void {
   if (text === "") return;
   const main = state.selection.main;
   const head = main.from + text.length;
-  const target = EditorSelection.cursor(head, caretAssoc(view, head, 1));
+  // assoc 只能在**插入前**的文档里测量：插入把文档延伸出去时（在文档末尾 yank，槽内容比
+  // 光标之后的剩余文档还长），head 已越出当前文档长度——coordsAtPos 内部的 doc.lineAt
+  // 会抛 RangeError，命令无声失败（自证阶段实测：⌥⌫ ⌥⌫ → ⌃Y 在短文档里完全不生效）。
+  // 越界时退化为按插入起点取可见侧 assoc——起点必在当前文档内。
+  const assoc = head <= state.doc.length ? caretAssoc(view, head, 1) : caretAssoc(view, main.from, 1);
+  const target = EditorSelection.cursor(head, assoc);
   view.dispatch({
     changes: { from: main.from, to: main.to, insert: text },
     selection: target,

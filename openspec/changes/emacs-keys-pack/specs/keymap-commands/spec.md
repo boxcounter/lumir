@@ -46,6 +46,16 @@
 - **WHEN** 在 `one\ntwo\nthree` 的行首依次按下 `⌃K`、`⌃K`、`⌃Y`
 - **THEN** 前两次 kill 把 `one` 与随后的换行合并进同一槽（文档变为 `two\nthree`），`⌃Y` 插回 `one\n`，文档恢复原状且光标落在插入内容之后
 
+#### Scenario: 后向连续 kill 同样合并
+
+- **WHEN** 在 `alpha beta gamma end` 的 `gamma` 之后依次按下 `⌥⌫`、`⌥⌫`、`⌃Y`
+- **THEN** 两次后向 kill 合并进同一槽（后杀的词在前、先杀的词在后），`⌃Y` 一次插回即恢复原文档——后向的相接端是本次 kill 的右端（= 上次 kill 后的光标位置），相接判定 MUST NOT 只对前向成立
+
+#### Scenario: 在文档末尾 yank 长槽内容
+
+- **WHEN** 槽内容比光标之后的剩余文档更长（例如先 `⌃K` 杀掉一整行、撤销回原状、再把光标移到文档末尾按下 `⌃Y`）
+- **THEN** 槽内容完整插入（文档长度增加槽内容长度），光标落在插入内容之后；MUST NOT 因插入目标位置越出**当前**文档长度而静默失败（实现不得在插入前的文档上测量插入后的光标坐标）
+
 ### Requirement: 表格 cell 的删除边界
 
 删除 / 转置 / kill 命令 SHALL 把删除起点与步长钳制在光标所在 grid 表格 cell 的可见内容区间内，MUST NOT 删除隐藏管道符——隐藏管道符是零宽 replace 且承担表格结构，跨过去删除即破坏表格（M129 survey 实证：表格随即降级为原始 Markdown 呈现）。非矩形 / 降级表按原始 Markdown 渲染（管道符可见），不参与钳制。
@@ -66,6 +76,8 @@
 
 编辑器 SHALL 提供保持 anchor、只移动 head 的扩选命令：`⌃⇧F` / `⌃⇧B`（字符）、`⌃⇧N` / `⌃⇧P`（逐行）、`⌃⇧A` / `⌃⇧E`（行首 / 行尾）、`⌥⇧F` / `⌥⇧B`（词）。落点 SHALL 复用对应移动命令的硬化落点（数学原子跨入钳制、跨块级原子 widget 钳制、表格行路由与 cell 吸附、隐藏 replace 退化回退），MUST NOT 另写一套移动数学。扩选 SHALL 揭示滚动（`scrollIntoView` 传 SelectionRange）。本版 MUST NOT 引入 mark mode：选区仍只有 anchor / head 两端。
 
+本版已知限制 SHALL 如实记录：M131 定下的 token 口径对含 Alt 的组合只按物理键（`KeyboardEvent.code`）判定、忽略 Shift，故 `⌥⇧F/B` 与 `⌥F/B` 归一到同一 token。绑定 `Alt-KeyF` / `Alt-KeyB` 之后，bare `⌥F` / `⌥B` 也会触发按词扩选；且本版 MUST NOT 再绑 bare `⌥F` / `⌥B` 的单词移动（会与扩选绑定归一到同一 token，装配期以重复绑定失败）。要让二者分开，须先修订 token 口径（含 Alt 的组合纳入 Shift 判定；同时把 `⌃⌥_` 重做别名拆成 `Ctrl-Alt-Minus` 与 `Ctrl-Alt-Shift-Minus` 两条绑定，以同时容纳真机形状与不带 shiftKey 的合成事件），属后续 change 的范围。
+
 #### Scenario: 各方向扩选端点
 
 - **WHEN** 在 `alpha beta gamma` 中，光标停在 `beta` 词首依次按下 `⌃⇧F`、`⌃⇧E`、`⌃⇧A`、`⌃⇧B`、`⌃⇧N`、`⌃⇧P`、`⌥⇧F`、`⌥⇧B`
@@ -81,6 +93,8 @@
 表格滚动容器（livePreview 的 grid 表格 widget，`tabindex=0`）的焦点作用域键——`←`、`→`、`Home`、`End`、`Escape`——SHALL 由统一键位表分发，MUST NOT 在 `livePreview.ts` 保留并列的 keydown 手柄（同一物理组合两处各写一份即 M131 要消灭的旁路形态）。
 
 这些物理键在文本编辑中另有语义（原生 caret / 行首尾 / 取消），故绑定 SHALL 带**命中条件**（事件目标落在该容器内才命中）；条件不满足时 SHALL NOT 消费事件（不 `preventDefault`），文本编辑中的同名键 SHALL 照旧走原生路径。命令 SHALL 接收触发事件以定位事件目标，MUST NOT 依赖全局焦点猜测。行为 SHALL 与迁移前一致：左右各 120px 步进、`Home` 横向回最左、`End` 横向到最右、`Escape` 把焦点交还编辑器。
+
+本 requirement SHALL 取代 M131（change `keymap-unify`）增量中「widget 自己的焦点作用域键（Escape / Home / End / 左右方向键）仍由该 widget 现有手柄先消费，本层对已消费事件让路」一句——该句描述的是收编前的分工，自本 change 起不再成立。因 `keymap-commands` 尚无 living spec（没有可 MODIFIED 的对象），本 change 以 ADDED requirement 表达取代关系；**archive M131 时 MUST 按本 requirement 修订该句**。
 
 #### Scenario: 容器焦点内的滚动键
 

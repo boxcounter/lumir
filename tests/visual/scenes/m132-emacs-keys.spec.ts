@@ -153,6 +153,41 @@ test("⌃K kill 行：行尾连带换行、连续 kill 合并进同一槽，⌃Y
   expect((await caret(page)).head, "yank 后光标落在插入内容之后").toBe(4);
 });
 
+test("后向连续 kill 合并：⌥⌫⌥⌫ 两次杀词进同一槽，⌃Y 一次插回两词（评审 r1 P2-1 回归）", async ({ page }) => {
+  const doc = "alpha beta gamma end\n";
+  await openFile(page, { "kill-word.md": doc }, "kill-word.md");
+
+  // 光标在 gamma 之后：两次 ⌥⌫ 依次杀掉 "gamma" 与 " beta"（后向相接：光标停在 from）
+  await setSelection(page, doc.indexOf("gamma") + "gamma".length);
+  await page.keyboard.press("Alt+Backspace");
+  await expect.poll(() => readDocument(page)).toBe("alpha beta  end\n");
+  await page.keyboard.press("Alt+Backspace");
+  await expect.poll(() => readDocument(page)).toBe("alpha  end\n");
+
+  // 两次后向 kill 必须合并成一条（"beta gamma"）：⌃Y 一次插回即完整还原；
+  // 若相接判定对后向失效，槽里只剩最后一次 kill（"beta "），插回后是 "alpha beta  end\n"
+  await page.keyboard.press("Control+y");
+  await expect.poll(() => readDocument(page)).toBe(doc);
+});
+
+test("⌃Y 在文档末尾插入：槽内容长于光标之后的剩余文档时不得抛错或静默失败（越界回归）", async ({ page }) => {
+  const doc = "abcdefghij\nx\n";
+  await openFile(page, { "yank-end.md": doc }, "yank-end.md");
+
+  await setSelection(page, 0);
+  await page.keyboard.press("Control+k");
+  await expect.poll(() => readDocument(page)).toBe("\nx\n");
+  await page.keyboard.press("Meta+z");
+  await expect.poll(() => readDocument(page)).toBe(doc);
+
+  // 光标在文档末尾 + 槽长 10 字符：插入目标位置越出当前文档长度。
+  // 旧实现在此处按插入后的位置测量坐标（coordsAtPos → doc.lineAt 越界）抛 RangeError，
+  // 命令无声失败——文档不变、也没有任何提示。
+  await setSelection(page, doc.length);
+  await page.keyboard.press("Control+y");
+  await expect.poll(() => readDocument(page)).toBe(`${doc}abcdefghij`);
+});
+
 test("表格 cell 内 ⌃K 只 kill 到 cell 尾：管道符一个不少、表格仍是 grid", async ({ page }) => {
   await openFile(page, { "table.md": TABLE_DOC }, "table.md");
   await expect(page.locator(".cm-lp-table-scroll")).toHaveCount(1);
