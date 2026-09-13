@@ -1,6 +1,8 @@
+import { listen } from "@tauri-apps/api/event";
 import { createShell } from "./shell";
 import { createEditor } from "./editor";
 import { Keymap } from "./keys";
+import type { CommandRunner, CommandRuntime } from "./keys";
 import { createFileTree, openKind } from "./tree";
 import {
   configGet,
@@ -55,8 +57,6 @@ editor.setAttachmentProvider({
     return `data:${mime};base64,${base64}`;
   },
 });
-
-const keymap = new Keymap();
 
 // 编辑器区域的"暂不支持预览 / 错误提示"覆盖层：显示提示时藏起编辑器本体。
 const notice = document.createElement("div");
@@ -164,13 +164,6 @@ async function openFile(path: string, kind: "md" | "code" | "text" | "binary") {
   }
 }
 
-window.addEventListener("keydown", (event) => {
-  if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "s") {
-    event.preventDefault();
-    void save.save();
-  }
-});
-
 window.addEventListener("beforeunload", (event) => {
   if (!editor.isDirty()) return;
   event.preventDefault();
@@ -239,7 +232,7 @@ function invalidateResolve(): void {
   pendingResolve.clear();
 }
 
-/** 激活链接（点击 / Mod-Enter）：按解析结果跳转、提示或给出一键创建入口。 */
+/** 激活链接（Mod-Click / ⌘Enter）：按解析结果跳转、提示或给出一键创建入口。 */
 async function followWikilink(raw: string): Promise<void> {
   const from = currentPath;
   if (from === undefined) return;
@@ -308,6 +301,9 @@ function wikilinkAt(pos: number): string | null {
 
 // 点击跳转（spec §4.2）：Mod-Click 命中 wikilink span 时阻止选区落点，直接跟随链接；
 // 裸点击不拦截，保持链接文本可正常落点编辑。
+// 鼠标路径仍收 metaKey || ctrlKey（迁移前口径，未随 D1 的 ⌘/⌃ 拆分改动）：⌘ 与 ⌃ 的
+// 拆分裁决针对键盘族，⌃-Click 在 macOS 是系统级次级点击手势，两者是否一并收窄待裁决
+// （键位表只管键盘，此处不在表内）。
 editor.view.dom.addEventListener("mousedown", (e) => {
   if (e.button !== 0) return;
   if (!(e.metaKey || e.ctrlKey)) return; // Mod-Click：macOS Cmd，跨平台兼容 Ctrl
@@ -320,14 +316,45 @@ editor.view.dom.addEventListener("mousedown", (e) => {
   void followWikilink(raw);
 });
 
-// 键位（ADR 0001 §4：chorded 非 modal）：Mod-Enter 跟随光标处链接。
-keymap.register("Mod-Enter", "wikilink.follow");
-keymap.attach(window, (command) => {
-  if (command === "wikilink.follow") {
+// ---------------------------------------------------------------------------
+// 统一键位层（M131）：唯一分发表在 keys.ts，装配在这里——编辑器侧命令由 editor 提供，
+// 装配侧命令（保存 / 链接跟随）在下面就地实现。原先散落的四条旁路（keys.ts 的
+// window trie、editor 的 CM keymap 与 domEventHandlers、此处的裸 window 监听）已全部
+// 迁入；剩下的只有这一处 attach。
+// ---------------------------------------------------------------------------
+const commands: CommandRuntime = {
+  ...editor.commands,
+  "document.save": () => {
+    void save.save();
+  },
+  // 轨道 A 原样迁入：作用域仍是 global（迁移前挂在 window 上，任意焦点都生效）。
+  "wikilink.follow": () => {
     const raw = wikilinkAt(editor.view.state.selection.main.head);
     if (raw !== null) void followWikilink(raw);
-  }
+  },
+};
+
+new Keymap().attach(window, commands, {
+  // editor 作用域判定：事件目标落在 contentDOM 内（含其中 widget 与表格滚动容器）。
+  // 用目标而非焦点，是因为轨道 D 的 widget 就在 contentDOM 里——焦点落在表格滚动
+  // 容器上时命令照常生效，而它自己的滚动键由 livePreview 的手柄先消费（分发器入口
+  // 检查 defaultPrevented 让路）。
+  isEditorEvent: (event) =>
+    event.target instanceof Node && editor.view.contentDOM.contains(event.target),
 });
+
+// 原生 Edit 菜单的撤销 / 重做项（lib.rs 的自定义项，不带 accelerator）点击后经此事件
+// 回到前端——菜单与键盘走同一个命令层，不产生第二套撤销。取值口径见 lib.rs
+// MENU_COMMAND_EVENT：菜单只说 undo/redo，映射到命令 id 是前端的事。
+// ipc.ts 不在 M131 的改动范围，此通道在装配层直连 listen（无 invoke 语义）；下次动
+// ipc.ts 时应并入其 onXxx 族。
+const MENU_COMMANDS: Record<string, CommandRunner | undefined> = {
+  undo: commands["editor.undo"],
+  redo: commands["editor.redo"],
+};
+listen<string>("app:menu_command", (event) => {
+  MENU_COMMANDS[event.payload]?.();
+}).catch(() => {}); // 无 Tauri 后端（纯浏览器预览）时静默忽略
 
 const mastheadVault = shell.root.querySelector<HTMLElement>(".masthead-vault")!;
 const mastheadFile = shell.root.querySelector<HTMLElement>(".masthead-file")!;

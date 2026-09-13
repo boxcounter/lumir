@@ -1,6 +1,7 @@
-import { Annotation, Compartment, EditorSelection, EditorState, findClusterBreak } from "@codemirror/state";
+import { Annotation, Compartment, EditorSelection, EditorState, Transaction, findClusterBreak } from "@codemirror/state";
 import type { Extension, SelectionRange, Text } from "@codemirror/state";
-import { EditorView, keymap, lineNumbers, highlightActiveLine } from "@codemirror/view";
+import { EditorView, lineNumbers, highlightActiveLine } from "@codemirror/view";
+import { history, redo, undo } from "@codemirror/commands";
 import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
 import { HighlightStyle, StreamLanguage, syntaxHighlighting, syntaxTree, ensureSyntaxTree } from "@codemirror/language";
 import type { Language } from "@codemirror/language";
@@ -30,6 +31,7 @@ import { findTables, tableAt } from "./preview/table";
 import type { TableModel, TableRow } from "./preview/table";
 import { createInvokeAttachmentProvider, codeLanguage, extensionOf, fileClass } from "./preview/attachments";
 import type { AttachmentProvider, CodeLanguage } from "./preview/attachments";
+import type { CommandRunner, EditorCommandId } from "./keys";
 
 // 编辑器单内核双模式（ADR 0002 §2）：一个 CM6 内核、两种模式。
 // md = 高亮 + live preview 装饰层（src/preview/）；code = 仅高亮。
@@ -291,13 +293,10 @@ function moveCaretVertically(view: EditorView, forward: boolean): boolean {
   return true;
 }
 
-// Ctrl-P/N 是 macOS 文本系统惯例，只绑 mac；ArrowUp/Down 全平台接管。
-const verticalMotionKeymap = keymap.of([
-  { key: "ArrowDown", run: (view) => moveCaretVertically(view, true) },
-  { key: "ArrowUp", run: (view) => moveCaretVertically(view, false) },
-  { mac: "Ctrl-n", run: (view) => moveCaretVertically(view, true) },
-  { mac: "Ctrl-p", run: (view) => moveCaretVertically(view, false) },
-]);
+// 键位归统一层（M131）：⌃N/⌃P 与 ArrowUp/ArrowDown 的绑定在 keys.ts 的 KEY_BINDINGS，
+// 命令实现仍是上面这两个函数——迁移只换了键位来源，移动语义与硬化原语一字未动。
+// 原写法用 `{ mac: "Ctrl-n" }` 做平台分支（CM keymap 的 mac 标记）；现在 ⌃ 系一律归
+// Emacs（D1），不再需要平台替换。
 
 // 水平光标移动（M110/M111 真实桌面缺陷修复）：macOS Emacs 风格 Ctrl-F/B 原本走原生
 // contenteditable 路径——原生 caret 无法进入 CM 的 replace 原子范围（公式
@@ -384,11 +383,7 @@ function moveCaretHorizontally(view: EditorView, forward: boolean): boolean {
   return true;
 }
 
-const horizontalMotionKeymap = keymap.of([
-  { mac: "Ctrl-f", run: (view) => moveCaretHorizontally(view, true) },
-  { mac: "Ctrl-b", run: (view) => moveCaretHorizontally(view, false) },
-  { mac: "Ctrl-e", run: (view) => moveCaretToLineEnd(view) },
-]);
+// 键位归统一层（M131）：⌃F/⌃B/⌃E 的绑定在 keys.ts 的 KEY_BINDINGS，命令实现不动。
 
 // Ctrl-E（macOS 文本系统「移到行尾」）改由 CM 派发（M118 真实桌面缺陷：该键原本
 // 走原生 contenteditable 路径——原生 caret 在 grid 表格 cell 内落点失控，实测落在
@@ -423,6 +418,35 @@ function moveCaretToLineEnd(view: EditorView): boolean {
   return true;
 }
 
+// ⌃A（macOS 文本系统「移到行首」= Emacs C-a；D2 裁决把全选让给 ⌘A）：与 ⌃E 同款口径，
+// 只是方向相反。moveToLineBoundary 取文本行首（硬边界，语义即段落首，不受软换行截断）；
+// 行首若紧贴隐藏 replace（表格行首管道符），两侧坐标测量都退化为全零 rect（实测：表格行
+// col0 两侧皆 DEGEN、col1 可见侧为 side 1），揭示滚动随之把整窗内容拉偏（M118 同族机制，
+// 实测未修前 scrollTop 下挫 62px），故与 ⌃E 镜像地把落点向前挪到行内第一个可停靠位置——
+// 表格行即首 cell 起点，与 ⌃E 的「末 cell 尾部」对称。
+function moveCaretToLineStart(view: EditorView): boolean {
+  const main = view.state.selection.main;
+  if (!main.empty) {
+    // 非空选区：与原生行为一致，折叠到左端；scrollIntoView 揭示光标。
+    view.dispatch({ selection: { anchor: main.from }, scrollIntoView: true, userEvent: "select" });
+    return true;
+  }
+  let head = view.moveToLineBoundary(main, false, false).head;
+  if (head !== main.head) {
+    const line = view.state.doc.lineAt(head);
+    while (head < line.to && coordsDegenerate(view.coordsAtPos(head, 1))) head++;
+  }
+  if (head === main.head) return true; // 已在行首：仍视为已处理
+  // assoc 1：可见内容在落点之后（与 ⌃E 的 assoc -1 镜像；探针已确认该侧测量非退化）。
+  const target = EditorSelection.cursor(head, 1);
+  view.dispatch({
+    selection: target,
+    effects: EditorView.scrollIntoView(target, { y: "nearest" }),
+    userEvent: "move.line.start",
+  });
+  return true;
+}
+
 export type EditorReadyPhase =
   | "source-ready"
   | "decoration-ready"
@@ -441,6 +465,12 @@ export type EditorReadyListener = (event: EditorReadyEvent) => void;
 
 export interface EditorHandle {
   view: EditorView;
+  /**
+   * 编辑器侧命令实现（keys.ts 统一键位层的全部 editor.* 命令，由装配处注入分发器）。
+   * 命令只读 view 的当前状态并自行 dispatch；命中即视为已消费，无事可做也不放行
+   * 原生路径（例如 ⌘Z 在历史为空时同样吞掉默认行为，避免浏览器原生撤销插手文档）。
+   */
+  commands: Record<EditorCommandId, CommandRunner>;
   /**
    * 显式切换模式（配置加载 / 用户切换）：除热切换当前模式外，同时把该模式记为
    * 配置默认基线，openDocument 对无文件上下文（path 缺失）文档的回落以此为锚。
@@ -570,8 +600,15 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
   let dirty = false;
   const trustedLoad = Annotation.define<boolean>();
 
+  // 装载/复位事务（打开文件、外部重载、vault 切换清空）不进撤销史（M131）：
+  // 它们的 addToHistory 标 false，CM history 只把这次替换累积成 mapping 并作用到已有
+  // 事件上——整篇替换会把旧事件的位置映射力竭，事件被逐个丢弃（实测：装载后
+  // undoDepth 归零、undo 返回 false）。这样 ⌘Z 不会把上一个文件的内容"撤"回新文档里。
   function dispatchTrusted(spec: Parameters<EditorView["dispatch"]>[0]): void {
-    view.dispatch({ ...spec, annotations: [trustedLoad.of(true)] });
+    view.dispatch({
+      ...spec,
+      annotations: [trustedLoad.of(true), Transaction.addToHistory.of(false)],
+    });
   }
 
   function updateDirty(next: boolean): void {
@@ -692,16 +729,27 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
   const state = EditorState.create({
     doc: SAMPLE,
     extensions: [
-      verticalMotionKeymap,
-      horizontalMotionKeymap,
-      EditorView.domEventHandlers({
-        keydown(event, view) {
-          if (event.target !== view.contentDOM || event.altKey || event.shiftKey ||
-            event.key.toLowerCase() !== "a" || !(event.metaKey || event.ctrlKey)) return false;
-          view.dispatch({ selection: { anchor: 0, head: view.state.doc.length }, userEvent: "select" });
-          return true;
-        },
-      }),
+      // 撤销史（M131）：CM history 的线性双栈（done/undone），undo/redo 命令经统一键位层
+      // 绑定（keys.ts 的 KEY_BINDINGS）。history() 自带一个 beforeinput 手柄（原生
+      // historyUndo/historyRedo 输入类型直接改走 CM 的撤销栈），所以即使有别的路径触发
+      // 浏览器原生撤销，落点也仍在这一个栈上，不会出现两套撤销互相打架。
+      //
+      // 与既有机制的相容口径（逐条对照源码）：
+      // - trustedLoad 装载事务带 Transaction.addToHistory.of(false)：不进栈，并把旧事件
+      //   映射力竭后丢弃（见 dispatchTrusted 注释）。
+      // - changeFilter 不拦撤销：CM 的 undo/redo 事务带 filter:false 绕过变更过滤器，
+      //   但命令本身在 state.readOnly 时返回 false（非 md 只读模式下撤销必然无事发生），
+      //   与「非 md 文档不可变更」的既有保证一致。
+      // - dirty 判定不变：仍以文本与 cleanDoc 比较为准，因此撤销回到已保存内容时
+      //   dirty 自然收窄为 false（不依赖撤销栈位置，见 updateListener）。
+      history(),
+      // 键位分发在 window 层（keys.ts），但 CM 的 DOM 观察器只为「有插件注册 keydown」的
+      // 事件挂监听，并在把事件交给手柄前 forceFlush 掉尚未读入的 DOM 变更（快速输入 /
+      // 输入法 / 外部注入）。这条空手柄不处理任何键，只为让 keydown 留在观察列表里：
+      // 观察列表此前由本文件自己的 ⌘A 手柄维持，迁走后 md 模式靠 livePreview 的 widget
+      // 手柄、code 模式则没有任何 keydown 手柄——空手柄把两种模式的观察集拉回迁移前口径，
+      // 也让「命令读到的是 flush 过的 state」不再依赖别的模块恰好注册了 keydown。
+      EditorView.domEventHandlers({ keydown: () => false }),
       EditorView.theme({ ".cm-gutters-before": { border: "none" } }),
       modeCompartment.of(modeExtensions(initialMode)),
       // 兜底防线：editability 已随模式在视图层拒收输入，changeFilter 再挡住任何
@@ -715,8 +763,42 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
   });
   const view = new EditorView({ state, parent });
 
+  // 统一键位层（keys.ts）的编辑器侧命令实现：每条只读 view 当前状态并自行 dispatch。
+  // 全部返回 void——命中即已消费，分发器统一吞掉默认行为（命中但无事可做，例如历史
+  // 为空的 ⌘Z，也必须吞掉，否则原生 contenteditable 撤销会插手 CM 管理的文档）。
+  const commands: Record<EditorCommandId, CommandRunner> = {
+    "editor.cursor-up": () => {
+      moveCaretVertically(view, false);
+    },
+    "editor.cursor-down": () => {
+      moveCaretVertically(view, true);
+    },
+    "editor.cursor-forward": () => {
+      moveCaretHorizontally(view, true);
+    },
+    "editor.cursor-backward": () => {
+      moveCaretHorizontally(view, false);
+    },
+    "editor.line-start": () => {
+      moveCaretToLineStart(view);
+    },
+    "editor.line-end": () => {
+      moveCaretToLineEnd(view);
+    },
+    "editor.select-all": () => {
+      view.dispatch({ selection: { anchor: 0, head: view.state.doc.length }, userEvent: "select" });
+    },
+    "editor.undo": () => {
+      undo(view);
+    },
+    "editor.redo": () => {
+      redo(view);
+    },
+  };
+
   return {
     view,
+    commands,
     setMode(mode: EditorMode) {
       // 显式切换即新的配置默认基线；即便与当前模式相同也要锚定（当前模式
       // 可能是上一个文件经 openDocument 漂移来的）。
