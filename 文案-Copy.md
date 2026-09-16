@@ -56,9 +56,18 @@
 | D65 | 键位面板未绑定标注 | 作者 | 未绑定 | Unbound | 被配置解绑的命令仍在面板里，标注它当前没有键位指向。 |
 | D66 | 键位面板未绑定的行说明 | 作者 | 当前没有键位指向它（配置解绑或尚未绑定） | No key is bound to it (unbound in config, or never bound) | 说明「未绑定」的两种成因，并指向下一步该去配置里找。 |
 | D67 | 键位面板关闭提示 | 作者 | Esc / ⌃G 或点击遮罩关闭 | Close with Esc / ⌃G or by clicking outside | 给出手不离键盘的出口，并说明鼠标路径。 |
+| D68 | 搜索 panel 标签 / 输入框 | 作者 | 查找 | Find | 标签文字与输入框读屏名同源同字，视觉与读屏指向同一个动作；不用占位符——占位符一输入就消失，读屏也拿不到。 |
+| D69 | 搜索 panel 导航按钮 | 作者 | 上一个 / 下一个 | Previous / Next | 纯动词短语，不带键位提示（panel 内键位就地消费，不进键位表）；无匹配时按钮禁用，置灰本身说明没得走。 |
+| D70 | 搜索 panel 大小写开关 | 作者 | 区分大小写 | Match case | 可见字形是 Aa（省空间），aria-label 给出完整含义；开/关经 aria-pressed 报告，读屏能听出状态。 |
+| D71 | 搜索 panel 关闭按钮 | 作者 | 关闭 | Close | 可见字形是 ×，aria-label 给出完整含义，读屏不播报「乘号」。 |
+| D72 | 搜索 panel 匹配计数 | 作者 | {当前}/{总数}；无匹配时 0/0；超过计数上限（当前 1000）时 {总数}+ | {current}/{total}; 0/0 when there is no match; {total}+ past the match-count cap (currently 1000) | 计数是活信息（aria-live=polite，随查询播报）。未选中任何匹配时报 0/总数；超过内部上限时报下界加号，不假装知道精确总数。 |
+| D73 | 表格降级提示（非矩形） | 作者 | 表格阅读降级：第 {行号} 行单元格数与表头不符（应为 {列数} 列）——保留原始 Markdown | Table reading degraded: row {line} has a different cell count than the header ({columns} columns) — showing raw Markdown | 归因到具体行号（文档 1 基行号，非表内行序）与应有列数，作者照着行号就能定位源文件里出格的那行；只说「保留原始 Markdown」等于没说。 |
+| D74 | 表格降级提示（体积超限） | 作者 | 表格阅读降级：表格约 {KiB} KiB，超过 64 KiB 阅读上限——保留原始 Markdown | Table reading degraded: the table is about {KiB} KiB, over the 64 KiB reading limit — showing raw Markdown | 说明超的是 64 KiB 阅读上限而非表格本身损坏，并给出约数体积供作者判断下一步。 |
+| D75 | 表格降级提示（兜底） | 作者 | 表格阅读降级：无法识别表格结构——保留原始 Markdown | Table reading degraded: the table structure could not be recognized — showing raw Markdown | 判定不出具体原因时不给假归因，只陈述「结构无法识别」这一事实与回退结果。 |
+| D76 | 横线读屏名 | 作者 | 分隔线 | Separator | 源码的 `---` 已被替换成无文本的横线，补 aria-label 避免出现无名的 separator（装饰隐藏标记时仍保留可理解的读屏文本）。 |
 
-D30 已合并入 D18；D30 编号停用，不复用。D2–D3、D8–D18、D27–D29 随 Thread 特性删除（ADR 0006，2026-09-12）停用，不复用。D23–D24 随 panel 空壳清除（M124，2026-09-12）停用，不复用。D55–D62 为保存链路加固新增（M127，2026-09-12）。D63–D67 为键位查看面板新增（M133，2026-09-13）。
+D30 已合并入 D18；D30 编号停用，不复用。D2–D3、D8–D18、D27–D29 随 Thread 特性删除（ADR 0006，2026-09-12）停用，不复用。D23–D24 随 panel 空壳清除（M124，2026-09-12）停用，不复用。D55–D62 为保存链路加固新增（M127，2026-09-12）。D63–D67 为键位查看面板新增（M133，2026-09-13）。D68–D72 为文件内搜索 panel 新增（M139，2026-09-16）。D73–D76 为 Markdown 渲染批新增（M138，2026-09-16）——表格降级归因句三种形态与分隔线读屏名。
 
 ## 文案实现备注
 
-树、编辑器、toast 的动态错误由 `src/tree.ts` / `src/save-controller.ts` 持有或透传；本 deck 收编其稳定可见部分。保存链路的稳定文案（含守卫提示与冲突/备份动作）随 M127 的拆分集中在 `src/save-controller.ts`。键位面板（D63–D67）的文案在 `src/main.ts` 的 `createBindingsPanel` 内；面板里逐条显示的**键位来由**不是本 deck 的条目——它来自 `src/keys.ts` 键位表的 `doc` 字段（表即文档，随绑定一起维护）。
+树、编辑器、toast 的动态错误由 `src/tree.ts` / `src/save-controller.ts` 持有或透传；本 deck 收编其稳定可见部分。保存链路的稳定文案（含守卫提示与冲突/备份动作）随 M127 的拆分集中在 `src/save-controller.ts`。键位面板（D63–D67）的文案在 `src/main.ts` 的 `createBindingsPanel` 内；面板里逐条显示的**键位来由**不是本 deck 的条目——它来自 `src/keys.ts` 键位表的 `doc` 字段（表即文档，随绑定一起维护）。搜索 panel（D68–D72）的文案在 `src/search.ts` 的 `LumirSearchPanel` 内——与键位面板把文案写在 `main.ts` 的写法并列；计数串的三态（`当前/总数`、`0/0`、`总数+`）由同文件的 `tallyLabel` 生成，deck 里的 `{当前}/{总数}` 即它的模板。表格降级归因句（D73–D75）的文案在 `src/preview/table.ts` 的 `degradationNotice`：`src/preview/livePreview.ts` 把同一句话同时写进 `aria-label` 与 `data-degraded`（单一来源），上屏文本由 `src/style.css` 的 `.cm-lp-table-degraded::after` 用 `attr(data-degraded)` 取用——读屏与视觉看到的是同一份归因，CSS 里不另写一份。分隔线读屏名（D76）同样在 `src/preview/livePreview.ts`，由 `HorizontalRuleWidget` 写入。
