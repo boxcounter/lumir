@@ -1,0 +1,116 @@
+/* 文件内搜索 panel 的样式（M139）。与并行 mission 的 src/style.css 隔离，本 mission 的
+   搜索样式一律放这里，由 main.ts import。
+
+   覆盖官方样式时为什么带高特异性：@codemirror/search 与 @codemirror/view 的基础主题是**运行期**
+   注入到 <head> 末尾的（style-mod），同特异性时它赢。故凡是要压过官方的地方都多带一层选择器
+   （.cm-editor .cm-panels…、.cm-editor .cm-content .cm-searchMatch），与 style.css 里
+   `.cm-lp-table .cm-lp-table-row` 压 `.cm-line` 同一手法；本项目自己的 class
+   （.lumir-search-*）不参与这场竞争，保持单类选择器。 */
+
+/* ── panel 容器：CM 的 .cm-panels.cm-panels-top（本 panel 固定在编辑器顶部） ───────── */
+.cm-editor .cm-panels.cm-panels-top {
+  background: var(--bg-nav);
+  color: var(--text);
+  border-bottom: 1px solid var(--bd-2);
+}
+
+/* ── bar 本体：与 masthead 同一节奏（左右 48px 内边距、11–13px 字号） ───────────── */
+.lumir-search {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  padding: 6px 48px;
+  font-family: var(--font-body);
+  font-size: 12px;
+}
+
+/* 「查找」标签：display 字体 + 字距，与 masthead 的 vault 名同族但更克制，不抢正文注意力 */
+.lumir-search-label {
+  flex: none;
+  font-family: var(--font-display);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: .2em;
+  color: var(--text);
+}
+
+/* 输入框：editorial 的下划线形态（无框、无底），聚焦时下划线转 accent */
+.lumir-search-input {
+  flex: 0 1 320px;
+  min-width: 0;
+  padding: 3px 2px;
+  border: none;
+  border-bottom: 1px solid var(--bd-3);
+  border-radius: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+}
+.lumir-search-input:focus {
+  outline: none;
+  border-bottom-color: var(--accent);
+}
+
+/* 计数：等宽字体 + 右对齐，随数字变化不抖动；无匹配时转 accent */
+.lumir-search-count {
+  flex: none;
+  min-width: 4.5em;
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--dim);
+  text-align: right;
+}
+.lumir-search-count.is-empty {
+  color: var(--accent);
+}
+
+/* bar 内的按钮：弱化默认态（灰字无框），hover 才给反馈——与文件树「切换」按钮同一族 */
+.lumir-search-button {
+  flex: none;
+  padding: 3px 8px;
+  border: none;
+  border-radius: 4px;
+  background: none;
+  color: var(--dim);
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.4;
+  cursor: pointer;
+}
+.lumir-search-button:hover:not(:disabled) {
+  background: var(--bg-2);
+  color: var(--text);
+}
+.lumir-search-button:disabled {
+  opacity: .45;
+  cursor: default;
+}
+.lumir-search-case {
+  font-family: var(--font-mono);
+  letter-spacing: .02em;
+}
+/* 大小写开关的「开」态：accent 底 + accent 字（唯一带底色的按钮，一眼可辨） */
+.lumir-search-case.is-on {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--accent);
+}
+.lumir-search-close {
+  padding: 2px 8px;
+  font-size: 15px;
+  line-height: 1;
+}
+
+/* ── 匹配高亮（官方 searchHighlighter 的 mark 装饰） ──────────────────────────────
+   全部匹配用 accent 淡底，当前匹配加深并压一条 accent 下划线——与 toast / 链接等的
+   accent 语义一致（同一套 token，不引入新色）。 */
+.cm-editor .cm-content .cm-searchMatch {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  border-radius: 2px;
+}
+.cm-editor .cm-content .cm-searchMatch.cm-searchMatch-selected {
+  background: color-mix(in srgb, var(--accent) 32%, transparent);
+  box-shadow: inset 0 -1px 0 var(--accent);
+}

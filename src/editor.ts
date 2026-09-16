@@ -32,6 +32,7 @@ import type { TableModel, TableRow } from "./preview/table";
 import { createInvokeAttachmentProvider, codeLanguage, extensionOf, fileClass } from "./preview/attachments";
 import type { AttachmentProvider, CodeLanguage } from "./preview/attachments";
 import type { CommandRunner, EditorCommandId } from "./keys";
+import { lumirSearch } from "./search";
 
 // 编辑器单内核双模式（ADR 0002 §2）：一个 CM6 内核、两种模式。
 // md = 高亮 + live preview 装饰层（src/preview/）；code = 仅高亮。
@@ -1101,6 +1102,11 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
       // 「命令读到的是 flush 过的 state」不依赖别的模块恰好注册 keydown 的保证。
       EditorView.domEventHandlers({ keydown: () => false }),
       EditorView.theme({ ".cm-gutters-before": { border: "none" } }),
+      // 文件内搜索（M139）：官方 search 能力 + 本项目的搜索 panel（src/search.ts）。
+      // 装在**模式无关**的基础层：md 与 code 两种模式都能查（code 只读，panel 里也没有替换
+      // 这类会改文档的控件）。panel 的 Compartment 之外落点也意味着模式热切换（openDocument
+      // 的 reconfigure）不会把它连带重建——面板与查询跨文件保留，与编辑器行为一致。
+      lumirSearch(),
       modeCompartment.of(modeExtensions(initialMode)),
       // 兜底防线：editability 已随模式在视图层拒收输入，changeFilter 再挡住任何
       // 绕过 DOM 输入路径的程序化 dispatch（trustedLoad 标记的装载事务除外）。
