@@ -456,7 +456,14 @@ function collectTableDecorations(view: EditorView, tables: readonly TableModel[]
         };
         const empty = view.state.doc.sliceString(slot.from, slot.to).trim() === "";
         if (empty) {
-          decos.push(Decoration.replace({ widget: new EmptyTableCellWidget(column + 1, row.header, table.align[column] ?? "left") }).range(slot.from, slot.to));
+          const widget = new EmptyTableCellWidget(column + 1, row.header, table.align[column] ?? "left");
+          // 零宽空槽（短行尾部补出的空 cell，M142，见 table.ts 的 padShortRow）不能用
+          // replace：CM6 对零宽 replace 要求起点或终点 inclusive，两侧都非 inclusive 时
+          // 抛 RangeError（@codemirror/view 的 PointDecoration.range）。插入语义用 point
+          // widget 表达；非零宽空槽（`|  |` 这类空格空槽）走原路径，行为不变。
+          decos.push(slot.to > slot.from
+            ? Decoration.replace({ widget }).range(slot.from, slot.to)
+            : Decoration.widget({ widget }).range(slot.from));
         } else {
           decos.push(Decoration.mark({ class: "cm-lp-table-cell", attributes: attrs }).range(slot.from, slot.to));
         }

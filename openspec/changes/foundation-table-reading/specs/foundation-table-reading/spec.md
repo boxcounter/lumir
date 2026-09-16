@@ -18,17 +18,22 @@
 
 ### Requirement: Pipe 语法与矩形性
 
-系统 SHALL 遵循当前 GFM parser 的 pipe table 边界，支持有或无首尾 pipe、默认/左/中/右对齐、空格或 `||` 空槽、escaped pipe，以及 parser 明确支持的引用或列表内表格。系统 MUST 在 parser 识别 `Table` 后从 delimiter 边界独立恢复空槽并验证矩形性；表头、delimiter 或数据行列数不一致、范围不完整或槽位无法安全映射时，MUST 整块回退完整源码，不得猜测补列或丢列。
+系统 SHALL 遵循当前 GFM parser 的 pipe table 边界，支持有或无首尾 pipe、默认/左/中/右对齐、空格或 `||` 空槽、escaped pipe，以及 parser 明确支持的引用或列表内表格。系统 MUST 在 parser 识别 `Table` 后从 delimiter 边界独立恢复空槽并验证矩形性。数据行 cell 数少于表头列数时 MUST 按 GFM spec §4.10 在尾部补空 cell 后按矩形呈现，MUST NOT 因此整块回退（M142 收窄，见 `narrow-table-short-row-gfm-padding`）；表头或 delimiter 列数不一致、数据行 cell 数多于表头、范围不完整或槽位无法安全映射时，MUST 整块回退完整源码，不得猜测丢弃多余列或丢列。
 
 #### Scenario: 空槽和转义 pipe保持列位
 
 - **WHEN** 表格包含 `||`、空格空槽或 `\|`，且有首尾 pipe 或省略首尾 pipe
 - **THEN** 空槽占据原列，后续 cell 不左移，escaped pipe 保持在原 cell 内容中，复制仍能恢复原始 Markdown
 
-#### Scenario: 引用或列表中的非矩形表格
+#### Scenario: 引用或列表中的多列表格
 
-- **WHEN** 引用或列表容器内的候选表格、或普通表格的数据行少列/多列而无法形成矩形
+- **WHEN** 引用或列表容器内的候选表格、或普通表格的数据行多于表头列数而无法形成矩形
 - **THEN** 系统显示该候选范围的完整连续源码，不把部分行伪装成表格，不修改容器前缀、缩进或换行
+
+#### Scenario: 短行尾部补空列
+
+- **WHEN** 表头声明 6 列而数据行只有 5 格（M137 实测的 `outline.md` 形态）
+- **THEN** 尾部补空 cell 后按 6 列矩形呈现，末格为空白 cell，不出现降级提示，源文件与磁盘文件不变
 
 ### Requirement: 最终呈现与宽表局部滚动
 

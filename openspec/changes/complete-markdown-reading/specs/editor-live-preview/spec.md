@@ -33,9 +33,9 @@ md 模式 SHALL 在同一个列表的同级项目中保持正文起点一致，�
 
 ### Requirement: 基础 pipe 表格阅读与源码列对齐
 
-md 模式 SHALL 将当前 `@lezer/markdown` GFM parser 识别的矩形 pipe 表格呈现为表头、行、列关系可辨识的只读表格，包括 parser 识别的列表或引用内表格。支持范围 SHALL 包含可选首尾 pipe、空单元格和转义 pipe。表头与分隔行列数以及每个数据行的槽位数 SHALL 一致才进入表格格式化；空槽 MUST NOT 导致后续单元格移列。分隔行 `:---`、`:---:`、`---:` SHALL 分别映射左、中、右对齐；无冒号默认左对齐。
+md 模式 SHALL 将当前 `@lezer/markdown` GFM parser 识别的 pipe 表格呈现为表头、行、列关系可辨识的只读表格，包括 parser 识别的列表或引用内表格。支持范围 SHALL 包含可选首尾 pipe、空单元格和转义 pipe。表头与分隔行的列数 SHALL 一致才进入表格格式化；数据行 cell 数少于表头列数时 SHALL 按 GFM spec §4.10 在尾部补空 cell 后按矩形呈现（M142 收窄，见 `narrow-table-short-row-gfm-padding`），多于表头列数时 SHALL 整块回退可读源码；空槽 MUST NOT 导致后续单元格移列。分隔行 `:---`、`:---:`、`---:` SHALL 分别映射左、中、右对齐；无冒号默认左对齐。
 
-单元格 SHALL 至少完整显示可读源码内容；本范围不要求行内富文本、图片、嵌入或 wikilink 交互。系统 MUST NOT 执行单元格中的 HTML。非矩形或无法安全映射源码边界的 Table SHALL 整块回退可读源码，MUST NOT 丢弃多余列或自动修复原文。未被 parser 识别为 Table 的文本 SHALL 保留原有普通 Markdown 行为，不猜测为表格。合并/跨行单元格、嵌套表格、HTML 表格不在支持范围。
+单元格 SHALL 至少完整显示可读源码内容；本范围不要求行内富文本、图片、嵌入或 wikilink 交互。系统 MUST NOT 执行单元格中的 HTML。数据行多列或无法安全映射源码边界的 Table SHALL 整块回退可读源码，MUST NOT 丢弃多余列或自动修复原文（少列按尾部补空 cell 渲染，见上）。未被 parser 识别为 Table 的文本 SHALL 保留原有普通 Markdown 行为，不猜测为表格。合并/跨行单元格、嵌套表格、HTML 表格不在支持范围。
 
 #### Scenario: 四种列对齐及空槽
 
@@ -47,10 +47,15 @@ md 模式 SHALL 将当前 `@lezer/markdown` GFM parser 识别的矩形 pipe 表�
 - **WHEN** 表格省略首尾 pipe 或单元格内出现 `\|`
 - **THEN** 按当前 parser 确定的边界呈现，转义 pipe 不额外拆列
 
-#### Scenario: 非矩形与复杂语法保护
+#### Scenario: 多列与复杂语法保护
 
-- **WHEN** parser 识别的 Table 数据行少列或多列，或反引号内未转义 pipe 被 parser 拆列后形成非矩形
+- **WHEN** parser 识别的 Table 数据行多于表头列数，或反引号内未转义 pipe 被 parser 拆列后形成多列
 - **THEN** 整块呈现可读源码，全部内容可访问，不丢列、不另造与 parser 不同的语法
+
+#### Scenario: 短行尾部补空列
+
+- **WHEN** parser 识别的 Table 数据行 cell 数少于表头列数
+- **THEN** 尾部补空 cell 后按矩形呈现，空 cell 占据原列位、列边界与表头一致，源文件不变
 
 ### Requirement: 宽表可访问
 

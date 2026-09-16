@@ -7,10 +7,14 @@ import type { TableModel, TableRow } from "../../../src/preview/table";
 
 const fixture = readFileSync(new URL("../fixtures/table-foundation-v2/representative.md", import.meta.url), "utf8");
 
-// 降级归因文案的三条分支（M138）。oversize 与非矩形由页面场景覆盖（第 20 行短行案例 +
-// 超长表 regex）；兜底分支在真实解析路径上不可达——lezer 的 GFM parser 只在 delimiter
-// 行与表头列数一致时才产出 Table（实测 `| a | b | c |` + `| --- | --- |` 根本不出 Table 节点），
-// 所以那条是防御性默认值。这里按 Node 侧直接断言，避免「兜底文案无人验」的静默分支。
+// 降级归因文案的三条分支（M138）。oversize 与多列由页面场景覆盖（fixture 第 28 行
+// 三格数据行 + 超长表 regex）；兜底分支在真实解析路径上不可达——lezer 的 GFM parser
+// 只在 delimiter 行与表头列数一致时才产出 Table（实测 `| a | b | c |` + `| --- | --- |`
+// 根本不出 Table 节点），所以那条是防御性默认值。这里按 Node 侧直接断言，避免
+// 「兜底文案无人验」的静默分支。
+//
+// 短行不再出现在这条分支上（M142 收窄合同）：findTables 先把 cell 数少于表头的行
+// 尾部补成零宽空 slot，只有「多列」与「槽位一个都没恢复出来」的行才走到这里。
 function row(from: number, cells: number, header = false): TableRow {
   return { from, to: from + 1, header, slots: Array.from({ length: cells }, (_, index) => ({ from: from + index, to: from + index + 1 })) };
 }
@@ -41,8 +45,8 @@ test("降级归因文案：oversize / 行数不符 / 兜底三分支", () => {
   );
 
   // 首个与表头列数不符的行 → 取该行的文档行号（1 基，由调用方传入的行号解析器给出）
-  const ragged = table({ reason: "non-rectangular", rows: [row(0, 3, true), row(20, 3), row(40, 2)] });
-  expect(degradationNotice(ragged, (pos) => (pos === 40 ? 27 : 21))).toBe(
+  const excess = table({ reason: "non-rectangular", rows: [row(0, 3, true), row(20, 3), row(40, 4)] });
+  expect(degradationNotice(excess, (pos) => (pos === 40 ? 27 : 21))).toBe(
     "表格阅读降级：第 27 行单元格数与表头不符（应为 3 列）——保留原始 Markdown",
   );
 
@@ -51,52 +55,104 @@ test("降级归因文案：oversize / 行数不符 / 兜底三分支", () => {
   expect(degradationNotice(unknown, () => 1)).toBe("表格阅读降级：无法识别表格结构——保留原始 Markdown");
 });
 
-test("表格可见行、降级边界、AX、滚动和源码复制", async ({ page, context }) => {
+test("表格可见行、短行补空列、多列降级、AX、滚动和源码复制", async ({ page, context }) => {
   await context.grantPermissions(["clipboard-read", "clipboard-write"]);
   await stubTauri(page, { entries: [{ path: "table.md", kind: "file", size: fixture.length, mtime_ms: 0 }], files: { "table.md": fixture } });
   await page.goto("/");
   await page.locator('.ft-row[title="table.md"]').click();
-  await expect(page.locator(".cm-lp-table-scroll")).toHaveCount(1);
-  await expect(page.locator(".cm-lp-table-cell")).toContainText(["Name", "alpha"]);
-  await expect(page.locator(".cm-lp-table-cell-empty")).toHaveCount(1);
-  const emptyCell = await page.locator(".cm-lp-table-cell-empty").evaluate((cell) => {
+  // fixture 三张矩形表按 grid 渲染（第 5/18/32 行），第 26 行的多列表整块降级
+  await expect(page.locator(".cm-lp-table-scroll")).toHaveCount(3);
+  await expect(page.locator(".cm-lp-table")).toHaveCount(3);
+  await expect(page.locator(".cm-lp-table-cell", { hasText: "alpha" })).toHaveCount(1);
+  // 空 cell 4 个：表一 `| alpha | | centered |` 1 个 + 第 18 行短行补出的 1 个 + 6 列表补出的 2 个
+  await expect(page.locator(".cm-lp-table-cell-empty")).toHaveCount(4);
+  const emptyCell = await page.locator(".cm-lp-table-cell-empty").first().evaluate((cell) => {
     const rect = cell.getBoundingClientRect();
     return { width: rect.width, height: rect.height, text: cell.textContent };
   });
   expect(emptyCell.width).toBeGreaterThan(0);
   expect(emptyCell.height).toBeGreaterThan(0);
+  // 补出的空 cell 与空格空槽同形：无占位符、无缺列标记，就是空格子
   expect(emptyCell.text).toBe("");
-  const geometry = await page.locator(".cm-lp-table-row").evaluateAll((rows) => rows.map((row) => {
-    const rect = row.getBoundingClientRect();
-    return { top: rect.top, bottom: rect.bottom, height: rect.height };
-  }));
-  expect(geometry.every((row) => row.height > 0)).toBeTruthy();
-  for (let i = 1; i < geometry.length; i++) expect(geometry[i].top).toBeGreaterThanOrEqual(geometry[i - 1].bottom - 1);
-  // 行高回归：行不得被隐藏管道符留下的 widgetBuffer 占位撑高——
-  // 修复前行高约 92px（单元格 33px + 2 条隐式 grid 行），修复后应与单元格同高。
+
+  // 逐表几何：每张表内各行 cell 数一致（矩形），行序不重叠，行高与 cell 同高。
+  // 行高回归：行不得被隐藏管道符留下的 widgetBuffer 占位撑高——修复前行高约
+  // 92px（单元格 33px + 2 条隐式 grid 行），修复后应与单元格同高。
+  const tables = await page.locator(".cm-lp-table").evaluateAll((els) => els.map((table) =>
+    [...table.querySelectorAll<HTMLElement>(".cm-lp-table-row")].map((row) => {
+      const rect = row.getBoundingClientRect();
+      return { top: rect.top, bottom: rect.bottom, height: rect.height, cells: row.querySelectorAll(".cm-lp-table-cell").length };
+    })));
+  expect(tables.map((rows) => rows.length)).toEqual([3, 2, 3]);
+  for (const rows of tables) {
+    const columns = rows[0].cells;
+    for (const row of rows) expect(row.cells).toBe(columns);
+    for (let i = 1; i < rows.length; i++) expect(rows[i].top).toBeGreaterThanOrEqual(rows[i - 1].bottom - 1);
+  }
   const cellHeight = await page.locator(".cm-lp-table-cell").first().evaluate((cell) => cell.getBoundingClientRect().height);
-  for (const row of geometry) expect(row.height).toBeLessThan(cellHeight + 2);
-  await expect(page.locator(".cm-lp-table-scroll")).toHaveAttribute("role", "region");
-  await expect(page.locator(".cm-lp-table")).toHaveAttribute("role", "table");
-  await expect(page.locator(".cm-lp-table-cell[role=columnheader]")).toHaveCount(3);
+  for (const rows of tables) for (const row of rows) expect(row.height).toBeLessThan(cellHeight + 2);
+
+  await expect(page.locator(".cm-lp-table-scroll").first()).toHaveAttribute("role", "region");
+  await expect(page.locator(".cm-lp-table").first()).toHaveAttribute("role", "table");
+  await expect(page.locator(".cm-lp-table").first()).toHaveAttribute("aria-colcount", "3");
+  await expect(page.locator(".cm-lp-table").nth(0).locator("[role=columnheader]")).toHaveCount(3);
+  await expect(page.locator(".cm-lp-table").nth(1).locator("[role=columnheader]")).toHaveCount(2);
+  await expect(page.locator(".cm-lp-table").nth(2).locator("[role=columnheader]")).toHaveCount(6);
+
+  // 多列表整块降级：源码可见，归因文案带上出错行号（M138）。fixture 第 28 行
+  // `| one | two | three |` 有 3 格而表头声明 2 列——行号是**文档行号**，用户照着
+  // 就能定位到源文件那一行。
+  await expect(page.locator(".cm-content")).toContainText("| one | two | three |");
   await expect(page.locator(".cm-lp-table-degraded")).toHaveCount(1);
-  // 降级文案带原因与出错行号（M138）：fixture 里第 20 行 `| one |` 只有 1 格，
-  // 表头声明 2 列。行号是**文档行号**，用户照着就能定位到源文件那一行。
-  const notice = "表格阅读降级：第 20 行单元格数与表头不符（应为 2 列）——保留原始 Markdown";
+  const notice = "表格阅读降级：第 28 行单元格数与表头不符（应为 2 列）——保留原始 Markdown";
   await expect(page.locator(".cm-lp-table-degraded")).toHaveAttribute("aria-label", notice);
   // 上屏的文案与 aria-label 同源（CSS ::after 经 data 属性取用，不在样式表里另写一份）
   const painted = await page.locator(".cm-lp-table-degraded").evaluate((el) =>
     getComputedStyle(el, "::after").content.replace(/^"|"$/g, ""),
   );
   expect(painted).toBe(notice);
+
   expect(await readDocument(page)).toBe(fixture);
-  await page.locator(".cm-lp-table-scroll").focus();
+  await page.locator(".cm-lp-table-scroll").first().focus();
   await page.keyboard.press("End");
   await page.keyboard.press("Escape");
   await page.locator(".cm-content").click();
   await page.keyboard.press("Meta+a");
   await page.keyboard.press("Meta+c");
   expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(fixture);
+  expect(await readDocument(page)).toBe(fixture);
+});
+
+test("短行尾部补空列：outline.md 同款 6 列表头 + 5 cell 行按矩形渲染", async ({ page }) => {
+  // M137 现场（~/Downloads/Everything-copy/outline.md:106-109）四行各缺最后一列，
+  // 旧合同整块回退源码；M142 收窄为尾部补空列（GFM §4.10）。这里钉住渲染口径：
+  // 空 cell 就是空 cell，列几何与表头对齐。
+  await stubTauri(page, { entries: [{ path: "table.md", kind: "file", size: fixture.length, mtime_ms: 0 }], files: { "table.md": fixture } });
+  await page.goto("/");
+  await page.locator('.ft-row[title="table.md"]').click();
+  const short = page.locator(".cm-lp-table").nth(2);
+  await expect(short).toHaveCount(1);
+  await expect(short).toHaveAttribute("aria-colcount", "6");
+  await expect(short).toHaveAttribute("style", /--cm-lp-table-columns:\s*6/);
+  const grid = await tableGridGeometry(page, 2);
+  expect(grid).toHaveLength(3);
+  for (const rowCells of grid) expect(rowCells).toHaveLength(6);
+  // 补出的第 6 列是空格子：没有占位符文案，也没有「此处缺列」标记
+  expect(grid[1][5].text).toBe("");
+  expect(grid[2][5].text).toBe("");
+  // 原有最后一格留在第 5 列，位置不因补列而左移或右移
+  expect(grid[1][4].text).toContain("z");
+  expect(grid[2][4].text).toContain("z");
+  // 列几何：补出的第 6 列与表头第 6 列左缘对齐，且位于第 5 列右侧
+  for (const rowCells of grid) {
+    expect(Math.abs(rowCells[5].left - grid[0][5].left)).toBeLessThan(1);
+    expect(rowCells[5].left).toBeGreaterThan(rowCells[4].left + rowCells[4].width - 1);
+  }
+  // 短行不再整块回退：屏幕上的降级提示只有多列表那一条
+  await expect(page.locator(".cm-lp-table-degraded")).toHaveCount(1);
+  // 该行按 grid 行渲染，且源码（含管道符）不再作为文本上屏——只有 cell 内容可见
+  expect(await short.locator(".cm-lp-table-row").first().evaluate((row) => getComputedStyle(row).display)).toBe("grid");
+  expect(await page.locator(".cm-content").textContent()).not.toContain("| H2 |");
   expect(await readDocument(page)).toBe(fixture);
 });
 
@@ -118,8 +174,11 @@ test("超长表安全源码降级且不全量物化可见表格行", async ({ pa
 
 interface CellRect { text: string; left: number; top: number; width: number; }
 
-async function tableGridGeometry(page: import("@playwright/test").Page): Promise<CellRect[][]> {
-  return page.locator(".cm-lp-table-row").evaluateAll((rows) => rows.map((row) =>
+async function tableGridGeometry(page: import("@playwright/test").Page, tableIndex?: number): Promise<CellRect[][]> {
+  const rows = tableIndex === undefined
+    ? page.locator(".cm-lp-table-row")
+    : page.locator(".cm-lp-table").nth(tableIndex).locator(".cm-lp-table-row");
+  return rows.evaluateAll((list) => list.map((row) =>
     [...row.querySelectorAll<HTMLElement>(".cm-lp-table-cell")].map((cell) => {
       const rect = cell.getBoundingClientRect();
       return { text: cell.textContent ?? "", left: rect.left, top: rect.top, width: rect.width };
