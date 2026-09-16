@@ -90,7 +90,8 @@ pub enum LogEventName {
     ConfigWarning,
     /// 后台回调超 16ms 预算的采样。
     SlowCallback,
-    /// 外链打开（M144）：交给系统默认应用的结果。
+    /// 链接激活（M144 引入外链打开，M145 扩为按类别记录）：交给系统默认应用的结果
+    /// 与前端分类出的其它类别（internal-md / anchor / blocked-scheme）。
     LinkOpen,
 }
 
@@ -136,9 +137,11 @@ impl LogEventName {
             Self::RenderError => &["kind", "stage", "code"],
             Self::ConfigWarning => &["source", "message"],
             Self::SlowCallback => &["name", "ms"],
-            // scheme 只记协议名（http / https / mailto 这类小词表），**不记 URL 原文**
-            //——URL 是文档内容，本模块的隐私边界不允许正文进日志（见模块头）。
-            Self::LinkOpen => &["scheme", "outcome"],
+            // `category` 是链接类别（M145）：external / internal-md / asset / anchor /
+            // blocked-scheme；`scheme` 只有外链路径上有值（http / https / mailto 这类
+            // 小词表）。**不记 URL 与目标原文**——那是文档内容，本模块的隐私边界不允许
+            // 正文进日志（见模块头）。
+            Self::LinkOpen => &["category", "scheme", "outcome"],
         }
     }
 }
@@ -427,20 +430,23 @@ fn recovery_restored_to(sink: &Sink, path: &str) {
     );
 }
 
-/// Rust 侧埋点：外链打开（`commands::open_external_url`）。`outcome` 取 `opened`
-///（已交给系统默认应用）或 `rejected`（scheme 不在白名单 / 目标不可信）。
-/// 只记 scheme 与结果，不记 URL 原文——URL 是文档内容，落在隐私边界之外。
-pub fn link_open(scheme: &str, outcome: &str) {
-    link_open_to(global(), scheme, outcome);
+/// Rust 侧埋点：链接激活（`commands::open_external_url` / `commands::link_open_path`）。
+/// `category` 取链接类别（external / internal-md / asset / anchor / blocked-scheme，
+/// M145 起记录；前端分类结果经 `log_event` 走同一条事件），`outcome` 取 `opened`
+///（已交给系统默认应用）或 `rejected` / `failed`；`scheme` 只有外链路径上有值。
+/// 只记类别与结果，不记 URL / 目标原文——那是文档内容，落在隐私边界之外。
+pub fn link_open(category: &str, outcome: &str, scheme: Option<&str>) {
+    link_open_to(global(), category, outcome, scheme);
 }
 
-fn link_open_to(sink: &Sink, scheme: &str, outcome: &str) {
-    emit(
-        sink,
-        Event::new(LogEventName::LinkOpen)
-            .field("scheme", scheme)
-            .field("outcome", outcome),
-    );
+fn link_open_to(sink: &Sink, category: &str, outcome: &str, scheme: Option<&str>) {
+    let mut event = Event::new(LogEventName::LinkOpen)
+        .field("category", category)
+        .field("outcome", outcome);
+    if let Some(scheme) = scheme {
+        event = event.field("scheme", scheme);
+    }
+    emit(sink, event);
 }
 
 /// 前端经 `log_event` 命令转发的入口：白名单外负载**显式拒绝**（返回错误信封），

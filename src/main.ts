@@ -19,6 +19,8 @@ import {
   documentSetDirty,
   isCommandError,
   linkGraphResolve,
+  linkOpenPath,
+  linkResolveNote,
   onFsEntryChanged,
   onMenuCommand,
   onQuitBlocked,
@@ -35,7 +37,7 @@ import type { FsEntry } from "./bindings/FsEntry";
 import type { LinkResolveResult } from "./bindings/LinkResolveResult";
 import { extensionOf, mimeTypeOf, resolveByNameUnique } from "./preview/attachments";
 import { findWikilinkSpans } from "./preview/wikilinks";
-import { externalLinkAt } from "./preview/links";
+import { standardLinkAt } from "./preview/links";
 import { openSearch } from "./search";
 import "./style.css";
 // 搜索 panel 的样式单列一个文件（M139）：与并行 mission 的 src/style.css 隔离，
@@ -315,30 +317,70 @@ function wikilinkAt(pos: number): string | null {
 }
 
 /**
- * 光标/点击处的链接（M144）：外链（http / https / mailto）或 wikilink，都没有则 null。
+ * 光标/点击处的链接（M144 起外链，M145 扩到全形态）：wikilink 或标准 Markdown 链接。
  *
  * wikilink 优先且路径逐字未动：`[[x]]` 在语法树里也是一个没有 URL 子节点的 `Link`
- * 节点，外链判定天然不命中它，两者不会互相抢；顺序写死仍是有意的——wikilink 的
- * 语义只有 Rust link_graph 一份，先问它。没有 vault 上下文（没有打开中的 md 文件）
- * 时 wikilink 不算可激活的链接（解析基准就是当前文件），外链不受此限。
+ * 节点，标准链接判定天然不命中它，两者不会互相抢；顺序写死仍是有意的——wikilink 的
+ * 语义只有 Rust link_graph 一份，先问它。
+ *
+ * vault 上下文（打开中的 md 文件）是 vault 内跳转类链接的前提：`[x](note.md)` 与
+ * `[x](./doc.pdf)` 的解析基准就是当前文件，没有它就不算可激活的链接。外链与纯锚点
+ * 不受此限（前者不需要 vault，后者就在这份文档里）。
  *
  * 键盘路径（选区 head）与鼠标路径（点击坐标）共用本判定，跟随逻辑只有一份。
  */
-type LinkTarget = { kind: "wikilink"; raw: string } | { kind: "external"; url: string };
+type LinkTarget =
+  | { kind: "wikilink"; raw: string }
+  | { kind: "external"; url: string }
+  | { kind: "note"; target: string }
+  | { kind: "asset"; target: string }
+  | { kind: "anchor" };
 
 function linkTargetAt(pos: number): LinkTarget | null {
   const raw = wikilinkAt(pos);
   if (raw !== null) {
     return currentPath === undefined ? null : { kind: "wikilink", raw };
   }
-  const link = externalLinkAt(editor.view.state, pos);
-  return link === null ? null : { kind: "external", url: link.url };
+  const link = standardLinkAt(editor.view.state, pos);
+  if (link === null) return null;
+  switch (link.form.kind) {
+    case "external":
+      return { kind: "external", url: link.form.url };
+    case "internal":
+      return currentPath === undefined ? null : { kind: "note", target: link.form.target };
+    case "asset":
+      return currentPath === undefined ? null : { kind: "asset", target: link.form.target };
+    case "anchor":
+      return { kind: "anchor" };
+    case "blocked":
+      // 白名单外 scheme 不装饰也不激活（渲染层同样保持原文）。这里显式记一条诊断：
+      // 「按了 ⌘⏎ 没反应」是 dogfood 里最难归因的一类反馈，日志要能回答它是被拒的。
+      logEvent("link_open", { category: "blocked-scheme", outcome: "rejected" });
+      return null;
+  }
 }
 
-/** 跟随链接：wikilink 走既有跳转链路，外链交系统默认应用。 */
+/** 跟随链接：应用内跳转（wikilink / 相对路径 md）与交系统默认应用（外链 / vault 内资产）
+ *  各走各的链路，纯锚点只给提示（M145：不做文档内滚动跳转）。 */
 function followLink(target: LinkTarget): void {
-  if (target.kind === "wikilink") void followWikilink(target.raw);
-  else void openExternalLink(target.url);
+  switch (target.kind) {
+    case "wikilink":
+      void followWikilink(target.raw);
+      break;
+    case "external":
+      void openExternalLink(target.url);
+      break;
+    case "note":
+      void followNoteLink(target.target);
+      break;
+    case "asset":
+      void openVaultAsset(target.target);
+      break;
+    case "anchor":
+      logEvent("link_open", { category: "anchor", outcome: "unsupported" });
+      toast("暂不支持锚点跳转");
+      break;
+  }
 }
 
 /** 外链交给系统默认应用打开（Rust 侧校验 scheme）；失败给人话提示。 */
@@ -350,12 +392,51 @@ async function openExternalLink(url: string): Promise<void> {
   }
 }
 
+/**
+ * 跟随相对路径 md 链接 `[x](note.md)`（M145）：解析交 Rust（`link_resolve_note`——
+ * 相对当前文件所在目录的路径语义，与 wikilink 的名称匹配不同源），命中的文件走
+ * 与 wikilink 同一条 `openFile` 打开链路，因此应用内只存在一套「打开一篇笔记」。
+ *
+ * 解析不到只提示、不创建文件：一键创建是 wikilink 的显式动作（spec §4.4），
+ * 相对路径链接不继承它——作者写错路径时，凭空多出一个文件和只给一句提示相比，
+ * 后者才是他要的。
+ */
+async function followNoteLink(target: string): Promise<void> {
+  const from = currentPath;
+  if (from === undefined) return;
+  try {
+    const path = await linkResolveNote(from, target);
+    if (path === null) {
+      logEvent("link_open", { category: "internal-md", outcome: "unresolved" });
+      toast(`链接目标不存在：${target}`);
+      return;
+    }
+    logEvent("link_open", { category: "internal-md", outcome: "opened" });
+    await openFile(path, openKind(path));
+  } catch (e) {
+    toast(errorMessage(e));
+  }
+}
+
+/** 打开 vault 内的非 md 文件 / 目录 `[x](./doc.pdf)`：交系统默认应用。目标必须落在
+ *  vault 内（Rust 侧前缀校验），落不进去 / 不存在时透传它的人话错误。 */
+async function openVaultAsset(target: string): Promise<void> {
+  const from = currentPath;
+  if (from === undefined) return;
+  try {
+    await linkOpenPath(from, target);
+  } catch (e) {
+    toast(errorMessage(e));
+  }
+}
+
 // 点击跳转（spec §4.2）：⌘-Click 命中链接时阻止选区落点，直接跟随链接；
 // 裸点击不拦截，保持链接文本可正常落点编辑。
 // M132 收窄：鼠标路径与 D1 的 ⌘/⌃ 拆分对齐——只有 ⌘-Click 跟随链接；⌃-Click 让位给
 // macOS 的系统级次级点击（右键等价手势），不再被当作链接激活。键位表只管键盘，鼠标
 // 路径就地判定（收窄前是 e.metaKey || e.ctrlKey，与拆分前的键盘口径同源）。
 // M144：鼠标路径同样覆盖外链——外链不需要 vault 上下文，故不再以 currentPath 提前返回。
+// M145：同一条路径覆盖全部可激活形态（应用内跳转类仍要求 vault 上下文，判定在 linkTargetAt）。
 editor.view.dom.addEventListener("mousedown", (e) => {
   if (e.button !== 0) return;
   if (!e.metaKey) return;
@@ -379,7 +460,8 @@ const commands: CommandRuntime = {
     void save.save();
   },
   // 轨道 A 原样迁入（键位与作用域不变）；M144 起跟随光标/选区处的链接——外链交系统
-  // 浏览器、wikilink 走既有跳转链路。落在非链接处无操作（不假装有反馈）。
+  // 浏览器、wikilink 走既有跳转链路；M145 补齐其余形态：相对路径 md 走应用内跳转、
+  // vault 内非 md 交系统默认应用、纯锚点只提示。落在非链接处无操作（不假装有反馈）。
   "link.follow": () => {
     const target = linkTargetAt(editor.view.state.selection.main.head);
     if (target !== null) followLink(target);

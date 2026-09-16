@@ -106,6 +106,25 @@ export function wikilinkCreate(from: string, link: string): Promise<CreateNoteRe
 export function openExternalUrl(url: string): Promise<void> {
   return invoke<void>("open_external_url", { url });
 }
+
+/**
+ * 解析相对路径 md 链接（`[x](note.md)`，M145）：目标是**相对当前文件所在目录**的
+ * 路径（`./` `..` 归一的语义在 Rust `link_graph`，前端不复制），命中返回 vault
+ * 相对路径，解析不到 resolve 为 null——那不是错误，前端只提示、不创建文件。
+ * `#fragment` 部分按 M145 口径忽略。
+ */
+export function linkResolveNote(from: string, target: string): Promise<string | null> {
+  return invoke<string | null>("link_resolve_note", { from, target });
+}
+
+/**
+ * 在系统默认应用打开 vault 内的非 md 文件 / 目录（`[x](./doc.pdf)`、`[x](docs/)`，
+ * M145）。与外链同一分层（`open_external_url`）：信任边界在 Rust 侧，这里校验的是
+ * 目标必须落在 vault 内且存在——越界 / 不存在 / 打不开都返回错误信封，前端 toast 人话。
+ */
+export function linkOpenPath(from: string, target: string): Promise<void> {
+  return invoke<void>("link_open_path", { from, target });
+}
 export const vaultRemap = (id: string, path: string): Promise<VaultWorkspace> => invoke<VaultWorkspace>("vault_remap", { id, path });
 
 // ---------------------------------------------------------------------------

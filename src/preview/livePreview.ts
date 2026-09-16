@@ -20,7 +20,7 @@ import {
 } from "./attachments";
 import type { AttachmentProvider } from "./attachments";
 import { findWikilinkSpans } from "./wikilinks";
-import { externalUrlOf, standardLinkParts } from "./links";
+import { classifyLinkTarget, standardLinkParts } from "./links";
 import { collectInlineMath, isInsideCodeContext, mathBlockSet } from "./math";
 import { mermaidBlockSet, onMermaidSettled } from "./mermaid";
 import { calloutMarkerDecorations, calloutOnLine, detectCallout } from "./callout";
@@ -120,27 +120,37 @@ class HorizontalRuleWidget extends WidgetType {
 }
 
 /**
- * 外链标记 `↗︎`（M144，D77）。U+2197 后跟 U+FE0E（变体选择符 VS15）——不加它
- * 这个码位在部分字体下会按 emoji 表现渲染成彩色箭头，与正文排版不搭。
+ * 链接标记：`↗︎`（外链与 vault 内资产，D77）与 `→`（应用内跳转，D80）。
+ *
+ * U+2197 后跟 U+FE0E（变体选择符 VS15）——不加它这个码位在部分字体下会按 emoji
+ * 表现渲染成彩色箭头，与正文排版不搭。`→`（U+2192）本身就是文字表现，不需要选择符。
+ *
+ * 两个标记承载的是语义而不是强调（M145）：「会离开本应用」用 ↗︎、「应用内跳转」用 →，
+ * 同一份文档里一眼能分辨哪条链接会把作者带出 Lumir。
  */
 const EXTERNAL_LINK_MARK = "\u2197\uFE0E";
+const INTERNAL_LINK_MARK = "\u2192";
 
 /**
- * 外链渲染的尾部标记：`[title](url)` 渲染为 `title` + `↗︎`，括号与 URL 隐藏
+ * 链接渲染的尾部标记：`[title](target)` 渲染为 `title` + 标记，括号与目标源码隐藏
  *（隐藏走调用方的 replace 装饰，本 widget 只出标记）。标记是纯装饰——链接的
- * 可读文本是 title 本身，URL 经 mark 的 `title` 属性给出（悬停可见、读屏可取），
+ * 可读文本是 title 本身，目标经 mark 的 `title` 属性给出（悬停可见、读屏可取），
  * 因此标记自身 `aria-hidden`，不参与阅读顺序。
  */
-class ExternalLinkMarkWidget extends WidgetType {
-  eq(other: ExternalLinkMarkWidget): boolean {
-    return other instanceof ExternalLinkMarkWidget;
+class LinkMarkWidget extends WidgetType {
+  constructor(readonly mark: string) {
+    super();
+  }
+
+  eq(other: LinkMarkWidget): boolean {
+    return other.mark === this.mark;
   }
 
   toDOM(): HTMLElement {
     const el = document.createElement("span");
     el.className = "cm-lp-link-mark";
     el.setAttribute("aria-hidden", "true");
-    el.textContent = EXTERNAL_LINK_MARK;
+    el.textContent = this.mark;
     return el;
   }
 }
@@ -820,18 +830,27 @@ function collectSyntaxDecorations(
           );
           if (!slot) return false;
         }
-        const url = externalUrlOf(parts.target);
-        if (url === null) return; // 非外链（相对路径 / 锚点）：保持原文，继续遍历 label
+        // M145：装饰与激活解耦——形态只看目标原文（分类在 links.ts），文件存不存在
+        // 是激活时才问的问题。白名单外 scheme 与不可信目标保持原文（能开的才看起来能开）。
+        const form = classifyLinkTarget(parts.target);
+        if (form.kind === "blocked") return;
+        const internal = form.kind === "internal" || form.kind === "anchor";
         // 空显示文本（`[](url)`）只出标记不出 mark：零宽 mark 无意义，也免去「CM 是否
         // 接受零宽 mark 装饰」这个问题。
         if (parts.labelFrom < parts.labelTo) {
+          const title = form.kind === "external" ? form.url : parts.target;
           decos.push(
-            Decoration.mark({ class: "cm-lp-link", attributes: { title: url } }).range(parts.labelFrom, parts.labelTo),
+            Decoration.mark({ class: "cm-lp-link", attributes: { title } }).range(parts.labelFrom, parts.labelTo),
           );
         }
         decos.push(Decoration.replace({}).range(ref.from, parts.labelFrom));
         decos.push(Decoration.replace({}).range(parts.labelTo, ref.to));
-        decos.push(Decoration.widget({ widget: new ExternalLinkMarkWidget(), side: 1 }).range(ref.to));
+        decos.push(
+          Decoration.widget({
+            widget: new LinkMarkWidget(internal ? INTERNAL_LINK_MARK : EXTERNAL_LINK_MARK),
+            side: 1,
+          }).range(ref.to),
+        );
         return;
       }
       return;

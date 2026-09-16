@@ -25,6 +25,12 @@ export interface VaultFixture {
   failures?: Record<string, { code: string; message: string }>;
   /** link_graph_resolve 桩：链接原文 → LinkResolveResult。未命中按 unresolved 应答。 */
   links?: Record<string, unknown>;
+  /**
+   * link_resolve_note 桩（M145）：`${from}\n${target}` → 解析到的 vault 相对路径，
+   * `null` = 解析不到。未收录的键按 null 应答（同 link_graph_resolve 的「未收录即
+   * 未解析」口径）——相对路径的归一语义在 Rust，桩不复制。
+   */
+  noteLinks?: Record<string, string | null>;
   /** wikilink_create 桩：链接原文 → 创建后的 vault 相对路径（同时写入 files）。 */
   creates?: Record<string, string>;
   /** vault_open 桩：选择器"选中"的目标 vault（root + 完整 fixture）；缺省按用户取消应答 null。 */
@@ -46,7 +52,7 @@ export async function stubTauri(page: Page, vault: VaultFixture | null): Promise
     //（与真后端 open_vault 的替换语义对齐）。
     let current = v;
 
-    type Args = { path?: string; from?: string; link?: string; id?: string; title?: string; vault_id?: string; expected_revision?: string; content?: string; dirty?: boolean; force_new?: boolean; event?: string; fields?: Record<string, string>; url?: string };
+    type Args = { path?: string; from?: string; link?: string; target?: string; id?: string; title?: string; vault_id?: string; expected_revision?: string; content?: string; dirty?: boolean; force_new?: boolean; event?: string; fields?: Record<string, string>; url?: string };
     const checkVault = (args: Args) => {
       if (args.vault_id !== (current?.vault_id ?? "fixture-vault")) throw { code: "fixture_contract", message: "vault_id mismatch" };
     };
@@ -62,6 +68,11 @@ export async function stubTauri(page: Page, vault: VaultFixture | null): Promise
     // 桩只记录不打开——场景据此断言「⌘⏎ / ⌘-Click 走的是外链路径、URL 取自正文」，
     // 而不真的唤起浏览器（真机上这条由 Rust 侧 open_external_url 落 link_open 日志）。
     w.__openedUrls = [] as string[];
+    // link_open_path 的调用记录（M145）：vault 内非 md 文件 / 目录交给系统默认应用的
+    // 请求，按调用顺序（同样只记录不打开）。
+    w.__openedPaths = [] as Array<{ from: string; target: string }>;
+    // link_resolve_note 的调用记录（M145）：相对路径 md 的解析请求。
+    w.__noteResolves = [] as Array<{ from: string; target: string }>;
     const handlers: Record<string, (args: Args) => unknown> = {
       log_event: (args) => {
         (w.__logEvents as LogEventRecord[]).push({
@@ -72,6 +83,23 @@ export async function stubTauri(page: Page, vault: VaultFixture | null): Promise
       },
       open_external_url: (args) => {
         (w.__openedUrls as string[]).push(args.url ?? "");
+        return null;
+      },
+      // 相对路径 md 的解析（M145）：语义在 Rust link_graph，桩只查表不计算；
+      // 未收录的键按「解析不到」应答（同 link_graph_resolve 的未命中口径）。
+      link_resolve_note: (args) => {
+        (w.__noteResolves as Array<{ from: string; target: string }>).push({
+          from: args.from ?? "",
+          target: args.target ?? "",
+        });
+        return current?.noteLinks?.[`${args.from}\n${args.target}`] ?? null;
+      },
+      // vault 内非 md / 目录交系统默认应用（M145）：桩只记录请求，不真的交给系统。
+      link_open_path: (args) => {
+        (w.__openedPaths as Array<{ from: string; target: string }>).push({
+          from: args.from ?? "",
+          target: args.target ?? "",
+        });
         return null;
       },
       document_set_dirty: (args) => {
@@ -264,6 +292,20 @@ export async function dirtyReports(page: Page): Promise<boolean[]> {
 /** open_external_url 的调用记录（外链打开请求的实际目标，按调用顺序）。 */
 export async function openedUrls(page: Page): Promise<string[]> {
   return page.evaluate(() => (window as unknown as { __openedUrls: string[] }).__openedUrls);
+}
+
+/** link_open_path 的调用记录（vault 内非 md / 目录交系统默认应用的请求，按调用顺序）。 */
+export async function openedPaths(page: Page): Promise<Array<{ from: string; target: string }>> {
+  return page.evaluate(
+    () => (window as unknown as { __openedPaths: Array<{ from: string; target: string }> }).__openedPaths,
+  );
+}
+
+/** link_resolve_note 的调用记录（相对路径 md 的解析请求，按调用顺序）。 */
+export async function noteResolves(page: Page): Promise<Array<{ from: string; target: string }>> {
+  return page.evaluate(
+    () => (window as unknown as { __noteResolves: Array<{ from: string; target: string }> }).__noteResolves,
+  );
 }
 
 /** vault_remap 的调用记录（前端把用户确认的映射传给后端的证据）。 */

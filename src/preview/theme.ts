@@ -179,9 +179,9 @@ export const livePreviewTheme = EditorView.theme({
     verticalAlign: "super",
   },
 
-  // 外链（M144）：标准 `[title](url)` 渲染为 title + 尾部 ↗︎ 标记，括号与 URL
-  // 源码被 replace 隐藏（装饰不改文档，ADR 0003 §3）。链接色沿用 wikilink 的
-  // accent——设计基线是「朱红留给链接与错误态」。
+  // 标准链接（M144 外链、M145 全形态）：`[title](target)` 渲染为 title + 尾部标记
+  //（↗︎ 会离开本应用 / → 应用内跳转），括号与目标源码被 replace 隐藏（装饰不改文档，
+  // ADR 0003 §3）。链接色沿用 wikilink 的 accent——设计基线是「朱红留给链接与错误态」。
   ".cm-lp-link": { color: "var(--accent)", cursor: "pointer" },
   ".cm-lp-link-mark": {
     color: "var(--accent)",
