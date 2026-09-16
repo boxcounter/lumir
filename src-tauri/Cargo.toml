@@ -29,6 +29,15 @@ notify = "8"
 # 目录选择器：rfd 纯 Rust 原生 dialog，不需要 tauri-plugin-dialog 的
 # tauri.conf.json / capabilities 配置（那不在本 change 的改动面内）。
 rfd = "0.17"
+# 外链打开（M144）：交给系统默认应用（macOS 走 NSWorkspace 等价路径），跨平台语义
+# 由插件持有，不自己拼 `open` 命令。
+#
+# 用插件的 Rust 侧 API（`app.opener().open_url`）而非前端 JS API：这样 webview 对
+# opener 命令的 ACL 保持**默认拒绝**（capabilities 里不加任何 `opener:*` 权限），
+# 唯一入口是本仓自己的 `open_external_url` command——scheme 白名单、诊断埋点、
+# 错误信封都在那一处，webview 里没有任何第二条能绕开校验去开 URL 的路径。
+# 同类取舍先例见上面 rfd 一行。
+tauri-plugin-opener = "2"
 
 [features]
 # 生产构建开关（Tauri 2 官方模板约定，名称必须恰为 custom-protocol）：

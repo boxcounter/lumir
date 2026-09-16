@@ -90,6 +90,8 @@ pub enum LogEventName {
     ConfigWarning,
     /// 后台回调超 16ms 预算的采样。
     SlowCallback,
+    /// 外链打开（M144）：交给系统默认应用的结果。
+    LinkOpen,
 }
 
 impl LogEventName {
@@ -105,6 +107,7 @@ impl LogEventName {
             Self::RenderError => "render_error",
             Self::ConfigWarning => "config_warning",
             Self::SlowCallback => "slow_callback",
+            Self::LinkOpen => "link_open",
         }
     }
 
@@ -133,6 +136,9 @@ impl LogEventName {
             Self::RenderError => &["kind", "stage", "code"],
             Self::ConfigWarning => &["source", "message"],
             Self::SlowCallback => &["name", "ms"],
+            // scheme 只记协议名（http / https / mailto 这类小词表），**不记 URL 原文**
+            //——URL 是文档内容，本模块的隐私边界不允许正文进日志（见模块头）。
+            Self::LinkOpen => &["scheme", "outcome"],
         }
     }
 }
@@ -418,6 +424,22 @@ fn recovery_restored_to(sink: &Sink, path: &str) {
     emit(
         sink,
         Event::new(LogEventName::RecoveryRestored).field("path", path),
+    );
+}
+
+/// Rust 侧埋点：外链打开（`commands::open_external_url`）。`outcome` 取 `opened`
+///（已交给系统默认应用）或 `rejected`（scheme 不在白名单 / 目标不可信）。
+/// 只记 scheme 与结果，不记 URL 原文——URL 是文档内容，落在隐私边界之外。
+pub fn link_open(scheme: &str, outcome: &str) {
+    link_open_to(global(), scheme, outcome);
+}
+
+fn link_open_to(sink: &Sink, scheme: &str, outcome: &str) {
+    emit(
+        sink,
+        Event::new(LogEventName::LinkOpen)
+            .field("scheme", scheme)
+            .field("outcome", outcome),
     );
 }
 

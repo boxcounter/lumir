@@ -39,6 +39,16 @@ const MENU_COMMAND_EVENT: &str = "app:menu_command";
 pub fn run() {
     let started = std::time::Instant::now();
     tauri::Builder::default()
+        // 外链打开（M144）：插件注册后 `app.opener()` 可用（Rust 侧调用不经 ACL）。
+        // `open_js_links_on_click(false)`：插件默认会往 webview 注入一段脚本，把
+        // `<a target=_blank>` 的点击直接开成浏览器——那是绕开本仓 scheme 校验的第二条
+        // 打开路径，且会往页面里装一个全局 click 处理。关掉它，打开只有一条路：
+        // `open_external_url` command。
+        .plugin(
+            tauri_plugin_opener::Builder::new()
+                .open_js_links_on_click(false)
+                .build(),
+        )
         .manage(commands::VaultState::default())
         .manage(commands::DirtyState::default())
         .invoke_handler(tauri::generate_handler![
@@ -53,6 +63,7 @@ pub fn run() {
             commands::document_save,
             commands::document_set_dirty,
             commands::log_event,
+            commands::open_external_url,
             commands::recovery_backup,
             commands::recovery_load,
             commands::recovery_base_revision,

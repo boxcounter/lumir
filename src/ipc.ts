@@ -95,6 +95,17 @@ export function linkGraphResolve(from: string, link: string): Promise<LinkResolv
 export function wikilinkCreate(from: string, link: string): Promise<CreateNoteResult> {
   return invoke<CreateNoteResult>("wikilink_create", { from, link });
 }
+
+/**
+ * 在系统默认应用打开外链（http / https / mailto）。
+ *
+ * scheme 白名单的判定在 Rust 侧（`open_external_url` 的校验是唯一来源）——前端
+ * 只负责把编辑器里读到的 URL 原文交给它，不自行判定能不能开；非法 scheme 返回
+ * `open_url_rejected` 错误信封，前端按人话提示（toast）。
+ */
+export function openExternalUrl(url: string): Promise<void> {
+  return invoke<void>("open_external_url", { url });
+}
 export const vaultRemap = (id: string, path: string): Promise<VaultWorkspace> => invoke<VaultWorkspace>("vault_remap", { id, path });
 
 // ---------------------------------------------------------------------------

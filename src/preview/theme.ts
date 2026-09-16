@@ -179,6 +179,18 @@ export const livePreviewTheme = EditorView.theme({
     verticalAlign: "super",
   },
 
+  // 外链（M144）：标准 `[title](url)` 渲染为 title + 尾部 ↗︎ 标记，括号与 URL
+  // 源码被 replace 隐藏（装饰不改文档，ADR 0003 §3）。链接色沿用 wikilink 的
+  // accent——设计基线是「朱红留给链接与错误态」。
+  ".cm-lp-link": { color: "var(--accent)", cursor: "pointer" },
+  ".cm-lp-link-mark": {
+    color: "var(--accent)",
+    fontSize: "0.8em",
+    marginLeft: "2px",
+    verticalAlign: "super",
+    userSelect: "none",
+  },
+
   // math（KaTeX）：公式本体样式走本地打包的 katex.min.css（继承 currentColor，
   // 随 shell 基线配色适配）；此处只补块级容器与失败降级（可读源码 + 明确失败态）。
   ".cm-lp-math-block": { padding: "4px 0", overflowX: "auto" },
