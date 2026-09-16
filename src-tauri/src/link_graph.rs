@@ -565,6 +565,36 @@ impl LinkGraph {
         Ok(self.resolve(from, &link))
     }
 
+    /// 解析相对路径 md 链接（M145）：`[x](note.md)` 的目标是**相对当前文件所在目录**
+    /// 的路径，与 wikilink 的名称匹配语义（§3.2 的根相对 / 名称 / 后缀三态）不同源，
+    /// 因此不复用 `resolve`：`[x](note.md)` 与 `[[note]]` 指向的可能不是同一个文件。
+    ///
+    /// 命中即返回 vault 相对路径（大小写口径同 §3.1：精确大小写优先于折叠匹配）；
+    /// 无扩展名的目标按 `.md` 补全再试一次（与 wikilink 的 stem 子步同一意图：作者写
+    /// `[配置](配置)` 时指的是那篇笔记）。解析不到返回 None——调用方只提示、不创建。
+    pub fn resolve_relative(&self, from: &str, target: &str) -> Option<String> {
+        let path = relative_vault_path(from, target)?;
+        if let Some(hit) = self.lookup_exact(&path) {
+            return Some(hit);
+        }
+        if !path.to_lowercase().ends_with(".md") {
+            if let Some(hit) = self.lookup_exact(&format!("{path}.md")) {
+                return Some(hit);
+            }
+        }
+        None
+    }
+
+    /// 全路径精确查询（大小写折叠桶内先取精确大小写，再取桶内字典序第一）。
+    fn lookup_exact(&self, path: &str) -> Option<String> {
+        let bucket = self.path_index.get(&path.to_lowercase())?;
+        bucket
+            .iter()
+            .find(|p| p.as_str() == path)
+            .or_else(|| bucket.first())
+            .cloned()
+    }
+
     /// §3.2 候选集构造：根相对精确路径 → 短路径（完整文件名 → 去扩展名）→ 路径后缀。
     /// 大小写不敏感（§3.1），精确大小写匹配者优先于折叠匹配者。
     /// 索引实现（M33）：桶键保证折叠命中，桶内按精确谓词分 exact / folded 两层，
@@ -961,6 +991,45 @@ fn validate_vault_relative(path: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// 标准 Markdown 链接目标 → vault 相对路径（M145）：以 `from` 所在目录为基准归一
+/// `.` 与 `..`，并丢掉 `#fragment`（锚点部分按 M145 口径忽略，不做文档内跳转）。
+/// 以 `/` 开头的目标按 vault 根相对（Obsidian 口径）。
+///
+/// 返回 None 的情况一律是「这个目标不该被当成 vault 内路径去解析」：空路径
+///（`[x]()` 与纯锚点 `[x](#h)`）、含反斜杠（vault 路径统一 `/`）、`..` 越出 vault 根、
+/// 归一后为空（`[x](..)` 这类指目标目录自身）、或来源路径自身带 `..`（基准不可信，
+/// vault 相对路径不该出现它——不猜基准，宁可不解析）。
+pub fn relative_vault_path(from: &str, target: &str) -> Option<String> {
+    let path = target.split('#').next().unwrap_or("").trim();
+    if path.is_empty() || path.contains('\\') {
+        return None;
+    }
+    let mut segments: Vec<&str> = Vec::new();
+    if !path.starts_with('/') {
+        let mut dir = from.split('/');
+        dir.next_back(); // 去掉文件名，只留所在目录
+        for segment in dir.filter(|segment| !segment.is_empty()) {
+            if segment == ".." {
+                return None;
+            }
+            segments.push(segment);
+        }
+    }
+    for segment in path.split('/') {
+        match segment {
+            "" | "." => {}
+            ".." => {
+                segments.pop()?;
+            }
+            other => segments.push(other),
+        }
+    }
+    if segments.is_empty() {
+        return None;
+    }
+    Some(segments.join("/"))
+}
+
 fn parse_single(raw: &str) -> Result<WikiLink, CommandError> {
     let links = parse_links(raw);
     if links.len() != 1 {
@@ -1113,5 +1182,90 @@ mod tests {
         }
         let err = g.create_target("a.md", "[[../../new]]").unwrap_err();
         assert_eq!(err.code, "wikilink_invalid_path");
+    }
+
+    #[test]
+    fn relative_path_normalizes_dot_segments() {
+        // 相对当前文件所在目录归一（`. ` 丢弃、`..` 回退一层）
+        assert_eq!(
+            relative_vault_path("notes/index.md", "../docs/a.md").as_deref(),
+            Some("docs/a.md")
+        );
+        assert_eq!(
+            relative_vault_path("notes/index.md", "./sub/./a.md").as_deref(),
+            Some("notes/sub/a.md")
+        );
+        // 以 `/` 开头 = vault 根相对
+        assert_eq!(
+            relative_vault_path("notes/index.md", "/docs/a.md").as_deref(),
+            Some("docs/a.md")
+        );
+        // 根目录下的文件：目录段为空
+        assert_eq!(
+            relative_vault_path("index.md", "docs/a.md").as_deref(),
+            Some("docs/a.md")
+        );
+        // 锚点部分忽略
+        assert_eq!(
+            relative_vault_path("index.md", "a.md#section").as_deref(),
+            Some("a.md")
+        );
+        // 指目录自身（`[x](./)`）：归一到所在目录，交给系统打开那个文件夹
+        assert_eq!(
+            relative_vault_path("notes/a.md", "./").as_deref(),
+            Some("notes")
+        );
+    }
+
+    #[test]
+    fn relative_path_rejects_unusable_targets() {
+        // 越出 vault 根、含反斜杠、空路径（纯锚点）、归一后为空
+        for target in ["../../etc/passwd.md", "..\\win.md", "#section", "..", ""] {
+            assert_eq!(
+                relative_vault_path("notes/a.md", target),
+                None,
+                "target={target}"
+            );
+        }
+        assert_eq!(relative_vault_path("../a.md", "../b.md"), None);
+    }
+
+    #[test]
+    fn resolve_relative_is_directory_relative_not_name_based() {
+        let mut g = LinkGraph::new();
+        g.upsert("docs/guide.md", None);
+        g.upsert("notes/guide.md", None);
+        g.upsert("notes/index.md", None);
+        // 同名的两篇笔记：相对路径按目录解析，绝不退化成名称匹配
+        assert_eq!(
+            g.resolve_relative("notes/index.md", "guide.md").as_deref(),
+            Some("notes/guide.md")
+        );
+        assert_eq!(
+            g.resolve_relative("notes/index.md", "../docs/guide.md")
+                .as_deref(),
+            Some("docs/guide.md")
+        );
+        // 不存在就如实 unresolved（不猜同名的其它文件）
+        assert_eq!(g.resolve_relative("notes/index.md", "other.md"), None);
+        // 无扩展名按 `.md` 补全（与 wikilink 的 stem 子步同意图）
+        assert_eq!(
+            g.resolve_relative("notes/index.md", "guide").as_deref(),
+            Some("notes/guide.md")
+        );
+    }
+
+    #[test]
+    fn resolve_relative_prefers_exact_case_then_folded() {
+        let mut g = LinkGraph::new();
+        g.upsert("notes/Readme.md", None);
+        assert_eq!(
+            g.resolve_relative("notes/index.md", "Readme.md").as_deref(),
+            Some("notes/Readme.md")
+        );
+        assert_eq!(
+            g.resolve_relative("notes/index.md", "readme.md").as_deref(),
+            Some("notes/Readme.md")
+        );
     }
 }

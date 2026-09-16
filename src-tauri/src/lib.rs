@@ -64,6 +64,8 @@ pub fn run() {
             commands::document_set_dirty,
             commands::log_event,
             commands::open_external_url,
+            commands::link_resolve_note,
+            commands::link_open_path,
             commands::recovery_backup,
             commands::recovery_load,
             commands::recovery_base_revision,

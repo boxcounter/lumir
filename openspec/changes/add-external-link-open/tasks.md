@@ -38,3 +38,20 @@
 - [x] 5.4 真机验收：新增 `scripts/acceptance/scenarios/12-links.md` + fixture `links.md` / `links-wiki.md` / `links-missing.md`；`node scripts/acceptance/run.mjs --check` 全绿（20 场景）；单场景先跑 FAIL 一条**本场景自造的跨步骤断言**（`ax.not` 被上一步残留 toast 命中），改成 `ax.count max:1` 后 PASS
 - [x] 5.5 套件能力：`file` 断言支持 glob 路径（`path` 含 `*` 时取匹配文件里 mtime 最新的一份再断言），`checkScenario` 与 README 断言表同步；`12-links` 据此用 `env:logs/*.jsonl` 断言 `link_open` 落盘 + 日志无 URL 原文。**反向验证**：植入 mtime 更晚且不含该事件的文件 → 如实 FAIL（不取旧文件、断言不空转），移除后 PASS
 - [x] 5.6 全量真机回归 **20/20 PASS（223 断言，约 7 分钟）**，证据归档 `test-results/acceptance/2026-09-16/`（worktree 本地，git 外）；`12-links` 单场景 24 断言全 PASS，含 title↗︎ 在真实 WKWebView 上屏、⌘⏎ 走通 opener（诊断日志 `link_open` `scheme=https` `outcome=opened`，无 URL 原文）
+
+## 6. 形态矩阵补全（M145，2026-09-17 修订）
+
+> 动因：Alex dogfood 反馈「我启动后看到的链接并没有渲染成 title↗︎」——M144 把「相对路径不装饰」写进 Non-goals 时未显式确认，属裁决疏漏。本节把口径扩到全部标准 inline 链接，规格增量（proposal / 两个 spec delta）在同一次修订里就地更新，避免归档后 living spec 出现自相矛盾的两条 requirement。
+
+- [x] 6.1 `src/preview/links.ts`：`classifyLinkTarget` 五类形态分类（external / internal / asset / anchor / blocked），判据只看目标原文；`standardLinkParts` 不变，`externalUrlOf` / `externalLinkAt` 被分类器与 `standardLinkAt` 取代
+- [x] 6.2 `src/preview/livePreview.ts`：`Link` 分支对全部可装饰形态出标记（`LinkMarkWidget` 按类别出 `↗︎` / `→`），blocked 形态保持原文；`title` 属性外链给解码后 URL、其余给目标原文
+- [x] 6.3 `src-tauri/src/link_graph.rs`：`relative_vault_path`（`./` `..` 归一、`/` 开头按 vault 根相对、`#fragment` 忽略、越界即 None）+ `resolve_relative`（全路径精确查询，无扩展名补 `.md`，**不退化到名称匹配**）+ 4 条单测
+- [x] 6.4 `src-tauri/src/commands.rs` + `lib.rs`：新增 command `link_resolve_note`（相对路径 md 解析，解析不到返回 null = 不是错误）与 `link_open_path`（vault 内非 md / 目录交系统默认应用，目标经 `fs_io::resolve_in_vault` 校验：拒绝绝对路径 / `..` / 符号链接逃逸，必须存在）
+- [x] 6.5 `src-tauri/src/logging.rs`：`link_open` 事件白名单扩为 `category` / `outcome` / `scheme`，Rust 侧埋点签名同步改为 `link_open(category, outcome, scheme)`
+- [x] 6.6 `src/main.ts` + `src/ipc.ts`：`linkTargetAt` 按类别返回五态，`followLink` 分流（wikilink / 应用内笔记 → 应用内跳转；外链 / vault 内资产 → 系统默认应用；纯锚点 → toast；blocked → 无操作 + 诊断）；相对路径未解析只 toast、不创建文件
+- [x] 6.7 capabilities **仍不新增任何 `opener:*` 权限**：`link_open_path` 与 `open_external_url` 走同一条最小权限路径（Rust 侧 API，webview 对插件 IPC 默认拒绝）
+- [x] 6.8 `文案-Copy.md` 补 D80–D83（应用内标记、链接目标不存在、锚点不支持、vault 内文件打开失败）并同步「文案实现备注」里 widget 名与文案落点
+- [x] 6.9 视觉：`tests/visual/scenes/render-link.spec.ts` 扩到 12 条用例（分类纯函数、全形态渲染与标记顺序、表格 cell 内外链与内链、源码显露、⌘⏎ 与 ⌘-Click 分流、相对 md 跳转成功 / 未解析、锚点 toast、blocked 无副作用、资产打开与被拒）；fixture `links.md` 扩到 13 条链接；整页基线 `render-link-chromium-darwin.png` 更新（前后对比说明见 review-request）；`stubTauri` 增 `noteLinks` 桩与 `__openedPaths` / `__noteResolves` 记录
+- [x] 6.10 真机验收：新增 fixture `note.md` / `notes.txt` / `links-relative.md` / `links-missing-relative.md` / `links-anchor.md` / `links-asset.md` / `links-blocked.md`，`12-links.md` 扩到 25 步（含四类新形态的渲染与激活、`link_open` 各类别诊断断言）；`node scripts/acceptance/run.mjs --check` 全绿
+- [x] 6.11 验证：`scripts/gate.sh quick` + `scripts/gate.sh visual` 全绿；`node scripts/acceptance/run.mjs 12` 单场景 PASS 并附证据
+- [x] 6.12 `docs/backlog.md` 记录 M145 的核销与两处待 Alex 复核的裁决（非 md 带 ↗︎、锚点带 → 仅 toast）

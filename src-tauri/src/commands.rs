@@ -548,7 +548,11 @@ pub fn open_external_url(app: tauri::AppHandle, url: String) -> Result<(), Comma
     use tauri_plugin_opener::OpenerExt;
 
     let Some((scheme, target)) = openable_external_url(&url) else {
-        crate::logging::link_open(scheme_label(target_text(&url)), "rejected");
+        crate::logging::link_open(
+            "blocked-scheme",
+            "rejected",
+            Some(scheme_label(target_text(&url))),
+        );
         return Err(CommandError::new(
             "open_url_rejected",
             format!("打不开这类链接：{url}——只支持 http、https、mailto"),
@@ -556,14 +560,94 @@ pub fn open_external_url(app: tauri::AppHandle, url: String) -> Result<(), Comma
     };
     match app.opener().open_url(target, None::<&str>) {
         Ok(()) => {
-            crate::logging::link_open(scheme, "opened");
+            crate::logging::link_open("external", "opened", Some(scheme));
             Ok(())
         }
         Err(e) => {
-            crate::logging::link_open(scheme, "failed");
+            crate::logging::link_open("external", "failed", Some(scheme));
             Err(CommandError::new(
                 "open_url_failed",
                 format!("打开链接失败：{e}"),
+            ))
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 相对路径链接（M145，change add-external-link-open 的形态矩阵补全）
+// ---------------------------------------------------------------------------
+
+/// 解析相对路径 md 链接 `[x](note.md)`：以 `from` 所在目录为基准（`./` `..` 归一，
+/// 允许 `..` 只要不越出 vault 根），命中的 vault 相对路径经 link_graph 的文件全集
+/// 判定——语义与 wikilink 的名称匹配不同源，见 `LinkGraph::resolve_relative`。
+///
+/// 返回 `None` = 解析不到（目标不存在 / 越出 vault 根 / 空路径）。**这不是错误**：
+/// 前端只给「链接目标不存在」toast，MUST NOT 创建文件（一键创建是 wikilink 的显式
+/// 动作，相对路径链接不继承它）。`#fragment` 部分按 M145 口径忽略。
+#[tauri::command(rename_all = "snake_case")]
+pub fn link_resolve_note(
+    state: tauri::State<'_, VaultState>,
+    from: String,
+    target: String,
+) -> Result<Option<String>, CommandError> {
+    let inner = state.inner.lock().expect("vault state poisoned");
+    if inner.root.is_none() {
+        return Err(CommandError::new(
+            "vault_not_open",
+            "尚未打开 vault，请先选择目录",
+        ));
+    }
+    Ok(inner.graph.resolve_relative(&from, &target))
+}
+
+/// 在系统默认应用打开 vault 内的非 md 文件 `[x](./doc.pdf)` / 目录 `[x](docs/)`。
+///
+/// 与 `open_external_url` 同一分层与同一条最小权限路径（opener 插件的 IPC 对 webview
+/// 保持默认拒绝，唯一入口是本仓 command）。区别在信任边界：外链校验的是 scheme，
+/// 这里校验的是**目标必须落在 vault 内**——路径归一后交给 `fs_io::resolve_in_vault`
+/// （拒绝绝对路径 / `..` / 符号链接逃逸，且目标必须存在），前缀校验与读取链路同源。
+/// 越界 → `link_path_rejected`，不存在 / 不可访问 → 透传 fs 侧的人话错误。
+#[tauri::command(rename_all = "snake_case")]
+pub fn link_open_path(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, VaultState>,
+    from: String,
+    target: String,
+) -> Result<(), CommandError> {
+    use tauri_plugin_opener::OpenerExt;
+
+    let root = state.root()?;
+    let Some(rel) = link_graph::relative_vault_path(&from, &target) else {
+        crate::logging::link_open("asset", "rejected", None);
+        return Err(CommandError::new(
+            "link_path_rejected",
+            format!("打不开这个目标：{target}——它不在 vault 内"),
+        ));
+    };
+    let abs = match fs_io::resolve_in_vault(&root, &rel) {
+        Ok(abs) => abs,
+        Err(e) => {
+            crate::logging::link_open("asset", "rejected", None);
+            return Err(e);
+        }
+    };
+    let Some(abs) = abs.to_str() else {
+        crate::logging::link_open("asset", "rejected", None);
+        return Err(CommandError::new(
+            "link_path_rejected",
+            format!("打不开这个目标：{rel}——路径含非 UTF-8 字符"),
+        ));
+    };
+    match app.opener().open_path(abs, None::<&str>) {
+        Ok(()) => {
+            crate::logging::link_open("asset", "opened", None);
+            Ok(())
+        }
+        Err(e) => {
+            crate::logging::link_open("asset", "failed", None);
+            Err(CommandError::new(
+                "link_path_failed",
+                format!("打开文件失败：{e}"),
             ))
         }
     }
