@@ -70,15 +70,16 @@
 设计见 [docs/process/real-machine-acceptance.md](process/real-machine-acceptance.md)）；手感/审美项仍归 Alex。
 
 分类依据 = **证据目录里真实 PASS 的场景**，不是「场景写了就算覆盖」。最近一次全量实跑：
-`test-results/acceptance/2026-09-16/` —— **17 场景 / 161 断言 / 16 PASS 1 FAIL**（约 6 分钟，M138；
-同日期目录被本次 run 覆盖，M135 r3 的 15/146 记录不再在该目录里）。唯一 FAIL 是
+**`test-results/acceptance/2026-09-16/`（主 checkout 路径；M138 的 run 在 wt-138 worktree 下的同名目录，
+合并时由 tower 复制回主 checkout——master 上该目录此前是 M135 的 15 场景旧记录）** ——
+**17 场景 / 161 断言 / 16 PASS 1 FAIL**（约 6 分钟，M138）。唯一 FAIL 是
 `08b-autosave-pause` 的「追加输入落在探测串之后」——冲突 toast 出现后盲发的 `m,o,r,e` 四次按键
 都没进编辑器（AX value 里根本没有 `more`），而该场景真正要判的四条冲突期断言（磁盘 sha256 未变 /
 磁盘仍是外部版本 / 内存改动未丢 / 提示未消解）全 PASS。**已排除与 M138 的因果**：把本次 src 改动
 stash 掉重跑，同一断言以同一文本复现 FAIL（2/2 复现，非 flake）；而 M135 tip 在同日证据里该场景
-是 PASS（`wt-135` 证据目录）。属「盲发按键依赖焦点/注入链路、套件 `keys` 动作无回读」这一已知脆弱面
-（对照 worker-search 同日 finding `20260916-worker-search-bug-kimicu-press-key-wkwebview-input-acceptance-keys.md`），
-待套件维护者另开一轮收口。
+是 PASS。归因、复现步骤与修法已落 finding
+`.tower/comms/findings/20260916-worker-render-bug-08b-autosave-pause-do-keys-2-2-keys.md`
+（与 worker-search 的 `press_key` 丢键 finding 同族；套件 `keys` 动作缺回读/重试），待套件维护者另开一轮收口。
 
 **已机验（行为判定落定，有 PASS 证据）**
 

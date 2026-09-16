@@ -2,8 +2,54 @@ import { expect, test } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import { stubTauri } from "./tauri-stub";
 import { readDocument } from "./parity-checks";
+import { degradationNotice } from "../../../src/preview/table";
+import type { TableModel, TableRow } from "../../../src/preview/table";
 
 const fixture = readFileSync(new URL("../fixtures/table-foundation-v2/representative.md", import.meta.url), "utf8");
+
+// 降级归因文案的三条分支（M138）。oversize 与非矩形由页面场景覆盖（第 20 行短行案例 +
+// 超长表 regex）；兜底分支在真实解析路径上不可达——lezer 的 GFM parser 只在 delimiter
+// 行与表头列数一致时才产出 Table（实测 `| a | b | c |` + `| --- | --- |` 根本不出 Table 节点），
+// 所以那条是防御性默认值。这里按 Node 侧直接断言，避免「兜底文案无人验」的静默分支。
+function row(from: number, cells: number, header = false): TableRow {
+  return { from, to: from + 1, header, slots: Array.from({ length: cells }, (_, index) => ({ from: from + index, to: from + index + 1 })) };
+}
+
+function table(overrides: Partial<TableModel>): TableModel {
+  return {
+    from: 0,
+    to: 40,
+    sourceBytes: 0,
+    columns: 3,
+    rows: [row(0, 3, true), row(20, 3)],
+    separator: { from: 8, to: 9 },
+    align: ["left", "left", "left"],
+    rectangular: false,
+    degraded: true,
+    ...overrides,
+  };
+}
+
+test("降级归因文案：oversize / 行数不符 / 兜底三分支", () => {
+  const oversize = table({ reason: "oversize", sourceBytes: 2 * 1024 * 1024 });
+  expect(degradationNotice(oversize, () => 1)).toBe(
+    "表格阅读降级：表格约 2048 KiB，超过 64 KiB 阅读上限——保留原始 Markdown",
+  );
+  // sourceBytes 在超 64KiB 时按 0 记（findTables 的取值口径），此时退回按字符数估算
+  expect(degradationNotice(table({ reason: "oversize", sourceBytes: 0, to: 1536 * 1024 }), () => 1)).toBe(
+    "表格阅读降级：表格约 1536 KiB，超过 64 KiB 阅读上限——保留原始 Markdown",
+  );
+
+  // 首个与表头列数不符的行 → 取该行的文档行号（1 基，由调用方传入的行号解析器给出）
+  const ragged = table({ reason: "non-rectangular", rows: [row(0, 3, true), row(20, 3), row(40, 2)] });
+  expect(degradationNotice(ragged, (pos) => (pos === 40 ? 27 : 21))).toBe(
+    "表格阅读降级：第 27 行单元格数与表头不符（应为 3 列）——保留原始 Markdown",
+  );
+
+  // 兜底：非 oversize 且各行与表头等宽（结构不可识别）也不静默留白
+  const unknown = table({ reason: "non-rectangular", rows: [row(0, 3, true), row(20, 3)] });
+  expect(degradationNotice(unknown, () => 1)).toBe("表格阅读降级：无法识别表格结构——保留原始 Markdown");
+});
 
 test("表格可见行、降级边界、AX、滚动和源码复制", async ({ page, context }) => {
   await context.grantPermissions(["clipboard-read", "clipboard-write"]);
