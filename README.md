@@ -39,12 +39,15 @@ cargo run --release                              # 错误：白屏（缺 custom-
 
 ## 文档地图
 
+agent 会话入口见 [AGENTS.md](AGENTS.md)（门禁自验入口、tower 硬规则、真机复验方法）。
+
 | 目录 | 内容 |
 |---|---|
 | [docs/adr/](docs/adr/) | 架构决策记录（ADR）：跨切面的"为什么"（定位、技术路线、开放策略等） |
 | [openspec/](openspec/) | 功能规格层：living spec 与 change proposal，管"功能做什么" |
 | [docs/specs/](docs/specs/) | 专项规格（如性能测量方法学） |
 | [docs/process/](docs/process/) | 制品流程约定（ADR 生命周期、OpenSpec 工作流） |
+| [docs/backlog.md](docs/backlog.md) | 已知 findings 与待裁决队列（唯一积压载体） |
 
 ADR 与 OpenSpec 的分工：ADR 记跨切面架构决策，OpenSpec 管功能规格；功能变更不产生 ADR，架构转向不写成 proposal（ADR 0004 第 5 条）。
 

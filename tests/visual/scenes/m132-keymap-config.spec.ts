@@ -204,7 +204,7 @@ test("菜单事件通道（ipc.onMenuCommand）：undo 落到同一命令层", a
 });
 
 test("⌘-Click 跟随 wikilink；⌃-Click 让位系统次级点击", async ({ page }) => {
-  const files = { "a.md": "链接：[[target]]\n", "target.md": "# 目标\n\n目标内容。\n" };
+  const files: Record<string, string> = { "a.md": "链接：[[target]]\n", "target.md": "# 目标\n\n目标内容。\n" };
   await stubTauri(page, {
     entries: Object.keys(files).map((path) => ({ path, kind: "file", size: files[path].length, mtime_ms: 0 })),
     files,

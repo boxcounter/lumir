@@ -213,7 +213,9 @@ test('100k密集项完整回调预算与最终标记', async ({ page }, info) =>
   }
   const { p95, max } = summarize(durations);
   await info.attach('complete-callback-durations', { body: JSON.stringify({ p95, max, rounds, durations }), contentType: 'application/json' });
-  expect(p95).toBeLessThan(40);
+  // 预算 60ms（2026-09-16 Alex 裁决放宽自 40ms：master 间歇 p95 51.7ms，四方互证与代码
+  // 改动无关，属环境噪声；随 dogfood 性能专项复核是否回调）。
+  expect(p95).toBeLessThan(60);
   await page.locator('.cm-scroller').evaluate(el => { el.scrollTop = el.scrollHeight; });
   await expect(page.locator('.cm-lp-list-marker').filter({ hasText: '999999999.' })).toHaveText('999999999.[x]');
   expect(await readDocument(page)).toBe(text);

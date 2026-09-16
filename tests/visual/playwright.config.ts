@@ -6,10 +6,12 @@ const port = Number(process.env.LUMIR_VISUAL_PORT ?? 4173);
 
 // 容差集中在此处，全场景共享；单场景需要更严/更松时在断言上覆盖（见 README.md）。
 // - threshold：单个像素通道色差的容忍度（0-1），吸收抗锯齿/字体渲染的机器间抖动
-// - maxDiffPixelRatio：允许不同的像素占总像素的比例上限
+// - maxDiffPixelRatio：允许不同的像素占总像素的比例上限。0.001（2026-09-16 Alex 裁决收紧
+//   自 0.005：1200×800 下 4800px 容差曾让「删左栏 UI」级变化静默假绿，批次二实证）；
+//   残余渲染抖动由 threshold 吸收，删除 UI 元素后须核对相关基线时间戳（卫生检查见 README.md）
 export const tolerance = {
   threshold: 0.2,
-  maxDiffPixelRatio: 0.005,
+  maxDiffPixelRatio: 0.001,
 };
 
 export default defineConfig({

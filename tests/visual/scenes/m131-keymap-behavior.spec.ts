@@ -277,7 +277,10 @@ test("作用域：⌘S 是全局键（焦点不在编辑器也生效），editor
   const before = await caret(page);
 
   // 焦点移出编辑器（body）：editor 作用域的 ⌃A 不得接管（拆分前它是编辑器手柄）
-  await page.locator(".cm-content").evaluate((el) => (el as HTMLElement).ownerDocument.activeElement instanceof HTMLElement && (el as HTMLElement).ownerDocument.activeElement.blur());
+  await page.locator(".cm-content").evaluate((el) => {
+    const active = el.ownerDocument.activeElement;
+    if (active instanceof HTMLElement) active.blur();
+  });
   expect(await page.evaluate(() => document.activeElement?.className ?? "")).not.toContain("cm-content");
   await page.keyboard.press("Control+a");
   await page.waitForTimeout(60);
