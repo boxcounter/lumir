@@ -35,4 +35,4 @@ Alex 2026-09-16 裁决采纳（原话「好，采纳。」），执行口径由 
 - 影响的文档：`docs/specs/table-reading.md`（§2 / §9）、`docs/backlog.md`（裁决与落地记录）。
 - 影响的测试/验收：`tests/visual/scenes/table-foundation-v2.spec.ts`、`tests/visual/fixtures/table-foundation-v2/representative.md`、`scripts/acceptance/scenarios/render-table-degrade.md`、`scripts/acceptance/fixtures/render-table-degrade.md`。
 - 关联约束：ADR 0003 §3（装饰不改写文档）、ADR 0002 §2（单内核双模式）、ADR 0004 第 5 条（功能变更走 OpenSpec）。
-- 视觉基线：本 change 不触达任何已入库截图场景的 fixture（含表的 fixture 均无 `toHaveScreenshot` 断言），预期基线零变化；若实际出现差异，按 [tests/visual/README.md](../../../tests/visual/README.md) 的更新纪律逐场景核对后再更新。
+- 视觉基线：预期零变化，实测一致（204 场景全绿、未 `--update`）。依据是**截图场景里没有短行/多列表**，不是「表格从不进截图」——9 个截图场景文件（13 条 `toHaveScreenshot`）逐条核对，唯一含表的是 [math.spec.ts](../../../tests/visual/scenes/math.spec.ts) 的内联文档 `MATH_MD`（`| 公式 | 值 |`，表头 2 列、数据行 2 格），那是矩形表，渲染不受本次收窄影响（补空列只对 cell 数少于表头的短行生效）；含表 fixture（`table-foundation-v2`、`table-header-layout`）本身没有截图断言。若实际出现差异，按 [tests/visual/README.md](../../../tests/visual/README.md) 的更新纪律逐场景核对后再更新。
