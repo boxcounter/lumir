@@ -1,6 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import { findMathSpans, mathRenderCacheSize, renderMath } from "../../../src/preview/math";
-import { stubTauri } from "./tauri-stub";
+import { logEvents, stubTauri } from "./tauri-stub";
 
 // Math/LaTeX（foundation-markdown 用户裁决，M105 选型 KaTeX）：
 // 词法 span 定位单测（findMathSpans 是前端持有的词法逻辑）+ 渲染缓存 +
@@ -131,6 +131,13 @@ test("行内与块级渲染，失败回落可读源码，代码上下文排除",
   await expect(page.locator(".cm-lp-table .cm-lp-math-block")).toHaveCount(0);
 
   await expect(page.locator(".katex")).toHaveCount(3); // 行内 2（正文 + 表内）+ 块级 1，仅此而已
+
+  // 诊断埋点（M136）：失败公式必须**经 log_event 转发** render_error，且只记分类后的
+  // 结果——KaTeX 原始错误文本带公式尾部片段（文档内容），不得进日志。失败结果入缓存，
+  // 同一公式只记一条；成功渲染不记。
+  await expect
+    .poll(async () => (await logEvents(page, "render_error")).map((e) => e.fields))
+    .toEqual([{ kind: "katex", stage: "render", code: "parse_error" }]);
 
   await expect(page).toHaveScreenshot("math-rendering.png");
 });

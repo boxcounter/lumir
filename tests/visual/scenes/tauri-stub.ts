@@ -4,6 +4,17 @@ import type { Page } from "@playwright/test";
 // __TAURI_INTERNALS__ 形状打桩（参考 node_modules/@tauri-apps/api/mocks.js），
 // invoke 走 fixture 路由；listen 经 transformCallback/plugin:event|listen 注册，
 // 场景里用 window.__fireFsEvent 模拟后端 emit fs:entry_changed。
+//
+// log_event（前端诊断埋点出口，见 src/diagnostics.ts）也在此路由：桩只**记录**
+// 调用参数，不校验白名单——事件名 / 字段名的白名单唯一来源是 Rust 侧
+//（src-tauri/src/logging.rs），在桩里复制一份必然漂移。场景据此断言「正确时机
+// 发出正确事件」，落盘语义与拒绝语义由 Rust 单测覆盖。
+
+/** 前端经 log_event 转发的一条诊断事件（原名 + 字段，未校验白名单）。 */
+export interface LogEventRecord {
+  event: string;
+  fields: Record<string, string>;
+}
 
 export interface VaultFixture {
   entries: unknown[];
@@ -35,7 +46,7 @@ export async function stubTauri(page: Page, vault: VaultFixture | null): Promise
     //（与真后端 open_vault 的替换语义对齐）。
     let current = v;
 
-    type Args = { path?: string; from?: string; link?: string; id?: string; title?: string; vault_id?: string; expected_revision?: string; content?: string; dirty?: boolean; force_new?: boolean };
+    type Args = { path?: string; from?: string; link?: string; id?: string; title?: string; vault_id?: string; expected_revision?: string; content?: string; dirty?: boolean; force_new?: boolean; event?: string; fields?: Record<string, string> };
     const checkVault = (args: Args) => {
       if (args.vault_id !== (current?.vault_id ?? "fixture-vault")) throw { code: "fixture_contract", message: "vault_id mismatch" };
     };
@@ -45,7 +56,16 @@ export async function stubTauri(page: Page, vault: VaultFixture | null): Promise
     w.__configGets = 0;
     // vault_remap 的调用记录（场景断言前端把用户确认的映射传给后端）。
     w.__remapCalls = [] as Array<{ id?: string; path?: string }>;
+    // log_event 的转发记录（M136）：前端埋点发出的每条诊断事件，按发出顺序。
+    w.__logEvents = [] as LogEventRecord[];
     const handlers: Record<string, (args: Args) => unknown> = {
+      log_event: (args) => {
+        (w.__logEvents as LogEventRecord[]).push({
+          event: args.event ?? "",
+          fields: args.fields ?? {},
+        });
+        return null;
+      },
       document_set_dirty: (args) => {
         (w.__dirtyReports as boolean[]).push(args.dirty ?? false);
         return null;
@@ -218,6 +238,14 @@ export async function fireMenuCommand(page: Page, command: string): Promise<void
 /** config_get 的调用计数（等「配置已加载」用；M132 的 [keys] 覆盖在配置到位后生效）。 */
 export async function configGets(page: Page): Promise<number> {
   return page.evaluate(() => (window as unknown as { __configGets: number }).__configGets);
+}
+
+/** 前端已转发的诊断事件（按发出顺序）；`event` 选传，只看某一类事件。 */
+export async function logEvents(page: Page, event?: string): Promise<LogEventRecord[]> {
+  const all = await page.evaluate(
+    () => (window as unknown as { __logEvents: LogEventRecord[] }).__logEvents,
+  );
+  return event === undefined ? all : all.filter((e) => e.event === event);
 }
 
 /** document_set_dirty 的上报记录（前端 dirty 镜像给后端的证据）。 */
