@@ -95,7 +95,7 @@ steps:
 | `clickInNode` | `target`、`dx`、`dy` | 点「某个有 bbox 的节点内部」的相对位置（如 `AXTable`） |
 | `clickEditor` | `dx`（默认 40）、`dy`（默认 6） | 点编辑器顶部建立渲染层焦点（编辑器内元素无 AX bbox，只能按坐标） |
 | `focusWindow` | `retries` | 确保目标窗口在前台（键盘场景的前台纪律，见上） |
-| `key` / `keys` | `key` / `keys: [...]`、`gapMs` | 键盘注入（`ctrl+n`、`cmd+s`、`cmd+/` …） |
+| `key` / `keys` | `key` / `keys: [...]`、`gapMs` | 键盘注入（`ctrl+n`、`cmd+s`、`cmd+/` …）。`keys` 对**整串都是可打印单字符**的序列额外做回读 + 有限重试（≤3）；chord / 混合序列 / 无可读目标一律保持盲发不重试（判定边界见「已知边界」） |
 | `type` | `text`、`clear` | 输入到编辑器（内部先真实点击聚焦，避免落陈旧选区） |
 | `sleep` | `ms` | 等待 |
 | `record` | `as`、`file` | 记下文件 sha256/mtime，供 `changedSince`/`unchangedSince`/`mtimeNewerThan` 比较 |
@@ -149,6 +149,11 @@ Alex 抽审路径：先看 `summary.md`，再进 FAIL 场景看 `steps.md` + `sh
 - **AX 解析用「引号奇偶」判多行 value 的边界**：`AXTextArea` 的文档文本跨行展开，解析器按引号是否
   闭合决定续行到哪。若**文档内容本身含 `"`**，value 会被从引号处截断，导致 `editor.has` 假 FAIL /
   `editor.not` 假 PASS。当前 fixtures 不含引号；加含引号的 fixture 前要先修 `lib/ax.mjs` 的启发式。
+- **AX 的 `(focused)` 标记**：KimiCU 在 AX 文本里给当前聚焦节点标 `(focused)`（多行 value 落在**末行**上，
+  故 `lib/ax.mjs` 在合并后的整段里找），解析成 `node.focused`——`keys` 动作的落点判定靠它。局限：
+  如果**文档正文本身含 `(focused)` 字样**，该节点会被误标（当前 fixtures 不含）；另外输入法/多窗口
+  切换瞬间 AX 的 focused 标记可能滞后于 DOM 焦点，此时回读会盯在旧目标上——按「按键未落地/部分落地」
+  报错，不会静默放过。
 - **文本注入偶发不落地**：KimiCU 的 `type_text` 对 WKWebView 偶发返回 `ok` 但编辑器没变（M134 实证，
   M135 r2 也撞到一次：07b 首轮因输入没落地而 FAIL，重跑即过）。`do: type` 因此做「注入 → 回读校验 →
   没落地才重试（最多 3 次）」，并把重试次数写进证据（`type 注入第 N 次才落地`）。
@@ -156,6 +161,30 @@ Alex 抽审路径：先看 `summary.md`，再进 FAIL 场景看 `steps.md` + `sh
   这样两种失败模式都不会假绿——整段没落 → 次数仍是 N（报错）；前缀型 partial landing 后重试拼接
   （`MEM-` + `MEM-EDIT-2` → `MEM-MEM-EDIT-2`）→ 次数为 N+2（报错，不放行）。
   注意：仅靠 `editor.has(want)` 子串匹配挡不住第二种，必须用次数（r2 评审指出的漏洞）。
+- **`press_key` 的逐键注入会整批丢键（原生 input 与编辑器 contenteditable 都有）**：M139 往搜索
+  panel 的原生 `<input>` 逐字符注入 `needle` 只落地 `ndl`（三个 `e` 全丢）、`a..z` 只落地
+  `abcdghijkl`（丢 e、f 与 m..z），且 app 侧 keydown 探针证明被丢的键**从未到达 DOM**（收到的
+  keydown 序列就是 `N,D,L`，输入框依次 `[n][nd][ndl]`）；M138 在 08b 里对编辑器盲发 `m,o,r,e`
+  **2/2 稳定全丢**（两次文本逐字相同），`git stash push -- src/preview src/style.css` 对照后仍复现
+  （排除产品代码因果）——因此那条「contenteditable 稳定落地」的旁证被证伪，编辑器路径同样会整批丢。
+  `do: keys` 的对策是回读 + 有限重试（≤3），判定边界（M140 定死，别扩大适用面）：
+  - **只对「整串都是单个可打印字符」的 keys 做回读/重试**。chord（`cmd+s`/`ctrl+n`/`escape`）没有
+    文本语义，重试还会重复触发副作用（⌘S 再存一次盘、⌃N 再挪一次光标），一律保持原路径盲发。
+  - **回读目标按 AX 的 `(focused)` 标记选**：标记在谁身上键盘就往谁落。`AXTextArea` → 读 `.value`
+    （编辑器路径）；`AXTextField`/`AXSearchField` → 读 `.value`（原生 input 路径）；焦点落在按钮这类
+    非文本节点上时回读它自己的可读字段，如实判成「焦点不在文本目标上」。没有 focused 标记时才退到
+    「编辑器优先、其次第一个可读输入框」。目标取不到 → 保持盲发并留一条 note。
+  - **判据仍是出现次数**（注入前 N、注入后须恰为 N+1），且**只在目标字节完全没变时才重试**：整批丢键
+    正是本重试要修的；值变了却没凑齐目标串（partial landing）**直接报错不重试**——再注入整串会原地拼接
+    出脏文本（M140 真机复现：`needle` 被丢成 `ndl`，按次数口径重试会拼成 `ndlneedle` 并通过 N+1 校验，
+    而子串断言照样绿，正是本口径要挡的假绿）。重试次数写进证据（`keys「more」第 N 次注入才落地`）。
+  - **无效的缓解**（M140 实测过，别再试）：加长 `gapMs`（250→700）、注入前 settle 2.5s、坐标点回
+    编辑器（连跑 5 次全 FAIL）、补一个 `⌘→` 归位。丢的是注入链路本身，不是节奏或光标位置。
+- **冲突待决态下 `press_key` 丢键而 `type_text` 仍可用**（M140 实证，08b 的现场）：`⌘S` 提出保存冲突后，
+  同一编辑器上 `press_key` 的可打印序列连续 6 次「未落地」（工具自报 `ok/occluded=false`），而
+  `do: type`（type_text）在同一现场稳定落地。08b 的「冲突期间继续输入」因此走 `do: type`，并把落点
+  设计成对「光标保留」与「光标被重置到文档末尾」两种 app 行为都成立：探测串先追加到文档末尾，再断言
+  紧跟其后的追加——落点跑到别处就 FAIL，不是恒真断言。
 - **编辑器不可读 ≠ 文档为空**：modal（⌘/ 键位面板、对话框）打开期间 AX 快照里**没有 AXTextArea**，
   此时 `editor.*` 一律记 FAIL，`recordEditor` 直接报错——否则负向断言与逐字节比较会在 `"" === ""`
   上空转假绿（r2 评审实证）。断言需要读文档时，基线要在 modal 打开前记录、关闭后比较。
