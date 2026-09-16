@@ -39,6 +39,8 @@ export function checkScenario(scenario) {
       else if (!EXPECT_KINDS.has(kinds[0])) push(`${at} expect[${j}] 未知断言 ${kinds[0]}`);
       else if (kinds[0] === "file" && !exp.file.path) push(`${at} expect[${j}] file 断言缺 path`);
       else if (kinds[0] === "glob" && (!exp.glob.dir || !exp.glob.pattern)) push(`${at} expect[${j}] glob 断言缺 dir/pattern`);
+      else if (kinds[0] === "ax" && !["has", "not", "count", "focused"].some((k) => exp.ax[k] !== undefined))
+        push(`${at} expect[${j}] ax 断言缺 has/not/count/focused（写错字段名会静默变成恒真断言）`);
     }
   }
   return problems;
@@ -192,6 +194,17 @@ export async function runScenario(ctx, scenario) {
       const ax = state.ax ?? (await readAx(cu, ctx.pid));
       state.ax = ax;
       const spec = expect.ax;
+      if (spec.focused !== undefined) {
+        // 焦点断言走**解析结果**而不是 AX 原始文本：原始文本上的正则没有节点边界意识，
+        // `AXTextArea[\s\S]*?\(focused\)` 这类写法在 `(focused)` 落在后面的节点上时照样匹配
+        // （r1 评审实证：冲突 toast 的 AXButton 就在 AXTextArea 之后）。
+        // 判定：AX 里**恰有一个** focused 节点，且它的 role 命中 spec.focused（子串或 /…/ 正则）。
+        const m = matcher(spec.focused);
+        const focused = ax.nodes.filter((n) => n.focused);
+        const roles = focused.map((n) => n.role).join(",") || "无";
+        if (focused.length === 1 && m.test(focused[0].role)) return pass(label, `focused=${roles}`);
+        return fail(`${label}（期望唯一 focused 节点为 ${m.show}，实际 focused=${roles}，共 ${focused.length} 个）`, "", ax);
+      }
       if (spec.has !== undefined) {
         const m = matcher(spec.has);
         if (m.test(ax.text)) return pass(label);
@@ -209,7 +222,7 @@ export async function runScenario(ctx, scenario) {
         const ok = (exact === undefined || n === exact) && (min === undefined || n >= min) && (max === undefined || n <= max);
         return ok ? pass(label, `命中 ${n} 次`) : fail(`${label}（期望命中 ${exact ?? `${min ?? ""}..${max ?? ""}`}，实际 ${n}）`, "", ax);
       }
-      return fail(`${label}（ax 断言缺少 has/not/count）`, "", ax);
+      return fail(`${label}（ax 断言缺少 has/not/count/focused）`, "", ax);
     }
     if (expect.editor) {
       const spec = expect.editor;
@@ -656,7 +669,15 @@ async function doAction(step, { ctx, cu, scenario, vars, pid, evidence }) {
 function describeExpect(expect) {
   if (expect.ax) {
     const s = expect.ax;
-    return `AX ${s.has !== undefined ? `含 ${matcher(s.has).show}` : s.not !== undefined ? `不含 ${matcher(s.not).show}` : JSON.stringify(s)}`;
+    return `AX ${
+      s.has !== undefined
+        ? `含 ${matcher(s.has).show}`
+        : s.not !== undefined
+          ? `不含 ${matcher(s.not).show}`
+          : s.focused !== undefined
+            ? `焦点在 ${matcher(s.focused).show}`
+            : JSON.stringify(s)
+    }`;
   }
   if (expect.editor) return `编辑器 ${expect.editor.has !== undefined ? `含 ${matcher(expect.editor.has).show}` : `不含 ${matcher(expect.editor.not).show}`}`;
   if (expect.file) return `文件 ${expect.file.path} ${JSON.stringify(Object.keys(expect.file).filter((k) => k !== "path" && k !== "label"))}`;

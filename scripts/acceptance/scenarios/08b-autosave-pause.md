@@ -16,7 +16,7 @@ steps:
       - label: 输入已进入编辑器
         editor: { has: "PAUSE-PROBE" }
       - label: 探测串落在文档末尾（下面「紧跟其后」的追加断言以此为落点）
-        editor: { has: "/PAUSE-PROBE[\\s\\S]*$/" }
+        editor: { has: "/PAUSE-PROBE(?![\\s\\S])/" }
   - name: 外部改写磁盘（制造冲突前提）
     do: vaultWrite
     file: plain.md
@@ -41,10 +41,12 @@ steps:
   - name: 注入前确认键盘落点
     # M140：冲突 toast 出现后不假设注入落点，先按键盘场景的前台纪律复查窗口焦点，
     # 再用 AX 的 focused 标记证明「键盘落点 = 编辑器」——落点可证，就不再靠假设。
+    # 断言用解析结果（ax.focused）而不是 AX 原始文本上的正则：原始文本的正则没有节点边界，
+    # `(focused)` 落在 AXTextArea 之后的节点上（如冲突 toast 的按钮）也会假阳性（r1 评审实证）。
     do: focusWindow
     expect:
       - label: AX 焦点标记在编辑器上（键盘注入落点可证）
-        ax: { has: "/AXTextArea[\\s\\S]*?\\(focused\\)/" }
+        ax: { focused: "AXTextArea" }
   - name: 冲突待决期间继续输入（紧跟在探测串之后）
     # 为什么用 type 而不是盲发 press_key（M138 现场 + M140 复验，详见 README「已知边界」）：
     # 本状态下 press_key 的可打印字符序列会**整批丢键**（连跑 6 次「按键未落地」，工具返回

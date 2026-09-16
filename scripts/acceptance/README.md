@@ -109,13 +109,16 @@ steps:
 
 | 形态 | 字段 | 说明 |
 |---|---|---|
-| `ax` | `has` / `not` / `count:{pattern,exact,min,max}` | 在 AX 树文本上匹配 |
+| `ax` | `has` / `not` / `count:{pattern,exact,min,max}` / `focused` | `has`/`not`/`count` 在 AX 树**文本**上匹配；`focused: "AXTextArea"` 走**解析结果**——要求 AX 里恰有一个 focused 节点且其 role 命中（键盘落点类断言用这个，别用跨节点的正则，见「已知边界」） |
 | `editor` | `has` / `not` / `unchangedSince` / `changedSince` | 在编辑器文档文本（AXTextArea.value）上匹配；`*Since` 引用 `recordEditor` 记的基线，做逐字节比较 |
 | `file` | `path`、`exists`、`has`、`not`、`changedSince`、`unchangedSince`、`mtimeNewerThan` | `path` 相对验收 vault；`env:` 前缀指隔离配置目录；`xxxSince` 引用 `record` 记下的基线 |
 | `glob` | `dir`、`pattern`、`min`/`exact` | 文件名由 app 决定的产物（崩溃备份、另存副本）用 glob 断言 |
 | `shot` | 名称 | 截图 + AX dump 留档 |
 
-匹配值：字符串按**子串**；`/.../` 包起来按正则。
+匹配值：字符串按**子串**；`/.../` 包起来按正则。注意**正则一律带 `m` flag**（`lib/execute.mjs` 的 `matcher()`），
+所以 `^`/`$` 是**行**边界而不是字符串边界：要断言「文档末尾」得写 `(?![\\s\\S])`（负向先行断言后面没有字符）。
+M140 r1 评审实证：`/PAUSE-PROBE[\\s\\S]*$/` 在 `m` 下恒真（`[\s\S]*` 能吞到末尾、`$` 恰好也成立），
+探测串在文档中部照样 PASS——这类「看着更强、其实等价于子串」的断言是本套件最该盯的假绿形态。
 
 ## 证据布局（`test-results/acceptance/<日期>/`，git 外）
 
@@ -150,8 +153,11 @@ Alex 抽审路径：先看 `summary.md`，再进 FAIL 场景看 `steps.md` + `sh
   闭合决定续行到哪。若**文档内容本身含 `"`**，value 会被从引号处截断，导致 `editor.has` 假 FAIL /
   `editor.not` 假 PASS。当前 fixtures 不含引号；加含引号的 fixture 前要先修 `lib/ax.mjs` 的启发式。
 - **AX 的 `(focused)` 标记**：KimiCU 在 AX 文本里给当前聚焦节点标 `(focused)`（多行 value 落在**末行**上，
-  故 `lib/ax.mjs` 在合并后的整段里找），解析成 `node.focused`——`keys` 动作的落点判定靠它。局限：
-  如果**文档正文本身含 `(focused)` 字样**，该节点会被误标（当前 fixtures 不含）；另外输入法/多窗口
+  故 `lib/ax.mjs` 在合并后的整段里找），解析成 `node.focused`——`keys` 动作的落点判定与
+  `ax: { focused: "AXTextArea" }` 断言都读它。**不要用 AX 原始文本上的正则做落点断言**：正则没有节点
+  边界，`AXTextArea[\s\S]*?\(focused\)` 在 `(focused)` 落在后面的节点（冲突 toast 的按钮等）上照样
+  匹配（r1 评审实证）；`focused` 形态要求**恰一个** focused 节点且 role 命中，堵死这条假阳性路径。
+  局限：如果**文档正文本身含 `(focused)` 字样**，该节点会被误标（当前 fixtures 不含）；另外输入法/多窗口
   切换瞬间 AX 的 focused 标记可能滞后于 DOM 焦点，此时回读会盯在旧目标上——按「按键未落地/部分落地」
   报错，不会静默放过。
 - **文本注入偶发不落地**：KimiCU 的 `type_text` 对 WKWebView 偶发返回 `ok` 但编辑器没变（M134 实证，
