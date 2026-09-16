@@ -11,7 +11,7 @@ import {
   setMermaidLoaderForTests,
   setMermaidTimeoutsForTests,
 } from "../../../src/preview/mermaid";
-import { stubTauri } from "./tauri-stub";
+import { logEvents, stubTauri } from "./tauri-stub";
 
 // Mermaid 图表渲染（foundation-markdown 用户裁决，M105 选型 mermaid 官方包）：
 // Node 侧单测（缓存/降级/块定位，假 mermaid 注入，不依赖 DOM）+ UI 场景
@@ -206,6 +206,13 @@ test("渲染成功，失败回落完整原文，普通代码块不误判", async
 
   // 普通代码块含 mermaid 字样：保持代码行，不渲染
   await expect(page.locator(".cm-lp-codeblock-line").filter({ hasText: "const mermaid" })).toHaveCount(1);
+
+  // 诊断埋点（M136）：降级路径必须**经 log_event 转发** render_error，且只记分类后的
+  // 结果——原始错误文本（含图表源码）不得进日志。kind/stage/code 由 src/preview/mermaid.ts
+  // 给出，白名单在 src-tauri/src/logging.rs。失败结果入缓存，成功图表不记。
+  await expect
+    .poll(async () => (await logEvents(page, "render_error")).map((e) => e.fields))
+    .toEqual([{ kind: "mermaid", stage: "render", code: "render_failed" }]);
 
   await expect(page).toHaveScreenshot("mermaid-rendering.png");
 });

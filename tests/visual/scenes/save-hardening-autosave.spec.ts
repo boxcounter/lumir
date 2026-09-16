@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 import type { Page } from "@playwright/test";
-import { DEMO_VAULT, dirtyReports, externalWrite, fileText, fireFsEvent, stubTauri } from "./tauri-stub";
+import { DEMO_VAULT, dirtyReports, externalWrite, fileText, fireFsEvent, logEvents, stubTauri } from "./tauri-stub";
 
 // M127 自动保存与崩溃备份：自动保存按「停止输入 2s」debounce 落盘；dogfood 核心场景
 // （Lumir ↔ Obsidian 来回）里存在未解决冲突 / 外部修改待决时自动保存必须暂停，不得
@@ -132,6 +132,12 @@ test("未解决冲突时自动保存暂停：不硬冲 CAS，dirty 内容落崩�
   await expect(page.locator(".lumir-toast", { hasText: "保存冲突" })).toBeVisible();
   const afterManualSave = await saveCalls(page);
   expect(afterManualSave).toBe(1);
+
+  // 诊断埋点（M136）：冲突确立即经 log_event 转发一条 autosave_paused。跃迁语义——
+  // 只在暂停集合由空变非空时记，暂停期间每 2s 一次的 reconcile 不重复灌日志。
+  await expect
+    .poll(async () => (await logEvents(page, "autosave_paused")).map((e) => e.fields))
+    .toEqual([{ path: "README.md", reason: "conflict" }]);
 
   // 冲突未处置期间继续输入并等过 debounce：自动保存 MUST 暂停（不得重试 CAS）。
   await content.click();
