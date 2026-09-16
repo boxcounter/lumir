@@ -12,6 +12,7 @@
 import { StateEffect } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import type { FsChangeKind } from "./bindings/FsChangeKind";
+import { logEvent } from "./diagnostics";
 import type { EditorHandle } from "./editor";
 import {
   documentSave,
@@ -114,6 +115,23 @@ export function createSaveController(deps: SaveControllerDeps): SaveController {
   /** 崩溃备份恢复提示的浮条（换 vault 时整批撤下，避免提示指向旧 vault）。 */
   const recoveryPrompts = new Set<HTMLElement>();
 
+  /** 暂停自动保存 + 诊断埋点：只在**跃迁**（暂停集合从空变非空）时记一条，
+   *  否则暂停期间每 2s 一次 reconcile 会把日志灌满。 */
+  function pauseAutosave(path: string, reason: string): void {
+    const transition = autosavePaused.size === 0;
+    autosavePaused.add(reason);
+    if (transition) logEvent("autosave_paused", { path, reason });
+  }
+
+  /** 暂停态解除（同一文档重新可自动保存）+ 诊断埋点。文档切换 / vault 复位经
+   *  cancelScheduledState 清空暂停集合时**不记**：那是「上一份文档的处置随文档一起
+   *  作废」，不是自动保存恢复——记成 resumed 会误导读日志的人。 */
+  function resumeAutosave(path: string, reason: string): void {
+    if (autosavePaused.size === 0) return;
+    autosavePaused.clear();
+    logEvent("autosave_resumed", { path, reason });
+  }
+
   function saveErrorMessage(e: unknown): string {
     if (isCommandError(e)) return SAVE_ERROR_HINTS[e.code] ?? `保存失败：${e.message}`;
     return `保存失败：${errorMessage(e)}`;
@@ -126,6 +144,8 @@ export function createSaveController(deps: SaveControllerDeps): SaveController {
   }
 
   function cancelScheduledState(): void {
+    // 直接 clear 而不过 resumeAutosave：这里的解除是「上一份文档的处置随文档一起
+    // 作废」（切文件 / 切 vault），不是自动保存对当前文档恢复可用，不该记 resumed。
     autosavePaused.clear();
     cancelReconcile();
   }
@@ -218,7 +238,7 @@ export function createSaveController(deps: SaveControllerDeps): SaveController {
       displayedRevision = revision;
       if (editor.view.state.doc.toString() === content) {
         editor.markClean();
-        autosavePaused.clear(); // 已与磁盘同步：冲突/外部修改待决状态一并解除
+        resumeAutosave(path, "saved"); // 已与磁盘同步：冲突/外部修改待决状态一并解除
         void recoveryDiscard(path).catch(() => {}); // 保存成功即清除崩溃备份
         toast(auto ? "已自动保存" : "已保存");
         return true;
@@ -229,10 +249,10 @@ export function createSaveController(deps: SaveControllerDeps): SaveController {
       if (isCommandError(e) && e.code === "document_conflict") {
         // CAS 失败：重试必败（revision 已变），纯文案会把用户修改锁死在内存——
         // dirtyGuard 与退出守卫又堵死切换/退出，必须给逃生口（M124）。
-        autosavePaused.add("conflict");
+        pauseAutosave(path, "conflict");
         showConflictPrompt(path);
       } else if (isCommandError(e) && e.code === "fs_not_found") {
-        autosavePaused.add("not-found");
+        pauseAutosave(path, "not-found");
         showNotFoundPrompt(path);
       } else {
         toast(saveErrorMessage(e));
@@ -283,7 +303,7 @@ export function createSaveController(deps: SaveControllerDeps): SaveController {
       displayedRevision = revision;
       if (editor.view.state.doc.toString() === content) {
         editor.markClean();
-        autosavePaused.clear();
+        resumeAutosave(path, "force_saved");
         void recoveryDiscard(path).catch(() => {});
         toast("已强制覆盖保存");
       } else {
@@ -291,11 +311,11 @@ export function createSaveController(deps: SaveControllerDeps): SaveController {
       }
     } catch (e) {
       if (isCommandError(e) && e.code === "document_conflict") {
-        autosavePaused.add("conflict");
+        pauseAutosave(path, "conflict");
         showConflictPrompt(path);
       } else if (isCommandError(e) && e.code === "fs_not_found") {
         // 冲突处置期间文件又被外部删除：同样走另存出口。
-        autosavePaused.add("not-found");
+        pauseAutosave(path, "not-found");
         showNotFoundPrompt(path);
       } else {
         toast(saveErrorMessage(e));
@@ -326,7 +346,7 @@ export function createSaveController(deps: SaveControllerDeps): SaveController {
         // 缓冲内容已落到新文件，本地 dirty 处置完毕——否则 openFile 的 dirtyGuard
         // 会拦下这次切换，用户停在已删除文件上。
         editor.markClean();
-        autosavePaused.clear();
+        resumeAutosave(fromPath, "saved_as_new");
         // 旧路径的备份随内容迁走（旧文件已被外部删除，其备份不再可恢复）。
         void recoveryDiscard(fromPath).catch(() => {});
         await deps.openFile(created, "md");
@@ -378,7 +398,7 @@ export function createSaveController(deps: SaveControllerDeps): SaveController {
   /** 重新载入（放弃我的修改）：冲突处置与 watch 重载共用的入口，给出完成反馈。 */
   async function discardAndReload(path: string): Promise<void> {
     if (await reloadDisplayedFile(path)) {
-      autosavePaused.clear(); // 内容已回到磁盘版本，暂停态随冲突一并解除
+      resumeAutosave(path, "reloaded"); // 内容已回到磁盘版本，暂停态随冲突一并解除
       toast("已重新载入磁盘内容");
     }
   }
@@ -391,16 +411,24 @@ export function createSaveController(deps: SaveControllerDeps): SaveController {
    * reloadDisplayedFile 的 revision 比对丢弃；外部删除无法重载，只提示内容仍保留；
    * dirty 时把选择权交给用户（sticky 浮条而非 modal，不打断打字）；未 dirty 自动
    * 重载并提示。仅 md 模式：展示中的 md 才有内存修改可丢失。
-   * M127：dirty 分流一律暂停自动保存——磁盘已有更新版本，自动保存不能硬冲 CAS。 */
+   * M127：dirty 分流一律暂停自动保存——磁盘已有更新版本，自动保存不能硬冲 CAS。
+   *
+   * 诊断埋点（save_external_change）记在**判定为外部变更的那几个分支**里，不记在入口：
+   * 自身保存也会经 watch 回流成事件，入口无条件记录会把「每次自动保存」都记成外部变更
+   * （实测如此）。判据与 App 的既有分流口径完全一致：删除分支（无法重载）与 dirty 分支
+   * （无法重载、只能暂停）本身就是外部变更；干净分支要 reloadDisplayedFile 真的重载了
+   * 才算——revision 未变即自身保存的回声。 */
   function handleExternalChange(path: string, kind: FsChangeKind): void {
     if (saveInFlight) return;
     if (kind === "deleted") {
-      autosavePaused.add("not-found");
+      logExternalChange(path, kind);
+      pauseAutosave(path, "not-found");
       toast(`当前文件已被外部删除：${path}；编辑器中的内容未丢失`, [], true);
       return;
     }
     if (editor.isDirty()) {
-      autosavePaused.add("external");
+      logExternalChange(path, kind);
+      pauseAutosave(path, "external");
       toast(
         `检测到外部修改：${path}`,
         [
@@ -411,9 +439,19 @@ export function createSaveController(deps: SaveControllerDeps): SaveController {
       );
     } else {
       void reloadDisplayedFile(path, { onlyIfChanged: true }).then((reloaded) => {
-        if (reloaded) toast("检测到外部修改，已自动重载");
+        if (!reloaded) return; // 回声：revision 与本次保存的结果一致，磁盘没有变化
+        logExternalChange(path, kind);
+        toast("检测到外部修改，已自动重载");
       });
     }
+  }
+
+  /** 诊断埋点：外部修改命中**打开中的文档**。Rust 的 watch 流给的是全 vault 变更，
+   *  「命中打开中的文档且不是自身保存」这个判定只有前端有（displayedPath 与 revision
+   *  都在这），所以这一条由前端经 log_event 转发，而不是在 Rust 侧记全量文件变更
+   *  （那会淹没真正的摩擦信号）。 */
+  function logExternalChange(path: string, kind: FsChangeKind): void {
+    logEvent("save_external_change", { path, change: kind });
   }
 
   // ---------------------------------------------------------------------------

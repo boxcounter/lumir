@@ -31,6 +31,7 @@
 //! 选型 ts-rs 而非 specta/tauri-specta 的理由见 Cargo.toml 注释。
 
 use serde::Serialize;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
@@ -431,7 +432,17 @@ pub fn document_save(
     expected_revision: &str,
     content: &str,
 ) -> Result<String, CommandError> {
-    fs_io::save_markdown(&state.root()?, path, expected_revision, content)
+    let root = state.root()?;
+    match fs_io::save_markdown(&root, path, expected_revision, content) {
+        Ok(revision) => Ok(revision),
+        Err(e) => {
+            // 诊断埋点：CAS 冲突是本族里最要紧的摩擦信号（kind 冲突检测点就在这）。
+            if e.code == "document_conflict" {
+                crate::logging::save_conflict(path, &e.code);
+            }
+            Err(e)
+        }
+    }
 }
 
 /// 编辑器未保存修改（dirty）的后端镜像（M101 退出守卫）：前端 onDirty 每次变化
@@ -462,6 +473,22 @@ pub fn document_set_dirty(
     Ok(())
 }
 
+/// 前端诊断事件统一入口（change add-diagnostics-logging）：前端不自行写日志文件，
+/// 关键事件（渲染失败、autosave 跃迁、config warning、慢回调采样、外部修改命中）
+/// 全部经这一条命令交给 Rust 侧落盘。
+///
+/// 事件名是 [`crate::logging::LogEventName`] 枚举——事件集与字段白名单的唯一来源在
+/// Rust（TS 联合类型由 ts-rs 导出给前端 import），前端不另立清单；枚举反序列化失败
+/// 即白名单外事件名，被 invoke 层拒绝。字段白名单校验在 logging 侧，拒绝时返回
+/// `log_event_rejected` 错误信封（调用方按 best-effort 处理，日志不打断业务）。
+#[tauri::command(rename_all = "snake_case")]
+pub fn log_event(
+    event: crate::logging::LogEventName,
+    fields: HashMap<String, String>,
+) -> Result<(), CommandError> {
+    crate::logging::log_frontend_event(event, fields)
+}
+
 // ---------------------------------------------------------------------------
 // 崩溃备份（M127，change save-hardening）
 // ---------------------------------------------------------------------------
@@ -478,7 +505,10 @@ pub fn recovery_backup(
     content: &str,
     base_revision: &str,
 ) -> Result<(), CommandError> {
-    crate::recovery::backup(&state.root()?, path, content, base_revision)
+    crate::recovery::backup(&state.root()?, path, content, base_revision)?;
+    // 诊断埋点：备份写入成功（recovery 的既有事件点）。
+    crate::logging::recovery_written(path);
+    Ok(())
 }
 
 /// 读崩溃备份内容；无备份返回 null（不是错误）。
@@ -487,7 +517,13 @@ pub fn recovery_load(
     state: tauri::State<'_, VaultState>,
     path: &str,
 ) -> Result<Option<String>, CommandError> {
-    Ok(crate::recovery::load(&state.root()?, path)?.map(|entry| entry.content))
+    let entry = crate::recovery::load(&state.root()?, path)?;
+    if entry.is_some() {
+        // 诊断埋点：读到备份 = 用户选择了「恢复内容」（恢复链路在 Rust 侧唯一的可观测点；
+        // 随后的编辑器装载在前端，Rust 不可见）。
+        crate::logging::recovery_restored(path);
+    }
+    Ok(entry.map(|entry| entry.content))
 }
 
 /// 备份记录的 CAS 基准 revision（恢复时作保存基准用）；无备份 / 老格式备份返回 null

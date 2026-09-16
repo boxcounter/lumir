@@ -4,7 +4,7 @@
 
 ### Requirement: 结构化事件日志落盘
 
-系统 SHALL 将关键运行时事件以 JSONL（每行一个 JSON 对象）写入 `<config_dir>/logs/` 下的按日滚动文件（`YYYY-MM-DD.jsonl`）。每条事件 MUST 含 `ts`（ISO 8601）、`level`、`event` 字段；事件负载 MUST NOT 包含文档正文或键入内容，仅含事件名、vault 相对路径、错误码、耗时等诊断字段。日志 MUST NOT 写入 vault 内任何位置（ADR 0003 §3），MUST NOT 经网络外发。
+系统 SHALL 将关键运行时事件以 JSONL（每行一个 JSON 对象）写入 `<config_dir>/logs/` 下的按日滚动文件（`YYYY-MM-DD.jsonl`，日期取 UTC——Rust core 无本地时区来源，单一时区口径无歧义）。每条事件 MUST 含 `ts`（ISO 8601，UTC）、`level`、`event` 字段；事件负载 MUST NOT 包含文档正文或键入内容，仅含事件名、vault 相对路径、错误码、耗时等诊断字段。日志 MUST NOT 写入 vault 内任何位置（ADR 0003 §3），MUST NOT 经网络外发。
 
 #### Scenario: 保存冲突事件落盘
 
@@ -37,13 +37,13 @@
 - **WHEN** 下一次事件写入发生
 - **THEN** 超期文件被删除，当日文件不受影响
 
-### Requirement: [log] 配置表
+### Requirement: log 配置表
 
-`~/.config/lumir/` config.toml SHALL 支持 `[log]` 表，`level` 合法值为 `"info"`（默认）与 `"off"`；`off` 时事件丢弃不写盘。非法值 MUST 走既有 config warning 语义，不得导致启动失败（ADR 0002 §5）。
+`~/.config/lumir/config.json` SHALL 支持 `log` 表（`{"log": {"level": "info"}}`），`level` 合法值为 `"info"`（默认）与 `"off"`；`off` 时事件丢弃不写盘。非法值 MUST 走既有 config warning 语义，不得导致启动失败（ADR 0002 §5）。配置格式随现状（config.rs 的「JSON 而非 TOML」选型），本 change 不做格式迁移。
 
 #### Scenario: 关闭日志
 
-- **GIVEN** config.toml 含 `[log]` 且 `level = "off"`
+- **GIVEN** config.json 含 `"log": {"level": "off"}`
 - **WHEN** 发生保存冲突
 - **THEN** `logs/` 不产生新事件行，应用行为不受影响
 

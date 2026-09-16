@@ -11,6 +11,7 @@ pub mod config;
 pub mod fs_io;
 pub mod index;
 pub mod link_graph;
+pub mod logging;
 pub mod ready;
 pub mod recovery;
 pub mod workspaces;
@@ -51,6 +52,7 @@ pub fn run() {
             commands::fs_file_revision,
             commands::document_save,
             commands::document_set_dirty,
+            commands::log_event,
             commands::recovery_backup,
             commands::recovery_load,
             commands::recovery_base_revision,
@@ -62,6 +64,9 @@ pub fn run() {
             workspaces::vault_remap,
         ])
         .setup(move |app| {
+            // 诊断日志先初始化：`[log] level` 在第一条事件之前生效（level = off 时
+            // 整条链路都不落盘，见 logging 模块头）。
+            logging::init();
             ready::emit_ready(started);
             #[cfg(target_os = "macos")]
             install_menu_overrides(app.handle())?;
@@ -110,6 +115,9 @@ pub fn run() {
                 api.prevent_close();
                 let _ = app.emit("app:quit_blocked", ());
             }
+            // 退出：把诊断日志缓冲刷盘（丢掉一个批次的量会把「退出前发生了什么」抹掉，
+            // 而那正是最常要查的一段）。正常退出路径都会走到这里。
+            tauri::RunEvent::Exit => logging::flush(),
             _ => {}
         });
 }

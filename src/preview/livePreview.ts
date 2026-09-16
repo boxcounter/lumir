@@ -23,6 +23,7 @@ import { findWikilinkSpans } from "./wikilinks";
 import { collectInlineMath, isInsideCodeContext, mathBlockSet } from "./math";
 import { mermaidBlockSet, onMermaidSettled } from "./mermaid";
 import { calloutMarkerDecorations, calloutOnLine, detectCallout } from "./callout";
+import { sampleCallback } from "../diagnostics";
 import type { LinkResolveResult } from "../bindings/LinkResolveResult";
 import { BlockWrapper } from "@codemirror/view";
 import { findTables, tableAt, tableRowsInRange, type TableModel } from "./table";
@@ -383,13 +384,17 @@ const mermaidBlockDecorations = StateField.define<DecorationSet>({
 
 // mermaid 异步 settle → previewRefresh 的桥（wikilink pending 范式的实现侧）：
 // 渲染完成时强制装饰层重建。dispose 随 view 销毁。
+// dispatch 会同步跑完整轮装饰重建，是典型的「后台回调」——超 16ms 预算时采样记一条
+// slow_callback（重渲染毛刺的现场就在这里）。
 const mermaidSettleBridge = ViewPlugin.fromClass(
   class {
     private unsubscribe: () => void;
 
     constructor(view: EditorView) {
       this.unsubscribe = onMermaidSettled(() => {
-        view.dispatch({ effects: previewRefresh.of(null) });
+        sampleCallback("mermaid_settle", () => {
+          view.dispatch({ effects: previewRefresh.of(null) });
+        });
       });
     }
 

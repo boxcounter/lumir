@@ -18,6 +18,7 @@ import type { DecorationSet } from "@codemirror/view";
 import type { EditorView } from "@codemirror/view";
 import type { EditorState, Range } from "@codemirror/state";
 import { syntaxTree } from "@codemirror/language";
+import { logEvent } from "../diagnostics";
 import { detectFrontmatter } from "./frontmatter";
 import { enterReplacedSource } from "./math";
 
@@ -125,8 +126,22 @@ async function doRender(source: string): Promise<MermaidRenderState> {
   } catch (e) {
     // mermaid.render 失败时可能留下 id 为 d<id> 的临时节点，尽力清理。
     if (typeof document !== "undefined") document.getElementById(`d${id}`)?.remove();
-    return { status: "error", message: e instanceof Error ? e.message.split("\n")[0] : String(e), stage };
+    const message = e instanceof Error ? e.message.split("\n")[0] : String(e);
+    logEvent("render_error", {
+      kind: "mermaid",
+      stage,
+      code: mermaidErrorCode(stage, message),
+    });
+    return { status: "error", message, stage };
   }
+}
+
+/** 渲染失败的错误码。**刻意不记原始错误文本**：mermaid 的解析错误消息会带上图表源码
+ *  （即文档内容），隐私边界只允许分类后的错误码进日志（见 src-tauri/src/logging.rs 的
+ *  白名单）。原因是超时 / 加载失败 / parse-render 三类，够定位「哪一步炸了」。 */
+function mermaidErrorCode(stage: "load" | "render", message: string): string {
+  if (message.includes("超时")) return "timeout";
+  return stage === "load" ? "renderer_load_failed" : "render_failed";
 }
 
 function renderQueued(source: string): Promise<MermaidRenderState> {
