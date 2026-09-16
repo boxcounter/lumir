@@ -32,6 +32,14 @@
 // KEY_BINDINGS 默认表；分发语义不变。面板自己的关闭键（Escape / ⌃G）不进本表，理由见
 // main.ts 的面板段落：一个 token 只有一条绑定，这两个 token 已被 editor 作用域占用。
 //
+// M139：表新增一条全局绑定（⌘F → app.search-open），命令实现在装配层 main.ts（搜索能力与
+// panel 本体在 src/search.ts）。作用域取 global 而非 editor：mac 惯例是「⌘F 在哪儿都能开查找」，
+// 且 panel 打开后焦点在 panel 的输入框里（不在 contentDOM 内），editor 作用域会让「已打开时
+// 再按 ⌘F 把焦点移回输入框」这条官方行为失效。panel 自己的关闭键（Escape / ⌃G）与输入框内的
+// Enter / ⇧Enter 不进本表，理由同 M133 的面板段落：表内一个 token 只能有一条绑定，Escape 已被
+// editor.widget-escape（带 when 条件）占用；那条绑定在焦点落于 panel 时不命中（作用域判定看
+// 事件目标是否在 contentDOM 内），两处不构成同一物理键的第二条分发路径。
+//
 // 平台口径（M131 评审 r1 F1 如实记录）：迁移后**表内绑定一律全平台无条件生效**，不再有
 // 平台门。两处与迁移前不同，均只在非 macOS 平台可观测：
 //   - ⌃N/P/F/B/E 迁移前是 CM keymap 的 `{ mac: "Ctrl-n" }`（只绑 mac），现在非 mac 平台
@@ -94,7 +102,13 @@ export type WidgetCommandId = (typeof WIDGET_COMMAND_IDS)[number];
 export const EDITOR_COMMAND_IDS = [...EDITOR_CORE_COMMAND_IDS, ...WIDGET_COMMAND_IDS] as const;
 
 /** 全局命令 id（实现落在装配层 main.ts）。 */
-export const GLOBAL_COMMAND_IDS = ["document.save", "wikilink.follow", "app.describe-bindings"] as const;
+export const GLOBAL_COMMAND_IDS = [
+  "document.save",
+  "wikilink.follow",
+  "app.describe-bindings",
+  // M139：⌘F 打开文件内搜索（能力与 panel 在 src/search.ts，装配在 main.ts）
+  "app.search-open",
+] as const;
 
 /** 全部命令 id：类型与运行期清单同源，测试据此断言无孤儿命令、无越界绑定。 */
 export const COMMAND_IDS = [...EDITOR_COMMAND_IDS, ...GLOBAL_COMMAND_IDS] as const;
@@ -209,6 +223,7 @@ export const KEY_BINDINGS: readonly KeyBinding[] = [
   { key: "Cmd-s", command: "document.save", scope: "global", doc: "D3 裁决：⌘S 是唯一保存键；⌃S 解绑（预留给 isearch），不再触发保存" },
   { key: "Cmd-Enter", command: "wikilink.follow", scope: "global", doc: "轨道 A 原样迁入：迁移前挂在 window 上（任意焦点生效），作用域不变" },
   { key: "Cmd-/", command: "app.describe-bindings", scope: "global", doc: "键位查看面板（M133）：mac 帮助惯例的简化形态——系统「帮助」菜单的 accelerator 实为 ⇧⌘?（Cmd-?），该键在本应用的原生菜单下会先被系统 Help 菜单截获，故取 ⌘/；Emacs 的 C-h b（describe-bindings）不可用——⌃H 已被后删字符占用" },
+  { key: "Cmd-f", command: "app.search-open", scope: "global", doc: "文件内搜索（M139）：mac 惯例的查找键；取 global 而非 editor——焦点在文件树或已打开的搜索框里时同样要能开（已打开则把焦点移回输入框）。⌃F 已被 Emacs C-f（前移字符）占用，故沿用 ⌘ 系" },
 ];
 
 /** 命令实现：命中即已消费——分发器统一吞掉默认行为，命令本身无事可做也不放行原生路径。

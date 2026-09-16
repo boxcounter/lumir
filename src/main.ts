@@ -34,7 +34,11 @@ import type { FsEntry } from "./bindings/FsEntry";
 import type { LinkResolveResult } from "./bindings/LinkResolveResult";
 import { extensionOf, mimeTypeOf, resolveByNameUnique } from "./preview/attachments";
 import { findWikilinkSpans } from "./preview/wikilinks";
+import { openSearch } from "./search";
 import "./style.css";
+// 搜索 panel 的样式单列一个文件（M139）：与并行 mission 的 src/style.css 隔离，
+// 本 mission 的搜索样式一律放这里。
+import "./search-panel.css";
 
 const app = document.querySelector<HTMLElement>("#app");
 if (!app) {
@@ -343,6 +347,9 @@ const commands: CommandRuntime = {
   },
   // 键位查看面板（M133）：列出**生效中**的键位表（含 [keys] 覆盖的产物）。
   "app.describe-bindings": () => bindingsPanel.toggle(),
+  // 文件内搜索（M139）：能力与 panel 在 src/search.ts，此处只把编辑器视图交过去。
+  // 作用域 global——焦点在文件树 / 搜索框里时同样要能开（⌘F 的 mac 惯例，理由见 keys.ts）。
+  "app.search-open": () => openSearch(editor.view),
 };
 
 // editor 作用域判定：事件目标落在 contentDOM 内（含其中 widget 与表格滚动容器）。
