@@ -19,9 +19,9 @@ steps:
     expect:
       - label: 磁盘已按外部内容改写
         file: { path: plain.md, has: "只存在于磁盘" }
-  - name: 等 watch 事件与自动重载
+  - name: 等 watch 事件与自动重载（读的时刻要落在 toast 生命周期内）
     do: sleep
-    ms: 3500
+    ms: 2000
     expect:
       - shot: 自动重载之后
       - label: 编辑器内容已被自动重载（不再是旧内容）

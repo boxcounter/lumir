@@ -39,6 +39,18 @@ export async function readConfig() {
   return JSON.parse(await readText(file));
 }
 
+/**
+ * 清空崩溃备份目录。
+ * 为什么必须做：备份目录在**隔离配置目录**下，不在验收 vault 里——只重置 vault 会让上一场景/上一轮的
+ * 备份残留到本场景，使「启动发现残留备份」类场景读到别人的备份（实证：08c 恢复了 keys.md 的内容，
+ * 而本场景用的是 plain.md），glob 断言也会因此假绿。每场景开始前必须清干净。
+ */
+export async function resetRecovery() {
+  const dir = path.join(envHome(), "lumir", "recovery");
+  await rm(dir, { recursive: true, force: true });
+  return dir;
+}
+
 /** 把 vault 重置为 fixtures 的精确副本：只清 vault 根下的 .md（合成 vault 的既有内容形态）。 */
 export async function resetVault() {
   const vault = vaultDir();

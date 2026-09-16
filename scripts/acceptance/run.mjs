@@ -18,6 +18,7 @@ import {
   assertSafeTargets,
   launchApp,
   reclaimPort,
+  resetRecovery,
   resetVault,
   stopApp,
   writeConfig,
@@ -134,6 +135,7 @@ async function main() {
     let out;
     try {
       await resetVault();
+      await resetRecovery(); // 备份目录在隔离配置下，不清会让上一场景的备份串场
       await writeConfig({ mode: "md" });
       if (handle) await stopApp(handle);
       handle = await launchApp({ logFile: path.join(root, "app.log") });

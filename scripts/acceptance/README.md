@@ -48,7 +48,7 @@ runner 在启动前做预检，不满足直接退出且不产生半截证据：
 
 | 隔离项 | 做法 | 为什么 |
 |---|---|---|
-| 配置目录 | app 进程带 `XDG_CONFIG_HOME=<结果目录>/../env` 启动，套件自带 `config.json` | `src-tauri/src/config.rs` 优先读 `XDG_CONFIG_HOME`；用户的 `~/.config/lumir` 全程不读不写，`config.json` 里 `keys` 表的重绑场景可以随便改 |
+| 配置目录 | app 进程带 `XDG_CONFIG_HOME=<结果目录>/../env` 启动，套件自带 `config.json`；**每场景清空其中的 `recovery/`** | `src-tauri/src/config.rs` 优先读 `XDG_CONFIG_HOME`；用户的 `~/.config/lumir` 全程不读不写。清 `recovery/` 是必须的——崩溃备份在配置目录下而非 vault 里，不清会让上一场景的备份串场（实证：08c 恢复出了 keys.md 的内容） |
 | 验收 vault | `/tmp/lumir-m102-acceptance`，每次运行重置为 `fixtures/` 的精确副本 | 合成 vault；用户真实 vault（`/Users/boxcounter/Downloads/Everything-copy`）永不写入（`assertSafeTargets()` 兜底拒绝） |
 | 端口 | dev server 走 `LUMIR_ACCEPTANCE_PORT`（默认 1430），经 `--config` 覆写 | 绝不与 Alex 手头的 `pnpm tauri dev` 抢 1420 |
 
@@ -151,8 +151,14 @@ Alex 抽审路径：先看 `summary.md`，再进 FAIL 场景看 `steps.md` + `sh
   `editor.not` 假 PASS。当前 fixtures 不含引号；加含引号的 fixture 前要先修 `lib/ax.mjs` 的启发式。
 - **文本注入偶发不落地**：KimiCU 的 `type_text` 对 WKWebView 偶发返回 `ok` 但编辑器没变（M134 实证，
   M135 r2 也撞到一次：07b 首轮因输入没落地而 FAIL，重跑即过）。`do: type` 因此做「注入 → 回读校验 →
-  没落地才重试（最多 3 次）」，并把重试次数写进证据（`type 注入第 N 次才落地`）。重试**不会掩盖缺陷**：
-  只有「整段一次都不落」才重试，落了一半再补会拼成另一段文本，断言照样 FAIL。
+  没落地才重试（最多 3 次）」，并把重试次数写进证据（`type 注入第 N 次才落地`）。
+  回读判据是**出现次数**：注入前记下目标串出现次数 N，注入后要求恰为 N+1。
+  这样两种失败模式都不会假绿——整段没落 → 次数仍是 N（报错）；前缀型 partial landing 后重试拼接
+  （`MEM-` + `MEM-EDIT-2` → `MEM-MEM-EDIT-2`）→ 次数为 N+2（报错，不放行）。
+  注意：仅靠 `editor.has(want)` 子串匹配挡不住第二种，必须用次数（r2 评审指出的漏洞）。
+- **编辑器不可读 ≠ 文档为空**：modal（⌘/ 键位面板、对话框）打开期间 AX 快照里**没有 AXTextArea**，
+  此时 `editor.*` 一律记 FAIL，`recordEditor` 直接报错——否则负向断言与逐字节比较会在 `"" === ""`
+  上空转假绿（r2 评审实证）。断言需要读文档时，基线要在 modal 打开前记录、关闭后比较。
 - **AX 快照可能退化**：`get_app_state` 偶尔只返回菜单栏（`truncated: [..., cycle]`）。这通常是
   KimiCU 后台服务进了坏状态，表现为**全局**退化（Finder、别的 app 一起坏）。此时全套会一起报
   「前端未就绪」，处理办法是重启 KimiCU 服务，不是改场景。

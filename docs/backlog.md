@@ -70,7 +70,7 @@
 设计见 [docs/process/real-machine-acceptance.md](process/real-machine-acceptance.md)）；手感/审美项仍归 Alex。
 
 分类依据 = **证据目录里真实 PASS 的场景**，不是「场景写了就算覆盖」。最近一次全量实跑：
-`test-results/acceptance/2026-09-16/` —— **15 场景 / 144 断言 / 15 PASS 0 FAIL**（约 5.2 分钟，M135 r2）。
+`test-results/acceptance/2026-09-16/` —— **15 场景 / 146 断言 / 15 PASS 0 FAIL**（约 5.4 分钟，M135 r3）。
 
 **已机验（行为判定落定，有 PASS 证据）**
 

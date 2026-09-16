@@ -150,6 +150,9 @@ export async function runScenario(ctx, scenario) {
   async function check(expect, state) {
     const label = expect.label ?? describeExpect(expect);
     if (typeof expect.shot === "string" || expect.shot === true) {
+      // 截图是「动作之后」的证据：瞬时 UI（toast）要几百毫秒才渲染出来，立刻读会拍到空档。
+      // 同一步骤里后面的断言共享这份快照，所以这个等待同时决定 toast 类断言能不能看见提示。
+      await sleep(600);
       const shot = await readAx(cu, ctx.pid, { mode: "full" });
       // 同一步骤内共享快照：toast 是瞬时的，shot 之后再读一次 AX 常常已经看不到它
       // （实证：07c 的「检测到外部修改，已自动重载」只在 shot 那次读里存在）。
@@ -184,7 +187,19 @@ export async function runScenario(ctx, scenario) {
     }
     if (expect.editor) {
       const spec = expect.editor;
-      const text = (state.ax ?? (await readAx(cu, ctx.pid))).editor ?? "";
+      const ax = state.ax ?? (await readAx(cu, ctx.pid));
+      state.ax = ax;
+      // 「编辑器节点不在 AX 快照里」≠「文档为空」。modal（键位面板/对话框）打开时 AX 里没有
+      // AXTextArea，若把它当空串，负向断言与逐字节比较会全部空转（实证：09 面板不穿透 "" === ""）。
+      // 因此只要拿不到编辑器节点，editor.* 一律记 FAIL——不许在不可观测的窗口里下结论。
+      if (!ax.textarea) {
+        return fail(
+          `${label}（编辑器节点不可读：AX 快照里没有 AXTextArea——modal 打开期间常见）`,
+          "该断言形态需要读文档内容才能成立；请在编辑器可读时记录基线/断言，或避开 modal 窗口",
+          ax,
+        );
+      }
+      const text = ax.editor ?? "";
       if (spec.unchangedSince !== undefined) {
         // 逐字节比较：比 not/match 强——负向匹配在「基线里本来就没有该串」时会假 PASS。
         const before = vars[spec.unchangedSince];
@@ -355,10 +370,17 @@ async function doAction(step, { ctx, cu, scenario, vars, pid, evidence }) {
     }
     case "type": {
       // KimiCU 的文本注入对 WKWebView 偶发不落地（返回 ok 但编辑器没变，M134 实证）。
-      // 这里做「注入 → 回读校验 → 没落地才重试」，并把重试次数记进证据（不静默重试）。
-      // 重试不会制造假绿：只有「整段文本一次不落」才重试；若第一次落了一半，第二次会追加成
-      // 另一段文本，断言照样 FAIL。
+      // 「注入 → 回读校验 → 没落地才重试」+**出现次数校验**：
+      //   - 只接受「目标串出现次数 = 注入前次数 + 1」；
+      //   - 前缀型 partial landing（先落 "MEM-" 再补 "MEM-EDIT-2" → "MEM-MEM-EDIT-2"）会让
+      //     子串断言假绿，次数校验能抓住（出现 2 次 → 直接报错，不放行）；
+      //   - 整段一直没落地 → 报错。
+      // 这样重试既修偶发不落地，又不可能制造假绿。
       const want = step.text;
+      const countOf = (t) => (want ? t.split(want).length - 1 : 0);
+      const first = await readAx(cu, p);
+      if (!first.textarea) throw new Error("type 前无法确认编辑器可读：AX 快照里没有 AXTextArea");
+      const baseline = step.clear ? 0 : countOf(first.editor ?? "");
       const max = step.retries ?? 3;
       let last = "";
       let res = null;
@@ -367,18 +389,33 @@ async function doAction(step, { ctx, cu, scenario, vars, pid, evidence }) {
         res = await typeInEditor(cu, p, want, { clear: step.clear });
         await sleep(800);
         last = (await readAx(cu, p)).editor ?? "";
-        if (last.includes(want)) break;
+        let c = countOf(last);
+        if (c === baseline + 1) break;
+        if (c > baseline + 1) {
+          throw new Error(
+            `注入重复落地：目标串「${want}」出现 ${c} 次（期望 ${baseline + 1}）——` +
+              `疑似 partial landing 后重试拼接，文档已被破坏，不按 PASS 处理`,
+          );
+        }
         await sleep(700);
         last = (await readAx(cu, p)).editor ?? "";
-        if (last.includes(want)) break;
+        c = countOf(last);
+        if (c === baseline + 1) break;
+        if (c > baseline + 1) {
+          throw new Error(`注入重复落地：目标串「${want}」出现 ${c} 次（期望 ${baseline + 1}）`);
+        }
+      }
+      const finalCount = countOf(last);
+      if (finalCount !== baseline + 1) {
+        throw new Error(
+          `文本注入未落地：${max} 次尝试后「${want}」出现 ${finalCount} 次（期望 ${baseline + 1}）；` +
+            `工具返回 ${JSON.stringify(res ?? {}).slice(0, 200)}`,
+        );
       }
       if (n > 1) {
         evidence.record({
           kind: "note",
-          text:
-            `type 注入第 ${n} 次才落地（前 ${n - 1} 次未生效）；` +
-            `工具返回 ${JSON.stringify(res ?? {})}`.slice(0, 300) +
-            "；KimiCU 键盘注入对 WKWebView 偶发不落地（M134 实证）",
+          text: `type 注入第 ${n} 次才落地（前 ${n - 1} 次未生效；已按出现次数校验确认无重复）`,
         });
       }
       return;
@@ -448,9 +485,14 @@ async function doAction(step, { ctx, cu, scenario, vars, pid, evidence }) {
     }
     case "recordEditor": {
       // 记录编辑器文本，供 editor.unchangedSince 做逐字节比较（负向匹配不够强）。
-      const text = (await readAx(cu, p)).editor ?? "";
-      vars[step.as] = text;
-      return `${text.length} 字节`;
+      // 编辑器节点不在 AX 快照里时**报错**，不许存成空串基线——否则后面对比 "" === "" 会假绿
+      // （实证：⌘/ 面板打开期间 AX 里没有 AXTextArea）。
+      const ax = await readAx(cu, p);
+      if (!ax.textarea) {
+        throw new Error("记录编辑器基线失败：AX 快照里没有 AXTextArea（modal 打开期间常见），基线不能记成空串");
+      }
+      vars[step.as] = ax.editor ?? "";
+      return `${(ax.editor ?? "").length} 字节`;
     }
     case "vaultRm": {
       const files = step.files ?? [step.file];
