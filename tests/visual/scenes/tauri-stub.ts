@@ -46,7 +46,7 @@ export async function stubTauri(page: Page, vault: VaultFixture | null): Promise
     //（与真后端 open_vault 的替换语义对齐）。
     let current = v;
 
-    type Args = { path?: string; from?: string; link?: string; id?: string; title?: string; vault_id?: string; expected_revision?: string; content?: string; dirty?: boolean; force_new?: boolean; event?: string; fields?: Record<string, string> };
+    type Args = { path?: string; from?: string; link?: string; id?: string; title?: string; vault_id?: string; expected_revision?: string; content?: string; dirty?: boolean; force_new?: boolean; event?: string; fields?: Record<string, string>; url?: string };
     const checkVault = (args: Args) => {
       if (args.vault_id !== (current?.vault_id ?? "fixture-vault")) throw { code: "fixture_contract", message: "vault_id mismatch" };
     };
@@ -58,12 +58,20 @@ export async function stubTauri(page: Page, vault: VaultFixture | null): Promise
     w.__remapCalls = [] as Array<{ id?: string; path?: string }>;
     // log_event 的转发记录（M136）：前端埋点发出的每条诊断事件，按发出顺序。
     w.__logEvents = [] as LogEventRecord[];
+    // open_external_url 的调用记录（M144）：外链打开请求的实际目标，按调用顺序。
+    // 桩只记录不打开——场景据此断言「⌘⏎ / ⌘-Click 走的是外链路径、URL 取自正文」，
+    // 而不真的唤起浏览器（真机上这条由 Rust 侧 open_external_url 落 link_open 日志）。
+    w.__openedUrls = [] as string[];
     const handlers: Record<string, (args: Args) => unknown> = {
       log_event: (args) => {
         (w.__logEvents as LogEventRecord[]).push({
           event: args.event ?? "",
           fields: args.fields ?? {},
         });
+        return null;
+      },
+      open_external_url: (args) => {
+        (w.__openedUrls as string[]).push(args.url ?? "");
         return null;
       },
       document_set_dirty: (args) => {
@@ -251,6 +259,11 @@ export async function logEvents(page: Page, event?: string): Promise<LogEventRec
 /** document_set_dirty 的上报记录（前端 dirty 镜像给后端的证据）。 */
 export async function dirtyReports(page: Page): Promise<boolean[]> {
   return page.evaluate(() => (window as unknown as { __dirtyReports: boolean[] }).__dirtyReports);
+}
+
+/** open_external_url 的调用记录（外链打开请求的实际目标，按调用顺序）。 */
+export async function openedUrls(page: Page): Promise<string[]> {
+  return page.evaluate(() => (window as unknown as { __openedUrls: string[] }).__openedUrls);
 }
 
 /** vault_remap 的调用记录（前端把用户确认的映射传给后端的证据）。 */

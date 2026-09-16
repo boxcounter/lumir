@@ -104,7 +104,9 @@ export const EDITOR_COMMAND_IDS = [...EDITOR_CORE_COMMAND_IDS, ...WIDGET_COMMAND
 /** 全局命令 id（实现落在装配层 main.ts）。 */
 export const GLOBAL_COMMAND_IDS = [
   "document.save",
-  "wikilink.follow",
+  // M144：`wikilink.follow` → `link.follow`——命令现在跟随光标/点击处的**链接**，
+  // 外链交给系统浏览器、wikilink 走既有跳转链路。名字不再只覆盖 wikilink。
+  "link.follow",
   "app.describe-bindings",
   // M139：⌘F 打开文件内搜索（能力与 panel 在 src/search.ts，装配在 main.ts）
   "app.search-open",
@@ -221,7 +223,7 @@ export const KEY_BINDINGS: readonly KeyBinding[] = [
 
   // ── 全局
   { key: "Cmd-s", command: "document.save", scope: "global", doc: "D3 裁决：⌘S 是唯一保存键；⌃S 解绑（预留给 isearch），不再触发保存" },
-  { key: "Cmd-Enter", command: "wikilink.follow", scope: "global", doc: "轨道 A 原样迁入：迁移前挂在 window 上（任意焦点生效），作用域不变" },
+  { key: "Cmd-Enter", command: "link.follow", scope: "global", doc: "轨道 A 原样迁入（键位与作用域不变，迁移前挂在 window 上）；M144 起命令跟随光标/选区处的**链接**：外链经 Rust 交给系统浏览器，wikilink 走既有跳转链路——同一条命令，不再只管 wikilink" },
   { key: "Cmd-/", command: "app.describe-bindings", scope: "global", doc: "键位查看面板（M133）：mac 帮助惯例的简化形态——系统「帮助」菜单的 accelerator 实为 ⇧⌘?（Cmd-?），该键在本应用的原生菜单下会先被系统 Help 菜单截获，故取 ⌘/；Emacs 的 C-h b（describe-bindings）不可用——⌃H 已被后删字符占用" },
   { key: "Cmd-f", command: "app.search-open", scope: "global", doc: "文件内搜索（M139）：mac 惯例的查找键；取 global 而非 editor——焦点在文件树或已打开的搜索框里时同样要能开（已打开则把焦点移回输入框）。⌃F 已被 Emacs C-f（前移字符）占用，故沿用 ⌘ 系" },
 ];

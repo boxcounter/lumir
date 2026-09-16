@@ -490,6 +490,86 @@ pub fn log_event(
 }
 
 // ---------------------------------------------------------------------------
+// 外链打开（M144，change add-external-link-open）
+// ---------------------------------------------------------------------------
+
+/// 外链 scheme 白名单——**唯一来源**。只有这三类能交给系统默认应用；其余 scheme
+/// 一律拒绝（`file:` / `javascript:` / 应用自定义协议…）：文档内容不该能指挥操作
+/// 系统去打开任意东西。前端不复制这份清单，它只把编辑器里读到的 URL 原文递过来。
+const EXTERNAL_URL_SCHEMES: [&str; 3] = ["http", "https", "mailto"];
+
+/// 去 CommonMark 的尖括号包裹形式（`[a](<https://x>)`）与首尾空白。
+fn target_text(raw: &str) -> &str {
+    let text = raw.trim();
+    text.strip_prefix('<')
+        .and_then(|inner| inner.strip_suffix('>'))
+        .unwrap_or(text)
+        .trim()
+}
+
+/// 归一 URL 的 scheme：命中白名单返回规范小写写法（`HTTP://x` 与 `http://x` 同归一），
+/// 其余情况（白名单外的 scheme、没有 scheme）一律返回 `other`——诊断日志只记分类，
+/// 不记原文。
+fn scheme_label(target: &str) -> &'static str {
+    let Some((scheme, _)) = target.split_once(':') else {
+        return "other";
+    };
+    EXTERNAL_URL_SCHEMES
+        .iter()
+        .copied()
+        .find(|allowed| allowed.eq_ignore_ascii_case(scheme))
+        .unwrap_or("other")
+}
+
+/// 能否交给系统打开：scheme 在白名单内，且目标里没有空白 / 控制字符。
+/// 后者是「还原不可信」的护栏——目标里混进空白或控制字符说明我们对这条 URL 的
+/// 还原不可靠，宁可拒绝也不要把半截字符串递给系统。返回 (scheme 标签, 目标)。
+fn openable_external_url(raw: &str) -> Option<(&'static str, &str)> {
+    let target = target_text(raw);
+    let scheme = scheme_label(target);
+    if scheme == "other" || target.chars().any(|c| c.is_whitespace() || c.is_control()) {
+        return None;
+    }
+    Some((scheme, target))
+}
+
+/// 在系统默认应用打开外链（http / https / mailto）。
+///
+/// 为什么用插件而不是自己拼 `open` 命令：跨平台语义由插件持有（macOS 走 NSWorkspace
+/// 等价路径），本仓不维护一套平台分支。为什么走 Rust 侧而不是前端 JS API：webview 对
+/// opener 命令的 ACL 保持默认拒绝（capabilities 不加任何 `opener:*` 权限），唯一入口
+/// 是这条 command——scheme 校验、诊断埋点、错误信封都只在一个地方，webview 里没有第二
+/// 条能绕开校验去开 URL 的路径。
+///
+/// 校验落在 Rust：前端可能被文档内容影响（URL 来自 Markdown 正文），信任边界在这一侧。
+/// 拒绝时返回 `open_url_rejected`（前端 toast 人话），失败时返回 `open_url_failed`。
+#[tauri::command(rename_all = "snake_case")]
+pub fn open_external_url(app: tauri::AppHandle, url: String) -> Result<(), CommandError> {
+    use tauri_plugin_opener::OpenerExt;
+
+    let Some((scheme, target)) = openable_external_url(&url) else {
+        crate::logging::link_open(scheme_label(target_text(&url)), "rejected");
+        return Err(CommandError::new(
+            "open_url_rejected",
+            format!("打不开这类链接：{url}——只支持 http、https、mailto"),
+        ));
+    };
+    match app.opener().open_url(target, None::<&str>) {
+        Ok(()) => {
+            crate::logging::link_open(scheme, "opened");
+            Ok(())
+        }
+        Err(e) => {
+            crate::logging::link_open(scheme, "failed");
+            Err(CommandError::new(
+                "open_url_failed",
+                format!("打开链接失败：{e}"),
+            ))
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // 崩溃备份（M127，change save-hardening）
 // ---------------------------------------------------------------------------
 
@@ -605,6 +685,63 @@ mod tests {
         assert!(state.is_dirty());
         state.set(false);
         assert!(!state.is_dirty());
+    }
+
+    /// 外链 scheme 白名单（M144）：白名单内的 scheme 大小写不敏感归一到规范写法，
+    /// 其余（含没有 scheme、相对路径、应用自定义协议）一律归 `other`。
+    #[test]
+    fn external_url_scheme_whitelist() {
+        assert_eq!(scheme_label("https://example.invalid/x"), "https");
+        assert_eq!(scheme_label("HTTPS://example.invalid/x"), "https");
+        assert_eq!(scheme_label("http://example.invalid"), "http");
+        assert_eq!(scheme_label("mailto:a@b.invalid"), "mailto");
+        assert_eq!(scheme_label("MaIlTo:a@b.invalid"), "mailto");
+
+        assert_eq!(scheme_label("javascript:alert(1)"), "other");
+        assert_eq!(scheme_label("file:///etc/hosts"), "other");
+        assert_eq!(scheme_label("obsidian://open?vault=x"), "other");
+        assert_eq!(scheme_label("note.md"), "other");
+        assert_eq!(scheme_label("/abs/path.md"), "other");
+        assert_eq!(scheme_label("#heading"), "other");
+        assert_eq!(scheme_label(""), "other");
+    }
+
+    /// 尖括号包裹形式与首尾空白：`[a](<https://x>)` 是 CommonMark 的写法，取出的是
+    /// 里面的目标；只有成对时才剥（落单的 `<` 是目标内容的一部分）。
+    #[test]
+    fn external_url_target_text_strips_angle_wrapper() {
+        assert_eq!(
+            target_text("  https://x.invalid/y  "),
+            "https://x.invalid/y"
+        );
+        assert_eq!(target_text("<https://x.invalid/y>"), "https://x.invalid/y");
+        assert_eq!(target_text(" <mailto:a@b.invalid> "), "mailto:a@b.invalid");
+        assert_eq!(target_text("<https://x.invalid"), "<https://x.invalid");
+        assert_eq!(target_text("https://x.invalid>"), "https://x.invalid>");
+    }
+
+    /// 白名单内的 scheme 也可能因目标不可信被拒：解析出的目标含空白或控制字符时
+    /// 不打开（还原不出用户真正想开的东西，宁可拒绝）。
+    #[test]
+    fn external_url_openable_requires_scheme_and_clean_target() {
+        assert_eq!(
+            openable_external_url("https://x.invalid/a"),
+            Some(("https", "https://x.invalid/a"))
+        );
+        assert_eq!(
+            openable_external_url("  <mailto:a@b.invalid> "),
+            Some(("mailto", "mailto:a@b.invalid"))
+        );
+        assert_eq!(
+            openable_external_url("https://x.invalid/a%20b"),
+            Some(("https", "https://x.invalid/a%20b"))
+        );
+
+        assert_eq!(openable_external_url("https://x.invalid/a b"), None);
+        assert_eq!(openable_external_url("https://x.invalid/a\nb"), None);
+        assert_eq!(openable_external_url("https://x.invalid/\u{7}"), None);
+        assert_eq!(openable_external_url("javascript:alert(1)"), None);
+        assert_eq!(openable_external_url("note.md"), None);
     }
 
     #[test]

@@ -22,6 +22,7 @@ import {
   onFsEntryChanged,
   onMenuCommand,
   onQuitBlocked,
+  openExternalUrl,
   vaultCurrent,
   vaultOpen,
   vaultOpenPath,
@@ -34,6 +35,7 @@ import type { FsEntry } from "./bindings/FsEntry";
 import type { LinkResolveResult } from "./bindings/LinkResolveResult";
 import { extensionOf, mimeTypeOf, resolveByNameUnique } from "./preview/attachments";
 import { findWikilinkSpans } from "./preview/wikilinks";
+import { externalLinkAt } from "./preview/links";
 import { openSearch } from "./search";
 import "./style.css";
 // 搜索 panel 的样式单列一个文件（M139）：与并行 mission 的 src/style.css 隔离，
@@ -312,21 +314,57 @@ function wikilinkAt(pos: number): string | null {
   return null;
 }
 
-// 点击跳转（spec §4.2）：⌘-Click 命中 wikilink span 时阻止选区落点，直接跟随链接；
+/**
+ * 光标/点击处的链接（M144）：外链（http / https / mailto）或 wikilink，都没有则 null。
+ *
+ * wikilink 优先且路径逐字未动：`[[x]]` 在语法树里也是一个没有 URL 子节点的 `Link`
+ * 节点，外链判定天然不命中它，两者不会互相抢；顺序写死仍是有意的——wikilink 的
+ * 语义只有 Rust link_graph 一份，先问它。没有 vault 上下文（没有打开中的 md 文件）
+ * 时 wikilink 不算可激活的链接（解析基准就是当前文件），外链不受此限。
+ *
+ * 键盘路径（选区 head）与鼠标路径（点击坐标）共用本判定，跟随逻辑只有一份。
+ */
+type LinkTarget = { kind: "wikilink"; raw: string } | { kind: "external"; url: string };
+
+function linkTargetAt(pos: number): LinkTarget | null {
+  const raw = wikilinkAt(pos);
+  if (raw !== null) {
+    return currentPath === undefined ? null : { kind: "wikilink", raw };
+  }
+  const link = externalLinkAt(editor.view.state, pos);
+  return link === null ? null : { kind: "external", url: link.url };
+}
+
+/** 跟随链接：wikilink 走既有跳转链路，外链交系统默认应用。 */
+function followLink(target: LinkTarget): void {
+  if (target.kind === "wikilink") void followWikilink(target.raw);
+  else void openExternalLink(target.url);
+}
+
+/** 外链交给系统默认应用打开（Rust 侧校验 scheme）；失败给人话提示。 */
+async function openExternalLink(url: string): Promise<void> {
+  try {
+    await openExternalUrl(url);
+  } catch (e) {
+    toast(errorMessage(e));
+  }
+}
+
+// 点击跳转（spec §4.2）：⌘-Click 命中链接时阻止选区落点，直接跟随链接；
 // 裸点击不拦截，保持链接文本可正常落点编辑。
 // M132 收窄：鼠标路径与 D1 的 ⌘/⌃ 拆分对齐——只有 ⌘-Click 跟随链接；⌃-Click 让位给
 // macOS 的系统级次级点击（右键等价手势），不再被当作链接激活。键位表只管键盘，鼠标
 // 路径就地判定（收窄前是 e.metaKey || e.ctrlKey，与拆分前的键盘口径同源）。
+// M144：鼠标路径同样覆盖外链——外链不需要 vault 上下文，故不再以 currentPath 提前返回。
 editor.view.dom.addEventListener("mousedown", (e) => {
   if (e.button !== 0) return;
   if (!e.metaKey) return;
-  if (currentPath === undefined) return; // 无 vault 上下文：链接只是文本
   const pos = editor.view.posAtCoords({ x: e.clientX, y: e.clientY });
   if (pos === null) return;
-  const raw = wikilinkAt(pos);
-  if (raw === null) return;
+  const target = linkTargetAt(pos);
+  if (target === null) return; // 不在链接上：不拦截，选区正常落点
   e.preventDefault();
-  void followWikilink(raw);
+  followLink(target);
 });
 
 // ---------------------------------------------------------------------------
@@ -340,10 +378,11 @@ const commands: CommandRuntime = {
   "document.save": () => {
     void save.save();
   },
-  // 轨道 A 原样迁入：作用域仍是 global（迁移前挂在 window 上，任意焦点都生效）。
-  "wikilink.follow": () => {
-    const raw = wikilinkAt(editor.view.state.selection.main.head);
-    if (raw !== null) void followWikilink(raw);
+  // 轨道 A 原样迁入（键位与作用域不变）；M144 起跟随光标/选区处的链接——外链交系统
+  // 浏览器、wikilink 走既有跳转链路。落在非链接处无操作（不假装有反馈）。
+  "link.follow": () => {
+    const target = linkTargetAt(editor.view.state.selection.main.head);
+    if (target !== null) followLink(target);
   },
   // 键位查看面板（M133）：列出**生效中**的键位表（含 [keys] 覆盖的产物）。
   "app.describe-bindings": () => bindingsPanel.toggle(),
