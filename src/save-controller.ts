@@ -411,19 +411,23 @@ export function createSaveController(deps: SaveControllerDeps): SaveController {
    * reloadDisplayedFile 的 revision 比对丢弃；外部删除无法重载，只提示内容仍保留；
    * dirty 时把选择权交给用户（sticky 浮条而非 modal，不打断打字）；未 dirty 自动
    * 重载并提示。仅 md 模式：展示中的 md 才有内存修改可丢失。
-   * M127：dirty 分流一律暂停自动保存——磁盘已有更新版本，自动保存不能硬冲 CAS。 */
+   * M127：dirty 分流一律暂停自动保存——磁盘已有更新版本，自动保存不能硬冲 CAS。
+   *
+   * 诊断埋点（save_external_change）记在**判定为外部变更的那几个分支**里，不记在入口：
+   * 自身保存也会经 watch 回流成事件，入口无条件记录会把「每次自动保存」都记成外部变更
+   * （实测如此）。判据与 App 的既有分流口径完全一致：删除分支（无法重载）与 dirty 分支
+   * （无法重载、只能暂停）本身就是外部变更；干净分支要 reloadDisplayedFile 真的重载了
+   * 才算——revision 未变即自身保存的回声。 */
   function handleExternalChange(path: string, kind: FsChangeKind): void {
-    if (saveInFlight) return; // 自身保存也产生 watch 事件：不是外部变更，不记日志（口径同分流）
-    // 诊断埋点：外部修改命中**打开中的文档**。Rust 的 watch 流给的是全 vault 变更，
-    // 「命中打开中的文档」这个判定只有前端有（displayedPath 在这），所以这一条由前端
-    // 经 log_event 转发，而不是在 Rust 侧记全量文件变更（那会淹没真正的摩擦信号）。
-    logEvent("save_external_change", { path, change: kind });
+    if (saveInFlight) return;
     if (kind === "deleted") {
+      logExternalChange(path, kind);
       pauseAutosave(path, "not-found");
       toast(`当前文件已被外部删除：${path}；编辑器中的内容未丢失`, [], true);
       return;
     }
     if (editor.isDirty()) {
+      logExternalChange(path, kind);
       pauseAutosave(path, "external");
       toast(
         `检测到外部修改：${path}`,
@@ -435,9 +439,19 @@ export function createSaveController(deps: SaveControllerDeps): SaveController {
       );
     } else {
       void reloadDisplayedFile(path, { onlyIfChanged: true }).then((reloaded) => {
-        if (reloaded) toast("检测到外部修改，已自动重载");
+        if (!reloaded) return; // 回声：revision 与本次保存的结果一致，磁盘没有变化
+        logExternalChange(path, kind);
+        toast("检测到外部修改，已自动重载");
       });
     }
+  }
+
+  /** 诊断埋点：外部修改命中**打开中的文档**。Rust 的 watch 流给的是全 vault 变更，
+   *  「命中打开中的文档且不是自身保存」这个判定只有前端有（displayedPath 与 revision
+   *  都在这），所以这一条由前端经 log_event 转发，而不是在 Rust 侧记全量文件变更
+   *  （那会淹没真正的摩擦信号）。 */
+  function logExternalChange(path: string, kind: FsChangeKind): void {
+    logEvent("save_external_change", { path, change: kind });
   }
 
   // ---------------------------------------------------------------------------

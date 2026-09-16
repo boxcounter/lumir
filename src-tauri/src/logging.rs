@@ -49,14 +49,14 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use ts_rs::TS;
 
 use crate::commands::CommandError;
-use crate::config::{self, LogLevel};
+use crate::config::LogLevel;
 
 /// 单文件上限：追加会越限时删档重开（滚动保留最近窗口）。
-pub const MAX_FILE_BYTES: u64 = 5 * 1024 * 1024;
+const MAX_FILE_BYTES: u64 = 5 * 1024 * 1024;
 /// 保留天数（含当日；先到为准）。
-pub const RETAIN_DAYS: i64 = 7;
+const RETAIN_DAYS: i64 = 7;
 /// 保留文件数上限（先到为准；按日一文时 7 天规则先到，本项是防御）。
-pub const MAX_FILES: usize = 10;
+const MAX_FILES: usize = 10;
 /// 单批事件上限：稳态高频流下也不让单次写入过大。
 const MAX_BATCH: usize = 256;
 /// 字段值上限（字符）：白名单之外的第二道护栏——防止把正文当诊断字段塞进来。
@@ -140,7 +140,7 @@ impl LogEventName {
 /// 一条待落盘事件：`at` 是构造时刻（`ts` 取它，不是落盘时刻），字段已按白名单归一
 /// （键取白名单里的 `'static str`）。
 #[derive(Debug, Clone)]
-pub struct Event {
+struct Event {
     name: LogEventName,
     at: SystemTime,
     fields: Vec<(&'static str, String)>,
@@ -174,7 +174,7 @@ enum Msg {
 
 /// 诊断日志落盘器。`enabled = false`（`[log] level = "off"`）时事件在入口即丢弃，
 /// 连 `logs/` 目录都不会创建。
-pub struct Sink {
+struct Sink {
     enabled: AtomicBool,
     tx: Sender<Msg>,
 }
@@ -340,21 +340,31 @@ static SINK: OnceLock<Sink> = OnceLock::new();
 /// 配置读不到（配置目录不可确定）时按关闭处理——那种情况下也没有日志目录可写。
 fn global() -> &'static Sink {
     SINK.get_or_init(|| {
-        let dir = match config::config_dir() {
-            Ok(dir) => dir,
-            Err(e) => {
-                eprintln!("lumir: 诊断日志未启用：{}", e.message);
-                return Sink::start(PathBuf::new(), LogLevel::Off, FLUSH_INTERVAL);
-            }
-        };
-        let level = match config::load() {
-            Ok(snapshot) => snapshot.config.log.level,
-            Err(e) => {
-                eprintln!("lumir: 诊断日志等级读取失败，按 off 处理：{}", e.message);
-                LogLevel::Off
-            }
-        };
-        Sink::start(dir.join("logs"), level, FLUSH_INTERVAL)
+        // 测试构建下永不落盘：单例一旦被某个测试触达，就会把事件写进**真实**配置目录
+        // （~/.config/lumir/logs）——本 change 实现期实测发生过一次（一个测试误用公共
+        // 包装而非注入变体，写了 13 行测试事件进真实目录）。测试一律走 `*_to(sink)` 注入
+        // 路径（见本模块测试），这里直接关掉，让误用表现为「没有日志」而不是污染环境。
+        #[cfg(test)]
+        return Sink::start(PathBuf::new(), LogLevel::Off, FLUSH_INTERVAL);
+        #[cfg(not(test))]
+        {
+            use crate::config;
+            let dir = match config::config_dir() {
+                Ok(dir) => dir,
+                Err(e) => {
+                    eprintln!("lumir: 诊断日志未启用：{}", e.message);
+                    return Sink::start(PathBuf::new(), LogLevel::Off, FLUSH_INTERVAL);
+                }
+            };
+            let level = match config::load() {
+                Ok(snapshot) => snapshot.config.log.level,
+                Err(e) => {
+                    eprintln!("lumir: 诊断日志等级读取失败，按 off 处理：{}", e.message);
+                    LogLevel::Off
+                }
+            };
+            Sink::start(dir.join("logs"), level, FLUSH_INTERVAL)
+        }
     })
 }
 
@@ -958,5 +968,15 @@ mod tests {
         );
         assert_eq!(lines[0]["level"], "warn");
         assert_eq!(lines[1]["level"], "info");
+    }
+
+    /// 测试构建下单例一律关闭：任何测试经公共包装触达单例，都不该把事件写进真实配置
+    /// 目录（实现期实测污染过一次，见 global() 的注释）。
+    #[test]
+    fn global_sink_is_disabled_in_test_builds() {
+        assert!(!global().enabled.load(Ordering::Relaxed));
+        // 公共包装在测试构建下同样只是丢弃，不产生文件
+        save_conflict("docs/a.md", "document_conflict");
+        flush();
     }
 }
