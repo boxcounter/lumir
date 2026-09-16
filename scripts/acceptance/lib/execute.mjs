@@ -508,52 +508,82 @@ async function doAction(step, { ctx, cu, scenario, vars, pid, evidence }) {
     }
     case "type": {
       // KimiCU 的文本注入对 WKWebView 偶发不落地（返回 ok 但编辑器没变，M134 实证）。
-      // 「注入 → 回读校验 → 没落地才重试」+**出现次数校验**：
-      //   - 只接受「目标串出现次数 = 注入前次数 + 1」；
-      //   - 前缀型 partial landing（先落 "MEM-" 再补 "MEM-EDIT-2" → "MEM-MEM-EDIT-2"）会让
-      //     子串断言假绿，次数校验能抓住（出现 2 次 → 直接报错，不放行）；
-      //   - 整段一直没落地 → 报错。
-      // 这样重试既修偶发不落地，又不可能制造假绿。
+      // 重试口径与 `keys` 一致（M143 对齐）——**只在目标字节完全未变时**再注入一次（≤3 次）；
+      // 值变了却没凑齐目标串（partial landing）直接报错，不再注入：整串重试会原地拼到已落地的
+      // 残段后面，而出现次数校验反而可能放行。
+      //   判据：注入前记目标串出现 N 次，落地要求恰为 N+1；
+      //   N+2 → 重复落地；次数不够 + 字节未变 → 未落地（可重试）；次数不够 + 字节已变 → partial（报错）。
+      // 历史教训（M135 旧注释已删）：旧实现「次数 ≠ N+1 就重试」是假绿路径——真机例（M140 r1 复验）：
+      // 搜索框先有 "n"，注入 "eedle" 只落地 "dl" 得 "ndl"，重试拼成 "ndleedle"，`eedle` 恰现 1 次
+      // = N+1 即放行，而输入框已坏。旧注释举的 `MEM-` + `MEM-EDIT-2` → `MEM-MEM-EDIT-2` 记 2 次
+      // 也是算错的：后者在该串里只出现 1 次（split 计数），那个例子本身就走在假绿路径上。
       const want = step.text;
       const countOf = (t) => (want ? t.split(want).length - 1 : 0);
       const first = await readAx(cu, p);
       if (!first.textarea) throw new Error("type 前无法确认编辑器可读：AX 快照里没有 AXTextArea");
-      const baseline = step.clear ? 0 : countOf(first.editor ?? "");
-      const max = step.retries ?? 3;
-      let last = "";
-      let res = null;
-      let n = 0;
-      for (n = 1; n <= max; n++) {
-        res = await typeInEditor(cu, p, want, { clear: step.clear });
-        await sleep(800);
-        last = (await readAx(cu, p)).editor ?? "";
-        let c = countOf(last);
-        if (c === baseline + 1) break;
-        if (c > baseline + 1) {
+      const baselineValue = first.editor ?? "";
+      // clear=true 时注入会先清空编辑器，注入前的旧内容不参与计数，基线按 0 算。
+      const baseline = step.clear ? 0 : countOf(baselineValue);
+      const max = Math.min(step.retries ?? 3, 3);
+      const reread = async () => {
+        const ax = await readAx(cu, p);
+        if (!ax.textarea) {
           throw new Error(
-            `注入重复落地：目标串「${want}」出现 ${c} 次（期望 ${baseline + 1}）——` +
-              `疑似 partial landing 后重试拼接，文档已被破坏，不按 PASS 处理`,
+            "type 回读目标在注入过程中不可读了（AX 快照里没有 AXTextArea，modal 打开期间常见）——" +
+              "不在不可观测的窗口里下结论",
           );
         }
+        return ax.editor ?? "";
+      };
+      const classify = (v) => {
+        const c = countOf(v);
+        if (c === baseline + 1) return "landed";
+        if (c > baseline + 1) return "duplicated";
+        return v === baselineValue ? "unchanged" : "partial";
+      };
+
+      let attempt = 0;
+      let res = null;
+      let lastValue = baselineValue;
+      let verdict = "unchanged";
+      for (attempt = 1; attempt <= max; attempt++) {
+        res = await typeInEditor(cu, p, want, { clear: step.clear });
+        await sleep(800);
+        lastValue = await reread();
+        verdict = classify(lastValue);
+        if (verdict === "landed") break;
+        // 再等一拍复读：DOM 落地与 AX 快照之间有时序，不能拿一次过早的读当结论。
         await sleep(700);
-        last = (await readAx(cu, p)).editor ?? "";
-        c = countOf(last);
-        if (c === baseline + 1) break;
-        if (c > baseline + 1) {
-          throw new Error(`注入重复落地：目标串「${want}」出现 ${c} 次（期望 ${baseline + 1}）`);
-        }
+        lastValue = await reread();
+        verdict = classify(lastValue);
+        if (verdict !== "unchanged") break;
       }
-      const finalCount = countOf(last);
-      if (finalCount !== baseline + 1) {
+      if (verdict === "duplicated") {
         throw new Error(
-          `文本注入未落地：${max} 次尝试后「${want}」出现 ${finalCount} 次（期望 ${baseline + 1}）；` +
+          `注入重复落地：目标串「${want}」出现 ${countOf(lastValue)} 次（期望 ${baseline + 1}）——` +
+            "疑似 partial landing 后重试拼接，文档已被破坏，不按 PASS 处理",
+        );
+      }
+      if (verdict === "partial") {
+        throw new Error(
+          `文本注入部分落地：目标串「${want}」出现 ${countOf(lastValue)} 次（期望 ${baseline + 1}），但编辑器内容已变——` +
+            `不重试：再注入整串会在残段后拼出脏文本。基线=${JSON.stringify(baselineValue.slice(0, 200))} ` +
+            `现值=${JSON.stringify(lastValue.slice(0, 200))}`,
+        );
+      }
+      if (verdict !== "landed") {
+        throw new Error(
+          `文本注入未落地：${max} 次注入后目标串「${want}」出现 ${countOf(lastValue)} 次（期望 ${baseline + 1}）；` +
+            "编辑器内容每次注入前后逐字节一致（丢在注入链路，见 README 已知边界）；" +
             `工具返回 ${JSON.stringify(res ?? {}).slice(0, 200)}`,
         );
       }
-      if (n > 1) {
+      if (attempt > 1) {
         evidence.record({
           kind: "note",
-          text: `type 注入第 ${n} 次才落地（前 ${n - 1} 次未生效；已按出现次数校验确认无重复）`,
+          text:
+            `type 注入第 ${attempt} 次才落地（前 ${attempt - 1} 次编辑器内容逐字节未变；` +
+            "已按出现次数校验确认无重复）",
         });
       }
       return;

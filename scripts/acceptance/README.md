@@ -96,7 +96,7 @@ steps:
 | `clickEditor` | `dx`（默认 40）、`dy`（默认 6） | 点编辑器顶部建立渲染层焦点（编辑器内元素无 AX bbox，只能按坐标） |
 | `focusWindow` | `retries` | 确保目标窗口在前台（键盘场景的前台纪律，见上） |
 | `key` / `keys` | `key` / `keys: [...]`、`gapMs` | 键盘注入（`ctrl+n`、`cmd+s`、`cmd+/` …）。`keys` 对**整串都是可打印单字符**的序列额外做回读 + 有限重试（≤3）；chord / 混合序列 / 无可读目标一律保持盲发不重试（判定边界见「已知边界」） |
-| `type` | `text`、`clear` | 输入到编辑器（内部先真实点击聚焦，避免落陈旧选区） |
+| `type` | `text`、`clear`、`retries` | 输入到编辑器（内部先真实点击聚焦，避免落陈旧选区）；回读 + 有限重试与 `keys` **同一口径**：只在编辑器字节完全未变时重试（≤3），partial landing 直接报错不重试（判定边界见「已知边界」） |
 | `sleep` | `ms` | 等待 |
 | `record` | `as`、`file` | 记下文件 sha256/mtime，供 `changedSince`/`unchangedSince`/`mtimeNewerThan` 比较 |
 | `recordEditor` | `as` | 记下编辑器文本，供 `editor.unchangedSince` 做**逐字节**比较 |
@@ -162,11 +162,18 @@ Alex 抽审路径：先看 `summary.md`，再进 FAIL 场景看 `steps.md` + `sh
   报错，不会静默放过。
 - **文本注入偶发不落地**：KimiCU 的 `type_text` 对 WKWebView 偶发返回 `ok` 但编辑器没变（M134 实证，
   M135 r2 也撞到一次：07b 首轮因输入没落地而 FAIL，重跑即过）。`do: type` 因此做「注入 → 回读校验 →
-  没落地才重试（最多 3 次）」，并把重试次数写进证据（`type 注入第 N 次才落地`）。
-  回读判据是**出现次数**：注入前记下目标串出现次数 N，注入后要求恰为 N+1。
-  这样两种失败模式都不会假绿——整段没落 → 次数仍是 N（报错）；前缀型 partial landing 后重试拼接
-  （`MEM-` + `MEM-EDIT-2` → `MEM-MEM-EDIT-2`）→ 次数为 N+2（报错，不放行）。
-  注意：仅靠 `editor.has(want)` 子串匹配挡不住第二种，必须用次数（r2 评审指出的漏洞）。
+  没落地才重试」，**重试口径与 `keys` 统一（M143 对齐）**：
+  - **只在目标字节完全未变时才重试**（回读 `AXTextArea.value`，最多 3 次）。值变了却没凑齐目标串
+    （partial landing）**直接报错不重试**——再注入整串会原地拼到已经落地的残段后面。回读目标在注入
+    过程中变得不可读（无 `AXTextArea`，如 modal 打开）也直接报错，不在不可观测的窗口里下结论。
+  - **判据是出现次数**：注入前记目标串出现 N 次，落地要求恰为 N+1。N+2 记「重复落地」；次数不够
+    且字节未变记「未落地」（可重试）；次数不够但字节已变记「部分落地」（报错）。重试次数写进证据
+    （`type 注入第 N 次才落地`）。
+  - **历史教训（别再回到旧口径）**：加固前是「次数 ≠ N+1 就重试」，且注释声称次数校验能挡住前缀型
+    partial landing——两处都错。真机例（M140 r1 评审独立复验）：搜索框先有 `n`，注入 `eedle` 只落地
+    `dl` 得 `ndl`，按次数口径重试拼成 `ndleedle`，`eedle` 恰现 1 次 = N+1 即放行，而输入框已坏；
+    旧注释举的 `MEM-` + `MEM-EDIT-2` → `MEM-MEM-EDIT-2` 记 2 次也算错，后者在该串里只出现 1 次
+    （split 计数）。仅靠 `editor.has(want)` 子串匹配挡不住这类路径，必须字节判据 + 次数一起用。
 - **`press_key` 的逐键注入会整批丢键（原生 input 与编辑器 contenteditable 都有）**：M139 往搜索
   panel 的原生 `<input>` 逐字符注入 `needle` 只落地 `ndl`（三个 `e` 全丢）、`a..z` 只落地
   `abcdghijkl`（丢 e、f 与 m..z），且 app 侧 keydown 探针证明被丢的键**从未到达 DOM**（收到的
