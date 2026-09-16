@@ -353,8 +353,36 @@ async function doAction(step, { ctx, cu, scenario, vars, pid, evidence }) {
       }
       return;
     }
-    case "type":
-      return typeInEditor(cu, p, step.text, { clear: step.clear });
+    case "type": {
+      // KimiCU 的文本注入对 WKWebView 偶发不落地（返回 ok 但编辑器没变，M134 实证）。
+      // 这里做「注入 → 回读校验 → 没落地才重试」，并把重试次数记进证据（不静默重试）。
+      // 重试不会制造假绿：只有「整段文本一次不落」才重试；若第一次落了一半，第二次会追加成
+      // 另一段文本，断言照样 FAIL。
+      const want = step.text;
+      const max = step.retries ?? 3;
+      let last = "";
+      let res = null;
+      let n = 0;
+      for (n = 1; n <= max; n++) {
+        res = await typeInEditor(cu, p, want, { clear: step.clear });
+        await sleep(800);
+        last = (await readAx(cu, p)).editor ?? "";
+        if (last.includes(want)) break;
+        await sleep(700);
+        last = (await readAx(cu, p)).editor ?? "";
+        if (last.includes(want)) break;
+      }
+      if (n > 1) {
+        evidence.record({
+          kind: "note",
+          text:
+            `type 注入第 ${n} 次才落地（前 ${n - 1} 次未生效）；` +
+            `工具返回 ${JSON.stringify(res ?? {})}`.slice(0, 300) +
+            "；KimiCU 键盘注入对 WKWebView 偶发不落地（M134 实证）",
+        });
+      }
+      return;
+    }
     case "click": {
       const t = step.target ?? {};
       if (t.x !== undefined) return cu.click(p, { x: t.x, y: t.y });

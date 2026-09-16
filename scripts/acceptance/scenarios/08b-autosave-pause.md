@@ -40,8 +40,9 @@ steps:
     do: keys
     keys: ["m", "o", "r", "e"]
     expect:
-      - label: 追加输入已生效
-        editor: { has: "MORE" }
+      # KimiCU 的 press_key 按物理键注入，不带 shift → 实际落小写；断言写全小写以免误判
+      - label: 追加输入已生效（紧跟在探测串之后）
+        editor: { has: "PAUSE-PROBEmore" }
   - name: 等足够久（远超 2s 去抖）
     do: sleep
     ms: 7000
