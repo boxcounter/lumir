@@ -17,6 +17,7 @@ Lumir：本地文本工作台，当前阶段定位为 Emacs keybinding PKM（[AD
 | [docs/specs/](docs/specs/) | 专项规格（性能测量方法学等） |
 | [docs/process/](docs/process/) | 制品流程约定 |
 | [docs/backlog.md](docs/backlog.md) | 已知 findings 与待裁决队列——**新 findings 落这里，不再积在 HANDOFF.md** |
+| [REVIEW.md](REVIEW.md) | 反复踩过的坑与开工前检查清单（症状/根因/证据/防线）——**worker 动工前、reviewer 出 verdict 前必读** |
 | [scripts/acceptance/](scripts/acceptance/) | 真机验收套件（用法与场景格式见其 [README](scripts/acceptance/README.md)） |
 | [tests/visual/README.md](tests/visual/README.md) | 视觉门禁口径与基线更新纪律 |
 | `HANDOFF.md`（git 外） | 当前 session 状态、桌面复验现场、配额 runbook 细节 |
@@ -61,6 +62,7 @@ scripts/gate.sh all      # visual + 性能合同（release 构建，首次分钟
 
 ## 工作流分工速查
 
+- **开工前必读**：worker 动工前与 reviewer 给 verdict 前先过一遍 [REVIEW.md](REVIEW.md)，逐条对一眼自己的改动面；重复踩到表内某条时把新现场补进该条证据，不另起条目。
 - 功能变更（新能力、行为修改）→ OpenSpec change（提案评审 → 实现 → 归档评审，两个 Alex 节点是硬门禁）。
 - 跨切面架构决策 → ADR。
 - 渲染/交互缺陷修复 → 合同先行（[rendering-defect-contract-first.md](docs/process/rendering-defect-contract-first.md)）：先定位不变量条款 + 属性测试，禁止只做案例级补丁。
