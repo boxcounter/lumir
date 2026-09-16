@@ -29,6 +29,7 @@ import {
   wikilinkCreate,
 } from "./ipc";
 import { createSaveController } from "./save-controller";
+import { logEvent, sampleCallback } from "./diagnostics";
 import type { FsEntry } from "./bindings/FsEntry";
 import type { LinkResolveResult } from "./bindings/LinkResolveResult";
 import { extensionOf, mimeTypeOf, resolveByNameUnique } from "./preview/attachments";
@@ -358,10 +359,14 @@ let detachKeymap = new Keymap().attach(window, commands, keymapContext);
  *  无响应」的竞态。覆盖只换「键 → 命令」的对应（作用域随命令归属，见 keys.ts）；
  *  未知命令 / 非法键位 / 多段 chord 都给 warning 并忽略该条，MUST NOT 抛错打断启动。
  *  warning 走 console（与 ConfigSnapshot.warnings 的既有口径一致：M1 以来配置 warning
- *  没有 UI 出口，本 change 不新增 UI 面）。 */
+ *  没有 UI 出口，本 change 不新增 UI 面），并另经 log_event 落一份诊断日志——
+ *  dogfood 期排查「键位没生效」时 agent 能直接读事件，不必让人回忆 console 输出。 */
 function applyKeyConfig(overrides: KeyOverrides | undefined): void {
   const { bindings, warnings } = applyKeyOverrides(overrides ?? {});
-  for (const warning of warnings) console.warn(`lumir: ${warning}`);
+  for (const warning of warnings) {
+    console.warn(`lumir: ${warning}`);
+    logEvent("config_warning", { source: "keys", message: warning });
+  }
   effectiveBindings = bindings; // 面板渲染这份产物，不自己重新合并一遍默认表
   if (Object.keys(overrides ?? {}).length === 0) return; // 无覆盖：默认表已在分发
   detachKeymap();
@@ -653,31 +658,35 @@ function loadVault(root: string, entries: FsEntry[], vaultId = root, restored = 
 
 // watch 增量事件流 → 附件索引与文件树同步打补丁（都不全量重扫）。
 // 无 Tauri 后端的环境（如纯浏览器预览）下 listen 会 reject，静默忽略。
+// 整段处理是「后台回调」（不在键入路径上），超 16ms 预算时采样记一条 slow_callback
+// ——「文件一多就卡」这类毛刺正是 dogfood 要定位的东西。
 onFsEntryChanged((changes) => {
-  for (const change of changes) {
-    if (change.kind === "deleted") {
-      // 目录删除连同子孙一起出索引（与 tree.applyChanges 的级联删除同口径）
-      attachmentPaths = attachmentPaths.filter(
-        (p) => p !== change.path && !p.startsWith(`${change.path}/`),
-      );
-    } else if (
-      (change.entry_kind ?? "file") === "file" &&
-      !attachmentPaths.includes(change.path)
-    ) {
-      attachmentPaths.push(change.path);
+  sampleCallback("fs_entry_changed", () => {
+    for (const change of changes) {
+      if (change.kind === "deleted") {
+        // 目录删除连同子孙一起出索引（与 tree.applyChanges 的级联删除同口径）
+        attachmentPaths = attachmentPaths.filter(
+          (p) => p !== change.path && !p.startsWith(`${change.path}/`),
+        );
+      } else if (
+        (change.entry_kind ?? "file") === "file" &&
+        !attachmentPaths.includes(change.path)
+      ) {
+        attachmentPaths.push(change.path);
+      }
     }
-  }
-  // 打开中文件被外部变更（Lumir ↔ Obsidian 来回编辑的高频路径，M124）：
-  // 附件索引与文件树照常吃增量，文档内容另行处置（save 控制器内分流）。
-  const openPath = save.displayedPath();
-  if (openPath) {
-    const hit = changes.find((c) => c.path === openPath);
-    if (hit) save.handleExternalChange(openPath, hit.kind);
-  }
-  // 链接索引已由后端随事件流增量更新；前端清缓存重建装饰
-  invalidateResolve();
-  editor.refreshPreview();
-  tree.applyChanges(changes);
+    // 打开中文件被外部变更（Lumir ↔ Obsidian 来回编辑的高频路径，M124）：
+    // 附件索引与文件树照常吃增量，文档内容另行处置（save 控制器内分流）。
+    const openPath = save.displayedPath();
+    if (openPath) {
+      const hit = changes.find((c) => c.path === openPath);
+      if (hit) save.handleExternalChange(openPath, hit.kind);
+    }
+    // 链接索引已由后端随事件流增量更新；前端清缓存重建装饰
+    invalidateResolve();
+    editor.refreshPreview();
+    tree.applyChanges(changes);
+  });
 }).catch(() => {});
 
 // 启动恢复：后端 setup 已按 last_vault 尝试自动打开；这里拉取结果。
@@ -699,8 +708,12 @@ configGet().then((snapshot) => {
   editor.setMode(snapshot.config.editor.mode);
   applyKeyConfig(snapshot.config.keys);
   // 配置 warning（含 [keys] 的逐项回退）：M1 以来没有 UI 出口，如实记到 console，
-  // 不新增 UI 面（避免启动浮条与既有启动视觉冲突）。
-  for (const warning of snapshot.warnings) console.warn(`lumir: ${warning}`);
+  // 不新增 UI 面（避免启动浮条与既有启动视觉冲突）；同一份 warning 另落诊断日志
+  // （config_warning 事件），让读日志的 agent 直接看到配置面出了什么问题。
+  for (const warning of snapshot.warnings) {
+    console.warn(`lumir: ${warning}`);
+    logEvent("config_warning", { source: "config", message: warning });
+  }
 }).catch(() => {});
 
 // app-ready 只表示 webview/application shell 已挂载，不等价于 vault 恢复或编辑器首帧。

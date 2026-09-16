@@ -20,6 +20,13 @@
 //! 便于生成人话错误；前后端同格式免转换。代价：不支持注释、手写编辑体验逊于
 //! TOML。若 dogfood 阶段手改配置成为高频动作，重评 TOML（届时只需换本模块的
 //! 解析两行，对外契约不变）。
+//!
+//! ## log 表（add-diagnostics-logging）
+//!
+//! `{"log": {"level": "info" | "off"}}`，默认 `info`（dogfood 期需要数据）。
+//! 形状校验与 keys 表同口径：整表收成 Value 逐项判定，非法值只回退该字段并附人话
+//! warning（`{"log": "info"}` 这种错形状也只丢这一项，不拖垮整文件）。`level` 的
+//! 消费方是 src-tauri/src/logging.rs（`off` 时事件丢弃不写盘）。
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -44,6 +51,8 @@ pub struct AppConfig {
     /// 键位写法与前端键位 token 同源（如 `"Cmd-s"`、`"Ctrl-Alt-Minus"`、`"ArrowUp"`）；
     /// 多段 chord（含空白）本版不支持。命令 id 的合法性由前端键位层判定（见模块头）。
     pub keys: HashMap<String, Option<String>>,
+    /// 运行时诊断日志（add-diagnostics-logging）：事件落盘等级。
+    pub log: LogConfig,
 }
 
 impl Default for AppConfig {
@@ -53,6 +62,7 @@ impl Default for AppConfig {
             last_vault: None,
             editor: EditorConfig::default(),
             keys: HashMap::new(),
+            log: LogConfig::default(),
         }
     }
 }
@@ -80,6 +90,31 @@ pub enum EditorMode {
     Code,
 }
 
+/// 诊断日志配置（`[log]` 表）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, TS)]
+#[ts(export, export_to = "../../src/bindings/")]
+pub struct LogConfig {
+    pub level: LogLevel,
+}
+
+impl Default for LogConfig {
+    fn default() -> Self {
+        Self {
+            level: LogLevel::Info,
+        }
+    }
+}
+
+/// 日志等级：`info` = 记录 v0 事件集全部事件；`off` = 事件丢弃不写盘。
+/// 两档来自裁决点 1（默认 info：dogfood 期需要数据）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, TS)]
+#[serde(rename_all = "lowercase")]
+#[ts(export, export_to = "../../src/bindings/")]
+pub enum LogLevel {
+    Info,
+    Off,
+}
+
 /// 一次配置加载的结果：生效配置 + 人话 warning 列表 + 实际读取路径。
 #[derive(Debug, Clone, PartialEq, Serialize, TS)]
 #[ts(export, export_to = "../../src/bindings/")]
@@ -100,6 +135,8 @@ struct RawConfig {
     /// [keys] 表整体收成 Value：形状（对象？键位合法？值类型？）逐项判定，非法项只丢
     /// 自己并附 warning，不影响其余键位（与 editor.mode 的逐字段口径一致）。
     keys: serde_json::Value,
+    /// [log] 表同理收成 Value：错形状（如 `"log": "info"`）只丢这一项，不拖垮整文件。
+    log: serde_json::Value,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -212,12 +249,16 @@ fn validate(raw: RawConfig) -> (AppConfig, Vec<String>) {
     let (keys, mut key_warnings) = validate_keys(raw.keys);
     warnings.append(&mut key_warnings);
 
+    let (log, mut log_warnings) = validate_log(raw.log);
+    warnings.append(&mut log_warnings);
+
     (
         AppConfig {
             version,
             last_vault,
             editor: EditorConfig { mode },
             keys,
+            log,
         },
         warnings,
     )
@@ -261,6 +302,42 @@ fn validate_keys(raw: serde_json::Value) -> (HashMap<String, Option<String>>, Ve
         }
     }
     (keys, warnings)
+}
+
+/// [log] 表的形状校验（add-diagnostics-logging）：与 keys 表同口径——整表非法只丢这一项
+/// 并附人话 warning，`level` 取值非法只回退该字段到默认 `info`（ADR 0002 §5：非法配置不
+/// 导致启动失败）。未知键忽略（向前兼容）。
+fn validate_log(raw: serde_json::Value) -> (LogConfig, Vec<String>) {
+    let defaults = LogConfig::default();
+    let mut warnings = Vec::new();
+    let map = match raw {
+        serde_json::Value::Null => return (defaults, warnings),
+        serde_json::Value::Object(map) => map,
+        _ => {
+            warnings.push(
+                "配置项 log 应为对象（如 {\"log\": {\"level\": \"info\"}}），已忽略".to_string(),
+            );
+            return (defaults, warnings);
+        }
+    };
+    let level = match map.get("level") {
+        None | Some(serde_json::Value::Null) => defaults.level,
+        Some(serde_json::Value::String(text)) => match text.as_str() {
+            "info" => LogLevel::Info,
+            "off" => LogLevel::Off,
+            other => {
+                warnings.push(format!(
+                    "配置项 log.level 取值 \"{other}\" 非法（可选：info、off），已回退为 info"
+                ));
+                defaults.level
+            }
+        },
+        Some(_) => {
+            warnings.push("配置项 log.level 应为字符串（info / off），已回退为 info".to_string());
+            defaults.level
+        }
+    };
+    (LogConfig { level }, warnings)
 }
 
 #[cfg(test)]
@@ -437,5 +514,57 @@ mod tests {
             snap.config.keys.get("Ctrl-j").and_then(|v| v.as_deref()),
             Some("editor.not-a-command")
         );
+    }
+
+    #[test]
+    fn missing_log_table_defaults_to_info() {
+        // 老配置文件（本 change 之前写入）没有 log 字段：默认 info、无 warning。
+        let f = TempFile::new(r#"{"version":1}"#);
+        let snap = load_from(&f.0);
+        assert_eq!(snap.config.log.level, LogLevel::Info);
+        assert!(snap.warnings.is_empty());
+    }
+
+    #[test]
+    fn log_level_accepts_info_and_off() {
+        let off = load_from(&TempFile::new(r#"{"log":{"level":"off"}}"#).0);
+        assert_eq!(off.config.log.level, LogLevel::Off);
+        assert!(off.warnings.is_empty(), "{:?}", off.warnings);
+
+        let info = load_from(&TempFile::new(r#"{"log":{"level":"info"}}"#).0);
+        assert_eq!(info.config.log.level, LogLevel::Info);
+        assert!(info.warnings.is_empty());
+    }
+
+    #[test]
+    fn illegal_log_level_warns_and_falls_back_to_info() {
+        // ADR 0002 §5：非法值走既有 warning 语义，不得导致启动失败。
+        let f = TempFile::new(r#"{"log":{"level":"verbose"},"last_vault":"/tmp/vault"}"#);
+        let snap = load_from(&f.0);
+        assert_eq!(snap.config.log.level, LogLevel::Info);
+        assert_eq!(snap.config.last_vault.as_deref(), Some("/tmp/vault"));
+        assert_eq!(snap.warnings.len(), 1);
+        assert!(
+            snap.warnings[0].contains("log.level"),
+            "{:?}",
+            snap.warnings
+        );
+    }
+
+    #[test]
+    fn malformed_log_table_is_dropped_without_killing_the_file() {
+        // 错形状（字符串而非对象）只丢这一项；level 类型错同样只回退该字段。
+        let f = TempFile::new(r#"{"log":"info","editor":{"mode":"code"}}"#);
+        let snap = load_from(&f.0);
+        assert_eq!(snap.config.log.level, LogLevel::Info);
+        assert_eq!(snap.config.editor.mode, EditorMode::Code);
+        assert_eq!(snap.warnings.len(), 1);
+        assert!(snap.warnings[0].contains("log"));
+
+        let f = TempFile::new(r#"{"log":{"level":2}}"#);
+        let snap = load_from(&f.0);
+        assert_eq!(snap.config.log.level, LogLevel::Info);
+        assert_eq!(snap.warnings.len(), 1);
+        assert!(snap.warnings[0].contains("log.level"));
     }
 }

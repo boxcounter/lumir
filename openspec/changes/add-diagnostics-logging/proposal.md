@@ -17,7 +17,7 @@ dogfood 阶段（ADR 0006 转向）的决策输入是 friction log，其中「�
 1. **结构化事件日志落盘**（`diagnostics`）：关键运行时事件以 JSONL（每行一个 JSON 对象）写入 `<config_dir>/logs/` 按日滚动文件（`YYYY-MM-DD.jsonl`）。每条事件含 `ts`（ISO 8601）、`level`、`event` 与诊断字段（vault 相对路径、错误码、耗时等）。v0 事件集：`save_conflict` / `save_external_change` / `autosave_paused` / `autosave_resumed` / `recovery_written` / `recovery_restored` / `render_error`（mermaid/katex）/ `config_warning` / `slow_callback`（超 16ms 预算的后台回调采样）。
 2. **非阻塞写入**：日志写不在 keypress-to-paint 路径上引入同步文件 IO（ADR 0002 §6 性能合同），缓冲批量落盘；门禁验证以 perf.yml 相对回归不退化为准。
 3. **滚动与体积治理**：单文件上限 5MB、保留最近 7 天（先到为准），超限惰性删除——复用注册表 ghost tmp 治理的惰性删除模式（只在写入跃迁时触发清理，幂等）。
-4. **`[log]` 配置表**：`~/.config/lumir/` config.toml 加 `[log]` 表，`level = "info" | "off"`，默认 `info`（dogfood 期需要数据）；配置即数据带 schema 校验（ADR 0002 §5），非法值走既有 warning 语义不崩。
+4. **`log` 配置表**：`~/.config/lumir/config.json` 加 `log` 表（`{"log": {"level": "info"}}`），`level = "info" | "off"`，默认 `info`（dogfood 期需要数据）；配置即数据带 schema 校验（ADR 0002 §5），非法值走既有 warning 语义不崩。文件格式随现状（config.rs 的「JSON 而非 TOML」选型，M132 起生效）——本 change 不迁移配置格式。
 5. **前端事件统一转发**：前端关键事件（渲染失败、autosave 状态跃迁、config warnings 等）经单一 invoke 命令转发 Rust 侧统一落盘；前端不自行写文件。
 
 **裁决点 1——默认开关**（推荐值：`info` 默认开）：dogfood 期的数据价值依赖默认开；隐私代价低（事件不含文档正文、永不外发）。备选：`off` 默认开——dogfood 数据大概率残缺。**（2026-09-16 Alex 裁决：按推荐值定稿）**

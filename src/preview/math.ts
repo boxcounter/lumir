@@ -13,6 +13,7 @@ import type { DecorationSet } from "@codemirror/view";
 import type { EditorState, Range } from "@codemirror/state";
 import type { EditorView } from "@codemirror/view";
 import { syntaxTree } from "@codemirror/language";
+import { logEvent } from "../diagnostics";
 import { detectFrontmatter } from "./frontmatter";
 import { findTables, tableAt } from "./table";
 import type { TableModel } from "./table";
@@ -162,11 +163,25 @@ export function renderMath(source: string, displayMode: boolean): RenderResult {
   try {
     result = { html: katex.renderToString(source, { displayMode, throwOnError: true }) };
   } catch (e) {
-    result = { error: e instanceof Error ? e.message.split("\n")[0] : String(e) };
+    const message = e instanceof Error ? e.message.split("\n")[0] : String(e);
+    // 诊断埋点（结果入缓存，同一公式只记一次）：只记分类后的错误码，**不记原始错误
+    // 文本**——KaTeX 的错误消息带公式尾部片段（文档内容），隐私边界不允许它进日志
+    //（见 src-tauri/src/logging.rs 的白名单）。
+    logEvent("render_error", {
+      kind: "katex",
+      stage: "render",
+      code: mathErrorCode(message),
+    });
+    result = { error: message };
   }
   if (renderCache.size >= RENDER_CACHE_LIMIT) renderCache.clear();
   renderCache.set(key, result);
   return result;
+}
+
+/** KaTeX 失败的错误码（分类，不含原文）。 */
+function mathErrorCode(message: string): string {
+  return message.startsWith("KaTeX parse error") ? "parse_error" : "render_failed";
 }
 
 /** 测试钩子：当前缓存条目数。 */
