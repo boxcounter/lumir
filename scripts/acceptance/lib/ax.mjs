@@ -37,6 +37,9 @@ export function parseNodes(axText) {
       bbox: bbox ? { x: +bbox[1], y: +bbox[2], w: +bbox[3], h: +bbox[4] } : null,
       actions: /actions=\[([^\]]*)\]/.exec(rest)?.[1]?.split(",").map((s) => s.trim()) ?? [],
       help: /help="([^"]*)"/.exec(rest)?.[1] ?? null,
+      // KimiCU 在 AX 文本末尾标 `(focused)`（多行 value 的**末行**上，故在合并后的 raw 里找）：
+      // 键盘注入落点就是它——keys 动作的回读目标判定要靠这个标记（见 execute.mjs 的 keysTarget）。
+      focused: /\(focused\)/.test(raw),
       depth,
       raw: raw.trim(),
     });

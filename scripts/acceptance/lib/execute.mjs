@@ -39,6 +39,8 @@ export function checkScenario(scenario) {
       else if (!EXPECT_KINDS.has(kinds[0])) push(`${at} expect[${j}] 未知断言 ${kinds[0]}`);
       else if (kinds[0] === "file" && !exp.file.path) push(`${at} expect[${j}] file 断言缺 path`);
       else if (kinds[0] === "glob" && (!exp.glob.dir || !exp.glob.pattern)) push(`${at} expect[${j}] glob 断言缺 dir/pattern`);
+      else if (kinds[0] === "ax" && !["has", "not", "count", "focused"].some((k) => exp.ax[k] !== undefined))
+        push(`${at} expect[${j}] ax 断言缺 has/not/count/focused（写错字段名会静默变成恒真断言）`);
     }
   }
   return problems;
@@ -91,6 +93,32 @@ async function clickWithRetry(cu, pid, x, y, { retries = 3 } = {}) {
     }
   }
   throw lastErr;
+}
+
+/** 可读的原生输入框角色（WKWebView 的 `<input>` 在 AX 里落成这两类）。 */
+const TEXT_FIELD_ROLES = new Set(["AXTextField", "AXSearchField", "AXSecureTextField"]);
+
+/** 单个可打印字符（非空白 ASCII）：keys 动作里只有这种键名有唯一的文本语义。 */
+const PRINTABLE_KEY_RE = /^[\x21-\x7e]$/;
+
+/**
+ * keys 动作的回读目标——「键盘往哪儿落」必须可证，否则回读会盯错节点：
+ *   1. AX 快照里标了 `(focused)` 的节点（键盘注入就落在它身上）；
+ *   2. 没有 focused 标记时退到「可读的文本目标」：编辑器（AXTextArea.value）优先，
+ *      其次第一个有可读 value 的原生输入框（WKWebView 的 `<input>`）。
+ * 三者都不存在 → 返回 null（该步无可回读目标，保持盲发口径）。
+ */
+function keysTarget(ax) {
+  const node =
+    ax.nodes.find((n) => n.focused) ??
+    ax.textarea ??
+    ax.nodes.find((n) => TEXT_FIELD_ROLES.has(n.role) && typeof n.value === "string");
+  if (!node) return null;
+  if (node.role === "AXTextArea") return { kind: "editor", value: node.value ?? "" };
+  if (TEXT_FIELD_ROLES.has(node.role)) return { kind: "input", value: node.value ?? "" };
+  // 焦点在非文本节点上（按钮 / toast 动作条 / 面板）：键盘落在它身上，注入进不了任何文档文本。
+  // 把它自己也当回读目标，才能把这种情况如实判成「按键未落地」而不是盯错编辑器。
+  return { kind: node.role, value: node.title ?? node.label ?? node.value ?? "" };
 }
 
 /** 编辑器内 widget 没有 title/label，只有 help（如 mermaid 的 AXGroup.help = 围栏原文）。 */
@@ -166,6 +194,17 @@ export async function runScenario(ctx, scenario) {
       const ax = state.ax ?? (await readAx(cu, ctx.pid));
       state.ax = ax;
       const spec = expect.ax;
+      if (spec.focused !== undefined) {
+        // 焦点断言走**解析结果**而不是 AX 原始文本：原始文本上的正则没有节点边界意识，
+        // `AXTextArea[\s\S]*?\(focused\)` 这类写法在 `(focused)` 落在后面的节点上时照样匹配
+        // （r1 评审实证：冲突 toast 的 AXButton 就在 AXTextArea 之后）。
+        // 判定：AX 里**恰有一个** focused 节点，且它的 role 命中 spec.focused（子串或 /…/ 正则）。
+        const m = matcher(spec.focused);
+        const focused = ax.nodes.filter((n) => n.focused);
+        const roles = focused.map((n) => n.role).join(",") || "无";
+        if (focused.length === 1 && m.test(focused[0].role)) return pass(label, `focused=${roles}`);
+        return fail(`${label}（期望唯一 focused 节点为 ${m.show}，实际 focused=${roles}，共 ${focused.length} 个）`, "", ax);
+      }
       if (spec.has !== undefined) {
         const m = matcher(spec.has);
         if (m.test(ax.text)) return pass(label);
@@ -183,7 +222,7 @@ export async function runScenario(ctx, scenario) {
         const ok = (exact === undefined || n === exact) && (min === undefined || n >= min) && (max === undefined || n <= max);
         return ok ? pass(label, `命中 ${n} 次`) : fail(`${label}（期望命中 ${exact ?? `${min ?? ""}..${max ?? ""}`}，实际 ${n}）`, "", ax);
       }
-      return fail(`${label}（ax 断言缺少 has/not/count）`, "", ax);
+      return fail(`${label}（ax 断言缺少 has/not/count/focused）`, "", ax);
     }
     if (expect.editor) {
       const spec = expect.editor;
@@ -361,10 +400,109 @@ async function doAction(step, { ctx, cu, scenario, vars, pid, evidence }) {
       await noteIfFocusLost(ctx, p);
       return pressKey(cu, p, step.key);
     case "keys": {
+      // 回读/重试的判定边界（两条都满足才做，缺一不可）：
+      //   1) 整串都是单个可打印字符——此时「注入的文本」有唯一语义（拼接起来的串），
+      //      才有可判定的期望值；chord（⌘S/⌃N/escape）没有文本语义，且重试会重复触发
+      //      副作用（⌘S 再存一次盘、⌃N 再挪一次光标），一律保持原路径；
+      //   2) AX 里有可回读目标——编辑器取 AXTextArea.value，原生 input 取 AX value
+      //      （目标怎么选见 keysTarget）。
+      // 不满足就盲发 + 不重试（与加固前逐字一致）。
       await noteIfFocusLost(ctx, p);
-      for (const k of step.keys) {
-        await pressKey(cu, p, k);
-        await sleep(step.gapMs ?? 250);
+      /** 注入通道自报的结果（失败诊断用：KimiCU 的 press_key 会报 occluded/ok 等字段）。 */
+      const results = [];
+      const inject = async () => {
+        for (const k of step.keys) {
+          results.push(await pressKey(cu, p, k));
+          await sleep(step.gapMs ?? 250);
+        }
+      };
+      const printable = step.keys.every((k) => PRINTABLE_KEY_RE.test(k));
+      const target = printable ? keysTarget(await readAx(cu, p)) : null;
+      if (!target) {
+        if (printable) {
+          evidence.record({
+            kind: "note",
+            text:
+              `keys「${step.keys.join("")}」是可打印字符序列，但 AX 里没有可回读目标` +
+              "（无 focused 节点、无 AXTextArea、无可读输入框）——本步只盲发、不重试",
+          });
+        }
+        await inject();
+        return;
+      }
+
+      // 判据沿用 M135 r3 的**出现次数**口径：注入前记 N，注入后要求恰为 N+1。
+      // 只断言「目标串是子串」会让 partial landing 后重试拼接出的脏文本假绿。
+      const want = step.keys.join("");
+      const countOf = (t) => t.split(want).length - 1;
+      const baselineValue = target.value;
+      const baseline = countOf(baselineValue);
+      const max = Math.min(step.retries ?? 3, 3);
+      const reread = async () => {
+        const t = keysTarget(await readAx(cu, p));
+        if (!t || t.kind !== target.kind) {
+          throw new Error(
+            `keys 回读目标在注入过程中变了（期望 ${target.kind}，实际 ${t?.kind ?? "无可读目标"}）——` +
+              "重试会打到别处，不重试，也不在不可观测的窗口里下结论",
+          );
+        }
+        return t.value;
+      };
+      const classify = (v) => {
+        const c = countOf(v);
+        if (c === baseline + 1) return "landed";
+        if (c > baseline + 1) return "duplicated";
+        return v === baselineValue ? "unchanged" : "partial";
+      };
+
+      let attempt = 0;
+      let lastValue = baselineValue;
+      let verdict = "unchanged";
+      for (attempt = 1; attempt <= max; attempt++) {
+        await inject();
+        await sleep(600);
+        lastValue = await reread();
+        verdict = classify(lastValue);
+        if (verdict === "landed") break;
+        // 再等一拍复读：DOM 落地与 AX 快照之间有时序，不能拿一次过早的读当结论。
+        await sleep(700);
+        lastValue = await reread();
+        verdict = classify(lastValue);
+        // 只有「目标字节完全没变」才允许再注入一次——整批丢键正是本重试要修的场景。
+        // 值变了却没凑齐目标串（partial landing）绝不能重试：再注入整串会原地拼接
+        // （如 "ndl" + "needle" → "ndlneedle"），而子串断言反而可能假绿。
+        if (verdict !== "unchanged") break;
+      }
+      if (verdict === "duplicated") {
+        throw new Error(
+          `按键重复落地：目标串「${want}」出现 ${countOf(lastValue)} 次（期望 ${baseline + 1}）——` +
+            "疑似 partial landing 后重试拼接，目标文本已被破坏，不按 PASS 处理",
+        );
+      }
+      if (verdict === "partial") {
+        throw new Error(
+          `按键部分落地：目标串「${want}」出现 ${countOf(lastValue)} 次（期望 ${baseline + 1}），但目标内容已变——` +
+            `不重试：再注入整串会拼出脏文本。${target.kind} 基线=${JSON.stringify(baselineValue.slice(0, 200))} ` +
+            `现值=${JSON.stringify(lastValue.slice(0, 200))}`,
+        );
+      }
+      if (verdict !== "landed") {
+        const where =
+          target.kind === "editor" || target.kind === "input"
+            ? `${target.kind} 的内容每次注入前后逐字节一致（丢在注入链路，见 README 已知边界）`
+            : `焦点不在文本目标上（focused=${target.kind}）：按键没有落进任何文档文本`;
+        throw new Error(
+          `按键未落地：${max} 次注入后目标串「${want}」出现 ${countOf(lastValue)} 次（期望 ${baseline + 1}）；${where}；` +
+            `工具返回 ${JSON.stringify(results.slice(-step.keys.length)).slice(0, 300)}`,
+        );
+      }
+      if (attempt > 1) {
+        evidence.record({
+          kind: "note",
+          text:
+            `keys「${want}」第 ${attempt} 次注入才落地（前 ${attempt - 1} 次 ${target.kind} 内容逐字节未变；` +
+            "已按出现次数校验确认无重复）",
+        });
       }
       return;
     }
@@ -531,7 +669,15 @@ async function doAction(step, { ctx, cu, scenario, vars, pid, evidence }) {
 function describeExpect(expect) {
   if (expect.ax) {
     const s = expect.ax;
-    return `AX ${s.has !== undefined ? `含 ${matcher(s.has).show}` : s.not !== undefined ? `不含 ${matcher(s.not).show}` : JSON.stringify(s)}`;
+    return `AX ${
+      s.has !== undefined
+        ? `含 ${matcher(s.has).show}`
+        : s.not !== undefined
+          ? `不含 ${matcher(s.not).show}`
+          : s.focused !== undefined
+            ? `焦点在 ${matcher(s.focused).show}`
+            : JSON.stringify(s)
+    }`;
   }
   if (expect.editor) return `编辑器 ${expect.editor.has !== undefined ? `含 ${matcher(expect.editor.has).show}` : `不含 ${matcher(expect.editor.not).show}`}`;
   if (expect.file) return `文件 ${expect.file.path} ${JSON.stringify(Object.keys(expect.file).filter((k) => k !== "path" && k !== "label"))}`;
