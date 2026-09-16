@@ -11,6 +11,9 @@ src-tauri/target/
 # perf 测量结果（scripts/perf/* 产出，CI 作为 artifact 上传）
 perf-results/
 
+# 真机验收证据（scripts/acceptance/* 产出；截图量大、session 产物，不入 git）
+test-results/acceptance/
+
 # misc
 *.log
 .DS_Store

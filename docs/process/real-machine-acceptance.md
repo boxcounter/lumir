@@ -50,3 +50,33 @@ AI-only 模式下（ADR 0004）「待真机验收」清单只增不减，全部�
 ## 评审节点（Alex）
 
 - 本设计裁决通过后，实现走 tower mission（建议并入 dogfood 前置批次）；实现完成的验收动作 = 套件跑通 9 项清单中全部「可脚本化」行，FAIL 为零，Alex 只需确认手感项。
+
+## 实现落地（M135，2026-09-16）
+
+套件已建成，入口与用法唯一来源是 [scripts/acceptance/README.md](../../scripts/acceptance/README.md)
+（本文件不复制）。与本文设计的两处实际偏差，记录在案：
+
+1. **驱动通道用 KimiCU 的 MCP server 本体，不是 agent 手调工具**：runner 直接以 stdio JSON-RPC
+   起 `kimi-cu mcp`，把「读 AX / 截图 / 注入键鼠」变成脚本可复现的动作。理由：agent 手调的路径
+   无法固化成制品，断言也就无法确定性重跑。仍然是「复用 KimiCU MCP」，零新增依赖。
+2. **两块能力受工具面限制，只验到渲染/结构层**（覆盖分类以 [docs/backlog.md](../backlog.md)
+   「待真机验收」为准，该表按**证据目录里真实 PASS 的场景**分桶；最近一次全量实跑
+   15 场景 / 146 断言 / 15 PASS）：
+   - 光标/选区（`AXSelectedTextRange`）不在 KimiCU 的 AX 输出里 → 项 3 的「逐 cell 行移动」、
+     项 9 的「⌃K 不跨管道符」这类**光标位置**口径无法真机断言；套件只验「按键序列后文档不被
+     破坏、源码不泄漏」，精确语义仍由 chromium 侧视觉场景覆盖。
+   - 手感/审美（项 4，及 5/6/7 的手感部分）照原裁决不下沉，只留截图。
+
+### 覆盖映射（实现态）
+
+| 验收项 | 场景 |
+|---|---|
+| 1 Mermaid 点击进源码编辑 | `01-mermaid-click`（行为全验） |
+| 2 公式点击进编辑 | `02-math-click`（渲染层验；⌃B 次数待判定） |
+| 3 Ctrl+N/P 表格行为 | `03-table-ctrl-np`（表格结构 + 不破坏；逐 cell 落点不可回读） |
+| 5 cell 内公式渲染 + 点击编辑 | `05-cell-math`（渲染层验；点击进编辑不可回读） |
+| 6 Callout 显露 / cell 内 `$$` / 表格宽度 | `06-callout-and-width`（渲染层验；宽度只留证据） |
+| 7 M124 恢复路径 | `07-recovery-paths`、`07b-recovery-saveas`、`07c-external-reload`（三条全验） |
+| 8 M127 自动保存链路 | `08-autosave`、`08b-autosave-pause`、`08c-crash-recovery`、`08d-crash-discard`、`08e-force-overwrite`（四子行为全验） |
+| 9 Emacs 键位 / ⌘Z 真机路径 / ⌘/ 面板 / `[keys]` | `09-emacs-keys`、`09b-keys-config`（行为全验） |
+| 4 表头双击选中手感 | 不下沉（Alex） |
