@@ -17,6 +17,7 @@ Lumir：本地文本工作台，当前阶段定位为 Emacs keybinding PKM（[AD
 | [docs/specs/](docs/specs/) | 专项规格（性能测量方法学等） |
 | [docs/process/](docs/process/) | 制品流程约定 |
 | [docs/backlog.md](docs/backlog.md) | 已知 findings 与待裁决队列——**新 findings 落这里，不再积在 HANDOFF.md** |
+| [scripts/acceptance/](scripts/acceptance/) | 真机验收套件（用法与场景格式见其 [README](scripts/acceptance/README.md)） |
 | [tests/visual/README.md](tests/visual/README.md) | 视觉门禁口径与基线更新纪律 |
 | `HANDOFF.md`（git 外） | 当前 session 状态、桌面复验现场、配额 runbook 细节 |
 
@@ -33,6 +34,21 @@ scripts/gate.sh all      # visual + 性能合同（release 构建，首次分钟
 ```
 
 与 CI 对应：`rust.yml` / `visual.yml` / `perf.yml` / `docs-check.yml`（PR 与 master push 强制）。本地全绿才允许提交合并请求；基线数字（测试数、场景数）以最近一次全绿输出为准，不背口头值。
+
+## 真机验收套件（agent 执行，不进 CI）
+
+行为判定的下沉通道：`node scripts/acceptance/run.mjs`（用法、场景格式、证据布局、已知边界见
+[scripts/acceptance/README.md](scripts/acceptance/README.md)）。与视觉门禁分工：`tests/visual`
+守布局/配色/间距（chromium 近似、CI 强制），本套件守**真实 WKWebView 下的行为正确性**
+（本地 agent 执行）。
+
+- **执行时机**：dogfood 批次每次合并后、Alex 验收前，由 agent 先跑一遍；Alex 只看 FAIL 项与手感项。
+- **维护权**：新功能 mission 的 tasks 必须附带「新增/更新验收场景」一项（随实现同 PR），否则套件会腐烂。
+- **手感/审美不下沉**：表头双击选中手感、表格宽度观感、WKWebView 翻屏节奏等仍归 Alex，套件只留截图证据。
+- **证据不入 git**：`test-results/acceptance/`，与 perf-results 同惯例，Alex 抽审靠本地目录。
+- **环境隔离**：套件自带 `XDG_CONFIG_HOME` 与合成验收 vault（`/tmp/lumir-m102-acceptance`），
+  绝不读写用户的 `~/.config/lumir` 与真实 vault；dev 端口用 `LUMIR_ACCEPTANCE_PORT`（默认 1430）
+  与 Alex 手头的 1420 隔离。
 
 ## 硬规则（无其他居所）
 

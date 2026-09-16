@@ -41,20 +41,52 @@
 
 ## 待真机验收
 
-行为判定部分将由验收套件下沉为 agent 可执行场景（设计见 [docs/process/real-machine-acceptance.md](process/real-machine-acceptance.md)），手感/审美项仍归 Alex。当前清单（`pnpm dev:app` 下逐项确认）：
+行为判定已下沉为 agent 可执行场景（入口 [scripts/acceptance/](../scripts/acceptance/README.md)，
+设计见 [docs/process/real-machine-acceptance.md](process/real-machine-acceptance.md)）；手感/审美项仍归 Alex。
 
-1. Mermaid 图表点击进源码编辑（含渲染中/失败态）。
-2. 公式点击进编辑；公式后 Ctrl+B 是否 1–2 次。
-3. Ctrl+N/P 表格行为：表内逐 cell 行移动、相邻行进出、跨整表跳过（M118 裁决行为）。
+**2026-09-16 实跑结果（M135）**：`node scripts/acceptance/run.mjs` —— 10 场景 / 87 断言 / **10 PASS 0 FAIL**，
+约 3.2 分钟；证据 `test-results/acceptance/2026-09-16/`（git 外，含 summary.md、逐场景 steps.md、截图、失败时 AX dump）。
+
+**已机验（行为判定落定）**
+
+1. **Mermaid 点击进源码编辑** —— `01-mermaid-click`：渲染态（成功块为 `help=围栏原文` 的 widget、失败块给
+   「图表解析失败」+ 原文）→ 点击 widget → 源码显露、widget 让位。渲染中(pending)态窗口极短，只留截图。
+7. **M124 恢复路径** —— `07-recovery-paths`、`07b-recovery-saveas`：外部改写后保存给出「保存冲突」双动作
+   （重新载入 / 强制覆盖）、内存改动未丢、磁盘未被静默覆盖；文件被外部清空后保存，内存改动仍在。
+8. **M127 自动保存落盘** —— `08-autosave`：输入后磁盘文件 sha256 变化且内容含本次输入（真机 2s 去抖生效）。
+9. **Emacs 键位 / ⌘Z / ⌘/ 面板 / [keys]** —— `09-emacs-keys`、`09b-keys-config`：
+   **⌘Z 未被 macOS 视图层级吃掉**（插入 → ⌘Z → 内容消失，即 M? 的 menu swap 真机成立，回退方案不必启用）；
+   ⌘/ 面板打开/关闭且打开期间文档逐字节不变（作用域键不穿透）；`keys` 表解绑 ⌘S / 重绑 ⌃S 生效。
+
+**已机验到渲染/结构层，行为细节仍缺可观测面**
+
+2. 公式进编辑 —— `02-math-click`：行内/块级公式均渲染为 KaTeX、源码不显露。
+   **「公式后 ⌃B 是否 1–2 次」仍待判定**：该判定要求光标停在公式 span 之后，而 AX 输出不暴露光标/选区，
+   纯键盘落位无法回读校验（代码口径 1 次，`mathSpanCrossed` 落点 = span.to−1）。
+3. Ctrl+N/P 表格行为 —— `03-table-ctrl-np`：grid 表确实渲染成 `AXTable (Markdown 表格 N)` + `AXRow` 单元格文本；
+   ⌃N/⌃P 序列后表格与文档内容完好。**逐 cell 落点不可回读**（同上光标面缺失），实测按坐标点进 AXTable 的
+   bbox 内也不会让渲染态表格让位给源码行，故不做该断言。
+5. cell 内公式 —— `05-cell-math`：`$y$`/`$$y$$` 在 cell 内按行内样式渲染（AX 行文本为 `行内 / y / 块级 / y`）。
+   **「点击渲染态公式进编辑」不可机验**（KaTeX span 既不进 AX 树也不带 bbox，与项 2 同因）。
+6. Callout —— `06-callout-and-width`：渲染态下 `[!note]` 标记与 `>` 前缀都不显露、内容按块渲染。
+   **「光标进该行后源码显露」不可机验**（需光标落在 callout 首行）；表格宽度只留截图证据。
+
+**仍归 Alex 手感（不下沉）**
+
 4. 表头 cell 双击 padding 的选中手感。
-5. 表格 cell 内公式渲染 + 点击编辑。
-6. Callout 光标行源码显露、cell 内 `$$y$$`、表格宽度（欠宽拉伸、超宽横滚）。
-7. M124 三条恢复路径（冲突双动作、另存为、外部修改重载）真实 WKWebView 手感；remap 修复后启动不再被拦。
-8. M127 链路：自动保存 2s 落盘、冲突/外部修改期自动保存暂停、崩溃恢复提示与「恢复内容/丢弃」、强制覆盖再冲突的双动作。
-9. 批次三 Emacs 键位 v0 全套真机手感：⌃V/⌥V、⌃L、⌃D/⌃H/⌃T、⌥D/⌥⌫、⌃K/⌃Y（连续 kill 合并、表格 cell 内不跨管道符）、⌃G、shift-extend 扩选；⌘Z 真机路径（是否被视图层级先吃掉，回退方案在 keymap-unify proposal Impact）；`~/.config/lumir/` [keys] 重绑/解绑实操；⌘/ 键位面板（打开/关闭不穿透、解绑后「未绑定」标注）。
+5. 表格 cell 内公式点击手感；6. 表格宽度观感（欠宽不拉伸、超宽横滚是否合意，与「待 Alex 裁决」4 同源）；
+7. WKWebView 下三条恢复路径的手感；9. Emacs 翻屏/扩选真机手感。截图在证据目录，判定归 Alex。
 
 ## 记录在案（无需动作）
 
+- **KimiCU AX 服务全局退化**（2026-09-16，M135 期间实测）：`get_app_state` 只剩菜单栏（`element_count`
+  1–16、`truncated: [closed_menu, cycle]`、`window_bounds x=0 y=0 w=1 h=1`），Finder / Reminders / Lumir
+  **一起坏**；`xpc-ping` 仍报 `accessibility=true screenRecording=true`。判定为 KimiCU 后台服务进了坏状态，
+  恢复手段是重启服务（`/Applications/KimiCU.app/Contents/MacOS/kimi-cu install`）。这是机器级动作，
+  已上报 tower 待 Alex 处理；套件本身无问题，恢复后重跑即可。
+- **磁盘满**（2026-09-16 实测）：`/System/Volumes/Data` 一度仅剩 219MB，`pnpm tauri dev` 因 vite 写临时
+  文件 ENOSPC 起不来。各 worktree 的 `src-tauri/target` 各占 1.5–3G 是主因。已由他人清出 3G+；若复发，
+  考虑 worktree 共享 `CARGO_TARGET_DIR`（代价：并发构建互相阻塞）。
 - **r1 格式崩溃备份**（无 base_revision）恢复后首次保存必报一次冲突——安全方向，仅限跑过 r1 build 的人。
 - **kimi-cu `type_text` 走 AX 注入**，编辑器失焦时文本落陈旧原生选区——工具观测，非 app 缺陷。
 - **[keys] 解绑 ≠ 关闭能力**（已录 spec）：解绑后 macOS 原生选择器可能接手（如 ⌃K → `deleteToEndOfLine:`）——dogfood 改配置时预期内行为。
