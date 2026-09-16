@@ -34,7 +34,15 @@ test("表格可见行、降级边界、AX、滚动和源码复制", async ({ pag
   await expect(page.locator(".cm-lp-table")).toHaveAttribute("role", "table");
   await expect(page.locator(".cm-lp-table-cell[role=columnheader]")).toHaveCount(3);
   await expect(page.locator(".cm-lp-table-degraded")).toHaveCount(1);
-  await expect(page.locator(".cm-lp-table-degraded")).toHaveAttribute("aria-label", "表格阅读降级：保留原始 Markdown");
+  // 降级文案带原因与出错行号（M138）：fixture 里第 20 行 `| one |` 只有 1 格，
+  // 表头声明 2 列。行号是**文档行号**，用户照着就能定位到源文件那一行。
+  const notice = "表格阅读降级：第 20 行单元格数与表头不符（应为 2 列）——保留原始 Markdown";
+  await expect(page.locator(".cm-lp-table-degraded")).toHaveAttribute("aria-label", notice);
+  // 上屏的文案与 aria-label 同源（CSS ::after 经 data 属性取用，不在样式表里另写一份）
+  const painted = await page.locator(".cm-lp-table-degraded").evaluate((el) =>
+    getComputedStyle(el, "::after").content.replace(/^"|"$/g, ""),
+  );
+  expect(painted).toBe(notice);
   expect(await readDocument(page)).toBe(fixture);
   await page.locator(".cm-lp-table-scroll").focus();
   await page.keyboard.press("End");
@@ -53,6 +61,11 @@ test("超长表安全源码降级且不全量物化可见表格行", async ({ pa
   await page.locator('.ft-row[title="long.md"]').click();
   await expect(page.locator(".cm-lp-table-scroll")).toHaveCount(0);
   await expect(page.locator(".cm-content")).toContainText("row-0");
+  // 超长表走 oversize 分支：文案给出体积与上限，而不是复用「列数不符」（M138）
+  await expect(page.locator(".cm-lp-table-degraded")).toHaveAttribute(
+    "aria-label",
+    /^表格阅读降级：表格约 \d+ KiB，超过 64 KiB 阅读上限——保留原始 Markdown$/,
+  );
   expect(await page.locator(".cm-line").count()).toBeLessThan(300);
   expect(await readDocument(page)).toBe(source);
 });

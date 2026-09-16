@@ -57,6 +57,29 @@ export const livePreviewTheme = EditorView.theme({
   ".cm-line.cm-lp-block-separator.cm-lp-callout-gap": { height: "10px", minHeight: "10px" },
 
   ".cm-line.cm-lp-codeblock-line": { backgroundColor: "var(--bg-2)", fontFamily: "var(--font-mono)" },
+  // 代码块 token 着色（M138，类名由 preview/code.ts 出）：色值与 editor.ts 的
+  // code 模式 codeHighlight 同一套 editorial token——同一段代码在围栏里和整文件
+  // 打开时读起来是同一门语言。
+  ".cm-lp-tok-comment": { color: "var(--dim)" },
+  ".cm-lp-tok-keyword": { color: "var(--accent)" },
+  ".cm-lp-tok-string": { color: "var(--callout-tip)" },
+  ".cm-lp-tok-literal": { color: "var(--callout-warning)" },
+  ".cm-lp-tok-property": { color: "var(--callout-note)" },
+  ".cm-lp-tok-type": { color: "var(--callout-abstract)" },
+  // 分隔线（M138）：源码被 replace widget 顶掉，横线本体是 0 高 inline-block，
+  // 垂直位置靠 vertical-align 定，纵向留白走行 padding（CM 测量的行高不含 margin）。
+  // 中性色暖发丝线——与表格边框同一 token，符合「borders recede to warm hairlines」
+  // 的设计基线；朱红留给链接与错误态。
+  ".cm-line.cm-lp-hr-line": { paddingBlock: "0.62em" },
+  ".cm-lp-hr": {
+    display: "inline-block",
+    inlineSize: "100%",
+    blockSize: "0",
+    margin: "0",
+    border: "0",
+    borderTop: "1px solid var(--bd-2)",
+    verticalAlign: "middle",
+  },
   ".cm-lp-inline-code": {
     backgroundColor: "var(--bg-2)",
     fontFamily: "var(--font-mono)",

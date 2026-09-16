@@ -70,7 +70,15 @@
 设计见 [docs/process/real-machine-acceptance.md](process/real-machine-acceptance.md)）；手感/审美项仍归 Alex。
 
 分类依据 = **证据目录里真实 PASS 的场景**，不是「场景写了就算覆盖」。最近一次全量实跑：
-`test-results/acceptance/2026-09-16/` —— **15 场景 / 146 断言 / 15 PASS 0 FAIL**（约 5.4 分钟，M135 r3）。
+`test-results/acceptance/2026-09-16/` —— **17 场景 / 161 断言 / 16 PASS 1 FAIL**（约 6 分钟，M138；
+同日期目录被本次 run 覆盖，M135 r3 的 15/146 记录不再在该目录里）。唯一 FAIL 是
+`08b-autosave-pause` 的「追加输入落在探测串之后」——冲突 toast 出现后盲发的 `m,o,r,e` 四次按键
+都没进编辑器（AX value 里根本没有 `more`），而该场景真正要判的四条冲突期断言（磁盘 sha256 未变 /
+磁盘仍是外部版本 / 内存改动未丢 / 提示未消解）全 PASS。**已排除与 M138 的因果**：把本次 src 改动
+stash 掉重跑，同一断言以同一文本复现 FAIL（2/2 复现，非 flake）；而 M135 tip 在同日证据里该场景
+是 PASS（`wt-135` 证据目录）。属「盲发按键依赖焦点/注入链路、套件 `keys` 动作无回读」这一已知脆弱面
+（对照 worker-search 同日 finding `20260916-worker-search-bug-kimicu-press-key-wkwebview-input-acceptance-keys.md`），
+待套件维护者另开一轮收口。
 
 **已机验（行为判定落定，有 PASS 证据）**
 
@@ -85,7 +93,8 @@
 8. **M127 自动保存链路四条子行为全部覆盖** ——
    `08-autosave`（2s 落盘：磁盘 sha256 变化且内容含输入）；
    `08b-autosave-pause`（**冲突待决期间自动保存暂停**：记录磁盘 sha256，跨 2s 去抖再等 7s，磁盘逐字节不变、
-   仍是外部版本、冲突提示未消解）；
+   仍是外部版本、冲突提示未消解；本场景的「追加输入落点」前置断言当前 FAIL，原因见上节，暂停行为本身
+   的四条断言每轮都 PASS）；
    `08c-crash-recovery`（app 自己在隔离目录写的崩溃备份 →  重启后提示「恢复内容 / 丢弃备份」，
    点「恢复内容」后崩溃前内容回到编辑器）；
    `08d-crash-discard`（同现场点「丢弃备份」：给丢弃反馈且内容**不**进编辑器）；
@@ -95,6 +104,15 @@
    **⌘Z 未被 macOS 视图层级吃掉**（插入 → ⌘Z → 内容消失，menu swap 真机成立，回退方案不必启用）；
    ⌘/ 面板打开/关闭、打开期间文档逐字节不变（作用域键与可打印字符都不穿透）；
    keys 表解绑 ⌘S / 重绑 ⌃S 生效。
+10. **Markdown 渲染三件套**（M138）—— `render-markdown`：`---` 渲染为横线且 frontmatter 定界符
+    不误渲（AX 面读到读屏名「分隔线」、`editor.not "---"`）；围栏代码块源码逐字保留、未收录语言
+    保持纯文本；引用内有序/无序/嵌套列表按常规列表渲染（`- ` 与 `>` 都不再显露）。
+    **配色与几何不进真机**：横线宽度=栏宽且本体 0 高、标记走等宽字体且同级正文列对齐、token 色值
+    全部取自既有 editorial token——由视觉门禁 `tests/visual/scenes/render-{hr,codeblock,quote-list}.spec.ts`
+    的计算色/几何断言守（chromium），真机只验文本层与 AX 结构。
+11. **表格降级文案归因**（M138）—— `render-table-degrade`：表头声明 3 列、第 10 行只有 2 格时，
+    AX 面读到「第 10 行单元格数与表头不符（应为 3 列）」与「保留原始 Markdown」，同时整块保持
+    源码态（不补列、不截断）。
 
 **已机验到渲染/结构层，行为细节仍缺可观测面**
 
@@ -114,6 +132,9 @@
 4. 表头 cell 双击 padding 的选中手感。
 5. 表格 cell 内公式点击手感；6. 表格宽度观感（欠宽不拉伸、超宽横滚是否合意，与「待 Alex 裁决」4 同源）；
 7. WKWebView 下三条恢复路径的手感；9. Emacs 翻屏/扩选真机手感。截图在证据目录，判定归 Alex。
+10. 分隔线的粗细与上下留白、围栏代码块配色的观感（M138）——机器断言只钉「渲成横线（发丝线、
+    宽度=栏宽）」与「色值取自既有 editorial token」，合不合意归 Alex；前后对比见
+    `tests/visual/baselines/render-*.spec.ts-snapshots/` 与真机截图。
 
 ## 记录在案（无需动作）
 
@@ -128,6 +149,7 @@
 
 ## 已核销（留痕，定期清理）
 
+- 2026-09-16：**表格降级文案不暴露原因**（M137 finding `20260916-worker-table-survey-improve-reason.md`）→ M138 落地：降级文案带上出错**文档行号**与应为列数（`第 N 行单元格数与表头不符（应为 M 列）`），oversize 走体积/上限文案，无法识别结构走兜底文案；文案单一来源 `src/preview/table.ts` 的 `degradationNotice`，上屏（`::after` 经 data 属性）与 aria-label 同一份。同步断言在视觉场景 `table-foundation-v2` 与真机场景 `render-table-degrade`。
 - 2026-09-16：**视觉门禁容差假绿** → Alex 裁决收紧 `maxDiffPixelRatio` 0.005→0.001 + 删 UI 后核对相关基线时间戳（卫生步骤入 tests/visual/README.md 与 AGENTS.md）。
 - 2026-09-16：**lists 100k 性能预算** → Alex 裁决放宽 p95 40→60ms（间歇超属环境噪声；随 dogfood 性能专项复核是否回调）。
 - 2026-09-16：**run.sh 端口占用检查只查 4173** → 已修，检查 `${LUMIR_VISUAL_PORT:-4173}` 实际端口。

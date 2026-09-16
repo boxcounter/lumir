@@ -3,7 +3,6 @@ import { StateEffect } from "@codemirror/state";
 import type { EditorState, Range } from "@codemirror/state";
 import { Decoration, EditorView, ViewPlugin, WidgetType } from "@codemirror/view";
 import type { DecorationSet, ViewUpdate } from "@codemirror/view";
-import { detectCallout } from "./callout";
 
 type Node = ReturnType<typeof syntaxTree>["topNode"];
 interface Group { width: number; body: number }
@@ -191,28 +190,19 @@ class ListLayout {
           seen.add(line.from);
           let offset = line.text.search(/\S/);
           if (offset >= 0 && line.text[offset] === ">") {
-            // callout（M109）内的列表：行首是引用标记时内容位置在标记之后，
-            // 仅当所属 blockquote 是 callout（首行 [!type]）才扫过标记解析；
-            // 普通引用保持原口径（列表装饰不进入 blockquote）。
-            // 嵌套口径（M110，M109 review 边角 3）：从内容位置沿 Blockquote
-            // 祖先链向上，任一 callout 即放开——引用内嵌 callout（首个 > 属于
-            // 外层普通引用）时内层列表同样生效；callout 内嵌普通引用维持既有
-            // 放开行为。
+            // 引用内的列表（M138）：行首是引用标记时内容位置在标记之后，扫过
+            // 全部连续 `>` 与紧随的空格后按常规列表判定——引用内的列表与正文
+            // 里的列表同一套标记 widget、同一套等宽序号与正文缩进。
+            //
+            // 此前只有 callout（M109）放开这一路径，普通引用的列表停在源码态；
+            // 放开后 callout 与普通引用走同一分支（callout 本就是 blockquote），
+            // 嵌套引用 `> > ` 也自然按最内层内容起点解析。
             let content = offset;
             while (line.text[content] === ">") {
               content++;
               while (content < line.text.length && line.text[content] === " ") content++;
             }
-            let bq: Node | null = this.tree.resolveInner(line.from + content, 1);
-            let callout = false;
-            while (bq) {
-              if (bq.name === "Blockquote" && detectCallout(doc, bq)) {
-                callout = true;
-                break;
-              }
-              bq = bq.parent;
-            }
-            if (callout && content < line.text.length) offset = content;
+            if (content < line.text.length) offset = content;
           }
           if (offset >= 0) {
             let node: Node | null = this.tree.resolveInner(line.from + offset, 1);
