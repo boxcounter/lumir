@@ -43,6 +43,21 @@ function children(node: { firstChild: { name: string; from: number; to: number; 
   return result;
 }
 
+/**
+ * 数据行尾部补空列（GFM spec §4.10：「If there are a number of cells fewer than
+ * the number of cells in the header row, empty cells are inserted」；Alex 2026-09-16
+ * 裁决，合同见 docs/specs/table-reading.md §2）。补出来的是零宽 slot（`.from === .to`），
+ * 与 `||` 零宽空槽同形态，由既有空槽渲染路径画成正常空 cell——空 cell 就是空 cell，
+ * 不填占位符、不加缺列标记。
+ * 一个槽位都没恢复出来的行不补：那是「槽位不能安全映射」，必须整块降级，不能被一串
+ * 空 cell 伪装成正常行。多列（cell 数多于表头）同样不修：GFM 是 excess ignored，
+ * 静默丢列与「不猜测修复」冲突，仍整块降级。
+ */
+function padShortRow(row: TableRow, columns: number): void {
+  if (row.slots.length === 0) return;
+  while (row.slots.length < columns) row.slots.push({ from: row.to, to: row.to });
+}
+
 type SourceReader = string | ((from: number, to: number) => string);
 
 function readSource(source: SourceReader, from: number, to: number): string {
@@ -98,6 +113,7 @@ export function findTables(source: SourceReader, sourceLength: number, tree: Syn
       }
       const columns = rows[0]?.slots.length ?? 0;
       const align = parseAlignment(source, separator, columns);
+      for (const row of rows) padShortRow(row, columns);
       const complete = separator.to > separator.from && rows.length >= 1 && align !== null && rows.every((row) => row.slots.length === columns);
       const sourceBytes = ref.from >= from && ref.to <= to && ref.to - ref.from <= 64 * 1024
         ? new TextEncoder().encode(readSource(source, ref.from, ref.to)).byteLength
