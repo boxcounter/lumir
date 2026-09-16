@@ -81,6 +81,14 @@ steps:
         # 上一步的未创建提示可能还在（带动作的 toast 挂 8s），所以判「没有第二条」而不是
         # 「一条都没有」——跨步骤的残留是正常现象，不是回归。
         ax: { count: { pattern: "未创建的链接", max: 1 } }
+  - name: 诊断日志确认 opener 真被调用
+    do: sleep
+    ms: 800
+    expect:
+      - label: 打开尝试落了 link_open 事件（scheme=https、outcome=opened）
+        file: { path: "env:logs/*.jsonl", has: '/"event":"link_open".*"outcome":"opened"/' }
+      - label: 日志里没有 URL 原文（logging 的隐私边界：负载不含文档正文）
+        file: { path: "env:logs/*.jsonl", not: "example.invalid" }
 ---
 
 外链（标准 Markdown 链接 `[title](url)`）渲染与打开的**行为**判定（M144）。
@@ -97,22 +105,21 @@ steps:
   `example.invalid/alpha`，不会加载任何页面），浏览器会抢走前台焦点。放在最后 + 前置
   `focusWindow` 步骤，避免抢焦点影响后续键盘注入。
 - **⌘-Click 外链**：**本套件无法表达**。`click` 动作不支持修饰键（`lib/execute.mjs` 的
-  click 只有 target/count），且 `scripts/acceptance/lib/**` 不在本 mission 的改动面内。
-  该路径由视觉场景 `tests/visual/scenes/render-link.spec.ts` 覆盖（stub 记录
-  `open_external_url` 的调用参数，断言开的是哪个 URL 且不真开浏览器）。
-- **opener 调用本身**：真机断言本应走诊断日志（Rust 侧 `open_external_url` 落 `link_open`
-  事件，字段 `scheme` / `outcome`）。场景**没有**做这条断言——日志文件名是 UTC 日期
-  （`<XDG_CONFIG_HOME>/lumir/logs/<UTC 日期>.jsonl`），而验收环境的 `env/` 目录跨天复用
-  （`lib/util.mjs` 的 `envHome()` 不带日期），写死日期的 `file` 断言会在后续任何一天读到
-  **旧文件**而空过（该文件里本来就有上一次运行写的 `link_open`）——那是断言假绿，比没有
-  断言更糟。人工/agent 核对命令（`*` 由 shell 展开，绕开写死日期）：
-
-  ```bash
-  grep link_open test-results/acceptance/env/lumir/logs/*.jsonl
-  # 期望看到 "scheme":"https" + "outcome":"opened"
-  ```
-
-  要让这条也能机验，需给 `file` 断言支持 glob 路径（已投 finding）。
+  click 只有 target/count）——给 click 加修饰键是套件能力改造，不在 M144 内（已投 finding，
+  记进 docs/backlog.md 的「验收套件」小节）。因此该路径由视觉场景
+  `tests/visual/scenes/render-link.spec.ts` 覆盖（stub 记录 `open_external_url` 的调用
+  参数，断言开的是哪个 URL 且不真开浏览器）。
+- **opener 调用本身**：走诊断日志（Rust 侧 `open_external_url` 落 `link_open` 事件，字段
+  `scheme` / `outcome`）。日志文件名是 UTC 日期、而验收环境的 `env/` 目录跨天复用
+  （`lib/util.mjs` 的 `envHome()` 不带日期），所以断言写成 glob —— `path: "env:logs/*.jsonl"`
+  由 `lib/execute.mjs` 取**匹配文件里 mtime 最新的那一份**再断言内容。写死日期的断言会在
+  之后每天读到上次 run 的旧文件而永久空过（该文件里本来就有上一次写的 `link_open`），
+  那不是覆盖、是假绿。
+- **这条日志断言的残余风险（如实记录）**：同一 worktree 同一天重复跑时，最新文件就是
+  同一个（同日线同一个 JSONL），里面可能有**上一次 run** 落下的 `link_open`。因此它不独立
+  成立——与「无报错 toast / 文档未被改 / 没有多出未创建提示」三条负断言联合构成判定。
+  真机上每轮全量只跑一次本场景，风险可接受；人工核对仍可直接
+  `grep link_open test-results/acceptance/env/lumir/logs/*.jsonl`。
 
 ## 环境
 

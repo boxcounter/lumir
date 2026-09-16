@@ -26,7 +26,7 @@ Alex 的原话与已定口径（2026-09-16）：「链接（[title](link)）渲�
 
 **为什么外链白名单在前端出现两次**（如实记录）：前端必须知道"这条链接看起来能不能开"才能决定渲染（`note.md` 不该长得像外链），后端必须独立校验"这条链接能不能开"（文档内容不能指挥操作系统）。两处各 3 项，各自有测试钉住（视觉场景钉前端、cargo 单测钉后端），后端是权威——前端的判断只能减少请求，绝不能代替校验。
 
-**验收口径的偏差**（如实记录）：mission 建议"opener 断言走 M136 的 tauri stub log event gate"。自查后该机制**只存在于 chromium/Playwright**（`tests/visual/scenes/tauri-stub.ts` 注入 `window.__TAURI_INTERNALS__`），真机套件没有 stub、也没有 JS eval 通道，够不着页面内钩子。因此拆成两条：**视觉场景**用桩记录 `open_external_url` 的调用参数，断言"开的是哪个 URL"且不真的唤起浏览器；**真机验收**断言诊断日志里出现 `link_open`（真机上这条会真的唤起一次系统浏览器，用保留域 `example.invalid`，场景正文如实写明）。
+**验收口径的偏差**（如实记录）：mission 建议"opener 断言走 M136 的 tauri stub log event gate"。自查后该机制**只存在于 chromium/Playwright**（`tests/visual/scenes/tauri-stub.ts` 注入 `window.__TAURI_INTERNALS__`），真机套件没有 stub、也没有 JS eval 通道，够不着页面内钩子。因此拆成两条：**视觉场景**用桩记录 `open_external_url` 的调用参数，断言"开的是哪个 URL"且不真的唤起浏览器；**真机验收**断言诊断日志里出现 `link_open`（真机上这条会真的唤起一次系统浏览器，用保留域 `example.invalid`，场景正文如实写明）。后者需要一项套件能力：诊断日志按 UTC 日期命名而验收环境的 `env/` 目录跨天复用，写死日期的断言会永久假绿——因此本 change 一并给验收套件的 `file` 断言加了 glob 路径支持（取 mtime 最新的一份再断言），并反向验证过它不会取到旧文件。
 
 ## Non-goals
 

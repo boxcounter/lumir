@@ -78,6 +78,33 @@ function resolveSpecPath(p) {
 }
 
 /**
+ * file 断言的路径解析：字面路径直接用；含 `*` 时按 glob 在父目录里取**匹配文件里 mtime
+ * 最新的那一份**。
+ *
+ * 为什么需要它：诊断日志按 UTC 日期命名（`<config>/logs/YYYY-MM-DD.jsonl`），而验收环境
+ * 的 `env/` 目录跨天复用（`envHome()` 不带日期）——写死日期的断言会在之后每一天读到**上次
+ * run 留下的旧文件**，其余内容照样命中，于是断言永久空过（假绿）；换台机器又因文件不存在
+ * 直接 FAIL。glob 取最新一份让断言始终对着「这次 run 刚落的那份」。
+ */
+async function resolveSpecFile(p) {
+  if (!p.includes("*")) return resolveSpecPath(p);
+  const full = resolveSpecPath(p);
+  const dir = path.dirname(full);
+  const pattern = new RegExp(
+    `^${path.basename(full).replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*")}$`,
+  );
+  let hits;
+  try {
+    hits = (await readdir(dir)).filter((name) => pattern.test(name)).map((name) => path.join(dir, name));
+  } catch {
+    return full; // 目录不在：让 fileInfo 走「不存在」分支，报错信息仍是原路径
+  }
+  const found = await Promise.all(hits.map(async (file) => ({ file, info: await fileInfo(file) })));
+  found.sort((a, b) => (b.info?.mtimeMs ?? 0) - (a.info?.mtimeMs ?? 0));
+  return found[0]?.file ?? full;
+}
+
+/**
  * 坐标点击 + 重试：KimiCU 用「最近一次 get_app_state 的截图」校验坐标是否在图内，
  * 两次读之间窗口尺寸/位置变了就会被判越界（实测偶发）。重试时重新取一张图即可。
  */
@@ -264,7 +291,7 @@ export async function runScenario(ctx, scenario) {
     }
     if (expect.file) {
       const spec = expect.file;
-      const file = resolveSpecPath(spec.path);
+      const file = await resolveSpecFile(spec.path);
       const info = await fileInfo(file);
       const label2 = spec.label ?? label;
       if (spec.exists !== undefined) {
