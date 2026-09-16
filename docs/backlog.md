@@ -29,6 +29,15 @@
 - **mathSpanCrossed ±4KB 窗口对超大公式块的切割**（M111 review 观察）。
 - **代码围栏行尾恰为 `$...$` 时跨行 Ctrl+B 一次移两字符**（M113，罕见且良性）。
 - **相邻 grid 表连排时 Ctrl+N/P 每按一次过一张表**（M113，与裁决不冲突）。
+- **「已被外部删除」浮条无动作**（2026-09-16 夜间批次，Alex 需求 3 复核时发现）：dirty 时
+  「检测到外部修改」浮条**已有**「重载（放弃我的修改）」动作（`src/save-controller.ts:435`），
+  但「当前文件已被外部删除」浮条（`src/save-controller.ts:426`）没有任何动作，只能切文件再切回。
+  需求 3 据此撤销（主诉场景已被既有动作覆盖），此缺口留作顺手修。
+- **`TableModel.reason` 的 `"incomplete"` 是死值**（M137 finding、M142 评审复核）：类型联合里有，
+  生产只产 `"non-rectangular"` / `"oversize"`。清扫类。
+- **语言注册表两处漂移**（M138 旁注）：`src/editor.ts` 的 LANGUAGES 未导出，`src/preview/code.ts`
+  另建一份着色语言表。建议收口为单一来源（小 mission）。
+- **文案-Copy.md D40 后空行断表 + 编号未升序**（M141 评审旁证）：既有缺陷，清扫类。
 
 ### shell / 系统
 
@@ -37,7 +46,8 @@
 
 ### 未复现
 
-- **编辑区全空白偶发**：M114 一次、M116 0/3，复现条件未锁定。待运行时诊断日志（openspec/changes/add-diagnostics-logging）落地后靠事件序列定位。
+- **编辑区全空白偶发**：M114 一次、M116 0/3，复现条件未锁定。运行时诊断日志已落地（M134，
+  2026-09-16），下次复现后查 `<config_dir>/lumir/logs/<UTC日期>.jsonl` 的事件序列定位。
 - **视觉套件 `markdown-parser` 的 `large-mixed` 偶发失败**（M144 一次，低）：整轮视觉回归里它 `page.evaluate: TypeError: Cannot read properties of undefined (reading 'metrics')` 失败一次（该用例把 `mixed` 文档重复 2000 次喂给解析实验，并挂 CDP profiler 采样），单独重跑与随后整轮重跑都 10/10 PASS。现场没有留下可归因的线索（不是本批次的改动路径——该 fixture 是独立的 vite 子应用，不加载 `src/`）。**给后续跑 `gate.sh visual` 的人**：它若偶发报红，先单独重跑该 spec 再判断，别当成自己的回归。
 
 ### 验收套件（M144 实测出的表达力缺口）
@@ -48,6 +58,12 @@
   `open_external_url` 的调用目标，断言开的是哪个 URL 且不真开浏览器）。修法：给 click 动作加
   `modifiers: ["meta"]`（KimiCU 的 `click` 底层已支持 mouse_button，修饰键需在 `cu.mjs` 侧按住 meta 再点）。
   **M144 裁决：套件能力改造另开 mission，本批不做。**
+- **`type` 动作 `clear:true` 的残余假绿形态**（reviewer-typefix finding，low，pre-existing）：
+  clear:true + 旧内容恰好已含一次目标串 + 注入整体 no-op 时，classify 会误判 landed。无任何场景使用
+  clear，未被 M143 的 diff 触及。finding `20260916-reviewer-typefix-bug-type-clear-true-no-op`。
+- **`checkScenario` 不校验 `do: type` 的 `text` 非空**（worker-typefix finding）：漏写 `text:` 会在
+  真机跑成注入 `undefined` 后连报 3 次未落地，而非在 `--check` 阶段就报。
+  finding `20260916-worker-typefix-improve-checkscenario-do-type-text-undefined`。
 
 ## 工具链与环境（待 Alex 裁决）
 
@@ -79,6 +95,13 @@
 5. **`scripts/perf/memory.mjs` 的 WebKit pid 差集归因在非独占主机不可靠**（外来 helper 被误算，
    实测一次 409.7MB 虚高读数）；常驻内存存量超合同（2026-09-06 evidence 已 218–222MB）——
    合同口径裁决随 dogfood 性能专项。
+6. **KimiCU `press_key` 逐键注入会整批丢键**（2026-09-16 M138/M139/M140 三方实证）：原生 input 与
+   contenteditable 都会发生，丢在 DOM 之前（app 侧 keydown 只收到部分键，如注入 `needle` 只到 `ndl`）；
+   间歇性、成因未定位。套件侧已由 M140/M143 的「回读 + 字节未变才重试」口径兜住，工具层缺陷仍在。
+   findings：`20260916-worker-search-bug-kimicu-press-key-wkwebview-input-acceptance-keys.md`、
+   `20260916-worker-keys-bug-kimicu-press-key-type-text.md`（正文实为 press_key）。
+7. **同机第二个 Lumir 实例显著加剧 press_key 丢键**（M140/M142 对照实证）：跑真机验收前的预检
+   须同时确认 1420（dev）与 1430（验收）都没有 Lumir 实例在跑。
 
 ## 待真机验收
 
@@ -86,16 +109,11 @@
 设计见 [docs/process/real-machine-acceptance.md](process/real-machine-acceptance.md)）；手感/审美项仍归 Alex。
 
 分类依据 = **证据目录里真实 PASS 的场景**，不是「场景写了就算覆盖」。最近一次全量实跑：
-**`test-results/acceptance/2026-09-16/`（主 checkout 路径；M138 的 run 在 wt-138 worktree 下的同名目录，
-合并时由 tower 复制回主 checkout——master 上该目录此前是 M135 的 15 场景旧记录）** ——
-**17 场景 / 161 断言 / 16 PASS 1 FAIL**（约 6 分钟，M138）。唯一 FAIL 是
-`08b-autosave-pause` 的「追加输入落在探测串之后」——冲突 toast 出现后盲发的 `m,o,r,e` 四次按键
-都没进编辑器（AX value 里根本没有 `more`），而该场景真正要判的四条冲突期断言（磁盘 sha256 未变 /
-磁盘仍是外部版本 / 内存改动未丢 / 提示未消解）全 PASS。**已排除与 M138 的因果**：把本次 src 改动
-stash 掉重跑，同一断言以同一文本复现 FAIL（2/2 复现，非 flake）；而 M135 tip 在同日证据里该场景
-是 PASS。归因、复现步骤与修法已落 finding
-`.tower/comms/findings/20260916-worker-render-bug-08b-autosave-pause-do-keys-2-2-keys.md`
-（与 worker-search 的 `press_key` 丢键 finding 同族；套件 `keys` 动作缺回读/重试），待套件维护者另开一轮收口。
+**master@`6e4d19a`（主 checkout 直接跑，2026-09-16 深夜收尾终验）——20 场景 / 223 断言 / 20 PASS 0 FAIL**
+（约 7 分钟；证据 `test-results/acceptance/2026-09-16/`，含各场景 steps.md / shots / ax 与
+`_type-retry-unit/` 口径验证 8 判定）。08b 的旧 FAIL（冲突期盲发按键未落地）已由 M140 核销
+（keys 动作回读+有限重试 + 08b 落点改走 type 通道 + 探测串移文末 + `ax.focused` 断言形态）；
+同族 type 侧假绿由 M143 核销（重试口径对齐 keys：只在字节完全未变时重试，partial landing 直接报错）。
 
 **已机验（行为判定落定，有 PASS 证据）**
 
@@ -110,8 +128,7 @@ stash 掉重跑，同一断言以同一文本复现 FAIL（2/2 复现，非 flak
 8. **M127 自动保存链路四条子行为全部覆盖** ——
    `08-autosave`（2s 落盘：磁盘 sha256 变化且内容含输入）；
    `08b-autosave-pause`（**冲突待决期间自动保存暂停**：记录磁盘 sha256，跨 2s 去抖再等 7s，磁盘逐字节不变、
-   仍是外部版本、冲突提示未消解；本场景的「追加输入落点」前置断言当前 FAIL，原因见上节，暂停行为本身
-   的四条断言每轮都 PASS）；
+   仍是外部版本、冲突提示未消解；前置断言「探测串落在文档末尾 + AX 焦点在编辑器」M140 重做后稳定 PASS）；
    `08c-crash-recovery`（app 自己在隔离目录写的崩溃备份 →  重启后提示「恢复内容 / 丢弃备份」，
    点「恢复内容」后崩溃前内容回到编辑器）；
    `08d-crash-discard`（同现场点「丢弃备份」：给丢弃反馈且内容**不**进编辑器）；
@@ -131,6 +148,11 @@ stash 掉重跑，同一断言以同一文本复现 FAIL（2/2 复现，非 flak
     AX 面读到「第 10 行单元格数与表头不符（应为 3 列）」与「保留原始 Markdown」，同时整块保持
     源码态（不丢列、不截断）；同 fixture 的短行表（末行少一格）自 M142 起按矩形渲染，AX 面读到
     `Markdown 表格`、该行源码不再显露。
+12. **文件内搜索 v0**（M139）—— `search-01-find`（⌘F panel 出现、匹配计数、上一个/下一个导航、
+    Esc 还原焦点）、`search-02-binding`（`config.json` keys 表重绑搜索命令生效）。
+13. **外链渲染与打开**（M144）—— `12-links`（24 断言）：外链渲染为 `title↗︎`、URL 源码隐藏、
+    光标触及整条显露、⌘⏎ 打开外链（日志 `link_open` 落盘且不含 URL 原文）/ wikilink 跳转 /
+    未解析 wikilink 只 toast 不建文件、相对路径与 `javascript:` 保持原文不装饰。
 
 **已机验到渲染/结构层，行为细节仍缺可观测面**
 
@@ -166,6 +188,16 @@ stash 掉重跑，同一断言以同一文本复现 FAIL（2/2 复现，非 flak
 - **`config.json` 解绑 ≠ 关闭能力**（已录 spec）：解绑后 macOS 原生选择器可能接手（如 ⌃K → `deleteToEndOfLine:`）——dogfood 改配置时预期内行为。
 
 ## 已核销（留痕，定期清理）
+
+- 2026-09-16：**文件内搜索 v0**（M139，merge `647f519`）：`@codemirror/search` 6.7.2 能力底座 +
+  editorial panel 重制（`src/search.ts`，createPanel），⌘F 走 keys.ts global 可重绑；匹配计数 /
+  上一个/下一个 / 大小写切换。文案 D68–D72（M141 补录）。
+- 2026-09-16：**验收套件注入假绿同族核销**（M140 merge `098918d` + M143 merge `d460535`）：
+  keys 动作补回读 + 有限重试（≤3，只在目标字节完全未变时重试，partial landing 直接报错）；
+  type 动作对齐同一口径（删除「次数校验能抓住前缀型 partial landing」的错误辩护注释）；
+  08b 落点重做（探测串移文末 + 改走 type 通道 + `ax.focused` 新断言形态，走解析结果而非正则）；
+  checkScenario 守卫（ax 断言必须带 has/not/count/focused 之一）。
+  口径级验证 8 判定（假 CU 驱动真实代码路径）在 `_type-retry-unit/`。
 
 - 2026-09-16：**验收套件 `file` 断言支持 glob 路径**（M144 落地，finding `20260916-worker-links-improve-file-glob-dated.md` + tower clarify-reply 裁决）：`file.path` 含 `*` 时按 glob 在父目录里取**匹配文件里 mtime 最新的那一份**再断言内容。动因是诊断日志按 UTC 日期命名、而验收环境的 `env/` 目录跨天复用（`envHome()` 不带日期）——写死日期的断言会在之后每天读到上次 run 留下的旧文件而**永久空过**（假绿），换机又直接 FAIL。落点：`scripts/acceptance/lib/execute.mjs` 的 `resolveSpecFile`（约 20 行）+ `scripts/acceptance/README.md` 断言表一句 + `scenarios/12-links.md` 用 `env:logs/*.jsonl` 断言 `link_open` 落盘并顺带断言日志里没有 URL 原文。**反向验证过**：在日志目录植入一个 mtime 更晚、不含 `link_open` 的文件后场景如实 FAIL（证明确实取最新那份、断言不空转），移除后 PASS。已知残余风险（同日重复跑时最新文件里可能有上一次的事件）写在场景正文，该断言与三条负断言联合构成判定。
 
