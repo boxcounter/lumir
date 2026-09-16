@@ -122,6 +122,25 @@ export function findTables(source: SourceReader, sourceLength: number, tree: Syn
   return tables;
 }
 
+/**
+ * 降级归因文案（M138）：整块回退的判定结果翻成用户能照着修的一句话。
+ * 「保留原始 Markdown」是合同预期行为，但只说这句话等于没说——用户看不到
+ * 哪一行出格（实测案例：四行各缺最后一列，排查花掉一整个 survey mission）。
+ * 出错行号取**文档行号**（1 基）而非表内行序：用户照着行号就能定位到源文件。
+ * 文案单一来源在这里；`.cm-lp-table-degraded` 的 `::after` 经 data 属性取用。
+ */
+export function degradationNotice(table: TableModel, lineNumberOf: (pos: number) => number): string {
+  if (table.reason === "oversize") {
+    const kib = Math.max(1, Math.round((table.sourceBytes || table.to - table.from) / 1024));
+    return `表格阅读降级：表格约 ${kib} KiB，超过 64 KiB 阅读上限——保留原始 Markdown`;
+  }
+  const ragged = table.rows.find((row) => row.slots.length !== table.columns);
+  if (ragged) {
+    return `表格阅读降级：第 ${lineNumberOf(ragged.from)} 行单元格数与表头不符（应为 ${table.columns} 列）——保留原始 Markdown`;
+  }
+  return "表格阅读降级：无法识别表格结构——保留原始 Markdown";
+}
+
 export function tableAt(tables: readonly TableModel[], from: number, to = from): TableModel | undefined {
   let low = 0;
   let high = tables.length - 1;

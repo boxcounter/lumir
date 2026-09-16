@@ -320,7 +320,9 @@ body { background:var(--bg); color:var(--text); font-family:var(--font-body); fo
   font-size: .82em;
 }
 .cm-lp-table-degraded::after {
-  content: "表格阅读降级：保留原始 Markdown";
+  /* 文案由装饰层按降级原因生成（table.ts 的 degradationNotice），经 data 属性取用：
+     悬停/读屏/上屏同一份归因，不在 CSS 里另写一份。 */
+  content: attr(data-degraded);
   display: block;
   padding-block: 3px;
 }

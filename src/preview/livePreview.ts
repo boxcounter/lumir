@@ -26,7 +26,8 @@ import { calloutMarkerDecorations, calloutOnLine, detectCallout } from "./callou
 import { sampleCallback } from "../diagnostics";
 import type { LinkResolveResult } from "../bindings/LinkResolveResult";
 import { BlockWrapper } from "@codemirror/view";
-import { findTables, tableAt, tableRowsInRange, type TableModel } from "./table";
+import { findTables, tableAt, tableRowsInRange, degradationNotice, type TableModel } from "./table";
+import { highlightCode } from "./code";
 import { TABLE_SCROLL_CLASS, WIDGET_SCROLL_STEP_PX } from "../keys";
 import type { CommandRunner, WidgetCommandId } from "../keys";
 
@@ -92,6 +93,28 @@ class WikilinkWidget extends WidgetType {
       el.title = this.raw;
     }
     return el;
+  }
+}
+
+/**
+ * 分隔线（HorizontalRule，M138）：`---` / `***` / `___` 渲染为一条横线。
+ * 走 replace widget 而非行装饰 + 隐藏源码——横线本体的宽度必须是栏宽，
+ * 且高度不参与行高计算（0 高 + border，垂直位置由 vertical-align 定）。
+ * 文档首部 frontmatter 的 `---` 定界符不在此列（inFrontmatter 剪枝，Obsidian 口径）。
+ */
+class HorizontalRuleWidget extends WidgetType {
+  eq(other: HorizontalRuleWidget): boolean {
+    return other instanceof HorizontalRuleWidget;
+  }
+
+  toDOM(): HTMLElement {
+    const rule = document.createElement("hr");
+    rule.className = "cm-lp-hr";
+    // 横线本身没有可读文本（源码 `---` 已被替换），补一个读屏名，别让它成为
+    // 无名的 separator（foundation-markdown §5「装饰隐藏标记时仍保留可理解的
+    // 读屏文本或等价语义」）。
+    rule.setAttribute("aria-label", "分隔线");
+    return rule;
   }
 }
 
@@ -459,7 +482,13 @@ function buildDecorations(view: EditorView, ctx: PreviewContext): DecorationSet 
     for (const table of tables) {
       if (!table.degraded || table.to < vr.from || table.from > vr.to) continue;
       const line = view.state.doc.lineAt(table.from);
-      decos.push(Decoration.line({ class: "cm-lp-table-degraded", attributes: { "aria-label": "表格阅读降级：保留原始 Markdown" } }).range(line.from));
+      // 降级文案带原因与出错行号（M138）：同一句话既上屏（style.css 的 ::after
+      // 经 data 属性取用）也进 aria-label，读屏与视觉看到的是同一份归因。
+      const notice = degradationNotice(table, (pos) => view.state.doc.lineAt(pos).number);
+      decos.push(Decoration.line({
+        class: "cm-lp-table-degraded",
+        attributes: { "aria-label": notice, "data-degraded": notice },
+      }).range(line.from));
     }
     collectTableDecorations(view, tables, vr.from, vr.to, decos);
     collectSyntaxDecorations(view, vr.from, vr.to, fm, ctx, decos, tables);
@@ -538,6 +567,25 @@ function hideMark(
   if (eatSpaceAfter && doc.sliceString(t, t + 1) === " ") t += 1;
   if (eatSpaceBefore && doc.sliceString(f - 1, f) === " ") f -= 1;
   decos.push(Decoration.replace({}).range(f, t));
+}
+
+function collectCodeTokens(
+  view: EditorView,
+  node: SyntaxNode,
+  vrFrom: number,
+  vrTo: number,
+  decos: Range<Decoration>[],
+): void {
+  const text = node.getChild("CodeText");
+  if (!text) return;
+  const info = node.getChild("CodeInfo");
+  const code = view.state.doc.sliceString(text.from, text.to);
+  const tokens = highlightCode(code, info ? view.state.doc.sliceString(info.from, info.to) : "");
+  for (const token of tokens) {
+    // 只出视口内的 token：长块在视口外的那部分扫描过但不建装饰（视口增量义务）。
+    if (text.from + token.to < vrFrom || text.from + token.from > vrTo) continue;
+    decos.push(Decoration.mark({ class: token.cls }).range(text.from + token.from, text.from + token.to));
+  }
 }
 
 function collectSyntaxDecorations(
@@ -684,10 +732,22 @@ function collectSyntaxDecorations(
         return;
       }
 
+      if (name === "HorizontalRule") {
+        // `---` / `***` / `___` 的横线渲染（M138）。源码 `---` 与横线不可能同时可见，
+        // 而横线本身 0 高——光标落在该行时若仍藏源码，用户既看不到光标也看不到刚敲进去
+        // 的字符（callout 标记同款问题，同款解法）：选区触及该行即显露源码。
+        const ruleLine = doc.lineAt(ref.from);
+        if (touchesSelection(ruleLine.from, ruleLine.to)) return false;
+        decos.push(Decoration.line({ class: "cm-lp-hr-line" }).range(ruleLine.from));
+        decos.push(Decoration.replace({ widget: new HorizontalRuleWidget() }).range(ref.from, ref.to));
+        return false;
+      }
+
       if (name === "FencedCode" || name === "CodeBlock") {
         for (const l of lineRanges(view, Math.max(ref.from, vrFrom), Math.min(ref.to, vrTo))) {
           decos.push(Decoration.line({ class: "cm-lp-codeblock-line" }).range(l.from));
         }
+        collectCodeTokens(view, ref.node, vrFrom, vrTo, decos);
         return false;
       }
 
