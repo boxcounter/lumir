@@ -27,14 +27,14 @@
 
 ## 4. 文案与记录
 
-- [x] 4.1 `文案-Copy.md` 补录新增文案（D77–D80：外链标记、外链拒绝提示、外链打开失败提示、链接命令更名说明），编号沿 D 系追加
+- [x] 4.1 `文案-Copy.md` 补录新增文案（D77–D79：外链标记、外链拒绝提示、外链打开失败提示），编号沿 D 系追加；命令更名（`wikilink.follow` → `link.follow`）不是用户可见文案，记在文案册的「文案实现备注」里而不占编号
 - [x] 4.2 `docs/backlog.md` 记录本项核销（口径、落点、证据指针）
 
 ## 5. 验证
 
 - [x] 5.1 `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` 通过（`openspec validate add-external-link-open --strict` 亦通过）
 - [x] 5.2 `scripts/gate.sh quick` 全绿（7/7：cargo-fmt / cargo-clippy / cargo-test / bindings-drift / tsc-root / tsc-visual / openspec-validate）
-- [x] 5.3 视觉：新增 `tests/visual/scenes/render-link.spec.ts` + `tests/visual/fixtures/render-link/links.md` + 整页基线 `render-link-chromium-darwin.png`；场景断言渲染态、源码显露、表格内收窄、文档逐字节不变、⌘⏎ 与 ⌘-Click 经桩记录打开的目标（零浏览器启动）、链接起点也命中；配套 Node 侧纯函数断言钉住 scheme 白名单与解码口径。`scripts/gate.sh visual` 全绿（8/8，视觉回归 160s）
+- [x] 5.3 视觉：新增 `tests/visual/scenes/render-link.spec.ts` + `tests/visual/fixtures/render-link/links.md` + 整页基线 `render-link-chromium-darwin.png`；场景断言渲染态、源码显露、**表格 cell 内的外链照常渲染且表格仍是 grid（六条用例之一）**、文档逐字节不变、⌘⏎ 与 ⌘-Click 经桩记录打开的目标（零浏览器启动）、链接起点也命中；配套 Node 侧纯函数断言钉住 scheme 白名单与解码口径。`scripts/gate.sh visual` 全绿（8/8，视觉回归 155–160s）
 - [x] 5.4 真机验收：新增 `scripts/acceptance/scenarios/12-links.md` + fixture `links.md` / `links-wiki.md` / `links-missing.md`；`node scripts/acceptance/run.mjs --check` 全绿（20 场景）；单场景先跑 FAIL 一条**本场景自造的跨步骤断言**（`ax.not` 被上一步残留 toast 命中），改成 `ax.count max:1` 后 PASS
 - [x] 5.5 套件能力：`file` 断言支持 glob 路径（`path` 含 `*` 时取匹配文件里 mtime 最新的一份再断言），`checkScenario` 与 README 断言表同步；`12-links` 据此用 `env:logs/*.jsonl` 断言 `link_open` 落盘 + 日志无 URL 原文。**反向验证**：植入 mtime 更晚且不含该事件的文件 → 如实 FAIL（不取旧文件、断言不空转），移除后 PASS
 - [x] 5.6 全量真机回归 **20/20 PASS（221 断言，约 7 分钟）**，证据归档 `test-results/acceptance/2026-09-16/`（worktree 本地，git 外）；`12-links` 单场景 24 断言全 PASS，含 title↗︎ 在真实 WKWebView 上屏、⌘⏎ 走通 opener（诊断日志 `link_open` `scheme=https` `outcome=opened`，无 URL 原文）

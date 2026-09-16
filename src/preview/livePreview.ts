@@ -809,8 +809,11 @@ function collectSyntaxDecorations(
         if (touchesSelection(ref.from, ref.to)) return false;
         const parts = standardLinkParts(ref.node, doc);
         if (!parts) return false; // 引用式链接 / 未闭合形态：原样
-        // 跨 cell 的链接不装饰：cell 间的管道符已被隐藏，横跨它的装饰会吞并相邻
-        // cell（M113 r1 P2-1 同族）；落在单个 cell 内的链接照常渲染。
+        // 防御性收窄（不是可达路径）：Link 节点跨不到 cell 边界——标题里出现**未转义**
+        // 管道符时那一行会被切成两个 cell，lezer 至此不再产出 Link 节点（实测
+        // `| [x | y](u) |` 只剩 URL 节点），因此该形态自然保持原文。留着这条是因为
+        // 跨槽的 replace 装饰会吞并相邻 cell（M113 r1 P2-1 同族）：一旦 parse 行为变化，
+        // 这里必须先把装饰挡在 cell 内。
         if (table) {
           const slot = tableRowsInRange(table, ref.from, ref.from)[0]?.slots.find(
             (s) => ref.from >= s.from && ref.to <= s.to,

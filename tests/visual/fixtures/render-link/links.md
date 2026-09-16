@@ -18,3 +18,8 @@ tags: [render]
 不支持 [别开我](javascript:alert(1)) 不打开。
 
 尖括号包裹 [包裹形式](<https://example.invalid/wrapped>) 同样是外链。
+
+| 链接列 | 说明 |
+| --- | --- |
+| [表格内外链](https://example.invalid/cell) | 单元格文本 |
+| [再一条](https://example.invalid/cell2) | 第二条 |

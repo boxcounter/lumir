@@ -32,4 +32,9 @@ md 模式下，标准 Markdown 链接 `[title](url)` 的目标 scheme 属于外�
 #### Scenario: 表格 cell 内的外链
 
 - **WHEN** 外链出现在 grid 表格的某个 cell 内，且整条链接落在该 cell 内
-- **THEN** 该链接照常渲染为 title + `↗︎`；跨越 cell 边界（管道符）的链接不装饰、保持原文——隐藏的管道符承担表格结构，横跨它的装饰会吞并相邻 cell
+- **THEN** 该链接照常渲染为 title + `↗︎`，同一行其余 cell 的内容不受影响（表格仍是 grid）
+
+#### Scenario: 链接标题里的未转义管道符
+
+- **WHEN** 链接标题里出现**未转义**的管道符（`| [x | y](https://example.invalid) |`）
+- **THEN** 该行被管道符切成两个 cell、该处不再是一个链接（词法层面即不成立），因此保持原文不装饰；系统 MUST NOT 猜测修复这条链接，表格自身按表格合同处置（cell 数多于表头 → 整块降级）

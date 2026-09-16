@@ -18,6 +18,9 @@ const links = readFileSync(new URL("../fixtures/render-link/links.md", import.me
 const SITE = "https://example.invalid/site";
 const MAIL = "mailto:someone@example.invalid";
 const WRAPPED = "https://example.invalid/wrapped";
+const CELL = "https://example.invalid/cell";
+// 五条外链：正文三处 + 表格两个数据行各一处（渲染数量在下面各断言里复用）。
+const EXTERNAL_LINKS = 5;
 // ↗︎ = U+2197 + U+FE0E（变体选择符 VS15，强制文字表现而非 emoji）。
 const MARK = "\u2197\uFE0E";
 
@@ -48,7 +51,7 @@ async function open(page: Page): Promise<void> {
   });
   await page.goto("/");
   await page.locator('.ft-row[title="links.md"]').click();
-  await expect(page.locator(".cm-lp-link")).toHaveCount(3);
+  await expect(page.locator(".cm-lp-link")).toHaveCount(EXTERNAL_LINKS);
 }
 
 /** 把 CM 选区设到某个偏移并聚焦（「光标落在链接上」的显式构造）。 */
@@ -64,11 +67,11 @@ async function setCursor(page: Page, pos: number): Promise<void> {
 test("外链渲染为 title + ↗︎，非外链保持原文，文档逐字节不变", async ({ page }) => {
   await open(page);
 
-  // 三条外链（https / mailto / 尖括号包裹）渲染成链接，其余一律原文
-  await expect(page.locator(".cm-lp-link")).toHaveCount(3);
-  await expect(page.locator(".cm-lp-link-mark")).toHaveCount(3);
+  // 五条外链（https / mailto / 尖括号包裹 / 表格 cell 内两处）渲染成链接，其余一律原文
+  await expect(page.locator(".cm-lp-link")).toHaveCount(EXTERNAL_LINKS);
+  await expect(page.locator(".cm-lp-link-mark")).toHaveCount(EXTERNAL_LINKS);
   const marks = page.locator(".cm-lp-link-mark");
-  await expect(marks).toHaveText([MARK, MARK, MARK]);
+  await expect(marks).toHaveText([MARK, MARK, MARK, MARK, MARK]);
 
   // 显示文本是 title，URL 源码被隐藏（渲染态下不可见）
   const rendered = await page.locator(".cm-content").innerText();
@@ -93,22 +96,45 @@ test("外链渲染为 title + ↗︎，非外链保持原文，文档逐字节�
   await expect(page).toHaveScreenshot("render-link.png");
 });
 
+test("表格 cell 内的外链照常渲染，表格仍是 grid", async ({ page }) => {
+  // spec delta 的「表格 cell 内的外链」场景：链接整条落在某个 cell 内时照常渲染。
+  // 反例（链接标题里出现**未转义**管道符）不需要断言：那种写法会把行切成两个 cell，
+  // lezer 至此不再产出 Link 节点（实测：`| [x | y](u) |` 里只有 URL 节点、没有 Link），
+  // 该处自然保持原文；表格自身还会因为 cell 数多于表头而整块降级（表格合同，另有场景）。
+  await open(page);
+
+  await expect(page.locator(".cm-lp-table")).toHaveCount(1);
+  const inCell = page.locator(".cm-lp-table .cm-lp-link", { hasText: "表格内外链" });
+  await expect(inCell).toHaveCount(1);
+  await expect(inCell).toHaveAttribute("title", CELL);
+  await expect(page.locator(".cm-lp-table .cm-lp-link-mark")).toHaveCount(2);
+
+  // 渲染态下 cell 内的 URL 源码同样被隐藏，显示文本是 title
+  const rendered = await page.locator(".cm-content").innerText();
+  expect(rendered).toContain("表格内外链");
+  expect(rendered).not.toContain(CELL);
+  expect(rendered).not.toContain("example.invalid/cell2");
+  // cell 文本没有被链接装饰吞掉：同一行的第二列仍在
+  expect(rendered).toContain("单元格文本");
+  expect(await readDocument(page)).toBe(links);
+});
+
 test("光标落在链接上显露源码，离开即恢复渲染", async ({ page }) => {
   await open(page);
   const first = page.locator(".cm-lp-link").first();
   await expect(first).toBeVisible();
 
-  // 光标进链接：整条显露源码（编辑态与渲染前一致，也避免长 URL 被隐藏后产生
+  // 光标进链接：该条整条显露源码（编辑态与渲染前一致，也避免长 URL 被隐藏后产生
   // 中间大段「按键光标不动」的死区）
   const start = links.indexOf("[示例站点]");
   await setCursor(page, start + 3);
-  await expect(page.locator(".cm-lp-link")).toHaveCount(2);
+  await expect(page.locator(".cm-lp-link")).toHaveCount(EXTERNAL_LINKS - 1);
   const revealed = await page.locator(".cm-content").innerText();
   expect(revealed).toContain("[示例站点](https://example.invalid/site)");
 
   // 光标离开：回到渲染态
   await setCursor(page, start - 1);
-  await expect(page.locator(".cm-lp-link")).toHaveCount(3);
+  await expect(page.locator(".cm-lp-link")).toHaveCount(EXTERNAL_LINKS);
   const restored = await page.locator(".cm-content").innerText();
   expect(restored).not.toContain(SITE);
   // 显露/恢复都只是装饰层的事，文档始终没变
