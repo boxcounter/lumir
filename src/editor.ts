@@ -31,6 +31,7 @@ import { findTables, tableAt } from "./preview/table";
 import type { TableModel, TableRow } from "./preview/table";
 import { createInvokeAttachmentProvider, codeLanguage, extensionOf, fileClass } from "./preview/attachments";
 import type { AttachmentProvider, CodeLanguage } from "./preview/attachments";
+import { JSON_TOKEN_TABLE } from "./preview/code";
 import type { CommandRunner, EditorCommandId } from "./keys";
 import { lumirSearch } from "./search";
 
@@ -875,6 +876,15 @@ const cLanguage = StreamLanguage.define(c);
 const cppLanguage = StreamLanguage.define(cpp);
 const yamlLanguage = StreamLanguage.define(yaml);
 const htmlLanguage = StreamLanguage.define(html);
+// json 是全表里唯一带 tokenTable 的：legacy json mode 把键标成**复合** token
+// `string property`（legacy-modes/mode/javascript.js:518 的 objprop：`cx.marked =
+// cx.style + " property"`），而 CM6 的 createTokenType 逐词解析复合 token 时 `property`
+// 不在 @lezer/highlight 的 tags 里（只有 propertyName）→ 该词被丢弃并 console 警告；
+// defaultTable 里虽有 `property → propertyName`，但它只按完整 token 名命中，复合名查不到。
+// 净效果：键退化成纯 string、与值同色。补上这张表后 `string property` 解析为
+// [string, propertyName]，配色规则按 codeHighlight 的条目序裁决（见其注释）。
+// 表由 preview/code.ts 单一持有——code 模式与 markdown 代码块的键色必须一致。
+const jsonLanguage = StreamLanguage.define({ ...json, tokenTable: JSON_TOKEN_TABLE });
 const LANGUAGES: Record<CodeLanguage, Language> = {
   rust: StreamLanguage.define(rust),
   typescript: tsLanguage,
@@ -886,7 +896,7 @@ const LANGUAGES: Record<CodeLanguage, Language> = {
   java: StreamLanguage.define(java),
   ruby: StreamLanguage.define(ruby),
   shell: StreamLanguage.define(shell),
-  json: StreamLanguage.define(json),
+  json: jsonLanguage,
   toml: StreamLanguage.define(toml),
   yaml: yamlLanguage,
   css: StreamLanguage.define(css),
@@ -908,7 +918,12 @@ function codeLanguageFor(path: string | undefined): Language | null {
 
 // code 模式 token 配色：只用单套排版基线的既有视觉 token
 //（--dim/--accent/--callout-*，M55 体系）。
-// legacy-modes token 经 StreamLanguage 默认 tokenTable 落到标准 tags。
+// legacy-modes token 经 StreamLanguage 的 tokenTable 落到标准 tags（defaultTable 打底，
+// json 另带 preview/code.ts 的 JSON_TOKEN_TABLE，见 LANGUAGES 上方注释）。
+// 条目序即优先级：HighlightStyle 把规则按此序写进样式表，同一节点带多个 tag 时
+// **靠后**的条目命中（CM6 文档原文「styles defined further down in the list will have
+// a higher CSS precedence」）——所以 propertyName 必须留在 string 之后，json 键才会
+// 取属性色而不是字符串色（键同时带 string + propertyName 两个 tag）。
 const codeHighlight = syntaxHighlighting(
   HighlightStyle.define([
     { tag: [tags.comment, tags.blockComment, tags.docComment], color: "var(--dim)" },

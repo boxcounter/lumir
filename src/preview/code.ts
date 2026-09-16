@@ -4,10 +4,10 @@
 // `markdown({codeLanguages})` 把子语言烘进 parser，而这个调用点在 src/editor.ts
 // （`markdown(markdownConfig)`），不在本 mission 的范围里，preview 模块拿不到它。
 // 于是改用同一批 @codemirror/legacy-modes parser，经 StreamLanguage 归一化后直接
-// 驱动：token 名 → 标准 tag 的解析逐字复刻 CM6 的那套（别名表 + @lezer/highlight
-// 的 tags），因此同一段代码在围栏里与整文件打开时得到的 tag、进而颜色完全一致
-// （对照实验见 mission 报告：21 种语言逐 token 与「StreamLanguage + highlightTree」
-// 参照实现逐一对齐）。配色类名在 theme.ts，色值仍是同一套 editorial token。
+// 驱动：token 名 → 标准 tag 的解析逐字复刻 CM6 的那套（别名表 + parser 的 tokenTable
+// + @lezer/highlight 的 tags），因此同一段代码在围栏里与整文件打开时得到的 tag、进而
+// 颜色完全一致（对照实验见 mission 报告：21 种语言逐 token 与「StreamLanguage +
+// highlightTree」参照实现逐一对齐）。配色类名在 theme.ts，色值仍是同一套 editorial token。
 //
 // 覆盖范围 = legacy-modes 有现成 mode 的常见全栈集；info string 缺失或不在表里
 // 一律不着色（保持既有纯文本渲染，不用近似 parser 冒充）。块级 mermaid 走自己的
@@ -38,6 +38,25 @@ export interface CodeToken {
   cls: string;
 }
 
+/** parser 的 `tokenTable` 口径：legacy token 名 → 标准 tag（CM6 额外映射，defaultTable 之外的补位）。 */
+type TokenTable = Record<string, Tag>;
+
+/**
+ * json 专属的 tokenTable，随 parser 一起声明（`StreamLanguage` 的 `tokenTable` 字段）。
+ * legacy json mode 把对象键标成**复合** token `string property`（legacy-modes/mode/
+ * javascript.js:518 的 objprop：`cx.marked = cx.style + " property"`），而 @lezer/highlight
+ * 的 tags 里没有 `property` 这个名字（只有 propertyName）——CM6 的 createTokenType 逐词
+ * 解析复合 token 时会把该词丢掉并 console 警告，而 defaultTable 的 `property → propertyName`
+ * 兜底只按完整 token 名命中，复合名查不到。净效果：键退化成纯 string、与值同色。
+ * 补上这张表后 `string property` 解析为 [string, propertyName]，套用哪个类由
+ * TOKEN_CLASSES 的条目序裁决（见其注释）。
+ * json 是本文件唯一带 tokenTable 的语言：javascript/typescript 的 objprop 走同一条
+ * `cx.style + " property"` 分支，但那里字符串键本来就该是字符串色，不跟着改。
+ * 与 src/editor.ts 的 json parser 同源（editor.ts 从这里 import）：code 模式与 markdown
+ * 代码块的键色必须一致，各写一份就等着漂移（REVIEW.md 第 8 条）。
+ */
+export const JSON_TOKEN_TABLE: TokenTable = { property: tags.propertyName };
+
 /**
  * 语言名 → StreamLanguage。与 src/editor.ts 的 LANGUAGES 同批 parser（code 模式
  * 按扩展名选语言的那张表）；那张表未导出，此处按 fenced info string 的口径重建一份。
@@ -54,7 +73,7 @@ const LANGUAGES: Record<string, StreamLanguage<unknown>> = {
   java: StreamLanguage.define(java),
   ruby: StreamLanguage.define(ruby),
   shell: StreamLanguage.define(shell),
-  json: StreamLanguage.define(json),
+  json: StreamLanguage.define({ ...json, tokenTable: JSON_TOKEN_TABLE }),
   toml: StreamLanguage.define(toml),
   yaml: StreamLanguage.define(yaml),
   css: StreamLanguage.define(css),
@@ -98,6 +117,9 @@ const ALIASES: Record<string, string> = {
 /**
  * token → 类名。tag 分组与 src/editor.ts 的 codeHighlight 逐条对应（同一套语义
  * 色），差别只在输出 CSS 类而非内联色值——类名挂在 theme.ts，色值一处定义。
+ * 与 editor.ts 同一条口径：条目序即优先级（HighlightStyle 按此序写 CSS，同一 token
+ * 带多个 tag 时靠后的条目命中），propertyName 必须留在 string 之后——json 键同时带
+ * string + propertyName，靠前会让它退回字符串色。
  */
 const TOKEN_CLASSES = HighlightStyle.define([
   { tag: [tags.comment, tags.blockComment, tags.docComment], class: "cm-lp-tok-comment" },
@@ -114,7 +136,8 @@ const TOKEN_CLASSES = HighlightStyle.define([
 /**
  * StreamLanguage 的 streamParser 是运行期字段，d.ts 只声明了 `define`——CM6 没有把
  * 「在编辑器外驱动流式 parser」做成公开合同。这里只需要三件套
- * （startState/token/blankLine，均已被 fullParser 补全默认值），用窄接口取用，
+ * （startState/token/blankLine，均已被 fullParser 补全默认值）加上 parser 自带的
+ * `tokenTable`（fullParser 保证存在，未声明时是 null 原型空对象），用窄接口取用，
  * 不把整个实例当任意对象透传。
  */
 interface StreamInternals {
@@ -122,6 +145,7 @@ interface StreamInternals {
     token(stream: StringStream, state: unknown): string | null | void;
     blankLine(state: unknown, indentUnit: number): void;
     startState(indentUnit: number): unknown;
+    tokenTable: TokenTable;
   };
 }
 
@@ -153,22 +177,26 @@ const TAG_TABLE = tags as unknown as Record<string, Tag | ((tag: Tag) => Tag)>;
 
 /**
  * CM5 token 名 → tag 列表，逐字对应 CM6 的 token 名解析（stream parser 的
- * createTokenType + defaultTokenTable）：
- * 1. 整个名字先在别名表里查（CM6 的 defaultTable 只按完整名字命中，别名表与它同表）；
+ * createTokenType + defaultTokenTable + parser 的 tokenTable）：
+ * 1. 整个名字先在别名表里查（CM6 的 defaultTable 只按完整名字命中，别名表与它同表），
+ *    再查 parser 的 tokenTable（CM6 同序：`this.table[tag]` 命中就返回，否则才走
+ *    createTokenType）；
  * 2. 未命中则按空格拆成多个 tag（json 键的 `string property`）、按点号拆 modifier
- *    （`string.special`），每个 part 只查 @lezer/highlight 的 tags；
- * 3. 认不出的 part 丢弃（CM6 同此：`string property` 里 property 不是 tags 名，
- *    结果只剩 string——所以 json 键在 code 模式里是字符串色，这里必须一致）。
+ *    （`string.special`），每个 part 先查 tokenTable 再查 @lezer/highlight 的 tags
+ *    （CM6 的 `extra[part] || tags[part]` 同序）；
+ * 3. 认不出的 part 丢弃。json 键的 `string property` 因此解析为 [string, propertyName]
+ *    ——property 由 JSON_TOKEN_TABLE 供给（没有这张表时 CM6 会丢掉它并 console 警告，
+ *    键只剩 string，与值同色）。
  * 全部认不出即不着色：未知 token 保持纯文本，不猜颜色。
  */
-function tagsForStyle(style: string): Tag[] {
-  const aliased = LEGACY_TAGS[style];
+function tagsForStyle(style: string, extra: TokenTable): Tag[] {
+  const aliased = LEGACY_TAGS[style] ?? extra[style];
   if (aliased) return [aliased];
   const resolved: Tag[] = [];
   for (const name of style.split(" ")) {
     let found: Tag[] = [];
     for (const part of name.split(".")) {
-      const value = TAG_TABLE[part];
+      const value = extra[part] ?? TAG_TABLE[part];
       if (typeof value === "function") {
         if (!found.length) return [];
         found = found.map(value);
@@ -206,17 +234,22 @@ function resolveLanguage(info: string): { name: string; lang: StreamLanguage<unk
   return Object.prototype.hasOwnProperty.call(LANGUAGES, name) ? { name, lang: LANGUAGES[name] } : null;
 }
 
-function classOf(style: string): string | null {
-  let cached = styleClassCache.get(style);
+function classOf(langName: string, style: string, extra: TokenTable): string | null {
+  // 缓存键含语言：tokenTable 是 per-parser 的，同一个 token 名在不同语言下会落到不同
+  // tag——`string property` 在 json（带表）是 [string, propertyName]，在 javascript
+  // 是 [string]，类名不同。
+  const key = `${langName}\u0000${style}`;
+  let cached = styleClassCache.get(key);
   if (cached !== undefined) return cached;
-  const resolved = tagsForStyle(style);
+  const resolved = tagsForStyle(style, extra);
   const cls = resolved.length ? TOKEN_CLASSES.style(resolved) : null;
-  styleClassCache.set(style, cls);
+  styleClassCache.set(key, cls);
   return cls;
 }
 
-function tokenize(code: string, lang: StreamLanguage<unknown>): readonly CodeToken[] {
+function tokenize(code: string, lang: StreamLanguage<unknown>, langName: string): readonly CodeToken[] {
   const { streamParser } = internals(lang);
+  const extra = streamParser.tokenTable;
   const state = streamParser.startState(INDENT_UNIT);
   const tokens: CodeToken[] = [];
   let offset = 0;
@@ -238,7 +271,7 @@ function tokenize(code: string, lang: StreamLanguage<unknown>): readonly CodeTok
         }
         if (stream.pos === stream.start) stream.pos++;
         if (style) {
-          const cls = classOf(style);
+          const cls = classOf(langName, style, extra);
           if (cls !== null) {
             const from = offset + stream.start;
             const to = offset + stream.pos;
@@ -270,7 +303,7 @@ export function highlightCode(code: string, info: string): readonly CodeToken[] 
   const key = `${resolved.name}\u0000${code}`;
   const cached = cache.get(key);
   if (cached) return cached;
-  const tokens = tokenize(code, resolved.lang);
+  const tokens = tokenize(code, resolved.lang, resolved.name);
   if (cache.size >= CACHE_LIMIT) cache.clear();
   cache.set(key, tokens);
   return tokens;
