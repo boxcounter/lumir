@@ -6,6 +6,7 @@
 //   2. LUMIR_READY 只说明进程起来了，前端的文件树/编辑器可能还没就绪；一切动作前先 settle。
 //   3. KimiCU 的 type_text 传 index 时会先在后台做一次真实点击建立渲染层焦点——编辑器失焦时
 //      直接注入会落到陈旧选区，所以输入一律带 index。
+import { execFileSync } from "node:child_process";
 import { findNode, parseNodes } from "./ax.mjs";
 import { sleep } from "./util.mjs";
 
@@ -102,6 +103,47 @@ export async function openFile(cu, pid, name, { marker, timeoutMs = 60_000 } = {
     },
     { timeoutMs, label: `${name} 内容进入编辑器`, everyMs: 800 },
   );
+}
+
+/** 当前前台 app 的 pid（lsappinfo）；取不到返回 null。 */
+export function frontmostPid() {
+  try {
+    const asn = execFileSync("/usr/bin/lsappinfo", ["front"], { encoding: "utf8" }).trim();
+    const out = execFileSync("/usr/bin/lsappinfo", ["info", "-only", "pid", asn], { encoding: "utf8" });
+    const m = /"pid"=(\d+)/.exec(out);
+    return m ? Number(m[1]) : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * tower 纪律（2026-09-16，M134 实证）：KimiCU 对 WKWebView 内 CodeMirror 的键盘注入在窗口被遮挡时
+ * 可能不落地（返回 occluded:true），activate 后也未必恢复。键盘驱动场景应先让目标窗口成为前台。
+ *
+ * 实测补充（M135 r2）：当用户正在用别的 app 时，`AXRaise` **无法**把后台 app 抢到前台
+ * （前台 pid 仍是别的进程），且强行抢焦点会打断用户——KimiCU 的 press_key/type_text 默认走
+ * **后台注入**路径，正是为这种场景设计的。因此这里做成**尽力而为 + 如实记录**：
+ * 拿到前台记 true，拿不到记 false 并留在证据里，由场景自己的行为断言证明注入是否真的落地
+ * （注入没落地时那些断言必然 FAIL——不存在「没验到也算过」的路径）。
+ * 纪律里禁止的两件事仍然禁止：静默跳过、改用 set_value 伪造键盘语义。
+ */
+export async function tryForeground(cu, pid, { retries = 2 } = {}) {
+  for (let i = 0; i < retries; i++) {
+    const front = frontmostPid();
+    if (front === pid) return { frontmost: true, frontPid: pid, raised: i > 0 };
+    const ax = await readAx(cu, pid).catch(() => null);
+    const win = ax?.nodes.find((n) => n.role === "AXWindow");
+    if (win) {
+      try {
+        await cu.performSecondaryAction(pid, win.index, "AXRaise");
+      } catch {
+        /* 无 AXRaise 权限/动作时忽略：后台注入路径仍可用 */
+      }
+    }
+    await sleep(700);
+  }
+  return { frontmost: frontmostPid() === pid, frontPid: frontmostPid(), raised: true };
 }
 
 /** 编辑器当前文档文本（AXTextArea.value）。 */

@@ -59,8 +59,9 @@ AI-only 模式下（ADR 0004）「待真机验收」清单只增不减，全部�
 1. **驱动通道用 KimiCU 的 MCP server 本体，不是 agent 手调工具**：runner 直接以 stdio JSON-RPC
    起 `kimi-cu mcp`，把「读 AX / 截图 / 注入键鼠」变成脚本可复现的动作。理由：agent 手调的路径
    无法固化成制品，断言也就无法确定性重跑。仍然是「复用 KimiCU MCP」，零新增依赖。
-2. **两块能力受工具面限制，只验到渲染/结构层**（实跑 10 场景 87 断言全 PASS；细目见
-   [docs/backlog.md](../backlog.md)「待真机验收」）：
+2. **两块能力受工具面限制，只验到渲染/结构层**（覆盖分类以 [docs/backlog.md](../backlog.md)
+   「待真机验收」为准，该表按**证据目录里真实 PASS 的场景**分桶；r2 补的 4 条子行为场景尚未拿到
+   PASS 证据——跑之前 KimiCU AX 服务两次全局退化，见该文「工具链与环境」）：
    - 光标/选区（`AXSelectedTextRange`）不在 KimiCU 的 AX 输出里 → 项 3 的「逐 cell 行移动」、
      项 9 的「⌃K 不跨管道符」这类**光标位置**口径无法真机断言；套件只验「按键序列后文档不被
      破坏、源码不泄漏」，精确语义仍由 chromium 侧视觉场景覆盖。
@@ -75,7 +76,7 @@ AI-only 模式下（ADR 0004）「待真机验收」清单只增不减，全部�
 | 3 Ctrl+N/P 表格行为 | `03-table-ctrl-np`（表格结构 + 不破坏；逐 cell 落点不可回读） |
 | 5 cell 内公式渲染 + 点击编辑 | `05-cell-math`（渲染层验；点击进编辑不可回读） |
 | 6 Callout 显露 / cell 内 `$$` / 表格宽度 | `06-callout-and-width`（渲染层验；宽度只留证据） |
-| 7 M124 恢复路径 | `07-recovery-paths`、`07b-recovery-saveas`（行为全验） |
-| 8 M127 自动保存 2s 落盘 | `08-autosave`（磁盘 sha256 + 内容，行为全验） |
+| 7 M124 恢复路径 | `07-recovery-paths`（冲突双动作，已验）、`07b-recovery-saveas`（真删除→另存为，已验）、`07c-external-reload`（已建，待复跑） |
+| 8 M127 自动保存链路 | `08-autosave`（2s 落盘，已验）、`08b-autosave-pause`／`08c-crash-recovery`／`08d-crash-discard`／`08e-force-overwrite`（已建，待复跑） |
 | 9 Emacs 键位 / ⌘Z 真机路径 / ⌘/ 面板 / `[keys]` | `09-emacs-keys`、`09b-keys-config`（行为全验） |
 | 4 表头双击选中手感 | 不下沉（Alex） |

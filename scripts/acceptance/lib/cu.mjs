@@ -17,6 +17,7 @@ export class CuClient {
   #nextId = 1;
   #pending = new Map();
   #stderr = [];
+  #spawnError = null;
 
   static async start({ bin = process.env.KIMICU_BIN ?? DEFAULT_BIN } = {}) {
     const client = new CuClient();
@@ -30,10 +31,15 @@ export class CuClient {
     } catch (e) {
       throw new CuError(`无法启动 KimiCU MCP server（${bin}）：${e.message}`);
     }
+    // spawn 失败（ENOENT 等）走 'error' 事件，不经同步 try/catch。这里**不 throw**（会变成
+    // uncaughtException，进程带栈崩溃、绕过 README 的退出码约定），改为存下错误并 reject 在飞请求，
+    // 让 initialize 正常 reject → run.mjs 走「运行失败 = exit 2」的路径留痕。
     this.#proc.on("error", (e) => {
-      throw new CuError(
+      this.#spawnError = new CuError(
         `KimiCU 不可用（${bin}）：${e.message}。安装：curl -fsSL https://cdn.kimi.com/kimi-computer-use/latest/setup_macos.sh | bash`,
       );
+      for (const { reject } of this.#pending.values()) reject(this.#spawnError);
+      this.#pending.clear();
     });
     this.#proc.stderr.on("data", (d) => this.#stderr.push(d.toString()));
     this.#proc.stdout.on("data", (d) => this.#onData(d.toString()));
@@ -82,6 +88,8 @@ export class CuClient {
   }
 
   #request(method, params, timeoutMs = 30_000) {
+    // spawn 已失败时立刻 reject：否则请求会干等到超时才报错，掩盖真实原因。
+    if (this.#spawnError) return Promise.reject(this.#spawnError);
     const id = this.#nextId++;
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
@@ -172,6 +180,11 @@ export class CuClient {
     if (index !== undefined) args.index = index;
     if (page !== undefined) args.page = page;
     return this.call("scroll", args);
+  }
+
+  async performSecondaryAction(pid, index, action) {
+    const { json } = await this.call("perform_secondary_action", { pid, index, action });
+    return json;
   }
 
   async stop() {

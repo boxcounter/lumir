@@ -3,14 +3,46 @@
 // 场景格式（design: docs/process/real-machine-acceptance.md「形态」）用 YAML front-matter +
 // 人读正文；一个验收项一个文件。步骤是动作，`expect` 是断言列表，逐条独立记结果——
 // 一条断言失败不阻断后续步骤，好让一次运行把该场景的问题一次暴露齐。
+import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { readFile, stat, writeFile, appendFile } from "node:fs/promises";
+import { appendFile, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import yaml from "js-yaml";
 import { findNode } from "./ax.mjs";
 import { copyFixture, readConfig, writeConfig } from "./app.mjs";
-import { clickNode, openFile, pressKey, readAx, typeInEditor, waitUntil } from "./drive.mjs";
+import { clickNode, frontmostPid, openFile, pressKey, readAx, tryForeground, typeInEditor, waitUntil } from "./drive.mjs";
 import { envHome, readText, sleep, vaultDir } from "./util.mjs";
+
+/** 动作与断言的白名单：`--check` 用它做静态校验，避免写错 key 要等一整轮真机才发现。 */
+export const ACTIONS = new Set([
+  "settle", "sleep", "key", "keys", "type", "click", "clickNodeText", "clickInNode", "clickEditor",
+  "focusWindow", "open", "configWrite", "restart", "record", "recordEditor", "vaultWrite", "vaultAppend", "vaultRm",
+]);
+export const EXPECT_KINDS = new Set(["ax", "editor", "file", "glob", "shot"]);
+
+/** 静态校验一个场景，返回问题列表（空 = 通过）。 */
+export function checkScenario(scenario) {
+  const problems = [];
+  const push = (m) => problems.push(`${scenario.id}: ${m}`);
+  if (!scenario.id) push("缺少 id");
+  if (scenario.item === undefined) push("缺少 item");
+  if (scenario.open && !scenario.marker) push(`open=${scenario.open} 但没写 marker（无法判断是否打开成功）`);
+  for (const [i, step] of (scenario.steps ?? []).entries()) {
+    const at = `steps[${i}]${step.name ? `(${step.name})` : ""}`;
+    if (!step.name) push(`${at} 缺少 name`);
+    if (step.do !== undefined && !ACTIONS.has(step.do)) push(`${at} 未知动作 do=${step.do}`);
+    if (step.do === "keys" && !Array.isArray(step.keys)) push(`${at} do=keys 需要 keys 数组`);
+    if (step.do === "key" && !step.key) push(`${at} do=key 需要 key`);
+    for (const [j, exp] of (step.expect ?? []).entries()) {
+      const kinds = Object.keys(exp).filter((k) => k !== "label");
+      if (kinds.length !== 1) push(`${at} expect[${j}] 应恰好一个断言形态，实际 ${JSON.stringify(kinds)}`);
+      else if (!EXPECT_KINDS.has(kinds[0])) push(`${at} expect[${j}] 未知断言 ${kinds[0]}`);
+      else if (kinds[0] === "file" && !exp.file.path) push(`${at} expect[${j}] file 断言缺 path`);
+      else if (kinds[0] === "glob" && (!exp.glob.dir || !exp.glob.pattern)) push(`${at} expect[${j}] glob 断言缺 dir/pattern`);
+    }
+  }
+  return problems;
+}
 
 export async function loadScenario(file) {
   const raw = await readText(file);
@@ -102,6 +134,8 @@ export async function runScenario(ctx, scenario) {
     startedAt: new Date().toISOString(),
   });
 
+  if (ctx.foregroundNote) evidence.record({ kind: "note", text: ctx.foregroundNote });
+
   const fail = async (label, detail, axSnapshot) => {
     const rec = evidence.record({ kind: "assert", label, ok: false, detail });
     if (axSnapshot) {
@@ -117,6 +151,9 @@ export async function runScenario(ctx, scenario) {
     const label = expect.label ?? describeExpect(expect);
     if (typeof expect.shot === "string" || expect.shot === true) {
       const shot = await readAx(cu, ctx.pid, { mode: "full" });
+      // 同一步骤内共享快照：toast 是瞬时的，shot 之后再读一次 AX 常常已经看不到它
+      // （实证：07c 的「检测到外部修改，已自动重载」只在 shot 那次读里存在）。
+      state.ax = shot;
       const f = shot.image ? await evidence.saveShot(shot.image, expect.shot === true ? label : expect.shot) : null;
       const ok = Boolean(shot.image);
       await evidence.saveAx(shot.text, expect.shot === true ? label : expect.shot);
@@ -148,6 +185,19 @@ export async function runScenario(ctx, scenario) {
     if (expect.editor) {
       const spec = expect.editor;
       const text = (state.ax ?? (await readAx(cu, ctx.pid))).editor ?? "";
+      if (spec.unchangedSince !== undefined) {
+        // 逐字节比较：比 not/match 强——负向匹配在「基线里本来就没有该串」时会假 PASS。
+        const before = vars[spec.unchangedSince];
+        if (before === undefined) return fail(`${label}（未记录编辑器基线 ${spec.unchangedSince}）`);
+        return before === text
+          ? pass(label, `${text.length} 字节逐字节一致`)
+          : fail(`${label}（编辑器文本已变）`, `before=${JSON.stringify(before.slice(0, 120))} / now=${JSON.stringify(text.slice(0, 120))}`, state.ax);
+      }
+      if (spec.changedSince !== undefined) {
+        const before = vars[spec.changedSince];
+        if (before === undefined) return fail(`${label}（未记录编辑器基线 ${spec.changedSince}）`);
+        return before !== text ? pass(label, `${before.length} → ${text.length} 字节`) : fail(`${label}（编辑器文本未变：${before.length} 字节）`, "", state.ax);
+      }
       if (spec.has !== undefined) {
         const m = matcher(spec.has);
         return m.test(text) ? pass(label) : fail(`${label}（期望编辑器含 ${m.show}）`, JSON.stringify(text.slice(0, 400)), state.ax);
@@ -201,6 +251,25 @@ export async function runScenario(ctx, scenario) {
       }
       return fail(`${label2}（file 断言无法识别）`);
     }
+    if (expect.glob) {
+      // 崩溃备份、另存副本这类「文件名由 app 决定」的产物只能用 glob 断言。
+      const spec = expect.glob;
+      const dir = resolveSpecPath(spec.dir);
+      const re = spec.pattern instanceof RegExp ? spec.pattern : new RegExp(spec.pattern);
+      let hits = [];
+      try {
+        hits = (await readdir(dir, { recursive: true, withFileTypes: true }))
+          .filter((e) => e.isFile())
+          .map((e) => path.join(e.parentPath ?? e.path, e.name))
+          .filter((f) => re.test(f));
+      } catch {
+        hits = [];
+      }
+      const ok = (spec.min === undefined || hits.length >= spec.min) && (spec.exact === undefined || hits.length === spec.exact);
+      return ok
+        ? pass(spec.label ?? label, `${hits.length} 个：${hits.slice(0, 3).map((f) => path.basename(f)).join(", ")}`)
+        : fail(`${spec.label ?? label}（期望 ${spec.exact ?? `≥${spec.min}`} 个，实际 ${hits.length}）`, `${dir} 下无匹配 ${spec.pattern}`);
+    }
     return fail(`${label}（未知断言形态）`, JSON.stringify(expect).slice(0, 200));
   }
 
@@ -237,12 +306,30 @@ export async function runScenario(ctx, scenario) {
     const ax = await readAx(cu, ctx.pid).catch(() => null);
     await fail(`[场景异常] ${e.message}`, String(e.stack ?? "").split("\n").slice(1, 3).join(" | "), ax);
   } finally {
+    const fails = evidence.records.filter((r) => r.kind === "assert" && !r.ok);
+    if (fails.length && /未取得|中途丢失/.test(ctx.foregroundNote ?? "")) {
+      evidence.record({
+        kind: "note",
+        text:
+          "⚠ 本次运行前台焦点未取得（或被中途抢走）：上述 FAIL 需先按 tower 纪律排除 " +
+          "「frontmost-required 且未通过」这一可能，再判定为 app 缺陷。",
+      });
+    }
     // 注意：finally 里**不能 return**——那会吞掉 try 里抛出的异常，把异常场景误判成 PASS
     // （本套件实证过一次：openFile 超时被吞，证据目录只剩空 PASS）。
     const { status } = await evidence.finish();
     result = { status, records: evidence.records };
   }
   return result;
+}
+
+/** 键盘动作前复查前台；中途丢失（可能被别的窗口抢走）就尽力抢回并留痕。 */
+async function noteIfFocusLost(ctx, pid) {
+  if (frontmostPid() === pid) return;
+  await tryForeground(ctx.cu, pid, { retries: 2 });
+  ctx.foregroundNote =
+    `键盘注入前复检：前台焦点中途丢失（已尽力抢回，前台 pid=${frontmostPid() ?? "未知"}）——` +
+    "若后续键盘断言 FAIL，先按 tower 纪律排除 frontmost-required 因素再判 app 缺陷";
 }
 
 async function doAction(step, { ctx, cu, scenario, vars, pid, evidence }) {
@@ -256,8 +343,10 @@ async function doAction(step, { ctx, cu, scenario, vars, pid, evidence }) {
     case "sleep":
       return sleep(step.ms ?? 1000);
     case "key":
+      await noteIfFocusLost(ctx, p);
       return pressKey(cu, p, step.key);
     case "keys": {
+      await noteIfFocusLost(ctx, p);
       for (const k of step.keys) {
         await pressKey(cu, p, k);
         await sleep(step.gapMs ?? 250);
@@ -329,6 +418,27 @@ async function doAction(step, { ctx, cu, scenario, vars, pid, evidence }) {
       vars[step.as ?? step.name] = await fileInfo(file);
       return vars[step.as ?? step.name];
     }
+    case "recordEditor": {
+      // 记录编辑器文本，供 editor.unchangedSince 做逐字节比较（负向匹配不够强）。
+      const text = (await readAx(cu, p)).editor ?? "";
+      vars[step.as] = text;
+      return `${text.length} 字节`;
+    }
+    case "vaultRm": {
+      const files = step.files ?? [step.file];
+      const removed = [];
+      for (const f of files) {
+        const target = path.isAbsolute(f) ? f : path.join(vaultDir(), f);
+        await rm(target, { force: false }); // 真删除；不存在则报错，避免「删了个寂寞」还当成功
+        removed.push(path.basename(target));
+      }
+      return removed.join(", ");
+    }
+    case "focusWindow": {
+      const fg = await tryForeground(cu, p, { retries: step.retries ?? 2 });
+      vars.__foreground = fg;
+      return fg.frontmost ? "前台已取得" : `前台未取得（前台 pid=${fg.frontPid ?? "未知"}），走 KimiCU 后台注入路径`;
+    }
     case "vaultWrite": {
       const file = path.join(vaultDir(), step.file);
       await writeFile(file, step.content ?? "");
@@ -341,6 +451,7 @@ async function doAction(step, { ctx, cu, scenario, vars, pid, evidence }) {
     }
     case "restart":
       await ctx.restartApp();
+      if (ctx.foregroundNote) evidence.record({ kind: "note", text: ctx.foregroundNote });
       return;
     default:
       throw new Error(`未知动作 do=${step.do}`);

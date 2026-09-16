@@ -22,9 +22,9 @@ import {
   stopApp,
   writeConfig,
 } from "./lib/app.mjs";
-import { waitAppReady } from "./lib/drive.mjs";
+import { tryForeground, waitAppReady } from "./lib/drive.mjs";
 import { Evidence, appendRunLog, writeSummary } from "./lib/evidence.mjs";
-import { loadScenario, runScenario } from "./lib/execute.mjs";
+import { checkScenario, loadScenario, runScenario } from "./lib/execute.mjs";
 import { envHome, log, mkdirp, repoRoot, resultsRoot, sleep, vaultDir } from "./lib/util.mjs";
 
 const args = process.argv.slice(2);
@@ -40,6 +40,18 @@ async function listScenarios() {
 }
 
 const all = await listScenarios();
+if (args.includes("--check")) {
+  // 静态校验：不真机、秒级，写场景时先用它挡掉 key 拼错、断言形态写错这类低级错。
+  const problems = all.flatMap(checkScenario);
+  for (const s of all) log(`CHECK ${problems.some((p) => p.startsWith(`${s.id}:`)) ? "FAIL" : "PASS"} ${s.id}`);
+  if (problems.length) {
+    log("");
+    for (const p of problems) log(`  ✗ ${p}`);
+    process.exit(1);
+  }
+  log(`\n场景静态校验通过（${all.length} 个）`);
+  process.exit(0);
+}
 if (args.includes("--list")) {
   for (const s of all) log(`${s.id}\t（backlog 项 ${s.item}）\t${s.title}`);
   process.exit(0);
@@ -55,8 +67,55 @@ const evidence = new Evidence(root);
 let handle = null;
 let cu = null;
 
+/**
+ * 起实例前的环境预检（tower 纪律，2026-09-16）：
+ * - KimiCU 不存在 → 直接说清安装命令，不要跑到一半才发现；
+ * - 磁盘水位 < 2G 不起真机实例（cargo/vite 会 ENOSPC 硬失败，批次四实证）；
+ * - 报告 1420 端口占用情况（套件自身走 1430，但仍先看一眼：1420 被占说明同机有别的
+ *   `pnpm tauri dev` 在跑，机器负载与 AX 稳定性都会受影响）。
+ */
+async function preflight() {
+  const { existsSync } = await import("node:fs");
+  const bin = process.env.KIMICU_BIN ?? "/Applications/KimiCU.app/Contents/MacOS/kimi-cu";
+  if (!existsSync(bin)) {
+    throw new Error(
+      `KimiCU 未安装（${bin}）。安装：curl -fsSL https://cdn.kimi.com/kimi-computer-use/latest/setup_macos.sh | bash`,
+    );
+  }
+  const { statfsSync } = await import("node:fs");
+  const fs = statfsSync(repoRoot());
+  const freeGb = (fs.bavail * fs.bsize) / 1e9;
+  if (freeGb < 2) {
+    // 阈值来自 tower 纪律（<2G 不起真机实例）。唯一可绕过的方式是显式授权：目标 target 是热的、
+    // 本次不会触发 Rust 重编时，实际磁盘需求只有几 MB。绕过会留痕（run.log + 报告），不静默。
+    if (process.env.LUMIR_ACCEPTANCE_ALLOW_LOW_DISK !== "1") {
+      throw new Error(
+        `磁盘可用 ${freeGb.toFixed(2)}G < 2G：真机实例会 ENOSPC 硬失败，请先清理或上报（tower 纪律）。` +
+          `若 target 已热、本次不重编，可显式设 LUMIR_ACCEPTANCE_ALLOW_LOW_DISK=1 绕过（会留痕）。`,
+      );
+    }
+    log(`⚠ 磁盘可用仅 ${freeGb.toFixed(2)}G，已按显式授权（LUMIR_ACCEPTANCE_ALLOW_LOW_DISK=1）越过 2G 阈值`);
+    await appendRunLog(root, `${new Date().toISOString()} OVERRIDE low-disk free=${freeGb.toFixed(2)}G`);
+  } else {
+    log(`磁盘可用 ${freeGb.toFixed(1)}G`);
+  }
+  const { execFileSync } = await import("node:child_process");
+  let on1420 = "";
+  try {
+    on1420 = execFileSync("/usr/sbin/lsof", ["-nP", "-iTCP:1420", "-sTCP:LISTEN"], { encoding: "utf8" }).trim();
+  } catch {
+    /* 未被占用 */
+  }
+  log(
+    on1420
+      ? `注意：1420 端口被占用（同机有别的 tauri dev 在跑）；套件自身走 ${acceptPort()} 不受影响\n`
+      : `1420 端口空闲；套件自身走 ${acceptPort()}\n`,
+  );
+}
+
 async function main() {
   const targets = assertSafeTargets();
+  await preflight();
   log(`验收 vault：${targets.vault}`);
   log(`隔离配置：${targets.envHome}（用户的 ~/.config/lumir 全程不读写）`);
   log(`证据目录：${root}（git 外）`);
@@ -71,6 +130,7 @@ async function main() {
   for (const scenario of selected) {
     const t0 = Date.now();
     log(`▶ ${scenario.id}（backlog 项 ${scenario.item}）${scenario.title}`);
+    let fgNote = "";
     let out;
     try {
       await resetVault();
@@ -79,8 +139,15 @@ async function main() {
       handle = await launchApp({ logFile: path.join(root, "app.log") });
       await sleep(1200);
       await waitAppReady(cu, handle.pid); // 前端就绪门：左栏文件树 + 编辑器节点就位再开跑
+      // tower 纪律：键盘场景先尽力拿前台并如实记录（拿不到不中止——行为断言才是注入是否落地的证据）。
+      const fg = await tryForeground(cu, handle.pid);
+      fgNote = fg.frontmost
+        ? "前台焦点：已取得"
+        : `前台焦点：未取得（前台 pid=${fg.frontPid ?? "未知"}）——键盘走 KimiCU 后台注入路径`;
+      log(`  ${fgNote}`);
       const ctx = {
         cu,
+        foregroundNote: fgNote,
         pid: handle.pid,
         evidence,
         repoRoot: repoRoot(),
@@ -89,6 +156,8 @@ async function main() {
           handle = await launchApp({ logFile: path.join(root, "app.log") });
           await sleep(1200);
           await waitAppReady(cu, handle.pid);
+          const fg2 = await tryForeground(cu, handle.pid);
+          ctx.foregroundNote = `重启前台焦点：${fg2.frontmost ? "已取得" : `未取得（pid=${fg2.frontPid ?? "?"}）`}`;
           ctx.pid = handle.pid;
         },
       };
@@ -111,7 +180,6 @@ async function main() {
     });
     log(`  ${out.status}  ${seconds.toFixed(1)}s  ${path.join(root, scenario.id)}`);
     for (const f of out.records.filter((r) => r.kind === "assert" && !r.ok)) log(`    ✗ ${f.label}${f.detail ? ` — ${f.detail}` : ""}`);
-    results[results.length - 1].records = undefined;
     await appendRunLog(root, `${new Date().toISOString()} ${scenario.id} ${out.status}`);
   }
 

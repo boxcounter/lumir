@@ -9,6 +9,7 @@
 node scripts/acceptance/run.mjs              # 全部场景
 node scripts/acceptance/run.mjs 01 08        # 按 id 前缀 / backlog 项号筛选
 node scripts/acceptance/run.mjs --list       # 列出场景
+node scripts/acceptance/run.mjs --check      # 静态校验场景（不真机，秒级；挡 key 拼错/断言形态错）
 node scripts/acceptance/run.mjs --keep-app   # 跑完保留 app，人工接手看现场
 ```
 
@@ -21,14 +22,33 @@ node scripts/acceptance/run.mjs --keep-app   # 跑完保留 app，人工接手�
 
 1. **起真实 app**：`pnpm tauri dev`（WKWebView，非 chromium 近似）。
 2. **驱动**：经 KimiCU MCP（stdio JSON-RPC）读 AX 树 / 截图 / 注入键盘与点击。
-3. **断言**：AX 文本、编辑器文档文本、磁盘文件（sha256 / mtime / 内容）。
+3. **断言**：AX 文本、编辑器文档文本、磁盘文件（sha256 / mtime / 内容 / glob）。
 4. **落证**：`test-results/acceptance/<日期>/<场景>/`（git 外）。
+
+### 起实例前的环境纪律（tower 定，2026-09-16）
+
+runner 在启动前做预检，不满足直接退出且不产生半截证据：
+
+| 检查 | 规则 | 为什么 |
+|---|---|---|
+| KimiCU 可用 | 二进制不存在即报错并给安装命令 | 驱动通道缺失时跑也是白跑 |
+| 磁盘水位 | `< 2G` 拒绝启动（可选显式绕过，见下） | 真机实例触发 cargo/vite 时 ENOSPC 硬失败（批次四实证） |
+| 1420 端口 | 只报告占用情况 | 全机同一时刻只能有一个 `pnpm tauri dev`（vite strictPort 1420）；本套件走独立端口，但仍先看一眼同机负载 |
+
+**键盘场景的前台纪律**（tower 定，M134 实证）：KimiCU 对 WKWebView 内 CodeMirror 的键盘注入在窗口
+**被遮挡时不落地**（返回 `occluded:true`），activate 后也未必恢复。因此 runner 在每个场景就绪后、
+以及每次 `restart` 之后都会 `ensureForeground`：已在前台不动窗口，否则 AXRaise 并复验 `lsappinfo`
+的前台归属；**拿不到前台就报 FAIL**，不静默跳过、也不改用 `set_value` 伪造键盘语义（`set_value`
+不经键位分发链路，验不到 `keys.ts`）。副作用：跑套件期间 Lumir 窗口会到前台。
+
+**磁盘水位绕过**：`LUMIR_ACCEPTANCE_ALLOW_LOW_DISK=1` 可越过 2G 阈值，**只在 target 已热、本次不会
+触发 Rust 重编**（实际磁盘需求仅几 MB）时使用；绕过会写进 run.log 留痕，不静默。
 
 ### 运行环境是隔离的（三件事一起保证可复现）
 
 | 隔离项 | 做法 | 为什么 |
 |---|---|---|
-| 配置目录 | app 进程带 `XDG_CONFIG_HOME=<结果目录>/../env` 启动，套件自带 `config.json` | `src-tauri/src/config.rs` 优先读 `XDG_CONFIG_HOME`；用户的 `~/.config/lumir` 全程不读不写，`[keys]` 重绑场景可以随便改 |
+| 配置目录 | app 进程带 `XDG_CONFIG_HOME=<结果目录>/../env` 启动，套件自带 `config.json` | `src-tauri/src/config.rs` 优先读 `XDG_CONFIG_HOME`；用户的 `~/.config/lumir` 全程不读不写，`config.json` 里 `keys` 表的重绑场景可以随便改 |
 | 验收 vault | `/tmp/lumir-m102-acceptance`，每次运行重置为 `fixtures/` 的精确副本 | 合成 vault；用户真实 vault（`/Users/boxcounter/Downloads/Everything-copy`）永不写入（`assertSafeTargets()` 兜底拒绝） |
 | 端口 | dev server 走 `LUMIR_ACCEPTANCE_PORT`（默认 1430），经 `--config` 覆写 | 绝不与 Alex 手头的 `pnpm tauri dev` 抢 1420 |
 
@@ -72,12 +92,16 @@ steps:
 | （省略） | — | 只做断言 |
 | `open` | `file`、`marker` | 点左栏文件名打开，等编辑器出现 marker |
 | `click` | `target: {role,name\|help\|any,nth}` 或 `{x,y}` | 节点按 AX 索引点（走 AXPress）；`{x,y}` 走真实鼠标坐标 |
+| `clickInNode` | `target`、`dx`、`dy` | 点「某个有 bbox 的节点内部」的相对位置（如 `AXTable`） |
 | `clickEditor` | `dx`（默认 40）、`dy`（默认 6） | 点编辑器顶部建立渲染层焦点（编辑器内元素无 AX bbox，只能按坐标） |
+| `focusWindow` | `retries` | 确保目标窗口在前台（键盘场景的前台纪律，见上） |
 | `key` / `keys` | `key` / `keys: [...]`、`gapMs` | 键盘注入（`ctrl+n`、`cmd+s`、`cmd+/` …） |
 | `type` | `text`、`clear` | 输入到编辑器（内部先真实点击聚焦，避免落陈旧选区） |
 | `sleep` | `ms` | 等待 |
-| `record` | `as`、`file` | 记下文件 sha256/mtime，供后续 `changedSince`/`unchangedSince`/`mtimeNewerThan` 比较 |
-| `vaultWrite` / `vaultAppend` | `file`、`content` | 从外部改写验收 vault（模拟外部修改/删除） |
+| `record` | `as`、`file` | 记下文件 sha256/mtime，供 `changedSince`/`unchangedSince`/`mtimeNewerThan` 比较 |
+| `recordEditor` | `as` | 记下编辑器文本，供 `editor.unchangedSince` 做**逐字节**比较 |
+| `vaultWrite` / `vaultAppend` | `file`、`content` | 从外部改写验收 vault（模拟外部修改） |
+| `vaultRm` | `file` 或 `files` | 从外部**真删除**（不存在即报错）——触发 `fs_not_found` 与「保存冲突」是两条不同分支 |
 | `configWrite` | `keys`、`restart` | 改写隔离 config.json（默认重启 app） |
 | `restart` | — | 重启 app（崩溃恢复类场景） |
 
@@ -86,8 +110,9 @@ steps:
 | 形态 | 字段 | 说明 |
 |---|---|---|
 | `ax` | `has` / `not` / `count:{pattern,exact,min,max}` | 在 AX 树文本上匹配 |
-| `editor` | `has` / `not` | 在编辑器文档文本（AXTextArea.value）上匹配 |
+| `editor` | `has` / `not` / `unchangedSince` / `changedSince` | 在编辑器文档文本（AXTextArea.value）上匹配；`*Since` 引用 `recordEditor` 记的基线，做逐字节比较 |
 | `file` | `path`、`exists`、`has`、`not`、`changedSince`、`unchangedSince`、`mtimeNewerThan` | `path` 相对验收 vault；`env:` 前缀指隔离配置目录；`xxxSince` 引用 `record` 记下的基线 |
+| `glob` | `dir`、`pattern`、`min`/`exact` | 文件名由 app 决定的产物（崩溃备份、另存副本）用 glob 断言 |
 | `shot` | 名称 | 截图 + AX dump 留档 |
 
 匹配值：字符串按**子串**；`/.../` 包起来按正则。
@@ -121,6 +146,9 @@ Alex 抽审路径：先看 `summary.md`，再进 FAIL 场景看 `steps.md` + `sh
 - **编辑器内容是 AXTextArea.value**：它等于**渲染后**的文档文本（被 widget 替换掉的源码在里面
   看不见）——这正是「渲染态 vs 源码显露」断言的判据。长文档只有视口内的行在 AX 里，场景 fixture
   因此都很短。
+- **AX 解析用「引号奇偶」判多行 value 的边界**：`AXTextArea` 的文档文本跨行展开，解析器按引号是否
+  闭合决定续行到哪。若**文档内容本身含 `"`**，value 会被从引号处截断，导致 `editor.has` 假 FAIL /
+  `editor.not` 假 PASS。当前 fixtures 不含引号；加含引号的 fixture 前要先修 `lib/ax.mjs` 的启发式。
 - **AX 快照可能退化**：`get_app_state` 偶尔只返回菜单栏（`truncated: [..., cycle]`）。这通常是
   KimiCU 后台服务进了坏状态，表现为**全局**退化（Finder、别的 app 一起坏）。此时全套会一起报
   「前端未就绪」，处理办法是重启 KimiCU 服务，不是改场景。
@@ -132,4 +160,5 @@ Alex 抽审路径：先看 `summary.md`，再进 FAIL 场景看 `steps.md` + `sh
 2. 在 `scenarios/` 建 `<项号>-<短名>.md`，front-matter 里写清 `item` / `fixtures` / `open`。
 3. 断言优先选**稳定子串**（文案单一来源是 `文案-Copy.md`）与**磁盘事实**（sha256/mtime），少依赖
    toast 停留时长。
-4. `node scripts/acceptance/run.mjs <id>` 跑通再提（FAIL 为零，失败项如实记录不硬凑）。
+4. `node scripts/acceptance/run.mjs --check` 过静态校验，再 `node scripts/acceptance/run.mjs <id>` 跑通
+   （FAIL 为零，失败项如实记录不硬凑）。

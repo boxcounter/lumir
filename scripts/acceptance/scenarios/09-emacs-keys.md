@@ -34,12 +34,20 @@ steps:
         ax: { has: "键位（生效中）" }
       - label: 面板列出命令与键位
         ax: { has: "移动与选择" }
-  - name: 面板不穿透——按键不应改到文档
-    do: key
-    key: "ctrl+n"
+  - name: 记录编辑器基线（供逐字节比较）
+    do: recordEditor
+    as: beforePanelKeys
     expect:
-      - label: 面板打开期间文档逐字节不变（作用域键被拦住）
-        editor: { not: "UNDO-ME" }
+      - label: 面板仍在（记录基线时面板未被关掉）
+        ax: { has: "键位（生效中）" }
+  - name: 注入作用域键与可打印字符
+    do: keys
+    keys: ["ctrl+n", "x", "ctrl+d"]
+    expect:
+      - label: 面板打开期间文档逐字节不变（作用域键与字符都被拦住）
+        editor: { unchangedSince: beforePanelKeys }
+      - label: 注入的字符没有落进文档
+        editor: { not: "x" }
       - label: 面板仍在
         ax: { has: "键位（生效中）" }
   - name: 再按 ⌘/ 关闭面板
