@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "test": "playwright test",
-    "update-baselines": "playwright test --update-snapshots"
+    "update-baselines": "playwright test --update-snapshots",
+    "test:isolation": "cd ../.. && node --test tests/visual/isolation.test.mjs"
   },
   "devDependencies": {
     "@playwright/test": "^1.62.1"

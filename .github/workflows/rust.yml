@@ -44,5 +44,14 @@ jobs:
       - name: cargo test
         run: cargo test --manifest-path src-tauri/Cargo.toml
 
-      - name: ts-rs bindings 无漂移（cargo test 重导出后须与仓内一致）
-        run: git diff --exit-code -- src/bindings/
+      - name: ts-rs bindings 无漂移（cargo test 重导出后须与仓内一致，含未跟踪的新文件）
+        run: |
+          set -euo pipefail
+          # 判据是「工作区相对索引的任何差异」，不是 git diff：后者只看已跟踪文件，
+          # ts-rs 新导出的 bindings 文件（untracked）不会让它报红——正是最常见的漂移形态。
+          dirty=$(git status --porcelain -- src/bindings/)
+          if [ -n "$dirty" ]; then
+            echo "::error::src/bindings/ 有漂移（未提交的修改或未跟踪的新文件）："
+            printf '%s\n' "$dirty"
+            exit 1
+          fi

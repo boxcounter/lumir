@@ -44,6 +44,12 @@ jobs:
           node-version: 22
           cache: pnpm
 
+      - name: 视觉套件隔离断言（tests/visual/isolation.test.mjs）
+        # 纯 node:test（不碰 chromium、不依赖构建产物），但守的是视觉套件自身的证据隔离设计，
+        # 故留在 visual job。入口是 tests/visual/package.json 的脚本——本地 gate.sh visual
+        # 与这里调同一入口（此前这 7 条断言无人运行，正在腐烂；M153 接入）。
+        run: pnpm --dir tests/visual run test:isolation
+
       - name: 安装依赖并构建前端
         run: |
           pnpm install --frozen-lockfile

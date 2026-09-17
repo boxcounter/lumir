@@ -31,15 +31,32 @@ for (const viewport of [{ width: 1280, height: 900 }, { width: 640, height: 480 
       expect(Math.abs(geometry.firstX - geometry.left)).toBeLessThan(0.5);
       await page.screenshot({ path: info.outputPath('paragraph.png') });
       await info.attach('geometry', { body: JSON.stringify({ viewport, geometry }), contentType: 'application/json' });
-      await paragraph.evaluate(el => {
-        const node = document.createTreeWalker(el, NodeFilter.SHOW_TEXT).nextNode()!;
-        const range = document.createRange(); range.setStart(node, 0); range.setEnd(node, 8);
-        const selection = window.getSelection()!; selection.removeAllRanges(); selection.addRange(range);
+      // 选区断言此前是「一拍设、下一拍读」的两拍结构，全量负载下偶发读到塌成 "" 的选区
+      //（CM 的装饰重建替换掉文本节点、Range 随之脱离；docs/backlog.md:70 的 finding）。
+      // 现在「设选区 + 立即回读」在同一次 evaluate 内完成，并由 expect.poll 重试——
+      // 每轮尝试都重设一次，单次装饰重建不再能让断言读到空选区。
+      const selectHead = () => paragraph.evaluate(el => {
+        const node = document.createTreeWalker(el, NodeFilter.SHOW_TEXT).nextNode();
+        if (node === null || node.nodeType !== Node.TEXT_NODE) return '';
+        const text = node as Text;
+        const range = document.createRange();
+        range.setStart(text, 0);
+        range.setEnd(text, Math.min(8, text.length));
+        const selection = window.getSelection();
+        if (selection === null) return '';
+        selection.removeAllRanges();
+        selection.addRange(range);
+        return selection.toString();
       });
-      expect(await page.evaluate(() => window.getSelection()!.toString())).toBe(ordinary.slice(0, 8));
+      await expect.poll(selectHead).toBe(ordinary.slice(0, 8));
       await page.evaluate(() => navigator.clipboard.writeText('paragraph-partial-sentinel'));
-      await page.keyboard.press('Meta+c');
-      expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(ordinary.slice(0, 8));
+      // ⌘C 拷的是**当前实时选区**，所以这一路同样每轮先重设选区再按：否则上一拍塌掉的
+      // 选区会让复制读到哨兵值，把时序缺陷报成无关 mission 的回归。
+      await expect.poll(async () => {
+        await selectHead();
+        await page.keyboard.press('Meta+c');
+        return page.evaluate(() => navigator.clipboard.readText());
+      }).toBe(ordinary.slice(0, 8));
       await paragraph.click();
       expect(await copyFresh(page, 'paragraph-source-sentinel')).toBe(source);
       expect(await readDocument(page)).toBe(source);
