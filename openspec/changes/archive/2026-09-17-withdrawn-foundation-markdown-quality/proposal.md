@@ -24,9 +24,9 @@
 
 ## Why
 
-M77 的匿名画像和 M78 的首帧/覆盖审计显示，Markdown 基础质量需要从实现零散约定收敛为可验收合同。现有性能方法学仍将打开指标定义为 `fs.readFile → UTF-8 decode`，不覆盖真实解析、装饰与 paint，因此不能把该子指标当作用户打开体验。[docs/specs/perf-measurement.md](../../../docs/specs/perf-measurement.md)
+M77 的匿名画像和 M78 的首帧/覆盖审计显示，Markdown 基础质量需要从实现零散约定收敛为可验收合同。现有性能方法学仍将打开指标定义为 `fs.readFile → UTF-8 decode`，不覆盖真实解析、装饰与 paint，因此不能把该子指标当作用户打开体验。[docs/specs/perf-measurement.md](../../../../docs/specs/perf-measurement.md)
 
-本 change 只建立 Markdown 阅读、编辑保存和基础质量的质量口径。它遵守 ADR 0004 的 M1/M2 边界：Markdown 是核心底座，ACP、MCP、Thread、Session、Agent 业务概念和产品定位冻结，不由本 change 定义。[ADR 0004](../../../docs/adr/0004-development-and-openness-strategy.md)
+本 change 只建立 Markdown 阅读、编辑保存和基础质量的质量口径。它遵守 ADR 0004 的 M1/M2 边界：Markdown 是核心底座，ACP、MCP、Thread、Session、Agent 业务概念和产品定位冻结，不由本 change 定义。[ADR 0004](../../../../docs/adr/0004-development-and-openness-strategy.md)
 
 ## What Changes
 

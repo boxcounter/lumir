@@ -22,9 +22,9 @@
 
 ## Why
 
-表格是 Markdown Foundation 的关键阅读能力。上位合同已要求表格保留空槽、对齐、转义 pipe、源码复制、非矩形安全降级和宽表可达，但尚未把首帧分层、极端形状、公开 CodeMirror 分层、真实 WKWebView（WebKit WebView）端点和 failure evidence 收敛为独立可执行合同。[Foundation Markdown 质量合同](../../../docs/specs/foundation-markdown.md)
+表格是 Markdown Foundation 的关键阅读能力。上位合同已要求表格保留空槽、对齐、转义 pipe、源码复制、非矩形安全降级和宽表可达，但尚未把首帧分层、极端形状、公开 CodeMirror 分层、真实 WKWebView（WebKit WebView）端点和 failure evidence 收敛为独立可执行合同。[Foundation Markdown 质量合同](../../../../docs/specs/foundation-markdown.md)
 
-M72 的隔离 table probe 记录了公开 BlockWrapper 路线、源码选择映射、局部横滚、AX 语义与真实 WK 交互的可行性证据。它同时明确固定 240 CSS px、同步全量 metadata、probe 读数和颜色变体不是生产实现或性能通过证据。[M72 table probe](../complete-markdown-reading/table-probe72.md)
+M72 的隔离 table probe 记录了公开 BlockWrapper 路线、源码选择映射、局部横滚、AX 语义与真实 WK 交互的可行性证据。它同时明确固定 240 CSS px、同步全量 metadata、probe 读数和颜色变体不是生产实现或性能通过证据。[M72 table probe](../2026-09-17-withdrawn-complete-markdown-reading/table-probe72.md)
 
 M88 匿名画像是本 change 的外部输入。当前仓库未保存可复核的 M88 summary，因此本 change 不伪造频率、分布或覆盖率数字，要求在节点 1 单独裁决脱敏输入。
 

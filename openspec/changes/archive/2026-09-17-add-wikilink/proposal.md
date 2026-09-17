@@ -7,9 +7,9 @@
 
 ## Why
 
-M1 内容清单含 wikilink 跳转（[ADR 0004 §1](../../../docs/adr/0004-development-and-openness-strategy.md)），其前置任务"冻结 wikilink spec + 按冻结 spec 合成 fixture 集"（ADR 0003 §4）已完成：冻结 spec 在 [docs/specs/wikilink/link-semantics.md](../../../docs/specs/wikilink/link-semantics.md)（下称"链接语义 spec"），合成 fixture 在 [tests/wikilink-fixtures/](../../../tests/wikilink-fixtures/)。本 change 按冻结 spec 实现解析、跳转与链接图。
+M1 内容清单含 wikilink 跳转（[ADR 0004 §1](../../../../docs/adr/0004-development-and-openness-strategy.md)），其前置任务"冻结 wikilink spec + 按冻结 spec 合成 fixture 集"（ADR 0003 §4）已完成：冻结 spec 在 [docs/specs/wikilink/link-semantics.md](../../../../docs/specs/wikilink/link-semantics.md)（下称"链接语义 spec"），合成 fixture 在 [tests/wikilink-fixtures/](../../../../tests/wikilink-fixtures/)。本 change 按冻结 spec 实现解析、跳转与链接图。
 
-架构裁决在先：link graph 在 Rust core（[ADR 0002 §3](../../../docs/adr/0002-technical-route.md)）；架构复查 P1-4 进一步要求 wikilink 语义解析只有一份实现（Rust link_graph），前端只做装饰定位——双解析器会在 Obsidian 方言的长尾上必然漂移。本提案把该纪律落成可验收的 requirement。
+架构裁决在先：link graph 在 Rust core（[ADR 0002 §3](../../../../docs/adr/0002-technical-route.md)）；架构复查 P1-4 进一步要求 wikilink 语义解析只有一份实现（Rust link_graph），前端只做装饰定位——双解析器会在 Obsidian 方言的长尾上必然漂移。本提案把该纪律落成可验收的 requirement。
 
 ## What Changes
 

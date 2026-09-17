@@ -30,7 +30,7 @@
 
 ## Why
 
-M1 的出口是只读浏览真实 vault，而不是开始编辑。现有规格只要求「列表符号美化」，没有表格阅读要求；实现只将无序标记换成圆点，未建立列表正文的对齐规则，也没有表格装饰分支。依据：[既有规格](../../specs/editor-live-preview/spec.md)、[ListMark 分支](../../../src/preview/livePreview.ts)、[M1/M2 出口](../../../docs/adr/0004-development-and-openness-strategy.md)。
+M1 的出口是只读浏览真实 vault，而不是开始编辑。现有规格只要求「列表符号美化」，没有表格阅读要求；实现只将无序标记换成圆点，未建立列表正文的对齐规则，也没有表格装饰分支。依据：[既有规格](../../../specs/editor-live-preview/spec.md)、[ListMark 分支](../../../../src/preview/livePreview.ts)、[M1/M2 出口](../../../../docs/adr/0004-development-and-openness-strategy.md)。
 
 列表换行后的正文起点与表格行列关系属于阅读完成度。因此补入 M1 收尾；源码编辑仍归 M2，不把专用表格操作变成 M2 出口。
 
@@ -54,7 +54,7 @@ M1 的出口是只读浏览真实 vault，而不是开始编辑。现有规格�
 
 - 影响的 specs：`editor-live-preview` 新增 requirements；保留既有视口增量义务。
 - 后续实现预计涉及：`src/preview/livePreview.ts`、`src/preview/theme.ts`，必要时拆出列表/表格纯解析及 decoration 模块；`tests/visual/` 的行为与几何断言。当前提交仅包含计划与规格。
-- 关联约束：ADR 0002 单 CM 内核、公开扩展与性能合同；ADR 0003 只读及源码保护；ADR 0004 里程碑。已有依赖与 parser 接线见 [package.json](../../../package.json)、[editor.ts](../../../src/editor.ts)。
+- 关联约束：ADR 0002 单 CM 内核、公开扩展与性能合同；ADR 0003 只读及源码保护；ADR 0004 里程碑。已有依赖与 parser 接线见 [package.json](../../../../package.json)、[editor.ts](../../../../src/editor.ts)。
 
 ## Review Decisions
 
