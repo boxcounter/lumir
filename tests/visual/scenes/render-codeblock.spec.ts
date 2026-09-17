@@ -69,6 +69,43 @@ test("token 划分：语言识别、别名归一、未知与无标识降级", ()
   expect(highlightCode("x".repeat(1024), "rust").length).toBe(0); // 纯文本无法识别 token
 });
 
+// M147 的不变量：json 的键恒取属性色、字符串值恒不与键同色。输入维度扫一遍——嵌套层级、
+// 数组内对象、空对象/空数组、单行紧凑、纯数字键、中文键、含点/冒号/空格/转义引号的键——
+// 只钉一个 fixture 只能证明那个案例被修好（渲染缺陷合同先行的属性测试要求）。
+test("json 键着色不变量：任意形状的 json，键取属性色、字符串值取字符串色", () => {
+  const cases: Array<{ doc: string; keys: string[]; strings: string[] }> = [
+    { doc: `{"name": "lumir", "count": 3, "ok": true, "nothing": null}`, keys: ['"name"', '"count"', '"ok"', '"nothing"'], strings: [] },
+    { doc: `{\n  "name": "lumir",\n  "nested": { "inner": "deep" },\n  "list": [{ "a": "b" }]\n}`, keys: ['"name"', '"nested"', '"inner"', '"list"', '"a"'], strings: ['"lumir"', '"deep"', '"b"'] },
+    { doc: `{"123": "digits", "中文键": "unicode"}`, keys: ['"123"', '"中文键"'], strings: ['"digits"', '"unicode"'] },
+    { doc: `{"a.b": "v", "a:b": "w", "a b": "x"}`, keys: ['"a.b"', '"a:b"', '"a b"'], strings: ['"v"', '"w"', '"x"'] },
+    { doc: `{"esc\\"q": "v"}`, keys: [`"esc\\"q"`], strings: ['"v"'] },
+    { doc: `{"empty": {}, "arr": []}`, keys: ['"empty"', '"arr"'], strings: [] },
+    { doc: `[{"k": "v"}, {"k2": 2}]`, keys: ['"k"', '"k2"'], strings: ['"v"'] },
+  ];
+  for (const { doc, keys, strings } of cases) {
+    const tokens = highlightCode(doc, "json");
+    const classesOf = (text: string) => tokens.filter((token) => doc.slice(token.from, token.to) === text).map((token) => token.cls);
+    for (const key of keys) {
+      const classes = classesOf(key);
+      expect(classes.length, `${doc} 的键 ${key} 未被着色`).toBeGreaterThan(0);
+      for (const cls of classes) expect(cls, `${doc} 的键 ${key}`).toContain("cm-lp-tok-property");
+    }
+    for (const value of strings) {
+      const classes = classesOf(value);
+      expect(classes.length, `${doc} 的值 ${value} 未被着色`).toBeGreaterThan(0);
+      for (const cls of classes) {
+        expect(cls, `${doc} 的值 ${value}`).toContain("cm-lp-tok-string");
+        expect(cls, `${doc} 的值 ${value} 被当成了键`).not.toContain("cm-lp-tok-property");
+      }
+    }
+  }
+  // javascript/typescript 的字符串键不跟着变（同一条 objprop 分支，但那里字符串色才是对的）
+  const js = highlightCode(`const a = {"name": "lumir"};`, "javascript");
+  const jsKey = js.filter((token) => `const a = {"name": "lumir"};`.slice(token.from, token.to) === '"name"');
+  expect(jsKey.length).toBeGreaterThan(0);
+  for (const token of jsKey) expect(token.cls).toBe("cm-lp-tok-string");
+});
+
 test("≥5 种语言着色，未知/无标识保持纯文本，配色不越出 editorial token", async ({ page }) => {
   await open(page);
 
@@ -93,11 +130,19 @@ test("≥5 种语言着色，未知/无标识保持纯文本，配色不越出 e
     expect(hit!.color, `${text} 的颜色`).toBe(color);
   }
 
-  // json 键取字符串色（与 code 模式一致：legacy json mode 的键是 `string property`
-  // 复合 token，CM6 只认得出 string）
-  const jsonKey = (await tokenSpans(page, `{"name": "lumir"`)).find((span) => span.text === '"name"');
-  expect(jsonKey?.cls).toBe("cm-lp-tok-string");
-  expect(jsonKey?.color).toBe(COLOR.tip);
+  // json 键取属性色：legacy json mode 的键是 `string property` 复合 token，property
+  // 经 parser 的 tokenTable（JSON_TOKEN_TABLE）解析成 tags.propertyName，键因此同时带
+  // string 与 property 两个类；theme.ts 里 .cm-lp-tok-property 在 .cm-lp-tok-string 之后，
+  // 靠后者命中。M147 前 property 无 tag 可用，键只剩 string、与值同色——本行旧口径
+  //（「键取字符串色」）由此反转：preview 侧不再向 code 模式的**旧**行为对齐，而是两侧
+  // 同时对齐到新的正确行为（parity 方向没变，锚点换了）。
+  const jsonSpans = await tokenSpans(page, `{"name": "lumir"`);
+  const jsonKey = jsonSpans.find((span) => span.text === '"name"');
+  expect(jsonKey?.cls).toContain("cm-lp-tok-property");
+  expect(jsonKey?.color).toBe(COLOR.note);
+  const jsonValue = jsonSpans.find((span) => span.text === '"lumir"');
+  expect(jsonValue?.cls).toBe("cm-lp-tok-string");
+  expect(jsonValue?.color).toBe(COLOR.tip);
 
   // 未知语言（`text`）与无 info 的围栏：不着色
   for (const line of ["fenced code -- source stays literal", "no info string stays plain"]) {
@@ -114,6 +159,12 @@ test("≥5 种语言着色，未知/无标识保持纯文本，配色不越出 e
   for (const color of used) expect(ALLOWED.has(color), color).toBe(true);
 
   await expect(page).toHaveScreenshot("render-codeblock.png");
+
+  // 整页基线是 1200×800 的**视口**截图（playwright.config 未开 fullPage），json 行落在折叠线
+  // 以下——本次修复前逐张核对过基线，那条键色从没进过任何整页基线，整页对比守不住它。
+  // 这里补一张元素级基线（同 m133 的 overlay 元素截图口径）把键/值分色钉在视觉层。
+  // 必须放在整页截图**之后**：元素截图会把该行滚进视口，先截会改掉整页基线的滚动位置。
+  await expect(page.locator(".cm-line", { hasText: `{"name": "lumir"` }).first()).toHaveScreenshot("render-codeblock-json-line.png");
 });
 
 test("编辑态：块内输入即时着色，颜色不溢出到块外段落", async ({ page }) => {

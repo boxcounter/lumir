@@ -6,11 +6,13 @@ import { readDocument } from "./parity-checks";
 // StreamLanguage + HighlightStyle，editor.ts LANGUAGES），只读合同
 //（M97/M101：editable(false) + readOnly(true)）不动。
 // 颜色断言锚定默认 light 主题 token：--accent #b23a2c（关键字）、
-// --callout-tip #5a7a3f（字符串）、--callout-warning #a05e1c（数字/atom）。
+// --callout-tip #5a7a3f（字符串）、--callout-warning #a05e1c（数字/atom）、
+// --callout-note #4f6f8f（属性名，M147 起 json 键取此色）。
 const LIGHT = {
   keyword: "rgb(178, 58, 44)",
   string: "rgb(90, 122, 63)",
   number: "rgb(160, 94, 28)",
+  property: "rgb(79, 111, 143)",
 };
 
 const TS_DOC = `// 小工具示例
@@ -58,8 +60,21 @@ test("打开 .ts 文件：关键字/字符串/数字 token 着色且编辑器保
   expect(await readDocument(page)).toBe(TS_DOC);
 });
 
-test("打开 .json 文件：键与字符串值同色、数字值分色", async ({ page }) => {
-  const JSON_DOC = `{\n  "name": "lumir",\n  "count": 3\n}\n`;
+test("打开 .json 文件：键取属性色、与字符串值分色，数字与 bool 仍取字面量色", async ({ page }) => {
+  // 输入维度扫一遍而不是只钉一个案例（渲染缺陷合同先行的不变量口径）：顶层/嵌套/数组内
+  // 的键、纯数字与中文键、四种值类型齐上——不变量是「键恒取属性色、字符串值恒取字符串色、
+  // 字面量恒取 warning 色」，逐条都得成立；单钉一行只能证明那一行。
+  const JSON_DOC = `{
+  "name": "lumir",
+  "count": 3,
+  "ok": true,
+  "nothing": null,
+  "123": "digits",
+  "中文键": "unicode",
+  "nested": { "inner": "deep" },
+  "list": [{ "a": "b" }]
+}
+`;
   await stubTauri(page, {
     entries: [{ path: "config.json", kind: "file", size: JSON_DOC.length, mtime_ms: 0 }],
     files: { "config.json": JSON_DOC },
@@ -67,9 +82,22 @@ test("打开 .json 文件：键与字符串值同色、数字值分色", async (
   await page.goto("/");
   await page.locator('.ft-row[title="config.json"]').click();
   await expect(page.locator(".cm-content")).toHaveAttribute("contenteditable", "false");
-  // legacy javascript(json) mode 的键 token 是 string+property 复合 tag，tag 优先级
-  // 上 string 胜出——键取字符串色（与多数主题「json 键同字符串色」一致），值分色。
-  await expect.poll(() => tokenColor(page, '"name"')).toBe(LIGHT.string);
-  await expect.poll(() => tokenColor(page, '"lumir"')).toBe(LIGHT.string);
-  await expect.poll(() => tokenColor(page, "3")).toBe(LIGHT.number);
+  // legacy javascript(json) mode 把键标成复合 token `string property`：property 由
+  // JSON_TOKEN_TABLE（preview/code.ts，editor.ts 同源 import）解析成 tags.propertyName，
+  // 键因此同时带 string 与 propertyName 两个 tag。HighlightStyle 的条目序即优先级——
+  // propertyName 的条目在 string 之后，故键落属性色。M147 前 property 无 tag 可用，
+  // 键退化成纯 string、与字符串值同色（本断言即当时那条「键同字符串色」旧口径的反转）。
+  const keys = ["name", "count", "ok", "nothing", '"123"', "中文键", "nested", "inner", "list", "a"];
+  const strings = ["lumir", "digits", "unicode", "deep", "b"];
+  const literals = ["3", "true", "null"];
+  for (const key of keys) {
+    const needle = key.startsWith('"') ? key : `"${key}"`;
+    await expect.poll(() => tokenColor(page, needle), { message: `键 ${needle}` }).toBe(LIGHT.property);
+  }
+  for (const value of strings) {
+    await expect.poll(() => tokenColor(page, `"${value}"`), { message: `字符串值 ${value}` }).toBe(LIGHT.string);
+  }
+  for (const literal of literals) {
+    await expect.poll(() => tokenColor(page, literal), { message: `字面量 ${literal}` }).toBe(LIGHT.number);
+  }
 });
