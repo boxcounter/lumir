@@ -1,6 +1,7 @@
 # ADR 0004: 开发与开放策略
 
 - 状态: accepted
+- 经 0006 deferred: M2（agent 集成）整体 deferred，当前阶段序列改由 0006 重排（见 [ADR 0006](0006-agent-positioning-deferred.md)）
 - 日期: 2026-09-04
 - 角色: Alex Lee（评审/裁决），AI agent（起草）
 
@@ -24,7 +25,7 @@
 
    注：表中周数是上限约束（防漂移保险），不是工时预估——AI-only 开发速度下各阶段可能提前完成，提前即进入下一阶段；例外是 M3 出口的"连续两周"，它度量的是真实使用的持续时间，无法压缩。
 
-   **列表与表格的阶段归属（2026-09-06 Alex 用户裁决）**：M1 收尾补齐列表文字对齐（含换行悬挂与嵌套）及基础 Markdown 表格阅读（含列对齐、宽表可达与源码复制保护），保持只读且不重写源码。列表与表格的 Markdown 源码编辑归 M2 基础手动编辑；专用单元格导航、增删行列等表格操作不是 M2 必须项。功能边界与验收由 [complete-markdown-reading 提案](../../openspec/changes/complete-markdown-reading/proposal.md) 进入 OpenSpec 节点 1 评审；阶段方向已批准，不代表新 spec 已通过或授权实现。该补齐不改变其他里程碑出口与下述架构 review。
+   **列表与表格的阶段归属（2026-09-06 Alex 用户裁决）**：M1 收尾补齐列表文字对齐（含换行悬挂与嵌套）及基础 Markdown 表格阅读（含列对齐、宽表可达与源码复制保护），保持只读且不重写源码。列表与表格的 Markdown 源码编辑归 M2 基础手动编辑；专用单元格导航、增删行列等表格操作不是 M2 必须项。功能边界与验收由 [complete-markdown-reading 提案](../../openspec/changes/archive/2026-09-17-withdrawn-complete-markdown-reading/proposal.md) 进入 OpenSpec 节点 1 评审；阶段方向已批准，不代表新 spec 已通过或授权实现。该补齐不改变其他里程碑出口与下述架构 review。
 
    **M2 前段范围（2026-09-06 Alex 用户裁决）**：补齐 Markdown 正文输入、删除、剪切、粘贴及中文输入法（IME）、undo/redo、保存、未保存（dirty）状态与保存失败反馈；切换文件或退出时不静默丢失未保存内容；外部 Agent 并发修改时不静默覆盖任一方内容；支持 Markdown 编辑时源码显露与预览切换。手动编辑与 Agent 写入共享写入及版本检查基础，但手动修改不经过 Agent 审批。具体自动保存策略、冲突处理及合并算法留给后续 spec 裁决，不在此锁定，也不扩张为 IDE 或全部文件类型编辑。该补齐不挤掉 Agent 集成，不把 v1 全量目标带入 M2（见 [ADR 0005 §6](0005-product-ontology-object-model.md#6-分层m2-最小循环-vs-v1-mvp)）。锚点机制仍是 M2 第一个技术原型；先验证该原型，再在 M2 前段落实基础手动编辑与共享写入基础。
 

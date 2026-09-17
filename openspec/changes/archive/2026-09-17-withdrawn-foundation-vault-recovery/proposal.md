@@ -2,7 +2,25 @@
 
 - Change ID: foundation-vault-recovery
 - 日期: 2026-09-07
+- **状态: 撤回（2026-09-17，M150）** —— 见下方「撤回记录」
 - 角色: Alex Lee（评审/裁决），AI agent（起草）
+
+> **撤回记录（2026-09-17，M150）**
+>
+> 本 change 从未进入实现（0/9 任务，节点 1 亦未通过），其设计的核心机制在仓内**不存在**：
+> 全仓 `grep operation_id` 零命中，`intent` / `ledger` 同样零命中（`src-tauri/src/`）——
+> per-path CAS 临界区、durable intent 的 phase 推进（`prepared → replace_inflight →
+> replaced → parent_synced → result_durable`）、同 id 幂等重放与启动收敛均未落地。
+>
+> 它要解决的问题（保存的崩溃窗口内不丢内容、结果可收敛）已由另一套设计承接：
+> `archive/2026-09-12-save-hardening`（崩溃备份 `<config_dir>/recovery/` + 启动枚举恢复提示 +
+> 备份记录的 revision 作 CAS 基准）与 `archive/2026-09-12-save-and-watch-recovery`
+> （`document_conflict` 双动作恢复、`fs_not_found` 另存出口、watch 外部修改处置），
+> 加上 `src-tauri/src/fs_io.rs` 既有的「临时文件 + `sync_all` + rename + 重读 revision」写入序列
+> 与 `document_write_unknown` 错误码。因此本 change 的**路线**（intent ledger 强一致合同）不再推进。
+>
+> 配套处置：`docs/specs/vault-recovery.md` 的状态头同步改为「已撤回，留档作重启输入」——
+> 它是本 change 的实现边界摘要，正文保留，不再构成验收口径。完整提案文本随本目录留档。
 
 ## Why
 

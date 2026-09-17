@@ -43,7 +43,7 @@ AI-only 模式下（ADR 0004）「待真机验收」清单只增不减，全部�
 
 ## 裁决点
 
-1. **证据是否入 git**：建议不入（截图量大、session 产物），`test-results/acceptance/` 与 perf-results 同惯例；Alex 抽审靠本地目录。备选：摘要表入 `docs/design-parity-contract/evidence/`。
+1. **证据是否入 git**：建议不入（截图量大、session 产物），统一落 `test-results/acceptance/`，与 perf-results 同惯例（该目录已在 `.gitignore` 内）；Alex 抽审靠本地目录。备选：摘要表入 git（`docs/backlog.md` 的「待真机验收」节），截图仍留本地。
 2. **执行时机**：建议 dogfood 批次每次合并后 + Alex 验收前由 agent 先跑一遍，Alex 只看 FAIL 项与手感项。
 3. **场景维护权**：新功能 mission 的 tasks 里必须附带「新增/更新验收场景」一项（随实现同 PR），否则套件会腐烂。
 

@@ -26,5 +26,5 @@
 ## 4. 验证
 
 - [x] 4.1 `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` 通过
-- [ ] 4.2 `scripts/gate.sh all` 全绿（性能相对回归不退化 = 非阻塞写入的门禁验证）
+- [ ] ~~4.2 `scripts/gate.sh all` 全绿（性能相对回归不退化 = 非阻塞写入的门禁验证）~~（**2026-09-17 M150 归档对账：改由 CI perf.yml 承担，本地不复跑**。理由与证据：① 本机 `all` 档在消除下述既有违规前不可能全绿；② CI 最新 master run（`perf.yml` 35183611418，2026-09-17）的四项测量逐项显示——冷启动 median 134.39ms 相对基线回退 -51.8%、keypress-to-paint median 33.90ms 回退 20.4%，均 ≤40% 容忍线通过（keypress-to-paint 正是本 change 的「非阻塞写入」验证项）；唯一拒合项是 `resident-memory` max=213.52MB > 合同 200MB，属 AI 定位之前的既有存量超标，与本 change 无因果（记录在案：`docs/backlog.md` 待 Alex 裁决 7）；③ 本地 `all` 需冷 release 构建 + chromium，本 mission 仅 quick 档构建就把可用磁盘压到 2.2G，低于本仓记录的「worktree 首次构建须 ≥3G」预算，ENOSPC 会留下不可回血的半截 target，不做该冒险）
 - [x] 4.3 桌面复验：触发一次保存冲突与一次崩溃恢复，`logs/` 当日文件出现对应事件行且不含文档正文（隔离 XDG 与 vault；实测事件序列见 commit message / review-request）

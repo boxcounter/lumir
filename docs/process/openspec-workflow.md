@@ -48,6 +48,23 @@ spec 增量（delta）约定：change 目录下的 `specs/<capability>/spec.md` 
 5. **归档评审**：tasks 全部勾选（或标注放弃原因）后提交 PR 请求节点 2 评审。
 6. **归档**：节点 2 通过后执行 `npx --yes @fission-ai/openspec@1.12.0 archive <change-id> --yes`，living spec 自动并入 `openspec/specs/`。
 
+## 批次收尾 checklist（归档跟踪）
+
+实测失效模式（M150 归档对账，2026-09-17）：**实现 PR 合并后没人跟进归档**——当时 11 个活跃 change 里 7 个已实现未归档（`add-wikilink` 积压 12 天），living spec 因此长期落后于实现，其间还出现 living spec 与实现直接矛盾（`editor-live-preview` 自称「M1 只读口径」而 md 模式早已可编辑）。防线是把它做成批次收尾的强制项：
+
+- [ ] **本批 merge 的 change 全部列入归档待办并跟踪到归档**：每个 change 在实现 PR 合并时即落一条待归档记录（`docs/backlog.md` 的「待 Alex 裁决」节），批次收尾时用 `npx --yes @fission-ai/openspec@1.12.0 list` 逐个核对——列表里出现 `✓ Complete` 却仍在活跃列表里的，就是漏跟踪的那个。
+- [ ] **归档前逐条对账**（对账口径）：tasks 勾选状态 / spec 增量 / 当前实现三者一致才归档；任务未勾但有正当理由的，先就地标注放弃原因再归档；spec 增量与实现矛盾的，**不归档**，并在 `docs/backlog.md` 说明矛盾点。
+- [ ] **归档后核对新建 capability 的 Purpose**：`archive` 会为新建的 living spec 写入占位 Purpose（`TBD - created by archiving change …`），`validate --all --strict` 会因此报红——须手写替换为「这个 capability 是干什么的」，再跑一次 validate 确认全绿。
+
+## 撤回（withdrawn）：放弃一个 change
+
+僵尸提案（从未进入实现，其能力已由别的 mission 实现、或路线已废）不能留在活跃列表里——`openspec list` 会永远把它们当在办事项。OpenSpec CLI 没有 withdraw 命令，本项目口径（M150 首次执行）：
+
+1. 把 change 目录整体移到 `openspec/changes/archive/<日期>-withdrawn-<change-id>/`：活跃列表清空、提案全文留档（含 design 与证据文件）、CI 的 change 制品检查跳过 `archive/`。`withdrawn-` 前缀把「撤回」与「已合并归档」在目录名上分开。
+2. 在它的 `proposal.md` 头部补一段「撤回记录」：日期、为什么不再推进、问题由谁承接、以及**遗留了什么**（未按其形态产出的验收面、未进 living spec 的口径缺口）——三件事缺一，撤回就退化成静默删除。
+3. 同步配套文档：`docs/specs/*` 的状态头改为「已撤回（留档作重启输入）」，并在 `docs/backlog.md` 落核销条目。三处（archive 目录、spec 状态头、backlog）要能互相印证。
+4. 撤回件不再受 `validate --archived` 的「任务全勾」约束（该检查本就不在 CI 与 `gate.sh` 里）。
+
 ## 首个全循环对象：性能测量方法学 spec（与 M8 的约定）
 
 ADR 0004 第 4 条指定 OpenSpec 的首个全循环验证对象为 M8（feat/perf-spec-ci）的性能测量方法学 spec。约定如下：

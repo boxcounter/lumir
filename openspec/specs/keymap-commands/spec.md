@@ -245,12 +245,19 @@ macOS 原生菜单 MUST NOT 提供第二套撤销：Edit 子菜单 MUST NOT 保�
 
 ### Requirement: 鼠标路径的 ⌘ / ⌃ 拆分
 
-`⌘`-Click SHALL 跟随 wikilink（命中链接 span 时阻止选区落点并激活链接）；`⌃`-Click SHALL NOT 被当作链接激活——`⌃`-Click 在 macOS 是系统级次级点击（右键等价手势），MUST 让回系统；裸点击 SHALL 不拦截（链接文本可正常落点编辑）。该拆分与 D1 的键盘拆分同源：`⌘` 系归 mac 惯例、`⌃` 系归 Emacs / 系统手势。
+`⌘`-Click SHALL 跟随光标处（点击位置）的**链接**——wikilink、外链、相对路径 md 与 vault 内资产都算——命中链接时阻止选区落点并激活链接；`⌃`-Click SHALL NOT 被当作链接激活——`⌃`-Click 在 macOS 是系统级次级点击（右键等价手势），MUST 让回系统；裸点击 SHALL 不拦截（链接文本可正常落点编辑）。该拆分与 D1 的键盘拆分同源：`⌘` 系归 mac 惯例、`⌃` 系归 Emacs / 系统手势。
+
+需要 vault 上下文的类别（wikilink 与 vault 内路径类链接——解析基准是当前文件）在没有打开中的 md 文件时 `⌘`-Click 不跟随；外链与纯锚点不需要 vault 上下文，`⌘`-Click 照常生效。
 
 #### Scenario: ⌃-Click 不跳转、⌘-Click 跳转
 
 - **WHEN** 在含 `[[target]]` 的文档里先 `⌃`-Click 该链接，再 `⌘`-Click 该链接
 - **THEN** 第一次不跳转（仍在原文件、无提示，选区正常落点）；第二次跟随链接打开目标文件
+
+#### Scenario: 无 vault 上下文时外链仍可开
+
+- **WHEN** 没有打开中的 md 文件（无 vault 上下文），在文档里 `⌘`-Click 一条外链
+- **THEN** 外链照常交给系统默认应用打开（外链打开不依赖 vault 上下文）
 
 ### Requirement: IPC 与事件通道单一入口
 
@@ -294,3 +301,169 @@ macOS 原生菜单 MUST NOT 提供第二套撤销：Edit 子菜单 MUST NOT 保�
 
 - **WHEN** 面板打开时按 `Escape`；再次打开后按 `⌃G`；再次打开后点击遮罩（面板之外的区域）
 - **THEN** 三种操作都关闭面板；点击面板本体不关闭；面板打开态再按 `⌘/` 也关闭
+
+### Requirement: 大纲开关——⌘⇧O 与 toc.toggle
+
+系统 SHALL 提供命令 `toc.toggle` 承担「展开 / 收起大纲浮层」，命令 id SHALL 为 `toc.toggle`，
+作用域 SHALL 为 `global`，默认绑定 SHALL 为 `⌘⇧O`，实现 SHALL 落在装配层（`src/main.ts`），能力与
+浮层本体 SHALL 在 `src/toc.ts`。
+
+该命令 SHALL 进 `KEY_BINDINGS` 与 `GLOBAL_COMMAND_IDS`，因此 `[keys]` 配置 SHALL 能像其余命令
+一样对它重绑或解绑，`app.describe-bindings` 面板 SHALL 自动列出它（面板渲染的是生效表与
+`COMMAND_IDS`，新增命令不需要改面板代码）；其 `doc` 字段 SHALL 写明取 `⌘⇧O` 的来由与作用域理由。
+
+作用域取 `global` 而非 `editor` 的理由 SHALL 记录在绑定来由里：浮层打开时焦点在浮层内（不在编辑器
+内容区内），`editor` 作用域会让「已打开时再按同一个键收起」失效；空标题文档也要能在任意焦点下走到
+提示。注册前 SHALL 核对该组合与既有绑定及原生菜单零冲突：表内 `⌘⇧` 系当前只有 `⇧⌘Z`（重做），
+macOS 原生菜单的 accelerator 集合里 `⌘⇧` 系同样只有 `⇧⌘Z`。
+
+浮层自己的导航键（`↑↓` / `Enter` / `Esc`）SHALL NOT 进本表：表的不变量是「一个 token 一条绑定」，
+而这些 token 已被 `editor` 作用域占用（`↑↓` 归 `editor.cursor-up/down`、`Esc` 归
+`editor.widget-escape`（带 `when` 条件））。浮层内就地消费 + 阻止默认行为，使 window 上的分发器对
+已消费事件让路——不构成同一物理键的第二条分发映射。
+
+#### Scenario: 表的不变量在新增绑定后仍成立
+
+- **WHEN** 装配应用（构造分发器并注入命令实现）
+- **THEN** 新增绑定后表内仍无重复绑定、每条绑定都有归属命令与来由、清单里没有孤儿命令，装配不抛错
+
+#### Scenario: 零冲突的核对留痕
+
+- **WHEN** 查阅 `KEY_BINDINGS` 里 `toc.toggle` 那一条
+- **THEN** `doc` 字段写明：作用域取 `global` 的理由、与既有 `⌘⇧` 系绑定（`⇧⌘Z`）的零冲突结论，以及
+  原生菜单 accelerator 集合同样只有 `⇧⌘Z` 这一核对结果
+
+#### Scenario: 面板与配置都能看到它
+
+- **WHEN** 按 `⌘/` 打开键位面板；另一轮用 `[keys]` 把 `⌘⇧O` 重绑为 `⌃J` 后按 `⌘/`；再一轮用
+  `[keys]` 把 `⌘⇧O` 解绑（值写 `null`）后按 `⌘/`
+- **THEN** 第一轮面板里有 `⌘⇧O → toc.toggle` 一行（含来由）；第二轮该命令对应的键位显示为 `⌃J`；
+  第三轮 `toc.toggle` 仍被列出并标注「未绑定」——命令不因重绑 / 解绑从视野里消失
+
+### Requirement: 标签命令族——关闭 / 循环切换 / 序号直达
+
+系统 SHALL 提供标签命令族，命令 id SHALL 为 `tab.close`、`tab.next`、`tab.prev` 与
+`tab.goto-1` … `tab.goto-9`（九条各一个 id：命令层没有参数通道，序号只能落在 id 上，
+这样 `[keys]` 配置重绑与键位面板都能如实显示「⌘3 → tab.goto-3」）。作用域一律 SHALL 为
+`global`（标签是窗口级对象，焦点在文件树 / 搜索框 / 大纲浮层里时同样要能切，与 ⌘F / ⌘⇧O
+同一理由），实现 SHALL 落在装配层（`src/main.ts`），能力（会话与切换）SHALL 在
+`src/editor.ts`。
+
+默认绑定 SHALL 为：`⌘W` → `tab.close`、`⌃⇥` → `tab.next`、`⌃⇧⇥` → `tab.prev`、
+`⌘1`…`⌘9` → `tab.goto-1` … `tab.goto-9`。全部 SHALL 进 `KEY_BINDINGS` 与
+`GLOBAL_COMMAND_IDS`，因此 `[keys]` 配置 SHALL 能像其余命令一样对它们重绑或解绑，
+`app.describe-bindings` 面板 SHALL 自动列出它们（面板渲染的是生效表与 `COMMAND_IDS`）；
+每条绑定的 `doc` 字段 SHALL 写明取该键的来由与作用域理由。
+
+序号越界（标签数少于序号）SHALL 为无操作——MUST NOT 退化为「跳到最后一个」这类隐式兜底。
+`⌃⇥` / `⌃⇧⇥` 在标签数少于 2 时 SHALL 为无操作。
+
+#### Scenario: 表的不变量在新增绑定后仍成立
+
+- **WHEN** 装配应用（构造分发器并注入命令实现）
+- **THEN** 新增绑定后表内仍无重复绑定、每条绑定都有归属命令与来由、清单里没有孤儿命令，装配不抛错
+
+#### Scenario: 序号直达与循环切换在边界上不越界
+
+- **WHEN** 打开的标签数少于按下的序号（如只有 2 个标签时按 ⌘5），或标签数少于 2 时按 ⌃⇥
+- **THEN** 前台标签不变，不出现任何隐式兜底跳转
+
+#### Scenario: 键位冲突核对的留痕
+
+- **WHEN** 新增绑定前核对与既有绑定及原生菜单 accelerator 的冲突
+- **THEN** 核对结论 SHALL 记在绑定的 `doc` 字段与 change 的 proposal 里，逐键给出三条独立来源（表内 / 原生菜单 accelerator / 系统级）的结论；`⌘W` 的冲突与处置（在 `src-tauri/src/lib.rs` 让出该键）SHALL 一并留痕
+
+### Requirement: ⌘W 归标签——原生菜单关闭项让出该加速键
+
+macOS 原生 `Menu::default()` 在 File 与 Window 两个子菜单里的**预置** Close 项自带 `⌘W`
+key equivalent，菜单键等价在 NSApplication 分发阶段就被截获，webview 的 keydown 收不到该键。
+系统 SHALL 在 `src-tauri/src/lib.rs` 把这两个预置项换成**不带加速键**的自定义菜单项（按 M131
+让出 `⌘Z` / `⇧⌘Z` 的同一先例），点击经 `app:menu_command` 交回前端，由前端映射到 `tab.close`
+命令——菜单与键盘 SHALL 走同一个命令实现，MUST NOT 产生第二套关闭逻辑。
+
+菜单里的关闭项 SHALL 保留（只是不再有加速键）。`⌘W` 的语义 SHALL 为「关闭当前标签」，
+MUST NOT 关窗；零标签时 `⌘W` SHALL 为无操作。退出仍走 `⌘Q`（有 dirty 守卫）与窗口红灯按钮。
+
+菜单手术的**结构性假设** SHALL 在替换前校验（子菜单存在、末位项确为预置 Close、文案匹配），
+校验失败时 SHALL 保留默认菜单不改动并打 stderr 警告——MUST NOT 在结构变化时盲目删项。
+
+#### Scenario: 结构假设不成立时不动菜单
+
+- **WHEN** 默认菜单里找不到 File / Window 子菜单，或其末位项不是文案为 `Close` 的预置项
+- **THEN** 该子菜单不被改动、打一条 stderr 警告，其余两处菜单改造（退出守卫 / 撤销重做）照常进行
+
+#### Scenario: 菜单事件的转发载荷
+
+- **WHEN** 菜单里任意一个自定义关闭项被点击
+- **THEN** 经 `app:menu_command` 发出的载荷 SHALL 是平台术语 `close`（不是前端命令 id），File 与 Window 两处映射到同一个载荷；前端把它映射到 `tab.close`
+
+### Requirement: 链接跟随——⌘⏎ 与 ⌘-Click 同一命令
+
+系统 SHALL 提供一个链接跟随命令承担「激活光标/点击处的链接」，命令 id SHALL 为 `link.follow`，作用域 SHALL 为 `global`，默认绑定 SHALL 为 `⌘⏎`。该 id 取代 `wikilink.follow`（命令跟随的已经是**链接**这件事本身，不再只管 wikilink；旧 id 不再使用，`[keys]` 配置里引用旧 id 会按既有口径产生未知命令 warning 并忽略该条）。⌘-Click SHALL 走同一条命令实现——鼠标路径就地判定（键位表只管键盘），MUST NOT 衍生第二套跟随逻辑。
+
+跟随 SHALL 按键盘路径的当前选区（head）或鼠标路径的点击位置判定，按链接类别分流（分类口径见 `editor-live-preview` 的链接形态矩阵）：
+
+1. **wikilink**：SHALL 走既有跳转链路（Rust `link_graph` 解析 → 打开目标文件 → 锚点定位），MUST NOT 新建第二套解析或打开路径。未解析（`unresolved`）时 SHALL 只给提示，MUST NOT 创建文件——自动创建是作者没做过的动作，提示里既有的「创建并打开」显式入口不变。
+2. **外链**：SHALL 交给系统默认应用打开（见下）。
+3. **应用内笔记**（相对路径 md）：SHALL 按**相对当前文件所在目录**的路径语义解析（`./` `..` 归一、以 `/` 开头按 vault 根相对、`#fragment` 忽略）后走与 wikilink 同一条「打开一篇笔记」链路（同一 `openFile`），MUST NOT 新建第二套打开路径。MUST NOT 复用 wikilink 的名称匹配语义（`[x](note.md)` 与 `[[note]]` 可能指向不同文件）。解析不到时 SHALL 只给「链接目标不存在」提示，MUST NOT 创建文件、MUST NOT 跳转。
+4. **vault 内资产**（非 md 文件 / 目录）：SHALL 交给系统默认应用打开；目标 MUST 先经 vault 内路径校验（拒绝绝对路径、`..` 穿越与符号链接逃逸，且目标必须存在），校验不通过 SHALL 拒绝并给提示，MUST NOT 交给系统。
+5. **纯锚点**：SHALL 给出「暂不支持锚点跳转」提示，MUST NOT 做文档内滚动跳转（当前没有锚点→行号的文档内链路，不做半个实现）。
+6. **不可用形态**（白名单外 scheme）：SHALL 无操作——不产生任何打开请求、不移动选区、不给提示；该形态在渲染层就是原文，没有"看起来能开"的外观，因此无操作与外观自洽。光标不在链接上时同样无操作。
+
+外链打开的 scheme 白名单（`http` / `https` / `mailto`，大小写不敏感）SHALL 在 Rust 侧校验并作为**打开许可**的唯一权威判定：前端可以按同一白名单决定"是否渲染成外链、是否发起打开请求"这类呈现层判断，但 MUST NOT 以自身判断代替校验；scheme 不在白名单内、或目标还原后含空白 / 控制字符时，后端 SHALL 拒绝并返回 `open_url_rejected` 错误信封（前端按人话 toast 展示），MUST NOT 交给系统打开。
+
+vault 内资产的路径校验同理 MUST 在 Rust 侧（`link_open_path`）：前端只把「在哪个文件里、目标原文是什么」递过去，MUST NOT 自行拼绝对路径，也 MUST NOT 以自身判断代替校验。
+
+打开链路 SHALL 只有一条：webview MUST NOT 被授予 `opener` 插件的任何直接调用权限（capabilities MUST NOT 新增 `opener:*` 条目），唯一入口是本仓的 `open_external_url`（外链）与 `link_open_path`（vault 内资产）两个 command；插件自身注入的「点击 `<a target=_blank>` 直接开浏览器」脚本 SHALL 关闭——那是绕开校验的第二条打开路径。
+
+链接激活 SHALL 落下 `link_open` 诊断事件（`LogEventName` 成员），字段 SHALL 只有 `category`（链接类别：`external` / `internal-md` / `asset` / `anchor` / `blocked-scheme`）、`outcome`（`opened` / `unresolved` / `unsupported` / `rejected` / `failed`）与 `scheme`（可选，仅外链路径上有值：归一后的协议名，白名单外与无 scheme 归 `other`）。系统打开类（`external` / `asset`）由 Rust 侧记录（判定与调用都在那一侧），其余类别由前端记录（分类只在前端）。URL / 目标原文与文档内容 MUST NOT 写入日志——那是文档内容，`logging` 的隐私边界（负载里没有文档正文与键入内容）优先于排查便利。
+
+#### Scenario: ⌘⏎ 打开光标处的外链
+
+- **WHEN** 光标落在 `[示例站点](https://example.invalid/site)` 的显示文本内，按下 `⌘⏎`
+- **THEN** 系统默认应用打开 `https://example.invalid/site`；诊断日志出现 `link_open`（`category=external`、`scheme=https`、`outcome=opened`），日志中没有该 URL 原文
+
+#### Scenario: ⌘-Click 与 ⌘⏎ 同一路径
+
+- **WHEN** 在 `[写邮件](mailto:someone@example.invalid)` 上 `⌘-Click`，随后在 `[包裹形式](<https://example.invalid/wrapped>)` 上把光标移入并按下 `⌘⏎`
+- **THEN** 两次打开的目标分别是 `mailto:someone@example.invalid` 与 `https://example.invalid/wrapped`（尖括号包裹形式开的是里面的目标），走的是同一条命令实现
+
+#### Scenario: 相对路径 md 跳进 vault 内的笔记
+
+- **WHEN** 在 `notes/index.md` 里对 `[指南](../docs/guide.md)` 按下 `⌘⏎`，且 vault 里有 `docs/guide.md`
+- **THEN** 编辑器切到 `docs/guide.md` 的内容（与 wikilink 跳转同一条打开链路）；诊断日志出现 `link_open`（`category=internal-md`、`outcome=opened`）
+
+#### Scenario: 相对路径 md 解析不到
+
+- **WHEN** 在 `[不存在的笔记](missing.md)` 上按下 `⌘⏎`，且 vault 里没有 `missing.md`
+- **THEN** 弹出「链接目标不存在：missing.md」提示，跳到 `missing.md` 的动作 MUST NOT 发生，vault 里 MUST NOT 出现新文件（一键创建是 wikilink 的显式动作）；诊断日志出现 `category=internal-md`、`outcome=unresolved`
+
+#### Scenario: vault 内非 md 资产交系统默认应用
+
+- **WHEN** 对 `[说明书](docs/manual.pdf)` 按下 `⌘⏎`，且 vault 里有 `docs/manual.pdf`
+- **THEN** 系统默认应用打开该文件；诊断日志出现 `category=asset`、`outcome=opened`
+
+#### Scenario: 资产目标越出 vault 被拒
+
+- **WHEN** 对 `[越界](../outside.pdf)` 按下 `⌘⏎`（归一后越出 vault 根）
+- **THEN** 后端拒绝并返回 `link_path_rejected` 错误信封，前端 toast 展示「打不开这个目标：…——它不在 vault 内」；MUST NOT 有任何文件被系统打开
+
+#### Scenario: 纯锚点只给提示
+
+- **WHEN** 对 `[去标题](#小节)` 按下 `⌘⏎`
+- **THEN** 弹出「暂不支持锚点跳转」提示；文档不做滚动跳转、选区与文档内容都不变
+
+#### Scenario: wikilink 两态
+
+- **WHEN** 光标落在一条已解析的 `[[note]]` 上按下 `⌘⏎`；随后落在一条未创建的 `[[missing]]` 上按下 `⌘⏎`
+- **THEN** 前者打开 `note.md` 并按锚点定位（既有链路，行为不变）；后者只弹出未创建提示，vault 里 MUST NOT 出现新文件——除非作者在提示里点了「创建并打开」
+
+#### Scenario: 非白名单 scheme 被拒
+
+- **WHEN** 光标落在 `[别开我](javascript:alert(1))` 上按下 `⌘⏎`
+- **THEN** 不产生任何打开请求、不弹提示（该形态在渲染层就是原文，跟随命令判定为"不可用形态"）；即使前端判断失误把非法目标递到后端，`open_external_url` 也 SHALL 独立拒绝并返回 `open_url_rejected`
+
+#### Scenario: 光标不在链接上无操作
+
+- **WHEN** 光标停在普通正文里按下 `⌘⏎`
+- **THEN** 不打开任何 URL、不弹提示、文档与选区都不变

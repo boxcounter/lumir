@@ -1,11 +1,11 @@
 # Foundation Table Reading 质量合同
 
-- 状态：提案阶段 living contract（对应 change `foundation-table-reading`；节点 1 只批准合同，节点 2 才批准实现出口）
+- 状态：生效中的质量合同（M142 已按 Alex 裁决收窄短行口径至 GFM §4.10，见 §2/§9）；其 OpenSpec 提案 `foundation-table-reading` 已于 2026-09-17 **撤回**（未过节点 1，见该 change 的撤回记录），本合同全文继续作为仓内权威合同与实现依据
 - 产品定位：Markdown 表格是 Lumir Foundation 的关键阅读能力；产品定位、ACP、MCP、Thread、Session、Agent 继续冻结
 - 授权：用户已授权 tower 在本合同范围内代为裁决实现边界与候选预算；绝对性能阈值仍须单独节点确认
 - 范围：本地 Markdown pipe table 的首次呈现、阅读、滚动、选择复制、只读保护、可访问性、增量构建与失败证据；不实现产品代码或专用表格编辑器
 - 上位合同：[Foundation Markdown 质量合同](foundation-markdown.md)、[性能测量方法学](perf-measurement.md)、[ADR 0004](../adr/0004-development-and-openness-strategy.md)
-- 可行性证据：[M72 table probe](../../openspec/changes/complete-markdown-reading/table-probe72.md)；M72 证明公开 CodeMirror 扩展路线可行，不证明生产实现、列宽或性能预算已通过
+- 可行性证据：[M72 table probe](../../openspec/changes/archive/2026-09-17-withdrawn-complete-markdown-reading/table-probe72.md)；M72 证明公开 CodeMirror 扩展路线可行，不证明生产实现、列宽或性能预算已通过
 
 ## 1. 证据边界与对象分层
 

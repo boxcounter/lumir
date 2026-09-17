@@ -2,7 +2,25 @@
 
 - Change ID: foundation-markdown-quality
 - 日期: 2026-09-07
+- **状态: 撤回（2026-09-17，M150）** —— 见下方「撤回记录」
 - 角色: Alex Lee（评审/裁决），AI agent（起草）
+
+> **撤回记录（2026-09-17，M150）**
+>
+> 本 change 是「只立合同、不改实现」的提案（0/14 任务），其 Proposal 阶段任务（节点 1 评审、
+> M77/M78 证据转化）从未完成，实现阶段与出口验证阶段全部未开工——也无需开工：合同指向的能力
+> 已由后续 mission 分批实现并各有门禁承载（Math/Mermaid 选型 M105、callout M109、表格
+> M137/M142、渲染保真三件套与代码着色 M138、文件内搜索 M139、链接全形态 M144/M145、
+> JSON 键色 M147），验收面是 `tests/visual/` 视觉门禁 + `scripts/acceptance/` 真机套件 + perf.yml。
+>
+> 合同本体（F0/F1 端点、源码不变铁律、失败降级、可访问性口径）留档在
+> [docs/specs/foundation-markdown.md](../../../../docs/specs/foundation-markdown.md)，
+> 它仍是仓内被引用的权威合同文本（`src/preview/table.ts`、`src/preview/callout.ts` 等实现注释
+> 直接引用其章节）；本 change 的 spec 增量只是该文档的 requirement 级镜像，未归档、不生成 living spec。
+>
+> **未按本合同形态产出的部分**（如实记录，不在本 mission 补）：tiny/small/medium/large fixture
+> 验收矩阵、M88 脱敏画像、真实 WK 下的 F0/F1 专项测量报告（现由 perf.yml 的四项指标与真机验收
+> 场景分别覆盖，口径不同）。完整提案文本与 spec 增量随本目录留档。
 
 ## Why
 
