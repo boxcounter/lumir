@@ -195,6 +195,17 @@ Alex 抽审路径：先看 `summary.md`，再进 FAIL 场景看 `steps.md` + `sh
 - **不做手感/审美判定**：表头双击选中手感、表格宽度观感、WKWebView 下的翻屏节奏等归 Alex；
   套件只留截图证据（与 `tests/visual/README.md` 同一原则）。
 - **不进 CI（v0）**：macos runner 跑真机 Tauri 成本高、失败模式多，稳定后再评。
+- **清理实例只认「自己起的那个进程组」，禁止用模式匹配 `pkill`**（2026-09-18 M164 的教训，实测代价：
+  误伤了用户手头那份 dogfood 实例）：`pkill -f "target/debug/lumir"` 这类按**二进制路径**匹配的模式会连带
+  命中用户的实例——同一个二进制路径，只有进程组不同（M164 实测：Alex 的 1420 会话连同它的 vite dev server
+  一起退出）。套件自身就是这么隔离的：`findAppPid(pgid)` 只认 `launchApp` 起的那个进程组、`stopApp` 只对
+  `-pgid` 发信号；手工清场照抄这个口径——先 `ps -o pid,pgid,command | grep target/debug/lumir` 找到自己的
+  pgid，再 `kill -- -<pgid>`（或按 pid 逐个 kill），不确定归属的就别动。
+- **无人值守批次要防休眠**（2026-09-18 M164 实测）：机器/显示休眠会让 app 窗口漂到屏幕外（实测
+  `window_bounds y≈1076`，屏高只有 ~982pt），KimiCU 随即报
+  「target WebArea did not acquire stable keyboard focus」，键盘注入整批不落地、场景里出现一串与产品无关的
+  FAIL。跑真机批次时把命令包在 `caffeinate -dimsu <cmd>` 里；套件的 `launchApp` 也已把窗口位置经 `--config`
+  钉在主屏（见 `lib/app.mjs` 的说明），两条一起用。
 - **dirty 拦截门的可测窗口很窄**（M164 实测）：切换 vault 的 dirty 前置判据是「任一**有路径**的标签
   dirty」（`src/save-controller.ts` 的 `vaultSwitchBlock`），而自动保存的防抖是**停止输入后 2s**
   （`AUTOSAVE_DEBOUNCE_MS`）——落盘后 dirty 收回 false。所以「改完就走」这条真实窗口只有 2s，而本套件
