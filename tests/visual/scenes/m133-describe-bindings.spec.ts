@@ -12,7 +12,7 @@ import { readDocument } from "./parity-checks";
 
 const DOC = "# 标题\n\n内容段落。\n";
 
-const GROUPS = ["移动与选择", "扩选", "删除", "kill-yank", "翻屏", "撤销", "widget", "全局"];
+const GROUPS = ["移动与选择", "扩选", "删除", "kill-yank", "翻屏", "撤销", "widget", "标签", "全局"];
 
 /** 装载 vault 并等配置到位（[keys] 覆盖在 config_get 之后才挂上分发器）。 */
 async function openVault(page: Page, config?: { keys?: Record<string, string | null> }): Promise<void> {

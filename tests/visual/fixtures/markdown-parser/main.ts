@@ -66,7 +66,7 @@ function snapshot(tree: any, state: EditorState) {
   return { nodes, highlights, inner };
 }
 Object.assign(window, { experiment: {
-  open(doc: string) { const start = performance.now(); editor.openDocument(doc, 'experiment.md'); timings.push(performance.now() - start); },
+  open(doc: string) { const start = performance.now(); editor.reloadSession(editor.activeSession(), doc, 'experiment.md'); timings.push(performance.now() - start); },
   available() { const start = performance.now(); const result = forceParsing(view, view.state.doc.length, 10); timings.push(performance.now() - start); return result && syntaxTreeAvailable(view.state, view.state.doc.length); },
   compare() {
     const reference = EditorState.create({ doc: view.state.doc, extensions: markdown({ base: markdownLanguage, extensions: [GFM] }) });
