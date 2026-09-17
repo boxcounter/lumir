@@ -15,6 +15,7 @@ import type { EditorView } from "@codemirror/view";
 import { syntaxTree } from "@codemirror/language";
 import { logEvent } from "../diagnostics";
 import { detectFrontmatter } from "./frontmatter";
+import { findClosingRun, runLen } from "./lexical";
 import { findTables, tableAt } from "./table";
 import type { TableModel } from "./table";
 
@@ -106,27 +107,6 @@ function scanInlineEnd(text: string, from: number): number | null {
       if (prev !== " " && prev !== "\t" && !(next >= "0" && next <= "9")) return j + 1;
     }
     j++;
-  }
-  return null;
-}
-
-function runLen(text: string, from: number, c: string): number {
-  let n = 0;
-  while (text[from + n] === c) n++;
-  return n;
-}
-
-/** 从 from 起找长度恰好为 n 的反引号闭合串（GFM inline code 规则）。 */
-function findClosingRun(text: string, from: number, n: number): number | null {
-  let k = from;
-  while (k < text.length) {
-    if (text[k] === "`") {
-      const run = runLen(text, k, "`");
-      if (run === n) return k + n;
-      k += run;
-    } else {
-      k++;
-    }
   }
   return null;
 }

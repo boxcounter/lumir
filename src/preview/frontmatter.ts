@@ -15,24 +15,79 @@ export interface FrontmatterBlock {
   inner: string;
 }
 
-/** 检测文档首部 frontmatter；无（或未闭合）返回 null。扫描上限防止未闭合的 --- 导致全文档扫描。 */
-const MAX_FRONTMATTER_LINES = 512;
+/**
+ * frontmatter 扫行上限：开围栏行之后最多再检查这么多行。**单一常量**（M152 收口，
+ * 原值两处不同：frontmatter.ts 512 / wikilinks.ts 200）。
+ * 取 **512** 的论证（把词法层的排除区对齐到渲染层，而不是反过来）：
+ * - 512 是有意的产品口径，不是漂移出来的数——5041f63 专门把本文件的 200 抬到 512，并在
+ *   同一次提交里加了 208 行的 fixture（tests/visual/fixtures/markdown-combo/frontmatter-200.md）
+ *   与断言「超过 200 行仍渲染 properties 区块」（markdown-combo.spec.ts 的 key204 上屏）；
+ * - 反之取 200 等于回退那次决策：201–512 行的 frontmatter 不再渲染区块，属产品行为变更，
+ *   不是清扫范围；
+ * - 排除区与渲染层必须同口径：wikilink 排除的范围就是「properties 区块盖住的那段文字」。
+ *   改动前两者不同口径（512 vs 200），后果是 >200 行区块里「看不见却能激活」的链接。
+ * 已知残留：Rust 的 link_graph.rs 仍自带一份 200（本 mission 未碰 Rust），201–512 行这一段
+ * 两侧口径仍不同——改动前即如此，已另发 finding 建议对齐（或经 bindings 单向下发）。
+ */
+export const MAX_FRONTMATTER_LINES = 512;
 
-export function detectFrontmatter(doc: Text): FrontmatterBlock | null {
-  if (doc.lines < 2 || doc.line(1).text.trim() !== "---") return null;
-  const last = Math.min(doc.lines, MAX_FRONTMATTER_LINES);
+/**
+ * frontmatter 检测所需的行视图。CM 的 `Text` 结构上直接满足（`lines` + `line(n)`），
+ * 纯字符串侧用 textLineView 适配——检测逻辑因此只有一份，装饰层与 wikilink 排除区
+ * 不会各扫一遍、各得一个答案。
+ */
+export interface FrontmatterLineView {
+  readonly lines: number;
+  line(n: number): { from: number; to: number; text: string };
+}
+
+/** 纯字符串的行视图适配（偏移口径与 CM 的 Text 一致：`to` 不含换行符）。 */
+export function textLineView(text: string): FrontmatterLineView {
+  const starts: number[] = [0];
+  for (let i = 0; i < text.length; i++) {
+    if (text[i] === "\n") starts.push(i + 1);
+  }
+  return {
+    lines: starts.length,
+    line(n) {
+      const from = starts[n - 1];
+      const to = n < starts.length ? starts[n] - 1 : text.length;
+      return { from, to, text: text.slice(from, to) };
+    },
+  };
+}
+
+/** frontmatter 围栏范围；closeLine 是闭合围栏行号（1 基，消费方据此续扫或取 inner 右界）。 */
+export interface FrontmatterRange {
+  from: number;
+  to: number;
+  closeLine: number;
+}
+
+/**
+ * 检测文档首部 frontmatter 的围栏范围：首行 trim 后为 `---`，其后 MAX_FRONTMATTER_LINES
+ * 行内出现 `---` / `...` 闭合行即成立；无或未闭合返回 null（扫描有界——未闭合的 --- 不会
+ * 导致全文档扫描）。装饰层（本模块的 properties 区块）与 wikilinks.ts 的排除区共用此检测：
+ * 同一份判定、同一个上限，两层对同一条链接不会给出不同答案。
+ */
+export function scanFrontmatter(source: FrontmatterLineView): FrontmatterRange | null {
+  if (source.lines < 2 || source.line(1).text.trim() !== "---") return null;
+  const last = Math.min(source.lines, MAX_FRONTMATTER_LINES + 1);
   for (let n = 2; n <= last; n++) {
-    const line = doc.line(n);
+    const line = source.line(n);
     const t = line.text.trim();
     if (t === "---" || t === "...") {
-      return {
-        from: doc.line(1).from,
-        to: line.to,
-        inner: doc.sliceString(doc.line(1).to + 1, line.from),
-      };
+      return { from: source.line(1).from, to: line.to, closeLine: n };
     }
   }
   return null;
+}
+
+/** 检测文档首部 frontmatter；无（或未闭合）返回 null。 */
+export function detectFrontmatter(doc: Text): FrontmatterBlock | null {
+  const range = scanFrontmatter(doc);
+  if (range === null) return null;
+  return { from: range.from, to: range.to, inner: doc.sliceString(doc.line(1).to + 1, doc.line(range.closeLine).from) };
 }
 
 function renderValue(v: unknown): string {

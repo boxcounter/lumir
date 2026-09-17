@@ -12,6 +12,11 @@
 // 覆盖范围 = legacy-modes 有现成 mode 的常见全栈集；info string 缺失或不在表里
 // 一律不着色（保持既有纯文本渲染，不用近似 parser 冒充）。块级 mermaid 走自己的
 // widget 渲染，不在此表内。
+//
+// M152 起本模块同时是**代码语言注册表的单一来源**：LANGUAGES 一张表供 code 模式
+// （src/editor.ts 按扩展名选语言）与围栏代码块（本模块按 info string 选语言）共用，
+// 键集由 preview/attachments.ts 的 CodeLanguage 在编译期约束；token 的 tag 分组
+// （TOKEN_GROUPS）同样是单一来源，两侧只各自渲染（CSS 类名 / 内联色值）。
 
 import { HighlightStyle, StreamLanguage, StringStream } from "@codemirror/language";
 import { tags } from "@lezer/highlight";
@@ -30,6 +35,7 @@ import { html, xml } from "@codemirror/legacy-modes/mode/xml";
 import { swift } from "@codemirror/legacy-modes/mode/swift";
 import { lua } from "@codemirror/legacy-modes/mode/lua";
 import { standardSQL } from "@codemirror/legacy-modes/mode/sql";
+import type { CodeLanguage } from "./attachments";
 
 /** 单个 token 的着色区间（偏移相对代码块正文起点）。 */
 export interface CodeToken {
@@ -49,20 +55,24 @@ type TokenTable = Record<string, Tag>;
  * 解析复合 token 时会把该词丢掉并 console 警告，而 defaultTable 的 `property → propertyName`
  * 兜底只按完整 token 名命中，复合名查不到。净效果：键退化成纯 string、与值同色。
  * 补上这张表后 `string property` 解析为 [string, propertyName]，套用哪个类由
- * TOKEN_CLASSES 的条目序裁决（见其注释）。
+ * TOKEN_GROUPS 的条目序裁决（见其注释）。
  * json 是本文件唯一带 tokenTable 的语言：javascript/typescript 的 objprop 走同一条
  * `cx.style + " property"` 分支，但那里字符串键本来就该是字符串色，不跟着改。
- * 与 src/editor.ts 的 json parser 同源（editor.ts 从这里 import）：code 模式与 markdown
- * 代码块的键色必须一致，各写一份就等着漂移（REVIEW.md 第 8 条）。
+ * 只挂在下面 LANGUAGES 的 json 项上——那是 code 模式与 markdown 代码块共用的同一张表，
+ * 键色两侧同源，不存在各写一份的漂移面（REVIEW.md 第 8 条）。
  */
 export const JSON_TOKEN_TABLE: TokenTable = { property: tags.propertyName };
 
 /**
- * 语言名 → StreamLanguage。与 src/editor.ts 的 LANGUAGES 同批 parser（code 模式
- * 按扩展名选语言的那张表）；那张表未导出，此处按 fenced info string 的口径重建一份。
- * 两处注册表的同步没有编译期保障——改语言集要同时改这里。
+ * 语言名 → StreamLanguage——**代码语言注册表的单一来源**（M152 收口）：code 模式
+ * （src/editor.ts 按扩展名选语言）与围栏代码块（本模块按 fenced info string 选语言）
+ * 共用这一张表，两边不再各持一份 parser 列表。
+ * `Record<CodeLanguage, StreamLanguage<unknown>>` 是编译期合同（CodeLanguage 由
+ * preview/attachments.ts 的扩展名注册表推导）：注册表新增语言名而此处未实现、或此处
+ * 多出无人引用的实现，编译都会失败。vue/svelte 无对应 legacy mode（SFC 按 html 兜底）；
+ * php 无对应 mode，注册表标 null → 纯文本只读，不由近似 parser 冒充。
  */
-const LANGUAGES: Record<string, StreamLanguage<unknown>> = {
+export const LANGUAGES: Record<CodeLanguage, StreamLanguage<unknown>> = {
   rust: StreamLanguage.define(rust),
   typescript: StreamLanguage.define(typescript),
   javascript: StreamLanguage.define(javascript),
@@ -114,24 +124,43 @@ const ALIASES: Record<string, string> = {
   kt: "kotlin",
 };
 
+/** token 的语义分组名：类名与色值两侧映射表的键（各自的 `Record<TokenRole, …>` 穷尽检查）。 */
+export type TokenRole = "comment" | "keyword" | "string" | "literal" | "property" | "type";
+
+interface TokenGroup {
+  role: TokenRole;
+  tags: readonly Tag[];
+}
+
 /**
- * token → 类名。tag 分组与 src/editor.ts 的 codeHighlight 逐条对应（同一套语义
- * 色），差别只在输出 CSS 类而非内联色值——类名挂在 theme.ts，色值一处定义。
- * 与 editor.ts 同一条口径：条目序即优先级（HighlightStyle 按此序写 CSS，同一 token
- * 带多个 tag 时靠后的条目命中），propertyName 必须留在 string 之后——json 键同时带
- * string + propertyName，靠前会让它退回字符串色。
+ * token 的语义分组——**单一来源**（M152）：tag 列表只在这里写一次，两侧各自渲染消费
+ * （本模块出 CSS 类名，src/editor.ts 的 codeHighlight 出内联色值），任一侧都不得再维护
+ * 一份 tag 列表。
+ * **条目序即优先级**（原先只在两侧注释里口口相传的隐性规则，在此显式声明）：HighlightStyle
+ * 按此序把规则写进样式表，同一节点带多个 tag 时**靠后**的条目命中（CM6 文档原文
+ * 「styles defined further down in the list will have a higher CSS precedence」）——所以
+ * property 必须留在 string 之后：json 键同时带 string + propertyName 两个 tag，靠前会让
+ * 它退回字符串色。
  */
-const TOKEN_CLASSES = HighlightStyle.define([
-  { tag: [tags.comment, tags.blockComment, tags.docComment], class: "cm-lp-tok-comment" },
+export const TOKEN_GROUPS = [
+  { role: "comment", tags: [tags.comment, tags.blockComment, tags.docComment] },
   {
-    tag: [tags.keyword, tags.definitionKeyword, tags.controlKeyword, tags.operatorKeyword, tags.moduleKeyword, tags.modifier],
-    class: "cm-lp-tok-keyword",
+    role: "keyword",
+    tags: [tags.keyword, tags.definitionKeyword, tags.controlKeyword, tags.operatorKeyword, tags.moduleKeyword, tags.modifier],
   },
-  { tag: [tags.string, tags.docString, tags.character, tags.regexp, tags.special(tags.string)], class: "cm-lp-tok-string" },
-  { tag: [tags.number, tags.atom, tags.bool, tags.null], class: "cm-lp-tok-literal" },
-  { tag: [tags.propertyName, tags.attributeName], class: "cm-lp-tok-property" },
-  { tag: [tags.typeName, tags.className, tags.namespace, tags.tagName], class: "cm-lp-tok-type" },
-]);
+  { role: "string", tags: [tags.string, tags.docString, tags.character, tags.regexp, tags.special(tags.string)] },
+  { role: "literal", tags: [tags.number, tags.atom, tags.bool, tags.null] },
+  { role: "property", tags: [tags.propertyName, tags.attributeName] },
+  { role: "type", tags: [tags.typeName, tags.className, tags.namespace, tags.tagName] },
+] as const satisfies readonly TokenGroup[];
+
+/** 类名口径：`cm-lp-tok-<role>`（theme.ts 的选择器按此命名，与 role 一一对应）。 */
+export const tokenClassOf = (role: TokenRole): string => `cm-lp-tok-${role}`;
+
+/** 本模块的渲染消费：分组 → CSS 类（色值一处定义在 theme.ts）。 */
+const TOKEN_CLASSES = HighlightStyle.define(
+  TOKEN_GROUPS.map((group) => ({ tag: group.tags, class: tokenClassOf(group.role) })),
+);
 
 /**
  * StreamLanguage 的 streamParser 是运行期字段，d.ts 只声明了 `define`——CM6 没有把
@@ -227,11 +256,14 @@ const EMPTY: readonly CodeToken[] = [];
 const cache = new Map<string, readonly CodeToken[]>();
 const styleClassCache = new Map<string, string | null>();
 
+/** info string 是任意字符串：只在注册表确有该键时才收窄到 CodeLanguage。 */
+const isRegisteredLanguage = (name: string): name is CodeLanguage => Object.prototype.hasOwnProperty.call(LANGUAGES, name);
+
 /** 按 fenced info string 解析语言：无标识、未收录一律 null（不着色）。 */
 function resolveLanguage(info: string): { name: string; lang: StreamLanguage<unknown> } | null {
   const first = info.trim().split(/\s+/)[0]?.toLowerCase() ?? "";
   const name = ALIASES[first] ?? first;
-  return Object.prototype.hasOwnProperty.call(LANGUAGES, name) ? { name, lang: LANGUAGES[name] } : null;
+  return isRegisteredLanguage(name) ? { name, lang: LANGUAGES[name] } : null;
 }
 
 function classOf(langName: string, style: string, extra: TokenTable): string | null {

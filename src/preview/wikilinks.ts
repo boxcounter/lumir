@@ -8,6 +8,9 @@
 // 偏移口径：findWikilinkSpans 返回 UTF-16 码元偏移（JS 字符串原生，CM 直接可用）；
 // locateWikilinkSpans 返回 Unicode code point 偏移（fixture spanUnit 口径，测试用）。
 
+import { scanFrontmatter, textLineView } from "./frontmatter";
+import { findClosingRun, runLen } from "./lexical";
+
 export interface WikilinkSpan {
   /** 整条链接的范围 `[from, to)`，含 `!` 前缀。 */
   from: number;
@@ -15,8 +18,6 @@ export interface WikilinkSpan {
   /** 是否 `![[...]]` embed 形态。 */
   embed: boolean;
 }
-
-const MAX_FRONTMATTER_LINES = 200;
 
 interface CharRange {
   from: number;
@@ -97,72 +98,36 @@ function scanLinkEnd(text: string, start: number, embed: boolean): number | null
   return j + 2;
 }
 
-function runLen(text: string, from: number, c: string): number {
-  let n = 0;
-  while (text[from + n] === c) n++;
-  return n;
-}
-
-/** 从 from 起找长度恰好为 n 的反引号闭合串（GFM inline code 规则）。 */
-function findClosingRun(text: string, from: number, n: number): number | null {
-  let k = from;
-  while (k < text.length) {
-    if (text[k] === "`") {
-      const run = runLen(text, k, "`");
-      if (run === n) return k + n;
-      k += run;
-    } else {
-      k++;
-    }
-  }
-  return null;
-}
-
 /** 不解析为链接的区块（§2.3）：frontmatter 与 fenced code block。 */
 function excludedRanges(text: string): CharRange[] {
-  const lines: { start: number; end: number; raw: string }[] = [];
-  let start = 0;
-  for (let i = 0; i < text.length; i++) {
-    if (text[i] === "\n") {
-      lines.push({ start, end: i + 1, raw: text.slice(start, i) });
-      start = i + 1;
-    }
-  }
-  if (start < text.length) {
-    lines.push({ start, end: text.length, raw: text.slice(start) });
-  }
-
+  const lines = textLineView(text);
   const ranges: CharRange[] = [];
-  let li = 0;
-  // frontmatter：文件首部 --- 包围块（闭合 --- 或 ...，与 frontmatter.ts 同口径）。
-  if (lines.length > 0 && lines[0].raw.trim() === "---") {
-    for (let k = 1; k < lines.length && k <= MAX_FRONTMATTER_LINES; k++) {
-      const t = lines[k].raw.trim();
-      if (t === "---" || t === "...") {
-        ranges.push({ from: 0, to: lines[k].end });
-        li = k + 1;
-        break;
-      }
-    }
+  // frontmatter：判定与上限同源（frontmatter.ts 的 scanFrontmatter，MAX_FRONTMATTER_LINES
+  // 单一常量）——装饰层的 properties 区块与这里排除的必须是同一段文字。
+  const fm = scanFrontmatter(lines);
+  let n = 1;
+  if (fm !== null) {
+    ranges.push({ from: fm.from, to: fm.to });
+    n = fm.closeLine + 1;
   }
   // fenced code block：行首 3+ 个相同 ` 或 ~ 开启，同样字符、长度 >= 开启串的纯围栏行闭合。
   let fence: { ch: string; len: number } | null = null;
-  for (; li < lines.length; li++) {
-    const line = lines[li];
+  for (; n <= lines.lines; n++) {
+    const line = lines.line(n);
     if (fence === null) {
-      const trimmed = line.raw.trimStart();
+      const trimmed = line.text.trimStart();
       const fc = trimmed[0];
       if (fc === "`" || fc === "~") {
         const run = runLen(trimmed, 0, fc);
         if (run >= 3) {
           fence = { ch: fc, len: run };
-          ranges.push({ from: line.start, to: line.end });
+          ranges.push({ from: line.from, to: line.to });
         }
       }
     } else {
-      ranges.push({ from: line.start, to: line.end });
+      ranges.push({ from: line.from, to: line.to });
       const open = fence;
-      const t = line.raw.trim();
+      const t = line.text.trim();
       if (t.length > 0 && t.length >= open.len && [...t].every((c) => c === open.ch)) {
         fence = null;
       }

@@ -8,24 +8,10 @@ import type { ViewUpdate } from "@codemirror/view";
 export type ScrollSnapshot = ReturnType<EditorView["scrollSnapshot"]>;
 import { history, redo, undo } from "@codemirror/commands";
 import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
-import { HighlightStyle, StreamLanguage, syntaxHighlighting, syntaxTree, ensureSyntaxTree } from "@codemirror/language";
+import { HighlightStyle, syntaxHighlighting, syntaxTree, ensureSyntaxTree } from "@codemirror/language";
 import type { Language } from "@codemirror/language";
 import { tags } from "@lezer/highlight";
 import { GFM } from "@lezer/markdown";
-import { javascript, json, typescript } from "@codemirror/legacy-modes/mode/javascript";
-import { python } from "@codemirror/legacy-modes/mode/python";
-import { go } from "@codemirror/legacy-modes/mode/go";
-import { rust } from "@codemirror/legacy-modes/mode/rust";
-import { c, cpp, java, kotlin } from "@codemirror/legacy-modes/mode/clike";
-import { ruby } from "@codemirror/legacy-modes/mode/ruby";
-import { shell } from "@codemirror/legacy-modes/mode/shell";
-import { toml } from "@codemirror/legacy-modes/mode/toml";
-import { yaml } from "@codemirror/legacy-modes/mode/yaml";
-import { css, sCSS } from "@codemirror/legacy-modes/mode/css";
-import { html, xml } from "@codemirror/legacy-modes/mode/xml";
-import { swift } from "@codemirror/legacy-modes/mode/swift";
-import { lua } from "@codemirror/legacy-modes/mode/lua";
-import { standardSQL } from "@codemirror/legacy-modes/mode/sql";
 import type { EditorMode } from "./bindings/EditorMode";
 import { livePreview, previewRefresh, widgetCommands } from "./preview/livePreview";
 import type { PreviewContext, WikilinkResolver } from "./preview/livePreview";
@@ -35,8 +21,9 @@ import type { MathSpan } from "./preview/math";
 import { findTables, tableAt } from "./preview/table";
 import type { TableModel, TableRow } from "./preview/table";
 import { createInvokeAttachmentProvider, codeLanguage, extensionOf, fileClass } from "./preview/attachments";
-import type { AttachmentProvider, CodeLanguage } from "./preview/attachments";
-import { JSON_TOKEN_TABLE } from "./preview/code";
+import type { AttachmentProvider } from "./preview/attachments";
+import { LANGUAGES, TOKEN_GROUPS } from "./preview/code";
+import type { TokenRole } from "./preview/code";
 import type { CommandRunner, EditorCommandId } from "./keys";
 import { lumirSearch } from "./search";
 
@@ -680,7 +667,6 @@ function killLine(view: EditorView): void {
 }
 
 /** Emacs C-y：把 kill 槽插入光标处（替换选区），光标落在插入内容之后。 */
-/** Emacs C-y：把 kill 槽插入光标处（替换选区），光标落在插入内容之后。 */
 function yank(view: EditorView): void {
   const state = view.state;
   if (state.readOnly) return;
@@ -948,49 +934,8 @@ export interface EditorHandle {
 }
 
 // code 模式的语法高亮（M120）：扩展名 → 语言名的映射是注册表（preview/attachments.ts
-// 的 CODE_EXTENSIONS）的职责，这里只把语言名解析成 CM6 Language——legacy-modes 的
-// StreamParser 经 StreamLanguage 包成 CM6 Language，同一 parser 多扩展共享实例。
-// Record<CodeLanguage, Language> 是编译期合同：注册表新增语言名而此处未实现、
-// 或此处多出无人引用的实现，编译都会失败。vue/svelte 无对应 legacy mode（SFC 按
-// html 兜底）；php 无对应 mode，注册表标 null → 纯文本只读，不由近似 parser 冒充。
-const jsLanguage = StreamLanguage.define(javascript);
-const tsLanguage = StreamLanguage.define(typescript);
-const cLanguage = StreamLanguage.define(c);
-const cppLanguage = StreamLanguage.define(cpp);
-const yamlLanguage = StreamLanguage.define(yaml);
-const htmlLanguage = StreamLanguage.define(html);
-// json 是全表里唯一带 tokenTable 的：legacy json mode 把键标成**复合** token
-// `string property`（legacy-modes/mode/javascript.js:518 的 objprop：`cx.marked =
-// cx.style + " property"`），而 CM6 的 createTokenType 逐词解析复合 token 时 `property`
-// 不在 @lezer/highlight 的 tags 里（只有 propertyName）→ 该词被丢弃并 console 警告；
-// defaultTable 里虽有 `property → propertyName`，但它只按完整 token 名命中，复合名查不到。
-// 净效果：键退化成纯 string、与值同色。补上这张表后 `string property` 解析为
-// [string, propertyName]，配色规则按 codeHighlight 的条目序裁决（见其注释）。
-// 表由 preview/code.ts 单一持有——code 模式与 markdown 代码块的键色必须一致。
-const jsonLanguage = StreamLanguage.define({ ...json, tokenTable: JSON_TOKEN_TABLE });
-const LANGUAGES: Record<CodeLanguage, Language> = {
-  rust: StreamLanguage.define(rust),
-  typescript: tsLanguage,
-  javascript: jsLanguage,
-  python: StreamLanguage.define(python),
-  go: StreamLanguage.define(go),
-  c: cLanguage,
-  cpp: cppLanguage,
-  java: StreamLanguage.define(java),
-  ruby: StreamLanguage.define(ruby),
-  shell: StreamLanguage.define(shell),
-  json: jsonLanguage,
-  toml: StreamLanguage.define(toml),
-  yaml: yamlLanguage,
-  css: StreamLanguage.define(css),
-  scss: StreamLanguage.define(sCSS),
-  html: htmlLanguage,
-  xml: StreamLanguage.define(xml),
-  swift: StreamLanguage.define(swift),
-  kotlin: StreamLanguage.define(kotlin),
-  lua: StreamLanguage.define(lua),
-  sql: StreamLanguage.define(standardSQL),
-};
+// 的 CODE_EXTENSIONS）的职责；语言名 → CM6 Language 的表由 preview/code.ts 单一持有
+// （LANGUAGES 同时供 markdown 围栏代码块使用，编译期合同见其注释）。
 
 /** code 模式按扩展名取语言包；无扩展名线索或该扩展无语言包返回 null（纯文本，不着色）。 */
 function codeLanguageFor(path: string | undefined): Language | null {
@@ -1001,21 +946,20 @@ function codeLanguageFor(path: string | undefined): Language | null {
 
 // code 模式 token 配色：只用单套排版基线的既有视觉 token
 //（--dim/--accent/--callout-*，M55 体系）。
-// legacy-modes token 经 StreamLanguage 的 tokenTable 落到标准 tags（defaultTable 打底，
-// json 另带 preview/code.ts 的 JSON_TOKEN_TABLE，见 LANGUAGES 上方注释）。
-// 条目序即优先级：HighlightStyle 把规则按此序写进样式表，同一节点带多个 tag 时
-// **靠后**的条目命中（CM6 文档原文「styles defined further down in the list will have
-// a higher CSS precedence」）——所以 propertyName 必须留在 string 之后，json 键才会
-// 取属性色而不是字符串色（键同时带 string + propertyName 两个 tag）。
+// tag 分组与「条目序即优先级」由 preview/code.ts 的 TOKEN_GROUPS 单一持有，这里只把
+// 每个 role 映射成色值——两侧不再各写一份 tag 列表（Record<TokenRole, string> 让分组
+// 增删在此处编译报错）。
+const CODE_COLORS: Record<TokenRole, string> = {
+  comment: "var(--dim)",
+  keyword: "var(--accent)",
+  string: "var(--callout-tip)",
+  literal: "var(--callout-warning)",
+  property: "var(--callout-note)",
+  type: "var(--callout-abstract)",
+};
+
 const codeHighlight = syntaxHighlighting(
-  HighlightStyle.define([
-    { tag: [tags.comment, tags.blockComment, tags.docComment], color: "var(--dim)" },
-    { tag: [tags.keyword, tags.definitionKeyword, tags.controlKeyword, tags.operatorKeyword, tags.moduleKeyword, tags.modifier], color: "var(--accent)" },
-    { tag: [tags.string, tags.docString, tags.character, tags.regexp, tags.special(tags.string)], color: "var(--callout-tip)" },
-    { tag: [tags.number, tags.atom, tags.bool, tags.null], color: "var(--callout-warning)" },
-    { tag: [tags.propertyName, tags.attributeName], color: "var(--callout-note)" },
-    { tag: [tags.typeName, tags.className, tags.namespace, tags.tagName], color: "var(--callout-abstract)" },
-  ]),
+  HighlightStyle.define(TOKEN_GROUPS.map((group) => ({ tag: group.tags, color: CODE_COLORS[group.role] }))),
   { fallback: true },
 );
 
