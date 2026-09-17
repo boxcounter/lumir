@@ -29,7 +29,8 @@ worker 动工前、reviewer 给出 verdict 前逐条过一遍。每条按「症�
 **3. 容差宽到能吞掉一次真实变化**
 - 症状：「删左栏 UI」级改动（`c9a3c20` 删 Thread UI）让两张整页基线静默通过，直到另一次超容差失配（`736b3f7`）才暴露；0.005 在 1200×800 下是 4800 像素。
 - 根因：容差按「机器间抖动上限」设，没核「最小真实变化」的下限。
-- 证据：`tests/visual/playwright.config.ts:9-14`（现行 0.001 及其来历）；提交 `c9a3c20` / `736b3f7` / `d439184`；`docs/backlog.md:213`。
+- 证据：`tests/visual/playwright.config.ts:9-14`（现行 0.001 及其来历）；提交 `c9a3c20` / `736b3f7` / `d439184`；`docs/backlog.md:257`。
+  0.001 时代的两处新现场（2026-09-17）：M148 的 masthead 指示段约 100px 真实变化被吞（0.001×1200×800≈960px，15 张整页基线 sha256 逐字节零变化、普通模式照绿，最终靠新增元素级基线补偿，`openspec/changes/add-toc-outline/tasks.md` 基线对比说明节）；mermaid 两张整页基线停留在 `736b3f7`，M138（`ca81b7c`）起正文 js 着色产生 952px 差异（<960）被吞、期间门禁一直绿，M149 因标签栏位移重生成基线才把它带出来（reviewer-tabs 逐像素定位，`openspec/changes/add-multi-tabs/tasks.md` §8.4；finding `.tower/comms/findings/20260917-reviewer-tabs-improve-review-md-3-mermaid-952px-960px-m149.md`）。
 - 防线：下次动容差、或加会删/移 UI 的场景时，本地先把该元素删掉跑一次，确认门禁确实 FAIL；删 UI 后逐一核对该元素出现过的所有整页基线时间戳是否随本次更新。
 
 **4. 断言写死了会滚动或跨天复用的产物路径**
@@ -51,13 +52,13 @@ worker 动工前、reviewer 给出 verdict 前逐条过一遍。每条按「症�
 **6. 覆盖声明超出真实验证**
 - 症状：`tasks.md` 声称场景断言了「表格内收窄」而场景没做（M144 r1 P2-1）；M135 r1 把 7/8 标成「行为已验」，未覆盖的四条子行为在三个桶里全部消失；文档在跑通前写、跑通后没回改。
 - 根因：覆盖分类按「场景写了」而不是「证据目录里真实 PASS」。
-- 证据：`docs/backlog.md:115`；提交 `e5ef190`、`6ed8a63`、`6d48d47`（都是把数字/表述改准的收口）。
+- 证据：`docs/backlog.md:155`；提交 `e5ef190`、`6ed8a63`、`6d48d47`（都是把数字/表述改准的收口）。
 - 防线：下次写「已验 / 已覆盖」时逐条给出证据指针（场景名 + PASS 计数），拿不出 PASS 证据的一律写「未验」；跑完回来核对文档数字与证据目录一致。
 
 **7. 证据只在终端跑过，没落成文件或指针已失效**
 - 症状：评审复验发现报告里声称的证据目录不存在（M143 r1 P2-1）；另一处证据实际留在 worktree 内，worktree 清理后指针失效（M138 r1 P2-2）。
 - 根因：自报证据不落盘，或落在会被清理的位置——合并评审无从复核。
-- 证据：`scripts/acceptance/README.md:123`（证据布局）与 `:196`（「重试次数写进证据」）；`docs/backlog.md:204`（`_type-retry-unit/` 8 判定落盘的终态）；AGENTS.md 硬规则「批次收尾顺带 `git push origin master`」（同族：落地动作无人校验）。
+- 证据：`scripts/acceptance/README.md:123`（证据布局）与 `:196`（「重试次数写进证据」）；`docs/backlog.md:248`（`_type-retry-unit/` 8 判定落盘的终态）；AGENTS.md 硬规则「批次收尾顺带 `git push origin master`」（同族：落地动作无人校验）。
 - 防线：下次声称「跑过了」之前，用绝对路径 `ls` 一遍自己写下的证据路径再写进报告；证据落在 `test-results/`（本地留存、git 外）而不是 worktree 内；写不出可 `ls` 的指针就等于没跑。
 
 **8. 同一语义两处真源，改动只落到一处**
@@ -69,7 +70,7 @@ worker 动工前、reviewer 给出 verdict 前逐条过一遍。每条按「症�
 **9. 值或开关声明了却没有消费者**
 - 症状：`src/preview/table.ts:37` 的 `"incomplete"` 在类型联合里、生产从不产出、`src/` 零消费者；`editor.measure` 能在 config.json 里配、还给校验 warning，但完全不生效（假开关）。
 - 根因：数据结构先于消费者落地，没有「声明即被消费」的检查。
-- 证据：`docs/backlog.md:40-41`；`src/preview/table.ts:37`；现场 `.tower/comms/findings/20260912-worker-hygiene-improve-src-tauri-editorconfig-measure-css-measure.md`。
+- 证据：`docs/backlog.md:42-43`；`src/preview/table.ts:37`；现场 `.tower/comms/findings/20260912-worker-hygiene-improve-src-tauri-editorconfig-measure-css-measure.md`。
 - 防线：下次新增配置项、枚举值或字段时，同一 mission 内给出消费者或断言其功效；拿不出消费者的收进 `docs/backlog.md`，不要留在代码里冒充能力。
 
 ## 四、真机与并行环境
@@ -83,20 +84,28 @@ worker 动工前、reviewer 给出 verdict 前逐条过一遍。每条按「症�
 **11. 真机键盘注入整批丢键，同机第二个实例显著加剧**
 - 症状：注入 `needle` 只落地 `ndl`、`a..z` 只落地 `abcdghijkl`，app 侧 keydown 探针证明被丢的键从未到达 DOM；M138 / M139 / M140 三方各自实证，第二实例常驻时复现率明显变高。
 - 根因：KimiCU 逐键 CGEvent 链路对 WKWebView 间歇丢键（成因未定位），而工具自报 `ok` 无法自证落地。
-- 证据：`docs/backlog.md:102-108`；`scripts/acceptance/README.md:177-199`。
+- 证据：`docs/backlog.md:136-140`；`scripts/acceptance/README.md:177-199`。
 - 防线：跑真机场景前确认 1420 与 1430 都没有 Lumir 实例；断言走「回读 + 只在字节未变才重试」，不用重试次数当判据；失败先按丢键复跑一次再判产品缺陷（同一场景曾 M138 FAIL、M142 PASS）。
 
 **12. 磁盘水位与并行 worktree 的 target 预算**
 - 症状：磁盘 <1G 时 ENOSPC 硬阻塞真机批次（219MiB 时 `pnpm tauri dev` 因 vite 写临时文件失败而中止）；建到一半 ENOSPC 会留下半截 target 且不回血，比不构建更糟。
 - 根因：每个 worktree 各带 1.5–3G 的 debug target，磁盘是单例资源，预检是事后长出来的。
-- 证据：`docs/backlog.md:77-86`；`scripts/acceptance/README.md:35`。
+- 证据：`docs/backlog.md:111-120`；`scripts/acceptance/README.md:35`。
 - 防线：起真机实例前 `df -h` 看水位，worktree 首次构建按 ≥3G 估；空间不够就只跑 chromium 视觉门禁，并在报告里如实声明覆盖范围，不写「全量验收」。
 
 **13. 测试或套件污染真实环境、场景间串场**
 - 症状：一个中间版本让单元测试把 13 行事件写进真实 `~/.config/lumir/logs/`（M134）；验收套件不清 `recovery/` 时 08c 恢复出了上一场景的 vault 内容；视觉门禁默认 4173 被别的 worktree 的 `vite preview` 占着，`reuseExistingServer` 复用别人的 dist，对比对象不是本次构建。
 - 根因：并行 worktree + 真实主机，隔离没写进预检，靠事后逐条补。
-- 证据：提交 `58b54bd`；`scripts/acceptance/README.md:51-53`；`tests/visual/README.md:53-55`；`tests/visual/playwright.config.ts:3-4`。
-- 防线：下次写会碰全局状态的功能时，先确认落点在 `XDG_CONFIG_HOME` / 临时目录而不是 `~/.config`；跑视觉门禁前设 `LUMIR_VISUAL_PORT` 并确认无人占用；结论异常时先查 dist 是不是本次构建的。
+- 证据：提交 `58b54bd`；`scripts/acceptance/README.md:51-53`；`tests/visual/README.md:53-55`；`tests/visual/playwright.config.ts:3-4`；「vite preview 服务 dist」操作坑的实测 finding `.tower/comms/findings/20260917-reviewer-tabs-improve-review-md-3-mermaid-952px-960px-m149.md`。
+- 防线：下次写会碰全局状态的功能时，先确认落点在 `XDG_CONFIG_HOME` / 临时目录而不是 `~/.config`；跑视觉门禁前设 `LUMIR_VISUAL_PORT` 并确认无人占用；结论异常时先查 dist 是不是本次构建的；手动单跑 playwright 场景前先 `pnpm build`——webServer 是 `vite preview`，服务的是 dist 构建产物而不是 src 编译结果，改了 `src/` 不重建则改动不生效、反向验证会假绿（`gate.sh visual` 自带 build，只有手动迭代才踩）。
+
+## 五、等待方式（agent 运行时）
+
+**14. 用分钟级 sleep 盲等后台任务或等回话**
+- 症状：worker-toc 在 M148 用 16 次 120–290s 的 `sleep` 撑 turn（累计约 61 分钟），直接耗尽 2 小时任务预算被超时重启；盲等醒来后读到的是「睡到那一刻」的半截现场，是假绿/假红的温床（与第 1/2 条同族）。
+- 根因：误以为「结束 turn 会终止 run、看不到后台任务结果」；实际上后台任务完成通知与 tower 的 resume 都会唤醒 agent。每次 sleep 还烧一次 tool-call 往返的 context（该 worker 的 inputCacheRead 从 287k 涨到 418k）。
+- 证据：finding `.tower/comms/findings/20260917-tower-improve-worker-sleep-tower-waitfor-turn.md`（现场：agent-57 会话日志 turnId 0 step 122–252）；对照组 worker-jsonhl 全程「结束 turn + 被 resume」、零消息丢失、近零 sleep。
+- 防线：等自己的后台任务一律用 `WaitFor`（挂起零 LLM 请求、完成即唤醒，timeout ≤600s 可续等）；等 tower 或他人回话就结束 turn，回复经 resume 送达；只有无事件源的外部状态（锁文件、磁盘水位）才允许 ≤60s 的短采样，且采样须带诊断负载（如采样锁/磁盘状态做裁决复核），不是干睡。
 
 ## 维护
 

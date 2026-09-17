@@ -20,6 +20,7 @@
 7. **内存合同存量超标**：2026-09-06 evidence 218–222MB 已超 <200MB 合同（2026-09-16 未复测）——放宽合同还是专项治理，随 dogfood 性能专项拍板。
 8. **共享 `CARGO_TARGET_DIR` 与 dev-only 脚本化驱动入口**（工具链节 2/3 的长期候选）：是否立项待裁决。
 9. **链接形态矩阵的两处 tower 裁决**（M145，2026-09-17，Alex 未逐条点头）：① 相对路径**非 md**（`[x](./doc.pdf)`）带 `↗︎`（语义「会离开本应用」）而不是 `→`；② **纯锚点** `[x](#sec)` 带 `→` 但激活只给「暂不支持锚点跳转」toast（不做文档内滚动）。附一处同批未单独确认的口径：`[x](note.md#sec)` 按「应用内跳转 + 锚点部分忽略」处理。三处若要翻转，落点是 `src/preview/links.ts` 的 `classifyLinkTarget`（标记）与 `src/main.ts` 的 `followLink`（激活）。
+10. **多标签会话恢复**（M149，2026-09-17）：重启后按「路径列表 + 激活项」重开上次的标签。v1 明确不做（当时口径「留 backlog」），做成什么形状与何时做待裁决。建议形状：存 vault 维度（registry 旁 `last_session`）、只存有序路径 + 激活下标（可选滚动 offset），**不存**未保存内容与撤销史；打开必须走 `openFile` 既有链路；文件已删/不在 vault 内时跳过并记诊断；启动日志记一条 `session_restored{count}`（`log_event` 通道已有）。时机建议：等 dogfood 反馈「常态开几个标签」后再定，避免为 2 个标签的场景过度设计。finding `20260917-worker-tabs-idea-m149-backlog.md`。
 
 ## 待修 findings（不阻塞）
 
@@ -43,6 +44,18 @@
 - **语言注册表两处漂移**（M138 旁注）：`src/editor.ts` 的 LANGUAGES 未导出，`src/preview/code.ts`
   另建一份着色语言表。建议收口为单一来源（小 mission）。
 - **文案-Copy.md D40 后空行断表 + 编号未升序**（M141 评审旁证）：既有缺陷，清扫类。
+- **rust 字符字面量在围栏代码块里不着色（与 code 模式的 parity 缺口）**（M147 finding，medium）：
+  `src/preview/code.ts` 的 `tagsForStyle` 遇「modifier 开头的复合 token 名」整条丢 tag（CM6 的
+  `createTokenType` 只警告并保留其余 part）；rust simpleMode 的 `string.special` 触发——`'a'` 在
+  code 模式取字符串色、在 ` ```rust ` 围栏里取正文色，M138 的「围栏与整文件打开 tag/颜色完全一致」
+  声明对这类 token 不成立。影响面已枚举：收录语言里只有 rust（字符/字节字符字面量两种构造）。
+  修法（finding 附建议 diff）：与 CM6 同语义逐名字段独立结算、跳 part 不丢整条；须配不变量测试
+  （「simpleMode 复合 token 在围栏与 code 模式 tag 集合一致」）并走渲染缺陷合同先行流程核对
+  rust 场景基线。finding `20260917-worker-jsonhl-bug-tag-token-rust-code.md`。
+- **`src/preview/livePreview.ts:427` 注释仍引用已删除的 `openDocument`**（M149 r1 nit 残留，low）：
+  改「装载（`editor.reloadSession`）」，与同批另两处（mermaid.spec.ts:296 / toc-outline.spec.ts:84，
+  已改）同形；一行注释零行为变化，可并入下次碰该文件的源码改动。
+  finding `20260917-worker-tabs-improve-m149-nit-livepreview-ts-opendocument-scope.md`。
 
 ### shell / 系统
 
@@ -54,6 +67,7 @@
 - **编辑区全空白偶发**：M114 一次、M116 0/3，复现条件未锁定。运行时诊断日志已落地（M134，
   2026-09-16），下次复现后查 `<config_dir>/lumir/logs/<UTC日期>.jsonl` 的事件序列定位。
 - **视觉套件 `markdown-parser` 的 `large-mixed` 偶发失败**（M144 一次，低）：整轮视觉回归里它 `page.evaluate: TypeError: Cannot read properties of undefined (reading 'metrics')` 失败一次（该用例把 `mixed` 文档重复 2000 次喂给解析实验，并挂 CDP profiler 采样），单独重跑与随后整轮重跑都 10/10 PASS。现场没有留下可归因的线索（不是本批次的改动路径——该 fixture 是独立的 vite 子应用，不加载 `src/`）。**给后续跑 `gate.sh visual` 的人**：它若偶发报红，先单独重跑该 spec 再判断，别当成自己的回归。
+- **`paragraph.spec.ts`「普通段首对齐 640」全量轮瞬态失败一次**（reviewer-toc finding，2026-09-17）：程序设 DOM 选区后下一拍 `getSelection()` 读到 `""`（预期 `普通段落不再缩进`）；隔离复跑 2/2 PASS、第二轮全量 8/8 PASS，与 M148 diff 无因果（toc 不产生装载后的编辑器 dispatch）。疑似全量负载下 CM 装饰重建把文本节点替换、Range 脱离导致选区坍缩——既有测试的时序敏感面；若发生在 CI 会红掉无关 mission 的门禁。修法：选区断言改为「同一 evaluate 内设选区并立即回读」，或读取端加 `expect.poll` 重试（`tests/visual/scenes/paragraph.spec.ts:38-39`）。finding `20260917-reviewer-toc-bug-paragraph-spec-ts-640-flake.md`。
 
 ### 验收套件（M144 实测出的表达力缺口）
 
@@ -69,6 +83,25 @@
 - **`checkScenario` 不校验 `do: type` 的 `text` 非空**（worker-typefix finding）：漏写 `text:` 会在
   真机跑成注入 `undefined` 后连报 3 次未落地，而非在 `--check` 阶段就报。
   finding `20260916-worker-typefix-improve-checkscenario-do-type-text-undefined`。
+- **`click` 的 `target.name` 与断言的匹配口径不一致**（M148 finding，low）：`findNode`
+  （`lib/ax.mjs`）是裸 `new RegExp(name)` 语义（无 `m` flag），断言侧 `matcher()`（`lib/execute.mjs`）
+  才是「`/.../`=正则、其余=子串」——`target: { name: "/第一部分/" }` 会去找字面量「/第一部分/」
+  而报「找不到可点节点」，与「控件真的不存在」无法区分（M148 为此多跑一整轮真机）；`m` flag 之差
+  还决定 `^…$` 是整串锚定还是行锚定（`AXTextArea.value` 是整篇文档文本，行锚定会误命中编辑器节点）。
+  根治法：寻址与断言共用 `matcher()`（提到 `lib/` 公共位置，裸串=子串、RegExp 对象保持原行为）；
+  这是全部场景共用的寻址入口，改完需一次全量真机复验，单独立项，不塞进功能 mission。临时口径
+  （用 `help` 寻址 / 锚定裸正则）已写进 `scripts/acceptance/README.md` 已知边界。
+  finding `20260917-worker-toc-improve-click-target-name.md`。
+
+## 视觉门禁（tests/visual）
+
+- **README 缺「删 UI 后核对基线时间戳」卫生节，两处指针悬空**（M146 finding，low）：
+  `tests/visual/playwright.config.ts:11` 与本文档已核销节都声称该卫生步骤写在
+  `tests/visual/README.md`，但该 README 全文无此内容，规则本体只在 AGENTS.md 硬规则里——
+  按指针去读 README 的人拿不到这条强制步骤（而它正是 0.005→0.001 收紧的原因）。修法：README
+  「更新基线」节补一段（删除/移动 UI 元素后逐张核对其出现过的整页基线时间戳，`ls -l
+  tests/visual/baselines/` 对照）；另建议 `scripts/visual/run.sh --update` 输出回显一句该提醒，
+  让跑 `--update` 的人不必先读 README。finding `20260917-worker-reviewmd-bug-ui-readme.md`。
 
 ## 工具链与环境（待 Alex 裁决）
 
@@ -107,6 +140,12 @@
    `20260916-worker-keys-bug-kimicu-press-key-type-text.md`（正文实为 press_key）。
 7. **同机第二个 Lumir 实例显著加剧 press_key 丢键**（M140/M142 对照实证）：跑真机验收前的预检
    须同时确认 1420（dev）与 1430（验收）都没有 Lumir 实例在跑。
+8. **孤儿进程巡检**（M148 finding，low）：wt-62 遗留两组存活 10 天的 headful Chromium 孤儿
+   （ppid=1，带完整子进程树）与历史 `vite preview` 常驻，会干扰真机验收里「谁是前台」的判断
+   （M148 全量轮撞到过窗口被挤位）。批次收尾统一回收：`ps -o pid,ppid,etime,command | grep -E
+   'playwright|chromium|vite preview'`，找 ppid=1 且 elapsed > 1 天的孤儿、确认不属于在跑 mission
+   后 kill；**注意别碰 Alex 的 dogfood 实例（1420 端口的 vite / target/debug/lumir）**。
+   finding `20260917-worker-toc-improve-wt-62-headful-chromium-10-vite-preview.md`。
 
 ## 待真机验收
 
@@ -114,9 +153,11 @@
 设计见 [docs/process/real-machine-acceptance.md](process/real-machine-acceptance.md)）；手感/审美项仍归 Alex。
 
 分类依据 = **证据目录里真实 PASS 的场景**，不是「场景写了就算覆盖」。最近一次全量实跑：
-**master@`6e4d19a`（主 checkout 直接跑，2026-09-16 深夜收尾终验）——20 场景 / 223 断言 / 20 PASS 0 FAIL**
-（约 7 分钟；证据 `test-results/acceptance/2026-09-16/`，含各场景 steps.md / shots / ax 与
-`_type-retry-unit/` 口径验证 8 判定）。08b 的旧 FAIL（冲突期盲发按键未落地）已由 M140 核销
+**M148+M149 批次（2026-09-17）——22 场景 / 22 PASS 0 FAIL**：全量 22/22 @ `fab134c`（M149 r1 交付态，
+含 M148 的 13-toc），r1→r2 唯一行为改动（`closeTab` 守卫）后单场景复跑 14-tabs PASS @ `52bb912`
+（43 断言 / 40.5s）；合并提交 `ac51328`。证据 `test-results/acceptance/2026-09-17/`（两次 run 的
+合成布局见该目录 summary.md）。上一次全量：master@`6e4d19a`（2026-09-16，20 场景 / 223 断言，
+证据 `test-results/acceptance/2026-09-16/`）。08b 的旧 FAIL（冲突期盲发按键未落地）已由 M140 核销
 （keys 动作回读+有限重试 + 08b 落点改走 type 通道 + 探测串移文末 + `ax.focused` 断言形态）；
 同族 type 侧假绿由 M143 核销（重试口径对齐 keys：只在字节完全未变时重试，partial landing 直接报错）。
 
@@ -161,6 +202,13 @@
     URL 原文）/ wikilink 跳转与未创建不建文件 / 相对路径 md 跳进目标笔记 / 解析不到只 toast /
     锚点只提示 / 不可用形态不装饰也不激活；`link_open` 的 `category`（external / internal-md /
     asset / anchor / blocked-scheme）逐类断言。
+14. **TOC 大纲 popover**（M148）—— `13-toc`（17 步 / 32 断言）：masthead 当前位置指示段、
+    ⌘⇧O 浮层开合、↑↓ 导航不穿透到编辑器、Enter 跳转后光标恰在标题行尾、空 heading 文档给 toast。
+    配色与几何由视觉门禁元素级基线 `toc-popover-chromium-darwin.png` 守。
+15. **多标签**（M149）—— `14-tabs`（43 断言）：单击预览替换 / 首次输入或双击固定 / ⌘1–9 直达 /
+    ⌃⇥ 循环 / ⌘W 关当前标签（未命名 dirty 才确认）/ 后台标签外部删除被浮条点名。
+    **语义变化（Alex 使用习惯）**：⌘W 从关窗变为关当前标签（菜单「关闭」项保留但无加速键，
+    退出走 ⌘Q / 红灯）；有路径的标签间切换不再有 dirty 守卫；切换 vault 升级为任一标签 dirty 即拦。
 
 **已机验到渲染/结构层，行为细节仍缺可观测面**
 
@@ -194,6 +242,7 @@
 - **r1 格式崩溃备份**（无 base_revision）恢复后首次保存必报一次冲突——安全方向，仅限跑过 r1 build 的人。
 - **kimi-cu `type_text` 走 AX 注入**，编辑器失焦时文本落陈旧原生选区——工具观测，非 app 缺陷。
 - **`config.json` 解绑 ≠ 关闭能力**（已录 spec）：解绑后 macOS 原生选择器可能接手（如 ⌃K → `deleteToEndOfLine:`）——dogfood 改配置时预期内行为。
+- **js/ts 对象字面量键的复合 `property` token 有意不修**（M147 finding，low）：`{1: "x"}` 的数字键取数字色、字符串键取字符串色（后者是 GitHub/VS Code 同款通行呈现），每次渲染伴一条 `Unknown highlighting tag property` console 噪声（CM6 按 part 名去重，不刷屏）；code 模式与围栏两侧一致，不构成 parity 缺口。若将来裁决「对象键一律属性色」，做法与 M147 相同——javascript/typescript 的 parser 挂 `{ property: tags.propertyName }` tokenTable（两处 LANGUAGES 同源）并核对 js/ts 基线；数字键要属性色还需处理 objprop 复合名（HighlightStyle 条目序裁决）。finding `20260917-worker-jsonhl-improve-javascript-typescript-property-token-console-json-js-ts.md`。
 
 ## 已核销（留痕，定期清理）
 
