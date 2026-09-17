@@ -6,6 +6,8 @@
 #
 # 校验内容（口径本体见 docs/process/adr-lifecycle.md）：
 #   1. docs/adr/ 下每份 ADR 的文件结构、状态字段、日期与角色字段、必备章节
+#      - 状态值合法（合法集合见下），与「deferred 必带全角括号注解」**两条分别校验**
+#        （adr-lifecycle.md 的 `deferred` 一节定稿口径：裸 deferred 非法）
 #   2. docs/adr/README.md 索引与 ADR 文件双向一致
 # 输出：失败时逐条打印问题（CI 上同时是 ::error:: 注解）并以 1 退出。
 #
@@ -41,6 +43,15 @@ for f in "${files[@]}"; do
   status=$(grep -m1 -E '^- 状态: ' "$f" | sed 's/^- 状态: //' || true)
   if ! echo "$status" | grep -qE '^(proposed|accepted|deprecated|deferred|superseded by ADR-[0-9]{4})(（[^）]*）)?$'; then
     echo "::error file=${f}::状态字段非法：'${status}'（合法值：proposed / accepted / deprecated / deferred / superseded by ADR-NNNN，可附 （…） 注解）"
+    fail=1
+  fi
+
+  # 第二条（与上一条分别校验，见 adr-lifecycle.md 的 `deferred` 一节）：`deferred` 必带
+  # 非空的全角括号注解。裸 `deferred` 答不出「搁置到什么时候、因为什么」，与这个状态要求
+  # 可重启判据的性质自相矛盾；注解内容自由，惯例是「自何时起 + 缘由 + 由哪份 ADR 触发」。
+  # 其余状态不受此条约束（注解始终可选）。
+  if echo "$status" | grep -qE '^deferred(（|$)' && ! echo "$status" | grep -qE '^deferred（[^）]+）$'; then
+    echo "::error file=${f}::状态 'deferred' 必须附全角括号注解（裸 deferred 非法；内容自由，惯例：自何时起 + 缘由 + 由哪份 ADR 触发）"
     fail=1
   fi
 
