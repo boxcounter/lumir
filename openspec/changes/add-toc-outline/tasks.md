@@ -56,7 +56,11 @@
 
 - [x] 5.1 `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` 通过。
 - [x] 5.2 `scripts/gate.sh quick` 全绿（fmt / clippy / cargo test / bindings 漂移 / tsc / openspec validate）。
-- [x] 5.3 `node scripts/acceptance/run.mjs 13` 在真实 WKWebView 下全 PASS（证据落
-      `test-results/acceptance/`；被环境阻塞时如实记录并上报，不用 chromium 结果替代）。
+- [x] 5.3 真机（WKWebView）全量 `node scripts/acceptance/run.mjs` **21/21 PASS**（含 `13-toc`
+      单场景 PASS / 32 断言 0 失败，耗时 31.9s）；证据落 `test-results/acceptance/2026-09-17/`
+      （`summary.md` / `results.json` / `13-toc/steps.md` + `shots/` + `ax/`）。此前两轮 13-toc 的
+      FAIL 与排查过程一并留档：首轮是 `click.target.name` 口径写错（已修 + 写进套件 README），
+      次轮是全量轮里 `Enter` 丢键的连锁（已按「确定性优先」重排步骤，`run.mjs 12 13` 复现后
+      消除连锁）。
 - [x] 5.4 `git diff --check` 通过；改动文件集合与 mission scope 一致（跨 scope 的只有那一条被批准的
       只读 import，无 preview 文件改动）。
