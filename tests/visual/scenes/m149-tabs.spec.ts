@@ -1,6 +1,13 @@
 import { expect, test, type Page } from "@playwright/test";
 import { readDocument } from "./parity-checks";
-import { fireMenuCommand, stubTauri, type VaultFixture } from "./tauri-stub";
+import {
+  externalWrite,
+  fileText,
+  fireFsEvent,
+  fireMenuCommand,
+  stubTauri,
+  type VaultFixture,
+} from "./tauri-stub";
 
 // M149 多标签。为什么要有这个场景（判据都是实测结论，不是设想）：
 //
@@ -229,4 +236,105 @@ test("⌘W 关当前标签：干净标签直接关，dirty 标签先给三个出
   await expect(page.locator(".tab")).toHaveCount(0);
   await expect(page.locator(".tabstrip")).toBeHidden();
   await expect(page.locator(".masthead-file")).toHaveText("无当前文件");
+});
+
+// ---------------------------------------------------------------------------
+// 逐标签的保存粒度（reviewer r1 P2-3：这三条是 per-tab 粒度升级的核心行为合同，
+// 此前只有真机场景的间接覆盖、或根本没有回归防线——重引入共享状态不会有任何测试变红）
+// ---------------------------------------------------------------------------
+test("⌘S 只存前台标签：另一个标签的未保存内容不落盘", async ({ page }) => {
+  await stubTauri(page, VAULT);
+  await page.goto("/");
+  const content = page.locator(".cm-content");
+
+  // 标签一：改脏 alpha，随后用一次外部写入把它钉在「自动保存已暂停」态——否则 2s 后
+  // 自动保存会把 alpha 也落盘，这条用例就分不出「⌘S 只存前台」了。
+  await page.locator('.ft-row[title="alpha.md"]').click();
+  await content.click();
+  await page.keyboard.type("AAA");
+  await externalWrite(page, "alpha.md", ALPHA);
+  await fireFsEvent(page, [{ kind: "modified", path: "alpha.md", entry_kind: "file" }]);
+  await expect(page.locator(".lumir-toast", { hasText: "检测到外部修改" })).toBeVisible();
+
+  // 标签二：新开 beta、改脏，让它当前台。
+  await page.locator('.ft-row[title="beta.md"]').click({ modifiers: ["Meta"] });
+  await content.click();
+  await page.keyboard.type("BBB");
+  await expect(page.locator(".tab")).toHaveCount(2);
+
+  await page.keyboard.press("Meta+s");
+  await expect(page.locator(".lumir-toast", { hasText: "已保存" })).toBeVisible();
+
+  // 前台标签落盘；另一个标签的未保存内容仍在内存里、没有被写进任何文件。
+  await expect.poll(() => fileText(page, "beta.md")).toContain("BBB");
+  expect(await fileText(page, "alpha.md")).not.toContain("AAA");
+  await expect(page.locator(".tab", { hasText: "alpha.md" }).locator(".tab-dirty")).toBeVisible();
+});
+
+test("自动保存的 debounce 逐标签独立：切标签不把待写内容带到新文档", async ({ page }) => {
+  await stubTauri(page, VAULT);
+  await page.goto("/");
+
+  await page.locator('.ft-row[title="alpha.md"]').click();
+  await page.locator(".cm-content").click();
+  await page.keyboard.type("AAA");
+  // 立刻另开 beta 并切过去：alpha 的 debounce 还在跑，而前台已经不是它了。
+  await page.locator('.ft-row[title="beta.md"]').click({ modifiers: ["Meta"] });
+  await expect(page.locator(".cm-content")).toContainText("Beta 的第一段");
+
+  // debounce 到期后写的是 alpha——它自己的路径与内容。若定时器是共享的、到点再去读
+  // 「当前前台是谁」，写的就会是 beta，而 alpha 永远等不到落盘（这正是代码注释里
+  // 「把 A 的内容写进 B 的路径」那类静默数据损坏的回归点）。
+  await expect.poll(() => fileText(page, "alpha.md"), { timeout: 6000 }).toContain("AAA");
+  expect(await fileText(page, "beta.md")).not.toContain("AAA");
+  // beta 也没被别人的写入算到自己头上：它仍是干净的。
+  await expect(page.locator(".tab", { hasText: "beta.md" }).locator(".tab-dirty")).toBeHidden();
+});
+
+test("后台标签的外部修改也自动重载，且不抢前台", async ({ page }) => {
+  await stubTauri(page, VAULT);
+  await page.goto("/");
+  const content = page.locator(".cm-content");
+
+  await page.locator('.ft-row[title="alpha.md"]').click();
+  await page.locator('.ft-row[title="beta.md"]').click({ modifiers: ["Meta"] });
+  await expect(content).toContainText("Beta 的第一段");
+  await expect(page.locator(".tab")).toHaveCount(2);
+
+  // 外部改写**后台**标签的文件。
+  await externalWrite(page, "alpha.md", "# Alpha 标题\n\n外部改写过的正文。\n");
+  await fireFsEvent(page, [{ kind: "modified", path: "alpha.md", entry_kind: "file" }]);
+
+  // 浮条点名 alpha；前台的 beta 不被抢（后台分支只换代它的 state，不碰 view）。
+  await expect(page.locator(".lumir-toast", { hasText: "alpha.md" })).toBeVisible();
+  await expect(content).toContainText("Beta 的第一段");
+
+  // 切回 alpha：看到的是磁盘上的新内容——后台分支确实重载了它。
+  await page.locator(".tab-open", { hasText: "alpha.md" }).click();
+  await expect(content).toContainText("外部改写过的正文");
+});
+
+test("零标签时 ⌘W 无操作：未命名文档不是标签（reviewer r1 P2-1）", async ({ page }) => {
+  // vault 未装载：编辑器里是启动时的 SAMPLE 演示文档，没有任何标签（标签栏隐藏）。
+  await stubTauri(page, null);
+  await page.goto("/");
+  await expect(page.locator(".tabstrip")).toBeHidden();
+  const before = await readDocument(page);
+  expect(before.length).toBeGreaterThan(0);
+
+  await page.locator(".cm-content").click();
+  await page.keyboard.press("Meta+w");
+
+  // 无操作：文档逐字节不变（P2-1 修之前它会被静默换成一份空文档）、没有确认浮条。
+  expect(await readDocument(page)).toBe(before);
+  await expect(page.locator(".tabstrip")).toBeHidden();
+  await expect(page.locator(".lumir-toast")).toHaveCount(0);
+
+  // dirty 的未命名文档同样无操作：P2-1 修之前会弹出主体为空的确认浮条（`「」有未保存…`）。
+  await page.locator(".cm-content").click();
+  await page.keyboard.type("Z");
+  await page.keyboard.press("Meta+w");
+  expect(await readDocument(page)).toContain("Z");
+  await expect(page.locator(".lumir-toast", { hasText: "关闭后修改将丢失" })).toHaveCount(0);
+  await expect(page.locator(".tabstrip")).toBeHidden();
 });

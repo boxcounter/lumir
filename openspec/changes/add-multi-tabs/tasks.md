@@ -15,7 +15,12 @@
 - [x] 1.4 运行时经 `StateEffect.appendConfig` 追加的扩展（当前是 `src/toc.ts` 的大纲监听）
       随新建会话带上：否则新标签上大纲指示段静默停更。收集点在 `collectAppendedExtensions`
 - [x] 1.5 证据：`tests/visual/scenes/m149-tabs.spec.ts` 的「切标签保留滚动位置与撤销史」用例
-      （⌘Z 撤回的是切走前的输入、切回来 scrollTop 与离开时差 ≤20px、篇首标记不在渲染出的可见行里）
+      ——滚动判据是**视口顶行与离开时同一行**（用 `view.posAtCoords` 读，见该用例 `topVisibleLine`
+      的注释）；撤销史判 ⌘Z 撤回的是切走之前那次输入。**不断言 scrollTop 像素值**：恢复走 CM 的
+      scrollTarget、由它自己的测量周期落地，而本应用的 scroller 是 grid 布局（实测同一行仍置顶
+      时该值可以读到 0）。反向验证：注释掉 `editor.ts` 的 `activate()` 里那句滚动恢复重跑，
+      该用例如实变红（Expected `填充 44 行。` / Received `# 顶部 TOP-MARK`）。
+      （reviewer r1 P2-2：原文写「scrollTop 差 ≤20px」，与用例实际断言不符，已改正。）
 
 ## 2. 标签栏 UI
 
@@ -70,8 +75,11 @@
 - [x] 5.7 关闭 dirty 标签有确认，保存未闭环时不关闭
 - [x] 5.8 save-controller 原先经 `appendConfig` 自装的 updateListener 收进内核的
       `editor.onDocChanged`（那条路径只作用于当时那一个 state，新标签会静默失效）
-- [x] 5.9 证据：`14-tabs` 的后半段（后台标签被外部改写 → 浮条点名 `「tabs-long.md」` 且前台
-      正文不被顶掉）；`gate.sh visual` 的 save-* 系列场景全绿（见 §8）
+- [x] 5.9 证据：`14-tabs` 的「后台标签的文件被外部删除」一步——`vaultRm` 删掉**后台**标签的
+      `tabs-a.md`，浮条点名 `「tabs-a.md」`、前台正文与标签数都不变；`gate.sh visual` 的 save-*
+      系列场景全绿（见 §8）
+      （reviewer r1 P2-2：原文写「后台标签被外部**改写** → 浮条点名 `tabs-long.md`」，事件类型
+      与文件名都错，已按场景实际内容改正。）
 
 ## 6. 文件树联动
 
@@ -106,12 +114,20 @@
       复跑记录（2026-09-17）：首轮 0/1（两条口径问题，均已修——见下面 8.4 之后的「首轮 FAIL 归因」）
 - [x] 8.4 视觉基线：逐张核对 + 前后对比说明
       - **12 张整页基线随标签栏更新**（都「有文件打开」→ 标签栏占掉编辑器列顶部一行，正文整体
-        下移约 31px；文件树、masthead、大纲指示段、正文渲染本身逐像素未动）：
-        `app-main/filetree-open`、`callout/{rendering,theme}`、`math/{rendering,theme}`、
-        `mermaid/{rendering,theme}`、`render-codeblock`、`render-hr`、`render-link`、
-        `render-quote-list`、`wikilink-states`。核对方式：逐张看 `*-diff.png`，
-        差异形态是「顶部新增标签栏 + 全篇文字下移一档（字形在新旧位置各留一次痕迹）」，
-        与预期渲染一致；单张差异像素占比 0.5%–0.9%（阈值 0.2 下只有文字边缘算差异）。
+        下移约 31px）：`app-main/filetree-open`、`callout/{rendering,theme}`、
+        `math/{rendering,theme}`、`mermaid/{rendering,theme}`、`render-codeblock`、`render-hr`、
+        `render-link`、`render-quote-list`、`wikilink-states`。
+        核对方式：逐张看 `*-diff.png`（差异形态是「顶部新增标签栏 + 全篇文字下移一档」，与预期
+        渲染一致）+ **reviewer r1 的独立像素审计**。以下读数以 reviewer 的审计为准——我这边只做了
+        目视核对，不足以支撑「逐像素未动」这种断言（reviewer r1 P2-4 已指出原措辞失实）：
+          - 左栏 `x < 244` 全部 **0 差异**；
+          - 正文按 31px 位移对齐后 **10/12 张为 0.000%**；
+          - **8/12 张吃进 M148 的 toc 指示段（`› Demo Vault`）、mermaid 两张吃进 M138 的 js 代码块
+            着色（952px）**；其中 952px **小于容差 960px**（1200×800 × 0.001），属 REVIEW.md 第 3 条
+            「容差宽到能吞掉一次真实变化」的同族现象（reviewer 已另发 TowerFinding，建议把这条补进
+            第 3 条的证据）。
+          基线本身对当前构建是真实的（门禁绿、残差全部归因）；失实的是原说明里「masthead /
+          指示段 / 正文渲染本身逐像素未动」这句未经核对的断言，此处按实测改写。
       - **空态基线 `app-main.png` 逐字节零变化**（不在改动清单里）——这是「标签栏空态隐藏、
         不占行高」的直接证据。
       - **三张既有元素级基线零变化**：`toc-popover`、`describe-bindings-panel`、
@@ -137,14 +153,43 @@
 - [x] 9.1 `scripts/acceptance/fixtures/`：`tabs-a.md` / `tabs-b.md` / `tabs-long.md`
       （短文档 + 一篇多屏长文，用于滚动恢复的派生证据）
 - [x] 9.2 `scripts/acceptance/scenarios/14-tabs.md`：开 / 切 / 关 / 预览替换 / 首次输入固定 /
-      ⌘1–9 直达 / ⌃⇥ 循环 / ⌘W dirty 确认 / 滚动恢复 / 外部变更点名后台标签
+      ⌘1–9 直达 / ⌃⇥ 循环 / ⌘W 干净关 + dirty 确认 + 关掉后交给邻座 / 空态之后还能继续开 /
+      后台标签被外部删除时浮条点名它
+      （reviewer r1 P2-2：原文把「滚动恢复」也列入本场景覆盖，与场景正文明确排除它矛盾——
+      那条覆盖在视觉通道，见 9.4 与 §8）
 - [x] 9.3 `node scripts/acceptance/run.mjs --check`：22 个场景静态校验通过
-- [x] 9.4 正文写清断言口径（标签计数用关闭钮读屏名、dirty 计数用「（未保存）」后缀、滚动恢复
-      用「篇首标记不在渲染出的可见行里」的派生证据）与**未进本场景的通道**（⌘-点击 / 双击 /
-      原生菜单点击 → 视觉场景；标签栏视觉 → 元素级基线）
+- [x] 9.4 正文写清断言口径（标签计数用关闭钮读屏名；**不断言 dirty 标记**——自动保存的 2s
+      debounce 与 `do: type` 抢窗口，改为先用 `vaultRm` 把自动保存停在暂停态、再验 ⌘W 确认）与
+      **未进本场景的通道**：⌘-点击 / 双击（套件无法表达）、原生菜单点击（点不到菜单栏）→ 视觉
+      场景；**滚动 / 光标恢复 → 视觉通道**（`AXTextArea.value` 不是视口代理）；标签栏视觉 →
+      元素级基线
 
 ## 10. 已知边界 / 不做
 
 - [x] 10.1 会话恢复（重启后重开标签）不做——留 `docs/backlog.md`
 - [x] 10.2 拖拽排序 / split view / 标签预览浮层不做（proposal 的非目标）
 - [x] 10.3 未命名文档 dirty 时打开文件仍拦截（沿用 M130），未做成「未命名标签」形态
+
+## 11. 评审 r1（reviewer-tabs）修复
+
+- [x] 11.1 **P2-1 零标签时 ⌘W 非无操作**：`closeTab()` 加 `session.path === undefined` 守卫
+      （未命名文档不是标签，⌘W 与逐标签关闭钮对它一律无操作）。回归测试：
+      `m149-tabs.spec.ts` 的「零标签时 ⌘W 无操作」——**反向验证**过：去掉守卫后该用例变红
+      （Expected 演示文档原文 / Received `""`，即文档被静默清空）；同时断言 dirty 的未命名文档
+      不再弹出主体为空的确认浮条。
+- [x] 11.2 **P2-2 证据失实三处 + openDocument 残留注释**：§1.5（改为「断言视口顶行与离开时
+      同一行，不断言像素值」并附反向验证）、§5.9（改为实际场景：`vaultRm` 删后台标签的
+      `tabs-a.md`、浮条点名 `tabs-a.md`）、§9.2/§9.4（把「滚动恢复」从本场景覆盖里去掉，
+      写明它在视觉通道）；注释三处里 `tests/visual/scenes/{mermaid,toc-outline}.spec.ts` 已改，
+      `src/preview/livePreview.ts:427` 不在本 mission 改动面内 → 已发 finding 请 tower 路由。
+- [x] 11.3 **P2-3 三条 spec 场景无回归防线**（tower 裁决：补测）：`m149-tabs.spec.ts` 新增
+      「⌘S 只存前台标签」「自动保存的 debounce 逐标签独立」「后台标签的外部修改也自动重载」。
+      定时器那条做过**反向验证**：把 reconcile 的落点改成「到点读前台」（朴素共享定时器的写法），
+      该用例如实变红（Expected `"AAA"` / Received 原 alpha 内容 = alpha 永远等不到落盘）。
+- [x] 11.4 **P2-4 基线对比说明漏报**：§8.4 按 reviewer 的独立像素审计改写——左栏 0 差异、
+      正文位移对齐后 10/12 张为 0.000%、8/12 张吃进 M148 指示段、mermaid 两张吃进 M138 的
+      js 代码块着色（952px，**小于** 960px 容差）；并明确「masthead / 指示段 / 正文渲染本身
+      逐像素未动」那句是我**未经核对**的断言，不是事实。
+- [x] 11.5 修完重跑：`scripts/gate.sh visual` **8/8 PASS（SKIP 0）**（visual-regression 227 用例）；
+      真机 `node scripts/acceptance/run.mjs 14` 复跑 **PASS**（40.5s——closeTab 是本轮唯一的行为
+      改动，其余为测试与文档）。

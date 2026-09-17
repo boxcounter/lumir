@@ -268,8 +268,15 @@ function activateTab(session: EditorSession): void {
   syncActiveDocument();
 }
 
-/** 关标签：有未保存修改的先给三个出口确认（文案 D92 / D93）。 */
+/** 关标签：有未保存修改的先给三个出口确认（文案 D92 / D93）。
+ *
+ * **未命名文档（没有路径）不是标签**：⌘W 与逐标签关闭钮对它一律无操作（reviewer r1 P2-1）。
+ * 它的内容只活在内存里，根本没有「关掉」这个语义——不加这条守卫时，冷启动的 SAMPLE 演示
+ * 文档会被静默换成一份空文档（用户看到的是文档被无声清空），对一个无路径的 dirty 文档还会
+ * 弹出主体为空的确认浮条（`「」有未保存修改…`）。spec 与 proposal 都写「零标签时 ⌘W 无操作」，
+ * 这条守卫就是它的落点。 */
 async function closeTab(session: EditorSession): Promise<void> {
+  if (session.path === undefined) return;
   if (!session.dirty) {
     closeTabNow(session);
     return;
