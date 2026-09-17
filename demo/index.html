@@ -69,6 +69,8 @@ body { font-family:var(--font-ui); background:var(--bg); color:var(--text); font
   background:var(--pane-bg); font-size:12px; min-height:44px;
 }
 #console .c-title { font-weight:600; margin-right:4px; }
+.c-mock-link { color:var(--accent); text-decoration:underline; text-underline-offset:2px; }
+.c-mock-link:hover { text-decoration:none; }
 .c-group { display:flex; align-items:center; gap:6px; }
 .c-label { color:var(--dim); }
 .seg { display:inline-flex; border:1px solid var(--border); border-radius:var(--radius); overflow:hidden; background:var(--bg); }
@@ -231,6 +233,8 @@ body { font-family:var(--font-ui); background:var(--bg); color:var(--text); font
 // ============================================================================
 const COPY = {
   zh: {
+    C13_mockLink: "另有多 vault UX mock →",
+    C13_mockLinkTitle: "多 vault 入口与切换器 UX mock（M158）",
     D1_switch: "切换",
     D1_switchTitle: "切换 vault",
     D2_emptyHint: "打开一个目录作为 vault，开始浏览全部文件。",
@@ -267,6 +271,8 @@ const COPY = {
     intent_ink: "「墨」为夜间长读设计：底色是带蓝灰的深灰而非纯黑，正文亮度压低一档避免刺眼。琥珀与青两种强调色分工——青指向可跟随的链接，琥珀标记需要处理的异常（未创建、不支持、歧义），黑暗中一眼分流。",
   },
   en: {
+    C13_mockLink: "Multi-vault UX mock →",
+    C13_mockLinkTitle: "Multi-vault entry & switcher UX mock (M158)",
     D1_switch: "Switch",
     D1_switchTitle: "Switch vault",
     D2_emptyHint: "Open a folder as a vault to start browsing all its files.",
@@ -562,6 +568,12 @@ function renderConsole() {
   host.replaceChildren();
   const t = T();
   host.append(el("span", "c-title", esc(t.C1_consoleTitle)));
+
+  // 指向后续 UX mock 的链接（本页是 M41/M57 期的视觉方向走查台，M158 的多 vault mock 是独立单文件）。
+  const mockLink = el("a", "c-mock-link", esc(t.C13_mockLink));
+  mockLink.href = "multi-vault.html";
+  mockLink.title = t.C13_mockLinkTitle;
+  host.append(mockLink);
 
   let g = el("span", "c-group");
   g.append(el("span", "c-label", esc(t.C2_direction)));
