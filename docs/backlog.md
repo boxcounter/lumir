@@ -20,6 +20,64 @@
 8. **共享 `CARGO_TARGET_DIR` 与 dev-only 脚本化驱动入口**（工具链节 2/3 的长期候选）：是否立项待裁决。
 9. **链接形态矩阵的两处 tower 裁决**（M145，2026-09-17，Alex 未逐条点头）：① 相对路径**非 md**（`[x](./doc.pdf)`）带 `↗︎`（语义「会离开本应用」）而不是 `→`；② **纯锚点** `[x](#sec)` 带 `→` 但激活只给「暂不支持锚点跳转」toast（不做文档内滚动）。附一处同批未单独确认的口径：`[x](note.md#sec)` 按「应用内跳转 + 锚点部分忽略」处理。三处若要翻转，落点是 `src/preview/links.ts` 的 `classifyLinkTarget`（标记）与 `src/main.ts` 的 `followLink`（激活）。
 10. **多标签会话恢复**（M149，2026-09-17）：重启后按「路径列表 + 激活项」重开上次的标签。v1 明确不做（当时口径「留 backlog」），做成什么形状与何时做待裁决。建议形状：存 vault 维度（registry 旁 `last_session`）、只存有序路径 + 激活下标（可选滚动 offset），**不存**未保存内容与撤销史；打开必须走 `openFile` 既有链路；文件已删/不在 vault 内时跳过并记诊断；启动日志记一条 `session_restored{count}`（`log_event` 通道已有）。时机建议：等 dogfood 反馈「常态开几个标签」后再定，避免为 2 个标签的场景过度设计。finding `20260917-worker-tabs-idea-m149-backlog.md`。
+11. **跨语言 frontmatter 上限 Rust 200 vs TS 512（201–512 行分歧）**（**待裁决**；M152 finding，worker-langunify，
+    2026-09-17，low）：M152 把 TS 侧上限收敛为单一常量 `src/preview/frontmatter.ts:19` 的 512（装饰层 /
+    wikilink 排除区 / toc 同源），Rust 的 `src-tauri/src/link_graph.rs:106` 仍是 200，且 `:105` 的注释
+    「与 src/preview/wikilinks.ts 同口径」在该文件不再持有这个常量后已成**错误自述**。后果：201–512 行的
+    首部区块被 TS 当 frontmatter、被 Rust 当正文（`parse_links` 认出其中的 `[[...]]`、`extract_headings`
+    认其中的 `#` 行），toc 与 Rust 标题树对同一段判定不同。此分歧在 M152 之前就存在（Rust 一直是 200），
+    M152 只消掉了 TS 侧内部的两处漂移，未扩大也未缩小它，用户可感知面有限（反链能力已移除）。
+    **tower 处置建议**：立项把 Rust 侧对齐 512，或由 Alex 裁「有意分歧」并把口径写进 spec。finding 给两条
+    做法——(a) 直接改 Rust 常量 + 加一条 Rust 单测读 `src/preview/frontmatter.ts` 抓值断言两边一致（跨语言
+    最省事的机械防线）；(b) 常量经 ts-rs bindings 单向下发。finding
+    `20260917-worker-langunify-improve-frontmatter-rust-200-vs-ts-512-m152-201-512.md`。
+12. **冷启动 `restore_last_vault` 在 setup 主线程同步跑（真实 vault ~125ms、4× 规模 ~770ms），推迟首帧且
+    perf 门禁看不见**（**待裁决（立项）**；M154 survey，worker-rustasync，2026-09-17，high——本批唯一
+    「用户可感」的主线程阻塞项）：`src-tauri/src/lib.rs:97` 在 setup 内同步调 `open_vault`，其内部串行做
+    注册表 IO + watch + `scan_workspace` + `build_graph`（逐 md 读文件 + 解析 wikilink 建索引，实测
+    scan 14.0ms + build_graph 111.2ms；4× 规模 32.9 + 736.7ms），随 vault 线性放大（约 12–16ms/MB md 字节）。
+    tauri 在 setup 之前就已按 config 建好窗口（tauri 2.11.5 `app.rs:2524-2531`），所以这段是「窗口已存在、
+    主线程被占、run loop 未启动」＝用户可见首帧被推迟。**可见性缺口**：perf 合同的冷启动端点是 stdout
+    `LUMIR_READY`（`ready.rs:27-43`），该行在恢复之前打印（`lib.rs:94`），因此 <300ms 合同与 CI 相对回归
+    门禁对这段耗时结构性失明。它也不是 command，`#[tauri::command(async)]` 覆盖不到它。
+    **tower 处置建议**：**P1 立项走 OpenSpec change**——finding 明确「改的是启动时序（首帧与恢复的可见性
+    顺序），属行为变更，不要作为补丁直推」。修法：setup 只读配置 + 起线程（或 `spawn_blocking`）做
+    open_vault，完成后写 VaultState 并发事件让前端重拉 `vault_current`；前端启动逻辑已是「拉结果」形态，
+    契约改动小（`src/main.ts:547` 的 `vaultCurrent()` 拉取——**M155 更正**：finding 写的 `main.ts:1157`
+    是 M151 拆分前的行号，现文件 575 行）。finding
+    `20260917-worker-rustasync-bug-restore-last-vault-setup-scan-build-graph-perf.md`。
+13. **`save_markdown` 的 CAS 窗口实测 4–94ms，窗口内的外部改写会被 rename 静默覆盖**（**待裁决（先裁方案
+    再立项）**；M154 survey，worker-rustasync，2026-09-17，medium，vuln）：CAS 检查
+    （`src-tauri/src/fs_io.rs:347-353`）与 `rename`（`:408`）之间要做「建 tmp + 写全量内容 + fsync」，
+    实测窗口 ≈3KB 4.0ms（max 4.8）/ 1MB 4.0ms（max 22.1）/ 50MB 58.0ms（max 94.1），慢盘与同步盘更宽。
+    窗口内目标被外部进程改写（同步客户端、git checkout、另一个编辑器或第二个窗口），rename 会覆盖那份
+    **更新**的版本——正是 CAS 想防的那次丢失。对照 `link_graph.rs:919-922` 的 `openat + O_EXCL` 是内核
+    一步、天然无窗口，但 save 是「替换」语义，不能照抄。**需 Alex 先裁方案**：(a) **收窄（廉价、不关闭）**
+    ——rename 前重新取 `(dev, ino, mtime, size)` 与 CAS 时快照比对，不符则报 `document_conflict`，窗口缩到
+    微秒级但仍有理论间隙；(b) **关闭（需设计裁决）**——macOS `renameatx_np(RENAME_SWAP)` 原子交换 + 读交换
+    出的旧内容算 hash 与 `expected_revision` 比对，不符则 swap 回来并报冲突，无未保护窗口；回滚语义
+    （swap 回失败怎么办）要单独设计，属独立 mission。本仓已有直调 syscall 先例（`link_graph.rs:807-841`）。
+    tower 处置建议：不要在窗口语义未定前直接从 backlog 拉实现。finding
+    `20260917-worker-rustasync-vuln-save-markdown-cas-4ms-94ms-rename.md`。
+14. **前端单测层（`tests/unit`，26 用例）只在本地 gate，未进任何 CI workflow**（**待裁决**；
+    reviewer-testinfra finding，2026-09-17，low，无归属 mission）：M153 落地的单测层只接进
+    `scripts/gate.sh quick`；`.github/workflows/rust.yml` 的路径过滤仅 `src-tauri/**` 与 `src/bindings/**`
+    （不含 `src/**`），`visual.yml` 触发 `src/**` 但步骤里没有 `pnpm test`。于是 `keys.ts` 的 chord 解析、
+    `save-controller` 状态机这类纯逻辑若回归，CI 全绿而只有本地红——而 `rust.yml` 文件头自称「AI-only
+    模式下 CI 是唯一防线（ADR 0004）」。**tower 处置建议**：待 Alex 裁决「CI 是否也守前端纯逻辑」。
+    若要做，成本极低：`visual.yml` 已有 node 22 + pnpm 环境，加一行 `run: pnpm test` 即可（单测层秒级）；
+    M153 的 mission 书本身把这一层定位为「本地快速反馈层」，所以这属于**定位裁决**而非缺口补齐。finding
+    `20260917-reviewer-testinfra-improve-gate-sh-quick-ci-workflow.md`。
+15. **perf 端点 `open-1mb-file` 从「磁盘 IO 占位口径」修订为真实打开路径**（**待裁决（立项）**；
+    worker-testinfra idea，M153，2026-09-17，medium）：该端点现在量的是「读 1MB 文件到内存 + UTF-8 解码」
+    （M1 遗留占位，实测 p95 1.12ms / median 0.44ms），却被 `perf.yml` 与 `tests/perf/thresholds.json` 以
+    100ms 绝对阈值 enforce——它变绿**不等于**「打开文档」体验没退化（不含读取后的解析、CodeMirror 装载与
+    首帧渲染）。M153 已在脚本头、`meta.note` 与 artifact 里如实标注「占位端点 + 已 enforce + 修订义务」。
+    **tower 处置建议**：立项一个「性能合同端点修订」mission——① 定端点（建议「打开请求 → 编辑器首帧
+    渲染」，测量通道复用 keypress-to-paint 的 CDP 注入机制）；② 按新端点重标定 contract 与容忍线（不能
+    沿用 100ms）；③ 重建滚动基线并归档旧口径结果，避免新旧数字混比；④ `docs/specs/perf-measurement.md`
+    记口径变更与不可比说明。可等 dogfood 性能专项一起做。finding
+    `20260917-worker-testinfra-idea-open-1mb-file-io.md`。
 
 ## 待修 findings（不阻塞）
 
@@ -38,10 +96,6 @@
   「检测到外部修改」浮条**已有**「重载（放弃我的修改）」动作（`src/save-controller.ts:435`），
   但「当前文件已被外部删除」浮条（`src/save-controller.ts:426`）没有任何动作，只能切文件再切回。
   需求 3 据此撤销（主诉场景已被既有动作覆盖），此缺口留作顺手修。
-- **`TableModel.reason` 的 `"incomplete"` 是死值**（M137 finding、M142 评审复核）：类型联合里有，
-  生产只产 `"non-rectangular"` / `"oversize"`。清扫类。
-- **语言注册表两处漂移**（M138 旁注）：`src/editor.ts` 的 LANGUAGES 未导出，`src/preview/code.ts`
-  另建一份着色语言表。建议收口为单一来源（小 mission）。
 - **文案-Copy.md D40 后空行断表 + 编号未升序**（M141 评审旁证）：既有缺陷，清扫类。
 - **rust 字符字面量在围栏代码块里不着色（与 code 模式的 parity 缺口）**（M147 finding，medium）：
   `src/preview/code.ts` 的 `tagsForStyle` 遇「modifier 开头的复合 token 名」整条丢 tag（CM6 的
@@ -87,6 +141,91 @@
   （用 `help` 寻址 / 锚定裸正则）已写进 `scripts/acceptance/README.md` 已知边界。
   finding `20260917-worker-toc-improve-click-target-name.md`。
 
+### Rust 侧主线程与锁（M154 survey 遗留）
+
+- **`apply_fs_changes` 持 VaultState 锁逐文件做磁盘 IO；`vault_current` 持锁跨全量 scan**（M154 finding，
+  worker-rustasync，2026-09-17，medium，**待修**——两处小改、行为等价）：
+  `src-tauri/src/commands.rs:172-193` 的 watch 回调在 `let mut inner = self.inner.lock()` 之后，循环里对每个
+  变更文件调 `fs_io::read_text_file`（磁盘读 + 双 canonicalize）再 upsert，整批持锁：实测真实 vault 全量
+  1341 md = 112.1ms、4× 合成 6100 md = 753.0ms（0.084–0.123ms/文件）。它跑在 `lumir-fs-debounce` 线程上
+  （不是主线程），所以是**后台线程持锁挡主线程**——批量变更（git checkout、同步客户端批量回写、批量改名/
+  删除）会把整段锁窗口压给主线程的 `link_graph_resolve`（每个 wikilink 渲染都调）、`wikilink_create` 与
+  `document_save`。修法（不需要 async）：先在锁外把本批 md 内容读成 `Vec<(path, Option<String>)>`，再取锁
+  循环 upsert，持锁降到微秒级（读失败保持现有「宁缺毋滥」语义）。同 file `commands.rs:375-390` 的
+  `vault_current` 在锁内调 `reconcile_vault`（含 `sweep_registry` 写盘）与 `scan_workspace`（14ms）；
+  `fs_scan_workspace`（`:394-398`）已是正确形态（`state.root()` 短锁 clone 后 IO 在锁外），对齐即可。
+  **注意两件事正交**：收窄锁**不会**把 IO 移出主线程，别把「收窄锁」当成「不阻塞主线程」。tower 处置
+  建议：P2，与「待 Alex 裁决」第 12 条的启动时序分开处理（本项可直接做）。finding
+  `20260917-worker-rustasync-improve-apply-fs-changes-vaultstate-io-vault-current-scan.md`。
+
+### 文档指针与门禁清单
+
+- **门禁清单三处过期**（M153 finding，worker-testinfra，2026-09-17，low，**待修**）：M153 给
+  `gate.sh quick` 加了 `docs-check` 与单测层、给 visual 层加了 isolation 断言，三处复刻门禁清单的文档随之
+  过期——① `AGENTS.md:32-34` 逐行复刻了 `scripts/gate.sh` 的用法（现缺 quick 的 `docs-check` 与单测层
+  `tsc-unit` + `unit-tests`，也缺 visual 层的 `isolation-runs`）；② `tests/visual/README.md` 全篇未提
+  `tests/visual/isolation.test.mjs`（2 用例 / 7 条隔离断言，此前无人运行）；③ `README.md:62` 的
+  `visual.yml` 行未提它现在也跑隔离断言。tower 处置建议：① 按 finding 的意见**直接删掉 AGENTS.md 那 3 行
+  用法副本、只留指向 `scripts/gate.sh` 的指针**——那 3 行本来就是 gate.sh 头注释的副本，而 AGENTS.md 自己
+  的原则是「不复制有 canonical 居所的内容」，删副本才是根治，否则下次改门禁还会漂；②③ 就地各补一句。
+  finding `20260917-worker-testinfra-improve-agents-md-gate-sh-tests-visual-readme-md-isolation-readme-vi.md`。
+- **四处「代码落点」指针在 M151 拆分后失准**（M151 finding，worker-mainsplit，2026-09-17，medium，**待修**；
+  spec 的 SHALL 判据仍成立，只是措辞不精确）：① `文案-Copy.md:91`——键位面板（D63–D67）文案在
+  `src/main.ts` 的 `createBindingsPanel` → 实为 `src/bindings-panel.ts`；「链接目标不存在」（D81）与
+  「暂不支持锚点跳转」（D82）在 `src/main.ts` 的 `followNoteLink` / `followLink` → 实为
+  `src/link-follow.ts`；且「与键位面板把文案写在 `main.ts` 的写法并列」这个前提已不成立（两者都是独立
+  模块）。② `src/shell.ts:5,13`——标签栏条目「由 src/main.ts 渲染」→ 实为 `src/tabs.ts`（shell 只给容器
+  这一点未变）。③ `openspec/specs/keymap-commands/spec.md:10`——「文档与链接命令在装配层 `src/main.ts`」
+  在指向上已不精确：命令**表与 runner 装配**确在 main.ts（`link.follow` → `linkFollow.followAt(...)`、
+  `tab.*` → `tabs.*`），但链接能力本体在 `src/link-follow.ts`、标签能力在 `src/tabs.ts`；M127 起 save
+  命令已是这个形态（`document.save` → `save.save()`），spec 措辞自那时起就没跟上。
+  ④ `scripts/acceptance/scenarios/14-tabs.md:166-167` 同形（标签栏现在 `src/tabs.ts`，打开意图 `openFile`
+  与命令表仍在 main.ts）。tower 处置建议：约 6 行改动一次收口，随下次碰这些文件的 mission 顺带做即可，
+  不必单开 mission；spec 那句按 finding 的措辞改写为「命令的归属与 runner 装配在装配层 `src/main.ts`，
+  能力本体在各自模块（editor / save-controller / link-follow / tabs / bindings-panel）」。finding
+  `20260917-worker-mainsplit-improve-m151-main-ts-deck-shell-ts-keymap-spec.md`。
+
+### openspec 归档制品与实验脚本
+
+- **历史归档文件的相对链接死链扫尾**（M150 finding，worker-speccleanup，2026-09-17，low，**待修**；
+  **M155 已逐条在磁盘上复核并在本条更正 finding 的两处误差**）：根因已实证——`openspec archive` 把 change
+  目录移到 `archive/<日期>-<id>/`（**深一层**）却不重写制品内的相对链接，而 docs-check 不做链接检查
+  （`.github/workflows/docs-check.yml` 只有 ADR 结构与 openspec validate 两步），于是每次归档都静默留下
+  死链。M150 本批归档件的 17 处已就地修好；历史件里**真正需要扫尾的是 5 个文件 / 9 条链接**（下表；每条
+  箭头右侧是该制品内**原样**写着的链接目标，用 `os.path` 在磁盘上解析过，确认全部落到
+  `openspec/docs/…` 这类不存在的路径；修法是各补一层 `../` 让它解析到 `docs/…`，已逐条验证补一层后可达）：
+  1. `openspec/changes/archive/2026-09-05-add-editor-live-preview/proposal.md` → `../../../docs/adr/0004-…`、`../../../docs/adr/0002-…`、`../../../docs/adr/0003-…`（**3 条**）
+  2. `openspec/changes/archive/2026-09-05-add-perf-measurement-methodology/proposal.md` → `../../../docs/adr/0002-…`、`../../../docs/specs/perf-measurement.md`
+  3. `openspec/changes/archive/2026-09-05-add-perf-measurement-methodology/specs/perf-measurement/spec.md` → `../../../../../docs/specs/perf-measurement.md`（5 层，要补成 6 层）
+  4. `openspec/changes/archive/2026-09-05-add-vault-workspace/proposal.md` → `../../../docs/adr/0004-…`、`../../../docs/adr/0001-…`
+  5. `openspec/changes/archive/2026-09-12-remove-threads-and-theme/proposal.md` → `../../../docs/adr/0006-…`
+
+  **M155 对 finding 清单的两处更正**（都用「把链接目标拼到制品所在目录再 `exists()`」的同一口径实测）：①
+  第 1 个文件是 **3 条**不是 2 条——finding 漏了
+  `../../../docs/adr/0003-obsidian-compatibility-scope.md`（同一文件的 proposal.md 第 11 行那句「Obsidian
+  兼容范围」）；② finding 列的
+  `openspec/changes/archive/2026-09-05-add-editor-live-preview/specs/attachment-display/spec.md` 里的
+  `./assets/shot.png` **是误报，应从清单剔除**——它在 spec 的 Scenario 正文里，是「文档内容长什么样」的示例
+  （`**WHEN** 文档同时含 … 与 ![截图](./assets/shot.png)`），不是制品间的引用；该 change 目录下根本没有
+  `assets/`，补 `../` 也只会指向另一个不存在的路径。这条同时**印证了 finding 自己给的门禁注意事项**：机器
+  检查必须能排除 spec 正文里的示意例子，否则会给所有 spec 报假红。因此清单从 finding 的「6 文件」收敛为
+  **5 文件 / 9 条链接**。
+  tower 处置建议：① 一次性扫尾（规则：`../` + 原链接能解析到真实文件则补一层；finding 估 5 分钟、可脚本
+  校验）；② 加机器门禁「openspec 制品中的相对链接必须可达」（脚本需排除 spec 正文里的示意例子，如
+  `[配置](配置)`，或约定示意例子用行内代码而非链接）；③ 只加人工提醒**不推荐**——没有执行者，属 REVIEW.md
+  第 9 条已记的反模式，而这条 finding 本身就是它第二次发生。推荐 1+2。finding
+  `20260917-worker-speccleanup-bug-archive-6.md`。
+- **`scripts/visual/table-probe72/matrix.mjs` 的产出路径指向已移走的 change 目录**（M150 finding，
+  worker-speccleanup，2026-09-17，low，**待修**）：`:35` 把 probe 矩阵 JSON 写到
+  `openspec/changes/complete-markdown-reading/`，M150 已把该目录移到
+  `openspec/changes/archive/2026-09-17-withdrawn-complete-markdown-reading/`，目录不复存在——
+  **重跑 probe 会 ENOENT**；该脚本不在 CI 与 `gate.sh` 的任何门里，所以不会报红，而失败信息（父目录不存在）
+  与被验证对象无关，容易误导下一次排查。同类引用 `docs/specs/table-reading.md:8` 与 `docs/adr/0004:28`
+  已由 M150 就地改指 archive。tower 处置建议：产出改到 `test-results/`（与验收/perf 证据同惯例、已
+  gitignore），既有三份 matrix JSON 留 archive 作历史证据；退一步可改指 archive 路径，或在脚本头注明
+  「M72 一次性实验，产出目录已随 change 撤回移走，重跑需先自建目录」。finding
+  `20260917-worker-speccleanup-bug-table-probe72-matrix-mjs-change.md`。
+
 ## 工具链与环境（待 Alex 裁决）
 
 1. **1420 端口串行**：vite dev server 固定 `127.0.0.1:1420` 且 strictPort，全机同一时刻只能有一个
@@ -130,6 +269,20 @@
    'playwright|chromium|vite preview'`，找 ppid=1 且 elapsed > 1 天的孤儿、确认不属于在跑 mission
    后 kill；**注意别碰 Alex 的 dogfood 实例（1420 端口的 vite / target/debug/lumir）**。
    finding `20260917-worker-toc-improve-wt-62-headful-chromium-10-vite-preview.md`。
+9. **批次内 target 纪律是否沉淀入 REVIEW.md**（M155 评估，2026-09-17；**建议：入 REVIEW.md 第 12 条，不另起
+   条目**；需 Alex 裁决）：本批（M150–M154）中途磁盘只剩 **553MiB**，ENOSPC 直接阻塞所有真机批次，tower
+   当场立了三条临时纪律（见 06:52 的广播）——每个 worktree 同一时刻至多一份 cargo target；**最后一次 cargo
+   门禁跑完后立即删 target 并广播释放**；进真机验收前 `df -h`，<3G 不起构建。纪律生效后水位回到 4.6Gi，
+   且 M151（回收 2.2G）/ M152（回收 2.0G）各自按纪律删 target 并广播，此后批次内再未触到水位。
+   **建议入 REVIEW.md 第 12 条的理由三条**：① 门槛已满足——本节第 2 条与 REVIEW.md 第 12 条记的是同族事件，
+   本批是同族第三次（批次四 219MiB ENOSPC、M142 期 2.7G、本批 553MiB），「重复踩过」成立；② REVIEW.md 的
+   维护规则自己写着「重复踩到表内某条：把新现场补进该条的证据，不要另起重复条目」，而第 12 条已有完整的
+   症状/根因/证据/防线，本次只是把防线从「看水位」加严到「跑完即删并广播」；③ **留在 backlog 的问题是没有
+   执行者**——第 12 条在「开工前检查清单」里，agent 动工前会逐条过，backlog 不会。
+   **代价与边界**：本条只动 `docs/backlog.md`（本 mission scope），若 Alex 同意，改 REVIEW.md 第 12 条的
+   证据（补本批现场）与防线（加「最后一次 cargo 门禁后立即删 target 并广播；同一 worktree 同时至多一份
+   target」）需要一个能写该文件的动作（随下次碰 REVIEW.md 的 mission 顺带做即可）。
+   长期方案候选仍是本节第 2 条的「worktree 共享 `CARGO_TARGET_DIR`」与「待 Alex 裁决」第 8 条，与本条不冲突。
 
 ## 待真机验收
 
@@ -260,5 +413,26 @@
 - 2026-09-17：**`tests/visual/README.md` 卫生节 missing**（M146 finding `20260917-worker-reviewmd-bug-ui-readme.md`）→ 已由 M147 `c81b3ed` 闭合：`tests/visual/README.md` 补入「删除 / 移动 UI 元素后的核对（卫生步骤，强制）」一节（现 67–85 行），`playwright.config.ts:11` 与 AGENTS.md 的指针恢复可达。**未做**：finding 里顺带建议的「`scripts/visual/run.sh --update` 输出回显该提醒」未落地（建议项，非必需）。
 - 2026-09-17：**`src/preview/livePreview.ts:427` 注释引用已删除的 `openDocument`**（M149 r1 nit `20260917-worker-tabs-improve-m149-nit-livepreview-ts-opendocument-scope.md`）→ M150 改「装载（`editor.reloadSession`）」，与 M149 同批另两处（`mermaid.spec.ts:296` / `toc-outline.spec.ts:84`）同形。同时顺手改掉同文件第 4 行的同族陈述——文件头「只读口径：不做光标行 reveal 源码的编辑态逻辑」同样与实现矛盾（该文件里有完整的选区显露实现），一并改为现行编辑态口径。
 - 2026-09-17：**`docs/process/real-machine-acceptance.md` 证据落点指针悬空**（M150 顺手修）：裁决点 1 的备选「摘要表入 `docs/design-parity-contract/evidence/`」指向的契约已随 ADR 0006 失效（`docs/design-parity-contract/README.md` 自述「状态：失效（2026-09-12）」），改为「证据统一落 `test-results/acceptance/`（已 gitignore），摘要表入 `docs/backlog.md` 的待真机验收节」。
+- 2026-09-17：**两条清扫类 finding 由 M152 闭合核销**（worker-langunify，commit `6e8e70a`，原「待修
+  findings／编辑器·键位」的两条）：① **`TableModel.reason` 的 `"incomplete"` 死值已删**
+  （`src/preview/table.ts:37` 的类型联合收敛为 `"oversize" | "non-rectangular"`，全仓零生产零消费）；
+  ② **语言注册表两处漂移已收口**（`src/preview/code.ts` 的 `LANGUAGES` 成为唯一一份着色语言表并导出为
+  `Record<CodeLanguage, StreamLanguage<unknown>>`，`CodeLanguage` 由 `src/preview/attachments.ts` 的扩展名
+  注册表推导、经 `import type` 编译期擦除；`src/editor.ts` 删掉整块 legacy-modes import、7 个具名 parser
+  常量与自建表，只留查表；token 的 tag 分组同源落在 `code.ts` 的 `TOKEN_GROUPS`，两侧只做渲染映射——类名与
+  内联色值）。**核销口径提示**：M152 分支 `feat/language-registry-and-frontmatter-unify`（tip `59d05a2`）
+  在本条落盘时**尚未并入 master**（r2 复审中），所以这两条核销记的是「决策已定」，在 M152 合并后才对 master
+  生效。**附带影响（跨文件，本 mission 的 scope 只含 `docs/backlog.md`）**：本次改动净增 171 行
+  （264 → 435），`REVIEW.md` 里 9 处以 `docs/backlog.md:NNN` 为证据指针的条目（第 3/4/5/6/7/8/9/11/12 条）
+  行号全部随之漂移；**逐条实测发现其中 7 处在本次改动之前就已指向别的条目**（裸行号这种写法早就失效了，本批
+  只是让它更失效）——明细与建议见 finding
+  `20260917-worker-backlog-improve-review-md-docs-backlog-md-9-7-m155.md`。
+  建议 `REVIEW.md` 的证据指针改用可 grep 的条目名 / 节名而不是行号；本次核销涉及的两条已移到本节（内容见上）。
+- 2026-09-17：**link_graph.rs `MAX_FRONTMATTER_LINES` 注释失联 finding 关闭（前提失效）**
+  （M152 首发 finding `20260917-worker-langunify-improve-link-graph-rs-max-frontmatter-lines-ts-m152.md`；
+  severity 标为 medium）：该条写于 512 裁决翻转**之前**，其前提「M152 把 TS 侧收敛为 200、Rust 应改注释指向
+  `src/preview/frontmatter.ts`」已被推翻——M152 最终把 TS 侧定为 512。它唯一仍成立的点（`link_graph.rs:105`
+  的注释指向的文件名 `src/preview/wikilinks.ts` 不再持有该常量，已成错误自述）已并入现行条目「待 Alex 裁决」
+  第 11 条，随该条一并处置。按 finding 正文自己的请求（「请以本条为准，前一条可关」）核销，不再单独立项。
 - 批次三：键位分发三轨并行 + 扩展名注册表漂移（M130/M131/M132）；save-ipc.ts 折回 ipc.ts（M132）；Ctrl-K/D/T 原生路径风险（M132）。
 - 批次二：DeepSeek Flash 试用结论——可做 build，review 环节（k3-256k）不能省。
