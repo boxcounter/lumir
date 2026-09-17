@@ -1,6 +1,8 @@
 # Tasks: add-wikilink
 
 > 正常循环：实现未开始，全部任务未勾选。经 Alex 提案评审（节点 1）通过后才进入实现；裁决点 G/H/I 的裁决结果落地为 spec 与 fixture 的最终口径。
+>
+> **归档（2026-09-17，M150）**：实现已合并且长期积压未归档。对账结果——第 1、2、4 组完成；第 3 组按 2026-09-05 Alex 裁决整组推迟（放弃原因就地标注）；5.3 未执行（放弃原因见该行）。`specs/backlinks-panel/` 增量不随本 change 归档（推迟的 capability 不得生成 living spec），理由见 proposal 文末「归档对账」。
 
 ## 1. Rust 单实现解析（wikilink-resolution）
 
@@ -38,4 +40,4 @@
 
 - [x] 5.1 `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` 通过
 - [x] 5.2 fixture 双解析器纪律验收：Rust 单测全绿（含 resolveCases），前端 span 定位测试全绿（parseCases），两侧消费同一 cases.json
-- [ ] 5.3 用作者真实 vault 验收：`[[note]]` 跳转、`[[note#heading]]` 标题定位、未创建链接显示与一键创建（backlinks 面板已按挤压预案推迟，不在验收项内）；perf.yml 与视觉门禁不回归
+- [ ] ~~5.3 用作者真实 vault 验收：`[[note]]` 跳转、`[[note#heading]]` 标题定位、未创建链接显示与一键创建（backlinks 面板已按挤压预案推迟，不在验收项内）；perf.yml 与视觉门禁不回归~~（**放弃原因（2026-09-17 M150）**：作者真实 vault `/Users/boxcounter/Downloads/Everything-copy` 为只读纪律，不在其中执行写入类动作（一键创建会落新文件）；等价验证由 `tests/wikilink-fixtures/cases.json` 的 Rust 全量断言（含 createCases）与真机场景 `scripts/acceptance/12-links` 的 wikilink 跳转 / 未创建不建文件断言承担，perf 与视觉门禁随各次合并门禁回归）

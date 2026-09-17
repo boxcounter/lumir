@@ -1,6 +1,6 @@
 # Foundation Markdown 质量合同
 
-- 状态：提案阶段合同（对应 change `foundation-markdown-quality`，须经 OpenSpec 节点 1；实现后须经节点 2）
+- 状态：生效中的质量合同，M1 之后由多个 mission 的实现与门禁承载；其 OpenSpec 提案 `foundation-markdown-quality` 已于 2026-09-17 **撤回**（未过节点 1，见该 change 的撤回记录），本合同全文继续作为仓内权威合同与实现依据
 - 角色：Alex Lee（评审/裁决），AI agent（起草）
 - 范围：Markdown 本地打开、阅读渲染、编辑保存的基础质量；不定义产品定位或协作对象
 - 依据：[ADR 0004](../adr/0004-development-and-openness-strategy.md)、[性能测量方法学](perf-measurement.md)；本合同按 M77 匿名调查摘要输入制定，完整统计不作为仓库制品。M78 首帧/覆盖审计结论已转化为本合同端点与验收要求，审计原文不作为仓库附件。

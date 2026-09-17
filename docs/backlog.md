@@ -15,8 +15,7 @@
 3. **「保留我的版本」后自动保存暂停但用户无感知**：无回归；提示文案留 UX 重做阶段。遗留自批次二。
 4. **宽表横向溢出裁切是否预期**：实测溢出 1549pt vs 栏宽 766pt，AX 层完整。待 Alex 对照设计规格确认。遗留自桌面复验（M116 期）。
 5. **Emacs 档 3 与全产品键位**：isearch / mark / region / ⌃X 前缀，及左栏 tree/shell 零键盘支持——待 UX 重做会话与 dogfood 反馈后立项。批次三遗留。
-6. **openspec 归档 `add-diagnostics-logging`**（M134 已合并，2026-09-16）：实现与文档已入库，归档评审待 Alex 点头：
-   `npx --yes @fission-ai/openspec@1.12.0 archive add-diagnostics-logging --yes`。
+6. ~~**openspec 归档 `add-diagnostics-logging`**（M134 已合并，2026-09-16）：实现与文档已入库，归档评审待 Alex 点头。~~ **2026-09-17 M150 已按批次授权执行**（Alex 对整体 review 的裁决「好，采纳。你动手吧」含归档节点 2 批量授权）：归档为 `openspec/changes/archive/2026-09-17-add-diagnostics-logging`，living spec 落 `openspec/specs/diagnostics/spec.md`；其未勾任务 4.2（`gate.sh all` 全绿）就地标注改由 CI perf.yml 承担（本地 `all` 因既有内存合同超标不可能全绿，见本条下方第 7 项），核销记录见「已核销」。
 7. **内存合同存量超标**：2026-09-06 evidence 218–222MB 已超 <200MB 合同（2026-09-16 未复测）——放宽合同还是专项治理，随 dogfood 性能专项拍板。
 8. **共享 `CARGO_TARGET_DIR` 与 dev-only 脚本化驱动入口**（工具链节 2/3 的长期候选）：是否立项待裁决。
 9. **链接形态矩阵的两处 tower 裁决**（M145，2026-09-17，Alex 未逐条点头）：① 相对路径**非 md**（`[x](./doc.pdf)`）带 `↗︎`（语义「会离开本应用」）而不是 `→`；② **纯锚点** `[x](#sec)` 带 `→` 但激活只给「暂不支持锚点跳转」toast（不做文档内滚动）。附一处同批未单独确认的口径：`[x](note.md#sec)` 按「应用内跳转 + 锚点部分忽略」处理。三处若要翻转，落点是 `src/preview/links.ts` 的 `classifyLinkTarget`（标记）与 `src/main.ts` 的 `followLink`（激活）。
@@ -52,11 +51,6 @@
   修法（finding 附建议 diff）：与 CM6 同语义逐名字段独立结算、跳 part 不丢整条；须配不变量测试
   （「simpleMode 复合 token 在围栏与 code 模式 tag 集合一致」）并走渲染缺陷合同先行流程核对
   rust 场景基线。finding `20260917-worker-jsonhl-bug-tag-token-rust-code.md`。
-- **`src/preview/livePreview.ts:427` 注释仍引用已删除的 `openDocument`**（M149 r1 nit 残留，low）：
-  改「装载（`editor.reloadSession`）」，与同批另两处（mermaid.spec.ts:296 / toc-outline.spec.ts:84，
-  已改）同形；一行注释零行为变化，可并入下次碰该文件的源码改动。
-  finding `20260917-worker-tabs-improve-m149-nit-livepreview-ts-opendocument-scope.md`。
-
 ### shell / 系统
 
 - **退出守卫菜单结构假设**（M101 review）；Dock/系统关机路径不覆盖。
@@ -92,16 +86,6 @@
   这是全部场景共用的寻址入口，改完需一次全量真机复验，单独立项，不塞进功能 mission。临时口径
   （用 `help` 寻址 / 锚定裸正则）已写进 `scripts/acceptance/README.md` 已知边界。
   finding `20260917-worker-toc-improve-click-target-name.md`。
-
-## 视觉门禁（tests/visual）
-
-- **README 缺「删 UI 后核对基线时间戳」卫生节，两处指针悬空**（M146 finding，low）：
-  `tests/visual/playwright.config.ts:11` 与本文档已核销节都声称该卫生步骤写在
-  `tests/visual/README.md`，但该 README 全文无此内容，规则本体只在 AGENTS.md 硬规则里——
-  按指针去读 README 的人拿不到这条强制步骤（而它正是 0.005→0.001 收紧的原因）。修法：README
-  「更新基线」节补一段（删除/移动 UI 元素后逐张核对其出现过的整页基线时间戳，`ls -l
-  tests/visual/baselines/` 对照）；另建议 `scripts/visual/run.sh --update` 输出回显一句该提醒，
-  让跑 `--update` 的人不必先读 README。finding `20260917-worker-reviewmd-bug-ui-readme.md`。
 
 ## 工具链与环境（待 Alex 裁决）
 
@@ -234,6 +218,8 @@
 
 ## 记录在案（无需动作）
 
+- **docs-check 在 master 上红了 5 天没人发现**（M150 期间 worker-testinfra 发现，2026-09-17）：ADR 0005 的 `状态: deferred（…）` 不在 docs-check 的状态枚举里（枚举只列 proposed/accepted/deprecated/superseded），而 `docs/adr/README.md` 的状态生命周期明确把 `deferred` 当合法状态——门禁与文档自相矛盾，于是 ADR 校验 job 自 2026-09-12 起每次 master push 都失败（实测：`gh run list --workflow=docs-check.yml` 最近 6 次全 failure，`gh run view 35184453904 --log-failed` 报「状态字段非法：'deferred（…）'」），**没有任何机制在看这个红**。根因是流程面的：tower 侧合并走本地 `gate.sh`（不含 docs-check 的 ADR 校验），GitHub Actions 的状态无人巡检，「CI 全绿才可合入」这条口径只在 Rust/视觉/perf 三门上有消费者。处置（2026-09-17 当批次已做）：枚举扩展为含 `deferred`（M153 改门禁判据、M150 改 `docs/process/adr-lifecycle.md` 的合法值清单与注解格式，并把 `deferred` 的语义写死为「搁置非放弃、须带全角括号注解、须保留 Revisit 条件」）。
+  **待裁决选项（若要消除「红无观察者」这个结构，动作在别处）**：在批次收尾加一条「CI 状态检查」——收尾时跑一次 `gh run list --branch master --limit N` 确认最近若干次 push 的四个 workflow 都绿，红了就当场归因或落 finding。推荐采纳：本次的代价是一条 AP 级规则（`deferred` 合法）与它的执行者脱节了 5 天，而检查成本是一条命令；落点是 `AGENTS.md` 的「tower 操作」硬规则（本批次未改那个文件，故只在本条记录）。若 Alex 认为 GitHub CI 只是给 PR 用的旁路观察、不作为合并准入，则本项保持「记录在案」不动。
 - **KimiCU AX 服务全局退化**（2026-09-16，M135 期间实测）：`get_app_state` 只剩菜单栏（`element_count`
   1–16、`truncated: [closed_menu, cycle]`、`window_bounds x=0 y=0 w=1 h=1`），Finder / Reminders / Lumir
   **一起坏**；`xpc-ping` 仍报 `accessibility=true screenRecording=true`。判定为 KimiCU 后台服务进了坏状态，
@@ -268,5 +254,11 @@
 - 2026-09-16：**run.sh 端口占用检查只查 4173** → 已修，检查 `${LUMIR_VISUAL_PORT:-4173}` 实际端口。
 
 - 2026-09-17：**链接装饰全形态覆盖**（M145）→ Alex dogfood 反馈（第 4 条，原话「我启动后看到的链接并没有渲染成 title↗︎」）驱动的口径补齐。M144 只装饰 http/https/mailto，把「相对路径不装饰」写进 Non-goals 时**未向 Alex 显式确认**（tower 已认领为裁决疏漏）。M145 补齐后的形态矩阵：外链（含 `mailto`）→ `title↗︎` 交系统默认应用；相对路径 md / 无扩展名 → `title→` 应用内跳转（Alex 裁决原话「内部跳转的带→，也就是 title→」）；相对路径非 md 与目录 → `title↗︎` 交系统默认应用；纯锚点 → `title→` 但激活只 toast；白名单外 scheme → 原文不装饰。装饰与激活解耦：分类只看目标原文（`src/preview/links.ts` 的 `classifyLinkTarget`），文件存不存在是激活时才问的问题，因此「目标不存在」的链接照常装饰、代价由 toast 承担。落点：`src/preview/links.ts`（`classifyLinkTarget` 五类 + `standardLinkAt`）、`src/preview/livePreview.ts`（`LinkMarkWidget` 按类别出 `↗︎`/`→`）、`src/main.ts`（`linkTargetAt` 五态 + `followLink` 分流 + 相对路径未解析只 toast 不创建）、`src/ipc.ts`（`linkResolveNote` / `linkOpenPath`）、`src-tauri/src/link_graph.rs`（`relative_vault_path` + `resolve_relative`：相对当前文件目录的路径语义，`./` `..` 归一、`/` 开头按 vault 根相对、`#fragment` 忽略、**不退化到 wikilink 的名称匹配**）、`src-tauri/src/commands.rs`（`link_resolve_note` + `link_open_path`，后者经 `fs_io::resolve_in_vault` 做 vault 内约束与存在性校验）、`src-tauri/src/logging.rs`（`link_open` 增 `category` 字段：external / internal-md / asset / anchor / blocked-scheme）。**权限面未变**：capabilities 仍零 `opener:*`，新增的资产打开走同一条 Rust 侧最小权限路径（`app.opener().open_path`，不经 webview IPC）。规格：修订 `openspec/changes/add-external-link-open` 的两份 spec delta（就地扩为形态矩阵，避免归档后 living spec 出现两条自相矛盾 requirement）；文案 D80–D83。证据：视觉场景 `tests/visual/scenes/render-link.spec.ts`（12 条用例，含分类纯函数与四类激活分流；桩记录 `open_external_url` / `link_open_path` / `link_resolve_note`）+ 更新后的整页基线；真机场景 `scripts/acceptance/scenarios/12-links.md`（25 步，含相对 md 跳转成功 / 未解析 toast、锚点 toast、非 md 打开、不可用不装饰；`link_open` 各类别断言带 `^…$` 行锚）。**两处待 Alex 复核的裁决已录入「待 Alex 裁决」第 9 条**（非 md 带 ↗︎、锚点带 → 仅 toast），另有 `note.md#sec` 锚点忽略口径同批披露。
+- 2026-09-17：**归档积压清理——7 个已合并未归档的 change 批量归档**（M150，Alex 对整体 review 的裁决「好，采纳。你动手吧」，含归档节点 2 的批量授权）。归档清单（`openspec/changes/archive/2026-09-17-*`）：`add-wikilink`（积压 12 天）、`add-diagnostics-logging`、`add-external-link-open`、`fix-json-key-highlight`、`add-toc-outline`、`add-multi-tabs`、`narrow-table-short-row-gfm-padding`；对账结果——7 个的 spec 增量与实现逐条一致，其中 `add-wikilink` 的 `specs/backlinks-panel/` 增量**不随归档**（该 capability 已按 ADR 0004 §2 挤压预案推迟且实现已移除，照旧归档会凭空生成一份描述「面板存在」的 living spec），其推迟记录移入 proposal 的「归档对账」节；未勾任务就地标注放弃原因（`add-wikilink` 5.3、`add-diagnostics-logging` 4.2）。**教训（本批次的核心发现）**：7 个 change 里**只有 1 个**（`add-diagnostics-logging`）在 `docs/backlog.md` 里被记为待归档，其余 6 个合并后无人跟踪——living spec 因此长期落后，`editor-live-preview` 甚至与实现直接矛盾（自称「M1 只读口径」而 md 模式早已可编辑）。**防线**：`docs/process/openspec-workflow.md` 新增「批次收尾 checklist（归档跟踪）」三条（每个 merge 的 change 即记待归档并跟踪到归档 / 归档前逐条对账 / 归档后手写新建 capability 的 Purpose）；同文件新增「撤回（withdrawn）」口径（僵尸提案的处置三步）。归档后 `openspec list` 活跃列表为空，`validate --all --strict` 14 项全绿（含 5 处新建 living spec 的手写 Purpose）。
+- 2026-09-17：**僵尸提案撤回 4 个**（M150）：`foundation-vault-recovery`（0/9）/ `foundation-markdown-quality`（0/14）/ `foundation-table-reading`（0/17）/ `complete-markdown-reading`（2/17）。处置：整体移到 `openspec/changes/archive/2026-09-17-withdrawn-<id>/`，各自 proposal 头部写入「撤回记录」（理由 / 承接者 / 遗留面）。逐个的对账结论：① `foundation-vault-recovery` 的核心机制**在仓内不存在**（全仓 `grep operation_id` 零命中，`intent` / `ledger` 同样零命中），其要解决的问题已由 `archive/2026-09-12-save-hardening`（崩溃备份 + 启动恢复）与 `archive/2026-09-12-save-and-watch-recovery`（冲突 / 外部修改处置）承接，`docs/specs/vault-recovery.md` 状态头改为「已撤回（留档作重启输入）」；② `foundation-markdown-quality` 是「只立合同」的提案，合同本体 `docs/specs/foundation-markdown.md` 仍在被实现注释引用（`src/preview/table.ts`、`callout.ts`、`math.ts`、`mermaid.ts`），状态头改为「生效中的质量合同」；③ `foundation-table-reading` 同理，合同本体 `docs/specs/table-reading.md` 已被 M142 按 Alex 裁决收窄，状态头同步；④ `complete-markdown-reading` 的四项 requirement 均已实现（列表布局 `src/preview/lists.ts`、表格 `src/preview/table.ts`），但其出口验证从未按其形态执行、节点 2 未过，故撤回而非归档。**遗留缺口（需另立 change，本批不做）**：列表对齐与基础表格阅读的 requirement 文本至今未进 living spec——只有实现、门禁与 `docs/specs/table-reading.md` 合同，没有 requirement 级规格。另：`scripts/visual/table-probe72/matrix.mjs` 的产出路径指向 `openspec/changes/complete-markdown-reading/`（随本次移动失效），已投 finding 待处置。
+- 2026-09-17：**补记两处规格缺口（M150）**：① **文件内搜索 v0**（M139 实现先于规格落地，merge `647f519`）→ 补 retro change `add-in-file-search` 并归档，新建 living spec `openspec/specs/in-file-search/spec.md`（入口与键位归属 / 能力集与匹配口径 / 关闭与焦点归还三条 requirement，含「不做替换」「高亮只看视口」等如实边界）；② **`editor-live-preview` 规格对齐 + M138 渲染三件套补记** → retro change `align-editor-live-preview-spec`：删掉 living spec 里与实现矛盾的「M1 只读口径，不含编辑态行为」与「MUST NOT 实现光标所在行 reveal 源码」（现状是 md 模式可编辑、选区触及即显露源码），补入 `Markdown 渲染保真（分隔线 / 围栏代码着色 / 引用内列表）` requirement，并重写 Purpose（`## Purpose` 的增量只在 capability 创建时被读取）。两份 retro change 的 tasks 全部按「已存在实现与证据」核对勾选。
+- 2026-09-17：**`tests/visual/README.md` 卫生节 missing**（M146 finding `20260917-worker-reviewmd-bug-ui-readme.md`）→ 已由 M147 `c81b3ed` 闭合：`tests/visual/README.md` 补入「删除 / 移动 UI 元素后的核对（卫生步骤，强制）」一节（现 67–85 行），`playwright.config.ts:11` 与 AGENTS.md 的指针恢复可达。**未做**：finding 里顺带建议的「`scripts/visual/run.sh --update` 输出回显该提醒」未落地（建议项，非必需）。
+- 2026-09-17：**`src/preview/livePreview.ts:427` 注释引用已删除的 `openDocument`**（M149 r1 nit `20260917-worker-tabs-improve-m149-nit-livepreview-ts-opendocument-scope.md`）→ M150 改「装载（`editor.reloadSession`）」，与 M149 同批另两处（`mermaid.spec.ts:296` / `toc-outline.spec.ts:84`）同形。同时顺手改掉同文件第 4 行的同族陈述——文件头「只读口径：不做光标行 reveal 源码的编辑态逻辑」同样与实现矛盾（该文件里有完整的选区显露实现），一并改为现行编辑态口径。
+- 2026-09-17：**`docs/process/real-machine-acceptance.md` 证据落点指针悬空**（M150 顺手修）：裁决点 1 的备选「摘要表入 `docs/design-parity-contract/evidence/`」指向的契约已随 ADR 0006 失效（`docs/design-parity-contract/README.md` 自述「状态：失效（2026-09-12）」），改为「证据统一落 `test-results/acceptance/`（已 gitignore），摘要表入 `docs/backlog.md` 的待真机验收节」。
 - 批次三：键位分发三轨并行 + 扩展名注册表漂移（M130/M131/M132）；save-ipc.ts 折回 ipc.ts（M132）；Ctrl-K/D/T 原生路径风险（M132）。
 - 批次二：DeepSeek Flash 试用结论——可做 build，review 环节（k3-256k）不能省。

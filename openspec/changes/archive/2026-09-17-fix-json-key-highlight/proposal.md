@@ -36,5 +36,5 @@ Alex 人工测试发现「JSON 格式的语法着色效果不好——全是一�
 - 影响的 specs：`editor-live-preview`
 - 影响的代码/系统：`src/preview/code.ts`（token 映射单一来源、token 名解析读 parser 的 tokenTable、解析缓存键含语言）、`src/editor.ts`（json 语言实例带 tokenTable）
 - 影响的测试/验收：`tests/visual/scenes/m120-code-highlight.spec.ts`、`tests/visual/scenes/render-codeblock.spec.ts`（新增元素级基线 `baselines/render-codeblock.spec.ts-snapshots/render-codeblock-json-line.png`）、`tests/visual/README.md`（基线的删/移 UI 核对卫生节，顺带闭合 finding `20260917-worker-reviewmd-bug-ui-readme`）
-- 关联约束：ADR 0002 §2（单内核双模式）、ADR 0003 §3（装饰不改写文档）、[REVIEW.md](../../../REVIEW.md) 第 8 条（同一语义两处真源）、第 3 条（容差假绿）
+- 关联约束：ADR 0002 §2（单内核双模式）、ADR 0003 §3（装饰不改写文档）、[REVIEW.md](../../../../REVIEW.md) 第 8 条（同一语义两处真源）、第 3 条（容差假绿）
 - 视觉基线：**既有整页基线零变更**（全量 217 场景无 `--update` 通过，`render-codeblock.png` 的 sha256 改动前后一致）——json 行在该场景的视口截图里位于折叠线以下，键色从未出现在任何整页基线里；新增一张元素级基线把键/值分色钉住。`m120-code-highlight` 无截图断言，只有计算色断言。

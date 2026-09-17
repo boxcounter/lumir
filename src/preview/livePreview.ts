@@ -1,7 +1,9 @@
 // live preview 装饰层（editor-live-preview capability 的核心）。
 // 裁决点 D 推荐项落地：视口增量 ViewPlugin —— 只为可见区域构建 decoration，
 // 滚动/文档变化/语法树增量解析时重建；MUST NOT 全量构建（1MB <100ms 性能合同）。
-// 只读口径：不做光标行 reveal 源码的编辑态逻辑。
+// 编辑态口径（M1 只读期已结束）：光标/选区触及的结构显露源码——callout 行、
+// 标准 Markdown 链接、frontmatter 块、公式与 mermaid widget；显露由选区驱动的
+// 装饰重建实现，MUST NOT 改写文档（ADR 0003 §3 铁律）。
 
 import { Decoration, EditorView, ViewPlugin, WidgetType } from "@codemirror/view";
 import type { DecorationSet, ViewUpdate } from "@codemirror/view";
@@ -424,7 +426,7 @@ function frontmatterSet(state: EditorState): DecorationSet {
 // ```mermaid 围栏块可跨行，与 frontmatter/块级公式同约束走 StateField。
 // 除 docChanged/selection 外，previewRefresh（渲染 settle）也触发
 // 重算：settle 后缓存状态对象变更，widget eq 不等，CM 重新调用 toDOM。
-// 语法树推进也必须触发重算（M110 真实桌面缺陷）：大文档 openDocument 调度时
+// 语法树推进也必须触发重算（M110 真实桌面缺陷）：大文档装载（editor.reloadSession）调度时
 // 增量解析尚未覆盖尾部围栏块，字段算出 Decoration.none；后台解析经
 // Language.setState 事务推进，若不监听树变化，装饰永久缺失、围栏停留源码。
 const mermaidBlockDecorations = StateField.define<DecorationSet>({

@@ -2,13 +2,14 @@
 
 - Change ID: add-wikilink
 - 日期: 2026-09-05
+- 归档: 2026-09-17（M150 批量归档，Alex 已授权节点 2；对账记录见文末「归档对账」）
 - 角色: Alex Lee（评审/裁决），AI agent（起草）
 
 ## Why
 
-M1 内容清单含 wikilink 跳转（[ADR 0004 §1](../../../docs/adr/0004-development-and-openness-strategy.md)），其前置任务"冻结 wikilink spec + 按冻结 spec 合成 fixture 集"（ADR 0003 §4）已完成：冻结 spec 在 [docs/specs/wikilink/link-semantics.md](../../../docs/specs/wikilink/link-semantics.md)（下称"链接语义 spec"），合成 fixture 在 [tests/wikilink-fixtures/](../../../tests/wikilink-fixtures/)。本 change 按冻结 spec 实现解析、跳转与链接图。
+M1 内容清单含 wikilink 跳转（[ADR 0004 §1](../../../../docs/adr/0004-development-and-openness-strategy.md)），其前置任务"冻结 wikilink spec + 按冻结 spec 合成 fixture 集"（ADR 0003 §4）已完成：冻结 spec 在 [docs/specs/wikilink/link-semantics.md](../../../../docs/specs/wikilink/link-semantics.md)（下称"链接语义 spec"），合成 fixture 在 [tests/wikilink-fixtures/](../../../../tests/wikilink-fixtures/)。本 change 按冻结 spec 实现解析、跳转与链接图。
 
-架构裁决在先：link graph 在 Rust core（[ADR 0002 §3](../../../docs/adr/0002-technical-route.md)）；架构复查 P1-4 进一步要求 wikilink 语义解析只有一份实现（Rust link_graph），前端只做装饰定位——双解析器会在 Obsidian 方言的长尾上必然漂移。本提案把该纪律落成可验收的 requirement。
+架构裁决在先：link graph 在 Rust core（[ADR 0002 §3](../../../../docs/adr/0002-technical-route.md)）；架构复查 P1-4 进一步要求 wikilink 语义解析只有一份实现（Rust link_graph），前端只做装饰定位——双解析器会在 Obsidian 方言的长尾上必然漂移。本提案把该纪律落成可验收的 requirement。
 
 ## What Changes
 
@@ -40,3 +41,9 @@ M1 内容清单含 wikilink 跳转（[ADR 0004 §1](../../../docs/adr/0004-devel
 - 影响的 specs：新增 capability `wikilink-resolution`、`wikilink-navigation`、`backlinks-panel`。
 - 影响的代码/系统：`src-tauri/src/link_graph.rs`（占位骨架充实为解析器 + 索引 + 反链查询）、`src-tauri/src/commands.rs`（新增 `link_graph_resolve` / `link_graph_backlinks` / `wikilink_create`，payload 类型经 ts-rs 单一来源导出）、`src-tauri/src/lib.rs`（装配 vault 打开/事件流接入索引维护）；前端 `src/preview/`（wikilink 装饰与三态显示）、`src/ipc.ts`（薄封装）、`src/keys.ts`（注册 chord）、`src/tree.ts`/`src/main.ts`（跳转打开文件接线、backlinks 面板挂载）。测试：Rust 单测跑 `tests/wikilink-fixtures/cases.json` 全部用例；前端 span 定位测试跑 parseCases 的 span 断言。
 - 关联约束：ADR 0003 §1（兼容范围）、§2（不做清单）、§3（铁律：一键创建只建新文件）、§4（spec + fixture 为兼容性本体）；ADR 0002 §3（link graph 在 Rust core）、§6（性能合同：装饰定位沿用视口增量纪律）、§7（图结构不耦合 UI 层）；ADR 0001 §4（键位 chorded 非 modal）；ADR 0004 §2（backlinks 挤压预案）；架构复查 P1-4（单实现解析）。
+
+## 归档对账（2026-09-17，M150）
+
+- **backlinks-panel capability 不随本 change 归档**：该 capability 已按 ADR 0004 §2 挤压预案整组推迟，前端实现（面板、IPC 封装、视觉场景与基线）随后移除，Rust 侧 `link_graph_backlinks` command 已删除（上方「What Changes」第 1 条与 Impact 中对该 command 的描述是当时口径，现状不缺该实现）。若照旧归档，`openspec/specs/backlinks-panel/spec.md` 会凭空诞生一份描述「面板存在」的 living spec，与实现直接矛盾。故归档前删除 `specs/backlinks-panel/` 增量，推迟记录以本节的形态随 change 归档留痕；v1+ 重建意向见 finding `20260905-tower-idea-v1-agent.md`。
+- **未勾任务的放弃原因**：3.1–3.2 按挤压预案推迟（tasks.md 已就地标注）；5.3 的「作者真实 vault 验收」未执行——真实 vault 只读纪律下不做写入动作，等价验证由 `tests/wikilink-fixtures/cases.json` 的 Rust 全量断言与真机场景 12-links 的 wikilink 跳转/未创建不建文件断言承担（见 tasks.md 同类标注）。
+- **spec 增量与实现一致性**：`wikilink-resolution` 与 `wikilink-navigation` 两份增量逐条对照实现无冲突（`link_graph_resolve` / `wikilink_create` 均在 `src-tauri/src/commands.rs`），随本 change 归档。

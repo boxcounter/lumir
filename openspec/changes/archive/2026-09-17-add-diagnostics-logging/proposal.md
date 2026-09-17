@@ -6,7 +6,7 @@
 
 ## Why
 
-AI-only 模式下（[ADR 0004](../../../docs/adr/0004-development-and-openness-strategy.md)）CI 门禁覆盖了「合入前」，但运行时对 agent 是全黑的：`src-tauri` 无任何日志依赖（Cargo.toml 无 tracing/log），`ConfigSnapshot.warnings` 只进 console 无出口（backlog，M132 finding），偶发缺陷「编辑区全空白」因复现条件未锁定两批未立项（backlog「未复现」）。
+AI-only 模式下（[ADR 0004](../../../../docs/adr/0004-development-and-openness-strategy.md)）CI 门禁覆盖了「合入前」，但运行时对 agent 是全黑的：`src-tauri` 无任何日志依赖（Cargo.toml 无 tracing/log），`ConfigSnapshot.warnings` 只进 console 无出口（backlog，M132 finding），偶发缺陷「编辑区全空白」因复现条件未锁定两批未立项（backlog「未复现」）。
 
 dogfood 阶段（ADR 0006 转向）的决策输入是 friction log，其中「哪里卡住」的一半（崩溃恢复触发、保存冲突频发、渲染失败、性能毛刺）是机器可记录的事件，目前全靠 Alex 人肉回忆与转述。本 change 让这些事件以机器可读形式落盘，agent 会话可直接读取定位，Alex 只需记录「想回外部工具」的动机部分。
 

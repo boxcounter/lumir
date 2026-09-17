@@ -1,6 +1,7 @@
 # ADR 0001: 定位与边界
 
 - 状态: accepted
+- 经 0006 deferred: §1 定位句与 §2 产品本体在当前阶段不生效；§3 非目标、§4 键盘、§5 极致快美、§6 开放策略继续有效（见 [ADR 0006](0006-agent-positioning-deferred.md)）
 - 日期: 2026-09-04
 - 角色: Alex Lee（评审/裁决），AI agent（起草）
 

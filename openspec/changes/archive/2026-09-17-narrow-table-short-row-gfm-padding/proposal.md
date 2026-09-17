@@ -6,9 +6,9 @@
 
 ## Why
 
-Lumir 的表格合同（[docs/specs/table-reading.md](../../../docs/specs/table-reading.md) §2）原口径是「数据行少列或多列一律整块回退源码，系统不得补列」。这与 GFM 规范不一致：GFM 明确允许数据行的 cell 数与表头不同——少则尾部补空 cell，多则忽略多余 cell（[GFM spec §4.10](https://github.github.com/gfm/#tables-extension-)：「The remainder of the table's rows may vary in the number of cells. If there are a number of cells fewer than the number of cells in the header row, empty cells are inserted. If there are greater, the excess is ignored.」）。GitHub 与 Obsidian 打开同一份文件都能正常显示。
+Lumir 的表格合同（[docs/specs/table-reading.md](../../../../docs/specs/table-reading.md) §2）原口径是「数据行少列或多列一律整块回退源码，系统不得补列」。这与 GFM 规范不一致：GFM 明确允许数据行的 cell 数与表头不同——少则尾部补空 cell，多则忽略多余 cell（[GFM spec §4.10](https://github.github.com/gfm/#tables-extension-)：「The remainder of the table's rows may vary in the number of cells. If there are a number of cells fewer than the number of cells in the header row, empty cells are inserted. If there are greater, the excess is ignored.」）。GitHub 与 Obsidian 打开同一份文件都能正常显示。
 
-M137 诊断给出了真实代价：`~/Downloads/Everything-copy/outline.md:106-109` 的六列表有四行各缺最后一列（agent 产出的 markdown，ragged row 属高频形态），Lumir 把整张表（含正常的表头与分隔行）回退成源码，用户看到的是「Lumir 打不开我的表」，而不是「我的文件少了一个 `|`」。证据：finding `.tower/comms/findings/20260916-worker-table-survey-idea-gfm.md`（M137 报告，含复现与控制变量：补齐末列后同一份解析器配置下不再降级），另有 [M72 table probe](../complete-markdown-reading/table-probe72.md) 的同族观察。
+M137 诊断给出了真实代价：`~/Downloads/Everything-copy/outline.md:106-109` 的六列表有四行各缺最后一列（agent 产出的 markdown，ragged row 属高频形态），Lumir 把整张表（含正常的表头与分隔行）回退成源码，用户看到的是「Lumir 打不开我的表」，而不是「我的文件少了一个 `|`」。证据：finding `.tower/comms/findings/20260916-worker-table-survey-idea-gfm.md`（M137 报告，含复现与控制变量：补齐末列后同一份解析器配置下不再降级），另有 [M72 table probe](../2026-09-17-withdrawn-complete-markdown-reading/table-probe72.md) 的同族观察。
 
 Alex 2026-09-16 裁决采纳（原话「好，采纳。」），执行口径由 tower 明确并经 Alex 过目：**仅收窄短行**（少列 → 尾部补空 cell），**多列仍整块降级**——GFM 对多列是 excess ignored，静默丢列与合同「不猜测修复」的精神冲突。本合同收窄**不动**只读铁律：装饰不改写文档，源文件与磁盘逐字节不变。
 
@@ -35,4 +35,4 @@ Alex 2026-09-16 裁决采纳（原话「好，采纳。」），执行口径由 
 - 影响的文档：`docs/specs/table-reading.md`（§2 / §9）、`docs/backlog.md`（裁决与落地记录）。
 - 影响的测试/验收：`tests/visual/scenes/table-foundation-v2.spec.ts`、`tests/visual/fixtures/table-foundation-v2/representative.md`、`scripts/acceptance/scenarios/render-table-degrade.md`、`scripts/acceptance/fixtures/render-table-degrade.md`。
 - 关联约束：ADR 0003 §3（装饰不改写文档）、ADR 0002 §2（单内核双模式）、ADR 0004 第 5 条（功能变更走 OpenSpec）。
-- 视觉基线：预期零变化，实测一致（204 场景全绿、未 `--update`）。依据是**截图场景里没有短行/多列表**，不是「表格从不进截图」——9 个截图场景文件（13 条 `toHaveScreenshot`）逐条核对，唯一含表的是 [math.spec.ts](../../../tests/visual/scenes/math.spec.ts) 的内联文档 `MATH_MD`（`| 公式 | 值 |`，表头 2 列、数据行 2 格），那是矩形表，渲染不受本次收窄影响（补空列只对 cell 数少于表头的短行生效）；含表 fixture（`table-foundation-v2`、`table-header-layout`）本身没有截图断言。若实际出现差异，按 [tests/visual/README.md](../../../tests/visual/README.md) 的更新纪律逐场景核对后再更新。
+- 视觉基线：预期零变化，实测一致（204 场景全绿、未 `--update`）。依据是**截图场景里没有短行/多列表**，不是「表格从不进截图」——9 个截图场景文件（13 条 `toHaveScreenshot`）逐条核对，唯一含表的是 [math.spec.ts](../../../../tests/visual/scenes/math.spec.ts) 的内联文档 `MATH_MD`（`| 公式 | 值 |`，表头 2 列、数据行 2 格），那是矩形表，渲染不受本次收窄影响（补空列只对 cell 数少于表头的短行生效）；含表 fixture（`table-foundation-v2`、`table-header-layout`）本身没有截图断言。若实际出现差异，按 [tests/visual/README.md](../../../../tests/visual/README.md) 的更新纪律逐场景核对后再更新。

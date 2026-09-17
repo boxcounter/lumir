@@ -1,5 +1,7 @@
 # Vault recovery 实现合同
 
+> **状态：已撤回（2026-09-17）。** 本文件对应的 change `foundation-vault-recovery` 从未进入实现，其 durable intent / `operation_id` 幂等 / 崩溃阶段矩阵在仓内不存在（全仓 `grep operation_id` 零命中），且不再沿该路线推进；保存的崩溃保护已由 [archive/2026-09-12-save-hardening](../../openspec/changes/archive/2026-09-12-save-hardening/proposal.md)（崩溃备份 + 启动恢复提示）与 [archive/2026-09-12-save-and-watch-recovery](../../openspec/changes/archive/2026-09-12-save-and-watch-recovery/proposal.md)（冲突与外部修改处置）承接。本文件保留为重启输入——若将来要做强一致保存事务，这是边界参考；**不再构成验收口径**。撤回记录见 [该 change 的 proposal](../../openspec/changes/archive/2026-09-17-withdrawn-foundation-vault-recovery/proposal.md)。
+
 本文件是 `foundation-vault-recovery` change 的实现边界摘要。它只描述单文件保存崩溃后的结果收敛，不是产品代码或真实 vault 操作说明。
 
 ## 依赖与边界

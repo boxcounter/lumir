@@ -1,14 +1,16 @@
 # Lumir
 
-把 agent 当作可见协作者的文本工作台：本地纯文件、全文件类型一等公民、agent 可见协作、极致快。定位与边界的完整论证见 [ADR 0001](docs/adr/0001-product-positioning-and-boundaries.md)。
+本地文本工作台：本地纯文件、全文件类型一等公民、极致快。当前阶段定位为 **Emacs keybinding PKM**，自用 daily driver 优先；AI/Agent 定位 deferred（搁置，非放弃）——见 [ADR 0006](docs/adr/0006-agent-positioning-deferred.md)，历史定位与边界论证见 [ADR 0001](docs/adr/0001-product-positioning-and-boundaries.md)（其中 §1 定位句与 §2 产品本体经 0006 在当前阶段不生效）。
 
-当前处于早期开发阶段（里程碑划分见 [ADR 0004](docs/adr/0004-development-and-openness-strategy.md)），功能与接口随时会变。项目在 M3 里程碑达成前不接受外部贡献，因此暂无贡献指南。
+当前处于早期开发阶段（里程碑划分见 [ADR 0004](docs/adr/0004-development-and-openness-strategy.md)，其中 M2 agent 集成经 0006 deferred），功能与接口随时会变。项目在 M3 里程碑达成前不接受外部贡献，因此暂无贡献指南。
 
 ## 开发环境要求
 
 - Rust（stable 工具链）
-- Node.js ^20.19.0 或 >=22.12.0（Vite 要求）
+- Node.js >=22.12.0（Vite 8 要求；`tests/unit` 单测层依赖 Node 自带的 TypeScript 类型剥离 `--experimental-strip-types`，需 ≥22.6，故不再保留 `^20.19` 分支）
 - pnpm
+
+注意 Node 版本口径：Node 20 已于 2026-04-30 EOL，且 20.x 上 `tests/unit` 会明确报红（不静默跳过），本地「全绿」在 20.x 上不可达——请用 22.x 或更高。
 
 ## 运行
 

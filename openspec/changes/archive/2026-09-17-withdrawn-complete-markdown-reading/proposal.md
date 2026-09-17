@@ -2,13 +2,35 @@
 
 - Change ID: complete-markdown-reading
 - 日期: 2026-09-06
+- **状态: 撤回（2026-09-17，M150）**——见下方「撤回记录」
 - 角色: Alex Lee（评审/裁决），AI agent（起草）
 - 状态: 2026-09-06 tower 依 Alex 授权通过节点 1；公开 BlockWrapper 路线为条件批准，须先完成真实 WKWebView 可行性验证，节点 2 未通过。
 - 本轮授权: 2026-09-06 Alex 追加授权 tower 代行本轮列表对齐与基础表格阅读的提案节点裁决，并在证据充分后代行对应归档裁决。授权不是节点已通过；tower 须分别记录具体决定。M71 提交仅起草；M72 在节点 1 后只做隔离前置实验，不实施生产表格、不 archive，不操作真实 vault、不推送远端 master、不扩展 M2。下文要求的 Alex 裁决在该限定范围内可由获授权的 tower 代行。
 
+> **撤回记录（2026-09-17，M150）**
+>
+> 本 change 自 2026-09-06 起积压 11 天未推进（2/17 任务：节点 1 与 M72 前置实验），其四项
+> requirement（列表文字对齐与悬挂换行 / 基础 pipe 表格阅读与源码列对齐 / 宽表可访问 /
+> 列表表格阅读的源码与扩展边界）指向的能力**已由后续 mission 实现**：列表布局在
+> `src/preview/lists.ts`（组宽按实际最长标记紧凑计算 + `measured` / `metadataReady` 的
+> partial→complete 一次切换），表格在 `src/preview/table.ts`（grid 渲染、四对齐、空槽、
+> 短行补空列、多列整块降级），门禁面为 `tests/visual/scenes/table-foundation-v2.spec.ts`
+> 与真机场景 `render-table-degrade`；表格合同正文在
+> [docs/specs/table-reading.md](../../../../docs/specs/table-reading.md)（M142 按 Alex 裁决收窄）。
+>
+> **撤回而非归档的理由**：实现虽已落地，但本 change 的出口验证（3.x 的整轮视觉矩阵、真实 WK
+> 选区/复制逐项比对、perf 四项复测）从未按其形态执行，节点 2 亦未通过；把未经该验收的
+> requirement 文本并入 living spec 会给出「已验证」的错误印象。
+>
+> **遗留口径缺口（本 mission 不补，已记入 `docs/backlog.md`）**：上述四项 requirement 的文本
+> 从未进入 living spec——列表对齐与基础表格阅读目前只有实现与门禁，没有 requirement 级规格
+> （表格侧另有 `docs/specs/table-reading.md` 作为合同载体）。补齐需另立 change。
+>
+> 完整提案、design、spec 增量与 M72 probe 证据文件随本目录留档。
+
 ## Why
 
-M1 的出口是只读浏览真实 vault，而不是开始编辑。现有规格只要求「列表符号美化」，没有表格阅读要求；实现只将无序标记换成圆点，未建立列表正文的对齐规则，也没有表格装饰分支。依据：[既有规格](../../specs/editor-live-preview/spec.md)、[ListMark 分支](../../../src/preview/livePreview.ts)、[M1/M2 出口](../../../docs/adr/0004-development-and-openness-strategy.md)。
+M1 的出口是只读浏览真实 vault，而不是开始编辑。现有规格只要求「列表符号美化」，没有表格阅读要求；实现只将无序标记换成圆点，未建立列表正文的对齐规则，也没有表格装饰分支。依据：[既有规格](../../../specs/editor-live-preview/spec.md)、[ListMark 分支](../../../../src/preview/livePreview.ts)、[M1/M2 出口](../../../../docs/adr/0004-development-and-openness-strategy.md)。
 
 列表换行后的正文起点与表格行列关系属于阅读完成度。因此补入 M1 收尾；源码编辑仍归 M2，不把专用表格操作变成 M2 出口。
 
@@ -32,7 +54,7 @@ M1 的出口是只读浏览真实 vault，而不是开始编辑。现有规格�
 
 - 影响的 specs：`editor-live-preview` 新增 requirements；保留既有视口增量义务。
 - 后续实现预计涉及：`src/preview/livePreview.ts`、`src/preview/theme.ts`，必要时拆出列表/表格纯解析及 decoration 模块；`tests/visual/` 的行为与几何断言。当前提交仅包含计划与规格。
-- 关联约束：ADR 0002 单 CM 内核、公开扩展与性能合同；ADR 0003 只读及源码保护；ADR 0004 里程碑。已有依赖与 parser 接线见 [package.json](../../../package.json)、[editor.ts](../../../src/editor.ts)。
+- 关联约束：ADR 0002 单 CM 内核、公开扩展与性能合同；ADR 0003 只读及源码保护；ADR 0004 里程碑。已有依赖与 parser 接线见 [package.json](../../../../package.json)、[editor.ts](../../../../src/editor.ts)。
 
 ## Review Decisions
 
