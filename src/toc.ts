@@ -17,11 +17,18 @@
 //   - 浮层打开是用户主动动作、不在键入路径上，这一次才补一次全量解析（25ms 预算，超时回落
 //     已解析部分），保证条目表尽可能是全文。
 //
-// 浮层自己的导航键（↑↓ / Enter / Esc）由浮层就地消费，**不进** keys.ts 的统一表：表的不变量是
-// 「一个 token 一条绑定」，而 ↑↓ 已归 editor.cursor-*、Esc 已归 editor.widget-escape（带 when
-// 条件）。浮层打开期间持有焦点，editor 作用域因「事件目标不在 contentDOM 内」不命中，就地消费
-// 后 preventDefault，window 上的分发器对已消费事件让路——与 M133 键位面板、M139 搜索 panel
-// 同一套口径，不构成同一物理键的第二条分发映射。
+// 浮层自己的导航键（↑↓ / ⌃N⌃P / Enter / Esc）由浮层就地消费，**不进** keys.ts 的统一表：表的不
+// 变量是「一个 token 一条绑定」，而 ↑↓ / ⌃N / ⌃P 已归 editor.cursor-*、Esc 已归
+// editor.widget-escape（带 when 条件）。浮层打开期间持有焦点，editor 作用域因「事件目标不在
+// contentDOM 内」不命中，就地消费后 preventDefault，window 上的分发器对已消费事件让路——与 M133
+// 键位面板、M139 搜索 panel 同一套口径，不构成同一物理键的第二条分发映射。
+//
+// ⌃N / ⌃P 是 Emacs 的 next-line / previous-line，与 ↑↓ 完全等价（dired 在列表缓冲里同样把它
+// 们重定义成 dired-next-line / dired-previous-line，列表语境里这两个键是同一语义的 Emacs 拼法）。
+// 它们**不能**写进统一键位表：同 token 已被 editor.cursor-down / editor.cursor-up 占用，第二条
+// 绑定会被 Keymap 构造期的重复绑定检查直接拒绝。因此浮层就地消费是唯一自洽的形态，界面上的键位
+// 提示是这两个键唯一的可见出口。归属、生效条件与关闭后的归还口径见
+// openspec/specs/toc-outline/spec.md 的「命令入口与浮层内键位的归属」。
 //
 // 已知边界（如实记录，见 change add-toc-outline 的 spec）：
 //   - 只认 ATX 标题（`#` 起首）；Setext 标题（`===` / `---` 下划线形态）v1 不识别；
@@ -93,7 +100,7 @@ const ITEM_ID_PREFIX = "lumir-toc-opt-";
 /** 文案（单一来源 文案-Copy.md D84–D87）。 */
 const NO_HEADINGS_TEXT = "这份文档还没有标题，大纲为空";
 const POPOVER_LABEL = "大纲";
-const POPOVER_HINT = "↑↓ 选择 · Enter 跳转 · Esc 关闭";
+const POPOVER_HINT = "↑↓ ⌃N⌃P 选择 · Enter 跳转 · Esc 关闭";
 const INDICATOR_TITLE = "点击展开大纲";
 /** 标题链的分隔符（纯排版分隔，不承载语义）。 */
 const PATH_SEPARATOR = " › ";
@@ -385,10 +392,14 @@ class Toc implements TocHandle {
     const token = keyToken(event);
     if (token === null) return;
     switch (token) {
+      // ⌃N / ⌃P 是 Emacs 的 next-line / previous-line，与 ↑↓ 完全等价：同一落点、同一钳位口径，
+      // 共用 move() 这一份实现（浮层里 MUST NOT 有第二套下标逻辑）。
       case "ArrowDown":
+      case "Ctrl-N":
         this.move(1);
         break;
       case "ArrowUp":
+      case "Ctrl-P":
         this.move(-1);
         break;
       case "Enter":
