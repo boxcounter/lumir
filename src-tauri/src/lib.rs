@@ -30,6 +30,17 @@ const UNDO_MENU_ID: &str = "lumir.undo";
 #[cfg(target_os = "macos")]
 const REDO_MENU_ID: &str = "lumir.redo";
 
+/// 自定义关闭菜单项 id（M149）：见 install_menu_overrides。
+///
+/// 原生 `Menu::default()` 在 macOS 上往 **File** 与 **Window** 两个子菜单各放了一个预置
+/// Close（都带 ⌘W 加速键）。两处都要换掉，但给两个不同的 id：同一 id 在菜单里出现两次
+/// 在 tauri/muda 里语义不明（按 id 查找只返回第一个），而两者在做同一个动作这件事由
+/// menu_command_of 统一映射表达，不靠 id 相同。
+#[cfg(target_os = "macos")]
+const CLOSE_MENU_ID: &str = "lumir.close";
+#[cfg(target_os = "macos")]
+const CLOSE_WINDOW_MENU_ID: &str = "lumir.close_window";
+
 /// 菜单命令事件名（M131）：前端 main.ts 订阅它，把菜单点击交给统一键位层的命令实现。
 /// 载荷见 menu_command_of（菜单只说 undo / redo 这类平台术语，映射到前端命令 id 是前端的事）。
 #[cfg(target_os = "macos")]
@@ -135,21 +146,95 @@ pub fn run() {
         });
 }
 
-/// macOS 菜单改造入口：一次 `Menu::default()` 内完成退出守卫（M101）与撤销/重做让位
-/// （M131）两处手术，改完统一 set_menu。
+/// macOS 菜单改造入口：一次 `Menu::default()` 内完成退出守卫（M101）、撤销/重做让位
+/// （M131）与关闭项让位（M149）三处手术，改完统一 set_menu。
 ///
-/// 为什么合成一个入口：两个改造都要基于 tauri 默认菜单做增删，各自 `Menu::default()`
+/// 为什么合成一个入口：三处改造都要基于 tauri 默认菜单做增删，各自 `Menu::default()`
 /// 再 set_menu 会让后装的那次覆盖掉前一次（退出守卫会静默失效）。返回值语义沿旧例——
-/// 只有真改动了才 set_menu，结构假设不成立时保留默认菜单。
+/// 只要有一处真改动了就 set_menu，三处都因结构假设不成立而放弃时保留默认菜单。
 #[cfg(target_os = "macos")]
 fn install_menu_overrides(app: &tauri::AppHandle) -> tauri::Result<()> {
     let menu = Menu::default(app)?;
     let quit_guarded = guard_quit_item(&menu, app)?;
     let undo_redo_swapped = swap_undo_redo_items(&menu, app)?;
-    if quit_guarded || undo_redo_swapped {
+    let close_swapped = swap_close_window_items(&menu, app)?;
+    if quit_guarded || undo_redo_swapped || close_swapped {
         app.set_menu(menu)?;
     }
     Ok(())
+}
+
+/// 关闭菜单项让位（M149 多标签）：把 **File** 与 **Window** 两个子菜单里的**预置** Close
+/// 换成不带加速键的自定义项，点击经 MENU_COMMAND_EVENT 交回前端统一命令层。
+///
+/// 为什么必须换：预置 CloseWindow 在 macOS 上自带 key equivalent ⌘W（muda 的
+/// `PredefinedMenuItemType::CloseWindow => Accelerator::new(Some(CMD_OR_CTRL), Code::KeyW)`，
+/// 见 items/predefined.rs 的 accelerator()，经 platform_impl/macos 的
+/// `item_type.accelerator()` 落到 NSMenuItem）。菜单键等价在 NSApplication 分发阶段就被菜单
+/// 截获，webview 的 keydown 永远收不到 ⌘W——与 M131 的 ⌘Z / ⇧⌘Z 完全同一机制（那边是
+/// M129 survey 的实证）。台账里 ⌘W 归 `tab.close`，因此必须让出这个键。
+///
+/// 语义变化（mission 裁决，tower 2026-09-17）：⌘W 从「关窗」变成「关当前标签」；菜单里的
+/// 关闭项仍在，只是不再带加速键。单窗口应用里「关窗≈关应用」，而关标签是更高频动作
+/// （Obsidian / VS Code 同口径）；退出仍走 ⌘Q（有 dirty 守卫）与红灯按钮。
+///
+/// 结构性假设（tauri 2.11.5 `menu::Menu::default` 源码）：File 子菜单在 macOS 上只有一项
+/// 预置 Close（非 macOS 还多一个 Quit），Window 子菜单为 [Minimize, Maximize, 分隔符,
+/// Close] 且 Close 在末位；预置项文案为 "Close"（muda 对 macOS 不带助记符 `&`）。校验失败即
+/// 跳过该子菜单并打 stderr 警告，绝不在结构变化时盲目删项。返回是否做了替换。
+#[cfg(target_os = "macos")]
+fn swap_close_window_items<R: tauri::Runtime>(
+    menu: &Menu<R>,
+    app: &tauri::AppHandle<R>,
+) -> tauri::Result<bool> {
+    let mut swapped = false;
+    for (submenu_title, id) in [("File", CLOSE_MENU_ID), ("Window", CLOSE_WINDOW_MENU_ID)] {
+        let submenu = menu.items()?.into_iter().find_map(|item| match item {
+            MenuItemKind::Submenu(submenu)
+                if submenu
+                    .text()
+                    .map(|text| text == submenu_title)
+                    .unwrap_or(false) =>
+            {
+                Some(submenu)
+            }
+            _ => None,
+        });
+        let Some(submenu) = submenu else {
+            eprintln!(
+                "lumir: close menu not installed: Menu::default() has no {submenu_title} submenu (tauri menu structure changed)"
+            );
+            continue;
+        };
+        let items = submenu.items()?;
+        let Some(MenuItemKind::Predefined(close)) = items.last() else {
+            eprintln!(
+                "lumir: close menu not installed: {submenu_title} submenu last item is not a predefined item (tauri menu structure changed)"
+            );
+            continue;
+        };
+        let text = close.text().unwrap_or_default();
+        if !is_close_item_text(&text) {
+            eprintln!(
+                "lumir: close menu not installed: {submenu_title} submenu last item text {text:?} is not Close (tauri menu structure changed)"
+            );
+            continue;
+        }
+        // 文案沿用原生（"Close"），加速键刻意不设——见函数头：设了就等于把 ⌘W 又截走。
+        let item = MenuItemBuilder::with_id(id, text).build(app)?;
+        submenu.remove_at(items.len() - 1)?;
+        submenu.append(&item)?;
+        swapped = true;
+    }
+    Ok(swapped)
+}
+
+/// 判断菜单项文案是否为原生 Close 项：muda 对 macOS 给出 "Close"（Windows/Linux 为
+/// "C&lose Window"，本函数一并接受，便于将来跨平台时不静默退化）。纯函数，供
+/// swap_close_window_items 删项前校验。
+#[cfg(target_os = "macos")]
+fn is_close_item_text(text: &str) -> bool {
+    text == "Close" || text == "C&lose Window" || text == "Close Window"
 }
 
 /// macOS 退出守卫菜单（M101）：Cocoa 默认 Quit 项直连 NSApp terminate:，不经
@@ -268,12 +353,14 @@ fn edit_items_are_predefined_undo_redo(texts: &[String]) -> bool {
 }
 
 /// 菜单命令事件载荷（前端 main.ts 的 MENU_COMMANDS 键）。菜单只说平台术语
-/// undo / redo，映射到前端命令 id 是前端的事——Rust 侧不持有前端的命令命名。
+/// undo / redo / close，映射到前端命令 id 是前端的事——Rust 侧不持有前端的命令命名。
 #[cfg(target_os = "macos")]
 fn menu_command_of(id: &str) -> Option<&'static str> {
     match id {
         UNDO_MENU_ID => Some("undo"),
         REDO_MENU_ID => Some("redo"),
+        // File 与 Window 两个子菜单的关闭项做同一个动作（关当前标签），因此同一个载荷。
+        CLOSE_MENU_ID | CLOSE_WINDOW_MENU_ID => Some("close"),
         _ => None,
     }
 }
@@ -316,7 +403,9 @@ fn restore_last_vault(app: &tauri::AppHandle) {
 
 #[cfg(all(test, target_os = "macos"))]
 mod tests {
-    use super::{edit_items_are_predefined_undo_redo, is_quit_item_text, menu_command_of};
+    use super::{
+        edit_items_are_predefined_undo_redo, is_close_item_text, is_quit_item_text, menu_command_of,
+    };
 
     #[test]
     fn quit_item_text_matches_muda_default_forms() {
@@ -333,6 +422,23 @@ mod tests {
         assert!(!is_quit_item_text("About lumir"));
         assert!(!is_quit_item_text("Quitters")); // 必须带空格边界
         assert!(!is_quit_item_text("quit lumir")); // 大小写敏感，非 muda 默认文案
+    }
+
+    /// 关闭项文案校验（M149）：只认 muda 的默认文案，错项一律判否（宁可不改菜单）。
+    #[test]
+    fn close_item_text_matches_muda_default_forms() {
+        assert!(is_close_item_text("Close")); // macOS
+        assert!(is_close_item_text("C&lose Window")); // Windows/Linux
+        assert!(is_close_item_text("Close Window"));
+    }
+
+    #[test]
+    fn close_item_text_rejects_other_predefined_items() {
+        assert!(!is_close_item_text(""));
+        assert!(!is_close_item_text("close")); // 大小写敏感，非 muda 默认文案
+        assert!(!is_close_item_text("Close All"));
+        assert!(!is_close_item_text("Minimize"));
+        assert!(!is_close_item_text("Quit lumir"));
     }
 
     /// Edit 子菜单前两项校验：只认 muda 对 macOS 的默认文案（不带助记符 `&`）。
@@ -367,13 +473,24 @@ mod tests {
         ])));
     }
 
-    /// 菜单命令事件载荷：只认自己的两个菜单项 id，其余（含 Quit）不产生命令事件。
+    /// 菜单事件载荷（M131 + M149）：只认自己的菜单项 id，其余（含 Quit、预置项文案本身）
+    /// 不产生命令事件。
+    ///
+    /// M149 新增的两个关闭项 id 各断言一次：它们是**两次独立的菜单手术**（File 子菜单与
+    /// Window 子菜单各一处），只测一个会漏掉另一条转发路径。
+    ///
+    /// 真实菜单手术（remove_at / append）需要一份 AppHandle，纯单测覆盖不到——与 M131
+    /// 同一深度：可判定的部分是「文案校验 + id → 载荷映射」，手术本身由真机验收覆盖
+    /// （14-tabs 的菜单点击步骤）。
     #[test]
-    fn menu_command_only_covers_undo_redo_items() {
+    fn menu_command_only_covers_our_menu_items() {
         assert_eq!(menu_command_of("lumir.undo"), Some("undo"));
         assert_eq!(menu_command_of("lumir.redo"), Some("redo"));
+        assert_eq!(menu_command_of("lumir.close"), Some("close"));
+        assert_eq!(menu_command_of("lumir.close_window"), Some("close"));
         assert_eq!(menu_command_of("lumir.quit"), None);
         assert_eq!(menu_command_of("Undo"), None);
+        assert_eq!(menu_command_of("Close"), None);
         assert_eq!(menu_command_of(""), None);
     }
 }

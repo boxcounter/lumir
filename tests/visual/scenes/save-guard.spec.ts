@@ -89,11 +89,17 @@ test("保存冲突：可理解的冲突提示，修改保留，切换与退出�
   await expect(page.locator(".masthead-file")).toContainText("未保存");
   await expect(content).toContainText("edited");
 
-  // dirty 拦截切换文件：必须有人话提示，且停留在当前文件。
+  // M149：dirty 不再拦截「打开另一个文件」——它开成（或复用）标签，修改留在原标签上。
+  // 拦截只保留给「前台是未命名文档」那一种情形（见 m130-text-open-trap.spec.ts）。
   await page.locator('.ft-row[title="docs"]').click();
   await page.locator('.ft-row[title="docs/guide.md"]').click();
-  await expect(page.locator(".lumir-toast", { hasText: "无法切换文件" })).toBeVisible();
-  await expect(page.locator(".masthead-file")).toContainText("README.md");
+  await expect(page.locator(".masthead-file")).toHaveText("docs/guide.md");
+  await expect(page.locator(".tab.is-active .tab-name")).toHaveText("guide.md");
+  // README.md 的标签还在、仍带 dirty 点，且**没有**任何拦截提示：内存修改一点没丢。
+  const readmeTab = page.locator(".tab", { hasText: "README.md" });
+  await expect(readmeTab).toHaveCount(1);
+  await expect(readmeTab.locator(".tab-dirty")).toBeVisible();
+  await expect(page.locator(".lumir-toast", { hasText: "无法切换文件" })).toHaveCount(0);
 
   // dirty 拦截退出（后端守卫触发 app:quit_blocked）：必须有界面提示。
   await fireQuitBlocked(page);

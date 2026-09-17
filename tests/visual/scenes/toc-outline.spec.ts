@@ -81,7 +81,7 @@ test("位置指示段：有标题的文件显示当前标题链，无标题 / �
   await openToc(page);
   const indicator = page.locator(".masthead-section");
   await expect(indicator).toBeVisible();
-  // 光标在文档首（openDocument 复位到 0），第一行就是 H1 → 链路只有它自己
+  // 光标在文档首（装载时复位到 0），第一行就是 H1 → 链路只有它自己
   await expect(indicator).toHaveText("第一部分");
 
   // 换到无标题文档：指示段收起（它声称的是「当前文件里的位置」，没有位置可指）

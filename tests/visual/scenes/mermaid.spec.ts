@@ -293,7 +293,7 @@ test("图表按排版基线渲染", async ({ page }) => {
 });
 
 test("大文档：尾部围栏块在增量解析推进后渲染（M110 真实桌面回归）", async ({ page }) => {
-  // 文档大到 openDocument 调度时语法树必然未解析到尾部：StateField 初次算出
+  // 文档大到装载（editor.reloadSession）调度时语法树必然未解析到尾部：StateField 初次算出
   // Decoration.none；修复前字段不监听解析推进（Language.setState 事务），
   // 装饰永久缺失、围栏停留源码样式——真实 WKWebView 大 vault 必现、headless
   // 小 fixture 全绿的分歧点。

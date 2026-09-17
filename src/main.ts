@@ -1,12 +1,15 @@
 import { createShell } from "./shell";
 import { createEditor } from "./editor";
+import type { EditorSession } from "./editor";
 import {
   applyKeyOverrides,
   COMMAND_IDS,
-  GLOBAL_COMMAND_IDS,
   KEY_BINDINGS,
   Keymap,
   keyToken,
+  NON_TAB_GLOBAL_COMMAND_IDS,
+  TAB_COMMAND_IDS,
+  TAB_GOTO_IDS,
   WIDGET_COMMAND_IDS,
 } from "./keys";
 import type { CommandId, CommandRunner, CommandRuntime, KeyBinding, KeyOverrides } from "./keys";
@@ -130,12 +133,14 @@ function toast(text: string, actions: Array<{ label: string; run(): void }> = []
 
 /** dirty 守卫提示的标识类与保存链路的其余决策都在 src/save-controller.ts；
  *  main.ts 只装配（M127）。原 fileRequest 与 documentGeneration 恒同增同减，
- *  已合并为 controller 的世代号，兼作 editor.openDocument 的 requestId。 */
+ *  已合并为 controller 的世代号，兼作 editor 装载（reloadSession）的 requestId。 */
 const save = createSaveController({
   editor,
   container: shell.editor,
   toast,
-  openFile: (path, kind) => openFile(path, kind),
+  // intent 原样转发：装配层是唯一知道「落到哪个标签」的地方（save-controller 只在
+  // 另存为新文件 / 恢复崩溃备份两条链路上指定 "current"）。
+  openFile: (path, kind, intent) => openFile(path, kind, intent),
   invalidateResolve: () => invalidateResolve(),
   showEditor: () => showEditor(),
   isNoticeHidden: () => notice.hidden,
@@ -160,35 +165,276 @@ editor.onReady((event) => {
   emitReadiness(event.phase, event);
 });
 
-// 打开文件：读出文本交给 editor.openDocument——模式裁决（以扩展名注册表为唯一
-// 事实源：.md/.markdown → md 模式；其余已打开的文件一律只读 code，含未知扩展与
-// basename 无点的文件，M130 方向 A）和附件相对路径解析依赖的 currentFilePath 都在
-// 内核里完成（spec「模式配置来源」）。不支持的二进制 → 提示而非报错弹窗。
-async function openFile(path: string, kind: "md" | "code" | "text" | "binary") {
-  if (!save.guard("切换文件")) return;
+// ---------------------------------------------------------------------------
+// 标签（M149）：模型就是 editor 的会话列表（顺序 = 打开顺序），装配层只多维护
+// 「哪个是可复用的预览标签」与标签栏 DOM。选中 / 关闭 / 切换都经内核的会话 API，
+// 这里不自己存第二份文档清单（REVIEW.md 第 8 条：同一语义不要两处真源）。
+// ---------------------------------------------------------------------------
+
+/** vault 相对路径 → 文件名（标签的可见文本）。 */
+function fileNameOf(path: string): string {
+  return path.slice(path.lastIndexOf("/") + 1) || path;
+}
+
+/** 标签栏渲染：从会话列表**全量重建**。标签数量是人的注意力量级（几到十几个），全量重建
+ *  比增量 diff 简单，也天然不会漂。空态（没有任何带路径的会话）整条隐藏——它在网格里
+ *  不占行高，所以空态布局与多标签之前逐像素一致（整页基线的空态对照因此不需要更新）。 */
+function renderTabs(): void {
+  const sessions = editor.sessions().filter((session) => session.path !== undefined);
+  const active = editor.activeSession();
+  shell.tabStrip.hidden = sessions.length === 0;
+  shell.tabStrip.replaceChildren(
+    ...sessions.map((session) => {
+      const path = session.path as string;
+      const name = fileNameOf(path);
+      const isActive = session === active;
+
+      const tab = document.createElement("div");
+      tab.className = "tab";
+      tab.dataset.path = path;
+      tab.classList.toggle("is-active", isActive);
+      // 预览（临时）标签：标题走斜体。多标签下「这一篇会不会被下一次单击顶掉」必须有
+      // 可见线索，否则用户以为它已经固定住了。
+      tab.classList.toggle("is-preview", session.preview);
+
+      const open = document.createElement("button");
+      open.type = "button";
+      open.className = "tab-open";
+      open.setAttribute("role", "tab");
+      open.setAttribute("aria-selected", String(isActive));
+      // 读屏名点名文件名 + 它自己的未保存状态（文案 D90）；悬停提示给完整相对路径
+      //（同名文件分散在不同目录时要能分辨，文案 D91）。
+      open.setAttribute("aria-label", session.dirty ? `${name}（未保存）` : name);
+      open.title = path;
+      open.addEventListener("mousedown", (event) => event.preventDefault());
+      open.addEventListener("click", () => activateTab(session));
+
+      const dot = document.createElement("span");
+      dot.className = "tab-dirty";
+      dot.textContent = "●";
+      dot.hidden = !session.dirty;
+      const label = document.createElement("span");
+      label.className = "tab-name";
+      label.textContent = name;
+      open.append(dot, label);
+
+      const close = document.createElement("button");
+      close.type = "button";
+      close.className = "tab-close";
+      close.textContent = "×";
+      close.title = `关闭 ${name}`;
+      close.setAttribute("aria-label", `关闭 ${name}`);
+      close.addEventListener("mousedown", (event) => event.preventDefault());
+      close.addEventListener("click", (event) => {
+        event.stopPropagation();
+        void closeTab(session);
+      });
+
+      tab.append(open, close);
+      return tab;
+    }),
+  );
+  // 标签栏出现 / 消失会改变编辑器列的高度，通知 CM 立刻重新测量一次：否则它要等浏览器
+  // resize 观察器的回调，滚动锚点会在之后的某一拍才被修正——那一拍落在用户操作之间时，
+  // 表现为「莫名其妙跳了几个像素」。m118 的「cell 内 Ctrl+E」场景按 1px 容差断言
+  // 「内容不下挫」，实测就是被这一拍打红的（全量跑 3px、单跑 ≤1px，典型的竞态形态）。
+  // requestMeasure 由 CM 合并，代价只有一次测量。
+  editor.view.requestMeasure();
+}
+
+/** 前台会话变化后把周边表现层**一次**对齐：正文基准路径、masthead、后端 dirty 镜像、
+ *  大纲指示段、文件树高亮、标签栏。这是「当前文档」在装配层的唯一同步点——别处的读点
+ *  一律改为问 editor.activeSession()，不再各自存副本。 */
+function syncActiveDocument(): void {
+  const session = editor.activeSession();
+  // resolve 的 from 基准不在这里同步：它由 resolveBase() 活读前台会话（见那边的注释，
+  // 那份副本曾在装载时序上造成一整批 wikilink 停在 pending）。
+  syncDirtyIndicator();
+  syncBackendDirty();
+  // 指示段与文档同一帧到位（不落在 120ms 节流窗口之后）：见 TocHandle.refresh 的说明。
+  toc.refresh();
+  tree.setCurrentPath(session.path);
+  renderTabs();
+}
+
+function activateTab(session: EditorSession): void {
+  if (session !== editor.activeSession()) {
+    editor.activateSession(session);
+    invalidateResolve(); // from 变了（多半是另一篇文档），按 from 键控的缓存整批失效
+    showEditor();
+  }
+  // 已经是前台时也要重绘：调用方可能在本次调用前改过会话的可见属性（例如把预览标签
+  // 固定住），标签栏必须跟着变。
+  syncActiveDocument();
+}
+
+/** 关标签：有未保存修改的先给三个出口确认（文案 D92 / D93）。
+ *
+ * **未命名文档（没有路径）不是标签**：⌘W 与逐标签关闭钮对它一律无操作（reviewer r1 P2-1）。
+ * 它的内容只活在内存里，根本没有「关掉」这个语义——不加这条守卫时，冷启动的 SAMPLE 演示
+ * 文档会被静默换成一份空文档（用户看到的是文档被无声清空），对一个无路径的 dirty 文档还会
+ * 弹出主体为空的确认浮条（`「」有未保存修改…`）。spec 与 proposal 都写「零标签时 ⌘W 无操作」，
+ * 这条守卫就是它的落点。 */
+async function closeTab(session: EditorSession): Promise<void> {
+  if (session.path === undefined) return;
+  if (!session.dirty) {
+    closeTabNow(session);
+    return;
+  }
+  const path = session.path ?? "";
+  toast(
+    `「${path}」有未保存修改，关闭后修改将丢失`,
+    [
+      { label: "保存并关闭", run: () => void saveThenClose(session) },
+      { label: "放弃修改并关闭", run: () => closeTabNow(session) },
+      { label: "取消", run: () => {} },
+    ],
+    true,
+  );
+}
+
+/** 保存链路以「前台文档」为落点，所以先把要关的这一个切到前台再存——顺序是有意的，
+ *  不是随手切的。保存未闭环（冲突 / 写失败 / 无落盘基准）时不关：用户还没处置完。 */
+async function saveThenClose(session: EditorSession): Promise<void> {
+  activateTab(session);
+  await save.save();
+  if (session.dirty) return;
+  closeTabNow(session);
+}
+
+function closeTabNow(session: EditorSession): void {
+  const wasActive = session === editor.activeSession();
+  editor.closeSession(session);
+  if (wasActive) {
+    invalidateResolve(); // 前台文档被关掉：它的 from 基准一并作废
+    showEditor(); // 关掉最后一个标签会落在未命名空文档上，撤下「暂不支持预览」覆盖层
+  }
+  syncActiveDocument();
+}
+
+/** 按意图挑落点会话（只决定「落到哪个标签」，内容装载在 openFile 里做）：
+ *  - "current"：前台会话就地换文档（跟随链接 / 另存为新文件 / 恢复崩溃备份）；
+ *  - "preview"：复用可复用的标签（预览标签，或还没有文件的未命名文档）；没有就新建一个；
+ *  - "pinned"：总是新建固定标签。
+ *
+ *  预览标签一定是干净的——首次输入即固定（见下面 editor.onDirty 的处理），因此就地替换
+ *  不会丢内容；兜底再判一次 dirty，异常情况下宁可新开一个也不覆盖。未命名文档同理：
+ *  openFile 的守卫已经保证它在 dirty 时不会被走到这里。 */
+function targetSessionFor(intent: "preview" | "pinned" | "current"): EditorSession {
+  if (intent === "current") return editor.activeSession();
+  if (intent === "preview") {
+    const reusable = editor.sessions().find(
+      (session) => session.path === undefined || (session.preview && !session.dirty),
+    );
+    if (reusable !== undefined) {
+      reusable.preview = true;
+      return reusable;
+    }
+    const created = editor.createSession();
+    created.preview = true;
+    return created;
+  }
+  return editor.createSession();
+}
+
+/** 可见标签（有文件路径的会话），按打开顺序。标签栏、⌘1–9、⌃⇥ 共用这一份口径——
+ *  未命名文档不是标签（空态就是它），所以一律经这里过滤。 */
+function visibleTabs(): EditorSession[] {
+  return editor.sessions().filter((session) => session.path !== undefined);
+}
+
+/** 序号落点（⌘1–9 / 循环切换的唯一解析点）：越界返回 undefined，调用方无操作。
+ *  **不做**「越界就跳到最后一个」这类隐式兜底——⌘7 在只有 3 个标签时不该有动作。 */
+function sessionAt(index: number): EditorSession | undefined {
+  return visibleTabs()[index];
+}
+
+function activateTabByIndex(index: number): void {
+  const session = sessionAt(index);
+  if (session !== undefined) activateTab(session);
+}
+
+/** 循环切换（⌃⇥ / ⌃⇧⇥）：首尾回卷。0 或 1 个标签时什么都不做——「下一个」不存在，
+ *  回卷到自己只会产生一次无意义的标签栏重绘。 */
+function cycleTab(delta: number): void {
+  const tabs = visibleTabs();
+  if (tabs.length < 2) return;
+  const current = tabs.indexOf(editor.activeSession());
+  activateTab(tabs[(current + delta + tabs.length) % tabs.length]);
+}
+
+/** ⌘1–9 的九条命令实现。用 TAB_GOTO_IDS 生成而不是手写九遍：序号与命令 id 出自同一次
+ *  遍历，不可能错位（手抄一处错的表现是「某个 ⌘N 静默不动」，最难发现的一类 bug）。 */
+function tabGotoCommands(): Record<(typeof TAB_GOTO_IDS)[number], CommandRunner> {
+  const table = {} as Record<(typeof TAB_GOTO_IDS)[number], CommandRunner>;
+  TAB_GOTO_IDS.forEach((id, index) => {
+    table[id] = () => activateTabByIndex(index);
+  });
+  return table;
+}
+
+/** 装载完成后的表现层对齐（打开 / 重载共用）。 */
+function afterLoad(): void {
+  invalidateResolve(); // 内容已换，按 from 键控的解析缓存整批失效
+  showEditor();
+  syncActiveDocument();
+}
+
+// 打开文件：读出文本交给内核装载——模式裁决（以扩展名注册表为唯一事实源：
+// .md/.markdown → md 模式；其余已打开的文件一律只读 code，含未知扩展与 basename
+// 无点的文件，M130 方向 A）和附件相对路径解析依赖的 currentFilePath 都在内核里完成
+//（spec「模式配置来源」）。不支持的二进制 → 提示而非报错弹窗。
+//
+// 落点由 intent 决定（M149，Alex 已裁决）：
+//   - 文档内链接跟随 / 另存为新文件 / 恢复备份 → "current"（**默认值**）：当前标签跟随
+//     换文档——这是 M144/M145 既有语义，也是「不传就退化成 M149 之前的行为」这个保守兜底；
+//   - 单击文件树 → "preview"：复用预览标签，旧预览被就地替换，不新开；
+//   - 双击 / ⌘-点击文件树 → "pinned"：新开固定标签。
+async function openFile(
+  path: string,
+  kind: "md" | "code" | "text" | "binary",
+  intent: "preview" | "pinned" | "current" = "current",
+) {
+  // 唯一保留的 dirty 守卫：前台是**未命名文档**（没有路径）。它的内容没有落盘基准，
+  // 就地替换等于丢弃草稿，另开标签又会让草稿失去落点——沿用 M130 的守卫与文案。
+  // 有文件路径的标签之间是标签切换，不丢内容，因此不设守卫（M149 的语义变化，
+  // 见 openspec change add-multi-tabs 的 proposal「语义变化」一节）。
+  if (editor.activeSession().path === undefined && !save.guard("切换文件")) return;
+  // 已经打开的文件一律切到既有标签：不重复开、也不重读（非 md 只读，重读只会把用户
+  // 正在看的位置顶掉）。三种意图都适用；双击 / ⌘-点击一个已打开的**预览**标签 = 把它
+  // 固定住——这正是「双击 = 固定」的落点（第一次单击已把它开成预览，这边收尾）。
+  //
+  // 这一条必须放在 showNotice 与 beginSwitch 之前：切换是同步的，既不需要「正在打开」
+  // 这一步，提前 return 也绝不会把「正在打开 / 暂不支持预览」覆盖层留在编辑器上
+  //（M149 实测缺陷：留下过一次，`.editor-notice` 从此盖住整块正文且不再撤下，表现为
+  //  此后所有点击都被它 intercept——视觉场景 wikilink.spec.ts 就是这样红的）。
+  const existing = editor.sessionForPath(path);
+  if (existing !== undefined) {
+    if (intent === "pinned") existing.preview = false;
+    showEditor(); // 撤下一次更早的、已被这次同步切换取代的「正在打开」覆盖层
+    activateTab(existing);
+    return;
+  }
   const request = save.beginSwitch();
-  if (kind !== "binary") showNotice(`正在打开：${path}`);
   if (kind === "binary") {
     showNotice(`暂不支持预览：${path}`);
     return;
   }
+  showNotice(`正在打开：${path}`);
   try {
     const snapshot = await fsReadSnapshot(path);
-    if (!save.isCurrent(request) || !save.guard("切换文件")) return;
-    const text = snapshot.content;
+    if (!save.isCurrent(request)) return;
+    // 守卫复查：请求在途期间前台可能已经换过（并发打开 / 用户切走）。
+    if (editor.activeSession().path === undefined && !save.guard("切换文件")) return;
     // 只有 md 进保存链路（登记磁盘 revision）；非 md 以只读 code 模式打开，不存在
-    // dirty，也不该被任何保存入口接受（M130）。currentPath 同理：wikilink 语义只对
-    // md 生效，非 md 打开时不作 resolve 的 from 基准。
-    const revision = kind === "md" ? snapshot.revision : undefined;
-    save.noteOpened(path, revision);
-    currentPath = kind === "md" ? path : undefined;
-    mastheadFile.textContent = path;
-    invalidateResolve(); // from 变更，按 from 键控的缓存整批失效
-    editor.openDocument(text, path, request);
-    // 指示段与文档同一帧到位（不落在 120ms 节流窗口之后）：见 TocHandle.refresh 的说明。
-    toc.refresh();
-    tree.setCurrentPath(path);
-    showEditor();
+    // dirty，也不该被任何保存入口接受（M130）。
+    save.noteOpened(path, kind === "md" ? snapshot.revision : undefined);
+    const session = targetSessionFor(intent);
+    activateTab(session); // 已在同一会话上时是 no-op
+    // 装载走事务派生（editor.reloadSession）而不是新建 state：同一标签内换文件时
+    // 搜索面板的查询与开合状态因此保留（M139 以来的既有行为）。
+    editor.reloadSession(session, snapshot.content, path, request);
+    afterLoad();
   } catch (e) {
     if (!save.isCurrent(request)) return;
     showNotice(errorMessage(e));
@@ -196,7 +442,8 @@ async function openFile(path: string, kind: "md" | "code" | "text" | "binary") {
 }
 
 window.addEventListener("beforeunload", (event) => {
-  if (!editor.isDirty()) return;
+  // 判据是「任一标签有未保存修改」：多标签下只看前台文档会让后台标签的修改被静默丢弃。
+  if (!editor.sessions().some((session) => session.dirty)) return;
   event.preventDefault();
   event.returnValue = "当前 Markdown 有未保存修改";
 });
@@ -205,8 +452,20 @@ window.addEventListener("beforeunload", (event) => {
 // wikilink：解析缓存、跳转、一键创建（语义全部经 invoke 取 Rust link_graph 结果）
 // ---------------------------------------------------------------------------
 
-/** 当前文件（md 模式）的 vault 相对路径；resolve 的 from 基准。 */
-let currentPath: string | undefined;
+/**
+ * wikilink resolve 的 from 基准：**活读前台会话**，不另存一份副本。
+ *
+ * 为什么不是模块级变量（M149 排查出的一处真 bug）：那份副本与会话里的路径是同语义的
+ * 两处真源，装载时序上只要晚半步就会整批出错——装饰层在**装载事务的 dispatch 里**就问
+ * resolver，此时 `from` 若还是 undefined，`resolve()` 连在途解析都不发起（见下面 resolve
+ * 的第一个分支），这一批 wikilink 会全部停在 pending 且永不自动重来（视觉场景
+ * `wikilink.spec.ts` 的 `.cm-lp-wikilink-resolved` 找不到就是这个原因）。
+ * 会话的 path 在装载之前就已就位（reloadSession 的第一件事），活读它没有这个时间窗。
+ */
+function resolveBase(): string | undefined {
+  const session = editor.activeSession();
+  return session.mode === "md" ? session.path : undefined;
+}
 /** 解析结果缓存：键 = `${from}\n${raw}`。watch 增量 / 切文件 / 创建后整批失效。 */
 const resolveCache = new Map<string, LinkResolveResult>();
 const pendingResolve = new Set<string>();
@@ -232,7 +491,7 @@ function handleResolveFailure(key: string, epoch: number, e: unknown): void {
 
 const wikilinkResolver = {
   resolve(raw: string): LinkResolveResult | undefined {
-    const from = currentPath;
+    const from = resolveBase();
     if (from === undefined) return undefined;
     const key = `${from}\n${raw}`;
     const hit = resolveCache.get(key);
@@ -265,7 +524,7 @@ function invalidateResolve(): void {
 
 /** 激活链接（Mod-Click / ⌘Enter）：按解析结果跳转、提示或给出一键创建入口。 */
 async function followWikilink(raw: string): Promise<void> {
-  const from = currentPath;
+  const from = resolveBase();
   if (from === undefined) return;
   let result = resolveCache.get(`${from}\n${raw}`);
   if (!result) {
@@ -353,7 +612,7 @@ type LinkTarget =
 function linkTargetAt(pos: number): LinkTarget | null {
   const raw = wikilinkAt(pos);
   if (raw !== null) {
-    return currentPath === undefined ? null : { kind: "wikilink", raw };
+    return resolveBase() === undefined ? null : { kind: "wikilink", raw };
   }
   const link = standardLinkAt(editor.view.state, pos);
   if (link === null) return null;
@@ -361,9 +620,9 @@ function linkTargetAt(pos: number): LinkTarget | null {
     case "external":
       return { kind: "external", url: link.form.url };
     case "internal":
-      return currentPath === undefined ? null : { kind: "note", target: link.form.target };
+      return resolveBase() === undefined ? null : { kind: "note", target: link.form.target };
     case "asset":
-      return currentPath === undefined ? null : { kind: "asset", target: link.form.target };
+      return resolveBase() === undefined ? null : { kind: "asset", target: link.form.target };
     case "anchor":
       return { kind: "anchor" };
     case "blocked":
@@ -416,7 +675,7 @@ async function openExternalLink(url: string): Promise<void> {
  * 后者才是他要的。
  */
 async function followNoteLink(target: string): Promise<void> {
-  const from = currentPath;
+  const from = resolveBase();
   if (from === undefined) return;
   try {
     const path = await linkResolveNote(from, target);
@@ -435,7 +694,7 @@ async function followNoteLink(target: string): Promise<void> {
 /** 打开 vault 内的非 md 文件 / 目录 `[x](./doc.pdf)`：交系统默认应用。目标必须落在
  *  vault 内（Rust 侧前缀校验），落不进去 / 不存在时透传它的人话错误。 */
 async function openVaultAsset(target: string): Promise<void> {
-  const from = currentPath;
+  const from = resolveBase();
   if (from === undefined) return;
   try {
     await linkOpenPath(from, target);
@@ -487,6 +746,15 @@ const commands: CommandRuntime = {
   "app.search-open": () => openSearch(editor.view),
   // 轻量大纲（M148）：开→关 / 关→开，无标题文档只给提示（不弹空浮层）。
   "toc.toggle": () => toc.toggle(),
+  // 标签（M149）：能力与切换在 editor 的会话 API，装配层只做两件它才知道的事——
+  // 切换后的表现层对齐（activateTab → syncActiveDocument）与关标签的确认。
+  // `tab.close` 关的是**前台**标签；逐标签关闭钮走同一条 closeTab（同一个确认）。
+  "tab.close": () => {
+    void closeTab(editor.activeSession());
+  },
+  "tab.next": () => cycleTab(1),
+  "tab.prev": () => cycleTab(-1),
+  ...tabGotoCommands(),
 };
 
 // editor 作用域判定：事件目标落在 contentDOM 内（含其中 widget 与表格滚动容器）。
@@ -537,7 +805,7 @@ function applyKeyConfig(overrides: KeyOverrides | undefined): void {
 let effectiveBindings: readonly KeyBinding[] = KEY_BINDINGS;
 
 /** 面板的功能分组：只列命令 id，键位与作用域一律从生效表读。
- *  8 个分组覆盖全部命令（不做文本改写的选择类命令——⌘A 全选、⌃G 撤下选择——归
+ *  9 个分组覆盖全部命令（不做文本改写的选择类命令——⌘A 全选、⌃G 撤下选择——归
  *  「移动与选择」，与光标族同属「不动文档的定位/选区命令」）；未列入任何分组的
  *  命令自动落到末尾「其他」——将来新增命令忘记归组时不会从面板里消失。 */
 const BINDING_GROUPS: ReadonlyArray<{ title: string; commands: readonly CommandId[] }> = [
@@ -548,7 +816,12 @@ const BINDING_GROUPS: ReadonlyArray<{ title: string; commands: readonly CommandI
   { title: "翻屏", commands: ["editor.scroll-page-down", "editor.scroll-page-up", "editor.recenter"] },
   { title: "撤销", commands: ["editor.undo", "editor.redo"] },
   { title: "widget", commands: WIDGET_COMMAND_IDS },
-  { title: "全局", commands: GLOBAL_COMMAND_IDS },
+  // M149：标签单列一组（而不是并进「全局」）——⌘W 的语义变化与 ⌘1–9 的九条直达是
+  // dogfood 期最需要一眼核对的两件事，混在全局组里不容易看全。两组必须**互斥**：
+  // 「全局」组用 keys.ts 的 NON_TAB_GLOBAL_COMMAND_IDS，否则同一命令会被两个分组
+  // 各渲染一行（面板行数翻倍，「每条命令一行」的口径被破坏）。
+  { title: "标签", commands: TAB_COMMAND_IDS },
+  { title: "全局", commands: NON_TAB_GLOBAL_COMMAND_IDS },
 ];
 
 /** 面板自己的关闭键（token 口径与表内绑定同源，见下面 keydown 监听）。 */
@@ -681,14 +954,17 @@ const bindingsPanel = createBindingsPanel({
   restoreFocus: () => editor.view.focus(),
 });
 
-// 原生 Edit 菜单的撤销 / 重做项（lib.rs 的自定义项，不带 accelerator）点击后经此事件
-// 回到前端——菜单与键盘走同一个命令层，不产生第二套撤销。取值口径见 lib.rs
-// MENU_COMMAND_EVENT：菜单只说 undo/redo，映射到命令 id 是前端的事。
+// 原生 Edit 菜单的撤销 / 重做项与 File/Window 的关闭项（lib.rs 的自定义项，都不带
+// accelerator）点击后经此事件回到前端——菜单与键盘走同一个命令层，不产生第二套实现。
+// 取值口径见 lib.rs MENU_COMMAND_EVENT：菜单只说 undo / redo / close 这类平台术语，
+// 映射到命令 id 是前端的事。关闭项映射到 `tab.close`（M149：⌘W 归标签，菜单里的关闭项
+// 因此也关标签而不是关窗，两者的语义必须一致）。
 // M132：该通道从装配层直连 listen 收进 ipc.ts 的 onMenuCommand（同类事件走同一模块，
 // M131 已把它记为待收编项）；ipc.ts 的这一族因此覆盖 invoke 与 listen 两条通道。
 const MENU_COMMANDS: Record<string, CommandRunner | undefined> = {
   undo: commands["editor.undo"],
   redo: commands["editor.redo"],
+  close: commands["tab.close"],
 };
 onMenuCommand((payload) => {
   MENU_COMMANDS[payload]?.();
@@ -697,29 +973,65 @@ onMenuCommand((payload) => {
 const mastheadVault = shell.root.querySelector<HTMLElement>(".masthead-vault")!;
 const mastheadFile = shell.root.querySelector<HTMLElement>(".masthead-file")!;
 
-// dirty 状态反馈（M101 验收修复）：toast 会消隐，dirty 期间 masthead 文件名旁
-// 常驻「未保存」标记；同时把 dirty 镜像给后端退出守卫（Cmd+Q / 关窗拦截）。
+// dirty 状态反馈（M101 验收修复 + M149 按标签）：toast 会消隐，dirty 期间 masthead
+// 文件名旁常驻「未保存」标记。M149 起这个后缀描述的是**前台标签**那一个文档；逐标签的
+// 状态由标签栏自己的 dirty 点承担（见 renderTabs），两者同源同义。
 function syncDirtyIndicator(): void {
-  const path = save.displayedPath();
-  if (path === undefined) return;
-  mastheadFile.textContent = editor.isDirty() ? `${path}（未保存）` : path;
+  const session = editor.activeSession();
+  const path = session.path;
+  mastheadFile.textContent = path === undefined
+    ? "无当前文件"
+    : session.dirty ? `${path}（未保存）` : path;
+}
+
+/** 已推给后端的 dirty 镜像值（M149）：只在**变化**时上报。
+ *
+ *  标签切换会频繁调用 syncActiveDocument → syncBackendDirty，每切换一次就 invoke 一遍
+ *  是白费（后端是覆盖式写入，同一个值重复推没有语义），而且会破坏 M107 的「启动只推一次
+ *  复位镜像」这条既有断言（它的意图正是「别在上报通道上乱喷」）。undefined = 还没推过，
+ *  启动时必然推一次。 */
+let pushedDirty: boolean | undefined;
+
+/** 后端退出守卫（Cmd+Q / 关窗拦截）的 dirty 镜像：判据是「**任一**标签有未保存修改」。
+ *  旧实现只有一个文档，取单个 dirty 即可；多标签下必须取并集，否则后台标签里的修改在
+ *  退出时会被静默放行。无 Tauri 后端（纯浏览器预览）时同步失败无害，静默忽略。 */
+function syncBackendDirty(): void {
+  const any = editor.sessions().some((session) => session.dirty);
+  if (any === pushedDirty) return;
+  pushedDirty = any;
+  documentSetDirty(any).catch(() => {});
 }
 
 editor.onDirty((dirty) => {
+  // 内核在前台会话内容变化、或任何会话被标记为与磁盘同步时回调（见 editor.ts 的
+  // updateDirty / setSessionDirty）。两种情形都要重画标签栏：dirty 点是逐标签的。
   syncDirtyIndicator();
+  renderTabs();
   // 保存成功（dirty→false）后所有 dirty 表现层必须一致清除：masthead 标记、
   // 后端退出守卫镜像，以及 dirty 期间弹出的守卫提示。sticky 提示按设计不自动
   // 消隐，不主动撤下会让「未保存」在保存成功后残留在右下角（桌面验收缺陷）。
   if (!dirty) save.clearGuardToasts();
-  // 无 Tauri 后端（纯浏览器预览）时同步失败无害，静默忽略。
-  documentSetDirty(dirty).catch(() => {});
+  syncBackendDirty();
+});
+
+// 预览标签「首次输入即固定」（M149，Alex 口径）：编辑动作落在预览标签上就说明用户
+// 打算留着它，此后单击文件树不再顶掉它。
+//
+// 判据是「docChanged 且 dirty」而不是单看 docChanged：**装载也走 docChanged**（打开文件 /
+// 外部重载 / 恢复备份都是整篇替换），而装载不是「开始编辑」。装载后 cleanDoc 已与内容对齐、
+// dirty 为 false，据此把两者分开——不必让内核再为此加一个来源参数。
+editor.onDocChanged(() => {
+  const session = editor.activeSession();
+  if (!session.dirty || !session.preview) return;
+  session.preview = false;
+  renderTabs();
 });
 
 // DirtyState 防滞留（M107）：后端的 dirty 镜像在 webview 重载（开发者刷新 /
 // 崩溃重载）后可能滞留 stale true，退出守卫将永久拦截。前端是唯一事实源，
 // 初始化后主动推送一次当前值复位镜像（启动时必为 false）；重载后用户再次
 // 编辑仍走 onDirty 正常同步。无 Tauri 后端时失败无害，静默忽略。
-documentSetDirty(editor.isDirty()).catch(() => {});
+syncBackendDirty();
 
 // 退出/关窗被 dirty 守卫拦截时必须可见（M101）：后端 prevent_exit/prevent_close
 // 本身无任何界面表现，前端收到事件要给出可理解的提示。sticky：拦截提示不得
@@ -768,7 +1080,9 @@ function pickVault(forceNew = false): void {
 }
 
 tree = createFileTree(shell.treeMount, {
-  onOpenFile: (path, kind) => void openFile(path, kind),
+  // 打开意图由树判定（它是唯一看得到点击事件的地方）：单击 = 复用预览标签，
+  // 双击 / ⌘-点击 = 新固定标签（M149 语义，Alex 已裁决）。
+  onOpenFile: (path, kind, intent) => void openFile(path, kind, intent),
   onOpenVault: () => pickVault(),
 });
 
@@ -777,7 +1091,9 @@ tree = createFileTree(shell.treeMount, {
 // 文件的 currentPath 会被当作新 vault 的 resolve/create from 基准，wikilink
 // 一键创建会把文件误建到新 vault 的同名相对路径下。
 function loadVault(root: string, entries: FsEntry[], vaultId = root, restored = false) {
-  if (!save.guard("切换 vault")) return;
+  // 判据是「任一标签有未保存修改」——切 vault 会把全部标签一起作废（save-controller 的
+  // guardVaultSwitch）。旧实现只有一个文档，那条 guard 与它等价。
+  if (!save.guardVaultSwitch()) return;
   vaultLoaded = true;
   emitReadiness("vault-ready", { root, vaultId, restored });
   save.noteVaultReset();
@@ -786,17 +1102,16 @@ function loadVault(root: string, entries: FsEntry[], vaultId = root, restored = 
   // 回调全部作废，解析缓存与单链接降级集合整批失效
   resolveEpoch += 1;
   invalidateResolve();
-  // 三件套重置：清空编辑器文档（内部 currentFilePath 一并置空）、复位前端
-  // currentPath；旧 vault 的「暂不支持预览」覆盖层一并撤下
+  // 全部标签作废：内核只留一个未命名空文档（内部 currentFilePath 一并置空）。
   editor.reset();
-  currentPath = undefined;
-  mastheadFile.textContent = "无当前文件";
-  toc.refresh(); // 指示段随文档清空立即收起（同上，不落在节流窗口之后）
-  showEditor();
   editor.setWikilinkResolver(wikilinkResolver);
   mastheadVault.textContent = root.slice(root.lastIndexOf("/") + 1) || root;
-  tree.setCurrentPath(undefined);
   tree.setVault(root, entries);
+  // 表现层一次对齐：masthead 文件名回「无当前文件」、标签栏隐藏（空态）、树高亮清空、
+  // 大纲指示段收起、后端 dirty 镜像复位。放在 setVault 之后：setVault 重绘整棵树，
+  // 之后再由它把树高亮刷成「无当前文件」。
+  syncActiveDocument();
+  showEditor(); // 旧 vault 的「暂不支持预览」覆盖层一并撤下
   // 残留崩溃备份的恢复入口（M127）：装载完成后才有 vault 上下文可定位备份。
   void save.checkRecovery();
 }
@@ -820,12 +1135,15 @@ onFsEntryChanged((changes) => {
         attachmentPaths.push(change.path);
       }
     }
-    // 打开中文件被外部变更（Lumir ↔ Obsidian 来回编辑的高频路径，M124）：
-    // 附件索引与文件树照常吃增量，文档内容另行处置（save 控制器内分流）。
-    const openPath = save.displayedPath();
-    if (openPath) {
-      const hit = changes.find((c) => c.path === openPath);
-      if (hit) save.handleExternalChange(openPath, hit.kind);
+    // 已打开文件被外部变更（Lumir ↔ Obsidian 来回编辑的高频路径，M124）：附件索引与
+    // 文件树照常吃增量，文档内容另行处置（save 控制器内分流）。M149：判据是**全部**
+    // 打开中的文档而不是前台那一个——多标签下后台标签被外部改写同样要处置（旧实现只查
+    // displayedPath，后台标签的变更会静默漏报）。
+    for (const session of editor.sessions()) {
+      const path = session.path;
+      if (path === undefined) continue;
+      const hit = changes.find((c) => c.path === path);
+      if (hit) save.handleExternalChange(path, hit.kind);
     }
     // 链接索引已由后端随事件流增量更新；前端清缓存重建装饰
     invalidateResolve();
