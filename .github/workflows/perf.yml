@@ -78,7 +78,10 @@ jobs:
       - name: keypress-to-paint <16ms（headless 注入近似，下界）
         run: node scripts/perf/keypress-to-paint.mjs
 
-      - name: 打开 1MB 文件 <100ms（占位口径）
+      - name: 打开 1MB 文件 <100ms（占位口径且已 enforce：只量磁盘 IO + UTF-8 解码，非真实打开端点）
+        # 张力如实标注（M153）：这条 step 量的是「读 1MB 到内存」，不是「打开请求 → 首帧渲染」；
+        # 而 check-thresholds.mjs 对它就 enforce（绝对模式，contract 100ms）。
+        # 阈值有效、数字稳定，但不代表用户可感知的打开耗时；修订义务在脚本文件头。
         run: node scripts/perf/open-file.mjs
 
       - name: 常驻内存 <200MB

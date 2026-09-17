@@ -1,0 +1,26 @@
+{
+  // 前端单测层的类型防线：tests/unit/*.ts 全量 tsc --noEmit。
+  // 与根 tsconfig / tests/visual/tsconfig.json 同口径（strict + bundler 解析 + DOM lib），
+  // 两处差异各有原因：
+  //   - allowImportingTsExtensions：运行期跑的是真实 .ts 源码（Node 类型剥离），导入必须写
+  //     全 `./x.ts` 扩展名，故必须开这个开关（配合 noEmit）。
+  //   - 类型剥离的语法约束（enum / 参数属性之类不可擦除的写法）由**运行期**兜：
+  //     剥离器直接抛 ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX。这里不开 tsc 的
+  //     erasableSyntaxOnly，因为 src/preview/* 里已有参数属性（不在本层被测范围内），
+  //     开了会让这一层因为别人家的写法而红。收敛那个写法是独立议题，已记入 backlog。
+  // 本层不装 @types/node，用到的那几个 Node API 由 node-env.d.ts 声明（同 tests/visual 惯例）。
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "types": [],
+    "strict": true,
+    "noEmit": true,
+    "isolatedModules": true,
+    "skipLibCheck": true,
+    "useDefineForClassFields": true,
+    "allowImportingTsExtensions": true
+  },
+  "include": ["*.ts"]
+}

@@ -3,8 +3,9 @@
 # agent 自验用：worker 完成前至少跑 quick；碰 src/** 跑 visual；reviewer 合并前跑 all。
 #
 # 用法：
-#   scripts/gate.sh          # quick：fmt + clippy + cargo test + bindings 漂移 + tsc + openspec validate
-#   scripts/gate.sh visual   # quick + 视觉回归（默认 LUMIR_VISUAL_PORT=4273 隔离端口）
+#   scripts/gate.sh          # quick：fmt + clippy + cargo test + bindings 漂移 + tsc（根/视觉/单测）
+#                            #        + 单测 + docs-check + openspec validate
+#   scripts/gate.sh visual   # quick + 视觉套件隔离断言 + 视觉回归（默认 LUMIR_VISUAL_PORT=4273 隔离端口）
 #   scripts/gate.sh all      # visual + 性能合同（release 构建，首次分钟级；本地无滚动基线时
 #                            # 相对回归比较自动跳过，只 enforce 绝对阈值）
 #
@@ -59,19 +60,35 @@ run_gate cargo-fmt cargo fmt --check --manifest-path src-tauri/Cargo.toml
 run_gate cargo-clippy cargo clippy --all-targets --manifest-path src-tauri/Cargo.toml -- -D warnings
 # cargo test 同时是 ADR 0003 §4 fixture 测试集与 ts-rs bindings 导出的载体
 run_gate cargo-test cargo test --manifest-path src-tauri/Cargo.toml
-# bindings 漂移检查须在 cargo test（重导出）之后；工作区有未提交改动时此项会如实报红
-run_gate bindings-drift git diff --exit-code -- src/bindings/
+# bindings 漂移检查须在 cargo test（重导出）之后。判据取「工作区相对索引的任何差异」而非
+# `git diff`：后者只看已跟踪文件，新导出的 bindings 文件（untracked）不会让它报红，
+# 而那正是这类漂移最常见的形态。两种差异（M 与 ??）现在都进 gate 日志并如实报红。
+run_gate bindings-drift bash -c '
+  dirty=$(git status --porcelain -- src/bindings/)
+  if [ -n "$dirty" ]; then printf "%s\n" "$dirty"; exit 1; fi
+'
 run_gate tsc-root pnpm exec tsc --noEmit
 if [ -d tests/visual/node_modules ]; then
   run_gate tsc-visual bash -c 'cd tests/visual && ../../node_modules/.bin/tsc --noEmit'
 else
   skip_gate tsc-visual "tests/visual 依赖未装：pnpm --dir tests/visual install --ignore-workspace"
 fi
+# 前端最小单测层（src 的纯逻辑，零新增依赖；环境要求与取舍见 tests/unit/README.md）。
+# tsc-unit 与 unit-tests 成对：前者守类型，后者守行为（tests/unit 不在根 tsconfig 的
+# include 里，根 tsc 覆盖不到它）。
+run_gate tsc-unit pnpm exec tsc -p tests/unit/tsconfig.json
+run_gate unit-tests node tests/unit/run.mjs
+# 制品门禁：与 CI 的 docs-check.yml 共用同一脚本（本地绿才等于 CI 绿）
+run_gate docs-check bash scripts/docs-check.sh
 run_gate openspec-validate npx --yes @fission-ai/openspec@1.12.0 validate --all --strict
 
 # --- visual 层（对应 visual.yml） ---
 
 if [ "$tier" = visual ] || [ "$tier" = all ]; then
+  # 视觉套件自身的隔离设计断言（tests/visual/isolation.test.mjs）：纯 node:test，不碰浏览器，
+  # 但它守的是视觉套件的运行期证据隔离，故归这一层（M153 之前它无人运行）。入口是
+  # tests/visual/package.json 的脚本，CI 调同一入口。
+  run_gate isolation-runs pnpm --dir tests/visual run test:isolation
   run_gate visual-regression env LUMIR_VISUAL_PORT="${LUMIR_VISUAL_PORT:-4273}" bash scripts/visual/run.sh
 fi
 
