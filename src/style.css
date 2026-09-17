@@ -386,3 +386,60 @@ body { background:var(--bg); color:var(--text); font-family:var(--font-body); fo
 .lumir-bindings-doc { min-width: 0; font-size: 12px; color: var(--dim); }
 .lumir-bindings-row.is-unbound .lumir-bindings-key { color: var(--accent); }
 .lumir-bindings-hint { margin: 12px 0 0; font-size: 11px; color: var(--dim); }
+
+/* masthead 当前位置指示段（M148 轻量大纲）：文件名之后的当前标题链，兼作浮层入口。
+   不加常驻占地——它就在既有的 masthead 行内，与文件名一起参与 flex 收缩（两者都省略号收尾）。 */
+.masthead-section {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  padding: 0;
+  border: none;
+  background: none;
+  font: inherit;
+  color: var(--text);
+  cursor: pointer;
+}
+.masthead-section::before { content: "›"; margin-right: 6px; color: var(--dim); }
+.masthead-section:hover { color: var(--accent); }
+.masthead-section[hidden] { display: none; }
+
+/* 轻量大纲浮层（M148）：绝对定位贴在指示段下方，不占任何常驻空间。
+   颜色 / 边框 / 圆角 / 字体全部取 M55 的既有 token；阴影是浮层与正文分离的唯一手段，
+   由 --text 混色而来（与 .lumir-bindings-overlay 的遮罩同一手法），不引入新颜色。 */
+.lumir-toc {
+  position: absolute;
+  top: 100%;
+  left: 48px;
+  z-index: 15;
+  width: 300px;
+  padding: 6px 0 0;
+  background: var(--bg);
+  border: 1px solid var(--bd-2);
+  border-radius: var(--radius);
+  box-shadow: 0 6px 18px color-mix(in srgb, var(--text) 16%, transparent);
+}
+.lumir-toc[hidden] { display: none; }
+.lumir-toc-list { max-height: 55vh; overflow: auto; outline: none; }
+/* 缩进按 --toc-depth（相对文档最浅层标题的层差，src/toc.ts 写入）；不用侧栏、不加连接线。 */
+.lumir-toc-item {
+  padding: 3px 12px 3px calc(12px + var(--toc-depth, 0) * 14px);
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+.lumir-toc-item.is-current { font-weight: 600; }
+.lumir-toc-item.is-active { background: var(--bg-2); }
+.lumir-toc-hint {
+  margin: 6px 0 0;
+  padding: 6px 12px;
+  border-top: 1px solid var(--bd-1);
+  font-size: 11px;
+  color: var(--dim);
+}

@@ -40,6 +40,12 @@
 // editor.widget-escape（带 when 条件）占用；那条绑定在焦点落于 panel 时不命中（作用域判定看
 // 事件目标是否在 contentDOM 内），两处不构成同一物理键的第二条分发路径。
 //
+// M148：表新增一条全局绑定（⌘⇧O → toc.toggle），命令实现在装配层 main.ts，能力与大纲浮层在
+// src/toc.ts。作用域取 global 而非 editor：浮层打开时焦点在浮层里（不在 contentDOM 内），再按
+// 要能收起；空标题文档也要能走到提示。浮层自己的导航键（↑↓ / Enter / Esc）不进本表，理由同
+// M133 / M139 的面板段落：表内一个 token 只能有一条绑定，↑↓ 已被 editor.cursor-* 占用、Esc 已被
+// editor.widget-escape 占用，浮层就地消费时那两条绑定因作用域判定不命中。
+//
 // 平台口径（M131 评审 r1 F1 如实记录）：迁移后**表内绑定一律全平台无条件生效**，不再有
 // 平台门。两处与迁移前不同，均只在非 macOS 平台可观测：
 //   - ⌃N/P/F/B/E 迁移前是 CM keymap 的 `{ mac: "Ctrl-n" }`（只绑 mac），现在非 mac 平台
@@ -110,6 +116,8 @@ export const GLOBAL_COMMAND_IDS = [
   "app.describe-bindings",
   // M139：⌘F 打开文件内搜索（能力与 panel 在 src/search.ts，装配在 main.ts）
   "app.search-open",
+  // M148：⌘⇧O 展开/收起轻量大纲浮层（能力与浮层在 src/toc.ts，装配在 main.ts）
+  "toc.toggle",
 ] as const;
 
 /** 全部命令 id：类型与运行期清单同源，测试据此断言无孤儿命令、无越界绑定。 */
@@ -226,6 +234,7 @@ export const KEY_BINDINGS: readonly KeyBinding[] = [
   { key: "Cmd-Enter", command: "link.follow", scope: "global", doc: "轨道 A 原样迁入（键位与作用域不变，迁移前挂在 window 上）；M144 起命令跟随光标/选区处的**链接**：外链经 Rust 交给系统浏览器，wikilink 走既有跳转链路——同一条命令，不再只管 wikilink" },
   { key: "Cmd-/", command: "app.describe-bindings", scope: "global", doc: "键位查看面板（M133）：mac 帮助惯例的简化形态——系统「帮助」菜单的 accelerator 实为 ⇧⌘?（Cmd-?），该键在本应用的原生菜单下会先被系统 Help 菜单截获，故取 ⌘/；Emacs 的 C-h b（describe-bindings）不可用——⌃H 已被后删字符占用" },
   { key: "Cmd-f", command: "app.search-open", scope: "global", doc: "文件内搜索（M139）：mac 惯例的查找键；取 global 而非 editor——焦点在文件树或已打开的搜索框里时同样要能开（已打开则把焦点移回输入框）。⌃F 已被 Emacs C-f（前移字符）占用，故沿用 ⌘ 系" },
+  { key: "Cmd-Shift-o", command: "toc.toggle", scope: "global", doc: "轻量大纲（M148）：⌘⇧O 展开/收起 masthead 的标题路径浮层。取 global 而非 editor——浮层打开时焦点在浮层里（不在 contentDOM 内），再按要能收起；空标题文档也要能走到提示。冲突已核（零冲突）：表内 ⌘⇧ 系只有 ⇧⌘Z（重做），原生菜单的 accelerator 集合里 ⌘⇧ 系也只有 ⇧⌘Z（muda predefined：Redo），macOS 的 Help 子菜单在 tauri 默认菜单里为空" },
 ];
 
 /** 命令实现：命中即已消费——分发器统一吞掉默认行为，命令本身无事可做也不放行原生路径。
