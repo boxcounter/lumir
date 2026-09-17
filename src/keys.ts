@@ -40,11 +40,13 @@
 // editor.widget-escape（带 when 条件）占用；那条绑定在焦点落于 panel 时不命中（作用域判定看
 // 事件目标是否在 contentDOM 内），两处不构成同一物理键的第二条分发路径。
 //
-// M148：表新增一条全局绑定（⌘⇧O → toc.toggle），命令实现在装配层 main.ts，能力与大纲浮层在
-// src/toc.ts。作用域取 global 而非 editor：浮层打开时焦点在浮层里（不在 contentDOM 内），再按
-// 要能收起；空标题文档也要能走到提示。浮层自己的导航键（↑↓ / Enter / Esc）不进本表，理由同
-// M133 / M139 的面板段落：表内一个 token 只能有一条绑定，↑↓ 已被 editor.cursor-* 占用、Esc 已被
-// editor.widget-escape 占用，浮层就地消费时那两条绑定因作用域判定不命中。
+// M148 / M157：表新增一条全局绑定（⌘⇧O → toc.toggle），命令实现在装配层 main.ts，能力与大纲
+// 浮层在 src/toc.ts。作用域取 global 而非 editor：浮层打开时焦点在浮层里（不在 contentDOM 内），
+// 再按要能收起；空标题文档也要能走到提示。浮层自己的导航键（↑↓ / ⌃N⌃P / Enter / Esc）不进本表，
+// 理由同 M133 / M139 的面板段落：表内一个 token 只能有一条绑定，↑↓ / ⌃N / ⌃P 已被
+// editor.cursor-* 占用（⌃N = cursor-down、⌃P = cursor-up）、Esc 已被 editor.widget-escape 占用，
+// 浮层就地消费时那两条绑定因作用域判定不命中。M157 新增的 ⌃N / ⌃P 因此只能由浮层就地消费——
+// 写进本表会被 Keymap 构造期的重复绑定检查直接拒绝（`src/toc.ts` 的 onKeydown 里是同一份 move）。
 //
 // M149：表新增三个标签命令族——`tab.close`、`tab.next` / `tab.prev`、`tab.goto-1`…`tab.goto-9`
 //（9 条绑定按序号展开成 9 个命令 id：命令层没有参数通道，而「⌘3 直达第 3 个标签」的语义必须
