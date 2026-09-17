@@ -12,4 +12,9 @@ vault: VaultInfo | null,
 /**
  * 人话提示（如 last_vault 恢复失败）；无提示为 null。前端可直接展示。
  */
-notice: string | null, };
+notice: string | null, 
+/**
+ * 启动恢复是否仍在进行（change startup-restore-off-main-thread）：true = 恢复线程仍
+ * 在跑（此时 `vault` 必为 null）；false = 终态（已打开，或未打开 + 可选 notice）。
+ */
+restore_pending: boolean, };

@@ -102,8 +102,15 @@ steps:
 | `recordEditor` | `as` | 记下编辑器文本，供 `editor.unchangedSince` 做**逐字节**比较 |
 | `vaultWrite` / `vaultAppend` | `file`、`content` | 从外部改写验收 vault（模拟外部修改） |
 | `vaultRm` | `file` 或 `files` | 从外部**真删除**（不存在即报错）——触发 `fs_not_found` 与「保存冲突」是两条不同分支 |
-| `configWrite` | `keys`、`restart` | 改写隔离 config.json（默认重启 app） |
-| `restart` | — | 重启 app（崩溃恢复类场景） |
+| `configWrite` | `lastVault`、`keys`、`restart`、`requireVault` | 改写隔离 config.json（默认重启 app）。`lastVault` **缺省沿用当前值**（显式给才覆盖）——启动恢复的失效路径靠它把 `last_vault` 指向一个不存在的目录；`requireVault: false` 只放宽本步重启的就绪门（见下条） |
+| `restart` | `requireVault` | 重启 app（崩溃恢复类场景） |
+
+**就绪门与 `requireVault`**（M159 起）：每次起/重启实例后套件等「左栏文件树 + 编辑器节点就位」
+（`lib/drive.mjs` 的 `waitAppReady`）。严格门的判据是「树头部的『切换 vault』按钮 + 至少一个
+`.md` 行」——`last_vault` 失效 / 无 `last_vault` 时前端**合法地**停在未打开空态（树 pane 里
+没有文件行），严格门必不成立。因此 `configWrite` / `restart` 支持 `requireVault: false`：
+本步的就绪门放宽为「树 pane 呈现任一种形态（文件行或空态说明行+打开入口）+ 编辑器在位」。
+**默认仍是严格门**；放宽是逐步、显式的，终态由该场景自己的断言证明，不是「放宽即放行」。
 
 ### 断言（每个 `expect` 条目一条记录）
 

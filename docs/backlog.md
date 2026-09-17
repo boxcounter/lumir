@@ -32,19 +32,23 @@
     最省事的机械防线）；(b) 常量经 ts-rs bindings 单向下发。finding
     `20260917-worker-langunify-improve-frontmatter-rust-200-vs-ts-512-m152-201-512.md`。
 12. **冷启动 `restore_last_vault` 在 setup 主线程同步跑（真实 vault ~125ms、4× 规模 ~770ms），推迟首帧且
-    perf 门禁看不见**（**待裁决（立项）**；M154 survey，worker-rustasync，2026-09-17，high——本批唯一
-    「用户可感」的主线程阻塞项）：`src-tauri/src/lib.rs:97` 在 setup 内同步调 `open_vault`，其内部串行做
-    注册表 IO + watch + `scan_workspace` + `build_graph`（逐 md 读文件 + 解析 wikilink 建索引，实测
-    scan 14.0ms + build_graph 111.2ms；4× 规模 32.9 + 736.7ms），随 vault 线性放大（约 12–16ms/MB md 字节）。
-    tauri 在 setup 之前就已按 config 建好窗口（tauri 2.11.5 `app.rs:2524-2531`），所以这段是「窗口已存在、
-    主线程被占、run loop 未启动」＝用户可见首帧被推迟。**可见性缺口**：perf 合同的冷启动端点是 stdout
-    `LUMIR_READY`（`ready.rs:27-43`），该行在恢复之前打印（`lib.rs:94`），因此 <300ms 合同与 CI 相对回归
-    门禁对这段耗时结构性失明。它也不是 command，`#[tauri::command(async)]` 覆盖不到它。
-    **tower 处置建议**：**P1 立项走 OpenSpec change**——finding 明确「改的是启动时序（首帧与恢复的可见性
-    顺序），属行为变更，不要作为补丁直推」。修法：setup 只读配置 + 起线程（或 `spawn_blocking`）做
-    open_vault，完成后写 VaultState 并发事件让前端重拉 `vault_current`；前端启动逻辑已是「拉结果」形态，
-    契约改动小（`src/main.ts:547` 的 `vaultCurrent()` 拉取——**M155 更正**：finding 写的 `main.ts:1157`
-    是 M151 拆分前的行号，现文件 575 行）。finding
+    perf 门禁看不见**（**已立项并实现**（M156 提案 → M159 实现，2026-09-17；归档待 Alex 节点 2）；M154 survey，
+    worker-rustasync，2026-09-17，high——本批唯一「用户可感」的主线程阻塞项）：`src-tauri/src/lib.rs:97`
+    在 setup 内同步调 `open_vault`，其内部串行做注册表 IO + watch + `scan_workspace` + `build_graph`
+    （逐 md 读文件 + 解析 wikilink 建索引，实测 scan 14.0ms + build_graph 111.2ms；4× 规模 32.9 + 736.7ms），
+    随 vault 线性放大（约 12–16ms/MB md 字节）。tauri 在 setup 之前就已按 config 建好窗口
+    （tauri 2.11.5 `app.rs:2524-2531`），所以这段占着主线程、用户可见首帧被推迟。
+    **机制表述更正（M159，证据见 `openspec/changes/startup-restore-off-main-thread/design.md` §1）**：不是
+    「run loop 未启动」——用户 setup hook 由事件循环的**首个 `Ready` 回调**驱动（`app.rs:1423-1427`），
+    准确说法是「主线程被占在事件循环首个回调内，回调返回前无法绘制」。结论不变：这段耗时直接加在
+    「用户看到可用界面」之前，且它不是 command、`#[tauri::command(async)]` 覆盖不到它。
+    **可见性缺口**：perf 合同的冷启动端点是 stdout `LUMIR_READY`（`ready.rs:27-43`），该行在恢复之前打印
+    （`lib.rs:94`），因此 <300ms 合同与 CI 相对回归门禁对这段耗时结构性失明；M159 的处置是**让这段工作不再
+    占主线程**（ready 行的位置与语义不动，见 `docs/specs/perf-measurement.md` §1 的说明），不是挪 ready 行。
+    **tower 处置（已执行）**：P1 立项走 OpenSpec change——finding 明确「改的是启动时序（首帧与恢复的可见性
+    顺序），属行为变更，不要作为补丁直推」。提案 `startup-restore-off-main-thread`（M156）已合并且节点 1 已裁决，
+    实现见 M159：`VaultState` 增打开世代号 + `restore_pending`，恢复落在命名线程 `lumir-vault-restore`，
+    完成信号 `vault:restore_finished` + 前端以 `vault_current` 为权威状态。finding
     `20260917-worker-rustasync-bug-restore-last-vault-setup-scan-build-graph-perf.md`。
 13. **`save_markdown` 的 CAS 窗口实测 4–94ms，窗口内的外部改写会被 rename 静默覆盖**（**待裁决（先裁方案
     再立项）**；M154 survey，worker-rustasync，2026-09-17，medium，vuln）：CAS 检查
@@ -298,6 +302,10 @@
 （keys 动作回读+有限重试 + 08b 落点改走 type 通道 + 探测串移文末 + `ax.focused` 断言形态）；
 同族 type 侧假绿由 M143 核销（重试口径对齐 keys：只在字节完全未变时重试，partial landing 直接报错）。
 
+**M159 单场景实跑（2026-09-17，非全量）**：`16-startup-restore` **PASS / 10 断言 / 0 失败 / 29.4s**
+（`node scripts/acceptance/run.mjs 16`，证据 `test-results/acceptance/2026-09-17/16-startup-restore/`，
+含两张截图与 AX dump）。套件现 **23** 个场景（本条为该批新增）；全量实跑留待批次收尾，不在此宣称。
+
 **已机验（行为判定落定，有 PASS 证据）**
 
 1. **Mermaid 点击进源码编辑** —— `01-mermaid-click`：渲染态（成功块为 `help=围栏原文` 的 widget、
@@ -346,6 +354,15 @@
     ⌃⇥ 循环 / ⌘W 关当前标签（未命名 dirty 才确认）/ 后台标签外部删除被浮条点名。
     **语义变化（Alex 使用习惯）**：⌘W 从关窗变为关当前标签（菜单「关闭」项保留但无加速键，
     退出走 ⌘Q / 红灯）；有路径的标签间切换不再有 dirty 守卫；切换 vault 升级为任一标签 dirty 即拦。
+16. **启动自动恢复 last_vault**（M159，2026-09-17）—— `16-startup-restore`（10 断言 / 29.4s）：
+    默认 config（`last_vault` = 验收 vault）启动后自动进入 vault（树里出现文件）且**不残留**「恢复中」
+    提示；`last_vault` 指向不存在目录后重启 → 未打开空态 + 「上次打开的 vault 已不可用：{路径}，
+    请重新选择目录」+ 「打开 vault」入口（AXButton）在位、树里没有装载任何文件。
+    **边界**：恢复中态本身通常不可见（典型 vault 远比前端挂载快），所以这里断言的是「不残留」而非「看见」；
+    入口断言带 `AXButton` role 前缀——裸子串「打开 vault」在该 AX dump 里命中 4 行（masthead 的
+    「未打开 vault」、编辑器提示也都含这四个字），带 role 后只命中真正的按钮行（实测 4 → 1）。
+    **不宣称性能改进**：恢复耗时不再占主线程，但 `LUMIR_READY` 的出现时刻不变（本 change 不动该行位置）；
+    「树晚出现」的观感归 Alex（截图在证据目录）。
 
 **已机验到渲染/结构层，行为细节仍缺可观测面**
 

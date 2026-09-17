@@ -94,7 +94,9 @@ pub fn run() {
             ready::emit_ready(started);
             #[cfg(target_os = "macos")]
             install_menu_overrides(app.handle())?;
-            restore_last_vault(app.handle());
+            // last_vault 自动恢复移出主线程（M159）：本回调随即返回，事件循环继续跑
+            // ——窗口立即可绘制。setup 内 MUST NOT 同步做 config::load / open_vault。
+            start_restore(app.handle());
             Ok(())
         })
         .on_menu_event(|app, event| {
@@ -372,32 +374,113 @@ fn is_quit_item_text(text: &str) -> bool {
     text == "Quit" || text.starts_with("Quit ")
 }
 
-/// 启动恢复（vault-workspace spec）：last_vault 存在且仍为合法目录则自动打开；
-/// 失效则进入未打开状态并留下人话提示（前端经 vault_current 取走展示），不崩溃不卡死。
-fn restore_last_vault(app: &tauri::AppHandle) {
-    let snapshot = match config::load() {
-        Ok(s) => s,
-        Err(e) => {
-            app.state::<commands::VaultState>()
-                .set_notice(format!("配置加载失败：{}", e.message));
+/// 启动恢复（vault-workspace spec「启动恢复的时序与可见性」）：setup 只起命名线程后立即返回，
+/// 恢复的全部耗时（配置读取、`last_vault` 校验、全量枚举与索引建立）都在主线程之外完成。
+///
+/// 线程选型（design §3.3）：`std::thread::Builder` 命名线程，与仓内既有的 `lumir-log` /
+/// `lumir-fs-debounce` 同形；任务是纯阻塞 IO，没有 async 组合需求，不需要 tokio blocking
+/// worker。`emit_ready` 的发射位置不动——它仍是「事件循环可接管」的标记，不含恢复耗时。
+///
+/// 起线程失败（资源耗尽）时**不做主线程兜底**：setup 内同步跑恢复正是本 change 要消掉的
+/// 行为（spec：setup MUST NOT 同步执行 `config::load` 与 `open_vault`）。此时恢复从未开始，
+/// `restore_pending` 保持 false，前端启动时拉一次 `vault_current` 直接得到「未打开 + 打开
+/// 入口」这个合法终态，用户可手动打开。
+fn start_restore(app: &tauri::AppHandle) {
+    let handle = app.clone();
+    if let Err(e) = std::thread::Builder::new()
+        .name("lumir-vault-restore".into())
+        .spawn(move || restore_last_vault(&handle))
+    {
+        eprintln!("lumir: 恢复线程启动失败（未开始恢复，界面按未打开空态启动）：{e}");
+    }
+}
+
+/// 恢复线程内的收尾保证（design §3.4）：正常提交、提前 `return` 与 debug profile 下的
+/// unwind 都必须「清 `restore_pending` + 发完成信号」。release 的 `panic = "abort"` 直接
+/// 终止进程，不存在卡在恢复中的状态，因此不依赖本结构。
+struct RestoreGuard {
+    app: tauri::AppHandle,
+    generation: u64,
+    signaled: bool,
+}
+
+impl RestoreGuard {
+    fn new(app: &tauri::AppHandle, generation: u64) -> Self {
+        Self {
+            app: app.clone(),
+            generation,
+            signaled: false,
+        }
+    }
+
+    /// 正常结束：把终局交给 [`commands::VaultState::finish_restore`] 单次持锁裁决，再发完成信号。
+    fn finish(mut self, outcome: commands::RestoreOutcome) {
+        self.app
+            .state::<commands::VaultState>()
+            .finish_restore(self.generation, outcome);
+        self.signal();
+    }
+
+    /// 完成信号的唯一发射点。载荷为 `()`（无载荷）：载荷会在「恢复读状态」与「用户提交」
+    /// 之间产生竞态，而前端本来就以 `vault_current` 为权威状态，事件只是唤醒信号。
+    fn signal(&mut self) {
+        if self.signaled {
             return;
         }
+        self.signaled = true;
+        let _ = self.app.emit(RESTORE_FINISHED_EVENT, ());
+    }
+}
+
+impl Drop for RestoreGuard {
+    fn drop(&mut self) {
+        if self.signaled {
+            return;
+        }
+        // 提前 return / panic unwind：不把界面永远留在「恢复中」——清掉进行态（不应用任何
+        // 终局，恢复本来也没算出终局）再发信号，前端据此拉一次权威状态落到终态。
+        self.app
+            .state::<commands::VaultState>()
+            .finish_restore(self.generation, commands::RestoreOutcome::Idle);
+        self.signal();
+    }
+}
+
+/// 后端 → 前端的「启动恢复已结束」唤醒信号（无载荷）。与前端 `lumir:vault-ready`
+/// 的分工见 `src/main.ts` 两个发射点：前者面向启动状态机，后者面向前端就绪管线/测试。
+const RESTORE_FINISHED_EVENT: &str = "vault:restore_finished";
+
+/// 启动恢复任务体（在 `lumir-vault-restore` 线程上跑）：进入进行态 → 算终局 → 单次持锁提交。
+fn restore_last_vault(app: &tauri::AppHandle) {
+    let generation = app.state::<commands::VaultState>().begin_restore();
+    let guard = RestoreGuard::new(app, generation);
+    guard.finish(restore_outcome(app));
+}
+
+/// 恢复任务的终局计算：全部 IO 都在锁外、且不改写任何状态；四条结束路径（成功 / 无
+/// `last_vault` / 路径失效 / 配置加载失败或打开失败）各自映射成一个显式终局，文案与
+/// M159 之前的 `restore_last_vault` 逐字一致。是否真正应用由 `finish_restore` 裁决
+/// ——用户抢先成功打开的 vault 优先，过期结果整包丢弃（含失败提示）。
+fn restore_outcome(app: &tauri::AppHandle) -> commands::RestoreOutcome {
+    let snapshot = match config::load() {
+        Ok(s) => s,
+        Err(e) => return commands::RestoreOutcome::Notice(format!("配置加载失败：{}", e.message)),
     };
-    let state = app.state::<commands::VaultState>();
     let Some(last) = snapshot.config.last_vault else {
-        return;
+        return commands::RestoreOutcome::Idle;
     };
     let path = std::path::PathBuf::from(&last);
     if !path.is_dir() {
-        state.set_notice(format!("上次打开的 vault 已不可用：{last}，请重新选择目录"));
-        return;
+        return commands::RestoreOutcome::Notice(format!(
+            "上次打开的 vault 已不可用：{last}，请重新选择目录"
+        ));
     }
-    match commands::open_vault(app, &state, path, false) {
-        Ok(info) if !info.remap_candidates.is_empty() => {
-            state.set_notice("发现可能已移动的 vault，请确认重映射".into())
+    match commands::prepare_vault_open(app, path, false) {
+        Ok(commands::PreparedOpen::Remap { .. }) => {
+            commands::RestoreOutcome::Notice("发现可能已移动的 vault，请确认重映射".into())
         }
-        Ok(_) => {}
-        Err(e) => state.set_notice(format!("恢复上次 vault 失败：{}", e.message)),
+        Ok(commands::PreparedOpen::Ready(prepared)) => commands::RestoreOutcome::Opened(prepared),
+        Err(e) => commands::RestoreOutcome::Notice(format!("恢复上次 vault 失败：{}", e.message)),
     }
 }
 

@@ -47,15 +47,24 @@ export async function settle(cu, pid, { timeoutMs = 30_000 } = {}) {
 /**
  * 前端就绪门：等左栏文件树 + 编辑器节点就位。
  * 不用「整棵 AX 文本两次一致」——编辑器有光标/渲染时序，树会持续微抖，会假超时。
+ *
+ * `requireVault: false`（M159 起，只给「本步期待未打开空态」的场景用）：启动恢复移出主线程
+ * 后，`last_vault` 失效 / 无 `last_vault` 时前端**合法地**停在未打开空态（树 pane 里没有
+ * `.ft-row`，只有空态的「打开 vault」入口），严格门那条「树里有 .md 行」永远不成立。放宽后
+ * 判据是「树 pane 呈现了任一种形态 + 编辑器节点在位」，终态仍由场景自己的断言证明
+ * ——不得作为默认口径（默认仍是严格门，见 run.mjs 的 ctx.restartApp）。
  */
-export async function waitAppReady(cu, pid, { timeoutMs = 30_000 } = {}) {
+export async function waitAppReady(cu, pid, { timeoutMs = 30_000, requireVault = true } = {}) {
   let seen = 0;
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     const ax = await readAx(cu, pid);
-    const hasTree = findNode(ax.nodes, { role: "AXButton", name: /切换 vault/ }) !== null;
+    const hasHeader = findNode(ax.nodes, { role: "AXButton", name: /切换 vault/ }) !== null;
     const hasFiles = ax.nodes.some((n) => n.role === "AXButton" && /\.md$/.test(n.title ?? ""));
-    if (hasTree && hasFiles && ax.textarea) seen += 1;
+    // 未打开空态在 AX 里的稳定标志：空态说明行 + 「打开 vault」入口（D5/D6 的文案）。
+    const hasEmptyState = /打开一个目录作为 vault/.test(ax.text) && /打开 vault/.test(ax.text);
+    const treeReady = hasHeader && hasFiles ? true : !requireVault && hasEmptyState;
+    if (treeReady && ax.textarea) seen += 1;
     else seen = 0;
     if (seen >= 2) {
       await sleep(600);
@@ -63,7 +72,9 @@ export async function waitAppReady(cu, pid, { timeoutMs = 30_000 } = {}) {
     }
     await sleep(700);
   }
-  throw new StepError(`前端在 ${timeoutMs}ms 内未就绪（左栏文件树/编辑器节点未出现）`);
+  throw new StepError(
+    `前端在 ${timeoutMs}ms 内未就绪（左栏文件树/编辑器节点未出现${requireVault ? "" : "；本步已放宽为允许未打开空态"}）`,
+  );
 }
 
 export async function clickNode(cu, pid, { role, name, nth = 0, needNode = true }) {

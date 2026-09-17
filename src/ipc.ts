@@ -71,6 +71,16 @@ export function onQuitBlocked(handler: () => void): Promise<() => void> {
   return listen("app:quit_blocked", () => handler());
 }
 
+/**
+ * 订阅「启动恢复已结束」事件（M159，change startup-restore-off-main-thread）；
+ * 返回退订函数。**无载荷**：它只是唤醒信号，让前端去拉一次权威状态（`vaultCurrent`）
+ * ——把结果塞进载荷会在「恢复读状态」与「用户提交」之间产生竞态（design §3.4）。
+ * 恢复在 webview 挂载前就完成时事件会丢失，因此启动序列必须「先订阅、再拉取」。
+ */
+export function onVaultRestoreFinished(handler: () => void): Promise<() => void> {
+  return listen("vault:restore_finished", () => handler());
+}
+
 /** 读 vault 内二进制附件，返回 base64（裁决点 A：invoke + base64）。 */
 export function fsReadAttachment(path: string): Promise<string> {
   return invoke<string>("fs_read_attachment", { path });

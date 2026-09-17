@@ -39,6 +39,11 @@ export interface VaultFixture {
   remapCandidates?: Array<{ id: string; path: string }>;
   /** config_get 桩（M132）：模式 / [keys] 覆盖表 / 配置 warning。缺省 md + 空覆盖 + 无 warning。 */
   config?: { mode?: "md" | "code"; keys?: Record<string, string | null>; warnings?: string[] };
+  /**
+   * 启动恢复进行态桩（M159）：`true` 时 `vault_current` 按后端契约回「vault 为 null +
+   * restore_pending: true」（进行中 = 尚未提交，两者不可同时成立），前端应呈现恢复中提示。
+   */
+  restorePending?: boolean;
 }
 
 export async function stubTauri(page: Page, vault: VaultFixture | null): Promise<void> {
@@ -119,10 +124,19 @@ export async function stubTauri(page: Page, vault: VaultFixture | null): Promise
           path: "/mock/config.json",
         };
       },
-      vault_current: () =>
-        current
-          ? { vault: { root: current.root ?? "/Users/alex/demo-vault", entries: current.entries, vault_id: current.vault_id ?? "fixture-vault", remap_candidates: [] }, notice: current.notice ?? null }
-          : { vault: null, notice: null },
+      vault_current: () => {
+        // 恢复进行态（M159）：进行中就没有已提交的 vault——`vault: null` 与
+        // `restore_pending: true` 必须同时成立，否则前端会把进行态当终态（design §3.1）。
+        const pending = current?.restorePending === true;
+        if (!current || pending) {
+          return { vault: null, notice: current?.notice ?? null, restore_pending: pending };
+        }
+        return {
+          vault: { root: current.root ?? "/Users/alex/demo-vault", entries: current.entries, vault_id: current.vault_id ?? "fixture-vault", remap_candidates: [] },
+          notice: current.notice ?? null,
+          restore_pending: false,
+        };
+      },
       vault_open: (args) => {
         const target = current?.switchTo;
         if (!target) return null;
@@ -235,6 +249,19 @@ export async function stubTauri(page: Page, vault: VaultFixture | null): Promise
         callbacks.get(id)?.({ event: "app:menu_command", id, payload: command });
       }
     };
+    // 测试钩子：模拟后端 emit vault:restore_finished（M159 的启动恢复完成信号，无载荷）。
+    // 它只是唤醒信号——场景改完后端状态（__setBackendVault）再 fire，才能验到「事件 → 再拉一次
+    // vault_current」这条链路；不 fire 则验不到（前端不会自己轮询，design §7 A5）。
+    w.__fireVaultRestoreFinished = () => {
+      for (const id of listeners.get("vault:restore_finished") ?? []) {
+        callbacks.get(id)?.({ event: "vault:restore_finished", id, payload: null });
+      }
+    };
+    // 测试钩子：替换后端当前 vault（模拟恢复线程稍后提交 / 用户打开成功）——此后
+    // vault_current 按新 fixture 应答。前端不持副本，只能经权威拉取看到它。
+    w.__setBackendVault = (v: VaultFixture | null) => {
+      current = v;
+    };
     // 测试钩子：模拟外部程序改/删文件（Lumir ↔ Obsidian 来回场景）。
     // 不触发 watch 事件——事件由场景显式 fireFsEvent 送达，与真后端
     // 「fs 变更 → debounce → emit」的时序解耦，断言更确定。
@@ -268,6 +295,21 @@ export async function fireMenuCommand(page: Page, command: string): Promise<void
   await page.evaluate(
     (c) => (window as unknown as { __fireMenuCommand: (command: string) => void }).__fireMenuCommand(c),
     command,
+  );
+}
+
+/** 模拟后端 emit vault:restore_finished（M159 启动恢复完成信号，无载荷）。 */
+export async function fireVaultRestoreFinished(page: Page): Promise<void> {
+  await page.evaluate(() =>
+    (window as unknown as { __fireVaultRestoreFinished: () => void }).__fireVaultRestoreFinished(),
+  );
+}
+
+/** 替换后端当前 vault（模拟恢复线程稍后提交 / 用户打开成功；vault_current 随之应答新值）。 */
+export async function setBackendVault(page: Page, vault: VaultFixture | null): Promise<void> {
+  await page.evaluate(
+    (v) => (window as unknown as { __setBackendVault: (v: VaultFixture | null) => void }).__setBackendVault(v),
+    vault,
   );
 }
 

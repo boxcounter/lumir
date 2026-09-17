@@ -12,6 +12,7 @@ import {
   onFsEntryChanged,
   onMenuCommand,
   onQuitBlocked,
+  onVaultRestoreFinished,
   vaultCurrent,
   vaultOpen,
   vaultOpenPath,
@@ -49,6 +50,10 @@ const editor = createEditor(shell.editor);
 let attachmentPaths: string[] = [];
 /** 是否已有 vault 装载成功；onOpenVault 失败时据此决定空态还是浮条提示。 */
 let vaultLoaded = false;
+/** 已装载的 vault 根（`vaultLoaded` 为真时有效）：启动恢复有两条入口（完成信号与首次
+ *  拉取），两者可能同时到达——同一个 vault 的重复响应只装载一次，避免重复走一遍
+ *  装载副作用（编辑器整批复位、崩溃备份入口再弹一次）。 */
+let loadedRoot: string | undefined;
 
 // 附件 provider：文件名匹配走 vault 索引（add-vault-workspace 裁决点 F），
 // 字节读取走 ipc 的 fsReadAttachment 封装（裁决点 A，invoke + base64）。
@@ -486,6 +491,10 @@ function loadVault(root: string, entries: FsEntry[], vaultId = root, restored = 
   // guardVaultSwitch）。旧实现只有一个文档，那条 guard 与它等价。
   if (!save.guardVaultSwitch()) return;
   vaultLoaded = true;
+  loadedRoot = root;
+  // `lumir:vault-ready` = **前端装载完成**（面向就绪管线/测试，全仓无消费者），与后端
+  // `vault:restore_finished`（面向启动状态机：后端恢复任务结束，前端据此再拉一次状态）
+  // 分工不同——两个名字太像，这里是唯一的区分点，改名/改语义前先读 design §6.2。
   emitReadiness("vault-ready", { root, vaultId, restored });
   save.noteVaultReset();
   attachmentPaths = entries.filter((e) => e.kind === "file").map((e) => e.path);
@@ -542,17 +551,48 @@ onFsEntryChanged((changes) => {
   });
 }).catch(() => {});
 
-// 启动恢复：后端 setup 已按 last_vault 尝试自动打开；这里拉取结果。
-// 未打开 → 空态 + 打开入口；恢复失败 → 空态上人话提示。
-vaultCurrent()
-  .then((status) => {
-    if (status.vault) {
-      loadVault(status.vault.root, status.vault.entries, status.vault.vault_id, true);
-    } else {
-      tree.showEmpty(status.notice);
-    }
-  })
-  .catch((e) => tree.showEmpty(errorMessage(e)));
+// 启动恢复（M159，change startup-restore-off-main-thread）：后端把 last_vault 的自动恢复
+// 移出了 setup 主线程，前端因此要能表达三态——**恢复中** / 已打开 / 未打开（+ 可选提示）。
+//
+// 顺序是契约的一部分：**先订阅完成信号、再拉一次权威状态**。反过来的话，恢复在两者之间
+// 完成会既没有监听者、拉取又早于完成，界面永久停在恢复中态（design §4.1）。
+// 事件只是唤醒信号（无载荷）；权威状态始终是 vault_current 的返回值——webview 挂载晚于
+// 恢复完成时事件根本收不到，终态照样正确。
+
+// 恢复中态的提示行（文案-Copy.md D95）。复用未打开空态的布局，只换提示行：零新样式、
+// 零布局变化，「打开 vault」入口天然保留（用户可在恢复期间抢先改选目录，design §4.3）。
+const RESTORING_NOTICE = "正在恢复上次打开的 vault……";
+
+/** 拉一次权威 vault 状态：已打开就装载，否则按终态（恢复中 / 恢复失败 / 无 vault）显示空态。
+ *
+ *  两条「不降级」门（都是让位规则的前端侧，design §4.2）：① 同一个 vault 的响应只装载一次
+ *  ——启动时完成信号与首次拉取可能同时到达，重复装载会白走一遍编辑器整批复位与崩溃备份入口；
+ *  ② 尚未到终态的空态只在**没装载过**时呈现——装载之后再到达的「恢复中 / 无 vault」响应是
+ *  更早那次拉取的迟到响应，不能把已装载的树降级成空态。 */
+function refreshVaultStatus(): Promise<void> {
+  return vaultCurrent()
+    .then((status) => {
+      if (status.vault) {
+        if (status.vault.root === loadedRoot) return;
+        loadVault(status.vault.root, status.vault.entries, status.vault.vault_id, true);
+      } else if (!vaultLoaded) {
+        tree.showEmpty(status.restore_pending ? RESTORING_NOTICE : status.notice);
+      }
+    })
+    .catch((e) => {
+      if (!vaultLoaded) tree.showEmpty(errorMessage(e));
+    });
+}
+
+/** 恢复完成信号的处理（订阅见下）：让位规则——只有尚未成功装载任何 vault 时才应用它。
+ *  `vaultLoaded` 只在 `loadVault` 里置 true，因此 picker 取消 / 打开异常 / remap 候选短路
+ *  这三条失效路径都不会挡掉恢复结果，与后端「失败不产生世代跃迁」对称（design §4.2）。 */
+function applyRestoreFinished(): void {
+  if (!vaultLoaded) void refreshVaultStatus();
+}
+
+onVaultRestoreFinished(applyRestoreFinished).catch(() => {}); // 无 Tauri 后端（纯浏览器预览）时静默忽略
+void refreshVaultStatus();
 
 // editor.mode：只对没有文件上下文的文档（空态 / 新建）生效的默认模式；打开文件时
 // 一律按扩展名裁决（M130 方向 A：非 md 只读 code），该配置对文件打开不再有影响。
