@@ -32,8 +32,11 @@ export function openKind(path: string): OpenKind {
 }
 
 export interface FileTreeCallbacks {
-  /** 点击文件：按 openKind 分类交给装配层处理。 */
-  onOpenFile(path: string, kind: OpenKind): void;
+  /** 打开文件：按 openKind 分类交给装配层处理。`intent` 是打开意图（M149 多标签）——
+   *  `"pinned"` = 新开固定标签，`"preview"` = 复用预览标签。判定形态由树决定（它是唯一
+   *  看得到点击事件的地方）：**⌘-点击 = "pinned"**，其余单击 = "preview"，双击由 dblclick
+   *  事件单独给出 "pinned"。 */
+  onOpenFile(path: string, kind: OpenKind, intent: "preview" | "pinned"): void;
   /** 「打开 vault」入口：空态按钮与树头部的常驻切换入口共用。 */
   onOpenVault(): void;
 }
@@ -122,9 +125,14 @@ export function createFileTree(mount: HTMLElement, cb: FileTreeCallbacks): FileT
         for (const child of sortedChildren(node)) mountNode(child, ul);
       }
     } else {
-      row.addEventListener("click", () =>
-        cb.onOpenFile(node.entry.path, openKind(node.entry.path)),
-      );
+      const open = (intent: "preview" | "pinned") =>
+        cb.onOpenFile(node.entry.path, openKind(node.entry.path), intent);
+      // 单击 = 复用预览标签；⌘-点击 = 新固定标签（M149 语义，Alex 已裁决）。
+      // 双击另发一次 "pinned"：浏览器在 dblclick 之前会先派发两次 click，那两次落在
+      // 「同一文件已打开 → 切过去」的路径上，随后这次 pinned 把它固定住——这正是
+      // 「双击 = 固定」的落点，不需要在树里做时间窗去抖。
+      row.addEventListener("click", (event) => open(event.metaKey ? "pinned" : "preview"));
+      row.addEventListener("dblclick", () => open("pinned"));
     }
     node.li = li;
     return li;

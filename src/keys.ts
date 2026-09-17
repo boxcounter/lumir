@@ -46,6 +46,25 @@
 // M133 / M139 的面板段落：表内一个 token 只能有一条绑定，↑↓ 已被 editor.cursor-* 占用、Esc 已被
 // editor.widget-escape 占用，浮层就地消费时那两条绑定因作用域判定不命中。
 //
+// M149：表新增三个标签命令族——`tab.close`、`tab.next` / `tab.prev`、`tab.goto-1`…`tab.goto-9`
+//（9 条绑定按序号展开成 9 个命令 id：命令层没有参数通道，而「⌘3 直达第 3 个标签」的语义必须
+// 落在命令 id 上，配置重绑与键位面板才能如实显示它）。命令实现在装配层 main.ts，能力（会话与
+// 切换）在 editor.ts。全部取 scope global：标签是窗口级对象，焦点在文件树 / 搜索框 / 大纲浮层里
+// 时同样要能切（与 ⌘F、⌘⇧O 同一理由）。
+//
+// 零冲突核对（注册前实测，三条独立来源，逐条可复核）：
+//   - **表内**：本文件即真源，现表无 ⌘W / ⌘数字 / ⌃⇥ 系绑定（⌘W 系为空，⌘ 数字无，⌃Tab 无）。
+//   - **原生菜单 accelerator**：tauri 2.11.5 的 `Menu::default()` 逐项来自 muda 0.19.3
+//     `items/predefined.rs` 的 `accelerator()`——Copy ⌘C / Cut ⌘X / Paste ⌘V / Undo ⌘Z /
+//     Redo ⇧⌘Z / SelectAll ⌘A / Minimize ⌘M / Fullscreen ⌃⌘F / Hide ⌘H / HideOthers ⌥⌘H /
+//     **CloseWindow ⌘W** / Quit ⌘Q。⌘ 数字与 ⌃⇥ 不在其中；**⌘W 在**——所以 M149 在
+//     `src-tauri/src/lib.rs` 里按 M131 的先例（同样是「预置项自带 key equivalent，菜单键等价
+//     在 NSApplication 分发阶段就被截获，webview 的 keydown 收不到」）把两个预置 Close 换成
+//     不带加速键的自定义项，把 ⌘W 让回 webview。该文件的反向指针见那边的函数注释。
+//   - **系统级**：macOS 的窗口循环键是 ⌘`（不是 ⌃⇥）；AppKit 不预置 ⌃⇥ / ⌃⇧⇥。
+// ⌘W 的语义从「关窗」改为「关当前标签」是 mission 裁决（tower 2026-09-17）：单窗口应用里
+// 「关窗≈关应用」，而关标签是更高频动作；退出仍走 ⌘Q（有 dirty 守卫）与红灯按钮。
+//
 // 平台口径（M131 评审 r1 F1 如实记录）：迁移后**表内绑定一律全平台无条件生效**，不再有
 // 平台门。两处与迁移前不同，均只在非 macOS 平台可观测：
 //   - ⌃N/P/F/B/E 迁移前是 CM keymap 的 `{ mac: "Ctrl-n" }`（只绑 mac），现在非 mac 平台
@@ -107,8 +126,29 @@ export type WidgetCommandId = (typeof WIDGET_COMMAND_IDS)[number];
 /** 编辑器侧全部命令 id（内核 + widget）。 */
 export const EDITOR_COMMAND_IDS = [...EDITOR_CORE_COMMAND_IDS, ...WIDGET_COMMAND_IDS] as const;
 
-/** 全局命令 id（实现落在装配层 main.ts）。 */
-export const GLOBAL_COMMAND_IDS = [
+/** ⌘1–9 直达第 1–9 个标签的命令 id（M149）。命令层没有参数通道，序号只能落在 id 上——
+ *  这样 `[keys]` 配置重绑与键位面板都能如实显示「⌘3 → tab.goto-3」，也不会出现
+ *  「一个 id 同时表示多个语义」的隐式约定。声明在 GLOBAL_COMMAND_IDS 之前：后者用
+ *  展开运算符引用它，倒序会在模块求值时踩 const 的暂时性死区。 */
+export const TAB_GOTO_IDS = [
+  "tab.goto-1",
+  "tab.goto-2",
+  "tab.goto-3",
+  "tab.goto-4",
+  "tab.goto-5",
+  "tab.goto-6",
+  "tab.goto-7",
+  "tab.goto-8",
+  "tab.goto-9",
+] as const;
+
+/** 标签命令 id（M149）：关闭 / 循环切换 / 序号直达。单独导出是因为键位面板把它们单列
+ *  一组——「全局」组的成员必须排除它们，否则同一命令会被两个分组各渲染一行
+ *（面板行数因此翻倍，「每条命令一行」的口径被破坏，m133 的既有场景正是按行数断言的）。 */
+export const TAB_COMMAND_IDS = ["tab.close", "tab.next", "tab.prev", ...TAB_GOTO_IDS] as const;
+
+/** 非标签的全局命令 id（键位面板「全局」组的成员；实现落在装配层 main.ts）。 */
+export const NON_TAB_GLOBAL_COMMAND_IDS = [
   "document.save",
   // M144：`wikilink.follow` → `link.follow`——命令现在跟随光标/点击处的**链接**，
   // 外链交给系统浏览器、wikilink 走既有跳转链路。名字不再只覆盖 wikilink。
@@ -118,6 +158,13 @@ export const GLOBAL_COMMAND_IDS = [
   "app.search-open",
   // M148：⌘⇧O 展开/收起轻量大纲浮层（能力与浮层在 src/toc.ts，装配在 main.ts）
   "toc.toggle",
+] as const;
+
+/** 全局命令 id（实现落在装配层 main.ts）：非标签部分 + 标签部分。 */
+export const GLOBAL_COMMAND_IDS = [
+  ...NON_TAB_GLOBAL_COMMAND_IDS,
+  // M149：标签（能力与切换在 editor.ts 的会话 API，装配在 main.ts）
+  ...TAB_COMMAND_IDS,
 ] as const;
 
 /** 全部命令 id：类型与运行期清单同源，测试据此断言无孤儿命令、无越界绑定。 */
@@ -154,6 +201,17 @@ function isWidgetKeyTarget(event: KeyboardEvent): boolean {
 
 /** 表格滚动容器内左右方向键的步进（原 livePreview 手柄口径，迁移不改行为）。 */
 export const WIDGET_SCROLL_STEP_PX = 120;
+
+/** ⌘1–9 直达绑定（M149）：九条同形绑定，程序化生成而不手抄九遍——抄错一个数字的表现是
+ *  「某个 ⌘N 静默不动」，正是最难发现的一类 bug（REVIEW.md 第 8 条：同语义不要两处真源，
+ *  这里连一处手抄都省掉）。绑定顺序 = 标签序号，序号只出现在 TAB_GOTO_IDS 与循环下标两处，
+ *  两者由同一次遍历产生，不可能错位。 */
+const TAB_GOTO_BINDINGS: readonly KeyBinding[] = TAB_GOTO_IDS.map((command, index) => ({
+  key: `Cmd-${index + 1}`,
+  command,
+  scope: "global",
+  doc: `⌘${index + 1} 直达第 ${index + 1} 个标签（M149，Alex 明确要求「坐上 ⌘1–9 直达」）；取 global——焦点在文件树 / 搜索框 / 大纲浮层里时同样要能直达。超出标签数时无操作。冲突已核（零冲突）：⌘ 数字不在 tauri 默认菜单的 accelerator 集合里（见文件头 M149 段），表内亦无 ⌘ 数字绑定`,
+}));
 
 /**
  * 唯一分发表（D1/D2/D3 落点见各条 doc）。键位 token 的口径：
@@ -235,6 +293,12 @@ export const KEY_BINDINGS: readonly KeyBinding[] = [
   { key: "Cmd-/", command: "app.describe-bindings", scope: "global", doc: "键位查看面板（M133）：mac 帮助惯例的简化形态——系统「帮助」菜单的 accelerator 实为 ⇧⌘?（Cmd-?），该键在本应用的原生菜单下会先被系统 Help 菜单截获，故取 ⌘/；Emacs 的 C-h b（describe-bindings）不可用——⌃H 已被后删字符占用" },
   { key: "Cmd-f", command: "app.search-open", scope: "global", doc: "文件内搜索（M139）：mac 惯例的查找键；取 global 而非 editor——焦点在文件树或已打开的搜索框里时同样要能开（已打开则把焦点移回输入框）。⌃F 已被 Emacs C-f（前移字符）占用，故沿用 ⌘ 系" },
   { key: "Cmd-Shift-o", command: "toc.toggle", scope: "global", doc: "轻量大纲（M148）：⌘⇧O 展开/收起 masthead 的标题路径浮层。取 global 而非 editor——浮层打开时焦点在浮层里（不在 contentDOM 内），再按要能收起；空标题文档也要能走到提示。冲突已核（零冲突）：表内 ⌘⇧ 系只有 ⇧⌘Z（重做），原生菜单的 accelerator 集合里 ⌘⇧ 系也只有 ⇧⌘Z（muda predefined：Redo），macOS 的 Help 子菜单在 tauri 默认菜单里为空" },
+
+  // ── 全局：标签（M149）
+  { key: "Cmd-w", command: "tab.close", scope: "global", doc: "关当前标签（dirty 时先确认）；取 global 而非 editor——焦点在文件树 / 搜索框 / 大纲浮层里时同样要能关。**这个键原本被原生菜单的预置 Close 项占着**（muda 给 CloseWindow 的 accelerator 就是 ⌘W，菜单键等价在 NSApplication 分发阶段截获，webview 的 keydown 收不到）：M149 在 src-tauri/src/lib.rs 按 M131 先例把 File / Window 两个子菜单的预置 Close 换成不带加速键的自定义项让出该键，见那边的函数注释。语义随之从「关窗」变为「关标签」（tower 2026-09-17 裁决），退出仍走 ⌘Q（有 dirty 守卫）与红灯" },
+  { key: "Ctrl-Tab", command: "tab.next", scope: "global", doc: "循环切到下一个标签（末端回卷到第一个）；取 global——切标签是窗口级动作，不该依赖焦点在哪。冲突已核（零冲突）：tauri 默认菜单的 accelerator 集合里没有 ⌃⇥，macOS 的窗口循环键是 ⌘` 而非 ⌃⇥，表内亦无 ⌃ 系 Tab 绑定。" },
+  { key: "Ctrl-Shift-Tab", command: "tab.prev", scope: "global", doc: "循环切到上一个标签（首端回卷到最后一个），与 ⌃⇥ 成对；冲突核实同 ⌃⇥。" },
+  ...TAB_GOTO_BINDINGS,
 ];
 
 /** 命令实现：命中即已消费——分发器统一吞掉默认行为，命令本身无事可做也不放行原生路径。

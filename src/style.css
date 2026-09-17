@@ -33,7 +33,9 @@ body { background:var(--bg); color:var(--text); font-family:var(--font-body); fo
 .app-shell {
   display: grid;
   grid-template-columns: var(--nav-width) minmax(0, 1fr);
-  grid-template-rows: auto minmax(0, 1fr);
+  /* 三行：masthead / 标签栏 / 正文。标签栏空态 hidden（display:none）时第二行塌成 0，
+     因此「没有打开文件」的空态布局与 M149 之前逐像素一致。 */
+  grid-template-rows: auto auto minmax(0, 1fr);
   height: 100%;
   min-width: 0;
   min-height: 0;
@@ -55,7 +57,7 @@ body { background:var(--bg); color:var(--text); font-family:var(--font-body); fo
 .masthead-vault { font-family:var(--font-display); font-size:15px; font-weight:700; letter-spacing:.42em; color:var(--text); }
 .masthead-file { color:var(--dim); min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .pane-filetree { grid-column:1; grid-row:1 / -1; display:flex; flex-direction:column; min-height:0; overflow:auto; }
-.pane-editor { grid-column:2; grid-row:2; }
+.pane-editor { grid-column:2; grid-row:3; }
 .tree-pane { flex:0 1 auto; min-height:128px; overflow:auto; }
 .masthead { min-height:57px; }
 @media (max-width:1100px) {
@@ -443,3 +445,113 @@ body { background:var(--bg); color:var(--text); font-family:var(--font-body); fo
   font-size: 11px;
   color: var(--dim);
 }
+
+/* 标签栏（M149 多标签）：编辑器列顶部的独立一行，容器空态 hidden。
+   颜色 / 边框 / 字体全部取 M55 既有 token（--bg-nav / --bd-* / --text / --dim /
+   --accent / --font-body），不引入新视觉语言——与 .ft-header 的「弱化灰字 + 细边框」
+   同一套手法。放独立网格行而不是塞进 masthead：不挤占文件名与大纲指示段，也不动正文
+   列宽（m119 / table-foundation-v2 的宽度断言依赖它）。 */
+.tabstrip {
+  grid-column: 2;
+  grid-row: 2;
+  display: flex;
+  align-items: stretch;
+  min-width: 0;
+  padding: 0 48px;
+  background: var(--bg-nav);
+  border-bottom: 1px solid var(--bd-1);
+  /* 溢出：v1 只做横向滚动（不做拖拽排序 / 不折叠成下拉）。溢出时标签自身宽度不变，
+     正文列宽也不受影响——滚动条占的是本行高度。 */
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
+}
+/* author 的 display:flex 会盖掉 UA 的 [hidden] 规则，显式补回（同 .editor-notice） */
+.tabstrip[hidden] { display: none; }
+
+.tab {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+  max-width: 220px;
+  min-height: 30px;
+  padding: 0 6px 0 10px;
+  border: none;
+  border-right: 1px solid var(--bd-1);
+  background: none;
+  font-family: var(--font-body);
+  font-size: 12px;
+  color: var(--dim);
+  cursor: pointer;
+  text-align: left;
+}
+.tab:hover { background: var(--bg-2); }
+/* 标签本体（可点区域）显式压平：`<button>` 的 UA 默认样式会带上边框、背景与系统字体，
+   那样一条标签栏会看起来像一排按钮而不是标签。压平后标签就是「一块可点的文字」。 */
+.tab-open {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 0;
+  border: none;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.tab.is-active {
+  background: var(--bg);
+  color: var(--text);
+}
+/* 激活态标记：贴在本行底边（压住容器的 border-bottom），与 masthead 的双线同一语言。 */
+.tab.is-active::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  border-bottom: 2px solid var(--text);
+}
+.tab-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* 预览标签：标题走斜体（临时态的唯一视觉线索——单击树文件建立、开下一篇时被替换）。 */
+.tab.is-preview .tab-name { font-style: italic; }
+
+/* dirty 点：与 masthead 的「（未保存）」同源（同一 dirty 状态的两个可见面）。
+   用固定宽度的字形而不是文案，标签宽度不随保存状态跳动。 */
+.tab-dirty {
+  flex: none;
+  width: 8px;
+  text-align: center;
+  color: var(--accent);
+  font-size: 10px;
+  line-height: 1;
+}
+.tab-dirty[hidden] { display: none; }
+
+.tab-close {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: none;
+  border-radius: 3px;
+  background: none;
+  color: var(--dim);
+  font: inherit;
+  font-size: 13px;
+  line-height: 16px;
+  text-align: center;
+  cursor: pointer;
+}
+.tab-close:hover { background: var(--bg-3); color: var(--text); }

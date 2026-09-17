@@ -1,6 +1,11 @@
-import { Annotation, Compartment, EditorSelection, EditorState, Transaction, findClusterBreak } from "@codemirror/state";
+import { Annotation, Compartment, EditorSelection, EditorState, StateEffect, Transaction, findClusterBreak } from "@codemirror/state";
 import type { Extension, SelectionRange, Text } from "@codemirror/state";
 import { EditorView, lineNumbers, highlightActiveLine } from "@codemirror/view";
+import type { ViewUpdate } from "@codemirror/view";
+
+/** 滚动位置快照的类型（`view.scrollSnapshot()` 的产物）。CM 不导出 ScrollTarget 类型，
+ *  所以取方法的返回类型而不是手写泛型参数——类型随 CM 版本走，不会漂。 */
+export type ScrollSnapshot = ReturnType<EditorView["scrollSnapshot"]>;
 import { history, redo, undo } from "@codemirror/commands";
 import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
 import { HighlightStyle, StreamLanguage, syntaxHighlighting, syntaxTree, ensureSyntaxTree } from "@codemirror/language";
@@ -37,8 +42,13 @@ import { lumirSearch } from "./search";
 
 // 编辑器单内核双模式（ADR 0002 §2）：一个 CM6 内核、两种模式。
 // md = 高亮 + live preview 装饰层（src/preview/）；code = 仅高亮。
-// 模式差异收敛进一个 Compartment，setMode/openDocument 用 reconfigure 热切换，
+// 模式差异收敛进一个 Compartment，setMode / 装载用 reconfigure 热切换，
 // 不重建 EditorView、不丢文档状态。M1 只读（ADR 0003 §3 铁律），装饰层不含编辑态逻辑。
+//
+// M149 多标签：全应用仍然只有**一个 EditorView**，但每打开一个文档就多一份独立的
+// EditorState（EditorSession）。切标签 = `view.setState(会话的 state)`——撤销史、语法树、
+// 选区、搜索查询、模式配置都在 state 里跟着走，因此切回来不重新解析、不丢撤销栈。
+// 会话的公共面见 EditorSession / EditorHandle；装配层（src/main.ts）负责标签栏与打开意图。
 
 const SAMPLE = `\
 ---
@@ -815,6 +825,52 @@ export interface EditorReadyEvent {
 
 export type EditorReadyListener = (event: EditorReadyEvent) => void;
 
+/**
+ * 一个**文档会话**（M149 多标签）：一份 EditorState + 逐文档的记账。
+ *
+ * 架构口径：全应用只有一个 EditorView，切标签走 `view.setState(会话的 state)`——
+ * 撤销史（history 是 StateField）、语法树、选区、搜索查询、模式配置都随 state 走，
+ * 切回来**不重新解析、不丢撤销栈**。这与「重建 view」的区别是可观测的：重建会丢掉
+ * 撤销史与语法树，`setState` 不会。
+ *
+ * 会话对象是**活的**：内核在激活期间每次 dispatch 后回写 `state`，切走时回写滚动位置；
+ * 装配层据此渲染标签栏，不要再自己缓存一份。
+ */
+export interface EditorSession {
+  /** 会话 id（单调递增，供标签栏做 DOM key / 断言；顺序由 sessions() 的数组序决定）。 */
+  readonly id: number;
+  /** 当前状态：激活期间每次 dispatch 后回写，非激活会话是上次切走时的那一份。 */
+  state: EditorState;
+  /** 文档的 vault 相对路径；未命名文档（空态 / 新建）为 undefined。 */
+  path: string | undefined;
+  /** dirty 判定基准：最近一次装载或保存时的全文。 */
+  cleanDoc: string;
+  /** 相对 cleanDoc 是否有改动。 */
+  dirty: boolean;
+  /**
+   * 该会话的编辑器模式。**逐会话**存在这里而不是内核的一个单值：`changeFilter` 的
+   * 非 md 拦截闭包读它，切标签时必须与 state 一起换，否则前台是 code 会话而模式变量
+   * 还停在 md，拦截会错判（install 期 setMode 也可能改模式，故不能只按路径反推）。
+   */
+  mode: EditorMode;
+  /**
+   * 「可被复用」的临时会话标记（M149 预览标签）。内核**不读**这个字段——它是装配层
+   * 的标签属性：单击文件树建立的会话标 true，下一次单击树文件就地替换它而不新开标签；
+   * 双击或首次输入即置 false（固定）。放在会话上而不是装配层的 Map 里，是因为
+   * 会话被关闭时这个标记必须随之消失，两处各存一份必然漂移（REVIEW.md 第 8 条）。
+   */
+  preview: boolean;
+  /**
+   * 离开该会话时的滚动位置快照（`view.scrollSnapshot()` 的产物）。**滚动不在 CM state 里**
+   *（只存在于 scrollDOM），所以必须逐会话单独存，否则切标签会继承上一篇的滚动位置。
+   *
+   * 存快照而不是裸 `scrollTop`：快照记的是「某个文档位置 + 相对视口的偏移」，恢复时报给
+   * CM 的 `scrollTarget` 由它自己的测量周期落地，不受两份内容高度差与排版变化的影响；
+   * 直接写 `scrollDOM.scrollTop` 会被 CM 的滚动锚点维护逻辑改掉（M149 实测差 242px）。
+   */
+  scroll: ScrollSnapshot | undefined;
+}
+
 export interface EditorHandle {
   view: EditorView;
   /**
@@ -825,24 +881,44 @@ export interface EditorHandle {
   commands: Record<EditorCommandId, CommandRunner>;
   /**
    * 显式切换模式（配置加载 / 用户切换）：除热切换当前模式外，同时把该模式记为
-   * 配置默认基线，openDocument 对无文件上下文（path 缺失）文档的回落以此为锚。
+   * 配置默认基线，createSession 对无文件上下文（path 缺失）文档的回落以此为锚。
    * Compartment 热切换，不重建 view。
    */
   setMode(mode: EditorMode): void;
   mode(): EditorMode;
   /**
-   * 打开文档：替换内容并按文件类型选模式（spec「模式配置来源」）——
-   * .md/.markdown → md；其余一切已打开的文件 → 只读 code（含未知扩展、dotfile 与
-   * basename 无点的文件，M130 方向 A）；只有没有文件上下文（path 缺失）的文档才
-   * 回落配置默认基线（setMode 锚定，不随上一个打开文件的模式漂移）。
+   * 新建一个**空文档**会话（M149）：建立逐会话记账，但不装载内容、不激活。
+   * 路径与内容由调用方随后的 reloadSession 补上（装载走事务派生，会话因此能继承
+   * 搜索面板一类的 StateField 状态；新建 state 会把它们丢掉）。模式先取配置默认基线，
+   * 装载时按路径裁决。
    */
-  openDocument(doc: string, path?: string, requestId?: number): void;
+  createSession(): EditorSession;
+  /**
+   * 用新内容改写一个既有会话（外部重载 / 放弃我的修改 / 恢复崩溃备份）。
+   * 目标会话不在前台时只换它的 state，不碰 view。
+   */
+  reloadSession(session: EditorSession, doc: string, path: string | undefined, requestId?: number): void;
+  /**
+   * 激活会话：把 view 的 state 换成它那一份，并恢复该会话的滚动位置。
+   * 同步调用、无异步等待——切换只换 state，不重新解析文档。
+   */
+  activateSession(session: EditorSession): void;
+  /** 当前激活的会话。 */
+  activeSession(): EditorSession;
+  /** 全部会话，按创建顺序（= 标签栏的从左到右顺序）。 */
+  sessions(): readonly EditorSession[];
+  /** 按路径查会话；未打开返回 undefined。 */
+  sessionForPath(path: string): EditorSession | undefined;
+  /** 关闭会话：从列表中摘除（脏内容由调用方先行确认）。 */
+  closeSession(session: EditorSession): void;
+  /** 按路径标记「已与磁盘同步」：更新 cleanDoc 并清 dirty（保存成功 / 重载后）。 */
+  markCleanOf(path: string, content: string): void;
   /** 监听文档装载、装饰和首个 paint 的可观测阶段。 */
   onReady(listener: EditorReadyListener): () => void;
   /**
-   * 清空文档并复位上下文（vault 切换 / 关闭时调用）：doc 清空、内部
-   * currentFilePath 置空、模式回到配置默认基线（defaultMode，与 openDocument
-   * 对无文件上下文文档的回落锚一致——不继承上一个文件漂移出的模式）。
+   * 清空全部会话并复位上下文（vault 切换 / 关闭时调用）：只留一个未命名空文档会话，
+   * 模式回到配置默认基线（defaultMode，与 createSession 对无文件上下文文档的回落锚
+   * 一致——不继承上一个文件漂移出的模式）。
    */
   reset(): void;
   /**
@@ -859,9 +935,16 @@ export interface EditorHandle {
   refreshPreview(): void;
   /** 滚动定位到 1-based 行号并把光标移到行首（wikilink 锚点跳转用）。 */
   revealLine(line: number): void;
+  /** 前台会话是否相对它的 dirty 基准有改动。 */
   isDirty(): boolean;
-  markClean(): void;
   onDirty(listener: (dirty: boolean) => void): () => void;
+  /**
+   * 监听**前台会话**的内容变化（每次 docChanged）。保存链路的自动保存排期挂这里。
+   * M149 之前它由 save-controller 往 view 上 appendConfig 一个 updateListener 实现；
+   * appendConfig 只作用于当时那一个 state，新建会话会漏掉它——自动保存因此会静默失效，
+   * 所以改成内核的正式回调（回调进所有会话，与 appendConfig 无关）。
+   */
+  onDocChanged(listener: () => void): () => void;
 }
 
 // code 模式的语法高亮（M120）：扩展名 → 语言名的映射是注册表（preview/attachments.ts
@@ -950,21 +1033,55 @@ function modeForPath(path: string | undefined, fallback: EditorMode): EditorMode
 
 export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md", markdownConfig: Parameters<typeof markdown>[0] = { base: markdownLanguage, extensions: [GFM] }): EditorHandle {
   const modeCompartment = new Compartment();
+  // 前台会话模式的**投影**：changeFilter 的闭包在 state 创建时就绑好了，只能读实例变量，
+  // 所以模式真源放在会话上（EditorSession.mode），这里只是把它投给创建期闭包。
+  // 唯一写入点是 syncMode()，由激活 / 装载 / setMode 三处调用——不构成第二份真源。
   let currentMode = initialMode;
-  // 配置默认基线：openDocument 对无文件上下文（path 缺失）文档的回落锚在这里；
-  // 只有 setMode（配置加载 / 用户显式切换）会移动它，openDocument 自身不改。
+  // 配置默认基线：createSession 对无文件上下文（path 缺失）文档的回落锚在这里；
+  // 只有 setMode（配置加载 / 用户显式切换）会移动它，装载本身不改。
   let defaultMode = initialMode;
-  let currentPath: string | undefined;
   let provider: AttachmentProvider = createInvokeAttachmentProvider();
   let wikilinkResolver: WikilinkResolver | null = null;
   const readyListeners = new Set<EditorReadyListener>();
   let readyPath: string | undefined;
   let readyRequestId: number | undefined;
   let readySerial = 0;
-  let cleanDoc = SAMPLE;
   const dirtyListeners = new Set<(dirty: boolean) => void>();
-  let dirty = false;
+  /** 文档内容变化（docChanged）的订阅者：保存链路的自动保存排期挂在这里，取代
+   *  save-controller 原先往 view 上 appendConfig 一个 updateListener 的写法
+   *（那条路径由 M149 收编——扩展追加只作用于当时那一个 state，新建会话会漏掉它）。 */
+  const docChangedListeners = new Set<() => void>();
   const trustedLoad = Annotation.define<boolean>();
+
+  // ---------------------------------------------------------------------------
+  // 会话（M149 多标签）：sessions 按创建顺序持有全部文档会话，active 是前台那一个
+  // ---------------------------------------------------------------------------
+  let sessionSerial = 0;
+  const sessions: EditorSession[] = [];
+  /** 前台会话。`updateDirty` / `cleanDoc` / `currentPath` 这些原本的实例级单值
+   *  一律改从它读，避免「内核以为在改 A、其实 view 显示的是 B」这类静默错配。 */
+  let active: EditorSession;
+
+  /**
+   * 运行时经 `StateEffect.appendConfig` 追加到 view 上的扩展（当前只有 src/toc.ts
+   * 用它装大纲的 updateListener）。appendConfig 的语义是「追加到**当时那一个**
+   * state 的 config」（@codemirror/state 的 Configuration 合并规则），新建会话若不
+   * 显式带上，那些监听会在切标签后静默失效——大纲指示段停更是最难查的一类。
+   *
+   * 收集靠下面的 updateListener 读事务里的 appendConfig 效果：谁追加、追加什么，
+   * 内核不需要知道，因此 toc.ts 维持零改动（它不在本 mission 的改动面内）。
+   */
+  const appendedExtensions: Extension[] = [];
+  function collectAppendedExtensions(update: ViewUpdate): void {
+    for (const transaction of update.transactions) {
+      for (const effect of transaction.effects) {
+        if (!effect.is(StateEffect.appendConfig)) continue;
+        for (const extension of Array.isArray(effect.value) ? effect.value : [effect.value]) {
+          if (!appendedExtensions.includes(extension)) appendedExtensions.push(extension);
+        }
+      }
+    }
+  }
 
   // 装载/复位事务（打开文件、外部重载、vault 切换清空）不进撤销史（M131）：
   // 它们的 addToHistory 标 false，CM history 只把这次替换累积成 mapping 并作用到已有
@@ -978,9 +1095,24 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
   }
 
   function updateDirty(next: boolean): void {
-    if (dirty === next) return;
-    dirty = next;
-    dirtyListeners.forEach((listener) => listener(dirty));
+    if (active.dirty === next) return;
+    active.dirty = next;
+    dirtyListeners.forEach((listener) => listener(next));
+  }
+
+  /**
+   * 改某个会话的 dirty 并广播。前台会话走这里；**后台会话同样要广播**——标签栏的
+   * dirty 点是逐标签的，不广播就会一直留着旧状态（可达路径：冲突浮条还开着时切走，
+   * 再点它的「强制覆盖保存」）。
+   */
+  function setSessionDirty(session: EditorSession, next: boolean): void {
+    if (session === active) {
+      updateDirty(next);
+      return;
+    }
+    if (session.dirty === next) return;
+    session.dirty = next;
+    dirtyListeners.forEach((listener) => listener(next));
   }
 
   function emitReady(phase: EditorReadyPhase): void {
@@ -996,13 +1128,15 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
 
   function schedulePaint(serial: number): void {
     requestAnimationFrame(() => {
-      if (serial !== readySerial || readyPath !== currentPath) return;
+      if (serial !== readySerial || readyPath !== active.path) return;
       emitReady("paint");
     });
   }
 
   const previewContext: PreviewContext = {
-    currentFilePath: () => currentPath,
+    // 活读前台会话的路径：装饰层（wikilink / 附件相对路径解析）必须用**当前显示
+    // 那一份文档**的基准，切标签时它随 active 一起换（M149 前的静默错误面就在这里）。
+    currentFilePath: () => active.path,
     attachmentProvider: () => provider,
     wikilinkResolver: () => wikilinkResolver,
   };
@@ -1092,47 +1226,87 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
       : [...editability, ...highlight, baseTheme, lineNumbers(), highlightActiveLine()];
   }
 
-  const state = EditorState.create({
-    doc: SAMPLE,
-    extensions: [
-      // 撤销史（M131）：CM history 的线性双栈（done/undone），undo/redo 命令经统一键位层
-      // 绑定（keys.ts 的 KEY_BINDINGS）。history() 自带一个 beforeinput 手柄（原生
-      // historyUndo/historyRedo 输入类型直接改走 CM 的撤销栈），所以即使有别的路径触发
-      // 浏览器原生撤销，落点也仍在这一个栈上，不会出现两套撤销互相打架。
-      //
-      // 与既有机制的相容口径（逐条对照源码）：
-      // - trustedLoad 装载事务带 Transaction.addToHistory.of(false)：不进栈，并把旧事件
-      //   映射力竭后丢弃（见 dispatchTrusted 注释）。
-      // - changeFilter 不拦撤销：CM 的 undo/redo 事务带 filter:false 绕过变更过滤器，
-      //   但命令本身在 state.readOnly 时返回 false（非 md 只读模式下撤销必然无事发生），
-      //   与「非 md 文档不可变更」的既有保证一致。
-      // - dirty 判定不变：仍以文本与 cleanDoc 比较为准，因此撤销回到已保存内容时
-      //   dirty 自然收窄为 false（不依赖撤销栈位置，见 updateListener）。
-      history(),
-      // 键位分发在 window 层（keys.ts），但 CM 的 DOM 观察器只为「有插件注册 keydown」的
-      // 事件挂监听，并在把事件交给手柄前 forceFlush 掉尚未读入的 DOM 变更（快速输入 /
-      // 输入法 / 外部注入）。这条空手柄不处理任何键，只为让 keydown 留在观察列表里：
-      // 观察列表此前由本文件自己的 ⌘A 手柄与 livePreview 的 widget 手柄维持，两者先后迁入
-      // 统一键位表（M131 / M132）后，两模式都不再有别的 keydown 手柄——空手柄是唯一让
-      // 「命令读到的是 flush 过的 state」不依赖别的模块恰好注册 keydown 的保证。
-      EditorView.domEventHandlers({ keydown: () => false }),
-      EditorView.theme({ ".cm-gutters-before": { border: "none" } }),
-      // 文件内搜索（M139）：官方 search 能力 + 本项目的搜索 panel（src/search.ts）。
-      // 装在**模式无关**的基础层：md 与 code 两种模式都能查（code 只读，panel 里也没有替换
-      // 这类会改文档的控件）。panel 的 Compartment 之外落点也意味着模式热切换（openDocument
-      // 的 reconfigure）不会把它连带重建——面板与查询跨文件保留，与编辑器行为一致。
-      lumirSearch(),
-      modeCompartment.of(modeExtensions(initialMode)),
-      // 兜底防线：editability 已随模式在视图层拒收输入，changeFilter 再挡住任何
-      // 绕过 DOM 输入路径的程序化 dispatch（trustedLoad 标记的装载事务除外）。
-      EditorState.changeFilter.of((tr) => tr.docChanged && currentMode !== "md" && !tr.annotation(trustedLoad) ? [] : true),
-      EditorView.updateListener.of((update) => {
-        if (update.docChanged) updateDirty(update.state.doc.toString() !== cleanDoc);
-      }),
-      EditorView.lineWrapping,
-    ],
-  });
-  const view = new EditorView({ state, parent });
+  /**
+   * 一个会话的 EditorState。**每次新建会话都重建一份**（而不是复用同一个 state
+   * 对象）：撤销史 / 语法树 / 搜索查询都是 StateField，必须逐会话独立，否则标签之间
+   * 会共享一个撤销栈。创建期扩展逐条有据，见下面各段注释。
+   */
+  function sessionState(doc: string, path: string | undefined, mode: EditorMode): EditorState {
+    return EditorState.create({
+      doc,
+      extensions: [
+        // 撤销史（M131）：CM history 的线性双栈（done/undone），undo/redo 命令经统一键位层
+        // 绑定（keys.ts 的 KEY_BINDINGS）。history() 自带一个 beforeinput 手柄（原生
+        // historyUndo/historyRedo 输入类型直接改走 CM 的撤销栈），所以即使有别的路径触发
+        // 浏览器原生撤销，落点也仍在这一个栈上，不会出现两套撤销互相打架。
+        //
+        // 与既有机制的相容口径（逐条对照源码）：
+        // - trustedLoad 装载事务带 Transaction.addToHistory.of(false)：不进栈，并把旧事件
+        //   映射力竭后丢弃（见 dispatchTrusted 注释）。
+        // - changeFilter 不拦撤销：CM 的 undo/redo 事务带 filter:false 绕过变更过滤器，
+        //   但命令本身在 state.readOnly 时返回 false（非 md 只读模式下撤销必然无事发生），
+        //   与「非 md 文档不可变更」的既有保证一致。
+        // - dirty 判定不变：仍以文本与 cleanDoc 比较为准，因此撤销回到已保存内容时
+        //   dirty 自然收窄为 false（不依赖撤销栈位置，见 updateListener）。
+        // - 撤销史**逐会话独立**（M149）：history 是 StateField，每个 state 自带一份栈；
+        //   切标签走 view.setState，栈跟着 state 走，切回来仍能撤销。
+        history(),
+        // 键位分发在 window 层（keys.ts），但 CM 的 DOM 观察器只为「有插件注册 keydown」的
+        // 事件挂监听，并在把事件交给手柄前 forceFlush 掉尚未读入的 DOM 变更（快速输入 /
+        // 输入法 / 外部注入）。这条空手柄不处理任何键，只为让 keydown 留在观察列表里：
+        // 观察列表此前由本文件自己的 ⌘A 手柄与 livePreview 的 widget 手柄维持，两者先后迁入
+        // 统一键位表（M131 / M132）后，两模式都不再有别的 keydown 手柄——空手柄是唯一让
+        // 「命令读到的是 flush 过的 state」不依赖别的模块恰好注册 keydown 的保证。
+        EditorView.domEventHandlers({ keydown: () => false }),
+        EditorView.theme({ ".cm-gutters-before": { border: "none" } }),
+        // 文件内搜索（M139）：官方 search 能力 + 本项目的搜索 panel（src/search.ts）。
+        // 装在**模式无关**的基础层：md 与 code 两种模式都能查（code 只读，panel 里也没有替换
+        // 这类会改文档的控件）。panel 的 Compartment 之外落点也意味着模式热切换（装载时的
+        // reconfigure）不会把它连带重建——面板与查询跨文件保留，与编辑器行为一致。
+        lumirSearch(),
+        modeCompartment.of(modeExtensions(mode, path)),
+        // 兜底防线：editability 已随模式在视图层拒收输入，changeFilter 再挡住任何
+        // 绕过 DOM 输入路径的程序化 dispatch（trustedLoad 标记的装载事务除外）。
+        // 闭包读的是实例级 currentMode——切标签时必须同步（activateSession），否则
+        // 前台是 code 会话而 currentMode 还停在 md，非 md 的拦截会错判。
+        EditorState.changeFilter.of((tr) => tr.docChanged && currentMode !== "md" && !tr.annotation(trustedLoad) ? [] : true),
+        EditorView.updateListener.of((update) => {
+          collectAppendedExtensions(update);
+          // 前台会话的 state 回写（M149）：装配层与保存链路都按会话读文档全文与选区，
+          // 会话对象因此必须始终持有最新那一份（setState 不触发本监听，激活时另写）。
+          active.state = update.state;
+          if (update.docChanged) {
+            updateDirty(update.state.doc.toString() !== active.cleanDoc);
+            docChangedListeners.forEach((listener) => listener());
+          }
+        }),
+        EditorView.lineWrapping,
+        // 运行时追加的扩展（见 appendedExtensions）：不带上的话，用 appendConfig 装的
+        // 监听器（当前是 src/toc.ts 的大纲指示段）会在切到新会话后静默失效。
+        ...appendedExtensions,
+      ],
+    });
+  }
+
+  function makeSession(doc: string, path: string | undefined, mode: EditorMode): EditorSession {
+    return {
+      id: ++sessionSerial,
+      state: sessionState(doc, path, mode),
+      path,
+      mode,
+      cleanDoc: doc,
+      dirty: false,
+      preview: false,
+      scroll: undefined,
+    };
+  }
+
+  // 启动时的会话：SAMPLE 演示文档（无文件上下文）。它也是标签栏不显示的那一个——
+  // 「未命名」会话只承载「还没有打开任何文件」这个状态。
+  const initialSession = makeSession(SAMPLE, undefined, initialMode);
+  sessions.push(initialSession);
+  active = initialSession;
+  const view = new EditorView({ state: active.state, parent });
 
   // 统一键位层（keys.ts）的编辑器侧命令实现：每条只读 view 当前状态并自行 dispatch。
   // 全部返回 void——命中即已消费，分发器统一吞掉默认行为（命中但无事可做，例如历史
@@ -1229,30 +1403,97 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
     },
   };
 
+  // ---------------------------------------------------------------------------
+  // 会话操作（M149）：切标签 = 换 state，不重建 view、不重新解析文档
+  // ---------------------------------------------------------------------------
+
+  /** 把前台会话的模式投影给创建期闭包（见 currentMode 声明处）。 */
+  function syncMode(): void {
+    currentMode = active.mode;
+  }
+
+  /**
+   * 装载事务：整篇替换 + 复位选区，不进撤销史（口径见 dispatchTrusted 的注释）。
+   *
+   * 走事务派生新 state 而不是 `EditorState.create`，是为了让装载**继承原 state 的
+   * 其余字段**——搜索面板的查询与开合状态是 StateField，新建 state 会把它们丢掉，
+   * 而「打开新文件后面板与查询仍在」是 M139 以来的既有行为（见 src/search.ts 的
+   * panel 注释）。后台会话的重载同理，只是派生完不往 view 上派发。
+   */
+  function loadedState(state: EditorState, doc: string, mode: EditorMode, path: string | undefined): EditorState {
+    return state.update({
+      changes: { from: 0, to: state.doc.length, insert: doc },
+      selection: { anchor: 0 },
+      effects: modeCompartment.reconfigure(modeExtensions(mode, path)),
+      annotations: [trustedLoad.of(true), Transaction.addToHistory.of(false)],
+    }).state;
+  }
+
+  /** 激活会话本体：换 state + 恢复该会话的滚动位置 + 同步模式上下文。 */
+  function activate(session: EditorSession): void {
+    if (session === active) return;
+    // 离开前把滚动位置记回前台会话：滚动不在 state 里（只存在于 scrollDOM），
+    // 存成 CM 的 scrollSnapshot（位置锚 + 相对偏移），恢复时走同一个 scrollTarget
+    // 通道——它由 CM 自己的测量周期落地，不受两份内容高度差与排版变化影响；
+    // 直接写 scrollDOM.scrollTop 会被 CM 的滚动锚点维护逻辑改掉（M149 实测差 242px）。
+    active.scroll = view.scrollSnapshot();
+    active = session;
+    syncMode();
+    readyPath = session.path;
+    // 在途的 paint 事件作废：它属于刚切走的那个会话。
+    ++readySerial;
+    // 只换 state——撤销史 / 语法树 / 选区 / 搜索查询都在 state 里跟着走，不重新解析。
+    // setState 不能在 update 进行中调用（CM 会抛），本函数只在命令层与装配层的
+    // 事件回调里调用，都不在 update 内。
+    view.setState(session.state);
+    // 恢复该会话的滚动位置。没有快照（新建会话）时不干预：新装载的文档由
+    // reloadSession 复位到篇首，未命名空文档本来就在篇首。
+    if (session.scroll !== undefined) view.dispatch({ effects: session.scroll });
+    collapseDomSelectionIfBlurred();
+  }
+
   return {
     view,
     commands,
     setMode(mode: EditorMode) {
       // 显式切换即新的配置默认基线；即便与当前模式相同也要锚定（当前模式
-      // 可能是上一个文件经 openDocument 漂移来的）。
+      // 可能是上一个文件经装载漂移来的）。
       defaultMode = mode;
-      if (mode === currentMode) return;
-      currentMode = mode;
-      view.dispatch({ effects: modeCompartment.reconfigure(modeExtensions(mode, currentPath)) });
+      if (mode === active.mode) return;
+      active.mode = mode;
+      syncMode();
+      view.dispatch({ effects: modeCompartment.reconfigure(modeExtensions(mode, active.path)) });
     },
-    mode: () => currentMode,
+    mode: () => active.mode,
     onReady(listener: EditorReadyListener) {
       readyListeners.add(listener);
       return () => readyListeners.delete(listener);
     },
-    openDocument(doc: string, path?: string, requestId?: number) {
-      currentPath = path;
+    createSession() {
+      // 空文档起步：路径与内容都由随后的 reloadSession 补上——装载走事务派生，会话因此
+      // 能继承搜索面板一类的 StateField 状态（新建 state 会把它们丢掉）。
+      const session = makeSession("", undefined, defaultMode);
+      sessions.push(session);
+      return session;
+    },
+    reloadSession(session: EditorSession, doc: string, path: string | undefined, requestId?: number) {
+      const mode = modeForPath(path, defaultMode);
+      session.path = path;
+      session.mode = mode;
+      session.cleanDoc = doc;
+      // 内容整篇换掉：旧的滚动快照锚在一份已经不存在的正文上，作废。
+      session.scroll = undefined;
+      if (session !== active) {
+        // 后台会话（外部变更自动重载 / 恢复备份）：只换代它的 state，不碰 view，
+        // 也不发装载阶段事件——那些事件的消费者（视觉门禁截图、诊断日志）看的是前台。
+        session.state = loadedState(session.state, doc, mode, path);
+        setSessionDirty(session, false);
+        return;
+      }
       readyPath = path;
       readyRequestId = requestId;
       const serial = ++readySerial;
-      const next = modeForPath(path, defaultMode);
-      currentMode = next;
-      cleanDoc = doc;
+      syncMode();
       dispatchTrusted({
         changes: { from: 0, to: view.state.doc.length, insert: doc },
         // 显式复位选区与滚动（M110 真实桌面缺陷排查）：替换整篇文档后 CM 会把
@@ -1260,8 +1501,11 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
         // 滚动复位用直接赋值而非 scrollIntoView 效果：后者带 scrollMargin，文档
         // 溢出视口时会把 pos 0 对齐到视口顶而主动下滚，页首 padding 被顶出画。
         selection: { anchor: 0 },
-        effects: modeCompartment.reconfigure(modeExtensions(next, path)),
+        effects: modeCompartment.reconfigure(modeExtensions(mode, path)),
       });
+      // 新装载的文档从篇首开始：这里用直接赋值而不是 scrollIntoView 效果（M110 真实
+      // 桌面缺陷排查）——后者带 scrollMargin，文档溢出视口时会把 pos 0 对齐到视口顶而
+      // 主动下滚，页首 padding 被顶出画。
       view.scrollDOM.scrollTop = 0;
       view.scrollDOM.scrollLeft = 0;
       updateDirty(false);
@@ -1271,26 +1515,56 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
       emitReady("frontmatter-ready");
       schedulePaint(serial);
     },
+    activateSession(session: EditorSession) {
+      activate(session);
+    },
+    activeSession: () => active,
+    sessions: () => sessions,
+    sessionForPath(path: string) {
+      return sessions.find((session) => session.path === path);
+    },
+    closeSession(session: EditorSession) {
+      const index = sessions.indexOf(session);
+      if (index < 0) return;
+      sessions.splice(index, 1);
+      if (session !== active) return;
+      // 关掉的是前台会话：激活右邻，没有右邻则左邻（浏览器 / VS Code 同口径）。
+      const neighbour = sessions[index] ?? sessions[index - 1];
+      if (neighbour !== undefined) {
+        activate(neighbour);
+        return;
+      }
+      // 最后一个也关了——回到未命名空文档（标签栏随之隐藏）。
+      const blank = makeSession("", undefined, defaultMode);
+      sessions.push(blank);
+      activate(blank);
+    },
+    markCleanOf(path: string, content: string) {
+      const session = sessions.find((s) => s.path === path);
+      if (session === undefined) return;
+      // dirty 基准推到已落盘的那份内容；此后若又改了，dirty 自然重新变 true
+      // （保存期间用户继续输入的情形——不把「保存时的快照」当成文档已干净）。
+      session.cleanDoc = content;
+      setSessionDirty(session, session.state.doc.toString() !== content);
+    },
     reset() {
       ++readySerial;
-      currentPath = undefined;
       readyPath = undefined;
       readyRequestId = undefined;
-      currentMode = defaultMode;
-      cleanDoc = "";
-      dispatchTrusted({
-        changes: { from: 0, to: view.state.doc.length, insert: "" },
-        effects: modeCompartment.reconfigure(modeExtensions(defaultMode)),
-      });
+      // 全部会话作废，只留一个未命名空文档（vault 切换 / 关闭）。旧会话对象随 GC 回收。
+      sessions.length = 0;
+      const blank = makeSession("", undefined, defaultMode);
+      sessions.push(blank);
+      activate(blank);
       updateDirty(false);
-      collapseDomSelectionIfBlurred();
     },
-    isDirty: () => dirty,
-    markClean() { cleanDoc = view.state.doc.toString(); updateDirty(false); },
+    isDirty: () => active.dirty,
     onDirty(listener) { dirtyListeners.add(listener); return () => dirtyListeners.delete(listener); },
+    onDocChanged(listener) { docChangedListeners.add(listener); return () => docChangedListeners.delete(listener); },
     setAttachmentProvider(next: AttachmentProvider) {
       provider = next;
-      // doc/viewport 均未变化，派发专用 effect 强制装饰层重建。
+      // doc/viewport 均未变化，派发专用 effect 强制装饰层重建（只重建前台会话的；
+      // 后台会话切回来时由 CM 重建 ViewPlugin 装饰，口径见 EditorSession 的说明）。
       view.dispatch({ effects: previewRefresh.of(null) });
     },
     setWikilinkResolver(next: WikilinkResolver | null) {
