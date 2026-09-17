@@ -98,11 +98,25 @@ async function openFile(page: Page, files: Record<string, string>, name: string)
   await expect(page.locator(".masthead-file")).toHaveText(name);
 }
 
-/** 装载 vault 但不打开文件：编辑器停在无文件上下文的文档（不可保存 → dirty 只由文本决定）。 */
+/** 装载 vault 且编辑器停在**未命名空文档**（无文件上下文 → 不可保存，dirty 只由文本决定）。
+ *
+ *  M164 判据变更：M163 起「装载 vault 后一个标签都没有」是**空 vault 首入态**——D107 的引导层
+ *  盖住正文（`.editor-notice` 拦截指针事件，编辑器点不进去），因此它不再是「装载后直接可得」
+ *  的状态。未命名空文档改经「打开一个文件再关掉它的标签」到达：`closeTabNow` 会落在它上面
+ *  并撤下覆盖层（`src/tabs.ts` / `src/editor.ts` 的 `closeSession`）。本函数验的是未命名文档
+ *  上的键位与撤销语义，与「怎么到达它」无关；引导层本身另有一条断言钉住（别让它静默回退）。 */
 async function openEmptyEditor(page: Page): Promise<string> {
-  await stubTauri(page, { entries: [], files: {} });
+  await stubTauri(page, {
+    entries: [{ path: "blank.md", kind: "file", size: 6, mtime_ms: 0 }],
+    files: { "blank.md": "BLANK\n" },
+  });
   await page.goto("/");
+  await expect(page.locator(".editor-notice")).toContainText("这个 vault 还没有打开的文件");
+  await page.locator('.ft-row[title="blank.md"]').click();
+  await expect(page.locator(".masthead-file")).toHaveText("blank.md");
+  await page.keyboard.press("Meta+w");
   await expect(page.locator(".masthead-file")).toHaveText("无当前文件");
+  await expect(page.locator(".tab")).toHaveCount(0);
   await page.locator(".cm-content").click();
   return readDocument(page);
 }

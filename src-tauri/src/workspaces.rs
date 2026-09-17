@@ -1,6 +1,10 @@
 //! vault 注册表的本地 JSON 持久化。
-//! 注册表写入采用临时文件 + rename 原子替换（vault_register）；应用进程内
-//! command 调用串行，跨进程并发不在本阶段范围。
+//! 注册表写入采用临时文件 + rename 原子替换（vault_register）。**进程内有两个写者**：
+//! command 通道（注册 / 重映射 / 记打开）与启动恢复线程（M159，`lumir-vault-restore` 在
+//! 恢复成功后记 `last_opened_at`）。两者可能并发写，但每项都是**整文件**原子替换，读到的
+//! 永远是某个完整版本、不会撕裂；竞态后果按良性推演——同项的治理写被覆盖后由下次
+//! `sweep_registry` 自愈（`mark_opened` 只改 `last_opened_at`，不改治理标记），记账字段
+//! 丢失只让列表摘要少一个读数、不改任何判定。跨进程并发不在本阶段范围。
 //!
 //! 失效注册项（幽灵项）治理走「惰性归档」：路径失效先在 `missing_since`
 //! 记账，持续失效超过 [`MISSING_GRACE_MS`] 后打上 `archived_at` 标记。

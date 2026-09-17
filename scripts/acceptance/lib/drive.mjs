@@ -48,6 +48,13 @@ export async function settle(cu, pid, { timeoutMs = 30_000 } = {}) {
  * 前端就绪门：等左栏文件树 + 编辑器节点就位。
  * 不用「整棵 AX 文本两次一致」——编辑器有光标/渲染时序，树会持续微抖，会假超时。
  *
+ * 三种合法终态（M164 补第三种）：
+ *   1. 已装载 vault 且有文件行 + 编辑器可读（严格门的默认形态）；
+ *   2. 已装载 vault 但一个标签都没恢复 → D107 的空 vault 引导盖住正文，编辑器从 AX 消失。
+ *      这是**启动常态**（该 vault 还没有会话历史），不是异常——判据是「树头部入口在 + 引导
+ *      文案在」，两者都是正观测；
+ *   3. 未打开 vault 的空态（D5/D6）——只有 `requireVault: false` 才认（见下）。
+ *
  * `requireVault: false`（M159 起，只给「本步期待未打开空态」的场景用）：启动恢复移出主线程
  * 后，`last_vault` 失效 / 无 `last_vault` 时前端**合法地**停在未打开空态（树 pane 里没有
  * `.ft-row`，只有空态的「打开 vault」入口），严格门那条「树里有 .md 行」永远不成立。放宽后
@@ -59,12 +66,26 @@ export async function waitAppReady(cu, pid, { timeoutMs = 30_000, requireVault =
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     const ax = await readAx(cu, pid);
-    const hasHeader = findNode(ax.nodes, { role: "AXButton", name: /切换 vault/ }) !== null;
+    // 树头部入口（形态 A，M163）：入口是 vault 名称本身，读屏名取 D96 的
+    // 「vault：{名称}（点击查看全部 vault）」——旧的「切换 vault」按钮已随形态 A 退场。
+    // **角色不写死**：入口带 `aria-haspopup="listbox"`，WKWebView 因此把它映射成
+    // `AXPopUpButton` 而不是 `AXButton`（2026-09-17 实测：写死 role 会让整个套件在启动就
+    // 超时——判据里真正有区分度的是那句读屏名，它只可能来自入口）。
+    const hasHeader = findNode(ax.nodes, { name: /点击查看全部 vault/ }) !== null;
     const hasFiles = ax.nodes.some((n) => n.role === "AXButton" && /\.md$/.test(n.title ?? ""));
     // 未打开空态在 AX 里的稳定标志：空态说明行 + 「打开 vault」入口（D5/D6 的文案）。
     const hasEmptyState = /打开一个目录作为 vault/.test(ax.text) && /打开 vault/.test(ax.text);
-    const treeReady = hasHeader && hasFiles ? true : !requireVault && hasEmptyState;
-    if (treeReady && ax.textarea) seen += 1;
+    // **已装载 vault 但一个标签都没恢复**（M163 的「空 vault 首入态」）：树头部入口与文件行
+    // 都在，但 D107 的引导层盖住正文、编辑器随之从 AX 里消失。这是启动的**常态**（该 vault
+    // 还没有会话历史），严格门必须认它——否则每个场景都会在这一步超时。
+    const hasEmptyVaultNotice = /这个 vault 还没有打开的文件/.test(ax.text);
+    const treeReady = hasHeader && (hasFiles || hasEmptyVaultNotice)
+      ? true
+      : !requireVault && hasEmptyState;
+    // 编辑器就位 = AXTextArea 可读，**或**上面那条空态引导正在覆盖它。后者是**正**判据
+    // （引导文案必须真的在 AX 里），不是「读不到就当就绪」——REVIEW.md 第 2 条禁的是后者。
+    const editorReady = ax.textarea !== null || hasEmptyVaultNotice;
+    if (treeReady && editorReady) seen += 1;
     else seen = 0;
     if (seen >= 2) {
       await sleep(600);

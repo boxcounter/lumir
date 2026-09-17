@@ -8,11 +8,11 @@
 //      用户真实 vault（/Users/boxcounter/Downloads/Everything-copy）永不写入。
 //   3. 端口隔离：dev server 走独立端口，绝不与 Alex 手头的 `pnpm tauri dev` 抢 1420。
 import { execFileSync, spawn } from "node:child_process";
-import { appendFileSync, mkdirSync } from "node:fs";
+import { appendFileSync, mkdirSync, realpathSync } from "node:fs";
 import { cp, readdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { CuError } from "./cu.mjs";
-import { envHome, exists, log, mkdirp, readText, repoRoot, sleep, stripAnsi, vaultDir } from "./util.mjs";
+import { envHome, exists, log, mkdirp, readText, repoRoot, secondVaultDir, sleep, stripAnsi, vaultDir } from "./util.mjs";
 
 export const BUNDLE_ID = "com.lumir.app";
 
@@ -65,6 +65,116 @@ export async function resetVault() {
   return vault;
 }
 
+/** 第二个合成 vault 的重置：内容取自 `fixtures/second-vault/`（与验收 vault 的文件名不重叠，
+ *  切换前后的正文断言因此能互相区分）。同样只清根下的 .md。 */
+export async function resetSecondVault() {
+  const vault = secondVaultDir();
+  const src = path.join(fixturesDir(), "second-vault");
+  await mkdirp(vault);
+  for (const name of await readdir(vault)) {
+    if (name.endsWith(".md")) await rm(path.join(vault, name), { force: true });
+  }
+  for (const name of await readdir(src)) {
+    if (!name.endsWith(".md")) continue;
+    await cp(path.join(src, name), path.join(vault, name));
+  }
+  return vault;
+}
+
+/**
+ * 清空 vault 注册表（隔离配置目录下的 `workspaces/`）。
+ * 为什么必须做：注册表决定列表浮层里有哪些行、以及「按路径命中的 id」。多 vault 场景会预置
+ * 注册项，残留到下一场景会让「单 vault」的预期看到两行（跨场景串场，与 recovery 同因）。
+ */
+export async function resetRegistry() {
+  const dir = path.join(envHome(), "lumir", "workspaces");
+  await rm(dir, { recursive: true, force: true });
+  return dir;
+}
+
+/**
+ * 清空按 vault 的标签会话（隔离配置目录下的 `vault-sessions/`）。
+ * 为什么必须做：会话决定「装载完 vault 后恢复哪些标签」，残留会让本场景的启动恢复出上一场景
+ * 的标签（08c 曾因 recovery 残留恢复出 keys.md 的内容——同族）。
+ */
+export async function resetSessions() {
+  const dir = path.join(envHome(), "lumir", "vault-sessions");
+  await rm(dir, { recursive: true, force: true });
+  return dir;
+}
+
+/** 注册项 id 的合法字符（与 Rust 侧 `workspaces::valid_id` 同源：id 同时是文件名，
+ *  因此这是路径逃逸防护）。套件里显式校验，让写错 id 在动作处就报错而不是落一个读不回的盘。 */
+const ID_RE = /^[A-Za-z0-9_-]{1,128}$/;
+
+/** 预置一条 vault 注册项（`<env>/lumir/workspaces/<id>.json`）——「这个目录已经是我的 vault」
+ *  这一状态只能由注册表表达，而真机上走到它的唯一通道是系统目录选择器（套件不驱动原生
+ *  对话框，见 README「已知边界」），因此多 vault 场景从预置注册表起步。
+ *
+ *  路径先 realpath：注册表存的是 canonicalize 后的路径（`reconcile_vault`），而 macOS 的
+ *  `/tmp` 是 `/private/tmp` 的软链接——不归一的话 app 打开同一目录时会 `find_by_path` 落空、
+ *  另生成一个 id，预置的会话（按 id 存放）就对不上了。 */
+export async function writeRegistryEntry({ id, path: vaultPath, lastOpenedAt, missingSince, archivedAt }) {
+  if (!ID_RE.test(id ?? "")) throw new CuError(`注册项 id 非法：${JSON.stringify(id)}（只允许字母数字与 -_）`);
+  const dir = await mkdirp(path.join(envHome(), "lumir", "workspaces"));
+  let real = vaultPath;
+  try {
+    real = realpathSync(vaultPath);
+  } catch {
+    /* 目录还不存在（如故意预置失效路径）：按原样落盘，可用性判定交给 app */
+  }
+  const entry = { id, path: real };
+  if (lastOpenedAt !== undefined) entry.last_opened_at = lastOpenedAt;
+  if (missingSince !== undefined) entry.missing_since = missingSince;
+  if (archivedAt !== undefined) entry.archived_at = archivedAt;
+  await writeFile(path.join(dir, `${id}.json`), `${JSON.stringify(entry, null, 2)}\n`);
+  return entry;
+}
+
+/** 预置一个 vault 的标签会话（`<env>/lumir/vault-sessions/<id>.json`）。
+ *  tabs 是**vault 相对路径**的有序列表，active 是其中的激活项（缺省/非法值按「退化到第一个
+ *  可打开的标签」处理，与 `vault_session::sanitize` 同口径）。 */
+export async function writeSession({ id, tabs, active = null }) {
+  if (!ID_RE.test(id ?? "")) throw new CuError(`会话 id 非法：${JSON.stringify(id)}（只允许字母数字与 -_）`);
+  const dir = await mkdirp(path.join(envHome(), "lumir", "vault-sessions"));
+  const payload = { version: 1, tabs, active, updated_at: Date.now() };
+  await writeFile(path.join(dir, `${id}.json`), `${JSON.stringify(payload, null, 2)}\n`);
+  return payload;
+}
+
+/** `seed` 块里的路径记号：`$vault` / `$vault2` 指套件的两个合成 vault（不写死 /tmp 路径，
+ *  这样 `LUMIR_ACCEPTANCE_VAULT` 覆写时场景跟着走）；其余按绝对路径原样用。 */
+function resolveSeedPath(p) {
+  if (p === "$vault") return vaultDir();
+  if (p === "$vault2") return secondVaultDir();
+  return p;
+}
+
+/** 应用场景 frontmatter 的 `seed` 块（注册表 + 会话预置）。
+ *
+ *  **必须在起 app 之前跑**（run.mjs 在每个场景的 launchApp 之前调用）：app 打开一个未注册
+ *  目录时会立刻给它分配一个自动 id 并落盘，事后再预置同路径的注册项会让列表里出现两行指向
+ *  同一目录（一行自动 id、一行预置 id），`find_by_path` 命中哪一行还不确定。 */
+export async function prepareSeed(seed) {
+  const written = { registry: [], sessions: [] };
+  if (!seed) return written;
+  for (const e of seed.registry ?? []) {
+    written.registry.push(
+      await writeRegistryEntry({
+        id: e.id,
+        path: resolveSeedPath(e.path),
+        lastOpenedAt: e.lastOpenedAt,
+        missingSince: e.missingSince,
+        archivedAt: e.archivedAt,
+      }),
+    );
+  }
+  for (const [id, s] of Object.entries(seed.sessions ?? {})) {
+    written.sessions.push(await writeSession({ id, tabs: s?.tabs ?? [], active: s?.active ?? null }));
+  }
+  return written;
+}
+
 export async function copyFixture(name) {
   await cp(path.join(fixturesDir(), name), path.join(vaultDir(), name));
   return path.join(vaultDir(), name);
@@ -92,8 +202,16 @@ function spawnSyncText(cmd, args) {
 }
 
 /**
- * 起 `pnpm tauri dev`。端口经 --config 覆写（不落盘、不改仓库 tauri.conf.json）。
+ * 起 `pnpm tauri dev`。端口与**窗口位置**经 --config 覆写（不落盘、不改仓库 tauri.conf.json）。
  * 解析条件：stdout 出现 `LUMIR_READY`（src-tauri/src/ready.rs）或队列就绪兜底。
+ *
+ * 为什么要覆写窗口位置（M164 实测）：无人值守的批次里，macOS 会把新窗口放到主屏之外的
+ * 区域（实测 `window_bounds x=193 y=1076`，而内置屏只有 ~982pt 高），窗口一旦落在屏幕外，
+ * WKWebView 就**拿不到键盘焦点**——`type_text` 直接报
+ * 「target WebArea did not acquire stable keyboard focus; no keys were sent」，整步的注入
+ * 全部不落地，表现为一堆与产品无关的 FAIL（同一场景、同一提交，窗口在屏内时全 PASS）。
+ * tauri 的 --config 是整根替换 `app.windows` 数组，因此这里必须把 title/width/height 一并
+ * 重述（与 `src-tauri/tauri.conf.json` 的窗口对象逐字段一致——改那边的窗口尺寸要同步这里）。
  */
 export async function launchApp({ port = acceptPort(), timeoutMs = 300_000, logFile } = {}) {
   const root = repoRoot();
@@ -101,6 +219,9 @@ export async function launchApp({ port = acceptPort(), timeoutMs = 300_000, logF
     build: {
       devUrl: `http://127.0.0.1:${port}`,
       beforeDevCommand: `pnpm exec vite --port ${port} --strictPort`,
+    },
+    app: {
+      windows: [{ title: "Lumir", width: 1200, height: 800, x: 120, y: 80, focus: true }],
     },
   };
   const child = spawn(
@@ -184,17 +305,21 @@ export async function cuSeesApp(cu, pid, { retries = 20 } = {}) {
   return false;
 }
 
-/** 护栏：验收 vault 与配置目录都不得指向用户真实资产。 */
+/** 护栏：验收 vault（含第二个）与配置目录都不得指向用户真实资产。 */
 export function assertSafeTargets() {
   const v = vaultDir();
   if (v.startsWith("/Users/")) {
     throw new CuError(`拒绝：验收 vault 指向用户目录（${v}）；只允许 /tmp 下的合成 vault`);
   }
+  const v2 = secondVaultDir();
+  if (v2.startsWith("/Users/")) {
+    throw new CuError(`拒绝：第二个验收 vault 指向用户目录（${v2}）；只允许 /tmp 下的合成 vault`);
+  }
   const home = envHome();
   if (!home.includes("test-results/acceptance/")) {
     throw new CuError(`拒绝：隔离配置目录不在 test-results/acceptance 下（${home}）`);
   }
-  return { vault: v, envHome: home };
+  return { vault: v, secondVault: v2, envHome: home };
 }
 
 /**

@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { DEMO_VAULT, fireFsEvent, remapCalls, stubTauri } from "./tauri-stub";
+import { DEMO_VAULT, fireFsEvent, remapCalls, requestAddVault, stubTauri } from "./tauri-stub";
 
 // 基线场景：主界面（文件树 + 编辑器 + 面板）。截图目标见 README.md 的选型说明——
 // 这是 webview 内容截图，不含原生窗口装饰。Tauri 后端用 __TAURI_INTERNALS__ 桩
@@ -67,11 +67,11 @@ test("watch 增量刷新保持展开状态", async ({ page }) => {
   await expect(page.locator('.ft-row[title="archive.pdf"]')).toHaveCount(0);
 });
 
-// 树头部常驻「切换 vault」入口（switcher-vault）：点击走与空态按钮相同的
-// vault_open 流程，树整体替换为目标 vault。
+// 树头部常驻入口（形态 A，M163）：`button.ft-vault`（名称 + caret）打开列表浮层；
+// 浮层底部的「新增 vault…」走与空态按钮相同的 vault_open 流程，树整体替换为目标 vault。
 const ALT_VAULT_ROOT = "/Users/alex/notes-vault";
 
-test("树头部切换入口切换到另一个 vault", async ({ page }) => {
+test("经浮层新增入口切换到另一个 vault", async ({ page }) => {
   await stubTauri(page, {
     ...DEMO_VAULT,
     switchTo: {
@@ -89,7 +89,7 @@ test("树头部切换入口切换到另一个 vault", async ({ page }) => {
   await page.goto("/");
   await expect(page.locator(".ft-vault-name")).toHaveText("demo-vault");
 
-  await page.getByRole("button", { name: "切换 vault" }).click();
+  await requestAddVault(page);
 
   // 头部与树整体替换为新 vault；旧 vault 条目不残留
   await expect(page.locator(".ft-vault-name")).toHaveText("notes-vault");
@@ -119,7 +119,7 @@ test("切换命中重映射候选：不装载空树，作为新 vault 打开后�
   await page.goto("/");
   await expect(page.locator(".ft-vault-name")).toHaveText("demo-vault");
 
-  await page.getByRole("button", { name: "切换 vault" }).click();
+  await requestAddVault(page);
 
   // 不得装载空树：保持旧 vault，sticky 提示给出出口。
   const chooser = page.locator(".lumir-toast", { hasText: "尚未注册为 vault" });
@@ -140,7 +140,7 @@ test("切换命中重映射候选：确认映射后按映射结果装载", async
   await page.goto("/");
   await expect(page.locator(".ft-vault-name")).toHaveText("demo-vault");
 
-  await page.getByRole("button", { name: "切换 vault" }).click();
+  await requestAddVault(page);
   const chooser = page.locator(".lumir-toast", { hasText: "尚未注册为 vault" });
   await chooser.getByRole("button", { name: "确认映射到此路径" }).click();
 

@@ -34,6 +34,13 @@ export function vaultDir() {
   return process.env.LUMIR_ACCEPTANCE_VAULT ?? "/tmp/lumir-m102-acceptance";
 }
 
+/** **第二个**合成 vault（M164，多 vault 场景的切换目标）：与验收 vault 同级、同在 /tmp 下。
+ *  它不参与「vault 重置为 fixtures 精确副本」——内容来自 `fixtures/second-vault/`，与
+ *  验收 vault 的文件名刻意不重叠，切换前后的正文断言因此能互相区分。 */
+export function secondVaultDir() {
+  return process.env.LUMIR_ACCEPTANCE_VAULT2 ?? `${vaultDir()}-b`;
+}
+
 /** 套件全部运行期产物（git 外）。日期目录便于 Alex 抽审时按批次定位。 */
 export function resultsRoot() {
   const date = new Date().toISOString().slice(0, 10);

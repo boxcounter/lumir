@@ -17,8 +17,12 @@ import {
   acceptPort,
   assertSafeTargets,
   launchApp,
+  prepareSeed,
   reclaimPort,
   resetRecovery,
+  resetRegistry,
+  resetSecondVault,
+  resetSessions,
   resetVault,
   stopApp,
   writeConfig,
@@ -135,7 +139,14 @@ async function main() {
     let out;
     try {
       await resetVault();
+      await resetSecondVault(); // 第二个合成 vault：多 vault 场景的切换目标
       await resetRecovery(); // 备份目录在隔离配置下，不清会让上一场景的备份串场
+      // 注册表与会话也在隔离配置下：前者决定列表浮层有几行、后被哪些 id 命中，后者决定装载后
+      // 恢复哪些标签——两者残留都会让本场景看到上一场景的状态（与 recovery 同因）。
+      await resetRegistry();
+      await resetSessions();
+      // 场景自己的注册表 / 会话预置：**必须在 launchApp 之前**（见 prepareSeed 的说明）。
+      await prepareSeed(scenario.seed);
       await writeConfig({ mode: "md" });
       if (handle) await stopApp(handle);
       handle = await launchApp({ logFile: path.join(root, "app.log") });

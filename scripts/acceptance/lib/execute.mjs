@@ -27,6 +27,9 @@ export function checkScenario(scenario) {
   if (!scenario.id) push("缺少 id");
   if (scenario.item === undefined) push("缺少 item");
   if (scenario.open && !scenario.marker) push(`open=${scenario.open} 但没写 marker（无法判断是否打开成功）`);
+  for (const [i, e] of (scenario.seed?.registry ?? []).entries()) {
+    if (!e?.id || !e?.path) push(`seed.registry[${i}] 需要 id 与 path`);
+  }
   for (const [i, step] of (scenario.steps ?? []).entries()) {
     const at = `steps[${i}]${step.name ? `(${step.name})` : ""}`;
     if (!step.name) push(`${at} 缺少 name`);
