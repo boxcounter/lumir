@@ -1,0 +1,1018 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lumir UX mock · 多 vault 入口与切换器</title>
+<style>
+/* ============================================================================
+   生产 token —— 逐字抄自 src/style.css:6-14（M55 token 化，ADR 0006 后收敛为
+   单套排版基线）。本 mock 只用这些 token，不引入新颜色 / 新圆角 / 新字体，
+   与 M149 标签栏「全部取既有 token」同一口径。
+   ============================================================================ */
+:root {
+  --bg:#f6f3ea; --bg-nav:#efeadd; --bg-2:#ece6d5; --bg-3:#e2d9c1;
+  --bd-1:#e0d8c2; --bd-2:#cfc4a6; --bd-3:#b3a684;
+  --text:#262219; --dim:#8d8471; --accent:#b23a2c;
+  --sel:rgba(178,58,44,.16); --selection-ink:var(--text); --radius:5px; --measure:80%; --nav-width:244px;
+  --font-body:-apple-system, "PingFang SC", "Hiragino Sans GB", sans-serif;
+  --font-display:"Songti SC", "STSong", ui-serif, Georgia, serif;
+  --font-mono:ui-monospace, "SF Mono", Menlo, monospace;
+  --line-height:1.75;
+}
+* { box-sizing:border-box; }
+html,body { margin:0; }
+body { background:var(--bg-2); color:var(--text); font-family:var(--font-body); font-size:13px; }
+
+/* ============ mock 控制台（与 demo/index.html 的 #console 同形） ============ */
+#console {
+  position:sticky; top:0; z-index:30;
+  display:flex; flex-wrap:wrap; align-items:center; gap:8px 18px;
+  padding:8px 14px; border-bottom:1px solid var(--bd-2); background:var(--bg);
+  font-family:-apple-system, "PingFang SC", sans-serif; font-size:12px;
+}
+#console .c-title { font-weight:600; }
+.c-group { display:flex; align-items:center; gap:6px; }
+.c-label { color:var(--dim); }
+.seg { display:inline-flex; border:1px solid var(--bd-2); border-radius:var(--radius); overflow:hidden; background:var(--bg); }
+.seg button { border:none; border-right:1px solid var(--bd-2); background:none; color:var(--text); font:inherit; padding:3px 9px; cursor:pointer; }
+.seg button:last-child { border-right:none; }
+.seg button.active { background:var(--accent); color:var(--bg); }
+.c-note { flex-basis:100%; color:var(--dim); line-height:1.6; max-width:1200px; }
+.c-note b { color:var(--accent); font-weight:600; }
+
+/* ============ 舞台：一或两个 shell ============ */
+#stage { padding:16px; }
+.shell-row { display:flex; gap:16px; align-items:flex-start; }
+.shell-cell { flex:1 1 0; min-width:0; }
+.shell-caption { margin:0 0 6px; font-family:-apple-system, "PingFang SC", sans-serif; font-size:12px; color:var(--dim); }
+/* shell 高度跟着窗口走：控制台约 90-120px + stage 上下留白 + 说明面板的入口。
+   固定 700px 会在常见窗口里把 toast（贴着编辑器 pane 底部）挤出可视区——dirty 守卫提示
+   正好是底部元素，走查时看不到就等于没做。 */
+.shell-host { position:relative; height:clamp(460px, calc(100vh - 210px), 760px); border:1px solid var(--bd-2); border-radius:var(--radius); overflow:hidden; background:var(--bg); }
+/* 并排时每个 shell 约 580px 宽：真实窄窗（<1100px）下左栏会收到 204px
+   （src/style.css:63 的 @media）。这里用同一变量模拟该断点，不另造第二套尺寸。 */
+.shell-host.is-narrow { --nav-width:204px; }
+
+/* ============================================================================
+   app-shell 复刻（src/style.css:36-73、src/shell.ts）
+   ============================================================================ */
+.app-shell {
+  display:grid; grid-template-columns:var(--nav-width) minmax(0,1fr);
+  grid-template-rows:auto auto minmax(0,1fr);
+  height:100%; min-width:0; min-height:0;
+}
+.masthead {
+  grid-column:2 / -1; grid-row:1;
+  display:flex; align-items:baseline; gap:10px;
+  min-height:57px; padding:22px 48px 14px; position:relative;
+  font-size:11px; letter-spacing:.08em;
+}
+.masthead::after { content:""; position:absolute; left:48px; right:48px; bottom:0; border-top:3px solid var(--text); border-bottom:1px solid var(--text); }
+.masthead-vault { font-family:var(--font-display); font-size:15px; font-weight:700; letter-spacing:.42em; }
+.masthead-file { color:var(--dim); min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.masthead-section { flex:0 1 auto; min-width:0; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; padding:0; border:none; background:none; font:inherit; color:var(--text); cursor:pointer; }
+.masthead-section::before { content:"›"; margin-right:6px; color:var(--dim); }
+
+.tabstrip {
+  grid-column:2; grid-row:2;
+  display:flex; align-items:stretch; min-width:0; padding:0 48px;
+  background:var(--bg-nav); border-bottom:1px solid var(--bd-1);
+  overflow-x:auto; overflow-y:hidden;
+}
+.tabstrip[hidden] { display:none; }
+.tab { position:relative; display:flex; align-items:center; gap:6px; flex:0 0 auto; max-width:220px; min-height:30px; padding:0 6px 0 10px; border:none; border-right:1px solid var(--bd-1); background:none; font-family:var(--font-body); font-size:12px; color:var(--dim); cursor:pointer; text-align:left; }
+.tab:hover { background:var(--bg-2); }
+.tab.is-active { background:var(--bg); color:var(--text); }
+.tab.is-active::after { content:""; position:absolute; left:0; right:0; bottom:0; border-bottom:2px solid var(--text); }
+.tab-name { flex:1 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.tab-close { flex:none; width:16px; height:16px; padding:0; border:none; border-radius:3px; background:none; color:var(--dim); font:inherit; font-size:13px; line-height:16px; text-align:center; cursor:pointer; }
+.tab-close:hover { background:var(--bg-3); color:var(--text); }
+
+.pane { min-width:0; min-height:0; overflow:auto; }
+.pane-filetree { grid-column:1; grid-row:1 / -1; display:flex; flex-direction:column; min-height:0; overflow:auto; background:var(--bg-nav); border-right:1px solid var(--bd-1); font-family:var(--font-body); font-size:13px; line-height:1.6; padding:18px 12px 14px; }
+.pane-editor { grid-column:2; grid-row:3; padding:0; position:relative; background:var(--bg); }
+.tree-pane { flex:0 1 auto; min-height:128px; overflow:auto; }
+
+/* ============ 文件树（src/style.css:99-232） ============ */
+.filetree { font-family:-apple-system, "PingFang SC", sans-serif; font-size:13px; }
+.ft-header { display:flex; align-items:center; gap:6px; padding:4px 4px 8px; font-weight:600; color:var(--text); }
+.ft-vault-name { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.ft-switch-btn { flex:none; padding:1px 6px; border:none; border-radius:4px; background:none; font:inherit; font-size:12px; font-weight:400; color:var(--dim); cursor:pointer; }
+.ft-switch-btn:hover { background:var(--bg-2); color:var(--text); }
+.ft-children { list-style:none; margin:0; padding-left:13px; }
+.ft-root-list { padding-left:0; }
+.ft-item { margin:0; }
+.ft-row { display:flex; align-items:center; gap:4px; width:100%; min-height:27px; padding:0 4px; border:none; background:none; font-family:var(--font-body); font-size:13px; line-height:27px; text-align:left; cursor:pointer; border-radius:4px; color:var(--text); }
+.ft-row[data-depth="1"] { color:color-mix(in srgb, var(--text) 96%, var(--bg-nav)); }
+.ft-row[data-depth="2"] { color:color-mix(in srgb, var(--text) 91%, var(--bg-nav)); }
+.ft-dir { font-weight:600; }
+.ft-row:hover { background:var(--bg-2); }
+.ft-row.is-current { border-left:2px solid var(--text); border-radius:0 4px 4px 0; font-weight:600; }
+.ft-current-mark { width:15px; flex:none; color:var(--text); }
+.ft-caret { width:12px; flex:none; color:var(--dim); font-size:10px; text-align:center; }
+.ft-name { min-width:0; flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.ft-empty { padding:12px 4px; font-family:-apple-system, "PingFang SC", sans-serif; font-size:13px; white-space:normal; color:var(--dim); }
+.ft-hint { margin:0 0 12px; }
+.ft-open-btn { padding:6px 14px; border:1px solid var(--bd-2); border-radius:6px; background:var(--bg); font:inherit; cursor:pointer; color:var(--text); }
+.ft-open-btn:hover { background:var(--bg-2); }
+
+/* ============ 正文（src/style.css:18 / --measure） ============ */
+.doc { max-width:var(--measure); margin:0 auto; padding:40px 0; font-size:16px; line-height:1.75; }
+.doc h1 { font-family:var(--font-display); font-size:1.55em; line-height:1.35; margin:.4em 0 .5em; font-weight:400; }
+.doc p { margin:.45em 0; }
+.doc .mock-only { color:var(--dim); font-size:13px; }
+
+/* ============ toast（src/style.css:73） ============ */
+.lumir-toast { position:absolute; bottom:16px; right:16px; display:flex; align-items:center; gap:10px; padding:8px 14px; background:var(--text); color:var(--bg); font-size:13px; z-index:20; max-width:78%; font-family:-apple-system, "PingFang SC", sans-serif; line-height:1.5; }
+.lumir-toast button { border:1px solid var(--bg); background:transparent; color:inherit; cursor:pointer; font:inherit; padding:2px 10px; flex:none; }
+
+/* ============================================================================
+   新增：vault 切换器（本 mock 的提案部分）。全部取既有 token。
+   ============================================================================ */
+.ft-header { position:relative; }
+/* 变体 A：名称本身是列表入口（＋caret 作可点提示） */
+.ft-vault {
+  flex:1 1 auto; min-width:0; display:flex; align-items:center; gap:4px;
+  padding:1px 4px; border:none; border-radius:4px; background:none;
+  font:inherit; font-size:13px; font-weight:600; color:var(--text);
+  text-align:left; cursor:pointer;
+}
+.ft-vault:hover { background:var(--bg-2); }
+.ft-vault-caret { flex:none; color:var(--dim); font-size:9px; }
+/* 变体 B：名称仍是入口，另给常驻的 ＋ 新增入口（与现状的「切换」并列） */
+.ft-add-btn {
+  flex:none; width:20px; height:20px; padding:0; border:none; border-radius:4px;
+  background:none; color:var(--dim); font:inherit; font-size:13px; line-height:20px;
+  text-align:center; cursor:pointer;
+}
+.ft-add-btn:hover { background:var(--bg-2); color:var(--text); }
+
+/* 浮层：与大纲浮层 .lumir-toc（src/style.css:414-425）同一手法——绝对定位、细框、
+   --text 混色阴影、不占任何常驻空间。宽度 320px 会溢出 244px 左栏，见说明第 12 条。 */
+.vault-pop {
+  position:absolute; top:36px; left:2px; width:320px; z-index:15;
+  padding:4px 0; background:var(--bg); border:1px solid var(--bd-2); border-radius:var(--radius);
+  box-shadow:0 6px 18px color-mix(in srgb, var(--text) 16%, transparent);
+  font-family:-apple-system, "PingFang SC", sans-serif;
+}
+.vault-pop[hidden] { display:none; }
+.vault-row { position:relative; display:block; width:100%; padding:6px 10px; border:none; background:none; font:inherit; color:var(--text); text-align:left; cursor:pointer; }
+.vault-row:hover { background:var(--bg-nav); }
+.vault-row.is-current { background:var(--bg-nav); }
+.vault-row.is-busy { color:var(--text); }
+.vault-row[aria-disabled="true"] { cursor:default; color:var(--dim); }
+.vault-row-top { display:flex; align-items:center; gap:6px; }
+.vault-dot { flex:none; width:6px; height:6px; border-radius:50%; background:var(--accent); }
+.vault-dot.is-off { background:transparent; }
+.vault-row-name { flex:1 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:13px; font-weight:600; }
+.vault-row-flag { flex:none; font-size:11px; font-weight:400; color:var(--dim); }
+.vault-row-sub { margin:1px 0 0 12px; font-size:11px; color:var(--dim); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.vault-row-sub.is-warn { color:var(--accent); }
+.vault-row-act { margin:3px 0 0 12px; font-size:11px; color:var(--dim); text-decoration:underline; text-underline-offset:2px; }
+.vault-sep { margin:4px 0; border-top:1px solid var(--bd-1); }
+.vault-add { display:flex; align-items:center; gap:6px; padding:6px 10px; border:none; background:none; width:100%; font:inherit; color:var(--text); text-align:left; cursor:pointer; }
+.vault-add:hover, .vault-add.is-focus { background:var(--bg-nav); }
+.vault-row-sub, .vault-row-act { display:block; }
+.vault-add-plus { flex:none; width:12px; color:var(--dim); text-align:center; }
+.vault-none { padding:8px 10px; color:var(--dim); font-size:12px; }
+.vault-spin { display:inline-block; width:8px; height:8px; border:1.5px solid var(--bd-3); border-top-color:var(--accent); border-radius:50%; animation:spin 700ms linear infinite; }
+@keyframes spin { to { transform:rotate(360deg); } }
+
+/* 新增流程的 OS 选择器示意框（明确标注「非本产品 UI」） */
+.os-picker { position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:10px; background:color-mix(in srgb, var(--bg) 88%, var(--text)); }
+.os-picker-note { font-size:11px; color:var(--dim); font-family:-apple-system, "PingFang SC", sans-serif; }
+.os-picker-body { width:360px; padding:14px 16px; background:var(--bg-2); border:1px solid var(--bd-3); border-radius:8px; font-size:13px; color:var(--text); font-family:-apple-system, "PingFang SC", sans-serif; }
+.os-picker-row { display:flex; justify-content:space-between; gap:12px; padding:4px 0; color:var(--dim); }
+.os-picker-row.is-sel { color:var(--text); font-weight:600; }
+
+/* 流程条（mock 的示意，不是产品 UI） */
+.flow { display:flex; flex-wrap:wrap; gap:8px; margin:12px 0 0; font-family:-apple-system, "PingFang SC", sans-serif; }
+.flow-step { border:1px solid var(--bd-2); border-radius:var(--radius); padding:5px 10px; font-size:12px; color:var(--dim); background:var(--bg); }
+.flow-step.is-active { border-color:var(--accent); color:var(--text); }
+
+/* 批注（与 demo/index.html 的 .anno 同形） */
+.anno { font-family:-apple-system, "PingFang SC", sans-serif; font-size:9px; font-weight:600; color:var(--bg); background:var(--accent); border-radius:8px; padding:0 5px; flex:none; line-height:1.5; cursor:help; }
+
+/* ============ 说明 / 裁决点（走查材料，不是产品 UI，不译） ============ */
+#notes { max-width:1180px; margin:24px auto 80px; padding:0 24px; font-family:var(--font-body); font-size:13px; line-height:1.75; color:var(--text); }
+#notes h2 { font-family:var(--font-display); font-size:18px; border-bottom:2px solid var(--text); padding-bottom:6px; margin:34px 0 12px; }
+#notes h3 { font-size:14px; margin:20px 0 6px; }
+#notes code { font-family:var(--font-mono); font-size:12px; background:var(--bg-2); padding:0 4px; border-radius:3px; }
+#notes table { border-collapse:collapse; margin:10px 0; font-size:12.5px; }
+#notes th, #notes td { border:1px solid var(--bd-2); padding:5px 9px; text-align:left; vertical-align:top; }
+#notes th { background:var(--bg-2); }
+#notes ol, #notes ul { margin:8px 0; padding-left:22px; }
+#notes li { margin:4px 0; }
+#notes .rec { color:var(--accent); font-weight:600; }
+#notes .mock-tag { display:inline-block; font-family:-apple-system, "PingFang SC", sans-serif; font-size:11px; border:1px solid var(--bd-3); border-radius:10px; padding:0 8px; color:var(--dim); }
+/* 批注徽标贴在浮动容器 / 行首元素上时走绝对定位，避免把行内三行结构挤歪。
+   浮层自身的徽标落到右下角：它的右上角正是「当前行」徽标的位置，两个叠在一起会互相盖住。 */
+.vault-row > .anno { position:absolute; top:-7px; right:-7px; }
+.vault-pop > .anno { position:absolute; bottom:-7px; right:-7px; }
+
+/* mock 自身的 JS 错误出口：页面挂了要看得见原因，而不是只剩半个壳。 */
+#jserr { position:fixed; left:0; right:0; bottom:0; z-index:99; padding:6px 12px; background:var(--accent); color:var(--bg); font-family:var(--font-mono); font-size:12px; }
+#jserr[hidden] { display:none; }
+</style>
+</head>
+<body>
+<div id="console"></div>
+<div id="stage"></div>
+<div id="notes"></div>
+<div id="jserr" hidden></div>
+<script>
+// mock 自身的错误出口：脚本半途抛错时页面只剩半个壳，必须把原因摆出来（走查者不需要开控制台）。
+window.addEventListener("error", (event) => {
+  const box = document.getElementById("jserr");
+  box.textContent = `mock 脚本错误：${event.message}（line ${event.lineno ?? "?"}）`;
+  box.hidden = false;
+});
+// ============================================================================
+// COPY：产品可见文案（与 demo/index.html 同口径：key 即 deck 条目编号，render 只引用 key）。
+// `V*` 是**待入 deck 的新条目**（文案-Copy.md 现止于 D94，提案落地时按序编号 D95+）；
+// 复用既有条目的地方直接标 D 号，说明该串来自已入库文案，不新造。
+// ============================================================================
+const COPY = {
+  zh: {
+    // —— 复用既有条目（文案-Copy.md 现有编号）——
+    D1_noVault: "未打开 vault",         // D1
+    D1_noFile: "无当前文件",             // D1 同格
+    D4_switch: "切换",                  // D4（现状：树头部切换按钮）
+    D5_emptyHint: "打开一个目录作为 vault，开始浏览全部文件。", // D5
+    D6_openVault: "打开 vault",          // D6
+    // —— 新增：列表与入口 ——
+    V1_listLabel: "vault",                                   // 浮层读屏名
+    V2_entryTitle: (n) => `vault：${n}（点击查看全部 vault）`, // 列表入口的 aria-label / title
+    V3_current: "当前",                                        // 当前项标记
+    V4_add: "新增 vault…",                                     // 新增入口（A 在列表底，B 在左栏头部）
+    V4_addTitle: "选择一个目录作为新 vault",                     // 新增入口的 title / aria-label
+    V5_none: "还没有 vault",                                   // 列表为空
+    V6_missing: "路径不可用：目录被移动，或所在卷未挂载",          // 失效行
+    V7_relocate: "重新定位…",                                   // 失效行动作（走现有 remap 链路）
+    V8_summary: (n, when) => `${n} 个标签 · ${when}`,           // 行摘要（非当前项 = 上次的标签数）
+    V8_summaryCurrent: (n) => `${n} 个标签 · 现在打开`,          // 当前项的摘要
+    V8_when: { now: "刚刚", yesterday: "昨天", d3: "3 天前" },    // 相对时间（数据侧只存 key，随语言出串）
+    V9_noTabs: "还没有打开过文件",                               // 无标签历史
+    V10_busySave: "保存现场…",                                  // 过渡态第一拍
+    V10_busyOpen: (n) => `正在打开 ${n}…`,                       // 过渡态第二拍
+    V11_added: (n) => `已加入：${n}`,                            // 新增成功
+    V12_addedToast: (n) => `已加入并切换到 ${n}`,                 // 新增即切换（待裁决 3）
+    V13_switched: (n, c) => `已切到 ${n} · 恢复上次打开的 ${c} 个标签`, // 恢复提示（可选，默认关）
+    V14_emptyVault: "这个 vault 还没有打开的文件。在左栏选一个文件开始。", // 空 vault 首入态
+    V15_guard: (n, c) => `「${n}」里有 ${c} 个标签有未保存修改，切换会丢弃这些修改`, // dirty 拦截
+    V15_guardSave: "保存并切换",
+    V15_guardDiscard: "放弃修改并切换",
+    V15_guardCancel: "取消",
+    V15_saved: (c) => `已保存 ${c} 个标签`,                       // 守卫的「保存并切换」路径
+    V15_guardCurrent: "当前文档不支持保存，无法切换 vault；请按 Cmd+Z 撤销修改", // 现状文案（save-controller.ts:245）
+    V16_skipped: (n) => `${n} 个文件已不在这个 vault 里，已跳过`,  // 恢复时跳过缺失文件
+    V17_osPicker: "系统目录选择器（macOS 绘制，不属于本产品 UI；此处为示意）",
+    V18_osPick: "选择这个目录",
+    V19_relocateToast: "重新定位：选择一个目录把它指回这个 vault",  // 复用现有 vault_remap 文案形态（D40 同族）
+    C1_title: "多 vault 入口与切换器 · UX mock",
+    C2_variant: "变体", C2_a: "A 列表内新增", C2_b: "B 左栏固定入口", C2_both: "并排对照",
+    C3_stage: "状态", C4_rows: "列表行", C4_full: "摘要+路径", C4_lean: "仅摘要",
+    C5_lang: "语言", C6_anno: "批注", C6_off: "关", C6_on: "开",
+    C7_phase: "过渡拍", C7_save: "保存现场", C7_open: "打开中",
+    C8_step: "新增步骤", C9_restore: "恢复提示", C9_off: "不提示（推荐）", C9_on: "提示",
+    stage_empty: "未打开（列表为空）", stage_single: "单 vault", stage_multi: "多 vault（核心）",
+    stage_switch: "切换中", stage_restored: "切回恢复", stage_newvault: "新 vault 首入",
+    stage_dirty: "未保存拦截", stage_add: "新增 vault",
+    note_empty: "首次使用：没有任何 vault。空态本身就是唯一入口（沿用现有 D5/D6），列表不存在。",
+    note_single: "只有一个 vault。问题：切换器入口是否还出现？我的建议是常驻出现（见说明第 4 条）。",
+    note_multi: "核心态：列表里能看到全部 vault、当前项、以及每个 vault 上次的标签数——切过去之前就知道会恢复什么。",
+    note_switch: "过渡态：保存当前 vault 的标签列表 → 打开目标 vault。旧上下文保留到新 vault ready，避免空窗。",
+    note_restored: "切回恢复：整窗换上下文，标签栏按该 vault 上次的列表重建（一律按固定标签恢复）。",
+    note_newvault: "空 vault 首入态：新增的 vault 没有标签历史，标签栏隐藏、正文给一句引导。",
+    note_dirty: "未保存拦截：任一标签 dirty 即拦下（multi-tabs spec:127）。现状只有一句 sticky 提示，无出口。",
+    note_add: "新增流程三步：① 点「新增 vault…」② 系统目录选择器 ③ 加入列表并切过去（建议：不引入命名步骤）。",
+    C10_captionA: "变体 A · 列表内新增（名称即入口，caret 提示可点）",
+    C10_captionB: "变体 B · 左栏固定入口（「切换」开列表，＋ 常驻新增）",
+  },
+  en: {
+    D1_noVault: "No vault open",
+    D1_noFile: "No current file",
+    D4_switch: "Switch",
+    D5_emptyHint: "Open a folder as a vault to start browsing all its files.",
+    D6_openVault: "Open vault",
+    V1_listLabel: "Vaults",
+    V2_entryTitle: (n) => `Vaults: ${n} (click to see all vaults)`,
+    V3_current: "Current",
+    V4_add: "Add vault…",
+    V4_addTitle: "Choose a folder as a new vault",
+    V5_none: "No vaults yet",
+    V6_missing: "Path unavailable: the folder was moved, or its volume is not mounted",
+    V7_relocate: "Relocate…",
+    V8_summary: (n, when) => `${n} tab${n === 1 ? "" : "s"} · ${when}`,
+    V8_summaryCurrent: (n) => `${n} tab${n === 1 ? "" : "s"} · open now`,
+    V8_when: { now: "just now", yesterday: "yesterday", d3: "3 days ago" },
+    V9_noTabs: "No files opened yet",
+    V10_busySave: "Saving state…",
+    V10_busyOpen: (n) => `Opening ${n}…`,
+    V11_added: (n) => `Added: ${n}`,
+    V12_addedToast: (n) => `Added and switched to ${n}`,
+    V13_switched: (n, c) => `Switched to ${n} · restored ${c} tab${c === 1 ? "" : "s"}`,
+    V14_emptyVault: "No files opened in this vault yet. Pick one in the left column to start.",
+    V15_guard: (n, c) => `"${n}" has ${c} tab${c === 1 ? "" : "s"} with unsaved changes; switching will discard them`,
+    V15_guardSave: "Save and switch",
+    V15_guardDiscard: "Discard changes and switch",
+    V15_guardCancel: "Cancel",
+    V15_saved: (c) => `Saved ${c} tab${c === 1 ? "" : "s"}`,
+    V15_guardCurrent: "The current document cannot be saved, so the vault cannot be switched; press Cmd+Z to undo",
+    V16_skipped: (n) => `${n} file${n === 1 ? "" : "s"} are no longer in this vault and were skipped`,
+    V17_osPicker: "System folder picker (drawn by macOS, not part of this product; stand-in)",
+    V18_osPick: "Choose this folder",
+    V19_relocateToast: "Relocate: pick a folder to point back at this vault",
+    C1_title: "Multi-vault entry & switcher · UX mock",
+    C2_variant: "Variant", C2_a: "A Add inside list", C2_b: "B Fixed add in nav", C2_both: "Side by side",
+    C3_stage: "State", C4_rows: "List rows", C4_full: "Summary + path", C4_lean: "Summary only",
+    C5_lang: "Language", C6_anno: "Annotate", C6_off: "Off", C6_on: "On",
+    C7_phase: "Phase", C7_save: "Saving state", C7_open: "Opening",
+    C8_step: "Add step", C9_restore: "Restore notice", C9_off: "None (recommended)", C9_on: "Toast",
+    stage_empty: "No vault (empty list)", stage_single: "Single vault", stage_multi: "Multi vault (core)",
+    stage_switch: "Switching", stage_restored: "Switched back", stage_newvault: "New vault first open",
+    stage_dirty: "Unsaved block", stage_add: "Add vault",
+    note_empty: "First run: no vaults at all. The empty state is the only entry (reuses D5/D6); no list exists.",
+    note_single: "One vault only. Question: does the switcher entry still appear? I recommend it always does (see note 4).",
+    note_multi: "Core state: the list shows every vault, the current one, and each vault's last tab count — you know what will be restored before switching.",
+    note_switch: "Transition: save the current vault's tab list, then open the target vault. The old context stays until the new vault is ready.",
+    note_restored: "Switched back: the whole window changes context and the tab strip is rebuilt from that vault's last list (restored as pinned tabs).",
+    note_newvault: "First open of a new vault: no tab history, the tab strip is hidden and the body gives one line of guidance.",
+    note_dirty: "Unsaved block: any dirty tab blocks the switch (multi-tabs spec:127). Today it is a sticky line with no way out.",
+    note_add: "Add flow in three steps: ① click “Add vault…” ② system folder picker ③ added to the list and switched to (proposal: no naming step).",
+    C10_captionA: "Variant A · add inside the list (the name is the entry, caret hints it is clickable)",
+    C10_captionB: "Variant B · fixed add in the left column (“Switch” opens the list, ＋ adds)",
+  },
+};
+
+// 批注：元素 data-anno → 设计意图（悬停展示）。编号 V* 见说明第 6 节。
+const ANNOTATIONS = {
+  V1: "V1 · 列表入口 · 名称即可点，＋caret 作可点提示；替代现状的「切换」文字按钮",
+  V2: "V2 · 列表浮层 · 与大纲浮层同一手法：绝对定位、不占常驻空间、切完即消失",
+  V3: "V3 · 当前项 · 朱红实心点（M52 朱红只在需要分流的地方出现）",
+  V4: "V4 · 摘要行 · 「N 个标签 · 上次打开时间」= 决策③「只恢复标签列表」在切之前的可见预告",
+  V5: "V5 · 失效行 · 路径不可用不静默移除，复用现有 vault_remap 给「重新定位…」出口",
+  V6: "V6 · 新增入口 · 方案 A 摆在列表底部（单一入口）；方案 B 摆在左栏头部（一键可达）",
+  V7: "V7 · 过渡态 · 旧上下文保留到新 vault ready，进度只出现在指针所在的浮层里",
+  V8: "V8 · 恢复提示 · 默认不弹：整窗换上下文 + 标签栏出现本身已是可见结果",
+  V9: "V9 · dirty 拦截 · 现状文案无动作；此 mock 给三出口（把出口放在拦下它的地方）",
+  V10: "V10 · 空 vault 首入 · 标签栏隐藏，正文一句话指路，不伪造内容",
+  V11: "V11 · OS 选择器 · 非产品 UI，示意框只标位置，不模仿 macOS 外观",
+};
+
+// ============================================================================
+// 数据：vault 注册表形态。字段的「今天已有 / 提案要新增」标注见说明第 5 节。
+// files 只是为了让左栏有东西可看，不代表任何真实 vault 内容。
+// ============================================================================
+const VAULTS = {
+  demo: {
+    name: "demo-vault", path: "~/Documents/demo-vault", lastKey: "now",
+    tabs: ["README.md", "docs/guide.md"],
+    files: ["assets/logo.png", "docs/guide.md", "docs/notes.txt", "src/main.ts", "README.md"],
+  },
+  write: {
+    name: "写作归档", path: "~/Documents/写作归档", lastKey: "yesterday",
+    tabs: ["2026-09-对话记录.md", "2026-08-选题池.md", "inbox/未命名.md"],
+    files: ["2026-09-对话记录.md", "2026-08-选题池.md", "inbox/线索.md", "inbox/未命名.md"],
+  },
+  paper: {
+    name: "论文-2026", path: "/Volumes/Research/论文-2026", lastKey: "d3",
+    missing: true, tabs: ["draft/ch1.md"], files: ["draft/ch1.md"],
+  },
+  notes: {
+    name: "notes-2026", path: "~/Documents/notes-2026", lastKey: "now",
+    tabs: [], files: ["README.md", "inbox/新线索.md"],
+  },
+};
+
+// 每个 stage 是一份完整现场快照（切 stage 即重置，保证走查可重复）。
+const STAGES = {
+  empty:    { list: [],                       current: null,    popover: false },
+  single:   { list: ["demo"],                 current: "demo",  popover: true  },
+  multi:    { list: ["demo", "write", "paper"], current: "demo", popover: true  },
+  switch:   { list: ["demo", "write", "paper"], current: "demo", popover: true, target: "write" },
+  restored: { list: ["write", "demo", "paper"], current: "write", popover: false },
+  newvault: { list: ["notes", "demo"],         current: "notes", popover: false, added: true },
+  dirty:    { list: ["demo", "write", "paper"], current: "demo", popover: true, target: "write", dirty: ["README.md", "docs/guide.md"] },
+  add:      { list: ["demo", "write", "paper"], current: "demo", popover: true },
+};
+
+const model = {
+  variant: "A", stage: "multi", lang: "zh", rows: "full", anno: false,
+  phase: "open", step: 1, restoreToast: false,
+  list: [], current: null, popover: false, target: null, dirty: [],
+  sessions: {}, osPicker: false, addedNotes: false, _addedBase: null, toast: null,
+};
+
+const T = () => COPY[model.lang];
+const esc = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+const baseName = (p) => p.slice(p.lastIndexOf("/") + 1);
+const isImage = (n) => /\.(png|jpe?g|gif|svg|webp)$/i.test(n);
+/** 路径显示层缩写：多段路径只留尾部三段（同名目录靠尾部区分，头部信息量低）。 */
+function shortPath(p) {
+  const parts = p.split("/").filter(Boolean);
+  return parts.length <= 3 ? p : "…/" + parts.slice(-3).join("/");
+}
+function vaultName(id) { return VAULTS[id]?.name ?? ""; }
+
+// ============================================================================
+// 现场切换与交互
+// ============================================================================
+function applyStage(id) {
+  const st = STAGES[id];
+  model.stage = id;
+  model.list = st.list.slice();
+  model.current = st.current;
+  model.popover = st.popover;
+  model.target = st.target ?? null;
+  model.dirty = st.dirty ? st.dirty.slice() : [];
+  model.phase = "open";
+  model.step = 1;
+  model.osPicker = false;
+  model.addedNotes = false;
+  model._addedBase = null;
+  model.toast = null;
+  model.sessions = {};
+  for (const key of Object.keys(VAULTS)) {
+    const v = VAULTS[key];
+    model.sessions[key] = { tabs: v.tabs.slice(), active: v.tabs[0] ?? null };
+  }
+  render();
+}
+
+/** 切换完成：整窗换上下文（masthead / 标签栏 / 树 / 正文一次换），列表按最近打开倒序。 */
+function completeSwitch(target) {
+  model.current = target;
+  model.target = null;
+  model.popover = false;
+  model.dirty = [];
+  model.list = [target, ...model.list.filter((id) => id !== target)];
+  // 落到哪个 stage 由结果决定：有标签历史 = 切回恢复，没有 = 空 vault 首入。
+  model.stage = model.sessions[target].tabs.length > 0 ? "restored" : "newvault";
+  model.toast = model.restoreToast
+    ? { html: esc(T().V13_switched(vaultName(target), model.sessions[target].tabs.length)), anno: "V8" }
+    : null;
+  render();
+}
+function guardActions(target) {
+  const t = T();
+  return [
+    { label: t.V15_guardSave, act: "guard-save", vault: target },
+    { label: t.V15_guardDiscard, act: "guard-discard", vault: target },
+    { label: t.V15_guardCancel, act: "guard-cancel" },
+  ];
+}
+
+function startSwitch(target) {
+  if (VAULTS[target]?.missing) return;
+  // dirty 守卫（与产品口径同源：任一标签有未保存修改即拦下，spec multi-tabs:127）。
+  // 拦在这里而不是放行后清 dirty：切 vault 会把全部标签一起作废，静默清空等于丢内容。
+  // 提示点名**当前** vault——未保存的修改属于它，不属于正要切过去的那一个。
+  if (model.dirty.length > 0) {
+    model.target = null;
+    model.toast = {
+      html: esc(T().V15_guard(vaultName(model.current), model.dirty.length)),
+      actions: guardActions(target),
+      sticky: true,
+      anno: "V9",
+    };
+    render();
+    return;
+  }
+  model.stage = "switch";
+  model.target = target;
+  model.phase = "save";
+  model.popover = true;
+  model.toast = null;
+  render();
+  window.setTimeout(() => { if (model.target !== target) return; model.phase = "open"; render(); }, 450);
+  window.setTimeout(() => { if (model.target !== target) return; completeSwitch(target); }, 1300);
+}
+
+function setStep(n) {
+  model.step = n;
+  if (n === 3) {
+    if (!model.addedNotes) {
+      model.addedNotes = true;
+      model._addedBase = { list: model.list.slice(), current: model.current };
+      model.list = model.list.concat(["notes"]);
+    }
+    model.current = "notes";
+    model.popover = true;
+    model.osPicker = false;
+    // 新增即切过去（裁决 3）：新 vault 没有标签历史，切换代价为零。
+    model.toast = { html: esc(T().V12_addedToast(VAULTS.notes.name)) };
+  } else {
+    if (model.addedNotes) {
+      model.addedNotes = false;
+      model.list = model._addedBase.list.slice();
+      model.current = model._addedBase.current;
+    }
+    model.osPicker = n === 2;
+    model.popover = true;
+    model.toast = null;
+  }
+  render();
+}
+
+function openFile(path) {
+  const s = model.sessions[model.current];
+  if (!s) return;
+  if (!s.tabs.includes(path)) s.tabs = s.tabs.concat([path]);
+  s.active = path;
+  render();
+}
+
+// ============================================================================
+// 渲染：shell（masthead / 标签栏 / 文件树 / 正文）
+// ============================================================================
+function vaultSummary(id) {
+  const s = model.sessions[id];
+  if (id === model.current) return s.tabs.length === 0 ? T().V9_noTabs : T().V8_summaryCurrent(s.tabs.length);
+  if (s.tabs.length === 0) return T().V9_noTabs;
+  return T().V8_summary(s.tabs.length, T().V8_when[VAULTS[id].lastKey]);
+}
+
+function headerHtml() {
+  const t = T();
+  const name = vaultName(model.current);
+  const entryTitle = t.V2_entryTitle(name);
+  const expanded = `aria-expanded="${model.popover ? "true" : "false"}" aria-haspopup="listbox"`;
+  if (model.variant === "B") {
+    // 变体 B：名称仍是文本（现状），「切换」开列表（D4 保留），＋ 是常驻新增入口。
+    return `<div class="ft-header">
+      <span class="ft-vault-name">${esc(name)}</span>
+      <button type="button" class="ft-switch-btn" data-act="popover" data-anno="V1" ${expanded} title="${esc(entryTitle)}">${esc(t.D4_switch)}</button>
+      <button type="button" class="ft-add-btn" data-act="add" data-anno="V6" title="${esc(t.V4_addTitle)}" aria-label="${esc(t.V4_addTitle)}">＋</button>
+    </div>`;
+  }
+  // 变体 A：名称本身是列表入口（＋caret 作可点提示），「切换」文字按钮退场。
+  return `<div class="ft-header">
+    <button type="button" class="ft-vault" data-act="popover" data-anno="V1" ${expanded} title="${esc(entryTitle)}" aria-label="${esc(entryTitle)}">
+      <span class="ft-vault-name">${esc(name)}</span><span class="ft-vault-caret" aria-hidden="true">▾</span>
+    </button>
+  </div>`;
+}
+
+function popoverHtml() {
+  const t = T();
+  const rows = model.list.map((id) => {
+    const v = VAULTS[id];
+    const cur = id === model.current;
+    const busy = model.target === id && model.stage === "switch";
+    const sub = [];
+    if (busy) {
+      const label = model.phase === "save" ? t.V10_busySave : t.V10_busyOpen(v.name);
+      sub.push(`<span class="vault-row-sub" data-anno="V7"><span class="vault-spin"></span> ${esc(label)}</span>`);
+    } else {
+      sub.push(`<span class="vault-row-sub" data-anno="V4">${esc(vaultSummary(id))}</span>`);
+    }
+    if (v.missing) {
+      // 失效行：摘要照常给（路径坏了，但隔着它还有什么仍有信息量），再给成因与出口。
+      sub.push(`<span class="vault-row-sub is-warn" data-anno="V5">${esc(t.V6_missing)}</span>`);
+      sub.push(`<span class="vault-row-act" data-act="relocate">${esc(t.V7_relocate)}</span>`);
+    } else if (model.rows === "full" && !busy) {
+      sub.push(`<span class="vault-row-sub">${esc(shortPath(v.path))}</span>`);
+    }
+    return `<button type="button" class="vault-row${cur ? " is-current" : ""}${busy ? " is-busy" : ""}"
+        role="option" aria-selected="${cur ? "true" : "false"}"${v.missing ? ' aria-disabled="true"' : ""}
+        data-act="switch" data-vault="${id}"${cur ? ' data-anno="V3"' : ""}>
+      <span class="vault-row-top">
+        <span class="vault-dot${cur ? "" : " is-off"}" aria-hidden="true"></span>
+        <span class="vault-row-name">${esc(v.name)}</span>
+        ${cur ? `<span class="vault-row-flag">${esc(t.V3_current)}</span>` : ""}
+      </span>
+      ${sub.join("")}
+    </button>`;
+  }).join("");
+
+  const addRow = `<button type="button" class="vault-add${model.stage === "add" && model.step === 1 ? " is-focus" : ""}" data-act="add" data-anno="V6">
+      <span class="vault-add-plus" aria-hidden="true">＋</span><span>${esc(t.V4_add)}</span>
+    </button>`;
+  const empty = `<div class="vault-none">${esc(t.V5_none)}</div>`;
+  // 变体 A 把新增摆在列表底部（单一入口）；变体 B 的新增在左栏头部，列表不再重复一次。
+  const body = model.list.length === 0 ? empty + addRow : rows + (model.variant === "A" ? `<div class="vault-sep"></div>${addRow}` : "");
+  return `<div class="vault-pop" role="listbox" aria-label="${esc(t.V1_listLabel)}"${model.popover ? "" : " hidden"} data-anno="V2">${body}</div>`;
+}
+
+function treeHtml(files) {
+  const root = { dirs: new Map(), files: [] };
+  for (const f of files) {
+    const parts = f.split("/");
+    let node = root;
+    for (let i = 0; i < parts.length - 1; i++) {
+      if (!node.dirs.has(parts[i])) node.dirs.set(parts[i], { dirs: new Map(), files: [] });
+      node = node.dirs.get(parts[i]);
+    }
+    node.files.push(parts[parts.length - 1]);
+  }
+  const session = model.sessions[model.current];
+  const walk = (node, prefix, depth) => {
+    let html = `<ul class="ft-children${prefix === "" ? " ft-root-list" : ""}">`;
+    for (const [name, child] of [...node.dirs].sort((a, b) => a[0].localeCompare(b[0]))) {
+      html += `<li class="ft-item"><button type="button" class="ft-row ft-dir" data-depth="${depth}" data-act="noop">
+        <span class="ft-caret">▾</span><span class="ft-name">${esc(name)}</span></button>`;
+      html += walk(child, prefix + name + "/", depth + 1) + "</li>";
+    }
+    for (const name of node.files.sort((a, b) => a.localeCompare(b))) {
+      const path = prefix + name;
+      const cur = session?.active === path;
+      const kind = isImage(name) ? "ft-image" : /\.md$/i.test(name) ? "ft-md" : "ft-other";
+      html += `<li class="ft-item"><button type="button" class="ft-row ${kind}${cur ? " is-current" : ""}"
+        data-depth="${depth}" data-path="${esc(path)}" data-act="open" aria-current="${cur ? "true" : "false"}">
+        ${cur ? '<span class="ft-current-mark">¶</span>' : '<span class="ft-caret"></span>'}
+        <span class="ft-name">${esc(name)}</span></button></li>`;
+    }
+    return html + "</ul>";
+  };
+  return walk(root, "", 0);
+}
+
+function tabStripHtml() {
+  const session = model.sessions[model.current];
+  if (!session || session.tabs.length === 0) return `<div class="tabstrip" hidden></div>`;
+  const tabs = session.tabs.map((path, i) => {
+    const active = path === session.active || (i === 0 && session.active === null);
+    const dirty = model.dirty.includes(path);
+    return `<div class="tab${active ? " is-active" : ""}" data-act="tab" data-path="${esc(path)}">
+      <span class="tab-name">${esc(baseName(path))}${dirty ? "（未保存）" : ""}</span><span class="tab-close" aria-hidden="true">×</span>
+    </div>`;
+  }).join("");
+  return `<div class="tabstrip" role="tablist" aria-label="打开的文档">${tabs}</div>`;
+}
+
+function editorHtml() {
+  const t = T();
+  // 未打开 vault（列表为空）= 编辑器空 pane，与生产现状一致；「空 vault 首入」是另一回事。
+  if (model.current === null) return "";
+  const session = model.sessions[model.current];
+  if (model.osPicker) {
+    return `<div class="os-picker">
+      <div class="os-picker-note" data-anno="V11">${esc(t.V17_osPicker)}</div>
+      <div class="os-picker-body">
+        <div class="os-picker-row"><span>Documents</span><span>30 项</span></div>
+        <div class="os-picker-row is-sel"><span>notes-2026</span><span>已选中</span></div>
+        <div class="os-picker-row"><span>写作归档</span><span>12 项</span></div>
+        <div style="margin-top:10px"><button type="button" class="ft-open-btn" data-act="pick">${esc(t.V18_osPick)}</button></div>
+      </div>
+    </div>`;
+  }
+  if (!session || session.tabs.length === 0) {
+    return `<div class="doc"><p class="mock-only" data-anno="V10">${esc(t.V14_emptyVault)}</p></div>`;
+  }
+  const active = session.active ?? session.tabs[0];
+  return `<div class="doc">
+    <h1>${esc(docTitle(active))}</h1>
+    <p class="mock-only">（mock 正文：表示该标签已装载；真实产品这里渲染 Markdown 全文）</p>
+    <p>本 mock 只回答两件事：vault 在哪里新增、multi-vault 在哪里能看到。正文内容不参与走查。</p>
+  </div>`;
+}
+
+/** 正文标题（masthead 的位置指示段取同一值）：与文件名不同，才看得出「文件 › 位置」两段。 */
+const DOC_TITLES = {
+  "README.md": "Demo Vault",
+  "2026-09-对话记录.md": "2026-09 对话记录",
+  "inbox/未命名.md": "未命名",
+};
+function docTitle(path) {
+  return DOC_TITLES[path] ?? baseName(path).replace(/\.md$/i, "");
+}
+
+function toastHtml() {
+  if (!model.toast) return "";
+  const actions = (model.toast.actions ?? []).map((a) =>
+    `<button type="button" data-act="${a.act}"${a.vault ? ` data-vault="${a.vault}"` : ""}>${esc(a.label)}</button>`).join("");
+  return `<div class="lumir-toast"${model.toast.sticky ? ' data-sticky="true"' : ""} data-anno="${model.toast.anno ?? ""}">
+    <span>${model.toast.html}</span>${actions}</div>`;
+}
+
+function emptyNavHtml() {
+  const t = T();
+  return `<div class="ft-empty">
+    <p class="ft-hint">${esc(t.D5_emptyHint)}</p>
+    <button type="button" class="ft-open-btn" data-act="open-vault">${esc(t.D6_openVault)}</button>
+  </div>`;
+}
+
+function shellHtml(caption) {
+  const t = T();
+  const session = model.sessions[model.current];
+  const activePath = session?.active ?? null;
+  const dirtyActive = activePath !== null && model.dirty.includes(activePath);
+  const mastheadFile = model.current === null
+    ? t.D1_noFile
+    : `${activePath ?? t.D1_noFile}${dirtyActive ? "（未保存）" : ""}`;
+  const section = activePath ? docTitle(activePath) : null;
+  const nav = model.current === null
+    ? emptyNavHtml()
+    : `<div class="filetree">${headerHtml()}${treeHtml(VAULTS[model.current].files)}</div>${popoverHtml()}`;
+  return `<div class="shell-cell">
+    <p class="shell-caption">${esc(caption)}</p>
+    <div class="shell-host${model.variant === "both" ? " is-narrow" : ""}">
+      <div class="app-shell">
+        <header class="masthead">
+          <span class="masthead-vault">${esc(model.current === null ? t.D1_noVault : vaultName(model.current))}</span>
+          <span class="masthead-file">${esc(mastheadFile)}</span>
+          ${section ? `<button type="button" class="masthead-section" data-act="noop">${esc(section)}</button>` : ""}
+        </header>
+        ${tabStripHtml()}
+        <section class="pane pane-filetree">${nav}</section>
+        <section class="pane pane-editor">${editorHtml()}${toastHtml()}</section>
+      </div>
+    </div>
+  </div>`;
+}
+
+function stageHtml() {
+  const captions = { A: T().C10_captionA, B: T().C10_captionB };
+  if (model.variant === "both") {
+    const saved = model.variant;
+    model.variant = "A"; const htmlA = shellHtml(captions.A);
+    model.variant = "B"; const htmlB = shellHtml(captions.B);
+    model.variant = saved;
+    return `<div class="shell-row">${htmlA}${htmlB}</div>`;
+  }
+  return `<div class="shell-row">${shellHtml(captions[model.variant])}</div>`;
+}
+
+// ============================================================================
+// 控制台（与 demo/index.html 同形：段选 + 底部一条说明）
+// ============================================================================
+function seg(options, current, onPick) {
+  const box = document.createElement("span");
+  box.className = "seg";
+  for (const [val, label] of options) {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.textContent = label;
+    if (val === current) b.classList.add("active");
+    b.addEventListener("click", () => { onPick(val); render(); });
+    box.append(b);
+  }
+  return box;
+}
+function group(host, label, control, extra) {
+  const g = document.createElement("span");
+  g.className = "c-group";
+  const l = document.createElement("span");
+  l.className = "c-label";
+  l.textContent = label;
+  g.append(l, control);
+  if (extra) g.append(extra);
+  host.append(g);
+}
+function renderConsole() {
+  const host = document.getElementById("console");
+  const t = T();
+  host.replaceChildren();
+  const title = document.createElement("span");
+  title.className = "c-title";
+  title.textContent = t.C1_title;
+  host.append(title);
+
+  group(host, t.C2_variant, seg([["A", t.C2_a], ["B", t.C2_b], ["both", t.C2_both]], model.variant,
+    (v) => { model.variant = v; }));
+  group(host, t.C3_stage, seg([
+    ["empty", t.stage_empty], ["single", t.stage_single], ["multi", t.stage_multi], ["switch", t.stage_switch],
+    ["restored", t.stage_restored], ["newvault", t.stage_newvault], ["dirty", t.stage_dirty], ["add", t.stage_add],
+  ], model.stage, (v) => applyStage(v)));
+  group(host, t.C4_rows, seg([["full", t.C4_full], ["lean", t.C4_lean]], model.rows, (v) => { model.rows = v; }));
+
+  if (model.stage === "switch") {
+    group(host, t.C7_phase, seg([["save", t.C7_save], ["open", t.C7_open]], model.phase, (v) => { model.phase = v; }));
+  }
+  if (model.stage === "add") {
+    group(host, t.C8_step, seg([["1", "①"], ["2", "②"], ["3", "③"]], String(model.step), (v) => setStep(Number(v))));
+  }
+  if (model.stage === "restored") {
+    group(host, t.C9_restore, seg([["off", t.C9_off], ["on", t.C9_on]], model.restoreToast ? "on" : "off",
+      (v) => { model.restoreToast = v === "on"; if (!model.restoreToast) model.toast = null; }));
+  }
+  group(host, t.C5_lang, seg([["zh", "中文"], ["en", "English"]], model.lang, (v) => { model.lang = v; }));
+  group(host, t.C6_anno, seg([["off", t.C6_off], ["on", t.C6_on]], model.anno ? "on" : "off",
+    (v) => { model.anno = v === "on"; }));
+
+  const note = document.createElement("div");
+  note.className = "c-note";
+  note.innerHTML = t["note_" + model.stage];
+  host.append(note);
+}
+
+function injectAnnotations() {
+  document.querySelectorAll(".anno").forEach((a) => a.remove());
+  if (!model.anno) return;
+  document.querySelectorAll("[data-anno]").forEach((el) => {
+    const id = el.dataset.anno;
+    if (!ANNOTATIONS[id] || el.querySelector(":scope > .anno")) return;
+    const a = document.createElement("span");
+    a.className = "anno";
+    a.textContent = id;
+    a.title = ANNOTATIONS[id];
+    el.append(a);
+  });
+}
+
+function flowHtml() {
+  if (model.stage !== "add") return "";
+  const t = T();
+  const steps = [`① ${t.V4_add}`, `② ${t.V17_osPicker}`, `③ ${t.V11_added(VAULTS.notes.name)} + ${t.V14_emptyVault}`];
+  return `<div class="flow">${steps.map((s, i) =>
+    `<span class="flow-step${i + 1 === model.step ? " is-active" : ""}">${esc(s)}</span>`).join("")}</div>`;
+}
+
+function render() {
+  document.documentElement.lang = model.lang === "zh" ? "zh" : "en";
+  renderConsole();
+  document.getElementById("stage").innerHTML = stageHtml() + flowHtml();
+  injectAnnotations();
+}
+
+// ============================================================================
+// 事件：舞台内一次委托（并排模式下两个 shell 共用同一份现场）
+// ============================================================================
+document.getElementById("stage").addEventListener("click", (event) => {
+  const target = event.target.closest("[data-act]");
+  if (!target) return;
+  const act = target.dataset.act;
+  if (act === "noop") return;
+  if (act === "popover") { model.popover = !model.popover; render(); return; }
+  if (act === "switch") { startSwitch(target.dataset.vault); return; }
+  if (act === "relocate") { model.toast = { html: esc(T().V19_relocateToast) }; render(); return; }
+  if (act === "add" || act === "open-vault") { model.stage = "add"; setStep(2); return; }
+  if (act === "pick") { setStep(3); return; }
+  if (act === "open") { openFile(target.dataset.path); return; }
+  if (act === "tab") { model.sessions[model.current].active = target.dataset.path; render(); return; }
+  if (act === "guard-save") {
+    const n = model.dirty.length;
+    const targetVault = target.dataset.vault;
+    model.dirty = [];
+    model.toast = { html: esc(T().V15_saved(n)) };
+    window.setTimeout(() => completeSwitch(targetVault), 600);
+    render();
+    return;
+  }
+  if (act === "guard-discard") { const v = target.dataset.vault; model.dirty = []; model.toast = null; completeSwitch(v); return; }
+  if (act === "guard-cancel") { model.toast = null; render(); return; }
+});
+
+// URL 参数直达某个状态（走查 / 截图 / 分享链接用）：?variant=both&stage=multi&rows=lean
+{
+  const q = new URLSearchParams(location.search);
+  const pick = (key, allowed) => { const v = q.get(key); return v && allowed.includes(v) ? v : null; };
+  model.variant = pick("variant", ["A", "B", "both"]) ?? model.variant;
+  model.rows = pick("rows", ["full", "lean"]) ?? model.rows;
+  model.lang = pick("lang", ["zh", "en"]) ?? model.lang;
+  model.phase = pick("phase", ["save", "open"]) ?? model.phase;
+  model.restoreToast = q.get("restore") === "on";
+  model.anno = q.get("anno") === "on";
+  const stage = pick("stage", Object.keys(STAGES));
+  const step = pick("step", ["1", "2", "3"]);
+  applyStage(stage ?? "multi");
+  if (model.stage === "dirty") {
+    // dirty stage 直接落进来时先把守卫摆出来（正常路径是点列表行才出现，见 startSwitch）。
+    // 提示点名当前 vault：未保存的修改属于它，target 只是被拦下的那一次切换意图。
+    model.toast = { html: esc(T().V15_guard(vaultName(model.current), model.dirty.length)), actions: guardActions(model.target), sticky: true, anno: "V9" };
+    render();
+  }
+  if (model.stage === "switch") {
+    model.phase = pick("phase", ["save", "open"]) ?? "open";
+    render();
+  }
+  if (model.stage === "add" && step) setStep(Number(step));
+  if (model.stage === "restored" && model.restoreToast) {
+    model.toast = { html: esc(T().V13_switched(vaultName("write"), model.sessions.write.tabs.length)), anno: "V8" };
+    render();
+  }
+  render();
+  renderNotes();
+}
+
+// ============================================================================
+// 说明 / 取舍 / 待裁决（走查材料，不是产品文案，因此不进 COPY、不译）
+// ============================================================================
+function renderNotes() {
+  document.getElementById("notes").innerHTML = `
+<h2>多 vault 入口与切换器 · UX mock</h2>
+<p><span class="mock-tag">单文件 · file:// 可直接打开 · 零依赖 · 本文与 mock 同源，随改动一起更新</span></p>
+<p>这份 mock 只回答 Alex 的原话问题：<b>「vault 在哪里新增，multi-vault 在哪里能看到」</b>。四个已定决策（1 space = 1 vault、单激活、切换即整窗换上下文、只恢复标签列表）已按他的口径落进 mock，不再重复论证。范围到 UX 走查为止：<b>零 src/ 改动、零 openspec 改动</b>，Alex 过目后才起草 OpenSpec 提案。</p>
+
+<h3>怎么用</h3>
+<ul>
+<li>顶部控制台：变体（A / B / 并排对照）、8 个状态、列表行详略、语言、批注开关。<b>条件控件</b>只在对应状态出现（「过渡拍」在切换中、「新增步骤」在新增 vault、「恢复提示」在切回恢复）。</li>
+<li>可以直接点：左栏 vault 名称（方案 A）或「切换」（方案 B）开列表 → 点列表行切 vault（有 1.3s 的过渡时间轴：保存现场 → 打开中）→ 点左栏文件开标签 → 点列表底部「新增 vault…」走进新增流程。</li>
+<li>URL 直达某个状态（走查 / 截图 / 分享链接）：<code>?stage=multi&amp;variant=both&amp;rows=lean&amp;anno=on</code>，stage 取值 <code>empty / single / multi / switch / restored / newvault / dirty / add</code>，另有 <code>phase=save|open</code>、<code>step=1|2|3</code>、<code>restore=on</code>、<code>lang=en</code>。</li>
+<li><b>边界</b>：不读写任何真实文件；系统目录选择器用示意框代替（刻意不模仿 macOS 外观，免得被当成设计稿）；正文是占位；列表里的 vault 是合成数据，不是真实 vault。页面底部若出现一条朱红横条，那是 mock 自身的脚本错误出口（把异常直接摆出来，不必开控制台）——正常走查不该看到它。</li>
+</ul>
+
+<h3>1. 现状（今天是什么样）</h3>
+<table>
+<tr><th>面</th><th>今天的实现</th></tr>
+<tr><td>入口</td><td><b>只有一个</b>：左栏树头部的「切换」文字按钮（<code>src/tree.ts:197-204</code> 的 <code>.ft-switch-btn</code>，M30）。点击直接弹系统目录选择器，语义是<b>替换</b>当前 vault。</td></tr>
+<tr><td>多 vault 可见性</td><td><b>零</b>。界面上任何地方都看不到「我一共有几个 vault」。注册表 <code>~/.config/lumir/workspaces/*.json</code>（字段 id / path，M126）已经在盘上，但只被 remap 候选消费（路径失效时的「发现 N 个可映射的 vault 路径」，D40），没有列表 UI。</td></tr>
+<tr><td>持久化</td><td>只有 <code>last_vault</code> 一个配置项（<code>src-tauri/src/config.rs:48</code>）：重启恢复<b>一个</b> vault 的路径，<b>不恢复标签</b>（零标签会话持久化）。</td></tr>
+<tr><td>键位</td><td><code>src/keys.ts</code> 里没有任何 vault 相关绑定——打开 / 切换 vault 今天只能用鼠标。与「Emacs keybinding PKM」的阶段定位（ADR 0006）不一致。</td></tr>
+<tr><td>dirty 守卫</td><td><code>src/save-controller.ts:240-250</code>：任一标签有未保存修改就拦下，提示是一句 sticky 文案（「「{path}」有未保存修改，无法切换 vault；请先保存（Cmd+S）」），<b>没有动作</b>——出口是用户自己先回编辑器存好再重试。</td></tr>
+</table>
+<p>注：<code>demo/index.html</code>（M41/M57 期制品）用的是 ADR 0006 之前的「纸 / 石墨 / 墨」三方向 token 与旧 D 编号，本文与它并列时容易误读。<b>本 mock 用的是现行 <code>src/style.css:6-14</code> 的单套 token</b>；按 mission 范围，我只给 <code>demo/index.html</code> 加了一条指向本 mock 的链接，没有顺手改那个历史制品（它的 stale 问题另记 finding 走 backlog）。</p>
+
+<h3>2. 两个方案</h3>
+<table>
+<tr><th>维度</th><th>方案 A · 列表内新增</th><th>方案 B · 左栏固定入口</th></tr>
+<tr><td>新增入口</td><td>列表浮层底部「新增 vault…」（列表底部一条分隔线之下）</td><td>左栏头部常驻 <code>＋</code>，与「切换」并列</td></tr>
+<tr><td>切换入口</td><td>vault 名称本身（＋ <code>▾</code> caret 作可点提示），现状的「切换」文字按钮退场</td><td>沿用现状的「切换」文字按钮（D4 保留），点击改为开列表而非直弹系统选择器</td></tr>
+<tr><td>左栏头部</td><td>一个控件（名称 + caret），最安静</td><td>三个控件（名称 + 切换 + ＋），244px 内偏挤</td></tr>
+<tr><td>点到新增</td><td>两步（开列表 → 点底部）</td><td>一步</td></tr>
+<tr><td>D4「切换」文案</td><td>退场（proposal 要连同 deck 条目一起处置）</td><td>保留，不动已入库文案</td></tr>
+<tr><td>取舍</td><td>切换是中频、新增是<b>低频</b>（一个用户通常 1–3 个 vault，装一次就完了）。把低频动作收进中频入口，左栏保持安静——与 M52 定稿的「低频动作弱化、朱红只在需要分流处出现」同一条线（现状的「切换」按钮本身就是「低频动作常驻但弱化」）。代价：可点性靠 caret 提示，不如文字标签直白。</td><td>新增一键可达、「切换」标签直白、不动已入库文案。代价：左栏头部密度上升，且两个控件做近义的事（名称与切换都开同一个列表）。</td></tr>
+</table>
+<p><span class="rec">我的推荐：方案 A</span>（理由见上「取舍」；B 的价值在低频动作的一步可达，但这条价值在 1–3 个 vault 的真实用量下不足以换左栏头部的密度）。这是裁决点 1。</p>
+
+<h3>3. 四个已定决策落在 mock 的哪里</h3>
+<table>
+<tr><th>决策</th><th>落点</th></tr>
+<tr><td>1 space = 1 vault（命名继续用 vault）</td><td>列表读屏名就是「vault」；每行一个 vault；不出现 space 一词。</td></tr>
+<tr><td>单激活</td><td>当前项 = 朱红实心点 + 「当前」标 + 行底色，任何时刻只有一个；切换完成才换位。</td></tr>
+<tr><td>切换即整窗换上下文</td><td>点列表行即可看到：masthead 的 vault 名与文件、标签栏、文件树、正文一次全换。</td></tr>
+<tr><td>只恢复标签列表（不恢复光标 / 滚动位置）</td><td>行摘要「N 个标签 · 上次打开时间」= 切之前就能看到会恢复什么；切完标签栏按该列表重建，一律按<b>固定标签</b>恢复（预览标签是临时态，恢复它等于恢复一个随时被顶掉的槽位）。mock 刻意不体现光标 / 滚动位置恢复了什么。</td></tr>
+</table>
+
+<h3>4. 数据缺口（提案要新增什么）</h3>
+<table>
+<tr><th>mock 里显示的</th><th>今天的数据源</th><th>缺口</th></tr>
+<tr><td>列表里有哪些 vault</td><td><code>workspaces/*.json</code> 的 id / path</td><td>需要一条「列出注册表」的命令（今天只有按失效路径过滤的 <code>remap_candidates</code>）</td></tr>
+<tr><td>vault 名称</td><td>path 的 basename（<code>src/tree.ts:240</code>、<code>src/main.ts:498</code> 都是这么取的）</td><td>无缺口。<b>若</b>要独立的显示名（裁决 2），才需要新增落盘字段。</td></tr>
+<tr><td>「N 个标签」</td><td>无 —— 零标签会话持久化</td><td>新增 vault 维度 <code>last_session</code>（有序路径 + 激活项）。与 backlog「待 Alex 裁决」第 10 条是同一件事，多 vault 只是把它从「可选」变成「必要」。</td></tr>
+<tr><td>「上次打开时间」</td><td>无</td><td>新增 <code>last_opened_at</code>（形态与已有的 <code>missing_since</code> / <code>archived_at</code> 同类）</td></tr>
+<tr><td>「路径不可用」</td><td><code>missing_since</code> / <code>archived_at</code> 已在盘上，但标了 <code>#[ts(skip)]</code>（<code>src-tauri/src/workspaces.rs:37-50</code>，字段在 45-49 行），不进 webview 契约</td><td>要让前端画这一行，必须把失效状态放进契约</td></tr>
+<tr><td>列表排序</td><td>目录枚举顺序（不定）</td><td>依赖 <code>last_opened_at</code>；否则只能按名称排</td></tr>
+</table>
+<p>另：<code>archived_at</code>（失效超过 24h 的惰性归档）今天不进契约。列表要不要显示「已归档」项、要不要给「从列表移除」，是裁决 10 的一部分。</p>
+
+<h3>5. 待 Alex 裁决</h3>
+<ol>
+<li><b>新增入口摆法 A 还是 B</b> —— <span class="rec">建议 A</span>（列表内新增）。备选 B（左栏 ＋）。两者都可在控制台切到「并排对照」一眼比。</li>
+<li><b>新增时要不要命名步骤</b> —— <span class="rec">建议不要</span>：显示名取目录名 basename，与今天的状态栏 / 树头部口径一致。引入独立显示名就要处理「目录改名后显示名过期」的双真源问题（registry 今天只有 id / path）。若你要命名，落点是 registry 加 <code>display_name</code> + 一个改名入口，mock 里没有画。</li>
+<li><b>新增后是否自动切过去</b> —— <span class="rec">建议自动切</span>：新 vault 没有标签历史，切换只写当前 vault 的标签列表，不丢内容；先切过去再让用户自己找入口，反而多一步。备选：只加入列表、不动当前上下文。</li>
+<li><b>只有一个 vault 时入口是否还出现</b> —— <span class="rec">建议常驻出现</span>：隐藏它会让「再加一个 vault」在界面上无处可去（今天唯一入口就是那个按钮）。列表里只有一项 + 一条「新增 vault…」并不碍事。</li>
+<li><b>列表行信息量</b> —— <span class="rec">建议摘要 + 路径两行</span>：路径能区分同名目录（<code>notes</code> / <code>notes</code>），且只显示尾部三段（头部信息量低）。代价是行高翻倍。控制台的「列表行：仅摘要」就是瘦身版。</li>
+<li><b>列表排序</b> —— <span class="rec">建议最近打开倒序</span>（当前项自然在首位，与「切换即换上下文」的心智一致）。备选：按名称排（稳定，但与使用频率无关）。</li>
+<li><b>切回恢复要不要提示</b> —— <span class="rec">建议不提示</span>：整窗换上下文 + 标签栏出现本身就是可见结果，而切换是用户的主动动作（deck D50「自动行为必须留下痕迹」管的是用户没主动做的动作）。<b>异常</b>要提示：上次的某个文件已不在 vault 里被跳过时，给一句「{n} 个文件已不在这个 vault 里，已跳过」。控制台可切到「提示」看 toast 形态。</li>
+<li><b>过渡态形态</b> —— <span class="rec">建议进度只出现在浮层行内</span>（「保存现场…」→「正在打开 {name}…」），并<b>保留旧上下文直到新 vault 就绪</b>（不清空编辑器，避免空窗闪烁）。大 vault 下这段是真实等待：backlog「待 Alex 裁决」第 12 条实测冷启动的同步调用路径（<code>restore_last_vault</code> → 注册表 IO + watch + 全量 scan + 建索引）真实 vault 约 125ms、4× 规模约 770ms；切换 vault 走的是同一段 <code>open_vault</code>，量级可比，但<b>该数字不是为切换场景测的</b>（口径是冷启动）。备选：整窗遮罩 / 顶部进度条（都会新增常驻 UI 元素）。</li>
+<li><b>dirty 拦截的出口</b> —— <span class="rec">建议给三动作</span>：保存并切换 / 放弃修改并切换 / 取消（与关标签确认 D93 同形）。现状是一句无动作的 sticky 提示，用户得自己回编辑器存好再重试——把出口放在拦下他的地方。若采纳，proposal 要新增对应 deck 条目。</li>
+<li><b>路径失效的 vault 怎么处置</b> —— <span class="rec">建议保留在列表里 + 「重新定位…」</span>（走现有 <code>vault_remap</code> 链路，复用 D40 的用户认知）。待裁：要不要另给「从列表移除」（今天注册表只归档不删）。</li>
+<li><b>空列表态文案</b> —— <span class="rec">建议沿用现有 D5 / D6</span>（「打开一个目录作为 vault…」+「打开 vault」），不动已入库文案与既有验收。若你认为多 vault 下措辞该升级成「新增 vault」，这是一处必须显式改口径的地方（会牵动 deck 与已有文案断言）。</li>
+<li><b>浮层宽度 320px 会溢出 244px 左栏</b> —— <span class="rec">建议接受</span>（与大纲浮层 <code>.lumir-toc</code> 同一手法：绝对定位、溢出左栏、不占常驻空间）。若要收在栏内，行内信息必须再砍（路径与摘要二选一）。</li>
+<li><b>要不要给键位</b> —— 今天打开 / 切换 vault 零键位，与 Emacs keybinding PKM 的定位不符。<span class="rec">建议给「打开 vault 切换器」一个键位</span>，候选 <code>⌘O</code>（macOS「打开」惯例）或 <code>⌘⇧V</code>；经查 <code>src/keys.ts</code> 两者当前均未绑定，但 <code>⌘O</code> 是否被原生 File 菜单占用<b>未核实</b>（本 mock 不做结论）。</li>
+</ol>
+
+<h3>6. 批注 id 对照</h3>
+<p>页面上的朱红小标签 = 控制台「批注」打开后出现在元素上的 id，悬停看设计意图。V* 是本 mock 自己的编号（待入 deck 的文案条目另见下节）。</p>
+<table>
+<tr><th>id</th><th>位置</th><th>意图</th></tr>
+<tr><td>V1</td><td>左栏头部的列表入口</td><td>名称即可点（A）或「切换」（B）；替代今天「点一下直接弹系统选择器」的形态</td></tr>
+<tr><td>V2</td><td>列表浮层本体</td><td>与大纲浮层同一手法：绝对定位、不占常驻空间、切完即消失</td></tr>
+<tr><td>V3</td><td>当前项</td><td>朱红实心点 + 「当前」标：单激活的可见面</td></tr>
+<tr><td>V4</td><td>行摘要</td><td>「N 个标签 · 上次打开时间」= 决策 4 在切之前的可见预告</td></tr>
+<tr><td>V5</td><td>失效行</td><td>路径不可用不静默移除，复用现有 remap 链路给出口</td></tr>
+<tr><td>V6</td><td>新增入口</td><td>A 在列表底部（单一入口）/ B 在左栏头部（一键可达）</td></tr>
+<tr><td>V7</td><td>过渡态</td><td>进度只出现在指针所在的浮层里；旧上下文保留到新 vault 就绪</td></tr>
+<tr><td>V8</td><td>恢复提示（可选）</td><td>默认不弹；开了就是这一条 toast</td></tr>
+<tr><td>V9</td><td>dirty 拦截</td><td>把出口（保存 / 放弃 / 取消）放在拦下它的地方</td></tr>
+<tr><td>V10</td><td>空 vault 首入</td><td>标签栏隐藏、正文一句话指路，不伪造内容</td></tr>
+<tr><td>V11</td><td>OS 选择器示意框</td><td>非产品 UI，只标位置，不模仿 macOS 外观</td></tr>
+</table>
+
+<h3>7. 新文案（提案落地时分配 deck 编号；现止于 D94）</h3>
+<table>
+<tr><th>暂用 key</th><th>中文</th><th>English</th><th>意图</th></tr>
+<tr><td>V1_listLabel</td><td>vault</td><td>Vaults</td><td>浮层读屏名；与 D63 / D85 / D88 同口径，只说明「这是什么」</td></tr>
+<tr><td>V4_add</td><td>新增 vault…</td><td>Add vault…</td><td>省略号预告「下一步要选目录」；继续用 vault 一词（决策 4）</td></tr>
+<tr><td>V6_missing</td><td>路径不可用：目录被移动，或所在卷未挂载</td><td>Path unavailable: the folder was moved, or its volume is not mounted</td><td>给两种成因，不猜测；不静默移除注册项</td></tr>
+<tr><td>V7_relocate</td><td>重新定位…</td><td>Relocate…</td><td>与既有 remap 认知同词（D40 同族）</td></tr>
+<tr><td>V8_summary</td><td>{n} 个标签 · {when}</td><td>{n} tab / {n} tabs · {when}</td><td>决策 4 的核心预告：切之前就知道会恢复什么。<b>英文按数量出单复数</b>（中文无此问题），V13 / V15 / V16 同。</td></tr>
+<tr><td>V9_noTabs</td><td>还没有打开过文件</td><td>No files opened yet</td><td>空 vault 在列表里的摘要位不空着</td></tr>
+<tr><td>V10_busySave / V10_busyOpen</td><td>保存现场… / 正在打开 {name}…</td><td>Saving state… / Opening {name}…</td><td>两拍各自说明在做什么；等待必须留在指针所在处</td></tr>
+<tr><td>V13_switched</td><td>已切到 {name} · 恢复上次打开的 {n} 个标签</td><td>Switched to {name} · restored {n} tab / {n} tabs</td><td>裁决 7 若选「提示」则用这条</td></tr>
+<tr><td>V14_emptyVault</td><td>这个 vault 还没有打开的文件。在左栏选一个文件开始。</td><td>No files opened in this vault yet. Pick one in the left column to start.</td><td>空 vault 首入：给动作，不伪造内容</td></tr>
+<tr><td>V15_guard</td><td>「{name}」里有 {n} 个标签有未保存修改，切换会丢弃这些修改</td><td>"{name}" has {n} tab / {n} tabs with unsaved changes; switching will discard them</td><td>点名 vault 与数量，陈述后果（与 D92 同口径）</td></tr>
+<tr><td>V15_guardSave / _Discard / _Cancel</td><td>保存并切换 / 放弃修改并切换 / 取消</td><td>Save and switch / Discard changes and switch / Cancel</td><td>与 D93 三动作同形；动作自含代价</td></tr>
+<tr><td>V15_saved</td><td>已保存 {n} 个标签</td><td>Saved {n} tab / {n} tabs</td><td>切换前落盘要留痕（D55 同族：自动 / 批量动作要有可见结果）</td></tr>
+<tr><td>V16_skipped</td><td>{n} 个文件已不在这个 vault 里，已跳过</td><td>{n} file / {n} files are no longer in this vault and were skipped</td><td>恢复时唯一该打扰的情况：结果与上次不一致。<b>mock 未渲染</b>（它是恢复流程的异常分支，要一个「上次有这个文件、现在没了」的 fixture 才演得出来），此处只提文案。</td></tr>
+<tr><td>V17_osPicker / V18_osPick</td><td>系统目录选择器（…示意）/ 选择这个目录</td><td>System folder picker (…stand-in) / Choose this folder</td><td>mock 脚手架文案，不进产品</td></tr>
+</table>
+<p>复用不新造：D1「未打开 vault」/「无当前文件」、D4「切换」、D5「打开一个目录作为 vault，开始浏览全部文件。」、D6「打开 vault」——present 的 mock 直接引用同一串。</p>
+
+<h3>8. 已知未做 / 留给 proposal</h3>
+<ul>
+<li>没有画「vault 重命名 / 从列表移除」——取决于裁决 2 与 10。</li>
+<li>没有画「多个 vault 同时打开」——决策 2 已定单激活，不做窗口分屏。</li>
+<li>没有画「切换时的标签列表落盘失败」——那是保存链路的失败面，应在 proposal 里与 <code>last_session</code> 的写入路径一起定（今天 <code>last_vault</code> 写失败是降级 warning，见 <code>src-tauri/src/commands.rs:305-327</code>）。</li>
+<li>没有画键位面板里的新命令条目——取决于裁决 13。</li>
+<li>本 mock 的列表行摘要在 Linux 外置卷、网络盘等慢挂载场景下的开销未评估（列出注册表本身不读目录，但「路径不可用」判定要 <code>exists()</code> 探测）。</li>
+</ul>
+`;
+}
+</script>
+</body>
+</html>
