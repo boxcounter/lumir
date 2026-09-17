@@ -36,8 +36,8 @@
 ## 5. 验证
 
 - [x] 5.1 `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` 通过
-- [ ] 5.2 `scripts/gate.sh quick` 全绿（含 bindings 漂移与 tsc）
-- [ ] 5.3 `scripts/gate.sh visual` 全绿；本 change 不更新整页基线，若实现期发现必须更新，先交 Alex 过目再执行 `--update`
+- [x] 5.2 `scripts/gate.sh quick` 全绿（含 bindings 漂移与 tsc）
+- [x] 5.3 `scripts/gate.sh visual` 全绿；本 change 不更新整页基线，若实现期发现必须更新，先交 Alex 过目再执行 `--update`
 - [x] 5.4 `node scripts/acceptance/run.mjs --check` 通过后，按 3.3 落地时的 `id` 前缀跑该场景（`node scripts/acceptance/run.mjs <该 id>`），全 PASS（证据留在 `test-results/acceptance/`，不入 git）
 - [ ] 5.5 冷启动读数前后对比（本地观察，不作阈值判定）：确认 `LUMIR_READY` 的出现时刻无显著变化（预期不变，本 change 不宣称性能改进）；若 CI 冷启动 median 回退超 40%，按真回归排查，不得调整基线
 - [ ] 5.6 归档前对账一次 design §4.5 显式化过的语义边缘（恢复完成时无标题缓冲继承手动打开语义）：若 Alex 在节点 1 把它收紧，则按新 requirement 改 spec 增量与实现，不得沿用「继承既有语义」口径；未收紧则本项无操作，勾掉即可
