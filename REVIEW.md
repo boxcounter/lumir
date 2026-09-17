@@ -105,7 +105,8 @@ worker 动工前、reviewer 给出 verdict 前逐条过一遍。每条按「症�
 - 症状：worker-toc 在 M148 用 16 次 120–290s 的 `sleep` 撑 turn（累计约 61 分钟），直接耗尽 2 小时任务预算被超时重启；盲等醒来后读到的是「睡到那一刻」的半截现场，是假绿/假红的温床（与第 1/2 条同族）。
 - 根因：误以为「结束 turn 会终止 run、看不到后台任务结果」；实际上后台任务完成通知与 tower 的 resume 都会唤醒 agent。每次 sleep 还烧一次 tool-call 往返的 context（该 worker 的 inputCacheRead 从 287k 涨到 418k）。
 - 证据：finding `.tower/comms/findings/20260917-tower-improve-worker-sleep-tower-waitfor-turn.md`（现场：agent-57 会话日志 turnId 0 step 122–252）；对照组 worker-jsonhl 全程「结束 turn + 被 resume」、零消息丢失、近零 sleep。
-- 防线：等自己的后台任务一律用 `WaitFor`（挂起零 LLM 请求、完成即唤醒，timeout ≤600s 可续等）；等 tower 或他人回话就结束 turn，回复经 resume 送达；只有无事件源的外部状态（锁文件、磁盘水位）才允许 ≤60s 的短采样，且采样须带诊断负载（如采样锁/磁盘状态做裁决复核），不是干睡。
+- 复发（2026-09-18）：M164 worker-multivault-closeout（agent-108，deepseek-flash）用 `sleep 180/230/240; tail log` 前台盲等视觉门禁，4 次约 15 分钟（Alex 截图实证；现场 session_43197879/agents/agent-108），tower 中止后带纠正重启。教训：「开工前必读」对 Flash worker 不自觉生效。
+- 防线：等自己的后台任务一律用 `WaitFor`（挂起零 LLM 请求、完成即唤醒，timeout ≤600s 可续等）；等 tower 或他人回话就结束 turn，回复经 resume 送达；只有无事件源的外部状态（锁文件、磁盘水位）才允许 ≤60s 的短采样，且采样须带诊断负载（如采样锁/磁盘状态做裁决复核），不是干睡。**tower 侧执行（2026-09-18 起）：每次 spawn/resume worker 的 instructions 显式写「>60s 的命令一律 run_in_background + WaitFor/结束 turn，禁止前台分钟级 sleep 轮询」，不再只靠本表自觉。**
 
 ## 维护
 
