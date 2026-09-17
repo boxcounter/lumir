@@ -7,8 +7,10 @@
 ## 开发环境要求
 
 - Rust（stable 工具链）
-- Node.js ^20.19.0 或 >=22.12.0（Vite 要求）
+- Node.js >=22.12.0（Vite 8 要求；`tests/unit` 单测层依赖 Node 自带的 TypeScript 类型剥离 `--experimental-strip-types`，需 ≥22.6，故不再保留 `^20.19` 分支）
 - pnpm
+
+注意 Node 版本口径：Node 20 已于 2026-04-30 EOL，且 20.x 上 `tests/unit` 会明确报红（不静默跳过），本地「全绿」在 20.x 上不可达——请用 22.x 或更高。
 
 ## 运行
 
