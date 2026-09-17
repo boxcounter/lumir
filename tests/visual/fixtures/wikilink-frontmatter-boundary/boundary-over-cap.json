@@ -1,0 +1,11 @@
+{
+  "path": "boundary-over-cap.md",
+  "frontmatterLineCount": 600,
+  "blockLink": "[[past-cap]]",
+  "body": "\n正文合法链接：[[visible-body]]。\n",
+  "expected": {
+    "frontmatter": false,
+    "decorated": ["[[past-cap]]", "[[visible-body]]"],
+    "queried": ["[[past-cap]]", "[[visible-body]]"]
+  }
+}

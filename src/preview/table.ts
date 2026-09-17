@@ -34,7 +34,7 @@ export interface TableModel {
   align: TableAlignment[];
   rectangular: boolean;
   degraded: boolean;
-  reason?: "oversize" | "non-rectangular" | "incomplete";
+  reason?: "oversize" | "non-rectangular";
 }
 
 function children(node: { firstChild: { name: string; from: number; to: number; nextSibling: any } | null }): { name: string; from: number; to: number }[] {
