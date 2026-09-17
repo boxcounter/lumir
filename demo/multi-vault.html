@@ -466,6 +466,20 @@ function guardActions(target) {
 
 function startSwitch(target) {
   if (VAULTS[target]?.missing) return;
+  // dirty 守卫（与产品口径同源：任一标签有未保存修改即拦下，spec multi-tabs:127）。
+  // 拦在这里而不是放行后清 dirty：切 vault 会把全部标签一起作废，静默清空等于丢内容。
+  // 提示点名**当前** vault——未保存的修改属于它，不属于正要切过去的那一个。
+  if (model.dirty.length > 0) {
+    model.target = null;
+    model.toast = {
+      html: esc(T().V15_guard(vaultName(model.current), model.dirty.length)),
+      actions: guardActions(target),
+      sticky: true,
+      anno: "V9",
+    };
+    render();
+    return;
+  }
   model.stage = "switch";
   model.target = target;
   model.phase = "save";
@@ -856,8 +870,9 @@ document.getElementById("stage").addEventListener("click", (event) => {
   const step = pick("step", ["1", "2", "3"]);
   applyStage(stage ?? "multi");
   if (model.stage === "dirty") {
-    // dirty stage 的守卫提示是「点击切换才出现」的形态；直接进这一态时就先摆出来。
-    model.toast = { html: esc(T().V15_guard(vaultName(model.target), model.dirty.length)), actions: guardActions(model.target), sticky: true, anno: "V9" };
+    // dirty stage 直接落进来时先把守卫摆出来（正常路径是点列表行才出现，见 startSwitch）。
+    // 提示点名当前 vault：未保存的修改属于它，target 只是被拦下的那一次切换意图。
+    model.toast = { html: esc(T().V15_guard(vaultName(model.current), model.dirty.length)), actions: guardActions(model.target), sticky: true, anno: "V9" };
     render();
   }
   if (model.stage === "switch") {
@@ -943,7 +958,7 @@ function renderNotes() {
 <li><b>列表行信息量</b> —— <span class="rec">建议摘要 + 路径两行</span>：路径能区分同名目录（<code>notes</code> / <code>notes</code>），且只显示尾部三段（头部信息量低）。代价是行高翻倍。控制台的「列表行：仅摘要」就是瘦身版。</li>
 <li><b>列表排序</b> —— <span class="rec">建议最近打开倒序</span>（当前项自然在首位，与「切换即换上下文」的心智一致）。备选：按名称排（稳定，但与使用频率无关）。</li>
 <li><b>切回恢复要不要提示</b> —— <span class="rec">建议不提示</span>：整窗换上下文 + 标签栏出现本身就是可见结果，而切换是用户的主动动作（deck D50「自动行为必须留下痕迹」管的是用户没主动做的动作）。<b>异常</b>要提示：上次的某个文件已不在 vault 里被跳过时，给一句「{n} 个文件已不在这个 vault 里，已跳过」。控制台可切到「提示」看 toast 形态。</li>
-<li><b>过渡态形态</b> —— <span class="rec">建议进度只出现在浮层行内</span>（「保存现场…」→「正在打开 {name}…」），并<b>保留旧上下文直到新 vault 就绪</b>（不清空编辑器，避免空窗闪烁）。大 vault 下这段是真实等待：冷启动 <code>open_vault</code> 实测真实 vault 约 125ms、4× 规模约 770ms（backlog「待 Alex 裁决」第 12 条）。备选：整窗遮罩 / 顶部进度条（都会新增常驻 UI 元素）。</li>
+<li><b>过渡态形态</b> —— <span class="rec">建议进度只出现在浮层行内</span>（「保存现场…」→「正在打开 {name}…」），并<b>保留旧上下文直到新 vault 就绪</b>（不清空编辑器，避免空窗闪烁）。大 vault 下这段是真实等待：backlog「待 Alex 裁决」第 12 条实测冷启动的同步调用路径（<code>restore_last_vault</code> → 注册表 IO + watch + 全量 scan + 建索引）真实 vault 约 125ms、4× 规模约 770ms；切换 vault 走的是同一段 <code>open_vault</code>，量级可比，但<b>该数字不是为切换场景测的</b>（口径是冷启动）。备选：整窗遮罩 / 顶部进度条（都会新增常驻 UI 元素）。</li>
 <li><b>dirty 拦截的出口</b> —— <span class="rec">建议给三动作</span>：保存并切换 / 放弃修改并切换 / 取消（与关标签确认 D93 同形）。现状是一句无动作的 sticky 提示，用户得自己回编辑器存好再重试——把出口放在拦下他的地方。若采纳，proposal 要新增对应 deck 条目。</li>
 <li><b>路径失效的 vault 怎么处置</b> —— <span class="rec">建议保留在列表里 + 「重新定位…」</span>（走现有 <code>vault_remap</code> 链路，复用 D40 的用户认知）。待裁：要不要另给「从列表移除」（今天注册表只归档不删）。</li>
 <li><b>空列表态文案</b> —— <span class="rec">建议沿用现有 D5 / D6</span>（「打开一个目录作为 vault…」+「打开 vault」），不动已入库文案与既有验收。若你认为多 vault 下措辞该升级成「新增 vault」，这是一处必须显式改口径的地方（会牵动 deck 与已有文案断言）。</li>
