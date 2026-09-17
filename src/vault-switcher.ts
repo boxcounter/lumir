@@ -272,6 +272,90 @@ export function createVaultSwitchGate(deps: VaultSwitchGateDeps): VaultSwitchGat
   };
 }
 
+/** 守卫类粘性提示的呈现（M163 r1 P2-1）：**先撤下既有守卫浮条再挂新的**。
+ *
+ *  装配层的 toast 对 sticky 按文案去重并直接复用既有元素（M107 为「连按 ⌘Q 同一守卫」设计，
+ *  那时动作没有载荷）。守卫浮条的动作带着「切到哪一个」：文案刻意只点名当前 vault 与脏标签
+ *  数（M158 r1），于是「dirty 拦下点 B → 不处置 → 再点 C」两次文案逐字相同，去重命中后 C 的
+ *  proceed 被丢弃，用户看到的仍是绑着 B 的三条动作——一次静默的错目标切换。撤下旧的再挂新的
+ *  是最小修法：同一文案的第二次请求必须换一份带着新 proceed 的浮条。 */
+export function createGuardPromptPresenter(deps: {
+  clearPrevious(): void;
+  toast(text: string, actions: ToastAction[], sticky: boolean): unknown;
+}): (text: string, actions: ToastAction[]) => void {
+  return (text, actions) => {
+    deps.clearPrevious();
+    deps.toast(text, actions, true);
+  };
+}
+
+/** remap 门短路回执里本模块要用的字段（不把整个 VaultInfo 拖进来）。 */
+export interface VaultRemapInfo {
+  root: string;
+  remap_candidates: ReadonlyArray<{ id: string; path: string }>;
+}
+
+export interface VaultRemapPromptDeps {
+  /** dirty 前置门（装配层的 switchGate.request）。 */
+  guard(proceed: () => Promise<void> | void): boolean;
+  /** 粘性两出口浮条的出口（装配层的守卫提示呈现）。 */
+  notify(text: string, actions: ToastAction[]): void;
+  /** 路径的显示名（= 目录 basename；装配层注入，本模块不依赖文件树模块）。 */
+  displayName(path: string): string;
+  /** 按已知路径重开并装载（`vault_open_path` + 装载的封装）。 */
+  openPath(path: string): Promise<void>;
+  /** 把某个注册项 id 绑到新路径（`vault_remap` 的封装）。 */
+  remap(id: string, path: string): Promise<void>;
+  /** 打开失败 / 绑定失败的人话提示。 */
+  fail(message: string): void;
+}
+
+export interface VaultRemapPrompt {
+  /** 摆出两个出口（M121/M126 既有形态）：作为新 vault 打开 / 确认映射到此路径。 */
+  present(info: VaultRemapInfo): void;
+}
+
+/** 「未注册目录 + 存在失效注册项」时摆出的两个出口（既有形态）。
+ *
+ *  M163 r1 P1-1：两个动作都**必须在动作时点过 dirty 门**。这张浮条是 sticky、可无限期存活，
+ *  期间用户照常编辑会产生 dirty，而两个动作最终都会经 `editor.reset()` 把全部标签一起作废
+ *  ——不过门就等于静默丢弃未保存修改（spec「vault 切换与整窗上下文替换」）。
+ *
+ *  门还必须摆在 `openPath`（后端提交）**之前**：`vault_open_path` 一旦返回，后端就已经切到
+ *  新 vault 了，那时再拦只会留下「后端在新 vault、前端显示旧的」的半切换态（此后相对路径的
+ *  保存会落到错误的 vault 上）——这是装配层「先拦后开」那条不变量的同款。
+ *
+ *  「确认映射到此路径」先做 `remap` 再 `reopen`：remap 是用户显式确认的注册表修正、不丢内容，
+ *  门拦在它之后（拦的是重开）语义无害。 */
+export function createVaultRemapPrompt(deps: VaultRemapPromptDeps): VaultRemapPrompt {
+  function reopen(root: string): void {
+    deps.guard(() => deps.openPath(root).catch((e) => deps.fail(errorText(e))));
+  }
+
+  return {
+    present(info) {
+      const top = info.remap_candidates[0];
+      // 调用方只在有候选时摆浮条；空数组不摆（不产出没有出口的提示）。
+      if (top === undefined) return;
+      deps.notify(
+        `「${deps.displayName(info.root)}」尚未注册为 vault；发现可能已移动的 vault：${top.path}`,
+        [
+          { label: "作为新 vault 打开", run: () => reopen(info.root) },
+          {
+            label: "确认映射到此路径",
+            run: () => {
+              void deps
+                .remap(top.id, info.root)
+                .then(() => reopen(info.root))
+                .catch((e) => deps.fail(errorText(e)));
+            },
+          },
+        ],
+      );
+    },
+  };
+}
+
 // ---------------------------------------------------------------------------
 // 会话存储（4.4 / 4.5）：防抖写、切换前与退出前 flush、装载后按会话恢复标签
 // ---------------------------------------------------------------------------
@@ -500,11 +584,15 @@ class VaultSwitcher implements VaultSwitcherHandle {
     popover.addEventListener("mousedown", (event) => event.preventDefault());
     // 焦点离开浮层即收起（Tab 出去、点到别处、窗口失活都走这条）——这条路径不抢焦点。
     list.addEventListener("blur", () => this.close(false));
-    // 点击浮层之外收起（编辑器、文件树、toast…）。
+    // 点击浮层与入口之外收起（编辑器、文件树、toast…）。入口要排除：它是「开→关」的切换点，
+    // 第一次点击就收起会让随后的 click 走 toggle 又开一次（视觉上闪一下，aria-expanded 假翻），
+    // 与 .lumir-toc 排除它的指示段同一手法。
     document.addEventListener("mousedown", (event) => {
       if (!this.open) return;
       const target = event.target;
-      if (target instanceof Node && popover.contains(target)) return;
+      if (!(target instanceof Node)) return;
+      const entry = deps.entry();
+      if (popover.contains(target) || (entry !== undefined && entry.contains(target))) return;
       this.close(false);
     });
     addRow.addEventListener("click", () => {

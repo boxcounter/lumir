@@ -23,7 +23,13 @@ import {
 } from "./ipc";
 import { createSaveController, SAVE_GUARD_TOAST_CLASS } from "./save-controller";
 import { createToc } from "./toc";
-import { createVaultSwitcher, createVaultSwitchGate, samePath } from "./vault-switcher";
+import {
+  createGuardPromptPresenter,
+  createVaultRemapPrompt,
+  createVaultSwitcher,
+  createVaultSwitchGate,
+  samePath,
+} from "./vault-switcher";
 import type { VaultSwitcherHandle } from "./vault-switcher";
 // M151：名字听不出归属的三块能力各自的模块（见各处装配点与模块头注释）。
 // link-follow（解析缓存 + 链接跟随）、tabs（标签栏 DOM）、bindings-panel（键位查看面板）。
@@ -194,15 +200,41 @@ const tabs = createTabs({
  *  指路，不伪造内容（也不残留上一次 vault 的正文——那已被 editor.reset 作废）。 */
 const EMPTY_VAULT_TEXT = "这个 vault 还没有打开的文件。在左栏选一个文件开始。";
 
+/** 守卫类粘性提示的出口：先撤下既有守卫浮条再挂新的（M163 r1 P2-1——toast 的 sticky 去重按
+ *  文案命中会复用旧元素，而守卫浮条的动作带着「切到哪一个」，复用等于把后一次请求的 proceed
+ *  丢掉；来由见 src/vault-switcher.ts 的 createGuardPromptPresenter）。 */
+const showGuardPrompt = createGuardPromptPresenter({
+  clearPrevious: () => save.clearGuardToasts(),
+  // 挂上守卫提示族的标识类：dirty 清除时由 save.clearGuardToasts 整批撤下。
+  toast: (text, actions, sticky) =>
+    void toast(text, actions, sticky).classList.add(SAVE_GUARD_TOAST_CLASS),
+});
+
 /** 切换流程的门与闸（M163 的 4.1–4.3；状态机与三动作在 src/vault-switcher.ts，可脱离
- *  DOM 单测）。判据来自 save-controller 的 vaultSwitchBlock（M149 口径原样），提示挂在
- *  守卫提示族上（dirty 清除时由 save.clearGuardToasts 整批撤下）。 */
+ *  DOM 单测）。判据来自 save-controller 的 vaultSwitchBlock（M149 口径原样）。 */
 const switchGate = createVaultSwitchGate({
   block: () => save.vaultSwitchBlock(),
   saveAll: () => save.saveAllDirty(),
   currentName: () => vaultName,
-  notify: (text, actions) => {
-    toast(text, actions, true).classList.add(SAVE_GUARD_TOAST_CLASS);
+  notify: (text, actions) => showGuardPrompt(text, actions),
+  fail: (message) => toast(message),
+});
+
+/** 「未注册目录 + 存在失效注册项」时的两出口浮条（M121/M126 既有形态；M163 r1 P1-1 起两个
+ *  动作在**动作时点**也过 dirty 门——浮条 sticky、可无限期存活，期间产生的修改不许被静默
+ *  丢弃；门在 vault_open_path 提交之前，见 src/vault-switcher.ts 的 createVaultRemapPrompt）。 */
+const remapPrompt = createVaultRemapPrompt({
+  guard: (proceed) => guardVaultSwitch(proceed),
+  // 用普通 sticky 浮条（**不**挂守卫提示族的标识类）：它说的是「这个目录还没注册」，
+  // 与 dirty 无关——挂上族标会让一次成功的保存把它一并撤下，用户手上那条路径确认提示就没了。
+  notify: (text, actions) => void toast(text, actions, true),
+  displayName: (path) => baseName(path),
+  openPath: async (path) => {
+    const opened = await vaultOpenPath(path, true);
+    await applyVault(opened.root, opened.entries, opened.vault_id, false);
+  },
+  remap: async (id, path) => {
+    await vaultRemap(id, path);
   },
   fail: (message) => toast(message),
 });
@@ -502,6 +534,11 @@ editor.onDocChanged(() => {
   if (!session.dirty || !session.preview) return;
   session.preview = false;
   tabs.renderTabs();
+  // 提升即「可持久化集合」多了一个成员（预览标签不入盘，spec「按 vault 持久化标签列表」），
+  // 属一次**集合变化**，必须沿同一条防抖写盘——否则崩溃窗口里这个提升会丢（M163 r1 P2-2）。
+  // 这里不经 syncActiveDocument（那会连 masthead / 大纲 / 树高亮一起重算，而这一步只改了
+  // 一个会话的属性），直接调会话侧的通知口。
+  switcher.sessionChanged();
 });
 
 // DirtyState 防滞留（M107）：后端的 dirty 镜像在 webview 重载（开发者刷新 /
@@ -601,34 +638,18 @@ async function requestRelocate(
 // 目录选择器入口（空态按钮与浮层底部的「新增 vault…」共用）。命中重映射候选时
 //（spec：未注册路径 + 失效注册需显式确认）open_vault 按契约返回空 entries，
 // 此时不得装载——否则用户看到 vault 名已换、树全空的死态（桌面验收缺陷）；
-// 改为 sticky 提示给出两个出口：作为新 vault 打开 / 确认映射到最近期候选。
+// 改为 sticky 提示给出两个出口（两个动作在**动作时点**过 dirty 门，见 remapPrompt）。
 function pickVault(forceNew = false): void {
   vaultOpen(forceNew)
     .then((info) => {
       // null = 用户在目录选择器取消，无错误状态（spec）
       if (!info) return;
       if (info.remap_candidates.length > 0) {
-        const top = info.remap_candidates[0];
-        const name = baseName(info.root);
-        // 确认动作用 vaultOpenPath 直开刚选中的路径，不再弹一次选择器。
-        const reopen = () => vaultOpenPath(info.root, true)
-          .then((opened) => applyVault(opened.root, opened.entries, opened.vault_id, false))
-          .catch((e) => toast(errorMessage(e)));
-        toast(
-          `「${name}」尚未注册为 vault；发现可能已移动的 vault：${top.path}`,
-          [
-            { label: "作为新 vault 打开", run: () => void reopen() },
-            {
-              label: "确认映射到此路径",
-              run: () => void vaultRemap(top.id, info.root)
-                .then(() => reopen())
-                .catch((e) => toast(errorMessage(e))),
-            },
-          ],
-          true,
-        );
+        remapPrompt.present(info);
         return;
       }
+      // 非 remap 成功路径：选择器返回后的微任务里立刻装载，中间没有用户输入窗口（dirty 门
+      // 已在弹选择器之前跑过），不需要在这里再拦一次。
       void applyVault(info.root, info.entries, info.vault_id, false);
     })
     .catch((e) => {

@@ -232,6 +232,10 @@ export function createFileTree(mount: HTMLElement, cb: FileTreeCallbacks): FileT
     caret.textContent = "▾";
     entry.append(name, caret);
     entry.addEventListener("click", () => cb.onOpenVaultSwitcher());
+    // mousedown 不夺焦点（与 .lumir-toc 的指示段同手法）：浮层开着时点入口是一次「关」，
+    // 若这里夺走焦点，浮层会先经 blur 收起、随后的 click 又把它开回来（闪一下 + 假翻一次
+    // aria-expanded）；不夺焦则 click 落在「已开 → toggle 收起」这条路上。
+    entry.addEventListener("mousedown", (event) => event.preventDefault());
     entryEl = entry;
     header.append(entry);
     const ul = document.createElement("ul");

@@ -14,6 +14,8 @@ import type { EditorSession } from "../../src/editor.ts";
 import type { ToastAction, VaultSwitchBlock } from "../../src/save-controller.ts";
 import {
   SESSION_WRITE_DEBOUNCE_MS,
+  createGuardPromptPresenter,
+  createVaultRemapPrompt,
   createVaultSessionStore,
   createVaultSwitcher,
   createVaultSwitchGate,
@@ -444,6 +446,202 @@ test("切换门：切换进行中忽略新的请求；继续一步抛错时只�
 });
 
 // ---------------------------------------------------------------------------
+// remap 浮条的两个出口（M163 r1 P1-1）：动作时点的 dirty 门
+// ---------------------------------------------------------------------------
+
+interface RemapRig {
+  prompt: ReturnType<typeof createVaultRemapPrompt>;
+  calls: string[];
+  notices: Array<{ text: string; actions: ToastAction[] }>;
+  openPaths: string[];
+  remapped: Array<{ id: string; path: string }>;
+  failures: string[];
+  setBlock(block: VaultSwitchBlock | null): void;
+  setSaveAll(result: boolean): void;
+}
+
+function createRemapRig(): RemapRig {
+  let block: VaultSwitchBlock | null = null;
+  let saveAllResult = true;
+  const rig: RemapRig = {
+    prompt: undefined as unknown as ReturnType<typeof createVaultRemapPrompt>,
+    calls: [],
+    notices: [],
+    openPaths: [],
+    remapped: [],
+    failures: [],
+    setBlock: (next) => void (block = next),
+    setSaveAll: (result) => void (saveAllResult = result),
+  };
+  // 门用真品（createVaultSwitchGate），这样「拦下 → 三条出口 → 继续」整条链都被测到。
+  const gate = createVaultSwitchGate({
+    block: () => block,
+    saveAll: async () => saveAllResult,
+    currentName: () => "vault-a",
+    notify: (text, actions) => {
+      rig.calls.push("guard-notify");
+      rig.notices.push({ text, actions });
+    },
+    fail: (message) => void rig.failures.push(message),
+  });
+  rig.prompt = createVaultRemapPrompt({
+    guard: (proceed) => {
+      rig.calls.push("guard");
+      return gate.request(proceed);
+    },
+    notify: (text, actions) => void rig.notices.push({ text, actions }),
+    displayName: (path) => path.slice(path.lastIndexOf("/") + 1),
+    openPath: async (path) => {
+      rig.calls.push("openPath");
+      rig.openPaths.push(path);
+    },
+    remap: async (id, path) => {
+      rig.calls.push("remap");
+      rig.remapped.push({ id, path });
+    },
+    fail: (message) => void rig.failures.push(message),
+  });
+  return rig;
+}
+
+const REMAP_INFO = {
+  root: "/Users/alex/notes-moved",
+  remap_candidates: [{ id: "notes", path: "/Users/alex/notes" }],
+};
+
+test("remap 浮条：干净时两个出口都摆出来，动作直接打开（门在打开之前）", async () => {
+  const rig = createRemapRig();
+  rig.prompt.present(REMAP_INFO);
+  assert.equal(rig.notices.length, 1);
+  assert.equal(
+    rig.notices[0].text,
+    "「notes-moved」尚未注册为 vault；发现可能已移动的 vault：/Users/alex/notes",
+  );
+  assert.deepEqual(
+    rig.notices[0].actions.map((action) => action.label),
+    ["作为新 vault 打开", "确认映射到此路径"],
+  );
+
+  rig.notices[0].actions[0].run();
+  await flush();
+  assert.deepEqual(rig.openPaths, ["/Users/alex/notes-moved"]);
+  assert.deepEqual(rig.calls, ["guard", "openPath"], "门必须在打开之前（判据顺序）");
+
+  // 「确认映射到此路径」：先 remap 再打开
+  const mapped = createRemapRig();
+  mapped.prompt.present(REMAP_INFO);
+  mapped.notices[0].actions[1].run();
+  await flush();
+  assert.deepEqual(mapped.remapped, [{ id: "notes", path: "/Users/alex/notes-moved" }]);
+  assert.deepEqual(mapped.openPaths, ["/Users/alex/notes-moved"]);
+  assert.deepEqual(mapped.calls, ["remap", "guard", "openPath"]);
+});
+
+test("remap 浮条：dirty 时按出口处置才继续（保存并切换 / 放弃修改并切换）", async () => {
+  // 先在干净时摆浮条，拿到两个出口（这是用户手上那份浮条）
+  const rig = createRemapRig();
+  rig.prompt.present(REMAP_INFO);
+  const exits = rig.notices[0].actions;
+
+  // 浮条存活期间产生 dirty
+  rig.setBlock({ dirtyCount: 2, hasUnsaveable: false });
+  rig.calls.length = 0;
+  exits[0].run(); // 「作为新 vault 打开」
+  await flush();
+  assert.deepEqual(rig.openPaths, [], "被拦下时 MUST NOT 打开（否则 editor.reset 静默丢弃修改）");
+  assert.deepEqual(rig.calls, ["guard", "guard-notify"], "门先跑，拦下即给三出口");
+
+  // 「保存并切换」：保存未闭环就不继续
+  const guardNotice = rig.notices.at(-1)!;
+  assert.deepEqual(
+    guardNotice.actions.map((action) => action.label),
+    ["保存并切换", "放弃修改并切换", "取消"],
+  );
+  rig.setSaveAll(false);
+  guardNotice.actions[0].run();
+  await flush();
+  assert.deepEqual(rig.openPaths, [], "保存未闭环不继续切换");
+
+  rig.setSaveAll(true);
+  guardNotice.actions[0].run();
+  await flush();
+  assert.deepEqual(rig.openPaths, ["/Users/alex/notes-moved"]);
+
+  // 「放弃修改并切换」：不经保存直接继续
+  const second = createRemapRig();
+  second.prompt.present(REMAP_INFO);
+  second.setBlock({ dirtyCount: 1, hasUnsaveable: false });
+  second.notices[0].actions[0].run();
+  await flush();
+  assert.deepEqual(second.openPaths, []);
+  second.notices.at(-1)!.actions[1].run();
+  await flush();
+  assert.deepEqual(second.openPaths, ["/Users/alex/notes-moved"]);
+
+  // 「确认映射到此路径」：remap 先落（注册表修正不丢内容），门拦的是重开
+  const mapped = createRemapRig();
+  mapped.prompt.present(REMAP_INFO);
+  mapped.setBlock({ dirtyCount: 1, hasUnsaveable: false });
+  mapped.notices[0].actions[1].run();
+  await flush();
+  assert.deepEqual(mapped.remapped, [{ id: "notes", path: "/Users/alex/notes-moved" }]);
+  assert.deepEqual(mapped.openPaths, [], "门拦的是重开：dirty 时 remap 已落但不开");
+  assert.deepEqual(mapped.calls, ["remap", "guard", "guard-notify"]);
+});
+
+// ---------------------------------------------------------------------------
+// 守卫提示的呈现（M163 r1 P2-1）：同文案的第二次请求必须换新浮条
+// ---------------------------------------------------------------------------
+
+test("守卫提示呈现：先撤下既有浮条，同文案的第二次请求不会复用旧动作（P2-1）", () => {
+  const live = new Map<string, { text: string; actions: ToastAction[] }>();
+  /** 复刻装配层 toast 的 sticky 去重：按文案命中即复用旧元素（新 actions 被丢弃）。 */
+  const toast = (text: string, actions: ToastAction[], sticky: boolean) => {
+    const existing = sticky ? live.get(text) : undefined;
+    if (existing !== undefined) return existing;
+    const el = { text, actions };
+    if (sticky) live.set(text, el);
+    return el;
+  };
+  const present = createGuardPromptPresenter({
+    clearPrevious: () => live.clear(),
+    toast: (text, actions, sticky) => void toast(text, actions, sticky),
+  });
+  const toB: ToastAction = { label: "放弃修改并切换", run: () => {} };
+  const toC: ToastAction = { label: "放弃修改并切换", run: () => {} };
+
+  present("同一句提示", [toB]);
+  assert.equal(live.get("同一句提示")?.actions[0], toB);
+  // 不处置就再点另一个 vault：文案逐字相同（只点名当前 vault + 计数），去重会命中
+  present("同一句提示", [toC]);
+  assert.equal(
+    live.get("同一句提示")?.actions[0],
+    toC,
+    "第二次请求的动作必须换新——否则用户点「放弃修改并切换」会切到上一个目标",
+  );
+});
+
+// ---------------------------------------------------------------------------
+// 会话存储补充（M163 r1 P2-2）：预览→固定的提升属集合变化
+// ---------------------------------------------------------------------------
+
+test("会话存储：预览标签被提升为固定后，下一次变化信号必须把它写进去（P2-2 的语义面）", async () => {
+  const rig = createStoreRig();
+  const promoted = tab("b.md", true);
+  rig.setSessions(tab("a.md"), promoted);
+  rig.setActivePath("a.md");
+  await rig.store.onVaultLoaded("vault-a", []);
+  await rig.store.flush();
+  assert.deepEqual(rig.writes.at(-1)!.tabs, ["a.md"], "预览标签不入盘");
+
+  // 首次输入即固定（M149）：提升后装配层在同一处再报一次集合变化
+  promoted.preview = false;
+  rig.store.sessionChanged();
+  await rig.store.flush();
+  assert.deepEqual(rig.writes.at(-1)!.tabs, ["a.md", "b.md"]);
+});
+
+// ---------------------------------------------------------------------------
 // 浮层：渲染与交互（最小假 DOM——浮层那一层是唯一有 DOM 的代码，这里用替身把它的行为
 // 拉进可复现的断言：渲染哪些行、点击落到哪个请求、键盘游标怎么走、关闭后状态怎么回。
 // 真实渲染的观感仍归视觉门禁与真机手感，不在这一层。）
@@ -552,15 +750,34 @@ class FakeEl {
   }
 }
 
-function installFakeDocument(): void {
+interface FakeDocument {
+  /** 手动派发挂在 document 上的监听（浮层的「点浮层外收起」走这条）。 */
+  fire(type: string, event: FakeEvent): void;
+}
+
+function installFakeDocument(): FakeDocument {
+  const listeners = new Map<string, Array<(event: FakeEvent) => void>>();
   (globalThis as unknown as Record<string, unknown>).document = {
     createElement: (tag: string) => new FakeEl(tag),
-    addEventListener: () => {},
+    addEventListener: (type: string, listener: (event: FakeEvent) => void) => {
+      const list = listeners.get(type) ?? [];
+      list.push(listener);
+      listeners.set(type, list);
+    },
+  };
+  // 浮层的判定用 `target instanceof Node`（与 .lumir-toc 同款）：最小替身里让 Node 由 FakeEl
+  // 顶替，判定的语义（「这个目标是不是元素」）保持不变。
+  (globalThis as unknown as Record<string, unknown>).Node = FakeEl;
+  return {
+    fire: (type, event) => {
+      for (const listener of listeners.get(type) ?? []) listener(event);
+    },
   };
 }
 
 interface SwitcherRig {
   switcher: ReturnType<typeof createVaultSwitcher>;
+  doc: FakeDocument;
   mounts: FakeEl;
   entries: FakeEl[];
   popover(): FakeEl;
@@ -574,12 +791,13 @@ interface SwitcherRig {
 }
 
 function createSwitcherRig(rows: VaultListEntry[]): SwitcherRig {
-  installFakeDocument();
+  const doc = installFakeDocument();
   const mounts = new FakeEl("div");
   const entry = new FakeEl("button");
   let notify: ((rows: VaultListEntry[]) => void) | null = null;
   const rig: SwitcherRig = {
     switcher: undefined as unknown as ReturnType<typeof createVaultSwitcher>,
+    doc,
     mounts,
     entries: [entry],
     popover: () => mounts.children[0],
@@ -770,6 +988,22 @@ test("浮层：↑↓ / ⌃N⌃P 只走可选中行，Enter 切换，当前项�
   assert.equal(rig.focusedEditor, 2);
   // 列表读取失败：只给一条人话提示，不弹空浮层
   assert.deepEqual(rig.warns, []);
+});
+
+test("浮层：点入口不收起（closer 排除入口），点浮层外收起（P2-5）", async () => {
+  const rig = createSwitcherRig([listRow({ id: "notes", path: "/Users/alex/notes" })]);
+  await rig.switcher.onVaultLoaded("notes", []);
+  rig.switcher.toggle();
+  await flush();
+  assert.equal(rig.popover().hidden, false);
+
+  // 入口是「开 → 关」的切换点：点它不该先收起再重开（那会闪一下 + 假翻 aria-expanded）
+  rig.doc.fire("mousedown", { target: rig.entries[0] });
+  assert.equal(rig.popover().hidden, false, "点入口不收起");
+
+  // 点浮层与入口之外：收起
+  rig.doc.fire("mousedown", { target: new FakeEl("div") });
+  assert.equal(rig.popover().hidden, true);
 });
 
 test("listRow helper：摘要与列表行字段同源（tab_count / last_opened_at 直接来自契约）", () => {
