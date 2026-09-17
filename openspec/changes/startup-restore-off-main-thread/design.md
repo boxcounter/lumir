@@ -127,6 +127,14 @@ void refreshVaultStatus();                                                      
 
 恢复进行中还没有 vault 装载，因此：文件树未渲染（无 `.ft-row` 可点）、没有任何标签或文档、编辑器是空态。`openFile`（`src/main.ts:200`）的全部调用面都依赖这三者之一——树点击（`src/main.ts:476`）、文档内链接跟随与一键创建（`src/link-follow.ts:150/177/294`）、保存链路（另存为 `src/save-controller.ts:445`、恢复备份 `:648`）、以及崩溃备份恢复入口（`save.checkRecovery()`，只在 `loadVault` 尾部调用，`src/main.ts:506`）。所以本 change **不需要**为「恢复期间打开文件」加状态守卫；spec 里也只对「打开 vault」定边界。这一条写进 design 是为了审计：将来若新增任何「启动即可用」的打开入口（如会话恢复、最近文件列表），必须先回答它与恢复进行态的关系。
 
+### 4.5 恢复完成时「无标题缓冲」的处置：显式化既有语义
+
+自动恢复完成触发 `loadVault` 时，对**无标题缓冲**（`session.path === undefined`）继承手动打开 vault 的既有语义：**守卫放行、缓冲丢弃**。
+
+- 代码事实：`loadVault` 先过 `save.guardVaultSwitch()`（`src/main.ts:487`），该守卫的脏判据是 `session.path !== undefined && session.dirty`（`src/save-controller.ts:240-247`）——无标题文档不算脏，因此放行；随后 `editor.reset()`（`src/main.ts:496`，实现见 `src/editor.ts:1494`）作废全部标签、只留一个未命名空文档，用户在恢复窗口内敲进无标题缓冲的内容随之消失。
+- 这条语义**不是本 change 引入的**：手动打开 vault 走同一个 `loadVault`、同一个守卫，该语义 Alex 已在 M149 守卫口径下接受（有文件路径的标签之间是切换、不设守卫；无标题文档另有 `openFile` 的显式守卫）。本 change 唯一改变的是它的**可达性**：恢复在 setup 内同步完成时，webview 挂载时 `vault_current` 已是终态，用户没有机会在恢复完成前动编辑器；异步窗口（大 vault 770ms+）把这条路径从「不可能」变成「可达」。
+- 因此本 change 不改变语义、不引入新机制。若 Alex 要收紧（例如「恢复完成时编辑器非空则延迟应用恢复结果」），那是新语义，需在节点 1 明确后另加 requirement；proposal 的「本 change 内的一个裁决点」一节已登记这个边缘，不留给实现期偶遇。
+
 ## 5. 失败路径逐条（行为不变的部分）
 
 | 情形 | 现状（`src-tauri/src/lib.rs:377-402`） | 本 change 之后 |

@@ -22,7 +22,7 @@
 
 - [ ] 3.1 Rust 单测（`src-tauri/src/commands.rs` 的 `mod tests`）：`begin_restore` 置 pending；`finish_restore` 在世代不符时丢弃且不覆盖 `root`/`notice`；一致路径提交并自增；四条结束路径后 pending 必为 false
 - [ ] 3.2 Rust 集成测（`src-tauri/tests/workspace_scenarios.rs`）：用户打开 vault 后到达的过期恢复结果被丢弃，当前 vault 仍是用户那个（可无线程构造：直接调 prepare/commit 与 finish 的两阶段 API）
-- [ ] 3.3 新增真机验收场景 `scripts/acceptance/scenarios/15-startup-restore.md`（`item: 12`）：① 默认 config（`last_vault` = 验收 vault）启动后自动进入 vault、无「恢复中」文案残留（`shot` 证据）；② `last_vault` 指向不存在目录重启后为未打开空态 + 「上次打开的 vault 已不可用」提示 + 「打开 vault」入口存在
+- [ ] 3.3 新增真机验收场景（文件名 / `id` / `item` 三者一致，**号取落地时「待真机验收」列表的实际末位项号**：评审时末位为 15，预计占 **16**；不得复用既有的 10/11/12/13/14——`12-links.md` 已占 `item: 12`，且 `run.mjs:60` 的筛选同时按 `id` 前缀与 `item` 号匹配，重号会让 `node run.mjs 12` 串选两个场景。落地时把本节、5.4 与 `scripts/acceptance/README.md` 三处的号一并改齐）：① 默认 config（`last_vault` = 验收 vault）启动后自动进入 vault、无「恢复中」文案残留（`shot` 证据）；② `last_vault` 指向不存在目录重启后为未打开空态 + 「上次打开的 vault 已不可用」提示 + 「打开 vault」入口存在
 - [ ] 3.4 验收 runner 的 `configWrite`（`scripts/acceptance/lib/execute.mjs:650`）支持覆盖 `last_vault`（缺省保持现状=沿用当前值），供 3.3 的失效路径使用；同步更新 `scripts/acceptance/README.md` 的动作表
 - [ ] 3.5 `tests/visual/scenes/tauri-stub.ts` 的 `vault_current` 桩补 `restore_pending` 字段（含可注入 `true` 的选项）；新增元素级视觉断言 `tests/visual/scenes/startup-restore.spec.ts`：恢复中态与既有空态同布局（`.ft-empty` / `.ft-notice` / 打开按钮），**不新增或更新整页基线**
 - [ ] 3.6 可选证据（非门禁）：用 ~6000 md 的合成 vault（约 45MB）起 dev app，截图记录「首帧（恢复中态）→ 树出现」的先后与耗时，附在证据里供 Alex 判手感
@@ -38,5 +38,6 @@
 - [ ] 5.1 `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` 通过
 - [ ] 5.2 `scripts/gate.sh quick` 全绿（含 bindings 漂移与 tsc）
 - [ ] 5.3 `scripts/gate.sh visual` 全绿；本 change 不更新整页基线，若实现期发现必须更新，先交 Alex 过目再执行 `--update`
-- [ ] 5.4 `node scripts/acceptance/run.mjs --check` 通过后跑 `node scripts/acceptance/run.mjs 15`，全 PASS（证据留在 `test-results/acceptance/`，不入 git）
+- [ ] 5.4 `node scripts/acceptance/run.mjs --check` 通过后，按 3.3 落地时的 `id` 前缀跑该场景（`node scripts/acceptance/run.mjs <该 id>`），全 PASS（证据留在 `test-results/acceptance/`，不入 git）
 - [ ] 5.5 冷启动读数前后对比（本地观察，不作阈值判定）：确认 `LUMIR_READY` 的出现时刻无显著变化（预期不变，本 change 不宣称性能改进）；若 CI 冷启动 median 回退超 40%，按真回归排查，不得调整基线
+- [ ] 5.6 归档前对账一次 design §4.5 显式化过的语义边缘（恢复完成时无标题缓冲继承手动打开语义）：若 Alex 在节点 1 把它收紧，则按新 requirement 改 spec 增量与实现，不得沿用「继承既有语义」口径；未收紧则本项无操作，勾掉即可

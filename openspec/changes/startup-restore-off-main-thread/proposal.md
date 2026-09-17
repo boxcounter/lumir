@@ -40,6 +40,8 @@ Lumir 每次启动都会自动恢复上次的 vault。这件事目前发生在 T
 
 **恢复进行中是否保留「打开 vault」入口**：本 change 选**保留**（用户优先，理由与备选见 design.md §7 A4、§8）。若 Alex 倾向「恢复完成前不出入口」，翻转只落在两处——恢复中态改为不带按钮的空态变体、以及后端世代校验从「防线」降格为「断言」（仍建议保留）。请在节点 1 一并裁掉，避免实现期再回来改口径。
 
+同一次裁决里还有一个**已显式化**的语义边缘：自动恢复完成触发 `loadVault` 时，对无标题缓冲（`path === undefined`）**继承手动打开 vault 的既有语义**（守卫放行、缓冲丢弃，`src/save-controller.ts:240-247` + `src/main.ts:487/496`）。该语义 Alex 已在 M149 守卫口径接受，本 change 不改变它，只把它的**可达性**从不可能变为可达（异步窗口内用户可以往空编辑器里敲字，恢复完成时被抹掉；论证见 design.md §4.5）。若 Alex 想收紧（例如「恢复完成时编辑器非空则延迟应用恢复结果」），也请在节点 1 一并裁——那是新语义，会多出一条 requirement。
+
 ## Non-goals（非目标）
 
 - **不新增 perf 端点、不改阈值 / 门禁模式 / 合同数字 / 滚动基线**。把 `lumir:vault-ready`（前端 `CustomEvent`，`src/main.ts:489`，全仓无消费者）升格为合同端点**不做**——CI 冷启动 harness 只读 stdout，读不到 webview 侧信号（`docs/specs/perf-measurement.md:71` 已明确「headless CI 无法可靠读 webview console」），要覆盖它必须先造一条后端 stdout 通道，那是新端点=新合同，按既有口径应由后续 OpenSpec change 承载。
