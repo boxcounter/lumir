@@ -69,6 +69,7 @@
 - **辅口径（归因用）**：app 自报的 `elapsed_ms`（`src-tauri/src/ready.rs`：从 `run()` 入口到 Tauri setup 完成，即 webview 创建后、事件循环接管前）。两者之差 ≈ exec/动态链接/harness 调度开销，校准期用于判断瓶颈在进程装载还是 Tauri 初始化。
 - ready 信号契约见 `src-tauri/src/ready.rs` 文档注释：`LUMIR_READY {"event":"ready","elapsed_ms":<f64>,"pid":<u32>,"ts_unix_ms":<u64>}`，同时写 `$TMPDIR/lumir-ready-<pid>`。harness 匹配 stdout 行首 `LUMIR_READY ` 前缀。
 - 明确排除：前端首屏挂载（webview 侧 `performance.now()` 打点，见 `src/main.ts`）暂不入端点——headless CI 无法可靠读 webview console。首屏挂载纳入端点是校准期的候选修订项。
+- **ready 不含也不等待 `last_vault` 自动恢复**（M159 裁决，change startup-restore-off-main-thread）：该端点的语义是「事件循环可接管」，不是「用户首帧」——`LUMIR_READY` 在恢复任务启动**之前**打印（`src-tauri/src/lib.rs` 的 setup：`emit_ready` → `start_restore`），恢复耗时（真实 vault ~125ms、4× 规模 ~770ms）不经此端点，也 **MUST NOT** 用「把该标记移到恢复之后」的方式让门禁覆盖它——那是拿指标换真实体验：延迟一分不减，只把延迟记进数里。恢复耗时若需要可见性，走诊断事件（独立 change），不搭在合同端点上。
 
 ### 工具链
 

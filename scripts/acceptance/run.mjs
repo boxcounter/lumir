@@ -153,11 +153,13 @@ async function main() {
         pid: handle.pid,
         evidence,
         repoRoot: repoRoot(),
-        restartApp: async () => {
+        restartApp: async ({ requireVault = true } = {}) => {
           await stopApp(handle);
           handle = await launchApp({ logFile: path.join(root, "app.log") });
           await sleep(1200);
-          await waitAppReady(cu, handle.pid);
+          // requireVault: false = 本步期待「未打开空态」（如 last_vault 失效），就绪门放宽为
+          // 「树 pane 任一形态 + 编辑器在位」。默认仍是严格门（树里有 .md 行）。
+          await waitAppReady(cu, handle.pid, { requireVault });
           const fg2 = await tryForeground(cu, handle.pid);
           ctx.foregroundNote = `重启前台焦点：${fg2.frontmost ? "已取得" : `未取得（pid=${fg2.frontPid ?? "?"}）`}`;
           ctx.pid = handle.pid;

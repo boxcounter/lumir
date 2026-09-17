@@ -651,12 +651,16 @@ async function doAction(step, { ctx, cu, scenario, vars, pid, evidence }) {
       const { readConfig, writeConfig } = await import("./app.mjs");
       const cur = await readConfig().catch(() => ({}));
       const next = {
-        lastVault: cur.last_vault ?? (await import("./util.mjs")).vaultDir(),
+        // lastVault 缺省沿用当前值（缺省行为与加固前逐字一致）；显式给 step.lastVault 才覆盖
+        // ——启动恢复的失效路径要把它指向一个不存在的目录（M159 的 16-startup-restore）。
+        lastVault: step.lastVault ?? cur.last_vault ?? (await import("./util.mjs")).vaultDir(),
         mode: cur.editor?.mode ?? "md",
         keys: step.keys !== undefined ? step.keys : cur.keys,
       };
       await writeConfig(next);
-      if (step.restart !== false) await ctx.restartApp();
+      // requireVault: false 只对本步的重启生效（该步期待「未打开空态」，就绪门里「树里有
+      // .md 行」这一条必然不成立）；非重启场景照旧走严格门。
+      if (step.restart !== false) await ctx.restartApp({ requireVault: step.requireVault !== false });
       return next;
     }
     case "clickInNode": {
@@ -715,7 +719,7 @@ async function doAction(step, { ctx, cu, scenario, vars, pid, evidence }) {
       return file;
     }
     case "restart":
-      await ctx.restartApp();
+      await ctx.restartApp({ requireVault: step.requireVault !== false });
       if (ctx.foregroundNote) evidence.record({ kind: "note", text: ctx.foregroundNote });
       return;
     default:

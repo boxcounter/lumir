@@ -109,6 +109,9 @@ pub struct VaultStatus {
     pub vault: Option<VaultInfo>,
     /// 人话提示（如 last_vault 恢复失败）；无提示为 null。前端可直接展示。
     pub notice: Option<String>,
+    /// 启动恢复是否仍在进行（change startup-restore-off-main-thread）：true = 恢复线程仍
+    /// 在跑（此时 `vault` 必为 null）；false = 终态（已打开，或未打开 + 可选 notice）。
+    pub restore_pending: bool,
 }
 
 /// 进程内 vault 状态：同一时刻只有一个打开的 vault（spec：重复打开替换）。
@@ -125,6 +128,11 @@ struct VaultInner {
     notice: Option<String>,
     /// wikilink 正反链索引（ADR 0002 §3）：vault 打开时建立，随 watch 增量维护。
     graph: LinkGraph,
+    /// 打开世代号（M159）：每次**成功**提交 +1（启动为 0）。启动恢复在 `begin_restore`
+    /// 记下当时的世代，提交时比对——用户抢先成功打开的 vault 优先，过期恢复结果整包丢弃。
+    generation: u64,
+    /// 启动恢复进行态（终态口径见 [`VaultStatus::restore_pending`]）。
+    restore_pending: bool,
 }
 
 impl Default for VaultState {
@@ -135,10 +143,67 @@ impl Default for VaultState {
     }
 }
 
+impl VaultInner {
+    /// 提交一次打开：**唯一**写 root/watcher/graph 的入口。先起好新 watcher 再替换，
+    /// 旧 watcher 随字段覆盖被 drop、监听停止；成功提交即世代 +1（M159 让位规则）。
+    fn commit(&mut self, prepared: PreparedVaultOpen) {
+        let PreparedVaultOpen {
+            root,
+            watcher,
+            graph,
+            ..
+        } = prepared;
+        self.watcher = Some(watcher);
+        self.root = Some(root);
+        self.notice = None;
+        self.graph = graph;
+        self.generation += 1;
+    }
+}
+
 impl VaultState {
-    /// 供 lib.rs 启动恢复写入提示。
-    pub fn set_notice(&self, notice: String) {
-        self.inner.lock().expect("vault state poisoned").notice = Some(notice);
+    /// 进入恢复进行态并记下当前世代（启动恢复线程的起点）。
+    pub fn begin_restore(&self) -> u64 {
+        let mut inner = self.inner.lock().expect("vault state poisoned");
+        inner.restore_pending = true;
+        inner.generation
+    }
+
+    /// 启动恢复的**唯一**提交点（design §3.2）：单次持锁比对世代与「是否已有 vault」，
+    /// 不符即整包丢弃——含失败 notice（用户已成功打开的 vault 不该被上次 vault 的提示
+    /// 污染）。无论哪条分支都置 `restore_pending = false`；返回终局是否被应用。
+    pub fn finish_restore(&self, generation: u64, outcome: RestoreOutcome) -> bool {
+        let mut inner = self.inner.lock().expect("vault state poisoned");
+        inner.restore_pending = false;
+        if inner.generation != generation || inner.root.is_some() {
+            return false;
+        }
+        match outcome {
+            RestoreOutcome::Opened(prepared) => inner.commit(*prepared),
+            RestoreOutcome::Notice(notice) => inner.notice = Some(notice),
+            RestoreOutcome::Idle => {}
+        }
+        true
+    }
+
+    /// 当前状态快照（`vault_current` command 与测试共用）：vault 非空时按 root 重新对账
+    /// 稳定身份并全量枚举。
+    pub fn status(&self) -> Result<VaultStatus, CommandError> {
+        let inner = self.inner.lock().expect("vault state poisoned");
+        let vault = match &inner.root {
+            Some(root) => Some(VaultInfo {
+                vault_id: crate::workspaces::reconcile_vault(root)?.id,
+                root: root.display().to_string(),
+                entries: fs_io::scan_workspace(root)?,
+                remap_candidates: vec![],
+            }),
+            None => None,
+        };
+        Ok(VaultStatus {
+            vault,
+            notice: inner.notice.clone(),
+            restore_pending: inner.restore_pending,
+        })
     }
 
     fn root(&self) -> Result<PathBuf, CommandError> {
@@ -193,25 +258,44 @@ impl VaultState {
     }
 }
 
-/// 打开 vault 的公共路径（vault_open command 与 lib.rs 启动恢复共用）：
-/// 全量枚举成功后才替换当前 vault、停旧 watch、起新 watch（spec：替换语义）。
-pub fn open_vault(
+/// 打开 vault 的第一阶段（M159 两阶段拆分）：全部 IO 与副作用——remap 门、注册表对账、
+/// 起 watch、全量枚举、建索引——都在这里完成，**不改写 `VaultState`**。未提交即 drop 的
+/// watcher 等于不监听，所以「准备失败 / 被丢弃」都不会留下半个打开态。
+pub struct PreparedVaultOpen {
+    /// vault 根目录绝对路径。
+    pub root: PathBuf,
+    /// 稳定 vault 身份（`reconcile_vault` 的结果）。
+    pub vault_id: String,
+    pub entries: Vec<FsEntry>,
+    /// 提交时随 [`VaultInner::commit`] 接管；提前 drop 即停止监听。
+    pub watcher: VaultWatcher,
+    /// 全量枚举结果建出的链接索引。
+    pub graph: LinkGraph,
+}
+
+/// [`prepare_vault_open`] 的两种结果：真正备好的打开，或 remap 候选短路（**没有**打开
+/// 任何 vault，行为与拆分前逐字一致）。
+pub enum PreparedOpen {
+    Remap {
+        root: PathBuf,
+        candidates: Vec<crate::workspaces::VaultWorkspace>,
+    },
+    /// Boxed：`PreparedVaultOpen` 比 Remap 分支大一个数量级（clippy::large_enum_variant）。
+    Ready(Box<PreparedVaultOpen>),
+}
+
+/// 打开 vault 的第一阶段实现（见 [`PreparedVaultOpen`]）。
+pub fn prepare_vault_open(
     app: &tauri::AppHandle,
-    state: &VaultState,
     root: PathBuf,
     force_new: bool,
-) -> Result<VaultInfo, CommandError> {
+) -> Result<PreparedOpen, CommandError> {
     // 已注册路径直接打开，不受 remap 门影响（M121 修复：幽灵注册项曾拦停
     // 已注册 vault）。门判定只读——reconcile_vault 对未注册路径有注册 side effect，
     // 不能用来探测「目标未注册」。
     if !force_new {
         if let Some(candidates) = crate::workspaces::remap_gate(&root)? {
-            return Ok(VaultInfo {
-                vault_id: candidates[0].id.clone(),
-                root: root.display().to_string(),
-                entries: vec![],
-                remap_candidates: candidates,
-            });
+            return Ok(PreparedOpen::Remap { root, candidates });
         }
     }
     // Register/reconcile stable vault identity before opening.
@@ -231,18 +315,73 @@ pub fn open_vault(
     let entries = fs_io::scan_workspace(&root)?;
     watcher.seed(entries.iter().map(|e| e.path.clone()));
     let graph = VaultState::build_graph(&root, &entries);
-    let mut inner = state.inner.lock().expect("vault state poisoned");
-    // 先起好新 watcher 再替换；旧 watcher 随字段覆盖被 drop，监听停止
-    inner.watcher = Some(watcher);
-    inner.root = Some(root.clone());
-    inner.notice = None;
-    inner.graph = graph;
-    Ok(VaultInfo {
+    Ok(PreparedOpen::Ready(Box::new(PreparedVaultOpen {
+        root,
         vault_id: workspace.id,
-        root: root.display().to_string(),
         entries,
-        remap_candidates: vec![],
-    })
+        watcher,
+        graph,
+    })))
+}
+
+/// 打开 vault 的第二阶段：单次持锁提交，返回是否提交（prepare 的产物被 `commit` 接管后
+/// 其 watch 随之生效）。`expect_generation` 为 `Some` 时先比对世代——启动恢复用它让位给
+/// 用户抢先成功打开的 vault；不符即返回 `false` 且零副作用（prepared 被 drop = 不起监听）。
+pub fn commit_vault_open(
+    state: &VaultState,
+    prepared: PreparedVaultOpen,
+    expect_generation: Option<u64>,
+) -> bool {
+    let mut inner = state.inner.lock().expect("vault state poisoned");
+    if let Some(expected) = expect_generation {
+        if inner.generation != expected {
+            return false;
+        }
+    }
+    inner.commit(prepared);
+    true
+}
+
+/// 启动恢复的终局（design §3.2/§5）：由恢复线程在提交前算出，交
+/// [`VaultState::finish_restore`] 单次持锁裁决应用或整体丢弃。
+pub enum RestoreOutcome {
+    /// 恢复成功：提交已备好的打开结果。
+    Opened(Box<PreparedVaultOpen>),
+    /// 以人话提示结束（路径失效 / 配置加载失败 / 打开失败 / remap 候选）。
+    Notice(String),
+    /// 无 `last_vault`：终态是「未打开且无提示」，不写任何状态。
+    Idle,
+}
+
+/// 打开 vault 的公共路径（`vault_open` / `vault_open_path` 两个 command 共用）：
+/// 「prepare + 无条件 commit」等价于 M159 之前的单函数实现——全量枚举成功后才替换当前
+/// vault、停旧 watch、起新 watch（spec：替换语义），remap 候选短路返回行为不变。
+pub fn open_vault(
+    app: &tauri::AppHandle,
+    state: &VaultState,
+    root: PathBuf,
+    force_new: bool,
+) -> Result<VaultInfo, CommandError> {
+    match prepare_vault_open(app, root, force_new)? {
+        PreparedOpen::Remap { root, candidates } => Ok(VaultInfo {
+            vault_id: candidates[0].id.clone(),
+            root: root.display().to_string(),
+            entries: vec![],
+            remap_candidates: candidates,
+        }),
+        PreparedOpen::Ready(prepared) => {
+            let prepared = *prepared;
+            let info = VaultInfo {
+                vault_id: prepared.vault_id.clone(),
+                root: prepared.root.display().to_string(),
+                entries: prepared.entries.clone(),
+                remap_candidates: vec![],
+            };
+            // expect_generation 为 None：用户主动打开无条件提交（与拆分前等价）。
+            commit_vault_open(state, prepared, None);
+            Ok(info)
+        }
+    }
 }
 
 /// last_vault 写回（配置即数据纪律，ADR 0002 §5）：
@@ -370,23 +509,10 @@ pub fn vault_open_path(
     Ok(info)
 }
 
-/// 启动后查询当前 vault 状态（含恢复失败的人话提示）。
+/// 启动后查询当前 vault 状态（含恢复进行态与恢复失败的人话提示）。
 #[tauri::command]
 pub fn vault_current(state: tauri::State<'_, VaultState>) -> Result<VaultStatus, CommandError> {
-    let inner = state.inner.lock().expect("vault state poisoned");
-    let vault = match &inner.root {
-        Some(root) => Some(VaultInfo {
-            vault_id: crate::workspaces::reconcile_vault(root)?.id,
-            root: root.display().to_string(),
-            entries: fs_io::scan_workspace(root)?,
-            remap_candidates: vec![],
-        }),
-        None => None,
-    };
-    Ok(VaultStatus {
-        vault,
-        notice: inner.notice.clone(),
-    })
+    state.status()
 }
 
 /// 全量重扫当前 vault（前端按需调用；watch 期间常规刷新走增量事件）。
@@ -880,5 +1006,240 @@ mod tests {
         assert!(!remember_last_vault_to(&bad, Path::new("/tmp/vault")));
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // -----------------------------------------------------------------------
+    // M159：启动恢复的两阶段状态机（begin/finish_restore + commit_vault_open）
+    //
+    // 这些测试不需要 AppHandle：`fs_io::watch` 只依赖目录与回调，因此 prepared 可以直接
+    // 造出来，世代让位规则无线程即可覆盖（tasks 3.1/3.2 的判定面）。
+    // -----------------------------------------------------------------------
+
+    /// 恢复状态机测试用的临时 vault（Drop 时删除；沿用「无 tempfile 依赖」的既有纪律）。
+    struct TempVault(PathBuf);
+
+    impl TempVault {
+        fn new(tag: &str) -> Self {
+            let path = std::env::temp_dir().join(format!(
+                "lumir-vault-restore-test-{}-{tag}",
+                std::process::id()
+            ));
+            std::fs::create_dir_all(&path).expect("create temp vault");
+            Self(path)
+        }
+
+        fn path(&self) -> PathBuf {
+            self.0.clone()
+        }
+    }
+
+    impl Drop for TempVault {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    /// 已备好的打开结果（prepare 的产物）。状态机测试不关心 entries/graph——提交只是搬移
+    /// 它们，因此取空。
+    fn prepared(vault: &TempVault) -> PreparedVaultOpen {
+        let root = vault.path();
+        PreparedVaultOpen {
+            root: root.clone(),
+            vault_id: "test-vault".into(),
+            entries: vec![],
+            watcher: fs_io::watch(&root, |_| {}).expect("watch temp vault"),
+            graph: LinkGraph::new(),
+        }
+    }
+
+    fn root_of(state: &VaultState) -> Option<PathBuf> {
+        state
+            .inner
+            .lock()
+            .expect("vault state poisoned")
+            .root
+            .clone()
+    }
+
+    fn notice_of(state: &VaultState) -> Option<String> {
+        state
+            .inner
+            .lock()
+            .expect("vault state poisoned")
+            .notice
+            .clone()
+    }
+
+    fn pending_of(state: &VaultState) -> bool {
+        state
+            .inner
+            .lock()
+            .expect("vault state poisoned")
+            .restore_pending
+    }
+
+    fn generation_of(state: &VaultState) -> u64 {
+        state.inner.lock().expect("vault state poisoned").generation
+    }
+
+    /// M159 3.1：`begin_restore` 置进行态，并把「此刻的世代」交给恢复任务作提交比对基准。
+    #[test]
+    fn begin_restore_marks_pending_and_reports_current_generation() {
+        let state = VaultState::default();
+        assert!(!pending_of(&state));
+        assert_eq!(state.begin_restore(), 0);
+        assert!(pending_of(&state));
+
+        // 用户先打开过 vault：恢复记下的是跃迁之后的世代
+        let a = TempVault::new("begin-a");
+        assert!(commit_vault_open(&state, prepared(&a), None));
+        assert_eq!(state.begin_restore(), 1);
+        assert!(pending_of(&state));
+    }
+
+    /// M159 3.1：世代一致时提交：写 root、清 notice、世代 +1、进行态清零。
+    #[test]
+    fn finish_restore_commits_and_bumps_generation_on_matching_generation() {
+        let state = VaultState::default();
+        let a = TempVault::new("finish-ok");
+        let generation = state.begin_restore();
+        assert!(state.finish_restore(generation, RestoreOutcome::Opened(Box::new(prepared(&a)))));
+        assert_eq!(root_of(&state), Some(a.path()));
+        assert_eq!(notice_of(&state), None);
+        assert_eq!(generation_of(&state), 1);
+        assert!(!pending_of(&state));
+    }
+
+    /// M159 3.1/3.2：用户抢先成功打开 B 后到达的**成功**恢复结果被整体丢弃，
+    /// 当前 vault 仍是用户那个（spec「恢复结果不覆盖用户已打开的 vault」）。
+    #[test]
+    fn finish_restore_discards_stale_success_and_keeps_user_vault() {
+        let state = VaultState::default();
+        let a = TempVault::new("stale-a");
+        let b = TempVault::new("stale-b");
+        let generation = state.begin_restore();
+        assert!(commit_vault_open(&state, prepared(&b), None)); // 用户抢先成功打开 B
+        assert!(!state.finish_restore(generation, RestoreOutcome::Opened(Box::new(prepared(&a)))));
+        assert_eq!(root_of(&state), Some(b.path())); // 不是恢复给的 A
+        assert_eq!(generation_of(&state), 1); // 丢弃不产生世代跃迁
+        assert!(!pending_of(&state));
+    }
+
+    /// M159 3.1：过期**失败**路径的提示同样被丢弃——用户已打开的 vault 不该被上次 vault
+    /// 的失败提示污染（让位是整包的，不是只让 vault）。
+    #[test]
+    fn finish_restore_discards_stale_notice() {
+        let state = VaultState::default();
+        let b = TempVault::new("stale-notice");
+        let generation = state.begin_restore();
+        assert!(commit_vault_open(&state, prepared(&b), None));
+        assert!(!state.finish_restore(
+            generation,
+            RestoreOutcome::Notice("上次打开的 vault 已不可用：/gone".into())
+        ));
+        assert_eq!(notice_of(&state), None);
+        assert_eq!(root_of(&state), Some(b.path()));
+        assert!(!pending_of(&state));
+    }
+
+    /// M159 3.1：世代一致时提示路径写入 notice，且不碰 root 与世代（未打开任何 vault 的终态）。
+    #[test]
+    fn finish_restore_applies_notice_without_touching_vault() {
+        let state = VaultState::default();
+        let generation = state.begin_restore();
+        assert!(state.finish_restore(
+            generation,
+            RestoreOutcome::Notice("配置加载失败：坏配置".into())
+        ));
+        assert_eq!(notice_of(&state), Some("配置加载失败：坏配置".into()));
+        assert_eq!(root_of(&state), None);
+        assert_eq!(generation_of(&state), 0);
+        assert!(!pending_of(&state));
+    }
+
+    /// M159 3.1：四条结束路径（成功 / 无 last_vault / 提示 / 过期丢弃）走完，`restore_pending`
+    /// 必为 false——否则界面会永远停在「恢复中」。
+    #[test]
+    fn restore_pending_clears_on_every_end_path() {
+        // 成功
+        let opened = VaultState::default();
+        let a = TempVault::new("paths-opened");
+        let generation = opened.begin_restore();
+        opened.finish_restore(generation, RestoreOutcome::Opened(Box::new(prepared(&a))));
+        assert!(!pending_of(&opened));
+
+        // 无 last_vault（Idle：不写任何状态）
+        let idle = VaultState::default();
+        let generation = idle.begin_restore();
+        assert!(idle.finish_restore(generation, RestoreOutcome::Idle));
+        assert!(!pending_of(&idle));
+        assert_eq!(root_of(&idle), None);
+        assert_eq!(notice_of(&idle), None);
+
+        // 提示（路径失效 / 配置加载失败 / 打开失败）
+        let noticed = VaultState::default();
+        let generation = noticed.begin_restore();
+        noticed.finish_restore(
+            generation,
+            RestoreOutcome::Notice("恢复上次 vault 失败：坏了".into()),
+        );
+        assert!(!pending_of(&noticed));
+
+        // 过期丢弃（用户抢先成功打开）
+        let stale = VaultState::default();
+        let b = TempVault::new("paths-stale");
+        let generation = stale.begin_restore();
+        assert!(commit_vault_open(&stale, prepared(&b), None));
+        assert!(!stale.finish_restore(generation, RestoreOutcome::Idle));
+        assert!(!pending_of(&stale));
+    }
+
+    /// M159 3.1：`commit_vault_open` 的世代比对不符即拒绝，零副作用（prepared 被丢弃、
+    /// 世代不跃迁、当前 vault 不动）。
+    #[test]
+    fn commit_vault_open_rejects_mismatched_generation() {
+        let state = VaultState::default();
+        let a = TempVault::new("commit-a");
+        let b = TempVault::new("commit-b");
+        let generation = state.begin_restore();
+        assert!(commit_vault_open(&state, prepared(&b), None));
+        assert!(!commit_vault_open(&state, prepared(&a), Some(generation)));
+        assert_eq!(root_of(&state), Some(b.path()));
+        assert_eq!(generation_of(&state), 1);
+    }
+
+    /// M159 3.1：用户 picker 取消 / 打开失败都不提交，世代不变——恢复结果因此照常生效。
+    /// 前端「只有成功装载才让位」与后端「失败不产生世代跃迁」在这一条上对称。
+    #[test]
+    fn restore_still_applies_when_user_open_did_not_commit() {
+        let state = VaultState::default();
+        let a = TempVault::new("no-commit-a");
+        let generation = state.begin_restore();
+        // 取消 / 打开异常：没有任何提交，世代仍是恢复记下的那个
+        assert!(state.finish_restore(generation, RestoreOutcome::Opened(Box::new(prepared(&a)))));
+        assert_eq!(root_of(&state), Some(a.path()));
+    }
+
+    /// M159：`vault_current` 的取值口（[`VaultState::status`]）如实报出进行态与终态。
+    #[test]
+    fn status_reports_restore_pending_then_terminal() {
+        let state = VaultState::default();
+        assert!(!state.status().unwrap().restore_pending);
+
+        let generation = state.begin_restore();
+        let pending = state.status().unwrap();
+        assert!(pending.restore_pending);
+        assert!(pending.vault.is_none());
+
+        state.finish_restore(
+            generation,
+            RestoreOutcome::Notice("上次打开的 vault 已不可用：/gone".into()),
+        );
+        let terminal = state.status().unwrap();
+        assert!(!terminal.restore_pending);
+        assert_eq!(
+            terminal.notice.as_deref(),
+            Some("上次打开的 vault 已不可用：/gone")
+        );
     }
 }
