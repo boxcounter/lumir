@@ -28,4 +28,5 @@
 - [x] 4.2 `pnpm exec tsc --noEmit` 与 `tests/visual` 的 tsc（`../../node_modules/.bin/tsc --noEmit`）通过。
 - [x] 4.3 视觉回归全绿：`LUMIR_VISUAL_PORT=4273 scripts/visual/run.sh` 217/217；`cargo fmt --check` 与 `git diff --exit-code -- src/bindings/`（bindings 漂移）通过。
 - [x] 4.4 node 直取 legacy parser + `highlightTree` 的对照实验：修前键只带 string 且打印 `Unknown highlighting tag property`，修后键带 string + propertyName，值与其它 token 不变；spread 出的 parser 的 `token`/`startState` 与原型同一函数引用。
-- [ ] 4.5 `scripts/gate.sh quick` 的 cargo 两项（clippy / cargo test）**未跑**：磁盘可用仅 1.4 GiB，一次 debug 构建按本仓经验需 2–3G，按 [REVIEW.md](../../../REVIEW.md) 第 12 条的防线不发起（半截 target 不回血，会连带阻塞并行 worktree）。本 mission 改动面为纯 TS，未触碰 Rust 与 bindings；覆盖缺口已在 review-request 里如实声明。
+- [x] 4.5 `scripts/gate.sh quick` 的 cargo 两项按 **CI 原口径**通过（`cargo clippy --all-targets --manifest-path src-tauri/Cargo.toml -- -D warnings`、`cargo test --manifest-path src-tauri/Cargo.toml`，无 debuginfo / 增量口径偏离；clippy 日志自证 `Finished \`dev\` profile [unoptimized + debuginfo]`）：clippy 退出码 0、cargo test **116 项全通过**（97+2+6+11，0 failed / 0 panicked）；`cargo test` 之后按 gate.sh 的次序重跑 `git diff --exit-code -- src/bindings/` 仍为 0 变更（ts-rs 重导出没有改写 bindings）。冷构建在本 worktree 从零起（target 0 → 2.0G），全程带 <500M 磁盘水位守护（未触发）。日志：`/tmp/m147-cargo-logs/{clippy,test}.log`。
+  - 说明：首次尝试时磁盘可用仅 1.4 GiB，cargo 两项暂时挂起（见 review-request 的覆盖声明）；tower 清出空间后的补跑记录见本 change 的 review 往返消息。
