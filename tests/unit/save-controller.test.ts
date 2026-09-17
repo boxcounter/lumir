@@ -54,19 +54,55 @@ test("guard：无路径 / 无落盘基准 / 有基准三种 dirty 给不同出�
   stopTimers(rig);
 });
 
-test("guardVaultSwitch：任一标签有未保存修改就拦下并点名该标签", () => {
+test("vaultSwitchBlock：任一标签有未保存修改就给判据，无脏标签返回 null（判据不弹提示）", () => {
   const rig = createRig();
   rig.editor.open("a.md", "# A");
   rig.controller.noteOpened("a.md", "rev-1");
   rig.editor.open("b.md", "# B");
   rig.controller.noteOpened("b.md", "rev-1");
-  assert.equal(rig.controller.guardVaultSwitch(), true);
+  assert.equal(rig.controller.vaultSwitchBlock(), null);
 
-  // 后台标签脏也照样拦住切 vault（切 vault 会把全部标签一起作废）
+  // 后台标签脏也照样计入（切 vault 会把全部标签一起作废，判据是全体）
   rig.editor.edit("a.md", "# A 改");
-  assert.equal(rig.controller.guardVaultSwitch(), false);
-  assert.match(rig.toasts.live()[0].text, /「a.md」/);
-  assert.match(rig.toasts.live()[0].text, /切换 vault/);
+  assert.deepEqual(rig.controller.vaultSwitchBlock(), { dirtyCount: 1, hasUnsaveable: false });
+  // 判据只给信息：提示与三条出口摆在拦下它的地方（装配层），这里零 toast
+  assert.equal(rig.toasts.live().length, 0);
+
+  // 无落盘基准的脏标签（非 md）标出来：「保存并切换」那条出口给不出来
+  rig.editor.open("notes.txt", "纯文本", { mode: "code" });
+  rig.editor.edit("notes.txt", "纯文本改");
+  assert.deepEqual(rig.controller.vaultSwitchBlock(), { dirtyCount: 2, hasUnsaveable: true });
+  stopTimers(rig);
+});
+
+test("saveAllDirty：逐个保存全部可保存的脏标签，未闭环返回 false", async () => {
+  const rig = createRig();
+  rig.backend.handle("document_save", (args) => `rev-2-${args.path}`);
+  rig.editor.open("a.md", "# A");
+  rig.controller.noteOpened("a.md", "rev-1");
+  rig.editor.open("b.md", "# B");
+  rig.controller.noteOpened("b.md", "rev-1");
+  rig.editor.edit("a.md", "# A 改");
+  rig.editor.edit("b.md", "# B 改");
+
+  assert.equal(await rig.controller.saveAllDirty(), true);
+  assert.deepEqual(rig.backend.argsOf("document_save").map((args) => args.path), ["a.md", "b.md"]);
+  assert.equal(rig.editor.handle.sessionForPath("a.md")!.dirty, false);
+  assert.equal(rig.editor.handle.sessionForPath("b.md")!.dirty, false);
+
+  // 不可保存的脏标签：给不出保存路径 → 仍然算未闭环（调用方据此不切换）
+  rig.editor.open("notes.txt", "纯文本", { mode: "code" });
+  rig.editor.edit("notes.txt", "纯文本改");
+  assert.equal(await rig.controller.saveAllDirty(), false);
+
+  // 冲突：未闭环，且提示与出口由保存链路给出（不在切换流程里另造一套）
+  rig.editor.handle.markCleanOf("notes.txt", "纯文本改");
+  rig.backend.handle("document_save", () => {
+    throw commandError("document_conflict", "磁盘上的版本更新");
+  });
+  rig.editor.edit("a.md", "# A 又改");
+  assert.equal(await rig.controller.saveAllDirty(), false);
+  assert.match(rig.toasts.live().at(-1)!.text, /保存冲突/);
   stopTimers(rig);
 });
 

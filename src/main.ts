@@ -2,7 +2,7 @@ import { createShell } from "./shell";
 import { createEditor } from "./editor";
 import { applyKeyOverrides, KEY_BINDINGS, Keymap } from "./keys";
 import type { CommandRunner, CommandRuntime, KeyBinding, KeyOverrides } from "./keys";
-import { createFileTree } from "./tree";
+import { baseName, createFileTree, openKind } from "./tree";
 import {
   configGet,
   errorMessage,
@@ -14,12 +14,23 @@ import {
   onQuitBlocked,
   onVaultRestoreFinished,
   vaultCurrent,
+  vaultList,
   vaultOpen,
   vaultOpenPath,
   vaultRemap,
+  vaultSessionGet,
+  vaultSessionPut,
 } from "./ipc";
-import { createSaveController } from "./save-controller";
+import { createSaveController, SAVE_GUARD_TOAST_CLASS } from "./save-controller";
 import { createToc } from "./toc";
+import {
+  createGuardPromptPresenter,
+  createVaultRemapPrompt,
+  createVaultSwitcher,
+  createVaultSwitchGate,
+  samePath,
+} from "./vault-switcher";
+import type { VaultSwitcherHandle } from "./vault-switcher";
 // M151：名字听不出归属的三块能力各自的模块（见各处装配点与模块头注释）。
 // link-follow（解析缓存 + 链接跟随）、tabs（标签栏 DOM）、bindings-panel（键位查看面板）。
 import { createLinkFollow } from "./link-follow";
@@ -27,6 +38,8 @@ import { createTabs } from "./tabs";
 import { createBindingsPanel } from "./bindings-panel";
 import { logEvent, sampleCallback } from "./diagnostics";
 import type { FsEntry } from "./bindings/FsEntry";
+import type { VaultInfo } from "./bindings/VaultInfo";
+import type { VaultListEntry } from "./bindings/VaultListEntry";
 import { extensionOf, mimeTypeOf, resolveByNameUnique } from "./preview/attachments";
 import { openSearch } from "./search";
 import "./style.css";
@@ -54,6 +67,10 @@ let vaultLoaded = false;
  *  拉取），两者可能同时到达——同一个 vault 的重复响应只装载一次，避免重复走一遍
  *  装载副作用（编辑器整批复位、崩溃备份入口再弹一次）。 */
 let loadedRoot: string | undefined;
+/** 当前 vault 的显示名（= 目录 basename，M163）：masthead、切换器列表的当前项与 dirty
+ *  守卫提示都读它。唯一赋值点是 applyVault——与 mastheadVault.textContent 同一次赋值，
+ *  不各存一份派生物。 */
+let vaultName = "";
 
 // 附件 provider：文件名匹配走 vault 索引（add-vault-workspace 裁决点 F），
 // 字节读取走 ipc 的 fsReadAttachment 封装（裁决点 A，invoke + base64）。
@@ -130,7 +147,9 @@ const save = createSaveController({
   toast,
   // intent 原样转发：装配层是唯一知道「落到哪个标签」的地方（save-controller 只在
   // 另存为新文件 / 恢复崩溃备份两条链路上指定 "current"）。
-  openFile: (path, kind, intent) => openFile(path, kind, intent),
+  openFile: async (path, kind, intent) => {
+    await openFile(path, kind, intent);
+  },
   invalidateResolve: () => linkFollow.invalidate(),
   showEditor: () => showEditor(),
   isNoticeHidden: () => notice.hidden,
@@ -170,6 +189,82 @@ const tabs = createTabs({
   syncActiveDocument: () => syncActiveDocument(),
 });
 
+// ---------------------------------------------------------------------------
+// 多 vault 切换器（M163，change multi-vault-workspaces 的 3.x / 4.x）：列表浮层、切换流程的
+// 请求侧、按 vault 的标签会话与装载后恢复都在 src/vault-switcher.ts。这里只装配它看不到的
+// 东西：树头部入口、当前 vault 的打开链路（dirty 前置门 + vault_open_path + 装载）、
+// 会话的 ipc、以及恢复时逐标签打开文件的那条既有链路（openFile）。
+// ---------------------------------------------------------------------------
+
+/** 空 vault 首入态的引导（文案 D107）：装载完成而一个标签都没能恢复出来时，正文给一句
+ *  指路，不伪造内容（也不残留上一次 vault 的正文——那已被 editor.reset 作废）。 */
+const EMPTY_VAULT_TEXT = "这个 vault 还没有打开的文件。在左栏选一个文件开始。";
+
+/** 守卫类粘性提示的出口：先撤下既有守卫浮条再挂新的（M163 r1 P2-1——toast 的 sticky 去重按
+ *  文案命中会复用旧元素，而守卫浮条的动作带着「切到哪一个」，复用等于把后一次请求的 proceed
+ *  丢掉；来由见 src/vault-switcher.ts 的 createGuardPromptPresenter）。 */
+const showGuardPrompt = createGuardPromptPresenter({
+  clearPrevious: () => save.clearGuardToasts(),
+  // 挂上守卫提示族的标识类：dirty 清除时由 save.clearGuardToasts 整批撤下。
+  toast: (text, actions, sticky) =>
+    void toast(text, actions, sticky).classList.add(SAVE_GUARD_TOAST_CLASS),
+});
+
+/** 切换流程的门与闸（M163 的 4.1–4.3；状态机与三动作在 src/vault-switcher.ts，可脱离
+ *  DOM 单测）。判据来自 save-controller 的 vaultSwitchBlock（M149 口径原样）。 */
+const switchGate = createVaultSwitchGate({
+  block: () => save.vaultSwitchBlock(),
+  saveAll: () => save.saveAllDirty(),
+  currentName: () => vaultName,
+  notify: (text, actions) => showGuardPrompt(text, actions),
+  fail: (message) => toast(message),
+});
+
+/** 「未注册目录 + 存在失效注册项」时的两出口浮条（M121/M126 既有形态；M163 r1 P1-1 起两个
+ *  动作在**动作时点**也过 dirty 门——浮条 sticky、可无限期存活，期间产生的修改不许被静默
+ *  丢弃；门在 vault_open_path 提交之前，见 src/vault-switcher.ts 的 createVaultRemapPrompt）。 */
+const remapPrompt = createVaultRemapPrompt({
+  guard: (proceed) => guardVaultSwitch(proceed),
+  // 用普通 sticky 浮条（**不**挂守卫提示族的标识类）：它说的是「这个目录还没注册」，
+  // 与 dirty 无关——挂上族标会让一次成功的保存把它一并撤下，用户手上那条路径确认提示就没了。
+  notify: (text, actions) => void toast(text, actions, true),
+  displayName: (path) => baseName(path),
+  openPath: async (path) => {
+    const opened = await vaultOpenPath(path, true);
+    await applyVault(opened.root, opened.entries, opened.vault_id, false);
+  },
+  remap: async (id, path) => {
+    await vaultRemap(id, path);
+  },
+  fail: (message) => toast(message),
+});
+
+const switcher: VaultSwitcherHandle = createVaultSwitcher({
+  mount: shell.root, // 浮层挂点取 app-shell 根：左栏两个容器都 overflow:auto，挂进去会被裁掉
+  entry: () => tree.vaultEntry(),
+  toast,
+  sessions: () => editor.sessions(),
+  // 前台路径取自保存链路（它才是「前台标签是哪一个」的持有者），不在这里再存一份副本。
+  activePath: () => save.displayedPath(),
+  list: () => vaultList(),
+  requestSwitch: (row) => guardVaultSwitch(() => switchToVault(row.path)),
+  requestAdd: () => requestAddVault(),
+  requestRelocate: (row, siblings) => guardVaultSwitch(() => requestRelocate(row, siblings)),
+  expanded: (expanded) => tree.setVaultEntryExpanded(expanded),
+  focusEditor: () => editor.view.focus(),
+  getSession: (vaultId) => vaultSessionGet(vaultId),
+  putSession: (vaultId, paths, active) => vaultSessionPut(vaultId, paths, active),
+  // 恢复用**固定标签**意图逐个打开（预览意图会让第二个起顶掉前一个，只剩最后一个），
+  // 且不上屏失败覆盖层：恢复是批量动作，单个文件的失败由计数提示承担（见 vault-switcher）。
+  openPinned: (path) => openFile(path, openKind(path), "pinned", true),
+  activate: (path) => {
+    const session = editor.sessionForPath(path);
+    if (session !== undefined) tabs.activateTab(session);
+  },
+  onEmptyVault: () => showNotice(EMPTY_VAULT_TEXT),
+  warn: (text) => toast(text),
+});
+
 /** 前台会话变化后把周边表现层**一次**对齐：正文基准路径、masthead、后端 dirty 镜像、
  *  大纲指示段、文件树高亮、标签栏。这是「当前文档」在装配层的唯一同步点——别处的读点
  *  一律改为问 editor.activeSession()，不再各自存副本。 */
@@ -183,6 +278,9 @@ function syncActiveDocument(): void {
   toc.refresh();
   tree.setCurrentPath(session.path);
   tabs.renderTabs();
+  // 标签集合 / 顺序 / 激活项变化后防抖落盘会话（M163）。挂在这个唯一同步点上：切标签、
+  // 开文件、关标签都会经过它，别处不必各埋一个「记得写会话」的钩子。
+  switcher.sessionChanged();
 }
 
 /** 装载完成后的表现层对齐（打开 / 重载共用）。 */
@@ -202,16 +300,21 @@ function afterLoad(): void {
 //     换文档——这是 M144/M145 既有语义，也是「不传就退化成 M149 之前的行为」这个保守兜底；
 //   - 单击文件树 → "preview"：复用预览标签，旧预览被就地替换，不新开；
 //   - 双击 / ⌘-点击文件树 → "pinned"：新开固定标签。
+//
+// 返回「这次打开是否成功」——只有 M163 的会话恢复读它（逐个打开、失败的计入跳过数）。
+// `quiet` 为真时**不上屏失败覆盖层**：恢复是逐标签的批量动作，单个文件的失败不该把正文
+// 换成错误提示（spec：跳过并给一次计数提示）；其余调用方沿用既有表现，不看返回值。
 async function openFile(
   path: string,
   kind: "md" | "code" | "text" | "binary",
   intent: "preview" | "pinned" | "current" = "current",
-) {
+  quiet = false,
+): Promise<boolean> {
   // 唯一保留的 dirty 守卫：前台是**未命名文档**（没有路径）。它的内容没有落盘基准，
   // 就地替换等于丢弃草稿，另开标签又会让草稿失去落点——沿用 M130 的守卫与文案。
   // 有文件路径的标签之间是标签切换，不丢内容，因此不设守卫（M149 的语义变化，
   // 见 openspec change add-multi-tabs 的 proposal「语义变化」一节）。
-  if (editor.activeSession().path === undefined && !save.guard("切换文件")) return;
+  if (editor.activeSession().path === undefined && !save.guard("切换文件")) return false;
   // 已经打开的文件一律切到既有标签：不重复开、也不重读（非 md 只读，重读只会把用户
   // 正在看的位置顶掉）。三种意图都适用；双击 / ⌘-点击一个已打开的**预览**标签 = 把它
   // 固定住——这正是「双击 = 固定」的落点（第一次单击已把它开成预览，这边收尾）。
@@ -225,19 +328,19 @@ async function openFile(
     if (intent === "pinned") existing.preview = false;
     showEditor(); // 撤下一次更早的、已被这次同步切换取代的「正在打开」覆盖层
     tabs.activateTab(existing);
-    return;
+    return true;
   }
   const request = save.beginSwitch();
   if (kind === "binary") {
-    showNotice(`暂不支持预览：${path}`);
-    return;
+    if (!quiet) showNotice(`暂不支持预览：${path}`);
+    return false;
   }
   showNotice(`正在打开：${path}`);
   try {
     const snapshot = await fsReadSnapshot(path);
-    if (!save.isCurrent(request)) return;
+    if (!save.isCurrent(request)) return false;
     // 守卫复查：请求在途期间前台可能已经换过（并发打开 / 用户切走）。
-    if (editor.activeSession().path === undefined && !save.guard("切换文件")) return;
+    if (editor.activeSession().path === undefined && !save.guard("切换文件")) return false;
     // 只有 md 进保存链路（登记磁盘 revision）；非 md 以只读 code 模式打开，不存在
     // dirty，也不该被任何保存入口接受（M130）。
     save.noteOpened(path, kind === "md" ? snapshot.revision : undefined);
@@ -247,13 +350,19 @@ async function openFile(
     // 搜索面板的查询与开合状态因此保留（M139 以来的既有行为）。
     editor.reloadSession(session, snapshot.content, path, request);
     afterLoad();
+    return true;
   } catch (e) {
-    if (!save.isCurrent(request)) return;
-    showNotice(errorMessage(e));
+    if (!save.isCurrent(request)) return false;
+    if (!quiet) showNotice(errorMessage(e));
+    return false;
   }
 }
 
 window.addEventListener("beforeunload", (event) => {
+  // 退出前把标签会话 flush 掉（M163，MUST NOT 只依赖防抖定时器——正常退出与「放弃修改并
+  // 退出」都走这条路）。尽力而为：invoke 是异步的，webview 拆除可能早于它完成；这是这条
+  // 需求在现有钩子里能拿到的最好时点（没有「窗口即将关闭」的 await 通道）。
+  void switcher.flush();
   // 判据是「任一标签有未保存修改」：多标签下只看前台文档会让后台标签的修改被静默丢弃。
   if (!editor.sessions().some((session) => session.dirty)) return;
   event.preventDefault();
@@ -269,7 +378,9 @@ window.addEventListener("beforeunload", (event) => {
 const linkFollow = createLinkFollow({
   editor,
   // intent 不传：链接跟随一律就地替换前台标签（openFile 的默认值 "current"）。
-  openFile: (path, kind) => openFile(path, kind),
+  openFile: async (path, kind) => {
+    await openFile(path, kind);
+  },
   toast,
 });
 
@@ -295,6 +406,8 @@ const commands: CommandRuntime = {
   "app.search-open": () => openSearch(editor.view),
   // 轻量大纲（M148）：开→关 / 关→开，无标题文档只给提示（不弹空浮层）。
   "toc.toggle": () => toc.toggle(),
+  // vault 切换器（M163）：开→关 / 关→开；未装载 vault 时无操作（那时没有列表入口）。
+  "vault.switcher": () => switcher.toggle(),
   // 标签（M149）：能力与切换在 editor 的会话 API，装配层只做两件它才知道的事——
   // 切换后的表现层对齐（tabs.activateTab → syncActiveDocument）与关标签的确认（都在 src/tabs.ts）。
   // `tab.close` 关的是**前台**标签；逐标签关闭钮走同一条 closeTab（同一个确认）。
@@ -421,6 +534,11 @@ editor.onDocChanged(() => {
   if (!session.dirty || !session.preview) return;
   session.preview = false;
   tabs.renderTabs();
+  // 提升即「可持久化集合」多了一个成员（预览标签不入盘，spec「按 vault 持久化标签列表」），
+  // 属一次**集合变化**，必须沿同一条防抖写盘——否则崩溃窗口里这个提升会丢（M163 r1 P2-2）。
+  // 这里不经 syncActiveDocument（那会连 masthead / 大纲 / 树高亮一起重算，而这一步只改了
+  // 一个会话的属性），直接调会话侧的通知口。
+  switcher.sessionChanged();
 });
 
 // DirtyState 防滞留（M107）：后端的 dirty 镜像在 webview 重载（开发者刷新 /
@@ -434,38 +552,105 @@ syncBackendDirty();
 // 在用户看到前自动消隐（守卫反馈要持续可见，点击浮条关闭）。
 onQuitBlocked(() => save.showQuitBlocked()).catch(() => {});
 let tree!: ReturnType<typeof createFileTree>;
-// 目录选择器入口（空态按钮与树头部「切换」共用）。命中重映射候选时
+
+// ---------------------------------------------------------------------------
+// vault 切换 / 新增 / 重新定位（M163 的 4.1–4.3、4.7、4.8；能力面在 src/vault-switcher.ts）
+//
+// 三条通道各自的第一步都是同一道 dirty 前置门（guardVaultSwitch）：判据原样来自
+// save-controller 的 vaultSwitchBlock（M149：任一**有路径**的标签 dirty），提示与三条出口
+// 摆在拦下它的地方。装载本身只有一处实现（applyVault），本文件不出现第二条装载通道。
+// ---------------------------------------------------------------------------
+
+/** 切换 vault 的 dirty 前置门（本文件唯一的入口封装，供三条通道与 loadVault 的最后防线
+ *  共用）：把「继续」这一步交给 src/vault-switcher.ts 的门与闸。`proceed` = 继续切换
+ *  （打开目标并装载）；拦下时返回 false 并已给出三条出口：
+ *    - 保存并切换：先保存全部脏标签，保存未闭环（冲突 / 写失败 / 无落盘基准）就**不**继续
+ *      （spec「保存未闭环则不切换」）；不可保存的脏标签不给这条动作（走不通的建议不给）；
+ *    - 放弃修改并切换：直接继续（守卫本身不产生副作用，内容随后随 vault 复位一起作废）；
+ *    - 取消：什么都不做。
+ *
+ *  「新增」在**弹目录选择器之前**过这道门是有意的：选择器一返回，后端就已经把选中的目录当成
+ *  当前 vault 提交了（vault_open 内部 reconcile + commit），那时再拦会留下「后端在新 vault、
+ *  前端还显示旧的」的不一致态——此后相对路径的保存会落到错误的 vault 上。先拦后选，取消
+ *  选择器就真的什么都没发生。 */
+function guardVaultSwitch(proceed: () => Promise<void> | void): boolean {
+  return switchGate.request(proceed);
+}
+
+/** 打开目标 vault 并装载（切换 / 重定位共用）：打开失败就抛出去，由门与闸统一给一条失败
+ *  提示（目标打开失败保留当前上下文，MUST NOT 把文件树抹成空态）。 */
+async function switchToVault(path: string): Promise<void> {
+  const info = await vaultOpenPath(path, false);
+  await applyVault(info.root, info.entries, info.vault_id, false);
+}
+
+/** 新增 vault（浮层底部的唯一新增入口）：先过 dirty 前置门，再走既有目录选择器链路。
+ *  取消选择器不改变任何上下文；命中 remap 门时沿用既有两出口浮条，不因列表而绕过。 */
+function requestAddVault(): void {
+  guardVaultSwitch(() => void pickVault());
+}
+
+/** 失效行「重新定位…」（spec「失效 vault 的处置」）：把该稳定 id 绑到用户新选的目录
+ *  （vault_remap），成功后打开它（等价于一次切换）。
+ *
+ *  选择目录只能走 vault_open——后端没有「只选目录不开 vault」的命令。这里传 force_new=false
+ *  是有意的：命中 remap 门（未注册路径 + 存在失效注册项）时后端**不提交、不注册**，这正是
+ *  「只取路径、不动上下文」需要的语义。门没短路就说明后端已经把选中的目录当成 vault 提交
+ *  了（该路径已注册，或它没有可映射的失效项），两种情形都拒绝：
+ *    - 路径属于**另一个**注册项：稳定 id 是重映射的锚点，把两个身份静默并到同一路径会让
+ *      列表出现两行同路径、后续按路径查找不再确定；
+ *    - 没有可映射项（该注册项已归档等）：无从绑定，也不能让它变成一个「新增 vault」。
+ *  两种拒绝都先把后端恢复到当前 vault：前端从头到尾没换过上下文，后端也不该停在一个前端
+ *  不知道的 vault 上（相对路径的保存会落到错误的 vault）。 */
+async function requestRelocate(
+  row: VaultListEntry,
+  siblings: readonly VaultListEntry[],
+): Promise<void> {
+  let picked: VaultInfo | null;
+  try {
+    picked = await vaultOpen(false);
+  } catch (e) {
+    toast(errorMessage(e));
+    return;
+  }
+  if (picked === null) return; // 取消：上下文不变
+  const occupied = siblings.find(
+    (item) => item.id !== row.id && samePath(item.path, picked.root),
+  );
+  if (picked.remap_candidates.length === 0 || occupied !== undefined) {
+    if (loadedRoot !== undefined) await vaultOpenPath(loadedRoot, true).catch(() => {});
+    toast(
+      occupied !== undefined
+        ? `这个目录已经是「${occupied.name}」的路径，不能用来重新定位`
+        : `这个目录没法用来重新定位「${row.name}」；请选择该 vault 现在所在的目录`,
+    );
+    return;
+  }
+  try {
+    await vaultRemap(row.id, picked.root);
+  } catch (e) {
+    toast(errorMessage(e));
+    return;
+  }
+  await switchToVault(picked.root);
+}
+
+// 目录选择器入口（空态按钮与浮层底部的「新增 vault…」共用）。命中重映射候选时
 //（spec：未注册路径 + 失效注册需显式确认）open_vault 按契约返回空 entries，
 // 此时不得装载——否则用户看到 vault 名已换、树全空的死态（桌面验收缺陷）；
-// 改为 sticky 提示给出两个出口：作为新 vault 打开 / 确认映射到最近期候选。
+// 改为 sticky 提示给出两个出口（两个动作在**动作时点**过 dirty 门，见 remapPrompt）。
 function pickVault(forceNew = false): void {
   vaultOpen(forceNew)
     .then((info) => {
       // null = 用户在目录选择器取消，无错误状态（spec）
       if (!info) return;
       if (info.remap_candidates.length > 0) {
-        const top = info.remap_candidates[0];
-        const name = info.root.slice(info.root.lastIndexOf("/") + 1) || info.root;
-        // 确认动作用 vaultOpenPath 直开刚选中的路径，不再弹一次选择器。
-        const reopen = () => vaultOpenPath(info.root, true)
-          .then((opened) => loadVault(opened.root, opened.entries, opened.vault_id))
-          .catch((e) => toast(errorMessage(e)));
-        toast(
-          `「${name}」尚未注册为 vault；发现可能已移动的 vault：${top.path}`,
-          [
-            { label: "作为新 vault 打开", run: () => void reopen() },
-            {
-              label: "确认映射到此路径",
-              run: () => void vaultRemap(top.id, info.root)
-                .then(() => reopen())
-                .catch((e) => toast(errorMessage(e))),
-            },
-          ],
-          true,
-        );
+        remapPrompt.present(info);
         return;
       }
-      loadVault(info.root, info.entries, info.vault_id);
+      // 非 remap 成功路径：选择器返回后的微任务里立刻装载，中间没有用户输入窗口（dirty 门
+      // 已在弹选择器之前跑过），不需要在这里再拦一次。
+      void applyVault(info.root, info.entries, info.vault_id, false);
     })
     .catch((e) => {
       // 已有 vault 时打开失败（如改选了一个不可读目录）不得把既有树抹成
@@ -479,19 +664,36 @@ tree = createFileTree(shell.treeMount, {
   // 打开意图由树判定（它是唯一看得到点击事件的地方）：单击 = 复用预览标签，
   // 双击 / ⌘-点击 = 新固定标签（M149 语义，Alex 已裁决）。
   onOpenFile: (path, kind, intent) => void openFile(path, kind, intent),
-  onOpenVault: () => pickVault(),
+  // 空态按钮（未装载 vault 时唯一入口）与浮层底部的「新增 vault…」同一条链路。
+  onOpenVault: () => requestAddVault(),
+  // 树头部的常驻入口（形态 A）：展开 / 收起列表浮层。
+  onOpenVaultSwitcher: () => switcher.toggle(),
 });
 
-// vault 装载的两个入口（手动打开 / 启动恢复）共用：先换附件索引再装文件树。
-// 换 vault 前必须全量复位旧上下文（reviewer-switcher high finding）：否则旧
-// 文件的 currentPath 会被当作新 vault 的 resolve/create from 基准，wikilink
-// 一键创建会把文件误建到新 vault 的同名相对路径下。
-function loadVault(root: string, entries: FsEntry[], vaultId = root, restored = false) {
-  // 判据是「任一标签有未保存修改」——切 vault 会把全部标签一起作废（save-controller 的
-  // guardVaultSwitch）。旧实现只有一个文档，那条 guard 与它等价。
-  if (!save.guardVaultSwitch()) return;
+/** 装载 vault 的最后防线版（空态打开 / 启动恢复）：dirty 时拦下并就地给出三条出口，出口
+ *  执行时经同一个 proceed 继续装载——守卫不清除 dirty，那三条出口必须能把它带过去（否则
+ *  用户选了「放弃修改并切换」还会再被拦一次，等于把他的决定无声作废）。 */
+function loadVault(root: string, entries: FsEntry[], vaultId = root, restored = false): void {
+  guardVaultSwitch(() => applyVault(root, entries, vaultId, restored));
+}
+
+/** 装载的唯一实现（切换 / 新增 / 重新定位 / 空态打开 / 启动恢复共用）：先换附件索引再装
+ *  文件树，换 vault 前全量复位旧上下文（reviewer-switcher high finding）——否则旧文件的
+ *  currentPath 会被当作新 vault 的 resolve/create from 基准，wikilink 一键创建会把文件误建
+ *  到新 vault 的同名相对路径下。 */
+async function applyVault(
+  root: string,
+  entries: FsEntry[],
+  vaultId: string,
+  restored: boolean,
+): Promise<void> {
+  // 切换前 flush 当前 vault 的会话（MUST NOT 只依赖防抖：切走之后再没有「当前 vault」这个
+  // 上下文，写不成了）。启动路径上还没有当前 vault，flushSession 直接返回。
+  await switcher.flush();
   vaultLoaded = true;
   loadedRoot = root;
+  const name = baseName(root);
+  vaultName = name;
   // `lumir:vault-ready` = **前端装载完成**（面向就绪管线/测试，全仓无消费者），与后端
   // `vault:restore_finished`（面向启动状态机：后端恢复任务结束，前端据此再拉一次状态）
   // 分工不同——两个名字太像，这里是唯一的区分点，改名/改语义前先读 design §6.2。
@@ -504,7 +706,7 @@ function loadVault(root: string, entries: FsEntry[], vaultId = root, restored = 
   // 全部标签作废：内核只留一个未命名空文档（内部 currentFilePath 一并置空）。
   editor.reset();
   editor.setWikilinkResolver(linkFollow.resolver);
-  mastheadVault.textContent = root.slice(root.lastIndexOf("/") + 1) || root;
+  mastheadVault.textContent = name;
   tree.setVault(root, entries);
   // 表现层一次对齐：masthead 文件名回「无当前文件」、标签栏隐藏（空态）、树高亮清空、
   // 大纲指示段收起、后端 dirty 镜像复位。放在 setVault 之后：setVault 重绘整棵树，
@@ -513,6 +715,9 @@ function loadVault(root: string, entries: FsEntry[], vaultId = root, restored = 
   showEditor(); // 旧 vault 的「暂不支持预览」覆盖层一并撤下
   // 残留崩溃备份的恢复入口（M127）：装载完成后才有 vault 上下文可定位备份。
   void save.checkRecovery();
+  // 装载后恢复该 vault 的标签列表（M163）：逐标签异步装载，不阻塞树与首帧；恢复途中若又
+  // 换了一次 vault，本次恢复整体作废（vault-switcher 的世代号）。
+  void switcher.onVaultLoaded(vaultId, entries);
 }
 
 // watch 增量事件流 → 附件索引与文件树同步打补丁（都不全量重扫）。

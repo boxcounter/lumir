@@ -19,6 +19,7 @@
 import type { EditorHandle, EditorSession } from "./editor";
 import { TAB_GOTO_IDS } from "./keys";
 import type { CommandRunner } from "./keys";
+import { baseName } from "./tree";
 
 export interface TabsDeps {
   editor: EditorHandle;
@@ -54,14 +55,11 @@ export interface TabsHandle {
 export function createTabs(deps: TabsDeps): TabsHandle {
   const { editor, mount, toast, saveCurrent, invalidateResolve, showEditor, syncActiveDocument } = deps;
 
-  /** vault 相对路径 → 文件名（标签的可见文本）。 */
-  function fileNameOf(path: string): string {
-    return path.slice(path.lastIndexOf("/") + 1) || path;
-  }
-
   /** 标签栏渲染：从会话列表**全量重建**。标签数量是人的注意力量级（几到十几个），全量重建
    *  比增量 diff 简单，也天然不会漂。空态（没有任何带路径的会话）整条隐藏——它在网格里
-   *  不占行高，所以空态布局与多标签之前逐像素一致（整页基线的空态对照因此不需要更新）。 */
+   *  不占行高，所以空态布局与多标签之前逐像素一致（整页基线的空态对照因此不需要更新）。
+   *  标签可见文本是路径末段：basename 派生全前端只有一份（`src/tree.ts` 的 baseName，
+   *  REVIEW.md 第 8 条），标签栏、文件树、masthead 与切换器列表共用它。 */
   function renderTabs(): void {
     const sessions = editor.sessions().filter((session) => session.path !== undefined);
     const active = editor.activeSession();
@@ -69,7 +67,7 @@ export function createTabs(deps: TabsDeps): TabsHandle {
     mount.replaceChildren(
       ...sessions.map((session) => {
         const path = session.path as string;
-        const name = fileNameOf(path);
+        const name = baseName(path);
         const isActive = session === active;
 
         const tab = document.createElement("div");

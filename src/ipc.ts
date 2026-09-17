@@ -12,6 +12,8 @@ import type { ConfigSnapshot } from "./bindings/ConfigSnapshot";
 import type { FsChange } from "./bindings/FsChange";
 import type { FsEntryChangedEvent } from "./bindings/FsEntryChangedEvent";
 import type { VaultInfo } from "./bindings/VaultInfo";
+import type { VaultListEntry } from "./bindings/VaultListEntry";
+import type { VaultSession } from "./bindings/VaultSession";
 import type { VaultStatus } from "./bindings/VaultStatus";
 import type { LinkResolveResult } from "./bindings/LinkResolveResult";
 import type { CreateNoteResult } from "./bindings/CreateNoteResult";
@@ -136,6 +138,29 @@ export function linkOpenPath(from: string, target: string): Promise<void> {
   return invoke<void>("link_open_path", { from, target });
 }
 export const vaultRemap = (id: string, path: string): Promise<VaultWorkspace> => invoke<VaultWorkspace>("vault_remap", { id, path });
+
+// ---------------------------------------------------------------------------
+// 多 vault 切换器（M163，change multi-vault-workspaces 的 1.x / 2.x 契约的前端一半）
+// ---------------------------------------------------------------------------
+
+/** vault 注册表摘要列表。前端**每次打开切换器重新拉取**、MUST NOT 维护常驻镜像——
+ *  注册表是唯一真源（spec「vault 列表与可见性」）。可用性探测在后端的非主线程上做。 */
+export function vaultList(): Promise<VaultListEntry[]> {
+  return invoke<VaultListEntry[]>("vault_list");
+}
+
+/** 读某 vault 的标签会话。无历史（首次打开 / 文件损坏 / 版本不匹配）resolve 为 null，
+ *  不是错误——后端把这三条都归成「没有标签历史」。 */
+export function vaultSessionGet(vaultId: string): Promise<VaultSession | null> {
+  return invoke<VaultSession | null>("vault_session_get", { vault_id: vaultId });
+}
+
+/** 写某 vault 的标签会话（标签集合 / 顺序 / 激活项变化后防抖写，切换前与退出前 flush）。
+ *  写失败在后端降级为 warning 并照常 resolve：会话只影响「下次打开这个 vault 恢复什么」，
+ *  不值得拦停用户的一次切换或退出。只有 vault_id 非法才 reject（路径逃逸防护）。 */
+export function vaultSessionPut(vaultId: string, tabs: string[], active: string | null): Promise<void> {
+  return invoke<void>("vault_session_put", { vault_id: vaultId, tabs, active });
+}
 
 // ---------------------------------------------------------------------------
 // 崩溃备份恢复链路（M127 引入；M132 从 src/save-ipc.ts 折回）
