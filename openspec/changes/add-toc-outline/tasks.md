@@ -69,5 +69,7 @@
       消除连锁）。
 - [x] 5.4 `git diff --check` 通过；改动文件集合与 mission scope 一致（跨 scope 的只有那一条被批准的
       只读 import，无 preview 文件改动）。
-- [ ] 5.5 rebase 到 master（bc98f2f，M147 已合并）后重跑：`scripts/gate.sh quick` 全绿**无 SKIP**、
-      `scripts/gate.sh visual` 全绿（含新增 `toc-outline` 场景）、真机全量复跑证据。
+- [x] 5.5 rebase 到 master（bc98f2f，M147 已合并）后重跑：`scripts/gate.sh quick` **7/7 PASS（SKIP 0）**、
+      `scripts/gate.sh visual` **8/8 PASS（含新增 `toc-outline` 场景，219 用例全绿）**、真机全量
+      `node scripts/acceptance/run.mjs` 复跑 **21/21 PASS**（`13-toc` 32 断言 0 失败，31.2s）——
+      交付状态 tip `59e057b`，证据 `test-results/acceptance/2026-09-17/`。
