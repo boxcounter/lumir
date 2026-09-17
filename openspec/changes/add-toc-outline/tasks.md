@@ -51,6 +51,11 @@
       口径，供后续场景复用）。
 - [x] 4.4 `openspec/changes/add-toc-outline/`：proposal / tasks / 两份 delta（`toc-outline` 新建、
       `keymap-commands` 增绑定与命令）。
+- [x] 4.5 `tests/visual/scenes/toc-outline.spec.ts`（新场景）+ 新基线
+      `toc-popover-chromium-darwin.png`：钉住整页容差抓不到的新 UI——指示段的有/无（含空态对照）、
+      浮层条目与 `--toc-depth` 层级、当前段高亮、键位提示、`↓` 不穿透、`Enter` 后直接读
+      CodeMirror 选区断言光标落在标题行尾、`⌘⇧O` / `Esc` 开合。既有 15 张整页基线实测逐字节零变化
+      （整页容差 ~960 px 吞掉指示段 ~100 px 的变化），已如实记进 proposal 的 Impact。
 
 ## 5. 验证
 
@@ -64,3 +69,5 @@
       消除连锁）。
 - [x] 5.4 `git diff --check` 通过；改动文件集合与 mission scope 一致（跨 scope 的只有那一条被批准的
       只读 import，无 preview 文件改动）。
+- [ ] 5.5 rebase 到 master（bc98f2f，M147 已合并）后重跑：`scripts/gate.sh quick` 全绿**无 SKIP**、
+      `scripts/gate.sh visual` 全绿（含新增 `toc-outline` 场景）、真机全量复跑证据。

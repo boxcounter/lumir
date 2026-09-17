@@ -67,5 +67,9 @@ Alex 的需求原话（2026-09-17，M148 需求）：**「增加 TOC——我希
   的已知边界补一条「光标位置的派生证据」。
 - 关联约束：ADR 0003 §3（不改写源文件）、ADR 0002 §2（单内核双模式）与第 6 条（性能合同：键击
   路径不整篇解析）、ADR 0006（当前定位）、ADR 0004 第 5 条（功能变更走 OpenSpec）。
-- 视觉基线：masthead 多一个可能出现的指示段，**含标题的文档截图会变**（空态与无标题文档不变）。
-  `tests/visual/**` 不在本 mission 的 scope（M147 持有），基线更新时间点由 tower/Alex 裁决。
+- 视觉基线（实测结论，与预报不同）：masthead 多出的指示段**没有任何整页基线变化**——它只改约
+  100 px，被整页容差 `maxDiffPixelRatio: 0.001`（1200×800 ≈ 960 px）吞掉；空态对照
+  `app-main-chromium-darwin.png` 逐字节不变（隐藏条件没有漏）。因此本 change 补了一条**只钉新 UI**
+  的 chromium 场景（`tests/visual/scenes/toc-outline.spec.ts` + 新基线
+  `toc-popover-chromium-darwin.png`，元素级截图 + 直接读 CodeMirror 选区），既有 15 张基线未动。
+  `tests/visual/**` 的 scope 由 tower 于 M147 合并后 widen 给本 mission（2026-09-17）。
