@@ -48,8 +48,8 @@ runner 在启动前做预检，不满足直接退出且不产生半截证据：
 
 | 隔离项 | 做法 | 为什么 |
 |---|---|---|
-| 配置目录 | app 进程带 `XDG_CONFIG_HOME=<结果目录>/../env` 启动，套件自带 `config.json`；**每场景清空其中的 `recovery/`** | `src-tauri/src/config.rs` 优先读 `XDG_CONFIG_HOME`；用户的 `~/.config/lumir` 全程不读不写。清 `recovery/` 是必须的——崩溃备份在配置目录下而非 vault 里，不清会让上一场景的备份串场（实证：08c 恢复出了 keys.md 的内容） |
-| 验收 vault | `/tmp/lumir-m102-acceptance`，每次运行重置为 `fixtures/` 的精确副本 | 合成 vault；用户真实 vault（`/Users/boxcounter/Downloads/Everything-copy`）永不写入（`assertSafeTargets()` 兜底拒绝） |
+| 配置目录 | app 进程带 `XDG_CONFIG_HOME=<结果目录>/../env` 启动，套件自带 `config.json`；**每场景清空其中的 `recovery/`、`workspaces/`、`vault-sessions/`** | `src-tauri/src/config.rs` 优先读 `XDG_CONFIG_HOME`；用户的 `~/.config/lumir` 全程不读不写。三个子目录都必须清：崩溃备份在配置目录下而非 vault 里（不清会让上一场景的备份串场——实证：08c 恢复出了 keys.md 的内容）；`workspaces/` 决定列表浮层有几行、按路径命中哪个 id；`vault-sessions/` 决定装载后恢复哪些标签。后两者是 M164 补的（多 vault 场景会预置它们，残留会让下一场景看到上一场景的 vault 列表与标签） |
+| 验收 vault（两个） | `/tmp/lumir-m102-acceptance` 与 `/tmp/lumir-m102-acceptance-b`，每次运行分别重置为 `fixtures/` 与 `fixtures/second-vault/` 的精确副本 | 合成 vault；用户真实 vault（`/Users/boxcounter/Downloads/Everything-copy`）永不写入（`assertSafeTargets()` 对两个 vault 与配置目录都兜底拒绝）。第二个 vault 是多 vault 场景的切换目标，文件名与第一个刻意不重叠 |
 | 端口 | dev server 走 `LUMIR_ACCEPTANCE_PORT`（默认 1430），经 `--config` 覆写 | 绝不与 Alex 手头的 `pnpm tauri dev` 抢 1420 |
 
 app 进程的定位用**进程组**（`pnpm tauri dev` 以 detached 起，自成一组）：Tauri CLI 以相对路径
@@ -68,6 +68,11 @@ fixtures: [mermaid.md]       # 场景开始前覆盖进验收 vault 的 fixture
 open: mermaid.md             # 用左栏点击打开的文件
 marker: "Mermaid 场景"       # 等编辑器出现该内容才算打开成功
 config: { keys: {...} }      # 可选：覆盖隔离 config.json（触发重跑 app）
+seed:                        # 可选：预置隔离配置里的注册表 / 会话（**起 app 之前**写）
+  registry:
+    - { id: acc-a, path: $vault, lastOpenedAt: 1757000002000 }
+  sessions:
+    acc-a: { tabs: [tabs-a.md, tabs-b.md], active: tabs-b.md }
 steps:
   - name: 渲染态              # 人读的步骤名，步骤下所有断言都挂在它下面
     expect:
@@ -85,13 +90,37 @@ steps:
 ---
 ```
 
+### 预置状态（`seed`）
+
+`seed` 写在 front-matter 上，由 runner 在**起 app 之前**应用（`run.mjs` 的每场景重置里）。它表达
+的是「这个目录此前已经是我的 vault」「这个 vault 此前开着这几个标签」这类**只能由磁盘上的配置
+状态表达**的前置条件。
+
+| 键 | 形状 | 落点 |
+|---|---|---|
+| `seed.registry[]` | `{ id, path, lastOpenedAt?, missingSince?, archivedAt? }` | `<隔离配置>/lumir/workspaces/<id>.json`（一条一个文件，与 Rust 侧注册表同形） |
+| `seed.sessions{}` | `{ <id>: { tabs: [...], active } }` | `<隔离配置>/lumir/vault-sessions/<id>.json` |
+
+- `path` 支持两个记号：`$vault` / `$vault2` 指套件的两个合成 vault（不写死 `/tmp` 路径，
+  `LUMIR_ACCEPTANCE_VAULT` 覆写时场景跟着走）；其余按绝对路径原样用。
+- **必须写在起 app 之前**：app 打开一个未注册目录时会立刻给它分配一个自动 id 并落盘，事后再预置
+  同路径的注册项会让列表里出现两行指向同一目录（一行自动 id、一行预置 id），按路径查找命中哪一行
+  还不确定。`prepareSeed()` 因此接在 `resetRegistry()` 之后、`launchApp()` 之前。
+- `path` 会先 `realpath`：注册表存的是 canonicalize 后的路径（`reconcile_vault`），而 macOS 的
+  `/tmp` 是 `/private/tmp` 的软链接——不归一的话 app 打开同一目录时 `find_by_path` 落空、另生成
+  一个 id，预置的会话（按 id 存放）就对不上了。
+- `id` 只允许字母数字与 `-_`（与 Rust 的 `workspaces::valid_id` 同源：id 同时是文件名，这是路径
+  逃逸防护）；写错在动作处即报错，不会落一个读不回的盘。
+
 ### 动作（`do`）
 
 | 动作 | 参数 | 说明 |
 |---|---|---|
 | （省略） | — | 只做断言 |
+| `settle` | — | 读一次 AX 快照并落定（等价于「什么都不做、只等一拍」，用于纯断言步骤前的稳定） |
 | `open` | `file`、`marker` | 点左栏文件名打开，等编辑器出现 marker |
-| `click` | `target: {role,name\|help\|any,nth}` 或 `{x,y}` | 节点按 AX 索引点（走 AXPress）；`{x,y}` 走真实鼠标坐标 |
+| `click` | `target: {role,name\|help\|any,nth,count}` 或 `{x,y}` | 节点按 AX 索引点（走 AXPress）；`{x,y}` 走真实鼠标坐标。`target.count: 2` 是双击（树里的双击 = 新开固定标签） |
+| `clickNodeText` | `text` | 点 value/title **逐字等于** `text` 的节点（比 `name` 的正则更死板） |
 | `clickInNode` | `target`、`dx`、`dy` | 点「某个有 bbox 的节点内部」的相对位置（如 `AXTable`） |
 | `clickEditor` | `dx`（默认 40）、`dy`（默认 6） | 点编辑器顶部建立渲染层焦点（编辑器内元素无 AX bbox，只能按坐标） |
 | `focusWindow` | `retries` | 确保目标窗口在前台（键盘场景的前台纪律，见上） |
@@ -106,11 +135,23 @@ steps:
 | `restart` | `requireVault` | 重启 app（崩溃恢复类场景） |
 
 **就绪门与 `requireVault`**（M159 起）：每次起/重启实例后套件等「左栏文件树 + 编辑器节点就位」
-（`lib/drive.mjs` 的 `waitAppReady`）。严格门的判据是「树头部的『切换 vault』按钮 + 至少一个
+（`lib/drive.mjs` 的 `waitAppReady`）。严格门的判据是「树头部的 vault 入口按钮（形态 A，
+读屏名 `vault：{名称}（点击查看全部 vault）`，见 deck D96）+ 至少一个
 `.md` 行」——`last_vault` 失效 / 无 `last_vault` 时前端**合法地**停在未打开空态（树 pane 里
 没有文件行），严格门必不成立。因此 `configWrite` / `restart` 支持 `requireVault: false`：
 本步的就绪门放宽为「树 pane 呈现任一种形态（文件行或空态说明行+打开入口）+ 编辑器在位」。
 **默认仍是严格门**；放宽是逐步、显式的，终态由该场景自己的断言证明，不是「放宽即放行」。
+
+严格门认**三种**合法终态（M164 补齐第三种）：
+
+| 终态 | 判据（都在 `waitAppReady` 里） | 何时出现 |
+|---|---|---|
+| 已装载 vault + 有文件行 | 入口按钮在 + 至少一个 `.md` 行 + `AXTextArea` 可读 | 默认形态 |
+| 已装载 vault + 空 vault 引导 | 入口按钮在 + D107 的「这个 vault 还没有打开的文件」在 AX 里 | 该 vault 还没有会话历史（**启动常态**，M163 起）：引导层盖住正文，编辑器从 AX 里消失——严格门不认它的话每个场景都会在这一步超时 |
+| 未打开 vault 的空态 | 树 pane 的空态说明行（D5）+ 打开入口，且 `ax.textarea` 在位 | `last_vault` 失效 / 无 `last_vault`；**只有** `requireVault: false` 才认 |
+
+第二行的判据是**正**观测（引导文案必须真的在 AX 里），不是「编辑器读不到就当就绪」——REVIEW.md
+第 2 条禁的是后者。`editor.*` 类断言仍严格：`AXTextArea` 不可读一律 FAIL，不会在空转的 `""` 上下结论。
 
 ### 断言（每个 `expect` 条目一条记录）
 
@@ -154,6 +195,30 @@ Alex 抽审路径：先看 `summary.md`，再进 FAIL 场景看 `steps.md` + `sh
 - **不做手感/审美判定**：表头双击选中手感、表格宽度观感、WKWebView 下的翻屏节奏等归 Alex；
   套件只留截图证据（与 `tests/visual/README.md` 同一原则）。
 - **不进 CI（v0）**：macos runner 跑真机 Tauri 成本高、失败模式多，稳定后再评。
+- **dirty 拦截门的可测窗口很窄**（M164 实测）：切换 vault 的 dirty 前置判据是「任一**有路径**的标签
+  dirty」（`src/save-controller.ts` 的 `vaultSwitchBlock`），而自动保存的防抖是**停止输入后 2s**
+  （`AUTOSAVE_DEBOUNCE_MS`）——落盘后 dirty 收回 false。所以「改完就走」这条真实窗口只有 2s，而本套件
+  的键盘注入每键约 250ms + 一次 MCP 往返（`keys` 的 `gapMs` 默认 250），跨步或多键串都抢不到：
+  - 抢窗口的两种写法都**实测不成立**（跨步必然等到自动保存，门不触发、直接切走；把刷新字符与
+    `⌘O`/`↓`/`Enter` 塞进同一个 `keys` 步仍 2s 以上）。`19-vault-switch-guard` 因此改用
+    **外部改写成冲突**制造**持久** dirty——冲突待决期间自动保存暂停（08b 覆盖该行为），守卫可以稳定
+    触发，不再与注入耗时赛跑；
+  - **未覆盖**：保存并切换在**保存能闭环**时「保存成功 → 继续切换」那条顺路（真机抢不到窗口）。
+    由 chromium 视觉通道覆盖：`tests/visual/scenes/mv-vault-switch-guard.spec.ts`（四条用例：拦下文案与
+    三出口 / 取消 / 保存并切换 / 放弃修改并切换，含 `document_save` 写动作级判据）。**不要把 19 的
+    PASS 读成「三条出口的每条顺路都在真机验过」**；
+  - 同族未覆盖：不可保存的脏标签（无落盘基准）不给「保存并切换」这条分支，在
+    `tests/unit/vault-switcher.test.ts` 的状态机口径里。
+
+  这类 `NSOpenPanel` 是 app 自己的模态 sheet，本套件没有驱动它的动作（也不打算加：AX 时序不稳、
+  控件随系统语言变）。受影响的是 `multi-vault-workspaces` 的「新增 vault…」这条入口路径，顶法是：
+  - 入口 → 选择器 → 装载新 vault 的**链路语义**由 chromium 视觉通道覆盖
+    （`tests/visual/scenes/app-main.spec.ts`：`vault_open` 桩 + remap 两出口）；
+  - 真机侧把「这两个目录此前都已作为 vault 打开过」用 `seed.registry` 预置（见「预置状态」），
+    因此 `17/19` 验的是**切换**，不是**首次加入**：真机上「第一次把某个目录加进列表」这一段
+    **没有被验证过**——这是本条缺口的准确边界，不要读成「新增路径已验证」。
+  - 原生**保存**面板同样不驱动；但「另存为新文件」的落盘路径由 app 自己决定文件名
+    （`07b-recovery-saveas` 断言首级产物 `plain-恢复.md`），不经对话框。
 - **光标/选区不可断言**：KimiCU 的 AX 输出不暴露 `AXSelectedTextRange`，因此「逐 cell 行移动」
   「kill 到 cell 尾不跨管道符」这类**光标位置**口径无法在真机断言；套件只验「序列按键后文档不被
   破坏、源码不泄漏」，精确语义由 chromium 侧视觉场景覆盖。

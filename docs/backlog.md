@@ -20,6 +20,9 @@
 8. **共享 `CARGO_TARGET_DIR` 与 dev-only 脚本化驱动入口**（工具链节 2/3 的长期候选）：是否立项待裁决。
 9. **链接形态矩阵的两处 tower 裁决**（M145，2026-09-17，Alex 未逐条点头）：① 相对路径**非 md**（`[x](./doc.pdf)`）带 `↗︎`（语义「会离开本应用」）而不是 `→`；② **纯锚点** `[x](#sec)` 带 `→` 但激活只给「暂不支持锚点跳转」toast（不做文档内滚动）。附一处同批未单独确认的口径：`[x](note.md#sec)` 按「应用内跳转 + 锚点部分忽略」处理。三处若要翻转，落点是 `src/preview/links.ts` 的 `classifyLinkTarget`（标记）与 `src/main.ts` 的 `followLink`（激活）。
 10. **多标签会话恢复**（M149，2026-09-17）：重启后按「路径列表 + 激活项」重开上次的标签。v1 明确不做（当时口径「留 backlog」），做成什么形状与何时做待裁决。建议形状：存 vault 维度（registry 旁 `last_session`）、只存有序路径 + 激活下标（可选滚动 offset），**不存**未保存内容与撤销史；打开必须走 `openFile` 既有链路；文件已删/不在 vault 内时跳过并记诊断；启动日志记一条 `session_restored{count}`（`log_event` 通道已有）。时机建议：等 dogfood 反馈「常态开几个标签」后再定，避免为 2 个标签的场景过度设计。finding `20260917-worker-tabs-idea-m149-backlog.md`。
+    **状态更新（M164 收口，2026-09-17；change `multi-vault-workspaces` 任务 7.1 口径）**：本项已由该 change **承接并落地**——后端 M162（`eafd258`）与前端 M163（`fb2dc26`）均已合并，归档评审待 Alex。落地的形状与上面的建议有**三处有意差异**：① 会话**不与注册项同文件**，单独落在 `<config>/lumir/vault-sessions/<id>.json`（design §2：注册项是身份，其读取路径对解析失败一律跳过，把易变的界面状态混进身份文件会把「会话写坏」升级成「vault 从列表与 remap 候选中消失」）；② 激活项存**相对路径**而不是下标（下标在列表变化后指向别处；不可用时按「退化到第一个可打开的标签」处理）；③ 恢复走 `openFile` 的 **`pinned` 意图**逐标签打开（预览意图会让第二个起顶掉前一个，只剩最后一个）。落定口径见 `openspec/changes/multi-vault-workspaces/specs/vault-workspace/spec.md` 的「按 vault 持久化标签列表」与「装载后恢复标签列表」；真机证据见本文件「待真机验收」第 18 项。
+    **v1 建议里唯一未落地的一条（如实登记，不当缺陷）**：启动日志的 `session_restored{count}` 没有实现——`src-tauri/src/logging.rs` 的事件白名单里没有该事件，`src/vault-switcher.ts` 的恢复路径也不发埋点（实测 `grep -rn session_restored src/ src-tauri/src/` 零命中）。design §9 把它写成「观察点（`log_event` 通道已有）」，那句**与实现不符**；它是建议里的观测手段、不是 spec 的 SHALL，故不改已评审的 design 正文，记在这里。**观测缺口**：目前「上次恢复了几个标签、跳过了几个」只能靠真机截图与场景断言看，跑不套件时看不到。若补，落点是恢复结束时发一条 `log_event`（需同时扩 Rust 白名单）。
+    **仍未做的边界**：光标位置、滚动位置与撤销史都不恢复（决策 3 的口径，未变）；「常态开几个标签」的 dogfood 反馈仍未取得，因此本项**不做**「会话数量上限 / 清理策略」这类后续设计。
 11. **跨语言 frontmatter 上限 Rust 200 vs TS 512（201–512 行分歧）**（**待裁决**；M152 finding，worker-langunify，
     2026-09-17，low）：M152 把 TS 侧上限收敛为单一常量 `src/preview/frontmatter.ts:19` 的 512（装饰层 /
     wikilink 排除区 / toc 同源），Rust 的 `src-tauri/src/link_graph.rs:106` 仍是 200，且 `:105` 的注释
@@ -82,6 +85,17 @@
     沿用 100ms）；③ 重建滚动基线并归档旧口径结果，避免新旧数字混比；④ `docs/specs/perf-measurement.md`
     记口径变更与不可比说明。可等 dogfood 性能专项一起做。finding
     `20260917-worker-testinfra-idea-open-1mb-file-io.md`。
+16. **「用户主动打开 / 切换 vault」仍走同步路径，大 vault 上会有等量级的界面无响应**（**待裁决（是否立项）**；
+    change `multi-vault-workspaces` design §9 登记的后续项，M164 收口时按任务 7.2 落到这里）。M159 只把**启动恢复**
+    移出了主线程（`lumir-vault-restore`），用户主动触发的打开/切换仍走 command 线程上的同步 `open_vault`：
+    注册表 IO + 建 watch + `scan_workspace` + `build_graph` 全在一段里跑完才返回，实测真实 vault 约 125ms、
+    4× 规模约 770ms（同一段代码，数字出自身为本变更提供依据的冷启动实测，见本文件第 12 条），期间界面不重绘。
+    change 明确**不修**（非目标），且**刻意不引入进度条 / 遮罩**——同步路径下界面在此期间不重绘，这类元素不可见
+    （口径见 spec「vault 切换与整窗上下文替换」最后一句）。**需 Alex 裁的是要不要立项异步化**：① 收益是切换
+    「人手可感知的卡顿」消失；② 代价与 M159 同族——先后端把提交移出主线程、再处理与用户后续操作的让位规则
+    （M159 已有的 `restore_pending` / 世代号是先例，可复用），前端则要重新设计过渡态（进度或乐观切换），
+    这会推翻本变更「不做过渡元素」的口径，因此不属收口范畴。建议时机：与 dogfood 的性能专项一起裁
+    （与第 12 条同批），不要单独提前做。
 
 ## 待修 findings（不阻塞）
 
@@ -230,6 +244,79 @@
   「M72 一次性实验，产出目录已随 change 撤回移走，重跑需先自建目录」。finding
   `20260917-worker-speccleanup-bug-table-probe72-matrix-mjs-change.md`。
 
+### 多 vault 收口遗留（M164 登记，2026-09-17）
+
+- **视觉容差再次吞掉真实变化：本次 13 张基线里 6 张是「静默」的**（M164 实测，2026-09-18）：
+  M163 的入口形态 A 让「切换」按钮退场（约 780px 的按钮 + 名称布局位移），13 张含左栏树头部的整页/
+  元素基线**内容**都变了，但普通模式只报了 7 张（超出 `maxDiffPixelRatio: 0.001`，即 1200×800 下约
+  960px）；另外 6 张——math-rendering / math-theme / render-hr / render-link / wikilink-states /
+  describe-bindings-panel（后者是键位面板多一条 `⌘O`，不同原因）——差异落在容差之内，**门禁全绿而
+  画面里还留着已退场的按钮**。发现方式：`--update-snapshots=all` 重建后逐张 sha256 与 `HEAD` 对比
+  （关键坑：Playwright 的 `--update-snapshots` 缺省是 **changed** 模式，只重写超容差的那几张——
+  「跑过 update 了」不等于「基线都重建了」）。**处置**：本次按 all 模式重建全部 13 张 + 2 张新增，
+  前后截图与逐张清单交 Alex 过目后入库（见 M164 的 review-request）。**建议把本现场补进 REVIEW.md
+  第 3 条的证据**（那是 REVIEW.md 的文件，需一个能写它的动作顺带做）。**给后续跑视觉门禁的人**：
+  动过会删除/移动 UI 的场景后，`rg` 出引用该元素的场景 → `--update-snapshots=all` 重建 →
+  sha256 对比找出「内容变了但没报警」的那几张，别只看门禁颜色。
+- **真机 app 窗口会被放到屏幕外，键盘注入随即整批不落地**（M164 实测，2026-09-18，medium）：
+  无人值守的批次里实测 `window_bounds x=193 y=1076`（内置屏只有 ~982pt 高），此后 KimiCU 的
+  `type_text` 直接报「target WebArea did not acquire stable keyboard focus; no keys were sent」，
+  场景里出现一串与产品无关的 FAIL（同一提交、窗口在屏内时全 PASS）。**处置**：
+  `scripts/acceptance/lib/app.mjs` 的 `launchApp` 现在经 `--config` 一并覆写窗口位置
+  （`x:120,y:80` + `focus:true`，并把 title/width/height 重述——tauri 的 `--config` 是**整根替换**
+  `app.windows` 数组，不重述就会掉成默认尺寸）。**操作纪律**：无人值守的真机批次把命令包在
+  `caffeinate -dimsu` 里（机器/显示休眠会让窗口位置漂走，也会让 KimiCU 的注入链路失稳；
+  M164 的验收轮实测：包了 caffeinate 后同一场景 33.6s PASS）。
+- **编辑器缺 Emacs 的 `M-<` / `M->`，按下去插入 Alt 图层符号**（M157 finding，worker-toc-proposal，
+  medium，**推断部分待真机确认**）：`src/keys.ts` 的 `KEY_BINDINGS` 有 `Alt-KeyV` / `Alt-KeyD` /
+  `Alt-Backspace` / `Alt-KeyF` / `Alt-KeyB`，**没有** `Alt-Comma` / `Alt-Period`，而 `src/editor.ts`
+  未装 CM commands keymap（无第二层兜底）→ 这两个键落到 macOS 的 Alt 图层，推断会把 `¯` / `˘` 量级
+  的符号**插进文档**（⌥v→`√`、⌥d→`∂` 是表内已记录的既有事实；具体字符**未在真机验过**）。对
+  「只改选区、不改文档」这条铁律（ADR 0003 §3）来说，这是意外写入，不是简单的键位缺口。
+  **M164 未验真机**：本 mission 的真机场景不覆盖键位层。复现方式（一条命令级的手工验收）：编辑器里
+  按 ⌥⇧, / ⌥⇧.，看文档是否被插入字符、光标是否不动。修法两条待 Alex 裁：补齐（新增
+  `editor.doc-start` / `editor.doc-end`，别复用 `C-a` / `C-e` 的**行**首尾语义）或明确「不支持」并
+  写进 living spec。finding `20260917-worker-toc-proposal-improve-emacs-m-lt-m-gt-beginning-end-of-buffer-alt.md`。
+- **`demo/index.html` 与现行产品脱节三处**（M158 finding，worker-uxmock，medium，**待修**；M164 只落账）：
+  ① `:9-56` 是 ADR 0006 之前的「纸 / 石墨 / 墨」三方向 token（现行 `src/style.css` 只有单套基线）；
+  ② `:234-247` 自带一套旧 D 编号（其 D1=切换、D2=空态提示、D3=打开 vault；deck 现行是 D1=masthead
+  vault 字段、D4=切换（已停用）、D5=空态提示、D6=打开 vault）；③ 右侧仍有一栏 config 探针（现行 shell
+  是两栏）。它是 M41/M57 期的视觉方向走查台、不是产品界面，但**会被当成现行口径误读**（M164 收口时
+  差点按它的编号去核 D 条）。修法二选一：按现行 token 与 deck 编号重做一版，或在文件头写明「历史走查台，
+  现行口径见 `demo/multi-vault.html` 与 `src/style.css`」。finding
+  `20260917-worker-uxmock-improve-demo-index-html-token-d-config.md`。
+- **`文案-Copy.md` D90 行误引 D15**（M149 遗留；M163 r2 评审发现同形误引，M164 落账，**修法待 Alex 裁**）：
+  D90（标签条目的「未保存」读屏名）在备注里把 **D15** 引作「保存成功 toast」族的来源，而保存留痕一族
+  实际是 **D55 / D56**，手动「已保存」在 deck 里**没有独立条目**。与 M163 r2 已修的那处同形（那次改的是
+  同一族的另一行），可选修法两条：把引用改成 D55 / D56，或删掉该括号。
+  **M164 没有就地改**：deck 正文是已评审制品，改哪一处是口径决定，且 M163 r2 的修法（改引用）未必适用于
+  D90 的具体语境——与 M163 r2 的「修法待裁决」是同一类处置。证据：`文案-Copy.md` 的 D90 行（备注括号）。
+- **`tauri` 未开 `test` feature：带 `AppHandle` 的接线层无法单测**（M159 finding，worker-startup-impl，
+  low，**待修**）：`src-tauri/Cargo.toml` 的 tauri 依赖没有 `test` feature，`tauri::test::mock_app()` 不可用；
+  凡签名要 `&AppHandle` 的函数（`commands::prepare_vault_open`、`lib::restore_outcome`）只能靠集成测或真机
+  覆盖——`src-tauri/tests/` 是外部 crate，`#[cfg(test)]` 项对它不可见。M159 的实测代价：`prepare_vault_open`
+  只在建 watcher 时用 `app`（remap 短路分支根本不用），却因此拿不到直接单测。影响面会随「需要 AppHandle 的
+  接线层」变多而扩大（M154 survey 的 async 化改造同样会遇到）。修法：给 tauri 依赖开 `test` feature，或用
+  feature-gated 构造函数（`#[cfg(any(test, feature = "test-helpers"))]`）。finding
+  `20260917-worker-startup-impl-improve-tauri-test-feature-apphandle-m159.md`。
+- **重定位缺「只选目录、不开 vault」的后端命令，前端只能借 remap 短路分支**（M163 finding，
+  worker-multivault-frontend，medium，**待修**）：`src/main.ts` 的 `requestRelocate` 需要「让用户选一个目录、
+  只取路径、不打开、不注册」，但 `open_vault` 在选择器返回后就提交 vault（reconcile + commit）。前端只能借
+  `vault_open(force_new=false)` 的 remap 短路分支（未注册路径 + 有失效项时后端不提交）；**门没短路时后端已经
+  切换**，前端必须用 `vault_open_path(loadedRoot, true)` 把后端拉回来再拒绝——「先提交再回滚」的形状，回滚失败
+  会留下「后端在新 vault、前端显示旧的」的半切换态（此后相对路径的保存落到错误的 vault）。修法：加一个
+  picker-only 命令（只返回用户选的路径，不动 `VaultState`）。**不是**本变更引入的缺陷（既有 `vault_open` 语义
+  如此），但它是重定位路径的真实脆弱点。finding `20260917-worker-multivault-frontend-improve-vault-remap.md`。
+- **`commit_vault_open` 的 `Some(expect_generation)` 分支无生产消费者**（M164 归档期收敛观察；
+  low，**待归档评审确认**）：该参数为「启动恢复让位」而加，做法是「比对世代不符则拒绝提交」；但生产路径上
+  唯一的调用是 `commands.rs:381` 的 `commit_vault_open(state, prepared, None)`（用户主动打开无条件提交），
+  `Some(_)` 只出现在单测（`commands.rs:1216`）——恢复路径用的是**另一处**同语义判定
+  （`VaultState::finish_restore` 里的 `inner.generation != generation`，`commands.rs:178`）。即同一个不变量
+  有两份实现、其中公开那份没有生产调用者（REVIEW.md 第 9 条的同族）。**处置建议**：归档评审时确认它是否
+  只想服务测试；若是，要么删掉参数并让测试走 `finish_restore`，要么在注释里写明「只为测试保留」——两条都比
+  现状（读者无法判断它是有意保留还是残留）好。**M164 未改**：动它要碰 `commands.rs`（不在本 mission scope），
+  且改动落在提交路径的并发语义上，应由独立 mission 做。
+
 ## 工具链与环境（待 Alex 裁决）
 
 1. **1420 端口串行**：vite dev server 固定 `127.0.0.1:1420` 且 strictPort，全机同一时刻只能有一个
@@ -294,13 +381,14 @@
 设计见 [docs/process/real-machine-acceptance.md](process/real-machine-acceptance.md)）；手感/审美项仍归 Alex。
 
 分类依据 = **证据目录里真实 PASS 的场景**，不是「场景写了就算覆盖」。最近一次全量实跑：
-**M148+M149 批次（2026-09-17）——22 场景 / 22 PASS 0 FAIL**：全量 22/22 @ `fab134c`（M149 r1 交付态，
-含 M148 的 13-toc），r1→r2 唯一行为改动（`closeTab` 守卫）后单场景复跑 14-tabs PASS @ `52bb912`
-（43 断言 / 40.5s）；合并提交 `ac51328`。证据 `test-results/acceptance/2026-09-17/`（两次 run 的
-合成布局见该目录 summary.md）。上一次全量：master@`6e4d19a`（2026-09-16，20 场景 / 223 断言，
-证据 `test-results/acceptance/2026-09-16/`）。08b 的旧 FAIL（冲突期盲发按键未落地）已由 M140 核销
-（keys 动作回读+有限重试 + 08b 落点改走 type 通道 + 探测串移文末 + `ax.focused` 断言形态）；
-同族 type 侧假绿由 M143 核销（重试口径对齐 keys：只在字节完全未变时重试，partial landing 直接报错）。
+**M164 批次（本地 2026-09-18 凌晨；证据目录按 UTC 记为 `2026-09-17`）——26 场景 / 26 PASS 0 FAIL**
+（`node scripts/acceptance/run.mjs`，含本批新增的 17/18/19 与 M160 遗留项的 `13-toc` 复跑），
+证据 `test-results/acceptance/2026-09-17/`（git 外，`summary.md` + 各场景 `steps.md`/`shots/`/`ax/`）。
+上一次全量：M149 批次（2026-09-17）22/22 @ `fab134c`。**本批的套件改动**（M164）：就绪门改判形态 A 的
+入口读屏名（`AXPopUpButton`，不是 `AXButton`——写死角色会让整套在启动就超时）、窗口经 `--config`
+定位到主屏（否则 macOS 会把窗口放到屏幕外、键盘注入整批不落地）、每场景增清 `workspaces/` 与
+`vault-sessions/`、新增 `seed`（注册表 / 会话预置）与第二个合成 vault。**运行纪律**：无人值守批次用
+`caffeinate -dimsu <cmd>` 包住（见「多 vault 收口遗留」里的实测现场）。
 
 **M159 单场景实跑（2026-09-17，非全量）**：`16-startup-restore` **PASS / 10 断言 / 0 失败 / 29.4s**
 （`node scripts/acceptance/run.mjs 16`，证据 `test-results/acceptance/2026-09-17/16-startup-restore/`，
@@ -363,6 +451,32 @@
     「未打开 vault」、编辑器提示也都含这四个字），带 role 后只命中真正的按钮行（实测 4 → 1）。
     **不宣称性能改进**：恢复耗时不再占主线程，但 `LUMIR_READY` 的出现时刻不变（本 change 不动该行位置）；
     「树晚出现」的观感归 Alex（截图在证据目录）。
+
+17. **多 vault 列表与切换**（M164，2026-09-18）—— `17-multi-vault-switch`（38 断言 / 35.0s）：
+    树头部入口（形态 A，D96 读屏名）打开列表浮层 → 浮层里两个 vault（当前项带「当前」标 +
+    「2 个标签 · 现在打开」、没有历史的行给 D101 的串、底部 D104 的新增入口）→ ⌘O 开 / Esc 关的键位路径 →
+    点列表行切到另一个 vault（整窗上下文替换：入口、树、正文、空 vault 引导都换）→ 切走前把当前 vault 的
+    会话按**稳定 id** 落盘（`env:vault-sessions/acc-a.json` 的存在性 + `tabs` 有序 + `active`，三条 `file`
+    断言直读盘，不是「界面看起来对」）→ 切回后按会话恢复两个固定标签且激活项正确（`BPIN` 只可能来自被存的
+    激活标签；`editor.not "标签场景 A"` 是「激活项退化成了第一个」的反证）。两个固定标签经「单击打开 →
+    键入（首次输入即固定）」这条真实路径得到——**双击固定在该套件里不可表达**：索引点击走的是 AXPress ×2
+    （不是真 dblclick），`target.count` 也没有 x/y 变体，该路径由视觉通道覆盖。
+18. **启动恢复 vault 并一并恢复它的标签列表**（M164，2026-09-18）—— `18-vault-session-restore`
+    （7 断言 / 18.1s）：`seed.sessions` 预置 acc-a 的两个固定标签与会话里的激活项 → 启动后 vault 按
+    `last_vault` 自动恢复、两个标签按会话恢复（`关闭 ` ×2）、激活项是 tabs-b、不残留空 vault 引导。
+    与 16 的分工：16 验「vault 恢复本身」（含失效路径），本条验「装载后紧接着的标签恢复」；会话**写入**侧
+    由 17 的 `file` 断言覆盖，本条只验读回与恢复。
+19. **切换 vault 的 dirty 前置门三条出口**（M164，2026-09-18）—— `19-vault-switch-guard`
+    （35 断言 / 24.2s）：用**外部改写**把 dirty 变成持久状态（冲突待决期间自动保存暂停，08b 已覆盖该行为）
+    → 点另一行被拦下（D109 点名**当前** vault + 脏标签数，三出口齐全）→ 取消（留在 A、内容不丢、浮条撤下）
+    → 同一条文案的第二次请求再次拦下（浮条按文案去重不得复用旧 proceed，M163 r1 P2-1 那条）→
+    保存并切换（**保存未闭环 → 不切走** + 沿用既有的「重载 / 保留我的版本」出口，任务 4.2 的原文）→
+    放弃修改并切换（切到 B、被放弃的内存改动不落盘、磁盘仍是外部那一版）。
+    **未覆盖（套件表达力缺口，已记 `scripts/acceptance/README.md`「已知边界」）**：保存**能**闭环时
+    「保存成功 → 继续切换」那条顺路——真机上它要求「文档变更后 2s 内发出切换请求」（自动保存防抖 2s），
+    而键盘注入每键约 250ms + 一次 MCP 往返，抢不到那个窗口（两种抢法都实测不成立）。该路径由 chromium
+    视觉通道 `tests/visual/scenes/mv-vault-switch-guard.spec.ts`（4 用例，含 `document_save` 写动作级
+    判据）覆盖——**不要把 19 的 PASS 读成「三条出口的每条顺路都在真机验过」**。
 
 **已机验到渲染/结构层，行为细节仍缺可观测面**
 

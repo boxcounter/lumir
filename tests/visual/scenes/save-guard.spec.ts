@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { DEMO_VAULT, dirtyReports, fireQuitBlocked, stubTauri } from "./tauri-stub";
+import { DEMO_VAULT, dirtyReports, fireQuitBlocked, requestAddVault, stubTauri } from "./tauri-stub";
 
 // M101 保存守卫回归：真实桌面验收确认的三类缺陷。
 // 1. 非 Markdown 文件必须在内存层拒绝用户编辑（视图层只读，不产生 dirty）——
@@ -138,7 +138,7 @@ test("保存成功后所有 dirty 表现层一致清除，切换 vault 无未保
   await expect(blocked).toHaveCount(0);
 
   // 切换 vault 不再出现未保存拦截提示，新 vault 正常装载。
-  await page.locator(".ft-switch-btn").click();
+  await requestAddVault(page);
   await expect(page.locator(".masthead-vault")).toHaveText("other-vault");
   await expect(page.locator(".lumir-toast", { hasText: "未保存" })).toHaveCount(0);
 });

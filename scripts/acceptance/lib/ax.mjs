@@ -1,7 +1,7 @@
 // AX 树文本的解析与检索。
 //
 // KimiCU 的 get_app_state 把 AX 树渲染成缩进文本，每行形如：
-//   - [11] AXButton (切换 vault) @191,54 37×21 actions=[AXPress] help="切换 vault"
+//   - [11] AXButton (vault：slax-reader-demo（点击查看全部 vault）) @191,54 37×21 actions=[AXPress]
 //    - [8] AXStaticText = "slax-reader-demo 无当前文件"
 //     - [5] AXWebArea (Lumir)
 // 套件的两类断言（找可点节点、找文本证据）都建立在这个解析上。

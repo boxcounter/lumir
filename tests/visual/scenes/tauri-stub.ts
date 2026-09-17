@@ -16,6 +16,26 @@ export interface LogEventRecord {
   fields: Record<string, string>;
 }
 
+/** `vault_list` 的一行（契约见 src/bindings/VaultListEntry.ts）。列在桩里只被**渲染**，
+ *  排序由后端给定（前端不重排），因此这里的书写顺序就是浮层里的行序。 */
+export interface VaultListRow {
+  id: string;
+  path: string;
+  name: string;
+  available: boolean;
+  last_opened_at: number | null;
+  tab_count: number;
+}
+
+/** 一个 vault 的标签会话（契约见 src/bindings/VaultSession.ts）。`version` / `updated_at`
+ *  可省：桩按当前 schema 版本补齐，场景只关心 tabs / active 这两条会被断言的字段。 */
+export interface VaultSessionRow {
+  tabs: string[];
+  active: string | null;
+  version?: number;
+  updated_at?: number;
+}
+
 export interface VaultFixture {
   entries: unknown[];
   files?: Record<string, string>;
@@ -23,6 +43,12 @@ export interface VaultFixture {
   root?: string;
   vault_id?: string;
   failures?: Record<string, { code: string; message: string }>;
+  /** `vault_list` 桩：注册表内容（缺省按当前 fixture 派生**一条**「当前 vault」行——
+   *  单 vault 下浮层仍要出现，见 change task 3.1）。 */
+  vaults?: VaultListRow[];
+  /** `vault_session_get` 的初值，键是 vault 稳定 id。缺省一律无历史（空会话）。
+   *  与真后端同构：会话按 id 存在桩层，跨 vault 切换存活（切走再切回要能读回同一份）。 */
+  sessions?: Record<string, VaultSessionRow>;
   /** link_graph_resolve 桩：链接原文 → LinkResolveResult。未命中按 unresolved 应答。 */
   links?: Record<string, unknown>;
   /**
@@ -57,10 +83,20 @@ export async function stubTauri(page: Page, vault: VaultFixture | null): Promise
     //（与真后端 open_vault 的替换语义对齐）。
     let current = v;
 
-    type Args = { path?: string; from?: string; link?: string; target?: string; id?: string; title?: string; vault_id?: string; expected_revision?: string; content?: string; dirty?: boolean; force_new?: boolean; event?: string; fields?: Record<string, string>; url?: string };
+    type Args = { path?: string; from?: string; link?: string; target?: string; id?: string; title?: string; vault_id?: string; expected_revision?: string; content?: string; dirty?: boolean; force_new?: boolean; event?: string; fields?: Record<string, string>; url?: string; tabs?: string[]; active?: string | null };
     const checkVault = (args: Args) => {
       if (args.vault_id !== (current?.vault_id ?? "fixture-vault")) throw { code: "fixture_contract", message: "vault_id mismatch" };
     };
+    // 会话真源（M163）：按 vault 稳定 id 存放，跨 vault 切换存活——「切走再切回读回同一份
+    // 标签列表」这条链路要能被视觉场景端到端看见。初值来自 fixture 的 sessions。
+    const sessions = new Map<string, VaultSessionRow>(
+      Object.entries(v?.sessions ?? {}).map(([id, row]) => [
+        id,
+        { ...row, version: row.version ?? 1, updated_at: row.updated_at ?? 0 },
+      ]),
+    );
+    /** 路径的目录名（vault_list 的 name 口径与 /_vaults 的缺省行共用）。 */
+    const baseName = (p: string) => p.split("/").filter((s) => s !== "").pop() ?? p;
     // 退出守卫桩：document_set_dirty 的上报记录（场景断言 dirty 已镜像给后端）。
     w.__dirtyReports = [] as boolean[];
     // config_get 的调用计数（M132 场景用它等「配置已加载 → 键位覆盖已挂上」）。
@@ -78,7 +114,54 @@ export async function stubTauri(page: Page, vault: VaultFixture | null): Promise
     w.__openedPaths = [] as Array<{ from: string; target: string }>;
     // link_resolve_note 的调用记录（M145）：相对路径 md 的解析请求。
     w.__noteResolves = [] as Array<{ from: string; target: string }>;
+    // vault_session_put 的调用记录（M163）：落盘内容按调用顺序，场景据此断言「会话按 vault
+    // 记在稳定 id 上、内容是有序的固定标签 + 激活项」。
+    w.__sessionPuts = [] as Array<{ vault_id?: string; tabs?: string[]; active?: string | null }>;
+    // document_save 的调用记录（M164）：只记「真的发生了保存」这个事实与内容——
+    // 「放弃修改后不写盘」这类**负向**判据需要一个能看到写动作的观测点，否则只能读文件表，
+    // 而切换 vault 之后原 vault 的文件表已经不在 `current` 里，断言会空转（REVIEW.md 第 2 条）。
+    // **命名避开 `__saveCalls`**：那是 `save-hardening-autosave.spec.ts` 自己的**计数**（它用
+    // 第二个 addInitScript 往 `window.__saveCalls` 上挂 +1 的包装），同名会让两边的类型互相踩
+    // （实测：那边得到数组、`+= 1` 变成字符串拼接，`document_save` 随之报错）。
+    w.__documentWrites = [] as Array<{ path: string; content: string }>;
     const handlers: Record<string, (args: Args) => unknown> = {
+      // vault_list 桩（M163）：缺省派生**一条**「当前 fixture 那一行」——列表浮层在单 vault
+      // 下同样要出现（change task 3.1），因此不能让它缺省返回空数组（空数组会被读成
+      // 「一个 vault 都没有」）。排序由后端给，桩按书写顺序返回、不重排。
+      vault_list: () => {
+        if (current?.vaults) return current.vaults;
+        if (!current) return [];
+        const root = current.root ?? "/Users/alex/demo-vault";
+        return [
+          {
+            id: current.vault_id ?? "fixture-vault",
+            path: root,
+            name: baseName(root),
+            available: true,
+            last_opened_at: null,
+            tab_count: 0,
+          },
+        ];
+      },
+      // 会话读（M163）：无记录等价于「没有标签历史」（与 vault_session::load_from 的五种
+      // None 同义），前端据此走空 vault 首入态。
+      vault_session_get: (args) => sessions.get(args.vault_id ?? "") ?? null,
+      // 会话写（M163）：写失败在真后端只降级（warning 语义），桩按成功应答并把内容存进
+      // 会话真源——「切走 → 切回 → 标签恢复」这条链路要能真的读回写入的内容。
+      vault_session_put: (args) => {
+        (w.__sessionPuts as Array<{ vault_id?: string; tabs?: string[]; active?: string | null }>).push({
+          vault_id: args.vault_id,
+          tabs: args.tabs,
+          active: args.active,
+        });
+        sessions.set(args.vault_id ?? "", {
+          version: 1,
+          updated_at: Date.now(),
+          tabs: args.tabs ?? [],
+          active: args.active ?? null,
+        });
+        return null;
+      },
       log_event: (args) => {
         (w.__logEvents as LogEventRecord[]).push({
           event: args.event ?? "",
@@ -171,6 +254,10 @@ export async function stubTauri(page: Page, vault: VaultFixture | null): Promise
         const revision = `fixture-revision-${currentText}`;
         if (args.expected_revision !== revision) throw { code: "document_conflict", message: "文件已被外部修改，请先协调冲突" };
         if (current?.failures?.document_save) throw current.failures.document_save;
+        (w.__documentWrites as Array<{ path: string; content: string }>).push({
+          path,
+          content: args.content ?? "",
+        });
         current!.files![path] = args.content ?? "";
         return `fixture-revision-${args.content ?? ""}`;
       },
@@ -353,6 +440,44 @@ export async function noteResolves(page: Page): Promise<Array<{ from: string; ta
 /** vault_remap 的调用记录（前端把用户确认的映射传给后端的证据）。 */
 export async function remapCalls(page: Page): Promise<Array<{ id?: string; path?: string }>> {
   return page.evaluate(() => (window as unknown as { __remapCalls: Array<{ id?: string; path?: string }> }).__remapCalls);
+}
+
+/** 经树头部入口发起一次「新增 vault」（= 目录选择器链路，与空态按钮同一条）。
+ *
+ *  M163 形态 A 起树头部只有一个入口（`button.ft-vault`，名称 + caret），点它开的是列表浮层
+ *  而不是系统选择器；「新增」是浮层底部的行。原先直接点「切换」按钮的写法已不存在，这个
+ *  封装是**唯一**的选择器落点（REVIEW.md 第 8 条：同一语义不做两处真源）。 */
+export async function requestAddVault(page: Page): Promise<void> {
+  await page.locator(".ft-vault").click();
+  await page.locator(".vault-add").click();
+}
+
+/** 经树头部入口打开列表浮层（不选任何行）。 */
+export async function openVaultSwitcher(page: Page): Promise<void> {
+  await page.locator(".ft-vault").click();
+  await page.locator(".vault-list").waitFor({ state: "visible" });
+}
+
+/** vault_session_put 的调用记录（会话落盘内容，按调用顺序）。 */
+export async function sessionPuts(
+  page: Page,
+): Promise<Array<{ vault_id?: string; tabs?: string[]; active?: string | null }>> {
+  return page.evaluate(
+    () =>
+      (window as unknown as {
+        __sessionPuts: Array<{ vault_id?: string; tabs?: string[]; active?: string | null }>;
+      }).__sessionPuts,
+  );
+}
+
+/** document_save 的调用记录（真的发生的保存：路径 + 写入内容，按调用顺序）。
+ *  与 `save-hardening-autosave.spec.ts` 的 `__saveCalls`（计数）分开命名，见 stub 里那行注释。 */
+export async function documentWrites(page: Page): Promise<Array<{ path: string; content: string }>> {
+  return page.evaluate(
+    () =>
+      (window as unknown as { __documentWrites: Array<{ path: string; content: string }> })
+        .__documentWrites,
+  );
 }
 
 /** 模拟外部程序写入文件（Obsidian 侧保存；不自带 watch 事件）。 */

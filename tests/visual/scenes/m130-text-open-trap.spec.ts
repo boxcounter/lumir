@@ -115,10 +115,21 @@ test("注册表差集的裁决落地：hpp/cc 走 C++、bash/zsh 走 shell、php
 test("没有打开文件时 Cmd+S 必须给出可见反馈（不得静默 return）", async ({ page }) => {
   await stubTauri(page, VAULT);
   await page.goto("/");
-  // 装载 vault 但不打开文件：编辑器为空的默认模式文档（无 displayedPath）
-  const content = page.locator(".cm-content");
+  // 装载 vault 但一个标签都没有 = M163 的空 vault 首入态：D107 的引导层盖住正文
+  //（`.editor-notice` 拦截指针事件，编辑器点不进去）。这条断言把新状态钉住。
+  await expect(page.locator(".editor-notice")).toContainText("这个 vault 还没有打开的文件");
   await expect(page.locator(".masthead-file")).toHaveText("无当前文件");
 
+  // M164 判据变更：未命名空文档不再由「装载后直接可得」到达，改走「打开一个文件再关掉它的
+  // 标签」——`closeTabNow` 关掉最后一个标签时落在未命名空文档上并撤下覆盖层。本场景验的是
+  // 未命名 dirty 文档上的 ⌘S 反馈与切换守卫，与「怎么到达它」无关。
+  await page.locator('.ft-row[title="readme.md"]').click();
+  await expect(page.locator(".masthead-file")).toHaveText("readme.md");
+  await page.keyboard.press("Meta+w");
+  await expect(page.locator(".masthead-file")).toHaveText("无当前文件");
+  await expect(page.locator(".tab")).toHaveCount(0);
+
+  const content = page.locator(".cm-content");
   await content.click();
   await page.keyboard.type("draft");
   await expect(content).toContainText("draft");
