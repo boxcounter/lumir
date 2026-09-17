@@ -25,8 +25,8 @@ export type FileClass = "md" | "image" | "binary" | "code" | "text";
 const MD_EXTENSIONS = ["md", "markdown"];
 
 /** code 模式扩展名 → legacy-modes 语言名；null = 该扩展无对应语言包（纯文本只读）。
- *  值域即 editor.ts 的 LANGUAGES 键（Record<CodeLanguage, Language> 编译期强制两边
- *  一致）。收录口径 = 原 tree.ts CODE_EXTS 与 editor.ts CODE_EXTENSIONS 的并集，
+ *  值域即 preview/code.ts 的 LANGUAGES 键（那张表的 `Record<CodeLanguage, …>` 编译期
+ *  强制两边一致）。收录口径 = 原 tree.ts CODE_EXTS 与 editor.ts CODE_EXTENSIONS 的并集，
  *  差集逐项裁决：hpp → cpp、bash/zsh → shell、svelte → html（与 vue 同口径：SFC
  *  按 html 兜底）、php → null（legacy-modes 无 php mode，不用近似 parser 冒充高亮）、
  *  cc → cpp、scss → css(sCSS)。裁决记录见 openspec change non-md-readonly-open。 */
@@ -67,7 +67,8 @@ const CODE_EXTENSIONS = {
   php: null,
 } as const;
 
-/** code 模式的语言名（注册表推导）；editor.ts 用它约束 Language 实现覆盖。 */
+/** code 模式的语言名（注册表推导）；preview/code.ts 的 LANGUAGES 用它约束实现覆盖
+ *  （`Record<CodeLanguage, StreamLanguage>`：键缺失或多出都在那边编译失败）。 */
 export type CodeLanguage = NonNullable<(typeof CODE_EXTENSIONS)[keyof typeof CODE_EXTENSIONS]>;
 
 /** image 扩展名 → data: URL 的 MIME。键集即 image 分类（文件树展示与附件渲染同源；
