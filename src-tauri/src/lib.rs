@@ -14,6 +14,7 @@ pub mod link_graph;
 pub mod logging;
 pub mod ready;
 pub mod recovery;
+pub mod vault_session;
 pub mod workspaces;
 
 #[cfg(target_os = "macos")]
@@ -86,6 +87,10 @@ pub fn run() {
             commands::wikilink_create,
             workspaces::vault_register,
             workspaces::vault_remap,
+            // 多 vault（M162）：列表 + 按 vault 的标签会话（前端在 M163 接）
+            workspaces::vault_list,
+            vault_session::vault_session_get,
+            vault_session::vault_session_put,
         ])
         .setup(move |app| {
             // 诊断日志先初始化：`[log] level` 在第一条事件之前生效（level = off 时
@@ -414,10 +419,23 @@ impl RestoreGuard {
     }
 
     /// 正常结束：把终局交给 [`commands::VaultState::finish_restore`] 单次持锁裁决，再发完成信号。
+    ///
+    /// 裁决为「已应用」且终局是一次成功打开时，顺带记该注册项的 `last_opened_at`
+    /// （M162；spec：启动恢复也是「打开成功」的一种）——被让位丢弃的恢复不记：那次打开没有
+    /// 发生，不该改动列表排序与「上次打开时间」。写在本线程（`lumir-vault-restore`）上，
+    /// 不占主线程。
     fn finish(mut self, outcome: commands::RestoreOutcome) {
-        self.app
+        let opened_id = match &outcome {
+            commands::RestoreOutcome::Opened(prepared) => Some(prepared.vault_id.clone()),
+            _ => None,
+        };
+        let applied = self
+            .app
             .state::<commands::VaultState>()
             .finish_restore(self.generation, outcome);
+        if let Some(id) = opened_id.filter(|_| applied) {
+            crate::workspaces::mark_opened(&id);
+        }
         self.signal();
     }
 

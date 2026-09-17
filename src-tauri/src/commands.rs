@@ -465,6 +465,21 @@ fn warn_last_vault_failed(e: &CommandError) {
     eprintln!("lumir: 记录 last_vault 失败（vault 已打开，本次忽略）：{e}");
 }
 
+/// 打开成功后的记账（M127 的 `last_vault` + M162 的注册项 `last_opened_at`）：两者在
+/// **同一次成功路径**上写，都只降级 warning（打开是主结果，两者都只影响下次启动与列表顺序）。
+///
+/// `remap_candidates` 非空 = 这次被 remap 门拦下、没有打开任何 vault（`open_vault` 的
+/// 短路返回），一律不记账——否则一次没有发生的打开会改写列表排序，并被记成「上次打开的
+/// vault」。启动恢复不调本函数：它不改写 `last_vault`（本来就是从它恢复的），只在提交之后
+/// 记账 `last_opened_at`（见 `lib.rs` 的 `RestoreGuard::finish`）。
+pub fn remember_open(info: &VaultInfo) {
+    if !info.remap_candidates.is_empty() {
+        return;
+    }
+    remember_last_vault(Path::new(&info.root));
+    crate::workspaces::mark_opened(&info.vault_id);
+}
+
 /// 调系统目录选择器打开 vault；用户取消返回 Ok(None)，不产生错误状态。
 /// 成功后写入 last_vault。
 #[tauri::command(rename_all = "snake_case")]
@@ -482,11 +497,9 @@ pub async fn vault_open(
     };
     let root = handle.path().to_path_buf();
     let info = open_vault(&app, &state, root, force_new)?;
-    // remap 候选短路返回（未实际打开）不写 last_vault：仅打开成功才记忆。
-    // 记忆写失败降级为 warning（M127）：不把已成功的打开报成失败。
-    if info.remap_candidates.is_empty() {
-        remember_last_vault(Path::new(&info.root));
-    }
+    // 打开成功才记账（remap 短路不记）：last_vault 与 last_opened_at 在同一次成功路径上写，
+    // 两者都降级 warning（M127：不把已成功的打开报成失败）。
+    remember_open(&info);
     Ok(Some(info))
 }
 
@@ -501,11 +514,8 @@ pub fn vault_open_path(
     force_new: bool,
 ) -> Result<VaultInfo, CommandError> {
     let info = open_vault(&app, &state, PathBuf::from(path), force_new)?;
-    // remap 候选短路返回（未实际打开）不写 last_vault：仅打开成功才记忆。
-    // 记忆写失败降级为 warning（M127），同 vault_open。
-    if info.remap_candidates.is_empty() {
-        remember_last_vault(Path::new(&info.root));
-    }
+    // 打开成功才记账（remap 短路不记），同 vault_open：last_vault 与 last_opened_at 同次写入。
+    remember_open(&info);
     Ok(info)
 }
 
