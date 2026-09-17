@@ -32,6 +32,7 @@ import {
   wikilinkCreate,
 } from "./ipc";
 import { createSaveController } from "./save-controller";
+import { createToc } from "./toc";
 import { logEvent, sampleCallback } from "./diagnostics";
 import type { FsEntry } from "./bindings/FsEntry";
 import type { LinkResolveResult } from "./bindings/LinkResolveResult";
@@ -144,6 +145,17 @@ function emitReadiness(name: string, detail: object = {}): void {
   window.dispatchEvent(new CustomEvent(`lumir:${name}`, { detail }));
 }
 
+// 轻量大纲（M148）：masthead 的当前位置指示段 + ⌘⇧O 浮层。能力与浮层本体在 src/toc.ts，
+// 装配侧只提供三样：编辑器视图、是否有当前文件（空态不显示指示段）、无标题时的提示出口
+// （toast，文案见 文案-Copy.md D84）。指示段与浮层都挂 masthead，浮层不动布局。
+const toc = createToc({
+  view: editor.view,
+  indicator: shell.mastheadSection,
+  mount: shell.masthead,
+  hasFile: () => save.displayedPath() !== undefined,
+  toast,
+});
+
 editor.onReady((event) => {
   emitReadiness(event.phase, event);
 });
@@ -173,6 +185,8 @@ async function openFile(path: string, kind: "md" | "code" | "text" | "binary") {
     mastheadFile.textContent = path;
     invalidateResolve(); // from 变更，按 from 键控的缓存整批失效
     editor.openDocument(text, path, request);
+    // 指示段与文档同一帧到位（不落在 120ms 节流窗口之后）：见 TocHandle.refresh 的说明。
+    toc.refresh();
     tree.setCurrentPath(path);
     showEditor();
   } catch (e) {
@@ -471,6 +485,8 @@ const commands: CommandRuntime = {
   // 文件内搜索（M139）：能力与 panel 在 src/search.ts，此处只把编辑器视图交过去。
   // 作用域 global——焦点在文件树 / 搜索框里时同样要能开（⌘F 的 mac 惯例，理由见 keys.ts）。
   "app.search-open": () => openSearch(editor.view),
+  // 轻量大纲（M148）：开→关 / 关→开，无标题文档只给提示（不弹空浮层）。
+  "toc.toggle": () => toc.toggle(),
 };
 
 // editor 作用域判定：事件目标落在 contentDOM 内（含其中 widget 与表格滚动容器）。
@@ -775,6 +791,7 @@ function loadVault(root: string, entries: FsEntry[], vaultId = root, restored = 
   editor.reset();
   currentPath = undefined;
   mastheadFile.textContent = "无当前文件";
+  toc.refresh(); // 指示段随文档清空立即收起（同上，不落在节流窗口之后）
   showEditor();
   editor.setWikilinkResolver(wikilinkResolver);
   mastheadVault.textContent = root.slice(root.lastIndexOf("/") + 1) || root;
