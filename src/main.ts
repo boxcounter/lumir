@@ -185,6 +185,8 @@ async function openFile(path: string, kind: "md" | "code" | "text" | "binary") {
     mastheadFile.textContent = path;
     invalidateResolve(); // from 变更，按 from 键控的缓存整批失效
     editor.openDocument(text, path, request);
+    // 指示段与文档同一帧到位（不落在 120ms 节流窗口之后）：见 TocHandle.refresh 的说明。
+    toc.refresh();
     tree.setCurrentPath(path);
     showEditor();
   } catch (e) {
@@ -789,6 +791,7 @@ function loadVault(root: string, entries: FsEntry[], vaultId = root, restored = 
   editor.reset();
   currentPath = undefined;
   mastheadFile.textContent = "无当前文件";
+  toc.refresh(); // 指示段随文档清空立即收起（同上，不落在节流窗口之后）
   showEditor();
   editor.setWikilinkResolver(wikilinkResolver);
   mastheadVault.textContent = root.slice(root.lastIndexOf("/") + 1) || root;

@@ -67,6 +67,13 @@ export interface TocOptions {
 export interface TocHandle {
   /** ⌘⇧O 与点击指示段共用的入口：关→开，开→关；无标题时只给提示。 */
   toggle(): void;
+  /**
+   * 立即同步一次指示段（不等节流窗口）。装配层在**文档装载边界**调用：打开文件 / 切换 vault
+   * 之后，指示段必须与文档同一帧到位——否则「打开文件」到「指示段出现」之间有一段空窗，
+   * 截图类门禁会拍到不确定的中间态（M148 实证：视觉门禁的截图早于 120ms 节流那一拍，同一份
+   * 代码在不同机器上可能拍到有/无指示段两种状态）。
+   */
+  refresh(): void;
 }
 
 /** ATX 标题节点名（H1–H6）。 */
@@ -129,9 +136,14 @@ export function extractHeadings(state: EditorState, full = false): TocHeading[] 
 /**
  * 当前位置锚点：光标在可见范围内时取光标，否则取视口顶部。
  * 位置指示与浮层的「当前段」都以它为准——「随光标移动/滚动更新」这条口径的落点就在这里。
+ *
+ * `preferCursor` 用于文档装载边界（`Toc.refresh`）：那一刻 `visibleRanges` 可能还是上一份文档
+ * 的测量结果（CM 的 measure 还没跑），此时只有光标位置是可信的；看视口会把链路算到别的段上，
+ * 直到下一次节流刷新才纠正——那是一段不确定的中间态，截图类门禁会拍到它。
  */
-export function anchorPos(state: EditorState, view: EditorView): number {
+export function anchorPos(state: EditorState, view: EditorView, preferCursor = false): number {
   const head = state.selection.main.head;
+  if (preferCursor) return head;
   for (const range of view.visibleRanges) {
     if (head >= range.from && head <= range.to) return head;
   }
@@ -247,7 +259,7 @@ class Toc implements TocHandle {
     this.view.dispatch({
       effects: StateEffect.appendConfig.of(EditorView.updateListener.of(() => this.schedule())),
     });
-    this.sync();
+    this.refresh();
   }
 
   private schedule(): void {
@@ -261,12 +273,23 @@ class Toc implements TocHandle {
   }
 
   /** 指示段与状态对齐：标题链 + 是否有当前文件；没有标题或没有当前文件时不显示。 */
-  private sync(): void {
+  private sync(preferCursor = false): void {
     const headings = extractHeadings(this.view.state);
-    const path = headingPath(headings, headingIndexAt(headings, anchorPos(this.view.state, this.view)));
+    const pos = anchorPos(this.view.state, this.view, preferCursor);
+    const path = headingPath(headings, headingIndexAt(headings, pos));
     const text = path.map((heading) => heading.text).join(PATH_SEPARATOR);
     if (this.indicator.textContent !== text) this.indicator.textContent = text;
     this.indicator.hidden = !this.hasFile() || path.length === 0;
+  }
+
+  /** 文档装载边界（打开文件 / 清空）立即同步：见 TocHandle.refresh 的说明。 */
+  refresh(): void {
+    if (this.timer !== null) {
+      clearTimeout(this.timer);
+      this.timer = null;
+    }
+    this.lastRun = performance.now();
+    this.sync(true);
   }
 
   /** 构建条目表；current 为当前段下标（-1 = 光标在首个标题之前，没有当前段）。 */
@@ -347,8 +370,9 @@ class Toc implements TocHandle {
       selection: { anchor: pos },
       effects: EditorView.scrollIntoView(pos, { y: "center" }),
     });
-    // 指示段立即跟上本次跳转（不等节流窗口），否则跳转后的路径要过一拍才更新。
-    this.sync();
+    // 指示段立即跟上本次跳转（不等节流窗口）：光标刚被放到目标行尾、视口还没重测，
+    // 这一拍只有光标是可信锚点（见 anchorPos 的 preferCursor）。
+    this.refresh();
   }
 
   private move(delta: number): void {
