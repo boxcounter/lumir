@@ -39,6 +39,10 @@ body { background:var(--bg); color:var(--text); font-family:var(--font-body); fo
   height: 100%;
   min-width: 0;
   min-height: 0;
+  /* M163：vault 切换器浮层的包含块。浮层不能挂在左栏里（.pane-filetree / .tree-pane 都是
+     overflow:auto，会被裁掉），而口径 12 明确允许它溢出左栏（320px 宽 vs 244px 栏宽），
+     所以挂在网格容器上、由它提供定位基准。绝对定位的子元素不参与网格排布，不影响布局。 */
+  position: relative;
 }
 .masthead {
   grid-column: 2 / -1;
@@ -126,23 +130,33 @@ body { background:var(--bg); color:var(--text); font-family:var(--font-body); fo
   white-space: nowrap;
 }
 
-/* 常驻切换入口：弱化默认态（小一号、灰字、无边框），hover 才给反馈 */
-.ft-switch-btn {
-  flex: none;
-  padding: 1px 6px;
+/* 常驻 vault 切换器入口（形态 A，M163）：**名称本身即入口** + caret 作可点提示，取代 M30 的
+   「切换」文字按钮（D4 因此停用）。弱化默认态（无边框、无底色），hover 才给反馈——与它取代
+   的那个按钮同一取向：中频动作不抢主导航注意力。 */
+.ft-vault {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 4px;
   border: none;
   border-radius: 4px;
   background: none;
   font: inherit;
-  font-size: 12px;
-  font-weight: 400;
-  color: var(--dim);
+  color: var(--text);
+  text-align: left;
   cursor: pointer;
 }
 
-.ft-switch-btn:hover {
+.ft-vault:hover {
   background: var(--bg-2);
-  color: var(--text);
+}
+
+.ft-vault-caret {
+  flex: none;
+  color: var(--dim);
+  font-size: 10px;
 }
 
 .ft-children {
@@ -462,6 +476,92 @@ body { background:var(--bg); color:var(--text); font-family:var(--font-body); fo
   font-size: 11px;
   color: var(--dim);
 }
+
+/* vault 切换器浮层（M163）：与 .lumir-toc 同一手法——绝对定位、不占任何常驻行高、关闭即
+   消失；颜色 / 边框 / 圆角 / 阴影全部取既有 token，不引入新视觉语言。宽度 320px 允许溢出
+   左栏（244px，口径 12）：收进栏内就得再砍行内信息（显示名 + 摘要 + 路径三段 + 失效行）。
+   挂点是 app-shell（左栏两个容器都 overflow:auto，浮层挂进去会被裁切），定位由 src/vault-switcher.ts
+   用入口的视口矩形算出来。max-height 用 vh：随窗口重排即时生效，不需要 JS 监听 resize。 */
+.vault-pop {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 15;
+  display: flex;
+  flex-direction: column;
+  width: 320px;
+  max-height: 60vh;
+  padding: 6px;
+  background: var(--bg);
+  border: 1px solid var(--bd-2);
+  border-radius: var(--radius);
+  box-shadow: 0 6px 18px color-mix(in srgb, var(--text) 16%, transparent);
+  font-family: var(--font-body);
+  font-size: 13px;
+}
+/* 优先级 0-2-0 > `.vault-pop` 的 0-1-0：加了 display: flex 之后这里的隐藏仍然生效。 */
+.vault-pop[hidden] { display: none; }
+/* 唯一滚动容器：flex 子项要能缩到内容高以下，min-height: 0 是前提（同 .lumir-toc-list）。 */
+.vault-list { flex: 1 1 auto; min-height: 0; overflow: auto; outline: none; }
+.vault-row {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  width: 100%;
+  padding: 5px 8px;
+  border: none;
+  border-radius: 4px;
+  background: none;
+  font: inherit;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+.vault-row:hover { background: var(--bg-2); }
+.vault-row.is-active { background: var(--bg-2); }
+/* 当前项：唯一的标记（朱红实心点 + 「当前」字样）——朱红只在需要分流的地方出现（M52）。 */
+.vault-row.is-current .vault-row-name { font-weight: 600; }
+.vault-row-top { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.vault-dot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+.vault-dot.is-off { background: var(--bd-3); }
+.vault-row-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vault-row-flag { flex: none; font-size: 11px; color: var(--dim); }
+.vault-row-sub {
+  padding-left: 12px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.vault-row-sub.is-warn { color: var(--accent); }
+/* 失效行的唯一出口：整行可点（点击即重定位），所以这里只是标签，不是第二个可交互元素
+   （按钮里嵌按钮是无效结构，键盘路径由浮层的 Enter 承担）。 */
+.vault-row-act { padding-left: 12px; font-size: 11px; color: var(--text); text-decoration: underline; }
+.vault-sep { flex: 0 0 auto; margin: 6px 0; border-top: 1px solid var(--bd-1); }
+.vault-add {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px;
+  border: none;
+  border-radius: 4px;
+  background: none;
+  font: inherit;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+.vault-add:hover { background: var(--bg-2); }
+.vault-add-plus { color: var(--dim); }
 
 /* 标签栏（M149 多标签）：编辑器列顶部的独立一行，容器空态 hidden。
    颜色 / 边框 / 字体全部取 M55 既有 token（--bg-nav / --bd-* / --text / --dim /

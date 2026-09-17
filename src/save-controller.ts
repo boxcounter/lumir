@@ -4,7 +4,8 @@
 // 状态边界（M149 多标签后按**路径**键控）：每个打开文档的 path / revision / 在途标记 /
 // 自动保存暂停原因都在这里，键是 vault 相对路径。main.ts 不再自行维护副本，只经
 // displayedPath()（前台标签的路径）、beginSwitch()、noteOpened()、noteVaultReset()、
-// guardVaultSwitch() 与本模块交互。
+// vaultSwitchBlock() / saveAllDirty()（切换 vault 的前置判据与「保存并切换」出口，M163
+// 起提示与三动作由装配层在拦下它的地方给出）与本模块交互。
 //
 // 为什么从「当前展示文档」升级成「按路径」（M149）：多标签下「当前展示的文档」不再唯一，
 // 自动保存的 debounce 必须逐标签独立——旧实现只有一个 reconcileTimer，切标签会把待写的
@@ -62,6 +63,15 @@ export interface ToastAction {
 
 export type ToastFn = (text: string, actions?: ToastAction[], sticky?: boolean) => HTMLElement;
 
+/** 切换 vault 的 dirty 前置判据（M149 判据，M163 起只给判据、不给提示）。 */
+export interface VaultSwitchBlock {
+  /** 有未保存修改的标签数（判据：任一**有路径**的标签 dirty）。 */
+  dirtyCount: number;
+  /** 这些脏标签里是否有**不可保存**的（非 md / 未登记 CAS 基准）——有则「保存并切换」
+   *  这条出口给不出来（走不通的建议不给，change task 4.2）。 */
+  hasUnsaveable: boolean;
+}
+
 export interface SaveControllerDeps {
   editor: EditorHandle;
   /** toast 挂载点（守卫提示的整批撤下要按 DOM 查询）。 */
@@ -84,9 +94,18 @@ export interface SaveController {
   /** 前台文档的 dirty 守卫；返回 false 时已给出人话提示。用于「就地替换前台标签」
    *  这一类会丢内容的动作（当前唯一调用点是打开文件时前台是未命名文档的情形）。 */
   guard(action: string): boolean;
-  /** 切换 vault 的 dirty 守卫（M149）：**任一**标签有未保存修改就拦下——切 vault 会把
-   *  全部标签一起作废。返回 false 时已给出人话提示。 */
-  guardVaultSwitch(): boolean;
+  /** 切换 vault 的 dirty 前置判据（M149 判据原样，M163 起调用形态变了）：**任一**标签有
+   *  未保存修改就拦下——切 vault 会把全部标签一起作废。返回被拦下的信息（脏标签数 +
+   *  是否含不可保存的脏标签）；无脏标签返回 null。
+   *
+   *  本函数**不弹提示**：切 vault 是用户主动发起的整窗换上下文动作，提示与出口（保存并
+   *  切换 / 放弃修改并切换 / 取消）必须摆在拦下它的地方，由调用方（装配层的切换流程）
+   *  给出。这里只回答「能不能切」以及「规模有多大」。 */
+  vaultSwitchBlock(): VaultSwitchBlock | null;
+  /** 保存**全部**可保存的脏标签（切换的「保存并切换」出口用；手动 ⌘S 只存前台那一个）。
+   *  返回「是否已无脏标签」：有任一条没闭环（冲突 / 写失败 / 无落盘基准）即 false，调用方
+   *  据此**不**继续切换（change task 4.2）。每条失败的提示与出口由保存链路自己给出。 */
+  saveAllDirty(): Promise<boolean>;
   /** 打开新文档前调用：世代自增、清空上一文档的暂停态与定时器。返回的世代号
    * 兼作 editor 装载的 requestId（原 fileRequest 与 documentGeneration
    * 恒同增同减，合并为一个计数器）。 */
@@ -234,20 +253,23 @@ export function createSaveController(deps: SaveControllerDeps): SaveController {
     return false;
   }
 
-  /** 切换 vault 的守卫（M149）：**任一**标签有未保存修改就拦下。切 vault 会把全部标签
-   *  一起作废，所以判据是全体——旧实现只有一个文档，两者等价。提示点名第一个脏标签，
-   *  用户知道该去存哪一个。 */
-  function guardVaultSwitch(): boolean {
+  /** 切换 vault 的守卫判据（M149 判据不变，M163 起**只给判据不弹提示**）：任一有路径的
+   *  标签 dirty 即拦下。切 vault 会把全部标签一起作废，所以判据是全体——旧实现只有一个
+   *  文档，两者等价。
+   *
+   *  旧实现（M149–M162）在这里自己弹一句点名单个脏标签的 sticky 提示；M163 把提示与出口
+   *  移到拦下它的地方（切换流程的三动作，见装配层的 guardVaultSwitch），因为「哪些标签脏」
+   *  已由标签栏逐标签的 dirty 点承担（D90），而这一句要回答的是「损失规模」——判据是全体
+   *  标签，数量才是全体视角的信息。两条旧提示串随之退场，不再有消费者。 */
+  function vaultSwitchBlock(): VaultSwitchBlock | null {
     const dirty = editor
       .sessions()
       .filter((session) => session.path !== undefined && session.dirty);
-    if (dirty.length === 0) return true;
-    const path = dirty[0].path as string;
-    const blocked = saveBaseline(path) === null
-      ? `当前文档不支持保存，无法切换 vault；请按 Cmd+Z 撤销修改`
-      : `「${path}」有未保存修改，无法切换 vault；请先保存（Cmd+S）`;
-    toast(blocked).classList.add(SAVE_GUARD_TOAST_CLASS);
-    return false;
+    if (dirty.length === 0) return null;
+    return {
+      dirtyCount: dirty.length,
+      hasUnsaveable: dirty.some((session) => saveBaseline(session.path as string) === null),
+    };
   }
 
   function beginSwitch(): number {
@@ -349,6 +371,19 @@ export function createSaveController(deps: SaveControllerDeps): SaveController {
   /** 保存失败的提示在多标签下必须点名文档：否则「保存失败」不知道是哪个标签。 */
   function saveErrorWithPath(e: unknown, path: string): string {
     return `${nameOf(path)}${saveErrorMessage(e)}`;
+  }
+
+  /** 保存**全部**脏标签（切换 vault 的「保存并切换」出口用）。顺序保存、逐条独立：一条
+   *  失败不打断其余标签的保存（用户希望的是「尽量都存下来」）；最后再判一次是否还有脏标签，
+   *  只要有一条没闭环（冲突 / 写失败 / 无落盘基准）就返回 false——调用方据此不继续切换。
+   *  失败提示与出口由 saveDocument 给出（冲突与「已被外部删除」都带动作），不在这里再造一套。 */
+  async function saveAllDirty(): Promise<boolean> {
+    for (const session of editor.sessions()) {
+      const path = session.path;
+      if (path === undefined || !session.dirty) continue;
+      await saveDocument(false, path);
+    }
+    return !editor.sessions().some((session) => session.path !== undefined && session.dirty);
   }
 
   /** 保存冲突的恢复提示：两个动作分别对应「放弃本地」与「覆盖磁盘」。sticky：
@@ -680,7 +715,8 @@ export function createSaveController(deps: SaveControllerDeps): SaveController {
   return {
     displayedPath,
     guard,
-    guardVaultSwitch,
+    vaultSwitchBlock,
+    saveAllDirty,
     beginSwitch,
     isCurrent: (s) => s === serial,
     noteOpened,

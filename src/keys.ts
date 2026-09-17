@@ -54,6 +54,13 @@
 // 切换）在 editor.ts。全部取 scope global：标签是窗口级对象，焦点在文件树 / 搜索框 / 大纲浮层里
 // 时同样要能切（与 ⌘F、⌘⇧O 同一理由）。
 //
+// M163：表新增一条全局绑定（⌘O → vault.switcher），命令实现在装配层 main.ts，能力（列表浮层
+// 与会话）在 src/vault-switcher.ts（change multi-vault-workspaces 的裁决点 13）。作用域取 global
+// 而非 editor：浮层打开时焦点在浮层里（不在 contentDOM 内），再按要能收起；未装载 vault 时
+// 命令无操作（那时没有列表入口）。浮层自己的导航键（↑↓ / Enter / Esc）不进本表，理由同 M148：
+// 一个 token 只能有一条绑定，↑↓ 已归 editor.cursor-up / cursor-down、Esc 已归
+// editor.widget-escape（带 when 条件），浮层就地消费时那两条因作用域判定不命中。
+//
 // 零冲突核对（注册前实测，三条独立来源，逐条可复核）：
 //   - **表内**：本文件即真源，现表无 ⌘W / ⌘数字 / ⌃⇥ 系绑定（⌘W 系为空，⌘ 数字无，⌃Tab 无）。
 //   - **原生菜单 accelerator**：tauri 2.11.5 的 `Menu::default()` 逐项来自 muda 0.19.3
@@ -160,6 +167,8 @@ export const NON_TAB_GLOBAL_COMMAND_IDS = [
   "app.search-open",
   // M148：⌘⇧O 展开/收起轻量大纲浮层（能力与浮层在 src/toc.ts，装配在 main.ts）
   "toc.toggle",
+  // M163：⌘O 打开 vault 切换器（能力、浮层与会话在 src/vault-switcher.ts，装配在 main.ts）
+  "vault.switcher",
 ] as const;
 
 /** 全局命令 id（实现落在装配层 main.ts）：非标签部分 + 标签部分。 */
@@ -295,6 +304,7 @@ export const KEY_BINDINGS: readonly KeyBinding[] = [
   { key: "Cmd-/", command: "app.describe-bindings", scope: "global", doc: "键位查看面板（M133）：mac 帮助惯例的简化形态——系统「帮助」菜单的 accelerator 实为 ⇧⌘?（Cmd-?），该键在本应用的原生菜单下会先被系统 Help 菜单截获，故取 ⌘/；Emacs 的 C-h b（describe-bindings）不可用——⌃H 已被后删字符占用" },
   { key: "Cmd-f", command: "app.search-open", scope: "global", doc: "文件内搜索（M139）：mac 惯例的查找键；取 global 而非 editor——焦点在文件树或已打开的搜索框里时同样要能开（已打开则把焦点移回输入框）。⌃F 已被 Emacs C-f（前移字符）占用，故沿用 ⌘ 系" },
   { key: "Cmd-Shift-o", command: "toc.toggle", scope: "global", doc: "轻量大纲（M148）：⌘⇧O 展开/收起 masthead 的标题路径浮层。取 global 而非 editor——浮层打开时焦点在浮层里（不在 contentDOM 内），再按要能收起；空标题文档也要能走到提示。冲突已核（零冲突）：表内 ⌘⇧ 系只有 ⇧⌘Z（重做），原生菜单的 accelerator 集合里 ⌘⇧ 系也只有 ⇧⌘Z（muda predefined：Redo），macOS 的 Help 子菜单在 tauri 默认菜单里为空" },
+  { key: "Cmd-o", command: "vault.switcher", scope: "global", doc: "打开 vault 切换器（M163，change multi-vault-workspaces 的口径 13）：⌘O 是 mac 惯例的「打开」，而 vault 的打开与切换此前零键位，与 ADR 0006 的 Emacs keybinding PKM 定位不符。取 global 而非 editor——浮层打开时焦点在浮层里（不在 contentDOM 内），再按要能收起；未装载 vault 时无操作。冲突已核（零冲突，三条独立来源）：① 表内 ⌘O 无绑定（本文件即真源）；② 原生菜单 accelerator 集合里没有 ⌘O——tauri 2.11.5 的 `Menu::default()` 逐项来自 muda 0.19.3 `items/predefined.rs` 的 `accelerator()`（Copy ⌘C / Cut ⌘X / Paste ⌘V / Undo ⌘Z / Redo ⇧⌘Z / SelectAll ⌘A / Minimize ⌘M / Fullscreen ⌃⌘F / Hide ⌘H / HideOthers ⌥⌘H / CloseWindow ⌘W / Quit ⌘Q，见该文件 :301-342），File 子菜单在 macOS 上只有一项预置 Close（M149 已把它换成不带 accelerator 的自定义项）；③ macOS 不给任何系统菜单预置 ⌘O（「打开…」由应用自建，本应用不建）。浮层内的 ↑↓ / Enter / Esc 就地在浮层内消费、不进本表（理由同 M148 那条：同 token 已被 editor.cursor-up / cursor-down / editor.widget-escape 占用）" },
 
   // ── 全局：标签（M149）
   { key: "Cmd-w", command: "tab.close", scope: "global", doc: "关当前标签（dirty 时先确认）；取 global 而非 editor——焦点在文件树 / 搜索框 / 大纲浮层里时同样要能关。**这个键原本被原生菜单的预置 Close 项占着**（muda 给 CloseWindow 的 accelerator 就是 ⌘W，菜单键等价在 NSApplication 分发阶段截获，webview 的 keydown 收不到）：M149 在 src-tauri/src/lib.rs 按 M131 先例把 File / Window 两个子菜单的预置 Close 换成不带加速键的自定义项让出该键，见那边的函数注释。语义随之从「关窗」变为「关标签」（tower 2026-09-17 裁决），退出仍走 ⌘Q（有 dirty 守卫）与红灯" },

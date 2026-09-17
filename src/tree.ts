@@ -7,8 +7,19 @@ import type { FsChange } from "./bindings/FsChange";
 import type { FsEntry } from "./bindings/FsEntry";
 import { extensionOf, fileClass } from "./preview/attachments";
 
-/** 展示分类（spec：至少区分目录 / Markdown / 图片等可预览附件 / 其他）。 */
+/** 显示分类（spec：至少区分目录 / Markdown / 图片等可预览附件 / 其他）。 */
 export type DisplayKind = "dir" | "md" | "image" | "other";
+
+/** 路径 → 末段（basename）。**全前端唯一一份**（REVIEW.md 第 8 条）：文件树的行名与
+ *  vault 名（本文件）、masthead 的 vault 名（main.ts）、标签可见文本（tabs.ts）、切换器
+ *  列表行与守卫提示（vault-switcher.ts / main.ts）全部消费它。空末段（路径以 `/` 收尾）
+ *  回落到整串，与「根目录 / 空串」这类退化输入下的既有口径一致。
+ *
+ *  注意：注册表里的 vault 显示名不走这里——vault_list 的 `name` 字段由 Rust 侧派生
+ *  （契约规定显示名 = 目录名），前端只消费，不重复派生。 */
+export function baseName(path: string): string {
+  return path.slice(path.lastIndexOf("/") + 1) || path;
+}
 
 /** 点击打开的行为分类：md / code 进编辑器对应模式，text 只读原文，binary 给提示。 */
 export type OpenKind = "md" | "code" | "text" | "binary";
@@ -37,8 +48,11 @@ export interface FileTreeCallbacks {
    *  看得到点击事件的地方）：**⌘-点击 = "pinned"**，其余单击 = "preview"，双击由 dblclick
    *  事件单独给出 "pinned"。 */
   onOpenFile(path: string, kind: OpenKind, intent: "preview" | "pinned"): void;
-  /** 「打开 vault」入口：空态按钮与树头部的常驻切换入口共用。 */
+  /** 未打开 vault 空态里的「打开 vault」按钮（文案 D6）：走目录选择器链路。 */
   onOpenVault(): void;
+  /** 树头部 vault 切换器入口（形态 A，M163）的点击：打开列表浮层。
+   *  入口只在**已装载 vault**时存在——空态（含启动恢复进行中）没有列表入口。 */
+  onOpenVaultSwitcher(): void;
 }
 
 export interface FileTree {
@@ -49,6 +63,10 @@ export interface FileTree {
   applyChanges(changes: FsChange[]): void;
   /** 未打开 vault 空态；notice 为 last_vault 恢复失败等的人话提示。 */
   showEmpty(notice: string | null): void;
+  /** 树头部的切换器入口元素（浮层的定位锚点）；未装载 vault 时为 undefined。 */
+  vaultEntry(): HTMLElement | undefined;
+  /** 切换器展开态同步（`aria-expanded`）——入口 DOM 由本模块建，展开态由浮层持有。 */
+  setVaultEntryExpanded(expanded: boolean): void;
 }
 
 interface Node {
@@ -64,11 +82,7 @@ function byTreeOrder(a: Node, b: Node): number {
   const aDir = a.entry.kind === "dir" ? 0 : 1;
   const bDir = b.entry.kind === "dir" ? 0 : 1;
   if (aDir !== bDir) return aDir - bDir;
-  return nameOf(a.entry.path).localeCompare(nameOf(b.entry.path));
-}
-
-function nameOf(path: string): string {
-  return path.slice(path.lastIndexOf("/") + 1);
+  return baseName(a.entry.path).localeCompare(baseName(b.entry.path));
 }
 
 function parentOf(path: string): string {
@@ -76,11 +90,19 @@ function parentOf(path: string): string {
   return i < 0 ? "" : path.slice(0, i);
 }
 
+/** 切换器入口的悬停提示与读屏名（文案 D96）：入口是 vault 名称本身，纯文本看不出它可点，
+ *  提示必须给出动作与收益（「点击查看全部 vault」）——同一句话两处复用，不写两份。 */
+function vaultEntryLabel(vaultName: string): string {
+  return `vault：${vaultName}（点击查看全部 vault）`;
+}
+
 export function createFileTree(mount: HTMLElement, cb: FileTreeCallbacks): FileTree {
   // 全量模型：path → Node；根路径为 ""。展开状态独立保存，刷新不丢（spec 3.3）。
   const nodes = new Map<string, Node>();
   const expanded = new Set<string>();
   let vaultName = "";
+  /** 树头部的切换器入口（形态 A）：未装载 vault 时不存在（空态整块替换）。 */
+  let entryEl: HTMLButtonElement | undefined;
 
   const rootEl = document.createElement("div");
   rootEl.className = "filetree";
@@ -107,7 +129,7 @@ export function createFileTree(mount: HTMLElement, cb: FileTreeCallbacks): FileT
     caret.className = "ft-caret";
     const name = document.createElement("span");
     name.className = "ft-name";
-    name.textContent = nameOf(node.entry.path);
+    name.textContent = baseName(node.entry.path);
     row.append(caret, name);
     li.append(row);
     node.li = li;
@@ -184,24 +206,34 @@ export function createFileTree(mount: HTMLElement, cb: FileTreeCallbacks): FileT
       nodes.set(entry.path, node);
       const parent = nodes.get(parentOf(entry.path));
       // 枚举结果是完整清单，父节点必已存在（按路径序父先于子）
-      parent?.children?.set(nameOf(entry.path), node);
+      parent?.children?.set(baseName(entry.path), node);
     }
 
     rootEl.replaceChildren();
     const header = document.createElement("div");
     header.className = "ft-header";
+    // 常驻切换入口（形态 A，M163）：**vault 名称本身即入口** + caret 作可点提示，现状的
+    // 「切换」文字按钮退场（D4 因此停用，不复用）。单 vault 时常驻出现——隐藏它会让「再加
+    // 一个 vault」在界面上无处可去。列表语义（aria-haspopup / aria-expanded）在这里给出，
+    // 展开态由浮层同步（setVaultEntryExpanded）。
+    const entry = document.createElement("button");
+    entry.type = "button";
+    entry.className = "ft-vault";
+    entry.setAttribute("aria-haspopup", "listbox");
+    entry.setAttribute("aria-expanded", "false");
+    entry.title = vaultEntryLabel(vaultName);
+    entry.setAttribute("aria-label", vaultEntryLabel(vaultName));
     const name = document.createElement("span");
     name.className = "ft-vault-name";
     name.textContent = vaultName;
-    // 常驻切换入口：与空态「打开 vault」共用 onOpenVault（替换语义，见 commands.rs open_vault）
-    const switchBtn = document.createElement("button");
-    switchBtn.type = "button";
-    switchBtn.className = "ft-switch-btn";
-    switchBtn.textContent = "切换";
-    switchBtn.title = "切换 vault";
-    switchBtn.setAttribute("aria-label", "切换 vault");
-    switchBtn.addEventListener("click", () => cb.onOpenVault());
-    header.append(name, switchBtn);
+    const caret = document.createElement("span");
+    caret.className = "ft-vault-caret";
+    caret.setAttribute("aria-hidden", "true");
+    caret.textContent = "▾";
+    entry.append(name, caret);
+    entry.addEventListener("click", () => cb.onOpenVaultSwitcher());
+    entryEl = entry;
+    header.append(entry);
     const ul = document.createElement("ul");
     ul.className = "ft-children ft-root-list";
     for (const child of sortedChildren(root)) mountNode(child, ul);
@@ -237,10 +269,18 @@ export function createFileTree(mount: HTMLElement, cb: FileTreeCallbacks): FileT
       syncCurrent();
     },
     setVault(root, entries) {
-      vaultName = root.slice(root.lastIndexOf("/") + 1) || root;
+      vaultName = baseName(root);
       expanded.clear();
       renderAll(entries);
       mount.replaceChildren(rootEl);
+    },
+
+    vaultEntry() {
+      return entryEl;
+    },
+
+    setVaultEntryExpanded(expanded) {
+      entryEl?.setAttribute("aria-expanded", expanded ? "true" : "false");
     },
 
     applyChanges(changes) {
@@ -253,7 +293,7 @@ export function createFileTree(mount: HTMLElement, cb: FileTreeCallbacks): FileT
         const parentPath = parentOf(change.path);
         const parent = nodes.get(parentPath);
         if (!parent) continue; // 父目录已不在模型里（如整棵被删），跳过
-        const name = nameOf(change.path);
+        const name = baseName(change.path);
         const existing = nodes.get(change.path);
 
         if (change.kind === "deleted") {
@@ -302,6 +342,9 @@ export function createFileTree(mount: HTMLElement, cb: FileTreeCallbacks): FileT
     },
 
     showEmpty(notice) {
+      // 空态整块替换掉整棵树，入口随之从 DOM 消失——「未装载 vault（含启动恢复进行中）
+      // 时无列表入口」这条口径就落在这一句上（entryEl 一并置空，命令据此无操作）。
+      entryEl = undefined;
       const empty = document.createElement("div");
       empty.className = "ft-empty";
       if (notice) {
