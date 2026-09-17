@@ -10,7 +10,7 @@
 
 | 面 | 今天 | 缺口 |
 |---|---|---|
-| 切换入口 | `src/tree.ts:193-204`：树头部 `span.ft-vault-name` + `button.ft-switch-btn`「切换」，点击 → `cb.onOpenVault()` → `pickVault()`（`src/main.ts:436-471`）→ `vault_open` 目录选择器，语义是**替换** | 没有列表、看不到全部 vault |
+| 切换入口 | `src/tree.ts:197-204`：树头部 `span.ft-vault-name` + `button.ft-switch-btn`「切换」，点击 → `cb.onOpenVault()` → `pickVault()`（`src/main.ts:436-471`）→ `vault_open` 目录选择器，语义是**替换** | 没有列表、看不到全部 vault |
 | 注册表 | `~/.config/lumir/workspaces/<id>.json`，`VaultWorkspace { id, path, missing_since, archived_at }`（`src-tauri/src/workspaces.rs:35-50`），写盘 tmp + rename（`:71-77`） | 没有「列出注册表」的命令；`missing_since` / `archived_at` 带 `#[ts(skip)]`（`:41-49`）不进契约；没有 `last_opened_at` |
 | 注册表读取的容错 | 三处读取对解析失败一律 `continue` / `Ok(None)`（`sweep_registry` `:95-99`、`remap_candidates` `:143`、`find_by_path` `:168-171`） | 这是 §2「会话不与注册项同文件」的直接依据 |
 | 打开链路 | `vault_open` / `vault_open_path`（`src/ipc.ts:41-47`）；成功路径写 `last_vault` 并降级 warning（`src-tauri/src/commands.rs:302-329`）；前端统一落 `loadVault`（`src/main.ts:484-507`） | 无会话写入点 |
@@ -99,6 +99,8 @@ M156 的 design §4.5 已把「恢复完成触发 `loadVault` 时，无标题缓
 - M156 已经对「last_vault 记忆与启动恢复」这条 requirement 提交了 MODIFIED 增量（未归档）。本 change 若再 MODIFY 同一条，两个未归档 change 的增量会在归档时互相覆盖（后归档的那个基于旧文本）。
 - 本 change 需要的行为变化全部是**增加值**：列表、切换、会话持久化与恢复，既有 requirement（打开即替换、单激活、注册表治理、`last_vault` 口径、dirty 守卫判据）逐条仍然成立。因此本 change 不动任何既有 requirement，只 ADD 新的，并在新 requirement 里**引用**既有口径（如「按 `multi-tabs` 既有判据拦下」）而不是重述——避免 REVIEW.md 第 8 条那类「同一语义两处真源」。
 
+**唯一例外是 `multi-tabs`**（M161 r1 P2-1）：`multi-tabs` 的 scenario「任一标签 dirty 即拦下切换 vault」要求提示**点名那个有未保存修改的标签**，而本 change 的提示口径是「点名当前 vault + 脏标签数」——这是 scenario 级的真矛盾，不只是「是否重述」的问题，只引用判据挽不回它。该 capability 上没有任何未归档 change 持有增量（M156 与 toc-popover 都不碰它），因此对它加 MODIFIED 无归档互覆风险。修法取「改 spec 而不是委屈新文案」：M149 写那条 scenario 时出口是「用户自己回去存」，提示必须把人指到文件；本 change 把出口放进拦下它的地方（三动作），而「哪些标签脏」已由标签栏逐标签的 dirty 点承担（D90 要求）——旧口径的用途被两处新机制接管，提示因此改为承载「规模 + 损失归属」。修改后 living spec 的三条 scenario 与 delta 逐字一致（见 `specs/multi-tabs/spec.md`）。
+
 ## 6. 切换流程与并发
 
 ```
@@ -117,7 +119,9 @@ M156 的 design §4.5 已把「恢复完成触发 `loadVault` 时，无标题缓
 1. **一次只处理一个切换**：两个 in-flight 切换（用户在等待期间点了别的行）会互相覆盖——先完成的那个装载上下文，后完成的又覆盖一次，还可能与「落盘 A 的会话」交错。忽略第二次请求是最省且可解释的口径（现状的同步路径下这个窗口很窄，但标签恢复是异步的，窗口会变宽）。
 2. **dirty 的检查发生在发起打开之前，且不得被绕开**：M158 r1 评审的 P2-2 就是这个问题——mock 里「点列表行」这条路径绕过了守卫直接切换，与「任一标签 dirty 即拦下」自相矛盾。spec 里为此写了一条 scenario（再次点击仍被拦下）。`loadVault` 里的既有守卫保留为最后防线，不撤。
 
-**判据不变、只加出口**：本 change MUST NOT 新造一套 dirty 判据。判据就是 `save-controller.ts:237-251` 的 `guardVaultSwitch()`（任一**有路径**的标签 dirty 即拦下），也是 `multi-tabs` spec 里已经写死的口径；无标题缓冲（`path === undefined`）的处置沿用 M156 design §4.5 显式化的既有语义（守卫放行）。实现期该函数需要从「返回 boolean + 自己弹文案」扩展为「把被拦下的信息（脏标签数）交给调用方，由切换流程给出三动作」——这是调用形态的调整，判据与文案口径不动。
+**判据不变、只加出口**：本 change MUST NOT 新造一套 dirty 判据。判据就是 `save-controller.ts:237-251` 的 `guardVaultSwitch()`（任一**有路径**的标签 dirty 即拦下），也是 `multi-tabs` spec 里已经写死的口径；无标题缓冲（`path === undefined`）的处置沿用 M156 design §4.5 显式化的既有语义（守卫放行）。实现期该函数需要从「返回 boolean + 自己弹文案」扩展为「把被拦下的信息（脏标签数）交给调用方，由切换流程给出三动作」——这是调用形态的调整；`save-controller.ts:247-248` 的两条既有提示串随之替换（它们不在 `文案-Copy.md` 的 deck 里，无需 deck 处置）。
+
+**提示内容一并改写（`multi-tabs` 的 MODIFIED delta）**：从「点名那个脏标签」改为「点名当前 vault + 脏标签数」。三点理由：(1) 出口从「自己回去存」变成「保存并切换」，提示不必再把人指到文件；(2) 「哪些标签脏」是逐标签的性质，标签栏的 dirty 点（D90 已要求每个标签自报）就是它的归属面，塞进一句提示反而是第二处真源（REVIEW.md 第 8 条）；(3) 数量恰好是「损失规模」的度量，而这一句要回答的是「要不要放弃」——判据是全体标签，数量才是全体视角的信息（点名一个标签既不全也不足以裁决）。旧 scenario 证明「守卫取全体而非只看前台」的用途由新 scenario 的「1 个」保住（前台干净、非前台脏 ⇒ 提示仍报 1）。
 
 ## 7. 裁决点 A / B 的对照与翻转落点
 

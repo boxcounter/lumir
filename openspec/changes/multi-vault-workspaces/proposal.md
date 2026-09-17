@@ -67,7 +67,7 @@
 | 6 | 列表排序 | **最近打开倒序** | 当前项自然在首位，与「切换即换上下文」的心智一致；需要新增 `last_opened_at` |
 | 7 | 切回恢复是否提示 | **不提示**；异常（有文件被跳过）时提示 | 整窗换上下文 + 标签栏出现本身就是可见结果，且切换是用户主动动作（D50「自动行为必须留下痕迹」管的是用户没主动做的动作）；结果与上次不一致才是该打扰的情况 |
 | 8 | 过渡态形态 | **不做过渡态元素**（偏离 mock 的两拍进度） | 用户主动打开/切换今天走的是**同步** command：期间 Tauri 主线程被占、窗口不重绘（与 M156 design §2 的「窗口存在但无法绘制」同一机制），浮层行内进度根本不会被看到。切换的可见结果就是「完成即整窗换上下文」。要 mock 里的两拍，得先把用户主动打开与切换也移出主线程——那是 M156 显式留下的独立项，本 change 登记为非目标与后续项（见 design §8） |
-| 9 | dirty 拦截的出口 | **三动作**：保存并切换 / 放弃修改并切换 / 取消（与 D93 同形），提示**点名当前 vault** | 现状是一句无动作的 sticky 提示，用户得自己回编辑器存好再重试；把出口放在拦下它的地方。点名当前 vault 是 M158 r1 的修正（未保存修改属于当前 vault，不属于目标） |
+| 9 | dirty 拦截的出口 | **三动作**：保存并切换 / 放弃修改并切换 / 取消（与 D93 同形），提示**点名当前 vault + 脏标签数** | 现状是一句无动作的 sticky 提示，用户得自己回编辑器存好再重试；把出口放在拦下它的地方。点名当前 vault 是 M158 r1 的修正（未保存修改属于当前 vault，不属于目标）。**这条同时改写了 `multi-tabs` 的一条既有 scenario**（它要求提示点名那个脏标签）：M149 写它时出口是「用户自己回去存」，提示必须把人指到文件；现在「保存并切换」一键完成这件事，而「哪些标签脏」由标签栏逐标签的 dirty 点承担（D90 已要求）——因此本 change 对该 capability 提交一条 MODIFIED delta（见 Impact） |
 | 10 | 路径失效的 vault 怎么处置 | **保留在列表 + 「重新定位…」**（复用 `vault_remap`）；**已归档项也在列表里**；**不给「从列表移除」** | 归档标记的用途是抑制**自动**浮条（remap 候选），列表是用户主动打开的面，抑制它会让「一共有几个 vault」这个列表存在的理由落空；删除注册项会破坏稳定 id 与 remap 锚点 |
 | 11 | 空列表态文案 | **沿用 D5 / D6**，不新造 | 不动已入库文案与既有断言；多 vault 下「打开 vault」的语义恰好就是「新增一个 vault」 |
 | 12 | 浮层宽度 320px 溢出 244px 左栏 | **接受** | 与大纲浮层 `.lumir-toc` 同一手法（绝对定位、溢出左栏、不占常驻空间）；收进栏内就得再砍行内信息 |
@@ -112,6 +112,7 @@
 
 ## Impact
 
-- **影响的 specs**：`vault-workspace`（7 条 ADDED requirement；无 MODIFIED / REMOVED）。其余 capability 不动——`multi-tabs` 的守卫判据原样沿用（本 change 只增加出口，不重述判据），`file-tree` 的空态不动，`perf-measurement` 无 delta。
+- **影响的 specs**：`vault-workspace`（7 条 ADDED requirement；无 MODIFIED / REMOVED）、`multi-tabs`（1 条 MODIFIED requirement：「未命名文档的 dirty 守卫」——只改其第三个 scenario 的提示口径与第三段的提示内容，判据原文不动，见 `specs/multi-tabs/spec.md`）。其余 capability 不动：`file-tree` 的空态不变，`perf-measurement` 无 delta。
+  - 为什么 `multi-tabs` 这次需要 MODIFIED 而 `vault-workspace` 不需要：对 `vault-workspace` 的零 MODIFIED 是为了规避与 M156 未归档 MODIFIED 增量的归档互覆；`multi-tabs` 上没有任何未归档 change 持有增量（M156 与 toc-popover 都不碰它），加 MODIFIED 无冲突风险。若不加，归档后 living spec 会留下一条与本 change 行为直接矛盾的 scenario（M161 r1 P2-1）。
 - **影响的代码/系统**：`src-tauri/src/workspaces.rs`（注册项增 `last_opened_at`、列表命令与可用性摘要）、新增会话持久化模块（`vault-sessions/` 的读写）、`src-tauri/src/commands.rs`（新 command 注册）、`src/bindings/*`（ts-rs 重导出）、`src/ipc.ts` + `src/main.ts`（切换器装配、切换流程、装载后恢复标签）、`src/tree.ts`（树头部入口形态）、`src/tabs.ts`（恢复时的固定标签落点）、`src/keys.ts`（新命令的默认键位）、`文案-Copy.md`（新增文案条目）、真机验收场景、`tests/visual` 元素级断言与受影响的整页基线。
 - **关联约束**：ADR 0002 §5（配置即数据：新存储逐字段校验、非法值人话 warning）、ADR 0002 §6（性能合同：不动数字与门禁）、ADR 0003（不写 vault）、ADR 0004（本 change 走 OpenSpec 两节点，AI 起草、Alex 两处裁决）、ADR 0006（Emacs keybinding PKM 定位 → 给键位）。

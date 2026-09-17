@@ -27,7 +27,7 @@
 
 ## 4. 前端：切换、会话落盘与装载后恢复
 
-- [ ] 4.1 切换流程：dirty 前置检查（提示点名**当前** vault、带脏标签数）→ 三动作（保存并切换 / 放弃修改并切换 / 取消，与 D93 同形）→ flush 当前 vault 的会话 → `vault_open_path` → `loadVault`；目标打开失败保留当前上下文，只给一条失败提示（沿用 `src/main.ts:466-470`）
+- [ ] 4.1 切换流程：dirty 前置检查（提示点名**当前** vault、带脏标签数，替换 `src/save-controller.ts:247-248` 的两条既有串——旧串不在 deck 里）→ 三动作（保存并切换 / 放弃修改并切换 / 取消，与 D93 同形）→ flush 当前 vault 的会话 → `vault_open_path` → `loadVault`；目标打开失败保留当前上下文，只给一条失败提示（沿用 `src/main.ts:466-470`）
 - [ ] 4.2 「保存并切换」在保存未闭环（冲突 / 写失败 / 无落盘基准）时 MUST NOT 继续切换，沿用既有保存失败提示与出口；不可保存的脏标签不给该动作
 - [ ] 4.3 切换进行中忽略新的切换请求；`loadVault` 里的既有守卫保留为最后防线
 - [ ] 4.4 会话写入时机：标签集合 / 顺序 / 激活项变化后防抖写；切换前与退出前 flush（MUST NOT 只依赖防抖定时器）；预览标签不入盘；摘要数字与入盘数字同源
@@ -54,7 +54,7 @@
 
 - [ ] 7.1 `docs/backlog.md` 第 10 条（多标签会话恢复）由本 change 承接——归档时更新其状态与口径
 - [ ] 7.2 归档时把「用户主动打开 / 切换移出主线程」（design §9 的登记项）落一条 backlog 或 finding，避免这条账只留在 design 里
-- [ ] 7.3 逐条确认既有 requirement 未被本 change 的矛盾触及（本 change 对 `vault-workspace` 只 ADD；`multi-tabs` 的守卫判据只被引用、未重述；`file-tree` 空态不变；`perf-measurement` 无 delta）——README 与 proposal 的「已建议口径」两表逐条对得上
+- [ ] 7.3 对账既有 living spec **到 scenario 粒度**（M161 r1 P2-1 的教训：只对 requirement 粒度会让矛盾 scenario 留在 living spec 里）：逐条核 `vault-workspace` / `multi-tabs` / `file-tree` / `perf-measurement` 的每条 scenario 与本 change 的口径是否一致——本 change 对 `vault-workspace` 只 ADD、对 `multi-tabs` 提交 1 条 MODIFIED（其第三条 scenario 的提示口径），`file-tree` 空态不变、`perf-measurement` 无 delta；delta 里的 MODIFIED requirement 文本须与 living spec 逐字一致（只改该改的那一处）；proposal 的「已建议口径」两表与该对账结论对得上
 
 ## 8. 验证
 
