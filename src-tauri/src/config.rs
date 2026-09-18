@@ -72,12 +72,23 @@ impl Default for AppConfig {
 pub struct EditorConfig {
     /// 编辑器模式（ADR 0002 §2 单内核双模式）。
     pub mode: EditorMode,
+    /// 文件级折行（change line-wrap-options）：`true`（默认）时正文行在阅读栏内折行，
+    /// `false` 时长行不折、由编辑区（`.cm-scroller`）横向平移呈现。只管正文行——围栏 /
+    /// 缩进代码块行由 `code_block_wrap` 裁决（「一元素一条规则」）。TS 侧出厂默认同值，
+    /// 见 `src/editor.ts` 的 `DEFAULT_LINE_WRAP`（两处写值各有单测钉住）。
+    pub line_wrap: bool,
+    /// 代码块折行：`false`（默认）时 md live preview 里的围栏 / 缩进代码块不折行、由块级
+    /// 横滚容器承载；`true` 时在阅读栏内折行（M138 以来的现状）。作用面只有 md 模式——
+    /// 非 md 文件没有围栏渲染，对它们无可观测效果（不是漏实现）。
+    pub code_block_wrap: bool,
 }
 
 impl Default for EditorConfig {
     fn default() -> Self {
         Self {
             mode: EditorMode::Md,
+            line_wrap: true,
+            code_block_wrap: false,
         }
     }
 }
@@ -143,6 +154,13 @@ struct RawConfig {
 #[serde(default)]
 struct RawEditorConfig {
     mode: Option<String>,
+    /// 折行两项（change line-wrap-options）：字段缺失 → `None` → `validate()` 回落到
+    /// `EditorConfig::default`。**类型不符（如 `"line_wrap": "yes"`）不走逐字段回落**：
+    /// `Option<bool>` 在 serde 解析期即失败，整份 `RawConfig` 落回默认（全部默认 + 一条
+    /// warning），与 `mode` 给错类型时同路。这是既有解析模型的性质，本 change 如实记录并用
+    /// 单测钉住，不发明「逐字段类型容忍」——那会与 `editor.mode` 形成同类不同治。
+    line_wrap: Option<bool>,
+    code_block_wrap: Option<bool>,
 }
 
 /// 配置目录（ADR 0002 §5 路径规则）。无法确定 home 是唯一的致命错误。
@@ -234,17 +252,28 @@ fn validate(raw: RawConfig) -> (AppConfig, Vec<String>) {
         }
     };
 
-    let mode = match raw.editor.mode.as_deref() {
-        None => defaults.editor.mode,
-        Some("md") => EditorMode::Md,
-        Some("code") => EditorMode::Code,
-        Some(other) => {
-            warnings.push(format!(
+    let mut mode = EditorMode::Md;
+    let mut line_wrap = defaults.editor.line_wrap;
+    let mut code_block_wrap = defaults.editor.code_block_wrap;
+    if let Some(raw_mode) = raw.editor.mode.as_deref() {
+        match raw_mode {
+            "md" => mode = EditorMode::Md,
+            "code" => mode = EditorMode::Code,
+            other => warnings.push(format!(
                 "配置项 editor.mode 取值 \"{other}\" 非法（可选：md、code），已回退为 md"
-            ));
-            defaults.editor.mode
+            )),
         }
-    };
+    }
+    // 折行两项（line-wrap-options）：bool 只有两种取值，缺字段即回落到 Default，不产生
+    // warning。**类型不符到不了这里**——`Option<bool>` 在 serde 解析期就失败，整份配置
+    // 走整文件回落（见模块头与 `RawEditorConfig` 的注释）；单测
+    // `wrong_type_line_wrap_falls_back_entire_file` 钉住这条边界。
+    if let Some(value) = raw.editor.line_wrap {
+        line_wrap = value;
+    }
+    if let Some(value) = raw.editor.code_block_wrap {
+        code_block_wrap = value;
+    }
 
     let (keys, mut key_warnings) = validate_keys(raw.keys);
     warnings.append(&mut key_warnings);
@@ -256,7 +285,11 @@ fn validate(raw: RawConfig) -> (AppConfig, Vec<String>) {
         AppConfig {
             version,
             last_vault,
-            editor: EditorConfig { mode },
+            editor: EditorConfig {
+                mode,
+                line_wrap,
+                code_block_wrap,
+            },
             keys,
             log,
         },
@@ -566,5 +599,55 @@ mod tests {
         assert_eq!(snap.config.log.level, LogLevel::Info);
         assert_eq!(snap.warnings.len(), 1);
         assert!(snap.warnings[0].contains("log.level"));
+    }
+
+    #[test]
+    fn missing_editor_wrap_fields_take_defaults() {
+        // 老配置文件（change line-wrap-options 之前写入）没有这两项：line_wrap = true、
+        // code_block_wrap = false、不产生 warning（比照 missing_log_table_defaults_to_info）。
+        let f = TempFile::new(r#"{"version":1,"editor":{"mode":"md"}}"#);
+        let snap = load_from(&f.0);
+        assert!(snap.config.editor.line_wrap);
+        assert!(!snap.config.editor.code_block_wrap);
+        assert!(snap.warnings.is_empty(), "{:?}", snap.warnings);
+    }
+
+    #[test]
+    fn explicit_editor_wrap_fields_are_loaded() {
+        let f = TempFile::new(r#"{"editor":{"line_wrap":false,"code_block_wrap":true}}"#);
+        let snap = load_from(&f.0);
+        assert!(!snap.config.editor.line_wrap);
+        assert!(snap.config.editor.code_block_wrap);
+        assert_eq!(
+            snap.config.editor.mode,
+            EditorMode::Md,
+            "缺 mode 时仍回落默认"
+        );
+        assert!(snap.warnings.is_empty(), "{:?}", snap.warnings);
+    }
+
+    #[test]
+    fn wrong_type_line_wrap_falls_back_entire_file() {
+        // 边界如实记录（design §2.1、§4-4）：`Option<bool>` 遇到类型不符会在 serde 解析期失败，
+        // 走的是**整文件回落**（全部默认 + 一条 warning），与 editor.mode 给错类型时同路。
+        // MUST NOT 出现「一部分字段按配置、一部分按默认」的混合态——同一份文件里的合法字段
+        //（这里是最新的一处 last_vault）也一并落回默认。
+        let f = TempFile::new(
+            r#"{"last_vault":"/tmp/vault","editor":{"line_wrap":"yes","code_block_wrap":true}}"#,
+        );
+        let snap = load_from(&f.0);
+        assert_eq!(snap.config, AppConfig::default(), "整份配置应落回默认");
+        assert!(snap.config.editor.line_wrap, "line_wrap 回到默认 true");
+        assert!(
+            !snap.config.editor.code_block_wrap,
+            "同一份配置里的 code_block_wrap 也一并落回默认 false（无混合态）"
+        );
+        assert_eq!(snap.config.editor.mode, EditorMode::Md);
+        assert_eq!(
+            snap.config.last_vault, None,
+            "同一份文件里的合法字段同样落回默认"
+        );
+        assert_eq!(snap.warnings.len(), 1, "{:?}", snap.warnings);
+        assert!(snap.warnings[0].contains("不是合法 JSON"));
     }
 }

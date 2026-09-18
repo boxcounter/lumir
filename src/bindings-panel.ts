@@ -17,6 +17,7 @@
 
 import {
   COMMAND_IDS,
+  KEYLESS_COMMAND_IDS,
   keyToken,
   NON_TAB_GLOBAL_COMMAND_IDS,
   TAB_COMMAND_IDS,
@@ -84,6 +85,15 @@ export function createBindingsPanel(options: BindingsPanelOptions): BindingsPane
   overlay.append(panel);
   options.mount.append(overlay);
 
+  /** 未绑定行的说明（M180，文案 D66）：两种成因**分开**说，并各自指出下一步。此前是一句
+   *  通用的「配置解绑或尚未绑定」，把「有意不占键位」读成过渡态——新命令（折行开关）默认就
+   *  不占键位，读不出成因会让人以为它坏了。成因判定用 keys.ts 的默认不绑键清单，不另立一份。 */
+  function unboundNotice(command: CommandId): string {
+    return KEYLESS_COMMAND_IDS.includes(command)
+      ? "默认不占键位（有意如此）——可在 [keys] 里绑定"
+      : "已被配置解绑——可在 [keys] 里重新绑定";
+  }
+
   /** 一行：一条绑定，或一条「未绑定」命令（binding 为 null）。 */
   function makeRow(command: CommandId, binding: KeyBinding | null): HTMLElement {
     const row = document.createElement("div");
@@ -97,7 +107,7 @@ export function createBindingsPanel(options: BindingsPanelOptions): BindingsPane
     id.textContent = command;
     const doc = document.createElement("span");
     doc.className = "lumir-bindings-doc";
-    doc.textContent = binding?.doc ?? "当前没有键位指向它（配置解绑或尚未绑定）";
+    doc.textContent = binding?.doc ?? unboundNotice(command);
     row.append(key, id, doc);
     return row;
   }

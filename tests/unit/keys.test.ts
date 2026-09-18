@@ -5,8 +5,10 @@
 import { mock, test } from "node:test";
 import assert from "node:assert/strict";
 import {
+  BLOCK_SCROLL_CLASS,
   COMMAND_IDS,
   EDITOR_COMMAND_IDS,
+  KEYLESS_COMMAND_IDS,
   KEY_BINDINGS,
   Keymap,
   TABLE_SCROLL_CLASS,
@@ -197,15 +199,21 @@ function recordingRuntime() {
   return { runtime, runs };
 }
 
-/** 表格滚动容器替身：`closest` 命中与否决定 when 条件真假。
+/** 块级横滚容器替身：`closest` 命中（事件目标在容器内）与「容器自身持有焦点」共同决定 when
+ *  条件真假——M180 起判据是两者的**与**（只按前者会把光标落在块内文本时的方向键吞掉）。
  *  写成显式字段而非 TS 参数属性：类型剥离不认参数属性（可擦除语法限制）。 */
 class FakeElement {
-  readonly matches: boolean;
-  constructor(matches: boolean) {
-    this.matches = matches;
+  readonly inContainer: boolean;
+  readonly containerFocused: boolean;
+  constructor(inContainer: boolean, containerFocused = inContainer) {
+    this.inContainer = inContainer;
+    this.containerFocused = containerFocused;
   }
   closest(): FakeElement | null {
-    return this.matches ? this : null;
+    return this.inContainer ? this : null;
+  }
+  get ownerDocument(): { activeElement: FakeElement | null } {
+    return { activeElement: this.containerFocused ? this : null };
   }
 }
 
@@ -236,17 +244,26 @@ test("Keymap：when 条件不满足时不消费（widget 键不吞文本编辑�
   const { runtime, runs } = recordingRuntime();
   new Keymap().attach(host.target, runtime, { isEditorEvent: () => true });
 
+  // 焦点在编辑器文本里：事件目标根本不在容器内
   const inText = keyEvent({ key: "ArrowLeft", target: new FakeElement(false) });
   host.fire(inText);
   assert.equal(inText.defaultPrevented, false);
   assert.deepEqual(runs, []);
 
+  // M180 收紧的那一格：光标落在块内文本（事件目标在容器内，但活动元素是编辑器内容区）
+  const insideContainerText = keyEvent({ key: "ArrowLeft", target: new FakeElement(true, false) });
+  host.fire(insideContainerText);
+  assert.equal(insideContainerText.defaultPrevented, false, "容器没持有焦点时不消费，方向键归 caret");
+  assert.deepEqual(runs, []);
+
+  // 容器自身持有焦点：命中
   const inWidget = keyEvent({ key: "ArrowLeft", target: new FakeElement(true) });
   host.fire(inWidget);
   assert.equal(inWidget.defaultPrevented, true);
   assert.deepEqual(runs, ["editor.widget-scroll-left"]);
 
-  assert.equal(TABLE_SCROLL_CLASS, "cm-lp-table-scroll");
+  assert.equal(BLOCK_SCROLL_CLASS, "cm-lp-block-scroll");
+  assert.equal(TABLE_SCROLL_CLASS, "cm-lp-table-scroll", "表格容器保留原 class（既有选择器与断言按它定位）");
 });
 
 test("Keymap：已消费事件让路、IME 组合期与 229 不接管、无关键不动 pending", () => {
@@ -336,4 +353,45 @@ test("applyKeyOverrides：解绑删除绑定，未知命令 / 空键位 / 无默
   assert.ok(warnings.some((line) => line.includes("非法")));
   assert.equal(bindings.length, before - 1, "只有 ⌘S 的解绑生效");
   assert.equal(bindings.filter((binding) => normalizeKey(binding.key) === "Cmd-S").length, 0);
+});
+
+// ---------------------------------------------------------------------------
+// M180：默认不绑键清单（KEYLESS_COMMAND_IDS）与折行命令
+// ---------------------------------------------------------------------------
+
+test("三项对账：每条命令有绑定或在默认不绑键清单里；清单无幻影 id、与绑定表无交集", () => {
+  const bound = new Set<string>(KEY_BINDINGS.map((binding) => binding.command));
+  const keyless = new Set(KEYLESS_COMMAND_IDS);
+  for (const command of COMMAND_IDS) {
+    assert.ok(
+      bound.has(command) || keyless.has(command),
+      `命令 ${command} 既没有任何绑定、也不在 KEYLESS_COMMAND_IDS 里（孤儿命令）`,
+    );
+  }
+  for (const command of KEYLESS_COMMAND_IDS) {
+    assert.ok(commandIds.includes(command), `默认不绑键清单里的 ${command} 不在 COMMAND_IDS（幻影 id）`);
+    assert.ok(!bound.has(command), `${command} 既登记为默认不绑键、又带着默认绑定——清单在说谎`);
+  }
+});
+
+test("折行命令：不在 editor 组（作用域派生成 global）、默认不绑键、[keys] 绑上即生效", () => {
+  for (const command of ["view.toggle-line-wrap", "view.toggle-code-block-wrap"]) {
+    assert.ok(commandIds.includes(command), `${command} 不在 COMMAND_IDS`);
+    assert.ok(
+      !editorCommandIds.includes(command),
+      `${command} 若落在 editor 组，作用域会被派生成 editor（应为 global）`,
+    );
+    assert.equal(
+      KEY_BINDINGS.find((binding) => binding.command === command),
+      undefined,
+      `${command} MUST NOT 出现在默认绑定表里（本版不为折行占任何物理键位）`,
+    );
+    assert.ok(KEYLESS_COMMAND_IDS.includes(command), `${command} 应登记在默认不绑键清单里`);
+  }
+  // ⌃J 是默认表里的空位：绑上即得一条 global 绑定——作用域由命令清单派生，不随配置漂移
+  const { bindings, warnings } = applyKeyOverrides({ "Ctrl-j": "view.toggle-line-wrap" });
+  assert.deepEqual(warnings, []);
+  const bound = bindings.find((binding) => normalizeKey(binding.key) === "Ctrl-J");
+  assert.equal(bound?.command, "view.toggle-line-wrap");
+  assert.equal(bound?.scope, "global", "绑定后作用域仍由命令清单派生");
 });

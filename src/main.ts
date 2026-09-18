@@ -408,6 +408,13 @@ const commands: CommandRuntime = {
   "toc.toggle": () => toc.toggle(),
   // vault 切换器（M163）：开→关 / 关→开；未装载 vault 时无操作（那时没有列表入口）。
   "vault.switcher": () => switcher.toggle(),
+  // 折行开关（M180，change line-wrap-options 的 D1/D3 裁决）：翻转的是**应用运行期**的折行
+  // 口径——全部会话（含当时不在前台的标签页）随即同步，新标签页取当前应用态；不写文档、
+  // 不进撤销栈、不碰 dirty、不落盘（config.json 的内容与 mtime 逐字节不变）。
+  // 两条都默认不绑键（登记在 keys.ts 的 KEYLESS_COMMAND_IDS），由 [keys] 绑定后可用；
+  // 作用域 global，故 id 前缀取 `view.` 而不是 `editor.`（前缀与作用域不得互相打脸）。
+  "view.toggle-line-wrap": () => editor.toggleLineWrap(),
+  "view.toggle-code-block-wrap": () => editor.toggleCodeBlockWrap(),
   // 标签（M149）：能力与切换在 editor 的会话 API，装配层只做两件它才知道的事——
   // 切换后的表现层对齐（tabs.activateTab → syncActiveDocument）与关标签的确认（都在 src/tabs.ts）。
   // `tab.close` 关的是**前台**标签；逐标签关闭钮走同一条 closeTab（同一个确认）。
@@ -804,6 +811,14 @@ void refreshVaultStatus();
 // keys：单键重绑 / 解绑（M132），覆盖到位后重挂分发器（见 applyKeyConfig）。
 configGet().then((snapshot) => {
   editor.setMode(snapshot.config.editor.mode);
+  // 折行口径（M180，change line-wrap-options）：配置给的是**启动时的起点**——应用运行期的
+  // 翻转由两条 `view.toggle-*` 命令承担，运行期 MUST NOT 回写这里（config.json 的 mtime 与
+  // 内容在翻转前后逐字节不变）。放在 setMode 之后：mode 决定代码块内容级 class 有没有
+  // 作用对象，两者一起重配（editor.setWrap 走的就是那条 modeAndWrapEffects 路径）。
+  editor.setWrap({
+    lineWrap: snapshot.config.editor.line_wrap,
+    codeBlockWrap: snapshot.config.editor.code_block_wrap,
+  });
   applyKeyConfig(snapshot.config.keys);
   // 配置 warning（含 [keys] 的逐项回退）：M1 以来没有 UI 出口，如实记到 console，
   // 不新增 UI 面（避免启动浮条与既有启动视觉冲突）；同一份 warning 另落诊断日志

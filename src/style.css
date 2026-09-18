@@ -270,6 +270,28 @@ body { background:var(--bg); color:var(--text); font-family:var(--font-body); fo
   display: none;
 }
 
+/* 块级横滚容器（M180）：表格与代码块共用同一套横滚机制与同一个 class——键位层的命中条件
+   按它判定，两类容器必须同名（判据的单一来源在 src/keys.ts 的 BLOCK_SCROLL_CLASS）。
+   表格容器**同时**带 cm-lp-table-scroll（既有选择器与断言按它定位，见下方规则）。
+   这里不带 scrollbar-gutter：共用规则一旦带上它，「默认不折行」的代码块会凭空缩进一栏。 */
+.cm-lp-block-scroll {
+  display: block;
+  max-inline-size: 100%;
+  overflow-x: auto;
+  /* 纵向永不滚动（内容即块本体，高度恰好贴合）：overflow-x:auto 与
+     overflow-y:visible 的组合在 WKWebView 下有裁切疑点（M119 宽表缺陷），
+     显式 hidden 让横滚容器语义在所有引擎一致。 */
+  overflow-y: hidden;
+  overscroll-behavior-inline: contain;
+  outline-offset: 3px;
+}
+.cm-lp-block-scroll:focus-visible { outline: 2px solid var(--accent); }
+/* 代码块横滚容器（M180）：只补底板，不补纵向间距。翻转开关带来的几何变化 SHALL 只来自
+   折行本身，照抄表格的 padding-block: 12px 会把代码块下方所有行推走（CM 按 border-box 量
+   行高，见下方 .cm-lp-table-scroll 的 M110 注释）。底板是必需的：滚到右侧时行盒之外没有
+   底色（.cm-lp-codeblock-line 的背景只覆盖行盒宽度），而容器自己的背景不随内容滚动，
+   正好铺满可见区域。 */
+.cm-lp-codeblock-scroll { background-color: var(--bg-2); }
 .cm-lp-table-scroll {
   display: block;
   max-inline-size: 100%;

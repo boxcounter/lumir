@@ -5,4 +5,17 @@ export type EditorConfig = {
 /**
  * 编辑器模式（ADR 0002 §2 单内核双模式）。
  */
-mode: EditorMode, };
+mode: EditorMode, 
+/**
+ * 文件级折行（change line-wrap-options）：`true`（默认）时正文行在阅读栏内折行，
+ * `false` 时长行不折、由编辑区（`.cm-scroller`）横向平移呈现。只管正文行——围栏 /
+ * 缩进代码块行由 `code_block_wrap` 裁决（「一元素一条规则」）。TS 侧出厂默认同值，
+ * 见 `src/editor.ts` 的 `DEFAULT_LINE_WRAP`（两处写值各有单测钉住）。
+ */
+line_wrap: boolean, 
+/**
+ * 代码块折行：`false`（默认）时 md live preview 里的围栏 / 缩进代码块不折行、由块级
+ * 横滚容器承载；`true` 时在阅读栏内折行（M138 以来的现状）。作用面只有 md 模式——
+ * 非 md 文件没有围栏渲染，对它们无可观测效果（不是漏实现）。
+ */
+code_block_wrap: boolean, };

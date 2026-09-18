@@ -42,7 +42,10 @@ Lines](https://www.gnu.org/software/emacs/manual/html_node/emacs/Continuation-Li
 「Setting the variable `truncate-lines` in any way makes it local to the current buffer; until that
 time, the default value, which is normally `nil`, is in effect」——**默认值来自全局设定、翻转是
 缓冲区内的一次性状态、不落盘**（[Line Truncation](https://www.gnu.org/software/emacs/manual/html_node/emacs/Line-Truncation.html)）。
-本提案的形态与之逐条对应：配置项给默认，命令给标签页内的瞬态翻转，不做 per-file 持久化。
+本提案的形态与之逐条对应：配置项给默认、命令给瞬态翻转、不做 per-file 持久化。**粒度上有一处
+自觉的偏离**：Emacs 的 `truncate-lines` 是 buffer-local，本 change 的翻转范围是**应用运行期**
+（D1 裁决原文「应用级。」）——切标签页时口径一致，新标签页取当前应用态而不是配置默认；换来的是
+「一个开关、一个口径」的心智模型，代价是每次翻转要遍历全部会话 reconfigure（见 design §2.2）。
 该页还给出截断场景的行为底线：「Horizontal scrolling automatically causes line truncation」——
 即截断从来与「可横向滚动」配套，这也是本提案「不折行时文字必须仍然可达」那条底线的依据。
 
@@ -83,9 +86,12 @@ time, the default value, which is normally `nil`, is in effect」——**默认�
    该清单不得含幻影 id、不得与绑定表有交集。同时要求键位面板对未绑定行**说清成因与下一步**
    （既有文案 D66 只覆盖「配置解绑 / 尚未绑定」两种成因，需扩到「默认不占键位，可用 `[keys]`
    绑定」）。
-6. **状态归属：标签页级（= Emacs 的 buffer-local）**。两条命令翻转的是**当前标签页**的瞬态显示
-   状态，不写文档、不进撤销栈、不改变 dirty、不落盘、不回写 `config.json`；新标签页取配置默认
-   （与 Emacs「设了就 buffer-local、新 buffer 走默认值」一致）。理由与替代方案见 design §2.2、§3。
+6. **状态归属：应用运行期（D1 裁决）**。两条命令翻转的是**应用运行期**的瞬态显示状态——全部会话
+   （含后台标签页）立即取同一口径，新标签页取当前应用态而不是配置默认；不写文档、不进撤销栈、
+   不改变 dirty、不落盘、不回写 `config.json`。配置项给的是**启动时的起点**，命令给的是运行期口径，
+   两者分工清楚。这比 Emacs 的 buffer-local 粒度粗一档（`toggle-truncate-lines` 只作用于当前
+   buffer），是本 change 唯一自觉偏离对应物的地方；代价（每次翻转遍历全部会话 reconfigure）与
+   替代方案见 design §2.2、§3。
 7. **不折行时文字必须仍然可达**：不折行意味着超宽内容不再被压进同一行宽，它 SHALL 由容器
    （文件级 = 编辑区 `.cm-scroller` 的横向平移；代码块级 = 块内容器的横向滚动）呈现，
    MUST NOT 出现「文字被裁掉且无法到达」的状态。这是本 change 唯一的「不能退化」底线条款，
@@ -98,7 +104,7 @@ time, the default value, which is normally `nil`, is in effect」——**默认�
 | 默认绑定 | 无（不占键位；登记在 `KEYLESS_COMMAND_IDS`） | 无（同上） |
 | 作用域 | `global`（焦点在文件树 / 搜索框 / 浮层里同样命中） | `global` |
 | 生效对象 | md 与只读 code 模式的整篇正文行 | 仅 md live preview 里的围栏 / 缩进代码块 |
-| 状态归属 | 当前标签页；新标签页回落配置默认 | 同左 |
+| 状态归属 | 应用运行期（D1）；全部会话同步，新标签页取当前应用态 | 同左 |
 | 反馈 | 无 toast、无常驻指示（翻转结果即时可见，见 Non-goals） | 同左 |
 | 落盘 | 不落盘、不回写配置（`config.json` 前后逐字节不变） | 同左 |
 | id 前缀 | `view.`（**不用** `editor.`）：本仓 `editor.` 前缀 = editor 作用域命令，作用域由命令清单机械派生（`src/keys.ts:451`），前缀与作用域 MUST NOT 互相打脸 | 同左 |
@@ -166,11 +172,28 @@ time, the default value, which is normally `nil`, is in effect」——**默认�
 - 性能：toggle 只有一次 `Compartment.reconfigure`；代码块容器是装饰层在既有视口增量纪律内多包一层
   div；无新增解析、无全量构建。
 
-## 待 Alex 裁决
+## 裁决记录（2026-09-18，Alex）
 
-- **D1｜标签页级 vs 应用级翻转**：本提案取标签页级（真源在会话对象上，= Emacs buffer-local）。
-  若要全局（切标签页也一致），规格上把「标签页」改为「应用运行期」即可，实现侧要多一次对全部会话
-  reconfigure 的遍历，并另存一个模块级初值——见 design §2.2。
+本节原为「待 Alex 裁决」，五条已于 2026-09-18 全部落槌。结论如下，正文与规格已按结论改到位；
+凡与提案初稿冲突的，以本节为准。
+
+- **D1｜状态归属：应用级**（原话「应用级。」）。**推翻**了初稿的标签页级（= Emacs buffer-local）
+  口径：翻转是应用运行期的显示口径，全部会话立即一致，新标签页取**当前应用态**而不是配置默认。
+  详见 What Changes #6、命令面表、design §2.2 与 `editor-live-preview` 的「折行开关的瞬态口径」。
+- **D2｜原生菜单入口：不做**（原话「不需要，保持配置文件里有配置项就满足需要了」）。可见面维持
+  「配置项 + 命令 + 键位面板」，不加 View 菜单项。
+- **D3｜命令作用域：`global`**（对建议的回复原话「无异议」）。两条命令的 id 取 `view.` 前缀、
+  进 `NON_TAB_GLOBAL_COMMAND_IDS`；焦点落在文件树 / 搜索框 / 浮层里时同样命中。
+- **D4｜代码块容器的键盘可达性：随本 change 一起做**（回复原话「无异议」）。代价是 MODIFY 既有
+  requirement「轨道 D 的 widget 滚动键纳入统一键位表」，判据泛化为「块级横滚容器」。
+- **D5｜折行状态播报 / 常驻指示：不做**（原话「不需要」）。无 toast、无 mode line；观测缺口如实
+  记录在 spec 里（dogfood 后若确认为真实痛点，按手感证据另提 change）。
+
+### 初稿的待裁决选项（留档，已被上文结论覆盖）
+
+- **D1｜标签页级 vs 应用级翻转**：初稿取标签页级（真源在会话对象上，= Emacs buffer-local）；
+  裁决取**应用级**。初稿列的成本描述（实现侧多一次对全部会话 reconfigure 的遍历、另存一个
+  模块级初值）正是本 change 实现期的实际形态，见 design §2.2。
 - **D2｜要不要原生菜单入口**（View 菜单项 / 勾选项）：本提案不做（理由见 Non-goals），可见面只有
   「配置项 + 命令 + 键位面板」。若你要菜单入口，本 change 需新增一节 requirement、菜单 accelerator
   冲突核对与菜单结构断言，工作量为本 change 的约一半。
