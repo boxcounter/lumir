@@ -325,19 +325,10 @@ pub fn prepare_vault_open(
 }
 
 /// 打开 vault 的第二阶段：单次持锁提交，返回是否提交（prepare 的产物被 `commit` 接管后
-/// 其 watch 随之生效）。`expect_generation` 为 `Some` 时先比对世代——启动恢复用它让位给
-/// 用户抢先成功打开的 vault；不符即返回 `false` 且零副作用（prepared 被 drop = 不起监听）。
-pub fn commit_vault_open(
-    state: &VaultState,
-    prepared: PreparedVaultOpen,
-    expect_generation: Option<u64>,
-) -> bool {
+/// 其 watch 随之生效）。用户主动打开一律无条件提交——「让位给用户抢先打开的 vault」这条
+/// 世代判定只有一处实现，在 [`VaultState::finish_restore`]（启动恢复的唯一提交点）。
+pub fn commit_vault_open(state: &VaultState, prepared: PreparedVaultOpen) -> bool {
     let mut inner = state.inner.lock().expect("vault state poisoned");
-    if let Some(expected) = expect_generation {
-        if inner.generation != expected {
-            return false;
-        }
-    }
     inner.commit(prepared);
     true
 }
@@ -377,8 +368,8 @@ pub fn open_vault(
                 entries: prepared.entries.clone(),
                 remap_candidates: vec![],
             };
-            // expect_generation 为 None：用户主动打开无条件提交（与拆分前等价）。
-            commit_vault_open(state, prepared, None);
+            // 用户主动打开无条件提交（与拆分前等价）；让位判定只在 finish_restore。
+            commit_vault_open(state, prepared);
             Ok(info)
         }
     }
@@ -1102,7 +1093,7 @@ mod tests {
 
         // 用户先打开过 vault：恢复记下的是跃迁之后的世代
         let a = TempVault::new("begin-a");
-        assert!(commit_vault_open(&state, prepared(&a), None));
+        assert!(commit_vault_open(&state, prepared(&a)));
         assert_eq!(state.begin_restore(), 1);
         assert!(pending_of(&state));
     }
@@ -1120,18 +1111,22 @@ mod tests {
         assert!(!pending_of(&state));
     }
 
-    /// M159 3.1/3.2：用户抢先成功打开 B 后到达的**成功**恢复结果被整体丢弃，
-    /// 当前 vault 仍是用户那个（spec「恢复结果不覆盖用户已打开的 vault」）。
+    /// M159 3.1/3.2：用户抢先成功打开 B 后到达的**成功**恢复结果被整体丢弃，零副作用
+    /// （prepared 被丢弃、世代不跃迁、当前 vault 不动、不写 notice）——spec「恢复结果不覆盖
+    /// 用户已打开的 vault」。世代比对现在只有 `VaultState::finish_restore` 一处实现
+    /// （M171 删掉了 `commit_vault_open` 的 `expect_generation` 参数，原先由它覆盖的这条
+    /// 不变量一并归到这里）。
     #[test]
     fn finish_restore_discards_stale_success_and_keeps_user_vault() {
         let state = VaultState::default();
         let a = TempVault::new("stale-a");
         let b = TempVault::new("stale-b");
         let generation = state.begin_restore();
-        assert!(commit_vault_open(&state, prepared(&b), None)); // 用户抢先成功打开 B
+        assert!(commit_vault_open(&state, prepared(&b))); // 用户抢先成功打开 B
         assert!(!state.finish_restore(generation, RestoreOutcome::Opened(Box::new(prepared(&a)))));
         assert_eq!(root_of(&state), Some(b.path())); // 不是恢复给的 A
         assert_eq!(generation_of(&state), 1); // 丢弃不产生世代跃迁
+        assert_eq!(notice_of(&state), None);
         assert!(!pending_of(&state));
     }
 
@@ -1142,7 +1137,7 @@ mod tests {
         let state = VaultState::default();
         let b = TempVault::new("stale-notice");
         let generation = state.begin_restore();
-        assert!(commit_vault_open(&state, prepared(&b), None));
+        assert!(commit_vault_open(&state, prepared(&b)));
         assert!(!state.finish_restore(
             generation,
             RestoreOutcome::Notice("上次打开的 vault 已不可用：/gone".into())
@@ -1199,23 +1194,27 @@ mod tests {
         let stale = VaultState::default();
         let b = TempVault::new("paths-stale");
         let generation = stale.begin_restore();
-        assert!(commit_vault_open(&stale, prepared(&b), None));
+        assert!(commit_vault_open(&stale, prepared(&b)));
         assert!(!stale.finish_restore(generation, RestoreOutcome::Idle));
         assert!(!pending_of(&stale));
     }
 
-    /// M159 3.1：`commit_vault_open` 的世代比对不符即拒绝，零副作用（prepared 被丢弃、
-    /// 世代不跃迁、当前 vault 不动）。
+    /// M159 3.1（M171 改道）：世代比对不符即拒绝，零副作用（prepared 被丢弃、世代不跃迁、
+    /// 当前 vault 不动、不写 notice）。比对现在只有 `VaultState::finish_restore` 一处实现
+    /// （原 `commit_vault_open(..., expect_generation)` 的参数已删），原先打在它身上的这条
+    /// 断言改由本测试承担。
     #[test]
-    fn commit_vault_open_rejects_mismatched_generation() {
+    fn finish_restore_rejects_mismatched_generation_without_side_effects() {
         let state = VaultState::default();
         let a = TempVault::new("commit-a");
         let b = TempVault::new("commit-b");
         let generation = state.begin_restore();
-        assert!(commit_vault_open(&state, prepared(&b), None));
-        assert!(!commit_vault_open(&state, prepared(&a), Some(generation)));
+        assert!(commit_vault_open(&state, prepared(&b))); // 用户抢先成功打开 B
+        assert!(!state.finish_restore(generation, RestoreOutcome::Opened(Box::new(prepared(&a)))));
         assert_eq!(root_of(&state), Some(b.path()));
         assert_eq!(generation_of(&state), 1);
+        assert_eq!(notice_of(&state), None);
+        assert!(!pending_of(&state));
     }
 
     /// M159 3.1：用户 picker 取消 / 打开失败都不提交，世代不变——恢复结果因此照常生效。
