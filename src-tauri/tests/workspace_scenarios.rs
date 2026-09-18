@@ -294,11 +294,7 @@ fn scenario_stale_restore_result_discarded_after_user_opened_vault() {
     assert!(state.status().unwrap().restore_pending);
 
     // 用户抢先成功打开 B（与 vault_open command 同一条路：无条件提交）
-    assert!(commands::commit_vault_open(
-        &state,
-        prepared_open(&user),
-        None
-    ));
+    assert!(commands::commit_vault_open(&state, prepared_open(&user)));
 
     // 恢复线程随后提交（成功结果）与其失败提示：世代不符 → 整包丢弃
     assert!(!state.finish_restore(
