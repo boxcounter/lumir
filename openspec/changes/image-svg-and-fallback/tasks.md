@@ -58,9 +58,15 @@
 
 ## 3. 实现：SVG 安全渲染口径固化
 
-- [ ] 3.1 确认渲染路径只经 `<img>`：`rg -n "innerHTML|insertAdjacentHTML|DOMParser" src/preview/`
-      在图片渲染链路零命中（`mermaid.ts` 的 `innerHTML` 是图表渲染器的信任边界，不在图片链路内）。
-      **验收口径**：命令输出贴进 PR；命中即视为未完成。
+- [ ] 3.1 确认**图片渲染链路**只经 `<img>`：判定范围限于该链路自身——
+      `rg -n "innerHTML|insertAdjacentHTML|DOMParser" src/preview/attachments.ts src/preview/livePreview.ts`
+      必须零命中。
+      **验收口径**：命令输出贴进 PR；**链路内命中即视为未完成**。链路外今天固定有四处命中——
+      `callout.ts:174`（callout 图标取自仓内常量字符串）、`math.ts:225` 与 `math.ts:252`（KaTeX 产出的
+      `.html`）、`mermaid.ts:239`（mermaid 渲染器的 SVG 产出，其安全口径见该文件 `:236-239` 的既有注释）
+      ——它们各自的信任边界与本次改动无关，**不算未完成**：把这四处文件名连「为什么与本 change 无关」
+      贴进 PR 即可。MUST NOT 为了「让 grep 干净」去改写这三条链路——那会动 callout / math / mermaid
+      三个本 change 不触碰的能力。
 - [ ] 3.2 在图片渲染入口写一条**为什么必须用 `<img>`** 的短注释（防将来「顺手改成内联」），指向
       design §4 的规范依据；不复制规范正文。
       **验收口径**：注释在，且不超过三行。
@@ -100,10 +106,20 @@
 
 ## 6. 真机验收场景（WKWebView，`scripts/acceptance/`）
 
-- [ ] 6.1 新增场景 `scripts/acceptance/scenarios/<id>-image-fallback.md`，覆盖：带 `width`/`height`
-      的 svg 正常显示、零尺寸 svg 出可见占位、目标缺失出占位、含脚本与外链的 svg 不执行不请求。
+- [ ] 6.1 新增场景 `scripts/acceptance/scenarios/<id>-image-fallback.md`，覆盖三层：① 带
+      `width`/`height` 的 svg 正常显示；② 百分比固有宽度的 svg（design §8.1 的中招形状）经尺寸兜底
+      后可见、兜底仍不可见时出可见占位；③ 目标缺失出可见占位。
+      **安全腿只断言真机层可观测的量**：含 `<script>` / `onload` 的 svg——用一个脚本副作用标记（如
+      试图改写 `document.title` 或挂一个全局标记）**经 AX 断言该标记未出现**，**并且**断言该位置终态
+      可见（两条一起，缺一条就退化成负向空转，REVIEW.md 第 2 条）。「不执行」的保证来自 `<img>` 的
+      载入上下文（design §4.1），MUST NOT 把 dev flavour 的 CSP 当作该断言的依据（dev 下 CSP 是否注入
+      未经真机验证）。
+      **「不发起外部请求」这一腿不在真机层判**：套件断言词汇只有 AX 文本 / 编辑器文档 / 磁盘文件 /
+      诊断日志四类（`scripts/acceptance/README.md:25`），没有网络探针——写在这里只能得到恒真的空转
+      断言。请求腿归 **5.4**（chromium 层，带强制变红验证）。
       **验收口径**：`node scripts/acceptance/run.mjs --check` 静态校验 PASS；`run.mjs <id>` 真机 PASS，
-      证据落 `test-results/acceptance/<日期>/<场景>/`（`status.txt` = PASS）。
+      证据落 `test-results/acceptance/<日期>/<场景>/`（`status.txt` = PASS）；安全腿的两条断言在
+      `steps.md` 里各占一条（可分别读出），不合并成一条。
 - [ ] 6.2 场景 fixture 落 `scripts/acceptance/fixtures/`，与 md 一起进合成 vault。
       **验收口径**：场景 PASS 且 `steps.md` 里断言逐条可读；断言形态遵守「不可读一律 FAIL」
       （[REVIEW.md](../../../REVIEW.md) 第 2 条）——不要写「AX 里没有该文本即通过」式的负向空转。
