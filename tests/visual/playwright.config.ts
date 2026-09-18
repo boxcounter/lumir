@@ -14,6 +14,13 @@ export const tolerance = {
   maxDiffPixelRatio: 0.001,
 };
 
+// 像素断言开关（M173，2026-09-18 Alex 裁决）：置位后截图的像素对比整体不执行，只留一行日志与
+// annotation；结构 / 计算属性断言（DOM 结构、getComputedStyle、可见性、文字）两个模式下都照跑。
+// CI 置位（.github/workflows/visual.yml），本地默认全量跑像素（scripts/visual/run.sh）。
+// 依据：CI runner 与本地渲染不等价，整页像素在两套环境下没有可比性（证据与口径见 README.md）。
+// 消费者是 scenes/expect-screenshot.ts——所有像素断言必须走它，直接写 toHaveScreenshot 会绕开开关。
+export const structuralOnly = process.env.LUMIR_VISUAL_STRUCTURAL === "1";
+
 export default defineConfig({
   testDir: "./scenes",
   snapshotDir: "./baselines",

@@ -2,7 +2,12 @@ name: visual
 
 # 视觉回归门禁：ADR 0001「极致美」的工程兜底（ADR 0004 M0）。
 # 门禁只守「不丑」——布局、配色、间距不回归即拒合；「美不美」的裁决权在 Alex 人肉。
-# 选型与口径见 tests/visual/README.md。
+#
+# 口径（M173，2026-09-18 Alex 裁决）：CI 只跑**结构 / 计算属性断言**（DOM 结构、getComputedStyle
+# 数值、元素可见性与数量、文字内容），整页 / 元素像素对比归本地 `scripts/visual/run.sh`。
+# 依据：CI runner 与本地渲染不等价，整页像素在两套环境下没有可比性（证据与口径见
+# tests/visual/README.md）。scenes 里的 22 处像素断言保留在代码中，由 LUMIR_VISUAL_STRUCTURAL=1
+# 跳过（消费者 scenes/expect-screenshot.ts），本地默认全量跑。
 
 on:
   pull_request:
@@ -31,7 +36,9 @@ permissions:
 jobs:
   visual:
     name: 视觉回归
-    runs-on: macos-latest
+    # 显式镜像标签，不用 macos-latest：后者会静默换代（2026-09 实际落到 macos-26-arm64），
+    # 渲染环境随镜像漂移而无人知道本次跑在哪套系统上；perf.yml 同样钉死（macos-15）。
+    runs-on: macos-26
     steps:
       - uses: actions/checkout@v4
 
@@ -62,10 +69,16 @@ jobs:
           key: playwright-${{ runner.os }}-${{ hashFiles('tests/visual/pnpm-lock.yaml') }}
 
       - name: 安装视觉测试依赖与 chromium
-        # tests/visual 是自包含子项目（独立 lockfile，不进根 workspace）
+        # tests/visual 是自包含子项目（独立 lockfile，不进根 workspace）；
+        # package.json 把 @playwright/test 钉成精确版本（非 caret），锁的构建与本地一致
         run: |
           pnpm --dir tests/visual install --ignore-workspace --frozen-lockfile
           pnpm --dir tests/visual exec playwright install chromium
+
+      - name: 浏览器构建自证（与本地同一份脚本）
+        # 把 playwright 版本、它要的 chromium revision、runner 缓存里实际存在的构建打进日志。
+        # 本地 scripts/visual/run.sh 调同一脚本——两侧日志逐行可对照，不一致才有据可查（M173）。
+        run: bash scripts/visual/browser-build.sh
 
       - name: 视觉测试代码类型检查（堵签名漂移）
         # scenes/*.ts 此前无类型检查——mermaid 渲染器签名漂移曾靠 30s 超时暴露。
@@ -74,7 +87,12 @@ jobs:
         working-directory: tests/visual
         run: ../../node_modules/.bin/tsc --noEmit
 
-      - name: 视觉回归对比（不通过即拒合）
+      - name: 视觉回归对比：结构 / 计算属性断言（不通过即拒合）
+        # LUMIR_VISUAL_STRUCTURAL=1：22 处整页 / 元素像素断言不执行（只留 [pixel-skip] 日志与
+        # annotation），其余断言照跑。像素对比归本地 scripts/visual/run.sh——CI runner 与本地
+        # 渲染不等价（M172 实证：同 toolchain 下本地 254 全绿、CI 20 条像素基线红）。
+        env:
+          LUMIR_VISUAL_STRUCTURAL: "1"
         run: pnpm --dir tests/visual test
 
       - name: 失败时上传 diff 制品

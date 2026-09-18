@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { expectScreenshot } from "./expect-screenshot";
 import { findMathSpans, mathRenderCacheSize, renderMath } from "../../../src/preview/math";
 import { logEvents, stubTauri } from "./tauri-stub";
 
@@ -139,7 +140,7 @@ test("行内与块级渲染，失败回落可读源码，代码上下文排除",
     .poll(async () => (await logEvents(page, "render_error")).map((e) => e.fields))
     .toEqual([{ kind: "katex", stage: "render", code: "parse_error" }]);
 
-  await expect(page).toHaveScreenshot("math-rendering.png");
+  await expectScreenshot(page, "math-rendering.png");
 });
 
 test("复制保真：全选复制输出原始 Markdown", async ({ page, context }) => {
@@ -171,5 +172,5 @@ test("公式跟随正文 token 渲染", async ({ page }) => {
     return { mathColor, bodyColor };
   });
   expect(colors.mathColor).toBe(colors.bodyColor);
-  await expect(page).toHaveScreenshot("math-theme.png");
+  await expectScreenshot(page, "math-theme.png");
 });

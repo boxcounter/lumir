@@ -36,12 +36,17 @@ scripts/gate.sh all      # visual + 性能合同（release 构建，首次分钟
 
 与 CI 对应：`rust.yml` / `visual.yml` / `perf.yml` / `docs-check.yml`（PR 与 master push 强制）。本地全绿才允许提交合并请求；基线数字（测试数、场景数）以最近一次全绿输出为准，不背口头值。
 
+视觉门禁**分层**（2026-09-18 Alex 裁决，依据 [tests/visual/README.md](tests/visual/README.md)）：
+CI 的 `visual.yml` 只跑结构 / 计算属性断言（置 `LUMIR_VISUAL_STRUCTURAL=1`，22 处整页像素断言跳过），
+整页 / 元素像素对比归本地 `scripts/gate.sh visual`。动过视觉相关代码（`src/style.css`、
+`src/preview/**`、`tests/visual/scenes/**`）后必须本地跑一次，**CI 绿不代表像素层没回归**。
+
 ## 真机验收套件（agent 执行，不进 CI）
 
 行为判定的下沉通道：`node scripts/acceptance/run.mjs`（用法、场景格式、证据布局、已知边界见
 [scripts/acceptance/README.md](scripts/acceptance/README.md)）。与视觉门禁分工：`tests/visual`
-守布局/配色/间距（chromium 近似、CI 强制），本套件守**真实 WKWebView 下的行为正确性**
-（本地 agent 执行）。
+守布局/配色/间距（chromium 近似；CI 只强制结构层，整页像素本地跑），本套件守
+**真实 WKWebView 下的行为正确性**（本地 agent 执行）。
 
 - **执行时机**：dogfood 批次每次合并后、Alex 验收前，由 agent 先跑一遍；Alex 只看 FAIL 项与手感项。
 - **维护权**：新功能 mission 的 tasks 必须附带「新增/更新验收场景」一项（随实现同 PR），否则套件会腐烂。
