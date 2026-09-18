@@ -7,6 +7,17 @@
 D3 = 命令作用域 `global`，D4 = 代码块容器键盘可达性随本 change 一起做，D5 = 不做播报 / 常驻指示。
 本文件里凡与「应用级」相关的表述都以 D1 为准（`proposal.md` 的「裁决记录」节是同一条结论的索引）。
 
+**归档记录（节点 2，2026-09-18）**——Alex 节点 2 通过后归档为
+`openspec/changes/archive/2026-09-18-line-wrap-options/`。对账结论：两份 delta 合计 4 条 ADDED + 3 条 MODIFIED——
+3 条 ADDED 落 `editor-live-preview`、1 条 ADDED + 3 条 MODIFIED 落 `keymap-commands`——逐 requirement 与 delta 做
+字节比对**全部 EXACT**、其余 requirement 零变化（`git diff` 的删除行只落在三条被 MODIFIED 的 requirement
+内部，含「表格滚动容器」→「块级横滚容器」的泛化与命中条件收紧两处**申报过的**修订）；D1–D5 五件裁决与
+`proposal.md` 的「裁决记录」节一致，四件制品已改写为应用级语义（grep 无标签页级残留）；实现与 delta 一致
+（`config.rs` 两个布尔项、`src/keys.ts` 的 `KEYLESS_COMMAND_IDS` 两条命令、`src/main.ts` 两条命令实现与
+`setWrap` 接线）。9.2 由 tower 复裁决收口（见该行），9.4 / 9.5 是**如实标注的覆盖边界**——按节点 2 口径
+接受为边界、不当缺陷、也不冒称已验。**无实现期静默扩 scope**；本 change 不新建 capability
+（`editor-live-preview` 与 `keymap-commands` 均为既有 living spec），无 Purpose 占位待补。
+
 ## 1. 配置面（Rust）
 
 - [x] 1.1 `src-tauri/src/config.rs` 的 `EditorConfig` 增 `line_wrap: bool` 与 `code_block_wrap: bool`，
@@ -172,10 +183,12 @@ D3 = 命令作用域 `global`，D4 = 代码块容器键盘可达性随本 change
 - [x] 9.1 `src/main.ts` 的 scope：**已解决**——tower 在 2026-09-18 10:44 已把 `src/main.ts` 纳入 M180 的
       scope（`clarify-reply` 确认，`activity.log` 可查），本 change 的两处改动（`commands` 记录两条实现、
       `configGet().then` 里 `setWrap`）合规，且只动了这两处
-- [ ] 9.2 `scripts/acceptance/lib/execute.mjs` 的 scope：本文件不在 scope 清单里，但 `record`
+- [x] 9.2 `scripts/acceptance/lib/execute.mjs` 的 scope：本文件不在 scope 清单里，但 `record`
       动作不认 `env:` 前缀（基线记成 null），不修则 task 7.3 的 `config.json` 逐字节断言无从落地。
       改动是把路径解析统一到 `file` 断言同源的 `resolveSpecPath`（**1 行**），已在 review-request 里
-      单列请裁决——**tower 复裁决前保持现状，不因它单独回退**
+      单列请裁决——**tower 已复裁决纳入 scope**（2026-09-18，见 M180 mission note：「理由成立……scope 已扩
+      纳入，reviewer 须核对该行实现的正确性」），故本行按已裁决收口，不再挂「待复裁决」；1 行改动
+      留在实现里，不单独回退
 - [x] 9.3 新增的 5 张视觉基线**已入库**：Alex 2026-09-18 过目通过（原话「可以。」）；按流程用**收窄命令**
       重出（`--update-snapshots --grep 折行`，既有 5 张基线的时间戳仍是 18:41:57、未被触碰）后与过目件
       `test-results/m180/baseline-review/SHA256-new-baselines.txt` **逐张核对 5/5 SAME**
@@ -185,9 +198,16 @@ D3 = 命令作用域 `global`，D4 = 代码块容器键盘可达性随本 change
 - [ ] 9.4 真机的 `mtime` 层不变性未验：`file.unchangedSince` 比的是 sha256（内容逐字节），断言词汇里
       没有「mtime 未变」这一形态。task 7.3 的口径因此收窄为「内容 sha256 不变 + 无回写字段」（见
       design §4 的「真机侧的覆盖边界」）
+      **节点 2 对账（2026-09-18）**：本条按**如实标注的覆盖边界**接受，**不当缺陷、不勾**——收窄后的口径
+      （内容 sha256 不变 + 无 `line_wrap` / `code_block_wrap` 回写字段）确有真机断言在跑，缺的只是
+      mtime 这一个更细的量级；断言词汇扩容属套件能力建设，与本 change 的实现无关。勾了才是
+      「覆盖声明超出真实验证」（REVIEW.md 第 6 条）。
 - [ ] 9.5 真机侧没有计算属性通道，「正文行折 / 不折」「代码块行折 / 不折」的视觉判断只能看 `shots/`；
       横滚幅度（120px / End / Home）的机器断言在视觉层。真机的键盘路径本身已验（`focused` 容器
       → 横滚 → `Escape` 交还焦点；起点要先 `clickEditor`，见 `21-wrap-default` 的说明）
+      **节点 2 对账（2026-09-18）**：同 9.4，按**如实标注的覆盖边界**接受、**不勾**——「折 / 不折」的
+      机器判据落在视觉层的 `getComputedStyle` 断言（`white-space` / `overflow-wrap`），真机侧只留截图，
+      两层分工已在 design §4 写明，不构成未验的实现面。
 - [x] 9.6 两条 out-of-scope 的 harness 边界已按协议提交 finding（`lib/ax.mjs` 的 value 截断、
       `lib/execute.mjs` 的 `record` 前缀；后者本 change 顺手修了 1 行）——tower 已把它们落档进
       `docs/backlog.md`（master 的 `fc8748a`）；另有 acceptance 套件的 `config` 通道表达不了

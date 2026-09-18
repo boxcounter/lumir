@@ -7,7 +7,7 @@
 | 问题 | 答案 | 证据 |
 |---|---|---|
 | 白名单在哪 | `src/preview/attachments.ts:76-87` 的 `IMAGE_MIME`（键集即 image 分类）；svg 在 `:82`，MIME = `image/svg+xml` | 另见模块头 `:8-12` 声明「本文件是扩展名 → 分类/语言/MIME 的唯一事实源」 |
-| 谁是消费者 | `src/tree.ts:8,32,40`（展示分类）、`src/main.ts:43,84`（附件 `data:` URL 的 MIME）、`src/editor.ts:23-24`（模式裁决）、`src/preview/code.ts:38`（语言名类型约束） | `rg` 全仓无第二份图片扩展名表（[REVIEW.md](../../../REVIEW.md) 第 8 条的核对动作已做） |
+| 谁是消费者 | `src/tree.ts:8,32,40`（展示分类）、`src/main.ts:43,84`（附件 `data:` URL 的 MIME）、`src/editor.ts:23-24`（模式裁决）、`src/preview/code.ts:38`（语言名类型约束） | `rg` 全仓无第二份图片扩展名表（[REVIEW.md](../../../../REVIEW.md) 第 8 条的核对动作已做） |
 | 未收录的扩展归哪一类 | 不在白名单里（`REGISTRY` 之外的扩展按 `text` 分类，`src/preview/attachments.ts:129-132`），但这**不影响内联渲染**，见 1.2 | |
 | vault 扫描是否按扩展名过滤 | 不过滤：`src-tauri/src/fs_io.rs:155` 的注释写明「全类型递归枚举（不按扩展名过滤）」；唯一的忽略集是 `IGNORED_NAMES`（`:27`：`.git` / `.DS_Store` / `node_modules`） | |
 
@@ -55,7 +55,7 @@
 「不支持格式」在今天**没有独立的判定与文案**：`![x](a.psd)` / `![x](a.heic)` 一律走
 「读字节 → `data:` URL → 交给 `<img>`」，失败时归入「解码失败」那一类。也就是说，**格式支持与否
 不是前端判定，而是渲染引擎的行为**——所以本 change 不在前端加格式白名单（那会造出第二份表，
-违反 [REVIEW.md](../../../REVIEW.md) 第 8 条），只保证「引擎给不出可见像素时有可见回退」。
+违反 [REVIEW.md](../../../../REVIEW.md) 第 8 条），只保证「引擎给不出可见像素时有可见回退」。
 
 同一条兜底还覆盖 Obsidian 方言：`buildWikiEmbedWidget`（`src/preview/livePreview.ts:974-994`）先用
 `isImageName`（`:979`，走 `attachments.ts:144-146`）分流，非图片出「内容嵌入不支持」占位（`:980`），
@@ -106,7 +106,7 @@ change 的处理是**维持现状**，并把「图片行是否与链接/分隔�
 
 条款引用的是**输入分布**（引用形态 × 读取结果 × 解码结果 × 渲染尺寸），不引用具体案例（不是
 「那张 svg」）。这正是
-[rendering-defect-contract-first.md](../../../docs/process/rendering-defect-contract-first.md)
+[rendering-defect-contract-first.md](../../../../docs/process/rendering-defect-contract-first.md)
 要求的形态：先定位/补齐不变量条款，再配不变量级的属性测试。
 
 ### 3.2 实现口径（不写死实现，只定判据）
@@ -137,7 +137,7 @@ change 的处理是**维持现状**，并把「图片行是否与链接/分隔�
    `.cm-lp-image img` 存在 **当且仅当** 渲染尺寸非零。
 2. 真机层（WKWebView）：该位置的 AX 文本非空，且含原始引用串（alt 与路径都在这一串里）。
 
-**反向验证（[REVIEW.md](../../../REVIEW.md) 第 1 条的防线）**：新断言写好后，先塞一份「只声明
+**反向验证（[REVIEW.md](../../../../REVIEW.md) 第 1 条的防线）**：新断言写好后，先塞一份「只声明
 `viewBox`」的零尺寸 svg 进去实测，**确认它红**（今天的实现就是红），再动实现。
 
 ## 4. SVG 安全性论证
@@ -299,7 +299,7 @@ XML 解析失败，前端拿到的是同一个事件。今天把这几类一律�
 | **只用 `naturalWidth` 一类内在尺寸信号当终态判据** | 中招形态实测 `naturalWidth/naturalHeight = 300×100`（非零）而布局盒 **0×0**——内在尺寸对这一态**看不见**（§8.1 实验矩阵）；反过来它报 0 也不能断定不可见。判据必须落在替换区自身的可见尺寸上（第 3.2 节）。 |
 | **引入 asset protocol 或自定义 protocol 旁路 `data:` URL** | 现有 `data:` 路径没有失败证据；换通道要动 Rust、CSP 与权限面（非目标）。契约层面 「invoke + base64」是 living spec 已裁决的形态，换通道属于另一个 change。 |
 | **内联 SVG 到 DOM（`innerHTML`）** | 打开脚本执行与外部资源解析（第 4.2 节），且被 CSP 挡下的同样是白板——收益为零、风险为正。 |
-| **在前端加「可渲染格式白名单」** | 会造出第二份扩展名表（[REVIEW.md](../../../REVIEW.md) 第 8 条），而且前端判不出引擎的解码能力——判定权本来就在引擎手里。 |
+| **在前端加「可渲染格式白名单」** | 会造出第二份扩展名表（[REVIEW.md](../../../../REVIEW.md) 第 8 条），而且前端判不出引擎的解码能力——判定权本来就在引擎手里。 |
 | **给 svg 加净化器（sanitize）** | `<img>` 上下文已经关闭脚本与外链，净化器只增加一份需要长期跟进的解析代码（Non-goals）。 |
 | **顺手把图片行纳入选区显露源码** | 这是对所有图片的可见行为变更，超出本次诉求；列为选项 B 交 Alex 裁决（proposal）。 |
 
@@ -404,5 +404,5 @@ for (const [n, e] of [["chromium", chromium], ["webkit", webkit]]) {
 - **文案层**：D111–D113 进 deck + 备注段登记。
 - **不改写源文件**：所有场景断言 `EditorState.doc` / 磁盘文件逐字节不变（ADR 0003 §3）。
 - **基线**：本 change 预期不动任何整页基线（`markdown-combo` 无基线；`rg` 全仓确认无基线场景含
-  图片占位），但按 [REVIEW.md](../../../REVIEW.md) 第 3 条的纪律，实现期必须逐个核对图片占位
+  图片占位），但按 [REVIEW.md](../../../../REVIEW.md) 第 3 条的纪律，实现期必须逐个核对图片占位
   出现过的场景，把核对结果写进 PR 说明。

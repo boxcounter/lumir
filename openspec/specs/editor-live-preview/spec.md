@@ -177,7 +177,7 @@ md 模式下，标准 Markdown 链接 `[title](target)`（lezer 语法树的 `Li
 md 模式 SHALL 在基础装饰之外渲染下列三类结构（M138 落地），三者均 MUST NOT 改写文档内容（`EditorState.doc` 与磁盘文件逐字节不变，ADR 0003 §3 铁律）：
 
 1. **分隔线**：`---` / `***` / `___` 主题行 SHALL 渲染为一条横线（replace widget，读屏名「分隔线」），渲染态 MUST NOT 露出源码标记。**文档首部 frontmatter 块内的 `---` 定界符 MUST NOT 被当作分隔线**（frontmatter 判定复用既有唯一实现，toc 与装饰层不得各写一份）。横线的宽度 SHALL 取阅读栏宽，本体 SHALL 不参与行高计算；光标或选区触及该行时 SHALL 显露源码（否则作者既看不到光标也看不到刚敲入的字符）。
-2. **围栏代码块着色**：带 info string 且语言在收录表内的围栏代码块 SHALL 按该语言着色，token 色值 MUST 只取自既有 editorial token（MUST NOT 为此新增颜色）；同一段代码经围栏渲染与整文件（code 模式）打开时 SHALL 得到同一套 tag 与配色，MUST NOT 出现两侧漂移。info string 缺失、语言不在收录表内时 SHALL 保持纯文本（源码逐字保留，MUST NOT 用近似 parser 冒充着色）。块级 mermaid 走自身的 widget 渲染路径，不适用本条。围栏代码块的分隔行与源码 SHALL 保持可选中的原文，装饰 MUST NOT 吞掉字符。**已知例外（如实记录，缺陷在案）**：rust 的字符 / 字节字符字面量（simpleMode 的 `string.special` 复合 token）在围栏里丢 tag、取正文色，与 code 模式不一致——影响面已枚举（收录语言里只有 rust），finding 与修法见 `docs/backlog.md` 的「rust 字符字面量在围栏代码块里不着色」条；本条「两侧同 tag 同配色」在修复前对该类 token 不成立，MUST NOT 被读作已满足。
+2. **围栏代码块着色**：带 info string 且语言在收录表内的围栏代码块 SHALL 按该语言着色，token 色值 MUST 只取自既有 editorial token（MUST NOT 为此新增颜色）；同一段代码经围栏渲染与整文件（code 模式）打开时 SHALL 得到同一套 tag 与配色，MUST NOT 出现两侧漂移。**该一致性 SHALL 由两侧共用同一张语言表（`src/preview/code.ts` 的 `LANGUAGES`）保证，MUST NOT 由两侧各自维护一份语言或配色表。** 语言相关的键名口径按各自 capability 条目处置：json 见「JSON 键名与值分色」，yaml 见「YAML 代码块的键名配色」。info string 缺失、语言不在收录表内时 SHALL 保持纯文本（源码逐字保留，MUST NOT 用近似 parser 冒充着色）。块级 mermaid 走自身的 widget 渲染路径，不适用本条。围栏代码块的分隔行与源码 SHALL 保持可选中的原文，装饰 MUST NOT 吞掉字符。着色 SHALL 受单一代码块长度上限约束（超过即回落纯文本，MUST NOT 因语言不同而放宽）。**已知例外（如实记录，缺陷在案）**：（a）rust 的字符 / 字节字符字面量（simpleMode 的 `string.special` 复合 token）在围栏里丢 tag、取正文色，与 code 模式不一致——影响面已枚举（收录语言里只有 rust），finding 与修法见 `docs/backlog.md` 的「rust 字符字面量在围栏代码块里不着色」条；（b）toml 的表头 `[x]` 与 `true` / `false`、日期共用 legacy mode 的同一个 `atom` token（`@codemirror/legacy-modes` 的 `mode/toml.js:44,57,59`），tokenTable 按 token 名映射、分不开三者，因此表头取的是字面量色（与数字、布尔同色）——两侧口径一致（不构成漂移），修它需要改 vendored mode 的词法，本 capability 记为接受现状，记 `docs/backlog.md`。本条「两侧同 tag 同配色」在（b）上成立、在（a）修复前不成立，MUST NOT 被读作已满足。
 3. **引用内列表**：引用块（含嵌套引用 `> >`）内的有序 / 无序 / 任务列表 SHALL 与正文里的列表走同一套标记装饰与正文对齐——行首连续的 `>` 与紧随空格、以及列表标记 SHALL 在渲染态被隐藏；callout 内的列表与普通引用内的列表同一口径（callout 本就是 blockquote）。嵌套层级、多位编号与任务状态 SHALL 保留，MUST NOT 重新编号或写入任务状态。
 
 三项装饰 SHALL 遵守本 spec 的视口增量纪律（`live preview 装饰层` requirement）：只为可见区域构建，MUST NOT 因这三项在打开文档时引入全量构建。
@@ -197,7 +197,232 @@ md 模式 SHALL 在基础装饰之外渲染下列三类结构（M138 落地）�
 - **WHEN** md 文档里有两个围栏代码块，一个 info string 为 `python`、另一个为 `brainfuck`（不在收录表内）
 - **THEN** python 块按语言取色（色值来自既有 editorial token），brainfuck 块按纯文本显示且源码逐字可读可选中；同一段 python 代码在只读 `.py` 文件（code 模式）里取到同一套配色
 
+#### Scenario: 两侧语言与配色表同源
+
+- **WHEN** 任何一门收录语言在只读文件（code 模式）与 md 围栏代码块里渲染同一段代码
+- **THEN** 两侧取到同一套 tag 与同一组色值；系统 MUST NOT 存在第二份语言表或配色表可供两侧分别取用（语言表的增删在两侧同时生效）
+
+#### Scenario: 着色受长度上限约束且与语言无关
+
+- **WHEN** 任一收录语言的围栏代码块长度超过单一代码块的长度上限（回落阈值）
+- **THEN** 该块回落为纯文本、不产出任何 token 装饰；该上限对收录语言一律适用，MUST NOT 因语言不同而放宽（MUST NOT 只对部分语言生效）
+
 #### Scenario: 引用内的列表按常规列表渲染
 
 - **WHEN** 打开含 `> - 甲` `> - 乙` 以及嵌套 `> > 1. 丙` 的 Markdown
 - **THEN** 引用内的列表以常规列表呈现（标记换列表符号、正文缩进对齐、层级保留），`>` 与 `-` / `1.` 等标记在渲染态不可见；文档内容逐字节不变
+
+### Requirement: YAML 代码块的键名配色
+
+yaml 文档里的**映射键**（`key:` 与 `- key:` 两种形态的键）SHALL 以属性名配色（`--callout-note`）呈现，MUST NOT 与字面量（数字、布尔）同色——键的语义是属性名，与 json 的对象键同一口径（见「JSON 键名与值分色」）。该口径 SHALL 对**未加引号**的键形态恒成立——顶层键、嵌套键、序列项内的键、非 ASCII 键、含 `-` / `.` / `/` / `+` / 空格的键——MUST NOT 只对某一类键生效（带引号的键另见下一条 scenario）。字符串值 SHALL 保持字符串配色（`--callout-tip`），数字值 SHALL 保持字面量配色（`--callout-warning`），布尔值（`true` / `false` 等）SHALL 保持关键字配色（`--accent`），注释 SHALL 保持注释配色（`--dim`）；未加引号的标量值与结构符号（`-` / `:` / `,` 等）SHALL 维持正文色（本 capability 不对它们赋予颜色语义）。同一段 yaml 在 md 围栏（```yaml 与 ```yml 两个 info string）与只读 `.yml` / `.yaml` 文件（code 模式）里的配色 SHALL 一致——两侧共用同一张语言表，该一致性 MUST NOT 由两侧分别对齐。配色 MUST 只取自既有 editorial token，MUST NOT 为本次修复新增颜色。本口径 MUST NOT 外溢到其它语言——toml 的 `atom`（表头 / 日期 / 布尔）以及 json、javascript、typescript 的既有取色 SHALL 保持不变。装饰 MUST NOT 改写文档内容，`EditorState.doc` 与磁盘文件逐字节不变（ADR 0003 §3 铁律）。
+
+#### Scenario: 围栏 yaml 代码块的键取属性名色
+
+- **WHEN** md 文档里有 ```yaml 围栏代码块，内容为两层嵌套映射加一个序列（`dimensions:` → `- name: Goal` → `key: goal`）
+- **THEN** 全部键名（`dimensions`、`name`、`key`）以属性名色呈现、MUST NOT 与数字或布尔同色；字符串值取字符串色；块内不再出现「整块只有一种颜色」的形态
+
+#### Scenario: 别名 yml 与 yaml 同口径
+
+- **WHEN** md 文档里两个围栏代码块内容逐字节相同，info string 分别为 `yaml` 与 `yml`
+- **THEN** 两块取到逐 token 相同的类名与色值
+
+#### Scenario: .yml 文件与围栏同色
+
+- **WHEN** 打开内容与上述围栏块相同的只读 `.yml`（或 `.yaml`）文件
+- **THEN** 键取属性名色、字符串值取字符串色，与围栏渲染逐 token 相同，且文件仍不可编辑
+
+#### Scenario: 键形态不影响判定
+
+- **WHEN** yaml 的键是非 ASCII 键、含 `-` / `.` / `/` / `+` / 空格的键，或位于序列项内与任意嵌套层级
+- **THEN** 每个键都以属性名色呈现，MUST NOT 只对该类键中的某一种生效
+
+#### Scenario: 带引号的键取字符串色（已知边界，如实记录）
+
+- **WHEN** yaml 的键写成 `"k": v` 或 `'k': v`
+- **THEN** 该键取字符串色，与同段里的引号值同口径；系统 MUST NOT 把它读成属性名。原因是 vendored `mode/yaml.js` 的引号分支排在键判定之前、产出的是 `string` token（与引号值同一个 token 名），token 名层面分不开键与值——要分开须改 vendored parser 的词法，本 change 非目标。本 scenario 是上一条 requirement 的**边界说明**，不是它的失效面
+
+#### Scenario: 其它语言的 atom 不跟着变
+
+- **WHEN** md 围栏 ```toml 代码块里出现表头 `[[hooks]]`、布尔 `true` 与日期，或 ```json 代码块里出现对象键
+- **THEN** toml 的表头 / 布尔 / 日期仍取字面量色、json 的键仍取属性名色（MUST NOT 因 yaml 的键名修正而改变）
+
+### Requirement: 折行口径与配置来源
+
+`~/.config/lumir/config.json` 的 `[editor]` 表 SHALL 支持两个布尔项，键名与 Rust 字段名逐字一致
+（沿用 `EditorConfig` 无 `serde(rename)` 的既有口径，`src-tauri/src/config.rs:70-75`）：
+
+- `editor.line_wrap`：文件级折行，`true`（默认）/ `false`。`true` 时正文行在阅读栏内折行，
+  `false` 时长行不折、由编辑区横向平移呈现。
+- `editor.code_block_wrap`：代码块折行，`false`（默认）/ `true`。作用对象只有 md live preview 里的
+  围栏与缩进代码块（代码块**不是 widget**，是行装饰：`src/preview/livePreview.ts:792-798`）。
+
+两项 SHALL 与既有 `editor.mode` 走同一条装配链——各类型 `impl Default`（`config.rs:77-83`）、
+宽容解析镜像上的 `#[serde(default)]`（`:142-146`）、`validate()` 逐字段回落到默认（`:237-247`）——
+MUST NOT 为它们另开一条装载路径。取值不合法时 MUST 走既有 config warning 语义、不得导致启动失败
+（ADR 0002 §5）：warning 出口沿用现状（console + 诊断日志的 `config_warning` 事件，
+`src/main.ts:811-814`），本 change MUST NOT 新增 UI 面。
+
+**已知边界（如实记录）**：类型不符（如 `"line_wrap": "yes"`）会在解析期让整份宽容结构失败、走整文件
+回落（全部默认 + warning，`config.rs:200-209`），与 `editor.mode` 给错类型时同路。本 change MUST NOT
+引入「逐字段类型容忍」——那是解析模型的变更，不应附带在新增字段里；实现 SHALL 用一条单测把这条
+边界钉住，MUST NOT 把它读成「配置项没问题」。
+
+装载时点 SHALL 与现状一致：只在启动装载（`src/main.ts:805` 是全仓唯一的 `config_get` 消费点，
+无 watcher、无第二次读取），改配置需重启；运行期的口径变更由「折行开关的瞬态口径」承担。配置格式
+随现状（config.rs 的「JSON 而非 TOML」选型，`config.rs:17-22`），本 change 不做格式迁移。新增字段
+SHALL 经 ts-rs 导出到 `src/bindings/` 并受 bindings 漂移门禁约束（`scripts/gate.sh:61-70`）。
+
+两个配置项是**输入面**：应用 MUST NOT 因运行期的折行翻转回写 `config.json`，MUST NOT 做 per-file 的
+折行状态持久化（对比 Emacs：`toggle-truncate-lines` 只做 buffer-local 翻转、不落盘
+[Line Truncation](https://www.gnu.org/software/emacs/manual/html_node/emacs/Line-Truncation.html)）。
+
+#### Scenario: 缺字段时取默认
+
+- **WHEN** `config.json` 的 `[editor]` 表里没有这两个字段（旧配置原样启动）
+- **THEN** 正文行折行、代码块不折行（`line_wrap = true`、`code_block_wrap = false`）；不产生任何
+  config warning
+
+#### Scenario: 显式关闭文件级折行
+
+- **WHEN** 配置 `{"editor": {"line_wrap": false}}` 后启动，打开一份含超长正文行的 Markdown
+- **THEN** 该行不折行；光标可移到行尾，超宽部分可在编辑区（`.cm-scroller`）横向到达，MUST NOT 被
+  裁掉且无法到达；文档内容逐字节不变
+
+#### Scenario: 代码块折行可显式打开
+
+- **WHEN** 配置 `{"editor": {"code_block_wrap": true}}` 后启动，打开一份含超长代码行的 Markdown
+- **THEN** 代码块的长行在阅读栏内折行（与 M138 以来的现状一致），MUST NOT 出现块内横向滚动容器
+
+#### Scenario: 类型不符走整文件回落
+
+- **WHEN** 配置 `{"editor": {"line_wrap": "yes", "mode": "md"}, "keys": {"Cmd-s": null}}` 后启动
+- **THEN** 产生 warning（console 与诊断日志的 `config_warning` 事件），整份配置按默认解释（这是本
+  requirement 如实记录的既有边界，与 `editor.mode` 给错类型同路）；应用照常启动、可编辑
+- **AND** 该边界 SHALL 由一条单测钉住（断言此时 `line_wrap` 与 `mode` 同时回到默认，MUST NOT 出现
+  「部分字段按配置、部分按默认」的混合态）
+
+### Requirement: 折行渲染与代码块横滚容器
+
+折行的判定 SHALL 是「一元素一条规则」：代码块行（围栏 / 缩进代码块）由 `editor.code_block_wrap`
+裁决，其余所有行（含只读 code 模式的正文行）由 `editor.line_wrap` 裁决；两者 MUST NOT 互相改写。
+四条生效路径 SHALL 为：
+
+| `editor.line_wrap` | `editor.code_block_wrap` | 正文行 | 代码块 |
+|---|---|---|---|
+| `true` | `false` | 栏内折行 | 不折行，块内横向滚动 |
+| `true` | `true` | 栏内折行 | 栏内折行 |
+| `false` | `false` | 不折行，编辑区横向平移 | 不折行，块内横向滚动 |
+| `false` | `true` | 不折行，编辑区横向平移 | 栏内折行 |
+
+文件级口径为「不折行」时，编辑区 MUST NOT 折行（`.cm-content` 落回 `white-space: pre`），超长行
+SHALL 由 `.cm-scroller` 的横向滚动到达——「Horizontal scrolling automatically causes line
+truncation」是本条的对齐口径（[Line Truncation](https://www.gnu.org/software/emacs/manual/html_node/emacs/Line-Truncation.html)），
+MUST NOT 使用会让内容不可达的方案（如 `overflow: hidden` 式的静默裁切）。
+
+代码块口径为「不折行」时，块内每行 SHALL 不折行（行级 `white-space` 压回 `pre`、`overflow-wrap`
+回到 `normal`），且该块 SHALL 由一个**块级横滚容器**承载，使超长行在容器内横向滚动。容器 SHALL：
+
+- 复用 CM6 的 `BlockWrapper` 机制（与表格容器同一机制，`src/preview/livePreview.ts:234-279`）；
+  MUST NOT 把代码块替换为 replace widget——源码 SHALL 保持可选中的原文、md 模式下仍可编辑；
+- 可聚焦（`tabindex=0`）并带 `region` 角色与读屏可读的名字（与表格容器既有形态一致，
+  `src/preview/livePreview.ts:262`）；
+- 与表格滚动容器**共用同一「块级横滚容器」判据**，使既有五条 widget 滚动键（`←` `→` `Home` `End`
+  `Escape`）对代码块同样生效；判据的 class 单一来源 SHALL 在 `src/keys.ts`（见
+  `keymap-commands` 的「轨道 D 的 widget 滚动键纳入统一键位表」）。MUST NOT 为实现横滚另加一条
+  `keydown` 路径（键位通路仍只有统一键位表一条）；
+- 提供代码块底板：横向滚到右侧时 MUST NOT 露出无底色的空白（底色仍取自既有 `--bg-2` 与 token 配色，
+  `src/preview/theme.ts:59`、`:63-68`）；
+- MUST NOT 引入额外的纵向内外边距：翻转开关带来的几何变化 SHALL 只来自折行本身。任何必要的间距
+  SHALL 用 padding 表达、MUST NOT 用 margin（CM 按 border-box 量行高，margin 对高度图不可见，
+  口径见 `src/preview/theme.ts:96-100`、`src/style.css:284-288` 的 M110 注释）；表格容器的
+  `padding-block: 12px` MUST NOT 被照抄（它会把代码块下方所有行推走）。
+
+两项口径 SHALL 遵守本 spec 的视口增量纪律（「live preview 装饰层」requirement）：块发现与装饰构建
+MUST NOT 因本 change 变成全文档扫描。任何一项 MUST NOT 改写文档（`EditorState.doc` 与磁盘文件逐字节
+不变，ADR 0003 §3）。
+
+既有例外原样保留：表格 cell 有自己的 `white-space: pre-wrap`（`src/style.css:325-326`）、块级公式与
+mermaid 走自身 widget 渲染路径、表格容器自己的 `overflow-x: auto`——三者 MUST NOT 被本 change 改变。
+
+#### Scenario: 默认口径下代码块不折行且块内可滚
+
+- **WHEN** 默认配置下打开一份含超长代码行（长度超过阅读栏宽）的 Markdown
+- **THEN** 该代码行不折行（不产生第二个视觉行），代码块在自己的容器内横向滚动；同一文档里的超长
+  正文行仍照常折行（一元素一条规则）
+
+#### Scenario: 文件级不折行 + 代码块折行
+
+- **WHEN** 配置 `{"editor": {"line_wrap": false, "code_block_wrap": true}}` 后打开同一份文档
+- **THEN** 代码块的长行在阅读栏内折行（无块内滚动容器），而正文的超长行不折行、由编辑区横向平移
+  呈现——两级配置各自作用于各自的对象，互不改写
+
+#### Scenario: 代码块容器的键盘可达性
+
+- **WHEN** 默认配置下打开含超长代码行的 Markdown，用 `Tab` 把焦点移入代码块横滚容器，依次按 `→`、
+  `End`、`Home`、`Escape`
+- **THEN** 容器横向滚动 120px、滚到最右、回到最左，`Escape` 把焦点交还编辑器内容区（行为与表格滚动
+  容器一致）；全程文档内容逐字节不变、编辑器光标位置不变
+
+#### Scenario: 横滚到右端不露白底
+
+- **WHEN** 把代码块容器横向滚到最右端，读该区域的计算背景色
+- **THEN** 代码块底板覆盖整块可见区域（与未滚动时同一色值），MUST NOT 出现无底色的空白条
+
+#### Scenario: 容器不改变代码块的纵向节奏与文档内容
+
+- **WHEN** 打开一份代码行都不超栏宽的 Markdown（默认配置），与 `code_block_wrap = true` 下同一份
+  文档对照
+- **THEN** 代码块的纵向占位与文字位置一致（容器不引入额外垂直位移）；两种配置下文档内容逐字节
+  相同、dirty 状态不变
+
+#### Scenario: 只读 code 模式的正文行走文件级口径
+
+- **WHEN** 默认配置下打开一个非 md 文件（只读 code 模式），其某行长于栏宽
+- **THEN** 该行按 `editor.line_wrap`（默认折行）呈现——`editor.code_block_wrap` 对 code 模式没有
+  作用对象，MUST NOT 产生容器、MUST NOT 报错或提示
+
+### Requirement: 折行开关的瞬态口径
+
+折行的运行期翻转 SHALL 由两条命令承担，命令的 id、作用域、默认不绑键与面板口径见 `keymap-commands`
+的「折行开关命令」requirement；本 requirement 只定**状态语义**。
+
+折行口径的**运行期真源是应用运行期的一个值**（D1 裁决，2026-09-18）：两条命令的翻转 SHALL 作用于
+**全部会话**，翻转后所有标签页（含当时不在前台的）SHALL 立即呈现同一口径，MUST NOT 出现「前台变了、
+后台标签页还是旧口径」的错位；翻转 SHALL 立即生效，且 MUST NOT 改写文档（`EditorState.doc` 与磁盘
+文件逐字节不变，ADR 0003 §3）、MUST NOT 进撤销栈、MUST NOT 改变 dirty、MUST NOT 落盘
+（`config.json` 的内容与 mtime 在翻转前后逐字节不变）、MUST NOT 做 per-file 持久化。
+
+粒度上本 change 自觉偏离 Emacs 的对应物：`toggle-truncate-lines` 只把 `truncate-lines` 在**当前
+buffer** 内变成局部值（[Line Truncation](https://www.gnu.org/software/emacs/manual/html_node/emacs/Line-Truncation.html)），
+而本 change 取应用运行期（Alex D1 原话「应用级。」）。由此两条推论 SHALL 成立：一，切标签页
+SHALL NOT 改变折行口径；二，新标签页 SHALL 取**当前应用态**而不是配置默认——配置项给的是启动时的
+起点，命令给的是运行期口径，重载/新建会话都不得退回配置值。重启后 SHALL 回到配置值（运行期值不持久化）。
+
+本版 MUST NOT 为翻转提供 toast 播报或常驻指示（无 mode line）：翻转的可见结果即反馈。**已知观测
+缺口（如实记录）**：当文档里没有超长行 / 没有代码块时，翻转没有可见效果，用户与 agent 都无法从界面上
+读出当前状态。这是本版的自觉取舍（理由与替代落点见 proposal 的非目标）；若 dogfood 后确认为真实
+痛点，按手感证据另提 change。
+
+#### Scenario: 翻转立即生效、全体标签页一致且不落盘
+
+- **WHEN** 通过 `[keys]` 绑定的键触发折行翻转（前台标签页有超长行与超长代码行，另有至少一个后台
+  标签页打开着同类文档），随后比对 `config.json` 的内容与 mtime，并读文档内容与 dirty 状态
+- **THEN** 折行口径立即变化（正文行与代码块按各自口径重新呈现）；切到那个后台标签页看到的同样是
+  新口径；`config.json` 逐字节不变、mtime 不变；文档内容逐字节不变、dirty 不变、撤销栈不含本次
+  翻转带来的条目
+
+#### Scenario: 切标签页不改变折行口径
+
+- **WHEN** 触发翻转（与配置默认相反），切到另一个标签页观察，再切回
+- **THEN** 两次观察都是**翻转后**的口径——折行是应用运行期的显示口径，MUST NOT 随标签页切换退回
+  配置值，也 MUST NOT 出现「某个标签页还停在旧口径」的第三种状态
+
+#### Scenario: 新标签页取当前应用态
+
+- **WHEN** 用与配置默认相反的配置启动，触发折行翻转，随后新建 / 打开另一个标签页
+- **THEN** 新标签页按**当前应用态**呈现（而不是回到配置默认）；重启应用后所有标签页回到配置值
+
+#### Scenario: 重启回到配置值
+
+- **WHEN** 翻转后退出应用、重新启动，打开同一份文档
+- **THEN** 呈现与配置一致（翻转是瞬态的，不持久化）；`config.json` 的内容与翻转前逐字节相同
