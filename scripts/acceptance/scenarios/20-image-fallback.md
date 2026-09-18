@@ -73,6 +73,6 @@ steps:
   上是没有 bbox 的 `AXGroup`，因此**不要**用文本节点当尺寸判据。
 - **脚本腿的判据是 `document.title`**：fixture 里的脚本与 onload 都试图把标题改成
   `LUMIR-SVG-SCRIPT-RAN` / `LUMIR-SVG-ONLOAD-RAN`；`<img>` 载入上下文按规范关闭脚本执行
-  （依据见 `openspec/changes/image-svg-and-fallback/design.md` §4），所以标题应保持 `Lumir`。
+  （依据见 `openspec/changes/archive/2026-09-18-image-svg-and-fallback/design.md` §4），所以标题应保持 `Lumir`。
   两条负向断言与同一步骤里的两条正观测配对。
 - **手感/审美不下沉**：svg 在栏宽内的大小与留白观感归 Alex，本场景只留截图证据。

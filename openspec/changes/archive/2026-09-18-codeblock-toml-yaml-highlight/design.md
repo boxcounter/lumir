@@ -181,13 +181,13 @@ toml 数组的 `[` `]` 是 `bracket`、yaml 的结构标点是 `meta`——`@lez
 
 1. **非 DOM 层**（`highlightCode` 直调，不依赖浏览器）：逐 token 断言 `from` / `to` / `cls`——键 = `cm-lp-tok-property`、引号值 = `cm-lp-tok-string`、布尔 = `cm-lp-tok-keyword`、数字与日期 = `cm-lp-tok-literal`、注释 = `cm-lp-tok-comment`；并按**输入维度扫描**（M147 的做法），不只钉一个 fixture：纯标量值、嵌套映射、列表、内联 `{a: 1}`、锚点与别名、无键的纯列表块、超 64 KiB 块。fixture 里 MUST 含 §1.2 那个真实块形态。
 2. **DOM 层**（chromium 计算色）：md 文档里的围栏块断言 `span.cm-lp-tok-*` 的类名**与** `getComputedStyle` 色值；同内容的 `.yml` / `.toml` 只读文件断言计算色。两侧类名生成方式不同（围栏 `cm-lp-tok-*`、code 模式 CM6 自动生成的 `ͼ*`），**必须比色值而不是比类名**。整页基线守不住折叠线以下的代码块（M147 实证、本 change 的 `evidence/01` 就是被折叠截断的例子），因此补一张**元素级**基线（口径同 m133 / M147 的 `render-codeblock-json-line.png`）。
-3. **反向验证**（[REVIEW.md](../../../REVIEW.md) 第 1 条）：摘掉 `YAML_TOKEN_TABLE` 重跑，第 1、2 层的键色断言必须转红；改回后必须转绿。
+3. **反向验证**（[REVIEW.md](../../../../REVIEW.md) 第 1 条）：摘掉 `YAML_TOKEN_TABLE` 重跑，第 1、2 层的键色断言必须转红；改回后必须转绿。
 
 补充两条既有口径的沿用：
 
 - **64 KiB 安全阀同样适用**：超大 yaml/toml 围栏 MUST 不着色（与 M138 对 rust 的断言同口径），本次不改该常量。
-- **既有整页基线零变更**：yaml / toml 此前不在 fixture 里，其键色从未进过任何整页基线；实现期按 M147 的做法实测核对（全量无 `--update` 通过 + 相关基线 sha256 对照），新增基线 `--update` 前截图须 Alex 过目（AGENTS.md 硬规则、[tests/visual/README.md](../../../tests/visual/README.md)）。
-- **新增整页基线的容差必须覆盖**（实现期实测，[REVIEW.md](../../../REVIEW.md) 第 3 条的新现场）：把 yaml 的键色改回旧值（键回到字面量赭色）后，新增那张 1200×800 的整页基线差异是 **958 像素**，而全局 `maxDiffPixelRatio` 0.001 的额度是 **960 像素**——差 2 像素就静默通过。故该断言显式覆盖为 0.0005（480 像素，留 2 倍余量）；元素级那张（766×29）额度 22 像素、差异 92 像素，不受此问题影响。这次「改回旧值跑一遍看红不红」的反向验证连同两个读数记在 `tasks.md` 的 3.7。
+- **既有整页基线零变更**：yaml / toml 此前不在 fixture 里，其键色从未进过任何整页基线；实现期按 M147 的做法实测核对（全量无 `--update` 通过 + 相关基线 sha256 对照），新增基线 `--update` 前截图须 Alex 过目（AGENTS.md 硬规则、[tests/visual/README.md](../../../../tests/visual/README.md)）。
+- **新增整页基线的容差必须覆盖**（实现期实测，[REVIEW.md](../../../../REVIEW.md) 第 3 条的新现场）：把 yaml 的键色改回旧值（键回到字面量赭色）后，新增那张 1200×800 的整页基线差异是 **958 像素**，而全局 `maxDiffPixelRatio` 0.001 的额度是 **960 像素**——差 2 像素就静默通过。故该断言显式覆盖为 0.0005（480 像素，留 2 倍余量）；元素级那张（766×29）额度 22 像素、差异 92 像素，不受此问题影响。这次「改回旧值跑一遍看红不红」的反向验证连同两个读数记在 `tasks.md` 的 3.7。
 
 ## 6. 边界与已知缺口（本 change 只记录、不修）
 

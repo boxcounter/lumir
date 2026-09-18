@@ -1,7 +1,18 @@
 # Tasks: image-svg-and-fallback
 
 任务口径：每条给出**验收口径**（判据 + 证据落点）。「证据」指可 `ls` 的路径或可复算的命令输出，
-不是「跑过了」的口头声明（[REVIEW.md](../../../REVIEW.md) 第 7 条）。
+不是「跑过了」的口头声明（[REVIEW.md](../../../../REVIEW.md) 第 7 条）。
+
+**归档记录（节点 2，2026-09-18）**——Alex 节点 2 通过后归档为
+`openspec/changes/archive/2026-09-18-image-svg-and-fallback/`。对账结论：tasks **全部勾选、无放弃项**；
+2 条 MODIFIED + 2 条 ADDED 落进 living spec `openspec/specs/attachment-display/spec.md`，逐 requirement 与
+delta 做字节比对**全部 EXACT**、其余 requirement 零变化（`git diff` 的删除行只落在两条被 MODIFIED 的
+requirement 内部）；实现与 delta 逐条一致（`<img>` 是图片链路唯一渲染路径、尺寸兜底为本缺陷主修法、
+三种引用形态共用同一条终态处置且无扩展名特判——`src/preview/attachments.ts` 的 `ImageWidget`），
+**无实现期静默扩 scope**；本 change 不新建 capability（`attachment-display` 是既有 living spec），
+无 Purpose 占位待补。节点 1 裁决 A（图片行维持现状、不加选区显露，将来单独立项）落账不动，
+`docs/backlog.md` 第 19 条**保留不核销**；第 18 条（外链直连分支）的 (a)/(b) 处置权仍在 Alex，
+**不在归档范围**——归档只覆盖本 change 的两条腿（可见回退 + SVG 安全渲染口径）。
 
 ## 1. 复现与定位（实现前，先定位再改）
 
@@ -87,7 +98,7 @@
       状态块单独满足（渲染成功 / 空白 / 报错三者都 PASS）。改为两侧都判——「成功渲染时
       `.cm-lp-image img` 存在且可见」与「不可见时不出现零高度替换区」。
       **验收口径**：新断言在**修复前**对零尺寸样本为 FAIL（这条红是 5.2 的产物）；修复后 PASS。
-- [x] 5.2 反向验证（必做，[REVIEW.md](../../../REVIEW.md) 第 1 条的防线）：先把零尺寸 fixture 塞进
+- [x] 5.2 反向验证（必做，[REVIEW.md](../../../../REVIEW.md) 第 1 条的防线）：先把零尺寸 fixture 塞进
       场景，确认新断言**真的红**，再动实现。
       **验收口径**：红灯的输出（playwright 失败信息）留档在 PR 说明里；没有这一步的绿灯不算数。
 - [x] 5.3 新增 fixture：只声明 `viewBox` 的零尺寸 svg、渲染为空的位图样本、含 `<script>` 与
@@ -98,7 +109,7 @@
       请求；脚本执行用一个可观测副作用（如 `document.title` 或全局标记）断言未发生。
       **验收口径**：把该 svg 改为内联渲染（临时实验，不提交）时断言必须变红——即断言有区分度；
       实验结论写进 PR 说明。
-- [x] 5.5 基线核对（[REVIEW.md](../../../REVIEW.md) 第 3 条 + AGENTS.md 的视觉门禁卫生）：
+- [x] 5.5 基线核对（[REVIEW.md](../../../../REVIEW.md) 第 3 条 + AGENTS.md 的视觉门禁卫生）：
       核对图片占位出现过的场景与全部整页基线的时间戳；确认本次是否需要重拍。
       **验收口径**：存量事实是 `markdown-combo.spec.ts` 无 `toHaveScreenshot`、`baselines/` 下无其
       snapshot 目录，且无其他场景引用图片占位——PR 里逐条核对后写明「本次零基线更新」或列出被更新
@@ -122,7 +133,7 @@
       `steps.md` 里各占一条（可分别读出），不合并成一条。
 - [x] 6.2 场景 fixture 落 `scripts/acceptance/fixtures/`，与 md 一起进合成 vault。
       **验收口径**：场景 PASS 且 `steps.md` 里断言逐条可读；断言形态遵守「不可读一律 FAIL」
-      （[REVIEW.md](../../../REVIEW.md) 第 2 条）——不要写「AX 里没有该文本即通过」式的负向空转。
+      （[REVIEW.md](../../../../REVIEW.md) 第 2 条）——不要写「AX 里没有该文本即通过」式的负向空转。
 - [x] 6.3 断言用**正**观测：该位置的 AX 文本非空且含原始引用串（`alt` 与路径都在其中）。
       **验收口径**：把 fixture 换成「空白实现」（临时回退到修复前代码）时该断言 FAIL——即断言能
       区分「有占位」与「空白」。

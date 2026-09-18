@@ -4,6 +4,17 @@
 > 第 2 组起是实现期任务。** 两个裁决点（proposal 末节）已在节点 1 定下（结论与日期见 proposal 的
 > 「裁决记录」）：**yaml 的单色缺陷独立成立、本 change 不撤回**，第 2–5 组照方案实现；toml 按假说 (b)
 > 处置（无产品缺陷，只纳入门禁）；修复广度取**方案 A**，故第 2.3 与 3.8 不实现，归档时标注放弃原因。
+>
+> **归档记录（节点 2，2026-09-18）**——Alex 节点 2 通过后归档为
+> `openspec/changes/archive/2026-09-18-codeblock-toml-yaml-highlight/`；归档动作把三条归档期任务
+> （5.2 / 5.3 / 6.5）一并收口，逐条勾选与结论见下。对账结论：1 条 MODIFIED + 1 条 ADDED 落进 living spec
+> `openspec/specs/editor-live-preview/spec.md`，逐 requirement 与 delta 做字节比对**全部 EXACT**、其余
+> requirement 零变化；「Markdown 渲染保真」并入后其「已知例外」段**并列 rust 与 toml 两条**
+> （归档前只列 rust——这正是本 change 要补的那格），另两条 M138/M152 既有行为的 spec 回填（语言表同源 /
+> 长度上限）也已进 living spec。实现期两处订正（5.4 的「带引号的键」收成边界 scenario、3.7 的整页容差
+> 958/960 → 0.0005）都在 delta 与 design §5/§6 里落定；2.3 / 3.8 按方案 A 不实现（放弃原因见各行内）。
+> **无实现期静默扩 scope**；本 change 不新建 capability（`editor-live-preview` 是既有 living spec），
+> 无 Purpose 占位待补。
 
 ## 1. 提案期（M167，已完成，零 `src/`、零 `tests/` 改动）
 
@@ -123,27 +134,34 @@
       **证据**（M179）：条目文本已写好并随 review-request 交 tower 代落——**本 mission 的 scope 不含
       `docs/backlog.md`**（避免与并行 mission 冲突），故不就地改那个文件。拟落的段落见 review-request 正文，
       建议归入「记录在案（无需动作）」节，标题「toml 的表头 `[x]` / `[[x]]` 与布尔、日期共用 `atom`」。
-- [ ] 5.2 归档时：把裁决点 1 的结论（Alex 手上的现场是哪一个）与 toml 的复核结论（「已着色 + 反例未定位」）
+- [x] 5.2 归档时：把裁决点 1 的结论（Alex 手上的现场是哪一个）与 toml 的复核结论（「已着色 + 反例未定位」）
       落一条核销记录；若裁决点 1 选 (b)，本 change 按撤回口径处置（目录移入 `archive/<日期>-withdrawn-` +
       proposal 头部补撤回记录），不留僵尸提案
-      **本 mission 不勾**：归档节点（Alex 节点 2）动作。**已定的输入**：裁决点 1 结论 = yaml 缺陷独立成立
-      （不撤回）+ toml 采信旧构建假说 (b)、无产品缺陷；toml 的复核结论 = 合成块已着色、真实语料里无现场
-      （`evidence/03-复核记录.md` §3.1 / §4）。故 5.2 的后半句（撤回口径）**不适用**，前半句的核销记录照写。
-- [ ] 5.3 归档时把本 change 的 spec 增量（1 条 MODIFIED + 1 条 ADDED）并入 `openspec/specs/editor-live-preview/spec.md`；
+      **归档结论（2026-09-18，节点 2）**：核销记录已落 `docs/backlog.md` 的「已核销」节当日条（含 merge
+      `485dba5`、归档路径、对账结论一句话）。裁决点 1 结论 = yaml 缺陷独立成立（不撤回）+ toml 采信旧构建
+      假说 (b)、无产品缺陷；toml 的复核结论 = 合成块已着色、真实语料里零现场（`evidence/03-复核记录.md`
+      §3.1 / §4）。故本行后半句（撤回口径）**不适用**——本 change 走已合并归档路线，不写撤回记录、不建
+      `withdrawn-` 目录。
+- [x] 5.3 归档时把本 change 的 spec 增量（1 条 MODIFIED + 1 条 ADDED）并入 `openspec/specs/editor-live-preview/spec.md`；
       核对并入结果——「Markdown 渲染保真」第 2 款的「已知例外」段落应含 toml 的 `atom` 复用那条
       （MODIFIED 增量已写入），并入后 MUST NOT 只列 rust 一条；该款另含**两条 M138/M152 既有行为的 spec 回填**
       （回填既有行为、不新增产品行为，已在 proposal Impact 与 design §7 申报）：①「该一致性 SHALL 由两侧共用同一张语言表
       （`src/preview/code.ts` 的 `LANGUAGES`）保证，MUST NOT 由两侧各自维护一份语言或配色表」+ Scenario
       「两侧语言与配色表同源」；②「着色 SHALL 受单一代码块长度上限约束（超过即回落纯文本，MUST NOT 因语言不同而放宽）」
       + Scenario「着色受长度上限约束且与语言无关」。四处（本行 / proposal Impact / design §7 / delta）逐字一致
-      **本 mission 不勾**：归档节点动作（并入 living spec 与 6.5 的评审同批）。并入时按本行核对四处逐字一致。
+      **归档结论（2026-09-18，节点 2）**：并入已执行（`openspec archive codeblock-toml-yaml-highlight` 报
+      `editor-live-preview: + 1 added, ~ 1 modified`），落点 = `openspec/specs/editor-live-preview/spec.md` 的
+      「Markdown 渲染保真（分隔线 / 围栏代码着色 / 引用内列表）」（MODIFIED）与「YAML 代码块的键名配色」（ADDED）。
+      并入后核对三项全过：① 「已知例外」段**并列（a）rust 字符字面量与（b）toml 的 `atom` 复用**两条，不再只列 rust；
+      ② 上述两条 M138/M152 回填与其 Scenario 都在位；③ 该 requirement 与 delta 字节比对 EXACT，living 其余的
+      删除行只落在被 MODIFIED 的 requirement 内部（零误删）。
 - [x] 5.4 **（实现期新增，非原清单）spec 增量的两处文本订正，归档时按此核对**：ADDED requirement 原写
       「该口径 SHALL 对任意键形态恒成立——顶层键、嵌套键、序列项内的键、**带单双引号的键**、非 ASCII 键、…」，
       实现期实测**带引号的键取 `cm-lp-tok-string`**（`mode/yaml.js` 的引号分支排在键判定之前、产出与引号值
       同一个 `string` token 名，token 表按 token 名映射分不开键与值）——方案 A 修不了它。故：① 该句改为
       「对**未加引号**的键形态恒成立」；② 新单列 Scenario「带引号的键取字符串色（已知边界，如实记录）」；
       ③ design §6 边界表加同一行；④ 测试里钉住该边界（`"quoted key": v` → `cm-lp-tok-string`）。
-      依据 [REVIEW.md](../../../REVIEW.md) 第 6 条（覆盖声明不得超出真实验证）：这是把提案期的**超范围表述**
+      依据 [REVIEW.md](../../../../REVIEW.md) 第 6 条（覆盖声明不得超出真实验证）：这是把提案期的**超范围表述**
       收回到实测口径，不新增颜色、不动其它语言、不改任何行为，故不构成扩 scope；其余口径逐字未动。
 
 ## 6. 验证（实现期）
@@ -181,4 +199,10 @@
       仍为正文色——与 chromium 侧的计算色断言、元素级基线三方一致。
       环境如实记录：运行期磁盘最低到 1.8G（起跑预检 2.6G，过 2G 门；未触发 ENOSPC，未用低盘绕过开关）；
       1420 有 Alex 手头的实例在跑（套件走 1430 隔离，未抢端口、未动那个实例）；用户真实 vault 全程只读。
-- [ ] 6.5 归档评审（Alex 节点 2）：tasks 全部勾选或标注放弃原因；spec 增量与 proposal 意图一致，无静默扩 scope
+- [x] 6.5 归档评审（Alex 节点 2）：tasks 全部勾选或标注放弃原因；spec 增量与 proposal 意图一致，无静默扩 scope
+      **归档结论（2026-09-18）**：Alex 已拍板「归档」= 节点 2 通过。三个条件逐条满足：① tasks 27 项里
+      24 项勾选 + 2.3 / 3.8 标注放弃原因（方案 A）+ 5.2 / 5.3 / 6.5 三条归档期任务在本文件收口；
+      ② spec 增量与 proposal 意图一致（1 条 MODIFIED + 1 条 ADDED，逐 requirement 字节比对 EXACT）；
+      ③ 无静默扩 scope——实现期只有 5.4 声明的两处文本订正（把提案期的超范围表述收回实测口径、不新增
+      颜色不动行为）与 3.7 的容差收紧这两个**已在 delta / design 里申报**的改动。完整对账见文首
+      「归档记录（节点 2）」。
