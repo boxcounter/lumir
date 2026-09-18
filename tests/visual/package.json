@@ -9,6 +9,6 @@
     "test:isolation": "cd ../.. && node --test tests/visual/isolation.test.mjs"
   },
   "devDependencies": {
-    "@playwright/test": "^1.62.1"
+    "@playwright/test": "1.62.1"
   }
 }

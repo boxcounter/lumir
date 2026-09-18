@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { expectScreenshot } from "./expect-screenshot";
 import { DEMO_VAULT, sessionPuts, stubTauri, type VaultFixture, type VaultListRow } from "./tauri-stub";
 
 // 多 vault 切换器（M163 落地 / M164 补视觉门禁）的元素级回归。
@@ -76,7 +77,7 @@ test("树头部入口：单 vault 时也在，旧的「切换」文字按钮退�
   // 未展开时浮层不在布局里
   await expect(page.locator(".vault-pop")).toBeHidden();
 
-  await expect(page.locator(".ft-header")).toHaveScreenshot("vault-entry.png");
+  await expectScreenshot(page.locator(".ft-header"), "vault-entry.png");
 });
 
 test("浮层：当前项 / 摘要 / 失效行 / 新增入口，且不占常驻布局、允许溢出左栏", async ({ page }) => {
@@ -134,7 +135,7 @@ test("浮层：当前项 / 摘要 / 失效行 / 新增入口，且不占常驻�
   ]);
   expect(popWidth).toBeGreaterThan(paneWidth);
 
-  await expect(pop).toHaveScreenshot("vault-popover.png");
+  await expectScreenshot(pop, "vault-popover.png");
 
   // 关闭即消失（不占空间、不留残影）
   await page.keyboard.press("Escape");

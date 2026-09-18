@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { expectScreenshot } from "./expect-screenshot";
 import { readFileSync } from "node:fs";
 import { stubTauri } from "./tauri-stub";
 import { readDocument } from "./parity-checks";
@@ -79,5 +80,5 @@ test("引用内的有序/无序/嵌套列表按常规列表渲染", async ({ pag
   // 渲染不写文档（源码保护）
   expect(await readDocument(page)).toBe(source);
 
-  await expect(page).toHaveScreenshot("render-quote-list.png");
+  await expectScreenshot(page, "render-quote-list.png");
 });

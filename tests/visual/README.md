@@ -21,34 +21,74 @@ ADR 0001 第 5 条「极致美」的工程兜底（ADR 0004 M0 deliverable）。
 触发重评的信号：引入自定义 titlebar、窗口级透明度 / 圆角、或多窗口布局——届时补一个 macOS 整窗截图场景。
 
 **其他已知口径**：chromium headless shell 强制 deviceScaleFactor=1，基线为 1200x800 CSS 像素
-（viewport 与 `src-tauri/tauri.conf.json` 窗口尺寸一致）；字体走 chromium 自带渲染栈，
-本地与 CI（同为 macOS arm64 + 同版本 chromium）渲染一致，残余抖动由容差吸收。
+（viewport 与 `src-tauri/tauri.conf.json` 窗口尺寸一致）；残余抖动由容差吸收。
 CSS 动画（CodeMirror 光标闪烁）在截图时冻结，保证逐帧确定性。
+
+## 本地与 CI 的渲染口径：不是「一致」，是分工
+
+**整页 / 元素像素对比只在本地跑；CI 只跑结构 / 计算属性断言。**（M173，2026-09-18 Alex 裁决）
+
+这条口径来自一次实证：CI runner 与本地**渲染不等价**，整页像素在两套环境下没有可比性。
+
+- CI 比对的对象与入库基线**逐字节相同**（40 张 `*-expected.png` 的 sha256 40/40 全同），
+  排除「拿错基线 / 基线被改坏」；
+- 差异只落在字形栅格层：CJK 与拉丁混排行被撑宽约 2.5%、纯色区与字形身份零差异、
+  同一 run 的首跑与重试像素数逐位相同（确定性差异，不是抖动）；
+- 两侧浏览器构建**相同**：`@playwright/test` 1.62.1 → chromium **v1234**
+  （Chrome for Testing 151.0.7922.34），CI 用 `--frozen-lockfile`、本地同样冻结安装，指向同一构建。
+  M173 用这套工具链在本地跑全量：**254 条全绿**，而同一批基线在 CI 红 20 条。所以差异在 runner
+  侧的系统字体 / 渲染链，不在浏览器版本——结论是不修基线，改口径。
+
+落地：
+
+- `package.json` 把 `@playwright/test` 钉成**精确版本**（`1.62.1`，不是 caret），浏览器构建随之钉死；
+- `scripts/visual/browser-build.sh` 把 playwright 版本、它要的 chromium revision、本机缓存里
+  **实际存在**的构建打进日志；本地 `scripts/visual/run.sh` 与 CI 调同一份脚本，两侧日志逐行可对照；
+- CI 置 `LUMIR_VISUAL_STRUCTURAL=1`：22 处像素断言不执行，只留 `[pixel-skip]` 日志与
+  `pixel-skip` annotation（跳过留痕，不是静默通过），结构 / 计算属性断言照跑；
+- `visual.yml` 的 runner 钉 `macos-26`——原 `macos-latest` 会静默换代，渲染环境随之漂移。
+
+**代价**：CI 绿不再代表像素层没回归。动了视觉相关代码（`src/style.css`、`src/preview/**`、
+场景本身）必须本地跑 `scripts/visual/run.sh` 或 `scripts/gate.sh visual`——
+「删左栏 UI」一级的变化只有本地看得见。
+
+**证据锚点**：CI 现场 run `35295440948`（`gh run view 35295440948 --log-failed`，20 条像素基线红）；
+本机另有完整排查报告 `.tower/comms/inbox/20260918-worker-ci-diagnosis-*.md`
+（`.tower/` 不入 git，这条指针仅本机可查）。
 
 ## 目录结构
 
 ```
 tests/visual/
-  playwright.config.ts   # 容差、viewport、webServer（vite preview）集中配置
-  scenes/                # 每个 .spec.ts 是一组场景
-  baselines/             # 入库的基线截图（Playwright snapshot 目录）
-  package.json           # 自包含子项目：独立于根 workspace（--ignore-workspace）
-scripts/visual/run.sh    # 本地一键：构建 → 装依赖 → 对比（--update 更新基线）
+  playwright.config.ts         # 容差、viewport、webServer（vite preview）、像素开关集中配置
+  scenes/                      # 每个 .spec.ts 是一组场景
+  scenes/expect-screenshot.ts  # 像素断言的唯一入口（LUMIR_VISUAL_STRUCTURAL=1 时跳过）
+  baselines/                   # 入库的基线截图（Playwright snapshot 目录）
+  package.json                 # 自包含子项目：独立于根 workspace（--ignore-workspace）
+scripts/visual/run.sh          # 本地一键：构建 → 装依赖 → 对比（--update 更新基线）
+scripts/visual/browser-build.sh # 浏览器构建自证（本地与 CI 共用同一份）
 ```
 
 ## 运行
 
 ```bash
-scripts/visual/run.sh            # 本地对比（等价于 CI）
+scripts/visual/run.sh            # 本地全量（含整页像素）；CI 只跑结构断言，二者不等价
 # 或分步：
 pnpm build
 pnpm --dir tests/visual install --ignore-workspace --frozen-lockfile
 pnpm --dir tests/visual exec playwright install chromium   # 首次
+bash scripts/visual/browser-build.sh                       # 本次用的哪套浏览器，进日志
 pnpm --dir tests/visual test
 ```
 
 失败时 diff 制品在 `tests/visual/test-results/`（actual / expected / diff 三张图），
 CI 会将其作为 artifact 上传。
+
+复现 CI 现场（结构断言 + 跳过像素）用同一开关：
+
+```bash
+LUMIR_VISUAL_STRUCTURAL=1 LUMIR_VISUAL_PORT=4273 scripts/visual/run.sh
+```
 
 多 worktree 并行跑场景时默认端口 4173 会撞车（`reuseExistingServer` 可能错用别的
 worktree 的 dist）：用 `LUMIR_VISUAL_PORT=<端口>` 指定独立端口隔离，例如
@@ -56,14 +96,19 @@ worktree 的 dist）：用 `LUMIR_VISUAL_PORT=<端口>` 指定独立端口隔离
 
 ## 新增场景
 
-1. 在 `scenes/` 加一个 `.spec.ts`（或往现有 spec 加一条 `expect(page).toHaveScreenshot(...)`）；
-2. 跑 `pnpm --dir tests/visual run update-baselines` 生成基线；
-3. 截图人工过目后连同代码一起提交。
+1. 在 `scenes/` 加一个 `.spec.ts`（或往现有 spec 加断言）；
+2. 像素断言一律写成 `expectScreenshot(page, "foo.png")`（入口函数在
+   `scenes/expect-screenshot.ts`）——**不要直接调 `expect(...).toHaveScreenshot(...)`**：
+   开关只在入口函数上生效，直接调会在 CI 里照跑并撞上环境不等价的红；
+3. 跑 `pnpm --dir tests/visual run update-baselines` 生成基线；
+4. 截图人工过目后连同代码一起提交。
 
 ## 更新基线
 
 门禁失败且变化为有意（设计演进）：`scripts/visual/run.sh --update`，
 人工核对新截图后提交。这一步是「美不美」的人工裁决点，不要机械执行。
+`LUMIR_VISUAL_STRUCTURAL=1` 时本脚本会拒绝 `--update`：那种模式下像素断言整个不执行，
+`--update` 会「成功」却什么都不刷新——静默空跑比报错更难发现。
 
 ### 删除 / 移动 UI 元素后的核对（卫生步骤，强制）
 
@@ -90,5 +135,5 @@ ls -l tests/visual/baselines/*-snapshots/              # 相关基线的时间�
 `maxDiffPixelRatio` 为允许差异像素占比）；单场景在断言参数上覆盖，例如：
 
 ```ts
-await expect(page).toHaveScreenshot("foo.png", { maxDiffPixelRatio: 0.01 });
+await expectScreenshot(page, "foo.png", { maxDiffPixelRatio: 0.01 });
 ```

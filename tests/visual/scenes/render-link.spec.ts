@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { expectScreenshot } from "./expect-screenshot";
 import { readFileSync } from "node:fs";
 import { stubTauri, openedUrls, openedPaths, noteResolves, logEvents, fileText } from "./tauri-stub";
 import { readDocument } from "./parity-checks";
@@ -142,7 +143,7 @@ test("全部形态都装饰：标记语义正确，白名单外 scheme 保持原
   // 渲染不写文档（源码保护）
   expect(await readDocument(page)).toBe(links);
 
-  await expect(page).toHaveScreenshot("render-link.png");
+  await expectScreenshot(page, "render-link.png");
 });
 
 test("表格 cell 内的链接照常渲染，表格仍是 grid", async ({ page }) => {

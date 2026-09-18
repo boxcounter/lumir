@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { expectScreenshot } from "./expect-screenshot";
 import { COMMAND_IDS, KEY_BINDINGS } from "../../../src/keys";
 import { configGets, stubTauri } from "./tauri-stub";
 import { readDocument } from "./parity-checks";
@@ -84,7 +85,7 @@ test("⌘/ 打开面板：列出生效表里全部键位并按功能族分组", 
   await expect(panelRow.locator(".lumir-bindings-key")).toHaveText("Cmd-/");
   await expect(panelRow.locator(".lumir-bindings-doc")).toContainText("⌘/");
 
-  await expect(page.locator(".lumir-bindings-overlay")).toHaveScreenshot("describe-bindings-panel.png");
+  await expectScreenshot(page.locator(".lumir-bindings-overlay"), "describe-bindings-panel.png");
 });
 
 test("面板显示生效表：配置重绑后按配置渲染，不是静态默认表", async ({ page }) => {

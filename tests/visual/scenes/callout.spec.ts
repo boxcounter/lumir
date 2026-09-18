@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { expectScreenshot } from "./expect-screenshot";
 import { EditorState } from "@codemirror/state";
 import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
 import { ensureSyntaxTree, syntaxTree } from "@codemirror/language";
@@ -179,7 +180,7 @@ test("渲染：类型样式、默认/自定义标题、未知类型降级、普�
   await expect(page.locator(".cm-lp-callout-line .cm-lp-wikilink-resolved")).toHaveCount(1);
   await expect(page.locator(".cm-lp-callout-line .cm-lp-list-marker")).toHaveCount(2);
 
-  await expect(page).toHaveScreenshot("callout-rendering.png");
+  await expectScreenshot(page, "callout-rendering.png");
 });
 
 test("复制保真：全选复制输出原始 Markdown（含 [!type] 标记）", async ({ page, context }) => {
@@ -199,7 +200,7 @@ test("callout 按排版基线 token 着色", async ({ page }) => {
     .first()
     .evaluate((el) => getComputedStyle(el).borderLeftColor);
   expect(color).toBe("rgb(79, 111, 143)");
-  await expect(page).toHaveScreenshot("callout-theme.png");
+  await expectScreenshot(page, "callout-theme.png");
 });
 
 test("嵌套 callout：内层正文色与列表装饰（M109 review 边角 2/3，M110 修复）", async ({ page }) => {

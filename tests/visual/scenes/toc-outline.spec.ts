@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { expectScreenshot } from "./expect-screenshot";
 import { stubTauri, type VaultFixture } from "./tauri-stub";
 
 // 轻量大纲（M148，toc-outline capability）的视觉与交互回归。
@@ -151,7 +152,7 @@ test("浮层：层级缩进、当前段高亮、键盘导航与跳转落点", as
   await expect(page.locator(".lumir-toc-item.is-current")).toHaveText("第一部分");
   await expect(page.locator(".lumir-toc-hint")).toHaveText("↑↓ ⌃N⌃P 选择 · Enter 跳转 · Esc 关闭");
   // 浮层只占浮层自己的位置：文档区没有被推开（masthead 高度不变，指示段仍在同一行）
-  await expect(page.locator(".lumir-toc")).toHaveScreenshot("toc-popover.png");
+  await expectScreenshot(page.locator(".lumir-toc"), "toc-popover.png");
 
   // ↓ 移动键盘游标（不穿透到文档：文档内容不变）
   await page.keyboard.press("ArrowDown");
@@ -239,7 +240,7 @@ test("浮层总高上限：窗口高 80%（含底部提示），列表在浮层�
   expect(geo.listScroll).toBeGreaterThan(geo.listClient);
   await expect(hint).toBeVisible();
   await expect(page.locator(".lumir-toc-item.is-active")).toHaveText("第 1 章 概览");
-  await expect(popover).toHaveScreenshot("toc-popover-long.png");
+  await expectScreenshot(popover, "toc-popover-long.png");
 
   // 改窗口内容区高：上限跟着变，浮层保持打开（不必重开）
   await page.setViewportSize({ width: 1200, height: 400 });

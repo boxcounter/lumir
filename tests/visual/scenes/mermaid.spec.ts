@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { expectScreenshot } from "./expect-screenshot";
 import { EditorState } from "@codemirror/state";
 import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
 import { GFM } from "@lezer/markdown";
@@ -214,7 +215,7 @@ test("渲染成功，失败回落完整原文，普通代码块不误判", async
     .poll(async () => (await logEvents(page, "render_error")).map((e) => e.fields))
     .toEqual([{ kind: "mermaid", stage: "render", code: "render_failed" }]);
 
-  await expect(page).toHaveScreenshot("mermaid-rendering.png");
+  await expectScreenshot(page, "mermaid-rendering.png");
 });
 
 test("复制保真：全选复制输出原始 Markdown", async ({ page, context }) => {
@@ -289,7 +290,7 @@ test("图表按排版基线渲染", async ({ page }) => {
     .first()
     .evaluate((el) => getComputedStyle(el).fill);
   expect(fill).not.toBe("rgb(0, 0, 0)");
-  await expect(page).toHaveScreenshot("mermaid-theme.png");
+  await expectScreenshot(page, "mermaid-theme.png");
 });
 
 test("大文档：尾部围栏块在增量解析推进后渲染（M110 真实桌面回归）", async ({ page }) => {

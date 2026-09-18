@@ -61,8 +61,11 @@ ADR 与 OpenSpec 的分工：ADR 记跨切面架构决策，OpenSpec 管功能�
 |---|---|
 | `rust.yml` | `cargo fmt --check`、`clippy -D warnings`、`cargo test`（含 ts-rs bindings 导出校验） |
 | `perf.yml` | 性能合同测量：绝对阈值 + 相对滚动基线回归 >20% 拒合（方法学见 [docs/specs/perf-measurement.md](docs/specs/perf-measurement.md)） |
-| `visual.yml` | 视觉回归：布局、配色、间距不回归（口径见 tests/visual/README.md） |
+| `visual.yml` | 视觉回归**结构层**：DOM 结构、计算样式、可见性与数量、文字内容不回归（CI runner 与本地渲染不等价，整页像素对比归本地 `scripts/gate.sh visual`；口径与证据见 [tests/visual/README.md](tests/visual/README.md)） |
 | `docs-check.yml` | ADR 与 OpenSpec 制品的结构与合法性校验 |
+
+`visual.yml` 绿只说明结构层没回归：动了视觉相关代码必须本地跑一次 `scripts/gate.sh visual`
+（含 22 处整页 / 元素像素对比），像素层没有 CI 兜底。
 
 ## License
 

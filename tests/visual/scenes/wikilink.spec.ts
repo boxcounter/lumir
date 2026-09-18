@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { expect, test } from "@playwright/test";
+import { expectScreenshot } from "./expect-screenshot";
 import { locateWikilinkSpans } from "../../../src/preview/wikilinks";
 import { stubTauri } from "./tauri-stub";
 import type { VaultFixture } from "./tauri-stub";
@@ -93,7 +94,7 @@ test("链接三态显示（resolved / ambiguous / unresolved）", async ({ page 
   await expect(ambiguous).toHaveAttribute("title", /c\.md\nsub\/c\.md/);
   // unresolved：未创建样式，区分显示但不是错误
   await expect(page.locator(".cm-lp-wikilink-unresolved")).toContainText("missing");
-  await expect(page).toHaveScreenshot("wikilink-states.png");
+  await expectScreenshot(page, "wikilink-states.png");
 });
 
 test("点击跳转：Mod-Click 跟随，锚点命中定位，锚点缺失给提示", async ({ page }) => {

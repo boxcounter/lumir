@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { expectScreenshot } from "./expect-screenshot";
 import { readFileSync } from "node:fs";
 import { stubTauri } from "./tauri-stub";
 import { readDocument } from "./parity-checks";
@@ -158,13 +159,13 @@ test("≥5 种语言着色，未知/无标识保持纯文本，配色不越出 e
   expect(used.length).toBeGreaterThan(0);
   for (const color of used) expect(ALLOWED.has(color), color).toBe(true);
 
-  await expect(page).toHaveScreenshot("render-codeblock.png");
+  await expectScreenshot(page, "render-codeblock.png");
 
   // 整页基线是 1200×800 的**视口**截图（playwright.config 未开 fullPage），json 行落在折叠线
   // 以下——本次修复前逐张核对过基线，那条键色从没进过任何整页基线，整页对比守不住它。
   // 这里补一张元素级基线（同 m133 的 overlay 元素截图口径）把键/值分色钉在视觉层。
   // 必须放在整页截图**之后**：元素截图会把该行滚进视口，先截会改掉整页基线的滚动位置。
-  await expect(page.locator(".cm-line", { hasText: `{"name": "lumir"` }).first()).toHaveScreenshot("render-codeblock-json-line.png");
+  await expectScreenshot(page.locator(".cm-line", { hasText: `{"name": "lumir"` }).first(), "render-codeblock-json-line.png");
 });
 
 test("编辑态：块内输入即时着色，颜色不溢出到块外段落", async ({ page }) => {

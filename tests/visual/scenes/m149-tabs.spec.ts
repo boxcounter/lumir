@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { expectScreenshot } from "./expect-screenshot";
 import { readDocument } from "./parity-checks";
 import {
   externalWrite,
@@ -88,7 +89,7 @@ test("标签栏：空态隐藏、单标签常驻、预览斜体、dirty 点（�
   await expect(page.locator(".tab").first()).toHaveClass(/is-active/);
   await expect(page.locator(".tab-dirty")).toBeHidden();
 
-  await expect(strip).toHaveScreenshot("tab-bar-preview.png");
+  await expectScreenshot(strip, "tab-bar-preview.png");
 
   // 「首次输入即固定」：内容第一次变化就清掉预览标记，并亮起 dirty 点。
   await page.locator(".cm-content").click();
@@ -99,7 +100,7 @@ test("标签栏：空态隐藏、单标签常驻、预览斜体、dirty 点（�
   // 读屏名带上该标签自己的未保存状态（文案 D90）。
   await expect(page.locator(".tab-open")).toHaveAttribute("aria-label", /alpha\.md（未保存）/);
 
-  await expect(strip).toHaveScreenshot("tab-bar-dirty.png");
+  await expectScreenshot(strip, "tab-bar-dirty.png");
 });
 
 test("打开意图：单击复用预览标签、⌘-点击新开固定标签、双击固定住已有预览标签", async ({ page }) => {
@@ -133,7 +134,7 @@ test("打开意图：单击复用预览标签、⌘-点击新开固定标签、�
   await expect(page.locator(".tab")).toHaveCount(2);
 
   // 元素级基线：两个固定标签并存 + 激活态（预览斜体在上面那条基线里）。
-  await expect(page.locator(".tabstrip")).toHaveScreenshot("tab-bar-two-pinned.png");
+  await expectScreenshot(page.locator(".tabstrip"), "tab-bar-two-pinned.png");
 });
 
 test("切标签保留滚动位置与撤销史（逐标签，不重新解析、不清栈）", async ({ page }) => {

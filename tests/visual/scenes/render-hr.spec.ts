@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { expectScreenshot } from "./expect-screenshot";
 import { readFileSync } from "node:fs";
 import { stubTauri } from "./tauri-stub";
 import { readDocument } from "./parity-checks";
@@ -55,7 +56,7 @@ test("三条分隔线渲染为横线，frontmatter 定界符排除在外", async
   // 渲染不写文档（源码保护）
   expect(await readDocument(page)).toBe(hr);
 
-  await expect(page).toHaveScreenshot("render-hr.png");
+  await expectScreenshot(page, "render-hr.png");
 });
 
 test("光标落进分隔线行时显露源码", async ({ page }) => {

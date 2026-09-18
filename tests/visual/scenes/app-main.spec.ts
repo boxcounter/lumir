@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { expectScreenshot } from "./expect-screenshot";
 import { DEMO_VAULT, fireFsEvent, remapCalls, requestAddVault, stubTauri } from "./tauri-stub";
 
 // 基线场景：主界面（文件树 + 编辑器 + 面板）。截图目标见 README.md 的选型说明——
@@ -15,7 +16,7 @@ test("未打开 vault 的空态主界面", async ({ page }) => {
   // SAMPLE 文档经 live preview 渲染：frontmatter 为 properties 区块，正文为装饰后形态。
   await expect(page.locator(".cm-content")).toContainText("标题一");
   await page.waitForTimeout(400);
-  await expect(page).toHaveScreenshot("app-main.png");
+  await expectScreenshot(page, "app-main.png");
 });
 
 test("打开 vault 后的全类型文件树", async ({ page }) => {
@@ -46,7 +47,7 @@ test("打开 vault 后的全类型文件树", async ({ page }) => {
   await page.locator('.ft-row[title="README.md"]').click();
   await expect(page.locator(".editor-notice")).toBeHidden();
 
-  await expect(page).toHaveScreenshot("filetree-open.png");
+  await expectScreenshot(page, "filetree-open.png");
 });
 
 test("watch 增量刷新保持展开状态", async ({ page }) => {
