@@ -18,6 +18,7 @@ const imageAssets: Record<string, string> = {
   "assets/script.svg": fixture("script.svg"),
   "assets/external-ref.svg": fixture("external-ref.svg"),
   "assets/empty.png": fixture("empty.png"),
+  "assets/zero-declared.svg": fixture("zero-declared.svg"),
 };
 
 /** images.md 里九条图片引用的原文（widget 的 rawRef 即这一串，也是 img 的 alt）。 */
@@ -27,6 +28,7 @@ const REFS = {
   percent: "![percent svg](assets/zero-size.svg)",
   percentWiki: "![[zero-size.svg]]",
   empty: "![empty bitmap](assets/empty.png)",
+  zeroDeclared: "![zero declared svg](assets/zero-declared.svg)",
   missing: "![missing bitmap](assets/missing.png)",
   remote: "![remote image](https://example.invalid/remote.png)",
   script: "![script svg](assets/script.svg)",
@@ -185,8 +187,8 @@ test("图片终态：尺寸兜底画出来 + 不可见即可见占位", async ({
   await page.route("**/example.invalid/**", (route) => route.abort());
   await open(page, images, "images.md", undefined, imageAssets);
 
-  // 九条引用全部落地到终态（加载中状态块已撤）再一次性读数。
-  await expect(page.locator(".cm-lp-image")).toHaveCount(9);
+  // 十条引用全部落地到终态（加载中状态块已撤）再一次性读数。
+  await expect(page.locator(".cm-lp-image")).toHaveCount(10);
   await expect(page.locator(".cm-lp-image-status")).toHaveCount(0);
 
   // 中招形状（`width="100%"` + 仅 viewBox）修复前的两个读数是「布局盒 0×0 / 自然尺寸 300×100」——
@@ -200,16 +202,18 @@ test("图片终态：尺寸兜底画出来 + 不可见即可见占位", async ({
   expect(await imageReadings(page, REFS.fixed)).toEqual({ box: "240x80", natural: "240x80", complete: true });
   expect(await imageReadings(page, REFS.wide), "超宽图仍按既有 max-width 口径收窄").toEqual({ box: "829x249", natural: "2000x600", complete: true });
 
-  // 不可见的三处各自落地可见占位，且占位文本含原始引用串（alt 与路径都在其中）。
+  // 不可见的四处各自落地可见占位，且占位文本含原始引用串（alt 与路径都在其中）。
+  // 两条分支各有输入：解码失败（空位图 / 外链被拦）与「兜底取不到宽度」（固有尺寸为零的 svg）。
   const chips = page.locator(".cm-lp-image-error");
-  await expect(chips).toHaveCount(3);
+  await expect(chips).toHaveCount(4);
   await expect(chips.filter({ hasText: REFS.empty })).toHaveText(`图片无法显示：${REFS.empty}`);
+  await expect(chips.filter({ hasText: REFS.zeroDeclared })).toHaveText(`图片无法显示：${REFS.zeroDeclared}`);
   await expect(chips.filter({ hasText: REFS.remote })).toHaveText(`图片无法显示：${REFS.remote}`);
   await expect(chips.filter({ hasText: REFS.missing })).toContainText(`图片读取失败：${REFS.missing}`);
 
-  // 通用不变量：九条引用无一留下零高度空白（宽度或高度为 0 即判）。
+  // 通用不变量：十条引用无一留下零高度空白（宽度或高度为 0 即判）。
   const areas = await replacementAreas(page);
-  expect(areas).toHaveLength(9);
+  expect(areas).toHaveLength(10);
   expect(areas.filter((a) => /^(0x|.*x0$)/.test(a.box))).toEqual([]);
 
   // 装饰层不改写文档（ADR 0003 §3）。
@@ -222,7 +226,7 @@ test("SVG 安全腿：脚本不执行、内嵌外链不发起请求、两处终�
   await page.setViewportSize({ width: 1280, height: 1000 });
   await page.route("**/example.invalid/**", (route) => route.abort());
   await open(page, images, "images.md", undefined, imageAssets);
-  await expect(page.locator(".cm-lp-image-error")).toHaveCount(3);
+  await expect(page.locator(".cm-lp-image-error")).toHaveCount(4);
 
   // 安全腿二（先判，防「不执行」这类负向断言在空转——REVIEW.md 第 2 条）：
   // 两处 svg 都真的渲染出来了（240×80）。

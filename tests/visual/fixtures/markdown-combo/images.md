@@ -20,6 +20,10 @@
 
 ![empty bitmap](assets/empty.png)
 
+固有尺寸声明为零的 svg（尺寸兜底取不到宽度，走第二道保险）：
+
+![zero declared svg](assets/zero-declared.svg)
+
 目标缺失：
 
 ![missing bitmap](assets/missing.png)

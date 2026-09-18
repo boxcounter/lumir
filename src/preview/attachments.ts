@@ -210,44 +210,114 @@ export function resolveImagePath(ref: string, currentFilePath: string | undefine
   return parts.join("/");
 }
 
-/** 内联图片 widget：异步读字节，成功渲染 <img>，失败原地换占位（不抛错、不破图）。 */
+/** 替换区或其内容的可见尺寸（布局盒，单位 px）。 */
+export interface ImageBox {
+  width: number;
+  height: number;
+}
+
+/** 图片态文案（deck D111–D113），与 `文案-Copy.md` 逐字一致：本组函数是那三条的唯一真源。 */
+export function imageLoadingText(rawRef: string): string {
+  return `加载中… ${rawRef}`;
+}
+
+export function imageReadErrorText(rawRef: string, reason: string): string {
+  return `图片读取失败：${rawRef}（${reason}）`;
+}
+
+/** 终态不可见的占位文案：成因中立（`<img>` 的 error 不携带原因，编不出准确成因），
+ *  原始引用文本一律保留（alt 与路径都在其中）。 */
+export function imageFallbackText(rawRef: string): string {
+  return `图片无法显示：${rawRef}`;
+}
+
+/** 终态可见判据（纯函数）：替换区的**可见尺寸**非零才算画出来了。
+ *  只读 naturalWidth/naturalHeight 不行——`width="100%"` + 仅 viewBox 的 svg 实测
+ *  自然尺寸 300×100 而布局盒 0×0（design §8.1 实验矩阵）：内在尺寸对这一态看不见。 */
+export function imageVisible(box: ImageBox): boolean {
+  return box.width > 0 && box.height > 0;
+}
+
+/** 尺寸兜底取点（本缺陷的主修法）：替换区布局尺寸为零而引擎给出正自然尺寸时，按自然宽度设
+ *  显式像素宽度（高度留 auto，宽高比由引擎的默认对象尺寸决定）；其余情况返回 null（走占位）。 */
+export function imageFallbackWidth(box: ImageBox, natural: ImageBox): number | null {
+  if (imageVisible(box)) return null;
+  return imageVisible(natural) ? natural.width : null;
+}
+
+/** 内联图片 widget：异步读字节，成功渲染 <img>，读取失败 / 解码失败 / 渲染不出可见像素时
+ *  原地换可见占位（不抛错、不破图、不留零高度空白）。
+ *
+ *  MUST 只经 `<img>`（含 `data:` URL）渲染，不得把 SVG 内容内联进 DOM：图片上下文关闭脚本执行
+ *  与外部资源解析，内联插入会同时打开两者（规范依据与被禁的四条实现路径见
+ *  openspec/changes/image-svg-and-fallback/design.md §4）。 */
 export class ImageWidget extends WidgetType {
-  constructor(
-    readonly key: string,
-    readonly load: () => Promise<string>,
-    readonly rawRef: string,
-  ) {
+  readonly key: string;
+  readonly load: () => Promise<string>;
+  readonly rawRef: string;
+
+  constructor(key: string, load: () => Promise<string>, rawRef: string) {
     super();
+    this.key = key;
+    this.load = load;
+    this.rawRef = rawRef;
   }
 
   eq(other: ImageWidget): boolean {
-    return other.key === this.key;
+    // rawRef 参与相等性：alt / 加载文案 / 占位文案都取自它——两条引用同一个目标但原文不同的
+    // 引用（`![alt](a.svg)` 与 `![[a.svg]]`）必须各自渲染自己那条引用文本。
+    return other.key === this.key && other.rawRef === this.rawRef;
   }
 
   toDOM(): HTMLElement {
     // 内联 replace widget（块级 widget 不允许由插件装饰提供），根元素用 span。
     const wrap = document.createElement("span");
     wrap.className = "cm-lp-image";
+    // 加载中状态先落地、直到终态确认才撤：整条源码已被 replace 装饰藏起来，任何
+    // 「先清空、再插入」的中间态都会让替换区出现可见空窗（spec 的可见回退不变量）。
     const status = document.createElement("span");
     status.className = "cm-lp-image-status";
-    status.textContent = `加载中… ${this.rawRef}`;
+    status.textContent = imageLoadingText(this.rawRef);
     wrap.append(status);
+
+    const boxOf = (el: Element): ImageBox => {
+      const rect = el.getBoundingClientRect();
+      return { width: rect.width, height: rect.height };
+    };
+    const fallback = () => wrap.replaceChildren(errorChip(imageFallbackText(this.rawRef)));
 
     this.load().then(
       (src) => {
         const img = document.createElement("img");
         img.alt = this.rawRef;
-        img.onerror = () => {
-          wrap.replaceChildren(errorChip(`图片解码失败：${this.rawRef}`));
+        img.onerror = fallback;
+        // 终态处置（三种引用形态共用这一条，不为任何扩展名立分支）：状态块先撤、再量——
+        // 它的文本会给 inline-block 包装盒一个确定宽度，带着它量会把「量到了宽度」误当成
+        // 图片可见。撤与随后的插入在同一个任务内完成，中间不绘制，所以不产生空窗。
+        let settled = false;
+        const settle = () => {
+          if (settled) return;
+          settled = true;
+          status.remove();
+          if (imageVisible(boxOf(img))) return;
+          const width = imageFallbackWidth(boxOf(img), {
+            width: img.naturalWidth,
+            height: img.naturalHeight,
+          });
+          if (width !== null) img.style.width = `${width}px`;
+          if (!imageVisible(boxOf(img))) fallback();
         };
-        wrap.replaceChildren(img);
+        img.onload = settle;
+        wrap.append(img);
         img.src = src;
-        if (img.complete && img.naturalWidth === 0) {
-          img.onerror(new Event("error"));
+        // data: URL 常在赋 src 后**同步** complete：不补一次探测就等不到 load 事件的终态处置。
+        if (img.complete) {
+          if (img.naturalWidth === 0) img.onerror(new Event("error"));
+          else settle();
         }
       },
       (e: unknown) => {
-        wrap.replaceChildren(errorChip(`图片读取失败：${this.rawRef}（${errorMessage(e)}）`));
+        wrap.replaceChildren(errorChip(imageReadErrorText(this.rawRef, errorMessage(e))));
       },
     );
     return wrap;
@@ -263,11 +333,13 @@ function errorChip(text: string): HTMLElement {
 
 /** 附件引用占位（未找到 / 未接线）或笔记嵌入不支持的提示块；保留原始引用文本。 */
 export class AttachmentNoticeWidget extends WidgetType {
-  constructor(
-    readonly message: string,
-    readonly rawRef: string,
-  ) {
+  readonly message: string;
+  readonly rawRef: string;
+
+  constructor(message: string, rawRef: string) {
     super();
+    this.message = message;
+    this.rawRef = rawRef;
   }
 
   eq(other: AttachmentNoticeWidget): boolean {
