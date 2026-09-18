@@ -2,9 +2,11 @@ name: perf
 
 # 性能合同测量（ADR 0002 §6，方法学本体见 docs/specs/perf-measurement.md）。
 # 2026-09-05 一次性校准后 enforce=true：绝对模式（open-1mb-file/resident-memory）超阈拒合；
-# 相对回归模式（cold-start/keypress-to-paint）对照 actions/cache 滚动基线，回退超容忍线拒合
-# （统计口径与容忍线以 docs/specs/perf-measurement.md「相对回归门禁」为准，此处不重复数字）；
-# 结果缺失即 exit 1。基线仅 master push 全绿后由 update-baseline.mjs 写回。
+# 相对回归模式（cold-start/keypress-to-paint）对照 actions/cache 滚动基线，回退超「该指标」容忍线拒合
+# （容忍线逐指标、随基线窗口实测散布浮动；统计口径与容忍线以 docs/specs/perf-measurement.md
+# 「相对回归门禁」为准，此处不重复数字）；结果缺失即 exit 1。
+# 基线推进逐指标解耦（M174）：写回条件为 always()，是否推进由 update-baseline.mjs 读
+# perf-results/gate-status.json 逐指标裁决——任一指标确定性超阈不再连带冻结其它指标的滚动基线。
 
 on:
   pull_request:
@@ -84,10 +86,15 @@ jobs:
         # 阈值有效、数字稳定，但不代表用户可感知的打开耗时；修订义务在脚本文件头。
         run: node scripts/perf/open-file.mjs
 
-      - name: 常驻内存 <200MB
+      - name: 常驻内存 <250MB（门禁阈值）
+        # M174 提阈：200→250MB。依据 = 抽样 9 次 master perf run，该项 9/9 确定性超阈、读数
+        # 206.50–215.28MB（非抖动；2026-09-05 校准值约 110MB，稳态翻倍），250 给 ≥16% 头顶余量。
+        # 性质：这是「门禁阈值」的修订，不占用 ADR 0002 §6 的一次性校准额度；ADR 0002 §6 的文本
+        # 仍写 200MB，其修订是本 change 的显式后续项（记在 spec §4 与 review-request）。artifact 的
+        # contract 字段仍记合同值 200MB，门禁阈值见 thresholds.json / gate-status.json。
         run: node scripts/perf/memory.mjs
 
-      - name: 阈值比较（enforce：超阈/相对回归超容忍线/结果缺失即红）
+      - name: 阈值比较（enforce：超阈/相对回归超容忍线/结果缺失即红；判据落盘 perf-results/gate-status.json）
         if: always()
         run: node scripts/perf/check-thresholds.mjs
 
@@ -99,12 +106,19 @@ jobs:
           path: perf-results/
           retention-days: 30
 
-      - name: 更新滚动基线（仅 master push 且全绿）
-        if: success() && github.event_name == 'push' && github.ref == 'refs/heads/master'
+      # 条件由 success() 改为 always()（M174）：基线推进必须与「整个 run 是否全绿」解耦。
+      # 原口径下任一指标确定性超阈（M172：resident-memory 9/9 超阈 206.50–215.28MB）⇒ run 永不 success
+      # ⇒ 全部相对基线永久冻结，keypress-to-paint 长期对着单样本基线 28.15ms 比较（日志「最近 1 次 master」）。
+      # 是否推进改由脚本逐指标裁决（读上一 step 落盘的 gate-status.json：fail 不进基线、pass/skip 进，
+      # 判据缺失则 fail-closed 一条不进），读数异常与否的判定权仍在 check-thresholds.mjs 一处。
+      - name: 更新滚动基线（master push；逐指标解耦，fail 的指标不进）
+        if: always() && github.event_name == 'push' && github.ref == 'refs/heads/master'
         run: node scripts/perf/update-baseline.mjs
 
       - name: 写回基线 cache
-        if: success() && github.event_name == 'push' && github.ref == 'refs/heads/master'
+        # 同样用 always()：上一步已逐指标裁决完毕，此处只负责持久化它写回的文件
+        # （update-baseline.mjs 无论是否推进都会把基线文件写出来，save 总有路径可取）。
+        if: always() && github.event_name == 'push' && github.ref == 'refs/heads/master'
         uses: actions/cache/save@v4
         with:
           path: perf-results/baseline/

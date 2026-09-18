@@ -2,7 +2,7 @@
 
 ## Purpose
 
-为 ADR 0002 第 6 条性能合同的四个数字（冷启动 <300ms、keypress-to-paint <16ms、打开 1MB Markdown <100ms、常驻内存 <200MB）定义测量方法学与 CI 门禁口径。各 requirement 的完整方法学定义（端点、工具链、采样口径、fixture 规格的逐条细节）以 [docs/specs/perf-measurement.md](../../../docs/specs/perf-measurement.md) 为权威文本；本 spec 在 requirement 级别引用对应小节，不复制全文。首个 capability 基线，由 change `add-perf-measurement-methodology` 归档并入（2026-09-05，归档时含 M13 一次性校准后的门禁口径）。
+为 ADR 0002 第 6 条性能合同的四个数字（冷启动 <300ms、keypress-to-paint <16ms、打开 1MB Markdown <100ms、常驻内存 <200MB）定义测量方法学与 CI 门禁口径。各 requirement 的完整方法学定义（端点、工具链、采样口径、fixture 规格的逐条细节）以 [docs/specs/perf-measurement.md](../../../docs/specs/perf-measurement.md) 为权威文本；本 spec 在 requirement 级别引用对应小节，不复制全文。首个 capability 基线，由 change `add-perf-measurement-methodology` 归档并入（2026-09-05，归档时含 M13 一次性校准后的门禁口径）。**2026-09-18 M174 判据修正**（未走 change 提案，与 2026-09-05 的 M37/M38 口径修正同例）：相对回归的容忍线逐指标化并随窗口散布浮动、新增 `minRuns` 薄基线降级、基线改逐指标推进（修掉「整轮全绿才写」的冻结死锁）；其中常驻内存的 **CI 门禁阈值**由 200MB 改为 **250MB**（见「常驻内存测量」requirement），该条改动了 ADR 0002 §6 的数字之一，ADR 文本修订登记为 follow-up。
 
 ## Requirements
 
@@ -31,7 +31,7 @@ CI SHALL 为 ADR 0002 第 6 条性能合同的四个数字（冷启动 <300ms、
 
 ### Requirement: keypress-to-paint 测量
 
-keypress-to-paint SHALL 定义为页面内 `keydown` 事件派发时刻到其后第二帧渲染完成时刻的差值，以 CDP `Input.dispatchKeyEvent` 驱动 headless Chrome 加载 release 前端产物近似测量，N=50、间隔 100ms，细节见 docs/specs/perf-measurement.md 第 2 节。该现有端点是 Blink「事件 → 帧调度」结构下界：不含 OS 输入管道与合成器/vsync 开销，引擎不是产品的 WebKit，也不覆盖 Foundation 真实可编辑文档的更新与绘制路径。任何读数的引用（CI 输出、报告、校准讨论）MUST 附带下界声明，MUST NOT 将数值单独引用为 Foundation 真实编辑延迟。CI 门禁为相对回归模式，比较值取 median（见「门禁模式与一次性校准」requirement）；绝对合同值 <16ms 保留，在标准化环境（裁决者本机）按 ADR 0002 第 6 条裁决。Foundation 真实编辑性能 SHALL 通过后续 OpenSpec change 新增独立演进端点；该端点 MUST NOT 被本结构下界替代或据此宣称已覆盖。
+keypress-to-paint SHALL 定义为页面内 `keydown` 事件派发时刻到其后第二帧渲染完成时刻的差值，以 CDP `Input.dispatchKeyEvent` 驱动 headless Chrome 加载 release 前端产物近似测量，N=50、间隔 100ms，细节见 docs/specs/perf-measurement.md 第 2 节。该现有端点是 Blink「事件 → 帧调度」结构下界：不含 OS 输入管道与合成器/vsync 开销，引擎不是产品的 WebKit，也不覆盖 Foundation 真实可编辑文档的更新与绘制路径。任何读数的引用（CI 输出、报告、校准讨论）MUST 附带下界声明，MUST NOT 将数值单独引用为 Foundation 真实编辑延迟。CI 门禁为相对回归模式，比较值取 median（见「门禁模式与一次性校准」requirement）；绝对合同值 <16ms 保留，在标准化环境（裁决者本机）按 ADR 0002 第 6 条裁决。本项在相对回归门禁中的容忍线 SHALL 为 60%（2026-09-18 M174 逐指标配置，算术见 docs/specs/perf-measurement.md「相对回归门禁」的 M174 判据修正证据链），并受 `minRuns` 薄基线降级保护。Foundation 真实编辑性能 SHALL 通过后续 OpenSpec change 新增独立演进端点；该端点 MUST NOT 被本结构下界替代或据此宣称已覆盖。
 
 #### Scenario: 下界声明随读数输出
 
@@ -59,7 +59,7 @@ keypress-to-paint SHALL 定义为页面内 `keydown` 事件派发时刻到其后
 
 ### Requirement: 常驻内存测量
 
-常驻内存 SHALL 定义为 app 全进程树的 RSS 合计（含按基线差集规则归因的 `com.apple.WebKit.*` XPC 进程），「常驻」为 ready 信号后 idle 10 秒进入采样窗口，取 5 个样本，细节见 docs/specs/perf-measurement.md 第 4 节。门禁比较值 SHALL 取 max（内存是峰值敏感指标，p95 会漏掉单调爬升——这是 p95 总约定的唯一例外）。RSS 含 shared pages 重复计数、读数系统性偏高的缺陷 MUST 在 spec 中显式声明；若校准期发现该口径把 200MB 阈值顶死，允许经 OpenSpec 循环修订为 phys_footprint 口径，此修订 MUST NOT 占用 ADR 0002 的一次性数字校准额度。
+常驻内存 SHALL 定义为 app 全进程树的 RSS 合计（含按基线差集规则归因的 `com.apple.WebKit.*` XPC 进程），「常驻」为 ready 信号后 idle 10 秒进入采样窗口，取 5 个样本，细节见 docs/specs/perf-measurement.md 第 4 节。门禁比较值 SHALL 取 max（内存是峰值敏感指标，p95 会漏掉单调爬升——这是 p95 总约定的唯一例外）。RSS 含 shared pages 重复计数、读数系统性偏高的缺陷 MUST 在 spec 中显式声明；若发现该口径把门禁阈值顶死，允许经 OpenSpec 循环修订为 phys_footprint 口径，此修订 MUST NOT 占用 ADR 0002 的一次性数字校准额度。**CI 门禁阈值（2026-09-18 M174）SHALL 为 250MB**（`tests/perf/thresholds.json` 的 `resident-memory.threshold`），依据为实测稳态（9 次 master run 9/9 超阈、读数 206.50–215.28MB，而 2026-09-05 校准实测约 110MB）；该阈值改动了 ADR 0002 §6 的数字之一，故 ADR 0002 §6 的文本修订 MUST 作为独立 follow-up 落地；落地前「ADR 合同值（200MB）」与「CI 门禁阈值（250MB）」在该项上不相等，artifact 的 `contract` 字段仍记合同值、实际门禁阈值记在 `perf-results/gate-status.json`。
 
 #### Scenario: WebKit XPC 进程归因
 
@@ -73,17 +73,32 @@ keypress-to-paint SHALL 定义为页面内 `keydown` 事件派发时刻到其后
 
 ### Requirement: 门禁模式与一次性校准
 
-阈值门禁 SHALL 以 `tests/perf/thresholds.json` 的 `enforce: true` 启用拒合，CI 门禁 SHALL 分两种模式（2026-09-05 一次性校准结论，ADR 0002 第 6 条）：**绝对模式**（打开 1MB 文件、常驻内存）超阈即 CI 红、拒合；**相对回归模式**（冷启动、keypress-to-paint）以滚动基线比较——本次门禁值与基线值均取同一指标的 median，基线取该指标最近 10 次 master 门禁值的 median（经 `actions/cache` 持久化，仅 master push 且测量全绿时写回），本次门禁值相对基线回退 >40% 即 CI 红、拒合，口径细节见 docs/specs/perf-measurement.md「相对回归门禁」一节。基线缺失时 SHALL 输出 `::warning::` 并跳过该项相对比较、不拒合；enforce 下任一指标本次结果文件缺失或不可读 SHALL exit 1 拒合（缺数据即红）。一次性校准额度已于 2026-09-05 使用（依据：CI 两次全量实测重指标噪声 3-4 倍、轻指标几乎一致），此后 MUST NOT 再次使用；四个绝对合同数字未改动。M0 空壳阶段的绝对值 MUST NOT 作为达标判定，仅用于该次校准。
+阈值门禁 SHALL 以 `tests/perf/thresholds.json` 的 `enforce: true` 启用拒合，CI 门禁 SHALL 分两种模式（2026-09-05 一次性校准结论 + 2026-09-18 M174 判据修正，ADR 0002 第 6 条）：**绝对模式**（打开 1MB 文件、常驻内存）超阈即 CI 红、拒合；**相对回归模式**（冷启动、keypress-to-paint）以滚动基线比较——本次门禁值与基线值均取同一指标的 median，基线取该指标最近 10 次 master 门禁值的 median（经 `actions/cache` 持久化），回退超**该指标容忍线**即 CI 红、拒合。容忍线 SHALL 为 `max(该指标 maxRegressionPct, 窗口高侧散布 × spreadHeadroom)`（默认 40% 与 1.2，`keypress-to-paint` 为 60%）；基线历史条数不足 `minRuns`（默认 5）时该指标 SHALL 降级为 `::warning::` 不拒合，仅超 `outlierMultiplier` 倍（默认 3）的量级异常仍拒合。基线 SHALL 逐指标独立推进：判据取 `check-thresholds.mjs` 落盘的 `perf-results/gate-status.json`，该指标判 `fail` 且 `enforce: true` 时其历史不动（warn-only 档不拒合任何读数，该档下照常推进），且写回条件 MUST NOT 以「整体 run 是否全绿」为准（M174 修掉该冻结死锁）；PR 与 workflow_dispatch 只读基线。基线缺失时 SHALL 输出 `::warning::` 并跳过该项相对比较、不拒合；enforce 下任一指标本次结果文件缺失或不可读 SHALL exit 1 拒合（缺数据即红）。口径细节见 docs/specs/perf-measurement.md「相对回归门禁」一节。一次性校准额度已于 2026-09-05 使用（依据：CI 两次全量实测重指标噪声 3-4 倍、轻指标几乎一致），此后 MUST NOT 再次使用。**合同数字与门禁阈值的关系**：冷启动 <300ms、keypress-to-paint <16ms、打开 1MB 文件 <100ms 三项合同值未改动；常驻内存的门禁阈值按「常驻内存测量」一条为 250MB（ADR 0002 §6 文本修订为 follow-up）；M174 的判据修正本身不占用校准额度。M0 空壳阶段的绝对值 MUST NOT 作为达标判定，仅用于该次校准。
 
 #### Scenario: 绝对模式超阈拒合
 
 - **WHEN** `enforce: true` 下绝对模式指标（打开 1MB 文件、常驻内存）门禁值超阈
 - **THEN** CI 红、拒合，与 ADR 0002 第 6 条「回归即拒合」一致
 
-#### Scenario: 相对回归超 40% 拒合
+#### Scenario: 相对回归超容忍线拒合
 
-- **WHEN** 相对回归模式指标（冷启动、keypress-to-paint）的 median 门禁值相对滚动基线 median 回退超过 40%
+- **WHEN** 相对回归模式指标（冷启动、keypress-to-paint）的 median 门禁值相对基线窗口 median 的回退超过该指标容忍线（默认 40%，keypress-to-paint 60%，并随窗口实测高侧散布浮动），且基线历史条数 ≥ `minRuns`
 - **THEN** CI 红、拒合
+
+#### Scenario: 薄基线降级不拒合
+
+- **WHEN** 该指标基线历史条数 < `minRuns`（默认 5；含单样本基线与 cache 重建期），且本次读数未超基线 median 的 `outlierMultiplier` 倍
+- **THEN** CI 输出 `::warning::`、不拒合，且本次读数照常进基线（否则窗口永远攒不满、降级状态无法走出）
+
+#### Scenario: 单指标拒合不冻结其它指标基线
+
+- **WHEN** 某指标本次判 `fail`（超阈 / 回退超容忍线 / 结果缺失），而其它相对模式指标判 `pass` 或 `skip`
+- **THEN** 判 `fail` 的指标历史不动，其它指标的历史照常推进（M174 前「整轮全绿才写」会因单项确定性超阈而冻结全部基线）
+
+#### Scenario: 常驻内存门禁阈值 250MB
+
+- **WHEN** `resident-memory` 的 max 读数 < 250MB
+- **THEN** 该项通过（实测稳态 206.50–215.28MB 落在阈值内），不再因 200MB 门槛确定性拒合
 
 #### Scenario: 基线缺失不拒合
 
