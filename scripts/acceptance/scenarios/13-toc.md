@@ -221,7 +221,7 @@ steps:
 （归档记录 `openspec/changes/archive/2026-09-17-add-toc-outline/`），入口形态由 Alex 裁决：
 masthead 显示当前标题路径（兼作位置指示），点击它或按 ⌘⇧O 展开浮层大纲。M157 的两条增补
 （浮层内的 ⌃N / ⌃P 与「最大高度 = 窗口高的 80%」）见
-`openspec/changes/toc-popover-emacs-keys-and-max-height/`。
+`openspec/changes/archive/2026-09-18-toc-popover-emacs-keys-and-max-height/`。
 
 ## 断言口径（为什么这么写）
 

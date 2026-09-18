@@ -106,6 +106,34 @@
     内存合同存量超标）。**修好之前，任何引用「CI 全绿」的裁决依据显式降级为「本地 gate.sh 全绿 +
     rust/docs-check 绿」**。finding
     `20260918-worker-archive-survey-bug-master-ci-visual-2026-09-13-perf-gate-sh.md`。
+    **状态更新（2026-09-18，M175 登记）**：**M172 已定位，治理批已立项，本条不核销——核销时点是治理批
+    M173 / M174 合并之后**。survey 报告 `.tower/comms/inbox/20260918-worker-ci-diagnosis-tower-survey-summary-m172-ci-visual-perf-perf.md`（M172，已并入 master；survey 零文件改动，正文只活在 `.tower/` 内，此处留名备查）。定位结果：
+    - **visual = 渲染环境不等价，不是基线失效（M169 让裁的两选项「环境漂移 / 基线失效」已判定为前者）**：把 CI 的 `visual-diff`
+      artifact 里 40 张 `*-expected.png` 与入库基线做 sha256 → **40/40 全同**（CI 没拿错基线、基线也没被改坏）；
+      差异只落在字形栅格层——纯色平区域与 4px 实心几何**逐字节相同**、24px 宋体标题**零差异**、字体身份未被替换
+      （二值墨迹 IoU 0.46–0.79 而墨量不变）；同 run 首跑与 retry 报**完全相同的像素数**（确定性，不是抖动）；
+      runner 镜像与浏览器在绿 run（09-05）与红 run 之间**完全一致**（macos-26-arm64 / macOS 26.6.2 25G83 /
+      Chrome for Testing 151.0.7922.34），故漂移源在本地侧或字体解析。形态是 CJK / 拉丁混排行被撑宽
+      （导航行末端 +5px/200px ≈2.5%、frontmatter 值列 +7px），纯 ASCII 标签与 mono 元素裁图零差异；
+      实测 22 条基线 20 红 2 绿（`22 failed / 232 passed`，run `35295440948` @`007aa086`）。触发窗口 =
+      `0804552`（09-06 引入 text-autospace 等 editorial token）→ `cca9462`（09-12 基线重建）。**候选机制
+      （未验证）**：`tests/visual/package.json` 用 caret `^1.62.1` 未钉死，本机浏览器缓存同时存在
+      chromium-1234 与 -1243，入库基线可能由更新构建渲染——这正是 M173 任务 1 要坐实或推翻的那一步。
+      反证已排除「本地假绿」：`scripts/visual/run.sh:12-23` 先查端口占用、再 `pnpm build`，并置
+      `LUMIR_VISUAL_FRESH_SERVER=1` 关掉 `reuseExistingServer`，两种结论确实来自两个渲染环境。
+    - **perf = 两个端点 + 一处结构性死锁**：`resident-memory` **9/9 确定性超阈**（实测 206.50–215.28MB >
+      200MB 合同；2026-09-05 校准值约 110MB，稳态翻倍）；`keypress-to-paint` 9 次 6 红、读数散布
+      **22.35–53.20ms（2.4 倍）**，而基线是单样本 28.15ms、40% 容忍线（39.4ms）正好落在散布中间；
+      `perf.yml:102-104` 的 update-baseline 条件是 `if: success() && push && master`，内存永久超阈
+      ⇒ **滚动基线永久冻结**（日志「最近 1 次 master」即证据）。`cold-start`（median 117.76ms < 300ms）
+      与 `open-1mb-file` 全部合格，不动。
+    - **治理批已立项（Alex 同日裁决，2026-09-18）**：M173 `feat/visualci`（原话「采纳你的建议」——CI 只守
+      结构/计算属性断言、22 处整页像素对比挪回本地 `gate.sh visual`、`@playwright/test` 钉精确版本 +
+      浏览器构建自证进日志、`macos-latest` 钉显式镜像）；M174 `feat/perf`（原话「允许提高 thresholds」+
+      「无异议」——resident-memory 提阈（建议 250MB 档）、解锁基线死锁、keypress-to-paint 改与最近 N 次
+      master 中位数比较或提容忍）。本条登记时两支均 active、未合并。
+    - **在此期间口径不变**：本条上段的降级规则继续有效，任何引用「CI 全绿」的裁决依据须显式降级为
+      「本地 `gate.sh` 全绿 + rust / docs-check 绿」。
 18. **远程 http(s) 图片直连分支在现行 CSP 下必然失败，且错误文案误归因为「解码失败」**（M165 finding，
     worker-svg-proposal-2，2026-09-18，low，**待裁决**）：`src/preview/livePreview.ts:869-872` 把外链直接
     交给 `img.src`，而 `src-tauri/tauri.conf.json:21` 的 `img-src 'self' asset: data:` 不含 http(s)——
@@ -214,6 +242,45 @@
   **注意两件事正交**：收窄锁**不会**把 IO 移出主线程，别把「收窄锁」当成「不阻塞主线程」。tower 处置
   建议：P2，与「待 Alex 裁决」第 12 条的启动时序分开处理（本项可直接做）。finding
   `20260917-worker-rustasync-improve-apply-fs-changes-vaultstate-io-vault-current-scan.md`。
+
+### 启动恢复让位判定与提交返回值（M171 遗留）
+
+- **`finish_restore` 让位判定的第二操作数 `root.is_some()` 零测试、且可达**（M171 finding，
+  worker-rm-dead-param，2026-09-18，medium，**待修**）：`src-tauri/src/commands.rs:178` 的拒绝条件是
+  `inner.generation != generation || inner.root.is_some()`，而现有测试**全部只把第一个操作数走到 `true`**
+  ——`finish_restore_discards_stale_success_and_keeps_user_vault`（`:1120`）、
+  `finish_restore_discards_stale_notice`（`:1136`）、`restore_pending_clears_on_every_end_path`
+  的「过期丢弃」段（`:1193-1199`）、`finish_restore_rejects_mismatched_generation_without_side_effects`
+  （`:1207`）与集成场景 `src-tauri/tests/workspace_scenarios.rs:287`（断言在 `:297`）——它们在
+  「先 `begin_restore` 拿到世代、之后才提交 B」的时序下，比对必然落在世代不符上，第二操作数从不被单独判定。
+  **可达性（两处代码事实）**：① `begin_restore` 跑在恢复线程上——`src-tauri/src/lib.rs:393-397` 的
+  `start_restore` spawn `lumir-vault-restore`，`:473` 的 `restore_last_vault` **第一句**才取世代；用户若
+  在这次 spawn 之后、那一句之前成功打开自己的 vault（`vault_open` → `commit_vault_open` → 世代 +1），
+  `begin_restore` 记下的就是**打开之后**的世代。② 前端没有把「打开 vault」挡在恢复结束之前——
+  `restore_pending` 在 `src/` 里只有 `src/main.ts:784` 一个消费者（空树时用它选 `RESTORING_NOTICE`
+  文案），`vault_open` 链路（`src/ipc.ts`、`src/vault-switcher.ts`）不看它。两条合起来：恢复线程随后
+  `finish_restore(该世代, Opened(...))` 时世代相等，**唯一挡住「恢复结果盖掉用户已打开的 vault」的就是
+  `root.is_some()`**。**影响**：谁若认为「世代比对已蕴含一切」而删掉第二操作数，现有测试不会红——删掉的
+  正是这道门。**修法**（finding 已给具体测试，放同一文件的既有测试区即可）：`commit_vault_open(&state,
+  prepared(&b))` 先提交 B → 再 `begin_restore()` 取世代 → 断言取到的世代**等于**当前世代（这是「拒绝
+  来自第二个条件」的显式证据）→ `assert!(!state.finish_restore(世代, Opened(prepared(&a))))`，并断言
+  root 仍是 B、世代未跃迁、notice 为 None、pending 已清。任何后续动 `commands.rs` 的 mission 可顺带做。
+  finding `20260918-worker-rm-dead-param-improve-m171-finish-restore-root-is-some.md`。
+- **`commit_vault_open` 的 `-> bool` 在删参后恒为 `true`，且无生产消费者**（M171 同批观察，
+  worker-rm-dead-param，2026-09-18，low，**待修**）：`src-tauri/src/commands.rs:330-334` 在 M171 删掉
+  `expect_generation` 参数后只剩「无条件提交」——函数体是 `inner.commit(prepared); true`，取值面已塌成
+  常量（唯一能返回 `false` 的路径随被删的比对一起消失）。生产调用点只有 `:372` 的
+  `commit_vault_open(state, prepared);`（忽略返回值、无分支），消费它的只有单测的 `assert!`
+  （`:1096` / `:1125` / `:1140` / `:1197` / `:1212`）与集成场景 `src-tauri/tests/workspace_scenarios.rs:297`
+  ——REVIEW.md 第 9 条（声明了没有消费者的值）的同族，形态从「死参数」变成「死返回值」。**修法（二选一，
+  随下次碰该文件的 mission 顺带做）**：改签名为 `()`，把 6 处 `assert!(commit_vault_open(...))` 改成裸调用；
+  或保留 `bool` 并在 doc 注释里写明「恒 `true`，为将来的条件化提交留位」。**与上文的关系**：本文件
+  「多 vault 收口遗留」节里 `commit_vault_open` 的 `Some(expect_generation)` 无生产消费者那条，其处置建议
+  的「删掉参数」那半**已由 M171 落地**（`efd27f1`，merge `5a944e5`；该条正文按原样留痕，未改），本条记的
+  是删参后剩下的那一半。观测出处：M171 review-request 的「未做项」第 1 条
+  （`.tower/comms/inbox/20260918-worker-rm-dead-param-tower-review-request-m171-expect-generation-finish-restore-tip-148.md`，
+  会话内文件，留名备查）；同一 finding 文件
+  `20260918-worker-rm-dead-param-improve-m171-finish-restore-root-is-some.md` 记的是上一条。
 
 ### 文档指针与门禁清单
 
@@ -368,7 +435,9 @@
   有两份实现、其中公开那份没有生产调用者（REVIEW.md 第 9 条的同族）。**处置建议**：归档评审时确认它是否
   只想服务测试；若是，要么删掉参数并让测试走 `finish_restore`，要么在注释里写明「只为测试保留」——两条都比
   现状（读者无法判断它是有意保留还是残留）好。**M164 未改**：动它要碰 `commands.rs`（不在本 mission scope），
-  且改动落在提交路径的并发语义上，应由独立 mission 做。
+  且改动落在提交路径的并发语义上，应由独立 mission 做。**该参数已由 M171 删除**（`efd27f1`，merge
+  `5a944e5`），**本条按历史留痕**；删参后剩下的那一半（`-> bool` 恒 `true` 且无生产消费者）另见
+  「启动恢复让位判定与提交返回值（M171 遗留）」节。
 
 ## 工具链与环境（待 Alex 裁决）
 
@@ -622,6 +691,6 @@
   ① **`startup-restore-off-main-thread`**（M156 提案 → M159 实现，merge `ad93a03`）→ `openspec/changes/archive/2026-09-18-startup-restore-off-main-thread/`；「待 Alex 裁决」第 12 条的「归档待 Alex 节点 2」改为已归档。对账：tasks 25/27（3.6 自标「可选证据，非门禁」→ 标注不执行；5.5「冷启动读数前后对比」→ 本地未跑、改取 CI 旁证，两条**保留未勾**并就地标注理由），spec 增量（`vault-workspace` 的 MODIFIED「last_vault 记忆与启动恢复」+ ADDED「启动恢复的时序与可见性」）与实现逐条一致；Alex 节点 2 裁决 design §4.5 的语义边缘「**不收紧**」。
   ② **`multi-vault-workspaces`**（M162 + M163 + M164，merge `eafd258` / `fb2dc26` / `2f16f86`）→ `openspec/changes/archive/2026-09-18-multi-vault-workspaces/`；「待 Alex 裁决」第 10 条状态更新段的「归档评审待 Alex」改为已归档。对账：tasks 39/39、7 条 ADD 落 `vault-workspace`、1 条 MODIFIED 落 `multi-tabs`（与 living 逐字只差 proposal 声明的两处，归档未误删 living 其它内容）；Alex 节点 2 裁决守卫判据的宽窄措辞差「**接受差异**」（living `multi-tabs/spec.md:127` 原文不动，理由是判据先于该 change 存在、行为不变）。
   ③ **`toc-popover-emacs-keys-and-max-height`**（M160，merge `d4ca60a`）→ `openspec/changes/archive/2026-09-18-toc-popover-emacs-keys-and-max-height/`；核销「待 Alex 裁决」第 20 条。对账：tasks 34/34（3.1 / 3.2 的产物由 tower 的 integration fix `a779cbb` 落盘；6.2 改由「零 Rust diff + CI `rust.yml` 在 `2f16f86` success」继承；6.4 由 M164 全量 26/26 与 `2026-09-18/13-toc` PASS 覆盖），2 条 MODIFIED 落 `toc-outline`、1 条 MODIFIED 落 `keymap-commands`。
-  三份 living spec 的 Purpose 补了归属记录（`vault-workspace` / `toc-outline` / `keymap-commands`）。**顺带修正的失效指针**：`docs/backlog.md` 第 10 条指向的 `openspec/changes/multi-vault-workspaces/specs/...` 与第 12 条指向的 `openspec/changes/startup-restore-off-main-thread/design.md` 已改为 living spec / archive 路径；另有两处同类失效指针在 `scripts/acceptance/scenarios/13-toc.md:224` 与 `16-startup-restore.md:34`（本 mission scope 外），已投 finding。
+  三份 living spec 的 Purpose 补了归属记录（`vault-workspace` / `toc-outline` / `keymap-commands`）。**顺带修正的失效指针**：`docs/backlog.md` 第 10 条指向的 `openspec/changes/multi-vault-workspaces/specs/...` 与第 12 条指向的 `openspec/changes/startup-restore-off-main-thread/design.md` 已改为 living spec / archive 路径；另有两处同类失效指针在 `scripts/acceptance/scenarios/13-toc.md:224` 与 `16-startup-restore.md:34`（本 mission scope 外），已投 finding（**M175 已闭合**：两处改指 `openspec/changes/archive/2026-09-18-*` 实际路径）。
 - 批次三：键位分发三轨并行 + 扩展名注册表漂移（M130/M131/M132）；save-ipc.ts 折回 ipc.ts（M132）；Ctrl-K/D/T 原生路径风险（M132）。
 - 批次二：DeepSeek Flash 试用结论——可做 build，review 环节（k3-256k）不能省。
