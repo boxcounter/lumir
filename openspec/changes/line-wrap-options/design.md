@@ -36,8 +36,8 @@
 | ts-rs 导出目标 | 每个类型上的 `#[ts(export, export_to = "../../src/bindings/")]`（`config.rs:43` `:71` `:87` `:95` `:113` `:120`）→ 产物 `src/bindings/EditorConfig.ts` |
 | bindings 漂移门禁：`cargo test` 负责导出，随后比对 `src/bindings/` 的 git 差异（含未跟踪新文件） | `scripts/gate.sh:61-70`（`git status --porcelain -- src/bindings/` 在 `:66-70`） |
 | 前端只读一次配置：`configGet()` → `snapshot.config.editor.mode` | `src/ipc.ts:38-39`；`src/main.ts:805`（`setMode` 在 `:806`、`applyKeyConfig` 在 `:807`） |
-| **无热重载**：`configGet` 全仓只有 import（`src/main.ts:8`）、调用（`:805`）与定义（`src/ipc.ts:38`）三处；无 watcher、无重载 command | 全仓 grep `configGet` 只有上述三处 |
-| 唯一的运行期写入只碰 `last_vault`（读取整个 JSON 为 `Value`、改一个键、原子 tmp+rename） | `src-tauri/src/commands.rs:394-428`（保未知字段 `:395-402`；原子替换 `:411-427`）、`:433-439` |
+| **无热重载**：`configGet` 全仓只有 import（`src/main.ts:7`）、调用（`:805`）与定义（`src/ipc.ts:38`）三处；无 watcher、无重载 command | 全仓 grep `configGet` 只有上述三处 |
+| 运行期对配置的写入只碰 `last_vault` 一个**字段**，写入点有两处（同一纪律：读整个 JSON 为 `Value`、只改该字段、tmp+rename；其余字段都是应用只读的输入面） | ① `src-tauri/src/commands.rs:394-428` 的 `write_last_vault_to`（保未知字段 `:395-402`；原子替换 `:411-427`；纯函数部分 `merge_last_vault` `:433-439`）；② `src-tauri/src/workspaces.rs:263-287` 的 `vault_remap`（M163 的 vault 重映射：`:267` 取配置路径、同样只改 `last_vault`、`:279-285` tmp+rename） |
 
 ### 1.2 `[keys]` 覆盖机制
 
@@ -221,7 +221,7 @@
 - `[keys]` 绑定零改动即可用：未知命令拒绝（`src/keys.ts:447`）不会命中它们（id 在 `COMMAND_IDS` 里），
   为一个未绑定的 token 新增绑定是既有能力（`:456`）。`Keymap.attach` 只查「绑定 → 有实现」
   （`:494-503`），因此绑定后立即生效。
-- 面板：两条命令会落进既有「全局」组（`src/bindings-panel.ts:42` 用 `NON_TAB_GLOBAL_COMMAND_IDS`），
+- 面板：两条命令会落进既有「全局」组（`src/bindings-panel.ts:44` 用 `NON_TAB_GLOBAL_COMMAND_IDS`），
   **不新增分组**——分组标题是 `文案-Copy.md` D63–D67 的条目，不新增分组就不动文案。面板会把它们渲染成
   「未绑定」行（既有能力），行数与未绑定行数的断言要跟着改（`m133` 的 `:69` `:70`）。
 - 面板未绑定行的**说明串要跟着扩**：现状是面板自带的通用串

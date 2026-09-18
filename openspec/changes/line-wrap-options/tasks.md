@@ -69,7 +69,9 @@
 - [ ] 4.1 `src/bindings-panel.ts:101` 的未绑定行说明串扩为覆盖两种成因并指向下一步
       （默认不占键位 / 已被配置解绑，可用 `[keys]` 绑定）
 - [ ] 4.2 `文案-Copy.md` D66 同步修订（编号沿用、附修订记录，先例见 D86 于 M160 的扩写）
-- [ ] 4.3 确认两条命令落进既有「全局」组、MUST NOT 新增分组（`src/bindings-panel.ts:42`）
+- [ ] 4.3 确认两条命令落进既有「全局」组、MUST NOT 新增分组（`src/bindings-panel.ts:44` 的
+      `{ title: "全局", ... }` 条目）；同时扫掉 `tests/visual/scenes/m133-describe-bindings.spec.ts:65`
+      行内注释仍写「8 组」的残留（`GROUPS` 实为 9 组，该文件本轮本就要改行数断言，顺手校正，REVIEW.md 第 8 条）
 - [ ] 4.4 本 change 无 toast / 无常驻指示 → 不需要新文案条目（若有任何新增可见文案，回到本项补条目）
 
 ## 5. 单测

@@ -19,7 +19,7 @@ md 与只读 code 两种模式同样生效；`rg -n "lineWrapping" src/` 全仓�
 不带 `white-space` 声明（上游 [view/src/theme.ts](https://raw.githubusercontent.com/codemirror/view/main/src/theme.ts)；
 本仓锁定 `@codemirror/view@6.43.11`，`pnpm-lock.yaml:108`）。也就是说折行是**整块内容元素**的开关，
 不是逐块能力——要让代码块与正文取不同口径，必须先补一层「按块类型覆盖」的机制，本 change 补的
-就是这一层（机制与四组合口径见 design §2.2–§2.4）。
+就是这一层（机制见 design §2.2–§2.4，四组合的判定口径见 §2.5）。
 
 **二、代码块折行的代价，以及本仓既有的对照做法。** 代码块被折行后，缩进对齐与「一行一条语句」的
 阅读节奏都会碎掉。本仓对块级结构化内容一贯给横向滚动容器，只有代码块例外：
@@ -106,8 +106,9 @@ time, the default value, which is normally `nil`, is in effect」——**默认�
 ## Non-goals
 
 - **不做 per-file 持久化、不回写配置**：toggle 只改运行期状态。配置面（`config.json`）是用户手编的
-  输入面（ADR 0002 §5「配置即数据」）；回写会把它变成应用状态存储，并新增第二条写通道——现状全仓
-  只有 `last_vault` 一条运行期写（`src-tauri/src/commands.rs:394-428`）。Emacs 的
+  输入面（ADR 0002 §5「配置即数据」）；回写会把它变成应用状态存储，并新增第三条写通道——现状运行期
+  只写 `last_vault` 这一个字段，写入点两处（`src-tauri/src/commands.rs:394-428` 的 `write_last_vault_to`、
+  `src-tauri/src/workspaces.rs:263-287` 的 `vault_remap`，同纪律）。Emacs 的
   `toggle-truncate-lines` 同样不落盘（见 Why 引文）。
 - **不做配置热重载**：现状 `config_get` 只在启动读一次（`src/main.ts:805`，无 watcher）。新增配置项
   不改变这个时点（改配置需重启），运行期翻转由命令承担。
