@@ -20,7 +20,7 @@
 8. **共享 `CARGO_TARGET_DIR` 与 dev-only 脚本化驱动入口**（工具链节 2/3 的长期候选）：是否立项待裁决。
 9. **链接形态矩阵的两处 tower 裁决**（M145，2026-09-17，Alex 未逐条点头）：① 相对路径**非 md**（`[x](./doc.pdf)`）带 `↗︎`（语义「会离开本应用」）而不是 `→`；② **纯锚点** `[x](#sec)` 带 `→` 但激活只给「暂不支持锚点跳转」toast（不做文档内滚动）。附一处同批未单独确认的口径：`[x](note.md#sec)` 按「应用内跳转 + 锚点部分忽略」处理。三处若要翻转，落点是 `src/preview/links.ts` 的 `classifyLinkTarget`（标记）与 `src/main.ts` 的 `followLink`（激活）。
 10. **多标签会话恢复**（M149，2026-09-17）：重启后按「路径列表 + 激活项」重开上次的标签。v1 明确不做（当时口径「留 backlog」），做成什么形状与何时做待裁决。建议形状：存 vault 维度（registry 旁 `last_session`）、只存有序路径 + 激活下标（可选滚动 offset），**不存**未保存内容与撤销史；打开必须走 `openFile` 既有链路；文件已删/不在 vault 内时跳过并记诊断；启动日志记一条 `session_restored{count}`（`log_event` 通道已有）。时机建议：等 dogfood 反馈「常态开几个标签」后再定，避免为 2 个标签的场景过度设计。finding `20260917-worker-tabs-idea-m149-backlog.md`。
-    **状态更新（M164 收口，2026-09-17；change `multi-vault-workspaces` 任务 7.1 口径）**：本项已由该 change **承接并落地**——后端 M162（`eafd258`）与前端 M163（`fb2dc26`）均已合并，归档评审待 Alex。落地的形状与上面的建议有**三处有意差异**：① 会话**不与注册项同文件**，单独落在 `<config>/lumir/vault-sessions/<id>.json`（design §2：注册项是身份，其读取路径对解析失败一律跳过，把易变的界面状态混进身份文件会把「会话写坏」升级成「vault 从列表与 remap 候选中消失」）；② 激活项存**相对路径**而不是下标（下标在列表变化后指向别处；不可用时按「退化到第一个可打开的标签」处理）；③ 恢复走 `openFile` 的 **`pinned` 意图**逐标签打开（预览意图会让第二个起顶掉前一个，只剩最后一个）。落定口径见 `openspec/changes/multi-vault-workspaces/specs/vault-workspace/spec.md` 的「按 vault 持久化标签列表」与「装载后恢复标签列表」；真机证据见本文件「待真机验收」第 18 项。
+    **状态更新（M164 收口，2026-09-17；change `multi-vault-workspaces` 任务 7.1 口径）**：本项已由该 change **承接并落地**——后端 M162（`eafd258`）与前端 M163（`fb2dc26`）均已合并；**归档评审已过（2026-09-18，节点 2），已归档**为 `openspec/changes/archive/2026-09-18-multi-vault-workspaces/`（living spec 落 `openspec/specs/vault-workspace/spec.md` 的 7 条 ADD 与 `openspec/specs/multi-tabs/spec.md` 的 1 条 MODIFIED）。落地的形状与上面的建议有**三处有意差异**：① 会话**不与注册项同文件**，单独落在 `<config>/lumir/vault-sessions/<id>.json`（design §2：注册项是身份，其读取路径对解析失败一律跳过，把易变的界面状态混进身份文件会把「会话写坏」升级成「vault 从列表与 remap 候选中消失」）；② 激活项存**相对路径**而不是下标（下标在列表变化后指向别处；不可用时按「退化到第一个可打开的标签」处理）；③ 恢复走 `openFile` 的 **`pinned` 意图**逐标签打开（预览意图会让第二个起顶掉前一个，只剩最后一个）。落定口径见 `openspec/specs/vault-workspace/spec.md` 的「按 vault 持久化标签列表」与「装载后恢复标签列表」；真机证据见本文件「待真机验收」第 18 项。
     **v1 建议里唯一未落地的一条（如实登记，不当缺陷）**：启动日志的 `session_restored{count}` 没有实现——`src-tauri/src/logging.rs` 的事件白名单里没有该事件，`src/vault-switcher.ts` 的恢复路径也不发埋点（实测 `grep -rn session_restored src/ src-tauri/src/` 零命中）。design §9 把它写成「观察点（`log_event` 通道已有）」，那句**与实现不符**；它是建议里的观测手段、不是 spec 的 SHALL，故不改已评审的 design 正文，记在这里。**观测缺口**：目前「上次恢复了几个标签、跳过了几个」只能靠真机截图与场景断言看，跑不套件时看不到。若补，落点是恢复结束时发一条 `log_event`（需同时扩 Rust 白名单）。
     **仍未做的边界**：光标位置、滚动位置与撤销史都不恢复（决策 3 的口径，未变）；「常态开几个标签」的 dogfood 反馈仍未取得，因此本项**不做**「会话数量上限 / 清理策略」这类后续设计。
 11. **跨语言 frontmatter 上限 Rust 200 vs TS 512（201–512 行分歧）**（**待裁决**；M152 finding，worker-langunify，
@@ -35,13 +35,13 @@
     最省事的机械防线）；(b) 常量经 ts-rs bindings 单向下发。finding
     `20260917-worker-langunify-improve-frontmatter-rust-200-vs-ts-512-m152-201-512.md`。
 12. **冷启动 `restore_last_vault` 在 setup 主线程同步跑（真实 vault ~125ms、4× 规模 ~770ms），推迟首帧且
-    perf 门禁看不见**（**已立项并实现**（M156 提案 → M159 实现，2026-09-17；归档待 Alex 节点 2）；M154 survey，
+    perf 门禁看不见**（**已立项并实现**（M156 提案 → M159 实现，2026-09-17；**已归档 2026-09-18，节点 2**，`openspec/changes/archive/2026-09-18-startup-restore-off-main-thread/`）；M154 survey，
     worker-rustasync，2026-09-17，high——本批唯一「用户可感」的主线程阻塞项）：`src-tauri/src/lib.rs:97`
     在 setup 内同步调 `open_vault`，其内部串行做注册表 IO + watch + `scan_workspace` + `build_graph`
     （逐 md 读文件 + 解析 wikilink 建索引，实测 scan 14.0ms + build_graph 111.2ms；4× 规模 32.9 + 736.7ms），
     随 vault 线性放大（约 12–16ms/MB md 字节）。tauri 在 setup 之前就已按 config 建好窗口
     （tauri 2.11.5 `app.rs:2524-2531`），所以这段占着主线程、用户可见首帧被推迟。
-    **机制表述更正（M159，证据见 `openspec/changes/startup-restore-off-main-thread/design.md` §1）**：不是
+    **机制表述更正（M159，证据见 `openspec/changes/archive/2026-09-18-startup-restore-off-main-thread/design.md` §1）**：不是
     「run loop 未启动」——用户 setup hook 由事件循环的**首个 `Ready` 回调**驱动（`app.rs:1423-1427`），
     准确说法是「主线程被占在事件循环首个回调内，回调返回前无法绘制」。结论不变：这段耗时直接加在
     「用户看到可用界面」之前，且它不是 command、`#[tauri::command(async)]` 覆盖不到它。
@@ -122,6 +122,7 @@
     同族）。living spec `editor-live-preview/spec.md:25` 的显露枚举不含图片。提案已给两支：A 维持现状、
     单独立项（worker 建议）；B 并入该 change 给 Image 分支加选区判断 + spec 枚举补「图片」+ 一条 Scenario。
     待 Alex 节点 1 一并裁决。finding `20260918-worker-svg-proposal-2-bug-live-preview.md`。
+20. **change `toc-popover-emacs-keys-and-max-height` 待归档跟踪**（**已核销**：归档前补记、同日随归档核销，核销记录见文末「已核销」节的 2026-09-18 条；2026-09-18，M170）：流程口径要求每个 change 在实现 PR 合并时即落一条待归档记录并跟踪到归档（`docs/process/openspec-workflow.md` 的批次收尾 checklist 第一条）。该 change（浮层 80% 总高 + `⌃N` / `⌃P` 就地键，M160，merge `d4ca60a`）**合并时没有落这条记录**——全仓 grep `toc-popover-emacs-keys` 当时零命中，正是 M150 记过的失效模式（当时 7 个 change 只有 1 个被跟踪）。本 mission（M170 归档节点 2）在归档前补记本条，随后即随归档核销：归档为 `openspec/changes/archive/2026-09-18-toc-popover-emacs-keys-and-max-height/`，living spec 落 `toc-outline`（2 条 MODIFIED）与 `keymap-commands`（1 条 MODIFIED）；未勾任务 3.1 / 3.2 / 6.2 / 6.4 / 6.6 在归档动作里按证据勾齐（3.1 / 3.2 的产物由 tower 的 integration fix `a779cbb` 落在 `文案-Copy.md:77` / `:103` / `:111`；6.2 改由「零 Rust diff + CI `rust.yml` 在 `2f16f86` success」继承；6.4 由 M164 全量 26/26 与此后的 `13-toc` 复跑覆盖；6.6 即本条）。
 
 ## 待修 findings（不阻塞）
 
@@ -617,5 +618,10 @@
   `src/preview/frontmatter.ts`」已被推翻——M152 最终把 TS 侧定为 512。它唯一仍成立的点（`link_graph.rs:105`
   的注释指向的文件名 `src/preview/wikilinks.ts` 不再持有该常量，已成错误自述）已并入现行条目「待 Alex 裁决」
   第 11 条，随该条一并处置。按 finding 正文自己的请求（「请以本条为准，前一条可关」）核销，不再单独立项。
+- 2026-09-18：**归档待办三件核销**（M170 归档节点 2；Alex 三件裁决同日）——三个已合并未归档的 change 在本次一次性归档，各自的跟踪一条一条核清；归档后 `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` = **17 passed / 0 failed**，活跃 change 只剩 3 个（`codeblock-toml-yaml-highlight` / `image-svg-and-fallback` / `line-wrap-options`）：
+  ① **`startup-restore-off-main-thread`**（M156 提案 → M159 实现，merge `ad93a03`）→ `openspec/changes/archive/2026-09-18-startup-restore-off-main-thread/`；「待 Alex 裁决」第 12 条的「归档待 Alex 节点 2」改为已归档。对账：tasks 25/27（3.6 自标「可选证据，非门禁」→ 标注不执行；5.5「冷启动读数前后对比」→ 本地未跑、改取 CI 旁证，两条**保留未勾**并就地标注理由），spec 增量（`vault-workspace` 的 MODIFIED「last_vault 记忆与启动恢复」+ ADDED「启动恢复的时序与可见性」）与实现逐条一致；Alex 节点 2 裁决 design §4.5 的语义边缘「**不收紧**」。
+  ② **`multi-vault-workspaces`**（M162 + M163 + M164，merge `eafd258` / `fb2dc26` / `2f16f86`）→ `openspec/changes/archive/2026-09-18-multi-vault-workspaces/`；「待 Alex 裁决」第 10 条状态更新段的「归档评审待 Alex」改为已归档。对账：tasks 39/39、7 条 ADD 落 `vault-workspace`、1 条 MODIFIED 落 `multi-tabs`（与 living 逐字只差 proposal 声明的两处，归档未误删 living 其它内容）；Alex 节点 2 裁决守卫判据的宽窄措辞差「**接受差异**」（living `multi-tabs/spec.md:127` 原文不动，理由是判据先于该 change 存在、行为不变）。
+  ③ **`toc-popover-emacs-keys-and-max-height`**（M160，merge `d4ca60a`）→ `openspec/changes/archive/2026-09-18-toc-popover-emacs-keys-and-max-height/`；核销「待 Alex 裁决」第 20 条。对账：tasks 34/34（3.1 / 3.2 的产物由 tower 的 integration fix `a779cbb` 落盘；6.2 改由「零 Rust diff + CI `rust.yml` 在 `2f16f86` success」继承；6.4 由 M164 全量 26/26 与 `2026-09-18/13-toc` PASS 覆盖），2 条 MODIFIED 落 `toc-outline`、1 条 MODIFIED 落 `keymap-commands`。
+  三份 living spec 的 Purpose 补了归属记录（`vault-workspace` / `toc-outline` / `keymap-commands`）。**顺带修正的失效指针**：`docs/backlog.md` 第 10 条指向的 `openspec/changes/multi-vault-workspaces/specs/...` 与第 12 条指向的 `openspec/changes/startup-restore-off-main-thread/design.md` 已改为 living spec / archive 路径；另有两处同类失效指针在 `scripts/acceptance/scenarios/13-toc.md:224` 与 `16-startup-restore.md:34`（本 mission scope 外），已投 finding。
 - 批次三：键位分发三轨并行 + 扩展名注册表漂移（M130/M131/M132）；save-ipc.ts 折回 ipc.ts（M132）；Ctrl-K/D/T 原生路径风险（M132）。
 - 批次二：DeepSeek Flash 试用结论——可做 build，review 环节（k3-256k）不能省。

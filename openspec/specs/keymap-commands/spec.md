@@ -1,7 +1,7 @@
 # keymap-commands Specification
 
 ## Purpose
-全应用键位的单一事实来源与分发合同：唯一一张 key → command 表（`src/keys.ts`）驱动所有编辑、文档与 widget 焦点键，口径为「⌘ 系归 macOS 惯例、⌃ 系归 Emacs 惯例」，覆盖移动 / 扩选 / 删除 / kill-yank / 撤销与配置层（`[keys]` 重绑与解绑）。
+全应用键位的单一事实来源与分发合同：唯一一张 key → command 表（`src/keys.ts`）驱动所有编辑、文档与 widget 焦点键，口径为「⌘ 系归 macOS 惯例、⌃ 系归 Emacs 惯例」，覆盖移动 / 扩选 / 删除 / kill-yank / 撤销与配置层（`[keys]` 重绑与解绑）。由 change `toc-popover-emacs-keys-and-max-height` 归档并入的增量（2026-09-18，实现 M160）：`大纲开关——⌘⇧O 与 toc.toggle` 的浮层就地键枚举由三个（`↑↓` / `Enter` / `Esc`）扩为五个（新增 `⌃N` / `⌃P`），并写明这两键不进本表的理由。
 
 ## Requirements
 
@@ -340,10 +340,11 @@ macOS 原生菜单 MUST NOT 提供第二套撤销：Edit 子菜单 MUST NOT 保�
 提示。注册前 SHALL 核对该组合与既有绑定及原生菜单零冲突：表内 `⌘⇧` 系当前只有 `⇧⌘Z`（重做），
 macOS 原生菜单的 accelerator 集合里 `⌘⇧` 系同样只有 `⇧⌘Z`。
 
-浮层自己的导航键（`↑↓` / `Enter` / `Esc`）SHALL NOT 进本表：表的不变量是「一个 token 一条绑定」，
-而这些 token 已被 `editor` 作用域占用（`↑↓` 归 `editor.cursor-up/down`、`Esc` 归
-`editor.widget-escape`（带 `when` 条件））。浮层内就地消费 + 阻止默认行为，使 window 上的分发器对
-已消费事件让路——不构成同一物理键的第二条分发映射。
+浮层自己的导航键（`↑↓` / `⌃N` / `⌃P` / `Enter` / `Esc`）SHALL NOT 进本表：表的不变量是「一个
+token 一条绑定」，而其中 `↑↓` / `⌃N` / `⌃P` 已被 `editor.cursor-up/down` 占用、`Esc` 已被
+`editor.widget-escape`（带 `when` 条件）占用——同 token 的第二条绑定会被分发器构造期的重复绑定
+检查直接拒绝。浮层内就地消费 + 阻止默认行为，使 window 上的分发器对已消费事件让路——不构成同一
+物理键的第二条分发映射。
 
 #### Scenario: 表的不变量在新增绑定后仍成立
 
