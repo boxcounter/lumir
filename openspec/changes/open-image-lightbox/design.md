@@ -212,7 +212,8 @@ CSS 判据（推荐项）：
   关闭路径、占位/加载态不可打开（**正观测同场景内证明**）、焦点与不穿透、doc/caret 逐值不变、
   svg 与位图同构、缩放口径两侧；反向验证（先红）与「去掉 `max-height` 后必红」各留档。
 - **真机层（WKWebView，`scripts/acceptance/`）**：新增场景（编号 23）断言放大图 **AXImage 几何非零**
-  （不可见图的 AX 文本照样读得到——M178 在 `scripts/acceptance/README.md:70-71` 记下过这条陷阱，
+  （不可见图的 AX 文本照样读得到——这条陷阱记在 `docs/backlog.md:257-264`（M178 finding，主要居所）与
+  `openspec/changes/archive/2026-09-18-image-svg-and-fallback/tasks.md:190-192`，
   判据取几何）、`Esc` 关闭后焦点回编辑器、`editor.unchangedSince` 与磁盘 `unchangedSince`。
 - **不改写源文件**：视觉与真机两层都断言 `EditorState.doc` / 磁盘文件逐字节不变（ADR 0003 §3）。
 - **基线**：lightbox 是新元素，按 [REVIEW.md](../../../REVIEW.md) 第 3 条与 `tests/visual/README.md`

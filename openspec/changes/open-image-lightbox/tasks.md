@@ -128,7 +128,8 @@ delta（[proposal.md](proposal.md) 的 Impact 已写明）。裁决点 2 选备�
       覆盖：双击成功渲染的图（固定尺寸 svg 与位图各一）→ 遮罩出现；`Esc` 关闭后焦点回编辑器；
       三条关闭路径。
       **断言形态**：放大图的可见性用 **AXImage 节点的几何读数**（节点行里的 `@x,y w×h` 宽高非零）——
-      不可见图的 AX 文本照样读得到，这是 M178 在 `scripts/acceptance/README.md:70-71` 记下的陷阱；
+      不可见图的 AX 文本照样读得到，这条陷阱记在 `docs/backlog.md:257-264`（M178 finding，主要居所）与
+      `openspec/changes/archive/2026-09-18-image-svg-and-fallback/tasks.md:190-192`；
       MUST NOT 只断言「AX 里有某个文本」。
       **验收口径**：`node scripts/acceptance/run.mjs --check` 静态校验 PASS；`run.mjs 23` 真机 PASS，
       证据落 `test-results/acceptance/<日期>/23-image-lightbox/`（`status.txt` = PASS、`steps.md`

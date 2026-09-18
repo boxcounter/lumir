@@ -10,7 +10,7 @@ Alex 需求原话（2026-09-18）：**「双击图片能看大图」**。
 
 ### 一、诉求面在哪：内联图片「能显示」不等于「看得清」
 
-图片内联渲染刚刚被 M178 修好（`attachment-svg-and-fallback` 已归档）：三种引用形态今天都能画出来，
+图片内联渲染刚刚被 M178 修好（`image-svg-and-fallback` 已归档）：三种引用形态今天都能画出来，
 不可见的形态有可见占位。但内联的尺寸口径是**按阅读栏宽收窄**——`.cm-lp-image img { max-width: 100% }`
 （`src/preview/theme.ts:211`），而阅读栏宽是固定的正文栏。M178 的实测矩阵里，2000×600 的图在 600px
 容器下渲染为 600×180（收窄口径本身正常工作，代价是大图只剩缩略版）——截图、图表、设计稿这类
@@ -88,7 +88,7 @@ Alex 需求原话（2026-09-18）：**「双击图片能看大图」**。
 - **不改字节通道与安全策略**：`fs_read_attachment`、`data:` URL 形态、CSP
   （`src-tauri/tauri.conf.json:21`）、`resolveImagePath`、路径防护一律不动（ADR 0002 §3 不变）。
 - **不把 SVG 内联进 DOM**：放大图与内联图同一载入上下文（`<img>`），MUST NOT 为「放大后更清晰」
-  之类似是而非的理由打开内联路径（M178 的安全条款理由见 `attachment-svg-and-fallback` 的 design §4）。
+  之类似是而非的理由打开内联路径（M178 的安全条款理由见 `image-svg-and-fallback` 的 design §4）。
 
 ## capability 归属：为什么是 `attachment-display` 的 ADDED，而不是新 capability
 
