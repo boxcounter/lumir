@@ -405,23 +405,53 @@ function moveCaretHorizontally(view: EditorView, forward: boolean): boolean {
 // 垂直移动、M111 水平移动同一修复口径）。M132 的扩选变体（⌃⇧E / ⌃⇧A）与它们共用同一落点
 // 计算，硬化口径只此一份。
 
+/** 落点是否画得出 caret：前侧（assoc +1，即落点后一个字符所属的 DOM 节点）可测量
+ *  才算可停靠。隐藏 replace（表格管道符、标题尾部标记）之后的位置测量退化为全零或
+ *  null——那里 caret 没有位置（M168 实测：原生 caret 矩形 0×0，WKWebView 上表现为
+ *  「光标串到下一行 cell」）。判据与 ⌃A 场景的「行内第一个可测量位置」同一条。 */
+function dockable(view: EditorView, pos: number): boolean {
+  const coords = view.coordsAtPos(pos, 1);
+  return coords !== null && !coordsDegenerate(coords);
+}
+
+/** grid 表格 cell 内容右缘：cell 内容区（cellClamp 给出的 slot）去掉尾部对齐空白后的位置。 */
+function cellContentEdge(state: EditorState, pos: number): { from: number; to: number } | null {
+  const cell = cellClamp(state, pos);
+  if (!cell) return null;
+  const text = state.doc.sliceString(cell.from, cell.to);
+  return { from: cell.from + (text.length - text.trimStart().length), to: cell.from + text.trimEnd().length };
+}
+
 /** 行首 / 行尾落点（含隐藏 replace 退化回退）。
  *  moveToLineBoundary 取文本行边界（硬边界，段落语义，不受软换行截断）；落点藏进隐藏
- *  replace（表格管道符、标题尾部标记）时坐标测量退化，回退到行内最后一个 / 第一个可停靠
- *  位置——表格行即末 / 首 cell 边界，正合「挪到 cell 尾 / 首」的预期。assoc 取可见侧
+ *  replace（表格管道符、标题尾部标记）时坐标测量退化，回退到可停靠位置（dockable）——
+ *  这正是 M118 未修净的那一半：当时的回退判据看的是后侧（assoc -1）、而 caret 画在前侧，
+ *  隐藏管道符边界因此被判成「可停靠」，落点停在无 caret 的边界位上（M168 真实桌面缺陷：
+ *  「表格 cell 里 ⌃E，光标会进入下面一行的 cell，而不是移动到当前 cell 的末尾」）。
+ *
+ *  表格 cell 内的行尾 = **当前 cell 的内容右缘**（不是整个表格行的行尾——那是末 cell；
+ *  也不是文本行行尾——那里是隐藏管道符边界）。行首不并入本口径：行的可见行首（首 cell
+ *  内容起点）本身可停靠，⌃A 的行级语义照旧（见 keymap-commands spec）。assoc 取可见侧
  *  （行尾 -1、行首 1）：退化侧的 scrollIntoView 会把整窗内容拉偏（M118，实测 ⌃A 未修前
  *  scrollTop 下挫 62px）。 */
 function lineBoundaryTarget(view: EditorView, from: SelectionRange, forward: boolean): { head: number; assoc: -1 | 1 } {
+  const { doc } = view.state;
   let head = view.moveToLineBoundary(from, forward, false).head;
-  if (head !== from.head) {
-    const line = view.state.doc.lineAt(head);
-    if (forward) {
-      while (head > line.from && coordsDegenerate(view.coordsAtPos(head, -1))) head--;
-    } else {
-      while (head < line.to && coordsDegenerate(view.coordsAtPos(head, 1))) head++;
+  let limit = forward ? doc.lineAt(head).from : doc.lineAt(head).to;
+  if (forward) {
+    const edge = cellContentEdge(view.state, from.head);
+    if (edge) {
+      head = edge.to;
+      limit = edge.from;
     }
   }
-  return { head, assoc: forward ? -1 : 1 };
+  if (head !== from.head) {
+    while (forward ? head > limit : head < limit) {
+      if (dockable(view, head)) break;
+      head = forward ? prevCluster(view.state, head, limit) : nextCluster(view.state, head, limit);
+    }
+  }
+  return { head, assoc: caretAssoc(view, head, forward ? -1 : 1) };
 }
 
 function moveCaretToLineEnd(view: EditorView): boolean {

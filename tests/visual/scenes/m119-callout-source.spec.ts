@@ -51,11 +51,24 @@ test("光标进入 callout 内容行显露 inline 源码标记，离开恢复；
   await expect(quoteLine.locator(".cm-lp-strong", { hasText: "加粗" })).toHaveCount(1);
   await expect(quoteLine).not.toContainText("**");
 
-  // 光标移入普通引用行：> 显露（M110 全引用通用），但 inline 格式保持渲染
+  // 光标移入普通引用行的加粗范围：> 显露（M110 全引用通用），该强调范围也显露源码
+  //（M168 起强调范围是节点范围级：光标落在范围内即显露该范围，与行级显露互不替代）
   await quoteLine.locator(".cm-lp-strong").click();
   await expect(quoteLine).toContainText(">");
-  await expect(quoteLine.locator(".cm-lp-strong", { hasText: "加粗" })).toHaveCount(1);
+  await expect(quoteLine).toContainText("**加粗**");
+  await expect(quoteLine.locator(".cm-lp-strong", { hasText: "加粗" })).toHaveCount(0);
+  // 反例对照：光标仍在这一行、但落在加粗范围之外（"保持渲染" 处）——行级显露照旧（> 可见），
+  // 强调范围回到渲染态（** 不裸露）。这条把「节点范围级」与「行级」分开钉死。
+  const afterBold = CALLOUT_DOC.indexOf("> 普通引用 **加粗**") + "> 普通引用 **加粗**".length + 1;
+  await page.evaluate((pos) => {
+    const view = (document.querySelector(".cm-content") as unknown as { cmTile: { root: { view: any } } }).cmTile.root.view;
+    view.dispatch({ selection: { anchor: pos } });
+    view.focus();
+  }, afterBold);
+  await page.waitForTimeout(80);
+  await expect(quoteLine).toContainText(">");
   await expect(quoteLine).not.toContainText("**");
+  await expect(quoteLine.locator(".cm-lp-strong", { hasText: "加粗" })).toHaveCount(1);
   // callout 行恢复渲染态
   await expect(contentLine.locator(".cm-lp-strong", { hasText: "加粗" })).toHaveCount(1);
   await expect(contentLine).not.toContainText("**");
