@@ -53,6 +53,6 @@ Alex 实测原话（M167 mission Context 逐字）：「toml 和 yml 代码块�
 **裁决点 2 — 修复广度：方案 A（建议）还是方案 B？**
 
 - **方案 A（本提案的 What Changes）**：yaml 的键改取属性色。最小改动、不动配色角色表、parity 结构上不变、既有基线零变更。
-- **方案 B**：连 yaml 的值与结构符号（`-`、`:`、`---`、锚点）一并上色。代价是新增配色角色（`TOKEN_GROUPS` + `src/editor.ts` 的 `CODE_COLORS` 两处穷尽检查同步）+ 全量视觉基线重建并逐张与 Alex 过目；且 yaml 的普通标量值在 vendored parser 里根本不产出 token，方案 B 也修不了它——只能让标点先有色。
+- **方案 B**：连 yaml 的值与结构符号（`-`、`:`、`---`、锚点）一并上色。代价是新增配色角色（`TOKEN_GROUPS` + `src/editor.ts` 的 `CODE_COLORS` 两处穷尽检查同步）+ 全量视觉基线重建并逐张与 Alex 过目；**且新角色不是 yaml 独享**——该 token 名（`meta` / `punctuation`）在 21 门收录语言里有 **10 门**会产出，加一个角色等于同时改掉这 10 门语言的观感（普查命令与逐语言读数见 [`evidence/03-复核记录.md`](evidence/03-复核记录.md) §6）；另外 yaml 的普通标量值在 vendored parser 里根本不产出 token，方案 B 也修不了它——只能让标点先有色。
 
 未选的那一支在归档时标注放弃原因，不留悬空任务。
