@@ -157,14 +157,19 @@
       `tsc-root 1s` / `tsc-visual 1s` / `tsc-unit 1s` / `unit-tests 0s` / `docs-check 0s` / `openspec-validate 2s`。
       （`gate.sh visual` 内含 quick 层，故不再单跑一次 `quick`。）
 - [x] 6.3 `scripts/gate.sh visual` 全绿（新增基线已由 Alex 过目后入库）
-      ——**本条只完成前半句**：门禁在「新增基线于本地工作区就位」的状态下全量跑通；**「已由 Alex 过目后入库」
-      这个前置尚未满足**（按 M164 口径，批准前提交里不带基线）。为避免读成「入库已做完」，此处显式拆开记。
-      **证据（门禁部分）**（M179）：`GATE RESULT: 12/12 PASS（SKIP 0）`、退出码 0（同上日志），含 `visual-regression 184s`
-      ——**全量像素模式**（未置 `LUMIR_VISUAL_STRUCTURAL`）。
-      **证据（入库部分：未完成）**：按 M164 的口径「批准前本分支不带基线更新」，提交 `0e86c9f` 里不含这三张 PNG
-      （现为 worktree 内 untracked），前/后截图 + 差异图 + sha256 清单在 `test-results/m179/baseline-review/`
-      （副本 `/tmp/m179-baseline-review/`），随 review-request 呈请；Alex 通过后本 mission 补一次提交
-      （同一分支，第二次提交），入库前逐张 sha256 与批准件核对。
+      **本条两个部分都已满足**（原先只完成门禁部分，入库部分按 M164 口径挂在 Alex 过目后，现补记完成）：
+      **证据（门禁部分）**（M179）：`GATE RESULT: 12/12 PASS（SKIP 0）`、退出码 0（`test-results/m179/09-gate-visual.log`），
+      含 `visual-regression 184s`——**全量像素模式**（未置 `LUMIR_VISUAL_STRUCTURAL`）。
+      **证据（入库部分：已完成，2026-09-18）**：Alex 2026-09-18 对「3 张 AFTER 图作为今后参照答案入库」答复通过
+      （原话「可以」）。入库前逐张核对 worktree 内文件与呈请件清单 `test-results/m179/baseline-review/SHA256-new-baselines.txt`
+      （副本 `/tmp/m179-baseline-review/`）——**4/4 MATCH**（含既有 `json-line` 一张作对照），三张新基线另与
+      Alex 过目的 `AFTER-*` 副本逐字节相同。入库提交 `9b14210`（**只含这 3 张 PNG**，未用 `git add -A`）：
+      `render-codeblock-toml-yaml-…` `c23bd9a93148e1165c0fd6b69513ba646813a9b3694cd8273c8b3704cebaa853`、
+      `render-codeblock-yaml-line-…` `2d55601c494eea86c2e630b6a4a8e9cacff114a17463b1c09a8d5edbc97c048f`、
+      `render-codeblock-toml-line-…` `70bcf6958396bf67eb0a7651914dbbff63a2ce0a2b42743f997bb01f4fcfc61f`；
+      既有两张未动（`1382ada2…` / `cada2074…`）。入库后在**同一提交内容**上复跑
+      `LUMIR_VISUAL_PORT=4273 bash scripts/visual/run.sh render-codeblock`（全量像素 + `pnpm build` 重建 dist，
+      杜绝拿旧 dist 假绿）→ **10/10 PASS**（`test-results/m179/14-post-baseline-commit-run.log`），基线生效。
 - [x] 6.4 真机验收套件跑一遍，FAIL 项为 0（或不涉及本 change 的项如实标注）
       **证据**（M179）：`caffeinate -dimsu node scripts/acceptance/run.mjs` 全量跑完，末行
       `结论：26/26 PASS`、退出码 0，**FAIL 项为 0**（无「不涉及本 change 的项」需要标注）——
