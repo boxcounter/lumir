@@ -11,8 +11,8 @@ src-tauri/target/
 # perf 测量结果（scripts/perf/* 产出，CI 作为 artifact 上传）
 perf-results/
 
-# 真机验收证据（scripts/acceptance/* 产出；截图量大、session 产物，不入 git）
-test-results/acceptance/
+# 真机验收与评审证据（scripts/acceptance/* 与 test-results/<mission>/ 产出；截图量大、session 产物，不入 git；.last-run.json 已被跟踪、不受此豁免影响）
+test-results/
 
 # misc
 *.log
