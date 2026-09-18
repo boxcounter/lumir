@@ -198,7 +198,7 @@ toml 数组的 `[` `]` 是 `bracket`、yaml 的结构标点是 `meta`——`@lez
 | yaml 锚点与别名 `&a` / `*a` 无颜色 | 返回 `variable` → `tags.variableName` 不在任何分组 | 不修：同上 |
 | yaml `:` / `- ` / 内联括号无颜色 | 返回 `meta` | 不修：与全仓「标点不取色」一致（rust 的 `{}` `;` 同） |
 | 无键的 yaml 块（纯列表 / 纯标量）整块不着色 | parser 只给 `meta` 与 `null` | 不修：vendored parser 的能力边界，两侧一致；作为已知边界写进 spec 的 scenario |
-| 带引号的键（`"k": v` / `'k': v`）取字符串色 | `yaml.js` 的引号分支排在键判定之前，产出 `string` token（与引号值同一个 token 名，`mode/yaml.js:20-21`） | 不修：token 名层面分不开键与值，要分开须改 vendored parser；已写成 spec 的边界 scenario（实现期实测：`"quoted key": v` → `cm-lp-tok-string`） |
+| 带引号的键（`"k": v` / `'k': v`）取字符串色 | `yaml.js` 的引号分支排在键判定之前，产出 `string` token（与引号值同一个 token 名，`mode/yaml.js:16-17`） | 不修：token 名层面分不开键与值，要分开须改 vendored parser；已写成 spec 的边界 scenario（实现期实测：`"quoted key": v` → `cm-lp-tok-string`） |
 | toml 节头 `[x]` 与布尔、日期同色 | `atom` 过载（§4.1） | 不修：需 fork parser |
 | ```` ```.toml ```` / ```` ```config.toml ```` / 零宽空格前缀 | §2.2 的归一化边界 | 不修：放宽别名面需要需求证据；记录在案 |
 | 围栏 yaml 键的 span 含前导缩进 | `yaml.js` 键正则 `^\s*` 消耗缩进 | 不修：与 code 模式的 span 边界一致，改它会引入新的 parity 漂移 |

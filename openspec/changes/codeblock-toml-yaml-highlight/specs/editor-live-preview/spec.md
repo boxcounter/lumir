@@ -44,7 +44,7 @@ md 模式 SHALL 在基础装饰之外渲染下列三类结构（M138 落地）�
 
 ### Requirement: YAML 代码块的键名配色
 
-yaml 文档里的**映射键**（`key:` 与 `- key:` 两种形态的键）SHALL 以属性名配色（`--callout-note`）呈现，MUST NOT 与字面量（数字、布尔）同色——键的语义是属性名，与 json 的对象键同一口径（见「JSON 键名与值分色」）。该口径 SHALL 对**未加引号**的键形态恒成立——顶层键、嵌套键、序列项内的键、非 ASCII 键、含 `-` / `.` / `/` / `+` / 空格的键——MUST NOT 只对某一类键生效（带引号的键另见下一条 scenario）。字符串值 SHALL 保持字符串配色（`--callout-tip`），数字与布尔值 SHALL 保持字面量配色（`--callout-warning`），注释 SHALL 保持注释配色（`--dim`）；未加引号的标量值与结构符号（`-` / `:` / `,` 等）SHALL 维持正文色（本 capability 不对它们赋予颜色语义）。同一段 yaml 在 md 围栏（```yaml 与 ```yml 两个 info string）与只读 `.yml` / `.yaml` 文件（code 模式）里的配色 SHALL 一致——两侧共用同一张语言表，该一致性 MUST NOT 由两侧分别对齐。配色 MUST 只取自既有 editorial token，MUST NOT 为本次修复新增颜色。本口径 MUST NOT 外溢到其它语言——toml 的 `atom`（表头 / 日期 / 布尔）以及 json、javascript、typescript 的既有取色 SHALL 保持不变。装饰 MUST NOT 改写文档内容，`EditorState.doc` 与磁盘文件逐字节不变（ADR 0003 §3 铁律）。
+yaml 文档里的**映射键**（`key:` 与 `- key:` 两种形态的键）SHALL 以属性名配色（`--callout-note`）呈现，MUST NOT 与字面量（数字、布尔）同色——键的语义是属性名，与 json 的对象键同一口径（见「JSON 键名与值分色」）。该口径 SHALL 对**未加引号**的键形态恒成立——顶层键、嵌套键、序列项内的键、非 ASCII 键、含 `-` / `.` / `/` / `+` / 空格的键——MUST NOT 只对某一类键生效（带引号的键另见下一条 scenario）。字符串值 SHALL 保持字符串配色（`--callout-tip`），数字值 SHALL 保持字面量配色（`--callout-warning`），布尔值（`true` / `false` 等）SHALL 保持关键字配色（`--accent`），注释 SHALL 保持注释配色（`--dim`）；未加引号的标量值与结构符号（`-` / `:` / `,` 等）SHALL 维持正文色（本 capability 不对它们赋予颜色语义）。同一段 yaml 在 md 围栏（```yaml 与 ```yml 两个 info string）与只读 `.yml` / `.yaml` 文件（code 模式）里的配色 SHALL 一致——两侧共用同一张语言表，该一致性 MUST NOT 由两侧分别对齐。配色 MUST 只取自既有 editorial token，MUST NOT 为本次修复新增颜色。本口径 MUST NOT 外溢到其它语言——toml 的 `atom`（表头 / 日期 / 布尔）以及 json、javascript、typescript 的既有取色 SHALL 保持不变。装饰 MUST NOT 改写文档内容，`EditorState.doc` 与磁盘文件逐字节不变（ADR 0003 §3 铁律）。
 
 #### Scenario: 围栏 yaml 代码块的键取属性名色
 
