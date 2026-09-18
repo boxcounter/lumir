@@ -112,9 +112,10 @@ change 的处理是**维持现状**，并把「图片行是否与链接/分隔�
 ### 3.2 实现口径（不写死实现，只定判据）
 
 - **终态判据**：加载完成后，图片可见的充分条件是「解码成功 **且** 渲染尺寸非零」。任一不成立即
-  走占位。`naturalWidth/naturalHeight` 只能作辅助信号（`viewBox` + `auto` 宽高的 svg 可能报 0，
-  而它们可能仍然渲染为可见；反过来也可能非零而外层塌成零）——判据必须落在**替换区自身的可见
-  尺寸**上，不能只落在 `naturalWidth` 上。
+  走占位。`naturalWidth/naturalHeight` 只能作辅助信号——**本缺陷正是它漏判的反例**：中招形态实测
+  `naturalWidth/naturalHeight = 300×100`（非零、`complete = true`、无 `error`），而布局盒 **0×0**
+  （§8.1 实验矩阵）。也就是说内在尺寸读不出「画了等于没画」。判据必须落在**替换区自身的可见尺寸**
+  上，不能只落在 `naturalWidth` 上。
 - **不得依赖 `load` 事件的时序**：不得用「插入 `<img>` 后再补一次兜底」这种最终必然生效的方案
   ——空窗期内用户看到的就是空白，同样命中不变量。
 - **占位形态复用既有视觉语言**：既有错误块样式 `.cm-lp-image-error`（`src/preview/theme.ts:147-156`）
@@ -147,8 +148,8 @@ change 的处理是**维持现状**，并把「图片行是否与链接/分隔�
 「User agents must not run executable code (e.g. scripts) embedded in the image resource.」
 （[HTML Standard §4.8.4 Images](https://html.spec.whatwg.org/multipage/images.html)）。这一条与 URL
 scheme 无关——`data:image/svg+xml` 走的是同一条 image-loading 算法，因此它直接覆盖本仓的加载路径
-（`<img>` + `data:` URL）。下面引的 MDN 段是同一上下文（图片上下文）的第一手描述，两者**并引**：
-规范条文负责「必须不执行可执行代码」，MDN 负责把同一上下文里被关闭的能力逐项列清。
+（`<img>` + `data:` URL）。**承重的是上面这条规范语句**；下面引的 MDN 段**只作旁证**——它把同一
+上下文（图片上下文）里被关闭的能力逐项列清、可读性好，但不承担「必须不执行」这个结论。
 
 SVG 规范把「被引用时的处理模式」单独定义，按引用方式选模式，并给出每个模式下四项能力的开关
 （[SVG Integration，W3C SVG 工作组编辑草案](https://svgwg.org/specs/integration/)）：
@@ -279,7 +280,7 @@ XML 解析失败，前端拿到的是同一个事件。今天把这几类一律�
 | 方案 | 拒绝理由 |
 |---|---|
 | **只给 svg 加特判分支**（`extensionOf(path) === "svg"` 时做点什么） | 缺陷机制与扩展名无关（第 3.1 节的输入分布里没有「扩展名」这一维）；svg 特判会在下一篇报告换成 png/heic 时重演。也违反合同先行规则。 |
-| **用 `naturalWidth === 0` 当唯一的终态判据** | `viewBox` + `auto` 宽高的 svg 可能报 0 而仍可见，图片也可能非零而外层塌成零。判据必须落在替换区自身的可见尺寸上（第 3.2 节）。 |
+| **只用 `naturalWidth` 一类内在尺寸信号当终态判据** | 中招形态实测 `naturalWidth/naturalHeight = 300×100`（非零）而布局盒 **0×0**——内在尺寸对这一态**看不见**（§8.1 实验矩阵）；反过来它报 0 也不能断定不可见。判据必须落在替换区自身的可见尺寸上（第 3.2 节）。 |
 | **引入 asset protocol 或自定义 protocol 旁路 `data:` URL** | 现有 `data:` 路径没有失败证据；换通道要动 Rust、CSP 与权限面（非目标）。契约层面 「invoke + base64」是 living spec 已裁决的形态，换通道属于另一个 change。 |
 | **内联 SVG 到 DOM（`innerHTML`）** | 打开脚本执行与外部资源解析（第 4.2 节），且被 CSP 挡下的同样是白板——收益为零、风险为正。 |
 | **在前端加「可渲染格式白名单」** | 会造出第二份扩展名表（[REVIEW.md](../../../REVIEW.md) 第 8 条），而且前端判不出引擎的解码能力——判定权本来就在引擎手里。 |
@@ -293,6 +294,15 @@ XML 解析失败，前端拿到的是同一个事件。今天把这几类一律�
 **中招形状**：SVG 只声明百分比宽度、没有固有像素尺寸。最小形状是 `width="100%"` + `viewBox`——这也是
 mermaid CLI、D2、Excalidraw 等导出器的默认形态（本机样本 `/Users/boxcounter/Downloads/mermaid-diagram-1787642287522.svg`
 即 `<svg width="100%" style="max-width: 1489.5px" viewBox="-50 -10 1489.5 909">`）。
+
+**上游记录（形态不是本仓臆测）**：mermaid 自己记录过这个形状——
+[issue #1490「SVG width and height attributes inconsistencies between diagrams」](https://github.com/mermaid-js/mermaid/issues/1490)
+（mermaid-js/mermaid，2020-06-21 建立、2020-09-02 关闭，state reason `completed`）指出各图类型导出的
+`width`/`height` 声明不一致，部分类型就是「100% 宽高 + 只能从 `viewBox` 推出初始尺寸」；报告者在正文里的
+结论是提取初始尺寸「is much harder and, as far as I know, **you cannot do it using only CSS**」——这正是
+本 change 采取「加载后用引擎给出的自然尺寸设显式像素宽度」而不是改 CSS 的上游依据（修法见 §8.2 首行的
+处置与 tasks 1.3 / 2.6）。**抓取限制**：该 issue 正文中的 XML 代码块在本次抓取里被剥离，故此处只引标题、
+状态与散文结论，不逐字引它给出的 XML（避免把没读到的片段当原文）。
 
 **实验矩阵**（playwright 1.62.1，**chromium 与 webkit 逐格一致**；容器 600px；CSS 与
 `src/preview/theme.ts:144-145` 同源）：
@@ -363,8 +373,11 @@ for (const [n, e] of [["chromium", chromium], ["webkit", webkit]]) {
 - **合同层**：`attachment-display` 增量的四条（2 MODIFIED + 2 ADDED）逐条落到 scenario。
 - **视觉层（chromium，CI）**：`tests/visual/scenes/markdown-combo.spec.ts` 的无区分度断言换成
   「成功渲染」与「不可见即占位」两侧都判；新增零尺寸 svg / 位图与含脚本、外链的 svg fixture。
+  **「不发起外部请求」这一腿落在这一层**（`page.on("request")` + 强制变红验证，tasks 5.4）——真机
+  套件没有网络探针，放在那边只能是空转断言（tasks 6.1 的说明）。
 - **真机层（WKWebView，`scripts/acceptance/`）**：新增场景，断言该位置的 AX 文本在 svg 与失败
-  形态下都非空且含原始引用。
+  形态下都非空且含原始引用；安全腿只判真机层可观测的两项——脚本副作用标记经 AX 断言**未出现**，
+  且该位置**终态可见**（两条一起，tasks 6.1）。
 - **文案层**：D111–D113 进 deck + 备注段登记。
 - **不改写源文件**：所有场景断言 `EditorState.doc` / 磁盘文件逐字节不变（ADR 0003 §3）。
 - **基线**：本 change 预期不动任何整页基线（`markdown-combo` 无基线；`rg` 全仓确认无基线场景含
