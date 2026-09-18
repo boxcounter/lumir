@@ -10,11 +10,11 @@
 
 百分比固有宽度（`width="100%"` + viewBox，无固有像素尺寸）：
 
-![percent svg](assets/zero-size.svg)
+![percent svg](assets/percent-width.svg)
 
 同一份百分比固有宽度 svg 的方言形态：
 
-![[zero-size.svg]]
+![[percent-width.svg]]
 
 只声明 viewBox（无 width / height 属性）：
 

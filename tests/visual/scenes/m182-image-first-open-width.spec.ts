@@ -6,7 +6,7 @@
 //   打开次序；同一引用在首开与重开（同一页面内切走再切回）必须收敛到同一 width。
 //
 // 区分度（REVIEW.md 第 1 条，已做反向验证）：**差异断言是「固有宽度不定的图按栏宽渲染」这一条**，
-// 不是「两态相等」——修复前 chromium 下两态其实相等（都停在 300×100，见 zero-size.svg 的旧断言
+// 不是「两态相等」——修复前 chromium 下两态其实相等（都停在 300×100，见 percent-width.svg（原 zero-size.svg）的旧断言
 // markdown-combo.spec.ts），只有「按栏宽」这条在修复前是红的。反向验证的做法：注释掉
 // src/preview/theme.ts 里 `.cm-lp-image` 的 `width: "100%"`，本文件应红在 percent / percentWiki /
 // viewboxOnly 三行；红输出留档 test-results/m182/。
@@ -23,7 +23,7 @@ const other = "# 另一篇\n\n正文。\n";
 const assets: Record<string, string> = {
   "assets/sample.svg": fixture("sample.svg"),
   "assets/wide.svg": fixture("wide.svg"),
-  "assets/zero-size.svg": fixture("zero-size.svg"),
+  "assets/percent-width.svg": fixture("percent-width.svg"),
   "assets/viewbox-only.svg": fixture("viewbox-only.svg"),
   "assets/zero-declared.svg": fixture("zero-declared.svg"),
   "assets/empty.png": fixture("empty.png"),
@@ -33,8 +33,8 @@ const assets: Record<string, string> = {
 const REFS = {
   wide: "![wide svg](assets/wide.svg)",
   fixed: "![fixed svg](assets/sample.svg)",
-  percent: "![percent svg](assets/zero-size.svg)",
-  percentWiki: "![[zero-size.svg]]",
+  percent: "![percent svg](assets/percent-width.svg)",
+  percentWiki: "![[percent-width.svg]]",
   viewboxOnly: "![viewbox only](assets/viewbox-only.svg)",
   zeroDeclared: "![zero declared svg](assets/zero-declared.svg)",
   empty: "![empty bitmap](assets/empty.png)",
@@ -110,9 +110,9 @@ test("图片显示宽度不随时间/缓存变化，且只由固有宽度与栏�
     })),
     files: { "width-matrix.md": doc, "other.md": other, ...assets },
     links: {
-      "![[zero-size.svg]]": {
+      "![[percent-width.svg]]": {
         status: "resolved",
-        path: "assets/zero-size.svg",
+        path: "assets/percent-width.svg",
         candidates: [],
         embed_target: "attachment",
         anchor: { status: "none", heading: null, line: null },

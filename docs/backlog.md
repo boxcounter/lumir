@@ -229,6 +229,14 @@
 
 ### 验收套件（M144 实测出的表达力缺口）
 
+- **场景证据目录跨 run 不清空，`ax/` 与 `shots/` 累积→读 dump 无法分辨新旧**（M182 finding，
+  worker-img-width-fix，2026-09-18，medium，**待修**）：`scripts/acceptance/lib/evidence.mjs:30-37` 的
+  `startScenario` 只 `mkdirp`，不清理上一次 run 的 `ax/` 与 `shots/`；同一天重复跑同一场景（迭代调试的
+  常态）时序号重新计，旧文件被覆盖一半、留下一半——实测同一场景目录里同时存在两轮的 `01-首开.txt` /
+  `02-切回.txt`，读数分属两轮，复盘时可能把上一轮 dump 当本轮结论（REVIEW.md 第 2/7 条同族）。本次为把
+  红/绿证据归档成可复核目录，只能每次手动 `rm -rf` 场景目录再跑。修法：`startScenario` 里清掉 `ax/` 与
+  `shots/`（或整目录重建），并把「一次 run 的目录只含本次 run 的产物」写进 scripts/acceptance/README.md
+  的证据布局一节。finding `.tower/comms/findings/20260918-worker-img-width-fix-bug-run-ax-shots-dump.md`。
 - **`ax.mjs` 取 `AXTextArea.value` 用非贪婪正则，文档含半角 `"` 时断言真假双向失真**（M180 finding，
   worker-wrap-impl，2026-09-18，medium，**待修**）：`scripts/acceptance/lib/ax.mjs:36` 的正则遇半角
   引号即截断 value——`editor.has` 假红、`editor.not` **假绿**（负断言在截断文本上找不到目标串而

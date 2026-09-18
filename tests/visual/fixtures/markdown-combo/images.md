@@ -8,13 +8,13 @@
 
 ![wide svg](assets/wide.svg)
 
-百分比固有宽度、只声明 viewBox 的 svg（design §8.1 的中招形状）：
+百分比固有宽度、只声明 viewBox 的 svg（固有宽度不定的代表；M178 称「中招形状」，M182 起按栏宽填充）：
 
-![percent svg](assets/zero-size.svg)
+![percent svg](assets/percent-width.svg)
 
-同一份中招 svg 的 Obsidian 方言形态：
+同一份「固有宽度不定」svg 的 Obsidian 方言形态：
 
-![[zero-size.svg]]
+![[percent-width.svg]]
 
 空位图（0 字节，无可解码内容）：
 

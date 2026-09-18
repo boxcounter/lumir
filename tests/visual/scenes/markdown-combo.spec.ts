@@ -14,7 +14,7 @@ const images = fixture("images.md");
 const imageAssets: Record<string, string> = {
   "assets/sample.svg": image,
   "assets/wide.svg": fixture("wide.svg"),
-  "assets/zero-size.svg": fixture("zero-size.svg"),
+  "assets/percent-width.svg": fixture("percent-width.svg"),
   "assets/script.svg": fixture("script.svg"),
   "assets/external-ref.svg": fixture("external-ref.svg"),
   "assets/empty.png": fixture("empty.png"),
@@ -25,8 +25,8 @@ const imageAssets: Record<string, string> = {
 const REFS = {
   fixed: "![fixed svg](assets/sample.svg)",
   wide: "![wide svg](assets/wide.svg)",
-  percent: "![percent svg](assets/zero-size.svg)",
-  percentWiki: "![[zero-size.svg]]",
+  percent: "![percent svg](assets/percent-width.svg)",
+  percentWiki: "![[percent-width.svg]]",
   empty: "![empty bitmap](assets/empty.png)",
   zeroDeclared: "![zero declared svg](assets/zero-declared.svg)",
   missing: "![missing bitmap](assets/missing.png)",
@@ -67,12 +67,12 @@ async function open(
   readDelayMs = 0,
 ) {
   await stubTauri(page, {
-    entries: [path, "assets/sample.svg", "assets/missing.png", "assets/missing.svg", "assets/wide.svg", "assets/zero-size.svg", "assets/script.svg", "assets/external-ref.svg", "assets/empty.png"].map((entry) => ({ path: entry, kind: "file", size: text.length, mtime_ms: 0 })),
+    entries: [path, "assets/sample.svg", "assets/missing.png", "assets/missing.svg", "assets/wide.svg", "assets/percent-width.svg", "assets/script.svg", "assets/external-ref.svg", "assets/empty.png"].map((entry) => ({ path: entry, kind: "file", size: text.length, mtime_ms: 0 })),
     files: { [path]: text, ...imageAssets },
     links: {
       "![[sample.svg]]": { status: "resolved", path: "assets/sample.svg", candidates: [], embed_target: "attachment", anchor: { status: "none", heading: null, line: null } },
       "![[missing.svg]]": { status: "unresolved", path: null, candidates: [], embed_target: null, anchor: { status: "none", heading: null, line: null } },
-      "![[zero-size.svg]]": { status: "resolved", path: "assets/zero-size.svg", candidates: [], embed_target: "attachment", anchor: { status: "none", heading: null, line: null } },
+      "![[percent-width.svg]]": { status: "resolved", path: "assets/percent-width.svg", candidates: [], embed_target: "attachment", anchor: { status: "none", heading: null, line: null } },
     },
     failures,
   });
@@ -83,7 +83,7 @@ async function open(
 }
 
 /** 某条图片引用的替换区读数：布局盒（替换区可见尺寸）+ 引擎给出的自然尺寸。两个一起记—— */
-/** 只记自然尺寸会把中招形态读成「加载正常」（实则布局盒 0×0，design §3.2）。 */
+/** 只记自然尺寸会把固有宽度不定的形态读成「加载正常」（实则布局盒 0×0，design §3.2）。 */
 async function imageReadings(page: Page, ref: string) {
   return page.locator(`.cm-lp-image img[alt=${JSON.stringify(ref)}]`).evaluate((el) => {
     const img = el as HTMLImageElement;
