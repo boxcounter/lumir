@@ -16,7 +16,7 @@ steps:
       超长正文行（刻意超过阅读栏宽）：折行口径的运行期翻转由 view.toggle-line-wrap 与 view.toggle-code-block-wrap 两条命令承担，两条都默认不占键位、由 [keys] 绑定后可用；这一行刻意写得很长，远超阅读栏宽：PROSE-END-MARK。
 
       ```text
-      {"vault":"Everything-copy","file":"Logbook/2026-09/2026-09-18.md","note":"the quick brown fox jumps over the lazy dog 0123456789","flag":true,"count":42,"tail":"CODE-END-MARK"}
+      vault: Everything-copy | file: Logbook/2026-09/2026-09-18.md | note: the quick brown fox jumps over the lazy dog 0123456789 | flag: true | count: 42 | tail: CODE-END-MARK
       ```
 
       ```text
@@ -36,9 +36,9 @@ steps:
         ax: { has: "CODE-END-MARK" }
       - label: 起始口径是默认值——容器在（code_block_wrap=false）
         ax: { has: "Markdown 代码块 1" }
-      - label: 翻转前记下 config.json 的 sha256 与 mtime
-        file: { path: env:config.json, exists: true }
-  - name: 记 config.json 基线（翻转前后逐字节/mtime 比较用）
+      - label: 翻转前 config.json 就位（隔离配置，harness 写入的形状）
+        file: { path: env:config.json, has: '"last_vault"' }
+  - name: 记 config.json 基线（翻转后比对 sha256 用）
     do: record
     as: cfgBefore
     file: "env:config.json"
@@ -72,8 +72,12 @@ steps:
       - shot: 文件级口径翻转后
   - name: 收尾核对：两次翻转都没落盘
     expect:
-      - label: config.json 与翻转前逐字节相同、mtime 未变（瞬态状态不持久化）
+      - label: config.json 的内容与翻转前 sha256 一致（瞬态状态不持久化）
         file: { path: env:config.json, unchangedSince: cfgBefore }
+      - label: 配置里没有多出折行状态的回写字段
+        file: { path: env:config.json, not: "line_wrap" }
+      - label: 代码块口径同样没有回写
+        file: { path: env:config.json, not: "code_block_wrap" }
       - label: 磁盘上的文档也没被改写
         file: { path: wrap-probe.md, has: "CODE-END-MARK" }
 ---
@@ -84,15 +88,20 @@ steps:
 且不在原生菜单 accelerator 集合里，避开 ⌃ 系的原生接手与「偷 kill-line 的 ⌃K」两个坑）。
 
 键位是 `global` 作用域、翻转作用于**应用运行期**（D1 裁决「应用级」）：全部标签页随之同步，新标签页
-取当前应用态。本场景只开一个标签，故「全体同步」这条没有断言面——多标签的一致性由代码路径
-（`editor.setWrap` 遍历全部会话）保证，视觉层与真机层都不再为它单开场景。
+取当前应用态。本场景只开一个标签，「全体同步」那条断言的落点在视觉层
+（`tests/visual/scenes/render-codeblock.spec.ts` 的「应用级口径（D1）」场景：两标签 + 切回）。
 
-**config.json 逐字节 / mtime 断言的采样纪律**（M166 评审备录）：这两次采样之间**不得触发 vault
-打开 / 重映射**——`vault_remap`（`src-tauri/src/workspaces.rs`）与 `write_last_vault_to`
-（`src-tauri/src/commands.rs`）都会写 config.json，`merge_last_vault` 写进去的内容含 `version`
-字段。因此基线记在「文件已打开、vault 已装载」之后，中间只按折行键，不碰打开/切换动作。
+**config.json 断言的采样纪律**（M166 评审备录）：两次采样之间**不得触发 vault 打开 / 重映射**——
+`vault_remap`（`src-tauri/src/workspaces.rs`）与 `write_last_vault_to`（`src-tauri/src/commands.rs`）
+都会写 config.json，`merge_last_vault` 写进去的内容含 `version` 字段。因此基线记在「文件已打开、
+vault 已装载」之后，中间只按折行键，不碰打开/切换动作。
 
-机器判据（三条）：① 容器在不在 AX 树里（代码块轴的翻转）；② 焦点归属（`Escape` 后回到
-`AXTextArea`，视觉层的容器键盘场景另测 120px/End/Home）；③ config.json 的逐字节与 mtime 不变
-（瞬态、不落盘）。文件级轴的**视觉**变化（正文行折 ↔ 不折）在真机侧没有计算属性通道可读，
-看 `shots/`。
+**可断言到什么程度（如实记录）**：`file.unchangedSince` 比的是 **sha256**（内容逐字节），不是 mtime
+——harness 的断言词汇里没有「mtime 未变」这一形态（只有 `mtimeNewerThan`）。因此本场景的「不落盘」
+判据是「内容 sha256 不变 + 没有多出回写字段」，mtime 层的不变性未验（那条若要验需给 harness 加
+`mtimeSameAs` 一类断言）。sha256 不变是更强的判据：mtime 可能在内容不变时抖动（touch），反过来的
+情形不存在。
+
+另：探针文档刻意不含半角双引号——套件解析 `AXTextArea` 的 value 用非贪婪正则
+（`lib/ax.mjs` 的 `/=\s*"([\s\S]*?)"/`），文档里出现 `"` 会让 `editor: has` 读到半截文本。
+该边界已按协议提交 finding。

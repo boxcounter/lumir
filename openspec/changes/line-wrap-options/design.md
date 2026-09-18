@@ -343,13 +343,28 @@
 
 ### 真机侧的覆盖边界（如实记录，别当 bug 追）
 
-- 真机能给的**机器**判据只有三条：① 代码块横滚容器在不在 AX 树里（`role=region` + 读屏名）；
-  ② 焦点归属（`Escape` 后 `AXTextArea`）；③ `config.json` 的 sha256 / mtime 不变。真机套件没有
-  计算属性通道，「正文行折 / 不折」与「代码块行折 / 不折」的**视觉**口径只能看 `shots/`——
-  该轴的计算属性断言在视觉层（`render-codeblock.spec.ts`）。
-- 「启动口径来自 `config.json`」这条接线在**视觉层**验（同一份前端代码、只差引擎），真机套件当前
-  的 `config` 通道只透传 `keys`（`scripts/acceptance/lib/execute.mjs` 的 `writeConfig({ mode, keys })`），
-  要真机也验需扩那个调用——已按协议记成 finding，不在本 change 的 scope 内。
+- 真机能给的**机器**判据是三条：① 代码块横滚容器在不在 AX 树里（`role=region` + 读屏名）；
+  ② 焦点归属（`Tab` 后 `focused` 是容器 `AXGroup`、`Escape` 后回到 `AXTextArea`）；③ `config.json`
+  的内容 sha256 不变 + 没有多出回写字段。真机套件没有计算属性通道，「正文行折 / 不折」与
+  「代码块行折 / 不折」的**视觉**口径只能看 `shots/`——该轴的计算属性断言在视觉层
+  （`render-codeblock.spec.ts`）。横滚的**幅度**（120px / End / Home）同样在视觉层机器断言，
+  真机侧只看截图序列（横滚位置不在 AX 通道里）。
+- **键盘路径实测结论**（2026-09-18，`21-wrap-default` PASS）：`Tab` 能把焦点送进容器、`→` / `End` /
+  `Home` 真的横滚、`Escape` 交还焦点。前提是**焦点起点要对**：`open` 之后焦点在左栏文件行按钮上，
+  此时一次 `Tab` 只走到左栏下一行（首轮实测就踩了这个坑，`→` 与上一张截图逐字节相同、`Home` 把 caret
+  挪到了文档首），场景因此先用 `clickEditor` 把焦点交给 `.cm-content` 再 `Tab`。
+- 「启动口径来自 `config.json`」这条接线在**视觉层**验（同一份前端代码，只差引擎）：真机套件当前的
+  `config` 通道只透传 `keys`（`execute.mjs` 的 `writeConfig({ mode, keys })`），要真机也验需扩那个调用
+  ——已按协议记成 finding，不在本 change 的 scope 内。
+- **`mtime` 层的不变性未验**：`file.unchangedSince` 比的是 **sha256**（内容逐字节），断言词汇里没有
+  「mtime 未变」这一形态（只有 `mtimeNewerThan`）。「瞬态、不落盘」的机器判据因此落在「内容 sha256
+  不变 + 没有多出 `line_wrap` / `code_block_wrap` 回写字段」上——sha256 是更强的判据（mtime 可能在
+  内容不变时抖动，反之不成立），但如实记录：本 change 没有断言 mtime 本身。
+- **套件解析侧的两处边界**（都与本 change 的场景写法有关，已按协议提交 finding）：
+  ① `lib/ax.mjs` 取 value 用非贪婪正则，文档里出现半角 `"` 时 `AXTextArea.value` 会被截断
+  （`editor.has` 假红、`editor.not` 假绿）——探针文档因此刻意不含半角双引号；
+  ② `lib/execute.mjs` 的 `record` 此前不认 `env:` 前缀（记出的基线是 null），本 change 顺手改成与
+  `file` 断言同源的 `resolveSpecPath`（1 行，属 scope 外的必要改动，已在 review-request 里单列）。
 
 ## 5. 与 REVIEW.md 的对表（本 change 的实现面）
 

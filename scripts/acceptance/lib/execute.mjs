@@ -681,7 +681,11 @@ async function doAction(step, { ctx, cu, scenario, vars, pid, evidence }) {
       return clickWithRetry(cu, p, px, py);
     }
     case "record": {
-      const file = path.isAbsolute(step.file) ? step.file : path.join(vaultDir(), step.file);
+      // 路径口径与 file 断言同源（M180）：`env:` 前缀此前不被识别，记出来的是一个不存在的
+      // 路径、基线成 null——`unchangedSince` 于是报「内容已变：undefined -> …」（方向是安全的
+      // 假红），但同一个 null 基线在 `mtimeNewerThan` 那边会退化成「0 基线」的假绿。统一走
+      // resolveSpecPath：`env:` 前缀、绝对路径与 vault 相对路径三种写法都按 file 断言的口径解析。
+      const file = resolveSpecPath(step.file);
       vars[step.as ?? step.name] = await fileInfo(file);
       return vars[step.as ?? step.name];
     }

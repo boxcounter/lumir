@@ -140,13 +140,15 @@ D3 = 命令作用域 `global`，D4 = 代码块容器键盘可达性随本 change
 - [x] 7.2 新增场景 `21-wrap-default.md`（编号续现有序列）：探针文档由 `vaultWrite` 现造（含超长代码行
       与超长正文行），默认口径下断言代码块横滚容器在 AX 树里；Tab → → / End / Home 的滚动序列留截图
 - [x] 7.3 新增场景 `22-wrap-toggle.md`：`[keys]` 绑 `Cmd-Shift-J` / `Cmd-Shift-K` 后翻转，
-      断言容器在 AX 树里消失/回来、`Escape` 后焦点回 `AXTextArea`，且 `config.json` 的 sha256 与
-      mtime 逐字节不变（design §2.7）。**采样纪律**：基线记在 vault 已装载、文件已打开之后，
-      两次采样之间不触发 vault 打开 / 重映射（`vault_remap` 与 `write_last_vault_to` 都会写
-      config.json）——按 M166 评审备录写进场景说明
+      断言容器在 AX 树里消失/回来、`Escape` 后焦点回 `AXTextArea`，且 `config.json` 的 **sha256
+      与翻转前一致 + 没有多出 `line_wrap` / `code_block_wrap` 回写字段**（design §2.7）。
+      **mtime 层未验**（harness 的断言词汇里没有「mtime 未变」形态，只有 `mtimeNewerThan`）——见
+      9.4。**采样纪律**：基线记在 vault 已装载、文件已打开之后，两次采样之间不触发 vault 打开 /
+      重映射（`vault_remap` 与 `write_last_vault_to` 都会写 config.json）——按 M166 评审备录写进场景说明
 - [x] 7.4 真机断言不依赖重试次数（本场景的按键是 chord，套件按既有口径盲发；断言取「AX 树里的节点
-      在/不在」「焦点归属」「配置字节不变」三态，不是「按了几次」）；起实例前确认 1430 空闲、1420
-      全程未碰
+      在/不在」「焦点归属」「配置内容不变」三态，不是「按了几次」）；起实例前确认 1430 空闲、1420
+      全程未碰。**实测补记**：键盘路径要先把焦点交给编辑器（`clickEditor`）再 `Tab`——`open` 之后焦点
+      在左栏文件行按钮上，直接 `Tab` 走不到容器（首轮实测现场已留在 `shots/` 与 steps.md）
 - [x] 7.5 起实例前 `df -h` 看水位；用 `pnpm tauri dev`（不是裸二进制），规避白屏陷阱
 - [x] 7.6 证据落在 `test-results/acceptance/`（git 外），报告里的每个路径先用绝对路径 `ls` 一遍
 
@@ -169,7 +171,18 @@ D3 = 命令作用域 `global`，D4 = 代码块容器键盘可达性随本 change
 - [ ] 9.1 `src/main.ts` 的 scope：本 mission 的 scope 清单不含它，但 tasks 2.5 / 2.6 要求改它，
       且不改就编译不过。已两次报 tower（`clarify-request` / `clarify-followup`）请求纳入 scope；
       **在 tower 答复前，`src/main.ts` 的两处改动属于「按任务清单执行、scope 待补」状态**
-- [ ] 9.2 新增的 5 张视觉基线待 Alex 过目（AGENTS.md 硬规则「基线更新是人肉裁决点」；本次是
+- [ ] 9.2 `scripts/acceptance/lib/execute.mjs` 的 scope：同上，本文件不在 scope 清单里，但 `record`
+      动作不认 `env:` 前缀（基线记成 null），不修则 task 7.3 的 `config.json` 逐字节断言无从落地。
+      改动是把路径解析统一到 `file` 断言同源的 `resolveSpecPath`（**1 行**），已在 review-request 里单列
+- [ ] 9.3 新增的 5 张视觉基线待 Alex 过目（AGENTS.md 硬规则「基线更新是人肉裁决点」；本次是
       **新增**基线而非更新既有基线，既有基线逐张零变更已实测）
-- [ ] 9.3 真机侧没有计算属性通道，「正文行折 / 不折」与「代码块行折 / 不折」的视觉口径只能看
-      `shots/`；该轴的计算属性断言在视觉层（design §4 的「真机侧的覆盖边界」）
+- [ ] 9.4 真机的 `mtime` 层不变性未验：`file.unchangedSince` 比的是 sha256（内容逐字节），断言词汇里
+      没有「mtime 未变」这一形态。task 7.3 的口径因此收窄为「内容 sha256 不变 + 无回写字段」（见
+      design §4 的「真机侧的覆盖边界」）
+- [ ] 9.5 真机侧没有计算属性通道，「正文行折 / 不折」「代码块行折 / 不折」的视觉判断只能看 `shots/`；
+      横滚幅度（120px / End / Home）的机器断言在视觉层。真机的键盘路径本身已验（`focused` 容器
+      → 横滚 → `Escape` 交还焦点；起点要先 `clickEditor`，见 `21-wrap-default` 的说明）
+- [ ] 9.6 两条 out-of-scope 的 harness 边界已按协议提交 finding（`lib/ax.mjs` 的 value 截断、
+      `lib/execute.mjs` 的 `record` 前缀；后者本 change 顺手修了 1 行）；另有 acceptance 套件的
+      `config` 通道表达不了 `[editor]` 新配置项（finding）
+
