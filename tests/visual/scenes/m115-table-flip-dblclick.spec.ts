@@ -52,6 +52,48 @@ function bookmarkTableGrid(page: import("@playwright/test").Page) {
   });
 }
 
+/** 视口快照：scrollTop、选区、以及「触发时机」表头在视口内的中心 y（视觉位置的真值）。 */
+function windowSample(page: import("@playwright/test").Page) {
+  return page.evaluate(() => {
+    const view = (document.querySelector(".cm-content") as unknown as { cmTile: { root: { view: any } } }).cmTile.root.view;
+    const m = view.state.selection.main;
+    const tables = [...document.querySelectorAll(".cm-lp-table")] as HTMLElement[];
+    const table = tables.find((t) => t.textContent?.includes("bookmark_saved"))!;
+    const header = [...table.querySelectorAll(".cm-lp-table-cell")].find(
+      (c) => c.textContent?.trim() === "触发时机",
+    ) as HTMLElement;
+    const sr = view.scrollDOM.getBoundingClientRect();
+    const hr = header.getBoundingClientRect();
+    return {
+      scrollTop: view.scrollDOM.scrollTop,
+      from: m.from,
+      to: m.to,
+      text: view.state.doc.sliceString(m.from, m.to),
+      // 表头中心在视口内的 y——「视口是否上跳」的视觉量（scrollTop 只记账，见下方断言注释）
+      headerY: hr.top + hr.height / 2 - sr.top,
+    };
+  });
+}
+
+/** 等视口落定：首次采样之后（间隔 60ms）连续两次确认 scrollTop / 选区 / 表头 y 都不再变化，上限 3s。 */
+async function settledSample(page: import("@playwright/test").Page) {
+  let prev = await windowSample(page);
+  const start = Date.now();
+  let stable = 0;
+  while (Date.now() - start < 3000 && stable < 2) {
+    await page.waitForTimeout(60);
+    const cur = await windowSample(page);
+    const same =
+      cur.scrollTop === prev.scrollTop &&
+      cur.from === prev.from &&
+      cur.to === prev.to &&
+      Math.abs(cur.headerY - prev.headerY) < 0.5;
+    stable = same ? stable + 1 : 0;
+    prev = cur;
+  }
+  return prev;
+}
+
 test("表格进入视口后及时渲染为 grid，不等后台 500ms 解析 tick", async ({ page }) => {
   test.setTimeout(90_000);
   await openDocWithLaggyParse(page);
@@ -102,23 +144,34 @@ test("双击底部边缘表头：选中「触发时机」本身，视口不上�
     const r = header.getBoundingClientRect();
     view.scrollDOM.scrollTop += r.top + r.height / 2 - (sr.top + view.scrollDOM.clientHeight - 70);
     const r2 = header.getBoundingClientRect();
-    return { x: r2.left + r2.width / 2, y: r2.top + r2.height / 2 };
+    return {
+      x: r2.left + r2.width / 2,
+      y: r2.top + r2.height / 2,
+      // 瞄准时表头在视口内的中心 y：下方「视口是否上跳」以它为基准
+      aimedY: r2.top + r2.height / 2 - sr.top,
+    };
   });
   const before = await page.evaluate(() => (document.querySelector(".cm-scroller") as HTMLElement).scrollTop);
   await page.mouse.click(point.x, point.y, { clickCount: 2, delay: 80 });
-  await page.waitForTimeout(300);
-  const after = await page.evaluate(() => {
-    const view = (document.querySelector(".cm-content") as unknown as { cmTile: { root: { view: any } } }).cmTile.root.view;
-    const m = view.state.selection.main;
-    return {
-      from: m.from,
-      to: m.to,
-      text: view.state.doc.sliceString(m.from, m.to),
-      scrollTop: (document.querySelector(".cm-scroller") as HTMLElement).scrollTop,
-    };
-  });
+  // 点击后等视口落定再断言（M177）：慢环境里发现重试链 / CM 的滚动锚定在点击后还会再动几帧，
+  // 单点测量取到的是过渡态——CI 现场首跑测到 73px、重试即绿，本地 40 帧采样（1.4s）恒为 0。
+  const after = await settledSample(page);
   expect(after.text, "双击应选中「触发时机」").toBe("触发时机");
   expect(after.from, "选区应落在 bookmark 事件表表头的词区间").toBe(exp.from);
   expect(after.to).toBe(exp.to);
-  expect(Math.abs(after.scrollTop - before), "双击不应引起视口跳变").toBeLessThan(50);
+  // 「视口不上跳」判在**视觉量**（瞄准时表头的视口内 y）而非 raw scrollTop：视口上方内容高度
+  // 变化时 CM 的滚动锚定会等量补偿 scrollTop，内容视觉不动（CI 首跑那 73px 属这一类）。原始缺陷
+  // 的形态是表头连同内容整体移位约一屏（commit 895d6f1），瞄准点在 clientH-70——阈值 120px
+  // 对一屏级位移留足检出余量，又不把上述补偿当回归。
+  const driftY = Math.abs(after.headerY - point.aimedY);
+  const driftTop = Math.abs(after.scrollTop - before);
+  // 落定后的实测值进日志：本场景是契约性质（Chromium 复现不出 red 态，见文件头），
+  // 下次若在 CI 抖动，这行就是「稳定后的位移是多少」的第一手证据。
+  console.log(
+    `[m115] 双击后落定：aimedY=${point.aimedY.toFixed(1)} headerY=${after.headerY.toFixed(1)} driftY=${driftY.toFixed(1)} driftTop=${driftTop.toFixed(1)} sel=${after.text}`,
+  );
+  expect(
+    driftY,
+    `双击不应引起视口跳变：表头视口内 y 由 ${point.aimedY.toFixed(1)} 变为 ${after.headerY.toFixed(1)}（位移 ${driftY.toFixed(1)}px，scrollTop 差 ${driftTop.toFixed(1)}px）`,
+  ).toBeLessThan(120);
 });

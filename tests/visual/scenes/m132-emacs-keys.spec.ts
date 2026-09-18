@@ -364,13 +364,29 @@ test("widget 滚动键走统一键位表；文本里的 ← 仍走原生 caret",
   await page.keyboard.press("Home");
   await expect.poll(scrollLeft).toBe(0);
   await page.keyboard.press("End");
+  // 「滚到最右」不按 scrollLeft + clientWidth === scrollWidth 判定（M177）：滚动条占布局宽度时
+  // （CI runner 用 classic 滚动条、本地用 overlay 滚动条），`scrollbar-gutter: stable`
+  //（style.css 的 .cm-lp-table-scroll）会预留 15px 沟槽，Chromium 的 scrollWidth 与可达滚动
+  // 上限在该状态下相差恰好一个沟槽宽。CI 现场四次 run / 八次尝试逐位相同：scrollWidth 2163
+  // 而 scrollLeft + clientWidth 恒为 2148（差 15）——是环境常数，不是抖动。本地复现（强制
+  // ::-webkit-scrollbar 占位后重跑）：scrollLeft 1326 + clientWidth 750 = 2076、scrollWidth
+  // 2091，差值同为 15，而表格自然宽右缘距容器右缘只有 0.17px——视觉上确已到最右。
+  // 故判据换成两条与环境无关的事实：内容右缘进入容器可见区（overhang）＋浏览器钳位处不再能右滚。
   const atEnd = await page.evaluate(() => {
     const el = document.querySelector(".cm-lp-table-scroll")!;
-    return { scrollLeft: el.scrollLeft, scrollWidth: el.scrollWidth, clientWidth: el.clientWidth };
+    const grid = el.querySelector(".cm-lp-table") as HTMLElement;
+    return {
+      scrollLeft: el.scrollLeft,
+      // 表格自然宽右缘相对容器右缘的溢出量：到最右时为 0（未到最右时约等于剩余滚动距离）
+      overhang: grid.getBoundingClientRect().right - el.getBoundingClientRect().right,
+    };
   });
   expect(atEnd.scrollLeft).toBeGreaterThan(0);
-  // 滚到最右：可见右缘覆盖自然宽（scrollLeft 由浏览器钳到 scrollWidth - clientWidth）
-  expect(atEnd.scrollLeft + atEnd.clientWidth).toBeGreaterThanOrEqual(atEnd.scrollWidth - 1);
+  expect(atEnd.overhang, "滚动到最右后，表格自然宽右缘应落在容器可见区内").toBeLessThan(2);
+  // End 必须走到浏览器钳位的可达最右：已在最右时再按 → 不再右移
+  //（End 若只走固定步进而非钳位，这里就会移动）
+  await page.keyboard.press("ArrowRight");
+  expect(await scrollLeft(), "已在可达最右：→ 不再移动").toBe(atEnd.scrollLeft);
 
   // Escape：焦点交还编辑器
   await page.keyboard.press("Escape");
