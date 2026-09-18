@@ -112,8 +112,8 @@ worker 动工前、reviewer 给出 verdict 前逐条过一遍。每条按「症�
 
 **15. 同一 mission 被重复 spawn，两个 live loop 共写同一 worktree**
 - 症状：M165–M168 四个 mission 在 spawn 时各被注册两次（两组 spawn 相隔约 94 秒，名字加 `-2` 后缀、**agent id 相同**）；M168 两个 loop 都活着，并行往同一 worktree 写同一批文件，分支上短暂出现两套互斥契约（⌃A cell 级 vs 行级）。通信层按 agent id 解析发送者名字，两个 loop 的消息都标成同一个 roster 名——重复工作对 tower 不可见；同名 roster 再注册还会把既有 reviewer 绑定挤到别的 target（agent-122 已完成的 M165 clean 评审因此无法落章）。
-- 根因：未锁定。工作假说：存在另一会话/进程里的**孪生 tower 回路**——它看得到同样的 inbox、复制 spawn（`-2` 后缀）、也会自己评审与 merge（M168 的 merge `44cd3a0` 非本 tower 会话执行；另有一次非本会话发起的 merge 尝试被门禁拦下）。
-- 证据：`.tower/comms/log/activity.log`（`23:34:38` vs `23:36:12` 两组 spawn、01:04:43 `merge.blocked`、01:05:47 非本会话 merge）；findings `.tower/comms/findings/20260918-worker-interaction-fixes-2-improve-towerspawn-mission-agent-id-live-loop-worktree.md` 与 `20260918-worker-codeblock-lang-proposal-bug-agent-wt-167.md`；被拦评审 `.tower/comms/inbox/20260918-reviewer-interaction-fixes-b-tower-review-result-blocked-m165-tip-b9ce80c-clean-merge-roster-re.md`。
+- 根因：未锁定。候选假说两个：① 另一会话/进程里的**孪生 tower 回路**——看得到同样的 inbox、复制 spawn（`-2` 后缀）、也自己评审与 merge；② 本机 CLI 会话的重启/窗口重放把同一批 tower 动作执行了两次（早先 `ps` 证据：本机只有一代 CLI 进程，倾向②但无法坐实）。**校正（批次收尾核对 activity.log 后）**：本条原稿称「M168 的 merge `44cd3a0` 非本 tower 会话执行」——不成立，本批四次 merge（`bda4fe4`/`44cd3a0`/`ef8f596`/`fe46310`）在 log 里全部记为 `tower merge`，即本会话执行；`01:04:43` 的 `merge.blocked` 是 M167 在 M166 合并后 tip-moved 的常规门禁拦截，不是外部发起的 merge 尝试。双写症状（同 agent id 双注册、同名 roster 挤绑）仍成立，根因照旧未锁定。
+- 证据：`.tower/comms/log/activity.log`（`23:34:38` vs `23:36:12` 两组同 agent id 的 spawn）；findings `.tower/comms/findings/20260918-worker-interaction-fixes-2-improve-towerspawn-mission-agent-id-live-loop-worktree.md` 与 `20260918-worker-codeblock-lang-proposal-bug-agent-wt-167.md`；被拦评审 `.tower/comms/inbox/20260918-reviewer-interaction-fixes-b-tower-review-result-blocked-m165-tip-b9ce80c-clean-merge-roster-re.md`。
 - 防线：spawn/resume 后约 2 分钟核 activity.log 尾部有无非本 tower 发起的 spawn/merge 行；发现 `-2` 同名注册立即收束到单一写者；resume 前确认旧实例已终态（`tower died` 行）。worker 侧：尽早 commit 让 tip 可评审；探针/临时目录带 mission 后缀（`/tmp/lumir-probe-<mission>`）；动工前 `ls -lT` 核对目标文件 mtime 是否晚于自己上次写入，发现被并发写入即停手上报，不靠覆盖取胜。
 
 ## 维护
