@@ -187,6 +187,16 @@ test('partial组超出后台提前范围仍完成且末端标记不重叠', asyn
 });
 
 test('100k密集项完整回调预算与最终标记', async ({ page }, info) => {
+  // CI 上跳过（M176，2026-09-18 tver 裁决，代替 mid-run 人工裁决）：CI 共享 runner 渲染不动
+  // 100k 密集列表，是环境能力问题而非回归，与「整页像素归本地」（M173）同一口径——性能敏感的
+  // 渲染断言不守 CI 门。证据：本测试首次出现在 CI 的 run 34689964849（2026-09-12）即 20.4s
+  // 超时失败，此后在 CI 从未绿过；pre-M173 的红 run 35295440948 同测试同形态（不是 M173 引入）；
+  // 本地两种模式 254 全绿（/tmp/lumir-m173-visual/）。**本地继续执行**：gate.sh visual 的默认
+  // 全量模式照跑本测试（本地渲染能力够），预算口径（p95 < 60ms）不变——CI 跳过不等于放宽预算。
+  // 条件只绑 CI、不绑 LUMIR_VISUAL_STRUCTURAL：那个开关在 playwright.config.ts 里定义为「只管
+  // 像素断言，结构 / 计算属性断言两个模式下都照跑」，顺带改其语义会与该处注释（本 mission 不可改）
+  // 脱节；本地结构模式跑这条只是重复本地已有的能力，不产生假绿。
+  test.skip(!!process.env.CI, 'CI runner 渲染 100k 密集列表超时（run 34689964849 起在 CI 从未绿过）；本测试归本地 scripts/gate.sh visual');
   const text = Array.from({ length: 100000 }, (_, i) => `${i === 99999 ? '999999999. [x]' : `${i + 1}.`} z`).join('\n');
   await page.addInitScript(() => {
     const original = window.setTimeout;

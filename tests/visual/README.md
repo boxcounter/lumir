@@ -46,7 +46,12 @@ CSS 动画（CodeMirror 光标闪烁）在截图时冻结，保证逐帧确定�
   **实际存在**的构建打进日志；本地 `scripts/visual/run.sh` 与 CI 调同一份脚本，两侧日志逐行可对照；
 - CI 置 `LUMIR_VISUAL_STRUCTURAL=1`：22 处像素断言不执行，只留 `[pixel-skip]` 日志与
   `pixel-skip` annotation（跳过留痕，不是静默通过），结构 / 计算属性断言照跑；
-- `visual.yml` 的 runner 钉 `macos-26`——原 `macos-latest` 会静默换代，渲染环境随之漂移。
+- `visual.yml` 的 runner 钉 `macos-26`——原 `macos-latest` 会静默换代，渲染环境随之漂移；
+- 同口径再收一条（M176）：`scenes/lists.spec.ts` 的「100k 密集项完整回调预算与最终标记」在 CI 上
+  `test.skip(!!process.env.CI)`——CI runner 渲染不动 100k 密集列表，属环境能力问题（该测试首次进 CI 的
+  run `34689964849` 即 20.4s 超时失败，此后在 CI 从未绿过），不是回归。本地不受影响：`scripts/gate.sh visual`
+  的默认全量模式照跑它（本地约 21s），单跑这一条用 `scripts/visual/run.sh --grep 100k密集项`；
+  本地结构模式也照跑（`LUMIR_VISUAL_STRUCTURAL` 只关像素断言）。
 
 **代价**：CI 绿不再代表像素层没回归。动了视觉相关代码（`src/style.css`、`src/preview/**`、
 场景本身）必须本地跑 `scripts/visual/run.sh` 或 `scripts/gate.sh visual`——
