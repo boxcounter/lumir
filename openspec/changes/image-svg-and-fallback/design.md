@@ -189,6 +189,22 @@ vault 里从别处下载的 svg 就能在打开笔记时执行脚本。所以 sp
 只允许 `<img>`（本仓现有路径就是 `<img>`，本 change 只是把这条原因写进合同，防将来「顺手改成
 内联」）。
 
+**实现期实测补充（M178，2026-09-18，chromium）**：把上面这条论证做成了一次内联实验（证据
+`test-results/acceptance/2026-09-18/image-fallback-after/inline-experiment.json`，脚本临时、不提交）。
+实测把两条腿分开看：
+
+| 腿 | 内联后的实测结果 | 与 `<img>` 上下文的对照 |
+|---|---|---|
+| 外部资源解析 | 内联 `external-ref.svg` 后**确实**发出 `https://example.invalid/lumir-svg-external-ref.png` 请求 | `<img>` 载入时零请求（视觉场景断言的是请求全集） |
+| 脚本执行 | 经 `innerHTML` 内联的 `<script>` **不执行**（HTML 规范：innerHTML 插入的 script 是惰性的）；把同一段脚本作为活的 script 节点插入时**执行**（标记与标题都变） | `<img>` 载入时零副作用标记 |
+
+所以更准确的表述是：**内联插入确定会打开外部资源解析；脚本执行取决于插入方式**（真正的解析式
+内联、或把脚本作为活节点插入时才执行，`innerHTML` 这一条路径本身是惰性的）。这不改变本节的结论
+（只用 `<img>`：两条腿都不需要押在「哪种插入方式更安全」上），但它说明条款的**理由**不该被读成
+「`innerHTML` 一定会跑脚本」。spec 的条款文字（「内联插入会同时打开两者」）未改——它约束的是
+「必须走 `<img>`」这条规则本身，规则不受这条实测影响；本条实测记在这里，供将来重写该条款理由时
+引用。
+
 **CSP 是第二道防线，不是本条款的理由**：成品 CSP（`src-tauri/tauri.conf.json:21`）是
 `script-src 'self'` + `img-src 'self' asset: data:`，内联 SVG 里的行内 `<script>`、`on*` 事件属性
 与外部 `<image href>` 今天都会被 CSP 挡下。禁止内联插入的理由是**不把这一点寄托在一行随时可能被
@@ -324,6 +340,13 @@ mermaid CLI、D2、Excalidraw 等导出器的默认形态（本机样本 `/Users
    （第三行同样 0×0）。
 2. **chromium 与 webkit 结果一致** ⇒ CI 的 chromium 视觉通道**能复现**它，fixture 型门禁成立，
    不必把这一族交给真机才能守。
+
+**第三条结论（M178 实现期追加，真机实测）**：引擎在「固有尺寸声明为零」的形态上**不一致**——
+`width="0" height="0"` + viewBox 的 svg，chromium 给出自然尺寸 0（本仓按解码失败处置 → 可见占位），
+WKWebView 给出默认对象尺寸 300×100（真机渲染成 `AXImage … 301×101`，是一张可见图像）。证据：
+`test-results/acceptance/2026-09-18/engine-diff-width0/ax-第一次运行-含-zero-svg.txt`（git 外，本机留存）。
+两条路径都不违反不变量（可见 / 有占位），但**本矩阵前五行的一致结论只覆盖「百分比固有宽度」这一族**，
+不要外推成「chromium 的读数等于真机读数」。
 
 **与 Alex 报告逐项闭合**：这一态**不触发** `onerror`（`complete=true`，且此时 `naturalWidth` 是 300
 而不是 0 —— `src/preview/attachments.ts:245-247` 的同步探测两个条件都不满足，等于空转）→ 没有错误

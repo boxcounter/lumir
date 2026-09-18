@@ -40,20 +40,22 @@ const REFS = {
  * 抛错 → 图片一律走「读取失败」占位），本场景要验真实渲染，因此在 stub 之后包一层。
  * 必须在 `page.goto` 之前调用（addInitScript 按注册顺序执行，stubTauri 在前）。
  */
-async function stubAttachmentReads(page: Page, files: Record<string, string>): Promise<void> {
-  await page.addInitScript((map: Record<string, string>) => {
+async function stubAttachmentReads(page: Page, files: Record<string, string>, delayMs = 0): Promise<void> {
+  await page.addInitScript((args: { map: Record<string, string>; delayMs: number }) => {
+    const { map, delayMs } = args;
     const internals = (window as any).__TAURI_INTERNALS__;
     const original = internals.invoke;
-    internals.invoke = async (command: string, args: { path?: string }) => {
-      if (command !== "fs_read_attachment") return original(command, args);
-      const content = map[args.path ?? ""];
-      if (content === undefined) throw { code: "fs_not_found", message: `文件不存在：${args.path}` };
+    internals.invoke = async (command: string, argv: { path?: string }) => {
+      if (command !== "fs_read_attachment") return original(command, argv);
+      if (delayMs > 0) await new Promise((resolve) => setTimeout(resolve, delayMs));
+      const content = map[argv.path ?? ""];
+      if (content === undefined) throw { code: "fs_not_found", message: `文件不存在：${argv.path}` };
       const bytes = new TextEncoder().encode(content);
       let binary = "";
       for (const b of bytes) binary += String.fromCharCode(b);
       return btoa(binary);
     };
-  }, files);
+  }, { map: files, delayMs });
 }
 
 async function open(
@@ -62,6 +64,7 @@ async function open(
   path = "combo.md",
   failures?: Record<string, { code: string; message: string }>,
   reads?: Record<string, string>,
+  readDelayMs = 0,
 ) {
   await stubTauri(page, {
     entries: [path, "assets/sample.svg", "assets/missing.png", "assets/missing.svg", "assets/wide.svg", "assets/zero-size.svg", "assets/script.svg", "assets/external-ref.svg", "assets/empty.png"].map((entry) => ({ path: entry, kind: "file", size: text.length, mtime_ms: 0 })),
@@ -74,7 +77,7 @@ async function open(
     failures,
   });
   // 顺序要紧：stubTauri 的 init script 先跑（它才挂出 __TAURI_INTERNALS__），我们的包装在后。
-  if (reads) await stubAttachmentReads(page, reads);
+  if (reads) await stubAttachmentReads(page, reads, readDelayMs);
   await page.goto("/");
   await page.locator(`.ft-row[title="${path}"]`).click();
 }
@@ -242,4 +245,31 @@ test("SVG 安全腿：脚本不执行、内嵌外链不发起请求、两处终�
   // 内联渲染时它必然出现，见 PR 说明里的临时内联实验）。
   const external = requests.filter((url) => !url.startsWith("http://127.0.0.1")).sort();
   expect(external).toEqual(["https://example.invalid/remote.png"]);
+});
+
+test("加载中状态在终态前始终可见（不留空窗）", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 1000 });
+  await page.route("**/example.invalid/**", (route) => route.abort());
+  // 读字节慢一拍（读桩注入延迟，真机上这段窗口由附件大小与磁盘决定）：源码已被 replace
+  // 装饰藏起来，此刻替换区若不可见就是用户看到的「空白」。延迟取得长一些，让采样落在
+  // 加载中窗口内而不是与终态抢时间。
+  await open(page, images, "images.md", undefined, imageAssets, 5000);
+
+  const statuses = page.locator(".cm-lp-image-status");
+  await expect(statuses.first()).toBeVisible();
+  // 一次页面调用里同时取文本与布局盒：两件事不会落在不同的瞬间。
+  const loading = await statuses.evaluateAll((els) =>
+    els.map((el) => {
+      const box = el.getBoundingClientRect();
+      return { text: (el.textContent ?? "").slice(0, 4), box: `${Math.round(box.width)}x${Math.round(box.height)}` };
+    }),
+  );
+  expect(loading.length, "加载中窗口内应有多处状态块（一次也没采到说明断言没落在窗口里）").toBeGreaterThan(0);
+  expect(loading.filter((item) => /^(0x|.*x0$)/.test(item.box)), "加载中状态块也必须占位").toEqual([]);
+  expect(loading.every((item) => item.text.startsWith("加载中…")), "加载中状态块带原始引用文本").toBe(true);
+
+  // 终态：加载中状态块全部撤下，替换区换成图片或可见占位（两者都不是空白）。
+  await expect(statuses).toHaveCount(0, { timeout: 20000 });
+  await expect(page.locator(".cm-lp-image-error")).toHaveCount(4);
+  expect(await readDocument(page)).toBe(images);
 });
