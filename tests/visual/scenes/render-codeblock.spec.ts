@@ -107,6 +107,128 @@ test("json 键着色不变量：任意形状的 json，键取属性色、字符�
   for (const token of jsKey) expect(token.cls).toBe("cm-lp-tok-string");
 });
 
+// ---------------------------------------------------------------------------
+// M179：yaml 的键名配色（方案 A——只把 legacy yaml mode 的 `atom` 改取属性名色）。
+// 修前现场：`atom` 落在 TOKEN_GROUPS 的 literal 组，而 `mode/yaml.js:77` 的 `return "atom"`
+// 是该文件里唯一一处、只由映射键分支产出——键因此与数字、布尔同色，整块只出一种颜色。
+// 契约与 json 同族（见「JSON 键名与值分色」）：键的语义是属性名，取属性色。
+// ---------------------------------------------------------------------------
+
+/** 逐 token 的 (原文, 类名)：原文按 token 边界切——yaml mode 的键正则吃前导缩进，故匹配一律先 trim。 */
+function tokenList(doc: string, info: string): Array<{ text: string; cls: string }> {
+  return highlightCode(doc, info).map((token) => ({ text: doc.slice(token.from, token.to), cls: token.cls }));
+}
+
+/** 某段原文命中的全部类名（trim 后逐字相等）；空数组 = 该文本没被着色。 */
+function classesOf(tokens: Array<{ text: string; cls: string }>, text: string): string[] {
+  return tokens.filter((token) => token.text.trim() === text).map((token) => token.cls);
+}
+
+test("yaml 键着色不变量：任意形态的键取属性色、MUST NOT 落字面量色", () => {
+  // 输入维度扫一遍而不是只钉一个 fixture（REVIEW.md 第 1 条：单案例只能证明那个案例被修好）。
+  // 形态取自可触及语料与真实 vault 的 `Logbook/README.md`（`dimensions:` 那张表）：顶层键、
+  // 嵌套键、序列项内的键、多词键、含 `-` / `.` / `/` / `+` 的键、非 ASCII 键。
+  const cases: Array<{ doc: string; keys: string[] }> = [
+    { doc: `dimensions:\n  - name: Goal\n    key: goal\n    source: monthly\n`, keys: ["dimensions", "name", "key", "source"] },
+    { doc: `outer:\n  inner:\n    deepest: 1\n`, keys: ["outer", "inner", "deepest"] },
+    { doc: `- name: Goal\n  key: goal\n`, keys: ["name", "key"] },
+    { doc: `Business line: Slax Reader\n`, keys: ["Business line"] },
+    { doc: `importance-urgency: x\na.b: y\nc/d: z\ne+f: g\n`, keys: ["importance-urgency", "a.b", "c/d", "e+f"] },
+    { doc: `类别: 1\n名字: 备忘录\n`, keys: ["类别", "名字"] },
+  ];
+  for (const { doc, keys } of cases) {
+    const tokens = tokenList(doc, "yaml");
+    for (const key of keys) {
+      const classes = classesOf(tokens, key);
+      expect(classes.length, `${JSON.stringify(doc)} 的键 ${key} 未被着色`).toBeGreaterThan(0);
+      for (const cls of classes) {
+        expect(cls, `${JSON.stringify(doc)} 的键 ${key}`).toContain("cm-lp-tok-property");
+        expect(cls, `${JSON.stringify(doc)} 的键 ${key} 落了字面量色`).not.toContain("cm-lp-tok-literal");
+      }
+    }
+  }
+});
+
+test("yaml 的 token 分工：键取属性色，字符串 / 布尔 / 数字 / 注释各归其色且不被牵连", () => {
+  const doc = `name: 'quoted'\ncount: 12\nflag: true\n# 注释\ndescription: 未加引号的标量\nlist:\n  - a\n`;
+  const tokens = tokenList(doc, "yaml");
+  // 键：五个形态各验一次（序列项内的 `name` 与顶层 `name` 同形，由上一用例的独立文档覆盖）
+  for (const key of ["name", "count", "flag", "description", "list"]) {
+    expect(classesOf(tokens, key), `键 ${key}`).toEqual(["cm-lp-tok-property"]);
+  }
+  // 值：字符串 / 数字 / 布尔 / 注释
+  expect(classesOf(tokens, "'quoted'"), "字符串值").toEqual(["cm-lp-tok-string"]);
+  expect(classesOf(tokens, "12"), "数字值").toEqual(["cm-lp-tok-literal"]);
+  expect(classesOf(tokens, "true"), "布尔值").toEqual(["cm-lp-tok-keyword"]);
+  expect(classesOf(tokens, "# 注释"), "注释").toEqual(["cm-lp-tok-comment"]);
+  // 未加引号的标量值与结构符号（`-` / `:`）本就不产出 token——修键名不改变这条既有边界
+  expect(classesOf(tokens, "未加引号的标量"), "未加引号的标量值").toEqual([]);
+  expect(classesOf(tokens, "a"), "序列里的标量值").toEqual([]);
+  // 已知边界（spec 里单列一条 scenario）：带引号的键走 yaml mode 的引号分支、产出 `string`
+  // token——与引号值同一个 token 名，token 名层面分不开键与值，故它仍取字符串色。要分开须改
+  // vendored parser 的词法，本 change 非目标（design §6 有同一行）。
+  expect(classesOf(tokenList(`"quoted key": v\n`, "yaml"), '"quoted key"'), "带引号的键").toEqual(["cm-lp-tok-string"]);
+});
+
+test("yml 与 yaml 逐 token 相同；yaml 的 atom 不外溢到 toml / json / javascript", () => {
+  const doc = `dimensions:\n  - name: Goal\n    key: goal\n`;
+  // 别名归一：同一段代码两个 info string 得到逐 token 相同的 from / to / cls
+  expect(highlightCode(doc, "yml")).toEqual(highlightCode(doc, "yaml"));
+
+  // toml 的 `atom`（表头 / 布尔 / 日期）取色不变，仍是字面量色——tokenTable 只挂在 yaml 项上
+  const tomlDoc = `[[hooks]]\nevent = 'PreToolUse'\nenabled = true\nretries = 3\nsince = 1979-05-27\n# 注释\n`;
+  const toml = tokenList(tomlDoc, "toml");
+  expect(classesOf(toml, "[[hooks]]"), "toml 表头").toEqual(["cm-lp-tok-literal"]);
+  expect(classesOf(toml, "true"), "toml 布尔").toEqual(["cm-lp-tok-literal"]);
+  expect(classesOf(toml, "1979-05-27"), "toml 日期").toEqual(["cm-lp-tok-literal"]);
+  expect(classesOf(toml, "event"), "toml 键").toEqual(["cm-lp-tok-property"]);
+  expect(classesOf(toml, "'PreToolUse'"), "toml 字符串").toEqual(["cm-lp-tok-string"]);
+  expect(classesOf(toml, "3"), "toml 数字").toEqual(["cm-lp-tok-literal"]);
+  expect(classesOf(toml, "# 注释"), "toml 注释").toEqual(["cm-lp-tok-comment"]);
+
+  // json / javascript 的键口径不跟着变（json 键属性色、js 字符串键字符串色）。
+  // json 键同时带 string 与 propertyName 两个 tag、类名因此是多类并存，故按 includes 判而不是值相等。
+  const jsonKey = classesOf(tokenList(`{"name": "lumir"}`, "json"), '"name"');
+  expect(jsonKey.length, "json 键未被着色").toBeGreaterThan(0);
+  for (const cls of jsonKey) expect(cls, "json 键").toContain("cm-lp-tok-property");
+  const jsKey = classesOf(tokenList(`const a = {"name": "lumir"};`, "javascript"), '"name"');
+  expect(jsKey.length, "js 键未被着色").toBeGreaterThan(0);
+  for (const cls of jsKey) {
+    expect(cls, "js 键").toContain("cm-lp-tok-string");
+    expect(cls, "js 键").not.toContain("cm-lp-tok-property");
+  }
+
+  // 缓存按语言分流（classOf 的缓存键含语言名）：同一个 token 名在两个语言下必须互不串味。
+  // 先 yaml 再 toml 再 yaml，两侧读数都不许变——缓存若不按语言分键，第二次读会拿到第一次的类名。
+  const yamlAgain = tokenList(doc, "yaml");
+  expect(classesOf(yamlAgain, "name")[0]).toBe("cm-lp-tok-property");
+  expect(classesOf(tokenList(tomlDoc, "toml"), "true")).toEqual(["cm-lp-tok-literal"]);
+  expect(classesOf(tokenList(doc, "yaml"), "name")[0]).toBe("cm-lp-tok-property");
+});
+
+test("yaml / toml 的着色边界：超上限、无键的纯列表、未收录语言", () => {
+  // 先给正观测：有键的 yaml 块确实产出 token（否则下面的负向断言在空集上空转，REVIEW.md 第 2 条）
+  expect(classesOf(tokenList(`k: v\n`, "yaml"), "k")).toEqual(["cm-lp-tok-property"]);
+
+  // 超过单一代码块上限（64 KiB）即回落纯文本，与语言无关
+  const bigYaml = `k: v\n`.repeat(14000); // 70000 字符 > 64 KiB
+  const bigToml = `k = 1\n`.repeat(14000);
+  expect(bigYaml.length).toBeGreaterThan(64 * 1024);
+  expect(bigToml.length).toBeGreaterThan(64 * 1024);
+  expect(highlightCode(bigYaml, "yaml"), "超大 yaml 块").toEqual([]);
+  expect(highlightCode(bigToml, "toml"), "超大 toml 块").toEqual([]);
+  // 同一段内容在阈值内着色、超阈值不着色，差别只来自长度而不是语言或内容
+  expect(highlightCode(bigYaml.slice(0, 64 * 1024), "yaml").length).toBeGreaterThan(0);
+
+  // 无键的纯列表块：parser 只给 `meta` 与 `null`，整块不出 token（yaml mode 的能力边界，两侧一致）
+  expect(highlightCode(`- a\n- b\n`, "yaml"), "无键的纯列表").toEqual([]);
+
+  // 未收录语言与无 info 围栏保持纯文本
+  for (const info of ["", "  ", "brainfuck-nope", "toml-lite", ".yml"]) {
+    expect(highlightCode(`k: v\n`, info), JSON.stringify(info)).toEqual([]);
+  }
+});
+
 test("≥5 种语言着色，未知/无标识保持纯文本，配色不越出 editorial token", async ({ page }) => {
   await open(page);
 
@@ -166,6 +288,115 @@ test("≥5 种语言着色，未知/无标识保持纯文本，配色不越出 e
   // 这里补一张元素级基线（同 m133 的 overlay 元素截图口径）把键/值分色钉在视觉层。
   // 必须放在整页截图**之后**：元素截图会把该行滚进视口，先截会改掉整页基线的滚动位置。
   await expectScreenshot(page.locator(".cm-line", { hasText: `{"name": "lumir"` }).first(), "render-codeblock-json-line.png");
+});
+
+/** 把某行滚进视口：位置取自 CM6 的行块坐标（与字体 / 布局无关），不靠猜滚动量。 */
+async function scrollToLine(page: Page, needle: string): Promise<void> {
+  await page.evaluate((text) => {
+    const view = (document.querySelector(".cm-content") as unknown as { cmTile: { root: { view: any } } }).cmTile.root.view;
+    const doc: string = view.state.doc.toString();
+    const at = doc.indexOf(text);
+    if (at < 0) throw new Error(`文档里没有 ${text}`);
+    view.scrollDOM.scrollTop = Math.max(0, view.lineBlockAt(view.state.doc.lineAt(at).from).top - 40);
+  }, needle);
+}
+
+/** 某行上**真的上了色**的 token（原文 trim、计算色 ≠ 行自身色），按文档顺序。
+ *  CM6 只为可见区域建装饰，故调用前须先 `scrollToLine`；再等目标 token 真出现才读。
+ *  比色值不比类名：围栏侧是 `cm-lp-tok-*`、code 模式侧是 CM6 自动生成的 `ͼ*`。 */
+async function coloredTokens(page: Page, lineNeedle: string, expectToken: string) {
+  const line = page.locator(".cm-line", { hasText: lineNeedle }).first();
+  await line.waitFor();
+  const read = () =>
+    line.evaluate((el) => {
+      const base = getComputedStyle(el).color;
+      return [...el.querySelectorAll<HTMLElement>("span")]
+        .map((span) => ({ text: (span.textContent ?? "").trim(), color: getComputedStyle(span).color }))
+        .filter((token) => token.text !== "" && token.color !== base);
+    });
+  await expect
+    .poll(async () => (await read()).some((token) => token.text === expectToken), {
+      message: `「${lineNeedle}」行上应出现已着色的 ${expectToken}`,
+    })
+    .toBe(true);
+  return read();
+}
+
+test("DOM：同段 yaml 在围栏（yaml）与只读 .yml / .yaml 文件（code 模式）里配色逐条相同", async ({ page }) => {
+  // code 模式侧的内容直接从 fixture 的 ```yaml 围栏里取——「同一段 yaml」由构造保证，
+  // 两处各写一份会在下一次改 fixture 时静默漂移（REVIEW.md 第 8 条）。
+  const yamlBlock = /```yaml\n([\s\S]*?)```/.exec(source)?.[1] ?? "";
+  expect(yamlBlock, "fixture 里应有 ```yaml 围栏").toContain("key: goal");
+  await stubTauri(page, {
+    entries: [
+      { path: "languages.md", kind: "file", size: source.length, mtime_ms: 0 },
+      { path: "config.yml", kind: "file", size: yamlBlock.length, mtime_ms: 0 },
+      { path: "config.yaml", kind: "file", size: yamlBlock.length, mtime_ms: 0 },
+    ],
+    files: { "languages.md": source, "config.yml": yamlBlock, "config.yaml": yamlBlock },
+  });
+  await page.goto("/");
+  await page.locator('.ft-row[title="languages.md"]').click();
+  await expect(page.locator(".cm-lp-tok-keyword").first()).toBeVisible();
+
+  // 围栏侧（md 渲染路径）：取一段同时含键与行尾注释的行——两个 token、两种色，比单 token 更有区分度
+  await scrollToLine(page, "特殊维度");
+  const fenceLine = await coloredTokens(page, "特殊维度", "name");
+  expect(fenceLine).toEqual([
+    { text: "name", color: COLOR.note },
+    { text: "# 特殊维度：values 来自当月 _monthly.md", color: COLOR.dim },
+  ]);
+  await scrollToLine(page, "key: goal");
+  const fenceKeyLine = await coloredTokens(page, "key: goal", "key");
+  expect(fenceKeyLine).toEqual([{ text: "key", color: COLOR.note }]);
+
+  // code 模式侧：只读文件，同一段 yaml（逐字节相同）
+  for (const file of ["config.yml", "config.yaml"]) {
+    await page.locator(`.ft-row[title="${file}"]`).click();
+    await expect(page.locator(".cm-content"), file).toHaveAttribute("contenteditable", "false");
+    await expect(page.locator(".cm-content"), file).toHaveAttribute("aria-readonly", "true");
+    expect(await coloredTokens(page, "特殊维度", "name"), file).toEqual(fenceLine);
+    expect(await coloredTokens(page, "key: goal", "key"), file).toEqual(fenceKeyLine);
+  }
+
+  // 围栏侧 ```yml：别名走同一条 parser 路径，键同样取属性名色
+  await page.locator('.ft-row[title="languages.md"]').click();
+  await expect(page.locator(".cm-lp-tok-keyword").first()).toBeVisible();
+  await scrollToLine(page, "key: category");
+  expect(await coloredTokens(page, "key: category", "key")).toEqual([{ text: "key", color: COLOR.note }]);
+});
+
+test("DOM：围栏 toml / yaml 的取色（键属性色、toml 的 atom 不跟着变）", async ({ page }) => {
+  await open(page);
+
+  // 像素断言排在最前，顺序固定：先整页（滚到新增块所在位置）再元素级——元素截图会把目标行滚进
+  // 视口，先截会改掉整页位置。放在计算色断言之前是为了让「视觉层」这一关独立可达：只改类名而不
+  // 改色值这类回归计算色断言看不出来，只有基线比得出来（REVIEW.md 第 1、3 条）。
+  await scrollToLine(page, "[[hooks]]");
+  // 整页这张**必须覆盖容差**（REVIEW.md 第 3 条）：实测把 yaml 的键色改回旧值（键回到字面量赭色），
+  // 这张 1200×800 的差异是 **958 像素**，而全局 maxDiffPixelRatio 0.001 的额度是 **960 像素**——
+  // 差 2 像素就静默假绿。0.0005（480 像素）留 2 倍余量，同时仍远大于本地渲染抖动（同一基线的
+  // 正常 run 逐像素零差异）。元素级那张不受此问题影响（766×29，额度 22 像素、差异 92 像素）。
+  await expectScreenshot(page, "render-codeblock-toml-yaml.png", { maxDiffPixelRatio: 0.0005 });
+  await expectScreenshot(page.locator(".cm-line", { hasText: "event = 'PreToolUse'" }).first(), "render-codeblock-toml-line.png");
+  await expectScreenshot(page.locator(".cm-line", { hasText: "特殊维度" }).first(), "render-codeblock-yaml-line.png");
+
+  // yaml：键取属性色、注释取注释色。修前这一行的 span 是 `cm-lp-tok-literal` / `cm-lp-tok-comment`
+  //（键与数字、布尔同色 = 整块只出一种颜色），本断言即那条旧口径的反转。
+  await scrollToLine(page, "特殊维度");
+  expect(await coloredTokens(page, "特殊维度", "name")).toEqual([
+    { text: "name", color: COLOR.note },
+    { text: "# 特殊维度：values 来自当月 _monthly.md", color: COLOR.dim },
+  ]);
+
+  // toml：表头 `[[hooks]]` 与布尔 `true` 取字面量色——`atom` 在 toml mode 有三处语义
+  //（表头 / 布尔 / 日期），tokenTable 按 token 名映射、分不开，故本 change 明确不改 toml。
+  await scrollToLine(page, "[[hooks]]");
+  expect(await coloredTokens(page, "[[hooks]]", "[[hooks]]")).toEqual([{ text: "[[hooks]]", color: COLOR.warning }]);
+  expect(await coloredTokens(page, "enabled = true", "enabled")).toEqual([
+    { text: "enabled", color: COLOR.note },
+    { text: "true", color: COLOR.warning },
+  ]);
 });
 
 test("编辑态：块内输入即时着色，颜色不溢出到块外段落", async ({ page }) => {

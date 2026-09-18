@@ -56,12 +56,25 @@ type TokenTable = Record<string, Tag>;
  * 兜底只按完整 token 名命中，复合名查不到。净效果：键退化成纯 string、与值同色。
  * 补上这张表后 `string property` 解析为 [string, propertyName]，套用哪个类由
  * TOKEN_GROUPS 的条目序裁决（见其注释）。
- * json 是本文件唯一带 tokenTable 的语言：javascript/typescript 的 objprop 走同一条
- * `cx.style + " property"` 分支，但那里字符串键本来就该是字符串色，不跟着改。
+ * json 与 yaml 是本文件**仅有的两处** tokenTable（另一处见 YAML_TOKEN_TABLE 的说明）。
+ * javascript/typescript 的 objprop 走同一条 `cx.style + " property"` 分支，但那里字符串键
+ * 本来就该是字符串色，不跟着改。
  * 只挂在下面 LANGUAGES 的 json 项上——那是 code 模式与 markdown 代码块共用的同一张表，
  * 键色两侧同源，不存在各写一份的漂移面（REVIEW.md 第 8 条）。
  */
 export const JSON_TOKEN_TABLE: TokenTable = { property: tags.propertyName };
+
+/**
+ * yaml 专属的 tokenTable：legacy yaml mode 把**映射键**标成 `atom`
+ * （`legacy-modes/mode/yaml.js:77` 的 `return "atom"`——该文件里唯一一处，只在「pairs → key」
+ * 分支产出），而 `atom` 落在 TOKEN_GROUPS 的字面量组，键因此与数字、布尔同色：整块只出一种
+ * 颜色，观感上等同于没着色。键的语义是属性名（与 json 的对象键同口径），故在 token 名层面
+ * 重映射为 propertyName。
+ * **MUST NOT 外溢到 toml**：`atom` 在 toml mode 有三处语义（表头 `[x]` / `[[x]]`、布尔、日期，
+ * 见 `mode/toml.js:44,57,59`），token 名层面不可区分——把它一起改成属性色会让表头与布尔、日期
+ * 同色，那是另一个决定。表只挂下面 LANGUAGES 的 yaml 项，toml 项不挂。
+ */
+export const YAML_TOKEN_TABLE: TokenTable = { atom: tags.propertyName };
 
 /**
  * 语言名 → StreamLanguage——**代码语言注册表的单一来源**（M152 收口）：code 模式
@@ -85,7 +98,7 @@ export const LANGUAGES: Record<CodeLanguage, StreamLanguage<unknown>> = {
   shell: StreamLanguage.define(shell),
   json: StreamLanguage.define({ ...json, tokenTable: JSON_TOKEN_TABLE }),
   toml: StreamLanguage.define(toml),
-  yaml: StreamLanguage.define(yaml),
+  yaml: StreamLanguage.define({ ...yaml, tokenTable: YAML_TOKEN_TABLE }),
   css: StreamLanguage.define(css),
   scss: StreamLanguage.define(sCSS),
   html: StreamLanguage.define(html),
