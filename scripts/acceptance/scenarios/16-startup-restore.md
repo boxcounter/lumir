@@ -31,7 +31,7 @@ steps:
       - shot: 失效路径的未打开空态
 ---
 
-说明：本场景覆盖 `openspec/changes/startup-restore-off-main-thread` 的两条机器可判路径
+说明：本场景覆盖 `openspec/changes/archive/2026-09-18-startup-restore-off-main-thread/` 的两条机器可判路径
 （tasks 3.3）——① 默认 config 启动后自动进入 vault 且不残留「恢复中」；② `last_vault` 失效时
 进入未打开空态 + 既有失效提示 + 「打开 vault」入口。
 
