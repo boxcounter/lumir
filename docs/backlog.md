@@ -96,7 +96,7 @@
     （M159 已有的 `restore_pending` / 世代号是先例，可复用），前端则要重新设计过渡态（进度或乐观切换），
     这会推翻本变更「不做过渡元素」的口径，因此不属收口范畴。建议时机：与 dogfood 的性能专项一起裁
     （与第 12 条同批），不要单独提前做。
-17. **CI 的 visual 与 perf 在 master 上长期红（自 2026-09-13），与本地 gate.sh 全绿结论相反**（M169 survey
+17. **CI 的 visual 与 perf 在 master 上长期红（自 2026-09-13），与本地 gate.sh 全绿结论相反**（**已核销**：治理批 M173/M174/M175 全部合并，核销记录见文末「已核销」节的 2026-09-18 条；M169 survey
     finding，worker-archive-survey，2026-09-18，high）：master 最后一次 push（`2f16f86`）上 visual 30+ 条
     失败（整页基线像素差 3176–7207px，容差仅 ~960px，远超临界抖动）、perf failure（但冷启动 median
     117.76ms < 300ms 合同，失败端点未定位）；rust / docs-check success。同一提交本地 `gate.sh visual`
@@ -117,8 +117,11 @@
       （导航行末端 +5px/200px ≈2.5%、frontmatter 值列 +7px），纯 ASCII 标签与 mono 元素裁图零差异；
       实测 22 条基线 20 红 2 绿（`22 failed / 232 passed`，run `35295440948` @`007aa086`）。触发窗口 =
       `0804552`（09-06 引入 text-autospace 等 editorial token）→ `cca9462`（09-12 基线重建）。**候选机制
-      （未验证）**：`tests/visual/package.json` 用 caret `^1.62.1` 未钉死，本机浏览器缓存同时存在
-      chromium-1234 与 -1243，入库基线可能由更新构建渲染——这正是 M173 任务 1 要坐实或推翻的那一步。
+      「入库基线可能由更新构建（chromium-1243）渲染」已被 M173 任务 1 实测推翻（2026-09-18）**：frozen
+      lockfile 把 @playwright/test 钉在 1.62.1，其 chromium 即 v1234（Chrome for Testing 151.0.7922.34），
+      与 CI 逐字同一构建；本机缓存里的 1243（153.0.8010.12）从未进入任何一次比对；本地同工具链全量
+      254 passed。差异只能来自 runner 侧系统字体 / 渲染链。finding
+      `20260918-worker-visual-ci-bug-m173-1-m172-frozen-ci-v1234.md`。
       反证已排除「本地假绿」：`scripts/visual/run.sh:12-23` 先查端口占用、再 `pnpm build`，并置
       `LUMIR_VISUAL_FRESH_SERVER=1` 关掉 `reuseExistingServer`，两种结论确实来自两个渲染环境。
     - **perf = 两个端点 + 一处结构性死锁**：`resident-memory` **9/9 确定性超阈**（实测 206.50–215.28MB >
@@ -131,9 +134,11 @@
       结构/计算属性断言、22 处整页像素对比挪回本地 `gate.sh visual`、`@playwright/test` 钉精确版本 +
       浏览器构建自证进日志、`macos-latest` 钉显式镜像）；M174 `feat/perf`（原话「允许提高 thresholds」+
       「无异议」——resident-memory 提阈（建议 250MB 档）、解锁基线死锁、keypress-to-paint 改与最近 N 次
-      master 中位数比较或提容忍）。本条登记时两支均 active、未合并。
-    - **在此期间口径不变**：本条上段的降级规则继续有效，任何引用「CI 全绿」的裁决依据须显式降级为
-      「本地 `gate.sh` 全绿 + rust / docs-check 绿」。
+      master 中位数比较或提容忍）。**三支均已合并**（M175 `7bea675`、M174 `d967ce8`、M173 `475f069`，
+      评审全 clean，M174 经两轮）；合并后首个 master push（`475f069`）上的 visual / perf run 即新规程首跑。
+    - **口径收尾（2026-09-18，治理批合并后）**：本条上段的降级规则解除，但「CI 全绿」的含义已被 M173
+      永久改变——`visual.yml` 绿只代表结构层不回归，整页像素没有 CI 兜底（口径见 `README.md` /
+      `AGENTS.md` / `tests/visual/README.md`）；像素层断言只能引用本地 `gate.sh visual` 的结果。
 18. **远程 http(s) 图片直连分支在现行 CSP 下必然失败，且错误文案误归因为「解码失败」**（M165 finding，
     worker-svg-proposal-2，2026-09-18，low，**待裁决**）：`src/preview/livePreview.ts:869-872` 把外链直接
     交给 `img.src`，而 `src-tauri/tauri.conf.json:21` 的 `img-src 'self' asset: data:` 不含 http(s)——
@@ -282,9 +287,23 @@
   会话内文件，留名备查）；同一 finding 文件
   `20260918-worker-rm-dead-param-improve-m171-finish-restore-root-is-some.md` 记的是上一条。
 
+### 门禁测量与 CI 环境（治理批遗留）
+
+- **keypress-to-paint 读数疑似帧量化，统计量宜从 median 改 min/p10**（M174 评审副产物观察，
+  2026-09-18，low，**待裁决（是否立项改统计口径）**）：CI 的 9 次 keypress 读数（22.35–53.20ms）
+  与 33.3ms 帧间隔呈量化关系，median 对这类量化分布既不敏感也不稳定；min / p10 更贴近「最好可达」
+  的渲染耗时。**需先取 CI 原始 samples 证实量化假设再动 spec**；落点会是
+  `tests/perf/thresholds.json` 的 `gate` 字段与 `docs/specs/perf-measurement.md` 判据节。
+- **CI runner 字体 / 渲染链探针（可选，纯诊断）**（M172 §7 分支 2 建议、M173 声明留白，
+  2026-09-18，low）：visual 红的环境根因（runner 侧字体解析）未被直接证实，只是排除了其它候选
+  （基线 sha256 40/40 相同、浏览器构建两侧同一、确定性复现）。像素对比已归本地，该探针只剩诊断
+  价值——仅当未来想把像素层拿回 CI 才需要。做法：一次性 workflow 步骤跑 `system_profiler
+  SPFontsDataType` + 页面内 `document.fonts.check()`，与本地对照。不立项不影响任何现行门禁。
+
 ### 文档指针与门禁清单
 
-- **门禁清单三处过期**（M153 finding，worker-testinfra，2026-09-17，low，**待修**）：M153 给
+- **门禁清单三处过期**（M153 finding，worker-testinfra，2026-09-17，low，**已核销**：2026-09-18 治理批
+  收尾由 tower 直改闭合，核销记录见文末「已核销」节）：M153 给
   `gate.sh quick` 加了 `docs-check` 与单测层、给 visual 层加了 isolation 断言，三处复刻门禁清单的文档随之
   过期——① `AGENTS.md:32-34` 逐行复刻了 `scripts/gate.sh` 的用法（现缺 quick 的 `docs-check` 与单测层
   `tsc-unit` + `unit-tests`，也缺 visual 层的 `isolation-runs`）；② `tests/visual/README.md` 全篇未提
@@ -322,6 +341,12 @@
   结果），归档对账只能以旧 push 的 CI 结果为准。修法：把「比对本地 HEAD 与 origin/master，不一致即
   报红」做成批次收尾 checklist 或 `scripts/gate.sh` 收尾步骤，不靠人记。finding
   `20260918-worker-archive-survey-bug-master-origin-master-merge-ci.md`。
+- **ADR 0002 §6 的 200MB 合同文本与现行 250MB 门禁阈值分叉，待显式文本修订**（M174 finding，
+  worker-perf-gate，2026-09-18，low，**待修**）：Alex 裁决「允许提高 thresholds」后 CI 阈值为 250MB，
+  但 ADR 0002 §6 仍写 200MB——ADR 是历史决策记录、不私改，需一次显式修订（把数字改为 250，或把口径
+  改写为 phys_footprint 测量值并注明与 200 时代的测量差异）。修订前分叉已在
+  `openspec/specs/perf-measurement/spec.md` 与 `tests/perf/thresholds.json` 双处标注。finding
+  `20260918-worker-perf-gate-improve-m174-follow-up-adr-0002-6-200mb-ci-250mb.md`。
 
 ### openspec 归档制品与实验脚本
 
@@ -692,5 +717,26 @@
   ② **`multi-vault-workspaces`**（M162 + M163 + M164，merge `eafd258` / `fb2dc26` / `2f16f86`）→ `openspec/changes/archive/2026-09-18-multi-vault-workspaces/`；「待 Alex 裁决」第 10 条状态更新段的「归档评审待 Alex」改为已归档。对账：tasks 39/39、7 条 ADD 落 `vault-workspace`、1 条 MODIFIED 落 `multi-tabs`（与 living 逐字只差 proposal 声明的两处，归档未误删 living 其它内容）；Alex 节点 2 裁决守卫判据的宽窄措辞差「**接受差异**」（living `multi-tabs/spec.md:127` 原文不动，理由是判据先于该 change 存在、行为不变）。
   ③ **`toc-popover-emacs-keys-and-max-height`**（M160，merge `d4ca60a`）→ `openspec/changes/archive/2026-09-18-toc-popover-emacs-keys-and-max-height/`；核销「待 Alex 裁决」第 20 条。对账：tasks 34/34（3.1 / 3.2 的产物由 tower 的 integration fix `a779cbb` 落盘；6.2 改由「零 Rust diff + CI `rust.yml` 在 `2f16f86` success」继承；6.4 由 M164 全量 26/26 与 `2026-09-18/13-toc` PASS 覆盖），2 条 MODIFIED 落 `toc-outline`、1 条 MODIFIED 落 `keymap-commands`。
   三份 living spec 的 Purpose 补了归属记录（`vault-workspace` / `toc-outline` / `keymap-commands`）。**顺带修正的失效指针**：`docs/backlog.md` 第 10 条指向的 `openspec/changes/multi-vault-workspaces/specs/...` 与第 12 条指向的 `openspec/changes/startup-restore-off-main-thread/design.md` 已改为 living spec / archive 路径；另有两处同类失效指针在 `scripts/acceptance/scenarios/13-toc.md:224` 与 `16-startup-restore.md:34`（本 mission scope 外），已投 finding（**M175 已闭合**：两处改指 `openspec/changes/archive/2026-09-18-*` 实际路径）。
+- 2026-09-18：**CI visual/perf 长期红治理批核销**（「待 Alex 裁决」第 17 条；M172 诊断 → Alex 三项裁决
+  → M173/M174/M175 落地）。M172（survey）定位：visual = runner 侧渲染环境不等价（基线 40/40 sha256
+  相同、差异只在字形栅格层、确定性复现）；perf = resident-memory 9/9 确定性超 200MB 阈 + keypress 基线
+  单样本冻结 + `update-baseline` 的 `if: success()` 结构性死锁。M173（merge `475f069`）：`visual.yml`
+  收窄为结构/计算属性断言（`LUMIR_VISUAL_STRUCTURAL=1`，22 处像素断言经 `expectScreenshot` 包装跳过，
+  空基线反向验证证明断言真执行/真跳过）、`@playwright/test` 钉 1.62.1、浏览器构建自证步骤（本地/CI
+  同一脚本）、`runs-on` 钉 `macos-26`、结构模式 `--update` 防呆；其任务 1 顺带推翻「基线由更新浏览器
+  构建渲染」的候选机制。M174（merge `d967ce8`）：resident-memory 阈 200→250MB（ADR 0002 §6 分叉双处
+  标注 + follow-up finding 待文本修订）、`update-baseline`/`cache-save` 改 `always()` 且逐指标裁决落盘
+  `perf-results/gate-status.json`（fail 不进基线、缺判据 fail-closed、薄基线 `minRuns=5` 降级不拒合）、
+  keypress 容忍线 60% + `spreadHeadroom` 浮动护栏；r1 评审抓出一处「浮动项惰性」措辞失真（真实上界
+  57.9%×1.2=69.4%），r2 修三处文字并补两条真差分探针后 clean。M175（merge `7bea675`）：backlog 第 17
+  条立项登记与验收场景失效指针修复。合并态 `gate.sh quick` 10/10 PASS。**留白**：runner 字体探针与
+  keypress 帧量化观察见「门禁测量与 CI 环境」节；新规程的首次 CI 实证以 `475f069` 上的 visual / perf
+  run 为准。
+- 2026-09-18：**门禁清单三处过期**（M153 finding `20260917-worker-testinfra-improve-agents-md-gate-sh-tests-visual-readme-md-isolation-readme-vi.md`，
+  原「待修 findings／文档指针与门禁清单」首条）→ 治理批收尾由 tower 直改闭合：① `AGENTS.md` 删掉
+  gate.sh 三行用法副本、改为指向脚本头注释的指针（canonical 居所原则）；② `tests/visual/README.md`
+  目录结构补 `isolation.test.mjs`（2 用例 / 7 条：run 目录隔离、证据脱敏与 fail-closed、symlink 拒绝）；
+  ③ `README.md` 门禁表 `visual.yml` 行补「另跑套件隔离断言」——目标行已被 M173 改写为结构层口径，
+  在其上补一句而非恢复原措辞。
 - 批次三：键位分发三轨并行 + 扩展名注册表漂移（M130/M131/M132）；save-ipc.ts 折回 ipc.ts（M132）；Ctrl-K/D/T 原生路径风险（M132）。
 - 批次二：DeepSeek Flash 试用结论——可做 build，review 环节（k3-256k）不能省。

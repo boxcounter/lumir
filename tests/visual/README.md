@@ -64,6 +64,7 @@ tests/visual/
   scenes/                      # 每个 .spec.ts 是一组场景
   scenes/expect-screenshot.ts  # 像素断言的唯一入口（LUMIR_VISUAL_STRUCTURAL=1 时跳过）
   baselines/                   # 入库的基线截图（Playwright snapshot 目录）
+  isolation.test.mjs           # 套件隔离断言（2 用例 / 7 条：run 目录隔离、证据脱敏与 fail-closed、symlink 拒绝；纯 node:test，CI 与 gate.sh visual 层都会跑）
   package.json                 # 自包含子项目：独立于根 workspace（--ignore-workspace）
 scripts/visual/run.sh          # 本地一键：构建 → 装依赖 → 对比（--update 更新基线）
 scripts/visual/browser-build.sh # 浏览器构建自证（本地与 CI 共用同一份）

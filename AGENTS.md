@@ -26,13 +26,7 @@ Lumir：本地文本工作台，当前阶段定位为 Emacs keybinding PKM（[AD
 
 ## 门禁（自验入口）
 
-统一入口：[scripts/gate.sh](scripts/gate.sh)，输出机器可读（`GATE PASS|FAIL|SKIP` 逐行 + `GATE RESULT` 汇总），任一 FAIL 退出码 1。
-
-```bash
-scripts/gate.sh          # quick：fmt + clippy + cargo test + bindings 漂移 + tsc + openspec validate
-scripts/gate.sh visual   # quick + 视觉回归（LUMIR_VISUAL_PORT 默认 4273 隔离）
-scripts/gate.sh all      # visual + 性能合同（release 构建，首次分钟级）
-```
+统一入口：[scripts/gate.sh](scripts/gate.sh)，输出机器可读（`GATE PASS|FAIL|SKIP` 逐行 + `GATE RESULT` 汇总），任一 FAIL 退出码 1。三档（`quick` / `visual` / `all`）的逐项内容与端口隔离参数以 `scripts/gate.sh` 头部注释为准（canonical 居所），此处不复刻。
 
 与 CI 对应：`rust.yml` / `visual.yml` / `perf.yml` / `docs-check.yml`（PR 与 master push 强制）。本地全绿才允许提交合并请求；基线数字（测试数、场景数）以最近一次全绿输出为准，不背口头值。
 
