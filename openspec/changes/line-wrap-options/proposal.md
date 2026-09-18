@@ -1,4 +1,4 @@
-# Proposal: 折行选项——文件默认折行、代码块默认不折行
+# Proposal: 折行显示选项——文件级默认折行、代码块默认不折行
 
 - Change ID: line-wrap-options
 - 日期: 2026-09-18
@@ -6,136 +6,179 @@
 
 ## Why
 
-Alex 实测原话（2026-09-18）：**「代码块——折行选项，默认不折行」**、**「文件的折行选项，默认折行」**。
+Alex 实测原话（2026-09-18）：「代码块——折行选项，默认不折行」「文件的折行选项，默认折行」。
+两句话要的是同一件事的两个方向：**折行按块类型取不同默认**，而不是全编辑器一个恒开的开关。
 
-这两句话与现状的关系并不相同，逐条说清：
+**一、现状是「一切皆折行」，且没有运行期开关。** 折行在 Lumir 里是一条写死的扩展：
+`src/editor.ts:1227` 的 `EditorView.lineWrapping` 装在 `sessionState()` 的扩展数组里，对每个会话、
+md 与只读 code 两种模式同样生效；`rg -n "lineWrapping" src/` 全仓只命中这一处，项目自己的样式里
+没有任何 `white-space` 覆盖（`src/style.css` 的 `white-space` 命中都属表格 cell、masthead、文件树等
+非编辑器内容面）。CM6 侧的实现口径是「内容元素上的一个 class」：基座把 `white-space: pre` 放在
+`.cm-content` 上，`lineWrapping` 再加一个 `.cm-lineWrapping` 把内容改成
+`white-space: break-spaces; word-break: break-word; overflow-wrap: anywhere`，且 `.cm-line` 自身
+不带 `white-space` 声明（上游 [view/src/theme.ts](https://raw.githubusercontent.com/codemirror/view/main/src/theme.ts)；
+本仓锁定 `@codemirror/view@6.43.11`，`pnpm-lock.yaml:108`）。也就是说折行是**整块内容元素**的开关，
+不是逐块能力——要让代码块与正文取不同口径，必须先补一层「按块类型覆盖」的机制，本 change 补的
+就是这一层（机制与四组合口径见 design §2.2–§2.4）。
 
-**一、文件级折行已是现行行为，缺的是「关掉」的手段。** 编辑器每个会话的扩展列表里都无条件装有
-`EditorView.lineWrapping`（`src/editor.ts:1227`，在 `sessionState(...)` 的扩展数组内），对 md 模式与
-只读 code 模式一视同仁。所以「文件默认折行」今天已成立，但没有对应的开关。Emacs 侧的对应物是
-`truncate-lines`：官方手册写明折行是缺省、「By default, continued lines are wrapped at the right
-window edge」，截断由 `C-x x t`（`toggle-truncate-lines`）**按 buffer 局部**开与关
-（[Line Truncation](https://www.gnu.org/software/emacs/manual/html_node/emacs/Line-Truncation.html)）。
-Lumir 当前阶段定位就是 Emacs keybinding PKM（[ADR 0006](docs/adr/0006-agent-positioning-deferred.md)），
-这个开关是同一手感的缺口。
+**二、代码块折行的代价，以及本仓既有的对照做法。** 代码块被折行后，缩进对齐与「一行一条语句」的
+阅读节奏都会碎掉。本仓对块级结构化内容一贯给横向滚动容器，只有代码块例外：
 
-**二、代码块今天也是「折行」，Alex 要的默认是「不折行」——落地后是一次可见的默认行为变更。**
-围栏代码块在 live preview 里不是 widget，而是普通文档行加装饰：`src/preview/livePreview.ts:792-798`
-只对块内每一行 push `Decoration.line({ class: "cm-lp-codeblock-line" })`，样式里只有背景色与等宽
-字体（`src/preview/theme.ts:59`）；既没有自己的横向滚动容器，也没有任何 `white-space` 覆盖。因此代码
-块行继承 `.cm-content` 上 `cm-lineWrapping` 带来的 `white-space: break-spaces`（CM 基础主题；给它
-加这个类正是 `EditorView.lineWrapping` 的实现方式），超长代码行今天**折行**显示。
+- 表格：`src/preview/livePreview.ts:259-278` 用 CM6 的 `BlockWrapper` 把表格所在行区间包进
+  `div.cm-lp-table-scroll`，样式在 `src/style.css:273-289`（`overflow-x: auto`），容器带
+  `tabindex=0` / `role=region` / `aria-label`（`src/preview/livePreview.ts:262`）；
+- 块级公式与 mermaid：`src/preview/theme.ts:196`、`:218` 各自 `overflowX: "auto"`；
+- 代码块：只有行装饰与背景色——`src/preview/livePreview.ts:792-798` 对 `FencedCode` / `CodeBlock`
+  只出 `Decoration.line({ class: "cm-lp-codeblock-line" })` 与 token 着色，样式
+  `src/preview/theme.ts:59` 只有 `backgroundColor` 与等宽字体，**既没有 `white-space` 也没有
+  `overflow`**——长行只能折。（顺带更正一个常见误解：代码块**不是 widget**，是行装饰；
+  `rg -n "cm-lp-codeblock" src/` 只有加类与样式两处。这一结构决定了实现形态，见 design §0 与 §2.3。）
 
-**证据（本仓现值）**：`grep -rn "cm-lp-codeblock" src/` 只有 `livePreview.ts:794` 与 `theme.ts:59`
-两处；`theme.ts:59` 那条规则里没有 `overflow` 也没有 `white-space`。
+**三、与 Emacs 的对应物。** 当前阶段定位是 Emacs keybinding PKM（ADR 0006），这条需求在 Emacs 里
+有直接对应物，且形态同构：默认「继续行」即折行（[Continuation
+Lines](https://www.gnu.org/software/emacs/manual/html_node/emacs/Continuation-Lines.html)：
+「By default, continued lines are wrapped at the right window edge」）；`toggle-truncate-lines`
+就地翻转 `truncate-lines`，「works by locally changing the variable `truncate-lines`」，且
+「Setting the variable `truncate-lines` in any way makes it local to the current buffer; until that
+time, the default value, which is normally `nil`, is in effect」——**默认值来自全局设定、翻转是
+缓冲区内的一次性状态、不落盘**（[Line Truncation](https://www.gnu.org/software/emacs/manual/html_node/emacs/Line-Truncation.html)）。
+本提案的形态与之逐条对应：配置项给默认，命令给标签页内的瞬态翻转，不做 per-file 持久化。
+该页还给出截断场景的行为底线：「Horizontal scrolling automatically causes line truncation」——
+即截断从来与「可横向滚动」配套，这也是本提案「不折行时文字必须仍然可达」那条底线的依据。
 
-结论：本 change 落地后，含超长代码行的文档看起来会变（折行 → 截断 + 块内横滚）。这是 Alex 要的口径，
-但必须作为**默认行为变更**显式记录，不能包装成「只是多了一个开关」悄悄发生。
-
-配置面已向 Alex 声明，提案评审时可改：两个全局配置项（配置即数据惯例，ADR 0002 第 5 条）+ 两个可绑定
-命令（默认不占键位，走 M132 的 `[keys]` 重绑），不做 per-file 持久化。
+顺带一条支撑「默认不占键位」的事实：Emacs 里这条命令的规范键 `C-x x t` 是**多段 chord**，
+而本版键位层明确不支持多段 chord（含空白的键位被拒，`src-tauri/src/config.rs:283-288`）。
+把默认键位留给用户按 `[keys]` 自定因此是唯一自洽的选择，不是图省事。
 
 ## What Changes
 
-1. **两个新配置项，落在既有 `editor` 表内**（与 `editor.mode` 同表、同命名风格——JSON 键名就是 Rust
-   字段名的 snake_case，本仓不给配置字段做 serde rename，`src-tauri/src/config.rs:49`）：
+1. **新增两个配置项**（`[editor]` 表，沿用「JSON 键名 = Rust 字段名」的既有口径，见
+   `src-tauri/src/config.rs:70-75`）：`editor.line_wrap`（bool，默认 `true`）——文件级折行；
+   `editor.code_block_wrap`（bool，默认 `false`）——代码块折行。两项只在启动装载（现状如此：
+   `src/main.ts:805` 是全仓唯一读取点），改配置需重启，运行期变更由命令承担。
+2. **新增两条命令**：`view.toggle-line-wrap` 与 `view.toggle-code-block-wrap`，作用域 `global`，
+   **默认不占任何键位**，由 `[keys]` 绑定后可用（覆盖层零改动：`src/keys.ts:422-460` 的覆盖本来就是
+   「任意键 → 任意命令」的映射）。「默认不绑键」这次是要**签字**的状态，因此落到一份显式清单
+   `src/keys.ts` 的 `KEYLESS_COMMAND_IDS` 上，并修订「每条命令至少一条绑定」这条既有不变量为三项
+   对账（见第 5 点与 design §2.6）。
+3. **折行的生效口径（四组合）**：
 
-   ```json
-   { "editor": { "mode": "md", "line_wrap": true, "code_block_wrap": false } }
-   ```
+   | 文件级 `line_wrap` | 代码块级 `code_block_wrap` | 正文行 | 代码块 |
+   |---|---|---|---|
+   | `true`（默认） | `false`（默认） | 在阅读栏内折行 | 不折行，块内横向滚动 |
+   | `true` | `true` | 在阅读栏内折行 | 在阅读栏内折行（现状） |
+   | `false` | `false` | 不折行，编辑区可横向平移 | 不折行，块内横向滚动 |
+   | `false` | `true` | 不折行，编辑区可横向平移 | 在阅读栏内折行 |
 
-   - `editor.line_wrap`（布尔，出厂 `true`）：文档正文的折行。`false` = 截断（Emacs 的 truncate 语义）。
-   - `editor.code_block_wrap`（布尔，出厂 `false`）：围栏代码块的折行。`false` = 代码块不折行，超长行
-     在**代码块自己**的横向滚动容器里滚动，文档其余部分照常。
-   - 两者独立：代码块行上的判定以 `editor.code_block_wrap` 为准（更具体者优先），其余行以
-     `editor.line_wrap` 为准。同一元素上的 `white-space` MUST NOT 有第二条规则参与判定。
-   - 取值来自**启动时读一次**的配置（与 `editor.mode` 同一口径）：运行期改 `config.json` 不生效，
-     本版不引入配置热重载（现状：`configGet()` 只在启动调用一次，`src/main.ts:805`）。
+   判定口径是「一元素一条规则」：代码块行由 `code_block_wrap` 裁决，其余所有行由 `line_wrap` 裁决；
+   表格 / 块级公式 / mermaid 维持现状（它们各有自己的容器，不在本 change 的作用面内）。
+4. **代码块补上块级横滚容器**：生效口径为「不折行」时，围栏与缩进代码块 SHALL 获得一个块级横滚
+   容器，机制复用表格已跑通的 `BlockWrapper`（**不**换成 replace widget，理由见 Non-goals）。
+   容器 SHALL 可聚焦、带无障碍名，并与表格滚动容器**共用同一判据**，使既有五条 widget 滚动键
+   （`←` `→` `Home` `End` `Escape`）对代码块同样生效——不新增第二条按键通路（本项 MODIFY 既有
+   requirement「轨道 D 的 widget 滚动键纳入统一键位表」，判据的 class 单一来源仍在 `src/keys.ts`）。
+5. **键位表不变量放宽一处**：既有 requirement 规定「表内的每条命令 SHALL 至少有一条绑定」
+   （`openspec/specs/keymap-commands/spec.md` 的「统一键位分发表」），与「两条默认不绑键的新命令」
+   正面冲突。改为三项对账：`COMMAND_IDS` 每条命令要么有绑定、要么在 `KEYLESS_COMMAND_IDS` 里；
+   该清单不得含幻影 id、不得与绑定表有交集。同时要求键位面板对未绑定行**说清成因与下一步**
+   （既有文案 D66 只覆盖「配置解绑 / 尚未绑定」两种成因，需扩到「默认不占键位，可用 `[keys]`
+   绑定」）。
+6. **状态归属：标签页级（= Emacs 的 buffer-local）**。两条命令翻转的是**当前标签页**的瞬态显示
+   状态，不写文档、不进撤销栈、不改变 dirty、不落盘、不回写 `config.json`；新标签页取配置默认
+   （与 Emacs「设了就 buffer-local、新 buffer 走默认值」一致）。理由与替代方案见 design §2.2、§3。
+7. **不折行时文字必须仍然可达**：不折行意味着超宽内容不再被压进同一行宽，它 SHALL 由容器
+   （文件级 = 编辑区 `.cm-scroller` 的横向平移；代码块级 = 块内容器的横向滚动）呈现，
+   MUST NOT 出现「文字被裁掉且无法到达」的状态。这是本 change 唯一的「不能退化」底线条款，
+   依据见 Why 第三节的 Emacs 引文。
 
-2. **代码块的「不折行」是块内横滚，不是整窗横滚。** 超长代码行 SHALL 在代码块自己的滚动容器里横向
-   滚动，MUST NOT 让编辑器整体（含标题、正文）出现横向滚动。落点是既有机制——表格已经这么做：
-   `.cm-lp-table-scroll` 是 rank 10 的外层 wrapper（`overflow-x: auto`，`src/style.css:273-289`），由
-   `EditorView.blockWrappers` 注入（`src/preview/livePreview.ts:234-279`、`:317`）。代码块复用同一
-   机制，不新建第二套方案。
+## 命令面（评审时先看这一节）
 
-3. **两个 toggle 命令**：`editor.toggle-line-wrap` 与 `editor.toggle-code-block-wrap`，作用域
-   `global`（与 `tab.close` / `toc.toggle` 同理由：它作用于当前标签页这一窗口级对象，用户可能在
-   文件树或浮层里持有焦点时切换），实现落在装配层（`src/main.ts`）。**默认不绑键**——这是 Emacs
-   `toggle-truncate-lines` 的「局部开关」语义在 Lumir 的落点，`[keys]` 配置 SHALL 能像其余命令一样
-   把它们绑上键。它们的 `doc` 字段 SHALL 写明「默认不绑键、经 `[keys]` 配置绑定后可用」。
-
-4. **toggle 是瞬态，不回写配置、不落盘**。语义按 Emacs 的 buffer 局部模型：当前标签页翻转，
-   该标签页关闭或应用重启后回到配置值；新开的标签页从配置值开始。`config.json` MUST NOT 因翻转而
-   被写入（配置是输入，不是运行期状态）。翻转 SHALL 立即生效，MUST NOT 要求重新打开文件。
-
-5. **翻转要有可观测的反馈**。代码块开关在「文档里没有超长代码行」时翻转是看不出区别的，
-   文件开关在没有超长行的文档上同理。因此翻转 SHALL 给出一次瞬态提示（沿用既有 toast，
-   `src/main.ts:110`），写明是哪一项折行、变成什么状态。文案进 `文案-Copy.md`。
-
-6. **键位层的「无孤儿命令」不变量需要一条显式出口**。现行 living spec 要求「表内的每条命令 SHALL
-   至少有一条绑定」（`openspec/specs/keymap-commands/spec.md:12`），并有门禁在守：`src/keys.ts` 的
-   `COMMAND_IDS` 逐条必须能在 `KEY_BINDINGS` 里找到绑定（`tests/visual/scenes/m131-keymap-table.spec.ts:52-66`）。
-   两条默认不绑键的命令会让这条不变量不成立。本 change 的口径是**显式登记**而不是放宽：`src/keys.ts`
-   新增一份「默认不绑键」清单（`KEYLESS_COMMAND_IDS`），不变量改为「每条命令要么有绑定、要么在该
-   清单里登记；两者都不占的才算孤儿；登记项 MUST NOT 同时出现在绑定表里」。这样「默认不绑键」是一个
-   有人签字的决定，不是遗漏——形如 M131 消灭的「命令实现了但没人绑」那种静默状态。
-
-## 裁决点（提案评审时请 Alex 定，逐条都可改）
-
-| # | 待定 | 本提案的默认取向 | 换一种的话代价有多大 |
-|---|---|---|---|
-| D1 | 配置项命名与默认值 | `editor.line_wrap` 默认 `true`、`editor.code_block_wrap` 默认 `false` | 改名只动 Rust 侧字段名与两个 delta 的措辞；默认值反向则与 Alex 原话相反，不提议 |
-| D2 | 两个 toggle 默认不绑键 | 保持不绑（`KEYLESS_COMMAND_IDS`） | **代价是可达性**：Lumir 的键位层不支持多段 chord（`[keys]` 里含空白的键位被拒，`src-tauri/src/config.rs:283-288`），因此没有 Emacs 那种 `C-x x t` 的写法，也未实现 `M-x`。不绑键 = 只能靠手改 `config.json` 才能触发（改完需重启，见 D3）。若 Alex 要「装好就能用」，改动是给两条命令各加一条默认绑定（并在三条来源上核对冲突：表内 / 原生菜单 accelerator / 系统级，核对手续见 `keymap-commands` 的「标签命令族」requirement 的同名 scenario），此时它们退出 `KEYLESS_COMMAND_IDS` |
-| D3 | 是否需要热生效 | 不引入：配置仍是启动读一次（与 `editor.mode` 一致） | 引入配置监听或「重载配置」命令是新能力（新增命令 id、新增文件监听、失败路径），建议单独立 change；本 change 用 toggle 命令承担「运行期改主意」的需求 |
-| D4 | 翻转反馈 | 加一次瞬态 toast（第 5 条） | 若不要反馈，删掉该条 requirement 与对应 scenario、删掉 `文案-Copy.md` 条目即可；但那时「翻转生效了吗」在无超长行的文档上不可自证 |
+| 项 | `view.toggle-line-wrap` | `view.toggle-code-block-wrap` |
+|---|---|---|
+| 默认绑定 | 无（不占键位；登记在 `KEYLESS_COMMAND_IDS`） | 无（同上） |
+| 作用域 | `global`（焦点在文件树 / 搜索框 / 浮层里同样命中） | `global` |
+| 生效对象 | md 与只读 code 模式的整篇正文行 | 仅 md live preview 里的围栏 / 缩进代码块 |
+| 状态归属 | 当前标签页；新标签页回落配置默认 | 同左 |
+| 反馈 | 无 toast、无常驻指示（翻转结果即时可见，见 Non-goals） | 同左 |
+| 落盘 | 不落盘、不回写配置（`config.json` 前后逐字节不变） | 同左 |
+| id 前缀 | `view.`（**不用** `editor.`）：本仓 `editor.` 前缀 = editor 作用域命令，作用域由命令清单机械派生（`src/keys.ts:451`），前缀与作用域 MUST NOT 互相打脸 | 同左 |
 
 ## Non-goals
 
-- **不做 per-file 持久化**：不写 `config.json`、不写任何 per-file 状态、不做「记住这个文件的折行」。
-  瞬态值随标签页存活，重启即回配置默认。
-- **不做菜单入口**：不在 macOS 原生菜单加「视图 → 折行」项。菜单通道（`app:menu_command` →
-  `MENU_COMMANDS`，`src/main.ts:473-480`）技术上可用，但那会把本 change 的可见面从「配置 + 命令」
-  扩成「配置 + 命令 + 原生菜单」，还要背上菜单结构假设校验那一套（`keymap-commands` 的「菜单与命令层
-  一致」requirement）。若 D2 选择可达性优先，请在这两处之间选一处，不要都做。
-- **不做 M-x / 命令面板**：那是通用的「无键位命令怎么触发」能力，覆盖面远大于折行（现有 51 条命令里
-  被 `[keys]` 解绑的同样受益），本 change 不顺手起一个半成品。
-- **不改代码块之外的结构**：表格（`.cm-lp-table-scroll`）、块级公式与 mermaid 的横向滚动容器现状不动
-  （表格是 `overflow-x: auto` 的真源，本 change 只复用它的机制，不重构它）。
-- **不做 per-language / per-block 折行**：只有「文件级」与「代码块级」两个粒度。
-- **不做折行宽度、字号、栏宽（`--measure`）的可配置化**：`--measure` 是 `:root` 静态变量
-  （`src/style.css:9`），本 change 不碰。
-- **不改只读 code 模式的可编辑性**：折行是视图属性，与 `editable(false)` 的只读保证无关。
-- **不引入新视觉语言**：滚动容器的样式沿用既有 editorial token 与既有 `overflow` 写法。
+- **不做 per-file 持久化、不回写配置**：toggle 只改运行期状态。配置面（`config.json`）是用户手编的
+  输入面（ADR 0002 §5「配置即数据」）；回写会把它变成应用状态存储，并新增第二条写通道——现状全仓
+  只有 `last_vault` 一条运行期写（`src-tauri/src/commands.rs:394-428`）。Emacs 的
+  `toggle-truncate-lines` 同样不落盘（见 Why 引文）。
+- **不做配置热重载**：现状 `config_get` 只在启动读一次（`src/main.ts:805`，无 watcher）。新增配置项
+  不改变这个时点（改配置需重启），运行期翻转由命令承担。
+- **不引入逐字段的类型容忍**：`Option<bool>` 遇到类型不符（`{"editor": {"line_wrap": "yes"}}`）会走
+  整文件回落（全部默认 + warning），与 `editor.mode` 给错类型同路。这是既有解析模型的性质，
+  本 change 只**如实记录并用单测钉住**，不改解析模型——那会是一处与 `editor.mode` 不一致的特例。
+- **不改代码块的渲染结构**：不把代码块换成 replace widget——那会丢掉源码的可选中与可编辑
+  （md 模式的代码块是可编辑原文），与既有 requirement「Markdown 渲染保真」第 2 条
+  「源码 SHALL 保持可选中的原文」冲突。
+- **不做逐块类型 / 逐语言的更细粒度配置**：列表、引用、表格、公式、mermaid 的折行一律维持现状；
+  不给代码块加「按语言决定折行」这类维度（无需求支撑）。
+- **只读 code 模式（非 md 文件）的正文行不算「代码块」**：它跟随 `editor.line_wrap`；
+  `editor.code_block_wrap` 只管 md 里的围栏 / 缩进代码块。code 模式下按代码块 toggle 无作用对象，
+  MUST NOT 报错、MUST NOT 给提示（写进 spec，避免被读成漏实现）。
+- **不加原生菜单入口**（View 菜单项 / 勾选项）：可见面会从「配置 + 命令」扩成「配置 + 命令 + 菜单」，
+  并背上菜单结构假设与 accelerator 冲突核对那一套；本 change 的可见面收敛在键位面板里（见 D2）。
+- **不做 `M-x` / 命令面板**：那是通用能力（现有 51 条命令里被 `/keys` 解绑的同样受益），远超本
+  change 的边界，且需要新增「按 id 调用命令」的入口——现状全仓不存在这样的通道
+  （唯一无事件按 id 调用是菜单桥 `src/main.ts:473-480`）。
+- **不加折行状态的常驻指示（无 mode line）与 toast 播报**：翻转的可见结果就是反馈。若 dogfood 后
+  发现「看不见当前状态」是真实痛点，按手感证据另提 change（候选落点：masthead 指示段，仿 Emacs
+  mode line）。这是本提案自觉接受的观测缺口，见 D5 与 design §2.7。
+- **不做折行增强**：不引入 Emacs `visual-line-mode` / `adaptive-wrap` 那类「按词折 + 悬挂缩进」的
+  口径，本 change 只有「折 / 不折」二态。
+- **不预置任何默认键位**，包括 Emacs 的 `C-x x t`（本版键位层不支持多段 chord）。
+- **不动视觉容差、不引入新配色 / 新排版变量**；代码块横滚容器 MUST NOT 用 margin 表达间距
+  （CM 的行高测量不含 margin，口径见 `src/style.css:284-288` 的 M110 注释）。
 
 ## Impact
 
-- 影响的 specs：`editor-live-preview`（ADDED ×2：折行口径与配置来源、折行开关的瞬态口径）、
-  `keymap-commands`（MODIFIED ×2：统一键位分发表、键位查看面板；ADDED ×1：折行开关命令）。
-- 影响的代码/系统：
-  - Rust 配置层：`src-tauri/src/config.rs`（`EditorConfig` 增两个字段 + `RawEditorConfig` 容忍缺省 +
-    `validate()` 逐字段回落与 warning + 单测）。
-  - 前端：`src/bindings/EditorConfig.ts`（ts-rs 重新导出，bindings 漂移门禁会比对）、
-    `src/editor.ts`（新增一个 wrap Compartment 与会话级折行状态，逐会话持有）、`src/preview/`
-    （代码块的 block wrapper + 折行类）、`src/keys.ts`（两个新命令 id + `KEYLESS_COMMAND_IDS`）、
-    `src/main.ts`（配置应用与两个命令实现）、`src/style.css` 或 live preview 主题（代码块滚动容器样式）。
-  - 无 Rust 行为变更、无 IPC 协议变更（`config_get` 的返回体多两个字段，属 ts-rs 自动导出）。
-- 影响的测试/验收：
-  - 需**改**的既有门禁：`tests/visual/scenes/m131-keymap-table.spec.ts`（无孤儿命令的两处循环改为
-    「绑定 ∪ 默认不绑键清单」的对账）、`tests/visual/scenes/m133-describe-bindings.spec.ts`（分组
-    标题数组不变，但「无未绑定行」与行数断言要跟着变）、`src/bindings-panel.ts` 的分组表（两条命令
-    归入既有「全局」组，不新增分组）。
-  - 需**新增**的：折行的视觉场景（含一条**超过栏宽**的代码行 fixture——这一点是硬要求，见下）、
-    真机验收场景（WKWebView 下横向滚动与 toggle 生效）。
-  - **基线风险（REVIEW.md 第 3 条的现场）**：现有代码块 fixture 的最长行是 45 字符
-    （`tests/visual/fixtures/render-codeblock/languages.md`），远短于栏宽，因此本次默认值变更在现有
-    基线上**看不出任何差异**——这正是「容差吞掉真实变化」的温床（0.001 在 1200×800 下约等于 960 像素）。
-    所以视觉验收 MUST 自带一条超长代码行 fixture，并在 tasks 里要求逐张核对出现过代码块的基线。
-  - 真机验收 harness 的配置写入目前只支持 `editor.mode` 与 `keys`
-    （`scripts/acceptance/lib/app.mjs:28-33`），需扩出两个折行字段。
-- 影响的文档：`文案-Copy.md`（翻转提示的新条目；键位面板分组标题不变，故 D63–D67 不动）。
-- 关联约束：ADR 0002 第 5 条（配置即数据 + schema 校验——新字段走既有 `validate()` 回落路径）、
-  ADR 0002 第 6 条（性能合同——代码块的块范围发现必须视口有界，与表格 wrapper 同一纪律）、
-  ADR 0003 第 3 条（不改写源文件——折行是纯视图属性，文档与磁盘逐字节不变）、
-  ADR 0006（Emacs keybinding PKM 定位）、ADR 0004 第 5 条（功能变更走 OpenSpec）。
-- 性能：折行切换是状态重配（Compartment reconfigure），不重建 EditorView、不重解析文档。代码块的
-  块范围发现与既有表格发现同形（视口有界），不新增全文档扫描。
+- 影响的 specs：`editor-live-preview`（ADDED ×3：折行口径与配置来源、折行渲染与代码块横滚容器、
+  折行开关的瞬态口径）；`keymap-commands`（MODIFIED ×3：统一键位分发表放宽不变量、轨道 D 泛化为
+  块级横滚容器、键位查看面板的未绑定行说明；ADDED ×1：折行开关命令）。
+- 影响的代码/系统：`src-tauri/src/config.rs`（`EditorConfig` 两个布尔字段 + 宽容镜像与逐字段回落）、
+  `src/editor.ts`（折行状态与会话级重配）、`src/preview/livePreview.ts`（代码块横滚容器 +
+  表格容器补共享 class）、`src/preview/theme.ts` 与 `src/style.css`（行级 `white-space`、
+  容器背景底板）、`src/keys.ts`（两个命令 id、`KEYLESS_COMMAND_IDS`、块级横滚容器 class 的单一来源）、
+  `src/bindings-panel.ts`（未绑定行说明）、`src/bindings/*`（ts-rs 生成物，随 `cargo test` 更新，
+  漂移门禁在 `scripts/gate.sh:61-70`）。
+- 影响的测试/验收：`src-tauri/src/config.rs` 内的 Rust 单测（既有先例
+  `missing_log_table_defaults_to_info`，`:519-526`）、`tests/unit/keys.test.ts`、
+  `tests/visual/scenes/m131-keymap-table.spec.ts`（无孤儿命令的判据改为三项对账）、
+  `m133-describe-bindings.spec.ts`（行数 / 未绑定行数 / 未绑定说明）、`render-codeblock.spec.ts`
+  （新增超长代码行的容器与横滚断言）、`scripts/acceptance/scenarios/`（新增折行场景，含配置默认与
+  `[keys]` 绑定后触发两条路径）、`scripts/acceptance/lib/app.mjs`（`writeConfig` 增两个可选字段）。
+- 影响的文档：`文案-Copy.md` D66（未绑定行说明扩到「默认不占键位」这一成因，编号沿用、附修订记录）。
+- 视觉基线：默认口径下只有「超过栏宽的代码行」行为变化；既有 fixture 的代码行都短于栏宽
+  （`tests/visual/fixtures/render-codeblock/languages.md` 最长代码行 45 字符），故既有整页基线预计
+  不变——真变了，就是实现引入了与折行无关的位移，按缺陷处理。任何基线更新仍走 Alex 人肉过目
+  （AGENTS.md 硬规则）。
+- 关联约束：ADR 0006（Emacs keybinding 定位，本 change 与该定位一致）、ADR 0002 §5（配置即数据 +
+  schema 校验）、ADR 0003 §3（不改写源文件——两条命令都不碰文档）、ADR 0002 §6（性能合同：折行切换
+  是扩展 reconfigure，不重解析、不重建视图）、ADR 0001 §4（键位形态）、ADR 0004 §5（功能变更走
+  OpenSpec）。
+- 性能：toggle 只有一次 `Compartment.reconfigure`；代码块容器是装饰层在既有视口增量纪律内多包一层
+  div；无新增解析、无全量构建。
+
+## 待 Alex 裁决
+
+- **D1｜标签页级 vs 应用级翻转**：本提案取标签页级（真源在会话对象上，= Emacs buffer-local）。
+  若要全局（切标签页也一致），规格上把「标签页」改为「应用运行期」即可，实现侧要多一次对全部会话
+  reconfigure 的遍历，并另存一个模块级初值——见 design §2.2。
+- **D2｜要不要原生菜单入口**（View 菜单项 / 勾选项）：本提案不做（理由见 Non-goals），可见面只有
+  「配置项 + 命令 + 键位面板」。若你要菜单入口，本 change 需新增一节 requirement、菜单 accelerator
+  冲突核对与菜单结构断言，工作量为本 change 的约一半。
+- **D3｜命令作用域 `global` vs `editor`**：本提案取 `global`（焦点在文件树 / 搜索框 / 浮层里也生效，
+  与 `tab.*`、`toc.toggle` 同族），id 前缀因此取 `view.`。若你要「只有焦点在编辑器里才生效」，
+  改动是把 id 改回 `editor.` 前缀并放进 `EDITOR_COMMAND_IDS`，行为差异仅在「哪些焦点下按键有效」。
+- **D4｜代码块容器的键盘可达性是否随本 change 一起做**：本提案做了（复用既有五条 widget 滚动键，
+  代价是 MODIFY 轨道 D 一条既有 requirement）。若要把这部分切出去，本 change 收缩为纯折行二态，
+  代码块容器只保留鼠标 / 触控板可达——代价是它与表格容器「同形而不同能力」。
+- **D5｜要不要折行状态的播报 / 常驻指示**：本提案不加（无 toast、无 mode line，理由见 Non-goals）。
+  若你要「按一下有回声」或让界面上一眼看出当前口径，最小落点是两条 toast 文案（`文案-Copy.md`
+  续号）+ 1 个实现文件 + 1 个真机场景；常驻指示的落点建议复用 masthead 指示段（仿 Emacs mode line）。

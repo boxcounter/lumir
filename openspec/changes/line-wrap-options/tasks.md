@@ -1,189 +1,135 @@
 # Tasks: line-wrap-options
 
-> 本 change 停在【评审节点 1：提案评审】——proposal / design / tasks / spec 增量四件已产出，**尚未进入
-> 实现**。节点 1 通过后按本清单逐项实现并勾选；发现 proposal 意图需要变更时先改 proposal 再动代码
-> （`docs/process/openspec-workflow.md` 第 4 条），不静默扩 scope。
->
-> 每条勾选须给**可复核的证据指针**（命令输出 / 场景名 / 文件:行 / 基线名 / 可 `ls` 的绝对路径）。
-> 拿不出证据的一条写「未验」，不写「已验」（REVIEW.md 第 6 条）。
->
-> 本 change 的实现只应改到：`src-tauri/src/config.rs`、`src/bindings/EditorConfig.ts`（ts-rs 产物）、
-> `src/editor.ts`、`src/preview/`、`src/keys.ts`、`src/main.ts`、`src/style.css`、
-> `tests/unit/`、`tests/visual/`（含基线与 fixture）、`scripts/acceptance/`、`文案-Copy.md`。
-> 越过这个集合前先在 proposal 里写明理由。
+实现顺序：配置面 → 前端状态与命令 → 渲染 → 面板与文案 → 单测 → 视觉 → 真机 → 收口。
+每条完成后就地勾选；跑不动的项写「未验」并附原因，MUST NOT 写成已验（REVIEW.md 第 6 条）。
 
 ## 1. 配置面（Rust）
 
-- [ ] 1.1 `EditorConfig` 增 `line_wrap: bool` 与 `code_block_wrap: bool`；`Default` 给 `true` / `false`
-      （新增字段与 `mode` 同表、同行风格；不给配置字段做 serde rename——JSON 键名即字段名的 snake_case）
-      —— 证据：`src-tauri/src/config.rs` 的 `EditorConfig` 定义与 `impl Default`
-- [ ] 1.2 `RawEditorConfig` 增 `line_wrap: Option<bool>` / `code_block_wrap: Option<bool>`，沿用
-      `#[serde(default)]`；`validate()` 的 editor 分支按同一形状扩两行（缺失 → 该字段 `Default`）
-      —— 证据：`config.rs` 的 `RawEditorConfig` 与 `validate()` editor 分支
-- [ ] 1.3 单测：字段缺失回落出厂值（形如既有 `missing_log_table_defaults_to_info`）、显式 `false`/`true`
-      被如实读入、两个字段互不影响
-      —— 证据：`cargo test -p lumir config::` 的用例名与输出
-- [ ] 1.4 **边界实测并钉住**：类型不符（`{"editor": {"line_wrap": "yes"}}`）的现行为——预期走**整文件回落**
-      路径（全部默认 + warning，与 `editor.mode` 给错类型同路）。实测结论若与预期不同，以实测为准并写进
-      spec 的已知边界，MUST NOT 顺手发明「逐字段类型容忍」
-      —— 证据：一条覆盖该输入的单测 + 实测输出
-- [ ] 1.5 重跑 ts-rs 导出并提交 `src/bindings/EditorConfig.ts` 的 diff；`scripts/gate.sh` 的 bindings 漂移
-      检查必须绿（`git status --porcelain -- src/bindings/` 无输出）
-      —— 证据：`src/bindings/EditorConfig.ts` 含两个新字段；gate 的 `bindings-drift` 行输出
-- [ ] 1.6 与前端的两处默认值对账：Rust `Default` 与 TS 出厂常量同值（`line_wrap=true`、
-      `code_block_wrap=false`），两侧常量处各写一行指针注释指向对方（沿用 `editor.mode` 的既有先例，
-      并按 REVIEW.md 第 8 条留下防线）
-      —— 证据：两侧常量 + 两侧各自的默认值测试
+- [ ] 1.1 `src-tauri/src/config.rs` 的 `EditorConfig` 增 `line_wrap: bool` 与 `code_block_wrap: bool`，
+      `Default` 给 `true` / `false`（`config.rs:77-83`，与 `mode` 同路）
+- [ ] 1.2 `RawEditorConfig` 增 `line_wrap: Option<bool>` / `code_block_wrap: Option<bool>`
+      （`config.rs:142-146`，沿用 `#[serde(default)]`）
+- [ ] 1.3 `validate()` 的 editor 分支按同一形状扩两行（`config.rs:237-247`）：
+      缺字段 → 回落到 `Default`，不产生 warning
+- [ ] 1.4 Rust 单测：缺字段取默认（比照 `missing_log_table_defaults_to_info`，`config.rs:519-526`）
+- [ ] 1.5 Rust 单测：类型不符（`{"editor": {"line_wrap": "yes", "mode": "md"}}`）走整文件回落——
+      断言此时 `line_wrap` 与 `mode` **同时**回到默认、warning 存在，不存在「部分按配置部分按默认」
+      的混合态（design §2.1、§4-4）
+- [ ] 1.6 跑 `cargo test`（在 `src-tauri` 下）让 ts-rs 重新导出 `src/bindings/EditorConfig.ts`，
+      把生成物一并提交；`scripts/gate.sh:61-70` 的漂移门禁须绿
 
-## 2. 前端折行落点（`src/editor.ts`）
+## 2. 前端：折行状态、会话与命令（`src/editor.ts`、`src/main.ts`、`src/keys.ts`）
 
-- [ ] 2.1 `EditorSession` 增折行状态字段（与 `mode` 并列，逐会话持有——真源在会话上，不是内核单值）
-      —— 证据：`src/editor.ts` 的 `EditorSession` 定义与字段注释
-- [ ] 2.2 新增模块级 `wrapCompartment = new Compartment()`（与 `modeCompartment` 并列）；新增
-      `wrapExtensions(mode, wrap)` 承载全部折行相关扩展（`line_wrap=false` 时不装
-      `EditorView.lineWrapping`；md 模式且 `code_block_wrap=false` 时装代码块的内容级类与块 wrapper
-      facet）
-      —— 证据：`wrapExtensions` 定义 + 两个调用点
-- [ ] 2.3 `sessionState(...)` 增折行参数（与 `mode` 同形），`makeSession` / `createSession` /
-      装载路径都从**会话的**折行值计算扩展——MUST NOT 从内核单值读（那会在切标签页后错位，是
-      `mode` 字段注释记下的同一陷阱）
-      —— 证据：`sessionState` 签名与三处调用；`activate` 路径无新增同步动作（值随 state 走）
-- [ ] 2.4 `setWrap(kind, value)` 只改前台会话的折行值 + 重配 `wrapCompartment`，**不写配置、不动内核的
-      default 值**；`setWrapConfig(config)` 写内核 default（新标签页的起点）并把两个值应用到当前前台会话。
-      `setMode` 模式切换时同步重配折行扩展（md 专属部分依赖模式），二者共用同一个 `reconfigureWrap()`
-      —— 证据：三处代码 + 一条「切标签页后折行取值不错位」的单测/视觉断言
-- [ ] 2.5 MUST NOT 在 `livePreview()` 内部旁路读折行状态（那会形成创建期闭包 + 第二处装配入口）
-      —— 证据：`grep -n "wrap" src/preview/livePreview.ts` 无折行状态读取
+- [ ] 2.1 `src/editor.ts`：新增 `wrapCompartment = new Compartment()`（与 `modeCompartment` `:979` 并列）
+      与 `wrapExtensions(mode, wrap)`；`sessionState(...)`（`:1178-1233`）增加折行参数，
+      替换掉写死的 `EditorView.lineWrapping`（`:1227`）
+- [ ] 2.2 `EditorSession`（`:825-858`）持有折行状态（真源），内核另存 `defaultWrap`（新标签页起点，
+      只有在配置加载时移动）；`makeSession` / `createSession`（`:1235-1246` `:1416-1422`）从
+      `defaultWrap` 起步（design §2.2）
+- [ ] 2.3 状态变更走单一路径 `reconfigureWrap()`，由 `setMode`（模式变了要跟着重配）与
+      `setWrap`（折行值变了）共用；MUST NOT 在 `livePreview()` 内部读折行状态（design §2.2）
+- [ ] 2.4 `src/keys.ts`：新增 `KEYLESS_COMMAND_IDS`（默认不绑键清单）并导出；两条折行命令 id
+      `view.toggle-line-wrap` / `view.toggle-code-block-wrap` 进 `NON_TAB_GLOBAL_COMMAND_IDS`
+      （`:160-172`）；表内 MUST NOT 为它们加任何默认绑定
+- [ ] 2.5 `src/main.ts` 的 `commands` 记录（`:393-420`）加两条实现：翻转发起的命令对应当前标签页的
+      折行值、调用 2.3 的重配入口；doc/注释写明默认不绑键、`[keys]` 可绑
+- [ ] 2.6 `src/main.ts:805-807` 的配置消费点：把两个值写进 `defaultWrap` 并应用到当前前台会话
+      （`setMode` 之后），与 `applyKeyConfig` 并列
+- [ ] 2.7 TS 侧出厂默认（`DEFAULT_LINE_WRAP = true` / `DEFAULT_CODE_BLOCK_WRAP = false`）与 Rust
+      `Default` 互指注释 + 各自单测钉住（REVIEW.md 第 8 条；design §2.7）
 
-## 3. 代码块「不折行」的渲染落点
+## 3. 渲染：文件级与代码块级
 
-- [ ] 3.1 行级 `white-space`：内容级类（经 `contentAttributes`）压回 `.cm-line.cm-lp-codeblock-line` 的
-      `white-space: pre` + `overflow-wrap: normal`；规则只此一条，判定只看 `code_block_wrap`
-      —— 证据：`wrapExtensions` 里的内容属性 + 样式规则
-- [ ] 3.2 块级滚动容器：新增 `codeBlockWrappers(view)`（与 `tableWrappers` 同形），为每个围栏代码块返回
-      `overflow-x: auto` 的 `BlockWrapper`；块发现 SHALL 视口有界（沿用 `tableDiscoveryRange` 的做法），
-      MUST NOT 全文档扫描
-      —— 证据：`codeBlockWrappers` 定义 + 样式类 + 一条「块内滚动、整窗不滚动」的视觉断言
-- [ ] 3.3 MUST NOT 给代码块的折行容器加块级内边距或外边距（CM 按 border-box 量行高，外边距不可见会造成
-      落点漂移；表格容器的 `padding-block: 12px` 是表格的观感选择，不适用于代码块）
-      —— 证据：样式规则里无 `padding-block` / `margin`
-- [ ] 3.4 内容不可丢：围栏行与源码仍是文档真文本（可选中、md 模式下可编辑），MUST NOT 换成只读副本
-      —— 证据：视觉断言里代码块行文本与文档文本一致 + 可编辑性未放宽
-- [ ] 3.5 横向滚动条出现时的水平位移处置（候选：表格同款 `scrollbar-gutter: stable`）：切换前后除折行
-      本身外行盒不变
-      —— 证据：视觉断言的读数（切换前后的行盒 / 代码块左缘）
+- [ ] 3.0 **先验两条 CM 契约**（design §4-0，本 worktree 无 `node_modules`）：① 折行的 `white-space`
+      落在 `.cm-content.cm-lineWrapping` 上、`.cm-line` 自身没有；② `EditorView.blockWrappers` 可并存
+      多个 facet 值（表格与代码块各一套）。②不成立时按退路走：并入同一个 wrapper 函数
+      （`blockWrappersFor(view)`）。验证方式写进实现 PR 描述（一行实测命令或最小断言）
+- [ ] 3.1 文件级：`line_wrap = false` 时不装 `lineWrapping`，超长行由 `.cm-scroller` 横向到达；
+      断言没有内容被裁掉（design §2.4）
+- [ ] 3.2 代码块级：`code_block_wrap = false` 时给 `.cm-content` 加内容级 class，CSS 把
+      `.cm-line.cm-lp-codeblock-line` 的 `white-space` 压回 `pre`、`overflow-wrap` 回 `normal`
+      （`src/preview/theme.ts:59` 附近或 `src/style.css`）
+- [ ] 3.3 `src/preview/livePreview.ts`：新增 `codeBlockWrappers(view)`（与 `tableWrappers` `:234-279`
+      同形，视口有界，MUST NOT 全文档扫描），为围栏 / 缩进代码块生成横滚容器；容器带
+      `tabindex=0` / `role=region` / 读屏名（与表格容器 `:262` 同形）
+- [ ] 3.4 容器 MUST NOT 照抄 `padding-block: 12px`（`src/style.css:273-289`）：改写前先跑一次视觉门禁
+      留底，确认翻转开关带来的几何变化只来自折行本身；容器自带 `--bg-2` 底板（design §2.3-3、§2.3-7）
+- [ ] 3.5 `src/keys.ts`：新增泛化的「块级横滚容器」class 作为单一来源，两类容器共用；
+      表格容器**同时保留** `cm-lp-table-scroll`（`TABLE_SCROLL_CLASS`，`:205`）——既有选择器与字面量
+      断言按它定位（`tests/unit/keys.test.ts:249`、`tests/visual/scenes/m119-table-width.spec.ts` 等
+      多处）；`isWidgetKeyTarget`（`:208-211`）改查泛化后的 class
+- [ ] 3.6 命中条件的语义（design §4-2）：确认「容器自身持有焦点」的实现（按需收紧为
+      `closest(...) && document.activeElement?.closest(...)`），并把表格的既有场景
+      （`tests/visual/scenes/m131-keymap-behavior.spec.ts:158-195`）回归一遍
+- [ ] 3.7 嵌套语境实测（引用块 / 列表项内的围栏代码块，design §4-1）：能承载局部容器就写进视觉场景；
+      确实承载不了的形态写进 spec 的已知边界——MUST NOT 静默退化成整窗横滚
 
-## 4. 命令与键位层
+## 4. 键位面板与文案
 
-- [ ] 4.1 `src/keys.ts`：两条命令 id `view.toggle-line-wrap` / `view.toggle-code-block-wrap` 进
-      `NON_TAB_GLOBAL_COMMAND_IDS`（作用域由清单机械派生为 `global`）
-      —— 证据：`keys.ts` 的清单与 `applyKeyOverrides` 的派生结果（面板里两条落在「全局」组）
-- [ ] 4.2 `src/keys.ts`：新增导出 `KEYLESS_COMMAND_IDS`（本轮含两条折行命令）与一段说明「默认不绑键是
-      显式决定，不是遗漏」的注释；两条命令 MUST NOT 进 `KEY_BINDINGS`
-      —— 证据：`KEYLESS_COMMAND_IDS` 定义 + `KEY_BINDINGS` 无这两条
-- [ ] 4.3 `src/main.ts`：两条命令的实现进 `commands` 记录（全量 `Record<CommandId, CommandRunner>`，
-      缺实现即 tsc 错），实现内只调用 `editor` 暴露的 `setWrap(...)`——MUST NOT 与「配置启动应用」各写
-      一套逻辑
-      —— 证据：`main.ts` 的 commands 记录 + 两条实现体
-- [ ] 4.4 单测（键位层）：默认不绑键的三项对账——`COMMAND_IDS` 每条「有绑定 ∪ 在清单里」；清单 ⊆
-      `COMMAND_IDS`；清单 ∩ 绑定表 = ∅；并**反向验证**：临时把一条命令同时放进清单与绑定表、或从清单
-      删掉一条却不加绑定，对账必须 FAIL（确认断言有区分度，REVIEW.md 第 1 条）
-      —— 证据：`tests/unit/keys.test.ts` 用例名 + 反向验证的实测输出
-- [ ] 4.5 `tests/visual/scenes/m131-keymap-table.spec.ts`：把两处「无孤儿命令」循环改为与
-      `KEYLESS_COMMAND_IDS` 的对账（判据严格化，不是删除检查），并补一条「清单与绑定表无交集」的断言
-      —— 证据：该场景的用例名 + 反向验证（故意破坏对账时 FAIL）
-- [ ] 4.6 单测/视觉：`[keys]` 把某个空位 token（如 `Ctrl-j`）绑到 `view.toggle-line-wrap` 后，键位层
-      接受该覆盖（不产生「未知命令」warning），且绑定表里出现这条新绑定
-      —— 证据：用例名与输出
+- [ ] 4.1 `src/bindings-panel.ts:101` 的未绑定行说明串扩为覆盖两种成因并指向下一步
+      （默认不占键位 / 已被配置解绑，可用 `[keys]` 绑定）
+- [ ] 4.2 `文案-Copy.md` D66 同步修订（编号沿用、附修订记录，先例见 D86 于 M160 的扩写）
+- [ ] 4.3 确认两条命令落进既有「全局」组、MUST NOT 新增分组（`src/bindings-panel.ts:42`）
+- [ ] 4.4 本 change 无 toast / 无常驻指示 → 不需要新文案条目（若有任何新增可见文案，回到本项补条目）
 
-## 5. 面板与文案
+## 5. 单测
 
-- [ ] 5.1 面板分组不改：两条命令经 `NON_TAB_GLOBAL_COMMAND_IDS` 落进既有「全局」组，MUST NOT 新增分组
-      （分组标题是文案交付物）
-      —— 证据：`src/bindings-panel.ts` 的 `BINDING_GROUPS` 未改动 + 面板渲染里两条命令在「全局」组
-- [ ] 5.2 `tests/visual/scenes/m133-describe-bindings.spec.ts`：行数与未绑定行数的断言按新事实改（默认
-      状态下应出现 2 条「未绑定」行）；分组标题数组**不变**；元素级基线
-      `describe-bindings-panel.png` 重拍（新增两行）
-      —— 证据：场景全绿 + 基线 diff 说明（并附前后截图供 Alex 过目）
-- [ ] 5.3 `文案-Copy.md`：翻转反馈的新条目（写明哪一项折行、变成什么状态）与实现备注段的出处；若最终
-      决定不要反馈（proposal 的裁决点 D4），本项改为「不新增文案」并在 tasks 里如实记录该决定
-      —— 证据：`文案-Copy.md` 的 D 编号条目 + 实现侧文案常量
-- [ ] 5.4 反馈落地：翻转命令接既有瞬时提示（`src/main.ts` 的 `toast`），文案取自 5.3
-      —— 证据：翻转命令实现里的 toast 调用 + 视觉/真机断言能看到该提示
+- [ ] 5.1 `tests/unit/keys.test.ts`：三项对账断言——每条命令有绑定或在 `KEYLESS_COMMAND_IDS` 里；
+      清单无幻影 id；清单与 `KEY_BINDINGS` 无交集（design §2.6）。先造一个必须 FAIL 的输入实测
+      断言有区分度（REVIEW.md 第 1 条）
+- [ ] 5.2 `tests/unit/keys.test.ts`：两条新命令的作用域派生结果是 `global`、不在 `KEY_BINDINGS` 里、
+      且 `[keys]` 覆盖能把它们绑上（含「绑定后作用域仍由清单派生」）
+- [ ] 5.3 前端单测：折行状态随会话独立（切换会话不串值）；`defaultWrap` 不因 toggle 移动
+      （新会话仍取配置默认）（design §2.2）
+- [ ] 5.4 前端单测：`line_wrap = false` 时 `wrapExtensions` 不含 `lineWrapping`；
+      `code_block_wrap` 的四种组合各一条断言（含「一元素一条规则」的边界）
+- [ ] 5.5 1.4 / 1.5 / 2.7 的 Rust 与 TS 默认值单测（两侧同批）
 
-## 6. 测试与验收
+## 6. 视觉门禁
 
-- [ ] 6.1 单元：折行状态与命令行为的纯逻辑测试（`setWrap` 改前台会话而不动 default；新会话从 default
-      开始；`wrapExtensions` 在四种取值组合下装/不装哪些扩展）
-      —— 证据：`node tests/unit/run.mjs` 的用例名与计数
-- [ ] 6.2 视觉 fixture：新增一份**含超过栏宽的代码行**与超长正文行的 fixture（现成的
-      `tests/visual/fixtures/render-codeblock/languages.md` 最长行 45 字符，拿它断言截断是恒真断言——
-      REVIEW.md 第 1 条）
-      —— 证据：新 fixture 文件的绝对路径 + 其中最长行的字符数
-- [ ] 6.3 视觉场景（新增，建议 `tests/visual/scenes/m166-line-wrap.spec.ts`）：出厂口径下「代码块不折行
-      + 块内可横滚 + 整窗不横滚」；`code_block_wrap=true` 时恢复折行；`line_wrap=false` 时正文截断；
-      翻转命令生效且只影响当前标签页；`EditorState.doc` 与磁盘逐字节不变
-      —— 证据：场景名 + 逐条断言 + PASS 计数
-- [ ] 6.4 视觉基线：代码块相关的元素级基线重拍或新增；**逐张核对**出现过代码块/长行的整页基线，确认
-      是否有真实变化被 0.001 容差吞掉（REVIEW.md 第 3 条：先把元素删掉/改掉跑一次确认门禁真的会 FAIL，
-      再决定是否更新基线）
-      —— 证据：`git status --porcelain tests/visual/baselines/` 的清单 + 每张的处置结论（改了/零变化 +
-      零变化的核对方式）
-- [ ] 6.5 基线更新前截图须 Alex 过目（`tests/visual/README.md` 的基线更新纪律：基线更新是人肉裁决点）
-      —— 证据：前后截图的可 `ls` 绝对路径
-- [ ] 6.6 真机验收：新增场景（建议 `scripts/acceptance/scenarios/20-line-wrap.md`），覆盖①出厂口径下
-      代码块横滚可见、②`editor.code_block_wrap=true` 恢复折行、③经 `[keys]` 绑定后按该键真的翻转并回读
-      到状态变化。键盘注入类断言走「回读 + 只在字节未变时重试」，MUST NOT 用重试次数当判据
-      （REVIEW.md 第 11 条、acceptance README 的历史教训）
-      —— 证据：`node scripts/acceptance/run.mjs --check` 的 CHECK PASS 行 + 真机 run 的 `test-results/`
-      绝对路径（跑不动就写「未验」）
-- [ ] 6.7 验收 harness 支持新字段：`scripts/acceptance/lib/app.mjs` 的 `writeConfig` 目前只写
-      `editor: { mode }` 与可选 `keys`，需扩出两个折行字段（或让场景能整表覆写 `editor`），否则 6.6 的
-      ②无法配出来
-      —— 证据：`writeConfig` 的签名与场景 front-matter 的用法
-- [ ] 6.8 嵌套语境实测：引用块 / 列表项内的围栏代码块，块 wrapper 的范围与滚动是否正确。承载不了的
-      形态如实写进 spec 的已知边界，**不许静默退化成「折行」或「整窗横滚」**
-      —— 证据：视觉或真机的实测结论（含失败形态的记录）
-- [ ] 6.9 性能：确认代码块的块发现是视口有界（打开 1MB 文档的耗时与 base 对比不劣化；`scripts/perf` 的
-      现成端点跑一遍）
-      —— 证据：perf 输出与 base 的对比数字
+- [ ] 6.1 新增含**超长代码行**与**超长正文行**的 fixture（既有
+      `tests/visual/fixtures/render-codeblock/languages.md` 最长行 45 字符，暴露不了默认变更，
+      design §4-5）
+- [ ] 6.2 `tests/visual/scenes/render-codeblock.spec.ts` 增场景：默认口径下代码行不折行
+      （断言 `getComputedStyle` 的 `white-space` 为 `pre` 且行高只占一行）、块内可滚
+      （`scrollWidth > clientWidth`）、容器存在且 `tabindex=0`
+- [ ] 6.3 增场景：容器键盘可达（`Tab` 聚焦 → `→` 滚 120px → `End` 最右 → `Home` 最左 → `Escape`
+      交还焦点），与表格容器同行为
+- [ ] 6.4 增场景：横滚到右端不露白底（读计算背景色一致）；容器不改变代码块的纵向节奏
+      （与 `code_block_wrap = true` 对照）
+- [ ] 6.5 增场景：`line_wrap = false` 时正文行不折行 + 编辑区可横向到达；四种组合的呈现各截一张
+      （元素级或整页）
+- [ ] 6.6 `tests/visual/scenes/m131-keymap-table.spec.ts:52-66` 的两处循环改为三项对账
+      （按 `KEYLESS_COMMAND_IDS`）
+- [ ] 6.7 `tests/visual/scenes/m133-describe-bindings.spec.ts`：行数改为
+      `KEY_BINDINGS.length + KEYLESS_COMMAND_IDS.length`、未绑定行数改为清单长度、加未绑定说明串断言
+- [ ] 6.8 逐张核对出现过代码块的整页基线（`ls -l tests/visual/baselines/*-snapshots/` 看时间戳）；
+      需要更新时按 `tests/visual/README.md` 的纪律走，截图**先交 Alex 过目**（AGENTS.md 硬规则）
+- [ ] 6.9 门禁：`LUMIR_VISUAL_PORT=<未被占用端口> scripts/gate.sh visual` 全绿，输出留档
 
-## 7. 文档与 spec 同步
+## 7. 真机验收（agent 执行，不进 CI）
 
-- [ ] 7.1 归档前把 delta 与实现对齐；实现期若出现 proposal 未写的形态（例如某嵌套语境无法承载局部
-      容器），先更新 proposal/design 再落地
-      —— 证据：proposal/design 的修订记录
-- [ ] 7.2 `keymap-commands` 的 delta 里对「键位查看面板」的分组枚举做了顺带对齐（补 `标签`）：
-      该 living spec 原文列了 8 个分组、实现与视觉场景是 9 个（`src/bindings-panel.ts:31-45`、
-      `tests/visual/scenes/m133-describe-bindings.spec.ts:15`）。这次是**原样重述该 requirement**，
-      不修就把一句假话继续带下去——如实记录这次对齐，不是静默扩 scope
-      —— 证据：delta 里的枚举 + 对照锚点
-- [ ] 7.3 实现 PR 合并时在 `docs/backlog.md` 的「待 Alex 裁决」节落一条**待归档记录**，批次收尾跟踪到
-      归档（`openspec-workflow.md` 的批次收尾 checklist 第一条）
-      —— 证据：`docs/backlog.md` 的条目
+- [ ] 7.1 `scripts/acceptance/lib/app.mjs` 的 `writeConfig`（`:28-33`）支持写入两个新字段（可选参数，
+      不写即默认）
+- [ ] 7.2 新增场景（编号续现有序号）：默认口径下打开含超长代码行与超长正文行的文档——代码块不折、
+      块内可滚、正文折行；`line_wrap = false` 时正文不折且可横向到达
+- [ ] 7.3 新增场景：`[keys]` 把新键绑给两条命令后按该键，折行口径立即变化；`config.json` 的内容与
+      mtime 逐字节/mtime 不变（这是「瞬态、不落盘」的机器判据，design §2.7）
+- [ ] 7.4 真机断言走「回读 + 只在字节未变时重试」，MUST NOT 用重试次数当成功判据（REVIEW.md 第 5、
+      11 条）；场景启动前确认 1420 / 1430 没有别的 Lumir 实例
+- [ ] 7.5 起实例前 `df -h` 看磁盘水位；按 AGENTS.md 的白屏陷阱纪律选启动方式
+- [ ] 7.6 证据落在 `test-results/acceptance/`（git 外），报告里的每个路径先用绝对路径 `ls` 一遍
+      （REVIEW.md 第 7 条）
 
-## 8. 验证
+## 8. 收口
 
 - [ ] 8.1 `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` 通过
-      —— 证据：命令输出
-- [ ] 8.2 `scripts/gate.sh quick` 全绿（含 `cargo test`、bindings 漂移、`tsc`、openspec validate）
-      —— 证据：`GATE PASS` 逐行输出与 `GATE RESULT`
-- [ ] 8.3 `scripts/gate.sh visual` 全绿（含 6.3 的新场景与 6.4 的基线处置）
-      —— 证据：`LUMIR_VISUAL_PORT` 隔离端口下的 PASS 计数
-- [ ] 8.4 真机：`node scripts/acceptance/run.mjs 20` 单场景 PASS
-      —— 证据：证据目录的绝对路径（跑不动写「未验」并说明原因）
-- [ ] 8.5 `git diff --check` 通过；改动文件集合与 proposal 的 Impact 节一致，越界项已在 tower 批准后补记
-      —— 证据：`git diff --check` 无输出 + 改动文件清单
-
-## 9. 已知边界 / 不做
-
-- [ ] 9.1 不做 per-file 持久化：翻转不写 `config.json`、不记 per-file 状态
-      —— 证据：无新增配置写入路径；翻转前后 `config.json` 内容与 mtime 不变
-- [ ] 9.2 不做菜单入口、不做 `M-x` / 命令面板（理由见 proposal 的 Non-goals 与裁决点 D2）
-      —— 证据：`src-tauri/src/lib.rs` 与前端零相关改动
-- [ ] 9.3 不改表格 / 公式 / mermaid 的横向滚动容器现状（代码块只复用块 wrapper 机制）
-      —— 证据：`tableWrappers` 与相关样式规则的 diff 为零
-- [ ] 9.4 不引入配置热重载（proposal 的裁决点 D3）：配置仍在启动读一次
-      —— 证据：无 watcher、无 reload 命令
-- [ ] 9.5 未配置 `[keys]` 时两条命令无可触发路径——已知边界，写进 `keymap-commands` 的 delta
-      —— 证据：delta 里「已知边界」那段
+- [ ] 8.2 `scripts/gate.sh`（quick）全绿：fmt + clippy + cargo test + bindings 漂移 + tsc + openspec
+      validate
+- [ ] 8.3 文档同步：`文案-Copy.md`（4.2）、`scripts/acceptance/README.md`（新场景的用法若有变化）、
+      `docs/backlog.md`（本 change 实施中冒出的 findings）
+- [ ] 8.4 归档对账（`docs/process/openspec-workflow.md` 的批次收尾 checklist）：本 change 合并时落一条
+      待归档记录；归档前逐条对账 tasks / spec 增量 / 实现；归档后核对新建 capability 的 Purpose
+      （本 change 不新建 capability，`editor-live-preview` 与 `keymap-commands` 都是既有 living spec）
+- [ ] 8.5 把「实现期必须验证」的结论回填 design §4：每条标注实测结果（成立 / 走退路 / 转为已知边界），
+      不留「待验」字样进归档
