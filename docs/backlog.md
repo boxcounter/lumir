@@ -219,6 +219,20 @@
 
 ### 验收套件（M144 实测出的表达力缺口）
 
+- **`ax.mjs` 取 `AXTextArea.value` 用非贪婪正则，文档含半角 `"` 时断言真假双向失真**（M180 finding，
+  worker-wrap-impl，2026-09-18，medium，**待修**）：`scripts/acceptance/lib/ax.mjs:36` 的正则遇半角
+  引号即截断 value——`editor.has` 假红、`editor.not` **假绿**（负断言在截断文本上找不到目标串而
+  「通过」）。M180 的真机探针因此刻意不含 `"`；reviewer-wrap-impl 已独立核实真实性。修法：value
+  抽取改走结构化解析（AX dump 的字段边界）或转义感知正则，并补一条「文档含引号」的反向验证场景。
+  finding `20260918-worker-wrap-impl-bug-acceptance-ax-value-editor-not.md`。
+- **验收套件 `config` 通道只透传 `keys`，`[editor]` 新配置项无法构造启动口径**（M180 finding，
+  worker-wrap-impl，2026-09-18，medium，**待修**）：`scripts/acceptance/lib/execute.mjs:364` 的
+  `config` 步骤把 `mode` 写死、只透传 `keys` 表——M180 新增的 `editor.line_wrap` / `editor.code_block_wrap`
+  无法在真机构造「启动口径来自 config.json」的场景，该接线只能在视觉层验（桩外再包一层 `config_get`）。
+  修法：`writeConfig`/config 通道按表透传（或显式加 `editor` 可选字段），与 M180 已落地的
+  `app.mjs writeConfig` 两可选字段对齐。finding
+  `20260918-worker-wrap-impl-improve-acceptance-editor-mode-keys.md`。
+
 - **`click` 动作不支持修饰键**（M144，medium）：`lib/execute.mjs` 的 click 只有 `target` / `count`，没有
   modifier 参数，因此「⌘-Click 跟随链接」这条路径**在真机套件里无法触发**（⌘⏎ 可以，键位动作支持 chord）。
   M144 改用视觉场景覆盖该路径（`tests/visual/scenes/render-link.spec.ts`：stub 记录
