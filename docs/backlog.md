@@ -148,13 +148,23 @@
     (b) 若要支持远程图片，需先裁「是否允许联网取图」，再改 CSP + Rust 侧代理下载，属独立 change 不是补丁。
     文案改「无法显示」一项已由 M165 的 spec delta 覆盖，实现期确认其同样覆盖外部 URL 分支即可。finding
     `20260918-worker-svg-proposal-2-bug-http-s-csp.md`。
+    **实现期确认（M178，2026-09-18）**：外部 URL 分支（`src/preview/livePreview.ts:869-873`）与本地附件
+    走**同一个** `ImageWidget` 终态处置，失败时给同一条 D113 占位并保留原始引用串——chromium 场景已断言
+    （`tests/visual/scenes/markdown-combo.spec.ts`：`![remote image](https://example.invalid/remote.png)`
+    的替换区文本逐字为 `图片无法显示：![remote image](https://example.invalid/remote.png)`，且不残留
+    「解码失败」归因）。该路径在成品里仍 100% 走不通（CSP 不含 http(s)，静态核对、未真机坐实）；本批做的
+    是**不撒谎的成因**，不是让它可用——(a)/(b) 的处置权仍在 Alex。
 19. **图片行不受「光标触及即显露源码」覆盖**（M165 finding，worker-svg-proposal-2，2026-09-18，medium，
-    **挂在 change `image-svg-and-fallback` 节点 1 的 A/B 裁决点上**）：`src/preview/livePreview.ts:807-815`
+    **节点 1 已裁：A = 维持现状**）：`src/preview/livePreview.ts:807-815`
     的 Image 分支无 `touchesSelection` 判断（对照 Link 分支 `:821` 有），图片引用被 replace 装饰整条藏起、
     光标进入该行不显露源码；且无 atomicRanges，光标可落进被替换区间而不可见（与 M119 修过的 callout 缺陷
-    同族）。living spec `editor-live-preview/spec.md:25` 的显露枚举不含图片。提案已给两支：A 维持现状、
+    同族）。living spec `editor-live-preview/spec.md:25` 的显露枚举不含图片。提案给过两支：A 维持现状、
     单独立项（worker 建议）；B 并入该 change 给 Image 分支加选区判断 + spec 枚举补「图片」+ 一条 Scenario。
-    待 Alex 节点 1 一并裁决。finding `20260918-worker-svg-proposal-2-bug-live-preview.md`。
+    **Alex 于 2026-09-18（change `image-svg-and-fallback` 节点 1）裁决 A = 维持现状**：该 change 不动图片行的
+    显露口径（M178 实现期实测确认：`rg touchesSelection src/preview/livePreview.ts` 仍是六处调用、图片分支
+    仍未触及它）。「图片行是否与链接/分隔线同口径」**留作将来单独立项**，本条保留、不核销——将来立项时
+    落点是 Image 分支的 `touchesSelection` 判断 + `editor-live-preview` spec 的显露覆盖集枚举。
+    finding `20260918-worker-svg-proposal-2-bug-live-preview.md`。
 20. **change `toc-popover-emacs-keys-and-max-height` 待归档跟踪**（**已核销**：归档前补记、同日随归档核销，核销记录见文末「已核销」节的 2026-09-18 条；2026-09-18，M170）：流程口径要求每个 change 在实现 PR 合并时即落一条待归档记录并跟踪到归档（`docs/process/openspec-workflow.md` 的批次收尾 checklist 第一条）。该 change（浮层 80% 总高 + `⌃N` / `⌃P` 就地键，M160，merge `d4ca60a`）**合并时没有落这条记录**——全仓 grep `toc-popover-emacs-keys` 当时零命中，正是 M150 记过的失效模式（当时 7 个 change 只有 1 个被跟踪）。本 mission（M170 归档节点 2）在归档前补记本条，随后即随归档核销：归档为 `openspec/changes/archive/2026-09-18-toc-popover-emacs-keys-and-max-height/`，living spec 落 `toc-outline`（2 条 MODIFIED）与 `keymap-commands`（1 条 MODIFIED）；未勾任务 3.1 / 3.2 / 6.2 / 6.4 / 6.6 在归档动作里按证据勾齐（3.1 / 3.2 的产物由 tower 的 integration fix `a779cbb` 落在 `文案-Copy.md:77` / `:103` / `:111`；6.2 改由「零 Rust diff + CI `rust.yml` 在 `2f16f86` success」继承；6.4 由 M164 全量 26/26 与此后的 `13-toc` 复跑覆盖；6.6 即本条）。
 
 ## 待修 findings（不阻塞）

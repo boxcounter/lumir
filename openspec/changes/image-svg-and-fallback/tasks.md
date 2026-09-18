@@ -8,17 +8,17 @@
 > 机制已在 M165 修订轮复现（design §8.1），因此本组任务从「判明成因」收紧为「用中招形状做 fixture
 > + 按已验证的取点实现」——不再需要先做真机定位。
 
-- [ ] 1.1 fixture 用**中招形状**：一份 `width="100%"` + 仅 `viewBox` 的 svg（不带 `height`，即
+- [x] 1.1 fixture 用**中招形状**：一份 `width="100%"` + 仅 `viewBox` 的 svg（不带 `height`，即
       design §8.1 实测矩阵的输入）；实现期若能拿到 Alex 报告的那份 `images/hooks-overview.en.svg`
       就直接用它（M165 修订轮在本机 `mdfind` 与用户 vault 里都没找到，取不到不算阻塞）。
       **MUST NOT** 用带 `width`/`height` 的 `sample.svg` 当本条的输入——那个形状不中招（实测 240×80 正常）。
       **验收口径**：fixture 里 `width="100%"` 命中且无 `height=`；形状与 design §8.1 的实测输入逐字一致。
-- [ ] 1.2 反向验证（先红）：在**修复前**跑该 fixture 的断言，必须观测到「源码被替换 + 渲染盒 0×0」，
+- [x] 1.2 反向验证（先红）：在**修复前**跑该 fixture 的断言，必须观测到「源码被替换 + 渲染盒 0×0」，
       并把**两个读数一起**记下来：替换区布局盒 `0×0`、`naturalWidth/naturalHeight = 300×100`。
       **验收口径**：截图 + 两个读数落 `test-results/acceptance/<日期>/<场景>/`；断言在修复前为 FAIL。
       只记自然尺寸会得出「加载正常」的错误结论（实测它与渲染结果相反），必须记布局盒——这正是
       design §3.2「判据落在替换区可见尺寸」的实证理由。这一条同时是第 5.2 条反向验证的输入。
-- [ ] 1.3 实现取点：**尺寸兜底（把图画出来），不是只做占位**——加载完成后若替换区布局尺寸为 0
+- [x] 1.3 实现取点：**尺寸兜底（把图画出来），不是只做占位**——加载完成后若替换区布局尺寸为 0
       而 `naturalWidth/naturalHeight > 0`，按后者给 `<img>` 设显式像素宽度（高度留 `auto`，宽高比由
       引擎给出的默认对象尺寸决定）。已验证：该做法把 0×0 变为 **300×100**（chromium 与 webkit 一致），
       且 2000×600 的图片仍按既有 `max-width: 100%` 收窄（不回归）。占位是**兜底之后仍不可见时**的
@@ -29,27 +29,27 @@
 
 ## 2. 实现：可见回退不变量
 
-- [ ] 2.1 终态判据改为「替换区自身的可见尺寸」：加载完成后，替换区可见内容尺寸为零即认可为
+- [x] 2.1 终态判据改为「替换区自身的可见尺寸」：加载完成后，替换区可见内容尺寸为零即认可为
       「不可见」，回落占位；MUST NOT 只以 `naturalWidth`/`naturalHeight` 单点判定。
       **验收口径**：第 5 节的属性测试矩阵全绿；且第 1.2 条的零尺寸样本从「空白」变为「可见占位」，
       有前后两张截图对照。
-- [ ] 2.2 加载中状态在任何终态下都不留空窗：MUST NOT 出现「状态块被移除、占位尚未插入」的中间态。
+- [x] 2.2 加载中状态在任何终态下都不留空窗：MUST NOT 出现「状态块被移除、占位尚未插入」的中间态。
       **验收口径**：属性测试里「加载中不出现空窗」场景 PASS；人工观察一次大附件（慢读）打开过程无
       可见闪烁，录屏或连续截图留档。
-- [ ] 2.3 三种引用形态共用同一终态处置：标准 `![alt](rel)`、标准 `![alt](https://…)`、Obsidian
+- [x] 2.3 三种引用形态共用同一终态处置：标准 `![alt](rel)`、标准 `![alt](https://…)`、Obsidian
       `![[file.ext]]`。实现上 MUST NOT 为 `svg` 单立分支（`extensionOf(path) === "svg"` 这类特判
       一律不写）。
       **验收口径**：三条形态在属性测试矩阵里各有覆盖；实现 PR 里贴出 `git diff` 证明没有扩展名特判。
-- [ ] 2.4 终态占位文案按 design §5 收口：`图片解码失败：{引用}` 退场，改用成因中立的
+- [x] 2.4 终态占位文案按 design §5 收口：`图片解码失败：{引用}` 退场，改用成因中立的
       `图片无法显示：{引用}`；读取失败仍用 `图片读取失败：{引用}（{原因}）`（成因得出来才写成因）。
       占位一律保留原始引用文本（alt 与路径都在其中）。
       **验收口径**：三条文案的字符串与 `文案-Copy.md` D111–D113 逐字一致；断言「占位文本含原始引用
       串」在视觉与真机两层都有（不靠肉眼）。
-- [ ] 2.5 占位与加载态的样式复用既有视觉语言（`.cm-lp-image-error` / `.cm-lp-image-status`，
+- [x] 2.5 占位与加载态的样式复用既有视觉语言（`.cm-lp-image-error` / `.cm-lp-image-status`，
       `src/preview/theme.ts:144-156`）；若最终必须补一条最小可见尺寸规则，写清为什么既有样式兜不住。
       **验收口径**：`git diff src/preview/theme.ts` 为空，或有且仅有一条新增规则 + 该理由；无新配色、
       无新字体、无新圆角值。
-- [ ] 2.6 尺寸兜底（本缺陷的**主修法**，见 design §8.1 与 tasks 1.3）：加载完成后替换区布局尺寸为 0
+- [x] 2.6 尺寸兜底（本缺陷的**主修法**，见 design §8.1 与 tasks 1.3）：加载完成后替换区布局尺寸为 0
       而 `naturalWidth/naturalHeight > 0` 时，按自然尺寸给 `<img>` 设显式像素宽度（高度留 `auto`）；
       MUST NOT 借此改写源文件（ADR 0003 §3），MUST NOT 解析 SVG 文本（design §4.2 的安全边界）。
       **验收口径**：1.2 的 fixture 从 0×0 变为 **300×100**（chromium 与 webkit 一致）；对照样本
@@ -58,7 +58,7 @@
 
 ## 3. 实现：SVG 安全渲染口径固化
 
-- [ ] 3.1 确认**图片渲染链路**只经 `<img>`：判定范围限于该链路自身——
+- [x] 3.1 确认**图片渲染链路**只经 `<img>`：判定范围限于该链路自身——
       `rg -n "innerHTML|insertAdjacentHTML|DOMParser" src/preview/attachments.ts src/preview/livePreview.ts`
       必须零命中。
       **验收口径**：命令输出贴进 PR；**链路内命中即视为未完成**。链路外今天固定有四处命中——
@@ -67,38 +67,38 @@
       ——它们各自的信任边界与本次改动无关，**不算未完成**：把这四处文件名连「为什么与本 change 无关」
       贴进 PR 即可。MUST NOT 为了「让 grep 干净」去改写这三条链路——那会动 callout / math / mermaid
       三个本 change 不触碰的能力。
-- [ ] 3.2 在图片渲染入口写一条**为什么必须用 `<img>`** 的短注释（防将来「顺手改成内联」），指向
+- [x] 3.2 在图片渲染入口写一条**为什么必须用 `<img>`** 的短注释（防将来「顺手改成内联」），指向
       design §4 的规范依据；不复制规范正文。
       **验收口径**：注释在，且不超过三行。
 
 ## 4. 单测（`tests/unit`，纯逻辑层）
 
-- [ ] 4.1 把可纯化的判定抽出来并加断言：终态分派（可见 / 不可见）的纯判据与占位文案组装。
+- [x] 4.1 把可纯化的判定抽出来并加断言：终态分派（可见 / 不可见）的纯判据与占位文案组装。
       **验收口径**：`node tests/unit/run.mjs`（= `pnpm test`）PASS 且新增用例计入 `gate.sh` 的
       `unit-tests` 行；新增用例数写进 PR 说明。
-- [ ] 4.2 不把 DOM 行为硬塞进这一层：真 `EditorView` 需要 DOM，本层用假实现只会得到一层假断言
+- [x] 4.2 不把 DOM 行为硬塞进这一层：真 `EditorView` 需要 DOM，本层用假实现只会得到一层假断言
       （`tests/unit/README.md:21-23` 的分工）。
       **验收口径**：`tests/unit/harness.ts` 不新增 DOM 替身；图片 widget 的行为断言全部落在第 5、
       第 6 节两层。
 
 ## 5. 视觉场景（chromium，CI 门禁）
 
-- [ ] 5.1 替换 `tests/visual/scenes/markdown-combo.spec.ts:34` 的无区分度断言：现在它被「加载中」
+- [x] 5.1 替换 `tests/visual/scenes/markdown-combo.spec.ts:34` 的无区分度断言：现在它被「加载中」
       状态块单独满足（渲染成功 / 空白 / 报错三者都 PASS）。改为两侧都判——「成功渲染时
       `.cm-lp-image img` 存在且可见」与「不可见时不出现零高度替换区」。
       **验收口径**：新断言在**修复前**对零尺寸样本为 FAIL（这条红是 5.2 的产物）；修复后 PASS。
-- [ ] 5.2 反向验证（必做，[REVIEW.md](../../../REVIEW.md) 第 1 条的防线）：先把零尺寸 fixture 塞进
+- [x] 5.2 反向验证（必做，[REVIEW.md](../../../REVIEW.md) 第 1 条的防线）：先把零尺寸 fixture 塞进
       场景，确认新断言**真的红**，再动实现。
       **验收口径**：红灯的输出（playwright 失败信息）留档在 PR 说明里；没有这一步的绿灯不算数。
-- [ ] 5.3 新增 fixture：只声明 `viewBox` 的零尺寸 svg、渲染为空的位图样本、含 `<script>` 与
+- [x] 5.3 新增 fixture：只声明 `viewBox` 的零尺寸 svg、渲染为空的位图样本、含 `<script>` 与
       `onload` 的 svg、含外部 `<image href="https://example.invalid/...">` 的 svg。放在
       `tests/visual/fixtures/markdown-combo/`，与既有 `sample.svg` / `broken.svg` 同处。
       **验收口径**：`ls tests/visual/fixtures/markdown-combo/` 可见四份新文件；每份在场景里被引用。
-- [ ] 5.4 把「不执行脚本、不发起外部请求」变成断言：用 `page.on("request")` 收集请求，断言零外部
+- [x] 5.4 把「不执行脚本、不发起外部请求」变成断言：用 `page.on("request")` 收集请求，断言零外部
       请求；脚本执行用一个可观测副作用（如 `document.title` 或全局标记）断言未发生。
       **验收口径**：把该 svg 改为内联渲染（临时实验，不提交）时断言必须变红——即断言有区分度；
       实验结论写进 PR 说明。
-- [ ] 5.5 基线核对（[REVIEW.md](../../../REVIEW.md) 第 3 条 + AGENTS.md 的视觉门禁卫生）：
+- [x] 5.5 基线核对（[REVIEW.md](../../../REVIEW.md) 第 3 条 + AGENTS.md 的视觉门禁卫生）：
       核对图片占位出现过的场景与全部整页基线的时间戳；确认本次是否需要重拍。
       **验收口径**：存量事实是 `markdown-combo.spec.ts` 无 `toHaveScreenshot`、`baselines/` 下无其
       snapshot 目录，且无其他场景引用图片占位——PR 里逐条核对后写明「本次零基线更新」或列出被更新
@@ -106,7 +106,7 @@
 
 ## 6. 真机验收场景（WKWebView，`scripts/acceptance/`）
 
-- [ ] 6.1 新增场景 `scripts/acceptance/scenarios/<id>-image-fallback.md`，覆盖三层：① 带
+- [x] 6.1 新增场景 `scripts/acceptance/scenarios/<id>-image-fallback.md`，覆盖三层：① 带
       `width`/`height` 的 svg 正常显示；② 百分比固有宽度的 svg（design §8.1 的中招形状）经尺寸兜底
       后可见、兜底仍不可见时出可见占位；③ 目标缺失出可见占位。
       **安全腿只断言真机层可观测的量**：含 `<script>` / `onload` 的 svg——用一个脚本副作用标记（如
@@ -120,37 +120,71 @@
       **验收口径**：`node scripts/acceptance/run.mjs --check` 静态校验 PASS；`run.mjs <id>` 真机 PASS，
       证据落 `test-results/acceptance/<日期>/<场景>/`（`status.txt` = PASS）；安全腿的两条断言在
       `steps.md` 里各占一条（可分别读出），不合并成一条。
-- [ ] 6.2 场景 fixture 落 `scripts/acceptance/fixtures/`，与 md 一起进合成 vault。
+- [x] 6.2 场景 fixture 落 `scripts/acceptance/fixtures/`，与 md 一起进合成 vault。
       **验收口径**：场景 PASS 且 `steps.md` 里断言逐条可读；断言形态遵守「不可读一律 FAIL」
       （[REVIEW.md](../../../REVIEW.md) 第 2 条）——不要写「AX 里没有该文本即通过」式的负向空转。
-- [ ] 6.3 断言用**正**观测：该位置的 AX 文本非空且含原始引用串（`alt` 与路径都在其中）。
+- [x] 6.3 断言用**正**观测：该位置的 AX 文本非空且含原始引用串（`alt` 与路径都在其中）。
       **验收口径**：把 fixture 换成「空白实现」（临时回退到修复前代码）时该断言 FAIL——即断言能
       区分「有占位」与「空白」。
-- [ ] 6.4 与 AGENTS.md 的维护权一致：新功能 mission 的 tasks 必带「新增/更新验收场景」，本 change
+- [x] 6.4 与 AGENTS.md 的维护权一致：新功能 mission 的 tasks 必带「新增/更新验收场景」，本 change
       的实现 PR 必须同时含 6.1–6.3。
       **验收口径**：实现 PR 的文件列表里同时出现场景 md 与 fixture。
 
 ## 7. 文案 deck
 
-- [ ] 7.1 `文案-Copy.md` 追加 D111（图片加载中）、D112（图片读取失败）、D113（图片无法显示），
+- [x] 7.1 `文案-Copy.md` 追加 D111（图片加载中）、D112（图片读取失败）、D113（图片无法显示），
       编号按末位连续追加（当前末位 D110），五要素（位置 / 角色 / 中文 / English / 设计意图）齐全。
       **验收口径**：`文案-Copy.md` 里 D111–D113 三行齐备，中文与实现字符串逐字一致。
-- [ ] 7.2 文末「文案实现备注」段（`文案-Copy.md:105`）登记归属文件，并记录 `图片解码失败：{引用}`
+- [x] 7.2 文末「文案实现备注」段（`文案-Copy.md:105`）登记归属文件，并记录 `图片解码失败：{引用}`
       的退场理由；`加载中… {引用}` 与 `图片读取失败：{引用}（{原因}）` 标注为补登。
       **验收口径**：备注段有本次的登记条目，含三处出处与一条退场说明。
 
 ## 8. 验证
 
-- [ ] 8.1 `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` 通过（提案阶段与本 PR
+- [x] 8.1 `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` 通过（提案阶段与本 PR
       各跑一次）。
       **验收口径**：输出末行 `Totals: N passed, 0 failed`，且 `change/image-svg-and-fallback` 为 ✓。
-- [ ] 8.2 `scripts/gate.sh quick` 与 `scripts/gate.sh visual` 全绿。
+- [x] 8.2 `scripts/gate.sh quick` 与 `scripts/gate.sh visual` 全绿。
       **验收口径**：`GATE PASS` 逐行 + `GATE RESULT` 汇总；FAIL 项逐条修完再提交。
-- [ ] 8.3 真机套件至少跑一次新增场景并留档（AGENTS.md：dogfood 批次合并后、Alex 验收前先跑一遍）。
+- [x] 8.3 真机套件至少跑一次新增场景并留档（AGENTS.md：dogfood 批次合并后、Alex 验收前先跑一遍）。
       **验收口径**：`test-results/acceptance/<日期>/summary.md` 里本场景为 PASS。
-- [ ] 8.4 不改写源文件：所有场景断言 `EditorState.doc` 与磁盘文件逐字节不变（ADR 0003 §3）。
+- [x] 8.4 不改写源文件：所有场景断言 `EditorState.doc` 与磁盘文件逐字节不变（ADR 0003 §3）。
       **验收口径**：视觉场景的 `readDocument(page)` 逐字节比较、真机场景的 `editor.unchangedSince`
       断言均在位且 PASS。
-- [ ] 8.5 本 change 的收官对账：tasks 全部勾选（或标注放弃原因）、spec 增量与实现一致、living spec
+- [x] 8.5 本 change 的收官对账：tasks 全部勾选（或标注放弃原因）、spec 增量与实现一致、living spec
       归档另走节点 2（本 change 先完成节点 1 提案评审）。
       **验收口径**：`npx --yes @fission-ai/openspec@1.12.0 list` 里本 change 状态与 tasks 勾选一致。
+
+## 本批（M178 实现）的证据落点与两处口径说明
+
+证据全部本地留存（git 外），可 `ls`：
+
+| 判据 | 路径 |
+|---|---|
+| 反向验证：修复前为红，两个读数一起记（1.2 / 5.2） | `test-results/acceptance/2026-09-18/image-fallback-before/`——`red-before-fix.log` 的 FAIL 输出含 `{ box: "0x0", natural: "300x100", complete: true }`；`readings.json` 是十条引用的逐条读数；`viewport.png`/`content.png` 是修复前截图 |
+| 修复后读数与前后截图对照（2.1 / 2.6） | `test-results/acceptance/2026-09-18/image-fallback-after/`——零尺寸样本 0×0 → **300×100**；正常图片读数逐值不变（240×80 / 829×249） |
+| 加载中不留空窗的连续截图（2.2） | `image-fallback-after/loading.png` 与 `terminal.png`（读桩注入 2.5s 延迟）；断言在 `markdown-combo.spec.ts` 的「加载中状态在终态前始终可见」 |
+| 5.4 内联实验（区分度） | `image-fallback-after/inline-experiment.json` |
+| 真机场景 PASS（6.1–6.4 / 8.3） | `test-results/acceptance/2026-09-18/20-image-fallback/`（`status.txt` = PASS、`steps.md` 15 条断言全 PASS、`shots/`、`ax/`） |
+| 真机反向验证：空白实现 → 如实 FAIL（6.3） | `test-results/acceptance/2026-09-18/blank-impl-reverse-verification/`——`AXImage (![percent svg](…)) @325,360 735×10`（chromium 同形状是 0×0）、`图片解码失败：…`（旧文案）、steps 里三条 FAIL |
+| 引擎分歧留档（design §8.1 第三条结论） | `test-results/acceptance/2026-09-18/engine-diff-width0/`——同一份 `width="0" height="0"` svg 在 WKWebView 渲染成 301×101，chromium 判自然尺寸 0 |
+
+**两处口径说明（如实记录，不是遗漏）**
+
+1. **6.1② 「兜底仍不可见」这一半的输入换成空位图**：原计划的输入是 `width="0"` 的 svg，实测
+   WKWebView 给它默认对象尺寸 300×100（渲染成可见图像，见 `engine-diff-width0/`），因此它在真机上
+   不构成「仍不可见」。改用 **0 字节位图**（读取成功、无可解码内容 → `图片无法显示：…`），两条腿
+   在真机上分别由「中招形状 → 兜底后可见」与「空位图 → 可见占位」承担。chromium 层仍保留
+   `width="0"` 形态（该引擎下判自然尺寸 0，走占位）。
+2. **6.1／6.3 的「可见」判据改为几何读数**：先用「该位置的 AX 文本含原始引用串 / svg 内部文本」
+   写断言，真机反向验证发现**空白实现下 AX 里照样读得到**（WebKit 会暴露不可见 svg 的内部文本），
+   即那条断言没有区分度。现改用 `AXImage` 节点行里的 `@x,y w×h`（宽高非零），空白实现下该行是
+   `735×10` → 断言如实 FAIL。AX 层的这条陷阱另立 finding 上报 tower
+   （`20260918-worker-svg-impl-bug-ax-wkwebview-svg.md`），建议写进验收套件 README 的已知边界。
+
+**未做的边界（如实声明）**
+
+- 2.2 的「录屏」没有做，用连续截图（`loading.png` / `terminal.png`）替代；慢读窗口由读桩注入延迟
+  构造，不是真实的大附件读取。
+- 6.1 的「不发起外部请求」腿不在真机层判（套件无网络探针），归 5.4 的 chromium 层，带强制变红验证。
+- 图片行是否与链接/分隔线同口径的显露源码：按节点 1 裁决 A 维持现状，本 change 不动（backlog 第 19 条）。
