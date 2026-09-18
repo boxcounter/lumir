@@ -50,7 +50,7 @@
 |---|---|---|
 | 字节读取失败（文件不存在 / 权限 / 超限 / 路径逃逸） | **有** | `:249-251` |
 | `<img>` 抛 `error`（解码失败、格式不支持、**外部 URL 被 CSP 拦**） | **有** | `:240-242` |
-| 解码成功但渲染不出可见像素（尺寸为零） | **无** | 两条都不命中：没有 `error` 事件；`naturalWidth` 也不必然为 0（例如声明了 `viewBox`、宽高为 `auto` 的 svg，规范要求宽高**保持 `auto`**，见 §4.4） |
+| 解码成功但渲染不出可见像素（尺寸为零） | **无** | 两条都不命中：没有 `error` 事件；本例 `naturalWidth` 也不为 0（实测 300×100，见 §8.1）。机制见 §8.1——本仓 `.cm-lp-image` 的 inline-block 与「SVG 无固有宽度」的百分比循环依赖；规范给的是默认对象尺寸，0×0 是本仓 CSS 的缺口（§4.4） |
 
 「不支持格式」在今天**没有独立的判定与文案**：`![x](a.psd)` / `![x](a.heic)` 一律走
 「读字节 → `data:` URL → 交给 `<img>`」，失败时归入「解码失败」那一类。也就是说，**格式支持与否
@@ -143,6 +143,13 @@ change 的处理是**维持现状**，并把「图片行是否与链接/分隔�
 
 ### 4.1 载入上下文决定权限，`<img>` 上下文的两个处理模式都关闭脚本与外部资源
 
+**硬性规范语句（主引）**：WHATWG HTML Living Standard §4.8.4 的图像加载处理模型要求
+「User agents must not run executable code (e.g. scripts) embedded in the image resource.」
+（[HTML Standard §4.8.4 Images](https://html.spec.whatwg.org/multipage/images.html)）。这一条与 URL
+scheme 无关——`data:image/svg+xml` 走的是同一条 image-loading 算法，因此它直接覆盖本仓的加载路径
+（`<img>` + `data:` URL）。下面引的 MDN 段是同一上下文（图片上下文）的第一手描述，两者**并引**：
+规范条文负责「必须不执行可执行代码」，MDN 负责把同一上下文里被关闭的能力逐项列清。
+
 SVG 规范把「被引用时的处理模式」单独定义，按引用方式选模式，并给出每个模式下四项能力的开关
 （[SVG Integration，W3C SVG 工作组编辑草案](https://svgwg.org/specs/integration/)）：
 
@@ -193,16 +200,36 @@ vault 里从别处下载的 svg 就能在打开笔记时执行脚本。所以 sp
   同等成立，不由 svg 引入；本 change 不改上限，但要求实现期在本节记录实测观感（见 tasks）。
 - **XML 解析错误**：畸形 svg 由引擎判为 `error`，落进「解码失败」类，有可见回退——不需要额外处理。
 
-### 4.4 尺寸：零尺寸是规范允许的形态
+### 4.4 尺寸：规范给的是默认对象尺寸，「0×0」是本仓 CSS 的缺口
 
-同一份规范另有一节规定 SVG 在 CSS 上下文里的尺寸解析
-（[SVG Integration § Sizing SVG content in CSS context](https://svgwg.org/specs/integration/)）：
-`svg` 元素的初始宽高为 `auto`；解析 `auto` 时，**没有 `viewBox`** 才把缺失的宽/高分别解析为
-`300px` / `150px`（CSS 2.1 的替代元素尺寸算法），**有 `viewBox` 则把未声明的宽/高保持为 `auto`**，
-只给出固有宽高比。因此「只声明 `viewBox`（或只声明 `viewBox` + 百分比宽高）」是一份**合法**的 svg，
-它在行内 `inline-block` 容器（`src/preview/theme.ts:144`）里不保证得到非零渲染尺寸——这是第 1.3 节
-「第三条失败形态」有规范支撑的来源，也是本 change 要求把终态判据落在**替换区可见尺寸**上的直接理由
-（只读 `naturalWidth` 会在这一类上给出错误结论）。
+三处规范各管一段，合起来才是完整图景：
+
+1. **SVG 侧不会给出固有宽度**：SVG 2 §8.12「Intrinsic sizing properties of SVG content」——原文
+   「`'auto'` and percentage lengths must not be used to determine an intrinsic width or intrinsic
+   height.」（[SVG 2 §8.12](https://svgwg.org/svg2-draft/coords.html)）。所以 `width="100%"` 或干脆
+   不声明宽高，都不产生固有宽度，`viewBox` 只剩固有宽高比。（前稿引的是 SVG Integration 的
+   「Sizing SVG content in CSS context」一节，说的是同一件事——有 `viewBox` 时未声明的宽高保持
+   `auto`；本轮修订复核的是上引 SVG 2 §8.12 的原文。）
+2. **CSS 侧因此回落到默认对象尺寸**：CSS 2.2 §10.3.2 的替代元素宽度算法——原文「the used value of
+   width becomes **300px**」；高度取「2:1 比例、不超过 **150px**、不超过设备宽」的最大矩形
+   （[CSS 2.2 §10.3.2](https://drafts.csswg.org/css2/#inline-replaced-width)）。CSS Images 3 §5.3
+   把同一件事定义成术语「默认对象尺寸」
+   （[css-images-3 §default-object-size](https://drafts.csswg.org/css-images-3/#default-object-size)）。
+3. **实测与本条吻合**：`width="100%"` + `viewBox="0 0 240 80"` 的样本，引擎给出的
+   `naturalWidth/naturalHeight` 正是 **300×100**——3:1 比例下的默认对象尺寸折算（§8.1 矩阵第一行）。
+   即**引擎这一侧没有失职**。
+
+**结论（与本节前稿相反，勿再按前稿实现）**：「渲染成 0×0」**不是**规范许可的形态——规范路径给的是
+非零的默认对象尺寸；本仓测到的 0×0 来自 `src/preview/theme.ts:144` 的 `.cm-lp-image
+{ display: inline-block }` 与「SVG 无固有宽度」之间的百分比循环依赖（隔离实测见 §8.1）。这个差别
+直接决定实现策略：
+
+- 前稿的表述（「零尺寸是规范允许的形态」）会推导出「只做可见回退占位」——那会让 Alex 的 svg 变成
+  一个占位块，**不满足本 change 的诉求**（「支持 svg 图片显示」）。
+- 正确取点是**先做尺寸兜底把图画出来**（加载后按 `naturalWidth/naturalHeight` 设显式像素宽度，见
+  §8.1 与 tasks 1.3），回退占位是兜底之后仍不可见时的**第二道保险**。
+- 终态判据仍必须落在**替换区可见尺寸**上（§3.2 不变）：本例的 `naturalWidth` 是 300（非零），只读它
+  会得出「一切正常」的结论——这正是判据不能只用自然尺寸的实证理由。
 
 ## 5. fallback 形态与文案
 
@@ -261,10 +288,73 @@ XML 解析失败，前端拿到的是同一个事件。今天把这几类一律�
 
 ## 8. 风险与未决点
 
+### 8.1 缺陷机制：已复现（M165 修订轮，2026-09-18）
+
+**中招形状**：SVG 只声明百分比宽度、没有固有像素尺寸。最小形状是 `width="100%"` + `viewBox`——这也是
+mermaid CLI、D2、Excalidraw 等导出器的默认形态（本机样本 `/Users/boxcounter/Downloads/mermaid-diagram-1787642287522.svg`
+即 `<svg width="100%" style="max-width: 1489.5px" viewBox="-50 -10 1489.5 909">`）。
+
+**实验矩阵**（playwright 1.62.1，**chromium 与 webkit 逐格一致**；容器 600px；CSS 与
+`src/preview/theme.ts:144-145` 同源）：
+
+| 输入 / 样式 | `complete` | `naturalWidth×Height` | 渲染盒 |
+|---|---|---|---|
+| `width="100%"` + `viewBox`，套 app 现样式（inline-block + `max-width: 100%`） | true | 300×100 | **0×0** |
+| 同上，**去掉 inline-block 包装** | true | 300×100 | 600×200 |
+| 同上，**只删 `max-width: 100%`**（保留 inline-block） | true | 300×100 | **0×0** |
+| 同上，加载后设 `style.width = naturalWidth + "px"` | true | 300×100 | **300×100** |
+| `width="240" height="80"`（现有 fixture 形状），套 app 现样式 | true | 240×80 | 240×80 |
+| 2000×600 图片，套 app 现样式 | true | 2000×600 | 600×180（既有收窄口径正常） |
+
+**两条结论**：
+
+1. **成因是本仓 CSS，不是引擎、也不是规范**：`.cm-lp-image { display: inline-block }`（`theme.ts:144`）
+   的 shrink-to-fit 与「SVG 无固有宽度」形成百分比循环依赖——img 的 max-content 贡献为 0 → 包装盒
+   0 宽 → img 0 宽 → 0 高。去掉包装盒即恢复正常（矩阵第二行）；**与 `max-width: 100%` 无关**
+   （第三行同样 0×0）。
+2. **chromium 与 webkit 结果一致** ⇒ CI 的 chromium 视觉通道**能复现**它，fixture 型门禁成立，
+   不必把这一族交给真机才能守。
+
+**与 Alex 报告逐项闭合**：这一态**不触发** `onerror`（`complete=true`，且此时 `naturalWidth` 是 300
+而不是 0 —— `src/preview/attachments.ts:245-247` 的同步探测两个条件都不满足，等于空转）→ 没有错误
+占位；`alt` 只在**加载失败**时由浏览器渲染 → 也没有 alt；源码已被 `Decoration.replace` 藏掉且图片行
+不在显露覆盖集内（§1.4）⇒「图片不显示 + 连源码都看不到了 + 没有任何痕迹」三条现象由同一机制全部解释，
+不需要引入「解码失败」类假设。
+
+**复现命令（任何 agent 可重跑；脚本不进仓）**：
+
+```bash
+# 前置：tests/visual 的依赖已装（主 checkout 已装；新 worktree 先跑 pnpm --dir tests/visual install --ignore-workspace）
+cd tests/visual && node --input-type=module -e '
+import { chromium, webkit } from "@playwright/test";
+const pct = `<svg xmlns="http://www.w3.org/2000/svg" width="100%" viewBox="0 0 240 80"><rect width="240" height="80" fill="#dfe8f5"/></svg>`;
+const u = (s) => `data:image/svg+xml,${encodeURIComponent(s)}`;
+const html = `<div style="width:600px">前文 text <span style="display:inline-block;margin:6px 0"><img id="a" src="${u(pct)}" style="max-width:100%;display:block"></span> 后文 text</div>`;
+for (const [n, e] of [["chromium", chromium], ["webkit", webkit]]) {
+  const b = await e.launch(); const p = await b.newPage();
+  await p.setContent(`<body style="margin:0">${html}</body>`); await p.waitForTimeout(300);
+  const r = await p.evaluate(() => { const i = document.getElementById("a"); const q = i.getBoundingClientRect();
+    return `${q.width}x${q.height} natural ${i.naturalWidth}x${i.naturalHeight} complete ${i.complete}`; });
+  console.log(n, r); await b.close();
+}'
+# 实测输出（修复前）：chromium 0x0 natural 300x100 complete true；webkit 同
+```
+
+**仍未验证的部分（不许当成已验）**：
+
+- Alex 报告里那份 `images/hooks-overview.en.svg` **本机不存在**（`mdfind` 无命中；
+  `/Users/boxcounter/Downloads/Everything-copy` 下也没有 `images/` 目录），所以「它就是这一族」是
+  **由现象反推**，不是逐字节核对。实现期按 tasks 1.1 用中招形状做 fixture；拿得到原文件则直接用它。
+- 「WKWebView 与 chromium 在渲染盒上的差异」**未找到权威来源**（能查到的只有 `naturalWidth` 这一层
+  的引擎差异）。本 change 的结论不依赖它——本轮 webkit（最接近 WKWebView 的引擎）实测与 chromium
+  同结果，真机层仍按 tasks 的验收面复核。
+
+### 8.2 风险与未决点
+
 | 项 | 状态 | 处置 |
 |---|---|---|
-| Alex 那张 svg 的真实成因（解码失败，还是解码成功但零尺寸） | **未定**，`<img>` 的错误事件不携带原因 | 实现期第一项任务：真机打开该形态的样本，用「有图 / 有占位 / 空白」三种终态定位；定位结果回填到本节。**不阻塞实现**——不变量对两种成因同等生效。 |
-| 零尺寸判据的取法（何时算「不可见」） | 待实现期定 | 以「替换区可见高度 > 0」为判据，配合真机复核；阈值/取法写进实现 PR 的说明，不在本 change 预设像素值。 |
+| 图片不可见的原始成因 | **已复现**（§8.1）：本仓 `.cm-lp-image` 的 inline-block 与「SVG 无固有宽度」的循环依赖 | 实现期按 tasks 1.1 的中招 fixture 与 1.3 / 2.6 的**尺寸兜底**取点；§4.4 已按规范口径改写（规范给默认对象尺寸，0×0 是本仓缺口）。 |
+| 零尺寸判据的取法（何时算「不可见」） | 判据方向已定（替换区可见尺寸），具体读数待实现期写进 PR | 实测已证明**不能**只读 `naturalWidth`（本例它是 300，非零）——判据仍取「替换区可见尺寸」，配合真机复核；不在本 change 预设像素阈值。 |
 | 大图（含 50MB 级附件）的排版与内存 | 既有边界 | 本 change 不改；实现期记录一次实测观感，必要时另立 finding。 |
 | 呈现层是多 vault / 多标签的装配 | 无冲突 | 图片渲染在 `EditorView` 的装饰层，与 vault 切换、标签切换无耦合。 |
 
