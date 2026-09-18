@@ -207,7 +207,15 @@ export const livePreviewTheme = EditorView.theme({
   ".cm-lp-fm-empty": { color: "var(--dim)" },
 
   // 附件图片与占位（内联 replace widget，根元素 span）。
-  ".cm-lp-image": { display: "inline-block", margin: "6px 0" },
+  // `width: 100%` 是图片显示宽度不变量（M182）的机制落点，不是观感调参：包装盒是 img 的
+  // 包含块，img 的 `max-width: 100%` 与「固有比例图按包含块填充」两条都相对它解析。包装盒
+  // 若是 shrink-to-fit（`width: auto`），它的宽度就由**在场内容**决定——加载中状态块的文本
+  // 宽度会先把包装盒钉死（≈ 半栏宽），图片字节到达后填充这个宽度并被 `settle` 判为可见，
+  // 终态就停在状态块宽度上；缓存命中的重开走同步 settle（首帧布局里没有状态块），包装盒
+  // 按图片自己算，于是收敛到栏宽。两个终态由「布局时状态块在不在场」决定 —— 正是本不变量
+  // 禁止的时序依赖。给包装盒一个与在场内容无关的确定宽度（栏宽）后，两条路径的包含块相同，
+  // 终态必然一致；图片本身仍按固有宽度 + `max-width: 100%` 渲染，小图不拉伸。
+  ".cm-lp-image": { display: "inline-block", width: "100%", margin: "6px 0" },
   ".cm-lp-image img": { maxWidth: "100%", borderRadius: "4px", display: "block" },
   ".cm-lp-image-status": { color: "var(--dim)", fontSize: "0.85em" },
   ".cm-lp-image-error, .cm-lp-embed-unsupported": {
