@@ -24,11 +24,23 @@ export function fixturesDir() {
   return path.join(repoRoot(), "scripts/acceptance/fixtures");
 }
 
-/** 写隔离 config.json。keys 为 null 时整体不写该字段（默认无覆盖）。 */
-export async function writeConfig({ lastVault = vaultDir(), mode = "md", keys = undefined } = {}) {
+/** 写隔离 config.json。`keys` 不传时整体不写该字段（默认无覆盖）。
+ *  M180（change line-wrap-options）起支持 `lineWrap` / `codeBlockWrap`：**传了才写进 editor 表**
+ *  ——两项缺失时应用走 Rust 侧 `Default`（line_wrap = true、code_block_wrap = false），
+ *  这正是「默认口径」场景要的形态；显式写 false / true 才构造出另外三条组合。 */
+export async function writeConfig({
+  lastVault = vaultDir(),
+  mode = "md",
+  lineWrap = undefined,
+  codeBlockWrap = undefined,
+  keys = undefined,
+} = {}) {
   const dir = path.join(envHome(), "lumir");
   await mkdirp(dir);
-  const cfg = { version: 1, last_vault: lastVault, editor: { mode } };
+  const editor = { mode };
+  if (lineWrap !== undefined) editor.line_wrap = lineWrap;
+  if (codeBlockWrap !== undefined) editor.code_block_wrap = codeBlockWrap;
+  const cfg = { version: 1, last_vault: lastVault, editor };
   if (keys !== undefined) cfg.keys = keys;
   await writeFile(path.join(dir, "config.json"), `${JSON.stringify(cfg, null, 2)}\n`);
   return path.join(dir, "config.json");

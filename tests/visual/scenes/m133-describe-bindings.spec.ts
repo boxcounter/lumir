@@ -1,6 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import { expectScreenshot } from "./expect-screenshot";
-import { COMMAND_IDS, KEY_BINDINGS } from "../../../src/keys";
+import { COMMAND_IDS, KEYLESS_COMMAND_IDS, KEY_BINDINGS } from "../../../src/keys";
 import { configGets, stubTauri } from "./tauri-stub";
 import { readDocument } from "./parity-checks";
 
@@ -63,12 +63,14 @@ test("⌘/ 打开面板：列出生效表里全部键位并按功能族分组", 
   await focusEditor(page, DOC.length);
   await openPanel(page);
 
-  // 分组标题与顺序（8 组覆盖全部命令，无兜底分组）
+  // 分组标题与顺序（9 组覆盖全部命令，无兜底分组；「全局」组的成员来自
+  // NON_TAB_GLOBAL_COMMAND_IDS，「标签」组单列——两组必须互斥，理由见 bindings-panel.ts）
   expect(await page.locator(".lumir-bindings-group-title").allTextContents()).toEqual(GROUPS);
 
-  // 逐行即逐绑定：默认表里每条绑定一行，每条命令都有键位指向它 → 无「未绑定」行
-  await expect(page.locator(".lumir-bindings-row")).toHaveCount(KEY_BINDINGS.length);
-  await expect(page.locator(".lumir-bindings-row.is-unbound")).toHaveCount(0);
+  // 逐行即逐绑定 + 逐条默认不绑键的命令：默认表里每条绑定一行，每条命令都有键位指向它或
+  // 登记在 KEYLESS_COMMAND_IDS 里 → 只有后者会出现「未绑定」行（M180 新增两条折行命令）。
+  await expect(page.locator(".lumir-bindings-row")).toHaveCount(KEY_BINDINGS.length + KEYLESS_COMMAND_IDS.length);
+  await expect(page.locator(".lumir-bindings-row.is-unbound")).toHaveCount(KEYLESS_COMMAND_IDS.length);
 
   // 每条命令都在面板里出现（没有命令从视野里消失）
   for (const command of COMMAND_IDS) {
@@ -101,7 +103,9 @@ test("面板显示生效表：配置重绑后按配置渲染，不是静态默�
   await expect(
     page.locator('.lumir-bindings-row[data-command="editor.undo"]').filter({ hasText: "Cmd-z" }),
   ).toHaveCount(1);
-  await expect(page.locator(".lumir-bindings-row")).toHaveCount(KEY_BINDINGS.length + 1);
+  await expect(page.locator(".lumir-bindings-row")).toHaveCount(
+    KEY_BINDINGS.length + 1 + KEYLESS_COMMAND_IDS.length,
+  );
 });
 
 test("解绑后命令仍在视野里：⌘S 解绑 → document.save 标注「未绑定」", async ({ page }) => {
@@ -113,12 +117,36 @@ test("解绑后命令仍在视野里：⌘S 解绑 → document.save 标注「�
   await expect(unbound).toHaveCount(1);
   await expect(unbound).toHaveClass(/is-unbound/);
   await expect(unbound.locator(".lumir-bindings-key")).toHaveText("未绑定");
-  await expect(unbound.locator(".lumir-bindings-doc")).toContainText("没有键位指向它");
+  // M180：说明串按成因分开——这一条是「被配置解绑」，不是「默认不绑键」
+  await expect(unbound.locator(".lumir-bindings-doc")).toContainText("已被配置解绑");
   // 解绑只少一条绑定，其余行数不变（未绑定行补上那条命令的位置）
-  await expect(page.locator(".lumir-bindings-row")).toHaveCount(KEY_BINDINGS.length);
+  await expect(page.locator(".lumir-bindings-row")).toHaveCount(KEY_BINDINGS.length + KEYLESS_COMMAND_IDS.length);
   await expect(
     page.locator('.lumir-bindings-row[data-command="document.save"] .lumir-bindings-key'),
   ).not.toHaveText("Cmd-s");
+});
+
+test("未绑定行说清成因与下一步：默认不占键位（M180 折行命令）与已被配置解绑分开读", async ({ page }) => {
+  await openVault(page, { keys: { "Cmd-s": null } });
+  await focusEditor(page, DOC.length);
+  await openPanel(page);
+
+  // 默认不占键位：两条折行命令（登记在 KEYLESS_COMMAND_IDS），落进既有「全局」组
+  for (const command of ["view.toggle-line-wrap", "view.toggle-code-block-wrap"]) {
+    const row = page.locator(`.lumir-bindings-row[data-command="${command}"]`);
+    await expect(row).toHaveCount(1);
+    await expect(row).toHaveClass(/is-unbound/);
+    await expect(row.locator(".lumir-bindings-key")).toHaveText("未绑定");
+    await expect(row.locator(".lumir-bindings-doc")).toContainText("默认不占键位");
+    await expect(row.locator(".lumir-bindings-doc")).toContainText("[keys]");
+  }
+
+  // 同一个面板里的另一种成因必须读起来不一样（只说「未绑定」等于让人猜）
+  const unboundSave = page.locator('.lumir-bindings-row[data-command="document.save"]');
+  await expect(unboundSave.locator(".lumir-bindings-doc")).toContainText("已被配置解绑");
+
+  // 两条折行命令落进既有分组，MUST NOT 新增分组
+  expect(await page.locator(".lumir-bindings-group-title").allTextContents()).toEqual(GROUPS);
 });
 
 test("面板打开期间 editor 作用域键不穿透到文档", async ({ page }) => {

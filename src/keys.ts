@@ -61,6 +61,12 @@
 // 一个 token 只能有一条绑定，↑↓ 已归 editor.cursor-up / cursor-down、Esc 已归
 // editor.widget-escape（带 when 条件），浮层就地消费时那两条因作用域判定不命中。
 //
+// M180：表新增两条**默认不绑键**的命令（`view.toggle-line-wrap` / `view.toggle-code-block-wrap`），
+// 「无孤儿命令」不变量因此多了一条显式出口——`KEYLESS_COMMAND_IDS`（默认不绑键清单，见其声明处）。
+// 同一 change 里判据泛化一处：轨道 D 的 widget 焦点键从 `TABLE_SCROLL_CLASS` 泛化为
+// `BLOCK_SCROLL_CLASS`（表格与代码块的横滚容器共用同一个 class），命中条件同时收紧为
+// 「容器自身持有这次按键的焦点」。
+//
 // 零冲突核对（注册前实测，三条独立来源，逐条可复核）：
 //   - **表内**：本文件即真源，现表无 ⌘W / ⌘数字 / ⌃⇥ 系绑定（⌘W 系为空，⌘ 数字无，⌃Tab 无）。
 //   - **原生菜单 accelerator**：tauri 2.11.5 的 `Menu::default()` 逐项来自 muda 0.19.3
@@ -169,6 +175,12 @@ export const NON_TAB_GLOBAL_COMMAND_IDS = [
   "toc.toggle",
   // M163：⌘O 打开 vault 切换器（能力、浮层与会话在 src/vault-switcher.ts，装配在 main.ts）
   "vault.switcher",
+  // M180：折行开关（能力与状态在 editor.ts，装配在 main.ts）。取 `view.` 前缀而不是
+  // `editor.`：本仓的既有约定是 `editor.` 前缀 = 编辑器作用域命令，而这两条作用于**应用
+  // 运行期的显示口径**（与 tab.*、toc.toggle 同族），作用域由清单派生为 global——
+  // 前缀与作用域 MUST NOT 互相打脸（D3 裁决）。两条都默认不绑键，见 KEYLESS_COMMAND_IDS。
+  "view.toggle-line-wrap",
+  "view.toggle-code-block-wrap",
 ] as const;
 
 /** 全局命令 id（实现落在装配层 main.ts）：非标签部分 + 标签部分。 */
@@ -180,6 +192,26 @@ export const GLOBAL_COMMAND_IDS = [
 
 /** 全部命令 id：类型与运行期清单同源，测试据此断言无孤儿命令、无越界绑定。 */
 export const COMMAND_IDS = [...EDITOR_COMMAND_IDS, ...GLOBAL_COMMAND_IDS] as const;
+
+/**
+ * 默认不绑键的命令 id 清单（M180）：「有实现、有 id、有意不占键位」是**要签字的决定**，
+ * 不是遗漏——M131 要消灭的是「命令实现了但没人绑」那种静默状态，本清单是它的显式出口，
+ * 不是判据的放松（`openspec/specs/keymap-commands` 的「统一键位分发表」）。
+ *
+ * 三条对账由单测与视觉场景各守一遍：① `COMMAND_IDS` 每条命令要么有绑定、要么在本清单里；
+ * ② 清单项不得是 `COMMAND_IDS` 之外的幻影 id；③ 清单与绑定表无交集（登记为「默认不绑键」
+ * 的命令 MUST NOT 又带着默认绑定，否则这份清单在说谎）。
+ *
+ * **类型刻意写成 `readonly string[]` 而不是字面量联合**：写窄了，②就变成编译期保证、
+ * 运行期断言退化成恒真（REVIEW.md 第 1 条「看着有覆盖、实际不判任何东西」）；写宽了，
+ * ②才是真的在跑。需要 `CommandId` 的消费者（键位面板）自行做包含判定。
+ */
+export const KEYLESS_COMMAND_IDS: readonly string[] = [
+  // M180：折行开关——本版不为折行占用任何物理键位（Emacs 的规范键 C-x x t 是多段 chord，
+  // 而本版键位层不支持多段 chord），用户按需经 [keys] 绑定。
+  "view.toggle-line-wrap",
+  "view.toggle-code-block-wrap",
+];
 
 export type EditorCommandId = (typeof EDITOR_COMMAND_IDS)[number];
 export type CommandId = (typeof COMMAND_IDS)[number];
@@ -201,13 +233,26 @@ export interface KeyBinding {
   doc: string;
 }
 
-/** 表格滚动容器（livePreview 的 grid 表格 widget）的 class：widget 键的命中条件用。 */
+/** 块级横滚容器的 class（M180）：livePreview 的表格滚动容器与代码块滚动容器**共用**它——
+ *  键位层的命中条件按它判定，两类容器必须同名（判据的单一来源在这里）。 */
+export const BLOCK_SCROLL_CLASS = "cm-lp-block-scroll";
+
+/** 表格滚动容器的 class：M180 起该容器**同时**带 BLOCK_SCROLL_CLASS。本常量保留是因为既有
+ *  选择器与字面量断言按它定位（`tests/unit/keys.test.ts` 与 m110/m113/m118/m119/m131/m132/
+ *  m168 等场景多处），改名只会把这些断言一并拖进来，收益只是名字好听。 */
 export const TABLE_SCROLL_CLASS = "cm-lp-table-scroll";
 
-/** 事件目标是否落在表格滚动容器内（含其后代）。 */
+/** 事件目标是否落在**持有本次按键焦点的**块级横滚容器上。
+ *
+ *  M180 收紧为「容器自身是活动元素」：容器里的文本是编辑器正文（md 可编辑），
+ *  「事件目标落在容器内（含其后代）」会把光标落在块内文本时的方向键误判成容器滚动——
+ *  caret 路径被吞掉，而 `keymap-commands` 的既有 scenario 明确要求文本中的方向键走原生
+ *  路径。收紧后表格与代码块两个容器同判据、同行为。 */
 function isWidgetKeyTarget(event: KeyboardEvent): boolean {
   const target = event.target;
-  return target instanceof Element && target.closest(`.${TABLE_SCROLL_CLASS}`) !== null;
+  if (!(target instanceof Element)) return false;
+  const container = target.closest(`.${BLOCK_SCROLL_CLASS}`);
+  return container !== null && container.ownerDocument.activeElement === container;
 }
 
 /** 表格滚动容器内左右方向键的步进（原 livePreview 手柄口径，迁移不改行为）。 */
@@ -289,11 +334,14 @@ export const KEY_BINDINGS: readonly KeyBinding[] = [
   { key: "Alt-KeyF", command: "editor.extend-word-forward", scope: "editor", doc: "⌥⇧F：按词向后扩选；含 Alt 的组合按物理键且 Shift 不参与判定（M131 token 口径），故与 ⌥F 同 token——v0 未绑 ⌥F 的单词移动，见 openspec change emacs-keys-pack 的 shift-extend requirement「本版已知限制」" },
   { key: "Alt-KeyB", command: "editor.extend-word-backward", scope: "editor", doc: "⌥⇧B：按词向前扩选；token 口径同 ⌥⇧F" },
 
-  // ── 编辑器内：轨道 D 的表格滚动容器（widget）焦点键（M132 从 livePreview 手柄收编）
-  // when 把命中限定在 widget 焦点内：文本编辑中的 Home / End / 左右方向键 / Escape
-  // 必须照旧走原生 caret 路径（连同名键一起绑会把这些键从文本编辑里吞掉）。
-  { key: "ArrowLeft", command: "editor.widget-scroll-left", scope: "editor", when: isWidgetKeyTarget, doc: "表格滚动容器焦点内的 ←（原手柄的 120px 步进）；when 保证文本编辑中的 ← 不受影响" },
-  { key: "ArrowRight", command: "editor.widget-scroll-right", scope: "editor", when: isWidgetKeyTarget, doc: "容器焦点内的 →（原手柄口径）" },
+  // ── 编辑器内：轨道 D 的**块级横滚容器**焦点键（M132 从 livePreview 手柄收编；M180 从
+  // 「表格滚动容器」泛化为「块级横滚容器」：表格容器与围栏 / 缩进代码块的横滚容器共用同一个
+  // class，见 BLOCK_SCROLL_CLASS）。
+  // when 把命中限定在「容器自身持有这次按键的焦点」：文本编辑中的 Home / End / 左右方向键 /
+  // Escape 必须照旧走原生 caret 路径，光标落在块内文本时（事件目标在容器内、但活动元素是
+  // 编辑器内容区）也归 caret。
+  { key: "ArrowLeft", command: "editor.widget-scroll-left", scope: "editor", when: isWidgetKeyTarget, doc: "块级横滚容器焦点内的 ←（原手柄的 120px 步进）；when 保证文本编辑中的 ← 不受影响" },
+  { key: "ArrowRight", command: "editor.widget-scroll-right", scope: "editor", when: isWidgetKeyTarget, doc: "容器焦点内的 →（原手柄口径）；表格与代码块容器同判据同行为" },
   { key: "Home", command: "editor.widget-scroll-home", scope: "editor", when: isWidgetKeyTarget, doc: "容器焦点内的 Home：横向滚回最左" },
   { key: "End", command: "editor.widget-scroll-end", scope: "editor", when: isWidgetKeyTarget, doc: "容器焦点内的 End：横向滚到最右" },
   { key: "Escape", command: "editor.widget-escape", scope: "editor", when: isWidgetKeyTarget, doc: "容器焦点内的 Escape：焦点交还编辑器（view.focus()），随后按键回到文本上下文" },

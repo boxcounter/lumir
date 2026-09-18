@@ -3,6 +3,7 @@ import {
   COMMAND_IDS,
   EDITOR_COMMAND_IDS,
   GLOBAL_COMMAND_IDS,
+  KEYLESS_COMMAND_IDS,
   KEY_BINDINGS,
   Keymap,
   keyToken,
@@ -49,18 +50,26 @@ test("键位表不变量：无重复键、每绑定有归属命令、命令无�
     expect(["global", "editor"]).toContain(binding.scope);
   }
 
-  // 无孤儿命令：清单里每条命令至少有一条绑定；编辑器命令与全局命令各归其实现方
+  // 无孤儿命令（M180 起是三项对账）：每条命令要么有绑定、要么登记在默认不绑键清单里。
+  // 两个方向都要查——「有实现但没人绑」与「清单写着不绑键、绑定表里却有一条」都是错。
   for (const command of COMMAND_IDS) {
     expect(
-      KEY_BINDINGS.some((binding) => binding.command === command),
-      `命令 ${command} 没有任何绑定`,
+      KEY_BINDINGS.some((binding) => binding.command === command) || KEYLESS_COMMAND_IDS.includes(command),
+      `命令 ${command} 既没有任何绑定，也不在默认不绑键清单里`,
     ).toBe(true);
+  }
+  for (const command of KEYLESS_COMMAND_IDS) {
+    expect(COMMAND_IDS, `默认不绑键清单里的 ${command} 不在命令清单里（幻影 id）`).toContain(command);
+    expect(
+      KEY_BINDINGS.some((binding) => binding.command === command),
+      `${command} 既登记为默认不绑键、又带着默认绑定——清单在说谎`,
+    ).toBe(false);
   }
   for (const binding of KEY_BINDINGS) {
     const owner = binding.scope === "editor" ? EDITOR_COMMAND_IDS : GLOBAL_COMMAND_IDS;
     expect(owner, `${binding.key} 的命令 ${binding.command} 与作用域 ${binding.scope} 不匹配`).toContain(binding.command);
   }
-  // 编辑器命令全部带上，避免「命令实现了但没人绑」
+  // 编辑器命令全部带上，避免「命令实现了但没人绑」（折行命令不在 editor 组，不受这条约束）
   for (const command of EDITOR_COMMAND_IDS) {
     expect(KEY_BINDINGS.filter((binding) => binding.command === command).length).toBeGreaterThan(0);
   }

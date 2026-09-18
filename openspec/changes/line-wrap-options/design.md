@@ -71,7 +71,7 @@
 | `.cm-scroller` 带 `overflow-x: auto`（CM 基础主题给），本仓主题没取消它 | 本仓 `.cm-scroller` 主题：`src/editor.ts:1129-1135`（md 列 `minmax(24px,1fr) minmax(0,var(--measure)) minmax(24px,1fr)`，code 列首列 `minmax(max-content,1fr)`）；`.cm-content { min-width: 0; width: 100% }` `:1136-1141`；`.cm-line { padding: 0 }` `:1143`；`--measure: 80%` `src/style.css:9` |
 | 本仓**没有**任何针对 `.cm-content` / `.cm-line` / `.cm-scroller` 的 `white-space` 覆盖（`src/style.css` 里的 `white-space` 命中都属表格 cell `:325-326`、masthead `:62`、文件树等非编辑器内容面） | `src/style.css` 全量 grep |
 | 全前端只有一个 Compartment：`modeCompartment`，重配点四处（挂载 `:1211`、装载 `:1371`、`setMode` `:1409`、前台重载 `:1448`） | `src/editor.ts:979`、`:1211`、`:1371`、`:1409`、`:1448` |
-| 会话级状态先例与其陷阱：`mode` 存在会话对象上（逐会话真源），因为 `changeFilter` 的闭包在 state 创建时绑好、只能读实例变量，故内核另存一份「投影」`currentMode`，唯一写入点是 `syncMode()`，由激活 / 装载 / `setMode` 三处调用 | `src/editor.ts:825-858`（`mode` `:836-841` 的注释就是这条陷阱原文）、`:980-986`、`syncMode()` `:1354-1357`、`activate` 里 `:1385` |
+| 会话级状态先例与其陷阱：`mode` 存在会话对象上（逐会话真源），因为 `changeFilter` 的闭包在 state 创建时绑好、只能读实例变量，故内核另存一份「投影」`currentMode`，唯一写入点是 `syncMode()`，由激活 / 装载 / `setMode` 三处调用。**M180 的折行状态不走这条**：D1 取应用级，真源在 `createEditor` 闭包里的一个值上，全部会话同步重配（§2.2） | `src/editor.ts:825-858`（`mode` `:836-841` 的注释就是这条陷阱原文）、`:980-986`、`syncMode()` `:1354-1357`、`activate` 里 `:1385` |
 
 ### 1.4 代码块（围栏 + language-data 着色）的折行现状
 
@@ -118,21 +118,30 @@
 
 ### 2.2 前端落点：折行状态的持有者与重配
 
-- **真源在会话对象上**：`EditorSession`（`src/editor.ts:825-858`）新增折行状态字段，与 `mode`
-  （`:836-841`）并列。理由是同一份：折行是「这个标签页的显示属性」，内核单值会在切标签页后错位。
-- **新增一个模块级 `wrapCompartment = new Compartment()`**，与 `modeCompartment`（`src/editor.ts:979`）
-  并列。CM 的 Compartment 以实例身份定位，一个实例可服务多个 state，每个 state 持有自己的那份——
-  这正是逐标签页状态天然正确的原因。
-- **折行相关扩展只有一处装配**：`wrapExtensions(mode, wrap)`（新增），由 `wrapCompartment` 承载；
-  触发重配的只有两个入口——`setMode`（模式变了，md 专属的那部分要跟着变）与 `setWrap`（折行值变了），
-  二者共用同一个 `reconfigureWrap()`。**MUST NOT 在 `livePreview()` 内部旁路读折行状态**：那是创建期
-  闭包读可变变量，正是 `:836-841` 记下的 `currentMode` 陷阱形态。
-- `sessionState(doc, path, mode)`（`src/editor.ts:1178-1233`）增加折行参数，与 `mode` 同形。
-- 新会话（`makeSession` `:1235-1246`、`createSession` `:1416-1422`）从**配置默认基线**开始，与
-  `defaultMode`（`:980-986`）同形：内核另存一个 `defaultWrap`，**只有配置加载会移动它**。
-  toggle 命令 MUST NOT 移动 `defaultWrap`——翻转当前标签页不该改变「新标签页从什么值开始」。
-- 状态切回标签页不需要额外同步动作：折行值与 `mode` 不同，它不参与任何创建期闭包，值是随 state 走的，
-  `setState` 换 state 即换值（`activate` `:1377-1397`）。这是**不重复 `currentMode` 那套投影**的理由。
+- **真源是应用运行期的一个值**（D1 裁决原文「应用级。」）：`createEditor` 闭包内一份
+  `let wrap = { lineWrap, codeBlockWrap }`，初值取 TS 侧出厂默认常量；配置到达时由装配层写一次
+  （`setWrap`）。**MUST NOT 存在第二份真源**：会话对象上不存折行值（那是初稿的标签页级口径），
+  配置项也不是运行期真源（它只在启动时喂一次初值）。
+- **新增一个 `wrapCompartment = new Compartment()`**，与 `modeCompartment`（`src/editor.ts:979`）
+  并列。折行相关扩展只有一处装配：`wrapExtensions(mode, wrap)`（新增），由它承载。
+  **MUST NOT 在 `livePreview()` 内部旁路读折行状态**：那是创建期闭包读可变变量，正是
+  `:836-841` 记下的 `currentMode` 陷阱形态。
+- **每次翻转是一次全量重配**：`setWrap(next)` 更新闭包里的值，再遍历 `sessions` 把每个会话的
+  `state` 用 `wrapCompartment.reconfigure(wrapExtensions(...))` 派生成新 state——前台会话经
+  `view.dispatch` 生效，后台会话只换 `session.state`（与 `reloadSession` 的既有分岔同形）。
+  「全部会话同步」是应用级口径的定义，不是可选优化：漏掉后台会话会让切回去的标签页显示旧口径。
+- **`setMode` 也走同一个重配入口**：`wrapExtensions` 的两项里有一项（代码块内容级 class）只在
+  md 模式有意义，模式热切换时若不一起重配，code → md 切回来会丢掉那一层。`setMode` 与 `setWrap`
+  共用同一个 `reconfigureWrap()`，`wrapExtensions` 只有一处装配。
+- `sessionState(doc, path, mode, wrap)`（`src/editor.ts:1178-1233`）增加折行参数，与 `mode` 同形
+  ——**这是「新会话从哪起步」的落点**：新建 / 装载会话时读的是当时的应用态，因此新标签页取
+  **当前应用态**而不是配置默认（这正是 D1 与初稿的关键差异）。
+- **不需要 `currentMode` 那套投影**：折行值不参与任何创建期闭包（`changeFilter` 之类只看 `mode`），
+  它随 state 走；应用级口径下所有会话的取值本就一致，切标签页（`activate` `:1377-1397`）不涉及
+  折行同步动作。
+- 与 `mode` 的一处不对称要如实记录：`mode` 是**逐会话**的（装载时按路径裁决，`modeForPath`），
+  折行是**应用级**的——折行因此不参与 `modeForPath` 那条裁决链，装载新文件只受应用态影响
+  （会话 state 里的 Compartment 值由全量重配维持，`loadedState` 不必再动它）。
 
 ### 2.3 代码块「不折行」的实现（两层）
 
@@ -200,11 +209,13 @@
   （`src/keys.ts:160-172`）。作用域由 `applyKeyOverrides` 机械派生（`:451`）：非 `EDITOR_COMMAND_IDS`
   → `global`。
   - id 前缀取 `view.` 而不是 `editor.`：本仓的既有约定是 `editor.` 前缀 = 编辑器作用域命令
-    （`EDITOR_COMMAND_IDS` 的 33 条，`src/keys.ts:89-136`）。这两条命令作用于「当前标签页」这一窗口级
-    对象（与 `tab.close` / `toc.toggle` 同族），作用域取 `global`，`editor.` 前缀会与作用域互相打脸。
-  - 作用域取 `global` 的理由：用户点了文件树、焦点不在编辑器内容区时，仍应能切换当前标签页的显示；
+    （`EDITOR_COMMAND_IDS` 的 33 条，`src/keys.ts:89-136`）。这两条命令作用于**应用运行期的显示
+    口径**（窗口级对象，与 `tab.*` / `toc.toggle` 同族），作用域取 `global`，`editor.` 前缀会与
+    作用域互相打脸。
+  - 作用域取 `global` 的理由：用户点了文件树、焦点不在编辑器内容区时，仍应能切换当前显示口径；
     这与 `tab.*` 和 `toc.toggle` 的理由同族。若 Alex 更希望「只有焦点在编辑器里才生效」，改动是把 id
-    改回 `editor.` 前缀并放进 `EDITOR_COMMAND_IDS`，行为差别只是「哪些焦点下按键有效」（proposal D3）。
+    改回 `editor.` 前缀并放进 `EDITOR_COMMAND_IDS`，行为差别只是「哪些焦点下按键有效」（D3 已裁决
+    取 `global`，见 proposal 的裁决记录）。
   - 边界如实记录：`global` 作用域意味着面板 / 大纲浮层 / 搜索框持有焦点时这两条命令同样命中。
     这不与「面板打开期间编辑键不穿透」的既有保证冲突——那条保证针对会改文档的 `editor` 命令，
     而这两条只改显示状态、MUST NOT 碰文档（spec 的「折行开关的瞬态口径」有对应 scenario）。
@@ -233,15 +244,17 @@
 ### 2.7 加载时点与生命周期
 
 - 启动：`configGet()`（`src/main.ts:805`）→ 在 `editor.setMode(...)`（`:806`）之后加一次折行配置应用，
-  它做两件事——写 `defaultWrap`（新标签页的起点）、把两个值应用到当前前台会话。启动早期（配置到达前）
-  的会话按 TS 侧出厂默认跑，与 Rust 默认值相同。
+  它做一件事——用配置的两个值初始化**应用运行期**的折行状态（`setWrap`）。新建 / 装载会话都从这份
+  应用态取初值，因此不存在单独的「新标签页起点」变量（D1 之后 `defaultWrap` 这个方案被删掉）。
+  启动早期（配置到达前）的会话按 TS 侧出厂默认跑，与 Rust 默认值相同。
 - **两处默认值的处置**：TS 侧出厂默认（`DEFAULT_LINE_WRAP = true` / `DEFAULT_CODE_BLOCK_WRAP = false`）
   与 Rust 的 `Default` 是同一语义的两份写值。既有先例就是 `initialMode = "md"`
   （`src/editor.ts:978`）对 `EditorConfig::default` 的 `mode: Md`（`config.rs:80`），本 change 沿用该先例，
   并按 REVIEW.md 第 8 条的口径加两道防线：两侧各有测试钉住各自的默认值（Rust 单测 + 前端单测），
   两侧常量处各写一行指针注释指向对方。
-- 运行期：toggle 只改当前会话的折行值并重配 Compartment，**不写 `config.json`**（本 change 不新增任何
-  配置写入路径），因此重启后回到配置值；`config.json` 的 mtime 与内容在翻转前后逐字节不变——这是可断言的。
+- 运行期：toggle 改的是**应用运行期的折行状态**并重配**全部会话**的 Compartment（前台经 dispatch、
+  后台只换 state），**不写 `config.json`**（本 change 不新增任何配置写入路径），因此重启后回到配置值；
+  `config.json` 的 mtime 与内容在翻转前后逐字节不变——这是可断言的。
 - 配置 warning 沿用既有出口：console + `logEvent("config_warning")`（`src/main.ts:811-814`），本版不加
   新 UI 面（配置 warning 无 UI 出口是既有已知项，`docs/backlog.md:105`）。
 - **观测缺口（自觉取舍，proposal D5）**：无 mode line、无 toast，故「当前折行口径」在界面上不可读；
@@ -253,7 +266,8 @@
 
 | 方案 | 否决理由 |
 |---|---|
-| 内核一个全局布尔代替会话级状态 | 切标签页后错位，正是 `src/editor.ts:836-841` 记下的陷阱；而把值放进 state（Compartment）后逐标签页天然正确 |
+| 标签页级翻转（= Emacs buffer-local，本提案初稿的方案） | D1 裁决取**应用级**（原话「应用级。」）：折行是应用运行期的显示口径，切标签页时两种口径并存会让人以为开关坏了。代价如实记录：翻转要遍历全部会话 reconfigure；新标签页取当前应用态而不是配置默认——初稿的 `defaultWrap`（新标签页起点）方案因此被删掉（§2.2） |
+| 内核一个全局单值但只应用到前台会话 | 后台会话停在旧口径，切回去看到的还是翻转前的呈现——「应用级」的定义就是全部会话同步，只改前台等于半个开关（§2.2） |
 | 在 `livePreview()` 内部读折行状态 | 创建期闭包读可变变量 = 同一个陷阱；且折行扩展会因此有两处装配入口，违反 M131 的「单一分发路径」精神 |
 | 代码块只做行级 `white-space: pre`，不做块级容器 | 溢出的长行会把 `.cm-scroller`（CM 基础主题的 `overflow-x: auto`）拉出整窗横滚，连标题一起横移；与表格 / 公式 / mermaid 的「局部容器」口径不符 |
 | 把代码块源码换成 `<pre>` 只读副本 | 破坏「围栏源码保持可选可编辑」（`openspec/specs/editor-live-preview/spec.md:156`）与 md 模式可编辑性 |
@@ -267,29 +281,90 @@
 | 顺手做菜单入口（View 菜单项） | 可见面从「配置 + 命令」扩成「配置 + 命令 + 原生菜单」，并背上菜单结构假设校验那一套；见 proposal 的 Non-goals 与 D2 |
 | 顺手做 M-x / 命令面板 | 通用能力（现有 51 条命令里被解绑的同样受益），远超本 change 的边界，且需要新增 dispatch-by-id 入口 |
 
-## 4. 实现期必须验证 / 未决的点
+## 4. 实现期必须验证 / 未决的点（逐条写实测结论，2026-09-18）
 
-0. **CM 侧两条契约（本 worktree 无 `node_modules`，未本地复核）**：① 折行的 `white-space` 声明落在
-   `.cm-content.cm-lineWrapping` 上、`.cm-line` 自身没有（§1.3）；② `EditorView.blockWrappers` 可以
-   并存多个 facet 值（表格那套 + 代码块那套，§1.4/§2.3-2）。两条都用本地 dist 或一次最小实测复核；
-   ②不成立时的退路已写明（并入同一个 wrapper 函数）。
-1. **嵌套语境**（引用块、列表项内的围栏代码块）下 block wrapper 的范围与滚动是否正确。机制是通用的，
-   但表格当前只在顶层用。实测后如实记录：能承载局部容器的写进 requirement 的 scenario；某形态确实
-   承载不了的，写进 spec 的已知边界——**不许静默退化成「折行」或「整窗横滚」**。
-2. **容器判据的语义**（§2.3-6）：光标落在代码块文本里（未经 `Tab` 聚焦容器）时方向键的归属。
-   期望是 caret 路径不受影响；不成立则按 §2.3-6 的收紧方案改判据，并把表格的既有场景一并回归。
-3. **横滚容器的几何面**：滚动条出现时的水平位移、「翻转前后除折行本身外行盒不变」的断言取法、
-   以及「滚到右端不露白底」的底板（§2.3-7）。
-4. **类型不符配置**（`{"editor": {"line_wrap": "yes"}}`）的现行为实测确认（预期走整文件回落），
-   留单测钉住（§2.1）。
-5. **现有基线暴露不了本次默认变更**（代码块 fixture 最长行 45 字符）：视觉验收必须自带超长代码行
-   fixture，并逐张核对出现过代码块的整页基线（REVIEW.md 第 3 条）。
-6. **`[keys]` 绑定后真的能触发**：需要一条视觉或真机断言（不是只看面板显示改对了）；键位注入类断言
-   按 acceptance README 的口径走「回读 + 只在字节未变时重试」。
-7. 启动早期（配置到达前）与配置到达后的折行状态是否出现可见跳变——文件级折行只在有超长行时可见，
-   若实测有跳变，考虑把配置应用提前到首次渲染前（不改设计，只调时序）。
-8. **面板未绑定行的说明串**（§2.6）与 `文案-Copy.md` D66 的修订要在同一批里落地，并按 m133 加断言——
-   文案改了而断言仍只看「未绑定」两个字，等于没验。
+0. **CM 侧两条契约**（本 worktree 开工时无 `node_modules`，故列为首验项）：**两条都成立，退路未使用**。
+   - ① 折行的 `white-space` 落在 `.cm-content.cm-lineWrapping` 上、`.cm-line` 自身没有：本地
+     `node_modules/@codemirror/view/dist/index.js` 的 baseTheme（`.cm-content { whiteSpace: "pre" }`、
+     `.cm-lineWrapping { whiteSpace: "break-spaces"; wordBreak: "break-word"; overflowWrap: "anywhere" }`）
+     与文件末尾的 `EditorView.lineWrapping = contentAttributes.of({ "class": "cm-lineWrapping" })`；
+     版本 `@codemirror/view@6.43.11`（`node_modules/@codemirror/view/package.json`）。→ 内容级 class
+     覆盖可行（选择器带 `.cm-content` 前缀压过 0,2,0 的 `.cm-lineWrapping`）。
+   - ② `blockWrappers` 可并存多个 facet 值：facet 的值类型是
+     `readonly (RangeSet<BlockWrapper> | ((view: EditorView) => RangeSet<BlockWrapper>))[]`
+     （`index.d.ts:1330`），运行时取**全部**值（`index.js:3427` 的 `state.facet(blockWrappers).map(...)`），
+     合并走 `RangeSet.iter(sets: readonly RangeSet<T>[])`（`@codemirror/state` `index.d.ts:1600`，按 rank 排）。
+     → 表格一套 + 代码块一套可以并存，**不需要**并入同一个 `blockWrappersFor(view)`。
+     成品形态补充：代码块那套装在 `wrapCompartment` 里（代码块折行时**不装**），所以「并存」只在默认
+     口径下出现——这是刻意的，见 §2.3 与 spec 的「代码块折行可显式打开（MUST NOT 出现块内横向滚动容器）」。
+1. **嵌套语境**（引用块内的围栏代码块）：**能承载局部容器**，已写进场景而不是「已知边界」。
+   `tests/visual/fixtures/render-codeblock/wrap.md` 含一处引用块内的围栏代码块，
+   `render-codeblock.spec.ts` 的「嵌套语境」场景断言：它有自己的容器、容器里是引用块那几行
+   （`cm-lp-quote-line`）、`scrollWidth > clientWidth`、滚到右端后行尾进可视区，且编辑区
+   `scrollWidth === clientWidth`——溢出没有退化成 §3 明确否决的整窗横滚。
+2. **容器判据的语义**：已按预期**收紧**为「容器自身持有这次按键的焦点」（`src/keys.ts` 的
+   `isWidgetKeyTarget`：`closest(BLOCK_SCROLL_CLASS) && ownerDocument.activeElement === 容器`）。
+   现场理由写在实现处：光标落在块内文本时事件目标在容器内、但活动元素是编辑器内容区，只按
+   `closest` 会把 caret 的方向键吞掉。两条断言钉住它：视觉层「光标落在代码块文本里时方向键仍归
+   caret」（含 `activeElement` 是 `cm-content` 的前置断言，避免在错误状态上空转）与单测
+   `keys.test.ts` 的 `FakeElement(true, false)` 一格（`closest` 命中但未持有焦点 → 不消费）。表格的
+   既有场景（`m131-keymap-behavior` 用 `focus()` 显式制造容器焦点）在同一批里回归通过。
+3. **横滚容器的几何面**：三条都用断言钉住，没有留观察项。
+   - 「文字可达」：`overflow-x: auto` + `scrollWidth > clientWidth` + 滚到最右后**行尾文本右端距
+     容器右缘 ≤ 1px**（用 `Range.selectNodeContents` 取文本右端，不是行盒右缘——行盒宽度不随
+     溢出文本变宽，拿它断言等于没断言）。
+   - 「不露白底」：底板取 `--bg-2`；滚到最右后容器右缘那一列的 `elementFromPoint` 底色与代码行
+     同色（滚出去的行盒不再覆盖那里，露出的必须是容器底板）。
+   - 「不改纵向节奏」：同一文档里容器装卸（`code_block_wrap` 翻转）前后，代码块**下方**那一行的
+     `getBoundingClientRect().top` 变化 ≤ 0.5px。
+4. **类型不符配置**：**确认走整文件回落**（预期成立）。Rust 单测
+   `wrong_type_line_wrap_falls_back_entire_file` 断言 `{"last_vault":"/tmp/vault","editor":{"line_wrap":"yes","code_block_wrap":true}}`
+   下 `line_wrap`、`code_block_wrap`、`mode` 与同文件里的合法字段**一起**回到默认、warning 恰一条
+   ——不存在「部分按配置、部分按默认」的混合态。
+5. **既有基线零变更**（实测，与 proposal 的预估一致）：定向跑 `render-codeblock.spec.ts`、
+   `m133-describe-bindings.spec.ts`、`m131-keymap-table.spec.ts`，既有像素基线（含 m133 的面板元素
+   基线与 render-codeblock 的 5 张）逐张零差异——代码块新增的横滚容器没有改动任何既有基线
+   （默认口径下容器的底盒与代码行盒逐像素重合：无 padding、无 margin、无圆角、无 scrollbar-gutter）。
+   新增基线只有 5 张，全部来自本 change 的新场景：4 张四组合整页 + 1 张「滚到最右」元素级
+   （`wrap-combo-{1..4}-*`、`wrap-codeblock-scrolled-to-end`）。按 AGENTS.md 的基线纪律，这批新图
+   **待 Alex 过目**后才算生效。
+6. **`[keys]` 绑定后真的能触发**：已验，两层。
+   - 视觉层：用 `Ctrl-j` / `Ctrl-k` 绑定后逐次按键，断言两轴按格翻转（`white-space` 与容器个数），
+     四种组合各一张整页基线；另有一景断言「配置绑定后」启动的口径也生效（`config_get` 应答里补上
+     `editor.line_wrap` / `editor.code_block_wrap`，即 main.ts 那条 `setWrap` 接线的端到端证据）。
+   - 真机层：`scripts/acceptance/scenarios/22-wrap-toggle.md` 用 `Cmd-Shift-J` / `Cmd-Shift-K`
+     （默认表空位，且不在原生菜单 accelerator 集合里）按键，断言容器在 AX 树里消失/回来、
+     `Escape` 后焦点回 `AXTextArea`、`config.json` 逐字节与 mtime 不变。
+7. **启动早期的可见跳变**：**未观察到跳变，故不改时序**。「配置缺省」与「启动口径来自配置」两条
+   场景里，首帧呈现即为终态（`config_get` 与首帧同批到达）。
+8. **面板未绑定行的说明串**与 `文案-Copy.md` D66 **同批落地**并有断言：`m133` 的新场景分别读
+   「默认不占键位」与「已被配置解绑」两条行说明（两种成因读起来不一样），并断言分组标题数组不变
+   （MUST NOT 新增分组）。
+
+### 真机侧的覆盖边界（如实记录，别当 bug 追）
+
+- 真机能给的**机器**判据是三条：① 代码块横滚容器在不在 AX 树里（`role=region` + 读屏名）；
+  ② 焦点归属（`Tab` 后 `focused` 是容器 `AXGroup`、`Escape` 后回到 `AXTextArea`）；③ `config.json`
+  的内容 sha256 不变 + 没有多出回写字段。真机套件没有计算属性通道，「正文行折 / 不折」与
+  「代码块行折 / 不折」的**视觉**口径只能看 `shots/`——该轴的计算属性断言在视觉层
+  （`render-codeblock.spec.ts`）。横滚的**幅度**（120px / End / Home）同样在视觉层机器断言，
+  真机侧只看截图序列（横滚位置不在 AX 通道里）。
+- **键盘路径实测结论**（2026-09-18，`21-wrap-default` PASS）：`Tab` 能把焦点送进容器、`→` / `End` /
+  `Home` 真的横滚、`Escape` 交还焦点。前提是**焦点起点要对**：`open` 之后焦点在左栏文件行按钮上，
+  此时一次 `Tab` 只走到左栏下一行（首轮实测就踩了这个坑，`→` 与上一张截图逐字节相同、`Home` 把 caret
+  挪到了文档首），场景因此先用 `clickEditor` 把焦点交给 `.cm-content` 再 `Tab`。
+- 「启动口径来自 `config.json`」这条接线在**视觉层**验（同一份前端代码，只差引擎）：真机套件当前的
+  `config` 通道只透传 `keys`（`execute.mjs` 的 `writeConfig({ mode, keys })`），要真机也验需扩那个调用
+  ——已按协议记成 finding，不在本 change 的 scope 内。
+- **`mtime` 层的不变性未验**：`file.unchangedSince` 比的是 **sha256**（内容逐字节），断言词汇里没有
+  「mtime 未变」这一形态（只有 `mtimeNewerThan`）。「瞬态、不落盘」的机器判据因此落在「内容 sha256
+  不变 + 没有多出 `line_wrap` / `code_block_wrap` 回写字段」上——sha256 是更强的判据（mtime 可能在
+  内容不变时抖动，反之不成立），但如实记录：本 change 没有断言 mtime 本身。
+- **套件解析侧的两处边界**（都与本 change 的场景写法有关，已按协议提交 finding）：
+  ① `lib/ax.mjs` 取 value 用非贪婪正则，文档里出现半角 `"` 时 `AXTextArea.value` 会被截断
+  （`editor.has` 假红、`editor.not` 假绿）——探针文档因此刻意不含半角双引号；
+  ② `lib/execute.mjs` 的 `record` 此前不认 `env:` 前缀（记出的基线是 null），本 change 顺手改成与
+  `file` 断言同源的 `resolveSpecPath`（1 行，属 scope 外的必要改动，已在 review-request 里单列）。
 
 ## 5. 与 REVIEW.md 的对表（本 change 的实现面）
 

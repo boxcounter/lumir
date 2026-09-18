@@ -2,6 +2,54 @@
 // 类名统一 cm-lp-* 前缀。
 
 import { EditorView } from "@codemirror/view";
+import type { EditorMode } from "../bindings/EditorMode";
+
+/** 代码块折行口径的内容级 class（M180，单一来源）：由 `src/editor.ts` 的 `wrapExtensions` 经
+ *  `contentAttributes` 加到 `.cm-content` 上，本文件的样式按它们选择。两个 class 互斥，
+ *  按 `editor.code_block_wrap` 取其中一个；它们与 CM 自己的 `cm-lineWrapping` 并列共存
+ *  （contentAttributes 的 class 是拼接的），因此选择器带 `.cm-content` 前缀把
+ *  `.cm-line.cm-lp-codeblock-line` 的口径从「继承 content」改为「按块类型覆盖」。 */
+export const CODEBLOCK_NOWRAP_CLASS = "cm-lp-codeblock-nowrap";
+
+/** 代码块折行为「开」时的内容级 class：`line_wrap = false` 时 `.cm-content` 是 `white-space: pre`，
+ *  代码块要折行就得自己把它覆盖回来（否则「文件不折 / 代码块折」这条组合没有落点）。 */
+export const CODEBLOCK_WRAP_CLASS = "cm-lp-codeblock-wrap";
+
+/** 折行口径的出厂默认（M180）：与 Rust `EditorConfig::default()` 的 `line_wrap` /
+ *  `code_block_wrap` 是同一语义的两份写值（`src-tauri/src/config.rs` 的
+ *  `impl Default for EditorConfig` 是那边的真源）。配置到达前（启动早期）按这里的值跑；
+ *  两侧各有单测钉住各自的默认值，改一处必须同步另一处（REVIEW.md 第 8 条）。 */
+export const DEFAULT_LINE_WRAP = true;
+export const DEFAULT_CODE_BLOCK_WRAP = false;
+
+/** 折行口径（M180，D1 裁决 = 应用运行级）：一份值管全部会话。 */
+export interface WrapSettings {
+  readonly lineWrap: boolean;
+  readonly codeBlockWrap: boolean;
+}
+
+/** 折行口径的判定结果：两个正交轴各自的结论。 */
+export interface WrapSpec {
+  /** 正文行：是否装 CM 的 `EditorView.lineWrapping`（把 `.cm-content` 改成 break-spaces）。 */
+  readonly lineWrapping: boolean;
+  /** 代码块行：要装的内容级 class；`null` = 不装。 */
+  readonly codeBlockClass: string | null;
+}
+
+/**
+ * 「一元素一条规则」的唯一判定点（M180）：代码块行由 `codeBlockWrap` 裁决、其余所有行由
+ * `lineWrap` 裁决，两个轴互不改写。判定与装配分开，是为了让四组合能被单测直接断言
+ * （装配扩展要 DOM，判定不要）；`src/editor.ts` 的 `wrapExtensions` 据此装扩展。
+ *
+ * code 模式恒为 `null`：围栏 / 缩进代码块只在 md live preview 里渲染，code 模式没有可作用的
+ * 元素——装一个没有消费者的 class 就是假声明（REVIEW.md 第 9 条）。
+ */
+export function wrapSpec(mode: EditorMode, lineWrap: boolean, codeBlockWrap: boolean): WrapSpec {
+  return {
+    lineWrapping: lineWrap,
+    codeBlockClass: mode !== "md" ? null : codeBlockWrap ? CODEBLOCK_WRAP_CLASS : CODEBLOCK_NOWRAP_CLASS,
+  };
+}
 
 export const livePreviewTheme = EditorView.theme({
   ".cm-editor": { color: "var(--text)", backgroundColor: "var(--bg)", fontFamily: "var(--font-body)" },
@@ -57,6 +105,24 @@ export const livePreviewTheme = EditorView.theme({
   ".cm-line.cm-lp-block-separator.cm-lp-callout-gap": { height: "10px", minHeight: "10px" },
 
   ".cm-line.cm-lp-codeblock-line": { backgroundColor: "var(--bg-2)", fontFamily: "var(--font-mono)" },
+  // 代码块折行口径（M180，一元素一条规则）：围栏 / 缩进代码块行由 editor.code_block_wrap
+  // 裁决、与 editor.line_wrap 无关，故两个内容级 class 由 editor.ts 的 wrapExtensions 经
+  // contentAttributes 加到 .cm-content 上（与 CM 自己的 cm-lineWrapping 并列共存）。
+  // 选择器带 .cm-content 前缀（0,3,0）压过基础主题的 .cm-lineWrapping（0,2,0）——
+  // 「不折行」要把继承下来的 break-spaces / overflow-wrap:anywhere 一起压回 pre / normal，
+  // 只改 white-space 不够（overflow-wrap 是继承属性，会把 pre 的长行再切碎）。
+  [`.cm-content.${CODEBLOCK_NOWRAP_CLASS} .cm-line.cm-lp-codeblock-line`]: {
+    whiteSpace: "pre",
+    wordBreak: "normal",
+    overflowWrap: "normal",
+  },
+  // 「文件不折行 + 代码块折行」这条组合的落点：.cm-content 落回 white-space: pre 时，
+  // 代码块要自己把折行口径覆盖回来。
+  [`.cm-content.${CODEBLOCK_WRAP_CLASS} .cm-line.cm-lp-codeblock-line`]: {
+    whiteSpace: "break-spaces",
+    wordBreak: "break-word",
+    overflowWrap: "anywhere",
+  },
   // 代码块 token 着色（M138，类名由 preview/code.ts 出）：色值与 editor.ts 的
   // code 模式 codeHighlight 同一套 editorial token——同一段代码在围栏里和整文件
   // 打开时读起来是同一门语言。

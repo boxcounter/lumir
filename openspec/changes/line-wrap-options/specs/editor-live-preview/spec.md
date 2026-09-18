@@ -142,41 +142,41 @@ mermaid 走自身 widget 渲染路径、表格容器自己的 `overflow-x: auto`
 折行的运行期翻转 SHALL 由两条命令承担，命令的 id、作用域、默认不绑键与面板口径见 `keymap-commands`
 的「折行开关命令」requirement；本 requirement 只定**状态语义**。
 
-两条命令 SHALL 翻转**当前标签页**的瞬态显示状态，并 SHALL 立即生效：MUST NOT 改写文档
-（`EditorState.doc` 与磁盘文件逐字节不变，ADR 0003 §3）、MUST NOT 进撤销栈、MUST NOT 改变 dirty、
-MUST NOT 落盘（`config.json` 的内容与 mtime 在翻转前后逐字节不变）、MUST NOT 做 per-file 持久化。
-状态 SHALL 随标签页独立持有：切走再切回时该标签页的折行口径 SHALL 保持它自己的值，MUST NOT 出现
-「内核单值错位到别的标签页」（这是本项目记过的陷阱形态：创建期闭包读可变实例变量，
-`src/editor.ts:836-841`）。重启后 SHALL 回到配置值。
+折行口径的**运行期真源是应用运行期的一个值**（D1 裁决，2026-09-18）：两条命令的翻转 SHALL 作用于
+**全部会话**，翻转后所有标签页（含当时不在前台的）SHALL 立即呈现同一口径，MUST NOT 出现「前台变了、
+后台标签页还是旧口径」的错位；翻转 SHALL 立即生效，且 MUST NOT 改写文档（`EditorState.doc` 与磁盘
+文件逐字节不变，ADR 0003 §3）、MUST NOT 进撤销栈、MUST NOT 改变 dirty、MUST NOT 落盘
+（`config.json` 的内容与 mtime 在翻转前后逐字节不变）、MUST NOT 做 per-file 持久化。
 
-新标签页 SHALL 从**配置默认**开始；翻转 MUST NOT 改变新标签页的起点——这与 Emacs 的语义一致：
-`toggle-truncate-lines` 只把变量在**当前 buffer** 内变成局部值，「until that time, the default
-value, which is normally `nil`, is in effect」 指的是新 buffer 走默认
-（[Line Truncation](https://www.gnu.org/software/emacs/manual/html_node/emacs/Line-Truncation.html)）。
+粒度上本 change 自觉偏离 Emacs 的对应物：`toggle-truncate-lines` 只把 `truncate-lines` 在**当前
+buffer** 内变成局部值（[Line Truncation](https://www.gnu.org/software/emacs/manual/html_node/emacs/Line-Truncation.html)），
+而本 change 取应用运行期（Alex D1 原话「应用级。」）。由此两条推论 SHALL 成立：一，切标签页
+SHALL NOT 改变折行口径；二，新标签页 SHALL 取**当前应用态**而不是配置默认——配置项给的是启动时的
+起点，命令给的是运行期口径，重载/新建会话都不得退回配置值。重启后 SHALL 回到配置值（运行期值不持久化）。
 
 本版 MUST NOT 为翻转提供 toast 播报或常驻指示（无 mode line）：翻转的可见结果即反馈。**已知观测
 缺口（如实记录）**：当文档里没有超长行 / 没有代码块时，翻转没有可见效果，用户与 agent 都无法从界面上
 读出当前状态。这是本版的自觉取舍（理由与替代落点见 proposal 的非目标）；若 dogfood 后确认为真实
 痛点，按手感证据另提 change。
 
-#### Scenario: 翻转立即生效且不落盘
+#### Scenario: 翻转立即生效、全体标签页一致且不落盘
 
-- **WHEN** 通过 `[keys]` 绑定的键触发折行翻转（当前标签页有超长行与超长代码行），随后比对
-  `config.json` 的内容与 mtime，并读文档内容与 dirty 状态
-- **THEN** 折行口径立即变化（正文行与代码块按各自口径重新呈现）；`config.json` 逐字节不变、
-  mtime 不变；文档内容逐字节不变、dirty 不变、撤销栈不含本次翻转带来的条目
+- **WHEN** 通过 `[keys]` 绑定的键触发折行翻转（前台标签页有超长行与超长代码行，另有至少一个后台
+  标签页打开着同类文档），随后比对 `config.json` 的内容与 mtime，并读文档内容与 dirty 状态
+- **THEN** 折行口径立即变化（正文行与代码块按各自口径重新呈现）；切到那个后台标签页看到的同样是
+  新口径；`config.json` 逐字节不变、mtime 不变；文档内容逐字节不变、dirty 不变、撤销栈不含本次
+  翻转带来的条目
 
-#### Scenario: 状态随标签页独立
+#### Scenario: 切标签页不改变折行口径
 
-- **WHEN** 标签页 A 触发翻转（与配置默认相反），切到标签页 B 观察，再切回 A
-- **THEN** B 仍按配置默认呈现，A 保持它翻转后的值——切标签页 MUST NOT 把 A 的状态带进 B，也 MUST NOT
-  把 A 的状态重置为默认
+- **WHEN** 触发翻转（与配置默认相反），切到另一个标签页观察，再切回
+- **THEN** 两次观察都是**翻转后**的口径——折行是应用运行期的显示口径，MUST NOT 随标签页切换退回
+  配置值，也 MUST NOT 出现「某个标签页还停在旧口径」的第三种状态
 
-#### Scenario: 新标签页取配置默认
+#### Scenario: 新标签页取当前应用态
 
-- **WHEN** 在当前标签页翻转后，新建 / 打开另一个标签页
-- **THEN** 新标签页按配置默认呈现（翻转 MUST NOT 改变新标签页的起点）；重启应用后所有标签页也都回到
-  配置值
+- **WHEN** 用与配置默认相反的配置启动，触发折行翻转，随后新建 / 打开另一个标签页
+- **THEN** 新标签页按**当前应用态**呈现（而不是回到配置默认）；重启应用后所有标签页回到配置值
 
 #### Scenario: 重启回到配置值
 

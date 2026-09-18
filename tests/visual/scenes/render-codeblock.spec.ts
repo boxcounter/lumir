@@ -1,7 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 import { expectScreenshot } from "./expect-screenshot";
 import { readFileSync } from "node:fs";
-import { stubTauri } from "./tauri-stub";
+import { configGets, stubTauri } from "./tauri-stub";
 import { readDocument } from "./parity-checks";
 import { highlightCode } from "../../../src/preview/code";
 
@@ -425,4 +425,438 @@ test("编辑态：块内输入即时着色，颜色不溢出到块外段落", as
 
   // 输入后块外段落仍无着色（装饰按代码块边界裁剪）
   expect(await outside()).toEqual({ tokens: 0, color: COLOR.text });
+});
+
+// ---------------------------------------------------------------------------
+// M180（change line-wrap-options）：折行口径——文件级默认折行、代码块默认不折行。
+// 四条组合、「一元素一条规则」与「文字可达」在这层守（chromium 的 getComputedStyle + 滚动几何）；
+// 真机侧另有一套（scripts/acceptance/scenarios/*wrap*），分工见那边的场景说明。
+// 判定用**同一份文档里的短行**做单行基准，不写死行高：字体与行高来自排版基线变量，
+// 写死 28px 这类数字会在下次改基线时静默失配（REVIEW.md 第 1、8 条）。
+// ---------------------------------------------------------------------------
+
+const WRAP_SOURCE = readFileSync(new URL("../fixtures/render-codeblock/wrap.md", import.meta.url), "utf8");
+const PROSE_NEEDLE = "超长正文行";
+const CODE_NEEDLE = "CODE-END-MARK";
+/** [keys] 把两条默认不绑键的折行命令绑到默认表里的两个空位（⌃J / ⌃K）。本版界面上没有别的
+ *  触发路径（不做 M-x，见 spec 的已知边界），绑键因此既是场景的入口，也是 spec 里
+ *  「配置绑定后真的能触发」那条 scenario 的验证形态。 */
+const WRAP_KEYS = { "Ctrl-j": "view.toggle-line-wrap", "Ctrl-k": "view.toggle-code-block-wrap" };
+
+/** 装载折行 fixture（md 模式 + 两条命令已绑键），并等配置覆盖真的挂上分发器。
+ *
+ *  `editorConfig` 非空时在桩**之后**再包一层 `config_get`（见 patchEditorConfig）：
+ *  `stubTauri` 的 config_get 只出 `editor.mode`，而「配置项真的被消费」这条接线
+ *  （main.ts 的 `editor.setWrap`）需要能构造启动口径的四种取值。 */
+async function openWrap(page: Page, editorConfig?: Record<string, unknown>): Promise<void> {
+  await stubTauri(page, {
+    entries: [{ path: "wrap.md", kind: "file", size: WRAP_SOURCE.length, mtime_ms: 0 }],
+    files: { "wrap.md": WRAP_SOURCE },
+    config: { keys: WRAP_KEYS },
+  });
+  if (editorConfig !== undefined) await patchEditorConfig(page, editorConfig);
+  await page.goto("/");
+  await page.locator('.ft-row[title="wrap.md"]').click();
+  await expect(page.locator(".masthead-file")).toHaveText("wrap.md");
+  await expect.poll(() => configGets(page)).toBeGreaterThan(0);
+  await page.waitForTimeout(80);
+}
+
+/** 给桩的 `config_get` 应答补上 editor 表里的折行两项（启动口径的来源）。
+ *
+ *  为什么不改 `tests/visual/scenes/tauri-stub.ts`：它的 `config` 形状由套件里所有场景共用，
+ *  为一个场景放宽形状会把别的场景一并拖进来；而 `addInitScript` 的注册顺序保证这里包到的
+ *  一定是桩刚装好的那份 invoke（后注册的脚本后跑）。
+ */
+async function patchEditorConfig(page: Page, editor: Record<string, unknown>): Promise<void> {
+  await page.addInitScript((extra) => {
+    type Invoke = (cmd: string, args: unknown) => Promise<unknown>;
+    const internals = (window as unknown as { __TAURI_INTERNALS__?: { invoke?: Invoke } }).__TAURI_INTERNALS__;
+    if (internals?.invoke === undefined) throw new Error("patchEditorConfig 必须在 stubTauri 之后调用");
+    const original = internals.invoke.bind(internals);
+    internals.invoke = async (cmd, args) => {
+      const result = await original(cmd, args);
+      if (cmd !== "config_get" || result === null || typeof result !== "object") return result;
+      const snapshot = result as { config?: { editor?: Record<string, unknown> } };
+      if (snapshot.config === undefined) return result;
+      return {
+        ...(result as object),
+        config: { ...snapshot.config, editor: { ...snapshot.config.editor, ...extra } },
+      };
+    };
+  }, editor);
+}
+
+/** 某行的折行读数：计算 white-space / overflow-wrap + 行盒高度。 */
+async function lineWrap(page: Page, needle: string) {
+  return page.locator(".cm-line", { hasText: needle }).first().evaluate((el) => {
+    const style = getComputedStyle(el);
+    return { whiteSpace: style.whiteSpace, overflowWrap: style.overflowWrap, height: el.getBoundingClientRect().height };
+  });
+}
+
+/** 某行的行盒高度（拿来做单行基准）。 */
+async function rowHeight(page: Page, needle: string): Promise<number> {
+  return page.locator(".cm-line", { hasText: needle }).first().evaluate((el) => el.getBoundingClientRect().height);
+}
+
+/** 视觉行数：行盒高度 ÷ 同一文档里短行的行盒高度。 */
+function visualLines(height: number, unit: number): number {
+  return Math.round(height / unit);
+}
+
+/** 折行 fixture 里含超长代码行那个容器的读数。 */
+async function codeContainer(page: Page) {
+  return page.locator(".cm-lp-codeblock-scroll", { hasText: CODE_NEEDLE }).first().evaluate((el) => {
+    const style = getComputedStyle(el);
+    return {
+      scrollWidth: el.scrollWidth,
+      clientWidth: el.clientWidth,
+      overflowX: style.overflowX,
+      background: style.backgroundColor,
+      role: el.getAttribute("role"),
+      label: el.getAttribute("aria-label"),
+      tabindex: el.getAttribute("tabindex"),
+    };
+  });
+}
+
+/** 把一个块级横滚容器滚到最右，并读「正文文本右端距容器右缘还有多远」。
+ *  形参类型走 `ReturnType<Page["locator"]>`（= Playwright 的 Locator）：本文件只从
+ *  `@playwright/test` 引了 Page 一个类型，为此再引一个类型名不值当。 */
+async function scrollToEnd(el: ReturnType<Page["locator"]>) {
+  return el.evaluate((node) => {
+    const box = node as HTMLElement;
+    box.scrollLeft = box.scrollWidth;
+    const line = [...box.querySelectorAll<HTMLElement>(".cm-line")].find(
+      (item) => (item.textContent ?? "").includes("CODE-END-MARK"),
+    )!;
+    const range = document.createRange();
+    range.selectNodeContents(line);
+    const edge = box.getBoundingClientRect();
+    const probe = document.elementFromPoint(edge.right - 4, edge.top + 4);
+    return {
+      scrollLeft: box.scrollLeft,
+      maxScroll: box.scrollWidth - box.clientWidth,
+      textRight: range.getBoundingClientRect().right,
+      edgeRight: edge.right,
+      probeBackground: probe instanceof HTMLElement ? getComputedStyle(probe).backgroundColor : "",
+    };
+  });
+}
+
+test("默认口径：代码块不折行（块内可滚、行尾可达）、正文行折行——一元素一条规则", async ({ page }) => {
+  await openWrap(page);
+  await scrollToLine(page, CODE_NEEDLE);
+
+  // 代码块行：white-space 被内容级 class 压回 pre、overflow-wrap 回 normal
+  //（只改 white-space 不够——overflow-wrap 是继承属性，不压回 normal 长行仍会被切碎）
+  const code = await lineWrap(page, CODE_NEEDLE);
+  expect(code.whiteSpace).toBe("pre");
+  expect(code.overflowWrap).toBe("normal");
+  // 正文行：仍继承 .cm-content 的 break-spaces——代码块那一层不改它
+  const prose = await lineWrap(page, PROSE_NEEDLE);
+  expect(prose.whiteSpace).toBe("break-spaces");
+
+  // 视觉行数：代码块恰好一行、正文折成多行
+  expect(visualLines(code.height, await rowHeight(page, "short code line")), "超长代码行不得折出第二行").toBe(1);
+  expect(visualLines(prose.height, await rowHeight(page, "正文段落")), "超长正文行应在栏内折行").toBeGreaterThan(2);
+
+  // 容器：存在、可聚焦、带读屏名、横滚（不是裁切）
+  const box = await codeContainer(page);
+  expect(box.role).toBe("region");
+  expect(box.label).toBe("Markdown 代码块 1");
+  expect(box.tabindex).toBe("0");
+  expect(box.overflowX).toBe("auto");
+  expect(box.scrollWidth, "超长代码行必须在容器内溢出（否则本场景没有区分度）").toBeGreaterThan(box.clientWidth);
+
+  // 文字可达底线（spec：「MUST NOT 出现文字被裁掉且无法到达」）：滚到最右后行尾进可视区
+  const end = await scrollToEnd(page.locator(".cm-lp-codeblock-scroll", { hasText: CODE_NEEDLE }).first());
+  expect(end.scrollLeft).toBeGreaterThan(0);
+  expect(end.scrollLeft).toBe(end.maxScroll);
+  expect(end.textRight - end.edgeRight, "行尾必须能滚进可视区").toBeLessThanOrEqual(1);
+  // 元素级基线钉住「滚到最右」的现场（行尾可见 + 容器底板铺满）。整页基线不在这里重复拍：
+  // 「四种组合」那组按口径各拍一张，其中默认口径那张与这里的整页状态逐字节相同——
+  // 同一状态两张基线是空占（REVIEW.md 第 1 条「看着有覆盖、其实不判任何东西」的同族形态）。
+  await expectScreenshot(
+    page.locator(".cm-lp-codeblock-scroll", { hasText: CODE_NEEDLE }).first(),
+    "wrap-codeblock-scrolled-to-end.png",
+  );
+});
+
+test("代码块容器键盘可达：Tab 聚焦 → → 120px → End 最右 → Home 最左 → Escape 交还焦点", async ({ page }) => {
+  await openWrap(page);
+  await scrollToLine(page, CODE_NEEDLE);
+  const container = page.locator(".cm-lp-codeblock-scroll", { hasText: CODE_NEEDLE }).first();
+  // 用 focus() 而非 click()：点击走 CM 的 mousedown 会把焦点收回 contentDOM，而「容器自身
+  // 持有焦点」正是 when 条件的判据（与 m131-keymap-behavior 的表格场景同款口径）。
+  await container.evaluate((el) => (el as HTMLElement).focus());
+  expect(await page.evaluate(() => document.activeElement?.className ?? "")).toContain("cm-lp-codeblock-scroll");
+
+  await page.keyboard.press("ArrowRight");
+  await page.waitForTimeout(60);
+  expect(await container.evaluate((el) => el.scrollLeft), "→ 步进 120px（与表格容器同一口径）").toBe(120);
+  await page.keyboard.press("End");
+  await page.waitForTimeout(60);
+  expect(await container.evaluate((el) => el.scrollWidth - el.clientWidth)).toBeGreaterThan(120);
+  expect(await container.evaluate((el) => el.scrollLeft), "End 滚到最右").toBe(
+    await container.evaluate((el) => el.scrollWidth - el.clientWidth),
+  );
+  await page.keyboard.press("Home");
+  await page.waitForTimeout(60);
+  expect(await container.evaluate((el) => el.scrollLeft), "Home 回到最左").toBe(0);
+  await page.keyboard.press("Escape");
+  await page.waitForTimeout(60);
+  expect(
+    await page.evaluate(() => document.querySelector(".cm-content")?.contains(document.activeElement) ?? false),
+    "Escape 把焦点交还编辑器",
+  ).toBe(true);
+  // 全程文档逐字节不变（只读操作不得改文档）
+  expect(await readDocument(page)).toBe(WRAP_SOURCE);
+});
+
+test("光标落在代码块文本里时方向键仍归 caret（容器没持有焦点就不接管）", async ({ page }) => {
+  await openWrap(page);
+  await scrollToLine(page, CODE_NEEDLE);
+  // 点进代码块文本：焦点回到编辑器内容区，容器不是活动元素
+  await page.locator(".cm-line", { hasText: CODE_NEEDLE }).first().click();
+  await page.waitForTimeout(60);
+  expect(
+    await page.evaluate(() => document.activeElement?.className ?? ""),
+    "点击后活动元素应是编辑器内容区，不是容器（否则本场景验不到收紧后的判据）",
+  ).toContain("cm-content");
+  const before = await page.evaluate(() => {
+    const view = (document.querySelector(".cm-content") as unknown as { cmTile: { root: { view: any } } }).cmTile.root.view;
+    return view.state.selection.main.head;
+  });
+  await page.keyboard.press("ArrowRight");
+  await page.waitForTimeout(60);
+  const after = await page.evaluate(() => {
+    const view = (document.querySelector(".cm-content") as unknown as { cmTile: { root: { view: any } } }).cmTile.root.view;
+    return view.state.selection.main.head;
+  });
+  expect(after, "⌃ 光标应右移一个字符").toBeGreaterThan(before);
+  expect(await page.locator(".cm-lp-codeblock-scroll", { hasText: CODE_NEEDLE }).first().evaluate((el) => el.scrollLeft)).toBe(0);
+});
+
+test("四种组合逐格可判：两个轴正交，代码块折行时不装容器", async ({ page }) => {
+  await openWrap(page);
+  await scrollToLine(page, CODE_NEEDLE);
+  const codeUnit = await rowHeight(page, "short code line");
+  const proseUnit = await rowHeight(page, "正文段落");
+
+  /** 当前状态的读数：两行的 white-space、容器个数、两行的视觉行数。 */
+  const read = async () => {
+    const code = await lineWrap(page, CODE_NEEDLE);
+    const prose = await lineWrap(page, PROSE_NEEDLE);
+    return {
+      codeWhiteSpace: code.whiteSpace,
+      proseWhiteSpace: prose.whiteSpace,
+      containers: await page.locator(".cm-lp-codeblock-scroll").count(),
+      codeLines: visualLines(code.height, codeUnit),
+      proseLines: visualLines(prose.height, proseUnit),
+    };
+  };
+  const toggle = async (key: string) => {
+    await page.keyboard.press(key);
+    await page.waitForTimeout(80);
+  };
+
+  // ① 配置缺省：文件折行 + 代码块不折行（两处代码块各一个容器）
+  let now = await read();
+  expect(now).toMatchObject({ codeWhiteSpace: "pre", proseWhiteSpace: "break-spaces" });
+  expect(now.containers, "代码块不折行时应有横滚容器").toBeGreaterThan(0);
+  expect(now.codeLines).toBe(1);
+  expect(now.proseLines).toBeGreaterThan(1);
+  await expectScreenshot(page, "wrap-combo-1-file-fold-block-nowrap.png");
+
+  // ② 关掉文件级折行：正文行压回 pre、代码块口径不变（一元素一条规则），编辑区可横向到达
+  await toggle("Control+j");
+  now = await read();
+  expect(now).toMatchObject({ codeWhiteSpace: "pre", proseWhiteSpace: "pre" });
+  expect(now.containers, "文件级折行开关不改代码块那一条规则").toBeGreaterThan(0);
+  expect(now.proseLines, "关掉文件级折行后超长正文行必须是一行").toBe(1);
+  const scroller = await page.evaluate(() => {
+    const el = document.querySelector<HTMLElement>(".cm-scroller")!;
+    el.scrollLeft = el.scrollWidth;
+    return { scrollWidth: el.scrollWidth, clientWidth: el.clientWidth, scrollLeft: el.scrollLeft };
+  });
+  expect(scroller.scrollWidth, "超长正文行必须让编辑区可横向滚动（不是裁切）").toBeGreaterThan(scroller.clientWidth);
+  expect(scroller.scrollLeft).toBe(scroller.scrollWidth - scroller.clientWidth);
+  await page.evaluate(() => {
+    document.querySelector<HTMLElement>(".cm-scroller")!.scrollLeft = 0;
+  });
+  await page.waitForTimeout(60);
+  await expectScreenshot(page, "wrap-combo-2-file-nowrap-block-nowrap.png");
+
+  // ③ 打开代码块折行（文件级仍不折）：代码块变折行、横滚容器卸掉
+  await toggle("Control+k");
+  now = await read();
+  expect(now).toMatchObject({ codeWhiteSpace: "break-spaces", proseWhiteSpace: "pre", containers: 0 });
+  expect(now.codeLines, "代码块折行后超长代码行应折出多行").toBeGreaterThan(1);
+  await expectScreenshot(page, "wrap-combo-3-file-nowrap-block-wrap.png");
+
+  // ④ 文件级也折回来：两轴都折
+  await toggle("Control+j");
+  now = await read();
+  expect(now).toMatchObject({ codeWhiteSpace: "break-spaces", proseWhiteSpace: "break-spaces", containers: 0 });
+  expect(now.proseLines).toBeGreaterThan(1);
+  await expectScreenshot(page, "wrap-combo-4-both-wrap.png");
+});
+
+test("容器不改变纵向节奏；滚到右端不露白底（底板取自 --bg-2）", async ({ page }) => {
+  // 两个 fixture 一起挂：纵向节奏要用**代码行都短于栏宽**的文档比（长行在折行打开时必然变高，
+  // 那是折行本身的变化，不是容器的副作用）；底板要用真的会溢出的长行才能滚起来。
+  await stubTauri(page, {
+    entries: [
+      { path: "languages.md", kind: "file", size: source.length, mtime_ms: 0 },
+      { path: "wrap.md", kind: "file", size: WRAP_SOURCE.length, mtime_ms: 0 },
+    ],
+    files: { "languages.md": source, "wrap.md": WRAP_SOURCE },
+    config: { keys: WRAP_KEYS },
+  });
+  await page.goto("/");
+  await expect.poll(() => configGets(page)).toBeGreaterThan(0);
+  await page.locator('.ft-row[title="languages.md"]').click();
+  await expect(page.locator(".cm-lp-tok-keyword").first()).toBeVisible();
+  await page.waitForTimeout(80);
+
+  /** 某行行盒顶端的页面坐标（比容器装卸前后的纵向位置）。 */
+  const topOf = async (needle: string) =>
+    page.locator(".cm-line", { hasText: needle }).first().evaluate((el) => el.getBoundingClientRect().top);
+
+  await scrollToLine(page, "[[hooks]]");
+  const before = await topOf("[[hooks]]");
+  await page.keyboard.press("Control+k");
+  await page.waitForTimeout(80);
+  expect(await page.locator(".cm-lp-codeblock-scroll").count(), "代码块折行时容器应卸掉").toBe(0);
+  expect(Math.abs((await topOf("[[hooks]]")) - before), "卸掉容器不得挪动其下方内容").toBeLessThanOrEqual(0.5);
+  await page.keyboard.press("Control+k");
+  await page.waitForTimeout(80);
+  expect(await page.locator(".cm-lp-codeblock-scroll").count(), "折回不折行时容器应装回").toBeGreaterThan(0);
+  expect(Math.abs((await topOf("[[hooks]]")) - before), "装回容器同样不得挪动其下方内容").toBeLessThanOrEqual(0.5);
+
+  // 底板：滚到最右后，容器右缘那一列的计算底色必须与代码行同色（滚出去的行盒不再覆盖那里）
+  await page.locator('.ft-row[title="wrap.md"]').click();
+  await expect(page.locator(".masthead-file")).toHaveText("wrap.md");
+  await scrollToLine(page, CODE_NEEDLE);
+  const box = await codeContainer(page);
+  const end = await scrollToEnd(page.locator(".cm-lp-codeblock-scroll", { hasText: CODE_NEEDLE }).first());
+  expect(end.scrollLeft, "底板断言只有在真的滚起来之后才有意义").toBeGreaterThan(0);
+  expect(box.background, "容器底板与代码行同色（同一个 --bg-2），不得透明").toBe(
+    await page
+      .locator(".cm-line", { hasText: CODE_NEEDLE })
+      .first()
+      .evaluate((el) => getComputedStyle(el).backgroundColor),
+  );
+  expect(box.background).not.toBe("rgba(0, 0, 0, 0)");
+  expect(end.probeBackground, "容器右缘那一列不得露出无底色的空白").toBe(box.background);
+});
+
+test("启动口径来自配置：line_wrap=false 正文不折、code_block_wrap=true 不装容器", async ({ page }) => {
+  // 这一条守的是「配置项真的被消费」那条接线——全仓唯一的 config_get 消费点是 main.ts 的
+  // editor.setWrap；桩外层补上 editor 的两项，等价于用户在 config.json 里写死它们。
+  await openWrap(page, { line_wrap: false, code_block_wrap: false });
+  await scrollToLine(page, CODE_NEEDLE);
+  const folded = await lineWrap(page, PROSE_NEEDLE);
+  expect(folded.whiteSpace, "配置 line_wrap=false 时正文行不折行").toBe("pre");
+  expect(visualLines(folded.height, await rowHeight(page, "正文段落")), "正文行应恰好一行").toBe(1);
+  // 文件级开关不改代码块那一条规则：仍不折行、容器仍在
+  expect((await lineWrap(page, CODE_NEEDLE)).whiteSpace).toBe("pre");
+  expect(await page.locator(".cm-lp-codeblock-scroll", { hasText: CODE_NEEDLE }).count()).toBe(1);
+
+  // 反过来：配置 code_block_wrap=true 时代码块折行、容器不装（文件级仍是默认折行）
+  await openWrap(page, { line_wrap: true, code_block_wrap: true });
+  await scrollToLine(page, CODE_NEEDLE);
+  const wrapped = await lineWrap(page, CODE_NEEDLE);
+  expect(wrapped.whiteSpace, "配置 code_block_wrap=true 时代码块折行").toBe("break-spaces");
+  expect(visualLines(wrapped.height, await rowHeight(page, "short code line"))).toBeGreaterThan(1);
+  expect(await page.locator(".cm-lp-codeblock-scroll").count(), "折行打开时 MUST NOT 装横滚容器").toBe(0);
+  expect((await lineWrap(page, PROSE_NEEDLE)).whiteSpace, "文件级口径不受代码块开关影响").toBe("break-spaces");
+});
+
+test("嵌套语境：引用块内的围栏代码块同样承载局部容器，不退化成整窗横滚", async ({ page }) => {
+  await openWrap(page);
+  await scrollToLine(page, "NESTED-END-MARK");
+  const nested = page.locator(".cm-lp-codeblock-scroll", { hasText: "NESTED-END-MARK" });
+  await expect(nested, "引用块内的围栏代码块也应有自己的横滚容器").toHaveCount(1);
+  const box = await nested.evaluate((el) => ({
+    scrollWidth: el.scrollWidth,
+    clientWidth: el.clientWidth,
+    lines: [...el.querySelectorAll<HTMLElement>(".cm-line")].map((line) => line.className).join("|"),
+  }));
+  expect(box.lines, "容器里应是引用块的那几行（说明局部容器真的落在嵌套语境里）").toContain("cm-lp-quote-line");
+  expect(box.scrollWidth, "超长嵌套代码行应在容器内溢出").toBeGreaterThan(box.clientWidth);
+
+  // 「局部容器」的判据：溢出被容器吃掉，编辑区不出现整窗横滚（design 明确否决的形态）。
+  // 本 fixture 里唯一可能撑宽编辑区的东西就是这两处超长代码行（正文行折行），故等式成立即可判。
+  const scroller = await page.evaluate(() => {
+    const el = document.querySelector<HTMLElement>(".cm-scroller")!;
+    return { scrollWidth: el.scrollWidth, clientWidth: el.clientWidth };
+  });
+  expect(scroller.scrollWidth, "嵌套代码块的溢出 MUST NOT 变成整窗横滚").toBe(scroller.clientWidth);
+
+  // 文字可达：滚到右端后行尾进可视区
+  const end = await nested.evaluate((el) => {
+    el.scrollLeft = el.scrollWidth;
+    const line = [...el.querySelectorAll<HTMLElement>(".cm-line")].find((item) =>
+      (item.textContent ?? "").includes("NESTED-END-MARK"),
+    )!;
+    const range = document.createRange();
+    range.selectNodeContents(line);
+    return { scrollLeft: el.scrollLeft, gap: range.getBoundingClientRect().right - el.getBoundingClientRect().right };
+  });
+  expect(end.scrollLeft).toBeGreaterThan(0);
+  expect(end.gap, "嵌套容器的行尾同样必须能滚进可视区").toBeLessThanOrEqual(1);
+});
+
+test("应用级口径（D1）：翻转作用于全部会话，新标签页取当前应用态", async ({ page }) => {
+  // 这是本 change 与提案初稿的关键差异所在（D1 把标签页级改成应用级），因此必须有断言面：
+  // 单一会话上的翻转只是「值变了」，应用级还要求**全部会话一致 + 新会话取当前值**。
+  await stubTauri(page, {
+    entries: [
+      { path: "wrap.md", kind: "file", size: WRAP_SOURCE.length, mtime_ms: 0 },
+      { path: "wrap2.md", kind: "file", size: WRAP_SOURCE.length, mtime_ms: 0 },
+    ],
+    files: { "wrap.md": WRAP_SOURCE, "wrap2.md": WRAP_SOURCE },
+    config: { keys: WRAP_KEYS },
+  });
+  await page.goto("/");
+  await page.locator('.ft-row[title="wrap.md"]').click();
+  await expect(page.locator(".masthead-file")).toHaveText("wrap.md");
+  await expect.poll(() => configGets(page)).toBeGreaterThan(0);
+  await page.waitForTimeout(80);
+
+  /** 当前标签里代码块行的口径（每次切完标签重新取）。 */
+  const codeWhiteSpace = async () => (await lineWrap(page, CODE_NEEDLE)).whiteSpace;
+
+  await scrollToLine(page, CODE_NEEDLE);
+  expect(await codeWhiteSpace(), "起始是配置缺省口径").toBe("pre");
+
+  // 在标签 A 上翻转代码块口径
+  await page.keyboard.press("Control+k");
+  await page.waitForTimeout(80);
+  expect(await codeWhiteSpace()).toBe("break-spaces");
+
+  // 让 A 成为固定标签（首次输入即固定，M149 口径）：第二个文件因此另开标签而不是替换预览标签
+  await page.locator(".cm-content").click();
+  await page.evaluate(() => {
+    const view = (document.querySelector(".cm-content") as unknown as { cmTile: { root: { view: any } } }).cmTile.root.view;
+    view.dispatch({ selection: { anchor: 0 } });
+  });
+  await page.keyboard.type("x");
+  await expect(page.locator(".tab")).toHaveCount(1);
+  await page.locator('.ft-row[title="wrap2.md"]').click();
+  await expect(page.locator(".masthead-file")).toHaveText("wrap2.md");
+  await expect(page.locator(".tab")).toHaveCount(2);
+
+  // 新标签页取**当前应用态**（D1：不是配置默认）
+  await scrollToLine(page, CODE_NEEDLE);
+  expect(await codeWhiteSpace(), "新标签页必须取当前应用态，而不是退回配置默认").toBe("break-spaces");
+
+  // 切回标签 A：口径仍是翻转后的值（切标签不改变折行口径）
+  await page.locator(".tab").first().click();
+  await expect(page.locator(".masthead-file")).toHaveText("wrap.md");
+  await scrollToLine(page, CODE_NEEDLE);
+  expect(await codeWhiteSpace(), "切标签 MUST NOT 改变折行口径").toBe("break-spaces");
 });

@@ -134,15 +134,15 @@ MUST NOT 依赖全局焦点猜测。行为 SHALL 与迁移前一致：左右各 
 系统 SHALL 提供两条命令承担「翻转折行开关」：`view.toggle-line-wrap` 与 `view.toggle-code-block-wrap`。
 两条命令的作用域 SHALL 为 `global`，实现 SHALL 落在装配层（`src/main.ts`），折行的能力与状态归属 SHALL 在
 `src/editor.ts`；翻转的语义与作用面 SHALL 按 `editor-live-preview` 的「折行开关的瞬态口径」与「折行口径与
-配置来源」两条 requirement（当前标签页的瞬态覆盖、立即生效、不落盘、不持久化）。
+配置来源」两条 requirement（应用运行期的瞬态口径、立即生效、全体会话一致、不落盘、不持久化）。
 
 两条命令 SHALL 默认**不绑键**，并 SHALL 登记进默认不绑键清单（`src/keys.ts` 的 `KEYLESS_COMMAND_IDS`，见
 「统一键位分发表」）。它们 MUST NOT 出现在 `KEY_BINDINGS` 里——本版不为折行占用任何物理键位。`[keys]` 配置
 SHALL 能像其余命令一样把它们绑上键：两条 id 都在 `COMMAND_IDS` 里，故不会走到「未知命令」的拒绝路径；
 `Keymap.attach` 的校验是「绑定 → 有实现」，绑定后即生效。
 
-作用域取 `global` 而非 `editor` 的理由 SHALL 记录在实现处（命令记录的注释）与 `doc` 语义里：命令作用于当前
-标签页的显示属性（窗口级对象，与 `tab.*`、`toc.toggle` 同族），焦点在文件树 / 搜索框 / 浮层里时同样应能
+作用域取 `global` 而非 `editor` 的理由 SHALL 记录在实现处（命令记录的注释）与 `doc` 语义里：命令作用于
+应用运行期的显示口径（窗口级对象，与 `tab.*`、`toc.toggle` 同族），焦点在文件树 / 搜索框 / 浮层里时同样应能
 切换。命令 id 前缀因此取 `view.` 而不是 `editor.`——本仓的既有约定是 `editor.` 前缀属于编辑器作用域命令
 （作用域由命令清单派生，`applyKeyOverrides` 只认清单不认前缀），前缀与作用域 MUST NOT 互相矛盾。由此带来
 的边界 SHALL 如实记录：`global` 作用域意味着模态面板 / 浮层持有焦点时这两条命令同样命中——这不与「面板
@@ -171,9 +171,9 @@ SHALL 能像其余命令一样把它们绑上键：两条 id 都在 `COMMAND_IDS
 
 - **WHEN** 配置 `{"keys": {"Ctrl-j": "view.toggle-line-wrap"}}` 后启动应用（⌃J 是默认表里的空位），在打开的
   文件上按下该键
-- **THEN** 触发的是折行翻转——不出「未知命令」warning、不是无反应：当前标签页的折行呈现立即变化
-  （文件级与代码块级各按自己的口径，见 `editor-live-preview` 的「折行渲染与代码块横滚容器」）；
-  MUST NOT 依赖 toast 或指示文本判断（本版没有它们）
+- **THEN** 触发的是折行翻转——不出「未知命令」warning、不是无反应：折行呈现立即变化（**全部标签页**
+  同步，含当时不在前台的那些；文件级与代码块级各按自己的口径，见 `editor-live-preview` 的「折行渲染与
+  代码块横滚容器」）；MUST NOT 依赖 toast 或指示文本判断（本版没有它们）
 
 #### Scenario: 面板列出两条命令并标注未绑定
 

@@ -31,7 +31,7 @@ import type { LinkResolveResult } from "../bindings/LinkResolveResult";
 import { BlockWrapper } from "@codemirror/view";
 import { findTables, tableAt, tableRowsInRange, degradationNotice, type TableModel } from "./table";
 import { highlightCode } from "./code";
-import { TABLE_SCROLL_CLASS, WIDGET_SCROLL_STEP_PX } from "../keys";
+import { BLOCK_SCROLL_CLASS, TABLE_SCROLL_CLASS, WIDGET_SCROLL_STEP_PX } from "../keys";
 import type { CommandRunner, WidgetCommandId } from "../keys";
 
 // @lezer/common 不是直接依赖（callout.ts 同口径），SyntaxNode 类型从 syntaxTree 推导。
@@ -259,7 +259,7 @@ function tableWrappers(view: EditorView) {
         BlockWrapper.create({
           tagName: "div",
           rank: 10,
-          attributes: { class: TABLE_SCROLL_CLASS, role: "region", "aria-label": label, tabindex: "0" },
+          attributes: { class: `${BLOCK_SCROLL_CLASS} ${TABLE_SCROLL_CLASS}`, role: "region", "aria-label": label, tabindex: "0" },
         }).range(start, table.to),
         BlockWrapper.create({
           tagName: "div",
@@ -279,6 +279,55 @@ function tableWrappers(view: EditorView) {
 }
 
 /**
+ * 代码块的块级横滚容器（M180）：围栏 / 缩进代码块各包一层。
+ *
+ * 与表格容器并存：`EditorView.blockWrappers` 是 facet，多个值（表格一套 + 代码块一套）在
+ * `RangeSet.iter(sets)` 里按 rank 合并，两套容器因此可以同时生效——实现期已实测确认，见
+ * change line-wrap-options 的 design §4-0。rank 取 10（与表格容器同级；两者范围不会重叠）。
+ *
+ * 发现范围沿用表格的纪律：视口有界（`tableDiscoveryRange`），MUST NOT 全文档扫描。
+ * 不复制表格那套「解析未覆盖 → 30ms 后 dispatch 重试」：容器不改变布局高度（无 padding /
+ * 无 margin），晚一两帧出现只是让「可横滚」晚一点生效——不像表格 grid 翻转会把点击坐标
+ * 挪走（M115 那类真实桌面缺陷）。
+ *
+ * 挂载由 `src/editor.ts` 的 `wrapExtensions` 决定（那边是折行扩展的唯一装配点）：只在
+ * **md 模式 + 代码块不折行**时装。code 模式没有围栏渲染、天然没有容器；代码块折行时没有
+ * 任何东西需要滚动，装了只会多出一个空的 `region`（spec 的「代码块折行可显式打开」明确
+ * 要求那种口径下 MUST NOT 出现块内横向滚动容器）。
+ */
+export function codeBlockWrappers(view: EditorView) {
+  const { from, to } = tableDiscoveryRange(view);
+  const doc = view.state.doc;
+  const wrappers: Range<BlockWrapper>[] = [];
+  let index = 0;
+  parseCoveredTree(view.state, to).iterate({
+    from,
+    to,
+    enter(ref) {
+      if (ref.name !== "FencedCode" && ref.name !== "CodeBlock") return;
+      // 容器范围按**整行**取：起点对齐行首，终点对齐末行行尾（节点可能停在行内），
+      // 与表格容器的取法同口径。
+      const start = doc.lineAt(ref.from).from;
+      const end = Math.min(Math.max(doc.lineAt(Math.max(ref.from, ref.to - 1)).to, ref.to), doc.length);
+      index++;
+      wrappers.push(
+        BlockWrapper.create({
+          tagName: "div",
+          rank: 10,
+          attributes: {
+            class: `${BLOCK_SCROLL_CLASS} cm-lp-codeblock-scroll`,
+            role: "region",
+            "aria-label": `Markdown 代码块 ${index}`,
+            tabindex: "0",
+          },
+        }).range(start, end),
+      );
+    },
+  });
+  return BlockWrapper.set(wrappers, true);
+}
+
+/**
  * 轨道 D 的 widget 命令实现（M132 收编进统一键位表）。
  *
  * 迁移前这些键由本文件的 domEventHandlers 手柄消费（焦点在滚动容器上时生效），键位因此
@@ -287,10 +336,12 @@ function tableWrappers(view: EditorView) {
  * 手柄逐字一致：左右 120px、Home→最左、End→最右、Escape→焦点交还编辑器。
  */
 export function widgetCommands(view: EditorView): Record<WidgetCommandId, CommandRunner> {
+  // M180：容器查找从 TABLE_SCROLL_CLASS 泛化为 BLOCK_SCROLL_CLASS——表格与代码块的横滚容器
+  // 共用同一个 class（判据的单一来源在 keys.ts），这两条实现因此不需要各写一份。
   const containerOf = (event?: KeyboardEvent): HTMLElement | null => {
     const target = event?.target;
     if (!(target instanceof Element)) return null;
-    return target.closest<HTMLElement>(`.${TABLE_SCROLL_CLASS}`);
+    return target.closest<HTMLElement>(`.${BLOCK_SCROLL_CLASS}`);
   };
   const onContainer = (event: KeyboardEvent | undefined, apply: (el: HTMLElement) => void): void => {
     const el = containerOf(event);
@@ -347,8 +398,10 @@ export function livePreview(ctx: PreviewContext) {
         return true;
       },
       focusin(event, view) {
+        // M180：容器 class 泛化后，代码块的横滚容器同样享有一条——「同判据同行为」，
+        // 表格与代码块不允许出现一个能 Tab 聚焦保住选区、另一个不能。
         const target = event.target;
-        if (!(target instanceof HTMLElement) || !target.matches(`.${TABLE_SCROLL_CLASS}`)) return false;
+        if (!(target instanceof HTMLElement) || !target.matches(`.${BLOCK_SCROLL_CLASS}`)) return false;
         const selection = view.dom.ownerDocument.getSelection();
         if (!selection?.anchorNode || !view.contentDOM.contains(selection.anchorNode)) {
           view.focus();
@@ -360,7 +413,8 @@ export function livePreview(ctx: PreviewContext) {
         return false;
       },
       wheel(event) {
-        const target = event.target instanceof Element ? event.target.closest<HTMLElement>(`.${TABLE_SCROLL_CLASS}`) : null;
+        // M180：与 widget 键同判据——块级横滚容器（表格与代码块）都吃横向滚轮。
+        const target = event.target instanceof Element ? event.target.closest<HTMLElement>(`.${BLOCK_SCROLL_CLASS}`) : null;
         if (!target || !event.deltaX) return false;
         target.scrollLeft += event.deltaX;
         event.preventDefault();

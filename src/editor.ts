@@ -14,6 +14,7 @@ import { tags } from "@lezer/highlight";
 import { GFM } from "@lezer/markdown";
 import type { EditorMode } from "./bindings/EditorMode";
 import { livePreview, previewRefresh, widgetCommands } from "./preview/livePreview";
+import { codeBlockWrappers } from "./preview/livePreview";
 import type { PreviewContext, WikilinkResolver } from "./preview/livePreview";
 import { detectFrontmatter } from "./preview/frontmatter";
 import { findMathSpans } from "./preview/math";
@@ -25,6 +26,8 @@ import type { AttachmentProvider } from "./preview/attachments";
 import { LANGUAGES, TOKEN_GROUPS } from "./preview/code";
 import type { TokenRole } from "./preview/code";
 import type { CommandRunner, EditorCommandId } from "./keys";
+import { DEFAULT_CODE_BLOCK_WRAP, DEFAULT_LINE_WRAP, wrapSpec } from "./preview/theme";
+import type { WrapSettings } from "./preview/theme";
 import { lumirSearch } from "./search";
 
 // 编辑器单内核双模式（ADR 0002 §2）：一个 CM6 内核、两种模式。
@@ -903,6 +906,18 @@ export interface EditorHandle {
   setMode(mode: EditorMode): void;
   mode(): EditorMode;
   /**
+   * 设置**应用运行期**的折行口径（M180，D1 裁决原话「应用级」）：配置加载（启动时喂初值）与
+   * 两条 toggle 命令都走这一个入口，全部会话随即同步重配。只传要改的轴，未传的轴保持不变；
+   * 值没变时直接返回，不做无谓的全量重配。不写文档、不进撤销栈、不碰 dirty、不落盘。
+   */
+  setWrap(next: Partial<WrapSettings>): void;
+  /** 当前应用运行期的折行口径（只读快照：命令层据此翻转，断言据此读值）。 */
+  wrapSettings(): WrapSettings;
+  /** 翻转文件级折行（正文行）——应用运行期状态，全部会话同步生效。 */
+  toggleLineWrap(): void;
+  /** 翻转代码块折行——同左；非 md 文件没有围栏渲染，翻转对它无可观测效果。 */
+  toggleCodeBlockWrap(): void;
+  /**
    * 新建一个**空文档**会话（M149）：建立逐会话记账，但不装载内容、不激活。
    * 路径与内容由调用方随后的 reloadSession 补上（装载走事务派生，会话因此能继承
    * 搜索面板一类的 StateField 状态；新建 state 会把它们丢掉）。模式先取配置默认基线，
@@ -1005,8 +1020,32 @@ function modeForPath(path: string | undefined, fallback: EditorMode): EditorMode
   return fileClass(extensionOf(path)) === "md" ? "md" : "code";
 }
 
+/**
+ * 折行相关扩展的**唯一装配点**（M180）：判定在 `preview/theme.ts` 的 `wrapSpec`，这里只把
+ * 判定结果装成扩展——正文行看 `lineWrap`（CM 的 `EditorView.lineWrapping`，把 `.cm-content`
+ * 改成 break-spaces），代码块行看 `codeBlockWrap`（内容级 class，样式同一模块），`mode`
+ * 只决定代码块那一层有没有作用对象（非 md 不装）。
+ */
+function wrapExtensions(mode: EditorMode, settings: WrapSettings): Extension[] {
+  const spec = wrapSpec(mode, settings.lineWrap, settings.codeBlockWrap);
+  const extensions: Extension[] = spec.lineWrapping ? [EditorView.lineWrapping] : [];
+  if (spec.codeBlockClass !== null) {
+    extensions.push(EditorView.contentAttributes.of({ class: spec.codeBlockClass }));
+  }
+  // 代码块的块级横滚容器（M180）：只有「代码块不折行」时才装——折行打开时没有任何东西需要
+  // 横滚，装一个空容器只会多出一个空的 `region`（spec 的「代码块折行可显式打开」明确要求
+  // 那种口径下 MUST NOT 出现块内横向滚动容器）。装/卸走同一个 Compartment，翻转即生效。
+  if (mode === "md" && !settings.codeBlockWrap) {
+    extensions.push(EditorView.blockWrappers.of(codeBlockWrappers));
+  }
+  return extensions;
+}
+
 export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md", markdownConfig: Parameters<typeof markdown>[0] = { base: markdownLanguage, extensions: [GFM] }): EditorHandle {
   const modeCompartment = new Compartment();
+  /** 折行口径的 Compartment（M180）：正文行的 `lineWrapping` 与代码块行的内容级 class 都装在
+   *  它里面，翻转走一次 reconfigure（与 modeCompartment 并列同形）。 */
+  const wrapCompartment = new Compartment();
   // 前台会话模式的**投影**：changeFilter 的闭包在 state 创建时就绑好了，只能读实例变量，
   // 所以模式真源放在会话上（EditorSession.mode），这里只是把它投给创建期闭包。
   // 唯一写入点是 syncMode()，由激活 / 装载 / setMode 三处调用——不构成第二份真源。
@@ -1014,6 +1053,12 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
   // 配置默认基线：createSession 对无文件上下文（path 缺失）文档的回落锚在这里；
   // 只有 setMode（配置加载 / 用户显式切换）会移动它，装载本身不改。
   let defaultMode = initialMode;
+  /**
+   * 折行口径的**应用运行期真源**（M180，D1 裁决原文「应用级」，见 `setWrap`）：一份值管全部
+   * 会话——翻转时遍历 session 逐个重配，新建 / 装载会话都从这里起步。这里**不是**「新标签页的
+   * 起点」：配置项只在启动时喂一次初值，之后的翻转对所有会话（含新开的）立即生效。
+   */
+  let wrap: WrapSettings = { lineWrap: DEFAULT_LINE_WRAP, codeBlockWrap: DEFAULT_CODE_BLOCK_WRAP };
   let provider: AttachmentProvider = createInvokeAttachmentProvider();
   let wikilinkResolver: WikilinkResolver | null = null;
   const readyListeners = new Set<EditorReadyListener>();
@@ -1201,11 +1246,25 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
   }
 
   /**
+   * 换 mode / 换折行口径时要派发的两个 Compartment 重配（M180）——**两件事必须一起做**：
+   * 模式变了，md 专属的 live preview 要跟着换；折行也要跟着重配，因为代码块内容级 class
+   * 只在 md 模式有意义（`wrapSpec` 的 mode 分支），只重配模式会让 code → md 切回来的代码块
+   * 丢掉那一层。折行值取自应用运行期的 `wrap`（应用级口径下所有会话取值一致，任何一次
+   * state 重建都取当前值）。
+   */
+  function modeAndWrapEffects(mode: EditorMode, path: string | undefined): StateEffect<unknown>[] {
+    return [
+      modeCompartment.reconfigure(modeExtensions(mode, path)),
+      wrapCompartment.reconfigure(wrapExtensions(mode, wrap)),
+    ];
+  }
+
+  /**
    * 一个会话的 EditorState。**每次新建会话都重建一份**（而不是复用同一个 state
    * 对象）：撤销史 / 语法树 / 搜索查询都是 StateField，必须逐会话独立，否则标签之间
    * 会共享一个撤销栈。创建期扩展逐条有据，见下面各段注释。
    */
-  function sessionState(doc: string, path: string | undefined, mode: EditorMode): EditorState {
+  function sessionState(doc: string, path: string | undefined, mode: EditorMode, settings: WrapSettings): EditorState {
     return EditorState.create({
       doc,
       extensions: [
@@ -1254,7 +1313,10 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
             docChangedListeners.forEach((listener) => listener());
           }
         }),
-        EditorView.lineWrapping,
+        // 折行口径（M180）：正文行（`lineWrapping`）与代码块行（内容级 class）两层的装配点。
+        // 值取应用运行期的折行状态——新会话因此从**当前应用态**起步，而不是配置默认
+        //（配置只是启动时喂进来的初值）：这正是 D1「应用级」与初稿「标签页级」的关键差异。
+        wrapCompartment.of(wrapExtensions(mode, settings)),
         // 运行时追加的扩展（见 appendedExtensions）：不带上的话，用 appendConfig 装的
         // 监听器（当前是 src/toc.ts 的大纲指示段）会在切到新会话后静默失效。
         ...appendedExtensions,
@@ -1265,7 +1327,7 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
   function makeSession(doc: string, path: string | undefined, mode: EditorMode): EditorSession {
     return {
       id: ++sessionSerial,
-      state: sessionState(doc, path, mode),
+      state: sessionState(doc, path, mode, wrap),
       path,
       mode,
       cleanDoc: doc,
@@ -1398,7 +1460,9 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
     return state.update({
       changes: { from: 0, to: state.doc.length, insert: doc },
       selection: { anchor: 0 },
-      effects: modeCompartment.reconfigure(modeExtensions(mode, path)),
+      // 模式与折行两个 Compartment 一起重配（M180）：装载可能把会话从 md 换成 code
+      //（非 md 只读），代码块内容级 class 的有无取决于 mode，只重配模式会留下它。
+      effects: modeAndWrapEffects(mode, path),
       annotations: [trustedLoad.of(true), Transaction.addToHistory.of(false)],
     }).state;
   }
@@ -1426,6 +1490,32 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
     collapseDomSelectionIfBlurred();
   }
 
+  /**
+   * 把折行口径重配到**全部会话**（M180 应用级口径的唯一写入路径）。
+   *
+   * 前台会话经 dispatch 生效（updateListener 把新 state 回写 session.state）；后台会话只换代
+   * 它的 state，不碰 view——与 reloadSession 的既有分岔同形。「全部会话同步」是应用级的定义，
+   * 不是可选优化：漏掉后台会话，切回去的标签页会显示旧口径。
+   */
+  function reconfigureWrap(): void {
+    for (const session of sessions) {
+      const effects = wrapCompartment.reconfigure(wrapExtensions(session.mode, wrap));
+      if (session === active) view.dispatch({ effects });
+      else session.state = session.state.update({ effects }).state;
+    }
+  }
+
+  /** 应用运行期折行口径的写入路径（M180）：配置加载与两条 toggle 命令共用，只传要改的轴。 */
+  function setWrap(next: Partial<WrapSettings>): void {
+    const merged: WrapSettings = {
+      lineWrap: next.lineWrap ?? wrap.lineWrap,
+      codeBlockWrap: next.codeBlockWrap ?? wrap.codeBlockWrap,
+    };
+    if (merged.lineWrap === wrap.lineWrap && merged.codeBlockWrap === wrap.codeBlockWrap) return;
+    wrap = merged;
+    reconfigureWrap();
+  }
+
   return {
     view,
     commands,
@@ -1436,9 +1526,18 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
       if (mode === active.mode) return;
       active.mode = mode;
       syncMode();
-      view.dispatch({ effects: modeCompartment.reconfigure(modeExtensions(mode, active.path)) });
+      // 模式与折行一起重配：代码块内容级 class 只在 md 模式有意义（见 modeAndWrapEffects）。
+      view.dispatch({ effects: modeAndWrapEffects(mode, active.path) });
     },
     mode: () => active.mode,
+    setWrap,
+    wrapSettings: () => ({ ...wrap }),
+    toggleLineWrap() {
+      setWrap({ lineWrap: !wrap.lineWrap });
+    },
+    toggleCodeBlockWrap() {
+      setWrap({ codeBlockWrap: !wrap.codeBlockWrap });
+    },
     onReady(listener: EditorReadyListener) {
       readyListeners.add(listener);
       return () => readyListeners.delete(listener);
@@ -1475,7 +1574,7 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
         // 滚动复位用直接赋值而非 scrollIntoView 效果：后者带 scrollMargin，文档
         // 溢出视口时会把 pos 0 对齐到视口顶而主动下滚，页首 padding 被顶出画。
         selection: { anchor: 0 },
-        effects: modeCompartment.reconfigure(modeExtensions(mode, path)),
+        effects: modeAndWrapEffects(mode, path),
       });
       // 新装载的文档从篇首开始：这里用直接赋值而不是 scrollIntoView 效果（M110 真实
       // 桌面缺陷排查）——后者带 scrollMargin，文档溢出视口时会把 pos 0 对齐到视口顶而
