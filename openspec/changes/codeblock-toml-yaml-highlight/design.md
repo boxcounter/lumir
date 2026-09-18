@@ -20,7 +20,7 @@
 
 ### 1.2 决定性证据：Alex 真实 vault 里的实际块
 
-源：`/Users/boxcounter/Downloads/Everything-copy/4_Archives/Engineering/Logbook/README.md` 的第一个围栏块（```yaml，28 行，`dimensions:` 表），**原样**渲染（只读 vault，不改动）。
+源：`/Users/boxcounter/Downloads/Everything-copy/4_Archives/Engineering/Logbook/README.md` 的第一个围栏块（```yaml，30 行，`dimensions:` 表），**原样**渲染（只读 vault，不改动）。
 
 首个块（14 个着色 span）：
 
@@ -31,7 +31,7 @@
 | `Goal` / `monthly` / `Slax Reader` / `ZSXQ` …（值） | `null` | 无 span，正文色 `rgb(38, 34, 25)` |
 | `-` / `:` | `meta` | 无 span，正文色 |
 
-该笔记的另一块（含 `commitments`、26 行）合计：**39 个 `cm-lp-tok-literal` + 1 个 `cm-lp-tok-comment`**，`property` / `string` / `keyword` **零命中**（`/tmp/lumir-probe-m167/real.log`）。即**整块只出一种颜色**——键的赭色与值的正文色之外没有任何区分，这就是「看起来没有高亮」的可复现来源（截图 `evidence/01-yaml-block-as-is.png`）。
+该笔记的另一块（含 `commitments`、45 行）合计：**39 个 `cm-lp-tok-literal` + 1 个 `cm-lp-tok-comment`**，`property` / `string` / `keyword` **零命中**（`/tmp/lumir-probe-m167/real.log`）。即**整块只出一种颜色**——键的赭色与值的正文色之外没有任何区分，这就是「看起来没有高亮」的可复现来源（截图 `evidence/01-yaml-block-as-is.png`）。
 
 ### 1.3 语料普查：报告里的「toml / yml」在可触及语料里没有现场
 
