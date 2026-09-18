@@ -25,7 +25,7 @@
 - [x] 1.4 `proposal.md` / `design.md`：范围与边界（含 `>64KiB` 安全阀同样适用）、着色 parity 校验方法
       （逐 token 对照 CM6 或快照，沿用 M138 口径）、两个裁决点
       **证据**：`proposal.md` 的 Why / What Changes / Non-goals / Impact / 裁决点；`design.md` 的 §1–§7。
-- [x] 1.5 `tasks.md` + `specs/editor-live-preview/spec.md`（1 条 ADDED requirement），
+- [x] 1.5 `tasks.md` + `specs/editor-live-preview/spec.md`（1 条 MODIFIED + 1 条 ADDED requirement），
       并确认本 mission **零 `src/`、零 `tests/` 改动**
 - [x] 1.6 `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` 通过
       **证据**：worktree 内跑该命令（输出 `/tmp/m167-validate.log`），含 `✓ change/codeblock-toml-yaml-highlight`，
@@ -81,7 +81,11 @@
       proposal 头部补撤回记录），不留僵尸提案
 - [ ] 5.3 归档时把本 change 的 spec 增量（1 条 MODIFIED + 1 条 ADDED）并入 `openspec/specs/editor-live-preview/spec.md`；
       核对并入结果——「Markdown 渲染保真」第 2 款的「已知例外」段落应含 toml 的 `atom` 复用那条
-      （MODIFIED 增量已写入），并入后 MUST NOT 只列 rust 一条
+      （MODIFIED 增量已写入），并入后 MUST NOT 只列 rust 一条；该款另含**两条 M138/M152 既有行为的 spec 回填**
+      （回填既有行为、不新增产品行为，已在 proposal Impact 与 design §7 申报）：①「该一致性 SHALL 由两侧共用同一张语言表
+      （`src/preview/code.ts` 的 `LANGUAGES`）保证，MUST NOT 由两侧各自维护一份语言或配色表」+ Scenario
+      「两侧语言与配色表同源」；②「着色 SHALL 受单一代码块长度上限约束（超过即回落纯文本，MUST NOT 因语言不同而放宽）」
+      + Scenario「着色受长度上限约束且与语言无关」。四处（本行 / proposal Impact / design §7 / delta）逐字一致
 
 ## 6. 验证（实现期）
 

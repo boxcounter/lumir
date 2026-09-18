@@ -203,7 +203,7 @@ toml 数组的 `[` `]` 是 `bracket`、yaml 的结构标点是 `meta`——`@lez
 
 ## 7. 影响面与风险
 
-- **specs**：`editor-live-preview` 一条 ADDED requirement（「YAML 代码块的键名配色」）+ 一条 MODIFIED requirement（「Markdown 渲染保真」第 2 款：接进 yaml 的键名口径、并把 toml 的 `atom` 复用记进「已知例外」段落），见 `specs/editor-live-preview/spec.md` 增量。
+- **specs**：`editor-live-preview` 一条 ADDED requirement（「YAML 代码块的键名配色」）+ 一条 MODIFIED requirement（「Markdown 渲染保真」第 2 款：接进 yaml 的键名口径、并把 toml 的 `atom` 复用记进「已知例外」段落）。**该款另含两条 M138/M152 既有行为的 spec 回填**（回填既有行为、不新增产品行为，本次一并申报，避免 delta 超出申报面）：①「该一致性 SHALL 由两侧共用同一张语言表（`src/preview/code.ts` 的 `LANGUAGES`）保证，MUST NOT 由两侧各自维护一份语言或配色表」+ Scenario「两侧语言与配色表同源」；②「着色 SHALL 受单一代码块长度上限约束（超过即回落纯文本，MUST NOT 因语言不同而放宽）」+ Scenario「着色受长度上限约束且与语言无关」。见 `specs/editor-live-preview/spec.md` 增量。
 - **代码**：`src/preview/code.ts` 一处（新增常量 + yaml 项包 tokenTable）。零 Rust 改动、零新依赖、零新颜色。
 - **测试/验收**：`tests/visual` 的 fixture 与场景（含新增元素级基线）、`scripts/acceptance/scenarios/render-markdown.md` 补一张截图证据（着色是像素级呈现，AX 树不承载颜色，真机侧不写颜色断言）。
 - **风险**：低。风险面集中在「视觉基线是否被误判为零变更」——故实现期必须逐张核对相关基线的 sha256 与时间戳（REVIEW.md 第 3 条）。

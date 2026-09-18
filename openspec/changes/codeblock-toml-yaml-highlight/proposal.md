@@ -37,7 +37,7 @@ Alex 实测原话（M167 mission Context 逐字）：「toml 和 yml 代码块�
 
 ## Impact
 
-- 影响的 specs：`editor-live-preview`（1 条 ADDED + 1 条 MODIFIED requirement）。ADDED = 「YAML 代码块的键名配色」；MODIFIED = 「Markdown 渲染保真（分隔线 / 围栏代码着色 / 引用内列表）」第 2 款——把 yaml 的键名口径接进该款，并把 toml 的 `atom` 复用（表头与布尔 / 日期同色）记进该款的「已知例外」段落，使「toml 不改」这件事在 living spec 里有落脚点（该 capability 当前无未归档 change 持有增量，无归档互覆风险）
+- 影响的 specs：`editor-live-preview`（1 条 ADDED + 1 条 MODIFIED requirement）。ADDED = 「YAML 代码块的键名配色」；MODIFIED = 「Markdown 渲染保真（分隔线 / 围栏代码着色 / 引用内列表）」第 2 款——把 yaml 的键名口径接进该款，并把 toml 的 `atom` 复用（表头与布尔 / 日期同色）记进该款的「已知例外」段落，使「toml 不改」这件事在 living spec 里有落脚点（该 capability 当前无未归档 change 持有增量，无归档互覆风险）。**该款另含两条 M138/M152 既有行为的 spec 回填**（回填既有行为、不新增产品行为，本次一并申报，避免 delta 超出申报面）：①「该一致性 SHALL 由两侧共用同一张语言表（`src/preview/code.ts` 的 `LANGUAGES`）保证，MUST NOT 由两侧各自维护一份语言或配色表」+ Scenario「两侧语言与配色表同源」；②「着色 SHALL 受单一代码块长度上限约束（超过即回落纯文本，MUST NOT 因语言不同而放宽）」+ Scenario「着色受长度上限约束且与语言无关」
 - 影响的代码/系统：`src/preview/code.ts`（新增 `YAML_TOKEN_TABLE` 并挂到 yaml 项——单一来源处，两侧消费同时生效）；`src/preview/theme.ts` / `src/editor.ts` 不改
 - 影响的测试/验收：`tests/visual/fixtures/render-codeblock/languages.md`、`tests/visual/scenes/render-codeblock.spec.ts`、新增元素级基线、`scripts/acceptance/scenarios/render-markdown.md`（补一张截图证据，AX 树不承载颜色，真机侧不写颜色断言）
 - 关联约束：ADR 0002 §2（单内核双模式）、ADR 0003 §3（装饰不改写文档）、[REVIEW.md](../../../REVIEW.md) 第 8 条（同一语义两处真源——本次仍只改单一来源处）、第 1 条（断言须有区分度）、第 3 条（容差吞变化）
@@ -53,6 +53,6 @@ Alex 实测原话（M167 mission Context 逐字）：「toml 和 yml 代码块�
 **裁决点 2 — 修复广度：方案 A（建议）还是方案 B？**
 
 - **方案 A（本提案的 What Changes）**：yaml 的键改取属性色。最小改动、不动配色角色表、parity 结构上不变、既有基线零变更。
-- **方案 B**：连 yaml 的值与结构符号（`-`、`:`、`---`、锚点）一并上色。代价是新增配色角色（`TOKEN_GROUPS` + `src/editor.ts` 的 `CODE_COLORS` 两处穷尽检查同步）+ 全量视觉基线重建并逐张与 Alex 过目；**且新角色不是 yaml 独享**——该 token 名（`meta` / `punctuation`）在 21 门收录语言里有 **10 门**会产出，加一个角色等于同时改掉这 10 门语言的观感（普查命令与逐语言读数见 [`evidence/03-复核记录.md`](evidence/03-复核记录.md) §6）；另外 yaml 的普通标量值在 vendored parser 里根本不产出 token，方案 B 也修不了它——只能让标点先有色。
+- **方案 B**：连 yaml 的值与结构符号（`-`、`:`、`---`、锚点）一并上色。代价是新增配色角色（`TOKEN_GROUPS` + `src/editor.ts` 的 `CODE_COLORS` 两处穷尽检查同步）+ 全量视觉基线重建并逐张与 Alex 过目；**且新角色不是 yaml 独享**——该 token 名（`meta` / `punctuation`）在 21 门收录语言里有 **17 门**（10 个 mode 文件，按收录语言口径折算）会产出，加一个角色等于同时改掉这 17 门语言的观感（普查命令与逐语言读数见 [`evidence/03-复核记录.md`](evidence/03-复核记录.md) §6）；另外 yaml 的普通标量值在 vendored parser 里根本不产出 token，方案 B 也修不了它——只能让标点先有色。
 
 未选的那一支在归档时标注放弃原因，不留悬空任务。
