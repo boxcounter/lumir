@@ -668,6 +668,15 @@ function collectSyntaxDecorations(
   };
   const revealInlineSource = (ref: { from: number; to: number; node: SyntaxNode }): boolean =>
     touchesSelection(doc.lineAt(ref.from).from, doc.lineAt(ref.to).to) && insideCallout(ref.node);
+  // 选区与节点范围相接即该范围整段显露源码（M168 真实桌面缺陷：光标放在 `**粗体**`
+  // 的内容里仍是渲染态，`**` 被隐藏、进不了编辑态）。与链接整条显露同族（M145），
+  // 区别是**含端点**：范围两端邻接位两侧都是隐藏标记（端点左是隐藏的定界符、右是
+  // 隐藏的收尾定界符），停在端点上的 caret 坐标退化、也编辑不到定界符，端点相接一并
+  // 显露才能让「光标所在范围」始终有可编辑的原文。适用面只看渲染态是否隐藏标记：
+  // 强调系（Emphasis / StrongEmphasis / Strikethrough）隐藏 `*` / `_` / `~`；
+  // 行内代码不隐藏反引号（渲染态既有 `` `code` `` 原文），故不并入本条。
+  const revealRangeSource = (from: number, to: number): boolean =>
+    view.state.selection.ranges.some((r) => r.from <= to && r.to >= from);
   syntaxTree(view.state).iterate({
     from: vrFrom,
     to: vrTo,
@@ -715,6 +724,8 @@ function collectSyntaxDecorations(
       }
 
       if (name === "StrongEmphasis" || name === "Emphasis" || name === "Strikethrough") {
+        // 光标落在该范围内（含端点）即整段显露源码（M168）。
+        if (revealRangeSource(ref.from, ref.to)) return false;
         // callout 内容行选区显露：跳过样式与标记隐藏，该行显示 `**加粗**` 源码（M119）。
         if (revealInlineSource(ref)) return false;
         const cls =

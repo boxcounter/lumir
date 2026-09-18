@@ -111,7 +111,7 @@ const LONG_TABLE_DOC = (() => {
   return `${filler}\n\n| 名称 | 状态 | 备注 |\n| --- | --- | --- |\n| 表格 | 正常 | alpha |\n| 数据 | 良好 | beta |\n\n${filler}\n`;
 })();
 
-test("cell 内 Ctrl+E 到行尾：内容不下挫、落点为末 cell 尾部", async ({ page }) => {
+test("cell 内 Ctrl+E 到当前 cell 内容右缘：内容不下挫、caret 可测", async ({ page }) => {
   await openDoc(page, "ctrl-e.md", LONG_TABLE_DOC);
   await page.locator(".cm-lp-table-scroll").waitFor();
   await page.locator(".cm-lp-table-cell", { hasText: "表格" }).first().click();
@@ -123,14 +123,16 @@ test("cell 内 Ctrl+E 到行尾：内容不下挫、落点为末 cell 尾部", a
   await page.waitForTimeout(120);
   const after = await snap(page);
   expect(Math.abs(after.scrollTop - before.scrollTop)).toBeLessThanOrEqual(1);
-  // 行尾藏进隐藏管道符，落点回退到末 cell 尾部（行内最后可停靠位置）
+  // M168 起落点单位是**当前 cell**（不再是整行行尾 = 末 cell）：`| 表格 | 正常 | alpha |`
+  // 行内从首 cell 按 ⌃E，落在该 cell 内容右缘（"表格" 之后），不跨隐藏管道符。
   const lineInfo = await page.evaluate(() => {
     const view = (document.querySelector(".cm-content") as unknown as { cmTile: { root: { view: any } } }).cmTile.root.view;
     const line = view.state.doc.lineAt(view.state.selection.main.head);
-    return { to: line.to, text: line.text };
+    return { from: line.from, to: line.to, text: line.text };
   });
-  expect(lineInfo.text).toContain("alpha");
-  expect(after.head).toBe(lineInfo.to - 1);
+  expect(lineInfo.text).toContain("alpha"); // 仍在同一表格行
+  const contentRight = lineInfo.from + lineInfo.text.indexOf("表格") + "表格".length;
+  expect(after.head).toBe(contentRight);
   // caret 按 assoc -1（可见侧）测量，坐标不退化
   const caretTop = await page.evaluate(() => {
     const view = (document.querySelector(".cm-content") as unknown as { cmTile: { root: { view: any } } }).cmTile.root.view;
