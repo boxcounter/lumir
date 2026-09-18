@@ -660,6 +660,17 @@
 - **kimi-cu `type_text` 走 AX 注入**，编辑器失焦时文本落陈旧原生选区——工具观测，非 app 缺陷。
 - **`config.json` 解绑 ≠ 关闭能力**（已录 spec）：解绑后 macOS 原生选择器可能接手（如 ⌃K → `deleteToEndOfLine:`）——dogfood 改配置时预期内行为。
 - **js/ts 对象字面量键的复合 `property` token 有意不修**（M147 finding，low）：`{1: "x"}` 的数字键取数字色、字符串键取字符串色（后者是 GitHub/VS Code 同款通行呈现），每次渲染伴一条 `Unknown highlighting tag property` console 噪声（CM6 按 part 名去重，不刷屏）；code 模式与围栏两侧一致，不构成 parity 缺口。若将来裁决「对象键一律属性色」，做法与 M147 相同——javascript/typescript 的 parser 挂 `{ property: tags.propertyName }` tokenTable（两处 LANGUAGES 同源）并核对 js/ts 基线；数字键要属性色还需处理 objprop 复合名（HighlightStyle 条目序裁决）。finding `20260917-worker-jsonhl-improve-javascript-typescript-property-token-console-json-js-ts.md`。
+- **`scrollbar-gutter: stable` + 占位滚动条下 `scrollWidth` 恒等式断言必差 15px**（M177 worker
+  finding，2026-09-18，low）：`.cm-lp-table-scroll`（`src/style.css:282`）的 `scrollbar-gutter: stable`
+  在 classic 滚动条环境（CI macos-26 runner）预留 15px inline-end 沟槽，Chromium 在此状态下
+  `scrollWidth` 与钳位可达滚动上限差恰好一个沟槽宽（CI 四次 run 逐位相同：2163 vs 2148；本地 overlay
+  滚动条下恒等成立、复现不出，强制 15px 滚动条可复现同数字形状）——「滚到最右」用
+  `scrollLeft + clientWidth >= scrollWidth - 1` 判定在此类环境必误红（m132-emacs-keys.spec.ts:373
+  存量 CI 确定性失败的根因）。**教训（测试口径）**：这类断言改用环境无关判据——① 内容几何（表格自然宽
+  右缘距容器右缘 <2px）；② 行为判据（已在最右时再按方向键不再移动，浏览器钳位是唯一真值）。M177 已把
+  m132:351 的实例改完。**未做的可选动作**：重新评估 `scrollbar-gutter: stable` 的必要性（它防的是滚动条
+  出现/消失引起的抖宽），或至少在 `src/style.css:282` 注释里写明 classic 环境的 15px 预留——属产品/视觉
+  裁决，不急。finding `20260918-worker-m132-m115-bug-scrollbar-gutter-stable-scrollwidth-15px.md`。
 
 ## 已核销（留痕，定期清理）
 
