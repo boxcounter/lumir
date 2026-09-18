@@ -34,6 +34,15 @@ declare module "node:assert/strict" {
   export default assert;
 }
 
+// 用例读仓内文本 fixture（如 文案-Copy.md 的 deck 表格行）用到的两个读点。
+declare module "node:fs" {
+  export function readFileSync(path: URL | string, encoding: "utf8"): string;
+}
+
+declare module "node:url" {
+  export function fileURLToPath(url: URL | string): string;
+}
+
 declare var process: {
   version: string;
   exitCode?: number;
