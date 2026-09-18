@@ -79,10 +79,11 @@
       「键 + 动作词」的行文一致）。宽度预算：浮层宽 300px、提示内边距 12px → 可用约 276px，
       且 `.lumir-toc` 继承 `.masthead` 的 `letter-spacing: .08em`——该串**预计单行放得下，
       以实测为准**；实测放不下时改紧凑写法
-      —— **未改文件**（tower 裁决 `文案-Copy.md` 归 M159）；实现侧新串见 `src/toc.ts` 的
-      `POPOVER_HINT`。宽度**已实测单行放得下**：元素基线 `toc-popover-chromium-darwin.png`
-      （301×171）里提示占一行
-- [ ] 3.2 同文件末尾的「文案实现备注」段补 M157 的出处（与本 deck 既有记法一致）
+      —— **归档时勾掉（2026-09-18，节点 2）：产物已由 tower 的 integration fix 落盘**（merge `a779cbb`）——
+      `文案-Copy.md:77` 的 D86 已是 `↑↓ ⌃N⌃P 选择 · Enter 跳转 · Esc 关闭`（与本条建议文案一致）。
+      M160 实现侧的新串在 `src/toc.ts` 的 `POPOVER_HINT`。宽度**已实测单行放得下**：元素基线
+      `toc-popover-chromium-darwin.png`（301×171）里提示占一行
+- [x] 3.2 同文件末尾的「文案实现备注」段补 M157 的出处（与本 deck 既有记法一致）　**归档时勾掉（2026-09-18，节点 2）：产物已在 master**——`文案-Copy.md:111` 已登记 D86 归 `src/toc.ts` 的 `POPOVER_HINT` 并附「M160 未新增条目」说明；`:103` 记「D86 于 M160（2026-09-17）扩为覆盖五个就地键，编号沿用不改」。落盘提交为 tower 的 integration fix `a779cbb`。
       —— **未改文件**（同 3.1）；文案全文随 M160 的 review-request 交付 tower
 - [x] 3.3 证据：`tests/visual/scenes/toc-outline.spec.ts:122` 的 `toHaveText` 断言更新为新串；
       `scripts/acceptance/scenarios/13-toc.md` 里 **13 处** `↑↓ 选择` 探针与正文「断言口径」段的
@@ -148,21 +149,29 @@
 
 - [x] 6.1 `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` 通过
       —— 证据：命令输出（见交付说明）
-- [ ] 6.2 `scripts/gate.sh quick` 全绿（本 change 无 Rust 改动，Rust 门禁应无新增失败）
+- [x] 6.2 `scripts/gate.sh quick` 全绿（本 change 无 Rust 改动，Rust 门禁应无新增失败）
       —— **cargo 三步（fmt / clippy / test）未跑**：M159 持 `/tmp/lumir-cargo-build.lock` 冷构建并占
       1430 做真机验收，同机并行 cargo 会争磁盘（当时可用 4.1Gi）。已跑的前端层全绿：`tsc-root`
       `tsc-visual` `tsc-unit` `unit-tests`（26/26）`acceptance --check`（22/22）`docs-check`
       `openspec validate --strict`。本 change **零 Rust diff**，cargo 三层按批次口径继承 base 绿灯，
       或待 M159 release 后补跑
+      —— **归档时勾掉（2026-09-18，节点 2），并补上本条缺的继承证据指针**：① 零 Rust diff 实测——
+      `git show --stat d4ca60a` 的 9 个文件全在 `src/**`、`tests/visual/**`、`scripts/acceptance/**` 与
+      本 change 目录内，无 `src-tauri/**`；② CI `rust.yml` 在含该改动的 `2f16f86` 上 **success**
+      （run `35287313039`，`gh run list --commit 2f16f86` 可复现）；③ 前端层已跑七项同上。**本地 cargo
+      三层仍未跑**（理由不变），本条勾选依据是「零 Rust diff + base 继承」，**不宣称本地跑过 cargo**。
 - [x] 6.3 `scripts/gate.sh visual` 全绿（含 `toc-outline` 场景的新断言与新基线）
       —— 证据：`pnpm --dir tests/visual run test:isolation` PASS；
       `LUMIR_VISUAL_PORT=4273 scripts/visual/run.sh` → **231 passed**（含新断言与新基线）；
       反向验证：`git stash push -- src/style.css` 后同一场景 **1 failed**（旧 55vh 读数 483px）
-- [ ] 6.4 真机（WKWebView）：`node scripts/acceptance/run.mjs 13` 单场景 PASS，再跑全量；
+- [x] 6.4 真机（WKWebView）：`node scripts/acceptance/run.mjs 13` 单场景 PASS，再跑全量；
       证据落 `test-results/acceptance/<日期>/`，报告里给可 `ls` 的绝对路径指针
-      —— **未跑**：M159 正在同一台机器上占 1430 端口跑真机验收（其广播 12:03），套件端口冲突 +
-      两实例互相抢前台焦点会污染双方结论。`13-toc` 的新步骤已过 `--check` 静态校验；真机结论
-      **未验**，待批次收尾串行补跑
+      —— **归档时勾掉（2026-09-18，节点 2），两条证据都经 `ls` 复核**：① M164 的全量真机 **26/26 PASS**
+      （含 `13-toc`），证据 `test-results/acceptance/2026-09-17/`（git 外，`13-toc/status.txt` 存在）；
+      ② **更新的一次复跑**：`test-results/acceptance/2026-09-18/summary.md` 的 `13-toc` = PASS / 46 断言 /
+      0 失败 / 52.8s，证据目录 `test-results/acceptance/2026-09-18/13-toc/`（`status.txt` = PASS，
+      含 steps.md / shots/ / ax/）——即本条要求的「单场景 PASS，再跑全量」里的单场景一步在 M160 之后
+      已由批次收尾补跑，全量一步由 ① 的 26/26 承担。原「未跑」理由（M159 占 1430）已随批次串行化消失。
 - [x] 6.5 `git diff --check` 通过；改动文件集合与 mission scope 一致（跨 scope 的只读依赖若出现，
       须在 tower 批准后再动）
       —— 证据：`git diff --check` 无输出；改动集合 = `src/toc.ts` / `src/style.css` / `src/keys.ts`

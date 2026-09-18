@@ -1,5 +1,12 @@
 # Tasks: startup-restore-off-main-thread
 
+> **归档记录（节点 2，2026-09-18）**：本清单在归档动作前逐条对账，口径为 `docs/process/openspec-workflow.md`
+> 的三条（tasks 勾选状态 / spec 增量 / 当前实现三者一致才归档）。两条保留未勾并就地标注理由——3.6（自标
+> 「可选证据，非门禁」，标注为不执行）与 5.5（本地未做冷启动前后对比，改取 CI 旁证）；5.6 由 Alex 节点 2
+> 裁决「不收紧」（2026-09-18）后勾掉。spec 增量（`vault-workspace` 的 MODIFIED「last_vault 记忆与启动恢复」
+> 与 ADDED「启动恢复的时序与可见性」）与实现逐条一致，无实现期静默扩 scope，无新建 capability（故无
+> Purpose 占位），无相对链接死链。归档为 `openspec/changes/archive/2026-09-18-startup-restore-off-main-thread/`。
+
 ## 1. 后端：启动恢复移出主线程
 
 - [x] 1.1 `VaultInner` 增 `generation: u64`（启动 0）与 `restore_pending: bool`；`VaultState` 增 `begin_restore() -> u64`（置 pending，返回当前世代）与 `finish_restore(generation, outcome) -> bool`（单次持锁：比对世代与 `root.is_some()`，不符则整体丢弃含失败 notice；无论哪条分支都置 `restore_pending = false`）
@@ -25,7 +32,7 @@
 - [x] 3.3 新增真机验收场景（文件名 / `id` / `item` 三者一致，**号取落地时「待真机验收」列表的实际末位项号**：评审时末位为 15，预计占 **16**；不得复用既有的 10/11/12/13/14——`12-links.md` 已占 `item: 12`，且 `run.mjs:60` 的筛选同时按 `id` 前缀与 `item` 号匹配，重号会让 `node run.mjs 12` 串选两个场景。落地时把本节、5.4 与 `scripts/acceptance/README.md` 三处的号一并改齐）：① 默认 config（`last_vault` = 验收 vault）启动后自动进入 vault、无「恢复中」文案残留（`shot` 证据）；② `last_vault` 指向不存在目录重启后为未打开空态 + 「上次打开的 vault 已不可用」提示 + 「打开 vault」入口存在
 - [x] 3.4 验收 runner 的 `configWrite`（`scripts/acceptance/lib/execute.mjs:650`）支持覆盖 `last_vault`（缺省保持现状=沿用当前值），供 3.3 的失效路径使用；同步更新 `scripts/acceptance/README.md` 的动作表
 - [x] 3.5 `tests/visual/scenes/tauri-stub.ts` 的 `vault_current` 桩补 `restore_pending` 字段（含可注入 `true` 的选项）；新增元素级视觉断言 `tests/visual/scenes/startup-restore.spec.ts`：恢复中态与既有空态同布局（`.ft-empty` / `.ft-notice` / 打开按钮），**不新增或更新整页基线**
-- [ ] 3.6 可选证据（非门禁）：用 ~6000 md 的合成 vault（约 45MB）起 dev app，截图记录「首帧（恢复中态）→ 树出现」的先后与耗时，附在证据里供 Alex 判手感
+- [ ] 3.6 可选证据（非门禁）：用 ~6000 md 的合成 vault（约 45MB）起 dev app，截图记录「首帧（恢复中态）→ 树出现」的先后与耗时，附在证据里供 Alex 判手感　**归档时标注「可选证据，不执行」（2026-09-18，节点 2）**：本条自标「非门禁」，故不计入完成度、不补跑。已有的旁证：真机场景 `16-startup-restore` 在 2026-09-17 全量 run 中 PASS（`test-results/acceptance/2026-09-17/16-startup-restore/status.txt`，两个用例=自动进入 vault 且无「恢复中」文案残留 / `last_vault` 失效路径），视觉场景 `tests/visual/scenes/startup-restore.spec.ts` 断言恢复中态与既有空态同布局。45MB 合成 vault 下的首帧手感仍归 Alex 人肉验收，**未验**。
 
 ## 4. 文档与口径
 
@@ -39,5 +46,5 @@
 - [x] 5.2 `scripts/gate.sh quick` 全绿（含 bindings 漂移与 tsc）
 - [x] 5.3 `scripts/gate.sh visual` 全绿；本 change 不更新整页基线，若实现期发现必须更新，先交 Alex 过目再执行 `--update`
 - [x] 5.4 `node scripts/acceptance/run.mjs --check` 通过后，按 3.3 落地时的 `id` 前缀跑该场景（`node scripts/acceptance/run.mjs <该 id>`），全 PASS（证据留在 `test-results/acceptance/`，不入 git）
-- [ ] 5.5 冷启动读数前后对比（本地观察，不作阈值判定）：确认 `LUMIR_READY` 的出现时刻无显著变化（预期不变，本 change 不宣称性能改进）；若 CI 冷启动 median 回退超 40%，按真回归排查，不得调整基线
-- [ ] 5.6 归档前对账一次 design §4.5 显式化过的语义边缘（恢复完成时无标题缓冲继承手动打开语义）：若 Alex 在节点 1 把它收紧，则按新 requirement 改 spec 增量与实现，不得沿用「继承既有语义」口径；未收紧则本项无操作，勾掉即可
+- [ ] 5.5 冷启动读数前后对比（本地观察，不作阈值判定）：确认 `LUMIR_READY` 的出现时刻无显著变化（预期不变，本 change 不宣称性能改进）；若 CI 冷启动 median 回退超 40%，按真回归排查，不得调整基线　**归档时标注（2026-09-18，节点 2）：本地未做前后对比，改取 CI 旁证 ⇒ 保留未勾**（「无显著变化」这句不宣称已由本地观察证实）。旁证：CI `perf` 在含本 change 的 `2f16f86` 上实测 `cold-start: p95=155.75ms median=117.76 max=190.66 (n=20, contract<300ms)`，并与基线比出 `median=117.76ms vs 基线 median-of-medians=278.54ms（最近 1 次 master），回退 -57.7% vs 容忍 ≤40% 通过`（run `35287312955`，`gh run view 35287312955 --log` 可复现；该 run 整体 failure 是 `keypress-to-paint` 超阈驳回，冷启动端点自身合格）。按本条口径「回退超 40% 才按真回归排查」——未回退，故无进一步动作。
+- [x] 5.6 归档前对账一次 design §4.5 显式化过的语义边缘（恢复完成时无标题缓冲继承手动打开语义）：若 Alex 在节点 1 把它收紧，则按新 requirement 改 spec 增量与实现，不得沿用「继承既有语义」口径；未收紧则本项无操作，勾掉即可　**证据：Alex 节点 2 裁决「不收紧」（2026-09-18）** ⇒ 本项无操作、勾掉。无标题缓冲在 vault 装载时「守卫放行、内容随 `editor.reset()` 丢弃」的语义沿用现状，spec 增量与实现都不改（判据落在 `src/save-controller.ts:264-273` 的 `path !== undefined && dirty`；design §4.5 已声明该语义不是本 change 引入，根因是 save-controller 的这条判据）。裁决原话「不收紧」由 tower 转达（本 change 的归档对账请求）。

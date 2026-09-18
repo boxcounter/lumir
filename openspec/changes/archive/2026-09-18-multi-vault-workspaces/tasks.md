@@ -4,8 +4,16 @@
 >
 > **勾选状态（M164 收口，2026-09-18）**：本清单在 M162（后端，merge `eafd258`）/ M163（前端，merge `fb2dc26`）
 > 与 M164（验收·视觉·文档收口）之后一次性勾齐。每条括注证据（文件:行 / 单测名 / 场景名 / 命令输出）；
-> 拿不出证据的一律不勾。**7.1 / 7.2 / 8.6 标注「归档时」的三条保持不勾**——它们的时点是归档评审
-> （节点 2），M164 已把其中的 backlog 工作做完（见各条的括注），勾选留给归档。
+> 拿不出证据的一律不勾。**7.1 / 7.2 / 8.6 标注「归档时」的三条已由归档动作（节点 2，2026-09-18）勾掉**——
+> 前两条的 backlog 产物由 M164 落盘、本次按归档口径复核；8.6 的最终对账结论与其括注同一批写入。
+>
+> **归档记录（节点 2，2026-09-18）**：归档对账由 M169（独立 survey）与本次归档动作两轮完成，口径为
+> `docs/process/openspec-workflow.md` 的三条（tasks 勾选 / spec 增量 / 当前实现三者一致）。结论：两份 delta 与
+> 实现逐条一致、无静默扩 scope、无新建 capability（故无 Purpose 占位）、无相对链接死链。节点 2 裁决三件
+> （2026-09-18）：① startup-restore design §4.5 的无标题缓冲语义边缘 → **不收紧**；② `multi-tabs` living 的守卫
+> 判据宽窄措辞差（「任一标签有未保存修改」vs 实现的「任一**有路径**的标签」）→ **接受差异**，living 原文不动
+> （见 7.3 对账记录末条）；③ `commit_vault_open` 的死参数 → **删参数让测试走 `finish_restore`**（由姊妹 mission
+> 执行，不属本 change 的归档动作）。
 
 ## 1. 后端：注册项字段与列表命令
 
@@ -57,18 +65,18 @@
 
 ## 7. 文档与口径
 
-- [ ] 7.1 `docs/backlog.md` 第 10 条（多标签会话恢复）由本 change 承接——归档时更新其状态与口径　**M164 已把 backlog 正文写好**（`docs/backlog.md` 第 10 条的「状态更新（M164 收口）」：三处与原建议的有意差异、落地口径指针、v1 建议里未落地的 `session_restored{count}` 观测点）。**本条不勾**：它的时点是归档评审（节点 2），届时按归档口径复核。
-- [ ] 7.2 归档时把「用户主动打开 / 切换移出主线程」（design §9 的登记项）落一条 backlog 或 finding，避免这条账只留在 design 里　**M164 已落账**（`docs/backlog.md`「待 Alex 裁决」新增第 16 条：现状、收益、代价与建议时机）。**本条不勾**：同上，时点是归档评审。
+- [x] 7.1 `docs/backlog.md` 第 10 条（多标签会话恢复）由本 change 承接——归档时更新其状态与口径　**M164 已把 backlog 正文写好**（`docs/backlog.md` 第 10 条的「状态更新（M164 收口）」：三处与原建议的有意差异、落地口径指针、v1 建议里未落地的 `session_restored{count}` 观测点）。**归档时勾掉（2026-09-18，节点 2）**：该条已按归档口径复核，正文的「归档评审待 Alex」改为「已归档」并随本次归档核销。
+- [x] 7.2 归档时把「用户主动打开 / 切换移出主线程」（design §9 的登记项）落一条 backlog 或 finding，避免这条账只留在 design 里　**M164 已落账**（`docs/backlog.md`「待 Alex 裁决」新增第 16 条：现状、收益、代价与建议时机）。**归档时勾掉（2026-09-18，节点 2）**：M169 的独立对账复核了第 16 条的正文与 design §9 的登记项逐条对应，无需再落 finding。
 - [x] 7.3 对账既有 living spec **到 scenario 粒度**（M161 r1 P2-1 的教训：只对 requirement 粒度会让矛盾 scenario 留在 living spec 里）：逐条核 `vault-workspace` / `multi-tabs` / `file-tree` / `perf-measurement` 的每条 scenario 与本 change 的口径是否一致——本 change 对 `vault-workspace` 只 ADD、对 `multi-tabs` 提交 1 条 MODIFIED（其第三条 scenario 的提示口径），`file-tree` 空态不变、`perf-measurement` 无 delta；delta 里的 MODIFIED requirement 文本须与 living spec 逐字一致（只改该改的那一处）；proposal 的「已建议口径」两表与该对账结论对得上　**证据**：对账结论见本节末「7.3 对账记录」。
 
 ## 8. 验证
 
-- [x] 8.1 `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` 通过　**证据**：`Totals: 17 passed, 0 failed (17 items)`（`change/multi-vault-workspaces` 在内；`scripts/gate.sh quick` 的 `openspec-validate` 也 PASS）。
+- [x] 8.1 `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` 通过　**证据**：M164 当时记的 `Totals: 17 passed, 0 failed (17 items)` 是旧数；**归档时实测（2026-09-18，节点 2，本 change 归档之前）**为 `Totals: 19 passed, 0 failed (19 items)`（5 个活跃 change + 14 份 living spec）——数字变化与本 change 无关，其间新立了 `codeblock-toml-yaml-highlight` / `image-svg-and-fallback` / `line-wrap-options` 三个 change。`scripts/gate.sh quick` 的 `openspec-validate` 当时也 PASS。
 - [x] 8.2 `scripts/gate.sh quick` 全绿（fmt + clippy + cargo test + bindings 漂移 + tsc + openspec validate）　**证据**：`GATE RESULT: 10/10 PASS（SKIP 0）`——cargo-fmt / cargo-clippy / cargo-test / bindings-drift / tsc-root / tsc-visual / tsc-unit / unit-tests / docs-check / openspec-validate（在 M164 的最终提交内容上复跑）。
 - [x] 8.3 `scripts/gate.sh visual` 全绿；基线变动逐张经 Alex 过目后入库　**证据**：`GATE RESULT: 12/12 PASS（SKIP 0）`（含 `visual-regression 162s`；在最终提交内容上复跑）。基线：M163 的入口形态 A 影响 **13 张既有基线**（7 张超容差失败、**6 张落在 0.001 容差内静默通过**——REVIEW.md 第 3 条的新现场）+ 2 张新增（`mv-vault-switcher` 的元素级基线）；13 张 Before/After 与 2 张新增的清单交 tower 转 Alex 过目，**Alex 2026-09-18 批准全部入库**（tower 转达）。入库前逐张 sha256 核对与批准件一致（22/22 match）。
 - [x] 8.4 `node scripts/acceptance/run.mjs --check` 通过后，按 6.1 落地时的 `id` 前缀跑该批场景，全 PASS（证据留 `test-results/acceptance/`，不入 git）　**证据**：`--check` = 「场景静态校验通过（26 个）」；全量 `node scripts/acceptance/run.mjs` = **26/26 PASS**（2026-09-18，含本批 17/18/19 与 M160 遗留的 13-toc），证据 `test-results/acceptance/2026-09-17/`（git 外）。
 - [x] 8.5 冷启动读数前后对比：本 change 不新增 perf 端点、不改阈值与门禁口径；若 CI 冷启动 median 回退 >40%，按真回归排查，不得调整基线　**证据**：本 change 的 diff 对 `tests/perf/**`、`docs/specs/perf-measurement.md`、`src-tauri/src/ready.rs` 零改动（`git diff master...HEAD --stat` 核对）；perf 端点与阈值未动，故无「新旧数字混比」问题。**未跑** `gate.sh all` 的 perf 段（需要 release 构建，属 CI 的 `perf.yml` 职责）——本条按「口径未变 + 零 perf 相关 diff」判为成立，不宣称本地跑过 perf。
-- [ ] 8.6 归档评审前对账一次本 change 的「建议口径」是否被节点 1 翻转（入口 A/B 与 design §9 的未决项）；有翻转则先改 spec 再归档　**M164 已做了一次对账**（结论：无翻转，见 7.3 记录）。**本条不勾**：它要求的是归档评审**前**的最终复核，时点在节点 2。
+- [x] 8.6 归档评审前对账一次本 change 的「建议口径」是否被节点 1 翻转（入口 A/B 与 design §9 的未决项）；有翻转则先改 spec 再归档　**归档时最终复核（2026-09-18，节点 2）：无翻转，勾掉**——M169 的独立对账（与 M164 的 7.3 记录相互独立：重读两份 delta、四个 living spec 的每条 scenario 与实现）结论同样为「无翻转、无实现期静默扩 scope、无 Purpose 占位、无相对链接死链」。节点 2 的三件裁决（2026-09-18）逐件落齐，均不翻转本 change 的口径：① `multi-tabs` living 的守卫判据宽窄措辞差 → **接受差异**（living 原文不动，见 7.3 记录末条）；② startup-restore design §4.5 的无标题缓冲语义边缘 → **不收紧**（与本 change 不冲突）；③ `commit_vault_open` 的死参数 → **删参数让测试走 `finish_restore`**（由姊妹 mission 执行，不属本 change 的归档动作）。
 
 ## 7.3 对账记录（M164，2026-09-18）
 
@@ -87,7 +95,11 @@
   （打开链路、`last_vault` 记账、注册表治理与重映射的既有 scenario 都不被本 change 触碰；本 change 只 ADD 7 条
   requirement）。**一个已知的措辞张力**（本 change 未引入、也未修）：living 的守卫判据写「任一标签有未保存修改」，
   而实现与 `vault-workspace` delta 写「任一**有路径**的标签」——差异来自 M156 的无名缓冲豁免。change 有意保留
-  living 原文（「判据原文不动」），故不改；此处只标注，避免后续读者误判。
+  living 原文（「判据原文不动」），故不改；此处只标注，避免后续读者误判。**节点 2 裁决「接受差异」（2026-09-18）**：
+Alex 已显式接受该宽窄措辞差——`openspec/specs/multi-tabs/spec.md` 的「任一标签有未保存修改」保持不动，实现与
+`vault-workspace` delta 的「任一**有路径**的标签」也保持不动，归档不为对齐而改任一侧。行为不变（判据先于本 change
+存在，`src/save-controller.ts:264-273` 的 `path !== undefined && dirty`），两个 living capability 对同一判据的
+措辞差异是已裁决的既定状态，不是待修项。
 - **`file-tree`（「空态不变」成立）**：`tree.showEmpty` 仍逐字使用 D5 / D6，且空态下不渲染 `.ft-vault` 入口
   （`entryEl` 被清），与 delta 的「未装载时无列表入口」scenario 一致；四条既有 requirement（全类型树 / 点击打开 /
   watch 增量 / 未打开空态）的每条 scenario 均不受本 change 影响。**树头部入口与 D107 的空 vault 引导不在这个

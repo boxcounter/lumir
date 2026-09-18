@@ -122,6 +122,7 @@
     同族）。living spec `editor-live-preview/spec.md:25` 的显露枚举不含图片。提案已给两支：A 维持现状、
     单独立项（worker 建议）；B 并入该 change 给 Image 分支加选区判断 + spec 枚举补「图片」+ 一条 Scenario。
     待 Alex 节点 1 一并裁决。finding `20260918-worker-svg-proposal-2-bug-live-preview.md`。
+20. **change `toc-popover-emacs-keys-and-max-height` 待归档跟踪**（**归档前补记、同日随即核销**，2026-09-18，M170）：流程口径要求每个 change 在实现 PR 合并时即落一条待归档记录并跟踪到归档（`docs/process/openspec-workflow.md` 的批次收尾 checklist 第一条）。该 change（浮层 80% 总高 + `⌃N` / `⌃P` 就地键，M160，merge `d4ca60a`）**合并时没有落这条记录**——全仓 grep `toc-popover-emacs-keys` 当时零命中，正是 M150 记过的失效模式（当时 7 个 change 只有 1 个被跟踪）。本 mission（M170 归档节点 2）在归档前补记本条，随后即随归档核销：归档为 `openspec/changes/archive/2026-09-18-toc-popover-emacs-keys-and-max-height/`，living spec 落 `toc-outline`（2 条 MODIFIED）与 `keymap-commands`（1 条 MODIFIED）；未勾任务 3.1 / 3.2 / 6.2 / 6.4 / 6.6 在归档动作里按证据勾齐（3.1 / 3.2 的产物由 tower 的 integration fix `a779cbb` 落在 `文案-Copy.md:77` / `:103` / `:111`；6.2 改由「零 Rust diff + CI `rust.yml` 在 `2f16f86` success」继承；6.4 由 M164 全量 26/26 与此后的 `13-toc` 复跑覆盖；6.6 即本条）。
 
 ## 待修 findings（不阻塞）
 
