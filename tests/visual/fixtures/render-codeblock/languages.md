@@ -30,6 +30,42 @@ echo "hello" | wc -l
 {"name": "lumir", "count": 3}
 ```
 
+```toml
+[package]
+name = 'lumir'
+retries = 3
+# 注释
+[[hooks]]
+event = 'PreToolUse'
+enabled = true
+since = 1979-05-27
+```
+
+```yaml
+dimensions:
+  - name: Goal                         # 特殊维度：values 来自当月 _monthly.md
+    key: goal
+    source: monthly
+
+  - name: Business line
+    key: business-line
+    values:
+      - Slax Reader
+      - ZSXQ
+
+  - name: Importance/Urgency
+    key: importance-urgency
+```
+
+```yml
+snapshot:
+  - name: 类别
+    key: category
+    values:
+      - Important+Urgent
+      - Not Important+Not Urgent
+```
+
 ```text
 fenced code -- source stays literal
 ```

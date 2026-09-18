@@ -187,6 +187,7 @@ toml 数组的 `[` `]` 是 `bracket`、yaml 的结构标点是 `meta`——`@lez
 
 - **64 KiB 安全阀同样适用**：超大 yaml/toml 围栏 MUST 不着色（与 M138 对 rust 的断言同口径），本次不改该常量。
 - **既有整页基线零变更**：yaml / toml 此前不在 fixture 里，其键色从未进过任何整页基线；实现期按 M147 的做法实测核对（全量无 `--update` 通过 + 相关基线 sha256 对照），新增基线 `--update` 前截图须 Alex 过目（AGENTS.md 硬规则、[tests/visual/README.md](../../../tests/visual/README.md)）。
+- **新增整页基线的容差必须覆盖**（实现期实测，[REVIEW.md](../../../REVIEW.md) 第 3 条的新现场）：把 yaml 的键色改回旧值（键回到字面量赭色）后，新增那张 1200×800 的整页基线差异是 **958 像素**，而全局 `maxDiffPixelRatio` 0.001 的额度是 **960 像素**——差 2 像素就静默通过。故该断言显式覆盖为 0.0005（480 像素，留 2 倍余量）；元素级那张（766×29）额度 22 像素、差异 92 像素，不受此问题影响。这次「改回旧值跑一遍看红不红」的反向验证连同两个读数记在 `tasks.md` 的 3.7。
 
 ## 6. 边界与已知缺口（本 change 只记录、不修）
 
@@ -197,6 +198,7 @@ toml 数组的 `[` `]` 是 `bracket`、yaml 的结构标点是 `meta`——`@lez
 | yaml 锚点与别名 `&a` / `*a` 无颜色 | 返回 `variable` → `tags.variableName` 不在任何分组 | 不修：同上 |
 | yaml `:` / `- ` / 内联括号无颜色 | 返回 `meta` | 不修：与全仓「标点不取色」一致（rust 的 `{}` `;` 同） |
 | 无键的 yaml 块（纯列表 / 纯标量）整块不着色 | parser 只给 `meta` 与 `null` | 不修：vendored parser 的能力边界，两侧一致；作为已知边界写进 spec 的 scenario |
+| 带引号的键（`"k": v` / `'k': v`）取字符串色 | `yaml.js` 的引号分支排在键判定之前，产出 `string` token（与引号值同一个 token 名，`mode/yaml.js:16-17`） | 不修：token 名层面分不开键与值，要分开须改 vendored parser；已写成 spec 的边界 scenario（实现期实测：`"quoted key": v` → `cm-lp-tok-string`） |
 | toml 节头 `[x]` 与布尔、日期同色 | `atom` 过载（§4.1） | 不修：需 fork parser |
 | ```` ```.toml ```` / ```` ```config.toml ```` / 零宽空格前缀 | §2.2 的归一化边界 | 不修：放宽别名面需要需求证据；记录在案 |
 | 围栏 yaml 键的 span 含前导缩进 | `yaml.js` 键正则 `^\s*` 消耗缩进 | 不修：与 code 模式的 span 边界一致，改它会引入新的 parity 漂移 |
