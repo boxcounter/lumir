@@ -11,6 +11,20 @@
 > - **真机执行（2.4 的 `13-toc` 步骤、6.4）与 cargo 三层（6.2）未跑**：M159 持 `/tmp/lumir-cargo-build.lock`
 >   并占 1430 端口做真机验收，同机并行会争磁盘与 CPU。`13-toc` 的新步骤已过静态校验（4.3），真机结论待
 >   批次收尾跑；cargo 三层按批次口径「零 Rust diff（本 change 无 Rust 改动）+ base 全绿继承」。
+>
+> **归档记录（节点 2，2026-09-18）**——上面那条实现记录里的三处未覆盖/未执行项，在归档动作里逐项收口：
+> - **3.1 / 3.2（`文案-Copy.md` D86）→ 勾掉**：产物已由 tower 的 integration fix `a779cbb` 落在 master
+>   （`文案-Copy.md:77` 的五键串、`:103` 的 M160 扩键注记、`:111` 的归属登记）。
+> - **6.2（cargo 三层）→ 勾掉，补上缺的继承证据指针**：`d4ca60a` 零 Rust diff（`git show --stat` 9 个文件无
+>   `src-tauri/**`）+ CI `rust.yml` 在 `2f16f86` 上 success（run `35287313039`）；**本地仍未跑 cargo 三层**，
+>   勾选依据是「零 Rust diff + base 继承」，不宣称本地跑过。
+> - **6.4（真机 `13-toc`）→ 勾掉**：M164 全量 26/26（含 13-toc）+ `test-results/acceptance/2026-09-18/13-toc/`
+>   的 PASS（46 断言 / 0 失败）。
+> - **6.6（backlog 待归档记录）→ 勾掉**：由本 mission 补落 `docs/backlog.md` 第 20 条并当日核销（如实记明
+>   「合并时未落」，是 M150 同类缺口的复发实证）。
+> 归档对账结论：两份 delta 与实现逐条一致（`toc-outline` 2 条 MODIFIED、`keymap-commands` 1 条 MODIFIED），
+> 无实现期静默扩 scope、无新建 capability（故无 Purpose 占位）、无相对链接死链；归档为
+> `openspec/changes/archive/2026-09-18-toc-popover-emacs-keys-and-max-height/`。
 
 ## 1. 浮层最大高度 80%（响应式）
 
@@ -74,7 +88,7 @@
 
 ## 3. 键位提示文案（D86）
 
-- [ ] 3.1 `文案-Copy.md` D86 更新为覆盖五个就地键。建议文案：
+- [x] 3.1 `文案-Copy.md` D86 更新为覆盖五个就地键。建议文案：
       `↑↓ ⌃N⌃P 选择 · Enter 跳转 · Esc 关闭`（同义键并成一组、共用一个动作词，与既有
       「键 + 动作词」的行文一致）。宽度预算：浮层宽 300px、提示内边距 12px → 可用约 276px，
       且 `.lumir-toc` 继承 `.masthead` 的 `letter-spacing: .08em`——该串**预计单行放得下，
@@ -178,9 +192,13 @@
       （注释）/ `scripts/acceptance/scenarios/13-toc.md` / `scripts/acceptance/fixtures/toc-long.md` /
       `tests/visual/scenes/toc-outline.spec.ts` / 两张元素基线 / 本 change 目录。其中 `tests/visual`
       与基线两项是 tower 2026-09-17 12:03 的裁决放宽（原 scope 未含）
-- [ ] 6.6 实现 PR 合并时在 `docs/backlog.md` 的「待 Alex 裁决」节落一条**待归档记录**
+- [x] 6.6 实现 PR 合并时在 `docs/backlog.md` 的「待 Alex 裁决」节落一条**待归档记录**
       （`openspec-workflow.md` 的批次收尾 checklist 第一条），批次收尾时跟踪到归档
-      —— **未落**：`docs/backlog.md` 不在 M160 的 scope 内，交 tower 在合并时处置
+      —— **归档时勾掉（2026-09-18，节点 2）：记录由本 mission 补落并当日核销**。`docs/backlog.md`
+      「待 Alex 裁决」新增第 20 条，正文如实记明「合并时未落、归档前补记」，随后随本次归档核销
+      （「已核销」节同步留痕）。M160 的「未落」理由（该文件不在 M160 的 scope 内）成立，所以这不是
+      M160 的欠账，而是「每个 merge 的 change 即记待归档」这一环在本 change 上确实断过的实证——
+      与 M150 记过的失效模式同类。
 
 ## 7. 已知边界 / 不做
 
