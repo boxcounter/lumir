@@ -108,6 +108,14 @@ worker 动工前、reviewer 给出 verdict 前逐条过一遍。每条按「症�
 - 复发（2026-09-18）：M164 worker-multivault-closeout（agent-108，deepseek-flash）用 `sleep 180/230/240; tail log` 前台盲等视觉门禁，4 次约 15 分钟（Alex 截图实证；现场 session_43197879/agents/agent-108），tower 中止后带纠正重启。教训：「开工前必读」对 Flash worker 不自觉生效。
 - 防线：等自己的后台任务一律用 `WaitFor`（挂起零 LLM 请求、完成即唤醒，timeout ≤600s 可续等）；等 tower 或他人回话就结束 turn，回复经 resume 送达；只有无事件源的外部状态（锁文件、磁盘水位）才允许 ≤60s 的短采样，且采样须带诊断负载（如采样锁/磁盘状态做裁决复核），不是干睡。**tower 侧执行（2026-09-18 起）：每次 spawn/resume worker 的 instructions 显式写「>60s 的命令一律 run_in_background + WaitFor/结束 turn，禁止前台分钟级 sleep 轮询」，不再只靠本表自觉。**
 
+## 六、多实例与调度（tower 侧）
+
+**15. 同一 mission 被重复 spawn，两个 live loop 共写同一 worktree**
+- 症状：M165–M168 四个 mission 在 spawn 时各被注册两次（两组 spawn 相隔约 94 秒，名字加 `-2` 后缀、**agent id 相同**）；M168 两个 loop 都活着，并行往同一 worktree 写同一批文件，分支上短暂出现两套互斥契约（⌃A cell 级 vs 行级）。通信层按 agent id 解析发送者名字，两个 loop 的消息都标成同一个 roster 名——重复工作对 tower 不可见；同名 roster 再注册还会把既有 reviewer 绑定挤到别的 target（agent-122 已完成的 M165 clean 评审因此无法落章）。
+- 根因：未锁定。工作假说：存在另一会话/进程里的**孪生 tower 回路**——它看得到同样的 inbox、复制 spawn（`-2` 后缀）、也会自己评审与 merge（M168 的 merge `44cd3a0` 非本 tower 会话执行；另有一次非本会话发起的 merge 尝试被门禁拦下）。
+- 证据：`.tower/comms/log/activity.log`（`23:34:38` vs `23:36:12` 两组 spawn、01:04:43 `merge.blocked`、01:05:47 非本会话 merge）；findings `.tower/comms/findings/20260918-worker-interaction-fixes-2-improve-towerspawn-mission-agent-id-live-loop-worktree.md` 与 `20260918-worker-codeblock-lang-proposal-bug-agent-wt-167.md`；被拦评审 `.tower/comms/inbox/20260918-reviewer-interaction-fixes-b-tower-review-result-blocked-m165-tip-b9ce80c-clean-merge-roster-re.md`。
+- 防线：spawn/resume 后约 2 分钟核 activity.log 尾部有无非本 tower 发起的 spawn/merge 行；发现 `-2` 同名注册立即收束到单一写者；resume 前确认旧实例已终态（`tower died` 行）。worker 侧：尽早 commit 让 tip 可评审；探针/临时目录带 mission 后缀（`/tmp/lumir-probe-<mission>`）；动工前 `ls -lT` 核对目标文件 mtime 是否晚于自己上次写入，发现被并发写入即停手上报，不靠覆盖取胜。
+
 ## 维护
 
 - 重复踩到表内某条：把新现场（commit / 证据路径）补进该条的「证据」，不要另起重复条目。

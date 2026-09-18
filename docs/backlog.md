@@ -96,6 +96,32 @@
     （M159 已有的 `restore_pending` / 世代号是先例，可复用），前端则要重新设计过渡态（进度或乐观切换），
     这会推翻本变更「不做过渡元素」的口径，因此不属收口范畴。建议时机：与 dogfood 的性能专项一起裁
     （与第 12 条同批），不要单独提前做。
+17. **CI 的 visual 与 perf 在 master 上长期红（自 2026-09-13），与本地 gate.sh 全绿结论相反**（M169 survey
+    finding，worker-archive-survey，2026-09-18，high）：master 最后一次 push（`2f16f86`）上 visual 30+ 条
+    失败（整页基线像素差 3176–7207px，容差仅 ~960px，远超临界抖动）、perf failure（但冷启动 median
+    117.76ms < 300ms 合同，失败端点未定位）；rust / docs-check success。同一提交本地 `gate.sh visual`
+    12/12 PASS——同 commit 两种结论，说明 CI runner 与本地渲染环境不等价（或基线本身失效）。**需 Alex 裁**：
+    ① 先立项判定 visual 红是环境漂移还是基线失效；若确认环境不等价，整页像素断言退出 CI（CI 只守结构/
+    计算属性断言、像素归本地），口径写进 `tests/visual/README.md`；② perf 定位失败端点（可能落在第 7 条
+    内存合同存量超标）。**修好之前，任何引用「CI 全绿」的裁决依据显式降级为「本地 gate.sh 全绿 +
+    rust/docs-check 绿」**。finding
+    `20260918-worker-archive-survey-bug-master-ci-visual-2026-09-13-perf-gate-sh.md`。
+18. **远程 http(s) 图片直连分支在现行 CSP 下必然失败，且错误文案误归因为「解码失败」**（M165 finding，
+    worker-svg-proposal-2，2026-09-18，low，**待裁决**）：`src/preview/livePreview.ts:869-872` 把外链直接
+    交给 `img.src`，而 `src-tauri/tauri.conf.json:21` 的 `img-src 'self' asset: data:` 不含 http(s)——
+    该路径在打包态与 dev 态都 100% 走不通（静态核对，未真机坐实），用户看到的是 `attachments.ts:240-242`
+    的「图片解码失败」误归因。选项：(a) **删直连分支**、并入 image-svg-and-fallback 的可见占位（成因中立
+    文案「本应用不联网取图」）——推荐，失去的是今天本就不工作的能力，与 ADR 0001 本地优先口径一致；
+    (b) 若要支持远程图片，需先裁「是否允许联网取图」，再改 CSP + Rust 侧代理下载，属独立 change 不是补丁。
+    文案改「无法显示」一项已由 M165 的 spec delta 覆盖，实现期确认其同样覆盖外部 URL 分支即可。finding
+    `20260918-worker-svg-proposal-2-bug-http-s-csp.md`。
+19. **图片行不受「光标触及即显露源码」覆盖**（M165 finding，worker-svg-proposal-2，2026-09-18，medium，
+    **挂在 change `image-svg-and-fallback` 节点 1 的 A/B 裁决点上**）：`src/preview/livePreview.ts:807-815`
+    的 Image 分支无 `touchesSelection` 判断（对照 Link 分支 `:821` 有），图片引用被 replace 装饰整条藏起、
+    光标进入该行不显露源码；且无 atomicRanges，光标可落进被替换区间而不可见（与 M119 修过的 callout 缺陷
+    同族）。living spec `editor-live-preview/spec.md:25` 的显露枚举不含图片。提案已给两支：A 维持现状、
+    单独立项（worker 建议）；B 并入该 change 给 Image 分支加选区判断 + spec 枚举补「图片」+ 一条 Scenario。
+    待 Alex 节点 1 一并裁决。finding `20260918-worker-svg-proposal-2-bug-live-preview.md`。
 
 ## 待修 findings（不阻塞）
 
@@ -123,6 +149,18 @@
   修法（finding 附建议 diff）：与 CM6 同语义逐名字段独立结算、跳 part 不丢整条；须配不变量测试
   （「simpleMode 复合 token 在围栏与 code 模式 tag 集合一致」）并走渲染缺陷合同先行流程核对
   rust 场景基线。finding `20260917-worker-jsonhl-bug-tag-token-rust-code.md`。
+- **隐藏管道符用 `display:none` 承载，是「caret 落到无位置处」缺陷族的共同结构根因**（M168 finding，
+  worker-interaction-fixes-2，2026-09-18，medium）：`src/preview/livePreview.ts:482-519` 的
+  `Decoration.replace({})` 隐藏管道符在 DOM 里无盒子，`coordsAtPos(pos, 1)` 退化为全零 rect、DOM 选区
+  退化为行元素级位置，浏览器把原生 caret 画到下一条被绘制的行上。M168 只从落点侧规避了 ⌃E；
+  **未规避面**：鼠标点 cell 右端（`posAtCoords` 给管道符位置）、⌃N/⌃P 的 `snapIntoCell`（落点
+  `slot.to, assoc: -1`）、无对齐空白表格的 ⌃E（只能停到末字素之前）。历史同族：M110/M111/M113/M118/
+  M132。修法 A（治根因）：隐藏管道符改零宽 inline-block widget 或给隐藏 span 显式 grid 定位，使该位置
+  有可解析盒子——须先验证不产生隐式 grid 行、不吃高度，并过视觉基线；修法 B（保症状不复发）：把
+  「不可停靠则回退」推广到所有落在 slot 边界的路径。推荐 A+B 并行。判据载体现成：
+  `tests/visual/scenes/m168-table-cell-line-end.spec.ts` 的形态矩阵可加「slot 右缘本身可停靠」一条。
+  立项时机建议随下次表格/光标专项。finding
+  `20260918-worker-interaction-fixes-2-bug-display-none-caret-m168.md`。
 ### shell / 系统
 
 - **退出守卫菜单结构假设**（M101 review）；Dock/系统关机路径不覆盖。
@@ -202,6 +240,20 @@
   不必单开 mission；spec 那句按 finding 的措辞改写为「命令的归属与 runner 装配在装配层 `src/main.ts`，
   能力本体在各自模块（editor / save-controller / link-follow / tabs / bindings-panel）」。finding
   `20260917-worker-mainsplit-improve-m151-main-ts-deck-shell-ts-keymap-spec.md`。
+- **文案-Copy.md D64 的键位面板分组枚举已过期**（M166 finding，worker-wrap-proposal-2，2026-09-18，
+  low，**待修**）：D64（`文案-Copy.md:55`）列「移动与选择 / 扩选 / 删除 / kill-yank / 翻屏 / 撤销 /
+  widget / 全局 / 其他」，与实现不符——`src/bindings-panel.ts:31-45` 的 BINDING_GROUPS 是 9 个固定组，
+  末两组为「标签」（M149 起）与「全局」，「其他」是未归组命令的兜底、仅在存在时 push（`:118-119`）；
+  m133 门禁冻结的 GROUPS 数组含「标签」。自 M149 起漂移。修法：D64 补「标签」到「全局」之前、「其他」
+  改写为兜底说明，编号沿用并附修订记录（D86 于 M160 的先例）；顺带核 D65/D66 是否随 M166 的面板文案
+  修订（M166 提案要求 D66 覆盖「默认不占键位」成因）。finding
+  `20260918-worker-wrap-proposal-2-improve-copy-md-d64.md`。
+- **批次收尾缺「本地 HEAD == origin/master」的机器校验**（M169 finding，worker-archive-survey，
+  2026-09-18，medium，**待修**；本次漂移已由 tower 在收尾时手工 push 收口）：AGENTS.md 硬规则「批次
+  收尾顺带 push」靠人记，本批一度落后 3 个 merge，CI 从未见过这三个提交（`gh run list --commit` 零
+  结果），归档对账只能以旧 push 的 CI 结果为准。修法：把「比对本地 HEAD 与 origin/master，不一致即
+  报红」做成批次收尾 checklist 或 `scripts/gate.sh` 收尾步骤，不靠人记。finding
+  `20260918-worker-archive-survey-bug-master-origin-master-merge-ci.md`。
 
 ### openspec 归档制品与实验脚本
 
