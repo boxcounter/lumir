@@ -79,8 +79,9 @@
 - [ ] 5.2 归档时：把裁决点 1 的结论（Alex 手上的现场是哪一个）与 toml 的复核结论（「已着色 + 反例未定位」）
       落一条核销记录；若裁决点 1 选 (b)，本 change 按撤回口径处置（目录移入 `archive/<日期>-withdrawn-` +
       proposal 头部补撤回记录），不留僵尸提案
-- [ ] 5.3 归档时把本 change 的 spec 增量并入 `openspec/specs/editor-live-preview/spec.md`；
-      核对并入后「Markdown 渲染保真」第 2 款的「已知例外」段落是否需补 toml 一条（现有段落只列 rust）
+- [ ] 5.3 归档时把本 change 的 spec 增量（1 条 MODIFIED + 1 条 ADDED）并入 `openspec/specs/editor-live-preview/spec.md`；
+      核对并入结果——「Markdown 渲染保真」第 2 款的「已知例外」段落应含 toml 的 `atom` 复用那条
+      （MODIFIED 增量已写入），并入后 MUST NOT 只列 rust 一条
 
 ## 6. 验证（实现期）
 

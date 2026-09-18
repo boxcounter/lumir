@@ -37,7 +37,7 @@ Alex 实测原话（M167 mission Context 逐字）：「toml 和 yml 代码块�
 
 ## Impact
 
-- 影响的 specs：`editor-live-preview`（1 条 ADDED requirement）
+- 影响的 specs：`editor-live-preview`（1 条 ADDED + 1 条 MODIFIED requirement）。ADDED = 「YAML 代码块的键名配色」；MODIFIED = 「Markdown 渲染保真（分隔线 / 围栏代码着色 / 引用内列表）」第 2 款——把 yaml 的键名口径接进该款，并把 toml 的 `atom` 复用（表头与布尔 / 日期同色）记进该款的「已知例外」段落，使「toml 不改」这件事在 living spec 里有落脚点（该 capability 当前无未归档 change 持有增量，无归档互覆风险）
 - 影响的代码/系统：`src/preview/code.ts`（新增 `YAML_TOKEN_TABLE` 并挂到 yaml 项——单一来源处，两侧消费同时生效）；`src/preview/theme.ts` / `src/editor.ts` 不改
 - 影响的测试/验收：`tests/visual/fixtures/render-codeblock/languages.md`、`tests/visual/scenes/render-codeblock.spec.ts`、新增元素级基线、`scripts/acceptance/scenarios/render-markdown.md`（补一张截图证据，AX 树不承载颜色，真机侧不写颜色断言）
 - 关联约束：ADR 0002 §2（单内核双模式）、ADR 0003 §3（装饰不改写文档）、[REVIEW.md](../../../REVIEW.md) 第 8 条（同一语义两处真源——本次仍只改单一来源处）、第 1 条（断言须有区分度）、第 3 条（容差吞变化）
