@@ -240,6 +240,57 @@
   这是全部场景共用的寻址入口，改完需一次全量真机复验，单独立项，不塞进功能 mission。临时口径
   （用 `help` 寻址 / 锚定裸正则）已写进 `scripts/acceptance/README.md` 已知边界。
   finding `20260917-worker-toc-improve-click-target-name.md`。
+- **AX 文本可读 ≠ 元素可见：WKWebView 会暴露不可见 svg 的内部文本**（M178 finding，
+  worker-svg-impl，2026-09-18，high，**待修**——`scripts/acceptance/README.md` 已知边界加一条）：
+  M178 反向验证实测，图片被回退成「735×10 细条」的那版实现里，AX 树照样读得到 svg 内部 `<text>`
+  （`AXStaticText = "percent fixture"`）与 alt——拿「AX 里有这段文本」当可见性判据会得到恒真断言
+  （REVIEW.md 第 1/2 条同族）；修复版同节点几何 315×106。口径：可见性断言用**带 bbox 的节点几何**
+  （`AXImage` / `AXButton` / 文本域给 `@x,y w×h`）；带 `<text>` 的 svg 在 AX 上是无 bbox 的
+  `AXGroup`，**不能用来判尺寸**；负向断言必须与同一位置、有几何或结构依据的正观测配对。范式写法
+  （`AXImage … @[0-9,-]+ [0-9]+×([5-9][0-9]|[1-9][0-9]{2,})` 计 1）与两条实测读数在 finding 里。
+  证据：空白版 AX/截图原目录 `blank-impl-reverse-verification` 已在 playwright cwd 事故中灭失
+  （见「视觉套件与整页基线门禁」节同日期条），关键读数留在 M178 tasks.md 证据节与评审记录；修复版
+  证据 `test-results/acceptance/2026-09-18/20-image-fallback/`。finding
+  `20260918-worker-svg-impl-bug-ax-wkwebview-svg.md`。
+
+### 视觉套件与整页基线门禁（M178/M179 登记，2026-09-18）
+
+- **`tauri-stub.ts` 缺 `fs_read_attachment`：chromium 视觉层此前从未真正渲染过一张图片**（M178
+  finding，worker-svg-impl，2026-09-18，medium，**待修**）：`tests/visual/scenes/tauri-stub.ts`
+  的 invoke 路由没有 `fs_read_attachment`，缺省抛 `unknown_command`——此前所有视觉场景里的图片
+  引用一律落「读取失败」占位；`markdown-combo.spec.ts:34` 的无区分度断言（成功 / 白板 / 报错三态都
+  满足）长期存活的部分原因即此。M178 已在该场景内用 `stubAttachmentReads()`（`page.addInitScript`
+  包 `__TAURI_INTERNALS__.invoke`）解决本场景，但每个新场景都要抄一遍。修法：桩路由补
+  `fs_read_attachment`（`files[path]` → UTF-8 → base64，未收录抛 `fs_not_found`，与 Rust 侧
+  `read_attachment` 错误形态一致），并把「图片 / 二进制 fixture 用文本内容表达、空串 = 0 字节」的
+  约定写进注释与 `tests/visual/README.md`；补完后删掉场景内的本地包装。finding
+  `20260918-worker-svg-impl-improve-fs-read-attachment-chromium.md`。
+- **playwright 从错误 cwd 启动会清空 `cwd/test-results`，与验收证据根同名碰撞**（M178 评审实测，
+  reviewer-svg-impl，2026-09-18，medium，**待修**——(c) 防线句并入下一批 hygiene，(a)/(b) 待
+  Alex 裁决是否立项）：在仓根（无 playwright.config.ts 的目录）跑 `npx playwright test <scene>` 时
+  playwright 回落默认配置且 outputDir=cwd/test-results，**启动即清空该目录**——M178 评审中 wt-178
+  的 `test-results/acceptance/2026-09-18/` 真机证据被整个抹掉（reviewer 复跑重建
+  20-image-fallback；`blank-impl-reverse-verification` 与 `engine-diff-width0` 两目录灭失，关键读数
+  已留在 M178 tasks.md 证据节与评审记录）。根因 = 验收套件证据根（仓根 `test-results/`）与
+  playwright 默认 outputDir 同名；视觉场景自身 outputDir（`tests/visual/test-results/`）不受影响，
+  只有「错误 cwd + 默认配置」这条路径踩中。候选防线：(a) 仓根放最小 playwright.config.ts 显式
+  outputDir 并对错误 cwd 报错；(b) 验收证据根改名（如 `acceptance-results/`）；(c)
+  `tests/visual/README.md` 与 `scripts/acceptance/README.md` 的「手动单跑」节各加一句防线 + 并入
+  REVIEW.md 第 13 条证据节。finding
+  `20260918-reviewer-svg-impl-bug-playwright-cwd-cwd-test-results-wipe.md`。
+- **整页 0.001 容差（960px）与「局部改色」真实变化同量级：M179 实测 958/960 差 2 像素静默假绿**
+  （M179 finding，worker-yaml-hl-impl，2026-09-18，medium，**待修**——①并入下一批 hygiene，
+  ②③待 Alex 裁决）：把 yaml 键色改回旧值，新增 1200×800 整页基线差异 958 像素，全局
+  `maxDiffPixelRatio: 0.001` 额度 960 像素 → 门禁通过（真变化被吞）；与 REVIEW.md 第 3 条已收的
+  mermaid 952/960 同族，但风险面更宽——「只在局部改颜色」的修复其像素量天然落在 100–1500 区间，
+  与 960 同阶，整页基线对这类变化是掷硬币式门禁（现有约 20 处整页像素断言里 codeblock / callout /
+  toc 都在风险带）。对照：同批元素级那张（766×29，额度 22）差异 92 像素 → 红，元素级区分度够。
+  M179 已就地处置：该断言显式覆盖 `maxDiffPixelRatio: 0.0005`（480，留 2 倍余量），读数写进断言
+  注释与 design §5。候选：① REVIEW.md #3 补证据 + 防线句「局部改色必须反向验证并按区域截图或
+  显式收紧容差，判据 = 实测差异像素数 / 该图额度」；② `expect-screenshot.ts` 在像素模式把每次比对
+  的实际差异像素数 / 额度打进 stdout（低成本可观测化）；③ 局部改色断言长期改区域截图。证据：
+  `test-results/m179/07-wholepage-diff-count.log` / `06-reverse-verification.log`。finding
+  `20260918-worker-yaml-hl-impl-improve-0-001-960px-m179-958-960-2.md`。
 
 ### Rust 侧主线程与锁（M154 survey 遗留）
 
@@ -681,6 +732,7 @@
   m132:351 的实例改完。**未做的可选动作**：重新评估 `scrollbar-gutter: stable` 的必要性（它防的是滚动条
   出现/消失引起的抖宽），或至少在 `src/style.css:282` 注释里写明 classic 环境的 15px 预留——属产品/视觉
   裁决，不急。finding `20260918-worker-m132-m115-bug-scrollbar-gutter-stable-scrollwidth-15px.md`。
+- **toml 的表头 `[x]` / `[[x]]` 与布尔、日期共用 legacy mode 的同一个 `atom` token，tokenTable 分不开**（M179，2026-09-18，low）：`@codemirror/legacy-modes@6.5.4` 的 `mode/toml.js:44,57,59` 三处 `return "atom"` 分别对应节头、日期、`true`/`false`；M179 给 yaml 挂的 tokenTable 只按 token 名映射，无法「只把节头改成属性色」——故 toml 的表头与数字、布尔同取字面量色 `rgb(160,94,28)`。观感上 toml 仍有四色区分（键属性蓝、字符串绿、注释灰、字面量棕），与 rust / json 块同档，M179 据此裁决**接受现状**，并把这条记进 `openspec` 的「Markdown 渲染保真」requirement 的「已知例外」段落（与 rust 字符字面量那条并列，不再只列 rust）。**若要修**：只能 patch / fork vendored `mode/toml.js` 让节头产出独立 token 名，再在 `TOKEN_GROUPS` 给它一个角色（`TokenRole` 与 `src/editor.ts` 的 `CODE_COLORS` 两处穷尽检查同步）——等于 fork 依赖，M179 明确非目标。回归保护已在位：`tests/visual/scenes/render-codeblock.spec.ts` 有 toml 六类 token 的取色断言 + 元素级基线 `render-codeblock-toml-line.png`。
 
 ## 已核销（留痕，定期清理）
 
