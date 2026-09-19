@@ -2,7 +2,8 @@
 // 三条图片态文案（deck D111–D113）与 widget 相等性。
 //
 // 不在这一层：真 <img> 的加载 / 解码 / 布局（需要 DOM 与渲染引擎）——那部分归
-// tests/visual/scenes/markdown-combo.spec.ts 与 scripts/acceptance 的 image-fallback 场景
+// tests/visual/scenes/markdown-combo.spec.ts、m182-image-first-open-width.spec.ts（宽度不变量）
+// 与 scripts/acceptance 的 20-image-fallback / 23-image-first-open-width 场景
 //（分工见 tests/unit/README.md 与 tests/unit/harness.ts 的边界说明）。
 
 import { test } from "node:test";

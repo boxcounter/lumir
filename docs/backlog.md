@@ -166,6 +166,16 @@
     落点是 Image 分支的 `touchesSelection` 判断 + `editor-live-preview` spec 的显露覆盖集枚举。
     finding `20260918-worker-svg-proposal-2-bug-live-preview.md`。
 20. **change `toc-popover-emacs-keys-and-max-height` 待归档跟踪**（**已核销**：归档前补记、同日随归档核销，核销记录见文末「已核销」节的 2026-09-18 条；2026-09-18，M170）：流程口径要求每个 change 在实现 PR 合并时即落一条待归档记录并跟踪到归档（`docs/process/openspec-workflow.md` 的批次收尾 checklist 第一条）。该 change（浮层 80% 总高 + `⌃N` / `⌃P` 就地键，M160，merge `d4ca60a`）**合并时没有落这条记录**——全仓 grep `toc-popover-emacs-keys` 当时零命中，正是 M150 记过的失效模式（当时 7 个 change 只有 1 个被跟踪）。本 mission（M170 归档节点 2）在归档前补记本条，随后即随归档核销：归档为 `openspec/changes/archive/2026-09-18-toc-popover-emacs-keys-and-max-height/`，living spec 落 `toc-outline`（2 条 MODIFIED）与 `keymap-commands`（1 条 MODIFIED）；未勾任务 3.1 / 3.2 / 6.2 / 6.4 / 6.6 在归档动作里按证据勾齐（3.1 / 3.2 的产物由 tower 的 integration fix `a779cbb` 落在 `文案-Copy.md:77` / `:103` / `:111`；6.2 改由「零 Rust diff + CI `rust.yml` 在 `2f16f86` success」继承；6.4 由 M164 全量 26/26 与此后的 `13-toc` 复跑覆盖；6.6 即本条）。
+21. **行内（同一行还有正文）图片引用现在会独占一行**（M182，worker-img-width-fix，2026-09-18，medium，
+    **待 Alex 裁决**）：M182 把图片替换区包装盒的宽度定成栏宽（`src/preview/theme.ts` 的 `.cm-lp-image`
+    `width: 100%`，机制说明见 `docs/specs/image-reading.md` §3），换来「显示宽度不因加载时序 / 缓存命中 /
+    打开次序而变」这条不变量（条款同文件 §2）。代价是行内图片引用会把所在行切开：引用前的正文 / 图片 /
+    引用后的正文各自成行。**实测输入分布**（真实 vault 只读统计）：256 条独占行引用 / 16 条同行含他字符，
+    后者多为被链接包裹的 `[![…](…)](…)`（本身仍独占一行）与样本文件里的 JSON 字符串，未见正文混排的
+    行内图。**裁决选项**：(a) 维持现状——图片一律块级栏宽（口径简单，与 Obsidian 阅读观感一致；M182 已
+    按此实现）；(b) 只在引用独占一行时给包装盒栏宽、行内引用保留旧的 shrink-to-fit（代价：行内引用回到
+    时序依赖的旧宽度，不变量只覆盖独占行形态，需要一处行内容判定）。worker 建议 (a)。证据（真机两态
+    几何读数 / 反向验证）：`test-results/m182/`、`test-results/acceptance/2026-09-18/23-image-first-open-width/`。
 
 ## 待修 findings（不阻塞）
 
@@ -219,6 +229,14 @@
 
 ### 验收套件（M144 实测出的表达力缺口）
 
+- **场景证据目录跨 run 不清空，`ax/` 与 `shots/` 累积→读 dump 无法分辨新旧**（M182 finding，
+  worker-img-width-fix，2026-09-18，medium，**待修**）：`scripts/acceptance/lib/evidence.mjs:30-37` 的
+  `startScenario` 只 `mkdirp`，不清理上一次 run 的 `ax/` 与 `shots/`；同一天重复跑同一场景（迭代调试的
+  常态）时序号重新计，旧文件被覆盖一半、留下一半——实测同一场景目录里同时存在两轮的 `01-首开.txt` /
+  `02-切回.txt`，读数分属两轮，复盘时可能把上一轮 dump 当本轮结论（REVIEW.md 第 2/7 条同族）。本次为把
+  红/绿证据归档成可复核目录，只能每次手动 `rm -rf` 场景目录再跑。修法：`startScenario` 里清掉 `ax/` 与
+  `shots/`（或整目录重建），并把「一次 run 的目录只含本次 run 的产物」写进 scripts/acceptance/README.md
+  的证据布局一节。finding `.tower/comms/findings/20260918-worker-img-width-fix-bug-run-ax-shots-dump.md`。
 - **`ax.mjs` 取 `AXTextArea.value` 用非贪婪正则，文档含半角 `"` 时断言真假双向失真**（M180 finding，
   worker-wrap-impl，2026-09-18，medium，**待修**）：`scripts/acceptance/lib/ax.mjs:36` 的正则遇半角
   引号即截断 value——`editor.has` 假红、`editor.not` **假绿**（负断言在截断文本上找不到目标串而

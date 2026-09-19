@@ -238,8 +238,11 @@ export function imageVisible(box: ImageBox): boolean {
   return box.width > 0 && box.height > 0;
 }
 
-/** 尺寸兜底取点（本缺陷的主修法）：替换区布局尺寸为零而引擎给出正自然尺寸时，按自然宽度设
- *  显式像素宽度（高度留 auto，宽高比由引擎的默认对象尺寸决定）；其余情况返回 null（走占位）。 */
+/** 尺寸兜底取点（M178 的第二道保险，适用范围在 M182 后收窄）：替换区布局尺寸为零而引擎给出正
+ *  自然尺寸时，按自然宽度设显式像素宽度（高度留 auto，宽高比由引擎的默认对象尺寸决定）；其余情况
+ *  返回 null（走占位）。M182 起包装盒宽度与在场内容无关（theme.ts 的 `.cm-lp-image` `width: 100%`），
+ *  「固有宽度不确定」的图片按栏宽填充、不再落到这里；本函数只兜引擎确实画不出可见像素的形态
+ *  （如 `width="0"` 的 svg、解码失败后的零尺寸盒）。 */
 export function imageFallbackWidth(box: ImageBox, natural: ImageBox): number | null {
   if (imageVisible(box)) return null;
   return imageVisible(natural) ? natural.width : null;
@@ -250,7 +253,7 @@ export function imageFallbackWidth(box: ImageBox, natural: ImageBox): number | n
  *
  *  MUST 只经 `<img>`（含 `data:` URL）渲染，不得把 SVG 内容内联进 DOM：图片上下文关闭脚本执行
  *  与外部资源解析，内联插入会同时打开两者（规范依据与被禁的四条实现路径见
- *  openspec/changes/image-svg-and-fallback/design.md §4）。 */
+ *  openspec/changes/archive/2026-09-18-image-svg-and-fallback/design.md §4）。 */
 export class ImageWidget extends WidgetType {
   readonly key: string;
   readonly load: () => Promise<string>;
@@ -291,9 +294,11 @@ export class ImageWidget extends WidgetType {
         const img = document.createElement("img");
         img.alt = this.rawRef;
         img.onerror = fallback;
-        // 终态处置（三种引用形态共用这一条，不为任何扩展名立分支）：状态块先撤、再量——
-        // 它的文本会给 inline-block 包装盒一个确定宽度，带着它量会把「量到了宽度」误当成
-        // 图片可见。撤与随后的插入在同一个任务内完成，中间不绘制，所以不产生空窗。
+        // 终态处置（三种引用形态共用这一条，不为任何扩展名立分支）：状态块先撤、再量。
+        // M182 起包装盒宽度与在场内容无关（theme.ts 的 `.cm-lp-image` `width: 100%`），状态块文本
+        // 不再能决定图片宽度；这里先撤它是「终态确认后才撤加载中状态」这条可见性契约的落点
+        //（spec 的可见回退不变量：从源码被替换到终态之间始终有可见内容）。撤与随后的插入在同一个
+        // 任务内完成，中间不绘制，所以不产生空窗。
         let settled = false;
         const settle = () => {
           if (settled) return;

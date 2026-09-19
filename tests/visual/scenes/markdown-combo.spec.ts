@@ -14,7 +14,7 @@ const images = fixture("images.md");
 const imageAssets: Record<string, string> = {
   "assets/sample.svg": image,
   "assets/wide.svg": fixture("wide.svg"),
-  "assets/zero-size.svg": fixture("zero-size.svg"),
+  "assets/percent-width.svg": fixture("percent-width.svg"),
   "assets/script.svg": fixture("script.svg"),
   "assets/external-ref.svg": fixture("external-ref.svg"),
   "assets/empty.png": fixture("empty.png"),
@@ -25,8 +25,8 @@ const imageAssets: Record<string, string> = {
 const REFS = {
   fixed: "![fixed svg](assets/sample.svg)",
   wide: "![wide svg](assets/wide.svg)",
-  percent: "![percent svg](assets/zero-size.svg)",
-  percentWiki: "![[zero-size.svg]]",
+  percent: "![percent svg](assets/percent-width.svg)",
+  percentWiki: "![[percent-width.svg]]",
   empty: "![empty bitmap](assets/empty.png)",
   zeroDeclared: "![zero declared svg](assets/zero-declared.svg)",
   missing: "![missing bitmap](assets/missing.png)",
@@ -67,12 +67,12 @@ async function open(
   readDelayMs = 0,
 ) {
   await stubTauri(page, {
-    entries: [path, "assets/sample.svg", "assets/missing.png", "assets/missing.svg", "assets/wide.svg", "assets/zero-size.svg", "assets/script.svg", "assets/external-ref.svg", "assets/empty.png"].map((entry) => ({ path: entry, kind: "file", size: text.length, mtime_ms: 0 })),
+    entries: [path, "assets/sample.svg", "assets/missing.png", "assets/missing.svg", "assets/wide.svg", "assets/percent-width.svg", "assets/script.svg", "assets/external-ref.svg", "assets/empty.png"].map((entry) => ({ path: entry, kind: "file", size: text.length, mtime_ms: 0 })),
     files: { [path]: text, ...imageAssets },
     links: {
       "![[sample.svg]]": { status: "resolved", path: "assets/sample.svg", candidates: [], embed_target: "attachment", anchor: { status: "none", heading: null, line: null } },
       "![[missing.svg]]": { status: "unresolved", path: null, candidates: [], embed_target: null, anchor: { status: "none", heading: null, line: null } },
-      "![[zero-size.svg]]": { status: "resolved", path: "assets/zero-size.svg", candidates: [], embed_target: "attachment", anchor: { status: "none", heading: null, line: null } },
+      "![[percent-width.svg]]": { status: "resolved", path: "assets/percent-width.svg", candidates: [], embed_target: "attachment", anchor: { status: "none", heading: null, line: null } },
     },
     failures,
   });
@@ -83,7 +83,7 @@ async function open(
 }
 
 /** 某条图片引用的替换区读数：布局盒（替换区可见尺寸）+ 引擎给出的自然尺寸。两个一起记—— */
-/** 只记自然尺寸会把中招形态读成「加载正常」（实则布局盒 0×0，design §3.2）。 */
+/** 只记自然尺寸会把固有宽度不定的形态读成「加载正常」（实则布局盒 0×0，design §3.2）。 */
 async function imageReadings(page: Page, ref: string) {
   return page.locator(`.cm-lp-image img[alt=${JSON.stringify(ref)}]`).evaluate((el) => {
     const img = el as HTMLImageElement;
@@ -194,12 +194,15 @@ test("图片终态：尺寸兜底画出来 + 不可见即可见占位", async ({
   await expect(page.locator(".cm-lp-image")).toHaveCount(10);
   await expect(page.locator(".cm-lp-image-status")).toHaveCount(0);
 
-  // 中招形状（`width="100%"` + 仅 viewBox）修复前的两个读数是「布局盒 0×0 / 自然尺寸 300×100」——
-  // 只记自然尺寸会把它读成「加载正常」（design §3.2）。尺寸兜底按自然宽度显式设像素宽度后，
-  // 布局盒回到 300×100（引擎给出的默认对象尺寸）。
-  expect(await imageReadings(page, REFS.percent), "零尺寸 svg 的读数（布局盒 / 自然尺寸）").toEqual({ box: "300x100", natural: "300x100", complete: true });
+  // 固有宽度不定的形状（`width="100%"` + 仅 viewBox，或只声明 viewBox）：终态按**包含块填充**
+  //（引擎对「有比例、无固有尺寸」图片的既定规则）。包含块是替换区包装盒，其宽度由 M182 的
+  // `width: 100%` 钉成栏宽：修复前它由加载中状态块先占（≈ 半栏宽）或被尺寸兜底写成 300px，
+  // 终态因此取决于「布局时状态块在不在场」——正是 M182 消除的时序依赖（条款见
+  // docs/specs/image-reading.md §2）。尺寸兜底（`imageFallbackWidth`）仍在，但只对真正画不出
+  // 可见像素的形态生效（见下方四处占位）。
+  expect(await imageReadings(page, REFS.percent), "固有宽度不定的 svg 按栏宽渲染").toEqual({ box: "829x276", natural: "300x100", complete: true });
   // 同一条处置覆盖 Obsidian 方言形态（三种引用形态共用终态，不为 svg 单立分支）。
-  expect(await imageReadings(page, REFS.percentWiki), "方言形态的读数（与标准形态同处置）").toEqual({ box: "300x100", natural: "300x100", complete: true });
+  expect(await imageReadings(page, REFS.percentWiki), "方言形态的读数（与标准形态同处置）").toEqual({ box: "829x276", natural: "300x100", complete: true });
 
   // 正常图片零行为变化：读数与修复前逐值相同（固定尺寸 240×80；2000×600 按栏宽收窄）。
   expect(await imageReadings(page, REFS.fixed)).toEqual({ box: "240x80", natural: "240x80", complete: true });

@@ -1,7 +1,7 @@
 ---
 id: "20-image-fallback"
 item: 20
-title: 图片引用的可见回退（svg 正常显示 / 中招形状兜底 / 不可见即占位 / 脚本不执行）
+title: 图片引用的可见回退（svg 正常显示 / 固有宽度不定者按栏宽填充 / 不可见即占位 / 脚本不执行）
 fixtures: [image-fallback.md, image-fallback-normal.svg, image-fallback-percent.svg, image-fallback-empty.png, image-fallback-script.svg]
 open: image-fallback.md
 marker: "图片引用场景"
@@ -24,8 +24,8 @@ steps:
         ax: { has: "![normal svg](image-fallback-normal.svg)" }
       - label: 该 svg 的内部文本进入 AX 树
         ax: { has: "normal fixture" }
-      - label: 中招形状（width=100% + 仅 viewBox）经尺寸兜底后**渲染出成比例的高度**
-        ax: { count: { pattern: "/AXImage \\(!\\[percent svg\\]\\(image-fallback-percent\\.svg\\)\\) @[0-9,-]+ [0-9]+×([5-9][0-9]|[1-9][0-9]{2,})/", exact: 1 } }
+      - label: 固有宽度不定的 svg（width=100% + 仅 viewBox）按栏宽填充（M182 起；修复前靠尺寸兜底成 300×100）
+        ax: { count: { pattern: "/AXImage \\(!\\[percent svg\\]\\(image-fallback-percent\\.svg\\)\\) @[0-9,-]+ [6-9][0-9]{2}×[12][0-9]{2}/", exact: 1 } }
       - label: 该位置保留原始引用串
         ax: { has: "![percent svg](image-fallback-percent.svg)" }
       - label: 图片行的源码仍被 replace 装饰藏起（节点 1 裁决 A = 维持现状）
@@ -57,7 +57,7 @@ steps:
         file: { path: image-fallback.md, unchangedSince: diskBase }
 ---
 
-说明：本场景覆盖 image-svg-and-fallback 的两条腿——可见回退（正常渲染 / 零尺寸兜底 / 不可见占位）
+说明：本场景覆盖 image-svg-and-fallback 的两条腿——可见回退（正常渲染 / 固有宽度不定者按栏宽填充 / 不可见占位）
 与 SVG 安全腿里真机可观测的那一半。
 
 - **「不发起外部请求」不在本层判**：套件断言词汇只有 AX 文本 / 编辑器文档 / 磁盘文件 / 诊断日志
@@ -68,7 +68,9 @@ steps:
   `AXGroup (![percent svg](…))` 与 `AXStaticText = "percent fixture"` **照样读得到**（截图里那一段
   是空的，AX 里却有文本）。所以「AX 里有这段文本」**不能**当可见性判据（这正是 REVIEW.md 第 1 条
   的假绿形态）。本场景改用**几何读数**：不带 `<text>` 的 svg 在 AX 树上是一个 `AXImage` 节点，
-  节点行里带 `@x,y w×h`——中招形状的断言因此写成「该 AXImage 的 bbox 宽高都非零」，回退成 0×0 时
+  节点行里带 `@x,y w×h`——固有宽度不定者的断言因此写成「该 AXImage 的 bbox 宽度 = 栏宽」（M182 起：
+  这类 svg 按包含块填充，不再靠尺寸兜底写成 300px 的固定宽度；条款见 docs/specs/image-reading.md
+  §2），渲染不可见时
   该行要么不存在、要么是 `0×0`，断言如实 FAIL（反向验证现场见 PR 说明）。带 `<text>` 的 svg 在 AX
   上是没有 bbox 的 `AXGroup`，因此**不要**用文本节点当尺寸判据。
 - **脚本腿的判据是 `document.title`**：fixture 里的脚本与 onload 都试图把标题改成
