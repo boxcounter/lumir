@@ -39,14 +39,19 @@ const REFS = {
  * `fs_read_attachment` 的桩：tauri-stub 的 invoke 路由里没有这个命令（缺省按 unknown_command
  * 抛错 → 图片一律走「读取失败」占位），本场景要验真实渲染，因此在 stub 之后包一层。
  * 必须在 `page.goto` 之前调用（addInitScript 按注册顺序执行，stubTauri 在前）。
+ *
+ * 每次调用在 `window.__lumirAttachmentReads` 上自增（M184 的「打开遮罩不重读字节」判据要读它：
+ * 这是**可外部观测**的调用计数，比「实现里没有 invoke」这类代码面判据强）。
  */
 async function stubAttachmentReads(page: Page, files: Record<string, string>, delayMs = 0): Promise<void> {
   await page.addInitScript((args: { map: Record<string, string>; delayMs: number }) => {
     const { map, delayMs } = args;
     const internals = (window as any).__TAURI_INTERNALS__;
     const original = internals.invoke;
+    (window as any).__lumirAttachmentReads = 0;
     internals.invoke = async (command: string, argv: { path?: string }) => {
       if (command !== "fs_read_attachment") return original(command, argv);
+      (window as any).__lumirAttachmentReads += 1;
       if (delayMs > 0) await new Promise((resolve) => setTimeout(resolve, delayMs));
       const content = map[argv.path ?? ""];
       if (content === undefined) throw { code: "fs_not_found", message: `文件不存在：${argv.path}` };
@@ -275,4 +280,344 @@ test("加载中状态在终态前始终可见（不留空窗）", async ({ page 
   await expect(statuses).toHaveCount(0, { timeout: 20000 });
   await expect(page.locator(".cm-lp-image-error")).toHaveCount(4);
   expect(await readDocument(page)).toBe(images);
+});
+
+// ---------------------------------------------------------------------------
+// M184：图片双击放大查看（change open-image-lightbox 的实现期断言组）
+// ---------------------------------------------------------------------------
+// 判据口径（REVIEW.md 第 1 / 2 条）：
+// - 「遮罩可见」用**几何读数**（放大图渲染盒宽高非零）与「与内联图同一图像源」判，不用 class
+//   是否存在——class 在「遮罩开着但图是 0×0」时同样成立；
+// - 「占位 / 加载态不可点开」与「同一份文档里成功渲染的图能打开」在**同一场景内配对**：只留负向
+//   断言的话，「双击注入没落地」也会让它变绿；
+// - 「焦点回到编辑器」用**行为判据**（关闭后 ⌃D 真的删掉一个字符，且 docText 的差异恰好是那一个
+//   字符），不用「调用了 view.focus()」这类机制推断；
+// - 「不重读字节」读的是读桩的**调用计数**（可外部观测），不是代码面 grep。
+//
+// 反向验证（1.2 / 5.6，红灯留档 test-results/m184/）：本组断言在实现落地前整组红（遮罩不存在）；
+// 去掉 `src/style.css` 的 `.lumir-lightbox-img` `max-height` 后「大图不越界」那条必红。
+
+const LIGHTBOX_OVERLAY = ".lumir-lightbox-overlay";
+
+/** 双击某条引用渲染出的内联图片（双击只挂在这一张 `<img>` 上，见 preview/attachments.ts）。 */
+const inlineImage = (page: Page, ref: string) => page.locator(`.cm-lp-image img[alt=${JSON.stringify(ref)}]`);
+
+/** 读桩记下的 `fs_read_attachment` 调用次数。 */
+async function attachmentReads(page: Page): Promise<number> {
+  return page.evaluate(() => (window as any).__lumirAttachmentReads ?? 0);
+}
+
+/** 编辑器态：文档文本 + 选区（caret 落点）。逐值比较这四步的「不动文档、不动光标」共用一个读数。 */
+async function editorState(page: Page) {
+  return page.locator(".cm-content").evaluate((el) => {
+    const tile = (el as unknown as {
+      cmTile?: { root: { view: { state: { doc: { toString(): string }; selection: { main: { head: number; anchor: number } } } } } };
+    }).cmTile;
+    if (!tile) throw new Error("CodeMirror document inspection unavailable");
+    const state = tile.root.view.state;
+    return { doc: state.doc.toString(), head: state.selection.main.head, anchor: state.selection.main.anchor };
+  });
+}
+
+/** 焦点归属：遮罩持有 / 编辑器持有（关闭后归还的那条断言读它）。 */
+async function focusInfo(page: Page) {
+  return page.evaluate((selector) => {
+    const active = document.activeElement as HTMLElement | null;
+    return {
+      isOverlay: active !== null && active === document.querySelector(selector),
+      inEditor: active !== null && active.closest(".cm-editor") !== null,
+      tag: active?.tagName ?? null,
+    };
+  }, LIGHTBOX_OVERLAY);
+}
+
+/** 遮罩读数：可见性 + 放大图渲染盒与自然尺寸 + 遮罩可用区域（内容盒，已减掉内边距）+ 图像源。 */
+async function lightboxReading(page: Page) {
+  return page.evaluate((selector) => {
+    const round = (n: number) => Math.round(n * 10) / 10;
+    const overlay = document.querySelector(selector) as HTMLElement | null;
+    if (!overlay) return { exists: false, hidden: true, box: null, area: null, natural: null, src: null, alt: null };
+    const style = getComputedStyle(overlay);
+    const rect = overlay.getBoundingClientRect();
+    const img = overlay.querySelector("img") as HTMLImageElement | null;
+    const box = img?.getBoundingClientRect();
+    return {
+      exists: true,
+      hidden: overlay.hidden,
+      box: box ? { width: round(box.width), height: round(box.height) } : null,
+      area: {
+        width: round(rect.width - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight)),
+        height: round(rect.height - parseFloat(style.paddingTop) - parseFloat(style.paddingBottom)),
+      },
+      natural: img ? { width: img.naturalWidth, height: img.naturalHeight } : null,
+      src: img?.src ?? null,
+      alt: img?.alt ?? null,
+    };
+  }, LIGHTBOX_OVERLAY);
+}
+
+/** 「关闭后焦点真的回到编辑器」的行为判据：⌃D 删掉光标处那一个字符，⌘Z 撤销复位。
+ *  `before` 是打开遮罩之前的编辑器态：关闭后光标须停在原位（打开与关闭都不动选区），
+ *  被删掉的须恰好是光标处那一个字符、且撤销后逐字节回到原文档。 */
+async function deletesAtCaretAfterClose(page: Page, before: { doc: string; head: number }) {
+  expect((await editorState(page)).head, "关闭后光标须停在打开前的位置（打开与关闭都不动选区）").toBe(before.head);
+  expect(before.head, "光标处要有可删的字符（否则这条判据空转）").toBeLessThan(before.doc.length);
+  await page.keyboard.press("Control+d");
+  const deleted = await editorState(page);
+  expect(deleted.doc.length, "关闭后 ⌃D 未生效说明焦点没回到编辑器").toBe(before.doc.length - 1);
+  expect(
+    deleted.doc.slice(0, before.head) + before.doc[before.head] + deleted.doc.slice(before.head),
+    "被删掉的应当恰好是光标处那一个字符",
+  ).toBe(before.doc);
+  await page.keyboard.press("Meta+z");
+  expect((await editorState(page)).doc, "撤销后应逐字节回到原文档").toBe(before.doc);
+}
+
+/** 等放大图真的画出来：赋 src 到完成布局之间有一拍，几何断言前先等渲染盒非零（否则读到 0×0，
+ *  会把「还没布局」误判成「适配口径错了」）。 */
+async function waitForLightboxImage(page: Page) {
+  await expect.poll(async () => (await lightboxReading(page)).box?.width ?? 0).toBeGreaterThan(0);
+}
+
+test("M184 双击打开遮罩、三条关闭路径与焦点归还", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 1000 });
+  await page.route("**/example.invalid/**", (route) => route.abort());
+  await open(page, images, "images.md", undefined, imageAssets);
+  await expect(page.locator(".cm-lp-image-status")).toHaveCount(0);
+  await expect(page.locator(".cm-lp-image img")).toHaveCount(6);
+
+  const overlay = page.locator(LIGHTBOX_OVERLAY);
+  // 惰性建立（2.5）：一次都没双击时 DOM 里没有遮罩节点。
+  await expect(overlay).toHaveCount(0);
+  // 先把光标落到第一行（后面「关闭后 ⌃D 真的删字符」需要一个确定的可删位置；单击不进
+  // 图片行，也不在任何显露覆盖集内）。
+  await page.locator(".cm-content").click({ position: { x: 8, y: 6 } });
+  const before = await editorState(page);
+  const readsBefore = await attachmentReads(page);
+
+  // 打开：双击终态渲染出的那张图。
+  await inlineImage(page, REFS.fixed).dblclick();
+  await expect(overlay).toHaveCount(1);
+  await expect(overlay).toBeVisible();
+  await waitForLightboxImage(page);
+  const opened = await lightboxReading(page);
+  expect(opened.box?.width ?? 0, "放大图渲染盒宽度须非零（几何判据）").toBeGreaterThan(0);
+  expect(opened.box?.height ?? 0, "放大图渲染盒高度须非零（几何判据）").toBeGreaterThan(0);
+  expect(opened.alt, "放大图的 alt = 原始引用文本（与内联图同一口径）").toBe(REFS.fixed);
+  expect(opened.src, "放大图须与内联图同一图像源").toBe(await inlineImage(page, REFS.fixed).evaluate((el) => (el as HTMLImageElement).src));
+  expect(await attachmentReads(page), "打开遮罩不得再读一次附件字节").toBe(readsBefore);
+
+  // 模态：编辑键不穿透、Tab 留在遮罩内，文档与光标逐值不变。
+  for (const key of ["Control+d", "Control+k", "Control+a", "Tab"]) await page.keyboard.press(key);
+  await expect(overlay, "遮罩持有焦点期间不得被按键关掉").toBeVisible();
+  expect(await focusInfo(page), "Tab 不得把焦点送出遮罩").toMatchObject({ isOverlay: true });
+  expect(await editorState(page), "打开期间文档与光标必须逐值不变").toEqual(before);
+
+  // 关闭路径一：Esc（就地消费）。
+  await page.keyboard.press("Escape");
+  await expect(overlay).toBeHidden();
+  expect(await focusInfo(page), "Esc 关闭后焦点须回到编辑器").toMatchObject({ inEditor: true });
+  expect((await editorState(page)).head, "打开与关闭都不得移动光标").toBe(before.head);
+  await deletesAtCaretAfterClose(page, before);
+
+  // 关闭路径二：点击遮罩（图片以外的区域）。
+  await inlineImage(page, REFS.fixed).dblclick();
+  await expect(overlay).toBeVisible();
+  await waitForLightboxImage(page);
+  await overlay.click({ position: { x: 4, y: 4 } });
+  await expect(overlay).toBeHidden();
+  expect(await focusInfo(page), "点击遮罩关闭后焦点须回到编辑器（mousedown preventDefault 的判据）").toMatchObject({ inEditor: true });
+  await deletesAtCaretAfterClose(page, before);
+
+  // 关闭路径三：遮罩内再次双击放大图。
+  await inlineImage(page, REFS.fixed).dblclick();
+  await expect(overlay).toBeVisible();
+  await waitForLightboxImage(page);
+  // 放大图的 alt 与内联图相同（同一引用原文），因此按「遮罩里那一张」定位。
+  await overlay.locator("img").dblclick();
+  await expect(overlay).toBeHidden();
+  expect(await focusInfo(page), "双击图片关闭后焦点须回到编辑器").toMatchObject({ inEditor: true });
+  await deletesAtCaretAfterClose(page, before);
+
+  // 再次打开不会建出第二个遮罩节点（惰性建立 + 单实例）。
+  await inlineImage(page, REFS.fixed).dblclick();
+  await expect(overlay).toHaveCount(1);
+  await page.keyboard.press("Escape");
+  await expect(overlay).toBeHidden();
+
+  // 全程不改写文档（ADR 0003 §3）：解引用、按键、三次关闭、三次撤销之后逐字节回到原文。
+  expect(await readDocument(page)).toBe(images);
+});
+
+test("M184 放大口径：宽图与高图都不越出遮罩、小图不放大", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 1000 });
+  await page.route("**/example.invalid/**", (route) => route.abort());
+  // 三个尺寸面各自需要一张会「被不同维度夹住」的图（VIEWPORT 1280×1000 → 遮罩可用 1120×720 左右）：
+  // 宽图（2000×150）由**宽度**夹住、高图（600×2000）由**高度**夹住、小图（240×80）两个维度都不夹。
+  // 只断言宽图的话，`max-height` 这一条规则根本没有区分度（2000×150 按宽度缩到 1120×84，
+  // 高度远没到 720）——反向验证时实测「去掉 max-height 仍然全绿」，所以高图这一腿是必须的。
+  const doc = [
+    "# 放大口径样本",
+    "",
+    "宽图（2000×150）：",
+    "",
+    "![wide](assets/wide.svg)",
+    "",
+    "高图（600×2000）：",
+    "",
+    "![tall](assets/tall.svg)",
+    "",
+    "小图（240×80）：",
+    "",
+    "![fixed](assets/sample.svg)",
+    "",
+  ].join("\n");
+  const assets = { "assets/wide.svg": fixture("wide.svg"), "assets/tall.svg": fixture("tall.svg"), "assets/sample.svg": image };
+  await stubTauri(page, {
+    entries: ["zoom.md", ...Object.keys(assets)].map((path) => ({ path, kind: "file", size: doc.length, mtime_ms: 0 })),
+    files: { "zoom.md": doc, ...assets },
+  });
+  await stubAttachmentReads(page, assets);
+  await page.goto("/");
+  await page.locator('.ft-row[title="zoom.md"]').click();
+  await expect(page.locator(".cm-lp-image-status")).toHaveCount(0);
+
+  const overlay = page.locator(LIGHTBOX_OVERLAY);
+  const cases = [
+    { ref: "![wide](assets/wide.svg)", natural: { width: 2000, height: 600 }, clamp: "width" },
+    { ref: "![tall](assets/tall.svg)", natural: { width: 600, height: 2000 }, clamp: "height" },
+  ] as const;
+
+  for (const item of cases) {
+    await inlineImage(page, item.ref).dblclick();
+    await expect(overlay).toBeVisible();
+    await waitForLightboxImage(page);
+    const big = await lightboxReading(page);
+    expect(big.natural, "放大图就是内联那张图的自然尺寸").toEqual(item.natural);
+    // 完整可见：两个维度都不越出遮罩的可用区域（不需要滚动或平移）。
+    expect(big.box!.width, `${item.ref} 不得越出遮罩可用宽度`).toBeLessThanOrEqual(big.area!.width + 1);
+    expect(big.box!.height, `${item.ref} 不得越出遮罩可用高度`).toBeLessThanOrEqual(big.area!.height + 1);
+    // 区分度：被哪个维度夹住就断言那一条贴住可用区域——去掉对应的 max-width / max-height
+    // 规则时这两条先红（反向验证留档 test-results/m184/）。
+    const binding = item.clamp === "width" ? big.box!.width - big.area!.width : big.box!.height - big.area!.height;
+    expect(Math.abs(binding), `${item.ref} 应被可用${item.clamp === "width" ? "宽" : "高"}度夹住（完整可见）`).toBeLessThanOrEqual(1);
+    expect(big.box!.width, `${item.ref} 应收窄到遮罩内`).toBeLessThan(item.natural.width);
+    await page.keyboard.press("Escape");
+    await expect(overlay).toBeHidden();
+  }
+
+  // 小图（240×80）：按自然尺寸显示，不放大（MUST NOT 写 width: 100%，那会把它拉成可用宽度）。
+  await inlineImage(page, "![fixed](assets/sample.svg)").dblclick();
+  await expect(overlay).toBeVisible();
+  await waitForLightboxImage(page);
+  const small = await lightboxReading(page);
+  expect(small.natural).toEqual({ width: 240, height: 80 });
+  expect(small.box, "小图不得被放大（也不得被拉成其他尺寸）").toEqual({ width: 240, height: 80 });
+});
+
+test("M184 占位与加载态没有打开路径（同场景配对正观测）", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 1000 });
+  await page.route("**/example.invalid/**", (route) => route.abort());
+  const doc = [
+    "# 占位与加载态",
+    "",
+    "成功渲染的图（配对的正观测）：",
+    "",
+    "![ok](assets/sample.svg)",
+    "",
+    "读取失败：",
+    "",
+    "![failed](assets/missing.png)",
+    "",
+    "终态不可见（0 字节位图）：",
+    "",
+    "![invisible](assets/empty.png)",
+    "",
+    "附件未找到：",
+    "",
+    "![[gone.svg]]",
+    "",
+    "内容嵌入不支持：",
+    "",
+    "![[note.md]]",
+    "",
+    "外部 URL（安全策略拦下）：",
+    "",
+    "![remote](https://example.invalid/remote.png)",
+    "",
+  ].join("\n");
+  const none = { status: "none", heading: null, line: null };
+  await stubTauri(page, {
+    entries: ["placeholders.md", "assets/sample.svg", "assets/missing.png", "assets/empty.png"].map((path) => ({
+      path,
+      kind: "file",
+      size: doc.length,
+      mtime_ms: 0,
+    })),
+    files: { "placeholders.md": doc, "assets/sample.svg": image, "assets/empty.png": fixture("empty.png") },
+    links: {
+      "![[gone.svg]]": { status: "unresolved", path: null, candidates: [], embed_target: null, anchor: none },
+      "![[note.md]]": { status: "resolved", path: "note.md", candidates: [], embed_target: "note", anchor: none },
+    },
+  });
+  await stubAttachmentReads(page, { "assets/sample.svg": image, "assets/empty.png": fixture("empty.png") });
+  await page.goto("/");
+  await page.locator('.ft-row[title="placeholders.md"]').click();
+  await expect(page.locator(".cm-lp-image-status")).toHaveCount(0);
+
+  const overlay = page.locator(LIGHTBOX_OVERLAY);
+  // 先证明四类占位真的在场上（正观测）——否则下面的负向断言可能只是「文档没打开」的空转。
+  await expect(page.locator(".cm-lp-image img")).toHaveCount(1);
+  await expect(page.locator(".cm-lp-image-error")).toHaveCount(3);
+  await expect(page.locator(".cm-lp-embed-unsupported")).toHaveCount(2);
+
+  for (const selector of [".cm-lp-image-error", ".cm-lp-embed-unsupported"]) {
+    const count = await page.locator(selector).count();
+    expect(count, `${selector} 未就位，负向断言会空转`).toBeGreaterThan(0);
+    for (let i = 0; i < count; i++) {
+      await page.locator(selector).nth(i).dblclick();
+      await expect(overlay, `${selector} 第 ${i + 1} 处不得有打开路径`).toHaveCount(0);
+    }
+  }
+
+  // 配对的正观测：同一份文档里成功渲染出的那张图能打开（否则上面那一组可能只是双击没落地）。
+  await inlineImage(page, "![ok](assets/sample.svg)").dblclick();
+  await expect(overlay).toBeVisible();
+  await waitForLightboxImage(page);
+  expect((await lightboxReading(page)).box!.width).toBeGreaterThan(0);
+});
+
+test("M184 加载中状态块没有打开路径", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 1000 });
+  await page.route("**/example.invalid/**", (route) => route.abort());
+  // 读字节慢一拍：源码已被 replace 装饰藏起，此刻替换区是加载中状态块（还没有 `<img>`）。
+  await open(page, images, "images.md", undefined, imageAssets, 5000);
+
+  const statuses = page.locator(".cm-lp-image-status");
+  await expect(statuses.first()).toBeVisible();
+  expect(await statuses.count(), "加载中窗口内应有多处状态块（一次也没采到说明断言没落在窗口里）").toBeGreaterThan(0);
+  await statuses.first().dblclick();
+  await expect(page.locator(LIGHTBOX_OVERLAY)).toHaveCount(0);
+
+  // 配对的正观测：终态之后同一位置的图能打开。
+  await expect(statuses).toHaveCount(0, { timeout: 20000 });
+  await inlineImage(page, REFS.fixed).dblclick();
+  await expect(page.locator(LIGHTBOX_OVERLAY)).toBeVisible();
+});
+
+test("M184 打开遮罩不重读字节、惰性建立不预建", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 1000 });
+  await page.route("**/example.invalid/**", (route) => route.abort());
+  await open(page, images, "images.md", undefined, imageAssets);
+  await expect(page.locator(".cm-lp-image-status")).toHaveCount(0);
+  await expect(page.locator(".cm-lp-image img")).toHaveCount(6);
+
+  // 十条引用各自只读一次（读取计数 = 成功渲染 + 读取尝试的条数），且没有遮罩节点。
+  const settled = await attachmentReads(page);
+  expect(settled, "文档打开路径上的读取次数不得多于引用条数").toBeLessThanOrEqual(10);
+  await expect(page.locator(LIGHTBOX_OVERLAY)).toHaveCount(0);
+
+  await inlineImage(page, REFS.wide).dblclick();
+  await expect(page.locator(LIGHTBOX_OVERLAY)).toBeVisible();
+  expect(await attachmentReads(page), "打开遮罩前后调用计数必须不变").toBe(settled);
 });

@@ -141,8 +141,18 @@ CSS 判据（推荐项）：
   「框比图大」的观感。
 
 两条断言（[tasks.md](tasks.md) 5.6）：大图的渲染盒宽高都 ≤ 遮罩可用区域；小图的渲染盒 ≤ 自然尺寸。
-**反向验证**：把 `max-height` 去掉跑一次，大图断言必须红——否则那条断言没有区分度
-（[REVIEW.md](../../../REVIEW.md) 第 1、3 条）。
+
+**反向验证（实现期实测修正，2026-09-19）**：本节原先写的是「把 `max-height` 去掉跑一次，大图断言
+必须红」。实测发现这条配方**没有区分度**——`wide.svg`（2000×600）在 1120×920 的可用区域里是被
+**宽度**夹住的（2000 → 1120，高度只有 336），去掉 `max-height` 之后它照样在界内、断言照绿。因此
+反向验证的样本必须是**高图**（600×2000）：去掉 `max-height` 后它按自然高度 2000px 溢出可用高度
+921px，断言当场红。实现里的断言组因此同时放宽图与高图两腿（`tests/visual/scenes/markdown-combo.spec.ts`
+的 M184 放大口径组），红输出留档 `test-results/m184/05-red-no-max-height-tall.log`。
+
+同批实测的另外两条（留档 `test-results/m184/06`、`07`）：单独去掉 `max-width: 100%`、或单独去掉
+`min-width/min-height: 0`，断言都仍绿——本布局下宽度一侧由 flex 的自动收缩与 `max-*` 各自足够。
+四条声明因此都留着（互为第二道），但**唯一被实测证伪会红的是 `max-height`**，它是那条断言的
+区分度来源；[tasks.md](tasks.md) 5.6 的验收口径按此改写。
 
 ## 6. SVG / 位图同构与安全边界
 
@@ -175,10 +185,19 @@ CSS 判据（推荐项）：
 - **惰性建 DOM**：遮罩节点首次打开时才建（照 `src/toc.ts:208-222` 构造函数建 DOM 的做法，
   但 lightbox 连构建都可以推迟到首次打开——它没有「状态需要提前对齐」的需求）。
   打开路径（打开 1MB Markdown < 100ms，ADR 0002 §6）上因此零新增工作。
-- **decode 复用未验证**：同一 `data:` URL 的第二次使用是否复用浏览器已解码的位图**没有权威依据**，
-  本 change 不押它。实现期按 [tasks.md](tasks.md) 2.7 实测一次（内存读数 + 首次打开耗时），
-  读数记进 PR；若发现大图放大导致内存显著上升，按既有 50MB 上限口径如实记录为已知边界
-  （本 change 不设新上限——上限属于 fs-io 的口径）。
+- **decode 复用：实现期实测（chromium，2026-09-19）**。同一 `data:` URL 的第二次使用**确实命中浏览器的
+  已解码位图**，且复用是按 **URL 字符串**键控的，不是按像素内容：
+  - 隔离实验（2600×1800 的 6.1MB PNG data URL）：首次 `decode()` **48.9ms**；同一串再 `decode()` 一次
+    **0.1ms**；**像素相同但串不同**的第三张 **49.3ms**（对照）。相差两个数量级，足以区分「复用」与
+    「重新解码」。
+  - 真实路径（1.85MB 的 svg data URL 走遮罩）：首次打开 `dispatch 0.5ms / 布局完成 0.5ms`，关闭后再
+    打开 `0.2ms / 0.2ms`。
+  - **失败读数如实记录**：`performance.memory.usedJSHeapSize` 在三组读数里逐次相同（33.1MB 不变），
+    这个量度在本形态下**读不出位图占用**（Chromium 的粗粒度上报）——所以本 change 不给内存结论，
+    只说「复用成立」。
+  - **限 chromium**：WKWebView 未测（真机层驱动不了双击，见 [tasks.md](tasks.md) 6.1 的通道边界记录），
+    因此这条复用的适用范围按 chromium 记；50MB 上限下的大图表现仍按 fs-io 的既有边界对待。
+  读数落 `test-results/m184/10-decode-probe.json`（本机，git 外）。
 - **不在键入路径上**：双击是用户主动动作；打开/关闭只做一次 DOM 创建与一次 `src` 赋值。
 
 ## 9. 备选方案与拒绝理由
@@ -215,6 +234,13 @@ CSS 判据（推荐项）：
   （不可见图的 AX 文本照样读得到——这条陷阱记在 `docs/backlog.md:257-264`（M178 finding，主要居所）与
   `openspec/changes/archive/2026-09-18-image-svg-and-fallback/tasks.md:190-192`，
   判据取几何）、`Esc` 关闭后焦点回编辑器、`editor.unchangedSince` 与磁盘 `unchangedSince`。
+  **实现期实测：这一层被通道能力挡住（2026-09-19）**。场景与 fixture 写好后跑了两轮真机，双击路径全部
+  落空；随后用四条注入通道做对照实验，结论是套件在 WKWebView 里**造不出 DOM 的 `dblclick`**（判据取
+  既有行为「双击文件树行 = 新建固定标签」，四条通道下标签数都停在 1，而同一点位的单次点击证明落点
+  准确）。因此真机场景**未落库**（只验前置条件的场景会让人误读为「真机验过」），边界写进
+  `scripts/acceptance/README.md` 的「已知边界」，收口方式已请 tower 裁决——逐条记录见
+  [tasks.md](tasks.md) 第 6 节与 8.3。**本 change 的真机覆盖因此是缺的，不是「已验」**；打开与关闭路径的
+  行为覆盖暂落在 chromium 层（那里是真实 dblclick）。
 - **不改写源文件**：视觉与真机两层都断言 `EditorState.doc` / 磁盘文件逐字节不变（ADR 0003 §3）。
 - **基线**：lightbox 是新元素，按 [REVIEW.md](../../../REVIEW.md) 第 3 条与 `tests/visual/README.md`
   的纪律核对——现有场景里出现图片的只有 `markdown-combo`（该场景无 `toHaveScreenshot`），

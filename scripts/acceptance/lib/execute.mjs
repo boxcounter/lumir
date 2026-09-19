@@ -110,12 +110,14 @@ async function resolveSpecFile(p) {
 /**
  * 坐标点击 + 重试：KimiCU 用「最近一次 get_app_state 的截图」校验坐标是否在图内，
  * 两次读之间窗口尺寸/位置变了就会被判越界（实测偶发）。重试时重新取一张图即可。
+ * `count` 原样透传给 KimiCU（实测：即使 count=2，WKWebView 里也不产生 DOM 的 `dblclick`，
+ * 见 cu.click 与 README「已知边界」）。
  */
-async function clickWithRetry(cu, pid, x, y, { retries = 3 } = {}) {
+async function clickWithRetry(cu, pid, x, y, { retries = 3, count } = {}) {
   let lastErr;
   for (let i = 0; i < retries; i++) {
     try {
-      return await cu.click(pid, { x, y });
+      return await cu.click(pid, { x, y, count });
     } catch (e) {
       lastErr = e;
       await cu.state(pid, { mode: "full" });
@@ -620,7 +622,9 @@ async function doAction(step, { ctx, cu, scenario, vars, pid, evidence }) {
     }
     case "click": {
       const t = step.target ?? {};
-      if (t.x !== undefined) return cu.click(p, { x: t.x, y: t.y });
+      // `count` 两条路径都如实透传（M184 实测：坐标路径与 AX 索引路径在 WKWebView 里**都不
+      // 产生** DOM 的 `dblclick`，见 README「已知边界」——要验双击类交互时别指望它）。
+      if (t.x !== undefined) return cu.click(p, { x: t.x, y: t.y, ...(t.count ? { count: t.count } : {}) });
       const ax = await readAx(cu, p);
       const node =
         t.help !== undefined
@@ -678,7 +682,8 @@ async function doAction(step, { ctx, cu, scenario, vars, pid, evidence }) {
       const { x, y, w, h } = target.bbox;
       const px = x + w * (step.dx ?? 0.5);
       const py = y + h * (step.dy ?? 0.5);
-      return clickWithRetry(cu, p, px, py);
+      // `count` 原样透传（实测在 WKWebView 里产生不出 DOM 的 `dblclick`，见 README「已知边界」）。
+      return clickWithRetry(cu, p, px, py, step.count ? { count: step.count } : {});
     }
     case "record": {
       // 路径口径与 file 断言同源（M180）：`env:` 前缀此前不被识别，记出来的是一个不存在的
