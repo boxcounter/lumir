@@ -16,6 +16,7 @@ import type { EditorMode } from "./bindings/EditorMode";
 import { livePreview, previewRefresh, widgetCommands } from "./preview/livePreview";
 import { codeBlockWrappers } from "./preview/livePreview";
 import type { PreviewContext, WikilinkResolver } from "./preview/livePreview";
+import type { ImageLightbox } from "./lightbox";
 import { detectFrontmatter } from "./preview/frontmatter";
 import { findMathSpans } from "./preview/math";
 import type { MathSpan } from "./preview/math";
@@ -962,6 +963,10 @@ export interface EditorHandle {
    * 装饰层据此做三态渲染；null 时走降级渲染（不做语义判断）。
    */
   setWikilinkResolver(resolver: WikilinkResolver | null): void;
+  /**
+   * 注入图片放大查看的遮罩（M184）；未注入（维护性调用 / 纯桩）时图片没有双击路径。
+   */
+  setLightbox(lightbox: ImageLightbox | null): void;
   /** 强制重建装饰（解析缓存更新 / watch 增量后调用）。 */
   refreshPreview(): void;
   /** 滚动定位到 1-based 行号并把光标移到行首（wikilink 锚点跳转用）。 */
@@ -1061,6 +1066,8 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
   let wrap: WrapSettings = { lineWrap: DEFAULT_LINE_WRAP, codeBlockWrap: DEFAULT_CODE_BLOCK_WRAP };
   let provider: AttachmentProvider = createInvokeAttachmentProvider();
   let wikilinkResolver: WikilinkResolver | null = null;
+  /** 图片放大查看的遮罩（M184）：装配层注入，装饰层只经 PreviewContext 取用。 */
+  let lightbox: ImageLightbox | null = null;
   const readyListeners = new Set<EditorReadyListener>();
   let readyPath: string | undefined;
   let readyRequestId: number | undefined;
@@ -1158,6 +1165,7 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
     currentFilePath: () => active.path,
     attachmentProvider: () => provider,
     wikilinkResolver: () => wikilinkResolver,
+    lightbox: () => lightbox,
   };
 
   // 编辑器失焦时 CM 不回写 DOM 选区（M110 真实桌面缺陷）：打开新文档替换整篇
@@ -1642,6 +1650,12 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
     },
     setWikilinkResolver(next: WikilinkResolver | null) {
       wikilinkResolver = next;
+      view.dispatch({ effects: previewRefresh.of(null) });
+    },
+    setLightbox(next: ImageLightbox | null) {
+      lightbox = next;
+      // 装饰层在构建期读这个口子（widget 的双击接线），注入后必须重建一次——否则注入前
+      // 已渲染出来的图片不会获得双击路径。
       view.dispatch({ effects: previewRefresh.of(null) });
     },
     refreshPreview() {

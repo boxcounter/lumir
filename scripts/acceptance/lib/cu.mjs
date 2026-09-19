@@ -144,7 +144,7 @@ export class CuClient {
     return this.call("press_key", { pid, keys });
   }
 
-  async click(pid, { index, x, y, button = "left" }) {
+  async click(pid, { index, x, y, button = "left", count }) {
     const args = { pid };
     if (index !== undefined) args.index = index;
     if (x !== undefined) {
@@ -152,6 +152,12 @@ export class CuClient {
       args.y = y;
     }
     args.button = button;
+    // count 是 MCP 的顶层参数（1..3），与 index / x,y 无关。
+    // 实测边界（M184，2026-09-19）：**count: 2 在 WKWebView 里合成不出 DOM 的 `dblclick`**——
+    // 坐标路径与 AX 索引路径（AXPress ×2）都试过，判据取既有行为「双击文件树行 = 新建固定标签」，
+    // 两条路径下都停在 1 个标签，而同一点位的单次点击证明落点是准的（test-results/m184/16、17）。
+    // 传 count 只是如实转发 MCP 参数；要验双击类交互，先看 README「已知边界」里那条。
+    if (count !== undefined) args.count = count;
     return this.call("click", args);
   }
 

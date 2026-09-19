@@ -119,9 +119,9 @@ steps:
 | （省略） | — | 只做断言 |
 | `settle` | — | 读一次 AX 快照并落定（等价于「什么都不做、只等一拍」，用于纯断言步骤前的稳定） |
 | `open` | `file`、`marker` | 点左栏文件名打开，等编辑器出现 marker |
-| `click` | `target: {role,name\|help\|any,nth,count}` 或 `{x,y}` | 节点按 AX 索引点（走 AXPress）；`{x,y}` 走真实鼠标坐标。`target.count: 2` 是双击（树里的双击 = 新开固定标签） |
+| `click` | `target: {role,name\|help\|any,nth,count}` 或 `{x,y,count}` | 节点按 AX 索引点（走 AXPress）；`{x,y}` 走真实鼠标坐标。`count` 原样透传给 KimiCU，但**它产生不出 DOM 的 `dblclick`**（坐标路径与 AX 索引路径都实测过，见「已知边界」）——要验双击类交互，目前只能靠 chromium 层或人工 |
 | `clickNodeText` | `text` | 点 value/title **逐字等于** `text` 的节点（比 `name` 的正则更死板） |
-| `clickInNode` | `target`、`dx`、`dy` | 点「某个有 bbox 的节点内部」的相对位置（如 `AXTable`） |
+| `clickInNode` | `target`、`dx`、`dy`、`count` | 点「某个有 bbox 的节点内部」的相对位置（如 `AXTable`）；`count` 同上，不产生 `dblclick` |
 | `clickEditor` | `dx`（默认 40）、`dy`（默认 6） | 点编辑器顶部建立渲染层焦点（编辑器内元素无 AX bbox，只能按坐标） |
 | `focusWindow` | `retries` | 确保目标窗口在前台（键盘场景的前台纪律，见上） |
 | `key` / `keys` | `key` / `keys: [...]`、`gapMs` | 键盘注入（`ctrl+n`、`cmd+s`、`cmd+/` …）。`keys` 对**整串都是可打印单字符**的序列额外做回读 + 有限重试（≤3）；chord / 混合序列 / 无可读目标一律保持盲发不重试（判定边界见「已知边界」） |
@@ -308,6 +308,18 @@ Alex 抽审路径：先看 `summary.md`，再进 FAIL 场景看 `steps.md` + `sh
 - **AX 快照可能退化**：`get_app_state` 偶尔只返回菜单栏（`truncated: [..., cycle]`）。这通常是
   KimiCU 后台服务进了坏状态，表现为**全局**退化（Finder、别的 app 一起坏）。此时全套会一起报
   「前端未就绪」，处理办法是重启 KimiCU 服务，不是改场景。
+- **合成不出 DOM 的 `dblclick`（M184 实测，2026-09-19）**：WKWebView 里的双击事件用现有通道**造不出来**。
+  四条路都试过、都失败：`click` 的 `count: 2`（坐标路径）、`click` 的 `count: 2`（AX 索引路径，即
+  AXPress ×2）、两次独立的 `click`（两次 MCP 往返的间隔超出系统双击间隔）、`drag_paths` 的两条单点
+  路径（`path_gap_ms` 取 10ms 与 0ms 两种）。
+  **判据取既有行为做对照**，不是「看遮罩有没有出现」：双击文件树行 = `src/tree.ts` 的
+  `dblclick → open("pinned")` → 必然新建一个标签（`targetSessionFor("pinned")` 总是 `createSession`），
+  四条通道下标签数都停在 1；而**同一点位的单次坐标点击**能正常切换文档（证明落点是准的、click 路径
+  照常工作）。现场：`test-results/m184/16-probe-clicks-land.log`、`/17-probe-dragpaths-variants.log`
+  （本机，git 外）。
+  影响：以 `dblclick` 为唯一打开路径的交互（如图片放大查看 M184）在真机层**无法驱动**——它的行为覆盖
+  只能在 chromium 层（那里是真实 dblclick），真机侧只剩「给注入通道加 clickCount 能力」或「人工双击」
+  两条路。这是通道边界，不是产品缺陷；写双击类场景前先读这条。
 - **场景维护权归实现者**：新功能 mission 的 tasks 必须带「新增/更新验收场景」一项（裁决点 3）。
 
 ## 加一个场景

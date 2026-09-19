@@ -248,6 +248,10 @@ export function imageFallbackWidth(box: ImageBox, natural: ImageBox): number | n
   return imageVisible(natural) ? natural.width : null;
 }
 
+/** 双击终态渲染出的图片时的接线口（拿到那张 `<img>` 与原始引用文本）。未接线（无 lightbox
+ *  句柄的纯桩 / 单测）时不传——图片因此没有双击路径，与 attachmentProvider 未接线即走占位同一口径。 */
+export type ImageOpenHandler = (img: HTMLImageElement, rawRef: string) => void;
+
 /** 内联图片 widget：异步读字节，成功渲染 <img>，读取失败 / 解码失败 / 渲染不出可见像素时
  *  原地换可见占位（不抛错、不破图、不留零高度空白）。
  *
@@ -258,17 +262,21 @@ export class ImageWidget extends WidgetType {
   readonly key: string;
   readonly load: () => Promise<string>;
   readonly rawRef: string;
+  /** 放大查看的双击回调（未接线时为 undefined）。 */
+  readonly onDoubleClick: ImageOpenHandler | undefined;
 
-  constructor(key: string, load: () => Promise<string>, rawRef: string) {
+  constructor(key: string, load: () => Promise<string>, rawRef: string, onDoubleClick?: ImageOpenHandler) {
     super();
     this.key = key;
     this.load = load;
     this.rawRef = rawRef;
+    this.onDoubleClick = onDoubleClick;
   }
 
   eq(other: ImageWidget): boolean {
     // rawRef 参与相等性：alt / 加载文案 / 占位文案都取自它——两条引用同一个目标但原文不同的
     // 引用（`![alt](a.svg)` 与 `![[a.svg]]`）必须各自渲染自己那条引用文本。
+    // 双击回调**不参与**：它不改变渲染结果，参与进来只会让装饰无谓重建（change design §3）。
     return other.key === this.key && other.rawRef === this.rawRef;
   }
 
@@ -294,6 +302,21 @@ export class ImageWidget extends WidgetType {
         const img = document.createElement("img");
         img.alt = this.rawRef;
         img.onerror = fallback;
+        // 放大查看（M184）：双击**只挂在这一张终态 `<img>` 上**——加载中状态块、读取失败与终态
+        // 不可见三类形态都没有 `<img>`，因此「占位不可点开」是结构性事实，不是一条要维护的开关。
+        // 阻止默认行为与公式 / mermaid widget 同款（src/preview/math.ts）：原生 caret / 选区若滞留
+        // 在被替换的 widget DOM 上，装饰重建后 CM 读取会把落点映射到文档起点。但本 change
+        // **不**把光标送进被替换的源码区间——与 M111 / M112「点击进源码编辑」的口径相反：看大图是
+        // 查看动作，图片行又没有显露口径，往被替换区间里塞一个不可见光标只会让人以为点坏了
+        //（openspec/changes/open-image-lightbox/design.md §4.4）。
+        if (this.onDoubleClick !== undefined) {
+          const open = this.onDoubleClick;
+          img.addEventListener("mousedown", (event) => event.preventDefault());
+          img.addEventListener("dblclick", (event) => {
+            event.preventDefault();
+            open(img, this.rawRef);
+          });
+        }
         // 终态处置（三种引用形态共用这一条，不为任何扩展名立分支）：状态块先撤、再量。
         // M182 起包装盒宽度与在场内容无关（theme.ts 的 `.cm-lp-image` `width: 100%`），状态块文本
         // 不再能决定图片宽度；这里先撤它是「终态确认后才撤加载中状态」这条可见性契约的落点

@@ -23,6 +23,7 @@ import {
 } from "./ipc";
 import { createSaveController, SAVE_GUARD_TOAST_CLASS } from "./save-controller";
 import { createToc } from "./toc";
+import { createImageLightbox } from "./lightbox";
 import {
   createGuardPromptPresenter,
   createVaultRemapPrompt,
@@ -85,6 +86,15 @@ editor.setAttachmentProvider({
     return `data:${mime};base64,${base64}`;
   },
 });
+
+// 图片放大查看（M184，双击内联图片 → 应用内遮罩）：能力与 DOM 在 src/lightbox.ts，装配侧只给
+// 它两样看不到的东西——挂点（app-shell 根，与键位面板同款）与关闭后把焦点交还编辑器。
+// 遮罩 DOM 惰性建立：文档打开路径与键入路径上零新增工作。
+const lightbox = createImageLightbox({
+  mount: shell.root,
+  restoreFocus: () => editor.view.focus(),
+});
+editor.setLightbox(lightbox);
 
 // 编辑器区域的"暂不支持预览 / 错误提示"覆盖层：显示提示时藏起编辑器本体。
 const notice = document.createElement("div");

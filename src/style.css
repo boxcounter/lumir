@@ -425,6 +425,38 @@ body { background:var(--bg); color:var(--text); font-family:var(--font-body); fo
 .lumir-bindings-row.is-unbound .lumir-bindings-key { color: var(--accent); }
 .lumir-bindings-hint { margin: 12px 0 0; font-size: 11px; color: var(--dim); }
 
+/* 图片放大查看（M184，change open-image-lightbox，双击内联图片）：与键位面板同一遮罩手法与
+   token，不引入新视觉语言。缩放口径 = 适配遮罩且不放大——放大图不设 width/height（浏览器对
+   <img> 的默认行为就是按自然尺寸渲染，「小图不放大」由此天然成立），越界由 max-width /
+   max-height 挡住；MUST NOT 写 width: 100%（会把小图拉大失真），MUST NOT 用 object-fit 兜一个
+   固定框（本形态没有固定框，借它只会引入「框比图大」的观感）。 */
+.lumir-lightbox-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 40px;
+  background: color-mix(in srgb, var(--text) 30%, transparent);
+  outline: none;
+}
+/* author 的 display:flex 会盖掉 UA 的 [hidden] 规则，显式补回（同 .lumir-bindings-overlay） */
+.lumir-lightbox-overlay[hidden] { display: none; }
+.lumir-lightbox-img {
+  /* 适配不放大：不设 width/height；可用区域就是 flex 容器的内容盒，内边距已被排除。
+     下面四条规则的分工经反向验证实测（留档 test-results/m184/06、07）：
+     - `max-height: 100%` 是**唯一被实测证伪会红**的一条：去掉它，600×2000 的高图按自然高度
+       2000px 溢出（可用高度 921），「高图不得越出遮罩」当场红；
+     - `max-width: 100%` 与 `min-*: 0` 在本布局下各自都足够（单独去掉任一组，断言仍绿）：
+       宽度一侧被 flex 的自动收缩夹住。两条都留着——单一机制被将来的布局改动（如换成非 flex
+       容器）打破时，另一条仍然成立。 */
+  max-width: 100%;
+  max-height: 100%;
+  min-width: 0;
+  min-height: 0;
+}
+
 /* masthead 当前位置指示段（M148 轻量大纲）：文件名之后的当前标题链，兼作浮层入口。
    不加常驻占地——它就在既有的 masthead 行内，与文件名一起参与 flex 收缩（两者都省略号收尾）。 */
 .masthead-section {

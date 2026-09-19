@@ -20,7 +20,8 @@ import {
   isImageName,
   resolveImagePath,
 } from "./attachments";
-import type { AttachmentProvider } from "./attachments";
+import type { AttachmentProvider, ImageOpenHandler } from "./attachments";
+import type { ImageLightbox } from "../lightbox";
 import { findWikilinkSpans } from "./wikilinks";
 import { classifyLinkTarget, standardLinkParts } from "./links";
 import { collectInlineMath, isInsideCodeContext, mathBlockSet } from "./math";
@@ -57,6 +58,9 @@ export interface PreviewContext {
   attachmentProvider(): AttachmentProvider | null;
   /** wikilink 解析器；未接线（无 vault / 后端无 link graph）时装饰层走降级渲染。 */
   wikilinkResolver(): WikilinkResolver | null;
+  /** 图片放大查看的遮罩（M184）；未接线时返回 null——图片因此没有双击路径
+   *（与 attachmentProvider 未接线即走占位同一口径）。 */
+  lightbox(): ImageLightbox | null;
 }
 
 /** wikilink 三态（spec §4.1）显示 widget：replace 整条链接，显示 alias 或 target。 */
@@ -925,6 +929,14 @@ function collectSyntaxDecorations(
   });
 }
 
+/** 放大查看的双击接线（change design §3）：把「双击这一张终态 `<img>`」交给遮罩，源取它的 `src`
+ *  ——同一图像源的第二次使用，不重读附件字节。未接线（无遮罩句柄）时返回 undefined，widget 因此
+ *  不挂监听：占位与加载态本来就没有 `<img>`，这里再叠一道「没接线就没有打开路径」。 */
+function imageOpenHandler(ctx: PreviewContext): ImageOpenHandler | undefined {
+  const lightbox = ctx.lightbox();
+  return lightbox === null ? undefined : (img, rawRef) => lightbox.open(img.src, rawRef);
+}
+
 /** 标准 ![alt](path)：外部 URL 直接渲染，否则相对当前文件解析并经 provider 读取。 */
 function buildStandardImage(
   target: string,
@@ -933,7 +945,7 @@ function buildStandardImage(
 ): Decoration {
   if (/^https?:\/\//.test(target)) {
     return Decoration.replace({
-      widget: new ImageWidget(target, () => Promise.resolve(target), rawRef),
+      widget: new ImageWidget(target, () => Promise.resolve(target), rawRef, imageOpenHandler(ctx)),
     });
   }
   const provider = ctx.attachmentProvider();
@@ -944,7 +956,7 @@ function buildStandardImage(
   }
   const path = resolveImagePath(target, ctx.currentFilePath());
   return Decoration.replace({
-    widget: new ImageWidget(path, () => provider.readDataUrl(path), rawRef),
+    widget: new ImageWidget(path, () => provider.readDataUrl(path), rawRef, imageOpenHandler(ctx)),
   });
 }
 
@@ -1024,7 +1036,7 @@ function buildWikilink(
       return Decoration.replace({ widget: new AttachmentNoticeWidget("附件读取未接线", raw) });
     }
     return Decoration.replace({
-      widget: new ImageWidget(path, () => provider.readDataUrl(path), raw),
+      widget: new ImageWidget(path, () => provider.readDataUrl(path), raw, imageOpenHandler(ctx)),
     });
   }
   return Decoration.replace({
@@ -1055,5 +1067,5 @@ function buildWikiEmbedWidget(rawRef: string, inner: string, ctx: PreviewContext
   if (path === null) {
     return new AttachmentNoticeWidget("附件未找到", rawRef);
   }
-  return new ImageWidget(path, () => provider.readDataUrl(path), rawRef);
+  return new ImageWidget(path, () => provider.readDataUrl(path), rawRef, imageOpenHandler(ctx));
 }
