@@ -14,15 +14,21 @@ delta（[proposal.md](proposal.md) 的 Impact 已写明）。裁决点 2 选备�
 **裁决状态（2026-09-19，节点 1 = Alex 原话「B 全推荐」）**：四项全取推荐项，见
 [proposal.md](proposal.md) 的「裁决记录」节。因此 **3.4 与 9.2 按「节点 1 未选中」处理——不做**，
 delta 与本文档均不改写；2.6 与 5.6 按推荐项（适配遮罩且不放大）实现与断言。任务编号沿用提案原编号
-（真机场景一项编号由 23 改为 **24**：23 已被 M182 的 `23-image-first-open-width` 占用）。
+（真机场景一项编号由 23 改为 **24**：23 已被 M182 的 `23-image-first-open-width` 占用；该场景
+**未落库**，见下）。
 
 **实现批次状态（M184，2026-09-19）**：实现与 chromium 层完成，**第 6 节（真机验收场景）未做**——
 验收套件的注入通道在 WKWebView 里造不出 DOM 的 `dblclick`，以 `dblclick` 为唯一打开路径的交互无法
 在真机层驱动（四条通道实测：坐标 `count: 2`、AX 索引 `count: 2`、两次独立 click、`drag_paths` 两条
 单点路径；对照判据与现场见 `scripts/acceptance/README.md` 的「已知边界」新增条目与
-`test-results/m184/13`～`/17`）。该边界已发文请 tower 裁决收口方式；第 6 节各条按「通道不可达，
-未做」标注，**不勾选**——一个只验前置条件的场景会让人误读为「真机验过」（[REVIEW.md](../../../REVIEW.md)
-第 6 条）。证据根目录：`test-results/m184/` 与 `test-results/acceptance/2026-09-19/`（本机，git 外）。
+`test-results/m184/13`～`/17`）。tower 裁决（2026-09-19，**A+C 组合**，原文
+`.tower/comms/inbox/20260919-tower-worker-lightbox-impl-clarify-reply-m184-a-c-chromium-alex.md`）：
+**行为判别层由 chromium 断言组承担**（第 5 节；反向验证先红后绿），**真机侧留人工清单**给 Alex 的
+dogfood 手感项 [manual-acceptance-checklist.md](manual-acceptance-checklist.md)。第 6 节各条按
+「真机通道不可达，未做」标注，**不勾选、不冒称**——一个只验前置条件的场景会让人误读为「真机验过」
+（[REVIEW.md](../../../REVIEW.md) 第 6 条）；曾按验收口径写好的场景 `24-image-lightbox` 与四个 fixture
+已从工作区撤下（**未落库**）。证据根目录：`test-results/m184/` 与 `test-results/acceptance/2026-09-19/`
+（本机，git 外）。
 
 ## 1. 现状读数与反向验证（实现前，先测再改）
 
@@ -246,28 +252,32 @@ delta 与本文档均不改写；2.6 与 5.6 按推荐项（适配遮罩且不�
       **验收口径**：`node scripts/acceptance/run.mjs --check` 静态校验 PASS；`run.mjs 23` 真机 PASS，
       证据落 `test-results/acceptance/<日期>/23-image-lightbox/`（`status.txt` = PASS、`steps.md`
       断言逐条可读）。
-      **实现记录（M184）：通道不可达，未做（不勾选）。** 编号按裁决记的 **24**（23 已被 M182 占用）。
-      按本节验收口径写好的场景（含「占位双击无反应」的控制组设计）跑了两轮真机，双击路径全部落空；
-      随后用四条通道做对照实验，结论是**套件在 WKWebView 里造不出 DOM 的 `dblclick`**（判据取既有行为
-      「双击文件树行 = 新建固定标签」：四条通道下标签数都停在 1，而同一点位的单次点击证明落点准确）：
-      `test-results/m184/13`～`/17`（详情与通道清单见 `scripts/acceptance/README.md` 的「已知边界」新增条目
-      与 finding `.tower/comms/findings/20260919-worker-lightbox-impl-improve-dom-dblclick-wkwebview.md`）。
-      因此场景与 fixture **未落库**（只验前置条件的场景会让人误读为「真机验过」，REVIEW.md 第 6 条）；
-      已把边界写进套件的 canonical 居所，并请 tower 裁决收口方式（clarify-request 已发：接受 chromium 层
-      覆盖 + 人工双击清单 / 先补通道能力 / Alex 手工验收）。
+      **实现记录（M184）：真机通道不可达，未做（不勾选、不冒称）。** 四条通道实测记录：
+      `test-results/m184/13`～`/17`（坐标 `count: 2` / AX 索引 `count: 2` / 两次独立 click /
+      `drag_paths` 两条单点路径；判据取既有行为「双击文件树行 = 新建固定标签」，四条都停在 1 个标签，
+      而同一点位的单次点击证明落点准确）；finding 指针：
+      `.tower/comms/findings/20260919-worker-lightbox-impl-improve-dom-dblclick-wkwebview.md`
+      （通道清单 + 复现配方 + 建议修法），canonical 居所另有 `scripts/acceptance/README.md` 的「已知边界」条目。
+      **场景与 fixture 未落库**：按本节验收口径写好的场景（`24-image-lightbox`，编号按裁决记 **24**——
+      23 已被 M182 占用）跑了两轮真机、双击路径全部落空后随 fixture 一并从工作区撤下（只验前置条件的场景
+      会让人误读为「真机验过」，REVIEW.md 第 6 条）。tower 裁决（2026-09-19，A+C 组合，原文
+      `.tower/comms/inbox/20260919-tower-worker-lightbox-impl-clarify-reply-m184-a-c-chromium-alex.md`）：
+      行为判别层由 chromium 断言组承担（第 5 节），真机侧留
+      [manual-acceptance-checklist.md](manual-acceptance-checklist.md) 给 Alex 的 dogfood 手感项。
 - [ ] 6.2 场景 fixture 落 `scripts/acceptance/fixtures/`（可复用既有 `image-fallback-normal.svg` /
       `image-fallback-percent.svg`，必要时补一份小图位图），与 md 一起进合成 vault。
       **验收口径**：场景 PASS 且 fixture 在 `fixtures:` 里逐条列名；断言遵守「不可读一律 FAIL」
       （[REVIEW.md](../../../REVIEW.md) 第 2 条），MUST NOT 写「读不到该文本即通过」式的负向空转。
-      **实现记录（M184）：未做（随 6.1 撤下）**。曾生成并跑过的 fixture（`image-lightbox.md` 占位在第一行
-      的可点击布局、`image-lightbox-control.md` 同点位的正对照、`image-lightbox-wide.svg` 2000×600、
+      **实现记录（M184）：未做（随 6.1 撤下，未落库）**。曾生成并跑过的 fixture（`image-lightbox.md` 占位在
+      第一行的可点击布局、`image-lightbox-control.md` 同点位的正对照、`image-lightbox-wide.svg` 2000×600、
       `image-lightbox-small.png` 120×90）已从工作区删除——它们的价值是「用同一点位给占位负向断言做正对照」
       这个设计，已写进上述 finding 供通道就绪时复用。
 - [ ] 6.3 真机反向验证：把双击路径临时去掉（或回退到实现前代码）跑同一场景，断言必须 FAIL
       （遮罩不出现 / AXImage 几何断言失配）。
       **验收口径**：FAIL 的 `status.txt` 与 `steps.md` 留档；没有这一步的 PASS 不算数。
-      **实现记录（M184）：未做（随 6.1 撤下）**——没有可跑的真机场景，这一步无从谈起。等效的反向验证在
-      chromium 层完成（1.2 的整组红）。
+      **实现记录（M184）：真机通道不可达，未做（不勾选、不冒称）**——没有可跑的真机场景（6.1 未落库），
+      这一步无从谈起；四条通道的实测记录与 finding 指针同 6.1。等效的反向验证在 chromium 层完成
+      （1.2 的整组红：`test-results/m184/09-red-authoritative.log`）。
 - [ ] 6.4 与 AGENTS.md 的维护权一致：新功能 mission 的 tasks 必带「新增/更新验收场景」，本 change 的
       实现 PR 必须同时含 6.1–6.2。
       **验收口径**：实现 PR 的文件列表里同时出现场景 md 与 fixture。
@@ -310,9 +320,14 @@ delta 与本文档均不改写；2.6 与 5.6 按推荐项（适配遮罩且不�
 - [ ] 8.3 真机套件至少跑一次新增场景并留档（AGENTS.md：dogfood 批次合并后、Alex 验收前先跑一遍）。
       **验收口径**：`test-results/acceptance/<日期>/summary.md` 里本场景为 PASS；报告里给可 `ls` 的
       绝对路径指针。
-      **实现记录（M184）：未做（通道不可达，见 6.1）**。真机批次跑了 6 次（两轮场景 + 四轮通道对照），
-      场景那两轮 FAIL 的原因不是产品缺陷（同点位的单次点击正常），证据
-      `test-results/m184/11`、`/12`、`/13`～`/17`。
+      **实现记录（M184）：真机通道不可达，未做（不勾选、不冒称）**。四条通道实测记录
+      `test-results/m184/13`～`/17` + finding 指针
+      `.tower/comms/findings/20260919-worker-lightbox-impl-improve-dom-dblclick-wkwebview.md`（同 6.1）。
+      真机批次实际跑了 6 次（两轮场景 + 四轮通道对照）：场景那两轮 FAIL 的原因不是产品缺陷（同一点位的
+      单次点击正常切换文档），证据 `test-results/m184/11`、`/12`；`test-results/acceptance/2026-09-19/`
+      下的 `24-image-lightbox/` 与 `probe-dblclick-channel/` 是这两轮的失败留档（场景本身未落库）。
+      **真机侧改由 [manual-acceptance-checklist.md](manual-acceptance-checklist.md) 承接**（tower 裁决
+      A+C：chromium 判别层 + Alex 人工清单）。
 - [x] 8.4 `git diff --check` 通过；改动文件集合与本 change 的 Impact 清单一致（出现跨 scope 的只读
       依赖须先报 tower 批准）。
       **验收口径**：改动集合 = `src/lightbox.ts`（新）/ `src/preview/attachments.ts` /
