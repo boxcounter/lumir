@@ -229,6 +229,24 @@
 
 ### 验收套件（M144 实测出的表达力缺口）
 
+- **真机套件造不出 DOM 的 `dblclick`（四条注入通道实测），双击类交互无法在真机层驱动**（M184 finding，
+  worker-lightbox-impl，2026-09-19，high，**待修**）：坐标 `count: 2`、AX 索引 `count: 2`（AXPress ×2）、
+  两次独立 `click`、`drag_paths` 两条单点路径——四条通道下「双击文件树行 = 新开固定标签」的对照判据都
+  停在 1 个标签，而同一点位单次点击正常 ⇒ 落点准确、缺的是 clickCount。影响面：以 dblclick 为唯一打开
+  路径的交互（M184 图片放大查看）无法在真机层验收，M184 因此按裁决 A+C 收口（chromium 层判别 + Alex
+  人工清单）。修法（按优先级）：① KimiCU 侧给 `click` 加 clickCount 控制（`kCGMouseEventClickState = 2`
+  一次性投递），用该 finding 的对照实验验证；② 在此之前真机层不覆盖双击类交互，人工补验（README
+  「已知边界」已记）。附带：`lib/cu.mjs` 里 M184 期遗留的 `doubleClick` 包装（造不出 dblclick 的死代码）
+  随本条一并处置。finding
+  `.tower/comms/findings/20260919-worker-lightbox-impl-improve-dom-dblclick-wkwebview.md`（含四条通道
+  复现配方，现场 `test-results/m184/13`～`/17`）。
+- **`ax.mjs` 的 `parseNodes` label 提取被嵌套括号截断，按名定位图片节点永远匹配不上**（M184 finding，
+  worker-lightbox-impl，2026-09-19，medium，**待修**）：`scripts/acceptance/lib/ax.mjs:47` 用
+  `/\(([^)]*)\)/` 取 label，遇嵌套括号截在第一个 `)`；图片节点的 AX label 恰好是整条 Markdown 引用原文
+  `![alt](path)`，被截成缺右括号形态，`target.name` 照原文写（含 `\)`）永远报「找不到带 bbox 的节点」。
+  `ax: has/count` 类断言不受影响（匹配 dump 全文，不经 `label`）。修法：label 提取换成允许一层嵌套的
+  形态（`/\(((?:[^()]|\([^()]*\))*)\)/`），改完逐条核现有场景的 `target.name`（带 `^…$` 锚点的优先）。
+  finding `.tower/comms/findings/20260919-worker-lightbox-impl-bug-acceptance-parsenodes-label-alt.md`。
 - **场景证据目录跨 run 不清空，`ax/` 与 `shots/` 累积→读 dump 无法分辨新旧**（M182 finding，
   worker-img-width-fix，2026-09-18，medium，**待修**）：`scripts/acceptance/lib/evidence.mjs:30-37` 的
   `startScenario` 只 `mkdirp`，不清理上一次 run 的 `ax/` 与 `shots/`；同一天重复跑同一场景（迭代调试的
