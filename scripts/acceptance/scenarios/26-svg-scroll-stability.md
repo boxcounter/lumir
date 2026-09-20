@@ -65,10 +65,13 @@ steps:
   base64 + 解码）。本套件读不到 `scrollTop`（见 `14-tabs.md` 的说明），每个断言的采样间隔（一次
   MCP 往返，数百毫秒）也远长于该窗口——**采样落在瞬态之后，所以本场景在修复前后都是绿的**，
   它的价值是终态回归护栏，不是本修复的判别性验证。
-- **判别性验证在哪**：chromium 通道（真 app + 桩后端 + 滚轮驱动 + 逐帧采样 scrollTop）。M187 的
-  探针实测：修复前「非用户输入的 scrollTop 变化」1 次 / 最坏 465px；修复后 0 次 / 最坏 0px；
-  正向滚动两态都是 0（与用户「快滚不触发、正向不触发」的报告一致）。探针脚本与逐条输出留档
-  `test-results/m187/`（git 外）。
+- **判别性验证在哪**：chromium 通道的**常驻属性测试**
+  [tests/visual/scenes/m187-image-scroll-stability.spec.ts](../../../tests/visual/scenes/m187-image-scroll-stability.spec.ts)
+  ——逐帧采 `scrollTop` + 输入事件时间戳，判「非用户输入引起的滚动位移」，驱动扫正向快滚（控制组）、
+  倒序慢滚、倒序快滚、翻屏键 ⌥V 与窄图重建路径。该文件在 master 上两条用例都 FAIL（最坏 532px /
+  60px，读数见 [docs/specs/image-reading.md](../../../docs/specs/image-reading.md) §6），修复后 0 次 / 0px；
+  红绿原样输出留档 `test-results/m187/`。**本场景与它分工**：它守瞬态（chromium 近似），本场景守
+  真机终态（WKWebView）。
 
 ## 驱动与落点的口径
 

@@ -263,16 +263,17 @@ test("倒序经过窄定尺寸图片：预留不动包装盒宽度、不拉伸�
   await installRecorder(page);
   await page.mouse.move(640, 400);
 
-  // 预热（不测量）：直接到底——图片早已渲染过一次（几何进会话记忆）且滚出渲染视口被销毁。
-  await page.evaluate(() => {
-    const scroller = document.querySelector(".cm-scroller") as HTMLElement;
-    scroller.scrollTop = scroller.scrollHeight;
-  });
-  await page.waitForTimeout(400);
+  // 预热（不测量）：分步正向滚过图片——它被渲染并加载（几何进会话记忆），随后滚出渲染视口被
+  // 销毁。用分步而不是一次跳到底：一次跳越可能让图片整段落在渲染视口之外，从头到尾没被渲染，
+  // 重建路径就没被走到（下面的读取次数自检会因此 FAIL——这是有意留的自检，不是放宽）。
+  await wheelSteps(page, 100, 16, 180);
+  await expect(page.locator(".cm-lp-image img")).toHaveCount(0);
   await resetRecorder(page);
 
-  // 倒序慢滚回来：图片重建，走「窄图钉宽度」那条预留分支。
-  await wheelSteps(page, -60, 30, 120);
+  // 倒序慢滚回来并停在图片处：图片重建，走「窄图钉宽度」那条预留分支。步间隔取 320ms
+  //（> 2× 字节到达延迟 120ms）：否则字节到达引发的位移会落在下一步滚轮的 ±40ms 邻域里被当成
+  // 输入，判据空转。
+  await wheelSteps(page, -60, 24, 320);
   expectNoSelfMovement(await movements(page), "倒序慢滚（窄图）");
 
   const reads = await readCounts(page);
