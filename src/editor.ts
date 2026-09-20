@@ -22,6 +22,8 @@ import { findMathSpans } from "./preview/math";
 import type { MathSpan } from "./preview/math";
 import { findTables, tableAt } from "./preview/table";
 import type { TableModel, TableRow } from "./preview/table";
+import { cellClamp, cellContentEdge } from "./cell-geometry";
+import type { CellClamp } from "./cell-geometry";
 import { createInvokeAttachmentProvider, codeLanguage, extensionOf, fileClass } from "./preview/attachments";
 import type { AttachmentProvider } from "./preview/attachments";
 import { LANGUAGES, TOKEN_GROUPS } from "./preview/code";
@@ -418,13 +420,8 @@ function dockable(view: EditorView, pos: number): boolean {
   return coords !== null && !coordsDegenerate(coords);
 }
 
-/** grid 表格 cell 内容右缘：cell 内容区（cellClamp 给出的 slot）去掉尾部对齐空白后的位置。 */
-function cellContentEdge(state: EditorState, pos: number): { from: number; to: number } | null {
-  const cell = cellClamp(state, pos);
-  if (!cell) return null;
-  const text = state.doc.sliceString(cell.from, cell.to);
-  return { from: cell.from + (text.length - text.trimStart().length), to: cell.from + text.trimEnd().length };
-}
+// cell 归属与 cell 内容区间（含 M168/M185 的 ⌃E 落点口径）在 src/cell-geometry.ts——纯位置判定，
+// 单独立模块是为了让 tests/unit 那一层能直接加载并驱动它（editor.ts 的 import 图 strip-only 加载不了）。
 
 /** 行首 / 行尾落点（含隐藏 replace 退化回退）。
  *  moveToLineBoundary 取文本行边界（硬边界，段落语义，不受软换行截断）；落点藏进隐藏
@@ -504,28 +501,6 @@ function moveCaretToLineStart(view: EditorView): boolean {
 // 零宽 replace，跨过去删除即破坏表格结构（M129 survey 实证），故所有编辑命令先取所在 cell
 // 的可见内容区间，再在其中取步长。
 // ---------------------------------------------------------------------------
-
-/** 光标所在 grid 表格 cell 的可见内容区间；落点在行内但不在 cell 内容区（隐藏管道符区 /
- *  行首尾）时 `inside` 为 false，命令据此不动文档。不在 grid 表格行内返回 null——非矩形与
- *  降级表按原始 Markdown 渲染（管道符可见），不参与钳制。 */
-interface CellClamp {
-  from: number;
-  to: number;
-  inside: boolean;
-}
-
-function cellClamp(state: EditorState, pos: number): CellClamp | null {
-  const tree = ensureSyntaxTree(state, pos, 25) ?? syntaxTree(state);
-  const tables = findTables((s, e) => state.doc.sliceString(s, e), state.doc.length, tree, pos, pos)
-    .filter((t) => t.rectangular && !t.degraded);
-  const table = tableAt(tables, pos);
-  if (!table) return null;
-  const row = table.rows.find((r) => pos >= r.from && pos <= r.to);
-  if (!row || row.slots.length === 0) return null;
-  const slot = row.slots.find((s) => pos >= s.from && pos <= s.to)
-    ?? (pos < row.slots[0].from ? row.slots[0] : row.slots[row.slots.length - 1]);
-  return { from: slot.from, to: slot.to, inside: pos >= slot.from && pos <= slot.to };
-}
 
 /** 编辑命令的可见边界：表格 cell 内用 cell 内容区间，表格外用整篇文档。 */
 function editLimits(state: EditorState, pos: number): { from: number; to: number; clamp: CellClamp | null } {

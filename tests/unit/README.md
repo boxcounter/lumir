@@ -18,6 +18,7 @@ node tests/unit/run.mjs     # = pnpm test
 | `src/keys.ts` | token 归一化（别名 / 定序 / Shift 隐含符号）、`keyToken` 的事件口径（含 Alt 按物理键判定）、键位表的不变量（token 唯一、作用域与命令组一致、⌘1–9 与 `TAB_GOTO_IDS` 一一对应）、分发器（作用域 / `when` / 已消费让路 / IME / chord 超时 / 缺实现抛错）、`applyKeyOverrides` 的重绑与 warning |
 | `src/save-controller.ts` | dirty 守卫三分支、保存成功 / 冲突 / 目标被外部删除、自动保存 debounce 与崩溃备份、外部修改分流（clean / dirty / deleted）、另存为逃生口、世代号、诊断埋点跃迁去重 |
 | `src/lightbox.ts` | 图片放大查看的遮罩状态机（M184）：打开的动作顺序（载入 → 显示 → 持焦）、`Esc` 的就地消费、三条用户关闭路径都交还焦点 / 焦点兜底不抢焦点、已关闭后的迟到关闭是空操作 |
+| `src/cell-geometry.ts` | grid 表格 cell 归属与 ⌃E 落点口径（M185）：形态矩阵下的 `cellContentEdge`（cell 右边界位按前向归属 / 内容紧贴管道符 / 下一 cell 空 cell 或短行补空列 / 末 cell / 多空格对齐空白）、边界位上的两套归属（编辑命令按本 cell 的 `inside`+`next`，⌃E 按前向）、落点幂等、非 grid 表返回 null。⌃F 的落点（= 隐藏管道符左缘）由 chromium 实测提供，view 侧的「可停靠」回退不在本层 |
 
 不在这一层：DOM 交互、CodeMirror view、渲染与布局（归 `tests/visual`）、真实 WKWebView
 下的行为（归 `scripts/acceptance`）。真 `EditorView` 需要 DOM，硬造只会得到一层假实现，
