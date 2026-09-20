@@ -248,6 +248,84 @@ export function imageFallbackWidth(box: ImageBox, natural: ImageBox): number | n
   return imageVisible(natural) ? natural.width : null;
 }
 
+// ---------------------------------------------------------------------------
+// 替换区尺寸的记忆与预留（M187）
+//
+// 缺陷现场：live preview 的装饰层只为渲染视口内的行建 widget（livePreview.ts 的视口增量），
+// 行滚出渲染视口后 widget 被销毁。再次滚回来时 widget 从零重建——重建瞬间 DOM 里只有一行
+// 「加载中…」文本，而 CM 的高度图里这个行块仍是上一次测得的整张图片高度。两个高度差一条
+// 图片的差值，CM 的滚动锚定（`measure()` 的 scrollAnchorHeight 校正）如实把它翻译成一次
+// scrollTop 位移：正文被推开一条图片的高度，字节到达后又被推回来。倒序慢滚经过图片时因此
+// 出现「正文向下跳一下再弹回」；当图片底边正好压在正文区顶部（锚点落在该行块内）时，校正
+// 无从抵消，用户看到的就是正文整体跳走、随后弹回原位——详见 docs/specs/image-reading.md §5。
+//
+// 落点：把「上次渲染出的替换区几何」按引用键记在会话内，重建时在字节到达前就按它把行高撑起来。
+// 预留用 CSS 的比例式表达（`aspect-ratio` + 必要时 `max-width`），不写死像素高度：高度由浏览器
+// 按当前栏宽算出，窗口变化后依然等于终态高度。预留样式挂在一个空的块级占位元素上（它挂进包装盒
+// 里，包装盒自己的布局盒不动——M182 的宽度不变量拿包装盒当判据面）。
+// ---------------------------------------------------------------------------
+
+/** 重建时的预留样式：`aspectRatio` = 图片宽高比；`maxWidth` = 窄于栏宽的图片要钉住的宽度（px），
+ *  `null` 表示不钉、让预留盒包住栏宽（两族的宽度规则见 §1）。 */
+export interface ImageReserve {
+  readonly aspectRatio: number;
+  readonly maxWidth: number | null;
+}
+
+/** 替换区的渲染几何：`box` = 上次渲染出的图片布局盒，`column` = 那次渲染时的正文栏宽。 */
+export interface ImageGeometry {
+  readonly box: ImageBox;
+  readonly column: number;
+}
+
+/**
+ * 由上次渲染几何推出重建时的预留样式；几何不可用（零/负尺寸）时返回 null（不预留，走
+ * 加载中状态的自然高度）。
+ *
+ * 窄图（上次渲染比栏宽窄）要把预留盒钉在那一档宽度上：这类引用的显示宽度是**图片自身的
+ * 宽度**（§1 第一族），只给比例不给上限时预留盒会按栏宽算高度、比终态高一截。贴满栏宽的
+ * 引用（含只声明 `viewBox` / 百分比宽的矢量图）反过来不能钉：它们的显示宽度就是栏宽，
+ * 钉死会把窗口变宽后的显示宽度锁在旧值上（M182 的宽度不变量）。
+ *
+ * 判据只用「上次渲染坐标」与「那次渲染时的栏宽」，MUST NOT 用自然尺寸信号推断显示宽度
+ * （该形态下 `naturalWidth` 是引擎的默认对象尺寸，§1 第二族）。
+ */
+export function imageReserve(geometry: ImageGeometry): ImageReserve | null {
+  const { box, column } = geometry;
+  if (!imageVisible(box)) return null;
+  const narrow = column > 0 && box.width < column - 1;
+  return { aspectRatio: box.width / box.height, maxWidth: narrow ? box.width : null };
+}
+
+/** 引用键 → 上次渲染几何。作用域是本会话（模块生存期）：切窗口 / 切文档都保留，
+ *  下次重建同一个引用时直接可用。 */
+const geometryCache = new Map<string, ImageGeometry>();
+
+/** 缓存上限：只存两个数字，代价可忽略；限长只为「不无限增长」这一条。 */
+const GEOMETRY_CACHE_LIMIT = 256;
+
+/** 记下某引用的渲染几何（同键覆盖，超限淘汰最早的一条）。 */
+export function rememberGeometry(key: string, geometry: ImageGeometry): void {
+  geometryCache.delete(key);
+  geometryCache.set(key, geometry);
+  while (geometryCache.size > GEOMETRY_CACHE_LIMIT) {
+    const oldest = geometryCache.keys().next().value;
+    if (oldest === undefined) break;
+    geometryCache.delete(oldest);
+  }
+}
+
+/** 某引用的已知渲染几何；没有（本会话还没渲染过 / 已被失效）返回 undefined。 */
+export function knownGeometry(key: string): ImageGeometry | undefined {
+  return geometryCache.get(key);
+}
+
+/** 失效某引用的几何：字节读不到、终态不可见（图片可能已被换掉）时用——留着它会让重建时
+ *  按旧尺寸预留一块空间，而终态是占位块。 */
+export function forgetGeometry(key: string): void {
+  geometryCache.delete(key);
+}
+
 /** 双击终态渲染出的图片时的接线口（拿到那张 `<img>` 与原始引用文本）。未接线（无 lightbox
  *  句柄的纯桩 / 单测）时不传——图片因此没有双击路径，与 attachmentProvider 未接线即走占位同一口径。 */
 export type ImageOpenHandler = (img: HTMLImageElement, rawRef: string) => void;
@@ -284,18 +362,44 @@ export class ImageWidget extends WidgetType {
     // 内联 replace widget（块级 widget 不允许由插件装饰提供），根元素用 span。
     const wrap = document.createElement("span");
     wrap.className = "cm-lp-image";
-    // 加载中状态先落地、直到终态确认才撤：整条源码已被 replace 装饰藏起来，任何
-    // 「先清空、再插入」的中间态都会让替换区出现可见空窗（spec 的可见回退不变量）。
+    // M187：本引用若已渲染过（几何在会话缓存里），先用一个空的占位元素把空间撑到终态尺寸，
+    // 再落加载中状态。重建瞬间的行高因此与终态一致，CM 的高度图不会突变、滚动锚定也就不会
+    // 推移正文（机制与现场见本文件「替换区尺寸的记忆与预留」节与 docs/specs/image-reading.md §5）。
+    //
+    // 预留样式挂在**子元素**上而不是包装盒上：包装盒的布局盒是 M182 宽度不变量的判据面
+    //（首开 / 重开两态必须逐项一致），把 `max-width` 加到包装盒上会让窄图的两态宽度不同
+    //（首开按栏宽、重开按自身宽度）。占位元素与图片同尺寸，包装盒的盒子两态一致。
+    const known = knownGeometry(this.key);
+    const reserve = known ? imageReserve(known) : null;
     const status = document.createElement("span");
     status.className = "cm-lp-image-status";
     status.textContent = imageLoadingText(this.rawRef);
+    const placeholder = document.createElement("span");
+    placeholder.className = IMAGE_RESERVE_CLASS;
+    if (reserve) {
+      applyReserve(placeholder, reserve);
+      // 加载中状态移出正常流：留在流里会给包装盒塞进行盒、把 inline-block 的基线挪到文本
+      // 基线上，与终态（块级图片 → 基线在盒子底边）差几像素（M187 探针实测 8px）。
+      wrap.style.position = "relative";
+      status.style.position = "absolute";
+      status.style.insetInlineStart = "0";
+      status.style.insetBlockStart = "0";
+      wrap.append(placeholder);
+    }
+    // 加载中状态先落地、直到终态确认才撤：整条源码已被 replace 装饰藏起来，任何
+    // 「先清空、再插入」的中间态都会让替换区出现可见空窗（spec 的可见回退不变量）。
     wrap.append(status);
 
     const boxOf = (el: Element): ImageBox => {
       const rect = el.getBoundingClientRect();
       return { width: rect.width, height: rect.height };
     };
-    const fallback = () => wrap.replaceChildren(errorChip(imageFallbackText(this.rawRef)));
+    // 终态不是图片（读取失败 / 解码不可见 / 零尺寸）时，预留随之作废：预留元素与状态块一并
+    // 撤掉（占位块要紧凑），并失效缓存（那张图可能已被换掉，留着会按旧尺寸预留）。
+    const fallback = () => {
+      forgetGeometry(this.key);
+      wrap.replaceChildren(errorChip(imageFallbackText(this.rawRef)));
+    };
 
     this.load().then(
       (src) => {
@@ -327,8 +431,14 @@ export class ImageWidget extends WidgetType {
           if (settled) return;
           settled = true;
           status.remove();
-          if (imageVisible(boxOf(img))) return;
-          const width = imageFallbackWidth(boxOf(img), {
+          placeholder.remove();
+          const box = boxOf(img);
+          if (imageVisible(box)) {
+            // 记下这次渲染的几何（含当时的栏宽），供本次会话内后续重建预留空间（M187）。
+            rememberGeometry(this.key, { box, column: columnOf(wrap, box.width) });
+            return;
+          }
+          const width = imageFallbackWidth(box, {
             width: img.naturalWidth,
             height: img.naturalHeight,
           });
@@ -345,12 +455,32 @@ export class ImageWidget extends WidgetType {
         }
       },
       (e: unknown) => {
+        forgetGeometry(this.key);
         wrap.replaceChildren(errorChip(imageReadErrorText(this.rawRef, errorMessage(e))));
       },
     );
     return wrap;
   }
 }
+
+/** 应用预留样式到一个空的块级占位元素：比例给高度（随栏宽自动等于终态高度），上限给窄图的
+ *  宽度档位。它是包装盒里唯一的常规流内容，所以它的盒子就是重建瞬间的行高。 */
+function applyReserve(placeholder: HTMLElement, reserve: ImageReserve): void {
+  placeholder.style.display = "block";
+  placeholder.style.aspectRatio = String(reserve.aspectRatio);
+  if (reserve.maxWidth !== null) placeholder.style.maxWidth = `${reserve.maxWidth}px`;
+}
+
+/** 正文栏宽 = 替换区所在行的宽度（包装盒自己是 `width: 100%`，量不出比它更外层的栏宽）；
+ *  行量不到（脱离文档的桩）时退回替换区自身的宽度。 */
+function columnOf(wrap: HTMLElement, fallback: number): number {
+  const line = wrap.parentElement?.getBoundingClientRect().width ?? 0;
+  return line > 0 ? line : fallback;
+}
+
+/** 预留占位元素的类名（样式全部内联：尺寸逐引用不同，theme.ts 里不设规则；类名留给
+ *  排查时在 DOM 上认元素）。 */
+const IMAGE_RESERVE_CLASS = "cm-lp-image-reserve";
 
 function errorChip(text: string): HTMLElement {
   const chip = document.createElement("span");
