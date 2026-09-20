@@ -261,6 +261,14 @@ const switcher: VaultSwitcherHandle = createVaultSwitcher({
   requestAdd: () => requestAddVault(),
   requestRelocate: (row, siblings) => guardVaultSwitch(() => requestRelocate(row, siblings)),
   expanded: (expanded) => tree.setVaultEntryExpanded(expanded),
+  // 收起浮层后把焦点交还编辑器（M186）：这三条一起构成「交还焦点 MUST NOT 改变阅读位置」。
+  // 滚动位置只存在于 scrollDOM、不属于 CM state。把焦点放进编辑器是**浏览器**接管的视口动作
+  //（聚焦时保证光标可见），本应用左右不了它何时发生——用户「滚着读」时光标停在别处，那一刻就
+  // 可能把整篇正文拽回光标处（表现为跳回篇首）。这里不预测它，只在前后把位置守住：先取快照、
+  // 聚焦之后再写回。取 / 写都走 CM 自己的滚动快照通道（与切标签恢复滚动位置同一份实现）：
+  // 直接写 scrollDOM.scrollTop 会被滚动锚点维护改掉（M149 实测差 242px）。
+  readingPosition: () => editor.view.scrollSnapshot(),
+  restoreReadingPosition: (snapshot) => editor.view.dispatch({ effects: snapshot }),
   focusEditor: () => editor.view.focus(),
   getSession: (vaultId) => vaultSessionGet(vaultId),
   putSession: (vaultId, paths, active) => vaultSessionPut(vaultId, paths, active),
