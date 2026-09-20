@@ -430,6 +430,11 @@ export class ImageWidget extends WidgetType {
         const settle = () => {
           if (settled) return;
           settled = true;
+          // 行已被渲染视口淘汰（widget 的 DOM 已脱离文档）时不量、不判、不写缓存：脱离文档的
+          // getBoundingClientRect 恒为 0×0，量出来的「不可见」是假象——当真走占位路径还会
+          // **把已缓存的几何误删**，下一次重建退回冷启动那条位移（M187 属性测试实测 532px：
+          // 正向滚过的图片在字节到达前就被淘汰，settle 对脱离文档的 DOM 判成「不可见」）。
+          if (!wrap.isConnected) return;
           status.remove();
           placeholder.remove();
           const box = boxOf(img);
@@ -449,9 +454,12 @@ export class ImageWidget extends WidgetType {
         wrap.append(img);
         img.src = src;
         // data: URL 常在赋 src 后**同步** complete：不补一次探测就等不到 load 事件的终态处置。
+        // 同步完成时把 settle 推到微任务：CM 在同一次同步执行里把 widget 的 DOM 插进行里
+        //（toDOM 返回后立即挂载），微任务因此能看到「已挂载 / 已被淘汰」的真实状态——上面那条
+        // isConnected 判据靠它区分这两者。
         if (img.complete) {
           if (img.naturalWidth === 0) img.onerror(new Event("error"));
-          else settle();
+          else queueMicrotask(settle);
         }
       },
       (e: unknown) => {

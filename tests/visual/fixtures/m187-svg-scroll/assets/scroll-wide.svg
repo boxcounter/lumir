@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 520" font-family="system-ui, -apple-system, sans-serif">
+  <rect width="720" height="520" fill="#eef2f7" stroke="#1e3a5f" stroke-width="2"/>
+  <text x="24" y="48" font-size="26" fill="#1e3a5f">m187 wide fixture</text>
+  <text x="24" y="84" font-size="15" fill="#4b5563">只声明 viewBox：固有尺寸不确定，按栏宽填充</text>
+  <rect x="24" y="112" width="672" height="112" fill="#dbeafe"/>
+  <rect x="24" y="244" width="672" height="112" fill="#dcfce7"/>
+  <rect x="24" y="376" width="672" height="112" fill="#fee2e2"/>
+</svg>
