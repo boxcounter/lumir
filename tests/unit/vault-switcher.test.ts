@@ -10,7 +10,7 @@ import assert from "node:assert/strict";
 import type { FsEntry } from "../../src/bindings/FsEntry.ts";
 import type { VaultListEntry } from "../../src/bindings/VaultListEntry.ts";
 import type { VaultSession } from "../../src/bindings/VaultSession.ts";
-import type { EditorSession } from "../../src/editor.ts";
+import type { EditorSession, ScrollSnapshot } from "../../src/editor.ts";
 import type { ToastAction, VaultSwitchBlock } from "../../src/save-controller.ts";
 import {
   SESSION_WRITE_DEBOUNCE_MS,
@@ -788,6 +788,16 @@ interface SwitcherRig {
   expandedFlags: boolean[];
   focusedEditor: number;
   warns: string[];
+  /** 编辑器替身：阅读位置（滚动值语义）+ 光标位置 + 三条 dep 的调用次序。 */
+  editor: {
+    /** 当前阅读位置。 */
+    scrollTop: number;
+    /** 光标在阅读面上的位置：环境替身在聚焦时把视口揭示到这里。 */
+    caretTop: number;
+    calls: string[];
+  };
+  setScrollTop(value: number): void;
+  setCaretTop(value: number): void;
 }
 
 function createSwitcherRig(rows: VaultListEntry[]): SwitcherRig {
@@ -795,6 +805,7 @@ function createSwitcherRig(rows: VaultListEntry[]): SwitcherRig {
   const mounts = new FakeEl("div");
   const entry = new FakeEl("button");
   let notify: ((rows: VaultListEntry[]) => void) | null = null;
+  const editor = { scrollTop: 0, caretTop: 0, calls: [] as string[] };
   const rig: SwitcherRig = {
     switcher: undefined as unknown as ReturnType<typeof createVaultSwitcher>,
     doc,
@@ -808,6 +819,9 @@ function createSwitcherRig(rows: VaultListEntry[]): SwitcherRig {
     expandedFlags: [],
     focusedEditor: 0,
     warns: [],
+    editor,
+    setScrollTop: (value) => void (editor.scrollTop = value),
+    setCaretTop: (value) => void (editor.caretTop = value),
   };
   rig.switcher = createVaultSwitcher({
     mount: mounts as unknown as HTMLElement,
@@ -823,7 +837,22 @@ function createSwitcherRig(rows: VaultListEntry[]): SwitcherRig {
     requestAdd: () => void (rig.added += 1),
     requestRelocate: (row, siblings) => void rig.relocated.push({ row, siblings }),
     expanded: (value) => void rig.expandedFlags.push(value),
-    focusEditor: () => void (rig.focusedEditor += 1),
+    readingPosition: () => {
+      editor.calls.push("readingPosition");
+      return { at: editor.scrollTop } as unknown as ScrollSnapshot;
+    },
+    restoreReadingPosition: (snapshot) => {
+      editor.calls.push("restoreReadingPosition");
+      editor.scrollTop = (snapshot as unknown as { at: number }).at;
+    },
+    // 环境替身：聚焦会把视口揭示到光标处（浏览器在聚焦可编辑元素时保证光标可见）。M186 真机
+    // 没复现出这条路径（见场景 25 的「覆盖边界」），替身按它的**可能**行为演出来——产品代码
+    // 必须在聚焦前后守住位置，而不是假定它不会发生。
+    focusEditor: () => {
+      editor.calls.push("focusEditor");
+      rig.focusedEditor += 1;
+      editor.scrollTop = editor.caretTop;
+    },
     getSession: async () => null,
     putSession: async () => {},
     openPinned: async () => true,
@@ -896,6 +925,8 @@ test("浮层：未装载 vault（入口不存在）时打开是无操作", () =>
     requestAdd: () => {},
     requestRelocate: () => {},
     expanded: () => {},
+    readingPosition: () => ({ at: 0 }) as unknown as ScrollSnapshot,
+    restoreReadingPosition: () => {},
     focusEditor: () => {},
     getSession: async () => null,
     putSession: async () => {},
@@ -988,6 +1019,89 @@ test("浮层：↑↓ / ⌃N⌃P 只走可选中行，Enter 切换，当前项�
   assert.equal(rig.focusedEditor, 2);
   // 列表读取失败：只给一条人话提示，不弹空浮层
   assert.deepEqual(rig.warns, []);
+});
+
+// ---------------------------------------------------------------------------
+// 阅读位置不变量（M186）：收起浮层交还焦点 MUST NOT 改变正文阅读位置
+// ---------------------------------------------------------------------------
+//
+// 缺陷现场（Alex 原话）：「打开 vault 列表然后 ESC 收起列表，右栏文档内容区域会自动回到顶部。
+// 期望是不改阅读位置，应该保持在刚才阅读的位置」。位置是**读者**的位置，不是焦点的一部分：
+// 用户用触控板/⌃V 滚着读时光标留在原处（常常还在篇首），而把焦点放进编辑器是浏览器接管的
+// 视口动作（聚焦时保证光标可见），那一刻视口就可能被打回光标处。
+//
+// 这里断的是不变量本身（任意阅读位置 × 任意关闭路径），不是现场那一个案例：环境替身
+//（rig 的 `focusEditor`）按该行为的**可能**形态把视口揭示到光标处——产品代码必须在聚焦前后
+// 守住位置，不依赖它是否真的发生。光标位置也参与扫：光标停在阅读位置之内时揭示本来就是无
+// 副作用的，那种输入下不变量同样必须成立（它不该只在「光标在别处」时才成立）。
+
+/** 收起浮层的三条路径（都走 close(restoreFocus=true)）。 */
+type ClosePath = "escape" | "enter-current" | "toggle";
+
+async function closeVia(rig: SwitcherRig, path: ClosePath): Promise<void> {
+  if (path === "toggle") {
+    rig.switcher.toggle();
+    return;
+  }
+  rig.list().fire("keydown", keydownEvent(path === "escape" ? "Escape" : "Enter"));
+}
+
+/** 打开浮层并等列表渲染完成。 */
+async function openSwitcher(rig: SwitcherRig): Promise<void> {
+  rig.switcher.toggle();
+  await flush();
+}
+
+test("浮层收起：交还焦点前后阅读位置不变（任意阅读位置 × 光标位置 × 关闭路径）", async () => {
+  const readingPositions = [0, 1, 137, 2400, 5000];
+  const caretPositions = [0, 137, 5000]; // 光标在篇首 / 文中 / 文末
+  const paths: ClosePath[] = ["escape", "enter-current", "toggle"];
+
+  for (const scrollTop of readingPositions) {
+    for (const caretTop of caretPositions) {
+      for (const path of paths) {
+        const rig = createSwitcherRig([listRow({ id: "notes", path: "/Users/alex/notes" })]);
+        await rig.switcher.onVaultLoaded("notes", []); // 当前项 = notes
+        await openSwitcher(rig);
+        rig.setScrollTop(scrollTop);
+        rig.setCaretTop(caretTop);
+
+        await closeVia(rig, path);
+
+        const where = `${path}(阅读位置 ${scrollTop} / 光标 ${caretTop})`;
+        assert.equal(rig.popover().hidden, true, `${where}：浮层应已收起`);
+        assert.equal(rig.focusedEditor, 1, `${where}：焦点应交还编辑器`);
+        assert.equal(rig.editor.scrollTop, scrollTop, `${where}：阅读位置不得被改变`);
+        // 次序即口径：快照 MUST 在聚焦之前取——聚焦后取到的是被揭示改过的值，写回等于白写。
+        assert.deepEqual(
+          rig.editor.calls,
+          ["readingPosition", "focusEditor", "restoreReadingPosition"],
+          `${where}：取快照 → 聚焦 → 写回，顺序不得颠倒`,
+        );
+      }
+    }
+  }
+});
+
+test("浮层收起：不接管焦点的收起路径（blur / 点浮层外）不碰阅读位置", async () => {
+  // 这两条路上焦点归用户点的那个东西，不由浮层接管——拿旧位置把视口拽回去反而是越权。
+  for (const close of [
+    (rig: SwitcherRig) => rig.list().fire("blur"),
+    (rig: SwitcherRig) => rig.doc.fire("mousedown", { target: new FakeEl("div") }),
+  ]) {
+    const rig = createSwitcherRig([listRow({ id: "notes", path: "/Users/alex/notes" })]);
+    await rig.switcher.onVaultLoaded("notes", []);
+    await openSwitcher(rig);
+    rig.setScrollTop(1400);
+    rig.setCaretTop(0);
+
+    close(rig);
+
+    assert.equal(rig.popover().hidden, true, "浮层应已收起");
+    assert.equal(rig.focusedEditor, 0, "不接管焦点的路径 MUST NOT 抢焦点");
+    assert.deepEqual(rig.editor.calls, [], "这些路径 MUST NOT 读写阅读位置");
+    assert.equal(rig.editor.scrollTop, 1400);
+  }
 });
 
 test("浮层：点入口不收起（closer 排除入口），点浮层外收起（P2-5）", async () => {

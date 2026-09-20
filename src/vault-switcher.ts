@@ -26,7 +26,7 @@
 import type { FsEntry } from "./bindings/FsEntry";
 import type { VaultListEntry } from "./bindings/VaultListEntry";
 import type { VaultSession } from "./bindings/VaultSession";
-import type { EditorSession } from "./editor";
+import type { EditorSession, ScrollSnapshot } from "./editor";
 // 键位 token 走 keys.ts 的同一份归一化实现：浮层就地消费 ↑↓ / ⌃N⌃P / Enter / Esc 时也要用
 // 统一口径判断按键（自写一份解析是 REVIEW.md 第 8 条那类漂移的温床）。
 import { keyToken } from "./keys";
@@ -511,8 +511,13 @@ export interface VaultSwitcherDeps extends VaultSessionStoreDeps {
   requestRelocate(row: VaultListEntry, siblings: readonly VaultListEntry[]): void;
   /** 同步入口的展开态（`aria-expanded`：入口 DOM 归树模块，展开态归浮层）。 */
   expanded(expanded: boolean): void;
-  /** 焦点交还编辑器（浮层里按 Esc / Enter 关闭后）。 */
+  /** 焦点交还编辑器（浮层里按 Esc / Enter 关闭后）。MUST NOT 改变正文的阅读位置——
+   *  位置由 `readingPosition` / `restoreReadingPosition` 在这一步前后守住，见 handOffFocus。 */
   focusEditor(): void;
+  /** 收起之前的阅读位置（`close` 在聚焦之前取，见 handOffFocus）。 */
+  readingPosition(): ScrollSnapshot;
+  /** 把阅读位置写回（与 readingPosition 同一份通道；装配层注入，本模块不解释它的形状）。 */
+  restoreReadingPosition(snapshot: ScrollSnapshot): void;
 }
 
 export interface VaultSwitcherHandle extends VaultSessionStore {
@@ -648,7 +653,23 @@ class VaultSwitcher implements VaultSwitcherHandle {
     this.open = false;
     this.popover.hidden = true;
     this.deps.expanded(false);
-    if (restoreFocus) this.deps.focusEditor();
+    if (restoreFocus) this.handOffFocus();
+  }
+
+  /** 把焦点交还编辑器，并**保住阅读位置**（M186）。
+   *
+   *  滚动位置是读者的位置，不是焦点的一部分：收起浮层不该让人丢掉刚才读到哪里。顺序本身就是
+   *  口径：
+   *   - 取快照 MUST 在聚焦之前——把焦点放进编辑器是**浏览器**接管的视口动作（聚焦时保证光标
+   *     可见），它一旦把视口移走，聚焦后再取、取到的就是被改过的值（缺陷本身）；
+   *   - 写回走编辑器自己的滚动通道（装配层注入），本模块不解释快照的形状、也不碰 DOM 滚动；
+   *   - 位置本来没动时，写回是一次空动作（同一份快照报回同一处）。
+   *  收起来自 `blur` / 点浮层外（`close(false)`）的不走这里：那条路上焦点归用户点的那个东西，
+   *  不由我们接管，也 MUST NOT 拿旧位置把视口拽回去。 */
+  private handOffFocus(): void {
+    const position = this.deps.readingPosition();
+    this.deps.focusEditor();
+    this.deps.restoreReadingPosition(position);
   }
 
   // -------------------------------------------------------------------------
