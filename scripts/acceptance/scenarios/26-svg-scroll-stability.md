@@ -123,22 +123,27 @@ steps:
   `02-起点.txt` 是 `AXGroup` + 子文本，`05-倒序回来看图.txt` 是 `AXImage … @325,260 735×572`。
 - **同一个状态在不同运行里形状不同**：终态在出生首跑里是 `AXImage … @325,260`，在
   `test-results/m190/26-calibration-runs-2026-09-21/ax/05-倒序回来看图.txt` 与
-  `test-results/m190/26-pass-2026-09-21/ax/04-倒序回来看图.txt` 两次运行里都是 `AXGroup` + 子文本——
-  三处同期的截图（各自的 `shots/04-倒序回来看图.jpeg`）里图片都**画得完整**（贴满栏宽、三色分带齐全、
-  比例正确）。
+  `test-results/m190/26-pass-2026-09-21/ax/04-倒序回来看图.txt` 两次运行里都是 `AXGroup`——三处同期的
+  截图（各自的 `shots/04-倒序回来看图.jpeg`）里图片都**画得完整**（贴满栏宽、三色分带齐全、比例正确）。
+- **换夹具救不了**：试过把夹具 svg 里的 `<text>` 全部去掉（猜「有可读子文本才会被展开成组」），
+  结果**同一次运行里两种形状照样并存**——`26-shape-experiment-textless-svg-2026-09-21/ax/02-大图已渲染.txt`
+  是 `AXImage … @325,516 735×571`，而同一次 run 的终态 `04-倒序回来看图.txt` 仍是 `AXGroup`。所以
+  「换夹具体积 / 去掉文本 / 稳住落点」都稳不住形状，别再试。
 
 ⇒ 形状是 WebKit 的 AX 曝光细节，不是渲染质量的信号，任何以形状为前提的断言都会随机 FAIL。因此本场景
 **只保留与形状无关的在场断言**（`ax.has` 匹配 alt 串，两种形状都命中），并删掉了原先两条形状相关断言：
 
 - `ax: { has: "svg 滚动夹具" }`（借 `20-image-fallback.md` 的规则，原意是证「图真的画出来了」）——
-  只在 `AXGroup` 形状下成立；
+  只在 `AXGroup` 形状下成立；它同时是 backlog M178 finding（`docs/backlog.md`）点名的坏模式**「AX 文本
+  可读 ≠ 元素可见」**的同族写法，删掉它同时消掉这条歧义；
 - `ax: { count: { pattern: "/AXImage … @… w×h/" } }`（宽度 = 栏宽、高度按固有比例）——只在 `AXImage`
-  形状下成立。
+  形状下成立（`26-calibration-runs…` 与 `26-pass…` 两次 run 里终态都是 `AXGroup`，这条会 FAIL）。
 
 **「图渲染完整」因此落在别处判**：chromium 层（M182 的宽度不变量：`23-image-first-open-width` 一族
 + [tests/visual/scenes/m187-image-scroll-stability.spec.ts](../../../tests/visual/scenes/m187-image-scroll-stability.spec.ts)
-的重建路径）、`20-image-fallback.md` 的真机几何读数（那边用的是**不带 `<text>`** 的夹具 svg，其
-`AXImage` 形状在多轮真机 run 里一直稳定）、以及本场景 `shots/` 的截图证据（人可读，Alex 抽审用）。
+的重建路径）、`20-image-fallback.md` 的真机几何读数（那边断言几何用的是**不带 `<text>`** 的夹具 svg，
+其 `AXImage` 形状在历次 run 里稳定——但那不是普遍保证，本场景自己的实验就是反例）、以及本场景 `shots/`
+的截图证据（人可读，Alex 抽审用）。
 
 ## 驱动与落点的口径
 
