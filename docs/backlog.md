@@ -215,10 +215,43 @@
   `tests/visual/scenes/m168-table-cell-line-end.spec.ts` 的形态矩阵可加「slot 右缘本身可停靠」一条。
   立项时机建议随下次表格/光标专项。finding
   `20260918-worker-interaction-fixes-2-bug-display-none-caret-m168.md`。
+- **cell 内容区间公式两处真源**（M185 finding，worker-cell-ctrle，2026-09-21，low）：「cell 可见内容
+  区间 = slot 去掉两侧对齐空白」的算法在 `src/preview/livePreview.ts:386-395`（cell 双击选词）与
+  `src/cell-geometry.ts` 的 `cellContentRange`（M185 新增）各有一份，语义逐字同构但无门禁绑定——
+  REVIEW.md 第 8 条同族；将来任一侧改口径会静默分叉成「双击选词范围与 ⌃E/⌃K 的 cell 内容边界不一致」。
+  修法：装饰层改为 `import { cellContentRange } from "../cell-geometry"`（纯函数、无 view 依赖），删掉
+  本地内联算法。finding `20260921-worker-cell-ctrle-improve-cell-cell-geometry-review-8.md`。
+- **`src/preview/*` 的 10 处构造函数参数属性阻断 unit 层直接 import `src/editor.ts`**（M185 finding，
+  worker-cell-ctrle，2026-09-21，low）：`tests/unit` 是类型剥离（strip-only）运行，遇参数属性这类
+  不可擦除写法直接抛 `ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX`；落点 10 处：`livePreview.ts:69/147/165`、
+  `math.ts:212/239`、`callout.ts:161`、`frontmatter.ts:105`、`lists.ts:12/61`、`mermaid.ts:211`。
+  任何要让 unit 层测 editor.ts 内判定的 mission 都会撞上（M185 的处置是抽纯模块 `src/cell-geometry.ts`
+  绕开）。收敛这 10 处写法后 unit 层可直接 import editor.ts。`tests/unit/tsconfig.json:7-10` 的注释此前
+  自称「已记入 backlog」而实际没有条目——本条即该承诺的兑现。finding
+  `20260921-worker-cell-ctrle-bug-tests-unit-tsconfig-json-backlog-backlog.md`。
 ### shell / 系统
 
 - **退出守卫菜单结构假设**（M101 review）；Dock/系统关机路径不覆盖。
 - **注册表目录 `{id}.json.tmp` 无扩展名过滤会被当注册项解析**（M126 finding；修复时顺带清掉 sweep_registry 对非 .json 文件的写面）。
+- **vault 浮层打开时游标行不会被滚进可视区**（M186 finding，worker-vault-scroll，2026-09-21，low）：
+  `src/vault-switcher.ts` 的 `toggle()` 里 `render()`（内含 `row.scrollIntoView`）先于
+  `popover.hidden = false` 执行，而 `display:none` 子树里 `scrollIntoView` 是空操作；注册表条目多到
+  超过 `.vault-pop` 的 `max-height: 60vh` 时，打开浮层后键盘游标（activeIndex）可能落在可视区外，
+  只剩盲按。同族的 `src/toc.ts:260-261` 明确在可见后补滚一次，vault 切换器没补。修法同款一行：
+  `hidden = false` 之后补一次 `setActive(activeIndex)`；可顺带加一条 registry 条目较多的 acceptance
+  变体。未验证项：只在 Chromium 侧读代码路径，真机没跑过超 60vh 的注册表。finding
+  `20260921-worker-vault-scroll-bug-vault-scrollintoview-hidden.md`。
+- **「交还焦点 MUST NOT 改阅读位置」建议下沉编辑器层**（M186 finding，worker-vault-scroll，
+  2026-09-21，medium，**收敛建议而非已复现缺陷**）：M186 只在 vault 切换器实现了
+  「取滚动快照 → 聚焦 → 写回」，其余四条以 `view.focus()` 交还焦点的路径没有这层保护：
+  `src/toc.ts:367`（大纲 Esc）、`src/search.ts:248`（⌘F 关闭）、`src/main.ts:95`（图片遮罩）、
+  `src/main.ts:480`（⌘/ 键位面板）。**如实标注：这四条路径真机未复现跳动**——场景 25 末尾的对照
+  步骤（⌘/ 与 ⌘F 面板滚到尾部 → 打开 → Esc → 断言渲染行仍在尾部）修前修后都 PASS。值得收的理由：
+  该不变量的触发条件由浏览器接管（聚焦可编辑元素时浏览器保证光标可见），产品代码无法预测何时发生，
+  四处各写一份必然漂移（REVIEW.md 第 8 条）。修法：`src/editor.ts` 暴露
+  `focusPreservingReadingPosition()`（scrollSnapshot → focus → dispatch），四处调用点统一改用，
+  main.ts 的 vault 切换器两个 dep（readingPosition / restoreReadingPosition）可顺带收回；spec 条款措辞
+  收口时上移到编辑器/交互维度。finding `20260921-worker-vault-scroll-idea-must-not-m186-vault.md`。
 
 ### 未复现
 
@@ -229,6 +262,19 @@
 
 ### 验收套件（M144 实测出的表达力缺口）
 
+- **套件缺 `scroll` 动作与页内采样：滚动类缺陷只能用翻屏键近似，亚秒级滚动自校正观察不到**（M187
+  finding，worker-svg-scroll，2026-09-21，medium，**待修**）：`scripts/acceptance/lib/execute.mjs` 的
+  动作表没有 scroll（`lib/cu.mjs:184` 的 MCP scroll 封装未接进场景 DSL），「慢速倒序滚动」在验收层
+  表达不了——M187 只能用 ⌥V 翻屏键近似（每步 600px，等于快滚，而缺陷恰在慢滚时出现）。同时套件
+  读不到 scrollTop、每个断言一次 MCP 往返（数百毫秒），观察不到「重建瞬间行块压缩 → CM 滚动锚定推走
+  → 字节到达推回」这类毫秒级自校正（两次位移相差一次附件字节到达）。结果：本类缺陷在验收层只能写成
+  终态护栏（场景 26 即如此，notes 已如实声明修前修后都绿），判别性验证只能落 chromium 通道
+  （`tests/visual/scenes/m187-image-scroll-stability.spec.ts`，可注入 wheel + 逐帧采样）。修法
+  （任选其一即可让本类缺陷进验收层）：① execute.mjs 暴露 `scroll` 动作（`{deltaY}` 或 `{page}`，
+  走 cu.scroll / 逐次 wheel 注入）；② 加 `sample` 动作跑注入的 rAF 采样器记录 scrollTop 时间线供
+  逐点断言——两者都可复用 `test-results/m187/probe-baseline-after.spec.ts` 的采样器与判据
+  （「非用户输入的 scrollTop 变化 > 8px」）。finding
+  `20260921-worker-svg-scroll-improve-scroll.md`。
 - **真机套件造不出 DOM 的 `dblclick`（四条注入通道实测），双击类交互无法在真机层驱动**（M184 finding，
   worker-lightbox-impl，2026-09-19，high，**待修**）：坐标 `count: 2`、AX 索引 `count: 2`（AXPress ×2）、
   两次独立 `click`、`drag_paths` 两条单点路径——四条通道下「双击文件树行 = 新开固定标签」的对照判据都
@@ -735,6 +781,17 @@
     而键盘注入每键约 250ms + 一次 MCP 往返，抢不到那个窗口（两种抢法都实测不成立）。该路径由 chromium
     视觉通道 `tests/visual/scenes/mv-vault-switch-guard.spec.ts`（4 用例，含 `document_save` 写动作级
     判据）覆盖——**不要把 19 的 PASS 读成「三条出口的每条顺路都在真机验过」**。
+20. **表格 cell 内 ⌃E→⌃F→⌃E 不再跳回前一 cell**（M185，2026-09-20/21）—— `24-table-cell-ctrl-e-seq`：
+    cell 内 ⌃E 到内容尾 → ⌃F 越过闭合管道符落进下一 cell → 再按 ⌃E 应停在**当前** cell 内容尾
+    （修复前会跳回前一 cell 尾部）。判据形态：序列后键入 `x`，断言它落在正确的 cell
+    （AX 逐 cell 落点不可回读，用插入字符的归属反推光标位置）。证据
+    `test-results/acceptance/2026-09-20/24-table-cell-ctrl-e-seq/`。
+21. **vault 列表 ESC 收起保持阅读位置**（M186，2026-09-20/21）—— `25-vault-list-close-keeps-reading-position`
+    （真机 PASS 三次 / 22–29s）：⌃V 滚到长文档尾部 → 打开 vault 浮层 → Esc 收起 → 断言渲染行仍在尾部。
+    **如实标注：该缺陷在 chromium 与真机均未复现**（修前跑同场景也 PASS），修复是结构性的
+    （收起 = 取滚动快照 → 聚焦 → 写回，走 `scrollSnapshot()` + dispatch）；场景末尾带 ⌘/ 键位面板与
+    ⌘F 搜索面板两条对照步骤（同样修前修后都 PASS）。唯一未覆盖现场：触控板滚动 + 编辑器从未聚焦
+    （套件造不出）。证据 `test-results/acceptance/2026-09-20/25-vault-list-close-keeps-reading-position/`。
 
 **已机验到渲染/结构层，行为细节仍缺可观测面**
 
