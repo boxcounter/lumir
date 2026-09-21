@@ -96,7 +96,9 @@
   **反向验证**：`test-results/m189/red-full-width-line.log` —— 把线改成 `inlineSize: 100%` 后该用例红（720px ≮ 382px）。
 - [x] 5.4 md / code 与显露口径断言：同一份内容在 code 模式下没有标记；光标落在最后一行、全选后标记仍在场。
   **实测**：用例 5——`.txt`（code 模式，行号栏在场）里 `.cm-lp-end-marker` count 0；md 长文里 ⌘A 与光标落到 `doc.length` 之后各读一次都在场，
-  且 `EditorState.doc` 仍与 fixture 逐字节相同。
+  且 `EditorState.doc` 仍与 fixture 逐字节相同。**补一条（实现期实测新增）**：md → code 切换后元素与滚动容器的在场态 class
+  （`cm-lp-end-marker-visible`，它带着 `grid-auto-rows: max-content` 那条行尺寸口径）必须一起离场——首轮实现漏了 destroy 里的 class 清理，
+  该断言在 `gate.sh visual` 上实测红过（`test-results/m189/red-scroller-class-cleanup.log`），修好后转绿。
 - [x] 5.5 非文档性断言：`⌘A` 复制得到的文本里没有标记的文案；文件内搜索标记文案无命中；`readDocument(page)` 与 fixture 逐字节相同（ADR 0003 §3）。
   **实测**：用例 6 三条全绿（搜索面板计数 `0/0`，正观测：搜正文串计数非 0）。
   **反向验证**：`test-results/m189/red-document-content.log` —— 临时把标记同时当成正文追加进文档后，复制出的文本里出现「到底了」，该用例红。
@@ -116,8 +118,8 @@
   **断言形态**：可见性 MUST NOT 只断言「AX 里有『到底了』这段文字」（M178 finding）——真机通道读不到文本节点的几何（见 6.2），
   因此可见性判据落在 chromium 层的几何断言 + 截图证据上，真机侧判的是「标记的可读文本节点存在 / 不存在」这一对 + 文档文本纯度 + 磁盘逐字节。
   **实测**：`--check` = `CHECK PASS 27-document-end-marker`；真机运行 **PASS（14 条断言 / 0 失败 / 25.4s）**，
-  证据 `test-results/acceptance/2026-09-20/27-document-end-marker/{status.txt,steps.md,shots/}`，
-  副本 `test-results/m189/acceptance-27-pass/`。截图 `shots/02-长文滚到底.jpeg` 可见：末段之下是「—— 到底了 ——」的短线夹字（弱化暖色）。
+  证据 `test-results/acceptance/2026-09-21/27-document-end-marker/{status.txt,steps.md,shots/}`（最终 tip 上的那一次），
+  副本 `test-results/m189/acceptance-27-pass/`；`test-results/acceptance/2026-09-20/...` 是同一场景在前一版代码上的首次 PASS。截图 `shots/02-长文滚到底.jpeg` 可见：末段之下是「—— 到底了 ——」的短线夹字（弱化暖色）。
 - [x] 6.2 探针：先用一次探针确认标记在真实 WKWebView 的 AX 树里是否可读（生成内容是否进 AX）。
   **实测（探针读数，落进场景说明的「覆盖边界」段）**：标记**进 AX 树**，形态是 `- [192] AXStaticText = "到底了"`，
   位置与 `AXTextArea` 同级（在 textbox 之外，印证它不是文档内容的一部分）。但该节点**没有 bbox**：
@@ -152,8 +154,8 @@
   **实测**：`LUMIR_VISUAL_PORT=4291 bash scripts/gate.sh visual` → `GATE RESULT: 12/12 PASS（SKIP 0）`
   （含 quick 全部十一步 + `isolation-runs` + `visual-regression 225s`）；日志 `test-results/m189/gate-visual.log`。
 - [x] 8.3 真机套件至少跑一次新增场景并留档（AGENTS.md：dogfood 批次合并后、Alex 验收前先跑一遍）。
-  **实测**：`node scripts/acceptance/run.mjs 27` = **PASS（14 条断言 / 0 失败）**，报告
-  `test-results/acceptance/2026-09-20/summary.md`，场景证据 `test-results/acceptance/2026-09-20/27-document-end-marker/`；
+  **实测**：`node scripts/acceptance/run.mjs 27` 在最终 tip 上 = **PASS（15 条断言 / 0 失败 / 26.7s）**，报告
+  `test-results/acceptance/2026-09-21/summary.md`，场景证据 `test-results/acceptance/2026-09-21/27-document-end-marker/`；
   另跑了一次反向验证（见 6.4，FAIL 留档）。
 - [x] 8.4 `git diff --check` 通过；改动文件集合与本 change 的 Impact 清单一致（出现跨 scope 的只读依赖须先报 tower 批准）。
   **实测**：`git diff --check` 无输出；改动集合 = `src/editor.ts`、`src/preview/endMarker.ts`（新增）、`src/preview/theme.ts`、

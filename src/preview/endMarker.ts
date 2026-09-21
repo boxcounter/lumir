@@ -7,9 +7,9 @@
 //
 // 为什么不是 `.cm-content` 的生成内容（change design §1.1 的候选 A）：spec 的三条判据都要读
 // 真实几何——「渲染盒宽高均非零」「横线的总宽小于阅读栏宽的一半」「标记内存在文本节点」。
-// 伪元素既有盒子也没有文本节点，`getBoundingClientRect` 一类读数对它一律取不到，判据会退化成
-// 读声明（computed style）而不是读渲染结果。本模块把同样的「不参与 CM 数据结构」性质用真元素
-// 实现，判据因此可断言。机制取舍与实测记录见 change 的 design.md §1。
+// 伪元素的盒子没有 JS 可读的几何（`getBoundingClientRect` 取不到它），也拿不出文本节点；
+// 判据只能退化成读声明（computed style）。本模块把候选 A 那套「不参与 CM 数据结构」的性质
+// 用真元素实现，三条判据因此都有渲染结果可读。机制取舍与实测记录见 change 的 design.md §1.1.1。
 
 import { EditorView, ViewPlugin } from "@codemirror/view";
 import type { ViewUpdate } from "@codemirror/view";
@@ -77,6 +77,9 @@ class EndMarkerView {
   constructor(view: EditorView) {
     this.view = view;
     this.marker = createEndMarker();
+    // 上一个实例（换文档 / 换模式时 CM 会重建 view plugin）不该留下在场态 class：
+    // 本次构造时标记尚未挂载，行尺寸必须回到 auto。destroy 也会清，这里是第二道。
+    view.scrollDOM.classList.remove(END_MARKER_VISIBLE_CLASS);
     this.request = {
       key: this,
       // 量的是 `.cm-content` 的渲染盒：标记在它之外，这个数里没有标记自己的高度贡献。
@@ -103,6 +106,9 @@ class EndMarkerView {
   destroy(): void {
     this.observer.disconnect();
     this.marker.remove();
+    // 在场态 class 与元素必须同生同死：漏掉它会让 code 模式的滚动容器继续吃
+    // `grid-auto-rows: max-content`（那里没有标记，不该有此口径）。
+    this.view.scrollDOM.classList.remove(END_MARKER_VISIBLE_CLASS);
   }
 
   /** 显隐 = 在场与否：不显示时元素根本不在 DOM 里（spec：一屏装得下时「标记不存在」）。 */
