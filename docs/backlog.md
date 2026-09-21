@@ -331,7 +331,7 @@
   （`lib/ax.mjs`）是裸 `new RegExp(name)` 语义（无 `m` flag），断言侧 `matcher()`（`lib/execute.mjs`）
   才是「`/.../`=正则、其余=子串」——`target: { name: "/第一部分/" }` 会去找字面量「/第一部分/」
   而报「找不到可点节点」，与「控件真的不存在」无法区分（M148 为此多跑一整轮真机）；`m` flag 之差
-  还决定 `^…$` 是整串锚定还是行锚定（`AXTextArea.value` 是整篇文档文本，行锚定会误命中编辑器节点）。
+  还决定 `^…$` 是整串锚定还是行锚定（`AXTextArea.value` 是当前渲染区间的行文本、可能跨行，行锚定会误命中编辑器节点）。
   根治法：寻址与断言共用 `matcher()`（提到 `lib/` 公共位置，裸串=子串、RegExp 对象保持原行为）；
   这是全部场景共用的寻址入口，改完需一次全量真机复验，单独立项，不塞进功能 mission。临时口径
   （用 `help` 寻址 / 锚定裸正则）已写进 `scripts/acceptance/README.md` 已知边界。
@@ -794,14 +794,21 @@
     ⌘F 搜索面板两条对照步骤（同样修前修后都 PASS）。唯一未覆盖现场：触控板滚动 + 编辑器从未聚焦
     （套件造不出）。证据 `test-results/acceptance/2026-09-20/25-vault-list-close-keeps-reading-position/`；
     2026-09-21 在 master `b82834e`（含 M189 完读标记）复跑仍 PASS（27.4s）。
-22. **svg 倒序滚动终态稳定**（M187）—— `26-svg-scroll-stability`：**真机首跑 FAIL（2026-09-21，
-    master `b82834e`，2 条断言红）**。这是该场景的出生首跑（M187 时未起真机实例、只过 `--check`）：
-    ① 起点步「图片源码尚未被装饰替换」前提不成立——图片上方 14 段正文落在初始渲染视口内，一起动
-    就被装饰；② 倒序回来步「AX 含 svg 滚动夹具」未命中（翻屏落点校准失效，M189 完读标记改变了
-    文档总高与 ⌃V/⌥V 落点）。预判 = 场景/fixture 设计误差而非产品缺陷（chromium 层判别性验证
-    `tests/visual/scenes/m187-image-scroll-stability.spec.ts` 在 master 红、修复后绿，证据
-    `test-results/m187/`）；M190 立项修复中，修后本条改写为首个真机 PASS。FAIL 现场
-    `test-results/acceptance/2026-09-21/26-svg-scroll-stability/`。
+22. **svg 倒序滚动终态稳定**（M187，场景修复 M190，2026-09-21）—— `26-svg-scroll-stability`
+    （17 断言 / 真机 PASS 两次，merge `e06f295`）：正向翻屏过大图（渲染、几何进会话记忆）→ 到底
+    （widget 销毁、节点缺席）→ 倒序三屏回到大图（重建在场、不在加载中、图片行仍被装饰）→ 停手
+    一拍终态稳定。同一匹配器在 起点(不在)/三屏(在)/到底(不在)/倒序(在) 四态断言，负向不空转。
+    **这是该场景的出生首个真机 PASS**（M187 时未起真机只过 `--check`）；首跑 FAIL 两条均为场景
+    设计误差（图片在初始渲染视口内、「AX 含 svg 滚动夹具」只在冷渲染 AXGroup 形状成立），M189
+    与 M187 产品代码均无缺陷（M190 三分支判别，`test-results/m190/M190-root-cause.md`）。
+    **两条通道语义坐实**（后来者写场景的硬知识，已写进场景说明）：① `AXTextArea.value` = CM
+    **当前渲染区间**（可见区 ±1000px）的 DOM 文本，不是整篇——且渲染区间 == 装饰区间，「装饰前
+    源码可见」在本通道结构性不可达；② 带 `<text>` 的 svg 在 AX 里的形状（AXImage 叶子 vs
+    AXGroup 含子文本）由 WebKit 曝光时机决定、夹具稳不住——终态可见性只能判「节点在场 + 几何归
+    chromium 层 + 截图」。场景 25 说明与 M148 finding 条目里「value 是整篇文本」的错误口径已随
+    本批订正。判别性验证（瞬态）仍在 chromium 层 `tests/visual/scenes/m187-image-scroll-stability.spec.ts`。
+    证据 `test-results/m190/26-pass-2026-09-21/`、`test-results/m190/batch-2026-09-21/`（24/25/26/27
+    同批 4/4 PASS）。
 23. **文档末尾完读标记**（M189，2026-09-21）—— `27-document-end-marker`（15 断言 / 30.2s，
     master `b82834e` 真机 PASS）：长文档（超一屏）末尾出现「到底了」节点、短文档（装得下）不出现
     （同一匹配器，非恒真）、文档文本纯度与磁盘逐字节不变。**覆盖边界（场景说明已写）**：这条 AX
