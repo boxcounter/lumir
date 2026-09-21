@@ -3,6 +3,7 @@
 
 import { EditorView } from "@codemirror/view";
 import type { EditorMode } from "../bindings/EditorMode";
+import { END_MARKER_VISIBLE_CLASS } from "./endMarker";
 
 /** 代码块折行口径的内容级 class（M180，单一来源）：由 `src/editor.ts` 的 `wrapExtensions` 经
  *  `contentAttributes` 加到 `.cm-content` 上，本文件的样式按它们选择。两个 class 互斥，
@@ -215,6 +216,41 @@ export const livePreviewTheme = EditorView.theme({
   // 按图片自己算，于是收敛到栏宽。两个终态由「布局时状态块在不在场」决定 —— 正是本不变量
   // 禁止的时序依赖。给包装盒一个与在场内容无关的确定宽度（栏宽）后，两条路径的包含块相同，
   // 终态必然一致；图片本身仍按固有宽度 + `max-width: 100%` 渲染，小图不拉伸。
+  // 正文末尾的「到底了」标记（document-end-marker）：与正文同列、紧随内容之下的 chrome。
+  // 元素挂在 .cm-scroller 上（与 .cm-content 同级，装配见 src/preview/endMarker.ts），
+  // 因此不进 CM 的 DOM 观察子树 / heightmap / 按视口增量构建的装饰层；显隐是**在场与否**，
+  // 由 endMarker.ts 的判据决定（一屏装得下时元素不在 DOM 里）。
+  //
+  // 滚动容器的隐式行尺寸：`.cm-content` 带 `min-height: 100%`（CM 基础主题），在滚动容器
+  // 只有一行时它的隐式行会被压到可用高度（行贡献算成 0）——正文其实溢出在行外，于是任何
+  // 「正文之下的行」都会叠在正文上而不是排在它后面。标记在场时把行尺寸改成 max-content，
+  // 第 2 行才真的落在正文内容盒之后。这条口径**只在标记在场时生效**：一屏装得下的文档与
+  // code 模式不加这个 class，行尺寸与视觉都保持原样（那里「点正文下方空白仍落在 .cm-content
+  // 内」这类既有行为不能变）。
+  [`.cm-scroller.${END_MARKER_VISIBLE_CLASS}`]: { gridAutoRows: "max-content" },
+  // 纵向间距一律走 padding（CM 测量的高度不含 margin，见下方 frontmatter 段的 M110 教训）：
+  // 标记上方那段呼吸来自 .cm-content 自己的 44px 下内边距，下方补对称的 44px。
+  ".cm-lp-end-marker": {
+    gridColumn: "2",
+    gridRow: "2",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: "1em",
+    paddingBlock: "0 44px",
+    fontFamily: "var(--font-display)",
+    fontSize: "0.82em",
+    letterSpacing: ".34em",
+    color: "var(--dim)",
+    userSelect: "none",
+  },
+  // 线段：短横线本体 0 高（高度来自 1px border），取色与分隔线同一发丝线 token。
+  // 与 .cm-lp-hr 的结构差别是**双重**的——定宽短线段（不是 inlineSize:100% 的通栏线）+ 夹着文字；
+  // 只靠「更短」不够：用户分不清「这条是作者写的分隔」与「这条是应用说完了」。
+  ".cm-lp-end-marker-line": { inlineSize: "4em", blockSize: "0", borderTop: "1px solid var(--bd-2)" },
+  // 文字：弱化色 + 宋体族（与标题同族，--font-display）+ 上面的字距——一眼是装饰，不是正文。
+  ".cm-lp-end-marker-text": { lineHeight: "1.4" },
+
   ".cm-lp-image": { display: "inline-block", width: "100%", margin: "6px 0" },
   ".cm-lp-image img": { maxWidth: "100%", borderRadius: "4px", display: "block" },
   ".cm-lp-image-status": { color: "var(--dim)", fontSize: "0.85em" },

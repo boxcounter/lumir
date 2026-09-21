@@ -59,7 +59,19 @@ Alex 需求原话（2026-09-21）：**「需求：文件底部有"到底了/完"
 
 ## 裁决记录
 
-（待 Alex 节点 1 裁决后补记；实现 mission 接手时把裁决取值逐项落进本表并同步 delta 与 [tasks.md](tasks.md) 的条件项。）
+**Alex 节点 1 裁决（2026-09-21）：四项全取推荐项**（原话落档于 M188 的 notes；本文按裁决取值落实，
+delta、tasks 与 design 一律按推荐项写，备选列随之作废）。
+
+| # | 裁决点 | 裁决取值 | 落点 |
+|---|---|---|---|
+| 1 | 文案 | **「到底了」**（English：`That's all`） | deck 补 D114（`文案-Copy.md` 第 105 行）；实现串的唯一来源是 `src/preview/endMarker.ts` 的 `END_MARKER_TEXT`，`tests/unit/end-marker.test.ts` 按 deck 表格行逐字断言 |
+| 2 | 视觉形态 | **短线夹字**：居中横线两侧各一段短**发丝线**（`--bd-2`）夹住**弱化小字**（`--dim` + `--font-display` + 字距） | 样式在 `src/preview/theme.ts` 的 `.cm-lp-end-marker*`；断言在 `tests/visual/scenes/end-marker.spec.ts` 的「形态与配色」用例（线段总宽 < 栏宽一半、存在文本节点、文字色 `--dim`、线段色 `--bd-2`、与作者手写通栏线同场对照） |
+| 3 | 出现形态 | **只在该文档「一屏装不下」时显示**：判据 = 不含标记的内容高度 > 可用视口高度（静态量，MUST NOT 读滚动位置） | 判据在 `src/preview/endMarker.ts` 的 `endMarkerVisible`；两态 + 临界带断言在 `tests/visual/scenes/end-marker.spec.ts` |
+| 4 | 适用面与边界 | **只 md 模式**；作者已手写「完 / 到底了 / `---`」时**照常显示**（不做内容探测） | 扩展只装进 `src/editor.ts` 的 md 分支；code 模式断言在同场景的「code 模式没有标记」用例 |
+
+未列入裁决面、按硬约束实现的项：不得与作者手写的通栏分隔线同形（线段短于栏宽一半 + 夹着文字）、
+不得使用朱红、不得进文档 / 不得被复制与搜索带出、滚动高度在所有滚动位置恒定、纵向间距用 `padding`、
+不加键位 / 命令 / 配置项。逐条断言与反向验证见 [tasks.md](tasks.md) 第 5 节。
 
 ## Non-goals
 
@@ -93,7 +105,7 @@ Alex 需求原话（2026-09-21）：**「需求：文件底部有"到底了/完"
 - 影响的 specs：`editor-live-preview`（ADDED ×2）。**不改** `toc-outline`（不共享其可见行追踪）、**不改** `keymap-commands`（不加命令、不加键位）、**不改** `frontmatter-properties`。
 - 影响的代码/系统：`src/preview/`（标记本体与样式；preview 装饰的样式落 `src/preview/theme.ts`，该文件头明确「不碰 `src/style.css`」），若选 recommendation 的机制还涉及装配侧的少量接线（显示判据的读取点），具体落点与两条候选机制见 [design.md](design.md) §1。`src-tauri/**` 零改动。
 - 影响的文档：`文案-Copy.md`（**仅当裁决点 1 选带文字的项**：追加 D114 一行 + 在文末「文案实现备注」段登记归属文件；末位当前 D113）。若裁决点 1 取备选③（无文字），D114 变成读屏名条目（与 D76「分隔线」同形），deck 仍要改。
-- 影响的测试/验收：`tests/visual/` 新增一个专用场景 + fixture（长短两份文档：一屏装得下 / 装不下）+ 按纪律处理元素级基线；`tests/unit/` 视实现是否抽出可纯化的判据而定；`scripts/acceptance/scenarios/` 新增一个真机场景（编号 **24**——23 已被 `23-image-first-open-width` 占用）。真机断言 MUST NOT 只查「AX 里有『到底了』这段文字」：不可见元素的 AX 文本照样读得到（`docs/backlog.md:293-304` 的 M178 finding），判据必须落在**几何读数**上。
+- 影响的测试/验收：`tests/visual/scenes/end-marker.spec.ts`（新增专用场景 + 三份 fixture：装不下 / 装得下 / 判据临界带，行为与几何断言为主）；`tests/unit/end-marker.test.ts`（判据与 deck 文案）；`scripts/acceptance/scenarios/27-document-end-marker.md`（真机场景，编号 **27**——24/25/26 已分给本批 M185/M186/M187，提案初稿写的 24 作废）。真机断言 MUST NOT 只查「AX 里有『到底了』这段文字」：不可见元素的 AX 文本照样读得到（`docs/backlog.md:293-304` 的 M178 finding）。**实现期定稿的真机口径**：这条 AX 通道只给 `AXButton` / `AXImage` / `AXScrollArea` 一类节点 bbox，纯文本节点（含标记节点）没有 `@x,y w×h`，因此真机只断言**标记可读文本节点的在场 / 缺席**（长文命中 1 次、短文 0 次，同一匹配器——不是恒真空转），可见性由 chromium 层的几何断言 + 截图证据承担；覆盖边界写在场景说明里。
 - 基线影响：推荐项（裁决点 3 = 按内容高度显示）下**预期零基线更新**——13 个像素基线场景的截图是 1200×800 的**视口**截图（未开 `fullPage`，见 `tests/visual/scenes/render-codeblock.spec.ts:286` 的记录），一屏装不下的文档其标记落在视口之外，一屏装得下的文档按推荐项不显示。这个「预期」必须由实现期用内容判据逐张核对（不能只看时间戳，[REVIEW.md](../../../REVIEW.md) 第 3 条）；若裁决点 3 取备选①（常驻），则一屏装得下的短文档场景也会出现标记，其整页基线会实打实地变——具体清单须在实现期用内容判据逐张核出（不得凭数量断言），基线重拍前须先请 Alex 过目（AGENTS.md 硬规则：基线更新是人肉裁决点）。
 - 关联约束：ADR 0003 §3（不改写源文件——标记不进文档）、ADR 0002 §6（性能合同——不在打开 1MB < 100ms 与键入路径上新增测量）、ADR 0006（Emacs keybinding PKM 定位——本 change 零键位、零命令）、ADR 0004 第 5 条（功能变更走 OpenSpec）。
 - 性能：标记是常量级的单个元素，不遍历文档、不新增读取；具体机制与测量口径见 [design.md](design.md) §1、§3。
