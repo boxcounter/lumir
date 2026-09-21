@@ -15,6 +15,7 @@ import { GFM } from "@lezer/markdown";
 import type { EditorMode } from "./bindings/EditorMode";
 import { livePreview, previewRefresh, widgetCommands } from "./preview/livePreview";
 import { codeBlockWrappers } from "./preview/livePreview";
+import { endMarker } from "./preview/endMarker";
 import type { PreviewContext, WikilinkResolver } from "./preview/livePreview";
 import type { ImageLightbox } from "./lightbox";
 import { detectFrontmatter } from "./preview/frontmatter";
@@ -1224,7 +1225,7 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
       EditorView.contentAttributes.of({ tabindex: "0", "aria-readonly": String(mode !== "md") }),
     ];
     return mode === "md"
-      ? [...editability, ...highlight, baseTheme, livePreview(previewContext)]
+      ? [...editability, ...highlight, baseTheme, livePreview(previewContext), endMarker]
       : [...editability, ...highlight, baseTheme, lineNumbers(), highlightActiveLine()];
   }
 
