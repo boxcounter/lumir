@@ -216,7 +216,7 @@ t.toString()                   // Stream(Comment,Document(BlockMapping(Pair(Key(
 
 后果：任何**按位置/范围**取节点的消费者（`iterate`、`resolveInner`、按范围取键）在触发形态下全部失效——对「取 yaml 顶层键做大纲」是**阻断性**缺陷。
 
-处置：本批两 change **都不支持 yaml 的结构功能**（它在大纲分层里落 T3，变量高亮本来也不适用数据语言），并把它记为上游缺陷（探针上游 issue 检索未见对应条目；本 mission 已投 finding，见 `docs/backlog.md` 的登记项）。
+处置：本批两 change **都不支持 yaml 的结构功能**（它在大纲分层里落 T3，变量高亮本来也不适用数据语言），并把它记为上游缺陷（探针上游 issue 检索未见对应条目）。finding 全文落 `.tower/comms/findings/20260924-worker-code-intel-proposal-bug-lezer-lezer-yaml-fig-lezer-bash-bash.md`——`.tower/**` **不入 git**，该路径只在本机可查（口径与 [REVIEW.md](../../../../REVIEW.md) 的语料说明一致：`.tower` 路径作现场原卷指针、仓内锚点另给）；`docs/backlog.md` 的登记**待 tower 路由后补**（本 mission 未获授权改 backlog），本文件不把它写成已登记。
 
 ## 7. `codeLanguages` 架构事实（为将来换代着色管线留档）
 
