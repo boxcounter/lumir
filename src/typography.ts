@@ -2,7 +2,7 @@
 // 档位计算、以及**唯一的 token 写入路径**。
 //
 // 作用面（D1 裁决）：编辑器**内容**面（md 正文 / 代码块 / frontmatter / code 模式）。shell
-//（左栏 / masthead / 浮层 / 键位面板）引用的仍是基线的 `--font-body` / `--font-mono`，本模块
+//（左栏 / modeline / 浮层 / 键位面板）引用的仍是基线的 `--font-sans` / `--font-mono`，本模块
 // 只写 `--editor-*` 三个 token（声明在 `src/style.css` 的 `:root`）。这条边界由 token 分层
 // **结构性**保证，不靠逐处记得改——直接覆盖 shell token 会让界面密度一起漂（被否决的方案见
 // change 的 design §3）。
@@ -20,8 +20,10 @@
 /**
  * 编辑器内容字号的出厂默认（px）。与 Rust 侧 `src-tauri/src/config.rs` 的
  * `DEFAULT_FONT_SIZE` 同值（那边是配置面的真源，TS 侧是「配置到达之前」的起步值）。
+ * 2026-09-24 节点 1 裁决 D1：16 → **15**（「编辑器即阅读表面」，与定稿图一致），
+ * CSS 的 `--editor-font-size` 默认值同批改为 15px。
  */
-export const DEFAULT_FONT_SIZE = 16;
+export const DEFAULT_FONT_SIZE = 15;
 
 /** 字号钳制区间（含端点）。与 Rust 侧的 `FONT_SIZE_MIN` / `FONT_SIZE_MAX` 同值：
  *  Rust 侧管**配置值**的合法区间（越界回落默认 + warning），这里管**运行期步进**的钳制。 */
@@ -38,8 +40,9 @@ export const EDITOR_FONT_FAMILY_TOKEN = "--editor-font-family";
 export const EDITOR_MONO_FAMILY_TOKEN = "--editor-mono-family";
 export const EDITOR_FONT_SIZE_TOKEN = "--editor-font-size";
 
-/** 基线族的 token 名：用户字体值的**后备栈**来源（读它们的现值拼在用户值之后）。 */
-export const BASELINE_FONT_FAMILY_TOKEN = "--font-body";
+/** 基线族的 token 名：用户字体值的**后备栈**来源（读它们的现值拼在用户值之后）。
+ *  M211 起正文族基线名是 `--font-sans`（旧 `--font-body` 随 token 层重建删除，不留别名）。 */
+export const BASELINE_FONT_FAMILY_TOKEN = "--font-sans";
 export const BASELINE_MONO_FAMILY_TOKEN = "--font-mono";
 
 /** 排版口径的三个配置项（Rust `EditorConfig` 的对应字段；`null` = 沿用基线）。 */
@@ -52,7 +55,7 @@ export interface TypographySettings {
   readonly fontSize: number;
 }
 
-/** 步进方向（`reset` 回到**配置值**，不是出厂 16px——Emacs 的 `C-x C-0` 同义）。 */
+/** 步进方向（`reset` 回到**配置值**，不是出厂默认值 15px——Emacs 的 `C-x C-0` 同义）。 */
 export type TextScaleDirection = "up" | "down" | "reset";
 
 /** 一档步进的结果（纯函数）：`up` = `round(size × 1.1)`、`down` = `round(size ÷ 1.1)`，
@@ -123,7 +126,7 @@ export function planTypography(
 /**
  * **唯一的 token 写入路径**（装配层与三条步进命令共用；`src/` 里只有这里写 `--editor-*`）。
  *
- * 字体族只在**配置了**才写：未配置时 `:root` 的默认值（`var(--font-body)` / `var(--font-mono)`）
+ * 字体族只在**配置了**才写：未配置时 `:root` 的默认值（`var(--font-sans)` / `var(--font-mono)`）
  * 就是基线观感，多写一次同义字面量只会变成「同一语义两处真源」。字号每次都写——它有两个
  * 来源（配置 / 运行期步进），写一次即表达「当前生效值」。
  *
