@@ -1,7 +1,7 @@
 # Tasks: open-image-lightbox
 
 任务口径：每条给出**验收口径**（判据 + 证据落点）。「证据」指可 `ls` 的路径或可复算的命令输出，
-不是「跑过了」的口头声明（[REVIEW.md](../../../REVIEW.md) 第 7 条）。
+不是「跑过了」的口头声明（[REVIEW.md](../../../../REVIEW.md) 第 7 条）。
 
 **提案阶段状态（M183，2026-09-18）**：本 change 只到节点 1，以下任务**全部未开工**——`[ ]` 是提案
 阶段的默认状态，不是「已实现未勾」。实现批次接手时按第 1 节的现状读数起手，并把每条任务勾选时的
@@ -26,7 +26,7 @@ delta 与本文档均不改写；2.6 与 5.6 按推荐项（适配遮罩且不�
 **行为判别层由 chromium 断言组承担**（第 5 节；反向验证先红后绿），**真机侧留人工清单**给 Alex 的
 dogfood 手感项 [manual-acceptance-checklist.md](manual-acceptance-checklist.md)。第 6 节各条按
 「真机通道不可达，未做」标注，**不勾选、不冒称**——一个只验前置条件的场景会让人误读为「真机验过」
-（[REVIEW.md](../../../REVIEW.md) 第 6 条）；曾按验收口径写好的场景 `24-image-lightbox` 与四个 fixture
+（[REVIEW.md](../../../../REVIEW.md) 第 6 条）；曾按验收口径写好的场景 `24-image-lightbox` 与四个 fixture
 已从工作区撤下（**未落库**）。证据根目录：`test-results/m184/` 与 `test-results/acceptance/2026-09-19/`
 （本机，git 外）。
 
@@ -42,7 +42,7 @@ dogfood 手感项 [manual-acceptance-checklist.md](manual-acceptance-checklist.m
       `test-results/acceptance/2026-09-19/image-lightbox-before/readings.json`（实现前）与
       `readings-after.json`（实现后；双击前的那一组与实现前逐值相同），对照表 `comparison.md`，
       跑法日志 `test-results/m184/08-readings-before.log`、`/18`。
-- [x] 1.2 反向验证（先红，[REVIEW.md](../../../REVIEW.md) 第 1 条的防线）：把「双击 → 遮罩可见」
+- [x] 1.2 反向验证（先红，[REVIEW.md](../../../../REVIEW.md) 第 1 条的防线）：把「双击 → 遮罩可见」
       这条断言先写出来，在**未实现前**跑一次，必须 FAIL（遮罩根本不存在）。
       **验收口径**：红灯输出留档（playwright 失败信息 / 验收 `status.txt` = FAIL）；
       没有这一步的绿灯不算数。
@@ -167,7 +167,7 @@ dogfood 手感项 [manual-acceptance-checklist.md](manual-acceptance-checklist.m
       `blur` 不抢焦点；已关闭后的迟到关闭是空操作；`blur` 先关之后用户路径不再补一次交还；打开态换源）。
       `node tests/unit/run.mjs` = **73 通过 / 0 失败**（此前 67），`gate.sh quick` 的 `unit-tests` 行 PASS。
       **与验收口径的两处偏差，如实记录**：① 「可打开性判据」在本实现里是**结构性事实**（监听器只挂在
-      终态 `<img>` 上），在无 DOM 的层里写出来只会是一条恒真断言（[REVIEW.md](../../../REVIEW.md) 第 1 条
+      终态 `<img>` 上），在无 DOM 的层里写出来只会是一条恒真断言（[REVIEW.md](../../../../REVIEW.md) 第 1 条
       的假绿形态）——因此不在这层加，由 5.4 的行为判据承担；② 「缩放口径的取整/边界计算」不适用（纯 CSS，
       实现里没有像素运算），由 5.6 的两侧几何断言承担。
 - [x] 4.2 不把 DOM 行为硬塞进这一层（`tests/unit/README.md:21-23` 的分工）：遮罩行为断言全部落在
@@ -181,7 +181,7 @@ dogfood 手感项 [manual-acceptance-checklist.md](manual-acceptance-checklist.m
 - [x] 5.1 在 `tests/visual/scenes/markdown-combo.spec.ts` 新增 lightbox 断言组（该场景已有
       `images.md` 的十条引用与附件读桩 `stubAttachmentReads`，是现成的输入面）：双击成功渲染的图片 →
       遮罩出现 **且放大图渲染盒宽高非零**。
-      **验收口径**：判据是几何读数而不是 class 存在（[REVIEW.md](../../../REVIEW.md) 第 1 条）；
+      **验收口径**：判据是几何读数而不是 class 存在（[REVIEW.md](../../../../REVIEW.md) 第 1 条）；
       1.2 的红灯在此转为绿。
       **实现记录（M184）**：`markdown-combo.spec.ts` 末尾新增「M184」断言组 **5 条用例**。打开判据 =
       放大图渲染盒宽高非零 + `alt` = 原始引用文本 + `src` 与内联那张**逐字符相同**（三条一起，
@@ -212,7 +212,7 @@ dogfood 手感项 [manual-acceptance-checklist.md](manual-acceptance-checklist.m
 - [x] 5.4 不可打开形态：同一份文档里双击 ① 加载中状态块（用读桩延迟制造窗口）、② `图片读取失败：…`
       占位、③ `图片无法显示：…` 占位、④ `附件未找到` / `内容嵌入不支持` 占位、⑤ 外部 `http(s)`
       目标落下的占位 —— 遮罩一次都不出现；**同一场景里再双击一张已渲染成功的图片，遮罩出现**。
-      **验收口径**：负向断言必须与正观测配对（[REVIEW.md](../../../REVIEW.md) 第 2 条：不可读/不存在
+      **验收口径**：负向断言必须与正观测配对（[REVIEW.md](../../../../REVIEW.md) 第 2 条：不可读/不存在
       类断言先确认读到的是真值）；反向验证——把 2.3 的双击挂到容器上，本断言必须变红（留档）。
       **实现记录（M184）**：覆盖 ①→⑤ 全部五类（加载中状态块用 5s 读桩延迟单列一条用例；其余四类在同一份
       专造文档里：`图片读取失败` / `图片无法显示`（0 字节位图）/ `附件未找到` / `内容嵌入不支持` /
@@ -241,7 +241,7 @@ dogfood 手感项 [manual-acceptance-checklist.md](manual-acceptance-checklist.m
       `test-results/m184/05-red-no-max-height-tall.log`；只用宽图时去掉 `max-height` 仍绿（该图被宽度夹住，
       断言没有区分度）——修正理由与两条补充读数（`max-width` / `min-*` 单独去掉都仍绿）写进
       [design.md](design.md) §5。
-- [x] 5.7 基线核对（[REVIEW.md](../../../REVIEW.md) 第 3 条 + AGENTS.md 的视觉门禁卫生）：
+- [x] 5.7 基线核对（[REVIEW.md](../../../../REVIEW.md) 第 3 条 + AGENTS.md 的视觉门禁卫生）：
       逐张核对图片引用出现过的场景与全部整页基线的时间戳；lightbox 是新元素，确认是否需要新增
       元素级基线。
       **验收口径**：PR 里写明「零基线更新」或列出新增 / 重拍的基线文件名，并给前后截图请 Alex 过目
@@ -257,6 +257,9 @@ dogfood 手感项 [manual-acceptance-checklist.md](manual-acceptance-checklist.m
       本就在真机场景的截图里留给 Alex 过目——真机场景不可达（见第 6 节），因此改为：整页基线零更新的
       证据是 `gate.sh visual` 全绿（`test-results/m184/20-gate-visual.log`），遮罩的观感过目件由
       Alex 自己在 dogfood 时看（chromium 截图不作为基线入库）。
+      **归档期补注（M208 节点 2，2026-09-25）**：上面那句「真机场景不可达」的前提已被 M209 推翻
+      （通道打通、场景 33 落库，见第 6 节开头一段）；**零基线更新这条结论不受影响**——33 的截图归
+      `test-results/acceptance/`，不进 `tests/visual/baselines/`，遮罩的观感仍由 Alex 在 dogfood 时过目。
 
 ## 6. 真机验收场景（WKWebView，`scripts/acceptance/`）
 
@@ -282,7 +285,7 @@ dogfood 手感项 [manual-acceptance-checklist.md](manual-acceptance-checklist.m
       **PASS（36 条断言 / 0 失败 / 32.775s）**，证据
       `test-results/acceptance/2026-09-24/33-image-lightbox/{status.txt,steps.md,shots/,ax/}`，汇总
       `test-results/acceptance/2026-09-24/summary.md`（断言数与耗时取自同目录 `results.json`），副本
-      `test-results/m209-probe/33-pass/`。**证据物理位置（如实记录，[REVIEW.md](../../../REVIEW.md) 第 7 条）**：
+      `test-results/m209-probe/33-pass/`。**证据物理位置（如实记录，[REVIEW.md](../../../../REVIEW.md) 第 7 条）**：
       `test-results/` 是本机 git 外目录，33 的现场与抄件当前只在 M209 的 worktree 下
       （`.tower/worktrees/wt-209/test-results/...`），主 checkout 尚无副本。M184 那两轮的失败留档仍在
       `test-results/m184/11`、`/12` 与 `test-results/acceptance/2026-09-19/`（`24-image-lightbox/`、
@@ -300,7 +303,7 @@ dogfood 手感项 [manual-acceptance-checklist.md](manual-acceptance-checklist.m
 - [x] 6.2 场景 fixture 落 `scripts/acceptance/fixtures/`（可复用既有 `image-fallback-normal.svg` /
       `image-fallback-percent.svg`，必要时补一份小图位图），与 md 一起进合成 vault。
       **验收口径**：场景 PASS 且 fixture 在 `fixtures:` 里逐条列名；断言遵守「不可读一律 FAIL」
-      （[REVIEW.md](../../../REVIEW.md) 第 2 条），MUST NOT 写「读不到该文本即通过」式的负向空转。
+      （[REVIEW.md](../../../../REVIEW.md) 第 2 条），MUST NOT 写「读不到该文本即通过」式的负向空转。
       **实现记录（M209，归档期承接）**：`lightbox.md` + `lightbox-fixed.svg` + `lightbox-percent.svg` +
       `lightbox-bitmap.png` 四份在场景 front-matter 的 `fixtures:` 里逐条列名，随 `runScenario` 拷进合成 vault；
       6.1 的 PASS 运行即「四份都已进 vault」的证据。M184 曾生成、后随场景撤下的四个 fixture 未复用
