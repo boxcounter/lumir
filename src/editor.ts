@@ -31,7 +31,7 @@ import { bindingHighlight } from "./code-identifiers";
 import { LANGUAGES, TOKEN_GROUPS } from "./preview/code";
 import type { TokenRole } from "./preview/code";
 import type { CommandRunner, EditorCommandId } from "./keys";
-import { DEFAULT_CODE_BLOCK_WRAP, DEFAULT_LINE_WRAP, wrapSpec } from "./preview/theme";
+import { DEFAULT_CODE_BLOCK_WRAP, DEFAULT_LINE_WRAP, codeBindingTheme, wrapSpec } from "./preview/theme";
 import type { WrapSettings } from "./preview/theme";
 import { DEFAULT_FONT_SIZE, applyTypography as writeTypography, nextFontSize } from "./typography";
 import type { TextScaleDirection, TypographySettings } from "./typography";
@@ -1274,7 +1274,7 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
     ];
     return mode === "md"
       ? [...editability, ...highlight, baseTheme, livePreview(previewContext), endMarker]
-      : [...editability, ...highlight, baseTheme, lineNumbers(), highlightActiveLine()];
+      : [...editability, ...highlight, baseTheme, codeBindingTheme, lineNumbers(), highlightActiveLine()];
   }
 
   /**

@@ -78,6 +78,32 @@ let LIMIT2 = 1;
 LIMIT2 + 1;
 `;
 
+/**
+ * 对象字面量简写形态的对照语料（真实语料抽样发现的唯一漏亮形态）：`{ LIMIT }` 的键同时是值
+ * （`PropertyDefinition` 是 Property 的**唯一**子节点、右端与 Property 重合）⇒ 按引用收录；
+ * `{ LIMIT: 2 }` 的键是 `PropertyDefinition,:,值` 三段 ⇒ 仍按排除位处理。
+ */
+const JS_SHORTHAND_DOC = `const LIMIT = 1;
+const o = { LIMIT };
+const p = { LIMIT: 2 };
+`;
+
+/**
+ * ts 的遮蔽语料（tasks 4.4：局部同名声明必须被认作**声明位**，否则遮蔽会漏判 = 错亮）。
+ * ts 与 js 共用判据表，但语料分开——「共用一张表」不等于「共用一份断言」。
+ */
+const TS_SHADOW_DOC = `const LIMIT: number = 42;
+
+function inner(): number {
+  const LIMIT: number = 1;
+  return LIMIT;
+}
+
+function bare(): number {
+  return LIMIT;
+}
+`;
+
 /** ts 的额外形态（接口 / 类型别名 / 枚举名与成员）。 */
 const TS_EXCLUDE_DOC = `interface LIMIT { LIMIT: number }
 type LIMIT = number;
@@ -166,6 +192,15 @@ export const JS_CASES: readonly HighlightCase[] = [
     rationale: "`obj.LIMIT` 的 LIMIT 是 PropertyName。",
   },
   {
+    name: "js：对象字面量简写属性是引用，同名对象键仍是排除位",
+    language: "javascript",
+    doc: JS_SHORTHAND_DOC,
+    click: { after: "const ", at: "LIMIT" },
+    hits: [{ after: "const o = { ", at: "LIMIT" }],
+    rationale:
+      "`{ LIMIT }` 的键节点同时就是值（简写的 Property 只含一个子节点、右端与父节点重合）⇒ 它是对同一变量的引用；`{ LIMIT: 2 }` 的键是属性名（排除位）。真实语料抽样里简写是唯一的漏亮形态（见 test-results/m198/false-positive-sample.md）。",
+  },
+  {
     name: "js：字符串里的同名文本不亮",
     language: "javascript",
     doc: JS_EXCLUDE_DOC,
@@ -204,6 +239,15 @@ export const JS_CASES: readonly HighlightCase[] = [
     click: { after: "enum ", at: "LIMIT" },
     hits: [],
     rationale: "枚举名是 TypeDefinition；成员是 `PropertyName ← EnumBody`——都是排除位。",
+  },
+  {
+    name: "ts：函数内的同名局部声明把模块级那组与它隔开（局部必须被认作声明位）",
+    language: "typescript",
+    doc: TS_SHADOW_DOC,
+    click: { after: "const ", at: "LIMIT" },
+    hits: [{ after: "function bare(): number {\n  return ", at: "LIMIT" }],
+    rationale:
+      "就近声明优先：`bare()` 里的引用归属模块级常量（容器 Script），`inner()` 里那两条归属函数内的局部声明（容器 Block ⊂ 函数跨度）⇒ 点模块级时不亮它们。这一条同时钉住「局部声明被认作声明位」——若它被误判成引用，函数内那两条会被错亮。",
   },
   {
     name: "ts：正向对照",
@@ -648,6 +692,16 @@ class Holder {
 }
 `;
 
+const JAVA_SHADOW_DOC = `// LIMIT 出现在注释里
+class K {
+  int m() {
+    int LIMIT = 1;
+    if (true) { int LIMIT = 2; return LIMIT; }
+    return LIMIT;
+  }
+}
+`;
+
 const JAVA_EXCLUDE_DOC = `// LIMIT 出现在注释里
 package LIMIT;
 
@@ -756,6 +810,15 @@ export const JAVA_CASES: readonly HighlightCase[] = [
     click: { after: 'String s = "', at: "LIMIT" },
     hits: [],
     rationale: "字符串内容不是标识符类节点。",
+  },
+  {
+    name: "java：内层块的同名局部声明把外层那组与它隔开（局部必须被认作声明位）",
+    language: "java",
+    doc: JAVA_SHADOW_DOC,
+    click: { after: "  int m() {\n    int ", at: "LIMIT" },
+    hits: [{ after: "if (true) { int LIMIT = 2; return LIMIT; }\n    return ", at: "LIMIT" }],
+    rationale:
+      "外层局部（容器 = 方法 Block）只点亮 `if` 之后那一处；内层块里的声明与它的 `return LIMIT` 各自成组 ⇒ 点外层时不亮它们（同一条「局部是声明位」的判据在 java 上的落点）。",
   },
   {
     name: "java：正向对照",

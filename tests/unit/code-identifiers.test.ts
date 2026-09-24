@@ -127,6 +127,15 @@ test("触发：只选中 `price`（`$` 未被选上）仍命中，且按节点�
     expectTags(DOLLAR_DOC, [THIRD_DOLLAR, SECOND_DOLLAR]),
     "只点亮其余 $price；独立的 `price` 与 `price_list` 一处都不亮（反向验证：把匹配文本改成选区文本时这里会变红）",
   );
+
+  // 第二种「选不全」：选区在标识符**内部**结束（只选中 `pri`）——同样是「包含于」而不是「等于」。
+  // 这两种形态合起来才有区分度：把判据改成「选区 === 节点」时，两条都必须变红
+  //（反向验证见 test-results/m198/reverse-verification/unit-partial-is-not-contained.log）。
+  const inner: ClickTarget = { after: "const ", at: "$price", shift: 1, length: 3 };
+  const innerSel = selection(DOLLAR_DOC, inner);
+  assert.equal(DOLLAR_DOC.slice(innerSel.from, innerSel.to), "pri");
+  assert.equal(bindingSource("javascript", DOLLAR_DOC, innerSel)?.name, "$price");
+  assert.deepEqual(hitsAt("javascript", DOLLAR_DOC, inner), expectTags(DOLLAR_DOC, [THIRD_DOLLAR, SECOND_DOLLAR]));
 });
 
 test("触发：独立的 `price` 与 `price_list` 各自成组，不与 `$price` 混", () => {

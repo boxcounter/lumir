@@ -70,6 +70,24 @@
 
 **另有一项跨两份 change 的机制裁决**：结构解析与着色管线的并存形态（S1 单管线 / **S2 双管线** / S3）**不在本 change 的裁决面**，它在同批 [code-outline](../code-outline/proposal.md) 的**裁决点 6**——本 change 按那份裁决的结论行事：S2 下本 change 只读消费结构解析与缓存（`src/code-identifiers.ts` 只做索引与装饰），着色管线一行不改；若那边改判 S1/S3，本 change 的实现前提（复用 S2 的解析缓存）随之失效，须先重写本 change 的 design §4.1。
 
+## 裁决记录（节点 1，2026-09-24）
+
+Alex 于 2026-09-24 完成节点 1 裁决，逐条落定（原话与落点）：
+
+| # | 裁决点 | 裁决 | 实现落点（M198） |
+|---|---|---|---|
+| 1 | 语言覆盖分层 | **按推荐**：与 code-outline 同一张表，只在 **T1 的 8 门**（javascript / typescript / python / rust / go / c / cpp / java）生效；T2（css / scss）与 T3 双击不高亮、**不提示** | `src/code-identifiers.ts` 的 `supportsVariableBinding()` 取 `STRUCTURE_SUPPORT` 的 `tier === "symbols"`（语言分层单一来源，不另建清单） |
+| 2 | 语义精度 | **原话「采纳推荐」**：即**近似 + 保守**——同名 + 同变量类 + 不被更内层同名声明遮蔽；**不做**严格作用域分析，**不宣称**「同 binding」是语言语义级判定 | 判据三层在 `code-identifiers.ts`：位置类别（逐语言判据表，实测父链）、名字（节点原文逐字节）、可见域（归属声明相同——design §3.3 的等价改写，见该模块头注释） |
+| 3 | 新增 `@lezer/*` 依赖许可 | **按推荐**：与 code-outline 同一份依赖清单与体积，**本 change 不单独新增任何依赖** | 本 change 零新增依赖（`package.json` / `pnpm-lock.yaml` 未改动）；只读消费 M197 已合并的 `src/code-structure.ts` |
+| 4 | md 模式是否支持 | **按推荐**：**不做**（Non-goals 三条理由） | 装饰只装进 `src/editor.ts` 的 code 分支；md 分支零改动（视觉场景有一条 md 零装饰对照） |
+| 5 | 呈现 | **按推荐**：只加底纹、不换字色；只取既有 editorial token、**MUST NOT 新增颜色**；与原生选区、搜索匹配三层可区分 | `src/preview/theme.ts` 的 `.cm-lp-code-binding`：`background-color: var(--bg-3)`（**色值从推荐的 `--bg-2` 改为 `--bg-3`**，理由见下） |
+| 6 | 触发面边界 | **按推荐**：判据取「选区**完整包含于**一个变量类位置的标识符节点内」；名字取**节点原文**；不碰既有双击行为 | `bindingSource()` 按包含关系取最内层节点；`bindingHits()` 用 `occ.name`（节点原文）匹配；装饰层不 dispatch、不改选区、不抢焦点 |
+
+**两处就地偏离（均为实现期实测所迫，已在 tasks.md 对应条目就地标注，并在 review-request 的偏离申报里单列）**：
+
+1. **裁决点 5 的色值取 `--bg-3` 而非 `--bg-2`**（tower 2026-09-24 裁决采纳，依据实测）：code 模式的**当前行底色就是 `--bg-2`**（`src/editor.ts:1251` 的 `.cm-activeLine`，code 分支装了 `highlightActiveLine()`），因此 `--bg-2` 的底纹在用户刚双击的那一行上完全隐形、同一行上的第二处匹配也一起看不见——这是硬冲突，不是审美问题。`--bg-3` 是既有 token（此前只被 `.tab-close:hover` 用），满足「只取既有 token + 不新增颜色 + 三层可区分」全部硬约束，且在 `--bg-2` 的当前行上仍可见。具体观感仍归 Alex 的手感项，截图证据在 `test-results/m198/`。
+2. **裁决点 6 的触发通道在真机验收层改用「搜索选区生成」**（tower 2026-09-24 裁决采纳，依据仓内实测）：`scripts/acceptance/README.md:311-322` 已定死 KimiCU 通道**合成不出 WKWebView 的 DOM `dblclick`**（四条通道实测），且该通道 **AX 不暴露装饰与颜色**（design §7 / proposal Impact 原文；M197 的 AX dump 可复核）、runner 也没有 DOM 探针。因此任务 8 的字面要求（真机判装饰在场/缺席 + 反向验证）**在现有通道下没有可判信号**。落地方案：真机用 `⌘F` 输入标识符 + `Enter`（`src/search.ts` 的 `findNext` 把选区移到匹配上）生成**同一个触发判据所需的选区**——判据写在选区上、不写在手势上，因此触发的是同一段产品行为；装饰区间集合、三层可区分、反向验证全部落 **chromium 层**（那里能读装饰与计算样式）；真机只判可判的三条（文档逐字节不变两条、T3/md 静默、截图留证）。逐条口径见 `tasks.md` 8.1–8.3 的就地标注与 `test-results/m198/task8-real-machine-scope.md`。
+
 ## capability 归属：`editor-live-preview` 的两条 ADDED
 
 **结论**：落 `editor-live-preview`（既有 living spec），**不新建 capability**。

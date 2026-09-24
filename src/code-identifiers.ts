@@ -128,6 +128,8 @@ interface PositionRule {
   readonly indexInParent?: number;
   /** 紧邻的前一个兄弟节点名必须 ∈ 列表——`for` 之后的推导式目标、`as` 之后的绑定名靠它定位。 */
   readonly prevSibling?: readonly string[];
+  /** 该节点的右端与父节点的右端重合（js-ts 的对象字面量简写上，键节点就是整个 Property）。 */
+  readonly atParentEnd?: boolean;
   readonly kind: Classification;
 }
 
@@ -150,6 +152,12 @@ const JS_BINDING_RULES: LanguageRules = {
     // 类名 / 函数名（与局部变量同名也不亮——它们是类型与函数，不是变量）。
     { path: ["VariableDefinition", "ClassDeclaration"], kind: "excluded" },
     { path: ["VariableDefinition", "FunctionDeclaration"], kind: "excluded" },
+    // 对象字面量的**简写属性**（`{ caseId }`）：键节点同时就是值（引用同一变量）。实测形态：
+    // 简写的 `Property` 只含一个 PropertyDefinition 子节点、且**键节点的右端与 Property 的右端重合**；
+    // 而 `{ caseId: 1 }` 的键是 `PropertyDefinition,:,值` 三段，键的右端在 Property 右端之前 ⇒ 仍按
+    // 排除位处理（对象键一律排除这条口径不变）。真实语料抽样（test-results/m198/false-positive-sample.md）
+    // 里这类简写是**唯一**的漏亮形态（4/44 次触发），因此按「引用」收录而不是留 unknown。
+    { path: ["PropertyDefinition", "Property", "ObjectExpression"], atParentEnd: true, kind: "reference" },
     // 类字段 / 方法名 / 对象键（PropertyDefinition）、成员访问与对象键（PropertyName）、类型名。
     { path: ["PropertyDefinition"], kind: "excluded" },
     { path: ["PropertyName"], kind: "excluded" },
@@ -375,7 +383,13 @@ const isShadowingDeclaration = (cls: Classification): boolean => cls === "declar
 const isVariableClass = (cls: Classification): boolean => cls === "declaration" || cls === "reference";
 
 /** 判据表的第一条匹配（前缀匹配 + firstOf / indexInParent / prevSibling）。 */
-function classify(rules: LanguageRules, chain: readonly string[], earlier: readonly string[], text: string): Classification {
+function classify(
+  rules: LanguageRules,
+  chain: readonly string[],
+  earlier: readonly string[],
+  text: string,
+  atParentEnd: boolean,
+): Classification {
   if (rules.blankNames !== undefined && rules.blankNames.includes(text)) return "excluded";
   for (const rule of rules.rules) {
     if (rule.path.length > chain.length) continue;
@@ -390,6 +404,7 @@ function classify(rules: LanguageRules, chain: readonly string[], earlier: reado
     if (rule.firstOf !== undefined && rule.firstOf.some((name) => earlier.includes(name))) continue;
     if (rule.indexInParent !== undefined && earlier.length !== rule.indexInParent) continue;
     if (rule.prevSibling !== undefined && !rule.prevSibling.includes(earlier[earlier.length - 1])) continue;
+    if (rule.atParentEnd === true && !atParentEnd) continue;
     return rule.kind;
   }
   return "unknown";
@@ -410,7 +425,9 @@ function collectOccurrences(rules: LanguageRules, tree: StructureTree, text: str
     const nodeText = text.slice(from, to);
     const chain: string[] = [name];
     for (let i = ancestors.length - 1; i >= 0; i--) chain.push(ancestors[i].name);
-    const cls = classify(rules, chain, earlier, nodeText);
+    const parent = ancestors[ancestors.length - 1];
+    // 右端与父节点右端重合 = 该节点是父节点的最后一段（js-ts 的对象字面量简写靠它与其他键形态分辨）。
+    const cls = classify(rules, chain, earlier, nodeText, parent !== undefined && parent.to === to);
     // 声明容器 = 向外最近的容器祖先；一个都没有时落文件根（消极侧：根容器跨度最大 = 最容易挡住候选）。
     let container = { name: ancestors.length > 0 ? ancestors[0].name : name, from: 0, to: text.length };
     for (let i = ancestors.length - 1; i >= 0; i--) {
@@ -435,7 +452,10 @@ function collectOccurrences(rules: LanguageRules, tree: StructureTree, text: str
     const name = cursor.name;
     const from = cursor.from;
     const to = cursor.to;
-    record(name, from, to, earlier);
+    // 快路径：不是标识符类节点就直接下潜——**不建祖先链**。整棵树里绝大多数是关键字 / 运算符 /
+    // 字面量节点，给它们逐个拼 chain 与逐条比对判据表是纯浪费（1MB 语料实测的主要开销之一，
+    // 见 test-results/m198/perf-var-highlight.json 的改进前后读数）。
+    if (rules.identifiers.includes(name)) record(name, from, to, earlier);
     if (!cursor.firstChild()) return;
     ancestors.push({ name, from, to });
     const before: string[] = [];

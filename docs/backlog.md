@@ -177,6 +177,22 @@
     时序依赖的旧宽度，不变量只覆盖独占行形态，需要一处行内容判定）。worker 建议 (a)。证据（真机两态
     几何读数 / 反向验证）：`test-results/m182/`、`test-results/acceptance/2026-09-18/23-image-first-open-width/`。
 
+22. **change `code-variable-highlight` 待归档跟踪**（2026-09-24，M198 实现完成，**待 Alex 节点 2 / 归档**）：
+    流程口径要求每个 change 在实现 PR 合并时即落一条待归档记录并跟踪到归档
+    （`docs/process/openspec-workflow.md` 的批次收尾 checklist 第一条）。本 change 的提案四件在 2026-09-24
+    节点 1 裁决通过（裁决点 2 原话「采纳推荐」，其余 5 点按推荐落定；逐条落点见 `proposal.md` 的
+    「裁决记录」节），实现在 M198 完成：判据落 `src/code-identifiers.ts`（位置类别 / 名字 / 可见域三层，
+    8 门 T1 语言）、呈现落 `src/preview/theme.ts` 的 `codeBindingTheme`、解析复用 M197 的
+    `src/code-structure.ts`（新增一条只读入口 `structureTree`，解析次数仍为 1）。**归档动作的三处口径**：
+    ① 实现期有两处偏离已在 `tasks.md` 就地标注并在 M198 的 review-request 里单列——呈现色值取 `--bg-3`
+    而非 `--bg-2`（后者与 code 模式当前行底色重合、底纹会隐形，tower 2026-09-24 裁决采纳），真机验收的
+    触发通道改用「⌘F + 查询词 + 回车」生成选区（双击手势在该通道合成不出、AX 不暴露装饰，tower 裁决
+    采纳）；② **一张新增元素级视觉基线待 Alex 过目**
+    （`tests/visual/baselines/m198-code-variable-highlight.spec.ts-snapshots/binding-highlight-chromium-darwin.png`，
+    截图副本与说明见 `test-results/m198/baseline-check.md`）——AGENTS.md 的「基线更新是人肉裁决点」；
+    ③ 1MB 级文件的索引构建读数**不达标**（首次触发 ≈ 0.9s，headless 下界），已在 M198 如实落盘并给出
+    后续路径（`test-results/m198/perf-var-highlight.json` 与 design §8 备选②），归档时应连同这条一起看。
+
 ## 待修 findings（不阻塞）
 
 ### 编辑器 / 键位
