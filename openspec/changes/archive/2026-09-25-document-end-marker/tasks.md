@@ -111,8 +111,8 @@
 - [x] 5.7 基线核对（[REVIEW.md](../../../../REVIEW.md) 第 3 条 + AGENTS.md 的视觉门禁卫生）：逐张核对 13 个像素基线场景是否需要更新。
   **实测**：推荐项下**零基线更新**，两条证据——① `bash scripts/gate.sh visual` = `GATE RESULT: 12/12 PASS`（含 `visual-regression 225s`，
   43 处像素断言在 0.001 容差下全绿；日志 `test-results/m189/gate-visual.log`）；② **内容判据逐张核对**：
-  16 份被这些场景打开的 fixture 逐份实测（`test-results/m189/baseline-fixtures.json`）——8 份内容超过一屏（900 / 4898 / 4534 / 742 /
-  5489 / 929 / 889 / 1964 / 1050px）而标记在 `scrollTop=0` 时**在视口之外**（`markerInViewport: false`），8 份装得下（内容高 = clientHeight 712）
+  16 份被这些场景打开的 fixture 逐份实测（`test-results/m189/baseline-fixtures.json`）——9 份内容超过一屏（900 / 4898 / 4534 / 742 /
+  5489 / 929 / 889 / 1964 / 1050px）而标记在 `scrollTop=0` 时**在视口之外**（`markerInViewport: false`），7 份装得下（内容高 = clientHeight 712）
   根本没有标记；基线是 1200×800 的视口截图（未开 `fullPage`），因此这些基线不可能框到标记。
 
 ## 6. 真机验收场景（WKWebView，`scripts/acceptance/`）
