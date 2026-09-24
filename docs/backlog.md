@@ -299,11 +299,61 @@
     reviewer r1/r2 已判成立）；若要给完读标记加像素基线，先过目
     `test-results/m189/acceptance-27-pass/shots/` 再 `--update`。归档后按其 living 落点补 Purpose 归属
     记录、实测归档件内相对链接层级。
+    **核销（M208 归档节点 2，2026-09-25）**：归档为 `openspec/changes/archive/2026-09-25-document-end-marker/`，
+    `editor-live-preview` 落 2 条 ADDED（无新建 capability），tasks 37/37 全勾（未触发的条件项 7.2 已就地
+    标注「不适用」）。归档期四处收口：① tasks 6.1 把 `test-results/acceptance/2026-09-20/27-document-end-marker/`
+    从「同一场景在前一版代码上的首次 PASS」改准为**反向验证 FAIL**（实测 `status.txt` = FAIL、14 断言 /
+    2 失败，与 6.4 的记载同一场地）；② 验收数字三处按 `test-results/acceptance/2026-09-21/results.json`
+    改准为 **14 断言 / 0 失败 / 30.195s**（原 tasks 6.1 写 25.4s、8.3 写 15 断言 / 26.7s、本条下游的
+    「待真机验收」节写 15 断言）；③ delta 的「已知边界」句与同文件规范性条款的矛盾改准（判据读的是
+    **不含标记自身贡献**的内容盒高度与滚动容器的可用高度，不是原文写的「滚动容器的可滚动高度」；
+    「实现期须实测是否被编辑器的尺寸观察机制观测到」改为已实测的无反应结论 + 归档件 design §7 指针）；
+    ④ 归档件内 **15 条** `../../../` 链接各补一层（脚本逐条拼路径 `exists()` 实测：补前 15 条不可达、
+    补后 0 条不可达；= M206 对账时的 14 条 + 本 mission 在 proposal 补「机制偏离记录」时新增的 1 条
+    `[REVIEW.md]` 链接）。另：proposal 补「机制偏离记录」
+    （design 候选 A 的三条判据不可断言 → 落第三条路「真元素挂 `.cm-scroller`」，含 reviewer r1/r2 判定
+    与节点 2 签字），`editor-live-preview` 的 Purpose 补本 change 的归属句。**未追改的两处（如实留档）**：
+    tasks 5.7 的「13 个像素基线场景 / 43 处像素断言」是 M189 时点读数（现 `tests/visual/baselines/` 已有
+    16 个快照目录），且 `43` 只在 `gate.sh visual` 的汇总结论里有支撑——归档件按原样保留，读时带时点。
 
 29. ~~**`restyle-ui-tokens-v1` 的 ui-design-system delta 有一条层级错的相对链接**~~（**已核销**，
     2026-09-25）：tower 直接修（4 层 `../` → 5 层），`test -f` 实测可解析、`validate --strict` 绿。
     遗留建议仍有效：把 M205 的「相对链接可达性实测」做成归档收尾可复跑脚本（docs-check 与 validate
     都不查相对链接）。
+
+30. **change `open-image-lightbox` 待归档跟踪**（**补登 + 核销同日**，2026-09-25，M208）：流程口径要求每个
+    change 在实现 PR 合并时即落一条待归档记录（`docs/process/openspec-workflow.md` 的批次收尾 checklist
+    第一条）。本 change（M184 实现 merge `501369c`）**合并时没有落这条记录**——全仓 grep
+    `open-image-lightbox` 在 `docs/backlog.md` 只命中 dblclick 通道条与 `src/preview/attachments.ts` 的旧
+    路径指针，没有待归档条目，正是 M150 记过的失效模式。它此前还**卡在通道边界上**：以 `dblclick` 为唯一
+    打开路径的交互被记作「真机不可验」（见「验收套件」节的 dblclick 条）。处置：① 双击通道由 M209 打通
+    （swift + `CGEvent` 显式 `kCGMouseEventClickState`），真机场景 33 落库并 PASS（36 断言）+ 反向验证
+    FAIL 7 红，6.1–6.3 / 6.5 / 8.3 五条未勾项补做；② 归档期两项 chromium 断言缺口（G1①②③ 方言形态 /
+    位图形态 / 放大层不发起外链与无脚本副作用、G2 模态期间的字符键）由 M209 补齐并各自反向验证；③ 归档期
+    措辞改准：读取计数按实现口径为 **9**（十处引用里有一条外部 `http(s)` 直连分支不读附件字节，「计数等于
+    引用条数」的等式不成立）、requirement 的三种形态列表注明外部 `http(s)` 只在渲染成可见图像时落在射程内
+    （出厂 CSP 下它必然落占位、没有打开路径）、proposal 与 design 的场景编号 23 → 33、人工清单收窄到
+    手感层（行为判别层由场景 33 + chromium 断言组承担）。**核销**：归档为
+    `openspec/changes/archive/2026-09-25-open-image-lightbox/`，`attachment-display` 落 2 条 ADDED（无新建
+    capability），tasks 34/37（3 条未勾各有就地理由：6.4 的判据钉在「本 change 的实现 PR」上，场景与 fixture
+    是 M209 的 PR 才落的；3.4 与 9.2 是可裁决条件项且节点 1 未选中）；归档件内 14 条 `../../../` 链接各补
+    一层（拼接 `exists()` 实测 0 条不可达；= M207 对账时的 13 条 + 本 mission 收口时在 6.1 记录里新增的
+    1 条 `[REVIEW.md]` 链接），`attachment-display` 的 Purpose 补本 change 归属句并回填 M178
+    （`image-svg-and-fallback`）漏掉的那半句。**另有两处残留如实登记**：① `src/preview/attachments.ts:415`
+    与 `scripts/acceptance/scenarios/33-image-lightbox.md:151` 的旧路径指针见「文档指针与门禁清单」节；
+    ② M184 探针实测的运行期 `attachmentReads` = 10 与「9 处引用需要读字节」这个静态条数不一致（成因未定位，
+    机制上装饰被滚动淘汰后重建会再读一次）——归档件把两个数都如实写出、**不编造解释**，若要对齐先起一次
+    读数实测。
+
+31. **结束标记（`.cm-lp-end-marker`）的字号基准与正文分叉，归 restyle 批次统一处理**（2026-09-25，M208
+    登记，**待实施**；来源 M206 归档对账的第 3 份 finding）：标记的 `0.82em` / `4em` 以 `.cm-scroller` 为
+    基准，而 `.cm-scroller` 没有自己的字号声明、只继承 `.cm-editor` 写死的 `14px`（`src/style.css:118-120`）；
+    `--editor-font-size` 的样式消费者只有 `.cm-content`（`src/editor.ts:1244`）。因此 M195 的排版能力把正文
+    放大时标记**不跟随**（线宽反推 45.9px = 4 × 0.82 × 14px 佐证基准是 14px）。这不违反 `document-end-marker`
+    的 delta（只要求「高度 SHALL 固定」），故不阻塞其归档（2026-09-25 已归档），但属用户可见的口径分叉。
+    **动作**：`restyle-ui-tokens-v1` 重制 token 层时把标记的字号基准对齐到内容字号的单一来源（`--editor-font-size`
+    或等价的 token 消费者），并补一条「正文放大后标记随之缩放」的断言。该结论目前是**代码链推导、未起真机
+    实测**，实施时先按实测确认分叉是否真实可见。
 
 ## 待修 findings（不阻塞）
 
@@ -444,7 +494,16 @@
   人工清单）。修法（按优先级）：① KimiCU 侧给 `click` 加 clickCount 控制（`kCGMouseEventClickState = 2`
   一次性投递），用该 finding 的对照实验验证；② 在此之前真机层不覆盖双击类交互，人工补验（README
   「已知边界」已记）。附带：`lib/cu.mjs` 里 M184 期遗留的 `doubleClick` 包装（造不出 dblclick 的死代码）
-  随本条一并处置。finding
+  随本条一并处置。**已核销（M209 探针 + M208 归档节点 2，2026-09-25）**：第五条通道实测**可用**——
+  `/usr/bin/swift` + `CGEvent` 显式投递 `kCGMouseEventClickState`（两次 down/up、间隔 60ms）能在
+  WKWebView 里造出真实 DOM `dblclick`，且已接进套件（`scripts/acceptance/lib/cgevent-click.swift` +
+  `doubleClick` 动作；`scripts/acceptance/README.md` 的「已知边界」条已按实测订正）。同时本条引用的
+  **判据本身不成立**：「双击文件树行 → 标签数 1→2」恒不成立（`openFile` 对已打开的同路径短路，
+  `src/main.ts:380-386`），它既不能证明也不能证伪通道——M184 的「四条通道都造不出 dblclick」推理据此
+  作废。承接面：真机场景 `scripts/acceptance/scenarios/33-image-lightbox.md`（2026-09-24 真机 PASS
+  36 断言、反向验证 FAIL 7 红），即 change `open-image-lightbox` 的 6.1–6.3 / 6.5 / 8.3 未勾项已由
+  M209 补做。**遗留一条**：上面那个附带项（`lib/cu.mjs` 的死包装）**仍未删**——M209 新增的是
+  `lib/execute.mjs` 层的同名动作，与它不同层，未合并；随下次动 `lib/` 时清理。finding
   `.tower/comms/findings/20260919-worker-lightbox-impl-improve-dom-dblclick-wkwebview.md`（含四条通道
   复现配方，现场 `test-results/m184/13`～`/17`）。
 - **`ax.mjs` 的 `parseNodes` label 提取被嵌套括号截断，按名定位图片节点永远匹配不上**（M184 finding，
@@ -640,6 +699,15 @@
   tasks 同批订正的同一处数字）。**动作**：下次动到 `src/` 或这些文档的 mission 顺手改指归档路径 / 改准数字，
   或单立一条清扫 mission。这些指针不影响任何门禁（`scripts/docs-check.sh` 不查相对链接、`validate` 不查路径），
   但 REVIEW.md 第 7 条的口径是「写不出可 `ls` 的指针就等于没跑」。
+- **M208 归档后残留的仓内旧路径指针（两处）**（2026-09-25，M208 登记，low，**待修**）：`document-end-marker`
+  与 `open-image-lightbox` 归档后，仓内仍有两处按旧路径 `openspec/changes/<id>/…` 指路（归档件内部指针已随
+  归档改准，这里列的是外部指针）：① `src/preview/attachments.ts:415` 的注释指向
+  `openspec/changes/open-image-lightbox/design.md` §4.4——`src/` 不在归档 mission 的 scope，按 M205 先例
+  只登记（Alex 节点 2 已裁决「只登记 `docs/backlog.md`，不在 M208 改」）；②
+  `scripts/acceptance/scenarios/33-image-lightbox.md:151` 的「覆盖」表指向
+  `openspec/changes/open-image-lightbox/tasks.md`——非 openspec 制品，同 M205 先例由下次动
+  `scripts/acceptance/**` 的 mission 顺带改指 `openspec/changes/archive/2026-09-25-open-image-lightbox/tasks.md`。
+  两处都不影响门禁（`docs-check.sh` 不查相对链接、`validate` 不查路径），但 REVIEW.md 第 7 条要求指针可 `ls`。
 - **门禁清单三处过期**（M153 finding，worker-testinfra，2026-09-17，low，**已核销**：2026-09-18 治理批
   收尾由 tower 直改闭合，核销记录见文末「已核销」节）：M153 给
   `gate.sh quick` 加了 `docs-check` 与单测层、给 visual 层加了 isolation 断言，三处复刻门禁清单的文档随之
@@ -990,13 +1058,15 @@
     本批订正。判别性验证（瞬态）仍在 chromium 层 `tests/visual/scenes/m187-image-scroll-stability.spec.ts`。
     证据 `test-results/m190/26-pass-2026-09-21/`、`test-results/m190/batch-2026-09-21/`（24/25/26/27
     同批 4/4 PASS）。
-23. **文档末尾完读标记**（M189，2026-09-21）—— `27-document-end-marker`（15 断言 / 30.2s，
-    master `b82834e` 真机 PASS）：长文档（超一屏）末尾出现「到底了」节点、短文档（装得下）不出现
+23. **文档末尾完读标记**（M189，2026-09-21）—— `27-document-end-marker`（**14 断言** / 30.2s，
+    master `b82834e` 真机 PASS；断言数订正于 M208 归档节点 2，ground truth =
+    `test-results/acceptance/2026-09-21/results.json`）：长文档（超一屏）末尾出现「到底了」节点、短文档（装得下）不出现
     （同一匹配器，非恒真）、文档文本纯度与磁盘逐字节不变。**覆盖边界（场景说明已写）**：这条 AX
     通道不给纯文本节点 bbox，「可见性」不在真机通道判——真机只判节点在场/缺席 + 纯度，可见性由
     chromium 几何断言（`tests/visual/scenes/end-marker.spec.ts`）+ 截图承担。反向验证（判据改成
-    恒不显示 → 2/15 红）留档 `test-results/m189/acceptance-27-reverse-fail/`。证据
-    `test-results/acceptance/2026-09-21/27-document-end-marker/`。
+    恒不显示 → **2/14** 红）留档 `test-results/m189/acceptance-27-reverse-fail/`。证据
+    `test-results/acceptance/2026-09-21/27-document-end-marker/`。归档为
+    `openspec/changes/archive/2026-09-25-document-end-marker/`（2026-09-25 节点 2）。
 
 **已机验到渲染/结构层，行为细节仍缺可观测面**
 

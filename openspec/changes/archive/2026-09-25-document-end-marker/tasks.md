@@ -1,10 +1,13 @@
 # Tasks: document-end-marker
 
-任务口径：每条给出**验收口径**（判据 + 证据落点）。「证据」指可 `ls` 的路径或可复算的命令输出，不是「跑过了」的口头声明（[REVIEW.md](../../../REVIEW.md) 第 7 条）。
+任务口径：每条给出**验收口径**（判据 + 证据落点）。「证据」指可 `ls` 的路径或可复算的命令输出，不是「跑过了」的口头声明（[REVIEW.md](../../../../REVIEW.md) 第 7 条）。
 
 **实现阶段记录（M189，2026-09-21）**：Alex 节点 1 四项全取推荐项（取值见 [proposal.md](proposal.md) 的「裁决记录」），
 因此本文件的条件项一项都不触发，实现按默认写法落地。证据目录：`test-results/m189/`（git 外，绝对路径
-`/Users/boxcounter/Code/Boxcounter/lumir/.tower/worktrees/wt-189/test-results/m189/`）。
+`/Users/boxcounter/Code/Boxcounter/lumir/test-results/m189/`）。
+**指针订正（M208 归档节点 2，2026-09-25）**：本行原写的绝对路径指向 M189 的 worktree
+（`.tower/worktrees/wt-189/…`），该 worktree 已随批次清理移除；证据的留存副本在主 checkout 的
+`test-results/m189/`，逐项 `ls` 可核（REVIEW.md 第 7 条）。
 
 **条件项**（本 change 未触发任何一条）：裁决落在**推荐项**上时，本文件的默认写法成立；落在备选上时，实现前先按裁决改写 delta 与本节条件项，不静默按推荐项做：
 
@@ -20,7 +23,7 @@
   **实测**（`test-results/m189/probe-before.json`）：长文三处 `scrollHeight` 均 1228、`clientHeight` 712，`.cm-content` 最后一个子节点是空行
   （`cm-line cm-lp-block-separator`），DOM 里没有任何标记元素（`markerCount: 0`、`textInDom: false`）；短文 `scrollHeight` 712 = `clientHeight`。
   三项与 design §1–§3 的机制推断一致。读数以 chromium 层为准（真机读数在同一目录的验收证据里）。
-- [x] 1.2 反向验证（先红，[REVIEW.md](../../../REVIEW.md) 第 1 条）：把「超过一屏的文档滚到底时标记可见（渲染盒宽高非零）」与「一屏装得下的文档没有标记」两条断言先写出来，在**未实现前**跑一次，两条都必须 FAIL。
+- [x] 1.2 反向验证（先红，[REVIEW.md](../../../../REVIEW.md) 第 1 条）：把「超过一屏的文档滚到底时标记可见（渲染盒宽高非零）」与「一屏装得下的文档没有标记」两条断言先写出来，在**未实现前**跑一次，两条都必须 FAIL。
   **实测**：`test-results/m189/red-before-implementation.log` —— 实现前 `tests/visual/scenes/end-marker.spec.ts` 六条用例全红（`6 failed`），
   红灯落在「标记在场」与「渲染盒几何」这两类判据上，不是「class 不存在」这类退化判据。
 - [x] 1.3 取一次**性能与几何基线**（3.2 / 8.2 的对照值）：打开 1MB Markdown 的现有端点读数（口径见 `perf-measurement` spec），以及 1.1 的三次 `scrollHeight` 数值。
@@ -84,7 +87,7 @@
   **实测**：`tests/visual/scenes/end-marker.spec.ts` + `tests/visual/fixtures/end-marker/{long,short,band}.md`（长文里含作者手写 `---`）；
   红转绿对照 = `red-before-implementation.log`（6 红）↔ 本场景 6 绿（`gate.sh visual` 的 `visual-regression` 步骤）。
   判据全是几何与文本读数（渲染盒、线段宽度与栏宽之比、计算色、文本节点），没有「class 存在」型断言。
-- [x] 5.2 两态断言：超过一屏 → 标记渲染盒宽高非零且居中；一屏装得下 → 标记不存在；再在同一场景里把文档补长（或压矮视口）→ 标记出现（配对正观测，[REVIEW.md](../../../REVIEW.md) 第 2 条：负向断言不得空转）。**覆盖缺口补一笔（M188 r1 P2-1）**：fixture 不能只取「明显装得下」与「明显装不下」两端，必须再有一份内容高度**恰好落在判据临界带内**（`clientHeight − 标记高度` 与 `clientHeight` 之间）。
+- [x] 5.2 两态断言：超过一屏 → 标记渲染盒宽高非零且居中；一屏装得下 → 标记不存在；再在同一场景里把文档补长（或压矮视口）→ 标记出现（配对正观测，[REVIEW.md](../../../../REVIEW.md) 第 2 条：负向断言不得空转）。**覆盖缺口补一笔（M188 r1 P2-1）**：fixture 不能只取「明显装得下」与「明显装不下」两端，必须再有一份内容高度**恰好落在判据临界带内**（`clientHeight − 标记高度` 与 `clientHeight` 之间）。
   **实测**：用例 1（两态 + 压矮视口 → 出现 + 放高视口 → 消失的三步配对）与用例 2（临界带）。
   临界带那份 fixture 的实测：`natural = clientHeight − 8`，断言当场证明它落在 `(clientHeight − 标记高度, clientHeight]` 带内
   （标记高度实测 60px > 8），并断言标记不显示；随后再压矮 120px → 标记出现（配对）。
@@ -105,11 +108,11 @@
 - [x] 5.6 几何稳定断言：滚到顶 / 中 / 底三次读 `scrollDOM.scrollHeight`，三次逐像素相同。
   **实测**：用例 3 断言四处读数逐项相同，并断言「标记随内容滚动」（滚到底时它的视口纵坐标更小、且落在滚动容器内）。
   **反向验证**：`test-results/m189/red-scroll-position-criterion.log` —— 判据临时改成「滚到底才显示」后，回顶的读数与第一次不同（1228 ≠ 1620），该用例红。
-- [x] 5.7 基线核对（[REVIEW.md](../../../REVIEW.md) 第 3 条 + AGENTS.md 的视觉门禁卫生）：逐张核对 13 个像素基线场景是否需要更新。
+- [x] 5.7 基线核对（[REVIEW.md](../../../../REVIEW.md) 第 3 条 + AGENTS.md 的视觉门禁卫生）：逐张核对 13 个像素基线场景是否需要更新。
   **实测**：推荐项下**零基线更新**，两条证据——① `bash scripts/gate.sh visual` = `GATE RESULT: 12/12 PASS`（含 `visual-regression 225s`，
   43 处像素断言在 0.001 容差下全绿；日志 `test-results/m189/gate-visual.log`）；② **内容判据逐张核对**：
-  16 份被这些场景打开的 fixture 逐份实测（`test-results/m189/baseline-fixtures.json`）——8 份内容超过一屏（900 / 4898 / 4534 / 742 /
-  5489 / 929 / 889 / 1964 / 1050px）而标记在 `scrollTop=0` 时**在视口之外**（`markerInViewport: false`），8 份装得下（内容高 = clientHeight 712）
+  16 份被这些场景打开的 fixture 逐份实测（`test-results/m189/baseline-fixtures.json`）——9 份内容超过一屏（900 / 4898 / 4534 / 742 /
+  5489 / 929 / 889 / 1964 / 1050px）而标记在 `scrollTop=0` 时**在视口之外**（`markerInViewport: false`），7 份装得下（内容高 = clientHeight 712）
   根本没有标记；基线是 1200×800 的视口截图（未开 `fullPage`），因此这些基线不可能框到标记。
 
 ## 6. 真机验收场景（WKWebView，`scripts/acceptance/`）
@@ -117,9 +120,12 @@
 - [x] 6.1 **新增场景** `scripts/acceptance/scenarios/27-document-end-marker.md`（编号按现有最大 26 续；`item` 字段取 27），覆盖：打开超过一屏的文档 → 翻到底 → 标记在场；打开一屏装得下的文档 → 没有标记。
   **断言形态**：可见性 MUST NOT 只断言「AX 里有『到底了』这段文字」（M178 finding）——真机通道读不到文本节点的几何（见 6.2），
   因此可见性判据落在 chromium 层的几何断言 + 截图证据上，真机侧判的是「标记的可读文本节点存在 / 不存在」这一对 + 文档文本纯度 + 磁盘逐字节。
-  **实测**：`--check` = `CHECK PASS 27-document-end-marker`；真机运行 **PASS（14 条断言 / 0 失败 / 25.4s）**，
-  证据 `test-results/acceptance/2026-09-21/27-document-end-marker/{status.txt,steps.md,shots/}`（最终 tip 上的那一次），
-  副本 `test-results/m189/acceptance-27-pass/`；`test-results/acceptance/2026-09-20/...` 是同一场景在前一版代码上的首次 PASS。截图 `shots/02-长文滚到底.jpeg` 可见：末段之下是「—— 到底了 ——」的短线夹字（弱化暖色）。
+  **实测**：`--check` = `CHECK PASS 27-document-end-marker`；真机运行 **PASS（14 条断言 / 0 失败 / 30.195s）**，
+  证据 `test-results/acceptance/2026-09-21/27-document-end-marker/{status.txt,steps.md,shots/}`（最终 tip 上的那一次；
+  断言数与耗时取自同批的 `test-results/acceptance/2026-09-21/results.json`，`summary.md` 的表格里写作 `14 / 0 / 30.2s`），
+  副本 `test-results/m189/acceptance-27-pass/`。**订正（M208 归档节点 2）**：`test-results/acceptance/2026-09-20/27-document-end-marker/`
+  **不是**「首次 PASS」——那一份 `status.txt` 实测 = **FAIL（14 条断言 / 2 失败）**，是 6.4 反向验证的场地
+  （两处记载的 `startedAt` 相同，互为印证）。截图 `shots/02-长文滚到底.jpeg` 可见：末段之下是「—— 到底了 ——」的短线夹字（弱化暖色）。
 - [x] 6.2 探针：先用一次探针确认标记在真实 WKWebView 的 AX 树里是否可读（生成内容是否进 AX）。
   **实测（探针读数，落进场景说明的「覆盖边界」段）**：标记**进 AX 树**，形态是 `- [192] AXStaticText = "到底了"`，
   位置与 `AXTextArea` 同级（在 textbox 之外，印证它不是文档内容的一部分）。但该节点**没有 bbox**：
@@ -140,10 +146,10 @@
 
 ## 7. 文案 deck
 
-- [x] 7.1 按裁决点 1 的裁决处置 [文案-Copy.md](../../../文案-Copy.md)：追加 D114 一行（末位当前 D113），中文与 English 两列都给，并在文末「文案实现备注」段登记归属文件（新条目按既有惯例在结尾补一句批次说明）。
+- [x] 7.1 按裁决点 1 的裁决处置 [文案-Copy.md](../../../../文案-Copy.md)：追加 D114 一行（末位当前 D113），中文与 English 两列都给，并在文末「文案实现备注」段登记归属文件（新条目按既有惯例在结尾补一句批次说明）。
   **实测**：`文案-Copy.md` 第 105 行 D114（中文「到底了」/ English `That's all`）+ 编号沿革段一句 + 实现备注段一条归属
   （`src/preview/endMarker.ts` 的 `END_MARKER_TEXT`）；`tests/unit/end-marker.test.ts` 按 deck 表格行逐字断言，两边漂移即红。
-- [x] 7.2 裁决点 1 取备选③（无文字）时：D114 登记为读屏名条目（与 D76「分隔线」同形），并核对 [foundation-markdown §5](../../../docs/specs/foundation-markdown.md) 的可访问性口径。
+- [x] 7.2 裁决点 1 取备选③（无文字）时：D114 登记为读屏名条目（与 D76「分隔线」同形），并核对 [foundation-markdown §5](../../../../docs/specs/foundation-markdown.md) 的可访问性口径。
   **不适用**：裁决取推荐项（有可见文字），该条条件项未触发。
 
 ## 8. 验证与收官
@@ -154,9 +160,10 @@
   **实测**：`LUMIR_VISUAL_PORT=4291 bash scripts/gate.sh visual` → `GATE RESULT: 12/12 PASS（SKIP 0）`
   （含 quick 全部十一步 + `isolation-runs` + `visual-regression 225s`）；日志 `test-results/m189/gate-visual.log`。
 - [x] 8.3 真机套件至少跑一次新增场景并留档（AGENTS.md：dogfood 批次合并后、Alex 验收前先跑一遍）。
-  **实测**：`node scripts/acceptance/run.mjs 27` 在最终 tip 上 = **PASS（15 条断言 / 0 失败 / 26.7s）**，报告
+  **实测**：`node scripts/acceptance/run.mjs 27` 在最终 tip 上 = **PASS（14 条断言 / 0 失败 / 30.195s）**
+  （数字订正于 M208 归档节点 2，ground truth = `test-results/acceptance/2026-09-21/results.json`），报告
   `test-results/acceptance/2026-09-21/summary.md`，场景证据 `test-results/acceptance/2026-09-21/27-document-end-marker/`；
-  另跑了一次反向验证（见 6.4，FAIL 留档）。
+  另跑了一次反向验证（见 6.4，FAIL 留档 `test-results/acceptance/2026-09-20/27-document-end-marker/`）。
 - [x] 8.4 `git diff --check` 通过；改动文件集合与本 change 的 Impact 清单一致（出现跨 scope 的只读依赖须先报 tower 批准）。
   **实测**：`git diff --check` 无输出；改动集合 = `src/editor.ts`、`src/preview/endMarker.ts`（新增）、`src/preview/theme.ts`、
   `文案-Copy.md`、`tests/unit/end-marker.test.ts`（新增）、`tests/visual/fixtures/end-marker/**`（新增）、

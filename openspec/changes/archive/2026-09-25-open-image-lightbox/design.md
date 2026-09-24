@@ -21,7 +21,7 @@
 2. 想给 widget 加交互，得自己挂 DOM 监听——这不构成键位旁路（键位表管键盘，图片的双击是鼠标动作），
    与 `src/link-follow.ts` 的 ⌘-Click 同族（鼠标路径就地判定）。
 
-**但 1 是机制推断，不是本轮实测读数。** 按 [REVIEW.md](../../../REVIEW.md) 第 7 条的纪律，
+**但 1 是机制推断，不是本轮实测读数。** 按 [REVIEW.md](../../../../REVIEW.md) 第 7 条的纪律，
 [tasks.md](tasks.md) 1.1 要求在动手前跑一次现状读数（双击后 caret 行号、`docText`、遮罩不存在、
 无源码显露），把读数落进 `test-results/`；实现后同一读数必须逐值相同。
 
@@ -52,7 +52,7 @@
 > 有 `<img>` ⇔ 双击可打开 ⇔ 终态可见。
 
 反过来做（挂在容器上 + 用状态标志判断）会得到一条需要与三处分支同步的开关——任何一处分支漏改，
-就会出现「占位也能点开一个空遮罩」或「图能显示但点不开」。同类教训见 [REVIEW.md](../../../REVIEW.md)
+就会出现「占位也能点开一个空遮罩」或「图能显示但点不开」。同类教训见 [REVIEW.md](../../../../REVIEW.md)
 第 8 条（同语义两处真源）与第 9 条（声明了却没有消费者）。
 
 副产物：加载中双击也无操作，这在语义上是对的（图还没出来，「看大图」无从谈起），
@@ -230,8 +230,9 @@ CSS 判据（推荐项）：
 - **视觉层（chromium，CI）**：`tests/visual/scenes/markdown-combo.spec.ts` 新增断言组——打开与三条
   关闭路径、占位/加载态不可打开（**正观测同场景内证明**）、焦点与不穿透、doc/caret 逐值不变、
   svg 与位图同构、缩放口径两侧；反向验证（先红）与「去掉 `max-height` 后必红」各留档。
-- **真机层（WKWebView，`scripts/acceptance/`）**：新增场景（编号 23）断言放大图 **AXImage 几何非零**
-  （不可见图的 AX 文本照样读得到——这条陷阱记在 `docs/backlog.md:257-264`（M178 finding，主要居所）与
+- **真机层（WKWebView，`scripts/acceptance/`）**：新增场景（编号 23；**实现期为 33**，见本节末的归档期订正）
+  断言放大图 **AXImage 几何非零**（不可见图的 AX 文本照样读得到——这条陷阱记在 `docs/backlog.md` 的
+  「视觉套件与整页基线门禁」节里 M178 的「AX 文本可读 ≠ 元素可见」条（主要居所）与
   `openspec/changes/archive/2026-09-18-image-svg-and-fallback/tasks.md:190-192`，
   判据取几何）、`Esc` 关闭后焦点回编辑器、`editor.unchangedSince` 与磁盘 `unchangedSince`。
   **实现期实测：这一层被通道能力挡住（2026-09-19）**。场景与 fixture 写好后跑了两轮真机，双击路径全部
@@ -241,7 +242,14 @@ CSS 判据（推荐项）：
   `scripts/acceptance/README.md` 的「已知边界」，收口方式已请 tower 裁决——逐条记录见
   [tasks.md](tasks.md) 第 6 节与 8.3。**本 change 的真机覆盖因此是缺的，不是「已验」**；打开与关闭路径的
   行为覆盖暂落在 chromium 层（那里是真实 dblclick）。
+  **归档期订正（M208 / M209，2026-09-25）**：上面这条「套件在 WKWebView 里造不出 `dblclick`」的结论
+  **已作废**——M209 实测第五条通道（`/usr/bin/swift` + `CGEvent` 显式投递 `kCGMouseEventClickState`）
+  能造出真实 `dblclick`，并已接进套件（`scripts/acceptance/lib/cgevent-click.swift` + `doubleClick` 动作）；
+  M184 用的那条判据本身也不成立（`openFile` 对已打开的同路径短路，「双击文件树行 → 标签数 1→2」恒不成立）。
+  真机场景最终以**编号 33** 落库（`scripts/acceptance/scenarios/33-image-lightbox.md`；2026-09-24 真机
+  PASS 36 断言 + 反向验证 FAIL 7 红），本 change 的真机覆盖**不再是缺的**；原稿的 23 / 24 已分别被
+  `23-image-first-open-width` 与 `24-table-cell-ctrl-e-seq` 占用。人工清单继续承接手感层。
 - **不改写源文件**：视觉与真机两层都断言 `EditorState.doc` / 磁盘文件逐字节不变（ADR 0003 §3）。
-- **基线**：lightbox 是新元素，按 [REVIEW.md](../../../REVIEW.md) 第 3 条与 `tests/visual/README.md`
+- **基线**：lightbox 是新元素，按 [REVIEW.md](../../../../REVIEW.md) 第 3 条与 `tests/visual/README.md`
   的纪律核对——现有场景里出现图片的只有 `markdown-combo`（该场景无 `toHaveScreenshot`），
   实现期逐张核对相册式基线并如实写明「零更新」或列出新增/重拍的基线名 + 截图先请 Alex 过目。
