@@ -21,6 +21,7 @@ import {
   itemPath,
   peekStructureEntries,
   structureEntries,
+  structureKeyBuildCount,
   structureParseCount,
   supportsStructure,
 } from "../../src/code-structure.ts";
@@ -370,6 +371,52 @@ test("顺序 = 文档顺序，落点 = 声明起点（前导缩进不在范围�
   assert.equal(method.line, 2);
 });
 
+test("条目跨度 `to` = 声明节点范围（声明范围是被钉住的合同，M198 变量高亮要消费它）", () => {
+  // 跨度取的是**声明节点**的 from/to（不是名字的范围）：`doc.slice(from, to)` 就是该声明的原文。
+  // 这条断言是 `StructureEntry.to` 的唯一消费者（REVIEW.md 第 9 条：声明了就得有人读它）。
+  const spans = (language: CodeLanguage, doc: string): string[] =>
+    structureEntries(language, doc).map((entry) => doc.slice(entry.from, entry.to));
+
+  const js = `const LIMIT = 42;\nclass Util {\n  field = 1;\n  greet(name) {\n    return name;\n  }\n}\nfunction helper() {}\n`;
+  assert.deepEqual(spans("javascript", js), [
+    "const LIMIT = 42;",
+    "class Util {\n  field = 1;\n  greet(name) {\n    return name;\n  }\n}",
+    "field = 1;",
+    "greet(name) {\n    return name;\n  }",
+    "function helper() {}",
+  ]);
+
+  // 逐名成条的条目：跨度是**各自的名字**（不是整个声明）——落点与跨度都落在名字上，
+  // 否则多条条目共享同一个区间，「当前位置归属」会永远选中最后一条（实现期实测踩到过）。
+  assert.deepEqual(spans("go", `package main\n\nvar x, y = 1, 2\n`), ["x", "y"]);
+  assert.deepEqual(spans("java", `class A {\n  int a, b;\n}\n`), ["class A {\n  int a, b;\n}", "a", "b"]);
+
+  // 无名结构节点（rust impl 块）与规则集（css）：跨度覆盖整块，跳转只用到 from
+  assert.deepEqual(spans("rust", `impl Util {\n    fn a(&self) {}\n}\n`), ["impl Util {\n    fn a(&self) {}\n}", "fn a(&self) {}"]);
+  assert.deepEqual(spans("css", `.a { color: red; }\n`), [".a { color: red; }"]);
+
+  // 通用不变量：任何语言的任何条目都必须是文档里的非空区间，且 from 落在条目文本的开始处
+  const docs: Array<[CodeLanguage, string]> = [
+    ["javascript", js],
+    ["python", `class C:\n    def m(self):\n        pass\n`],
+    ["rust", `struct S { a: u32 }\n`],
+    ["go", `package main\n\nfunc f() {}\n`],
+    ["c", `int f(void) { return 1; }\n`],
+    ["cpp", `class C { int a; };\n`],
+    ["java", `class A { int f; }\n`],
+    ["css", `.a { color: red; }\n`],
+    ["scss", `$v: 1px;\n.a { color: red; }\n`],
+  ];
+  for (const [language, doc] of docs) {
+    const entries = structureEntries(language, doc);
+    assert.ok(entries.length > 0, `${language} 的语料应产出条目`);
+    for (const entry of entries) {
+      assert.ok(entry.to > entry.from, `${language} 的 ${entry.text} 跨度应为非空区间`);
+      assert.ok(entry.to <= doc.length, `${language} 的 ${entry.text} 跨度不得越界`);
+    }
+  }
+});
+
 // --- 4. T2（规则集与 $变量）--------------------------------------------------------------------
 
 test("css：条目 = 规则集（选择器原文），嵌套规则深一级，属性声明不入列", () => {
@@ -440,6 +487,32 @@ test("同一文档第二次请求不重新解析；换文档（内容变化）�
   // 同一段文本换语言是另一个键（token 与节点名都可能不同）
   assert.deepEqual(texts("javascript", "function one() {}\n"), ["one"]);
   assert.equal(structureParseCount(), afterFirst + 2);
+});
+
+test("同一份文档重复问不重建缓存键（键是整篇原文，节流同步路径上不得每次重拼重哈希）", () => {
+  const body = `class Peak {\n  m() {\n    return 1;\n  }\n}\n`;
+  const marker = `# key-probe-${Date.now()}`;
+  const doc = `${body}${marker}\n`;
+  const before = structureKeyBuildCount();
+  // 未解析：一次查找（这一次要建键）
+  assert.equal(peekStructureEntries("javascript", doc), null);
+  assert.equal(structureKeyBuildCount(), before + 1);
+  // 同一文本对象第二次、第三次：走「上一次现场」的快路径，计数不动
+  assert.equal(peekStructureEntries("javascript", doc), null);
+  assert.equal(peekStructureEntries("javascript", doc), null);
+  assert.equal(structureKeyBuildCount(), before + 1, "同一文本对象重复 peek 不该再建键");
+  // 解析一次后，重复 peek 同样不建键（快路径优先于 Map）
+  const entries = structureEntries("javascript", doc);
+  const afterParse = structureKeyBuildCount();
+  for (let i = 0; i < 5; i++) assert.equal(peekStructureEntries("javascript", doc), entries);
+  assert.equal(structureKeyBuildCount(), afterParse, "命中之后重复 peek 也不该再建键");
+  // 缓存的身份仍是**内容**而不是对象：同值的另一份拼接产物照样命中（换文件 / 外部重载的语义不变）
+  assert.deepEqual(peekStructureEntries("javascript", body + marker + "\n"), entries);
+  // 内容变了 ⇒ 重新解析、并重新查过缓存（两个计数都动）
+  const parsedBefore = structureParseCount();
+  assert.deepEqual(texts("javascript", `${doc}class Extra {}\n`), ["Peak", "m", "Extra"]);
+  assert.equal(structureParseCount(), parsedBefore + 1);
+  assert.ok(structureKeyBuildCount() > afterParse, "内容变化后必须重新查缓存");
 });
 
 test("不支持的语言永远没有结构：11 门 T3 语言与「无语言包」两侧都成立", () => {

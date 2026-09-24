@@ -51,7 +51,9 @@ export interface StructureEntry {
   text: string;
   /** 声明节点在文档里的起点。 */
   from: number;
-  /** 声明节点在文档里的终点（供断言与去重，跳转不用它）。 */
+  /** 声明节点在文档里的终点（不含尾随空白与换行）。**消费者是 `tests/unit/code-structure.test.ts`
+   *  的跨度断言**——它把「`doc.slice(from, to)` = 声明节点原文」钉成合同（声明范围是后续 mission
+   *  〈变量高亮〉要吃的东西）；跳转不用它（落点是 `from`），因此这里不写「供去重」那类没有消费者的说法。 */
   to: number;
   /** 1 基行号。 */
   line: number;
@@ -338,8 +340,39 @@ const CACHE_LIMIT = 32;
 /** 「语言 + 文档原文」→ 条目表。code 模式只读，故内容即身份（design §1.6）。 */
 const cache = new Map<string, readonly StructureEntry[]>();
 let parseCount = 0;
+let keyBuildCount = 0;
 
 const cacheKey = (language: CodeLanguage, text: string): string => `${language}\u0000${text}`;
+
+/**
+ * 上一次查询的现场。**同一个 (语言, 原文) 上重复问时不重建键**——指示段的节流同步每 120ms 问一次
+ * 同一份文档，而键是整篇原文：不记忆的话每次同步都要拼一个文档长度的字符串并把它哈希一遍
+ * （1MB 文档 ~1MB 分配 + O(n)，14MB 的压缩 bundle 同比例放大；都不违反性能合同的字面，但完全是
+ * 可避免的）。`text` 是 string 原始值，`===` 比一层即可：同一个 `Text` 对象取出的串在 toc 侧
+ * 有记忆（`Toc.fullText()`），传进来的是同一个字符串对象。
+ *
+ * `entries: null` 是「这份文档已知没有缓存结果」——**未命中也要记住**：用户可能打开一个代码文件却
+ * 从不按 `⌘⇧O`，那种形态下每一次节流同步都是未命中。缓存的唯一写入口是 `remember()`（解析路径），
+ * 因此这条记忆不会被绕过而陈旧；`cache.clear()` 也只发生在 `remember()` 之前。
+ *
+ * 冷路径（首次解析）的 `cache.set` 会自己再建一次键——每文档一次，不为它把接口复杂化。
+ */
+let lastLookup: { language: CodeLanguage; text: string; entries: readonly StructureEntry[] | null } | null = null;
+
+/** 查缓存（含上一次现场的快路径）；未命中返回 null。**不解析**。 */
+function cachedEntries(language: CodeLanguage, text: string): readonly StructureEntry[] | null {
+  if (lastLookup !== null && lastLookup.language === language && lastLookup.text === text) return lastLookup.entries;
+  keyBuildCount += 1;
+  const entries = cache.get(cacheKey(language, text)) ?? null;
+  lastLookup = { language, text, entries };
+  return entries;
+}
+
+/** 把 (语言, 原文) → 条目表记进缓存与「上一次现场」。 */
+function remember(language: CodeLanguage, text: string, entries: readonly StructureEntry[]): void {
+  cache.set(cacheKey(language, text), entries);
+  lastLookup = { language, text, entries };
+}
 
 /**
  * 已解析的条目（**只看缓存，不解析**）——指示段的节流同步走这一条：光标 / 滚动路径上
@@ -348,7 +381,7 @@ const cacheKey = (language: CodeLanguage, text: string): string => `${language}\
  */
 export function peekStructureEntries(language: CodeLanguage | null, text: string): readonly StructureEntry[] | null {
   if (language === null || STRUCTURE_SUPPORT[language] === null) return null;
-  return cache.get(cacheKey(language, text)) ?? null;
+  return cachedEntries(language, text);
 }
 
 /**
@@ -358,13 +391,12 @@ export function peekStructureEntries(language: CodeLanguage | null, text: string
 export function structureEntries(language: CodeLanguage, text: string): readonly StructureEntry[] {
   const support = STRUCTURE_SUPPORT[language];
   if (support === null) return EMPTY;
-  const key = cacheKey(language, text);
-  const cached = cache.get(key);
-  if (cached !== undefined) return cached;
+  const cached = cachedEntries(language, text);
+  if (cached !== null) return cached;
   parseCount += 1;
   const entries = collectEntries(support, text);
   if (cache.size >= CACHE_LIMIT) cache.clear();
-  cache.set(key, entries);
+  remember(language, text, entries);
   return entries;
 }
 
@@ -374,6 +406,14 @@ export function structureEntries(language: CodeLanguage, text: string): readonly
  */
 export function structureParseCount(): number {
   return parseCount;
+}
+
+/**
+ * 累计进缓存查找（= 建过缓存键）的次数。**唯一的消费者是测试**：它把「同一份文档重复问不重建键」
+ * 这条可避免的 O(doc) 分配钉成断言（`cachedEntries` 的快路径命中时计数不动）。
+ */
+export function structureKeyBuildCount(): number {
+  return keyBuildCount;
 }
 
 // --- 提取 ------------------------------------------------------------------------------------

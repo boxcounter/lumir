@@ -179,7 +179,8 @@
 - [x] 6.1 把可纯化的部分抽出来加断言：条目类别映射、名字提取、层级计算、分层注册表的档位。
   **验收口径**：`node tests/unit/run.mjs` 全绿且新增用例数写进实现 PR；断言不依赖 DOM（`tests/unit/README.md`
   的分工）。
-  **实现期**：新增 `tests/unit/code-structure.test.ts`，**20 条用例**；全套 **142 pass / 0 fail**
+  **实现期**：新增 `tests/unit/code-structure.test.ts`，**22 条用例**（r1 评审的两条 P2 修复各补一条：
+条目跨度 `to` 断言、缓存键不重建的计数断言）；全套 **144 pass / 0 fail**
   （基线 122 → 新增 20）。「当前位置归属 + 祖先链」的算法（`itemIndexAt` / `itemPath`）也在本层断言
   ——它被移到 `src/code-structure.ts` 正是为了可被本层直接覆盖（`src/toc.ts` 的依赖链含 DOM 侧模块）。
 - [x] 6.2 不把 DOM / 布局行为硬塞进单测层。
@@ -316,7 +317,7 @@
 | 3 条目提取 | ✅ | 逐语言条目集合 + 名字口径 + 层级 + 两种无名回落；含负向清单 | `code-outline-cases.md`、`tests/unit/code-structure.test.ts`、`entries-by-language.txt` |
 | 4 接线（指示段 / 浮层 / 落点 / 空态） | ✅ | 统一条目模型、md 分支逐字不动；落点 = 声明起点；两条新提示与 D84 互斥 | `tests/visual/scenes/code-outline.spec.ts`、`30-code-outline.md` |
 | 5 文案 deck | ⚠️ 偏离 | 实现常量就位 + 视觉/真机各一条逐字断言；**deck 未补登**（越 scope）⇒ 已投 finding | tasks.md 5.1 的两行待补表 + finding `…copy-md-d115-d116…` |
-| 6 单测 | ✅ | 新增 20 条，全套 142 pass / 0 fail；`harness.ts` 零改动 | `gate-quick.log` 的 unit-tests |
+| 6 单测 | ✅ | 新增 22 条，全套 144 pass / 0 fail；`harness.ts` 零改动 | `gate-quick.log`（r1 后为 `gate-quick-r2.log`）的 unit-tests |
 | 7 视觉场景与基线 | ✅ | 新增 6 条用例；既有基线 32 张逐字节零差异；新增 1 张（待 Alex 过目） | `tests/visual/scenes/code-outline.spec.ts`、`baseline-check.md` |
 | 8 真机验收 | ✅ | 场景 30 PASS 1/1；反向验证 13 条红后还原重跑 PASS；`unchangedSince` 两条在位 | `acceptance-30-run4-restored.log`、`acceptance-30-evidence/`、`reverse-verification/` |
 | 9 验证与收官 | ✅ | quick 10/10、visual 见 `gate-visual.log`、docs-check PASS、openspec validate PASS、`git diff --check` 干净 | `gate-quick.log`、`gate-visual.log` |
@@ -341,3 +342,10 @@
 **未验证项（不许当已验）**：真机侧的「声明起点 vs 标题行尾」字符级差异（AX 不暴露选区；由 chromium
 侧读 CM 选区断言）；release 构建下的常驻内存门禁级读数（本次是 debug + 单点采样，**不宣称达标**）；
 Alex 的手感项（浮层在长条目下的观感、1MB 文件首次 ⌘⇧O 的可感程度）。
+
+**归档待办（reviewer r1 的归档建议，本次不改 spec）**：delta 里
+`specs/editor-live-preview/spec.md` 的 Scenario「解析结果缓存复用」写的是「切换文件后再切回，缓存按
+**换文件即失效**的规则重建」，而实现（与 design §1.6 的先例）把**文档内容**当缓存键——切回同一份内容
+会命中旧键、不重建（语义等价且更省：缓存的身份是内容，只有内容变了才重新解析，同时避免了「切回即
+重算」）。**归档评审（Alex 节点）时把该 scenario 的措辞改准为「缓存键 = 文档内容」**，或按字面加主动
+失效——两条都改，实现侧已按前者落地（`src/code-structure.ts` 的 `cacheKey` 与 2.1 的计数断言）。
