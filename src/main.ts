@@ -44,7 +44,7 @@ import { logEvent, sampleCallback } from "./diagnostics";
 import type { FsEntry } from "./bindings/FsEntry";
 import type { VaultInfo } from "./bindings/VaultInfo";
 import type { VaultListEntry } from "./bindings/VaultListEntry";
-import { extensionOf, mimeTypeOf, resolveByNameUnique } from "./preview/attachments";
+import { codeLanguage, extensionOf, mimeTypeOf, resolveByNameUnique } from "./preview/attachments";
 import { openSearch } from "./search";
 import "./style.css";
 // 搜索 panel 的样式单列一个文件（M139）：与并行 mission 的 src/style.css 隔离，
@@ -173,13 +173,23 @@ function emitReadiness(name: string, detail: object = {}): void {
 }
 
 // 轻量大纲（M148）：masthead 的当前位置指示段 + ⌘⇧O 浮层。能力与浮层本体在 src/toc.ts，
-// 装配侧只提供三样：编辑器视图、是否有当前文件（空态不显示指示段）、无标题时的提示出口
-// （toast，文案见 文案-Copy.md D84）。指示段与浮层都挂 masthead，浮层不动布局。
+// 装配侧只提供四样：编辑器视图、是否有当前文件（空态不显示指示段）、当前文档的模式与 code 语言
+// （M197：md 走标题大纲、code 走符号大纲，语言名从扩展名注册表取——单一来源），以及无条目时的
+// 提示出口（toast：D84 与 M197 的两条新文案）。指示段与浮层都挂 masthead，浮层不动布局。
 const toc = createToc({
   view: editor.view,
   indicator: shell.mastheadSection,
   mount: shell.masthead,
   hasFile: () => save.displayedPath() !== undefined,
+  // 活读前台会话的模式与路径（切标签 / 切 vault 后自动跟上）：语言名只在这里派生一次，
+  // toc 侧不再自己从路径推。
+  context: () => {
+    const session = editor.activeSession();
+    return {
+      mode: session.mode,
+      language: session.path === undefined ? null : codeLanguage(extensionOf(session.path)),
+    };
+  },
   toast,
 });
 
