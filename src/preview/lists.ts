@@ -42,14 +42,19 @@ class ListLayout {
       const style = getComputedStyle(this.view.contentDOM);
       const canvas = document.createElement("canvas");
       const context = canvas.getContext("2d")!;
-      // 字体族 MUST 与标记**渲染**用的那个 token 同源（change typography-and-zoom）：
-      // `.cm-lp-list-marker` 的 fontFamily 是 `var(--editor-mono-family)`（src/preview/theme.ts），
-      // 这里读的也是它。**这是字符串取值、不是 CSS 引用**：改 token 名不会带着它走，所以
-      // 非默认 `mono_font_family` 下若两处不同源，标记会按旧族算宽、与正文对不齐
-      //（REVIEW.md 第 8 条的第二种形态：一处是 CSS 引用、一处是 JS 取值）。
-      // 取值点同时受视觉场景钉住（typography.spec.ts 断言 canvas 拿到的族串与标记的
+      // 字体族与**字号比值**都必须与标记渲染用的那一份同源（change typography-and-zoom /
+      // restyle-ui-tokens-v1）：
+      // - 族：`.cm-lp-list-marker` 的 fontFamily 是 `var(--editor-mono-family)`
+      //   （src/preview/theme.ts），这里读的也是它。**这是字符串取值、不是 CSS 引用**：改 token
+      //   名不会带着它走，所以非默认 `mono_font_family` 下若两处不同源，标记会按旧族算宽、
+      //   与正文对不齐（REVIEW.md 第 8 条的第二种形态：一处是 CSS 引用、一处是 JS 取值）。
+      // - 字号比值：这里量的是「0」在**标记渲染字号**下的宽度，比值取自
+      //   `.cm-lp-list-marker` 的 `font-size: .9em`（= 字号阶梯的 13.5px，tokens 文档的
+      //   「一级列表 marker」；正文锚 15px）。两处是同一个比值的两个写值：改一处必须改另一处，
+      //   否则测量宽度与渲染宽度分叉，悬挂缩进逐级错位。
+      // 族取值点同时受视觉场景钉住（typography.spec.ts 断言 canvas 拿到的族串与标记的
       // 计算 fontFamily 逐字相同）。
-      context.font = `${parseFloat(style.fontSize) * .85}px ${style.getPropertyValue(EDITOR_MONO_FAMILY_TOKEN)}`;
+      context.font = `${parseFloat(style.fontSize) * .9}px ${style.getPropertyValue(EDITOR_MONO_FAMILY_TOKEN)}`;
       return context.measureText("0").width;
     },
     write: value => queueMicrotask(() => {

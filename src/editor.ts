@@ -995,22 +995,29 @@ function codeLanguageFor(path: string | undefined): Language | null {
   return name === null ? null : LANGUAGES[name];
 }
 
-// code 模式 token 配色：只用单套排版基线的既有视觉 token
-//（--dim/--accent/--callout-*，M55 体系）。
-// tag 分组与「条目序即优先级」由 preview/code.ts 的 TOKEN_GROUPS 单一持有，这里只把
-// 每个 role 映射成色值——两侧不再各写一份 tag 列表（Record<TokenRole, string> 让分组
-// 增删在此处编译报错）。
-const CODE_COLORS: Record<TokenRole, string> = {
-  comment: "var(--dim)",
-  keyword: "var(--accent)",
-  string: "var(--callout-tip)",
-  literal: "var(--callout-warning)",
-  property: "var(--callout-note)",
-  type: "var(--callout-abstract)",
+// code 模式 token 配色（change restyle-ui-tokens-v1，R2b）：色值**只**取自 tokens 文档的四个
+// 语法高亮 token（--tk-k/s/n/c），与围栏侧（src/preview/theme.ts 的 .cm-lp-tok-*）逐 role 同值。
+// tag 分组与「条目序即优先级」由 preview/code.ts 的 TOKEN_GROUPS 单一持有，这里只把每个 role
+// 映射成色值与字重——两侧不再各写一份 tag 列表（Record<TokenRole, …> 让分组增删在此处编译报错）。
+// 六个 role 落四个 token：property（json/yaml 的键）与 type 归 keyword 同色；键与字符串值恒不
+// 同色（JSON/YAML 的既有 requirement 仍成立）。**已知缺口（在案）**：eink 规则②要求 keyword 在
+// eink 下升到 700，本路径的色值/字重是 HighlightStyle 的运行期规则，选择器由 CM 生成、无法按
+// `data-theme` 加限定（围栏侧那份在 theme.ts 里已实现）——两侧在 eink 的字重档因此有差异，
+// 修法（把本路径改成 code.ts 的 class 表 + 共用一份 theme）见 docs/backlog.md。
+const CODE_COLORS: Record<TokenRole, { color: string; fontWeight?: string }> = {
+  comment: { color: "var(--tk-c)" },
+  keyword: { color: "var(--tk-k)", fontWeight: "600" },
+  string: { color: "var(--tk-s)" },
+  literal: { color: "var(--tk-n)" },
+  property: { color: "var(--tk-k)" },
+  type: { color: "var(--tk-k)" },
 };
 
 const codeHighlight = syntaxHighlighting(
-  HighlightStyle.define(TOKEN_GROUPS.map((group) => ({ tag: group.tags, color: CODE_COLORS[group.role] }))),
+  HighlightStyle.define(TOKEN_GROUPS.map((group) => {
+    const { color, fontWeight } = CODE_COLORS[group.role];
+    return fontWeight === undefined ? { tag: group.tags, color } : { tag: group.tags, color, fontWeight };
+  })),
   { fallback: true },
 );
 
@@ -1200,7 +1207,7 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
           markdown(markdownConfig),
           syntaxHighlighting(
             HighlightStyle.define([
-              { tag: tags.comment, color: "var(--dim)" },
+              { tag: tags.comment, color: "var(--text-3)" },
               { tag: [tags.keyword, tags.operator, tags.punctuation], color: "var(--text)" },
               { tag: [tags.string, tags.regexp, tags.number], color: "var(--accent)" },
               { tag: [tags.link, tags.url], color: "var(--accent)", textDecoration: "underline" },
@@ -1224,40 +1231,64 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
     // preview 只增加 Markdown 语义装饰，避免 code 模式落回默认白底、灰 gutter 或默认选区颜色。
     //
     // 字体族取**编辑器作用域**的 token（change typography-and-zoom）：md 走 `--editor-font-family`、
-    // code 走 `--editor-mono-family`，两者缺省分别引用基线的 `--font-body` / `--font-mono`
+    // code 走 `--editor-mono-family`，两者缺省分别引用基线的 `--font-sans` / `--font-mono`
     //（见 src/style.css 的 :root）。MUST NOT 在这里直接引用 shell 基线 token——那会让「配置只
     // 影响编辑器」从结构事实退化成「逐处记得别改」。
+    // 取色一律走 token 层（change restyle-ui-tokens-v1）；族的取法见上一条注释。
     const baseTheme = EditorView.theme({
       "&": {
         color: "var(--text)",
-        backgroundColor: "var(--bg)",
+        backgroundColor: "var(--content-bg)",
         fontFamily: mode === "md" ? "var(--editor-font-family)" : "var(--editor-mono-family)",
       },
+      // 阅读栏宽（design §4 未决项 1 的落法）：中列**定值** `--layout-doc-measure`（664px，
+      // tokens 文档 §布局尺寸），两侧 `minmax(24px, 1fr)` 等分剩余空间 ⇒ 正文列在视口内居中；
+      // 旧口径 `--measure: 80%`（百分比）随之退役。正文自己的 32px/44px/20px 内边距在下一条
+      // （`--sp-11/--sp-13/--sp-9`，tokens 文档 §间距阶梯点名的「正文 padding」高频出处），
+      // 因此 664px 是**框宽**、文字实测宽 576px——与定稿图 `.doc { max-width:664px;
+      // padding:32px 44px 20px }`（border-box）逐项一致。
+      //
+      // code 模式（design §4 未决项 1 的另一半，口径落地见 test-results/m212/）：模板不变
+      // （行的左列要容下 gutter），中列同样换成定值。行为口径：`minmax(max-content, 1fr)`
+      // 的 gutter 列与 `minmax(0, 1fr)` 的右列都是弹性轨道，中列的非弹性轨道先被撑满到
+      // 664px 上限，剩余空间再由这两列**等分**——即 gutter 列的最终宽度 = 行号自然宽 + 剩余
+      // 空间的一半，代码正文列恒为 664px。这是旧口径（80% 中列 + 同样的两侧模板）的同一形态，
+      // 只是中列从 80% 变定值：代码文件视图仍是「行号贴在中列左缘、列外余白由左右两列吸收」。
       ".cm-scroller": {
-        fontFamily: "inherit", lineHeight: "var(--line-height, 1.75)",
+        fontFamily: "inherit", lineHeight: "var(--lh-reading)",
         display: "grid !important", gridTemplateColumns: mode === "md"
-          ? "minmax(24px, 1fr) minmax(0, var(--measure)) minmax(24px, 1fr)"
-          : "minmax(max-content, 1fr) minmax(0, var(--measure)) minmax(0, 1fr)",
+          ? "minmax(24px, 1fr) minmax(0, var(--layout-doc-measure)) minmax(24px, 1fr)"
+          : "minmax(max-content, 1fr) minmax(0, var(--layout-doc-measure)) minmax(0, 1fr)",
         alignItems: "start",
       },
       ".cm-content": {
         fontFamily: "inherit", fontSize: "var(--editor-font-size)",
         gridColumn: "2", gridRow: "1", minWidth: "0", width: "100%",
-        marginInline: "0", paddingBlock: "44px",
+        marginInline: "0", paddingBlock: "var(--sp-11) var(--sp-9)", paddingInline: "var(--sp-13)",
         textAlign: "start", textIndent: "0", hangingPunctuation: "none", textAutospace: "no-autospace",
       },
       ".cm-line": { padding: "0" },
+      // gutter（code 模式的只读行号）：提示档文字色 + 框体底色 + 结构档右缘（tokens 文档
+      // 的 bg 层级：--frame 是「窗口框体/标题栏/侧栏/modeline」档，gutter 与它们同居框体面）。
       ".cm-gutters": {
         gridColumn: "1", gridRow: "1", justifySelf: "start", alignSelf: "stretch",
-        color: "var(--dim)",
-        backgroundColor: "var(--bg-nav)",
-        borderRight: "1px solid var(--bd-1)",
+        color: "var(--text-3)",
+        backgroundColor: "var(--frame)",
+        borderRight: "1px solid var(--border)",
       },
-      ".cm-activeLine": { backgroundColor: "var(--bg-2)" },
-      ".cm-activeLineGutter": { backgroundColor: "var(--bg-2)", color: "var(--text)" },
+      // 当前行底色取 `--hover`（交互反馈档）：它与「同一变量绑定匹配」的 `--code-bg` 底纹
+      // 必须不同——同值会让刚双击那一行上的匹配隐形（M198 的原始缺陷形态，见 theme.ts 的
+      // codeBindingTheme 注释）。
+      ".cm-activeLine": { backgroundColor: "var(--hover)" },
+      ".cm-activeLineGutter": { backgroundColor: "var(--hover)", color: "var(--text)" },
       ".cm-selectionBackground, ::selection": {
         backgroundColor: "var(--sel)",
-        color: "var(--selection-ink, var(--text))",
+      },
+      // 选中前景：light/dark 不写（继承 --text）；eink 黑底反白（tokens 文档 eink 规则④），
+      // `--sel-text` 也只在该档有定义。
+      [`:root[data-theme="eink"] & .cm-selectionBackground, :root[data-theme="eink"] & ::selection`]: {
+        backgroundColor: "var(--sel)",
+        color: "var(--sel-text)",
       },
       ".cm-cursor, .cm-dropCursor": { borderLeftColor: "var(--text)" },
       "&.cm-focused .cm-selectionBackground": { backgroundColor: "var(--sel)" },
