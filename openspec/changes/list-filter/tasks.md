@@ -162,7 +162,7 @@
   **证据**：见 7.5 与文末对账表。
 - [x] 9.4 `git diff --check` 与改动集合核对（与 proposal 的 Impact 逐条对齐）。
   **验收口径**：`git diff --stat` 的清单与 Impact 一致；确认**没有**对 `src/keys.ts` 的改动（零键位）、没有新增命令 / 配置项、没有落盘写入。
-  **证据**：见文末对账表的「改动集合」行；`src-tauri/**`、配置项与落盘路径零改动。**`src/keys.ts` 在 r1 复审后有一处改动**（可编辑宿主守卫，tower 裁决路径 ①，见 P1-1）：它不含任何新增键位 / 命令——「零键位」口径照旧成立，`KEY_BINDINGS` 与 `CommandId` 表逐字未动（`git diff` 可核）。
+  **证据**：见文末对账表的「改动集合」行；`src-tauri/**`、配置项与落盘路径零改动。**`src/keys.ts` 在 r1/r2 复审后有一处改动**（可编辑宿主守卫：只拦无修饰键的可打印单字符、chord 放行，tower 裁决路径 ①，见 P1-1）：它不含任何新增键位 / 命令——「零键位」口径照旧成立，`KEY_BINDINGS` 与 `CommandId` 表逐字未动（`git diff` 可核）。
 - [x] 9.5 收官对账：tasks 全部勾选或标注放弃原因；spec 增量与实现逐条对一眼；design §5 的十项都有「已实测（读数路径）」或「未实测（如实标注）」的结论。
   **验收口径**：对账表落本文件末尾（逐 requirement → 实现落点 → 断言落点）；`design.md` 的未验项逐条可见。
   **证据**：见文末「收官对账表」。
@@ -200,7 +200,7 @@
 | 新增纯函数模块 `src/list-filter.ts` | 新增（匹配 + 查询状态 + 三条共用文案常量） | ✅ |
 | `src/style.css` 两处浮层各加一行输入行样式 | 新增 `.lumir-toc-input` / `.lumir-toc-empty` / `.vault-filter` / `.vault-empty` + 两条 `[hidden]` | ✅ |
 | `文案-Copy.md` 新增条目（现最大 D114，从 D115 续） | D115/D116 为 code-outline 补登、D117–D119 为本 change（编号校正已就地标注） | ✅（编号校正） |
-| **零键位、零命令、零配置项、零落盘** | `src-tauri/**` / 配置项 / 落盘路径**零改动**；`src/keys.ts` 在 r1 复审后有一处**缺陷修复**（可编辑宿主守卫，无新增键位 / 命令——见 P1-1 条目） | ✅（含一处已裁决的修复） |
+| **零键位、零命令、零配置项、零落盘** | `src-tauri/**` / 配置项 / 落盘路径**零改动**；`src/keys.ts` 在 r1/r2 复审后有一处**缺陷修复**（可编辑宿主守卫：只拦无修饰键的可打印单字符，chord 放行；无新增键位 / 命令——见 P1-1 条目） | ✅（含一处已裁决的修复） |
 | `tests/unit/` 新单测 | 新增 `list-filter.test.ts`（6 条）+ `vault-switcher.test.ts`（+5 条） | ✅ |
 | `tests/visual/scenes/` 新增筛选场景 + 更新两张元素级基线 | 新增 `list-filter.spec.ts`（7 条）；既有两场景零改动；受影响基线是**四张**（含 `code-outline-popover`），待 Alex 过目后重拍 | ✅（补一张） |
 | `scripts/acceptance/scenarios/` 新增场景 + 更新 `13-toc` 游标判据 + `17`/`18` 重跑 | 新增 `32-list-filter.md` + `fixtures/list-filter.md`（编号校正）；`13-toc` 按实测改写游标判据；`17`/`18` 重跑 | 见下方真机读数 |
@@ -218,7 +218,7 @@
 | 5 | 已实测（chromium，`short-window.json`）并改写 spec 已知边界段 |
 | 6 | 部分实测：Esc / `⌘⇧O` 真机；Tab 出去 / 点浮层外 chromium |
 | 7 | chromium 已实测（含反向验证 RV-4）；真机鼠标点击现象未覆盖 |
-| 8 | **已实测（chromium，r1 复审后补）**：r1 评审证明原先的「结构证据」不成立（单字符走「其余键不消费」→ 冒泡到分发器 → global 绑定吞字符触发命令）。修法取 tower 裁决路径 ①：`src/keys.ts` 的 `Keymap.handle` 加可编辑宿主守卫；断言 `tests/visual/scenes/editable-host-guard.spec.ts`（筛选输入框 / 搜索框 / 编辑器三条），反向验证 RV-5 关掉守卫即红 |
+| 8 | **已实测（chromium，r1 修复 + r2 收窄后）**：r1 评审证明原先的「结构证据」不成立（单字符走「其余键不消费」→ 冒泡到分发器 → global 绑定吞字符触发命令）。修法取 tower 裁决路径 ① 并在 r2 按裁决**收窄到「只拦打字键」**：`src/keys.ts` 的 `Keymap.handle` 里，目标是编辑器之外的可编辑宿主且按下无修饰键的可打印单字符时才不分发（⌘/⌃/⌥ chord 放行——r1 的 blanket 形态会把 `⌘⇧O`/`⌘O` 再按收起浮层这条 living spec 关闭路径整段杀死）。断言 `tests/visual/scenes/editable-host-guard.spec.ts` 四条（筛选输入框单字符 / 浮层外单字符 / 搜索框单字符 / **焦点在输入框时的 toggle-close 两条**）。反向验证 RV-5（关守卫 → 单字符两条红）与 RV-6（放宽回 blanket → chord 两条红）互补 |
 | 1（补充） | 探针**不可判定**且真机通道造不出输入法组合：第 1 项按「未实测」登记（CDP 的 IME 目标不是 DOM activeElement，读数无法区分命题） |
 | 9 | 已实测（chromium 光标偏移断言 + 反向验证 RV-2） |
 | 10 | 已实测（单元层按调用参数断言 + 反向验证 RV-3） |

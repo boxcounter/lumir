@@ -418,6 +418,15 @@ export function isEditableHost(target: unknown): boolean {
   return el.isContentEditable === true || tag === "INPUT" || tag === "TEXTAREA";
 }
 
+/** 键是不是「打字键」：`event.key` 长度为 1（字母 / 数字 / 符号 / 空格）且不带 ⌘ / ⌃ / ⌥。
+ *
+ *  Shift 不算门槛：`⇧a` 打出来的仍是字符 `A`（`event.key` 已经是 Shift 后的那个字符），它属于
+ *  打字的一部分。⌥ 组合（`⌥a` → `å`）按 chord 放行——它是 macOS 的**组字**层，语义上更接近
+ *  「换一个字符的输入方式」，而本守卫只服务「单字符绑定不许吞掉用户键入的字符」这一条。 */
+function isTypingKey(event: KeyEventLike): boolean {
+  return event.key.length === 1 && !event.metaKey && !event.ctrlKey && !event.altKey;
+}
+
 /** chord 进行中 buffer 的清空超时（ms）。 */
 const CHORD_TIMEOUT_MS = 1500;
 
@@ -603,21 +612,28 @@ export class Keymap {
     // 229 是旧口径的「输入法正在处理」信号）。
     if (event.isComposing || event.keyCode === 229) return;
 
-    // 可编辑宿主守卫（change list-filter，M199 r1 P1-1）：事件目标是**编辑器之外**的可编辑宿主
-    //（原生输入框 / textarea / contenteditable）时，本层不分发任何绑定、也不 preventDefault——按键
-    // 留给原生路径，字符照常落入那个输入框。
+    // 可编辑宿主守卫（change list-filter，M199 r1 P1-1）：**只拦「打字键」**——事件目标是编辑器
+    // 之外的可编辑宿主（原生输入框 / textarea / contenteditable）且按下的键是无修饰键的可打印单字符
+    //（`isTypingKey`：`⇧` 仍属打字，⌘/⌃/⌥ chord 一律放行）时，本层不分发任何绑定、也不
+    // preventDefault——按键留给原生路径，字符照常落入那个输入框。
     //
     // 为什么必要：单字符 token 在表里合法且归一成大写（`s` → `S`），用户把 `s` 绑成
     // `document.save` 之后 scope 由命令派生为 global；浮层/搜索框的输入框里打 `s` 会命中该绑定并
     // preventDefault，而 preventDefault 在 keydown 阶段就 suppress 文本插入 ⇒ 字符进不了输入框、
     // 保存反而触发。approved delta「用户单字符绑定在浮层打开期间让位」要求恰好相反（实证：
-    // 关掉本守卫后 tests/visual/scenes/editable-host-guard.spec.ts 两条都红，字符根本没落进输入框）。
-    // 守卫对**所有**非编辑器可编辑宿主生效（筛选输入框、搜索 panel 的输入框…），一处改动覆盖同族。
+    // 关掉本守卫后 tests/visual/scenes/editable-host-guard.spec.ts 的前两条都红，字符根本没落进输入框）。
+    //
+    // 为什么**只**拦打字键（r2 评审 P1-1 的教训，别再把条件放宽）：两处浮层打开后焦点恒在筛选输入框，
+    // 一旦把 chord 也拦下，`⌘⇧O` / `⌘O` **再按收起浮层**这条 living spec 明写的关闭路径就永远不可达，
+    // 连同浮层里的 `⌘W` / `⌘F` / `⌘=` / `⌘1–9` 一起失效。收窄到「无修饰键的可打印字符」既保住 r1 的
+    // 修复，又让全部 chord 口径原样成立。实证（`editable-host-guard.spec.ts` 的四条 + 两次反向验证）：
+    //   - 放开回 blanket 守卫（RV-6）→ toggle-close 两条红（`Received: visible`）、单字符两条仍绿；
+    //   - 关掉守卫（RV-5）→ 单字符两条红（`Received: ""`，字符根本没落进输入框）、toggle-close 两条仍绿。
     //
     // 为什么排除编辑器：编辑器 contentDOM 本身就是 contenteditable，它是绝大多数绑定的主目标
     // （⌃N / ⌃K / ⌘S…），判据沿用既有的 `ctx.isEditorEvent`。守卫只拦**绑定分发**，不干预输入框
     // 自身的编辑行为，也不碰容器级的就地键挂点（那些走 DOM 冒泡与各自的 keydown 处理器）。
-    if (!ctx.isEditorEvent(event) && isEditableHost(event.target)) {
+    if (!ctx.isEditorEvent(event) && isEditableHost(event.target) && isTypingKey(event)) {
       this.reset();
       return;
     }

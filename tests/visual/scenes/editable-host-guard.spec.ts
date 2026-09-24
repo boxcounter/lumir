@@ -85,3 +85,38 @@ test("同一守卫覆盖搜索 panel：输入框里打 `s` 不触发保存、字
   await expect(page.locator(".lumir-toast", { hasText: /^已保存$/ })).toBeVisible();
   await expect.poll(async () => (await documentWrites(page)).length).toBe(writesBefore + 1);
 });
+
+// ---------------------------------------------------------------------------
+// chord 必须照常分发（r2 评审 P1-1）
+// ---------------------------------------------------------------------------
+//
+// 守卫**只**拦无修饰键的可打印单字符。为什么这条必须有断言：两处浮层打开后焦点恒在筛选输入框
+// （`list-filter.spec.ts` 已断言 `activeElement = input`），若守卫把 chord 一并拦下，living spec
+// 的关闭路径二（「再次打开后按 ⌘⇧O」/「⌘O 再按收起」）就**永远**不可达；r2 评审的探针在同一构建里
+// 实测复现（两条红、Tab 到非可编辑宿主的对照组绿），而 348 条既有断言全绿——因为**没有任何既有
+// 断言在「焦点位于可编辑宿主」时按修饰键 chord**（这本身就是覆盖洞，不是行为无变化）。
+
+test("守卫不拦 chord：焦点在筛选输入框时 ⌘⇧O 再按收起大纲浮层", async ({ page }) => {
+  await openDirty(page);
+
+  await page.keyboard.press("Meta+Shift+o");
+  const popover = page.locator(".lumir-toc");
+  await expect(popover).toBeVisible();
+  // 默认焦点态：焦点在筛选输入框（可编辑宿主）——这正是 chord 被误拦的现场
+  expect(await page.evaluate(() => document.activeElement?.className ?? "none")).toBe("lumir-toc-input");
+
+  await page.keyboard.press("Meta+Shift+o");
+  await expect(popover, "living spec 关闭路径二：⌘⇧O 再按应收起").toBeHidden();
+});
+
+test("守卫不拦 chord：焦点在筛选输入框时 ⌘O 再按收起 vault 浮层", async ({ page }) => {
+  await openDirty(page);
+
+  await page.keyboard.press("Meta+o");
+  const popover = page.locator(".vault-pop");
+  await expect(popover).toBeVisible();
+  expect(await page.evaluate(() => document.activeElement?.className ?? "none")).toBe("vault-filter");
+
+  await page.keyboard.press("Meta+o");
+  await expect(popover, "living spec 关闭路径二：⌘O 再按应收起").toBeHidden();
+});
