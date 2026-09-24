@@ -10,6 +10,14 @@ const longFrontmatter = fixture("frontmatter-200.md");
 const image = fixture("sample.svg");
 const images = fixture("images.md");
 
+/** 位图 fixture（96×32 真 PNG，M209 新增）：本目录此前只有 0 字节的 `empty.png`，位图形态没有
+ *  可用输入。字节先按 **latin1 读成二进制串再 `btoa`** 取 base64——附件读取本就是字节层，
+ *  `readFileSync(…, "utf8")` 会把非 ASCII 字节换成替换字符、二进制 fixture 走那条路必然解码失败；
+ *  latin1 与 `btoa` 是这份 tsconfig 下可用的等价物（tests/visual 未装 @types/node，node:fs 声明
+ *  里没有 Buffer 形态）。 */
+const bitmapBase64 = btoa(readFileSync(new URL("../fixtures/markdown-combo/bitmap.png", import.meta.url), "latin1"));
+const BITMAP_REF = "![bitmap](assets/bitmap.png)";
+
 /** 图片附件 fixture：键是 vault 相对路径，值是文件内容（本层按 UTF-8 读文本，经 base64 回给前端）。 */
 const imageAssets: Record<string, string> = {
   "assets/sample.svg": image,
@@ -42,9 +50,14 @@ const REFS = {
  *
  * 每次调用在 `window.__lumirAttachmentReads` 上自增（M184 的「打开遮罩不重读字节」判据要读它：
  * 这是**可外部观测**的调用计数，比「实现里没有 invoke」这类代码面判据强）。
+ *
+ * 值有两种形态（M209）：`string` = 文本附件，按 UTF-8 编码成字节；`{ base64 }` = 已经编码好的
+ * 原始字节（位图等二进制 fixture 必须走这条，否则 UTF-8 往返会损坏字节）。
  */
-async function stubAttachmentReads(page: Page, files: Record<string, string>, delayMs = 0): Promise<void> {
-  await page.addInitScript((args: { map: Record<string, string>; delayMs: number }) => {
+type AttachmentFixture = string | { base64: string };
+
+async function stubAttachmentReads(page: Page, files: Record<string, AttachmentFixture>, delayMs = 0): Promise<void> {
+  await page.addInitScript((args: { map: Record<string, AttachmentFixture>; delayMs: number }) => {
     const { map, delayMs } = args;
     const internals = (window as any).__TAURI_INTERNALS__;
     const original = internals.invoke;
@@ -55,6 +68,7 @@ async function stubAttachmentReads(page: Page, files: Record<string, string>, de
       if (delayMs > 0) await new Promise((resolve) => setTimeout(resolve, delayMs));
       const content = map[argv.path ?? ""];
       if (content === undefined) throw { code: "fs_not_found", message: `文件不存在：${argv.path}` };
+      if (typeof content !== "string") return content.base64;
       const bytes = new TextEncoder().encode(content);
       let binary = "";
       for (const b of bytes) binary += String.fromCharCode(b);
@@ -409,6 +423,12 @@ test("M184 双击打开遮罩、三条关闭路径与焦点归还", async ({ pag
 
   // 模态：编辑键不穿透、Tab 留在遮罩内，文档与光标逐值不变。
   for (const key of ["Control+d", "Control+k", "Control+a", "Tab"]) await page.keyboard.press(key);
+  // M209 G2：scenario 的 WHEN 是「若干编辑键与字符键」，此前只按了 Control 组合与 Tab。
+  // 字符键不在统一键位表里（`keyToken` 对它返回 null，遮罩不消费也不拦截），走的是文本插入
+  // 路径——它能不能落到文档只取决于焦点在不在编辑器。**这一腿不是重复覆盖**：下面同一组
+  // `editorState` 逐值断言是它唯一的接住点（焦点若被 TextInput 之类拉回编辑器，"abc" 就会
+  // 进文档、doc 长度当场变，断言必红）。
+  await page.keyboard.type("abc");
   await expect(overlay, "遮罩持有焦点期间不得被按键关掉").toBeVisible();
   expect(await focusInfo(page), "Tab 不得把焦点送出遮罩").toMatchObject({ isOverlay: true });
   expect(await editorState(page), "打开期间文档与光标必须逐值不变").toEqual(before);
@@ -620,4 +640,112 @@ test("M184 打开遮罩不重读字节、惰性建立不预建", async ({ page }
   await inlineImage(page, REFS.wide).dblclick();
   await expect(page.locator(LIGHTBOX_OVERLAY)).toBeVisible();
   expect(await attachmentReads(page), "打开遮罩前后调用计数必须不变").toBe(settled);
+});
+
+// ---------------------------------------------------------------------------
+// M209：G1 / G2 断言缺口补口（change open-image-lightbox 归档前的覆盖收口）
+// ---------------------------------------------------------------------------
+// 缺口来自 M207 归档对账：delta 的 scenario「三种引用形态都打开遮罩、同一图像源、SVG 与位图同构」
+// 在 lightbox 层零断言——M184 组的 12 次 dblclick 全落在 SVG 标准形态上，方言形态
+//（`![[percent-width.svg]]`）与位图形态一次都没双击过；「遮罩持有焦点期间若干字符键」也没按过
+// 字符键（G2 补在 M184 组那条模态循环里）。
+//
+// 判据口径与 M184 组完全同一套（几何读数 + 「与内联那张同一图像源」+ 正/负配对），不新造读数：
+// 每条断言都先给出「目标真的在场上」的正观测，再判要判的那件事——只留 src 相等这类单腿断言时，
+// 「双击没落地」或「图片是坏图」都能让它绿（REVIEW.md 第 1 / 2 条）。
+
+test("M209 方言形态（![[percent-width.svg]]）打开遮罩且图像源一致（G1①）", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 1000 });
+  await page.route("**/example.invalid/**", (route) => route.abort());
+  await open(page, images, "images.md", undefined, imageAssets);
+  await expect(page.locator(".cm-lp-image-status")).toHaveCount(0);
+
+  // 正观测先行：方言形态（wikilink 解析出的 embed 分支）的内联图真的渲染出来了。
+  expect(await imageReadings(page, REFS.percentWiki), "方言形态内联图读数").toEqual({ box: "829x276", natural: "300x100", complete: true });
+  const inlineSrc = await inlineImage(page, REFS.percentWiki).evaluate((el) => (el as HTMLImageElement).src);
+
+  await inlineImage(page, REFS.percentWiki).dblclick();
+  const overlay = page.locator(LIGHTBOX_OVERLAY);
+  await expect(overlay, "方言形态双击不得没有打开路径").toHaveCount(1);
+  await expect(overlay).toBeVisible();
+  await waitForLightboxImage(page);
+
+  const big = await lightboxReading(page);
+  expect(big.natural, "放大图就是内联那张（自然尺寸逐值相同）").toEqual({ width: 300, height: 100 });
+  expect(big.alt, "放大图 alt = 方言引用的原文").toBe(REFS.percentWiki);
+  expect(big.src, "放大图 src 与方言形态内联图逐字符相同（同一图像源）").toBe(inlineSrc);
+  // 装饰层不改写文档（ADR 0003 §3）：解引用与打开遮罩都不动源文件。
+  expect(await readDocument(page)).toBe(images);
+});
+
+test("M209 位图形态打开遮罩且图像源一致（G1②）", async ({ page }) => {
+  const doc = ["# 位图形态（G1②）", "", "有效位图（96×32，可解码）：", "", BITMAP_REF, ""].join("\n");
+  await page.setViewportSize({ width: 1280, height: 1000 });
+  await stubTauri(page, {
+    entries: [
+      { path: "bitmap.md", kind: "file", size: doc.length, mtime_ms: 0 },
+      { path: "assets/bitmap.png", kind: "file", size: 162, mtime_ms: 0 },
+    ],
+    files: { "bitmap.md": doc },
+  });
+  // 二进制 fixture 按 base64 进读桩（UTF-8 往返会把它变成替换字符，那样这条用例验的是解码失败）。
+  await stubAttachmentReads(page, { "assets/bitmap.png": { base64: bitmapBase64 } });
+  await page.goto("/");
+  await page.locator('.ft-row[title="bitmap.md"]').click();
+  await expect(page.locator(".cm-lp-image-status")).toHaveCount(0);
+
+  // 正观测：位图真的解码出来了（96×32）。**只判 src 相等是不够的**——src 相同而图是坏图
+  //（渲染盒 0×0）时那条断言照样绿，因此自然尺寸与渲染盒都判。
+  expect(await imageReadings(page, BITMAP_REF), "位图内联图读数").toEqual({ box: "96x32", natural: "96x32", complete: true });
+  const inlineSrc = await inlineImage(page, BITMAP_REF).evaluate((el) => (el as HTMLImageElement).src);
+
+  await inlineImage(page, BITMAP_REF).dblclick();
+  const overlay = page.locator(LIGHTBOX_OVERLAY);
+  await expect(overlay).toBeVisible();
+  await waitForLightboxImage(page);
+
+  const big = await lightboxReading(page);
+  expect(big.alt, "放大图 alt = 位图引用原文").toBe(BITMAP_REF);
+  expect(big.src, "放大图 src 与内联那张位图逐字符相同").toBe(inlineSrc);
+  expect(big.natural, "放大图就是内联那张位图（不是另一份解码结果）").toEqual({ width: 96, height: 32 });
+  expect(big.box, "小位图按自然尺寸显示，不放大").toEqual({ width: 96, height: 32 });
+  expect(await readDocument(page)).toBe(doc);
+});
+
+test("M209 放大层不发起外链请求、无脚本副作用（G1③）", async ({ page }) => {
+  const requests: string[] = [];
+  page.on("request", (request) => requests.push(request.url()));
+  await page.setViewportSize({ width: 1280, height: 1000 });
+  await page.route("**/example.invalid/**", (route) => route.abort());
+  await open(page, images, "images.md", undefined, imageAssets);
+  await expect(page.locator(".cm-lp-image-status")).toHaveCount(0);
+  await expect(page.locator(".cm-lp-image")).toHaveCount(10);
+
+  // 安全腿二（先判，防负向断言空转）：含外部 `<image href>` 的那张 svg 内联渲染成功。
+  expect(await imageReadings(page, REFS.externalRef), "含外链的 svg 内联渲染成功").toEqual({ box: "240x80", natural: "240x80", complete: true });
+  const external = () => requests.filter((url) => !url.startsWith("http://127.0.0.1")).sort();
+  expect(external(), "内联层的外链集合（对照基线）").toEqual(["https://example.invalid/remote.png"]);
+
+  const overlay = page.locator(LIGHTBOX_OVERLAY);
+  await inlineImage(page, REFS.externalRef).dblclick();
+  await expect(overlay).toBeVisible();
+  await waitForLightboxImage(page);
+  expect((await lightboxReading(page)).natural, "放大的是同一张 svg（含外链那张）").toEqual({ width: 240, height: 80 });
+  // 放大层若把 svg 内容内联进 DOM（innerHTML / DOMParser 之类），svg 内嵌的
+  // `https://example.invalid/lumir-svg-external-ref.png` 就会出现——内联渲染时的现场见上方
+  // 「SVG 安全腿」用例。给一拍时间让迟到请求也落进集合，再比**全集**。
+  await page.waitForTimeout(500);
+  expect(external(), "放大层不得发起任何新的外部请求").toEqual(["https://example.invalid/remote.png"]);
+
+  // 另一张含 `<script>` / `onload` 的 svg：放大同样不得执行它们（两个可观测副作用：window 标记
+  // 与 document.title，后者若被改写说明脚本在放大层里真的跑了）。
+  await page.keyboard.press("Escape");
+  await expect(overlay).toBeHidden();
+  await inlineImage(page, REFS.script).dblclick();
+  await expect(overlay).toBeVisible();
+  await waitForLightboxImage(page);
+  expect((await lightboxReading(page)).natural, "放大的是含脚本那张 svg").toEqual({ width: 240, height: 80 });
+  expect(await page.evaluate(() => (window as any).__lumirSvgScriptRan ?? null), "放大层不得执行 svg 内脚本").toBeNull();
+  expect(await page.title(), "放大层不得改写文档标题（onload / script 两条都不跑）").toBe("Lumir");
+  expect(await readDocument(page)).toBe(images);
 });

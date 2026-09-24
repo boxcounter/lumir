@@ -210,3 +210,26 @@ export async function screenshot(cu, pid) {
   const ax = await readAx(cu, pid, { mode: "full" });
   return { image: ax.image, ax };
 }
+
+/** swift + CGEvent 投递带 clickState 的点击（套件唯一能造出 DOM `dblclick` 的通道，M209）。
+ *
+ *  为什么不经 KimiCU：它的注入通道造不出 WKWebView 的 `dblclick`（坐标 `count: 2`、AXPress ×2、
+ *  两次独立 click、`drag_paths` 都不行，见 README「已知边界」）；`CGEvent` 显式设
+ *  `kCGMouseEventClickState` 可以。
+ *
+ *  `point` 是 **Quartz 全局屏幕坐标**（原点 = 主屏左上角，pt）——不是 KimiCU 的两种空间
+ *  （mode=ax 是窗口局部点、mode=full 是截图像素），换算由调用方（execute.mjs 的 doubleClick）做。
+ *  会移动真实光标，所以调用方应先 `focusWindow`；`mode` 默认 2（60ms 间隔的单击 + 双击）。 */
+export async function injectClickWithClickState(pid, point, { mode = 2 } = {}) {
+  const script = new URL("./cgevent-click.swift", import.meta.url).pathname;
+  const args = ["/usr/bin/swift", script, String(Math.round(point.x)), String(Math.round(point.y)), String(mode)];
+  if (mode === 4) args.push(String(pid));
+  try {
+    return execFileSync(args[0], args.slice(1), { encoding: "utf8" }).trim();
+  } catch (e) {
+    throw new StepError(
+      `swift + CGEvent 注入失败（${e.message}）。这条通道要 /usr/bin/swift（Xcode Command Line Tools）` +
+        `且进程要有辅助功能权限；README「已知边界」的 dblclick 条有说明。`,
+    );
+  }
+}
