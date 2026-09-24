@@ -11,9 +11,9 @@ import { extensionOf, fileClass } from "./preview/attachments";
 export type DisplayKind = "dir" | "md" | "image" | "other";
 
 /** 路径 → 末段（basename）。**全前端唯一一份**（REVIEW.md 第 8 条）：文件树的行名与
- *  vault 名（本文件）、masthead 的 vault 名（main.ts）、标签可见文本（tabs.ts）、切换器
- *  列表行与守卫提示（vault-switcher.ts / main.ts）全部消费它。空末段（路径以 `/` 收尾）
- *  回落到整串，与「根目录 / 空串」这类退化输入下的既有口径一致。
+ *  vault 名（都落在这里的侧栏头，M211 起 vault 名没有第二个展示位）、标签可见文本
+ *  （tabs.ts）、切换器列表行与守卫提示（vault-switcher.ts / main.ts）全部消费它。空末段
+ *  （路径以 `/` 收尾）回落到整串，与「根目录 / 空串」这类退化输入下的既有口径一致。
  *
  *  注意：注册表里的 vault 显示名不走这里——vault_list 的 `name` 字段由 Rust 侧派生
  *  （契约规定显示名 = 目录名），前端只消费，不重复派生。 */

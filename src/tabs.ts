@@ -10,7 +10,7 @@
 //   - invalidateResolve：解析缓存的 from 基准随前台文档而变，能力在 link-follow.ts；
 //   - showEditor：撤下「暂不支持预览」覆盖层（覆盖层属装配层的编辑器区）；
 //   - syncActiveDocument：前台文档变化后的表现层**一次**对齐，它在装配层（要同时对齐
-//     masthead / 文件树 / 大纲 / 标签栏），因此 activateTab 与 closeTabNow 末了都要回调它。
+//     modeline / 文件树 / 大纲 / 标签栏），因此 activateTab 与 closeTabNow 末了都要回调它。
 //     这条回调与 renderTabs 构成一次「本模块 → 装配层 → 本模块」的往返，与抽出前
 //     两个函数同处一个文件时的调用关系逐字相同。
 //
@@ -59,7 +59,7 @@ export function createTabs(deps: TabsDeps): TabsHandle {
    *  比增量 diff 简单，也天然不会漂。空态（没有任何带路径的会话）整条隐藏——它在网格里
    *  不占行高，所以空态布局与多标签之前逐像素一致（整页基线的空态对照因此不需要更新）。
    *  标签可见文本是路径末段：basename 派生全前端只有一份（`src/tree.ts` 的 baseName，
-   *  REVIEW.md 第 8 条），标签栏、文件树、masthead 与切换器列表共用它。 */
+   *  REVIEW.md 第 8 条），标签栏、文件树、侧栏头的 vault 名与切换器列表共用它。 */
   function renderTabs(): void {
     const sessions = editor.sessions().filter((session) => session.path !== undefined);
     const active = editor.activeSession();

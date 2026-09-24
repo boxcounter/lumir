@@ -33,40 +33,44 @@ const settings = (over: Partial<TypographySettings> = {}): TypographySettings =>
 test("出厂默认与 Rust `EditorConfig::default` 同值（两处真源对账）", () => {
   // Rust 侧的真源是 src-tauri/src/config.rs 的 `DEFAULT_FONT_SIZE`（= EditorConfig::default()
   // 的 font_size），那边由单测 missing_editor_typography_fields_take_defaults 钉住同一组值。
-  assert.equal(DEFAULT_FONT_SIZE, 16, "缺配置时内容字号为 16px");
+  // 第三处写值是 src/style.css 的 `--editor-font-size` 默认值（CSS 里没法被本层断言，由视觉
+  // 场景的默认口径计算属性断言钉住）。D1 裁决（2026-09-24）：三处同为 **15**。
+  assert.equal(DEFAULT_FONT_SIZE, 15, "缺配置时内容字号为 15px");
   assert.equal(FONT_SIZE_MIN, 12);
   assert.equal(FONT_SIZE_MAX, 32);
   assert.equal(TEXT_SCALE_FACTOR, 1.1);
   // 出厂默认即 spec「默认口径就是 change 之前的观感」那条 scenario 的起点
-  assert.equal(clampFontSize(DEFAULT_FONT_SIZE), 16);
+  assert.equal(clampFontSize(DEFAULT_FONT_SIZE), 15);
 });
 
-test("向上七档、向下七档：从 16 到 32 再回 16（反复乘除不漂移）", () => {
-  // 取整口径（round）与「向下用除法而不是乘倒数」的理由：18→20→22→24→26→29→32 是本 change
-  // 写进 spec 的档位表（design §2.4）；用乘法做向下会把 16 走成 15→14→12 之外的另几条路径。
+test("向上七档、向下七档：从 15 到 31 再回 15（反复乘除不漂移）", () => {
+  // 取整口径（round）与「向下用除法而不是乘倒数」的理由：档位表是 spec 的一部分；用乘法做
+  // 向下会把 15 走成另几条路径。D1 把基准从 16 挪到 15 后整张表随之平移（档位数不变）。
   const up: number[] = [];
   let size = DEFAULT_FONT_SIZE;
   for (let i = 0; i < 7; i++) {
     size = nextFontSize(size, "up");
     up.push(size);
   }
-  assert.deepEqual(up, [18, 20, 22, 24, 26, 29, 32], "向上七档到顶");
+  assert.deepEqual(up, [17, 19, 21, 23, 25, 28, 31], "向上七档");
+  // 第 8 档触顶（31 × 1.1 = 34.1 → 钳到 32）
+  assert.equal(nextFontSize(size, "up"), FONT_SIZE_MAX, "再上一档触顶");
   const down: number[] = [];
   for (let i = 0; i < 7; i++) {
     size = nextFontSize(size, "down");
     down.push(size);
   }
-  assert.deepEqual(down, [29, 26, 24, 22, 20, 18, 16], "向下七档回到 16（不漂移）");
+  assert.deepEqual(down, [28, 25, 23, 21, 19, 17, 15], "向下七档回到 15（不漂移）");
 });
 
-test("向下四档从 16 到底：15 → 14 → 13 → 12", () => {
+test("向下四档从 15 到底：14 → 13 → 12 → 12（第 4 档已在界上，返回原值）", () => {
   let size = DEFAULT_FONT_SIZE;
   const down: number[] = [];
   for (let i = 0; i < 4; i++) {
     size = nextFontSize(size, "down");
     down.push(size);
   }
-  assert.deepEqual(down, [15, 14, 13, 12]);
+  assert.deepEqual(down, [14, 13, 12, 12]);
 });
 
 test("上下限钳制：到界后继续按返回原值（调用方据此「无变化、无提示、不报错」）", () => {
@@ -85,7 +89,7 @@ test("上下限钳制：到界后继续按返回原值（调用方据此「无�
 
 test("档位断言有区分度：把倍率写成 1.2，档位表不匹配（必须 FAIL 的输入）", () => {
   // REVIEW.md 第 1 条：先造一个必须让它 FAIL 的输入，确认断言真的在判东西。
-  // 下面这组是「倍率 1.2」的档位（Emacs 的默认步幅）：本仓取 1.1，两条路径从 16 出发就走了
+  // 下面这组是「倍率 1.2」的档位（Emacs 的默认步幅）：本仓取 1.1，两条路径从 15 出发就走了
   // 不同的值，因此上一条断言不可能在倍率被改回 1.2 时照样通过。
   const wrongFactor = (current: number, direction: "up" | "down") =>
     direction === "up" ? Math.round(current * 1.2) : Math.round(current / 1.2);
@@ -95,8 +99,8 @@ test("档位断言有区分度：把倍率写成 1.2，档位表不匹配（必�
     size = wrongFactor(size, "up");
     wrong.push(size);
   }
-  assert.deepEqual(wrong, [19, 23, 28], "1.2 倍率的档位");
-  assert.notEqual(wrong.join(","), "18,20,22", "与 1.1 的档位不同——区分度成立");
+  assert.deepEqual(wrong, [18, 22, 26], "1.2 倍率的档位");
+  assert.notEqual(wrong.join(","), "17,19,21", "与 1.1 的档位不同——区分度成立");
 });
 
 test("applyTypography 计划：未配置字体族 = 不写（沿用 CSS 默认），字号照写", () => {

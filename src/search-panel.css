@@ -1,5 +1,6 @@
-/* 文件内搜索 panel 的样式（M139）。与并行 mission 的 src/style.css 隔离，本 mission 的
-   搜索样式一律放这里，由 main.ts import。
+/* 文件内搜索 panel 的样式（M139）。与 src/style.css 的 shell 规则分开：原由是并行 mission 的
+   隔离，M211 起两边的 token 层同源（src/style.css 的三组 :root[data-theme]），本文件不再
+   自带任何值。
 
    覆盖官方样式时为什么带高特异性：@codemirror/search 与 @codemirror/view 的基础主题是**运行期**
    注入到 <head> 末尾的（style-mod），同特异性时它赢。故凡是要压过官方的地方都多带一层选择器
@@ -7,46 +8,48 @@
    `.cm-lp-table .cm-lp-table-row` 压 `.cm-line` 同一手法；本项目自己的 class
    （.lumir-search-*）不参与这场竞争，保持单类选择器。 */
 
-/* ── panel 容器：CM 的 .cm-panels.cm-panels-top（本 panel 固定在编辑器顶部） ───────── */
+/* ── panel 容器：CM 的 .cm-panels.cm-panels-top（本 panel 固定在编辑器顶部） ─────────
+   它是**非浮层**（dock 在编辑器顶部），因此不吃 elevation：底 + 底边 hairline 与标题栏同手法
+   （design §2.7 #3 的「框体表面」）。 */
 .cm-editor .cm-panels.cm-panels-top {
-  background: var(--bg-nav);
+  background: var(--frame);
   color: var(--text);
-  border-bottom: 1px solid var(--bd-2);
+  border-bottom: 1px solid var(--border);
 }
 
-/* ── bar 本体：与 masthead 同一节奏（左右 48px 内边距、11–13px 字号） ───────────── */
+/* ── bar 本体：左右内边距与 modeline / 标题栏同档（14px），字号走 UI 阶梯 ───────────── */
 .lumir-search {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--sp-5);
   min-height: 44px;
-  padding: 6px 48px;
-  font-family: var(--font-body);
-  font-size: 12px;
+  padding: var(--sp-3) var(--sp-7);
+  font-family: var(--font-sans);
+  font-size: var(--fs-meta);
 }
 
-/* 「查找」标签：display 字体 + 字距，与 masthead 的 vault 名同族但更克制，不抢正文注意力 */
+/* 「查找」标签：大写档小标签形态 = sans 650 + 正字距（--font-display 随设计定稿退场）。 */
 .lumir-search-label {
   flex: none;
-  font-family: var(--font-display);
-  font-size: 12px;
-  font-weight: 700;
-  letter-spacing: .2em;
-  color: var(--text);
+  font-family: var(--font-sans);
+  font-size: var(--fs-label);
+  font-weight: var(--fw-bold);
+  letter-spacing: 0.08em;
+  color: var(--text-2);
 }
 
-/* 输入框：editorial 的下划线形态（无框、无底），聚焦时下划线转 accent */
+/* 输入框：下划线形态（无框、无底），底线结构档，聚焦转 accent */
 .lumir-search-input {
   flex: 0 1 320px;
   min-width: 0;
   padding: 3px 2px;
   border: none;
-  border-bottom: 1px solid var(--bd-3);
+  border-bottom: 1px solid var(--border);
   border-radius: 0;
   background: transparent;
   color: var(--text);
   font: inherit;
-  font-size: 13px;
+  font-size: var(--fs-ui);
 }
 .lumir-search-input:focus {
   outline: none;
@@ -59,58 +62,81 @@
   min-width: 4.5em;
   margin-left: auto;
   font-family: var(--font-mono);
-  font-size: 11px;
-  color: var(--dim);
+  font-size: var(--fs-label);
+  color: var(--text-3);
   text-align: right;
 }
 .lumir-search-count.is-empty {
   color: var(--accent);
 }
 
-/* bar 内的按钮：弱化默认态（灰字无框），hover 才给反馈——与文件树「切换」按钮同一族 */
+/* bar 内的按钮：弱化默认态（灰字无框），hover 才给反馈——与文件树的 vault 入口同一族 */
 .lumir-search-button {
   flex: none;
-  padding: 3px 8px;
+  padding: 3px var(--sp-4);
   border: none;
-  border-radius: 4px;
+  border-radius: var(--r4);
   background: none;
-  color: var(--dim);
+  color: var(--text-3);
   font: inherit;
-  font-size: 12px;
-  line-height: 1.4;
+  font-size: var(--fs-meta);
+  line-height: var(--lh-queue-title);
   cursor: pointer;
+  transition: background var(--dur-ui) var(--ease-standard);
 }
 .lumir-search-button:hover:not(:disabled) {
-  background: var(--bg-2);
+  background: var(--hover);
   color: var(--text);
 }
 .lumir-search-button:disabled {
-  opacity: .45;
+  opacity: 0.45;
   cursor: default;
 }
 .lumir-search-case {
   font-family: var(--font-mono);
-  letter-spacing: .02em;
+  letter-spacing: 0.02em;
 }
-/* 大小写开关的「开」态：accent 底 + accent 字（唯一带底色的按钮，一眼可辨） */
+/* 大小写开关的「开」态：唯一带底色的按钮，一眼可辨。
+   eink 下 tint 退场（规则①），改走「黑底反白」——与 .tb-btn.on / .queue-count 同一条规则④。 */
 .lumir-search-case.is-on {
-  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  background: var(--accent-tint);
   color: var(--accent);
 }
+:root[data-theme="eink"] .lumir-search-case.is-on {
+  background: #000;
+  color: #fff;
+}
 .lumir-search-close {
-  padding: 2px 8px;
-  font-size: 15px;
+  padding: var(--sp-1) var(--sp-4);
+  font-size: var(--fs-body);
   line-height: 1;
 }
 
 /* ── 匹配高亮（官方 searchHighlighter 的 mark 装饰） ──────────────────────────────
-   全部匹配用 accent 淡底，当前匹配加深并压一条 accent 下划线——与 toast / 链接等的
-   accent 语义一致（同一套 token，不引入新色）。 */
+   全部匹配取 --accent-tint；当前匹配取 --accent-fill + --accent-fill-text（实心填充）。
+   偏差记录（design §2.7 要求逐条记录）：表内写的是「当前匹配在 tint 档内加深一档」，但
+   ①色彩零新增（收敛规则 1）②本 change 起 src/ 内运行期混色全数退场（tasks §6.5 的验收口径）
+   两条约束下，「同一 tint 加深一档」没有可用的表达式——深一档的 tint 不是任何 token 的值。
+   故改用「实心填充 + 反白字」这一档（--accent-fill / --accent-fill-text 本就是为「实心强调」
+   定义的一对），层级强度高于 tint 档，且不新增色、不需混色。逐表面落档见
+   test-results/m211/peripheral-surfaces.md。 */
 .cm-editor .cm-content .cm-searchMatch {
-  background: color-mix(in srgb, var(--accent) 14%, transparent);
-  border-radius: 2px;
+  background: var(--accent-tint);
+  border-radius: var(--r4);
 }
 .cm-editor .cm-content .cm-searchMatch.cm-searchMatch-selected {
-  background: color-mix(in srgb, var(--accent) 32%, transparent);
-  box-shadow: inset 0 -1px 0 var(--accent);
+  background: var(--accent-fill);
+  color: var(--accent-fill-text);
+}
+/* eink：tint 全 transparent（规则①），高亮改由下划线承担（规则⑨同一手法）；当前匹配走
+   黑底反白（规则④）。 */
+:root[data-theme="eink"] .cm-editor .cm-content .cm-searchMatch {
+  background: transparent;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+:root[data-theme="eink"] .cm-editor .cm-content .cm-searchMatch.cm-searchMatch-selected {
+  background: #000;
+  color: #fff;
+  text-decoration: none;
 }
