@@ -49,7 +49,7 @@ async function openAndEdit(page: Page, typed = "ZZZ") {
   await expect(content).toContainText("Demo Vault");
   await content.click();
   await page.keyboard.type(typed);
-  await expect(page.locator(".masthead-file")).toContainText("未保存");
+  await expect(page.locator(".modeline-path")).toContainText("未保存");
   return content;
 }
 
@@ -79,7 +79,7 @@ test("另存为新文件：撞名沿 -2..-5 重试，在 -3 成功落地", async
   ]);
   // 内容落到新文件并切换过去。
   await expect.poll(() => fileText(page, "README-恢复-3.md")).toContain("ZZZ");
-  await expect(page.locator(".masthead-file")).toHaveText("README-恢复-3.md");
+  await expect(page.locator(".modeline-path")).toHaveText("README-恢复-3.md");
   await expect(page.locator(".cm-content")).toContainText("ZZZ");
 });
 
@@ -111,7 +111,7 @@ test("另存为新文件：-2..-5 全部撞名时给出人工出口，不静默�
   ]);
   // 内存修改仍在（未静默丢弃），dirty 保持。
   await expect(page.locator(".cm-content")).toContainText("ZZZ");
-  await expect(page.locator(".masthead-file")).toContainText("未保存");
+  await expect(page.locator(".modeline-path")).toContainText("未保存");
 });
 
 test("强制覆盖保存再冲突：提示升级为带动作按钮的 sticky 提示", async ({ page }) => {

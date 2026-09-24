@@ -140,7 +140,7 @@ async function composeQuery(page: Page, selector: string, interim: string, final
 
 test("大纲筛选：输入即筛（子串非前缀）、结果集里的游标与跳转落点、ARIA 归属", async ({ page }) => {
   await openToc(page);
-  await page.locator(".masthead-section").click();
+  await page.locator(".modeline-section").click();
   const popover = page.locator(".lumir-toc");
   const input = page.locator(".lumir-toc-input");
   const items = page.locator(".lumir-toc-item");
@@ -204,7 +204,7 @@ test("大纲筛选：输入即筛（子串非前缀）、结果集里的游标�
 
 test("大纲筛选：当前段被筛掉不高亮、清空回全量起点、无命中保留浮层、Esc 丢弃查询", async ({ page }) => {
   await openToc(page);
-  await page.locator(".masthead-section").click();
+  await page.locator(".modeline-section").click();
   const popover = page.locator(".lumir-toc");
   const items = page.locator(".lumir-toc-item");
   const current = page.locator(".lumir-toc-item.is-current");
@@ -247,7 +247,7 @@ test("大纲筛选：当前段被筛掉不高亮、清空回全量起点、无�
   await expect(items).toHaveCount(2);
   await page.keyboard.press("Escape");
   await expect(popover).toBeHidden();
-  await page.locator(".masthead-section").click();
+  await page.locator(".modeline-section").click();
   await expect(popover).toBeVisible();
   await expect(page.locator(".lumir-toc-input")).toHaveValue("");
   await expect(items).toHaveCount(5);
@@ -259,7 +259,7 @@ test("大纲筛选：当前段被筛掉不高亮、清空回全量起点、无�
 
 test("大纲筛选：组合期不刷新结果集，组合结束后刷一次", async ({ page }) => {
   await openToc(page);
-  await page.locator(".masthead-section").click();
+  await page.locator(".modeline-section").click();
   const items = page.locator(".lumir-toc-item");
   await expect(items).toHaveCount(5);
 
@@ -272,7 +272,7 @@ test("大纲筛选：组合期不刷新结果集，组合结束后刷一次", as
 
 test("大纲筛选：输入行在位且浮层总高仍为窗口内容区高的 80%（长文）", async ({ page }) => {
   await openToc(page, "toc-long.md");
-  await page.locator(".masthead-section").click();
+  await page.locator(".modeline-section").click();
   const popover = page.locator(".lumir-toc");
   const input = page.locator(".lumir-toc-input");
   const hint = page.locator(".lumir-toc-hint");

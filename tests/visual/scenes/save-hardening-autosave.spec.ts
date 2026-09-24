@@ -83,7 +83,7 @@ async function openAndEdit(page: Page, typed = "ZZZ") {
   await expect(content).toContainText("Demo Vault");
   await content.click();
   await page.keyboard.type(typed);
-  await expect(page.locator(".masthead-file")).toContainText("未保存");
+  await expect(page.locator(".modeline-path")).toContainText("未保存");
   return content;
 }
 
@@ -99,7 +99,7 @@ test("停止输入 debounce 后自动保存：内容落盘、dirty 清除与手�
   // 停止输入 2s 后自动保存：磁盘拿到内容，dirty 表现层与手动保存走同一清除路径。
   await expect.poll(() => fileText(page, "README.md"), { timeout: 5000 }).toContain("ZZZ");
   await expect(page.locator(".lumir-toast", { hasText: "已自动保存" })).toBeVisible();
-  await expect(page.locator(".masthead-file")).not.toContainText("未保存");
+  await expect(page.locator(".modeline-path")).not.toContainText("未保存");
   await expect.poll(async () => (await dirtyReports(page)).at(-1)).toBe(false);
   await expect(content).toContainText("ZZZ");
 });
@@ -118,7 +118,7 @@ test("debounce 随每次输入重置：连续输入期间不落盘", async ({ pa
 
   // 真正停止输入后一次落盘，内容含两次输入。
   await expect.poll(() => fileText(page, "README.md"), { timeout: 5000 }).toContain("MORE");
-  await expect(page.locator(".masthead-file")).not.toContainText("未保存");
+  await expect(page.locator(".modeline-path")).not.toContainText("未保存");
 });
 
 test("未解决冲突时自动保存暂停：不硬冲 CAS，dirty 内容落崩溃备份", async ({ page }) => {
@@ -145,7 +145,7 @@ test("未解决冲突时自动保存暂停：不硬冲 CAS，dirty 内容落崩�
   await page.waitForTimeout(3000);
   expect(await saveCalls(page)).toBe(afterManualSave);
   expect(await fileText(page, "README.md")).toBe("# External version\n");
-  await expect(page.locator(".masthead-file")).toContainText("未保存");
+  await expect(page.locator(".modeline-path")).toContainText("未保存");
 
   // 兜底：暂停期间 dirty 内容进了崩溃备份（进程崩溃仍有内容可恢复），
   // 且基准 revision 是「最后一次与编辑器同步的磁盘版本」（外部修改前的那个），
@@ -167,7 +167,7 @@ test("外部修改待决（dirty）时自动保存暂停：等过 debounce 也�
   await page.waitForTimeout(3000);
   expect(await saveCalls(page)).toBe(0);
   expect(await fileText(page, "README.md")).toBe("# External version\n");
-  await expect(page.locator(".masthead-file")).toContainText("未保存");
+  await expect(page.locator(".modeline-path")).toContainText("未保存");
   await expect.poll(async () => backupContent(page, "README.md") ?? "").toContain("ZZZ");
   expect(await backupBaseRevision(page, "README.md")).toBe(fixtureRevision(README_ORIGINAL));
 });
@@ -193,7 +193,7 @@ test("处置冲突后自动保存恢复，备份随保存成功清除", async ({
 
   await expect.poll(() => fileText(page, "README.md")).toContain("ZZZ");
   await expect.poll(async () => (await recoveryStore(page))).toEqual({});
-  await expect(page.locator(".masthead-file")).not.toContainText("未保存");
+  await expect(page.locator(".modeline-path")).not.toContainText("未保存");
 
   // 暂停解除：再次输入后自动保存恢复正常。
   await content.click();
@@ -224,7 +224,7 @@ test("启动发现残留崩溃备份：给出恢复入口，恢复后内容进�
   // 恢复的内容进编辑器缓冲且是未保存状态——仍走保存链路，不静默改写磁盘。
   const content = page.locator(".cm-content");
   await expect(content).toContainText("恢复的内容");
-  await expect(page.locator(".masthead-file")).toContainText("未保存");
+  await expect(page.locator(".modeline-path")).toContainText("未保存");
 
   // debounce 后自动保存：内容落盘，备份随之清除。
   await expect.poll(() => fileText(page, "README.md"), { timeout: 6000 }).toContain("恢复的内容");
@@ -252,7 +252,7 @@ test("备份后磁盘被外部修改：恢复按 CAS 报冲突，不静默覆盖
     .click();
   await expect(page.locator(".lumir-toast", { hasText: "已恢复未保存内容" })).toBeVisible();
   await expect(content).toContainText("恢复的内容");
-  await expect(page.locator(".masthead-file")).toContainText("未保存");
+  await expect(page.locator(".modeline-path")).toContainText("未保存");
 
   // 恢复时 MUST NOT 把磁盘当前 revision 吸为新基准：debounce 后的自动保存按 CAS
   // 报冲突（进而不是静默覆盖），磁盘上较新的外部版本原样保留。

@@ -75,13 +75,22 @@ test("表格可见行、短行补空列、多列降级、AX、滚动和源码复
   // 补出的空 cell 与空格空槽同形：无占位符、无缺列标记，就是空格子
   expect(emptyCell.text).toBe("");
 
-  // 逐表几何：每张表内各行 cell 数一致（矩形），行序不重叠，行高与 cell 同高。
+  // 逐表几何：每张表内各行 cell 数一致（矩形），行序不重叠，行高与**本行最高的 cell**同高。
   // 行高回归：行不得被隐藏管道符留下的 widgetBuffer 占位撑高——修复前行高约
   // 92px（单元格 33px + 2 条隐式 grid 行），修复后应与单元格同高。
+  // 比对本行的 cell 而不是「全表第一个 cell」：表头走标签档字号（11.5px）比数据 cell（13.5px）
+  // 矮，跨行比对会把数据行判成「比单元格高」（restyle 后实测到的形态）。
   const tables = await page.locator(".cm-lp-table").evaluateAll((els) => els.map((table) =>
     [...table.querySelectorAll<HTMLElement>(".cm-lp-table-row")].map((row) => {
       const rect = row.getBoundingClientRect();
-      return { top: rect.top, bottom: rect.bottom, height: rect.height, cells: row.querySelectorAll(".cm-lp-table-cell").length };
+      const cells = [...row.querySelectorAll<HTMLElement>(".cm-lp-table-cell")];
+      return {
+        top: rect.top,
+        bottom: rect.bottom,
+        height: rect.height,
+        cells: cells.length,
+        cellHeight: Math.max(...cells.map((cell) => cell.getBoundingClientRect().height)),
+      };
     })));
   expect(tables.map((rows) => rows.length)).toEqual([3, 2, 3]);
   for (const rows of tables) {
@@ -89,8 +98,12 @@ test("表格可见行、短行补空列、多列降级、AX、滚动和源码复
     for (const row of rows) expect(row.cells).toBe(columns);
     for (let i = 1; i < rows.length; i++) expect(rows[i].top).toBeGreaterThanOrEqual(rows[i - 1].bottom - 1);
   }
-  const cellHeight = await page.locator(".cm-lp-table-cell").first().evaluate((cell) => cell.getBoundingClientRect().height);
-  for (const rows of tables) for (const row of rows) expect(row.height).toBeLessThan(cellHeight + 2);
+  for (const rows of tables) {
+    for (const row of rows) {
+      expect(row.cellHeight).toBeGreaterThan(0);
+      expect(row.height, `行高 ${row.height} vs 本行 cell 高 ${row.cellHeight}`).toBeLessThan(row.cellHeight + 2);
+    }
+  }
 
   await expect(page.locator(".cm-lp-table-scroll").first()).toHaveAttribute("role", "region");
   await expect(page.locator(".cm-lp-table").first()).toHaveAttribute("role", "table");
@@ -243,7 +256,7 @@ test("代码块边界不触发表格增强", async ({ page }) => {
   expect(await readDocument(page)).toBe(source);
 });
 
-test("编辑器主内容宽度为可用区域的 80%，宽表仍可横向滚动", async ({ page }) => {
+test("编辑器主内容宽度为定值栏宽（664px）且居中，宽表仍可横向滚动", async ({ page }) => {
   const longCell = "x".repeat(220);
   const source = `# 宽度回归\n\n段落。\n\n| A | B | C |\n| --- | --- | --- |\n| ${longCell} | ${longCell} | ${longCell} |\n`;
   await stubTauri(page, { entries: [{ path: "width.md", kind: "file", size: source.length, mtime_ms: 0 }], files: { "width.md": source } });
@@ -267,8 +280,9 @@ test("编辑器主内容宽度为可用区域的 80%，宽表仍可横向滚动"
       tableOverflowX: getComputedStyle(tableScroll).overflowX,
     };
   });
-  // 主内容列 = 编辑窗格的 80%（grid 轨道 minmax(0, 80%)，两侧 1fr 居中）
-  expect(Math.abs(sizes.contentWidth - sizes.paneWidth * 0.8)).toBeLessThan(1);
+  // 主内容列 = 定值栏宽（restyle 前的 80% 口径已退役：`--layout-doc-measure` = 664px，
+  // 两侧 `minmax(24px, 1fr)` 等分剩余空间 ⇒ 居中；见 src/editor.ts 的 `.cm-scroller` 注释）
+  expect(sizes.contentWidth).toBe(664);
   // 居中：左右留白大致相等
   const leftGap = sizes.contentLeft - sizes.paneLeft;
   const rightGap = sizes.paneRight - sizes.contentRight;
@@ -280,7 +294,7 @@ test("编辑器主内容宽度为可用区域的 80%，宽表仍可横向滚动"
   expect(sizes.tableClientWidth).toBeLessThanOrEqual(sizes.contentWidth + 1);
 });
 
-test("窄窗口下编辑器主内容仍为窗格的 80%", async ({ page }) => {
+test("窄窗口下编辑器主内容被两侧 24px 轨道钳住（定值栏宽的上限不生效）", async ({ page }) => {
   await page.setViewportSize({ width: 480, height: 800 });
   const source = "# 窄窗口\n\n段落。\n";
   await stubTauri(page, { entries: [{ path: "narrow.md", kind: "file", size: source.length, mtime_ms: 0 }], files: { "narrow.md": source } });
@@ -290,10 +304,19 @@ test("窄窗口下编辑器主内容仍为窗格的 80%", async ({ page }) => {
   const sizes = await page.evaluate(() => {
     const pane = document.querySelector(".pane-editor")!.getBoundingClientRect();
     const content = document.querySelector(".cm-content")!.getBoundingClientRect();
-    return { paneWidth: pane.width, contentWidth: content.width };
+    const scroller = getComputedStyle(document.querySelector(".cm-scroller")!);
+    return {
+      paneWidth: pane.width,
+      contentWidth: content.width,
+      tracks: scroller.gridTemplateColumns.split(" ").map((v) => Number.parseFloat(v)),
+    };
   });
   expect(sizes.paneWidth).toBeGreaterThan(0);
-  expect(Math.abs(sizes.contentWidth - sizes.paneWidth * 0.8)).toBeLessThan(1);
+  expect(sizes.contentWidth).toBeLessThan(664);
+  // 中列吃满「窗格宽 − 两侧 24px 最小轨道」；窄窗口行为是**已声明的已知边界**
+  // （tasks §11.2「窄窗口行为未定」），这里钉住的是现状而不是某个设计值。
+  expect(Math.abs(sizes.contentWidth - (sizes.paneWidth - 48))).toBeLessThanOrEqual(1);
+  expect(sizes.tracks).toEqual([24, sizes.contentWidth, 24]);
 });
 
 test("列宽贴合内容：短内容表不拉满主栏，长内容表保持自然宽并横向滚动", async ({ page }) => {

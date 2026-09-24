@@ -5,10 +5,10 @@ import { stubTauri } from "./tauri-stub";
 import { readDocument } from "./parity-checks";
 
 // 分隔线（M138）：`---` / `***` / `___` 渲染为横线，文档首部 frontmatter 的
-// `---` 定界符不在此列（Obsidian 口径）。样式取中性暖发丝线 --bd-2，与表格边框
-// 同一 token（设计基线「borders recede to warm hairlines」），朱红留给链接与错误态。
+// `---` 定界符不在此列（Obsidian 口径）。样式取层次档发丝线 --border-soft，与表格 td 底线
+// 同一 token（设计基线「borders recede to hairlines」），accent 留给链接与错误态。
 const hr = readFileSync(new URL("../fixtures/render-hr/hr.md", import.meta.url), "utf8");
-const HAIRLINE = "rgb(207, 196, 166)"; // --bd-2 #cfc4a6
+const HAIRLINE = "rgb(237, 236, 231)"; // --border-soft #edece7（层次档发丝线）
 
 async function open(page: Page): Promise<void> {
   await stubTauri(page, {

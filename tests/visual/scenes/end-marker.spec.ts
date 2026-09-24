@@ -5,7 +5,7 @@ import { copyFresh, readDocument } from "./parity-checks";
 
 // 正文末尾的「到底了」标记（change document-end-marker）：
 //   判据 = 不含标记的内容高度 > 可用视口高度（静态、重算型、MUST NOT 读滚动位置）；
-//   形态 = 短线夹字（--bd-2 发丝线 + --dim 弱化字），MUST NOT 与作者手写的通栏分隔线同形；
+//   形态 = 短线夹字（--border-soft 发丝线 + --text-3 弱化字），MUST NOT 与作者手写的通栏分隔线同形；
 //   硬约束 = 不进 EditorState.doc / 不进保存字节 / 不被 ⌘A 带出 / 不被 ⌘F 命中 /
 //            滚动高度在所有滚动位置逐像素恒定 / 纵向间距用 padding 不用 margin。
 //
@@ -24,9 +24,9 @@ const MARKER_LINE = ".cm-lp-end-marker-line";
 const MARKER_TEXT = ".cm-lp-end-marker-text";
 /** deck D114 的可见文案（单一来源在 src/preview/endMarker.ts，此处按 deck 逐字再来一份）。 */
 const TEXT = "到底了";
-const DIM = "rgb(141, 132, 113)"; // --dim
-const HAIRLINE = "rgb(207, 196, 166)"; // --bd-2
-const ACCENT = "rgb(178, 58, 44)"; // --accent（朱红：标记 MUST NOT 使用）
+const TEXT_3 = "rgb(169, 167, 155)"; // --text-3（提示档：标记文字）
+const HAIRLINE = "rgb(237, 236, 231)"; // --border-soft（层次档发丝线）
+const ACCENT = "rgb(58, 95, 205)"; // --accent（新色板的链接色：标记 MUST NOT 使用）
 
 const MARKER_FOR: Record<string, string> = {
   "end-marker-long.md": "结束标记场景（长文）",
@@ -234,14 +234,15 @@ test("形态与配色：短线夹字，与作者手写的通栏分隔线可区�
   expect(geometry.lineHeights.every((h) => h <= 1)).toBe(true);
   expect(new Set(geometry.lineColors)).toEqual(new Set([HAIRLINE]));
 
-  // 配色：文字 --dim、线段 --bd-2，朱红（--accent）未参与
+  // 配色：文字取提示档（--text-3）、线段取层次档发丝线（--border-soft），链接色（--accent）未参与
   const colors = await page.locator(MARKER_TEXT).evaluate((el) => ({
     color: getComputedStyle(el).color,
     fontFamily: getComputedStyle(el).fontFamily,
   }));
-  expect(colors.color).toBe(DIM);
+  expect(colors.color).toBe(TEXT_3);
   expect(colors.color).not.toBe(ACCENT);
-  expect(colors.fontFamily).toMatch(/Songti|STSong|serif/i);
+  // 正文族（restyle 后标题族退场，sans 是界面上唯一的正文字族——标记不特殊化）
+  expect(colors.fontFamily).toMatch(/sans-serif/i);
 
   // 同一份文档里作者手写的 `---` 照常是**通栏**线：两类元素同时在场且几何可区分
   const rule = await page.locator(".cm-lp-hr").first().evaluate((el) => el.getBoundingClientRect().width);
@@ -310,4 +311,60 @@ test("非文档性：不被复制带出、不被文件内搜索命中、不进�
 
   // 文档字节：渲染不写文档（ADR 0003 §3）
   expect(await readDocument(page)).toBe(FIXTURES["end-marker-long.md"]);
+});
+
+// ---------------------------------------------------------------------------
+// backlog #31：标记的字号基准（R2b 修复的正式门禁断言）
+// ---------------------------------------------------------------------------
+
+/** 标记自己的字号读数：文字字号 + 线段计算宽（线段是 `4em`，随标记根字号解析）。 */
+async function markerMetrics(page: Page) {
+  return page.locator(MARKER).evaluate((el) => {
+    const text = el.querySelector<HTMLElement>(".cm-lp-end-marker-text")!;
+    const line = el.querySelector<HTMLElement>(".cm-lp-end-marker-line")!;
+    const content = document.querySelector<HTMLElement>(".cm-content")!;
+    return {
+      markerFontSize: Number.parseFloat(getComputedStyle(el).fontSize),
+      textFontSize: Number.parseFloat(getComputedStyle(text).fontSize),
+      lineWidth: line.getBoundingClientRect().width,
+      contentFontSize: Number.parseFloat(getComputedStyle(content).fontSize),
+    };
+  });
+}
+
+test("backlog #31：标记字号跟随内容字号（基准 = --editor-font-size，不再是固定的 14px）", async ({
+  page,
+  context,
+}) => {
+  // 旧缺陷形态：标记的 `0.82em` 以 `.cm-scroller` 为基准，而 `.cm-scroller` 只继承
+  // `.cm-editor` 写死的 14px ⇒ 放大正文时标记恒为 11.48px、完全不跟随。
+  // 修后：字号 = `calc(var(--editor-font-size) * 0.8)`，基准是内容字号的单一来源。
+  await stub(page);
+  await page.goto("/");
+  await open(page, "end-marker-long.md");
+  await expect(marker(page)).toHaveCount(1);
+  const small = await markerMetrics(page);
+
+  const bigPage = await context.newPage();
+  await stubTauri(bigPage, {
+    entries: Object.keys(FIXTURES).map((path) => ({ path, kind: "file", size: FIXTURES[path as keyof typeof FIXTURES].length, mtime_ms: 0 })),
+    files: { ...FIXTURES },
+    config: { font_size: 24 },
+  });
+  await bigPage.goto("/");
+  await open(bigPage, "end-marker-long.md");
+  await expect(marker(bigPage)).toHaveCount(1);
+  const big = await markerMetrics(bigPage);
+
+  // 内容字号确实换了两档（否则下面的比值断言在「两页一样」上空转——REVIEW.md 第 2 条）
+  expect(small.contentFontSize).toBe(15);
+  expect(big.contentFontSize).toBe(24);
+  expect(small.textFontSize).toBe(small.markerFontSize);
+  // 标记字号 = 0.8 × 内容字号（0.8 = tokens 文档 §字号阶梯的 12px doc-meta 档 ÷ 15px 正文锚）
+  expect(small.markerFontSize).toBeCloseTo(15 * 0.8, 2);
+  expect(big.markerFontSize).toBeCloseTo(24 * 0.8, 2);
+  expect(big.markerFontSize).toBeGreaterThan(small.markerFontSize);
+  // 线段 `4em` 随同一基准缩放（「线宽反推标记基准」那条证据要的性质）
+  expect(small.lineWidth).toBeCloseTo(4 * small.markerFontSize, 0);
+  expect(big.lineWidth).toBeCloseTo(4 * big.markerFontSize, 0);
 });

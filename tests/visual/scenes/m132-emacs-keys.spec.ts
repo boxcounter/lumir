@@ -63,7 +63,7 @@ async function openFile(
   });
   await page.goto("/");
   await page.locator(`.ft-row[title="${name}"]`).click();
-  await expect(page.locator(".masthead-file")).toHaveText(name);
+  await expect(page.locator(".modeline-path")).toHaveText(name);
 }
 
 const pipeCount = (text: string): number => (text.match(/\|/g) ?? []).length;

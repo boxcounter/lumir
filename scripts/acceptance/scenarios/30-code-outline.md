@@ -172,7 +172,7 @@ md 侧的全部口径由既有 `13-toc` 场景原样守——本场景只做 cod
 
 ## 断言口径（为什么这么写）
 
-- **指示段在 AX 里是带链的 `AXButton`**（M197 实测）：`.masthead-section` 的 `title` 落成
+- **指示段在 AX 里是带链的 `AXButton`**（M197 实测）：`modeline-section` 的 `title` 落成
   `help="点击展开大纲"`，其文本内容落成 AX 名，且 **CSS 的 `::before { content: "›" }`
   （`src/style.css:489`）也会进入 AX 名**——于是形如 `AXButton (›LIMIT)` / `AXButton (›Util › greet)`。
   本场景据此把「有没有指示段」「链是什么」写成**带节点形态的正则**：

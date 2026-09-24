@@ -15,7 +15,7 @@ steps:
       - label: 未激活时没有任何浮层（大纲零常驻界面）
         ax: { not: "⌃N⌃P 选择" }
 
-  - name: 点击 masthead 的位置指示段展开大纲（按 help 命中，不看标题链文本）
+  - name: 点击 modeline 的位置指示段展开大纲（按 help 命中，不看标题链文本）
     do: click
     target: { role: AXButton, help: "点击展开大纲" }
     expect:
@@ -139,7 +139,7 @@ steps:
         ax: { not: "第 1 章 概览 › 第 1 章 小节" }
 
   # 游标落点的判据（M199 实测改写）：焦点迁到筛选输入框后，浮层条目**不再带 `(focused)` 标记**
-  # （AX 里的唯一 focused 节点是 AXComboBox），因此改取**派生证据**——masthead 的标题链。
+  # （AX 里的唯一 focused 节点是 AXComboBox），因此改取**派生证据**——modeline 指示段的标题链。
   # 「链条里的 `›` 分隔符只可能由指示段产生」，因此带分隔符的链条串只对目标位置成立。
   # ⌃N 的落点由「再下一条 + Enter」证明：↓ 只走一条，从第 2 章的 H1 落到它的 H2，链条因此两段。
   - name: ↓ 再一条后 Enter —— 由链条证明 ⌃N×4 的落点（第 2 章概览 → 第 2 章小节）
@@ -248,7 +248,7 @@ steps:
 
 轻量大纲（TOC popover）的**行为**判定（M148）。规格见 `openspec/specs/toc-outline/spec.md`
 （归档记录 `openspec/changes/archive/2026-09-17-add-toc-outline/`），入口形态由 Alex 裁决：
-masthead 显示当前标题路径（兼作位置指示），点击它或按 ⌘⇧O 展开浮层大纲。M157 的两条增补
+modeline 显示当前标题路径（兼作位置指示），点击它或按 ⌘⇧O 展开浮层大纲。M157 的两条增补
 （浮层内的 ⌃N / ⌃P 与「最大高度 = 窗口高的 80%」）见
 `openspec/changes/archive/2026-09-18-toc-popover-emacs-keys-and-max-height/`。
 
@@ -270,8 +270,8 @@ masthead 显示当前标题路径（兼作位置指示），点击它或按 ⌘�
   **M199 实测推翻这条通道**：筛选输入框接管焦点后，`(focused)` 跟着 `aria-activedescendant` 落在
   `<input role="combobox">`（AX 里报成 `AXComboBox`）上，**条目上没有任何可见标记**（AX dump：
   `AXList (大纲)` 下的条目全是裸 `AXStaticText`；实测现场
-  `test-results/acceptance/2026-09-24/32-list-filter/ax/`）。因此游标落点改用**派生证据**——masthead
-  的标题链（见下一条）；「浮层还开着」这种恒真断言仍不足以承担它，链条串里的 `›` 分隔符才是判据。
+  `test-results/acceptance/2026-09-24/32-list-filter/ax/`）。因此游标落点改用**派生证据**——modeline
+  指示段的标题链（见下一条）；「浮层还开着」这种恒真断言仍不足以承担它，链条串里的 `›` 分隔符才是判据。
 - **⌃N / ⌃P 与 ↑↓ 等价，关闭后归还编辑器（M157；判据 M199 改写）**：浮层里这两条键与箭头共用同一份
   `move()`（`src/toc.ts` 的 onKeydown）。落点判据取**指示段的链条**：按完 ⌃N / ⌃P 后再按一次 `↓`
   （或直接）用 `Enter` 跳过去，断言链条落在目标那一条上——链条是光标的函数，且带 `›` 的链条串只可能

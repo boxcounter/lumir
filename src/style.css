@@ -685,11 +685,14 @@ body {
   text-align: center;
 }
 /* eink 规则④：选中态黑底反白，组件内次级元素手工反白（行内没有现成的颜色继承链——
-   .ft-name / .ft-caret / .ft-current-mark 各自写了 --text / --text-3）。 */
-:root[data-theme="eink"] .ft-row.is-current,
-:root[data-theme="eink"] .ft-row.is-current .ft-name,
-:root[data-theme="eink"] .ft-row.is-current .ft-caret,
-:root[data-theme="eink"] .ft-row.is-current .ft-current-mark {
+   .ft-name / .ft-caret / .ft-current-mark 各自写了 --text / --text-3）。
+   **`:hover` 必须排除**：`--hover` 档（rgba 黑 6%）压过选中底色（同一心智模型：悬停反馈压过常驻
+   选中底色，见 .cm-activeLine 与 .lumir-toc-item 的两处同形），此时底色是近白、若文字仍是
+   `--sel-text`（白）就是白底白字不可读。排除后悬停态回到常字色（黑），可读性由同一个模型保证。 */
+:root[data-theme="eink"] .ft-row.is-current:not(:hover),
+:root[data-theme="eink"] .ft-row.is-current:not(:hover) .ft-name,
+:root[data-theme="eink"] .ft-row.is-current:not(:hover) .ft-caret,
+:root[data-theme="eink"] .ft-row.is-current:not(:hover) .ft-current-mark {
   color: var(--sel-text);
 }
 .ft-empty {
@@ -839,7 +842,13 @@ body {
   color: var(--text-2);
   border-block-end-color: var(--border);
 }
-.cm-lp-table-row:not(:first-child) .cm-lp-table-cell:first-child {
+/* 首列字重 550（tokens 文档：td 层次档）。
+   判据用**列索引**（`aria-colindex`，装饰层按列写死）而不是 `:first-child`：CM6 会在行内
+   自动放置 `img.cm-widgetBuffer` / 占位 span，它们可能落在第一个 cell 之前，于是
+   `.cm-lp-table-cell:first-child` 不匹配任何 cell——「首列 550」整条静默失效（M212 reviewer
+   复现：DOM 首子节点是 widgetBuffer，不是 cell）。列索引是装饰层写死的属性，与 DOM 子节点
+   次序无关；`aria-colindex` 同时是读屏语义（role=cell/columnheader 的列号），两处同一来源。 */
+.cm-lp-table-row:not(:first-child) .cm-lp-table-cell[aria-colindex="1"] {
   font-weight: var(--fw-emphasis);
 }
 /* 行内被 Decoration.replace 隐藏的管道符仍留有 CM6 的 img.cm-widgetBuffer / 占位 span；
@@ -1084,7 +1093,9 @@ body {
 .lumir-toc-item:hover {
   background: var(--hover);
 }
-:root[data-theme="eink"] .lumir-toc-item.is-active {
+/* eink 规则④：选中项反白。同样排除 `:hover`（理由见 .ft-row.is-current 那处：悬停底色压过选中
+   底色，此时文字必须回到常字色，否则白底白字）。 */
+:root[data-theme="eink"] .lumir-toc-item.is-active:not(:hover) {
   color: var(--sel-text);
 }
 /* eink 规则⑧：filter 输入的聚焦强调走**线宽**档（下划线形态在 eink 无颜色可用）——

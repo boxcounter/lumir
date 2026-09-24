@@ -24,7 +24,7 @@ async function openVault(page: Page, config?: { keys?: Record<string, string | n
   });
   await page.goto("/");
   await page.locator('.ft-row[title="keys.md"]').click();
-  await expect(page.locator(".masthead-file")).toHaveText("keys.md");
+  await expect(page.locator(".modeline-path")).toHaveText("keys.md");
   await expect.poll(() => configGets(page)).toBeGreaterThan(0);
   await page.waitForTimeout(80);
 }

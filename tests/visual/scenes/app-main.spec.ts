@@ -127,7 +127,6 @@ test("切换命中重映射候选：不装载空树，作为新 vault 打开后�
   await expect(chooser).toBeVisible();
   await expect(chooser).toContainText("/Users/alex/Everything");
   await expect(page.locator(".ft-vault-name")).toHaveText("demo-vault");
-  await expect(page.locator(".masthead-vault")).toHaveText("demo-vault");
 
   await chooser.getByRole("button", { name: "作为新 vault 打开" }).click();
   await expect(page.locator(".ft-vault-name")).toHaveText("Everything-copy");

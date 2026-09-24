@@ -145,7 +145,7 @@ steps:
       - shot: 空态
       - label: 标签全部关闭
         ax: { count: { pattern: "关闭 ", exact: 0 } }
-      - label: masthead 回到无当前文件
+      - label: modeline 回到无当前文件
         ax: { has: "无当前文件" }
 
   - name: 空态之后还能继续开（未命名空文档被复用成新的预览标签）

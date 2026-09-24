@@ -626,13 +626,15 @@ test("三层可区分：原生选区 / 绑定匹配 / 搜索命中的计算样�
       binding: getComputedStyle(binding).backgroundColor,
       match: getComputedStyle(match).backgroundColor,
       selection: resolve("var(--sel)"),
-      token: resolve("var(--bg-3)"),
+      // 绑定匹配底纹（restyle 后 = `--code-bg`）——旧口径的 `--bg-3` 已随 token 层删除。
+      // 它 MUST NOT 与原生选区同值（同值会让「三层可区分」这条判据退化）。
+      token: resolve("var(--code-bg)"),
       // 两个判定装饰的是同一段文本，元素必然互相嵌套——「不复用」指的是**类名不共用**，
       // 不是「元素不重叠」（重叠是对的：图层可以叠在同一处文本上）
       sharedClass: match.classList.contains("cm-lp-code-binding") || binding.classList.contains("cm-searchMatch"),
     };
   });
-  // 色值只取既有 token：绑定底纹必须**恰好**是 --bg-3（不是新造色值）
+  // 色值只取既有 token：绑定底纹必须**恰好**是 --code-bg（不是新造色值）
   expect(colors.binding).toBe(colors.token);
   // 三层互不相同（计算样式级判据）
   expect(new Set([colors.binding, colors.match, colors.selection]).size).toBe(3);

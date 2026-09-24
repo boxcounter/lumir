@@ -79,11 +79,22 @@
 - **不做 callout 图标体系**：同族类型区分只靠标题行文字（v1.2 映射的刻意取舍），不引入图标。
 - **不做窗口宽度自适应策略**：原型目标视口 1280×900，现行窗口 1200×800 不变；窄窗口下侧栏的行为（现行 1100px 以下 204px 的媒体查询随旧 token 一并删除）不在本版重设计，如实记录为已知边界。
 - **不做原生整窗截图门禁**：本 change 引入 overlay 标题栏（tests/visual README 列为「触发重评的信号」），整窗截图场景单独立项评估，本 change 的真机证据走既有验收套件。
+- **不按三主题调校 KaTeX / mermaid / 图片附件**：这三个渲染面（第三方样式表 + 独立渲染器）沿用其自带的
+  配色与形态，本版只保证它们在新 token 下**可读**（正文色 / 底色继承），MUST NOT 视为「已按三主题调校」。
+  已知影响面：eink 下它们仍可能出现彩色；后续如需收敛，单独立项（**已知边界**）。
+- **abstract / todo 的族归属不再复议**：callout 13 类归五族的映射表里，`abstract`（原 teal 无对应色相）
+  与 `todo`（候选是琥珀，但 todo 是常态清单而非紧迫警示）是争议最大的两类，tokens v1.2 已注明理由并按
+  蓝（信息）族落定。本版 MUST NOT 就地改这两类的族归属；若日后复议，改 tokens 文档的映射表并同一批更新
+  `src/preview/callout.ts` 的 `CALLOUT_TYPES`（**已知边界**）。
+- **不做窗口宽度自适应策略**：原型目标视口 1280×900，现行窗口 1200×800 不变；窄窗口下侧栏的行为（现行 1100px 以下 204px 的媒体查询随旧 token 一并删除）不在本版重设计，如实记录为已知边界。
+  实测现状（`table-foundation-v2.spec.ts` 的窄窗口用例）：正文列被两侧 24px 最小轨道钳住，定值 664px
+  的上限在窄窗口下不生效；这是**未定行为**，MUST NOT 当作设计意图（**已知边界**）。
+- **dock 预留列无可见物**：本版它是零像素的网格列位，界面上没有它的任何像素或交互入口（**已知边界**）。
 - **不改任何行为 spec 的功能语义**：键位、命令、配置字段（除新增 `[ui] theme`）、保存、watch、搜索、wikilink 等全部不动。
 
 ## Impact
 
-- **影响的 specs**：**`ui-design-system`（新建）** —— ADDED ×6（设计 token 层 / 三主题与主题选择 / eink 降级规则 / 应用骨架布局 / chrome 表面与动效纪律 / 视觉基线处置）；**`frontmatter-properties`** —— MODIFIED ×1；**`editor-live-preview`** —— MODIFIED ×1；**`multi-tabs`** —— MODIFIED ×1；**`file-tree`** —— MODIFIED ×1。
+- **影响的 specs**：**`ui-design-system`（新建）** —— ADDED ×6（设计 token 层 / 三主题与主题选择 / eink 降级规则 / 应用骨架布局 / chrome 表面与动效纪律 / 视觉基线处置）；**`typography`** —— MODIFIED ×4（token 层与配置来源 / 字号步进的运行期口径 / 排版变更后的重测量 / 出厂默认口径不变——D1 把基准从 16px 挪到 15px，该 living spec 的三处字面值与「默认口径不变」的表述必须同步改写，backlog #27）；**`frontmatter-properties`** —— MODIFIED ×1；**`editor-live-preview`** —— MODIFIED ×1；**`multi-tabs`** —— MODIFIED ×1；**`file-tree`** —— MODIFIED ×1。
 - **影响的代码/系统**：
   - `src/style.css`：`:root` 全量重建（三主题块 + 五类非色 token）；
   - `src/shell.ts` / `src/main.ts`：骨架重构（标题栏 / modeline / 侧栏头 / masthead 移除 / dock 预留）、`[ui] theme` 启动施加；

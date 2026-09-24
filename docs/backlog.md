@@ -281,15 +281,19 @@
     文件**）、单测条数 15 → **17**；4.2 / 4.3 的反向验证**红侧未单独留档**已就地如实标注（绿侧断言在位）；
     `tasks.md` 三条 `../../../REVIEW.md` 补一层。
 
-27. **前置提醒：`restyle-ui-tokens-v1` 实现时必须补一条 `typography` 的 MODIFIED delta**（2026-09-24，M205
-    登记，**待实施**）：`restyle-ui-tokens-v1` 的 D1 已落锤把编辑器内容字号默认值 **16 → 15px**
-    （`tasks.md:63` 的 3.4，Rust `DEFAULT_FONT_SIZE` 同步），但它的 delta 集只有 `editor-live-preview` /
-    `file-tree` / `frontmatter-properties` / `multi-tabs` / `ui-design-system`，**没有 `typography`**。而
-    `typography` 的「出厂默认口径不变」requirement 明文写死「内容字号 `16px`」「与本 change 之前逐项相同」
-    ——不补 delta 就会复现 M150 记过的形态：**living spec 与实现直接矛盾**（spec 说 16px、实现出 15px），
-    且 `validate` 不查这类矛盾。**动作**：restyle 的实现 PR 必须带一条 `typography` 的 MODIFIED（改 16px
-    的两处口径与相关 scenario 的具体值），并在归档时核对 living `typography/spec.md` 的 4 条 requirement
-    与 `restyle` 的 delta 不冲突。
+27. ~~**前置提醒：`restyle-ui-tokens-v1` 实现时必须补一条 `typography` 的 MODIFIED delta**~~
+    （2026-09-24，M205 登记；**2026-09-25 由 M213 核销**）：`restyle-ui-tokens-v1` 的 D1 把编辑器内容字号
+    默认值 **16 → 15px**（`tasks.md` 的 3.4，Rust `DEFAULT_FONT_SIZE` 同步），而它的 delta 集当时只有
+    `editor-live-preview` / `file-tree` / `frontmatter-properties` / `multi-tabs` / `ui-design-system`，
+    **没有 `typography`**——不补就会复现 M150 记过的形态：**living spec 与实现直接矛盾**（spec 说 16px、
+    实现出 15px），且 `validate` 不查这类矛盾。**核销落点**：
+    `openspec/changes/restyle-ui-tokens-v1/specs/typography/spec.md`（新增 MODIFIED ×4：token 层与配置来源 /
+    字号步进的运行期口径 / 排版变更后的重测量 / 出厂默认口径不变，四处 16px 字面值与「与本 change 之前
+    逐项相同」的表述一并改写为 D1 的 15px 锚 + 新 token 名 `--font-sans` / `--lh-reading` /
+    `--layout-doc-measure`）；proposal 的 Impact 同步补 `typography —— MODIFIED ×4`。
+    **未做的部分（另立条目跟踪，见本文件「待修 findings」的「living spec Purpose 漂移」条）**：
+    `openspec/specs/typography/spec.md` 的 `## Purpose` 段仍写「shell（左栏、masthead、浮层…）」与
+    「30 张基线零差异」——openspec 的 delta 格式只覆盖 `## Requirements`，Purpose 只能等归档时手写。
 
 28. **change `document-end-marker` 待归档跟踪**（2026-09-24，M205 finding 补登，**待 Alex 节点 2**）：
     M205 归档五件后 `openspec list` 复核发现 `document-end-marker` 已 `✓ Complete` 却仍留活跃列表，且
@@ -345,17 +349,67 @@
     机制上装饰被滚动淘汰后重建会再读一次）——归档件把两个数都如实写出、**不编造解释**，若要对齐先起一次
     读数实测。
 
-31. **结束标记（`.cm-lp-end-marker`）的字号基准与正文分叉，归 restyle 批次统一处理**（2026-09-25，M208
-    登记，**待实施**；来源 M206 归档对账的第 3 份 finding）：标记的 `0.82em` / `4em` 以 `.cm-scroller` 为
-    基准，而 `.cm-scroller` 没有自己的字号声明、只继承 `.cm-editor` 写死的 `14px`（`src/style.css:118-120`）；
-    `--editor-font-size` 的样式消费者只有 `.cm-content`（`src/editor.ts:1244`）。因此 M195 的排版能力把正文
-    放大时标记**不跟随**（线宽反推 45.9px = 4 × 0.82 × 14px 佐证基准是 14px）。这不违反 `document-end-marker`
-    的 delta（只要求「高度 SHALL 固定」），故不阻塞其归档（2026-09-25 已归档），但属用户可见的口径分叉。
-    **动作**：`restyle-ui-tokens-v1` 重制 token 层时把标记的字号基准对齐到内容字号的单一来源（`--editor-font-size`
-    或等价的 token 消费者），并补一条「正文放大后标记随之缩放」的断言。该结论目前是**代码链推导、未起真机
-    实测**，实施时先按实测确认分叉是否真实可见。
+31. ~~**结束标记（`.cm-lp-end-marker`）的字号基准与正文分叉**~~（2026-09-25，M208 登记；
+    **2026-09-25 由 M213 核销**）：标记旧口径的 `0.82em` / `4em` 以 `.cm-scroller` 为基准，而它没有自己的
+    字号声明、只继承 `.cm-editor` 写死的 `14px` ⇒ M195 的排版能力放大正文时标记**不跟随**
+    （线宽反推 45.9px = 4 × 0.82 × 14px 佐证基准是 14px）。**核销落点（R2b 修复 + M213 补门禁断言）**：
+    ① 修复 `src/preview/theme.ts` 的 `.cm-lp-end-marker`——字号改 `calc(var(--editor-font-size) * 0.8)`
+    （基准 = 内容字号的单一来源；默认锚 15px ⇒ 12px = 字号阶梯的 doc-meta 档），线段仍写 `4em`
+    （随根字号解析，因而随基准缩放）；真机分叉的探针读数与修前/修后对照见
+    `test-results/m212/backlog-31-end-marker.md`（15px 档 12px / 线段 48px；24px 档 19.2px / 线段 76.8px；
+    修前两档恒为 11.48px）。② 门禁断言：`tests/visual/scenes/end-marker.spec.ts` 新增
+    「backlog #31：标记字号跟随内容字号」——两档（15px / 24px）各断言标记字号 = 0.8 × 内容字号、
+    线段长 = 4 × 标记字号，并前置断言两页内容字号确实不同（否则比值判据会在「两页一样」上空转）。
 
 ## 待修 findings（不阻塞）
+
+- **验收套件的 `--config` 覆盖会静默丢掉 `app.windows[0]` 里的窗口级配置**（2026-09-25，M213 登记，
+  **medium**）：`scripts/acceptance/lib/app.mjs` 启动 app 时传
+  `--config '{"build":{…},"app":{"windows":[{title,width,height,x,y,focus}]}}'`。Tauri CLI 的 `--config`
+  是**深合并**，但**数组按下标整体替换**——`app.windows[0]` 被这份只含六个键的对象整体替换，
+  `titleBarStyle: "Overlay"` 与 `hiddenTitle: true`（`src-tauri/tauri.conf.json`）**静默丢失**。
+  **实测对照**（M213，同一二进制）：走套件 → `AXScrollArea @0,32 1200×768`（webview 让出 32pt 原生标题栏）
+  且**屏幕上出现标题文字 "Lumir"**；手起（不覆盖 `app.windows`）→ `AXScrollArea @0,0 1200×800` 且无标题文字。
+  证据：`test-results/m213/titlebar/readings.md` §4（含两张截图与两份 AX 读数）。
+  **后果**：任何「真机上验证窗口级配置」的断言在套件里都验不到，而这个丢配置是**静默**的
+  （x/y/w/h 覆盖确实生效，只有同数组里的其它键被吃掉）——正是 REVIEW.md 第 9 条与「假绿」同族的形态。
+  **动作**：`app.mjs` 的覆盖对象里带上 `app.windows[0]` 的全部键（至少复制 `titleBarStyle` /
+  `hiddenTitle`），或改成只覆盖 `build.*`、窗口位置另走一条通道；补一条「套件启动后窗口处于 overlay
+  形态」的自检（例如断言 webview 的 AX 尺寸等于窗口尺寸）。
+- **验收 README 的 `configWrite` / 场景 front-matter `config:` 行没写 `theme` / `fontFamily` /
+  `monoFontFamily` / `fontSize`**（2026-09-25，M213 登记，low）：`scripts/acceptance/README.md` 的动作表
+  里 `configWrite` 只列 `lastVault、keys、restart、requireVault`，而实现（`lib/execute.mjs、
+  lib/app.mjs`）早已支持排版三项（M195）与主题（M210）；场景格式示例的 `config: { keys: {...} }` 同样
+  只举了 keys。M213 的场景 34/35 用 `config: { theme }` 与 `configWrite: theme` 时只能靠读实现确认。
+  **动作**：README 的两处补上这四个键（属文档面，落点 `scripts/acceptance/README.md`）。
+- **`.cm-lp-quote-line` 的 `padding-left` 声明当前无消费者**（2026-09-25，M213 登记，low）；
+  `src/preview/theme.ts` 写 `paddingLeft: var(--sp-5)`（10px），但 CM baseTheme 的
+  `.cm-line { padding: 0 }`（`src/editor.ts`）与它**同等特异性**、注入更晚，实测计算值为 **0px**——
+  引用块的文字因此贴着 2px 竖线。**不是 restyle 引入的**（两份规则在 restyle 前就已同形，改的只是
+  竖线宽度 3px → 2px 与色值），所以没有在本 change 里顺手改（会牵动 `render-quote-list` 基线与观感）。
+  **动作**：视觉裁决后给一条更高特异性的内边距（如 `.cm-line.cm-lp-quote-line` 双类选择器），
+  或把 `--sp-5` 移到别的载体上；R4 逐张重建基线时看 `render-quote-list` 就能判断现在的贴合是否可接受。
+
+- **真机套件没有计算属性通道 ⇒ 色值 / 主题类判据在真机层只能到「配置层 + 截图」**（2026-09-25，M213
+  登记，medium）：`scripts/acceptance` 的断言形态只有 `ax` / `editor` / `file` / `glob` / `shot`
+  （`lib/execute.mjs` 的 `EXPECT_KINDS`），**没有任何样式读数通道**。restyle 的三主题与 eink 九条降级
+  全是色值 / 线宽效应，AX 文本与文档文本都不随之变化——M213 实测确认「主题在真机上生效」这件事没有
+  机器判据可写：能机器判的只有①配置层（`env:config.json` 里的 `ui.theme`）②启动链路层（带该配置起得来、
+  骨架在场）③结构层（chromium 场景的计算属性断言），可见性只能靠截图给人看。**后果**：任何「主题 /
+  配色 / 对比度」的验收项在真机套件里都写不出可 FAIL 的判据，反向验证也无从下手（tasks §9.2 的
+  「去掉主题施加 → 必须 FAIL」在本通道下做不到位）。**动作候选**（需 Alex 裁决，均属套件基建、不在
+  任何单个 mission 的 scope）：① 给 KimiCU 的 AX 快照加一条「节点计算样式」读取（工具侧）；② 套件新增
+  `style` 断言形态（落点是 `scripts/acceptance/lib/execute.mjs` + README 的断言表），通道可以走
+  「在 webview 里 `page.evaluate` 等价物」——但真机没有注入 JS 的现成通道，实际仍需工具侧支持；
+  ③ 认账现状，把色值类验收统一交给 chromium 结构层 + Alex 抽审截图（M213 采用的就是这条，并已把边界
+  写进场景说明）。**关联**：`docs/process/real-machine-acceptance.md` 的通道边界表应补这一行。
+- **`openspec/specs/typography/spec.md` 的 `## Purpose` 段已与实现漂移**（2026-09-25，M213 登记，low）：
+  Purpose 第 3 段仍写「shell（左栏、**masthead**、浮层、键位面板、搜索面板）不受影响」与「既有整页基线
+  （本 change 落地时 **30 张**）逐张零差异」——masthead 已随 restyle 整块删除、基线已全量重建（张数也
+  不再是 30）。**为什么 M213 没修**：openspec 的 change delta 只覆盖 `## Requirements`（ADDED / MODIFIED
+  / REMOVED 三类），`## Purpose` 不被 delta 读取，只在 capability **创建**时写入——所以这条只能在归档
+  restyle 时手写替换，或另立一条 retro change。**动作**：restyle 归档节点 2 时顺手改这段（与「新建
+  capability 的 Purpose 手写」是同一道工序）。
 
 - **`list-filter` 归档时如实留下的四处覆盖缺口 / 措辞落差**（2026-09-24，M205 登记，low）：
   ① delta scenario「单字符绑定不进统一键位表」里「表内没有任何单字符绑定」这条**无断言**（现只覆盖 ⌃S 那条，
@@ -1067,6 +1121,20 @@
     恒不显示 → **2/14** 红）留档 `test-results/m189/acceptance-27-reverse-fail/`。证据
     `test-results/acceptance/2026-09-21/27-document-end-marker/`。归档为
     `openspec/changes/archive/2026-09-25-document-end-marker/`（2026-09-25 节点 2）。
+24. **restyle 主题通道与骨架落位**（M213，2026-09-25）—— `34-restyle-theme-skeleton`：
+    `ui.theme: "eink"` 经**配置通道**（front-matter 的 `config`，与 `font_size` / `[keys]` 同形）
+    起一个实例 → 断言 `env:config.json` 里确实是 `eink`、应用起得来、骨架与信息落位三点各自在场
+    （侧栏头 vault 入口 / modeline 文件路径 / modeline 右段「Markdown · N 行 · UTF-8」）、
+    **旧 masthead 的独有 AX 指纹**（vault 名与路径合并成的那一条 `AXStaticText`）不出现、
+    整轮前后验收 vault 文件 sha256 与 mtime 不变。**覆盖边界（场景说明已详述）**：本套件无计算属性
+    通道，eink 的色值/对比只能给截图（手眼项）；主题接线由 chromium 场景
+    `tests/visual/scenes/restyle-theme.spec.ts` 守。见「待修 findings」的「真机套件没有计算属性通道」条。
+25. **三主题真机呈现 + overlay 标题栏窗口级读数**（M213，2026-09-25）—— `35-restyle-three-themes`：
+    `light → dark → eink` 各走一次 `configWrite`（默认重启）+ 截图，三步各自断言配置里就是该主题、
+    上一步的主题已被覆盖（「读到 dark」≠「读到任意一份 config」）；末步落一张带 `AXTabGroup` /
+    文件树节点的读数截图，供标题栏与 traffic 灯位核对。**标题栏的三项窗口级证据**（traffic 灯原生绘制、
+    标题文字不显示、栏区可拖拽）不在断言里——真机截图 + 拖拽前后的窗口 bounds 读数落
+    `test-results/m213/titlebar/`，判定归 Alex（手感/审美不下沉）。
 
 **已机验到渲染/结构层，行为细节仍缺可观测面**
 
@@ -1091,6 +1159,14 @@
     `tests/visual/baselines/render-*.spec.ts-snapshots/` 与真机截图。
 
 ## 记录在案（无需动作）
+
+- **标题栏右侧「动作钮」区本版不渲染任何按钮**（2026-09-25，M213，tower 裁决）：tasks §4.3 的验收口径
+  原文写「无打开文件时标题栏只剩 traffic 区**与动作钮**」，实现期由 tower 裁决**本版不加动作钮**——
+  理由是动作钮的内容（保存 / 搜索 / 面板入口…）都没有定义，为一个未定义的东西先摆一排按钮会把
+  「定稿图里没有的东西」写进产品。落点：`titlebar` 只 `append(traffic, tabStrip)`（`src/shell.ts`），
+  delta 与 proposal 已把「右侧动作钮区」改写为**预留槽位（零可见内容）**，与 dock 预留列同一处置；
+  真机场景 `34` / `35` 的空态与标题栏判据按「只剩 traffic 区」写。若 Alex 认为应当有动作钮，
+  接口是标题栏右段加一个容器 + 定稿后再填内容（不涉及骨架改动）。
 
 - **docs-check 在 master 上红了 5 天没人发现**（M150 期间 worker-testinfra 发现，2026-09-17）：ADR 0005 的 `状态: deferred（…）` 不在 docs-check 的状态枚举里（枚举只列 proposed/accepted/deprecated/superseded），而 `docs/adr/README.md` 的状态生命周期明确把 `deferred` 当合法状态——门禁与文档自相矛盾，于是 ADR 校验 job 自 2026-09-12 起每次 master push 都失败（实测：`gh run list --workflow=docs-check.yml` 最近 6 次全 failure，`gh run view 35184453904 --log-failed` 报「状态字段非法：'deferred（…）'」），**没有任何机制在看这个红**。根因是流程面的：tower 侧合并走本地 `gate.sh`（不含 docs-check 的 ADR 校验），GitHub Actions 的状态无人巡检，「CI 全绿才可合入」这条口径只在 Rust/视觉/perf 三门上有消费者。处置（2026-09-17 当批次已做）：枚举扩展为含 `deferred`（M153 改门禁判据、M150 改 `docs/process/adr-lifecycle.md` 的合法值清单与注解格式，并把 `deferred` 的语义写死为「搁置非放弃、须带全角括号注解、须保留 Revisit 条件」）。
   **待裁决选项（若要消除「红无观察者」这个结构，动作在别处）**：在批次收尾加一条「CI 状态检查」——收尾时跑一次 `gh run list --branch master --limit N` 确认最近若干次 push 的四个 workflow 都绿，红了就当场归因或落 finding。推荐采纳：本次的代价是一条 AP 级规则（`deferred` 合法）与它的执行者脱节了 5 天，而检查成本是一条命令；落点是 `AGENTS.md` 的「tower 操作」硬规则（本批次未改那个文件，故只在本条记录）。若 Alex 认为 GitHub CI 只是给 PR 用的旁路观察、不作为合并准入，则本项保持「记录在案」不动。
@@ -1239,3 +1315,27 @@
   按实情对齐。
 - 批次三：键位分发三轨并行 + 扩展名注册表漂移（M130/M131/M132）；save-ipc.ts 折回 ipc.ts（M132）；Ctrl-K/D/T 原生路径风险（M132）。
 - 批次二：DeepSeek Flash 试用结论——可做 build，review 环节（k3-256k）不能省。
+
+- 2026-09-25：**表格首列字重 550 静默失效（`td:first-child` 撞 CM 的 widgetBuffer）修复**（M213，
+  tower 收编）：`src/style.css` 的 `.cm-lp-table-row:not(:first-child) .cm-lp-table-cell:first-child`
+  永不匹配——CM6 会在行内自动放置 `img.cm-widgetBuffer` / 占位 span，它们可能落在第一个 cell **之前**，
+  于是「首列 550」（tokens 文档的 td 层次档）整条静默失效（M212 reviewer 独立复现；M212 探针先发现）。
+  **修法**：判据改**列索引**——`[aria-colindex="1"]`（装饰层按列写死、与 DOM 子节点次序无关，
+  且它同时是读屏的列号语义，两处同源）。**闭环断言**：`tests/visual/scenes/restyle-content-types.spec.ts`
+  的「表格」条按列号取首列断言 550（旧 CSS 下该断言恒为 400 ⇒ 红）。**连带影响（如实登记）**：首列 550
+  让 cell 的 `min-inline-size: 7ch` 略微变宽（`ch` 随字重变），原本「贴合不横滚」的 fixture 会掉进
+  「横滚」档——`m119-table-width.spec.ts` 的欠宽用例把填充字数从 34 收到 30 以留在同一判据档内
+  （用例守的合同不变，见该处注释）。
+- 2026-09-25：**restyle R3 收尾：场景与真机验收场景全量改写**（M213，`feat/restyle-r3-scenes-acceptance-closeout`）：
+  ① `tests/visual/scenes/**` 的既有断言随 token 层/R2b 渲染层迁移（`.masthead-*` → `.modeline-*` /
+  `.ft-vault-name`，callout 图标体系退役 → `.cm-lp-callout-type`，旧色字面量 → `--tk-*` / `--border-soft` /
+  `--code-bg`，栏宽 80% → 定值 664 且「栏宽」改为读 `.cm-content` 的**内容盒**，typography 的基准
+  16px/1.75/.85em → 15px/1.7/.9em）；② 新增四个场景：`restyle-theme`（三主题 + tasks §1.2 的三条判据）、
+  `restyle-skeleton`（骨架几何 / 信息落位 / 标题栏空态）、`restyle-eink`（eink 九条逐条）、
+  `restyle-content-types`（表格首列 550 / 代码块头部条 / 引用 / 列表）；③ 视觉桩补 `ui.theme`
+  注入通道（`tauri-stub.ts`）并同步 `font_size` 出厂值 16→15；④ 真机新增场景 `34` / `35`（见「待真机验收」）。
+  **口径**：新场景不新增像素基线（实现期禁止零碎基线动作），三主题的截图证据走 Playwright 的
+  `info.attach` 产物（`tests/visual/test-results/`，git 外）。
+- 2026-09-25：**backlog #27 / #31 核销**（M213）：#27 补 `typography` 的 MODIFIED delta ×4（16px → D1 的
+  15px 锚 + 新 token 名），#31 由 R2b 修 `.cm-lp-end-marker` 的字号基准 + M213 补「正文放大后标记随之缩放」
+  的双档门禁断言。两条的详细落点见各自条目。

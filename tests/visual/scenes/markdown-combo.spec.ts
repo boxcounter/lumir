@@ -213,19 +213,28 @@ test("图片终态：尺寸兜底画出来 + 不可见即可见占位", async ({
   await expect(page.locator(".cm-lp-image")).toHaveCount(10);
   await expect(page.locator(".cm-lp-image-status")).toHaveCount(0);
 
+  // 「栏宽」= 阅读列的文字实测宽（`.cm-content` 的内容盒）：restyle 后它是 664px 的框内含
+  // 44px 左右内边距 ⇒ 576px。下面按它算期望读数，而不是写死像素（写死等于把栏宽复制一份）。
+  const column = await page.evaluate(() => {
+    const el = document.querySelector(".cm-content")!;
+    const style = getComputedStyle(el);
+    return el.getBoundingClientRect().width - Number.parseFloat(style.paddingLeft) - Number.parseFloat(style.paddingRight);
+  });
+  const box = (aspect: number) => `${Math.round(column)}x${Math.round(column * aspect)}`;
+
   // 固有宽度不定的形状（`width="100%"` + 仅 viewBox，或只声明 viewBox）：终态按**包含块填充**
   //（引擎对「有比例、无固有尺寸」图片的既定规则）。包含块是替换区包装盒，其宽度由 M182 的
   // `width: 100%` 钉成栏宽：修复前它由加载中状态块先占（≈ 半栏宽）或被尺寸兜底写成 300px，
   // 终态因此取决于「布局时状态块在不在场」——正是 M182 消除的时序依赖（条款见
   // docs/specs/image-reading.md §2）。尺寸兜底（`imageFallbackWidth`）仍在，但只对真正画不出
   // 可见像素的形态生效（见下方四处占位）。
-  expect(await imageReadings(page, REFS.percent), "固有宽度不定的 svg 按栏宽渲染").toEqual({ box: "829x276", natural: "300x100", complete: true });
+  expect(await imageReadings(page, REFS.percent), "固有宽度不定的 svg 按栏宽渲染").toEqual({ box: box(100 / 300), natural: "300x100", complete: true });
   // 同一条处置覆盖 Obsidian 方言形态（三种引用形态共用终态，不为 svg 单立分支）。
-  expect(await imageReadings(page, REFS.percentWiki), "方言形态的读数（与标准形态同处置）").toEqual({ box: "829x276", natural: "300x100", complete: true });
+  expect(await imageReadings(page, REFS.percentWiki), "方言形态的读数（与标准形态同处置）").toEqual({ box: box(100 / 300), natural: "300x100", complete: true });
 
-  // 正常图片零行为变化：读数与修复前逐值相同（固定尺寸 240×80；2000×600 按栏宽收窄）。
+  // 正常图片零行为变化：固定尺寸的按固有值、超宽的按栏宽收窄（同一条 max-width 口径）。
   expect(await imageReadings(page, REFS.fixed)).toEqual({ box: "240x80", natural: "240x80", complete: true });
-  expect(await imageReadings(page, REFS.wide), "超宽图仍按既有 max-width 口径收窄").toEqual({ box: "829x249", natural: "2000x600", complete: true });
+  expect(await imageReadings(page, REFS.wide), "超宽图仍按既有 max-width 口径收窄").toEqual({ box: box(600 / 2000), natural: "2000x600", complete: true });
 
   // 不可见的四处各自落地可见占位，且占位文本含原始引用串（alt 与路径都在其中）。
   // 两条分支各有输入：解码失败（空位图 / 外链被拦）与「兜底取不到宽度」（固有尺寸为零的 svg）。
@@ -661,7 +670,17 @@ test("M209 方言形态（![[percent-width.svg]]）打开遮罩且图像源一�
   await expect(page.locator(".cm-lp-image-status")).toHaveCount(0);
 
   // 正观测先行：方言形态（wikilink 解析出的 embed 分支）的内联图真的渲染出来了。
-  expect(await imageReadings(page, REFS.percentWiki), "方言形态内联图读数").toEqual({ box: "829x276", natural: "300x100", complete: true });
+  // 期望盒按阅读列的文字实测宽算（栏宽 = `.cm-content` 的内容盒；见「图片终态」那条的说明）。
+  const wikiColumn = await page.evaluate(() => {
+    const el = document.querySelector(".cm-content")!;
+    const style = getComputedStyle(el);
+    return el.getBoundingClientRect().width - Number.parseFloat(style.paddingLeft) - Number.parseFloat(style.paddingRight);
+  });
+  expect(await imageReadings(page, REFS.percentWiki), "方言形态内联图读数").toEqual({
+    box: `${Math.round(wikiColumn)}x${Math.round(wikiColumn / 3)}`,
+    natural: "300x100",
+    complete: true,
+  });
   const inlineSrc = await inlineImage(page, REFS.percentWiki).evaluate((el) => (el as HTMLImageElement).src);
 
   await inlineImage(page, REFS.percentWiki).dblclick();
