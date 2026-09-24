@@ -470,6 +470,14 @@ const commands: CommandRuntime = {
   // 作用域 global，故 id 前缀取 `view.` 而不是 `editor.`（前缀与作用域不得互相打脸）。
   "view.toggle-line-wrap": () => editor.toggleLineWrap(),
   "view.toggle-code-block-wrap": () => editor.toggleCodeBlockWrap(),
+  // 字号步进（M195，change typography-and-zoom）：改的是**编辑器内容字号**（Emacs 的
+  // text-scale-adjust 的对应物），不是整体界面缩放——MUST NOT 启用 Tauri 的 webview 缩放
+  // 热键（它会在统一键位表之外再注册一条 keydown 通路、接管同一批键，见 keymap-commands 的
+  // delta）。能力（运行期真源 + 施加）在 editor 侧：一份值管全部会话、不落盘、不回写
+  // config.json、不进撤销栈、不碰 dirty；⌘0 回到**配置字号**而不是出厂 16px。
+  "view.text-scale-up": () => editor.textScale("up"),
+  "view.text-scale-down": () => editor.textScale("down"),
+  "view.text-scale-reset": () => editor.textScale("reset"),
   // 标签（M149）：能力与切换在 editor 的会话 API，装配层只做两件它才知道的事——
   // 切换后的表现层对齐（tabs.activateTab → syncActiveDocument）与关标签的确认（都在 src/tabs.ts）。
   // `tab.close` 关的是**前台**标签；逐标签关闭钮走同一条 closeTab（同一个确认）。
@@ -882,6 +890,18 @@ configGet().then((snapshot) => {
     lineWrap: snapshot.config.editor.line_wrap,
     codeBlockWrap: snapshot.config.editor.code_block_wrap,
   });
+  // 排版口径（M195，change typography-and-zoom）：配置给的是**启动时的基准**——字号在运行期
+  // 由三条 `view.text-scale-*` 命令步进，运行期 MUST NOT 回写这里（config.json 的内容与 mtime
+  // 在步进前后逐字节不变）。字体族只在启动读一次（本 change 不做热重载，改字体需重启）。
+  // warning 走与 [keys] 覆盖同一条出口（console + 诊断日志）——本模块不新造一个出口。
+  for (const warning of editor.applyTypography({
+    fontFamily: snapshot.config.editor.font_family,
+    monoFontFamily: snapshot.config.editor.mono_font_family,
+    fontSize: snapshot.config.editor.font_size,
+  })) {
+    console.warn(`lumir: ${warning}`);
+    logEvent("config_warning", { source: "typography", message: warning });
+  }
   applyKeyConfig(snapshot.config.keys);
   // 配置 warning（含 [keys] 的逐项回退）：M1 以来没有 UI 出口，如实记到 console，
   // 不新增 UI 面（避免启动浮条与既有启动视觉冲突）；同一份 warning 另落诊断日志

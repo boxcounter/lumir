@@ -1,5 +1,11 @@
 // live preview 装饰层样式 —— 走 CM6 theme API（提案 Impact：不碰 src/style.css，vault 波持有）。
 // 类名统一 cm-lp-* 前缀。
+//
+// 字体族引用一律走**编辑器作用域**的 token（change typography-and-zoom）：
+// `--editor-font-family` / `--editor-mono-family`（声明在 src/style.css 的 :root，缺省分别引用
+// 基线的 --font-body / --font-mono）。`--font-display`（标题 / 装饰族）**不在此列**——D3 裁决下
+// 标题审美不归本能力，它保持引用 shell 基线 token。shell（左栏 / masthead / 浮层）的规则同样
+// 保持引用基线 token，「配置只影响编辑器」因此由 token 分层结构性保证。
 
 import { EditorView } from "@codemirror/view";
 import type { EditorMode } from "../bindings/EditorMode";
@@ -53,7 +59,7 @@ export function wrapSpec(mode: EditorMode, lineWrap: boolean, codeBlockWrap: boo
 }
 
 export const livePreviewTheme = EditorView.theme({
-  ".cm-editor": { color: "var(--text)", backgroundColor: "var(--bg)", fontFamily: "var(--font-body)" },
+  ".cm-editor": { color: "var(--text)", backgroundColor: "var(--bg)", fontFamily: "var(--editor-font-family)" },
   ".cm-line.cm-lp-block-separator": { fontSize: "0", lineHeight: "0", height: "0", minHeight: "0" },
   ".cm-selectionBackground, ::selection": { backgroundColor: "var(--sel)", color: "var(--selection-ink)" },
   ".cm-cursor, .cm-dropCursor": { borderLeftColor: "var(--text)" },
@@ -105,7 +111,7 @@ export const livePreviewTheme = EditorView.theme({
   // 相邻 callout 之间的空行保留块间距（覆盖 0 高分隔，选择器更具体优先）。
   ".cm-line.cm-lp-block-separator.cm-lp-callout-gap": { height: "10px", minHeight: "10px" },
 
-  ".cm-line.cm-lp-codeblock-line": { backgroundColor: "var(--bg-2)", fontFamily: "var(--font-mono)" },
+  ".cm-line.cm-lp-codeblock-line": { backgroundColor: "var(--bg-2)", fontFamily: "var(--editor-mono-family)" },
   // 代码块折行口径（M180，一元素一条规则）：围栏 / 缩进代码块行由 editor.code_block_wrap
   // 裁决、与 editor.line_wrap 无关，故两个内容级 class 由 editor.ts 的 wrapExtensions 经
   // contentAttributes 加到 .cm-content 上（与 CM 自己的 cm-lineWrapping 并列共存）。
@@ -149,7 +155,7 @@ export const livePreviewTheme = EditorView.theme({
   },
   ".cm-lp-inline-code": {
     backgroundColor: "var(--bg-2)",
-    fontFamily: "var(--font-mono)",
+    fontFamily: "var(--editor-mono-family)",
     borderRadius: "3px",
     padding: "0 3px",
     fontSize: "0.92em",
@@ -157,8 +163,8 @@ export const livePreviewTheme = EditorView.theme({
 
   ".cm-line.cm-lp-list-line": { paddingInlineStart: "var(--lp-list-body)", textIndent: "0" },
   ".cm-line.cm-lp-list-first": { textIndent: "calc(-1 * var(--lp-list-marker))" },
-  ".cm-lp-list-marker": { display: "inline-flex", inlineSize: "var(--lp-list-marker)", boxSizing: "border-box", paddingInlineEnd: "1ch", justifyContent: "flex-end", gap: ".5ch", textIndent: "0", whiteSpace: "pre", color: "var(--dim)", fontFamily: "var(--font-mono)", fontSize: ".85em", fontVariantNumeric: "tabular-nums" },
-  ".cm-lp-task-marker": { fontFamily: "var(--font-mono)" },
+  ".cm-lp-list-marker": { display: "inline-flex", inlineSize: "var(--lp-list-marker)", boxSizing: "border-box", paddingInlineEnd: "1ch", justifyContent: "flex-end", gap: ".5ch", textIndent: "0", whiteSpace: "pre", color: "var(--dim)", fontFamily: "var(--editor-mono-family)", fontSize: ".85em", fontVariantNumeric: "tabular-nums" },
+  ".cm-lp-task-marker": { fontFamily: "var(--editor-mono-family)" },
 
   // frontmatter properties 区块（块级 replace widget）。
   // 纵向间距在 -outer 上用 padding 而非 widget 本体 margin：CM6 测量的 widget
@@ -202,7 +208,7 @@ export const livePreviewTheme = EditorView.theme({
   ".cm-lp-fm-raw": {
     margin: "0",
     whiteSpace: "pre-wrap",
-    fontFamily: "var(--font-mono)",
+    fontFamily: "var(--editor-mono-family)",
     color: "var(--dim)",
   },
   ".cm-lp-fm-empty": { color: "var(--dim)" },
@@ -305,7 +311,7 @@ export const livePreviewTheme = EditorView.theme({
   // 随 shell 基线配色适配）；此处只补块级容器与失败降级（可读源码 + 明确失败态）。
   ".cm-lp-math-block": { padding: "4px 0", overflowX: "auto" },
   ".cm-lp-math-fallback": {
-    fontFamily: "var(--font-mono)",
+    fontFamily: "var(--editor-mono-family)",
     backgroundColor: "var(--bg-2)",
     color: "var(--accent)",
     borderRadius: "4px",
@@ -316,7 +322,7 @@ export const livePreviewTheme = EditorView.theme({
   // 降级块纵向间距走外层透明 padding（heightmap 不可测 margin，同 frontmatter）。
   ".cm-lp-math-fallback-outer": { padding: "4px 0" },
   ".cm-lp-math-error": {
-    fontFamily: "var(--font-body)",
+    fontFamily: "var(--editor-font-family)",
     color: "var(--accent)",
     fontSize: "0.85em",
     marginBottom: "4px",
@@ -338,7 +344,7 @@ export const livePreviewTheme = EditorView.theme({
   // 降级块纵向间距走外层透明 padding（heightmap 不可测 margin，同 frontmatter）。
   ".cm-lp-mermaid-fallback-outer": { padding: "4px 0" },
   ".cm-lp-mermaid-error": {
-    fontFamily: "var(--font-body)",
+    fontFamily: "var(--editor-font-family)",
     color: "var(--accent)",
     fontSize: "0.85em",
     marginBottom: "4px",
@@ -346,7 +352,7 @@ export const livePreviewTheme = EditorView.theme({
   ".cm-lp-mermaid-raw": {
     margin: "0",
     whiteSpace: "pre-wrap",
-    fontFamily: "var(--font-mono)",
+    fontFamily: "var(--editor-mono-family)",
     color: "var(--dim)",
     fontSize: "0.92em",
   },

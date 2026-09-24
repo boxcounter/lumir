@@ -181,6 +181,14 @@ export const NON_TAB_GLOBAL_COMMAND_IDS = [
   // 前缀与作用域 MUST NOT 互相打脸（D3 裁决）。两条都默认不绑键，见 KEYLESS_COMMAND_IDS。
   "view.toggle-line-wrap",
   "view.toggle-code-block-wrap",
+  // M195：编辑器内容字号步进（change typography-and-zoom）。取 `view.` 前缀而不是 `editor.`：
+  // 三条命令改的是**应用运行期**的排版口径（与 M180 的折行同族），作用域必须为 global——
+  // 焦点在左栏 / 搜索框 / 浮层里时同样要能改字号（见 keymap-commands 的 delta）。名字里的
+  // `text-scale` 取自 Emacs 的 `text-scale-adjust`：它改的是**文字**大小，不是整体界面缩放；
+  // 本版也不启用 Tauri 的 webview 缩放热键（那会在本表之外再注册一条 keydown 通路）。
+  "view.text-scale-up",
+  "view.text-scale-down",
+  "view.text-scale-reset",
 ] as const;
 
 /** 全局命令 id（实现落在装配层 main.ts）：非标签部分 + 标签部分。 */
@@ -353,6 +361,28 @@ export const KEY_BINDINGS: readonly KeyBinding[] = [
   { key: "Cmd-f", command: "app.search-open", scope: "global", doc: "文件内搜索（M139）：mac 惯例的查找键；取 global 而非 editor——焦点在文件树或已打开的搜索框里时同样要能开（已打开则把焦点移回输入框）。⌃F 已被 Emacs C-f（前移字符）占用，故沿用 ⌘ 系" },
   { key: "Cmd-Shift-o", command: "toc.toggle", scope: "global", doc: "轻量大纲（M148）：⌘⇧O 展开/收起 masthead 的标题路径浮层。取 global 而非 editor——浮层打开时焦点在浮层里（不在 contentDOM 内），再按要能收起；空标题文档也要能走到提示。冲突已核（零冲突）：表内 ⌘⇧ 系只有 ⇧⌘Z（重做），原生菜单的 accelerator 集合里 ⌘⇧ 系也只有 ⇧⌘Z（muda predefined：Redo），macOS 的 Help 子菜单在 tauri 默认菜单里为空" },
   { key: "Cmd-o", command: "vault.switcher", scope: "global", doc: "打开 vault 切换器（M163，change multi-vault-workspaces 的口径 13）：⌘O 是 mac 惯例的「打开」，而 vault 的打开与切换此前零键位，与 ADR 0006 的 Emacs keybinding PKM 定位不符。取 global 而非 editor——浮层打开时焦点在浮层里（不在 contentDOM 内），再按要能收起；未装载 vault 时无操作。冲突已核（零冲突，三条独立来源）：① 表内 ⌘O 无绑定（本文件即真源）；② 原生菜单 accelerator 集合里没有 ⌘O——tauri 2.11.5 的 `Menu::default()` 逐项来自 muda 0.19.3 `items/predefined.rs` 的 `accelerator()`（Copy ⌘C / Cut ⌘X / Paste ⌘V / Undo ⌘Z / Redo ⇧⌘Z / SelectAll ⌘A / Minimize ⌘M / Fullscreen ⌃⌘F / Hide ⌘H / HideOthers ⌥⌘H / CloseWindow ⌘W / Quit ⌘Q，见该文件 :301-342），File 子菜单在 macOS 上只有一项预置 Close（M149 已把它换成不带 accelerator 的自定义项）；③ macOS 不给任何系统菜单预置 ⌘O（「打开…」由应用自建，本应用不建）。浮层内的 ↑↓ / Enter / Esc 就地在浮层内消费、不进本表（理由同 M148 那条：同 token 已被 editor.cursor-up / cursor-down / editor.widget-escape 占用）" },
+
+  // ── 全局：编辑器内容字号步进（M195，change typography-and-zoom）
+  // 语义取自 Emacs 的 text-scale-adjust（C-x C-= / C-x C-- / C-x C-0，步进倍率 1.1、钳 [12,32]、
+  // 重置回到配置值）：Emacs 原键是三段 chord，而 `[keys]` 明确拒绝含空白的键位（配置层只校验
+  // 形状，见 src-tauri/src/config.rs 的 validate_keys），把默认键位押在 chord 上等于把这三条命令
+  // 变成「用户改不了键」——故按本仓既有的「⌘ 系归 macOS 惯例、⌃ 系归 Emacs 惯例」分工取 ⌘ 系。
+  // 键位占用已按三条独立来源核实（零冲突）：① 表内四个 token 均无占用（本文件即真源）；② 原生菜单
+  // accelerator 集合（muda 0.19.3 `items/predefined.rs:300-342`）不含 ⌘= / ⌘+ / ⌘− / ⌘0；
+  // ③ 三者不是 macOS 的预置菜单键。
+  //
+  // token 形态是这块**最大的静默失配风险**（写错不会报错、只会永远不命中）：
+  // - ⌘− 的事件 token 是 `Cmd--`（keyToken 拼 `[...mods, event.key].join("-")`，`event.key === "-"`），
+  //   表内因此 MUST 写 `Cmd--`，MUST NOT 写 `Cmd-Minus`——含 Alt 的组合才按物理键 `code` 判定。
+  // - ⌘⇧=（放大）在真机 macOS 上 `event.key === "+"`，归一成 `Cmd-+`（`+` 在 SHIFT_IMPLIED_KEYS
+  //   里，Shift 已隐含在字符中）；合成事件（Playwright 的 Meta+Shift+Equal）可能给 `key === "="`
+  //   + shiftKey → 归一成 `Cmd-Shift-=`（不命中）。这条差异写在 typography 场景的注释里，
+  //   不用「注入过就算验过」当判据。
+  // - 同一命令两条绑定是表内既有形态（撤销既有 `Ctrl-/` 与 `Ctrl-_` 两条），不构成冲突。
+  { key: "Cmd-=", command: "view.text-scale-up", scope: "global", doc: "放大编辑器内容字号一档（×1.1 取整，钳 [12,32]）：mac / 浏览器惯例的放大键。取 global 而非 editor——字号是应用运行期的显示口径，焦点在左栏 / 搜索框 / 浮层里时同样要能改（与 M180 的折行开关同族）。只改**文字**大小，不是整体界面缩放（MUST NOT 启用 Tauri 的 webview 缩放热键，理由见 keymap-commands 的 delta）" },
+  { key: "Cmd-+", command: "view.text-scale-up", scope: "global", doc: "同上，⌘⇧= 的字符形态（真机 event.key 为 \"+\"）：浏览器对放大同时接受 ⌘= 与 ⌘+，两条绑定指向同一条命令。token 形态的实测记录见本组上方的注释" },
+  { key: "Cmd--", command: "view.text-scale-down", scope: "global", doc: "缩小编辑器内容字号一档（÷1.1 取整，钳 [12,32]）。token MUST 写 `Cmd--`（⌘− 的事件 token 形态），写 `Cmd-Minus` 会静默不命中——理由见本组上方的注释" },
+  { key: "Cmd-0", command: "view.text-scale-reset", scope: "global", doc: "回到**配置字号**（不是出厂 16px）：Emacs 的 `C-x C-0` 是「restore the default (global) font size」，本仓的 global 就是配置值。运行期字号不落盘、不回写 config.json（D5 裁决，与 M180 的折行开关同纪律）" },
 
   // ── 全局：标签（M149）
   { key: "Cmd-w", command: "tab.close", scope: "global", doc: "关当前标签（dirty 时先确认）；取 global 而非 editor——焦点在文件树 / 搜索框 / 大纲浮层里时同样要能关。**这个键原本被原生菜单的预置 Close 项占着**（muda 给 CloseWindow 的 accelerator 就是 ⌘W，菜单键等价在 NSApplication 分发阶段截获，webview 的 keydown 收不到）：M149 在 src-tauri/src/lib.rs 按 M131 先例把 File / Window 两个子菜单的预置 Close 换成不带加速键的自定义项让出该键，见那边的函数注释。语义随之从「关窗」变为「关标签」（tower 2026-09-17 裁决），退出仍走 ⌘Q（有 dirty 守卫）与红灯" },

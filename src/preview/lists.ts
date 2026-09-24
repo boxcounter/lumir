@@ -3,6 +3,7 @@ import { StateEffect } from "@codemirror/state";
 import type { EditorState, Range } from "@codemirror/state";
 import { Decoration, EditorView, ViewPlugin, WidgetType } from "@codemirror/view";
 import type { DecorationSet, ViewUpdate } from "@codemirror/view";
+import { EDITOR_MONO_FAMILY_TOKEN } from "../typography";
 
 type Node = ReturnType<typeof syntaxTree>["topNode"];
 interface Group { width: number; body: number }
@@ -41,7 +42,14 @@ class ListLayout {
       const style = getComputedStyle(this.view.contentDOM);
       const canvas = document.createElement("canvas");
       const context = canvas.getContext("2d")!;
-      context.font = `${parseFloat(style.fontSize) * .85}px ${style.getPropertyValue("--font-mono")}`;
+      // 字体族 MUST 与标记**渲染**用的那个 token 同源（change typography-and-zoom）：
+      // `.cm-lp-list-marker` 的 fontFamily 是 `var(--editor-mono-family)`（src/preview/theme.ts），
+      // 这里读的也是它。**这是字符串取值、不是 CSS 引用**：改 token 名不会带着它走，所以
+      // 非默认 `mono_font_family` 下若两处不同源，标记会按旧族算宽、与正文对不齐
+      //（REVIEW.md 第 8 条的第二种形态：一处是 CSS 引用、一处是 JS 取值）。
+      // 取值点同时受视觉场景钉住（typography.spec.ts 断言 canvas 拿到的族串与标记的
+      // 计算 fontFamily 逐字相同）。
+      context.font = `${parseFloat(style.fontSize) * .85}px ${style.getPropertyValue(EDITOR_MONO_FAMILY_TOKEN)}`;
       return context.measureText("0").width;
     },
     write: value => queueMicrotask(() => {

@@ -318,6 +318,18 @@ export async function runScenario(ctx, scenario) {
         const ok = Boolean(info) && before && before.sha256 === info.sha256;
         return ok ? pass(label2, `仍为 ${info.sha256}`) : fail(`${label2}（内容已变：${before?.sha256} -> ${info?.sha256}）`);
       }
+      if (spec.mtimeUnchangedSince !== undefined) {
+        // mtime 逐字节口径的「没写过」判据（M195）：sha256 相同只说明内容没变，还可能存在
+        // 「写了同一份内容」（内容不变而 mtime 推进）。D5 的「不落盘」要同时排掉这两种，
+        // 因此保留一个与 unchangedSince 成对的 mtime 判据；精确相等（不是 +1 容差）——
+        // 两次 stat 之间没有写入时 mtimeMs 完全相同。
+        const before = vars[spec.mtimeUnchangedSince];
+        if (!before) return fail(`${label2}（未记录基线 ${spec.mtimeUnchangedSince}）`);
+        const ok = Boolean(info) && before.mtimeMs === info.mtimeMs;
+        return ok
+          ? pass(label2, `mtime 仍为 ${info.mtimeMs}`)
+          : fail(`${label2}（mtime 已推进：${before.mtimeMs} -> ${info?.mtimeMs}）`);
+      }
       if (spec.mtimeNewerThan !== undefined) {
         const base = vars[spec.mtimeNewerThan]?.mtimeMs ?? 0;
         const ok = Boolean(info) && info.mtimeMs > base + 1;
@@ -363,7 +375,14 @@ export async function runScenario(ctx, scenario) {
   try {
     if (scenario.fixtures) for (const f of scenario.fixtures) await copyFixture(f);
     if (scenario.config) {
-      await writeConfig({ mode: "md", keys: scenario.config.keys });
+      // 排版三项（M195）与 [keys] 同形：传了才写，缺省即出厂口径
+      await writeConfig({
+        mode: "md",
+        keys: scenario.config.keys,
+        fontFamily: scenario.config.fontFamily,
+        monoFontFamily: scenario.config.monoFontFamily,
+        fontSize: scenario.config.fontSize,
+      });
       await ctx.restartApp();
     }
     if (scenario.open) {
@@ -663,6 +682,11 @@ async function doAction(step, { ctx, cu, scenario, vars, pid, evidence }) {
         lastVault: step.lastVault ?? cur.last_vault ?? (await import("./util.mjs")).vaultDir(),
         mode: cur.editor?.mode ?? "md",
         keys: step.keys !== undefined ? step.keys : cur.keys,
+        // 排版三项（M195）：缺省**沿用当前值**，与 keys 同形——否则一次 configWrite 会把上一个
+        // 场景／本场景前面设过的 font_size 悄悄抹掉（那正是「改了配置却没生效」最难查的形态）。
+        fontFamily: step.fontFamily !== undefined ? step.fontFamily : cur.editor?.font_family,
+        monoFontFamily: step.monoFontFamily !== undefined ? step.monoFontFamily : cur.editor?.mono_font_family,
+        fontSize: step.fontSize !== undefined ? step.fontSize : cur.editor?.font_size,
       };
       await writeConfig(next);
       // requireVault: false 只对本步的重启生效（该步期待「未打开空态」，就绪门里「树里有

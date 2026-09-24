@@ -18,4 +18,29 @@ line_wrap: boolean,
  * 横滚容器承载；`true` 时在阅读栏内折行（M138 以来的现状）。作用面只有 md 模式——
  * 非 md 文件没有围栏渲染，对它们无可观测效果（不是漏实现）。
  */
-code_block_wrap: boolean, };
+code_block_wrap: boolean, 
+/**
+ * 正文（比例）字体族（change typography-and-zoom）：CSS `font-family` 值，`None` =
+ * 沿用基线观感（`src/style.css` 的 `--font-body`）。只在启动装载时读一次——本能力不做
+ * 热重载，改字体需重启（字号另有运行期步进命令，不落盘）。
+ *
+ * 这里**只挡空串 / 纯空白**（→ `None` + warning）：值是否合法的 CSS 字族由前端判定
+ *（`CSS.supports`），Rust 侧不复制一份 CSS 语法知识——与 `keys` 表「形状在此、语义在
+ * 前端」的既有分层同口径（见模块头）。
+ */
+font_family: string | null, 
+/**
+ * 等宽字体族：口径同 `font_family`，缺省引用基线的 `--font-mono`。它同时是**列表标记
+ * 宽度测量**与标记渲染共用的那个 token（`src/preview/lists.ts`），两处必须同源。
+ */
+mono_font_family: string | null, 
+/**
+ * 编辑器内容字号（px）：默认 16，合法区间 `[12, 32]`，区间外回落 16 + warning。
+ * 它是编辑器内容面（md 正文 / 代码块 / code 模式）的字号；shell 的 13px 与阅读栏宽
+ * 都不随之变（作用面由 token 分层结构性保证，见 change 的 design §2.2）。
+ *
+ * **这是本仓第一个数值配置字段**：写成字符串（`"font_size": "16"`）会在 serde 解析期
+ * 失败 → 走**整文件回落**（全部字段回默认 + 一条 warning，连 `last_vault` 一起丢）。
+ * 代价与「为什么不发明逐字段类型容忍」见模块头。
+ */
+font_size: number, };

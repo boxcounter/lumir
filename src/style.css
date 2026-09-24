@@ -11,6 +11,17 @@
   --font-display: "Songti SC", "STSong", ui-serif, Georgia, serif;
   --font-mono: ui-monospace, "SF Mono", Menlo, monospace;
   --line-height: 1.75;
+  /* 编辑器作用域的排版 token（change typography-and-zoom）：默认值 = 本 change 之前的观感。
+     编辑器内的一切字体族 / 字号引用走这一层（src/editor.ts 的 baseTheme、src/preview/theme.ts
+     的正文 / 代码块 / frontmatter / 列表标记），shell 的规则仍引用 --font-body / --font-mono
+     ——「配置只影响编辑器」因此是 token 分层的结构事实，不靠逐处记得改。
+     运行期写入路径只有一处：src/typography.ts 的 applyTypography（配置启动时喂一次、三条
+     view.text-scale-* 命令在运行期步进字号）。--editor-font-size 是编辑器内容字号的
+     **唯一写值**（本 change 之前 src/style.css 与 CM 主题各写一份 16px，后者 specificity 更高、
+     实际生效——实测记录见 change 的 design §4-0）。 */
+  --editor-font-family: var(--font-body);
+  --editor-mono-family: var(--font-mono);
+  --editor-font-size: 16px;
 }
 /* callout 类型色（M109，theme.ts 的 .cm-lp-callout-* 经 --callout-c 引用）：
    --callout-tint 控制底色混色强度。 */
@@ -25,7 +36,10 @@ body,
 body { background:var(--bg); color:var(--text); font-family:var(--font-body); font-size:13px; }
 ::selection { background:var(--sel); color:var(--selection-ink); }
 .pane-editor { max-width:none; min-width:0; }
-.cm-content { font-size:16px; line-height:1.75; }
+/* 内容面的字号只有一处真源：`--editor-font-size`（见 :root 的说明）。这里保留
+   line-height 的直接声明——它压过从 .cm-scroller 继承来的同名值，是既有的、与字号无关的
+   口径（改动会动到全部整页基线）；字号那半句已随本 change 收口，不再各写一份。 */
+.cm-content { line-height:1.75; }
 .cm-content { text-autospace: normal; hanging-punctuation: first last; }
 /* Chromium currently ignores hanging-punctuation; WKWebView supports it. CM6 retains defaults to preserve cursor alignment. */
 

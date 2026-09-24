@@ -27,12 +27,17 @@ export function fixturesDir() {
 /** 写隔离 config.json。`keys` 不传时整体不写该字段（默认无覆盖）。
  *  M180（change line-wrap-options）起支持 `lineWrap` / `codeBlockWrap`：**传了才写进 editor 表**
  *  ——两项缺失时应用走 Rust 侧 `Default`（line_wrap = true、code_block_wrap = false），
- *  这正是「默认口径」场景要的形态；显式写 false / true 才构造出另外三条组合。 */
+ *  这正是「默认口径」场景要的形态；显式写 false / true 才构造出另外三条组合。
+ *  M195（change typography-and-zoom）起同样支持 `fontFamily` / `monoFontFamily` / `fontSize`：
+ *  三个都**传了才写**，缺省即出厂口径（字体族沿用底线、字号 16）——与折行两项同一形态。 */
 export async function writeConfig({
   lastVault = vaultDir(),
   mode = "md",
   lineWrap = undefined,
   codeBlockWrap = undefined,
+  fontFamily = undefined,
+  monoFontFamily = undefined,
+  fontSize = undefined,
   keys = undefined,
 } = {}) {
   const dir = path.join(envHome(), "lumir");
@@ -40,6 +45,9 @@ export async function writeConfig({
   const editor = { mode };
   if (lineWrap !== undefined) editor.line_wrap = lineWrap;
   if (codeBlockWrap !== undefined) editor.code_block_wrap = codeBlockWrap;
+  if (fontFamily !== undefined) editor.font_family = fontFamily;
+  if (monoFontFamily !== undefined) editor.mono_font_family = monoFontFamily;
+  if (fontSize !== undefined) editor.font_size = fontSize;
   const cfg = { version: 1, last_vault: lastVault, editor };
   if (keys !== undefined) cfg.keys = keys;
   await writeFile(path.join(dir, "config.json"), `${JSON.stringify(cfg, null, 2)}\n`);
