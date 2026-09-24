@@ -202,7 +202,7 @@ test("内容未变不排期：盘上已经是这一处时不再写第二遍", as
   }
 });
 
-test("flush：取消防抖并立刻落盘；没有待写内容时也写一份当前镜像；未装载 vault 时是 no-op", async () => {
+test("flush：取消防抖并立刻落盘待写内容；没有待写内容不写盘；未装载 vault 时是 no-op", async () => {
   mock.timers.enable({ apis: ["setTimeout"] });
   try {
     const rig = createRig();
@@ -212,20 +212,22 @@ test("flush：取消防抖并立刻落盘；没有待写内容时也写一份当
 
     rig.activePath = "a.md";
     await load(rig, "vault-a");
-    assert.equal(rig.writes.length, 0, "装载本身不写盘（清理在下次落盘时生效，spec 的时序）");
+    assert.equal(rig.writes.length, 0, "装载本身不写盘（清理搭在下一次真实写入上，spec 的时序）");
 
+    // 没有待写内容就不写盘：这个时点挂在**每次开文件 / 切标签**上，无条件写等于一次打开一次
+    // tmp+rename，还会在「什么都没读」的启动路径上落一份空表（真机场景 28 实测到过：scroll 之前
+    // 位置文件就已存在）
     await rig.store.flush();
-    assert.equal(rig.writes.length, 1, "没有待写内容也写一份当前快照（退出路径上没有第二次机会）");
-    assert.deepEqual(rig.writes[0].entries, {});
+    assert.equal(rig.writes.length, 0);
 
     rig.view = position(900);
     rig.store.scrolled();
     await rig.store.flush(); // 窗口未到就切走
-    assert.equal(rig.writes.length, 2);
-    assert.equal(rig.writes[1].entries["a.md"]?.pos, 900);
+    assert.equal(rig.writes.length, 1);
+    assert.equal(rig.writes[0].entries["a.md"]?.pos, 900);
     mock.timers.tick(READING_POSITION_DEBOUNCE_MS * 2);
     await flush();
-    assert.equal(rig.writes.length, 2, "flush 已取消防抖定时器，不会再写第二次");
+    assert.equal(rig.writes.length, 1, "flush 已取消防抖定时器，不会再写第二次");
   } finally {
     mock.timers.reset();
   }
@@ -288,6 +290,9 @@ test("装载后按本次枚举清理：越界键与已移除路径不进入镜�
   });
   await load(rig, "vault-a", [fileEntry("a.md"), fileEntry("docs/c.md")]);
 
+  // 清理结果搭在下一次**真实写入**上（spec：清理「下一次落盘后盘上也不再出现」）
+  rig.view = position(500);
+  rig.store.scrolled();
   await rig.store.flush();
   assert.deepEqual(Object.keys(rig.writes[0].entries).sort(), ["a.md", "docs/c.md"]);
 });
@@ -297,6 +302,8 @@ test("打不开的键只跳过不删：在枚举里就留着（权限一类的�
   rig.activePath = "a.md";
   rig.files["vault-a"] = file({ "denied.md": at(10) });
   await load(rig, "vault-a", [fileEntry("a.md"), fileEntry("denied.md")]);
+  rig.view = position(500);
+  rig.store.scrolled();
   await rig.store.flush();
   assert.notEqual(rig.writes[0].entries["denied.md"], undefined);
 });
@@ -310,6 +317,8 @@ test("写入侧也守上限：201 条经一次落盘只剩 200 条且最旧的�
   }
   rig.files["vault-a"] = file(existing);
   await load(rig, "vault-a", Object.keys(existing).map((key) => fileEntry(key)));
+  rig.view = position(500);
+  rig.store.scrolled();
   await rig.store.flush();
   const written = rig.writes[0].entries;
   assert.equal(Object.keys(written).length, READING_POSITION_MAX_ENTRIES);
@@ -358,6 +367,8 @@ test("降级四种：读不到 / 无历史 / 版本不符（后端已归成 null
 
   // ③ 写失败只记一条 warning，不抛出、不拦停
   rig.failWrite = true;
+  rig.view = position(700);
+  rig.store.scrolled();
   await rig.store.flush();
   assert.deepEqual(rig.warns, ["磁盘只读"]);
   assert.equal(rig.writes.length, 0);

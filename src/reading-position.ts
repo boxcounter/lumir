@@ -171,8 +171,16 @@ export function createReadingPositionStore(
     }
   }
 
+  /** 把待写内容落盘（切换文件 / 标签 / vault 前、退出前）。**没有待写内容时不写盘**：这个时点挂在
+   *  `syncActiveDocument` 上（每次开文件、切标签、关标签都会经过），无条件写就等于一次打开写一次
+   *  tmp+rename，还会在「什么都没读」的启动路径上把一份空表落盘——真机场景 28 实测到过（scroll
+   *  之前位置文件就已存在）。与 `vault-switcher` 的 flush（无待写也写一份当前快照）的差别有理由：
+   *  那边的「当前快照」随时可得、多写一次是补漏；这边的盘上状态只由 pending 定义，没有 pending 就
+   *  没有新信息。**prune 的结果也搭在下一次真实写入上**（spec：装载后清理「下一次落盘后盘上也不再
+   *  出现」），不为了清理单独写一次。 */
   async function flush(): Promise<void> {
     cancelTimer();
+    if (pending.size === 0) return;
     const vaultId = currentId;
     const next = snapshot();
     pending.clear();
