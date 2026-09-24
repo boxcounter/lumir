@@ -8,6 +8,7 @@
 // 保持引用基线 token，「配置只影响编辑器」因此由 token 分层结构性保证。
 
 import { EditorView } from "@codemirror/view";
+import { BINDING_MATCH_CLASS } from "../code-identifiers";
 import type { EditorMode } from "../bindings/EditorMode";
 import { END_MARKER_VISIBLE_CLASS } from "./endMarker";
 
@@ -139,6 +140,16 @@ export const livePreviewTheme = EditorView.theme({
   ".cm-lp-tok-literal": { color: "var(--callout-warning)" },
   ".cm-lp-tok-property": { color: "var(--callout-note)" },
   ".cm-lp-tok-type": { color: "var(--callout-abstract)" },
+  // 同一变量的绑定匹配底纹（M198，change code-variable-highlight；类名由
+  // src/code-identifiers.ts 出）：只加底纹，**不改字色**——code 模式的字色已经被 token 着色占满，
+  // 再改字色会让「这个字既是关键字又被点亮」糊在一起。取色只用既有 token，零新增色值。
+  //
+  // 为什么是 `--bg-3` 而不是 design §5.1 推荐的 `--bg-2`：code 模式的**当前行底色就是 `--bg-2`**
+  // （src/editor.ts 的 `.cm-activeLine`，code 分支装了 highlightActiveLine()），因此 `--bg-2` 的
+  // 底纹在用户刚双击的那一行上**完全隐形**——而「同一行上的第二处匹配」也一起看不见。
+  // `--bg-3`（style.css 的既有 token，此前只被 `.tab-close:hover` 用）在 `--bg-2` 的当前行上
+  // 与普通行上都可见，且与原生选区（--sel）／搜索命中（accent 淡底）计算样式互不相同。
+  [`.${BINDING_MATCH_CLASS}`]: { backgroundColor: "var(--bg-3)", borderRadius: "2px" },
   // 分隔线（M138）：源码被 replace widget 顶掉，横线本体是 0 高 inline-block，
   // 垂直位置靠 vertical-align 定，纵向留白走行 padding（CM 测量的行高不含 margin）。
   // 中性色暖发丝线——与表格边框同一 token，符合「borders recede to warm hairlines」

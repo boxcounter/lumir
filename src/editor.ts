@@ -27,6 +27,7 @@ import { cellClamp, cellContentEdge } from "./cell-geometry";
 import type { CellClamp } from "./cell-geometry";
 import { createInvokeAttachmentProvider, codeLanguage, extensionOf, fileClass } from "./preview/attachments";
 import type { AttachmentProvider } from "./preview/attachments";
+import { bindingHighlight } from "./code-identifiers";
 import { LANGUAGES, TOKEN_GROUPS } from "./preview/code";
 import type { TokenRole } from "./preview/code";
 import type { CommandRunner, EditorCommandId } from "./keys";
@@ -1213,7 +1214,11 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
         ]
       : (() => {
           const language = codeLanguageFor(path);
-          return language ? [language, codeHighlight] : [codeHighlight];
+          // 双击标识符高亮同一变量（M198）：只装进 code 分支，且只有 T1 的 8 门语言有落点
+          //（判定在 code-identifiers 的 supportsVariableBinding，语言分层的单一来源是
+          // code-structure 的 STRUCTURE_SUPPORT）。md 分支零改动——本能力不做 md 模式。
+          const binding = bindingHighlight(path === undefined ? null : codeLanguage(extensionOf(path)));
+          return language ? [language, codeHighlight, binding] : [codeHighlight, binding];
         })();
     // CM6 的基础层必须继承 shell 的排版基线配色（ADR 0006，单一基线）；live
     // preview 只增加 Markdown 语义装饰，避免 code 模式落回默认白底、灰 gutter 或默认选区颜色。
