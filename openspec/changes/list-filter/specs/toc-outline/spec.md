@@ -70,7 +70,8 @@ SHALL 保持「解绑、预留给 isearch」的现状。筛选 SHALL 由持焦�
 
 输入框 SHALL 承担 ARIA **组合框**语义：`role=combobox`、`aria-expanded` 为真、`aria-controls` 指向
 列表的 `id`、`aria-activedescendant` 指向当前游标条目的 `id`。该属性 MUST NOT 继续留在列表上——它必须
-落在持焦点的元素上。输入框 SHALL 有说明其用途的占位文案与读屏名（文案见 `文案-Copy.md` 的 D115–D117）：
+落在持焦点的元素上。输入框 SHALL 有说明其用途的占位文案与读屏名（文案见 `文案-Copy.md` 的 D117–D119；编号在实现期校正：
+code-outline 遗留的两条空态提示先占 D115/D116，见本 change 的 tasks 4.1）：
 这是筛选可发现性的唯一出口（vault 浮层没有提示行；大纲的提示行只覆导航键）。
 
 就地键 SHALL 由浮层**容器**就地消费（挂点 MUST NOT 只挂在列表上）：`↑↓` / `⌃N` / `⌃P` SHALL 在**结果集**
@@ -82,7 +83,7 @@ SHALL 保持「解绑、预留给 isearch」的现状。筛选 SHALL 由持焦�
 查询的编辑 SHALL 走原生文本编辑语义（`⌫` / `⌥⌫` / `⌘A` / `⌦` / 左右方向键），MUST NOT 自建一套；
 MUST NOT 为「清空筛选」新增按钮或键位。
 
-无命中时浮层 SHALL 保持打开，列表区 SHALL 显示一行「无匹配」提示（文案 D115），底部键位提示（大纲）
+无命中时浮层 SHALL 保持打开，列表区 SHALL 显示一行「无匹配」提示（文案 D117），底部键位提示（大纲）
 SHALL 仍常驻可见；MUST NOT 关闭浮层，MUST NOT 复用「文档没有标题」那条提示（两者是不同的情形：一条
 标题都没有 vs 查询没命中），MUST NOT 把无命中当成「没有条目」而收起浮层。关闭浮层 SHALL 丢弃查询与
 游标：下次打开 SHALL 从空查询与全量态起点开始。

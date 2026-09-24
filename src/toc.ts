@@ -37,6 +37,15 @@
 // 提示是这两个键唯一的可见出口。归属、生效条件与关闭后的归还口径见
 // openspec/specs/toc-outline/spec.md 的「命令入口与浮层内键位的归属」。
 //
+// 输入筛选（change list-filter，M199）：浮层的第一行是一个**真输入框**（`role=combobox`），焦点
+// 打开即落在它上面，打字即筛；匹配与查询状态全部来自 src/list-filter.ts（两处浮层共用一份），本
+// 模块只负责接入：结果集是源条目下标数组（`visible`），DOM 只建结果集里那些条目，游标 / 当前段
+// 高亮 / 跳转落点都在**同一个**下标空间里解释（源下标只在 `entries[...]` 取值时出现一次）。
+//   为什么必须是可编辑宿主：输入法 composition 只投向 input / textarea / contenteditable，`div`
+//   列表收不到中文（change list-filter 的 design §2.2；实测记录见 tasks 8.1）。
+//   就地键挂点随焦点迁移到**浮层容器**（输入框里的键冒泡到容器；列表不再是焦点路径），失焦收起
+//   也一并外移——否则焦点从输入框 Tab 出去会留下「浮层开着、焦点在外」的状态。
+//
 // 已知边界（如实记录，见 change add-toc-outline 的 spec）：
 //   - md 只认 ATX 标题（`#` 起首）；Setext 标题（`===` / `---` 下划线形态）v1 不识别；
 //   - 标题文本保留行内标记原文（`## **粗**标题` 显示为 `**粗**标题`）；
@@ -53,6 +62,8 @@ import type { EditorMode } from "./bindings/EditorMode";
 import { itemIndexAt, itemPath, peekStructureEntries, structureEntries, supportsStructure } from "./code-structure";
 import type { StructureEntry } from "./code-structure";
 import { keyToken } from "./keys";
+import { FILTER_LABEL, FILTER_PLACEHOLDER, NO_MATCH_TEXT, createListFilter } from "./list-filter";
+import type { ListFilter } from "./list-filter";
 import { sampleCallback } from "./diagnostics";
 // frontmatter 范围的唯一真源（tower 批准 M148 的只读复用，2026-09-17）：lezer 的 markdown
 // 解析器不认识 YAML frontmatter，首部 `---` 块里一行 `# x`（YAML 注释）会被解析成
@@ -122,11 +133,16 @@ const SYNC_THROTTLE_MS = 120;
 const FULL_PARSE_BUDGET_MS = 25;
 /** 浮层条目的 id 前缀（aria-activedescendant 用；同页唯一即可）。 */
 const ITEM_ID_PREFIX = "lumir-toc-opt-";
+/** 列表的 id（输入框的 `aria-controls` 指认它）。 */
+const LIST_ID = "lumir-toc-list";
 
 /**
- * 文案（单一来源 文案-Copy.md D84–D87；后两条为 M197 新增、编号与措辞逐字记在
- * openspec/changes/code-outline/tasks.md 的 5.1，deck 补登由 tower 路由——本 mission 的 scope
- * 不含 文案-Copy.md）。`tests/unit/code-structure.test.ts` 与视觉场景按此处逐字断言。
+ * 文案（单一来源 文案-Copy.md D84–D87；M197 的两条为 code-outline 遗留、编号与措辞逐字记在
+ * openspec/changes/code-outline/tasks.md 的 5.1，已由 M199 补登为 D115/D116）。`tests/unit/
+ * code-structure.test.ts` 与视觉场景按此处逐字断言。
+ *
+ * 筛选的三条（无匹配提示 / 输入框占位 / 输入框读屏名）不在本文件：它们由两处浮层共用，常量住在
+ * **同一个**模块 src/list-filter.ts（D117–D119），本文件只 import。
  */
 const NO_HEADINGS_TEXT = "这份文档还没有标题，大纲为空";
 const NO_SYMBOLS_TEXT = "这份文件没有可提取的符号，大纲为空";
@@ -235,17 +251,31 @@ class Toc implements TocHandle {
   private readonly view: EditorView;
   private readonly indicator: HTMLButtonElement;
   private readonly popover: HTMLDivElement;
+  private readonly input: HTMLInputElement;
   private readonly list: HTMLDivElement;
+  private readonly empty: HTMLParagraphElement;
   private readonly hasFile: () => boolean;
   private readonly context: () => TocContext;
   private readonly toast: (text: string) => void;
   /** 浮层的定位块（.masthead）：浮层 left 与指示段 offsetLeft 同基准。 */
   private readonly container: HTMLElement;
+  /** 匹配与查询状态的唯一实现（两处浮层共用一份）；本类只管接入。 */
+  private readonly filter: ListFilter = createListFilter();
 
   /** 浮层里的条目表快照（打开那一刻取全量结果，打开期间不重建）。 */
   private entries: OutlineItem[] = [];
+  /** 结果集（源条目下标，升序）——筛选后**唯一**的「哪些条目可见」真源。 */
+  private visible: readonly number[] = [];
+  /** 结果集里的条目 DOM（下标空间 = 结果集，与 `visible` 逐项对应）。 */
   private items: HTMLElement[] = [];
-  /** 浮层打开态与键盘游标（entries 的下标）。 */
+  /**
+   * 当前段（**源下标**，打开那一刻算定；-1 = 光标在首个条目前）。筛选不改它——`is-current`
+   * 的判定是「源下标相等」，当前段被筛掉时结果集里自然没有带高亮的条目（spec 的 scenario）。
+   */
+  private currentSource = -1;
+  /** 输入法组合进行中：组合期不刷新结果集（拼音串必然零命中，刷新会闪一下）。 */
+  private composing = false;
+  /** 浮层打开态与键盘游标（结果集的下标）。 */
   private open = false;
   private activeIndex = -1;
   /** 节流状态。 */
@@ -268,18 +298,41 @@ class Toc implements TocHandle {
     const popover = document.createElement("div");
     popover.className = "lumir-toc";
     popover.hidden = true;
+    // 输入行（固定行，列向 flex 的第一个子项）：真输入框是**输入法的 composition 目标**，这是
+    // 中文查询串唯一能打进来的宿主（见文件头）。ARIA 组合框语义：持焦点的是它，列表是它控制的
+    // listbox，游标经 aria-activedescendant 报出去（该属性 MUST NOT 留在列表上——它必须落在
+    // 持焦点的元素上）。可发现性由占位文案承担（D118）。
+    const input = document.createElement("input");
+    input.type = "text";
+    input.className = "lumir-toc-input";
+    input.setAttribute("role", "combobox");
+    input.setAttribute("aria-expanded", "true");
+    input.setAttribute("aria-controls", LIST_ID);
+    input.setAttribute("aria-label", FILTER_LABEL);
+    input.placeholder = FILTER_PLACEHOLDER;
+    input.autocomplete = "off";
+    input.spellcheck = false;
     const list = document.createElement("div");
     list.className = "lumir-toc-list";
+    list.id = LIST_ID;
     list.setAttribute("role", "listbox");
     list.setAttribute("aria-label", POPOVER_LABEL);
     list.tabIndex = -1;
+    // 无命中态的一行提示（D117）：与「文档没有标题」（D84 的 toast）是两件事——那是打开失败，
+    // 这是查询没命中，浮层保持打开。
+    const empty = document.createElement("p");
+    empty.className = "lumir-toc-empty";
+    empty.textContent = NO_MATCH_TEXT;
+    empty.hidden = true;
     const hint = document.createElement("p");
     hint.className = "lumir-toc-hint";
     hint.textContent = POPOVER_HINT;
-    popover.append(list, hint);
+    popover.append(input, list, empty, hint);
     options.mount.append(popover);
     this.popover = popover;
+    this.input = input;
     this.list = list;
+    this.empty = empty;
 
     this.indicator.title = INDICATOR_TITLE;
     // mousedown 不夺焦点：焦点留在编辑器（或浮层）时，点击只是「切换」，不会先触发浮层的
@@ -287,9 +340,29 @@ class Toc implements TocHandle {
     this.indicator.addEventListener("mousedown", (event) => event.preventDefault());
     this.indicator.addEventListener("click", () => this.toggle());
 
-    list.addEventListener("keydown", (event) => this.onKeydown(event));
-    // 焦点离开浮层即收起（Tab 出去、点到别处、窗口失活都走这条）——这条路径不抢焦点。
-    list.addEventListener("blur", () => this.close(false));
+    // 就地键挂在**浮层容器**上：持焦点的是输入框，它的键冒泡到这里；列表已不是焦点路径。
+    // 行为口径一字不改（仍是就地消费 + preventDefault，未消费的键照常走原生路径）。
+    popover.addEventListener("keydown", (event) => this.onKeydown(event));
+    // 输入即筛。组合期不刷新（见 composing 的说明），组合结束后补一次。
+    input.addEventListener("compositionstart", () => {
+      this.composing = true;
+    });
+    input.addEventListener("compositionend", () => {
+      this.composing = false;
+      this.render();
+    });
+    input.addEventListener("input", (event) => {
+      if (this.composing || (event as InputEvent).isComposing) return;
+      this.render();
+    });
+    // 焦点离开**浮层**才收起（Tab 出去、点到别处、窗口失活都走这条）——挂点必须外移到容器：
+    // 挂在列表上时焦点从输入框 Tab 出去会留下「浮层还在、焦点已在外」的状态（change list-filter
+    // 的 design §2.3）。这条路径不抢焦点。
+    popover.addEventListener("focusout", (event) => {
+      const next = event.relatedTarget;
+      if (next instanceof Node && popover.contains(next)) return;
+      this.close(false);
+    });
     // 点击浮层与指示段之外的地方收起（编辑器、文件树、toast…）。
     document.addEventListener("mousedown", (event) => {
       if (!this.open) return;
@@ -337,11 +410,17 @@ class Toc implements TocHandle {
       }
     }
     this.entries = entries;
-    this.render(itemIndexAt(entries, anchorPos(this.view.state, this.view)));
+    // 打开 = 空查询 + 全量态起点：查询与游标随关闭丢弃（spec「关闭浮层 SHALL 丢弃查询与游标」），
+    // 因此这里显式清一遍输入框与匹配状态，不依赖上一条关闭路径是否走过。
+    this.input.value = "";
+    this.filter.reset();
+    this.currentSource = itemIndexAt(entries, anchorPos(this.view.state, this.view));
+    this.render();
     this.open = true;
     this.popover.hidden = false;
     this.place();
-    this.list.focus();
+    // 焦点落到输入框（不是列表）：打开即可打字，且就地键经它的冒泡照常生效。
+    this.input.focus();
     // 可见之后再滚一次：display:none 时 scrollIntoView 不动（当前段可能落在浮层可视区之外）。
     this.setActive(this.activeIndex);
     // 指示段立刻跟上这次解析，不等节流窗口：md 侧是刚补完全量解析、code 侧是首次拿到结构——
@@ -406,32 +485,50 @@ class Toc implements TocHandle {
     this.sync(true);
   }
 
-  /** 构建条目表；current 为当前段下标（-1 = 光标在首个条目前，没有当前段）。 */
-  private render(current: number): void {
+  /**
+   * 按当前查询重建结果集与它的 DOM；游标落在 `filter.cursorStart` 给的位置（查询非空 = 首条
+   * 命中，查询为空 = 全量态起点）。打开与每次输入都走这一条路径，没有第二套渲染。
+   *
+   * 缩进基准取 `this.entries`（打开那一刻的**全量**快照）的最浅层，与筛选无关：筛选后只剩深层
+   * 标题时缩进仍与筛选前逐条一致（裁决点 ⑤，`src/toc.ts` 的文档级口径不动）。
+   */
+  private render(): void {
     const shallowest = this.entries.reduce((min, item) => Math.min(min, item.level), Number.POSITIVE_INFINITY);
     const base = Number.isFinite(shallowest) ? shallowest : 0;
     // 上一轮条目整体作废：清空游标与其 DOM，避免跨轮清理指到新数组的同名下标上。
     this.list.replaceChildren();
     this.items = [];
     this.activeIndex = -1;
-    this.items = this.entries.map((item, i) => {
+    this.visible = this.filter.setQuery(
+      this.input.value,
+      this.entries.map((item) => item.text),
+    );
+    this.items = this.visible.map((source, index) => {
+      const item = this.entries[source] as OutlineItem;
       const element = document.createElement("div");
       element.className = "lumir-toc-item";
-      element.id = `${ITEM_ID_PREFIX}${i}`;
+      element.id = `${ITEM_ID_PREFIX}${source}`;
       element.setAttribute("role", "option");
       element.dataset.level = String(item.level);
       element.dataset.line = String(item.line);
       // 缩进归一（见文件头）：只用 H2/H3 的文档不浪费一层空缩进；code 侧的深嵌套同口径。
       element.style.setProperty("--toc-depth", String(item.level - base));
       element.textContent = item.text;
-      if (i === current) element.classList.add("is-current");
+      // 当前段高亮**只看源下标相等**：当前段被筛掉时结果集里没有它，于是没有条目带高亮
+      // （MUST NOT 把高亮落到别的条目上）。
+      if (source === this.currentSource) element.classList.add("is-current");
       // 点击路径与键盘路径共用同一个落点（jumpTo），不产生第二套跳转。
       element.addEventListener("mousedown", (event) => event.preventDefault());
-      element.addEventListener("click", () => this.jumpTo(i));
+      element.addEventListener("click", () => this.jumpTo(index));
       this.list.append(element);
       return element;
     });
-    this.setActive(current >= 0 ? current : 0);
+    // 无命中态：查询非空且结果集为空 → 保持浮层打开，列表区给一行提示（D117），底部键位提示
+    // 仍常驻。MUST NOT 与「文档没有标题」（D84 的 toast）混用，也不收起浮层。
+    const empty = this.visible.length === 0;
+    this.list.hidden = empty;
+    this.empty.hidden = !empty;
+    this.setActive(this.filter.cursorStart(this.currentSource));
   }
 
   private setActive(index: number): void {
@@ -443,12 +540,14 @@ class Toc implements TocHandle {
     this.activeIndex = index;
     const item = this.items[index];
     if (!item) {
-      this.list.removeAttribute("aria-activedescendant");
+      this.input.removeAttribute("aria-activedescendant");
       return;
     }
     item.classList.add("is-active");
     item.setAttribute("aria-selected", "true");
-    this.list.setAttribute("aria-activedescendant", item.id);
+    // 挂在**持焦点**的输入框上（ARIA 要求 aria-activedescendant 落在焦点元素上）；列表本身靠
+    // `aria-controls` 指认，不再持有该属性。
+    this.input.setAttribute("aria-activedescendant", item.id);
     item.scrollIntoView({ block: "nearest" });
   }
 
@@ -472,6 +571,9 @@ class Toc implements TocHandle {
     if (!this.open) return;
     this.open = false;
     this.popover.hidden = true;
+    // 查询与游标随关闭丢弃（spec）：下次打开从空查询与全量态起点开始。
+    this.input.value = "";
+    this.filter.reset();
     if (restoreFocus) this.view.focus();
   }
 
@@ -479,9 +581,14 @@ class Toc implements TocHandle {
    * 跳转：光标落到 `jumpTo` + 把该处滚到视口居中。
    * md 的口径是标题行行尾（与 editor.revealLine 同落点）；code 是**声明起点**——代码的声明行
    * 常常很长（签名与参数表），行尾落在函数体开头、看不到符号名（spec 明写 MUST NOT 改成行尾）。
+   *
+   * `index` 是**结果集下标**（键盘游标与点击路径给的都在这一个空间里）；源下标只在这里出现一次
+   * ——`visible[index]`。少了这一步映射就会跳到「结果集里第 i 条」在全文里的另一个标题上（一次
+   * 静默的跳错位置，design §2.4）。
    */
   private jumpTo(index: number): void {
-    const item = this.entries[index];
+    const source = this.visible[index];
+    const item = source === undefined ? undefined : this.entries[source];
     if (!item) return;
     this.close();
     const pos = Math.min(item.jumpTo, this.view.state.doc.length);

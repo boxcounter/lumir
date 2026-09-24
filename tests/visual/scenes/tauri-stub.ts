@@ -484,6 +484,11 @@ export async function configGets(page: Page): Promise<number> {
   return page.evaluate(() => (window as unknown as { __configGets: number }).__configGets);
 }
 
+/** 全部 invoke 的命令名（按调用顺序）——「筛选 MUST NOT 触发第二次拉取」这类次数判据读它。 */
+export async function invokes(page: Page): Promise<string[]> {
+  return page.evaluate(() => (window as unknown as { __invokes: string[] }).__invokes);
+}
+
 /** 前端已转发的诊断事件（按发出顺序）；`event` 选传，只看某一类事件。 */
 export async function logEvents(page: Page, event?: string): Promise<LogEventRecord[]> {
   const all = await page.evaluate(
