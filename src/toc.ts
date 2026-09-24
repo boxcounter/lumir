@@ -1,21 +1,28 @@
-// 轻量大纲（TOC）——M148。
+// 轻量大纲（TOC）——M148；M197 起数据源按模式分支（md 标题 / code 符号）。
 //
 // 入口形态（Alex 裁决）：masthead 在文件名后显示**当前标题路径**（兼作位置指示），点击这段或
 // 按 ⌘⇧O（keys.ts 的 `toc.toggle`）展开浮层大纲。目标是「视觉与交互都比较轻」：不加右栏、不加
 // 常驻面板、不占文档区任何空间（浮层绝对定位，颜色/边框/圆角全部取 M55 的既有 token）。
 //
-// 数据只有一份来源：CM syntaxTree 的 ATXHeading 节点（遍历先例见 src/preview/livePreview.ts，
-// 但本模块不 import preview 内部物，也不引入第二次 Markdown 解析）。两个消费者共用同一套提取：
-//   - masthead 指示段：光标所在段（光标滚出视口时退化为视口顶部所在段）的标题链，节流刷新；
-//   - 浮层条目表：全文档标题，H1–H6 按层级缩进，当前段高亮。
+// 数据源两条（M197，change code-outline）：
+//   - md 模式：CM syntaxTree 的 ATX 标题节点（遍历先例见 src/preview/livePreview.ts，但本模块
+//     不 import preview 内部物，也不引入第二次 Markdown 解析）；
+//   - code 模式：src/code-structure.ts 的结构解析树里的声明节点（@lezer 语法，见那里的分层注册表）。
+//     两条来源共用**同一套条目模型与同一个「当前位置链」算法**（见 OutlineItem 与 itemPath）——
+//     UI 通道（入口、浮层、就地键、跳转语义）只有一份实现，差异只在「条目怎么来」与「跳转到哪」。
+//     code 侧 MUST NOT 由正则 / 缩进 / 关键字扫描产出，md 侧的全部既有口径逐字不动。
 //
 // 标题文本取该行的文档原文去掉 `#` 标记（首尾的结尾标记一并去掉），行内标记（`**` 等）不剥离：
-// v1 只做「显示作者写下的那一行」，不做二次渲染，也不猜测作者意图。
+// v1 只做「显示作者写下的那一行」，不做二次渲染，也不猜测作者意图。code 侧的条目文本口径见
+// code-structure.ts（名字子节点原文 / 无名结构节点的起始行原文）。
 //
 // 三个已解析树口径（性能合同：键击路径不得整篇解析）：
-//   - 指示段随每次光标/滚动变化重算，只用**已解析**的树（syntaxTree(state)），永不强制解析；
-//   - 浮层打开是用户主动动作、不在键入路径上，这一次才补一次全量解析（25ms 预算，超时回落
-//     已解析部分），保证条目表尽可能是全文。
+//   - 指示段随每次光标/滚动变化重算，**只用已经有的结果**（md 用 syntaxTree(state)、code 只读
+//     结构缓存 peekStructureEntries），永不强制解析；
+//   - 浮层打开是用户主动动作、不在键入路径上，这一次才补一次全量解析。md 侧补解析带 25ms 预算
+//     （超时回落已解析部分）；code 侧一次解析完成、**不做部分截断**（半截大纲是错的信息），
+//     首次解析并缓存见 code-structure.ts 的解析时机条款。
+//   - code 模式下结构未解析时，指示段不显示，且**不为了点亮它而触发解析**（proposal 裁决点 7）。
 //
 // 浮层自己的导航键（↑↓ / ⌃N⌃P / Enter / Esc）由浮层就地消费，**不进** keys.ts 的统一表：表的不
 // 变量是「一个 token 一条绑定」，而 ↑↓ / ⌃N / ⌃P 已归 editor.cursor-*、Esc 已归
@@ -31,21 +38,28 @@
 // openspec/specs/toc-outline/spec.md 的「命令入口与浮层内键位的归属」。
 //
 // 已知边界（如实记录，见 change add-toc-outline 的 spec）：
-//   - 只认 ATX 标题（`#` 起首）；Setext 标题（`===` / `---` 下划线形态）v1 不识别；
+//   - md 只认 ATX 标题（`#` 起首）；Setext 标题（`===` / `---` 下划线形态）v1 不识别；
 //   - 标题文本保留行内标记原文（`## **粗**标题` 显示为 `**粗**标题`）；
-//   - 缩进按「文档里出现的最浅层标题」归一（只有 H2/H3 的文档不浪费一层空缩进）；
-//   - 光标落在首个标题之前（前言 / frontmatter 里）时没有「当前标题」，指示段不显示。
+//   - 缩进按「文档里出现的最浅层条目」归一（只有 H2/H3 的文档不浪费一层空缩进；code 侧的深嵌套
+//     同口径，以最浅的条目为基准）；
+//   - 光标落在首个条目之前（前言 / frontmatter 里 / 代码文件头部的注释与导入区）时没有「当前
+//     条目」，指示段不显示。
 
 import { StateEffect } from "@codemirror/state";
-import type { EditorState } from "@codemirror/state";
+import type { EditorState, Text } from "@codemirror/state";
 import { ensureSyntaxTree, syntaxTree } from "@codemirror/language";
 import { EditorView } from "@codemirror/view";
+import type { EditorMode } from "./bindings/EditorMode";
+import { itemIndexAt, itemPath, peekStructureEntries, structureEntries, supportsStructure } from "./code-structure";
+import type { StructureEntry } from "./code-structure";
 import { keyToken } from "./keys";
+import { sampleCallback } from "./diagnostics";
 // frontmatter 范围的唯一真源（tower 批准 M148 的只读复用，2026-09-17）：lezer 的 markdown
 // 解析器不认识 YAML frontmatter，首部 `---` 块里一行 `# x`（YAML 注释）会被解析成
 // ATXHeading1——不排除它就会在大纲里多出一条幽灵条目。语义只有这一份实现（editor.ts 与
 // livePreview 同样用它），因此这里 import 而不是自写一份判定。约束：对该文件零改动。
 import { detectFrontmatter } from "./preview/frontmatter";
+import type { CodeLanguage } from "./preview/attachments";
 
 export interface TocHeading {
   /** 标题层级 1–6（ATXHeadingN 的 N）。 */
@@ -59,6 +73,13 @@ export interface TocHeading {
   to: number;
 }
 
+/** 当前文档的大纲上下文：模式 + （code 模式下）语言名。装配层注入（见 TocOptions.context）。 */
+export interface TocContext {
+  mode: EditorMode;
+  /** code 模式下该扩展名对应的语言；无语言包 / 无扩展名线索 / 无当前文件时为 null。 */
+  language: CodeLanguage | null;
+}
+
 export interface TocOptions {
   view: EditorView;
   /** masthead 的当前位置指示段（点击展开浮层）。 */
@@ -67,12 +88,17 @@ export interface TocOptions {
   mount: HTMLElement;
   /** 是否有当前文件：空态（未打开 vault / 无当前文件）不显示指示段。 */
   hasFile(): boolean;
-  /** 无标题文档被激活时的提示出口（装配层注入；文案见 文案-Copy.md D84）。 */
+  /** 当前文档的模式与 code 语言（活读；切文件 / 切模式后由装配层保证值已更新）。 */
+  context(): TocContext;
+  /**
+   * 无条目文档被激活时的提示出口（装配层注入；文案见 文案-Copy.md D84 与 M197 的两条）。
+   * 三种情形各一条：md 无标题（D84）/ code 无可提取符号 / code 语言不支持大纲。
+   */
   toast(text: string): void;
 }
 
 export interface TocHandle {
-  /** ⌘⇧O 与点击指示段共用的入口：关→开，开→关；无标题时只给提示。 */
+  /** ⌘⇧O 与点击指示段共用的入口：关→开，开→关；无条目时只给提示。 */
   toggle(): void;
   /**
    * 立即同步一次指示段（不等节流窗口）。装配层在**文档装载边界**调用：打开文件 / 切换 vault
@@ -92,18 +118,44 @@ const TRAILING_MARKS = /[ \t]+#+[ \t]*$/;
 
 /** 节流窗口（ms）：光标/滚动后的重算合并到这一档，避免每次按键都遍历语法树。 */
 const SYNC_THROTTLE_MS = 120;
-/** 浮层打开路径的全量解析预算（ms）；超时回落已解析部分。 */
+/** md 侧浮层打开路径的全量解析预算（ms）；超时回落已解析部分。code 侧不做部分截断（见文件头）。 */
 const FULL_PARSE_BUDGET_MS = 25;
 /** 浮层条目的 id 前缀（aria-activedescendant 用；同页唯一即可）。 */
 const ITEM_ID_PREFIX = "lumir-toc-opt-";
 
-/** 文案（单一来源 文案-Copy.md D84–D87）。 */
+/**
+ * 文案（单一来源 文案-Copy.md D84–D87；后两条为 M197 新增、编号与措辞逐字记在
+ * openspec/changes/code-outline/tasks.md 的 5.1，deck 补登由 tower 路由——本 mission 的 scope
+ * 不含 文案-Copy.md）。`tests/unit/code-structure.test.ts` 与视觉场景按此处逐字断言。
+ */
 const NO_HEADINGS_TEXT = "这份文档还没有标题，大纲为空";
+const NO_SYMBOLS_TEXT = "这份文件没有可提取的符号，大纲为空";
+const NO_STRUCTURE_TEXT = "这份文件类型暂不支持大纲";
 const POPOVER_LABEL = "大纲";
 const POPOVER_HINT = "↑↓ ⌃N⌃P 选择 · Enter 跳转 · Esc 关闭";
 const INDICATOR_TITLE = "点击展开大纲";
-/** 标题链的分隔符（纯排版分隔，不承载语义）。 */
+/** 条目链的分隔符（纯排版分隔，不承载语义）。 */
 const PATH_SEPARATOR = " › ";
+
+/**
+ * 统一条目模型：md 的标题与 code 的符号在这两条通道上需要的量完全相同——文本、层级（缩进量）、
+ * 起点（算「当前位置链」用）、落点（跳转用）、行号。两条来源各自适配成它，之后的渲染 / 导航 /
+ * 跳转**只有一份实现**（REVIEW.md 第 8 条：同一语义不留两处真源）。
+ */
+interface OutlineItem {
+  text: string;
+  /**
+   * 层级量：md 是标题层级 1–6，code 是语法嵌套深度 0–n。两者都按「文档里最浅的一项」归一成
+   * `--toc-depth`，因此渲染侧不需要区分模式。
+   */
+  level: number;
+  /** 条目起点（当前位置归属判据）。 */
+  from: number;
+  /** 跳转落点：md 是标题行尾，code 是声明起点（MUST NOT 互换，见 spec 的两个 scenario）。 */
+  jumpTo: number;
+  /** 1 基行号（`data-line`）。 */
+  line: number;
+}
 
 /** 标题行原文 → 条目文本：去掉行首 `#` 标记串与结尾标记。 */
 function headingText(rawLine: string): string {
@@ -140,6 +192,28 @@ export function extractHeadings(state: EditorState, full = false): TocHeading[] 
   return headings;
 }
 
+/** md 的标题 → 统一条目（落点是标题行尾，逐字沿用既有口径）。 */
+function headingItems(state: EditorState, full = false): OutlineItem[] {
+  return extractHeadings(state, full).map((heading) => ({
+    text: heading.text,
+    level: heading.level,
+    from: heading.from,
+    jumpTo: heading.to,
+    line: heading.line,
+  }));
+}
+
+/** code 的结构条目 → 统一条目（落点是声明起点，与 md 不同且 MUST NOT 被改成行尾）。 */
+function entryItems(entries: readonly StructureEntry[]): OutlineItem[] {
+  return entries.map((entry) => ({
+    text: entry.text,
+    level: entry.depth,
+    from: entry.from,
+    jumpTo: entry.from,
+    line: entry.line,
+  }));
+}
+
 /**
  * 当前位置锚点：光标在可见范围内时取光标，否则取视口顶部。
  * 位置指示与浮层的「当前段」都以它为准——「随光标移动/滚动更新」这条口径的落点就在这里。
@@ -157,39 +231,19 @@ export function anchorPos(state: EditorState, view: EditorView, preferCursor = f
   return view.visibleRanges[0]?.from ?? head;
 }
 
-/** 包含 pos 的标题下标（最后一个 `from <= pos` 的标题）；pos 在首个标题之前时返回 -1。 */
-export function headingIndexAt(headings: readonly TocHeading[], pos: number): number {
-  let index = -1;
-  for (let i = 0; i < headings.length; i++) {
-    if (headings[i].from > pos) break;
-    index = i;
-  }
-  return index;
-}
-
-/** 该标题的祖先链（含自身）：同级或更浅的同族标题各自另起一段，链上只留祖先。 */
-export function headingPath(headings: readonly TocHeading[], index: number): TocHeading[] {
-  if (index < 0) return [];
-  const path: TocHeading[] = [];
-  for (let i = 0; i <= index; i++) {
-    while (path.length > 0 && path[path.length - 1].level >= headings[i].level) path.pop();
-    path.push(headings[i]);
-  }
-  return path;
-}
-
 class Toc implements TocHandle {
   private readonly view: EditorView;
   private readonly indicator: HTMLButtonElement;
   private readonly popover: HTMLDivElement;
   private readonly list: HTMLDivElement;
   private readonly hasFile: () => boolean;
+  private readonly context: () => TocContext;
   private readonly toast: (text: string) => void;
   /** 浮层的定位块（.masthead）：浮层 left 与指示段 offsetLeft 同基准。 */
   private readonly container: HTMLElement;
 
-  /** 浮层里的条目表快照（打开那一刻取全量解析结果，打开期间不重建）。 */
-  private entries: TocHeading[] = [];
+  /** 浮层里的条目表快照（打开那一刻取全量结果，打开期间不重建）。 */
+  private entries: OutlineItem[] = [];
   private items: HTMLElement[] = [];
   /** 浮层打开态与键盘游标（entries 的下标）。 */
   private open = false;
@@ -197,11 +251,17 @@ class Toc implements TocHandle {
   /** 节流状态。 */
   private timer: number | null = null;
   private lastRun = 0;
+  /**
+   * 全文串的记忆（code 侧用）：指示段走节流同步，而结构缓存的键是文档原文——1MB 文档上不该每次
+   * 同步都重新取一遍全文。code 模式只读，同一 `Text` 对象的内容不会变，故按对象身份记忆。
+   */
+  private textCache: { doc: Text; text: string } | null = null;
 
   constructor(options: TocOptions) {
     this.view = options.view;
     this.indicator = options.indicator;
     this.hasFile = options.hasFile;
+    this.context = options.context;
     this.toast = options.toast;
     this.container = options.mount;
 
@@ -246,19 +306,48 @@ class Toc implements TocHandle {
       this.close();
       return;
     }
-    const entries = extractHeadings(this.view.state, true);
-    if (entries.length === 0) {
-      this.toast(NO_HEADINGS_TEXT);
-      return;
+    const context = this.context();
+    let entries: OutlineItem[];
+    if (context.mode === "md") {
+      entries = headingItems(this.view.state, true);
+      if (entries.length === 0) {
+        this.toast(NO_HEADINGS_TEXT);
+        return;
+      }
+    } else {
+      // code 模式：语言不受支持（无语言包 / T3）时给「暂不支持」提示，MUST NOT 展开浮层，
+      // MUST NOT 用文本匹配猜条目；受支持但文件里没有条目时给另一条提示，MUST NOT 复用 D84
+      // （「这份文档还没有标题」在代码文件上是一句错话）。
+      const language = context.language;
+      if (!supportsStructure(language)) {
+        this.toast(NO_STRUCTURE_TEXT);
+        return;
+      }
+      // 首次解析在 1MB 级文件上是一次可感成本（design §1.6 的已知边界），用既有的 slow_callback
+      // 采样把它变成**产品端点上可复现的读数**：超过 16ms 的解析会在诊断日志里留一条
+      // `{"event":"slow_callback","name":"code_structure_parse","ms":…}`（命中缓存时无日志）。
+      // 走既有事件名与字段白名单（name/ms），不新增事件、不动 Rust 侧——调试与后续 perf 复测
+      // 都靠它，而不是靠临时探针。
+      entries = entryItems(
+        sampleCallback("code_structure_parse", () => structureEntries(language as CodeLanguage, this.fullText())),
+      );
+      if (entries.length === 0) {
+        this.toast(NO_SYMBOLS_TEXT);
+        return;
+      }
     }
     this.entries = entries;
-    this.render(headingIndexAt(entries, anchorPos(this.view.state, this.view)));
+    this.render(itemIndexAt(entries, anchorPos(this.view.state, this.view)));
     this.open = true;
     this.popover.hidden = false;
     this.place();
     this.list.focus();
     // 可见之后再滚一次：display:none 时 scrollIntoView 不动（当前段可能落在浮层可视区之外）。
     this.setActive(this.activeIndex);
+    // 指示段立刻跟上这次解析，不等节流窗口：md 侧是刚补完全量解析、code 侧是首次拿到结构——
+    // 两种情况都让「结构已解析 + 位置在条目内」这条判据当场成立，界面状态不必等到下一次
+    // 光标/滚动才对齐（口径同 refresh() 的装载边界：出现时机要可预测，截图类门禁才拍得稳）。
+    this.refresh();
   }
 
   /** 订阅视图更新（节流）：光标移动、滚动（视口变化）、换文件都经这一条路径。 */
@@ -279,12 +368,30 @@ class Toc implements TocHandle {
     }, delay);
   }
 
-  /** 指示段与状态对齐：标题链 + 是否有当前文件；没有标题或没有当前文件时不显示。 */
+  /** code 侧的文档原文（按 Text 对象身份记忆，见 textCache 的说明）。 */
+  private fullText(): string {
+    const doc = this.view.state.doc;
+    if (this.textCache === null || this.textCache.doc !== doc) this.textCache = { doc, text: doc.toString() };
+    return this.textCache.text;
+  }
+
+  /**
+   * 指示段路径上的条目——**一次解析都不做**：md 只用已解析的语法树，code 只读结构缓存
+   * （`peekStructureEntries`；未解析即空表 ⇒ 指示段隐藏，且不会为了点亮它而触发解析）。
+   */
+  private indicatorItems(): OutlineItem[] {
+    const context = this.context();
+    if (context.mode === "md") return headingItems(this.view.state);
+    const entries = peekStructureEntries(context.language, this.fullText());
+    return entries === null ? [] : entryItems(entries);
+  }
+
+  /** 指示段与状态对齐：条目链 + 是否有当前文件；没有条目或没有当前文件时不显示。 */
   private sync(preferCursor = false): void {
-    const headings = extractHeadings(this.view.state);
+    const items = this.indicatorItems();
     const pos = anchorPos(this.view.state, this.view, preferCursor);
-    const path = headingPath(headings, headingIndexAt(headings, pos));
-    const text = path.map((heading) => heading.text).join(PATH_SEPARATOR);
+    const path = itemPath(items, itemIndexAt(items, pos));
+    const text = path.map((item) => item.text).join(PATH_SEPARATOR);
     if (this.indicator.textContent !== text) this.indicator.textContent = text;
     this.indicator.hidden = !this.hasFile() || path.length === 0;
   }
@@ -299,29 +406,30 @@ class Toc implements TocHandle {
     this.sync(true);
   }
 
-  /** 构建条目表；current 为当前段下标（-1 = 光标在首个标题之前，没有当前段）。 */
+  /** 构建条目表；current 为当前段下标（-1 = 光标在首个条目前，没有当前段）。 */
   private render(current: number): void {
-    const shallowest = this.entries.reduce((min, heading) => Math.min(min, heading.level), 6);
+    const shallowest = this.entries.reduce((min, item) => Math.min(min, item.level), Number.POSITIVE_INFINITY);
+    const base = Number.isFinite(shallowest) ? shallowest : 0;
     // 上一轮条目整体作废：清空游标与其 DOM，避免跨轮清理指到新数组的同名下标上。
     this.list.replaceChildren();
     this.items = [];
     this.activeIndex = -1;
-    this.items = this.entries.map((heading, i) => {
-      const item = document.createElement("div");
-      item.className = "lumir-toc-item";
-      item.id = `${ITEM_ID_PREFIX}${i}`;
-      item.setAttribute("role", "option");
-      item.dataset.level = String(heading.level);
-      item.dataset.line = String(heading.line);
-      // 缩进归一（见文件头）：只用 H2/H3 的文档不浪费一层空缩进。
-      item.style.setProperty("--toc-depth", String(heading.level - shallowest));
-      item.textContent = heading.text;
-      if (i === current) item.classList.add("is-current");
+    this.items = this.entries.map((item, i) => {
+      const element = document.createElement("div");
+      element.className = "lumir-toc-item";
+      element.id = `${ITEM_ID_PREFIX}${i}`;
+      element.setAttribute("role", "option");
+      element.dataset.level = String(item.level);
+      element.dataset.line = String(item.line);
+      // 缩进归一（见文件头）：只用 H2/H3 的文档不浪费一层空缩进；code 侧的深嵌套同口径。
+      element.style.setProperty("--toc-depth", String(item.level - base));
+      element.textContent = item.text;
+      if (i === current) element.classList.add("is-current");
       // 点击路径与键盘路径共用同一个落点（jumpTo），不产生第二套跳转。
-      item.addEventListener("mousedown", (event) => event.preventDefault());
-      item.addEventListener("click", () => this.jumpTo(i));
-      this.list.append(item);
-      return item;
+      element.addEventListener("mousedown", (event) => event.preventDefault());
+      element.addEventListener("click", () => this.jumpTo(i));
+      this.list.append(element);
+      return element;
     });
     this.setActive(current >= 0 ? current : 0);
   }
@@ -367,17 +475,21 @@ class Toc implements TocHandle {
     if (restoreFocus) this.view.focus();
   }
 
-  /** 跳转：光标落到标题行尾 + 把该行滚到视口居中（与 editor.revealLine 同一落点口径）。 */
+  /**
+   * 跳转：光标落到 `jumpTo` + 把该处滚到视口居中。
+   * md 的口径是标题行行尾（与 editor.revealLine 同落点）；code 是**声明起点**——代码的声明行
+   * 常常很长（签名与参数表），行尾落在函数体开头、看不到符号名（spec 明写 MUST NOT 改成行尾）。
+   */
   private jumpTo(index: number): void {
-    const heading = this.entries[index];
-    if (!heading) return;
+    const item = this.entries[index];
+    if (!item) return;
     this.close();
-    const pos = Math.min(heading.to, this.view.state.doc.length);
+    const pos = Math.min(item.jumpTo, this.view.state.doc.length);
     this.view.dispatch({
       selection: { anchor: pos },
       effects: EditorView.scrollIntoView(pos, { y: "center" }),
     });
-    // 指示段立即跟上本次跳转（不等节流窗口）：光标刚被放到目标行尾、视口还没重测，
+    // 指示段立即跟上本次跳转（不等节流窗口）：光标刚被放到目标处、视口还没重测，
     // 这一拍只有光标是可信锚点（见 anchorPos 的 preferCursor）。
     this.refresh();
   }
