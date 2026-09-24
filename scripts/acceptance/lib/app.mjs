@@ -29,7 +29,10 @@ export function fixturesDir() {
  *  ——两项缺失时应用走 Rust 侧 `Default`（line_wrap = true、code_block_wrap = false），
  *  这正是「默认口径」场景要的形态；显式写 false / true 才构造出另外三条组合。
  *  M195（change typography-and-zoom）起同样支持 `fontFamily` / `monoFontFamily` / `fontSize`：
- *  三个都**传了才写**，缺省即出厂口径（字体族沿用底线、字号 16）——与折行两项同一形态。 */
+ *  三个都**传了才写**，缺省即出厂口径（字体族沿用底线、字号 15）——与折行两项同一形态。
+ *  M210（change restyle-ui-tokens-v1）起支持 `theme`：同样**传了才写**，且落在 `[ui]` 表上
+ *  ——缺省时**整个 ui 表不写**，应用走 Rust 侧 `Default`（theme = light），这正是「未配置
+ *  即 light」场景要的形态。 */
 export async function writeConfig({
   lastVault = vaultDir(),
   mode = "md",
@@ -38,6 +41,7 @@ export async function writeConfig({
   fontFamily = undefined,
   monoFontFamily = undefined,
   fontSize = undefined,
+  theme = undefined,
   keys = undefined,
 } = {}) {
   const dir = path.join(envHome(), "lumir");
@@ -49,6 +53,7 @@ export async function writeConfig({
   if (monoFontFamily !== undefined) editor.mono_font_family = monoFontFamily;
   if (fontSize !== undefined) editor.font_size = fontSize;
   const cfg = { version: 1, last_vault: lastVault, editor };
+  if (theme !== undefined) cfg.ui = { theme };
   if (keys !== undefined) cfg.keys = keys;
   await writeFile(path.join(dir, "config.json"), `${JSON.stringify(cfg, null, 2)}\n`);
   return path.join(dir, "config.json");

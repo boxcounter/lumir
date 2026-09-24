@@ -391,13 +391,14 @@ export async function runScenario(ctx, scenario) {
   try {
     if (scenario.fixtures) for (const f of scenario.fixtures) await copyFixture(f);
     if (scenario.config) {
-      // 排版三项（M195）与 [keys] 同形：传了才写，缺省即出厂口径
+      // 排版三项（M195）/ 主题（M210）与 [keys] 同形：传了才写，缺省即出厂口径
       await writeConfig({
         mode: "md",
         keys: scenario.config.keys,
         fontFamily: scenario.config.fontFamily,
         monoFontFamily: scenario.config.monoFontFamily,
         fontSize: scenario.config.fontSize,
+        theme: scenario.config.theme,
       });
       await ctx.restartApp();
     }
@@ -703,6 +704,9 @@ async function doAction(step, { ctx, cu, scenario, vars, pid, evidence }) {
         fontFamily: step.fontFamily !== undefined ? step.fontFamily : cur.editor?.font_family,
         monoFontFamily: step.monoFontFamily !== undefined ? step.monoFontFamily : cur.editor?.mono_font_family,
         fontSize: step.fontSize !== undefined ? step.fontSize : cur.editor?.font_size,
+        // 主题（M210）同理缺省**沿用当前值**：否则一次 configWrite 会把前面设过的 ui.theme
+        // 连表一起抹掉（`ui` 不写 = 回落 light），归因成本最高的那种「改了配置却没生效」形态。
+        theme: step.theme !== undefined ? step.theme : cur.ui?.theme,
       };
       await writeConfig(next);
       // requireVault: false 只对本步的重启生效（该步期待「未打开空态」，就绪门里「树里有
