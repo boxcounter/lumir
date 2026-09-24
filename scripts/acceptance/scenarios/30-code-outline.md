@@ -42,22 +42,38 @@ steps:
         ax: { count: { pattern: "/AXStaticText \\(greet\\)/", exact: 1 } }
       - label: 局部变量**不是**条目（同一通道刚证明四条真条目在，这条 0 命中才有区分度）
         ax: { count: { pattern: "/AXStaticText \\(local\\)/", exact: 0 } }
-      - label: 当前段落在光标所在的常量上（浮层打开时键盘游标已就位）
-        ax: { count: { pattern: "/AXStaticText \\(LIMIT\\).*\\(focused\\)/", exact: 1 } }
+
+  # 游标落点判据（M199 起，与 13-toc 同一通道改写）：焦点迁到筛选输入框（AXComboBox）后，
+  # 浮层条目不再带 (focused) 标记——落点一律由派生证据（Enter 跳转后的指示段链条）证明。
+  - name: ↓ 一条后 Enter —— 由链条证明浮层打开时键盘游标已就位在 LIMIT（当前段）
+    do: keys
+    keys: ["Down", "return"]
+    expect:
+      - label: 浮层已收起（Enter 是跳转）
+        ax: { not: "⌃N⌃P 选择" }
+      - label: 链条落在 ›Util（游标若不在 LIMIT 上，↓ 一条的落点会是字段或 greet，链条必带父级）
+        ax: { has: "/AXButton \\(›Util\\)/" }
+      - label: 链条不是 greet 那条（互斥对照，堵「游标本来就在末条」的假绿）
+        ax: { not: "/AXButton \\(›Util › greet\\)/" }
+
+  - name: ⌘⇧O 再开（回到浮层继续 ⌃N 测试；此时编辑器光标在 Util 声明处）
+    do: key
+    key: "cmd+shift+o"
+    expect:
+      - label: 浮层已展开
+        ax: { has: "⌃N⌃P 选择" }
 
   - name: ⌃N 连按十六次（Emacs next-line；条目只有四条 ⇒ 无论落地几次都夹在末条）
     do: keys
     keys:
       ["ctrl+n", "ctrl+n", "ctrl+n", "ctrl+n", "ctrl+n", "ctrl+n", "ctrl+n", "ctrl+n", "ctrl+n", "ctrl+n", "ctrl+n", "ctrl+n", "ctrl+n", "ctrl+n", "ctrl+n", "ctrl+n"]
 
-  - name: 判落点：键盘游标落在末条 greet 上
+  - name: 判落点：⌃N 夹在末条（M199 起条目不带 (focused) 标记，落点 greet 由下一步 Enter 的链条 ›Util › greet 派生证明）
     do: sleep
     ms: 400
     expect:
       - label: 浮层仍开着（⌃N 不是关闭键）
         ax: { has: "⌃N⌃P 选择" }
-      - label: 条目的 AX 行同时带 greet 与该条的 focused 标记（游标真的移到了末条）
-        ax: { count: { pattern: "/AXStaticText \\(greet\\).*\\(focused\\)/", exact: 1 } }
 
   - name: Enter 跳转到 greet（类内方法）的声明起点
     do: key
@@ -85,12 +101,9 @@ steps:
     keys:
       ["ctrl+p", "ctrl+p", "ctrl+p", "ctrl+p", "ctrl+p", "ctrl+p", "ctrl+p", "ctrl+p", "ctrl+p", "ctrl+p", "ctrl+p", "ctrl+p", "ctrl+p", "ctrl+p", "ctrl+p", "ctrl+p"]
 
-  - name: 判落点：键盘游标落在首条 LIMIT 上
+  - name: 判落点：⌃P 夹回首条（落点 LIMIT 由下一步 Enter 的链条 ›LIMIT 派生证明）
     do: sleep
     ms: 400
-    expect:
-      - label: 条目的 AX 行同时带 LIMIT 与该条的 focused 标记（游标真的回到了首条）
-        ax: { count: { pattern: "/AXStaticText \\(LIMIT\\).*\\(focused\\)/", exact: 1 } }
 
   - name: Enter 跳转到顶层常量 LIMIT 的声明起点
     do: key
@@ -171,13 +184,15 @@ md 侧的全部口径由既有 `13-toc` 场景原样守——本场景只做 cod
   按一次之后同一条正则命中。**「打开即解析」的实现会在第一步就命中而红**（这正是 design §5 的反向验证
   配方）。判据还配了两条 liveness（`ax: { has: "const LIMIT = 42;" }` / 编辑器逐字节判据），AX 快照
   退化时先红的是正向断言，不会写成「读不到 = 不存在 = 通过」（REVIEW.md 第 2 条）。
-- **浮层条目的 AX 形态**（M197 实测，供后续场景复用）：`AXList (大纲)` 之下逐条
-  `AXStaticText (条目文本)`，**键盘游标所在的那一条**带 `(focused)` 标记。因此「条目表里有哪几条」
-  可以写成逐条 `count … exact: 1`，负向（局部变量不入列）写成 `exact: 0` **且与四条正向同框**
+- **浮层条目的 AX 形态**（M197 实测；M199 起游标通道改写，与 13-toc 同一口径）：`AXList (大纲)` 之下逐条
+  `AXStaticText (条目文本)`。M148–M198 期间键盘游标所在的那一条带 `(focused)` 标记；**M199 的筛选
+  输入框接管焦点后 `(focused)` 落在 `AXComboBox` 上，条目不再带任何标记**（实测现场与推导见
+  13-toc 的同节），游标落点因此一律改用派生证据——Enter 跳转后的指示段链条。「条目表里有哪几条」
+  仍写成逐条 `count … exact: 1`，负向（局部变量不入列）写成 `exact: 0` **且与四条正向同框**
   ——同一通道先证明四条真条目在，0 命中才有区分度。
 - **用「夹到端点」吸收丢键**（REVIEW.md 第 11 条）：真机逐键注入会整批丢键，按「按 n 次」算落点
   不可靠。本场景的两次导航都连按十六次（条目只有四条）：落地几次都无所谓，落不到就夹在端点上
-  ——⌃N 夹末条 `greet`、⌃P 夹首条 `LIMIT`，两条落点各由一个精确断言判（`(focused)` 与指示段的链）。
+  ——⌃N 夹末条 `greet`、⌃P 夹首条 `LIMIT`，两条落点各由下一步 Enter 的指示段链条派生证明。
   这比「按三次刚好到 greet」稳，也比「浮层还开着」这种恒真断言强。
 - **两条新空态提示**：文案以 `文案-Copy.md` 为单一来源（本 change 新增两条；编号在实现期分配，见
   change 的 tasks.md 5.1）。断言同时给「不是 D84」与「两种情形互斥」两条负向——本次要修的正是
