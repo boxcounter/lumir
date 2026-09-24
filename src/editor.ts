@@ -33,6 +33,8 @@ import type { CommandRunner, EditorCommandId } from "./keys";
 import { DEFAULT_CODE_BLOCK_WRAP, DEFAULT_LINE_WRAP, wrapSpec } from "./preview/theme";
 import type { WrapSettings } from "./preview/theme";
 import { lumirSearch } from "./search";
+import { positionFromReadings, restoreScrollTop } from "./scroll-position";
+import type { ScrollPosition } from "./scroll-position";
 
 // 编辑器单内核双模式（ADR 0002 §2）：一个 CM6 内核、两种模式。
 // md = 高亮 + live preview 装饰层（src/preview/）；code = 仅高亮。
@@ -947,6 +949,18 @@ export interface EditorHandle {
   refreshPreview(): void;
   /** 滚动定位到 1-based 行号并把光标移到行首（wikilink 锚点跳转用）。 */
   revealLine(line: number): void;
+  /**
+   * 读当前前台视图的阅读位置（捕获侧唯一构造点；值语义见 src/scroll-position.ts）。
+   * 不可读（锚处没有可量的字符盒）返回 null——调用方按「本次不记录」处理，不写半个值。
+   */
+  readScrollPosition(): ScrollPosition | null;
+  /**
+   * 按公开通道施加一个阅读位置（恢复侧唯一入口；装载复位之后调用）。
+   * 位置不可读、或落点即篇首时**静默不施加**（沿用复位结果），不抛错、不提示。
+   */
+  applyScrollPosition(position: ScrollPosition): void;
+  /** 订阅前台滚动容器的滚动信号（捕获侧的信号源）；返回退订函数。 */
+  onScroll(listener: () => void): () => void;
   /** 前台会话是否相对它的 dirty 基准有改动。 */
   isDirty(): boolean;
   onDirty(listener: (dirty: boolean) => void): () => void;
@@ -1328,6 +1342,15 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
   active = initialSession;
   const view = new EditorView({ state: active.state, parent });
 
+  /** 滚动信号的订阅者（捕获侧）：挂原生 `scroll` 而不挂 CM 的 `viewportChanged`——两者同源
+   *  （CM 自己在 `.cm-scroller` 上就挂着原生 scroll 监听），取前者的理由是让捕获与 CM 的更新
+   *  循环解耦：捕获只需要一个 `scrollTop` 与一次 `coordsAtPos`，不必等一次测量周期。回调是
+   *  **同步派发**的，消费者自己负责防抖（见 src/reading-position.ts）。 */
+  const scrollListeners = new Set<() => void>();
+  view.scrollDOM.addEventListener("scroll", () => {
+    for (const listener of scrollListeners) listener();
+  });
+
   // 统一键位层（keys.ts）的编辑器侧命令实现：每条只读 view 当前状态并自行 dispatch。
   // 全部返回 void——命中即已消费，分发器统一吞掉默认行为（命中但无事可做，例如历史
   // 为空的 ⌘Z，也必须吞掉，否则原生 contenteditable 撤销会插手 CM 管理的文档）。
@@ -1644,6 +1667,83 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
         selection: { anchor: pos },
         effects: EditorView.scrollIntoView(pos, { y: "center" }),
       });
+    },
+    readScrollPosition(): ScrollPosition | null {
+      const scroller = view.scrollDOM;
+      // 锚取「高度等于 scrollTop 的行块起点」：公开方法、语义是「相对文档顶的高度」，且与
+      // 恢复侧一样只需要一个文档位置（不碰像素）。锚比视口顶那一行低约一个 paddingBlock，
+      // 这不影响判据——y 记的正是该锚相对视口的实际偏移（见 positionFromReadings 的注释）。
+      const anchor = view.lineBlockAtHeight(scroller.scrollTop).from;
+      const rect = view.coordsAtPos(anchor);
+      // 锚处没有可量的字符盒（折行点、被替换的区间等）：本次不记录，绝不写半个值。
+      if (rect === null) return null;
+      const box = scroller.getBoundingClientRect();
+      return {
+        pos: anchor,
+        ...positionFromReadings({
+          charTop: rect.top,
+          charLeft: rect.left,
+          boxTop: box.top,
+          boxLeft: box.left,
+          scrollLeft: scroller.scrollLeft,
+        }),
+      };
+    },
+    applyScrollPosition(position: ScrollPosition) {
+      // 越界的锚（两次会话之间文档被外部改写）夹到文档内：与 CM 自己的 clip 同口径，也让下面
+      // 的篇首判定用的是真正会被使用的那个位置。
+      const anchor = Math.max(0, Math.min(Math.round(position.pos), view.state.doc.length));
+      // 篇首不施加（design §5）：锚落在文档原点时直接沿用装载复位的结果——「恢复到篇首」与
+      // 「停在篇首」是同一件事，而带 margin 的 `scrollIntoView` 对 pos 0 有把页首的 44px
+      // 内边距顶出画的历史（M110），不做比做更稳。
+      if (anchor === 0) return;
+      // 坐标可读时再核一次落点：算出来 ≤ 0 说明这次恢复的结果就是篇首（文档变短等），
+      // 同样不施加。**注意这不构成前置门槛**——装载刚结束时存储的锚几乎总在视口之外，
+      // 那时 `coordsAtPos` 返回 null（实测：锚在视口下方 ~2800px 时为 null）。若把 null 当
+      // 「不可读 → 放弃恢复」，整条能力对所有深于一屏的位置都会静默失效（M194 实测现场）。
+      // CM 自己的通道先按 scrollTarget 重新定位视口、渲染、测量，之后再算坐标，因此发放效果
+      // 对任意深的锚都成立；锚真的不可读时 CM 的 `scrollIntoView` 自己会提前返回，视口留在
+      // 装载复位处——这正是 spec 要的「静默退化到篇首」。
+      const rect = view.coordsAtPos(anchor);
+      if (rect !== null) {
+        const box = view.scrollDOM.getBoundingClientRect();
+        const target = restoreScrollTop(
+          {
+            charTop: rect.top,
+            charLeft: rect.left,
+            boxTop: box.top,
+            boxLeft: box.left,
+            scrollLeft: view.scrollDOM.scrollLeft,
+          },
+          position,
+        );
+        if (target <= 0) return;
+      }
+      view.dispatch({
+        effects: EditorView.scrollIntoView(EditorSelection.cursor(anchor), {
+          y: "start",
+          yMargin: position.y,
+          // 横向**不**交给这个效果：非快照分支会先减掉 getScrollMargins(view).left，而本仓的
+          // gutter 插件正好提供它（固定列宽）——拿捕获值当 xMargin 会系统性偏一个 gutter 宽
+          //（code 模式实测 34px）。这里只要求「横向别动锚的位置」，横向量在下面直接赋值。
+          x: "nearest",
+          xMargin: 0,
+        }),
+      });
+      // 横向按 CM 自己的快照分支的口径恢复：直接写 scrollLeft（`dist/index.js` 的快照分支就是
+      // `scrollDOM.scrollLeft = xMargin`）。CM 的滚动锚点维护只管纵向（`scrollAnchorAt` 用
+      // scrollTop），因此这个赋值不会像裸写 scrollTop 那样被改掉（M149 的 242px 是纵向现场）。
+      //
+      // 放在下一帧：上面那个效果由 CM 在测量周期里落地，而它带 `x: "nearest"`——锚被横向移出
+      // 视口时它会主动把锚拉回来（实测：先写 200、效果随后把它拉回 62），所以横向必须是**最后**
+      // 一次写入。requestAnimationFrame 的回调排在 CM 同帧的测量之后。
+      requestAnimationFrame(() => {
+        view.scrollDOM.scrollLeft = position.x;
+      });
+    },
+    onScroll(listener: () => void) {
+      scrollListeners.add(listener);
+      return () => void scrollListeners.delete(listener);
     },
   };
 }

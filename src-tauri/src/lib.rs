@@ -12,6 +12,7 @@ pub mod fs_io;
 pub mod index;
 pub mod link_graph;
 pub mod logging;
+pub mod reading_position;
 pub mod ready;
 pub mod recovery;
 pub mod vault_session;
@@ -91,6 +92,9 @@ pub fn run() {
             workspaces::vault_list,
             vault_session::vault_session_get,
             vault_session::vault_session_put,
+            // 文档阅读位置（M194，change remember-reading-position）：与标签会话分开存
+            reading_position::reading_position_get,
+            reading_position::reading_position_put,
         ])
         .setup(move |app| {
             // 诊断日志先初始化：`[log] level` 在第一条事件之前生效（level = off 时
