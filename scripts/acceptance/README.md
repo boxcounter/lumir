@@ -119,9 +119,9 @@ steps:
 | （省略） | — | 只做断言 |
 | `settle` | — | 读一次 AX 快照并落定（等价于「什么都不做、只等一拍」，用于纯断言步骤前的稳定） |
 | `open` | `file`、`marker` | 点左栏文件名打开，等编辑器出现 marker |
-| `click` | `target: {role,name\|help\|any,nth,count}` 或 `{x,y,count}` | 节点按 AX 索引点（走 AXPress）；`{x,y}` 走真实鼠标坐标。`count` 原样透传给 KimiCU，但**它产生不出 DOM 的 `dblclick`**（坐标路径与 AX 索引路径都实测过，见「已知边界」）——要验双击类交互，目前只能靠 chromium 层或人工 |
+| `click` | `target: {role,name\|help\|any,nth,count}` 或 `{x,y,count}` | 节点按 AX 索引点（走 AXPress）；`{x,y}` 走真实鼠标坐标。`count` 原样透传给 KimiCU，实测**产生不出 DOM 的 `dblclick`**（坐标路径与 AX 索引路径都试过）。注意那次实测用的判据已被 M209 证伪、**尚未**按新判据重跑——「已知边界」那条读第一点后再引用这个结论 |
 | `clickNodeText` | `text` | 点 value/title **逐字等于** `text` 的节点（比 `name` 的正则更死板） |
-| `clickInNode` | `target`、`dx`、`dy`、`count` | 点「某个有 bbox 的节点内部」的相对位置（如 `AXTable`）；`count` 同上，不产生 `dblclick` |
+| `clickInNode` | `target`、`dx`、`dy`、`count` | 点「某个有 bbox 的节点内部」的相对位置（如 `AXTable`）；`count` 同上，未观察到 `dblclick`（判据限制见「已知边界」） |
 | `clickEditor` | `dx`（默认 40）、`dy`（默认 6） | 点编辑器顶部建立渲染层焦点（编辑器内元素无 AX bbox，只能按坐标） |
 | `focusWindow` | `retries` | 确保目标窗口在前台（键盘场景的前台纪律，见上） |
 | `key` / `keys` | `key` / `keys: [...]`、`gapMs` | 键盘注入（`ctrl+n`、`cmd+s`、`cmd+/` …）。`keys` 对**整串都是可打印单字符**的序列额外做回读 + 有限重试（≤3）；chord / 混合序列 / 无可读目标一律保持盲发不重试（判定边界见「已知边界」） |
@@ -308,18 +308,27 @@ Alex 抽审路径：先看 `summary.md`，再进 FAIL 场景看 `steps.md` + `sh
 - **AX 快照可能退化**：`get_app_state` 偶尔只返回菜单栏（`truncated: [..., cycle]`）。这通常是
   KimiCU 后台服务进了坏状态，表现为**全局**退化（Finder、别的 app 一起坏）。此时全套会一起报
   「前端未就绪」，处理办法是重启 KimiCU 服务，不是改场景。
-- **合成不出 DOM 的 `dblclick`（M184 实测，2026-09-19）**：WKWebView 里的双击事件用现有通道**造不出来**。
-  四条路都试过、都失败：`click` 的 `count: 2`（坐标路径）、`click` 的 `count: 2`（AX 索引路径，即
-  AXPress ×2）、两次独立的 `click`（两次 MCP 往返的间隔超出系统双击间隔）、`drag_paths` 的两条单点
-  路径（`path_gap_ms` 取 10ms 与 0ms 两种）。
-  **判据取既有行为做对照**，不是「看遮罩有没有出现」：双击文件树行 = `src/tree.ts` 的
-  `dblclick → open("pinned")` → 必然新建一个标签（`targetSessionFor("pinned")` 总是 `createSession`），
-  四条通道下标签数都停在 1；而**同一点位的单次坐标点击**能正常切换文档（证明落点是准的、click 路径
-  照常工作）。现场：`test-results/m184/16-probe-clicks-land.log`、`/17-probe-dragpaths-variants.log`
-  （本机，git 外）。
-  影响：以 `dblclick` 为唯一打开路径的交互（如图片放大查看 M184）在真机层**无法驱动**——它的行为覆盖
-  只能在 chromium 层（那里是真实 dblclick），真机侧只剩「给注入通道加 clickCount 能力」或「人工双击」
-  两条路。这是通道边界，不是产品缺陷；写双击类场景前先读这条。
+- **`dblclick`：KimiCU 的四条通道造不出来，`swift + CGEvent` 那条能（M184 实测，M209 修订
+  2026-09-25）**：KimiCU 现有通道实测失败的有四条：`click` 的 `count: 2`（坐标路径）、`click` 的
+  `count: 2`（AX 索引路径，即 AXPress ×2）、两次独立的 `click`（两次 MCP 往返的间隔超出系统双击
+  间隔）、`drag_paths` 的两条单点路径（`path_gap_ms` 取 10ms 与 0ms 两种）。现场
+  `test-results/m184/13`～`/17`（本机，git 外）。
+  **M209 修订两处**（探针脚本 `test-results/m209-probe/cgevent-click.swift` + harness
+  `probe.mjs`，现场与 AX dump 落 `test-results/acceptance/<日期>/m209-probe/`）：
+  ① **M184 用的那条判据不成立**，不能拿它当「双击没到前端」的证据：`openFile` 对**已打开的同路径**
+  会短路（`src/main.ts:380-386`——`existing !== undefined` 时只把这个标签从预览固定住、**不新建
+  标签**），而单击文件树行本身就是 `open("preview")` ⇒「双击树行 → 标签数 1→2」在任何可达现场
+  **恒不成立**（真双击也只把它固定住）。可用的间接判据是**固定效果**：双击之后再做一次确定的
+  「预览意图打开另一文件」——被固定则新开标签（2 个），仍是预览则就地替换（1 个）。
+  ② **第五条通道可用**：`/usr/bin/swift` + `CGEvent` 显式设 `kCGMouseEventClickState = 1 / 2`
+  （两次 down/up、间隔 60ms，投到 `.cghidEventTap`）**能**造出真实 DOM `dblclick`：同一点位的
+  正对照（单击树行 → 标签切到该文件）与负对照（单击图片 → 遮罩不开）同时成立，两条独立判据都亮
+  ——树行被固定（判据①）、图片 lightbox 遮罩打开（AX 树被 `aria-modal` 接管、放大图 `AXImage`
+  几何读数 1120×374、`Esc` 关得掉）。
+  **读这条时的三点纪律**：判据要用判据①那种**区分度**足够的形态（「遮罩打开」这类直接判据更佳——
+  注意 modal 打开时 AX 树只剩模态子树，标签栏会消失，「数图像节点 1→2」在模态作用域下恒为 1）；
+  「`count: 2` 出不了 dblclick」这句在 M184 的判据下测得，**尚未**按判据①重跑，别当成已证结论；
+  这条通道在 KimiCU 之外（套件目前没有 swift 动作），写双击类场景前先想清楚驱动从哪来。
 - **场景维护权归实现者**：新功能 mission 的 tasks 必须带「新增/更新验收场景」一项（裁决点 3）。
 
 ## 加一个场景
