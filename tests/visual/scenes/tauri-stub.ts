@@ -70,13 +70,22 @@ export interface VaultFixture {
   switchTo?: VaultFixture & { root: string };
   /** vault_open 重映射候选桩：目标路径未注册且存在失效注册时，非 force_new 打开按契约返回空 entries + candidates。 */
   remapCandidates?: Array<{ id: string; path: string }>;
-  /** config_get 桩（M132）：模式 / 折行口径（M180）/ [keys] 覆盖表 / 配置 warning。
-   *  缺省 md + 出厂折行（`line_wrap: true` / `code_block_wrap: false`，与
-   *  `src/preview/theme.ts` 的 DEFAULT_* 同值）+ 空覆盖 + 无 warning。 */
+  /** config_get 桩（M132）：模式 / 折行口径（M180）/ 排版口径（M195）/ [keys] 覆盖表 /
+   *  配置 warning。缺省 md + 出厂折行（`line_wrap: true` / `code_block_wrap: false`，与
+   *  `src/preview/theme.ts` 的 DEFAULT_* 同值）+ 出厂排版（`font_family` / `mono_font_family`
+   *  为 `null` = 沿用基线、`font_size: 16`，与 Rust `EditorConfig::default()` 同值）+
+   *  空覆盖 + 无 warning。 */
   config?: {
     mode?: "md" | "code";
     line_wrap?: boolean;
     code_block_wrap?: boolean;
+    /** 正文族（M195）：`null` = 沿用基线观感（与 Rust 侧 `Option<String>` 的 None 同义）。 */
+    font_family?: string | null;
+    /** 等宽族（M195）：口径同 `font_family`（**与列表标记渲染/测量同源的那个 token**）。 */
+    mono_font_family?: string | null;
+    /** 编辑器内容字号 px（M195）：合法区间 [12, 32]，区间外由 Rust 侧回落 16 并附 warning——
+     *  桩不复制那条校验（那归 cargo test），它只负责把配置**送达**前端。 */
+    font_size?: number;
     keys?: Record<string, string | null>;
     warnings?: string[];
   };
@@ -116,6 +125,10 @@ export async function stubTauri(page: Page, vault: VaultFixture | null): Promise
     w.__dirtyReports = [] as boolean[];
     // config_get 的调用计数（M132 场景用它等「配置已加载 → 键位覆盖已挂上」）。
     w.__configGets = 0;
+    // 全部 invoke 的命令名，按调用顺序（M195）。「按 ⌘= 后 config.json 逐字节不变」这条判据
+    // 在 chromium 里没有文件面（真机场景 29 用文件哈希 + mtime 断言），这里退化为等价判据：
+    // **没有第二处写类 command 被调用**。桩只记录，不解释语义。
+    w.__invokes = [] as string[];
     // vault_remap 的调用记录（场景断言前端把用户确认的映射传给后端）。
     w.__remapCalls = [] as Array<{ id?: string; path?: string }>;
     // log_event 的转发记录（M136）：前端埋点发出的每条诊断事件，按发出顺序。
@@ -259,6 +272,12 @@ export async function stubTauri(page: Page, vault: VaultFixture | null): Promise
               // DEFAULT_CODE_BLOCK_WRAP，两处不同值会让场景按错的折行口径跑。
               line_wrap: current?.config?.line_wrap ?? true,
               code_block_wrap: current?.config?.code_block_wrap ?? false,
+              // M195 的排版口径：缺省与 Rust `EditorConfig::default()` 逐项同值（null = 基线族、
+              // 16 = 出厂字号），因此**不传这三个字段的既有场景天然跑出厂默认口径**，不会
+              // 因为桩扩了形状而带上非默认字号（design §6.5）。
+              font_family: current?.config?.font_family ?? null,
+              mono_font_family: current?.config?.mono_font_family ?? null,
+              font_size: current?.config?.font_size ?? 16,
             },
             keys: current?.config?.keys ?? {},
           },
@@ -352,6 +371,7 @@ export async function stubTauri(page: Page, vault: VaultFixture | null): Promise
         cmd: string,
         args: { event?: string; handler?: number; path?: string; from?: string; link?: string },
       ) => {
+        (w.__invokes as string[]).push(cmd);
         if (cmd === "plugin:event|listen") {
           const ids = listeners.get(args.event ?? "") ?? [];
           ids.push(args.handler ?? 0);

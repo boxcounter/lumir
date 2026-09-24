@@ -395,3 +395,89 @@ test("折行命令：不在 editor 组（作用域派生成 global）、默认�
   assert.equal(bound?.command, "view.toggle-line-wrap");
   assert.equal(bound?.scope, "global", "绑定后作用域仍由命令清单派生");
 });
+
+// ---------------------------------------------------------------------------
+// M195：字号步进命令（change typography-and-zoom）与它最大的静默失配风险——token 形态
+// ---------------------------------------------------------------------------
+
+test("字号步进命令：四条默认绑定齐全、作用域派生成 global、不在默认不绑键清单里", () => {
+  const expected: Array<[string, string]> = [
+    ["Cmd-=", "view.text-scale-up"],
+    ["Cmd-+", "view.text-scale-up"],
+    ["Cmd--", "view.text-scale-down"],
+    ["Cmd-0", "view.text-scale-reset"],
+  ];
+  for (const [key, command] of expected) {
+    assert.ok(commandIds.includes(command), `${command} 不在 COMMAND_IDS`);
+    assert.ok(
+      !editorCommandIds.includes(command),
+      `${command} 落在 editor 组会让作用域派生成 editor；字号步进必须是 global（焦点在左栏也要命中）`,
+    );
+    const token = normalizeKey(key);
+    const binding = KEY_BINDINGS.find((item) => normalizeKey(item.key) === token);
+    assert.equal(binding?.command, command, `${key} 应绑定 ${command}（实际：${binding?.command}）`);
+    assert.equal(binding?.scope, "global", `${key} 的作用域应为 global`);
+    assert.ok((binding?.doc.length ?? 0) > 0, `${key} 的绑定必须带来由说明（表即文档）`);
+  }
+  for (const command of ["view.text-scale-up", "view.text-scale-down", "view.text-scale-reset"]) {
+    assert.ok(
+      !KEYLESS_COMMAND_IDS.includes(command),
+      `${command} 默认有绑定，MUST NOT 登记为默认不绑键`,
+    );
+  }
+});
+
+test("减号键的 token 形态：表内必须写 Cmd--，写 Cmd-Minus 永远不命中", () => {
+  // 反向断言（REVIEW.md 第 1 条）：这条判据的区分度在于——真事件的 token 与 `Cmd-Minus`
+  // **必须不相等**。若有人把 `keyToken` 改成按物理键判定（或把表内写成 Cmd-Minus），
+  // 下面这条 equality 会立刻红，而不是让 ⌘− 静默失效到真机上才被发现。
+  const event = { key: "-", code: "Minus", metaKey: true, ctrlKey: false, altKey: false, shiftKey: false };
+  assert.equal(keyToken(event), "Cmd--", "⌘− 的事件 token 是 `Cmd--`");
+  assert.equal(normalizeKey("Cmd--"), "Cmd--", "表内写法经归一仍是 `Cmd--`（连字符不被拆坏）");
+  assert.notEqual(keyToken(event), "Cmd-Minus", "写 `Cmd-Minus` 的绑定永远不命中（静默失配）");
+  assert.notEqual(normalizeKey("Cmd--"), normalizeKey("Cmd-Minus"));
+  // 含 Alt 的组合才按物理键判定（既有口径）：⌥⌘- 走 `Cmd-Alt-Minus`
+  assert.equal(keyToken({ ...event, altKey: true }), "Cmd-Alt-Minus");
+});
+
+test("放大键的两种字符形态：⌘= 与 ⌘⇧=（真机的 `Cmd-+`）都进同一命令", () => {
+  const equals = { key: "=", code: "Equal", metaKey: true, ctrlKey: false, altKey: false, shiftKey: false };
+  const plus = { ...equals, key: "+", shiftKey: true };
+  assert.equal(keyToken(equals), "Cmd-=");
+  assert.equal(
+    keyToken(plus),
+    "Cmd-+",
+    "真机 ⌘⇧= 给的是 key=\"+\"（Shift 隐含在字符里），归一到 `Cmd-+`",
+  );
+  for (const token of [keyToken(equals), keyToken(plus)]) {
+    const binding = KEY_BINDINGS.find((item) => normalizeKey(item.key) === token);
+    assert.equal(binding?.command, "view.text-scale-up", `${token} 应指向放大命令`);
+  }
+  assert.equal(keyToken({ key: "0", code: "Digit0", metaKey: true, ctrlKey: false, altKey: false, shiftKey: false }), "Cmd-0");
+  // 合成事件（Playwright 的 Meta+Shift+Equal 可能给 key="=" + shiftKey）归一成另一个 token，
+  // 那张形态**不命中**——这条差异写进 typography 场景的注释，不靠放宽断言掩盖。
+  assert.equal(keyToken({ ...equals, shiftKey: true }), "Cmd-Shift-=");
+  assert.equal(
+    KEY_BINDINGS.find((item) => normalizeKey(item.key) === "Cmd-Shift-="),
+    undefined,
+    "`Cmd-Shift-=` 不在表内（合成事件的形态差异，不是漏实现）",
+  );
+});
+
+test("字号步进命令可由 [keys] 重绑 / 解绑（默认键位都是单段无空白）", () => {
+  for (const key of ["Cmd-=", "Cmd-+", "Cmd--", "Cmd-0"]) {
+    assert.ok(!/\s/.test(key), `${key} 含空白会让用户无法重绑（chord 本版不支持）`);
+  }
+  const rebound = applyKeyOverrides({ "Cmd-=": "view.text-scale-down" });
+  assert.deepEqual(rebound.warnings, []);
+  assert.equal(
+    rebound.bindings.find((binding) => normalizeKey(binding.key) === "Cmd-=")?.command,
+    "view.text-scale-down",
+  );
+  const unbound = applyKeyOverrides({ "Cmd-0": null });
+  assert.deepEqual(unbound.warnings, []);
+  assert.equal(
+    unbound.bindings.find((binding) => normalizeKey(binding.key) === "Cmd-0"),
+    undefined,
+  );
+});

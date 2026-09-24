@@ -32,6 +32,8 @@ import type { TokenRole } from "./preview/code";
 import type { CommandRunner, EditorCommandId } from "./keys";
 import { DEFAULT_CODE_BLOCK_WRAP, DEFAULT_LINE_WRAP, wrapSpec } from "./preview/theme";
 import type { WrapSettings } from "./preview/theme";
+import { DEFAULT_FONT_SIZE, applyTypography as writeTypography, nextFontSize } from "./typography";
+import type { TextScaleDirection, TypographySettings } from "./typography";
 import { lumirSearch } from "./search";
 import { positionFromReadings, restoreScrollTop } from "./scroll-position";
 import type { ScrollPosition } from "./scroll-position";
@@ -897,6 +899,14 @@ export interface EditorHandle {
   /** 翻转代码块折行——同左；非 md 文件没有围栏渲染，翻转对它无可观测效果。 */
   toggleCodeBlockWrap(): void;
   /**
+   * 施加排版配置（change typography-and-zoom）：写 `--editor-*` token 并请求重测量（唯一写入
+   * 路径，见实现处的注释）。装配层在 `config_get` 之后调用一次；启动之后只有三条步进命令改
+   * 字号。返回值为配置值层面的 warning（非法字族），由装配层按既有口径记 console + 诊断日志。
+   */
+  applyTypography(settings: TypographySettings): readonly string[];
+  /** 字号步进一档 / 回到配置字号（应用运行期口径，不落盘）。 */
+  textScale(direction: TextScaleDirection): void;
+  /**
    * 新建一个**空文档**会话（M149）：建立逐会话记账，但不装载内容、不激活。
    * 路径与内容由调用方随后的 reloadSession 补上（装载走事务派生，会话因此能继承
    * 搜索面板一类的 StateField 状态；新建 state 会把它们丢掉）。模式先取配置默认基线，
@@ -1054,6 +1064,20 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
    * 起点」：配置项只在启动时喂一次初值，之后的翻转对所有会话（含新开的）立即生效。
    */
   let wrap: WrapSettings = { lineWrap: DEFAULT_LINE_WRAP, codeBlockWrap: DEFAULT_CODE_BLOCK_WRAP };
+  /**
+   * 排版口径的**应用运行期真源**（change typography-and-zoom）：配置只在启动时喂一次初值，
+   * 之后由三条 `view.text-scale-*` 命令推进（D5 裁决「不持久化」——不落盘、不回写
+   * config.json、不进撤销栈、不碰 dirty）。一份值管全部会话：真值经 documentElement 上的
+   * token 表达，因此后台标签页与**随后新建**的会话天然取当前运行期值（新标签页 MUST NOT
+   * 取配置默认）。
+   */
+  let typography: TypographySettings = {
+    fontFamily: null,
+    monoFontFamily: null,
+    fontSize: DEFAULT_FONT_SIZE,
+  };
+  /** `reset` 回到的那一份字号（D4：回到**配置值**，不是出厂 16px）。 */
+  let baseFontSize = DEFAULT_FONT_SIZE;
   let provider: AttachmentProvider = createInvokeAttachmentProvider();
   let wikilinkResolver: WikilinkResolver | null = null;
   /** 图片放大查看的遮罩（M184）：装配层注入，装饰层只经 PreviewContext 取用。 */
@@ -1193,11 +1217,16 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
         })();
     // CM6 的基础层必须继承 shell 的排版基线配色（ADR 0006，单一基线）；live
     // preview 只增加 Markdown 语义装饰，避免 code 模式落回默认白底、灰 gutter 或默认选区颜色。
+    //
+    // 字体族取**编辑器作用域**的 token（change typography-and-zoom）：md 走 `--editor-font-family`、
+    // code 走 `--editor-mono-family`，两者缺省分别引用基线的 `--font-body` / `--font-mono`
+    //（见 src/style.css 的 :root）。MUST NOT 在这里直接引用 shell 基线 token——那会让「配置只
+    // 影响编辑器」从结构事实退化成「逐处记得别改」。
     const baseTheme = EditorView.theme({
       "&": {
         color: "var(--text)",
         backgroundColor: "var(--bg)",
-        fontFamily: mode === "md" ? "var(--font-body)" : "var(--font-mono)",
+        fontFamily: mode === "md" ? "var(--editor-font-family)" : "var(--editor-mono-family)",
       },
       ".cm-scroller": {
         fontFamily: "inherit", lineHeight: "var(--line-height, 1.75)",
@@ -1207,7 +1236,7 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
         alignItems: "start",
       },
       ".cm-content": {
-        fontFamily: "inherit", fontSize: "16px",
+        fontFamily: "inherit", fontSize: "var(--editor-font-size)",
         gridColumn: "2", gridRow: "1", minWidth: "0", width: "100%",
         marginInline: "0", paddingBlock: "44px",
         textAlign: "start", textIndent: "0", hangingPunctuation: "none", textAutospace: "no-autospace",
@@ -1512,6 +1541,52 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
     }
   }
 
+  /**
+   * 排版口径的**唯一写入路径**（change typography-and-zoom）：配置加载与三条步进命令共用。
+   * 写 documentElement 上的 `--editor-*`（字体族只在配置了才写，见 src/typography.ts），随后
+   * 请求一次重测量——「CSS 换了而 CM 没重测」的表现是坐标与画面错位（M103 / M110 缺陷族同
+   * 形态）。实测（change 的 design §4-1）：`documentElement` 上的变量变化会唤醒 lists.ts 的既有
+   * 观察者、CM 也会在一个渲染帧内跟上，但那条兜底只在「文档含列表」时存在；显式请求让这条
+   * 正确性不依赖某个消费者恰好在场。后台会话各自持有 state 而没有 view——它们不需要立即测
+   *（切回前台时 CM 自己会测），与 reloadSession 的既有分岔同形。
+   */
+  function applyTypographySettings(next: TypographySettings): readonly string[] {
+    typography = { ...next };
+    baseFontSize = next.fontSize;
+    const result = writeTypography(typography);
+    view.requestMeasure();
+    keepCaretVisible();
+    return result.warnings;
+  }
+
+  /**
+   * 施加排版后把光标行保持在视口内（spec 的「改字号后光标仍可见」）。
+   *
+   * 字号变大会把光标行推到当前视口以下（实测：光标在可见区最下一行时按四档放大，行被推出
+   * 视口——滚动位置由 CM 的锚点维护，不跟着光标走）。`y: "nearest"` 只滚**最小必要距离**，
+   * 光标本来就在视口内时是 no-op，因此不会出现「按一下字号整屏跳走 / 跳到篇首」。
+   * 传 SelectionRange 而不是裸 pos 是 M118 的既有口径（assoc 取可见侧，否则测量可能退化成
+   * 全零 rect 把整窗内容拉偏）。
+   */
+  function keepCaretVisible(): void {
+    view.dispatch({ effects: EditorView.scrollIntoView(view.state.selection.main, { y: "nearest" }) });
+  }
+
+  /**
+   * 字号步进一档（`up` / `down`）或回到配置字号（`reset`）。到界后**无变化、无提示、不报错**：
+   * 值没变就直接返回（不写样式、不请求重测量——避免无意义的样式重算与重测量）。只动字号，
+   * 字体族不参与步进（没有「下一档字体」这种语义）。
+   */
+  function textScale(direction: TextScaleDirection): void {
+    const current = typography.fontSize;
+    const next = direction === "reset" ? baseFontSize : nextFontSize(current, direction);
+    if (next === current) return;
+    typography = { ...typography, fontSize: next };
+    writeTypography(typography);
+    view.requestMeasure();
+    keepCaretVisible();
+  }
+
   /** 应用运行期折行口径的写入路径（M180）：配置加载与两条 toggle 命令共用，只传要改的轴。 */
   function setWrap(next: Partial<WrapSettings>): void {
     const merged: WrapSettings = {
@@ -1545,6 +1620,8 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
     toggleCodeBlockWrap() {
       setWrap({ codeBlockWrap: !wrap.codeBlockWrap });
     },
+    applyTypography: applyTypographySettings,
+    textScale,
     onReady(listener: EditorReadyListener) {
       readyListeners.add(listener);
       return () => readyListeners.delete(listener);

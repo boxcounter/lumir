@@ -250,9 +250,27 @@
 - **不要假设 CM 自动重测量**：CM 对内容盒尺寸有观察通道，字号变化很可能自动触发测量，但这条
   **必须实测确认**（§4-1）。若实测已自动 → 保留断言、不额外调用；若实测滞后一帧或未触发 → 显式
   `requestMeasure()` 并保留断言。两条路都必须留同一条断言，避免「改成显式调用」之后被后人删掉。
+
+  **实测结论与实现取值（M195）**：§4-1 的实测显示本 change 的施加路径（`documentElement` 上的
+  CSS 变量）在同一帧内就会跟上，但对照路径（改 `.cm-content` 的 inline style）存在同 tick 的陈旧
+  窗口。实现取**显式调用**：`view.requestMeasure()` 紧跟在写 token 之后（`src/editor.ts` 的
+  `applyTypographySettings` / `textScale`）。理由：① spec 的 delta 直接要求「每次应用排版值之后
+  SHALL 让编辑器重新测量」，显式调用是这句 SHALL 的字面实现；② 实测里那条「自动跟上」依赖
+  `lists.ts` 恰好观察着 `documentElement`（只在 md 模式且渲染列表时才存在），把正确性压在一个
+  无关消费者的在场性上不合适；③ 成本是一次视口级测量（CM 既有路径，不随文档长度增长）。
+  **反向验证的如实记录**：把这次显式调用注释掉重跑 `typography.spec.ts` 的坐标/行高场景，
+  断言**仍绿**——即在这条路径上它当前是冗余的兜底而非必需项；这是可以据以删掉它的证据，
+  删与不删是评审可裁的点，本 change 取「不依赖偶然」的一侧。
 - **滚动与光标可见**：字号变化会改文档高度。理想结果是视口锚不跳（CM 的滚动锚定会按高度差修正），
   判据是「光标仍在视口内」；若实测出现明显跳动，退路是复用 M103 已有的揭示原语把光标行滚入视区
   （`editor.recenter` 那条路用的是 `revealLine` 同款 y 口径）。
+
+  **实测结论（M195）**：字号变大**确实**会把光标行推出视口（实测读数：光标在可视区最下一行时，
+  16 → 24px 后该行 `top=1051` 而可视区下沿 800，`scrollTop` 仍为 0——CM 的滚动锚定保的是内容位置，
+  不跟光标）。因此按本条退路落地：`src/editor.ts` 的 `keepCaretVisible()` 在每次施加排版后
+  `dispatch(EditorView.scrollIntoView(selection.main, { y: "nearest" }))`——只滚最小必要距离，
+  光标已在视口内时是 no-op，因此不会出现「按一下字号整屏跳走」。反向验证（把这次揭示调用去掉重跑）
+  确认场景变红，判据有区分度。
 
 ### 2.7 几何与性能影响
 
@@ -298,8 +316,34 @@
    `node_modules/@codemirror/view@6.43.11` 上读源码得到的（`buildTheme` 的选择器改写 + `themeClasses`）。
    实现期 SHALL 用**运行期实测**复核一次（默认配置下把 `src/style.css:28` 的 16px 临时改成 20px，
    读 `getComputedStyle(.cm-content).fontSize`：若仍是 16px，则 ② 生效成立）。**判据是读数，不是注释。**
+
+   **实测结论（M195 实现期，2026-09-24，chromium headless shell 151.0.7922.34 / 1200×800）**：
+   ① 在原 `:28` 位置给 `.cm-content` 临时加上 `font-size:20px`（同选择器、同 specificity 0,1,0）
+   重跑——`getComputedStyle('.cm-content').fontSize` 仍是 `16px`；② 不改样式表的复核路：向页面注入
+   一条同选择器的 `.cm-content{font-size:20px}` 作者规则，读数同样不变。两条读数落
+   `test-results/m195/specificity-probe.json`（`authorRuleWins: false`）。
+   **「写值 ② 生效」成立**，因此收口按 ② 那条落地：CM 主题的 `fontSize` 改为
+   `var(--editor-font-size)`，作者样式那一份的 `font-size` 删除、**只留 `line-height` 那半句**
+   （整条删掉会改动 `.cm-content` 的 line-height 声明来源与优先级语义，超出本 change 的面；
+   实测收口后默认口径读数逐项不变，见 `…/typography-before/readings.json` 与
+   `tests/visual/scenes/typography.spec.ts` 的第一条场景）。
 1. **CM 是否自动重测量**（§2.6）：改字号后不显式调用，检查光标矩形 / 行高是否立即正确。
    实测结论写回本节；无论哪条成立，断言都保留（§2.6 的判据）。
+
+   **实测结论（M195 实现期）**：分两条施加路径实测（读数落 `test-results/m195/remeasure-probe.json`
+   与 `…/remeasure-probe-cssvar.json`）——
+   - **真实施加路径**（`documentElement` 上的 CSS 变量，即 `applyTypography` 的写法）：改字号后
+     **同 tick** 的合成 mousedown 落行即正确，300ms 后同样正确。
+   - **对照路径**（直接改 `.cm-content` 的 inline style 属性）：同 tick 落**错行**、300ms 后自行
+     恢复正确。这条对照证明「点击落行」这个判据有区分度（陈旧 heightmap 会被抓出来），
+     也说明 CM 的重测是异步的（约一帧内），而非零成本同步。
+   - 判据形态：文档取「行行等高的短行列表」（短行、每行独占一行），点击某一行的可视中心后读
+     `getSelection()` 落在哪一行；用「目标行自身会折行」的文档会让几像素的偏移落在同一行内，
+     那种仪器**没有区分度**（首轮探针就是这样，已改掉）。
+   - 结论：本 change 的施加路径上 CM 不会留下可观测的错位窗口（`lists.ts` 盯 `documentElement`
+     的既有观察者也在同一帧被唤醒）。实现仍**显式**调用一次 `view.requestMeasure()`
+     （成本 = 一次视口级测量，无新解析）：它让这条正确性不依赖「文档恰好含列表」这个兜底
+     消费者在场，也不依赖 CM 内部实现细节；断言保留（§2.6 的判据 + 场景 7.2 那条）。
 2. **⌘− 与 ⌘⇧= 的 token 形态**（§2.5）：单测钉住「真实事件 token 与表内 token 相等」——
    ⌘− 应为 `Cmd--`、真机 ⌘⇧= 应为 `Cmd-+`；并用一次真机按键确认（视觉层的合成事件可能给
    另一种形态，那种差异要如实写进场景注释，不能靠放宽断言掩盖）。

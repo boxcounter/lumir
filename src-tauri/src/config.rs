@@ -27,6 +27,17 @@
 //! 形状校验与 keys 表同口径：整表收成 Value 逐项判定，非法值只回退该字段并附人话
 //! warning（`{"log": "info"}` 这种错形状也只丢这一项，不拖垮整文件）。`level` 的
 //! 消费方是 src-tauri/src/logging.rs（`off` 时事件丢弃不写盘）。
+//!
+//! ## 数值字段的打字代价（typography-and-zoom）
+//!
+//! `editor.font_size` 是本仓**第一个数值配置字段**，错打成字符串的代价比布尔高（多一对
+//! 引号、小数、`1e1` 都容易误写）：`"font_size": "16"` 会在 serde 解析期失败，走
+//! **整文件回落**——全部字段回默认（含 `last_vault: None`，下次启动要重新打开 vault）+ 一条
+//! warning。这是既有解析模型的性质（`mode` / `line_wrap` 给错类型同路），本 change 如实登记
+//! 并用单测钉住，**不发明「逐字段类型容忍」**：那会让 `font_size` 与 `editor.mode` 形成
+//! 「同类不同治」，正是 change line-wrap-options 明确拒绝过的事。替代形态（收成
+//! `serde_json::Value` 后逐项判定，即 `[keys]` / `[log]` 那条路）如需采纳，改动面是
+//! `RawEditorConfig` 的一处类型 + 一条单测。
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -81,6 +92,25 @@ pub struct EditorConfig {
     /// 横滚容器承载；`true` 时在阅读栏内折行（M138 以来的现状）。作用面只有 md 模式——
     /// 非 md 文件没有围栏渲染，对它们无可观测效果（不是漏实现）。
     pub code_block_wrap: bool,
+    /// 正文（比例）字体族（change typography-and-zoom）：CSS `font-family` 值，`None` =
+    /// 沿用基线观感（`src/style.css` 的 `--font-body`）。只在启动装载时读一次——本能力不做
+    /// 热重载，改字体需重启（字号另有运行期步进命令，不落盘）。
+    ///
+    /// 这里**只挡空串 / 纯空白**（→ `None` + warning）：值是否合法的 CSS 字族由前端判定
+    ///（`CSS.supports`），Rust 侧不复制一份 CSS 语法知识——与 `keys` 表「形状在此、语义在
+    /// 前端」的既有分层同口径（见模块头）。
+    pub font_family: Option<String>,
+    /// 等宽字体族：口径同 `font_family`，缺省引用基线的 `--font-mono`。它同时是**列表标记
+    /// 宽度测量**与标记渲染共用的那个 token（`src/preview/lists.ts`），两处必须同源。
+    pub mono_font_family: Option<String>,
+    /// 编辑器内容字号（px）：默认 16，合法区间 `[12, 32]`，区间外回落 16 + warning。
+    /// 它是编辑器内容面（md 正文 / 代码块 / code 模式）的字号；shell 的 13px 与阅读栏宽
+    /// 都不随之变（作用面由 token 分层结构性保证，见 change 的 design §2.2）。
+    ///
+    /// **这是本仓第一个数值配置字段**：写成字符串（`"font_size": "16"`）会在 serde 解析期
+    /// 失败 → 走**整文件回落**（全部字段回默认 + 一条 warning，连 `last_vault` 一起丢）。
+    /// 代价与「为什么不发明逐字段类型容忍」见模块头。
+    pub font_size: f64,
 }
 
 impl Default for EditorConfig {
@@ -89,9 +119,23 @@ impl Default for EditorConfig {
             mode: EditorMode::Md,
             line_wrap: true,
             code_block_wrap: false,
+            font_family: None,
+            mono_font_family: None,
+            font_size: DEFAULT_FONT_SIZE,
         }
     }
 }
+
+/// 编辑器内容字号的出厂默认（px）。TS 侧同值常量在 `src/typography.ts` 的
+/// `DEFAULT_FONT_SIZE`，CSS 层第三份写值是 `src/style.css` 的 `--editor-font-size` 默认
+/// `16px`：三处语义相同，各有断言钉住（两侧单测 + 默认口径的计算属性断言），改一处必须
+/// 同步其余两处（REVIEW.md 第 8 条）。
+pub const DEFAULT_FONT_SIZE: f64 = 16.0;
+
+/// 字号合法区间（含端点）：与前端步进命令的钳制区间同值（`src/typography.ts` 的
+/// `FONT_SIZE_MIN` / `FONT_SIZE_MAX`）。区间外一律回落默认值 + warning。
+pub const FONT_SIZE_MIN: f64 = 12.0;
+pub const FONT_SIZE_MAX: f64 = 32.0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, TS)]
 #[serde(rename_all = "lowercase")]
@@ -161,6 +205,13 @@ struct RawEditorConfig {
     /// 单测钉住，不发明「逐字段类型容忍」——那会与 `editor.mode` 形成同类不同治。
     line_wrap: Option<bool>,
     code_block_wrap: Option<bool>,
+    /// 排版三项（change typography-and-zoom）。前两项与 `mode` 同路：`Option<String>` 遇到
+    /// 类型不符（`"font_family": 16`）在解析期失败 → 整文件回落。
+    font_family: Option<String>,
+    mono_font_family: Option<String>,
+    /// **本仓第一个数值字段**：`"font_size": "16"`（带引号）同样在解析期失败 → 整文件回落，
+    /// 连 `last_vault` 一起丢（代价与替代形态见模块头「数值字段的打字代价」）。
+    font_size: Option<f64>,
 }
 
 /// 配置目录（ADR 0002 §5 路径规则）。无法确定 home 是唯一的致命错误。
@@ -274,6 +325,40 @@ fn validate(raw: RawConfig) -> (AppConfig, Vec<String>) {
     if let Some(value) = raw.editor.code_block_wrap {
         code_block_wrap = value;
     }
+    // 排版三项（typography-and-zoom）：两项字体族**只挡空串 / 纯空白**（→ None = 沿用基线 +
+    // warning），值的 CSS 合法性由前端 `CSS.supports` 判定（形状在此、语义在前端的既有分层）；
+    // 字号按区间 [12, 32] 判定，越界回落默认 + warning（照 editor.mode 的模板）。
+    let font_family = match raw.editor.font_family.as_deref().map(str::trim) {
+        None => None,
+        Some("") => {
+            warnings
+                .push("配置项 editor.font_family 为空（或纯空白），已回退为基线字体".to_string());
+            None
+        }
+        Some(value) => Some(value.to_string()),
+    };
+    let mono_font_family = match raw.editor.mono_font_family.as_deref().map(str::trim) {
+        None => None,
+        Some("") => {
+            warnings.push(
+                "配置项 editor.mono_font_family 为空（或纯空白），已回退为基线等宽字体".to_string(),
+            );
+            None
+        }
+        Some(value) => Some(value.to_string()),
+    };
+    let mut font_size = defaults.editor.font_size;
+    if let Some(value) = raw.editor.font_size {
+        // 区间判定同时挡 NaN（`contains` 对 NaN 为 false）。类型不符（`"font_size": "16"`）
+        // 到不了这里——它在 serde 解析期就已经让整份配置回落，单测钉住那条边界。
+        if (FONT_SIZE_MIN..=FONT_SIZE_MAX).contains(&value) {
+            font_size = value;
+        } else {
+            warnings.push(format!(
+                "配置项 editor.font_size 取值 {value} 超出合法区间 [{FONT_SIZE_MIN}, {FONT_SIZE_MAX}]，已回退为 {DEFAULT_FONT_SIZE}"
+            ));
+        }
+    }
 
     let (keys, mut key_warnings) = validate_keys(raw.keys);
     warnings.append(&mut key_warnings);
@@ -289,6 +374,9 @@ fn validate(raw: RawConfig) -> (AppConfig, Vec<String>) {
                 mode,
                 line_wrap,
                 code_block_wrap,
+                font_family,
+                mono_font_family,
+                font_size,
             },
             keys,
             log,
@@ -647,6 +735,119 @@ mod tests {
             snap.config.last_vault, None,
             "同一份文件里的合法字段同样落回默认"
         );
+        assert_eq!(snap.warnings.len(), 1, "{:?}", snap.warnings);
+        assert!(snap.warnings[0].contains("不是合法 JSON"));
+    }
+
+    #[test]
+    fn missing_editor_typography_fields_take_defaults() {
+        // 老配置文件（typography-and-zoom 之前写入）没有这三项：两项字体族 = None（沿用基线）、
+        // font_size = 16、不产生 warning（比照 missing_editor_wrap_fields_take_defaults）。
+        let f = TempFile::new(r#"{"version":1,"editor":{"mode":"md"}}"#);
+        let snap = load_from(&f.0);
+        assert_eq!(snap.config.editor.font_family, None);
+        assert_eq!(snap.config.editor.mono_font_family, None);
+        assert_eq!(snap.config.editor.font_size, DEFAULT_FONT_SIZE);
+        assert!(snap.warnings.is_empty(), "{:?}", snap.warnings);
+    }
+
+    #[test]
+    fn explicit_editor_typography_fields_are_loaded() {
+        // 合法值：字体族原样透传给前端（含逗号与引号的字体栈写法；两侧空白被 trim），
+        // 字号取区间内的值。无 warning。
+        let f = TempFile::new(
+            r#"{"editor":{"font_family":"  \"LXGW WenKai\", -apple-system, sans-serif  ","mono_font_family":"\"JetBrains Mono\", ui-monospace, monospace","font_size":20}}"#,
+        );
+        let snap = load_from(&f.0);
+        assert_eq!(
+            snap.config.editor.font_family.as_deref(),
+            Some("\"LXGW WenKai\", -apple-system, sans-serif")
+        );
+        assert_eq!(
+            snap.config.editor.mono_font_family.as_deref(),
+            Some("\"JetBrains Mono\", ui-monospace, monospace")
+        );
+        assert_eq!(snap.config.editor.font_size, 20.0);
+        assert!(snap.warnings.is_empty(), "{:?}", snap.warnings);
+    }
+
+    #[test]
+    fn font_size_interval_endpoints_are_accepted() {
+        // 区间闭区间（[12, 32]）：端点必须生效，不做「端点外」的误判。
+        for value in [FONT_SIZE_MIN, 16.0, FONT_SIZE_MAX] {
+            let f = TempFile::new(&format!(r#"{{"editor":{{"font_size":{value}}}}}"#));
+            let snap = load_from(&f.0);
+            assert_eq!(snap.config.editor.font_size, value);
+            assert!(snap.warnings.is_empty(), "{value}: {:?}", snap.warnings);
+        }
+    }
+
+    #[test]
+    fn empty_font_family_falls_back_to_baseline_with_warning() {
+        // 空串 / 纯空白 = 「沿用基线」这条正常状态之外的**笔误**：回落 None + warning；
+        // 同一份配置里的合法字段（font_size）照常生效（逐字段口径）。
+        for raw in ["", "   "] {
+            let f = TempFile::new(&format!(
+                r#"{{"editor":{{"font_family":"{raw}","mono_font_family":"  \n ","font_size":20}}}}"#
+            ));
+            let snap = load_from(&f.0);
+            assert_eq!(snap.config.editor.font_family, None);
+            assert_eq!(snap.config.editor.mono_font_family, None);
+            assert_eq!(snap.config.editor.font_size, 20.0, "合法字段不受影响");
+            assert_eq!(snap.warnings.len(), 2, "{raw:?}: {:?}", snap.warnings);
+            assert!(snap.warnings[0].contains("font_family"));
+            assert!(snap.warnings[1].contains("mono_font_family"));
+        }
+    }
+
+    #[test]
+    fn font_size_out_of_range_falls_back_per_field() {
+        // 越界只回落该字段（其余字段按配置生效），warning 恰一条且带区间读数。
+        for value in [8.0, 64.0, -1.0] {
+            let f = TempFile::new(&format!(
+                r#"{{"editor":{{"font_size":{value},"line_wrap":false,"font_family":"Inter"}}}}"#
+            ));
+            let snap = load_from(&f.0);
+            assert_eq!(
+                snap.config.editor.font_size, DEFAULT_FONT_SIZE,
+                "{value} 应回落默认"
+            );
+            assert!(!snap.config.editor.line_wrap, "其余字段按配置生效");
+            assert_eq!(snap.config.editor.font_family.as_deref(), Some("Inter"));
+            assert_eq!(snap.warnings.len(), 1, "{value}: {:?}", snap.warnings);
+            assert!(snap.warnings[0].contains("font_size"));
+            assert!(snap.warnings[0].contains("12"));
+            assert!(snap.warnings[0].contains("32"));
+        }
+    }
+
+    #[test]
+    fn wrong_type_font_size_falls_back_entire_file() {
+        // 边界如实记录（design §2.1、§4-4，tasks 2.3 ①）：`font_size` 是本仓第一个数值字段，
+        // 错打成字符串会在 serde 解析期失败 → **整文件回落**（全部字段回默认，连 last_vault
+        // 一起丢），warning 恰一条。MUST NOT 出现「一部分字段按配置、一部分按默认」的混合态。
+        let f = TempFile::new(
+            r#"{"last_vault":"/tmp/vault","editor":{"font_size":"16","font_family":"Inter","mode":"code","line_wrap":false}}"#,
+        );
+        let snap = load_from(&f.0);
+        assert_eq!(snap.config, AppConfig::default(), "整份配置应落回默认");
+        assert_eq!(snap.config.editor.font_size, DEFAULT_FONT_SIZE);
+        assert_eq!(snap.config.editor.font_family, None);
+        assert_eq!(snap.config.editor.mode, EditorMode::Md);
+        assert!(snap.config.editor.line_wrap);
+        assert_eq!(snap.config.last_vault, None, "合法字段同样落回默认");
+        assert_eq!(snap.warnings.len(), 1, "{:?}", snap.warnings);
+        assert!(snap.warnings[0].contains("不是合法 JSON"));
+    }
+
+    #[test]
+    fn wrong_type_font_family_falls_back_entire_file() {
+        // 同一族的边界：`"font_family": 16`（值写成数字）也走整文件回落——`Option<String>`
+        // 与 `Option<f64>` 的解析失败路径一致（同类同路，不搞逐个字段的特殊处理）。
+        let f = TempFile::new(r#"{"editor":{"font_family":16,"font_size":20}}"#);
+        let snap = load_from(&f.0);
+        assert_eq!(snap.config, AppConfig::default());
+        assert_eq!(snap.config.editor.font_size, DEFAULT_FONT_SIZE);
         assert_eq!(snap.warnings.len(), 1, "{:?}", snap.warnings);
         assert!(snap.warnings[0].contains("不是合法 JSON"));
     }
