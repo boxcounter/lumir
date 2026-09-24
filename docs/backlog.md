@@ -1338,4 +1338,30 @@
   `info.attach` 产物（`tests/visual/test-results/`，git 外）。
 - 2026-09-25：**backlog #27 / #31 核销**（M213）：#27 补 `typography` 的 MODIFIED delta ×4（16px → D1 的
   15px 锚 + 新 token 名），#31 由 R2b 修 `.cm-lp-end-marker` 的字号基准 + M213 补「正文放大后标记随之缩放」
-  的双档门禁断言。两条的详细落点见各自条目。
+  的双档门禁断言。两条的详细落点见各自条目。- 2026-09-25：**mermaid 不随主题**（M214 finding，bug，待立项）：三主题取色全同（`#ECECFF` 填充 /
+  `#333` 文字连线箭头）——dark 下连线箭头对比度 **1.07**（几乎不可见）、eink 下 off-palette 淡紫。
+  20 张整页基线全是浅色主题，这层今天零机器防线。处置方向：mermaid themeVariables 随 `data-theme`
+  换档（继承 currentColor 与底色 token 的口径在 design §4 未决项 3 已预留），立项时附 M214 的三主题
+  裁切证据（`test-results/m214/peripheral/content-types-{dark,eink}-mermaid.png`）。
+- 2026-09-25：**0.001 容差实测吞掉小元素删除**（M214 finding，improve）：§8.4 假绿防线删 modeline
+  右段，像素差 **199 px** < 预算 960 ⇒ 像素层通过，拦住它的是 R3 新加的结构断言。建议：为
+  `.modeline-*` 级别的小元素补**元素级**基线（元素 crop 的像素预算远小于整页），或按元素重要度
+  分级预算。与既有「整页 0.001 容差」条目（mermaid 952/960 同族）合并阅读。
+- 2026-09-25：**搜索面板 / lightbox / toast 无视觉基线覆盖**（M214 登记，tower 裁决口径）：34 张
+  基线里这三个周边表面零覆盖。M214 按「缺的补拍」在**证据层**补（`test-results/m214/peripheral/`
+  36 张补拍，不改场景文件、基线保持 34 张）供 Alex 过目；**真基线化（补场景 + 基线，张数 37+）
+  待立项**——立项即场景文件归 tests/visual/scenes/、基线随下一次 Alex 过目批入库。
+- 2026-09-25：**code 模式行号与代码列之间 150px 空档**（M212 finding，improve，待裁决）：栏宽从
+  80% 改定值 664 后，code 模式（`minmax(max-content, 1fr)`）的行号 gutter 与代码列之间出现约
+  150px 空档（百分比时代被弹性吸收）。取舍方向：code 模式栏宽跟随 664 定值 / 维持 max-content /
+  或 gutter 右对齐。证据与读数在 `test-results/m212/`。
+- 2026-09-25：**段落间距 / 标题间距未按 tokens 文档落地**（M212 finding，improve）：正文段落间距
+  与标题间距仍是旧基线的绝对值，未换成 tokens 文档的间距阶梯（sp-4 段落 / h2 20-0-6 等出处值）。
+  非观感事故（R3 结构层与 M214 像素层均以此为准重建），属 tokens 落地的残余面，立项时按
+  design-tokens-v1.md §间距阶梯逐处对。
+- 2026-09-25：**restyle R4 基线过目包已备齐待 Alex**（M214，唯一挂起项）：34 张一次性重建
+  （`--update-snapshots=all`，mtimes 同批）+ 逐张差异读数（34/34 远超容差，无静默假绿）+ 删除元素
+  核对（24 张必须刷新全刷新）+ 假绿防线（已还原）+ 过目入口 `test-results/m214/index.html`
+  （旧→新对照 + 变化原因 + 定稿图指向）。**Alex 逐张过目批准后**：resume worker-restyle-r4-baseline
+  入库（基线提交 → sha256 逐张与 `baselines-after/sha256.txt` 对账 → 全量门禁绿 → 评审 → 合并），
+  流程按 M164/M199 立范。worker 与 wt-214 待命不释放。
