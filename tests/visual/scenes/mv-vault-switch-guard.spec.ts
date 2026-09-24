@@ -42,7 +42,7 @@ async function makeDirty(page: Page): Promise<void> {
   await expect(page.locator(".cm-content")).toContainText("Demo Vault");
   await page.locator(".cm-content").click();
   await page.keyboard.type("EDITED-A");
-  await expect(page.locator(".masthead-file")).toContainText("未保存");
+  await expect(page.locator(".modeline-path")).toContainText("未保存");
 }
 
 /** 打开浮层并点目标 vault 那一行，等 dirty 拦截浮条出现。 */
@@ -80,7 +80,7 @@ test("出口「取消」：留在当前 vault，不写盘也不丢内容", async
   await expect(guard(page)).toHaveCount(0);
   await expect(page.locator(".ft-vault-name")).toHaveText("demo-vault");
   await expect(page.locator(".cm-content")).toContainText("EDITED-A");
-  await expect(page.locator(".masthead-file")).toContainText("未保存");
+  await expect(page.locator(".modeline-path")).toContainText("未保存");
   expect((await documentWrites(page)).filter((c) => c.content.includes("EDITED-A"))).toHaveLength(0);
 });
 

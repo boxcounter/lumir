@@ -6,18 +6,18 @@ import { readDocument } from "./parity-checks";
 import { highlightCode } from "../../../src/preview/code";
 
 // 代码块着色（M138）：markdown 文档内的围栏代码块按 info string 走 legacy-modes
-// 流式 parser。配色只用单套排版基线的既有 editorial token（与 editor.ts 的 code
-// 模式同色）——本文件先做不依赖 DOM 的 token 级断言，再验 chromium 侧的实际渲染色。
+// 流式 parser。配色只用四个语法高亮 token（--tk-k/s/n/c，与 editor.ts 的 code 模式
+// 逐 role 同值）——restyle 起不再借用 callout 色，见 src/preview/theme.ts 的 `.cm-lp-tok-*`。
 const source = readFileSync(new URL("../fixtures/render-codeblock/languages.md", import.meta.url), "utf8");
 
 const COLOR = {
-  accent: "rgb(178, 58, 44)", // --accent（关键字）
-  tip: "rgb(90, 122, 63)", // --callout-tip（字符串）
-  warning: "rgb(160, 94, 28)", // --callout-warning（数字/atom）
-  dim: "rgb(141, 132, 113)", // --dim（注释）
-  note: "rgb(79, 111, 143)", // --callout-note（属性）
-  abstract: "rgb(61, 122, 118)", // --callout-abstract（类型/标签）
-  text: "rgb(38, 34, 25)", // --text（正文）
+  keyword: "rgb(58, 95, 205)", // --tk-k（关键字）
+  property: "rgb(58, 95, 205)", // --tk-k（属性名：与关键字同色，键与字符串值仍不同色）
+  type: "rgb(58, 95, 205)", // --tk-k（类型 / 标签）
+  string: "rgb(44, 122, 77)", // --tk-s（字符串）
+  literal: "rgb(160, 110, 15)", // --tk-n（数字 / atom）
+  comment: "rgb(169, 167, 155)", // --tk-c（注释）
+  text: "rgb(33, 32, 26)", // --text（正文）
 };
 const ALLOWED = new Set(Object.values(COLOR));
 
@@ -234,17 +234,17 @@ test("≥5 种语言着色，未知/无标识保持纯文本，配色不越出 e
 
   // 每种语言至少一处 token 落色；这里同时钉住「哪一类 token 取哪个 token 色」
   const cases: Array<[string, string, string, string]> = [
-    ["fn main() -> i32", "fn", "cm-lp-tok-keyword", COLOR.accent],
-    ["let total = 42", "42", "cm-lp-tok-literal", COLOR.warning],
-    ["// 注释", "// 注释", "cm-lp-tok-comment", COLOR.dim],
-    ["const limit: number = 42", "const", "cm-lp-tok-keyword", COLOR.accent],
-    ["const limit: number = 42", "number", "cm-lp-tok-type", COLOR.abstract],
-    [`return \`hello \${name}\``, "`hello ${", "cm-lp-tok-string", COLOR.tip],
-    ["def greet(name: str) -> str:", "def", "cm-lp-tok-keyword", COLOR.accent],
-    [`return f"hello {name}"`, '"hello ', "cm-lp-tok-string", COLOR.tip],
-    [`echo "hello" | wc -l`, '"hello"', "cm-lp-tok-string", COLOR.tip],
-    [`echo "hello" | wc -l`, "-l", "cm-lp-tok-property", COLOR.note],
-    [`{"name": "lumir", "count": 3}`, "3", "cm-lp-tok-literal", COLOR.warning],
+    ["fn main() -> i32", "fn", "cm-lp-tok-keyword", COLOR.keyword],
+    ["let total = 42", "42", "cm-lp-tok-literal", COLOR.literal],
+    ["// 注释", "// 注释", "cm-lp-tok-comment", COLOR.comment],
+    ["const limit: number = 42", "const", "cm-lp-tok-keyword", COLOR.keyword],
+    ["const limit: number = 42", "number", "cm-lp-tok-type", COLOR.type],
+    [`return \`hello \${name}\``, "`hello ${", "cm-lp-tok-string", COLOR.string],
+    ["def greet(name: str) -> str:", "def", "cm-lp-tok-keyword", COLOR.keyword],
+    [`return f"hello {name}"`, '"hello ', "cm-lp-tok-string", COLOR.string],
+    [`echo "hello" | wc -l`, '"hello"', "cm-lp-tok-string", COLOR.string],
+    [`echo "hello" | wc -l`, "-l", "cm-lp-tok-property", COLOR.property],
+    [`{"name": "lumir", "count": 3}`, "3", "cm-lp-tok-literal", COLOR.literal],
   ];
   for (const [line, text, cls, color] of cases) {
     const spans = await tokenSpans(page, line);
@@ -262,10 +262,10 @@ test("≥5 种语言着色，未知/无标识保持纯文本，配色不越出 e
   const jsonSpans = await tokenSpans(page, `{"name": "lumir"`);
   const jsonKey = jsonSpans.find((span) => span.text === '"name"');
   expect(jsonKey?.cls).toContain("cm-lp-tok-property");
-  expect(jsonKey?.color).toBe(COLOR.note);
+  expect(jsonKey?.color).toBe(COLOR.property);
   const jsonValue = jsonSpans.find((span) => span.text === '"lumir"');
   expect(jsonValue?.cls).toBe("cm-lp-tok-string");
-  expect(jsonValue?.color).toBe(COLOR.tip);
+  expect(jsonValue?.color).toBe(COLOR.string);
 
   // 未知语言（`text`）与无 info 的围栏：不着色
   for (const line of ["fenced code -- source stays literal", "no info string stays plain"]) {
@@ -343,12 +343,12 @@ test("DOM：同段 yaml 在围栏（yaml）与只读 .yml / .yaml 文件（code 
   await scrollToLine(page, "特殊维度");
   const fenceLine = await coloredTokens(page, "特殊维度", "name");
   expect(fenceLine).toEqual([
-    { text: "name", color: COLOR.note },
-    { text: "# 特殊维度：values 来自当月 _monthly.md", color: COLOR.dim },
+    { text: "name", color: COLOR.property },
+    { text: "# 特殊维度：values 来自当月 _monthly.md", color: COLOR.comment },
   ]);
   await scrollToLine(page, "key: goal");
   const fenceKeyLine = await coloredTokens(page, "key: goal", "key");
-  expect(fenceKeyLine).toEqual([{ text: "key", color: COLOR.note }]);
+  expect(fenceKeyLine).toEqual([{ text: "key", color: COLOR.property }]);
 
   // code 模式侧：只读文件，同一段 yaml（逐字节相同）
   for (const file of ["config.yml", "config.yaml"]) {
@@ -363,7 +363,7 @@ test("DOM：同段 yaml 在围栏（yaml）与只读 .yml / .yaml 文件（code 
   await page.locator('.ft-row[title="languages.md"]').click();
   await expect(page.locator(".cm-lp-tok-keyword").first()).toBeVisible();
   await scrollToLine(page, "key: category");
-  expect(await coloredTokens(page, "key: category", "key")).toEqual([{ text: "key", color: COLOR.note }]);
+  expect(await coloredTokens(page, "key: category", "key")).toEqual([{ text: "key", color: COLOR.property }]);
 });
 
 test("DOM：围栏 toml / yaml 的取色（键属性色、toml 的 atom 不跟着变）", async ({ page }) => {
@@ -385,17 +385,17 @@ test("DOM：围栏 toml / yaml 的取色（键属性色、toml 的 atom 不跟�
   //（键与数字、布尔同色 = 整块只出一种颜色），本断言即那条旧口径的反转。
   await scrollToLine(page, "特殊维度");
   expect(await coloredTokens(page, "特殊维度", "name")).toEqual([
-    { text: "name", color: COLOR.note },
-    { text: "# 特殊维度：values 来自当月 _monthly.md", color: COLOR.dim },
+    { text: "name", color: COLOR.property },
+    { text: "# 特殊维度：values 来自当月 _monthly.md", color: COLOR.comment },
   ]);
 
   // toml：表头 `[[hooks]]` 与布尔 `true` 取字面量色——`atom` 在 toml mode 有三处语义
   //（表头 / 布尔 / 日期），tokenTable 按 token 名映射、分不开，故本 change 明确不改 toml。
   await scrollToLine(page, "[[hooks]]");
-  expect(await coloredTokens(page, "[[hooks]]", "[[hooks]]")).toEqual([{ text: "[[hooks]]", color: COLOR.warning }]);
+  expect(await coloredTokens(page, "[[hooks]]", "[[hooks]]")).toEqual([{ text: "[[hooks]]", color: COLOR.literal }]);
   expect(await coloredTokens(page, "enabled = true", "enabled")).toEqual([
-    { text: "enabled", color: COLOR.note },
-    { text: "true", color: COLOR.warning },
+    { text: "enabled", color: COLOR.property },
+    { text: "true", color: COLOR.literal },
   ]);
 });
 
@@ -419,7 +419,7 @@ test("编辑态：块内输入即时着色，颜色不溢出到块外段落", as
     const spans = await page.locator(".cm-line", { hasText: "追加注释" }).evaluate((el) =>
       [...el.querySelectorAll<HTMLElement>("span")].filter((span) => (span.textContent ?? "").includes("追加注释")).map((span) => [span.className, getComputedStyle(span).color]),
     );
-    return spans.some(([cls, color]) => (cls as string).includes("cm-lp-tok-comment") && color === COLOR.dim);
+    return spans.some(([cls, color]) => (cls as string).includes("cm-lp-tok-comment") && color === COLOR.comment);
   }).toBe(true);
   expect(await readDocument(page)).toContain("// 追加注释");
 
@@ -457,7 +457,7 @@ async function openWrap(page: Page, editorConfig?: Record<string, unknown>): Pro
   if (editorConfig !== undefined) await patchEditorConfig(page, editorConfig);
   await page.goto("/");
   await page.locator('.ft-row[title="wrap.md"]').click();
-  await expect(page.locator(".masthead-file")).toHaveText("wrap.md");
+  await expect(page.locator(".modeline-path")).toHaveText("wrap.md");
   await expect.poll(() => configGets(page)).toBeGreaterThan(0);
   await page.waitForTimeout(80);
 }
@@ -738,7 +738,7 @@ test("容器不改变纵向节奏；滚到右端不露白底（底板取自 --bg
 
   // 底板：滚到最右后，容器右缘那一列的计算底色必须与代码行同色（滚出去的行盒不再覆盖那里）
   await page.locator('.ft-row[title="wrap.md"]').click();
-  await expect(page.locator(".masthead-file")).toHaveText("wrap.md");
+  await expect(page.locator(".modeline-path")).toHaveText("wrap.md");
   await scrollToLine(page, CODE_NEEDLE);
   const box = await codeContainer(page);
   const end = await scrollToEnd(page.locator(".cm-lp-codeblock-scroll", { hasText: CODE_NEEDLE }).first());
@@ -823,7 +823,7 @@ test("应用级口径（D1）：翻转作用于全部会话，新标签页取当
   });
   await page.goto("/");
   await page.locator('.ft-row[title="wrap.md"]').click();
-  await expect(page.locator(".masthead-file")).toHaveText("wrap.md");
+  await expect(page.locator(".modeline-path")).toHaveText("wrap.md");
   await expect.poll(() => configGets(page)).toBeGreaterThan(0);
   await page.waitForTimeout(80);
 
@@ -847,7 +847,7 @@ test("应用级口径（D1）：翻转作用于全部会话，新标签页取当
   await page.keyboard.type("x");
   await expect(page.locator(".tab")).toHaveCount(1);
   await page.locator('.ft-row[title="wrap2.md"]').click();
-  await expect(page.locator(".masthead-file")).toHaveText("wrap2.md");
+  await expect(page.locator(".modeline-path")).toHaveText("wrap2.md");
   await expect(page.locator(".tab")).toHaveCount(2);
 
   // 新标签页取**当前应用态**（D1：不是配置默认）
@@ -856,7 +856,7 @@ test("应用级口径（D1）：翻转作用于全部会话，新标签页取当
 
   // 切回标签 A：口径仍是翻转后的值（切标签不改变折行口径）
   await page.locator(".tab").first().click();
-  await expect(page.locator(".masthead-file")).toHaveText("wrap.md");
+  await expect(page.locator(".modeline-path")).toHaveText("wrap.md");
   await scrollToLine(page, CODE_NEEDLE);
   expect(await codeWhiteSpace(), "切标签 MUST NOT 改变折行口径").toBe("break-spaces");
 });

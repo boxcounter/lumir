@@ -162,10 +162,16 @@ test("盘上的位置在篇首：按篇首呈现，页首内边距不被顶出�
   await open(page, "long.md");
   expect(await scrollTop(page)).toBe(0);
   expect(await topVisibleLine(page)).toBe(FIRST_LINE);
-  // M110 的缺陷签名：用 scrollIntoView 带 margin 复位会把页首的 44px 内边距顶出画，
-  // 那时首行的字符盒顶会贴到容器顶（≈ 0）。这里必须仍在内边距之下。
+  // M110 的缺陷签名：用 scrollIntoView 带 margin 复位会把页首的内边距顶出画，
+  // 那时首行的字符盒顶会贴到容器顶（≈ 0）。这里必须仍落在内边距之内。
+  // 阈值**取自 token 的计算值**（`.cm-content` 的 `padding-block-start` = `--sp-11`，
+  // restyle 后 44px → 32px），不写死像素：写死会把「页面内边距档位」这一层复制进判据。
+  const paddingTop = await page
+    .locator(".cm-content")
+    .evaluate((el) => Number.parseFloat(getComputedStyle(el).paddingTop));
   const offsets = await anchorOffsets(page, 0);
-  expect(offsets.top).toBeGreaterThan(40);
+  expect(paddingTop).toBeGreaterThan(0);
+  expect(offsets.top).toBeGreaterThanOrEqual(paddingTop);
 });
 
 test("已经打开的标签不被盘上的位置拽走：只切标签，视口停在运行期的位置", async ({ page }) => {

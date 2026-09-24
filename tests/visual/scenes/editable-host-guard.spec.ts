@@ -29,7 +29,7 @@ async function openDirty(page: Page): Promise<void> {
   await stubTauri(page, VAULT);
   await page.goto("/");
   await page.locator('.ft-row[title="guard.md"]').click();
-  await expect(page.locator(".masthead-file")).toHaveText("guard.md");
+  await expect(page.locator(".modeline-path")).toHaveText("guard.md");
   await expect.poll(() => configGets(page)).toBeGreaterThan(0);
   await page.waitForTimeout(80);
   await page.locator(".cm-content").click();

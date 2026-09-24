@@ -3,12 +3,12 @@
 // 判据一律是**读数**（计算属性、px 值、几何、像素哈希），不是「某个函数被调用过」：
 // 本 change 的可见结果就是字号与字体本身，读数就是它的证据面（REVIEW.md 第 1 / 11 条）。
 //
-// 覆盖：默认口径零变化（1.1 的读数逐项复现）、配置生效且只作用于编辑器、非法值 / 未安装字体
-// 退化为基线、三条步进命令与上下限、重置回配置值、不落盘不碰 dirty、键位通路唯一、
-// 焦点在左栏同样命中、改字号后坐标 / 行高 / 标记宽度 / 光标可见性。
+// 覆盖：出厂口径读数（D1 裁决后的新基准：15px / 行高 1.7 / 标记 .9em）、配置生效且只作用于
+// 编辑器、非法值 / 未安装字体退化为基线、三条步进命令与上下限、重置回配置值、不落盘不碰 dirty、
+// 键位通路唯一、焦点在左栏同样命中、改字号后坐标 / 行高 / 标记宽度 / 光标可见性。
 //
-// 刻意**不为默认口径新增像素基线**（D6：新增基线只放非默认口径）——默认口径的零回归由既有
-// 30 张基线与本场景的计算属性读数共同守。
+// 刻意**不为出厂口径新增像素基线**（D6：新增基线只放非默认口径）——出厂口径的回归由既有
+// 整页基线与本场景的计算属性读数共同守。
 
 import { expect, test } from "@playwright/test";
 import type { Page } from "@playwright/test";
@@ -16,9 +16,9 @@ import { stubTauri } from "./tauri-stub";
 import { expectScreenshot } from "./expect-screenshot";
 import { readDocument } from "./parity-checks";
 
-/** 场景文档：标题（--font-display，不可配）+ 正文段落 + 短行列表（每行独占一行，供「点击落行」
- *  这类几何判据用——行行等高的短行让陈旧 heightmap 的落点错到别的行上，判据才有区分度）+
- *  围栏代码块（等宽族）。 */
+/** 场景文档：标题（改 sans 字重阶梯，restyle 后不再有独立的标题字族）+ 正文段落 +
+ *  短行列表（每行独占一行，供「点击落行」这类几何判据用——行行等高的短行让陈旧 heightmap
+ *  的落点错到别的行上，判据才有区分度）+ 围栏代码块（等宽族）。 */
 const DOC = [
   "# 排版标题",
   "",
@@ -41,9 +41,19 @@ const DOC = [
   "",
 ].join("\n");
 
-/** 基线族的**期望字面量**（= src/style.css 的 :root 默认值，即 change 之前的观感）。 */
-const BODY_BASELINE = '-apple-system, "PingFang SC", "Hiragino Sans GB", sans-serif';
+/** 基线族的**期望字面量**（= src/style.css 的 `--font-sans` / `--font-mono` 默认值）。
+ *  Chromium 序列化计算值时会按「同族取先出现的那个 + 别名归一」处理：`BlinkMacSystemFont` 与
+ *  `-apple-system` 同族，序列化后写成 `"system-ui"`。因此这里的字面量是**归一后**的形态。 */
+const BODY_BASELINE = '-apple-system, "system-ui", "SF Pro Text", "Helvetica Neue", "PingFang SC", "Hiragino Sans GB", sans-serif';
+/** `--font-sans` 的**原文**（不归一）：`applyTypography` 把用户值 + 后备栈**逐字**写进
+ *  `documentElement.style`，inline 的 token 值因此保留 `BlinkMacSystemFont`。
+ *  两种形态各有一条断言面：计算值比归一后的串，inline token 比原文串。 */
+const BODY_STACK_RAW = '-apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", "PingFang SC", "Hiragino Sans GB", sans-serif';
 const MONO_BASELINE = 'ui-monospace, "SF Mono", Menlo, monospace';
+
+/** 出厂正文锚（D1 裁决 = 15px）与行高比（`--lh-reading` = 1.7）——本场景多处按它换算。 */
+const BASE_FONT_SIZE = 15;
+const BASE_LINE_HEIGHT_RATIO = 1.7;
 
 interface TypographyConfig {
   font_family?: string | null;
@@ -61,7 +71,7 @@ async function open(page: Page, options: { config?: TypographyConfig; text?: str
   });
   await page.goto("/");
   await page.locator('.ft-row[title="doc.md"]').click();
-  await expect(page.locator(".masthead-file")).toHaveText("doc.md");
+  await expect(page.locator(".modeline-path")).toHaveText("doc.md");
   await expect(page.locator(".cm-lp-list-marker").first()).toBeVisible();
   // 等配置装载完成（applyTypography 在 config_get 的回调里，晚于首帧）
   await expect.poll(() => page.evaluate(() => (window as never as { __configGets: number }).__configGets)).toBeGreaterThan(0);
@@ -76,7 +86,7 @@ async function readings(page: Page) {
     const codeLine = document.querySelector(".cm-lp-codeblock-line")!;
     const heading = document.querySelector(".cm-lp-h1")!;
     const ftRow = document.querySelector(".ft-row:not(.ft-dir)")!;
-    const masthead = document.querySelector(".masthead")!;
+    const modeline = document.querySelector(".modeline")!;
     const line = [...document.querySelectorAll(".cm-line")].find((el) =>
       (el.textContent ?? "").includes("delta four"),
     )!;
@@ -91,11 +101,12 @@ async function readings(page: Page) {
       listMarkerWidth: marker.getBoundingClientRect().width,
       codeLineFontFamily: getComputedStyle(codeLine).fontFamily,
       headingFontFamily: getComputedStyle(heading).fontFamily,
+      headingFontWeight: getComputedStyle(heading).fontWeight,
       singleLineHeight: line.getBoundingClientRect().height,
       // shell 侧（MUST NOT 受排版配置影响）
       fileTreeRowFontSize: getComputedStyle(ftRow).fontSize,
       fileTreeRowFontFamily: getComputedStyle(ftRow).fontFamily,
-      mastheadFontFamily: getComputedStyle(masthead).fontFamily,
+      modelineFontFamily: getComputedStyle(modeline).fontFamily,
       rootInlineTokens: {
         size: document.documentElement.style.getPropertyValue("--editor-font-size"),
         family: document.documentElement.style.getPropertyValue("--editor-font-family"),
@@ -232,21 +243,23 @@ async function caretGeometry(page: Page, needle: string) {
 // 默认口径：与 change 之前的读数逐项相同
 // ---------------------------------------------------------------------------
 
-test("缺省配置 = change 之前的观感（默认口径零变化）", async ({ page }) => {
+test("缺省配置即出厂口径（D1 = 15px / 行高 1.7 / 标记 .9em）", async ({ page }) => {
   await watchCanvasFont(page);
   await open(page);
   const now = await readings(page);
-  // 1.1 的现状读数（落 test-results/m195/typography-before/readings.json）逐项复现
-  expect(now.contentFontSize).toBe("16px");
+  // M195 的现状读数（落 test-results/m195/typography-before/readings.json）在 restyle 后按新
+  // 基准逐项平移：字号 16→15（D1 裁决）、行高 1.75→1.7、列表标记 .85em→.9em（tokens 阶梯的
+  // 13.5px 档）。判据仍是「读到的字面量」，只是字面量本身换了。
+  expect(now.contentFontSize).toBe(`${BASE_FONT_SIZE}px`);
   expect(now.contentFontFamily).toBe(BODY_BASELINE);
-  expect(now.contentLineHeight).toBe("28px");
+  expect(now.contentLineHeight).toBe(`${BASE_FONT_SIZE * BASE_LINE_HEIGHT_RATIO}px`);
   expect(now.editorFontFamily).toBe(BODY_BASELINE);
   expect(now.listMarkerFontFamily).toBe(MONO_BASELINE);
-  expect(now.listMarkerFontSize).toBe("13.6px");
+  expect(now.listMarkerFontSize).toBe(`${BASE_FONT_SIZE * 0.9}px`);
   expect(now.codeLineFontFamily).toBe(MONO_BASELINE);
-  expect(now.singleLineHeight).toBeCloseTo(28, 1);
-  // 唯一的写值点是 --editor-font-size（16px），字体族 token 未被写入（沿用 :root 的 var() 引用）
-  expect(now.rootInlineTokens.size).toBe("16px");
+  expect(now.singleLineHeight).toBeCloseTo(BASE_FONT_SIZE * BASE_LINE_HEIGHT_RATIO, 1);
+  // 唯一的写值点是 --editor-font-size（15px），字体族 token 未被写入（沿用 :root 的 var() 引用）
+  expect(now.rootInlineTokens.size).toBe(`${BASE_FONT_SIZE}px`);
   expect(now.rootInlineTokens.family).toBe("");
   expect(now.rootInlineTokens.mono).toBe("");
 
@@ -255,7 +268,7 @@ test("缺省配置 = change 之前的观感（默认口径零变化）", async (
   expect(canvasFont, "列表标记的 canvas 测量必须真的跑过").not.toBeNull();
   const [sizePart, familyPart] = [canvasFont!.slice(0, canvasFont!.indexOf("px")), canvasFont!.slice(canvasFont!.indexOf("px ") + 3)];
   expect(familyPart).toBe(now.listMarkerFontFamily);
-  expect(parseFloat(sizePart)).toBeCloseTo(parseFloat(now.contentFontSize) * 0.85, 6);
+  expect(parseFloat(sizePart)).toBeCloseTo(parseFloat(now.contentFontSize) * 0.9, 6);
 });
 
 test("配置生效且只作用于编辑器（正文 / 等宽 / 字号各自取到新值，shell 逐项不变）", async ({ page, context }) => {
@@ -274,17 +287,21 @@ test("配置生效且只作用于编辑器（正文 / 等宽 / 字号各自取�
   // 配置值 + 基线后备栈（「本机没装这个字体」退化成基线观感，而不是浏览器默认字体）
   expect(after.contentFontFamily).toBe(`"LXGW WenKai", ${BODY_BASELINE}`);
   expect(after.contentFontSize).toBe("20px");
-  expect(after.contentLineHeight).toBe("35px"); // 无单位行高 1.75 随字号等比
+  expect(after.contentLineHeight).toBe("34px"); // 无单位行高 1.7 随字号等比
   expect(after.listMarkerFontFamily).toBe(`"JetBrains Mono", ${MONO_BASELINE}`);
   expect(after.codeLineFontFamily).toBe(`"JetBrains Mono", ${MONO_BASELINE}`);
-  expect(after.listMarkerFontSize).toBe("17px"); // .85em
-  // 标题族不可配（D3）：配置正文族 MUST NOT 影响 --font-display 的引用者
-  expect(after.headingFontFamily).toBe(before.headingFontFamily);
-  // shell（左栏文件树 / masthead）逐项不变——「配置只影响编辑器」由 token 分层保证
+  expect(after.listMarkerFontSize).toBe("18px"); // .9em
+  // 标题族：restyle 起标题**没有独立字族**（`--font-display` 随 token 层删除，h1–h6 改 sans
+  // 字重阶梯）——标题族因此随正文族走（配了正文字族时一起变，这是「编辑器即阅读表面」的应有
+  // 形态），不可配的是**字重阶梯**：它取自非色 token（`--fw-*` 是绝对值，不随字号/字族变）。
+  expect(after.headingFontFamily).toBe(after.contentFontFamily);
+  expect(after.headingFontWeight).toBe(before.headingFontWeight);
+  expect(after.headingFontWeight).toBe("650");
+  // shell（左栏文件树 / modeline）逐项不变——「配置只影响编辑器」由 token 分层保证
   expect(after.fileTreeRowFontSize).toBe(before.fileTreeRowFontSize);
   expect(after.fileTreeRowFontFamily).toBe(before.fileTreeRowFontFamily);
-  expect(after.mastheadFontFamily).toBe(before.mastheadFontFamily);
-  expect(after.rootInlineTokens.family).toBe(`"LXGW WenKai", ${BODY_BASELINE}`);
+  expect(after.modelineFontFamily).toBe(before.modelineFontFamily);
+  expect(after.rootInlineTokens.family).toBe(`"LXGW WenKai", ${BODY_STACK_RAW}`);
   expect(after.rootInlineTokens.mono).toBe(`"JetBrains Mono", ${MONO_BASELINE}`);
 
   // 非默认口径的**新增**基线（只增不改，待 Alex 过目后才生效；D6）
@@ -346,21 +363,21 @@ test("语法合法但未安装的字族：按基线后备栈呈现，观感与�
 
 test("⌘= / ⌘− / ⌘0 逐档变化，且不写文档、不碰 dirty、不新增写类 invoke", async ({ page }) => {
   await open(page);
-  expect(await contentFontSize(page)).toBe(16);
+  expect(await contentFontSize(page)).toBe(BASE_FONT_SIZE);
   await page.locator(".cm-content").click();
   const before = await invokeLog(page);
   const dirtyBefore = await page.evaluate(() => [...((window as never as { __dirtyReports: boolean[] }).__dirtyReports ?? [])]);
 
   await page.keyboard.press("Meta+Equal");
-  expect(await contentFontSize(page)).toBe(18);
+  expect(await contentFontSize(page)).toBe(17);
   await page.keyboard.press("Meta+Equal");
-  expect(await contentFontSize(page)).toBe(20);
+  expect(await contentFontSize(page)).toBe(19);
   await page.keyboard.press("Meta+Equal");
-  expect(await contentFontSize(page)).toBe(22);
+  expect(await contentFontSize(page)).toBe(21);
   await page.keyboard.press("Meta+Minus");
-  expect(await contentFontSize(page)).toBe(20);
+  expect(await contentFontSize(page)).toBe(19);
   await page.keyboard.press("Meta+Digit0");
-  expect(await contentFontSize(page)).toBe(16);
+  expect(await contentFontSize(page)).toBe(BASE_FONT_SIZE);
 
   expect(await readDocument(page)).toContain("delta four");
   const added = (await invokeLog(page)).slice(before.length);
@@ -391,10 +408,10 @@ test("上下限：到界后继续按无变化、无提示、不报错", async ({
     ),
   ).toBe(0);
   await page.keyboard.press("Meta+Digit0");
-  expect(await contentFontSize(page)).toBe(16);
+  expect(await contentFontSize(page)).toBe(BASE_FONT_SIZE);
 });
 
-test("⌘0 回到**配置值**（不是出厂 16px）", async ({ page }) => {
+test("⌘0 回到**配置值**（不是出厂 15px）", async ({ page }) => {
   await open(page, { config: { font_size: 18 } });
   expect(await contentFontSize(page)).toBe(18);
   await page.locator(".cm-content").click();
@@ -416,9 +433,9 @@ test("焦点在左栏文件树上：⌘= 同样命中（作用域 global）", as
     "点击左栏空白后焦点不应在编辑器内容区",
   ).toBe(false);
   await page.keyboard.press("Meta+Equal");
-  expect(await contentFontSize(page)).toBe(18);
+  expect(await contentFontSize(page)).toBe(17);
   await page.keyboard.press("Meta+Digit0");
-  expect(await contentFontSize(page)).toBe(16);
+  expect(await contentFontSize(page)).toBe(BASE_FONT_SIZE);
 });
 
 test("键位通路唯一：窗口级 keydown 监听只有统一键位表这一条", async ({ page }) => {
@@ -430,7 +447,7 @@ test("键位通路唯一：窗口级 keydown 监听只有统一键位表这一�
   expect(listeners.length, `窗口级 keydown 监听：${listeners.join(", ")}`).toBe(1);
   await page.locator(".cm-content").click();
   await page.keyboard.press("Meta+Equal");
-  expect(await contentFontSize(page), "唯一那条监听就是统一键位表（⌘= 命中放大一档）").toBe(18);
+  expect(await contentFontSize(page), "唯一那条监听就是统一键位表（⌘= 命中放大一档）").toBe(17);
 });
 
 // ---------------------------------------------------------------------------
@@ -452,16 +469,16 @@ test("改字号后：行高与字号一致、点中该行落点正确、标记�
   });
   const caretBefore = await caretGeometry(page, "foxtrot six");
   expect(caretBefore.headText).toContain("foxtrot six");
-  for (let i = 0; i < 7; i++) await page.keyboard.press("Meta+Equal"); // 16 → 32
+  for (let i = 0; i < 8; i++) await page.keyboard.press("Meta+Equal"); // 15 → 31 → 触顶 32
   await page.waitForTimeout(60);
   const after = await readings(page);
   expect(after.contentFontSize).toBe("32px");
-  // 行高 = 字号 × 1.75（单行行盒几何）
-  expect(after.singleLineHeight).toBeCloseTo(32 * 1.75, 1);
-  expect(after.singleLineHeight / before.singleLineHeight).toBeCloseTo(2, 2);
-  // 列表标记宽度按新字号重测：它由 canvas 量出的「0」宽 × 组宽算出，字号翻倍即等比放大。
+  // 行高 = 字号 × 1.7（单行行盒几何）
+  expect(after.singleLineHeight).toBeCloseTo(32 * BASE_LINE_HEIGHT_RATIO, 1);
+  expect(after.singleLineHeight / before.singleLineHeight).toBeCloseTo(32 / BASE_FONT_SIZE, 2);
+  // 列表标记宽度按新字号重测：它由 canvas 量出的「0」宽 × 组宽算出，字号按比例放大即等比放大。
   // 这条读数在**没有重测**时会停在旧值（比值 1.0）——判据有区分度。
-  expect(after.listMarkerWidth / before.listMarkerWidth).toBeCloseTo(2, 1);
+  expect(after.listMarkerWidth / before.listMarkerWidth).toBeCloseTo(32 / BASE_FONT_SIZE, 1);
   // 测量与渲染同源（非默认字号同样成立）
   const canvasAfter = await lastCanvasFont(page);
   expect(canvasAfter).not.toBe(canvasBefore);
@@ -502,7 +519,7 @@ test("改字号后：行高与字号一致、点中该行落点正确、标记�
     expect(caretHeight).toBeGreaterThan(0);
     expect(
       caretHeight / (caretBefore.coords!.bottom - caretBefore.coords!.top),
-    ).toBeCloseTo(2, 1);
+    ).toBeCloseTo(32 / BASE_FONT_SIZE, 1);
   }
 });
 
@@ -551,13 +568,13 @@ test("改字号后光标仍在视口内（长文档 + 光标在视口下部）",
   expect(before.visible, "初始：光标在视口内").toBe(true);
   const scrollBefore = before.scrollTop;
 
-  for (let i = 0; i < 4; i++) await page.keyboard.press("Meta+Equal"); // 16 → 24（每行高 ×1.5）
+  for (let i = 0; i < 5; i++) await page.keyboard.press("Meta+Equal"); // 15 → 25（每行高 ×1.67）
   await page.waitForTimeout(120);
-  expect(await contentFontSize(page)).toBe(24);
+  expect(await contentFontSize(page)).toBe(25);
   const after = await caretState();
   expect(after.headText, "光标 MUST NOT 被挪到别处（例如篇首）").toBe(before.headText);
   expect(
     after.visible,
-    `字号 16→24 后光标应仍在视口内（读数：${JSON.stringify(after)}，改动前 scrollTop=${scrollBefore}）`,
+    `字号 15→25 后光标应仍在视口内（读数：${JSON.stringify(after)}，改动前 scrollTop=${scrollBefore}）`,
   ).toBe(true);
 });

@@ -34,19 +34,25 @@ function tableGeometry(page: import("@playwright/test").Page) {
 }
 
 test("欠宽方向：栏宽有富余时 cell 不折行，表格贴合内容自然宽", async ({ page }) => {
-  // 回归（用户桌面报告）：34 字 CJK cell 自然宽约 500px < 栏宽 764px，旧 352px
-  // 封顶把它钳成两行折行（行高 55px）且整表仅 417px——「折行却收缩」。
-  const source = `| 名称 | 说明 |\n| --- | --- |\n| alpha | ${"说".repeat(34)} |\n`;
+  // 回归（用户桌面报告）：34 字 CJK cell 自然宽约 500px < 栏宽，旧 352px 封顶把它钳成两行
+  // 折行（行高 55px）且整表仅 417px——「折行却收缩」。
+  //
+  // 填充字数从 34 收到 30（restyle 后）：栏宽落法从 `--measure: 80%` 改成定值 664px
+  // （文字实测宽 576px，见 src/editor.ts 的 `.cm-content` 注释），「有富余」的区间因此窄了；
+  // 而首列字重 550 让 cell 的 `min-inline-size: 7ch` 略增（`ch` 随字重变宽）——34 字时自然宽
+  // 579px 恰好越过 576px，本用例就从「贴合不横滚」掉进「横滚」档。30 字仍在同一判据档内
+  // （自然宽 > 460 且 < 文字宽），用例守的合同（贴合内容、不折行、不横滚）不变。
+  const source = `| 名称 | 说明 |\n| --- | --- |\n| alpha | ${"说".repeat(30)} |\n`;
   await openDoc(page, "narrow.md", source);
   await expect(page.locator(".cm-lp-table-scroll")).toHaveCount(1);
   const geo = await tableGeometry(page);
   expect(geo.tracks).toHaveLength(2);
   // 不折行：数据行保持单行高度（折行时约 55px，单行约 33px）
   expect(geo.rowHeight).toBeLessThan(45);
-  // 贴合内容：自然宽（旧封顶口径约 417px）之上、栏宽之下
+  // 贴合内容：自然宽（旧封顶口径约 417px）之上、文字宽之下
   expect(geo.tableWidth).toBeGreaterThan(460);
-  expect(geo.tableWidth).toBeLessThan(geo.contentWidth);
-  // 未超出栏宽：无需横向滚动
+  expect(geo.tableWidth).toBeLessThan(geo.clientWidth);
+  // 未超出文字宽：无需横向滚动
   expect(geo.scrollWidth).toBeLessThanOrEqual(geo.clientWidth + 1);
   expect(await readDocument(page)).toBe(source);
 
@@ -60,7 +66,7 @@ test("欠宽方向：栏宽有富余时 cell 不折行，表格贴合内容自�
 });
 
 test("超宽方向：自然宽超栏宽的表格容器横滚，不裁切、不收缩、不撑宽正文", async ({ page }) => {
-  // 6 列 × 40 字符：自然宽约 2000px > 栏宽 764px（用户桌面报告的 1549 vs 766 同型）。
+  // 6 列 × 40 字符：自然宽约 2000px > 栏宽（文字实测宽 576px，restyle 前是 80% 的 ~764px）。
   const cell = "abcdefghijklmnopqrstuvwxyz0123456789ABCD";
   const source = `| c1 | c2 | c3 | c4 | c5 | c6 |\n| --- | --- | --- | --- | --- | --- |\n| ${cell} | ${cell} | ${cell} | ${cell} | ${cell} | ${cell} |\n`;
   await openDoc(page, "wide.md", source);
@@ -69,8 +75,9 @@ test("超宽方向：自然宽超栏宽的表格容器横滚，不裁切、不�
   // 不收缩：表框保持自然宽（远超栏宽）；不裁切：滚动容器可见宽不超出正文列
   expect(geo.tableWidth).toBeGreaterThan(geo.contentWidth * 2);
   expect(geo.clientWidth).toBeLessThanOrEqual(geo.contentWidth + 1);
-  // 横滚可达：scrollWidth 覆盖完整自然宽且容器可滚
-  expect(geo.scrollWidth).toBeGreaterThanOrEqual(geo.tableWidth);
+  // 横滚可达：scrollWidth 覆盖完整自然宽（亚像素取整留 2px）且容器可滚
+  expect(geo.scrollWidth).toBeGreaterThanOrEqual(geo.tableWidth - 2);
+  expect(geo.scrollWidth).toBeLessThanOrEqual(geo.tableWidth + 2);
   expect(["auto", "scroll"]).toContain(geo.overflowX);
   // cell 不折行（折行是收缩手段，超宽表走横滚而非折行）
   expect(geo.rowHeight).toBeLessThan(45);
@@ -88,13 +95,15 @@ test("超宽方向：自然宽超栏宽的表格容器横滚，不裁切、不�
   expect(lastCellVisible.scrollLeft).toBeGreaterThan(0);
   expect(lastCellVisible.lastRight).toBeLessThanOrEqual(lastCellVisible.boxRight + 1);
 
-  // 正文列不被撑宽：.cm-content 仍为窗格的 80%
+  // 正文列不被撑宽：`.cm-content` 恒为定值栏宽（664px = `--layout-doc-measure`），
+  // 超宽表走容器内横滚，不会把阅读列本身撑开（旧口径 80% 随窗宽变，restyle 后是定值）。
   const widths = await page.evaluate(() => {
     const pane = document.querySelector(".pane-editor")!.getBoundingClientRect();
     const content = document.querySelector(".cm-content")!.getBoundingClientRect();
     return { paneWidth: pane.width, contentWidth: content.width };
   });
-  expect(Math.abs(widths.contentWidth - widths.paneWidth * 0.8)).toBeLessThan(1);
+  expect(widths.contentWidth).toBe(664);
+  expect(widths.contentWidth).toBeLessThan(widths.paneWidth);
   expect(await readDocument(page)).toBe(source);
 });
 
@@ -175,7 +184,17 @@ test("属性测试：列数×内容长度分布上宽度不变量恒成立", asy
     });
   });
 
-  const contentWidth = await page.evaluate(() => document.querySelector(".cm-content")!.getBoundingClientRect().width);
+  // 「栏宽」= 文字实测宽（`.cm-content` 的内容盒）：restyle 后它的框宽是 664px 且带 44px 左右内边距，
+  // 表格可用宽是内容盒那一条（576px）。用框宽会把「自然宽略超可用宽」的表误判成贴合。
+  const contentWidth = await page.evaluate(() => {
+    const el = document.querySelector(".cm-content")!;
+    const style = getComputedStyle(el);
+    return (
+      el.getBoundingClientRect().width -
+      Number.parseFloat(style.paddingLeft) -
+      Number.parseFloat(style.paddingRight)
+    );
+  });
   let fitCount = 0;
   let scrollCount = 0;
   geometry.forEach((g, i) => {

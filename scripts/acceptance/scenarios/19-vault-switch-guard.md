@@ -17,7 +17,7 @@ steps:
       - shot: 未保存现场
       - label: 输入落进文档
         editor: { has: "GUARD-EDIT-1" }
-      - label: 未保存标记上屏（masthead 常驻标记，与退出守卫的判据同源）
+      - label: 未保存标记上屏（modeline 路径段的常驻标记，与退出守卫的判据同源）
         ax: { has: "（未保存）" }
 
   - name: 外部改写同一个文件——把 dirty 变成**持久**状态

@@ -70,10 +70,11 @@ export interface VaultFixture {
   switchTo?: VaultFixture & { root: string };
   /** vault_open 重映射候选桩：目标路径未注册且存在失效注册时，非 force_new 打开按契约返回空 entries + candidates。 */
   remapCandidates?: Array<{ id: string; path: string }>;
-  /** config_get 桩（M132）：模式 / 折行口径（M180）/ 排版口径（M195）/ [keys] 覆盖表 /
-   *  配置 warning。缺省 md + 出厂折行（`line_wrap: true` / `code_block_wrap: false`，与
-   *  `src/preview/theme.ts` 的 DEFAULT_* 同值）+ 出厂排版（`font_family` / `mono_font_family`
-   *  为 `null` = 沿用基线、`font_size: 16`，与 Rust `EditorConfig::default()` 同值）+
+  /** config_get 桩（M132）：模式 / 折行口径（M180）/ 排版口径（M195）/ 界面主题（M213）/
+   *  [keys] 覆盖表 / 配置 warning。缺省 md + 出厂折行（`line_wrap: true` /
+   *  `code_block_wrap: false`，与 `src/preview/theme.ts` 的 DEFAULT_* 同值）+ 出厂排版
+   *  （`font_family` / `mono_font_family` 为 `null` = 沿用基线、`font_size: 15`，与 Rust
+   *  `EditorConfig::default()` 同值）+ 出厂主题（`light`，与 Rust `UiConfig::default()` 同值）+
    *  空覆盖 + 无 warning。 */
   config?: {
     mode?: "md" | "code";
@@ -83,9 +84,15 @@ export interface VaultFixture {
     font_family?: string | null;
     /** 等宽族（M195）：口径同 `font_family`（**与列表标记渲染/测量同源的那个 token**）。 */
     mono_font_family?: string | null;
-    /** 编辑器内容字号 px（M195）：合法区间 [12, 32]，区间外由 Rust 侧回落 16 并附 warning——
-     *  桩不复制那条校验（那归 cargo test），它只负责把配置**送达**前端。 */
+    /** 编辑器内容字号 px（M195）：合法区间 [12, 32]，区间外由 Rust 侧回落 `DEFAULT_FONT_SIZE`
+     *  并附 warning——桩不复制那条校验（那归 cargo test），它只负责把配置**送达**前端。 */
     font_size?: number;
+    /** 界面主题（M213）：`light` / `dark` / `eink`（与 Rust `UiTheme` 同一闭集合）。
+     *  缺省 `light` = 出厂口径——不传的场景天然跑浅色主题，不会因为桩扩了形状而换主题。
+     *  它对应启动装配层「把 `ui.theme` 写进 `documentElement.dataset.theme`」那一步
+     *  （`src/main.ts`），因此三主题场景截到的是**真实配置通道**下的主题，而不是场景
+     *  自己贴的 `data-theme` 属性（后者只证明 CSS 有第三套取值，验不到配置接线）。 */
+    theme?: "light" | "dark" | "eink";
     keys?: Record<string, string | null>;
     warnings?: string[];
   };
@@ -273,12 +280,18 @@ export async function stubTauri(page: Page, vault: VaultFixture | null): Promise
               line_wrap: current?.config?.line_wrap ?? true,
               code_block_wrap: current?.config?.code_block_wrap ?? false,
               // M195 的排版口径：缺省与 Rust `EditorConfig::default()` 逐项同值（null = 基线族、
-              // 16 = 出厂字号），因此**不传这三个字段的既有场景天然跑出厂默认口径**，不会
-              // 因为桩扩了形状而带上非默认字号（design §6.5）。
+              // 15 = 出厂字号——D1 裁决后 Rust 侧 DEFAULT_FONT_SIZE 与 src/style.css 的
+              // `--editor-font-size` 都是 15），因此**不传这三个字段的既有场景天然跑出厂默认
+              // 口径**，不会因为桩扩了形状而带上非默认字号（design §6.5）。
               font_family: current?.config?.font_family ?? null,
               mono_font_family: current?.config?.mono_font_family ?? null,
-              font_size: current?.config?.font_size ?? 16,
+              font_size: current?.config?.font_size ?? 15,
             },
+            // 界面主题（M213）：形状与 Rust `AppConfig` 的 `ui` 表逐项同值，缺省 `light`。
+            // `ui` 不是 Option（Rust 侧序列化必带），因此这里**总是**给出整表——桩落后于契约
+            // 会让启动装配层在 `snapshot.config.ui.theme` 上抛，那一块的失败面已被刻意收窄
+            // 到「主题没施加」（见 src/main.ts 的注释），但不该由场景来踩。
+            ui: { theme: current?.config?.theme ?? "light" },
             keys: current?.config?.keys ?? {},
           },
           warnings: current?.config?.warnings ?? [],

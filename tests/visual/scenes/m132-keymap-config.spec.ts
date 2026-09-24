@@ -33,7 +33,7 @@ async function openWithConfig(
   });
   await page.goto("/");
   await page.locator(`.ft-row[title="${name}"]`).click();
-  await expect(page.locator(".masthead-file")).toHaveText(name);
+  await expect(page.locator(".modeline-path")).toHaveText(name);
   await expect.poll(() => configGets(page)).toBeGreaterThan(0);
   await page.waitForTimeout(80);
 }
@@ -159,7 +159,7 @@ test("[keys] 解绑：⌘S 不再保存（键位让回原生路径）", async ({
     "解绑后 ⌘S 不得再触发保存",
   ).toBe(doc);
   await expect(page.locator(".lumir-toast", { hasText: /^已保存$/ })).toHaveCount(0);
-  await expect(page.locator(".masthead-file")).toContainText("（未保存）");
+  await expect(page.locator(".modeline-path")).toContainText("（未保存）");
 });
 
 test("[keys] 未知命令：warning 不崩，默认表照常分发", async ({ page }) => {
@@ -193,7 +193,7 @@ test("菜单事件通道（ipc.onMenuCommand）：undo 落到同一命令层", a
   });
   await page.goto("/");
   await page.locator('.ft-row[title="menu.md"]').click();
-  await expect(page.locator(".masthead-file")).toHaveText("menu.md");
+  await expect(page.locator(".modeline-path")).toHaveText("menu.md");
 
   await setSelection(page, doc.length);
   await page.keyboard.type("draft");
@@ -225,11 +225,11 @@ test("⌘-Click 跟随 wikilink；⌃-Click 让位系统次级点击", async ({ 
 
   // ⌃-Click：不再被当作链接激活（macOS 的次级点击手势），留在 a.md、无提示
   await link.click({ modifiers: ["Control"] });
-  await expect(page.locator(".masthead-file")).toHaveText("a.md");
+  await expect(page.locator(".modeline-path")).toHaveText("a.md");
   await expect(page.locator(".lumir-toast")).toHaveCount(0);
 
   // ⌘-Click：跟随链接并定位到标题行
   await link.click({ modifiers: ["Meta"] });
-  await expect(page.locator(".masthead-file")).toHaveText("target.md");
+  await expect(page.locator(".modeline-path")).toHaveText("target.md");
   await expect(page.locator(".cm-content")).toContainText("目标内容");
 });

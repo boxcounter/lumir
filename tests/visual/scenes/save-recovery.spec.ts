@@ -32,7 +32,7 @@ async function openAndEdit(page: import("@playwright/test").Page, typed = "ZZZ")
   await expect(content).toContainText("Demo Vault");
   await content.click();
   await page.keyboard.type(typed);
-  await expect(page.locator(".masthead-file")).toContainText("未保存");
+  await expect(page.locator(".modeline-path")).toContainText("未保存");
   return content;
 }
 
@@ -71,7 +71,7 @@ test("真实 CAS 冲突：重新载入放弃本地修改", async ({ page }) => {
   // 本地修改被放弃，编辑器回到磁盘内容；dirty 清除。
   await expect(content).toContainText("External version");
   await expect(content).not.toContainText("ZZZ");
-  await expect(page.locator(".masthead-file")).not.toContainText("未保存");
+  await expect(page.locator(".modeline-path")).not.toContainText("未保存");
 });
 
 test("真实 CAS 冲突：强制覆盖保存，确认文案明示覆盖较新内容", async ({ page }) => {
@@ -92,7 +92,7 @@ test("真实 CAS 冲突：强制覆盖保存，确认文案明示覆盖较新内
   // 覆盖落盘：磁盘内容 = 本地修改；dirty 清除。
   await expect(page.locator(".lumir-toast", { hasText: "已强制覆盖保存" })).toBeVisible();
   await expect.poll(() => fileText(page, "README.md")).toContain("ZZZ");
-  await expect(page.locator(".masthead-file")).not.toContainText("未保存");
+  await expect(page.locator(".modeline-path")).not.toContainText("未保存");
   await expect(content).toContainText("ZZZ");
 });
 
@@ -129,7 +129,7 @@ test("文件被外部删除后另存为新文件：内容落地并切换过去",
   // 新文件经 create_note（O_EXCL）创建并写入内存内容，编辑器切过去。
   await expect(page.locator(".lumir-toast", { hasText: "已另存为：README-恢复.md" })).toBeVisible();
   await expect.poll(() => fileText(page, "README-恢复.md")).toContain("ZZZ");
-  await expect(page.locator(".masthead-file")).toHaveText("README-恢复.md");
+  await expect(page.locator(".modeline-path")).toHaveText("README-恢复.md");
   await expect(page.locator(".cm-content")).toContainText("ZZZ");
 });
 
@@ -145,7 +145,7 @@ test("watch 外部修改（未 dirty）：自动重载并提示", async ({ page 
 
   await expect(content).toContainText("External version");
   await expect(page.locator(".lumir-toast", { hasText: "已自动重载" })).toBeVisible();
-  await expect(page.locator(".masthead-file")).not.toContainText("未保存");
+  await expect(page.locator(".modeline-path")).not.toContainText("未保存");
 });
 
 test("watch 外部修改（dirty）：sticky 提示二选一，保留或重载都可达", async ({ page }) => {
@@ -176,7 +176,7 @@ test("watch 外部修改（dirty）：sticky 提示二选一，保留或重载�
     .click();
   await expect(content).toContainText("Second external");
   await expect(content).not.toContainText("ZZZ");
-  await expect(page.locator(".masthead-file")).not.toContainText("未保存");
+  await expect(page.locator(".modeline-path")).not.toContainText("未保存");
 });
 
 test("watch 外部删除打开中文件：提示内容未丢失，编辑器保留现状", async ({ page }) => {

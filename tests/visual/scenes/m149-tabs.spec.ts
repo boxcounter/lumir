@@ -236,7 +236,17 @@ test("⌘W 关当前标签：干净标签直接关，dirty 标签先给三个出
   await confirm.getByRole("button", { name: "放弃修改并关闭" }).click();
   await expect(page.locator(".tab")).toHaveCount(0);
   await expect(page.locator(".tabstrip")).toBeHidden();
-  await expect(page.locator(".masthead-file")).toHaveText("无当前文件");
+  await expect(page.locator(".modeline-path")).toHaveText("无当前文件");
+  // 空态的标题栏：标签区隐藏后只剩 traffic 灯区（本版标题栏无动作钮——tower 裁决，
+  // 见 openspec/changes/restyle-ui-tokens-v1/tasks.md §4.3 的收官对账）。
+  const emptyTitlebar = await page.locator(".titlebar").evaluate((bar) => {
+    const traffic = bar.querySelector<HTMLElement>(".titlebar-traffic")!;
+    const visible = [...bar.children].filter((child) => (child as HTMLElement).offsetParent !== null);
+    return { children: visible.map((child) => child.className), trafficWidth: traffic.getBoundingClientRect().width };
+  });
+  expect(emptyTitlebar.children).toEqual(["titlebar-traffic"]);
+  // traffic 区宽度与侧栏对齐（骨架条款：左缘 traffic 灯区宽 236）
+  expect(emptyTitlebar.trafficWidth).toBe(236);
 });
 
 // ---------------------------------------------------------------------------

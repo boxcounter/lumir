@@ -61,7 +61,7 @@ steps:
     do: keys
     keys: ["Down"]
 
-  - name: Enter 跳转（判据取自被测功能自己的产出：masthead 的标题链只可能是光标所在位置生成的）
+  - name: Enter 跳转（判据取自被测功能自己的产出：modeline 指示段的标题链只可能是光标所在位置生成的）
     do: key
     key: "return"
     expect:
@@ -264,7 +264,7 @@ steps:
 真机套件的两条硬边界决定了本场景的判据形态：
 
 1. **AX 不给几何、不给条目计数**（`scripts/acceptance/README.md` 的「已知边界」）：因此「列表里现在有
-   哪几条」不能直接数行，只能取**派生证据**——被测功能自己的产出。本场景用的是 **masthead 的标题链**
+   哪几条」不能直接数行，只能取**派生证据**——被测功能自己的产出。本场景用的是 **modeline 指示段的标题链**
    （`src/toc.ts` 的 `itemPath`，口径是「光标在可见范围内取光标」）：跳转后光标必落在目标段里，链条
    就是光标的函数。于是：
    - 查询 `ban` + `↓` + `Enter` 后链条必须是 `Filter 章节 › Banana 小节 › Banana 细节`。

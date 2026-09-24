@@ -5,14 +5,14 @@ import { readDocument } from "./parity-checks";
 // M120：非 md 只读文件按扩展名获得语法高亮（@codemirror/legacy-modes →
 // StreamLanguage + HighlightStyle，editor.ts LANGUAGES），只读合同
 //（M97/M101：editable(false) + readOnly(true)）不动。
-// 颜色断言锚定默认 light 主题 token：--accent #b23a2c（关键字）、
-// --callout-tip #5a7a3f（字符串）、--callout-warning #a05e1c（数字/atom）、
-// --callout-note #4f6f8f（属性名，M147 起 json 键取此色）。
+// 颜色断言锚定默认 light 主题 token（restyle 后改指 --tk-* 四色）：
+// --tk-k #3a5fcd（关键字 / 属性名 / 类型，M147 起 json 键取 keyword 色）、
+// --tk-s #2c7a4d（字符串）、--tk-n #a06e0f（数字 / atom）。
 const LIGHT = {
-  keyword: "rgb(178, 58, 44)",
-  string: "rgb(90, 122, 63)",
-  number: "rgb(160, 94, 28)",
-  property: "rgb(79, 111, 143)",
+  keyword: "rgb(58, 95, 205)",
+  string: "rgb(44, 122, 77)",
+  number: "rgb(160, 110, 15)",
+  property: "rgb(58, 95, 205)",
 };
 
 const TS_DOC = `// 小工具示例

@@ -111,7 +111,7 @@ test("callout 光标所在行显露源码可编辑，其余行保持渲染态", 
   await stubTauri(page, { entries: [{ path: "c.md", kind: "file", size: CALLOUT_DOC.length, mtime_ms: 0 }], files: { "c.md": CALLOUT_DOC } });
   await page.goto("/");
   await page.locator('.ft-row[title="c.md"]').click();
-  await expect(page.locator(".cm-lp-callout-icon")).toHaveCount(1);
+  await expect(page.locator(".cm-lp-callout-type")).toHaveCount(1);
   const lines = page.locator(".cm-lp-callout-line");
   await expect(lines).toHaveCount(3);
   // 渲染态：所有行不显示 >
@@ -123,11 +123,11 @@ test("callout 光标所在行显露源码可编辑，其余行保持渲染态", 
   expect(await lines.nth(1).textContent()).toContain("> 第一行正文。");
   expect(await lines.nth(0).textContent()).not.toContain(">");
   expect(await lines.nth(2).textContent()).not.toContain(">");
-  await expect(page.locator(".cm-lp-callout-icon")).toHaveCount(1);
+  await expect(page.locator(".cm-lp-callout-type")).toHaveCount(1);
 
-  // 光标进入首行：[!note] 标记源码显露（图标消失），类型可编辑
+  // 光标进入首行：[!note] 标记源码显露（类型标签消失），类型可编辑
   await lines.nth(0).click({ position: { x: 40, y: 8 } });
-  await expect(page.locator(".cm-lp-callout-icon")).toHaveCount(0);
+  await expect(page.locator(".cm-lp-callout-type")).toHaveCount(0);
   expect(await lines.nth(0).textContent()).toContain("> [!note] 标题");
 
   // 在正文行输入：编辑生效且只动光标行源码
@@ -137,7 +137,7 @@ test("callout 光标所在行显露源码可编辑，其余行保持渲染态", 
 
   // 光标移出 callout：恢复渲染态
   await page.locator(".cm-line", { hasText: "普通段落" }).click({ position: { x: 20, y: 8 } });
-  await expect(page.locator(".cm-lp-callout-icon")).toHaveCount(1);
+  await expect(page.locator(".cm-lp-callout-type")).toHaveCount(1);
   expect(await lines.nth(1).textContent()).not.toContain(">");
 });
 

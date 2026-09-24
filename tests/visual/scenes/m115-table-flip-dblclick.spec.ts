@@ -139,13 +139,24 @@ test("双击底部边缘表头：选中「触发时机」本身，视口不上�
     const tables = [...document.querySelectorAll(".cm-lp-table")] as HTMLElement[];
     const table = tables.find((t) => t.textContent?.includes("bookmark_saved"))!;
     const header = [...table.querySelectorAll(".cm-lp-table-cell")].find((c) => c.textContent?.trim() === "触发时机") as HTMLElement;
+    // 瞄准点取**表头文字**的几何，不是 cell 盒：cell 盒按列宽撑满，而列宽由同列最宽的数据 cell
+    // 决定；表头走标签档字号（11.5px，restyle 后 cell 是 13.5px），cell 盒的中心会落到文字右侧的
+    // 空白处——那里的文档坐标紧邻被隐藏的管道符，双击会选中「|」而不是「触发时机」（restyle 后
+    // 首次实测到的形态：断言读回 "|"）。这条判据与列宽/字号解耦，因此两类改动都不会再让它假红。
+    const textBox = () => {
+      const range = document.createRange();
+      range.selectNodeContents(header);
+      const box = range.getBoundingClientRect();
+      return box.width > 0 ? box : header.getBoundingClientRect();
+    };
     const sr = view.scrollDOM.getBoundingClientRect();
     // 表头放到底部边缘（复现配方：clientH-76 .. clientH-63）
     const r = header.getBoundingClientRect();
     view.scrollDOM.scrollTop += r.top + r.height / 2 - (sr.top + view.scrollDOM.clientHeight - 70);
     const r2 = header.getBoundingClientRect();
+    const t2 = textBox();
     return {
-      x: r2.left + r2.width / 2,
+      x: t2.left + t2.width / 2,
       y: r2.top + r2.height / 2,
       // 瞄准时表头在视口内的中心 y：下方「视口是否上跳」以它为基准
       aimedY: r2.top + r2.height / 2 - sr.top,

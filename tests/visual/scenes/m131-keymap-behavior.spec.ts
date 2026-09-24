@@ -95,7 +95,7 @@ async function openFile(page: Page, files: Record<string, string>, name: string)
   });
   await page.goto("/");
   await page.locator(`.ft-row[title="${name}"]`).click();
-  await expect(page.locator(".masthead-file")).toHaveText(name);
+  await expect(page.locator(".modeline-path")).toHaveText(name);
 }
 
 /** 装载 vault 且编辑器停在**未命名空文档**（无文件上下文 → 不可保存，dirty 只由文本决定）。
@@ -113,17 +113,17 @@ async function openEmptyEditor(page: Page): Promise<string> {
   await page.goto("/");
   await expect(page.locator(".editor-notice")).toContainText("这个 vault 还没有打开的文件");
   await page.locator('.ft-row[title="blank.md"]').click();
-  await expect(page.locator(".masthead-file")).toHaveText("blank.md");
+  await expect(page.locator(".modeline-path")).toHaveText("blank.md");
   await page.keyboard.press("Meta+w");
-  await expect(page.locator(".masthead-file")).toHaveText("无当前文件");
+  await expect(page.locator(".modeline-path")).toHaveText("无当前文件");
   await expect(page.locator(".tab")).toHaveCount(0);
   await page.locator(".cm-content").click();
   return readDocument(page);
 }
 
-const unsavedMark = (page: Page) => page.locator(".masthead-file", { hasText: "（未保存）" });
+const unsavedMark = (page: Page) => page.locator(".modeline-path", { hasText: "（未保存）" });
 
-/** dirty 镜像探针（document_set_dirty）：无文件上下文的编辑器没有 masthead 标记，dirty 只能从这里看。 */
+/** dirty 镜像探针（document_set_dirty）：无文件上下文的编辑器没有 modeline 标记，dirty 只能从这里看。 */
 const dirtyMirror = (page: Page) =>
   page.evaluate(() => (window as unknown as { __dirtyReports: boolean[] }).__dirtyReports.at(-1));
 
@@ -320,7 +320,7 @@ test("撤销不跨文档：切换文件后 ⌘Z 不会把上一个文件的内�
   await expect(unsavedMark(page)).toHaveCount(0);
 
   await page.locator('.ft-row[title="b.md"]').click();
-  await expect(page.locator(".masthead-file")).toHaveText("b.md");
+  await expect(page.locator(".modeline-path")).toHaveText("b.md");
   await expect(page.locator(".cm-content")).toContainText("BBB");
 
   // 装载事务不进撤销栈（TrustedLoad）：B 文档里按 ⌘Z 必须什么都不发生

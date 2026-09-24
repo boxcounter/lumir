@@ -43,7 +43,8 @@ SHALL 按本 change design §2.7 的类推映射表组装（换皮不改交互�
   绿 `--ok`+`--ok-tint`、琥珀 `--pending`+`--pending-tint`、红 `--danger`+`--danger-tint`、
   灰 `--text-3`+`--agent-bg`（逐类映射以 tokens 文档 §callout 语义收敛 为准）；
   不出现逐类独立色值与 `color-mix` 现混底色；同族类型的区分只靠标题行文字，不引入图标；
-  eink 下全部色条为实心黑、底色为 transparent
+  eink 下全部色条为实心黑、底色回落到 `--content-bg`（eink 即白——tint token 在全黑档取
+  `transparent`，行底因此由内容面承担）
 
 ### Requirement: 三主题与主题选择
 
@@ -88,10 +89,12 @@ eink 主题 SHALL 按 tokens 文档 §eink 规则 的 9 条系统性降级（不
 
 ### Requirement: 应用骨架布局
 
-应用骨架 SHALL 为：标题栏 42px（全宽，左缘 traffic 灯区宽 236 与侧栏对齐，标签位于标题栏内，
-右侧为动作钮）/ 主行（侧栏 236px + 正文栏 + **右栏 dock 预留位**）/ modeline 25px（全宽）。
-dock 预留位 SHALL 只是结构上的列位（本版零像素、无内容、无边框、不可交互）——agent 栏及其
-任何像素不在本版。正文阅读宽 SHALL 为 664px 居中。
+应用骨架 SHALL 为：标题栏 42px（全宽，左缘 traffic 灯区宽 236 与侧栏对齐，标签位于标题栏内）/
+主行（侧栏 236px + 正文栏 + **右栏 dock 预留位**）/ modeline 25px（全宽）。标题栏**右侧动作钮区**
+本版为**预留槽位**：零可见内容（不渲染按钮），与 dock 预留列同一处置——动作钮特性的像素不在本版，
+接入时只填这一槽（已知偏差：tasks §4.3 的验收口径原文含「动作钮」，实现期由 tower 裁决按本版不加，
+收官对账记这条）。dock 预留位 SHALL 只是结构上的列位（本版零像素、无内容、无边框、不可交互）
+——agent 栏及其任何像素不在本版。正文阅读宽 SHALL 为 664px 居中。
 
 旧 masthead SHALL 移除，其信息迁移：vault 名 → 侧栏头（切换器入口形态不变）；当前文件路径 →
 modeline 左侧；当前位置指示 → modeline（toc 语义不变，只迁承载面）；行数 / 语法 / 编码 →
@@ -107,7 +110,8 @@ macOS 标题栏 SHALL 为 overlay 形态（traffic 灯保持原生绘制，标�
 #### Scenario: 空态的标题栏
 
 - **WHEN** 没有打开任何文件
-- **THEN** 标题栏只剩 traffic 灯区与动作钮（标签区隐藏），modeline 与侧栏骨架不变
+- **THEN** 标题栏只剩 traffic 灯区（标签区隐藏，本版无右侧动作钮——见「应用骨架布局」的预留槽位
+  条款），modeline 与侧栏骨架不变
 
 ### Requirement: chrome 表面与动效纪律
 

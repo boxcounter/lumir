@@ -151,7 +151,7 @@ async function items(page: Page): Promise<{ texts: string[]; depths: string[] }>
 
 test("惰性：打开与光标路径都不解析（指示段不显示），⌘⇧O 之后同一光标才显示符号链", async ({ page }) => {
   await bootstrap(page, "outline.js", "工具集");
-  const indicator = page.locator(".masthead-section");
+  const indicator = page.locator(".modeline-section");
   await expect(page.locator(VIEW)).toHaveAttribute("contenteditable", "false");
 
   // ① 刚打开：光标在第 1 行（注释区），结构未解析 ⇒ 指示段隐藏
@@ -212,7 +212,7 @@ test("跳转落点 = 声明起点（不是 md 的行尾）；键盘与鼠标共�
   // 与 md 的行尾口径可分辨：落点严格早于该行行尾
   const classLineEnd = JS_DOC.indexOf("\n", classStart);
   expect((await caret(page)).head).toBeLessThan(classLineEnd);
-  await expect(page.locator(".masthead-section")).toHaveText("Util");
+  await expect(page.locator(".modeline-section")).toHaveText("Util");
 
   // 鼠标点条目走同一落点：`helper` 的声明起点
   await page.keyboard.press("Meta+Shift+o");
@@ -271,7 +271,7 @@ test("受支持但文件里没有条目：给另一种提示，同样不展开�
 
 test("md 侧对照：标题链与行尾落点逐字不变（共用通道没被 code 分支带歪）", async ({ page }) => {
   await bootstrap(page, "toc.md", "第一部分");
-  const indicator = page.locator(".masthead-section");
+  const indicator = page.locator(".modeline-section");
   await expect(indicator).toHaveText("第一部分");
 
   await page.keyboard.press("Meta+Shift+o");

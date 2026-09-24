@@ -4,7 +4,7 @@ import { DEMO_VAULT, dirtyReports, fireQuitBlocked, requestAddVault, stubTauri }
 // M101 保存守卫回归：真实桌面验收确认的三类缺陷。
 // 1. 非 Markdown 文件必须在内存层拒绝用户编辑（视图层只读，不产生 dirty）——
 //    旧实现只靠 changeFilter 事后回滚 DOM，真实 WKWebView 的 AX/IME 注入路径会漏。
-// 2. dirty 状态的用户可见反馈（masthead 常驻标记 + 保存冲突/失败提示不静默）。
+// 2. dirty 状态的用户可见反馈（modeline 路径段常驻标记 + 保存冲突/失败提示不静默）。
 // 3. dirty 拦截切换/退出时必须有可理解的界面提示。
 // 原生退出拦截本体在 Rust（RunEvent::ExitRequested/CloseRequested + DirtyState），
 // 这里验证前端半边：dirty 经 document_set_dirty 镜像给后端、app:quit_blocked
@@ -38,8 +38,8 @@ test("code 模式文件在视图层只读：键盘与 DOM 注入都无法改内�
   await page.evaluate(() => document.execCommand("insertText", false, "HACKED"));
   await expect(content).not.toContainText("HACKED");
 
-  // 不产生 dirty：masthead 无标记，后端镜像无 true 上报。
-  await expect(page.locator(".masthead-file")).toHaveText("src/main.ts");
+  // 不产生 dirty：modeline 路径段无标记，后端镜像无 true 上报。
+  await expect(page.locator(".modeline-path")).toHaveText("src/main.ts");
   expect(await dirtyReports(page)).not.toContain(true);
 });
 
@@ -56,13 +56,13 @@ test("md 编辑产生 dirty 标记并镜像后端，保存成功后复位", asyn
   await expect(content).toContainText("edited");
 
   // dirty 持久可见（不只是一闪而过的 toast）。
-  await expect(page.locator(".masthead-file")).toContainText("未保存");
+  await expect(page.locator(".modeline-path")).toContainText("未保存");
   // dirty 已镜像给后端退出守卫。
   await expect.poll(() => dirtyReports(page)).toContain(true);
 
   await page.keyboard.press("Meta+s");
   await expect(page.locator(".lumir-toast")).toContainText("已保存");
-  await expect(page.locator(".masthead-file")).not.toContainText("未保存");
+  await expect(page.locator(".modeline-path")).not.toContainText("未保存");
   await expect.poll(() => dirtyReports(page)).toContain(false);
 });
 
@@ -86,14 +86,14 @@ test("保存冲突：可理解的冲突提示，修改保留，切换与退出�
   // 注意多个 toast 可并存（自动消隐前），断言一律按文本定位具体那条。
   await expect(page.locator(".lumir-toast", { hasText: "保存冲突" })).toContainText("未丢失");
   // 保存失败不标 clean：内存修改仍在，dirty 反馈保持。
-  await expect(page.locator(".masthead-file")).toContainText("未保存");
+  await expect(page.locator(".modeline-path")).toContainText("未保存");
   await expect(content).toContainText("edited");
 
   // M149：dirty 不再拦截「打开另一个文件」——它开成（或复用）标签，修改留在原标签上。
   // 拦截只保留给「前台是未命名文档」那一种情形（见 m130-text-open-trap.spec.ts）。
   await page.locator('.ft-row[title="docs"]').click();
   await page.locator('.ft-row[title="docs/guide.md"]').click();
-  await expect(page.locator(".masthead-file")).toHaveText("docs/guide.md");
+  await expect(page.locator(".modeline-path")).toHaveText("docs/guide.md");
   await expect(page.locator(".tab.is-active .tab-name")).toHaveText("guide.md");
   // README.md 的标签还在、仍带 dirty 点，且**没有**任何拦截提示：内存修改一点没丢。
   const readmeTab = page.locator(".tab", { hasText: "README.md" });
@@ -122,24 +122,24 @@ test("保存成功后所有 dirty 表现层一致清除，切换 vault 无未保
 
   await content.click();
   await page.keyboard.type("edited");
-  await expect(page.locator(".masthead-file")).toContainText("未保存");
+  await expect(page.locator(".modeline-path")).toContainText("未保存");
 
   // dirty 期间退出被拦截：sticky 提示不自动消隐（M101 设计）。
   await fireQuitBlocked(page);
   const blocked = page.locator(".lumir-toast", { hasText: "无法退出" });
   await expect(blocked).toBeVisible();
 
-  // 保存成功：masthead / 后端镜像 / sticky 守卫提示必须一致清除
+  // 保存成功：modeline / 后端镜像 / sticky 守卫提示必须一致清除
   //（旧实现 sticky 提示在保存成功后仍残留右下角 —— 桌面验收缺陷）。
   await page.keyboard.press("Meta+s");
   await expect(page.locator(".lumir-toast", { hasText: "已保存" })).toBeVisible();
-  await expect(page.locator(".masthead-file")).not.toContainText("未保存");
+  await expect(page.locator(".modeline-path")).not.toContainText("未保存");
   await expect.poll(async () => (await dirtyReports(page)).at(-1)).toBe(false);
   await expect(blocked).toHaveCount(0);
 
   // 切换 vault 不再出现未保存拦截提示，新 vault 正常装载。
   await requestAddVault(page);
-  await expect(page.locator(".masthead-vault")).toHaveText("other-vault");
+  await expect(page.locator(".ft-vault-name")).toHaveText("other-vault");
   await expect(page.locator(".lumir-toast", { hasText: "未保存" })).toHaveCount(0);
 });
 
@@ -160,7 +160,7 @@ test("保存写入结果未知：提示核对内容且说明修改未丢失", as
   await page.keyboard.press("Meta+s");
 
   await expect(page.locator(".lumir-toast", { hasText: "保存结果未知" })).toContainText("未丢失");
-  await expect(page.locator(".masthead-file")).toContainText("未保存");
+  await expect(page.locator(".modeline-path")).toContainText("未保存");
 });
 
 // M107 遗留断言：行为在 feat/save-guard-follow-up-repairs（main.ts，本任务 scope 外），
@@ -174,7 +174,7 @@ test("退出拦截提示按文案去重：连续拦截不堆叠 sticky toast（M
   await expect(content).toContainText("Demo Vault");
   await content.click();
   await page.keyboard.type("edited");
-  await expect(page.locator(".masthead-file")).toContainText("未保存");
+  await expect(page.locator(".modeline-path")).toContainText("未保存");
 
   // 连续 Cmd+Q 被后端守卫拦截（连续 app:quit_blocked）：sticky 提示复用既有浮条。
   await fireQuitBlocked(page);

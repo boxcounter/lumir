@@ -65,7 +65,18 @@ interface Reading {
 async function readings(page: Page): Promise<{ line: number; areas: Record<string, Reading> }> {
   return page.evaluate(() => {
     const round = (n: number) => Math.round(n * 10) / 10;
-    const line = document.querySelector(".cm-content")?.getBoundingClientRect().width ?? 0;
+    // 「栏宽」= **文字实测宽**（`.cm-content` 的内容盒），不是它的框宽：restyle 后
+    // `.cm-content` 是 664px 的框（`--layout-doc-measure`）内含 44px 左右内边距，
+    // 图片铺的是内容盒的 100%（576px）。旧口径下框宽与文字宽同值，这一条读法因此没被暴露。
+    const content = document.querySelector(".cm-content");
+    const contentStyle = content ? getComputedStyle(content) : null;
+    const line = content && contentStyle
+      ? round(
+          content.getBoundingClientRect().width -
+            Number.parseFloat(contentStyle.paddingLeft) -
+            Number.parseFloat(contentStyle.paddingRight),
+        )
+      : 0;
     const areas: Record<
       string,
       {

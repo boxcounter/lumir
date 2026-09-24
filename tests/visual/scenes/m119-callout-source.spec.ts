@@ -23,7 +23,7 @@ async function openCalloutDoc(page: import("@playwright/test").Page) {
   await stubTauri(page, { entries: [{ path: "c.md", kind: "file", size: CALLOUT_DOC.length, mtime_ms: 0 }], files: { "c.md": CALLOUT_DOC } });
   await page.goto("/");
   await page.locator('.ft-row[title="c.md"]').click();
-  await expect(page.locator(".cm-lp-callout-icon")).toHaveCount(1);
+  await expect(page.locator(".cm-lp-callout-type")).toHaveCount(1);
 }
 
 test("光标进入 callout 内容行显露 inline 源码标记，离开恢复；普通引用不受影响", async ({ page }) => {
@@ -88,12 +88,12 @@ test("callout 首行标题内的 inline 格式同样显露", async ({ page }) =>
   await page.goto("/");
   await page.locator('.ft-row[title="t.md"]').click();
   const firstLine = page.locator(".cm-line.cm-lp-callout-first");
-  // 渲染态：[!warning] 替换为图标，标题内加粗渲染
-  await expect(page.locator(".cm-lp-callout-icon")).toHaveCount(1);
+  // 渲染态：[!warning] 替换为类型标签，标题内加粗渲染
+  await expect(page.locator(".cm-lp-callout-type")).toHaveCount(1);
   await expect(firstLine.locator(".cm-lp-strong", { hasText: "加粗" })).toHaveCount(1);
   // 光标进入首行：[!warning] 源码显露（M110）且标题内 ** 同样显露（M119）
   await firstLine.locator(".cm-lp-strong").click();
-  await expect(page.locator(".cm-lp-callout-icon")).toHaveCount(0);
+  await expect(page.locator(".cm-lp-callout-type")).toHaveCount(0);
   await expect(firstLine).toContainText("[!warning]");
   await expect(firstLine).toContainText("**加粗**");
   expect(await readDocument(page)).toBe(TITLED);
