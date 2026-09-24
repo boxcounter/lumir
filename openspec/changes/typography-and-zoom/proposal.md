@@ -19,7 +19,7 @@
 | 3 | 编辑器内容的字号今天**两处写死 16px**：`src/style.css:28` 的 `.cm-content { font-size:16px }` 与 `src/editor.ts:1196` 的 CM 主题 `.cm-content { fontSize: "16px" }`。CM 主题的生成规则带一层作用域类（`EditorView.theme` → `buildTheme(".<生成类>", spec)`；无 `&` 的选择器一律改写为 `主选择器 + " " + sel`），specificity 0,2,0 压过前者的 0,1,0 → **真正生效的是 editor.ts 那一份**，style.css 那一份是同一语义的第二处写值（REVIEW.md 第 8 条同族） | `src/style.css:28`、`src/editor.ts:1196`、`node_modules/@codemirror/view/dist/index.js:6788-6800`、`:8744-8749`（`@codemirror/view@6.43.11`） |
 | 4 | 正文排版整体**相对量化**：标题 `1.04em`–`1.78em`、列表标记 `.85em`、引用 / 公式 `.92em`……因此「改一个字号」会按比例带动全套正文排版，不需要逐元素改 | `src/preview/theme.ts:60-65`、`:152-160`、`:193`、`:241` 等 |
 | 5 | 字体族在编辑器内的分布：md 正文 = `--font-body`、code 模式 = `--font-mono`（同一个 `baseTheme` 按模式二选一，`src/editor.ts:1186`）；围栏代码块 / frontmatter / 列表标记 / mermaid 源码 = `--font-mono`；标题与 callout 标签 = `--font-display` | `src/editor.ts:1186`、`src/preview/theme.ts:56`、`:108`、`:152`、`:160`、`:241`、`:308`、`:319` |
-| 6 | 字体 / 字号变化**需要重新测量**：列表标记宽度由 canvas 按 `parseFloat(computedFontSize) * .85` + `--font-mono` 量出，并在「`documentElement` 的 style / class 变化」与「`document.fonts` loadingdone」时重测 | `src/preview/lists.ts:38-48`、`:62-66` |
+| 6 | 字体 / 字号变化**需要重新测量**：列表标记宽度由 canvas 按 `parseFloat(computedFontSize) * .85` + 字体族量出，并在「`documentElement` 的 style / class 变化」与「`document.fonts` loadingdone」时重测。注意这是**字符串取值**（`getPropertyValue("--font-mono")`），不是 CSS 引用——改渲染用的 token 名不会带着它走，测量与渲染会因此分叉 | `src/preview/lists.ts:38-48`（取值在 `:44`）、`:62-66` |
 | 7 | 基线的 token 化并不彻底：`.filetree` 与 `.ft-empty` 把正文族写成了字面量（`font-family: -apple-system, "PingFang SC", sans-serif`）而非 `var(--font-body)` | `src/style.css:111`、`:226` |
 | 8 | 视觉基线共 **30 张整页 / 元素 PNG**（13 个快照目录），以 `deviceScaleFactor=1`、1200×800 CSS px 为口径。字号或字体一变，整页像素必然变——「默认口径零变化」因此是一条可断言、也必须断言的硬要求 | `find tests/visual/baselines -name '*.png' \| wc -l` = 30；`tests/visual/README.md:23-25` |
 
@@ -139,6 +139,7 @@ Emacs 的 `text-scale-adjust`：「To increase the font size of the `default` fa
   - `src/style.css`：`:root` 新增三个编辑器 token（默认值 = 今天的观感）；收起 `.cm-content` 那处重复的 16px（`:28`）；
   - `src/editor.ts`：`baseTheme` 的字体族 / 字号改引用编辑器 token（`:1186`、`:1196`）；施加点（写 token + 请求重测量）；三条命令实现与运行期真源；
   - `src/preview/theme.ts`：编辑器内字体引用改引用编辑器 token（代码块、frontmatter、列表标记等）；
+  - `src/preview/lists.ts`：列表标记宽度的 canvas 测量改读 `--editor-mono-family`（`:44` 今天是 `getPropertyValue("--font-mono")` 的**字符串取值**，不受 CSS 引用改名影响）——测量与渲染必须同源，否则非默认 `mono_font_family` 下标记与正文对不齐；
   - `src/main.ts`：`config_get` 接线处（`:830-841`）加一次排版配置应用；
   - `src/keys.ts`：3 个命令 id 进 `NON_TAB_GLOBAL_COMMAND_IDS`（`:166-184`）、4 条默认绑定、每条绑定带 `doc`；
   - `src/bindings/*`：ts-rs 生成物随 `cargo test` 更新（漂移门禁在 `scripts/gate.sh:61-70`）；

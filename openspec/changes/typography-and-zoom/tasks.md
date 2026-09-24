@@ -72,9 +72,14 @@
   **验收口径**：默认配置下 `getComputedStyle` 读到的编辑器字体族与字号与 1.1 的读数逐项相同。
 - [ ] 3.2 编辑器侧引用改走新 token：`src/editor.ts:1186`（按模式二选一）、`:1196`（字号）、
   `src/preview/theme.ts` 里所有编辑器内的 `var(--font-body)` / `var(--font-mono)`；
-  `--font-display` 与 shell 侧引用**不动**。
+  `--font-display` 与 shell 侧引用**不动**。**JS 侧的取值点一并改**：`src/preview/lists.ts:44` 用
+  `getPropertyValue("--font-mono")` 把字体族读成字符串喂给 canvas 测量——它不受 CSS 引用改名影响，
+  实现后 SHALL 读 `--editor-mono-family`（与标记渲染同一个 token），否则非默认 `mono_font_family` 下
+  标记渲染与测量分叉（对不齐）。
   **验收口径**：`rg -n 'var\(--font-(body|mono)\)' src/preview/theme.ts` 零命中（编辑器层不再直接引用
-  shell token）；`rg -n 'var\(--font-body\)' src/editor.ts` 零命中。
+  shell token）；`rg -n 'var\(--font-body\)' src/editor.ts` 零命中；
+  `rg -n 'getPropertyValue\("--font-(body|mono)"\)' src/` 零命中（JS 取值点也同源）；
+  `rg -n 'getPropertyValue\("--editor-mono-family"\)' src/preview/lists.ts` 命中一处。
 - [ ] 3.3 收口 §1.2 的双写：`16px` 的真源只剩 `--editor-font-size` 的默认值一处（`src/style.css:28`
   与 `src/editor.ts:1196` 都不再各写一份数字）。
   **验收口径**：`rg -n 'fontSize' src/editor.ts` 只剩引用变量的那一处；计算属性断言
@@ -120,8 +125,10 @@
 - [ ] 5.2 光标可见性：字号变化后光标仍在视口内；若实测跳动明显，按 M103 的揭示原语处理。
   **验收口径**：7.x 的场景读数为「光标行的 `top` 落在 `.cm-scroller` 的可视区之间」；
   改动前先跑一次确认它会 FAIL（P0 的反向验证）。
-- [ ] 5.3 列表标记宽度按新字号重测（既有消费者：`src/preview/lists.ts`）。
-  **验收口径**：改字号后标记宽度读数随字号等比变化（读数落 `test-results/<mission>/…`）。
+- [ ] 5.3 列表标记宽度按新字号重测，且**测量与渲染同源**（既有消费者：`src/preview/lists.ts`）。
+  **验收口径**：①改字号后标记宽度读数随字号等比变化；②默认与非默认 `mono_font_family` 两种口径下，
+  标记**渲染**的 `fontFamily`（计算属性）与**测量**喂给 canvas 的族字符串逐字相同（两处都从同一个
+  token 读）；读数落 `test-results/<mission>/…`。
 
 ## 6. 单测（`tests/unit`，纯逻辑层）
 
@@ -197,7 +204,7 @@
   `rg -n 'zoom_hotkeys|set_zoom' src-tauri/src/` 零命中（推荐形态下）。
 - [ ] 10.2 不动编辑器内的渲染结构（代码块仍是行装饰、表格 / 公式 / mermaid 的排版结构不变）。
   **验收口径**：`git diff src/preview/livePreview.ts` 为空；`git diff src/preview/theme.ts` 只含字体
-  变量名的替换（逐行核）。
+  变量名的替换（逐行核）；`git diff src/preview/lists.ts` 只含 `:44` 那处 token 名的替换（逐行核）。
 - [ ] 10.3 不碰 `--font-display` / `--line-height` / `--measure` 的默认值，也不顺手改成
   `src/style.css:111` / `:226` 的两处字面量。
   **验收口径**：`git diff src/style.css` 只含 `:root` 新增三行与 `.cm-content` 那处的收口。

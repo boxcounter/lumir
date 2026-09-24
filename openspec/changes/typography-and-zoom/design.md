@@ -73,7 +73,7 @@
 | 事实 | 锚点 |
 |---|---|
 | Tauri 提供 `zoom_hotkeys_enabled`（builder 开关）+ `Webview::set_zoom(scale_factor)`；macOS / Linux 上是**注入一段 polyfill**，Windows 走 WebView2 原生设置 | tauri 2.11.5 `src/webview/mod.rs:1041-1054`、`:2091-2102`；`src/manager/webview.rs:555-557` |
-| polyfill 的确切行为：`keydown`（macOS 看 `metaKey`）里接 ⌘− / ⌘= / ⌘+ / ⌘0，步进 **0.2**、上下限 0.2–10、`zoomLevel` 起点 1（**每次启动重置**），调 `plugin:webview|set_webview_zoom`；另有 `mousewheel` + Ctrl 路径；**不调用 `preventDefault`** | tauri 2.11.5 `src/webview/scripts/zoom-hotkey.js` |
+| polyfill 的确切行为：`keydown`（macOS 看 `metaKey`）里接 ⌘− / ⌘= / ⌘+ / ⌘0，步进 **0.2**、上下限 0.2–10、`zoomLevel` 起点 1（**每次启动重置**），调 `plugin:webview|set_webview_zoom`；另有 `mousewheel` + Ctrl 路径（该路径在 `:32` 调 `event.preventDefault()` 压住页面滚动）。**`keydown` 路径不调用 `preventDefault`**（`:12-28`）——这条差异对本 change 有意义：键盘路径与统一键位表会同时收到同一批事件（我们不绑它们时无冲突；一旦两处都接管就是双处理） | tauri 2.11.5 `src/webview/scripts/zoom-hotkey.js:12-28`（keydown）、`:30-42`（mousewheel，`preventDefault` 在 `:32`） |
 | 本项目**未启用**（`src-tauri` 全仓零命中；Tauri 侧默认 `false`）。启用需 ACL 权限 `core:webview:allow-set-webview-zoom`（本仓 `src-tauri/capabilities/default.json` 只有两条 event 权限） | `tauri-runtime-2.11.3/src/webview.rs:526`；`src-tauri/capabilities/default.json` |
 | 结论：它是「整体缩放」的最省实现，但它是一条**表外**的键位通路（不进 `KEY_BINDINGS`、不显示在键位面板、不可 `[keys]` 重绑），与「分发只有一条路径」的不变量正面冲突 → 推荐形态下 MUST NOT 启用；若 D4 取备选 B，也应通过**自己的命令**调缩放，而不是开这个开关 | 由上述三条推出 |
 
@@ -81,7 +81,8 @@
 
 | 事实 | 锚点 |
 |---|---|
-| 已有消费者在字体 / 字号变化时重测：列表标记宽度由 canvas 按 `parseFloat(computedStyle.fontSize) * .85` + `--font-mono` 量出，并在「`documentElement` 的 style / class 属性变化」与「`document.fonts` loadingdone」时重测 | `src/preview/lists.ts:38-48`、`:62-66`、`:81-97` |
+| 已有消费者在字体 / 字号变化时重测：列表标记宽度由 canvas 按 `parseFloat(computedStyle.fontSize) * .85` 与字体族量出，并在「`documentElement` 的 style / class 属性变化」与「`document.fonts` loadingdone」时重测 | `src/preview/lists.ts:38-48`、`:62-66`、`:81-97` |
+| **该消费者读的是 token 的字符串值，不是 CSS 引用**：`context.font = \`${…}px ${style.getPropertyValue("--font-mono")}\`` ——`getPropertyValue("--font-mono")` 拿到的是 token 的**值**，所以「把渲染引用换成 `--editor-mono-family`」不会带着它走。非默认 `mono_font_family` 下就会分叉：标记**渲染**用新族、**测量**仍按 shell 的 `--font-mono` 算宽度 → 列表标记与正文对不齐（这是本 change 必须一并收口的第二处「同语义两处来源」） | `src/preview/lists.ts:44` |
 | 该观察者的存在正好说明：**在 `documentElement` 上改 CSS 变量是这类消费者的既有触发条件**（`attributeFilter: ["style", "class"]`） | `src/preview/lists.ts:63` |
 | CM 自身对内容盒尺寸变化有观察通道（`ResizeObserver` / 几何变化检测）→ 字号变化**可能**会被自动重测量；这条**必须实测**，不能假设（见 §4-1） | 待实现期复核（本 worktree 无 `node_modules`；§4-1 给判据与退路） |
 | 同类缺陷的既有形态：`coordsAtPos` / 行高 / 滚动揭示一旦不匹配就是「光标画在别处」那一族（M103 垂直移动、M110 水平移动、M113/M118 表格与公式边界） | `openspec/specs/keymap-commands/spec.md` 的「编辑器光标命令的硬化底座」 |
@@ -157,6 +158,11 @@
   与 `src/editor.ts:1196` 都不再各写一份数字（前者只留 `line-height` 那半句，或整条删掉——实现期按
   「哪一条真正生效」实测后决定，判据是 `getComputedStyle(.cm-content)` 逐项与今天相同）。
   这条是 REVIEW.md 第 8 条的直接落点：**同一语义两处真源，改一处就漏另一处**。
+- **测量与渲染 MUST 同源（本 change 的第二处「同一语义两处来源」）**：`src/preview/lists.ts:44` 用
+  `getPropertyValue("--font-mono")` 把字体族读成**字符串**喂给 canvas 测量——它不受 CSS 引用改名
+  影响，改 token 时不会被带着走。实现 SHALL 让它读 `--editor-mono-family`（即与标记渲染同一个 token
+  名），并 SHALL 有断言钉住「标记渲染的族与测量用的族逐字相同」（默认与非默认 mono 族各一条）。
+  REVIEW.md 第 8 条的第二种形态：一处是 CSS 引用、一处是 JS 取值，改名时只有前者会跟着变。
 - **值的安全施加**（用户写的是 CSS 值，不是 HTML，但仍要挡住「非法值把观感打回浏览器默认字体」）：
   施加前 SHALL 用 `CSS.supports("font-family", 值)` 判定（含拼接后的完整值）；不通过（含空串）→
   记 warning + 保持基线。通过时写进 token 的完整值是 **`<用户值>, <基线后备栈>`**（例：正文 =

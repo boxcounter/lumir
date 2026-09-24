@@ -9,6 +9,11 @@ SHALL 走这一层，MUST NOT 直接引用 shell 基线 token；shell（左栏�
 MUST NOT 受编辑器 token 影响——「配置只影响编辑器」SHALL 由 token 分层结构性保证，MUST NOT 依赖逐处
 记得改。三个 token 的默认值 SHALL 等于本 change 之前的观感（字体族、字号、行高、栏宽逐项相同）。
 
+这条 SHALL 覆盖**JS 侧的取值点**，不只是 CSS 引用：按 `getPropertyValue` 读字体族字符串的消费者
+（列表标记宽度的 canvas 测量）读到的 SHALL 与它渲染所用的**同一个 token**——MUST NOT 出现「渲染走新的
+编辑器 token、测量仍读 shell token」的分叉（那会在非默认等宽族下表现为标记与正文对不齐）。CSS 引用改名
+时 JS 取值点不会自动跟着变，因此这条 SHALL 由断言钉住，MUST NOT 靠人记得改。
+
 编辑器内容的字号 MUST NOT 再有两处写值：本 change 之前 `src/style.css` 与编辑器主题各写一份 `16px`
 （后者带作用域类、specificity 更高，是实际生效的那一份），实现后真源 SHALL 只有 token 默认值一处，
 且 SHALL 由计算属性断言钉住。
@@ -35,6 +40,12 @@ SHALL 记一条 warning 并保持基线；通过时写入 token 的 SHALL 是「
 - **WHEN** 配置 `editor.font_family` 为一个本机已安装的字族、`editor.font_size` 为 `20`
 - **THEN** 编辑器内容的字体族与字号随之变化（正文与代码块按各自的 token 取到新族，字号为 20px）；
   左栏文件树、masthead、键位面板、搜索面板的字体与字号逐项不变
+
+#### Scenario: 测量与渲染同源
+
+- **WHEN** 配置 `mono_font_family` 为一个与本机默认等宽族不同的字族，打开一份含列表的 Markdown
+- **THEN** 列表标记（序号 / 项目符号）**渲染**用的字体族与列表标记宽度**测量**用的字体族是同一个值
+  （都取自等宽 token）；MUST NOT 出现「渲染用新族、测量仍按旧族算宽」导致标记与正文错位的状态
 
 #### Scenario: 非法值与未安装字体都退化为基线
 
