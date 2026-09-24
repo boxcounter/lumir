@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<title>Lumir UI 原型 · 三方向对比</title>
+<style>
+  body { font-family: -apple-system, "PingFang SC", sans-serif; margin: 40px auto; max-width: 1200px; color: #222; }
+  h1 { font-size: 22px; } h2 { font-size: 17px; margin-top: 36px; }
+  .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; }
+  figure { margin: 0; } img { width: 100%; border: 1px solid #ddd; border-radius: 6px; display: block; }
+  figcaption { font-size: 13px; color: #666; margin-top: 6px; }
+  a { color: #4a56c0; text-decoration: none; } a:hover { text-decoration: underline; }
+  .links { font-size: 14px; line-height: 2; }
+</style>
+</head>
+<body>
+<h1>Lumir UI 重设计 · 三方向原型对比</h1>
+<p>点击链接打开可交互原型（可切换 <code>?screen=1|2|3</code> 与 <code>?theme=light|dark|eink</code>）。截图为 1280×900 @2x。设计准绳：<a href="../docs/specs/design-brief-v1.md">design-brief-v1.md</a>（在仓库内阅读）。</p>
+
+<h2>方向 A「器物」—— Things 级安静质感 · panel 派（agent 平时隐藏，召唤出右 pane；裁决卡 + chat 同栏分区）</h2>
+<p class="links">
+  <a href="direction-a/index.html?screen=1">屏1 纯编辑</a> ·
+  <a href="direction-a/index.html?screen=2">屏2 agent 工作中</a> ·
+  <a href="direction-a/index.html?screen=3">屏3 裁决时刻</a> ·
+  <a href="direction-a/index.html?screen=1&theme=dark">dark</a> ·
+  <a href="direction-a/index.html?screen=1&theme=eink">eink</a>
+</p>
+<div class="grid">
+  <figure><img src="shots/direction-a-s1-light.png" alt=""><figcaption>屏1 纯编辑态</figcaption></figure>
+  <figure><img src="shots/direction-a-s2-light.png" alt=""><figcaption>屏2 agent 工作中</figcaption></figure>
+  <figure><img src="shots/direction-a-s3-light.png" alt=""><figcaption>屏3 裁决时刻</figcaption></figure>
+</div>
+
+<h2>方向 B「编辑部·现代版」—— 排版即界面 · minibuffer + inline 派（无常驻面板，Cmd-K 召唤；修订模式内联裁决）</h2>
+<p class="links">
+  <a href="direction-b/index.html?screen=1">屏1 纯编辑</a> ·
+  <a href="direction-b/index.html?screen=2">屏2 agent 工作中</a> ·
+  <a href="direction-b/index.html?screen=3">屏3 裁决时刻</a> ·
+  <a href="direction-b/index.html?screen=1&theme=dark">dark</a> ·
+  <a href="direction-b/index.html?screen=1&theme=eink">eink</a>
+</p>
+<div class="grid">
+  <figure><img src="shots/direction-b-s1-light.png" alt=""><figcaption>屏1 纯编辑态</figcaption></figure>
+  <figure><img src="shots/direction-b-s2-light.png" alt=""><figcaption>屏2 agent 工作中</figcaption></figure>
+  <figure><img src="shots/direction-b-s3-light.png" alt=""><figcaption>屏3 裁决时刻</figcaption></figure>
+</div>
+
+<h2>方向 C「驾驶舱」—— 结构化密度 · chat 与裁决队列并列派（常驻 agent 栏：上 chat 下 Inbox；选中提案中间栏出完整审阅视图）</h2>
+<p class="links">
+  <a href="direction-c/index.html?screen=1">屏1 纯编辑</a> ·
+  <a href="direction-c/index.html?screen=2">屏2 agent 工作中</a> ·
+  <a href="direction-c/index.html?screen=3">屏3 裁决时刻</a> ·
+  <a href="direction-c/index.html?screen=1&theme=dark">dark</a> ·
+  <a href="direction-c/index.html?screen=1&theme=eink">eink</a>
+</p>
+<div class="grid">
+  <figure><img src="shots/direction-c-s1-light.png" alt=""><figcaption>屏1 纯编辑态</figcaption></figure>
+  <figure><img src="shots/direction-c-s2-light.png" alt=""><figcaption>屏2 agent 工作中</figcaption></figure>
+  <figure><img src="shots/direction-c-s3-light.png" alt=""><figcaption>屏3 裁决时刻</figcaption></figure>
+</div>
+</body>
+</html>

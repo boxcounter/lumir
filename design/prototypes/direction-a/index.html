@@ -1,0 +1,965 @@
+<!DOCTYPE html>
+<!--
+  Lumir UI 重设计原型 · 方向 A「器物」(panel 派)
+  用法: index.html?screen=1|2|3&theme=light|dark|eink
+  自包含: 无外部资源, 系统字体栈, 内联 SVG 图标
+-->
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Lumir — 方向 A 原型</title>
+<style>
+/* ============ tokens ============ */
+:root{
+  --font-ui: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  --font-body: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", "PingFang SC", "Hiragino Sans GB", sans-serif;
+  --font-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+
+  --bg-app: #f2f1ee;
+  --bg-content: #fbfbfa;
+  --bg-hover: rgba(28,25,20,.045);
+  --bg-active: #e8e6e1;
+  --surface: #ffffff;
+  --text-1: #23211c;
+  --text-2: #6e6a62;
+  --text-3: #a6a29a;
+  --line: #e3e1dc;
+  --line-strong: #d2cfc8;
+  --accent: #5563c1;
+  --accent-hover: #4854a8;
+  --accent-soft: rgba(85,99,193,.10);
+  --accent-softer: rgba(85,99,193,.06);
+  --add: #33784d;
+  --add-bg: rgba(51,120,77,.10);
+  --del: #b0453c;
+  --del-bg: rgba(176,69,60,.09);
+  --shadow-card: 0 1px 2px rgba(24,21,16,.05);
+  --shadow-pop: 0 4px 16px rgba(24,21,16,.08);
+  --focus-ring: rgba(85,99,193,.35);
+  --selection: rgba(85,99,193,.18);
+}
+[data-theme="dark"]{
+  --bg-app: #1a1917;
+  --bg-content: #201f1d;
+  --bg-hover: rgba(235,232,226,.05);
+  --bg-active: #2e2c28;
+  --surface: #272624;
+  --text-1: #e9e7e1;
+  --text-2: #9d998f;
+  --text-3: #6b6760;
+  --line: #322f2b;
+  --line-strong: #45423c;
+  --accent: #93a0e6;
+  --accent-hover: #a8b3ec;
+  --accent-soft: rgba(147,160,230,.14);
+  --accent-softer: rgba(147,160,230,.08);
+  --add: #7fb98f;
+  --add-bg: rgba(127,185,143,.13);
+  --del: #d4887f;
+  --del-bg: rgba(212,136,127,.12);
+  --shadow-card: 0 1px 2px rgba(0,0,0,.28);
+  --shadow-pop: 0 4px 18px rgba(0,0,0,.4);
+  --focus-ring: rgba(147,160,230,.4);
+  --selection: rgba(147,160,230,.26);
+}
+[data-theme="eink"]{
+  --bg-app: #ffffff;
+  --bg-content: #ffffff;
+  --bg-hover: rgba(0,0,0,.06);
+  --bg-active: #000000;
+  --surface: #ffffff;
+  --text-1: #000000;
+  --text-2: #3a3a3a;
+  --text-3: #6e6e6e;
+  --line: #c9c9c9;
+  --line-strong: #000000;
+  --accent: #000000;
+  --accent-hover: #000000;
+  --accent-soft: rgba(0,0,0,.08);
+  --accent-softer: rgba(0,0,0,.05);
+  --add: #000000;
+  --add-bg: rgba(0,0,0,.07);
+  --del: #000000;
+  --del-bg: rgba(0,0,0,.05);
+  --shadow-card: none;
+  --shadow-pop: none;
+  --focus-ring: rgba(0,0,0,.45);
+  --selection: rgba(0,0,0,.16);
+}
+
+/* ============ base ============ */
+*{ margin:0; padding:0; box-sizing:border-box; }
+html,body{ height:100%; overflow:hidden; }
+body{
+  font-family: var(--font-ui);
+  font-size: 13px;
+  color: var(--text-1);
+  background: var(--bg-app);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+::selection{ background: var(--selection); }
+button{ font-family:inherit; font-size:inherit; color:inherit; background:none; border:none; cursor:pointer; }
+svg{ display:block; }
+
+#app{ display:flex; height:100vh; }
+
+/* ============ sidebar ============ */
+#sidebar{
+  width:248px; flex:none;
+  background:var(--bg-app);
+  border-right:1px solid var(--line);
+  display:flex; flex-direction:column;
+  transition: background .18s ease, border-color .18s ease;
+}
+.win-controls{
+  display:flex; gap:8px; padding:14px 16px 8px;
+}
+.win-controls i{
+  width:11px; height:11px; border-radius:50%;
+}
+.win-controls i:nth-child(1){ background:#ff5f57; }
+.win-controls i:nth-child(2){ background:#febc2e; }
+.win-controls i:nth-child(3){ background:#28c840; }
+[data-theme="eink"] .win-controls i{ background:#fff; border:1.5px solid #000; width:9px; height:9px; }
+
+.vault-head{
+  display:flex; align-items:center; justify-content:space-between;
+  padding:10px 16px 8px;
+}
+.vault-name{
+  font-size:13px; font-weight:600; letter-spacing:.01em;
+  display:flex; align-items:center; gap:7px;
+}
+.vault-name svg{ color:var(--text-3); }
+.icon-btn{
+  width:26px; height:26px; border-radius:6px;
+  display:flex; align-items:center; justify-content:center;
+  color:var(--text-3);
+  transition: background .12s ease, color .12s ease;
+}
+.icon-btn:hover{ background:var(--bg-hover); color:var(--text-1); }
+.icon-btn:active{ background:var(--bg-active); }
+[data-theme="eink"] .icon-btn:active{ color:#fff; }
+
+.search-wrap{ padding:2px 12px 10px; }
+.search{
+  display:flex; align-items:center; gap:6px;
+  height:28px; padding:0 9px;
+  background:var(--bg-hover);
+  border:1px solid transparent;
+  border-radius:7px;
+  color:var(--text-3);
+  transition: border-color .12s ease, background .12s ease;
+}
+.search:hover{ border-color:var(--line); }
+.search input{
+  flex:1; border:none; outline:none; background:none;
+  font-family:inherit; font-size:12.5px; color:var(--text-1);
+}
+.search input::placeholder{ color:var(--text-3); }
+.search:focus-within{ background:var(--bg-content); border-color:var(--accent); box-shadow:0 0 0 3px var(--focus-ring); }
+[data-theme="eink"] .search:focus-within{ box-shadow:0 0 0 2px var(--focus-ring); }
+
+/* file tree */
+.tree{ flex:1; padding:2px 8px 16px; overflow:hidden; }
+.tree-section{
+  padding:8px 10px 4px;
+  font-size:11px; font-weight:600; letter-spacing:.06em;
+  color:var(--text-3);
+}
+.trow{
+  display:flex; align-items:center; gap:2px;
+  height:26px; padding-right:8px;
+  border-radius:6px;
+  font-size:12.5px; color:var(--text-2);
+  cursor:default; user-select:none;
+  transition: background .1s ease, color .1s ease;
+  white-space:nowrap; overflow:hidden;
+}
+.trow:hover{ background:var(--bg-hover); color:var(--text-1); }
+.trow .chev{
+  width:16px; height:16px; flex:none;
+  display:flex; align-items:center; justify-content:center;
+  color:var(--text-3);
+}
+.trow .chev svg{ transition: transform .15s ease; }
+.trow.closed .chev svg{ transform:rotate(-90deg); }
+.trow .fname{ overflow:hidden; text-overflow:ellipsis; }
+.trow.file .fname{ padding-left:18px; }
+.trow.sel{
+  background:var(--bg-active);
+  color:var(--text-1); font-weight:550;
+}
+[data-theme="eink"] .trow.sel{ color:#fff; }
+[data-theme="eink"] .trow.sel .chev{ color:#fff; }
+.t-lv1{ padding-left:10px; }
+.t-lv2{ padding-left:26px; }
+.t-lv3{ padding-left:42px; }
+.t-lv4{ padding-left:58px; }
+
+/* ============ main column ============ */
+#main{ flex:1; min-width:0; display:flex; flex-direction:column; background:var(--bg-content); transition:background .18s ease; }
+
+/* tabstrip */
+#tabstrip{
+  height:44px; flex:none;
+  display:flex; align-items:flex-end; gap:6px;
+  padding:0 12px;
+  background:var(--bg-app);
+  border-bottom:1px solid var(--line);
+  transition: background .18s ease;
+}
+.tabs{ display:flex; align-items:center; gap:4px; flex:1; min-width:0; padding-bottom:6px; }
+.tab{
+  display:flex; align-items:center; gap:8px;
+  height:30px; padding:0 12px;
+  border-radius:8px;
+  font-size:12.5px; color:var(--text-2);
+  border:1px solid transparent;
+  max-width:220px;
+  transition: background .12s ease, color .12s ease, border-color .12s ease;
+}
+.tab .tname{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.tab:hover{ background:var(--bg-hover); color:var(--text-1); }
+.tab.active{
+  background:var(--bg-content);
+  color:var(--text-1); font-weight:500;
+  border-color:var(--line);
+  box-shadow:var(--shadow-card);
+}
+.tab .close{
+  width:16px; height:16px; border-radius:4px; flex:none;
+  display:flex; align-items:center; justify-content:center;
+  color:var(--text-3); opacity:0;
+  transition: opacity .12s ease, background .12s ease;
+}
+.tab:hover .close{ opacity:1; }
+.tab .close:hover{ background:var(--bg-hover); color:var(--text-1); }
+.strip-actions{ display:flex; align-items:center; gap:2px; padding-bottom:6px; }
+.strip-divider{ width:1px; height:18px; background:var(--line); margin:0 6px; flex:none; }
+.agent-btn{
+  display:flex; align-items:center; gap:6px;
+  height:28px; padding:0 10px;
+  border-radius:7px;
+  font-size:12px; font-weight:500;
+  color:var(--text-2);
+  border:1px solid transparent;
+  transition: background .12s ease, color .12s ease, border-color .12s ease;
+}
+.agent-btn:hover{ background:var(--bg-hover); color:var(--text-1); }
+.agent-btn.on{
+  color:var(--accent);
+  background:var(--accent-soft);
+  border-color:transparent;
+}
+[data-theme="eink"] .agent-btn.on{ border:1px solid #000; }
+
+/* reading view */
+#editor-scroll{ flex:1; overflow:hidden; display:flex; justify-content:center; }
+article.reader{
+  width:660px; max-width:100%;
+  padding:40px 48px 28px;
+  font-family:var(--font-body);
+}
+.doc-title{
+  font-size:27px; font-weight:700; letter-spacing:-.01em;
+  line-height:1.3;
+}
+.doc-meta{
+  margin-top:8px;
+  font-size:12px; color:var(--text-3);
+  font-family:var(--font-ui);
+  display:flex; align-items:center; gap:6px;
+}
+.doc-meta .dot{ width:2px; height:2px; border-radius:50%; background:var(--text-3); }
+.lede{
+  margin-top:18px;
+  font-size:18px; line-height:1.65; color:var(--text-1);
+  font-weight:450;
+}
+.reader h2{
+  font-size:19px; font-weight:650; letter-spacing:-.005em;
+  margin:30px 0 12px;
+  line-height:1.4;
+}
+.reader p{ font-size:16px; line-height:1.8; margin:12px 0; }
+.reader ol, .reader ul{ margin:10px 0 14px; padding-left:0; list-style:none; }
+.reader li{
+  position:relative;
+  font-size:16px; line-height:1.75;
+  padding-left:26px;
+  margin:7px 0;
+  color:var(--text-1);
+}
+.reader ol>li{ counter-increment:oli; }
+.reader ol{ counter-reset:oli; }
+.reader ol>li::before{
+  content:counter(oli) ".";
+  position:absolute; left:0; top:0;
+  color:var(--text-3);
+  font-variant-numeric:tabular-nums;
+  font-size:14.5px; line-height:2;
+}
+.reader ul>li::before{
+  content:"";
+  position:absolute; left:8px; top:.78em;
+  width:4px; height:4px; border-radius:50%;
+  background:var(--text-3);
+}
+.reader li li{ font-size:15px; color:var(--text-2); margin:5px 0; padding-left:24px; }
+.reader li ul, .reader li ol{ margin:5px 0 8px; }
+.reader li ol>li::before{ font-size:13.5px; }
+.reader li ul>li::before{ background:transparent; border:1.2px solid var(--text-3); width:3px; height:3px; border-radius:0; left:9px; }
+.reader code{
+  font-family:var(--font-mono);
+  font-size:.86em;
+  background:var(--bg-hover);
+  padding:1.5px 5px;
+  border-radius:5px;
+}
+.reader hr{
+  border:none; margin:26px 0 4px;
+  text-align:center;
+  color:var(--text-3);
+}
+.reader hr::after{ content:"···"; letter-spacing:12px; font-size:14px; }
+.wikilink{
+  color:var(--accent);
+  text-decoration:none;
+  border-radius:4px;
+  padding:0 2px; margin:0 -2px;
+  transition: background .12s ease;
+}
+.wikilink:hover{ background:var(--accent-soft); }
+[data-theme="eink"] .wikilink{ text-decoration:underline; text-underline-offset:3px; text-decoration-thickness:1px; }
+
+/* status bar */
+#statusbar{
+  height:28px; flex:none;
+  display:flex; align-items:center; justify-content:space-between;
+  padding:0 14px;
+  border-top:1px solid var(--line);
+  font-size:11.5px; color:var(--text-3);
+  background:var(--bg-content);
+}
+#statusbar .crumb{ display:flex; align-items:center; gap:5px; }
+#statusbar .crumb .sep{ color:var(--text-3); opacity:.6; }
+
+/* ============ agent pane ============ */
+#agent-pane{
+  width:0; flex:none; overflow:hidden;
+  background:var(--bg-app);
+  border-left:1px solid transparent;
+  transition: width .22s cubic-bezier(.32,.72,.35,1), border-color .18s ease;
+}
+body[data-screen="2"] #agent-pane,
+body[data-screen="3"] #agent-pane{
+  width:376px;
+  border-left-color:var(--line);
+}
+.pane-inner{
+  width:376px; height:100%;
+  display:flex; flex-direction:column;
+}
+.pane-head{
+  height:46px; flex:none;
+  display:flex; align-items:center; gap:8px;
+  padding:0 12px 0 16px;
+  border-bottom:1px solid var(--line);
+}
+.pane-title{ font-size:13px; font-weight:600; }
+.status-pill{
+  display:flex; align-items:center; gap:6px;
+  height:22px; padding:0 9px;
+  border-radius:11px;
+  font-size:11px; font-weight:500;
+  color:var(--text-2);
+  background:var(--bg-hover);
+}
+.status-pill.working{ color:var(--accent); background:var(--accent-soft); }
+.status-pill .pulse{
+  width:6px; height:6px; border-radius:50%;
+  background:var(--accent);
+  animation:pulse 1.6s ease-in-out infinite;
+}
+[data-theme="eink"] .status-pill.working{ border:1px solid #000; }
+@keyframes pulse{ 0%,100%{ opacity:1; transform:scale(1);} 50%{ opacity:.35; transform:scale(.8);} }
+.pane-head .spacer{ flex:1; }
+
+.pane-body{ flex:1; min-height:0; display:flex; flex-direction:column; }
+
+/* queue */
+.queue{ flex:0 1 auto; min-height:0; overflow:hidden; display:flex; flex-direction:column; }
+body[data-screen="3"] .queue{ flex:1; }
+.queue-head{
+  flex:none;
+  display:flex; align-items:center; gap:8px;
+  padding:14px 16px 8px;
+}
+.queue-label{
+  font-size:11px; font-weight:600; letter-spacing:.06em;
+  color:var(--text-3);
+}
+.queue-count{
+  font-size:11px; color:var(--text-3);
+  background:var(--bg-hover);
+  border-radius:8px; padding:1px 6px;
+  font-variant-numeric:tabular-nums;
+}
+.queue-head .spacer{ flex:1; }
+.text-btn{
+  font-size:11.5px; font-weight:500;
+  color:var(--text-2);
+  padding:3px 7px; border-radius:5px;
+  transition: color .12s ease, background .12s ease;
+}
+.text-btn:hover{ color:var(--text-1); background:var(--bg-hover); }
+.text-btn.accent{ color:var(--accent); }
+.text-btn.accent:hover{ background:var(--accent-soft); }
+.queue-list{ flex:1; min-height:0; overflow:hidden; padding:4px 12px 10px; display:flex; flex-direction:column; gap:10px; }
+
+.queue-empty{
+  margin:6px 12px 10px;
+  border:1px dashed var(--line-strong);
+  border-radius:10px;
+  padding:16px 14px;
+  text-align:center;
+  color:var(--text-3);
+  font-size:12px; line-height:1.6;
+}
+
+/* activity rows (screen 2) */
+.activity{ padding:2px 4px 0; }
+.act-row{
+  display:flex; align-items:center; gap:9px;
+  height:27px; padding:0 6px;
+  border-radius:6px;
+  font-size:12.5px; color:var(--text-2);
+  transition: background .1s ease;
+}
+.act-row:hover{ background:var(--bg-hover); }
+.act-row .ic{ width:15px; flex:none; display:flex; justify-content:center; color:var(--text-3); }
+.act-row.done .ic{ color:var(--add); }
+[data-theme="eink"] .act-row.done .ic{ color:#000; }
+.act-row .file-ref{ font-family:var(--font-mono); font-size:11.5px; }
+.act-row.current{ color:var(--text-1); }
+.act-row.current .ic .pulse-sm{
+  width:6px; height:6px; border-radius:50%;
+  background:var(--accent);
+  animation:pulse 1.4s ease-in-out infinite;
+}
+.act-summary{
+  margin:8px 6px 0;
+  font-size:11.5px; color:var(--text-3);
+  display:flex; align-items:center; gap:8px;
+}
+.act-bar{
+  flex:1; height:2px; border-radius:1px;
+  background:var(--bg-hover);
+  overflow:hidden;
+}
+.act-bar i{
+  display:block; height:100%; width:62%;
+  background:var(--accent);
+  border-radius:1px;
+  opacity:.55;
+}
+[data-theme="eink"] .act-bar i{ opacity:1; }
+
+/* proposal cards */
+.card{
+  flex:none;
+  background:var(--surface);
+  border:1px solid var(--line);
+  border-radius:10px;
+  box-shadow:var(--shadow-card);
+  overflow:hidden;
+  transition: border-color .15s ease, box-shadow .15s ease;
+}
+.card:hover{ border-color:var(--line-strong); }
+.card-head{
+  display:flex; align-items:center; gap:8px;
+  padding:11px 14px 0;
+}
+.chip{
+  flex:none;
+  height:19px; padding:0 7px;
+  display:flex; align-items:center;
+  border-radius:5px;
+  font-size:10.5px; font-weight:600; letter-spacing:.03em;
+}
+.chip.new{ color:var(--accent); background:var(--accent-soft); }
+.chip.edit{ color:var(--text-2); background:var(--bg-hover); }
+[data-theme="eink"] .chip.new{ border:1px solid #000; }
+.card-head .fname{
+  font-family:var(--font-mono);
+  font-size:12px; color:var(--text-1);
+  overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+}
+.card-summary{
+  padding:7px 14px 0;
+  font-size:12.5px; line-height:1.6;
+  color:var(--text-2);
+}
+.card-preview{
+  margin:10px 14px 0;
+  border:1px solid var(--line);
+  border-radius:7px;
+  background:var(--bg-content);
+  padding:9px 11px;
+  font-size:12px; line-height:1.7;
+  color:var(--text-2);
+  overflow:hidden;
+}
+.card-preview .pv-h{ color:var(--text-1); font-weight:600; font-size:12px; }
+.card-preview .pv-fade{
+  margin-top:2px;
+  color:var(--text-3); font-size:11px;
+}
+.diff{
+  margin:10px 14px 0;
+  border:1px solid var(--line);
+  border-radius:7px;
+  overflow:hidden;
+  font-family:var(--font-mono);
+  font-size:11.5px; line-height:1.75;
+}
+.diff .dline{
+  display:flex; gap:8px;
+  padding:0 10px;
+  white-space:nowrap; overflow:hidden;
+}
+.diff .sign{ flex:none; width:10px; color:var(--text-3); user-select:none; }
+.diff .ctx{ color:var(--text-2); }
+.diff .add{ background:var(--add-bg); color:var(--add); }
+.diff .add .sign{ color:var(--add); }
+.diff .del{ background:var(--del-bg); color:var(--del); }
+.diff .del .sign{ color:var(--del); }
+[data-theme="eink"] .diff .del .txt{ text-decoration:line-through; }
+[data-theme="eink"] .diff .add{ font-weight:600; }
+.diff-meta{
+  margin-top:6px;
+  font-size:11px; color:var(--text-3);
+  font-family:var(--font-ui);
+  padding:0 2px;
+}
+.card-actions{
+  display:flex; align-items:center; gap:7px;
+  padding:9px 14px 11px;
+}
+.btn{
+  height:28px; padding:0 13px;
+  border-radius:7px;
+  font-size:12px; font-weight:550;
+  transition: background .12s ease, color .12s ease, border-color .12s ease, transform .06s ease;
+}
+.btn:active{ transform:translateY(.5px); }
+.btn-primary{
+  background:var(--accent); color:#fff;
+}
+.btn-primary:hover{ background:var(--accent-hover); }
+[data-theme="eink"] .btn-primary{ background:#000; color:#fff; }
+.btn-ghost{
+  border:1px solid var(--line-strong);
+  color:var(--text-2);
+}
+.btn-ghost:hover{ color:var(--text-1); border-color:var(--text-3); }
+[data-theme="eink"] .btn-ghost:hover{ border-color:#000; }
+.card-actions .spacer{ flex:1; }
+.more-btn{
+  font-size:11.5px; color:var(--text-3);
+  padding:3px 6px; border-radius:5px;
+  transition: color .12s ease, background .12s ease;
+}
+.more-btn:hover{ color:var(--text-1); background:var(--bg-hover); }
+
+/* compact proposal card */
+.card.compact .card-head{ padding-top:10px; }
+.card.compact .card-summary{ padding-top:4px; }
+.card.compact .card-actions{ padding:8px 14px 10px; }
+.card.compact .btn{ height:25px; padding:0 11px; font-size:11.5px; }
+
+/* pending activity rows */
+.act-row.pending{ color:var(--text-3); }
+.act-row.pending .ic{
+  width:6px; height:6px; margin:0 4.5px;
+  border-radius:50%;
+  border:1.3px solid var(--text-3);
+  flex:none;
+  align-self:center;
+}
+
+/* chat */
+.chat{
+  flex:1; min-height:0;
+  border-top:1px solid var(--line);
+  display:flex; flex-direction:column;
+  background:var(--bg-app);
+}
+body[data-screen="3"] .chat{ flex:0 0 auto; }
+.chat-label{
+  padding:10px 16px 2px;
+  font-size:11px; font-weight:600; letter-spacing:.06em;
+  color:var(--text-3);
+}
+.chat-scroll{ flex:1; min-height:0; overflow:hidden; padding:4px 16px 0; }
+.msg{ padding:7px 0; }
+.msg + .msg{ border-top:1px solid var(--line); }
+.msg .who{
+  font-size:10.5px; font-weight:600; letter-spacing:.05em;
+  color:var(--text-3);
+  margin-bottom:3px;
+  display:flex; align-items:center; gap:6px;
+}
+.msg .who .when{ font-weight:400; letter-spacing:0; }
+.msg .body{
+  font-size:13px; line-height:1.65;
+  color:var(--text-1);
+}
+.msg.user .body{ color:var(--text-2); }
+.msg .body .file-ref{ font-family:var(--font-mono); font-size:11.5px; background:var(--bg-hover); padding:1px 5px; border-radius:4px; }
+.composer{
+  padding:10px 12px 12px;
+}
+.composer-box{
+  display:flex; align-items:flex-end; gap:8px;
+  background:var(--surface);
+  border:1px solid var(--line-strong);
+  border-radius:9px;
+  padding:8px 8px 8px 12px;
+  transition: border-color .12s ease, box-shadow .12s ease;
+}
+.composer-box:focus-within{
+  border-color:var(--accent);
+  box-shadow:0 0 0 3px var(--focus-ring);
+}
+.composer-box textarea{
+  flex:1; border:none; outline:none; resize:none;
+  background:none;
+  font-family:inherit; font-size:12.5px; line-height:1.5;
+  color:var(--text-1);
+  height:19px;
+}
+.composer-box textarea::placeholder{ color:var(--text-3); }
+.send-btn{
+  width:26px; height:26px; flex:none;
+  border-radius:7px;
+  background:var(--accent);
+  color:#fff;
+  display:flex; align-items:center; justify-content:center;
+  transition: background .12s ease, transform .06s ease;
+}
+.send-btn:hover{ background:var(--accent-hover); }
+.send-btn:active{ transform:translateY(.5px); }
+[data-theme="eink"] .send-btn{ background:#000; }
+
+/* screen visibility */
+.pane-screen{ display:none; flex:1; min-height:0; flex-direction:column; }
+body[data-screen="2"] #pane-working{ display:flex; }
+body[data-screen="3"] #pane-review{ display:flex; }
+</style>
+</head>
+<body data-screen="1">
+<div id="app">
+
+  <!-- ======== sidebar ======== -->
+  <aside id="sidebar">
+    <div class="win-controls"><i></i><i></i><i></i></div>
+    <div class="vault-head">
+      <div class="vault-name">
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 4.5h4l1.2 1.6h5.8v6.4h-11z"/><path d="M2.5 4.5v-1h4l1.2 1.6"/></svg>
+        Everything
+      </div>
+      <button class="icon-btn" title="新建笔记" aria-label="新建笔记">
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M8 3.5v9M3.5 8h9"/></svg>
+      </button>
+    </div>
+    <div class="search-wrap">
+      <div class="search">
+        <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5 14 14"/></svg>
+        <input type="text" placeholder="搜索" spellcheck="false">
+      </div>
+    </div>
+    <nav class="tree">
+      <div class="tree-section">文件夹</div>
+
+      <div class="trow t-lv1"><span class="chev"><svg width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 3.5 5 6l2.5-2.5"/></svg></span><span class="fname">1_Projects</span></div>
+      <div class="trow t-lv2"><span class="chev"><svg width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 3.5 5 6l2.5-2.5"/></svg></span><span class="fname">Slax-Reader-AI-Reading-Reimagined</span></div>
+      <div class="trow file t-lv3"><span class="fname">README.md</span></div>
+      <div class="trow t-lv3"><span class="chev"><svg width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 3.5 5 6l2.5-2.5"/></svg></span><span class="fname">specs</span></div>
+      <div class="trow file t-lv4"><span class="fname">2026-08-22-threads-demo-design.md</span></div>
+      <div class="trow file t-lv4"><span class="fname">2026-08-22-threads-demo-plan.md</span></div>
+      <div class="trow t-lv2 closed"><span class="chev"><svg width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 3.5 5 6l2.5-2.5"/></svg></span><span class="fname">Slax-Reader-Auto-Tagging</span></div>
+      <div class="trow t-lv2 closed"><span class="chev"><svg width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 3.5 5 6l2.5-2.5"/></svg></span><span class="fname">Slax-Reader-Onboarding</span></div>
+      <div class="trow t-lv2 closed"><span class="chev"><svg width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 3.5 5 6l2.5-2.5"/></svg></span><span class="fname">Work-Tracking-Method</span></div>
+
+      <div class="trow t-lv1 closed"><span class="chev"><svg width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 3.5 5 6l2.5-2.5"/></svg></span><span class="fname">2_Areas</span></div>
+
+      <div class="trow t-lv1"><span class="chev"><svg width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 3.5 5 6l2.5-2.5"/></svg></span><span class="fname">3_Resources</span></div>
+      <div class="trow file t-lv2 sel"><span class="fname">2026-R&amp;D-Strategy.md</span></div>
+      <div class="trow file t-lv2"><span class="fname">常用 English.md</span></div>
+      <div class="trow file t-lv2"><span class="fname">Personal Mission Statement.md</span></div>
+      <div class="trow t-lv2 closed"><span class="chev"><svg width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 3.5 5 6l2.5-2.5"/></svg></span><span class="fname">Templates</span></div>
+
+      <div class="trow t-lv1 closed"><span class="chev"><svg width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 3.5 5 6l2.5-2.5"/></svg></span><span class="fname">4_Archives</span></div>
+    </nav>
+  </aside>
+
+  <!-- ======== main ======== -->
+  <div id="main">
+    <div id="tabstrip">
+      <div class="tabs">
+        <div class="tab active">
+          <span class="tname">2026-R&amp;D-Strategy.md</span>
+          <span class="close"><svg width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><path d="M1.5 1.5l7 7M8.5 1.5l-7 7"/></svg></span>
+        </div>
+        <div class="tab">
+          <span class="tname">dimension-design.md</span>
+          <span class="close"><svg width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><path d="M1.5 1.5l7 7M8.5 1.5l-7 7"/></svg></span>
+        </div>
+      </div>
+      <div class="strip-actions">
+        <button class="icon-btn" title="切换侧栏" aria-label="切换侧栏">
+          <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="12" height="10" rx="2"/><path d="M6.5 3v10"/></svg>
+        </button>
+        <button class="icon-btn" title="编辑 / 预览" aria-label="编辑预览切换">
+          <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 8s2.3-3.8 5.5-3.8S13.5 8 13.5 8 11.2 11.8 8 11.8 2.5 8 2.5 8z"/><circle cx="8" cy="8" r="1.8"/></svg>
+        </button>
+        <span class="strip-divider"></span>
+        <button class="agent-btn" id="agent-btn" title="召唤 Agent">
+          <svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor"><path d="M8 1.5 9.6 6.4 14.5 8 9.6 9.6 8 14.5 6.4 9.6 1.5 8l4.9-1.6z"/></svg>
+          Agent
+        </button>
+      </div>
+    </div>
+
+    <div id="editor-scroll">
+      <article class="reader">
+        <h1 class="doc-title">2026 R&amp;D Strategy</h1>
+        <div class="doc-meta"><span>3_Resources</span><span class="dot"></span><span>63 行</span><span class="dot"></span><span>约 1,200 字</span></div>
+        <p class="lede">思路：不是学工具，而是改进工作方式。</p>
+
+        <h2>AI Coding 的基建、工作流规范</h2>
+        <ol>
+          <li>基建、流程、规范
+            <ul>
+              <li><code>.claude</code>：Context engineering</li>
+              <li>PR：模板自动生成描述、AI 初审、Code Review Skills</li>
+              <li>Spec：业务逻辑、服务间或模块间的接口（gRPC / RESTful）</li>
+              <li>与 AI 的合作：讨论与头脑风暴、发现、拆解成 AI 擅长的大小</li>
+            </ul>
+          </li>
+          <li>Review (Plan + Code) &gt; Coding——从自动补全、我来设计结构，转向以 Review 为中心；除了 Agent 产出的质量，还要探究它为什么没达到预期：缺的是哪层业务上下文</li>
+          <li>技能：Code Review、Agent 与 Hook、任务分解、TDD</li>
+          <li>Pilot：忠旺重写 API；华南做 Slax Reader</li>
+        </ol>
+
+        <hr>
+
+        <h2>从研发部的视角出发的 Tech Vision</h2>
+        <ul>
+          <li>对各职能端的期望——从各端的年终总结中收集信息</li>
+          <li>PR：AI 编写描述，让 reviewer 快速了解概要；AI 做初审，降低 reviewer 的心智负担</li>
+          <li>对忠旺——<a class="wikilink" href="#">2026-01 和忠旺</a>：全局统筹和主动同步；提高决策质量，通过写方案说清楚目标价值和取舍来实现</li>
+          <li>后端组的基建 → 公司的基建（AI Agents）——也许可以鼓励华南来做</li>
+        </ul>
+      </article>
+    </div>
+
+    <footer id="statusbar">
+      <div class="crumb"><span>3_Resources</span><span class="sep">/</span><span>2026-R&amp;D-Strategy.md</span></div>
+      <div>阅读模式 · 第 1 行，第 1 列</div>
+    </footer>
+  </div>
+
+  <!-- ======== agent pane ======== -->
+  <aside id="agent-pane">
+    <div class="pane-inner">
+
+      <!-- screen 2: working -->
+      <div class="pane-screen" id="pane-working">
+        <div class="pane-head">
+          <span class="pane-title">Agent</span>
+          <span class="status-pill working"><span class="pulse"></span>进行中</span>
+          <span class="spacer"></span>
+          <button class="icon-btn" title="关闭面板" aria-label="关闭面板">
+            <svg width="11" height="11" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><path d="M1.5 1.5l7 7M8.5 1.5l-7 7"/></svg>
+          </button>
+        </div>
+        <div class="pane-body">
+          <div class="queue">
+            <div class="queue-head">
+              <span class="queue-label">提案队列</span>
+              <span class="queue-count">0</span>
+            </div>
+            <div class="queue-empty">工作完成后，提案将出现在这里。<br>你可以继续阅读正文，不会被中断。</div>
+            <div class="activity">
+              <div class="act-row done"><span class="ic"><svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M2 6.5 4.8 9.3 10 3.5"/></svg></span><span>读取 <span class="file-ref">2026-R&amp;D-Strategy.md</span></span></div>
+              <div class="act-row done"><span class="ic"><svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M2 6.5 4.8 9.3 10 3.5"/></svg></span><span>搜索「1:1」「忠旺」「国杰」 · 命中 6 篇</span></div>
+              <div class="act-row done"><span class="ic"><svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M2 6.5 4.8 9.3 10 3.5"/></svg></span><span>读取 <span class="file-ref">2026-01 和忠旺.md</span> 等 3 篇</span></div>
+              <div class="act-row current"><span class="ic"><span class="pulse-sm"></span></span><span>正在起草备忘录结构…</span></div>
+              <div class="act-row pending"><span class="ic"></span><span>生成内链建议（2 处）</span></div>
+              <div class="act-row pending"><span class="ic"></span><span>提交提案，等待裁决</span></div>
+              <div class="act-summary"><span>已进行 12 秒</span><span class="act-bar"><i></i></span></div>
+            </div>
+          </div>
+          <div class="chat">
+            <div class="chat-label">对话</div>
+            <div class="chat-scroll">
+              <div class="msg user">
+                <div class="who">你<span class="when">· 12 秒前</span></div>
+                <div class="body">把 <span class="file-ref">2026-R&amp;D-Strategy.md</span> 整理成结构化备忘录，并链接相关的 1:1 笔记</div>
+              </div>
+              <div class="msg">
+                <div class="who">Agent<span class="when">· 刚刚</span></div>
+                <div class="body">收到。我先通读全文，检索相关的 1:1 笔记，再把整理方案作为提案提交给你裁决——不会直接改动原文。</div>
+              </div>
+              <div class="msg">
+                <div class="who">Agent<span class="when">· 刚刚</span></div>
+                <div class="body">已找到 3 篇相关笔记：<span class="file-ref">2026-01 和忠旺.md</span>、<span class="file-ref">2026-02 和国杰.md</span>、<span class="file-ref">2026-04 和忠旺.md</span>，整理时会一并给出链接建议。</div>
+              </div>
+            </div>
+            <div class="composer">
+              <div class="composer-box">
+                <textarea rows="1" placeholder="追问或补充指令…" spellcheck="false"></textarea>
+                <button class="send-btn" title="发送" aria-label="发送">
+                  <svg width="13" height="13" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M7 11.5v-9M3.5 6 7 2.5 10.5 6"/></svg>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- screen 3: review -->
+      <div class="pane-screen" id="pane-review">
+        <div class="pane-head">
+          <span class="pane-title">Agent</span>
+          <span class="status-pill">待裁决 · 3</span>
+          <span class="spacer"></span>
+          <button class="icon-btn" title="关闭面板" aria-label="关闭面板">
+            <svg width="11" height="11" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><path d="M1.5 1.5l7 7M8.5 1.5l-7 7"/></svg>
+          </button>
+        </div>
+        <div class="pane-body">
+          <div class="queue">
+            <div class="queue-head">
+              <span class="queue-label">提案队列</span>
+              <span class="queue-count">3</span>
+              <span class="spacer"></span>
+              <button class="text-btn accent">全部批准</button>
+              <button class="text-btn">全部驳回</button>
+            </div>
+            <div class="queue-list">
+
+              <div class="card">
+                <div class="card-head">
+                  <span class="chip new">新建</span>
+                  <span class="fname">2026-R&amp;D-Strategy-备忘录.md</span>
+                </div>
+                <div class="card-summary">整理为三段式备忘录（思路 / 原则 / 行动），条目无删减。</div>
+                <div class="card-preview">
+                  <div class="pv-h"># 2026 R&amp;D 策略备忘录</div>
+                  <div>核心思路：不是学工具，而是改进工作方式。</div>
+                  <div class="pv-fade">预览 2 / 28 行</div>
+                </div>
+                <div class="card-actions">
+                  <button class="btn btn-primary">批准</button>
+                  <button class="btn btn-ghost">驳回</button>
+                  <span class="spacer"></span>
+                  <button class="more-btn">修改意见…</button>
+                </div>
+              </div>
+
+              <div class="card">
+                <div class="card-head">
+                  <span class="chip edit">修改</span>
+                  <span class="fname">2026-R&amp;D-Strategy.md</span>
+                </div>
+                <div class="card-summary">补充 2 处内链，关联相关 1:1 笔记，其余内容不变。</div>
+                <div class="diff">
+                  <div class="dline ctx"><span class="sign">&nbsp;</span><span class="txt">对忠旺 ——</span></div>
+                  <div class="dline del"><span class="sign">−</span><span class="txt">[[2026-01 和忠旺]]：全局统筹和主动同步。</span></div>
+                  <div class="dline add"><span class="sign">+</span><span class="txt">[[2026-01 和忠旺]]、[[2026-04 和忠旺]]：…</span></div>
+                  <div class="dline ctx"><span class="sign">&nbsp;</span><span class="txt">- 管理工程师负荷 —— 委托给国杰。</span></div>
+                  <div class="dline add"><span class="sign">+</span><span class="txt">- 负荷与节奏详见 [[2026-02 和国杰]]。</span></div>
+                </div>
+                <div class="diff-meta">+2 −1 · 原文其余 60 行不变</div>
+                <div class="card-actions">
+                  <button class="btn btn-primary">批准</button>
+                  <button class="btn btn-ghost">驳回</button>
+                  <span class="spacer"></span>
+                  <button class="more-btn">修改意见…</button>
+                </div>
+              </div>
+
+              <div class="card compact">
+                <div class="card-head">
+                  <span class="chip edit">修改</span>
+                  <span class="fname">2026-01 和忠旺.md</span>
+                </div>
+                <div class="card-summary">文末追加一条指向新备忘录的反向链接。</div>
+                <div class="card-actions">
+                  <button class="btn btn-primary">批准</button>
+                  <button class="btn btn-ghost">驳回</button>
+                  <span class="spacer"></span>
+                  <button class="more-btn">修改意见…</button>
+                </div>
+              </div>
+
+            </div>
+          </div>
+          <div class="chat">
+            <div class="chat-label">对话</div>
+            <div class="chat-scroll">
+              <div class="msg user">
+                <div class="who">你<span class="when">· 3 分钟前</span></div>
+                <div class="body">把 <span class="file-ref">2026-R&amp;D-Strategy.md</span> 整理成结构化备忘录，并链接相关的 1:1 笔记</div>
+              </div>
+              <div class="msg">
+                <div class="who">Agent</div>
+                <div class="body">已完成。备忘录重排为三段式；原文补了 2 处内链，<span class="file-ref">2026-01 和忠旺.md</span> 追加反向链接。共 3 项提案，请裁决。</div>
+              </div>
+            </div>
+            <div class="composer">
+              <div class="composer-box">
+                <textarea rows="1" placeholder="追问或补充指令…" spellcheck="false"></textarea>
+                <button class="send-btn" title="发送" aria-label="发送">
+                  <svg width="13" height="13" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M7 11.5v-9M3.5 6 7 2.5 10.5 6"/></svg>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </aside>
+</div>
+
+<script>
+(function(){
+  var q = new URLSearchParams(location.search);
+  var screen = q.get('screen') || '1';
+  var theme = q.get('theme') || 'light';
+  if(!/^[123]$/.test(screen)) screen = '1';
+  if(!/^(light|dark|eink)$/.test(theme)) theme = 'light';
+  document.body.dataset.screen = screen;
+  document.documentElement.dataset.theme = theme;
+
+  var agentBtn = document.getElementById('agent-btn');
+  if(screen === '2' || screen === '3') agentBtn.classList.add('on');
+
+  agentBtn.addEventListener('click', function(){
+    var s = document.body.dataset.screen;
+    var next = (s === '1') ? '2' : '1';
+    var url = new URL(location.href);
+    url.searchParams.set('screen', next);
+    location.href = url;
+  });
+})();
+</script>
+</body>
+</html>

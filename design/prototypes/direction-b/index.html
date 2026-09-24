@@ -1,0 +1,833 @@
+<!DOCTYPE html>
+<!--
+  Lumir UI 重设计原型 · 方向 B「编辑部·现代版」
+  单文件自包含高保真静态原型。截图目标 1280×900。
+  用法：index.html?screen=1|2|3&theme=light|dark|eink
+-->
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lumir · 方向 B 原型</title>
+<style>
+  :root{
+    --sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Helvetica Neue", "Segoe UI", sans-serif;
+    --serif: ui-serif, "New York", Charter, "Bitstream Charter", "Source Serif Pro", "Source Serif 4", Georgia, "Songti SC", "Noto Serif CJK SC", serif;
+    --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, "JetBrains Mono", monospace;
+  }
+  body[data-theme="light"]{
+    --bg: #ffffff;
+    --chrome: #fafafc;
+    --surface: #ffffff;
+    --text: #1d1d22;
+    --text-2: #6f6f78;
+    --text-3: #a6a6ae;
+    --hairline: #e9e9ee;
+    --hairline-strong: #dcdce2;
+    --accent: #3d55c9;
+    --accent-text: #3d55c9;
+    --accent-soft: rgba(61,85,201,.07);
+    --add: #2c7a4b;
+    --add-soft: rgba(44,122,75,.075);
+    --del: #c24a38;
+    --code-bg: rgba(29,29,34,.045);
+    --shadow-float: 0 1px 2px rgba(23,23,30,.04), 0 12px 32px -10px rgba(23,23,30,.14);
+    --light-1:#ff5f57; --light-2:#febc2e; --light-3:#28c840;
+  }
+  body[data-theme="dark"]{
+    --bg: #17171a;
+    --chrome: #1b1b1f;
+    --surface: #212126;
+    --text: #e8e8ec;
+    --text-2: #9a9aa2;
+    --text-3: #63636b;
+    --hairline: #2a2a30;
+    --hairline-strong: #3a3a42;
+    --accent: #96a7f0;
+    --accent-text: #a3b2f2;
+    --accent-soft: rgba(150,167,240,.12);
+    --add: #7fc79a;
+    --add-soft: rgba(127,199,154,.12);
+    --del: #e08a76;
+    --code-bg: rgba(232,232,236,.07);
+    --shadow-float: 0 1px 2px rgba(0,0,0,.3), 0 16px 40px -10px rgba(0,0,0,.55);
+    --light-1:#ff5f57; --light-2:#febc2e; --light-3:#28c840;
+  }
+  body[data-theme="eink"]{
+    --bg: #ffffff;
+    --chrome: #ffffff;
+    --surface: #ffffff;
+    --text: #000000;
+    --text-2: #1a1a1a;
+    --text-3: #555555;
+    --hairline: #000000;
+    --hairline-strong: #000000;
+    --accent: #000000;
+    --accent-text: #000000;
+    --accent-soft: rgba(0,0,0,.06);
+    --add: #000000;
+    --add-soft: rgba(0,0,0,.05);
+    --del: #000000;
+    --code-bg: rgba(0,0,0,.05);
+    --shadow-float: none;
+    --light-1:#111111; --light-2:#777777; --light-3:#bbbbbb;
+  }
+
+  *{ box-sizing: border-box; margin: 0; padding: 0; }
+  html, body{ height: 100%; }
+  body{
+    font-family: var(--sans);
+    font-size: 13px;
+    background: var(--bg);
+    color: var(--text);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+    overflow: hidden;
+  }
+  ::selection{ background: var(--accent-soft); }
+
+  .window{ height: 100vh; display: flex; flex-direction: column; background: var(--bg); position: relative; }
+
+  /* ---------- 顶栏：交通灯 + 极低调标签 + ⌘K ---------- */
+  .topbar{
+    height: 46px; flex: none;
+    display: flex; align-items: stretch;
+    background: var(--chrome);
+    border-bottom: 1px solid var(--hairline);
+  }
+  .lights{ display: flex; align-items: center; gap: 8px; padding: 0 14px 0 16px; }
+  .lights i{ width: 12px; height: 12px; border-radius: 50%; display: block; }
+  .lights i:nth-child(1){ background: var(--light-1); }
+  .lights i:nth-child(2){ background: var(--light-2); }
+  .lights i:nth-child(3){ background: var(--light-3); }
+  body[data-theme="eink"] .lights i{ border: 1px solid #000; }
+  body[data-theme="eink"] .lights i:nth-child(3){ background:#fff; }
+
+  .tabs{ display: flex; align-items: stretch; margin-left: 10px; }
+  .tab{
+    display: flex; align-items: center; padding: 0 18px;
+    font-size: 12.5px; color: var(--text-3);
+    border-bottom: 2px solid transparent;
+    margin-bottom: -1px;
+    white-space: nowrap;
+  }
+  .tab.active{ color: var(--text); border-bottom-color: var(--accent); }
+  .tab .ext{ color: var(--text-3); margin-left: 1px; }
+  .tab.active .ext{ color: var(--text-2); }
+
+  .top-right{ margin-left: auto; display: flex; align-items: center; padding: 0 16px; gap: 10px; }
+  .kbd{
+    font-family: var(--sans); font-size: 11px; color: var(--text-3);
+    border: 1px solid var(--hairline-strong); border-radius: 5px;
+    padding: 2px 7px; letter-spacing: .02em;
+  }
+
+  /* ---------- 中部：rail + 文件树 + 正文 ---------- */
+  .middle{ flex: 1; display: flex; min-height: 0; }
+
+  .rail{
+    width: 48px; flex: none;
+    background: var(--chrome);
+    border-right: 1px solid var(--hairline);
+    display: flex; flex-direction: column; align-items: center;
+    padding: 10px 0;
+    gap: 4px;
+  }
+  .rail-btn{
+    width: 34px; height: 34px; border-radius: 9px;
+    display: flex; align-items: center; justify-content: center;
+    color: var(--text-3);
+    position: relative;
+  }
+  .rail-btn.active{ color: var(--text); background: rgba(127,127,140,.10); }
+  body[data-theme="eink"] .rail-btn.active{ background: rgba(0,0,0,.08); }
+  .rail-btn svg{ width: 18px; height: 18px; display: block; }
+  .rail-spacer{ flex: 1; }
+  .agent-dot{
+    position: absolute; top: 5px; right: 5px;
+    width: 6px; height: 6px; border-radius: 50%;
+    background: var(--accent);
+    display: none;
+  }
+  body[data-screen="2"] .agent-dot, body[data-screen="3"] .agent-dot{ display: block; }
+
+  .tree{
+    width: 216px; flex: none;
+    background: var(--chrome);
+    border-right: 1px solid var(--hairline);
+    padding: 12px 0;
+    overflow: hidden;
+  }
+  .tree-head{
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 2px 14px 10px;
+    font-size: 11px; font-weight: 600; letter-spacing: .10em;
+    color: var(--text-3);
+  }
+  .tree-head svg{ width: 12px; height: 12px; }
+  .tnode{ display: block; }
+  .trow{
+    display: flex; align-items: center; gap: 5px;
+    height: 25px;
+    font-size: 12px; color: var(--text-2);
+    padding-right: 10px;
+    white-space: nowrap; overflow: hidden;
+  }
+  .trow .chev{
+    width: 10px; height: 10px; flex: none;
+    color: var(--text-3);
+    display: flex; align-items: center; justify-content: center;
+  }
+  .trow .chev svg{ width: 7px; height: 7px; display: block; }
+  .trow.leaf .chev{ visibility: hidden; }
+  .trow.file{ color: var(--text-2); }
+  .trow.current{
+    color: var(--accent-text);
+    background: var(--accent-soft);
+    box-shadow: inset 2px 0 0 var(--accent);
+    font-weight: 500;
+  }
+  .trow .fname{ overflow: hidden; text-overflow: ellipsis; }
+  .lv0 .trow{ padding-left: 10px; font-weight: 500; color: var(--text); }
+  .lv1 .trow{ padding-left: 24px; }
+  .lv2 .trow{ padding-left: 38px; }
+  .lv0 > .trow{ color: var(--text-2); font-weight: 500; }
+
+  .page{ flex: 1; min-width: 0; overflow: hidden; position: relative; background: var(--bg); }
+
+  /* ---------- 正文排版（方向 B 的主角） ---------- */
+  article.doc{
+    width: 648px; margin: 0 auto;
+    padding: 36px 0 0;
+    height: 100%;
+  }
+  article.doc.s3{ padding-top: 54px; }
+  .kicker{
+    display: flex; align-items: center; gap: 12px;
+    font-size: 11px; letter-spacing: .16em; color: var(--text-3);
+  }
+  .kicker::before{ content: ""; width: 26px; height: 1px; background: var(--text-3); opacity: .6; }
+  .doc-title{
+    font-family: var(--serif);
+    font-size: 30px; font-weight: 600;
+    letter-spacing: -.012em; line-height: 1.24;
+    margin: 13px 0 9px;
+  }
+  .standfirst{
+    font-family: var(--serif);
+    font-size: 17px; line-height: 1.6;
+    color: var(--text-2);
+  }
+  .meta{
+    display: flex; align-items: center; gap: 6px;
+    margin-top: 13px; padding-bottom: 16px;
+    border-bottom: 1px solid var(--hairline);
+    font-size: 11.5px; color: var(--text-3);
+  }
+  .meta .sep{ opacity: .5; }
+  .meta .right{ margin-left: auto; }
+
+  article.doc h2{
+    font-family: var(--serif);
+    font-size: 20px; font-weight: 600; letter-spacing: -.006em;
+    margin: 22px 0 10px;
+    position: relative;
+  }
+  article.doc h3{
+    font-family: var(--serif);
+    font-size: 16.5px; font-weight: 600;
+    margin: 18px 0 6px;
+    position: relative;
+  }
+  h2.part{
+    display: flex; align-items: center; gap: 18px;
+    font-size: 14.5px; font-weight: 600;
+    letter-spacing: .42em; text-indent: .42em;
+    color: var(--text-2);
+    margin: 20px 0 4px;
+  }
+  h2.part::before, h2.part::after{
+    content: ""; flex: 1; height: 1px; background: var(--hairline-strong);
+  }
+  article.doc p{
+    font-family: var(--serif);
+    font-size: 16px; line-height: 1.78;
+    margin-bottom: 12px;
+  }
+
+  ol.l1{ list-style: none; margin: 2px 0 10px; }
+  ol.l1 > li{
+    font-family: var(--serif); font-size: 16px; line-height: 1.72;
+    padding-left: 28px; position: relative;
+    margin: 5px 0;
+  }
+  ol.l1 > li > .n{
+    position: absolute; left: 2px; top: 0;
+    font-family: var(--sans); font-size: 11.5px; line-height: 27px;
+    color: var(--text-3);
+  }
+  ul.l2, ul.bl{ list-style: none; margin: 3px 0 4px; }
+  ul.l2 > li{
+    font-family: var(--serif); font-size: 15.5px; line-height: 1.68;
+    padding-left: 46px; position: relative;
+    margin: 3px 0;
+  }
+  ul.bl > li{
+    font-family: var(--serif); font-size: 16px; line-height: 1.72;
+    padding-left: 20px; position: relative;
+    margin: 4px 0;
+  }
+  ul.bl > li::before{
+    content: "–"; position: absolute; left: 0; color: var(--text-3);
+  }
+  ul.l3{ list-style: none; margin: 3px 0 4px; }
+  ul.l3 > li{
+    font-family: var(--serif); font-size: 15px; line-height: 1.66;
+    padding-left: 18px; position: relative;
+    margin: 3px 0;
+    color: var(--text);
+  }
+  ul.l3 > li::before{
+    content: "·"; position: absolute; left: 4px; color: var(--text-3); font-weight: 700;
+  }
+  ul.l2 > li > .dash{ position: absolute; left: 26px; color: var(--text-3); }
+
+  code{
+    font-family: var(--mono); font-size: .82em;
+    background: var(--code-bg); border-radius: 4px;
+    padding: 1px 5px;
+  }
+  .wl{
+    color: var(--accent-text);
+    background: var(--accent-soft);
+    border-radius: 4px;
+    padding: 1px 5px;
+    font-size: .94em;
+    white-space: nowrap;
+  }
+  .rule{ display: flex; justify-content: center; gap: 11px; margin: 20px 0 4px; }
+  .rule i{ width: 3px; height: 3px; border-radius: 50%; background: var(--text-3); display: block; }
+
+  /* ---------- 底栏 ---------- */
+  .statusbar{
+    height: 29px; flex: none;
+    border-top: 1px solid var(--hairline);
+    background: var(--chrome);
+    display: flex; align-items: center;
+    padding: 0 14px;
+    font-size: 11.5px; color: var(--text-3);
+    position: relative;
+  }
+  .statusbar .st{ display: none; width: 100%; align-items: center; gap: 6px; }
+  body[data-screen="1"] .statusbar .st1{ display: flex; }
+  body[data-screen="2"] .statusbar .st2{ display: flex; }
+  body[data-screen="3"] .statusbar .st3{ display: flex; }
+  .statusbar .right{ margin-left: auto; display: flex; gap: 14px; align-items: center; }
+  .statusbar .sep{ opacity: .5; margin: 0 3px; }
+
+  .progress{
+    position: absolute; top: -1px; left: 0; height: 2px;
+    width: 44%;
+    background: var(--accent);
+    border-radius: 0 2px 2px 0;
+  }
+  .live-dot{
+    width: 7px; height: 7px; border-radius: 50%;
+    background: var(--accent); flex: none;
+    margin-right: 2px;
+    animation: pulse 1.6s ease-in-out infinite;
+  }
+  @keyframes pulse{ 0%,100%{ opacity: 1; } 50%{ opacity: .35; } }
+
+  /* ---------- agent 边距标记（屏 2） ---------- */
+  .agent-mark{
+    position: absolute; left: -40px; top: 0;
+    width: 20px; height: 100%; min-height: 27px;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .mk-done{ color: var(--text-3); font-size: 10px; }
+  .mk-run i{
+    width: 7px; height: 7px; border-radius: 50%;
+    background: var(--accent); display: block;
+    animation: pulse 1.4s ease-in-out infinite;
+  }
+  .mk-wait i{
+    width: 6px; height: 6px; border-radius: 50%;
+    border: 1.5px solid var(--text-3); display: block;
+  }
+  .agent-tag{
+    position: absolute; left: -40px; top: 0; transform: translateY(1px);
+    font-size: 9.5px; letter-spacing: .04em; color: var(--text-3);
+    display: none;
+  }
+
+  /* ---------- minibuffer ---------- */
+  .minibuffer{
+    position: absolute; left: 50%; transform: translateX(-50%);
+    top: 56px;
+    width: 620px;
+    background: var(--surface);
+    border: 1px solid var(--hairline-strong);
+    border-radius: 12px;
+    box-shadow: var(--shadow-float);
+    display: none;
+    z-index: 30;
+  }
+  body[data-theme="eink"] .minibuffer{ border-width: 1.5px; }
+  .mb2-row{
+    display: flex; align-items: center; gap: 12px;
+    padding: 13px 16px;
+    font-size: 14px;
+  }
+  .mb2-row .cmd{ color: var(--text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .mb2-row .cmd b{ color: var(--text); font-weight: 500; }
+  .mb2-state{
+    margin-left: auto; flex: none;
+    display: flex; align-items: center; gap: 7px;
+    font-size: 11.5px; color: var(--text-3);
+  }
+  .spinner{
+    width: 12px; height: 12px; border-radius: 50%;
+    border: 1.5px solid var(--hairline-strong);
+    border-top-color: var(--accent);
+    animation: spin 1s linear infinite;
+  }
+  @keyframes spin{ to{ transform: rotate(360deg); } }
+  body[data-screen="2"] .minibuffer.retired{ display: block; }
+  .minibuffer.retired{ border-color: var(--hairline); box-shadow: 0 1px 2px rgba(23,23,30,.03); }
+  .minibuffer.retired .mb2-row .cmd{ color: var(--text-3); }
+  .minibuffer.retired .mb2-row .cmd b{ color: var(--text-2); }
+
+  .mb-head{
+    display: flex; align-items: baseline; gap: 10px;
+    padding: 13px 16px 11px;
+    border-bottom: 1px solid var(--hairline);
+  }
+  .mb-head .ttl{ font-size: 13.5px; font-weight: 600; }
+  .mb-head .sub{ font-size: 11.5px; color: var(--text-3); }
+  .mb-head .esc{ margin-left: auto; font-size: 11px; color: var(--text-3); }
+  .mb-row{
+    display: flex; align-items: center; gap: 12px;
+    padding: 8px 16px;
+    font-size: 13px;
+  }
+  .mb-row + .mb-row{ border-top: 1px solid var(--hairline); }
+  .mb-row.cur{ background: var(--accent-soft); }
+  .mb-ic{
+    width: 22px; height: 22px; flex: none;
+    border: 1px solid var(--hairline-strong); border-radius: 6px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 12px; color: var(--text-2);
+    font-family: var(--sans);
+  }
+  .mb-row.cur .mb-ic{ border-color: var(--accent); color: var(--accent-text); }
+  .mb-row .what{ color: var(--text); }
+  .mb-row .what .wl{ font-size: 12px; padding: 0 4px; }
+  .mb-row .where{ margin-left: auto; flex: none; font-size: 11px; color: var(--text-3); font-family: var(--mono); }
+  .mb-foot{
+    display: flex; gap: 18px;
+    padding: 9px 16px;
+    border-top: 1px solid var(--hairline);
+    font-size: 11px; color: var(--text-3);
+  }
+  .mb-foot b{ font-weight: 500; color: var(--text-2); }
+  body[data-screen="3"] .minibuffer.open{ display: block; }
+
+  /* ---------- inline review（屏 3） ---------- */
+  .rev{ position: relative; }
+  .rev-tag{
+    position: absolute; left: -40px; top: 4px;
+    width: 17px; height: 17px; border-radius: 50%;
+    border: 1px solid var(--hairline-strong);
+    color: var(--text-3);
+    font-size: 10px; font-family: var(--sans);
+    display: flex; align-items: center; justify-content: center;
+  }
+  .rev.current .rev-tag{ border-color: var(--accent); color: var(--accent-text); background: var(--accent-soft); }
+  .rev-old{ color: var(--text-3); }
+  .rev-old .t{
+    text-decoration: line-through;
+    text-decoration-color: var(--del);
+    text-decoration-thickness: 1px;
+  }
+  .rev-old li{ margin: 2px 0; }
+  .rev-new{
+    position: relative;
+    margin: 7px 0 12px;
+    padding: 9px 14px 9px 13px;
+    background: var(--add-soft);
+    border-left: 2px solid var(--add);
+    border-radius: 0 6px 6px 0;
+  }
+  .rev-new p{ margin: 0; }
+  .del-inline{
+    color: var(--text-3);
+    text-decoration: line-through;
+    text-decoration-color: var(--del);
+  }
+  .ins-inline{
+    color: var(--accent-text);
+    background: var(--accent-soft);
+    border-radius: 4px;
+    padding: 1px 5px;
+    border-bottom: 1px dashed var(--accent);
+    white-space: nowrap;
+  }
+  .ins-inline::before{
+    content: "+";
+    font-size: 10px; font-family: var(--sans);
+    color: var(--accent);
+    margin-right: 3px;
+    vertical-align: 1px;
+  }
+
+  /* ---------- 浮动审阅条（屏 3） ---------- */
+  .reviewbar{
+    position: absolute; right: 34px; bottom: 42px;
+    display: none; align-items: center; gap: 4px;
+    background: var(--surface);
+    border: 1px solid var(--hairline-strong);
+    border-radius: 999px;
+    box-shadow: var(--shadow-float);
+    padding: 5px 6px 5px 15px;
+    font-size: 12px;
+    z-index: 20;
+  }
+  body[data-theme="eink"] .reviewbar{ border-width: 1.5px; }
+  body[data-screen="3"] .reviewbar{ display: flex; }
+  .reviewbar .pos{ color: var(--text-3); margin-right: 8px; font-variant-numeric: tabular-nums; }
+  .reviewbar .pos b{ color: var(--text); font-weight: 600; }
+  .rb-btn{
+    display: flex; align-items: center; gap: 6px;
+    padding: 5px 11px; border-radius: 999px;
+    color: var(--text-2);
+    white-space: nowrap;
+  }
+  .rb-btn .k{ font-size: 10.5px; color: var(--text-3); }
+  .rb-btn.accept{ color: var(--add); }
+  .rb-btn.primary{
+    background: var(--accent-soft); color: var(--accent-text); font-weight: 500;
+  }
+
+  /* ---------- 屏切换 ---------- */
+  article.doc.s1, article.doc.s2, article.doc.s3{ display: none; }
+  body[data-screen="1"] article.doc.s1{ display: block; }
+  body[data-screen="2"] article.doc.s2{ display: block; }
+  body[data-screen="3"] article.doc.s3{ display: block; }
+</style>
+</head>
+<body data-theme="light" data-screen="1">
+<div class="window">
+
+  <!-- 顶栏 -->
+  <header class="topbar">
+    <div class="lights"><i></i><i></i><i></i></div>
+    <nav class="tabs">
+      <div class="tab active">2026-R&D-Strategy<span class="ext">.md</span></div>
+      <div class="tab">dimension-design<span class="ext">.md</span></div>
+    </nav>
+    <div class="top-right">
+      <span class="kbd">⌘K</span>
+    </div>
+  </header>
+
+  <div class="middle">
+    <!-- 细窄 rail -->
+    <aside class="rail">
+      <div class="rail-btn active" title="文件">
+        <svg viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round">
+          <path d="M2.5 5c0-.83.67-1.5 1.5-1.5h2.6L8.4 5.3c.1.13.26.2.42.2H14c.83 0 1.5.67 1.5 1.5v6c0 .83-.67 1.5-1.5 1.5H4c-.83 0-1.5-.67-1.5-1.5V5z"/>
+        </svg>
+      </div>
+      <div class="rail-btn" title="搜索">
+        <svg viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round">
+          <circle cx="8" cy="8" r="4.6"/><path d="M11.4 11.4L15 15"/>
+        </svg>
+      </div>
+      <div class="rail-btn" title="Agent">
+        <svg viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round">
+          <path d="M9 2.6l1.35 4.05L14.4 8l-4.05 1.35L9 13.4 7.65 9.35 3.6 8l4.05-1.35L9 2.6z"/>
+          <path d="M13.8 12.4l.5 1.5 1.5.5-1.5.5-.5 1.5-.5-1.5-1.5-.5 1.5-.5.5-1.5z" stroke-width="1"/>
+        </svg>
+        <span class="agent-dot"></span>
+      </div>
+      <div class="rail-spacer"></div>
+      <div class="rail-btn" title="设置">
+        <svg viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round">
+          <circle cx="9" cy="9" r="2.2"/>
+          <path d="M9 2.8v1.8M9 13.4v1.8M2.8 9h1.8M13.4 9h1.8M4.7 4.7l1.3 1.3M12 12l1.3 1.3M13.3 4.7L12 6M6 12l-1.3 1.3"/>
+        </svg>
+      </div>
+    </aside>
+
+    <!-- 安静的三层文件树（真实 PARA 结构） -->
+    <aside class="tree">
+      <div class="tree-head">EVERYTHING
+        <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><path d="M3 4.5L6 7.5L9 4.5"/></svg>
+      </div>
+      <div class="tnode lv0 open">
+        <div class="trow"><span class="chev"><svg viewBox="0 0 8 8" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><path d="M2 1.2L5.8 4L2 6.8" transform="rotate(90 4 4)"/></svg></span><span class="fname">1_Projects</span></div>
+        <div class="tnode lv1 open">
+          <div class="trow"><span class="chev"><svg viewBox="0 0 8 8" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><path d="M2 1.2L5.8 4L2 6.8" transform="rotate(90 4 4)"/></svg></span><span class="fname">Slax-Reader-AI-Reading-Reimagined</span></div>
+          <div class="tnode lv2">
+            <div class="trow leaf"><span class="chev"></span><span class="fname">specs</span></div>
+            <div class="trow leaf"><span class="chev"></span><span class="fname">decisions</span></div>
+          </div>
+        </div>
+        <div class="tnode lv1"><div class="trow leaf"><span class="chev"></span><span class="fname">Slax-Reader-Auto-Tagging</span></div></div>
+        <div class="tnode lv1 open">
+          <div class="trow"><span class="chev"><svg viewBox="0 0 8 8" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><path d="M2 1.2L5.8 4L2 6.8" transform="rotate(90 4 4)"/></svg></span><span class="fname">Work-Tracking-Method</span></div>
+          <div class="tnode lv2">
+            <div class="trow leaf"><span class="chev"></span><span class="fname">decisions</span></div>
+          </div>
+        </div>
+        <div class="tnode lv1"><div class="trow leaf"><span class="chev"></span><span class="fname">Slax-Reader-Onboarding</span></div></div>
+        <div class="tnode lv1"><div class="trow leaf"><span class="chev"></span><span class="fname">Slax-Reader-User-Interviews</span></div></div>
+      </div>
+      <div class="tnode lv0"><div class="trow"><span class="chev"><svg viewBox="0 0 8 8" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><path d="M2 1.2L5.8 4L2 6.8"/></svg></span><span class="fname">2_Areas</span></div></div>
+      <div class="tnode lv0 open">
+        <div class="trow"><span class="chev"><svg viewBox="0 0 8 8" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><path d="M2 1.2L5.8 4L2 6.8" transform="rotate(90 4 4)"/></svg></span><span class="fname">3_Resources</span></div>
+        <div class="tnode lv1">
+          <div class="trow file current"><span class="chev"></span><span class="fname">2026-R&D-Strategy.md</span></div>
+          <div class="trow leaf file"><span class="chev"></span><span class="fname">Personal Mission Statement.md</span></div>
+          <div class="trow leaf"><span class="chev"></span><span class="fname">Templates</span></div>
+        </div>
+      </div>
+      <div class="tnode lv0"><div class="trow"><span class="chev"><svg viewBox="0 0 8 8" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><path d="M2 1.2L5.8 4L2 6.8"/></svg></span><span class="fname">4_Archives</span></div></div>
+    </aside>
+
+    <!-- 正文 -->
+    <main class="page">
+
+      <!-- ============ 屏 1 · 纯编辑态 ============ -->
+      <article class="doc s1">
+        <div class="kicker">3_RESOURCES · 战略笔记</div>
+        <h1 class="doc-title">2026 R&amp;D Strategy</h1>
+        <p class="standfirst">思路：不是学工具，而是改进工作方式。</p>
+        <div class="meta">
+          <span>修改于 2026-04-17</span><span class="sep">·</span>
+          <span>63 行</span><span class="sep">·</span>
+          <span>1,575 字符</span>
+          <span class="right">1 处内链</span>
+        </div>
+
+        <h2>AI Coding 的基建、工作流规范</h2>
+        <ol class="l1">
+          <li><span class="n">1.</span>基建、流程、规范
+            <ul class="l2">
+              <li><span class="dash">–</span><code>.claude</code>：Context engineering</li>
+              <li><span class="dash">–</span>PR：template 自动生成描述、first-pass review、code review Skills；作者自审，Reviewer 二审</li>
+              <li><span class="dash">–</span>Spec：业务逻辑、服务间或模块间的接口（如 gRPC 和 RESTful）</li>
+              <li><span class="dash">–</span>和 AI 的合作：讨论与头脑风暴、发现、拆解成 AI 擅长的大小</li>
+              <li><span class="dash">–</span>Review (Plan + Code) &gt; Coding
+                <ul class="l3">
+                  <li>从自动补全、我来设计结构、我来决定用什么设计模式 → Review over Coding</li>
+                </ul>
+              </li>
+            </ul>
+          </li>
+          <li><span class="n">2.</span>技能：Code Review · Agent（含 Hook）· Task decomposition · TDD?</li>
+          <li><span class="n">3.</span>Pilot：忠旺 —— 重写 API；华南 —— Slax Reader</li>
+          <li><span class="n">4.</span>测试：AI driven 自动化测试（computer-use?）</li>
+        </ol>
+
+        <div class="rule"><i></i><i></i><i></i></div>
+
+        <h2 class="part"><span>碎片</span></h2>
+
+        <h3>从研发部的视角出发的 Tech Vision</h3>
+        <ul class="bl">
+          <li>对各职能端的期望 —— 从各端的年终总结中收集信息。</li>
+          <li>PR：AI 编写描述，让 reviewer 快速了解概要；AI 做初审，降低 reviewer 的心智负担。</li>
+          <li>对忠旺 —— <span class="wl">2026-01 和忠旺</span>：全局统筹和主动同步；提高决策质量，通过写方案说清楚目标价值和权衡取舍。</li>
+        </ul>
+      </article>
+
+      <!-- ============ 屏 2 · agent 工作中 ============ -->
+      <article class="doc s2">
+        <div class="kicker">3_RESOURCES · 战略笔记</div>
+        <h1 class="doc-title">2026 R&amp;D Strategy</h1>
+        <p class="standfirst">思路：不是学工具，而是改进工作方式。</p>
+        <div class="meta">
+          <span>修改于 2026-04-17</span><span class="sep">·</span>
+          <span>63 行</span><span class="sep">·</span>
+          <span>1,575 字符</span>
+          <span class="right">1 处内链</span>
+        </div>
+
+        <h2>AI Coding 的基建、工作流规范<span class="agent-mark mk-done">✓</span></h2>
+        <ol class="l1">
+          <li><span class="n">1.</span>基建、流程、规范
+            <ul class="l2">
+              <li><span class="dash">–</span><code>.claude</code>：Context engineering</li>
+              <li><span class="dash">–</span>PR：template 自动生成描述、first-pass review、code review Skills；作者自审，Reviewer 二审</li>
+              <li><span class="dash">–</span>Spec：业务逻辑、服务间或模块间的接口（如 gRPC 和 RESTful）</li>
+              <li><span class="dash">–</span>和 AI 的合作：讨论与头脑风暴、发现、拆解成 AI 擅长的大小</li>
+              <li><span class="dash">–</span>Review (Plan + Code) &gt; Coding</li>
+            </ul>
+          </li>
+          <li><span class="n">2.</span>技能：Code Review · Agent（含 Hook）· Task decomposition · TDD?</li>
+          <li><span class="n">3.</span>Pilot：忠旺 —— 重写 API；华南 —— Slax Reader<span class="agent-mark mk-run"><i></i></span></li>
+          <li><span class="n">4.</span>测试：AI driven 自动化测试（computer-use?）</li>
+        </ol>
+
+        <div class="rule"><i></i><i></i><i></i></div>
+
+        <h2 class="part"><span>碎片</span></h2>
+
+        <h3>从研发部的视角出发的 Tech Vision<span class="agent-mark mk-wait"><i></i></span></h3>
+        <ul class="bl">
+          <li>对各职能端的期望 —— 从各端的年终总结中收集信息。</li>
+          <li>PR：AI 编写描述，让 reviewer 快速了解概要；AI 做初审，降低 reviewer 的心智负担。</li>
+          <li>对忠旺 —— <span class="wl">2026-01 和忠旺</span>：全局统筹和主动同步。</li>
+        </ul>
+      </article>
+
+      <!-- ============ 屏 3 · 裁决时刻（inline review） ============ -->
+      <article class="doc s3">
+        <div class="kicker">3_RESOURCES · 战略笔记</div>
+        <h1 class="doc-title">2026 R&amp;D Strategy</h1>
+        <div class="meta" style="border-bottom:none; padding-bottom:6px;">
+          <span>修改于 2026-04-17</span><span class="sep">·</span>
+          <span>63 行</span><span class="sep">·</span>
+          <span>1,575 字符</span>
+          <span class="right" style="color:var(--accent-text);">审阅模式 · 3 处修订</span>
+        </div>
+
+        <h2>AI Coding 的基建、工作流规范</h2>
+        <ol class="l1">
+          <li><span class="n">1.</span>基建、流程、规范
+            <ul class="l2">
+              <li><span class="dash">–</span><code>.claude</code>：Context engineering</li>
+              <li><span class="dash">–</span>PR：template 自动生成描述、first-pass review、code review Skills</li>
+              <li><span class="dash">–</span>Spec：业务逻辑、服务间或模块间的接口（如 gRPC 和 RESTful）</li>
+              <li><span class="dash">–</span>和 AI 的合作：讨论与头脑风暴、发现、拆解成 AI 擅长的大小</li>
+            </ul>
+          </li>
+        </ol>
+
+        <!-- 修订 2：列表 → 段落（前后对照） -->
+        <div class="rev current">
+          <span class="rev-tag">2</span>
+          <div class="rev-old">
+            <ul class="l2">
+              <li><span class="dash">–</span><span class="t">Review (Plan + Code) &gt; Coding</span>
+                <ul class="l3">
+                  <li><span class="t">从自动补全、我来设计结构、我来决定用什么设计模式 → Review over Coding</span></li>
+                </ul>
+              </li>
+            </ul>
+          </div>
+          <div class="rev-new">
+            <p>工作重心正从「我来写」移向「我来审」：过去是自动补全、自行设计结构、自行决定设计模式；今后是 Review over Coding。审的不只是 Agent 的 Plan 与 Code 的质量，还要追问它为什么没有达到预期——缺的是业务上下文，还是背景信息。</p>
+          </div>
+        </div>
+
+        <!-- 修订 3：删节 -->
+        <ol class="l1">
+          <li class="rev"><span class="rev-tag">3</span><span class="n">2.</span>技能：Code Review · Agent（含 Hook）· Task decomposition · <span class="del-inline">TDD?</span></li>
+          <!-- 修订 4：新增内链 -->
+          <li class="rev"><span class="rev-tag">4</span><span class="n">3.</span>Pilot：忠旺 —— 重写 API <span class="ins-inline">2026-03 和忠旺：API 重写启动</span>；华南 —— Slax Reader</li>
+          <li><span class="n">4.</span>测试：AI driven 自动化测试（computer-use?）</li>
+        </ol>
+      </article>
+    </main>
+  </div>
+
+  <!-- 底栏（三态） -->
+  <footer class="statusbar">
+    <div class="st st1">
+      <span>已保存 · 本地 vault</span>
+      <span class="right">
+        <span>行 63，列 1</span><span>1,575 字符</span><span>Markdown</span>
+      </span>
+    </div>
+    <div class="st st2">
+      <span class="progress"></span>
+      <span class="live-dot"></span>
+      <span style="color:var(--text-2);">agent 正在工作</span>
+      <span class="sep">·</span>
+      <span>已读 2026-R&amp;D-Strategy.md（63 行）</span>
+      <span class="sep">·</span>
+      <span style="color:var(--text-2);">正在搜索「忠旺」相关的 1:1 笔记</span>
+      <span class="sep">·</span>
+      <span>2/3</span>
+      <span class="right"><span class="kbd">esc</span><span style="margin-left:6px;">中断</span></span>
+    </div>
+    <div class="st st3">
+      <span style="color:var(--text-2);">等待裁决</span>
+      <span class="sep">·</span>
+      <span>4 项提案 · 当前第 2 项</span>
+      <span class="right">
+        <span class="kbd">⌘⇧⏎</span><span style="margin-left:6px;">全部接受</span>
+      </span>
+    </div>
+  </footer>
+
+  <!-- 屏 2：命令条余韵（刚发出的指令） -->
+  <div class="minibuffer retired">
+    <div class="mb2-row">
+      <svg width="15" height="15" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" style="color:var(--accent-text);flex:none;">
+        <path d="M9 2.6l1.35 4.05L14.4 8l-4.05 1.35L9 13.4 7.65 9.35 3.6 8l4.05-1.35L9 2.6z"/>
+      </svg>
+      <span class="cmd">把 <b>2026-R&amp;D-Strategy.md</b> 整理成结构化备忘录，并链接相关的 1:1 笔记</span>
+      <span class="mb2-state"><span class="spinner"></span>已受理</span>
+    </div>
+  </div>
+
+  <!-- 屏 3：命令条 overlay · 提案队列 -->
+  <div class="minibuffer open">
+    <div class="mb-head">
+      <span class="ttl">本次提案</span>
+      <span class="sub">整理 2026-R&amp;D-Strategy.md · 4 项</span>
+      <span class="esc">esc 关闭</span>
+    </div>
+    <div class="mb-row">
+      <span class="mb-ic">＋</span>
+      <span class="what">新建文档「2026 研发战略 · 结构化备忘录」</span>
+      <span class="where">1_Projects/</span>
+    </div>
+    <div class="mb-row cur">
+      <span class="mb-ic">✎</span>
+      <span class="what">改写：列表 → 段落（Review over Coding）</span>
+      <span class="where">本文 · 行 12–13</span>
+    </div>
+    <div class="mb-row">
+      <span class="mb-ic">−</span>
+      <span class="what">删节：移除未定项「TDD?」</span>
+      <span class="where">本文 · 行 19</span>
+    </div>
+    <div class="mb-row">
+      <span class="mb-ic">＋</span>
+      <span class="what">新增内链 <span class="wl">2026-03 和忠旺：API 重写启动</span></span>
+      <span class="where">本文 · 行 21</span>
+    </div>
+    <div class="mb-foot">
+      <span><b>↑↓</b> 选择</span>
+      <span><b>⏎</b> 定位到正文</span>
+      <span><b>⌘A</b> 全部接受</span>
+      <span><b>⌘R</b> 全部驳回</span>
+    </div>
+  </div>
+
+  <!-- 屏 3：浮动审阅条 -->
+  <div class="reviewbar">
+    <span class="pos"><b>2</b> / 4</span>
+    <span class="rb-btn accept primary">✓ 接受 <span class="k">⌘⏎</span></span>
+    <span class="rb-btn">✕ 驳回 <span class="k">⌘⌫</span></span>
+    <span class="rb-btn">全部接受 <span class="k">⌘⇧⏎</span></span>
+  </div>
+</div>
+
+<script>
+  (function(){
+    var q = new URLSearchParams(location.search);
+    var screen = q.get('screen');
+    var theme = q.get('theme');
+    document.body.dataset.screen = (screen === '2' || screen === '3') ? screen : '1';
+    document.body.dataset.theme = (theme === 'dark' || theme === 'eink') ? theme : 'light';
+    document.title = 'Lumir · 方向 B · 屏 ' + document.body.dataset.screen + ' · ' + document.body.dataset.theme;
+  })();
+</script>
+</body>
+</html>
