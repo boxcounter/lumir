@@ -28,10 +28,20 @@
 //! warning（`{"log": "info"}` 这种错形状也只丢这一项，不拖垮整文件）。`level` 的
 //! 消费方是 src-tauri/src/logging.rs（`off` 时事件丢弃不写盘）。
 //!
+//! ## ui 表（restyle-ui-tokens-v1）
+//!
+//! `{"ui": {"theme": "light" | "dark" | "eink"}}`，默认 `light`。取值校验照 `editor.mode`
+//! 模板：表内 `theme` 缺失 → 默认；取值不在表内 → warning + 回落默认（ADR 0002 §5：非法
+//! 配置不导致启动失败）。它与 `editor` 一样是**结构化表**（`RawUiConfig`），不是 keys / log
+//! 那种「整表收成 Value」——因此 `{"ui": "dark"}` 这种表的错形状与表内 `"theme": 2` 同路，
+//! 都走**整文件回落**（同族说明见下节）。`theme` 的消费方是前端启动施加处
+//! （`documentElement.dataset.theme`，与 `editor.mode` 同口径：装载时读一次、重启生效）；
+//! Rust 侧只负责读出来并挡住非法值，本版不做运行期切换、不跟随系统。
+//!
 //! ## 数值字段的打字代价（typography-and-zoom）
 //!
 //! `editor.font_size` 是本仓**第一个数值配置字段**，错打成字符串的代价比布尔高（多一对
-//! 引号、小数、`1e1` 都容易误写）：`"font_size": "16"` 会在 serde 解析期失败，走
+//! 引号、小数、`1e1` 都容易误写）：`"font_size": "15"` 会在 serde 解析期失败，走
 //! **整文件回落**——全部字段回默认（含 `last_vault: None`，下次启动要重新打开 vault）+ 一条
 //! warning。这是既有解析模型的性质（`mode` / `line_wrap` 给错类型同路），本 change 如实登记
 //! 并用单测钉住，**不发明「逐字段类型容忍」**：那会让 `font_size` 与 `editor.mode` 形成
@@ -58,6 +68,8 @@ pub struct AppConfig {
     /// `write_last_vault` 写回）。
     pub last_vault: Option<String>,
     pub editor: EditorConfig,
+    /// 界面主题（restyle-ui-tokens-v1）：`[ui]` 表，启动装载时施加一次。
+    pub ui: UiConfig,
     /// 键位覆盖表（M132）：键位写法 → 命令 id；值为 null 表示解绑该键位。
     /// 键位写法与前端键位 token 同源（如 `"Cmd-s"`、`"Ctrl-Alt-Minus"`、`"ArrowUp"`）；
     /// 多段 chord（含空白）本版不支持。命令 id 的合法性由前端键位层判定（见模块头）。
@@ -72,6 +84,7 @@ impl Default for AppConfig {
             version: SCHEMA_VERSION,
             last_vault: None,
             editor: EditorConfig::default(),
+            ui: UiConfig::default(),
             keys: HashMap::new(),
             log: LogConfig::default(),
         }
@@ -103,11 +116,11 @@ pub struct EditorConfig {
     /// 等宽字体族：口径同 `font_family`，缺省引用基线的 `--font-mono`。它同时是**列表标记
     /// 宽度测量**与标记渲染共用的那个 token（`src/preview/lists.ts`），两处必须同源。
     pub mono_font_family: Option<String>,
-    /// 编辑器内容字号（px）：默认 16，合法区间 `[12, 32]`，区间外回落 16 + warning。
+    /// 编辑器内容字号（px）：默认 15，合法区间 `[12, 32]`，区间外回落 15 + warning。
     /// 它是编辑器内容面（md 正文 / 代码块 / code 模式）的字号；shell 的 13px 与阅读栏宽
     /// 都不随之变（作用面由 token 分层结构性保证，见 change 的 design §2.2）。
     ///
-    /// **这是本仓第一个数值配置字段**：写成字符串（`"font_size": "16"`）会在 serde 解析期
+    /// **这是本仓第一个数值配置字段**：写成字符串（`"font_size": "15"`）会在 serde 解析期
     /// 失败 → 走**整文件回落**（全部字段回默认 + 一条 warning，连 `last_vault` 一起丢）。
     /// 代价与「为什么不发明逐字段类型容忍」见模块头。
     pub font_size: f64,
@@ -126,11 +139,17 @@ impl Default for EditorConfig {
     }
 }
 
-/// 编辑器内容字号的出厂默认（px）。TS 侧同值常量在 `src/typography.ts` 的
-/// `DEFAULT_FONT_SIZE`，CSS 层第三份写值是 `src/style.css` 的 `--editor-font-size` 默认
-/// `16px`：三处语义相同，各有断言钉住（两侧单测 + 默认口径的计算属性断言），改一处必须
-/// 同步其余两处（REVIEW.md 第 8 条）。
-pub const DEFAULT_FONT_SIZE: f64 = 16.0;
+/// 编辑器内容字号的出厂默认（px）：15（restyle-ui-tokens-v1 裁决 D1——Lumir 的编辑器就是
+/// 阅读表面，定稿图的密度、行高与间距全按 15px 调）。
+///
+/// 三处同语义写值：本常量（配置面的真源）、`src/typography.ts` 的 `DEFAULT_FONT_SIZE`、
+/// `src/style.css` 的 `--editor-font-size` 默认值。三者必须同值，各有断言钉住（两侧单测 +
+/// 默认口径的计算属性断言），改一处必须同步其余两处（REVIEW.md 第 8 条）。
+///
+/// **M210 只改 Rust 这一处**：TS 常量与 CSS 默认值的 16→15 随 R2a（M211）落地（同一 tasks
+/// §3.4 拆成两半）。R2a 之前配置值到达前 style.css 仍是 16px；配置一到即按本常量覆盖。两半
+/// 合拢后三处重新同值。
+pub const DEFAULT_FONT_SIZE: f64 = 15.0;
 
 /// 字号合法区间（含端点）：与前端步进命令的钳制区间同值（`src/typography.ts` 的
 /// `FONT_SIZE_MIN` / `FONT_SIZE_MAX`）。区间外一律回落默认值 + warning。
@@ -143,6 +162,37 @@ pub const FONT_SIZE_MAX: f64 = 32.0;
 pub enum EditorMode {
     Md,
     Code,
+}
+
+/// 界面配置（`[ui]` 表，restyle-ui-tokens-v1）。与 `EditorConfig` 同为结构化表：
+/// 逐字段取值校验，缺字段回落默认、取值非法回落默认 + warning。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, TS)]
+#[ts(export, export_to = "../../src/bindings/")]
+pub struct UiConfig {
+    /// 界面主题，默认 `light`。启动装载时读一次并施加到 `documentElement.dataset.theme`
+    /// ——与 `editor.mode` 同口径（重启生效）。本版不做运行期切换、不跟随系统主题。
+    pub theme: UiTheme,
+}
+
+impl Default for UiConfig {
+    fn default() -> Self {
+        Self {
+            theme: UiTheme::Light,
+        }
+    }
+}
+
+/// 界面主题三档（restyle-ui-tokens-v1）：同一套 token 名经 `data-theme` 属性切换取值。
+/// `light` = 默认浅色；`dark` = 深色；`eink` = 电子纸降级档（色彩退场，靠字重与线宽承担
+/// 对比，见 tokens 文档 §eink 规则）。写值是**闭集合**：取值校验在 Rust 侧完成，前端拿到的
+/// 一定是三档之一，不再判非法（与 `editor.mode` / `log.level` 同一形态）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, TS)]
+#[serde(rename_all = "lowercase")]
+#[ts(export, export_to = "../../src/bindings/")]
+pub enum UiTheme {
+    Light,
+    Dark,
+    Eink,
 }
 
 /// 诊断日志配置（`[log]` 表）。
@@ -187,6 +237,9 @@ struct RawConfig {
     version: Option<u32>,
     last_vault: Option<serde_json::Value>,
     editor: RawEditorConfig,
+    /// `[ui]` 表（restyle-ui-tokens-v1）走结构化镜像，与 `editor` 同路：表内字段类型不符
+    /// （`"theme": 2`）或整个表错形状（`"ui": "dark"`）都在解析期失败 → 整文件回落。
+    ui: RawUiConfig,
     /// [keys] 表整体收成 Value：形状（对象？键位合法？值类型？）逐项判定，非法项只丢
     /// 自己并附 warning，不影响其余键位（与 editor.mode 的逐字段口径一致）。
     keys: serde_json::Value,
@@ -209,9 +262,19 @@ struct RawEditorConfig {
     /// 类型不符（`"font_family": 16`）在解析期失败 → 整文件回落。
     font_family: Option<String>,
     mono_font_family: Option<String>,
-    /// **本仓第一个数值字段**：`"font_size": "16"`（带引号）同样在解析期失败 → 整文件回落，
+    /// **本仓第一个数值字段**：`"font_size": "15"`（带引号）同样在解析期失败 → 整文件回落，
     /// 连 `last_vault` 一起丢（代价与替代形态见模块头「数值字段的打字代价」）。
     font_size: Option<f64>,
+}
+
+/// `[ui]` 表的解析镜像（restyle-ui-tokens-v1）。缺字段 → `None` → `validate()` 回落到
+/// `UiConfig::default`（`light`），不产生 warning；取值非法到不了这里（在 `validate()` 里
+/// 回落 + warning）。类型不符（`"theme": 2`）在 serde 解析期即失败 → 整文件回落——与
+/// `editor.mode` 给错类型同路，不发明逐字段类型容忍（理由同 `RawEditorConfig` 的注释）。
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+struct RawUiConfig {
+    theme: Option<String>,
 }
 
 /// 配置目录（ADR 0002 §5 路径规则）。无法确定 home 是唯一的致命错误。
@@ -349,7 +412,7 @@ fn validate(raw: RawConfig) -> (AppConfig, Vec<String>) {
     };
     let mut font_size = defaults.editor.font_size;
     if let Some(value) = raw.editor.font_size {
-        // 区间判定同时挡 NaN（`contains` 对 NaN 为 false）。类型不符（`"font_size": "16"`）
+        // 区间判定同时挡 NaN（`contains` 对 NaN 为 false）。类型不符（`"font_size": "15"`）
         // 到不了这里——它在 serde 解析期就已经让整份配置回落，单测钉住那条边界。
         if (FONT_SIZE_MIN..=FONT_SIZE_MAX).contains(&value) {
             font_size = value;
@@ -357,6 +420,21 @@ fn validate(raw: RawConfig) -> (AppConfig, Vec<String>) {
             warnings.push(format!(
                 "配置项 editor.font_size 取值 {value} 超出合法区间 [{FONT_SIZE_MIN}, {FONT_SIZE_MAX}]，已回退为 {DEFAULT_FONT_SIZE}"
             ));
+        }
+    }
+
+    // [ui] 表（restyle-ui-tokens-v1）：取值校验照 editor.mode 模板——缺字段回落默认（不告警），
+    // 取值不在三档内回落默认 + 人话 warning。类型不符到不了这里（解析期整文件回落，见
+    // `RawUiConfig` 的注释）；单测 `wrong_type_ui_theme_falls_back_entire_file` 钉住那条边界。
+    let mut theme = defaults.ui.theme;
+    if let Some(raw_theme) = raw.ui.theme.as_deref() {
+        match raw_theme {
+            "light" => theme = UiTheme::Light,
+            "dark" => theme = UiTheme::Dark,
+            "eink" => theme = UiTheme::Eink,
+            other => warnings.push(format!(
+                "配置项 ui.theme 取值 \"{other}\" 非法（可选：light、dark、eink），已回退为 light"
+            )),
         }
     }
 
@@ -378,6 +456,7 @@ fn validate(raw: RawConfig) -> (AppConfig, Vec<String>) {
                 mono_font_family,
                 font_size,
             },
+            ui: UiConfig { theme },
             keys,
             log,
         },
@@ -742,7 +821,7 @@ mod tests {
     #[test]
     fn missing_editor_typography_fields_take_defaults() {
         // 老配置文件（typography-and-zoom 之前写入）没有这三项：两项字体族 = None（沿用基线）、
-        // font_size = 16、不产生 warning（比照 missing_editor_wrap_fields_take_defaults）。
+        // font_size = 15（出厂默认）、不产生 warning（比照 missing_editor_wrap_fields_take_defaults）。
         let f = TempFile::new(r#"{"version":1,"editor":{"mode":"md"}}"#);
         let snap = load_from(&f.0);
         assert_eq!(snap.config.editor.font_family, None);
@@ -827,7 +906,7 @@ mod tests {
         // 错打成字符串会在 serde 解析期失败 → **整文件回落**（全部字段回默认，连 last_vault
         // 一起丢），warning 恰一条。MUST NOT 出现「一部分字段按配置、一部分按默认」的混合态。
         let f = TempFile::new(
-            r#"{"last_vault":"/tmp/vault","editor":{"font_size":"16","font_family":"Inter","mode":"code","line_wrap":false}}"#,
+            r#"{"last_vault":"/tmp/vault","editor":{"font_size":"15","font_family":"Inter","mode":"code","line_wrap":false}}"#,
         );
         let snap = load_from(&f.0);
         assert_eq!(snap.config, AppConfig::default(), "整份配置应落回默认");
@@ -850,5 +929,65 @@ mod tests {
         assert_eq!(snap.config.editor.font_size, DEFAULT_FONT_SIZE);
         assert_eq!(snap.warnings.len(), 1, "{:?}", snap.warnings);
         assert!(snap.warnings[0].contains("不是合法 JSON"));
+    }
+
+    #[test]
+    fn missing_ui_table_defaults_to_light() {
+        // 老配置文件（restyle-ui-tokens-v1 之前写入）没有 ui 字段：默认 light、无 warning
+        // （比照 missing_log_table_defaults_to_info）。
+        let f = TempFile::new(r#"{"version":1,"editor":{"mode":"md"}}"#);
+        let snap = load_from(&f.0);
+        assert_eq!(snap.config.ui.theme, UiTheme::Light);
+        assert!(snap.warnings.is_empty(), "{:?}", snap.warnings);
+    }
+
+    #[test]
+    fn ui_theme_accepts_dark_and_eink() {
+        // 三档闭集合逐个过一遍；显式写 light 与缺省同值，且都不产生 warning。
+        for (raw, want) in [
+            ("light", UiTheme::Light),
+            ("dark", UiTheme::Dark),
+            ("eink", UiTheme::Eink),
+        ] {
+            let f = TempFile::new(&format!(r#"{{"ui":{{"theme":"{raw}"}}}}"#));
+            let snap = load_from(&f.0);
+            assert_eq!(snap.config.ui.theme, want, "{raw}");
+            assert!(snap.warnings.is_empty(), "{raw}: {:?}", snap.warnings);
+        }
+    }
+
+    #[test]
+    fn illegal_ui_theme_warns_and_falls_back_to_light() {
+        // ADR 0002 §5：非法值走既有 warning 语义（恰一条）、不得导致启动失败；同一份配置里的
+        // 合法字段照常生效（逐字段口径，比照 illegal_log_level_warns_and_falls_back_to_info）。
+        let f = TempFile::new(r#"{"ui":{"theme":"solarized"},"last_vault":"/tmp/vault"}"#);
+        let snap = load_from(&f.0);
+        assert_eq!(snap.config.ui.theme, UiTheme::Light);
+        assert_eq!(snap.config.last_vault.as_deref(), Some("/tmp/vault"));
+        assert_eq!(snap.warnings.len(), 1, "{:?}", snap.warnings);
+        assert!(snap.warnings[0].contains("ui.theme"), "{:?}", snap.warnings);
+    }
+
+    #[test]
+    fn wrong_type_ui_theme_falls_back_entire_file() {
+        // 边界如实记录（与 wrong_type_font_size_falls_back_entire_file 同路）：`[ui]` 表走
+        // 结构化镜像（`RawUiConfig`），表内类型不符（`"theme": 2`）与整个表错形状
+        //（`"ui": "dark"`）都在 serde 解析期失败 → **整文件回落**，warning 恰一条。
+        // MUST NOT 出现「一部分字段按配置、一部分按默认」的混合态。
+        for raw in [
+            r#"{"last_vault":"/tmp/vault","ui":{"theme":2},"editor":{"mode":"code"}}"#,
+            r#"{"last_vault":"/tmp/vault","ui":"dark"}"#,
+        ] {
+            let snap = load_from(&TempFile::new(raw).0);
+            assert_eq!(snap.config, AppConfig::default(), "{raw} 应整份落回默认");
+            assert_eq!(snap.config.ui.theme, UiTheme::Light);
+            assert_eq!(snap.config.last_vault, None, "合法字段同样落回默认");
+            assert_eq!(snap.warnings.len(), 1, "{raw}: {:?}", snap.warnings);
+            assert!(
+                snap.warnings[0].contains("不是合法 JSON"),
+                "{raw}: {:?}",
+                snap.warnings
+            );
+        }
     }
 }
