@@ -13,6 +13,8 @@ import {
   onMenuCommand,
   onQuitBlocked,
   onVaultRestoreFinished,
+  readingPositionGet,
+  readingPositionPut,
   vaultCurrent,
   vaultList,
   vaultOpen,
@@ -32,6 +34,7 @@ import {
   samePath,
 } from "./vault-switcher";
 import type { VaultSwitcherHandle } from "./vault-switcher";
+import { createReadingPositionStore } from "./reading-position";
 // M151：名字听不出归属的三块能力各自的模块（见各处装配点与模块头注释）。
 // link-follow（解析缓存 + 链接跟随）、tabs（标签栏 DOM）、bindings-panel（键位查看面板）。
 import { createLinkFollow } from "./link-follow";
@@ -283,6 +286,26 @@ const switcher: VaultSwitcherHandle = createVaultSwitcher({
   warn: (text) => toast(text),
 });
 
+// ---------------------------------------------------------------------------
+// 文档阅读位置（M194，change remember-reading-position 的 3.x / 4.x）：跨会话记住阅读位置的
+// 捕获侧与恢复侧。判定、防抖、清理与上限都在 src/reading-position.ts（无 DOM、可单测），这里
+// 只装配它看不到的东西：编辑器的两个口子、ipc、以及三个 flush 时点。
+// ---------------------------------------------------------------------------
+
+/** 阅读位置的存储。`activePath` 与标签会话取同一份（前台标签是哪一个），不再各自存副本。 */
+const readingPositions = createReadingPositionStore({
+  activePath: () => save.displayedPath(),
+  readPosition: () => editor.readScrollPosition(),
+  applyPosition: (position) => editor.applyScrollPosition(position),
+  getPositions: (vaultId) => readingPositionGet(vaultId),
+  putPositions: (vaultId, entries) => readingPositionPut(vaultId, entries),
+  warn: (text) => toast(text),
+});
+
+// 捕获侧的信号源：滚动容器一滚就通知（同步派发，防抖在 store 里）。订阅一次、挂全局——全应用
+// 只有一个 EditorView，「前台文档是谁」由 activePath 活读，不随标签切换重新挂监听。
+editor.onScroll(() => readingPositions.scrolled());
+
 /** 前台会话变化后把周边表现层**一次**对齐：正文基准路径、masthead、后端 dirty 镜像、
  *  大纲指示段、文件树高亮、标签栏。这是「当前文档」在装配层的唯一同步点——别处的读点
  *  一律改为问 editor.activeSession()，不再各自存副本。 */
@@ -299,6 +322,10 @@ function syncActiveDocument(): void {
   // 标签集合 / 顺序 / 激活项变化后防抖落盘会话（M163）。挂在这个唯一同步点上：切标签、
   // 开文件、关标签都会经过它，别处不必各埋一个「记得写会话」的钩子。
   switcher.sessionChanged();
+  // 阅读位置与标签会话同一批 flush（M194，task 3.4）：这是「切文件 / 切标签」在装配层的唯一
+  // 同步点，滚动停止后的防抖是主路径、这里是补漏——MUST NOT 只依赖定时器（切走之后没有第二次
+  // 机会），也 MUST NOT 只依赖退出路径（那条路径的 invoke 是异步的，可能赶不上界面拆除）。
+  void readingPositions.flush();
 }
 
 /** 装载完成后的表现层对齐（打开 / 重载共用）。 */
@@ -367,6 +394,14 @@ async function openFile(
     // 装载走事务派生（editor.reloadSession）而不是新建 state：同一标签内换文件时
     // 搜索面板的查询与开合状态因此保留（M139 以来的既有行为）。
     editor.reloadSession(session, snapshot.content, path, request);
+    // 阅读位置恢复（M194）：**必须在装载复位之后**（reloadSession 内部的 `scrollTop = 0` 是
+    // 既有的、有现场依据的复位，顺序与写法都不动），也必须在文档已经进入 view 之后——后台会话
+    // 分支只换代 state，那里不恢复（design §5）。
+    //
+    // 挂点在这一条分支里（而不是在 openFile 之上）就是「已打开的标签不被盘上的位置拽走」这条
+    // 判据的实现方式：同一个文件已经在某个标签里打开时，上面那个 short-circuit 直接 return，
+    // 根本走不到这里。store 还会再核一次「它仍是前台文档」（装载是异步的，期间用户可能切走）。
+    readingPositions.restoreFor(path);
     afterLoad();
     return true;
   } catch (e) {
@@ -381,6 +416,8 @@ window.addEventListener("beforeunload", (event) => {
   // 退出」都走这条路）。尽力而为：invoke 是异步的，webview 拆除可能早于它完成；这是这条
   // 需求在现有钩子里能拿到的最好时点（没有「窗口即将关闭」的 await 通道）。
   void switcher.flush();
+  // 阅读位置与标签会话同一批 flush（M194）。同样尽力而为：防抖写入是主路径，这里是补漏。
+  void readingPositions.flush();
   // 判据是「任一标签有未保存修改」：多标签下只看前台文档会让后台标签的修改被静默丢弃。
   if (!editor.sessions().some((session) => session.dirty)) return;
   event.preventDefault();
@@ -713,8 +750,10 @@ async function applyVault(
   restored: boolean,
 ): Promise<void> {
   // 切换前 flush 当前 vault 的会话（MUST NOT 只依赖防抖：切走之后再没有「当前 vault」这个
-  // 上下文，写不成了）。启动路径上还没有当前 vault，flushSession 直接返回。
+  // 上下文，写不成了）。启动路径上还没有当前 vault，flushSession 直接返回。阅读位置同一批
+  // flush（M194）：键还是旧 vault 的 id，来得及写走。
   await switcher.flush();
+  await readingPositions.flush();
   vaultLoaded = true;
   loadedRoot = root;
   const name = baseName(root);
@@ -740,6 +779,10 @@ async function applyVault(
   showEditor(); // 旧 vault 的「暂不支持预览」覆盖层一并撤下
   // 残留崩溃备份的恢复入口（M127）：装载完成后才有 vault 上下文可定位备份。
   void save.checkRecovery();
+  // 装载后读一次该 vault 的阅读位置并建内存镜像（M194，task 3.2）：**必须 await 在按标签列表
+  // 恢复标签之前**——那一步会经 openFile 逐个装载标签，而每个标签的恢复都要查这份镜像（查的是
+  // 内存，不再读盘）。位置在这里读，零新增 IO 挂点：清理也搭在下面这一次既有的枚举上。
+  await readingPositions.onVaultLoaded(vaultId, entries);
   // 装载后恢复该 vault 的标签列表（M163）：逐标签异步装载，不阻塞树与首帧；恢复途中若又
   // 换了一次 vault，本次恢复整体作废（vault-switcher 的世代号）。
   void switcher.onVaultLoaded(vaultId, entries);

@@ -33,6 +33,8 @@ import type { CommandRunner, EditorCommandId } from "./keys";
 import { DEFAULT_CODE_BLOCK_WRAP, DEFAULT_LINE_WRAP, wrapSpec } from "./preview/theme";
 import type { WrapSettings } from "./preview/theme";
 import { lumirSearch } from "./search";
+import { positionFromReadings, restoreScrollTop } from "./scroll-position";
+import type { ScrollPosition } from "./scroll-position";
 
 // 编辑器单内核双模式（ADR 0002 §2）：一个 CM6 内核、两种模式。
 // md = 高亮 + live preview 装饰层（src/preview/）；code = 仅高亮。
@@ -947,6 +949,18 @@ export interface EditorHandle {
   refreshPreview(): void;
   /** 滚动定位到 1-based 行号并把光标移到行首（wikilink 锚点跳转用）。 */
   revealLine(line: number): void;
+  /**
+   * 读当前前台视图的阅读位置（捕获侧唯一构造点；值语义见 src/scroll-position.ts）。
+   * 不可读（锚处没有可量的字符盒）返回 null——调用方按「本次不记录」处理，不写半个值。
+   */
+  readScrollPosition(): ScrollPosition | null;
+  /**
+   * 按公开通道施加一个阅读位置（恢复侧唯一入口；装载复位之后调用）。
+   * 位置不可读、或落点即篇首时**静默不施加**（沿用复位结果），不抛错、不提示。
+   */
+  applyScrollPosition(position: ScrollPosition): void;
+  /** 订阅前台滚动容器的滚动信号（捕获侧的信号源）；返回退订函数。 */
+  onScroll(listener: () => void): () => void;
   /** 前台会话是否相对它的 dirty 基准有改动。 */
   isDirty(): boolean;
   onDirty(listener: (dirty: boolean) => void): () => void;
@@ -1328,6 +1342,15 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
   active = initialSession;
   const view = new EditorView({ state: active.state, parent });
 
+  /** 滚动信号的订阅者（捕获侧）：挂原生 `scroll` 而不挂 CM 的 `viewportChanged`——两者同源
+   *  （CM 自己在 `.cm-scroller` 上就挂着原生 scroll 监听），取前者的理由是让捕获与 CM 的更新
+   *  循环解耦：捕获只需要一个 `scrollTop` 与一次 `coordsAtPos`，不必等一次测量周期。回调是
+   *  **同步派发**的，消费者自己负责防抖（见 src/reading-position.ts）。 */
+  const scrollListeners = new Set<() => void>();
+  view.scrollDOM.addEventListener("scroll", () => {
+    for (const listener of scrollListeners) listener();
+  });
+
   // 统一键位层（keys.ts）的编辑器侧命令实现：每条只读 view 当前状态并自行 dispatch。
   // 全部返回 void——命中即已消费，分发器统一吞掉默认行为（命中但无事可做，例如历史
   // 为空的 ⌘Z，也必须吞掉，否则原生 contenteditable 撤销会插手 CM 管理的文档）。
@@ -1644,6 +1667,56 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
         selection: { anchor: pos },
         effects: EditorView.scrollIntoView(pos, { y: "center" }),
       });
+    },
+    readScrollPosition(): ScrollPosition | null {
+      const scroller = view.scrollDOM;
+      // 锚取「高度等于 scrollTop 的行块起点」：公开方法、语义是「相对文档顶的高度」，且与
+      // 恢复侧一样只需要一个文档位置（不碰像素）。锚比视口顶那一行低约一个 paddingBlock，
+      // 这不影响判据——y 记的正是该锚相对视口的实际偏移（见 positionFromReadings 的注释）。
+      const anchor = view.lineBlockAtHeight(scroller.scrollTop).from;
+      const rect = view.coordsAtPos(anchor);
+      // 锚处没有可量的字符盒（折行点、被替换的区间等）：本次不记录，绝不写半个值。
+      if (rect === null) return null;
+      const box = scroller.getBoundingClientRect();
+      return {
+        pos: anchor,
+        ...positionFromReadings({
+          charTop: rect.top,
+          charLeft: rect.left,
+          boxTop: box.top,
+          boxLeft: box.left,
+        }),
+      };
+    },
+    applyScrollPosition(position: ScrollPosition) {
+      // 越界的锚（两次会话之间文档被外部改写）夹到文档内：CM 自己的 clip 也这么做，这里夹一
+      // 下是为了让下面的落点判定用的是真正会被使用的那个位置。
+      const anchor = Math.max(0, Math.min(position.pos, view.state.doc.length));
+      const rect = view.coordsAtPos(anchor);
+      if (rect === null) return; // 不可读：静默退化到篇首（沿用装载复位的结果）
+      const box = view.scrollDOM.getBoundingClientRect();
+      const readings = {
+        charTop: rect.top,
+        charLeft: rect.left,
+        boxTop: box.top,
+        boxLeft: box.left,
+      };
+      // 落点即篇首时不施加效果：`scrollIntoView` 带 margin 会把 pos 0 对齐到视口顶、把页首的
+      // 44px 内边距顶出画（M110 的现场），而那种情形下「保持复位结果」与「恢复到该位置」是
+      // 同一件事。这一条同时覆盖「存储的位置本来就在篇首」。
+      if (restoreScrollTop(readings, position) <= 0) return;
+      view.dispatch({
+        effects: EditorView.scrollIntoView(EditorSelection.cursor(anchor), {
+          y: "start",
+          yMargin: position.y,
+          x: "start",
+          xMargin: position.x,
+        }),
+      });
+    },
+    onScroll(listener: () => void) {
+      scrollListeners.add(listener);
+      return () => void scrollListeners.delete(listener);
     },
   };
 }

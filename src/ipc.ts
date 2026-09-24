@@ -11,6 +11,7 @@ import type { ReadSnapshot } from "./bindings/ReadSnapshot";
 import type { ConfigSnapshot } from "./bindings/ConfigSnapshot";
 import type { FsChange } from "./bindings/FsChange";
 import type { FsEntryChangedEvent } from "./bindings/FsEntryChangedEvent";
+import type { ReadingPositions } from "./bindings/ReadingPositions";
 import type { VaultInfo } from "./bindings/VaultInfo";
 import type { VaultListEntry } from "./bindings/VaultListEntry";
 import type { VaultSession } from "./bindings/VaultSession";
@@ -160,6 +161,26 @@ export function vaultSessionGet(vaultId: string): Promise<VaultSession | null> {
  *  不值得拦停用户的一次切换或退出。只有 vault_id 非法才 reject（路径逃逸防护）。 */
 export function vaultSessionPut(vaultId: string, tabs: string[], active: string | null): Promise<void> {
   return invoke<void>("vault_session_put", { vault_id: vaultId, tabs, active });
+}
+
+// ---------------------------------------------------------------------------
+// 文档阅读位置（M194，change remember-reading-position 的持久化契约的前端一半）
+// ---------------------------------------------------------------------------
+
+/** 读某 vault 的文档阅读位置表。无历史（首次读到 / 文件损坏 / 版本不符 / 读不到）resolve 为
+ *  null，不是错误——后端把这四种情况都归成「没有阅读位置历史」。 */
+export function readingPositionGet(vaultId: string): Promise<ReadingPositions | null> {
+  return invoke<ReadingPositions | null>("reading_position_get", { vault_id: vaultId });
+}
+
+/** 写某 vault 的阅读位置表（整份内存镜像；滚动停止后防抖写、切换文件 / 标签 / vault 前与退出
+ *  前 flush）。写失败在后端降级为 warning 并照常 resolve：位置只影响「下次打开从哪里开始」，
+ *  不值得拦停用户的一次切换或退出。只有 vault_id 非法才 reject（路径逃逸防护）。 */
+export function readingPositionPut(
+  vaultId: string,
+  entries: ReadingPositions["entries"],
+): Promise<void> {
+  return invoke<void>("reading_position_put", { vault_id: vaultId, entries });
 }
 
 // ---------------------------------------------------------------------------
