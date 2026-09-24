@@ -217,6 +217,36 @@ class FakeElement {
   }
 }
 
+test("Keymap：事件目标是编辑器之外的可编辑宿主时不分发、不 preventDefault（change list-filter）", () => {
+  const host = fakeWindow();
+  const { runtime, runs } = recordingRuntime();
+  const single: KeyBinding[] = [{ key: "s", command: "document.save", scope: "global", doc: "" }];
+  let inEditor = false;
+  new Keymap(single).attach(host.target, runtime, { isEditorEvent: () => inEditor });
+
+  // 原生 input / textarea / contenteditable：单字符绑定（global）不再吞字符、也不触发命令
+  for (const target of [{ tagName: "INPUT" }, { tagName: "textarea" }, { isContentEditable: true }]) {
+    const event = keyEvent({ key: "s", target });
+    host.fire(event);
+    assert.equal(event.defaultPrevented, false, "可编辑宿主里不消费，按键要留给原生路径");
+    assert.deepEqual(runs, [], "可编辑宿主里不触发任何绑定");
+  }
+
+  // 编辑器（contentDOM 内的 contenteditable）是绑定的主目标：照常分发
+  inEditor = true;
+  const inEditorEvent = keyEvent({ key: "s", target: { isContentEditable: true } });
+  host.fire(inEditorEvent);
+  assert.equal(inEditorEvent.defaultPrevented, true);
+  assert.deepEqual(runs, ["document.save"]);
+
+  // 非可编辑目标（浮层条目 / 按钮）：照常分发（守卫只管可编辑宿主）
+  inEditor = false;
+  const onButton = keyEvent({ key: "s", target: { tagName: "BUTTON" } });
+  host.fire(onButton);
+  assert.equal(onButton.defaultPrevented, true);
+  assert.deepEqual(runs, ["document.save", "document.save"]);
+});
+
 test("Keymap：editor 作用域只在编辑器事件内消费，作用域外不 preventDefault", () => {
   const host = fakeWindow();
   const { runtime, runs } = recordingRuntime();

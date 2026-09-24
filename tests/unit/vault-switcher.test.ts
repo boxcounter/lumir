@@ -1293,4 +1293,3 @@ test("浮层筛选：组合期不刷新结果集（拼音串零命中的闪烁�
   assert.equal(rig.popover().find("vault-row").length, 0, "组合结束后刷一次（此处零命中）");
   assert.equal(rig.popover().hidden, false, "零命中同样保持浮层打开");
 });
-

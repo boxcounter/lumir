@@ -42,7 +42,7 @@
   **证据**：`src/style.css` 的 `.lumir-toc-input` / `.lumir-toc-empty`（下划线取 `--bd-3`、聚焦 `--accent`，与 `src/search-panel.css` 的 editorial 输入同形）；`tests/visual/scenes/list-filter.spec.ts`「输入行在位且浮层总高仍为 80%」判 `inputHeight > 0` + 总高上下界 + `listScroll > listClient`。
 - [x] 2.2 焦点迁移的五处挂点（design §2.3）：打开时聚焦输入框、失焦收起挂点外移到浮层容器、`aria-activedescendant` 移到输入框（`role=combobox` + `aria-controls`）、就地键挂点上移到容器、逐条目 `mousedown` 防夺焦维持不变。
   **验收口径**：真机三条关闭路径（`Tab` 出去 / 点浮层外 / 再按 `⌘⇧O`）各收起一次；design §5 第 6、7 项有实测记录。
-  **证据**：`src/toc.ts` 的五处落点（`input.focus()` / `popover` 的 `focusout` / `input.setAttribute("aria-activedescendant")` / `popover` 的 `keydown` / 条目级 `mousedown` 原样）；**真机**：场景 32 的 Esc 一步关闭 + 场景 13 的 `⌘⇧O` 开→关→开（`test-results/m199/acceptance-run2.log`）；**chromium**：`list-filter.spec.ts` 的 `Tab` 出去即收起 + vault 侧的「点浮层外收起」（`mv-vault-switcher.spec.ts`）。**未覆盖（如实登记）**：真机侧「点击浮层以外的区域」这条路径没有独立断言（chromium 侧有），`Tab` 出去的真机读数在本批的 13/32 场景里也没有单独出（判据在 chromium 层）。
+  **证据**：`src/toc.ts` 的五处落点（`input.focus()` / `popover` 的 `focusout` / `input.setAttribute("aria-activedescendant")` / `popover` 的 `keydown` / 条目级 `mousedown` 原样）；**真机**：场景 32 的 Esc 一步关闭 + 场景 13 的 `⌘⇧O` 开→关→开（`test-results/m199/acceptance-run2.log`）；**chromium**：`list-filter.spec.ts` 的 `Tab` 出去即收起（大纲侧）；**单元层**：vault 侧的焦点离开收起与「点浮层以外收起」在 `tests/unit/vault-switcher.test.ts`（focusout 带浮层外 `relatedTarget`、document `mousedown` 落在浮层外，两条路径本 change 未动）。**未覆盖（如实登记）**：真机侧「点击浮层以外的区域」与 `Tab` 出去两条路径没有独立断言。**（r1 评审 P2-3 指正：原句把 vault 侧的覆盖错记到 `mv-vault-switcher.spec.ts`，该文件没有这两条断言。）**
 - [x] 2.3 结果集渲染 + 游标（复用既有 `move()` / `setActive()` / `jumpTo()`，MUST NOT 第二套下标逻辑）。
   **验收口径**：`git diff src/toc.ts` 里没有新增的下标钳制 / 移动实现（只有结果集映射与渲染）。
   **证据**：`git diff` 中 `move()` 逐字未变（仍是 `Math.min(items.length - 1, Math.max(0, activeIndex + delta))`）；新增的只有 `render()` 的结果集映射、`setActive()` 的 `aria-activedescendant` 归属、`jumpTo()` 的一步映射。
@@ -162,7 +162,7 @@
   **证据**：见 7.5 与文末对账表。
 - [x] 9.4 `git diff --check` 与改动集合核对（与 proposal 的 Impact 逐条对齐）。
   **验收口径**：`git diff --stat` 的清单与 Impact 一致；确认**没有**对 `src/keys.ts` 的改动（零键位）、没有新增命令 / 配置项、没有落盘写入。
-  **证据**：见文末对账表的「改动集合」行；`src/keys.ts`、`src-tauri/**` 零改动。
+  **证据**：见文末对账表的「改动集合」行；`src-tauri/**`、配置项与落盘路径零改动。**`src/keys.ts` 在 r1 复审后有一处改动**（可编辑宿主守卫，tower 裁决路径 ①，见 P1-1）：它不含任何新增键位 / 命令——「零键位」口径照旧成立，`KEY_BINDINGS` 与 `CommandId` 表逐字未动（`git diff` 可核）。
 - [x] 9.5 收官对账：tasks 全部勾选或标注放弃原因；spec 增量与实现逐条对一眼；design §5 的十项都有「已实测（读数路径）」或「未实测（如实标注）」的结论。
   **验收口径**：对账表落本文件末尾（逐 requirement → 实现落点 → 断言落点）；`design.md` 的未验项逐条可见。
   **证据**：见文末「收官对账表」。
@@ -200,7 +200,7 @@
 | 新增纯函数模块 `src/list-filter.ts` | 新增（匹配 + 查询状态 + 三条共用文案常量） | ✅ |
 | `src/style.css` 两处浮层各加一行输入行样式 | 新增 `.lumir-toc-input` / `.lumir-toc-empty` / `.vault-filter` / `.vault-empty` + 两条 `[hidden]` | ✅ |
 | `文案-Copy.md` 新增条目（现最大 D114，从 D115 续） | D115/D116 为 code-outline 补登、D117–D119 为本 change（编号校正已就地标注） | ✅（编号校正） |
-| **零键位、零命令、零配置项、零落盘** | `src/keys.ts` / `src-tauri/**` / 配置项 / 落盘路径**零改动**（`git diff --stat` 可核） | ✅ |
+| **零键位、零命令、零配置项、零落盘** | `src-tauri/**` / 配置项 / 落盘路径**零改动**；`src/keys.ts` 在 r1 复审后有一处**缺陷修复**（可编辑宿主守卫，无新增键位 / 命令——见 P1-1 条目） | ✅（含一处已裁决的修复） |
 | `tests/unit/` 新单测 | 新增 `list-filter.test.ts`（6 条）+ `vault-switcher.test.ts`（+5 条） | ✅ |
 | `tests/visual/scenes/` 新增筛选场景 + 更新两张元素级基线 | 新增 `list-filter.spec.ts`（7 条）；既有两场景零改动；受影响基线是**四张**（含 `code-outline-popover`），待 Alex 过目后重拍 | ✅（补一张） |
 | `scripts/acceptance/scenarios/` 新增场景 + 更新 `13-toc` 游标判据 + `17`/`18` 重跑 | 新增 `32-list-filter.md` + `fixtures/list-filter.md`（编号校正）；`13-toc` 按实测改写游标判据；`17`/`18` 重跑 | 见下方真机读数 |
@@ -218,7 +218,7 @@
 | 5 | 已实测（chromium，`short-window.json`）并改写 spec 已知边界段 |
 | 6 | 部分实测：Esc / `⌘⇧O` 真机；Tab 出去 / 点浮层外 chromium |
 | 7 | chromium 已实测（含反向验证 RV-4）；真机鼠标点击现象未覆盖 |
-| 8 | **未实测**（真机探针未跑）：以结构证据落定（容器级 `keydown` 就地消费 + `preventDefault`；单字符不进键位表） |
+| 8 | **已实测（chromium，r1 复审后补）**：r1 评审证明原先的「结构证据」不成立（单字符走「其余键不消费」→ 冒泡到分发器 → global 绑定吞字符触发命令）。修法取 tower 裁决路径 ①：`src/keys.ts` 的 `Keymap.handle` 加可编辑宿主守卫；断言 `tests/visual/scenes/editable-host-guard.spec.ts`（筛选输入框 / 搜索框 / 编辑器三条），反向验证 RV-5 关掉守卫即红 |
 | 1（补充） | 探针**不可判定**且真机通道造不出输入法组合：第 1 项按「未实测」登记（CDP 的 IME 目标不是 DOM activeElement，读数无法区分命题） |
 | 9 | 已实测（chromium 光标偏移断言 + 反向验证 RV-2） |
 | 10 | 已实测（单元层按调用参数断言 + 反向验证 RV-3） |
