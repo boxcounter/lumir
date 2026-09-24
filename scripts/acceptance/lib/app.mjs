@@ -115,6 +115,16 @@ export async function resetSessions() {
   return dir;
 }
 
+/** 清掉按 vault 的阅读位置（M194，change remember-reading-position）。与 recovery / workspaces /
+ *  vault-sessions 同因：它也在隔离配置目录下，残留会让下一个场景（或明天重跑本场景时）一打开文件
+ *  就恢复上一轮留下的位置，而「本轮之前不存在」「mtime 已推进」这类断言正是靠这份空目录区分
+ *  「本轮写的」与「上轮残留的」。 */
+export async function resetPositions() {
+  const dir = path.join(envHome(), "lumir", "reading-positions");
+  await rm(dir, { recursive: true, force: true });
+  return dir;
+}
+
 /** 注册项 id 的合法字符（与 Rust 侧 `workspaces::valid_id` 同源：id 同时是文件名，
  *  因此这是路径逃逸防护）。套件里显式校验，让写错 id 在动作处就报错而不是落一个读不回的盘。 */
 const ID_RE = /^[A-Za-z0-9_-]{1,128}$/;

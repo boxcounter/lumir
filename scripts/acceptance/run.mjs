@@ -19,6 +19,7 @@ import {
   launchApp,
   prepareSeed,
   reclaimPort,
+  resetPositions,
   resetRecovery,
   resetRegistry,
   resetSecondVault,
@@ -145,6 +146,7 @@ async function main() {
       // 恢复哪些标签——两者残留都会让本场景看到上一场景的状态（与 recovery 同因）。
       await resetRegistry();
       await resetSessions();
+      await resetPositions(); // 阅读位置（M194）：同上，残留会让下一场景一打开文件就换位置
       // 场景自己的注册表 / 会话预置：**必须在 launchApp 之前**（见 prepareSeed 的说明）。
       await prepareSeed(scenario.seed);
       await writeConfig({ mode: "md" });

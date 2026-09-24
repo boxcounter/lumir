@@ -104,6 +104,6 @@ steps:
   `scrollTop` 差 0）。
 - **位置文件按 vault 稳定 id 命名，id 是 pid 派生的**，故断言用 `env:reading-positions/*.json` 的 glob
   形式（取最新一份），不写死文件名。
-- **运行前请先清一次** `test-results/acceptance/env/lumir/reading-positions/`：套件不为这个新目录做
-  per-scenario 重置（`run.mjs` 只重置 recovery / workspaces / vault-sessions），残留文件会让
-  「本轮之前不存在」与「mtime 已推进」两条断言失去区分度。
+- **per-scenario 隔离**：`run.mjs` 已为这个新目录加 `resetPositions()`（与 recovery / workspaces /
+  vault-sessions 同因）——否则上一场景（或昨天那次 run）留在隔离配置目录里的位置会让本场景一打开
+  文件就换位置，「本轮之前不存在」那条断言也随之失去区分度。
