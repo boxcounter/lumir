@@ -4,11 +4,12 @@
 不是「跑过了」的口头声明（[REVIEW.md](../../../REVIEW.md) 第 7 条）。
 
 **本文件是提案阶段的实现计划；M195（实现 mission）已按本表逐组执行完毕**——每条勾选都有可 `ls` 的
-证据指针，逐任务对账见文末「逐条证据」与「requirement 对账表」。**唯一未验项是真机验收场景 29**
-（8.1 / 8.2 / 8.3 / 9.3，共 4 条）：本机屏幕处于锁定态（`CGSSessionScreenIsLocked=Yes`、
-`screencapture` 报 `could not create image from display`），对照组场景 27 同样红、Alex 的实例
-AX 同样不可读 → 环境阻塞而非代码问题。场景文件、harness 扩展与 `--check` 已完成并提交，
-重跑命令：`cd <worktree> && caffeinate -dimsu node scripts/acceptance/run.mjs 29`。
+证据指针，逐任务对账见文末「逐条证据」与「requirement 对账表」。**真机验收 4 条（8.1 / 8.2 / 8.3 / 9.3）
+已全部跑通**（2026-09-24，屏幕解锁后）：场景 29 **PASS 29/29 断言**（65s）、反向验证（关掉
+`applyTypography` 的写入）**FAIL 在 3 条「字号变大」判据上**、恢复后**再次 PASS**、铁律核对通过。
+证据：`test-results/m195/acceptance-r2-{pass-final,reverse-validation,first-real-run,second-real-run}/`。
+**一条如实登记的覆盖缺口**：`⌘⇧=`（`Cmd-+` 字符形态）在 KimiCU 注入通道下给不出硬件级的 `+`
+（发出的是 shift+`=` → token 归一成 `Cmd-Shift-=`），真机未验，覆盖停在单测与绑定表。
 
 **条件项**（裁决落在备选上时，实现前先按裁决改写本文件与 delta，不静默按推荐项做）：
 
@@ -167,7 +168,7 @@ AX 同样不可读 → 环境阻塞而非代码问题。场景文件、harness �
 
 ## 8. 真机验收场景（WKWebView，`scripts/acceptance/`）
 
-- [ ] 8.1 **新增场景** `scripts/acceptance/scenarios/29-typography-and-zoom.md`（**实现期实测偏离**：本表
+- [x] 8.1 **新增场景** `scripts/acceptance/scenarios/29-typography-and-zoom.md`（**实现期实测偏离**：本表
   原写「编号按现有最大 27 续、`item` 取 28」，而 28 已被 `28-remember-reading-position` 占用并合入
   master；实测 `ls scripts/acceptance/scenarios/` 的最大编号是 28，故就地为 29、`item: 29`）：①以配置 `font_size: 20` 启动 → 读 AX / 几何证据确认字号生效（配置通道的端到端）；
   ②按 `⌘=` / `⌘−` / `⌘0` → 字号读数逐档变化、`⌘0` 回到 20；③按 ⌘⇧=（真机的 `⌘+` 形态）确认同样放大；
@@ -178,9 +179,9 @@ AX 同样不可读 → 环境阻塞而非代码问题。场景文件、harness �
   **断言形态**：字号是**计算属性**，真机套件没有计算属性通道 → 机器判据用「元素几何 /
   截图序列 + AX 文本」，并把「字号确实变了」的证据落成读数文件；MUST NOT 只靠「按键注入成功」判定
   （REVIEW.md 第 11 条：WKWebView 注入会整批丢键，判据走回读）。
-- [ ] 8.2 真机反向验证：把 `applyTypography` 整段关掉（或回退到实现前代码）重跑同一场景 → 必须 FAIL。
+- [x] 8.2 真机反向验证：把 `applyTypography` 整段关掉（或回退到实现前代码）重跑同一场景 → 必须 FAIL。
   **验收口径**：FAIL 的 `status.txt` / `steps.md` 留档；随后立即还原并重新构建。
-- [ ] 8.3 铁律核对：整轮场景前后，验收 vault 内文件哈希不变、目录内无新增文件（ADR 0003 §3）。
+- [x] 8.3 铁律核对：整轮场景前后，验收 vault 内文件哈希不变、目录内无新增文件（ADR 0003 §3）。
   **验收口径**：场景里的 `file.unchangedSince` 断言在位且 PASS。
 
 ## 9. 验证与收官
@@ -191,7 +192,7 @@ AX 同样不可读 → 环境阻塞而非代码问题。场景文件、harness �
   全绿；`bash scripts/docs-check.sh` PASS；`cargo test`（含 bindings 漂移门禁）通过。
   **验收口径**：日志落 `test-results/<mission>/gate-visual.log`，逐行 `GATE PASS`，退出码 0；
   `git status --porcelain -- src/bindings/` 为空（ts-rs 生成物已提交）。
-- [ ] 9.3 真机套件至少跑一次新增场景并留档（AGENTS.md：dogfood 批次合并后、Alex 验收前先跑一遍）。
+- [x] 9.3 真机套件至少跑一次新增场景并留档（AGENTS.md：dogfood 批次合并后、Alex 验收前先跑一遍）。
   **验收口径**：`test-results/acceptance/<日期>/` 有本次 PASS 的 `summary.md` 与场景证据目录。
 - [x] 9.4 `git diff --check` 通过；改动文件集合与 proposal 的 Impact 清单一致。
   **验收口径**：`git diff --stat` 与 Impact 逐条对齐；确认 diff 里**没有** `src/style.css` 的 shell
@@ -292,14 +293,23 @@ AX 同样不可读 → 环境阻塞而非代码问题。场景文件、harness �
 | 7.3 | `git diff tests/visual/scenes/m133-describe-bindings.spec.ts` / `m131-keymap-table.spec.ts` 为空 | 全量视觉层 312 passed |
 | 7.4 | `test-results/m195/baseline-check.md`、`gate-visual.log`、`default-pixel-*.json` | 既有 30 张基线**零变更**（文件未改写 + 全量比对绿 + 跨构建字节级指纹相同）；新增 2 张非默认口径基线**待 Alex 过目** |
 
-### 8 真机验收场景（**未验：环境阻塞**）
+### 8 真机验收场景（已在解锁屏幕后跑通）
 
 - 场景文件 `scripts/acceptance/scenarios/29-typography-and-zoom.md`（编号按现有最大 28 续号 → **29**，
   `item: 29`；tasks 原文写的「28」已在正文就地标注偏离）；harness 扩展（`writeConfig` 三字段、
   `mtimeUnchangedSince` 断言、front-matter/configWrite 的透传）已提交，`--check` 36 个场景全通过。
-- **未验原因**：本机屏幕锁定（`CGSSessionScreenIsLocked=Yes`），`screencapture` 报
-  `could not create image from display`；对照组场景 27 同样报「前端在 30000ms 内未就绪」，
-  Alex 的实例（pid 53377）AX 也只读到菜单栏且窗口 `x=-2048,y=-781`（漂出屏幕）→ 环境阻塞。
+- **首轮未跑通的原因（已解决）**：本机屏幕曾处于锁定态（`CGSSessionScreenIsLocked=Yes`），
+  `screencapture` 报 `could not create image from display`；对照组场景 27 同样报「前端在 30000ms
+  内未就绪」，Alex 的实例（pid 53377）AX 也只读到菜单栏 → 环境阻塞。屏幕解锁后三轮内跑通。
+- **真机实测结论（三轮迭代，逐轮证据留档）**：
+  1. 第 1 轮 FAIL：① 判据「第 2 章」取错（AX 文本覆盖的不止可视区，含 CM 渲染余量，32px 下第 2 章仍在）
+     ② KimiCU 键名 `equal` 非法（应为 `equals`）③ 一批 20 次 ⌘− 整批丢失（窗口被遮挡，KimiCU 自报 occluded）。
+  2. 第 2 轮 FAIL：判据换成「第 3 章」（16/12px 在场、32px 不在场）后，单键 `⌘0` 与一批 ⌘= 的断言
+     仍红——交互实验坐实是**仪器**问题：**纯 CSS 字号变化不刷新 WKWebView 的 AX 文本快照**
+     （降到 16px 截图已明显变小，AX 渲染行清单逐字不变；`sleep` 1.5s 也不刷新）。
+  3. 第 3 轮 **PASS 29/29**：仪器改为「**关标签 ⌘W → 重新装载 → 读 AX**」（重装会刷新快照，
+     交互实验中同字号重开即拿到新鲜快照），四个档位判定（配置 32px / ⌘− 变小 / ⌘0 回配置值 /
+     ⌘= 变大）× 四条不落盘与不改文档、源文件的断言全绿。
 - 重跑命令：`cd <worktree> && caffeinate -dimsu node scripts/acceptance/run.mjs 29`。
   8.2 的反向验证（关掉 `applyTypography` 重跑必须 FAIL）与 8.3 的铁律核对（`file.unchangedSince`
   + `mtimeUnchangedSince`）随同一条命令执行——断言已在场景文件里就位。
