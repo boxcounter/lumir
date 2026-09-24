@@ -15,10 +15,8 @@ steps:
       - label: 第 2 章也在渲染行里（16px 下这屏装得下两章；字号变大后它必须消失）
         ax: { has: "第 2 章 概览 第 2 章概览正文。" }
 
-  - name: 记录基线：隔离 config.json 与源文件的 sha256 + mtime
-    do: record
-    as: 配置文件基线
-    file: "env:config.json"
+  - name: 配置面前置：隔离 config.json 存在且此刻没有 font_size
+    do: settle
     expect:
       - label: 隔离 config.json 存在（否则后面的「不变」在空值上恒真）
         file: { path: "env:config.json", exists: true }
@@ -53,6 +51,14 @@ steps:
     expect:
       - label: 文档已装载（编辑器里能读到首章标题）
         editor: { has: "第 1 章 概览" }
+
+  - name: 记录**写后**基线：configWrite 与启动恢复的 last_vault 写回都已发生之后
+    do: record
+    as: 配置写后基线
+    file: "env:config.json"
+    expect:
+      - label: 写后基线取自确实含 font_size 32 的那份文件（基线的内容本身是判据的前提）
+        file: { path: "env:config.json", has: '"font_size": 32' }
 
   - name: ⌘− 连按到下限（12px）：可见范围重新变宽，第 2 章回到渲染行里
     do: keys
@@ -98,9 +104,9 @@ steps:
     do: settle
     expect:
       - label: config.json 内容逐字节不变（字号步进 MUST NOT 回写配置）
-        file: { path: "env:config.json", unchangedSince: 配置文件基线 }
+        file: { path: "env:config.json", unchangedSince: 配置写后基线 }
       - label: config.json 的 mtime 也未推进（没有被写过同一份内容）
-        file: { path: "env:config.json", mtimeUnchangedSince: 配置文件基线 }
+        file: { path: "env:config.json", mtimeUnchangedSince: 配置写后基线 }
       - label: 源文件逐字节不变（ADR 0003 §3）
         file: { path: toc-long.md, unchangedSince: 长文文件 }
       - label: 源文件 mtime 也未推进
@@ -131,6 +137,18 @@ steps:
 - 每个尺寸档都有 `shot` 截图留档，人眼可复核「字确实大了」。
 - **不用「按键注入成功」当判据**（REVIEW.md 第 11 条：WKWebView 注入会整批丢键）：所有
   断言都读 AX 的回读结果。
+
+## 基线取点自查（每个 `unchangedSince` / `mtimeUnchangedSince` 的 record 点都在该文件「最后一次写」之后）
+
+| 基线 | record 点 | 该文件在此之后的写者 | 结论 |
+|---|---|---|---|
+| `长文文件`（`toc-long.md`） | 第 3 步（configWrite 之前） | 本场景无任何写 vault 的动作（字号步进只改样式；`configWrite`/`restart` 不碰 vault；无 `vaultWrite`/`type` 步） | ✅ |
+| `配置写后基线`（`env:config.json`） | 第 7 步（**configWrite + 重启 + 重新打开 + 建立焦点之后**） | 写 `config.json` 的路径只有两条：① 套件自己的 `writeConfig`（第 4 步，之后不再调）；② Rust 的 `remember_open` → `remember_last_vault`，**只在用户主动打开 vault 时调**，且代码注释明确「启动恢复不调本函数」（`src-tauri/src/commands.rs:462-470`）。本场景第 4 步之后没有 vault 打开动作 | ✅ |
+
+反面教材（r1 P1-1 的原状）：基线若取在第 4 步 configWrite **之前**，末步就是拿「写后文件」比「写前基线」——
+sha256 与 mtime 都必然不同，与屏幕是否解锁无关，一跑就红。修法即上表的取点，并让基线步自己断言
+「这份基线确实含 `font_size: 32`」——基线内容本身进判据，取错点会当场红在这一步，而不是拖到末步才以
+「内容已变」的面目暴露。
 
 ## 已知边界（如实登记）
 

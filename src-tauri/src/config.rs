@@ -126,13 +126,13 @@ impl Default for EditorConfig {
     }
 }
 
-/// 编辑器内容字号的出厂默认（px）。TS 侧同值常量在 `src/editor-typography.ts` 的
+/// 编辑器内容字号的出厂默认（px）。TS 侧同值常量在 `src/typography.ts` 的
 /// `DEFAULT_FONT_SIZE`，CSS 层第三份写值是 `src/style.css` 的 `--editor-font-size` 默认
 /// `16px`：三处语义相同，各有断言钉住（两侧单测 + 默认口径的计算属性断言），改一处必须
 /// 同步其余两处（REVIEW.md 第 8 条）。
 pub const DEFAULT_FONT_SIZE: f64 = 16.0;
 
-/// 字号合法区间（含端点）：与前端步进命令的钳制区间同值（`src/editor-typography.ts` 的
+/// 字号合法区间（含端点）：与前端步进命令的钳制区间同值（`src/typography.ts` 的
 /// `FONT_SIZE_MIN` / `FONT_SIZE_MAX`）。区间外一律回落默认值 + warning。
 pub const FONT_SIZE_MIN: f64 = 12.0;
 pub const FONT_SIZE_MAX: f64 = 32.0;

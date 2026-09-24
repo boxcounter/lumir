@@ -303,6 +303,14 @@ AX 同样不可读 → 环境阻塞而非代码问题。场景文件、harness �
 - 重跑命令：`cd <worktree> && caffeinate -dimsu node scripts/acceptance/run.mjs 29`。
   8.2 的反向验证（关掉 `applyTypography` 重跑必须 FAIL）与 8.3 的铁律核对（`file.unchangedSince`
   + `mtimeUnchangedSince`）随同一条命令执行——断言已在场景文件里就位。
+- **r1 评审 P1-1 返修（2026-09-24）**：场景 29 的「不落盘」基线原本取在第 4 步 `configWrite`
+  **之前**，末步拿「写后文件」比「写前基线」——sha256 与 mtime 都必然不同，屏幕一解锁就会确定性转红
+  （未跑出来只是因为场景从未真正执行）。修法：第 2 步改为纯断言步（不再取无用的写前基线），
+  在 configWrite + 重启 + 重开文档 + 建立焦点之后补一步 `record / as: 配置写后基线`（该步自带
+  「基线确实含 `font_size: 32`」的断言，取错点会当场红），末步两条 config 断言改指新基线；
+  场景正文补「基线取点自查」一节，逐条说明每个基线的 record 点都在该文件最后一次写之后
+  （`config.json` 的写者只有套件自己的 `writeConfig` 与 Rust 的 `remember_open`，
+  而代码注释明确「启动恢复不调本函数」）。
 
 ### 9 / 10 门禁与边界
 
