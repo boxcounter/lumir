@@ -218,10 +218,16 @@ export function createReadingPositionStore(
   }
 
   async function onVaultLoaded(vaultId: string, entries: readonly FsEntry[]): Promise<void> {
-    currentId = vaultId;
+    // **键推迟到镜像就绪之后再换**（reviewer r1 P2-3）。读盘这一次 await 是一个真实窗口：前台这时
+    // 还停在旧 vault 的文档上（滚轮惯性就会在这一段里送进 scroll 事件），若先把键换成新 vault，
+    // `scrolled()` 会把**旧文档的相对路径**以**新 vault 的 id** 捕获进 pending，防抖触发时镜像已就绪，
+    // `flush()` 就把这条旧路径并入新 vault 的位置文件——`pruneEntries` 清不掉它（新 vault 里恰好有
+    // 同相对路径的文件时它就在枚举里），此后打开那个文件会恢复**旧 vault 的阅读位置**且持久不愈合。
+    // 窗口内 currentId 仍是旧键（语义本来就对：那一刻前台确实还是旧 vault 的文档），且因为
+    // `applyVault` 在装载前已经 flush 过旧 vault，旧 vault 不会因此丢内容；`scrolled()` / `flush()`
+    // 在「还没有可写的键」时的既有行为就是直接返回。
     cancelTimer();
-    // 上一次装载留下的待写内容属于上一个 vault：键已经换了，直接丢弃（它已由那次切换前的
-    // flush 写走，或随那次装载作废）。
+    // 上一次装载留下的待写内容属于上一个 vault：键还没换，直接丢弃（它已由那次切换前的 flush 写走）。
     pending.clear();
     const gen = ++loadGen;
     let file: ReadingPositions | null = null;
@@ -237,6 +243,10 @@ export function createReadingPositionStore(
     );
     // 上限在镜像上就收口：手改过的文件可能带来超限内容，下一次落盘（乃至内存镜像）都不许超过它。
     mirror = capEntries(pruneEntries(file?.entries ?? {}, available));
+    // 双保险：窗口期理论上不该落进 pending（键还是旧键，写不进来），但这条不变量必须由本函数自己
+    // 保证——任何残留都绝不许带进新 vault 的镜像。
+    pending.clear();
+    currentId = vaultId;
   }
 
   return { scrolled, flush, restoreFor, onVaultLoaded };

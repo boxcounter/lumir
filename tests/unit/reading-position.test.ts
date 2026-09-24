@@ -54,6 +54,8 @@ interface Rig {
   applied: ScrollPosition[];
   /** 后端应答：vault id → 位置表（缺省 = 无历史）。 */
   files: Record<string, ReadingPositions | null>;
+  /** 读盘的实现（可替换：有的用例要把它挂住，用来模拟「装载窗口」）。 */
+  getPositionsImpl: (vaultId: string) => Promise<ReadingPositions | null>;
   failRead: boolean;
   failWrite: boolean;
   writes: Array<{ vaultId: string; entries: ReadingPositionMap }>;
@@ -67,6 +69,10 @@ function createRig(): Rig {
     view: null,
     applied: [],
     files: {},
+    getPositionsImpl: async (vaultId) => {
+      if (rig.failRead) throw { code: "io", message: "位置文件读不到" };
+      return rig.files[vaultId] ?? null;
+    },
     failRead: false,
     failWrite: false,
     writes: [],
@@ -76,10 +82,7 @@ function createRig(): Rig {
     activePath: () => rig.activePath,
     readPosition: () => rig.view,
     applyPosition: (p) => void rig.applied.push(p),
-    getPositions: async (vaultId) => {
-      if (rig.failRead) throw { code: "io", message: "位置文件读不到" };
-      return rig.files[vaultId] ?? null;
-    },
+    getPositions: (vaultId) => rig.getPositionsImpl(vaultId),
     putPositions: async (vaultId, entries) => {
       if (rig.failWrite) throw { code: "io", message: "磁盘只读" };
       rig.writes.push({ vaultId, entries });
@@ -400,4 +403,86 @@ test("装载途中又装载一次 vault：前一次读回的位置绝不许落�
   rig.activePath = "b.md";
   rig.store.restoreFor("b.md");
   assert.deepEqual(rig.applied, [position(222)]);
+});
+
+// ---------------------------------------------------------------------------
+// 装载窗口的写侧竞争（reviewer r1 P2-3）
+// ---------------------------------------------------------------------------
+
+/** 把 rig 的读盘挂住，返回「放开」的钩子——用来把「装载中的那一次 IPC 往返」拉长成一个可操作的
+ *  窗口（真机上它是一次本地 IPC，但滚轮惯性完全可能落进去）。 */
+function holdRead(rig: Rig): () => void {
+  let release: () => void = () => {};
+  const held = new Promise<void>((resolve) => {
+    release = () => resolve();
+  });
+  rig.getPositionsImpl = async (vaultId) => {
+    await held;
+    return rig.files[vaultId] ?? null;
+  };
+  return release;
+}
+
+test("装载窗口内旧文档的滚动绝不被写进新 vault 的位置文件（两个 vault 有同名相对路径时最危险）", async () => {
+  mock.timers.enable({ apis: ["setTimeout"] });
+  try {
+    const rig = createRig();
+    rig.activePath = "a.md";
+    rig.files["vault-a"] = file({ "a.md": at(1000) });
+    await load(rig, "vault-a", [fileEntry("a.md")]);
+
+    // 切到 vault-b：读盘挂住。此刻前台仍是 vault-a 的 a.md，而两个 vault 里都有 a.md
+    //（新 vault 里那个键在枚举里 ⇒ pruneEntries 清不掉，一旦写进去就是持久错位置）。
+    const release = holdRead(rig);
+    const loading = rig.store.onVaultLoaded("vault-b", [fileEntry("a.md")]);
+
+    rig.view = position(4242); // 窗口期视口动了（滚轮惯性）
+    rig.store.scrolled();
+
+    release();
+    await loading;
+    await flush();
+    // 防抖的真实触点在装载之后（IPC 窗口 ≪ 1s）：此刻若键已换，旧位置就会被并进新 vault 的镜像
+    mock.timers.tick(READING_POSITION_DEBOUNCE_MS * 2);
+    await flush();
+    assert.deepEqual(rig.writes, [], "窗口期的捕获不许有任何一条落到新 vault 的文件里");
+
+    // 装载完成后：键与镜像都是 vault-b 的，新捕获的位置才该写进 vault-b
+    rig.view = position(777);
+    rig.store.scrolled();
+    await rig.store.flush();
+    assert.equal(rig.writes.length, 1);
+    assert.equal(rig.writes[0].vaultId, "vault-b");
+    assert.equal(rig.writes[0].entries["a.md"]?.pos, 777, "写的是新捕获的位置，不是窗口期偷渡进来的旧位置");
+  } finally {
+    mock.timers.reset();
+  }
+});
+
+test("窗口期内的捕获仍归旧键：在装载完成前落盘，写的是旧 vault 的文件（不是「干脆不记」）", async () => {
+  mock.timers.enable({ apis: ["setTimeout"] });
+  try {
+    const rig = createRig();
+    rig.activePath = "a.md";
+    rig.files["vault-a"] = file({ "a.md": at(1000) });
+    await load(rig, "vault-a", [fileEntry("a.md")]);
+
+    const release = holdRead(rig);
+    const loading = rig.store.onVaultLoaded("vault-b", [fileEntry("a.md")]);
+    rig.view = position(4242);
+    rig.store.scrolled();
+    // 在装载完成之前就让防抖落盘：这条捕获属于旧 vault（那一刻前台确实是旧 vault 的文档）
+    mock.timers.tick(READING_POSITION_DEBOUNCE_MS);
+    await flush();
+    assert.equal(rig.writes.length, 1);
+    assert.equal(rig.writes[0].vaultId, "vault-a");
+    assert.equal(rig.writes[0].entries["a.md"]?.pos, 4242);
+
+    release();
+    await loading;
+    await flush();
+    assert.equal(rig.writes.length, 1, "装载本身不写盘");
+  } finally {
+    mock.timers.reset();
+  }
 });

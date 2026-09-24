@@ -37,6 +37,7 @@
 
 - [x] 3.1 新增与 `createVaultSessionStore` 同族的 store（无 DOM、可脱离浏览器单测）：换键（装载 vault 时登记 vault id）、内存镜像、防抖写入、`flush`、按本次枚举清理、内容未变不排期。
   **验收口径**：store 的单测覆盖「换键丢弃上一个 vault 的待写内容」「内容未变不排期」「flush 在没有待写内容时也写一份当前快照」（照 `src/vault-switcher.ts:394-493` 的口径）。
+  **实测修正（2026-09-24，本地标注）**：第三条口径**有意偏离**为「**没有待写内容就不写盘**」，单测断言按新口径写。理由是实测：这个 flush 时点挂在 `syncActiveDocument` 上（每次开文件 / 切标签 / 关标签都经过），无条件写等于一次打开一次 tmp+rename，且真机场景 28 首跑的现场是「scroll 之前位置文件就已存在」（`test-results/m194/acceptance-28-first.log` 的「期望 exists=false，实际 true」）。spec delta 的措辞本就是「flush **待写内容**」（`specs/vault-workspace/spec.md:16-17`），清理结果也改为搭在下一次真实写入上（同 spec 的「下一次落盘后盘上也不再出现」）。前两条口径不变。
 - [x] 3.2 装载 vault 时读一次位置文件并建内存镜像，同时按本次枚举到的条目剔除不在 vault 内的键（挂点：`src/main.ts` 的 `applyVault` / `switcher.onVaultLoaded` 一带，`src/main.ts:709-745`）。
   **验收口径**：视觉场景或单测断言「越界键与已移除路径的键在图里不出现，也不进入下一次落盘内容」。
 - [x] 3.3 捕获：监听 `view.scrollDOM` 的滚动信号（或 CM 的 `viewportChanged`，二者取一，理由写进实现注释），产出 design §2.3 的三个量；滚动停止后防抖落盘（新常量，量级取 `SESSION_WRITE_DEBOUNCE_MS`）。
@@ -105,6 +106,11 @@
 - [x] 9.3 真机套件至少跑一次新增场景并留档（AGENTS.md：dogfood 批次合并后、Alex 验收前先跑一遍）。
   **验收口径**：`test-results/acceptance/<日期>/` 有本次 PASS 的 `summary.md` 与场景证据目录。
 - [x] 9.4 `git diff --check` 通过；改动文件集合与本 change 的 Impact 清单一致（出现跨 scope 的只读依赖须先报 tower 批准）。
+  **更正（2026-09-24，reviewer r1 P2-2）**：`git diff --check master...<本分支>` **不是零命中**——唯一一处是
+  `src/bindings/ReadingPositionEntry.ts:10: trailing whitespace`，来自 ts-rs 生成物（`export type … = { pos: number, y: number, x: number, ` 的行尾空格）。核实 master 现值：27 个 bindings 里 **13 个**有同一处行尾风格
+  （`AnchorInfo.ts` 2 处 / `AppConfig.ts` 3 处 / `VaultSession.ts` 3 处 / `VaultListEntry.ts` 4 处 …，命中集中在多行 type 字面量那几行），且生成物有「Do not edit」纪律，**手改反而错**。
+  因此按本条的**原意**（改动集合与 Impact 对齐、没有对禁止面的改动）通过；按字面口径（零命中）不通过，
+  如实标注，不改生成物。
   **验收口径**：`git diff --stat` 的清单与 proposal 的 Impact 逐条对齐；确认 `git diff` 里**没有**对 `vault-sessions` 读写路径、CM 滚动快照通道、`src/style.css` 的改动。
 - [x] 9.5 收官对账：tasks 全部勾选（或标注放弃原因）、spec 增量与实现一致（逐 requirement 对一眼实现与断言）；`docs/backlog.md` 第 10 项的边界段补一句「滚动位置已由 `remember-reading-position` 承接」；living spec 归档另走节点 2。
   **验收口径**：对账表落 tasks 末尾（逐 requirement → 实现落点 → 断言落点）；backlog 的那一句可 `grep`。
