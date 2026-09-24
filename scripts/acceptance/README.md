@@ -119,10 +119,11 @@ steps:
 | （省略） | — | 只做断言 |
 | `settle` | — | 读一次 AX 快照并落定（等价于「什么都不做、只等一拍」，用于纯断言步骤前的稳定） |
 | `open` | `file`、`marker` | 点左栏文件名打开，等编辑器出现 marker |
-| `click` | `target: {role,name\|help\|any,nth,count}` 或 `{x,y,count}` | 节点按 AX 索引点（走 AXPress）；`{x,y}` 走真实鼠标坐标。`count` 原样透传给 KimiCU，实测**产生不出 DOM 的 `dblclick`**（坐标路径与 AX 索引路径都试过）。注意那次实测用的判据已被 M209 证伪、**尚未**按新判据重跑——「已知边界」那条读第一点后再引用这个结论 |
+| `click` | `target: {role,name\|help\|any,nth,count}` 或 `{x,y,count}` | 节点按 AX 索引点（走 AXPress）；`{x,y}` 走真实鼠标坐标。`count` 原样透传给 KimiCU，那四条通道**产生不出 DOM 的 `dblclick`**（判据与修正见「已知边界」）——要双击类交互请用 `doubleClick` |
 | `clickNodeText` | `text` | 点 value/title **逐字等于** `text` 的节点（比 `name` 的正则更死板） |
 | `clickInNode` | `target`、`dx`、`dy`、`count` | 点「某个有 bbox 的节点内部」的相对位置（如 `AXTable`）；`count` 同上，未观察到 `dblclick`（判据限制见「已知边界」） |
 | `clickEditor` | `dx`（默认 40）、`dy`（默认 6） | 点编辑器顶部建立渲染层焦点（编辑器内元素无 AX bbox，只能按坐标） |
+| `doubleClick` | `target`（`{role,name\|any,nth}` 或 `{x,y}`）、`dx`/`dy`、`mode`、`retries`、`settleMs` | **双击**（M209 起套件唯一的双击通道）：swift + `CGEvent` 显式设 `kCGMouseEventClickState`（详见「已知边界」）。`target` 取节点 bbox 中心、`dx`/`dy` 按其宽高比例偏移（默认 0.5）；`{x,y}` 给窗口局部坐标（遮罩这类没有 AX 节点的全屏层用）。动作内部先拿前台（**拿不到即报错**——真鼠标点击落在最上层那扇窗上），再把窗口局部点换算成 Quartz 屏幕坐标。**会移动真实光标**；目标窗口被遮挡或 KimiCU 的 AX 快照退化时按错因报错，不静默 |
 | `focusWindow` | `retries` | 确保目标窗口在前台（键盘场景的前台纪律，见上） |
 | `key` / `keys` | `key` / `keys: [...]`、`gapMs` | 键盘注入（`ctrl+n`、`cmd+s`、`cmd+/` …）。`keys` 对**整串都是可打印单字符**的序列额外做回读 + 有限重试（≤3）；chord / 混合序列 / 无可读目标一律保持盲发不重试（判定边界见「已知边界」） |
 | `type` | `text`、`clear`、`retries` | 输入到编辑器（内部先真实点击聚焦，避免落陈旧选区）；回读 + 有限重试与 `keys` **同一口径**：只在编辑器字节完全未变时重试（≤3），partial landing 直接报错不重试（判定边界见「已知边界」） |
@@ -307,28 +308,43 @@ Alex 抽审路径：先看 `summary.md`，再进 FAIL 场景看 `steps.md` + `sh
   上空转假绿（r2 评审实证）。断言需要读文档时，基线要在 modal 打开前记录、关闭后比较。
 - **AX 快照可能退化**：`get_app_state` 偶尔只返回菜单栏（`truncated: [..., cycle]`）。这通常是
   KimiCU 后台服务进了坏状态，表现为**全局**退化（Finder、别的 app 一起坏）。此时全套会一起报
-  「前端未就绪」，处理办法是重启 KimiCU 服务，不是改场景。
+  「前端未就绪」，处理办法是重启 KimiCU 服务，不是改场景。退化的树**没有 `window_bounds`**，
+  依赖坐标的动作（`doubleClick`）因此会按这条错因报错、不会拿菜单栏的坐标去点（M209 实测：
+  一次真机运行里 4 次 `get_app_state` 拿到只剩菜单栏的树，隔几拍又自己恢复）。
 - **`dblclick`：KimiCU 的四条通道造不出来，`swift + CGEvent` 那条能（M184 实测，M209 修订
   2026-09-25）**：KimiCU 现有通道实测失败的有四条：`click` 的 `count: 2`（坐标路径）、`click` 的
   `count: 2`（AX 索引路径，即 AXPress ×2）、两次独立的 `click`（两次 MCP 往返的间隔超出系统双击
   间隔）、`drag_paths` 的两条单点路径（`path_gap_ms` 取 10ms 与 0ms 两种）。现场
   `test-results/m184/13`～`/17`（本机，git 外）。
   **M209 修订两处**（探针脚本 `test-results/m209-probe/cgevent-click.swift` + harness
-  `probe.mjs`，现场与 AX dump 落 `test-results/acceptance/<日期>/m209-probe/`）：
+  `probe.mjs`，现场与 AX dump 落 `test-results/acceptance/<日期>/m209-probe/`；探针脚本随后移进
+  套件成为 `lib/cgevent-click.swift`，`doubleClick` 动作的驱动）：
   ① **M184 用的那条判据不成立**，不能拿它当「双击没到前端」的证据：`openFile` 对**已打开的同路径**
   会短路（`src/main.ts:380-386`——`existing !== undefined` 时只把这个标签从预览固定住、**不新建
   标签**），而单击文件树行本身就是 `open("preview")` ⇒「双击树行 → 标签数 1→2」在任何可达现场
   **恒不成立**（真双击也只把它固定住）。可用的间接判据是**固定效果**：双击之后再做一次确定的
   「预览意图打开另一文件」——被固定则新开标签（2 个），仍是预览则就地替换（1 个）。
-  ② **第五条通道可用**：`/usr/bin/swift` + `CGEvent` 显式设 `kCGMouseEventClickState = 1 / 2`
-  （两次 down/up、间隔 60ms，投到 `.cghidEventTap`）**能**造出真实 DOM `dblclick`：同一点位的
-  正对照（单击树行 → 标签切到该文件）与负对照（单击图片 → 遮罩不开）同时成立，两条独立判据都亮
-  ——树行被固定（判据①）、图片 lightbox 遮罩打开（AX 树被 `aria-modal` 接管、放大图 `AXImage`
-  几何读数 1120×374、`Esc` 关得掉）。
-  **读这条时的三点纪律**：判据要用判据①那种**区分度**足够的形态（「遮罩打开」这类直接判据更佳——
-  注意 modal 打开时 AX 树只剩模态子树，标签栏会消失，「数图像节点 1→2」在模态作用域下恒为 1）；
-  「`count: 2` 出不了 dblclick」这句在 M184 的判据下测得，**尚未**按判据①重跑，别当成已证结论；
-  这条通道在 KimiCU 之外（套件目前没有 swift 动作），写双击类场景前先想清楚驱动从哪来。
+  ② **第五条通道可用、且已接进套件**：`/usr/bin/swift` + `CGEvent` 显式设
+  `kCGMouseEventClickState = 1 / 2`（两次 down/up、间隔 60ms，投到 `.cghidEventTap`）**能**造出真实
+  DOM `dblclick`：同一点位的正对照（单击树行 → 标签切到该文件）与负对照（单击图片 → 遮罩不开）
+  同时成立，两条独立判据都亮——树行被固定（判据①）、图片 lightbox 遮罩打开（AX 树被 `aria-modal`
+  接管、放大图 `AXImage` 几何读数 1120×374、`Esc` 关得掉）。套件动作 `doubleClick`（实现
+  `lib/{execute,drive}.mjs` + `lib/cgevent-click.swift`）走的就是这条；场景 33 是它的第一个消费者
+  （三种引用形态各双击一次 + 三条关闭路径 + 两条 `unchangedSince`，PASS 现场
+  `test-results/acceptance/<日期>/33-image-lightbox/`）。
+  **用它的三条纪律**：
+  - **目标窗口必须在前台且未被遮挡**：真鼠标点击落在该点最上层的那扇窗上，KimiCU 的键盘注入可以
+    后台走、这条不行。`doubleClick` 拿到前台失败会**报错**（不是静默点到别处）。跑双击类场景时
+    别抢前台、别让别的窗口盖住 Lumir。
+  - **判据要用有区分度的形态**：「遮罩打开」这类直接判据最好用，且注意 modal 打开时 AX 树只剩模态
+    子树（标签栏消失、「数图像节点 1→2」在模态作用域下恒为 1、内联那张的节点会从树里消失）。
+    判据①（固定效果）是没有直接判据时的替代。
+  - **「`count: 2` 出不了 dblclick」这句在 M184 的判据下测得，尚未按判据①重跑**，别当成已证结论；
+    新增双击类交互请直接用 `doubleClick`。
+- **`doubleClick` 的两处环境依赖**：① 它要 `/usr/bin/swift`（Xcode Command Line Tools）与辅助功能
+  权限，缺了会在动作处报错；② 它读的是 mode=ax 的**窗口局部**坐标口径（KimiCU 的 mode=full 给的是
+  **截图像素**，实测 1152×768 对 1200 点，两种空间混用会让点击落到别处）——口径对不上或 AX 快照
+  退化成只剩菜单栏时，动作按错因分别报错，不猜。
 - **场景维护权归实现者**：新功能 mission 的 tasks 必须带「新增/更新验收场景」一项（裁决点 3）。
 
 ## 加一个场景

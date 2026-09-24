@@ -8,15 +8,26 @@ import { createHash } from "node:crypto";
 import { appendFile, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import yaml from "js-yaml";
-import { findNode } from "./ax.mjs";
+import { findNode, windowBounds } from "./ax.mjs";
 import { copyFixture, readConfig, writeConfig } from "./app.mjs";
-import { clickNode, frontmostPid, openFile, pressKey, readAx, tryForeground, typeInEditor, waitUntil } from "./drive.mjs";
+import {
+  clickNode,
+  frontmostPid,
+  injectClickWithClickState,
+  openFile,
+  pressKey,
+  readAx,
+  tryForeground,
+  typeInEditor,
+  waitUntil,
+} from "./drive.mjs";
 import { envHome, readText, sleep, vaultDir } from "./util.mjs";
 
 /** 动作与断言的白名单：`--check` 用它做静态校验，避免写错 key 要等一整轮真机才发现。 */
 export const ACTIONS = new Set([
   "settle", "sleep", "key", "keys", "type", "click", "clickNodeText", "clickInNode", "clickEditor",
-  "focusWindow", "open", "configWrite", "restart", "record", "recordEditor", "vaultWrite", "vaultAppend", "vaultRm",
+  "doubleClick", "focusWindow", "open", "configWrite", "restart", "record", "recordEditor", "vaultWrite",
+  "vaultAppend", "vaultRm",
 ]);
 export const EXPECT_KINDS = new Set(["ax", "editor", "file", "glob", "shot"]);
 
@@ -36,6 +47,7 @@ export function checkScenario(scenario) {
     if (step.do !== undefined && !ACTIONS.has(step.do)) push(`${at} 未知动作 do=${step.do}`);
     if (step.do === "keys" && !Array.isArray(step.keys)) push(`${at} do=keys 需要 keys 数组`);
     if (step.do === "key" && !step.key) push(`${at} do=key 需要 key`);
+    if (step.do === "doubleClick" && !step.target) push(`${at} do=doubleClick 需要 target（节点或 {x,y} 窗口局部坐标）`);
     for (const [j, exp] of (step.expect ?? []).entries()) {
       const kinds = Object.keys(exp).filter((k) => k !== "label");
       if (kinds.length !== 1) push(`${at} expect[${j}] 应恰好一个断言形态，实际 ${JSON.stringify(kinds)}`);
@@ -713,6 +725,48 @@ async function doAction(step, { ctx, cu, scenario, vars, pid, evidence }) {
       // `count` 原样透传（实测在 WKWebView 里产生不出 DOM 的 `dblclick`，见 README「已知边界」）。
       return clickWithRetry(cu, p, px, py, step.count ? { count: step.count } : {});
     }
+    case "doubleClick": {
+      // 双击（M209）：KimiCU 的注入通道造不出 WKWebView 的 DOM `dblclick`（坐标 count:2 /
+      // AXPress ×2 / 两次独立 click / drag_paths 都试过），唯一能造出来的是 swift + CGEvent
+      // 显式设 `kCGMouseEventClickState`（判据与现场见 README「已知边界」的 dblclick 条）。
+      //
+      // 坐标换算要说清：swift 要的是 **Quartz 全局屏幕坐标**，而 KimiCU 的两种空间都不是它——
+      // mode=full（clickInNode / shot 用的那个）给的是**截图像素**（实测 1152×768，是 1200 点的
+      // 0.96 倍缩放），mode=ax 给的是**窗口局部点**。本动作走 `readAx`（mode=ax）+ `windowBounds`
+      // 的原点相加；混用会让点击落到别处（本 mission 第一轮就踩过：把窗口局部坐标当屏幕坐标，
+      // 整轮探针跑成了假现场）。因此这里**核 header**：拿不到窗口局部口径就直接报错，不猜。
+      //
+      // 还必须先拿前台：真鼠标点击落在**该点最上层的那扇窗**上，目标窗口被别的应用盖住时点击
+      // 会打到别人身上（表现为「遮罩不出现」这类与产品无关的假红）。KimiCU 的键盘注入可以后台
+      // 走，这条通道不行。
+      const fg = await tryForeground(cu, p, { retries: step.retries ?? 4 });
+      if (!fg.frontmost) {
+        throw new Error(
+          `doubleClick 需要目标窗口在前台（当前前台 pid=${fg.frontPid ?? "未知"}）：真鼠标点击会落到最上层那扇窗上，` +
+            `此时点击不会到达 Lumir。跑双击类场景时目标窗口需可见且未被别的应用盖住。`,
+        );
+      }
+      const ax = await readAxForScreenPoint(cu, p);
+      const bounds = windowBounds(ax.text);
+      let local;
+      if (step.target?.x !== undefined) {
+        local = { x: step.target.x, y: step.target.y };
+      } else {
+        const node =
+          step.target?.any !== undefined
+            ? findByAny(ax.nodes, { role: step.target.role, any: step.target.any, nth: step.target.nth ?? 0 })
+            : findNode(ax.nodes, { role: step.target?.role, name: step.target?.name ?? step.target?.text, nth: step.target?.nth ?? 0 });
+        if (!node?.bbox) throw new Error(`doubleClick：找不到带 bbox 的节点 ${JSON.stringify(step.target)}`);
+        local = { x: node.bbox.x + node.bbox.w * (step.dx ?? 0.5), y: node.bbox.y + node.bbox.h * (step.dy ?? 0.5) };
+      }
+      const point = { x: bounds.x + local.x, y: bounds.y + local.y };
+      if (point.x < bounds.x || point.x > bounds.x + bounds.w || point.y < bounds.y || point.y > bounds.y + bounds.h) {
+        throw new Error(`doubleClick：算出的屏幕点 ${JSON.stringify(point)} 落在窗口 (${bounds.x},${bounds.y} ${bounds.w}×${bounds.h}) 之外`);
+      }
+      const out = await injectClickWithClickState(p, point, { mode: step.mode ?? 2 });
+      await sleep(step.settleMs ?? 900); // 双击到前端处理完（遮罩建 DOM、标签栏重绘）之间有一拍
+      return `窗口局部 ${Math.round(local.x)},${Math.round(local.y)} → 屏幕 ${Math.round(point.x)},${Math.round(point.y)}｜${out}`;
+    }
     case "record": {
       // 路径口径与 file 断言同源（M180）：`env:` 前缀此前不被识别，记出来的是一个不存在的
       // 路径、基线成 null——`unchangedSince` 于是报「内容已变：undefined -> …」（方向是安全的
@@ -765,6 +819,32 @@ async function doAction(step, { ctx, cu, scenario, vars, pid, evidence }) {
     default:
       throw new Error(`未知动作 do=${step.do}`);
   }
+}
+
+/** `doubleClick` 用的 AX 读数：必须是**窗口局部坐标口径**（mode=ax，带 window_bounds）。
+ *
+ *  两种拒绝情形分开报，别混成一句「找不到口径」：
+ *  - KimiCU 的 AX 服务退化——实测会返回只剩菜单栏的树（`element_count` 十几个、没有
+ *    `window_bounds`）。README「已知边界」记了这条，处理办法是重启 KimiCU 服务，不是改场景；
+ *  - 口径变了——`mode=full`（截图像素）与 `mode=ax`（窗口局部点）混用会让点击落到别处，
+ *    宁可报错也不猜。
+ *  退化是偶发的，所以先重试几拍再判死。 */
+async function readAxForScreenPoint(cu, pid, { retries = 3 } = {}) {
+  let last = null;
+  for (let i = 0; i < retries; i++) {
+    const ax = await readAx(cu, pid);
+    last = ax;
+    if (/window-local/.test(ax.text) && windowBounds(ax.text)) return ax;
+    await sleep(700);
+  }
+  const bounds = last ? windowBounds(last.text) : null;
+  if (!bounds) {
+    throw new Error(
+      "doubleClick 拿不到窗口坐标：AX 快照退化（只剩菜单栏/无 window_bounds）——KimiCU 的 AX 服务需要重启" +
+        "（README「已知边界」的「AX 快照可能退化」条），不是产品问题",
+    );
+  }
+  throw new Error("doubleClick 需要 mode=ax 的窗口局部坐标口径（AX dump 的 header 里应有 window-local 说明），本次口径不是它");
 }
 
 function describeExpect(expect) {
