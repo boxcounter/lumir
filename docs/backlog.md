@@ -228,8 +228,9 @@
     按 Alex 过目口径「合并指示即通过」重拍并随 merge `b517052` 入库，随后 `gate-visual-final.log` 为
     12/12 PASS（`test-results/m199/baseline-update.log` 那次 `--update` 是失败的尝试）；③ 按 Alex 裁决
     改写该 scenario 为「失效行 SHALL 出现在结果集里但 MUST NOT 进入键盘游标空间（与筛选前一致）」，删去
-    Enter 一句——**注意**：删句后 scenario 不再声明「点击失效行走重定位」（该半仍由
-    `tests/unit/vault-switcher.test.ts` 覆盖，未进 spec）。归档件内 3 条相对链接补一层 `../`；`tasks.md`
+    Enter 一句；同一 requirement 的**正文**里那句「`Enter` 与点击的动作 SHALL 保持现状」按同一裁决只保留
+    「**点击**」半（r1 评审指出首轮只改了 scenario、正文漏改，已由 r1 修复提交补齐；delta 与 living 两处
+    同改，`tests/unit/vault-switcher.test.ts` 覆盖点击那半）。归档件内 3 条相对链接补一层 `../`；`tasks.md`
     1.1 的判据由「`rg toLowerCase` 只在模块内命中」（实测 8 处、字面为假）改准为「两处消费者 import
     同一份模块」。本 change 的四处覆盖缺口另立条目（见「待修 findings」节）。
 
@@ -246,9 +247,11 @@
     记入的实质矛盾**：delta 的解析时机条款原写「换文件、外部重载、切换标签 SHALL 使缓存失效」、scenario
     原写「切回时缓存按『换文件即失效』重建」，而实现按「语言 + 文档内容」缓存（切回同一份内容命中旧键、
     不重建）——tasks 9.3 自陈过但 delta 未改。**Alex 节点 2 裁决取前者**：措辞改为「缓存身份 = 文档内容」，
-    实现侧零改动；M205 已在归档提交里改准 delta 的两处（requirement ③ + scenario）与 design §1.6 的同型
-    措辞，并入 living `editor-live-preview` 后与实现一致。归档件内 19 条相对链接分两类改准（10 条补一层
-    `../`、9 条改指归档目录名含自指一条）；6 处文本/指针漂移一并收口（`40 张 *-expected.png` → 实际命名与
+    实现侧零改动；M205 已在归档提交里改准 delta 的两处（requirement ③ + scenario）与同批 design 的对应
+    措辞——`code-variable-highlight/design.md` §1.6 / §4.3 在归档提交里改准，**`code-outline/design.md` §1.6
+    首轮漏改**（自报已改、实际 diff 为零），由 r1 修复提交按同一口径补齐（r1 评审 P2-1，2026-09-24），并入
+    living `editor-live-preview` 后与实现一致。归档件内 19 条相对链接分两类改准（10 条补一层
+    `../`、9 条改指归档目录名含自指一条）；5 处文本/指针漂移 + 上述缓存矛盾共 6 处一并收口（`40 张 *-expected.png` → 实际命名与
     32 张、`(focused)` 形态按 M199 改写、`visual-toast-d84.log` → `-reused.log`、deck 编号待分配 → D115/D116、
     基线「待 Alex 过目」由 backlog #23 承接）。`src/` 侧两处失效注释指针与其余仓内旧路径指针不在本 mission
     scope，已登记进「文档指针与门禁清单」节。
@@ -1143,5 +1146,12 @@
   或按裁决改措辞，实现侧零改动。**未做的（如实声明）**：M195 的两张 typography 基线、M198 的一张
   var-highlight 基线在归档件里仍标「待 Alex 过目」——本批没有可引的过目记录，标注按原样保留未擅改；
   `src/` 侧的失效注释指针与仓内其余旧路径指针按 scope 登记进「文档指针与门禁清单」节。
+  **r1 评审（2026-09-24，p2-2items / fix-then-merge）的两处修复**：① `code-outline` 归档件的 `design.md`
+  §1.6 缓存矛盾句**首轮漏改**（backlog 与 review-request 都自报已改，实际 diff 为零——「自报改了、diff 为零」
+  正是 REVIEW.md 第 7 条的同族形态），已按 `code-variable-highlight` 的同型口径补齐并加归档标注；②
+  `list-filter` 的裁决②首轮只改了 scenario，同一 requirement **正文**（delta 与 living 两处）仍留
+  「`Enter` 与点击的动作 SHALL 保持现状」的 Enter 半，已按裁决删 Enter 半、保留点击半（点击那半由
+  `tests/unit/vault-switcher.test.ts` 覆盖）。两处均在 r1 修复提交里改准，backlog 第 23/24 条的核销表述
+  按实情对齐。
 - 批次三：键位分发三轨并行 + 扩展名注册表漂移（M130/M131/M132）；save-ipc.ts 折回 ipc.ts（M132）；Ctrl-K/D/T 原生路径风险（M132）。
 - 批次二：DeepSeek Flash 试用结论——可做 build，review 环节（k3-256k）不能省。
