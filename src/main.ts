@@ -754,6 +754,11 @@ async function applyVault(
   // flush（M194）：键还是旧 vault 的 id，来得及写走。
   await switcher.flush();
   await readingPositions.flush();
+  // 装载后读一次该 vault 的阅读位置并建内存镜像（M194，task 3.2）：这是「读一次、此后每次打开
+  // 文档只查表」的那一次读。**位置放在树可用之前**：树一出现用户就可能点开文件，而装载路径上
+  // 的恢复要查这份镜像（放在后面会留一个「镜像还没到」的窗口，视觉场景实测到过——初值在盘上
+  // 的第一份文档点开时恢复不发生）。清理也搭在下面这一次既有的枚举上，零新增 IO。
+  await readingPositions.onVaultLoaded(vaultId, entries);
   vaultLoaded = true;
   loadedRoot = root;
   const name = baseName(root);
@@ -779,12 +784,9 @@ async function applyVault(
   showEditor(); // 旧 vault 的「暂不支持预览」覆盖层一并撤下
   // 残留崩溃备份的恢复入口（M127）：装载完成后才有 vault 上下文可定位备份。
   void save.checkRecovery();
-  // 装载后读一次该 vault 的阅读位置并建内存镜像（M194，task 3.2）：**必须 await 在按标签列表
-  // 恢复标签之前**——那一步会经 openFile 逐个装载标签，而每个标签的恢复都要查这份镜像（查的是
-  // 内存，不再读盘）。位置在这里读，零新增 IO 挂点：清理也搭在下面这一次既有的枚举上。
-  await readingPositions.onVaultLoaded(vaultId, entries);
   // 装载后恢复该 vault 的标签列表（M163）：逐标签异步装载，不阻塞树与首帧；恢复途中若又
-  // 换了一次 vault，本次恢复整体作废（vault-switcher 的世代号）。
+  // 换了一次 vault，本次恢复整体作废（vault-switcher 的世代号）。上面的位置镜像已经就绪，
+  // 逐个标签装载时会走各自的恢复。
   void switcher.onVaultLoaded(vaultId, entries);
 }
 

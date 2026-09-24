@@ -1685,33 +1685,60 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
           charLeft: rect.left,
           boxTop: box.top,
           boxLeft: box.left,
+          scrollLeft: scroller.scrollLeft,
         }),
       };
     },
     applyScrollPosition(position: ScrollPosition) {
-      // 越界的锚（两次会话之间文档被外部改写）夹到文档内：CM 自己的 clip 也这么做，这里夹一
-      // 下是为了让下面的落点判定用的是真正会被使用的那个位置。
-      const anchor = Math.max(0, Math.min(position.pos, view.state.doc.length));
+      // 越界的锚（两次会话之间文档被外部改写）夹到文档内：与 CM 自己的 clip 同口径，也让下面
+      // 的篇首判定用的是真正会被使用的那个位置。
+      const anchor = Math.max(0, Math.min(Math.round(position.pos), view.state.doc.length));
+      // 篇首不施加（design §5）：锚落在文档原点时直接沿用装载复位的结果——「恢复到篇首」与
+      // 「停在篇首」是同一件事，而带 margin 的 `scrollIntoView` 对 pos 0 有把页首的 44px
+      // 内边距顶出画的历史（M110），不做比做更稳。
+      if (anchor === 0) return;
+      // 坐标可读时再核一次落点：算出来 ≤ 0 说明这次恢复的结果就是篇首（文档变短等），
+      // 同样不施加。**注意这不构成前置门槛**——装载刚结束时存储的锚几乎总在视口之外，
+      // 那时 `coordsAtPos` 返回 null（实测：锚在视口下方 ~2800px 时为 null）。若把 null 当
+      // 「不可读 → 放弃恢复」，整条能力对所有深于一屏的位置都会静默失效（M194 实测现场）。
+      // CM 自己的通道先按 scrollTarget 重新定位视口、渲染、测量，之后再算坐标，因此发放效果
+      // 对任意深的锚都成立；锚真的不可读时 CM 的 `scrollIntoView` 自己会提前返回，视口留在
+      // 装载复位处——这正是 spec 要的「静默退化到篇首」。
       const rect = view.coordsAtPos(anchor);
-      if (rect === null) return; // 不可读：静默退化到篇首（沿用装载复位的结果）
-      const box = view.scrollDOM.getBoundingClientRect();
-      const readings = {
-        charTop: rect.top,
-        charLeft: rect.left,
-        boxTop: box.top,
-        boxLeft: box.left,
-      };
-      // 落点即篇首时不施加效果：`scrollIntoView` 带 margin 会把 pos 0 对齐到视口顶、把页首的
-      // 44px 内边距顶出画（M110 的现场），而那种情形下「保持复位结果」与「恢复到该位置」是
-      // 同一件事。这一条同时覆盖「存储的位置本来就在篇首」。
-      if (restoreScrollTop(readings, position) <= 0) return;
+      if (rect !== null) {
+        const box = view.scrollDOM.getBoundingClientRect();
+        const target = restoreScrollTop(
+          {
+            charTop: rect.top,
+            charLeft: rect.left,
+            boxTop: box.top,
+            boxLeft: box.left,
+            scrollLeft: view.scrollDOM.scrollLeft,
+          },
+          position,
+        );
+        if (target <= 0) return;
+      }
       view.dispatch({
         effects: EditorView.scrollIntoView(EditorSelection.cursor(anchor), {
           y: "start",
           yMargin: position.y,
-          x: "start",
-          xMargin: position.x,
+          // 横向**不**交给这个效果：非快照分支会先减掉 getScrollMargins(view).left，而本仓的
+          // gutter 插件正好提供它（固定列宽）——拿捕获值当 xMargin 会系统性偏一个 gutter 宽
+          //（code 模式实测 34px）。这里只要求「横向别动锚的位置」，横向量在下面直接赋值。
+          x: "nearest",
+          xMargin: 0,
         }),
+      });
+      // 横向按 CM 自己的快照分支的口径恢复：直接写 scrollLeft（`dist/index.js` 的快照分支就是
+      // `scrollDOM.scrollLeft = xMargin`）。CM 的滚动锚点维护只管纵向（`scrollAnchorAt` 用
+      // scrollTop），因此这个赋值不会像裸写 scrollTop 那样被改掉（M149 的 242px 是纵向现场）。
+      //
+      // 放在下一帧：上面那个效果由 CM 在测量周期里落地，而它带 `x: "nearest"`——锚被横向移出
+      // 视口时它会主动把锚拉回来（实测：先写 200、效果随后把它拉回 62），所以横向必须是**最后**
+      // 一次写入。requestAnimationFrame 的回调排在 CM 同帧的测量之后。
+      requestAnimationFrame(() => {
+        view.scrollDOM.scrollLeft = position.x;
       });
     },
     onScroll(listener: () => void) {

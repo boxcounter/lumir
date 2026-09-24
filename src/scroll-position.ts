@@ -6,15 +6,15 @@
 // 值形态的推导与往返是**纯代数**，抽到这里就能秒级单测；`src/editor.ts` 只留「读 view 的哪个
 // 数与 dispatch 哪个效果」。同 `src/cell-geometry.ts` 的处置。
 
-/** 一份文档的阅读位置（可序列化的三量）。`pos` 是文档位置锚，`y` / `x` 是锚的字符盒相对
- *  **滚动容器**顶 / 左的实际偏移。 */
+/** 一份文档的阅读位置（可序列化的三量）。`pos` 是文档位置锚；`y` 是锚的字符盒相对
+ *  **滚动容器**顶的实际偏移（视口偏移）；`x` 是捕获时的**横向滚动量**（`scrollLeft` 原值）。 */
 export interface ScrollPosition {
   pos: number;
   y: number;
   x: number;
 }
 
-/** 捕获侧的原始读数（client 坐标；都来自公开 API）。 */
+/** 捕获侧的原始读数（client 坐标 / 滚动量；都来自公开 API）。 */
 export interface ScrollReadings {
   /** 锚位置的字符盒顶 / 左（`view.coordsAtPos(anchor)`）。 */
   charTop: number;
@@ -22,13 +22,15 @@ export interface ScrollReadings {
   /** 滚动容器的顶 / 左（`view.scrollDOM.getBoundingClientRect()`）。 */
   boxTop: number;
   boxLeft: number;
+  /** 横向滚动量（`view.scrollDOM.scrollLeft`）。 */
+  scrollLeft: number;
 }
 
 /** 捕获口径（值形态的唯一构造点，与 [`restoreScrollTop`] 成对）。
  *
- *  `y` / `x` 取「字符盒相对滚动容器顶 / 左的偏移」，**不是**相对文档顶——这是 design §2.3
- *  的推导在实现期被实测修正的那一处（design §7 第 1、2 条要求实测钉住，不得凭推导宣称已验）：
- *  公开恢复通道 `EditorView.scrollIntoView(pos, {y: "start", yMargin})` 在 CM 里落地为
+ *  `y` 取「字符盒相对滚动容器顶的偏移」，**不是**相对文档顶——这是 design §2.3 的推导在实现期
+ *  被实测修正的那一处（design §7 第 1、2 条要求实测钉住，不得凭推导宣称已验）：公开恢复通道
+ *  `EditorView.scrollIntoView(pos, {y: "start", yMargin})` 在 CM 里落地为
  *  `scrollRectIntoView(scrollDOM, targetRect, …)`，其不变量是
  *  **`字符盒顶 = 滚动容器顶 + yMargin`**（`@codemirror/view` 的 `scrollRectIntoView`：
  *  `targetTop = rect.top - yMargin; moveY = targetTop - bounding.top`，`bounding` 就是
@@ -36,12 +38,19 @@ export interface ScrollReadings {
  *  （`src/editor.ts` 的 baseTheme）会让恢复落点恒等于 44px（页首附近），往返根本不成立；
  *  取「相对滚动容器」后，两个口径互为逆（判据见 tests/unit/scroll-position.test.ts）。
  *
+ *  `x` 取**原始 `scrollLeft`**（不是「字符盒相对容器左的偏移」）：横向那条通道
+ *  （`scrollIntoView` 的非快照分支）会先减去 `getScrollMargins(view).left`，而本仓的 gutter
+ *  插件正好提供这个 left（固定列宽）——实测把「相对容器左的偏移」当 xMargin 会系统性偏
+ *  一个 gutter 宽（code 模式实测 34px）。CM 自己的**快照**分支存的就是原始 `scrollLeft`、
+ *  恢复时也直接赋值给 `scrollDOM.scrollLeft`（`dist/index.js` 的快照分支），本实现与它同口径，
+ *  横向因此按构造精确。
+ *
  *  另一个容易看错的口径是 `pos` 的取法：`lineBlockAtHeight(scrollTop)` 取的是**高度等于
  *  scrollTop 的那一行块**，而文档原点（height 0）在页首内边距之下，所以它比「视口顶那一行」
  *  低约一个 `paddingBlock`。这不影响判据——`y` 记录的正是该锚相对视口的实际偏移，捕获与恢复
  *  用同一个锚，「离开时顶行 = 回来时顶行」照旧成立（真机场景 28 与视觉场景的判据都落在顶行）。 */
 export function positionFromReadings(readings: ScrollReadings): { y: number; x: number } {
-  return { y: readings.charTop - readings.boxTop, x: readings.charLeft - readings.boxLeft };
+  return { y: readings.charTop - readings.boxTop, x: readings.scrollLeft };
 }
 
 /** 恢复口径：给定**装载后**（scrollTop = 0）的同一读数与落盘载荷，算出效果的落点（scrollTop）。

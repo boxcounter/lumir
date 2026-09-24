@@ -49,6 +49,13 @@ export interface VaultFixture {
   /** `vault_session_get` 的初值，键是 vault 稳定 id。缺省一律无历史（空会话）。
    *  与真后端同构：会话按 id 存在桩层，跨 vault 切换存活（切走再切回要能读回同一份）。 */
   sessions?: Record<string, VaultSessionRow>;
+  /**
+   * `reading_position_get` 的初值（M194）：键是 vault 稳定 id，值是该 vault 的
+   * `entries`（键 = vault 相对路径 → `{pos, y, x, at}`）。缺省一律无历史——这就是
+   * 「上次已经存了一条位置」的模拟入口：桩不真实重启，位置靠初值上桌。**不在这里模拟
+   * Rust 侧的键校验 / 上限 / 版本治理**（那些归 cargo test 与 tests/unit，桩里复制一份必然漂移）。
+   */
+  positions?: Record<string, Record<string, { pos: number; y: number; x: number; at: number }>>;
   /** link_graph_resolve 桩：链接原文 → LinkResolveResult。未命中按 unresolved 应答。 */
   links?: Record<string, unknown>;
   /**
@@ -63,8 +70,16 @@ export interface VaultFixture {
   switchTo?: VaultFixture & { root: string };
   /** vault_open 重映射候选桩：目标路径未注册且存在失效注册时，非 force_new 打开按契约返回空 entries + candidates。 */
   remapCandidates?: Array<{ id: string; path: string }>;
-  /** config_get 桩（M132）：模式 / [keys] 覆盖表 / 配置 warning。缺省 md + 空覆盖 + 无 warning。 */
-  config?: { mode?: "md" | "code"; keys?: Record<string, string | null>; warnings?: string[] };
+  /** config_get 桩（M132）：模式 / 折行口径（M180）/ [keys] 覆盖表 / 配置 warning。
+   *  缺省 md + 出厂折行（`line_wrap: true` / `code_block_wrap: false`，与
+   *  `src/preview/theme.ts` 的 DEFAULT_* 同值）+ 空覆盖 + 无 warning。 */
+  config?: {
+    mode?: "md" | "code";
+    line_wrap?: boolean;
+    code_block_wrap?: boolean;
+    keys?: Record<string, string | null>;
+    warnings?: string[];
+  };
   /**
    * 启动恢复进行态桩（M159）：`true` 时 `vault_current` 按后端契约回「vault 为 null +
    * restore_pending: true」（进行中 = 尚未提交，两者不可同时成立），前端应呈现恢复中提示。
@@ -83,7 +98,7 @@ export async function stubTauri(page: Page, vault: VaultFixture | null): Promise
     //（与真后端 open_vault 的替换语义对齐）。
     let current = v;
 
-    type Args = { path?: string; from?: string; link?: string; target?: string; id?: string; title?: string; vault_id?: string; expected_revision?: string; content?: string; dirty?: boolean; force_new?: boolean; event?: string; fields?: Record<string, string>; url?: string; tabs?: string[]; active?: string | null };
+    type Args = { path?: string; from?: string; link?: string; target?: string; id?: string; title?: string; vault_id?: string; expected_revision?: string; content?: string; dirty?: boolean; force_new?: boolean; event?: string; fields?: Record<string, string>; url?: string; tabs?: string[]; active?: string | null; entries?: Record<string, { pos: number; y: number; x: number; at: number }> };
     const checkVault = (args: Args) => {
       if (args.vault_id !== (current?.vault_id ?? "fixture-vault")) throw { code: "fixture_contract", message: "vault_id mismatch" };
     };
@@ -117,6 +132,21 @@ export async function stubTauri(page: Page, vault: VaultFixture | null): Promise
     // vault_session_put 的调用记录（M163）：落盘内容按调用顺序，场景据此断言「会话按 vault
     // 记在稳定 id 上、内容是有序的固定标签 + 激活项」。
     w.__sessionPuts = [] as Array<{ vault_id?: string; tabs?: string[]; active?: string | null }>;
+    // 阅读位置真源（M194）：按 vault 稳定 id 存放，初值来自 fixture 的 positions——这就是
+    // 「盘上已经有一条位置」的模拟入口（桩不真实重启，初值即「上次会话留下的」）。
+    const positions = new Map<string, Record<string, { pos: number; y: number; x: number; at: number }>>(
+      Object.entries(v?.positions ?? {}),
+    );
+    // reading_position_get 的调用记录（M194）：按 vault 稳定 id，场景据此断言「装载 vault 时
+    // 只读一次、此后每次打开文档只查内存镜像」。
+    w.__readingPositionGets = [] as string[];
+    // reading_position_put 的调用记录（M194）：写入侧的判据落在这里（防抖后只写一次、
+    // 载荷里的位置与当前视口一致、越界键不进载荷）。命名避让 `__saveCalls`（计数）与
+    // `__sessionPuts`（会话），理由同上面那条 documentWrites 的注释。
+    w.__readingPositionPuts = [] as Array<{
+      vault_id?: string;
+      entries?: Record<string, { pos: number; y: number; x: number; at: number }>;
+    }>;
     // document_save 的调用记录（M164）：只记「真的发生了保存」这个事实与内容——
     // 「放弃修改后不写盘」这类**负向**判据需要一个能看到写动作的观测点，否则只能读文件表，
     // 而切换 vault 之后原 vault 的文件表已经不在 `current` 里，断言会空转（REVIEW.md 第 2 条）。
@@ -162,6 +192,28 @@ export async function stubTauri(page: Page, vault: VaultFixture | null): Promise
         });
         return null;
       },
+      // 阅读位置读（M194）：无记录等价于「没有阅读位置历史」（与 Rust 侧的五种 None 同义），
+      // 前端据此从篇首开始、不给任何提示。调用记录留档：场景据此断言「装载 vault 时只读一次」
+      // 这条纪律（每次打开文档只查内存镜像，不再读盘）。
+      reading_position_get: (args) => {
+        (w.__readingPositionGets as string[]).push(args.vault_id ?? "");
+        const entries = positions.get(args.vault_id ?? "");
+        // 契约形状与真后端一致：无历史回 null；有历史回 { version, entries }（fixture 只给
+        // entries，version 由桩按当前 schema 补齐——同 sessions 的处理）。
+        return entries === undefined ? null : { version: 1, entries };
+      },
+      // 阅读位置写（M194）：真后端在写失败时降级为 warning 并照常 resolve，桩按成功应答并把
+      // 载荷存进真源——「这次真的写了什么」是写入侧唯一的判据面。桩不实现 Rust 的键校验与
+      // 上限治理（那归 cargo test），因此一条越界键会**原样**进载荷：场景据此断言前端那一道
+      // 「按本次枚举清理」的收口确实生效。
+      reading_position_put: (args) => {
+        (w.__readingPositionPuts as Array<{
+          vault_id?: string;
+          entries?: Record<string, { pos: number; y: number; x: number; at: number }>;
+        }>).push({ vault_id: args.vault_id, entries: args.entries });
+        positions.set(args.vault_id ?? "", args.entries ?? {});
+        return null;
+      },
       log_event: (args) => {
         (w.__logEvents as LogEventRecord[]).push({
           event: args.event ?? "",
@@ -200,7 +252,14 @@ export async function stubTauri(page: Page, vault: VaultFixture | null): Promise
           config: {
             version: 1,
             last_vault: null,
-            editor: { mode: current?.config?.mode ?? "md" },
+            editor: {
+              mode: current?.config?.mode ?? "md",
+              // M180 的折行口径（桩缺省与出厂默认同值）：场景要「折行关闭 + 横向平移」时
+              // 从这里给。缺省值取自 src/preview/theme.ts 的 DEFAULT_LINE_WRAP /
+              // DEFAULT_CODE_BLOCK_WRAP，两处不同值会让场景按错的折行口径跑。
+              line_wrap: current?.config?.line_wrap ?? true,
+              code_block_wrap: current?.config?.code_block_wrap ?? false,
+            },
             keys: current?.config?.keys ?? {},
           },
           warnings: current?.config?.warnings ?? [],
@@ -467,6 +526,31 @@ export async function sessionPuts(
       (window as unknown as {
         __sessionPuts: Array<{ vault_id?: string; tabs?: string[]; active?: string | null }>;
       }).__sessionPuts,
+  );
+}
+
+/** reading_position_put 的调用记录（M194：阅读位置落盘内容，按调用顺序）。
+ *  写入侧的判据都在这里：防抖后只写一次、载荷里的位置与当前视口一致、越界键不进载荷。 */
+export async function readingPositionPuts(
+  page: Page,
+): Promise<
+  Array<{ vault_id?: string; entries?: Record<string, { pos: number; y: number; x: number; at: number }> }>
+> {
+  return page.evaluate(
+    () =>
+      (window as unknown as {
+        __readingPositionPuts: Array<{
+          vault_id?: string;
+          entries?: Record<string, { pos: number; y: number; x: number; at: number }>;
+        }>;
+      }).__readingPositionPuts,
+  );
+}
+
+/** reading_position_get 的调用记录（M194：按 vault 稳定 id，按调用顺序）。 */
+export async function readingPositionGets(page: Page): Promise<string[]> {
+  return page.evaluate(
+    () => (window as unknown as { __readingPositionGets: string[] }).__readingPositionGets,
   );
 }
 

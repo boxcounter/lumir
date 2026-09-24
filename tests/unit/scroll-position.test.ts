@@ -18,6 +18,7 @@ function readingsAt(scrollTop: number): ScrollReadings {
     charLeft: 0,
     boxTop: BOX_TOP,
     boxLeft: 0,
+    scrollLeft: 0,
   };
 }
 
@@ -25,6 +26,8 @@ test("值形态：捕获口径与恢复口径互为逆（同一份布局下，�
   const captured = positionFromReadings(readingsAt(1000));
   // y 是「字符盒相对滚动容器顶」的偏移，不是相对文档顶的那个数
   assert.equal(captured.y, 48);
+  // x 是**原始 scrollLeft**（横向那条通道要先减 scrollMargins.left，不能拿视口偏移代替）
+  assert.equal(positionFromReadings({ ...readingsAt(1000), scrollLeft: 200 }).x, 200);
   // 装载后 scrollTop = 0：restoreScrollTop 给出的落点必须回到捕获时的 1000
   assert.equal(restoreScrollTop(readingsAt(0), captured), 1000);
   // 任意位置都成立（不是某一个值的巧合）
