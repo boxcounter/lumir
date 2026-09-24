@@ -73,6 +73,18 @@ delta、tasks 与 design 一律按推荐项写，备选列随之作废）。
 不得使用朱红、不得进文档 / 不得被复制与搜索带出、滚动高度在所有滚动位置恒定、纵向间距用 `padding`、
 不加键位 / 命令 / 配置项。逐条断言与反向验证见 [tasks.md](tasks.md) 第 5 节。
 
+### 机制偏离记录（M189 实现期；Alex 节点 2 签字，2026-09-25）
+
+设计期的推荐机制是 [design.md](design.md) §1.1 的**候选 A**（`.cm-content` 的生成内容）——它满足全部几何
+不变量，但**它的三条 spec 判据不可断言**：伪元素没有 `getBoundingClientRect` 可读的盒子、也没有文本节点，
+三条几何判据只能退化成读 computed style（[REVIEW.md](../../../REVIEW.md) 第 1 条不容）。实现因此按
+[design.md](design.md) §1.1.1 落在**第三条路**：标记是挂在 `.cm-scroller` 上的真元素（`src/preview/endMarker.ts`
++ `src/preview/theme.ts` 的 `.cm-lp-end-marker*`），保留候选 A 全部被看重的性质（不进 `EditorState.doc`、
+不进 heightmap、不做 widget 测量、不参与按视口构建的装饰层、与滚动位置无关），同时让三条判据都有真实盒子
+可读。偏离的依据、两个实测落点问题（`min-height: 100%` 压行、竖向位置因此落在内容盒之下）与反向验证留档
+见 design §1.1.1 / §7 与 [tasks.md](tasks.md) 的 2.1；reviewer r1/r2 判该偏离成立，Alex 在节点 2 归档评审中
+一并签字确认（2026-09-25）。
+
 ## Non-goals
 
 - **不做阅读进度读数**（百分比 / 进度条 / 状态栏 / 剩余行数）：这是另一个形态（常驻读数、跨 capability），本 change 只加一个「终点」标记。

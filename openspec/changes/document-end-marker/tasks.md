@@ -117,9 +117,12 @@
 - [x] 6.1 **新增场景** `scripts/acceptance/scenarios/27-document-end-marker.md`（编号按现有最大 26 续；`item` 字段取 27），覆盖：打开超过一屏的文档 → 翻到底 → 标记在场；打开一屏装得下的文档 → 没有标记。
   **断言形态**：可见性 MUST NOT 只断言「AX 里有『到底了』这段文字」（M178 finding）——真机通道读不到文本节点的几何（见 6.2），
   因此可见性判据落在 chromium 层的几何断言 + 截图证据上，真机侧判的是「标记的可读文本节点存在 / 不存在」这一对 + 文档文本纯度 + 磁盘逐字节。
-  **实测**：`--check` = `CHECK PASS 27-document-end-marker`；真机运行 **PASS（14 条断言 / 0 失败 / 25.4s）**，
-  证据 `test-results/acceptance/2026-09-21/27-document-end-marker/{status.txt,steps.md,shots/}`（最终 tip 上的那一次），
-  副本 `test-results/m189/acceptance-27-pass/`；`test-results/acceptance/2026-09-20/...` 是同一场景在前一版代码上的首次 PASS。截图 `shots/02-长文滚到底.jpeg` 可见：末段之下是「—— 到底了 ——」的短线夹字（弱化暖色）。
+  **实测**：`--check` = `CHECK PASS 27-document-end-marker`；真机运行 **PASS（14 条断言 / 0 失败 / 30.195s）**，
+  证据 `test-results/acceptance/2026-09-21/27-document-end-marker/{status.txt,steps.md,shots/}`（最终 tip 上的那一次；
+  断言数与耗时取自同批的 `test-results/acceptance/2026-09-21/results.json`，`summary.md` 的表格里写作 `14 / 0 / 30.2s`），
+  副本 `test-results/m189/acceptance-27-pass/`。**订正（M208 归档节点 2）**：`test-results/acceptance/2026-09-20/27-document-end-marker/`
+  **不是**「首次 PASS」——那一份 `status.txt` 实测 = **FAIL（14 条断言 / 2 失败）**，是 6.4 反向验证的场地
+  （两处记载的 `startedAt` 相同，互为印证）。截图 `shots/02-长文滚到底.jpeg` 可见：末段之下是「—— 到底了 ——」的短线夹字（弱化暖色）。
 - [x] 6.2 探针：先用一次探针确认标记在真实 WKWebView 的 AX 树里是否可读（生成内容是否进 AX）。
   **实测（探针读数，落进场景说明的「覆盖边界」段）**：标记**进 AX 树**，形态是 `- [192] AXStaticText = "到底了"`，
   位置与 `AXTextArea` 同级（在 textbox 之外，印证它不是文档内容的一部分）。但该节点**没有 bbox**：

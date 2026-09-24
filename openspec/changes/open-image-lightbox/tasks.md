@@ -52,8 +52,12 @@ dogfood 手感项 [manual-acceptance-checklist.md](manual-acceptance-checklist.m
 - [x] 1.3 取一次**反向基线**（可与 1.1 合并）：记录双击前后 `fs_read_attachment` 的调用计数，
       作为 5.5 的对照值。
       **验收口径**：计数落在 1.1 的 `readings.json` 里；对照值在 5.5 被复用。
-      **实现记录（M184）**：十条引用 = 10 次读取，双击打开遮罩前后仍是 10 次（`readings.json` /
-      `readings-after.json` 的 `attachmentReads`），5.5 复用同一读数。
+      **实现记录（M184）**：十条引用 = 探针实测的 `attachmentReads` 10 次，双击打开遮罩前后仍是 10 次
+      （`readings.json` / `readings-after.json` 的 `attachmentReads`），5.5 复用同一读数。
+      **归档期订正（M208 归档节点 2）**：这个数是**运行期调用计数**，不能读成「引用条数 = 读取次数」的
+      等式——十条引用里有 9 处走附件读取通道，另一条是外部 `http(s)` 直连分支（它以 URL 本身为图像源、
+      不读附件字节）；delta 的 scenario 已按「9 处需要读字节的引用各只读一次 + 计数以『打开遮罩前后不变』
+      为判据」改准，断言侧的上界是 `toBeLessThanOrEqual(10)`（不是等式）。
 
 ## 2. 实现：lightbox 本体与接线
 
@@ -149,7 +153,8 @@ dogfood 手感项 [manual-acceptance-checklist.md](manual-acceptance-checklist.m
       **验收口径**：装配期对账（无重复绑定 / 无孤儿命令 / 清单与绑定表无交集）PASS；
       面板与 `[keys]` 两条路径各有一条断言；若默认不绑键，面板那行显示「未绑定」并说明成因。
       **实现记录（M184）**：**节点 1 未选中**（裁决点 3 取推荐项：不加命令、不绑键），本 mission 不做；
-      `git diff src/keys.ts` 为空。
+      `git diff src/keys.ts` 为空。**归档期确认（M208 节点 2）**：条件项未触发，维持不做并如实记为边界
+      （delta 的已知边界段已写明「无命令 id、无默认绑定」）。
 
 ## 4. 单测（`tests/unit`，纯逻辑层）
 
@@ -181,6 +186,12 @@ dogfood 手感项 [manual-acceptance-checklist.md](manual-acceptance-checklist.m
       **实现记录（M184）**：`markdown-combo.spec.ts` 末尾新增「M184」断言组 **5 条用例**。打开判据 =
       放大图渲染盒宽高非零 + `alt` = 原始引用文本 + `src` 与内联那张**逐字符相同**（三条一起，
       不用 class 存在）；红灯转绿的记录见 1.2（`test-results/m184/09` → `/02`）。
+      **归档期补记（M209，2026-09-25，G1）**：delta 的 scenario「SVG 与位图同构、放大图仍只经 img 渲染」
+      原先在 lightbox 层零断言（M207 归档对账的缺口 G1），M209 补三条用例把它的 THEN 接住——
+      方言形态 `![[percent-width.svg]]`、位图形态（新增有效位图 fixture `tests/visual/fixtures/markdown-combo/bitmap.png`）、
+      放大层不发起外链请求与无脚本副作用（外链请求全集前后相同 + `<script>`/`onload` 的可观测副作用不出现）；
+      反向验证三处各自红、还原后 16/16 绿（`test-results/m209-probe/01-red-src-bitmap-and-request-sets.log`
+      → `03-green-markdown-combo.log`）。
 - [x] 5.2 三条关闭路径各一条断言 + 关闭后焦点在编辑器（行为判据：关闭后按 `⌃D` 真的删掉字符，
       且断言前后 `docText` 的差异恰好是那一个字符）。
       **验收口径**：三条路径各自可单独读出（MUST NOT 合并成一条「关闭后遮罩不可见」）。
@@ -194,6 +205,10 @@ dogfood 手感项 [manual-acceptance-checklist.md](manual-acceptance-checklist.m
       **实现记录（M184）**：遮罩打开期间依次按 `⌃D` / `⌃K` / `⌃A` / `Tab` 后断言「遮罩仍在 + 焦点仍在
       遮罩 + `editorState`（doc/head/anchor）与打开前逐值相同」；用例末尾 `readDocument(page)` 与
       `images.md` 逐字节相同（ADR 0003 §3）。
+      **归档期补记（M209，2026-09-25，G2）**：delta 的 scenario 的 WHEN 含「与若干字符键」，而 M184 只按了
+      Control 系键与 `Tab`——M209 在同一组断言前补 `page.keyboard.type("abc")`，字符落进文档的编辑链路仍
+      被同一组 `editorState` 逐值断言接住；反向验证（把焦点强制给编辑器再键入）该组如实红：
+      `test-results/m209-probe/02-red-chars-reach-doc-when-editor-focused.log`。
 - [x] 5.4 不可打开形态：同一份文档里双击 ① 加载中状态块（用读桩延迟制造窗口）、② `图片读取失败：…`
       占位、③ `图片无法显示：…` 占位、④ `附件未找到` / `内容嵌入不支持` 占位、⑤ 外部 `http(s)`
       目标落下的占位 —— 遮罩一次都不出现；**同一场景里再双击一张已渲染成功的图片，遮罩出现**。
@@ -212,7 +227,10 @@ dogfood 手感项 [manual-acceptance-checklist.md](manual-acceptance-checklist.m
       **验收口径**：两条都是可复算的计数/节点判据，读数与 1.3 的基线对照。
       **实现记录（M184）**：读桩在 `window.__lumirAttachmentReads` 上自增（`stubAttachmentReads` 的改动），
       用例断言「终态后计数 = 打开遮罩后计数」+「未双击时 `.lumir-lightbox-overlay` 计数 0」+
-      「再次打开不建第二个遮罩节点」；与 1.1/1.3 的读数（10 → 10）一致。
+      「再次打开不建第二个遮罩节点」；与 1.1/1.3 的读数（10 → 10）一致。**归档期补注（M208 节点 2）**：
+      用例对「文档打开路径上的读取次数」用的是上界 `toBeLessThanOrEqual(10)`（不是等式），与 delta 的
+      「9 处需要读字节的引用各一次 + 打开遮罩前后不变」口径一致；M209 起该读桩同时服务 G1 组的位图形态
+      （`{ base64 }` 值形态）。
 - [x] 5.6 缩放口径两侧：远大于窗口的图（既有 `wide.svg` 是 2000×600，可再加一份更高的样本）放大后
       渲染盒宽高都 ≤ 遮罩可用区域；小于窗口的图放大后渲染盒 ≤ 自然尺寸。
       **验收口径**：去掉 `max-height` 的临时改动下前者必须 FAIL（红灯留档）。
@@ -242,42 +260,59 @@ dogfood 手感项 [manual-acceptance-checklist.md](manual-acceptance-checklist.m
 
 ## 6. 真机验收场景（WKWebView，`scripts/acceptance/`）
 
-- [ ] 6.1 **新增场景** `scripts/acceptance/scenarios/23-image-lightbox.md`（编号按现有最大 22 续），
-      覆盖：双击成功渲染的图（固定尺寸 svg 与位图各一）→ 遮罩出现；`Esc` 关闭后焦点回编辑器；
-      三条关闭路径。
+- [x] 6.1 **新增场景** `scripts/acceptance/scenarios/33-image-lightbox.md`，覆盖三种引用形态（固定尺寸 svg /
+      百分比宽度 svg / 位图）各双击一次打开遮罩、三条关闭路径（`Esc` / 点击遮罩 / 遮罩内再次双击）、
+      `Esc` 关闭后焦点回编辑器。
+      **通道边界已解除（M208 归档节点 2 转述的 M209 结论，2026-09-25）**：M184 记的「WKWebView 里造不出 DOM
+      `dblclick`」被 M209 推翻——第五条通道（`/usr/bin/swift` + `CGEvent` 显式投递 `kCGMouseEventClickState`）
+      实测能造出真实 `dblclick`，且已接进套件（`scripts/acceptance/lib/cgevent-click.swift` + `doubleClick` 动作）；
+      M184 的推理本身也不成立（它用的判据「双击文件树行 → 标签数 1→2」恒不成立：`openFile` 对已打开的同路径
+      短路，`src/main.ts:380-386`）。修正后的通道结论见 `scripts/acceptance/README.md` 的「已知边界」条与
+      `test-results/m209-probe/REPORT.md`（本机，git 外）。场景编号取 **33**（M184 稿里的 23 / 24 已分别被
+      `23-image-first-open-width` 与 `24-table-cell-ctrl-e-seq` 占用）。
       **断言形态**：放大图的可见性用 **AXImage 节点的几何读数**（节点行里的 `@x,y w×h` 宽高非零）——
-      不可见图的 AX 文本照样读得到，这条陷阱记在 `docs/backlog.md:257-264`（M178 finding，主要居所）与
-      `openspec/changes/archive/2026-09-18-image-svg-and-fallback/tasks.md:190-192`；
-      MUST NOT 只断言「AX 里有某个文本」。
-      **验收口径**：`node scripts/acceptance/run.mjs --check` 静态校验 PASS；`run.mjs 23` 真机 PASS，
-      证据落 `test-results/acceptance/<日期>/23-image-lightbox/`（`status.txt` = PASS、`steps.md`
+      不可见图的 AX 文本照样读得到，这条陷阱记在 `docs/backlog.md` 的验收套件节（M178 finding，主要居所）
+      与 `openspec/changes/archive/2026-09-18-image-svg-and-fallback/tasks.md`；
+      MUST NOT 只断言「AX 里有某个文本」。场景并把「遮罩开着」用两条一起钉（放大图的几何读数 + 标签栏节点
+      因 `aria-modal` 从 AX 树里消失）——内联那张图自己也有非零几何读数，单条几何断言分不出是遮罩里那张。
+      **验收口径**：`node scripts/acceptance/run.mjs --check` 静态校验 PASS；`run.mjs 33` 真机 PASS，
+      证据落 `test-results/acceptance/<日期>/33-image-lightbox/`（`status.txt` = PASS、`steps.md`
       断言逐条可读）。
-      **实现记录（M184）：真机通道不可达，未做（不勾选、不冒称）。** 四条通道实测记录：
-      `test-results/m184/13`～`/17`（坐标 `count: 2` / AX 索引 `count: 2` / 两次独立 click /
-      `drag_paths` 两条单点路径；判据取既有行为「双击文件树行 = 新建固定标签」，四条都停在 1 个标签，
-      而同一点位的单次点击证明落点准确）；finding 指针：
-      `.tower/comms/findings/20260919-worker-lightbox-impl-improve-dom-dblclick-wkwebview.md`
-      （通道清单 + 复现配方 + 建议修法），canonical 居所另有 `scripts/acceptance/README.md` 的「已知边界」条目。
-      **场景与 fixture 未落库**：按本节验收口径写好的场景（`24-image-lightbox`，编号按裁决记 **24**——
-      23 已被 M182 占用）跑了两轮真机、双击路径全部落空后随 fixture 一并从工作区撤下（只验前置条件的场景
-      会让人误读为「真机验过」，REVIEW.md 第 6 条）。tower 裁决（2026-09-19，A+C 组合，原文
-      `.tower/comms/inbox/20260919-tower-worker-lightbox-impl-clarify-reply-m184-a-c-chromium-alex.md`）：
-      行为判别层由 chromium 断言组承担（第 5 节），真机侧留
-      [manual-acceptance-checklist.md](manual-acceptance-checklist.md) 给 Alex 的 dogfood 手感项。
-- [ ] 6.2 场景 fixture 落 `scripts/acceptance/fixtures/`（可复用既有 `image-fallback-normal.svg` /
+      **实现记录（M209，2026-09-25；归档期承接 M184 的未做项）**：`--check 33` = PASS；真机运行
+      **PASS（36 条断言 / 0 失败 / 32.775s）**，证据
+      `test-results/acceptance/2026-09-24/33-image-lightbox/{status.txt,steps.md,shots/,ax/}`，汇总
+      `test-results/acceptance/2026-09-24/summary.md`（断言数与耗时取自同目录 `results.json`），副本
+      `test-results/m209-probe/33-pass/`。**证据物理位置（如实记录，[REVIEW.md](../../../REVIEW.md) 第 7 条）**：
+      `test-results/` 是本机 git 外目录，33 的现场与抄件当前只在 M209 的 worktree 下
+      （`.tower/worktrees/wt-209/test-results/...`），主 checkout 尚无副本。M184 那两轮的失败留档仍在
+      `test-results/m184/11`、`/12` 与 `test-results/acceptance/2026-09-19/`（`24-image-lightbox/`、
+      `probe-dblclick-channel/`）；M184 的 finding 仍是通道史的原始记录
+      （`.tower/comms/findings/20260919-worker-lightbox-impl-improve-dom-dblclick-wkwebview.md`，
+      其判据已由 M209 证伪，见同批 filed 的 `20260925-worker-lightbox-probe-bug-m184.md`）。
+      **场景与 fixture 的落库历史**：M184 按本节验收口径写好的场景（`24-image-lightbox`，编号按裁决记 **24**）
+      跑了两轮真机、双击路径全部落空后随 fixture 一并从工作区撤下（只验前置条件的场景会让人误读为
+      「真机验过」，REVIEW.md 第 6 条）；tower 裁决（2026-09-19，A+C 组合，原文
+      `.tower/comms/inbox/20260919-tower-worker-lightbox-impl-clarify-reply-m184-a-c-chromium-alex.md`）
+      把当时的行为判别层交给 chromium 断言组（第 5 节）与
+      [manual-acceptance-checklist.md](manual-acceptance-checklist.md) 的人工清单。这两条分工**继续有效**：
+      33 是 M209 在通道打通后按同口径重写的场景（不是那两轮的失败场景），chromium 断言组与人工清单
+      分别承担判别层与手感层。
+- [x] 6.2 场景 fixture 落 `scripts/acceptance/fixtures/`（可复用既有 `image-fallback-normal.svg` /
       `image-fallback-percent.svg`，必要时补一份小图位图），与 md 一起进合成 vault。
       **验收口径**：场景 PASS 且 fixture 在 `fixtures:` 里逐条列名；断言遵守「不可读一律 FAIL」
       （[REVIEW.md](../../../REVIEW.md) 第 2 条），MUST NOT 写「读不到该文本即通过」式的负向空转。
-      **实现记录（M184）：未做（随 6.1 撤下，未落库）**。曾生成并跑过的 fixture（`image-lightbox.md` 占位在
-      第一行的可点击布局、`image-lightbox-control.md` 同点位的正对照、`image-lightbox-wide.svg` 2000×600、
-      `image-lightbox-small.png` 120×90）已从工作区删除——它们的价值是「用同一点位给占位负向断言做正对照」
-      这个设计，已写进上述 finding 供通道就绪时复用。
-- [ ] 6.3 真机反向验证：把双击路径临时去掉（或回退到实现前代码）跑同一场景，断言必须 FAIL
+      **实现记录（M209，归档期承接）**：`lightbox.md` + `lightbox-fixed.svg` + `lightbox-percent.svg` +
+      `lightbox-bitmap.png` 四份在场景 front-matter 的 `fixtures:` 里逐条列名，随 `runScenario` 拷进合成 vault；
+      6.1 的 PASS 运行即「四份都已进 vault」的证据。M184 曾生成、后随场景撤下的四个 fixture 未复用
+      （其设计——用同一点位给占位负向断言做正对照——已写进 finding 供通道就绪时参考）。
+- [x] 6.3 真机反向验证：把双击路径临时去掉（或回退到实现前代码）跑同一场景，断言必须 FAIL
       （遮罩不出现 / AXImage 几何断言失配）。
       **验收口径**：FAIL 的 `status.txt` 与 `steps.md` 留档；没有这一步的 PASS 不算数。
-      **实现记录（M184）：真机通道不可达，未做（不勾选、不冒称）**——没有可跑的真机场景（6.1 未落库），
-      这一步无从谈起；四条通道的实测记录与 finding 指针同 6.1。等效的反向验证在 chromium 层完成
-      （1.2 的整组红：`test-results/m184/09-red-authoritative.log`）。
+      **实现记录（M209，归档期承接）**：把场景里三条驱动从 `do: doubleClick` 换成 `do: click`（双击路径被
+      去掉）后重跑 → **FAIL（7 条断言全红：三处放大图几何读数 0 命中、三处标签栏仍在 AX 树里、一处焦点停在
+      `AXWebArea`）**；FAIL 现场 `test-results/m209-probe/33-reverse-verification-fail/{status.txt,steps.md}`，
+      汇总副本 `test-results/m209-probe/33-summary-reverse-fail.md`。M184 在 chromium 层的等效反向验证
+      （1.2 的整组红，`test-results/m184/09-red-authoritative.log`）仍有效。
 - [ ] 6.4 与 AGENTS.md 的维护权一致：新功能 mission 的 tasks 必带「新增/更新验收场景」，本 change 的
       实现 PR 必须同时含 6.1–6.2。
       **验收口径**：实现 PR 的文件列表里同时出现场景 md 与 fixture。
@@ -285,11 +320,18 @@ dogfood 手感项 [manual-acceptance-checklist.md](manual-acceptance-checklist.m
       的交付改为①`scripts/acceptance/README.md` 的「已知边界」新增「合成不出 DOM 的 dblclick」一条
       （四条通道 + 对照判据 + 现场路径），②动作表与 `scenarios/17` 的旧口径改成实测口径，③`cu.click` /
       `click` / `clickInNode` 如实透传 `count` 并注明它出不了 dblclick。这些改动随本 PR 入库。
-- [ ] 6.5 不改写源文件的真机判据：`editor.unchangedSince`（编辑器内容）与磁盘文件的
+      **归档期补记（M208 归档节点 2）**：这条按字面**维持未勾**——它的判据钉在「本 change 的实现 PR」上，
+      而场景与 fixture 是 M209 的 PR 才落的（`scenarios/33-image-lightbox.md` + 四份 fixture + `doubleClick`
+      动作同批入库，即 6.1–6.2 的交付最终在同一批次里完成，只是不在实现 PR 里）；M184 的①那条「已知边界」
+      已被 M209 订正（原判据恒不成立、通道实际可用），本节按原样留档不改写历史。
+- [x] 6.5 不改写源文件的真机判据：`editor.unchangedSince`（编辑器内容）与磁盘文件的
       `unchangedSince` 两条断言在位且 PASS（ADR 0003 §3）。
       **验收口径**：两条各占一条可单独读出的步骤，不合并且不省略。
-      **实现记录（M184）：未做（真机层）**。同日不变量在另两层有断言：chromium 层 `readDocument(page)`
-      逐字节（5.3）与 1.1 的读数（`docText` 逐值相同）；真机层的两条 `unchangedSince` 待场景可达后补。
+      **实现记录（M209，归档期承接）**：场景 33 的最后一步落两条独立记录——「编辑器内容与基线逐字节相同
+      （212 字节逐字节一致）」与「磁盘文件 sha256 与基线相同（仍为 `8f3a7ee36953`）」，都在 PASS 运行的
+      `steps.md` 里各占一行、可单独读出（**口径差异如实记录**：两条是同一个步骤内的两条断言行，不是两条
+      独立步骤）。M184 时同日不变量只在另两层有断言（chromium 层 5.3 的 `readDocument(page)` 逐字节、1.1 的
+      `docText` 逐值相同），真机层的空缺至此补齐。
 
 ## 7. 文案 deck
 
@@ -317,17 +359,17 @@ dogfood 手感项 [manual-acceptance-checklist.md](manual-acceptance-checklist.m
       **实现记录（M184）**：`bash scripts/gate.sh quick` → **10/10 PASS**（`test-results/m184/19-gate-quick.log`）；
       `LUMIR_VISUAL_PORT=4273 bash scripts/gate.sh visual` → **全绿**（`test-results/m184/20-gate-visual.log`，
       含整页像素层：既有 13 个基线目录逐张对比通过，即「零基线更新」的正面证据）。
-- [ ] 8.3 真机套件至少跑一次新增场景并留档（AGENTS.md：dogfood 批次合并后、Alex 验收前先跑一遍）。
+- [x] 8.3 真机套件至少跑一次新增场景并留档（AGENTS.md：dogfood 批次合并后、Alex 验收前先跑一遍）。
       **验收口径**：`test-results/acceptance/<日期>/summary.md` 里本场景为 PASS；报告里给可 `ls` 的
       绝对路径指针。
-      **实现记录（M184）：真机通道不可达，未做（不勾选、不冒称）**。四条通道实测记录
-      `test-results/m184/13`～`/17` + finding 指针
-      `.tower/comms/findings/20260919-worker-lightbox-impl-improve-dom-dblclick-wkwebview.md`（同 6.1）。
-      真机批次实际跑了 6 次（两轮场景 + 四轮通道对照）：场景那两轮 FAIL 的原因不是产品缺陷（同一点位的
-      单次点击正常切换文档），证据 `test-results/m184/11`、`/12`；`test-results/acceptance/2026-09-19/`
-      下的 `24-image-lightbox/` 与 `probe-dblclick-channel/` 是这两轮的失败留档（场景本身未落库）。
-      **真机侧改由 [manual-acceptance-checklist.md](manual-acceptance-checklist.md) 承接**（tower 裁决
-      A+C：chromium 判别层 + Alex 人工清单）。
+      **实现记录（M209，归档期承接）**：`node scripts/acceptance/run.mjs 33` 真机 **PASS（36 条断言 /
+      0 失败 / 32.775s）**，报告 `test-results/acceptance/2026-09-24/summary.md`（表格里本场景为 PASS），
+      场景证据 `test-results/acceptance/2026-09-24/33-image-lightbox/`（`status.txt` = PASS、`steps.md`
+      逐条可读、`shots/` 8 张），副本 `test-results/m209-probe/33-pass/` 与 `33-summary-final-pass.md`；
+      另跑了一次反向验证（6.3，FAIL 留档）。M184 那 6 轮真机（两轮场景 + 四轮通道对照）的失败留档仍在
+      `test-results/m184/11`、`/12` 与 `test-results/acceptance/2026-09-19/`（`24-image-lightbox/`、
+      `probe-dblclick-channel/`）——它们是通道史，不是产品缺陷证据。
+      [manual-acceptance-checklist.md](manual-acceptance-checklist.md) 继续承接**手感层**（tower 裁决 A+C）。
 - [x] 8.4 `git diff --check` 通过；改动文件集合与本 change 的 Impact 清单一致（出现跨 scope 的只读
       依赖须先报 tower 批准）。
       **验收口径**：改动集合 = `src/lightbox.ts`（新）/ `src/preview/attachments.ts` /
@@ -363,6 +405,8 @@ dogfood 手感项 [manual-acceptance-checklist.md](manual-acceptance-checklist.m
       **验收口径**：与裁决结果一致的表述（不出现「有命令但没断言」或「声称可达实则只能鼠标」的落差）。
       **实现记录（M184）**：**节点 1 未选中**——不加命令、不绑键；spec 的「已知边界」段已写明
       「打开路径只有双击（鼠标）」，`src/keys.ts` 未改，键位面板不受影响。
+      **归档期确认（M208 节点 2）**：条件项未触发，维持不做并如实记为边界；真机场景 33 让「打开路径只有
+      双击」这条边界在真机层也有可跑的证据（双击通道可达、键盘路径仍不存在）。
 - [x] 9.3 已知边界（如实记录，不许当成已验）：同一 `data:` URL 的 decode 复用未验证（2.7 实测）；
       「遮罩失焦即关」的行为由第 6 节的真机场景覆盖、其手感（是否觉得「怎么自己关了」）归 Alex，
       套件只留截图；小图（不放大）双击的观感代价见 proposal 裁决点 2。

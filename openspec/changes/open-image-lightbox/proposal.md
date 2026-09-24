@@ -148,7 +148,9 @@ lightbox 本体的条款仍留在 `attachment-display`，capability 归属判断
 - 影响的测试/验收：`tests/visual/scenes/markdown-combo.spec.ts`（新增 lightbox 断言组；该场景已有
   `images.md` 的十条引用与附件读桩 `stubAttachmentReads`，是现成的输入面）+
   `tests/visual/fixtures/markdown-combo/`（按需补一份小于窗口的位图）；`scripts/acceptance/scenarios/`
-  新增一个真机场景（编号 23）+ 复用既有 `scripts/acceptance/fixtures/image-fallback-*.svg`。
+  新增一个真机场景（原稿记编号 **23**，实现期为 **33**——23 与 24 已分别被 M182 / M185 的
+  `23-image-first-open-width` / `24-table-cell-ctrl-e-seq` 占用；场景由 M209 在双击通道打通后落库，
+  见 [tasks.md](tasks.md) 的 6.1）+ 自己的 fixture（`lightbox.md` + 三份图，见 tasks 6.2）。
   基线按 [REVIEW.md](../../../REVIEW.md) 第 3 条的纪律逐张核对是否需要新增元素级基线
   （lightbox 是新元素，按 `tests/visual/README.md` 的基线更新纪律：截图先请 Alex 过目）。
 - 关联约束：ADR 0003 §3（不改写源文件——打开/关闭都不碰文档）、ADR 0002 §3（webview 不直接访问

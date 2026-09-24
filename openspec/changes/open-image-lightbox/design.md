@@ -241,6 +241,13 @@ CSS 判据（推荐项）：
   `scripts/acceptance/README.md` 的「已知边界」，收口方式已请 tower 裁决——逐条记录见
   [tasks.md](tasks.md) 第 6 节与 8.3。**本 change 的真机覆盖因此是缺的，不是「已验」**；打开与关闭路径的
   行为覆盖暂落在 chromium 层（那里是真实 dblclick）。
+  **归档期订正（M208 / M209，2026-09-25）**：上面这条「套件在 WKWebView 里造不出 `dblclick`」的结论
+  **已作废**——M209 实测第五条通道（`/usr/bin/swift` + `CGEvent` 显式投递 `kCGMouseEventClickState`）
+  能造出真实 `dblclick`，并已接进套件（`scripts/acceptance/lib/cgevent-click.swift` + `doubleClick` 动作）；
+  M184 用的那条判据本身也不成立（`openFile` 对已打开的同路径短路，「双击文件树行 → 标签数 1→2」恒不成立）。
+  真机场景最终以**编号 33** 落库（`scripts/acceptance/scenarios/33-image-lightbox.md`；2026-09-24 真机
+  PASS 36 断言 + 反向验证 FAIL 7 红），本 change 的真机覆盖**不再是缺的**；原稿的 23 / 24 已分别被
+  `23-image-first-open-width` 与 `24-table-cell-ctrl-e-seq` 占用。人工清单继续承接手感层。
 - **不改写源文件**：视觉与真机两层都断言 `EditorState.doc` / 磁盘文件逐字节不变（ADR 0003 §3）。
 - **基线**：lightbox 是新元素，按 [REVIEW.md](../../../REVIEW.md) 第 3 条与 `tests/visual/README.md`
   的纪律核对——现有场景里出现图片的只有 `markdown-combo`（该场景无 `toHaveScreenshot`），

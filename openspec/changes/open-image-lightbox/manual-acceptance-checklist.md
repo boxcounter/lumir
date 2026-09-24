@@ -1,14 +1,24 @@
 # 人工双击检查清单（M184 图片放大查看）
 
-归 **Alex 的 dogfood 手感项**——本项**只能人肉做**：真机验收套件在 WKWebView 里造不出 DOM 的
-`dblclick`（四条注入通道实测，见 `.tower/comms/findings/20260919-worker-lightbox-impl-improve-dom-dblclick-wkwebview.md`
-与 `scripts/acceptance/README.md` 的「已知边界」）。tower 裁决（2026-09-19，A+C 组合）：行为判别层
-由 chromium 断言组承担（打开 / 三条关闭 / 焦点归还 / 不穿透 / 几何），真机侧留这份清单。
+归 **Alex 的 dogfood 手感项**。**归档期订正（M208 / M209，2026-09-25）**：M184 当时的「真机验收套件在
+WKWebView 里造不出 DOM 的 `dblclick`」已被推翻——M209 实测第五条通道（`/usr/bin/swift` + `CGEvent` 显式
+投递 `kCGMouseEventClickState`）能造出真实 `dblclick`，且已接进套件（`doubleClick` 动作）；真机场景
+`scripts/acceptance/scenarios/33-image-lightbox.md` 因此承接了**行为判别层**（三种引用形态打开 / 三条关闭
+路径 / `Esc` 后焦点归还 / 模态期间不穿透 / 缩放几何 / 两条 `unchangedSince`，2026-09-24 真机 PASS 36 断言）。
+本清单据此**收窄到只能人肉判的部分**：手感（遮罩压暗程度、图片留白、居中观感）、WKWebView 特有的观察点
+（双击是否误触发文本选择或页面放大手势）与下面步骤的**手感**（不是断言口径）。历史背景（M184 的四条通道
+实测与 tower 的 A+C 裁决）见
+`.tower/comms/findings/20260919-worker-lightbox-impl-improve-dom-dblclick-wkwebview.md` 与
+`scripts/acceptance/README.md` 的「已知边界」条；chromium 层的行为判别组仍是
+`tests/visual/scenes/markdown-combo.spec.ts` 的 M184 + M209 断言组。
 
 任一条不符预期，请把「哪一步 + 看到什么」交给 tower 起 finding；手感类（遮罩压暗程度、图片留白、
 居中观感）直接说不喜欢即可，不需要理由。
 
 ## 步骤（在真实 app 里做，建议直接用你自己的 vault）
+
+以下步骤的行为面已被机器覆盖（真机场景 33 + chromium 断言组），走一遍是为了手感与观感代价，
+不必逐条核对断言口径。
 
 1. **打开**：双击文档里一张已渲染出来的图片 → 出现全屏遮罩、图片居中；大图完整可见（不出现滚动条），
    小图按原尺寸不放大。同时看一眼关闭前文档区与 masthead 的几何没有被推动。
