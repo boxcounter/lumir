@@ -106,7 +106,7 @@ pub struct EditorConfig {
     /// 非 md 文件没有围栏渲染，对它们无可观测效果（不是漏实现）。
     pub code_block_wrap: bool,
     /// 正文（比例）字体族（change typography-and-zoom）：CSS `font-family` 值，`None` =
-    /// 沿用基线观感（`src/style.css` 的 `--font-body`）。只在启动装载时读一次——本能力不做
+    /// 沿用基线观感（`src/style.css` 的 `--font-sans`）。只在启动装载时读一次——本能力不做
     /// 热重载，改字体需重启（字号另有运行期步进命令，不落盘）。
     ///
     /// 这里**只挡空串 / 纯空白**（→ `None` + warning）：值是否合法的 CSS 字族由前端判定

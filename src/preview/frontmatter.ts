@@ -1,7 +1,14 @@
 // frontmatter properties 区块（frontmatter-properties capability）。
 // 检测文档首部 --- 包围块，用 js-yaml 解析（裁决点 E 推荐项，不自造 YAML 子集），
-// 渲染为键值表格 replace widget；tags 以标签形态展示，嵌套值以 JSON 样式展示。
-// 解析失败回退：原文完整保留显示 + 人话提示（spec「解析失败回退」）。
+// 渲染为键值表格 replace widget；tags 以标签形态展示，status 以语义 chip 展示，嵌套值以
+// JSON 样式展示。解析失败回退：原文完整保留显示 + 人话提示（spec「解析失败回退」）。
+//
+// 形态口径（change restyle-ui-tokens-v1，R2b）：渲染结构不变（仍是键值表格 + 标签 + chip），
+// 换的是样式与**值的呈现档位**——字段名 mono 11px 提示档灰、值 13px 正文色、整块为
+// agent-bg 浅底圆角属性区（样式在 src/preview/theme.ts 的 `.cm-lp-frontmatter` / `.fm-*`）。
+// status 的「值 → 语义档」映射不在本模块（只把原值写进 data-fm-status，映射表在 CSS 侧），
+// 因此本模块不承担口径会变的那部分知识。构建逻辑（扫描上限、检测、StateField 装配时机）
+// 本 change 零改动。
 
 import { load as parseYaml } from "js-yaml";
 import { WidgetType } from "@codemirror/view";
@@ -156,6 +163,16 @@ export class FrontmatterWidget extends WidgetType {
           chip.textContent = tag;
           valueCell.append(chip);
         }
+      } else if (key === "status") {
+        // status 的值不渲染裸字符串，渲染成语义 chip（restyle R2b 的 `.fm` 形态）。
+        // 这里只出「chip 元素 + 原值」：值 → 语义档（ok / pending / danger / 中性兜底）的映射
+        // 表在 CSS 侧（theme.ts 的 `.cm-lp-fm-status[data-fm-status=…]`），本模块不判语义——
+        // 判定逻辑与取值清单只此一份，且不把「哪几个词算哪种状态」这种会变的口径写进构建路径。
+        const chip = document.createElement("span");
+        chip.className = "cm-lp-fm-status";
+        chip.dataset.fmStatus = renderValue(v).trim().toLowerCase();
+        chip.textContent = renderValue(v);
+        valueCell.append(chip);
       } else {
         valueCell.textContent = renderValue(v);
       }

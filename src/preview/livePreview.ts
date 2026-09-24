@@ -807,27 +807,23 @@ function collectSyntaxDecorations(
 
       if (name === "Blockquote") {
         // callout（Obsidian [!type]，M109）：首行 [!type] 命中的 blockquote 整块
-        // 换 callout 行样式（类型色经行内 --callout-c 变量接线，token 在 style.css），
-        // 标记替换为图标 widget；未命中保持普通引用样式。标记/标题装饰只在首行
-        // 落入视口时添加（视口重建时补齐）。
+        // 换 callout 行样式；**语义族**经族类名接线（restyle R2b 的收敛：13 类 → 五族，
+        // 族归属的单一来源是 callout.ts 的 CALLOUT_TYPES，色值在 theme.ts 的
+        // `.cm-lp-callout-fam-*`），标记替换为类型标签 widget；未命中保持普通引用样式。
+        // 标记/标题装饰只在首行落入视口时添加（视口重建时补齐）。
         const callout = detectCallout(doc, ref.node);
         for (const l of lineRanges(view, Math.max(ref.from, vrFrom), Math.min(ref.to, vrTo))) {
           if (!callout) {
             decos.push(Decoration.line({ class: "cm-lp-quote-line" }).range(l.from));
             continue;
           }
-          const classes = ["cm-lp-callout-line"];
+          const classes = ["cm-lp-callout-line", `cm-lp-callout-fam-${callout.family}`];
           if (l.from === callout.firstLineFrom) classes.push("cm-lp-callout-first");
           if (doc.lineAt(l.from).to === callout.lastLineTo) classes.push("cm-lp-callout-last");
-          decos.push(
-            Decoration.line({
-              class: classes.join(" "),
-              attributes: { style: `--callout-c:var(--callout-${callout.canonical})` },
-            }).range(l.from),
-          );
+          decos.push(Decoration.line({ class: classes.join(" ") }).range(l.from));
         }
         if (callout && callout.firstLineTo >= vrFrom && callout.firstLineFrom <= vrTo) {
-          // 首行有光标/选区时显露 [!type] 源码（类型与标题可编辑），否则替换为图标。
+          // 首行有光标/选区时显露 [!type] 源码（类型与标题可编辑），否则替换为类型标签。
           if (!touchesSelection(callout.firstLineFrom, callout.firstLineTo)) {
             const { marker, title } = calloutMarkerDecorations(callout);
             decos.push(marker);
@@ -859,8 +855,13 @@ function collectSyntaxDecorations(
       }
 
       if (name === "FencedCode" || name === "CodeBlock") {
+        // 块的**首行**：围栏块带 CodeMark（``` / ~~~ 行）时它是头部条（样式在 theme.ts 的
+        // .cm-line.cm-lp-codeblock-head）——语言标记是围栏行自己的文字，不另造 DOM 元素。
+        // 缩进代码块没有 CodeMark，也就没有头部条。
+        const headLine = ref.node.getChild("CodeMark") !== null ? doc.lineAt(ref.from).from : -1;
         for (const l of lineRanges(view, Math.max(ref.from, vrFrom), Math.min(ref.to, vrTo))) {
-          decos.push(Decoration.line({ class: "cm-lp-codeblock-line" }).range(l.from));
+          const classes = l.from === headLine ? "cm-lp-codeblock-line cm-lp-codeblock-head" : "cm-lp-codeblock-line";
+          decos.push(Decoration.line({ class: classes }).range(l.from));
         }
         collectCodeTokens(view, ref.node, vrFrom, vrTo, decos);
         return false;

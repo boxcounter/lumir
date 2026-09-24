@@ -39,7 +39,7 @@ export function endMarkerVisible(contentHeight: number, viewportHeight: number):
   return viewportHeight > 0 && contentHeight > viewportHeight;
 }
 
-/** 两段短线中的一段：本体 0 高，视觉高度来自 1px border（与 `.cm-lp-hr` 同款取色 `--bd-2`）。 */
+/** 两段短线中的一段：本体 0 高，视觉高度来自 1px border（与 `.cm-lp-hr` 同款取色 `--border-soft`）。 */
 function markerLine(): HTMLElement {
   const line = document.createElement("span");
   line.className = END_MARKER_LINE_CLASS;
