@@ -291,6 +291,23 @@
     的两处口径与相关 scenario 的具体值），并在归档时核对 living `typography/spec.md` 的 4 条 requirement
     与 `restyle` 的 delta 不冲突。
 
+28. **change `document-end-marker` 待归档跟踪**（2026-09-24，M205 finding 补登，**待 Alex 节点 2**）：
+    M205 归档五件后 `openspec list` 复核发现 `document-end-marker` 已 `✓ Complete` 却仍留活跃列表，且
+    实现合并时未落待归档记录——M150 记过的漏跟踪失效模式复现（finding
+    `.tower/comms/findings/20260924-worker-archive-five-bug-document-end-marker-complete-change.md`）。
+    归档评审须带上 M189 的**机制偏离签字**（没用 design 候选 A/B，落在「真元素挂 .cm-scroller」的第三条路，
+    reviewer r1/r2 已判成立）；若要给完读标记加像素基线，先过目
+    `test-results/m189/acceptance-27-pass/shots/` 再 `--update`。归档后按其 living 落点补 Purpose 归属
+    记录、实测归档件内相对链接层级。
+
+29. **`restyle-ui-tokens-v1` 的 ui-design-system delta 有一条层级错的相对链接**（2026-09-24，M205 finding
+    登记，**随 restyle 实现批顺手修，不需裁决**）：
+    `openspec/changes/restyle-ui-tokens-v1/specs/ui-design-system/spec.md` 指向
+    `docs/specs/design-tokens-v1.md` 的链接用了 4 层 `../`（解析成不存在的 `openspec/docs/specs/…`），
+    应为 5 层；docs-check 与 validate 都不查相对链接，归档时也不会被自动修（finding
+    `.tower/comms/findings/20260924-worker-archive-five-bug-restyle-ui-tokens-v1-ui-design-system-delta.md`）。
+    顺带建议：把 M205 的「相对链接可达性实测」做成归档收尾可复跑脚本。
+
 ## 待修 findings（不阻塞）
 
 - **`list-filter` 归档时如实留下的四处覆盖缺口 / 措辞落差**（2026-09-24，M205 登记，low）：
