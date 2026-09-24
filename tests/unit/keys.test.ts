@@ -217,6 +217,57 @@ class FakeElement {
   }
 }
 
+test("Keymap：事件目标是编辑器之外的可编辑宿主时，只拦打字键（chord 照常分发）", () => {
+  const host = fakeWindow();
+  const { runtime, runs } = recordingRuntime();
+  const bindings: KeyBinding[] = [
+    { key: "s", command: "document.save", scope: "global", doc: "" },
+    { key: "Cmd-Shift-o", command: "toc.toggle", scope: "global", doc: "" },
+  ];
+  let inEditor = false;
+  new Keymap(bindings).attach(host.target, runtime, { isEditorEvent: () => inEditor });
+
+  // 打字键（无修饰键的可打印单字符）：原生 input / textarea / contenteditable 里都不分发、不消费
+  for (const target of [{ tagName: "INPUT" }, { tagName: "textarea" }, { isContentEditable: true }]) {
+    const event = keyEvent({ key: "s", target });
+    host.fire(event);
+    assert.equal(event.defaultPrevented, false, "可编辑宿主里不消费，按键要留给原生路径");
+    assert.deepEqual(runs, [], "可编辑宿主里不触发任何绑定");
+  }
+
+  // ⇧ 属打字的一部分：`⇧s` 的 event.key 是 "S"，同样拦下（否则大写的单字符绑定会吞掉字符）
+  const shifted = keyEvent({ key: "S", shiftKey: true, target: { tagName: "INPUT" } });
+  host.fire(shifted);
+  assert.equal(shifted.defaultPrevented, false);
+  assert.deepEqual(runs, []);
+
+  // chord 照常分发（r2 评审 P1-1 的教训）：两处浮层打开后焦点恒在筛选输入框，
+  // 若 chord 也被拦，`⌘⇧O` / `⌘O` 再按收起浮层这条 living spec 的关闭路径就永远不可达。
+  const toggleInInput = keyEvent({ key: "O", metaKey: true, shiftKey: true, target: { tagName: "INPUT" } });
+  host.fire(toggleInInput);
+  assert.equal(toggleInInput.defaultPrevented, true);
+  assert.deepEqual(runs, ["toc.toggle"]);
+
+  // ⌥ chord 同样放行（macOS 的组字层：⌥a → "å"，语义上不是「键入一个字符」）
+  const altChord = keyEvent({ key: "å", altKey: true, target: { tagName: "INPUT" } });
+  host.fire(altChord);
+  assert.equal(altChord.defaultPrevented, false, "⌥ 组合不拦：它不是表里的单字符绑定形态");
+
+  // 编辑器（contentDOM 内的 contenteditable）是绑定的主目标：打字键也照常分发
+  inEditor = true;
+  const inEditorEvent = keyEvent({ key: "s", target: { isContentEditable: true } });
+  host.fire(inEditorEvent);
+  assert.equal(inEditorEvent.defaultPrevented, true);
+  assert.deepEqual(runs, ["toc.toggle", "document.save"]);
+
+  // 非可编辑目标（浮层条目 / 按钮）：照常分发（守卫只管可编辑宿主）
+  inEditor = false;
+  const onButton = keyEvent({ key: "s", target: { tagName: "BUTTON" } });
+  host.fire(onButton);
+  assert.equal(onButton.defaultPrevented, true);
+  assert.deepEqual(runs, ["toc.toggle", "document.save", "document.save"]);
+});
+
 test("Keymap：editor 作用域只在编辑器事件内消费，作用域外不 preventDefault", () => {
   const host = fakeWindow();
   const { runtime, runs } = recordingRuntime();

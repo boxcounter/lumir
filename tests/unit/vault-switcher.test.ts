@@ -12,6 +12,7 @@ import type { VaultListEntry } from "../../src/bindings/VaultListEntry.ts";
 import type { VaultSession } from "../../src/bindings/VaultSession.ts";
 import type { EditorSession, ScrollSnapshot } from "../../src/editor.ts";
 import type { ToastAction, VaultSwitchBlock } from "../../src/save-controller.ts";
+import { NO_MATCH_TEXT } from "../../src/list-filter.ts";
 import {
   SESSION_WRITE_DEBOUNCE_MS,
   createGuardPromptPresenter,
@@ -655,6 +656,10 @@ interface FakeEvent {
   shiftKey?: boolean;
   code?: string;
   target?: unknown;
+  /** focusout 的落点（浮层的「焦点离开浮层才收起」判据读它）。 */
+  relatedTarget?: unknown;
+  /** input 事件的组合期标记（筛选的组合期不刷新判据读它）。 */
+  isComposing?: boolean;
   defaultPrevented?: boolean;
   preventDefault?(): void;
 }
@@ -690,6 +695,11 @@ class FakeEl {
   tabIndex = 0;
   offsetWidth = 0;
   focused = false;
+  /** 输入框面（筛选行是 change list-filter 起的第一个可编辑宿主，代码读 value、写 placeholder）。 */
+  value = "";
+  placeholder = "";
+  autocomplete = "";
+  spellcheck = false;
 
   constructor(tagName: string) {
     this.tagName = tagName;
@@ -781,6 +791,8 @@ interface SwitcherRig {
   mounts: FakeEl;
   entries: FakeEl[];
   popover(): FakeEl;
+  /** 筛选输入行（浮层容器的第一个子项；持焦点、承载查询）。 */
+  input(): FakeEl;
   list(): FakeEl;
   switched: VaultListEntry[];
   relocated: Array<{ row: VaultListEntry; siblings: readonly VaultListEntry[] }>;
@@ -788,6 +800,10 @@ interface SwitcherRig {
   expandedFlags: boolean[];
   focusedEditor: number;
   warns: string[];
+  /** `list()` 被调用的次数（筛选 MUST NOT 触发第二次拉取，tasks 3.4）。 */
+  listCalls: number;
+  /** 当前选中行的 vault id（无选中行时 undefined）。 */
+  activeRowId(): string | undefined;
   /** 编辑器替身：阅读位置（滚动值语义）+ 光标位置 + 三条 dep 的调用次序。 */
   editor: {
     /** 当前阅读位置。 */
@@ -812,13 +828,20 @@ function createSwitcherRig(rows: VaultListEntry[]): SwitcherRig {
     mounts,
     entries: [entry],
     popover: () => mounts.children[0],
-    list: () => mounts.children[0].children[0],
+    // 子项顺序 = 构造顺序：输入行、列表、无命中提示、分隔线、新增入口（change list-filter）。
+    input: () => mounts.children[0].children[0],
+    list: () => mounts.children[0].children[1],
     switched: [],
     relocated: [],
     added: 0,
     expandedFlags: [],
     focusedEditor: 0,
     warns: [],
+    listCalls: 0,
+    activeRowId: () =>
+      mounts.children[0]
+        .find("vault-row")
+        .find((row) => row.classes.has("is-active"))?.dataset.vault,
     editor,
     setScrollTop: (value) => void (editor.scrollTop = value),
     setCaretTop: (value) => void (editor.caretTop = value),
@@ -830,6 +853,7 @@ function createSwitcherRig(rows: VaultListEntry[]): SwitcherRig {
     sessions: () => [],
     activePath: () => undefined,
     list: () => {
+      rig.listCalls += 1;
       notify?.(rows);
       return Promise.resolve(rows);
     },
@@ -986,27 +1010,27 @@ test("浮层：↑↓ / ⌃N⌃P 只走可选中行，Enter 切换，当前项�
   assert.equal(active().dataset.vault, "notes", "默认游标落在当前项");
 
   // ↓ 跳过失效行，落到下一个可切换的行
-  rig.list().fire("keydown", keydownEvent("ArrowDown"));
+  rig.popover().fire("keydown", keydownEvent("ArrowDown"));
   assert.equal(active().dataset.vault, "work");
   // 末项再按不动（钳制，不回卷）
-  rig.list().fire("keydown", keydownEvent("ArrowDown"));
+  rig.popover().fire("keydown", keydownEvent("ArrowDown"));
   assert.equal(active().dataset.vault, "work");
   // ⌃P 与 ↑ 等价
-  rig.list().fire("keydown", keydownEvent("p", { ctrlKey: true }));
+  rig.popover().fire("keydown", keydownEvent("p", { ctrlKey: true }));
   assert.equal(active().dataset.vault, "notes");
-  rig.list().fire("keydown", keydownEvent("p", { ctrlKey: true }));
+  rig.popover().fire("keydown", keydownEvent("p", { ctrlKey: true }));
   assert.equal(active().dataset.vault, "notes", "首项钳制");
 
   // Enter 切换当前游标行
-  rig.list().fire("keydown", keydownEvent("ArrowDown"));
-  rig.list().fire("keydown", keydownEvent("Enter"));
+  rig.popover().fire("keydown", keydownEvent("ArrowDown"));
+  rig.popover().fire("keydown", keydownEvent("Enter"));
   assert.deepEqual(rig.switched.map((row) => row.id), ["work"]);
   assert.equal(rig.popover().hidden, true, "发起切换后浮层收起");
 
   // 当前项上按 Enter：只关闭，不做一次无谓的重载
   rig.switcher.toggle();
   await flush();
-  rig.list().fire("keydown", keydownEvent("Enter"));
+  rig.popover().fire("keydown", keydownEvent("Enter"));
   assert.deepEqual(rig.switched.map((row) => row.id), ["work"]);
   assert.equal(rig.popover().hidden, true);
   assert.equal(rig.focusedEditor, 1, "键盘关闭要把焦点交还编辑器");
@@ -1014,7 +1038,7 @@ test("浮层：↑↓ / ⌃N⌃P 只走可选中行，Enter 切换，当前项�
   // Esc：关闭并交还焦点
   rig.switcher.toggle();
   await flush();
-  rig.list().fire("keydown", keydownEvent("Escape"));
+  rig.popover().fire("keydown", keydownEvent("Escape"));
   assert.equal(rig.popover().hidden, true);
   assert.equal(rig.focusedEditor, 2);
   // 列表读取失败：只给一条人话提示，不弹空浮层
@@ -1043,7 +1067,7 @@ async function closeVia(rig: SwitcherRig, path: ClosePath): Promise<void> {
     rig.switcher.toggle();
     return;
   }
-  rig.list().fire("keydown", keydownEvent(path === "escape" ? "Escape" : "Enter"));
+  rig.popover().fire("keydown", keydownEvent(path === "escape" ? "Escape" : "Enter"));
 }
 
 /** 打开浮层并等列表渲染完成。 */
@@ -1086,7 +1110,9 @@ test("浮层收起：交还焦点前后阅读位置不变（任意阅读位置 �
 test("浮层收起：不接管焦点的收起路径（blur / 点浮层外）不碰阅读位置", async () => {
   // 这两条路上焦点归用户点的那个东西，不由浮层接管——拿旧位置把视口拽回去反而是越权。
   for (const close of [
-    (rig: SwitcherRig) => rig.list().fire("blur"),
+    // 焦点离开浮层（tab 出去 / 点到别处）：挂点在**容器**上（change list-filter 的外移），
+    // relatedTarget 在浮层之外即收起。
+    (rig: SwitcherRig) => rig.popover().fire("focusout", { relatedTarget: new FakeEl("div") }),
     (rig: SwitcherRig) => rig.doc.fire("mousedown", { target: new FakeEl("div") }),
   ]) {
     const rig = createSwitcherRig([listRow({ id: "notes", path: "/Users/alex/notes" })]);
@@ -1125,4 +1151,145 @@ test("listRow helper：摘要与列表行字段同源（tab_count / last_opened_
   const row = listRow({ id: "notes", tab_count: 2, last_opened_at: now - 3 * 60_000 });
   assert.equal(summaryText(row.tab_count, row.last_opened_at, now, false), "2 个标签 · 3 分钟前");
   assert.equal(row.available, true);
+});
+
+// ---------------------------------------------------------------------------
+// 输入筛选（change list-filter，M199）
+// ---------------------------------------------------------------------------
+//
+// 本层判的是 vault 侧的作用面（匹配哪个字段、谁参与筛选、谁不受影响、结果集与下标的映射），
+// 匹配语义与查询状态本身在 tests/unit/list-filter.test.ts（两处共用的那一份实现）。
+
+/** 输入一个查询（真实路径：写 value 再派发 input 事件，与浏览器一致）。 */
+function typeQuery(rig: SwitcherRig, query: string): void {
+  rig.input().value = query;
+  rig.input().fire("input", {});
+}
+
+const FILTER_ROWS = (): VaultListEntry[] => [
+  listRow({ id: "notes", path: "/Users/alex/notes", name: "notes" }),
+  listRow({ id: "gone-vault", path: "/Volumes/ext/gone", name: "gone-vault", available: false }),
+  listRow({ id: "sandbox", path: "/Users/alex/sandbox", name: "sandbox" }),
+];
+
+test("浮层筛选：显示名子串命中（非前缀）、失效行参与、输入不触发第二次拉取", async () => {
+  const rig = createSwitcherRig(FILTER_ROWS());
+  await rig.switcher.onVaultLoaded("notes", []); // 当前项 = notes
+  rig.switcher.toggle();
+  await flush();
+  assert.equal(rig.listCalls, 1, "打开只拉一次");
+  assert.equal(rig.popover().find("vault-row").length, 3);
+
+  // 输入 "s"：中段/末段含 s 的行都命中（notes 的 s 在末尾、sandbox 的首字母也是 s），
+  // 不含 s 的失效行 gone-vault 被筛掉 —— 子串而非前缀的区分点正在这里。
+  typeQuery(rig, "s");
+  assert.deepEqual(
+    rig.popover().find("vault-row").map((row) => row.dataset.vault),
+    ["notes", "sandbox"],
+    "结果集顺序与后端给出的顺序一致（前端不重排）",
+  );
+  assert.equal(rig.activeRowId(), "notes", "游标落在首条可选中命中");
+
+  // 摘要与路径不参与匹配：输入「没有打开过文件」（D101 的摘要文案）不命中任何行
+  typeQuery(rig, "还没有打开过文件");
+  assert.equal(rig.popover().find("vault-row").length, 0);
+
+  // 失效行参与筛选（它是「重新定位…」的唯一入口，MUST NOT 被筛掉）
+  typeQuery(rig, "gone");
+  assert.deepEqual(rig.popover().find("vault-row").map((row) => row.dataset.vault), ["gone-vault"]);
+  assert.equal(rig.activeRowId(), undefined, "失效行不在键盘游标空间里（与筛选前同一口径）");
+
+  // 多次输入只过滤本地数组：list() 仍只调过一次
+  typeQuery(rig, "note");
+  assert.equal(rig.listCalls, 1, "筛选 MUST NOT 触发第二次拉取");
+});
+
+test("浮层筛选：无命中保持浮层 + 一行提示，新增入口照常可用", async () => {
+  const rig = createSwitcherRig(FILTER_ROWS());
+  await rig.switcher.onVaultLoaded("notes", []);
+  rig.switcher.toggle();
+  await flush();
+
+  typeQuery(rig, "zzz");
+  assert.equal(rig.popover().hidden, false, "无命中 MUST NOT 收起浮层");
+  assert.equal(rig.list().hidden, true, "列表让位给提示行");
+  const empty = rig.popover().find("vault-empty")[0];
+  assert.equal(empty.hidden, false);
+  assert.equal(empty.textContent, NO_MATCH_TEXT, "文案与 list-filter 的常量同源（deck D117）");
+  // 分隔线与「新增 vault…」不受筛选影响：摆脱空结果的唯一入口必须还在
+  assert.equal(rig.popover().find("vault-sep")[0].hidden, false);
+  assert.equal(rig.popover().find("vault-add")[0].hidden, false);
+  // 点击路径仍是既有链路（close(false) + requestAdd）
+  rig.popover().find("vault-add")[0].fire("click");
+  assert.equal(rig.added, 1);
+
+  // 重开（空查询）→ 输入再清空：回全量，游标回到全量态起点（当前项）
+  rig.switcher.toggle();
+  await flush();
+  typeQuery(rig, "zzz");
+  assert.equal(rig.popover().find("vault-row").length, 0);
+  typeQuery(rig, "");
+  assert.deepEqual(
+    rig.popover().find("vault-row").map((row) => row.dataset.vault),
+    ["notes", "gone-vault", "sandbox"],
+  );
+  assert.equal(rig.list().hidden, false);
+  assert.equal(rig.popover().find("vault-empty")[0].hidden, true);
+  assert.equal(rig.activeRowId(), "notes", "查询变回空时游标回到全量态起点（当前项）");
+});
+
+test("浮层筛选：当前项被筛掉不改当前 vault，关闭丢弃查询", async () => {
+  const rig = createSwitcherRig(FILTER_ROWS());
+  await rig.switcher.onVaultLoaded("notes", []);
+  rig.switcher.toggle();
+  await flush();
+
+  typeQuery(rig, "sandbox");
+  assert.equal(rig.popover().find("is-current").length, 0, "当前项被筛掉时结果集里没有当前项标记");
+  assert.deepEqual(rig.switched, [], "被筛掉 MUST NOT 触发任何切换");
+  assert.equal(rig.activeRowId(), "sandbox", "无当前项在结果集里时游标落首条命中");
+
+  // Esc 一步关闭：查询随之丢弃（重开是空查询 + 全量）
+  rig.popover().fire("keydown", keydownEvent("Escape"));
+  assert.equal(rig.popover().hidden, true);
+  assert.equal(rig.input().value, "", "关闭丢弃查询（输入框与匹配状态一起清）");
+  rig.switcher.toggle();
+  await flush();
+  assert.equal(rig.input().value, "");
+  assert.equal(rig.popover().find("vault-row").length, 3, "重开从全量开始");
+  assert.equal(rig.activeRowId(), "notes", "重开的游标回到全量态起点（当前项）");
+  assert.equal(rig.popover().find("is-current").length, 1, "当前项标记回来");
+});
+
+test("浮层筛选：重定位的占用判定仍看完整列表（siblings MUST NOT 变成结果集）", async () => {
+  const rig = createSwitcherRig(FILTER_ROWS());
+  await rig.switcher.onVaultLoaded("notes", []);
+  rig.switcher.toggle();
+  await flush();
+
+  // 只筛出失效行，点击它发起重定位：siblings 必须是本次拉取的**完整列表**
+  typeQuery(rig, "gone");
+  rig.popover().find("vault-row")[0].fire("click");
+  assert.deepEqual(rig.relocated.map((item) => item.row.id), ["gone-vault"]);
+  assert.deepEqual(
+    rig.relocated[0].siblings.map((row) => row.id),
+    ["notes", "gone-vault", "sandbox"],
+    "被筛掉的 vault 仍参与占用判定（收窄成结果集会让两个身份静默落到同一路径）",
+  );
+});
+
+test("浮层筛选：组合期不刷新结果集（拼音串零命中的闪烁不发生）", async () => {
+  const rig = createSwitcherRig(FILTER_ROWS());
+  await rig.switcher.onVaultLoaded("notes", []);
+  rig.switcher.toggle();
+  await flush();
+
+  rig.input().fire("compositionstart", {});
+  rig.input().value = "an";
+  rig.input().fire("input", { isComposing: true }); // 组合期的中间串
+  assert.equal(rig.popover().find("vault-row").length, 3, "组合期不重算结果集");
+  rig.input().value = "安装";
+  rig.input().fire("compositionend", {});
+  assert.equal(rig.popover().find("vault-row").length, 0, "组合结束后刷一次（此处零命中）");
+  assert.equal(rig.popover().hidden, false, "零命中同样保持浮层打开");
 });

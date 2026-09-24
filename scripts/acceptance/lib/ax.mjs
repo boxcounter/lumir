@@ -28,12 +28,21 @@ export function parseNodes(axText) {
     const rest = raw.replace(/^\s*-\s*\[\d+\]\s+(?:AX[A-Za-z]+|AXWebArea)\b/, "");
     const bbox = /@(-?\d+),(-?\d+)\s+(\d+)×(\d+)/.exec(rest);
     const depth = (firstLine.length - firstLine.trimStart().length) / 2;
+    // value 的两种渲染形态都要认（M199 实测）：编辑器与静态文本用 `= "…"`，而**有 AXValue 的非文本
+    // 控件**（AXComboBox / AXRadioButton / AXPopUpButton…）用 `Value: …`（无引号，直到 `@x,y`、
+    // `actions=` 或行尾）。只认前一种时 ARIA 组合框（`<input role="combobox">`）的文本读不到，
+    // keys 动作的回读目标会退到它的 label 上——注入的落地与否永远判不出来（现场见 execute.mjs 的
+    // TEXT_FIELD_ROLES 注释：实测值 "banbab" = 三次注入的残段累积）。
+    const value =
+      /=\s*"([\s\S]*?)"/.exec(rest)?.[1] ??
+      /Value:\s*(.*?)(?=\s+@|\s+actions=|$)/.exec(rest)?.[1] ??
+      null;
     nodes.push({
       index: Number(idx),
       role,
       title: /"([^"]*)"/.exec(rest)?.[1] ?? null,
       label: /\(([^)]*)\)/.exec(rest)?.[1] ?? null,
-      value: /=\s*"([\s\S]*?)"/.exec(rest)?.[1] ?? null,
+      value,
       bbox: bbox ? { x: +bbox[1], y: +bbox[2], w: +bbox[3], h: +bbox[4] } : null,
       actions: /actions=\[([^\]]*)\]/.exec(rest)?.[1]?.split(",").map((s) => s.trim()) ?? [],
       help: /help="([^"]*)"/.exec(rest)?.[1] ?? null,

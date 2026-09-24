@@ -164,3 +164,52 @@
 | ③ 共享口径 | 规则写 `toc-outline`、`vault-workspace` 引用（delta 现状） | 翻转宿主 ⇒ 两个 delta 文件内容对调；新建 capability ⇒ 新增 `openspec/specs/list-filter/spec.md` 与 archive 时的 Purpose（`docs/process/openspec-workflow.md:57`） |
 | ④ 键盘与退出 | 一步 `Esc`、无命中不关浮层（delta 原文） | 两步 `Esc` ⇒ 改 `Esc` 条款 + **必须**改写底部提示文案，并同步 `13-toc` 的 15 处断言、`tests/visual/scenes/toc-outline.spec.ts:153`、`文案-Copy.md` D86；无命中即关 ⇒ 删掉无命中态 requirement 与其场景 |
 | ⑤ 缩进基准 | 沿用文档级基准（`src/toc.ts:304` 不动，living spec 原文不动） | 按匹配集归一 ⇒ 把「文档最浅层」改写为「结果集最浅层」，并加一条筛选态缩进的场景 |
+
+## 7. 实现期实测结论（M199，2026-09-24）
+
+本节的读数都来自 M199 的真机（`scripts/acceptance/`，WKWebView + KimiCU）与 chromium（`tests/visual/`）
+运行，证据路径均可 `ls`（`test-results/m199/`，git 外）。**逐项标注「已实测 / 未实测」，不把未测的写成已验。**
+
+| # | 结论 |
+|---|---|
+| 1 | **未实测（探针不可判定，如实登记）**：chromium 用 CDP `Input.imeSetComposition` 做的半边探针结果**无法区分**被测命题——把 DOM 焦点放到 `.lumir-toc-list`（div）后派发组合串，"zhong" 仍落进了**弹层里的输入框**（`probe-ime-chromium.json`：`host: list(div)` 那次 `input=1, text="zhong"`，说明 Chromium 的 IME 目标不是 DOM activeElement，而是同一 frame 里的编辑宿主）。真机半边也造不出输入法组合（KimiCU 的 `type_text` 直接注入 Unicode，不经 IME；`do: keys` 只能注入 ASCII）。因此「非可编辑宿主收不到 IME 输入」这条**没有被本 mission 的测量证实**，形态选择（裁决点 ② 的真输入框）在本实现里由另外两条腿承重：原生文本编辑语义（`⌫` / `⌥⌫` / `⌘A` / `⌦` / 左右键）与 ARIA 组合框语义。**真机实测到的是它的正向部分**：文本确实进得了输入框（`AXComboBox` 的 `Value:` 读数，场景 32）。 |
+| 2 | **已实测**：真机 AX 快照里唯一带 `(focused)` 的节点是 `AXComboBox (筛选)`，浮层条目（`AXList (大纲)` 下的 `AXStaticText`）**没有任何标记**。据此 `scripts/acceptance/scenarios/13-toc.md` 的四处游标判据全部改写为**派生证据**（masthead 标题链，`›` 分隔符只可能由指示段产生）：`↓` 的落点由随后的 `Enter` 链条证明；⌃N / ⌃P 两腿各补一次「↓ + Enter」或直接 Enter 由链条判。改后 `13-toc` **49/49 PASS**（`test-results/m199/acceptance-run4.log`）。 |
+| 3 | **部分实测**：实现按「组合期不刷新、组合结束后的第一个输入事件刷一次」落地（两个事件序都成立）；chromium 断言在 `tests/visual/scenes/list-filter.spec.ts`（合成 `compositionstart` → `input(isComposing)` → `compositionend` 序列）。真机的事件序**未实测**（同第 1 项：真机通道造不出输入法组合）。 |
+| 4 | **已实测（chromium）**：N=120 次击键/档，「输入 → 结果集 DOM 重建完成」的处理时长中位 **0.30ms（60 条）/ 4.70ms（1000 条）**，p95 0.5 / 6.2ms，max 1.6 / 7.0ms；事件到下一帧 paint 的中位 0.70 / 5.40ms（`test-results/m199/filter-keystroke.json`）。**不启用退化预案**（DOM 重建路线留在实现里）；真机观感读数未取——ADR 0002 §6 的 `<16ms` 在这条路径上仍只是「chromium 上未观察到超预算」，不写成真机达标。 |
+| 5 | **已实测（chromium）**：`test-results/m199/short-window.json`——窗口内容区高 285px 时浮层底边**恰好**贴住内容区下沿（overflow 0px，与原文 `57px + 80% ≤ 100%` 的推导逐位吻合）；260px 时越出 5px；300 / 320 / 400 / 800px 均不越出。**原文那条已知边界照旧成立**（它说的是 80vh 上限那条分支），本次补一句：内容自然高度小于上限时（条数少的文档）约束换成自然高度，输入行让自然高度 +31px（`toc-outline` 的 5 条条目下浮层自然高约 202px → 窗口内容区高低于约 259px 时底边可能越出）。读数与改写落 `src/style.css` 与 `openspec/specs/toc-outline/spec.md` 的已知边界段。 |
+| 6 | **部分实测**：`Esc` 一步关闭（真机，场景 32）与 `⌘⇧O` 再按关（真机，`13-toc` 全绿）都过了；`Tab` 出去即收起在 chromium 侧有断言（`tests/visual/scenes/list-filter.spec.ts` 的大纲侧）；**vault 侧的焦点离开收起与「点浮层以外收起」在单元层**（`tests/unit/vault-switcher.test.ts`：focusout 带浮层外 `relatedTarget`、document `mousedown` 落在浮层外；两条路径本 change 未动）。真机侧的 `Tab` / 点击浮层以外**未单独断言**（r1 评审 P2-3 指正了原先那句过宽的指针）。 |
+| 7 | **chromium 已实测**（`list-filter.spec.ts`「点击输入框能落焦点」先把焦点 Tab 到行上再点输入框；反向验证 RV-4 去掉排除项后该条红）。**真机的鼠标点击现象未覆盖**（判据只能人工或 chromium）。 |
+| 8 | **已实测（chromium，r1 修复 + r2 收窄后）**：本条原先只登记「结构证据」，r1 评审走查证明那套证据**不成立**——浮层容器对单字符走「其余键不消费」，事件照常冒泡到 window 分发器；用户绑定派生的 scope 是 **global**，分发器只对 editor 作用域判 `isEditorEvent`，于是 `preventDefault()` + 保存触发：**字符进不了输入框**，与 delta scenario 的 THEN 恰好相反。修复（tower 裁决路径 ①）：`src/keys.ts` 的 `Keymap.handle` 加**可编辑宿主守卫**；**r2 评审把守卫收窄到「只拦打字键」**——目标是编辑器之外的可编辑宿主（原生 input / textarea / contenteditable）且按下的是**无修饰键的可打印单字符**（`isTypingKey`：`⇧` 仍属打字，⌘/⌃/⌥ chord 放行；编辑器 contentDOM 经既有的 `ctx.isEditorEvent` 排除）。收窄的理由是 r1 的 blanket 形态把 living spec 的关闭路径二整段杀死（两处浮层打开后焦点恒在筛选输入框，`⌘⇧O`/`⌘O` 再按收起浮层因此永不可达，连同浮层里的 `⌘W`/`⌘F`/`⌘=`/`⌘1–9` 一起失效——reviewer r2 探针在同构建里实测，读数 `Received: visible`，见 `test-results/m199/reviewer-r2-toggle-close-probe.md`）。断言落 `tests/visual/scenes/editable-host-guard.spec.ts` 四条：① 筛选输入框里打 `s` → 字符落进输入框（`toHaveValue("s")`）、桩的 `document_save` 调用数不变、无「已保存」浮条；② 浮层外（编辑器）打 `s` → 保存真的落盘（写盘记录 +1、内容含 `x`）；③ 搜索 panel 侧同型一条；④ **焦点在筛选输入框时 ⌘⇧O / ⌘O 再按应收起浮层**（关闭路径二，r2 的修复要求）。两次反向验证互补（读数 `test-results/m199/visual-filter-reverse.md`）：**RV-5** 关掉守卫 → 单字符两条红（`Received: ""`）而 chord 两条绿；**RV-6** 放宽回 blanket → chord 两条红（`Received: visible`）而单字符两条绿。真机侧：场景 32（字符进输入框，AXValue 读数）与场景 25（`⌘O` 再按收起，26/26 PASS）。 |
+| 9 | **已实测**：chromium 光标偏移断言（筛出中段一条后 `Enter` 落在该条的行尾）+ 反向验证 RV-2（去掉「结果集下标 → 源下标」映射后**只**该条红）。真机侧同一条映射由场景 32 的链条判据覆盖（查询 `ban` + `↓` + `Enter` → `Filter 章节 › Banana 小节 › Banana 细节`）。 |
+| 10 | **已实测**：单元层按**调用参数**断言 `requestRelocate` 的 `siblings` 仍是完整列表（`tests/unit/vault-switcher.test.ts`）+ 反向验证 RV-3（换成结果集后该条红）。 |
+
+### 语义变化登记（r2 修正版：可编辑宿主守卫的净影响）
+
+守卫收窄到「只拦无修饰键的可打印单字符」之后，本 change 的净行为变化**只剩 approved delta 要求的那一条**：
+
+| 路径 | 今天（收窄后） |
+|---|---|
+| 非编辑器可编辑宿主（筛选输入框 / 搜索 panel 输入框）里按**无修饰键的可打印字符** | 归输入框：字符落入、不触发任何绑定（**有意变化**，delta 的 scenario） |
+| 同一宿主里按 **⌘ / ⌃ 开头的 chord**（⌘⇧O、⌘O、⌘W、⌘F、⌘=、⌘1–9…） | **照常触发绑定**（与改动前一致；r1 的 blanket 形态曾把它们一并拦掉——r2 评审 P1-1 实证并裁决收窄） |
+| 同一宿主里按 **⌥ 组合**（`⌥a` → `å`） | 放行（按 chord 处理）。它是 macOS 的组字层，与「往输入框里键入一个字符」不是同一回事；本 change 只服务单字符绑定不许吞字这一条，⌥ 形态如实登记为未收窄的边界 |
+| 编辑器（contentDOM 内）里的任何按键 | 与改动前逐字一致（守卫经 `ctx.isEditorEvent` 排除） |
+| 浮层容器级就地键（↑↓ / ⌃N / ⌃P / Enter / Esc） | 与改动前逐字一致（容器先 `preventDefault`，分发器对已消费事件让路） |
+
+**一处被推翻的论证（如实留痕）**：r1 的 review-request 里用「348 条既有断言全绿」支持「搜索 panel 的 chord 让位无既有断言依赖」。
+r2 评审指出该论证的成立原因是**覆盖洞**——当时没有任何断言在「焦点位于可编辑宿主」时按修饰键 chord（浮层 toggle-close 因此整段失守而无灯可亮），
+不是「行为无变化」。修正后的证据是**两向**的：RV-6（放宽回 blanket → chord 两条红）与 RV-5（关掉守卫 → 单字符两条红）。
+
+### 真机场景读数（`test-results/acceptance/2026-09-24/`）
+
+| 场景 | 结果 | 说明 |
+|---|---|---|
+| `32-list-filter`（新增） | **PASS 47/47** | 两处浮层的打字即筛 / 结果集游标与跳转落点 / 无命中保持浮层 / `Esc` 一步丢弃查询 / 清空回全量 / 大小写折叠 |
+| `13-toc`（判据改写后） | **PASS 49/49** | 既有大纲行为未被筛选挤坏；游标判据走派生证据 |
+| `17-multi-vault-switch` | **PASS 38/38** | 切换器浮层的既有行为（含会话落盘与恢复）未回归 |
+| `18-vault-session-restore` | **PASS 7/7** | 同上 |
+
+**场景侧的两处修正（都不是产品缺陷，如实登记）**：① WKWebView 把 `<input role="combobox">` 报成
+`AXComboBox`（不是 `AXTextField`），且它的文本经 `Value: …` 暴露——套件原先两处都不认，`keys` 的回读目标
+因此退到 label 上，注入残段累积成脏查询（实测值 `banbab`）。`lib/ax.mjs` 与 `lib/execute.mjs` 已就地补上
+这两种形态。② 真机注入通道给不出大写（`A` 落成 `a`，同族边界见 README 的 `⌘⇧=` 那条），大小写折叠的真机
+判据改走「小写查询命中混合大小写文本」这一半。

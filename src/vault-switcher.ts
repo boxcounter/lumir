@@ -22,6 +22,13 @@
 // when 条件）。浮层打开期间持有焦点，editor 作用域因「事件目标不在 contentDOM 内」不命中；
 // 就地消费后 preventDefault，window 上的分发器对已消费事件让路——与 M148 大纲浮层、M133 键位
 // 面板、M139 搜索 panel 同一套口径（D86）。
+//
+// 输入筛选（change list-filter，M199）：浮层第一行是真输入框（`role=combobox`），焦点打开即落到
+// 它上面，打字即筛。匹配语义与交互口径**引用** toc-outline 的两条 ADDED requirement（
+// `openspec/changes/list-filter/specs/vault-workspace/spec.md`），实现上共用 src/list-filter.ts
+// 那一份匹配与状态——本模块只写 vault 侧的作用面：匹配**显示名**、失效行同样参与筛选、分隔线与
+// 「新增 vault…」不被筛掉、`rowEntries` 保持**完整列表**（「重新定位…」的占用判定要用它，收窄成
+// 结果集会让被筛掉的 vault 不再参与判定）。
 
 import type { FsEntry } from "./bindings/FsEntry";
 import type { VaultListEntry } from "./bindings/VaultListEntry";
@@ -30,6 +37,8 @@ import type { EditorSession, ScrollSnapshot } from "./editor";
 // 键位 token 走 keys.ts 的同一份归一化实现：浮层就地消费 ↑↓ / ⌃N⌃P / Enter / Esc 时也要用
 // 统一口径判断按键（自写一份解析是 REVIEW.md 第 8 条那类漂移的温床）。
 import { keyToken } from "./keys";
+import { FILTER_LABEL, FILTER_PLACEHOLDER, NO_MATCH_TEXT, createListFilter } from "./list-filter";
+import type { ListFilter } from "./list-filter";
 import type { ToastAction, VaultSwitchBlock } from "./save-controller";
 
 /** 会话落盘的防抖窗口（ms）：标签集合 / 顺序 / 激活项变化后合并到这一档。
@@ -78,6 +87,8 @@ export function summaryText(
 
 /** 浮层条目 id 前缀（aria-activedescendant 用；同页唯一即可）。 */
 const ITEM_ID_PREFIX = "lumir-vault-opt-";
+/** 列表的 id（输入框的 `aria-controls` 指认它）。 */
+const LIST_ID = "lumir-vault-list";
 
 // ---------------------------------------------------------------------------
 // 纯函数：会话快照 / 恢复计划 / 摘要里的时间与路径
@@ -534,15 +545,23 @@ class VaultSwitcher implements VaultSwitcherHandle {
   private readonly deps: VaultSwitcherDeps;
   private readonly store: VaultSessionStore;
   private readonly popover: HTMLDivElement;
+  private readonly input: HTMLInputElement;
   private readonly list: HTMLDivElement;
+  private readonly empty: HTMLParagraphElement;
   private readonly addRow: HTMLButtonElement;
   private readonly separator: HTMLDivElement;
+  /** 匹配与查询状态的唯一实现（与大纲浮层共用同一份，见文件头）。 */
+  private readonly filter: ListFilter = createListFilter();
 
-  /** 浮层状态：打开态、可选中行（供 ↑↓ 使用）、键盘游标（rows 下标）与当前项 id。 */
+  /** 浮层状态：打开态、结果集（源下标）、可选中行（供 ↑↓ 使用）、键盘游标（rows 下标）与当前项 id。 */
   private open = false;
+  /** 结果集：本次拉取到的条目数组的下标（升序）——筛选后**唯一**的「哪些行可见」真源。 */
+  private visible: readonly number[] = [];
   private rows: HTMLButtonElement[] = [];
   private rowEntries: VaultListEntry[] = [];
   private activeIndex = -1;
+  /** 输入法组合进行中：组合期不刷新结果集（同大纲浮层，拼音串必然零命中）。 */
+  private composing = false;
   /** 打开请求的令牌：拉取是异步的，回来时若已被关闭 / 又开过一次，本次结果整体丢弃。 */
   private openToken = 0;
   /** 当前 vault 的 id（列表里的当前项标记）。 */
@@ -555,11 +574,29 @@ class VaultSwitcher implements VaultSwitcherHandle {
     const popover = document.createElement("div");
     popover.className = "vault-pop";
     popover.hidden = true;
+    // 输入行（固定行，列向 flex 的第一个子项）：真输入框是输入法的 composition 目标，也是筛选
+    // 可发现性的唯一出口（本浮层没有提示行，靠占位文案 D118）。ARIA 组合框语义：持焦点的是它。
+    const input = document.createElement("input");
+    input.type = "text";
+    input.className = "vault-filter";
+    input.setAttribute("role", "combobox");
+    input.setAttribute("aria-expanded", "true");
+    input.setAttribute("aria-controls", LIST_ID);
+    input.setAttribute("aria-label", FILTER_LABEL);
+    input.placeholder = FILTER_PLACEHOLDER;
+    input.autocomplete = "off";
+    input.spellcheck = false;
     const list = document.createElement("div");
     list.className = "vault-list";
+    list.id = LIST_ID;
     list.setAttribute("role", "listbox");
     list.setAttribute("aria-label", POPOVER_LABEL);
     list.tabIndex = -1;
+    // 无命中态的一行提示（D117）：列表让位给它，浮层保持打开、「新增 vault…」照常可用。
+    const empty = document.createElement("p");
+    empty.className = "vault-empty";
+    empty.textContent = NO_MATCH_TEXT;
+    empty.hidden = true;
     const separator = document.createElement("div");
     separator.className = "vault-sep";
     const addRow = document.createElement("button");
@@ -574,21 +611,45 @@ class VaultSwitcher implements VaultSwitcherHandle {
     const addLabel = document.createElement("span");
     addLabel.textContent = ADD_TEXT;
     addRow.append(plus, addLabel);
-    popover.append(list, separator, addRow);
+    popover.append(input, list, empty, separator, addRow);
     deps.mount.append(popover);
     this.popover = popover;
+    this.input = input;
     this.list = list;
+    this.empty = empty;
     this.separator = separator;
     this.addRow = addRow;
 
-    // 列表内导航：↑↓ / ⌃N⌃P 移动，Enter 切换，Esc 关闭。
-    list.addEventListener("keydown", (event) => this.onKeydown(event));
+    // 列表内导航：↑↓ / ⌃N⌃P 移动，Enter 切换，Esc 关闭。挂点在**浮层容器**上：持焦点的是输入框，
+    // 它的键冒泡到这里；行为口径一字不改（仍是就地消费 + preventDefault）。
+    popover.addEventListener("keydown", (event) => this.onKeydown(event));
+    // 输入即筛（组合期不刷新，见 composing 的说明）。
+    input.addEventListener("compositionstart", () => {
+      this.composing = true;
+    });
+    input.addEventListener("compositionend", () => {
+      this.composing = false;
+      this.render(this.rowEntries);
+    });
+    input.addEventListener("input", (event) => {
+      if (this.composing || (event as InputEvent).isComposing) return;
+      this.render(this.rowEntries);
+    });
     // 浮层内的行不夺焦点（与 .lumir-toc 的条目、标签栏同一手法）：mousedown 一旦夺焦，
-    // list 的 blur 会先把浮层收起，随后的 click 落在已 display:none 的元素上，那一行的动作
-    // 就永远不会执行——点击路径必须活到 click。
-    popover.addEventListener("mousedown", (event) => event.preventDefault());
-    // 焦点离开浮层即收起（Tab 出去、点到别处、窗口失活都走这条）——这条路径不抢焦点。
-    list.addEventListener("blur", () => this.close(false));
+    // 输入框会失焦、随后的 click 落在已 display:none 的元素上，那一行的动作就永远不会执行
+    // ——点击路径必须活到 click。**输入框必须排除在外**：浮层级 preventDefault 会让它点不动
+    //（现象：点了没反应、指针进不去、随后的键入落不到查询上）。
+    popover.addEventListener("mousedown", (event) => {
+      if (event.target === input) return;
+      event.preventDefault();
+    });
+    // 焦点离开**浮层**才收起（Tab 出去、点到别处、窗口失活都走这条）——挂点必须外移到容器：
+    // 挂在列表上时焦点从输入框 Tab 出去会留下「浮层还在、焦点已在外」的状态。这条路径不抢焦点。
+    popover.addEventListener("focusout", (event) => {
+      const next = event.relatedTarget;
+      if (next instanceof Node && popover.contains(next)) return;
+      this.close(false);
+    });
     // 点击浮层与入口之外收起（编辑器、文件树、toast…）。入口要排除：它是「开→关」的切换点，
     // 第一次点击就收起会让随后的 click 走 toggle 又开一次（视觉上闪一下，aria-expanded 假翻），
     // 与 .lumir-toc 排除它的指示段同一手法。
@@ -628,6 +689,9 @@ class VaultSwitcher implements VaultSwitcherHandle {
     const entry = this.deps.entry();
     if (entry === undefined) return; // 未装载 vault：没有列表入口，命令也无操作
     const token = ++this.openToken;
+    // 打开 = 空查询 + 全量态起点：查询随关闭丢弃（spec），这里显式清一遍。
+    this.input.value = "";
+    this.filter.reset();
     void this.deps
       .list()
       .then((rows) => {
@@ -637,7 +701,8 @@ class VaultSwitcher implements VaultSwitcherHandle {
         this.popover.hidden = false;
         this.deps.expanded(true);
         this.place(entry);
-        this.list.focus();
+        // 焦点落到输入框（不是列表）：打开即可打字，且就地键经它的冒泡照常生效。
+        this.input.focus();
       })
       .catch((e) => {
         if (token !== this.openToken) return;
@@ -653,6 +718,9 @@ class VaultSwitcher implements VaultSwitcherHandle {
     this.open = false;
     this.popover.hidden = true;
     this.deps.expanded(false);
+    // 查询与游标随关闭丢弃（spec）：下次打开从空查询与全量态起点开始。
+    this.input.value = "";
+    this.filter.reset();
     if (restoreFocus) this.handOffFocus();
   }
 
@@ -676,24 +744,49 @@ class VaultSwitcher implements VaultSwitcherHandle {
   // 渲染与交互
   // -------------------------------------------------------------------------
 
-  private render(rows: readonly VaultListEntry[]): void {
+  /**
+   * 按当前查询重建结果集与它的行 DOM。
+   *
+   * `rowEntries` 是**完整列表**（本次拉取的全部行，顺序不动），筛选只决定哪些行进 DOM——它还有
+   * 第二个消费者：「重新定位…」把它当 `siblings` 传给占用判定（`requestRelocate`），收窄成结果集
+   * 会让被筛掉的 vault 不再参与判定（design §2.4 的静默身份合并）。
+   *
+   * `rows` 仍是「可选中行」（可用行）的下标空间：失效行进 DOM、参与筛选，但不在键盘游标空间里
+   * （与筛选前的口径逐条一致，`tests/visual/scenes/mv-vault-switcher.spec.ts` 钉着它）。
+   */
+  private render(list: readonly VaultListEntry[]): void {
     const now = Date.now();
-    this.rowEntries = [...rows];
+    this.rowEntries = [...list];
     this.rows = [];
     this.activeIndex = -1;
-    this.list.replaceChildren(...rows.map((row, index) => this.renderRow(row, index, now)));
+    this.visible = this.filter.setQuery(
+      this.input.value,
+      this.rowEntries.map((row) => row.name),
+    );
+    this.list.replaceChildren(
+      ...this.visible.map((source) => this.renderRow(this.rowEntries[source] as VaultListEntry, source, now)),
+    );
+    // 无命中态：查询非空且结果集为空 → 浮层保持打开、列表区给一行提示（D117）；分隔线与
+    // 「新增 vault…」不受筛选影响，仍照常给出（它是摆脱空结果的唯一入口）。
+    const empty = this.visible.length === 0;
+    this.list.hidden = empty;
+    this.empty.hidden = !empty;
     // 新增入口是浮层内**唯一**的新增入口（形态 A），列表为空时也照常给出。
-    this.separator.hidden = rows.length === 0;
+    this.separator.hidden = this.rowEntries.length === 0;
     // 默认游标落在当前项（列表按最近打开倒序，当前项本来就在首位；这里不假定位置）。
     // 游标下标是**可选中行**的下标（this.rows 不含失效行），因此按元素回查，不用整份列表
     // 的下标。
     const currentIndex = this.rows.findIndex((el) => el.dataset.vault === this.currentId);
-    this.setActive(this.rows.length === 0 ? -1 : Math.max(0, currentIndex));
+    // 查询非空时游标落在**首条可选中命中**（与 toc-outline 的「首条命中为起点」同一条规则，
+    // 只是这里的可选中集合不含失效行）；查询为空时回到全量态起点（当前项，无则首条）。
+    const start =
+      this.rows.length === 0 ? -1 : this.filter.query === "" ? Math.max(0, currentIndex) : 0;
+    this.setActive(start);
   }
 
   /** 一行：显示名 + 摘要 + 路径尾部三段；失效行改给成因与「重新定位…」。
    *  失效行**不发起打开**（点击与 Enter 都走重定位），可用行点击即请求切换。 */
-  private renderRow(row: VaultListEntry, index: number, now: number): HTMLButtonElement {
+  private renderRow(row: VaultListEntry, source: number, now: number): HTMLButtonElement {
     const current = row.id === this.currentId;
     const el = document.createElement("button");
     el.type = "button";
@@ -702,7 +795,7 @@ class VaultSwitcher implements VaultSwitcherHandle {
     el.setAttribute("aria-selected", String(current));
     el.dataset.vault = row.id;
     if (row.available) {
-      el.id = `${ITEM_ID_PREFIX}${index}`;
+      el.id = `${ITEM_ID_PREFIX}${source}`;
       if (current) el.classList.add("is-current");
       this.rows.push(el);
     } else {
@@ -763,11 +856,13 @@ class VaultSwitcher implements VaultSwitcherHandle {
     this.activeIndex = index;
     const row = this.rows[index];
     if (!row) {
-      this.list.removeAttribute("aria-activedescendant");
+      this.input.removeAttribute("aria-activedescendant");
       return;
     }
     row.classList.add("is-active");
-    this.list.setAttribute("aria-activedescendant", row.id);
+    // 挂在**持焦点**的输入框上（ARIA 要求 aria-activedescendant 落在焦点元素上）；列表靠
+    // `aria-controls` 指认，不再持有该属性。
+    this.input.setAttribute("aria-activedescendant", row.id);
     row.scrollIntoView({ block: "nearest" });
   }
 
