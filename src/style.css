@@ -500,8 +500,12 @@ body { background:var(--bg); color:var(--text); font-family:var(--font-body); fo
    整体高度就是这条上限，列表成为唯一滚动容器（`.lumir-toc-list` 的 flex + min-height: 0）。
    vh 随窗口重排即时生效，不需要 JS 监听 resize。
    已知边界：浮层锚在 masthead 下沿（`.masthead` 的 min-height: 57px），窗口内容区高 ≥ 285px
-   时 `57px + 80% ≤ 100%` 成立；更矮的窗口下浮层底边可能越出（不加钳制，见 change
-   toc-popover-emacs-keys-and-max-height 的非目标）。 */
+   时 `57px + 80% ≤ 100%` 成立、浮层不越出窗口底边；更矮的窗口下底边可能越出（不加钳制，见 change
+   toc-popover-emacs-keys-and-max-height 的非目标）。**M199 实测（change list-filter，加了筛选输入行
+   之后）**：285px 时底边恰好贴住内容区下沿（overflow 0px，与上面的推导逐位吻合）、260px 时越出 5px、
+   300/320/400/800px 均不越出（读数 test-results/m199/short-window.json）。内容自然高度小于 80% 上限
+   时（标题条数少的文档）约束换成自然高度：输入行是固定行，让自然高度 +31px（`toc-outline.md` 的 5
+   条条目下浮层自然高约 202px → 窗口内容区高低于约 259px 时底边可能越出）。 */
 .lumir-toc {
   position: absolute;
   top: 100%;

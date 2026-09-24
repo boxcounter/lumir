@@ -193,7 +193,52 @@
     ③ 1MB 级文件的索引构建读数**不达标**（首次触发 ≈ 0.9s，headless 下界），已在 M198 如实落盘并给出
     后续路径（`test-results/m198/perf-var-highlight.json` 与 design §8 备选②），归档时应连同这条一起看。
 
+23. **change `list-filter` 待归档跟踪**（2026-09-24，M199 实现，**待 Alex 节点 2 / 归档**）：流程口径要求
+    每个 change 在实现 PR 合并时即落一条待归档记录并跟踪到归档
+    （`docs/process/openspec-workflow.md` 的批次收尾 checklist 第一条）。本 change 的四件制品在 2026-09-24
+    节点 1 裁决通过（Alex 原话「五个点都采纳推荐」，逐条落点见 `proposal.md` 的「裁决记录」节，五个条件是
+    第 10 组全部未触发），实现在 M199：匹配与查询状态落 `src/list-filter.ts`（**唯一**一份实现，两处浮层
+    共用），接入落 `src/toc.ts`（输入行 / 焦点迁移五挂点 / 结果集下标映射 / 无命中态）与
+    `src/vault-switcher.ts`（输入行 + 同款迁移 + `rowEntries` 保持完整列表 + 输入框排除在浮层级
+    `mousedown` 之外），样式落 `src/style.css`（取既有 token）。**归档动作须一并看的三处**：
+    ① 实现期两处编号漂移已就地校正——真机场景编号取 **32**（提案里写的 29 已被 `29-typography-and-zoom`
+    占用；30/31 为 code-outline / code-variable-highlight），文案编号 **D117–D119**（code-outline 遗留的
+    两条空态提示先占 D115/D116，随本 mission 一并补登），delta 里的 `D115–D117` 指针已同步校正；
+    ② **四张浮层元素级基线待 Alex 过目后重拍**（`toc-popover` / `toc-popover-long` / `vault-popover`，
+    外加实现期发现的第四张 `code-outline-popover`——它拍的是同一个 `.lumir-toc`），截图与读数见
+    `test-results/m199/baseline-check.md` 与 `test-results/m199/baseline-review/`——AGENTS.md 的
+    「基线更新是人肉裁决点」；③ delta 的「失效行参与筛选且 Enter 仍走重定位」scenario 里「用键盘选中它」
+    一句与**筛选前**的既有口径不一致（失效行不在键盘游标空间里，`mv-vault-switcher.spec.ts` 钉着
+    「↓ 只在可用行之间走」），实现按「与筛选前逐条一致」落地（失效行参与筛选、点击走重定位、键盘仍不
+    可达），归档时应复核这句是否需要改写。
+
+24. **change `code-outline` 待归档跟踪**（2026-09-24，M197 实现完成，**待 Alex 节点 2 / 归档**；本条由 M199
+    按 M197 的 finding 补登，findings 原文：`.tower/comms/findings/20260924-worker-code-outline-impl-improve-docs-backlog-md-lezer-yaml-code-outline.md`）：
+    本 change 的实现已在 `feat/code-outline-implementation` 上完成（指示段 / 浮层 / 跳转落点 / 两条新文案
+    全部落地，有真机与视觉证据），但 backlog 里没有待归档记录——`docs/backlog.md` 不在 M197 的改动范围，
+    M197 按协议投出 finding 由 tower 路由，本 mission（M199）顺带补登。**归档时须一并处理的两处**：
+    ① 两条空态文案（`src/toc.ts` 的 `NO_SYMBOLS_TEXT` / `NO_STRUCTURE_TEXT`）在 M197 实现期未进 deck，
+    已由 M199 补登为 **D115/D116**（逐字取自 `openspec/changes/code-outline/tasks.md` 的 5.1 待补表）；
+    ② 证据目录：`test-results/m197/`（本机，git 外）与 `test-results/acceptance/2026-09-24/30-code-outline/`。
+
 ## 待修 findings（不阻塞）
+
+- **两个第三方 Lezer 语法包会静默坑人：`@lezer/yaml@1.0.4` 位置越界、`@fig/lezer-bash@1.2.5` 普通 bash
+  上出错**（2026-09-24，M192 提案期实测 + M197 实现期复现，medium，**待修**）：`@lezer/yaml@1.0.4`（官方）
+  在「文件以空行 + 注释行开头、其后是区块映射」时产出**越界区间**（`Document [65536, 11)`，`from > to`），
+  使按位置取节点的消费者（`iterate` / `resolveInner`）全部失效且**不报错**（只产出 `Stream` 与 `Comment`
+  两个节点）；最小复现 `parser.parse("\n# c\nkey: 1\n").topNode.getChild("Document")`，四种对照形态（注释在
+  首行 / 无注释的空行 / 内容后注释 / 空行+注释+序列）位置都正常，触发条件很窄。`@fig/lezer-bash@1.2.5`
+  （社区包，2023-02 后停更）对含 `local x=1` / `$(( ))` / `function f {` 的普通脚本产出 11 个 error 节点。
+  **Lumir 今天不受影响**（两者都没被使用：yaml 的着色走 `legacy-modes`，bash 不在结构表内，M197 已把 yaml
+  排除出结构功能表），风险在**将来**：任何「有官方语法就接上」的决策都会踩到它。复现与读数：
+  `test-results/m197/yaml-defect.txt` 与 `test-results/m197/probe/yaml-defect.mjs`（M197），
+  `.tower/worktrees/wt-192/openspec/changes/code-outline/evidence/01-language-stack-survey.md` §6（M192）。
+  findings：`20260924-worker-code-intel-proposal-bug-lezer-lezer-yaml-fig-lezer-bash-bash.md`、
+  `20260924-worker-code-outline-impl-improve-docs-backlog-md-lezer-yaml-code-outline.md`。
+  **建议动作**：① 换管线 / 加语言前先跑最小复现（不得按「有 parser 就支持」接入）；② 若真要支持 yaml 的
+  结构功能，先查上游 issue（M192 检索未见对应条目）或固定到其他版本验证；bash 建议先换候选包或维持不支持；
+  ③ 长期防线：把这两条最小复现做成随依赖升级跑的「语法可用性探针」（红了即拦下升级）。
 
 ### 编辑器 / 键位
 

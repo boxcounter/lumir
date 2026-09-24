@@ -656,6 +656,10 @@ interface FakeEvent {
   shiftKey?: boolean;
   code?: string;
   target?: unknown;
+  /** focusout 的落点（浮层的「焦点离开浮层才收起」判据读它）。 */
+  relatedTarget?: unknown;
+  /** input 事件的组合期标记（筛选的组合期不刷新判据读它）。 */
+  isComposing?: boolean;
   defaultPrevented?: boolean;
   preventDefault?(): void;
 }

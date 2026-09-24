@@ -127,8 +127,12 @@ async function clickWithRetry(cu, pid, x, y, { retries = 3, count } = {}) {
   throw lastErr;
 }
 
-/** 可读的原生输入框角色（WKWebView 的 `<input>` 在 AX 里落成这两类）。 */
-const TEXT_FIELD_ROLES = new Set(["AXTextField", "AXSearchField", "AXSecureTextField"]);
+/** 可读的原生输入框角色（WKWebView 的 `<input>` 在 AX 里落成这几类）。
+ *  `AXComboBox` 是 ARIA 组合框（`<input role="combobox">`，change list-filter 的筛选输入框）——
+ *  它是真正的可编辑文本宿主，键盘落进去的字在 AXValue 里。M199 实测：漏了它时 `keys` 的回读盯在
+ *  节点的 label（"筛选"）上、永远判「未落地」，而注入其实部分落地并逐次拼接（实测值 "banbab" =
+ *  三次注入的残段累积）——正是 README「历史教训（别再回到旧口径）」那类假绿/脏文本形态。 */
+const TEXT_FIELD_ROLES = new Set(["AXTextField", "AXSearchField", "AXSecureTextField", "AXComboBox"]);
 
 /** 单个可打印字符（非空白 ASCII）：keys 动作里只有这种键名有唯一的文本语义。 */
 const PRINTABLE_KEY_RE = /^[\x21-\x7e]$/;
