@@ -173,9 +173,12 @@
   master；实测 `ls scripts/acceptance/scenarios/` 的最大编号是 28，故就地为 29、`item: 29`）：①以配置 `font_size: 20` 启动 → 读 AX / 几何证据确认字号生效（配置通道的端到端）；
   ②按 `⌘=` / `⌘−` / `⌘0` → 字号读数逐档变化、`⌘0` 回到 20；③按 ⌘⇧=（真机的 `⌘+` 形态）确认同样放大；
   ④`config.json` 内容与 mtime 逐字节不变。
-  **验收口径**：`node scripts/acceptance/run.mjs --check` 通过（实测：36 个场景全通过）；真机运行 PASS，
-  证据落 `test-results/acceptance/<日期>/29-typography-and-zoom/`（**未验**：屏幕锁定，见文末
-  「逐条证据」的 8.x 一节）。
+  **验收口径**：`node scripts/acceptance/run.mjs --check` 通过（实测：36 个场景全通过）；
+  **真机 PASS 29/29 断言**（2026-09-24，65s），证据落
+  `test-results/acceptance/2026-09-24/29-typography-and-zoom/`（另有四轮留档
+  `test-results/m195/acceptance-r2-*/`）。**一处覆盖缺口**：③ 的 `⌘⇧=`（`Cmd-+` 字符形态）在 KimiCU
+  注入通道下给不出硬件级的 `+`（发出的是 shift+`=` → token 归一成 `Cmd-Shift-=`，不在表内）→ 该形态
+  真机未验，放大判据改取 `⌘=`（正键形态）；`Cmd-+` 的覆盖停在单测与绑定表（见 4.4 行与场景正文）。
   **断言形态**：字号是**计算属性**，真机套件没有计算属性通道 → 机器判据用「元素几何 /
   截图序列 + AX 文本」，并把「字号确实变了」的证据落成读数文件；MUST NOT 只靠「按键注入成功」判定
   （REVIEW.md 第 11 条：WKWebView 注入会整批丢键，判据走回读）。
@@ -263,7 +266,7 @@
 | 4.1 | `src/keys.ts` 的 `NON_TAB_GLOBAL_COMMAND_IDS`（三条 id）；`src/main.ts` 的 commands 记录 | `tsc --noEmit` 通过（`Record<CommandId, CommandRunner>` 全量合同） |
 | 4.2 | `src/typography.ts` 的 `nextFontSize` / `clampFontSize`；`src/editor.ts` 的 `textScale` | 单测覆盖向上 7 档 `[18,20,22,24,26,29,32]`、向下 7 档回 16、向下 4 档到 12、上下限、reset 回配置值 |
 | 4.3 | `src/keys.ts` 的四条绑定（各带 `doc`） | `tests/unit/keys.test.ts` 的「三条对账」+ 新增「四条绑定齐全/作用域 global/不在 KEYLESS」断言；`KEYLESS_COMMAND_IDS` 内容未变 |
-| 4.4 | `tests/unit/keys.test.ts`（`Cmd--` 反向断言、`Cmd-+` 真机形态、`Cmd-Shift-=` 不命中） | 单测钉住前两条；真机那一半（⌘⇧= 的 `event.key === "+"`）**属未验项**（见 8.x），差异写在场景 29 的注释与 `src/keys.ts` 的绑定组注释里 |
+| 4.4 | `tests/unit/keys.test.ts`（`Cmd--` 反向断言、`Cmd-+` 真机形态、`Cmd-Shift-=` 不命中） | 单测钉住前两条；真机那一半（⌘⇧= 的 `event.key === "+"`）**真机未验**——注入通道给不出硬件级 `+`（归一成 `Cmd-Shift-=`），差异写在场景 29 正文「判据形态与档位标定」与 `src/keys.ts` 的绑定组注释里；放大判据改取 `⌘=` 且真机 PASS |
 | 4.5 | `rg -n 'zoom_hotkeys\|zoomHotkeys' src-tauri/` 零命中；场景第 10 条「窗口级 keydown 监听 === 1」 | `src-tauri` 零命中；单测里也加了一条 `rg` 级别的口径（绑定 `doc` 写明理由） |
 | 4.6 | `git diff src/bindings-panel.ts` 为空；`m133`/`m131` 场景零改动且全绿 | 全量视觉层 312 passed（含 m133 / m131）；面板新增 4 行落在滚动区外，故那条像素基线零差异（机制与边界见 `baseline-check.md`） |
 
@@ -328,7 +331,7 @@
 |---|---|---|
 | 9.1 | `test-results/m195/gate-quick.log` 的 `GATE PASS openspec-validate` | `validate --all --strict` 绿 |
 | 9.2 | `gate-quick.log`（10/10 PASS）、`gate-visual.log`（全量像素层 312 passed / 0 failed）、`git status --porcelain -- src/bindings/` 为空 | `GATE RESULT: 10/10 PASS`，退出码 0 |
-| 9.3 | 未验（同 8.x） | — |
+| 9.3 | `test-results/acceptance/2026-09-24/` 的 `summary.md`（场景 29 PASS）+ `29-typography-and-zoom/steps.md`（29 断言全 PASS） | 已真机跑过一次并留档；场景 29 的静态校验 36/36 亦在档 |
 | 9.4 | `git diff --check` 干净；`git diff --stat` 与本 change 的 Impact 清单一致 | diff 里**没有** `src/style.css` 的 shell 字号/字面量改动、没有 `--font-display` 改动、没有 `src/preview/livePreview.ts` 改动、没有新增配置写入通道 |
 | 9.5 | 本节 + 下面的 requirement 对账表 | archive 时的占位 Purpose 替换属归档 mission 的动作（本 mission 只到实现 + 门禁） |
 | 10.1 | `rg -n 'zoom_hotkeys\|set_zoom' src-tauri/src/` 零命中；diff 无新增 UI | 边界成立 |
