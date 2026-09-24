@@ -8,6 +8,7 @@
 // 保持引用基线 token，「配置只影响编辑器」因此由 token 分层结构性保证。
 
 import { EditorView } from "@codemirror/view";
+import { BINDING_MATCH_CLASS } from "../code-identifiers";
 import type { EditorMode } from "../bindings/EditorMode";
 import { END_MARKER_VISIBLE_CLASS } from "./endMarker";
 
@@ -57,6 +58,26 @@ export function wrapSpec(mode: EditorMode, lineWrap: boolean, codeBlockWrap: boo
     codeBlockClass: mode !== "md" ? null : codeBlockWrap ? CODEBLOCK_WRAP_CLASS : CODEBLOCK_NOWRAP_CLASS,
   };
 }
+
+/**
+ * code 模式的「同一变量绑定匹配」底纹（M198，change code-variable-highlight）。
+ *
+ * 为什么是独立一份 theme 而不是塞进 `livePreviewTheme`：后者**只装在 md 分支**
+ *（`src/editor.ts` 的 `modeExtensions`），而本能力按裁决点 4 只做 code 模式——塞进那边的规则
+ * 在 code 模式下根本不落地（实现期实测：底纹计算样式读到 `rgba(0, 0, 0, 0)`）。
+ *
+ * 只加底纹、**不改字色**：code 模式的字色已被 token 着色占满，再改字色会让「这个字既是关键字
+ * 又被点亮」糊在一起。取色只用既有 token（零新增色值）。
+ *
+ * 为什么是 `--bg-3` 而不是 design §5.1 推荐的 `--bg-2`：code 模式的**当前行底色就是 `--bg-2`**
+ *（`src/editor.ts` 的 `.cm-activeLine`，code 分支装了 `highlightActiveLine()`），因此 `--bg-2`
+ * 的底纹在用户刚双击的那一行上**完全隐形**——同一行上的第二处匹配也一起看不见。`--bg-3`
+ *（`src/style.css:6` 的既有 token，此前只被 `.tab-close:hover` 用）在当前行与普通行上都可见，
+ * 且与原生选区（`--sel`）／搜索命中（accent 淡底）的计算样式互不相同。观感归 Alex 手感项。
+ */
+export const codeBindingTheme = EditorView.theme({
+  [`.${BINDING_MATCH_CLASS}`]: { backgroundColor: "var(--bg-3)", borderRadius: "2px" },
+});
 
 export const livePreviewTheme = EditorView.theme({
   ".cm-editor": { color: "var(--text)", backgroundColor: "var(--bg)", fontFamily: "var(--editor-font-family)" },

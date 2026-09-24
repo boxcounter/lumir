@@ -275,6 +275,14 @@ const SCSS_RULES: readonly EntryRule[] = [
 
 type Parser = ReturnType<typeof javascriptParser.configure>;
 
+/**
+ * 解析树与它的游标类型（从 parser 推导，避免直接依赖 `@lezer/common` 的包边——同 M197 的既有
+ * 口径）。**导出**是因为 M198 的标识符索引也要在树上走一遍，而它 MUST NOT 自己再解析一次
+ *（design §4.1：本 change 只读消费本模块的解析与缓存）。
+ */
+export type StructureTree = ReturnType<Parser["parse"]>;
+export type StructureCursor = ReturnType<StructureTree["cursor"]>;
+
 interface StructureSupport {
   /** symbols = 符号大纲（T1）；rules = 结构大纲、条目是规则集（T2）。 */
   tier: "symbols" | "rules";
@@ -359,6 +367,16 @@ const cacheKey = (language: CodeLanguage, text: string): string => `${language}\
  */
 let lastLookup: { language: CodeLanguage; text: string; entries: readonly StructureEntry[] | null } | null = null;
 
+/**
+ * 「最近一次解析」的单槽现场——**两条消费者（符号大纲 / 标识符索引）共享同一棵树**的落点。
+ * 为什么要有它：M198 的变量高亮要的是树，大纲要的是条目，两者若各自 `parser.parse()` 一次，
+ * 同一份文档就要被两套词法读两遍（用户「先 ⌘⇧O 再双击」或反过来的顺序都会踩到）。
+ * 单槽而不是容量 32：树是**大对象**（1MB 文档约 40 万节点），entries / 索引才是按文档缓存的派生
+ * 数据；保留一棵树的代价可测（见 M198 的 perf 读数），保留 32 棵不可接受。
+ * 键含文档原文，因此同键复用永远安全（树不可变；code 模式只读，原文即身份）。
+ */
+let lastParse: { language: CodeLanguage; text: string; tree: StructureTree } | null = null;
+
 /** 查缓存（含上一次现场的快路径）；未命中返回 null。**不解析**。 */
 function cachedEntries(language: CodeLanguage, text: string): readonly StructureEntry[] | null {
   if (lastLookup !== null && lastLookup.language === language && lastLookup.text === text) return lastLookup.entries;
@@ -385,19 +403,37 @@ export function peekStructureEntries(language: CodeLanguage | null, text: string
 }
 
 /**
- * 取条目（**首次需要结构时**才解析一次并缓存）。这是本模块唯一的解析入口——打开路径与光标路径
- * 都不到这里来（见 peekStructureEntries）。不支持的语言返回空表，MUST NOT 降级为文本近似。
+ * 取条目（**首次需要结构时**才解析一次并缓存）。这是本模块的两个解析入口之一（另一个是
+ * structureTree，两者共享同一棵树与同一份缓存——M198 的标识符索引走后者）。不支持的语言返回空表，
+ * MUST NOT 降级为文本近似。
  */
 export function structureEntries(language: CodeLanguage, text: string): readonly StructureEntry[] {
   const support = STRUCTURE_SUPPORT[language];
   if (support === null) return EMPTY;
   const cached = cachedEntries(language, text);
   if (cached !== null) return cached;
-  parseCount += 1;
-  const entries = collectEntries(support, text);
+  const tree = structureTree(language, text);
+  // structureTree 的返回值只为 null 在「不支持该语言」时出现，而那种情形上面已经返回。
+  const entries = collectEntries(support, tree as StructureTree, text);
   if (cache.size >= CACHE_LIMIT) cache.clear();
   remember(language, text, entries);
   return entries;
+}
+
+/**
+ * 取解析树（**首次需要结构时**才解析一次）。两条消费者共用它：符号大纲（structureEntries 内部
+ * 也走这里）与 M198 的标识符索引。同一份 (语言, 原文) 上重复调用不重复解析——这是
+ * 「先 ⌘⇧O 再双击」与「先双击再 ⌘⇧O」都只解析一次的实现落点（断言见
+ * `tests/unit/code-identifiers.test.ts`）。不支持的语言返回 null。
+ */
+export function structureTree(language: CodeLanguage, text: string): StructureTree | null {
+  const support = STRUCTURE_SUPPORT[language];
+  if (support === null) return null;
+  if (lastParse !== null && lastParse.language === language && lastParse.text === text) return lastParse.tree;
+  parseCount += 1;
+  const tree = support.parser.parse(text);
+  lastParse = { language, text, tree };
+  return tree;
 }
 
 /**
@@ -417,9 +453,6 @@ export function structureKeyBuildCount(): number {
 }
 
 // --- 提取 ------------------------------------------------------------------------------------
-
-/** lezer 树游标（类型从 parser 的返回值推导，避免直接依赖 @lezer/common 的包边）。 */
-type Cursor = ReturnType<ReturnType<typeof javascriptParser.parse>["cursor"]>;
 
 interface Span {
   from: number;
@@ -456,7 +489,7 @@ function lineText(text: string, from: number, to: number): string {
 }
 
 /** 先序遍历 cursor 覆盖的子树；visitor 返回 true 即中止。cursor 位置始终复原。 */
-function scanSubtree(cursor: Cursor, visitor: (name: string, from: number, to: number) => boolean): boolean {
+function scanSubtree(cursor: StructureCursor, visitor: (name: string, from: number, to: number) => boolean): boolean {
   if (!cursor.firstChild()) return false;
   let stopped = false;
   do {
@@ -470,7 +503,7 @@ function scanSubtree(cursor: Cursor, visitor: (name: string, from: number, to: n
 }
 
 /** 直接子节点里名字 ∈ names 的范围（`onlyFirst` 为真时只看首个子节点——位置判据）。 */
-function childSpans(cursor: Cursor, names: readonly string[], onlyFirst: boolean): Span[] {
+function childSpans(cursor: StructureCursor, names: readonly string[], onlyFirst: boolean): Span[] {
   if (!cursor.firstChild()) return [];
   const spans: Span[] = [];
   do {
@@ -484,7 +517,7 @@ function childSpans(cursor: Cursor, names: readonly string[], onlyFirst: boolean
 }
 
 /** 文档序第一个后代节点的范围（名字 ∈ names）。 */
-function firstDescendantSpan(cursor: Cursor, names: readonly string[]): Span | null {
+function firstDescendantSpan(cursor: StructureCursor, names: readonly string[]): Span | null {
   let found: Span | null = null;
   scanSubtree(cursor, (name, from, to) => {
     if (!names.includes(name)) return false;
@@ -494,10 +527,10 @@ function firstDescendantSpan(cursor: Cursor, names: readonly string[]): Span | n
   return found;
 }
 
-const hasDescendant = (cursor: Cursor, names: readonly string[]): boolean =>
+const hasDescendant = (cursor: StructureCursor, names: readonly string[]): boolean =>
   firstDescendantSpan(cursor, names) !== null;
 
-function guardPasses(guard: RuleGuard | undefined, cursor: Cursor): boolean {
+function guardPasses(guard: RuleGuard | undefined, cursor: StructureCursor): boolean {
   if (guard === undefined) return true;
   if (guard.has !== undefined && !hasDescendant(cursor, guard.has)) return false;
   return !(guard.lacks !== undefined && hasDescendant(cursor, guard.lacks));
@@ -509,7 +542,7 @@ function guardPasses(guard: RuleGuard | undefined, cursor: Cursor): boolean {
  * `eachGrandchild`：一个声明带多个名字时，落点必须落在各自的名字上，否则多条条目共享同一个起点，
  * 当前位置归属会选错那一条）。
  */
-function resolveEntries(rule: EntryRule, cursor: Cursor, text: string): { from: number; to: number; text: string }[] {
+function resolveEntries(rule: EntryRule, cursor: StructureCursor, text: string): { from: number; to: number; text: string }[] {
   const own = { from: cursor.from, to: cursor.to };
   const emit = (span: Span): { from: number; to: number; text: string }[] => [
     { from: own.from, to: own.to, text: text.slice(span.from, span.to) },
@@ -555,10 +588,10 @@ function resolveEntries(rule: EntryRule, cursor: Cursor, text: string): { from: 
   }
 }
 
-function collectEntries(support: StructureSupport, text: string): readonly StructureEntry[] {
+function collectEntries(support: StructureSupport, tree: StructureTree, text: string): readonly StructureEntry[] {
   const entries: StructureEntry[] = [];
   const starts = lineStarts(text);
-  const cursor = support.parser.parse(text).cursor();
+  const cursor = tree.cursor();
 
   const visit = (depth: number, methodScope: boolean): void => {
     const rule = support.rules.find(
