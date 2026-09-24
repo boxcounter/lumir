@@ -300,13 +300,10 @@
     `test-results/m189/acceptance-27-pass/shots/` 再 `--update`。归档后按其 living 落点补 Purpose 归属
     记录、实测归档件内相对链接层级。
 
-29. **`restyle-ui-tokens-v1` 的 ui-design-system delta 有一条层级错的相对链接**（2026-09-24，M205 finding
-    登记，**随 restyle 实现批顺手修，不需裁决**）：
-    `openspec/changes/restyle-ui-tokens-v1/specs/ui-design-system/spec.md` 指向
-    `docs/specs/design-tokens-v1.md` 的链接用了 4 层 `../`（解析成不存在的 `openspec/docs/specs/…`），
-    应为 5 层；docs-check 与 validate 都不查相对链接，归档时也不会被自动修（finding
-    `.tower/comms/findings/20260924-worker-archive-five-bug-restyle-ui-tokens-v1-ui-design-system-delta.md`）。
-    顺带建议：把 M205 的「相对链接可达性实测」做成归档收尾可复跑脚本。
+29. ~~**`restyle-ui-tokens-v1` 的 ui-design-system delta 有一条层级错的相对链接**~~（**已核销**，
+    2026-09-25）：tower 直接修（4 层 `../` → 5 层），`test -f` 实测可解析、`validate --strict` 绿。
+    遗留建议仍有效：把 M205 的「相对链接可达性实测」做成归档收尾可复跑脚本（docs-check 与 validate
+    都不查相对链接）。
 
 ## 待修 findings（不阻塞）
 

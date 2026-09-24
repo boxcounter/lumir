@@ -3,7 +3,7 @@
 ### Requirement: 设计 token 层
 
 系统 SHALL 以单层 CSS 自定义属性承载全部视觉决策，token 的分层、命名、值与收敛纪律以
-[design-tokens-v1.md](../../../../docs/specs/design-tokens-v1.md) 为权威文本（色彩 32 × 三主题、
+[design-tokens-v1.md](../../../../../docs/specs/design-tokens-v1.md) 为权威文本（色彩 32 × 三主题、
 字体 29、间距 14、圆角 8、布局 16、动效 4，共 103 个）。界面样式 SHALL 经 token 引用取值，
 MUST NOT 在 token 层之外新增字面色值、字号或间距；仅有的例外是 tokens 文档点名的组件常量
 （行内补偿与已调优组件内边距）与 eink 规则的组件级覆盖（见「eink 降级规则」）。
