@@ -243,8 +243,14 @@ export function createReadingPositionStore(
     );
     // 上限在镜像上就收口：手改过的文件可能带来超限内容，下一次落盘（乃至内存镜像）都不许超过它。
     mirror = capEntries(pruneEntries(file?.entries ?? {}, available));
-    // 双保险：窗口期理论上不该落进 pending（键还是旧键，写不进来），但这条不变量必须由本函数自己
-    // 保证——任何残留都绝不许带进新 vault 的镜像。
+    // **这是防线，不是冗余**（reviewer r2 实测：单删这一行，「窗口期的捕获不许落进新 vault」那条
+    // 单测即如实变红）。窗口期的捕获**会照常落进 pending**——那一刻键还是旧键、`scrolled()` 不区分
+    // 键的新旧，照旧捕获（这正是「窗口期内的捕获仍归旧键」那条单测的前提）。危险在于它的防抖触发
+    // 点若落在装载完成之后：`snapshot()` 是整份合并、**不按键归属过滤**，它会把这条件旧 vault 的
+    // 捕获并进**新 vault** 的镜像写出去；新 vault 里恰好有同相对路径的文件时 `pruneEntries` 也清不掉，
+    // 此后打开该文件就恢复成旧 vault 的阅读位置且持久不愈合（= r1 P2-3 的污染路径）。
+    // 因此换键之前必须清掉：换键前落进 pending 的一切都属于旧 vault，而那次捕获以一次本地 IPC 窗口
+    // 为界（旧 vault 的位置在装载前已经 flush 过），不值得为它再写一次盘。
     pending.clear();
     currentId = vaultId;
   }
