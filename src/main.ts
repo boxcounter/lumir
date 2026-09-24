@@ -71,9 +71,9 @@ let vaultLoaded = false;
  *  拉取），两者可能同时到达——同一个 vault 的重复响应只装载一次，避免重复走一遍
  *  装载副作用（编辑器整批复位、崩溃备份入口再弹一次）。 */
 let loadedRoot: string | undefined;
-/** 当前 vault 的显示名（= 目录 basename，M163）：masthead、切换器列表的当前项与 dirty
- *  守卫提示都读它。唯一赋值点是 applyVault——与 mastheadVault.textContent 同一次赋值，
- *  不各存一份派生物。 */
+/** 当前 vault 的显示名（= 目录 basename，M163）：切换器列表的当前项与 dirty
+ *  守卫提示都读它。唯一赋值点是 applyVault——侧栏头的 vault 名由 src/tree.ts 的
+ *  setVault 用同一个 baseName 派生，本文件不另存一份派生物。 */
 let vaultName = "";
 
 // 附件 provider：文件名匹配走 vault 索引（add-vault-workspace 裁决点 F），
@@ -172,14 +172,15 @@ function emitReadiness(name: string, detail: object = {}): void {
   window.dispatchEvent(new CustomEvent(`lumir:${name}`, { detail }));
 }
 
-// 轻量大纲（M148）：masthead 的当前位置指示段 + ⌘⇧O 浮层。能力与浮层本体在 src/toc.ts，
+// 轻量大纲（M148）：modeline 左段的当前位置指示段 + ⌘⇧O 浮层。能力与浮层本体在 src/toc.ts，
 // 装配侧只提供四样：编辑器视图、是否有当前文件（空态不显示指示段）、当前文档的模式与 code 语言
 // （M197：md 走标题大纲、code 走符号大纲，语言名从扩展名注册表取——单一来源），以及无条目时的
-// 提示出口（toast：D84 与 M197 的两条新文案）。指示段与浮层都挂 masthead，浮层不动布局。
+// 提示出口（toast：D84 与 M197 的两条新文案）。指示段与浮层都挂 modeline（M211 从旧标题区迁来），
+// 浮层向上展开、不动布局。
 const toc = createToc({
   view: editor.view,
-  indicator: shell.mastheadSection,
-  mount: shell.masthead,
+  indicator: shell.modelineSection,
+  mount: shell.modeline,
   hasFile: () => save.displayedPath() !== undefined,
   // 活读前台会话的模式与路径（切标签 / 切 vault 后自动跟上）：语言名只在这里派生一次，
   // toc 侧不再自己从路径推。
@@ -316,14 +317,15 @@ const readingPositions = createReadingPositionStore({
 // 只有一个 EditorView，「前台文档是谁」由 activePath 活读，不随标签切换重新挂监听。
 editor.onScroll(() => readingPositions.scrolled());
 
-/** 前台会话变化后把周边表现层**一次**对齐：正文基准路径、masthead、后端 dirty 镜像、
- *  大纲指示段、文件树高亮、标签栏。这是「当前文档」在装配层的唯一同步点——别处的读点
- *  一律改为问 editor.activeSession()，不再各自存副本。 */
+/** 前台会话变化后把周边表现层**一次**对齐：正文基准路径、modeline（路径 + 右段派生信息）、
+ *  后端 dirty 镜像、大纲指示段、文件树高亮、标签栏。这是「当前文档」在装配层的唯一同步点——
+ *  别处的读点一律改为问 editor.activeSession()，不再各自存副本。 */
 function syncActiveDocument(): void {
   const session = editor.activeSession();
   // resolve 的 from 基准不在这里同步：它由 link-follow.ts 的 resolveBase() 活读前台会话
   //（见那边的注释，那份副本曾在装载时序上造成一整批 wikilink 停在 pending）。
   syncDirtyIndicator();
+  syncModelineMeta();
   syncBackendDirty();
   // 指示段与文档同一帧到位（不落在 120ms 节流窗口之后）：见 TocHandle.refresh 的说明。
   toc.refresh();
@@ -484,7 +486,7 @@ const commands: CommandRuntime = {
   // text-scale-adjust 的对应物），不是整体界面缩放——MUST NOT 启用 Tauri 的 webview 缩放
   // 热键（它会在统一键位表之外再注册一条 keydown 通路、接管同一批键，见 keymap-commands 的
   // delta）。能力（运行期真源 + 施加）在 editor 侧：一份值管全部会话、不落盘、不回写
-  // config.json、不进撤销栈、不碰 dirty；⌘0 回到**配置字号**而不是出厂 16px。
+  // config.json、不进撤销栈、不碰 dirty；⌘0 回到**配置字号**而不是出厂默认值（15px，D1 裁决）。
   "view.text-scale-up": () => editor.textScale("up"),
   "view.text-scale-down": () => editor.textScale("down"),
   "view.text-scale-reset": () => editor.textScale("reset"),
@@ -559,18 +561,39 @@ onMenuCommand((payload) => {
   MENU_COMMANDS[payload]?.();
 }).catch(() => {}); // 无 Tauri 后端（纯浏览器预览）时静默忽略
 
-const mastheadVault = shell.root.querySelector<HTMLElement>(".masthead-vault")!;
-const mastheadFile = shell.root.querySelector<HTMLElement>(".masthead-file")!;
-
-// dirty 状态反馈（M101 验收修复 + M149 按标签）：toast 会消隐，dirty 期间 masthead
-// 文件名旁常驻「未保存」标记。M149 起这个后缀描述的是**前台标签**那一个文档；逐标签的
+// dirty 状态反馈（M101 验收修复 + M149 按标签）：toast 会消隐，dirty 期间 modeline 的
+// 路径段旁常驻「未保存」标记。M149 起这个后缀描述的是**前台标签**那一个文档；逐标签的
 // 状态由标签栏自己的 dirty 点承担（见 src/tabs.ts 的 renderTabs），两者同源同义。
 function syncDirtyIndicator(): void {
   const session = editor.activeSession();
   const path = session.path;
-  mastheadFile.textContent = path === undefined
+  shell.modelinePath.textContent = path === undefined
     ? "无当前文件"
     : session.dirty ? `${path}（未保存）` : path;
+}
+
+/** modeline 右段（`语法 · 行数 · UTF-8`）——design §4-2 的实现期结论，口径「**只读派生、
+ *  零新状态**」：
+ *
+ *  - 行数取 `view.state.doc.lines`。它是 CM 的 Text rope 上**构造期算好的缓存字段**
+ *    （`TextNode` 在构造时累加子节点的 lines、`TextLeaf` 恒为 1，见 @codemirror/state 的
+ *    Text 实现），读它是 O(1)，**不引入全文档遍历**——ADR 0002 §6 对键入路径的约束因此
+ *    不被这条新展示位破坏。
+ *  - 语法名从扩展名注册表取（`codeLanguage`，与文件树 / 大纲同一份注册表，不另立映射表）：
+ *    md 模式不是注册表条目，固定写 "Markdown"；code 模式无语言线索（php / 未知扩展 /
+ *    无扩展）时报 "Plain text"。
+ *  - 编码恒为 "UTF-8"：读取链路的契约就是 Rust `String`（fs_read_snapshot 的
+ *    `content: String`），前端拿不到也造不出别的编码——它不是「检测结果」，是契约事实。
+ *
+ *  只在**值真的变化**时写 DOM（每次键入都会走这条路径，条件写避免无谓的布局失效）。 */
+function syncModelineMeta(): void {
+  const session = editor.activeSession();
+  const lines = editor.view.state.doc.lines;
+  const language = session.mode === "md"
+    ? "Markdown"
+    : codeLanguage(extensionOf(session.path ?? "")) ?? "Plain text";
+  const text = `${language} · ${lines} 行 · UTF-8`;
+  if (shell.modelineMeta.textContent !== text) shell.modelineMeta.textContent = text;
 }
 
 /** 已推给后端的 dirty 镜像值（M149）：只在**变化**时上报。
@@ -596,12 +619,17 @@ editor.onDirty((dirty) => {
   // updateDirty / setSessionDirty）。两种情形都要重画标签栏：dirty 点是逐标签的。
   syncDirtyIndicator();
   tabs.renderTabs();
-  // 保存成功（dirty→false）后所有 dirty 表现层必须一致清除：masthead 标记、
+  // 保存成功（dirty→false）后所有 dirty 表现层必须一致清除：modeline 的标记、
   // 后端退出守卫镜像，以及 dirty 期间弹出的守卫提示。sticky 提示按设计不自动
   // 消隐，不主动撤下会让「未保存」在保存成功后残留在右下角（桌面验收缺陷）。
   if (!dirty) save.clearGuardToasts();
   syncBackendDirty();
 });
+
+// modeline 的行数随文档变化（每次键入都可能改行数）。走内核已有的 onDocChanged
+// （它已在用一个：预览标签「首次输入即固定」），不新开一条监听通道——行数是
+// rope 上的缓存字段，读一次 + 条件写 DOM 的代价不构成新的键入路径负担。
+editor.onDocChanged(() => syncModelineMeta());
 
 // 预览标签「首次输入即固定」（M149，Alex 口径）：编辑动作落在预览标签上就说明用户
 // 打算留着它，此后单击文件树不再顶掉它。
@@ -616,7 +644,7 @@ editor.onDocChanged(() => {
   tabs.renderTabs();
   // 提升即「可持久化集合」多了一个成员（预览标签不入盘，spec「按 vault 持久化标签列表」），
   // 属一次**集合变化**，必须沿同一条防抖写盘——否则崩溃窗口里这个提升会丢（M163 r1 P2-2）。
-  // 这里不经 syncActiveDocument（那会连 masthead / 大纲 / 树高亮一起重算，而这一步只改了
+  // 这里不经 syncActiveDocument（那会连 modeline / 大纲 / 树高亮一起重算，而这一步只改了
   // 一个会话的属性），直接调会话侧的通知口。
   switcher.sessionChanged();
 });
@@ -793,9 +821,10 @@ async function applyVault(
   // 全部标签作废：内核只留一个未命名空文档（内部 currentFilePath 一并置空）。
   editor.reset();
   editor.setWikilinkResolver(linkFollow.resolver);
-  mastheadVault.textContent = name;
+  // vault 名的展示位只有一处：侧栏头的切换器入口（tree.setVault 内部按同一个 baseName
+  // 渲染），本文件不再往另一个元素上写一份副本。
   tree.setVault(root, entries);
-  // 表现层一次对齐：masthead 文件名回「无当前文件」、标签栏隐藏（空态）、树高亮清空、
+  // 表现层一次对齐：modeline 路径回「无当前文件」、标签栏隐藏（空态）、树高亮清空、
   // 大纲指示段收起、后端 dirty 镜像复位。放在 setVault 之后：setVault 重绘整棵树，
   // 之后再由它把树高亮刷成「无当前文件」。
   syncActiveDocument();
@@ -920,6 +949,18 @@ configGet().then((snapshot) => {
     console.warn(`lumir: ${warning}`);
     logEvent("config_warning", { source: "config", message: warning });
   }
+  // 主题（restyle-ui-tokens-v1，节点 1 裁决 D3 = `[ui] theme` 配置）：启动装载时施加一次，
+  // 落点是 `<html data-theme>`——token 层的三组块按这个属性取色。与上面几步同属
+  // 「配置到位后施加一次」的启动装配落点区。**前端不判非法值**：取值是闭集合，合法性已由
+  // Rust 侧 validate 保证（light|dark|eink 之外 warning + 回落 light），前端再判一次就是
+  // 同一条语义的第二处真源（REVIEW.md 第 8 条）。本版不做运行期切换、不跟随系统主题（非目标）。
+  //
+  // 放在本块**最后一条**是有意的：`config_get` 的拿到 `ui` 是契约（Rust 的 AppConfig 里
+  // `ui` 不是 Option，序列化必带），但桩环境可能落后于契约——若断言在块首，桩缺 `ui` 时
+  // 抛出的异常会让后面所有配置项（模式 / 折行 / 排版 / [keys]）一起被 `.catch` 静默吞掉，
+  // 症状是「一大片场景以不相干的理由变红」。放最后则退化为「主题没施加」（浅色默认块照常
+  // 生效），失败面收窄到真正依赖主题的地方。测试桩的补齐见 tests/visual/scenes/tauri-stub.ts。
+  document.documentElement.dataset.theme = snapshot.config.ui.theme;
 }).catch(() => {});
 
 // app-ready 只表示 webview/application shell 已挂载，不等价于 vault 恢复或编辑器首帧。

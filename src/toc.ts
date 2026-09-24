@@ -1,8 +1,10 @@
 // 轻量大纲（TOC）——M148；M197 起数据源按模式分支（md 标题 / code 符号）。
 //
-// 入口形态（Alex 裁决）：masthead 在文件名后显示**当前标题路径**（兼作位置指示），点击这段或
-// 按 ⌘⇧O（keys.ts 的 `toc.toggle`）展开浮层大纲。目标是「视觉与交互都比较轻」：不加右栏、不加
-// 常驻面板、不占文档区任何空间（浮层绝对定位，颜色/边框/圆角全部取 M55 的既有 token）。
+// 入口形态（Alex 裁决）：modeline 在当前文件路径后显示**当前标题路径**（兼作位置指示），
+// 点击这段或按 ⌘⇧O（keys.ts 的 `toc.toggle`）展开浮层大纲。目标是「视觉与交互都比较轻」：
+// 不加右栏、不加常驻面板、不占文档区任何空间（浮层绝对定位，颜色/边框/圆角全部取 token 层）。
+// M211（change restyle-ui-tokens-v1）：指示段与浮层从旧的标题区（本 change 已删除）迁到
+// modeline——浮层因此改为**向上展开**（指示段今天在窗口最后一行），这是位置调整，不是交互变化。
 //
 // 数据源两条（M197，change code-outline）：
 //   - md 模式：CM syntaxTree 的 ATX 标题节点（遍历先例见 src/preview/livePreview.ts，但本模块
@@ -93,9 +95,9 @@ export interface TocContext {
 
 export interface TocOptions {
   view: EditorView;
-  /** masthead 的当前位置指示段（点击展开浮层）。 */
+  /** modeline 左段的当前位置指示段（点击展开浮层）。 */
   indicator: HTMLButtonElement;
-  /** 浮层挂点（.masthead：浮层的定位块）。 */
+  /** 浮层挂点（.modeline：浮层的定位块；浮层贴在它上沿、向上展开）。 */
   mount: HTMLElement;
   /** 是否有当前文件：空态（未打开 vault / 无当前文件）不显示指示段。 */
   hasFile(): boolean;
@@ -257,7 +259,7 @@ class Toc implements TocHandle {
   private readonly hasFile: () => boolean;
   private readonly context: () => TocContext;
   private readonly toast: (text: string) => void;
-  /** 浮层的定位块（.masthead）：浮层 left 与指示段 offsetLeft 同基准。 */
+  /** 浮层的定位块（.modeline）：浮层 left 与指示段的视口坐标同基准算。 */
   private readonly container: HTMLElement;
   /** 匹配与查询状态的唯一实现（两处浮层共用一份）；本类只管接入。 */
   private readonly filter: ListFilter = createListFilter();
@@ -551,11 +553,12 @@ class Toc implements TocHandle {
     item.scrollIntoView({ block: "nearest" });
   }
 
-  /** 把浮层对到指示段下方（右端不越出 masthead 的可视区）。 */
+  /** 把浮层对到指示段的左端（横向）；纵向由 CSS 的 `bottom: 100%` 贴在 modeline 上沿
+   *  （指示段今天在窗口最后一行，浮层向上展开）。右端不越出定位块的可视区。 */
   private place(): void {
-    // 与 .masthead 的左右内边距同值（style.css 的 padding 简写）。
-    const padding = 48;
-    // 两个 left 同基准才可比：浮层的 CSS left 相对包含块（.masthead）的内边距盒，故这里
+    // 与 .modeline 的左右内边距同值（style.css 的 padding 简写，= --sp-7）。
+    const padding = 14;
+    // 两个 left 同基准才可比：浮层的 CSS left 相对包含块（.modeline）的内边距盒，故这里
     // 用两者的视口坐标相减，而不是 offsetLeft（相对基准易漂）。
     const offset = this.indicator.getBoundingClientRect().left - this.container.getBoundingClientRect().left;
     const max = Math.max(0, this.container.clientWidth - this.popover.offsetWidth - padding);
@@ -634,7 +637,7 @@ class Toc implements TocHandle {
   }
 }
 
-/** 装配大纲（浮层 + masthead 指示段）；返回命令层要的入口。 */
+/** 装配大纲（浮层 + modeline 的指示段）；返回命令层要的入口。 */
 export function createToc(options: TocOptions): TocHandle {
   return new Toc(options);
 }
