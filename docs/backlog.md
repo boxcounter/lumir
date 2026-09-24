@@ -177,7 +177,7 @@
     时序依赖的旧宽度，不变量只覆盖独占行形态，需要一处行内容判定）。worker 建议 (a)。证据（真机两态
     几何读数 / 反向验证）：`test-results/m182/`、`test-results/acceptance/2026-09-18/23-image-first-open-width/`。
 
-22. **change `code-variable-highlight` 待归档跟踪**（2026-09-24，M198 实现完成，**待 Alex 节点 2 / 归档**）：
+22. **change `code-variable-highlight` 待归档跟踪**（2026-09-24，M198 实现完成；**已核销**：M205 归档节点 2，2026-09-24）：
     流程口径要求每个 change 在实现 PR 合并时即落一条待归档记录并跟踪到归档
     （`docs/process/openspec-workflow.md` 的批次收尾 checklist 第一条）。本 change 的提案四件在 2026-09-24
     节点 1 裁决通过（裁决点 2 原话「采纳推荐」，其余 5 点按推荐落定；逐条落点见 `proposal.md` 的
@@ -190,10 +190,21 @@
     采纳）；② **一张新增元素级视觉基线待 Alex 过目**
     （`tests/visual/baselines/m198-code-variable-highlight.spec.ts-snapshots/binding-highlight-chromium-darwin.png`，
     截图副本与说明见 `test-results/m198/baseline-check.md`）——AGENTS.md 的「基线更新是人肉裁决点」；
-    ③ 1MB 级文件的索引构建读数**不达标**（首次触发 ≈ 0.9s，headless 下界），已在 M198 如实落盘并给出
-    后续路径（`test-results/m198/perf-var-highlight.json` 与 design §8 备选②），归档时应连同这条一起看。
+    ③ 1MB 级文件的索引构建读数**不达标**：落盘读数是**首次触发 648.4 ms = 解析 205.8 + 索引构建 442.6**
+    （本行原写「首次触发 ≈ 0.9s（解析 0.28s + 索引构建 0.64s）」，与 `test-results/m198/perf-var-highlight.json`
+    不符，M205 归档时按落盘读数改准；**超标归因是索引构建**——解析 205.8 ms 落在 design §1.6 的
+    78–291 ms 估计区间内，索引构建 442.6 ms 远超该处 6–8 ms 的树遍历估计），后续路径按 design §8 备选②。
+    **核销（M205 归档节点 2，2026-09-24）**：归档为 `openspec/changes/archive/2026-09-24-code-variable-highlight/`，
+    `editor-live-preview` 落 2 条 ADDED，tasks 37/37 全勾；delta 正文两次引用的「代码文件的结构解析
+    （语言分层注册表）」requirement 由**同批先归档**的 code-outline 并入（归档顺序硬约束，避免 living spec
+    里出现指向不存在 requirement 的引用）；归档件内 18 条相对链接按「补一层 `../` / 改指归档目录名」两类
+    逐条改准；design §7 的「未实测的声明位形态」按 M198 实测收口（tasks 9.4 就地标注「实现期未做、M205
+    补齐」）、`--bg-2` 三处按实现的 `--bg-3` 改准；证据指针的四处失效文件名（`index-cost.json` /
+    `perf-var-highlight-*.json` / `task8-ax-probe.md` / `29-code-variable-highlight/`）一并改准。
+    **残留人肉点**：② 的那张新增元素级基线在归档件里仍标「待 Alex 过目」——本批没有可引的过目记录，
+    标注按原样保留、未擅改，需要时请在批次验收里一并确认。
 
-23. **change `list-filter` 待归档跟踪**（2026-09-24，M199 实现，**待 Alex 节点 2 / 归档**）：流程口径要求
+23. **change `list-filter` 待归档跟踪**（2026-09-24，M199 实现；**已核销**：M205 归档节点 2，2026-09-24）：流程口径要求
     每个 change 在实现 PR 合并时即落一条待归档记录并跟踪到归档
     （`docs/process/openspec-workflow.md` 的批次收尾 checklist 第一条）。本 change 的四件制品在 2026-09-24
     节点 1 裁决通过（Alex 原话「五个点都采纳推荐」，逐条落点见 `proposal.md` 的「裁决记录」节，五个条件是
@@ -210,9 +221,20 @@
     「基线更新是人肉裁决点」；③ delta 的「失效行参与筛选且 Enter 仍走重定位」scenario 里「用键盘选中它」
     一句与**筛选前**的既有口径不一致（失效行不在键盘游标空间里，`mv-vault-switcher.spec.ts` 钉着
     「↓ 只在可用行之间走」），实现按「与筛选前逐条一致」落地（失效行参与筛选、点击走重定位、键盘仍不
-    可达），归档时应复核这句是否需要改写。
+    可达）。
+    **核销（M205 归档节点 2，2026-09-24）**：归档为 `openspec/changes/archive/2026-09-24-list-filter/`，
+    `toc-outline` 落 2 条 ADDED + 1 条 MODIFIED、`vault-workspace` 落 1 条 ADDED，tasks 48/48 全勾。
+    三处的处置：① 场景编号已按实测 32 改准（`proposal.md` 两处同步）；② 四张基线**已结清**——`03ca450`
+    按 Alex 过目口径「合并指示即通过」重拍并随 merge `b517052` 入库，随后 `gate-visual-final.log` 为
+    12/12 PASS（`test-results/m199/baseline-update.log` 那次 `--update` 是失败的尝试）；③ 按 Alex 裁决
+    改写该 scenario 为「失效行 SHALL 出现在结果集里但 MUST NOT 进入键盘游标空间（与筛选前一致）」，删去
+    Enter 一句；同一 requirement 的**正文**里那句「`Enter` 与点击的动作 SHALL 保持现状」按同一裁决只保留
+    「**点击**」半（r1 评审指出首轮只改了 scenario、正文漏改，已由 r1 修复提交补齐；delta 与 living 两处
+    同改，`tests/unit/vault-switcher.test.ts` 覆盖点击那半）。归档件内 3 条相对链接补一层 `../`；`tasks.md`
+    1.1 的判据由「`rg toLowerCase` 只在模块内命中」（实测 8 处、字面为假）改准为「两处消费者 import
+    同一份模块」。本 change 的四处覆盖缺口另立条目（见「待修 findings」节）。
 
-24. **change `code-outline` 待归档跟踪**（2026-09-24，M197 实现完成，**待 Alex 节点 2 / 归档**；本条由 M199
+24. **change `code-outline` 待归档跟踪**（2026-09-24，M197 实现完成；**已核销**：M205 归档节点 2，2026-09-24；本条由 M199
     按 M197 的 finding 补登，findings 原文：`.tower/comms/findings/20260924-worker-code-outline-impl-improve-docs-backlog-md-lezer-yaml-code-outline.md`）：
     本 change 的实现已在 `feat/code-outline-implementation` 上完成（指示段 / 浮层 / 跳转落点 / 两条新文案
     全部落地，有真机与视觉证据），但 backlog 里没有待归档记录——`docs/backlog.md` 不在 M197 的改动范围，
@@ -220,8 +242,71 @@
     ① 两条空态文案（`src/toc.ts` 的 `NO_SYMBOLS_TEXT` / `NO_STRUCTURE_TEXT`）在 M197 实现期未进 deck，
     已由 M199 补登为 **D115/D116**（逐字取自 `openspec/changes/code-outline/tasks.md` 的 5.1 待补表）；
     ② 证据目录：`test-results/m197/`（本机，git 外）与 `test-results/acceptance/2026-09-24/30-code-outline/`。
+    **核销（M205 归档节点 2，2026-09-24）**：归档为 `openspec/changes/archive/2026-09-24-code-outline/`，
+    `editor-live-preview` 与 `toc-outline` 各落 1 条 ADDED，tasks 36/36 全勾。**补记一处本条第①段原未
+    记入的实质矛盾**：delta 的解析时机条款原写「换文件、外部重载、切换标签 SHALL 使缓存失效」、scenario
+    原写「切回时缓存按『换文件即失效』重建」，而实现按「语言 + 文档内容」缓存（切回同一份内容命中旧键、
+    不重建）——tasks 9.3 自陈过但 delta 未改。**Alex 节点 2 裁决取前者**：措辞改为「缓存身份 = 文档内容」，
+    实现侧零改动；M205 已在归档提交里改准 delta 的两处（requirement ③ + scenario）与同批 design 的对应
+    措辞——`code-variable-highlight/design.md` §1.6 / §4.3 在归档提交里改准，**`code-outline/design.md` §1.6
+    首轮漏改**（自报已改、实际 diff 为零），由 r1 修复提交按同一口径补齐（r1 评审 P2-1，2026-09-24），并入
+    living `editor-live-preview` 后与实现一致。归档件内 19 条相对链接分两类改准（10 条补一层
+    `../`、9 条改指归档目录名含自指一条）；5 处文本/指针漂移 + 上述缓存矛盾共 6 处一并收口（`40 张 *-expected.png` → 实际命名与
+    32 张、`(focused)` 形态按 M199 改写、`visual-toast-d84.log` → `-reused.log`、deck 编号待分配 → D115/D116、
+    基线「待 Alex 过目」由 backlog #23 承接）。`src/` 侧两处失效注释指针与其余仓内旧路径指针不在本 mission
+    scope，已登记进「文档指针与门禁清单」节。
+
+25. **change `typography-and-zoom` 待归档跟踪**（**补登 + 核销同日**，2026-09-24，M205）：流程口径要求每个
+    change 在实现 PR 合并时即落一条待归档记录（`docs/process/openspec-workflow.md` 的批次收尾 checklist
+    第一条）。本 change（M195 实现 merge `c988c80`）**合并时没有落这条记录**——全仓 grep `typography` 在
+    `docs/backlog.md` 只命中 list-filter 条目里的一处顺带提及，`M195` / `M193` 零命中，正是 M150 记过的
+    失效模式。M205 在归档前补登本条、随归档核销：归档为
+    `openspec/changes/archive/2026-09-24-typography-and-zoom/`，**新建 living capability `typography`**
+    （ADDED ×4，`## Purpose` 已按惯例手写替换掉 `archive` 生成的 TBD 占位）+ `keymap-commands` 落 1 条
+    ADDED，tasks 43/43 全勾。归档动作的四处收口：① `tasks.md` 三条 `../../../REVIEW.md` 补一层；② 登记性
+    缺陷就地改准——8.1① 的 `font_size: 20` → 实测场景用的 **32**（含 `⌘0` 回配置值 32）、`36 个场景全通过`
+    → **39**（M195 时点 36、归档复跑 39）、`proposal.md` 的 Impact 条目名「编辑器内字体引用的单一来源」→
+    delta 实际交付的 **「字号步进的运行期口径」**、delta req4 的「30 张既有基线」→ 改成带时点的写法并补
+    内容级判据（`30` 在 M195 时点准确，今日 non-typography 基线已 32 张——数字写死在 living spec 里会一直
+    过期）；③ 覆盖缺口如实留在归档件里（「全会话一致」零断言、config 的 12/32 与 code 模式同步未在渲染层
+    验、`⌘⇧=` 真机形态未验）；④ 跨 change 风险已单列（见第 27 条）。
+
+26. **change `remember-reading-position` 待归档跟踪**（**补登 + 核销同日**，2026-09-24，M205）：同上，本
+    change（M194 实现）合并时没有落待归档记录（backlog 里只有第 10 条边界段的一句能力承接）。归档为
+    `openspec/changes/archive/2026-09-24-remember-reading-position/`，`multi-tabs` 落 1 条 ADDED、
+    `vault-workspace` 落 1 条 ADDED + 2 条 MODIFIED，tasks 38/38 全勾；两份 living spec 的 `## Purpose`
+    按 M170 惯例补归属记录。四处证据口径按磁盘实况改准：1.1 的 `reading-position-before/readings.json`
+    与 1.2 的 `red-before-implementation.log` **未留档**（以反向验证现场代替，已如实标注）、1.4 的读数实际
+    落在 `test-results/m194/design7-probe/`、8.1 的 fixture 实际复用既有 `toc-long.md`（**无新增 fixture
+    文件**）、单测条数 15 → **17**；4.2 / 4.3 的反向验证**红侧未单独留档**已就地如实标注（绿侧断言在位）；
+    `tasks.md` 三条 `../../../REVIEW.md` 补一层。
+
+27. **前置提醒：`restyle-ui-tokens-v1` 实现时必须补一条 `typography` 的 MODIFIED delta**（2026-09-24，M205
+    登记，**待实施**）：`restyle-ui-tokens-v1` 的 D1 已落锤把编辑器内容字号默认值 **16 → 15px**
+    （`tasks.md:63` 的 3.4，Rust `DEFAULT_FONT_SIZE` 同步），但它的 delta 集只有 `editor-live-preview` /
+    `file-tree` / `frontmatter-properties` / `multi-tabs` / `ui-design-system`，**没有 `typography`**。而
+    `typography` 的「出厂默认口径不变」requirement 明文写死「内容字号 `16px`」「与本 change 之前逐项相同」
+    ——不补 delta 就会复现 M150 记过的形态：**living spec 与实现直接矛盾**（spec 说 16px、实现出 15px），
+    且 `validate` 不查这类矛盾。**动作**：restyle 的实现 PR 必须带一条 `typography` 的 MODIFIED（改 16px
+    的两处口径与相关 scenario 的具体值），并在归档时核对 living `typography/spec.md` 的 4 条 requirement
+    与 `restyle` 的 delta 不冲突。
 
 ## 待修 findings（不阻塞）
+
+- **`list-filter` 归档时如实留下的四处覆盖缺口 / 措辞落差**（2026-09-24，M205 登记，low）：
+  ① delta scenario「单字符绑定不进统一键位表」里「表内没有任何单字符绑定」这条**无断言**（现只覆盖 ⌃S 那条，
+  `tests/visual/scenes/m131-keymap-table.spec.ts:86`）——建议在 `tests/unit/keys.test.ts` 的表不变量循环里补
+  一句「token 无修饰键 ⇒ 必须是具名键」；② delta scenario「中文查询串命中中文标题」要求输入法路径，真机
+  通道造不出（`design.md` §7 第 1 项已如实登记）⇒ 该 scenario 只有单元 CJK（`tests/unit/list-filter.test.ts`）
+  与 chromium 合成组合事件两条替代证据，**无端到端证据**；③ vault delta 的「结果集以本次拉取到的数组下标
+  表达，游标 / 当前项 / 动作落点**在同一空间解释**」与实现有措辞落差——实现保留三套空间（源下标 /
+  `visible` / 可选中行 `rows`），靠 `id = ITEM_ID_PREFIX${source}` + `dataset.vault` 显式映射
+  （`src/vault-switcher.ts`）；toc-outline 那条的 MUST NOT（「并存两套空间**而不显式映射**」）字面成立，
+  vault 这条的「同一空间」字面不成立。**Alex 的裁决口径是「delta 不动、只登记」**，故 living spec 保留
+  原措辞，在此登记；④ 本 change 改了真机套件的**共享库** `scripts/acceptance/lib/ax.mjs`（value 解析认
+  `Value: …`）与 `lib/execute.mjs`（`TEXT_FIELD_ROLES` 收 `AXComboBox`），M199 只重跑了 13 / 17 / 18 / 25 / 32
+  五个场景，其余用到 `keys` 回读的场景本批未重跑——按 AGENTS.md 的套件执行时机，应由**批次收尾的全量套件
+  运行**覆盖，不必为本 change 单独补跑。
 
 - **两个第三方 Lezer 语法包会静默坑人：`@lezer/yaml@1.0.4` 位置越界、`@fig/lezer-bash@1.2.5` 普通 bash
   上出错**（2026-09-24，M192 提案期实测 + M197 实现期复现，medium，**待修**）：`@lezer/yaml@1.0.4`（官方）
@@ -233,7 +318,8 @@
   **Lumir 今天不受影响**（两者都没被使用：yaml 的着色走 `legacy-modes`，bash 不在结构表内，M197 已把 yaml
   排除出结构功能表），风险在**将来**：任何「有官方语法就接上」的决策都会踩到它。复现与读数：
   `test-results/m197/yaml-defect.txt` 与 `test-results/m197/probe/yaml-defect.mjs`（M197），
-  `.tower/worktrees/wt-192/openspec/changes/code-outline/evidence/01-language-stack-survey.md` §6（M192）。
+  `openspec/changes/archive/2026-09-24-code-outline/evidence/01-language-stack-survey.md` §6（M192；原指
+  `.tower/worktrees/wt-192/...`，那个 worktree 路径已随 worktree 清理失效、change 也已归档，M205 改指归档路径）。
   findings：`20260924-worker-code-intel-proposal-bug-lezer-lezer-yaml-fig-lezer-bash-bash.md`、
   `20260924-worker-code-outline-impl-improve-docs-backlog-md-lezer-yaml-code-outline.md`。
   **建议动作**：① 换管线 / 加语言前先跑最小复现（不得按「有 parser 就支持」接入）；② 若真要支持 yaml 的
@@ -520,6 +606,26 @@
 
 ### 文档指针与门禁清单
 
+- **M205 归档后残留的仓内旧路径指针**（2026-09-24，M205 登记，low，**待修**）：五个 change 归档后，仓内仍有
+  若干文件按**旧路径** `openspec/changes/<id>/` 指向已移入 `openspec/changes/archive/2026-09-24-<id>/` 的制品
+  （归档目录内部制品之间的指针已随归档改准，这里列的是**外部**指针）。逐条（以
+  `rg 'changes/(code-outline|code-variable-highlight|list-filter|typography-and-zoom|remember-reading-position)'`
+  实测）：① `src/code-structure.ts:118`（指向 code-outline 的 `specs/toc-outline/spec.md`）与
+  `src/toc.ts:141`（指向 code-outline 的 `tasks.md` 5.1）——**`src/` 改动不在 M205 的 scope**，按 M181 先例
+  （同型的 `src/preview/attachments.ts:253` 当年投 finding）在此登记；② `src/vault-switcher.ts:28`
+  （list-filter 的 `specs/vault-workspace/spec.md`）与 `src/code-identifiers.ts:121`（code-variable-highlight 的
+  `evidence/03-identifier-positions.md`）——同一条，M205 实测新增；③ `src/code-identifiers.ts:46-53` 的
+  「已知边界」段仍把 `with … as` / 推导式 / 海象 / 模式匹配等列为「**未实测**」，而**同一文件** `:197-217`
+  的判据表已按 M198 实测落了规则并注明「design §7 点名的未实测形态已补实测」——两段自相矛盾（low）；
+  ④ `文案-Copy.md:106` / `:112`（指向 code-outline 的 `tasks.md` 5.1）与
+  `scripts/acceptance/scenarios/30-code-outline.md:168`、`31-code-variable-highlight.md:153`、
+  `32-list-filter.md:258`——非 openspec 制品，M205 的 scope 不含；⑤
+  `scripts/acceptance/scenarios/29-typography-and-zoom.md:4` 的 front-matter `title` 仍在宣传「`⌘⇧=` 的可见
+  结果」，与正文已如实登记的「该形态真机未验」不符（旧版残留）；⑥
+  `scripts/acceptance/scenarios/28-remember-reading-position.md:104` 的「15 条」应为 **17 条**（与 M205 对
+  tasks 同批订正的同一处数字）。**动作**：下次动到 `src/` 或这些文档的 mission 顺手改指归档路径 / 改准数字，
+  或单立一条清扫 mission。这些指针不影响任何门禁（`scripts/docs-check.sh` 不查相对链接、`validate` 不查路径），
+  但 REVIEW.md 第 7 条的口径是「写不出可 `ls` 的指针就等于没跑」。
 - **门禁清单三处过期**（M153 finding，worker-testinfra，2026-09-17，low，**已核销**：2026-09-18 治理批
   收尾由 tower 直改闭合，核销记录见文末「已核销」节）：M153 给
   `gate.sh quick` 加了 `docs-check` 与单测层、给 visual 层加了 isolation 断言，三处复刻门禁清单的文档随之
@@ -1008,5 +1114,44 @@
   ② **`codeblock-toml-yaml-highlight`**（M167 提案 merge `ef8f596` → M179 实现 merge `485dba5`，三轮评审 r3 clean @`8710036`）→ `openspec/changes/archive/2026-09-18-codeblock-toml-yaml-highlight/`：tasks **27/27**（2.3 / 3.8 标注放弃原因——裁决点 2 = 方案 A 不实现；归档期三条 5.2 / 5.3 / 6.5 本次在归档件里逐条收口）；`editor-live-preview` 落 **1 条 MODIFIED + 1 条 ADDED**（`+ 1, ~ 1, - 0, → 0`），逐 requirement 字节比对 EXACT——**「Markdown 渲染保真」的「已知例外」段并入后并列 rust 与 toml 两条**（归档前只列 rust，这正是本 change 要补的那格），另两条 M138/M152 既有行为的 spec 回填（语言表同源 / 长度上限）也在位。实现期两处订正（5.4 把「带引号的键」从 MUST 收成边界 scenario、3.7 的整页容差 958/960 → 0.0005）都已在 delta 与 design §5/§6 落定，无静默扩 scope。toml 的 `atom` 复用缺陷作为**记录在案**留在本节（见「记录在案」节的条目），本次不修。
   ③ **`line-wrap-options`**（M166 提案 merge `bda4fe4` → M180 实现 merge `9a15a65`，两轮评审 r2 clean @`d5e860f`）→ `openspec/changes/archive/2026-09-18-line-wrap-options/`：tasks **54/56**（9.4 / 9.5 按**如实标注的覆盖边界**保留未勾——sha256 逐字节口径下无 mtime 断言词汇、真机无计算属性通道，按节点 2 口径接受为边界，不当缺陷也不冒称已验；9.2 由 tower 复裁决收口：`scripts/acceptance/lib/execute.mjs` 的 1 行 scope 外改动理由成立、scope 已扩纳入）；`editor-live-preview` 落 **3 条 ADDED**、`keymap-commands` 落 **1 条 ADDED + 3 条 MODIFIED**（`+ 4, ~ 3, - 0, → 0`），两份 delta 的 7 条 requirement 逐 requirement 字节比对 EXACT、零误删（living 的删除行只落在三条被 MODIFIED 的 requirement 内部，含「表格滚动容器」→「块级横滚容器」泛化与命中条件收紧两处申报过的修订）；D1–D5 五件裁决与 proposal 的「裁决记录」节一致，四件制品已改写为应用级语义（grep 无标签页级残留）。**无实现期静默扩 scope**。
   **归档动作的配套收尾**：① 三个 archive 目录内的相对链接各补一层 `../`（`openspec archive` 把目录移深一层却不重写制品内链接，这是本节「openspec 归档制品与实验脚本」记过的根因）——三个目录共 20 条相对链接逐条用「拼到制品所在目录再 `exists()`」实测，**19 条补一层后可达、1 条为 spec 正文里的示意例子**（`specs/attachment-display/spec.md` 的 `./assets/shot.png`，按 M155 坐实的误报形态排除、不改）；② `scripts/acceptance/scenarios/20-image-fallback.md:76` 指向旧 change 目录的指针改指 archive 路径。`src/preview/attachments.ts:253` 的同型指针在 mission scope 外，已投 finding 不在本次改。**三个 change 均未新建 capability**（落点全在既有 living spec），故无 Purpose 占位待补。
+
+- 2026-09-24：**五个 change 归档核销——活跃 change 从 8 降到 3**（M205 归档节点 2；Alex 逐件确认五件全部
+  归档，另下两项裁决：① code-outline delta 的缓存条款改措辞为「缓存身份 = 文档内容」（实现零改动）；
+  ② list-filter 的「失效行参与筛选」scenario 改写为「SHALL 出现在结果集里但 MUST NOT 进入键盘游标空间
+  （与筛选前一致）」，删去 Enter 句）。**归档顺序是硬约束**：`typography-and-zoom` → `code-outline` →
+  `code-variable-highlight` → `list-filter` → `remember-reading-position`——code-variable-highlight 的 delta
+  明文引用「代码文件的结构解析（语言分层注册表）」这条 requirement（它只由 code-outline 引入），`validate`
+  不查这类引用，先归后者才不会有悬空引用。**归档前后实测**：`validate --all --strict` 由
+  **22 passed / 0 failed**（8 活跃 change + 14 living spec）逐件降到 **18 passed / 0 failed**（3 活跃 change +
+  15 living spec）、退出码 0；`bash scripts/docs-check.sh` = PASS（ADR 6 份 + README 索引双向一致）；
+  `openspec list` 里五件均已移出活跃列表。**五件的落点**：typography-and-zoom → **新建 living
+  `openspec/specs/typography/`**（ADDED ×4，`## Purpose` 已按 toc-outline 的句式手写替换 `archive` 生成的
+  TBD 占位）+ `keymap-commands` 1 条 ADDED；code-outline → `editor-live-preview`、`toc-outline` 各 1 条 ADDED；
+  code-variable-highlight → `editor-live-preview` 2 条 ADDED；list-filter → `toc-outline` 2 条 ADDED +
+  1 条 MODIFIED、`vault-workspace` 1 条 ADDED；remember-reading-position → `multi-tabs` 1 条 ADDED、
+  `vault-workspace` 1 条 ADDED + 2 条 MODIFIED。归档后逐条核对：五件的 requirement 名在各自 living spec 里
+  各出现**恰好一次**（无重复并入）、六份 living spec 的 `## Purpose` 补齐了新并入 change 的归属记录。
+  **归档动作的配套收尾**：① **相对链接 108 条逐条实测**（脚本：把每条 `](相对路径)` 按制品所在目录拼出
+  绝对路径再 `exists()`）——**0 条不可达**；本次改动到链接**目标**的共 **46 处**（逐件：typography 3 /
+  code-outline 19 / code-variable-highlight 18 / list-filter 3 / remember-reading-position 3；口径是
+  「新旧文件的相对链接目标做多重集差」实测，不按行数估），分两类：「把相对路径改深一层（补 `../`）」
+  **24 处**（typography 3 / code-outline 10 / code-variable-highlight 5 / list-filter 3 /
+  remember-reading-position 3——其中 2 处是两个 evidence/01 的 `../../../../REVIEW.md`：survey 判它「已正确、
+  无需改」，归档后实测还差一层，**实测捞回**）、「把目录名改指归档名（跨 change 与自指 1 处）」**22 处**
+  （code-outline 9 / code-variable-highlight 13，其中 1 处是 code-variable-highlight 的 evidence/03
+  把 `[code-outline]` 链到了自己的 proposal）。
+  **M181 记过的失效模式在本批的形态**：survey 只数了「需要补层的」与「跨 change 的」，漏掉的正是
+  4 层变 5 层这类**深度换算错**——所以本批以脚本实测为判据，不认清单。② 一批数字/指针订正（详见第 22–26
+  条与「文档指针与门禁清单」节）；③ 五件归档件内**零**声明式扩 scope：所有文本改动都是「与实现/磁盘对齐」
+  或按裁决改措辞，实现侧零改动。**未做的（如实声明）**：M195 的两张 typography 基线、M198 的一张
+  var-highlight 基线在归档件里仍标「待 Alex 过目」——本批没有可引的过目记录，标注按原样保留未擅改；
+  `src/` 侧的失效注释指针与仓内其余旧路径指针按 scope 登记进「文档指针与门禁清单」节。
+  **r1 评审（2026-09-24，p2-2items / fix-then-merge）的两处修复**：① `code-outline` 归档件的 `design.md`
+  §1.6 缓存矛盾句**首轮漏改**（backlog 与 review-request 都自报已改，实际 diff 为零——「自报改了、diff 为零」
+  正是 REVIEW.md 第 7 条的同族形态），已按 `code-variable-highlight` 的同型口径补齐并加归档标注；②
+  `list-filter` 的裁决②首轮只改了 scenario，同一 requirement **正文**（delta 与 living 两处）仍留
+  「`Enter` 与点击的动作 SHALL 保持现状」的 Enter 半，已按裁决删 Enter 半、保留点击半（点击那半由
+  `tests/unit/vault-switcher.test.ts` 覆盖）。两处均在 r1 修复提交里改准，backlog 第 23/24 条的核销表述
+  按实情对齐。
 - 批次三：键位分发三轨并行 + 扩展名注册表漂移（M130/M131/M132）；save-ipc.ts 折回 ipc.ts（M132）；Ctrl-K/D/T 原生路径风险（M132）。
 - 批次二：DeepSeek Flash 试用结论——可做 build，review 环节（k3-256k）不能省。
