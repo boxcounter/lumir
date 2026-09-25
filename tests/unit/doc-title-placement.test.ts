@@ -23,9 +23,10 @@
 // 本层（Node 无 DOM，见 harness.ts 边界说明）钉装饰级/数据级不变量：
 //   I1 落点判定唯一来源 docTitlePlacement：path 未定义 → "none"；有 fm → "after-frontmatter"；
 //      无 fm → "document-top"。
-//   I2 doc-title 不存在独立的装饰集函数（docTitleSet 已随折叠删除）：after-frontmatter
-//      落点的数据由 docTitleForFrontmatter 供给、由 FrontmatterWidget 携带渲染；
-//      无 fm / path 未定义一律 null。
+//   I2 doc-title 不存在独立的装饰集入口（docTitleSet/DocTitleWidget 已随折叠删除）：
+//      装配层 livePreview.ts 不得再出现这两个符号；after-frontmatter 落点的数据由
+//      docTitleForFrontmatter 供给、由 FrontmatterWidget 携带渲染；无 fm / path 未定义
+//      一律 null。
 //   I3 document-top 落点的数据（docTitleTopData）：无 fm 且 path 定义时齐全（标题/路径段/
 //      行数/mtime），其余落点一律 null。
 //   I4 FrontmatterWidget 的 title 字段进入 eq 比对（四元组逐位 + null 口径）——漏比对会让
@@ -36,6 +37,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { EditorState, Text } from "@codemirror/state";
 import {
   detectFrontmatter,
@@ -86,7 +88,16 @@ test("I1 落点判定：path × fm 网格", () => {
 // I2 after-frontmatter 落点：无独立装饰集，数据由 fm widget 携带
 // ---------------------------------------------------------------------------
 
-test("I2 doc-title 不再有独立装饰集函数（折叠进 fm widget 后 docTitleSet 删除）", () => {
+test("I2 doc-title 不再有独立装饰集入口（折叠进 fm widget 后 docTitleSet/DocTitleWidget 删除）", () => {
+  // r1 review P2：断言必须打在符号真正住过的模块上——被删的 docTitleSet/DocTitleWidget
+  // 在本分支 base 上住在装配层 livePreview.ts，只查 doc-title.ts 会在回归重引入时恒真
+  //（假绿，REVIEW.md §一.1 同族）。livePreview.ts 无法在本 harness 做运行时 import
+  //（Node strip-only，其传递依赖里有构造器参数属性），等价口径 = 装配层源码里不得再
+  // 出现这两个符号（回归形态就是把块级 widget 装饰路径加回 livePreview）。
+  const livePreviewSource = readFileSync(new URL("../../src/preview/livePreview.ts", import.meta.url), "utf8");
+  assert.equal(livePreviewSource.includes("docTitleSet"), false, "livePreview.ts 不得再出现 docTitleSet");
+  assert.equal(livePreviewSource.includes("DocTitleWidget"), false, "livePreview.ts 不得再出现 DocTitleWidget");
+  // 辅助模块侧同样不得再出这两个导出。
   assert.equal("docTitleSet" in docTitleModule, false);
   assert.equal("DocTitleWidget" in docTitleModule, false);
 });
