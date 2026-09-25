@@ -382,18 +382,6 @@
   lib/app.mjs`）早已支持排版三项（M195）与主题（M210）；场景格式示例的 `config: { keys: {...} }` 同样
   只举了 keys。M213 的场景 34/35 用 `config: { theme }` 与 `configWrite: theme` 时只能靠读实现确认。
   **动作**：README 的两处补上这四个键（属文档面，落点 `scripts/acceptance/README.md`）。
-- **`.cm-lp-quote-line` 的 `padding-left` 声明当前无消费者**（2026-09-25，M213 登记，low）；
-  `src/preview/theme.ts` 写 `paddingLeft: var(--sp-5)`（10px），但 CM baseTheme 的
-  `.cm-line { padding: 0 }`（`src/editor.ts`）与它**同等特异性**、注入更晚，实测计算值为 **0px**——
-  引用块的文字因此贴着 2px 竖线。**不是 restyle 引入的**（两份规则在 restyle 前就已同形，改的只是
-  竖线宽度 3px → 2px 与色值），所以没有在本 change 里顺手改（会牵动 `render-quote-list` 基线与观感）。
-  **动作**：视觉裁决后给一条更高特异性的内边距（如 `.cm-line.cm-lp-quote-line` 双类选择器），
-  或把 `--sp-5` 移到别的载体上；R4 逐张重建基线时看 `render-quote-list` 就能判断现在的贴合是否可接受。
-  **状态（2026-09-25，M220 登记）**：已由 **M218**（`feat/restyle-fix-content-rendering-m218`，
-  任务 C4）承接，修法即本条动作里那两条之一。**M220 完成时（2026-09-25）该分支尚未合并 ⇒ 本条不勾销**，
-  核销动作由 tower 在 M218 合并后收尾；判据取合并后的实测 `paddingLeft` 计算值（≠ 0），
-  不是「分支上有提交」。
-
 - **真机套件没有计算属性通道 ⇒ 色值 / 主题类判据在真机层只能到「配置层 + 截图」**（2026-09-25，M213
   登记，medium）：`scripts/acceptance` 的断言形态只有 `ax` / `editor` / `file` / `glob` / `shot`
   （`lib/execute.mjs` 的 `EXPECT_KINDS`），**没有任何样式读数通道**。restyle 的三主题与 eink 九条降级
@@ -935,14 +923,6 @@
 与「已核销」语义相反，按维护规则（「核销后移入文末」）迁回本节；条目正文除各自补的「状态」行外未改。
 末条 C11 为本 mission 补建。）
 
-- 2026-09-25：**mermaid 不随主题**（M214 finding，bug，待立项）：三主题取色全同（`#ECECFF` 填充 /
-  `#333` 文字连线箭头）——dark 下连线箭头对比度 **1.07**（几乎不可见）、eink 下 off-palette 淡紫。
-  20 张整页基线全是浅色主题，这层今天零机器防线。处置方向：mermaid themeVariables 随 `data-theme`
-  换档（继承 currentColor 与底色 token 的口径在 design §4 未决项 3 已预留），立项时附 M214 的三主题
-  裁切证据（`test-results/m214/peripheral/content-types-{dark,eink}-mermaid.png`）。
-  **状态（2026-09-25，M220 登记）**：已由 **M219**（`feat/restyle-fix-mermaid-theme-m219`，任务 C10）
-  承接，修法即本条处置方向。**M220 完成时（2026-09-25）该分支尚未合并 ⇒ 本条不勾销**，核销动作由
-  tower 在 M219 合并后收尾；判据取合并后的三主题实测取色（三份不再相同），不是「分支上有提交」。
 - 2026-09-25：**0.001 容差实测吞掉小元素删除**（M214 finding，improve）：§8.4 假绿防线删 modeline
   右段，像素差 **199 px** < 预算 960 ⇒ 像素层通过，拦住它的是 R3 新加的结构断言。建议：为
   `.modeline-*` 级别的小元素补**元素级**基线（元素 crop 的像素预算远小于整页），或按元素重要度
@@ -955,14 +935,10 @@
   80% 改定值 664 后，code 模式（`minmax(max-content, 1fr)`）的行号 gutter 与代码列之间出现约
   150px 空档（百分比时代被弹性吸收）。取舍方向：code 模式栏宽跟随 664 定值 / 维持 max-content /
   或 gutter 右对齐。证据与读数在 `test-results/m212/`。
-- 2026-09-25：**段落间距 / 标题间距未按 tokens 文档落地**（M212 finding，improve）：正文段落间距
-  与标题间距仍是旧基线的绝对值，未换成 tokens 文档的间距阶梯（sp-4 段落 / h2 20-0-6 等出处值）。
-  非观感事故（R3 结构层与 M214 像素层均以此为准重建），属 tokens 落地的残余面，立项时按
-  design-tokens-v1.md §间距阶梯逐处对。
-  **状态（2026-09-25，M220 登记）**：已由 **M218**（`feat/restyle-fix-content-rendering-m218`，
-  任务 C1）承接，值取 M216 gap 报告 §2.3 #1 的全量化表（段落 8 / h1 24-9 / h2 20-6 / h3 16-5 /
-  li 2 / hr 20）。**M220 完成时（2026-09-25）该分支尚未合并 ⇒ 本条不勾销**，核销动作由 tower 在
-  M218 合并后收尾；判据取合并后的实测间距读数，不是「分支上有提交」。
+- 2026-09-25：**doc-meta 的 mtime 缓存「保存落盘后刷新」路径未经真机验证**（M218 reviewer r2 verdict
+  接受的取舍 2d，待真机补验）：A1 doc-meta 块的 mtime 缓存在 `markCleanOf`（保存落盘）后的刷新路径
+  只有单测与探针覆盖，本批验收集合不含真机保存动作。后续 dogfood 真机批补验：保存后 doc-meta 行的
+  「修改于」时间应刷新为落盘时刻。
 - 2026-09-25：**restyle R4 基线过目包已备齐待 Alex**（M214，唯一挂起项）：34 张一次性重建
   （`--update-snapshots=all`，mtimes 同批）+ 逐张差异读数（34/34 远超容差，无静默假绿）+ 删除元素
   核对（24 张必须刷新全刷新）+ 假绿防线（已还原）+ 过目入口 `test-results/m214/index.html`
@@ -1442,3 +1418,23 @@
   挤在同一行没有分隔。那六条是**进行中的 findings**（待立项 / 待裁决 / 待修），与本节「已核销」的语义
   相反，已按维护规则迁到「待修 findings（不阻塞）」的「restyle 追加修复批」小节；本节的语义恢复为
   「进来的是已核销条目」。）
+
+- 2026-09-25：**`.cm-lp-quote-line` 的 `padding-left` 声明无消费者（引用块文字贴竖线）核销**（M213 登记，
+  M218 任务 C4 修复，tower 收尾）：CM baseTheme 的 `.cm-line { padding: 0 }` 与引用行规则同等特异性、
+  注入更晚，实测计算值 0px。修法 = 双类选择器 `.cm-line.cm-lp-quote-line` 提权到 14px（定稿
+  index.html:293）。**核销判据（合并后实测，非「分支上有提交」）**：M218 merge `456ee47`，探针三主题
+  实测 `paddingLeft` 计算值 = 14px（255/255 中逐项），reviewer-fix-content r1 独立复跑一致。
+- 2026-09-25：**mermaid 不随主题（dark 连线对比度 1.07 / eink off-palette 淡紫）核销**（M214 finding，
+  M219 任务 C10 修复，tower 收尾）：静态 MERMAID_CONFIG 拆为 initialize 时读 `getComputedStyle` 的
+  token 计算值（`theme: "base"` + themeVariables），TS 侧零硬编码色值，单一真源 = style.css 三组
+  `:root[data-theme]`。**核销判据（合并后三主题实测取色，三份不再相同）**：M219 merge `7208867`，
+  dark 连线/箭头对比度 1.07 → **10.45**、eink 全 #000 对比度 21 且填充 transparent（淡紫消除）、
+  light 连线 14.44 / 描边 5.02——reviewer-fix-mermaid r1 重建 dist 独立复跑逐项一致；两个 mermaid
+  视觉场景 fail 坐实为 pre-restyle 旧基线漂移（delta 严格限定 SVG 区，master 同跑同红）。
+- 2026-09-25：**段落间距 / 标题间距未按 tokens 间距阶梯落地核销**（M212 finding，M218 任务 C1 修复，
+  tower 收尾）：间距阶梯全量值（段落 8 / h1 24-9 / h2 20-6 / h3 16-5 / li 2 / hr 20，M216 gap 报告
+  §2.3 #1）落进 livePreview.ts 分隔行高度与 theme.ts，替换旧基线魔术数；代码块邻接外距 4 上/12 下
+  经 tower 裁决同走分隔行通道（CM heightmap 对 margin 不可见，M110 缺陷 1 同族）。
+  **核销判据（合并后实测间距读数）**：M218 merge `456ee47`，探针三主题逐项对照 gap 表全量值
+  255/255 PASS，reviewer-fix-content r1 独立复跑一致。**已接受取舍（reviewer r2 落 checks）**：
+  CM 无 margin 折叠，段落→标题 ≤8px、代码块→标题 ≤12px 偏松；li 下缘 2px 放弃（末 item 无机制）。
