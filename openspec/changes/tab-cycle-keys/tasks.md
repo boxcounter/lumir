@@ -37,14 +37,22 @@ D2 不绑 Emacs 备选键（推荐 a）、D3 复用 `tab.next` / `tab.prev` 零�
 
 ## 4. 真机验收（agent 执行，不进 CI；随实现同 PR）
 
-本节场景序号按 tower 对账后的 registry 分配（content-width-drag r1 撞号后建立的口径）：
-36 = restyle-content、37 = heading-hierarchy-ramp、38 = content-width-drag、
-39 = product-version-display、40 = table-fullscreen-view（M229）、41 / 42 = nonmd-edit
-（M231，tower 广播 2026-09-25）、43 = list-tab-indent（M230）、44 = theme-switch
-（tower 广播 2026-09-26）、**45 = tab-cycle-keys（本 change）**。对账经过：本稿动工前
-核对 `scripts/acceptance/scenarios/` 既有编号（仓内最大 36）与 tower 广播的在途分配
-（36–44），取 45 无撞号。实现期新增场景前先核对 `scripts/acceptance/scenarios/` 的
-既有编号与本表，不再「续现有序列」盲取。
+本节场景序号按 registry 对账分配（content-width-drag r1 撞号后建立的口径），逐条出处：
+36 = restyle-content（master 仓内 `scripts/acceptance/scenarios/36-restyle-content.md`
+已落库；`openspec/changes/live-theme-switch/tasks.md:50` 的「36」是陈旧声明，见 finding
+`.tower/comms/findings/20260926-worker-proposal-table-fs-bug-live-theme-switch-36.md`）、
+37 = heading-hierarchy-ramp（`openspec/changes/heading-hierarchy-ramp/tasks.md:32`）、
+38 = content-width-drag（`openspec/changes/content-width-drag/tasks.md:83`）、
+39 = product-version-display（`openspec/changes/product-version-display/tasks.md:41`）、
+40 = table-fullscreen-view（M229，`openspec/changes/table-fullscreen-view/tasks.md:120`）、
+41 / 42 = nonmd-edit（M231，其 review-request 自述已于 2026-09-25 TowerSend 广播）、
+43 = list-tab-indent（M230，`openspec/changes/list-tab-indent/tasks.md:68`）、
+44 在仓内未查到声明，按 tower 口径 36–45 视为已占（与 M233 的登记口径一致，
+wt-233 的 `dotfile-jsonc-highlight/tasks.md` §7 文首）、
+**45 = tab-cycle-keys（本 change）**；46 = dotfile-jsonc-highlight（M233，同一份对账
+互认 45 归本 change）。对账经过：本稿动工前核对 `scripts/acceptance/scenarios/` 既有
+编号（仓内最大 36）与上列在途声明，取 45 无撞号。实现期新增场景前先核对
+`scripts/acceptance/scenarios/` 的既有编号与本表，不再「续现有序列」盲取。
 
 - [ ] 4.1 新增场景 `scripts/acceptance/scenarios/45-tab-cycle-keys.md`：合成 vault
       开三个标签，KimiCU `press_key` 真实注入（先试 xdotool 风格键名

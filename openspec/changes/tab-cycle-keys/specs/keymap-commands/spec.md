@@ -8,8 +8,8 @@
 `tab.goto-1` … `tab.goto-9`（九条各一个 id：命令层没有参数通道，序号只能落在 id 上，
 这样 `[keys]` 配置重绑与键位面板都能如实显示「⌘3 → tab.goto-3」）。作用域一律 SHALL 为
 `global`（标签是窗口级对象，焦点在文件树 / 搜索框 / 大纲浮层里时同样要能切，与 ⌘F / ⌘⇧O
-同一理由），实现 SHALL 落在装配层（`src/main.ts`），能力（会话与切换）SHALL 在
-`src/editor.ts`。
+同一理由），实现 SHALL 落在装配层（`src/main.ts`），能力 SHALL 在 `src/editor.ts`
+（会话 API）与 `src/tabs.ts`（标签栏与切换 / 循环，M151 从装配层抽出）。
 
 默认绑定 SHALL 为：`⌘W` → `tab.close`、`⌃⇥` → `tab.next`、`⌃⇧⇥` → `tab.prev`、
 `⌘}` → `tab.next`、`⌘{` → `tab.prev`、`⌘1`…`⌘9` → `tab.goto-1` … `tab.goto-9`。

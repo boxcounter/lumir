@@ -37,10 +37,11 @@ Safari / Firefox 的 mac 版同样接受这对键。多标签（M149）已落地
    在字符里）——机制与实测先例见 design §1.1。
 
 3. **真机验收场景**：新增 `scripts/acceptance/scenarios/45-tab-cycle-keys.md`，随实现
-   同 PR（AGENTS.md：验收场景维护权归新功能 mission）。编号 45 按 tower registry 对账
-   （36=restyle-content、37=heading-hierarchy-ramp、38=content-width-drag、
-   39=product-version-display（titlebar）、40=table-fullscreen-view、41/42=nonmd-edit、
-   43=list-tab-indent、44=theme-switch；对账文本见 tasks.md §5）。
+   同 PR（AGENTS.md：验收场景维护权归新功能 mission）。编号 45 按 registry 对账无撞号
+   （36=restyle-content（master 已落库）、37=heading-hierarchy-ramp、
+   38=content-width-drag、39=product-version-display、40=table-fullscreen-view、
+   41/42=nonmd-edit（M231）、43=list-tab-indent（M230）、44 仓内未查到声明按 tower
+   口径视为已占、46=dotfile-jsonc-highlight（M233）；逐条出处见 tasks.md §4 文首）。
 
 ## 待 Alex 裁决
 
