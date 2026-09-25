@@ -4,7 +4,7 @@
 > REMOVED+ADDED 亦被拒。行为翻转的 scenario「非 md 文本文件只读打开」只能随其宿主
 > requirement 整条 REMOVED + 新名 ADDED。living spec 他处对旧名「单内核双模式落地」的
 > 引用（同 spec「代码文件的结构解析」「双击标识符高亮同一变量」等）在归档时改指新名，
-> 见 tasks §6.3。
+> 见 tasks §6.4。
 
 ## REMOVED Requirements
 

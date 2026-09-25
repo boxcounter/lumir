@@ -20,9 +20,13 @@ Alex 原话（2026-09-25）：「支持编辑其他格式文件。目前似乎�
 本 change 翻开这条历史裁决。逐条复审（全部 file:line 锚点见 design.md §1）的结论：
 
 1. **当初挡路的全链路重验证，今天仍是义务，但验证面已大幅收窄**。M124/M127 之后保存链路
-   已收敛进 `src/save-controller.ts`，按路径键控、模式无关；逐环节复审（design §3）发现
-   真正的 md-only 门只有两处：`src/main.ts:418-420` 的 revision 登记门与
-   `src-tauri/src/fs_io.rs:348-353` 的 `save_markdown` 扩展名守卫。CAS、自动保存、冲突
+   已收敛进 `src/save-controller.ts`，按路径键控、模式无关；逐环节复审（design §3）定位
+   出全部 md-only 门共四处（初稿只查到两处，评审 r1 实证补出另外两处）：
+   `src/main.ts:418-420` 的 revision 登记门、`src/save-controller.ts:233-237` 的
+   `saveBaseline` mode 闸（不放宽则 code 会话的保存/强制保存/崩溃备份全部失效）、
+   `src/editor.ts:1417` 的 changeFilter dispatch 闸（不放宽则只翻 editability 会得到
+   假可编辑编辑器——contenteditable 在场但按键被吞）、`src-tauri/src/fs_io.rs:348-353`
+   的 `save_markdown` 扩展名守卫。除这四条门之外，CAS、自动保存、冲突
    恢复、崩溃备份、外部修改重载、退出守卫全部不携带 md 假设。
 2. **live preview 只服务 md 这条仍然成立**，但它只约束编辑形态（code 模式不引入装饰层），
    不构成「不可编辑」的理由。
@@ -41,11 +45,15 @@ Alex 原话（2026-09-25）：「支持编辑其他格式文件。目前似乎�
    二进制给「暂不支持预览」提示）。（delta：`editor-live-preview` REMOVED+ADDED+MODIFIED；
    `file-tree` REMOVED+ADDED——scenario 不可更名的工具链约束见 Impact 节）
 2. **可编辑性从「按模式」改为「按文件类」**：现状 `editable(false)`/`readOnly(true)` 硬绑
-   `mode !== "md"`（`src/editor.ts:1350-1354`）；改为按会话承载「可编辑」标志，md 与
-   注册表文本类文件可编辑，`aria-readonly` 等无障碍属性同步。`modeForPath` 的 md/code
-   两模式裁决本身不变（M130 方向 A 的模式选择语义保留，只解除只读）。
+   `mode !== "md"`（`src/editor.ts:1350-1354`），且 dispatch 层的 `changeFilter`
+   （`src/editor.ts:1417`）拦截非 md 会话的一切 docChanged 事务——两处都必须按会话
+   「可编辑」标志放宽，只翻前者会得到假可编辑编辑器（design §2.2）。改为按会话承载
+   标志，md 与注册表文本类文件可编辑，`aria-readonly` 等无障碍属性同步。`modeForPath`
+   的 md/code 两模式裁决本身不变（M130 方向 A 的模式选择语义保留，只解除只读）。
 3. **保存链路全量复用**（裁决点 D3 推荐项）：可编辑文本类文件打开即登记磁盘 revision
-   （`src/main.ts:418-420` 的 `kind === "md"` 门放宽），此后 Cmd+S、自动保存、CAS 冲突
+   （`src/main.ts:418-420` 的 `kind === "md"` 门放宽），保存基准闸 `saveBaseline`
+   （`src/save-controller.ts:233-237` 的 `mode !== "md"` 判）同步放宽为按可编辑标志
+   （design §3.2）；此后 Cmd+S、自动保存、CAS 冲突
    恢复、崩溃备份、外部修改重载、退出守卫与 md 走同一条链路。后端 `save_markdown` 的
    md-only 守卫（`src-tauri/src/fs_io.rs:348-353`）放宽为「拒绝 image/binary 扩展」
    （design §3.7）。「另存为新文件」逃生口泛化保留原扩展名（design §3.8）。
@@ -63,7 +71,7 @@ Alex 原话（2026-09-25）：「支持编辑其他格式文件。目前似乎�
 |---|---|---|---|---|
 | D1 | **可编辑范围**：注册表全量文本类，还是白名单？ | **注册表全量文本类**（`code` + `text`：已知代码扩展、未收录扩展、dotfile、无扩展名文件）——M130 保存死态的根因就是分类分裂（两套扩展名集合差集），白名单重新引入同一类陷阱；注册表已是单一事实源；未知二进制由打开时的 `fs_invalid_utf8` 兜底拒读，不靠扩展名猜 | 白名单（txt/json/yaml/toml + 有语言包的代码扩展，其余维持只读） | 白名单的收益是编辑面可控、验证面更小；代价是 `.log`/`.csv`/`LICENSE` 这类「目前只能编辑 md」抱怨的高发面仍然只读，且每条边界都要新文案与新测试 |
 | D2 | **编辑形态**：可编辑 code 模式，还是非 md 也套 live preview？ | **可编辑 code 模式**（纯文本编辑 + 既有 StreamLanguage 高亮）——live preview 装饰层是 md 语义（`editor-live-preview` spec「live preview 装饰层」条款 md-only），代码文件没有可装饰的对象 | 非 md 也套 live preview | 备选零收益且违反 spec 口径，列入仅为显式否决（design §6 V2） |
-| D3 | **保存链路**：全量复用 md 的保存冲突防护，还是手动保存-only？ | **全量复用**——逐环节复审（design §3）证明链路已模式无关，只开两处门；自动保存/冲突恢复/崩溃备份对非 md 文本（配置、脚本、笔记附件）的价值不低于 md | 手动保存-only（非 md 不进自动保存与崩溃备份） | 备选的代价：在模式无关的链路里新设模式分支，复杂度更高、防护更弱；收益只剩「少验几条路径」（design §6 V3） |
+| D3 | **保存链路**：全量复用 md 的保存冲突防护，还是手动保存-only？ | **全量复用**——逐环节复审（design §3）证明链路除四条窄门外已模式无关（评审 r1 补全门清单：revision 登记、`saveBaseline` mode 闸、changeFilter、后端守卫）；自动保存/冲突恢复/崩溃备份对非 md 文本（配置、脚本、笔记附件）的价值不低于 md | 手动保存-only（非 md 不进自动保存与崩溃备份） | 备选的代价：在模式无关的链路里新设模式分支，复杂度更高、防护更弱；收益只剩「少验几条路径」（design §6 V3） |
 | D4 | **护栏**：维持既有层，还是新增超大文件只读阈值？ | **维持既有层**（注册表分流 + UTF-8 校验 + 50MB 硬上限），不新增阈值；实现期真机 perf 复测，不达标再回来加 | 超过阈值（如 1MB，对齐打开性能合同）的文本文件保持只读 | 备选的收益是性能确定性；代价是没有实测证据就先立一条用户可感的功能边界——1MB 的 `.log` 只读而 0.9MB 可编辑，比统一可编辑更难解释 |
 
 ## Non-goals
@@ -83,13 +91,15 @@ Alex 原话（2026-09-25）：「支持编辑其他格式文件。目前似乎�
   「单内核双模式与可编辑性落地」+ MODIFIED「模式配置来源」——行为翻转的 scenario
   「非 md 文本文件只读打开」不可在 MODIFIED 中删除/更名（openspec 工具链约束），
   只能随宿主 requirement 整条 REMOVED + 新名 ADDED，living spec 他处对旧名的引用
-  归档时改指，见 tasks §6.3）、`file-tree`（REMOVED「点击打开文件」+ ADDED
+  归档时改指，见 tasks §6.4）、`file-tree`（REMOVED「点击打开文件」+ ADDED
   「点击打开文件与可编辑性裁决」，同约束）、`fs-io`（MODIFIED「文档保存与冲突恢复」
   「崩溃备份与恢复入口」「不可保存文档的保存反馈」）。
 - **影响的代码/系统**（实现 mission 照 design 锚点施工）：
-  - `src/editor.ts`：可编辑性按会话/文件类拆分（:1056-1059、:1346-1357、:1723）；
+  - `src/editor.ts`：可编辑性按会话/文件类拆分（:1056-1059、:1346-1357、:1723），
+    含 dispatch 层 changeFilter 闸放宽（:1413-1417，评审 r1 P1-2）；
   - `src/main.ts`：revision 登记门放宽（:418-420）；
-  - `src/save-controller.ts`：M130 兜底反馈文案更新（:312-322）、`saveAsNewFile` 泛化
+  - `src/save-controller.ts`：`saveBaseline` mode 闸放宽为按可编辑标志（:233-237，
+    评审 r1 P1-1）、M130 兜底反馈文案更新（:312-322）、`saveAsNewFile` 泛化
     保留原扩展名（:469-498）；
   - `src-tauri/src/fs_io.rs`：`save_markdown` 守卫放宽为拒绝清单（:342-353）+ 单测
     对账（:924-933）；`src-tauri/src/link_graph.rs` 或新增通用 create 命令支撑另存泛化

@@ -38,7 +38,9 @@ CAS / 自动保存 / 崩溃备份 / 退出守卫全链路都要按非 md 重新�
 **今天的评估**：「要全链路重新验证」这条理由**仍然成立**——本 change 不主张跳过验证，
 tasks §4 就是这份验证清单。但验证面已比 M130 时大幅收窄：M124（save recovery）与 M127
 （save hardening）把保存链路收敛进 `src/save-controller.ts`，按路径键控、逐环节模式无关
-（§3 逐环节复审）；当时散落各处的 md 假设如今只剩两处窄门（§3.1、§3.7）。因此
+（§3 逐环节复审）。初稿称「md 假设只剩两处窄门」——评审 r1 实证漏查两处，实为**四处**
+（§2.2 的 changeFilter 闸、§3.1 的 revision 登记门、§3.2 的 saveBaseline 闸、§3.7 的
+后端守卫），「窄门」定性不变、清单以本节为准。因此
 「代价远超堵漏目标」在当时的成本判断不构成今天「不做」的理由——今天的成本就是本 change
 一个实现 mission。
 **仍然成立的部分**：方向 A 的**模式裁决**语义（非 md 不走 md 模式、MUST NOT 回落配置默认）
@@ -117,6 +119,16 @@ code-outline 与 code-variable-highlight 的解析缓存按「语言 + 文档内
 :1367-1372），不重建 EditorView。`aria-readonly` 与 `tabindex` 随标志同步。
 M101/M130 留下的视图层只读合同注释（:1345-1349）改写为「按文件类」口径。
 
+**changeFilter 闸必须同批放宽**（评审 r1 P1-2 实证，初稿漏查）：`src/editor.ts:1417` 的
+`EditorState.changeFilter` 在 dispatch 层拦截 `currentMode !== "md"` 的一切 docChanged
+事务（trustedLoad 标记的装载事务除外，:1413-1417）。只翻 editability 会得到**假可编辑**
+编辑器——`contenteditable` 在场、视觉断言全绿，但按键在 dispatch 层被吞（REVIEW.md
+第 1 条同族陷阱）。该闸的判据要与 editable 标志同源：按会话 editable 放行，不再看模式。
+注意其闭包读的是实例级 `currentMode` 投影（:1415-1416 注释：切标签时必须由
+`activateSession`/`syncMode` 同步，否则前台 code 会话而投影停在 md 会错判）——改为
+editable 投影后这条同步纪律原样保留，且要补一条「投影与前台会话 editable 一致」的
+断言（tasks §1.4）。
+
 ### 2.3 编辑态下的 code 模式行为清单
 
 可编辑 code 模式 = 现状只读 code 模式 + 输入路径打开：
@@ -136,15 +148,20 @@ M101/M130 留下的视图层只读合同注释（:1345-1349）改写为「按文
 ### 3.1 revision 登记（开门点 1）
 
 `src/main.ts:418-420`：`save.noteOpened(path, kind === "md" ? snapshot.revision : undefined)`
-——唯一的前端 md 门。改为：可编辑文本类（`fileClass ∈ {md, code, text}`）登记
+——前端 md 门之一。改为：可编辑文本类（`fileClass ∈ {md, code, text}`）登记
 `snapshot.revision`。revision = 内容 SHA-256（`src-tauri/src/fs_io.rs:323-339`
 `file_revision`/`read_snapshot`），扩展名无关，无需后端配合。
 
-### 3.2 CAS 写入
+### 3.2 CAS 写入（开门点 2：saveBaseline 的 mode 闸）
 
-`saveDocument`（`src/save-controller.ts:333-387`）：按路径取 `saveBaseline`（:230-236）、
-调 `documentSave(path, expectedRevision, content)`、成功即登记新 revision + `markCleanOf`；
-失败分流 `document_conflict` / `fs_not_found`。全程无 md 假设。后端门见 §3.7。
+`saveDocument`（`src/save-controller.ts:333-387`）本体无 md 假设：取基准、调
+`documentSave(path, expectedRevision, content)`、成功即登记新 revision + `markCleanOf`、
+失败分流 `document_conflict` / `fs_not_found`。但基准的来源有闸（评审 r1 P1-1 实证，
+初稿漏查）：`saveBaseline`（:233-237）首行判 `session === undefined || session.mode
+!== "md"` 即返回 null——code session 即便按 §3.1 登记了 revision，保存入口仍在这里被
+提前短路（保存、强制保存后的基准刷新、崩溃备份的闸门、切换守卫的 `hasUnsaveable`
+（:276）全部经它）。该闸改为按会话 editable 标志判定（与 §2.2 同一标志、同一真源），
+注释（:230-232 的「非 md 是只读 code 模式」口径）同步改写。后端门见 §3.7。
 
 ### 3.3 自动保存与暂停边界
 
@@ -160,7 +177,9 @@ scenario 的「编辑 Markdown 后停止输入」表述随 fs-io delta 泛化为
 ### 3.5 崩溃备份与恢复入口
 
 `backupDirty`（`src/save-controller.ts:625-636`）：闸门是 `saveBaseline(path) !== null`
-——非 md 登记 revision 后（§3.1）自然进入备份路径，无需改代码。spec「无落盘基准不留
+——初稿据此写「非 md 登记 revision 后自然进入备份路径，无需改代码」，评审 r1 推翻：
+闸门本身含 mode 判（§3.2），`saveBaseline` 不放宽则本条不成立；§3.2 修正后本条才
+成立（备份路径代码本身仍零改动）。spec「无落盘基准不留
 备份」条款的触发面收窄为「未打开文件 / 未登记磁盘 revision」（fs-io delta）。
 恢复侧（:672-696）以备份信封的 revision 为 CAS 基准，扩展名无关。
 
@@ -170,7 +189,7 @@ scenario 的「编辑 Markdown 后停止输入」表述随 fs-io delta 泛化为
 revision 比对 + dirty 分流（未 dirty 自动重载 / dirty 给 sticky 选择），无 md 假设；
 watch 事件不按扩展名过滤（`fs_io.rs` watch 全类型，忽略集只管 ghost/临时文件）。
 
-### 3.7 后端守卫放宽（开门点 2）
+### 3.7 后端守卫放宽（开门点 3）
 
 `save_markdown`（`src-tauri/src/fs_io.rs:342-353`）的 `.md`/`.markdown` 白名单改为
 **拒绝清单**：扩展名属于注册表 image/binary 类即拒（`fs_read_only`，文案同步改为

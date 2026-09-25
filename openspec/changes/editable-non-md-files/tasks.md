@@ -14,7 +14,15 @@
 - [ ] 1.2 `modeForPath`（:1056-1059）保持两模式裁决不变；M101/M130 的视图层只读合同
   注释（:1345-1349）与「非 md 只读」相关注释（:1391-1393、:1049-1055）改写为
   「按文件类」口径；mode 热切换 / 装载路径（:1367-1372、:1723）接线新标志
-- [ ] 1.3 逐条核对 code 模式既有能力在可编辑后不变：高亮（`LANGUAGES` + `codeHighlight`）、
+- [ ] 1.3 **changeFilter 闸放宽**（评审 r1 P1-2，design §2.2 末节）：`src/editor.ts:1417`
+  的 `EditorState.changeFilter` 判据从 `currentMode !== "md"` 改为按会话 editable 标志
+  （与 1.1 同一真源）；其实例级投影（`currentMode`，:1415-1416 注释的切标签同步纪律）
+  随之一并改为 editable 投影；**不放宽它则 1.1 产出假可编辑编辑器**（contenteditable
+  在场但按键被 dispatch 层吞掉）
+- [ ] 1.4 反假绿断言（REVIEW.md 第 1/2 条）：切标签序列（md → code 可编辑 → code → md）
+  下投影与前台会话 editable 逐态一致；键入断言**回读 `EditorState.doc` 文本**（不只断言
+  contenteditable 属性在场），并先造「只翻 1.1 不翻 1.3」的反向输入实测该断言必红
+- [ ] 1.5 逐条核对 code 模式既有能力在可编辑后不变：高亮（`LANGUAGES` + `codeHighlight`）、
   行号 / activeLine、`codeBindingTheme`、搜索面板、折行（`wrapExtensions` code 分支）——
   零改动目标，发现被迫改动即停下上报（design §2.3 的「不获得」清单逐字保留）
 
@@ -22,10 +30,15 @@
 
 - [ ] 2.1 `src/main.ts:418-420`：revision 登记门从 `kind === "md"` 放宽为可编辑文本类
   （与 1.1 同一判据，MUST 同源消费注册表，MUST NOT 各写一份集合——REVIEW.md 第 8 条）
-- [ ] 2.2 `src/save-controller.ts`：M130 兜底反馈文案（:312-322「只保存 Markdown 文件」）
+- [ ] 2.2 **`saveBaseline` mode 闸放宽**（评审 r1 P1-1，design §3.2）：
+  `src/save-controller.ts:233-237` 的 `session.mode !== "md" → return null` 改按会话
+  editable 标志判定（与 1.1 同一标志）；注释（:230-232「非 md 是只读 code 模式」口径）
+  同步改写。消费面逐项复核：`saveDocument` 基准、强制保存后的基准刷新、`backupDirty`
+  闸门、切换守卫 `hasUnsaveable`（:276）——不放宽则 code 会话的保存 / 崩溃备份全部失效
+- [ ] 2.3 `src/save-controller.ts`：M130 兜底反馈文案（:312-322「只保存 Markdown 文件」）
   与触发面收窄同步更新（「未打开文件 / 未登记 revision」）；逐环节复核
   design §3.2–§3.6 的「无 md 假设」结论（代码通读，不是抽查）
-- [ ] 2.3 「另存为新文件」泛化（design §3.8）：恢复副本保留原扩展名；新增窄接口
+- [ ] 2.4 「另存为新文件」泛化（design §3.8）：恢复副本保留原扩展名；新增窄接口
   `create_file`（O_EXCL + 补齐中间目录 + vault 内路径校验，与 `create_new_vault_file`
   同语义），`saveAsNewFile` 对非 md 走它；逐级重试（-2..-5）与提示文案不变；
   `wikilink_create` 保持 md 语义不动
