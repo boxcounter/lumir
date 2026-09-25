@@ -22,7 +22,7 @@ Alex 需求原话（2026-09-26）：**「左栏，也就是文件目录栏，增
 | # | 设计点 | 为什么必须在提案层定死 |
 |---|---|---|
 | 1 | **删除语义与「不改写源文件」铁律的关系** | 铁律（ADR 0003 §3）约束的是**渲染/编辑对文件内容的改写**；删除/重命名是用户显式发起的文件级操作，不在铁律的字面范围内。但删除不可逆性是真实风险，护栏形态（废纸篓 + 确认 vs 永久删除）是产品裁决，不是实现细节 |
-| 2 | **删除/重命名命中已打开 tab 时的行为** | 已打开文件被删除/重命名会撞上 M124/M127 保存链路：`save-controller.ts:562-586` 今天把 watcher 的 deleted 事件统一处置为「暂停自动保存 + sticky 提示 + 内容保留在编辑器」。app 内发起的重命名如果沿用这条通道，用户主动改名会被误报为「已被外部删除」——这是错误归因。处置口径是行为契约，必须裁决 |
+| 2 | **删除/重命名命中已打开 tab 时的行为** | 已打开文件被删除/重命名会撞上 M124/M127 保存链路（`save-controller.ts:562-586`）。watcher 把改名拆成 `deleted:old` + `created:new`（`fs_io.rs:468-516`）：session remap 到新路径后，`created:new` 会命中它并走 dirty 分支——用户自己改名被误报为「检测到外部修改」（暂停自动保存 + sticky 提示）——这是错误归因。处置口径是行为契约，必须裁决 |
 | 3 | **菜单实现形态** | 仓内无任何右键菜单先例（`src/` grep `contextmenu` 零命中）。Tauri 原生菜单（tauri 2.11.5 的 `ContextMenu::popup`）与 web 自绘浮层（vault-switcher 浮层同形）是两条路，主题一致性、验收可断言性、键位体系的走向完全不同，裁决后不再回头 |
 
 ## What Changes
@@ -56,10 +56,11 @@ Alex 需求原话（2026-09-26）：**「左栏，也就是文件目录栏，增
 
 7. **已打开 tab 的联动**（裁决点 5 推荐项）：app 内**重命名**命中打开中的 tab 时，前端就地 remap
    session 路径（含目录重命名的前缀 remap），dirty 内容与 revision 基准保留（改名不改字节），并对
-   watcher 回响做一次性归因抑制——MUST NOT 报「已被外部删除」。app 内**删除**命中打开中的 tab 时，
-   沿用既有 watcher 删除处置（tab 保留、自动保存暂停、sticky 提示、内容不丢，`save-controller.ts:
-   564-569`），不另开分支。（delta：ADDED `fs-io / app 内文件操作的 tab 联动`，MODIFIED 语义挂在
-   既有「watch 增量事件流」旁注）
+   watcher 回响做一次性归因抑制（`deleted:old` 与 `created:new` 两个事件都在 session 链路吞掉，
+   树照常收敛）——MUST NOT 报「已被外部删除」或「检测到外部修改」。app 内**删除**命中打开中的
+   tab 时，沿用既有 watcher 删除处置（tab 保留、自动保存暂停、sticky 提示、内容不丢，
+   `save-controller.ts:564-569`），不另开分支。（delta：ADDED `fs-io / app 内文件操作的 tab
+   联动`，MODIFIED 语义挂在既有「watch 增量事件流」旁注）
 
 ## Non-goals
 
@@ -86,8 +87,8 @@ Alex 需求原话（2026-09-26）：**「左栏，也就是文件目录栏，增
     （菜单浮层，vault-switcher 同形）、`src/main.ts`（命令接线与 tab 联动）、
     `src/save-controller.ts`（rename remap 与回响抑制）。
   - 后端：`src-tauri/src/fs_io.rs`（新建/改名/删除的实现 + `resolve_new_in_vault` 变体——既有
-    `resolve_in_vault` 要求目标已存在，`:234-275`）、`src-tauri/src/commands.rs`（4 条新 command：
-    trash / rename / create_file / create_dir / reveal，共 5 条）、`src-tauri/Cargo.toml`
+    `resolve_in_vault` 要求目标已存在，`:234-275`）、`src-tauri/src/commands.rs`（5 条新 command：
+    trash / rename / create_file / create_dir / reveal）、`src-tauri/Cargo.toml`
     （新增 `trash` crate，理由与取舍注释同既有依赖格式）。
   - **capabilities 零增量**：所有文件操作走本仓自有 command（自有 command 不受 ACL 门禁，先例：
     `document_save` 等全部自有 command 均不在 `default.json` 内）；reveal 走 opener 插件的 Rust
@@ -158,7 +159,9 @@ Alex 需求原话（2026-09-26）：**「左栏，也就是文件目录栏，增
   - **app 内重命名** → 打开中的 tab 就地 remap 路径（文件改名 = 单 session 路径替换；目录改名 =
     其下所有打开 session 的前缀 remap）。dirty 内容、revision 基准、滚动与光标状态全部保留
     （改名不改字节，CAS 基准依旧有效）。watcher 对这次改名的回响（deleted 旧 + created 新）做
-    一次性归因抑制，MUST NOT 走「已被外部删除」分支。
+    一次性归因抑制——两个事件都在 session 链路吞掉（树照常收敛），MUST NOT 走「已被外部删除」
+    或「检测到外部修改」分支（机制细节见 [design.md](design.md) §3.2：remap 后 `session.path`
+    已是 new，真正会误命中 dirty session 的是 `created:new`）。
   - **app 内删除** → 沿用既有 watcher 删除处置：tab 保留、自动保存暂停（`not-found`）、sticky
     提示「内容未丢失」（`save-controller.ts:564-569` 现状）。理由：删除经确认对话框已是显式
     两步，提示文案把「文件没了但内容还在」说清即可；强关 tab 反而会把未保存内容逼到崩溃备份

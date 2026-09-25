@@ -45,15 +45,18 @@
 
 app 内发起的重命名命中打开中的文档时，前端 SHALL 就地 remap 打开 session 的路径（文件 = 单
 session 替换；目录 = 其下全部打开 session 的前缀替换），保留 dirty 内容、revision 基准、滚动
-与光标状态；本次改名的 watcher 回响 SHALL 按命令返回的 old→new 对做一次性归因抑制，MUST NOT
-触发「已被外部删除」处置。抑制条目消费即清或超时即清，MUST NOT 常驻。app 内发起的删除命中
+与光标状态；本次改名的 watcher 回响 SHALL 按 invoke 发起时登记的 old→new 对（invoke 失败即撤）
+做一次性归因抑制：`deleted:old` 与 `created:new` 两个事件都在 session 链路跳过（树与索引照常
+收敛），MUST NOT 触发「已被外部删除」或「检测到外部修改」处置。抑制条目消费即清或超时即清，
+MUST NOT 常驻。app 内发起的删除命中
 打开中的文档时 SHALL 沿用既有 watcher 删除处置（tab 保留、自动保存暂停、提示内容未丢失），
 不另开分支。外部发起的删除/改名 SHALL 完全沿用 watcher 现状处置。
 
 #### Scenario: app 内改名打开中的文件不误报
 
 - **WHEN** 打开中的 `a.md`（含未保存修改）经右键菜单改名为 `b.md`
-- **THEN** tab 就地变为 `b.md`，未保存内容与编辑状态保留，全程无「已被外部删除」提示
+- **THEN** tab 就地变为 `b.md`，未保存内容与编辑状态保留，全程无「已被外部删除」与
+  「检测到外部修改」提示
 
 #### Scenario: app 内改名目录联动深层 session
 

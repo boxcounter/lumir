@@ -61,9 +61,13 @@ acceptance-scenario-numbering-m234-47.md`）。
 
 - [ ] 4.1 rename remap：文件 = 单 session 路径替换；目录 = 前缀 remap；dirty / revision / 滚动 /
       光标保留。
-- [ ] 4.2 watcher 回响一次性抑制（old→new 对，消费即清 + 1s 超时），抑制期间不误报「已被外部
-      删除」；外部改名无抑制条目、走现状处置。
-      **验收口径**：真机改名打开中的 dirty 文件 20 次零误报（design §5.3），读数落盘。
+- [ ] 4.2 watcher 回响一次性抑制：`old→new` 对在 **invoke 发起时**登记、invoke 失败即撤（消除
+      乱序窗口）；watcher 批消费时在 **session 链路同时吞 `deleted:old` 与 `created:new` 两个事件**
+      （树与索引照常收敛）——remap 后 `session.path` 已是 new，`deleted:old` 匹配不到，真正会误报
+      的是 `created:new` 命中 dirty session 走「检测到外部修改」分支（r1 评审指正的机制）。消费
+      即清 + 1s 超时；外部改名无抑制条目、走现状处置。
+      **验收口径**：真机改名打开中的 dirty 文件 20 次，「已被外部删除」与「检测到外部修改」两种
+      误报均零（design §5.3），读数落盘。
 - [ ] 4.3 删除命中打开 tab：走 `handleExternalChange` 现状分支，不特判；专项断言「sticky 提示
       出现且内容未丢」。
 

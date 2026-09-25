@@ -143,15 +143,26 @@ canonicalize，目标本来就允许不存在）。所有五个写类命令共�
 - **后端 command**：`fs_rename_entry(rel, new_name)` → 源走 `resolve_in_vault`，目标走
   `resolve_new_in_vault`（父 = 源父目录，v1 同目录改名）→ `std::fs::rename`。
   冲突（目标已存在）→ `fs_already_exists`，MUST NOT 覆盖。
-- **watcher 联动 + tab 联动（本 change 唯一的归因抑制点）**：改名成功后，前端对打开中的
-  session 做就地 remap——文件：单个 session 路径替换；目录：其下所有打开 session 的路径前缀
-  替换（`old + "/"` → `new + "/"`）。同时登记一次性抑制 `(old → new)` 对：随后 watcher 批里
-  `deleted:old`（与目录子孙的 deleted）命中已 remap 的 session 时**跳过** `handleExternalChange`；
-  `created:new` 照常吃（树的 upsert 幂等）。revision 基准不变（改名不改字节，CAS 依旧有效）；
-  dirty 状态、滚动、光标全部保留。抑制条目在消费或超时（一个 debounce 窗口余量）后清除，
-  MUST NOT 常驻。
+- **watcher 联动 + tab 联动（本 change 唯一的归因抑制点）**：抑制登记在 **invoke 发起时**（不是
+  成功返回后）——登记内容 = `(old → new)` 对（目录改名覆盖整个子树前缀 `old/** → new/**`）；
+  invoke 失败即撤登记（此行改动从未发生，in-flight 窗口内到达的真实外部事件必须照常归因，
+  回滚消除乱序窗口）。invoke 成功后才 remap 打开中的 session——文件：单个 session 路径替换；
+  目录：其下所有打开 session 的路径前缀替换（`old + "/"` → `new + "/"`）。
+  **抑制必须同时吞两个事件，且吞点是 session 链路（`handleExternalChange`），树与索引照常吃
+  deleted/created 收敛**（`tree.applyChanges` 的 upsert 幂等，`tree.ts:324-348`）。原因
+  （r1 评审指出的机制错误）：watcher 把改名拆成 `deleted:old` + `created:new`
+  （`fs_io.rs:468-516`），而前端按精确路径匹配 session（`main.ts:886-891`）——remap 先行后
+  `session.path` 已是 new，`deleted:old` 永远匹配不到任何 session（防了不可能发生的事件）；
+  真正命中 dirty session 的是 `created:new` → `handleExternalChange(new, "created")` → dirty
+  分支 `pauseAutosave("external")` + sticky「检测到外部修改」（`save-controller.ts:571-583`），
+  用户自己改名被误报为外部修改。因此登记对被 watcher 批消费时：批内 `deleted:old`（含目录子孙
+  的 deleted）与 `created:new`（含子孙的 created）命中**经本对 remap 的 session** 时一律跳过
+  `handleExternalChange`；树/附件索引/链接索引照常收敛。revision 基准不变（改名不改字节，
+  CAS 依旧有效）；dirty 状态、滚动、光标全部保留。抑制条目在消费或超时（1s，一个 debounce
+  窗口余量）后清除，MUST NOT 常驻。
 - **外部改名**（Finder 发起）：无抑制条目，`deleted:old` 命中打开 session → 现状「已被外部
-  删除」处置——语义正确（对 app 而言确实无法区分外部改名与删除+新建，内容保留是保守正确解）。
+  删除」处置，随后 `created:new` 不命中任何 session（无人打开 new）——语义正确（对 app 而言
+  确实无法区分外部改名与删除+新建，内容保留是保守正确解）。
 - **错误**：`fs_not_found` / `fs_already_exists` / `fs_name_invalid`（非法末段名）/
   `fs_rename_failed`（跨卷等 IO 失败）。toast 人话 + 行退出编辑态回到原名。
 
@@ -218,8 +229,9 @@ canonicalize，目标本来就允许不存在）。所有五个写类命令共�
 7. **前端自绘树补丁（不等 watcher）**：操作成功后立刻改树模型会让「单一收敛通道」变成两处
    真源（REVIEW.md 第 8 条同族）；debounce 窗口 100ms 的延迟在可接受范围。唯一例外是新建文件
    的**自动打开**（不等回响，走读取链路，与树展示解耦）。
-8. **前端 `Date.now` 式去重抑制改名的 watcher 回响**：抑制条目以「命令返回的 old→new 对」为键，
-   消费即清；按时间窗盲抑会吞掉窗口内的真实外部删除（REVIEW.md 第 2 条同族：判据要有输入）。
+8. **前端 `Date.now` 式去重抑制改名的 watcher 回响**：抑制条目以「invoke 发起时登记的 old→new
+   对」为键（失败即撤登记），消费即清；按时间窗盲抑会吞掉窗口内的真实外部删除（REVIEW.md 第 2
+   条同族：判据要有输入）。
 
 ## 5. 实现期必须验证 / 未决的点
 
@@ -232,7 +244,8 @@ canonicalize，目标本来就允许不存在）。所有五个写类命令共�
    预案不是新裁决点**——走哪条不改变「绝对路径、零确认、成功 toast」的行为契约。
 3. **抑制对的窗口余量**：watcher debounce = 100ms（`fs_io.rs:33`）+ FSEvents 注册延迟，抑制
    条目寿命取「下一个 watcher 批到达或 1s 超时，先到为准」；实现期用真机改名 20 次验证零误报
-   「已被外部删除」。
+   ——「已被外部删除」与「检测到外部修改」两种误报都要断（后者才是 remap 后真正会命中的分支，
+   见 §3.2）。
 4. **目录改名时打开 session 的前缀 remap**：覆盖「目录下深层文件打开中改名祖先目录」用例
    （含 dirty session），真机场景必含。
 5. **外接卷 / iCloud 卷的废纸篓失败路径**：`fs_trash_failed` 的文案与「未删除任何内容」承诺
