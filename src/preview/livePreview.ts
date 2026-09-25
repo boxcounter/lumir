@@ -8,7 +8,7 @@
 import { Decoration, EditorView, ViewPlugin, WidgetType } from "@codemirror/view";
 import type { DecorationSet, ViewUpdate } from "@codemirror/view";
 import { StateEffect, StateField } from "@codemirror/state";
-import type { EditorState, Range } from "@codemirror/state";
+import type { EditorState, Range, Text } from "@codemirror/state";
 import { ensureSyntaxTree, syntaxTree } from "@codemirror/language";
 import { livePreviewTheme } from "./theme";
 import { listDecorations } from "./lists";
@@ -27,6 +27,7 @@ import { classifyLinkTarget, standardLinkParts } from "./links";
 import { collectInlineMath, isInsideCodeContext, mathBlockSet } from "./math";
 import { mermaidBlockSet, onMermaidSettled } from "./mermaid";
 import { calloutMarkerDecorations, calloutOnLine, detectCallout } from "./callout";
+import { docDirFromPath, docTitleFromPath, formatDocDate } from "./doc-meta";
 import { sampleCallback } from "../diagnostics";
 import type { LinkResolveResult } from "../bindings/LinkResolveResult";
 import { BlockWrapper } from "@codemirror/view";
@@ -61,6 +62,10 @@ export interface PreviewContext {
   /** 图片放大查看的遮罩（M184）；未接线时返回 null——图片因此没有双击路径
    *（与 attachmentProvider 未接线即走占位同一口径）。 */
   lightbox(): ImageLightbox | null;
+  /** 文件 mtime（Unix 毫秒，doc-meta「修改于」的数据源，M218 A1）：缓存命中返回值，
+   *  未命中返回 undefined（pending）——实现方后台取数，到达后派发 previewRefresh
+   *  触发重建（wikilinkResolver 同款范式）。取不到 mtime 时缓存 null。 */
+  fileMtime(path: string): number | null | undefined;
 }
 
 /** wikilink 三态（spec §4.1）显示 widget：replace 整条链接，显示 alias 或 target。 */
@@ -361,9 +366,105 @@ export function widgetCommands(view: EditorView): Record<WidgetCommandId, Comman
   };
 }
 
+// ---------------------------------------------------------------------------
+// doc-title / doc-meta 块（M218 A1，M216 gap 表 §2.2 缺失项）：定稿 12 张内容屏全部
+// 含此块。位置 = fm 区之后正文之前（原型 index.html:871-877 实例 + NOTES.md:45）。
+// 格式化 helper（标题/路径段/日期段）在 ./doc-meta（纯模块，单测可达）；行数 =
+// state.doc.lines（rope 缓存字段，O(1)）；修改时间 = 文件 mtime（经 ctx.fileMtime，
+// 后端 fs_file_mtime）。
+// ---------------------------------------------------------------------------
+
+/**
+ * doc-title / doc-meta 的块级 widget：替换不存在（不动文档文本），纯插入。
+ * 与 frontmatter widget 同口径——只改视图（ADR 0003 §3）。
+ */
+class DocTitleWidget extends WidgetType {
+  constructor(
+    readonly title: string,
+    readonly dir: string,
+    readonly lines: number,
+    readonly mtimeMs: number | null,
+  ) {
+    super();
+  }
+
+  eq(other: DocTitleWidget): boolean {
+    return (
+      other.title === this.title &&
+      other.dir === this.dir &&
+      other.lines === this.lines &&
+      other.mtimeMs === this.mtimeMs
+    );
+  }
+
+  toDOM(): HTMLElement {
+    const outer = document.createElement("div");
+    outer.className = "cm-lp-doc-title-outer";
+    const title = document.createElement("div");
+    title.className = "cm-lp-doc-title";
+    title.textContent = this.title;
+    const meta = document.createElement("div");
+    meta.className = "cm-lp-doc-meta";
+    const segment = (text: string) => {
+      const span = document.createElement("span");
+      span.textContent = text;
+      meta.append(span);
+    };
+    const sep = () => {
+      const span = document.createElement("span");
+      span.className = "cm-lp-doc-meta-sep";
+      span.textContent = "·";
+      meta.append(span);
+    };
+    const segments: string[] = [];
+    if (this.dir !== "") segments.push(this.dir);
+    segments.push(`${this.lines} 行`);
+    if (this.mtimeMs !== null) segments.push(`修改于 ${formatDocDate(this.mtimeMs)}`);
+    segments.forEach((text, i) => {
+      if (i > 0) sep();
+      segment(text);
+    });
+    outer.append(title, meta);
+    return outer;
+  }
+}
+
+function docTitleSet(state: EditorState, ctx: PreviewContext): DecorationSet {
+  const path = ctx.currentFilePath();
+  // 无文件上下文（未命名会话）不渲染——没有标题与路径段可给。
+  if (path === undefined) return Decoration.none;
+  const fm = detectFrontmatter(state.doc);
+  const widget = new DocTitleWidget(
+    docTitleFromPath(path),
+    docDirFromPath(path),
+    state.doc.lines,
+    ctx.fileMtime(path) ?? null,
+  );
+  // 有 fm 时钉在 fm 块之后（side 1）；无 fm 时在文档首行之前（块级 widget 在行首位置
+  // 按 side 定上下：负值在该行之上）。
+  return Decoration.set([
+    Decoration.widget({ widget, block: true, side: fm ? 1 : -1 }).range(fm ? fm.to : 0),
+  ]);
+}
+
 export function livePreview(ctx: PreviewContext) {
+  // doc-title 块走 StateField 的理由与 frontmatter 相同：它恒定存在于文档首部、不随
+  // 视口增量重建。重算时机：docChanged（行数段会变）/ previewRefresh（mtime 到达）/
+  // 新 state（切会话，create 重算）。
+  const docTitleDecorations = StateField.define<DecorationSet>({
+    create(state) {
+      return docTitleSet(state, ctx);
+    },
+    update(value, tr) {
+      return tr.docChanged || tr.effects.some((e) => e.is(previewRefresh))
+        ? docTitleSet(tr.state, ctx)
+        : value;
+    },
+    provide: (f) => EditorView.decorations.from(f),
+  });
   return [
     livePreviewTheme,
+    docTitleDecorations,
     frontmatterDecorations,
     mathBlockDecorations,
     mermaidBlockDecorations,
@@ -628,9 +729,18 @@ function buildDecorations(view: EditorView, ctx: PreviewContext): DecorationSet 
       const gap =
         (line.number > 1 && calloutOnLine(tree, view.state.doc, line.from - 1) !== null) ||
         (line.number < view.state.doc.lines && calloutOnLine(tree, view.state.doc, line.to + 1) !== null);
-      decos.push(
-        Decoration.line({ class: gap ? "cm-lp-block-separator cm-lp-callout-gap" : "cm-lp-block-separator" }).range(from),
-      );
+      // 代码块邻接分隔（M218 C1 阶梯补值，tower 裁决 2026-09-25 的 C6 margin 转换）：
+      // 容器外距上 4 / 下 12（定稿 direction-c/index.html:360-365 的 `margin: 4px 0 12px`）
+      // 不能落 CSS margin——.cm-lp-codeblock-scroll 是 BlockWrapper，margin 对 heightmap
+      // 不可见（M110 缺陷 1 同族），改由相邻分隔行高度承担；相邻块自身的阶梯 padding
+      // 照旧叠加（无折叠模型，组合间距偏松至多 12px，见 M218 证据）。
+      const prevIsCode = line.number > 1 && codeblockOnLine(tree, view.state.doc, line.from - 1);
+      const nextIsCode = line.number < view.state.doc.lines && codeblockOnLine(tree, view.state.doc, line.to + 1);
+      const classes = ["cm-lp-block-separator"];
+      if (gap) classes.push("cm-lp-callout-gap");
+      if (prevIsCode) classes.push("cm-lp-codeblock-gap-after");
+      if (nextIsCode) classes.push("cm-lp-codeblock-gap-before");
+      decos.push(Decoration.line({ class: classes.join(" ") }).range(from));
     }
   }
   return Decoration.set(decos, true);
@@ -639,6 +749,23 @@ function buildDecorations(view: EditorView, ctx: PreviewContext): DecorationSet 
 // 节点完全落在 frontmatter 内才跳过（防止相交判断误剪根节点导致整棵树不遍历）。
 const inFrontmatter = (fm: FrontmatterBlock | null, from: number, to: number): boolean =>
   fm !== null && from >= fm.from && to <= fm.to;
+
+/** 某一行是否属于围栏 / 缩进代码块（代码块邻接分隔判定用，M218 C1）；calloutOnLine 同形态。 */
+function codeblockOnLine(
+  tree: ReturnType<typeof syntaxTree>,
+  doc: Text,
+  pos: number,
+): boolean {
+  const line = doc.lineAt(pos);
+  const offset = line.text.search(/\S/);
+  if (offset < 0) return false;
+  let node: SyntaxNode | null = tree.resolveInner(line.from + offset, 1);
+  while (node) {
+    if (node.name === "FencedCode" || node.name === "CodeBlock") return true;
+    node = node.parent;
+  }
+  return false;
+}
 
 function lineRanges(
   view: EditorView,
@@ -751,9 +878,13 @@ function collectSyntaxDecorations(
 
       if (name === "Paragraph" && ref.node.parent?.name === "Document") {
         const first = doc.lineAt(ref.from);
+        // 段落末行带 -end 类：间距阶梯的「段落 8」由末行 padding-bottom 承载
+        //（theme.ts 的 .cm-line.cm-lp-paragraph-end；M218 C1）。
+        const lastFrom = doc.lineAt(ref.to).from;
         for (const line of lineRanges(view, Math.max(ref.from, vrFrom), Math.min(ref.to, vrTo))) {
           const classes = ["cm-lp-paragraph"];
           if (line.from === first.from) classes.push("cm-lp-paragraph-start");
+          if (line.from === lastFrom) classes.push("cm-lp-paragraph-end");
           decos.push(Decoration.line({ class: classes.join(" ") }).range(line.from));
         }
       }
@@ -761,8 +892,27 @@ function collectSyntaxDecorations(
       if (/^ATXHeading[1-6]$/.test(name)) {
         const level = name.slice(-1);
         const headingLine = doc.lineAt(ref.from);
-        const top = level === "2" ? 17.92 * 2.9 : 0;
-        const bottom = level === "1" ? 28.48 * .55 : level === "2" ? 17.92 * 1.1 : 0;
+        // 间距阶梯（M218 C1，定稿出处 index.html:244-245/:344：h1 `24px 0 9px`、
+        // h2 `20px 0 6px`、h3 `16px 0 5px`；h4–h6 定稿无出处保持 0）——替换旧基线的
+        // 魔术数（17.92*2.9 ≈ 52px 是定稿 h2 上距的 2.6 倍，M216 gap 表 §2.3 #1）。
+        // CM 无 margin 折叠：块间实际间距 = 上块 bottom + 下块 top（比定稿折叠值最多
+        // 松一个段落档 8px），逐元素取值按阶梯落地。
+        // 首个内容块的标题上距为 0（定稿 `h1:first-child, h2:first-child { margin-top: 0 }`，
+        // index.html:246）：标题前只有 frontmatter / doc-title 或空行时不上顶。判定只扫
+        // fm 结束到标题之间的空行串（逐行 trim，遇到非空即停）——不切整段前缀字符串
+        //（文档深部的标题会因此付出 O(前缀长) 的代价，违反键入路径约束）。
+        let firstContent = true;
+        for (
+          let n = fm === null ? 1 : doc.lineAt(fm.to).number + 1;
+          n < headingLine.number;
+          n++
+        ) {
+          if (doc.line(n).text.trim()) { firstContent = false; break; }
+        }
+        const top = firstContent
+          ? 0
+          : level === "1" ? 24 : level === "2" ? 20 : level === "3" ? 16 : 0;
+        const bottom = level === "1" ? 9 : level === "2" ? 6 : level === "3" ? 5 : 0;
         decos.push(
           Decoration.line({ class: `cm-lp-h${level}`, attributes: { style: `padding-top:${top}px;padding-bottom:${bottom}px` } }).range(headingLine.from),
         );

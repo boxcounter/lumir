@@ -274,6 +274,16 @@ pub fn resolve_in_vault(root: &Path, rel: &str) -> Result<PathBuf, CommandError>
     Ok(canon)
 }
 
+/// 单文件 mtime（Unix 毫秒，M218 doc-meta「修改于」的数据源）：路径口径与读取链路
+/// 同一个 `resolve_in_vault`；mtime 取不到（权限 / 平台不支持）为 `Ok(None)`，
+/// 与 `FsEntry.mtime_ms` 同口径。
+pub fn file_mtime_ms(root: &Path, rel: &str) -> Result<Option<i64>, CommandError> {
+    let path = resolve_in_vault(root, rel)?;
+    let meta = std::fs::metadata(&path)
+        .map_err(|e| CommandError::new("fs_read_failed", format!("无法读取 {rel}：{e}")))?;
+    Ok(mtime_ms(&meta))
+}
+
 /// 读取 vault 内文件并校验大小上限（人话错误，不分配超限内存）。
 fn read_file_bytes(root: &Path, rel: &str, max: u64) -> Result<Vec<u8>, CommandError> {
     let path = resolve_in_vault(root, rel)?;
