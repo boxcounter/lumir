@@ -1,0 +1,340 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Lumir — 表格全屏触发钮视觉裁决稿（M235）</title>
+<style>
+/* ============ tokens（逐值取自 design/prototypes/direction-c/index.html，即 docs/specs/design-tokens-v1.md 的登记源） ============ */
+:root {
+  --sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", "PingFang SC", "Hiragino Sans GB", sans-serif;
+  --mono: ui-monospace, "SF Mono", Menlo, monospace;
+}
+:root, :root[data-theme="light"] {
+  --frame: #f4f4f1;
+  --agent-bg: #f7f7f4;
+  --content-bg: #fdfdfc;
+  --preview-bg: #ffffff;
+  --border: #e3e2dd;
+  --border-soft: #edece7;
+  --text: #21201a;
+  --text-2: #6e6c61;
+  --text-3: #a9a79b;
+  --sel: #e8e7e1;
+  --hover: rgba(0,0,0,0.038);
+  --accent: #3a5fcd;
+  --accent-tint: #eef1fb;
+  --code-bg: #f2f1ec;
+  --shadow-pop: 0 1px 2px rgba(0,0,0,0.05);
+  --shadow-raise: 0 4px 16px rgba(0,0,0,0.10);
+  --scrim: rgba(0,0,0,0.22);
+}
+:root[data-theme="dark"] {
+  --frame: #1a1b1d;
+  --agent-bg: #1e1f21;
+  --content-bg: #222326;
+  --preview-bg: #26272b;
+  --border: rgba(255,255,255,0.095);
+  --border-soft: rgba(255,255,255,0.055);
+  --text: #e3e2db;
+  --text-2: #9b9a91;
+  --text-3: #62615b;
+  --sel: rgba(255,255,255,0.075);
+  --hover: rgba(255,255,255,0.05);
+  --accent: #8ba3ef;
+  --accent-tint: rgba(128,152,232,0.15);
+  --code-bg: rgba(255,255,255,0.05);
+  --shadow-pop: none;
+  --shadow-raise: 0 4px 16px rgba(0,0,0,0.50);
+  --scrim: rgba(0,0,0,0.50);
+}
+:root[data-theme="eink"] {
+  --frame: #ffffff;
+  --agent-bg: #ffffff;
+  --content-bg: #ffffff;
+  --preview-bg: #ffffff;
+  --border: #000000;
+  --border-soft: #b9b9b9;
+  --text: #000000;
+  --text-2: #3d3d3d;
+  --text-3: #6e6e6e;
+  --sel: #000000;
+  --sel-text: #ffffff;
+  --hover: rgba(0,0,0,0.06);
+  --accent: #000000;
+  --accent-tint: transparent;
+  --code-bg: #f0f0f0;
+  --shadow-pop: none;
+  --shadow-raise: none;
+  --scrim: rgba(0,0,0,0.35);
+}
+
+/* ============ base ============ */
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: var(--sans);
+  font-size: 13px;
+  color: var(--text);
+  background: var(--content-bg);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  font-feature-settings: "cv11", "ss01";
+  font-variant-numeric: tabular-nums;
+}
+button { font: inherit; color: inherit; background: none; border: none; cursor: default; }
+a { color: var(--accent); text-decoration: none; }
+
+/* ============ 文档摘录（排版参数照 direction-c 屏 1/屏 4：doc 664 居中、正文 15/1.7、表格 13.5） ============ */
+.doc { max-width: 664px; margin: 0 auto; padding: 32px 44px 20px; }
+.doc h2 { font-size: 16.5px; font-weight: 650; letter-spacing: -0.006em; margin: 20px 0 6px; }
+.doc h2:first-child { margin-top: 0; }
+.doc p { font-size: 15px; line-height: 1.7; margin: 0 0 8px; }
+.doc table { border-collapse: collapse; margin: 2px 0 10px; font-size: 13.5px; }
+.doc th {
+  text-align: left; font-size: 11.5px; font-weight: 650; letter-spacing: 0.04em;
+  color: var(--text-2); padding: 5px 14px 6px 0;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+.doc td {
+  padding: 6px 14px 6px 0; line-height: 1.5; vertical-align: top;
+  border-bottom: 1px solid var(--border-soft);
+  white-space: nowrap; /* 宽度合同：cell 不折行，超出由表格局部横滚承载（M119） */
+}
+.doc td:first-child { font-weight: 550; }
+.doc tr:last-child td { border-bottom: none; }
+:root[data-theme="eink"] .doc th { border-bottom-color: #000; }
+
+/* 表格横滚容器：产品里的可聚焦 region（tabindex=0，aria-label="Markdown 表格 N"） */
+.tbl-scroll { overflow-x: auto; }
+.tbl-slot { position: relative; }
+
+/* ============ 触发钮：内容区第一个 chrome 按钮 ============
+   形态纪律：零新 token——壳 = --preview-bg（bg 层级最亮档）+ 1px --border hairline，
+   圆角 r6（小型控件档），尺寸取侧栏小钮先例 26×24（--layout-tb-btn 的 sidebar 变体），
+   图标色 --text-2 → 热态 --text，过渡 --dur-hover（0.1s ease）。
+   无阴影：两档阴影分别专用 active tab 与浮层，内容区平铺 chrome 不投影（tokens v1 规则 7）。
+   eink：白底实心黑框（规则③⑤），热态黑底反白（规则④，同 .tb-btn.on 的 eink 处理）。 */
+.tf-btn {
+  position: absolute; z-index: 2;
+  width: 26px; height: 24px; border-radius: 6px;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--preview-bg);
+  border: 1px solid var(--border);
+  color: var(--text-2);
+  transition: opacity 0.1s ease, color 0.1s ease, background 0.1s ease;
+}
+.tf-btn svg { display: block; }
+:root[data-theme="eink"] .tf-btn { border-color: #000; color: #000; background: #fff; }
+
+/* 出现时机 = hover 容器才出现：本帧呈现的是 hovered 态（全不透明、图标色转 --text） */
+.t-hover .tf-btn { opacity: 1; color: var(--text); }
+:root[data-theme="eink"] .t-hover .tf-btn { background: #000; color: #fff; }
+/* 出现时机 = 常驻淡态：rest 帧 opacity 0.5；真机上 hover 升 1（board 页可真实 hover 体验） */
+.t-dim .tf-btn { opacity: 0.5; }
+.t-dim .tf-btn:hover { opacity: 1; color: var(--text); }
+:root[data-theme="eink"] .t-dim .tf-btn:hover { background: #000; color: #fff; }
+
+/* 位置三轴 */
+.tf-btn.pos-inside  { top: 6px; right: 6px; }            /* 右上角内侧叠放（压在表格可视区右上） */
+.tf-btn.pos-outside { top: 0; right: -34px; }            /* 表格外右上（占栏外沟槽） */
+.tf-btn.pos-top     { top: -13px; left: 50%; transform: translateX(-50%); } /* 上缘中央骑线 */
+
+/* ============ overlay 帧：M184 同款遮罩 + 居中表格快照（「点下去之后」的目标态） ============ */
+.ovl {
+  position: fixed; inset: 0; z-index: 20;
+  background: var(--scrim);
+  display: flex; align-items: center; justify-content: center;
+  padding: 48px;
+}
+/* 浮层壳配方（tokens v1.1）：--preview-bg + 1px --border + --shadow-raise，圆角 r10（浮层壳档）；
+   eink：实心黑框 1.4px（modal 强调档）、阴影退场、遮罩 .35 明度差保留。 */
+.ovl-panel {
+  background: var(--preview-bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: var(--shadow-raise);
+  max-width: 100%; max-height: 100%;
+  overflow: auto; /* 快照不缩放：自然尺寸，超出由壳内双向滚动承载（tasks 2.3） */
+  padding: 20px 24px;
+}
+:root[data-theme="eink"] .ovl-panel { border: 1.4px solid #000; box-shadow: none; }
+.ovl-panel table { border-collapse: collapse; font-size: 13.5px; }
+.ovl-panel th {
+  text-align: left; font-size: 11.5px; font-weight: 650; letter-spacing: 0.04em;
+  color: var(--text-2); padding: 5px 14px 6px 0; border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+.ovl-panel td {
+  padding: 6px 14px 6px 0; line-height: 1.5; vertical-align: top;
+  border-bottom: 1px solid var(--border-soft); white-space: nowrap;
+}
+.ovl-panel td:first-child { font-weight: 550; }
+.ovl-panel tr:last-child td { border-bottom: none; }
+:root[data-theme="eink"] .ovl-panel th { border-bottom-color: #000; }
+
+/* 遮罩帧的底层文档（被 scrim 压暗的对照物） */
+.underlay { position: fixed; inset: 0; overflow: hidden; }
+
+/* ============ board（无参数直开：12 变体总览 + overlay 行） ============ */
+.board-head {
+  position: sticky; top: 0; z-index: 5;
+  background: var(--content-bg);
+  border-bottom: 1px solid var(--border);
+  padding: 14px 32px 12px;
+  display: flex; align-items: baseline; gap: 18px; flex-wrap: wrap;
+}
+.board-head h1 { font-size: 15px; font-weight: 650; letter-spacing: -0.004em; }
+.board-head .themes { display: flex; gap: 10px; font-size: 12.5px; }
+.board-head .themes b { font-weight: 600; color: var(--text); }
+.board-head .hint { font-size: 11.5px; color: var(--text-3); }
+.board-row {
+  display: grid; grid-template-columns: 230px 1fr; gap: 28px;
+  padding: 26px 32px; border-bottom: 1px solid var(--border-soft);
+  align-items: start;
+}
+.board-row .meta .v-id { font-family: var(--mono); font-size: 11px; color: var(--text-3); }
+.board-row .meta .v-name { font-size: 13.5px; font-weight: 650; margin: 4px 0 6px; }
+.board-row .meta .v-desc { font-size: 12px; color: var(--text-2); line-height: 1.55; }
+.board-row .meta .v-link { display: inline-block; margin-top: 8px; font-size: 11.5px; }
+.board-row .stage { background: var(--content-bg); }
+.board-row .doc { padding-top: 8px; }
+.board-row.rec .v-name::after {
+  content: "推荐"; margin-left: 8px;
+  font-size: 10.5px; font-weight: 600; color: var(--accent);
+  background: var(--accent-tint); border-radius: 20px; padding: 2.5px 8px;
+  vertical-align: 2px;
+}
+:root[data-theme="eink"] .board-row.rec .v-name::after {
+  background: transparent; color: #000; border: 1px solid #000;
+}
+</style>
+</head>
+<body>
+<script>
+"use strict";
+/* ---- 参数 ---- */
+const q = new URLSearchParams(location.search);
+const theme = ["light", "dark", "eink"].includes(q.get("theme")) ? q.get("theme") : "light";
+document.documentElement.dataset.theme = theme;
+const variant = q.get("v");          // 单变体帧：<pos>-<icon>-<timing>
+const frame = q.get("frame");        // "overlay" = 点下去之后的目标态
+
+/* ---- 图标（1.4px 描边，与 direction-c 自绘控件同一手法） ---- */
+const ICONS = {
+  // 对角 expand 箭头：两条沿对角线向外的箭头
+  expand: '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M6.5 9.5 L13 3"/><path d="M9.5 3 H13 V6.5"/><path d="M9.5 6.5 L3 13"/><path d="M6.5 13 H3 V9.5"/></svg>',
+  // 四角框：四个角括号（fullscreen 通行字形）
+  corners: '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3 H3 V6"/><path d="M10 3 H13 V6"/><path d="M13 10 V13 H10"/><path d="M3 10 V13 H6"/></svg>',
+};
+
+/* ---- 变体表（位置 × 时机 × 图标 = 12） ---- */
+const POS = {
+  inside:  { cls: "pos-inside",  name: "右上角内侧叠放", desc: "压在表格可视区右上角，随容器不随内容；最贴近「它作用在这张表上」的语义，零文档几何变化。代价：叠在首行末格之上，极宽表的末列 cell 会被短暂遮挡。" },
+  outside: { cls: "pos-outside", name: "表格外右上",     desc: "钉在表格右上、栏宽之外的沟槽里，不碰表格一根线。代价：依赖 664 栏宽两侧的留白存在；窗口收窄或未来宽栏布局里沟槽消失时无处安放，且视觉上是「游离的 chrome」。" },
+  top:     { cls: "pos-top",     name: "表格上缘中央",   desc: "骑在表格上缘正中，findability 最高（视线扫表格上沿必经过）。代价：位置与表格内容无关（居中于容器而非表），三档里最「重」——像横幅钉在内容上。" },
+};
+const ICON = {
+  expand:  { name: "对角 expand 箭头", desc: "两条对角线向外的箭头，「放大/展开」语义。风险：单条对角箭头是「外部打开」的通行字形，两条外向箭头仍带方向性，可能被读成「拖大」。" },
+  corners: { name: "四角框",           desc: "四个角括号，macOS/视频播放器/系统全屏的通行字形，「全屏」语义无歧义，且无方向性——与「打开的是一个模态层，不是新去处」一致。" },
+};
+const TIMING = {
+  hover: { cls: "t-hover", name: "hover 才出现", desc: "静止态零足迹——不出现、不占位、不进任何整页基线；hover 表格容器时浮现（本帧即浮现态）。与「chrome 退后」纪律最一致，代价是可发现性全靠动作偶遇。" },
+  dim:   { cls: "t-dim",   name: "常驻淡态",     desc: "rest 态 opacity 0.5 常驻（本帧即 rest 态），hover 升全值。可发现性最高，代价是每张表多一个常驻 chrome 噪点，且会进入所有含表格的整页基线。" },
+};
+const REC = "inside-corners-hover";
+
+/* ---- 文档摘录（宽表：7 列，nowrap，自然宽 > 664 栏宽 → 局部横滚，即真实产品的宽表情形） ---- */
+const TABLE_HTML = `
+<table>
+  <thead><tr><th>值</th><th>定义</th><th>判断标准</th><th>典型场景</th><th>中断恢复成本</th><th>建议时段</th><th>备注</th></tr></thead>
+  <tbody>
+    <tr><td>Deep Work</td><td>单人、专注、认知负荷高</td><td>需要持续注意力；产出理解、决策或设计</td><td>写设计稿、读论文、改架构</td><td>高——被打断 2 分钟约需 10–15 分钟恢复</td><td>上午 9:30–12:00</td><td>每日 ≥2 块</td></tr>
+    <tr><td>Communication</td><td>实时同步互动</td><td>有对方参与的双向实时交流</td><td>例会、pair、1:1</td><td>低——本身就是打断</td><td>下午集中批量</td><td>能异步就异步</td></tr>
+    <tr><td>Ops</td><td>单人、例行、认知负荷低</td><td>有明确的步骤/流程；不需要深度思考</td><td>回邮件、填报表、整理收件箱</td><td>极低</td><td>碎片时间</td><td>优先委托 agent</td></tr>
+    <tr><td>Planning</td><td>单人或多人、面向未来排布</td><td>产出计划、优先级或日程</td><td>周计划、月度承诺复盘</td><td>中——上下文可外化到文档</td><td>周一上午 / 周五下午</td><td>与 Goal 对齐</td></tr>
+  </tbody>
+</table>`;
+
+const DOC_HTML = `
+<article class="doc">
+  <h2>维度 2：Mode（工作模态）</h2>
+  <p>每个 Entry 记一个 Mode，四个取值互斥。判断标准一列是裁决时的快查口径，横滚可见全表。</p>
+  <div class="tbl-slot">
+    <div class="tbl-scroll" tabindex="0" aria-label="Markdown 表格 1">${TABLE_HTML}</div>
+  </div>
+  <p>一个测试：做这件事时，如果被打断 2 分钟，需要多久才能恢复原状态？恢复成本一列即这个测试的读数。</p>
+</article>`;
+
+function btnHTML(posKey, iconKey) {
+  return `<button class="tf-btn ${POS[posKey].cls}" aria-label="放大查看表格">${ICONS[iconKey]}</button>`;
+}
+function excerptHTML(posKey, iconKey, timingKey) {
+  return `<div class="${TIMING[timingKey].cls}">${DOC_HTML.replace('<div class="tbl-slot">',
+    '<div class="tbl-slot">' + btnHTML(posKey, iconKey))}</div>`;
+}
+
+/* ---- overlay 帧：M184 同款遮罩 + 居中面板壳 + 表格快照（自然尺寸，超出壳内滚动） ---- */
+function renderOverlay() {
+  document.body.innerHTML = `
+    <div class="underlay">${DOC_HTML}</div>
+    <div class="ovl" role="dialog" aria-modal="true" aria-label="Markdown 表格 1">
+      <div class="ovl-panel">${TABLE_HTML}</div>
+    </div>`;
+}
+
+/* ---- 单变体帧 ---- */
+function renderVariant(id) {
+  const m = /^([a-z]+)-([a-z]+)-([a-z]+)$/.exec(id || "");
+  if (!m || !POS[m[1]] || !ICON[m[2]] || !TIMING[m[3]]) { renderBoard(); return; }
+  document.body.innerHTML = excerptHTML(m[1], m[2], m[3]);
+  document.title = `${id} · ${theme} — M235`;
+}
+
+/* ---- board 总览 ---- */
+function renderBoard() {
+  const themeLinks = ["light", "dark", "eink"].map(t =>
+    t === theme ? `<b>${t}</b>` : `<a href="?theme=${t}">${t}</a>`).join(" ");
+  let rows = "";
+  for (const [pk, p] of Object.entries(POS))
+    for (const [ik, i] of Object.entries(ICON))
+      for (const [tk, t] of Object.entries(TIMING)) {
+        const id = `${pk}-${ik}-${tk}`;
+        rows += `
+        <section class="board-row ${id === REC ? "rec" : ""}" id="${id}">
+          <div class="meta">
+            <div class="v-id">${id}</div>
+            <div class="v-name">${p.name} × ${i.name} × ${t.name}</div>
+            <div class="v-desc">${p.desc}</div>
+            <div class="v-desc" style="margin-top:4px">${i.desc}</div>
+            <div class="v-desc" style="margin-top:4px">${t.desc}</div>
+            <a class="v-link" href="?v=${id}&theme=${theme}">单帧 →</a>
+          </div>
+          <div class="stage">${excerptHTML(pk, ik, tk)}</div>
+        </section>`;
+      }
+  rows += `
+    <section class="board-row" id="overlay">
+      <div class="meta">
+        <div class="v-id">frame=overlay</div>
+        <div class="v-name">overlay 目标态（点下去之后）</div>
+        <div class="v-desc">M184 同款全屏遮罩（--scrim 压暗底层文档）+ 居中浮层壳（--preview-bg + 1px hairline + --shadow-raise，r10；eink 实心黑框 1.4px 无阴影）+ 表格快照自然尺寸、超出壳内双向滚动。零 chrome、零新文案，读屏名复用「Markdown 表格 N」。</div>
+        <a class="v-link" href="?frame=overlay&theme=${theme}">单帧 →</a>
+      </div>
+      <div class="stage">${DOC_HTML}</div>
+    </section>`;
+  document.body.innerHTML = `
+    <header class="board-head">
+      <h1>表格全屏触发钮 · 视觉裁决稿（M235）</h1>
+      <nav class="themes">${themeLinks}</nav>
+      <span class="hint">12 变体 = 位置 3 × 图标 2 × 时机 2；dim 行可真实 hover 体验升档；设计意图与推荐理由见 NOTES.md</span>
+    </header>
+    ${rows}`;
+}
+
+if (frame === "overlay") renderOverlay();
+else if (variant) renderVariant(variant);
+else renderBoard();
+</script>
+</body>
+</html>
