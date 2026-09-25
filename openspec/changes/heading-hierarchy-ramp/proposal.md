@@ -38,8 +38,8 @@ H4 起字号 ≤ 正文（与正文的区分由 650 vs 400 字重差承担）、
    标题层级阶梯）
 
 2. **token 层登记**：`--fs-h1` 19→21、`--fs-h2` 16.5→18，新增 `--fs-h3/h4/h5/h6` =
-   16/15/14/13；字号阶梯移除失去唯一消费者的 19 与 16.5 两档（tokens 收敛规则 2：
-   每档须有出处/消费者）。[design-tokens-v1.md](../../../docs/specs/design-tokens-v1.md)
+   16/15/14/13；字号阶梯移除失去唯一消费者的 19 与 16.5 两档（推论而非条文强制：
+   「阶梯不留失去消费者的档」，原型出处仍在 direction-c，详见 design §3.1）。[design-tokens-v1.md](../../../docs/specs/design-tokens-v1.md)
    的字号阶梯、字重语义（650 档由「h1/h2/h3」改「h1–h6」）、标题负字距档、统计数同步修订
    （映射表见 design.md §差距映射）。
 
@@ -53,9 +53,9 @@ H4 起字号 ≤ 正文（与正文的区分由 650 vs 400 字重差承担）、
    的时间戳随本次更新）。`tests/visual/scenes/typography.spec.ts` 的 heading 计算属性断言
    更新为六档逐档口径。
 
-5. **真机验收场景**：新增 `scripts/acceptance/scenarios/36-heading-hierarchy-ramp.md`
+5. **真机验收场景**：新增 `scripts/acceptance/scenarios/37-heading-hierarchy-ramp.md`
    （H1–H6 fixture + 计算属性断言 + 负向断言旧值不在场），随实现同 PR（AGENTS.md：
-   验收场景维护权归新功能 mission）。
+   验收场景维护权归新功能 mission）。编号取 37：36 已由 live-theme-switch 占用并合并。
 
 ## Non-goals
 

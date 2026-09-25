@@ -29,10 +29,11 @@
 
 ## 4. 真机验收（随实现同 PR）
 
-- [ ] 4.1 新增 `scripts/acceptance/scenarios/36-heading-hierarchy-ramp.md`：H1–H6 fixture
+- [ ] 4.1 新增 `scripts/acceptance/scenarios/37-heading-hierarchy-ramp.md`：H1–H6 fixture
   （中文标题 + 正文混排），计算属性断言六档取值（15px 基准下 21/18/16/15/14/13、字重
   全 650）、H6 无 italic、H4–H6 块距非零；负向断言旧值 19/16.5 不在场
-- [ ] 4.2 `node scripts/acceptance/run.mjs` 全量绿（含 36 号场景；端口与 config 隔离口径
+  （编号 37：36 已由 live-theme-switch 占用并合并；registry 口径 36=theme、37=heading）
+- [ ] 4.2 `node scripts/acceptance/run.mjs` 全量绿（含 37 号场景；端口与 config 隔离口径
   见套件 README）
 
 ## 5. 验证
