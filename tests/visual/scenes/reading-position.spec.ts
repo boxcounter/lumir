@@ -164,10 +164,12 @@ test("盘上的位置在篇首：按篇首呈现，页首内边距不被顶出�
   expect(await topVisibleLine(page)).toBe(FIRST_LINE);
   // M110 的缺陷签名：用 scrollIntoView 带 margin 复位会把页首的内边距顶出画，
   // 那时首行的字符盒顶会贴到容器顶（≈ 0）。这里必须仍落在内边距之内。
-  // 阈值**取自 token 的计算值**（`.cm-content` 的 `padding-block-start` = `--sp-11`，
-  // restyle 后 44px → 32px），不写死像素：写死会把「页面内边距档位」这一层复制进判据。
+  // 阈值**取自 token 的计算值**，不写死像素：写死会把「页面内边距档位」这一层复制进判据。
+  // 载体随 M222 的 doc-title 拓扑搬家：无 fm 文档（本 fixture 的 long.md）上 32px 页首
+  // padding 从 `.cm-content` 转给 `.cm-lp-doc-title-outer`（scroller 顶部真实 DOM 节点），
+  // 故从这里读；有 fm 形态下 `.cm-content` 的 padding 未动。
   const paddingTop = await page
-    .locator(".cm-content")
+    .locator(".cm-lp-doc-title-outer")
     .evaluate((el) => Number.parseFloat(getComputedStyle(el).paddingTop));
   const offsets = await anchorOffsets(page, 0);
   expect(paddingTop).toBeGreaterThan(0);

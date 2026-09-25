@@ -58,6 +58,21 @@ async function setCursor(page: Page, pos: number): Promise<void> {
   }, pos);
 }
 
+// 长文档的表格在第 61 行附近（30 段填充之后），doc-title 块落地后掉出 CM 初始渲染窗口
+//（M221 复跑实证：waitFor('.cm-lp-table-scroll') 超时）——揭示表格**下方** ~400 字符处，
+// nearest 滚动把该 pos 贴到视口下缘，整张表随之进视口并被渲染（直接揭示表头 pos 只会
+// 把表头贴到下缘，表体行仍在视口外不渲染——probe 实证 cells 3 vs 9）。
+// 用户滚到即渲染，这是 CM 虚拟渲染的正常行为，不是产品缺陷。
+async function revealTable(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    const view = (document.querySelector(".cm-content") as unknown as { cmTile: { root: { view: any } } }).cmTile
+      .root.view;
+    const text = view.state.doc.toString();
+    const pos = Math.min(text.length, text.indexOf("| 数据 | 良好 | beta |") + 400);
+    view.dispatch({ selection: { anchor: pos }, scrollIntoView: true });
+  });
+}
+
 interface Snap {
   head: number;
   line: number;
@@ -157,6 +172,7 @@ test("⌃A 在表格滚动容器焦点内同样到行首（widget 焦点委托�
   // 揭示滚动会把整窗内容下挫（M118 ⌃E 的同族缺陷），故这里与既有 ⌃E 场景同款断言
   // scrollTop 与 caret 可视性。
   await openFile(page, { "table.md": LONG_TABLE_DOC }, "table.md");
+  await revealTable(page);
   await page.locator(".cm-lp-table-scroll").waitFor();
   await page.locator(".cm-lp-table-cell", { hasText: "正常" }).first().click();
   await page.waitForTimeout(80);

@@ -91,23 +91,28 @@ test("有 fm：标题 24px/680/1.28/-0.012em，meta 三要素（路径 · 行数
   });
   expect(sepColor.sep).toBe(sepColor.border);
 
-  // 位置：fm 区之后、正文之前（DOM 序 + 纵向几何双重钉）
+  // 位置：fm 之后、正文之前（DOM 序 + 纵向几何双重钉）。M222 拓扑：doc-title 折叠进
+  // `.cm-lp-frontmatter-outer` 内部、位于 fm box 之后（frontmatter.ts:149-153），几何对照物
+  // 因此是 fm box（`.cm-lp-frontmatter`）而非 outer——outer 包着 title，bottom 必在其之下。
   const order = await page.evaluate(() => {
-    const fm = document.querySelector(".cm-lp-frontmatter-outer")!;
+    const fmOuter = document.querySelector(".cm-lp-frontmatter-outer")!;
+    const fmBox = fmOuter.querySelector(".cm-lp-frontmatter")!;
     const titleOuter = document.querySelector(".cm-lp-doc-title-outer")!;
     const firstLine = document.querySelector(".cm-content .cm-line")!;
     return {
-      fmBeforeTitle: !!(titleOuter.compareDocumentPosition(fm) & Node.DOCUMENT_POSITION_PRECEDING),
+      insideOuter: titleOuter.parentElement === fmOuter,
+      fmBoxBeforeTitle: !!(titleOuter.compareDocumentPosition(fmBox) & Node.DOCUMENT_POSITION_PRECEDING),
       titleBeforeBody: !!(firstLine.compareDocumentPosition(titleOuter) & Node.DOCUMENT_POSITION_PRECEDING),
-      fmBottom: fm.getBoundingClientRect().bottom,
+      fmBoxBottom: fmBox.getBoundingClientRect().bottom,
       titleTop: titleOuter.getBoundingClientRect().top,
       titleBottom: titleOuter.getBoundingClientRect().bottom,
       bodyTop: firstLine.getBoundingClientRect().top,
     };
   });
-  expect(order.fmBeforeTitle).toBe(true);
+  expect(order.insideOuter).toBe(true);
+  expect(order.fmBoxBeforeTitle).toBe(true);
   expect(order.titleBeforeBody).toBe(true);
-  expect(order.titleTop).toBeGreaterThanOrEqual(order.fmBottom - 1);
+  expect(order.titleTop).toBeGreaterThanOrEqual(order.fmBoxBottom - 1);
   expect(order.titleBottom).toBeLessThanOrEqual(order.bodyTop + 1);
 });
 
@@ -118,13 +123,15 @@ test("无 fm：钉在文档首行之前；根目录文件省略路径段", async
   const segments = await page.locator(".cm-lp-doc-meta").evaluate((el) => [...el.children].map((c) => c.textContent));
   expect(segments).toEqual(["5 行", "·", "修改于 9月20日"]);
 
-  // 位置：块是 cm-content 的第一个孩子（文档首行之前）
+  // 位置：块是 `.cm-scroller` 的第一个子元素（M222 拓扑：document-top 落点是 scroller 级
+  // 真实 DOM 节点，grid 行编排 title 行 1 / 正文行 2，见 theme.ts 的 DOC_TITLE_TOP_CLASS 段），
+  // 几何上在文档首行之前
   const first = await page.evaluate(() => {
-    const content = document.querySelector(".cm-content")!;
+    const scroller = document.querySelector(".cm-scroller")!;
     const titleOuter = document.querySelector(".cm-lp-doc-title-outer")!;
-    const firstLine = content.querySelector(".cm-line")!;
+    const firstLine = document.querySelector(".cm-content .cm-line")!;
     return {
-      isFirstChild: content.firstElementChild === titleOuter,
+      isFirstChild: scroller.firstElementChild === titleOuter,
       titleBottom: titleOuter.getBoundingClientRect().bottom,
       bodyTop: firstLine.getBoundingClientRect().top,
     };
