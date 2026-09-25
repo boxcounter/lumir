@@ -5,8 +5,9 @@ import { stubTauri } from "./tauri-stub";
 import { readDocument } from "./parity-checks";
 
 // 引用内的列表（M138）：blockquote 里的有序/无序/嵌套列表按常规列表渲染——同一个
-// 标记 widget（等宽字体的序号）、同一套正文起点对齐。此前只有 callout 放开这条路径，
+// 标记 widget、同一套正文起点对齐。此前只有 callout 放开这条路径，
 // 普通引用里的列表停在源码态（`> - 甲项` 原样显示）。
+// 标记体系本身是 M218 C3 口径：sans 族 + tabular-nums、ul glyph `–`/`◦`、ol 复合编号。
 const source = readFileSync(new URL("../fixtures/render-quote-list/quote-list.md", import.meta.url), "utf8");
 
 async function open(page: Page): Promise<void> {
@@ -47,19 +48,22 @@ test("引用内的有序/无序/嵌套列表按常规列表渲染", async ({ pag
   // 先等嵌套列表的组宽度就绪（组元数据未完整时该行暂不装饰，后台扫描补上）。
   await expect(page.locator(".cm-lp-quote-line.cm-lp-list-line")).toHaveCount(6);
   const lines = await page.locator(".cm-lp-quote-line.cm-lp-list-line").evaluateAll((els) => els.map((el) => el.textContent));
-  expect(lines).toEqual(["•甲项", "•乙项", "1.嵌套一", "2.嵌套二", "1.有序一", "2.有序二"]);
+  expect(lines).toEqual(["–甲项", "–乙项", "1.嵌套一", "2.嵌套二", "1.有序一", "2.有序二"]);
   // 整个引用块的行文本里不再出现源码标记（QuoteMark 与列表标记都被顶掉）
   const quoteText = await page.locator(".cm-lp-quote-line").evaluateAll((els) => els.map((el) => el.textContent ?? "").join("\n"));
   expect(quoteText).not.toContain(">");
   expect(quoteText).not.toContain("- ");
 
-  // 等宽字体序号：标记 widget 走 --font-mono，序号原样保留（不重编号）
+  // 标记族与编号口径（M218 C3）：标记 widget 走正文族（sans，--editor-font-family），
+  // 数字带 tabular-nums 等宽；ol 显示编号 = 组内序号（复合多级编号，父列表是 ul 时断链
+  // 从自己起）——源码里的字面数字不再是显示口径。
   const markers = await page.locator(".cm-lp-quote-line .cm-lp-list-marker").evaluateAll((els) =>
     els.map((el) => ({ text: el.textContent ?? "", font: getComputedStyle(el).fontFamily, numeric: getComputedStyle(el).fontVariantNumeric })),
   );
-  expect(markers.map((marker) => marker.text)).toEqual(["•", "•", "1.", "2.", "1.", "2."]);
+  expect(markers.map((marker) => marker.text)).toEqual(["–", "–", "1.", "2.", "1.", "2."]);
   for (const marker of markers) {
-    expect(marker.font).toContain("monospace");
+    expect(marker.font).toContain("sans-serif");
+    expect(marker.font).not.toContain("monospace");
     expect(marker.numeric).toContain("tabular-nums");
   }
 

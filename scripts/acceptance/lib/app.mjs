@@ -9,7 +9,7 @@
 //   3. 端口隔离：dev server 走独立端口，绝不与 Alex 手头的 `pnpm tauri dev` 抢 1420。
 import { execFileSync, spawn } from "node:child_process";
 import { appendFileSync, mkdirSync, realpathSync } from "node:fs";
-import { cp, readdir, rm, writeFile } from "node:fs/promises";
+import { cp, readdir, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { CuError } from "./cu.mjs";
 import { envHome, exists, log, mkdirp, readText, repoRoot, secondVaultDir, sleep, stripAnsi, vaultDir } from "./util.mjs";
@@ -76,12 +76,14 @@ export async function resetRecovery() {
   return dir;
 }
 
-/** 把 vault 重置为 fixtures 的精确副本：只清 vault 根下的 .md（合成 vault 的既有内容形态）。 */
+/** 把 vault 重置为 fixtures 的精确副本：清 vault 根下的 .md 与目录（合成 vault 的既有
+ *  内容形态 + M221 起场景可经 vaultWrite 建嵌套路径——目录不跨场景残留）。 */
 export async function resetVault() {
   const vault = vaultDir();
   await mkdirp(vault);
   for (const name of await readdir(vault)) {
     if (name.endsWith(".md")) await rm(path.join(vault, name), { force: true });
+    else if ((await stat(path.join(vault, name))).isDirectory()) await rm(path.join(vault, name), { recursive: true, force: true });
   }
   for (const name of await readdir(fixturesDir())) {
     if (!name.endsWith(".md")) continue;

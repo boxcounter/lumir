@@ -41,6 +41,20 @@ async function setCursor(page: import("@playwright/test").Page, pos: number) {
   }, pos);
 }
 
+// 长文档的表格在第 61 行附近（30 段填充之后），doc-title 块落地后掉出 CM 初始渲染窗口
+//（M221 复跑实证：waitFor('.cm-lp-table-scroll') 超时，快照里 24 段填充后直接 end-marker）。
+// 揭示表格**下方** ~400 字符处：nearest 滚动把该 pos 贴到视口下缘，整张表随之进视口并被渲染
+//（直接揭示表头 pos 只会把表头贴到下缘，表体行仍在视口外不渲染——probe 实证 cells 3 vs 9）。
+// 用户滚到即渲染，这是 CM 虚拟渲染的正常行为，不是产品缺陷。
+async function revealTable(page: import("@playwright/test").Page) {
+  await page.evaluate(() => {
+    const view = (document.querySelector(".cm-content") as unknown as { cmTile: { root: { view: any } } }).cmTile.root.view;
+    const text = view.state.doc.toString();
+    const pos = Math.min(text.length, text.indexOf("| 数据 | 良好 | beta |") + 400);
+    view.dispatch({ selection: { anchor: pos }, scrollIntoView: true });
+  });
+}
+
 async function openDoc(page: import("@playwright/test").Page, name: string, doc: string) {
   await stubTauri(page, { entries: [{ path: name, kind: "file", size: doc.length, mtime_ms: 0 }], files: { [name]: doc } });
   await page.goto("/");
@@ -113,6 +127,7 @@ const LONG_TABLE_DOC = (() => {
 
 test("cell 内 Ctrl+E 到当前 cell 内容右缘：内容不下挫、caret 可测", async ({ page }) => {
   await openDoc(page, "ctrl-e.md", LONG_TABLE_DOC);
+  await revealTable(page);
   await page.locator(".cm-lp-table-scroll").waitFor();
   await page.locator(".cm-lp-table-cell", { hasText: "表格" }).first().click();
   await page.waitForTimeout(80);
@@ -145,6 +160,7 @@ test("cell 内 Ctrl+E 到当前 cell 内容右缘：内容不下挫、caret 可�
 
 test("水平方向跨隐藏管道符（Ctrl+B/F）：内容不下挫", async ({ page }) => {
   await openDoc(page, "horiz.md", LONG_TABLE_DOC);
+  await revealTable(page);
   await page.locator(".cm-lp-table-scroll").waitFor();
   await page.locator(".cm-lp-table-cell", { hasText: "正常" }).first().click();
   await page.waitForTimeout(80);

@@ -204,6 +204,50 @@ test("浮层：层级缩进、当前段高亮、键盘导航与跳转落点", as
   expect(await docText(page)).toBe(beforeText);
 });
 
+test("几何：浮层 300px 宽、贴指示段左端与 modeline 上沿，条目 26px 行高 / 18px 层级步进", async ({ page }) => {
+  // M217 新 TOC 表面的几何层钉（结构断言抓不到定位漂移）：浮层宽度、锚点（place() 横向对
+  // 指示段左端、CSS `bottom: 100%` 纵向贴 modeline 上沿）与条目行几何（定稿 .pop-row：
+  // h26 / 左 padding = --sp-4 + depth×18px，index.html:697-704）。
+  await openToc(page);
+  await page.locator(".modeline-section").click();
+  await expect(page.locator(".lumir-toc-list")).toBeVisible();
+
+  const geo = await page.evaluate(() => {
+    const popover = document.querySelector(".lumir-toc") as HTMLElement;
+    const indicator = document.querySelector(".modeline-section") as HTMLElement;
+    const modeline = popover.offsetParent as HTMLElement;
+    const p = popover.getBoundingClientRect();
+    return {
+      width: p.width,
+      popoverBottom: p.bottom,
+      popoverLeft: p.left,
+      indicatorLeft: indicator.getBoundingClientRect().left,
+      modelineTop: modeline.getBoundingClientRect().top,
+    };
+  });
+  expect(geo.width).toBe(300);
+  expect(Math.abs(geo.popoverBottom - geo.modelineTop)).toBeLessThanOrEqual(1); // 向上展开贴上沿
+  expect(Math.abs(geo.popoverLeft - geo.indicatorLeft)).toBeLessThanOrEqual(1); // place() 对左端
+
+  const items = await page.locator(".lumir-toc-item").evaluateAll((els) =>
+    els.map((el) => {
+      const cs = getComputedStyle(el);
+      return {
+        height: (el as HTMLElement).getBoundingClientRect().height,
+        paddingLeft: cs.paddingLeft,
+        fontSize: cs.fontSize,
+      };
+    }),
+  );
+  for (const item of items) {
+    expect(item.height).toBe(26);
+    expect(item.fontSize).toBe("12.5px"); // --fs-ui-s
+  }
+  // 层级缩进的**像素**结果（--toc-depth 变量值在上面用例钉，这里钉它兑现出来的几何）：
+  // 归一深度 0/1/2/1/2 → 8 + depth×18
+  expect(items.map((item) => item.paddingLeft)).toEqual(["8px", "26px", "44px", "26px", "44px"]);
+});
+
 test("浮层总高上限：窗口高 80%（含底部提示），列表在浮层内滚动、提示常驻且随窗口变化", async ({ page }) => {
   await openToc(page);
   await page.locator('.ft-row[title="toc-long.md"]').click();

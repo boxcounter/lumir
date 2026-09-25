@@ -231,6 +231,69 @@ test("渲染：类型标签、默认/自定义标题、未知类型降级、普�
   await expectScreenshot(page, "callout-rendering.png");
 });
 
+test("定稿排版：双段标签（zh 12.5px/650 族色 + en 13px/550 正文色）、正文 13px、首/末行内边距", async ({ page }) => {
+  // C7（M218）双段标签与定稿 co padding（index.html:652/656、theme.ts:160-201）的读数钉：
+  // zh 段 = 中文类型名（12.5px/650/族色），en 段 = 英文规范名（13px/550/正文色），
+  // 未知类型单段不伪装规范名；正文面 13px；首行上距 --sp-3、末行下距 7px。
+  await openCallout(page);
+
+  const labels = await page.evaluate(() => {
+    const resolve = (name: string) => {
+      const s = document.createElement("span");
+      s.style.color = `var(${name})`;
+      document.body.append(s);
+      const c = getComputedStyle(s).color;
+      s.remove();
+      return c;
+    };
+    const read = (el: Element | null) => {
+      if (!el) return null;
+      const cs = getComputedStyle(el);
+      return { text: el.textContent, fontSize: cs.fontSize, fontWeight: cs.fontWeight, color: cs.color };
+    };
+    const block = (fam: string) =>
+      document.querySelector(`.cm-line.cm-lp-callout-first.cm-lp-callout-fam-${fam}`)!;
+    const note = block("info");
+    const tip = block("ok");
+    const unknown = block("neutral");
+    return {
+      noteZh: read(note.querySelector(".cm-lp-callout-type-zh")),
+      noteEn: read(note.querySelector(".cm-lp-callout-type-en")),
+      tipZh: read(tip.querySelector(".cm-lp-callout-type-zh")),
+      tipEn: read(tip.querySelector(".cm-lp-callout-type-en")),
+      unknownZh: read(unknown.querySelector(".cm-lp-callout-type-zh")),
+      unknownEn: read(unknown.querySelector(".cm-lp-callout-type-en")),
+      accent: resolve("--accent"),
+      ok: resolve("--ok"),
+      text3: resolve("--text-3"),
+      text: resolve("--text"),
+    };
+  });
+  expect(labels.noteZh).toMatchObject({ text: "笔记", fontSize: "12.5px", fontWeight: "650", color: labels.accent });
+  expect(labels.noteEn).toMatchObject({ text: "note", fontSize: "13px", fontWeight: "550", color: labels.text });
+  expect(labels.tipZh).toMatchObject({ text: "提示", color: labels.ok });
+  expect(labels.tipEn).toMatchObject({ text: "tip" });
+  // 未知类型：只有 zh 段（不伪装规范名），按原文类型名显示，取中性族色
+  expect(labels.unknownZh).toMatchObject({ text: "whatever", color: labels.text3 });
+  expect(labels.unknownEn).toBeNull();
+
+  const metrics = await page.evaluate(() => {
+    const read = (el: Element) => {
+      const cs = getComputedStyle(el);
+      return { fontSize: cs.fontSize, paddingTop: cs.paddingTop, paddingBottom: cs.paddingBottom };
+    };
+    const body = [...document.querySelectorAll(".cm-line.cm-lp-callout-line")].find((el) =>
+      el.textContent?.includes("小心"),
+    )!;
+    const firstLine = document.querySelector(".cm-line.cm-lp-callout-first")!;
+    const lastLine = document.querySelector(".cm-line.cm-lp-callout-last")!;
+    return { body: read(body), first: read(firstLine), last: read(lastLine) };
+  });
+  expect(metrics.body.fontSize).toBe("13px"); // co-body 档（比正文面 15px 小一档）
+  expect(metrics.first.paddingTop).toBe("6px"); // --sp-3
+  expect(metrics.last.paddingBottom).toBe("7px"); // sp 阶梯无 7px 档，定稿字面值
+});
+
 test("复制保真：全选复制输出原始 Markdown（含 [!type] 标记）", async ({ page, context }) => {
   await context.grantPermissions(["clipboard-read", "clipboard-write"]);
   await openCallout(page);

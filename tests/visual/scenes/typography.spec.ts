@@ -148,6 +148,11 @@ async function lastCanvasFont(page: Page): Promise<string | null> {
   });
 }
 
+/** 喂给 canvas 的全部字体串（列表标记测量按 MARKER_FONT_RATIOS 三档各写一次）。 */
+async function canvasFonts(page: Page): Promise<string[]> {
+  return page.evaluate(() => (window as never as { __canvasFonts: string[] }).__canvasFonts.slice());
+}
+
 /** 装一个窗口级 keydown 监听计数器：本 change 的「键位通路唯一」判据靠它——
  *  Tauri 的 webview 缩放热键（MUST NOT 启用）正是以 window 级 keydown 监听实现的，
  *  启用后这里的计数会变 2，「同一物理键两条分发路径」当场可见。 */
@@ -254,21 +259,32 @@ test("缺省配置即出厂口径（D1 = 15px / 行高 1.7 / 标记 .9em）", as
   expect(now.contentFontFamily).toBe(BODY_BASELINE);
   expect(now.contentLineHeight).toBe(`${BASE_FONT_SIZE * BASE_LINE_HEIGHT_RATIO}px`);
   expect(now.editorFontFamily).toBe(BODY_BASELINE);
-  expect(now.listMarkerFontFamily).toBe(MONO_BASELINE);
+  expect(now.listMarkerFontFamily).toBe(BODY_BASELINE); // C3（M218）：标记族改 sans（--editor-font-family）
   expect(now.listMarkerFontSize).toBe(`${BASE_FONT_SIZE * 0.9}px`);
   expect(now.codeLineFontFamily).toBe(MONO_BASELINE);
-  expect(now.singleLineHeight).toBeCloseTo(BASE_FONT_SIZE * BASE_LINE_HEIGHT_RATIO, 1);
+  // 单行行盒 = 字号 × 1.7 + 2px 列表项间距（定稿 li margin 2px 由每个 item 首行的
+  //  paddingTop 承载，theme.ts:306-309）——读数行是列表行，间距计入行盒。
+  expect(now.singleLineHeight).toBeCloseTo(BASE_FONT_SIZE * BASE_LINE_HEIGHT_RATIO + 2, 1);
   // 唯一的写值点是 --editor-font-size（15px），字体族 token 未被写入（沿用 :root 的 var() 引用）
   expect(now.rootInlineTokens.size).toBe(`${BASE_FONT_SIZE}px`);
   expect(now.rootInlineTokens.family).toBe("");
   expect(now.rootInlineTokens.mono).toBe("");
 
-  // 测量与渲染同源：canvas 拿到的族串与标记的**计算** fontFamily 逐字相同
-  const canvasFont = await lastCanvasFont(page);
-  expect(canvasFont, "列表标记的 canvas 测量必须真的跑过").not.toBeNull();
-  const [sizePart, familyPart] = [canvasFont!.slice(0, canvasFont!.indexOf("px")), canvasFont!.slice(canvasFont!.indexOf("px ") + 3)];
-  expect(familyPart).toBe(now.listMarkerFontFamily);
-  expect(parseFloat(sizePart)).toBeCloseTo(parseFloat(now.contentFontSize) * 0.9, 6);
+  // 测量与渲染同源：canvas 拿到的族串 = token **原文**（`--font-sans` 的未归一字面量），
+  // 与标记的**计算** fontFamily（Chromium 归一形态，BlinkMacSystemFont→"system-ui"）不是同一
+  // 形态——mono 栈无别名时二者恰好相等，sans 栈有别名就分叉。canvas 侧钉原文串，归一形态由
+  // 上面的 listMarkerFontFamily 断言钉。
+  // C3（M218）起测量按 MARKER_FONT_RATIOS 三档标记字号（13.5/13/12.5 ÷ 正文锚，
+  // lists.ts:34-37）各写一次 font——三档都要钉，只钉最后一次会漏掉档间分叉。
+  const fonts = await canvasFonts(page);
+  expect(fonts.length, "列表标记的 canvas 测量必须真的跑过").toBeGreaterThan(0);
+  expect([...new Set(fonts.map((f) => f.slice(f.indexOf("px ") + 3)))]).toEqual([BODY_STACK_RAW]);
+  const sizes = [...new Set(fonts.map((f) => parseFloat(f)))].sort((a, b) => b - a);
+  expect(sizes).toHaveLength(3);
+  const base = parseFloat(now.contentFontSize);
+  for (const [i, ratio] of [13.5 / 15, 13 / 15, 12.5 / 15].entries()) {
+    expect(sizes[i]).toBeCloseTo(base * ratio, 1);
+  }
 });
 
 test("配置生效且只作用于编辑器（正文 / 等宽 / 字号各自取到新值，shell 逐项不变）", async ({ page, context }) => {
@@ -288,7 +304,8 @@ test("配置生效且只作用于编辑器（正文 / 等宽 / 字号各自取�
   expect(after.contentFontFamily).toBe(`"LXGW WenKai", ${BODY_BASELINE}`);
   expect(after.contentFontSize).toBe("20px");
   expect(after.contentLineHeight).toBe("34px"); // 无单位行高 1.7 随字号等比
-  expect(after.listMarkerFontFamily).toBe(`"JetBrains Mono", ${MONO_BASELINE}`);
+  // 标记族随正文族（C3）：sans 配置值落在标记上，mono 配置只管代码
+  expect(after.listMarkerFontFamily).toBe(`"LXGW WenKai", ${BODY_BASELINE}`);
   expect(after.codeLineFontFamily).toBe(`"JetBrains Mono", ${MONO_BASELINE}`);
   expect(after.listMarkerFontSize).toBe("18px"); // .9em
   // 标题族：restyle 起标题**没有独立字族**（`--font-display` 随 token 层删除，h1–h6 改 sans
@@ -473,16 +490,16 @@ test("改字号后：行高与字号一致、点中该行落点正确、标记�
   await page.waitForTimeout(60);
   const after = await readings(page);
   expect(after.contentFontSize).toBe("32px");
-  // 行高 = 字号 × 1.7（单行行盒几何）
-  expect(after.singleLineHeight).toBeCloseTo(32 * BASE_LINE_HEIGHT_RATIO, 1);
-  expect(after.singleLineHeight / before.singleLineHeight).toBeCloseTo(32 / BASE_FONT_SIZE, 2);
+  // 行高 = 字号 × 1.7 + 2px 列表项间距（项间距是常量，不随字号缩放，见 :260 的注释）
+  expect(after.singleLineHeight).toBeCloseTo(32 * BASE_LINE_HEIGHT_RATIO + 2, 1);
+  expect((after.singleLineHeight - 2) / (before.singleLineHeight - 2)).toBeCloseTo(32 / BASE_FONT_SIZE, 2);
   // 列表标记宽度按新字号重测：它由 canvas 量出的「0」宽 × 组宽算出，字号按比例放大即等比放大。
   // 这条读数在**没有重测**时会停在旧值（比值 1.0）——判据有区分度。
   expect(after.listMarkerWidth / before.listMarkerWidth).toBeCloseTo(32 / BASE_FONT_SIZE, 1);
-  // 测量与渲染同源（非默认字号同样成立）
+  // 测量与渲染同源（非默认字号同样成立）：canvas 侧钉 token 原文串（归一形态由 :272 场景钉）
   const canvasAfter = await lastCanvasFont(page);
   expect(canvasAfter).not.toBe(canvasBefore);
-  expect(canvasAfter!.slice(canvasAfter!.indexOf("px ") + 3)).toBe(after.listMarkerFontFamily);
+  expect(canvasAfter!.slice(canvasAfter!.indexOf("px ") + 3)).toBe(BODY_STACK_RAW);
 
   // 点中某一行的可视中心 → 光标必须落在那一行（CM 的 heightmap 陈旧时会落到别的行）
   const landed = await page.evaluate(() => {
@@ -564,7 +581,9 @@ test("改字号后光标仍在视口内（长文档 + 光标在视口下部）",
     });
 
   const before = await caretState();
-  expect(before.headText, "光标应落在刚点的那一行").toContain(placed.replace(/^•/, "").trim());
+  // placed 是行的 textContent（含渲染态列表标记 glyph，C3 起 ul L1 = `–`）；
+  // headText 是源码行——比对前剥掉 glyph。
+  expect(before.headText, "光标应落在刚点的那一行").toContain(placed.replace(/^[–•◦]/, "").trim());
   expect(before.visible, "初始：光标在视口内").toBe(true);
   const scrollBefore = before.scrollTop;
 

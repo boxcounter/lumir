@@ -21,7 +21,7 @@ import {
   typeInEditor,
   waitUntil,
 } from "./drive.mjs";
-import { envHome, readText, sleep, vaultDir } from "./util.mjs";
+import { envHome, mkdirp, readText, sleep, vaultDir } from "./util.mjs";
 
 /** 动作与断言的白名单：`--check` 用它做静态校验，避免写错 key 要等一整轮真机才发现。 */
 export const ACTIONS = new Set([
@@ -808,6 +808,7 @@ async function doAction(step, { ctx, cu, scenario, vars, pid, evidence }) {
     }
     case "vaultWrite": {
       const file = path.join(vaultDir(), step.file);
+      await mkdirp(path.dirname(file)); // 嵌套路径（M221 场景 36 起）：目录行的 chevron 对齐需要真目录
       await writeFile(file, step.content ?? "");
       return file;
     }

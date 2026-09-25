@@ -39,7 +39,8 @@ test("code 模式文件在视图层只读：键盘与 DOM 注入都无法改内�
   await expect(content).not.toContainText("HACKED");
 
   // 不产生 dirty：modeline 路径段无标记，后端镜像无 true 上报。
-  await expect(page.locator(".modeline-path")).toHaveText("src/main.ts");
+  // M217 S7：路径段分隔符写作「 / 」（带空格，定稿 index.html:1225）。
+  await expect(page.locator(".modeline-path")).toHaveText("src / main.ts");
   expect(await dirtyReports(page)).not.toContain(true);
 });
 
@@ -93,7 +94,7 @@ test("保存冲突：可理解的冲突提示，修改保留，切换与退出�
   // 拦截只保留给「前台是未命名文档」那一种情形（见 m130-text-open-trap.spec.ts）。
   await page.locator('.ft-row[title="docs"]').click();
   await page.locator('.ft-row[title="docs/guide.md"]').click();
-  await expect(page.locator(".modeline-path")).toHaveText("docs/guide.md");
+  await expect(page.locator(".modeline-path")).toHaveText("docs / guide.md");
   await expect(page.locator(".tab.is-active .tab-name")).toHaveText("guide.md");
   // README.md 的标签还在、仍带 dirty 点，且**没有**任何拦截提示：内存修改一点没丢。
   const readmeTab = page.locator(".tab", { hasText: "README.md" });

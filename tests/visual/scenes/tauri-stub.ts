@@ -338,6 +338,15 @@ export async function stubTauri(page: Page, vault: VaultFixture | null): Promise
         if (text === undefined) throw { code: "fs_not_found", message: `文件不存在：${args.path}` };
         return { content: text, revision: `fixture-revision-${text}` };
       },
+      // 单文件 mtime（M218 A1 doc-meta「修改于」的数据源）：真后端读盘（取不到为 null 不报错），
+      // 桩从 entries 表的 mtime_ms 应答（fixture 的唯一时间真源）；路径不在表里按「取不到」回
+      // { mtime_ms: null }——前端据此省略「修改于」段，不报错、不阻断渲染。
+      fs_file_mtime: (args) => {
+        const entry = current?.entries?.find(
+          (e) => (e as { path?: string }).path === (args.path ?? ""),
+        ) as { mtime_ms?: number } | undefined;
+        return { mtime_ms: entry?.mtime_ms ?? null };
+      },
       document_save: (args) => {
         const path = args.path ?? "";
         const currentText = current?.files?.[path];

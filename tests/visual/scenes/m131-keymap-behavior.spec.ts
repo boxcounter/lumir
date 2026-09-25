@@ -58,6 +58,21 @@ async function setCursor(page: Page, pos: number): Promise<void> {
   }, pos);
 }
 
+// 长文档的表格在第 61 行附近（30 段填充之后），doc-title 块落地后掉出 CM 初始渲染窗口
+//（M221 复跑实证：waitFor('.cm-lp-table-scroll') 超时）——揭示表格**下方** ~400 字符处，
+// nearest 滚动把该 pos 贴到视口下缘，整张表随之进视口并被渲染（直接揭示表头 pos 只会
+// 把表头贴到下缘，表体行仍在视口外不渲染——probe 实证 cells 3 vs 9）。
+// 用户滚到即渲染，这是 CM 虚拟渲染的正常行为，不是产品缺陷。
+async function revealTable(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    const view = (document.querySelector(".cm-content") as unknown as { cmTile: { root: { view: any } } }).cmTile
+      .root.view;
+    const text = view.state.doc.toString();
+    const pos = Math.min(text.length, text.indexOf("| 数据 | 良好 | beta |") + 400);
+    view.dispatch({ selection: { anchor: pos }, scrollIntoView: true });
+  });
+}
+
 interface Snap {
   head: number;
   line: number;
@@ -157,6 +172,7 @@ test("⌃A 在表格滚动容器焦点内同样到行首（widget 焦点委托�
   // 揭示滚动会把整窗内容下挫（M118 ⌃E 的同族缺陷），故这里与既有 ⌃E 场景同款断言
   // scrollTop 与 caret 可视性。
   await openFile(page, { "table.md": LONG_TABLE_DOC }, "table.md");
+  await revealTable(page);
   await page.locator(".cm-lp-table-scroll").waitFor();
   await page.locator(".cm-lp-table-cell", { hasText: "正常" }).first().click();
   await page.waitForTimeout(80);
@@ -269,12 +285,14 @@ test("⌘S 唯一保存：⌃S 不再触发保存（D3）", async ({ page }) => 
   await page.keyboard.press("Control+s");
   await page.waitForTimeout(400); // 远小于 2s 自动保存 debounce
   expect(await page.evaluate(() => (window as unknown as { __fileText(p: string): string | undefined }).__fileText("save.md"))).toBe(original);
-  await expect(page.locator(".lumir-toast", { hasText: /^已保存$/ })).toHaveCount(0);
+  await expect(page.locator(".lumir-toast", { hasText: /^✓已保存$/ })).toHaveCount(0);
   await expect(unsavedMark(page)).toBeVisible();
 
-  // ⌘S 仍是保存键：落盘内容为当前缓冲、dirty 清除
+  // ⌘S 仍是保存键：落盘内容为当前缓冲、dirty 清除。
+  // M217 S14：成功类 toast 带 ✓ 前缀（.toast-check span，语义口径——只有「用户动作已成功
+  // 完成」的确认带 ✓），textContent 因此是「✓已保存」；这条断言同时守住 ✓ 在场。
   await page.keyboard.press("Meta+s");
-  await expect(page.locator(".lumir-toast", { hasText: /^已保存$/ })).toBeVisible();
+  await expect(page.locator(".lumir-toast", { hasText: /^✓已保存$/ })).toBeVisible();
   await expect
     .poll(() => page.evaluate(() => (window as unknown as { __fileText(p: string): string | undefined }).__fileText("save.md")))
     .toBe(typed);
@@ -302,9 +320,9 @@ test("作用域：⌘S 是全局键（焦点不在编辑器也生效），editor
   expect(after.head).toBe(before.head);
   expect(after.empty).toBe(true); // 没有形成选区
 
-  // global 作用域的 ⌘S 不受焦点影响
+  // global 作用域的 ⌘S 不受焦点影响（成功 toast 的 ✓ 前缀见上一用例的注）
   await page.keyboard.press("Meta+s");
-  await expect(page.locator(".lumir-toast", { hasText: /^已保存$/ })).toBeVisible();
+  await expect(page.locator(".lumir-toast", { hasText: /^✓已保存$/ })).toBeVisible();
   await expect
     .poll(() => page.evaluate(() => (window as unknown as { __fileText(p: string): string | undefined }).__fileText("scope.md")))
     .toBe(`${original}y`);

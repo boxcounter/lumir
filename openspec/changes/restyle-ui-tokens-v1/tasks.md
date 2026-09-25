@@ -296,7 +296,7 @@
 | `typography` §token 层与配置来源（MODIFIED） | `src/style.css` 的 `--editor-font-size: 15px` / `--lh-reading` / `--layout-doc-measure`；`src/typography.ts` 与 `src-tauri/src/config.rs` 的 `DEFAULT_FONT_SIZE = 15` | `tests/unit/typography.test.ts`（出厂值 15、档位表）；`typography.spec.ts`（出厂口径读数、配置只作用编辑器、非法值退化、步进与钳制、重测量） |
 | `typography` §字号步进 / §重测量 / §出厂默认口径（MODIFIED） | 同上（机制未动，只换基准点） | `typography.spec.ts`（⌘= / ⌘− / ⌘0 逐档、上下限、重置回配置值、改字号后几何与标记重测）；`end-marker.spec.ts`（backlog #31：标记字号 = 0.8 × 内容字号，双档） |
 | `frontmatter-properties`（MODIFIED ×1） | `src/preview/frontmatter.ts`（形态）+ `src/preview/theme.ts` 的 `.fm` 块 | `wikilink-frontmatter-boundary.spec.ts` / `render-hr.spec.ts`（fm 区与围栏定界符）既有断言；`restyle-eink.spec.ts` 规则⑤⑥（fm 白底黑框、chip 描边）；`render-codeblock.spec.ts`（fm key/value 字号分档） |
-| `editor-live-preview`（MODIFIED ×1） | `src/preview/theme.ts` / `livePreview.ts` / `callout.ts` / `code.ts` / `src/editor.ts` 的 code 模式配色 | `render-codeblock.spec.ts`（`--tk-*` 四色 + 键值分色）、`callout.spec.ts`（五族 + eink）、`m119-callout-source` / `m110-interaction`（源码显露）、`lists.spec.ts`、`render-quote-list` / `render-hr` / `render-link`、`m198`（三层可区分）、`restyle-content-types.spec.ts`（表格/代码块/引用/列表四类形态） |
+| `editor-live-preview`（MODIFIED ×1） | `src/preview/theme.ts` / `livePreview.ts` / `callout.ts` / `code.ts` / `src/editor.ts` 的 code 模式配色 | `render-codeblock.spec.ts`（`--tk-*` 四色 + 键值分色）、`callout.spec.ts`（五族 + eink + 定稿排版钉）、`m119-callout-source` / `m110-interaction`（源码显露）、`lists.spec.ts`、`render-quote-list` / `render-hr` / `render-link`、`m198`（三层可区分）、`restyle-content-types.spec.ts`（表格/代码块/引用/列表四类形态）、追加修复批新增 `doc-title.spec.ts`（doc-title/doc-meta 块）与 `toc-outline.spec.ts` 几何钉（§13） |
 | `multi-tabs`（MODIFIED ×1） | `src/shell.ts`（标签进标题栏）+ `src/style.css` 的 `.tabstrip` / `.tab*` | `m149-tabs.spec.ts`（含空态标题栏、标签 29/230/r7、eink 描边声明）；`restyle-skeleton.spec.ts`（标签在标题栏内的结构判据） |
 | `file-tree`（MODIFIED ×1） | `src/style.css` 的 `.ft-*`（行高 25 / 缩进 8+14×层深 / 选中 `--sel`）+ `src/tree.ts` | `parity-tree.spec.ts`（行高、字重档、层级缩进、无明度斜坡）；`restyle-eink.spec.ts` 规则④（黑底反白 + 次级元素手工反白）；`list-filter` / `mv-*` 行为场景 |
 
@@ -354,3 +354,37 @@ KaTeX·mermaid·附件未按三主题调校 / 窄窗口行为未定 / dock 预�
 | 真机反向验证（§9.2） | `test-results/m213/reverse/`（README + A 真机配置层红/绿 + B 结构层主题施加红/绿） |
 | 标题栏窗口级证据（§3.5 / design §4 未决项 0） | `test-results/m213/titlebar/`（`readings.md` + 两张 overlay 截图：灯位 inset 8/30/52、y=8、15×15；灯心 15.5 vs 标题栏行中心 21 ⇒ Δy≈5.5pt；拖拽未验证的现场与判定） |
 | 前几棒的历史读数 | `test-results/m211/**`（token 层 / 骨架 / eink 反向 / 周边表面 / 删除元素清单）、`test-results/m212/**`（渲染层实现记录 / r3-handoff / backlog #31 探针） |
+
+## 13. 追加修复批（M217–M222，2026-09-25）
+
+R3 收官（M213）后的 Alex 验收暴露一批缺陷/缺口，tower 拆成 mission 批修复。本节是该批的任务册补记
+（M217–M220 只改产品代码与文档、未回本文件，此处统一补记）。
+
+- [x] **M217 chrome 表面修复**（合并 `3f3354d`）：TOC/vault 浮层换新表面（r10、指示段迁 modeline、
+  条目 26px/18px 层进）、toast ✓ 前缀等。
+- [x] **M218 内容渲染修复**（合并 `456ee47`）：C1 代码块字号阶梯补值 / C3 列表标记体系（ol 复合编号、
+  三档字号 13.5/13/12.5、标记族 sans）/ C7 callout 双段标签（zhLabel/enLabel）/ C9 段落回左对齐 /
+  A1 doc-title·doc-meta 块（24px/680 + 12px text-3 meta）。
+- [x] **M219 / M220 文档 reconciliation**（合并 `7a96df6` 等）。
+- [x] **M221 断言与验收收尾**（本节唯一动 tasks/spec 的 mission）：
+  - [x] 视觉场景断言随修复更新：引用/段落对齐、表格 cell padding、callout 族色类与双段、列表复合编号
+    与 sans 标记族、vault 切换器、键位 toast 文案、探针清理（逐文件 diff 见 `test-results/m221/`）。
+  - [x] `doc-title.spec.ts` 新增：标题 24px/680/1.28/-0.012em + meta 三要素（路径 · 行数 · 修改于，
+    tabular-nums）+ 位置 fm 后正文前 + mtime 缺失省略段 + 无文件上下文不渲染。
+  - [x] `callout.spec.ts` 定稿排版钉：双段标签（zh 12.5px/650 族色 + en 13px/550 正文色）、正文 13px、
+    首行上距 --sp-3、末行下距 7px。
+  - [x] `toc-outline.spec.ts` 几何钉：浮层 300px、贴指示段左端与 modeline 上沿、条目 26px 行高与
+    18px 层级步进的像素兑现。
+  - [x] 真机验收场景 `36-restyle-content`：doc-title 块 / callout 双段标签 / 树 chevron 读数；harness
+    同 PR 引入嵌套 `vaultWrite`（mkdirp）与 `resetVault` 目录清理（目录不跨场景残留）。
+  - [x] **等 M222 复绿的断言**（期望行为写法保留，M222+M227 合并后已复绿）：表格系 23 用例
+    （doc-title×block-wrapper 劈叉）、`render-hr.spec.ts:62`（fm ⌘A→← 选区失同步）、
+    `cursor-motion.spec.ts:84`（⌘A→↓ 揭示不足）、`lists.spec.ts:31×2`（点 task-marker 后键入死亡）——
+    后三个是 M218 引入的同族回归（widget 点击/塌缩落点进 CM 不可映射位），bisect 证据与探针留档
+    `test-results/m221/probe-notes.md`。另：`wikilink-frontmatter-boundary.spec.ts:105`（M227
+    修复 link_graph_resolve 重复查询后复绿）、`reading-position.spec.ts:159` 与 `doc-title.spec.ts`
+    位置断言载体随 M222 拓扑更新、`m118×2`/`m131:155` setup 补表格揭示（掉出 CM 初始渲染窗口，
+    非产品缺陷）。终态：结构层全量 390/390 全绿（`test-results/m221/structural-final.log`）。
+- [x] **M222 产品侧修复**（合并 `1bec55e`）：doc-title×block-wrapper 劈叉 + 上述三个同族回归。
+  **M227 wikilink 重复查询修复**（合并 `cf39d55`）：invalidate 前移到 reloadSession 之前。
+  M221 排在两者之后合并，复绿判据 = 上列红断言全绿（已兑现，390/390）。

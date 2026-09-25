@@ -140,7 +140,7 @@ test("[keys] 重绑：⌃S 接上保存（D3 预留位由配置启用）", async
   await setSelection(page, doc.length);
   await page.keyboard.type("x");
   await page.keyboard.press("Control+s");
-  await expect(page.locator(".lumir-toast", { hasText: /^已保存$/ })).toBeVisible();
+  await expect(page.locator(".lumir-toast", { hasText: /^✓已保存$/ })).toBeVisible();
   await expect
     .poll(() => page.evaluate(() => (window as unknown as { __fileText(p: string): string | undefined }).__fileText("s.md")))
     .toBe(`${doc}x`);
@@ -158,7 +158,7 @@ test("[keys] 解绑：⌘S 不再保存（键位让回原生路径）", async ({
     await page.evaluate(() => (window as unknown as { __fileText(p: string): string | undefined }).__fileText("u.md")),
     "解绑后 ⌘S 不得再触发保存",
   ).toBe(doc);
-  await expect(page.locator(".lumir-toast", { hasText: /^已保存$/ })).toHaveCount(0);
+  await expect(page.locator(".lumir-toast", { hasText: /^✓已保存$/ })).toHaveCount(0);
   await expect(page.locator(".modeline-path")).toContainText("（未保存）");
 });
 
@@ -182,7 +182,7 @@ test("[keys] 未知命令：warning 不崩，默认表照常分发", async ({ pa
   await page.keyboard.type("x");
   await expect.poll(() => readDocument(page)).toBe(`${doc}x`);
   await page.keyboard.press("Meta+s");
-  await expect(page.locator(".lumir-toast", { hasText: /^已保存$/ })).toBeVisible();
+  await expect(page.locator(".lumir-toast", { hasText: /^✓已保存$/ })).toBeVisible();
 });
 
 test("菜单事件通道（ipc.onMenuCommand）：undo 落到同一命令层", async ({ page }) => {

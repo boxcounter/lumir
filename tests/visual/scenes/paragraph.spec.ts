@@ -27,7 +27,9 @@ for (const viewport of [{ width: 1280, height: 900 }, { width: 640, height: 480 
         return { firstX: first.getBoundingClientRect().x, left: el.getBoundingClientRect().x + parseFloat(style.paddingLeft), indent: style.textIndent, align: style.textAlign };
       });
       expect(geometry.indent).toBe('0px');
-      expect(geometry.align).toBe('justify');
+      // C9（M218）：段落回左对齐——定稿是 ragged right，justify + hyphens 是反向偏差
+      // （theme.ts:124 注释引 M216 gap 表 §2.3 #9）。
+      expect(geometry.align).toBe('start');
       expect(Math.abs(geometry.firstX - geometry.left)).toBeLessThan(0.5);
       await page.screenshot({ path: info.outputPath('paragraph.png') });
       await info.attach('geometry', { body: JSON.stringify({ viewport, geometry }), contentType: 'application/json' });

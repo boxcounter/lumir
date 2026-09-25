@@ -53,13 +53,13 @@ test("单字符 [keys] 绑定在大纲筛选输入框里让位：字符落入输
   // 顺带钉住「输入事件照常生效」：查询 `s` 在本文档零命中 → 无匹配提示出现
   await expect(page.locator(".lumir-toc-empty")).toBeVisible();
   expect((await documentWrites(page)).length, "输入框里的 `s` MUST NOT 触发保存").toBe(writesBefore);
-  await expect(page.locator(".lumir-toast", { hasText: /^已保存$/ })).toHaveCount(0);
+  await expect(page.locator(".lumir-toast", { hasText: /^✓已保存$/ })).toHaveCount(0);
 
   // ② 浮层外（焦点交还编辑器）打 `s`：照常触发保存
   await page.keyboard.press("Escape");
   await expect(page.locator(".lumir-toc")).toBeHidden();
   await page.keyboard.press("s");
-  await expect(page.locator(".lumir-toast", { hasText: /^已保存$/ })).toBeVisible();
+  await expect(page.locator(".lumir-toast", { hasText: /^✓已保存$/ })).toBeVisible();
   await expect.poll(async () => (await documentWrites(page)).length).toBe(writesBefore + 1);
   expect((await documentWrites(page)).at(-1)?.content).toContain("x");
 });
@@ -76,13 +76,13 @@ test("同一守卫覆盖搜索 panel：输入框里打 `s` 不触发保存、字
   await page.keyboard.type("s");
   await expect(query).toHaveValue("s");
   expect((await documentWrites(page)).length, "搜索框里的 `s` MUST NOT 触发保存").toBe(writesBefore);
-  await expect(page.locator(".lumir-toast", { hasText: /^已保存$/ })).toHaveCount(0);
+  await expect(page.locator(".lumir-toast", { hasText: /^✓已保存$/ })).toHaveCount(0);
 
   // 关闭 panel 后焦点回编辑器：`s` 恢复执行保存
   await page.keyboard.press("Escape");
   await expect(query).toHaveCount(0);
   await page.keyboard.press("s");
-  await expect(page.locator(".lumir-toast", { hasText: /^已保存$/ })).toBeVisible();
+  await expect(page.locator(".lumir-toast", { hasText: /^✓已保存$/ })).toBeVisible();
   await expect.poll(async () => (await documentWrites(page)).length).toBe(writesBefore + 1);
 });
 
