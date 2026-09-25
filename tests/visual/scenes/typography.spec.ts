@@ -597,3 +597,93 @@ test("改字号后光标仍在视口内（长文档 + 光标在视口下部）",
     `字号 15→25 后光标应仍在视口内（读数：${JSON.stringify(after)}，改动前 scrollTop=${scrollBefore}）`,
   ).toBe(true);
 });
+
+
+// ---------------------------------------------------------------------------
+// 标题六级阶梯（M228，change heading-hierarchy-ramp，稿 A 落槌值）
+// ---------------------------------------------------------------------------
+
+/** 阶梯文档：每级标题前都有正文行（首块标题上距为 0 的特判不触发，块距阶梯全档位可读）。 */
+const HEADINGS_DOC = [
+  "lead paragraph",
+  "",
+  "# H1 标题",
+  "",
+  "middle one",
+  "",
+  "## H2 标题",
+  "",
+  "middle two",
+  "",
+  "### H3 标题",
+  "",
+  "middle three",
+  "",
+  "#### H4 标题",
+  "",
+  "middle four",
+  "",
+  "##### H5 标题",
+  "",
+  "middle five",
+  "",
+  "###### H6 标题",
+  "",
+  "tail",
+  "",
+  "- alpha one",
+  "- bravo two",
+  "",
+].join("\n");
+
+/** 落槌阶梯（稿 A，2026-09-25）：字号 px / 字距 em / 块距 top/bottom px。字重全级 650、
+ *  h1–h3 行高 --lh-reading（1.7）、h4–h6 行高 --lh-ui（1.5，本裁决不含行高）。 */
+const RAMP = [
+  { level: 1, size: 21, tracking: -0.009, top: 24, bottom: 9, lineHeightRatio: 1.7 },
+  { level: 2, size: 18, tracking: -0.007, top: 20, bottom: 6, lineHeightRatio: 1.7 },
+  { level: 3, size: 16, tracking: -0.005, top: 16, bottom: 5, lineHeightRatio: 1.7 },
+  { level: 4, size: 15, tracking: -0.004, top: 14, bottom: 5, lineHeightRatio: 1.5 },
+  { level: 5, size: 14, tracking: -0.002, top: 12, bottom: 4, lineHeightRatio: 1.5 },
+  { level: 6, size: 13, tracking: 0, top: 10, bottom: 4, lineHeightRatio: 1.5 },
+] as const;
+
+test("标题六级阶梯：字号 / 字重 / 字距 / 行高 / 块距逐档读数（稿 A）", async ({ page }) => {
+  await open(page, { text: HEADINGS_DOC });
+  // 阶梯 token 逐字钉住（19 / 16.5 退场——负向判据由精确值承担：写回旧值这里立刻红）
+  const tokens = await page.evaluate(() => {
+    const cs = getComputedStyle(document.documentElement);
+    return [1, 2, 3, 4, 5, 6].map((n) => cs.getPropertyValue(`--fs-h${n}`).trim());
+  });
+  expect(tokens).toEqual(["21px", "18px", "16px", "15px", "14px", "13px"]);
+
+  const bodyColor = await page.evaluate(() => getComputedStyle(document.querySelector(".cm-content")!).color);
+  for (const row of RAMP) {
+    const reading = await page.evaluate((level) => {
+      const el = document.querySelector(`.cm-lp-h${level}`)!;
+      const cs = getComputedStyle(el);
+      return {
+        fontSize: cs.fontSize,
+        fontWeight: cs.fontWeight,
+        letterSpacing: cs.letterSpacing,
+        lineHeight: cs.lineHeight,
+        fontStyle: cs.fontStyle,
+        color: cs.color,
+        paddingTop: (el as HTMLElement).style.paddingTop,
+        paddingBottom: (el as HTMLElement).style.paddingBottom,
+      };
+    }, row.level);
+    // 字号经 token 取值（calc(1em * var(--fs-hN) / var(--editor-font-size))，出厂锚 15px）
+    expect(parseFloat(reading.fontSize), `h${row.level} 字号`).toBeCloseTo(row.size, 1);
+    expect(reading.fontWeight, `h${row.level} 字重`).toBe("650");
+    // 字距 em 随本级字号换算成 px；h6 不写规则 → 计算值是 normal（与「0」等价，UA 归一形态）
+    if (row.tracking === 0) expect(["normal", "0px"], `h${row.level} 字距`).toContain(reading.letterSpacing);
+    else expect(parseFloat(reading.letterSpacing), `h${row.level} 字距`).toBeCloseTo(row.size * row.tracking, 1);
+    expect(parseFloat(reading.lineHeight), `h${row.level} 行高`).toBeCloseTo(row.size * row.lineHeightRatio, 1);
+    // 块距（livePreview 的 line decoration 内联样式；标题前均有正文行，上距非 0）
+    expect(reading.paddingTop, `h${row.level} 上距`).toBe(`${row.top}px`);
+    expect(reading.paddingBottom, `h${row.level} 下距`).toBe(`${row.bottom}px`);
+    // 零装饰（稿 A）：h6 的 italic 与弱化色退场，全级 upright + 正文色
+    expect(reading.fontStyle, `h${row.level} 无 italic`).toBe("normal");
+    expect(reading.color, `h${row.level} 不取弱化色`).toBe(bodyColor);
+  }
+});

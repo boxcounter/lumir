@@ -19,9 +19,10 @@
    eink 的手工反白（`#000`/`#fff`/`#d8d8d8`/`#6e6e6e`），它们语义上属于既有 token
    的 eink 值，收敛时归位，不新增色。
 2. **字号阶梯 = 双锚点**：正文锚 15px、UI 锚 13px。标题从锚点向上做递减级差
-   （24→19→16.5→15，级差 5/2.5/1.5），UI 从锚点向下以 0.5px 步进压缩层级
+   （24→21→18→16→15→14→13，级差 3/3/2/1/1/1——heading-hierarchy-ramp 稿 A 修订，
+   2026-09-26；旧级差 24→19→16.5→15 退场），UI 从锚点向下以 0.5px 步进压缩层级
    （13→12.5→12→11.5→11→10.5→10）。0.5px 步进是 macOS 系统 UI 的通行做法
-   （SF 在 0.5 档渲染清晰），阶梯里 12 档全部有原型出处，没有为凑整而改值。
+   （SF 在 0.5 档渲染清晰），阶梯里 14 档全部有原型出处或裁决出处，没有为凑整而改值。
 3. **间距 = 2px 基网**：≤16px 每 2px 一档，>16px 按 4/8px 跳档，共 14 档。
    落不进基网的奇数值（5/7/9/11/13）只出现在两类场景并已点名：（a）行内补偿
    （chip padding 2.5px、wl padding 1px 5px，对齐 CJK 行腹）；（b）已调优的组件
@@ -121,16 +122,18 @@ border-soft）与底色差，不靠投影。
 `font-variant-numeric: tabular-nums`（数字表面：modeline/chip/meta/编号）。
 这两个特性随 `--font-sans` 走，是排版基因的一部分。
 
-**字号阶梯（12）**：24（doc-title）/ 19（h1）/ 16.5（h2）/ 15（正文·h3）/
-13.5（表格·memo·一级列表 marker）/ 13（UI 基准·fm-val·chat·队列标题）/
+**字号阶梯（14）**：24（doc-title）/ 21（h1）/ 18（h2）/ 16（h3）/ 15（正文·h4）/
+14（h5）/ 13.5（表格·memo·一级列表 marker）/ 13（UI 基准·fm-val·chat·队列标题·h6）/
 12.5（tab·文件树·activity 行）/ 12（doc-meta·代码块·文件路径）/
 11.5（th·面包屑·kbd hints）/ 11（label 基准·modeline·q-id）/
 10.5（micro label·chip·时间戳）/ 10（file-tag·ghost chip·fm 内 chip）。
-建议命名 `--fs-title/-h1/-h2/-body/-body-s/-ui/-ui-s/-meta/-label-s/-label/-micro/-nano`。
+建议命名 `--fs-title/-h1/-h2/-h3/-h4/-h5/-h6/-body/-body-s/-ui/-ui-s/-meta/-label-s/-label/-micro/-nano`。
+（2026-09-26 heading-hierarchy-ramp：19/16.5 两档随旧 H1/H2 退场——阶梯不留失去消费者的档；
+新增 21/18/16/14 四档，h4/h6 与正文/UI 档同值但语义位独立命名，不跨语义引用。）
 
 **字重阶梯（7）**：400 正文 / 500 中等强调（tab.active、folder）/
 550 强调不粗（选中树行、队列标题、表格首列、按钮）/ 600 半粗（chip、seg 选中、
-modeline `<b>`）/ 650 小字加粗（vault 名、label、h1/h2/h3）/
+modeline `<b>`）/ 650 小字加粗（vault 名、label、h1–h6）/
 680 大标题专用（doc-title、review-title）/ 700 标签大写档（agent-title、
 queue-title、file-tag）。680 只许出现在 ≥21px 的字号上。
 
@@ -138,7 +141,9 @@ queue-title、file-tag）。680 只许出现在 ≥21px 的字号上。
 1.58（chat 消息）/ 1.55（代码块）/ 1.5（UI 紧凑·表格 td·composer）/
 1.4（队列标题）。规则：行高按表面分档，不做全局统一值。
 
-**字距（随组件，不进阶梯）**：标题负字距 -0.012/-0.008/-0.006/-0.004em（随字号递减）；
+**字距（随组件，不进阶梯）**：标题负字距 -0.012（doc-title）/ -0.009（h1）/ -0.007（h2）/
+-0.005（h3）/ -0.004（h4）/ -0.002（h5）/ 0（h6）em（随字号递减；h1–h6 序列为
+heading-hierarchy-ramp 2026-09-26 修订，原 -0.008/-0.006/-0.004em 三档退场）；
 大写小标签正字距**逐处点名**（值一律取原型 CSS，不许在区间内取近似）：文件树组标题
 `.tg-label` 0.08em（index.html:230）、审阅文件区标题 `.files-title` 0.08em（:531）、
 agent 标题 / 队列标题 0.09em（:414、:465）、队列分组标签 `.q-group` 0.06em（:469）、
@@ -155,7 +160,8 @@ callout 组标题 `.co-g-label` 0.07em（:651）、键位面板组标题 `.kb-g-
 
 组件间 margin/padding 必须落阶梯；例外仅限收敛规则 3 点名的行内补偿与
 已调优组件内边距。高频出处：正文 `padding: 32px 44px 20px`（sp-11/13/9）、
-doc-body 段落间距 8（sp-4）、h2 `20px 0 6px`、fm 区 `padding: 8px 14px 9px`、
+doc-body 段落间距 8（sp-4）、h2 `20px 0 6px`、h4 `14px 0 5px`、h5 `12px 0 4px`、
+h6 `10px 0 4px`（h4–h6 为 heading-hierarchy-ramp 补档，2026-09-26）、fm 区 `padding: 8px 14px 9px`、
 代码块 `padding: 9px 14px 10px`、队列条目三行的 20px 悬挂缩进（sp-9，与
 checkbox 对齐——对齐纪律的样板）。
 
@@ -200,7 +206,7 @@ r10 = 文件卡、**浮层壳**（popover / modal：`.ovl-pop` :685、`.kbpanel`
 | `--layout-agent-w` | 348px | 「队列条目三行不折行」最小宽；随 agent 特性启用 |
 | `--layout-titlebar-h` | 42px | |
 | `--layout-modeline-h` | 25px | |
-| `--layout-doc-measure` | 664px | 正文 max-width，居中 |
+| `--layout-doc-measure` | 680px | 正文 max-width（框宽），居中；**默认值**（content-width-drag 节点 1 裁决 D1），可被 `ui.content_width` 配置覆盖（合法区间 [680, 1200]） |
 | `--layout-review-measure` | 720px | 审阅视图 max-width；随 agent 特性启用 |
 | `--layout-tab-h` | 29px | tab 高，max-width 230px |
 | `--layout-tb-btn` | 30×28px | 标题栏按钮（侧栏内变体 26×24） |
@@ -213,10 +219,11 @@ r10 = 文件卡、**浮层壳**（popover / modal：`.ovl-pop` :685、`.kbpanel`
 | `--layout-chat-queue-split` | 44% / 56% | chat 与队列的纵向配比；随 agent 特性启用 |
 | `--layout-composer-h` | 99px | composer 固定高（两轴几何不变的前提）；随 agent 特性启用 |
 
-目标视口 1280×900；正文栏在 agent 在场时被压至 ~696px，664 阅读宽仍成立
-（「用户仍可在中间栏读文」的兑现）。
+目标视口 1280×900；正文栏在 agent 在场时被压至 ~696px，680 阅读宽仍成立
+（「用户仍可在中间栏读文」的兑现；664→680 为 content-width-drag 节点 1 裁决 D1，
+2026-09-26——680 是**默认值**，用户可经栏宽拖拽在 [680, 1200] 内调宽）。
 
-服务原则 1/2：664 阅读宽是「内容即界面」的硬参数；固定栏宽是 chrome
+服务原则 1/2：680 阅读宽（默认）是「内容即界面」的硬参数；固定栏宽是 chrome
 退后的前提（chrome 尺寸不随内容呼吸）。
 
 ## 动效（4 个）
@@ -371,7 +378,7 @@ hairline 边缘 + bg 色阶三者各司其职，不靠堆叠模糊半径。
 | `--accent: #b23a2c` | `--accent: #3a5fcd` | 红→蓝，色相语义更换 |
 | `--sel: rgba(178,58,44,.16)` | `--sel` | 中性化；`::selection` 改 `--accent-tint` |
 | `--radius: 5px` | `--r*` 阶梯 | 按控件尺寸分档 |
-| `--measure: 80%` | `--layout-doc-measure: 664px` | 百分比改定值 |
+| `--measure: 80%` | `--layout-doc-measure: 680px` | 百分比改定值（664→680 为 content-width-drag D1 裁决） |
 | `--nav-width: 244px`（窄屏 204） | `--layout-sidebar-w: 236px` | 响应式 204 变体删除，收窄策略待裁决 |
 | `--line-height: 1.75` | 1.7（`--lh-reading`） | |
 | `--font-body` | `--font-sans` | 栈扩充（SF Pro Text/Helvetica Neue） |
@@ -409,7 +416,8 @@ hairline 边缘 + bg 色阶三者各司其职，不靠堆叠模糊半径。
 
 ## 统计
 
-共 **103 个 token**：色彩 32（含阴影 2、遮罩 1、traffic 组 1、danger-tint 1；
+共 **105 个 token**：色彩 32（含阴影 2、遮罩 1、traffic 组 1、danger-tint 1；
 `--shadow-raise` / `--scrim` 为 v1.1 增补、`--danger-tint` 为 v1.2 增补，均
-2026-09-24，缘起各见其节）、字体 29（族 3 + 字号 12 + 字重 7 + 行高 7）、
+2026-09-24，缘起各见其节）、字体 31（族 3 + 字号 14 + 字重 7 + 行高 7；
+字号 12→14 为 heading-hierarchy-ramp 修订，2026-09-26）、
 间距 14、圆角 8、布局 16、动效 4。

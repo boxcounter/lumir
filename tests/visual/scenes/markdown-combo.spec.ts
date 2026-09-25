@@ -213,7 +213,7 @@ test("图片终态：尺寸兜底画出来 + 不可见即可见占位", async ({
   await expect(page.locator(".cm-lp-image")).toHaveCount(10);
   await expect(page.locator(".cm-lp-image-status")).toHaveCount(0);
 
-  // 「栏宽」= 阅读列的文字实测宽（`.cm-content` 的内容盒）：restyle 后它是 664px 的框内含
+  // 「栏宽」= 阅读列的文字实测宽（`.cm-content` 的内容盒）：restyle 后它是 680px 的框内含
   // 44px 左右内边距 ⇒ 576px。下面按它算期望读数，而不是写死像素（写死等于把栏宽复制一份）。
   const column = await page.evaluate(() => {
     const el = document.querySelector(".cm-content")!;

@@ -156,6 +156,19 @@ pub const DEFAULT_FONT_SIZE: f64 = 15.0;
 pub const FONT_SIZE_MIN: f64 = 12.0;
 pub const FONT_SIZE_MAX: f64 = 32.0;
 
+/// 阅读栏宽默认（框宽 px，content-width-drag 节点 1 裁决 D1 落槌值 680；664 随裁决退场）。
+///
+/// 三处同语义写值：本常量（配置面的真源）、`src/content-width.ts` 的
+/// `DEFAULT_CONTENT_WIDTH`、`src/style.css` 的 `--layout-doc-measure` 默认值。三者必须同值，
+/// 各有断言钉住，改一处必须同步其余两处（REVIEW.md 第 8 条）。
+pub const DEFAULT_CONTENT_WIDTH: f64 = 680.0;
+
+/// 栏宽合法区间（含端点，D2 落槌 [680, 1200]——**默认值即下限**，拖拽只能往宽调）：
+/// 与前端拖拽钳制区间同值（`src/content-width.ts` 的 `CONTENT_WIDTH_MIN` /
+/// `CONTENT_WIDTH_MAX`）。区间外一律回落默认值 + warning。
+pub const CONTENT_WIDTH_MIN: f64 = 680.0;
+pub const CONTENT_WIDTH_MAX: f64 = 1200.0;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, TS)]
 #[serde(rename_all = "lowercase")]
 #[ts(export, export_to = "../../src/bindings/")]
@@ -166,18 +179,26 @@ pub enum EditorMode {
 
 /// 界面配置（`[ui]` 表，restyle-ui-tokens-v1）。与 `EditorConfig` 同为结构化表：
 /// 逐字段取值校验，缺字段回落默认、取值非法回落默认 + warning。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, TS)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, TS)]
 #[ts(export, export_to = "../../src/bindings/")]
 pub struct UiConfig {
     /// 界面主题，默认 `light`。启动装载时读一次并施加到 `documentElement.dataset.theme`
     /// ——与 `editor.mode` 同口径（重启生效）。本版不做运行期切换、不跟随系统主题。
     pub theme: UiTheme,
+    /// 阅读栏宽上限（框宽 px，content-width-drag，M228）：默认 680（D1），合法区间
+    /// `[680, 1200]`（D2——默认值即下限）。启动时装配一次；运行期由栏宽拖拽推进并回写
+    ///（`config_set_ui_value`，与 `editor.font_size` 的「运行期 MUST NOT 回写」不同——
+    /// 宽度是用户显式调整的**持久偏好**，回写即本能力的核心语义）。
+    /// 类型不符（`"content_width": "680"`）与 `font_size` 同路：serde 解析期失败 →
+    /// 整文件回落。
+    pub content_width: f64,
 }
 
 impl Default for UiConfig {
     fn default() -> Self {
         Self {
             theme: UiTheme::Light,
+            content_width: DEFAULT_CONTENT_WIDTH,
         }
     }
 }
@@ -275,6 +296,9 @@ struct RawEditorConfig {
 #[serde(default)]
 struct RawUiConfig {
     theme: Option<String>,
+    /// 栏宽（content-width-drag，M228）：数值字段，类型不符（`"content_width": "680"`）
+    /// 在解析期失败 → 整文件回落（与 `font_size` 先例同型同路，不发明逐字段容忍）。
+    content_width: Option<f64>,
 }
 
 /// 配置目录（ADR 0002 §5 路径规则）。无法确定 home 是唯一的致命错误。
@@ -438,6 +462,19 @@ fn validate(raw: RawConfig) -> (AppConfig, Vec<String>) {
         }
     }
 
+    // 栏宽（content-width-drag，M228）：区间判定照 `font_size` 模板——缺字段回落默认不告警、
+    // 越界回落默认 + warning；类型不符同样走解析期整文件回落（单测钉住）。
+    let mut content_width = defaults.ui.content_width;
+    if let Some(value) = raw.ui.content_width {
+        if (CONTENT_WIDTH_MIN..=CONTENT_WIDTH_MAX).contains(&value) {
+            content_width = value;
+        } else {
+            warnings.push(format!(
+                "配置项 ui.content_width 取值 {value} 超出合法区间 [{CONTENT_WIDTH_MIN}, {CONTENT_WIDTH_MAX}]，已回退为 {DEFAULT_CONTENT_WIDTH}"
+            ));
+        }
+    }
+
     let (keys, mut key_warnings) = validate_keys(raw.keys);
     warnings.append(&mut key_warnings);
 
@@ -456,7 +493,10 @@ fn validate(raw: RawConfig) -> (AppConfig, Vec<String>) {
                 mono_font_family,
                 font_size,
             },
-            ui: UiConfig { theme },
+            ui: UiConfig {
+                theme,
+                content_width,
+            },
             keys,
             log,
         },
@@ -766,6 +806,76 @@ mod tests {
         assert_eq!(snap.config.log.level, LogLevel::Info);
         assert_eq!(snap.warnings.len(), 1);
         assert!(snap.warnings[0].contains("log.level"));
+    }
+
+    #[test]
+    fn missing_ui_content_width_takes_default() {
+        // 老配置文件（content-width-drag 之前写入）没有这一项：回落默认 680（D1 落槌值）、
+        // 不产生 warning（比照 missing_editor_wrap_fields_take_defaults）。
+        let f = TempFile::new(r#"{"version":1,"ui":{"theme":"dark"}}"#);
+        let snap = load_from(&f.0);
+        assert_eq!(snap.config.ui.content_width, DEFAULT_CONTENT_WIDTH);
+        assert_eq!(snap.config.ui.theme, UiTheme::Dark, "同表其它字段不受影响");
+        assert!(snap.warnings.is_empty(), "{:?}", snap.warnings);
+        // 整个 [ui] 表缺失同样回落默认。
+        let f = TempFile::new(r#"{"version":1}"#);
+        let snap = load_from(&f.0);
+        assert_eq!(snap.config.ui.content_width, DEFAULT_CONTENT_WIDTH);
+        assert!(snap.warnings.is_empty(), "{:?}", snap.warnings);
+    }
+
+    #[test]
+    fn explicit_ui_content_width_is_loaded() {
+        let f = TempFile::new(r#"{"ui":{"content_width":800}}"#);
+        let snap = load_from(&f.0);
+        assert_eq!(snap.config.ui.content_width, 800.0);
+        assert!(snap.warnings.is_empty(), "{:?}", snap.warnings);
+    }
+
+    #[test]
+    fn out_of_range_ui_content_width_falls_back_with_warning() {
+        // 区间 [680, 1200]（D2 落槌值）：两端之外都回落默认 + 恰一条 warning。
+        for raw in [
+            r#"{"ui":{"content_width":200}}"#,
+            r#"{"ui":{"content_width":2000}}"#,
+        ] {
+            let snap = load_from(&TempFile::new(raw).0);
+            assert_eq!(snap.config.ui.content_width, DEFAULT_CONTENT_WIDTH, "{raw}");
+            assert_eq!(snap.warnings.len(), 1, "{raw}: {:?}", snap.warnings);
+            assert!(
+                snap.warnings[0].contains("ui.content_width"),
+                "{raw}: {:?}",
+                snap.warnings
+            );
+        }
+        // 端点值合法（含端点）。
+        for edge in [680, 1200] {
+            let f = TempFile::new(&format!(r#"{{"ui":{{"content_width":{edge}}}}}"#));
+            let snap = load_from(&f.0);
+            assert_eq!(snap.config.ui.content_width, f64::from(edge));
+            assert!(snap.warnings.is_empty(), "{edge}: {:?}", snap.warnings);
+        }
+    }
+
+    #[test]
+    fn wrong_type_ui_content_width_falls_back_entire_file() {
+        // 边界如实记录（与 wrong_type_ui_theme_falls_back_entire_file 同路）：数值字段写成
+        // 字符串（`"content_width": "680"`）在 serde 解析期失败 → **整文件回落**，warning 恰一条。
+        // MUST NOT 出现「一部分字段按配置、一部分按默认」的混合态（本 change 不引入逐字段类型容忍）。
+        let f = TempFile::new(
+            r#"{"last_vault":"/tmp/vault","ui":{"content_width":"680","theme":"dark"},"editor":{"mode":"code"}}"#,
+        );
+        let snap = load_from(&f.0);
+        assert_eq!(snap.config, AppConfig::default(), "应整份落回默认");
+        assert_eq!(snap.config.ui.theme, UiTheme::Light);
+        assert_eq!(snap.config.editor.mode, EditorMode::Md);
+        assert_eq!(snap.config.last_vault, None, "合法字段同样落回默认");
+        assert_eq!(snap.warnings.len(), 1, "{:?}", snap.warnings);
+        assert!(
+            snap.warnings[0].contains("不是合法 JSON"),
+            "{:?}",
+            snap.warnings
+        );
     }
 
     #[test]

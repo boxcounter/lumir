@@ -5,13 +5,16 @@
 // 而 `swift` + `CGEvent` 显式设 `kCGMouseEventClickState = 1 / 2` 能造出来（M209 实测：树行
 // 的双击固定效果与图片 lightbox 遮罩打开两条独立判据同时成立）。见 README「已知边界」。
 //
-// 用法：swift cgevent-click.swift <x> <y> <mode> [pid]
+// 用法：swift cgevent-click.swift <x> <y> <mode> [pid | x2 y2]
 //   mode 0 = 只把光标移到 (x,y)（不动鼠标键；用于收尾复位光标）
 //   mode 1 = 单击（clickState=1）
 //   mode 2 = 双击（clickState=1 然后 2，间隔 60ms）——**套件动作 `doubleClick` 用这条**
 //   mode 3 = 双击变体（间隔 150ms + 两次事件各带独立 timestamp）
 //   mode 4 = 双击变体：直接投给目标进程（CGEventPostToPid，需 pid）——绕开 window server 对
 //            HID tap 事件的 clickCount 重算，用于区分「clickState 被丢」与「WKWebView 不认合成双击」
+//   mode 5 = 拖拽（需 x2 y2）：leftMouseDown at (x,y) → 24 步 leftMouseDragged 插值到 (x2,y2) →
+//            leftMouseUp——**套件动作 `drag` 用这条**（M228：KimiCU 的 drag 工具在 WKWebView 里
+//            连文本选择都造不出来，与 dblclick 同一类注入边界；CGEvent 显式拖拽序列可用）。
 // 坐标是 Quartz 全局坐标（原点 = 主屏左上角，单位 pt）；KimiCU 的 AX dump 不给这个空间
 // （mode=ax 给窗口局部点、要加 window_bounds 原点；mode=full 给截图像素），换算在 execute.mjs 里。
 //
@@ -84,6 +87,25 @@ case 4:
     clickToPid(point, clickCount: 1, pid: target)
     usleep(60_000)
     clickToPid(point, clickCount: 2, pid: target)
+case 5:
+    guard args.count >= 6, let x2 = Double(args[4]), let y2 = Double(args[5]) else {
+        FileHandle.standardError.write("mode 5 需要第 5/6 个参数：拖拽终点 x2 y2\n".data(using: .utf8)!)
+        exit(2)
+    }
+    let to = CGPoint(x: x2, y: y2)
+    post(CGEvent(mouseEventSource: source, mouseType: .leftMouseDown, mouseCursorPosition: point, mouseButton: .left))
+    usleep(80_000)
+    let dragSteps = 24
+    for i in 1...dragSteps {
+        let p = CGPoint(
+            x: point.x + (to.x - point.x) * Double(i) / Double(dragSteps),
+            y: point.y + (to.y - point.y) * Double(i) / Double(dragSteps),
+        )
+        post(CGEvent(mouseEventSource: source, mouseType: .leftMouseDragged, mouseCursorPosition: p, mouseButton: .left))
+        usleep(12_000)
+    }
+    usleep(40_000)
+    post(CGEvent(mouseEventSource: source, mouseType: .leftMouseUp, mouseCursorPosition: to, mouseButton: .left))
 default:
     FileHandle.standardError.write("unknown mode \(mode)\n".data(using: .utf8)!)
     exit(2)

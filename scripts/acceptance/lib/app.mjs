@@ -42,6 +42,7 @@ export async function writeConfig({
   monoFontFamily = undefined,
   fontSize = undefined,
   theme = undefined,
+  contentWidth = undefined,
   keys = undefined,
 } = {}) {
   const dir = path.join(envHome(), "lumir");
@@ -53,7 +54,10 @@ export async function writeConfig({
   if (monoFontFamily !== undefined) editor.mono_font_family = monoFontFamily;
   if (fontSize !== undefined) editor.font_size = fontSize;
   const cfg = { version: 1, last_vault: lastVault, editor };
-  if (theme !== undefined) cfg.ui = { theme };
+  const ui = {};
+  if (theme !== undefined) ui.theme = theme;
+  if (contentWidth !== undefined) ui.content_width = contentWidth;
+  if (Object.keys(ui).length > 0) cfg.ui = ui;
   if (keys !== undefined) cfg.keys = keys;
   await writeFile(path.join(dir, "config.json"), `${JSON.stringify(cfg, null, 2)}\n`);
   return path.join(dir, "config.json");

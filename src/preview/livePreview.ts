@@ -812,7 +812,8 @@ function collectSyntaxDecorations(
         const level = name.slice(-1);
         const headingLine = doc.lineAt(ref.from);
         // 间距阶梯（M218 C1，定稿出处 index.html:244-245/:344：h1 `24px 0 9px`、
-        // h2 `20px 0 6px`、h3 `16px 0 5px`；h4–h6 定稿无出处保持 0）——替换旧基线的
+        // h2 `20px 0 6px`、h3 `16px 0 5px`；h4–h6 由 heading-hierarchy-ramp 补档
+        // 14/5、12/4、10/4——间距阶梯内取值，零块距退场）——替换旧基线的
         // 魔术数（17.92*2.9 ≈ 52px 是定稿 h2 上距的 2.6 倍，M216 gap 表 §2.3 #1）。
         // CM 无 margin 折叠：块间实际间距 = 上块 bottom + 下块 top（比定稿折叠值最多
         // 松一个段落档 8px），逐元素取值按阶梯落地。
@@ -830,8 +831,8 @@ function collectSyntaxDecorations(
         }
         const top = firstContent
           ? 0
-          : level === "1" ? 24 : level === "2" ? 20 : level === "3" ? 16 : 0;
-        const bottom = level === "1" ? 9 : level === "2" ? 6 : level === "3" ? 5 : 0;
+          : level === "1" ? 24 : level === "2" ? 20 : level === "3" ? 16 : level === "4" ? 14 : level === "5" ? 12 : 10;
+        const bottom = level === "1" ? 9 : level === "2" ? 6 : level === "3" ? 5 : level === "4" ? 5 : 4;
         decos.push(
           Decoration.line({ class: `cm-lp-h${level}`, attributes: { style: `padding-top:${top}px;padding-bottom:${bottom}px` } }).range(headingLine.from),
         );

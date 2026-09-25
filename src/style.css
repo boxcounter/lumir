@@ -134,8 +134,16 @@
   --font-mono: ui-monospace, "SF Mono", Menlo, monospace;
 
   --fs-title: 24px;
-  --fs-h1: 19px;
-  --fs-h2: 16.5px;
+  /* 标题阶梯（change heading-hierarchy-ramp，稿 A 裁决 2026-09-25）：H1–H6 六档、语义位独立
+     命名——h4 与 --fs-body、h6 与 --fs-ui 同值是巧合而非别名，将来可独立修订（design §3.1）。
+     渲染层（src/preview/theme.ts）经 `calc(1em * var(--fs-hN) / var(--editor-font-size))`
+     取值，em 比值随字号步进随动；19/16.5 两档随旧 H1/H2 退场（阶梯不留失去消费者的档）。 */
+  --fs-h1: 21px;
+  --fs-h2: 18px;
+  --fs-h3: 16px;
+  --fs-h4: 15px;
+  --fs-h5: 14px;
+  --fs-h6: 13px;
   --fs-body: 15px;
   --fs-body-s: 13.5px;
   --fs-ui: 13px;
@@ -190,7 +198,11 @@
   --layout-agent-w: 348px;
   --layout-titlebar-h: 42px;
   --layout-modeline-h: 25px;
-  --layout-doc-measure: 664px;
+  /* 栏宽默认 680px（content-width-drag 节点 1 裁决 D1，2026-09-26；664 退场）。
+     运行期由 `ui.content_width` 配置与栏宽拖拽经 src/content-width.ts 覆写本 token
+     （写在 documentElement 上），合法区间 [680, 1200]（D2）——此处是「配置到达前」的
+     起步值，三处同值（Rust DEFAULT_CONTENT_WIDTH / TS DEFAULT_CONTENT_WIDTH / 本行）。 */
+  --layout-doc-measure: 680px;
   --layout-review-measure: 720px;
   --layout-tab-h: 29px;
   --layout-tb-btn-w: 30px;
@@ -519,6 +531,41 @@ body {
   padding: 0;
   position: relative;
   background: var(--content-bg);
+}
+/* 栏宽拖拽手柄（M228，change content-width-drag）：shell 层覆盖元素，常态不可见、不占布局。
+   容器不吃指针事件，只有 10px 命中区的两条手柄吃——命中区外的文本选择 / 点击 / 滚动零影响。
+   视觉线 2px、hover 或拖拽中（容器 .dragging）显现，色取既有 --accent（零新配色，eink 档由
+   token 层自动落位）；位置（left）由 src/content-width.ts 按 .cm-content 实测矩形写入。 */
+.content-width-handles {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 3;
+}
+.content-width-handles[hidden] {
+  display: none;
+}
+.content-width-handle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 10px;
+  pointer-events: auto;
+  cursor: col-resize;
+}
+.content-width-handle::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 4px;
+  width: 2px;
+  background: var(--accent);
+  opacity: 0;
+}
+.content-width-handle:hover::before,
+.content-width-handles.dragging .content-width-handle::before {
+  opacity: 1;
 }
 .tree-pane {
   flex: 1 1 auto;

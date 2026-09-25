@@ -93,6 +93,10 @@ export interface VaultFixture {
      *  （`src/main.ts`），因此三主题场景截到的是**真实配置通道**下的主题，而不是场景
      *  自己贴的 `data-theme` 属性（后者只证明 CSS 有第三套取值，验不到配置接线）。 */
     theme?: "light" | "dark" | "eink";
+    /** 阅读栏宽 px（M228，content-width-drag）：缺省 680 = 出厂口径（与 Rust
+     *  `DEFAULT_CONTENT_WIDTH` 同值，D1 落槌）——不传的场景天然跑默认栏宽，不会因为
+     *  桩扩了形状而变宽。越界值的回落 + warning 归 Rust 侧（cargo test），桩只负责送达。 */
+    content_width?: number;
     keys?: Record<string, string | null>;
     warnings?: string[];
   };
@@ -114,7 +118,7 @@ export async function stubTauri(page: Page, vault: VaultFixture | null): Promise
     //（与真后端 open_vault 的替换语义对齐）。
     let current = v;
 
-    type Args = { path?: string; from?: string; link?: string; target?: string; id?: string; title?: string; vault_id?: string; expected_revision?: string; content?: string; dirty?: boolean; force_new?: boolean; event?: string; fields?: Record<string, string>; url?: string; tabs?: string[]; active?: string | null; entries?: Record<string, { pos: number; y: number; x: number; at: number }> };
+    type Args = { path?: string; from?: string; link?: string; target?: string; id?: string; title?: string; vault_id?: string; expected_revision?: string; content?: string; dirty?: boolean; force_new?: boolean; event?: string; fields?: Record<string, string>; url?: string; tabs?: string[]; active?: string | null; entries?: Record<string, { pos: number; y: number; x: number; at: number }>; key?: string; value?: unknown };
     const checkVault = (args: Args) => {
       if (args.vault_id !== (current?.vault_id ?? "fixture-vault")) throw { code: "fixture_contract", message: "vault_id mismatch" };
     };
@@ -291,12 +295,26 @@ export async function stubTauri(page: Page, vault: VaultFixture | null): Promise
             // `ui` 不是 Option（Rust 侧序列化必带），因此这里**总是**给出整表——桩落后于契约
             // 会让启动装配层在 `snapshot.config.ui.theme` 上抛，那一块的失败面已被刻意收窄
             // 到「主题没施加」（见 src/main.ts 的注释），但不该由场景来踩。
-            ui: { theme: current?.config?.theme ?? "light" },
+            ui: {
+              theme: current?.config?.theme ?? "light",
+              // 阅读栏宽（M228）：缺省 680 = Rust `UiConfig::default()` 同值。
+              content_width: current?.config?.content_width ?? 680,
+            },
             keys: current?.config?.keys ?? {},
           },
           warnings: current?.config?.warnings ?? [],
           path: "/mock/config.json",
         };
+      },
+      // `[ui]` 单键合并写（M228，content-width-drag）：桩只**记录**写入序列（真后端的
+      // 读-改-写与原子替换归 cargo test / 真机验收），场景用 __uiValueWrites 断言
+      //「松手写一次、拖拽过程不写」。失败注入走通用 failures 通道。
+      config_set_ui_value: (args) => {
+        w.__uiValueWrites = [
+          ...((w.__uiValueWrites as Array<{ key: string; value: unknown }>) ?? []),
+          { key: String(args.key), value: args.value },
+        ];
+        return null;
       },
       vault_current: () => {
         // 恢复进行态（M159）：进行中就没有已提交的 vault——`vault: null` 与
