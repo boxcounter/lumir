@@ -389,6 +389,10 @@
   竖线宽度 3px → 2px 与色值），所以没有在本 change 里顺手改（会牵动 `render-quote-list` 基线与观感）。
   **动作**：视觉裁决后给一条更高特异性的内边距（如 `.cm-line.cm-lp-quote-line` 双类选择器），
   或把 `--sp-5` 移到别的载体上；R4 逐张重建基线时看 `render-quote-list` 就能判断现在的贴合是否可接受。
+  **状态（2026-09-25，M220 登记）**：已由 **M218**（`feat/restyle-fix-content-rendering-m218`，
+  任务 C4）承接，修法即本条动作里那两条之一。**M220 完成时（2026-09-25）该分支尚未合并 ⇒ 本条不勾销**，
+  核销动作由 tower 在 M218 合并后收尾；判据取合并后的实测 `paddingLeft` 计算值（≠ 0），
+  不是「分支上有提交」。
 
 - **真机套件没有计算属性通道 ⇒ 色值 / 主题类判据在真机层只能到「配置层 + 截图」**（2026-09-25，M213
   登记，medium）：`scripts/acceptance` 的断言形态只有 `ax` / `editor` / `file` / `glob` / `shot`
@@ -924,6 +928,79 @@
   `5a944e5`），**本条按历史留痕**；删参后剩下的那一半（`-> bool` 恒 `true` 且无生产消费者）另见
   「启动恢复让位判定与提交返回值（M171 遗留）」节。
 
+### restyle 追加修复批（M215 / M216 gap 报告登记，2026-09-25）
+
+（2026-09-25，M220 迁移与补建：本节前六条由 tower 的 `bc963b5` 追加，**原落点在文末「已核销」节内**，
+且首条（mermaid）与上一条挤在同一行没有分隔——它们是**进行中的 findings**（待立项 / 待裁决 / 待修），
+与「已核销」语义相反，按维护规则（「核销后移入文末」）迁回本节；条目正文除各自补的「状态」行外未改。
+末条 C11 为本 mission 补建。）
+
+- 2026-09-25：**mermaid 不随主题**（M214 finding，bug，待立项）：三主题取色全同（`#ECECFF` 填充 /
+  `#333` 文字连线箭头）——dark 下连线箭头对比度 **1.07**（几乎不可见）、eink 下 off-palette 淡紫。
+  20 张整页基线全是浅色主题，这层今天零机器防线。处置方向：mermaid themeVariables 随 `data-theme`
+  换档（继承 currentColor 与底色 token 的口径在 design §4 未决项 3 已预留），立项时附 M214 的三主题
+  裁切证据（`test-results/m214/peripheral/content-types-{dark,eink}-mermaid.png`）。
+  **状态（2026-09-25，M220 登记）**：已由 **M219**（`feat/restyle-fix-mermaid-theme-m219`，任务 C10）
+  承接，修法即本条处置方向。**M220 完成时（2026-09-25）该分支尚未合并 ⇒ 本条不勾销**，核销动作由
+  tower 在 M219 合并后收尾；判据取合并后的三主题实测取色（三份不再相同），不是「分支上有提交」。
+- 2026-09-25：**0.001 容差实测吞掉小元素删除**（M214 finding，improve）：§8.4 假绿防线删 modeline
+  右段，像素差 **199 px** < 预算 960 ⇒ 像素层通过，拦住它的是 R3 新加的结构断言。建议：为
+  `.modeline-*` 级别的小元素补**元素级**基线（元素 crop 的像素预算远小于整页），或按元素重要度
+  分级预算。与既有「整页 0.001 容差」条目（mermaid 952/960 同族）合并阅读。
+- 2026-09-25：**搜索面板 / lightbox / toast 无视觉基线覆盖**（M214 登记，tower 裁决口径）：34 张
+  基线里这三个周边表面零覆盖。M214 按「缺的补拍」在**证据层**补（`test-results/m214/peripheral/`
+  36 张补拍，不改场景文件、基线保持 34 张）供 Alex 过目；**真基线化（补场景 + 基线，张数 37+）
+  待立项**——立项即场景文件归 tests/visual/scenes/、基线随下一次 Alex 过目批入库。
+- 2026-09-25：**code 模式行号与代码列之间 150px 空档**（M212 finding，improve，待裁决）：栏宽从
+  80% 改定值 664 后，code 模式（`minmax(max-content, 1fr)`）的行号 gutter 与代码列之间出现约
+  150px 空档（百分比时代被弹性吸收）。取舍方向：code 模式栏宽跟随 664 定值 / 维持 max-content /
+  或 gutter 右对齐。证据与读数在 `test-results/m212/`。
+- 2026-09-25：**段落间距 / 标题间距未按 tokens 文档落地**（M212 finding，improve）：正文段落间距
+  与标题间距仍是旧基线的绝对值，未换成 tokens 文档的间距阶梯（sp-4 段落 / h2 20-0-6 等出处值）。
+  非观感事故（R3 结构层与 M214 像素层均以此为准重建），属 tokens 落地的残余面，立项时按
+  design-tokens-v1.md §间距阶梯逐处对。
+  **状态（2026-09-25，M220 登记）**：已由 **M218**（`feat/restyle-fix-content-rendering-m218`，
+  任务 C1）承接，值取 M216 gap 报告 §2.3 #1 的全量化表（段落 8 / h1 24-9 / h2 20-6 / h3 16-5 /
+  li 2 / hr 20）。**M220 完成时（2026-09-25）该分支尚未合并 ⇒ 本条不勾销**，核销动作由 tower 在
+  M218 合并后收尾；判据取合并后的实测间距读数，不是「分支上有提交」。
+- 2026-09-25：**restyle R4 基线过目包已备齐待 Alex**（M214，唯一挂起项）：34 张一次性重建
+  （`--update-snapshots=all`，mtimes 同批）+ 逐张差异读数（34/34 远超容差，无静默假绿）+ 删除元素
+  核对（24 张必须刷新全刷新）+ 假绿防线（已还原）+ 过目入口 `test-results/m214/index.html`
+  （旧→新对照 + 变化原因 + 定稿图指向）。**Alex 逐张过目批准后**：resume worker-restyle-r4-baseline
+  入库（基线提交 → sha256 逐张与 `baselines-after/sha256.txt` 对账 → 全量门禁绿 → 评审 → 合并），
+  流程按 M164/M199 立范。worker 与 wt-214 待命不释放。
+- **code 模式 eink keyword 700 缺口：`HighlightStyle` 路径无法按 `data-theme` 限定**（2026-09-25，M220
+  建条，依据 M216 gap 报告 §2.3 #11，low，**机制缺口 / 待立项**）：eink 规则②（tokens 文档 §eink
+  规则 2）要求 keyword 在 eink 下升到 700。**围栏代码块侧已实现**——`src/preview/theme.ts:238` 的
+  `.cm-lp-tok-keyword` 基档 600，另有 `:root[data-theme="eink"] & .cm-lp-tok-keyword` 覆盖到 700
+  （`src/preview/theme.ts:243`）；那一侧是**类表 + CSS**，`data-theme` 限定天然生效。**code 模式
+  （完整代码文件）走另一条路**：`src/editor.ts` 的 `syntaxHighlighting(HighlightStyle.define(…))`
+  （`:1016-1022`），role → 色值 / 字重由 `CODE_COLORS` 常量给出（`:1007-1014`，keyword 恒 `600`），
+  而 CM6 由 `HighlightStyle` 生成的规则选择器**不带我们的类名**，CSS 侧无从按 `data-theme` 加限定。
+  结果：同一份语法高亮在 eink 下围栏侧 700、code 模式 600，两侧字重档不一致。
+  **后果面**：① 机器判据只覆盖围栏侧——`tests/visual/scenes/restyle-eink.spec.ts:121-135` 的「规则②」
+  用例断言的是围栏侧的 `.cm-lp-tok-keyword`，code 模式这半条规则**零防线**（M216 探针按「运行期规则
+  不覆盖 code 模式」自述跳过）；② eink 下 keyword / string / number 同为纯黑，字重是剩下的少数区分
+  手段，少一档即少一格对比。
+  **本条的立项缘由 = 指针失效**：`src/editor.ts:1003-1006` 的注释自述「**已知缺口（在案）**……修法
+  （把本路径改成 code.ts 的 class 表 + 共用一份 theme）见 docs/backlog.md」——但那条注释指向的条目在
+  `bc963b5` 之前的 backlog 里**不存在**（M216 实测：`grep 700` **零命中**；`CODE_COLORS` **仅一条命中**，
+  出自 M179 的「toml 表头与 legacy mode 共用 `atom` token」条——该条提到 `CODE_COLORS` 只是把它当作
+  「要同步改的两处穷尽检查」之一，与 eink 字重无关），读者无从跟进
+  （REVIEW.md 第 7 条的同族形态：自报在案、实际不在案）。本条即该指针的落点。
+  **候选修法**（择一，均需评审）：
+  (a) **按 `src/editor.ts:1006` 注释自己指的做**：code 模式也改成 class 表——每个 role 取
+  `.cm-lp-tok-*` 类名，色值与字重全部交给 `theme.ts` 的一份 CSS（与围栏侧共用一个真源，`data-theme`
+  限定随之生效）。机制支点已在位：`HighlightStyle` 的 `TagStyle` 支持 `class?: string`
+  （`@codemirror/language` 的 `interface TagStyle`），但**给了 `class` 的那条就不再接受内联样式**——
+  等于逐 role 把配色真源迁到 CSS，工作量与回归面（code 模式既有基线）都在这里。
+  (b) **保留 `HighlightStyle`，改由主题切换时重建扩展**：按 `data-theme` 生成两份 HighlightStyle
+  （eink 那份 keyword 700），启动 / 主题切换时 reconfigure 换上。与 `[ui] theme` 的「重启生效」口径
+  一致；代价是一条扩展重建路径与一处新耦合（主题状态 → 编辑器配置）。
+  **闭环判据（本条实施时应补）**：断言落在 code 模式侧（eink 下 code 模式 keyword 元素的计算
+  `font-weight` = 700）；现有围栏侧断言不能替代。补断言前，code 模式这半条规则维持「已知缺口」。
+  **证据**：M216 gap 报告 §2.3 #11 与 §3 规则②行（主 checkout `test-results/m216/gap-report.md`）。
+
 ## 工具链与环境（待 Alex 裁决）
 
 1. **1420 端口串行**：vite dev server 固定 `127.0.0.1:1420` 且 strictPort，全机同一时刻只能有一个
@@ -1160,6 +1237,28 @@
 
 ## 记录在案（无需动作）
 
+- **S15/S16 · 键位面板维持 680px 三列（有意偏离定稿 440px 两列）**（2026-09-25，Alex 裁决，M220
+  登记）：M215 gap 报告 §3.9 / §4 #15–#16 实测实现宽 680、三列（key + 命令 id + 说明；命令列
+  11px `--text-3`），定稿 `.kbpanel` 是 440px、两列（key + 说明，index.html:729）。**裁决：维持实现
+  形态**——命令列对排查自定义 `keys` 配置有实际用途，信息密度收益大于与定稿的几何差。**口径**：这是
+  **有意的偏离、不是缺陷**；随宽度成立的行几何（行 gap / 行字号 / key 列宽 / padding）一并维持实现值，
+  后续 parity 复核不再作为新发现上报。
+- **A2 · 结束标记维持短双线形态**（2026-09-25，Alex 裁决，M220 登记）：M216 gap 报告 §2.3 #8——定稿
+  `.doc-end` 是 `flex: 1` **通栏**双线夹字（index.html:298-302），实现是 48px **短**双线
+  （`src/preview/theme.ts` 的 `.cm-lp-end-marker`）；做短是**有意**与作者手写 `---` 的通栏线区分，
+  理由写在该处注释。**裁决：维持实现形态**——定稿 CSS 有形，但 12 张定稿图**从未实例化**该元素
+  （grep 仅 CSS 一处命中），通栏形态没有可对照的定稿观感，短双线的「封口感 + 与 hr 结构上不同」
+  成立。**口径**：同上，不再当偏差发现上报。
+- **C6 · 代码块头部条维持围栏行方案（spec 背书，不另造 DOM）**（2026-09-25，Alex 裁决，M220 登记）：
+  M216 gap 报告 §2.3 #6——定稿 `.cb-head` 是左右双段头（语言名 + 操作位，index.html:368-372），实现是
+  **围栏行原文**（```js）的降级排版（10.5px / `--text-3` / +0.03em，`src/preview/theme.ts:197-206`）。
+  **裁决：维持围栏行方案**——既有 spec 口径：围栏行是**源码的一部分**，它要求「围栏代码块的分隔行与
+  源码保持可选中的原文」，所以把语言标记提到头部条位置读、而不是另造一个 DOM 元素（另造会把同一信息
+  说两遍，且要动块级 widget 的测量路径）。**口径**：单段 / 双段的几何差记录在案、不判缺陷。
+  **注意 C6 在这一批里是两件不同的事**：头部条 = 本条（维持）；代码块**容器**（r8 + padding 9·14·10 +
+  margin 4·0·12）**随 M217 修复**（原 M218 任务 C6，判据规则落在 `src/style.css:772-864`，已随该文件的
+  scope 迁出 M218、由 tower 裁决 2026-09-25 转 M217），不在本条维持范围内。
+
 - **标题栏右侧「动作钮」区本版不渲染任何按钮**（2026-09-25，M213，tower 裁决）：tasks §4.3 的验收口径
   原文写「无打开文件时标题栏只剩 traffic 区**与动作钮**」，实现期由 tower 裁决**本版不加动作钮**——
   理由是动作钮的内容（保存 / 搜索 / 面板入口…）都没有定义，为一个未定义的东西先摆一排按钮会把
@@ -1338,30 +1437,8 @@
   `info.attach` 产物（`tests/visual/test-results/`，git 外）。
 - 2026-09-25：**backlog #27 / #31 核销**（M213）：#27 补 `typography` 的 MODIFIED delta ×4（16px → D1 的
   15px 锚 + 新 token 名），#31 由 R2b 修 `.cm-lp-end-marker` 的字号基准 + M213 补「正文放大后标记随之缩放」
-  的双档门禁断言。两条的详细落点见各自条目。- 2026-09-25：**mermaid 不随主题**（M214 finding，bug，待立项）：三主题取色全同（`#ECECFF` 填充 /
-  `#333` 文字连线箭头）——dark 下连线箭头对比度 **1.07**（几乎不可见）、eink 下 off-palette 淡紫。
-  20 张整页基线全是浅色主题，这层今天零机器防线。处置方向：mermaid themeVariables 随 `data-theme`
-  换档（继承 currentColor 与底色 token 的口径在 design §4 未决项 3 已预留），立项时附 M214 的三主题
-  裁切证据（`test-results/m214/peripheral/content-types-{dark,eink}-mermaid.png`）。
-- 2026-09-25：**0.001 容差实测吞掉小元素删除**（M214 finding，improve）：§8.4 假绿防线删 modeline
-  右段，像素差 **199 px** < 预算 960 ⇒ 像素层通过，拦住它的是 R3 新加的结构断言。建议：为
-  `.modeline-*` 级别的小元素补**元素级**基线（元素 crop 的像素预算远小于整页），或按元素重要度
-  分级预算。与既有「整页 0.001 容差」条目（mermaid 952/960 同族）合并阅读。
-- 2026-09-25：**搜索面板 / lightbox / toast 无视觉基线覆盖**（M214 登记，tower 裁决口径）：34 张
-  基线里这三个周边表面零覆盖。M214 按「缺的补拍」在**证据层**补（`test-results/m214/peripheral/`
-  36 张补拍，不改场景文件、基线保持 34 张）供 Alex 过目；**真基线化（补场景 + 基线，张数 37+）
-  待立项**——立项即场景文件归 tests/visual/scenes/、基线随下一次 Alex 过目批入库。
-- 2026-09-25：**code 模式行号与代码列之间 150px 空档**（M212 finding，improve，待裁决）：栏宽从
-  80% 改定值 664 后，code 模式（`minmax(max-content, 1fr)`）的行号 gutter 与代码列之间出现约
-  150px 空档（百分比时代被弹性吸收）。取舍方向：code 模式栏宽跟随 664 定值 / 维持 max-content /
-  或 gutter 右对齐。证据与读数在 `test-results/m212/`。
-- 2026-09-25：**段落间距 / 标题间距未按 tokens 文档落地**（M212 finding，improve）：正文段落间距
-  与标题间距仍是旧基线的绝对值，未换成 tokens 文档的间距阶梯（sp-4 段落 / h2 20-0-6 等出处值）。
-  非观感事故（R3 结构层与 M214 像素层均以此为准重建），属 tokens 落地的残余面，立项时按
-  design-tokens-v1.md §间距阶梯逐处对。
-- 2026-09-25：**restyle R4 基线过目包已备齐待 Alex**（M214，唯一挂起项）：34 张一次性重建
-  （`--update-snapshots=all`，mtimes 同批）+ 逐张差异读数（34/34 远超容差，无静默假绿）+ 删除元素
-  核对（24 张必须刷新全刷新）+ 假绿防线（已还原）+ 过目入口 `test-results/m214/index.html`
-  （旧→新对照 + 变化原因 + 定稿图指向）。**Alex 逐张过目批准后**：resume worker-restyle-r4-baseline
-  入库（基线提交 → sha256 逐张与 `baselines-after/sha256.txt` 对账 → 全量门禁绿 → 评审 → 合并），
-  流程按 M164/M199 立范。worker 与 wt-214 待命不释放。
+  的双档门禁断言。两条的详细落点见各自条目。
+  （2026-09-25，M220 补记：本条之后原本紧接六条 restyle findings，且第一条（mermaid）与「各自条目。」
+  挤在同一行没有分隔。那六条是**进行中的 findings**（待立项 / 待裁决 / 待修），与本节「已核销」的语义
+  相反，已按维护规则迁到「待修 findings（不阻塞）」的「restyle 追加修复批」小节；本节的语义恢复为
+  「进来的是已核销条目」。）

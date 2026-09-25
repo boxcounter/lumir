@@ -138,9 +138,14 @@ queue-title、file-tag）。680 只许出现在 ≥21px 的字号上。
 1.58（chat 消息）/ 1.55（代码块）/ 1.5（UI 紧凑·表格 td·composer）/
 1.4（队列标题）。规则：行高按表面分档，不做全局统一值。
 
-**字距（随组件，不进阶梯）**：标题负字距 -0.012/-0.008/-0.006/-0.004em
-（随字号递减）；大写 label 正字距 +0.06–0.09em。规则：负字距仅标题，
-正字距仅大写小标签。
+**字距（随组件，不进阶梯）**：标题负字距 -0.012/-0.008/-0.006/-0.004em（随字号递减）；
+大写小标签正字距**逐处点名**（值一律取原型 CSS，不许在区间内取近似）：文件树组标题
+`.tg-label` 0.08em（index.html:230）、审阅文件区标题 `.files-title` 0.08em（:531）、
+agent 标题 / 队列标题 0.09em（:414、:465）、队列分组标签 `.q-group` 0.06em（:469）、
+callout 组标题 `.co-g-label` 0.07em（:651）、键位面板组标题 `.kb-g-title` 0.07em（:739）、
+预览区标签 `.preview-label` 0.07em（:542）。规则：负字距仅标题，正字距仅大写小标签。
+（2026-09-25 修订：原文只给区间 `+0.06–0.09em`，实现据区间把键位面板组标题读成 0.08em，
+原型是 0.07em（M215 gap 报告 §3.9）。点名即防这类区间内漂移。）
 
 ## 间距阶梯（14 个）
 
@@ -163,9 +168,13 @@ checkbox 对齐——对齐纪律的样板）。
 `--r4 / --r5 / --r6 / --r7 / --r8 / --r9 / --r10 / --r-pill:20`。
 
 出处：r4 = tab 关闭钮、ghost chip、file-tag、q-check；r5 = wikilink、inline code；
-r6 = 树行、send 钮、seg；r7 = tab、tb-btn；r8 = 按钮、代码块、fm 区、queue-count；
-r9 = composer 框、Agent 备注；r10 = 文件卡；pill = chip。
+r6 = 树行、send 钮、seg；r7 = tab、tb-btn、toast（`.toast5`，index.html:750）；
+r8 = 按钮、代码块、fm 区、queue-count；r9 = composer 框、Agent 备注；
+r10 = 文件卡、**浮层壳**（popover / modal：`.ovl-pop` :685、`.kbpanel` :732）；pill = chip。
 规则：圆角与控件视觉尺寸正相关，连续取值不跳档。
+（2026-09-25 补记：浮层壳归 r10——popover 与 modal 同档，toast 例外取 r7。出处表原本只列
+「文件卡」，v1.1「浮层 elevation 与遮罩」节也只给了阴影/描边配方、未给圆角归属，实现据此
+把 toc / vault 浮层取成 r9（M215 gap 报告 §3.5）。）
 
 ## 阴影与 hairline（两档阴影 + 两档 hairline 规则）
 
