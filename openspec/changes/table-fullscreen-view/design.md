@@ -155,7 +155,7 @@
 |---|---|---|
 | cell / 表头双击选词 | **不变**：本 change 不占双击 | §1.3；裁决点 3 备选③被否的理由 |
 | 滚动容器五条 widget 键 | **不变**：遮罩 DOM 不是 CM widget，`when` 条件不命中 | `src/keys.ts:246-249` |
-| 图片 lightbox | **同形不共享状态**：两个遮罩没有互斥注册表；表格遮罩持焦时 `⌘/` 等 global 命令照常生效，新层抢焦点 → 本遮罩 `blur` 退场（既有口径）。表格 cell 里的图片双击今天打开图片 lightbox；快照克隆里的 `<img>` 不带监听——**克隆内双击图片不开 lightbox**（快照只读语义的应有之义，写进已知边界） | `src/lightbox.ts`；`src/toc.ts:231-232` |
+| 图片 lightbox | **同形不共享状态**：两个遮罩没有互斥注册表；表格遮罩持焦时 `⌘/` 等 global 命令照常生效，新层抢焦点 → 本遮罩 `blur` 退场（既有口径）。表格 cell 里的图片双击今天打开图片 lightbox；快照克隆里的 `<img>` 不带监听——**克隆内双击图片不开 lightbox**（快照只读语义的应有之义，写进已知边界） | `src/lightbox.ts`；`src/toc.ts:360-367`（focusout 监听） |
 | 选区显露 | 表格本就不在显露覆盖集内，不加不减 | §1.3 |
 | 外部重载 / 保存链路 | 文档代际变化 → 遮罩按 `blur` 口径关闭不抢焦点；保存不改变文档内容（⌘S 穿透与否由模态语义决定：遮罩持焦时 ⌘S 是 global 命令、照常生效——与 M184 期间一致） | §2.4；`src/save-controller.ts` |
 | 只读 code 模式 | 无关：表格 grid 只发生在 md 模式的装饰层 | `openspec/specs/editor-live-preview/spec.md`「单内核双模式落地」 |
