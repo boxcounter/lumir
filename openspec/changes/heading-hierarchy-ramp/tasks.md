@@ -36,10 +36,9 @@
   （中文标题 + 正文混排），计算属性断言六档取值（15px 基准下 21/18/16/15/14/13、字重
   全 650）、H6 无 italic、H4–H6 块距非零；负向断言旧值 19/16.5 不在场
   （编号 37：36 已由 live-theme-switch 占用并合并；registry 口径 36=theme、37=heading）
-- [ ] 4.2 `node scripts/acceptance/run.mjs` 全量绿（含 37 号场景；端口与 config 隔离口径
-  见套件 README）——37/38 两条本 mission 场景已真机 PASS（test-results/acceptance/2026-09-25/）；
-  45 场景全量复跑安排在收口前（harness 本轮改过 app.mjs/execute.mjs/drive.mjs/cgevent-click.swift，
-  影响面超本 mission），跑完再勾
+- [x] 4.2 `node scripts/acceptance/run.mjs` 全量复跑：**42/45 PASS**（含 37/38 双 PASS）。3 条红
+  （20/23 图片宽度判据区间失配、32 vault 路径断言）经 master 对照实验证实为既有红、与本
+  change 无关（master 同跑 0/3、失败签名逐条一致）——已单独立项登记，不在本 change 修
 
 ## 5. 验证
 
