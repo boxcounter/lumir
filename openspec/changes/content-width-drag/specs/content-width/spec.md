@@ -49,9 +49,10 @@ MUST NOT 改变 dirty 状态。本能力 MUST NOT 新增命令或键位（纯鼠
 ### Requirement: 宽度配置项与校验
 
 `~/.config/lumir/config.json` 的 `[ui]` 表 SHALL 支持整数像素项 `ui.content_width`（阅读栏宽上限），
-键名与 Rust 字段名逐字一致（沿用无 `serde(rename)` 的既有口径）。默认值 = 现行定值 664（对应
-`--layout-doc-measure` 的现值，`src/style.css:193`；最终值以节点 1 裁决 D1 为准），合法区间以
-节点 1 裁决 D2 为准（建议 [480, 1200]）。
+键名与 Rust 字段名逐字一致（沿用无 `serde(rename)` 的既有口径）。默认值 = **680**（节点 1 裁决 D1
+落槌值；注意它与裁决前仓内定值 664 不同——默认口径位移 16px，含编辑区的整页视觉基线随本 change
+整批重建并走 Alex 过目纪律），合法区间 = **[680, 1200]**（节点 1 裁决 D2 落槌值；默认值即下限，
+拖拽只能往宽调）。
 
 该配置项 SHALL 与 `editor.font_size` 走同一条装配链：各类型 `impl Default`、宽容解析镜像上的
 `#[serde(default)]`、`validate()` 逐字段区间判定（越界回落默认 + warning），MUST NOT 另开装载
@@ -71,7 +72,7 @@ change MUST NOT 引入「逐字段类型容忍」；实现 SHALL 用一条单测
 #### Scenario: 缺字段时取默认
 
 - **WHEN** `config.json` 的 `[ui]` 表里没有 `content_width`（旧配置原样启动）
-- **THEN** 栏宽为默认 664px，不产生任何 config warning；既有视觉基线零变化
+- **THEN** 栏宽为默认 680px，不产生任何 config warning
 
 #### Scenario: 显式配置生效
 
@@ -81,7 +82,7 @@ change MUST NOT 引入「逐字段类型容忍」；实现 SHALL 用一条单测
 #### Scenario: 越界回落默认
 
 - **WHEN** 配置 `{"ui": {"content_width": 200}}` 后启动
-- **THEN** 栏宽回落默认 664px，产生一条 config warning（console + 诊断日志），应用照常启动
+- **THEN** 栏宽回落默认 680px，产生一条 config warning（console + 诊断日志），应用照常启动
 
 #### Scenario: 类型不符走整文件回落
 
@@ -96,7 +97,9 @@ change MUST NOT 引入「逐字段类型容忍」；实现 SHALL 用一条单测
 
 写入 SHALL 遵守既有 `write_last_vault_to` 的纪律（`src-tauri/src/commands.rs:394-428`）：读整份
 JSON 为 `Value`（解析失败按空对象起）、只改 `ui.content_width` 一个字段、其余字段（含未知字段与
-其它表）逐键保留、`tmp` 文件 + `rename` 原子替换。写入是独立的 IPC 命令，MUST NOT 复用
+其它表）逐键保留、`tmp` 文件 + `rename` 原子替换。写入通道是**通用键值合并写命令**
+`config_set_ui_value(key, value)`（节点 1 裁决 D3：「命令做成通用键值写入」），`ui.content_width`
+是它的第一个调用方，M226 主题切换的 `ui.theme` 将复用同一通道；MUST NOT 复用
 「读全量配置再整份序列化前端状态」之类的旁路。
 
 写失败 SHALL 降级为提示（toast + 诊断日志 `config_warning`），MUST NOT 让拖拽本身失败、MUST NOT

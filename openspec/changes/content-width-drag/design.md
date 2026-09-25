@@ -17,7 +17,7 @@ CM 侧契约用主 checkout 的 `node_modules`（`@codemirror/view@6.43.11`，`p
 | tokens 文档同值登记：「`--layout-doc-measure` 664px 正文 max-width，居中」 | `docs/specs/design-tokens-v1.md:203` |
 | **轨道语义是上限**：`minmax(0, token)` 意味着窗口不够宽时中列收缩到可用宽度，token 只当 max-width 用——配置项的语义因此是「栏宽上限」，不是「栏宽定值」 | 由 `src/editor.ts:1285-1286` 的模板直接推出 |
 | 旧口径 `--measure: 80%`（百分比中列）已退役，无残留 | `src/editor.ts:1269-1271` 注释 |
-| 任务书口述「定稿宽度 680px」与代码/定稿证据（664px）不符；680 在仓内只作为字重 `--fw-display: 680` 出现 | `src/style.css:154`；裁决点 D1 |
+| 任务书口述「定稿宽度 680px」与代码/定稿证据（664px）不符；680 在仓内只作为字重 `--fw-display: 680` 出现。**D1 落槌 680**——默认口径因此位移 16px，含编辑区的整页基线随本 change 整批重建（与 heading-hierarchy-ramp 同批走 Alex 过目） | `src/style.css:154`；裁决点 D1 |
 
 ### 1.2 折行（M180）与宽度变化的交界面
 
@@ -73,7 +73,7 @@ CM 侧契约用主 checkout 的 `node_modules`（`@codemirror/view@6.43.11`，`p
 | shell 骨架：`app-shell` 下标题栏 / 文件树 / 编辑器 pane / modeline 四区；编辑器 pane 是 `pane("pane-editor")`，CM 挂载其中 | `src/shell.ts:67`、`:92`；挂载 `src/main.ts:63` |
 | 手柄 SHALL 挂在编辑器 pane 内、与 `.cm-editor` 并列的覆盖层（position absolute），MUST NOT 进 `.cm-scroller` / `.cm-content` 内部（那里是 CM 高度图与装饰层的地盘） | 由 §1.4 的高度纪律推出 |
 | 空态（无 vault / 恢复中）时编辑器 pane 上有覆盖层或隐藏，手柄此时 MUST NOT 出现 | `src/main.ts:848`（`showEditor`）一带的空态处理 |
-| 真机与视觉两层的操作通道：KimiCU 的 drag 可直接对手柄做拖拽（`scripts/acceptance/README.md`）；视觉层 Playwright 用 `page.mouse` 同形 | 套件文档 |
+| 真机与视觉两层的操作通道：KimiCU 的 drag 工具在 WKWebView **不产生 DOM 拖拽**（M228 实测：连 pointerdown 都不到，与 dblclick 同族注入边界）；真机拖拽走套件新增的 swift+CGEvent mode 5 通道（`scripts/acceptance/README.md`「已知边界」）；视觉层 Playwright 用 `page.mouse` 同形 | 套件文档 |
 
 ## 2. 设计落点
 
@@ -81,9 +81,9 @@ CM 侧契约用主 checkout 的 `node_modules`（`@codemirror/view@6.43.11`，`p
 
 - `UiConfig` 增 `content_width: f64`（与 `font_size` 同取 f64：JSON 数值字段的先例类型，
   `config.rs:128-129`；`Option<u32>` 会把 `"content_width": 700.5` 打进整文件回落，f64 更宽容）。
-  `Default` 给 664（D1）。
-- 常量三件套照 `font_size` 模板：`DEFAULT_CONTENT_WIDTH = 664.0`、`CONTENT_WIDTH_MIN = 480.0`、
-  `CONTENT_WIDTH_MAX = 1200.0`（D2）；TS 侧镜像常量放新模块（§2.3），两侧互指注释 + 各自单测钉住
+  `Default` 给 680（D1 落槌值）。
+- 常量三件套照 `font_size` 模板：`DEFAULT_CONTENT_WIDTH = 680.0`、`CONTENT_WIDTH_MIN = 680.0`、
+  `CONTENT_WIDTH_MAX = 1200.0`（D2 落槌 [680, 1200]——**默认值即下限**，拖拽只能往宽调）；TS 侧镜像常量放新模块（§2.3），两侧互指注释 + 各自单测钉住
   （REVIEW.md 第 8 条的既有处置，先例 `src/typography.ts:15-18`）。
 - `RawUiConfig` 增 `content_width: Option<f64>`；`validate()` 的 ui 分支按 `font_size` 模板扩：
   缺字段回落默认不告警；越界回落默认 + warning；类型不符走整文件回落（既有解析模型性质，
@@ -146,10 +146,12 @@ CM 侧契约用主 checkout 的 `node_modules`（`@codemirror/view@6.43.11`，`p
 
 - **时机**：只在 `pointerup`（且值相对拖拽起点有变化）时写一次。拖拽过程零写盘——写盘频率与
   手势数绑定（一次手势一次写），不需要防抖。
-- **写入通道**：新增 IPC `ui_set_content_width(width: f64)`；Rust 侧复用 `write_last_vault_to`
-  的纪律：读整份 `Value`（解析失败按 `{}` 起）→ 确保 `ui` 是 object → 写 `content_width` →
+- **写入通道**：新增 IPC `config_set_ui_value(key, value)`——D3 落槌口径是**通用键值写入**
+  （把 `ui.<key>` 单键写回 `config.json`），`ui.content_width` 是它的第一个调用方，M226 主题切换的
+  `ui.theme` 将复用同一通道；Rust 侧复用 `write_last_vault_to`
+  的纪律：读整份 `Value`（解析失败按 `{}` 起）→ 确保 `ui` 是 object → 写该键 →
   `to_string_pretty` → tmp+rename；未知字段与 `version` 处置照 `merge_last_vault`。
-  纯函数部分（`merge_content_width`）单独可测，断言「其余字段逐字节语义不变」。
+  纯函数部分（`merge_ui_value`）单独可测，断言「其余字段逐字节语义不变」。
 - **失败降级**：写失败 = CommandError → 前端 toast（新文案条目）+ `logEvent("config_warning")`；
   运行期宽度**不回滚**（与 `remember_last_vault` 的「主结果不受记忆写失败影响」同口径，
   `commands.rs:441-450` 的注释族）。
@@ -167,7 +169,7 @@ CM 侧契约用主 checkout 的 `node_modules`（`@codemirror/view@6.43.11`，`p
 - **与配置的关系**：启动时配置喂一次初值；拖拽回写让配置随即同步——因此不存在 M180/M195 的
   「运行期态 vs 配置默认」双真源分歧，重启后与退出前一致。
 - **出厂默认两处写值**：Rust `DEFAULT_CONTENT_WIDTH` 与 TS 镜像常量同值、互指注释、各自单测
-  （REVIEW.md 第 8 条既有处置）。CSS 侧 `--layout-doc-measure: 664px` 是「配置到达前」的起步值，
+  （REVIEW.md 第 8 条既有处置）。CSS 侧 `--layout-doc-measure: 680px` 是「配置到达前」的起步值，
   构成第三处——三处同值的断言面照 `font_size` 先例（`src/typography.ts:15-18` 注释记的就是这条）。
 
 ### 2.6 与键位 / 命令体系的关系
@@ -188,28 +190,60 @@ CM 侧契约用主 checkout 的 `node_modules`（`@codemirror/view@6.43.11`，`p
 | 每帧写 token 但靠 CM 自己发现宽度变化 | CM 的 ResizeObserver 只看 `scrollDOM`（dist:7165-7171），grid 中列变宽不触发它——不显式 `requestMeasure` 就是坐标错位（§1.4） |
 | 给手柄加默认键位或命令（如 `view.content-width-reset`） | 可见面从「拖拽 + 配置」扩到命令体系，键位面板/文案/门禁一起动；proposal Non-goals，后续按证据立项 |
 | `Option<u32>` 承载配置值 | `"content_width": 700.5` 会在 serde 解析期失败走整文件回落；`f64` 与 `font_size` 先例同型，宽容度一致（§2.1） |
-| 默认值改 680（跟随任务书口述） | 代码与定稿证据都是 664；680 是一次独立观感变更，会位移所有含编辑区的整页基线——若要做，值得单独走 Alex 过目，不搭本 change 的车（D1） |
+| 默认值改 680（跟随任务书口述） | **本建议被裁决推翻**：D1 落槌 680。原顾虑（位移所有含编辑区的整页基线）成立但 Alex 知情接受——基线整批重建与 heading-hierarchy-ramp 同批走 Alex 过目纪律（过目包 + 逐张对照表，批准前不提交任何基线 PNG） |
 
 ## 4. 实现期必须验证 / 未决的点（逐条写实测结论）
 
-0. **既有基线零变更核对**：默认值保持 664（D1 建议）时，全部含编辑区的整页基线时间戳与像素
-   MUST NOT 变化（手柄常态不可见、token 默认同值）；变了按缺陷处理。逐张核对纪律见
+0. **既有基线位移核对**：D1 落槌 680（默认口径位移 16px），全部含编辑区的整页基线**必然变化**——
+   逐张识别受影响基线（含 heading-hierarchy-ramp 的字号位移），备好逐张对照表 + 过目包
+   （test-results/m228/）请 Alex 过目，**批准前 git 不提交任何基线 PNG**（工作区保持零基线 diff）；
+   批准后才 `--update` 入库并逐张核对 sha256。逐张核对纪律见
    `tests/visual/README.md` 与 AGENTS.md 视觉门禁卫生条。
+   **实测（M228 实现期）**：像素层实跑收集失败基线清单 + 逐张对照表 + 过目包 index.html，
+   全部落 `test-results/m228/`；提交保持零基线 diff，待 Alex 过目。
 1. **手柄定位在两种模式下的正确性**：md（居中列）与 code（gutter + 非居中列）各断言手柄条与
    `.cm-content` 矩形缘重合（±1px）；横向滚动（`line_wrap = false`）后手柄跟随列缘。
+   **实测：成立**——`tests/visual/scenes/content-width.spec.ts`「缺省配置即出厂口径」与
+   「code 模式」两条断言命中区中线 = 列缘（closeTo 0 位精度）；横向滚动跟随由控制器的
+   scroller scroll 监听承担（`src/content-width.ts`），chromium 场景未覆盖横滚形态（已知边界，
+   真机手感归 Alex）。
 2. **拖拽帧实测**：对性能合同文档（1MB Markdown，折行开）做 live 拖拽，采样「施加 → requestMeasure →
    绘制」帧耗时；结论（达标 / 退到松手生效）连同数据写回本节。超预算即走 §2.3 退路，不硬扛。
+   **实测：达标，不走退路**——1,048,608 字节文档（heading + 折行段落混合）、右缘手柄 +100px
+   （栏宽 680→880）、100 步指针流，逐帧 rAF 间隔采样：p50 8.3ms / p90 9.0 / p95 9.2 / p99 9.4 /
+   max 9.4，>16.7ms 帧 0 次（数据 `test-results/m228/drag-frames.json`，探针脚本一次性、
+   跑完即删，跑法记在 JSON 的 meta 里）。读数是 chromium/Blink 下界近似，WKWebView 真机手感
+   归 Alex；rAF 合并（每帧最多施加一次）是本结论的关键形态。
 3. **折行重算正确性**：收窄后长行的折点数增加、点击折行内文字落点正确（坐标与画面一致——
    这是 `requestMeasure` 是否真的到位的试金石）；`line_wrap = false` 下变宽后 `.cm-scroller`
    的 `scrollWidth` 收缩。
-4. **写盘纪律**：`merge_content_width` 纯函数断言「含未知字段 / 其它表的配置写回后逐键保留」；
+   **实测：成立（折行重算有断言，落点判据继承既有场景）**——`setContentWidth` 的显式
+   `requestMeasure` 与 `keepCaretVisible` 走 `applyTypographySettings` 同一条路（`src/editor.ts`）；
+   chromium 场景断言拖拽后 `.cm-content` 实测宽度随动（840/780/1200 逐值），且超长行的行盒
+   高度随栏宽 +160 下降（折点数减少——没有显式重测量时高度图停在旧宽度，这条会停在原值）。
+   「点击折行内落点」未单设断言：拖拽不改光标位置、坐标一致性由 M195 的 caretGeometry 场景守
+   同一机制（重测量链同一条）——如实记为「机制继承，未独立复验」。`line_wrap = false` 的
+   横滚收缩未覆盖（chromium 场景缺口，记为已知边界）。
+4. **写盘纪律**：`merge_ui_value` 纯函数断言「含未知字段 / 其它表的配置写回后逐键保留」；
    真机场景断言拖拽后 `config.json` 含 `ui.content_width`、其余键不变、文档 sha256 不变、
    dirty 不变。
+   **实测：成立**——Rust 侧 `merge_ui_value` 单测断言逐键保留 + ui 错形状重置 +
+   空键拒绝（cargo test 全绿）；chromium 场景「松手写一次、拖拽过程零写」经
+   `__uiValueWrites` 序列断言；真机场景 `scripts/acceptance/scenarios/38-content-width-drag.md`
+   断言 config.json 落键、version/mode 存活、文档 sha256+mtime 不变、编辑器逐字节不变、
+   重启保持、下限钳制 680。
 5. **图片与表格的下游几何**：拖拽后图片列数换算（`attachments.ts:484-486`）与表格横滚容器表现
    跟随新列宽——若实测发现几何缓存不失效，补失效逻辑并在本节记录（先按「浏览器布局自动覆盖」
    假设验）。
+   **实测：按假设成立（抽样）**——栏宽经 token → grid 中列轨道施加，图片列数与表格容器读的是
+   布局后的 `.cm-content` 盒（浏览器布局自动失效，无 JS 几何缓存参与）；拖拽后列宽读数正确的
+   断言（§4-1/§4-3 的场景）同时证这条链路下游拿到的就是新盒。未逐 widget 复验（已知边界）。
 6. **写失败降级**：模拟写盘失败（验收 harness 的隔离配置目录置只读），断言 toast 出现、运行期
    宽度不回滚。
+   **实测：成立（判据在 chromium 层）**——harness 刻意不引入 shell/chmod 通道（置只读做不到），
+   改由 `tests/visual/scenes/content-width.spec.ts`「写盘失败」一条经 stub failures 注入：
+   toast 逐字断言 D121（含原因片段）、`config_warning` 日志在场、token 保持新值不回滚。
+   真机场景 38 的「已知边界」如实登记了这个分工。
 
 ## 5. 与 REVIEW.md 的对表（本 change 的实现面）
 
@@ -220,6 +254,6 @@ CM 侧契约用主 checkout 的 `node_modules`（`@codemirror/view@6.43.11`，`p
 | 8 同一语义两处真源 | 默认宽 / 上下限三处写值（Rust 常量、TS 常量、CSS 默认）互指注释 + 各自断言；token 名常量化单一来源（§2.3、§2.5） |
 | 9 声明即被消费 | `ui.content_width` 的消费者：启动装配 + 拖拽回写读侧（写侧 IPC）+ 视觉/真机断言；`editor.measure` 假开关教训不得重现 |
 | M110 同族（margin / 测量不可见） | 手柄在 shell 层、零文档流侵入；宽度变化必走显式 `requestMeasure`（§1.4、§2.2、§2.3） |
-| 11 真机键盘注入丢键 | 真机走 KimiCU **drag**（非键盘注入）；断言取「config.json 落值 + 截图」，不以事件次数当判据 |
+| 11 真机键盘注入丢键 | 真机走 swift+CGEvent 拖拽（mode 5，非键盘注入；KimiCU drag 工具在 WKWebView 不产生 DOM 拖拽，M228 实测）；断言取「config.json 落值 + 截图」，不以事件次数当判据 |
 | 13 测试污染真实环境 | 写盘断言只发生在验收套件的 `XDG_CONFIG_HOME` 隔离目录；不碰 `~/.config/lumir` |
 | 14 前台盲等 | 纯提案 mission；实现期后台命令按 spawn 指令走 WaitFor |

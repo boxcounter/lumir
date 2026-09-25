@@ -233,3 +233,24 @@ export async function injectClickWithClickState(pid, point, { mode = 2 } = {}) {
     );
   }
 }
+
+/** CGEvent 拖拽（M228，mode 5）：leftMouseDown → 插值 dragged 序列 → leftMouseUp。
+ *  KimiCU 的 drag 工具在 WKWebView 里不产生 DOM 拖拽（连文本选择都造不出来，M228 实测），
+ *  与 dblclick 同一类注入边界，因此走同一条 swift 通道。坐标是 Quartz 全局屏幕点（与
+ *  injectClickWithClickState 同口径）。 */
+export async function injectDrag(from, to) {
+  const script = new URL("./cgevent-click.swift", import.meta.url).pathname;
+  const args = [
+    "/usr/bin/swift", script,
+    String(Math.round(from.x)), String(Math.round(from.y)), "5",
+    String(Math.round(to.x)), String(Math.round(to.y)),
+  ];
+  try {
+    return execFileSync(args[0], args.slice(1), { encoding: "utf8" }).trim();
+  } catch (e) {
+    throw new StepError(
+      `swift + CGEvent 拖拽注入失败（${e.message}）。这条通道要 /usr/bin/swift（Xcode Command Line Tools）` +
+        `且进程要有辅助功能权限；README「已知边界」的 dblclick 条有说明。`,
+    );
+  }
+}

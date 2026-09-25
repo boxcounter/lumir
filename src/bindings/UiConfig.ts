@@ -10,4 +10,13 @@ export type UiConfig = {
  * 界面主题，默认 `light`。启动装载时读一次并施加到 `documentElement.dataset.theme`
  * ——与 `editor.mode` 同口径（重启生效）。本版不做运行期切换、不跟随系统主题。
  */
-theme: UiTheme, };
+theme: UiTheme, 
+/**
+ * 阅读栏宽上限（框宽 px，content-width-drag，M228）：默认 680（D1），合法区间
+ * `[680, 1200]`（D2——默认值即下限）。启动时装配一次；运行期由栏宽拖拽推进并回写
+ *（`config_set_ui_value`，与 `editor.font_size` 的「运行期 MUST NOT 回写」不同——
+ * 宽度是用户显式调整的**持久偏好**，回写即本能力的核心语义）。
+ * 类型不符（`"content_width": "680"`）与 `font_size` 同路：serde 解析期失败 →
+ * 整文件回落。
+ */
+content_width: number, };

@@ -14,6 +14,7 @@ import {
   clickNode,
   frontmostPid,
   injectClickWithClickState,
+  injectDrag,
   openFile,
   pressKey,
   readAx,
@@ -26,7 +27,7 @@ import { envHome, mkdirp, readText, sleep, vaultDir } from "./util.mjs";
 /** 动作与断言的白名单：`--check` 用它做静态校验，避免写错 key 要等一整轮真机才发现。 */
 export const ACTIONS = new Set([
   "settle", "sleep", "key", "keys", "type", "click", "clickNodeText", "clickInNode", "clickEditor",
-  "doubleClick", "focusWindow", "open", "configWrite", "restart", "record", "recordEditor", "vaultWrite",
+  "doubleClick", "drag", "focusWindow", "open", "configWrite", "restart", "record", "recordEditor", "vaultWrite",
   "vaultAppend", "vaultRm",
 ]);
 export const EXPECT_KINDS = new Set(["ax", "editor", "file", "glob", "shot"]);
@@ -48,6 +49,8 @@ export function checkScenario(scenario) {
     if (step.do === "keys" && !Array.isArray(step.keys)) push(`${at} do=keys 需要 keys 数组`);
     if (step.do === "key" && !step.key) push(`${at} do=key 需要 key`);
     if (step.do === "doubleClick" && !step.target) push(`${at} do=doubleClick 需要 target（节点或 {x,y} 窗口局部坐标）`);
+    if (step.do === "drag" && (!step.target || (step.dx === undefined && step.dy === undefined)))
+      push(`${at} do=drag 需要 target（带 bbox 的节点，或 textareaEdge）与 dx/dy 位移（窗口局部点）`);
     for (const [j, exp] of (step.expect ?? []).entries()) {
       const kinds = Object.keys(exp).filter((k) => k !== "label");
       if (kinds.length !== 1) push(`${at} expect[${j}] 应恰好一个断言形态，实际 ${JSON.stringify(kinds)}`);
@@ -391,7 +394,7 @@ export async function runScenario(ctx, scenario) {
   try {
     if (scenario.fixtures) for (const f of scenario.fixtures) await copyFixture(f);
     if (scenario.config) {
-      // 排版三项（M195）/ 主题（M210）与 [keys] 同形：传了才写，缺省即出厂口径
+      // 排版三项（M195）/ 主题（M210）/ 栏宽（M228）与 [keys] 同形：传了才写，缺省即出厂口径
       await writeConfig({
         mode: "md",
         keys: scenario.config.keys,
@@ -399,6 +402,7 @@ export async function runScenario(ctx, scenario) {
         monoFontFamily: scenario.config.monoFontFamily,
         fontSize: scenario.config.fontSize,
         theme: scenario.config.theme,
+        contentWidth: scenario.config.contentWidth,
       });
       await ctx.restartApp();
     }
@@ -707,6 +711,8 @@ async function doAction(step, { ctx, cu, scenario, vars, pid, evidence }) {
         // 主题（M210）同理缺省**沿用当前值**：否则一次 configWrite 会把前面设过的 ui.theme
         // 连表一起抹掉（`ui` 不写 = 回落 light），归因成本最高的那种「改了配置却没生效」形态。
         theme: step.theme !== undefined ? step.theme : cur.ui?.theme,
+        // 栏宽（M228）同形沿用：一次 configWrite MUST NOT 抹掉 `ui.content_width`。
+        contentWidth: step.contentWidth !== undefined ? step.contentWidth : cur.ui?.content_width,
       };
       await writeConfig(next);
       // requireVault: false 只对本步的重启生效（该步期待「未打开空态」，就绪门里「树里有
@@ -770,6 +776,56 @@ async function doAction(step, { ctx, cu, scenario, vars, pid, evidence }) {
       const out = await injectClickWithClickState(p, point, { mode: step.mode ?? 2 });
       await sleep(step.settleMs ?? 900); // 双击到前端处理完（遮罩建 DOM、标签栏重绘）之间有一拍
       return `窗口局部 ${Math.round(local.x)},${Math.round(local.y)} → 屏幕 ${Math.round(point.x)},${Math.round(point.y)}｜${out}`;
+    }
+    case "drag": {
+      // 拖拽（M228，content-width-drag）：栏宽手柄这类「只能拖」的控件没有点击语义。KimiCU 的
+      // drag 工具在 WKWebView 里**不产生 DOM 拖拽**（实测：对手柄与对正文文本各试一次，连文本
+      // 选择都造不出来——与 dblclick 同一类注入边界），因此走 doubleClick 同一条
+      // swift + CGEvent 通道（mode 5：down → 插值 dragged → up），坐标换算也完全同口径：
+      // 先拿前台（真鼠标拖拽落在最上层那扇窗），再把窗口局部点换算成 Quartz 屏幕坐标。
+      //
+      // target 两种形态（窗口局部点空间，mode=ax 的 bbox）：
+      //   1. `{role,name|any,nth}`：节点 bbox 中心（target.dx0/dy0 给 0..1 偏移）；
+      //   2. `{textareaEdge: "left"|"right"}`：编辑器列缘——WKWebView 把 role=separator 暴露成
+      //      **无 bbox 的 AXSplitter**（M228 实测：节点在树里、名字对，frame 为空），手柄节点
+      //      定位不可用；AXTextArea 的 bbox 即 `.cm-content` 的 border box（手柄命中区贴其左右缘
+      //      ±5px），从列缘内侧 2px、中高处起拖等价于抓住手柄。
+      const fg = await tryForeground(cu, p, { retries: step.retries ?? 4 });
+      if (!fg.frontmost) {
+        throw new Error(
+          `drag 需要目标窗口在前台（当前前台 pid=${fg.frontPid ?? "未知"}）：真鼠标拖拽会落到最上层那扇窗上，` +
+            `此时拖拽不会到达 Lumir。跑拖拽类场景时目标窗口需可见且未被别的应用盖住。`,
+        );
+      }
+      const ax = await readAxForScreenPoint(cu, p);
+      const bounds = windowBounds(ax.text);
+      const t = step.target ?? {};
+      let local;
+      if (t.textareaEdge !== undefined) {
+        const ta = ax.textarea;
+        if (!ta?.bbox) throw new Error("drag(textareaEdge)：编辑器节点没有 bbox，无法定位列缘");
+        local = {
+          x: t.textareaEdge === "left" ? ta.bbox.x + 2 : ta.bbox.x + ta.bbox.w - 2,
+          y: ta.bbox.y + ta.bbox.h / 2,
+        };
+      } else {
+        const node =
+          t.any !== undefined
+            ? findByAny(ax.nodes, { role: t.role, any: t.any, nth: t.nth ?? 0 })
+            : findNode(ax.nodes, { role: t.role, name: t.name, nth: t.nth ?? 0 });
+        if (!node?.bbox) throw new Error(`drag：找不到带 bbox 的节点 ${JSON.stringify(t)}`);
+        local = { x: node.bbox.x + node.bbox.w * (t.dx0 ?? 0.5), y: node.bbox.y + node.bbox.h * (t.dy0 ?? 0.5) };
+      }
+      const from = { x: bounds.x + local.x, y: bounds.y + local.y };
+      const to = { x: from.x + (step.dx ?? 0), y: from.y + (step.dy ?? 0) };
+      for (const pt of [from, to]) {
+        if (pt.x < bounds.x || pt.x > bounds.x + bounds.w || pt.y < bounds.y || pt.y > bounds.y + bounds.h) {
+          throw new Error(`drag：算出的屏幕点 ${JSON.stringify(pt)} 落在窗口 (${bounds.x},${bounds.y} ${bounds.w}×${bounds.h}) 之外`);
+        }
+      }
+      const out = await injectDrag(from, to);
+      await sleep(step.settleMs ?? 500); // 松手后的提交（rAF 末帧 + 写盘）之间有一拍
+      return `窗口局部 ${Math.round(local.x)},${Math.round(local.y)} → +${step.dx ?? 0},${step.dy ?? 0}｜${out}`;
     }
     case "record": {
       // 路径口径与 file 断言同源（M180）：`env:` 前缀此前不被识别，记出来的是一个不存在的

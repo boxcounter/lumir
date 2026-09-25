@@ -41,6 +41,16 @@ export function configGet(): Promise<ConfigSnapshot> {
   return invoke<ConfigSnapshot>("config_get");
 }
 
+/**
+ * 把单个 `[ui]` 键合并写回 config.json（M228，change content-width-drag，D3 裁决：
+ * 「命令做成通用键值写入」）。读-改-写、原子替换、保留未知字段，写失败抛 CommandError
+ *（`config_write_failed`），调用方负责降级提示。**通用通道**：`ui.content_width`（栏宽拖拽）
+ * 是第一个调用方，M226 主题切换的 `ui.theme` 将复用同一通道。
+ */
+export function configSetUiValue(key: string, value: unknown): Promise<void> {
+  return invoke<void>("config_set_ui_value", { key, value });
+}
+
 /** 调系统目录选择器打开 vault；用户取消 resolve 为 null（非错误）。 */
 export function vaultOpen(force_new = false): Promise<VaultInfo | null> {
   return invoke<VaultInfo | null>("vault_open", { force_new });

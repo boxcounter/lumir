@@ -5,6 +5,7 @@ import type { CommandRunner, CommandRuntime, KeyBinding, KeyOverrides } from "./
 import { baseName, createFileTree, openKind } from "./tree";
 import {
   configGet,
+  configSetUiValue,
   errorMessage,
   fsReadAttachment,
   fsReadSnapshot,
@@ -40,6 +41,7 @@ import { createReadingPositionStore } from "./reading-position";
 import { createLinkFollow } from "./link-follow";
 import { createTabs } from "./tabs";
 import { createBindingsPanel } from "./bindings-panel";
+import { WIDTH_SAVE_FAILED_TEXT, createContentWidthDrag } from "./content-width";
 import { logEvent, sampleCallback } from "./diagnostics";
 import type { FsEntry } from "./bindings/FsEntry";
 import type { VaultInfo } from "./bindings/VaultInfo";
@@ -99,6 +101,27 @@ const lightbox = createImageLightbox({
 });
 editor.setLightbox(lightbox);
 
+// 栏宽拖拽手柄（M228，change content-width-drag）：DOM 在 shell（编辑器 pane 的覆盖层），
+// 控制器在 src/content-width.ts；装配侧给三样东西——当前宽度的读写口（editor 闭包真源）、
+// 松手后的持久化（D3：通用键值合并写命令 config_set_ui_value，写失败降级为 toast + 诊断
+// 日志，运行期宽度**不回滚**——与 remember_last_vault 的「主结果不受写失败影响」同口径）。
+const widthDrag = createContentWidthDrag({
+  pane: shell.editor,
+  overlay: shell.widthHandles.overlay,
+  leftHandle: shell.widthHandles.left,
+  rightHandle: shell.widthHandles.right,
+  content: editor.view.contentDOM,
+  scroller: editor.view.scrollDOM,
+  getWidth: () => editor.contentWidth(),
+  setWidth: (width) => editor.setContentWidth(width),
+  onCommit(width) {
+    configSetUiValue("content_width", width).catch((e: unknown) => {
+      toast(WIDTH_SAVE_FAILED_TEXT(errorMessage(e)));
+      logEvent("config_warning", { source: "content-width", message: errorMessage(e) });
+    });
+  },
+});
+
 // 编辑器区域的"暂不支持预览 / 错误提示"覆盖层：显示提示时藏起编辑器本体。
 const notice = document.createElement("div");
 notice.className = "editor-notice";
@@ -109,11 +132,13 @@ function showNotice(text: string) {
   notice.textContent = text;
   notice.hidden = false;
   editor.view.dom.style.display = "none";
+  widthDrag.setVisible(false); // 空态 / 覆盖层在：栏宽手柄 MUST NOT 出现（spec「空态无手柄」）
 }
 
 function showEditor() {
   notice.hidden = true;
   editor.view.dom.style.display = "";
+  widthDrag.setVisible(true);
 }
 
 // 瞬时提示（锚点缺失 / 创建结果 / 解析错误）：编辑器右下角浮条，自动消隐。
@@ -346,6 +371,9 @@ function syncActiveDocument(): void {
   // 指示段与文档同一帧到位（不落在 120ms 节流窗口之后）：见 TocHandle.refresh 的说明。
   toc.refresh();
   tree.setCurrentPath(session.path);
+  // 会话切换后栏宽手柄重新贴合列缘（模式 / gutter 进出只改列位置不改列宽，控制器自己的
+  // ResizeObserver 看不见位置变化）。
+  widthDrag.reposition();
   tabs.renderTabs();
   // 标签集合 / 顺序 / 激活项变化后防抖落盘会话（M163）。挂在这个唯一同步点上：切标签、
   // 开文件、关标签都会经过它，别处不必各埋一个「记得写会话」的钩子。
@@ -973,6 +1001,10 @@ configGet().then((snapshot) => {
     console.warn(`lumir: ${warning}`);
     logEvent("config_warning", { source: "config", message: warning });
   }
+  // 阅读栏宽（M228，change content-width-drag）：配置给的是**启动时的初值**——运行期由栏宽
+  // 拖拽推进并回写 `ui.content_width`（D3），因此不存在「运行期态 vs 配置默认」的双真源。
+  // 前端不判区间（Rust 侧 validate 已越界回落默认 + warning，与主题同口径）。
+  editor.setContentWidth(snapshot.config.ui.content_width);
   // 主题（restyle-ui-tokens-v1，节点 1 裁决 D3 = `[ui] theme` 配置）：启动装载时施加一次，
   // 落点是 `<html data-theme>`——token 层的三组块按这个属性取色。与上面几步同属
   // 「配置到位后施加一次」的启动装配落点区。**前端不判非法值**：取值是闭集合，合法性已由

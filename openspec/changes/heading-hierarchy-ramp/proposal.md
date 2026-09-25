@@ -24,8 +24,8 @@ H2↔H3 是 1.5px 级差 + 同字重，H3–H5 与正文同字号只靠字重—
 [design/prototypes/heading-hierarchy/](../../../design/prototypes/heading-hierarchy/)
 （base 现行对照 + 稿 A 纯字号阶梯 / 稿 B 双族制 / 稿 C 结构信号，× light/dark/eink）。
 
-**裁决记录（2026-09-25，Alex，M224 notes）**：选定**稿 A 纯字号阶梯**——H1–H6 =
-21/18/16/15/14/13，级差 3/2/1/1/1，字重统一 650，零装饰。代价 Alex 知情接受：
+**裁决记录（2026-09-25，Alex，M224 notes）**：裁决原文逐字：「我选择 A」——即三稿对比中的
+**稿 A 纯字号阶梯**：H1–H6 = 21/18/16/15/14/13，级差 3/2/1/1/1，字重统一 650，零装饰。代价 Alex 知情接受：
 H4 起字号 ≤ 正文（与正文的区分由 650 vs 400 字重差承担）、字号阶梯新增 4 档 token。
 稿 B 的「H1 20px 用 680 违反 ≥21px 规则」子裁决随不选 B 消解；稿 C 的结构线语汇
 （H2 底线 / H3 竖杠）放弃。
@@ -53,7 +53,7 @@ H4 起字号 ≤ 正文（与正文的区分由 650 vs 400 字重差承担）、
    的时间戳随本次更新）。`tests/visual/scenes/typography.spec.ts` 的 heading 计算属性断言
    更新为六档逐档口径。
 
-5. **真机验收场景**：新增 `scripts/acceptance/scenarios/37-heading-hierarchy-ramp.md`
+5. **真机验收场景**：新增 `scripts/acceptance/scenarios/37-heading-hierarchy.md`
    （H1–H6 fixture + 计算属性断言 + 负向断言旧值不在场），随实现同 PR（AGENTS.md：
    验收场景维护权归新功能 mission）。编号取 37：36 已由 live-theme-switch 占用并合并。
 

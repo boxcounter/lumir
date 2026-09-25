@@ -383,6 +383,14 @@ pub fn write_last_vault(root: &Path) -> Result<(), CommandError> {
 
 /// 指定配置文件路径的写回（可测：不依赖真实配置目录）。
 pub(crate) fn write_last_vault_to(path: &Path, root: &Path) -> Result<(), CommandError> {
+    let mut value = read_config_json(path);
+    merge_last_vault(&mut value, root);
+    write_config_json(path, &value)
+}
+
+/// 应用侧写 config.json 的共用读入（ADR 0002 §5 配置即数据）：读整份 JSON 为 `Value`，
+/// 解析失败或不是对象按 `{}` 起——与写回纪律配套的宽容读入，未知字段原样保留在 Value 里。
+fn read_config_json(path: &Path) -> serde_json::Value {
     let mut value: serde_json::Value = match std::fs::read_to_string(path) {
         Ok(text) => serde_json::from_str(&text).unwrap_or_else(|_| serde_json::json!({})),
         Err(_) => serde_json::json!({}),
@@ -390,7 +398,11 @@ pub(crate) fn write_last_vault_to(path: &Path, root: &Path) -> Result<(), Comman
     if !value.is_object() {
         value = serde_json::json!({});
     }
-    merge_last_vault(&mut value, root);
+    value
+}
+
+/// 应用侧写 config.json 的共用落盘：tmp 文件 + rename 原子替换。
+fn write_config_json(path: &Path, value: &serde_json::Value) -> Result<(), CommandError> {
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir).map_err(|e| {
             CommandError::new(
@@ -402,7 +414,7 @@ pub(crate) fn write_last_vault_to(path: &Path, root: &Path) -> Result<(), Comman
     let tmp = path.with_extension("json.tmp");
     std::fs::write(
         &tmp,
-        serde_json::to_string_pretty(&value).expect("config serializes"),
+        serde_json::to_string_pretty(value).expect("config serializes"),
     )
     .map_err(|e| {
         CommandError::new(
@@ -418,15 +430,56 @@ pub(crate) fn write_last_vault_to(path: &Path, root: &Path) -> Result<(), Comman
     })
 }
 
-/// 逐字段改写 last_vault 的纯函数部分（可测）。version 仅在缺失或不高于
+/// version 的写入纪律（merge_last_vault 与 merge_ui_value 共用）：仅在缺失或不高于
 /// 当前 schema 时写入：更高版本说明配置由更新版本的应用写入，盲写会把
 /// 版本标记降回当前值（失真），保留原值让 config::load 继续按高版本 warning。
-fn merge_last_vault(value: &mut serde_json::Value, root: &Path) {
+fn bump_config_version(value: &mut serde_json::Value) {
     let version = value.get("version").and_then(|v| v.as_u64());
     if version.is_none_or(|v| v <= u64::from(config::SCHEMA_VERSION)) {
         value["version"] = serde_json::json!(config::SCHEMA_VERSION);
     }
+}
+
+/// 逐字段改写 last_vault 的纯函数部分（可测）。
+fn merge_last_vault(value: &mut serde_json::Value, root: &Path) {
+    bump_config_version(value);
     value["last_vault"] = serde_json::json!(root.display().to_string());
+}
+
+/// `[ui]` 表的单键合并写（M228，change content-width-drag，节点 1 裁决 D3：「写回
+/// config.json」+「命令做成通用键值写入」）。第一个调用方是栏宽拖拽松手后的
+/// `ui.content_width` 持久化；**M226 主题切换的 `ui.theme` 将复用同一通道**。
+/// 前端失败降级为 toast + 诊断日志，运行期值不回滚（与 remember_last_vault 同口径）。
+#[tauri::command(rename_all = "snake_case")]
+pub fn config_set_ui_value(key: String, value: serde_json::Value) -> Result<(), CommandError> {
+    write_ui_value_to(&config::config_dir()?.join("config.json"), &key, &value)
+}
+
+/// 指定配置文件路径的 `[ui]` 单键合并写（可测：不依赖真实配置目录）。
+pub(crate) fn write_ui_value_to(
+    path: &Path,
+    key: &str,
+    ui_value: &serde_json::Value,
+) -> Result<(), CommandError> {
+    if key.trim().is_empty() {
+        return Err(CommandError::new(
+            "config_write_failed",
+            "ui 配置键不能为空".to_string(),
+        ));
+    }
+    let mut value = read_config_json(path);
+    merge_ui_value(&mut value, key, ui_value);
+    write_config_json(path, &value)
+}
+
+/// 合并写 `ui.<key>` 的纯函数部分（可测）：只改这一个键，其余字段（含未知字段与其它表）
+/// 逐键保留；`ui` 不是对象时重置为空对象（错形状不拖垮整份配置，与读入侧的宽容同路）。
+fn merge_ui_value(value: &mut serde_json::Value, key: &str, ui_value: &serde_json::Value) {
+    bump_config_version(value);
+    if !value.get("ui").is_some_and(|u| u.is_object()) {
+        value["ui"] = serde_json::json!({});
+    }
+    value["ui"][key] = ui_value.clone();
 }
 
 /// 打开成功后的记忆写回：失败降级为 warning，MUST NOT 让整条打开失败（M127
@@ -1008,6 +1061,75 @@ mod tests {
         // 高版本配置由更新版本应用写入，不把 version 降回当前值
         assert_eq!(value["version"], serde_json::json!(99));
         assert_eq!(value["last_vault"], serde_json::json!("/tmp/vault"));
+    }
+
+    /// M228（content-width-drag，D3 通用键值合并写）：写 `ui.content_width` 只动这一个键，
+    /// 其余字段（`last_vault`、`editor` 表、`keys` 表、未知字段、ui 内其它键）逐键保留。
+    #[test]
+    fn merge_ui_value_sets_key_and_preserves_everything_else() {
+        let mut value = serde_json::json!({
+            "version": 1,
+            "last_vault": "/tmp/vault",
+            "editor": {"mode": "code", "font_size": 18},
+            "ui": {"theme": "dark"},
+            "keys": {"view.toggle-wrap": "ctrl+w"},
+            "future_field": {"nested": [1, 2]},
+        });
+        merge_ui_value(&mut value, "content_width", &serde_json::json!(760));
+        assert_eq!(value["ui"]["content_width"], serde_json::json!(760));
+        assert_eq!(
+            value["ui"]["theme"],
+            serde_json::json!("dark"),
+            "ui 内其它键保留"
+        );
+        assert_eq!(value["last_vault"], serde_json::json!("/tmp/vault"));
+        assert_eq!(
+            value["editor"],
+            serde_json::json!({"mode": "code", "font_size": 18}),
+            "其它表逐键保留"
+        );
+        assert_eq!(
+            value["keys"],
+            serde_json::json!({"view.toggle-wrap": "ctrl+w"})
+        );
+        assert_eq!(value["future_field"], serde_json::json!({"nested": [1, 2]}));
+    }
+
+    /// 既有 `ui` 表错形状（`"ui": "dark"`）时不拖垮整份配置：重置为空对象再写键。
+    #[test]
+    fn merge_ui_value_resets_misshapen_ui_table() {
+        let mut value = serde_json::json!({"ui": "dark", "last_vault": "/tmp/vault"});
+        merge_ui_value(&mut value, "content_width", &serde_json::json!(760));
+        assert_eq!(value["ui"], serde_json::json!({"content_width": 760}));
+        assert_eq!(value["last_vault"], serde_json::json!("/tmp/vault"));
+    }
+
+    /// version 纪律与 merge_last_vault 共用（bump_config_version）：高版本不降回。
+    #[test]
+    fn merge_ui_value_preserves_newer_version() {
+        let mut value = serde_json::json!({"version": 99});
+        merge_ui_value(&mut value, "content_width", &serde_json::json!(760));
+        assert_eq!(value["version"], serde_json::json!(99));
+    }
+
+    /// 写失败路径（配置路径的某个上级是文件，create_dir_all 必失败）：返回
+    /// config_write_failed，不 panic；空键同样拒绝且不落盘。
+    #[test]
+    fn write_ui_value_to_reports_write_failure() {
+        let dir = std::env::temp_dir().join(format!("lumir-ui-write-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("create temp dir");
+        let blocker = dir.join("blocker");
+        std::fs::write(&blocker, b"not a dir").expect("write blocker file");
+        let path = blocker.join("config.json");
+        let err = write_ui_value_to(&path, "content_width", &serde_json::json!(760))
+            .expect_err("写不进的路径必须报错");
+        assert_eq!(err.code, "config_write_failed");
+        let good = dir.join("config.json");
+        let err =
+            write_ui_value_to(&good, "  ", &serde_json::json!(760)).expect_err("空键必须报错");
+        assert_eq!(err.code, "config_write_failed");
+        assert!(!good.exists(), "空键不得落盘");
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     /// M127：last_vault 写失败必须降级为 warning（返回 false、不 panic、不传播），

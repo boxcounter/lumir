@@ -34,6 +34,7 @@ import type { CommandRunner, EditorCommandId } from "./keys";
 import { DEFAULT_CODE_BLOCK_WRAP, DEFAULT_LINE_WRAP, codeBindingTheme, wrapSpec } from "./preview/theme";
 import type { WrapSettings } from "./preview/theme";
 import { DEFAULT_FONT_SIZE, applyTypography as writeTypography, nextFontSize } from "./typography";
+import { CONTENT_WIDTH_TOKEN, DEFAULT_CONTENT_WIDTH, clampContentWidth } from "./content-width";
 import type { TextScaleDirection, TypographySettings } from "./typography";
 import { lumirSearch } from "./search";
 import { positionFromReadings, restoreScrollTop } from "./scroll-position";
@@ -933,6 +934,14 @@ export interface EditorHandle {
   /** 字号步进一档 / 回到配置字号（应用运行期口径，不落盘）。 */
   textScale(direction: TextScaleDirection): void;
   /**
+   * 施加阅读栏宽（M228，change content-width-drag）：写 `--layout-doc-measure` token 并请求
+   * 重测量（唯一写入路径，见实现处的注释）。装配层在 `config_get` 之后调用一次；启动之后
+   * 由栏宽拖拽每帧调用（live，D4），松手后的持久化在装配层（写 `ui.content_width`）。
+   */
+  setContentWidth(width: number): void;
+  /** 当前生效的阅读栏宽（运行期真源的只读快照：拖拽换算与断言据此读值）。 */
+  contentWidth(): number;
+  /**
    * 新建一个**空文档**会话（M149）：建立逐会话记账，但不装载内容、不激活。
    * 路径与内容由调用方随后的 reloadSession 补上（装载走事务派生，会话因此能继承
    * 搜索面板一类的 StateField 状态；新建 state 会把它们丢掉）。模式先取配置默认基线，
@@ -1111,6 +1120,13 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
   };
   /** `reset` 回到的那一份字号（D4：回到**配置值**，不是出厂 16px）。 */
   let baseFontSize = DEFAULT_FONT_SIZE;
+  /**
+   * 阅读栏宽的**应用运行期真源**（M228，change content-width-drag）：配置在启动时喂一次初值，
+   * 之后由栏宽拖拽推进——与 typography 不同，拖拽松手会**回写** `ui.content_width`（D3 裁决：
+   * 宽度是持久偏好，不是瞬态开关），因此运行期值与配置值天然同步，无双真源。token 写在
+   * `documentElement` 上，全部会话（含后台与新建）与 md/code 两种模式天然同宽。
+   */
+  let contentWidth = DEFAULT_CONTENT_WIDTH;
   let provider: AttachmentProvider = createInvokeAttachmentProvider();
   let wikilinkResolver: WikilinkResolver | null = null;
   /** 图片放大查看的遮罩（M184）：装配层注入，装饰层只经 PreviewContext 取用。 */
@@ -1290,18 +1306,19 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
         backgroundColor: "var(--content-bg)",
         fontFamily: mode === "md" ? "var(--editor-font-family)" : "var(--editor-mono-family)",
       },
-      // 阅读栏宽（design §4 未决项 1 的落法）：中列**定值** `--layout-doc-measure`（664px，
-      // tokens 文档 §布局尺寸），两侧 `minmax(24px, 1fr)` 等分剩余空间 ⇒ 正文列在视口内居中；
+      // 阅读栏宽（design §4 未决项 1 的落法）：中列**定值** `--layout-doc-measure`（默认 680px，
+      // tokens 文档 §布局尺寸；content-width-drag 起可被 `ui.content_width` 与栏宽拖拽覆写，
+      // 合法区间 [680, 1200]），两侧 `minmax(24px, 1fr)` 等分剩余空间 ⇒ 正文列在视口内居中；
       // 旧口径 `--measure: 80%`（百分比）随之退役。正文自己的 32px/44px/20px 内边距在下一条
       // （`--sp-11/--sp-13/--sp-9`，tokens 文档 §间距阶梯点名的「正文 padding」高频出处），
-      // 因此 664px 是**框宽**、文字实测宽 576px——与定稿图 `.doc { max-width:664px;
-      // padding:32px 44px 20px }`（border-box）逐项一致。
+      // 因此 680px 是**框宽**、文字实测宽 592px——与定稿图 `.doc { max-width:664px;
+      // padding:32px 44px 20px }`（border-box）同构（框宽 − 88px 内边距 = 文字宽）。
       //
       // code 模式（design §4 未决项 1 的另一半，口径落地见 test-results/m212/）：模板不变
       // （行的左列要容下 gutter），中列同样换成定值。行为口径：`minmax(max-content, 1fr)`
       // 的 gutter 列与 `minmax(0, 1fr)` 的右列都是弹性轨道，中列的非弹性轨道先被撑满到
-      // 664px 上限，剩余空间再由这两列**等分**——即 gutter 列的最终宽度 = 行号自然宽 + 剩余
-      // 空间的一半，代码正文列恒为 664px。这是旧口径（80% 中列 + 同样的两侧模板）的同一形态，
+      // 栏宽上限，剩余空间再由这两列**等分**——即 gutter 列的最终宽度 = 行号自然宽 + 剩余
+      // 空间的一半，代码正文列恒为栏宽值。这是旧口径（80% 中列 + 同样的两侧模板）的同一形态，
       // 只是中列从 80% 变定值：代码文件视图仍是「行号贴在中列左缘、列外余白由左右两列吸收」。
       ".cm-scroller": {
         fontFamily: "inherit", lineHeight: "var(--lh-reading)",
@@ -1646,6 +1663,24 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
   }
 
   /**
+   * 阅读栏宽的**唯一写入路径**（M228，change content-width-drag）：启动装配（配置值）与
+   * 栏宽拖拽（每帧 live，D4）共用。三步同 design §2.3：写 `--layout-doc-measure` token
+   *（documentElement，与 applyTypography 同落点）→ 显式 `view.requestMeasure()`（CSS 变量
+   * 变化不触发 CM 的 ResizeObserver——它只观察 scrollDOM；不请求就是 M103/M110 同族的
+   * 「坐标与画面错位」）→ 光标行保持可见（收窄会把光标行推出视口，与字号放大同形）。
+   * 值没变直接返回（拖拽到界后继续拖不触发无谓的样式重算与重测量）。
+   * 不改写文档、不进撤销栈、不碰 dirty。
+   */
+  function setContentWidth(width: number): void {
+    const next = clampContentWidth(width);
+    if (next === contentWidth) return;
+    contentWidth = next;
+    document.documentElement.style.setProperty(CONTENT_WIDTH_TOKEN, `${next}px`);
+    view.requestMeasure();
+    keepCaretVisible();
+  }
+
+  /**
    * 施加排版后把光标行保持在视口内（spec 的「改字号后光标仍可见」）。
    *
    * 字号变大会把光标行推到当前视口以下（实测：光标在可见区最下一行时按四档放大，行被推出
@@ -1708,6 +1743,8 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
     },
     applyTypography: applyTypographySettings,
     textScale,
+    setContentWidth,
+    contentWidth: () => contentWidth,
     onReady(listener: EditorReadyListener) {
       readyListeners.add(listener);
       return () => readyListeners.delete(listener);

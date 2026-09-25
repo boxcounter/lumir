@@ -1,4 +1,5 @@
 // app-shell 布局骨架 —— M1 接缝（架构复查 P2-7）。
+import { WIDTH_HANDLE_LABEL } from "./content-width";
 // 只建容器：标题栏（traffic 灯区 + 标签）/ 侧栏 / 编辑器 / modeline 四区，
 // 与文件树 / 编辑器的挂载点。文件树由 src/tree.ts 挂载（add-vault-workspace）；大纲的
 // 当前位置指示段与浮层由 src/toc.ts 维护（M148，M211 从已删除的标题区迁到 modeline）；
@@ -23,6 +24,9 @@ export interface AppShell {
   treeMount: HTMLElement;
   /** 编辑器 pane（CM6 单内核挂载点）。 */
   editor: HTMLElement;
+  /** 栏宽拖拽手柄（M228，change content-width-drag）：覆盖层容器 + 左右缘手柄条。
+   *  定位 / 拖拽 / 空态显隐由 src/content-width.ts 的控制器承担，这里只建 DOM。 */
+  widthHandles: { overlay: HTMLElement; left: HTMLElement; right: HTMLElement };
   /** modeline 容器：它同时是大纲浮层的定位块（见 src/toc.ts 的 mount）。 */
   modeline: HTMLElement;
   /** modeline 左段的当前文件路径（含 dirty 后缀），由装配层写入。 */
@@ -65,6 +69,28 @@ export function createShell(mount: HTMLElement): AppShell {
 
   const fileTree = pane("pane-filetree", "");
   const editor = pane("pane-editor", "");
+
+  // 栏宽拖拽手柄（M228，change content-width-drag，D5：md 与 code 模式都有）：shell 层覆盖
+  // 元素，与 CM 挂载点并列、MUST NOT 进 `.cm-scroller` / `.cm-content`（CM 按 border-box 量
+  // 行高，文档流内的异物会污染测量——M110 同族纪律）。常态不可见（视觉线 opacity 0 + 容器
+  // hidden，显隐由控制器按空态分叉管），hover / 拖拽中显现；读屏身份是 separator。
+  // 读屏名取 src/content-width.ts 的 WIDTH_HANDLE_LABEL（文案 D120 的单一来源）。
+  const widthOverlay = document.createElement("div");
+  widthOverlay.className = "content-width-handles";
+  widthOverlay.hidden = true;
+  const makeHandle = (side: string): HTMLElement => {
+    const el = document.createElement("div");
+    el.className = `content-width-handle content-width-handle-${side}`;
+    el.setAttribute("role", "separator");
+    el.setAttribute("aria-orientation", "vertical");
+    el.setAttribute("aria-label", WIDTH_HANDLE_LABEL);
+    el.tabIndex = 0;
+    return el;
+  };
+  const widthLeft = makeHandle("left");
+  const widthRight = makeHandle("right");
+  widthOverlay.append(widthLeft, widthRight);
+  editor.append(widthOverlay);
   const treeMount = document.createElement("section");
   treeMount.className = "tree-pane";
   fileTree.append(treeMount);
@@ -98,6 +124,7 @@ export function createShell(mount: HTMLElement): AppShell {
     fileTree,
     treeMount,
     editor,
+    widthHandles: { overlay: widthOverlay, left: widthLeft, right: widthRight },
     modeline,
     modelinePath,
     modelineSection,

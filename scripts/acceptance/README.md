@@ -124,6 +124,7 @@ steps:
 | `clickInNode` | `target`、`dx`、`dy`、`count` | 点「某个有 bbox 的节点内部」的相对位置（如 `AXTable`）；`count` 同上，未观察到 `dblclick`（判据限制见「已知边界」） |
 | `clickEditor` | `dx`（默认 40）、`dy`（默认 6） | 点编辑器顶部建立渲染层焦点（编辑器内元素无 AX bbox，只能按坐标） |
 | `doubleClick` | `target`（`{role,name\|any,nth}` 或 `{x,y}`）、`dx`/`dy`、`mode`、`retries`、`settleMs` | **双击**（M209 起套件唯一的双击通道）：swift + `CGEvent` 显式设 `kCGMouseEventClickState`（详见「已知边界」）。`target` 取节点 bbox 中心、`dx`/`dy` 按其宽高比例偏移（默认 0.5）；`{x,y}` 给窗口局部坐标（遮罩这类没有 AX 节点的全屏层用）。动作内部先拿前台（**拿不到即报错**——真鼠标点击落在最上层那扇窗上），再把窗口局部点换算成 Quartz 屏幕坐标。**会移动真实光标**；目标窗口被遮挡或 KimiCU 的 AX 快照退化时按错因报错，不静默 |
+| `drag` | `target`（`{role,name\|any,nth}` 节点须有 bbox，或 `{textareaEdge:"left"\|"right"}` 从编辑器列缘内侧起拖）、`dx`/`dy`（窗口局部点，UI 位移是**确定值**）、`retries`、`settleMs` | **拖拽**（M228 起，栏宽手柄这类「只能拖」的控件的唯一通道）：swift + `CGEvent` 显式投 `leftMouseDown → 插值 dragged ×24 → leftMouseUp`（与 `doubleClick` 同一通道——KimiCU 的 `drag` 工具在 WKWebView 里连文本选择都造不出来，M228 实测，见「已知边界」）。坐标换算与 `doubleClick` 同口径：先拿前台（**拿不到即报错**——真鼠标拖拽落在最上层那扇窗上），窗口局部点 + `window_bounds` 原点 → Quartz 屏幕坐标。**会移动真实光标**。`textareaEdge` 形态存在的原因：WKWebView 把 `role=separator` 暴露成**无 bbox 的 AXSplitter**（M228 实测），栏宽手柄按节点定位不到，只能从 AXTextArea 的 bbox 边缘起拖 |
 | `focusWindow` | `retries` | 确保目标窗口在前台（键盘场景的前台纪律，见上） |
 | `key` / `keys` | `key` / `keys: [...]`、`gapMs` | 键盘注入（`ctrl+n`、`cmd+s`、`cmd+/` …）。`keys` 对**整串都是可打印单字符**的序列额外做回读 + 有限重试（≤3）；chord / 混合序列 / 无可读目标一律保持盲发不重试（判定边界见「已知边界」） |
 | `type` | `text`、`clear`、`retries` | 输入到编辑器（内部先真实点击聚焦，避免落陈旧选区）；回读 + 有限重试与 `keys` **同一口径**：只在编辑器字节完全未变时重试（≤3），partial landing 直接报错不重试（判定边界见「已知边界」） |
@@ -132,7 +133,7 @@ steps:
 | `recordEditor` | `as` | 记下编辑器文本，供 `editor.unchangedSince` 做**逐字节**比较 |
 | `vaultWrite` / `vaultAppend` | `file`、`content` | 从外部改写验收 vault（模拟外部修改） |
 | `vaultRm` | `file` 或 `files` | 从外部**真删除**（不存在即报错）——触发 `fs_not_found` 与「保存冲突」是两条不同分支 |
-| `configWrite` | `lastVault`、`keys`、`restart`、`requireVault` | 改写隔离 config.json（默认重启 app）。`lastVault` **缺省沿用当前值**（显式给才覆盖）——启动恢复的失效路径靠它把 `last_vault` 指向一个不存在的目录；`requireVault: false` 只放宽本步重启的就绪门（见下条） |
+| `configWrite` | `lastVault`、`keys`、`restart`、`requireVault`、`theme`、`contentWidth`、排版三项 | 改写隔离 config.json（默认重启 app）。`lastVault` **缺省沿用当前值**（显式给才覆盖）——启动恢复的失效路径靠它把 `last_vault` 指向一个不存在的目录；`requireVault: false` 只放宽本步重启的就绪门（见下条）。`theme` / `contentWidth` / 排版三项同样**缺省沿用当前值**（M228 起含 `ui.content_width`）：一次 configWrite MUST NOT 把前面设过的键连表抹掉 |
 | `restart` | `requireVault` | 重启 app（崩溃恢复类场景） |
 
 **就绪门与 `requireVault`**（M159 起）：每次起/重启实例后套件等「左栏文件树 + 编辑器节点就位」
@@ -345,6 +346,14 @@ Alex 抽审路径：先看 `summary.md`，再进 FAIL 场景看 `steps.md` + `sh
   权限，缺了会在动作处报错；② 它读的是 mode=ax 的**窗口局部**坐标口径（KimiCU 的 mode=full 给的是
   **截图像素**，实测 1152×768 对 1200 点，两种空间混用会让点击落到别处）——口径对不上或 AX 快照
   退化成只剩菜单栏时，动作按错因分别报错，不猜。
+- **拖拽：KimiCU 的 `drag` 工具在 WKWebView 里造不出 DOM 拖拽（M228 实测）**：对栏宽手柄与正文
+  文本各试一次，手柄的 pointerdown 未到（调试桩零记录）、文本拖选也未发生——与 `dblclick` 同一类
+  注入边界。套件动作 `drag` 因此走 doubleClick 同一条 `swift + CGEvent` 通道（mode 5：
+  down → 24 步插值 dragged → up），前台纪律与坐标口径与 `doubleClick` 完全相同（会移动真实光标、
+  目标窗口必须前台未被遮挡）。另有一条 WKWebView 的 AX 怪癖配套：拖类控件若是 `role=separator`，
+  WKWebView 暴露成**无 bbox 的 AXSplitter**（节点在树、名字对、frame 为空），按节点定位不到——
+  栏宽手柄用 `textareaEdge` 形态（从 AXTextArea bbox 的列缘内侧 2px 起拖）绕开。场景 38 是首个
+  消费者（现场 `test-results/acceptance/<日期>/38-content-width-drag/`）。
 - **场景维护权归实现者**：新功能 mission 的 tasks 必须带「新增/更新验收场景」一项（裁决点 3）。
 
 ## 加一个场景

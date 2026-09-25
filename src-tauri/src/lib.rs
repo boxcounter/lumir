@@ -66,6 +66,7 @@ pub fn run() {
         .manage(commands::DirtyState::default())
         .invoke_handler(tauri::generate_handler![
             commands::config_get,
+            commands::config_set_ui_value,
             commands::vault_open,
             commands::vault_open_path,
             commands::vault_current,

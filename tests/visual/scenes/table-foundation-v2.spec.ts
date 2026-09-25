@@ -256,7 +256,7 @@ test("代码块边界不触发表格增强", async ({ page }) => {
   expect(await readDocument(page)).toBe(source);
 });
 
-test("编辑器主内容宽度为定值栏宽（664px）且居中，宽表仍可横向滚动", async ({ page }) => {
+test("编辑器主内容宽度为定值栏宽（680px）且居中，宽表仍可横向滚动", async ({ page }) => {
   const longCell = "x".repeat(220);
   const source = `# 宽度回归\n\n段落。\n\n| A | B | C |\n| --- | --- | --- |\n| ${longCell} | ${longCell} | ${longCell} |\n`;
   await stubTauri(page, { entries: [{ path: "width.md", kind: "file", size: source.length, mtime_ms: 0 }], files: { "width.md": source } });
@@ -280,9 +280,9 @@ test("编辑器主内容宽度为定值栏宽（664px）且居中，宽表仍可
       tableOverflowX: getComputedStyle(tableScroll).overflowX,
     };
   });
-  // 主内容列 = 定值栏宽（restyle 前的 80% 口径已退役：`--layout-doc-measure` = 664px，
+  // 主内容列 = 定值栏宽（restyle 前的 80% 口径已退役：`--layout-doc-measure` = 680px，
   // 两侧 `minmax(24px, 1fr)` 等分剩余空间 ⇒ 居中；见 src/editor.ts 的 `.cm-scroller` 注释）
-  expect(sizes.contentWidth).toBe(664);
+  expect(sizes.contentWidth).toBe(680);
   // 居中：左右留白大致相等
   const leftGap = sizes.contentLeft - sizes.paneLeft;
   const rightGap = sizes.paneRight - sizes.contentRight;
@@ -312,7 +312,7 @@ test("窄窗口下编辑器主内容被两侧 24px 轨道钳住（定值栏宽�
     };
   });
   expect(sizes.paneWidth).toBeGreaterThan(0);
-  expect(sizes.contentWidth).toBeLessThan(664);
+  expect(sizes.contentWidth).toBeLessThan(680);
   // 中列吃满「窗格宽 − 两侧 24px 最小轨道」；窄窗口行为是**已声明的已知边界**
   // （tasks §11.2「窄窗口行为未定」），这里钉住的是现状而不是某个设计值。
   expect(Math.abs(sizes.contentWidth - (sizes.paneWidth - 48))).toBeLessThanOrEqual(1);
