@@ -27,7 +27,7 @@ import { classifyLinkTarget, standardLinkParts } from "./links";
 import { collectInlineMath, isInsideCodeContext, mathBlockSet } from "./math";
 import { mermaidBlockSet, onMermaidSettled } from "./mermaid";
 import { calloutMarkerDecorations, calloutOnLine, detectCallout } from "./callout";
-import { docDirFromPath, docTitleFromPath, formatDocDate } from "./doc-meta";
+import { docTitleForFrontmatter, docTitleTop } from "./doc-title";
 import { sampleCallback } from "../diagnostics";
 import type { LinkResolveResult } from "../bindings/LinkResolveResult";
 import { BlockWrapper } from "@codemirror/view";
@@ -367,104 +367,48 @@ export function widgetCommands(view: EditorView): Record<WidgetCommandId, Comman
 }
 
 // ---------------------------------------------------------------------------
-// doc-title / doc-meta 块（M218 A1，M216 gap 表 §2.2 缺失项）：定稿 12 张内容屏全部
-// 含此块。位置 = fm 区之后正文之前（原型 index.html:871-877 实例 + NOTES.md:45）。
-// 格式化 helper（标题/路径段/日期段）在 ./doc-meta（纯模块，单测可达）；行数 =
-// state.doc.lines（rope 缓存字段，O(1)）；修改时间 = 文件 mtime（经 ctx.fileMtime，
-// 后端 fs_file_mtime）。
+// doc-title / doc-meta 块（M218 A1）：实现已迁往 ./doc-title（M222 把它扩成两种
+// 挂载机制，独立成模块）。有 fm 落点折叠进 FrontmatterWidget（见下方
+// frontmatterDecorations）；无 fm 落点是 scroller 级节点 docTitleTop。
 // ---------------------------------------------------------------------------
 
-/**
- * doc-title / doc-meta 的块级 widget：替换不存在（不动文档文本），纯插入。
- * 与 frontmatter widget 同口径——只改视图（ADR 0003 §3）。
- */
-class DocTitleWidget extends WidgetType {
-  constructor(
-    readonly title: string,
-    readonly dir: string,
-    readonly lines: number,
-    readonly mtimeMs: number | null,
-  ) {
-    super();
-  }
-
-  eq(other: DocTitleWidget): boolean {
-    return (
-      other.title === this.title &&
-      other.dir === this.dir &&
-      other.lines === this.lines &&
-      other.mtimeMs === this.mtimeMs
-    );
-  }
-
-  toDOM(): HTMLElement {
-    const outer = document.createElement("div");
-    outer.className = "cm-lp-doc-title-outer";
-    const title = document.createElement("div");
-    title.className = "cm-lp-doc-title";
-    title.textContent = this.title;
-    const meta = document.createElement("div");
-    meta.className = "cm-lp-doc-meta";
-    const segment = (text: string) => {
-      const span = document.createElement("span");
-      span.textContent = text;
-      meta.append(span);
-    };
-    const sep = () => {
-      const span = document.createElement("span");
-      span.className = "cm-lp-doc-meta-sep";
-      span.textContent = "·";
-      meta.append(span);
-    };
-    const segments: string[] = [];
-    if (this.dir !== "") segments.push(this.dir);
-    segments.push(`${this.lines} 行`);
-    if (this.mtimeMs !== null) segments.push(`修改于 ${formatDocDate(this.mtimeMs)}`);
-    segments.forEach((text, i) => {
-      if (i > 0) sep();
-      segment(text);
-    });
-    outer.append(title, meta);
-    return outer;
-  }
-}
-
-function docTitleSet(state: EditorState, ctx: PreviewContext): DecorationSet {
-  const path = ctx.currentFilePath();
-  // 无文件上下文（未命名会话）不渲染——没有标题与路径段可给。
-  if (path === undefined) return Decoration.none;
-  const fm = detectFrontmatter(state.doc);
-  const widget = new DocTitleWidget(
-    docTitleFromPath(path),
-    docDirFromPath(path),
-    state.doc.lines,
-    ctx.fileMtime(path) ?? null,
-  );
-  // 有 fm 时钉在 fm 块之后（side 1）；无 fm 时在文档首行之前（块级 widget 在行首位置
-  // 按 side 定上下：负值在该行之上）。
-  return Decoration.set([
-    Decoration.widget({ widget, block: true, side: fm ? 1 : -1 }).range(fm ? fm.to : 0),
-  ]);
-}
-
 export function livePreview(ctx: PreviewContext) {
-  // doc-title 块走 StateField 的理由与 frontmatter 相同：它恒定存在于文档首部、不随
-  // 视口增量重建。重算时机：docChanged（行数段会变）/ previewRefresh（mtime 到达）/
-  // 新 state（切会话，create 重算）。
-  const docTitleDecorations = StateField.define<DecorationSet>({
+  // frontmatter 的 replace 跨行，而插件装饰不允许替换换行符（CM6 硬限制），
+  // 故走 StateField：文档或选区变化时重算，且 detectFrontmatter 从文档首部扫描、
+  // 有行数上限（见 frontmatter.ts），与视口增量策略不冲突（不是全量装饰构建）。
+  // 重算时机另加 previewRefresh：折叠进 widget 的 doc-title 的 mtime 段经它到达。
+  // 需要 ctx（doc-title 的标题/路径段/mtime），故装配在闭包内而非模块级。
+  const frontmatterDecorations = StateField.define<DecorationSet>({
     create(state) {
-      return docTitleSet(state, ctx);
+      return frontmatterSet(state);
     },
     update(value, tr) {
-      return tr.docChanged || tr.effects.some((e) => e.is(previewRefresh))
-        ? docTitleSet(tr.state, ctx)
+      return tr.docChanged || tr.selection || tr.effects.some((e) => e.is(previewRefresh))
+        ? frontmatterSet(tr.state)
         : value;
     },
     provide: (f) => EditorView.decorations.from(f),
   });
+
+  function frontmatterSet(state: EditorState): DecorationSet {
+    const fm = detectFrontmatter(state.doc);
+    if (!fm) return Decoration.none;
+    return Decoration.set([
+      Decoration.replace({
+        widget: new FrontmatterWidget(
+          fm.inner,
+          state.selection.ranges.some((range) => range.from <= fm.from && range.to >= fm.to),
+          docTitleForFrontmatter(state, ctx, fm),
+        ),
+        block: true,
+      }).range(fm.from, fm.to),
+    ]);
+  }
+
   return [
     livePreviewTheme,
-    docTitleDecorations,
+    // 无 fm 落点的 doc-title（scroller 级节点，M222——不走 CM 装饰，原因见 doc-title.ts 文件头）。
+    docTitleTop(ctx, previewRefresh),
     frontmatterDecorations,
     mathBlockDecorations,
     mermaidBlockDecorations,
@@ -555,31 +499,6 @@ export function livePreview(ctx: PreviewContext) {
       { decorations: (v) => v.decorations },
     ),
   ];
-}
-
-// frontmatter 的 replace 跨行，而插件装饰不允许替换换行符（CM6 硬限制），
-// 故走 StateField：文档或选区变化时重算，且 detectFrontmatter 从文档首部扫描、
-// 有行数上限（见 frontmatter.ts），与视口增量策略不冲突（不是全量装饰构建）。
-const frontmatterDecorations = StateField.define<DecorationSet>({
-  create(state) {
-    return frontmatterSet(state);
-  },
-  update(value, tr) {
-    return tr.docChanged || tr.selection ? frontmatterSet(tr.state) : value;
-  },
-  provide: (f) => EditorView.decorations.from(f),
-});
-
-function frontmatterSet(state: EditorState): DecorationSet {
-  const fm = detectFrontmatter(state.doc);
-  if (!fm) return Decoration.none;
-  return Decoration.set([
-    Decoration.replace({ widget: new FrontmatterWidget(fm.inner,
-      state.selection.ranges.some(range => range.from <= fm.from && range.to >= fm.to)), block: true }).range(
-      fm.from,
-      fm.to,
-    ),
-  ]);
 }
 
 // ```mermaid 围栏块可跨行，与 frontmatter/块级公式同约束走 StateField。

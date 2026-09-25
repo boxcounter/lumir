@@ -356,9 +356,10 @@ function syncActiveDocument(): void {
   void readingPositions.flush();
 }
 
-/** 装载完成后的表现层对齐（打开 / 重载共用）。 */
+/** 装载完成后的表现层对齐（打开 / 重载共用）。
+ *  解析缓存失效不在这里：它必须发生在装载**之前**（openFile 里 reloadSession 的前一句），
+ *  否则会抹掉装载事务里刚发起的在途 resolve，mtime 到达后的重建会重复查询（M227）。 */
 function afterLoad(): void {
-  linkFollow.invalidate(); // 内容已换，按 from 键控的解析缓存整批失效
   showEditor();
   syncActiveDocument();
 }
@@ -419,6 +420,12 @@ async function openFile(
     save.noteOpened(path, kind === "md" ? snapshot.revision : undefined);
     const session = tabs.targetSessionFor(intent);
     tabs.activateTab(session); // 已在同一会话上时是 no-op
+    // 解析缓存整批失效必须在装载**之前**（save-controller.ts 外部重载路径的同序写法）：
+    // 装饰层在 reloadSession 的装载事务里首次构建并发起 link_graph_resolve（在途），
+    // 装完再清会把在途标记一并抹掉——随后 mtime 到达触发的 previewRefresh 重建时，
+    // 同名链接因 pending 已空、缓存已清而重复查询（M227 实证：同一 wikilink 一次打开
+    // 打两次后端）。内容真变更的语义不变：每次装载仍然整批失效，只是次序先于首次构建。
+    linkFollow.invalidate(); // 内容已换，按 from 键控的解析缓存整批失效
     // 装载走事务派生（editor.reloadSession）而不是新建 state：同一标签内换文件时
     // 搜索面板的查询与开合状态因此保留（M139 以来的既有行为）。
     editor.reloadSession(session, snapshot.content, path, request);

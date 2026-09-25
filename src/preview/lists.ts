@@ -103,8 +103,11 @@ class ListLayout {
       //   比值的两个写值：改一处必须改另一处，否则测量宽度与渲染宽度分叉，悬挂缩进
       //   逐级错位。这里量的是「0」在各档**标记渲染字号**下的宽度（数字在 sans 下
       //   等宽——标记带了 tabular-nums，逐级一个单位宽）。
-      // 族取值点同时受视觉场景钉住（typography.spec.ts 断言 canvas 拿到的族串与标记的
-      // 计算 fontFamily 逐字相同）。
+      // 族取值点同时受视觉场景钉住（typography.spec.ts）：口径是 canvas 拿到的族串 =
+      // token **原文**（自定义属性 getPropertyValue 返回 var() 代入后的未归一字面量）；
+      // 它与标记的**计算** fontFamily 不是同一形态——sans 栈经 Chromium 归一
+      //（BlinkMacSystemFont → "system-ui"）后与原文分叉，mono 栈无别名时恰好相等。
+      // 场景侧分别钉：canvasFonts 断言钉原文串，listMarkerFontFamily 断言钉归一形态。
       const family = style.getPropertyValue(EDITOR_FONT_FAMILY_TOKEN);
       const base = parseFloat(style.fontSize);
       return MARKER_FONT_RATIOS.map((ratio) => {
@@ -173,7 +176,14 @@ class ListLayout {
       this.timer = undefined;
     }
     this.tree = tree;
-    if (update.geometryChanged) this.measure();
+    // 注意：geometryChanged 刻意不是测量触发点。标记宽度只依赖字体族/字号
+    //（documentElement 的 style/class 经 MutationObserver、字体就绪经
+    // document.fonts loadingdone、初始值经构造时的 measure——typography.ts 的字体
+    // token 就写在 documentElement.style 上），窗口 resize / 主题切换都不改变它们。
+    // 挂 geometryChanged 的反例（M222 回归 3 探针实证）：⌘A→↓ 的滚动校正环路每个
+    // pass 都 geometryChanged → 每 pass 再排一次 requestMeasure → 测量环路被洪峰
+    // 打断（CM 的 "Measure loop restarted more than 5 times"），scrollTarget 的末次
+    // 校正跑不完，无 fm 长文档的 ↓ 揭示不足（cursor-motion.spec.ts:84）。
     if (resized || update.docChanged || tree !== syntaxTree(update.startState) || update.viewportChanged) this.build(update.view);
   }
 

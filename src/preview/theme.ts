@@ -25,6 +25,8 @@ import { EditorView } from "@codemirror/view";
 import { BINDING_MATCH_CLASS } from "../code-identifiers";
 import type { EditorMode } from "../bindings/EditorMode";
 import { END_MARKER_VISIBLE_CLASS } from "./endMarker";
+import { DOC_TITLE_TOP_CLASS } from "./doc-title";
+import { FRONTMATTER_HAS_TITLE_CLASS } from "./frontmatter";
 
 /** 代码块折行口径的内容级 class（M180，单一来源）：由 `src/editor.ts` 的 `wrapExtensions` 经
  *  `contentAttributes` 加到 `.cm-content` 上，本文件的样式按它们选择。两个 class 互斥，
@@ -317,8 +319,9 @@ export const livePreviewTheme = EditorView.theme({
   // 24px/680/1.28/-0.012em 标题 + 12px text-3 meta 行（路径 · 行数 · 修改时间，
   // tabular-nums），位置 = fm 区之后正文之前（原型 index.html:238-239 CSS +
   // :871-877 实例 + NOTES.md:45；tokens 锚点 docs/specs/design-tokens-v1.md:124-141）。
-  // 块级 widget（livePreview.ts 的 DocTitleWidget），纵向间距全走 padding（CM 测 widget
-  // 高度不含 margin，同 frontmatter 的 M110 教训）：meta 行与正文之间的 20px 是定稿
+  // 两种挂载机制（M222，见 doc-title.ts 文件头）：有 fm 折叠进 fm widget 的 outer、
+  // 无 fm 是 scroller 级节点。纵向间距全走 padding（CM 测 widget 高度不含 margin，
+  // 同 frontmatter 的 M110 教训）：meta 行与正文之间的 20px 是定稿
   // `.doc-body { margin-top: 20px }`（index.html:241）。
   ".cm-lp-doc-title-outer": { paddingBottom: "var(--sp-9)" },
   ".cm-lp-doc-title": {
@@ -338,6 +341,32 @@ export const livePreviewTheme = EditorView.theme({
   },
   ".cm-lp-doc-meta-sep": { color: "var(--border)" },
 
+  // document-top 落点（无 fm，M222 劈叉修复）：doc-title 是 `.cm-scroller` 的首个子元素
+  //（grid 第 2 列第 1 行），正文行下移到第 2 行、末尾标记再到第 3 行。机制与不变量见
+  // doc-title.ts 文件头——这里只承载几何：
+  // - 行尺寸：title 行 max-content、正文行 minmax(0, 1fr)。短文档正文盒填满剩余高度——
+  //   「点正文下方空白仍落在 .cm-content 内」的既有行为（endMarker 段注释点名的那条）不变；
+  //   末尾标记在场时（长文档）两行都改 max-content，否则正文行被压到可用高度、标记会叠在
+  //   溢出正文上（endMarker 段那条隐式行尺寸教训的另一半形态）。
+  // - 正文的 32px 上内边距（--sp-11）与横向 44px（--sp-13）转由 title 节点承担，正文
+  //   paddingTop 归零——视觉几何与 widget 形态逐项一致：32 / title / 20（--sp-9，上方既有
+  //   规则的 paddingBottom）/ 首个内容块。
+  // - 字号基准同 endMarker 的 backlog #31 教训：节点不继承 .cm-content 的字号声明，显式落
+  //   --editor-font-size，内层的 calc(Nem/15) 才按正文锚解析。
+  [`.cm-scroller.${DOC_TITLE_TOP_CLASS}`]: { gridTemplateRows: "max-content minmax(0, 1fr)" },
+  [`.cm-scroller.${DOC_TITLE_TOP_CLASS}.${END_MARKER_VISIBLE_CLASS}`]: { gridTemplateRows: "max-content max-content" },
+  [`.cm-scroller.${DOC_TITLE_TOP_CLASS} .cm-content`]: { gridRow: "2", paddingTop: "0" },
+  [`.cm-scroller.${DOC_TITLE_TOP_CLASS} > .cm-lp-doc-title-outer`]: {
+    gridColumn: "2",
+    gridRow: "1",
+    boxSizing: "border-box",
+    minWidth: "0",
+    fontSize: "var(--editor-font-size)",
+    paddingTop: "var(--sp-11)",
+    paddingInline: "var(--sp-13)",
+  },
+  [`.cm-scroller.${DOC_TITLE_TOP_CLASS}.${END_MARKER_VISIBLE_CLASS} .cm-lp-end-marker`]: { gridRow: "3" },
+
   // frontmatter properties 区块（块级 replace widget）→ 定稿的 `.fm` 属性区形态
   //（design/prototypes/direction-c 屏 4）：agent-bg 浅底 + r8 圆角 + `8px 14px 9px` 内边距
   //（tokens 文档 §间距阶梯点名的「fm 区 padding」高频出处），置于文档最顶部（widget 只对
@@ -349,6 +378,12 @@ export const livePreviewTheme = EditorView.theme({
   // 块后间距 20px（定稿 `.fm { margin-bottom: 20px }`，index.html:392；M216 gap 表
   // §2.3 #13：旧值 12+4 偏紧）。
   ".cm-lp-frontmatter-outer": { padding: "var(--sp-2) 0 var(--sp-9)" },
+  // fm widget 携带 doc-title 时（M222 回归 2 修复，折叠形态）：fm 盒下的 20px 从
+  // -outer 的 paddingBottom 挪给 title 的 paddingTop——间距阶梯逐项不变
+  //（sp-2 / fm 盒 / 20 / title / 20 / 正文），只是把第二段 20 的承载者换成 title，
+  // 这样 title 与 fm 盒之间、title 与正文之间各有 20px，与折叠前完全一致。
+  [`.cm-lp-frontmatter-outer.${FRONTMATTER_HAS_TITLE_CLASS}`]: { paddingBottom: "0" },
+  ".cm-lp-frontmatter-outer > .cm-lp-doc-title-outer": { paddingTop: "var(--sp-9)" },
   ".cm-lp-frontmatter": {
     borderRadius: "var(--r8)",
     padding: "var(--sp-4) var(--sp-7) 9px",

@@ -1,0 +1,598 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Lumir — Heading 层级辨识度 · 对比稿</title>
+<style>
+/* ============ tokens（与 direction-c 定稿一致，逐值复制） ============ */
+:root {
+  --sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", "PingFang SC", "Hiragino Sans GB", sans-serif;
+}
+:root, :root[data-theme="light"] {
+  --frame: #f4f4f1;
+  --agent-bg: #f7f7f4;
+  --content-bg: #fdfdfc;
+  --preview-bg: #ffffff;
+  --border: #e3e2dd;
+  --border-soft: #edece7;
+  --text: #21201a;
+  --text-2: #6e6c61;
+  --text-3: #a9a79b;
+  --sel: #e8e7e1;
+  --hover: rgba(0,0,0,0.038);
+  --accent: #3a5fcd;
+  --accent-tint: #eef1fb;
+  --code-bg: #f2f1ec;
+  --tk-k: #3a5fcd;
+  --tk-s: #2c7a4d;
+  --tk-n: #a06e0f;
+  --tk-c: #a9a79b;
+  --shadow-pop: 0 1px 2px rgba(0,0,0,0.05);
+  --tl-close: #ff5f57; --tl-min: #febc2e; --tl-max: #28c840;
+}
+:root[data-theme="dark"] {
+  --frame: #1a1b1d;
+  --agent-bg: #1e1f21;
+  --content-bg: #222326;
+  --preview-bg: #26272b;
+  --border: rgba(255,255,255,0.095);
+  --border-soft: rgba(255,255,255,0.055);
+  --text: #e3e2db;
+  --text-2: #9b9a91;
+  --text-3: #62615b;
+  --sel: rgba(255,255,255,0.075);
+  --hover: rgba(255,255,255,0.05);
+  --accent: #8ba3ef;
+  --accent-tint: rgba(128,152,232,0.15);
+  --code-bg: rgba(255,255,255,0.05);
+  --tk-k: #8ba3ef;
+  --tk-s: #7cc093;
+  --tk-n: #d9a75c;
+  --tk-c: #63615f;
+  --shadow-pop: none;
+}
+:root[data-theme="eink"] {
+  --frame: #ffffff;
+  --agent-bg: #ffffff;
+  --content-bg: #ffffff;
+  --preview-bg: #ffffff;
+  --border: #000000;
+  --border-soft: #b9b9b9;
+  --text: #000000;
+  --text-2: #3d3d3d;
+  --text-3: #6e6e6e;
+  --sel: #000000;
+  --sel-text: #ffffff;
+  --hover: rgba(0,0,0,0.06);
+  --accent: #000000;
+  --accent-tint: transparent;
+  --code-bg: #f0f0f0;
+  --tk-k: #000000;
+  --tk-s: #000000;
+  --tk-n: #000000;
+  --tk-c: #6e6e6e;
+  --shadow-pop: none;
+}
+
+/* ============ base ============ */
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html, body { height: 100%; overflow: hidden; }
+body {
+  font-family: var(--sans);
+  font-size: 13px;
+  color: var(--text);
+  background: var(--frame);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  font-feature-settings: "cv11", "ss01";
+}
+.num, .modeline, .doc-meta { font-variant-numeric: tabular-nums; }
+button { font: inherit; color: inherit; background: none; border: none; cursor: default; }
+::selection { background: var(--accent-tint); }
+:root[data-theme="eink"] ::selection { background: #000; color: #fff; }
+
+.window { display: flex; flex-direction: column; height: 100vh; }
+
+/* ============ titlebar（定稿原样） ============ */
+.titlebar {
+  height: 42px; flex: none;
+  display: flex; align-items: center;
+  background: var(--frame);
+  border-bottom: 1px solid var(--border);
+  padding: 0 12px 0 0;
+}
+.traffic { width: 236px; flex: none; display: flex; gap: 8px; padding-left: 14px; align-items: center; }
+.traffic i { width: 12px; height: 12px; border-radius: 50%; display: block; }
+.traffic .c { background: var(--tl-close); } .traffic .m { background: var(--tl-min); } .traffic .x { background: var(--tl-max); }
+:root[data-theme="eink"] .traffic i { border: 1.2px solid #000; }
+.tabs { display: flex; align-items: center; gap: 4px; flex: 1; min-width: 0; padding-left: 6px; }
+.tab {
+  display: flex; align-items: center; gap: 7px;
+  height: 29px; padding: 0 12px;
+  border-radius: 7px;
+  font-size: 12.5px; color: var(--text-2);
+  max-width: 230px;
+  border: 1px solid transparent;
+  white-space: nowrap;
+}
+.tab.active {
+  background: var(--content-bg);
+  color: var(--text);
+  border-color: var(--border);
+  box-shadow: var(--shadow-pop);
+  font-weight: 500;
+}
+:root[data-theme="eink"] .tab.active { border: 1.4px solid #000; box-shadow: none; }
+.tab .t-name { overflow: hidden; text-overflow: ellipsis; }
+.tab .t-close { color: var(--text-3); font-size: 13px; line-height: 1; padding: 1px 2px; border-radius: 4px; }
+
+/* ============ main row ============ */
+.main { flex: 1; display: flex; min-height: 0; }
+
+/* ============ sidebar（定稿原样，树精简） ============ */
+.sidebar {
+  width: 236px; flex: none;
+  background: var(--frame);
+  border-right: 1px solid var(--border);
+  display: flex; flex-direction: column;
+  min-height: 0;
+}
+.side-head {
+  flex: none; display: flex; align-items: center; justify-content: space-between;
+  padding: 12px 12px 8px 16px;
+}
+.vault-name { font-size: 13px; font-weight: 650; letter-spacing: 0.01em; display: flex; align-items: center; gap: 5px; }
+.vault-name svg { color: var(--text-3); }
+.side-head .tb-btn { width: 26px; height: 24px; border-radius: 6px; color: var(--text-3); }
+.tb-btn {
+  width: 30px; height: 28px; border-radius: 7px;
+  display: flex; align-items: center; justify-content: center;
+  color: var(--text-2);
+}
+.tree { flex: 1; overflow: hidden; padding: 2px 8px 12px; }
+.tr {
+  display: flex; align-items: center; gap: 4px;
+  height: 25px; padding-right: 8px;
+  border-radius: 6px;
+  font-size: 12.5px; color: var(--text);
+  white-space: nowrap; position: relative;
+}
+.tr .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.tr.folder { font-weight: 500; }
+.tr .chev { flex: none; width: 14px; height: 14px; display: flex; align-items: center; justify-content: center; color: var(--text-3); }
+.tr .chev svg { display: block; }
+.tr.open > .chev { transform: rotate(90deg); }
+.tr .chev.leaf { visibility: hidden; }
+.tr.selected { background: var(--sel); font-weight: 550; }
+:root[data-theme="eink"] .tr.selected { color: var(--sel-text); }
+.tree-group { margin-top: 10px; }
+.tree-group:first-child { margin-top: 2px; }
+
+/* ============ content / doc（定稿原样） ============ */
+.content { flex: 1; min-width: 0; background: var(--content-bg); display: flex; flex-direction: column; }
+.doc-scroll { flex: 1; overflow: hidden; }
+.doc { max-width: 664px; margin: 0 auto; padding: 32px 44px 20px; }
+.doc-title { font-size: 24px; line-height: 1.28; font-weight: 680; letter-spacing: -0.012em; }
+.doc-meta { margin-top: 7px; font-size: 12px; color: var(--text-3); display: flex; gap: 6px; align-items: center; }
+.doc-meta .sep { color: var(--border); }
+.doc-body { margin-top: 20px; font-size: 15px; line-height: 1.7; }
+.doc-body p { margin: 0 0 8px; }
+.doc-body p.lede { color: var(--text-2); }
+.doc-body hr { border: none; border-top: 1px solid var(--border-soft); margin: 20px 0; }
+.doc-body ol, .doc-body ul { margin: 0 0 10px; padding-left: 0; list-style: none; }
+.doc-body li { position: relative; padding-left: 26px; margin: 2px 0; }
+.doc-body > ol { counter-reset: n1; }
+.doc-body > ol > li { counter-increment: n1; }
+.doc-body > ol > li::before {
+  content: counter(n1) ".";
+  position: absolute; left: 0; top: 0;
+  color: var(--text-3); font-variant-numeric: tabular-nums; font-size: 13.5px; line-height: 1.9;
+}
+.doc-body > ol > li > ol { counter-reset: n2; margin: 3px 0; }
+.doc-body > ol > li > ol > li { counter-increment: n2; padding-left: 38px; }
+.doc-body > ol > li > ol > li::before {
+  content: counter(n1) "." counter(n2);
+  position: absolute; left: 0; top: 0;
+  color: var(--text-3); font-variant-numeric: tabular-nums; font-size: 13px; line-height: 1.95;
+}
+.doc-body ul > li::before {
+  content: "–";
+  position: absolute; left: 6px; top: 0; color: var(--text-3);
+}
+.doc-body ul ul { margin: 3px 0; }
+.doc-body ul ul > li { padding-left: 40px; }
+.doc-body ul ul > li::before { content: "◦"; left: 24px; font-size: 12px; }
+.wl {
+  color: var(--accent);
+  background: var(--accent-tint);
+  padding: 1px 5px; border-radius: 5px;
+  text-decoration: none; white-space: nowrap;
+}
+:root[data-theme="eink"] .wl { text-decoration: underline; text-underline-offset: 3px; padding: 0 2px; }
+code.inl {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 13px; background: var(--code-bg);
+  padding: 1.5px 5px; border-radius: 5px;
+}
+.doc-body blockquote {
+  margin: 0 0 12px; padding: 2px 0 2px 14px;
+  border-left: 2px solid var(--border);
+  color: var(--text-2);
+}
+.doc-body table { width: 100%; border-collapse: collapse; margin: 2px 0 10px; font-size: 13.5px; }
+.doc-body th {
+  text-align: left; font-size: 11.5px; font-weight: 650; letter-spacing: 0.04em;
+  color: var(--text-2); padding: 5px 14px 6px 0;
+  border-bottom: 1px solid var(--border);
+}
+.doc-body td {
+  padding: 6px 14px 6px 0; line-height: 1.5; vertical-align: top;
+  border-bottom: 1px solid var(--border-soft);
+}
+.doc-body td:first-child { font-weight: 550; white-space: nowrap; }
+.doc-body tr:last-child td { border-bottom: none; }
+:root[data-theme="eink"] .doc-body th { border-bottom-color: #000; }
+.codeblock {
+  margin: 4px 0 12px;
+  background: var(--code-bg);
+  border-radius: 8px;
+  padding: 9px 14px 10px;
+}
+:root[data-theme="eink"] .codeblock { background: #fff; border: 1px solid #000; }
+.cb-head {
+  display: flex; align-items: baseline; justify-content: space-between;
+  font-size: 10.5px; color: var(--text-3); letter-spacing: 0.03em;
+  margin-bottom: 5px;
+}
+.codeblock pre {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 12px; line-height: 1.55;
+  white-space: pre; overflow: hidden;
+}
+.tk-k { color: var(--tk-k); font-weight: 600; }
+.tk-s { color: var(--tk-s); }
+.tk-n { color: var(--tk-n); }
+.tk-c { color: var(--tk-c); }
+:root[data-theme="eink"] .tk-k { font-weight: 700; }
+
+/* ============ modeline（定稿原样） ============ */
+.modeline {
+  height: 25px; flex: none;
+  display: flex; align-items: center; justify-content: space-between;
+  background: var(--frame);
+  border-top: 1px solid var(--border);
+  padding: 0 12px;
+  font-size: 11px; color: var(--text-3);
+}
+.modeline b { font-weight: 600; color: var(--text-2); }
+.modeline .ml, .modeline .mr { display: flex; gap: 10px; align-items: center; }
+
+/* ================================================================
+   Heading 阶梯：base（现行）+ 三稿
+   基线出处：docs/specs/design-tokens-v1.md §字体（19/16.5/15 阶梯、
+   字重 650 档）+ 现行实现 src/preview/theme.ts:117-122（h4/h5=15/600、
+   h6=15/600 italic text-2）。
+   ================================================================ */
+
+/* ---------- base · 现行（对照组，不动） ---------- */
+body[data-v="base"] .doc-body h1 { font-size: 19px; font-weight: 650; letter-spacing: -0.008em; margin: 24px 0 9px; }
+body[data-v="base"] .doc-body h2 { font-size: 16.5px; font-weight: 650; letter-spacing: -0.006em; margin: 20px 0 6px; }
+body[data-v="base"] .doc-body h3 { font-size: 15px; font-weight: 650; letter-spacing: -0.004em; margin: 16px 0 5px; }
+body[data-v="base"] .doc-body h4 { font-size: 15px; font-weight: 600; margin: 14px 0 4px; }
+body[data-v="base"] .doc-body h5 { font-size: 15px; font-weight: 600; margin: 14px 0 4px; }
+body[data-v="base"] .doc-body h6 { font-size: 15px; font-weight: 600; font-style: italic; color: var(--text-2); margin: 14px 0 4px; }
+
+/* ---------- 稿 A · 纯字号阶梯（级差拉大，单变量） ----------
+   意图：辨识度全部由字号承担——21/18/16/15/14/13，相邻级差 3/2/1/1/1px；
+   字重统一 650 不加任何装饰。H4 起低于/持平正文，靠 650 字重收尾。 */
+body[data-v="a"] .doc-body h1 { font-size: 21px; font-weight: 650; letter-spacing: -0.009em; margin: 26px 0 10px; }
+body[data-v="a"] .doc-body h2 { font-size: 18px; font-weight: 650; letter-spacing: -0.007em; margin: 22px 0 7px; }
+body[data-v="a"] .doc-body h3 { font-size: 16px; font-weight: 650; letter-spacing: -0.005em; margin: 18px 0 6px; }
+body[data-v="a"] .doc-body h4 { font-size: 15px; font-weight: 650; letter-spacing: -0.004em; margin: 16px 0 5px; }
+body[data-v="a"] .doc-body h5 { font-size: 14px; font-weight: 650; letter-spacing: -0.002em; margin: 14px 0 4px; }
+body[data-v="a"] .doc-body h6 { font-size: 13px; font-weight: 650; letter-spacing: 0; margin: 12px 0 4px; }
+
+/* ---------- 稿 B · 双族制：展示档 + 标签档 ----------
+   意图：H1–H4 走字号×字重双轴（20/680 → 14.5/600 逐级双降）；
+   H5–H6 转入「标签」语汇（th / tg-label 同族：小字号 + 正字距 + 降明度），
+   与正文形成族差异而非级差。 */
+body[data-v="b"] .doc-body h1 { font-size: 20px; font-weight: 680; letter-spacing: -0.009em; margin: 26px 0 9px; }
+body[data-v="b"] .doc-body h2 { font-size: 17.5px; font-weight: 650; letter-spacing: -0.006em; margin: 22px 0 6px; }
+body[data-v="b"] .doc-body h3 { font-size: 15.5px; font-weight: 650; letter-spacing: -0.004em; margin: 18px 0 5px; }
+body[data-v="b"] .doc-body h4 { font-size: 14.5px; font-weight: 600; letter-spacing: -0.002em; margin: 16px 0 4px; }
+body[data-v="b"] .doc-body h5 { font-size: 12.5px; font-weight: 650; letter-spacing: 0.02em; margin: 14px 0 4px; }
+body[data-v="b"] .doc-body h6 { font-size: 12.5px; font-weight: 650; letter-spacing: 0.06em; color: var(--text-2); margin: 12px 0 4px; }
+
+/* ---------- 稿 C · 结构信号（骨架不动 + 既有线语汇） ----------
+   意图：字号骨架基本保持现行（19/16.5/15，深档微调）；辨识度由两个既有
+   结构语汇承担——H2 底线 hairline（th 同手法）、H3 左侧 2px 短竖杠
+   （引用块同手法，色取 --text-3 中性灰）；深档靠明度梯度（text → text-2 → text-3）。 */
+body[data-v="c"] .doc-body h1 { font-size: 19px; font-weight: 650; letter-spacing: -0.008em; margin: 24px 0 9px; }
+body[data-v="c"] .doc-body h2 {
+  font-size: 16.5px; font-weight: 650; letter-spacing: -0.006em;
+  margin: 22px 0 8px; padding-bottom: 5px;
+  border-bottom: 1px solid var(--border-soft);
+}
+body[data-v="c"] .doc-body h3 {
+  font-size: 15px; font-weight: 650; letter-spacing: -0.004em;
+  margin: 16px 0 5px; padding-left: 10px;
+  border-left: 2px solid var(--text-3);
+}
+body[data-v="c"] .doc-body h4 { font-size: 14.5px; font-weight: 650; letter-spacing: -0.002em; margin: 15px 0 4px; }
+body[data-v="c"] .doc-body h5 { font-size: 13.5px; font-weight: 600; color: var(--text-2); margin: 13px 0 4px; }
+body[data-v="c"] .doc-body h6 { font-size: 12.5px; font-weight: 600; letter-spacing: 0.04em; color: var(--text-3); margin: 12px 0 4px; }
+
+/* 首标题上边距归零（全稿通用） */
+.doc-body > h1:first-child, .doc-body > h2:first-child, .doc-body > h3:first-child { margin-top: 0; }
+
+/* ============ 切换器（?ui=0 隐藏，截图时不出现） ============ */
+.switcher {
+  position: fixed; right: 14px; bottom: 34px; z-index: 90;
+  display: flex; gap: 4px; align-items: center;
+  background: var(--preview-bg);
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  padding: 5px 7px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.10);
+  font-size: 11.5px; color: var(--text-2);
+}
+.switcher a { color: var(--text-2); text-decoration: none; padding: 2px 6px; border-radius: 5px; }
+.switcher a.cur { background: var(--sel); color: var(--text); font-weight: 550; }
+.switcher .sw-sep { width: 1px; height: 12px; background: var(--border-soft); }
+body[data-ui="0"] .switcher { display: none; }
+
+/* ============ 总览页（无 ?v= 时） ============ */
+.ov { display: none; }
+body[data-v=""] .ov { display: block; }
+body[data-v=""] .window { display: none; }
+.ov-wrap { max-width: 920px; margin: 0 auto; padding: 48px 32px 64px; }
+.ov h1 { font-size: 21px; font-weight: 680; letter-spacing: -0.009em; }
+.ov .ov-sub { margin-top: 8px; font-size: 13px; color: var(--text-2); line-height: 1.6; }
+.ov .ov-grid { margin-top: 26px; display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.ov .ov-card {
+  background: var(--content-bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 14px 16px 12px;
+}
+.ov .ov-card h2 { font-size: 14px; font-weight: 650; letter-spacing: -0.002em; }
+.ov .ov-card .ov-intent { margin-top: 5px; font-size: 12.5px; color: var(--text-2); line-height: 1.6; }
+.ov .ov-card table { margin-top: 9px; width: 100%; border-collapse: collapse; font-size: 11.5px; }
+.ov .ov-card td { padding: 2.5px 8px 2.5px 0; border-bottom: 1px solid var(--border-soft); color: var(--text-2); }
+.ov .ov-card td:first-child { color: var(--text-3); font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 10.5px; width: 30px; }
+.ov .ov-card tr:last-child td { border-bottom: none; }
+.ov .ov-links { margin-top: 9px; display: flex; gap: 10px; font-size: 12px; }
+.ov .ov-links a { color: var(--accent); text-decoration: none; }
+.ov .ov-links a:hover { text-decoration: underline; text-underline-offset: 3px; }
+.ov .ov-note { margin-top: 22px; font-size: 12px; color: var(--text-3); line-height: 1.7; }
+.ov .ov-note code { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 11px; background: var(--code-bg); padding: 1.5px 5px; border-radius: 5px; }
+</style>
+</head>
+<body data-v="" data-ui="1">
+
+<!-- ============ 总览页 ============ -->
+<div class="ov">
+  <div class="ov-wrap">
+    <h1>Heading 层级辨识度 · 对比稿</h1>
+    <p class="ov-sub">问题：现行阶梯里 H2（16.5/650）与 H3（15/650，与正文同字号）分不清，H4–H6 无定义。
+    以下 base 为现行对照，A/B/C 为三稿方向。每稿含 H1–H6 全层级连续排布 + 与正文/列表/表格/代码块相邻的真实密度场景，light / dark / eink 三主题。</p>
+    <div class="ov-grid">
+      <div class="ov-card">
+        <h2>base · 现行对照</h2>
+        <p class="ov-intent">19/16.5/15/15/15/15 + 650/650/650/600/600/600it——痛点本体：H2 与 H3 只差 1.5px，H3–H5 与正文同字号。</p>
+        <table>
+          <tr><td>H1</td><td>19px · 650</td><td>H4</td><td>15px · 600</td></tr>
+          <tr><td>H2</td><td>16.5px · 650</td><td>H5</td><td>15px · 600</td></tr>
+          <tr><td>H3</td><td>15px · 650</td><td>H6</td><td>15px · 600 斜体 · text-2</td></tr>
+        </table>
+        <div class="ov-links"><a href="?v=base">light</a><a href="?v=base&theme=dark">dark</a><a href="?v=base&theme=eink">eink</a></div>
+      </div>
+      <div class="ov-card">
+        <h2>稿 A · 纯字号阶梯（级差拉大）</h2>
+        <p class="ov-intent">只动字号一个变量：21/18/16/15/14/13，级差 3/2/1/1/1；字重统一 650，零装饰。代价：H4 起 ≤ 正文，靠字重收尾；token 阶梯新增 4 个值。</p>
+        <table>
+          <tr><td>H1</td><td>21px · 650</td><td>H4</td><td>15px · 650</td></tr>
+          <tr><td>H2</td><td>18px · 650</td><td>H5</td><td>14px · 650</td></tr>
+          <tr><td>H3</td><td>16px · 650</td><td>H6</td><td>13px · 650</td></tr>
+        </table>
+        <div class="ov-links"><a href="?v=a">light</a><a href="?v=a&theme=dark">dark</a><a href="?v=a&theme=eink">eink</a></div>
+      </div>
+      <div class="ov-card">
+        <h2>稿 B · 双族制（展示档 + 标签档）</h2>
+        <p class="ov-intent">H1–H4 字号×字重双轴递进（20/680 → 14.5/600）；H5–H6 转入标签语汇（th/tg-label 同族：12.5px + 正字距 + 降明度），深档与正文是「族差异」而非「级差」。H1 升 680（满足 ≥21px 规则的例外：20px 差 1px，需裁决）。</p>
+        <table>
+          <tr><td>H1</td><td>20px · 680</td><td>H4</td><td>14.5px · 600</td></tr>
+          <tr><td>H2</td><td>17.5px · 650</td><td>H5</td><td>12.5px · 650 · +0.02em</td></tr>
+          <tr><td>H3</td><td>15.5px · 650</td><td>H6</td><td>12.5px · 650 · +0.06em · text-2</td></tr>
+        </table>
+        <div class="ov-links"><a href="?v=b">light</a><a href="?v=b&theme=dark">dark</a><a href="?v=b&theme=eink">eink</a></div>
+      </div>
+      <div class="ov-card">
+        <h2>稿 C · 结构信号（骨架不动 + 线语汇）</h2>
+        <p class="ov-intent">字号骨架基本保持现行；辨识度交给两个既有结构语汇——H2 底线 hairline（th 同手法）、H3 左侧 2px 竖杠（引用块同手法，--text-3）；H4–H6 靠明度梯度 text → text-2 → text-3。token 阶梯改动最小。</p>
+        <table>
+          <tr><td>H1</td><td>19px · 650</td><td>H4</td><td>14.5px · 650</td></tr>
+          <tr><td>H2</td><td>16.5px · 650 · 底线</td><td>H5</td><td>13.5px · 600 · text-2</td></tr>
+          <tr><td>H3</td><td>15px · 650 · 左竖杠</td><td>H6</td><td>12.5px · 600 · +0.04em · text-3</td></tr>
+        </table>
+        <div class="ov-links"><a href="?v=c">light</a><a href="?v=c&theme=dark">dark</a><a href="?v=c&theme=eink">eink</a></div>
+      </div>
+    </div>
+    <p class="ov-note">截图包见 <code>shots/</code>（<code>{base,a,b,c}-light-window.png</code> 窗口实景、<code>*-full.png</code> 整页密度）。页面内右下角有稿/主题切换器。文档内容两段式：开头「层级速览」H1–H6 连续排布供相邻级比对，其后是一篇真实密度的中文笔记正文。</p>
+  </div>
+</div>
+
+<!-- ============ 稿页（完整窗口 chrome，文档两段式） ============ -->
+<div class="window">
+
+  <header class="titlebar">
+    <div class="traffic"><i class="c"></i><i class="m"></i><i class="x"></i></div>
+    <nav class="tabs">
+      <div class="tab"><span class="t-name">埋点字典.md</span><span class="t-close">×</span></div>
+      <div class="tab active"><span class="t-name">reading-flow-retro.md</span><span class="t-close">×</span></div>
+    </nav>
+  </header>
+
+  <div class="main">
+
+    <aside class="sidebar">
+      <div class="side-head">
+        <div class="vault-name">Everything
+          <svg width="10" height="10" viewBox="0 0 10 10" fill="none"><path d="M2.5 4L5 6.5L7.5 4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </div>
+        <div class="acts">
+          <button class="tb-btn" title="新建笔记">
+            <svg width="13" height="13" viewBox="0 0 13 13" fill="none"><path d="M6.5 2v9M2 6.5h9" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+          </button>
+        </div>
+      </div>
+      <div class="tree">
+        <div class="tree-group">
+          <div class="tr folder open" style="padding-left:8px"><span class="chev"><svg width="9" height="9" viewBox="0 0 9 9" fill="none"><path d="M3 1.8L6.2 4.5L3 7.2" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg></span><span class="name">1_Projects</span></div>
+          <div class="tr folder open" style="padding-left:22px"><span class="chev"><svg width="9" height="9" viewBox="0 0 9 9" fill="none"><path d="M3 1.8L6.2 4.5L3 7.2" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg></span><span class="name">Slax-Reader</span></div>
+          <div class="tr selected" style="padding-left:36px"><span class="chev leaf"></span><span class="name">reading-flow-retro.md</span></div>
+          <div class="tr" style="padding-left:36px"><span class="chev leaf"></span><span class="name">埋点字典.md</span></div>
+          <div class="tr folder" style="padding-left:22px"><span class="chev"><svg width="9" height="9" viewBox="0 0 9 9" fill="none"><path d="M3 1.8L6.2 4.5L3 7.2" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg></span><span class="name">Slax-Reader-Onboarding</span></div>
+        </div>
+        <div class="tree-group">
+          <div class="tr folder" style="padding-left:8px"><span class="chev"><svg width="9" height="9" viewBox="0 0 9 9" fill="none"><path d="M3 1.8L6.2 4.5L3 7.2" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg></span><span class="name">2_Areas</span></div>
+          <div class="tr folder" style="padding-left:8px"><span class="chev"><svg width="9" height="9" viewBox="0 0 9 9" fill="none"><path d="M3 1.8L6.2 4.5L3 7.2" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg></span><span class="name">3_Resources</span></div>
+          <div class="tr" style="padding-left:22px"><span class="chev leaf"></span><span class="name">Typography-Ramp-Notes.md</span></div>
+          <div class="tr folder" style="padding-left:8px"><span class="chev"><svg width="9" height="9" viewBox="0 0 9 9" fill="none"><path d="M3 1.8L6.2 4.5L3 7.2" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg></span><span class="name">4_Archives</span></div>
+        </div>
+      </div>
+    </aside>
+
+    <main class="content">
+      <div class="doc-scroll">
+        <article class="doc">
+          <h1 class="doc-title">阅读流重构 · 季度复盘</h1>
+          <div class="doc-meta"><span>1_Projects / Slax-Reader</span><span class="sep">·</span><span>142 行</span><span class="sep">·</span><span>修改于 9月25日</span></div>
+          <div class="doc-body">
+
+            <p class="lede">本页用于裁决 heading 层级辨识度：前半是 H1–H6 连续排布的「层级速览」，后半是一篇真实密度的复盘笔记正文。</p>
+
+            <h1>层级速览 · H1 章标题</h1>
+            <p>一级标题下的正文段落：阅读流重构的核心矛盾不在收藏端，而在消化端——这一行用来比对 H1 与 15px 正文的落差。</p>
+            <h2>H2 节标题 · 与上下文的间距</h2>
+            <p>二级标题下的正文：现行阶梯里 H2 与 H3 只差 1.5px，扫读时无法预判层级。</p>
+            <h3>H3 小节标题 · 现行与正文同字号</h3>
+            <p>三级标题下的正文：H3 在现行方案里就是 15px 650 字重，只靠笔画粗细区分。</p>
+            <h4>H4 条目标题 · 现行无定义</h4>
+            <p>四级标题下的正文：定稿阶梯没有 H4 的出处，实现里按 15px 600 落地。</p>
+            <h5>H5 子条目标题 · 深档</h5>
+            <p>五级标题下的正文：深档标题在长文档里承担「条目索引」职责。</p>
+            <h6>H6 附注标题 · 最深档</h6>
+            <p>六级标题下的正文：最深档接近「带强调的提示行」，与正文的区分度要求最低但不能为零。</p>
+
+            <hr>
+
+            <h1>一、背景与问题</h1>
+            <p>过去六个月，Inbox 积压从 300 篇涨到 1,200 篇；读完率（read-through rate）从 38% 跌到 11%。问题不在收藏端——收藏动作已经足够轻——而在消化端：收藏之后没有任何机制把文章重新带到用户面前。</p>
+            <ul>
+              <li>积压分布：62% 来自「稍后读」插件，28% 来自 RSS 导入，详见 <a class="wl">埋点字典</a></li>
+              <li>读完率口径：停留 ≥ 90s 且滚动深度 ≥ 80%，代码里对应 <code class="inl">readThrough</code> 事件</li>
+              <li>对照组：newsletter 频道的读完率 41%，接近健康水平</li>
+            </ul>
+
+            <h2>1.1 数据口径</h2>
+            <p>统计窗口为 4月1日–9月20日。所有比率以「进入阅读视图」为分母，不含列表页停留。清洗规则有两处需要说明。</p>
+            <h3>1.1.1 细分维度</h3>
+            <p>按平台、来源频道、文章长度三维交叉。文章长度以中文字符数分桶：&lt;1k / 1–5k / &gt;5k。</p>
+            <h4>平台拆分</h4>
+            <p>iOS 读完率 14%，Android 8%。差异主要来自推送打开场景：iOS 推送直达阅读视图，Android 先落列表页。</p>
+            <h5>备注</h5>
+            <p>Android 的统计不含 6月12日–6月18日，那段时间埋点 SDK 升级导致滚动深度字段缺失。</p>
+            <h6>附录说明</h6>
+            <p>原始 SQL 与清洗脚本在仓库 <code class="inl">analytics/readthrough/</code> 目录，可复跑。</p>
+
+            <h1>二、方案对比</h1>
+            <p>三个候选方案都围绕「把文章重新带到用户面前」，区别在于触发时机与打断成本。</p>
+            <table>
+              <thead><tr><th>方案</th><th>触发时机</th><th>打断成本</th><th>预期读完率</th></tr></thead>
+              <tbody>
+                <tr><td>每日摘要</td><td>早 8:00 推送</td><td>低</td><td>18–22%</td></tr>
+                <tr><td>空位填充</td><td>读完一篇后推荐下一篇</td><td>无</td><td>15–19%</td></tr>
+                <tr><td>周报复盘</td><td>周日晚邮件</td><td>无</td><td>9–12%</td></tr>
+              </tbody>
+            </table>
+
+            <h2>2.1 性能预算</h2>
+            <p>推荐计算全部本地完成，预算来自 <a class="wl">性能合同</a>：交互内不许有网络往返。核心约束：</p>
+            <div class="codeblock">
+              <div class="cb-head"><span>ranker/config.ts · 节选</span><span>ts</span></div>
+              <pre><code><span class="tk-k">const</span> budget = {
+  rankP95: <span class="tk-n">40</span>,          <span class="tk-c">// ms，全量重排上限</span>
+  candidateCap: <span class="tk-n">200</span>,     <span class="tk-c">// 候选池大小</span>
+  embedding: <span class="tk-s">'local-v2'</span>, <span class="tk-c">// 本地向量，无网络</span>
+  cacheTtl: <span class="tk-n">86400</span>,       <span class="tk-c">// 秒</span>
+};</code></pre>
+            </div>
+
+            <h1>三、决策与下一步</h1>
+            <blockquote>裁决记录：先做「空位填充」——它不打断、不需要新权限，且能复用已有的相似度索引。每日摘要降级为第二期候选。</blockquote>
+            <ol>
+              <li>9月30日前：候选池生成与排序跑通离线评测
+                <ol>
+                  <li>评测集：过去 90 天的已读文章回放</li>
+                  <li>指标：NDCG@5 ≥ 0.35，P95 延迟 ≤ 40ms</li>
+                </ol>
+              </li>
+              <li>10月15日前：阅读视图尾部接入推荐条，灰度 10%</li>
+              <li>11月1日：按读完率决定是否扩量，复盘会复审</li>
+            </ol>
+
+          </div>
+        </article>
+      </div>
+    </main>
+  </div>
+
+  <footer class="modeline num">
+    <div class="ml"><span>1_Projects / Slax-Reader / reading-flow-retro.md</span></div>
+    <div class="mr"><span>Markdown · 142 行 · UTF-8</span></div>
+  </footer>
+</div>
+
+<!-- 切换器 -->
+<div class="switcher" id="switcher"></div>
+
+<script>
+(function () {
+  var p = new URLSearchParams(location.search);
+  var v = p.get('v') || '';
+  var theme = p.get('theme') || 'light';
+  if (!/^(base|a|b|c)$/.test(v)) v = '';
+  if (!/^(light|dark|eink)$/.test(theme)) theme = 'light';
+  document.body.dataset.v = v;
+  document.documentElement.dataset.theme = theme;
+  if (p.get('ui') === '0') document.body.dataset.ui = '0';
+  if (p.get('expand') === '1') {
+    document.documentElement.style.overflow = 'visible';
+    document.body.style.overflow = 'visible';
+    document.body.style.height = 'auto';
+    var w = document.querySelector('.window');
+    w.style.height = 'auto';
+    document.querySelector('.doc-scroll').style.overflow = 'visible';
+  }
+  // 切换器
+  if (v) {
+    var sw = document.getElementById('switcher');
+    var html = [];
+    [['base','base'],['a','A'],['b','B'],['c','C']].forEach(function (it) {
+      html.push('<a href="?v=' + it[0] + '&theme=' + theme + '"' + (it[0] === v ? ' class="cur"' : '') + '>' + it[1] + '</a>');
+    });
+    html.push('<span class="sw-sep"></span>');
+    ['light','dark','eink'].forEach(function (t) {
+      html.push('<a href="?v=' + v + '&theme=' + t + '"' + (t === theme ? ' class="cur"' : '') + '>' + t + '</a>');
+    });
+    html.push('<span class="sw-sep"></span>');
+    html.push('<a href="./index.html">总览</a>');
+    sw.innerHTML = html.join('');
+    document.title = 'Lumir — Heading ' + (v === 'base' ? '现行对照' : '稿 ' + v.toUpperCase()) + ' · ' + theme;
+  }
+})();
+</script>
+</body>
+</html>
