@@ -60,13 +60,16 @@ test("解析：标题、默认名与标记范围", () => {
   // 自定义标题：title 范围指向行尾文本，label 不参与渲染
   const titled = calloutsIn("> [!warning] 自定义标题\n> 正文。\n")[0];
   expect(titled.titleFrom).not.toBeNull();
-  // 无标题：widget 渲染规范名；未知类型按原文类型名显示（不伪装）
+  // 无标题：widget 渲染双段类型标签（M218 C7：中文标签 + 英文规范名）；
+  // 未知类型按原文类型名单段显示（不伪装）
   const plain = calloutsIn("> [!tip]\n> 正文。\n")[0];
   expect(plain.titleFrom).toBeNull();
-  expect(plain.label).toBe("Tip");
+  expect(plain.zhLabel).toBe("提示");
+  expect(plain.enLabel).toBe("tip");
   const unknown = calloutsIn("> [!Whatever]\n> 正文。\n")[0];
   expect(unknown.titleFrom).toBeNull();
-  expect(unknown.label).toBe("Whatever");
+  expect(unknown.zhLabel).toBe("Whatever");
+  expect(unknown.enLabel).toBeNull();
   // 标记范围覆盖 [!type]（含折叠符与标题前一个空格），不含正文
   const src = "> [!note]- 标题\n> 正文。\n";
   const info = calloutsIn(src)[0];
