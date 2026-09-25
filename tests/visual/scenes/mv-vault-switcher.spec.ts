@@ -70,7 +70,11 @@ test("树头部入口：单 vault 时也在，旧的「切换」文字按钮退�
   await expect(entry).toHaveAttribute("aria-label", "vault：demo-vault（点击查看全部 vault）");
   await expect(entry).toHaveAttribute("title", "vault：demo-vault（点击查看全部 vault）");
   await expect(page.locator(".ft-vault-name")).toHaveText("demo-vault");
-  await expect(page.locator(".ft-vault-caret")).toHaveText("▾");
+  // M217 S1+S4：caret 从文字字形 ▾ 换成 10×10 细线 SVG chevron（定稿 index.html:787-789），
+  // 紧随名称、aria-hidden——断言 SVG 在场且不再有文字字形。
+  const vaultCaret = page.locator(".ft-vault-caret");
+  await expect(vaultCaret.locator("svg")).toHaveCount(1);
+  await expect(vaultCaret).toHaveText("");
   // 形态 A 下「切换」按钮退场（D4 因此停用、不复用）：类名与可读名两条路都不得命中
   await expect(page.locator(".ft-switch-btn")).toHaveCount(0);
   await expect(page.getByRole("button", { name: "切换", exact: true })).toHaveCount(0);
@@ -97,23 +101,32 @@ test("浮层：当前项 / 摘要 / 失效行 / 新增入口，且不占常驻�
   await expect(entry).toHaveAttribute("aria-expanded", "true");
   await expect(pop.locator(".vault-list")).toHaveAttribute("role", "listbox");
 
-  // 行序 = 桩给的顺序（= 后端排序结果），前端不重排
+  // 行序 = 桩给的顺序（= 后端排序结果），前端不重排。
+  // M217 S12：路径次行按 Alex 裁决裁掉（gap 表 #12），行文本只剩「名 + 摘要」（失效行另有
+  // 成因与「重新定位…」）；S13：当前行的 ✓ 槽位有字符、非当前行是空槽，因此当前行文本以 ✓ 开头。
   const rows = page.locator(".vault-row");
   await expect(rows).toHaveCount(3);
   await expect(rows).toHaveText([
     /^gone还没有打开过文件路径不可用：目录被移动，或所在卷未挂载重新定位…$/,
-    /^demo-vault当前2 个标签 · 现在打开\/Users\/alex\/demo-vault$/,
-    /^notes-vault还没有打开过文件\/Users\/alex\/notes-vault$/,
+    /^✓demo-vault当前2 个标签 · 现在打开$/,
+    /^notes-vault还没有打开过文件$/,
   ]);
 
-  // 当前项的唯一标记（朱红实心点 + 「当前」标）
-  await expect(page.locator(".vault-row.is-current")).toHaveCount(1);
-  await expect(page.locator(".vault-row.is-current .vault-row-name")).toHaveText("demo-vault");
-  await expect(page.locator(".vault-row.is-current .vault-row-flag")).toHaveText("当前");
-  await expect(page.locator(".vault-row.is-current .vault-dot")).not.toHaveClass(/is-off/);
-  // 非当前项的圆点是「空心的」（is-off），否则「当前」标记就不再是单激活的可见面
+  // 当前项的唯一标记（M217 S13，定稿 .pop-row.cur index.html:705-707）：✓ 槽位（accent）+
+  // 名 550 + 常驻 --sel 底色 + 「当前」flag 右对齐；非当前行是空白 12px 槽位（无点、无字）。
+  const currentRow = page.locator(".vault-row.is-current");
+  await expect(currentRow).toHaveCount(1);
+  await expect(currentRow.locator(".vault-row-name")).toHaveText("demo-vault");
+  await expect(currentRow.locator(".vault-row-flag")).toHaveText("当前");
+  await expect(currentRow.locator(".vault-dot")).toHaveText("✓");
   await expect(page.locator(".vault-row").nth(1).locator(".vault-row-sub").first()).toHaveText("2 个标签 · 现在打开");
-  await expect(page.locator(".vault-row").nth(2).locator(".vault-dot")).toHaveClass(/is-off/);
+  const offDot = page.locator(".vault-row").nth(2).locator(".vault-dot");
+  await expect(offDot).toHaveText("");
+  await expect(offDot).not.toHaveClass(/is-off/);
+  // flag 右对齐（margin-left:auto）：它在行内的左缘必须明显靠右，不是紧随名称
+  const flagX = await currentRow.locator(".vault-row-flag").evaluate((el) => el.getBoundingClientRect().left);
+  const nameRight = await currentRow.locator(".vault-row-name").evaluate((el) => el.getBoundingClientRect().right);
+  expect(flagX).toBeGreaterThan(nameRight);
 
   // 失效行：成因（D102）+ 重定位出口（D103），语义是「不可选中」
   const missing = page.locator(".vault-row.is-missing");

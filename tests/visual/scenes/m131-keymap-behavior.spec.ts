@@ -269,12 +269,14 @@ test("⌘S 唯一保存：⌃S 不再触发保存（D3）", async ({ page }) => 
   await page.keyboard.press("Control+s");
   await page.waitForTimeout(400); // 远小于 2s 自动保存 debounce
   expect(await page.evaluate(() => (window as unknown as { __fileText(p: string): string | undefined }).__fileText("save.md"))).toBe(original);
-  await expect(page.locator(".lumir-toast", { hasText: /^已保存$/ })).toHaveCount(0);
+  await expect(page.locator(".lumir-toast", { hasText: /^✓已保存$/ })).toHaveCount(0);
   await expect(unsavedMark(page)).toBeVisible();
 
-  // ⌘S 仍是保存键：落盘内容为当前缓冲、dirty 清除
+  // ⌘S 仍是保存键：落盘内容为当前缓冲、dirty 清除。
+  // M217 S14：成功类 toast 带 ✓ 前缀（.toast-check span，语义口径——只有「用户动作已成功
+  // 完成」的确认带 ✓），textContent 因此是「✓已保存」；这条断言同时守住 ✓ 在场。
   await page.keyboard.press("Meta+s");
-  await expect(page.locator(".lumir-toast", { hasText: /^已保存$/ })).toBeVisible();
+  await expect(page.locator(".lumir-toast", { hasText: /^✓已保存$/ })).toBeVisible();
   await expect
     .poll(() => page.evaluate(() => (window as unknown as { __fileText(p: string): string | undefined }).__fileText("save.md")))
     .toBe(typed);
@@ -302,9 +304,9 @@ test("作用域：⌘S 是全局键（焦点不在编辑器也生效），editor
   expect(after.head).toBe(before.head);
   expect(after.empty).toBe(true); // 没有形成选区
 
-  // global 作用域的 ⌘S 不受焦点影响
+  // global 作用域的 ⌘S 不受焦点影响（成功 toast 的 ✓ 前缀见上一用例的注）
   await page.keyboard.press("Meta+s");
-  await expect(page.locator(".lumir-toast", { hasText: /^已保存$/ })).toBeVisible();
+  await expect(page.locator(".lumir-toast", { hasText: /^✓已保存$/ })).toBeVisible();
   await expect
     .poll(() => page.evaluate(() => (window as unknown as { __fileText(p: string): string | undefined }).__fileText("scope.md")))
     .toBe(`${original}y`);

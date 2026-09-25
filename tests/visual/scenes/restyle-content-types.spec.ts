@@ -42,7 +42,7 @@ async function open(page: Page, file: string, doc: string, marker: string): Prom
   await expect(page.locator(".cm-content")).toContainText(marker);
 }
 
-test("表格：th 底线取结构档、td 取层次档，字号两档（11.5 / 13.5），首列 550", async ({ page }) => {
+test("表格：只留横线（th 结构档 / td 层次档 / 末行无）、无竖线，字号两档，首列 550 + nowrap", async ({ page }) => {
   await open(page, "table.md", TABLE_DOC, "第一列应为 550");
   await expect(page.locator(".cm-lp-table")).toHaveCount(1);
 
@@ -82,6 +82,12 @@ test("表格：th 底线取结构档、td 取层次档，字号两档（11.5 / 1
           weight: style.fontWeight,
           fontSize: style.fontSize,
           borderBottomColor: style.borderBottomColor,
+          borderBottomWidth: style.borderBottomWidth,
+          borderLeftWidth: style.borderLeftWidth,
+          borderRightWidth: style.borderRightWidth,
+          padding: style.padding,
+          verticalAlign: style.verticalAlign,
+          textWrapMode: style.textWrapMode,
           text: cell.textContent ?? "",
         };
       }),
@@ -92,28 +98,56 @@ test("表格：th 底线取结构档、td 取层次档，字号两档（11.5 / 1
   expect(rows).toHaveLength(3);
   for (const row of rows) expect(row.map((cell) => cell.col)).toEqual(["1", "2", "3"]);
 
-  // 表头行：粗体档（650）+ 标签档字号（11.5px）+ 底线取**结构档**
+  // 表头行：粗体档（650）+ 标签档字号（11.5px）+ 底线取**结构档**；padding = 定稿 th 5/14/6/0
   for (const cell of rows[0]) {
     expect(cell.weight).toBe(tokens.bold);
     expect(cell.fontSize).toBe("11.5px");
     expect(cell.borderBottomColor).toBe(tokens.border);
+    expect(cell.borderBottomWidth).toBe("1px");
+    expect(cell.padding).toBe("5px 14px 6px 0px");
   }
-  // 数据行：标签档字号之上一档（13.5px）、底线取**层次档**
+  // 数据行：标签档字号之上一档（13.5px）、底线取**层次档**；padding = 定稿 td 6/14/6/0
   for (const row of rows.slice(1)) {
     for (const cell of row) {
       expect(cell.fontSize).toBe("13.5px");
-      expect(cell.borderBottomColor).toBe(tokens.borderSoft);
+      expect(cell.padding).toBe("6px 14px 6px 0px");
+      expect(cell.verticalAlign).toBe("top");
+    }
+  }
+  // M217 C5 框线结构（定稿 index.html:347-358）：无外框、无竖线，只有横线——
+  // 中间数据行底线层次档，**末行无底线**（tr:last-child td）；eink 实心黑外框随外框删除一并消除。
+  for (const cell of rows[1]) {
+    expect(cell.borderBottomColor).toBe(tokens.borderSoft);
+    expect(cell.borderBottomWidth).toBe("1px");
+  }
+  for (const cell of rows[2]) expect(cell.borderBottomWidth).toBe("0px");
+  for (const row of rows) {
+    for (const cell of row) {
+      expect(cell.borderLeftWidth, "无竖线（左）").toBe("0px");
+      expect(cell.borderRightWidth, "无竖线（右）").toBe("0px");
     }
   }
 
   // 首列 550（缺陷修复的闭环断言）：**按列号**取首列，两行数据各自成立；
   // 其余列是常字重 400。旧实现用 `:first-child` 时这里恒为 400。
+  // M217 C5：首列同时不折行（定稿 td:first-child nowrap）。判据载体是 text-wrap-mode——
+  // contenteditable 子树被 Chromium 强制 white-space-collapse: preserve，computed
+  // white-space 序列化成 "pre" 而非 "nowrap"（style.css 规则注释与 M217 evidence 同口径）。
   for (const row of rows.slice(1)) {
     expect(row[0].weight, `数据行首列「${row[0].text}」应为强调档`).toBe(tokens.emphasis);
+    expect(row[0].textWrapMode, `数据行首列「${row[0].text}」应不折行`).toBe("nowrap");
     expect(row[1].weight).toBe(tokens.regular);
     expect(row[2].weight).toBe(tokens.regular);
   }
   expect(parseFloat(tokens.emphasis)).toBeGreaterThan(parseFloat(tokens.regular));
+
+  // 表外间距走横滚容器的 padding-block（定稿 table margin 2px 0 10px 的 padding 映射；
+  // 块级 margin 对 CM heightmap 不可见——M110 缺陷 1，style.css 规则注释）。
+  const scrollPad = await page.locator(".cm-lp-table-scroll").evaluate((el) => {
+    const style = getComputedStyle(el);
+    return { top: style.paddingTop, bottom: style.paddingBottom };
+  });
+  expect(scrollPad).toEqual({ top: "2px", bottom: "10px" });
 });
 
 test("代码块：mono 12px / 行高 1.55，首行头部条走标签档字号", async ({ page }) => {
@@ -189,7 +223,7 @@ test("引用块：2px 结构档竖线 + 次级正文色", async ({ page }) => {
   // 是否补一条更高特异性的内边距由视觉裁决（R4 逐张重建基线时看 render-quote-list 就能判断）。
 });
 
-test("列表：标记走 mono 强调档字号，悬挂缩进把首行标记推到行外", async ({ page }) => {
+test("列表：标记走 sans 正文族、一级 13.5px 档，悬挂缩进把首行标记推到行外", async ({ page }) => {
   await open(page, "types.md", TYPES_DOC, "一级项");
   await expect(page.locator(".cm-lp-list-marker").first()).toBeVisible();
   const read = await page.evaluate(() => {
@@ -198,22 +232,24 @@ test("列表：标记走 mono 强调档字号，悬挂缩进把首行标记推�
     const marker = first.querySelector<HTMLElement>(".cm-lp-list-marker")!;
     const markerStyle = getComputedStyle(marker);
     const probe = document.createElement("span");
-    probe.style.fontFamily = "var(--editor-mono-family)";
+    probe.style.fontFamily = "var(--editor-font-family)";
     document.body.append(probe);
-    const mono = getComputedStyle(probe).fontFamily;
+    const sans = getComputedStyle(probe).fontFamily;
     probe.remove();
     return {
       markerFontSize: markerStyle.fontSize,
       markerFamily: markerStyle.fontFamily,
       markerWidth: marker.getBoundingClientRect().width,
-      mono,
+      sans,
       firstTextIndent: Number.parseFloat(getComputedStyle(first).textIndent),
       hangingPadding: Number.parseFloat(getComputedStyle(line).paddingInlineStart),
       contentFontSize: getComputedStyle(document.querySelector(".cm-content")!).fontSize,
     };
   });
-  expect(read.markerFamily).toBe(read.mono);
-  // 标记字号 = 正文锚 × .9（13.5px，tokens 文档的 13.5 档）
+  // C3（M218）：标记族 = --editor-font-family（sans），不再是 mono
+  expect(read.markerFamily).toBe(read.sans);
+  // 一级标记字号 = 正文锚 × .9（13.5px，tokens 文档的 13.5 档；嵌套档 13/12.5 由
+  // typography.spec.ts 的 canvas 三档断言钉）
   expect(read.markerFontSize).toBe(`${Number.parseFloat(read.contentFontSize) * 0.9}px`);
   // 悬挂缩进：首行负缩进 = 标记盒宽（标记因此被推到正文左缘之外），
   // 内容行正内边距 > 0（续行回到正文左缘）——两条都是派生读数，不是「class 存在」

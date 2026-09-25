@@ -42,7 +42,9 @@ for (const width of [1280, 640]) {
       }
       expect((await geometry(page, 'Nested ordinary')).rects[0].x).toBeGreaterThan((await geometry(page, 'Gamma completed')).rects[0].x);
       expect((await geometry(page, 'Third level')).rects[0].x).toBeGreaterThan((await geometry(page, 'Nested ordinary')).rects[0].x);
-      await expect(page.locator('.cm-lp-list-marker').filter({ hasText: '100.' })).toHaveText('100.[x]');
+      // C3（M218）：ol 显示编号 = 组内序号的复合编号，不再是源码字面数字——
+      // 首个 ol 组（9./10./100.）的第三项显示为 "3."，任务标记 [x] 跟在编号后。
+      await expect(page.locator('.cm-lp-list-line').filter({ hasText: 'Gamma completed' }).locator('.cm-lp-list-marker')).toHaveText('3.[x]');
       await expect(page.locator('.cm-lp-codeblock-line.cm-lp-list-line')).toHaveCount(0);
       await page.setViewportSize({ width: width === 640 ? 1280 : 640, height: 1600 });
       expect(await readDocument(page)).toBe(source);
@@ -110,14 +112,14 @@ test('嵌套列表：祖先组宽度变化后子组跟随重对齐', async ({ pa
   await open(page, text);
   const before = await geometry(page, 'Child one');
   // 粘贴是单次 docChanged（Enter 会触发列表自动续标、击键会逐键产生后续
-  // 编辑而自愈，都不能用）：顶层列表追加 "10." 项，组 max width +1 unit，
-  // 之后不再有编辑。旧实现子组重扫按祖先 stale cached body 登记 indent，
-  // 祖先 publish 新 body 后子组错位 ~1 unit 滞留到下一击键（r1 review
-  // P2-1）；修复后祖先 stale 视为未就绪，子组下轮 build 拿到新 body 自行
-  // 右移 1 unit。
+  // 编辑而自愈，都不能用）：顶层列表一次追加 8 项（组内序号到 10，显示编号
+  // "10." 是 C3 的序号口径——组 max width +1 unit），之后不再有编辑。旧实现
+  // 子组重扫按祖先 stale cached body 登记 indent，祖先 publish 新 body 后子组
+  // 错位 ~1 unit 滞留到下一击键（r1 review P2-1）；修复后祖先 stale 视为未
+  // 就绪，子组下轮 build 拿到新 body 自行右移 1 unit。
   await page.locator('.cm-line').filter({ hasText: 'Child two' }).click();
   await page.keyboard.press('End');
-  await page.evaluate(() => navigator.clipboard.writeText('\n10. New'));
+  await page.evaluate(() => navigator.clipboard.writeText('\n3. N\n4. N\n5. N\n6. N\n7. N\n8. N\n9. N\n10. New'));
   await page.keyboard.press('Meta+v');
   expect(await readDocument(page)).toContain('10. New');
   await expect.poll(async () => (await geometry(page, 'Child one')).rects[0].x, { timeout: 3000 })
@@ -164,10 +166,11 @@ test('partial组超出后台提前范围仍完成且末端标记不重叠', asyn
   const before = await geometry(page, 'Item 1 long');
   const scroller = page.locator('.cm-scroller');
   await scroller.evaluate(el => { el.scrollTop = el.scrollHeight; });
-  await expect(page.locator('.cm-lp-list-marker').filter({ hasText: '999999999.' })).toBeVisible();
+  // 末端项的显示编号是组内序号 "18000."（C3：ol 编号按序号重算，源码字面 999999999 不显示）
+  await expect(page.locator('.cm-lp-list-marker').filter({ hasText: '18000.' })).toBeVisible();
   const tail = await geometry(page, 'Item 18000');
   expect(Math.abs(tail.rects[0].x - before.rects[0].x)).toBeLessThanOrEqual(1);
-  const box = await page.locator('.cm-lp-list-marker').filter({ hasText: '999999999.' }).evaluate(el => {
+  const box = await page.locator('.cm-lp-list-marker').filter({ hasText: '18000.' }).evaluate(el => {
     const outer = el.getBoundingClientRect();
     return { left: outer.left, right: outer.right, spans: [...el.children].map(child => ({ left: child.getBoundingClientRect().left, right: child.getBoundingClientRect().right })) };
   });
@@ -227,7 +230,8 @@ test('100k密集项完整回调预算与最终标记', async ({ page }, info) =>
   // 改动无关，属环境噪声；随 dogfood 性能专项复核是否回调）。
   expect(p95).toBeLessThan(60);
   await page.locator('.cm-scroller').evaluate(el => { el.scrollTop = el.scrollHeight; });
-  await expect(page.locator('.cm-lp-list-marker').filter({ hasText: '999999999.' })).toHaveText('999999999.[x]');
+  // 末端项显示编号 = 序号 "100000."（C3 序号口径，同 :167 注释）
+  await expect(page.locator('.cm-lp-list-marker').filter({ hasText: '100000.' })).toHaveText('100000.[x]');
   expect(await readDocument(page)).toBe(text);
 });
 
@@ -240,7 +244,12 @@ test('短编号标记区紧凑而非语法最大容量', async ({ page }) => {
     const outer = marker.getBoundingClientRect();
     return { marker: outer.width, text: text.width, gap: outer.right - text.right, line: el.getBoundingClientRect().width, available: el.getBoundingClientRect().width - parseFloat(getComputedStyle(el).paddingLeft) };
   });
-  expect(box.marker - box.text).toBeCloseTo(box.gap, 0);
+  // 标记区宽度按「组最大显示编号字符数 × 数字单位宽」预分配（canvas 量 "0"，tabular-nums
+  // 下数字等宽），右侧留 1ch 间隔；sans 族下 "." 比数字窄，渲染文本比预分配窄出的部分
+  // 由 flex-end 右对齐留在左侧——C3 换族后不再有 mono 时代的零余量，余量上限 < 1 单位宽。
+  const slack = box.marker - box.text - box.gap;
+  expect(slack).toBeGreaterThanOrEqual(-0.5);
+  expect(slack).toBeLessThan(8);
   expect(box.gap).toBeGreaterThan(3);
   expect(box.gap).toBeLessThan(12);
   expect(box.marker).toBeLessThan(35);

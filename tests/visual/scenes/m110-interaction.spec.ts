@@ -125,13 +125,24 @@ test("callout 光标所在行显露源码可编辑，其余行保持渲染态", 
   expect(await lines.nth(2).textContent()).not.toContain(">");
   await expect(page.locator(".cm-lp-callout-type")).toHaveCount(1);
 
-  // 光标进入首行：[!note] 标记源码显露（类型标签消失），类型可编辑
-  await lines.nth(0).click({ position: { x: 40, y: 8 } });
+  // 光标进入首行：[!note] 标记源码显露（类型标签消失），类型可编辑。
+  // 落点选在标题文字中段（x=80）：C7 双段标签后类型标签 widget 占行首 ~75px，点在标签上
+  // 光标只会停在行首 pos 0，而显露口径是严格重叠（空光标在行首/行尾不触发，见
+  // livePreview.ts touchesSelection）——必须落在行内文本上才进入编辑态。
+  await lines.nth(0).click({ position: { x: 80, y: 8 } });
   await expect(page.locator(".cm-lp-callout-type")).toHaveCount(0);
   expect(await lines.nth(0).textContent()).toContain("> [!note] 标题");
 
-  // 在正文行输入：编辑生效且只动光标行源码
-  await lines.nth(1).click({ position: { x: 60, y: 8 } });
+  // 在正文行输入：编辑生效且只动光标行源码。落点 x 不按字面值像素猜（C7 后 callout 正文
+  // 13px，字宽随字号档变）——用 CM 的 coordsAtPos 取「第一行」之后的真实坐标再点。
+  const targetX = await page.evaluate(() => {
+    const view = (document.querySelector(".cm-content") as unknown as { cmTile: { root: { view: any } } }).cmTile.root.view;
+    const pos = view.state.doc.toString().indexOf("第一行") + "第一行".length;
+    return view.coordsAtPos(pos)?.left ?? null;
+  });
+  expect(targetX, "coordsAtPos 应给出落点坐标").not.toBeNull();
+  const box1 = (await lines.nth(1).boundingBox())!;
+  await lines.nth(1).click({ position: { x: targetX! - box1.x, y: 8 } });
   await page.keyboard.type("X");
   expect(await readDocument(page)).toContain("第一行X正文。");
 
