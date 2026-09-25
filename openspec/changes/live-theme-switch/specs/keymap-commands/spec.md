@@ -10,7 +10,7 @@ light，行为定义见 `ui-design-system` 的「三主题与主题选择」）�
 
 默认键位 SHALL 是 `⌘⇧T`（语义取「T = Theme」；⌘ 系归 mac 惯例），绑定 SHALL 附来由说明
 （表即文档）。键位占用 SHALL 由三条独立来源核实并写进实现说明：① 表内（`src/keys.ts` 即
-真源，⌘⇧ 系此前仅 ⇧⌘Z 重做一条）；② 原生菜单 accelerator 集合（muda 的预置项 = ⌘C / ⌘X /
+真源，⌘⇧ 系现有 ⇧⌘Z（重做）与 ⇧⌘O（toc.toggle）两条，⌘⇧T 不在其中）；② 原生菜单 accelerator 集合（muda 的预置项 = ⌘C / ⌘X /
 ⌘V / ⌘Z / ⇧⌘Z / ⌘A / ⌘M / ⌃⌘F / ⌘H / ⌥⌘H / ⌘W / ⌘Q，不含 ⌘⇧T）；③ 系统级（⌘⇧T 不是
 macOS 的预置菜单键；浏览器「重开标签页」语义不适用于本应用）。该命令默认有绑定，因此
 `KEYLESS_COMMAND_IDS` SHALL 保持不变（MUST NOT 把它登记为「默认不绑键」）。

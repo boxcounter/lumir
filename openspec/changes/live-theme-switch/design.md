@@ -62,10 +62,16 @@ initialize + 烧色 SVG + 无主题维度的缓存键。除此之外没有任何
   `ensureMermaidRender` 缓存未命中，各块回到 pending 占位，经既有串行队列重渲、settle 后
   再次 `previewRefresh`。三态 widget（pending / ok / error）与有限 settle 全部复用，
   **不引入新状态机**。
-- **竞态（必须钉死）**：切换瞬间可能有 in-flight 渲染（旧主题 config）尚未 settle，其回调会把
-  旧色 SVG 写进缓存。判据：`doRender` 完成时比对其启动时的世代号与当前世代号，不一致则
-  **丢弃结果并按新主题重排队**，不许旧色 SVG 落地。世代号是模块内私有计数，不进缓存键
-  （缓存键仍是源码——切换后缓存已整体清空，世代只用于丢弃迟到结果）。
+- **竞态（必须钉死）**：切换瞬间可能有 in-flight 渲染（旧主题 config）尚未 settle。缓存的唯一
+  写入点是 `ensureMermaidRender` 的 settle 回调（`mermaid.ts:244-246` 的
+  `renderQueued(source).then(result => { renderCache.set(source, result); … })`），世代号检查
+  SHALL 守在写入点：渲染任务入队时（`ensureMermaidRender` 登记 pending 处）记下当前世代号，
+  settle 回调写缓存前比对，不一致则**丢弃结果——不写缓存、不触发 settle 通知、不重排队**，
+  旧色 SVG MUST NOT 落地。不重排队是正确的：失效后 `applyTheme` 派发的 `previewRefresh` 已
+  触发装饰重建，重建路径上的 `ensureMermaidRender` 会因缓存未命中按新主题重渲同一 source——
+  若 settle 回调再排一次，同一 source 会被渲染两遍（队列里重复排队）。世代号是模块内私有
+  计数，不进缓存键（缓存键仍是源码——切换后缓存已整体清空，世代只用于在写入点丢弃迟到
+  结果）。
 - 切换时 mermaid 尚未懒加载（无 ```mermaid 块出现过）的情形：`invalidateMermaidTheme()` 对
   未初始化的模块是幂等 no-op（`initialized` 本就是 false、缓存本就空），首次渲染照旧读新
   主题的计算值——懒初始化发生在 `data-theme` 写入之后的既有性质（`mermaid.ts:14-16`）不变。
@@ -90,7 +96,8 @@ initialize + 烧色 SVG + 无主题维度的缓存键。除此之外没有任何
   前缀与作用域不互相打脸是既有纪律）。作用域 global：焦点在文件树 / 搜索框 / 浮层里同样要能
   切（与 ⌘F、⌘⇧O 同理由）。
 - 默认键位 ⌘⇧T（裁决点 D2 推荐项），实现期按三来源格式复核并写进 keys.ts 的 doc：
-  ① 表内 ⌘⇧ 系仅 ⇧⌘Z（redo）；② muda 预置 accelerator 集合（⌘C/⌘X/⌘V/⌘Z/⇧⌘Z/⌘A/⌘M/⌃⌘F/
+  ① 表内 ⌘⇧ 系现有 ⇧⌘Z（redo，`src/keys.ts:312`）与 ⇧⌘O（toc.toggle，`src/keys.ts:362`）
+  两条，⌘⇧T 不在其中；② muda 预置 accelerator 集合（⌘C/⌘X/⌘V/⌘Z/⇧⌘Z/⌘A/⌘M/⌃⌘F/
   ⌘H/⌥⌘H/⌘W/⌘Q）无 ⌘⇧T；③ macOS 系统级不占用 ⌘⇧T（浏览器「重开标签页」语义不适用于本
   应用）。绑定写法 `Cmd-Shift-t`（单字符键名归一大写为 `Cmd-Shift-T`，归一化机制自动处理），
   单段无空白，`[keys]` 可重绑 / 解绑。

@@ -9,8 +9,10 @@
   + 刷新 modeline 主题指示文案）；启动装配（现 `main.ts:980`）改为经它施加，同步改写
   `main.ts:969-979` 的「运行期不切换」注释
 - [ ] 1.2 `src/preview/mermaid.ts`：新增 `invalidateMermaidTheme()` 出口——`initialized` 复位 +
-  `renderCache` 清空 + 世代号自增；`doRender` 完成时比对世代号，不一致丢弃结果并按新主题
-  重排队（旧色 SVG 不许落地）；未懒加载时幂等 no-op；同步改写文件头 :12-16 的自述
+  `renderCache` 清空 + 世代号自增；世代号检查守在缓存唯一写入点（`ensureMermaidRender` 的
+  settle 回调，`mermaid.ts:244-246`）：任务入队时记世代号、写缓存前比对，不一致丢弃（不写
+  缓存、不通知、不重排队——重渲由 previewRefresh 重建路径承担，防止同一 source 排两遍）；
+  未懒加载时幂等 no-op；同步改写文件头 :12-16 的自述
 - [ ] 1.3 `src/main.ts`：切换命令实现——读当前主题、循环取下一档（light→dark→eink）、
   `applyTheme` + `invalidateMermaidTheme()` + dispatch `previewRefresh` + 触发配置写回（§3）
 - [ ] 1.4 `src/shell.ts` + `src/main.ts`：modeline 右段主题指示钮（button，文案 = 当前主题名，
