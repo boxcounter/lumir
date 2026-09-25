@@ -1,0 +1,114 @@
+# Tasks: content-width-drag
+
+实现顺序：配置面 → 前端宽度模块与手柄 → 持久化 IPC → 单测 → 视觉 → 真机 → 收口。
+每条完成后就地勾选；跑不动的项写「未验」并附原因，MUST NOT 写成已验（REVIEW.md 第 6 条）。
+
+**口径基线（节点 1 裁决，待落槌）**：D1 默认值（建议 664）、D2 上下限（建议 [480, 1200]）、
+D3 回写 config.json 的新写通道、D4 live 拖拽（退路松手生效）、D5 手柄进 code 模式。
+本文件凡涉及默认值 / 上下限的数字均以裁决为准；`proposal.md` 的「待 Alex 裁决」节是索引。
+
+## 1. 配置面（Rust）
+
+- [ ] 1.1 `src-tauri/src/config.rs` 的 `UiConfig` 增 `content_width: f64`（`Default` 给裁决值；
+      f64 与 `font_size` 先例同型，design §2.1），常量三件套 `DEFAULT_CONTENT_WIDTH` /
+      `CONTENT_WIDTH_MIN` / `CONTENT_WIDTH_MAX` 照 `FONT_SIZE_*` 模板
+- [ ] 1.2 `RawUiConfig` 增 `content_width: Option<f64>`（沿用 `#[serde(default)]`）；
+      `validate()` 的 ui 分支按 `font_size` 模板扩：缺字段回落默认不告警、越界回落默认 + warning
+- [ ] 1.3 Rust 单测：缺字段取默认（比照 `missing_editor_wrap_fields_take_defaults`）、越界回落 +
+      warning 恰一条、类型不符（`{"ui": {"content_width": "680"}}`）走整文件回落（比照
+      `wrong_type_ui_theme_falls_back_entire_file`，断言 ui 与 editor 字段一起回默认、无混合态）
+- [ ] 1.4 `cargo test` 重新导出 `src/bindings/UiConfig.ts` 并一并提交；bindings 漂移门禁绿
+      （`scripts/gate.sh:61-70`）
+
+## 2. 前端：宽度模块、施加与手柄
+
+- [ ] 2.1 新模块 `src/content-width.ts`：`--layout-doc-measure` 的 token 名常量（单一来源）、
+      TS 侧默认 / 上下限镜像常量（与 Rust 互指注释）、纯函数 `clampContentWidth` 与对称换算
+      `nextContentWidth(startWidth, deltaX)`（取整到整数 px，先例 `src/typography.ts:61-68`）
+- [ ] 2.2 `src/editor.ts`：闭包内 `contentWidth` 运行期真源 + `setContentWidth(w)`（写 token →
+      `view.requestMeasure()` → `keepCaretVisible()`，三步同 design §2.3；值未变直接返回）；
+      token 写在 `documentElement`（与 `applyTypography` 同落点）
+- [ ] 2.3 `src/shell.ts`：编辑器 pane 内加手柄覆盖层容器（与 `.cm-editor` 并列、absolute、
+      `pointer-events: none`）；两条手柄条（左右缘）`pointer-events: auto`、10px 命中区、
+      2px 视觉线常态 `opacity: 0`、hover / 拖拽中显现、`cursor: col-resize`、`role="separator"` +
+      读屏名；样式落 `src/style.css`，色取既有 `--accent` token，零新配色
+- [ ] 2.4 手柄定位：读 `.cm-content` 的 `getBoundingClientRect()` 换算到 pane 坐标贴左右缘；
+      更新时机 = pane 的 ResizeObserver + `.cm-scroller` 的 scroll + 宽度施加后 + 会话切换后；
+      空态（无前台文档）时手柄 hidden——判定复用 `showEditor` 的状态分叉，不另造布尔
+- [ ] 2.5 拖拽：`pointerdown` → `setPointerCapture`；`pointermove` 按 rAF 合并后走
+      `nextContentWidth` + `setContentWidth`（live，D4）；`pointerup` 且值有变化才触发持久化
+      （task 3.1）。拖拽全程手柄保持显现
+- [ ] 2.6 `src/main.ts` 配置消费块：`applyTypography` 之后加
+      `editor.setContentWidth(snapshot.config.ui.content_width)`；前端不判区间（Rust 已校验，
+      与主题同口径）
+- [ ] 2.7 `tests/visual/scenes/tauri-stub.ts` 的 `config_get` 桩补 `ui.content_width`（缺省 =
+      裁决默认值，注释指回 Rust 常量）
+
+## 3. 持久化（写通道）
+
+- [ ] 3.1 `src-tauri/src/commands.rs` 新增 `ui_set_content_width(width: f64)` IPC：读整份 JSON 为
+      `Value`（解析失败按 `{}` 起）→ 确保 `ui` 为 object → 写 `content_width` → tmp+rename 原子
+      替换、保留未知字段（纪律照 `write_last_vault_to`，`commands.rs:394-428`）；纯函数
+      `merge_content_width` 分离可测；注册进 invoke handler；`src/ipc.ts` 加调用包装
+- [ ] 3.2 Rust 单测：`merge_content_width` 断言含未知字段 / 其它表的配置写回后逐键保留；
+      写失败路径返回 `config_write_failed`
+- [ ] 3.3 前端接线：`pointerup` 后调用 IPC；失败 → toast（`文案-Copy.md` 新增一条，续号）+
+      `logEvent("config_warning")`，运行期宽度**不回滚**；成功后不回读配置（design §2.4）
+
+## 4. 单测
+
+- [ ] 4.1 `tests/unit/content-width.test.ts`（新文件）：`clampContentWidth` 端点与取整、
+      `nextContentWidth` 的对称性（右缘 +Δx = 宽度 +2Δx；左缘 −Δx 同效）与钳制；TS 默认 /
+      上下限常量与 Rust 同值的对账断言（REVIEW.md 第 8 条）
+- [ ] 4.2 1.3 / 3.2 的 Rust 单测同批
+
+## 5. 视觉门禁
+
+- [ ] 5.1 新场景（挂编辑区既有 spec 或新增 `content-width.spec.ts`）：默认口径下手柄不可见、
+      hover 列缘命中区显现 2px 线（含「移开即隐去」负向断言——先造能 FAIL 的输入再提交，
+      REVIEW.md 第 1 条）
+- [ ] 5.2 拖拽场景（Playwright `page.mouse`）：含超长行的 fixture 下拖右缘 +80px，断言
+      `.cm-content` 宽度 +160、超长行折点数增加、点击折行内文字落点正确（`requestMeasure`
+      到位的试金石，design §4-3）；拖到上下限再超拖，宽度停在端点
+- [ ] 5.3 code 模式场景：手柄与 `.cm-content` 矩形缘重合（±1px，列不居中分支）；`line_wrap = false`
+      下横向滚动后手柄跟随列缘
+- [ ] 5.4 配置接线场景：桩给 `ui.content_width: 800` 启动，断言首帧列宽即 800（启动装配链的
+      端到端证据）；桩给越界值，断言回落默认 + `config_warning` 日志
+- [ ] 5.5 既有基线零变更核对：逐张核对含编辑区的整页基线时间戳与像素（AGENTS.md 视觉门禁卫生条）；
+      新增基线（手柄显现态）走 Alex 过目后入库
+- [ ] 5.6 `LUMIR_VISUAL_PORT=<独立端口> scripts/gate.sh visual` 全绿，输出留档 `test-results/m223/`
+
+## 6. 真机验收（agent 执行，不进 CI；随实现同 PR）
+
+本节场景序号按 tower 对账后的 registry 分配（r1 评审发现撞号后建立）：36 = live-theme-switch
+（M226，已合并）、37 = heading-hierarchy-ramp（M224）、**38 = content-width-drag（本 change）**。
+实现期新增场景前先核对 `scripts/acceptance/scenarios/` 的既有编号与本表，不再「续现有序列」盲取。
+
+- [ ] 6.1 `scripts/acceptance/lib/app.mjs` 的 `writeConfig` 支持 `uiContentWidth` 可选字段
+      （不传即不写 → 走 Rust `Default`）
+- [ ] 6.2 新增场景 `38-content-width-drag.md`：默认配置起实例，KimiCU drag
+      右缘手柄，断言 `config.json` 出现 `ui.content_width` 且其余键逐键不变、文档内容 sha256 与
+      dirty 不变；拖拽前后截图留档
+- [ ] 6.3 场景含重启保持：改宽后重启实例，列宽保持（读 `config.json` + 截图对照）
+- [ ] 6.4 写失败降级场景：隔离配置目录置只读后拖拽，断言 toast 出现、运行期宽度不回滚
+- [ ] 6.5 大文档拖拽帧实测（design §4-2）：1MB 探针文档折行开，拖拽采样帧耗时，数据落
+      `test-results/acceptance/` 并回填 design §4-2；不达标走松手生效退路并在 design §3 记录
+- [ ] 6.6 起实例前 `df -h` 看水位、确认 1420/1430 空闲；用 `pnpm tauri dev` 规避白屏陷阱
+      （REVIEW.md 第 10/11/12 条）
+
+## 7. 文档
+
+- [ ] 7.1 `docs/specs/design-tokens-v1.md:203` 的 `--layout-doc-measure` 条目改为「默认 664px，
+      可被 `ui.content_width` 覆盖（content-width-drag）」
+- [ ] 7.2 `文案-Copy.md`：手柄读屏名 + 写盘失败 toast 两条新条目（续号、附修订记录）
+
+## 8. 收口
+
+- [ ] 8.1 `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` 通过
+- [ ] 8.2 `scripts/gate.sh quick` 全绿（fmt + clippy + cargo test + bindings 漂移 + tsc +
+      docs-check + 单测 + openspec validate）
+- [ ] 8.3 归档对账（`docs/process/openspec-workflow.md` 批次收尾 checklist）：本 change 新建
+      capability `content-width`，归档后须手写 living spec 的 Purpose 替换占位（archive 的
+      `TBD` 会让 validate 报红）
+- [ ] 8.4 把「实现期必须验证」的结论回填 design §4：逐条标注实测结果（成立 / 走退路 / 转为
+      已知边界），不留「待验」字样进归档
