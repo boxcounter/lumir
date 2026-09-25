@@ -377,10 +377,14 @@ R3 收官（M213）后的 Alex 验收暴露一批缺陷/缺口，tower 拆成 mi
     18px 层级步进的像素兑现。
   - [x] 真机验收场景 `36-restyle-content`：doc-title 块 / callout 双段标签 / 树 chevron 读数；harness
     同 PR 引入嵌套 `vaultWrite`（mkdirp）与 `resetVault` 目录清理（目录不跨场景残留）。
-  - [ ] **等 M222 复绿的断言**（期望行为写法保留、当前红属正常）：表格系 ~20 用例
+  - [x] **等 M222 复绿的断言**（期望行为写法保留，M222+M227 合并后已复绿）：表格系 23 用例
     （doc-title×block-wrapper 劈叉）、`render-hr.spec.ts:62`（fm ⌘A→← 选区失同步）、
     `cursor-motion.spec.ts:84`（⌘A→↓ 揭示不足）、`lists.spec.ts:31×2`（点 task-marker 后键入死亡）——
     后三个是 M218 引入的同族回归（widget 点击/塌缩落点进 CM 不可映射位），bisect 证据与探针留档
-    `test-results/m221/probe-notes.md`。
-- [ ] **M222 产品侧修复**（worker-fix-doctitle-wrapper，进行中）：doc-title×block-wrapper 劈叉 +
-  上述三个同族回归。M221 的合并排在 M222 之后，复绿判据 = 上列红断言全绿。
+    `test-results/m221/probe-notes.md`。另：`wikilink-frontmatter-boundary.spec.ts:105`（M227
+    修复 link_graph_resolve 重复查询后复绿）、`reading-position.spec.ts:159` 与 `doc-title.spec.ts`
+    位置断言载体随 M222 拓扑更新、`m118×2`/`m131:155` setup 补表格揭示（掉出 CM 初始渲染窗口，
+    非产品缺陷）。终态：结构层全量 390/390 全绿（`test-results/m221/structural-final.log`）。
+- [x] **M222 产品侧修复**（合并 `1bec55e`）：doc-title×block-wrapper 劈叉 + 上述三个同族回归。
+  **M227 wikilink 重复查询修复**（合并 `cf39d55`）：invalidate 前移到 reloadSession 之前。
+  M221 排在两者之后合并，复绿判据 = 上列红断言全绿（已兑现，390/390）。
