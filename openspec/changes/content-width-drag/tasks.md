@@ -123,8 +123,7 @@
 ## 8. 收口
 
 - [x] 8.1 `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` 通过
-- [ ] 8.2 `scripts/gate.sh quick` 全绿（fmt + clippy + cargo test + bindings 漂移 + tsc +
-      docs-check + 单测 + openspec validate）
+- [x] 8.2 `scripts/gate.sh quick` 全绿（10/10 PASS，bindings 漂移随提交转绿）
 - [ ] 8.3 归档对账（`docs/process/openspec-workflow.md` 批次收尾 checklist）：本 change 新建
       capability `content-width`，归档后须手写 living spec 的 Purpose 替换占位（archive 的
       `TBD` 会让 validate 报红）

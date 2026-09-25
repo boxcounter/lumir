@@ -44,7 +44,8 @@
 ## 5. 验证
 
 - [x] 5.1 `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` 通过
-- [ ] 5.2 `scripts/gate.sh quick` 绿；`scripts/gate.sh visual`（含本地像素层）绿
+- [ ] 5.2 `scripts/gate.sh quick` 绿（已复跑 10/10 PASS）；`scripts/gate.sh visual` 结构层绿、
+  像素层待 Alex 过目 18 张基线后方可全绿（3.2/3.3）
 - [x] 5.3 真机复验：场景 37 两次 PASS（首跑 + 探针删除后复跑），截图证据在
   test-results/acceptance/2026-09-25/37-heading-hierarchy/shots/；H1–H6 混排层级辨识度
   手感项归 Alex（套件只留证据）
