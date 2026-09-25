@@ -80,9 +80,13 @@ D3 回写 config.json 的新写通道、D4 live 拖拽（退路松手生效）�
 
 ## 6. 真机验收（agent 执行，不进 CI；随实现同 PR）
 
+本节场景序号按 tower 对账后的 registry 分配（r1 评审发现撞号后建立）：36 = live-theme-switch
+（M226，已合并）、37 = heading-hierarchy-ramp（M224）、**38 = content-width-drag（本 change）**。
+实现期新增场景前先核对 `scripts/acceptance/scenarios/` 的既有编号与本表，不再「续现有序列」盲取。
+
 - [ ] 6.1 `scripts/acceptance/lib/app.mjs` 的 `writeConfig` 支持 `uiContentWidth` 可选字段
       （不传即不写 → 走 Rust `Default`）
-- [ ] 6.2 新增场景 `23-content-width-drag.md`（编号续现有序列）：默认配置起实例，KimiCU drag
+- [ ] 6.2 新增场景 `38-content-width-drag.md`：默认配置起实例，KimiCU drag
       右缘手柄，断言 `config.json` 出现 `ui.content_width` 且其余键逐键不变、文档内容 sha256 与
       dirty 不变；拖拽前后截图留档
 - [ ] 6.3 场景含重启保持：改宽后重启实例，列宽保持（读 `config.json` + 截图对照）
