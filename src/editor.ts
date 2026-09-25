@@ -292,12 +292,36 @@ function verticalTarget(view: EditorView, start: SelectionRange, forward: boolea
   return routeGridTable(view, from, target, forward);
 }
 
+/** 折叠揭示的自愈（M222 回归 3）：0 高分隔行（.cm-lp-block-separator，M218 C1 阶梯）
+ *  让 CM heightmap 的逐行估算与真实行高系统性偏离——长文档大跨度揭示时，校正环路每
+ *  pass 只能学进一个视口的行高，累计误差超过 CM 测量环路的 6 次预算（"Viewport
+ *  failed to stabilize"），scrollIntoView 停在半路（探针实证：caretBottom 962 vs
+ *  scrollerBottom 775 卡死；分隔行还原为正常高度即收敛；直赋 scrollTop 会被 CM 的
+ *  滚动锚定保持回卷）。自愈：settle 后光标仍在视口外就补发一次 scrollIntoView——
+ *  heightmap 的行高学习跨轮累计，第二轮带着已学高度重算即收敛（探针实证：补发一轮
+ *  caretBottom 962→770 且不回卷）。CM 的环路在一次 rAF 内跑完（含放弃分支），故
+ *  rAF 后即 settle 点；CM 自己收敛时这是 no-op；选区已变（用户又敲了键）则放弃，
+ *  不跟用户抢滚动。 */
+function healCollapsedReveal(view: EditorView, pos: number, attempts = 3): void {
+  requestAnimationFrame(() => {
+    if (view.state.selection.main.head !== pos) return;
+    const coords = view.coordsAtPos(pos);
+    if (!coords) return;
+    const rect = view.scrollDOM.getBoundingClientRect();
+    if (coords.bottom <= rect.bottom + 1 && coords.top >= rect.top - 1) return;
+    view.dispatch({ scrollIntoView: true });
+    if (attempts > 1) healCollapsedReveal(view, pos, attempts - 1);
+  });
+}
+
 function moveCaretVertically(view: EditorView, forward: boolean): boolean {
   const main = view.state.selection.main;
   if (!main.empty) {
     // 非空选区：与原生行为一致，折叠到移动方向的一端；scrollIntoView 揭示光标
     //（r1 review P2-1：否则 Cmd+A → ArrowDown 光标到文档末尾但不可见）。
-    view.dispatch({ selection: { anchor: forward ? main.to : main.from }, scrollIntoView: true, userEvent: "select" });
+    const anchor = forward ? main.to : main.from;
+    view.dispatch({ selection: { anchor }, scrollIntoView: true, userEvent: "select" });
+    healCollapsedReveal(view, anchor);
     return true;
   }
   const target = verticalTarget(view, main, forward);

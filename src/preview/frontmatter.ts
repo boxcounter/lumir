@@ -13,6 +13,15 @@
 import { load as parseYaml } from "js-yaml";
 import { WidgetType } from "@codemirror/view";
 import type { Text } from "@codemirror/state";
+import { buildDocTitleDOM, sameDocTitleData } from "./doc-title";
+import type { DocTitleData } from "./doc-title";
+
+/**
+ * fm-outer 携带 doc-title 时的修饰 class（M222 回归 2 修复：title 折叠进 fm widget，
+ * theme.ts 据此把 fm 盒下的 20px 间距从 -outer 的 paddingBottom 挪给 title 的 paddingTop）。
+ * 取值被 tests/unit/doc-title-placement.test.ts 钉死。
+ */
+export const FRONTMATTER_HAS_TITLE_CLASS = "cm-lp-frontmatter-has-title";
 
 export interface FrontmatterBlock {
   /** 整块（含两条 --- 围栏行）在文档中的范围。 */
@@ -109,12 +118,27 @@ function tagList(v: unknown): string[] {
 }
 
 export class FrontmatterWidget extends WidgetType {
-  constructor(readonly inner: string, readonly selected = false) {
+  // 不用构造器参数属性：tests/unit 直接跑 src 源码（Node 类型剥离不支持参数属性，
+  // 那是会生成代码的语法而不是纯类型标注——endMarker.ts 同口径；M222 起本文件被
+  // doc-title 合同测试经 detectFrontmatter 直接 import）。
+  readonly inner: string;
+  readonly selected: boolean;
+  /** 折叠进 outer 的 doc-title 数据（M222 回归 2 修复）；无 title 时为 null。 */
+  readonly title: DocTitleData | null;
+
+  constructor(inner: string, selected = false, title: DocTitleData | null = null) {
     super();
+    this.inner = inner;
+    this.selected = selected;
+    this.title = title;
   }
 
   eq(other: FrontmatterWidget): boolean {
-    return other.inner === this.inner && other.selected === this.selected;
+    return (
+      other.inner === this.inner &&
+      other.selected === this.selected &&
+      sameDocTitleData(other.title, this.title)
+    );
   }
 
   toDOM(): HTMLElement {
@@ -123,6 +147,10 @@ export class FrontmatterWidget extends WidgetType {
     const outer = document.createElement("div");
     outer.className = "cm-lp-frontmatter-outer";
     outer.append(this.buildBox());
+    if (this.title !== null) {
+      outer.classList.add(FRONTMATTER_HAS_TITLE_CLASS);
+      outer.append(buildDocTitleDOM(this.title));
+    }
     return outer;
   }
 
