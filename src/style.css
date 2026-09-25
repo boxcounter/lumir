@@ -344,13 +344,12 @@ body {
   position: relative;
   display: flex;
   align-items: center;
-  gap: var(--sp-3);
+  /* 定稿 .tab（index.html:145-154）：内 gap 7、左右 padding 12。 */
+  gap: 7px;
   flex: 0 0 auto;
   max-width: 230px;
   height: var(--layout-tab-h);
-  /* 组件内边距（收敛规则 3 点名的「已调优组件内边距」）：右侧 6px 是给 16px 关闭钮留的
-     视觉余量，左侧 12px 取定稿值。 */
-  padding: 0 var(--sp-3) 0 var(--sp-6);
+  padding: 0 var(--sp-6);
   border: 1px solid transparent;
   border-radius: var(--r7);
   background: none;
@@ -371,7 +370,7 @@ body {
 .tab-open {
   display: flex;
   align-items: center;
-  gap: var(--sp-3);
+  gap: 7px;
   flex: 1 1 auto;
   min-width: 0;
   padding: 0;
@@ -404,14 +403,14 @@ body {
   font-style: italic;
 }
 /* dirty 点：与 modeline 的「（未保存）」同源（同一 dirty 状态的两个可见面）。
-   用固定宽度的字形而不是文案，标签宽度不随保存状态跳动。 */
+   定稿 .tab .t-dot（index.html:165）：6×6 CSS 圆点，不再是 10px 文字字形 ●（字形偏大
+   且有基线偏移风险）。元素常驻 DOM、clean 时 hidden 收起，占位不随保存状态跳动。 */
 .tab-dirty {
   flex: none;
-  width: 8px;
-  text-align: center;
-  color: var(--pending);
-  font-size: var(--fs-nano);
-  line-height: 1;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--pending);
 }
 .tab-dirty[hidden] {
   display: none;
@@ -461,13 +460,16 @@ body {
   gap: var(--sp-6);
   min-width: 0;
 }
+/* 路径段（定稿 index.html:582-592、:1225）：裸 span = 常规字重 + --text-3，分隔符
+   「 / 」带空格（装配层写入时替换）。600/--text-2 档（.modeline b）定稿留给强调位，
+   屏 1 路径不用它。 */
 .modeline-path {
   min-width: 0;
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
-  color: var(--text-2);
-  font-weight: var(--fw-semibold);
+  color: var(--text-3);
+  font-weight: var(--fw-regular);
 }
 /* 当前位置指示段（M148 轻量大纲，M211 从已删除的标题区迁来）：文件名之后的当前标题链，兼作浮层
    入口。不加常驻占地——它就在 modeline 行内，与路径一起参与 flex 收缩（两者都省略号收尾）。 */
@@ -529,20 +531,26 @@ body {
 .lumir-toast,
 .toast-surface {
   position: absolute;
-  bottom: var(--sp-8);
+  /* 定稿 .toast5（index.html:745-755）：bottom 14、right 16、gap 8、12.5px。 */
+  bottom: var(--sp-7);
   right: var(--sp-8);
   display: flex;
   align-items: center;
-  gap: var(--sp-5);
+  gap: var(--sp-4);
   padding: var(--sp-4) var(--sp-7);
   background: var(--text);
   color: var(--content-bg);
-  font-size: var(--fs-ui);
+  font-size: var(--fs-ui-s);
   border-radius: var(--r7);
   /* 浮出物 → 吃 v1.1 的 elevation 档（eink = none，黑底白字本身成立）。 */
   box-shadow: var(--shadow-raise);
   z-index: 10;
   max-width: 70%;
+}
+/* 成功确认类 toast 的 ✓ 前缀（定稿 .toast5 .t5-check，index.html:755/1218）：
+   语义口径——只标「用户动作已成功完成」的确认（M217 S14，tower 裁决 2026-09-25）。 */
+.toast-check {
+  font-size: 12px;
 }
 .toast-action {
   border: 1px solid var(--border);
@@ -582,10 +590,10 @@ body {
   display: flex;
   align-items: center;
   gap: var(--sp-3);
-  padding: var(--sp-6) var(--sp-2) var(--sp-4) var(--sp-4);
+  /* 定稿 .side-head（index.html:191-194）：上右下左 = 12/12/8/16。 */
+  padding: var(--sp-6) var(--sp-6) var(--sp-4) var(--sp-8);
 }
 .ft-vault-name {
-  flex: 1;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -600,7 +608,9 @@ body {
   min-width: 0;
   display: flex;
   align-items: center;
-  gap: var(--sp-2);
+  /* 定稿 .vault-name（index.html:195）：caret 紧随名称，gap 5px——不再由 name 的 flex:1
+     把 caret 顶到行尾。按钮本体仍 flex:1（形态 A：名即入口，整行都是点击面）。 */
+  gap: 5px;
   padding: var(--sp-1) var(--sp-2);
   border: none;
   border-radius: var(--r4);
@@ -617,8 +627,12 @@ body {
 }
 .ft-vault-caret {
   flex: none;
+  width: 10px;
+  height: 10px;
   color: var(--text-3);
-  font-size: var(--fs-nano);
+}
+.ft-vault-caret svg {
+  display: block;
 }
 .ft-children {
   list-style: none;
@@ -662,11 +676,6 @@ body {
   background: var(--sel);
   font-weight: var(--fw-emphasis);
 }
-.ft-current-mark {
-  width: 15px;
-  flex: none;
-  color: var(--text);
-}
 .ft-name {
   min-width: 0;
   flex: 1;
@@ -677,22 +686,32 @@ body {
 .ft-row:hover {
   background: var(--hover);
 }
+/* 目录 caret（定稿 index.html:211-214）：9×9 细线 SVG chevron 居中在 14×14 槽位里，
+   展开 = 同一 chevron 旋转 90°（0.12s 过渡），文件行的空槽位同宽保持对齐。 */
 .ft-caret {
   width: 14px;
+  height: 14px;
   flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   color: var(--text-3);
-  font-size: var(--fs-nano);
-  text-align: center;
+  transition: transform var(--dur-ui) var(--ease-standard);
+}
+.ft-caret.is-open {
+  transform: rotate(90deg);
+}
+.ft-caret svg {
+  display: block;
 }
 /* eink 规则④：选中态黑底反白，组件内次级元素手工反白（行内没有现成的颜色继承链——
-   .ft-name / .ft-caret / .ft-current-mark 各自写了 --text / --text-3）。
+   .ft-name / .ft-caret 各自写了 --text / --text-3）。
    **`:hover` 必须排除**：`--hover` 档（rgba 黑 6%）压过选中底色（同一心智模型：悬停反馈压过常驻
    选中底色，见 .cm-activeLine 与 .lumir-toc-item 的两处同形），此时底色是近白、若文字仍是
    `--sel-text`（白）就是白底白字不可读。排除后悬停态回到常字色（黑），可读性由同一个模型保证。 */
 :root[data-theme="eink"] .ft-row.is-current:not(:hover),
 :root[data-theme="eink"] .ft-row.is-current:not(:hover) .ft-name,
-:root[data-theme="eink"] .ft-row.is-current:not(:hover) .ft-caret,
-:root[data-theme="eink"] .ft-row.is-current:not(:hover) .ft-current-mark {
+:root[data-theme="eink"] .ft-row.is-current:not(:hover) .ft-caret {
   color: var(--sel-text);
 }
 .ft-empty {
@@ -762,15 +781,21 @@ body {
 .cm-lp-block-scroll:focus-visible {
   outline: 2px solid var(--accent);
 }
-/* 代码块横滚容器（M180）：只补底板，不补纵向间距。翻转开关带来的几何变化 SHALL 只来自
-   折行本身，照抄表格的 padding-block: 12px 会把代码块下方所有行推走（CM 按 border-box 量
-   行高，见下方 .cm-lp-table-scroll 的 M110 注释）。底板是必需的：滚到右侧时行盒之外没有
-   底色（.cm-lp-codeblock-line 的背景只覆盖行盒宽度），而容器自己的背景不随内容滚动，
-   正好铺满可见区域。
+/* 代码块横滚容器（M180）：底板 + 定稿容器形态（index.html:360-366）：r8 圆角 +
+   padding `9px 14px 10px`。padding 计入 border-box、对 CM 测量可见（与表格侧 M110 同一
+   合同），折行开关带来的几何变化仍只来自折行本身——这份 padding 是常量，不随开关翻转。
+   定稿的 `margin: 4px 0 12px` **不落 margin**：块级 margin 对 CM heightmap 不可见，会让
+   块下方内容的 posAtCoords 累计错位（M110 缺陷 1）；容器自带底板与 eink 黑框，也不能照抄
+   表格的「透明 padding」手法（padding 会被底色/边框包住）。块外间距由块间分隔行高度承担
+   （M216 gap #1 间距阶梯的通道，livePreview.ts），本规则只管容器本体。
+   底板是必需的：滚到右侧时行盒之外没有底色（.cm-lp-codeblock-line 的背景只覆盖行盒宽度），
+   而容器自己的背景不随内容滚动，正好铺满可见区域。
    eink 规则⑤：无灰底可用 → 翻转为白底黑框（与 frontmatter 区同一条规则，preview 侧的
-   另一半在 src/preview/theme.ts）。 */
+   另一半在 src/preview/theme.ts）；黑框同形 r8（定稿 index.html:366，圆角由基规则给出）。 */
 .cm-lp-codeblock-scroll {
   background-color: var(--code-bg);
+  border-radius: var(--r8);
+  padding: 9px var(--sp-7) var(--sp-5);
 }
 :root[data-theme="eink"] .cm-lp-codeblock-scroll {
   background-color: #fff;
@@ -790,8 +815,9 @@ body {
   /* 纵向间距必须用 padding 而非 margin（M110 缺陷 1）：CM6 经 getBoundingClientRect
      测量块高度，border-box 不含 margin——块级 margin 对 heightmap 不可见，
      其下所有内容的 posAtCoords y→行映射按 margin 累计错位（双击表头落到下行）。
-     wrapper 无背景/边框，padding 与 margin 视觉等价且可被测量（spaceAbove）。 */
-  padding-block: var(--sp-6);
+     wrapper 无背景/边框，padding 与 margin 视觉等价且可被测量（spaceAbove）。
+     值 = 定稿 table margin `2px 0 10px`（index.html:347）的 padding 映射。 */
+  padding-block: 2px var(--sp-5);
 }
 .cm-lp-table-scroll:focus-visible {
   outline: 2px solid var(--accent);
@@ -806,8 +832,6 @@ body {
      自然宽超过栏宽时不收缩、不裁切，超出部分由 .cm-lp-table-scroll 横向滚动承载。 */
   grid-template-columns: repeat(var(--cm-lp-table-columns), minmax(min-content, max-content));
   inline-size: max-content;
-  border-block-start: 1px solid var(--border);
-  border-inline-start: 1px solid var(--border);
   /* 0.9em = 定稿的 13.5px（正文锚 15px）——字号是运行期可步进的，em 才是正确单位。 */
   font-size: 0.9em;
   line-height: var(--lh-ui);
@@ -828,28 +852,45 @@ body {
      整表反而窄于栏宽（「折行却收缩」缺陷）；列宽回归内容自然宽，超宽整表横滚。
      固定 px 上限曾是 M110 表头错位修复（ch 上限随字重变化）——取消上限后
      max-content 轨道天然行列一致，错位向量随之消失。 */
-  padding: 5px 8px;
-  border-inline-end: 1px solid var(--border-soft);
+  /* 定稿框线结构（index.html:347-358）：无外框、无竖线，只有横线——td 底线层次档
+     --border-soft、th 底线结构档 --border（见 :first-child 行）、末行无底线（:last-child）。
+     cell padding = 定稿 td `6px 14px 6px 0`；vertical-align: top（定稿 td 同值，多行
+     cell 内容顶对齐）。eink 的实心黑外框随外框删除一并消除。 */
+  padding: 6px var(--sp-7) 6px 0;
   border-block-end: 1px solid var(--border-soft);
+  vertical-align: top;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
-/* 表头行：字号 + 层次边线（tokens 文档：th 底线结构档 / td 层次档），首行不再铺底色。 */
+/* 末行 td 无底线（定稿 tr:last-child td，index.html:358）。行是 .cm-line 级 line
+   decoration，分隔行（|---|）恒在表头后、不会落在末位，:last-child 即最后一个数据行。 */
+.cm-lp-table .cm-lp-table-row:last-child .cm-lp-table-cell {
+  border-block-end: none;
+}
+/* 表头行：字号 + 层次边线（tokens 文档：th 底线结构档 / td 层次档），首行不再铺底色。
+   padding = 定稿 th `5px 14px 6px 0`（index.html:350）。 */
 .cm-lp-table-row:first-child .cm-lp-table-cell {
+  padding: 5px var(--sp-7) 6px 0;
   font-size: var(--fs-label-s);
   font-weight: var(--fw-bold);
   letter-spacing: 0.04em;
   color: var(--text-2);
   border-block-end-color: var(--border);
 }
-/* 首列字重 550（tokens 文档：td 层次档）。
+/* 首列字重 550 + nowrap（定稿 td:first-child，index.html:357）。
    判据用**列索引**（`aria-colindex`，装饰层按列写死）而不是 `:first-child`：CM6 会在行内
    自动放置 `img.cm-widgetBuffer` / 占位 span，它们可能落在第一个 cell 之前，于是
    `.cm-lp-table-cell:first-child` 不匹配任何 cell——「首列 550」整条静默失效（M212 reviewer
    复现：DOM 首子节点是 widgetBuffer，不是 cell）。列索引是装饰层写死的属性，与 DOM 子节点
-   次序无关；`aria-colindex` 同时是读屏语义（role=cell/columnheader 的列号），两处同一来源。 */
+   次序无关；`aria-colindex` 同时是读屏语义（role=cell/columnheader 的列号），两处同一来源。
+   读数注意（M217 实测）：编辑器 DOM 在 contenteditable 内，Chromium 对可编辑子树强制
+   white-space-collapse: preserve（摘掉 contenteditable 即恢复 collapse），于是本规则的
+   computed white-space 序列化成 "pre"（preserve+nowrap）而非 "nowrap"——不折行的判据由
+   text-wrap-mode: nowrap 承担（该 longhand 正常生效），collapse 与基规则 pre-wrap 行为一致，
+   非缺陷。 */
 .cm-lp-table-row:not(:first-child) .cm-lp-table-cell[aria-colindex="1"] {
   font-weight: var(--fw-emphasis);
+  white-space: nowrap;
 }
 /* 行内被 Decoration.replace 隐藏的管道符仍留有 CM6 的 img.cm-widgetBuffer / 占位 span；
    它们是自动放置的 grid item，会各撑出一条隐式行（约 1em），实测行高 92px 远超单元格 33px */
@@ -1024,7 +1065,8 @@ body {
   padding: var(--sp-3) 0 0;
   background: var(--preview-bg);
   border: 1px solid var(--border);
-  border-radius: var(--r9);
+  /* 浮层归 r10（定稿 .ovl-pop，index.html:685；M217 裁决，tokens 出处表补记随 M220 批次）。 */
+  border-radius: var(--r10);
   box-shadow: var(--shadow-raise);
 }
 /* 优先级 0-2-0 > `.lumir-toc` 的 0-1-0：加了 display: flex 之后这里的隐藏仍然生效
@@ -1032,12 +1074,14 @@ body {
 .lumir-toc[hidden] {
   display: none;
 }
-/* 唯一滚动容器：flex 子项要能缩到内容高以下，min-height: 0 是前提（漏了上限就失效）。 */
+/* 唯一滚动容器：flex 子项要能缩到内容高以下，min-height: 0 是前提（漏了上限就失效）。
+   padding 4（定稿 .pop-list，index.html:696）：选中底色内缩成圆角块，不直顶浮层边缘。 */
 .lumir-toc-list {
   flex: 1 1 auto;
   min-height: 0;
   overflow: auto;
   outline: none;
+  padding: var(--sp-2);
 }
 /* 无命中态：列表让位给一行提示（列表隐藏后它顶在列表区的位置）。 */
 .lumir-toc-list[hidden] {
@@ -1056,7 +1100,8 @@ body {
   background: transparent;
   color: var(--text);
   font-family: var(--font-sans);
-  font-size: var(--fs-ui);
+  /* 定稿 .pop-filter（index.html:690-695）：12.5px。 */
+  font-size: var(--fs-ui-s);
 }
 .lumir-toc-input:focus {
   outline: none;
@@ -1069,32 +1114,41 @@ body {
   font-size: var(--fs-ui);
   color: var(--text-3);
 }
-/* 列表行 = 文件树同族（行高/字号/缩进随层级、is-active = 树选中态）。缩进按 --toc-depth
-   （相对文档最浅层标题的层差，src/toc.ts 写入）；不用侧栏、不加连接线。 */
+/* 列表行（定稿 .opop .pop-row，index.html:697-704、:715-719）：h26 / radius 6 / 左 padding
+   d0 8、d1 26（步进 18px，随 --toc-depth 归一后的层差；--toc-depth 由 src/toc.ts 写入）。 */
 .lumir-toc-item {
-  padding: 3px var(--sp-6) 3px
-    calc(var(--sp-6) + var(--toc-depth, 0) * var(--layout-tree-indent-step));
+  height: 26px;
+  line-height: 26px;
+  padding: 0 var(--sp-4) 0
+    calc(var(--sp-4) + var(--toc-depth, 0) * 18px);
+  border-radius: var(--r6);
   font-size: var(--fs-ui-s);
-  line-height: var(--lh-ui);
   color: var(--text);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
   cursor: pointer;
 }
+/* 当前段（定稿 .pop-row.cur，index.html:706）：常驻 --sel + 550——「我在哪个标题下」不随
+   键盘游标离开而消失。与游标的共存规则（M217 worker 定并记录）：游标 is-active 用同一底色
+   加 inset 1px 描边（currentColor）——两态同列时叠加可辨（底色+550+描边），分列时游标仍
+   指得出来；描边取 currentColor，eink 反白后随文字一起翻白，不需要第二份颜色规则。 */
 .lumir-toc-item.is-current {
-  font-weight: var(--fw-semibold);
+  background: var(--sel);
+  font-weight: var(--fw-emphasis);
 }
 .lumir-toc-item.is-active {
   background: var(--sel);
+  box-shadow: inset 0 0 0 1px currentColor;
 }
 /* hover 与选中同族（design §2.7 #1 的类推行：is-active = 树选中态、hover = --hover）——
    声明在选中态之后，与 .ft-row 的次序一致（同一心智模型：悬停反馈压过常驻选中底色）。 */
 .lumir-toc-item:hover {
   background: var(--hover);
 }
-/* eink 规则④：选中项反白。同样排除 `:hover`（理由见 .ft-row.is-current 那处：悬停底色压过选中
-   底色，此时文字必须回到常字色，否则白底白字）。 */
+/* eink 规则④：选中项反白（当前段与键盘游标同底色，同一条反白规则）。同样排除 `:hover`
+   （理由见 .ft-row.is-current 那处：悬停底色压过选中底色，此时文字必须回到常字色，否则白底白字）。 */
+:root[data-theme="eink"] .lumir-toc-item.is-current:not(:hover),
 :root[data-theme="eink"] .lumir-toc-item.is-active:not(:hover) {
   color: var(--sel-text);
 }
@@ -1116,7 +1170,7 @@ body {
 
 /* vault 切换器浮层（M163）：与 .lumir-toc 同一手法——绝对定位、不占任何常驻行高、关闭即
    消失；壳同 #1（--preview-bg + 1px --border + --shadow-raise）。宽度 320px 允许溢出
-   左栏（236px）：收进栏内就得再砍行内信息（显示名 + 摘要 + 路径三段 + 失效行）。
+   左栏（236px）：收进栏内就得再砍行内信息（显示名 + 摘要两段 + 失效行）。
    挂点是 app-shell（左栏两个容器都 overflow:auto，浮层挂进去会被裁切），定位由
    src/vault-switcher.ts 用入口的视口矩形算出来。max-height 用 vh：随窗口重排即时生效，
    不需要 JS 监听 resize。 */
@@ -1132,7 +1186,8 @@ body {
   padding: var(--sp-3);
   background: var(--preview-bg);
   border: 1px solid var(--border);
-  border-radius: var(--r9);
+  /* 浮层归 r10（同 .lumir-toc，定稿 .ovl-pop index.html:685）。 */
+  border-radius: var(--r10);
   box-shadow: var(--shadow-raise);
   font-family: var(--font-sans);
   font-size: var(--fs-ui);
@@ -1164,6 +1219,8 @@ body {
   background: transparent;
   color: var(--text);
   font: inherit;
+  /* 定稿 .pop-filter（index.html:690-695）：12.5px（壳的 13px 不继承到输入行）。 */
+  font-size: var(--fs-ui-s);
 }
 .vault-filter:focus {
   outline: none;
@@ -1192,12 +1249,19 @@ body {
 .vault-row:hover {
   background: var(--hover);
 }
+/* 键盘游标（is-active）：--sel 底色 + inset 1px 描边（currentColor）——与当前项同底色时
+   仍指得出游标位置（共存规则同 .lumir-toc-item，M217 worker 定并记录）。 */
 .vault-row.is-active {
   background: var(--sel);
+  box-shadow: inset 0 0 0 1px currentColor;
 }
-/* 当前项：唯一的标记（实心点 + 加粗名称）——accent 只在需要分流的地方出现。 */
+/* 当前项（定稿 .pop-row.cur，index.html:705-707）：常驻 --sel + 名 550 + ✓ 槽位 +
+   「当前」flag 右对齐——accent 实心点与非当前行灰点退场，非当前行留空槽对齐。 */
+.vault-row.is-current {
+  background: var(--sel);
+}
 .vault-row.is-current .vault-row-name {
-  font-weight: var(--fw-semibold);
+  font-weight: var(--fw-emphasis);
 }
 .vault-row-top {
   display: flex;
@@ -1205,15 +1269,14 @@ body {
   gap: var(--sp-3);
   min-width: 0;
 }
+/* 12px ✓ 槽位（定稿 .p-check）：当前行一个 accent ✓，非当前行空槽——名称左缘全列对齐。 */
 .vault-dot {
   flex: none;
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--accent);
-}
-.vault-dot.is-off {
-  background: var(--text-3);
+  width: 12px;
+  font-size: var(--fs-label);
+  line-height: 1;
+  text-align: center;
+  color: var(--accent);
 }
 .vault-row-name {
   min-width: 0;
@@ -1223,11 +1286,13 @@ body {
 }
 .vault-row-flag {
   flex: none;
+  margin-left: auto;
   font-size: var(--fs-label);
   color: var(--text-3);
 }
 .vault-row-sub {
-  padding-left: var(--sp-6);
+  /* 与名称左缘对齐 = ✓ 槽位 12 + 行内 gap 6。 */
+  padding-left: 18px;
   font-size: var(--fs-label);
   line-height: var(--lh-ui);
   color: var(--text-3);
@@ -1271,8 +1336,15 @@ body {
 .vault-add-plus {
   color: var(--text-3);
 }
-/* eink 规则④：选中行的黑底反白要覆盖行内各自写了颜色的次级元素。 */
+/* eink 规则④：选中行（当前项与键盘游标同底色）的黑底反白要覆盖行内各自写了颜色的
+   次级元素——含 ✓ 槽位（.vault-dot，平时是 accent 色）。 */
+:root[data-theme="eink"] .vault-row.is-current,
+:root[data-theme="eink"] .vault-row.is-current .vault-dot,
+:root[data-theme="eink"] .vault-row.is-current .vault-row-name,
+:root[data-theme="eink"] .vault-row.is-current .vault-row-flag,
+:root[data-theme="eink"] .vault-row.is-current .vault-row-sub,
 :root[data-theme="eink"] .vault-row.is-active,
+:root[data-theme="eink"] .vault-row.is-active .vault-dot,
 :root[data-theme="eink"] .vault-row.is-active .vault-row-name,
 :root[data-theme="eink"] .vault-row.is-active .vault-row-flag,
 :root[data-theme="eink"] .vault-row.is-active .vault-row-sub,

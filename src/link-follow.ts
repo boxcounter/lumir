@@ -33,7 +33,12 @@ export interface LinkFollowDeps {
    *  **不传 intent**：链接跟随一律就地替换前台标签（"current" 是 openFile 的默认值）。 */
   openFile: (path: string, kind: OpenKind) => Promise<void>;
   /** 人话提示出口（装配层注入）。 */
-  toast: (text: string, actions?: Array<{ label: string; run(): void }>) => void;
+  toast: (
+    text: string,
+    actions?: Array<{ label: string; run(): void }>,
+    sticky?: boolean,
+    tone?: "neutral" | "success",
+  ) => void;
 }
 
 export interface LinkFollowHandle {
@@ -175,7 +180,7 @@ export function createLinkFollow(deps: LinkFollowDeps): LinkFollowHandle {
       invalidate();
       editor.refreshPreview(); // 创建成功后链接转为正常态（spec §4.4）
       await openFile(created, "md");
-      toast(`已创建：${created}`);
+      toast(`已创建：${created}`, [], false, "success");
     } catch (e) {
       // 目标已存在 = 索引过期（spec §4.4）：清缓存重解析而非覆盖
       invalidate();

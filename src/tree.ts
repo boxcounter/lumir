@@ -96,6 +96,17 @@ function vaultEntryLabel(vaultName: string): string {
   return `vault：${vaultName}（点击查看全部 vault）`;
 }
 
+/** 目录 caret（定稿 direction-c/index.html:211-214、:798-820）：9×9 细线 SVG chevron，
+ *  展开 = 同一 chevron 旋转 90°（`.ft-caret.is-open` 的 transform + 0.12s 过渡在 CSS 侧），
+ *  不再是折叠/展开两个字形（▸/▾）的跳切。stroke 取 currentColor，颜色仍由 .ft-caret 的
+ *  --text-3 与 eink 反白规则承担。 */
+const DIR_CARET_SVG =
+  '<svg width="9" height="9" viewBox="0 0 9 9" fill="none"><path d="M3 1.8L6.2 4.5L3 7.2" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+
+/** vault 名后的 caret（定稿 index.html:787-789）：10×10 细线向下 chevron，紧随名称（不旋转）。 */
+const VAULT_CARET_SVG =
+  '<svg width="10" height="10" viewBox="0 0 10 10" fill="none"><path d="M2.5 4L5 6.5L7.5 4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+
 export function createFileTree(mount: HTMLElement, cb: FileTreeCallbacks): FileTree {
   // 全量模型：path → Node；根路径为 ""。展开状态独立保存，刷新不丢（spec 3.3）。
   const nodes = new Map<string, Node>();
@@ -127,6 +138,7 @@ export function createFileTree(mount: HTMLElement, cb: FileTreeCallbacks): FileT
 
     const caret = document.createElement("span");
     caret.className = "ft-caret";
+    if (node.entry.kind === "dir") caret.innerHTML = DIR_CARET_SVG;
     const name = document.createElement("span");
     name.className = "ft-name";
     name.textContent = baseName(node.entry.path);
@@ -161,8 +173,7 @@ export function createFileTree(mount: HTMLElement, cb: FileTreeCallbacks): FileT
   }
 
   function syncCaret(node: Node) {
-    const caret = node.li?.querySelector(".ft-caret");
-    if (caret) caret.textContent = expanded.has(node.entry.path) ? "▾" : "▸";
+    node.li?.querySelector(".ft-caret")?.classList.toggle("is-open", expanded.has(node.entry.path));
   }
 
   function toggle(node: Node) {
@@ -229,7 +240,7 @@ export function createFileTree(mount: HTMLElement, cb: FileTreeCallbacks): FileT
     const caret = document.createElement("span");
     caret.className = "ft-vault-caret";
     caret.setAttribute("aria-hidden", "true");
-    caret.textContent = "▾";
+    caret.innerHTML = VAULT_CARET_SVG;
     entry.append(name, caret);
     entry.addEventListener("click", () => cb.onOpenVaultSwitcher());
     // mousedown 不夺焦点（与 .lumir-toc 的指示段同手法）：浮层开着时点入口是一次「关」，
@@ -257,13 +268,6 @@ export function createFileTree(mount: HTMLElement, cb: FileTreeCallbacks): FileT
       const active = row.closest<HTMLElement>(".ft-item")?.dataset.path === currentPath;
       row.classList.toggle("is-current", active);
       row.setAttribute("aria-current", active ? "true" : "false");
-      row.querySelector(".ft-current-mark")?.remove();
-      if (active) {
-        const mark = document.createElement("span");
-        mark.className = "ft-current-mark";
-        mark.textContent = "¶";
-        row.prepend(mark);
-      }
     });
   }
 

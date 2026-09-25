@@ -915,11 +915,10 @@ test("浮层：打开后渲染全部行（含当前项与失效行）与底部�
 
   const rows = rig.popover().find("vault-row");
   assert.equal(rows.length, 2);
-  // 可用行：名字 + 摘要（当前项说「现在打开」）+ 路径尾部三段
+  // 可用行：名字 + 摘要（当前项说「现在打开」）；路径行已裁（M217 S12）
   assert.deepEqual(rows[0].find("vault-row-name").map((el) => el.textContent), ["notes"]);
   assert.deepEqual(rows[0].find("vault-row-flag").map((el) => el.textContent), ["当前"]);
   assert.ok(rows[0].find("vault-row-sub").some((el) => el.textContent === "2 个标签 · 现在打开"));
-  assert.ok(rows[0].find("vault-row-sub").some((el) => el.textContent === "/Users/alex/notes"));
   assert.equal(rows[0].getAttribute("role"), "option");
   // 失效行：成因 + 「重新定位…」，语义标记为不可选中
   assert.equal(rows[1].getAttribute("aria-disabled"), "true");

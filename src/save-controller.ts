@@ -61,7 +61,12 @@ export interface ToastAction {
   run(): void;
 }
 
-export type ToastFn = (text: string, actions?: ToastAction[], sticky?: boolean) => HTMLElement;
+export type ToastFn = (
+  text: string,
+  actions?: ToastAction[],
+  sticky?: boolean,
+  tone?: "neutral" | "success",
+) => HTMLElement;
 
 /** 切换 vault 的 dirty 前置判据（M149 判据，M163 起只给判据、不给提示）。 */
 export interface VaultSwitchBlock {
@@ -345,10 +350,15 @@ export function createSaveController(deps: SaveControllerDeps): SaveController {
         editor.markCleanOf(path, content);
         resumeAutosave(path, "saved"); // 已与磁盘同步：冲突/外部修改待决状态一并解除
         void recoveryDiscard(path).catch(() => {}); // 保存成功即清除崩溃备份
-        toast(auto ? "已自动保存" : "已保存");
+        toast(auto ? "已自动保存" : "已保存", [], false, "success");
         return true;
       }
-      toast(auto ? "已自动保存当前快照，仍有未保存修改" : "已保存当前快照，仍有未保存修改");
+      toast(
+        auto ? "已自动保存当前快照，仍有未保存修改" : "已保存当前快照，仍有未保存修改",
+        [],
+        false,
+        "success",
+      );
       return false;
     } catch (e) {
       if (isCommandError(e) && e.code === "document_conflict") {
@@ -429,9 +439,9 @@ export function createSaveController(deps: SaveControllerDeps): SaveController {
         editor.markCleanOf(path, content);
         resumeAutosave(path, "force_saved");
         void recoveryDiscard(path).catch(() => {});
-        toast("已强制覆盖保存");
+        toast("已强制覆盖保存", [], false, "success");
       } else {
-        toast("已强制覆盖保存当前快照，仍有未保存修改");
+        toast("已强制覆盖保存当前快照，仍有未保存修改", [], false, "success");
       }
     } catch (e) {
       if (isCommandError(e) && e.code === "document_conflict") {
@@ -478,7 +488,7 @@ export function createSaveController(deps: SaveControllerDeps): SaveController {
         // 旧路径的备份随内容迁走（旧文件已被外部删除，其备份不再可恢复）。
         void recoveryDiscard(fromPath).catch(() => {});
         await deps.openFile(created, "md", "current");
-        toast(`已另存为：${created}`);
+        toast(`已另存为：${created}`, [], false, "success");
         return;
       } catch (e) {
         if (isCommandError(e) && e.code === "wikilink_target_exists") continue;
@@ -534,7 +544,7 @@ export function createSaveController(deps: SaveControllerDeps): SaveController {
   async function discardAndReload(path: string): Promise<void> {
     if (await reloadDocument(path)) {
       resumeAutosave(path, "reloaded"); // 内容已回到磁盘版本，暂停态随冲突一并解除
-      toast(`${nameOf(path)}已重新载入磁盘内容`);
+      toast(`${nameOf(path)}已重新载入磁盘内容`, [], false, "success");
     }
   }
 
@@ -689,13 +699,13 @@ export function createSaveController(deps: SaveControllerDeps): SaveController {
     editor.view.dispatch({
       changes: { from: 0, to: target.doc.length, insert: content },
     });
-    toast("已恢复未保存内容，请保存（Cmd+S）");
+    toast("已恢复未保存内容，请保存（Cmd+S）", [], false, "success");
   }
 
   async function discardBackup(path: string): Promise<void> {
     try {
       await recoveryDiscard(path);
-      toast("已丢弃崩溃备份");
+      toast("已丢弃崩溃备份", [], false, "success");
     } catch (e) {
       toast(errorMessage(e));
     }
