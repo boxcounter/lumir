@@ -9,8 +9,11 @@
 // - 失败降级：parse() 预校验 + render catch，回落「提示 + 完整原文围栏块」，
 //   不伪装已支持；装饰只改视图，文档文本不动，选择/复制输出原始 Markdown
 // （与其他 replace 装饰同口径）；
-// - 单一排版基线（ADR 0006，三主题已移除）：mermaid 固定 default 主题 +
-//   透明背景（MERMAID_CONFIG），不再随 data-theme 切换。
+// - 主题接线（M219，finding 20260925-worker-restyle-r4-baseline-bug-mermaid-*）：
+//   mermaid 把颜色烧进 SVG 内联样式，CSS 变量无法事后跟随，故 initialize 时把
+//   当前主题（<html data-theme>，main.ts 启动装配一次、运行期不切换）的 token
+//   计算值读入 themeVariables（theme: "base"）。mermaid 懒初始化必然发生在主题
+//   写入之后，时机天然对齐；运行期无切换，渲染缓存键因此仍只是源码。
 // 本模块顶层不触 DOM、不静态 import mermaid，Node 端测试可直接 import。
 
 import { Decoration, WidgetType } from "@codemirror/view";
@@ -37,13 +40,74 @@ export interface MermaidRenderer {
   render(id: string, source: string): Promise<{ svg: string }>;
 }
 
-// mermaid 内置 default 主题，background 透明，避免自带底色与编辑器 --bg 打架。
-const MERMAID_CONFIG: Record<string, unknown> = {
+// 静态部分：加载与隔离策略与主题无关。background 透明，避免自带底色与编辑器
+// --preview-bg 打架。
+const MERMAID_CONFIG_STATIC: Record<string, unknown> = {
   startOnLoad: false,
   securityLevel: "strict",
-  theme: "default",
-  themeVariables: { background: "transparent" },
 };
+
+// 色值真源是 style.css 的三组 :root[data-theme] 块，这里只读计算值、不登记
+// 任何色值（REVIEW.md 第 8 条：不留第二处真源）。theme: "base" 是 themeVariables
+// 完整生效的前提；primary/secondary/tertiary 三档派生出流程图的 mainBkg/
+// nodeBorder 等槽位，其余键覆盖连线/箭头、cluster、edge label 与 sequence 图。
+// eink 档的 token 取值本身保证「黑描边 + 白填充 + tint 退场」（--accent = #000、
+// 全部 -tint = transparent），映射无需按主题分支。
+function mermaidConfig(): Record<string, unknown> {
+  if (typeof document === "undefined") {
+    return { ...MERMAID_CONFIG_STATIC, theme: "default", themeVariables: { background: "transparent" } };
+  }
+  const styles = getComputedStyle(document.documentElement);
+  const token = (name: string): string => styles.getPropertyValue(name).trim();
+  const text = token("--text");
+  if (text === "") {
+    // token 层未装载（如无样式表的测试桩环境）：退回 mermaid 自带 default 主题。
+    return { ...MERMAID_CONFIG_STATIC, theme: "default", themeVariables: { background: "transparent" } };
+  }
+  const accent = token("--accent");
+  const accentTint = token("--accent-tint");
+  const previewBg = token("--preview-bg");
+  const pendingTint = token("--pending-tint");
+  const pending = token("--pending");
+  return {
+    ...MERMAID_CONFIG_STATIC,
+    theme: "base",
+    themeVariables: {
+      background: "transparent",
+      fontFamily: token("--font-sans"),
+      textColor: text,
+      lineColor: text,
+      primaryColor: accentTint,
+      primaryBorderColor: accent,
+      primaryTextColor: text,
+      secondaryColor: token("--ok-tint"),
+      secondaryBorderColor: token("--ok"),
+      secondaryTextColor: text,
+      tertiaryColor: pendingTint,
+      tertiaryBorderColor: pending,
+      tertiaryTextColor: text,
+      clusterBkg: token("--code-bg"),
+      clusterBorder: token("--border"),
+      edgeLabelBackground: previewBg,
+      titleColor: text,
+      noteBkgColor: pendingTint,
+      noteTextColor: text,
+      noteBorderColor: pending,
+      actorBkg: accentTint,
+      actorBorder: accent,
+      actorTextColor: text,
+      signalColor: text,
+      signalTextColor: text,
+      labelBoxBkgColor: accentTint,
+      labelBoxBorderColor: accent,
+      labelTextColor: text,
+      loopTextColor: text,
+      activationBkgColor: accentTint,
+      activationBorderColor: accent,
+      sequenceNumberColor: previewBg,
+    },
+  };
+}
 
 // ---------------------------------------------------------------------------
 // 懒加载与渲染队列：dynamic import 隔离 chunk；initialize 与 render 必须成对
@@ -116,7 +180,7 @@ async function doRender(source: string): Promise<MermaidRenderState> {
   try {
     const mermaid = await withTimeout(renderer(), loadTimeoutMs, `渲染器加载超时（${Math.round(loadTimeoutMs / 1000)}s）`);
     if (!initialized) {
-      mermaid.initialize(MERMAID_CONFIG);
+      mermaid.initialize(mermaidConfig());
       initialized = true;
     }
     stage = "render";
