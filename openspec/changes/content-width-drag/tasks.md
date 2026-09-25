@@ -79,14 +79,10 @@
       无场景）——已登记 design「已知边界」，归 follow-up
 - [x] 5.4 配置接线场景：桩给 `content_width: 800` 启动首帧即 800 已覆盖全绿；越界回落 + warning
       走 Rust validate 单测覆盖（chromium 桩不经 Rust 校验，造不出该路径）
-- [ ] 5.5 受影响基线重建（**进行中，待 Alex 过目**：18 张失败基线逐张对照表 + 三图对照过目包
-      index.html 已落 `test-results/m228/baseline-review/`（主仓，git 外），机制归因逐张列出；
-      像素层 run 输出留档 `test-results/m228/gate-visual-*.log`；基线 PNG 零 diff 纪律保持，
-      Alex 过目批准前不入库）——原文：（D1=680 使默认口径位移 16px，含编辑区的整页基线必然变化）：逐张对照表
-      （张名 / 变化原因 / 归属 heading 还是 width）+ 过目包（index.html，每个受影响表面至少一张
-      截图）落 `test-results/m228/`；**Alex 过目批准前 git 不提交任何基线 PNG**（工作区保持零基线
-      diff），批准后入库（sha256 逐张核对）；删除/移动元素出现过的所有整页基线时间戳逐一核对
-      （AGENTS.md 视觉门禁卫生条）
+- [x] 5.5 受影响基线重建（**已入库，Alex 2026-09-26 批准**：19+6 张分两波——第二波 6 张
+      首跑被同 test 前置失败挡住未执行，复跑浮现后逐张人工核对同机制；18 张与过目包
+      actual sha256 逐字节一致，manifest 与 wave2 新旧对照落 `test-results/m228/baseline-review/`；
+      入库后 gate visual 全量（含像素层）12/12 绿）
 - [x] 5.6 结构层全绿（`LUMIR_VISUAL_STRUCTURAL=1 LUMIR_VISUAL_PORT=4228`，visual-regression 349s PASS）；
       像素层本地跑进行中，输出与对照表落 `test-results/m228/`（基线 PNG 零 diff 纪律不变）
 

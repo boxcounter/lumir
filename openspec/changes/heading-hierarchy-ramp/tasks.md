@@ -22,13 +22,10 @@
 
 - [x] 3.1 `tests/visual/scenes/typography.spec.ts` 的 heading 计算属性断言更新为六档
   逐档口径（H1–H6 字号/字重/字距；含负向断言：19px/16.5px 与 italic 不在场）
-- [ ] 3.2 整页基线识别与重建（**进行中，待 Alex 过目**：结构层已全绿；像素层 18 张失败基线
-  已逐张归因为「664→680 列位移 ± 标题阶梯」，过目包落主仓
-  `test-results/m228/baseline-review/index.html`）——原文：：逐个核对含标题场景的基线（typography / markdown-combo /
-  toc-outline 等），确认每张受影响基线的时间戳随本次更新（视觉门禁卫生纪律）；先跑
-  结构层（`LUMIR_VISUAL_STRUCTURAL=1`）再跑本地像素层
-- [ ] 3.3 基线 `--update` 前截图逐张经 Alex 过目（人肉裁决点，不机械执行）——**等 Alex 看过
-  `test-results/m228/baseline-review/` 后执行**；当前工作区基线零 diff
+- [x] 3.2 整页基线识别与重建（Alex 2026-09-26 过目批准后入库，19+6 张分两波逐张核对；
+  入库后 `gate.sh visual` 全量含像素层 12/12 绿）
+- [x] 3.3 基线更新前截图经 Alex 过目（2026-09-26 批准，过目包
+  `test-results/m228/baseline-review/index.html` + wave2.html；sha256 对账表同目录）
 
 ## 4. 真机验收（随实现同 PR）
 
@@ -43,8 +40,8 @@
 ## 5. 验证
 
 - [x] 5.1 `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` 通过
-- [ ] 5.2 `scripts/gate.sh quick` 绿（已复跑 10/10 PASS）；`scripts/gate.sh visual` 结构层绿、
-  像素层待 Alex 过目 18 张基线后方可全绿（3.2/3.3）
+- [x] 5.2 `scripts/gate.sh quick` 10/10 绿；`scripts/gate.sh visual` 全量（含本地像素层）
+  基线入库后 12/12 绿（visual-regression 345s PASS）
 - [x] 5.3 真机复验：场景 37 两次 PASS（首跑 + 探针删除后复跑），截图证据在
   test-results/acceptance/2026-09-25/37-heading-hierarchy/shots/；H1–H6 混排层级辨识度
   手感项归 Alex（套件只留证据）
