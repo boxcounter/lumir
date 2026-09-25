@@ -92,7 +92,6 @@ export function createTabs(deps: TabsDeps): TabsHandle {
 
         const dot = document.createElement("span");
         dot.className = "tab-dirty";
-        dot.textContent = "●";
         dot.hidden = !session.dirty;
         const label = document.createElement("span");
         label.className = "tab-name";

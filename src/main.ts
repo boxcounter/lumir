@@ -120,7 +120,16 @@ function showEditor() {
 // sticky 的提示（如退出被拦截）不自动消隐，点击浮条本体关闭——守卫类反馈
 // 不允许在用户看到之前消失。sticky 提示按文案去重（M107）：连续触发同一守卫
 //（如连按 Cmd+Q）复用既有浮条，不堆叠；自动消隐的普通 toast 不受此限。
-function toast(text: string, actions: Array<{ label: string; run(): void }> = [], sticky = false): HTMLElement {
+// tone "success" 给浮条加 ✓ 前缀（定稿 direction-c 屏 5 toast），只用于「用户
+// 动作已成功完成」的确认；错误 / 警告 / 纯信息保持 neutral 不带 ✓（语义口径，
+// tower 裁决 2026-09-25）。
+type ToastTone = "neutral" | "success";
+function toast(
+  text: string,
+  actions: Array<{ label: string; run(): void }> = [],
+  sticky = false,
+  tone: ToastTone = "neutral",
+): HTMLElement {
   if (sticky) {
     for (const el of shell.editor.querySelectorAll<HTMLElement>(".lumir-toast[data-sticky-text]")) {
       if (el.dataset.stickyText === text) return el;
@@ -128,6 +137,13 @@ function toast(text: string, actions: Array<{ label: string; run(): void }> = []
   }
   const el = document.createElement("div");
   el.className = "lumir-toast toast-surface";
+  if (tone === "success") {
+    const check = document.createElement("span");
+    check.className = "toast-check";
+    check.setAttribute("aria-hidden", "true");
+    check.textContent = "✓";
+    el.append(check);
+  }
   const span = document.createElement("span");
   span.textContent = text;
   el.append(span);
@@ -567,9 +583,10 @@ onMenuCommand((payload) => {
 function syncDirtyIndicator(): void {
   const session = editor.activeSession();
   const path = session.path;
-  shell.modelinePath.textContent = path === undefined
-    ? "无当前文件"
-    : session.dirty ? `${path}（未保存）` : path;
+  // 定稿口径（index.html:1225）：路径段分隔符写作「 / 」（带空格）。session.path 是
+  // vault 相对路径（不含前导 /），直接全量替换即可。
+  const display = path === undefined ? "无当前文件" : path.replaceAll("/", " / ");
+  shell.modelinePath.textContent = session.dirty && path !== undefined ? `${display}（未保存）` : display;
 }
 
 /** modeline 右段（`语法 · 行数 · UTF-8`）——design §4-2 的实现期结论，口径「**只读派生、

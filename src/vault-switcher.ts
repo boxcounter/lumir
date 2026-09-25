@@ -784,8 +784,8 @@ class VaultSwitcher implements VaultSwitcherHandle {
     this.setActive(start);
   }
 
-  /** 一行：显示名 + 摘要 + 路径尾部三段；失效行改给成因与「重新定位…」。
-   *  失效行**不发起打开**（点击与 Enter 都走重定位），可用行点击即请求切换。 */
+  /** 一行：显示名 + 摘要次行（M217 起路径次行裁掉，gap 表 #12 Alex 裁决）；失效行改给成因与
+   *  「重新定位…」。失效行**不发起打开**（点击与 Enter 都走重定位），可用行点击即请求切换。 */
   private renderRow(row: VaultListEntry, source: number, now: number): HTMLButtonElement {
     const current = row.id === this.currentId;
     const el = document.createElement("button");
@@ -807,9 +807,11 @@ class VaultSwitcher implements VaultSwitcherHandle {
 
     const top = document.createElement("span");
     top.className = "vault-row-top";
+    // 12px ✓ 槽位（定稿 .p-check，index.html:705-707）：当前行 accent ✓，非当前行空槽。
     const dot = document.createElement("span");
-    dot.className = current ? "vault-dot" : "vault-dot is-off";
+    dot.className = "vault-dot";
     dot.setAttribute("aria-hidden", "true");
+    if (current) dot.textContent = "✓";
     const name = document.createElement("span");
     name.className = "vault-row-name";
     name.textContent = row.name;
@@ -823,7 +825,8 @@ class VaultSwitcher implements VaultSwitcherHandle {
     el.append(top, this.subLine(summaryText(row.tab_count, row.last_opened_at, now, current)));
 
     if (row.available) {
-      el.append(this.subLine(shortPath(row.path)));
+      // 路径次行按 Alex 裁决裁掉（M217，gap 表 #12）：单行制收敛后路径不再上屏；
+      // shortPath 本体留着（单测钉着它的口径），同名目录的区分暂由摘要与悬浮提示承担。
       el.addEventListener("click", () => {
         this.close(false);
         this.deps.requestSwitch(row);
