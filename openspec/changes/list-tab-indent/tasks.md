@@ -34,7 +34,8 @@ D5 非空选区只作用 head 项。本文件凡涉及键位与写回口径的�
 ## 3. 单测（tests/unit/）
 
 - [ ] 3.1 新文件 `tests/unit/list-indent.test.ts`，真 EditorState + markdown 语言解析
-      （先例 = `tests/unit/code-structure.test.ts` 的 headless 用法）：
+      （先例 = `tests/unit/cell-geometry.test.ts`：真 EditorState + 真 markdown 解析器，
+      文件头有该做法的记录）：
       indent 一层（首行 + 续行 + 子树各 +2）、outdent 一层、嵌套列表只动归属项
 - [ ] 3.2 边界：顶层项 outdent = null（no-op）；非列表行 / 代码块内 = null；
       行首空白不足 2 的行宽容移除；行首 tab 读取宽容、写入只写空格
