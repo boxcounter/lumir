@@ -38,6 +38,7 @@ import type { TextScaleDirection, TypographySettings } from "./typography";
 import { lumirSearch } from "./search";
 import { positionFromReadings, restoreScrollTop } from "./scroll-position";
 import type { ScrollPosition } from "./scroll-position";
+import { fsFileMtime } from "./ipc";
 
 // 编辑器单内核双模式（ADR 0002 §2）：一个 CM6 内核、两种模式。
 // md = 高亮 + live preview 装饰层（src/preview/）；code = 仅高亮。
@@ -1181,13 +1182,37 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
     });
   }
 
+  // doc-meta「修改于」的 mtime 缓存（M218 A1）：键 = vault 相对路径。装饰层构建期
+  // 只读缓存（fileMtime）；未缓存时这里后台取数，到达后 previewRefresh 触发重建
+  //（wikilinkResolver 的 pending 范式）。三条刷新路径：reloadSession（打开 / 外部
+  // 重载 / 恢复——磁盘内容可能已变，一律重取）、activateSession（缓存命中即零成本）、
+  // markCleanOf（保存落盘后 mtime 必变，废掉重取）。
+  const mtimeCache = new Map<string, number | null>();
+  const mtimeInflight = new Set<string>();
+  function ensureMtime(path: string | undefined): void {
+    if (path === undefined || mtimeCache.has(path) || mtimeInflight.has(path)) return;
+    mtimeInflight.add(path);
+    fsFileMtime(path).then((meta) => {
+      mtimeInflight.delete(path);
+      mtimeCache.set(path, meta.mtime_ms);
+      // 路径仍属于某个会话才触发重建（reset / 关标签后到達的迟到响应不打扰前台）。
+      if (sessions.some((s) => s.path === path)) view.dispatch({ effects: previewRefresh.of(null) });
+    }).catch(() => {
+      // 无 Tauri 后端（纯浏览器预览）或读取失败：不缓存，下次触发路径自然重试。
+      mtimeInflight.delete(path);
+    });
+  }
+
   const previewContext: PreviewContext = {
     // 活读前台会话的路径：装饰层（wikilink / 附件相对路径解析）必须用**当前显示
     // 那一份文档**的基准，切标签时它随 active 一起换（M149 前的静默错误面就在这里）。
-    currentFilePath: () => active.path,
+    // 启动早期（EditorView 的 StateField create 早于 active 赋值）读到 undefined：
+    // 装饰层按「无文件上下文」降级渲染，首个会话激活后随状态重建自然补齐（M218 A1）。
+    currentFilePath: () => active?.path,
     attachmentProvider: () => provider,
     wikilinkResolver: () => wikilinkResolver,
     lightbox: () => lightbox,
+    fileMtime: (path) => mtimeCache.get(path),
   };
 
   // 编辑器失焦时 CM 不回写 DOM 选区（M110 真实桌面缺陷）：打开新文档替换整篇
@@ -1550,6 +1575,7 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
     active = session;
     syncMode();
     readyPath = session.path;
+    ensureMtime(session.path);
     // 在途的 paint 事件作废：它属于刚切走的那个会话。
     ++readySerial;
     // 只换 state——撤销史 / 语法树 / 选区 / 搜索查询都在 state 里跟着走，不重新解析。
@@ -1674,6 +1700,9 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
       session.path = path;
       session.mode = mode;
       session.cleanDoc = doc;
+      // 装载 = 磁盘内容以这次为准（打开 / 外部重载 / 恢复备份）：mtime 缓存一律废掉重取。
+      if (path !== undefined) mtimeCache.delete(path);
+      ensureMtime(path);
       // 内容整篇换掉：旧的滚动快照锚在一份已经不存在的正文上，作废。
       session.scroll = undefined;
       if (session !== active) {
@@ -1739,6 +1768,9 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
       // （保存期间用户继续输入的情形——不把「保存时的快照」当成文档已干净）。
       session.cleanDoc = content;
       setSessionDirty(session, session.state.doc.toString() !== content);
+      // 保存落盘 = mtime 已变：废掉重取，doc-meta 的「修改于」随即刷新。
+      mtimeCache.delete(path);
+      ensureMtime(path);
     },
     reset() {
       ++readySerial;
@@ -1746,6 +1778,9 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
       readyRequestId = undefined;
       // 全部会话作废，只留一个未命名空文档（vault 切换 / 关闭）。旧会话对象随 GC 回收。
       sessions.length = 0;
+      // mtime 缓存按路径索引，vault 换了同 rel 路径指向别的文件——随会话一起作废。
+      mtimeCache.clear();
+      mtimeInflight.clear();
       const blank = makeSession("", undefined, defaultMode);
       sessions.push(blank);
       activate(blank);

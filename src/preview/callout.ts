@@ -11,9 +11,10 @@
 //   灰 2（example/quote）。族在这里登记（`CALLOUT_TYPES` 是本映射的单一来源），色值在
 //   theme.ts 的 `.cm-lp-callout-fam-*`（浅色档）与 `:root[data-theme="eink"]` 覆盖块；
 // - **无图标**（v1.2 的刻意取舍）：同族类型只靠标题行文字区分——色条与底色只表达语义族，
-//   类型名（label）是唯一的族内区分手段，因此标签**恒在场**（无自定义标题时显示规范名，
-//   有自定义标题时显示规范名 + 标题文字）。图标会假扮成「黑白下仍成立的区分手段」，
-//   与 eink 的降级口径冲突（tokens 文档 §callout 规则 2）；
+//   标题行文字是唯一的族内区分手段，因此标签**恒在场**：M218 起为**双段**（中文类型标签
+//   650 + 英文类型名 550，定稿 direction-c/index.html:927-943），有自定义标题时再随其后。
+//   图标会假扮成「黑白下仍成立的区分手段」，与 eink 的降级口径冲突（tokens 文档 §callout
+//   规则 2）；
 // - 未知类型安全降级：渲染为中性族 callout，标题按原文类型名显示 —— 可读、
 //   不伪装成已支持的类型，也不静默吞掉标记；
 // - 折叠语法 [!type]- / [!type]+ 只解析不折叠（Obsidian 折叠语义延后），
@@ -50,39 +51,43 @@ export interface CalloutInfo {
   /** 自定义标题文本范围；无标题时为 null（widget 渲染默认名）。 */
   titleFrom: number | null;
   titleTo: number | null;
-  /** 无自定义标题时的显示名：已知类型为规范名，未知类型为原文类型名。 */
-  label: string;
   /** 首行/末行边界（首行加标题行样式、末行收圆角）。 */
   firstLineFrom: number;
   firstLineTo: number;
   lastLineTo: number;
+  /** 中文类型标签（双段标签的前段，恒在场）：已知类型为 13 类映射表值，未知类型为原文类型名。 */
+  zhLabel: string;
+  /** 英文类型名（双段标签的后段）：已知类型为归一化小写名；未知类型为 null（只渲染前段）。 */
+  enLabel: string | null;
 }
 
 // ---------------------------------------------------------------------------
 // 类型表：规范类型 + Obsidian 别名（大小写不敏感，存储小写）。
 // ---------------------------------------------------------------------------
 
-const CALLOUT_TYPES = new Map<string, { canonical: string; label: string; family: CalloutFamily }>();
+const CALLOUT_TYPES = new Map<string, { canonical: string; zh: string; family: CalloutFamily }>();
 
-function register(canonical: string, label: string, family: CalloutFamily, aliases: string[]): void {
-  for (const name of [canonical, ...aliases]) CALLOUT_TYPES.set(name, { canonical, label, family });
+function register(canonical: string, zh: string, family: CalloutFamily, aliases: string[]): void {
+  for (const name of [canonical, ...aliases]) CALLOUT_TYPES.set(name, { canonical, zh, family });
 }
 
 // 族归属与理由逐类见 tokens 文档 §callout 语义收敛的映射表：abstract / todo 是映射里
 // 争议最大的两类（teal 无对应色相 / todo 是常态清单而非紧迫警示），此处按 v1.2 的裁决落。
-register("note", "Note", "info", []);
-register("abstract", "Abstract", "info", ["summary", "tldr"]);
-register("info", "Info", "info", []);
-register("todo", "Todo", "info", []);
-register("tip", "Tip", "ok", ["hint", "important"]);
-register("success", "Success", "ok", ["check", "done"]);
-register("question", "Question", "pending", ["help", "faq"]);
-register("warning", "Warning", "pending", ["caution", "attention"]);
-register("failure", "Failure", "danger", ["fail", "missing"]);
-register("danger", "Danger", "danger", ["error"]);
-register("bug", "Bug", "danger", []);
-register("example", "Example", "neutral", []);
-register("quote", "Quote", "neutral", ["cite"]);
+// 中文类型标签逐类对照定稿原型的 13 类实例（direction-c/index.html:927-943，M216 gap 表
+// §2.3 #7 的判据出处）：笔记/摘要/信息/待办/提示/成功/疑问/警告/失败/危险/缺陷/示例/引用。
+register("note", "笔记", "info", []);
+register("abstract", "摘要", "info", ["summary", "tldr"]);
+register("info", "信息", "info", []);
+register("todo", "待办", "info", []);
+register("tip", "提示", "ok", ["hint", "important"]);
+register("success", "成功", "ok", ["check", "done"]);
+register("question", "疑问", "pending", ["help", "faq"]);
+register("warning", "警告", "pending", ["caution", "attention"]);
+register("failure", "失败", "danger", ["fail", "missing"]);
+register("danger", "危险", "danger", ["error"]);
+register("bug", "缺陷", "danger", []);
+register("example", "示例", "neutral", []);
+register("quote", "引用", "neutral", ["cite"]);
 
 // ---------------------------------------------------------------------------
 // 解析：blockquote 首行第一个 QuoteMark 之后的内容须以 [!type] 开头。
@@ -131,7 +136,8 @@ export function detectCallout(doc: Text, node: SyntaxNode): CalloutInfo | null {
     markerTo,
     titleFrom,
     titleTo,
-    label: entry?.label ?? m[2],
+    zhLabel: entry?.zh ?? m[2],
+    enLabel: entry?.canonical ?? null,
     firstLineFrom: firstLine.from,
     firstLineTo: firstLine.to,
     lastLineTo: doc.lineAt(node.to).to,
@@ -157,26 +163,41 @@ export function calloutOnLine(
 // ---------------------------------------------------------------------------
 
 /**
- * 标签 widget：渲染**类型显示名**的文本节点（`.cm-lp-callout-type`，着色在 theme.ts）。
- *
- * 它替换掉 `[!type]` 源码，因此必须是一个 widget（不能只靠 mark 装饰）；**不再渲染图标**
- * （restyle R2b 的收敛）：族内类型（红系 failure/danger/bug）的区分完全由这段文字承担。
- * 有自定义标题时标签仍渲染——否则同族的三个红块在标题自定义后无从分辨（v1.2 的取舍
- * 正是「同族靠标题行文字」，这就要求类型名恒在场）。
+ * 标签 widget：替换 `[!type]` 源码，渲染**双段类型标签**（M218 C7，定稿
+ * direction-c/index.html:927-943 + tokens:335-337）——中文类型标签（650 族色）+
+ * 英文类型名（550 正文色），**两段恒在场**：eink 下五族合一后，类型区分完全由
+ * 标题行文字承担（同族的 failure/danger/bug 三个红块只能靠文字分辨）。
+ * 未知类型降级：只渲染前段、内容为原文类型名——可读、不伪装成已支持的类型。
  */
 export class CalloutLabelWidget extends WidgetType {
-  constructor(readonly label: string) {
+  // 显式字段而非参数属性：tests/unit 的 Node 类型剥离（strip-only）不支持参数属性，
+  // 本模块是单测的直接导入对象（content-restyle.test.ts）。
+  readonly zhLabel: string;
+  readonly enLabel: string | null;
+
+  constructor(zhLabel: string, enLabel: string | null) {
     super();
+    this.zhLabel = zhLabel;
+    this.enLabel = enLabel;
   }
 
   eq(other: CalloutLabelWidget): boolean {
-    return other.label === this.label;
+    return other.zhLabel === this.zhLabel && other.enLabel === this.enLabel;
   }
 
   toDOM(): HTMLElement {
     const span = document.createElement("span");
     span.className = "cm-lp-callout-type";
-    span.textContent = this.label;
+    const zh = document.createElement("span");
+    zh.className = "cm-lp-callout-type-zh";
+    zh.textContent = this.zhLabel;
+    span.append(zh);
+    if (this.enLabel !== null) {
+      const en = document.createElement("span");
+      en.className = "cm-lp-callout-type-en";
+      en.textContent = this.enLabel;
+      span.append(en);
+    }
     return span;
   }
 }
@@ -187,7 +208,7 @@ export function calloutMarkerDecorations(info: CalloutInfo): {
   title: Range<Decoration> | null;
 } {
   return {
-    marker: Decoration.replace({ widget: new CalloutLabelWidget(info.label) }).range(info.markerFrom, info.markerTo),
+    marker: Decoration.replace({ widget: new CalloutLabelWidget(info.zhLabel, info.enLabel) }).range(info.markerFrom, info.markerTo),
     title:
       info.titleFrom !== null && info.titleTo !== null
         ? Decoration.mark({ class: "cm-lp-callout-title" }).range(info.titleFrom, info.titleTo)

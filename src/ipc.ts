@@ -8,6 +8,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import type { CommandError } from "./bindings/CommandError";
 import type { ReadSnapshot } from "./bindings/ReadSnapshot";
+import type { FsFileMeta } from "./bindings/FsFileMeta";
 import type { ConfigSnapshot } from "./bindings/ConfigSnapshot";
 import type { FsChange } from "./bindings/FsChange";
 import type { FsEntryChangedEvent } from "./bindings/FsEntryChangedEvent";
@@ -58,6 +59,11 @@ export function vaultCurrent(): Promise<VaultStatus> {
 /** 读 vault 内文本文件与绑定 revision 快照。 */
 export function fsReadSnapshot(path: string): Promise<ReadSnapshot> {
   return invoke<ReadSnapshot>("fs_read_snapshot", { path });
+}
+
+/** 读 vault 内单文件元数据（M218 doc-meta「修改于」的 mtime 数据源）。 */
+export function fsFileMtime(path: string): Promise<FsFileMeta> {
+  return invoke<FsFileMeta>("fs_file_mtime", { path });
 }
 
 export function documentSave(path: string, expected_revision: string, content: string): Promise<string> {

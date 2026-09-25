@@ -112,14 +112,19 @@ export const livePreviewTheme = EditorView.theme({
   // 19 / 16.5 / 15（em 比值 = 阶梯值 ÷ 正文锚 15）。680 只许出现在 ≥21px 的字号上，
   // 编辑器里没有那个尺寸的标题，故不出现；h4–h6 不在阶梯里，保持正文尺寸、只降字重档。
   // 负字距随字号递减（tokens 文档 §字距）：-0.008 / -0.006 / -0.004em。
-  ".cm-lp-h1": { fontSize: "calc(19em / 15)", fontWeight: "650", lineHeight: "var(--lh-ui)", letterSpacing: "-0.008em" },
-  ".cm-lp-h2": { fontSize: "calc(16.5em / 15)", fontWeight: "650", lineHeight: "var(--lh-ui)", letterSpacing: "-0.006em" },
-  ".cm-lp-h3": { fontSize: "1em", fontWeight: "650", lineHeight: "var(--lh-ui)", letterSpacing: "-0.004em" },
+  // 标题行高随正文 1.7（--lh-reading）：定稿未给标题单设行高，行盒随 .doc-body 的 1.7
+  //（M216 gap 表 §2.3 #2：1.5 是偏紧的实测偏差）。h4–h6 定稿无出处，保持原档。
+  ".cm-lp-h1": { fontSize: "calc(19em / 15)", fontWeight: "650", lineHeight: "var(--lh-reading)", letterSpacing: "-0.008em" },
+  ".cm-lp-h2": { fontSize: "calc(16.5em / 15)", fontWeight: "650", lineHeight: "var(--lh-reading)", letterSpacing: "-0.006em" },
+  ".cm-lp-h3": { fontSize: "1em", fontWeight: "650", lineHeight: "var(--lh-reading)", letterSpacing: "-0.004em" },
   ".cm-lp-h4": { fontSize: "1em", fontWeight: "600", lineHeight: "var(--lh-ui)" },
   ".cm-lp-h5": { fontSize: "1em", fontWeight: "600", lineHeight: "var(--lh-ui)" },
   ".cm-lp-h6": { fontSize: "1em", fontWeight: "600", lineHeight: "var(--lh-ui)", fontStyle: "italic", color: "var(--text-2)" },
 
-  ".cm-lp-paragraph": { textAlign: "justify", textJustify: "inter-ideograph", textAutospace: "normal", hyphens: "auto" },
+  // 段落左对齐（M216 gap 表 §2.3 #9：定稿是 ragged right，justify + hyphens 是反向偏差）。
+  // 段落间距走末行 padding（CM 无 margin 折叠模型：间距阶梯的「段落 8」落在段末行，
+  // 类名由 livePreview 按「段落最后一行」加）。
+  ".cm-line.cm-lp-paragraph-end": { paddingBottom: "var(--sp-4)" },
   // frontmatter widget 被选区覆盖时的反白（显露态）：底色取 --sel；前景 light/dark 不写，
   // eink 取 --sel-text（同选中态的降级口径）。
   ".cm-lp-frontmatter.cm-lp-frontmatter-selected": { backgroundColor: "var(--sel)" },
@@ -133,9 +138,13 @@ export const livePreviewTheme = EditorView.theme({
   ".cm-lp-strike": { textDecoration: "line-through" },
 
   // 引用块（tokens 文档：引用 = 2px 竖线 + text-2；竖线取结构档 --border）。
-  ".cm-lp-quote-line": {
+  // 选择器必须双类 `.cm-line.cm-lp-quote-line`（0,2,0）：CM baseTheme 的
+  // `.cm-line { padding: 0 }` 与单类选择器同特异性且注入更晚，会把 paddingLeft
+  // 压回 0（backlog:385 登记的实踩；定稿出处 index.html:293-296 的
+  // `padding: 2px 0 2px 14px`）。
+  ".cm-line.cm-lp-quote-line": {
     borderLeft: "2px solid var(--border)",
-    paddingLeft: "var(--sp-5)",
+    paddingLeft: "var(--sp-7)",
     color: "var(--text-2)",
   },
 
@@ -150,7 +159,12 @@ export const livePreviewTheme = EditorView.theme({
   // 灰族的色条取的是 `--text-3`（eink 下是灰），按「色条全黑」的口径在 eink 覆盖块里改黑。
   ".cm-line.cm-lp-callout-line": {
     borderLeft: "2px solid var(--text-3)",
+    // 定稿 co padding `6px 12px 7px`（index.html:652）：左右各 12，上下由首/末行补。
     paddingLeft: "var(--sp-6)",
+    paddingRight: "var(--sp-6)",
+    // co-body 13px（index.html:656）：callout 正文比正文面小一档，行内子元素的字号
+    // 按父级 13px 折算（见下方 .cm-lp-inline-code 的补偿与本文件的折算约定）。
+    fontSize: "calc(13em / 15)",
     // 嵌套 callout（引用内嵌 callout）的行同时带外层 quote-line 的
     // color:var(--text-2)；callout 正文必须是正文色（M110，M109 review 边角 2）。
     color: "var(--text)",
@@ -168,22 +182,39 @@ export const livePreviewTheme = EditorView.theme({
   [`:root[data-theme="eink"] & .cm-line.cm-lp-callout-line`]: { borderLeftColor: "#000", backgroundColor: "#fff" },
   [`:root[data-theme="eink"] & .cm-lp-callout-type`]: { color: "#000" },
   ".cm-line.cm-lp-callout-first": { borderRadius: "0 var(--r6) 0 0", paddingTop: "var(--sp-3)" },
-  ".cm-line.cm-lp-callout-last": { borderRadius: "0 0 var(--r6) 0", paddingBottom: "var(--sp-3)" },
-  // 类型标签（callout.ts 的 CalloutLabelWidget）：族色 12.5px/650，随后的自定义标题
-  // 是正文色 + 550，两者同行——同族类型的区分全靠这段文字。
+  // 定稿 co padding 下侧 7px（index.html:652，sp 阶梯无 7px 档，写字面值）。
+  ".cm-line.cm-lp-callout-last": { borderRadius: "0 0 var(--r6) 0", paddingBottom: "7px" },
+  // 类型标签（callout.ts 的 CalloutLabelWidget）：**双段恒在场**（M216 gap 表 §2.3 #7，
+  // 定稿 index.html:927-943 实例 + tokens:335-337）——中文类型标签（12.5px/650 族色，
+  // .co-type）+ 英文类型名（13px/550 正文色，.co-title），eink 下五族合一后这是唯一的
+  // 类型区分手段。父行是 13px 档，两段按父级折算。
   ".cm-lp-callout-type": {
     display: "inline-flex",
     alignItems: "baseline",
     gap: "var(--sp-4)",
     marginRight: "var(--sp-4)",
-    fontSize: "calc(12.5em / 15)",
-    fontWeight: "650",
     userSelect: "none",
   },
-  ".cm-lp-callout-title": { fontSize: "calc(13em / 15)", fontWeight: "550", color: "var(--text)" },
+  ".cm-lp-callout-type-zh": { fontSize: "calc(12.5em / 13)", fontWeight: "650" },
+  ".cm-lp-callout-type-en": { fontSize: "1em", fontWeight: "550", color: "var(--text)" },
+  // 自定义标题：13px/550 正文色（父行 13px → 1em），与英文类型名同档同行。
+  ".cm-lp-callout-title": { fontSize: "1em", fontWeight: "550", color: "var(--text)" },
+  // 行内 code 在 callout 正文里按父级 13px 折算回阶梯的 13px（折算约定见文件头注释）。
+  ".cm-line.cm-lp-callout-line .cm-lp-inline-code": { fontSize: "calc(13em / 13)" },
   // 相邻 callout 之间的空行保留块间距（覆盖 0 高分隔，选择器更具体优先）：定稿的
   // callout 外距 4px × 上下两块 = 8px（--sp-4）。
   ".cm-line.cm-lp-block-separator.cm-lp-callout-gap": { height: "var(--sp-4)", minHeight: "var(--sp-4)" },
+  // 代码块邻接分隔（M218 C1 阶梯补值，tower 裁决 2026-09-25 的 C6 margin 转换）：容器外距
+  // 上 4（--sp-2）/ 下 12（--sp-6）由相邻分隔行高度承担——.cm-lp-codeblock-scroll 是
+  // BlockWrapper，CSS margin 对 heightmap 不可见（M110 同族）。与 callout-gap 共存时取
+  // 较大值（callout 底色间隔 8 不能被代码块上缘 4 吃掉；代码块下缘 12 > 8 自然胜出）。
+  ".cm-line.cm-lp-block-separator.cm-lp-codeblock-gap-before": { height: "var(--sp-2)", minHeight: "var(--sp-2)" },
+  ".cm-line.cm-lp-block-separator.cm-lp-codeblock-gap-after": { height: "var(--sp-6)", minHeight: "var(--sp-6)" },
+  ".cm-line.cm-lp-block-separator.cm-lp-callout-gap.cm-lp-codeblock-gap-before": { height: "var(--sp-4)", minHeight: "var(--sp-4)" },
+  ".cm-line.cm-lp-block-separator.cm-lp-codeblock-gap-before.cm-lp-codeblock-gap-after": {
+    height: "calc(var(--sp-2) + var(--sp-6))",
+    minHeight: "calc(var(--sp-2) + var(--sp-6))",
+  },
 
   // 代码块（tokens 文档 §字号阶梯「12（doc-meta·代码块·文件路径）」+ §行高「1.55」）：
   // 代码文字 mono 12px/1.55（em 比值 12 ÷ 正文锚 15 = .8），底板 --code-bg。eink 的白底黑框
@@ -244,9 +275,9 @@ export const livePreviewTheme = EditorView.theme({
   // 分隔线（M138）：源码被 replace widget 顶掉，横线本体是 0 高 inline-block，
   // 垂直位置靠 vertical-align 定，纵向留白走行 padding（CM 测量的行高不含 margin）。
   // 发丝线取**层次档** --border-soft（tokens 文档 §border 两档：hr / td 底线 / 区块内部分隔
-  // 归层次档，结构档留给窗口分区与引用块竖线）；定稿的 hr 外距 20px（--sp-9），
-  // 由上下各 --sp-5 的行 padding 承载。
-  ".cm-line.cm-lp-hr-line": { paddingBlock: "var(--sp-5)" },
+  // 归层次档，结构档留给窗口分区与引用块竖线）；定稿的 hr 外距 20px（--sp-9，
+  // index.html:247 `margin: 20px 0`），由上下各 --sp-9 的行 padding 承载。
+  ".cm-line.cm-lp-hr-line": { paddingBlock: "var(--sp-9)" },
   ".cm-lp-hr": {
     display: "inline-block",
     inlineSize: "100%",
@@ -266,14 +297,46 @@ export const livePreviewTheme = EditorView.theme({
     fontSize: "calc(13em / 15)",
   },
 
-  // 列表（标记测量机制不动，只换 token 与阶梯字号）：标记在等宽族下右对齐到正文起点，
-  // 悬挂缩进由 lists.ts 测量的 `--lp-list-*` 像素值驱动。标记字号取字号阶梯的 13.5px
-  //（tokens 文档「一级列表 marker」，em 比值 .9）——与 lists.ts 的 canvas 测量比值是同一
-  // 比值的两个写值，改一处必须改另一处（那边注释里互相指向）。
+  // 列表（标记测量机制不动，换族与逐级递减的字号档）：标记在正文字族（sans）下右对齐到
+  // 正文起点，悬挂缩进由 lists.ts 测量的 `--lp-list-*` 像素值驱动。定稿列表标记体系
+  //（index.html:249-277）：ul L1 `–` / L2+ `◦`、ol 复合多级编号（`1.` / `1.1` / `1.5.1`，
+  // 生成逻辑在 lists.ts）、标记族 sans（原型 ::before 继承 .doc-body 的正文族）、
+  // 字号逐级递减 13.5 / 13 / 12.5（深度 >3 同第三档）。族与三档字号比值与 lists.ts 的
+  // canvas 测量是同一组写值的两个落点：改一处必须改另一处（那边注释里互相指向）。
+  // 列表项间距「li 2」（定稿 `li { margin: 2px 0 }`，index.html:249）：CM 无 margin
+  // 折叠，项间 2px 由每个首行的 padding-top 承载（项间与列表上缘都落在 2px）。
   ".cm-line.cm-lp-list-line": { paddingInlineStart: "var(--lp-list-body)", textIndent: "0" },
-  ".cm-line.cm-lp-list-first": { textIndent: "calc(-1 * var(--lp-list-marker))" },
-  ".cm-lp-list-marker": { display: "inline-flex", inlineSize: "var(--lp-list-marker)", boxSizing: "border-box", paddingInlineEnd: "1ch", justifyContent: "flex-end", gap: ".5ch", textIndent: "0", whiteSpace: "pre", color: "var(--text-3)", fontFamily: "var(--editor-mono-family)", fontSize: ".9em", fontVariantNumeric: "tabular-nums" },
+  ".cm-line.cm-lp-list-first": { textIndent: "calc(-1 * var(--lp-list-marker))", paddingTop: "2px" },
+  ".cm-lp-list-marker": { display: "inline-flex", inlineSize: "var(--lp-list-marker)", boxSizing: "border-box", paddingInlineEnd: "1ch", justifyContent: "flex-end", gap: ".5ch", textIndent: "0", whiteSpace: "pre", color: "var(--text-3)", fontFamily: "var(--editor-font-family)", fontVariantNumeric: "tabular-nums" },
+  ".cm-lp-list-marker-d1": { fontSize: "calc(13.5em / 15)" },
+  ".cm-lp-list-marker-d2": { fontSize: "calc(13em / 15)" },
+  ".cm-lp-list-marker-d3": { fontSize: "calc(12.5em / 15)" },
   ".cm-lp-task-marker": { fontFamily: "var(--editor-mono-family)" },
+
+  // doc-title / doc-meta 块（M218 A1，定稿全 12 张内容屏都含此块，M216 gap 表 §2.2 缺失项）：
+  // 24px/680/1.28/-0.012em 标题 + 12px text-3 meta 行（路径 · 行数 · 修改时间，
+  // tabular-nums），位置 = fm 区之后正文之前（原型 index.html:238-239 CSS +
+  // :871-877 实例 + NOTES.md:45；tokens 锚点 docs/specs/design-tokens-v1.md:124-141）。
+  // 块级 widget（livePreview.ts 的 DocTitleWidget），纵向间距全走 padding（CM 测 widget
+  // 高度不含 margin，同 frontmatter 的 M110 教训）：meta 行与正文之间的 20px 是定稿
+  // `.doc-body { margin-top: 20px }`（index.html:241）。
+  ".cm-lp-doc-title-outer": { paddingBottom: "var(--sp-9)" },
+  ".cm-lp-doc-title": {
+    fontSize: "calc(24em / 15)",
+    fontWeight: "680",
+    lineHeight: "var(--lh-title)",
+    letterSpacing: "-0.012em",
+  },
+  ".cm-lp-doc-meta": {
+    display: "flex",
+    alignItems: "center",
+    gap: "var(--sp-3)",
+    marginTop: "7px",
+    fontSize: "calc(12em / 15)",
+    color: "var(--text-3)",
+    fontVariantNumeric: "tabular-nums",
+  },
+  ".cm-lp-doc-meta-sep": { color: "var(--border)" },
 
   // frontmatter properties 区块（块级 replace widget）→ 定稿的 `.fm` 属性区形态
   //（design/prototypes/direction-c 屏 4）：agent-bg 浅底 + r8 圆角 + `8px 14px 9px` 内边距
@@ -283,7 +346,9 @@ export const livePreviewTheme = EditorView.theme({
   // 高度是 border-box（不含 margin），margin 对 heightmap 不可见会导致其下
   // 内容 posAtCoords 行映射累计错位（M110 缺陷 1）；外层透明 padding 视觉
   // 等价且计入测量。
-  ".cm-lp-frontmatter-outer": { padding: "var(--sp-2) 0 var(--sp-6)" },
+  // 块后间距 20px（定稿 `.fm { margin-bottom: 20px }`，index.html:392；M216 gap 表
+  // §2.3 #13：旧值 12+4 偏紧）。
+  ".cm-lp-frontmatter-outer": { padding: "var(--sp-2) 0 var(--sp-9)" },
   ".cm-lp-frontmatter": {
     borderRadius: "var(--r8)",
     padding: "var(--sp-4) var(--sp-7) 9px",
@@ -307,7 +372,8 @@ export const livePreviewTheme = EditorView.theme({
     whiteSpace: "nowrap",
     userSelect: "none",
   },
-  ".cm-lp-fm-value": { fontSize: "calc(13em / 15)", color: "var(--text)", padding: "1px 0", wordBreak: "break-word" },
+  // 行内纵向 2.5px（定稿 `.fm-row { padding: 2.5px 0 }`，index.html:394；gap 表 §2.3 #13）。
+  ".cm-lp-fm-value": { fontSize: "calc(13em / 15)", color: "var(--text)", padding: "2.5px 0", wordBreak: "break-word" },
   // status 的值不渲染裸字符串，渲染成语义 chip（定稿屏 4：resolved = 绿，与队列「已批准」
   // 同一语义色）。取值 → 语义档的映射表在 CSS 侧（frontmatter.ts 只把原值写进
   // `data-fm-status`，不判语义）：三态 + 中性兜底，取值按真实 vault 抽样
@@ -344,6 +410,9 @@ export const livePreviewTheme = EditorView.theme({
     fontSize: "calc(10em / 13)",
     fontWeight: "600",
   },
+  // eink 规则⑥的外推（M216 gap 表 §2.3 #12）：规则口径是「**全部** chip 1px 黑框、
+  // 底色退场」，与 fm status chip 同一配方的 tags chip 同规处理。
+  [`:root[data-theme="eink"] & .cm-lp-tag`]: { backgroundColor: "transparent", border: "1px solid #000" },
   // 解析失败提示：否定语义取 --danger 文字（tokens 文档 §语义色：danger 是「驳回文字，
   // 不填充」），底用 hover 档；原文照旧完整保留在 .cm-lp-fm-raw（mono / 次级色）。
   ".cm-lp-fm-error": {
@@ -508,8 +577,9 @@ export const livePreviewTheme = EditorView.theme({
   },
   ".cm-lp-math-raw": { margin: "0", whiteSpace: "pre-wrap", color: "var(--text-2)" },
 
-  // mermaid：SVG 居中容器 + 占位与失败降级（口径同 math 降级块）。图表配色
-  // 由 mermaid.ts 固定渲染（default 主题 + 透明背景），此处只管容器。
+  // mermaid：SVG 居中容器 + 占位与失败降级（口径同 math 降级块）。图表配色由
+  // mermaid.ts 在 initialize 时读当前主题的 token 计算值（theme: "base" +
+  // themeVariables，三主题随色，M219），此处只管容器。
   ".cm-lp-mermaid": { padding: "var(--sp-2) 0", overflowX: "auto", textAlign: "center" },
   ".cm-lp-mermaid svg": { maxWidth: "100%" },
   ".cm-lp-mermaid-pending": { textAlign: "start", color: "var(--text-3)", fontSize: "calc(12.5em / 15)", padding: "var(--sp-3) 0" },

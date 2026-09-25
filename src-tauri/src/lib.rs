@@ -73,6 +73,7 @@ pub fn run() {
             commands::fs_read_snapshot,
             commands::fs_read_attachment,
             commands::fs_file_revision,
+            commands::fs_file_mtime,
             commands::document_save,
             commands::document_set_dirty,
             commands::log_event,

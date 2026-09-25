@@ -535,6 +535,29 @@ pub fn fs_read_snapshot(
     Ok(ReadSnapshot { content, revision })
 }
 
+/// 单文件元数据（M218 doc-title/doc-meta 块的数据源）：mtime 取不到为 null，
+/// 与 `FsEntry.mtime_ms` 同口径。
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export, export_to = "../../src/bindings/")]
+pub struct FsFileMeta {
+    /// 修改时间（Unix 毫秒）；取不到时为 null。
+    #[ts(type = "number | null")]
+    pub mtime_ms: Option<i64>,
+}
+
+/// 读 vault 内单文件的元数据（doc-meta「修改于」需要 mtime；`fs_read_snapshot`
+/// 不带它，文件列表的 `FsEntry` 又不覆盖「保存后即时刷新」这条路径，故单开）。
+#[tauri::command(rename_all = "snake_case")]
+pub fn fs_file_mtime(
+    state: tauri::State<'_, VaultState>,
+    path: &str,
+) -> Result<FsFileMeta, CommandError> {
+    let root = state.root()?;
+    Ok(FsFileMeta {
+        mtime_ms: fs_io::file_mtime_ms(&root, path)?,
+    })
+}
+
 /// 读 vault 内二进制附件，返回 base64（裁决点 A：invoke + base64）。
 #[tauri::command]
 pub fn fs_read_attachment(
