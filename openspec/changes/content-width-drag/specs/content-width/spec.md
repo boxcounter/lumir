@@ -49,9 +49,9 @@ MUST NOT 改变 dirty 状态。本能力 MUST NOT 新增命令或键位（纯鼠
 ### Requirement: 宽度配置项与校验
 
 `~/.config/lumir/config.json` 的 `[ui]` 表 SHALL 支持整数像素项 `ui.content_width`（阅读栏宽上限），
-键名与 Rust 字段名逐字一致（沿用无 `serde(rename)` 的既有口径）。默认值 = **680**（节点 1 裁决 D1
+键名与 Rust 字段名逐字一致（沿用无 `serde(rename)` 的既有口径）。默认值 = **760**（节点 1 裁决 D1
 落槌值；注意它与裁决前仓内定值 664 不同——默认口径位移 16px，含编辑区的整页视觉基线随本 change
-整批重建并走 Alex 过目纪律），合法区间 = **[680, 1200]**（节点 1 裁决 D2 落槌值；默认值即下限，
+整批重建并走 Alex 过目纪律），合法区间 = **[760, 1200]**（节点 1 裁决 D2 落槌值；默认值即下限，
 拖拽只能往宽调）。
 
 该配置项 SHALL 与 `editor.font_size` 走同一条装配链：各类型 `impl Default`、宽容解析镜像上的
@@ -59,7 +59,7 @@ MUST NOT 改变 dirty 状态。本能力 MUST NOT 新增命令或键位（纯鼠
 路径；取值不合法 MUST 走既有 config warning 语义（console + 诊断日志 `config_warning`），不得导致
 启动失败（ADR 0002 §5），本 change MUST NOT 为 warning 新增 UI 面。
 
-**已知边界（如实记录）**：类型不符（如 `"content_width": "680"`）在 serde 解析期让整份宽容结构
+**已知边界（如实记录）**：类型不符（如 `"content_width": "760"`）在 serde 解析期让整份宽容结构
 失败、走整文件回落（全部默认 + warning），与 `editor.font_size` / `ui.theme` 给错类型同路。本
 change MUST NOT 引入「逐字段类型容忍」；实现 SHALL 用一条单测把这条边界钉住。
 
@@ -72,7 +72,7 @@ change MUST NOT 引入「逐字段类型容忍」；实现 SHALL 用一条单测
 #### Scenario: 缺字段时取默认
 
 - **WHEN** `config.json` 的 `[ui]` 表里没有 `content_width`（旧配置原样启动）
-- **THEN** 栏宽为默认 680px，不产生任何 config warning
+- **THEN** 栏宽为默认 760px，不产生任何 config warning
 
 #### Scenario: 显式配置生效
 
@@ -82,11 +82,11 @@ change MUST NOT 引入「逐字段类型容忍」；实现 SHALL 用一条单测
 #### Scenario: 越界回落默认
 
 - **WHEN** 配置 `{"ui": {"content_width": 200}}` 后启动
-- **THEN** 栏宽回落默认 680px，产生一条 config warning（console + 诊断日志），应用照常启动
+- **THEN** 栏宽回落默认 760px，产生一条 config warning（console + 诊断日志），应用照常启动
 
 #### Scenario: 类型不符走整文件回落
 
-- **WHEN** 配置 `{"ui": {"content_width": "680", "theme": "dark"}}` 后启动
+- **WHEN** 配置 `{"ui": {"content_width": "760", "theme": "dark"}}` 后启动
 - **THEN** 整份配置按默认解释（`theme` 也回默认 light）+ 一条 warning；该边界 SHALL 由单测钉住，
   MUST NOT 出现「部分字段按配置、部分按默认」的混合态
 

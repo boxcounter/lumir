@@ -31,7 +31,7 @@ async function open(page: import("@playwright/test").Page, file: string, marker:
   await expect(page.locator(".cm-content")).toContainText(marker);
 }
 
-test("骨架几何：侧栏 236 / 标题栏 42 / modeline 25 / dock 列 0 / 正文列 680 居中", async ({ page }) => {
+test("骨架几何：侧栏 236 / 标题栏 42 / modeline 25 / dock 列 0 / 正文列 760 居中", async ({ page }) => {
   await stubTauri(page, VAULT);
   await open(page, "doc.md", "正文段落");
 
@@ -61,7 +61,7 @@ test("骨架几何：侧栏 236 / 标题栏 42 / modeline 25 / dock 列 0 / 正�
   });
 
   // 三档布局尺寸的单一来源是 token 层，读数与 token 逐项一致
-  expect(geo.token).toEqual({ sidebar: "236px", titlebar: "42px", modeline: "25px", measure: "680px" });
+  expect(geo.token).toEqual({ sidebar: "236px", titlebar: "42px", modeline: "25px", measure: "760px" });
   expect(geo.sidebarWidth).toBe(236);
   expect(geo.titlebarHeight).toBe(42);
   expect(geo.modelineHeight).toBe(25);
@@ -69,9 +69,9 @@ test("骨架几何：侧栏 236 / 标题栏 42 / modeline 25 / dock 列 0 / 正�
   expect(geo.shellRows).toEqual([42, 800 - 42 - 25, 25]);
   expect(geo.shellCols[0]).toBe(236);
   expect(geo.shellCols[2]).toBe(0);
-  // 正文列 = 定值 680（框宽），两侧等分剩余空间 ⇒ 居中
-  expect(geo.scrollerCols[1]).toBe(680);
-  expect(geo.contentWidth).toBe(680);
+  // 正文列 = 定值 760（框宽），两侧等分剩余空间 ⇒ 居中
+  expect(geo.scrollerCols[1]).toBe(760);
+  expect(geo.contentWidth).toBe(760);
   expect(Math.abs(geo.scrollerCols[0] - geo.scrollerCols[2])).toBeLessThanOrEqual(1);
   const leftGap = geo.contentLeft - geo.paneLeft;
   const rightGap = geo.paneRight - (geo.contentLeft + geo.contentWidth);

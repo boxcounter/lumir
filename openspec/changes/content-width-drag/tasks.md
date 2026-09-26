@@ -3,10 +3,12 @@
 实现顺序：配置面 → 前端宽度模块与手柄 → 持久化 IPC → 单测 → 视觉 → 真机 → 收口。
 每条完成后就地勾选；跑不动的项写「未验」并附原因，MUST NOT 写成已验（REVIEW.md 第 6 条）。
 
-**口径基线（节点 1 裁决，2026-09-25 已落槌）**：D1 默认 **680**、D2 上下限 **[680, 1200]**（默认值即
-下限）、D3 **写回 config.json**（Rust 侧通用键值合并写命令 `config_set_ui_value`，M226 的
+**口径基线（节点 1 裁决，2026-09-25 已落槌；D1/D2 于 2026-09-26 由 Alex 修订）**：D1 默认 **760**
+（原 680）、D2 上下限 **[760, 1200]**（原 [680, 1200]，**默认值仍即下限**）、D3 **写回 config.json**
+（Rust 侧通用键值合并写命令 `config_set_ui_value`，M226 的
 `ui.theme` 复用同一通道）、D4 **live 拖拽**（退路松手生效）、D5 **手柄进 code 模式**。
-裁决原文逐字转写在 `proposal.md` 的「裁决记录」节。
+裁决原文逐字转写在 `proposal.md` 的「裁决记录」节；2026-09-26 的修订原话与动因见
+`design.md` 的「§0 修订记录」。
 
 ## 1. 配置面（Rust）
 
@@ -16,7 +18,7 @@
 - [x] 1.2 `RawUiConfig` 增 `content_width: Option<f64>`（沿用 `#[serde(default)]`）；
       `validate()` 的 ui 分支按 `font_size` 模板扩：缺字段回落默认不告警、越界回落默认 + warning
 - [x] 1.3 Rust 单测：缺字段取默认（比照 `missing_editor_wrap_fields_take_defaults`）、越界回落 +
-      warning 恰一条、类型不符（`{"ui": {"content_width": "680"}}`）走整文件回落（比照
+      warning 恰一条、类型不符（`{"ui": {"content_width": "760"}}`）走整文件回落（比照
       `wrong_type_ui_theme_falls_back_entire_file`，断言 ui 与 editor 字段一起回默认、无混合态）
 - [x] 1.4 `cargo test` 重新导出 `src/bindings/UiConfig.ts` 并一并提交；bindings 漂移门禁绿
       （`scripts/gate.sh:61-70`）
@@ -115,6 +117,15 @@
 - [x] 7.1 `docs/specs/design-tokens-v1.md` 的 `--layout-doc-measure` 条目改为「默认 680px（D1
       落槌值），可被 `ui.content_width` 覆盖（content-width-drag）」
 - [x] 7.2 `文案-Copy.md`：手柄读屏名 + 写盘失败 toast 两条新条目（续号、附修订记录）
+- [x] 7.3 **（2026-09-26 修订追加）** D1 默认 680 → **760**、D2 区间 [680, 1200] → **[760, 1200]**：
+      代码/测试/文档全量同步（`src-tauri/src/config.rs`、`src/content-width.ts`、`src/style.css`、
+      `src/editor.ts`、`src/bindings/UiConfig.ts` 生成物、`tests/unit/content-width.test.ts`、
+      `tests/visual/scenes/{content-width,restyle-skeleton,table-foundation-v2,m119-table-width,
+      markdown-combo,m182-image-first-open-width,tauri-stub}`、`scripts/acceptance/scenarios/
+      38-content-width-drag.md`），修订记录落 `design.md` §0 与 `proposal.md` 的「裁决记录」抬头。
+      核销口径：`rg 680` 全仓清扫后剩余命中**逐条确认与栏宽无关**——`--fw-display: 680`（字重）、
+      `.lumir-bindings-panel` 的 `max-width: 680px`（键位面板宽，S15/S16 有意偏离值）、
+      `src/preview/theme.ts` 的 680 字重规则、`tests/perf/fixtures/markdown-1mb.md` 的语料内容。
 
 ## 8. 收口
 

@@ -198,11 +198,12 @@
   --layout-agent-w: 348px;
   --layout-titlebar-h: 42px;
   --layout-modeline-h: 25px;
-  /* 栏宽默认 680px（content-width-drag 节点 1 裁决 D1，2026-09-26；664 退场）。
-     运行期由 `ui.content_width` 配置与栏宽拖拽经 src/content-width.ts 覆写本 token
-     （写在 documentElement 上），合法区间 [680, 1200]（D2）——此处是「配置到达前」的
-     起步值，三处同值（Rust DEFAULT_CONTENT_WIDTH / TS DEFAULT_CONTENT_WIDTH / 本行）。 */
-  --layout-doc-measure: 680px;
+  /* 栏宽默认 760px（content-width-drag 节点 1 裁决 D1，2026-09-26 由 Alex 修订：
+     664 → 680 → **760**）。运行期由 `ui.content_width` 配置与栏宽拖拽经 src/content-width.ts
+     覆写本 token（写在 documentElement 上），合法区间 [760, 1200]（D2）——此处是
+     「配置到达前」的起步值，三处同值（Rust DEFAULT_CONTENT_WIDTH /
+     TS DEFAULT_CONTENT_WIDTH / 本行）。 */
+  --layout-doc-measure: 760px;
   --layout-review-measure: 720px;
   --layout-tab-h: 29px;
   --layout-tb-btn-w: 30px;
@@ -1022,6 +1023,9 @@ body {
   display: flex;
   flex-direction: column;
   width: 100%;
+  /* 键位面板宽：**与正文栏宽 `--layout-doc-measure` 无关**，是 S15/S16 的有意偏离值
+     （680px 三列；定稿是 440px 两列，见 docs/backlog.md 的「记录在案」）。
+     `rg 680` 清扫正文栏宽时不要动这一条。 */
   max-width: 680px;
   max-height: 100%;
   padding: var(--sp-9) var(--sp-10) var(--sp-8);

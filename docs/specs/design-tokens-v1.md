@@ -206,7 +206,7 @@ r10 = 文件卡、**浮层壳**（popover / modal：`.ovl-pop` :685、`.kbpanel`
 | `--layout-agent-w` | 348px | 「队列条目三行不折行」最小宽；随 agent 特性启用 |
 | `--layout-titlebar-h` | 42px | |
 | `--layout-modeline-h` | 25px | |
-| `--layout-doc-measure` | 680px | 正文 max-width（框宽），居中；**默认值**（content-width-drag 节点 1 裁决 D1），可被 `ui.content_width` 配置覆盖（合法区间 [680, 1200]） |
+| `--layout-doc-measure` | 760px | 正文 max-width（框宽），居中；**默认值**（content-width-drag 节点 1 裁决 D1，2026-09-26 Alex 修订为 760），可被 `ui.content_width` 配置覆盖（合法区间 [760, 1200]） |
 | `--layout-review-measure` | 720px | 审阅视图 max-width；随 agent 特性启用 |
 | `--layout-tab-h` | 29px | tab 高，max-width 230px |
 | `--layout-tb-btn` | 30×28px | 标题栏按钮（侧栏内变体 26×24） |
@@ -219,11 +219,13 @@ r10 = 文件卡、**浮层壳**（popover / modal：`.ovl-pop` :685、`.kbpanel`
 | `--layout-chat-queue-split` | 44% / 56% | chat 与队列的纵向配比；随 agent 特性启用 |
 | `--layout-composer-h` | 99px | composer 固定高（两轴几何不变的前提）；随 agent 特性启用 |
 
-目标视口 1280×900；正文栏在 agent 在场时被压至 ~696px，680 阅读宽仍成立
-（「用户仍可在中间栏读文」的兑现；664→680 为 content-width-drag 节点 1 裁决 D1，
-2026-09-26——680 是**默认值**，用户可经栏宽拖拽在 [680, 1200] 内调宽）。
+目标视口 1280×900；正文栏在 agent 在场时被压至 ~696px，此时正文文字实测宽约 608px（696 − 88
+内边距）。**这不与默认值矛盾**：`--layout-doc-measure` 的轨道语义是**上限**（`minmax(0, token)`），
+窗口或侧栏不够宽时中列收缩到可用宽度——696 是「被压后的实际列宽」，不是「默认值失效」。
+（「用户仍可在中间栏读文」的兑现；664→680→**760** 为 content-width-drag 节点 1 裁决 D1 及其
+2026-09-26 修订——760 是**默认值**，用户可经栏宽拖拽在 [760, 1200] 内调宽。）
 
-服务原则 1/2：680 阅读宽（默认）是「内容即界面」的硬参数；固定栏宽是 chrome
+服务原则 1/2：760 阅读宽（默认）是「内容即界面」的硬参数；固定栏宽是 chrome
 退后的前提（chrome 尺寸不随内容呼吸）。
 
 ## 动效（4 个）
@@ -378,7 +380,7 @@ hairline 边缘 + bg 色阶三者各司其职，不靠堆叠模糊半径。
 | `--accent: #b23a2c` | `--accent: #3a5fcd` | 红→蓝，色相语义更换 |
 | `--sel: rgba(178,58,44,.16)` | `--sel` | 中性化；`::selection` 改 `--accent-tint` |
 | `--radius: 5px` | `--r*` 阶梯 | 按控件尺寸分档 |
-| `--measure: 80%` | `--layout-doc-measure: 680px` | 百分比改定值（664→680 为 content-width-drag D1 裁决） |
+| `--measure: 80%` | `--layout-doc-measure: 760px` | 百分比改定值（664→680→760：content-width-drag D1 裁决 + 2026-09-26 修订） |
 | `--nav-width: 244px`（窄屏 204） | `--layout-sidebar-w: 236px` | 响应式 204 变体删除，收窄策略待裁决 |
 | `--line-height: 1.75` | 1.7（`--lh-reading`） | |
 | `--font-body` | `--font-sans` | 栈扩充（SF Pro Text/Helvetica Neue） |

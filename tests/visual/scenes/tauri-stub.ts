@@ -98,9 +98,9 @@ export interface VaultFixture {
      *  （`src/main.ts`），因此三主题场景截到的是**真实配置通道**下的主题，而不是场景
      *  自己贴的 `data-theme` 属性（后者只证明 CSS 有第三套取值，验不到配置接线）。 */
     theme?: "light" | "dark" | "eink";
-    /** 阅读栏宽 px（M228，content-width-drag）：缺省 680 = 出厂口径（与 Rust
-     *  `DEFAULT_CONTENT_WIDTH` 同值，D1 落槌）——不传的场景天然跑默认栏宽，不会因为
-     *  桩扩了形状而变宽。越界值的回落 + warning 归 Rust 侧（cargo test），桩只负责送达。 */
+    /** 阅读栏宽 px（M228，content-width-drag）：缺省 760 = 出厂口径（与 Rust
+     *  `DEFAULT_CONTENT_WIDTH` 同值，D1 落槌值 2026-09-26 修订）——不传的场景天然跑默认栏宽，
+     *  不会因为桩扩了形状而变宽。越界值的回落 + warning 归 Rust 侧（cargo test），桩只负责送达。 */
     content_width?: number;
     keys?: Record<string, string | null>;
     warnings?: string[];
@@ -302,8 +302,8 @@ export async function stubTauri(page: Page, vault: VaultFixture | null): Promise
             // 到「主题没施加」（见 src/main.ts 的注释），但不该由场景来踩。
             ui: {
               theme: current?.config?.theme ?? "light",
-              // 阅读栏宽（M228）：缺省 680 = Rust `UiConfig::default()` 同值。
-              content_width: current?.config?.content_width ?? 680,
+              // 阅读栏宽（M228）：缺省 760 = Rust `UiConfig::default()` 同值（2026-09-26 修订）。
+              content_width: current?.config?.content_width ?? 760,
             },
             keys: current?.config?.keys ?? {},
           },

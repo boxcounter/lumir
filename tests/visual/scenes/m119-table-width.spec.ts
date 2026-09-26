@@ -37,11 +37,13 @@ test("欠宽方向：栏宽有富余时 cell 不折行，表格贴合内容自�
   // 回归（用户桌面报告）：34 字 CJK cell 自然宽约 500px < 栏宽，旧 352px 封顶把它钳成两行
   // 折行（行高 55px）且整表仅 417px——「折行却收缩」。
   //
-  // 填充字数从 34 收到 30（restyle 后）：栏宽落法从 `--measure: 80%` 改成定值 680px
-  // （文字实测宽 576px，见 src/editor.ts 的 `.cm-content` 注释），「有富余」的区间因此窄了；
-  // 而首列字重 550 让 cell 的 `min-inline-size: 7ch` 略增（`ch` 随字重变宽）——34 字时自然宽
-  // 579px 恰好越过 576px，本用例就从「贴合不横滚」掉进「横滚」档。30 字仍在同一判据档内
-  // （自然宽 > 460 且 < 文字宽），用例守的合同（贴合内容、不折行、不横滚）不变。
+  // 填充字数从 34 收到 30（restyle 后）：栏宽落法从 `--measure: 80%` 改成定值框宽
+  // （`--layout-doc-measure`，2026-09-26 修订为 **760px ⇒ 文字实测宽 672px**，见 src/editor.ts 的
+  //  `.cm-content` 注释），「有富余」的区间随之变宽；首列字重 550 让 cell 的
+  // `min-inline-size: 7ch` 略增（`ch` 随字重变宽）。30 字稳稳在同一判据档内
+  // （自然宽 > 460 且 < 文字宽：实测约 510 < 672），用例守的合同（贴合内容、不折行、不横滚）不变。
+  // **注释里的数字随框宽走**：改 D1 默认值时同步核一遍（M236 修订 760 时核过——34 字档在 672 下
+  // 也回到「贴合」档，收字数的历史理由随之消失，30 字保留是为了不改夹具）。
   const source = `| 名称 | 说明 |\n| --- | --- |\n| alpha | ${"说".repeat(30)} |\n`;
   await openDoc(page, "narrow.md", source);
   await expect(page.locator(".cm-lp-table-scroll")).toHaveCount(1);
@@ -66,7 +68,7 @@ test("欠宽方向：栏宽有富余时 cell 不折行，表格贴合内容自�
 });
 
 test("超宽方向：自然宽超栏宽的表格容器横滚，不裁切、不收缩、不撑宽正文", async ({ page }) => {
-  // 6 列 × 40 字符：自然宽约 2000px > 栏宽（文字实测宽 576px，restyle 前是 80% 的 ~764px）。
+  // 6 列 × 40 字符：自然宽约 2000px > 栏宽（文字实测宽 672px，restyle 前是 80% 的 ~764px）。
   const cell = "abcdefghijklmnopqrstuvwxyz0123456789ABCD";
   const source = `| c1 | c2 | c3 | c4 | c5 | c6 |\n| --- | --- | --- | --- | --- | --- |\n| ${cell} | ${cell} | ${cell} | ${cell} | ${cell} | ${cell} |\n`;
   await openDoc(page, "wide.md", source);
@@ -95,14 +97,14 @@ test("超宽方向：自然宽超栏宽的表格容器横滚，不裁切、不�
   expect(lastCellVisible.scrollLeft).toBeGreaterThan(0);
   expect(lastCellVisible.lastRight).toBeLessThanOrEqual(lastCellVisible.boxRight + 1);
 
-  // 正文列不被撑宽：`.cm-content` 恒为定值栏宽（680px = `--layout-doc-measure`），
+  // 正文列不被撑宽：`.cm-content` 恒为定值栏宽（760px = `--layout-doc-measure`），
   // 超宽表走容器内横滚，不会把阅读列本身撑开（旧口径 80% 随窗宽变，restyle 后是定值）。
   const widths = await page.evaluate(() => {
     const pane = document.querySelector(".pane-editor")!.getBoundingClientRect();
     const content = document.querySelector(".cm-content")!.getBoundingClientRect();
     return { paneWidth: pane.width, contentWidth: content.width };
   });
-  expect(widths.contentWidth).toBe(680);
+  expect(widths.contentWidth).toBe(760);
   expect(widths.contentWidth).toBeLessThan(widths.paneWidth);
   expect(await readDocument(page)).toBe(source);
 });
@@ -184,8 +186,8 @@ test("属性测试：列数×内容长度分布上宽度不变量恒成立", asy
     });
   });
 
-  // 「栏宽」= 文字实测宽（`.cm-content` 的内容盒）：restyle 后它的框宽是 680px 且带 44px 左右内边距，
-  // 表格可用宽是内容盒那一条（576px）。用框宽会把「自然宽略超可用宽」的表误判成贴合。
+  // 「栏宽」= 文字实测宽（`.cm-content` 的内容盒）：restyle 后它的框宽是 760px 且带 44px 左右内边距，
+  // 表格可用宽是内容盒那一条（672px）。用框宽会把「自然宽略超可用宽」的表误判成贴合。
   const contentWidth = await page.evaluate(() => {
     const el = document.querySelector(".cm-content")!;
     const style = getComputedStyle(el);
