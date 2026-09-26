@@ -81,9 +81,9 @@ D2: c. 缩进后重排有序列表源码编号；D3: a. 无操作；D4: a. 无�
 - [x] 6.3 `node scripts/acceptance/run.mjs --check 43` 静态校验绿；真机跑通后证据落
       `test-results/acceptance/`（git 外）
 
-### 6.4 实现期发现（等 Alex 裁决，未落槌前不改 spec / 场景）
+### 6.4 实现期发现（tower 裁决 option-a-refined：接受现状 + backlog 立项，已收口）
 
-- [ ] 6.4 **TAB 接管打破了「块级横滚容器的键盘可达性」**（真机全量复跑抓到的既有行为回归）：
+- [x] 6.4 **TAB 接管打破了「块级横滚容器的键盘可达性」**（真机全量复跑抓到的既有行为回归）：
       现场 `test-results/acceptance/2026-09-26-m239-full/`（git 外）——`21-wrap-default` 由同日
       20:45 的 PASS 变 FAIL（`Tab 把焦点移进代码块容器` 两条断言实际 `focused=AXTextArea`）。
       机制：容器带 `tabindex="0"`（`src/preview/livePreview.ts:271`、`:330`），原本**唯一**的键盘
@@ -101,3 +101,20 @@ D2: c. 缩进后重排有序列表源码编号；D3: a. 无操作；D4: a. 无�
       **C** 把 TAB 接管收窄为「光标在列表项内才缩进」（= 提案 D4b，Alex 已否决）。
       **落槌前不改 spec / 场景**：场景 21 的 FAIL 与两份 spec 的原文是本次冲突的现场证据，改早了
       等于把证据抹掉（口径先于代码，见 4.1 与 AGENTS.md 的「先改 spec 再写代码」）。
+
+**6.4 的落槌与落地（2026-09-26，tower 裁决 `option-a-refined`，依据 Alex 总授权 + D1a 同向延伸，
+已向 Alex 报备可否决）**：接受实测后的真实状态——**块级横滚容器的键盘入口被本 change 移除**
+（`Tab` 被列表缩进接管；点容器经实测不生效：`AXPress` 后 `focused=AXTextArea`，容器节点在 AX 里
+无 bbox 无 `AXPress` 动作）。鼠标 / 触控板横滚不受影响；容器内五条滚动键的**行为**仍由 chromium 层
+`tests/visual/scenes/render-codeblock.spec.ts` 以编程聚焦验证。落地清单：
+
+1. 两处 living spec 的 MODIFIED delta 按实测改写（措辞与新判据逐句一致，不留「点容器进入」这类已
+   证伪的说法）：`specs/keymap-commands/spec.md` 的「轨道 D 的 widget 滚动键纳入统一键位表」、
+   `specs/editor-live-preview/spec.md` 的「折行渲染与代码块横滚容器」（后者的场景名沿用归档原名，
+   正文点明「名字与现状的落差」——改名会被归档检查判为丢场景）。
+2. `scripts/acceptance/scenarios/21-wrap-default.md` 收口：删掉依赖容器焦点的断言，换成仍成立的
+   行为断言（TAB 后焦点仍在编辑器 + 编辑器文本逐字节不变 + `→`/`Home`/`End`/`Escape` 无到达容器的
+   路径 + 文档 sha256/mtime 双双不动 + 容器仍在 AX 树里），并在「已知边界」登记键盘可达性已被
+   M239 移除、那五条键的新覆盖归属、以及恢复入口的候选。真机单跑 **21：1/1 PASS（15 断言）**。
+3. `docs/backlog.md` 新增待裁决条「块级横滚容器失去焦点入口」（候选①`editor.focus-block-scroll`
+   命令 + 新键位为推荐项，待 Alex 立项；候选②找可点边已被 AX dump 证伪；候选③接受现状即本裁决）。
