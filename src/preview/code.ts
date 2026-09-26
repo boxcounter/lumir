@@ -76,6 +76,87 @@ export const JSON_TOKEN_TABLE: TokenTable = { property: tags.propertyName };
  */
 export const YAML_TOKEN_TABLE: TokenTable = { atom: tags.propertyName };
 
+/** json 与 jsonc 共用的语言实例（D2 裁决：.jsonc 复用既有 legacy json mode，零新 parser）。 */
+const JSON_LANGUAGE: StreamLanguage<unknown> = StreamLanguage.define({ ...json, tokenTable: JSON_TOKEN_TABLE });
+
+/**
+ * dotfile（gitignore / gitattributes）的**参数化**游标记号器：行级语法，两门语言只差几条
+ * 规则，因此共用一份实现而不是抄两遍。
+ *
+ * 语义依据 gitignore(5) / gitattributes(5)（一手文档，不抄任何第三方实现，许可干净）：
+ *   - `#` 起首的行是注释；gitignore 里 `\#` 转义后是字面 `#` 模式（行首是反斜杠 ⇒ 不是注释）。
+ *   - gitignore 行首 `!` 是取反标记；行尾 `/` 是「仅目录」标记。两者都不改变模式本身。
+ *   - gitattributes 每行是 `pattern attr… `：行首第一个词是 glob pattern（不解语义、不着色），
+ *     之后每个词是一个属性名（`-attr` / `!attr` 取反形态同色），`attr=value` 的 value 走字符串色。
+ *
+ * token 名只落既有 `TOKEN_GROUPS` 的 role（comment / keyword / property / string），
+ * **零新增颜色**；模式本体一律返回 null（与 yaml spec 对结构符号「不赋予颜色语义」同口径）。
+ *
+ * 状态：无。两门语言的判定都只需「本行已消费到哪」——`sol()` 配合「当前字段是否行首」即可，
+ * 不需要跨行状态（gitignore 无块构造），也不做 glob 合法性校验（范围纪律：只着色）。
+ */
+interface DotfileSpec {
+  /** 本行第一个「字段」是否要整词吃掉而不着色（gitattributes 的 pattern）。 */
+  leadingPattern: boolean;
+  /** 行首取反标记（gitignore 的 `!`；gitattributes 无）。 */
+  leadingNegation: boolean;
+  /** 行尾目录标记（gitignore 的 `/`；gitattributes 无）。 */
+  trailingSlash: boolean;
+  /** 行首是否为 `#` 注释（两门都有——git 官方两处语法都定 `#` 起首即注释）。 */
+  comments: boolean;
+}
+
+/** 由规格生成一个 StreamParser（legacy-modes 的 `mkX` 同形：spec → 记号器）。 */
+function dotfileStreamParser(spec: DotfileSpec) {
+  return {
+    startState: () => ({}),
+    // 空行不产生 token；显式声明 blankLine 使 startState/token/blankLine 三件套完备
+    // （CM6 只在未声明时补空实现，用具名函数读起来更直白）。
+    blankLine: () => {},
+    token(stream: StringStream): string | null {
+      if (stream.sol()) {
+        if (spec.comments && stream.peek() === "#") {
+          stream.skipToEnd();
+          return "comment";
+        }
+        if (spec.leadingNegation && stream.peek() === "!") {
+          stream.next();
+          return "keyword";
+        }
+        if (spec.leadingPattern) {
+          // 行首第一个字段是 pattern（glob）本体：整词吃掉、不着色。用 `[^\s]` 而不是
+          // 「到空格」——gitattributes 的 pattern 里允许 `=`（只有属性名与值用 `=` 切分）。
+          stream.eatWhile(/[^\s]/);
+          return null;
+        }
+      }
+      if (spec.leadingPattern) {
+        // 空白另起一拍（与 legacy modes 的 `if (stream.eatSpace()) return null` 同形）：
+        // token 的起点是 stream.start，先把空白作为「无 token 的一段」走完，字段的 token
+        // 才会从字段首字符起算而不是从行首空白起算。
+        if (stream.eatSpace()) return null;
+        if (stream.eol()) return null;
+        if (stream.peek() === "=") {
+          // `attr=value` 的 `=` 本身不赋色，只作切分点。
+          stream.next();
+          return null;
+        }
+        // 紧跟 `=` 的一段是 value；否则是属性名。判据只看前一个字符（无状态）。
+        const isValue = stream.pos > 0 && stream.string.charAt(stream.pos - 1) === "=";
+        const rest = (/^[^\s=]*/.exec(stream.string.slice(stream.pos)) ?? [""])[0];
+        stream.pos += rest.length;
+        return isValue ? "string" : "property";
+      }
+      if (spec.trailingSlash) {
+        const ch = stream.next();
+        return ch === "/" && stream.eol() ? "keyword" : null;
+      }
+      stream.next();
+      return null;
+    },
+  };
+}
+
 /**
  * 语言名 → StreamLanguage——**代码语言注册表的单一来源**（M152 收口）：code 模式
  * （src/editor.ts 按扩展名选语言）与围栏代码块（本模块按 fenced info string 选语言）
@@ -96,7 +177,16 @@ export const LANGUAGES: Record<CodeLanguage, StreamLanguage<unknown>> = {
   java: StreamLanguage.define(java),
   ruby: StreamLanguage.define(ruby),
   shell: StreamLanguage.define(shell),
-  json: StreamLanguage.define({ ...json, tokenTable: JSON_TOKEN_TABLE }),
+  json: JSON_LANGUAGE,
+  // jsonc 与 json 是**同一个实例**（change dotfile-jsonc-highlight 的 D2 裁决）：legacy json
+  // mode 已把 `//`、`/* */` tokenize 成 comment，尾逗号也走普通标点路径（design §1.4 探针实测），
+  // 因此 .jsonc 只差注册表一行映射。共用实例顺带保证两侧（围栏 jsonc 与整文件 .jsonc）同源。
+  jsonc: JSON_LANGUAGE,
+  // dotfile：无现成 mode（legacy-modes 6.5.4 全量清单里没有，生态里也没有信誉可用的 CM6 实现），
+  // 按 gitignore(5) / gitattributes(5) 的官方语义自写极小游标 parser（共用一份参数化实现）。
+  // 不用近似 mode 冒充（php → null 的既定先例）。
+  gitignore: StreamLanguage.define(dotfileStreamParser({ leadingPattern: false, leadingNegation: true, trailingSlash: true, comments: true })),
+  gitattributes: StreamLanguage.define(dotfileStreamParser({ leadingPattern: true, leadingNegation: false, trailingSlash: false, comments: true })),
   toml: StreamLanguage.define(toml),
   yaml: StreamLanguage.define({ ...yaml, tokenTable: YAML_TOKEN_TABLE }),
   css: StreamLanguage.define(css),
@@ -109,7 +199,9 @@ export const LANGUAGES: Record<CodeLanguage, StreamLanguage<unknown>> = {
   sql: StreamLanguage.define(standardSQL),
 };
 
-/** fenced info string 常见写法 → 上表语言名（别名只做归一，不新增 parser）。 */
+/** fenced info string 常见写法 → 上表语言名（别名只做归一，不新增 parser）。
+ *  info string 与语言名同名时无需条目：`resolveLanguage` 未命中别名即按语言名查 `LANGUAGES`
+ *  （`gitignore` / `gitattributes` / `jsonc` 三个 info string 因此直接可用）。 */
 const ALIASES: Record<string, string> = {
   rs: "rust",
   ts: "typescript",

@@ -5,13 +5,23 @@
 // vault 合并后由装配处经 EditorHandle.setAttachmentProvider 注入真实索引
 //（全 vault 相对路径列表）。
 //
-// 扩展名注册表（M130 收敛）：本文件是「扩展名 → 打开/展示分类 + code 语言名 + 附件
-// MIME」的唯一事实源，tree.ts（展示与点击分类）、editor.ts（模式裁决与语言包解析）、
-// main.ts（附件 data: URL 的 MIME 与磁盘 revision 登记门）都从这里消费，模块内不再各自
-// 维护集合。**可编辑性**（editable-non-md-files）同样只有这里一处判据
-// （isEditableFileClass / isEditablePath），文件树、编辑器与保存链路都消费它。落点理由：
-// 本模块已持有 extensionOf 与 MIME 表，且在依赖图上位于 editor 之下（editor →
-// attachments），注册表放这里不引环；image/binary 分类与附件展示本就同源。
+// 打开/展示分类注册表（M130 收敛、dotfile-jsonc-highlight 起含文件名表）：本文件是
+// 「文件 → 打开/展示分类 + code 语言名 + 附件 MIME」的唯一事实源，tree.ts（展示与点击
+// 分类）、editor.ts（模式裁决与语言包解析）、main.ts（附件 data: URL 的 MIME、状态栏语言名
+// 与磁盘 revision 登记门）都从这里消费，模块内不再各自维护集合。**可编辑性**
+//（editable-non-md-files）同样只有这里一处判据（isEditableFileClass / isEditablePath），
+// 文件树、编辑器与保存链路都消费它。落点理由：本模块已持有 extensionOf 与 MIME 表，且在
+// 依赖图上位于 editor 之下（editor → attachments），注册表放这里不引环；image/binary
+// 分类与附件展示本就同源。
+//
+// **两个查询口的分工**（REVIEW.md 第 8 条：同一语义一处真源，共存时写清分工）：
+//   - `fileClassOfPath` / `codeLanguageOfPath`（path 版）= **文件打开裁决的唯一入口**。
+//     它们先按 basename 精确查文件名表（`.gitignore` / `.gitattributes` 这类名字约定），
+//     再回落到扩展名表。任何手里有路径的消费点都必须走这两个。
+//   - `fileClass(ext)` / `codeLanguage(ext)`（ext 版）= **无路径上下文的底层查询**，
+//     只按扩展名判（MIME 派生、文件名解析等本就没有「打开哪个文件」语义的地方）。
+// 两个匹配表的键集不重叠（文件名表的键都带前导点、扩展名表的键都不带），判定顺序因此
+// 只影响将来扩展：文件名是比扩展名**更具体**的信号，必须优先（spec 的判定顺序条款）。
 
 import { invoke } from "@tauri-apps/api/core";
 import { WidgetType } from "@codemirror/view";
@@ -54,6 +64,7 @@ const CODE_EXTENSIONS = {
   bash: "shell",
   zsh: "shell",
   json: "json",
+  jsonc: "jsonc",
   toml: "toml",
   yaml: "yaml",
   yml: "yaml",
@@ -70,9 +81,26 @@ const CODE_EXTENSIONS = {
   php: null,
 } as const;
 
-/** code 模式的语言名（注册表推导）；preview/code.ts 的 LANGUAGES 用它约束实现覆盖
- *  （`Record<CodeLanguage, StreamLanguage>`：键缺失或多出都在那边编译失败）。 */
-export type CodeLanguage = NonNullable<(typeof CODE_EXTENSIONS)[keyof typeof CODE_EXTENSIONS]>;
+/** **文件名注册表**（basename 精确、大小写敏感）：名字约定 → code 语言名。值域并入
+ *  `CodeLanguage`（与 `CODE_EXTENSIONS` 一起构成语言名的两个来源）。
+ *
+ *  只收 Alex 点名的两个精确 basename（change dotfile-jsonc-highlight 的 D3 裁决）：不匹配
+ *  `foo.gitignore` 这类扩展名形态，也不顺带收录 `.gitmodules` / `.gitkeep` 等——每个名字都要
+ *  核一门语法（`.gitmodules` 是 INI），语法正确性责任面不无需求地扩张。
+ *
+ *  MUST NOT 走 `extensionOf` 的 dotfile 口径取巧（把 `gitignore` 当扩展名塞进
+ *  `CODE_EXTENSIONS`）：那会误命中 `foo.gitignore`、漏掉无点 basename，并把「名字约定」
+ *  伪装成「扩展名」（design §6 V3）。 */
+const FILENAME_LANGUAGES = {
+  ".gitignore": "gitignore",
+  ".gitattributes": "gitattributes",
+} as const;
+
+/** code 模式的语言名（注册表推导，两个来源的并集）；preview/code.ts 的 LANGUAGES 用它约束
+ *  实现覆盖（`Record<CodeLanguage, StreamLanguage>`：键缺失或多出都在那边编译失败）。 */
+export type CodeLanguage =
+  | NonNullable<(typeof CODE_EXTENSIONS)[keyof typeof CODE_EXTENSIONS]>
+  | (typeof FILENAME_LANGUAGES)[keyof typeof FILENAME_LANGUAGES];
 
 /** image 扩展名 → data: URL 的 MIME。键集即 image 分类（文件树展示与附件渲染同源；
  *  heic 原先只在文件树的展示集合里，收敛后一并进入附件 MIME 与 isImageName）。 */
@@ -115,23 +143,44 @@ const REGISTRY: ReadonlyMap<string, ExtensionInfo> = (() => {
   return map;
 })();
 
+/** basename（路径末段）→ 分类/语言；由 `FILENAME_LANGUAGES` 派生，条目一律 code 类。
+ *  键集与 `REGISTRY` 的键集不重叠：本表的键都带前导点，那张表的键都不带。 */
+const FILENAME_REGISTRY: ReadonlyMap<string, ExtensionInfo> = new Map(
+  Object.entries(FILENAME_LANGUAGES).map(([basename, language]) => [
+    basename,
+    { class: "code", language } satisfies ExtensionInfo,
+  ]),
+);
+
+/** 路径的 basename（末段；与 tree.ts 的 baseName 同口径）。 */
+function basenameOf(path: string): string {
+  return path.slice(path.lastIndexOf("/") + 1);
+}
+
 /** 路径取扩展名（小写、不含点）；basename 无点（`LICENSE`/`Makefile`）返回空串 ""。
  *  口径（M130 收敛时统一，原先各模块不同）：只按 basename 里最后一个点切分——
  *  无点 basename → ""；dotfile `.gitignore` → "gitignore"（tree.ts 旧口径把点开头视为
  *  无扩展名，收敛后不再如此）。
- *  "" 与未收录扩展在分类上都是「未收录」（fileClass 返回 text）；模式裁决对两者的
+ *  "" 与未收录扩展在分类上都是「未收录」（`fileClassOfPath` 返回 text）；模式裁决对两者的
  *  处置也一致：**code 模式**（见 editor.ts modeForPath——非 md 一律 code，含无扩展名；
  *  配置 `editor.mode` 只对没有文件上下文的文档有意义），自 editable-non-md-files 起
  *  这些文件一律**可编辑**（isEditablePath 对 text 类返回真）。 */
 export function extensionOf(path: string): string {
-  const base = path.slice(path.lastIndexOf("/") + 1);
+  const base = basenameOf(path);
   const dot = base.lastIndexOf(".");
   return dot < 0 ? "" : base.slice(dot + 1).toLowerCase();
 }
 
-/** 扩展名分类；未收录（含无扩展名的 ""）按 text——按原文打开，不读成二进制。 */
+/** 扩展名分类；未收录（含无扩展名的 ""）按 text——按原文打开，不读成二进制。
+ *  **只按扩展名判**：打开文件请用 `fileClassOfPath`（文件名约定在那里生效）。 */
 export function fileClass(ext: string): FileClass {
   return REGISTRY.get(ext)?.class ?? "text";
+}
+
+/** 路径分类（**文件打开裁决的唯一入口**）：basename 精确命中文件名表（大小写敏感）优先，
+ *  否则按扩展名走 `REGISTRY`，均未命中落 text（既有口径不变）。 */
+export function fileClassOfPath(path: string): FileClass {
+  return FILENAME_REGISTRY.get(basenameOf(path))?.class ?? fileClass(extensionOf(path));
 }
 
 /** 可编辑文本类（editable-non-md-files，裁决 D1「注册表全量文本类」）：md / code / text
@@ -149,7 +198,7 @@ export function isEditableFileClass(cls: FileClass): boolean {
 /** 路径级可编辑判据：无文件上下文（path 缺失：空态 / 新建文档）按现状可编辑——它们的
  *  模式由配置 `editor.mode` 决定；有路径时按注册表裁决。 */
 export function isEditablePath(path: string | undefined): boolean {
-  return path === undefined || isEditableFileClass(fileClass(extensionOf(path)));
+  return path === undefined || isEditableFileClass(fileClassOfPath(path));
 }
 
 /** 注册表里 image/binary 两类的**全部扩展名**（升序）。保存守卫的拒绝清单事实源：
@@ -162,9 +211,16 @@ export function nonTextExtensions(): string[] {
     .sort();
 }
 
-/** code 模式的语言名；不是 code 类或该扩展无语言包时返回 null（纯文本不着色）。 */
+/** code 模式的语言名；不是 code 类或该扩展无语言包时返回 null（纯文本不着色）。
+ *  **只按扩展名判**：打开文件请用 `codeLanguageOfPath`（文件名约定在那里生效）。 */
 export function codeLanguage(ext: string): CodeLanguage | null {
   return REGISTRY.get(ext)?.language ?? null;
+}
+
+/** 路径的语言名（与 `fileClassOfPath` 同一判定顺序）：文件名表优先，其次扩展名表，
+ *  未命中或该文件无语言包时返回 null（纯文本不着色）。 */
+export function codeLanguageOfPath(path: string): CodeLanguage | null {
+  return FILENAME_REGISTRY.get(basenameOf(path))?.language ?? codeLanguage(extensionOf(path));
 }
 
 /** 附件 data: URL 的 MIME；仅 image 类收录，其余返回 undefined（调用侧兜底）。 */

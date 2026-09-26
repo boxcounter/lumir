@@ -289,7 +289,7 @@ test("索引条目数 = 语料里的标识符类出现数（含排除位）；�
 
 test("语言分层：只有 T1 的 8 门有变量高亮，T2 / T3 一律没有（且不解析、不装饰、不提示）", () => {
   const supported: CodeLanguage[] = ["javascript", "typescript", "python", "rust", "go", "c", "cpp", "java"];
-  const unsupported: CodeLanguage[] = ["css", "scss", "lua", "yaml", "sql", "ruby", "shell", "toml", "json", "html", "xml", "swift", "kotlin"];
+  const unsupported: CodeLanguage[] = ["css", "scss", "lua", "yaml", "sql", "ruby", "shell", "toml", "json", "jsonc", "gitignore", "gitattributes", "html", "xml", "swift", "kotlin"];
   for (const language of supported) assert.equal(supportsVariableBinding(language), true, `${language} 应当支持`);
   for (const language of unsupported) assert.equal(supportsVariableBinding(language), false, `${language} 不应当支持`);
 

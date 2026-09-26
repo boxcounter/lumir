@@ -1,0 +1,4 @@
+# 文本规范化
+*.md text eol=lf
+*.png binary
+*.jpg -diff

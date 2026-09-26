@@ -515,8 +515,8 @@ test("同一份文档重复问不重建缓存键（键是整篇原文，节流�
   assert.ok(structureKeyBuildCount() > afterParse, "内容变化后必须重新查缓存");
 });
 
-test("不支持的语言永远没有结构：11 门 T3 语言与「无语言包」两侧都成立", () => {
-  const unsupported: CodeLanguage[] = ["ruby", "shell", "toml", "yaml", "swift", "kotlin", "lua", "sql", "json", "html", "xml"];
+test("不支持的语言永远没有结构：14 门 T3 语言与「无语言包」两侧都成立", () => {
+  const unsupported: CodeLanguage[] = ["ruby", "shell", "toml", "yaml", "swift", "kotlin", "lua", "sql", "json", "jsonc", "gitignore", "gitattributes", "html", "xml"];
   const supported: CodeLanguage[] = ["javascript", "typescript", "python", "rust", "go", "c", "cpp", "java", "css", "scss"];
   // 分层表逐门核对（与 spec 的三档名单一致）：不支持的档一律 null
   for (const language of unsupported) {
@@ -591,17 +591,20 @@ test("条目链 = 祖先链（md 的标题层级与 code 的语法深度走同�
 
 // --- 7. 与 spec 的分层名单逐门对账 ------------------------------------------------------------
 
-test("分层注册表的键与既有语言表一一对应（21 门，无遗漏无多余）", () => {
+test("分层注册表的键与既有语言表一一对应（24 门，无遗漏无多余）", () => {
   const keys = Object.keys(STRUCTURE_SUPPORT).sort();
   assert.deepEqual(keys, [
     "c",
     "cpp",
     "css",
+    "gitattributes",
+    "gitignore",
     "go",
     "html",
     "java",
     "javascript",
     "json",
+    "jsonc",
     "kotlin",
     "lua",
     "python",
@@ -619,5 +622,5 @@ test("分层注册表的键与既有语言表一一对应（21 门，无遗漏�
   // php 不在 CodeLanguage 里（注册表标 null → 纯文本），因此本表没有它——「不顺带接 php」由类型保证
   assert.ok(!keys.includes("php"));
   const nullable = Object.entries(STRUCTURE_SUPPORT).filter(([, support]) => support === null);
-  assert.equal(nullable.length, 11, "不支持档应是 11 门");
+  assert.equal(nullable.length, 14, "不支持档应是 14 门");
 });

@@ -1,0 +1,8 @@
+# 依赖目录
+node_modules/
+dist/
+
+# 保留的例外
+!keep.txt
+
+*.log

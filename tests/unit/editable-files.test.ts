@@ -24,7 +24,7 @@ test("矩阵：md / 代码扩展 / 未收录扩展 / dotfile / 无扩展名 一�
     "page.php", // 收录但无语言包：仍是 code 类 → 可编辑（纯文本显示）
     "app.log", // 未收录扩展 → text
     "mystery.xyz", // 同上
-    ".gitignore", // dotfile：扩展名解析为 "gitignore"（未收录）→ text
+    ".gitignore", // dotfile：文件名表命中 → code 类（dotfile-jsonc-highlight 起；此前是 text）
     "LICENSE", // basename 无点 → text
     "Makefile",
     "dir/sub/notes.txt", // 嵌套目录里的 basename 才是判据来源

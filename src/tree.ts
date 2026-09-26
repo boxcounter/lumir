@@ -5,7 +5,7 @@
 
 import type { FsChange } from "./bindings/FsChange";
 import type { FsEntry } from "./bindings/FsEntry";
-import { extensionOf, fileClass } from "./preview/attachments";
+import { fileClassOfPath } from "./preview/attachments";
 
 /** 显示分类（spec：至少区分目录 / Markdown / 图片等可预览附件 / 其他）。 */
 export type DisplayKind = "dir" | "md" | "image" | "other";
@@ -24,12 +24,13 @@ export function baseName(path: string): string {
 /** 点击打开的行为分类：md / code 进编辑器对应模式，text 只读原文，binary 给提示。 */
 export type OpenKind = "md" | "code" | "text" | "binary";
 
-// 扩展名集合（图片 / 二进制 / 代码 / Markdown）的唯一事实源在 preview/attachments.ts
-//（M130 收敛）；本文件只按分类消费，不再各自维护一套集合。
+// 分类注册表（图片 / 二进制 / 代码 / Markdown，含 dotfile 的名字约定）的唯一事实源在
+// preview/attachments.ts（M130 收敛、dotfile-jsonc-highlight 起含文件名表）；本文件只按分类
+// 消费（`fileClassOfPath`），不再各自维护一套集合。
 
 export function displayKind(entry: FsEntry): DisplayKind {
   if (entry.kind === "dir") return "dir";
-  const cls = fileClass(extensionOf(entry.path));
+  const cls = fileClassOfPath(entry.path);
   if (cls === "md") return "md";
   if (cls === "image") return "image";
   return "other";
@@ -37,7 +38,7 @@ export function displayKind(entry: FsEntry): DisplayKind {
 
 /** 打开行为分类：image/binary 走"暂不支持预览"，其余尝试按文本读（含无扩展名）。 */
 export function openKind(path: string): OpenKind {
-  const cls = fileClass(extensionOf(path));
+  const cls = fileClassOfPath(path);
   if (cls === "md" || cls === "code" || cls === "text") return cls;
   return "binary";
 }
