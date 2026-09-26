@@ -33,15 +33,22 @@ steps:
       - label: 磁盘基线已记下
         file: { path: table-fullscreen.md, exists: true }
 
-  - name: 负对照：caret 落在降级表里（文档首块）时执行命令 → 无遮罩、事件不被消费
+  - name: 负对照·定位：caret 落在降级表里（文档首块）
     do: clickEditor
     dx: 40
     dy: 20
+    expect:
+      - label: 焦点落在编辑器正文里（键盘注入的前置；否则下面那条命令发不出去）
+        ax: { focused: "AXTextArea" }
+  - name: 负对照·执行：在降级表里执行 table.toggle-fullscreen（⌘J）→ 无遮罩、事件不被消费
+    do: key
+    key: "cmd+j"
     expect:
       - label: 遮罩未出现（降级表没有 grid DOM ⇒ 命中条件为假）
         ax: { has: "关闭 table-fullscreen.md" }
       - label: 正文未被改写（事件落到原生路径，没有别的副作用）
         editor: { unchangedSince: before }
+      - shot: 降级表里执行命令后
 
   - name: 正观测：caret 进正常表 → 命令打开遮罩，快照几何非零 + 表格文本在场
     do: clickInNode
@@ -132,7 +139,7 @@ steps:
 | 任务 | 本场景的承接 |
 |---|---|
 | 6.1 新增场景 | 本文件 + `fixtures/table-fullscreen.md`；触发走 `[keys]` 配置绑定（`09b-keys-config` 先例），与视觉场景 `tests/visual/scenes/m240-table-fullscreen.spec.ts` 同一条路径 |
-| 6.2 真机反向验证 | 去掉入口：把本场景的 `config.keys` 改成不绑定 `table.toggle-fullscreen`（或回退实现）后重跑，第 5 步起的遮罩断言必须 FAIL；现场留档 |
+| 6.2 真机反向验证 | 去掉入口：把本场景的 `config.keys` 改成不绑定 `table.toggle-fullscreen`（或回退实现）后重跑，正观测侧（打开遮罩那几步）的断言必须 FAIL；现场留档。**负对照步不受影响**（降级表里「无 grid DOM」与「无绑定」两因叠加，⌘J 不发命令 ⇒ 那两条断言照旧 PASS）——反向验证的判别力全部由正观测侧承担，这与「负向断言配正观测」同一条纪律 |
 | 6.3 不改写源文件 | 末尾两条独立断言：`editor: unchangedSince: before` + `file: unchangedSince: doc` |
 | 6.4 场景 md 与 fixture 同 PR | 本节两个文件随实现同 PR |
 
@@ -143,9 +150,18 @@ steps:
   ——`aria-modal` 的 dialog 让 AX 作用域收到模态子树。② 是把 ① 「钉在遮罩里那张」上的唯一手段：
   快照的读屏名**故意**与文档内那张相同（复用同一份 `Markdown 表格 N` 标签，spec 要求），所以只靠
   名字与几何分不开两处。
-- **负向断言配同场景正观测**（REVIEW.md 第 2 条）：第 4 步在降级表里执行命令断言「遮罩不出现」，
-  第 5 步在同一份文档的正常表里执行同一命令断言「遮罩出现」——后一条把前一条从「命令坏了」
-  这一类恒真里分开。
+- **负向断言配同场景正观测**（REVIEW.md 第 2 条）：负对照拆成两步——「负对照·定位」把 caret 点进
+  降级表并断言焦点在编辑器正文里（命令发得出去的前提），「负对照·执行」**真的按下 ⌘J**，断言
+  「遮罩不出现 + 文档逐字节不变」；紧接着的正观测步在同一份文档的正常表里按**同一个键**、断言
+  「遮罩出现」。后一条是前一条的反面证据：它证明这个键在本次会话的注入通道里确实能落地，
+  因此前一条的「不出现」不是「键没送到」的同义反复。
+  （**r1 评审 P2-1 的现场**：此前负对照只有 `clickEditor`、从未按 ⌘J，两条断言因此在
+  「命令没发出」时也恒真——步名与本节措辞却声称「执行命令」，属 REVIEW.md 第 6 条的覆盖虚标。
+  已按评审修法拆步补齐真触发。）
+  **通道注意**：`press_key("tab")` 在 WKWebView 有一个已知通道缺口（M240 的全量批次发现，
+  见 `docs/backlog.md` 的验收套件条与 finding `…tab-shift-tab-wkwebview-m239-43-master.md`），
+  ⌘J 这类 chord 不受它影响，但由此得一条纪律：**负向断言必须配一条通道可达的正观测**，
+  否则丢键会让它静默恒真。
 - **焦点断言走解析结果**：`ax: { focused: "AXTextArea" }` 要求 AX 里恰有一个 focused 节点且 role
   命中（跨节点正则没有节点边界意识）。
 - **代际变化（外部重载）这一条不在本场景**：遮罩开着时经外部通道改写文件需要套件在遮罩打开期间
