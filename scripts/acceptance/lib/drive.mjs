@@ -254,3 +254,18 @@ export async function injectDrag(from, to) {
     );
   }
 }
+
+/** AX 直接设窗口尺寸（M236，窄窗退让的真机验证）：确定值通道，不拖窗口边缘（命中区与
+ *  落点都不稳）。返回 swift 的回读行（`size=<w>x<h>`，窗口管理器钳制后的生效值）。 */
+export async function resizeWindowAX(pid, width, height) {
+  const script = new URL("./ax-window.swift", import.meta.url).pathname;
+  const args = ["/usr/bin/swift", script, String(pid), String(Math.round(width)), String(Math.round(height))];
+  try {
+    return execFileSync(args[0], args.slice(1), { encoding: "utf8" }).trim();
+  } catch (e) {
+    throw new StepError(
+      `swift + AX 窗口尺寸设置失败（${e.message}）。这条通道要 /usr/bin/swift（Xcode Command Line Tools）` +
+        `且进程要有辅助功能权限（与 CGEvent 注入同前提）。`,
+    );
+  }
+}

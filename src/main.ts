@@ -25,6 +25,7 @@ import {
   vaultSessionPut,
 } from "./ipc";
 import { createSaveController, SAVE_GUARD_TOAST_CLASS } from "./save-controller";
+import { getName, getVersion } from "@tauri-apps/api/app";
 import { createToc } from "./toc";
 import { createImageLightbox } from "./lightbox";
 import {
@@ -42,6 +43,7 @@ import { createLinkFollow } from "./link-follow";
 import { createTabs } from "./tabs";
 import { createBindingsPanel } from "./bindings-panel";
 import { WIDTH_SAVE_FAILED_TEXT, createContentWidthDrag } from "./content-width";
+import { createTitlebarIdentity } from "./modeline";
 import { logEvent, sampleCallback } from "./diagnostics";
 import type { FsEntry } from "./bindings/FsEntry";
 import type { VaultInfo } from "./bindings/VaultInfo";
@@ -967,6 +969,26 @@ function applyRestoreFinished(): void {
 
 onVaultRestoreFinished(applyRestoreFinished).catch(() => {}); // 无 Tauri 后端（纯浏览器预览）时静默忽略
 void refreshVaultStatus();
+
+// 标题栏产品标识块（M236，change product-version-display）：启动时经 Tauri 内置 app 模块
+// 读一次 productName / version（真源 = tauri.conf.json，前端 MUST NOT 硬编码第二份——
+// REVIEW.md 第 8 条），写 DOM 的事全在 src/modeline.ts（含窄窗退让）。运行期不刷新
+//（版本号构建期固化，没有可监听的变化源）。
+// 失败降级（ACL 漏配 / 非 Tauri 环境如 chromium 视觉桩未路由时）：标识块整体 hidden +
+// 一条 app_meta_unavailable 诊断日志——宁可不显示，MUST NOT 渲染假版本号。
+const titlebarIdentity = createTitlebarIdentity({
+  block: shell.titlebarIdentity.block,
+  name: shell.titlebarIdentity.name,
+  sep: shell.titlebarIdentity.sep,
+  version: shell.titlebarIdentity.version,
+  modelineVersion: shell.modelineVersion,
+});
+Promise.all([getName(), getVersion()])
+  .then(([name, version]) => titlebarIdentity.show({ name, version }))
+  .catch((e: unknown) => {
+    titlebarIdentity.fail();
+    logEvent("app_meta_unavailable", { message: errorMessage(e) });
+  });
 
 // editor.mode：只对没有文件上下文的文档（空态 / 新建）生效的默认模式；打开文件时
 // 一律按扩展名裁决（M130 方向 A：非 md 只读 code），该配置对文件打开不再有影响。

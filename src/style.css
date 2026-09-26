@@ -348,7 +348,35 @@ body {
    标题栏今天没有任何动作钮，原型的两颗是「搜索」与「agent 面板」，而 agent 面板是本 change
    的显式非目标、给 ⌘F 加一颗鼠标入口又属新增交互面（本 change 的口径是换皮不改交互）。
    因此这一段不落下 DOM/CSS；--layout-tb-btn-w/h 入库无消费者（预留面，记在
-   test-results/m211/token-spot-check.md）。 */
+   test-results/m211/token-spot-check.md）。
+   M236 起标题栏右端已有产品标识块（.titlebar-identity，常显信息位不是动作钮）——未来
+   动作钮接入时排在标识块**左侧**（动作钮靠近内容区、产品标识钉窗口角，macOS 惯例），
+   间距走 --sp-3；不要把标识块挪位（整页视觉基线会漂移）。 */
+
+/* 产品标识块（M236，change product-version-display，D1 右端 / D3 双档字重）：
+   全部现行 token，零新值、零组件级 eink 覆盖（--text-2/--text-3 三主题都有定义）。
+   flex:none + margin-left:auto 钉右端——tabstrip hidden 的空态也在右端；不收缩、不截断
+   （截断出「Lumir · 0…」是假信息）。窄窗退让（<640px 版本号退 modeline）的显隐由
+   src/modeline.ts 写 hidden 属性，样式层不感知阈值。 */
+.titlebar-identity {
+  flex: none;
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  user-select: none;
+  font-size: var(--fs-ui-s);
+  color: var(--text-3);
+}
+/* author 的 display:flex 会盖掉 UA 的 [hidden] 规则，显式补回（同 .tabstrip） */
+.titlebar-identity[hidden] {
+  display: none;
+}
+/* 产品名：550「强调不粗」特征档 + --text-2 承担识别度（与同行标签同档字号、基线对齐） */
+.ti-name {
+  font-weight: var(--fw-emphasis);
+  color: var(--text-2);
+}
 
 /* 标签（M149 多标签，M211 迁入标题栏）：形态按定稿——高 29 / max-width 230 /
    active 靠 `--shadow-pop` 表达「与正文同平面相连」（eink 无阴影，改 1.4px 描边强调档）。 */
@@ -469,8 +497,19 @@ body {
 .modeline-right {
   display: flex;
   align-items: center;
-  gap: var(--sp-6);
   min-width: 0;
+}
+.modeline-left {
+  gap: var(--sp-6);
+}
+/* 右段：meta（语法 · 行数 · 编码）+ 版本号段（M236，窄窗退让的落点，常态 hidden）。
+   gap 取 0——版本号段自带前导「 · 」文本（white-space: pre 保住前导空格），与 meta 内部
+   分隔的节奏逐字同形；版本号段 hidden 时本行视觉与 M211 原状逐像素一致。 */
+.modeline-right {
+  gap: 0;
+}
+.modeline-version {
+  white-space: pre;
 }
 /* 路径段（定稿 index.html:582-592、:1225）：裸 span = 常规字重 + --text-3，分隔符
    「 / 」带空格（装配层写入时替换）。600/--text-2 档（.modeline b）定稿留给强调位，

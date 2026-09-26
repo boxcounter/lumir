@@ -16,6 +16,10 @@
 - [ ] 1.3 `src/main.ts`：启动装配读取 `getName()` / `getVersion()`（`@tauri-apps/api/app`）
   一次并写 DOM；失败降级 = 标识块 `hidden` + `logEvent` 一条（MUST NOT 渲染假版本号，
   design §3.3）；运行期不刷新
+- [ ] 1.4 窄窗退让（**D2 改选备选**，2026-09-25）：`src/modeline.ts` 新模块承担退让逻辑——
+  窗口宽 < 640px（`matchMedia`）时隐藏标题栏的 `ti-sep` / `ti-version` 两段，版本号拼进
+  modeline 右段尾部（独立 span，不与 `syncModelineMeta` 的 meta 段合写）；≥ 640px 恢复。
+  产品名始终留标题栏右端（design §3.2）
 
 ## 2. ACL
 
@@ -41,8 +45,8 @@
 - [ ] 3.4 真机验收场景 **`scripts/acceptance/scenarios/39-titlebar-identity.md`**（编号接
   38-content-width-drag；端口与隔离纪律照旧，1420/1430 不碰）：标识块显示「Lumir ·
   0.0.0」且版本号与 src-tauri/tauri.conf.json 的 version 逐字节一致（读文件比对，不硬编码
-  预期值）；窗口调窄（≈520px）后标识块完整可见、标签区可横滚；标识块上按下拖拽窗口成立
-  （drag region 不被阻断）；三主题各一张标题栏截图证据
+  预期值）；窗口调窄（≈520px）后版本号退入 modeline 右段、产品名留标题栏右端（D2 备选），
+  拉宽恢复；标识块上按下拖拽窗口成立（drag region 不被阻断）；三主题各一张标题栏截图证据
 - [ ] 3.5 `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` 通过
 - [ ] 3.6 `bash scripts/gate.sh quick` 全绿；真机验收套件 `node scripts/acceptance/run.mjs 39`
   PASS（合并后、Alex 验收前由 agent 先跑一遍，AGENTS.md 执行时机）

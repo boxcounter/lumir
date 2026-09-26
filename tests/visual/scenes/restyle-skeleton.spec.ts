@@ -126,15 +126,15 @@ test("位置指示段迁到 modeline：有标题显示链接、无标题隐藏�
   await expect(page.locator(".modeline-section")).toBeHidden();
 });
 
-test("标签迁入标题栏：打开文件后标签是标题栏的子节点，空态只剩 traffic 区", async ({ page }) => {
+test("标签迁入标题栏：打开文件后标签是标题栏的子节点，空态是 traffic 区 + 标识块", async ({ page }) => {
   await stubTauri(page, VAULT);
   await page.goto("/");
 
-  // 空态：标签区隐藏，标题栏的可见子节点只剩 traffic 灯区
+  // 空态：标签区隐藏，标题栏的可见子节点 = traffic 灯区 + 右端产品标识块（M236）
   const emptyChildren = await page.locator(".titlebar").evaluate((bar) =>
     [...bar.children].filter((child) => (child as HTMLElement).offsetParent !== null).map((c) => c.className),
   );
-  expect(emptyChildren).toEqual(["titlebar-traffic"]);
+  expect(emptyChildren).toEqual(["titlebar-traffic", "titlebar-identity"]);
 
   await open(page, "doc.md", "正文段落");
   // 打开文件后标签在场，且**在标题栏内**（不是自成一个网格行）

@@ -93,6 +93,9 @@ pub enum LogEventName {
     /// 链接激活（M144 引入外链打开，M145 扩为按类别记录）：交给系统默认应用的结果
     /// 与前端分类出的其它类别（internal-md / anchor / blocked-scheme）。
     LinkOpen,
+    /// 应用元信息（产品名 / 版本号）读取失败（M236）：标题栏标识块随之整体隐藏。
+    /// 常见成因是 capabilities 漏配 core:app:allow-name / allow-version（ACL 拒绝）。
+    AppMetaUnavailable,
 }
 
 impl LogEventName {
@@ -109,6 +112,7 @@ impl LogEventName {
             Self::ConfigWarning => "config_warning",
             Self::SlowCallback => "slow_callback",
             Self::LinkOpen => "link_open",
+            Self::AppMetaUnavailable => "app_meta_unavailable",
         }
     }
 
@@ -120,6 +124,7 @@ impl LogEventName {
             Self::SaveConflict
             | Self::AutosavePaused
             | Self::ConfigWarning
+            | Self::AppMetaUnavailable
             | Self::SlowCallback => "warn",
             Self::RenderError => "error",
             _ => "info",
@@ -142,6 +147,8 @@ impl LogEventName {
             // 小词表）。**不记 URL 与目标原文**——那是文档内容，本模块的隐私边界不允许
             // 正文进日志（见模块头）。
             Self::LinkOpen => &["category", "scheme", "outcome"],
+            // 只记错误摘要（ACL 拒绝的 message 是权限名，不含用户数据）。
+            Self::AppMetaUnavailable => &["message"],
         }
     }
 }
