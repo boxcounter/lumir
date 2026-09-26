@@ -18,17 +18,16 @@ steps:
     do: sleep
     ms: 1500
     expect:
-      - label: 注册项出现在**新名**目录下（整目录搬过来的）
+      - label: 注册项出现在新名目录（vault-registry/）下——整目录搬过来的
         file: { path: env:vault-registry/legacy-vault.json, exists: true }
-      - label: **旧名**目录已被搬走（MUST NOT 新旧并存）
+      - label: 旧名目录（workspaces/）已被搬走（MUST NOT 新旧并存）
         file: { path: env:workspaces, exists: false }
       - label: 注册项记的仍是这个 vault 的路径（搬的是整目录，逐项不变形）
         file: { path: env:vault-registry/legacy-vault.json, has: "lumir-m102-acceptance" }
-      - label: app 真的**用了**这条注册项（恢复打开成功后刷了 last_opened_at；路径没命中就会另起一个 id，这条文件根本不会存在）
+      - label: app 真的用了这条注册项（恢复打开成功后刷了 last_opened_at；路径没命中就会另起一个 id，这条文件根本不会存在）
         file: { path: env:vault-registry/legacy-vault.json, has: "last_opened_at" }
 
   - name: 身份不丢：注册项恰好一条，旧名目录下一条都不剩
-    do: none
     expect:
       - label: 新名目录下恰好一个注册项文件（没有因「按路径找不到」另生成一个 id）
         glob: { dir: env:vault-registry, pattern: "\\.json$", exact: 1 }
@@ -36,7 +35,6 @@ steps:
         glob: { dir: env:workspaces, pattern: "\\.json$", exact: 0 }
 
   - name: 迁移记了一条诊断事件（log_event 通道）
-    do: none
     expect:
       - label: 当日日志里有 vault_registry_migrated 事件
         file: { path: env:logs/*.jsonl, has: "\"event\":\"vault_registry_migrated\"" }
@@ -58,14 +56,14 @@ steps:
     expect:
       - label: 浮层打开（新增入口在场 = 正向锚点）
         ax: { has: "选择一个目录作为新 vault" }
-      - label: 列表里有当前 vault 的行（该摘要串只有列表行会渲染，注册表读不回来就没有这一行）
-        ax: { has: "个标签 · 现在打开" }
+      - label: 列表里有当前 vault 的一行（行名 = vault 名 + 「当前」标——这一组合只有列表行会渲染）
+        ax: { has: "/lumir-m102-acceptance 当前/" }
       - shot: 切换器里的这一行
 
 teardown:
-  - label: 收尾：注册项仍在**新名**目录下
+  - label: 收尾：注册项仍在新名目录 vault-registry/ 下
     file: { path: env:vault-registry/legacy-vault.json, exists: true }
-  - label: 收尾：**旧名**目录始终没有回来
+  - label: 收尾：旧名目录 workspaces/ 始终没有回来
     file: { path: env:workspaces, exists: false }
 ---
 
@@ -96,7 +94,7 @@ teardown:
 | 注册项没丢 / 没被顶掉 | **`glob` 计数（exact）+ 文件内容** | 「恰好一条」是这里唯一有区分度的判据：少一条 = 搬丢，多一条 = app 另起了 id |
 | app 真的用了这条注册项 | **`last_opened_at` 出现在**该注册项文件里 | 只有「按路径命中既有注册项」的成功打开路径会刷这个字段（`mark_opened`）；新注册的项不会带它 |
 | 迁移的日志记录 | **`env:logs/*.jsonl` 的内容断言** | 日志文件按 UTC 日期命名，用 `*` 取最新一份（写死日期会跨天读到上一轮的旧文件，假绿） |
-| 注册表可读的 UI 出口 | **AX 文本**（列表行的摘要串） | 该串只由列表行渲染；树头部也有 vault 名，拿名字做判据会退化成恒真 |
+| 注册表可读的 UI 出口 | **AX 文本**（列表行读数名的「vault 名 + 当前」组合） | 树头部也有 vault 名（`vault：<名>（点击查看全部 vault）`），单拿名字做判据会退化成恒真；「当前」标只出现在列表行。**不**用行摘要串做判据：摘要随会话里的标签数变化（首轮实测该行读的是「还没有打开过文件」，因为浮层取 `vault_list` 时会话尚未写入） |
 | 迁移**失败**态 / 两种不动作态 | **不在这里**（单测覆盖） | 见下「已知边界」 |
 
 ## 已知边界（如实登记，不读成「全量已验」）
