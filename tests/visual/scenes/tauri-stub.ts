@@ -123,7 +123,7 @@ export async function stubTauri(page: Page, vault: VaultFixture | null): Promise
     //（与真后端 open_vault 的替换语义对齐）。
     let current = v;
 
-    type Args = { path?: string; from?: string; link?: string; target?: string; id?: string; title?: string; vault_id?: string; expected_revision?: string; content?: string; dirty?: boolean; force_new?: boolean; event?: string; fields?: Record<string, string>; url?: string; tabs?: string[]; active?: string | null; entries?: Record<string, { pos: number; y: number; x: number; at: number }>; key?: string; value?: unknown };
+    type Args = { path?: string; from?: string; rel?: string; new_name?: string; parent_rel?: string; name?: string; link?: string; target?: string; id?: string; title?: string; vault_id?: string; expected_revision?: string; content?: string; dirty?: boolean; force_new?: boolean; event?: string; fields?: Record<string, string>; url?: string; tabs?: string[]; active?: string | null; entries?: Record<string, { pos: number; y: number; x: number; at: number }>; key?: string; value?: unknown };
     const checkVault = (args: Args) => {
       if (args.vault_id !== (current?.vault_id ?? "fixture-vault")) throw { code: "fixture_contract", message: "vault_id mismatch" };
     };
@@ -183,6 +183,51 @@ export async function stubTauri(page: Page, vault: VaultFixture | null): Promise
     // 第二个 addInitScript 往 `window.__saveCalls` 上挂 +1 的包装），同名会让两边的类型互相踩
     // （实测：那边得到数组、`+= 1` 变成字符串拼接，`document_save` 随之报错）。
     w.__documentWrites = [] as Array<{ path: string; content: string }>;
+    // 文件级操作的「让世界前进」辅助（M244）：路径移动 / 删除 / 新增只改 fixture 的
+    // entries + files 两张表——语义对齐到「场景断言够用」这一层，路径判定（逃逸 / 忽略集 /
+    // 撞名）不在这里复制（那是 Rust 侧的真实边界，归 cargo test）。
+    const joinRel = (parent: string, name: string): string => (parent === "" ? name : `${parent}/${name}`);
+    const movePath = (vault: VaultFixture | null, from: string, to: string): void => {
+      if (!vault || from === to) return;
+      vault.entries = (vault.entries as Array<{ path: string }>).map((entry) => {
+        if (entry.path === from) return { ...entry, path: to };
+        if (entry.path.startsWith(`${from}/`)) return { ...entry, path: to + entry.path.slice(from.length) };
+        return entry;
+      });
+      const files = vault.files;
+      if (!files) return;
+      for (const key of Object.keys(files)) {
+        if (key === from) {
+          files[to] = files[key];
+          delete files[key];
+        } else if (key.startsWith(`${from}/`)) {
+          files[to + key.slice(from.length)] = files[key];
+          delete files[key];
+        }
+      }
+    };
+    const dropPath = (vault: VaultFixture | null, rel: string): void => {
+      if (!vault) return;
+      vault.entries = (vault.entries as Array<{ path: string }>).filter(
+        (entry) => entry.path !== rel && !entry.path.startsWith(`${rel}/`),
+      );
+      const files = vault.files;
+      if (!files) return;
+      for (const key of Object.keys(files)) {
+        if (key === rel || key.startsWith(`${rel}/`)) delete files[key];
+      }
+    };
+    const addEntry = (vault: VaultFixture | null, path: string, kind: "file" | "dir"): void => {
+      if (!vault) return;
+      (vault.entries as Array<Record<string, unknown>>).push({
+        path,
+        kind,
+        size: 0,
+        mtime_ms: 1757000003000,
+      });
+      if (kind === "file" && vault.files) vault.files[path] = "";
+    };
+
     const handlers: Record<string, (args: Args) => unknown> = {
       // vault_list 桩（M163）：缺省派生**一条**「当前 fixture 那一行」——列表浮层在单 vault
       // 下同样要出现（change task 3.1），因此不能让它缺省返回空数组（空数组会被读成
@@ -384,6 +429,49 @@ export async function stubTauri(page: Page, vault: VaultFixture | null): Promise
         current!.files![path] = args.content ?? "";
         return `fixture-revision-${args.content ?? ""}`;
       },
+      // 文件级操作（M244，change file-tree-context-menu）：桩做「记录调用 + 让世界前进」
+      // 的最小模拟——entries / files 跟着改，前端在场景显式 fireFsEvent 之前就有一个自洽的
+      // 世界；**事件仍由场景自己 fire**（与 __externalWrite / __externalDelete 同口径：
+      // 把「动作」与「watch 回响」两条时序解耦，断言更确定——回响抑制正是要在这个缝隙里验）。
+      // 路径判定（逃逸 / 忽略集 / 撞名）不在这里复制：那是 Rust 侧的真实边界，归 cargo test。
+      fs_rename_entry: (args) => {
+        const from = args.rel ?? "";
+        const name = args.new_name ?? "";
+        const to = from.includes("/") ? `${from.slice(0, from.lastIndexOf("/"))}/${name}` : name;
+        (w.__fsMutations as Array<Record<string, unknown>>).push({
+          cmd: "fs_rename_entry",
+          rel: from,
+          new_name: name,
+          to,
+        });
+        movePath(current, from, to);
+        return to;
+      },
+      fs_trash_entry: (args) => {
+        const rel = args.rel ?? "";
+        (w.__fsMutations as Array<Record<string, unknown>>).push({ cmd: "fs_trash_entry", rel });
+        dropPath(current, rel);
+        return null;
+      },
+      fs_create_file: (args) => {
+        const path = joinRel(args.parent_rel ?? "", args.name ?? "");
+        (w.__fsMutations as Array<Record<string, unknown>>).push({ cmd: "fs_create_file", path });
+        addEntry(current, path, "file");
+        return path;
+      },
+      fs_create_dir: (args) => {
+        const path = joinRel(args.parent_rel ?? "", args.name ?? "");
+        (w.__fsMutations as Array<Record<string, unknown>>).push({ cmd: "fs_create_dir", path });
+        addEntry(current, path, "dir");
+        return path;
+      },
+      fs_reveal_in_finder: (args) => {
+        (w.__fsMutations as Array<Record<string, unknown>>).push({
+          cmd: "fs_reveal_in_finder",
+          rel: args.rel ?? "",
+        });
+        return null;
+      },
       // link graph 桩：语义由场景 fixture 注入（前端不复制解析语义，
       // 桩也只查表不计算）；未收录的链接按 unresolved 应答。
       link_graph_resolve: (args) => {
@@ -407,6 +495,9 @@ export async function stubTauri(page: Page, vault: VaultFixture | null): Promise
         return { created };
       },
     };
+
+    // 文件级操作的调用记录（场景断言参数用；M244）。
+    w.__fsMutations = [];
 
     w.__TAURI_EVENT_PLUGIN_INTERNALS__ = {
       unregisterListener: (_event: string, id: number) => callbacks.delete(id),
@@ -537,6 +628,16 @@ export async function setBackendVault(page: Page, vault: VaultFixture | null): P
 /** config_get 的调用计数（等「配置已加载」用；M132 的 [keys] 覆盖在配置到位后生效）。 */
 export async function configGets(page: Page): Promise<number> {
   return page.evaluate(() => (window as unknown as { __configGets: number }).__configGets);
+}
+
+/**
+ * 文件级操作（M244）的调用记录：每条是 `{cmd, …参数}`。场景据此断言「前端到底把哪个路径
+ * 交给了后端」——界面观测不到的那一半（重命名的 old→new、新建的父目录）在这一层可见。
+ */
+export async function fsMutations(page: Page): Promise<Array<Record<string, unknown>>> {
+  return page.evaluate(
+    () => (window as unknown as { __fsMutations: Array<Record<string, unknown>> }).__fsMutations,
+  );
 }
 
 /** 全部 invoke 的命令名（按调用顺序）——「筛选 MUST NOT 触发第二次拉取」这类次数判据读它。 */

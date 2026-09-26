@@ -38,6 +38,15 @@ rfd = "0.17"
 # 错误信封都在那一处，webview 里没有任何第二条能绕开校验去开 URL 的路径。
 # 同类取舍先例见上面 rfd 一行。
 tauri-plugin-opener = "2"
+# 移到废纸篓（M244，change file-tree-context-menu）：删除必须可恢复（裁决点 2），
+# 平台语义由 crate 持有——macOS 走 NSFileManager 的 trashItem，目录整棵入篓、可整体放回，
+# 不自己拼 `osascript`/`mv` 命令。
+#
+# 为什么是 trash：纯用户态调用（无外部进程、无路径 quoting 注入面），错误类型区分
+# 「目标不可访问 / 路径无法规范化 / 卷不支持废纸篓」几类，正好是错误信封要的人话来源；
+# 被否决的替代是 osascript 驱动 Finder（外部进程 + 注入面，design §4.6）与
+# `std::fs::remove_file`（永久删除，产品裁决明确不提供）。
+trash = "5"
 
 [features]
 # 生产构建开关（Tauri 2 官方模板约定，名称必须恰为 custom-protocol）：

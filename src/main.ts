@@ -2,13 +2,19 @@ import { createShell } from "./shell";
 import { createEditor } from "./editor";
 import { applyKeyOverrides, KEY_BINDINGS, Keymap } from "./keys";
 import type { CommandId, CommandRunner, CommandRuntime, KeyBinding, KeyOverrides } from "./keys";
-import { baseName, createFileTree, openKind } from "./tree";
+import { baseName, createFileTree, openKind, vaultAbsolutePath } from "./tree";
+import type { InlineEditRequest, OpenKind } from "./tree";
 import {
   configGet,
   configSetUiValue,
   errorMessage,
+  fsCreateDir,
+  fsCreateFile,
   fsReadAttachment,
   fsReadSnapshot,
+  fsRenameEntry,
+  fsRevealInFinder,
+  fsTrashEntry,
   documentSetDirty,
   onFsEntryChanged,
   onMenuCommand,
@@ -39,6 +45,19 @@ import {
 } from "./vault-switcher";
 import type { VaultSwitcherHandle } from "./vault-switcher";
 import { createReadingPositionStore } from "./reading-position";
+import {
+  COPIED_PATH_TOAST,
+  COPY_PATH_FAILED_TOAST,
+  DIALOG_CANCEL,
+  TRASH_CONFIRM_DIR_BODY,
+  TRASH_CONFIRM_FILE_BODY,
+  TRASH_CONFIRM_OK,
+  TRASH_CONFIRM_TITLE,
+  createConfirmDialog,
+  createRenameEchoGuard,
+  createTreeContextMenu,
+} from "./tree-menu";
+import type { TreeMenuAction, TreeMenuTarget } from "./tree-menu";
 // M151：名字听不出归属的三块能力各自的模块（见各处装配点与模块头注释）。
 // link-follow（解析缓存 + 链接跟随）、tabs（标签栏 DOM）、bindings-panel（键位查看面板）。
 import { createLinkFollow } from "./link-follow";
@@ -359,6 +378,169 @@ const switcher: VaultSwitcherHandle = createVaultSwitcher({
   onEmptyVault: () => showNotice(EMPTY_VAULT_TEXT),
   warn: (text) => toast(text),
 });
+
+// ---------------------------------------------------------------------------
+// 文件树条目操作（M244，change file-tree-context-menu）：右键菜单、内联编辑提交、删除确认
+//
+// 分工：菜单浮层 / 确认框 / 改名回响抑制在 src/tree-menu.ts（无 ipc 依赖、可单测），内联
+// 编辑的行 DOM 在 src/tree.ts，**动作**在这里——只有装配层同时拿着 vault 根、编辑器会话与
+// 保存链路。三个共同点：
+//   1. 全部经后端 command 落地（ADR 0002 §3：webview 不直接触文件系统），唯一例外是
+//      「复制完整路径」（纯剪贴板，spec 明确零新命令）；
+//   2. 成功后的**树**一律等 watcher 回响收敛（唯一收敛通道，不自绘补丁——design §4.7），
+//      唯一例外是新建文件的自动打开（走读取链路，与树展示解耦）；
+//   3. 失败一律 toast 人话（后端错误信封的 message 已是人话），MUST NOT 静默。
+// ---------------------------------------------------------------------------
+
+const renameEcho = createRenameEchoGuard();
+
+const treeMenu = createTreeContextMenu({
+  mount: shell.root, // 与 vault 浮层同一挂点：左栏容器 overflow:auto，挂进去会被裁掉
+  onSelect: (action, target) => runTreeAction(action, target),
+});
+
+/** 确认框正在问的那一条（打开时写入，动作完成 / 取消后清空）。 */
+let trashPending: TreeMenuTarget | undefined;
+
+const trashConfirm = createConfirmDialog({
+  mount: shell.root,
+  onConfirm: () => {
+    const target = trashPending;
+    if (target !== undefined) void trashEntry(target.path);
+  },
+  // 焦点归还触发菜单的那一行（对话框关闭即调用；确认路径也在其列）。
+  restoreFocus: () => trashPending?.anchor.focus(),
+});
+
+/** 菜单动作分发：每个动作只做「起编辑 / 起确认 / 调命令」三件事之一（判定不在这一层）。 */
+function runTreeAction(action: TreeMenuAction, target: TreeMenuTarget): void {
+  switch (action) {
+    case "rename":
+      tree.beginRename(target.path);
+      return;
+    case "new-file":
+      tree.beginCreate(target.path, "file");
+      return;
+    case "new-dir":
+      tree.beginCreate(target.path, "dir");
+      return;
+    case "copy-path":
+      void copyVaultPath(target.path);
+      return;
+    case "reveal":
+      void revealInFinder(target.path);
+      return;
+    case "trash":
+      trashPending = target;
+      trashConfirm.open({
+        title: TRASH_CONFIRM_TITLE,
+        // 目录那一档明示「连同其中全部内容」（裁决点 2 的护栏：删除必须两步 + 可恢复）。
+        body:
+          target.kind === "dir"
+            ? TRASH_CONFIRM_DIR_BODY(target.name)
+            : TRASH_CONFIRM_FILE_BODY(target.name),
+        confirmLabel: TRASH_CONFIRM_OK,
+        cancelLabel: DIALOG_CANCEL,
+      });
+      return;
+  }
+}
+
+/**
+ * 复制完整路径（裁决点 4 = 绝对路径）：纯前端剪贴板通道，零后端命令、零 capabilities
+ * 增量（spec）。拼接只有一处（`tree.ts` 的 `vaultAbsolutePath`，MUST NOT 在这里再拼一次）。
+ *
+ * 失败（剪贴板不可用 / 权限被拒）给 toast 人话——不引剪贴板插件。design §5.2 的既定退路
+ * 是「行为契约不变地换一条通道」（后端 command + 剪贴板插件），但那条路只在真机实证
+ * WKWebView 拒绝时才走；真机场景 47 的剪贴板断言就是这条实证的落点。失败另记一条
+ * console 线索：诊断事件名是 Rust 侧的白名单（`logging.rs`），新增名字不在本 change 的
+ * 改动面内，因此不借一个语义不符的既有事件名。
+ */
+async function copyVaultPath(rel: string): Promise<void> {
+  const root = loadedRoot;
+  if (root === undefined) return; // 未装载 vault 时树不存在，菜单不可能出现（防御性）
+  const absolute = vaultAbsolutePath(root, rel);
+  try {
+    await navigator.clipboard.writeText(absolute);
+    toast(COPIED_PATH_TOAST, [], false, "success");
+  } catch (e) {
+    const reason = errorMessage(e);
+    console.warn(`lumir: 复制路径失败（${rel}）：${reason}`);
+    toast(COPY_PATH_FAILED_TOAST(reason));
+  }
+}
+
+/** 在 Finder 中显示（§3.4）：只读动作，无 watcher 联动（不产生文件系统变更）。 */
+async function revealInFinder(rel: string): Promise<void> {
+  try {
+    await fsRevealInFinder(rel);
+  } catch (e) {
+    toast(errorMessage(e));
+  }
+}
+
+/**
+ * 移到废纸篓（裁决点 2）：删除经确认框已是两步，这里只负责调命令与失败提示。
+ * 成功的**表现**由 watcher 的 deleted 统一收敛：树节点消失（级联子孙）、命中打开中的
+ * 文档时走既有的 `handleExternalChange`（暂停自动保存 + sticky「内容未丢失」，不特判、
+ * 不抑制——design §3.1）。失败则本就没有事件，提示里明说「未删除任何内容」。
+ */
+async function trashEntry(rel: string): Promise<void> {
+  try {
+    await fsTrashEntry(rel);
+  } catch (e) {
+    toast(errorMessage(e));
+  }
+}
+
+/**
+ * 内联编辑提交（重命名 / 新建共用）：不管成败都经 `tree.endInlineEdit` 回到那一行——
+ * 成功退出编辑态（新名由 watcher 回响收敛），失败留在编辑态并标红（后端是权威，前端的
+ * 即时校验只是先手）。重命名另有 tab 联动（裁决点 5），见下面两条分支的注释。
+ */
+async function submitInlineEdit(request: InlineEditRequest): Promise<void> {
+  if (request.mode === "rename") {
+    const predicted =
+      request.parentRel === "" ? request.name : `${request.parentRel}/${request.name}`;
+    // 抑制登记在 **invoke 发起时**（不是成功返回后）：in-flight 窗口内到达的真实外部事件
+    // 必须照常归因，失败即撤（回滚消除乱序窗口）。登记的是预测的新路径——与后端
+    // `rename_entry` 的返回值同一个公式（`join_rel(parent_rel, new_name)`）。
+    const cancelEcho = renameEcho.register(request.path, predicted);
+    let renamed: string;
+    try {
+      renamed = await fsRenameEntry(request.path, request.name);
+    } catch (e) {
+      cancelEcho();
+      tree.endInlineEdit(false, errorMessage(e));
+      return;
+    }
+    // 打开中的文档就地 remap（裁决点 5）：dirty 内容、revision 基准（改名不改字节，CAS
+    // 依旧有效）、滚动与光标全部保留；扩展名变化时 mode / editable 由 remap 内部重裁。
+    editor.remapSessionPaths(request.path, renamed);
+    tree.endInlineEdit(true);
+    // 表现层一次对齐：modeline 的路径段、标签栏可见文本与 `dataset.path`、树高亮、标签
+    // 会话落盘、阅读位置 flush——「当前文档」在装配层的唯一同步点。
+    syncActiveDocument();
+    return;
+  }
+
+  try {
+    if (request.mode === "create-file") {
+      const created = await fsCreateFile(request.parentRel, request.name);
+      tree.endInlineEdit(true);
+      // 新建文件成功即自动打开（§3.5）：**不等 watcher 回响**——打开走读取链路，与树的
+      // 展示互不依赖。意图取 "pinned"：新建是用户的显式动作，值得一个自己的固定标签
+      //（"preview" 会被下一次单击顶掉）。md / 其余类型由 openKind 一处裁决。
+      void openFile(created, openKind(created), "pinned");
+      return;
+    }
+    await fsCreateDir(request.parentRel, request.name);
+    tree.endInlineEdit(true);
+    // 新建子目录不自动展开、不自动打开（§3.6）：条目由 watcher 回响收敛进树。
+  } catch (e) {
+    tree.endInlineEdit(false, errorMessage(e));
+  }
+}
 
 // ---------------------------------------------------------------------------
 // 文档阅读位置（M194，change remember-reading-position 的 3.x / 4.x）：跨会话记住阅读位置的
@@ -934,6 +1116,11 @@ tree = createFileTree(shell.treeMount, {
   onOpenVault: () => requestAddVault(),
   // 树头部的常驻入口（形态 A）：展开 / 收起列表浮层。
   onOpenVaultSwitcher: () => switcher.toggle(),
+  // 条目右键（M244）：菜单浮层与动作都在上面那两个装配块里；树只报「哪一行、什么条目、
+  // 锚点是谁、指针在哪」。右键不改上下文（树不发 onOpenFile，装配层也不碰 currentPath）。
+  onContextMenu: (target, at) => treeMenu.open(target, at),
+  // 内联编辑提交（重命名 / 新建共用）。
+  onInlineEditSubmit: (request) => void submitInlineEdit(request),
 });
 
 /** 装载 vault 的最后防线版（空态打开 / 启动恢复）：dirty 时拦下并就地给出三条出口，出口
@@ -1018,12 +1205,19 @@ onFsEntryChanged((changes) => {
     // 文件树照常吃增量，文档内容另行处置（save 控制器内分流）。M149：判据是**全部**
     // 打开中的文档而不是前台那一个——多标签下后台标签被外部改写同样要处置（旧实现只查
     // displayedPath，后台标签的变更会静默漏报）。
+    //
+    // M244（design §3.2）：app 内改名的一次性归因抑制。菜单发起的重命名会让 watcher 回来
+    // 「deleted:old + created:new」，不抑制就会把用户自己改的名报成外部变更（remap 之后
+    // session.path 已是 new，真正命中 dirty 会话的是 `created:new` → 「检测到外部修改」）。
+    // 抑制只作用在**会话链路**上：上面的附件索引与下面的树 / 链接索引照常收敛。
+    const renamed = renameEcho.consume(changes.map((c) => c.path));
     for (const session of editor.sessions()) {
       const path = session.path;
       if (path === undefined) continue;
       const hit = changes.find((c) => c.path === path);
-      if (hit) save.handleExternalChange(path, hit.kind);
+      if (hit && !renamed.has(hit.path)) save.handleExternalChange(path, hit.kind);
     }
+    renameEcho.settle();
     // 链接索引已由后端随事件流增量更新；前端清缓存重建装饰
     linkFollow.invalidate();
     editor.refreshPreview();

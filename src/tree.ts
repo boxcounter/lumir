@@ -2,14 +2,86 @@
 // 数据源是 fs-io 的枚举结果 + fs:entry_changed 增量事件，webview 不直接触文件系统
 //（ADR 0002 §3）。模型与 DOM 分离：增量事件先打补丁到模型，再对受影响节点做
 // 局部 DOM 增删，不全量重绘；展开/折叠状态独立保存在 expanded 集合里，刷新不丢。
+//
+// 条目级操作（M244，change file-tree-context-menu）：右键菜单由装配层持有
+//（src/tree-menu.ts），本模块只负责「哪一行被右键」与**内联编辑**（重命名 / 新建共用
+// 同一形态：行名就地换成输入框，Enter 提交、Esc / 失焦取消、非法行内标红）。菜单与
+// 对话框是浮层，不进这棵树的 DOM；编辑是**行局部**的，不是模态——树的其余交互照常。
 
 import type { FsChange } from "./bindings/FsChange";
 import type { FsEntry } from "./bindings/FsEntry";
+import { keyToken } from "./keys";
 import { fileClassOfPath } from "./preview/attachments";
+import type { TreeMenuTarget } from "./tree-menu";
 
 /** 显示分类（spec：至少区分目录 / Markdown / 图片等可预览附件 / 其他）。 */
 export type DisplayKind = "dir" | "md" | "image" | "other";
 
+/**
+ * 枚举忽略集的前端副本（内联编辑的提示性预检用）。
+ *
+ * **权威是 `src-tauri/src/fs_io.rs` 的 `IGNORED_NAMES`**：命中的名字建成/改成之后不进
+ * 文件树、watch 事件也被吞掉，用户在界面上既看不到也删不掉。这里抄一份只为「提交前就
+ * 说清」，不承担判定职责（后端仍会拒）；两份的逐项对账在
+ * `tests/unit/tree-inline-edit.test.ts`（它解析那份 Rust 源比对，漂移即红——
+ * 与 `registry-drift.test.ts` 守 `SAVE_REJECTED_EXTENSIONS` 同一手法，REVIEW.md 第 8 条）。
+ */
+export const IGNORED_NAMES = [".git", ".DS_Store", "node_modules"];
+
+/**
+ * vault 根的绝对路径 + 树内相对路径（M244「复制完整路径」的**唯一一份**拼接，
+ * design §3.3 点名：一处实现，MUST NOT 每个调用点各自拼）。裁决点 4：写进剪贴板的是
+ * 绝对路径——相对路径离开 vault 上下文即失效，那不是「完整路径」的直觉语义。
+ */
+export function vaultAbsolutePath(root: string, rel: string): string {
+  const base = root.endsWith("/") ? root.slice(0, -1) : root;
+  return rel === "" ? base : `${base}/${rel}`;
+}
+
+/** 内联编辑的文案（编号见 文案-Copy.md 的 D125 起）：新建时的输入框占位与三条读屏名。
+ *  编辑框中「非法原因」的措辞与 `src-tauri/src/fs_io.rs` 的同名分支一致（见 validateEntryName）。 */
+export const UNNAMED_TEXT = "未命名";
+export const RENAME_INPUT_LABEL = (name: string): string => `重命名 ${name}`;
+export const NEW_FILE_INPUT_LABEL = "新建文件的名称";
+export const NEW_DIR_INPUT_LABEL = "新建子目录的名称";
+
+/**
+ * 内联编辑的末段名校验（导出是为了让校验矩阵直接单测，不必先造一棵树）：
+ * 与 `src-tauri/src/fs_io.rs` 的 `validate_new_name` 逐条同源——非空、不含 `/`、
+ * 不是 `.` / `..`、不命中忽略集，另加一条**前端特有**的撞名预检（同缀既有条目）。
+ * 返回 undefined = 可提交；否则是行内要显示的原因句。
+ *
+ * 提交前会 trim（「   」这类只剩空白的名字按空处理），这是前端比后端更严的一处，
+ * 方向正确：后端拒绝的东西前端不改，前端多挡的只是明显手误。
+ */
+export function validateEntryName(raw: string, siblings: ReadonlySet<string>): string | undefined {
+  const name = raw.trim();
+  if (name.length === 0) return "名称不能为空";
+  if (name.includes("/")) return `名称不能包含斜杠：${name}`;
+  if (name === "." || name === "..") return `${name} 不是有效的名称`;
+  if (IGNORED_NAMES.includes(name)) return `${name} 在忽略集内，建成后不会出现在文件树里`;
+  if (siblings.has(name)) return `已存在同名条目：${name}`;
+  return undefined;
+}
+
+/**
+ * 改名后的路径 remap（纯函数，M244 的裁决点 5）：路径正好是 `from` 时换成 `to`；落在
+ * `from/` 子树下时换成 `to` 下对应位置；其余返回 undefined（不受影响）。
+ *
+ * 文件改名 = 单路径替换，目录改名 = 子树前缀替换，两条形态共用这一份判定——MUST NOT 在
+ * 调用点各写一套前缀逻辑（REVIEW.md 第 8 条）。**放在这里而不是 editor.ts**：editor.ts
+ * 顶部会拉起 CodeMirror 与预览层，单测层导入不了它（类型剥离跑不动预览层的构造器参数
+ * 属性），而这条判定必须能被直接单测（tests/unit/tree-paths.test.ts）。
+ */
+export function remapPathAfterRename(
+  path: string,
+  from: string,
+  to: string,
+): string | undefined {
+  if (path === from) return to;
+  if (path.startsWith(`${from}/`)) return to + path.slice(from.length);
+  return undefined;
+}
 /** 路径 → 末段（basename）。**全前端唯一一份**（REVIEW.md 第 8 条）：文件树的行名与
  *  vault 名（都落在这里的侧栏头，M211 起 vault 名没有第二个展示位）、标签可见文本
  *  （tabs.ts）、切换器列表行与守卫提示（vault-switcher.ts / main.ts）全部消费它。空末段
@@ -54,6 +126,26 @@ export interface FileTreeCallbacks {
   /** 树头部 vault 切换器入口（形态 A，M163）的点击：打开列表浮层。
    *  入口只在**已装载 vault**时存在——空态（含启动恢复进行中）没有列表入口。 */
   onOpenVaultSwitcher(): void;
+  /** 条目右键（M244）：树只报「哪一行、什么条目、锚点是谁、指针在哪」——菜单本体与
+   *  动作归装配层（树不 import 菜单模块的 DOM 层，保持「谁建 DOM 谁收事件」的分工，
+   *  与浮层入口 / 浮层本体的分工同形）。右键 MUST NOT 触发打开或改上下文，因此这里
+   *  没有 intent 一类的参数。 */
+  onContextMenu(target: TreeMenuTarget, at: { x: number; y: number }): void;
+  /** 内联编辑提交（重命名 / 新建共用同一形态）：装配层去调后端命令，结果经
+   *  `endInlineEdit` 回到树上——只有装配层知道后端与 tab 联动。 */
+  onInlineEditSubmit(request: InlineEditRequest): void;
+}
+
+/** 内联编辑的提交请求（树 → 装配层）。 */
+export interface InlineEditRequest {
+  /** rename = 改既有条目；create-file / create-dir = 在目录下新建。 */
+  mode: "rename" | "create-file" | "create-dir";
+  /** rename 时 = 被改条目的 vault 相对路径；create 时 = 父目录路径（根为 `""`）。 */
+  path: string;
+  /** 父目录的 vault 相对路径（根为 `""`）；后端按它 + `name` 定位目标。 */
+  parentRel: string;
+  /** 已 trim 的末段名。 */
+  name: string;
 }
 
 export interface FileTree {
@@ -68,6 +160,14 @@ export interface FileTree {
   vaultEntry(): HTMLElement | undefined;
   /** 切换器展开态同步（`aria-expanded`）——入口 DOM 由本模块建，展开态由浮层持有。 */
   setVaultEntryExpanded(expanded: boolean): void;
+  /** 进入内联编辑：重命名该条目（§3.2）。条目不存在或已有编辑进行中时是空动作。 */
+  beginRename(path: string): void;
+  /** 进入内联编辑：在目录下新建（§3.5 / §3.6）。父不是目录或已有编辑进行中时空动作。 */
+  beginCreate(parentRel: string, kind: "file" | "dir"): void;
+  /** 编辑提交的结果回报：成功 = 退出编辑态；失败 = 留在编辑态并给原因（后端是权威）。 */
+  endInlineEdit(ok: boolean, reason?: string): void;
+  /** 正在编辑的条目路径 / 新建时的父目录；无编辑进行中为 undefined（断言口）。 */
+  editingPath(): string | undefined;
 }
 
 interface Node {
@@ -123,11 +223,8 @@ export function createFileTree(mount: HTMLElement, cb: FileTreeCallbacks): FileT
     return [...(node.children?.values() ?? [])].sort(byTreeOrder);
   }
 
-  function renderRow(node: Node): HTMLLIElement {
-    const li = document.createElement("li");
-    li.className = "ft-item";
-    li.dataset.path = node.entry.path;
-
+  /** 行元素（button）：重命名起就整行换成 div 版（见 beginRename），取消时用它还原。 */
+  function createRow(node: Node): HTMLButtonElement {
     const row = document.createElement("button");
     row.type = "button";
     const kind = displayKind(node.entry);
@@ -144,21 +241,26 @@ export function createFileTree(mount: HTMLElement, cb: FileTreeCallbacks): FileT
     name.className = "ft-name";
     name.textContent = baseName(node.entry.path);
     row.append(caret, name);
-    li.append(row);
-    node.li = li;
     row.classList.toggle("is-current", currentPath === node.entry.path);
 
+    // 右键（M244）：拦下系统菜单并把「哪一行」交给装配层。**不改上下文**——这里不调
+    // onOpenFile，也不动 currentPath / 标签（右键即改选中是 Finder 的语义，而本树的
+    // 「选中」等于「打开」，代价不对称，保持保守）。
+    row.addEventListener("contextmenu", (event) => {
+      event.preventDefault();
+      cb.onContextMenu(
+        {
+          path: node.entry.path,
+          kind: node.entry.kind === "dir" ? "dir" : "file",
+          name: baseName(node.entry.path),
+          anchor: row,
+        },
+        { x: event.clientX, y: event.clientY },
+      );
+    });
+
     if (node.entry.kind === "dir") {
-      const ul = document.createElement("ul");
-      ul.className = "ft-children";
-      ul.hidden = !expanded.has(node.entry.path);
-      li.append(ul);
-      node.childrenUl = ul;
-      syncCaret(node);
       row.addEventListener("click", () => toggle(node));
-      if (expanded.has(node.entry.path)) {
-        for (const child of sortedChildren(node)) mountNode(child, ul);
-      }
     } else {
       const open = (intent: "preview" | "pinned") =>
         cb.onOpenFile(node.entry.path, openKind(node.entry.path), intent);
@@ -169,7 +271,29 @@ export function createFileTree(mount: HTMLElement, cb: FileTreeCallbacks): FileT
       row.addEventListener("click", (event) => open(event.metaKey ? "pinned" : "preview"));
       row.addEventListener("dblclick", () => open("pinned"));
     }
+    return row;
+  }
+
+  function renderRow(node: Node): HTMLLIElement {
+    const li = document.createElement("li");
+    li.className = "ft-item";
+    li.dataset.path = node.entry.path;
+
+    const row = createRow(node);
+    li.append(row);
     node.li = li;
+
+    if (node.entry.kind === "dir") {
+      const ul = document.createElement("ul");
+      ul.className = "ft-children";
+      ul.hidden = !expanded.has(node.entry.path);
+      li.append(ul);
+      node.childrenUl = ul;
+      syncCaret(node);
+      if (expanded.has(node.entry.path)) {
+        for (const child of sortedChildren(node)) mountNode(child, ul);
+      }
+    }
     return li;
   }
 
@@ -177,17 +301,22 @@ export function createFileTree(mount: HTMLElement, cb: FileTreeCallbacks): FileT
     node.li?.querySelector(".ft-caret")?.classList.toggle("is-open", expanded.has(node.entry.path));
   }
 
+  /** 展开目录节点（渲染子节点、去掉 hidden）——toggle 的展开支与「新建时确保父目录可见」
+   *  共用这一份，MUST NOT 在两处各写一套挂载逻辑。 */
+  function expandNode(node: Node) {
+    if (node.childrenUl === undefined) return;
+    expanded.add(node.entry.path);
+    node.childrenUl.replaceChildren();
+    for (const child of sortedChildren(node)) mountNode(child, node.childrenUl);
+    node.childrenUl.hidden = false;
+  }
+
   function toggle(node: Node) {
     if (expanded.has(node.entry.path)) {
       expanded.delete(node.entry.path);
       if (node.childrenUl) node.childrenUl.hidden = true;
     } else {
-      expanded.add(node.entry.path);
-      if (node.childrenUl) {
-        node.childrenUl.replaceChildren();
-        for (const child of sortedChildren(node)) mountNode(child, node.childrenUl);
-        node.childrenUl.hidden = false;
-      }
+      expandNode(node);
     }
     syncCaret(node);
   }
@@ -263,6 +392,218 @@ export function createFileTree(mount: HTMLElement, cb: FileTreeCallbacks): FileT
     }
   }
 
+  // ---------------------------------------------------------------------------
+  // 内联编辑（重命名 / 新建共用同一形态；M244 §2.3）
+  //
+  // 形态：编辑中的那一行整行换成 `<div class="ft-row is-editing">`（原先是 `<button>`），
+  // 里面是 caret + `<input class="ft-edit">` + 一行错误文本。**换元素而不是在 button
+  // 里塞 input**：交互内容不能嵌在 button 里（语义非法、且 button 的激活语义会跟输入抢
+  // 回车），换成 div 后「编辑期间该行的打开 / 折叠 / 右键交互被抑制」是**结构性成立**的
+  // ——新元素根本没有那些监听，也不需要一堆 if 开关。树的其余行不受影响（编辑是行局部
+  // 的，不是模态）。
+  //
+  // 校验是**提示性预检**（后端权威）：非法即时标红 + 说明，MUST NOT 弹 toast 轰炸（§2.3）。
+  // ---------------------------------------------------------------------------
+
+  interface InlineEdit {
+    mode: InlineEditRequest["mode"];
+    path: string;
+    parentRel: string;
+    input: HTMLInputElement;
+    error: HTMLElement;
+    /** create 专用：临时行元素（提交成功后撤掉，真实节点由 watcher 回响收敛进来）。 */
+    tempLi?: HTMLLIElement;
+    /** rename 专用：还原原行（取消 / 成功后把 button 版换回去）。 */
+    restore?: () => void;
+    /** 提交中：提交与 blur 会互相触发，用它隔开（提交路径不接受 blur 的取消）。 */
+    submitting: boolean;
+    /** 即时校验（提交前再跑一次，避免只依赖最后一次 input 事件）。 */
+    check: () => string | undefined;
+    /** rename 的原名（同名提交视为取消，不必往返一次后端）。 */
+    original: string;
+  }
+
+  let editing: InlineEdit | null = null;
+
+  /** 同缀既有条目名（撞名预检的数据源）；rename 时排除条目自己。 */
+  function siblingNames(parentRel: string, exclude?: string): Set<string> {
+    const names = new Set<string>();
+    for (const name of nodes.get(parentRel)?.children?.keys() ?? []) {
+      if (name !== exclude) names.add(name);
+    }
+    return names;
+  }
+
+  /**
+   * 末段名校验（与 `src-tauri/src/fs_io.rs` 的 `validate_new_name` 逐条同源：非空 /
+   * 不含 `/` / 不是 `.`/`..` / 不命中忽略集 / 不撞名）。措辞与后端同名分支一致，让
+   * 「前端先说清」与「后端拒绝」两处说同一句话。
+   */
+  function validateName(raw: string, siblings: Set<string>): string | undefined {
+    return validateEntryName(raw, siblings);
+  }
+
+  function editRow(kind: "file" | "dir", placeholder: string): {
+    row: HTMLElement;
+    input: HTMLInputElement;
+    error: HTMLElement;
+  } {
+    const row = document.createElement("div");
+    row.className = `ft-row ${kind === "dir" ? "ft-dir" : "ft-other"} is-editing`;
+    const caret = document.createElement("span");
+    caret.className = "ft-caret";
+    if (kind === "dir") caret.innerHTML = DIR_CARET_SVG;
+    const input = document.createElement("input");
+    input.type = "text";
+    input.className = "ft-edit";
+    input.placeholder = placeholder;
+    input.autocomplete = "off";
+    input.spellcheck = false;
+    const error = document.createElement("span");
+    error.className = "ft-edit-error";
+    row.append(caret, input, error);
+    return { row, input, error };
+  }
+
+  function wireEdit(state: InlineEdit, siblings: Set<string>): void {
+    const { input, error } = state;
+    const refresh = (): string | undefined => {
+      const reason = validateName(input.value, siblings);
+      const invalid = reason !== undefined;
+      input.classList.toggle("is-invalid", invalid);
+      input.setAttribute("aria-invalid", invalid ? "true" : "false");
+      error.textContent = reason ?? "";
+      return reason;
+    };
+    state.check = refresh;
+    input.addEventListener("input", () => {
+      refresh();
+    });
+    // Enter 提交、Esc 取消。两个键在输入框内就地消费（preventDefault）：编辑器键位层
+    // 的作用域按「事件目标是否在 contentDOM 内」判定，这里本来就不命中；显式消费是给
+    // 「以后谁在 window 上加监听」留一道不依赖作用域的保险。
+    input.addEventListener("keydown", (event) => {
+      const token = keyToken(event);
+      if (token === "Enter") {
+        event.preventDefault();
+        submitEdit();
+        return;
+      }
+      if (token === "Escape") {
+        event.preventDefault();
+        cancelEdit();
+      }
+    });
+    // 失焦即取消（与 Finder 一致）。提交路径把它挡掉——那一路是我们自己收走的。
+    input.addEventListener("blur", () => {
+      if (state.submitting) return;
+      cancelEdit();
+    });
+    // 输入框自己的右键不弹树菜单（编辑期不换上下文）。
+    input.addEventListener("contextmenu", (event) => event.preventDefault());
+  }
+
+  function beginRename(path: string): void {
+    if (editing !== null) return;
+    const node = nodes.get(path);
+    const li = node?.li;
+    if (node === undefined || li === undefined) return;
+    const row = li.querySelector<HTMLElement>(".ft-row");
+    if (row === null) return;
+    const parentRel = parentOf(path);
+    const original = baseName(path);
+    const { row: edit, input, error } = editRow(
+      node.entry.kind === "dir" ? "dir" : "file",
+      original,
+    );
+    input.value = original;
+    input.setAttribute("aria-label", RENAME_INPUT_LABEL(original));
+    const state: InlineEdit = {
+      mode: "rename",
+      path,
+      parentRel,
+      input,
+      error,
+      submitting: false,
+      check: () => undefined,
+      original,
+      restore: () => {
+        if (edit.parentElement === li) li.replaceChild(row, edit);
+      },
+    };
+    li.replaceChild(edit, row);
+    editing = state;
+    wireEdit(state, siblingNames(parentRel, original));
+    input.focus();
+  }
+
+  function beginCreate(parentRel: string, kind: "file" | "dir"): void {
+    if (editing !== null) return;
+    const parent = nodes.get(parentRel);
+    if (parent === undefined || parent.entry.kind !== "dir") return;
+    // 目录折叠时先展开：输入框要落在可见位置上；这是「新建的落点可见」的必要条件，
+    // 与「新建子目录不自动展开父目录」（§3.6）不是同一条——那条说的是**新建出来的
+    // 目录**不展开自己，不是不展开父。
+    expandNode(parent);
+    const ul =
+      parentRel === ""
+        ? rootEl.querySelector<HTMLUListElement>(".ft-root-list")
+        : parent.childrenUl;
+    if (ul === undefined || ul === null) return;
+    const { row, input, error } = editRow(kind, UNNAMED_TEXT);
+    const li = document.createElement("li");
+    li.className = "ft-item is-new";
+    li.append(row);
+    // 首位子节点：新建项是临时的，插在最前不打扰既有排序（排序由挂载时的比较决定，
+    // 而它不参与那套比较）。
+    ul.insertBefore(li, ul.firstChild);
+    ul.hidden = false;
+    const state: InlineEdit = {
+      mode: kind === "dir" ? "create-dir" : "create-file",
+      path: parentRel,
+      parentRel,
+      input,
+      error,
+      tempLi: li,
+      submitting: false,
+      check: () => undefined,
+      original: "",
+    };
+    editing = state;
+    const siblings = siblingNames(parentRel);
+    wireEdit(state, siblings);
+    input.setAttribute("aria-label", kind === "dir" ? NEW_DIR_INPUT_LABEL : NEW_FILE_INPUT_LABEL);
+    input.focus();
+  }
+
+  function cancelEdit(): void {
+    const state = editing;
+    if (state === null) return;
+    editing = null;
+    state.tempLi?.remove();
+    state.restore?.();
+  }
+
+  function submitEdit(): void {
+    const state = editing;
+    if (state === null || state.submitting) return;
+    const reason = state.check();
+    if (reason !== undefined) return; // 非法：留在编辑态，行内已经标红
+    const name = state.input.value.trim();
+    // 同名提交 = 取消（后端会把它判成「目标已存在」，但那是我们自己的文件，不该报错）
+    if (state.mode === "rename" && name === state.original) {
+      cancelEdit();
+      return;
+    }
+    state.submitting = true;
+    cb.onInlineEditSubmit({
+      mode: state.mode,
+      path: state.path,
+      parentRel: state.parentRel,
+      name,
+    });
+  }
+
   let currentPath: string | undefined;
   function syncCurrent() {
     rootEl.querySelectorAll<HTMLElement>(".ft-row").forEach((row) => {
@@ -280,6 +621,9 @@ export function createFileTree(mount: HTMLElement, cb: FileTreeCallbacks): FileT
     setVault(root, entries) {
       vaultName = baseName(root);
       expanded.clear();
+      // 整棵树换掉：编辑中的行随 DOM 一起消失，编辑态必须一起作废（否则 editing 会
+      // 指着已脱离文档的输入框，后续 beginRename 全被它挡住）。
+      editing = null;
       renderAll(entries);
       mount.replaceChildren(rootEl);
     },
@@ -290,6 +634,39 @@ export function createFileTree(mount: HTMLElement, cb: FileTreeCallbacks): FileT
 
     setVaultEntryExpanded(expanded) {
       entryEl?.setAttribute("aria-expanded", expanded ? "true" : "false");
+    },
+
+    beginRename(path) {
+      beginRename(path);
+    },
+
+    beginCreate(parentRel, kind) {
+      beginCreate(parentRel, kind);
+    },
+
+    editingPath() {
+      return editing?.path;
+    },
+
+    endInlineEdit(ok, reason) {
+      const state = editing;
+      if (state === null) return;
+      if (ok) {
+        // 成功即退出编辑态：重命名的**新名由 watcher 回响收敛**（§3.5/§3.2：唯一收敛
+        // 通道仍是事件流，不自绘树补丁）；新建的临时行直接撤掉，真实节点同样等回响。
+        editing = null;
+        state.tempLi?.remove();
+        state.restore?.();
+        return;
+      }
+      // 失败：留在编辑态并把原因写在行内（后端是权威——前端预检没拦住的那几类都经这里）。
+      state.submitting = false;
+      if (reason !== undefined && reason !== "") {
+        state.error.textContent = reason;
+        state.input.classList.add("is-invalid");
+        state.input.setAttribute("aria-invalid", "true");
+      }
+      state.input.focus();
     },
 
     applyChanges(changes) {
@@ -318,6 +695,14 @@ export function createFileTree(mount: HTMLElement, cb: FileTreeCallbacks): FileT
               }
             }
             pruneExpanded(change.path);
+          }
+          // 正在编辑的那一条被外部删掉了：编辑态作废（那一行的输入框已随 DOM 消失，
+          // 留着 editing 会把后续的 beginRename / beginCreate 全部挡掉）。
+          if (
+            editing !== null &&
+            (editing.path === change.path || editing.path.startsWith(change.path + "/"))
+          ) {
+            editing = null;
           }
           continue;
         }
@@ -354,6 +739,7 @@ export function createFileTree(mount: HTMLElement, cb: FileTreeCallbacks): FileT
       // 空态整块替换掉整棵树，入口随之从 DOM 消失——「未装载 vault（含启动恢复进行中）
       // 时无列表入口」这条口径就落在这一句上（entryEl 一并置空，命令据此无操作）。
       entryEl = undefined;
+      editing = null;
       const empty = document.createElement("div");
       empty.className = "ft-empty";
       if (notice) {

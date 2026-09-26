@@ -980,6 +980,90 @@ pub fn create_file(
     inner.graph.create_file(&root, path)
 }
 
+// ---------------------------------------------------------------------------
+// 文件级操作（M244，change file-tree-context-menu §3.1-§3.6）
+//
+// 五条命令全部只作用于 vault 内路径，安全边界与读取链路同源（`fs_io::resolve_in_vault`
+// 或其新建变体 `resolve_new_in_vault`）。写纪律与 [`create_file`] 同族：撞名不覆盖、
+// 失败不留半状态。命令层只做「取 vault 根 + 委托 fs_io」——路径判定与 IO 都在 fs_io 里
+// （本模块不重复一套校验，REVIEW.md 第 8 条）。
+// ---------------------------------------------------------------------------
+
+/// 删除 = **移到系统废纸篓**（裁决点 2）：删除必须可恢复，MUST NOT 提供永久删除入口。
+/// 目录连子孙整棵入篓；失败返回 `fs_trash_failed` 且提示明示「未删除任何内容」。
+#[tauri::command(rename_all = "snake_case")]
+pub fn fs_trash_entry(
+    state: tauri::State<'_, VaultState>,
+    rel: String,
+) -> Result<(), CommandError> {
+    let root = state.root()?;
+    fs_io::trash_entry(&root, &rel)
+}
+
+/// 同目录改末段名（裁决点 3 的落地：树内联编辑提交后调它）。目标已存在返回
+/// `fs_already_exists`，MUST NOT 覆盖。返回改名后的 vault 相对路径——前端据此做
+/// 打开中 session 的路径 remap（裁决点 5）。
+#[tauri::command(rename_all = "snake_case")]
+pub fn fs_rename_entry(
+    state: tauri::State<'_, VaultState>,
+    rel: String,
+    new_name: String,
+) -> Result<String, CommandError> {
+    let root = state.root()?;
+    fs_io::rename_entry(&root, &rel, &new_name)
+}
+
+/// 在目录下新建空文件（§3.5）。`create_new` 原子语义：撞名即 `fs_already_exists`，
+/// 不覆盖。自动打开由前端在**成功路径**上做（不等 watcher 回响，design §3.5）。
+#[tauri::command(rename_all = "snake_case")]
+pub fn fs_create_file(
+    state: tauri::State<'_, VaultState>,
+    parent_rel: String,
+    name: String,
+) -> Result<String, CommandError> {
+    let root = state.root()?;
+    fs_io::create_file_entry(&root, &parent_rel, &name)
+}
+
+/// 在目录下新建子目录（§3.6）：与 [`fs_create_file`] 同构，新建目录不自动展开父目录。
+#[tauri::command(rename_all = "snake_case")]
+pub fn fs_create_dir(
+    state: tauri::State<'_, VaultState>,
+    parent_rel: String,
+    name: String,
+) -> Result<String, CommandError> {
+    let root = state.root()?;
+    fs_io::create_dir_entry(&root, &parent_rel, &name)
+}
+
+/// 在系统文件管理器里定位并选中该条目（§3.4；macOS = Finder）。与 [`link_open_path`]
+/// 同一条最小权限路径：opener 插件对 webview 保持默认拒绝，唯一入口是本 command。
+/// 命令名用跨平台语义 `reveal`（他日的 Linux/Windows 语义由插件持有），前端菜单文案
+/// 按 macOS 写「在 Finder 中显示」。本命令**不产生任何文件系统变更**。
+#[tauri::command(rename_all = "snake_case")]
+pub fn fs_reveal_in_finder(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, VaultState>,
+    rel: String,
+) -> Result<(), CommandError> {
+    use tauri_plugin_opener::OpenerExt;
+
+    let root = state.root()?;
+    let abs = fs_io::resolve_in_vault(&root, &rel)?;
+    let Some(abs) = abs.to_str() else {
+        return Err(CommandError::new(
+            "fs_reveal_failed",
+            format!("无法定位 {rel}——路径含非 UTF-8 字符"),
+        ));
+    };
+    app.opener().reveal_item_in_dir(abs).map_err(|e| {
+        CommandError::new(
+            "fs_reveal_failed",
+            format!("无法在 Finder 中显示 {rel}：{e}"),
+        )
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

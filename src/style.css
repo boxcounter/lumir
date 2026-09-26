@@ -1596,3 +1596,203 @@ body {
 :root[data-theme="eink"] .vault-row.is-active .vault-row-act {
   color: var(--sel-text);
 }
+
+/* ===========================================================================
+   文件树条目操作（M244，change file-tree-context-menu）：右键菜单浮层、行内联输入、
+   删除确认对话框。**本节是追加的新 section**，不改上面任何既有规则。
+   浮层壳沿用 vault 切换器那一份 recipe（--preview-bg + 1px --border + --shadow-raise +
+   r10，z-index 15）；模态遮罩沿用键位面板那一份（fixed inset 0 + --scrim + z-index 20）。
+   定位由 src/tree-menu.ts 用指针位置算出来（挂点是 app-shell，左栏容器 overflow:auto）。
+   =========================================================================== */
+
+/* 菜单浮层：宽度由内容决定（菜单文案是短词），最大宽度限制住超长文案。 */
+.ft-menu {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 15;
+  display: flex;
+  flex-direction: column;
+  min-width: 160px;
+  max-width: 280px;
+  padding: var(--sp-2);
+  background: var(--preview-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--r10);
+  box-shadow: var(--shadow-raise);
+  font-family: var(--font-sans);
+  font-size: var(--fs-ui);
+  /* 浮层本身不显示焦点环，但它持焦点（键盘游标走 aria-activedescendant）。 */
+  outline: none;
+}
+/* 优先级 0-2-0 > `.ft-menu` 的 0-1-0：写了 display: flex 之后这条隐藏才生效
+   （同一坑在 .vault-pop / .lumir-toc 上都踩过）。 */
+.ft-menu[hidden] {
+  display: none;
+}
+.ft-menu-item {
+  display: block;
+  width: 100%;
+  padding: 5px var(--sp-4);
+  border: none;
+  border-radius: var(--r4);
+  background: none;
+  font: inherit;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+.ft-menu-item:hover {
+  background: var(--hover);
+}
+/* 键盘游标（与 .vault-row.is-active / .lumir-toc-item.is-active 同形）：底色 + 内描边，
+   悬停规则排在它之前，选中压过悬停。 */
+.ft-menu-item.is-active {
+  background: var(--sel);
+  box-shadow: inset 0 0 0 1px currentColor;
+}
+/* 破坏性项（移到废纸篓）：固定尾部、以分隔线隔开，颜色用 --danger。 */
+.ft-menu-item.is-danger {
+  color: var(--danger);
+}
+.ft-menu-item.is-danger.is-active {
+  background: var(--danger-tint);
+}
+.ft-menu-sep {
+  margin: var(--sp-2) 0;
+  border-top: 1px solid var(--border-soft);
+}
+/* eink 规则④：选中项黑底反白（菜单项没有子元素写自己的颜色，单条规则即可）。 */
+:root[data-theme="eink"] .ft-menu-item.is-active {
+  color: var(--sel-text);
+}
+:root[data-theme="eink"] .ft-menu-item.is-danger.is-active {
+  color: var(--sel-text);
+}
+/* eink 规则⑧：焦点 / 选中用线宽表达，不用色差——浮层边框加粗到 1.4px。 */
+:root[data-theme="eink"] .ft-menu {
+  border-width: 1.4px;
+}
+
+/* 行内联输入（重命名 / 新建共用）：编辑中的那一行整行换成 div，输入框继承行名的排版，
+   只留一条下边线（与 .lumir-toc-input / .vault-filter 同一形态），聚焦时线变 accent。
+   编辑行允许换行：错误说明整句落在**第二行**（左栏只有 ~236px，挤在同一行会被截成
+   「名称不能包含…」——把原因截在最有信息量的地方上，等于没有原因）。行高随内容放开：
+   `.ft-row` 的固定行高会把第二行裁掉（实测：错误句看不见，元素基线里整行还是 25px）。 */
+.ft-row.is-editing {
+  cursor: text;
+  flex-wrap: wrap;
+  height: auto;
+  min-height: var(--layout-tree-row-h);
+}
+.ft-edit {
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  border: none;
+  border-bottom: 1px solid var(--border);
+  border-radius: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-family: var(--font-sans);
+}
+.ft-edit:focus {
+  outline: none;
+  border-bottom-color: var(--accent);
+}
+/* 非法名（空 / 含斜杠 / 忽略集 / 撞名）即时标红：只改这一行，MUST NOT 弹 toast 轰炸。 */
+.ft-edit.is-invalid {
+  border-bottom-color: var(--danger);
+  background: var(--danger-tint);
+}
+:root[data-theme="eink"] .ft-edit.is-invalid {
+  border-bottom-width: 1.4px;
+}
+/* 行内错误说明：整行独占第二行（flex 基础尺寸 100%），整句可见、可折行——
+   截断会把「哪个字符不行 / 撞了谁」这两处关键信息切掉。 */
+.ft-edit-error {
+  flex: 1 1 100%;
+  color: var(--danger);
+  font-size: var(--fs-label);
+  line-height: var(--lh-ui);
+  overflow-wrap: anywhere;
+}
+/* 新建的临时行：输入框占位（未命名）本身是灰的，这里只把整行调到「尚未落定」的观感。 */
+.ft-item.is-new .ft-row {
+  background: none;
+}
+
+/* 删除确认对话框（模态）：遮罩 + 面板，与 .lumir-bindings-overlay 同一套 recipe。 */
+.ft-confirm-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--sp-12);
+  background: var(--scrim);
+}
+.ft-confirm-overlay[hidden] {
+  display: none;
+}
+.ft-confirm {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-5);
+  width: min(440px, 100%);
+  padding: var(--sp-8);
+  background: var(--preview-bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--r10);
+  box-shadow: var(--shadow-raise);
+  font-family: var(--font-sans);
+  outline: none;
+}
+:root[data-theme="eink"] .ft-confirm {
+  border-width: 1.4px;
+}
+.ft-confirm-title {
+  margin: 0;
+  font-size: var(--fs-ui);
+  font-weight: var(--fw-bold);
+}
+/* 条目名可能很长：正文折行，不撑破面板宽度。 */
+.ft-confirm-body {
+  margin: 0;
+  color: var(--text-2);
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui);
+  overflow-wrap: anywhere;
+}
+.ft-confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--sp-3);
+}
+.ft-confirm-cancel,
+.ft-confirm-ok {
+  padding: var(--sp-2) var(--sp-7);
+  border: 1px solid var(--border);
+  border-radius: var(--r8);
+  background: var(--content-bg);
+  font: inherit;
+  font-size: var(--fs-ui);
+  font-weight: var(--fw-emphasis);
+  cursor: pointer;
+}
+.ft-confirm-cancel:hover,
+.ft-confirm-ok:hover {
+  background: var(--hover);
+}
+/* 破坏性动作的确认钮：与菜单里的破坏性项同一套颜色语义（--danger）。
+   焦点落在取消钮上（破坏性动作的默认落点必须是安全的那一个），因此这里只表色。 */
+.ft-confirm-ok {
+  color: var(--danger);
+  border-color: var(--danger);
+}
+:root[data-theme="eink"] .ft-confirm-ok {
+  border-width: 1.4px;
+}

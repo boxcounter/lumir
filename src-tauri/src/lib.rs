@@ -89,6 +89,15 @@ pub fn run() {
             commands::link_graph_resolve,
             commands::wikilink_create,
             commands::create_file,
+            // 文件级操作（M244，change file-tree-context-menu）：删除 / 重命名 / 新建 /
+            // 在 Finder 中显示——只作用于 vault 内路径，判定与 IO 都在 fs_io 的同一套
+            // 路径边界里（capabilities 零增量：自有 command 不受 ACL 门禁，reveal 走
+            // opener 的 Rust 侧 API，webview 的 opener ACL 保持默认拒绝）。
+            commands::fs_trash_entry,
+            commands::fs_rename_entry,
+            commands::fs_create_file,
+            commands::fs_create_dir,
+            commands::fs_reveal_in_finder,
             workspaces::vault_register,
             workspaces::vault_remap,
             // 多 vault（M162）：列表 + 按 vault 的标签会话（前端在 M163 接）
