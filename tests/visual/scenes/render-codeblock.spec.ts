@@ -350,11 +350,12 @@ test("DOM：同段 yaml 在围栏（yaml）与只读 .yml / .yaml 文件（code 
   const fenceKeyLine = await coloredTokens(page, "key: goal", "key");
   expect(fenceKeyLine).toEqual([{ text: "key", color: COLOR.property }]);
 
-  // code 模式侧：只读文件，同一段 yaml（逐字节相同）
+  // code 模式侧：同一段 yaml（逐字节相同）。非 md 的 code 会话自 editable-non-md-files
+  // 起可编辑——本用例钉的是两侧配色逐条相同，可编辑性与之正交。
   for (const file of ["config.yml", "config.yaml"]) {
     await page.locator(`.ft-row[title="${file}"]`).click();
-    await expect(page.locator(".cm-content"), file).toHaveAttribute("contenteditable", "false");
-    await expect(page.locator(".cm-content"), file).toHaveAttribute("aria-readonly", "true");
+    await expect(page.locator(".cm-content"), file).toHaveAttribute("contenteditable", "true");
+    await expect(page.locator(".cm-content"), file).toHaveAttribute("aria-readonly", "false");
     expect(await coloredTokens(page, "特殊维度", "name"), file).toEqual(fenceLine);
     expect(await coloredTokens(page, "key: goal", "key"), file).toEqual(fenceKeyLine);
   }

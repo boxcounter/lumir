@@ -126,6 +126,20 @@ export function wikilinkCreate(from: string, link: string): Promise<CreateNoteRe
 }
 
 /**
+ * 通用文件创建（editable-non-md-files §3.8「另存为新文件」泛化）：按**显式 vault 相对
+ * 路径**建空文件，扩展名原样保留（`note.txt` → `note-恢复.txt`，无扩展名文件同样无扩展名）。
+ *
+ * 与 `wikilinkCreate` 的分工：那条链路服务「从 wikilink 建笔记」（解析链接、拼 `.md`、
+ * 更新链接图），本命令只按给定路径建文件——非 md 文本的恢复副本 MUST NOT 被恢复成 `.md`。
+ * 写纪律与前者共用同一实现（O_EXCL 不覆盖既有文件、补齐中间目录、vault 内路径校验）。
+ * 目标已存在返回 `create_file_exists`，调用方据此改名重试（-2..-5）。
+ * 返回创建后的 vault 相对路径。
+ */
+export function createFile(path: string): Promise<string> {
+  return invoke<string>("create_file", { path });
+}
+
+/**
  * 在系统默认应用打开外链（http / https / mailto）。
  *
  * scheme 白名单的判定在 Rust 侧（`open_external_url` 的校验是唯一来源）——前端

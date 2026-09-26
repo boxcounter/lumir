@@ -2,8 +2,9 @@ import { expect, test } from "@playwright/test";
 import { DEMO_VAULT, dirtyReports, fireQuitBlocked, requestAddVault, stubTauri } from "./tauri-stub";
 
 // M101 保存守卫回归：真实桌面验收确认的三类缺陷。
-// 1. 非 Markdown 文件必须在内存层拒绝用户编辑（视图层只读，不产生 dirty）——
-//    旧实现只靠 changeFilter 事后回滚 DOM，真实 WKWebView 的 AX/IME 注入路径会漏。
+// 1. 非 Markdown 文件的编辑面——M101 时为「必须在内存层拒绝编辑」（视图层只读，不产生
+//    dirty）；editable-non-md-files 解除了该只读合同（image/binary 不进编辑器，app 里已
+//    不存在只读编辑器会话），本条用例随之翻转为「两条注入路径都真的进文档并上报 dirty」。
 // 2. dirty 状态的用户可见反馈（modeline 路径段常驻标记 + 保存冲突/失败提示不静默）。
 // 3. dirty 拦截切换/退出时必须有可理解的界面提示。
 // 原生退出拦截本体在 Rust（RunEvent::ExitRequested/CloseRequested + DirtyState），
@@ -18,7 +19,11 @@ const VAULT = {
   },
 };
 
-test("code 模式文件在视图层只读：键盘与 DOM 注入都无法改内存文档", async ({ page }) => {
+test("code 模式文件在视图层可编辑：键盘与 DOM 注入都真的进内存文档并上报 dirty", async ({ page }) => {
+  // M101 当年的这条用例钉的是「非 Markdown 文件必须在内存层拒绝用户编辑」（只读合同）。
+  // editable-non-md-files 解除了那个合同：image/binary 类根本不进编辑器，app 里已不存在
+  // 只读编辑器会话，因此本用例翻转为**反向**判据——同样两条注入路径（键盘 + execCommand）
+  // 现在都必须真的改到内存文档，且 dirty 如实镜像给后端。
   await stubTauri(page, VAULT);
   await page.goto("/");
   await page.locator('.ft-row[title="src"]').click();
@@ -26,22 +31,20 @@ test("code 模式文件在视图层只读：键盘与 DOM 注入都无法改内�
   const content = page.locator(".cm-content");
   await expect(content).toContainText("answer = 42");
 
-  // 视图层只读的直接证据：contenteditable 被摘掉（旧实现恒为 true）。
-  await expect(content).toHaveAttribute("contenteditable", "false");
+  // 可编辑合同的直接证据：contenteditable 在场、无只读态。
+  await expect(content).toHaveAttribute("contenteditable", "true");
+  await expect(content).toHaveAttribute("aria-readonly", "false");
 
-  // 键盘输入不得进文档。
+  // 键盘输入必须进文档（回读文档文本，不是只看属性——REVIEW.md 第 1 条的假可编辑形态）。
   await content.click();
-  await page.keyboard.type("HACKED");
-  await expect(content).not.toContainText("HACKED");
+  await page.keyboard.type("KEYED");
+  await expect(content).toContainText("KEYED");
 
-  // DOM 层注入（execCommand，等价 AX 文本注入走的输入路径）同样不得生效。
-  await page.evaluate(() => document.execCommand("insertText", false, "HACKED"));
-  await expect(content).not.toContainText("HACKED");
-
-  // 不产生 dirty：modeline 路径段无标记，后端镜像无 true 上报。
-  // M217 S7：路径段分隔符写作「 / 」（带空格，定稿 index.html:1225）。
-  await expect(page.locator(".modeline-path")).toHaveText("src / main.ts");
-  expect(await dirtyReports(page)).not.toContain(true);
+  // DOM 层注入（execCommand，等价 AX 文本注入走的输入路径）同样必须生效。
+  await page.evaluate(() => document.execCommand("insertText", false, "DOMED"));
+  await expect(content).toContainText("DOMED");
+  await expect(page.locator(".modeline-path")).toContainText("未保存");
+  expect(await dirtyReports(page)).toContain(true);
 });
 
 test("md 编辑产生 dirty 标记并镜像后端，保存成功后复位", async ({ page }) => {

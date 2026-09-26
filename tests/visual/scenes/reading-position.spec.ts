@@ -275,7 +275,11 @@ test("code 模式（非 md 文本）同样恢复：纵向 + 折行关闭时的�
   await stubTauri(page, fixture({ config: { line_wrap: false } }));
   await page.goto("/");
   await page.locator('.ft-row[title="plain.txt"]').click();
-  await expect(page.locator(".cm-content")).toHaveAttribute("contenteditable", "false");
+  // 非 md 文本自 editable-non-md-files 起可编辑（M130 的只读口径已解除）：这条断言原本
+  // 钉的是「只读会话」这个前置形态，现在钉的是「已进编辑器」这个前置形态——image/binary
+  // 类不进编辑器，app 里已不存在只读编辑器会话。
+  await expect(page.locator(".cm-content")).toHaveAttribute("contenteditable", "true");
+  await expect(page.locator(".cm-content")).toHaveAttribute("aria-readonly", "false");
 
   // 建立一处运行期位置：纵向摆到第 150 行 + 横向平移 200px，等防抖写入
   await scrollToLine(page, CODE_ANCHOR_LINE);
@@ -300,7 +304,7 @@ test("code 模式（非 md 文本）同样恢复：纵向 + 折行关闭时的�
   await page.keyboard.press("Meta+w");
   await expect(page.locator(".cm-content")).not.toContainText("第 001 行");
   await page.locator('.ft-row[title="plain.txt"]').click();
-  await expect(page.locator(".cm-content")).toHaveAttribute("contenteditable", "false");
+  await expect(page.locator(".cm-content")).toHaveAttribute("contenteditable", "true");
 
   await expect.poll(() => scrollTop(page)).toBeGreaterThan(0);
   await page.waitForTimeout(300);

@@ -88,6 +88,7 @@ pub fn run() {
             commands::recovery_list,
             commands::link_graph_resolve,
             commands::wikilink_create,
+            commands::create_file,
             workspaces::vault_register,
             workspaces::vault_remap,
             // 多 vault（M162）：列表 + 按 vault 的标签会话（前端在 M163 接）

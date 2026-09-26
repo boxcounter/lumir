@@ -790,6 +790,40 @@ impl LinkGraph {
         self.upsert(&rel, Some(""));
         Ok(rel)
     }
+
+    /// 通用文件创建（editable-non-md-files §3.8「另存为新文件」泛化的后端落点）。
+    ///
+    /// 与 [`Self::create_note`] 同一套写纪律——vault 内相对路径校验、内容为空、补齐中间
+    /// 目录、MUST NOT 覆盖既有文件（`create_new_vault_file` 的 O_EXCL + 逐级
+    /// `O_NOFOLLOW`/`mkdirat`，关掉符号链接逃逸与 TOCTOU 窗口）、创建后更新索引。
+    /// 差别只有一点：目标路径由调用方**显式给出**，因此保留原扩展名（`note.txt` 的恢复
+    /// 副本是 `note-恢复.txt`，无扩展名文件同样无扩展名），不经 wikilink 解析、也不强拼
+    /// `.md`——`create_note` 的 md 语义保持不动，那条链路服务的是「从 wikilink 建笔记」。
+    pub fn create_file(&mut self, root: &Path, rel: &str) -> Result<String, CommandError> {
+        validate_vault_relative(rel).map_err(|message| {
+            CommandError::new(
+                "create_file_invalid_path",
+                format!("目标路径不合法：{message}"),
+            )
+        })?;
+        let root_canonical = std::fs::canonicalize(root).map_err(|e| {
+            CommandError::new(
+                "create_file_failed",
+                format!("无法定位 vault 根目录 {}：{e}", root.display()),
+            )
+        })?;
+        create_new_vault_file(&root_canonical, rel).map_err(|e| {
+            if e.kind() == std::io::ErrorKind::AlreadyExists {
+                CommandError::new("create_file_exists", format!("目标已存在：{rel}"))
+            } else if is_unsafe_creation_error(&e) {
+                CommandError::new("create_file_invalid_path", format!("目标路径不安全：{e}"))
+            } else {
+                CommandError::new("create_file_failed", format!("无法创建 {rel}：{e}"))
+            }
+        })?;
+        self.upsert(rel, Some(""));
+        Ok(rel.to_string())
+    }
 }
 
 impl Default for LinkGraph {
@@ -1123,6 +1157,7 @@ fn embed_target_of(path: &str) -> EmbedTarget {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
 
     fn links_of(text: &str) -> Vec<(String, bool)> {
         parse_links(text)
@@ -1182,6 +1217,66 @@ mod tests {
         }
         let err = g.create_target("a.md", "[[../../new]]").unwrap_err();
         assert_eq!(err.code, "wikilink_invalid_path");
+    }
+
+    /// `create_file` 的写纪律（editable-non-md-files §3.8 另存泛化）：显式路径、保留扩展名、
+    /// 补齐中间目录、MUST NOT 覆盖既有文件、路径校验与 create_note 同一套。
+    #[test]
+    fn create_file_preserves_extension_and_never_overwrites() {
+        let dir = TempVaultDir::new();
+        let mut graph = LinkGraph::new();
+
+        // 保留原扩展名（含无扩展名文件）；嵌套目录自动补齐
+        for rel in [
+            "note-恢复.txt",
+            "config-恢复.yaml",
+            "LICENSE-恢复",
+            "sub/deep/a-恢复.rs",
+        ] {
+            let created = graph.create_file(&dir.0, rel).expect("create_file");
+            assert_eq!(created, rel);
+            let target = dir.0.join(rel);
+            assert!(target.is_file(), "{rel} 应被创建");
+            assert_eq!(
+                std::fs::read(&target).unwrap(),
+                Vec::<u8>::new(),
+                "内容必须为空"
+            );
+        }
+
+        // 目标已存在：报错且不覆盖既有内容（O_EXCL）
+        let occupied = dir.0.join("taken.txt");
+        std::fs::write(&occupied, "既有内容").unwrap();
+        let err = graph
+            .create_file(&dir.0, "taken.txt")
+            .expect_err("已存在必须报错");
+        assert_eq!(err.code, "create_file_exists");
+        assert_eq!(std::fs::read_to_string(&occupied).unwrap(), "既有内容");
+
+        // 路径校验与 create_note 同源：绝对路径 / `..` / 空段 / 反斜杠一律拒
+        for bad in ["/abs.txt", "../escape.txt", "a//b.txt", "", "dir\\win.txt"] {
+            let err = graph
+                .create_file(&dir.0, bad)
+                .expect_err("非法路径必须报错");
+            assert_eq!(err.code, "create_file_invalid_path", "path={bad:?}");
+        }
+    }
+
+    /// 临时 vault 目录（进程号 + 序号，与 `fs_io` 测试模块的同名辅助同形；不清理——系统
+    /// 临时目录由 OS 回收，本仓既有口径如此）。
+    struct TempVaultDir(PathBuf);
+    static DIR_SEQ: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+    impl TempVaultDir {
+        fn new() -> Self {
+            let path = std::env::temp_dir().join(format!(
+                "lumir-linkgraph-test-{}-{}",
+                std::process::id(),
+                DIR_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            ));
+            std::fs::create_dir_all(&path).expect("create temp vault");
+            Self(path)
+        }
     }
 
     #[test]

@@ -7,7 +7,9 @@
 //
 // 扩展名注册表（M130 收敛）：本文件是「扩展名 → 打开/展示分类 + code 语言名 + 附件
 // MIME」的唯一事实源，tree.ts（展示与点击分类）、editor.ts（模式裁决与语言包解析）、
-// main.ts（附件 data: URL 的 MIME）都从这里消费，模块内不再各自维护集合。落点理由：
+// main.ts（附件 data: URL 的 MIME 与磁盘 revision 登记门）都从这里消费，模块内不再各自
+// 维护集合。**可编辑性**（editable-non-md-files）同样只有这里一处判据
+// （isEditableFileClass / isEditablePath），文件树、编辑器与保存链路都消费它。落点理由：
 // 本模块已持有 extensionOf 与 MIME 表，且在依赖图上位于 editor 之下（editor →
 // attachments），注册表放这里不引环；image/binary 分类与附件展示本就同源。
 
@@ -16,9 +18,10 @@ import { WidgetType } from "@codemirror/view";
 import { errorMessage } from "../ipc";
 
 /** 扩展名的打开/展示分类。md = Markdown（md 模式，可编辑 + live preview）；
- *  code = 只读 code 模式（有语言包则高亮，无则纯文本）；image = 图片附件；
+ *  code = code 模式（有语言包则高亮，无则纯文本）；image = 图片附件；
  *  binary = 明确二进制（不读原文，提示「暂不支持预览」）；text = 未收录扩展或
- *  无扩展名线索（按原文只读打开）。 */
+ *  无扩展名线索（按原文打开）。**可编辑性**见 `isEditableFileClass`：md/code/text
+ *  三类可编辑，image/binary 不进编辑器（editable-non-md-files 起，M130 的只读口径已解除）。 */
 export type FileClass = "md" | "image" | "binary" | "code" | "text";
 
 /** Markdown 扩展名（md 模式 + 保存链接路的准入集合）。 */
@@ -117,18 +120,46 @@ const REGISTRY: ReadonlyMap<string, ExtensionInfo> = (() => {
  *  无点 basename → ""；dotfile `.gitignore` → "gitignore"（tree.ts 旧口径把点开头视为
  *  无扩展名，收敛后不再如此）。
  *  "" 与未收录扩展在分类上都是「未收录」（fileClass 返回 text）；模式裁决对两者的
- *  处置也一致：**只读 code**（见 editor.ts modeForPath——非 md 一律只读，含无扩展名；
- *  配置 `editor.mode` 只对没有文件上下文的文档有意义）。tree.ts 旧口径把 dotfile 视为
- *  无扩展名、进编辑器回落 md，收敛后这类文件也走只读 code。 */
+ *  处置也一致：**code 模式**（见 editor.ts modeForPath——非 md 一律 code，含无扩展名；
+ *  配置 `editor.mode` 只对没有文件上下文的文档有意义），自 editable-non-md-files 起
+ *  这些文件一律**可编辑**（isEditablePath 对 text 类返回真）。 */
 export function extensionOf(path: string): string {
   const base = path.slice(path.lastIndexOf("/") + 1);
   const dot = base.lastIndexOf(".");
   return dot < 0 ? "" : base.slice(dot + 1).toLowerCase();
 }
 
-/** 扩展名分类；未收录（含无扩展名的 ""）按 text——按原文只读打开，不读成二进制。 */
+/** 扩展名分类；未收录（含无扩展名的 ""）按 text——按原文打开，不读成二进制。 */
 export function fileClass(ext: string): FileClass {
   return REGISTRY.get(ext)?.class ?? "text";
+}
+
+/** 可编辑文本类（editable-non-md-files，裁决 D1「注册表全量文本类」）：md / code / text
+ *  三类以可编辑形态进编辑器（md 走 live preview，code 走纯文本 + 高亮）；image / binary
+ *  类 MUST NOT 进编辑器（文件树分流 +「暂不支持预览」提示，见 tree.ts 的 openKind）。
+ *
+ *  本函数是「按文件类裁决可编辑性」的**唯一判据**：editor.ts（会话 editable 标志）、
+ *  main.ts（磁盘 revision 登记门）、save-controller.ts（保存基准闸）全部同源消费它，
+ *  任何一处都 MUST NOT 另写一份「哪些扩展可编辑」的集合（REVIEW.md 第 8 条——M130 的
+ *  保存死态根因正是两套扩展名集合的差集）。 */
+export function isEditableFileClass(cls: FileClass): boolean {
+  return cls === "md" || cls === "code" || cls === "text";
+}
+
+/** 路径级可编辑判据：无文件上下文（path 缺失：空态 / 新建文档）按现状可编辑——它们的
+ *  模式由配置 `editor.mode` 决定；有路径时按注册表裁决。 */
+export function isEditablePath(path: string | undefined): boolean {
+  return path === undefined || isEditableFileClass(fileClass(extensionOf(path)));
+}
+
+/** 注册表里 image/binary 两类的**全部扩展名**（升序）。保存守卫的拒绝清单事实源：
+ *  Rust 侧 `src-tauri/src/fs_io.rs` 的 `SAVE_REJECTED_EXTENSIONS` 与本函数逐项对账
+ *  （`tests/unit/registry-drift.test.ts`，任一侧漂移即红）。 */
+export function nonTextExtensions(): string[] {
+  return [...REGISTRY]
+    .filter(([, info]) => !isEditableFileClass(info.class))
+    .map(([ext]) => ext)
+    .sort();
 }
 
 /** code 模式的语言名；不是 code 类或该扩展无语言包时返回 null（纯文本不着色）。 */

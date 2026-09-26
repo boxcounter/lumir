@@ -637,7 +637,7 @@ pub fn document_save(
     content: &str,
 ) -> Result<String, CommandError> {
     let root = state.root()?;
-    match fs_io::save_markdown(&root, path, expected_revision, content) {
+    match fs_io::save_document(&root, path, expected_revision, content) {
         Ok(revision) => Ok(revision),
         Err(e) => {
             // 诊断埋点：CAS 冲突是本族里最要紧的摩擦信号（kind 冲突检测点就在这）。
@@ -959,6 +959,25 @@ pub fn wikilink_create(
         .ok_or_else(|| CommandError::new("vault_not_open", "尚未打开 vault，请先选择目录"))?;
     let created = inner.graph.create_note(&root, from, link)?;
     Ok(CreateNoteResult { created })
+}
+
+/// 通用文件创建（editable-non-md-files §3.8）：按**显式 vault 相对路径**建空文件，
+/// 保留调用方给的扩展名（`note.txt` 的恢复副本是 `note-恢复.txt`，无扩展名文件同样无
+/// 扩展名）。与 [`wikilink_create`] 的差别是这里不经 wikilink 解析、也不强拼 `.md`——
+/// 「另存为新文件」对非 md 文本要恢复成同类型文件，走 `create_note` 会得到 `.md`。
+/// 写纪律（O_EXCL 不覆盖、补中间目录、vault 内路径校验）与 create_note 共用同一实现
+///（`LinkGraph::create_file`）。返回创建后的 vault 相对路径。
+#[tauri::command(rename_all = "snake_case")]
+pub fn create_file(
+    state: tauri::State<'_, VaultState>,
+    path: &str,
+) -> Result<String, CommandError> {
+    let mut inner = state.inner.lock().expect("vault state poisoned");
+    let root = inner
+        .root
+        .clone()
+        .ok_or_else(|| CommandError::new("vault_not_open", "尚未打开 vault，请先选择目录"))?;
+    inner.graph.create_file(&root, path)
 }
 
 #[cfg(test)]

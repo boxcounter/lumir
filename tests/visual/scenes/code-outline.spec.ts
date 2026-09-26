@@ -152,7 +152,9 @@ async function items(page: Page): Promise<{ texts: string[]; depths: string[] }>
 test("惰性：打开与光标路径都不解析（指示段不显示），⌘⇧O 之后同一光标才显示符号链", async ({ page }) => {
   await bootstrap(page, "outline.js", "工具集");
   const indicator = page.locator(".modeline-section");
-  await expect(page.locator(VIEW)).toHaveAttribute("contenteditable", "false");
+  // 非 md 代码文件自 editable-non-md-files 起可编辑（M130 的只读口径已解除）：
+  // 本用例钉的是「惰性解析」——可编辑性不改变那一条。
+  await expect(page.locator(VIEW)).toHaveAttribute("contenteditable", "true");
 
   // ① 刚打开：光标在第 1 行（注释区），结构未解析 ⇒ 指示段隐藏
   await expect(indicator).toBeHidden();

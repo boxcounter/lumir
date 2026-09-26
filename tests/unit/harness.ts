@@ -9,6 +9,7 @@
 import { EditorState } from "@codemirror/state";
 import type { EditorMode } from "../../src/bindings/EditorMode.ts";
 import type { EditorHandle, EditorSession } from "../../src/editor.ts";
+import { isEditablePath } from "../../src/preview/attachments.ts";
 import type { SaveController, ToastAction, ToastFn } from "../../src/save-controller.ts";
 import { createSaveController } from "../../src/save-controller.ts";
 
@@ -149,8 +150,11 @@ type ImplementedEditor = Pick<
 
 export interface EditorDouble {
   handle: EditorHandle;
-  /** 新建并激活一份文档（从 clean 开始）。 */
-  open(path: string | undefined, content: string, options?: { mode?: EditorMode }): EditorSession;
+  /** 新建并激活一份文档（从 clean 开始）。`editable` 默认按注册表从 path 推（与真编辑器
+   *  同源：跑的是 src/preview/attachments.ts 的 isEditablePath），显式传布尔值可造出
+   *  「不可编辑文件类」的会话（image/binary 形态——生产中它们不进编辑器，这里只为覆盖
+   *  saveBaseline 的不可保存分支）。 */
+  open(path: string | undefined, content: string, options?: { mode?: EditorMode; editable?: boolean }): EditorSession;
   /** 改内容：换 state、按 cleanDoc 重算 dirty，并触发 onDocChanged（自动保存排期靠它）。 */
   edit(path: string | undefined, content: string): void;
   activate(path: string | undefined): void;
@@ -186,6 +190,8 @@ export function createEditorDouble(): EditorDouble {
     },
     reloadSession: (session, doc, path) => {
       session.path = path;
+      // 与真编辑器同口径：可编辑性随路径一起换（唯一判据 isEditablePath）。
+      session.editable = isEditablePath(path);
       session.state = stateOf(doc);
       session.cleanDoc = doc;
       session.dirty = false;
@@ -215,6 +221,7 @@ export function createEditorDouble(): EditorDouble {
         cleanDoc: content,
         dirty: false,
         mode: options.mode ?? "md",
+        editable: options.editable ?? isEditablePath(path),
         preview: false,
         scroll: undefined,
       };
@@ -253,7 +260,7 @@ export interface Rig {
   controller: SaveController;
   /** deps 侧可断言的记录（openFile / invalidateResolve / showEditor 的调用）。 */
   deps: {
-    opened: Array<{ path: string; kind: string; intent: string | undefined }>;
+    opened: Array<{ path: string; intent: string | undefined }>;
     invalidateResolveCalls: number;
     showEditorCalls: number;
   };
@@ -271,8 +278,8 @@ export function createRig(): Rig {
     editor: editor.handle,
     container: toasts.container,
     toast: toasts.toast,
-    openFile: async (path, kind, intent) => {
-      deps.opened.push({ path, kind, intent });
+    openFile: async (path, intent) => {
+      deps.opened.push({ path, intent });
       editor.open(path, "");
     },
     invalidateResolve: () => void (deps.invalidateResolveCalls += 1),

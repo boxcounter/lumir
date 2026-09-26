@@ -336,16 +336,31 @@ test("shift-extend：⌃⇧F/B/N/P/A/E 与 ⌥⇧F/B 扩选（anchor 保持，he
   expect([snap.anchor, snap.head]).toEqual([doc.indexOf("gamma"), doc.indexOf("gamma") - 5]);
 });
 
-test("只读 code 模式：编辑键一律无事发生（非 md 只读不退让）", async ({ page }) => {
+test("可编辑 code 模式：编辑键真的改文档（editable-non-md-files 翻转旧的只读合同）", async ({ page }) => {
+  // 旧用例（M132）钉的是「非 md 只读 ⇒ 编辑键一律无事发生」。editable-non-md-files 解除了
+  // 只读合同（image/binary 不进编辑器，app 里已无只读编辑器会话），因此本用例翻转为**反向**
+  // 判据：同样的键在同一份 `.txt` 上必须真的按 Emacs 语义改文档。判据走 readDocument
+  // （CM 的 state.doc），不是属性在场——「假可编辑」形态正是属性绿而按键被吞。
   const doc = "plain text file\nsecond line\n";
   await openFile(page, { "note.txt": doc }, "note.txt");
+  await expect(page.locator(".cm-content")).toHaveAttribute("contenteditable", "true");
 
-  await setSelection(page, 2);
-  for (const key of ["Control+d", "Control+h", "Control+k", "Control+y", "Control+t", "Alt+d", "Alt+Backspace"]) {
-    await page.keyboard.press(key);
-  }
+  // ⌃D = delete-char-forward：光标落在 offset 0 ⇒ 删掉 'p'
+  await setSelection(page, 0);
+  await page.keyboard.press("Control+d");
   await page.waitForTimeout(80);
-  expect(await readDocument(page)).toBe(doc);
+  expect(await readDocument(page)).toBe("lain text file\nsecond line\n");
+
+  // ⌃K = kill-line：光标仍在 offset 0 ⇒ 杀掉首行剩余内容（不带换行）
+  await page.keyboard.press("Control+k");
+  await page.waitForTimeout(80);
+  expect(await readDocument(page)).toBe("\nsecond line\n");
+
+  // 反向对照：同一现场按一个**不编辑文档**的绑定（⌃G = keyboard-quit，只折叠选择）
+  // 文档逐字节不变——证明上面的变化确实来自那两个编辑键，而不是别的路径在改文档。
+  await page.keyboard.press("Control+g");
+  await page.waitForTimeout(80);
+  expect(await readDocument(page)).toBe("\nsecond line\n");
 });
 
 test("widget 滚动键走统一键位表；文本里的 ← 仍走原生 caret", async ({ page }) => {
