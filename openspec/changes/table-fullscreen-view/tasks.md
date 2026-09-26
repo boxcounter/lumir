@@ -126,7 +126,7 @@
 
 ## 6. 真机验收场景（WKWebView，`scripts/acceptance/`）
 
-- [ ] 6.1 新增场景 `scripts/acceptance/scenarios/40-table-fullscreen-view.md`（编号声明见文首；
+- [x] 6.1 新增场景 `scripts/acceptance/scenarios/40-table-fullscreen-view.md`（编号声明见文首；
       实现期动工前再核一次目录）：fixture 一份含正常表 + 降级表的 md；推荐项下经 `[keys]` 配置
       绑定触发（`09b-keys-config` 的配置注入先例；裁决点 3 选备选①则用默认绑定）。
       断言：遮罩 AX 几何非零 + 表格文本在场（两条一起钉，防「AX 文本可读 ≠ 元素可见」的 M178 陷阱）；
@@ -134,12 +134,24 @@
       套件通道可达，否则如实记为 chromium 层覆盖）。
       **验收口径**：`node scripts/acceptance/run.mjs --check` 静态校验 PASS；`run.mjs 40` 真机 PASS，
       证据落 `test-results/acceptance/<日期>/40-table-fullscreen-view/`（`status.txt` = PASS）。
-      **状态（M240 收尾，2026-09-26）**：场景 md + fixture 已入库、`run.mjs --check` PASS（49 个场景全过）；
-      真机跑批与反向验证**未做**——主 checkout 有 Alex 的 dogfood 实例常驻（1420），tower 裁决等它下线
-      （不抢前台、不盲发 chord，REVIEW.md 第 11 条）。本项因此**未勾选**，等 resume 后补跑并回填证据。
-- [ ] 6.2 真机反向验证：去掉入口触发（或回退实现）跑同一场景，断言必须 FAIL，FAIL 留档。
-- [ ] 6.3 不改写源文件的真机判据：`editor.unchangedSince` 与磁盘 `unchangedSince` 两条独立断言
+      **状态（M240 收尾，2026-09-26）**：**已真机 PASS**。`caffeinate -dimsu node scripts/acceptance/run.mjs 40`
+      （1420/1430 均空、无 lumir 进程；`LUMIR_ACCEPTANCE_RESULTS=…/2026-09-26-m240`）→ **1/1 PASS，34.6s**，
+      `steps.md` 28 条断言全 PASS（含降级表配对正观测、三条关闭路径各自的「焦点回编辑器」、
+      结尾两条 `unchangedSince`），截图 6 张；`status.txt` = `PASS`。
+      首次跑 FAIL 在我自己的断言上（降级归因的行号写错，fixture 的 ragged 行是第 3 行不是第 1 行），
+      已修并复跑（commit `d2b6ac1`）——**如实记账**：那次 FAIL 不是产品缺陷。
+      文档代际变化（外部重载）这一条仍**未覆盖**：遮罩开着时经外部通道改写文件需要套件在遮罩打开
+      期间投递 `vaultWrite` 并等重载链路跑完，本场景的步骤粒度做不到「等到重载完成再断言」，
+      chromium 层由视觉场景覆盖（5.5 收尾：焦点移出遮罩即关闭且不抢焦点）。
+- [x] 6.2 真机反向验证：去掉入口触发（或回退实现）跑同一场景，断言必须 FAIL，FAIL 留档。
+      **现场**：临时删掉场景 front-matter 的 `config.keys`（不绑 `Cmd-j`）后复跑，结果目录另开
+      （`…/2026-09-26-m240-reverse/`，不覆盖 PASS 证据）→ **0/1 PASS，25.8s**，6 条断言红且都红在
+      正确的判据上（「AX 树被模态接管」「遮罩又开着」「先证遮罩开着」三条 + 两条「焦点回编辑器
+      实际 focused=AXGroup」），恢复后复跑即 PASS。
+- [x] 6.3 不改写源文件的真机判据：`editor.unchangedSince` 与磁盘 `unchangedSince` 两条独立断言
       在位且 PASS（ADR 0003 §3）。
+      **证据**：`…/2026-09-26-m240/40-table-fullscreen-view/steps.md` 末节两条 ——
+      「编辑器内容与基线逐字节相同（95 字节）」+「磁盘文件 sha256 与基线相同（22e85d5b488f）」。
 - [x] 6.4 维护权一致（AGENTS.md）：实现 PR 必须同时含场景 md 与 fixture；手感层（遮罩内滚动节奏、
       快照观感）归 Alex dogfood，套件只留截图。
 
@@ -159,10 +171,15 @@
       全绿（视觉侧本地跑，CI 只跑结构层）；真机套件 `node scripts/acceptance/run.mjs 40` 至少跑一次
       并留档（合并后、Alex 验收前，AGENTS.md 执行时机）。
       **状态（M240 收尾，2026-09-26）**：`gate.sh quick` **10/10 PASS**；
-      `LUMIR_VISUAL_PORT=4273 bash scripts/gate.sh visual` = **11/12 PASS**，唯一 FAIL 是
-      `visual-regression` 的 m133 那两条**既存红**（master 上就红，已实测归因并另立 finding，
-      见 5.8 的证据栏）；本 change 的 9 条场景全绿、34 张基线零差异。真机项待 1420 空出
-      （同 6.1 的状态说明）——本项因此**未勾选**。
+      `LUMIR_VISUAL_PORT=4273 bash scripts/gate.sh visual` = **12/12 PASS**（原先的 11/12 里那一条
+      是 m133 的 master 既存红，已由本批次顺手收，commit `e686cdd`；本 change 的 9 条场景全绿、
+      34 张基线零差异）；真机 `run.mjs 40` **1/1 PASS**（证据见 6.1）。
+      **全量复跑**（`caffeinate -dimsu node scripts/acceptance/run.mjs`，
+      `LUMIR_ACCEPTANCE_RESULTS=…/2026-09-26-m240-full`）= **47/49 PASS**；两条红都不属于本 change，
+      且各有归因留档：① `32-list-filter`（既有红，tower 预期内）；② `43-list-tab-indent`——实测于
+      **master 上就红**（单独复跑仍红 + `git checkout 93e153a -- src` 后复跑同样红），根因是
+      Tab 键在真机注入通道里不落地（chromium 探针证明产品的 Tab/Shift+Tab 缩进正常工作），
+      已另立 finding 与 backlog 条目。本 change 的 40 是 49 条里唯一新场景，PASS ✓。
 - [x] 8.3 `git diff --check` 通过；改动文件集合与 [proposal.md](proposal.md) 的 Impact 清单一致
       （出现跨 scope 的只读依赖先报 tower 批准）。
 - [x] 8.4 收官对账：tasks 全部勾选（或标注放弃原因）、spec 增量与实现一致（无实现期静默扩 scope）、
