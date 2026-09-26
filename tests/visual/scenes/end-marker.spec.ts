@@ -388,7 +388,8 @@ test("backlog #31：标记字号跟随内容字号（基准 = --editor-font-size
 //      测量**（@codemirror/view 6.43.11 的 `measure()` 尾段）——同步改布局等于让那一轮读到被
 //      自己改动过的几何。M238 的修法是两条一起：正文行改成 `minmax(max-content, 1fr)`（下界
 //      即正文自然高，行永不被压；上界 1fr 保住「点正文下方空白仍落在 .cm-content 内」），并把
-//      patch 推迟到测量周期之外（`src/preview/endMarker.ts` 的双帧落地）。
+//      patch 推迟到测量周期之外落地（`src/preview/endMarker.ts` 的**单帧**——一帧即离开测量周期；
+//      双帧实测会把阅读位置恢复推离 13px，源码注释里已写「别改回双帧」）。
 //
 // 断言一律落几何读数（正文盒 / 子节点 / 标记矩形的相对关系），不读 class、不读 grid 声明
 //（REVIEW.md 第 1 条）。
@@ -441,7 +442,7 @@ test("M238：内容跨一屏判据的两个方向翻转后，标记都贴在正�
   const detached = await contiguity(page);
   expect(detached.deepestChildBottom).toBeLessThanOrEqual(detached.contentBottom + 1);
   expect(detached.markerTop).toBeNull();
-  // 再压回装不下：标记经**推迟落地**那条路回来（这次附加是 M238 新增的双帧路径）
+  // 再压回装不下：标记经**推迟落地**那条路回来（这次附加走 M238 新增的「延后一帧落地」路径）
   await setClientHeight(page, natural - 120);
   await expect(marker(page)).toHaveCount(1);
 

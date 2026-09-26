@@ -10,7 +10,7 @@ steps:
     do: settle
     expect:
       - label: 标识块整体上屏——产品名与版本号落在同一个 AX 文本节点内（真机实测 WKWebView 把三段
-          合并成一个静态文本「Lumir 0.0.0」；分隔符 aria-hidden 不出现，故此处按「相邻」判而非按「·」判）
+          合并成一个静态文本「Lumir 0.1.0」；分隔符 aria-hidden 不出现，故此处按「相邻」判而非按「·」判）
         ax: { has: "/$appName[^\\n]{0,4}$appVersion/" }
       - label: AX 树含版本号（$appVersion = tauri.conf.json 的 version，逐字节比对靠占位符代入保证）
         ax: { has: "$appVersion" }
@@ -27,7 +27,7 @@ steps:
       - label: modeline 右段拼出版本号（「… UTF-8 · $appVersion」形态）
         ax: { has: "/UTF-8 · $appVersion/" }
       - label: 版本号与产品名已拆开——没有任何 AX 文本节点同时含两者（该断言在宽窗下必须 FAIL，
-          实测过：宽窗 dump 的「Lumir 0.0.0」节点会让它命中）
+          实测过：宽窗 dump 的「Lumir 0.1.0」节点会让它命中）
         ax: { not: "/$appName[^\\n]{0,4}$appVersion/" }
       - shot: 标识块-窄窗520-退让
 
