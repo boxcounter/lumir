@@ -44,8 +44,16 @@ import { createTabs } from "./tabs";
 import { createBindingsPanel } from "./bindings-panel";
 import { WIDTH_SAVE_FAILED_TEXT, createContentWidthDrag } from "./content-width";
 import { createTitlebarIdentity } from "./modeline";
+import {
+  THEME_INDICATOR_LABEL,
+  THEME_SAVE_FAILED_TEXT,
+  currentTheme,
+  nextTheme,
+} from "./theme";
+import { invalidateMermaidTheme } from "./preview/mermaid";
 import { logEvent, sampleCallback } from "./diagnostics";
 import type { FsEntry } from "./bindings/FsEntry";
+import type { UiTheme } from "./bindings/UiTheme";
 import type { VaultInfo } from "./bindings/VaultInfo";
 import type { VaultListEntry } from "./bindings/VaultListEntry";
 import { codeLanguage, extensionOf, mimeTypeOf, resolveByNameUnique } from "./preview/attachments";
@@ -505,6 +513,58 @@ const linkFollow = createLinkFollow({
 });
 
 // ---------------------------------------------------------------------------
+// 主题（M237，change live-theme-switch）：运行期切换的单一施加点与循环命令。
+//
+// 真源分层（design §3.1）：`config.json` 的 `[ui] theme` = **启动真源**，`<html data-theme>` =
+// **运行期唯一生效面**。不引入第三处「当前主题」状态——modeline 钮的文案由 applyTheme 唯一
+// 写入，循环命令读的也是 data-theme（`src/theme.ts` 的 currentTheme）。主题的循环序与两条
+// 可见文案同在 src/theme.ts（纯逻辑，单测在那层跑），本文件只管施加与接线。
+//
+// applyTheme 是**唯一施加点**：启动装配（本文件末尾 configGet 块的最后一条）与运行期切换都经
+// 它，MUST NOT 出现第二处 `data-theme` 写入者（REVIEW.md 第 8 条）。
+// ---------------------------------------------------------------------------
+
+/** 施加主题：写 `<html data-theme>`（token 层三组块按它取色，chrome / CM 主题 / 两路语法高亮 /
+ *  KaTeX 全部经 CSS 变量即时跟随，零重测量——字体与字号不随主题变）+ 刷新 modeline 指示钮。
+ *  `theme` 取 Rust 侧 `UiTheme` 闭集合，前端不判非法值（合法性已由 Rust validate 保证，再判一次
+ *  就是同一条语义的第二处真源）。 */
+function applyTheme(theme: UiTheme): void {
+  document.documentElement.dataset.theme = theme;
+  shell.modelineTheme.textContent = theme;
+  const label = THEME_INDICATOR_LABEL(theme);
+  shell.modelineTheme.title = label;
+  shell.modelineTheme.setAttribute("aria-label", label);
+  shell.modelineTheme.hidden = false;
+}
+
+/** 循环切换到下一档（命令 `view.theme-cycle` 与 modeline 主题钮的**同一条实现路径**，
+ *  design §3.4：不调命令分发器，两处直接调它）。顺序是有意的：
+ *    ① 施加新主题（写 data-theme，全部 CSS 变量着色面同步完成）；
+ *    ② mermaid 按新主题失效（initialize 态 + 缓存 + 世代号）；
+ *    ③ 派发 previewRefresh 让装饰重建——重建时 mermaid 缓存未命中，各块回落既有 pending
+ *       占位并串行重渲，settle 后再次 previewRefresh。①②③ 的相对次序 MUST NOT 调换：
+ *       失效必须发生在重建之前，否则重建会命中刚清空前的旧缓存。
+ *    ④ 写回配置（不等结果）。
+ *
+ *  写回降级口径照栏宽拖拽（D3 裁决 + M228 的通用合并写 IPC）：applyTheme 已生效，写失败只是
+ *  不持久——运行期主题**不回滚**，toast 告知重启后回到配置文件里的主题，另记一条诊断日志。 */
+function cycleTheme(): void {
+  const next = nextTheme(currentTheme(document.documentElement));
+  applyTheme(next);
+  invalidateMermaidTheme();
+  editor.refreshPreview();
+  configSetUiValue("theme", next).catch((e: unknown) => {
+    toast(THEME_SAVE_FAILED_TEXT(errorMessage(e)));
+    // 诊断出口复用既有的 config_warning（用 source 区分成因）——不为一条失败新造事件名，
+    // 事件名与字段白名单的单一来源是 src-tauri/src/logging.rs。
+    logEvent("config_warning", { source: "theme", message: errorMessage(e) });
+  });
+}
+
+// modeline 主题钮的点击 = 同一条实现路径（click 事件本身不需要被消费，语义全在 cycleTheme 里）。
+shell.modelineTheme.addEventListener("click", cycleTheme);
+
+// ---------------------------------------------------------------------------
 // 统一键位层（M131）：唯一分发表在 keys.ts，装配在这里——编辑器侧命令由 editor 提供，
 // 装配侧命令（保存）在下面就地实现，链接跟随与标签那几条转各自模块的句柄（M151）。
 // 原先散落的四条旁路（keys.ts 的 window trie、editor 的 CM keymap 与 domEventHandlers、
@@ -543,6 +603,10 @@ const commands: CommandRuntime = {
   "view.text-scale-up": () => editor.textScale("up"),
   "view.text-scale-down": () => editor.textScale("down"),
   "view.text-scale-reset": () => editor.textScale("reset"),
+  // 主题循环切换（M237，change live-theme-switch 的 D1/D2 裁决）：light → dark → eink 循环，
+  // 命令实现就是上面的 cycleTheme（与 modeline 主题钮共用同一条路径，见那段注释）。
+  // 默认键位 ⌘⇧T 在 keys.ts 的 KEY_BINDINGS 里（冲突核实与 token 形态见那一条的 doc）。
+  "view.theme-cycle": () => cycleTheme(),
   // 标签（M149）：能力与切换在 editor 的会话 API，装配层只做两件它才知道的事——
   // 切换后的表现层对齐（tabs.activateTab → syncActiveDocument）与关标签的确认（都在 src/tabs.ts）。
   // `tab.close` 关的是**前台**标签；逐标签关闭钮走同一条 closeTab（同一个确认）。
@@ -1027,18 +1091,21 @@ configGet().then((snapshot) => {
   // 拖拽推进并回写 `ui.content_width`（D3），因此不存在「运行期态 vs 配置默认」的双真源。
   // 前端不判区间（Rust 侧 validate 已越界回落默认 + warning，与主题同口径）。
   editor.setContentWidth(snapshot.config.ui.content_width);
-  // 主题（restyle-ui-tokens-v1，节点 1 裁决 D3 = `[ui] theme` 配置）：启动装载时施加一次，
-  // 落点是 `<html data-theme>`——token 层的三组块按这个属性取色。与上面几步同属
-  // 「配置到位后施加一次」的启动装配落点区。**前端不判非法值**：取值是闭集合，合法性已由
+  // 主题（restyle-ui-tokens-v1 的启动真源 + M237 的运行期切换）：`[ui] theme` 是**启动真源**，
+  // 装载时经 applyTheme 施加到 `<html data-theme>`——token 层的三组块按这个属性取色，全部着色面
+  // 即时跟随。运行期由 `view.theme-cycle`（⌘⇧T）/ modeline 主题钮推进并回写配置文件，因此不存在
+  //「运行期态 vs 配置默认」的双真源；两处都走上面那个**唯一施加点** applyTheme。与上面几步同属
+  //「配置到位后施加一次」的启动装配落点区。**前端不判非法值**：取值是闭集合，合法性已由
   // Rust 侧 validate 保证（light|dark|eink 之外 warning + 回落 light），前端再判一次就是
-  // 同一条语义的第二处真源（REVIEW.md 第 8 条）。本版不做运行期切换、不跟随系统主题（非目标）。
+  // 同一条语义的第二处真源（REVIEW.md 第 8 条）。不跟随系统主题（非目标）。
   //
   // 放在本块**最后一条**是有意的：`config_get` 的拿到 `ui` 是契约（Rust 的 AppConfig 里
   // `ui` 不是 Option，序列化必带），但桩环境可能落后于契约——若断言在块首，桩缺 `ui` 时
   // 抛出的异常会让后面所有配置项（模式 / 折行 / 排版 / [keys]）一起被 `.catch` 静默吞掉，
   // 症状是「一大片场景以不相干的理由变红」。放最后则退化为「主题没施加」（浅色默认块照常
-  // 生效），失败面收窄到真正依赖主题的地方。测试桩的补齐见 tests/visual/scenes/tauri-stub.ts。
-  document.documentElement.dataset.theme = snapshot.config.ui.theme;
+  // 生效，modeline 主题钮停在初始 hidden），失败面收窄到真正依赖主题的地方。测试桩的补齐见
+  // tests/visual/scenes/tauri-stub.ts。
+  applyTheme(snapshot.config.ui.theme);
 }).catch(() => {});
 
 // app-ready 只表示 webview/application shell 已挂载，不等价于 vault 恢复或编辑器首帧。

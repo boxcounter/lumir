@@ -67,6 +67,11 @@
 // `BLOCK_SCROLL_CLASS`（表格与代码块的横滚容器共用同一个 class），命中条件同时收紧为
 // 「容器自身持有这次按键的焦点」。
 //
+// M237：表新增一条**有默认绑定**的全局命令（⌘⇧T → `view.theme-cycle`，change
+// live-theme-switch 的 D1/D2 裁决），键位占用按三条独立来源核实（表内 / muda 预置 accelerator /
+// macOS 系统级，逐条写在 KEY_BINDINGS 那一条的 doc 与它上方的组注释里）。`KEYLESS_COMMAND_IDS`
+// 不变——该命令默认有绑定，MUST NOT 登记进「默认不绑键」清单。
+//
 // 零冲突核对（注册前实测，三条独立来源，逐条可复核）：
 //   - **表内**：本文件即真源，现表无 ⌘W / ⌘数字 / ⌃⇥ 系绑定（⌘W 系为空，⌘ 数字无，⌃Tab 无）。
 //   - **原生菜单 accelerator**：tauri 2.11.5 的 `Menu::default()` 逐项来自 muda 0.19.3
@@ -189,6 +194,11 @@ export const NON_TAB_GLOBAL_COMMAND_IDS = [
   "view.text-scale-up",
   "view.text-scale-down",
   "view.text-scale-reset",
+  // M237：主题循环切换（change live-theme-switch，节点 1 裁决 D1/D2）。取 `view.` 前缀而不是
+  // `editor.`：它改的是**应用运行期**的显示口径（三主题的 token 取值，与 M180 的折行、M195 的
+  // 字号同族），作用域由本清单派生为 global——焦点在左栏 / 搜索框 / 键位面板 / 浮层里时同样要
+  // 能切。它**有**默认绑定（⌘⇧T），因此 MUST NOT 登记进 KEYLESS_COMMAND_IDS。
+  "view.theme-cycle",
 ] as const;
 
 /** 全局命令 id（实现落在装配层 main.ts）：非标签部分 + 标签部分。 */
@@ -383,6 +393,19 @@ export const KEY_BINDINGS: readonly KeyBinding[] = [
   { key: "Cmd-+", command: "view.text-scale-up", scope: "global", doc: "同上，⌘⇧= 的字符形态（真机 event.key 为 \"+\"）：浏览器对放大同时接受 ⌘= 与 ⌘+，两条绑定指向同一条命令。token 形态的实测记录见本组上方的注释" },
   { key: "Cmd--", command: "view.text-scale-down", scope: "global", doc: "缩小编辑器内容字号一档（÷1.1 取整，钳 [12,32]）。token MUST 写 `Cmd--`（⌘− 的事件 token 形态），写 `Cmd-Minus` 会静默不命中——理由见本组上方的注释" },
   { key: "Cmd-0", command: "view.text-scale-reset", scope: "global", doc: "回到**配置字号**（不是出厂 16px）：Emacs 的 `C-x C-0` 是「restore the default (global) font size」，本仓的 global 就是配置值。运行期字号不落盘、不回写 config.json（D5 裁决，与 M180 的折行开关同纪律）" },
+
+  // ── 全局：主题循环切换（M237，change live-theme-switch）
+  // 循环序 light → dark → eink → light（D1 裁决，实现在 main.ts 的 cycleTheme，与本表同在
+  // 装配层）；键位 ⌘⇧T 由 D2 裁决指定（Alex 点名「快捷键」是入口形态之一），语义取 T = Theme，
+  // ⌘ 系归 mac 惯例。取 global 而非 editor：主题是应用运行期的显示口径，焦点在左栏 / 搜索框 /
+  // 键位面板 / 浮层里时同样要能切（与 ⌘F、⌘⇧O、⌘= 同理由）。
+  // 冲突已核（零冲突，三条独立来源）：① 表内——本文件即真源，⌘⇧ 系现有 Cmd-Shift-z（重做）
+  // 与 Cmd-Shift-o（toc.toggle）两条，⌘⇧T 不在其中；② 原生菜单 accelerator 集合（tauri 的
+  // `Menu::default()` 逐项来自 muda 的 `items/predefined.rs`，清单见文件头 M149 段）不含 ⌘⇧T；
+  // ③ macOS 系统级不占用 ⌘⇧T（浏览器「重开刚关掉的标签页」语义不适用于本应用）。
+  // token 形态 `Cmd-Shift-T` 单段、无空白——用户经 [keys] 可重绑 / 解绑（含空白的多段 chord
+  // 会被配置层拒绝，把默认键位押在 chord 上等于让用户改不了键）。
+  { key: "Cmd-Shift-T", command: "view.theme-cycle", scope: "global", doc: "主题按 light → dark → eink 循环切到下一档（M237，D1/D2 裁决），切换即写回配置 `[ui] theme`（写失败降级为 toast，运行期主题不回滚）。取 global——焦点在左栏 / 搜索框 / 浮层里时同样要能切。冲突已核（零冲突，三条独立来源）：① 表内 ⌘⇧ 系只有 ⇧⌘Z（重做）与 ⇧⌘O（toc.toggle）两条，⌘⇧T 不在其中；② 原生菜单 accelerator 集合（muda 0.19.3 的 predefined，清单见文件头 M149 段）不含 ⌘⇧T；③ macOS 不预置 ⌘⇧T。可经 [keys] 重绑 / 解绑" },
 
   // ── 全局：标签（M149）
   { key: "Cmd-w", command: "tab.close", scope: "global", doc: "关当前标签（dirty 时先确认）；取 global 而非 editor——焦点在文件树 / 搜索框 / 大纲浮层里时同样要能关。**这个键原本被原生菜单的预置 Close 项占着**（muda 给 CloseWindow 的 accelerator 就是 ⌘W，菜单键等价在 NSApplication 分发阶段截获，webview 的 keydown 收不到）：M149 在 src-tauri/src/lib.rs 按 M131 先例把 File / Window 两个子菜单的预置 Close 换成不带加速键的自定义项让出该键，见那边的函数注释。语义随之从「关窗」变为「关标签」（tower 2026-09-17 裁决），退出仍走 ⌘Q（有 dirty 守卫）与红灯" },

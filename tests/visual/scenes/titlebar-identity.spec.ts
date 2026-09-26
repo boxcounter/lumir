@@ -125,12 +125,18 @@ test("窄窗退让（D2 备选）：<640px 版本号退 modeline 右段尾部，
   await expect(page.locator(".modeline-version")).toBeHidden();
   await expect(page.locator(".ti-version")).toBeVisible();
 
-  // 拉宽恢复：版本号回标题栏，modeline 右段恢复原状（textContent 清空，不留残字）
+  // 拉宽恢复：版本号回标题栏，modeline 右段里的版本号段清空、不留残字
   await page.setViewportSize({ width: 1200, height: 800 });
   await expect(page.locator(".ti-version")).toBeVisible();
   await expect(page.locator(".ti-sep")).toBeVisible();
   await expect(page.locator(".modeline-version")).toBeHidden();
-  await expect(page.locator(".modeline-right")).toHaveText(/Markdown · \d+ 行 · UTF-8(?![\s\S])/);
+  // M237 起 modeline 右段**最末**多了一个主题指示钮（独立元素、自带文案），因此「右段整体
+  // textContent」不再是 meta 的逐字形态。判据因此拆成两条，比原来那条整体断言更强：
+  // ① meta 段自身锚定到行尾（语法 · 行数 · 编码）；② 版本号段清空（原来那条负向断言守的
+  // 就是这一件事——「恢复原状、不留残字」）。
+  await expect(page.locator(".modeline-meta")).toHaveText(/Markdown · \d+ 行 · UTF-8(?![\s\S])/);
+  expect(await page.locator(".modeline-version").evaluate((el) => el.textContent)).toBe("");
+  await expect(page.locator(".modeline-theme")).toHaveText("light");
 });
 
 test("读取失败降级：桩不路由 app 元信息时标识块整体隐藏 + 一条诊断事件，无占位版本号", async ({ page }) => {

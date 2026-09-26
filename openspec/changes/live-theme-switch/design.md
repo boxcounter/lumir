@@ -78,15 +78,23 @@ initialize + 烧色 SVG + 无主题维度的缓存键。除此之外没有任何
 - 代价如实记录：含 N 个 mermaid 块的文档切换主题 = N 次串行重渲（既有队列与超时口径），期间
   块显示「渲染中…」占位。这是「切换中状态」的全部——其余表面同步完成，无中间态。
 
-### 3.3 配置写回：`config_set_ui_theme`（裁决点 D3 推荐项）
+### 3.3 配置写回：复用通用合并写 IPC（原稿的 `config_set_ui_theme` 实现期被否，2026-09-26 M237）
 
-- Rust 侧新增命令 `config_set_ui_theme(theme: UiTheme)`，实现照 `write_last_vault_to` 模板
-  （`commands.rs:385-420`）：读既有 config.json → 合并 `ui.theme` 字段（**合并而非整写**，
-  用户手改的其他字段与注释外内容不受损——serde_json::Value 级合并同先例）→ tmp+rename
-  原子写。入参校验复用 `UiTheme` 闭集合（serde 反序列化即校验）。
+> **实现期修正**：本节原稿要求新增 Rust 命令 `config_set_ui_theme(theme)`。动工时按 Alex 节点 1
+> 的裁决口径改为**复用 M228 已落地的通用合并写 IPC `config_set_ui_value(key, value)`**
+> （`src-tauri/src/commands.rs`）——它与原稿要的模板同源（serde_json::Value 级合并 + tmp+rename
+> 原子写 + 失败 `CommandError`），且已经是「`[ui]` 表单键写」的既有通道：为 `theme` 再开一条
+> 命令就是同一语义两套写通道（REVIEW.md 第 8 条）。写回纪律（合并而非整写、tmp+rename、失败
+> 降级不阻塞切换）逐条不变，只有「落点是新命令还是既有通用命令」这一处不同。
+
+- 写回通道：`config_set_ui_value("theme", "light" | "dark" | "eink")`，后端做法与
+  `write_last_vault_to` 同源（读既有 config.json → 合并 `ui.theme` 字段 → tmp+rename 原子写）。
+  入参校验：命令本身是**通用**键值写（不做取值校验，原稿为 `UiTheme` 入参设计的 serde 校验随之
+  不适用）；闭集合由前端 `UiTheme` 类型 + Rust 侧 `validate()` 的「非法值 warning + 回落 light」
+  两层承担——前端只会送出三档之一，写盘产物即使被外部改坏，下次启动照样按既有口径回落。
 - 前端切换**不等写回结果**：`applyTheme` 已生效，写回异步进行；失败 → `logEvent` +
-  toast「主题已切换，但写入配置失败，重启后将回到 <配置文件值>」（降级口径照
-  `warn_last_vault_failed` 先例：`commands.rs:455-457`——主流程不被配置写失败阻塞）。
+  toast「主题已切换，但写入配置失败，重启后将回到配置文件里的主题（{原因}）」（降级口径照
+  `warn_last_vault_failed` 先例——主流程不被配置写失败阻塞）。
 - 启动行为零变化：`config_get` 快照照旧是启动真源；写回只是让文件跟上运行态。
 
 ### 3.4 命令与键位

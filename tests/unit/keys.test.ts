@@ -11,6 +11,7 @@ import {
   KEYLESS_COMMAND_IDS,
   KEY_BINDINGS,
   Keymap,
+  NON_TAB_GLOBAL_COMMAND_IDS,
   TABLE_SCROLL_CLASS,
   TAB_GOTO_IDS,
   WIDGET_COMMAND_IDS,
@@ -530,5 +531,65 @@ test("字号步进命令可由 [keys] 重绑 / 解绑（默认键位都是单段
   assert.equal(
     unbound.bindings.find((binding) => normalizeKey(binding.key) === "Cmd-0"),
     undefined,
+  );
+});
+
+// ---------------------------------------------------------------------------
+// M237：主题循环切换命令（change live-theme-switch）——默认键位 ⌘⇧T 的 token 形态与
+// [keys] 覆盖通路
+// ---------------------------------------------------------------------------
+
+test("主题切换命令：⌘⇧T 的 token 形态、作用域 global、不在默认不绑键清单里", () => {
+  assert.ok(commandIds.includes("view.theme-cycle"), "view.theme-cycle 不在 COMMAND_IDS");
+  assert.ok(
+    !editorCommandIds.includes("view.theme-cycle"),
+    "落在 editor 组会让作用域派生成 editor；主题切换必须是 global（焦点在左栏 / 浮层里也要命中）",
+  );
+  // 事件侧与表内必须同 token：真实 ⌘⇧T 事件的 key 是 "T"（Shift 已体现在字符里），
+  // 表内写 `Cmd-Shift-T` 经 normalizeKey 后仍是 `Cmd-Shift-T`——这条 equality 是防止
+  // 「表内写 Cmd-Shift-t / Cmd-T 之类永不命中的形态」那类静默失配的判据。
+  const event = { key: "T", code: "KeyT", metaKey: true, ctrlKey: false, altKey: false, shiftKey: true };
+  const token = normalizeKey("Cmd-Shift-T");
+  assert.equal(keyToken(event), token, "⌘⇧T 的事件 token 与表内写法必须相等");
+  assert.equal(token, "Cmd-Shift-T");
+  const binding = KEY_BINDINGS.find((item) => normalizeKey(item.key) === token);
+  assert.equal(binding?.command, "view.theme-cycle");
+  assert.equal(binding?.scope, "global");
+  assert.ok((binding?.doc.length ?? 0) > 0, "绑定必须带来由说明（表即文档）");
+  // 键位面板的「全局」组 = NON_TAB_GLOBAL_COMMAND_IDS（src/bindings-panel.ts 的分组表），
+  // 因此本命令在清单里 ⇒ 面板的全局组里就有这一行（task 2.2 的「如实列出」）。
+  assert.ok(
+    (NON_TAB_GLOBAL_COMMAND_IDS as readonly string[]).includes("view.theme-cycle"),
+    "不在 NON_TAB_GLOBAL_COMMAND_IDS（面板全局组的成员来源）里",
+  );
+  // 文档里要能看到三条冲突来源的核实结论（表即文档的口径，写进 doc 而不是别处）
+  assert.ok(binding?.doc.includes("表内"));
+  assert.ok(binding?.doc.includes("muda") || binding?.doc.includes("原生菜单"));
+  assert.ok(binding?.doc.includes("macOS"));
+  assert.ok(
+    !KEYLESS_COMMAND_IDS.includes("view.theme-cycle"),
+    "该命令默认有绑定，MUST NOT 登记为默认不绑键（它在默认键位上是可用入口）",
+  );
+});
+
+test("主题切换命令可由 [keys] 重绑 / 解绑（默认键位单段无空白）", () => {
+  assert.ok(!/\s/.test("Cmd-Shift-T"), "默认键位含空白会让用户无法重绑（chord 本版不支持）");
+  // 重绑：⌃; → view.theme-cycle（作用域仍由命令清单派生为 global，不随配置漂移）
+  const rebound = applyKeyOverrides({ "Ctrl-;": "view.theme-cycle" });
+  assert.deepEqual(rebound.warnings, []);
+  const moved = rebound.bindings.find((binding) => normalizeKey(binding.key) === "Ctrl-;");
+  assert.equal(moved?.command, "view.theme-cycle");
+  assert.equal(moved?.scope, "global");
+  // 解绑：⌘⇧T 不再指向任何命令，原键与命令的其他绑定一并消失
+  const unbound = applyKeyOverrides({ "Cmd-Shift-T": null });
+  assert.deepEqual(unbound.warnings, []);
+  assert.equal(
+    unbound.bindings.find((binding) => normalizeKey(binding.key) === "Cmd-Shift-T"),
+    undefined,
+  );
+  assert.equal(
+    unbound.bindings.find((binding) => binding.command === "view.theme-cycle"),
+    undefined,
+    "解绑后该命令在生效表里没有绑定（键位面板据此显示未绑定）",
   );
 });
