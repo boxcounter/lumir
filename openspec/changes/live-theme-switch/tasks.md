@@ -69,8 +69,13 @@
   `.modeline-right` 整体文本断言（右段最末多了指示钮，判据拆成 meta 段锚定 + 版本号段清空）、
   `mermaid.spec.ts` 的世界代守卫用例（见 §4.1 的落点修正）。
   **像素层如实登记**：指示钮整块 ≈821 px² < 0.001 档的 960 px 预算，整页基线的像素对比结构性
-  看不见它（`test-results/m237/chip-area-probe.log`）——套件照绿不等于基线与界面一致，是否重建
-  基线归 Alex（`docs/backlog.md` 待裁决第 33 条），本批一律未改基线。
+  看不见它（`test-results/m237/chip-area-probe.log`）——套件照绿不等于基线与界面一致。**2026-09-26
+  tower 裁决（依据 Alex 总授权 + M236 立范流程）：21 张整页基线随本批重建**（基线**口径**未动，
+  仍是 `maxDiffPixelRatio: 0.001`，只刷新内容）；过目包与逐张对账在
+  `test-results/m237/baseline-review/`（`audit-table.md` + `img/*-pair.png` +
+  `baselines-{pre,post}-sha256.txt` + 独立复核脚本及日志），待归档跟踪记在
+  `docs/backlog.md` 待 Alex 裁决第 33 条。重建后复跑 `bash scripts/gate.sh visual` 终态
+  12/12 PASS（`test-results/m237/gate-visual-post-baseline.log`）。
 - [x] 4.3 真机验收场景 `scripts/acceptance/scenarios/44-theme-live-switch.md`
   （**编号修正**：不是原稿的 36——36 已被 `36-restyle-content` 占用，本批按 tower 重新分配的
   序列取 44）：快捷键三档循环一周逐档断言主题（真机侧的可读读数是 modeline 指示钮的 AX 文本，

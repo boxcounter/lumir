@@ -431,14 +431,21 @@
     主题指示钮（`.modeline-theme`，可见文本 = 当前主题名），该元素实测整块 **41.6×19.75 ≈ 821 px²**
     （证据 `test-results/m237/chip-area-probe.log`），而 1200×800 下 `maxDiffPixelRatio: 0.001` 的预算是
     **960 px**：即使钮内每个像素都变，diff 比例也只有 0.000856 < 0.001。后果是**全量视觉套件照绿**，
-    但那不等于「基线与界面一致」——21 张整页基线现在都少了这个钮。按 AGENTS.md 硬规则「基线更新是
-    人肉裁决点」，本批**一律未改基线**（等 Alex 决定是否随下一批重建）。**这是 REVIEW.md 第 3 条的同族
-    现场**（容差按「最小真实变化的下限」核算时，41×20 量级的新增元素在 0.001 档结构性不可见）；若 Alex
-    认为该收，落点是给这类小元素补元素级基线（标识块已有先例）或收紧容差，二者都不在本 change 的
-    scope 内（proposal 明写「不动视觉基线口径」）。
+    但那不等于「基线与界面一致」——21 张整页基线都少了这个钮。**2026-09-26 tower 裁决（依据 Alex 总授权 +
+    M236 立范流程）：随本批重建**——21 张整页基线已 `--update` 重建，过目包在
+    `test-results/m237/baseline-review/`：逐张 pre/post 差异对账 `audit-table.md`、逐张对照图
+    `img/*-pair.png`、sha256 manifest `baselines-{pre,post}-sha256.txt`，另有独立复核脚本
+    `independent-check.py` / `independent-profile.py` 与其日志（列级墨迹谱对账）。重建后的像素对账结论：
+    21 张的差异**全部**落在 modeline 条带（y778..797）内，形态 = 新增指示钮（右对齐 x1144..1185，宽 42px）
+    + 既有 modeline 右段文本整体左移 54px（钮宽 41.6 + 间距 12），条带外像素逐字节不变；钮区域像素在
+    6 个场景间逐字节相同。**这仍是 REVIEW.md 第 3 条的同族现场**——容差按「最小真实变化的下限」核算时，
+    41×20 ≈ 821 px² 的新增元素在 0.001 档（预算 960 px）结构性不可见，基线要靠人裁决推动才重建、门禁
+    本身照绿；若 Alex 认为该收，落点是给这类小元素补元素级基线（标识块已有先例）或收紧容差，二者都不
+    在本 change 的 scope 内（proposal 明写「不动视觉基线口径」）。
     ② **归档顺序**——本 change 的 `specs/ui-design-system/spec.md` delta 含 **MODIFIED Requirements**，
-    而它依赖的 `restyle-ui-tokens-v1` **仍未归档**（`openspec list`：49/51 tasks），此时 archive 会被拒。
-    按裁决「不强行 archive」，等 ① 有结论、② 的前置 change 归档后再走节点 2。归档对账要点预记：本 change
+    而它依赖的 `restyle-ui-tokens-v1` **仍未归档**（`openspec list`：49/51 tasks；2026-09-26 复检仍如此），
+    此时 archive 会被拒。按 task §5.1 的口径「不强行 archive」，等 ① 有结论、② 的前置 change 归档后再走
+    节点 2。归档对账要点预记：本 change
     的 tasks.md §1–§5 已逐条勾选并附证据指针（含两处**过时项修正**：§3.1 不新增 Rust 命令、走 M228 的
     通用合并写 IPC；§4.3 场景号 44）；真机判据为场景 44（`scripts/acceptance/scenarios/
     44-theme-live-switch.md`）；文案新增 D122（主题钮的悬停提示 / 读屏名）与 D123（写盘失败 toast）；
