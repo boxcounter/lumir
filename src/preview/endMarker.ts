@@ -1,4 +1,4 @@
-// 正文末尾的「到底了」标记（change document-end-marker）。
+// 正文末尾的「— End —」标记（change document-end-marker）。
 //
 // 它是应用 chrome，不是文档内容，因此**挂在 `.cm-scroller` 上、与 `.cm-content` 同级**：
 // 不进 `EditorState.doc`、不进保存字节、不被 ⌘A / ⌘F 取用（ADR 0003 §3），也不进 CM 的
@@ -10,6 +10,13 @@
 // 伪元素的盒子没有 JS 可读的几何（`getBoundingClientRect` 取不到它），也拿不出文本节点；
 // 判据只能退化成读声明（computed style）。本模块把候选 A 那套「不参与 CM 数据结构」的性质
 // 用真元素实现，三条判据因此都有渲染结果可读。机制取舍与实测记录见 change 的 design.md §1.1.1。
+//
+// **在场态的落地时机（M238）**：判据照旧在 CM 的 DOM 读相位算（`MeasureRequest.read`），但
+// 元素与行尺寸口径的改写在**测量周期之外**落地（`write` 只记录期望值并排一帧，`apply` 才动
+// DOM）。理由与实测证据见下方 `write` 与 `apply` 的注释：在测量周期里改布局，会让 CM 在该
+// 周期尾段（`scrollIntoView` + 新一轮 `measure`）读到被自己改动过的几何。正文行的尺寸口径
+// 另已改为**与标记在场无关**（`src/preview/theme.ts` 的 `.cm-scroller` 段），两处一起保证
+// 「标记恒贴在正文内容盒之下」这条不变量。
 
 import { EditorView, ViewPlugin } from "@codemirror/view";
 import type { ViewUpdate } from "@codemirror/view";
@@ -17,11 +24,10 @@ import type { ViewUpdate } from "@codemirror/view";
 export const END_MARKER_CLASS = "cm-lp-end-marker";
 export const END_MARKER_LINE_CLASS = "cm-lp-end-marker-line";
 export const END_MARKER_TEXT_CLASS = "cm-lp-end-marker-text";
-/** 加在 `.cm-scroller` 上的在场态 class（标记在场时才加，见 `EndMarkerView` 的说明）。 */
-export const END_MARKER_VISIBLE_CLASS = "cm-lp-end-marker-visible";
 
-/** 标记的可见文案：deck D114 的中文列（单一来源；`tests/unit/end-marker.test.ts` 按 deck 逐字断言）。 */
-export const END_MARKER_TEXT = "到底了";
+/** 标记的可见文案（Alex 2026-09-26 裁决「改用『— End —』」，替代原中文串；单一来源，
+ *  `tests/unit/end-marker.test.ts` 按 deck 逐字断言）。 */
+export const END_MARKER_TEXT = "— End —";
 
 /**
  * 出现判据（本 change 的唯一判定点，纯函数）：**不含标记的内容高度 > 可用视口高度**时显示。
@@ -66,7 +72,12 @@ class EndMarkerView {
   // 那是会生成代码的语法而不是纯类型标注）。
   private readonly view: EditorView;
   private readonly marker: HTMLElement;
+  /** 已落地的在场态（判据的**结论**不一定等于它，见 `pending`）。 */
   private attached = false;
+  /** 待落地的在场态：`write` 只记录期望值，真正的 DOM 改动在 `apply` 里做（下一帧）。 */
+  private pending = false;
+  /** 已排的动画帧句柄（0 = 没排队）。 */
+  private frame = 0;
   private readonly observer: ResizeObserver;
   private readonly request: {
     key: unknown;
@@ -77,16 +88,21 @@ class EndMarkerView {
   constructor(view: EditorView) {
     this.view = view;
     this.marker = createEndMarker();
-    // 上一个实例（换文档 / 换模式时 CM 会重建 view plugin）不该留下在场态 class：
-    // 本次构造时标记尚未挂载，行尺寸必须回到 auto。destroy 也会清，这里是第二道。
-    view.scrollDOM.classList.remove(END_MARKER_VISIBLE_CLASS);
+    // 上一个实例（换文档 / 换模式时 CM 会重建 view plugin）不该留下它的元素：本次构造时
+    // 标记尚未挂载，先清掉任何残留（destroy 也会清，这里是第二道）。
+    for (const stale of view.scrollDOM.querySelectorAll(`.${END_MARKER_CLASS}`)) stale.remove();
     this.request = {
       key: this,
       // 量的是 `.cm-content` 的渲染盒：标记在它之外，这个数里没有标记自己的高度贡献。
       // 一屏装得下时该盒被 min-height:100%（CM 基础主题）撑到可用高度，于是
       // 「盒高 > 可用高」⇔「内容自然高 > 可用高」——两种情形（撑开 / 不撑开）同解。
       read: (target) => endMarkerVisible(target.contentDOM.getBoundingClientRect().height, target.scrollDOM.clientHeight),
-      write: (visible) => this.setAttached(visible),
+      // **不在 write 相位动 DOM**（M238）：CM 的 `MeasureRequest.write` 明文要求「不得做触发
+      // 布局的事」（@codemirror/view 6.43.11 的 MeasureRequest 注释），而本模块的 patch 会往
+      // 滚动容器里加元素——正是「触发布局」。更要紧的是 `measure()` 的循环在这一步之后还会走
+      // `docView.scrollIntoView(...)` 与**新一轮测量**（同文件 `measure()` 尾段），同步改布局
+      // 等于让那一轮读到被自己改动过的几何。这里只记录期望值，落地交给下一帧的 `apply`。
+      write: (visible) => this.schedule(visible),
     };
     // 重算触发点（判据是重算型，不是逐帧监听）：内容尺寸变化（文档变更、异步图片到达、
     // 字体度量）观察 `.cm-content`；视口尺寸变化（窗口 resize、侧栏拖动）观察 `.cm-scroller`。
@@ -105,28 +121,44 @@ class EndMarkerView {
 
   destroy(): void {
     this.observer.disconnect();
+    this.cancelFrame();
     this.marker.remove();
-    // 在场态 class 与元素必须同生同死：漏掉它会让 code 模式的滚动容器继续吃
-    // `grid-auto-rows: max-content`（那里没有标记，不该有此口径）。
-    this.view.scrollDOM.classList.remove(END_MARKER_VISIBLE_CLASS);
   }
 
-  /** 显隐 = 在场与否：不显示时元素根本不在 DOM 里（spec：一屏装得下时「标记不存在」）。 */
-  private setAttached(visible: boolean): void {
+  /** 记录期望的在场态并（必要时）排一次落地。排队期间重复的请求被合并：以最后一次期望为准，
+   *  已排的那一帧不重排——反复排帧会让 patch 永远追不上期望值。 */
+  private schedule(visible: boolean): void {
+    if (visible === this.attached && this.frame === 0) return;
+    this.pending = visible;
+    if (this.frame !== 0) return;
+    // **一帧，不是两帧**（M238 实测，别改成双帧）：一帧就足以离开当前的测量周期（CM 的
+    // `measure()` 自己跑在一个动画帧回调里，本模块的回调必然排在它那次任务之后）；而多等一帧
+    // 会挪到测量周期尾段的 `scrollIntoView`/滚动锚点落地之后，实证代价是阅读位置恢复偏 13px
+    // ——`tests/visual/scenes/reading-position-probe.spec.ts` 的 §7-3（含异步图片的文档）在
+    // 双帧下 3/3 红（参照行 172.6 vs 捕获 159.6，容差 4px），单帧 0px。
+    this.frame = requestAnimationFrame(() => {
+      this.frame = 0;
+      this.apply(this.pending);
+    });
+  }
+
+  private cancelFrame(): void {
+    if (this.frame !== 0) cancelAnimationFrame(this.frame);
+    this.frame = 0;
+  }
+
+  /** 落地一次在场态（不显示时元素根本不在 DOM 里——spec：一屏装得下时「标记不存在」）。
+   *  挂载位置：`.cm-scroller` 的第 2 列、正文所在行的下一行（样式在 theme.ts），正文行的尺寸
+   *  口径与标记在场无关，因此这次改动只影响标记自己那一行的有无。
+   *
+   *  落地后**不补排测量**：标记在 `.cm-content` 之外、正文行的尺寸口径也已与它解耦，CM 量到的
+   *  几何（正文内容盒）一个像素都没变，没有需要对齐的东西；在这个窗口里多排一趟测量只会让 CM
+   *  拿在途的滚动锚点再算一次 scrollTop（ADR 0002 §6 的「不新增测量」在这条路径同样成立）。 */
+  private apply(visible: boolean): void {
     if (visible === this.attached) return;
     this.attached = visible;
-    // 挂载位置：`.cm-scroller` 的第 2 列第 2 行 = 正文所在列、正文之下（样式在 theme.ts）。
-    // 同时给滚动容器打在场态 class：`.cm-content` 带 `min-height: 100%`（CM 基础主题），
-    // 滚动容器被压缩到可用高度时它的隐式行贡献会被算成 0——只有把行尺寸改成 max-content，
-    // 第 2 行才真的落在正文内容盒之后而不是叠在正文上。该口径只在标记在场时生效，
-    // 因此不触碰一屏装得下的文档与 code 模式（那里行尺寸仍是原来的 auto）。
-    if (visible) {
-      this.view.scrollDOM.classList.add(END_MARKER_VISIBLE_CLASS);
-      this.view.scrollDOM.appendChild(this.marker);
-    } else {
-      this.marker.remove();
-      this.view.scrollDOM.classList.remove(END_MARKER_VISIBLE_CLASS);
-    }
+    if (visible) this.view.scrollDOM.append(this.marker);
+    else this.marker.remove();
   }
 }
 

@@ -350,3 +350,142 @@ test("零标签时 ⌘W 无操作：未命名文档不是标签（reviewer r1 P2
   await expect(page.locator(".lumir-toast", { hasText: "关闭后修改将丢失" })).toHaveCount(0);
   await expect(page.locator(".tabstrip")).toBeHidden();
 });
+
+// ---------------------------------------------------------------------------
+// M238：标签的整区可点 与「活跃标签恒完整可见」
+//
+// 两条都是 Alex 2026-09-26 真机截图报告的缺陷（红箭头指的就是被裁掉的活跃标签）：
+//   1. 只有点文件名文字才切换——动作原来绑在 `.tab-open` 上，而那个按钮的盒被
+//      `align-items: center` 压成行高、又不覆盖标签的左右内边距，实测热区只有 54×15
+//      （标签 103×29）；四条边全是死区。
+//   2. 键盘切换（⌘1–9 / ⌃⇥）与新建标签都不会横向滚动标签栏，活跃标签停在视口之外。
+// 断言一律落**矩形读数**（可视区与标签盒的包含关系），不用 class 或 scrollLeft 数值
+//（REVIEW.md 第 1 条）；「活跃标签读不到」判 FAIL，不当成「无需滚动」（第 2 条）。
+// ---------------------------------------------------------------------------
+
+/** 13 个文件名足够长的 fixture：保证标签栏真的溢出（短名字的 12 个标签可能装得下）。 */
+function overflowVault(count: number): VaultFixture {
+  const files: Record<string, string> = {};
+  for (let i = 0; i < count; i += 1) {
+    files[`chapter-${String(i).padStart(2, "0")}-probe.md`] = `# 章节 ${i}\n\n第 ${i} 篇正文。\n`;
+  }
+  return {
+    entries: Object.entries(files).map(([path, text]) => ({ path, kind: "file", size: text.length, mtime_ms: 0 })),
+    files,
+    links: {},
+  };
+}
+
+/** 活跃标签是否完整落在标签栏的可视区（padding 盒）里；读不到活跃标签 = FAIL。 */
+async function activeTabFullyVisible(page: Page): Promise<{ ok: boolean; detail: string }> {
+  return page.evaluate(() => {
+    const strip = document.querySelector(".tabstrip") as HTMLElement | null;
+    const active = strip?.querySelector<HTMLElement>(".tab.is-active") ?? null;
+    if (!strip || !active) return { ok: false, detail: "读不到标签栏或活跃标签（判 FAIL，不当作无需滚动）" };
+    const box = strip.getBoundingClientRect();
+    const left = box.left + strip.clientLeft;
+    const right = left + strip.clientWidth;
+    const rect = active.getBoundingClientRect();
+    return {
+      ok: rect.left >= left - 0.5 && rect.right <= right + 0.5,
+      detail: `活跃=${active.querySelector(".tab-name")?.textContent} 可视区=[${Math.round(left)},${Math.round(right)}] 标签=[${Math.round(rect.left)},${Math.round(rect.right)}]`,
+    };
+  });
+}
+
+test("标签整区可点：点边缘与空白区也切换，× 仍独立（M238）", async ({ page }) => {
+  await stubTauri(page, VAULT);
+  await page.goto("/");
+  await page.locator('.ft-row[title="alpha.md"]').click();
+  await page.locator('.ft-row[title="beta.md"]').click({ modifiers: ["Meta"] });
+  await expect(page.locator(".tab")).toHaveCount(2);
+
+  // 每轮都重新量：活跃态的 `font-weight: medium` 会让标签宽度差几个像素，用上一轮
+  // 的坐标点下一轮的点会落到漂移后的别处（判据变成噪声）。
+  const midYOf = async (): Promise<{ tab: DOMRect; close: DOMRect }> =>
+    page.evaluate(() => {
+      const tab = [...document.querySelectorAll<HTMLElement>(".tab")].find(
+        (t) => t.querySelector(".tab-name")?.textContent === "alpha.md",
+      )!;
+      return {
+        tab: tab.getBoundingClientRect().toJSON() as DOMRect,
+        close: tab.querySelector<HTMLElement>(".tab-close")!.getBoundingClientRect().toJSON() as DOMRect,
+      };
+    });
+
+  const cases: Array<[string, (g: { tab: DOMRect; close: DOMRect }) => [number, number]]> = [
+    ["标签上缘", (g) => [(g.tab.left + g.tab.right) / 2, g.tab.top + 1]],
+    ["标签下缘", (g) => [(g.tab.left + g.tab.right) / 2, g.tab.bottom - 1]],
+    ["左侧内边距", (g) => [g.tab.left + 4, (g.tab.top + g.tab.bottom) / 2]],
+    ["× 左侧空隙", (g) => [g.close.left - 3, (g.tab.top + g.tab.bottom) / 2]],
+    // × 右侧那一格是「负 margin 撑满按钮」方案也补不上的死区（打开的盒右缘只到 × 中段），
+    // 留在这里当反例：容器级命中区必须把它一起覆盖。
+    ["右侧内边距", (g) => [g.tab.right - 3, (g.tab.top + g.tab.bottom) / 2]],
+  ];
+
+  for (const [label, point] of cases) {
+    // 先把 beta 切到前台：只有真的发生了切换，下面那条断言才不是空转。
+    await page.locator(".tab-open", { hasText: "beta.md" }).click();
+    await expect(page.locator(".tab.is-active .tab-name")).toHaveText("beta.md");
+    const [x, y] = point(await midYOf());
+    await page.mouse.click(x, y);
+    await expect(page.locator(".tab.is-active .tab-name"), `${label}（${Math.round(x)},${Math.round(y)}）应切换到 alpha.md`).toHaveText("alpha.md");
+  }
+
+  // × 仍独立：点它关掉标签，而不是走「切换」那条路（标签数与前台都跟着变）。
+  await page.locator(".tab", { hasText: "alpha.md" }).locator(".tab-close").click();
+  await expect(page.locator(".tab")).toHaveCount(1);
+  await expect(page.locator(".tab-name")).toHaveText("beta.md");
+});
+
+test("标签溢出：活跃标签恒完整可见（键盘直达 / 循环 / 关闭后的落点，M238）", async ({ page }) => {
+  const count = 12;
+  await stubTauri(page, overflowVault(count));
+  await page.goto("/");
+  await page.locator('.ft-row[title="chapter-00-probe.md"]').click();
+  for (let i = 1; i < count; i += 1) {
+    await page.locator(`.ft-row[title="chapter-${String(i).padStart(2, "0")}-probe.md"]`).click({ modifiers: ["Meta"] });
+  }
+  await expect(page.locator(".tab")).toHaveCount(count);
+
+  // 溢出确实发生了：否则下面的断言在「根本不用滚」的文档上恒真（REVIEW.md 第 2 条）。
+  const strip = await page.evaluate(() => {
+    const el = document.querySelector(".tabstrip") as HTMLElement;
+    return { scrollWidth: el.scrollWidth, clientWidth: el.clientWidth };
+  });
+  expect(strip.scrollWidth).toBeGreaterThan(strip.clientWidth);
+
+  await page.locator(".cm-content").click();
+  /** 每一次「切换动作」之后都要成立的不变量（切换路径由 sequence 生成）。 */
+  const checkpoints: Array<[string, () => Promise<unknown>]> = [
+    ["⌘9 直达第 9 个", async () => page.keyboard.press("Meta+9")],
+    ["⌃⇥ 循环到第 10 个", async () => page.keyboard.press("Control+Tab")],
+    ["⌃⇥ 循环到第 11 个", async () => page.keyboard.press("Control+Tab")],
+    ["⌃⇥ 循环到第 12 个（最右）", async () => page.keyboard.press("Control+Tab")],
+    ["⌘1 回到第 1 个（最左）", async () => page.keyboard.press("Meta+1")],
+    ["⌘5 到中段第 5 个", async () => page.keyboard.press("Meta+5")],
+  ];
+  for (const [label, act] of checkpoints) {
+    await act();
+    const visible = await activeTabFullyVisible(page);
+    expect(visible.ok, `${label}：${visible.detail}`).toBe(true);
+  }
+
+  // 反向配对的旁证：回到最左（⌘1，活跃 = 第 1 个），再把标签栏滚到最右——活跃标签必然
+  // 出视口，同一判据当场判红。没有这一步，上面那串 PASS 读不出「它真的会红」
+  //（REVIEW.md 第 1 条：先造一个必须让它 FAIL 的输入）。
+  await page.keyboard.press("Meta+1");
+  await page.evaluate(() => {
+    const el = document.querySelector(".tabstrip") as HTMLElement;
+    el.scrollLeft = el.scrollWidth;
+  });
+  const scrolledAway = await activeTabFullyVisible(page);
+  expect(scrolledAway.ok).toBe(false);
+
+  // 关闭活跃标签（⌘W）后的落点同样要可见：这时标签栏停在最右、活跃标签在视口外，
+  // 重绘（closeTabNow → syncActiveDocument）是标签栏自己触发的对齐点。
+  await page.keyboard.press("Meta+w");
+  await expect(page.locator(".tab")).toHaveCount(count - 1);
+  const afterClose = await activeTabFullyVisible(page);
+  expect(afterClose.ok, `关闭后的落点：${afterClose.detail}`).toBe(true);
+});

@@ -3,11 +3,12 @@ import { readFileSync } from "node:fs";
 import { stubTauri } from "./tauri-stub";
 import { copyFresh, readDocument } from "./parity-checks";
 
-// 正文末尾的「到底了」标记（change document-end-marker）：
+// 正文末尾的「— End —」标记（change document-end-marker）：
 //   判据 = 不含标记的内容高度 > 可用视口高度（静态、重算型、MUST NOT 读滚动位置）；
 //   形态 = 短线夹字（--border-soft 发丝线 + --text-3 弱化字），MUST NOT 与作者手写的通栏分隔线同形；
 //   硬约束 = 不进 EditorState.doc / 不进保存字节 / 不被 ⌘A 带出 / 不被 ⌘F 命中 /
-//            滚动高度在所有滚动位置逐像素恒定 / 纵向间距用 padding 不用 margin。
+//            滚动高度在所有滚动位置逐像素恒定 / 纵向间距用 padding 不用 margin /
+//            位置恒贴正文内容盒之下（M238 的不变量，见文件末两条用例）。
 //
 // 判据一律落**几何读数**（渲染盒宽高、线宽与栏宽的比、矩形位置）与**文本节点**，
 // 不用「class 存在」（REVIEW.md 第 1 条）；负向断言都配正观测（REVIEW.md 第 2 条）。
@@ -22,8 +23,9 @@ const NOTE_SOURCE = "纯文本没有 live preview 装饰层：code 模式不该�
 const MARKER = ".cm-lp-end-marker";
 const MARKER_LINE = ".cm-lp-end-marker-line";
 const MARKER_TEXT = ".cm-lp-end-marker-text";
-/** deck D114 的可见文案（单一来源在 src/preview/endMarker.ts，此处按 deck 逐字再来一份）。 */
-const TEXT = "到底了";
+/** deck D114 的可见文案（单一来源在 src/preview/endMarker.ts，此处按 deck 逐字再来一份）。
+ *  M238 起是英文（Alex 2026-09-26 裁决），中英两列同形。 */
+const TEXT = "— End —";
 const TEXT_3 = "rgb(169, 167, 155)"; // --text-3（提示档：标记文字）
 const HAIRLINE = "rgb(237, 236, 231)"; // --border-soft（层次档发丝线）
 const ACCENT = "rgb(58, 95, 205)"; // --accent（新色板的链接色：标记 MUST NOT 使用）
@@ -186,7 +188,7 @@ test("判据不随滚动位置变化，滚动高度在所有滚动位置恒定",
   const middle = await readMarker(page);
   await scrollTo(page, "bottom");
   const bottom = await readMarker(page);
-  // 滚到底：标记进入视口（「到底了」在文档末尾这一次滚动里被看见）
+  // 滚到底：标记进入视口（「— End —」在文档末尾这一次滚动里被看见）
   const visibleAtBottom = await page.evaluate(() => {
     const el = document.querySelector(".cm-scroller") as HTMLElement;
     const rect = (document.querySelector(".cm-lp-end-marker") as HTMLElement).getBoundingClientRect();
@@ -261,12 +263,15 @@ test("code 模式没有标记；文末光标与全选都不影响显示", async 
   await open(page, NOTE);
   await expect(marker(page)).toHaveCount(0);
   await expect(page.locator(".cm-lineNumbers").first()).toBeVisible();
-  await expect(scroller(page)).not.toHaveClass(/cm-lp-end-marker-visible/);
 
-  // md 长文：标记在场，滚动容器带在场态 class；光标落在文档末尾、以及全选时标记照常显示（不从属显露口径）
+  // md 长文：标记在场（在场态由元素本身表达——M238 起滚动容器上不再有在场态 class，
+  // 行尺寸口径与标记在场无关，见下面那条不变量用例）；光标落在文档末尾、以及全选时
+  // 标记照常显示（不从属显露口径）。
   await open(page, "end-marker-long.md");
   await expect(marker(page)).toHaveCount(1);
-  await expect(scroller(page)).toHaveClass(/cm-lp-end-marker-visible/);
+  // 标记是 `.cm-scroller` 的直接子元素（应用 chrome，不是文档内容）——取代原来那条
+  // class 断言的位置，作用相同（钉住「挂在哪」），判据换成渲染树里的真实位置。
+  expect(await page.locator(".cm-scroller > .cm-lp-end-marker").count()).toBe(1);
   await page.locator(".cm-content").click();
   await page.keyboard.press("Meta+a");
   await expect(marker(page)).toHaveCount(1);
@@ -280,11 +285,9 @@ test("code 模式没有标记；文末光标与全选都不影响显示", async 
   await expect(marker(page)).toHaveCount(1);
   expect(await readDocument(page)).toBe(FIXTURES["end-marker-long.md"]);
 
-  // 切回 code 模式：装饰层被拆掉，元素与在场态 class 必须一起离场
-  //（漏掉 class 会让 code 模式的滚动容器继续吃 `grid-auto-rows: max-content`）
+  // 切回 code 模式：装饰层被拆掉，元素必须离场
   await open(page, NOTE);
   await expect(marker(page)).toHaveCount(0);
-  await expect(scroller(page)).not.toHaveClass(/cm-lp-end-marker-visible/);
 });
 
 test("非文档性：不被复制带出、不被文件内搜索命中、不进保存字节", async ({ page, context }) => {
@@ -367,4 +370,119 @@ test("backlog #31：标记字号跟随内容字号（基准 = --editor-font-size
   // 线段 `4em` 随同一基准缩放（「线宽反推标记基准」那条证据要的性质）
   expect(small.lineWidth).toBeCloseTo(4 * small.markerFontSize, 0);
   expect(big.lineWidth).toBeCloseTo(4 * big.markerFontSize, 0);
+});
+
+// ---------------------------------------------------------------------------
+// M238：标记恒贴在正文内容盒之下（不变量：正文行的尺寸口径与标记在场无关）
+//
+// 缺陷现场（Alex 2026-09-26 截图，蓝箭头）：标记显示在**正文中部**而不是末尾。机理两条，
+// 一条是几何耦合、一条是落地时机：
+//
+//   1. 几何耦合：正文行原先是 `minmax(0, 1fr)`，而标记在场时被改成 max-content——即**正文行
+//      的尺寸取决于标记在不在**。`.cm-content` 带 `min-height: 100%`（CM 基础主题），行被压到
+//      可用高度时 `.cm-content` 的隐式行贡献算成 0，正文溢出到行外；标记落在「被压过的行」之后
+//      就是正文中部。M189 实现期实测过同一形态（design.md §1.1.1：标记 y=652、正文内容盒到
+//      y=1228），当时的处置是「标记在场才改行尺寸」——它把耦合留在了原地。
+//   2. 落地时机：这个「改行尺寸」的 patch 原本在 CM 的测量周期里做（`MeasureRequest.write`），
+//      而 CM 的 `measure()` 循环在该相位之后还会走 `docView.scrollIntoView(...)` 与**新一轮
+//      测量**（@codemirror/view 6.43.11 的 `measure()` 尾段）——同步改布局等于让那一轮读到被
+//      自己改动过的几何。M238 的修法是两条一起：正文行改成 `minmax(max-content, 1fr)`（下界
+//      即正文自然高，行永不被压；上界 1fr 保住「点正文下方空白仍落在 .cm-content 内」），并把
+//      patch 推迟到测量周期之外（`src/preview/endMarker.ts` 的双帧落地）。
+//
+// 断言一律落几何读数（正文盒 / 子节点 / 标记矩形的相对关系），不读 class、不读 grid 声明
+//（REVIEW.md 第 1 条）。
+// ---------------------------------------------------------------------------
+
+/** 正文盒与它内部内容的相对关系 + 标记位置：判断「标记是否贴在正文内容盒之下」的一组读数。 */
+async function contiguity(page: Page) {
+  return page.evaluate(() => {
+    const content = document.querySelector(".cm-content") as HTMLElement;
+    const marker = document.querySelector(".cm-lp-end-marker") as HTMLElement | null;
+    const scroller = document.querySelector(".cm-scroller") as HTMLElement;
+    const box = content.getBoundingClientRect();
+    const deepest = [...content.querySelectorAll<HTMLElement>(".cm-line, .cm-gap")].reduce(
+      (max, el) => Math.max(max, el.getBoundingClientRect().bottom),
+      Number.NEGATIVE_INFINITY,
+    );
+    return {
+      contentBottom: box.bottom,
+      contentHeight: box.height,
+      deepestChildBottom: deepest,
+      markerTop: marker ? marker.getBoundingClientRect().top : null,
+      scrollTop: scroller.scrollTop,
+    };
+  });
+}
+
+test("M238：内容跨一屏判据的两个方向翻转后，标记都贴在正文内容盒之下", async ({ page }) => {
+  await stub(page);
+  await page.goto("/");
+  await open(page, "end-marker-long.md");
+  await expect(marker(page)).toHaveCount(1);
+
+  const natural = await naturalContentHeight(page);
+  const reads: Array<[string, Awaited<ReturnType<typeof contiguity>>]> = [];
+  const record = async (label: string): Promise<void> => {
+    reads.push([label, await contiguity(page)]);
+  };
+
+  await record("初始（长文，标记在场）");
+  await scrollTo(page, "bottom");
+  await record("滚到底");
+  await scrollTo(page, "middle");
+  await record("滚到中段");
+  // 压矮视口：内容仍超一屏（判据不变），标记必须原地不动
+  await setClientHeight(page, natural - 120);
+  await record("视口压矮");
+  // 放高到装得下：标记该离场（判据是重算型）——离场后正文盒仍要装得下自己的内容
+  await setClientHeight(page, natural + 200);
+  await expect(marker(page)).toHaveCount(0);
+  const detached = await contiguity(page);
+  expect(detached.deepestChildBottom).toBeLessThanOrEqual(detached.contentBottom + 1);
+  expect(detached.markerTop).toBeNull();
+  // 再压回装不下：标记经**推迟落地**那条路回来（这次附加是 M238 新增的双帧路径）
+  await setClientHeight(page, natural - 120);
+  await expect(marker(page)).toHaveCount(1);
+
+  for (const [label, read] of reads) {
+    expect(read.markerTop, `${label}：标记应在场`).not.toBeNull();
+    // 正文盒必须装得下它渲染出的内容：盒比内容矮就是「行被压过」的形态，标记会落在正文中部
+    expect(read.deepestChildBottom, `${label}：正文内容溢出盒外（行被压）`).toBeLessThanOrEqual(read.contentBottom + 1);
+    // 标记恒贴在正文内容盒之下（±1px 为亚像素取整），且不与正文重叠
+    expect(Math.abs((read.markerTop ?? 0) - read.contentBottom), `${label}：标记应贴在正文内容盒之下`).toBeLessThanOrEqual(1);
+  }
+
+  // 回来之后同样要贴住（这次是推迟落地路径的产物）
+  const restored = await contiguity(page);
+  expect(restored.markerTop).not.toBeNull();
+  expect(Math.abs((restored.markerTop ?? 0) - restored.contentBottom)).toBeLessThanOrEqual(1);
+});
+
+test("M238 回归探针：正文行的尺寸口径不得由滚动容器的 class 键控", async ({ page }) => {
+  await stub(page);
+  await page.goto("/");
+  await open(page, "end-marker-long.md");
+  await expect(marker(page)).toHaveCount(1);
+
+  const before = await contiguity(page);
+  expect(before.markerTop).not.toBeNull();
+  expect(Math.abs((before.markerTop ?? 0) - before.contentBottom)).toBeLessThanOrEqual(1);
+
+  // 探针：只清掉滚动容器上的**标记在场态 class**（M238 之前它是「正文行改 max-content」与
+  // 「标记排到第 3 行」两条规则的共同开关；本次修复把这个 class 连同那两条键控规则一起删掉了）。
+  // 修前这一步会让正文行掉回被压的 `minmax(0, 1fr)`、标记的 `gridRow: 3` 规则同时失效 →
+  // 标记落回正文那一行（首屏实测：markerTop ≈ 正文行顶，与 contentBottom 差约 1350px）——
+  // 这正是 Alex 截图里「标记在正文中部」的判据形态。修后没有任何规则读这个 class，标记必须纹丝不动。
+  // 保留这条探针的价值：将来谁再把行尺寸（或标记的行号）挂在某个 scroller class 上，这里会当场红。
+  await page.evaluate(() => {
+    document.querySelector(".cm-scroller")?.classList.remove("cm-lp-end-marker-visible");
+  });
+  await page.evaluate(
+    () => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))),
+  );
+  const after = await contiguity(page);
+  expect(after.contentHeight).toBeCloseTo(before.contentHeight, 0);
+  expect(after.markerTop).not.toBeNull();
+  expect(Math.abs((after.markerTop ?? 0) - after.contentBottom)).toBeLessThanOrEqual(1);
 });

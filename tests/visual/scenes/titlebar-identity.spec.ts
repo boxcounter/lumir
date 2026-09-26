@@ -19,7 +19,7 @@ import type { VaultFixture } from "./tauri-stub";
 /** 与桩侧 fixture 同值（桩模拟后端，场景断言前端渲染结果——两边各写一份是刻意的：
  *  场景断言的是「前端把后端给的值如实显示出来」，共享变量会让「桩变了场景跟着变」恒真）。 */
 const NAME = "Lumir";
-const VERSION = "0.0.0";
+const VERSION = "0.1.0";
 
 async function open(page: Page, vault: VaultFixture | null = DEMO_VAULT): Promise<void> {
   await stubTauri(page, vault);
@@ -110,10 +110,14 @@ test("窄窗退让（D2 备选）：<640px 版本号退 modeline 右段尾部，
   await expect(page.locator(".ti-sep")).toBeHidden();
   await expect(page.locator(".ti-name")).toBeVisible(); // 产品名留标题栏
   await expect(page.locator(".modeline-version")).toBeVisible();
-  // 逐字断言 textContent（含前导空格形态「 · 0.0.0」），不用 toHaveText 的空白归一化
+  // 逐字断言 textContent（含前导空格形态「 · 0.1.0」），不用 toHaveText 的空白归一化
   expect(await page.locator(".modeline-version").evaluate((el) => el.textContent)).toBe(` · ${VERSION}`);
-  // 拼接形态：modeline 右段整体读作「语法 · 行数 · UTF-8 · 版本号」
-  await expect(page.locator(".modeline-right")).toHaveText(/Markdown · \d+ 行 · UTF-8 · 0\.0\.0/);
+  // 拼接形态：modeline 右段整体读作「语法 · 行数 · UTF-8 · 版本号」。
+  // 版本号段按 `VERSION` 常量拼进正则（M238：这里原先是写死的 `0\.0\.0`，版本一 bump 就与
+  // 上面的常量分叉成两处真源——REVIEW.md 第 8 条；点号要转义，故用 replace 而不是模板里手写）。
+  await expect(page.locator(".modeline-right")).toHaveText(
+    new RegExp(`Markdown · \\d+ 行 · UTF-8 · ${VERSION.replaceAll(".", "\\.")}`),
+  );
   // 标题栏标识块仍钉右端（只有产品名一段）
   const box = (await page.locator(".titlebar-identity").boundingBox())!;
   expect(Math.abs(box.x + box.width - (520 - 12))).toBeLessThanOrEqual(1);

@@ -10,7 +10,10 @@
 #                            # 相对回归比较自动跳过，只 enforce 绝对阈值）
 #
 # 输出：每门禁一行 GATE PASS|FAIL|SKIP <名> <耗时>s；结尾 GATE RESULT: x/y PASS。
-# 任一 FAIL 退出码 1；FAIL 的完整日志路径印在该行末尾。
+# 任一 FAIL 退出码 1；每一行（PASS 与 FAIL）都印出该门禁的完整日志路径。
+# PASS 也留日志（backlog #34 的 2026-09-26 Alex 裁决）：只有一行 GATE PASS 时看不到用例数
+# 与逐用例读数，复盘要用「34 张逐张比对通过」这类可 grep 的证据就得重跑一次。日志落在系统
+# 临时目录（mktemp -t，`$TMPDIR` 下），按门禁名命名，不随本次运行删除；FAIL 额外回显末 30 行。
 set -uo pipefail
 cd "$(dirname "$0")/.."
 
@@ -39,8 +42,7 @@ run_gate() {
   local log
   log=$(mktemp -t "lumir-gate-${name}")
   if "$@" >"$log" 2>&1; then
-    echo "GATE PASS ${name} $((SECONDS - start))s"
-    rm -f "$log"
+    echo "GATE PASS ${name} $((SECONDS - start))s — 完整日志：$log"
     pass=$((pass + 1))
   else
     echo "GATE FAIL ${name} $((SECONDS - start))s — 完整日志：$log"

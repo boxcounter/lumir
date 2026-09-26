@@ -40,5 +40,8 @@ test("可用视口高度为零时一律不显示（未布局 / 被覆盖层盖�
 
 test("标记的文案与 deck D114 逐字一致（deck 是可见文案的唯一真源）", () => {
   assert.equal(END_MARKER_TEXT, deckRow("D114").zh);
-  assert.equal(deckRow("D114").en, "That's all");
+  // 中英两列同形是**有意的**（M238，Alex 2026-09-26 裁决）：原中文串「到底了」换成
+  // 自然地道的英文「— End —」后，标记不再分语言——deck 两列都写这一串，而不是给中文列
+  // 留一个无人消费的旧值（REVIEW.md 第 9 条：声明必须有人消费）。
+  assert.equal(deckRow("D114").en, END_MARKER_TEXT);
 });

@@ -92,9 +92,9 @@ steps:
 ## 已知边界
 
 - **AX 树里标识块的粒度（真机实测，2026-09-26）**：WKWebView 把标题栏的
-  `ti-name / ti-sep / ti-version` 三段**合并成一个静态文本节点**（宽窗 dump：`AXStaticText = "Lumir 0.0.0"`；
+  `ti-name / ti-sep / ti-version` 三段**合并成一个静态文本节点**（宽窗 dump：`AXStaticText = "Lumir 0.1.0"`；
   分隔符「·」标了 `aria-hidden` 不出现，三段之间只剩一个空格）。modeline 侧同理：路径、meta、
-  版本号被并成一个节点（窄窗 dump：`AXStaticText = "identity.md Markdown · 8 行 · UTF-8 · 0.0.0"`）。
+  版本号被并成一个节点（窄窗 dump：`AXStaticText = "identity.md Markdown · 8 行 · UTF-8 · 0.1.0"`）。
   因此「版本号在标题栏还是 modeline」只能靠两条互补判据定位：`has "/UTF-8 · $appVersion/"`
   （该串只可能由 modeline 右段产生）与 `has "/$appName[^\n]{0,4}$appVersion/"`
   （两者相邻 = 合体在标题栏）——两条在宽 / 窄窗下取值相反，互为反向输入。
