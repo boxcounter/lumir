@@ -1157,6 +1157,100 @@ mod tests {
         assert_eq!(before, paths.len(), "batch: {batch:?}");
     }
 
+    /// backlog 32 / finding `20260925-worker-fix-closeout-bug-watch` 的后端回归锚点：外部在
+    /// vault 里新建目录（连同其中文件）**必须**由 watch 增量带出——不是「等重启全量重扫」。
+    ///
+    /// 与真机验收 harness 的 `vaultWrite` 同形（`mkdirp(dirname)` 后写文件），也覆盖 seed 行为：
+    /// 播种集来自写入前的全量枚举，**不得**把随后的新目录吞成 Modified（它不在播种集里 → Created）。
+    #[test]
+    fn watch_delivers_external_new_dir_with_nested_file() {
+        let v = TempVault::with_fixture();
+        // FSEvents 流起点对齐：先静置，避免 fixture 的 Create 混进断言用的批次（同既有两个 watch 测试）
+        std::thread::sleep(Duration::from_millis(700));
+        let (tx, rx) = mpsc::channel::<Vec<FsChange>>();
+        let watcher = watch(&v.0, move |batch| {
+            tx.send(batch).expect("send batch");
+        })
+        .expect("watch");
+        // 与 open_vault 同序：watch 后枚举播种（此刻 restyle-dir 还不存在）
+        let entries = scan_workspace(&v.0).expect("scan");
+        watcher.seed(entries.iter().map(|e| e.path.clone()));
+
+        std::thread::sleep(Duration::from_millis(500));
+        std::fs::create_dir(v.0.join("restyle-dir")).unwrap();
+        std::fs::write(v.0.join("restyle-dir/note-in-dir.md"), "# x\n").unwrap();
+
+        let batch = rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("batch within 5s");
+        let has =
+            |kind: FsChangeKind, path: &str| batch.iter().any(|c| c.kind == kind && c.path == path);
+        assert!(
+            has(FsChangeKind::Created, "restyle-dir"),
+            "外部新建目录必须进增量，batch: {batch:?}"
+        );
+        assert!(
+            has(FsChangeKind::Created, "restyle-dir/note-in-dir.md"),
+            "目录内新建文件必须进增量，batch: {batch:?}"
+        );
+        // entry_kind 由 flush 时的 metadata 填充：前端据此把新节点建成目录（可展开）而不是文件
+        let dir_entry = batch.iter().find(|c| c.path == "restyle-dir").unwrap();
+        assert_eq!(dir_entry.entry_kind, Some(FsEntryKind::Dir));
+        let file_entry = batch
+            .iter()
+            .find(|c| c.path == "restyle-dir/note-in-dir.md")
+            .unwrap();
+        assert_eq!(file_entry.entry_kind, Some(FsEntryKind::File));
+    }
+
+    /// `refine_with_known` 的三条口径（seed 行为）逐条钉住——外部新建目录那条 finding 若再被
+    /// 怀疑，先看这里：播种集只影响**已在集内**的路径（重放的 Create 修正为 Modified），
+    /// 新目录仍是 Created，消失的路径一律 Deleted。
+    #[test]
+    fn refine_with_known_keeps_new_dir_created_and_normalizes_seeded_replay() {
+        let v = TempVault::new();
+        std::fs::create_dir_all(v.0.join("seeded-dir")).unwrap();
+        std::fs::create_dir_all(v.0.join("brand-new-dir")).unwrap();
+        let mut known: std::collections::HashSet<String> =
+            ["seeded-dir".to_string()].into_iter().collect();
+        let mut changes = vec![
+            // 播种过的路径被 FSEvents 重放为 Create → 修正为 Modified（不得当成新建）
+            FsChange {
+                kind: FsChangeKind::Created,
+                path: "seeded-dir".into(),
+                entry_kind: None,
+            },
+            // 不在播种集里的新目录 → 保持 Created，且 entry_kind 填成 dir
+            FsChange {
+                kind: FsChangeKind::Created,
+                path: "brand-new-dir".into(),
+                entry_kind: None,
+            },
+            // 路径已不存在 → 一律 Deleted（无论事件说它是什么）
+            FsChange {
+                kind: FsChangeKind::Modified,
+                path: "gone-dir".into(),
+                entry_kind: None,
+            },
+        ];
+        refine_with_known(&v.0, &mut known, &mut changes);
+        assert_eq!(
+            changes[0].kind,
+            FsChangeKind::Modified,
+            "播种过的路径是重放"
+        );
+        assert_eq!(changes[0].entry_kind, Some(FsEntryKind::Dir));
+        assert_eq!(
+            changes[1].kind,
+            FsChangeKind::Created,
+            "新目录不得被播种集吞掉"
+        );
+        assert_eq!(changes[1].entry_kind, Some(FsEntryKind::Dir));
+        assert_eq!(changes[2].kind, FsChangeKind::Deleted);
+        assert_eq!(changes[2].entry_kind, None, "deleted 一律不带 entry_kind");
+        assert!(known.contains("brand-new-dir"), "新目录应进已知集");
+    }
+
     #[test]
     fn document_save_checks_revision_and_replaces_atomically() {
         let v = TempVault::with_fixture();
