@@ -300,13 +300,14 @@ const typescriptParser: Parser = javascriptParser.configure({ dialect: "ts" });
  * - T1 符号大纲 8 门：javascript / typescript（@lezer/javascript，ts 走 dialect）、python、rust、go、
  *   java 各有官方语法；c / cpp 共用 @lezer/cpp（c 是其子集）。
  * - T2 结构大纲 2 门：css（@lezer/css）、scss（@lezer/sass）——条目是规则集，不是符号。
- * - T3 不支持 11 门，逐门理由：
+ * - T3 不支持 14 门，逐门理由：
  *   ruby / swift / kotlin / lua —— 只有社区单维护者包（判据 1 排除；lua 的另一候选还依赖已废弃的
  *   `lezer` 包）；shell —— 社区包 @fig/lezer-bash 停更 2 年+ 且在普通 bash 上产出 11 个 error 节点
  *   （判据 1 + 2 都不过）；toml —— 社区包 4 年未更新；sql —— 官方包但语法不产出声明节点（判据 2）；
  *   yaml —— 官方语法有位置缺陷（判据 2；复现读数见 test-results/m197/yaml-defect.txt）；json / html /
  *   xml —— 语法可用，但「条目文本口径」尚未裁定（键与元素名重复度太高，列表里分不出目标）——那是产品
- *   决定，本 change 不替它做，也不做半套。
+ *   决定，本 change 不替它做，也不做半套；jsonc / gitignore / gitattributes（dotfile-jsonc-highlight）
+ *   —— 无结构解析需求，行级语法也没有「条目」概念（与 json 同档）。
  * 另：php 不在 CodeLanguage 里（注册表标 null → 纯文本），因此本表无需为它留位；把 php 接上属于
  * 「扩语言覆盖」，另立 change（proposal 裁决点 5）。
  */
@@ -326,6 +327,9 @@ export const STRUCTURE_SUPPORT: Record<CodeLanguage, StructureSupport | null> = 
   toml: null,
   yaml: null,
   json: null,
+  jsonc: null,
+  gitignore: null,
+  gitattributes: null,
   html: null,
   xml: null,
   swift: null,

@@ -28,7 +28,7 @@ import { cellClamp, cellContentEdge } from "./cell-geometry";
 import type { CellClamp } from "./cell-geometry";
 import { listIndentChange } from "./list-indent";
 import type { ListIndentDirection } from "./list-indent";
-import { createInvokeAttachmentProvider, codeLanguage, extensionOf, fileClass, isEditablePath } from "./preview/attachments";
+import { createInvokeAttachmentProvider, codeLanguageOfPath, fileClassOfPath, isEditablePath } from "./preview/attachments";
 import type { AttachmentProvider } from "./preview/attachments";
 import { bindingHighlight } from "./code-identifiers";
 import { LANGUAGES, TOKEN_GROUPS } from "./preview/code";
@@ -899,7 +899,7 @@ export interface EditorSession {
   mode: EditorMode;
   /**
    * 该会话是否可编辑（editable-non-md-files，裁决 D1「注册表全量文本类」）。取值 = 无文件
-   * 上下文（空态 / 新建）或 `fileClass(extensionOf(path)) ∈ {md, code, text}`——判据只有
+   * 上下文（空态 / 新建）或 `isEditablePath(path)`——判据只有
    * `attachments.ts` 的 `isEditablePath` 一处（REVIEW.md 第 8 条）。同 `mode` 一样是**逐会话**
    * 的：`modeExtensions` 按它装视图层 editability（`editable` / `readOnly` / `aria-readonly`），
    * dispatch 层的 `changeFilter` 按它的实例级投影放行，保存链路的 `saveBaseline` 也读它
@@ -1053,10 +1053,11 @@ export interface EditorHandle {
 // 的 CODE_EXTENSIONS）的职责；语言名 → CM6 Language 的表由 preview/code.ts 单一持有
 // （LANGUAGES 同时供 markdown 围栏代码块使用，编译期合同见其注释）。
 
-/** code 模式按扩展名取语言包；无扩展名线索或该扩展无语言包返回 null（纯文本，不着色）。 */
+/** code 模式按路径取语言包（经注册表：文件名约定优先于扩展名）；无语言线索或该文件
+ *  无语言包返回 null（纯文本，不着色）。 */
 function codeLanguageFor(path: string | undefined): Language | null {
   if (path === undefined) return null;
-  const name = codeLanguage(extensionOf(path));
+  const name = codeLanguageOfPath(path);
   return name === null ? null : LANGUAGES[name];
 }
 
@@ -1099,7 +1100,7 @@ const codeHighlight = syntaxHighlighting(
  *  `editor.mode` 漂移）。 */
 function modeForPath(path: string | undefined, fallback: EditorMode): EditorMode {
   if (path === undefined) return fallback;
-  return fileClass(extensionOf(path)) === "md" ? "md" : "code";
+  return fileClassOfPath(path) === "md" ? "md" : "code";
 }
 
 /**
@@ -1329,7 +1330,7 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
           // 双击标识符高亮同一变量（M198）：只装进 code 分支，且只有 T1 的 8 门语言有落点
           //（判定在 code-identifiers 的 supportsVariableBinding，语言分层的单一来源是
           // code-structure 的 STRUCTURE_SUPPORT）。md 分支零改动——本能力不做 md 模式。
-          const binding = bindingHighlight(path === undefined ? null : codeLanguage(extensionOf(path)));
+          const binding = bindingHighlight(path === undefined ? null : codeLanguageOfPath(path));
           return language ? [language, codeHighlight, binding] : [codeHighlight, binding];
         })();
     // CM6 的基础层必须继承 shell 的排版基线配色（ADR 0006，单一基线）；live

@@ -58,7 +58,7 @@ import type { FsEntry } from "./bindings/FsEntry";
 import type { UiTheme } from "./bindings/UiTheme";
 import type { VaultInfo } from "./bindings/VaultInfo";
 import type { VaultListEntry } from "./bindings/VaultListEntry";
-import { codeLanguage, extensionOf, isEditablePath, mimeTypeOf, resolveByNameUnique } from "./preview/attachments";
+import { extensionOf, codeLanguageOfPath, isEditablePath, mimeTypeOf, resolveByNameUnique } from "./preview/attachments";
 import { openSearch } from "./search";
 import "./style.css";
 // 搜索 panel 的样式单列一个文件（M139）：与并行 mission 的 src/style.css 隔离，
@@ -251,7 +251,7 @@ const toc = createToc({
     const session = editor.activeSession();
     return {
       mode: session.mode,
-      language: session.path === undefined ? null : codeLanguage(extensionOf(session.path)),
+      language: session.path === undefined ? null : codeLanguageOfPath(session.path),
     };
   },
   toast,
@@ -737,7 +737,7 @@ function syncDirtyIndicator(): void {
  *    （`TextNode` 在构造时累加子节点的 lines、`TextLeaf` 恒为 1，见 @codemirror/state 的
  *    Text 实现），读它是 O(1)，**不引入全文档遍历**——ADR 0002 §6 对键入路径的约束因此
  *    不被这条新展示位破坏。
- *  - 语法名从扩展名注册表取（`codeLanguage`，与文件树 / 大纲同一份注册表，不另立映射表）：
+ *  - 语法名从分类注册表取（`codeLanguageOfPath`，与文件树 / 大纲同一份注册表，不另立映射表）：
  *    md 模式不是注册表条目，固定写 "Markdown"；code 模式无语言线索（php / 未知扩展 /
  *    无扩展）时报 "Plain text"。
  *  - 编码恒为 "UTF-8"：读取链路的契约就是 Rust `String`（fs_read_snapshot 的
@@ -749,7 +749,7 @@ function syncModelineMeta(): void {
   const lines = editor.view.state.doc.lines;
   const language = session.mode === "md"
     ? "Markdown"
-    : codeLanguage(extensionOf(session.path ?? "")) ?? "Plain text";
+    : codeLanguageOfPath(session.path ?? "") ?? "Plain text";
   const text = `${language} · ${lines} 行 · UTF-8`;
   if (shell.modelineMeta.textContent !== text) shell.modelineMeta.textContent = text;
 }
