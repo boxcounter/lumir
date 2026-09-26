@@ -30,9 +30,9 @@
 | 键 | 类型 | 默认 | 取值范围 | 生效时机 | 真源 |
 |---|---|---|---|---|---|
 | `editor.mode` | string 枚举 | `"md"` | `"md"` \| `"code"` | 启动装载读一次；只对**没有文件上下文**的文档（空态 / 新建）生效——打开文件一律按扩展名裁决 | `config.rs:101` |
-| `editor.line_wrap` | boolean | `true` | `true` / `false` | 启动装载读一次（改配置需重启）；运行期由 `view.toggle-line-wrap` 瞬态翻转，**不回写** | `config.rs:108` |
-| `editor.code_block_wrap` | boolean | `false` | `true` / `false` | 同上 | `config.rs:112` |
-| `editor.code_mode_line_wrap` | boolean | `false` | `true` / `false` | 同上（M247 新增） | `config.rs:124` |
+| `editor.line_wrap` | boolean | `true` | `true` / `false` | 启动装载读一次（改配置需重启）；运行期由 `view.toggle-line-wrap`（前台是 md 会话时）瞬态翻转，**不回写** | `config.rs:108` |
+| `editor.code_block_wrap` | boolean | `false` | `true` / `false` | 启动装载读一次（改配置需重启）；运行期由 `view.toggle-code-block-wrap` 瞬态翻转，**不回写** | `config.rs:112` |
+| `editor.code_mode_line_wrap` | boolean | `false` | `true` / `false` | 启动装载读一次（改配置需重启）；运行期由 `view.toggle-line-wrap`（前台是 code 会话时）瞬态翻转，**不回写**（M247 新增） | `config.rs:124` |
 | `editor.font_family` | string \| null | `null`（沿用基线 `--font-sans`） | 任意 CSS `font-family` 值；**空串 / 纯空白**判为笔误 → 回落 `null` + warning | 启动装载读一次（本能力不做热重载，改字体需重启） | `config.rs:132` |
 | `editor.mono_font_family` | string \| null | `null`（沿用基线 `--font-mono`） | 同 `font_family` | 同上 | `config.rs:135` |
 | `editor.font_size` | number | `15` | 闭区间 `[12, 32]`，区间外回落 `15` + warning | 启动装载读一次；运行期由三条 `view.text-scale-*` 命令步进，**不回写** | `config.rs:143`、`:170-175` |
@@ -47,7 +47,12 @@
 
 出厂口径是「**md 折 / code 不折**」的**分叉**：`line_wrap` 默认 `true`、`code_mode_line_wrap` 默认
 `false`。本键**不跟随** `line_wrap`——缺省值即上表的出厂 `false`，显式写 `true` 则把 code 模式也折起来。
-两键互不改写：`line_wrap` 对 code 模式无可观测效果、`code_mode_line_wrap` 对 md 无可观测效果（不是漏实现）。
+两个模式的折行键互不改写：`line_wrap` 对 code 模式无可观测效果、`code_mode_line_wrap` 对 md 无可观测
+效果（不是漏实现）。
+
+`view.toggle-line-wrap` 翻的是**前台会话模式**对应的那一轴（md 会话 → `line_wrap`，code 会话 →
+`code_mode_line_wrap`）：两个模式的正文行各有自己的键，命令按你眼前那个折行来翻。它只改运行期显示
+口径，不改本文件的任何键。
 
 字号的两项字体族只挡「空串 / 纯空白」，**值的 CSS 合法性由前端判定**（`CSS.supports`）——Rust 侧不复制
 一份 CSS 语法知识，与 `keys` 表「形状在 Rust、语义在前端」的分层同口径。
