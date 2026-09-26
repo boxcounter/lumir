@@ -2,7 +2,7 @@
 id: "43-list-tab-indent"
 item: 43
 title: 列表项 TAB / SHIFT+TAB：缩进的源码写回（有序列表按新归属重排编号）、到顶与非列表无操作、一次撤销还原
-fixtures: [list-indent-bullet.md, list-indent-ordered.md, list-indent-quote.md, list-indent-paragraph.md, code-outline.js]
+fixtures: [list-indent-bullet.md, list-indent-ordered.md, list-indent-quote.md, list-indent-nested.md, list-indent-paragraph.md, code-outline.js]
 open: list-indent-bullet.md
 marker: "alpha"
 steps:
@@ -214,6 +214,42 @@ steps:
       - label: 焦点仍在编辑器里
         ax: { focused: "AXTextArea" }
 
+  - name: 换文件：嵌套列表（`- alpha` / `  - bravo` / `  - charlie`）
+    do: open
+    file: list-indent-nested.md
+    marker: "charlie"
+    expect:
+      - label: 新文件已装载
+        editor: { has: "charlie" }
+
+  - name: 建立编辑器焦点
+    do: clickEditor
+    expect:
+      - label: 焦点在编辑器正文里
+        ax: { focused: "AXTextArea" }
+
+  - name: 移到第 3 行（`  - charlie`）到行尾并键入见证字符
+    do: keys
+    keys: ["ctrl+n", "ctrl+n", "ctrl+e", "q"]
+    expect:
+      - label: q 落在 charlie 这一行 ⇒ 落点已钉住
+        editor: { has: "charlieq" }
+
+  - name: 按 TAB：嵌套项再缩一层（步长 = 上一同级项 bravo 的内容列 4 − 本项 marker 列 2 = 2）
+    do: key
+    key: "tab"
+  - name: 等自动保存落盘
+    do: sleep
+    ms: 2600
+    expect:
+      - label: 源文件里 charlie 变成 4 空格缩进（`    - charlieq`）
+        file: { path: list-indent-nested.md, has: "/^    - charlieq$/" }
+      - label: 反向：原来的那一行不再存在
+        file: { path: list-indent-nested.md, not: "/^  - charlieq$/" }
+      - label: 只动归属项：前面的兄弟项 bravo 逐字节未动
+        file: { path: list-indent-nested.md, has: "/^  - bravo$/" }
+      - shot: 嵌套项-再缩一层
+
   - name: 换文件：非 md 的 code 会话（只读）
     do: open
     file: code-outline.js
@@ -258,6 +294,8 @@ teardown:
     file: { path: list-indent-ordered.md, has: "/^   1\\. dosq$/" }
   - label: 收尾：引用内列表停在 `>   - foxtrotq`
     file: { path: list-indent-quote.md, has: "/^>   - foxtrotq$/" }
+  - label: 收尾：嵌套列表里 charlie 停在再缩一层的形态
+    file: { path: list-indent-nested.md, has: "/^    - charlieq$/" }
   - label: 收尾：普通段落文件从未被写过（仍是基线内容）
     file: { path: list-indent-paragraph.md, has: "/^这一行是普通段落。$/" }
 ---
@@ -275,9 +313,11 @@ WKWebView 上走一遍**行为链**：按键 → 键位层分发 → 语法树�
    （固定 2 空格在有序列表上**嵌不进去**，实测见 change 的 design §3），且源码编号按新归属重排为
    新分组的第 1 项；原分组第一项 `1. uno` 逐字节不动。
 4. **引用内列表**：`> - foxtrot` 按 TAB 变 `>   - foxtrotq`（2 空格加在最内层 `>` 之后）。
-5. **无操作三形态**：列表第一项 TAB（没有可嵌套的父项）、顶层项 SHIFT+TAB（D3a）、非列表行
+5. **嵌套列表再缩一层**：`  - charlie`（与 bravo 同层）按 TAB 变 `    - charlieq`，兄弟项 bravo
+   逐字节不动（只动归属项那一支）。
+6. **无操作三形态**：列表第一项 TAB（没有可嵌套的父项）、顶层项 SHIFT+TAB（D3a）、非列表行
    TAB/SHIFT+TAB（D4a）——三种情形下文档 sha256 与 mtime 都不动、dirty 不亮、焦点不跳出编辑器。
-6. **只读模式**：非 md 的 code 会话里 TAB / SHIFT+TAB 不动文件（readOnly 提前返回 + changeFilter）。
+7. **只读模式**：非 md 的 code 会话里 TAB / SHIFT+TAB 不动文件（readOnly 提前返回 + changeFilter）。
 
 ## 判据走哪几条通道（可读性如实登记）
 
@@ -306,7 +346,7 @@ WKWebView 上走一遍**行为链**：按键 → 键位层分发 → 语法树�
   先查落点；④ `focused` 那条红 ⇒ 焦点没在编辑器里，先看 `clickEditor` 是否生效。
 - **不做手感判定**：缩进的观感（列表标记与悬挂缩进的跟随）归 Alex，本场景只留截图证据。
 - **不覆盖**：① 选区随 change mapping 的平移（AX 读不到选区）；② `[keys]` 重绑这两条命令
-  （既有键位层机制，归键位面板场景 09b）；③ 多行项（续行 + 子树）的整块平移在真机上只由
+  （既有键位层机制，归键位面板场景 09b）；③ 多行项（**续行** + 子树）的整块平移在真机上只由
   `^- alpha$` / `^1\. uno$` / `^> - echo$` 这些邻居行的逐字节断言间接覆盖——整块平移由
   `tests/unit/list-indent.test.ts` 的多行用例钉死；④ 见证字符 `q` 会留在 fixture 里
   （验收 vault 每次运行都从 fixtures/ 重置，且本场景的收尾断言按含 `q` 的形态写）。
