@@ -118,6 +118,18 @@ test("KEY_BINDINGS：⌘1–9 与 TAB_GOTO_IDS 按序号逐一对应，标签族
   assert.equal(KEY_BINDINGS.find((item) => item.key === "Cmd-w")?.command, "tab.close");
   assert.equal(KEY_BINDINGS.find((item) => item.key === "Ctrl-Tab")?.command, "tab.next");
   assert.equal(KEY_BINDINGS.find((item) => item.key === "Ctrl-Shift-Tab")?.command, "tab.prev");
+  // M242：⌘} / ⌘{ 两条默认绑定。定点断言按 token 相等写（不用 item.key 字面量）——防的正是
+  // 「token 形态写错成 Cmd-Shift-[ / Cmd-Shift-]」这类永不命中的静默失配（见下方专测）。
+  assert.equal(
+    KEY_BINDINGS.find((item) => normalizeKey(item.key) === "Cmd-}")?.command,
+    "tab.next",
+    "⌘} 应绑定 tab.next（与 ⌃⇥ 同命令）",
+  );
+  assert.equal(
+    KEY_BINDINGS.find((item) => normalizeKey(item.key) === "Cmd-{")?.command,
+    "tab.prev",
+    "⌘{ 应绑定 tab.prev（与 ⌃⇧⇥ 同命令）",
+  );
   // widget 焦点键都在表里，且都带 when 条件（否则会吞掉文本编辑里的同名键）
   for (const command of WIDGET_COMMAND_IDS) {
     const binding = KEY_BINDINGS.find((item) => item.command === command);
@@ -125,6 +137,49 @@ test("KEY_BINDINGS：⌘1–9 与 TAB_GOTO_IDS 按序号逐一对应，标签族
     assert.equal(binding.scope, "editor");
     assert.ok(binding.when !== undefined, `${command} 缺少 when 命中条件`);
   }
+});
+
+// M242（change tab-cycle-keys）：⌘} / ⌘{ 的 token 形态是本 change 最大的静默失配风险——写
+// `Cmd-Shift-]` / `Cmd-Shift-[` 不报错、只是永远不命中。仿 M195 的减号 / 加号专测写反向断言：
+// 真机事件 token MUST 等于表内写法，且与错误形态 MUST 不等（改了 keyToken 或写错表都会立刻红）。
+test("⌘} / ⌘{ 的 token 形态：真机事件与表内写法同 token，写 Cmd-Shift-[ 永不命中", () => {
+  // 真机 ⌘⇧] / ⌘⇧[：US 布局上必须按 Shift，WKWebView 给的是 Shift 后的字符 + shiftKey。
+  const nextEvent = { key: "}", code: "BracketRight", metaKey: true, ctrlKey: false, altKey: false, shiftKey: true };
+  const prevEvent = { key: "{", code: "BracketLeft", metaKey: true, ctrlKey: false, altKey: false, shiftKey: true };
+  assert.equal(keyToken(nextEvent), "Cmd-}", "⌘} 的事件 token 是 `Cmd-}`（Shift 隐含在字符里）");
+  assert.equal(keyToken(prevEvent), "Cmd-{", "⌘{ 的事件 token 是 `Cmd-{`");
+  // 反向断言（REVIEW.md 第 1 条）：错误形态与真机 token **必须不等**，否则这条判据没有区分度。
+  assert.notEqual(keyToken(nextEvent), "Cmd-Shift-]", "写 `Cmd-Shift-]` 的绑定永远不命中");
+  assert.notEqual(keyToken(prevEvent), "Cmd-Shift-[", "写 `Cmd-Shift-[` 的绑定永远不命中");
+  // 合成事件（Playwright 的 Meta+Shift+BracketRight 给 key=\"]\" + shiftKey）归一成另一形态，
+  // 那张形态**不在表内**——与 M195 的 ⌘⇧= 同款机制差异，写进注释而不是放宽断言掩盖。
+  assert.equal(keyToken({ ...nextEvent, key: "]" }), "Cmd-Shift-]");
+  assert.equal(keyToken({ ...prevEvent, key: "[" }), "Cmd-Shift-[");
+  assert.equal(KEY_BINDINGS.find((item) => normalizeKey(item.key) === "Cmd-Shift-]"), undefined);
+  assert.equal(KEY_BINDINGS.find((item) => normalizeKey(item.key) === "Cmd-Shift-["), undefined);
+  // 两条绑定与 ⌃⇥ / ⌃⇧⇥ 指向同一命令（零新命令 id）：命令层实现是同一个，行为不可能分叉。
+  assert.equal(KEY_BINDINGS.find((item) => normalizeKey(item.key) === "Cmd-}")?.command, "tab.next");
+  assert.equal(KEY_BINDINGS.find((item) => normalizeKey(item.key) === "Cmd-{")?.command, "tab.prev");
+  for (const key of ["Cmd-}", "Cmd-{"]) {
+    const binding = KEY_BINDINGS.find((item) => normalizeKey(item.key) === key);
+    assert.equal(binding?.scope, "global", `${key} 的作用域应为 global（切标签是窗口级动作）`);
+    assert.ok((binding?.doc.length ?? 0) > 0, `${key} 的绑定必须带来由说明（表即文档）`);
+    // 方向映射的惯例依据与三条来源的冲突核对结论写进 doc（表即文档的口径）
+    assert.ok(binding?.doc.includes("WebKit"), `${key} 的 doc 应写明方向映射的 macOS / WebKit 惯例依据`);
+    assert.ok(binding?.doc.includes("muda") || binding?.doc.includes("原生菜单"));
+  }
+});
+
+test("⌘} / ⌘{ 可由 [keys] 重绑 / 解绑（默认键位单段无空白）", () => {
+  for (const key of ["Cmd-}", "Cmd-{"]) {
+    assert.ok(!/\s/.test(key), `${key} 含空白会让用户无法重绑（chord 本版不支持）`);
+  }
+  const rebound = applyKeyOverrides({ "Cmd-}": "tab.prev" });
+  assert.deepEqual(rebound.warnings, []);
+  assert.equal(rebound.bindings.find((item) => normalizeKey(item.key) === "Cmd-}")?.command, "tab.prev");
+  const unbound = applyKeyOverrides({ "Cmd-{": null });
+  assert.deepEqual(unbound.warnings, []);
+  assert.equal(unbound.bindings.find((item) => normalizeKey(item.key) === "Cmd-{"), undefined);
 });
 
 test("Keymap：同一序列绑两次是表写错了，构造即抛错", () => {

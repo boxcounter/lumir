@@ -87,6 +87,16 @@
 // `Tab` 是多字符键名；且 scope editor 的命令在 contentDOM 之外不命中——焦点在浮层 / 搜索框的
 // 原生输入框里时，Tab 照旧走原生焦点遍历（本层不 consume、不 preventDefault）。
 //
+// M242：表新增两条**有默认绑定**的全局标签命令（`⌘}` → `tab.next`、`⌘{` → `tab.prev`，change
+// tab-cycle-keys 的 D1/D2/D3 裁决）。零新命令 id——与 M149 的 `tab.next` / `tab.prev` 逐字同语义，
+// 只是给每条命令再接一条键（同命令两条绑定是表内既有形态：撤销有 `Ctrl-/` 与 `Ctrl-_`、字号放大
+// 有 `Cmd-=` 与 `Cmd-+`）。语义边界一字不动：首 / 尾环绕、少于 2 个标签无操作（`cycleTab` 既有
+// 行为，`src/tabs.ts`）。`⌘}` / `⌘{` 物理上是 `⇧⌘]` / `⇧⌘[`（US 布局上这两个字符必须按 Shift），
+// 方向映射取 macOS 惯例（WebKit 快捷键文档的 Show next/previous tab = `⇧⌘}` / `⇧⌘{`）；
+// 键位占用按三条独立来源核实（见下方「零冲突核对」段的 M242 追加条）。token 形态是本 change
+// 最大的静默失配风险（写 `Cmd-Shift-]` 永不命中），与 M195 的 `Cmd-+` 同一机制，写在两条绑定的
+// doc 里防回潮。
+//
 // 零冲突核对（注册前实测，三条独立来源，逐条可复核）：
 //   - **表内**：本文件即真源，现表无 ⌘W / ⌘数字 / ⌃⇥ 系绑定（⌘W 系为空，⌘ 数字无，⌃Tab 无）。
 //   - **原生菜单 accelerator**：tauri 2.11.5 的 `Menu::default()` 逐项来自 muda 0.19.3
@@ -99,6 +109,16 @@
 //   - **系统级**：macOS 的窗口循环键是 ⌘`（不是 ⌃⇥）；AppKit 不预置 ⌃⇥ / ⌃⇧⇥。
 // ⌘W 的语义从「关窗」改为「关当前标签」是 mission 裁决（tower 2026-09-17）：单窗口应用里
 // 「关窗≈关应用」，而关标签是更高频动作；退出仍走 ⌘Q（有 dirty 守卫）与红灯按钮。
+//
+// M242 追加核对（同三条来源，逐键留痕，`⌘}` → tab.next / `⌘{` → tab.prev）：
+//   - **表内**：本文件即真源，现表无 `⌘}` / `⌘{` token（实测 grep 零命中）；`⌃⇥` / `⌃⇧⇥` 归一化后
+//     是不同 token，两对键互不干扰。
+//   - **原生菜单 accelerator**：`⇧⌘]` / `⇧⌘[` 不在上面的 muda predefined 清单里，也没有被任何
+//     自建菜单项占用（自建项里唯一带 accelerator 的是 `CmdOrCtrl+Q`，`src-tauri/src/lib.rs`）。
+//     菜单键等价只截获带 accelerator 的项（M149 对 ⌘W 的实证），所以这两个键会到达 webview 的 keydown。
+//   - **系统级**：macOS 不给系统菜单预置 `⇧⌘]` / `⇧⌘[`（窗口循环键是 ⌘`；AppKit 的
+//     「Show next/previous tab」预置是 ⌃⇥ 系）。Safari / Firefox 自身把这对键用作标签循环
+//     （WebKit 官方快捷键文档），本 change 正是把这个惯例接进应用内，不构成对系统键的抢占。
 //
 // 平台口径（M131 评审 r1 F1 如实记录）：迁移后**表内绑定一律全平台无条件生效**，不再有
 // 平台门。两处与迁移前不同，均只在非 macOS 平台可观测：
@@ -456,10 +476,12 @@ export const KEY_BINDINGS: readonly KeyBinding[] = [
   // 会被配置层拒绝，把默认键位押在 chord 上等于让用户改不了键）。
   { key: "Cmd-Shift-T", command: "view.theme-cycle", scope: "global", doc: "主题按 light → dark → eink 循环切到下一档（M237，D1/D2 裁决），切换即写回配置 `[ui] theme`（写失败降级为 toast，运行期主题不回滚）。取 global——焦点在左栏 / 搜索框 / 浮层里时同样要能切。冲突已核（零冲突，三条独立来源）：① 表内 ⌘⇧ 系只有 ⇧⌘Z（重做）与 ⇧⌘O（toc.toggle）两条，⌘⇧T 不在其中；② 原生菜单 accelerator 集合（muda 0.19.3 的 predefined，清单见文件头 M149 段）不含 ⌘⇧T；③ macOS 不预置 ⌘⇧T。可经 [keys] 重绑 / 解绑" },
 
-  // ── 全局：标签（M149）
+  // ── 全局：标签（M149；M242 追加 ⌘} / ⌘{ 两条绑定，来由与冲突核对见文件头 M242 段）
   { key: "Cmd-w", command: "tab.close", scope: "global", doc: "关当前标签（dirty 时先确认）；取 global 而非 editor——焦点在文件树 / 搜索框 / 大纲浮层里时同样要能关。**这个键原本被原生菜单的预置 Close 项占着**（muda 给 CloseWindow 的 accelerator 就是 ⌘W，菜单键等价在 NSApplication 分发阶段截获，webview 的 keydown 收不到）：M149 在 src-tauri/src/lib.rs 按 M131 先例把 File / Window 两个子菜单的预置 Close 换成不带加速键的自定义项让出该键，见那边的函数注释。语义随之从「关窗」变为「关标签」（tower 2026-09-17 裁决），退出仍走 ⌘Q（有 dirty 守卫）与红灯" },
   { key: "Ctrl-Tab", command: "tab.next", scope: "global", doc: "循环切到下一个标签（末端回卷到第一个）；取 global——切标签是窗口级动作，不该依赖焦点在哪。冲突已核（零冲突）：tauri 默认菜单的 accelerator 集合里没有 ⌃⇥，macOS 的窗口循环键是 ⌘` 而非 ⌃⇥，表内亦无 ⌃ 系 Tab 绑定。" },
   { key: "Ctrl-Shift-Tab", command: "tab.prev", scope: "global", doc: "循环切到上一个标签（首端回卷到最后一个），与 ⌃⇥ 成对；冲突核实同 ⌃⇥。" },
+  { key: "Cmd-}", command: "tab.next", scope: "global", doc: "⌘} 循环切到下一个标签（末端回卷到第一个；少于 2 个标签时无操作——cycleTab 既有行为），与 ⌃⇥ 同指 tab.next，零新命令、零行为分叉（M242）。方向映射取 macOS 惯例（WebKit 快捷键文档的 Show next tab = ⇧⌘}，Safari / Firefox 同键）：⌘} 物理是 ⇧⌘]（US 布局上 } 必须按 Shift）。token MUST 写 `Cmd-}`：事件 key 是字符 `}`、Shift 已隐含在字符里（`}` ∈ SHIFT_IMPLIED_KEYS），归一成 `Cmd-}`；写 `Cmd-Shift-]` 永不命中（静默失配，机制见文件头 M195 段）。取 global——切标签是窗口级动作。冲突已核（零冲突，三条独立来源）：① 表内无 `⌘}` / `⌘{`（本文件即真源），⌃⇥ 归一后是不同 token；② 原生菜单 accelerator 集合（tauri 的 Menu::default() 逐项来自 muda predefined，清单见文件头 M149 段）不含 ⇧⌘] / ⇧⌘[；③ macOS 不预置这对键（窗口循环键是 ⌘`）" },
+  { key: "Cmd-{", command: "tab.prev", scope: "global", doc: "⌘{ 循环切到上一个标签（首端回卷到最后一个；少于 2 个标签时无操作——cycleTab 既有行为），与 ⌃⇧⇥ 同指 tab.prev，零新命令（M242）。方向映射取 macOS 惯例（WebKit 快捷键文档的 Show previous tab = ⇧⌘{）：⌘{ 物理是 ⇧⌘[（US 布局上 { 必须按 Shift）。token MUST 写 `Cmd-{`：事件 key 是字符 `{`、Shift 已隐含在字符里（`{` ∈ SHIFT_IMPLIED_KEYS），归一成 `Cmd-{`；写 `Cmd-Shift-[` 永不命中（静默失配，机制见文件头 M195 段）。取 global——切标签是窗口级动作。冲突已核（零冲突，三条独立来源）：① 表内无 `⌘{` / `⌘}`（本文件即真源），⌃⇧⇥ 归一后是不同 token；② 原生菜单 accelerator 集合（tauri 的 Menu::default() 逐项来自 muda predefined，清单见文件头 M149 段）不含 ⇧⌘[ / ⇧⌘]；③ macOS 不预置这对键（窗口循环键是 ⌘`）" },
   ...TAB_GOTO_BINDINGS,
 ];
 
