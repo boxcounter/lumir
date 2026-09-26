@@ -129,6 +129,19 @@ M101/M130 留下的视图层只读合同注释（:1345-1349）改写为「按文
 editable 投影后这条同步纪律原样保留，且要补一条「投影与前台会话 editable 一致」的
 断言（tasks §1.4）。
 
+> **更正注记（M250，2026-09-27；不改写上文原文）**：本节「只翻 editability 会得到**假可编辑**
+> 编辑器——按键在 dispatch 层被吞」的前提**在当时不成立**。本仓的 `@codemirror/state`（6.7.4）下
+> 旧形态 `currentMode !== "md" ? [] : true` 里的 `[]` 是**空操作**（`filterTransaction` 把数组返回值
+> 交给 `ChangeSet.filter(ranges)`，而后者的入参是扁平 position 对——空数组走越界分支把全部 change
+> 原样保留），因此放宽与否都不吞键：M241 实测 m130 场景 9/9 全绿、探针读 `PROBE STATE="hello\nZZZ"`
+> （`test-results/m241/reverse-input/README.md`）；M250 另以独立探针复现（`EditorState.changeFilter`
+> 返回 `[]` → 变更落地 `"helloZZZ\n"`；返回 `false` → 被拦 `"hello\n"`）。**今天成立的部分**：该行已由
+> M241 改成返回 `false`（真正拦得住），所以「视图层拒收 + `changeFilter` 兜底」与本节末段「投影必须
+> 同步」两句话**自 M241 起才为真**（判据 = m130 的切标签序列用例）。真实机制：**视图层
+> `editable(false)` / `readOnly(true)` 拒收 DOM 输入 + `changeFilter` 返回 `false` 兜底程序化 dispatch
+> （M241 起）**；本文件上面「md 假设…实为**四处**窄门」句把 changeFilter 列为窄门之一的定性在当时
+> 同样不成立。来源 finding `20260927-worker-editable-non-md-bug-editor-ts-changefilter-m101-false`。
+
 ### 2.3 编辑态下的 code 模式行为清单
 
 可编辑 code 模式 = 现状只读 code 模式 + 输入路径打开：

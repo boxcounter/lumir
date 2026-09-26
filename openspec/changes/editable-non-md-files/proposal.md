@@ -50,6 +50,16 @@ Alex 原话（2026-09-25）：「支持编辑其他格式文件。目前似乎�
    「可编辑」标志放宽，只翻前者会得到假可编辑编辑器（design §2.2）。改为按会话承载
    标志，md 与注册表文本类文件可编辑，`aria-readonly` 等无障碍属性同步。`modeForPath`
    的 md/code 两模式裁决本身不变（M130 方向 A 的模式选择语义保留，只解除只读）。
+
+> **更正注记（M250，2026-09-27；不改写上文原文）**：本文件三处断言——上面 §2 的 P1 清单（「`src/editor.ts:1417`
+> 的 changeFilter dispatch 闸（不放宽则只翻 editability 会得到假可编辑编辑器——contenteditable 在场但按键被吞）」）、
+> 下面裁决点 D3 表行把 changeFilter 列为「四条窄门」之一、以及本条（「两处都必须按会话『可编辑』标志放宽，只翻前者会得到假可编辑编辑器」）——的**前提在当时不成立**：旧形态
+> `currentMode !== "md" ? [] : true` 里的 `[]` 在本仓的 `@codemirror/state`（6.7.4）下是**空操作**
+> （`ChangeSet.filter` 的入参是扁平 position 对，空数组走越界分支把全部 change 原样保留），放宽与否都不吞键
+> （M241 实测 m130 场景 9/9 绿 + 探针；M250 独立探针复现）。放宽该行**仍然必要**，但真实理由是「让 dispatch 层的
+> 兜底真正成立」——M241 把判据改成返回 `false` 之后它才拦得住，而不是「不放宽会得到假可编辑编辑器」。真实机制：
+> 视图层 `editable(false)` / `readOnly(true)` 拒收 DOM 输入 + `changeFilter` 返回 `false` 兜底程序化 dispatch
+> （M241 起）。来源 finding `20260927-worker-editable-non-md-bug-editor-ts-changefilter-m101-false`。
 3. **保存链路全量复用**（裁决点 D3 推荐项）：可编辑文本类文件打开即登记磁盘 revision
    （`src/main.ts:418-420` 的 `kind === "md"` 门放宽），保存基准闸 `saveBaseline`
    （`src/save-controller.ts:233-237` 的 `mode !== "md"` 判）同步放宽为按可编辑标志
