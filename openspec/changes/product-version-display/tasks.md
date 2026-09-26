@@ -105,8 +105,9 @@ D3 采纳），本清单已按裁决改写。**
 
   核对结果（2026-09-26）：**`restyle-ui-tokens-v1` 仍未归档**（`openspec list`：49/51 tasks），
   故本 change **不 archive**（按裁决要求不强行 archive）。
-  「登记进 `docs/backlog.md`」这一动作**超出本 mission 的 scope**（scope 不含 `docs/`），
-  已按协议改为发 finding 交 tower 处置，不越界改文件。
+  登记已落（tower 于 2026-09-26 把 `docs/backlog.md` 加进本 mission scope）：待裁决节新增第 32 条
+  「change `product-version-display` 待归档跟踪」，写明两个前置（视觉基线待 Alex 裁决 +
+  `restyle-ui-tokens-v1` 未归档）。
 
 ## 5. 验收套件 harness 修复（M236 执行期追加，tower 2026-09-26 裁决）
 
@@ -130,5 +131,6 @@ D3 采纳），本清单已按裁决改写。**
   判据达成情况（tower 验收口径「套件起实例后截图/AX 确认无原生标题栏行」）：截图与 AX 双证据见
   `test-results/m236/baseline-review/backlog366-before-after/`（修前两行 / 修后单行，红灯叠在
   tab 栏上）。
-  **残留**：backlog.md 那一条的**核销动作**同样落在 scope 之外（`docs/` 不在 scope globs 内），
-  与 §4.1 一并发 finding 交 tower 处置，本 change 不越界改 `docs/backlog.md`。
+  核销已落（tower 于 2026-09-26 把 `docs/backlog.md` 加进本 mission scope）：原「待修 findings」的
+  medium 条就地标为已修，全文核销记录落文末「已核销」的同日条目（含落点、判据、反向前置验证与
+  「全量场景切到 overlay 后只有场景 33 需重算几何」的连带修正）。
