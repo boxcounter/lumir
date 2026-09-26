@@ -41,6 +41,22 @@ runner 在启动前做预检，不满足直接退出且不产生半截证据：
 的前台归属；**拿不到前台就报 FAIL**，不静默跳过、也不改用 `set_value` 伪造键盘语义（`set_value`
 不经键位分发链路，验不到 `keys.ts`）。副作用：跑套件期间 Lumir 窗口会到前台。
 
+**启动实例的窗口形态自检**（M236，修 backlog:366）：`waitAppReady` 每次就绪（含 `restart` 后重启）
+都反查一遍「webview 铺满整窗」——`AXScrollArea` 的顶边与高度对 `AXWindow` 的差 ≤4px。不是 overlay
+就报 FAIL 并点名成因。
+
+为什么要有这条：套件用 `pnpm tauri dev --config '<json>'` 覆写窗口位置，而 tauri 的 `--config` 是
+深合并、**数组按下标整体替换**——`app.windows[0]` 会被传进去的对象整根替掉。早先这里手抄
+`title/width/height`，`titleBarStyle: "Overlay"` 与 `hiddenTitle: true` 因此被**静默**丢掉：套件实例
+长出原生标题栏（窗口多一行、webview 让出 32pt、屏幕上还出现窗口标题「Lumir」），**全程零报错**，
+于是「真机验证窗口级配置」这一类断言在套件里永远验不到（M213 实测对照见
+`test-results/m213/titlebar/readings.md` §4；M236 的修前/修后对照见
+`test-results/m236/baseline-review/backlog366-before-after/`）。
+
+配置侧的纪律：`lib/app.mjs` 的 `launchApp` **从 `src-tauri/tauri.conf.json` 读 `app.windows[0]` 原件
+再 spread**（窗口配置只有一份真源，REVIEW.md 第 8 条），只叠 `x/y/focus`。读不到窗口对象就抛错，
+不回落手抄一份——回到手抄就是回到这个坑。**新增窗口级配置键时不需要改本套件**。
+
 **磁盘水位绕过**：`LUMIR_ACCEPTANCE_ALLOW_LOW_DISK=1` 可越过 2G 阈值，**只在 target 已热、本次不会
 触发 Rust 重编**（实际磁盘需求仅几 MB）时使用；绕过会写进 run.log 留痕，不静默。
 
@@ -124,7 +140,8 @@ steps:
 | `clickInNode` | `target`、`dx`、`dy`、`count` | 点「某个有 bbox 的节点内部」的相对位置（如 `AXTable`）；`count` 同上，未观察到 `dblclick`（判据限制见「已知边界」） |
 | `clickEditor` | `dx`（默认 40）、`dy`（默认 6） | 点编辑器顶部建立渲染层焦点（编辑器内元素无 AX bbox，只能按坐标） |
 | `doubleClick` | `target`（`{role,name\|any,nth}` 或 `{x,y}`）、`dx`/`dy`、`mode`、`retries`、`settleMs` | **双击**（M209 起套件唯一的双击通道）：swift + `CGEvent` 显式设 `kCGMouseEventClickState`（详见「已知边界」）。`target` 取节点 bbox 中心、`dx`/`dy` 按其宽高比例偏移（默认 0.5）；`{x,y}` 给窗口局部坐标（遮罩这类没有 AX 节点的全屏层用）。动作内部先拿前台（**拿不到即报错**——真鼠标点击落在最上层那扇窗上），再把窗口局部点换算成 Quartz 屏幕坐标。**会移动真实光标**；目标窗口被遮挡或 KimiCU 的 AX 快照退化时按错因报错，不静默 |
-| `drag` | `target`（`{role,name\|any,nth}` 节点须有 bbox，或 `{textareaEdge:"left"\|"right"}` 从编辑器列缘内侧起拖）、`dx`/`dy`（窗口局部点，UI 位移是**确定值**）、`retries`、`settleMs` | **拖拽**（M228 起，栏宽手柄这类「只能拖」的控件的唯一通道）：swift + `CGEvent` 显式投 `leftMouseDown → 插值 dragged ×24 → leftMouseUp`（与 `doubleClick` 同一通道——KimiCU 的 `drag` 工具在 WKWebView 里连文本选择都造不出来，M228 实测，见「已知边界」）。坐标换算与 `doubleClick` 同口径：先拿前台（**拿不到即报错**——真鼠标拖拽落在最上层那扇窗上），窗口局部点 + `window_bounds` 原点 → Quartz 屏幕坐标。**会移动真实光标**。`textareaEdge` 形态存在的原因：WKWebView 把 `role=separator` 暴露成**无 bbox 的 AXSplitter**（M228 实测），栏宽手柄按节点定位不到，只能从 AXTextArea 的 bbox 边缘起拖 |
+| `drag` | `target`（`{role,name\|any,nth}` 节点须有 bbox、`{x,y}` 窗口局部坐标（M236 起，标题栏展示元素这类不一定有 AX bbox 的目标用），或 `{textareaEdge:"left"\|"right"}` 从编辑器列缘内侧起拖）、`dx`/`dy`（窗口局部点，UI 位移是**确定值**）、`allowOutOfBounds`、`retries`、`settleMs` | **拖拽**（M228 起，栏宽手柄这类「只能拖」的控件的唯一通道）：swift + `CGEvent` 显式投 `leftMouseDown → 插值 dragged ×24 → leftMouseUp`（与 `doubleClick` 同一通道——KimiCU 的 `drag` 工具在 WKWebView 里连文本选择都造不出来，M228 实测，见「已知边界」）。坐标换算与 `doubleClick` 同口径：先拿前台（**拿不到即报错**——真鼠标拖拽落在最上层那扇窗上），窗口局部点 + `window_bounds` 原点 → Quartz 屏幕坐标。**会移动真实光标**。起止点默认都必须在窗口内（防坐标空间错乱）；拖标题栏移动窗口时终点**故意**出窗，显式写 `allowOutOfBounds: true` 跳过终点检查。`textareaEdge` 形态存在的原因：WKWebView 把 `role=separator` 暴露成**无 bbox 的 AXSplitter**（M228 实测），栏宽手柄按节点定位不到，只能从 AXTextArea 的 bbox 边缘起拖 |
+| `resizeWindow` | `width`（数值，必填）、`height`（缺省保持当前）、`settleMs` | **AX 直写窗口尺寸**（M236，窄窗退让这类「精确几何」验证）：`lib/ax-window.swift` 经 Accessibility API 设 AXSize，确定值通道（不拖窗口边缘——命中区与落点都不稳）。前提是调用进程有辅助功能权限（与 CGEvent 注入同）；窗口管理器的钳制会如实反映在回读值里，断言用 `window.width` 对生效值 |
 | `focusWindow` | `retries` | 确保目标窗口在前台（键盘场景的前台纪律，见上） |
 | `key` / `keys` | `key` / `keys: [...]`、`gapMs` | 键盘注入（`ctrl+n`、`cmd+s`、`cmd+/` …）。`keys` 对**整串都是可打印单字符**的序列额外做回读 + 有限重试（≤3）；chord / 混合序列 / 无可读目标一律保持盲发不重试（判定边界见「已知边界」） |
 | `type` | `text`、`clear`、`retries` | 输入到编辑器（内部先真实点击聚焦，避免落陈旧选区）；回读 + 有限重试与 `keys` **同一口径**：只在编辑器字节完全未变时重试（≤3），partial landing 直接报错不重试（判定边界见「已知边界」） |
@@ -163,7 +180,12 @@ steps:
 | `editor` | `has` / `not` / `unchangedSince` / `changedSince` | 在编辑器文档文本（AXTextArea.value）上匹配；`*Since` 引用 `recordEditor` 记的基线，做逐字节比较 |
 | `file` | `path`、`exists`、`has`、`not`、`changedSince`、`unchangedSince`、`mtimeUnchangedSince`、`mtimeNewerThan` | `path` 相对验收 vault；`env:` 前缀指隔离配置目录；`xxxSince` 引用 `record` 记下的基线。`unchangedSince` 只比 sha256，`mtimeUnchangedSince` 比 mtime 精确相等——「不落盘」这类判据两个一起用（写了同一份内容时 sha256 相同而 mtime 会推进）。`path` 含 `*` 时按 glob 在父目录里取**匹配文件里 mtime 最新的那一份**再断言（诊断日志按 UTC 日期命名、`env/` 目录跨天复用，写死日期的断言会在之后每天读到上次 run 的旧文件而永久空过——这条是给那类「按日期滚动、目录不重置」的产物用的） |
 | `glob` | `dir`、`pattern`、`min`/`exact` | 文件名由 app 决定的产物（崩溃备份、另存副本）用 glob 断言 |
+| `window` | `moved: true/false` 或 `width: N` | 窗口几何（M236）：`moved` 对比**动作前**的 window_bounds 基线（步骤须有 `do`，位移 ≥8pt 才算动——标题栏拖拽移动窗口的判据）；`width` 断言生效宽度（±8pt 容差，对窗口管理器钳制后的真实值，不对请求值） |
 | `shot` | 名称 | 截图 + AX dump 留档 |
+
+**占位符**（M236 起）：expect 字符串里可写 `$appName` / `$appVersion`，加载时从本 checkout 的
+`src-tauri/tauri.conf.json` 读真值代入（worktree 跑就取 worktree 的 conf，与被测构建同源）——
+场景 MUST NOT 硬编码版本号副本（真源唯一，REVIEW.md 第 8 条），版本 bump 后场景跟着真源走。
 
 匹配值：字符串按**子串**；`/.../` 包起来按正则。注意**正则一律带 `m` flag**（`lib/execute.mjs` 的 `matcher()`），
 所以 `^`/`$` 是**行**边界而不是字符串边界：要断言「文档末尾」得写 `(?![\\s\\S])`（负向先行断言后面没有字符）。

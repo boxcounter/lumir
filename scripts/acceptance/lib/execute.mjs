@@ -18,19 +18,20 @@ import {
   openFile,
   pressKey,
   readAx,
+  resizeWindowAX,
   tryForeground,
   typeInEditor,
   waitUntil,
 } from "./drive.mjs";
-import { envHome, mkdirp, readText, sleep, vaultDir } from "./util.mjs";
+import { envHome, mkdirp, readText, repoRoot, sleep, vaultDir } from "./util.mjs";
 
 /** 动作与断言的白名单：`--check` 用它做静态校验，避免写错 key 要等一整轮真机才发现。 */
 export const ACTIONS = new Set([
   "settle", "sleep", "key", "keys", "type", "click", "clickNodeText", "clickInNode", "clickEditor",
   "doubleClick", "drag", "focusWindow", "open", "configWrite", "restart", "record", "recordEditor", "vaultWrite",
-  "vaultAppend", "vaultRm",
+  "vaultAppend", "vaultRm", "resizeWindow",
 ]);
-export const EXPECT_KINDS = new Set(["ax", "editor", "file", "glob", "shot"]);
+export const EXPECT_KINDS = new Set(["ax", "editor", "file", "glob", "shot", "window"]);
 
 /** 静态校验一个场景，返回问题列表（空 = 通过）。 */
 export function checkScenario(scenario) {
@@ -50,7 +51,9 @@ export function checkScenario(scenario) {
     if (step.do === "key" && !step.key) push(`${at} do=key 需要 key`);
     if (step.do === "doubleClick" && !step.target) push(`${at} do=doubleClick 需要 target（节点或 {x,y} 窗口局部坐标）`);
     if (step.do === "drag" && (!step.target || (step.dx === undefined && step.dy === undefined)))
-      push(`${at} do=drag 需要 target（带 bbox 的节点，或 textareaEdge）与 dx/dy 位移（窗口局部点）`);
+      push(`${at} do=drag 需要 target（带 bbox 的节点、{x,y} 窗口局部坐标或 textareaEdge）与 dx/dy 位移（窗口局部点）`);
+    if (step.do === "resizeWindow" && typeof step.width !== "number")
+      push(`${at} do=resizeWindow 需要数值 width（height 缺省保持当前）`);
     for (const [j, exp] of (step.expect ?? []).entries()) {
       const kinds = Object.keys(exp).filter((k) => k !== "label");
       if (kinds.length !== 1) push(`${at} expect[${j}] 应恰好一个断言形态，实际 ${JSON.stringify(kinds)}`);
@@ -59,16 +62,43 @@ export function checkScenario(scenario) {
       else if (kinds[0] === "glob" && (!exp.glob.dir || !exp.glob.pattern)) push(`${at} expect[${j}] glob 断言缺 dir/pattern`);
       else if (kinds[0] === "ax" && !["has", "not", "count", "focused"].some((k) => exp.ax[k] !== undefined))
         push(`${at} expect[${j}] ax 断言缺 has/not/count/focused（写错字段名会静默变成恒真断言）`);
+      else if (kinds[0] === "window" && !["moved", "width"].some((k) => exp.window[k] !== undefined))
+        push(`${at} expect[${j}] window 断言缺 moved/width`);
     }
   }
   return problems;
+}
+
+/**
+ * `$appName` / `$appVersion` 占位替换（M236）：期望值里要引用「当前构建的产品名 / 版本号」时
+ * 写占位符，加载时从本仓 src-tauri/tauri.conf.json 读真值代入——场景 MUST NOT 硬编码一份
+ * 版本号副本（真源唯一，REVIEW.md 第 8 条），版本 bump 后场景跟着真源走。
+ * repoRoot() 是本 checkout 的根（worktree 跑就取 worktree 的 conf），与被测构建同源。
+ */
+async function appMetaTokens() {
+  const conf = JSON.parse(await readText(path.join(repoRoot(), "src-tauri/tauri.conf.json")));
+  return { $appName: String(conf.productName), $appVersion: String(conf.version) };
+}
+
+/** 深度遍历 YAML 产物，字符串里的占位符全部替换。 */
+function substituteTokens(value, tokens) {
+  if (typeof value === "string") {
+    let out = value;
+    for (const [token, text] of Object.entries(tokens)) out = out.replaceAll(token, text);
+    return out;
+  }
+  if (Array.isArray(value)) return value.map((v) => substituteTokens(v, tokens));
+  if (value && typeof value === "object") {
+    return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, substituteTokens(v, tokens)]));
+  }
+  return value;
 }
 
 export async function loadScenario(file) {
   const raw = await readText(file);
   const m = /^---\n([\s\S]*?)\n---\n?([\s\S]*)$/.exec(raw);
   if (!m) throw new Error(`场景文件缺少 YAML front-matter：${file}`);
-  const meta = yaml.load(m[1]);
+  const meta = substituteTokens(yaml.load(m[1]), await appMetaTokens());
   const body = m[2];
   const id = meta.id ?? path.basename(file, ".md");
   return { ...meta, id, body, file };
@@ -387,6 +417,33 @@ export async function runScenario(ctx, scenario) {
         ? pass(spec.label ?? label, `${hits.length} 个：${hits.slice(0, 3).map((f) => path.basename(f)).join(", ")}`)
         : fail(`${spec.label ?? label}（期望 ${spec.exact ?? `≥${spec.min}`} 个，实际 ${hits.length}）`, `${dir} 下无匹配 ${spec.pattern}`);
     }
+    if (expect.window) {
+      // 窗口几何断言（M236）：标题栏拖拽移动窗口、resizeWindow 调尺寸两类的判据。
+      // moved 对比的是动作前的基线（boundsBefore，步骤执行 do 之前由 runScenario 记录）；
+      // width 容差 ±8pt（窗口管理器可能钳制 / 取整，断言对生效值不对请求值）。
+      const spec = expect.window;
+      const ax = await readAx(cu, ctx.pid);
+      const bounds = windowBounds(ax.text);
+      if (!bounds) return fail(`${label}（读不到 window_bounds：AX 快照退化）`, "", ax);
+      if (spec.moved !== undefined) {
+        const before = state.boundsBefore;
+        if (!before) return fail(`${label}（缺少动作前窗口位置基线——window.moved 断言的步骤必须有 do 动作）`, "", ax);
+        const dx = bounds.x - before.x;
+        const dy = bounds.y - before.y;
+        const moved = Math.abs(dx) >= 8 || Math.abs(dy) >= 8;
+        const detail = `(${before.x},${before.y}) → (${bounds.x},${bounds.y})，Δ=(${dx},${dy})`;
+        return moved === Boolean(spec.moved)
+          ? pass(label, detail)
+          : fail(`${label}（期望 moved=${spec.moved}，实际 ${detail}）`, "", ax);
+      }
+      if (spec.width !== undefined) {
+        const ok = Math.abs(bounds.w - spec.width) <= 8;
+        return ok
+          ? pass(label, `窗口宽 ${bounds.w} ≈ ${spec.width}`)
+          : fail(`${label}（期望宽 ≈${spec.width}，实际 ${bounds.w}）`, "", ax);
+      }
+      return fail(`${label}（window 断言缺 moved/width）`, "", ax);
+    }
     return fail(`${label}（未知断言形态）`, JSON.stringify(expect).slice(0, 200));
   }
 
@@ -415,6 +472,10 @@ export async function runScenario(ctx, scenario) {
       evidence.record({ kind: "step", name: step.name });
       const state = {};
       try {
+        // window.moved 断言需要动作前的窗口位置基线（M236：标题栏拖拽移动窗口的判据）。
+        if ((step.expect ?? []).some((e) => e.window?.moved !== undefined)) {
+          state.boundsBefore = windowBounds((await readAx(cu, ctx.pid)).text);
+        }
         await doAction(step, { ctx, scenario, vars, pid: () => ctx.pid, evidence, cu });
       } catch (e) {
         await fail(`[动作] ${step.name}`, e.message, await readAx(cu, ctx.pid).catch(() => null));
@@ -801,7 +862,10 @@ async function doAction(step, { ctx, cu, scenario, vars, pid, evidence }) {
       const bounds = windowBounds(ax.text);
       const t = step.target ?? {};
       let local;
-      if (t.textareaEdge !== undefined) {
+      if (t.x !== undefined) {
+        // 窗口局部坐标直给（M236：标题栏标识块这类不一定有 AX bbox 的展示元素）
+        local = { x: t.x, y: t.y };
+      } else if (t.textareaEdge !== undefined) {
         const ta = ax.textarea;
         if (!ta?.bbox) throw new Error("drag(textareaEdge)：编辑器节点没有 bbox，无法定位列缘");
         local = {
@@ -818,7 +882,10 @@ async function doAction(step, { ctx, cu, scenario, vars, pid, evidence }) {
       }
       const from = { x: bounds.x + local.x, y: bounds.y + local.y };
       const to = { x: from.x + (step.dx ?? 0), y: from.y + (step.dy ?? 0) };
-      for (const pt of [from, to]) {
+      // 越界检查默认开着（防坐标空间错乱假现场）；拖标题栏移动窗口时终点**故意**出窗
+      // （窗口跟着光标走），这种步骤显式写 allowOutOfBounds: true 跳过终点检查。
+      const checkPoints = step.allowOutOfBounds === true ? [from] : [from, to];
+      for (const pt of checkPoints) {
         if (pt.x < bounds.x || pt.x > bounds.x + bounds.w || pt.y < bounds.y || pt.y > bounds.y + bounds.h) {
           throw new Error(`drag：算出的屏幕点 ${JSON.stringify(pt)} 落在窗口 (${bounds.x},${bounds.y} ${bounds.w}×${bounds.h}) 之外`);
         }
@@ -826,6 +893,15 @@ async function doAction(step, { ctx, cu, scenario, vars, pid, evidence }) {
       const out = await injectDrag(from, to);
       await sleep(step.settleMs ?? 500); // 松手后的提交（rAF 末帧 + 写盘）之间有一拍
       return `窗口局部 ${Math.round(local.x)},${Math.round(local.y)} → +${step.dx ?? 0},${step.dy ?? 0}｜${out}`;
+    }
+    case "resizeWindow": {
+      // AX 直写窗口尺寸（M236，窄窗退让的真机验证）：确定值通道。高度缺省保持当前。
+      const ax = await readAx(cu, p);
+      const bounds = windowBounds(ax.text);
+      if (!bounds) throw new Error("resizeWindow：读不到 window_bounds（AX 快照退化）");
+      const out = await resizeWindowAX(p, step.width, step.height ?? bounds.h);
+      await sleep(step.settleMs ?? 500); // matchMedia change → DOM 显隐切换有一拍
+      return out;
     }
     case "record": {
       // 路径口径与 file 断言同源（M180）：`env:` 前缀此前不被识别，记出来的是一个不存在的
@@ -923,6 +999,7 @@ function describeExpect(expect) {
   }
   if (expect.editor) return `编辑器 ${expect.editor.has !== undefined ? `含 ${matcher(expect.editor.has).show}` : `不含 ${matcher(expect.editor.not).show}`}`;
   if (expect.file) return `文件 ${expect.file.path} ${JSON.stringify(Object.keys(expect.file).filter((k) => k !== "path" && k !== "label"))}`;
+  if (expect.window) return `窗口 ${JSON.stringify(expect.window)}`;
   if (expect.shot) return `截图证据 ${expect.shot}`;
   return JSON.stringify(expect).slice(0, 80);
 }

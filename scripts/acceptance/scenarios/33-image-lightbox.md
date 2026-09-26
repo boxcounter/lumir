@@ -42,14 +42,14 @@ steps:
       - label: 单击后遮罩未打开（标签栏还在、放大图的几何读数不存在）
         ax: { has: "关闭 lightbox.md" }
       - label: 单击后没有遮罩放大图（1120×374 是遮罩内容盒宽度推导出的读数，内联那张是 766×256）
-        ax: { not: "/AXImage .*@40,229 1120×374/" }
+        ax: { not: "/AXImage .*@40,213 1120×374/" }
 
   - name: 双击百分比宽度 svg：遮罩打开，放大图几何读数 = 遮罩可用区
     do: doubleClick
     target: { role: AXImage, name: "lightbox percent svg" }
     expect:
       - label: 遮罩放大图在 AX 里且几何读数非零（1120×374 = 窗口 1200 减两侧 padding 40、按 svg 3:1 比例）
-        ax: { count: { pattern: "/AXImage .*@40,229 1120×374/", exact: 1 } }
+        ax: { count: { pattern: "/AXImage .*@40,213 1120×374/", exact: 1 } }
       - label: AX 树被模态接管（标签栏节点从树里消失——这条把上一条钉在「遮罩里那张」上，内联那张的读数是 766×256）
         ax: { not: "关闭 lightbox.md" }
       - shot: 遮罩打开
@@ -59,7 +59,7 @@ steps:
     key: "escape"
     expect:
       - label: 遮罩已退场（放大图读数消失）
-        ax: { not: "/AXImage .*@40,229 1120×374/" }
+        ax: { not: "/AXImage .*@40,213 1120×374/" }
       - label: 标签栏回到 AX 树里（模态作用域撤销）
         ax: { has: "关闭 lightbox.md" }
       - label: 焦点回到编辑器（键盘落点判据，写在编辑器上）
@@ -71,7 +71,7 @@ steps:
     target: { role: AXImage, name: "lightbox percent svg" }
     expect:
       - label: 先证遮罩开着（否则下面那条负向断言在空转）
-        ax: { count: { pattern: "/AXImage .*@40,229 1120×374/", exact: 1 } }
+        ax: { count: { pattern: "/AXImage .*@40,213 1120×374/", exact: 1 } }
     # 遮罩是铺满窗口的固定层（position: fixed; inset: 0），窗口局部 (600,60) 落在标签栏上方、
     # 图片以外的区域——点它即「点击遮罩」这条关闭路径。
   - name: 点击遮罩空白区关闭（坐标点击走 KimiCU 的窗口局部点）
@@ -79,7 +79,7 @@ steps:
     target: { x: 600, y: 60 }
     expect:
       - label: 遮罩已退场
-        ax: { not: "/AXImage .*@40,229 1120×374/" }
+        ax: { not: "/AXImage .*@40,213 1120×374/" }
       - label: 标签栏回到 AX 树里
         ax: { has: "关闭 lightbox.md" }
       - shot: 点遮罩关闭后
@@ -89,13 +89,13 @@ steps:
     target: { role: AXImage, name: "lightbox percent svg" }
     expect:
       - label: 先证遮罩开着（此时这棵树里唯一的 AXImage 就是放大图）
-        ax: { count: { pattern: "/AXImage .*@40,229 1120×374/", exact: 1 } }
+        ax: { count: { pattern: "/AXImage .*@40,213 1120×374/", exact: 1 } }
   - name: 在遮罩内双击放大图（关闭已打开的那张）
     do: doubleClick
     target: { role: AXImage, name: "lightbox percent svg" }
     expect:
       - label: 遮罩已退场（再次双击放大图走的是「关闭」而非「重开」）
-        ax: { not: "/AXImage .*@40,229 1120×374/" }
+        ax: { not: "/AXImage .*@40,213 1120×374/" }
       - label: 标签栏回到 AX 树里
         ax: { has: "关闭 lightbox.md" }
       - shot: 双击放大图关闭后
@@ -104,8 +104,8 @@ steps:
     do: doubleClick
     target: { role: AXImage, name: "lightbox fixed svg" }
     expect:
-      - label: 放大图读数非零且为自然尺寸（240×80 居中：水平 40+(1120-240)/2=480，垂直 72+(688-80)/2=376）
-        ax: { count: { pattern: "/AXImage .*@480,376 240×80/", exact: 1 } }
+      - label: 放大图读数非零且为自然尺寸（240×80 居中：水平 40+(1120-240)/2=480，垂直 40+(720-80)/2=360）
+        ax: { count: { pattern: "/AXImage .*@480,360 240×80/", exact: 1 } }
       - label: 模态接管（标签栏消失）
         ax: { not: "关闭 lightbox.md" }
       - shot: 固定尺寸 svg 放大
@@ -114,14 +114,14 @@ steps:
     key: "escape"
     expect:
       - label: 遮罩已退场
-        ax: { not: "/AXImage .*@480,376 240×80/" }
+        ax: { not: "/AXImage .*@480,360 240×80/" }
 
   - name: 位图（96×32）：双击同样打开遮罩，按自然尺寸显示（不放大）
     do: doubleClick
     target: { role: AXImage, name: "lightbox bitmap" }
     expect:
-      - label: 放大图读数非零且为自然尺寸（96×32 居中：水平 40+(1120-96)/2=552，垂直 72+(688-32)/2=400）
-        ax: { count: { pattern: "/AXImage .*@552,400 96×32/", exact: 1 } }
+      - label: 放大图读数非零且为自然尺寸（96×32 居中：水平 40+(1120-96)/2=552，垂直 40+(720-32)/2=384）
+        ax: { count: { pattern: "/AXImage .*@552,384 96×32/", exact: 1 } }
       - label: 模态接管（标签栏消失）
         ax: { not: "关闭 lightbox.md" }
       - shot: 位图放大
@@ -130,7 +130,7 @@ steps:
     key: "escape"
     expect:
       - label: 遮罩已退场
-        ax: { not: "/AXImage .*@552,400 96×32/" }
+        ax: { not: "/AXImage .*@552,384 96×32/" }
 
   - name: 全程不改写源文件（ADR 0003 §3）：编辑器内容与磁盘文件逐字节不变
     expect:
@@ -162,6 +162,18 @@ steps:
 
 - **几何读数而不是文本存在性**：不可见的图在 AX 文本里照样有节点行（M178 finding，
   `docs/backlog.md` 的验收套件节），所以三条「图已渲染」的断言判的是节点行里的 `@x,y w×h` 非零。
+- **绝对读数的推导（2026-09-26 M236 重算）**：遮罩是 `position: fixed; inset: 0` + padding 40，
+  读数 = 视口内居中，所以**视口高度直接决定 y**。这组数字随 M236 修掉「套件 --config 丢窗口级配置」
+  （`docs/backlog.md` 待修 findings 的 medium 条）而变：修前套件实例带原生标题栏，**视口只有 768 高**
+  （webview 让出 32pt），命中区是 `y=72..760`；修后是**真·overlay**，视口 800、命中区 `y=40..760`。
+  重算式：水平 `40+(1120-w)/2`，垂直 `40+(720-h)/2`。
+  | 形态 | 修前读数 | 修后读数 |
+  |---|---|---|
+  | 百分比 svg（fit-width，1120×374） | `@40,229` | **`@40,213`** |
+  | 固定尺寸 svg（240×80） | `@480,376` | **`@480,360`** |
+  | 位图（96×32） | `@552,400` | **`@552,384`** |
+  x 不变（窗口宽 1200 与 padding 都没变）。**这条改动不是「放宽断言」**：新数字正是没被 harness
+  bug 污染的真机口径，修前那组反而在验一个用户见不到的窗口形态。
 - **遮罩开着用两条一起钉**：① 放大图的几何读数（`1120×374` 等，由窗口与 CSS padding 推导，
   与内联那张的读数不同）；② 标签栏节点从 AX 树里消失——`aria-modal` 的 dialog 会让 AX 作用域
   收到模态子树，这条把①钉在「遮罩里那张」而不是内联那张上。**只判①是不够的**：内联图也有非零

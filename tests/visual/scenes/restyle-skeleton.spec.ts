@@ -31,7 +31,7 @@ async function open(page: import("@playwright/test").Page, file: string, marker:
   await expect(page.locator(".cm-content")).toContainText(marker);
 }
 
-test("骨架几何：侧栏 236 / 标题栏 42 / modeline 25 / dock 列 0 / 正文列 680 居中", async ({ page }) => {
+test("骨架几何：侧栏 236 / 标题栏 42 / modeline 25 / dock 列 0 / 正文列 760 居中", async ({ page }) => {
   await stubTauri(page, VAULT);
   await open(page, "doc.md", "正文段落");
 
@@ -61,7 +61,7 @@ test("骨架几何：侧栏 236 / 标题栏 42 / modeline 25 / dock 列 0 / 正�
   });
 
   // 三档布局尺寸的单一来源是 token 层，读数与 token 逐项一致
-  expect(geo.token).toEqual({ sidebar: "236px", titlebar: "42px", modeline: "25px", measure: "680px" });
+  expect(geo.token).toEqual({ sidebar: "236px", titlebar: "42px", modeline: "25px", measure: "760px" });
   expect(geo.sidebarWidth).toBe(236);
   expect(geo.titlebarHeight).toBe(42);
   expect(geo.modelineHeight).toBe(25);
@@ -69,9 +69,9 @@ test("骨架几何：侧栏 236 / 标题栏 42 / modeline 25 / dock 列 0 / 正�
   expect(geo.shellRows).toEqual([42, 800 - 42 - 25, 25]);
   expect(geo.shellCols[0]).toBe(236);
   expect(geo.shellCols[2]).toBe(0);
-  // 正文列 = 定值 680（框宽），两侧等分剩余空间 ⇒ 居中
-  expect(geo.scrollerCols[1]).toBe(680);
-  expect(geo.contentWidth).toBe(680);
+  // 正文列 = 定值 760（框宽），两侧等分剩余空间 ⇒ 居中
+  expect(geo.scrollerCols[1]).toBe(760);
+  expect(geo.contentWidth).toBe(760);
   expect(Math.abs(geo.scrollerCols[0] - geo.scrollerCols[2])).toBeLessThanOrEqual(1);
   const leftGap = geo.contentLeft - geo.paneLeft;
   const rightGap = geo.paneRight - (geo.contentLeft + geo.contentWidth);
@@ -126,15 +126,15 @@ test("位置指示段迁到 modeline：有标题显示链接、无标题隐藏�
   await expect(page.locator(".modeline-section")).toBeHidden();
 });
 
-test("标签迁入标题栏：打开文件后标签是标题栏的子节点，空态只剩 traffic 区", async ({ page }) => {
+test("标签迁入标题栏：打开文件后标签是标题栏的子节点，空态是 traffic 区 + 标识块", async ({ page }) => {
   await stubTauri(page, VAULT);
   await page.goto("/");
 
-  // 空态：标签区隐藏，标题栏的可见子节点只剩 traffic 灯区
+  // 空态：标签区隐藏，标题栏的可见子节点 = traffic 灯区 + 右端产品标识块（M236）
   const emptyChildren = await page.locator(".titlebar").evaluate((bar) =>
     [...bar.children].filter((child) => (child as HTMLElement).offsetParent !== null).map((c) => c.className),
   );
-  expect(emptyChildren).toEqual(["titlebar-traffic"]);
+  expect(emptyChildren).toEqual(["titlebar-traffic", "titlebar-identity"]);
 
   await open(page, "doc.md", "正文段落");
   // 打开文件后标签在场，且**在标题栏内**（不是自成一个网格行）

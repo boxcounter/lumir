@@ -1,5 +1,5 @@
-// 内容区域宽度（change content-width-drag，节点 1 裁决 2026-09-25：D1 默认 680、
-// D2 上下限 [680, 1200]、D4 live 拖拽、D5 手柄进 code 模式）——栏宽 token 的**唯一
+// 内容区域宽度（change content-width-drag，节点 1 裁决 2026-09-25 → **2026-09-26 Alex 修订**：
+// D1 默认 760、D2 上下限 [760, 1200]、D4 live 拖拽、D5 手柄进 code 模式）——栏宽 token 的**唯一
 // 写入通道名**、TS 侧默认/上下限镜像常量、对称换算与钳制纯函数，以及双侧手柄的拖拽控制器。
 //
 // 栏宽 = `.cm-scroller` grid 中列轨道 `minmax(0, var(--layout-doc-measure))`（src/editor.ts），
@@ -14,13 +14,15 @@
 /** 栏宽 token 名（单一来源）：CSS 声明处按字面量写（样式表不是 JS），JS 的写入点引这里。 */
 export const CONTENT_WIDTH_TOKEN = "--layout-doc-measure";
 
-/** 阅读栏宽出厂默认（框宽 px，D1 落槌值）。与 Rust 侧 `DEFAULT_CONTENT_WIDTH` 同值。 */
-export const DEFAULT_CONTENT_WIDTH = 680;
+/** 阅读栏宽出厂默认（框宽 px，D1 落槌值 → 2026-09-26 Alex 修订为 760）。
+ *  与 Rust 侧 `DEFAULT_CONTENT_WIDTH` 同值。 */
+export const DEFAULT_CONTENT_WIDTH = 760;
 
-/** 栏宽钳制区间（含端点，D2 落槌值——**默认值即下限**，拖拽只能往宽调）。与 Rust 侧的
+/** 栏宽钳制区间（含端点，D2 落槌值 → 2026-09-26 修订为 [760, 1200]——**默认值即下限**，
+ *  拖拽只能往宽调）。与 Rust 侧的
  *  `CONTENT_WIDTH_MIN` / `CONTENT_WIDTH_MAX` 同值：Rust 侧管**配置值**的合法区间
  * （越界回落默认 + warning），这里管**运行期拖拽**的钳制。 */
-export const CONTENT_WIDTH_MIN = 680;
+export const CONTENT_WIDTH_MIN = 760;
 export const CONTENT_WIDTH_MAX = 1200;
 
 /** 手柄读屏名（文案 D120）。产品命名以提案为准：内容区域宽度拖拽调整。 */

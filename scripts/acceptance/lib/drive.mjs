@@ -89,13 +89,55 @@ export async function waitAppReady(cu, pid, { timeoutMs = 30_000, requireVault =
     else seen = 0;
     if (seen >= 2) {
       await sleep(600);
-      return readAx(cu, pid);
+      const final = await readAx(cu, pid);
+      // 窗口形态自检（M236，backlog:366）：每次启动（含 restartApp 重启）都反查一次
+      // 「webview 铺满整窗 = overlay 标题栏」，不让套件静默跑在非 overlay 形态上。
+      assertOverlayChrome(final);
+      return final;
     }
     await sleep(700);
   }
   throw new StepError(
     `前端在 ${timeoutMs}ms 内未就绪（左栏文件树/编辑器节点未出现${requireVault ? "" : "；本步已放宽为允许未打开空态"}）`,
   );
+}
+
+/**
+ * 套件实例的窗口形态自检（M236，修 backlog:366）：断言 webview **铺满整窗** = 真·overlay 标题栏。
+ *
+ * 为什么需要它：套件走 `--config` 覆写窗口对象，而 tauri 的深合并对数组是**按下标整体替换**。
+ * 早先覆写对象漏抄 `titleBarStyle: "Overlay"` / `hiddenTitle: true`，套件实例因此长出原生
+ * 标题栏（窗口多一行、webview 让出 32pt、屏幕上出现窗口标题「Lumir」），**且全程无报错**——
+ * 任何「真机验证窗口级配置」的断言在套件里都验不到（M213 实测对照：
+ * `test-results/m213/titlebar/readings.md` §4）。配置侧的修法在 app.mjs 的 launchApp
+ * （从 tauri.conf.json 读原件再 spread）；这里补的是**运行期反查**：万一将来又漏，本自检报红，
+ * 不留给「断言静默验到非 overlay 形态」这条路。
+ *
+ * 判据（用同一份 AX 文本里的两个节点，都带 bbox，单位一致）：
+ *   - overlay：`AXScrollArea @0,0 1200×800`，与 `AXWindow @0,0 1200×800` 重合；
+ *   - 原生标题栏：`AXScrollArea @0,31 1200×768`（顶边下移、高度少一截）。
+ * 取**面积最大**的 AXScrollArea（树 pane / 浮层里可能还有别的滚动区，第一个不一定是我们这层），
+ * 判据是「顶边对齐且高度不短」——容差 4px，吸收亚像素与窗口装饰的舍入。
+ *
+ * 读不到节点 / 没有 bbox 一律报错，不静默通过（REVIEW.md 第 2 条：不可读 ≠ 没问题）。
+ */
+function assertOverlayChrome(ax) {
+  const win = ax.nodes.find((n) => n.role === "AXWindow" && n.bbox);
+  const areas = ax.nodes.filter((n) => n.role === "AXScrollArea" && n.bbox);
+  if (!win) throw new StepError("窗口形态自检：AX 里读不到带 bbox 的 AXWindow（AX 快照退化）");
+  if (areas.length === 0) throw new StepError("窗口形态自检：AX 里读不到带 bbox 的 AXScrollArea（webview 容器缺失）");
+  const area = areas.reduce((a, b) => (a.bbox.w * a.bbox.h >= b.bbox.w * b.bbox.h ? a : b));
+  const topGap = area.bbox.y - win.bbox.y;
+  const heightGap = win.bbox.h - area.bbox.h;
+  if (topGap > 4 || heightGap > 4) {
+    throw new StepError(
+      `窗口形态自检（backlog:366）：webview 没有铺满窗口——AXWindow ${win.bbox.w}×${win.bbox.h} @${win.bbox.y}` +
+        `，最大 AXScrollArea ${area.bbox.w}×${area.bbox.h} @${area.bbox.y}（顶边差 ${topGap}、高度差 ${heightGap}）。` +
+        `这是「原生标题栏回来了」的信号：套件的 --config 覆写把 app.windows[0] 整根替换、` +
+        `titleBarStyle/hiddenTitle 被静默吃掉。修法见 lib/app.mjs 的 launchApp（从 tauri.conf.json 读原件再 spread）。` +
+        `本自检存在的意义就是不让它静默——断言在非 overlay 形态下验不到真东西。`,
+    );
+  }
 }
 
 export async function clickNode(cu, pid, { role, name, nth = 0, needNode = true }) {
@@ -251,6 +293,21 @@ export async function injectDrag(from, to) {
     throw new StepError(
       `swift + CGEvent 拖拽注入失败（${e.message}）。这条通道要 /usr/bin/swift（Xcode Command Line Tools）` +
         `且进程要有辅助功能权限；README「已知边界」的 dblclick 条有说明。`,
+    );
+  }
+}
+
+/** AX 直接设窗口尺寸（M236，窄窗退让的真机验证）：确定值通道，不拖窗口边缘（命中区与
+ *  落点都不稳）。返回 swift 的回读行（`size=<w>x<h>`，窗口管理器钳制后的生效值）。 */
+export async function resizeWindowAX(pid, width, height) {
+  const script = new URL("./ax-window.swift", import.meta.url).pathname;
+  const args = ["/usr/bin/swift", script, String(pid), String(Math.round(width)), String(Math.round(height))];
+  try {
+    return execFileSync(args[0], args.slice(1), { encoding: "utf8" }).trim();
+  } catch (e) {
+    throw new StepError(
+      `swift + AX 窗口尺寸设置失败（${e.message}）。这条通道要 /usr/bin/swift（Xcode Command Line Tools）` +
+        `且进程要有辅助功能权限（与 CGEvent 注入同前提）。`,
     );
   }
 }

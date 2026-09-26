@@ -1306,12 +1306,13 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
         backgroundColor: "var(--content-bg)",
         fontFamily: mode === "md" ? "var(--editor-font-family)" : "var(--editor-mono-family)",
       },
-      // 阅读栏宽（design §4 未决项 1 的落法）：中列**定值** `--layout-doc-measure`（默认 680px，
+      // 阅读栏宽（design §4 未决项 1 的落法）：中列**定值** `--layout-doc-measure`（默认 760px，
       // tokens 文档 §布局尺寸；content-width-drag 起可被 `ui.content_width` 与栏宽拖拽覆写，
-      // 合法区间 [680, 1200]），两侧 `minmax(24px, 1fr)` 等分剩余空间 ⇒ 正文列在视口内居中；
+      // 合法区间 [760, 1200]），两侧 `minmax(24px, 1fr)` 等分剩余空间 ⇒ 正文列在视口内居中；
       // 旧口径 `--measure: 80%`（百分比）随之退役。正文自己的 32px/44px/20px 内边距在下一条
       // （`--sp-11/--sp-13/--sp-9`，tokens 文档 §间距阶梯点名的「正文 padding」高频出处），
-      // 因此 680px 是**框宽**、文字实测宽 592px——与定稿图 `.doc { max-width:664px;
+      // 因此 760px 是**框宽**、文字实测宽 672px（760 − 88，88 = 44 × 2 左右内边距）——与定稿图
+      // `.doc { max-width:664px;
       // padding:32px 44px 20px }`（border-box）同构（框宽 − 88px 内边距 = 文字宽）。
       //
       // code 模式（design §4 未决项 1 的另一半，口径落地见 test-results/m212/）：模板不变

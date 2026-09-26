@@ -251,18 +251,45 @@ function spawnSyncText(cmd, args) {
  * WKWebView 就**拿不到键盘焦点**——`type_text` 直接报
  * 「target WebArea did not acquire stable keyboard focus; no keys were sent」，整步的注入
  * 全部不落地，表现为一堆与产品无关的 FAIL（同一场景、同一提交，窗口在屏内时全 PASS）。
- * tauri 的 --config 是整根替换 `app.windows` 数组，因此这里必须把 title/width/height 一并
- * 重述（与 `src-tauri/tauri.conf.json` 的窗口对象逐字段一致——改那边的窗口尺寸要同步这里）。
+ *
+ * **窗口对象必须从仓库 tauri.conf.json 读原件再叠位置**（M236 修 backlog:366）：tauri 的
+ * `--config` 是深合并，但**数组按下标整体替换**——`app.windows[0]` 会被这里传的对象整根替掉。
+ * 早先的写法是在这里手抄 title/width/height（+注释提醒「改那边要同步这里」），结果
+ * `titleBarStyle: "Overlay"` 与 `hiddenTitle: true` 被**静默**吃掉：套件实例长出原生标题栏
+ * （窗口多一行、webview 让出 32pt），而这个丢配置一点报错都没有——任何「真机验证窗口级配置」
+ * 的断言在套件里都验不到（M213 实测对照见 `test-results/m213/titlebar/readings.md` §4）。
+ * 现在改成从 `src-tauri/tauri.conf.json` 读 `app.windows[0]` 再 spread：窗口配置只有一份真源
+ * （REVIEW.md 第 8 条），新增窗口级键不会再漏。读不到就抛错，**不回落手抄一份**（静默降级回来
+ * 就是同一个坑）。运行期自检见 `drive.mjs` 的 assertOverlayChrome（waitAppReady 内）。
  */
 export async function launchApp({ port = acceptPort(), timeoutMs = 300_000, logFile } = {}) {
   const root = repoRoot();
+  const conf = JSON.parse(await readText(path.join(root, "src-tauri", "tauri.conf.json")));
+  const baseWindow = conf.app?.windows?.[0];
+  if (!baseWindow) {
+    throw new Error(
+      "launchApp：src-tauri/tauri.conf.json 里没有 app.windows[0]，无法构造 --config 覆写" +
+        "（拒绝在这里手抄一份窗口配置——那正是 backlog:366 的成因）。",
+    );
+  }
   const config = {
     build: {
       devUrl: `http://127.0.0.1:${port}`,
       beforeDevCommand: `pnpm exec vite --port ${port} --strictPort`,
     },
     app: {
-      windows: [{ title: "Lumir", width: 1200, height: 800, x: 120, y: 80, focus: true }],
+      // 先铺原件（titleBarStyle / hiddenTitle / title / width / height …），再只叠本轮要改的
+      // 位置与焦点。spread 顺序即优先级：右边覆盖左边。
+      //
+      // 位置从 (120, 80) 挪到 (8, 40)（M236 实测）：窗口宽 1200（显式覆写，见下），而 x=120 时
+      // 120 + 1200 = 1320 超出 1280 逻辑宽的屏幕，**窗口管理器会把它钳到 1160**——于是任何
+      // 「先把窗口调到 1200」的真机断言（场景 39 的拉伸恢复档）在 1280 宽的机器上必然 FAIL，
+      // 而失败信号看起来像产品侧问题。x=8 / y=40 仍在屏内（菜单栏下方、屏右缘之内）：
+      // 8 + 1200 = 1208 ≤ 1280。窗口宽度本身仍由 `src-tauri/tauri.conf.json` 决定（1200），
+      // 这里只改摆放 —— 比「把窗口挪一下再设尺寸」的重试逻辑简单，且对所有场景一致。
+      // 已知边界：屏幕逻辑宽 < 1208 的机器上 1200 宽的窗口放不下，会如实被钳（这类机器上
+      // 场景 39 的 `window.width` 断言会 FAIL —— 那是环境信号，不是产品缺陷）。
+      windows: [{ ...baseWindow, x: 8, y: 40, focus: true }],
     },
   };
   const child = spawn(

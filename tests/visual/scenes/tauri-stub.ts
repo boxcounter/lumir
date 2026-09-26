@@ -66,6 +66,11 @@ export interface VaultFixture {
   noteLinks?: Record<string, string | null>;
   /** wikilink_create 桩：链接原文 → 创建后的 vault 相对路径（同时写入 files）。 */
   creates?: Record<string, string>;
+  /** 应用元信息桩（M236，product-version-display）：`plugin:app|name` / `plugin:app|version`
+   *  两条内置 invoke 路由的应答。缺省 = 与真源同值（"Lumir" / "0.0.0"，真源在
+   *  src-tauri/tauri.conf.json——这里是**桩侧模拟后端**，不是前端硬编码副本）；显式给
+   *  `false` = 两条路由不存在（模拟 ACL 拒绝 / 无后端，验标识块的失败降级路径）。 */
+  appMeta?: { name: string; version: string } | false;
   /** vault_open 桩：选择器"选中"的目标 vault（root + 完整 fixture）；缺省按用户取消应答 null。 */
   switchTo?: VaultFixture & { root: string };
   /** vault_open 重映射候选桩：目标路径未注册且存在失效注册时，非 force_new 打开按契约返回空 entries + candidates。 */
@@ -93,9 +98,9 @@ export interface VaultFixture {
      *  （`src/main.ts`），因此三主题场景截到的是**真实配置通道**下的主题，而不是场景
      *  自己贴的 `data-theme` 属性（后者只证明 CSS 有第三套取值，验不到配置接线）。 */
     theme?: "light" | "dark" | "eink";
-    /** 阅读栏宽 px（M228，content-width-drag）：缺省 680 = 出厂口径（与 Rust
-     *  `DEFAULT_CONTENT_WIDTH` 同值，D1 落槌）——不传的场景天然跑默认栏宽，不会因为
-     *  桩扩了形状而变宽。越界值的回落 + warning 归 Rust 侧（cargo test），桩只负责送达。 */
+    /** 阅读栏宽 px（M228，content-width-drag）：缺省 760 = 出厂口径（与 Rust
+     *  `DEFAULT_CONTENT_WIDTH` 同值，D1 落槌值 2026-09-26 修订）——不传的场景天然跑默认栏宽，
+     *  不会因为桩扩了形状而变宽。越界值的回落 + warning 归 Rust 侧（cargo test），桩只负责送达。 */
     content_width?: number;
     keys?: Record<string, string | null>;
     warnings?: string[];
@@ -297,8 +302,8 @@ export async function stubTauri(page: Page, vault: VaultFixture | null): Promise
             // 到「主题没施加」（见 src/main.ts 的注释），但不该由场景来踩。
             ui: {
               theme: current?.config?.theme ?? "light",
-              // 阅读栏宽（M228）：缺省 680 = Rust `UiConfig::default()` 同值。
-              content_width: current?.config?.content_width ?? 680,
+              // 阅读栏宽（M228）：缺省 760 = Rust `UiConfig::default()` 同值（2026-09-26 修订）。
+              content_width: current?.config?.content_width ?? 760,
             },
             keys: current?.config?.keys ?? {},
           },
@@ -419,6 +424,16 @@ export async function stubTauri(page: Page, vault: VaultFixture | null): Promise
           return args.handler;
         }
         if (cmd === "plugin:event|unlisten") return null;
+        // 内置 app 模块（M236）：getName()/getVersion() 走 plugin:app|name / version。
+        // fixture.appMeta === false 时故意不路由（落到下面的 unknown_command），
+        // 模拟 ACL 拒绝 / 无后端——标识块的失败降级路径由 titlebar-identity 场景断言。
+        if (cmd === "plugin:app|name" || cmd === "plugin:app|version") {
+          const meta = current?.appMeta;
+          if (meta !== false) {
+            const value = meta ?? { name: "Lumir", version: "0.0.0" };
+            return cmd === "plugin:app|name" ? value.name : value.version;
+          }
+        }
         // failures 为持续性注入：同一 command 的每次调用都抛（markdown-combo 的
         // 多附件读取失败用例依赖此语义）。恢复动作的端到端走通改用 __externalWrite
         // / __externalDelete 自然路径（见 save-recovery.spec）。

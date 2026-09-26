@@ -5,6 +5,19 @@
 CM 侧契约用主 checkout 的 `node_modules`（`@codemirror/view@6.43.11`，`pnpm-lock.yaml` 锁定值）
 实证，行号即本地 dist 现值。
 
+## 0. 修订记录
+
+**2026-09-26（Alex，M236 同批）**：D1 默认值 **680 → 760**、D2 区间 **[680, 1200] → [760, 1200]**
+（**默认值仍即下限**，拖拽只能往宽调）。原话：「采纳你的建议档：默认 760、区间[760,1200]。我没有
+别的意见了，你可以动手了」。动因：760 让正文文字实测宽从 592px 回到 672px（框宽 − 88px 内边距），
+更接近「内容即界面」的阅读档；代价是含编辑区的整页基线再位移一次——与 M236 的标识块同批走
+Alex 过目纪律（过目包 `test-results/m236/baseline-review/`），**批准前不提交任何基线 PNG**。
+
+本文以下各节保留 **2026-09-25 节点 1 的原始落槌记录**（含当时的推理与备选），现役值以本节为准：
+凡文中出现「680 / [680, 1200]」而未标注为历史档者，一律按 **760 / [760, 1200]** 读。
+代码与测试里的现役值已同步（`src-tauri/src/config.rs`、`src/content-width.ts`、`src/style.css`、
+`src/editor.ts` 与各自单测/场景）。
+
 ## 1. 现状盘点
 
 ### 1.1 栏宽机制（中列 grid 轨道 + token 单写值）
@@ -81,9 +94,9 @@ CM 侧契约用主 checkout 的 `node_modules`（`@codemirror/view@6.43.11`，`p
 
 - `UiConfig` 增 `content_width: f64`（与 `font_size` 同取 f64：JSON 数值字段的先例类型，
   `config.rs:128-129`；`Option<u32>` 会把 `"content_width": 700.5` 打进整文件回落，f64 更宽容）。
-  `Default` 给 680（D1 落槌值）。
-- 常量三件套照 `font_size` 模板：`DEFAULT_CONTENT_WIDTH = 680.0`、`CONTENT_WIDTH_MIN = 680.0`、
-  `CONTENT_WIDTH_MAX = 1200.0`（D2 落槌 [680, 1200]——**默认值即下限**，拖拽只能往宽调）；TS 侧镜像常量放新模块（§2.3），两侧互指注释 + 各自单测钉住
+  `Default` 给 **760**（D1 落槌值 680，2026-09-26 修订为 760；本节以下同）。
+- 常量三件套照 `font_size` 模板：`DEFAULT_CONTENT_WIDTH = 760.0`、`CONTENT_WIDTH_MIN = 760.0`、
+  `CONTENT_WIDTH_MAX = 1200.0`（D2 落槌 [760, 1200]——**默认值即下限**，拖拽只能往宽调）；TS 侧镜像常量放新模块（§2.3），两侧互指注释 + 各自单测钉住
   （REVIEW.md 第 8 条的既有处置，先例 `src/typography.ts:15-18`）。
 - `RawUiConfig` 增 `content_width: Option<f64>`；`validate()` 的 ui 分支按 `font_size` 模板扩：
   缺字段回落默认不告警；越界回落默认 + warning；类型不符走整文件回落（既有解析模型性质，
@@ -169,7 +182,7 @@ CM 侧契约用主 checkout 的 `node_modules`（`@codemirror/view@6.43.11`，`p
 - **与配置的关系**：启动时配置喂一次初值；拖拽回写让配置随即同步——因此不存在 M180/M195 的
   「运行期态 vs 配置默认」双真源分歧，重启后与退出前一致。
 - **出厂默认两处写值**：Rust `DEFAULT_CONTENT_WIDTH` 与 TS 镜像常量同值、互指注释、各自单测
-  （REVIEW.md 第 8 条既有处置）。CSS 侧 `--layout-doc-measure: 680px` 是「配置到达前」的起步值，
+  （REVIEW.md 第 8 条既有处置）。CSS 侧 `--layout-doc-measure: 760px` 是「配置到达前」的起步值，
   构成第三处——三处同值的断言面照 `font_size` 先例（`src/typography.ts:15-18` 注释记的就是这条）。
 
 ### 2.6 与键位 / 命令体系的关系

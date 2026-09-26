@@ -411,21 +411,24 @@
     保持名实一致；④ 验收套件隔离 `XDG_CONFIG_HOME` 下补迁移场景（旧目录 + 文件 → 启动后新目录
     可见、注册项不丢）。历史文档（multi-vault-workspaces 等 change 名）不改写。
 
+32. **change `product-version-display` 待归档跟踪**（2026-09-26，M236 登记，**待 Alex 节点 2**）：流程口径要求
+    每个 change 在实现 PR 合并时即落一条待归档记录（`docs/process/openspec-workflow.md` 的批次收尾
+    checklist 第一条）。本 change（提案评审节点 1 已于 2026-09-25 通过，D1/D2/D3 裁决见 `proposal.md`
+    头部）**实现已完成、未归档**，卡在两件事上：
+    ① **视觉基线待 Alex 裁决**——标识块让 21 张整页基线 + 3 张标签栏元素基线内容变化，过目包在
+    `test-results/m236/baseline-review/`（**基线一律未改**，等批准才 `--update`）；
+    ② **归档顺序**——本 change 的 `specs/ui-design-system/spec.md` delta 含 **MODIFIED Requirements**，
+    而它依赖的 `restyle-ui-tokens-v1` **仍未归档**（`openspec list`：49/51 tasks），此时 archive 会被拒。
+    按裁决「不强行 archive」，等 ① 过、② 的前置 change 归档后再走节点 2。归档对账要点预记：本 change
+    的 tasks.md §1–§5 已逐条勾选并附证据指针；真机判据为场景 39（`scripts/acceptance/scenarios/
+    39-titlebar-identity.md`，1/1 PASS）。
+
 ## 待修 findings（不阻塞）
 
-- **验收套件的 `--config` 覆盖会静默丢掉 `app.windows[0]` 里的窗口级配置**（2026-09-25，M213 登记，
-  **medium**）：`scripts/acceptance/lib/app.mjs` 启动 app 时传
-  `--config '{"build":{…},"app":{"windows":[{title,width,height,x,y,focus}]}}'`。Tauri CLI 的 `--config`
-  是**深合并**，但**数组按下标整体替换**——`app.windows[0]` 被这份只含六个键的对象整体替换，
-  `titleBarStyle: "Overlay"` 与 `hiddenTitle: true`（`src-tauri/tauri.conf.json`）**静默丢失**。
-  **实测对照**（M213，同一二进制）：走套件 → `AXScrollArea @0,32 1200×768`（webview 让出 32pt 原生标题栏）
-  且**屏幕上出现标题文字 "Lumir"**；手起（不覆盖 `app.windows`）→ `AXScrollArea @0,0 1200×800` 且无标题文字。
-  证据：`test-results/m213/titlebar/readings.md` §4（含两张截图与两份 AX 读数）。
-  **后果**：任何「真机上验证窗口级配置」的断言在套件里都验不到，而这个丢配置是**静默**的
-  （x/y/w/h 覆盖确实生效，只有同数组里的其它键被吃掉）——正是 REVIEW.md 第 9 条与「假绿」同族的形态。
-  **动作**：`app.mjs` 的覆盖对象里带上 `app.windows[0]` 的全部键（至少复制 `titleBarStyle` /
-  `hiddenTitle`），或改成只覆盖 `build.*`、窗口位置另走一条通道；补一条「套件启动后窗口处于 overlay
-  形态」的自检（例如断言 webview 的 AX 尺寸等于窗口尺寸）。
+- ~~**验收套件的 `--config` 覆盖会静默丢掉 `app.windows[0]` 里的窗口级配置**（2026-09-25，M213 登记，
+  **medium**）~~ **2026-09-26 M236 已修**：worker 的修法是「从 `src-tauri/tauri.conf.json` 读
+  `app.windows[0]` 原件再 spread」，并加运行期自检 `assertOverlayChrome`；修前/修后对照、反向输入
+  实测与验收判据见文末「已核销」的同日条目。
 - **验收 README 的 `configWrite` / 场景 front-matter `config:` 行没写 `theme` / `fontFamily` /
   `monoFontFamily` / `fontSize`**（2026-09-25，M213 登记，low）：`scripts/acceptance/README.md` 的动作表
   里 `configWrite` 只列 `lastVault、keys、restart、requireVault`，而实现（`lib/execute.mjs、
@@ -1491,3 +1494,23 @@
   **核销判据（合并后实测间距读数）**：M218 merge `456ee47`，探针三主题逐项对照 gap 表全量值
   255/255 PASS，reviewer-fix-content r1 独立复跑一致。**已接受取舍（reviewer r2 落 checks）**：
   CM 无 margin 折叠，段落→标题 ≤8px、代码块→标题 ≤12px 偏松；li 下缘 2px 放弃（末 item 无机制）。
+- 2026-09-26：**验收套件 `--config` 静默丢掉 `app.windows[0]` 窗口级配置**（原「待修 findings」medium 条，
+  M213 登记 → **M236 修复**）：Alex 在自测实例截图里看到「两行标题栏」，根因即此——`pnpm tauri dev
+  --config` 的深合并对**数组按下标整体替换**，`app.mjs` 里手抄的 `{title,width,height,x,y,focus}`
+  把 `titleBarStyle: "Overlay"` 与 `hiddenTitle: true` 静默吃掉，套件实例因此长出原生标题栏
+  （webview 让出 32pt、屏幕上出现窗口标题「Lumir」），**全程零报错**。落点：
+  `scripts/acceptance/lib/app.mjs` 的 `launchApp` 改成从 `src-tauri/tauri.conf.json` 读
+  `app.windows[0]` **原件再 spread**、只叠 `x/y/focus`（窗口配置单一真源，REVIEW.md 第 8 条；
+  读不到窗口对象直接抛错，不回落手抄）；`lib/drive.mjs` 的 `waitAppReady` 就绪点上加
+  `assertOverlayChrome`（`AXScrollArea` 顶边与高度对 `AXWindow` 的差 >4px 即 FAIL 并点名成因，
+  `restart` 后重启同样过）；`scripts/acceptance/README.md` 补自检与配置侧纪律。
+  **判据（tower 验收口径）**：修后 AX 读数 `AXScrollArea @0,0 1152×768` 与窗口重合（修前
+  `@0,31 1152×737`）；套件实例截图单行 tab 栏、红灯叠在 tab 栏上，无原生标题栏行。
+  **反向前置验证**：把 `windows` 临时改回手抄写法跑场景 39 → 自检报「顶边差 32、高度差 32」如实 FAIL
+  （证明自检有区分度，也坐实该 bug 真实存在），改回 spread 后场景 39 **1/1 PASS**。
+  证据：`test-results/m236/baseline-review/backlog366-before-after/`（修前/修后截图 + AX 各两份）、
+  `test-results/m236/reverse-probe-backlog366-buggy-config.log`、
+  `test-results/m236/acceptance-39-backlog366-fixed.log`。
+  **连带修正**：本修复让全量场景从「非 overlay」切到「真 overlay」（视口 768 → 800），凡把视口高度
+  烘进断言的场景都要重算——扫描后只有 `scripts/acceptance/scenarios/33-image-lightbox.md` 烘了绝对坐标
+  （三条读数按 `水平 40+(1120-w)/2`、`垂直 40+(720-h)/2` 重算，场景内写明推导）。
