@@ -11,6 +11,7 @@ import {
   KEYLESS_COMMAND_IDS,
   KEY_BINDINGS,
   Keymap,
+  NON_TAB_GLOBAL_COMMAND_IDS,
   TABLE_SCROLL_CLASS,
   TAB_GOTO_IDS,
   WIDGET_COMMAND_IDS,
@@ -555,6 +556,12 @@ test("主题切换命令：⌘⇧T 的 token 形态、作用域 global、不在�
   assert.equal(binding?.command, "view.theme-cycle");
   assert.equal(binding?.scope, "global");
   assert.ok((binding?.doc.length ?? 0) > 0, "绑定必须带来由说明（表即文档）");
+  // 键位面板的「全局」组 = NON_TAB_GLOBAL_COMMAND_IDS（src/bindings-panel.ts 的分组表），
+  // 因此本命令在清单里 ⇒ 面板的全局组里就有这一行（task 2.2 的「如实列出」）。
+  assert.ok(
+    (NON_TAB_GLOBAL_COMMAND_IDS as readonly string[]).includes("view.theme-cycle"),
+    "不在 NON_TAB_GLOBAL_COMMAND_IDS（面板全局组的成员来源）里",
+  );
   // 文档里要能看到三条冲突来源的核实结论（表即文档的口径，写进 doc 而不是别处）
   assert.ok(binding?.doc.includes("表内"));
   assert.ok(binding?.doc.includes("muda") || binding?.doc.includes("原生菜单"));

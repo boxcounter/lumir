@@ -84,8 +84,13 @@
   `AXButton (主题：{主题名}（点击切换）)`，它由唯一施加点 `applyTheme` 与 `data-theme` 同步写入。
   色值 / eink 组件级覆盖 / mermaid SVG 内联色由 chromium 场景守（两侧分工见 §4.2）。
 - [x] 4.4 `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` 通过（26 passed / 0 failed）
-- [ ] 4.5 `bash scripts/gate.sh quick` 全绿；真机验收套件 `node scripts/acceptance/run.mjs 44`
-  PASS
+- [x] 4.5 `bash scripts/gate.sh quick` 全绿（提交后 **10/10 PASS**，含 bindings-drift——提交前那条 FAIL 是
+  预期：`src/bindings/UiConfig.ts` 随 ts-rs 重导出更新、未提交时被判漂移）；真机验收套件
+  `node scripts/acceptance/run.mjs 44` **PASS**（34 断言 / 55.5s）。**全流程无回归**：`node scripts/acceptance/run.mjs`
+  全量跑一遍 **46/47 PASS**，唯一 FAIL 是 `32-list-filter` 的「命中的那一行还在（`-b` 那个 vault 的完整路径）」
+  ——与 2026-09-25 的既有记录同一断言、同一处（`test-results/acceptance/2026-09-25/`），**先于本 change 存在**，
+  已登记 `docs/backlog.md` 待修 findings（本 change 的 scope 不含该场景的失败面）。证据：
+  `test-results/m237/acceptance-full.log` 与 `test-results/acceptance/2026-09-26/summary.md`。
 
 ## 5. 收尾
 

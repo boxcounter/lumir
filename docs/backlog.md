@@ -485,6 +485,17 @@
   / REMOVED 三类），`## Purpose` 不被 delta 读取，只在 capability **创建**时写入——所以这条只能在归档
   restyle 时手写替换，或另立一条 retro change。**动作**：restyle 归档节点 2 时顺手改这段（与「新建
   capability 的 Purpose 手写」是同一道工序）。
+- **`32-list-filter` 自 2026-09-25 起在真机上红（同一断言，可复现）**（2026-09-26，M237 登记，medium）：
+  全量真机套件 `46/47`，唯一 FAIL 是 `32-list-filter` 的最后一段——「命中的那一行还在（`-b` 那个 vault
+  的完整路径）」（期望 AX 含 `/private/tmp/lumir-m102-acceptance-b`）。`test-results/acceptance/`
+  的历史目录显示：**2026-09-24 PASS → 2026-09-25 FAIL（断言逐字相同）→ 2026-09-26 M237 全量复跑
+  同一处 FAIL**。因此这是**先于 M237 存在的红**（与本批主题切换改动无关：失败面是 vault 切换器
+  浮层的筛选结果集，本批没碰 `src/vault-switcher.ts` / `src/list-filter.ts` / 浮层样式）。
+  **证据**：`test-results/acceptance/2026-09-25/32-list-filter/steps.md:79`（旧）
+  与 `test-results/acceptance/2026-09-26/32-list-filter/steps.md:79`（本次，含 AX dump）。
+  **待定位**：要么是该场景对「第二个 vault 是否已注册」的前置失败（筛选前的那一步骤断了，`) 命中行」
+  自然不在），要么是 2026-09-25 那批（M236 的套件窗口/`--config` 改动）引入的真实回归——**未经定位，
+  不作结论**。归属调查建议放在下一批的套件收口里（本 change 的 scope 不含它）。
 
 - **`list-filter` 归档时如实留下的四处覆盖缺口 / 措辞落差**（2026-09-24，M205 登记，low）：
   ① delta scenario「单字符绑定不进统一键位表」里「表内没有任何单字符绑定」这条**无断言**（现只覆盖 ⌃S 那条，
