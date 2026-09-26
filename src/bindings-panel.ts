@@ -28,14 +28,26 @@ import type { CommandId, KeyBinding } from "./keys";
 /** 面板的功能分组：只列命令 id，键位与作用域一律从生效表读。
  *  9 个分组覆盖全部命令（不做文本改写的选择类命令——⌘A 全选、⌃G 撤下选择——归
  *  「移动与选择」，与光标族同属「不动文档的定位/选区命令」）；未列入任何分组的
- *  命令自动落到末尾「其他」——将来新增命令忘记归组时不会从面板里消失。 */
-const BINDING_GROUPS: ReadonlyArray<{ title: string; commands: readonly CommandId[] }> = [
+ *  命令自动落到末尾「其他」——将来新增命令忘记归组时不会从面板里消失。
+ *
+ *  **导出给单测**：`tests/unit/bindings-panel.test.ts` 用它做三条对账（每条 `COMMAND_IDS`
+ *  都有组 ⇒ 零兜底组 / 组里无幻影 id / 分组互斥）。兜底组的存在意味着「漏归组」本身不会
+ *  报错，只有别人场景里的分组标题断言会红（M239 实证：红在 m133 的视觉场景上，跨了 mission
+ *  才发现）；对账放进 unit 层，漏归组在引入它的那次改动里就红。 */
+export const BINDING_GROUPS: ReadonlyArray<{ title: string; commands: readonly CommandId[] }> = [
   { title: "移动与选择", commands: ["editor.cursor-up", "editor.cursor-down", "editor.cursor-forward", "editor.cursor-backward", "editor.line-start", "editor.line-end", "editor.select-all", "editor.keyboard-quit"] },
   { title: "扩选", commands: ["editor.extend-char-forward", "editor.extend-char-backward", "editor.extend-line-down", "editor.extend-line-up", "editor.extend-line-start", "editor.extend-line-end", "editor.extend-word-forward", "editor.extend-word-backward"] },
   { title: "删除", commands: ["editor.delete-char-forward", "editor.delete-char-backward", "editor.transpose-chars", "editor.delete-word-forward", "editor.delete-word-backward"] },
   { title: "kill-yank", commands: ["editor.kill-line", "editor.yank"] },
   { title: "翻屏", commands: ["editor.scroll-page-down", "editor.scroll-page-up", "editor.recenter"] },
   { title: "撤销", commands: ["editor.undo", "editor.redo"] },
+  // M239 的两条列表结构命令（Tab / ⇧Tab）单列一组：它们改写的是**列表项的嵌套层级**
+  // （连同续行与子树整体平移），与「移动与选择」（只动光标 / 选区）和「删除」都不是一族。
+  // 归组去重是面板的硬约束：漏登记的命令会落进末尾的兜底「其他」组，那条兜底是 M133 的
+  // 有意设计（新命令不从面板消失），但代价是漏归组只表现为「别处场景红」——M239 就这么
+  // 漏过一次（master 视觉门禁红，M240 顺手收）。现在由 tests/unit/bindings-panel.test.ts
+  // 的「零兜底组」对账守住。
+  { title: "列表缩进", commands: ["editor.list-indent", "editor.list-outdent"] },
   { title: "widget", commands: WIDGET_COMMAND_IDS },
   // M149：标签单列一组（而不是并进「全局」）——⌘W 的语义变化与 ⌘1–9 的九条直达是
   // dogfood 期最需要一眼核对的两件事，混在全局组里不容易看全。两组必须**互斥**：

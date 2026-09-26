@@ -484,6 +484,64 @@
 
 ## 待修 findings（不阻塞）
 
+### 验收套件（M240 现场发现，2026-09-26）
+
+- **Tab / Shift-Tab 注入在 WKWebView 不生效 ⇒ list-tab-indent（M239）的场景 43 在 master 上恒红**（medium，
+  产品行为正确）：全量真机批次 47/49 PASS，两条红里的 `43-list-tab-indent` 红在 `do: key tab` 之后源文件
+  未变（前一步键入 `q` 落在预期行、焦点 `AXTextArea` ⇒ 可打印字符的通道是通的）。**三步归因实测**：
+  ① 单独复跑 43 仍 FAIL（同样两条断言、同样值）；② `git checkout 93e153a -- src`（src/ 回到 M240 之前
+  = M239 合并后的 master）复跑**同样 FAIL**，随后 `git checkout HEAD -- src` 恢复 ⇒ 与 M240 无关；
+  ③ chromium 探针：`- alpha\n- bravo` 上 caret 置 `bravo` 行按 `Tab` → 文档变 `- alpha\n  - bravo`，
+  `Shift+Tab` 变回 ⇒ **产品功能正确，红在注入通道**（KimiCU 的 `press_key("tab")` 没有以 keydown
+  落到 WKWebView；候选成因：xdotool 风格键名映射失败 / macOS 的 Tab 焦点遍历在到达页面前吃掉，
+  未定位到哪一条）。
+  **风险面**：任何 `do: key tab` 类场景都会得到假 FAIL，而「Tab 无操作」这类**负向断言在真机上
+  恒真假绿**（43 的前两处「无操作」步骤就是这种形态，整条只在最后一步才红）。
+  **动作**（裁决归 M239 的 owner / tower）：① 低成本——在 `scripts/acceptance/README.md` 的已知边界
+  登记该通道缺口，并把 43 改成经 `[keys]` 绑到通道可达的组合来验命令本身（场景内写明默认绑定那条
+  路径待修）；② 正解——查 KimiCU 的 `press_key("tab")` 实际发出的键名 / keycode，修通后 43 原样跑绿。
+  两条都建议顺手把「负向断言必须配通道可达的正观测」写进 README 的判据纪律。
+  证据：`test-results/acceptance/2026-09-26-m240-full/43-list-tab-indent/steps.md`（FAIL 现场）、
+  `…/2026-09-26-m240-rerun43/`、`…/2026-09-26-m240-attrib43/`（pre-M240 同红）；finding
+  `.tower/comms/findings/20260926-worker-impl-table-fs-bug-tab-shift-tab-wkwebview-m239-43-master.md`。
+
+### 门禁（M240 现场发现，2026-09-26）
+
+- ~~**master 视觉门禁红：M239 的两条列表命令未归组，键位面板多出兜底「其他」组**（high）~~
+  **已修（M240 顺手收，commit `e686cdd`）**：`src/bindings-panel.ts` 新增「列表缩进」组收纳
+  `editor.list-indent` / `editor.list-outdent`，`BINDING_GROUPS` 导出给单测对账；
+  `tests/unit/bindings-panel.test.ts` 补三条不变量（每条 `COMMAND_IDS` 都有组 ⇒ 零兜底组 /
+  组里无幻影 id / 分组互斥），先红后绿留证（撤掉归组行 → 2 条 FAIL 并直接点出这两条 id，
+  恢复后 311/311 PASS）；`m133-describe-bindings.spec.ts` 的 GROUPS 期望随之加一组。
+  `gate.sh visual` 由 11/12 回到 **12/12 PASS**。现场与证据留痕（原文照录）：
+  面板的兜底逻辑（`render()` 里对 `COMMAND_IDS` 求「未归组」的差集）渲染出「其他」组，
+  M240 用 `git stash push -- src tests`（摘掉本 change 全部源码与本层测试改动）后 `pnpm build`
+  重跑同一场景，**同样 2 failed / 4 passed**，故该红与 M240 无关；直接读数显示「其他」组的内容
+  逐字为那两条 id。**防复发已落地**：兜底「其他」是「新命令忘归组」的静默出口（M133 的有意设计，
+  保证命令不从面板消失），代价是漏归组只表现为别人的场景红——现在由 unit 层的「零兜底组」
+  对账承担，漏归组在引入它的那次改动里就红。完整现场见 finding
+  `.tower/comms/findings/20260926-worker-impl-table-fs-bug-master-m239.md`。
+
+### 表格全屏（M240 登记，2026-09-26）
+
+- **长表在全屏遮罩里只看到「已渲染的那部分」**（medium，follow-up change 候选）：快照 = 打开那一刻
+  渲染态 grid 的深克隆，而 CM 的 DOM 随视口有界——实测（chromium 1200×800）700 行 / 60,764 B 的表
+  只渲染 49 行，其余以 `.cm-gap` 占位（16,651px；克隆时按卫生摘除，所以快照是紧凑的 49 行）。
+  后果：打开一张远高于视口的表的全屏视图，只能看到视口附近的行；关闭、在文档里往下滚、再打开才能
+  看到下一段。**这是「打开那一刻渲染态 grid 的副本」的字面口径**（spec 已把它写进已知边界），不是
+  缺陷，但它是「看一眼整张表」这一诉求在**行方向**上的缺口。完整快照需要另一条渲染路径（design §8
+  已否决的「从 TableModel + 源码切片重建」那一类，理由是丢 inline 渲染）或 CM 侧的整块渲染能力。
+  **动作**：立项时先答「行方向的完整呈现是否必要」——宽表（列方向）是本 change 的由来，长表的阅读
+  在文档里本来就是滚动；若要做，优先考虑「快照分段补齐」而不是第二套渲染口径。
+  证据：`test-results/acceptance/2026-09-26/table-fullscreen-before/open-cost.json`。
+- **视觉套件 README 的「22 处像素断言」与现状不符**（low，文档漂移）：`tests/visual/README.md:48` 与
+  `.github/workflows/visual.yml` 的注释都写「22 处整页像素断言跳过」，M240 实测当前
+  `expectScreenshot` 调用点 **34 处**、`tests/visual/baselines/` 下 **34 张 png**（1:1 对应）——
+  数字是 M173（2026-09-18）时代的，此后场景增长未回写。本 change 只动了 `tests/visual/**` 与
+  `scripts/**`，`visual.yml` 不在 mission scope 内，故不就地改（改一处会与另一处不一致）。
+  **动作**：一处改动同时更新 README 与 workflow 注释，并把「基线数字以最近一次全绿输出的『逐张比对
+  通过』计数为准」写进 README 的基线纪律段。
+
 - ~~**验收套件的 `--config` 覆盖会静默丢掉 `app.windows[0]` 里的窗口级配置**（2026-09-25，M213 登记，
   **medium**）~~ **2026-09-26 M236 已修**：worker 的修法是「从 `src-tauri/tauri.conf.json` 读
   `app.windows[0]` 原件再 spread」，并加运行期自检 `assertOverlayChrome`；修前/修后对照、反向输入

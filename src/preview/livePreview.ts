@@ -31,7 +31,9 @@ import { docTitleForFrontmatter, docTitleTop } from "./doc-title";
 import { sampleCallback } from "../diagnostics";
 import type { LinkResolveResult } from "../bindings/LinkResolveResult";
 import { BlockWrapper } from "@codemirror/view";
-import { findTables, tableAt, tableRowsInRange, degradationNotice, type TableModel } from "./table";
+import { findTables, fullscreenTableAt, tableAt, tableRowsInRange, degradationNotice, type TableModel } from "./table";
+import { TABLE_SLOT_CLASS, TableFullscreenTrigger } from "./table-trigger";
+import type { TableFullscreen } from "../table-fullscreen";
 import { highlightCode } from "./code";
 import { BLOCK_SCROLL_CLASS, TABLE_SCROLL_CLASS, WIDGET_SCROLL_STEP_PX } from "../keys";
 import type { CommandRunner, WidgetCommandId } from "../keys";
@@ -62,6 +64,10 @@ export interface PreviewContext {
   /** 图片放大查看的遮罩（M184）；未接线时返回 null——图片因此没有双击路径
    *（与 attachmentProvider 未接线即走占位同一口径）。 */
   lightbox(): ImageLightbox | null;
+  /** 表格放大全屏查看的遮罩（M240）；未接线时返回 null——表格工具钮仍在（它由装饰层按
+   *  「表渲染为 grid」的结构事实渲染），只是点它没反应（与 lightbox() 未接线时双击图片没反应
+   *  同一口径：能力没装配是结构性表现，不是一条要维护的开关）。 */
+  tableFullscreen(): TableFullscreen | null;
   /** 文件 mtime（Unix 毫秒，doc-meta「修改于」的数据源，M218 A1）：缓存命中返回值，
    *  未命中返回 undefined（pending）——实现方后台取数，到达后派发 previewRefresh
    *  触发重建（wikilinkResolver 同款范式）。取不到 mtime 时缓存 null。 */
@@ -265,6 +271,15 @@ function tableWrappers(view: EditorView) {
       const start = view.state.doc.lineAt(table.from).from;
       const label = `Markdown 表格 ${index + 1}`;
       return [
+        // 触发钮的坐标系统（M240，rank 20 = 最外）：`position: relative` 让全屏触发钮
+        // （绝对定位，见 ./table-trigger 的「别抄成跟着内容滚」）以**表格可视盒**为包含块，
+        // 而横滚容器在它内侧——包含块在横滚容器之外的绝对定位元素不被该容器滚动 / 裁切。
+        // 本层零样式足迹：无背景 / 边框 / 内外边距，静止帧与不装它时逐像素相同。
+        BlockWrapper.create({
+          tagName: "div",
+          rank: 20,
+          attributes: { class: TABLE_SLOT_CLASS },
+        }).range(start, table.to),
         BlockWrapper.create({
           tagName: "div",
           rank: 10,
@@ -285,6 +300,54 @@ function tableWrappers(view: EditorView) {
       ];
     });
   return BlockWrapper.set(wrappers, true);
+}
+
+/** 表格全屏命中判定的结果：要克隆的 grid 元素 + 该表既有的读屏名。 */
+export interface TableFullscreenTarget {
+  table: HTMLElement;
+  label: string;
+}
+
+/** grid 元素 → 目标：读屏名取元素上那份**既有**标签（`Markdown 表格 N`，唯一生成处在本文件
+ *  的 tableWrappers 里），MUST NOT 在这里另写一份字面量。没有读屏名就不给目标
+ *（`aria-modal` 的语义要求有名）。 */
+function fullscreenTargetOf(grid: HTMLElement): TableFullscreenTarget | null {
+  const label = grid.getAttribute("aria-label");
+  return label === null ? null : { table: grid, label };
+}
+
+/**
+ * `table.toggle-fullscreen` 的命中判定（M240）：命中返回「哪张表 + 它的读屏名」，否则 null
+ * （命令据此不动作；「命中条件不满足时不消费事件」由装配层的命令级门承担，见 keys.ts 的
+ * KeymapContext.commandGate）。
+ *
+ * 两个命中入口（spec 的命中条件 ②③）：
+ *
+ *   ① **表格滚动容器持焦**：容器元素本身就是「这张表当前渲染为 grid」的证据——装饰层只为
+ *      `rectangular && !degraded` 的表建容器（同一个 filter，见 tableWrappers），降级表没有
+ *      容器可言。这条不看 caret：滑块用户点了容器、或点了触发钮之后 caret 可能还留在原地。
+ *   ② **caret 在表内**：先用模型判「落在一张当前渲染为 grid 的表内」（`fullscreenTableAt`
+ *      的纯函数，判据与 ① 同源），再用 DOM 定位要克隆的元素——模型说能放大、DOM 里却还没有
+ *      `.cm-lp-table`（首帧时序）时给 null，MUST NOT 拿一个半成品去克隆。
+ *
+ * MUST NOT 引入全文档扫描：模型来自视口有界的 `tableDiscoveryRange` + 缓存（既有纪律）。
+ */
+export function tableFullscreenTarget(view: EditorView): TableFullscreenTarget | null {
+  const active = view.dom.ownerDocument.activeElement;
+  if (active instanceof Element) {
+    const container = active.closest(`.${TABLE_SCROLL_CLASS}`);
+    const grid = container?.querySelector<HTMLElement>(".cm-lp-table") ?? null;
+    if (grid !== null) {
+      const target = fullscreenTargetOf(grid);
+      if (target !== null) return target;
+    }
+  }
+  const { from, to } = tableDiscoveryRange(view);
+  const table = fullscreenTableAt(tableModels(view.state, from, to).models, view.state.selection.main.head);
+  if (table === undefined) return null;
+  const at = view.domAtPos(table.from).node;
+  const grid = (at instanceof Element ? at : at.parentElement)?.closest<HTMLElement>(".cm-lp-table") ?? null;
+  return grid === null ? null : fullscreenTargetOf(grid);
 }
 
 /**
@@ -601,6 +664,20 @@ function buildDecorations(view: EditorView, ctx: PreviewContext): DecorationSet 
   const fm = detectFrontmatter(view.state.doc);
   const { from, to } = tableDiscoveryRange(view);
   const tables = tableModels(view.state, from, to).models;
+
+  // 表格全屏触发钮（M240，D3 的鼠标入口）：每张**渲染为 grid** 的表一个（判据与
+  // tableWrappers 的 BlockWrapper 完全一致——同一份 models、同一个矩形性 + 非降级条件），
+  // 挂在表头行行首，DOM 是绝对定位的按钮（见 ./table-trigger 的坐标系统说明）。
+  // 降级表 / 非矩形表天然没有它：那两类没有 `.cm-lp-table` 子树，装饰也不会走到这里。
+  for (const table of tables) {
+    if (table.degraded || !table.rectangular) continue;
+    decos.push(
+      Decoration.widget({
+        widget: new TableFullscreenTrigger(() => ctx.tableFullscreen()),
+        side: -1,
+      }).range(view.state.doc.lineAt(table.from).from),
+    );
+  }
 
   for (const vr of view.visibleRanges) {
     for (const table of tables) {

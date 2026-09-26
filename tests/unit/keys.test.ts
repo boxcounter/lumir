@@ -593,3 +593,70 @@ test("主题切换命令可由 [keys] 重绑 / 解绑（默认键位单段无空
     "解绑后该命令在生效表里没有绑定（键位面板据此显示未绑定）",
   );
 });
+
+// ---------------------------------------------------------------------------
+// 命令级命中条件（M240，KeymapContext.commandGate）
+// ---------------------------------------------------------------------------
+
+test("Keymap：命令级门为假时不消费事件、不执行命令；为真时照常", () => {
+  const host = fakeWindow();
+  const { runtime, runs } = recordingRuntime();
+  const bindings: KeyBinding[] = [
+    // 形态与 [keys] 覆盖产出的绑定一致：没有 when 字段（条件只能来自命令级门）。
+    { key: "Cmd-j", command: "table.toggle-fullscreen", scope: "global", doc: "" },
+    { key: "Cmd-s", command: "document.save", scope: "global", doc: "" },
+  ];
+  let hit = false;
+  new Keymap(bindings).attach(host.target, runtime, {
+    isEditorEvent: () => true,
+    commandGate: (command) => command !== "table.toggle-fullscreen" || hit,
+  });
+
+  // 命中条件不满足：不 preventDefault、不执行命令——事件原样留给原生路径
+  //（spec 的「命中条件不满足时不消费事件」scenario；条件本体在装配层，需要编辑器状态）。
+  const miss = keyEvent({ key: "j", metaKey: true });
+  host.fire(miss);
+  assert.equal(miss.defaultPrevented, false);
+  assert.deepEqual(runs, []);
+
+  // 门只管自己那条命令：别的命令不受影响
+  host.fire(keyEvent({ key: "s", metaKey: true }));
+  assert.deepEqual(runs, ["document.save"]);
+
+  // 命中：照常消费 + 执行
+  hit = true;
+  const ok = keyEvent({ key: "j", metaKey: true });
+  host.fire(ok);
+  assert.equal(ok.defaultPrevented, true);
+  assert.deepEqual(runs, ["document.save", "table.toggle-fullscreen"]);
+});
+
+test("Keymap：不传 commandGate 时行为与既有逐条一致（缺省恒真）", () => {
+  const host = fakeWindow();
+  const { runtime, runs } = recordingRuntime();
+  const bindings: KeyBinding[] = [{ key: "Cmd-j", command: "table.toggle-fullscreen", scope: "global", doc: "" }];
+  new Keymap(bindings).attach(host.target, runtime, { isEditorEvent: () => true });
+
+  const event = keyEvent({ key: "j", metaKey: true });
+  host.fire(event);
+  assert.equal(event.defaultPrevented, true);
+  assert.deepEqual(runs, ["table.toggle-fullscreen"]);
+});
+
+test("表格全屏命令：在全局命令清单里、默认不绑键、可经 [keys] 绑上并生效", () => {
+  assert.ok((COMMAND_IDS as readonly string[]).includes("table.toggle-fullscreen"));
+  assert.ok((NON_TAB_GLOBAL_COMMAND_IDS as readonly string[]).includes("table.toggle-fullscreen"));
+  assert.ok(!(EDITOR_COMMAND_IDS as readonly string[]).includes("table.toggle-fullscreen"), "作用域必须派生为 global");
+  assert.ok(KEYLESS_COMMAND_IDS.includes("table.toggle-fullscreen"), "D3 裁决：默认不占物理组合");
+  assert.equal(
+    KEY_BINDINGS.find((binding) => binding.command === "table.toggle-fullscreen"),
+    undefined,
+    "默认表里 MUST NOT 有它的绑定（登记进默认不绑键清单即不得再带默认绑定）",
+  );
+  // 键位面板的「全局」组 = NON_TAB_GLOBAL_COMMAND_IDS ⇒ 未绑定时该行显示「未绑定」。
+  const rebound = applyKeyOverrides({ "Cmd-j": "table.toggle-fullscreen" });
+  assert.deepEqual(rebound.warnings, []);
+  const bound = rebound.bindings.find((binding) => binding.command === "table.toggle-fullscreen");
+  assert.equal(normalizeKey(bound?.key ?? ""), "Cmd-J");
+  assert.equal(bound?.scope, "global");
+});

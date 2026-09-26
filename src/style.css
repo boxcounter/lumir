@@ -923,6 +923,70 @@ body {
   background-color: #fff;
   border: 1px solid #000;
 }
+/* 表格全屏触发钮的坐标系统（M240，BlockWrapper rank 20 = 最外）：唯一职责是给触发钮当包含块。
+   钮是 `.cm-lp-table` 子树里的绝对定位元素（Decoration.widget，见 src/preview/table-trigger.ts），
+   而横滚容器在它内侧——包含块落在横滚容器**之外**的绝对定位元素不被该容器滚动、也不被它裁切，
+   「横滚时钮不动」因此是定位的结果，不是监听器或重排的产物（M235 的实现期交接明写
+   「别抄成跟着内容滚」）。本层零足迹：无背景 / 边框 / 内外边距，静止帧与不装它时逐像素相同
+   （5.8 的「零基线变化」判据依赖这一条）。 */
+.cm-lp-table-slot {
+  position: relative;
+}
+
+/* 表格全屏触发钮（M240，M235 划稿推荐档 `inside-corners-hover` 的形态纪律逐条落点）：
+   位置 = 右上角内侧叠放（top/right 6px，压在表格可视区右上角，零文档几何变化）；
+   壳 = --preview-bg + 1px --border hairline，圆角 r6（小型控件档），尺寸 26×24
+   （design-tokens-v1.md:212 的 `--layout-tb-btn` 侧栏内变体——本仓没有 30×28 那个 token 的
+   消费者，故此处按 tokens 文档写值），图标色 --text-2 → 热态 --text，过渡 --dur-hover；
+   **无阴影**（两档阴影分别专用 active tab 与浮层，内容区平铺 chrome 不投影，tokens v1 规则 7）；
+   **零新 token、零组件级新增色值**。
+   出现时机 = hover 表格容器才出现：静止态 visibility: hidden + opacity: 0——不出现、不占位
+   （绝对定位，不进任何流）、不进读屏树、不进任何整页基线（5.8 的静止态零足迹）。可发现性
+   缺口由命令入口承担，这正是 D3 双入口的分工。 */
+.lumir-table-fs-trigger {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--r6);
+  background: var(--preview-bg);
+  color: var(--text-2);
+  cursor: pointer;
+  opacity: 0;
+  visibility: hidden;
+  /* visibility 的隐藏延到淡出结束才生效，淡入立即生效（下一组的 transition-delay: 0）。
+     隐去（而非仅透明）是刻意的：静止态不进读屏树、不可聚焦、不接收指针。 */
+  transition: opacity var(--dur-hover) var(--ease-standard), visibility 0s linear var(--dur-hover);
+}
+/* hover 表格可视盒即浮现；键盘焦点落在钮上（focus-visible）同样浮现——hover 之外的唯一入口，
+   保持「可见即可用」。 */
+.cm-lp-table-slot:hover .lumir-table-fs-trigger,
+.lumir-table-fs-trigger:focus-visible {
+  opacity: 1;
+  visibility: visible;
+  color: var(--text);
+  transition-delay: 0s;
+}
+/* eink 规则③⑤：白底实心黑框（无灰底可用的翻转口径，同 .cm-lp-codeblock-scroll）；
+   规则④：热态黑底反白（同 `.tb-btn.on` 的处理）。 */
+:root[data-theme="eink"] .lumir-table-fs-trigger {
+  background: #fff;
+  border-color: #000;
+  color: #000;
+}
+:root[data-theme="eink"] .cm-lp-table-slot:hover .lumir-table-fs-trigger,
+:root[data-theme="eink"] .lumir-table-fs-trigger:focus-visible {
+  background: #000;
+  color: #fff;
+}
+
 .cm-lp-table-scroll {
   display: block;
   max-inline-size: 100%;
@@ -1015,8 +1079,10 @@ body {
   white-space: nowrap;
 }
 /* 行内被 Decoration.replace 隐藏的管道符仍留有 CM6 的 img.cm-widgetBuffer / 占位 span；
-   它们是自动放置的 grid item，会各撑出一条隐式行（约 1em），实测行高 92px 远超单元格 33px */
-.cm-lp-table .cm-lp-table-row > :not(.cm-lp-table-cell) {
+   它们是自动放置的 grid item，会各撑出一条隐式行（约 1em），实测行高 92px 远超单元格 33px。
+   唯一豁免是 M240 的表格全屏触发钮：它 `position: absolute`（不在流里、不生成隐式行，
+   见 .lumir-table-fs-trigger），本来就该显示。 */
+.cm-lp-table .cm-lp-table-row > :not(.cm-lp-table-cell):not(.lumir-table-fs-trigger) {
   display: none;
 }
 .cm-lp-table-cell-empty {
@@ -1160,6 +1226,60 @@ body {
   max-height: 100%;
   min-width: 0;
   min-height: 0;
+}
+
+/* 表格放大全屏查看（M240，change table-fullscreen-view，裁决点 1/2）：全屏遮罩 + 居中面板壳，
+   壳内是打开那一刻 grid 的只读快照副本（DOM 在 src/table-fullscreen.ts）。
+   与图片 lightbox（M184）同款遮罩惯用语：--scrim 压暗底层文档 + z-index 20 + 显式补回 [hidden]
+   （author 的 display 会盖掉 UA 规则，同 .lumir-bindings-overlay / .editor-notice）。
+   壳配方取 tokens v1.1 的浮层档：--preview-bg + 1px --border + --shadow-raise + r10
+   （与键位面板 / 大纲浮层同一份配方，不引入第二种浮层形态）。
+   **与图片 lightbox 的差异**：快照不缩放——表格的价值就在自然尺寸（宽表在阅读栏里只能看到
+   局部正是本能力的由来），故壳内 auto 双向滚动、面板尺寸由内容撑到上限为止。 */
+.lumir-table-fs-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--sp-12);
+  background: var(--scrim);
+  outline: none;
+}
+/* author 的 display:flex 会盖掉 UA 的 [hidden] 规则，显式补回（第三次踩同一处，见上）。 */
+.lumir-table-fs-overlay[hidden] {
+  display: none;
+}
+/* 面板壳 = 浮层配方（同 .lumir-bindings-panel）；尺寸上限 = 遮罩可用区域减内边距
+   （flex 容器的内容盒已排除 padding），超出由壳内双向滚动承载——快照按自然尺寸呈现，
+   MUST NOT 被壳宽压缩（5.6 的判据：宽表 scrollWidth > clientWidth）。 */
+.lumir-table-fs-panel {
+  max-width: 100%;
+  max-height: 100%;
+  padding: var(--sp-9) var(--sp-10);
+  background: var(--preview-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--r10);
+  box-shadow: var(--shadow-raise);
+  overflow: auto;
+}
+/* eink 规则⑦⑧：浮层阴影退场、边框升级 1.4px 实心黑（模态强调档）；--scrim 以明度差保留
+   （M184 已验证的遮罩底口径）。 */
+:root[data-theme="eink"] .lumir-table-fs-panel {
+  border: 1.4px solid #000;
+  box-shadow: none;
+}
+/* 快照容器**显式补齐** CM 注入主题的那几项（design §2 的克隆卫生）：仓内表格规则是全局选择器
+   （`.cm-lp-table …`），克隆脱离 `.cm-editor` 后仍然命中；但字体家族 / 字号 / 行高 / 字色是 CM
+   主题 scope 到编辑器根上的，克隆不继承——不补就会「同一张表两套观感」。取值与编辑器内容面同一
+   来源（--editor-font-family / --editor-font-size / --lh-ui，见 token 区），因此运行期字号步进
+   （⌘= / ⌘-）在两处同步，不是各写一份常量。5.4 的计算样式断言钉住这几项。 */
+.lumir-table-fs-snapshot {
+  font-family: var(--editor-font-family);
+  font-size: var(--editor-font-size);
+  line-height: var(--lh-ui);
+  color: var(--text);
 }
 
 /* 轻量大纲浮层（M148）：绝对定位贴**指示段上方**，不占任何常驻空间。

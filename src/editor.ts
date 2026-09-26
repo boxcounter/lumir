@@ -18,6 +18,7 @@ import { codeBlockWrappers } from "./preview/livePreview";
 import { endMarker } from "./preview/endMarker";
 import type { PreviewContext, WikilinkResolver } from "./preview/livePreview";
 import type { ImageLightbox } from "./lightbox";
+import type { TableFullscreen } from "./table-fullscreen";
 import { detectFrontmatter } from "./preview/frontmatter";
 import { findMathSpans } from "./preview/math";
 import type { MathSpan } from "./preview/math";
@@ -1006,6 +1007,11 @@ export interface EditorHandle {
    * 注入图片放大查看的遮罩（M184）；未注入（维护性调用 / 纯桩）时图片没有双击路径。
    */
   setLightbox(lightbox: ImageLightbox | null): void;
+  /**
+   * 注入表格放大全屏查看的遮罩（M240）；未注入（维护性调用 / 纯桩）时表格工具钮点击无反应
+   * （同 `setLightbox` 口径：能力未接线是结构性表现，不是一条要维护的开关）。
+   */
+  setTableFullscreen(fullscreen: TableFullscreen | null): void;
   /** 强制重建装饰（解析缓存更新 / watch 增量后调用）。 */
   refreshPreview(): void;
   /** 滚动定位到 1-based 行号并把光标移到行首（wikilink 锚点跳转用）。 */
@@ -1147,6 +1153,8 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
   let wikilinkResolver: WikilinkResolver | null = null;
   /** 图片放大查看的遮罩（M184）：装配层注入，装饰层只经 PreviewContext 取用。 */
   let lightbox: ImageLightbox | null = null;
+  /** 表格放大全屏查看的遮罩（M240）：同上，装配层注入。 */
+  let tableFullscreen: TableFullscreen | null = null;
   const readyListeners = new Set<EditorReadyListener>();
   let readyPath: string | undefined;
   let readyRequestId: number | undefined;
@@ -1268,6 +1276,7 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
     attachmentProvider: () => provider,
     wikilinkResolver: () => wikilinkResolver,
     lightbox: () => lightbox,
+    tableFullscreen: () => tableFullscreen,
     fileMtime: (path) => mtimeCache.get(path),
   };
 
@@ -1889,6 +1898,11 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
       lightbox = next;
       // 装饰层在构建期读这个口子（widget 的双击接线），注入后必须重建一次——否则注入前
       // 已渲染出来的图片不会获得双击路径。
+      view.dispatch({ effects: previewRefresh.of(null) });
+    },
+    setTableFullscreen(next: TableFullscreen | null) {
+      tableFullscreen = next;
+      // 同 setLightbox：装饰层在构建期读这个口子（表格全屏触发钮的点击接线），注入后重建一次。
       view.dispatch({ effects: previewRefresh.of(null) });
     },
     refreshPreview() {
