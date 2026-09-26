@@ -230,6 +230,9 @@ test("⌘W 关当前标签：干净标签直接关，dirty 标签先给三个出
   await expect(confirm).toBeVisible();
   await expect(confirm.getByRole("button", { name: "保存并关闭" })).toBeVisible();
   await expect(confirm.getByRole("button", { name: "放弃修改并关闭" })).toBeVisible();
+  // 元素级基线（M246）：toast 是零基线覆盖的三个周边表面之一（M214 登记），
+  // dirty 关闭确认是三出口（另含「取消」）的 sticky 形态代表
+  await expectScreenshot(confirm, "tab-close-confirm-toast.png");
   // 还没选：标签仍在。
   await expect(page.locator(".tab")).toHaveCount(1);
 

@@ -585,7 +585,7 @@ test("默认口径：代码块不折行（块内可滚、行尾可达）、正�
   );
 });
 
-test("代码块容器键盘可达：Tab 聚焦 → → 120px → End 最右 → Home 最左 → Escape 交还焦点", async ({ page }) => {
+test("代码块容器键盘可达：focus() 持焦 → → 120px → End 最右 → Home 最左 → Escape 交还焦点", async ({ page }) => {
   await openWrap(page);
   await scrollToLine(page, CODE_NEEDLE);
   const container = page.locator(".cm-lp-codeblock-scroll", { hasText: CODE_NEEDLE }).first();

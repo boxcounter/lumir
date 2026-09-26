@@ -1,5 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import { readFileSync } from "node:fs";
+import { expectScreenshot } from "./expect-screenshot";
 import { stubTauri } from "./tauri-stub";
 import { copyFresh, readDocument } from "./parity-checks";
 
@@ -253,6 +254,10 @@ test("形态与配色：短线夹字，与作者手写的通栏分隔线可区�
 
   // 标记在 .cm-content 之外（不是文档内容的一部分）
   expect(await page.locator(".cm-content .cm-lp-end-marker").count()).toBe(0);
+
+  // 元素级基线（M246）：两段发丝线 + 弱化小字的像素量级 ≪ 整页 0.001 容差的 960px 预算，
+  // 整页对比守不住它的形态，由元素 crop 钉住（截图会自动把标记滚进视口）
+  await expectScreenshot(marker(page), "end-marker.png");
 });
 
 test("code 模式没有标记；文末光标与全选都不影响显示", async ({ page }) => {

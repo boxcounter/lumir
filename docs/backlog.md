@@ -1133,15 +1133,22 @@
 与「已核销」语义相反，按维护规则（「核销后移入文末」）迁回本节；条目正文除各自补的「状态」行外未改。
 末条 C11 为本 mission 补建。）
 
-- 2026-09-25：**0.001 容差实测吞掉小元素删除**（M214 finding，improve；**2026-09-26 Alex 裁决：
-  采纳建议——为小元素补元素级基线**，派视觉门禁增强 mission）：§8.4 假绿防线删 modeline
+- 2026-09-25：**0.001 容差实测吞掉小元素删除**（M214 finding，improve；2026-09-26 Alex 裁决：
+  采纳建议——为小元素补元素级基线，派视觉门禁增强 mission；**已核销（M246，2026-09-27）**）：§8.4 假绿防线删 modeline
   右段，像素差 **199 px** < 预算 960 ⇒ 像素层通过，拦住它的是 R3 新加的结构断言。落地：为
   `.modeline-*` 级别的小元素补**元素级**基线（元素 crop 的像素预算远小于整页），或按元素重要度
   分级预算。与既有「整页 0.001 容差」条目（mermaid 952/960 同族）合并阅读。
-- 2026-09-25：**搜索面板 / lightbox / toast 无视觉基线覆盖**（M214 登记，tower 裁决口径）：34 张
-  基线里这三个周边表面零覆盖。M214 按「缺的补拍」在**证据层**补（`test-results/m214/peripheral/`
-  36 张补拍，不改场景文件、基线保持 34 张）供 Alex 过目；**真基线化（补场景 + 基线，张数 37+）
-  待立项**——立项即场景文件归 tests/visual/scenes/、基线随下一次 Alex 过目批入库。
+  **核销**：M246 现状盘点（`test-results/m246/element-coverage.md`）点名五个「删除即整页假绿」高危元素，
+  补 5 张元素级基线——`modeline-bar`（modeline.spec，守右段 meta / 主题钮 / 左段 path+指示段）、
+  `titlebar-identity-block`（titlebar-identity.spec）、`end-marker`（end-marker.spec）；
+  doc-meta 行结构断言已完整、记中危留账未补。既有 41 张基线零 `--update`。
+- 2026-09-25：**搜索面板 / lightbox / toast 无视觉基线覆盖**（M214 登记，tower 裁决口径；**已核销
+  （M246，2026-09-27）**）：34 张基线里这三个周边表面零覆盖。M214 按「缺的补拍」在**证据层**补
+  （`test-results/m214/peripheral/` 36 张补拍，不改场景文件、基线保持 34 张）供 Alex 过目。
+  **核销**：M246 真基线化——搜索面板两态（`search-panel-hit` / `search-panel-nomatch`，
+  search-panel.spec）、lightbox（`lightbox-overlay`，markdown-combo.spec M184 组新增一条）、
+  toast（`tab-close-confirm-toast`，m149-tabs.spec ⌘W 用例），基线以当前代码实际渲染重拍
+  （M214 补拍只作清单参考），逐张人工核对 + sha256 manifest 落 `test-results/m246/baselines-manifest.md`。
 - 2026-09-25：**code 模式行号与代码列之间 150px 空档**（M212 finding，improve，待裁决）：栏宽从
   80% 改定值 664 后，code 模式（`minmax(max-content, 1fr)`）的行号 gutter 与代码列之间出现约
   150px 空档（百分比时代被弹性吸收）。取舍方向：code 模式栏宽跟随 664 定值 / 维持 max-content /
