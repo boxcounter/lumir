@@ -360,14 +360,35 @@
     修前两档恒为 11.48px）。② 门禁断言：`tests/visual/scenes/end-marker.spec.ts` 新增
     「backlog #31：标记字号跟随内容字号」——两档（15px / 24px）各断言标记字号 = 0.8 × 内容字号、
     线段长 = 4 × 标记字号，并前置断言两页内容字号确实不同（否则比值判据会在「两页一样」上空转）。
-32. **watch 增量不覆盖外部新建目录：文件树不刷新（重启可见）**（2026-09-25，M221 finding，
+32. ~~**watch 增量不覆盖外部新建目录：文件树不刷新（重启可见）**~~ **已核销（M245，2026-09-27）——
+    产品侧无缺陷，原 finding 的根因判断不成立；错在验收断言的观测时序**（2026-09-25，M221 finding，
     worker-fix-closeout，low；**2026-09-26 Alex 裁决：修**——「你在 Finder 里整理 vault 是常态操作，
-    树不刷新会显得 app 死了」，派修复 mission，watch 增量覆盖「新建目录」）：app 运行中经外部在
-    vault 里新建目录（含文件）后，文件树 60 秒内不刷新出该目录行；重启后可见（重启重扫）。既有的
-    watch 增量刷新疑似不覆盖「新建目录」形态（外部新建**文件**是否有同样问题未测，修复时一并查明）。
-    落点：`src/tree.ts` × 后端 fs watch（`src-tauri/src/fs_io.rs` watch 注册段）；验收场景 36 现按
-    「restart 后可见」口径落地，修复后应改为断言**运行中**刷新。finding
-    `20260925-worker-fix-closeout-bug-watch.md`。
+    树不刷新会显得 app 死了」）：原 finding 依据「app 运行中经外部在 vault 里新建目录（含文件）后，
+    文件树 60 秒内不刷新出该目录行；重启后可见」判定 watch 增量不覆盖「新建目录」形态。
+    **M245 逐段定位（每一段都有落盘证据）**：
+    ① 后端**确实**发出该增量——真机实测 `flush − 文件 mtime = 104–122ms`，批次为
+    `[Created restyle-dir (dir), Created restyle-dir/note-in-dir.md (file)]`
+    （`test-results/acceptance/m245-probe5/app.log`；定位用的临时 `eprintln!` 已随 06a64c7 撤除）；
+    ② 前端 `applyChanges` 对该批次的处理正确：目录行模型→DOM 一步到位、可展开、可级联删
+    （`tests/unit/tree-increment.test.ts` 六例，含「父缺失丢弃」反向对照）；
+    ③ 真机五轮探针（`test-results/acceptance/m245-probe1…5/`）：**写完立刻读 AX 必 FAIL，先
+    `sleep 200` 再读必 PASS**，其后每一次读都 PASS——紧跟写入的第一次 AX 读取与那次刷新抢
+    （候选机制：AX 枚举本身占着 webview 主线程；未直接证实）；
+    ④ 原 finding 的「60 秒」是**断言链级联**：第一读漏掉目录行 → 下一步点不到目录行 → 再下一步
+    `open restyle-dir/note-in-dir.md` 等的是「左栏出现**子文件行**」，而目录折叠时子行永远不会
+    出现，于是 60s 超时（probe1/probe2 逐字复现这条级联）；
+    ⑤ 外部新建**文件**（原 finding 未测的那一半）同一条 watch 路径、无此问题：场景 47 的
+    「树里有 aaa-menu.md / aab-tab.md」「目录行已在树里」三条断言在本分支真机运行 PASS
+    （`test-results/acceptance/m245-final/47-file-tree-context-menu/steps.md`）。
+    **落地（M245，分支 `feat/fix-watch-external-mkdir-tree-refresh-m2`，提交 `06a64c7`）**：验收场景 36
+    删掉 `do: restart` 绕行步，断言翻为「运行中刷新可见」（前置 `sleep 1000` 只取观测时序，判据未
+    弱化，口径写进场景「已知边界」）；后端补 `watch_delivers_external_new_dir_with_nested_file` 与
+    `refine_with_known_keeps_new_dir_created_and_normalizes_seeded_replay`（Rust lib 162 全绿）；
+    前端补 `tests/unit/tree-increment.test.ts`（374 全绿）；真机场景 36 PASS（14/14，证据
+    `test-results/acceptance/m245-final/36-restyle-content/`）；`gate.sh quick` 9/9 PASS。
+    finding `20260925-worker-fix-closeout-bug-watch.md`（其结论已被本条更正）。
+    **同因的另一条 finding**：`20260927-worker-watch-mkdir-improve-vaultwrite-ax-do-settle-60.md`
+    （`do: settle` 其实只读一次 AX，名实不符；建议把「外部写入后先留一拍再读」写进套件 README）。
 33. **版本号 bump 策略**（2026-09-25，M225 finding，worker-proposal-version，low；
     **2026-09-26 Alex 裁决：按 semantic versioning**）：版本号真源 `src-tauri/tauri.conf.json:4` 的
     `version` 是占位 `"0.0.0"`（`package.json:3` 同），仓内无任何 bump 工具链或发布流程
