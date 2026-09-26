@@ -35,7 +35,7 @@ import { remapPathAfterRename } from "./tree";
 import { LANGUAGES, TOKEN_GROUPS } from "./preview/code";
 import type { TokenRole } from "./preview/code";
 import type { CommandRunner, EditorCommandId } from "./keys";
-import { DEFAULT_CODE_BLOCK_WRAP, DEFAULT_LINE_WRAP, codeBindingTheme, wrapSpec } from "./preview/theme";
+import { DEFAULT_CODE_BLOCK_WRAP, DEFAULT_CODE_MODE_LINE_WRAP, DEFAULT_LINE_WRAP, codeBindingTheme, wrapSpec } from "./preview/theme";
 import type { WrapSettings } from "./preview/theme";
 import { DEFAULT_FONT_SIZE, applyTypography as writeTypography, nextFontSize } from "./typography";
 import { CONTENT_WIDTH_TOKEN, DEFAULT_CONTENT_WIDTH, clampContentWidth } from "./content-width";
@@ -948,7 +948,8 @@ export interface EditorHandle {
   setWrap(next: Partial<WrapSettings>): void;
   /** 当前应用运行期的折行口径（只读快照：命令层据此翻转，断言据此读值）。 */
   wrapSettings(): WrapSettings;
-  /** 翻转文件级折行（正文行）——应用运行期状态，全部会话同步生效。 */
+  /** 翻转正文行折行——翻的是**前台会话模式**对应的那一轴（md → `lineWrap`，code →
+   *  `codeModeLineWrap`，M247）；应用运行期状态，该模式的全部会话同步生效。 */
   toggleLineWrap(): void;
   /** 翻转代码块折行——同左；非 md 文件没有围栏渲染，翻转对它无可观测效果。 */
   toggleCodeBlockWrap(): void;
@@ -1113,13 +1114,13 @@ function modeForPath(path: string | undefined, fallback: EditorMode): EditorMode
 }
 
 /**
- * 折行相关扩展的**唯一装配点**（M180）：判定在 `preview/theme.ts` 的 `wrapSpec`，这里只把
- * 判定结果装成扩展——正文行看 `lineWrap`（CM 的 `EditorView.lineWrapping`，把 `.cm-content`
- * 改成 break-spaces），代码块行看 `codeBlockWrap`（内容级 class，样式同一模块），`mode`
- * 只决定代码块那一层有没有作用对象（非 md 不装）。
+ * 折行相关扩展的**唯一装配点**（M180；M247 起正文行按模式分叉）：判定在 `preview/theme.ts`
+ * 的 `wrapSpec`，这里只把判定结果装成扩展——正文行看**该模式自己的**折行键（md → `lineWrap`，
+ * code → `codeModeLineWrap`），代码块行看 `codeBlockWrap`（内容级 class，样式同一模块），
+ * `mode` 只决定代码块那一层有没有作用对象（非 md 不装）。
  */
 function wrapExtensions(mode: EditorMode, settings: WrapSettings): Extension[] {
-  const spec = wrapSpec(mode, settings.lineWrap, settings.codeBlockWrap);
+  const spec = wrapSpec(mode, settings);
   const extensions: Extension[] = spec.lineWrapping ? [EditorView.lineWrapping] : [];
   if (spec.codeBlockClass !== null) {
     extensions.push(EditorView.contentAttributes.of({ class: spec.codeBlockClass }));
@@ -1151,8 +1152,16 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
    * 折行口径的**应用运行期真源**（M180，D1 裁决原文「应用级」，见 `setWrap`）：一份值管全部
    * 会话——翻转时遍历 session 逐个重配，新建 / 装载会话都从这里起步。这里**不是**「新标签页的
    * 起点」：配置项只在启动时喂一次初值，之后的翻转对所有会话（含新开的）立即生效。
+   *
+   * 三个轴按**会话模式**取用（M247，change code-mode-line-wrap）：`lineWrap` / `codeBlockWrap`
+   * 只管 md 模式的正文行与围栏代码块，`codeModeLineWrap` 只管 code 模式的正文行——出厂即
+   * 「md 折 / code 不折」的分叉（`DEFAULT_*` 三项）。
    */
-  let wrap: WrapSettings = { lineWrap: DEFAULT_LINE_WRAP, codeBlockWrap: DEFAULT_CODE_BLOCK_WRAP };
+  let wrap: WrapSettings = {
+    lineWrap: DEFAULT_LINE_WRAP,
+    codeBlockWrap: DEFAULT_CODE_BLOCK_WRAP,
+    codeModeLineWrap: DEFAULT_CODE_MODE_LINE_WRAP,
+  };
   /**
    * 排版口径的**应用运行期真源**（change typography-and-zoom）：配置只在启动时喂一次初值，
    * 之后由三条 `view.text-scale-*` 命令推进（D5 裁决「不持久化」——不落盘、不回写
@@ -1782,8 +1791,15 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
     const merged: WrapSettings = {
       lineWrap: next.lineWrap ?? wrap.lineWrap,
       codeBlockWrap: next.codeBlockWrap ?? wrap.codeBlockWrap,
+      codeModeLineWrap: next.codeModeLineWrap ?? wrap.codeModeLineWrap,
     };
-    if (merged.lineWrap === wrap.lineWrap && merged.codeBlockWrap === wrap.codeBlockWrap) return;
+    if (
+      merged.lineWrap === wrap.lineWrap &&
+      merged.codeBlockWrap === wrap.codeBlockWrap &&
+      merged.codeModeLineWrap === wrap.codeModeLineWrap
+    ) {
+      return;
+    }
     wrap = merged;
     reconfigureWrap();
   }
@@ -1806,7 +1822,16 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
     setWrap,
     wrapSettings: () => ({ ...wrap }),
     toggleLineWrap() {
-      setWrap({ lineWrap: !wrap.lineWrap });
+      // M247（change code-mode-line-wrap）：正文行的折行按**前台会话的模式**翻对应轴——md →
+      // `lineWrap`、code → `codeModeLineWrap`。为什么不做「只翻 lineWrap」：code 模式的正文行
+      // 已只读 `codeModeLineWrap`，只翻 `lineWrap` 会让这条命令在 code 模式下按了没反应
+      // （keymap-commands 的「配置绑定后真的能触发」要求「立即变化、不是无反应」）。三个轴仍是
+      // 应用运行期的一份值（D1），翻转对**该模式的全部会话**同步生效（含后台标签页）。
+      setWrap(
+        active.mode === "md"
+          ? { lineWrap: !wrap.lineWrap }
+          : { codeModeLineWrap: !wrap.codeModeLineWrap },
+      );
     },
     toggleCodeBlockWrap() {
       setWrap({ codeBlockWrap: !wrap.codeBlockWrap });

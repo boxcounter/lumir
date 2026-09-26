@@ -1293,13 +1293,16 @@ Promise.all([getName(), getVersion()])
 // keys：单键重绑 / 解绑（M132），覆盖到位后重挂分发器（见 applyKeyConfig）。
 configGet().then((snapshot) => {
   editor.setMode(snapshot.config.editor.mode);
-  // 折行口径（M180，change line-wrap-options）：配置给的是**启动时的起点**——应用运行期的
-  // 翻转由两条 `view.toggle-*` 命令承担，运行期 MUST NOT 回写这里（config.json 的 mtime 与
-  // 内容在翻转前后逐字节不变）。放在 setMode 之后：mode 决定代码块内容级 class 有没有
+  // 折行口径（M180，change line-wrap-options；M247 起三项）：配置给的是**启动时的起点**——
+  // 应用运行期的翻转由两条 `view.toggle-*` 命令承担，运行期 MUST NOT 回写这里（config.json 的
+  // mtime 与内容在翻转前后逐字节不变）。放在 setMode 之后：mode 决定代码块内容级 class 有没有
   // 作用对象，两者一起重配（editor.setWrap 走的就是那条 modeAndWrapEffects 路径）。
+  // 三项按模式分工：`line_wrap` / `code_block_wrap` 管 md 模式，`code_mode_line_wrap` 管 code
+  // 模式——出厂即「md 折 / code 不折」的分叉（两键各自的默认值都来自 Rust 侧 `EditorConfig`）。
   editor.setWrap({
     lineWrap: snapshot.config.editor.line_wrap,
     codeBlockWrap: snapshot.config.editor.code_block_wrap,
+    codeModeLineWrap: snapshot.config.editor.code_mode_line_wrap,
   });
   // 排版口径（M195，change typography-and-zoom）：配置给的是**启动时的基准**——字号在运行期
   // 由三条 `view.text-scale-*` 命令步进，运行期 MUST NOT 回写这里（config.json 的内容与 mtime

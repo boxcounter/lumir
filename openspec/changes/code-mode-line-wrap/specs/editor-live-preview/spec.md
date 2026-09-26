@@ -1,0 +1,232 @@
+# editor-live-preview 增量规格
+
+## MODIFIED Requirements
+
+### Requirement: 折行口径与配置来源
+
+`~/.config/lumir/config.json` 的 `[editor]` 表 SHALL 支持三个布尔项，键名与 Rust 字段名逐字一致
+（沿用 `EditorConfig` 无 `serde(rename)` 的既有口径，`src-tauri/src/config.rs`）：
+
+- `editor.line_wrap`：**md 模式**的正文行折行，`true`（默认）/ `false`。`true` 时正文行在阅读栏内折行，
+  `false` 时长行不折、由编辑区横向平移呈现。
+- `editor.code_block_wrap`：代码块折行，`false`（默认）/ `true`。作用对象只有 md live preview 里的
+  围栏与缩进代码块（代码块**不是 widget**，是行装饰：`src/preview/livePreview.ts`）。
+- `editor.code_mode_line_wrap`（本 change 新增）：**code 模式**的正文行折行，`false`（默认）/ `true`。
+
+**出厂口径是分叉的**：`line_wrap` 默认 `true`、`code_mode_line_wrap` 默认 `false`——同一份出厂配置下
+md 折行、code 不折行。`code_mode_line_wrap` MUST NOT 跟随 `line_wrap`：键缺席 = 上列的出厂 `false`，
+显式写 `true` 才把 code 模式也折起来。跟随口径被明确否决——它会让缺省值随用户改 `line_wrap` 漂移，
+出厂分叉随之失效。两键的作用面互不重叠（各管各的模式），MUST NOT 互相改写。
+
+三项 SHALL 与既有 `editor.mode` 走同一条装配链——各类型 `impl Default`
+（`src-tauri/src/config.rs` 的 `impl Default for EditorConfig`）、宽容解析镜像上的 `#[serde(default)]`、
+`validate()` 逐字段回落到默认——MUST NOT 为它们另开一条装载路径。取值不合法时 MUST 走既有 config
+warning 语义、不得导致启动失败（ADR 0002 §5）：warning 出口沿用现状（console + 诊断日志的
+`config_warning` 事件，`src/main.ts`），本 change MUST NOT 新增 UI 面。
+
+**已知边界（如实记录）**：类型不符（如 `"line_wrap": "yes"` 或 `"code_mode_line_wrap": "yes"`）会在
+解析期让整份宽容结构失败、走整文件回落（全部默认 + warning），与 `editor.mode` 给错类型时同路。
+本 change MUST NOT 引入「逐字段类型容忍」——那是解析模型的变更，不应附带在新增字段里；实现 SHALL 用
+单测把这条边界逐键钉住，MUST NOT 把它读成「配置项没问题」。
+
+装载时点 SHALL 与现状一致：只在启动装载（`src/main.ts` 是全仓唯一的 `config_get` 消费点，无 watcher、
+无第二次读取），改配置需重启；运行期的口径变更由「折行开关的瞬态口径」承担。配置格式随现状
+（config.rs 的「JSON 而非 TOML」选型），本 change 不做格式迁移。新增字段 SHALL 经 ts-rs 导出到
+`src/bindings/` 并受 bindings 漂移门禁约束（`scripts/gate.sh`）。
+
+三个配置项是**输入面**：应用 MUST NOT 因运行期的折行翻转回写 `config.json`，MUST NOT 做 per-file 的
+折行状态持久化（对比 Emacs：`toggle-truncate-lines` 只做 buffer-local 翻转、不落盘
+[Line Truncation](https://www.gnu.org/software/emacs/manual/html_node/emacs/Line-Truncation.html)）。
+
+#### Scenario: 缺字段时取默认
+
+- **WHEN** `config.json` 的 `[editor]` 表里没有这三个字段（旧配置原样启动）
+- **THEN** md 模式的正文行折行、md 的代码块不折行、code 模式的正文行不折行
+  （`line_wrap = true`、`code_block_wrap = false`、`code_mode_line_wrap = false`）；不产生任何 config warning
+- **AND** 键缺席时取到的就是**出厂分叉**（md 折 / code 不折）——本 change 的出厂口径即上列三项默认值，
+  不需要用户配置任何东西
+
+#### Scenario: code 模式缺字段时不跟随 line_wrap
+
+- **WHEN** 配置 `{"editor": {"line_wrap": true}}`（显式打开 md 折行）后打开一个非 md 文件，其某行长于栏宽
+- **THEN** 该行**不折行**——code 模式读的是 `code_mode_line_wrap`（缺席即出厂 `false`），
+  `line_wrap` 的取值对它无可观测效果
+
+#### Scenario: 显式关闭文件级折行
+
+- **WHEN** 配置 `{"editor": {"line_wrap": false}}` 后启动，打开一份含超长正文行的 Markdown
+- **THEN** 该行不折行；光标可移到行尾，超宽部分可在编辑区（`.cm-scroller`）横向到达，MUST NOT 被
+  裁掉且无法到达；文档内容逐字节不变
+
+#### Scenario: 代码块折行可显式打开
+
+- **WHEN** 配置 `{"editor": {"code_block_wrap": true}}` 后启动，打开一份含超长代码行的 Markdown
+- **THEN** 代码块的长行在阅读栏内折行（与 M138 以来的现状一致），MUST NOT 出现块内横向滚动容器
+
+#### Scenario: 显式打开 code 模式折行
+
+- **WHEN** 配置 `{"editor": {"code_mode_line_wrap": true}}` 后打开一个非 md 文件，其某行长于栏宽
+- **THEN** 该行在阅读栏内折行；md 文档的呈现不受影响（`line_wrap` / `code_block_wrap` 各按自己的值生效）
+
+#### Scenario: 类型不符走整文件回落
+
+- **WHEN** 配置 `{"editor": {"code_mode_line_wrap": "yes", "mode": "md"}, "keys": {"Cmd-s": null}}` 后启动
+- **THEN** 产生 warning（console 与诊断日志的 `config_warning` 事件），整份配置按默认解释（这是本
+  requirement 如实记录的既有边界，与 `editor.mode` 给错类型同路）；应用照常启动、可编辑
+- **AND** 该边界 SHALL 由单测钉住（断言此时 `code_mode_line_wrap`、`mode` 与同文件里的合法字段**一起**
+  回到默认，MUST NOT 出现「部分字段按配置、部分按默认」的混合态）
+
+### Requirement: 折行渲染与代码块横滚容器
+
+折行的判定 SHALL 是「一元素一条规则」：代码块行（围栏 / 缩进代码块）由 `editor.code_block_wrap` 裁决，
+**正文行由该模式自己的折行键**裁决——md 模式的正文行由 `editor.line_wrap`、code 模式的正文行由
+`editor.code_mode_line_wrap`（本 change 新增的分叉）；任一轴 MUST NOT 改写另一轴。两个模式各自的生效路径
+SHALL 为：
+
+| 模式 | 正文行 | 代码块层 |
+|---|---|---|
+| md | `editor.line_wrap`：`true`（默认）栏内折行；`false` 不折、编辑区横向平移 | `editor.code_block_wrap`：`false`（默认）不折、块级横滚容器；`true` 栏内折行 |
+| code | `editor.code_mode_line_wrap`：`false`（默认）不折、编辑区横向平移；`true` 栏内折行 | 无作用对象：非 md 没有围栏渲染，MUST NOT 装内容级 class、MUST NOT 产生容器 |
+
+md 模式内部的两轴四组合（既有口径，本 change 不改）：
+
+| `editor.line_wrap` | `editor.code_block_wrap` | md 正文行 | md 代码块 |
+|---|---|---|---|
+| `true` | `false` | 栏内折行 | 不折行，块内横向滚动 |
+| `true` | `true` | 栏内折行 | 栏内折行 |
+| `false` | `false` | 不折行，编辑区横向平移 | 不折行，块内横向滚动 |
+| `false` | `true` | 不折行，编辑区横向平移 | 栏内折行 |
+
+任一模式的文件级口径为「不折行」时，编辑区 MUST NOT 折行（`.cm-content` 落回 `white-space: pre`），超长行
+SHALL 由 `.cm-scroller` 的横向滚动到达——「Horizontal scrolling automatically causes line
+truncation」是本条的对齐口径（[Line Truncation](https://www.gnu.org/software/emacs/manual/html_node/emacs/Line-Truncation.html)），
+MUST NOT 使用会让内容不可达的方案（如 `overflow: hidden` 式的静默裁切）。**「不折行」的两个模式走的是同一条
+呈现路径**（同一份 `.cm-content` 口径与同一个 `.cm-scroller`）：本 change MUST NOT 为 code 模式另造一套横向
+平移机制。
+
+代码块口径为「不折行」时，块内每行 SHALL 不折行（行级 `white-space` 压回 `pre`、`overflow-wrap`
+回到 `normal`），且该块 SHALL 由一个**块级横滚容器**承载，使超长行在容器内横向滚动。容器 SHALL：
+
+- 复用 CM6 的 `BlockWrapper` 机制（与表格容器同一机制，`src/preview/livePreview.ts`）；
+  MUST NOT 把代码块替换为 replace widget——源码 SHALL 保持可选中的原文、md 模式下仍可编辑；
+- 可聚焦（`tabindex=0`）并带 `region` 角色与读屏可读的名字（与表格容器既有形态一致）；
+- 与表格滚动容器**共用同一「块级横滚容器」判据**，使既有五条 widget 滚动键（`←` `→` `Home` `End`
+  `Escape`）对代码块同样生效；判据的 class 单一来源 SHALL 在 `src/keys.ts`。MUST NOT 为实现横滚另加一条
+  `keydown` 路径（键位通路仍只有统一键位表一条）；
+- 提供代码块底板：横向滚到右侧时 MUST NOT 露出无底色的空白（底色仍取自既有 token）；
+- MUST NOT 引入额外的纵向内外边距：翻转开关带来的几何变化 SHALL 只来自折行本身。任何必要的间距
+  SHALL 用 padding 表达、MUST NOT 用 margin（CM 按 border-box 量行高，margin 对高度图不可见）；表格容器的
+  `padding-block` MUST NOT 被照抄（它会把代码块下方所有行推走）。
+
+两项口径 SHALL 遵守本 spec 的视口增量纪律（「live preview 装饰层」requirement）：块发现与装饰构建
+MUST NOT 因本 change 变成全文档扫描。任何一项 MUST NOT 改写文档（`EditorState.doc` 与磁盘文件逐字节
+不变，ADR 0003 §3）。
+
+既有例外原样保留：表格 cell 有自己的 `white-space: pre-wrap`、块级公式与 mermaid 走自身 widget 渲染
+路径、表格容器自己的 `overflow-x: auto`——三者 MUST NOT 被本 change 改变。
+
+#### Scenario: 默认口径下代码块不折行且块内可滚
+
+- **WHEN** 默认配置下打开一份含超长代码行（长度超过阅读栏宽）的 Markdown
+- **THEN** 该代码行不折行（不产生第二个视觉行），代码块在自己的容器内横向滚动；同一文档里的超长
+  正文行仍照常折行（一元素一条规则）
+
+#### Scenario: 文件级不折行 + 代码块折行
+
+- **WHEN** 配置 `{"editor": {"line_wrap": false, "code_block_wrap": true}}` 后打开同一份文档
+- **THEN** 代码块的长行在阅读栏内折行（无块内滚动容器），而正文的超长行不折行、由编辑区横向平移
+  呈现——两级配置各自作用于各自的对象，互不改写
+
+#### Scenario: 代码块容器的键盘可达性
+
+- **WHEN** 默认配置下打开含超长代码行的 Markdown，用 `Tab` 把焦点移入代码块横滚容器，依次按 `→`、
+  `End`、`Home`、`Escape`
+- **THEN** 容器横向滚动、滚到最右、回到最左，`Escape` 把焦点交还编辑器内容区（行为与表格滚动
+  容器一致）；全程文档内容逐字节不变、编辑器光标位置不变
+
+#### Scenario: 横滚到右端不露白底
+
+- **WHEN** 把代码块容器横向滚到最右端，读该区域的计算背景色
+- **THEN** 代码块底板覆盖整块可见区域（与未滚动时同一色值），MUST NOT 出现无底色的空白条
+
+#### Scenario: 容器不改变代码块的纵向节奏与文档内容
+
+- **WHEN** 打开一份代码行都不超栏宽的 Markdown（默认配置），与 `code_block_wrap = true` 下同一份
+  文档对照
+- **THEN** 代码块的纵向占位与文字位置一致（容器不引入额外垂直位移）；两种配置下文档内容逐字节
+  相同、dirty 状态不变
+
+#### Scenario: 只读 code 模式的正文行走文件级口径
+
+> scenario 名沿用改动前的写法（「文件级口径」在 M180 时代指 `editor.line_wrap`）：本 change 起 code 模式
+> 的正文行改由 `editor.code_mode_line_wrap` 裁决，名字保留是为了让归档对账逐条可追，**语义以本条正文为准**。
+
+- **WHEN** 默认配置下打开一个非 md 文件（code 模式），其某行长于栏宽
+- **THEN** 该行不折行（`code_mode_line_wrap` 出厂 `false`），超宽部分由编辑区（`.cm-scroller`）横向
+  滚动到达、MUST NOT 被裁掉且无法到达；`editor.code_block_wrap` 对 code 模式没有作用对象，MUST NOT
+  产生容器、MUST NOT 报错或提示
+- **AND** 在同一份配置下打开一份 Markdown 时，其超长正文行仍照常折行（分叉的两半同框可判）
+- **AND** 显式写 `{"editor": {"code_mode_line_wrap": true}}` 时该行改为在阅读栏内折行（覆盖键生效）
+
+### Requirement: 折行开关的瞬态口径
+
+折行的运行期翻转 SHALL 由两条命令承担，命令的 id、作用域、默认不绑键与面板口径见 `keymap-commands`
+的「折行开关命令」requirement；本 requirement 只定**状态语义**。
+
+`view.toggle-line-wrap` 翻的是**前台会话模式对应的那一个正文行轴**（本 change 明确的口径）：
+前台是 md 会话时翻 `line_wrap`、前台是 code 会话时翻 `code_mode_line_wrap`。理由：code 模式的正文行已
+只读 `code_mode_line_wrap`，若该命令恒翻 `line_wrap`，它在 code 模式下按下去将没有任何可见效果——
+与 `keymap-commands` 的「配置绑定后真的能触发」正面冲突（该 scenario 要求「折行呈现立即变化、不是
+无反应」）。`view.toggle-code-block-wrap` 的作用面不变（md 的围栏 / 缩进代码块），对 code 模式无可观测
+效果。两条命令的 id、作用域（`global`）、默认不绑键状态 MUST NOT 因本 change 改变。
+
+折行口径的**运行期真源是应用运行期的一组值**（D1 裁决，2026-09-18；本 change 起是三个轴）：两条命令的
+翻转 SHALL 作用于**全部会话**，翻转后所有标签页（含当时不在前台的）SHALL 立即呈现同一口径，MUST NOT
+出现「前台变了、后台标签页还是旧口径」的错位。三个轴各自独立：翻转 code 模式的轴 MUST NOT 改写 md
+模式的两个轴（反之亦然）——分叉在运行期同样成立，命令只改「你眼前那个折行」。翻转 SHALL 立即生效，
+且 MUST NOT 改写文档（`EditorState.doc` 与磁盘文件逐字节不变，ADR 0003 §3）、MUST NOT 进撤销栈、
+MUST NOT 改变 dirty、MUST NOT 落盘（`config.json` 的内容与 mtime 在翻转前后逐字节不变）、MUST NOT
+做 per-file 持久化。
+
+粒度上本 change 与既有口径一致（M180 的 D1，自 Emacs 的对应物 `toggle-truncate-lines` 有意偏离：
+后者只把 `truncate-lines` 在**当前 buffer** 内变成局部值
+[Line Truncation](https://www.gnu.org/software/emacs/manual/html_node/emacs/Line-Truncation.html)）：
+翻转是应用运行期的显示口径。由此两条推论 SHALL 成立：一，切标签页 SHALL NOT 改变折行口径；二，新标签页
+SHALL 取**当前应用态**而不是配置默认——配置项给的是启动时的起点，命令给的是运行期口径，重载/新建会话
+都不得退回配置值。重启后 SHALL 回到配置值（运行期值不持久化）。
+
+本版 MUST NOT 为翻转提供 toast 播报或常驻指示（无 mode line）：翻转的可见结果即反馈。**已知观测
+缺口（如实记录）**：当文档里没有超长行 / 没有代码块时，翻转没有可见效果，用户与 agent 都无法从界面上
+读出当前状态。这是本版的自觉取舍（理由与替代落点见既有 change 的非目标）；若 dogfood 后确认为真实
+痛点，按手感证据另提 change。
+
+#### Scenario: 翻转立即生效、全体标签页一致且不落盘
+
+- **WHEN** 通过 `[keys]` 绑定的键触发折行翻转（前台标签页有超长行与超长代码行，另有至少一个后台
+  标签页打开着同类文档），随后比对 `config.json` 的内容与 mtime，并读文档内容与 dirty 状态
+- **THEN** 折行口径立即变化（正文行与代码块按各自口径重新呈现）；切到那个后台标签页看到的同样是
+  新口径；`config.json` 逐字节不变、mtime 不变；文档内容逐字节不变、dirty 不变、撤销栈不含本次
+  翻转带来的条目
+
+#### Scenario: code 模式下翻转的是 code 模式的轴
+
+- **WHEN** 前台是 code 会话（非 md 文件，某行长于栏宽），通过 `[keys]` 触发 `view.toggle-line-wrap`
+- **THEN** 该长行立即变为折行（再按一次回到不折行）——命令在 code 模式下 MUST NOT 是「按了没反应」；
+- **AND** 切到任一 md 会话，其正文行的折行口径 MUST NOT 因这次翻转改变（三轴独立：翻 code 那一轴
+  不改写 md 的两个轴）
+
+#### Scenario: 切标签页不改变折行口径
+
+- **WHEN** 触发翻转（与配置默认相反），切到另一个标签页观察，再切回
+- **THEN** 两次观察都是**翻转后**的口径——折行是应用运行期的显示口径，MUST NOT 随标签页切换退回
+  配置值，也 MUST NOT 出现「某个标签页还停在旧口径」的第三种状态
+
+#### Scenario: 新标签页取当前应用态
+
+- **WHEN** 用与配置默认相反的配置启动，触发折行翻转，随后新建 / 打开另一个标签页
+- **THEN** 新标签页按**当前应用态**呈现（而不是回到配置默认）；重启应用后所有标签页回到配置值
+
+#### Scenario: 重启回到配置值
+
+- **WHEN** 翻转后退出应用、重新启动，打开同一份文档
+- **THEN** 呈现与配置一致（翻转是瞬态的，不持久化）；`config.json` 的内容与翻转前逐字节相同
