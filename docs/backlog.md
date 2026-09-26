@@ -1628,6 +1628,14 @@ living spec 两处已随本 change 改写口径（`keymap-commands` 的「轨道
   在写路径上再复查一次，把窗口收窄到两次系统调用之间；零窗口需要平台原子排他改名（macOS
   `renamex_np(RENAME_EXCL)` 等），引 libc 与平台分支的收益与风险不成比例，**本批不引**。
   登记在 `openspec/changes/file-tree-context-menu/design.md` §7.2。
+- **`applyListIndent` 的 `state.readOnly` 守卫当前无可达入口（保留守卫，不作覆盖声明）**（2026-09-27，
+  M249 finding，tower 裁决采 ① 记录在案）：`src/editor.ts` 的 applyListIndent 有
+  `if (view.state.readOnly) return;` 守卫，但 M231（editable-non-md-files）之后凡能进编辑器的文件类
+  都可编辑，image/binary 类由三处 openKind 入口拦在编辑器之外——该守卫当前没有可达入口，
+  「只读时缩进无效」这条行为也没有测试消费者（REVIEW.md 第 9 条形态）。**裁决：保留守卫**（对未来新增
+  只读入口的防御），文档/场景只许写成「不可达、不构成覆盖声明」——场景 43 已在 M249 改正（原「只读模式
+  （readOnly 提前返回）」的错误前提改为「非列表行无操作（D4a）」）。finding
+  `20260927-worker-gate-hygiene-improve-applylistindent-state-readonly-review-md-9.md`。
 
 ## 已核销（留痕，定期清理）
 
