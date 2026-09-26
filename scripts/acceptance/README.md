@@ -135,7 +135,7 @@ steps:
 | （省略） | — | 只做断言 |
 | `settle` | — | 读一次 AX 快照并落定（等价于「什么都不做、只等一拍」，用于纯断言步骤前的稳定） |
 | `open` | `file`、`marker` | 点左栏文件名打开，等编辑器出现 marker |
-| `click` | `target: {role,name\|help\|any,nth,count}` 或 `{x,y,count}` | 节点按 AX 索引点（走 AXPress）；`{x,y}` 走真实鼠标坐标。`count` 原样透传给 KimiCU，那四条通道**产生不出 DOM 的 `dblclick`**（判据与修正见「已知边界」）——要双击类交互请用 `doubleClick` |
+| `click` | `target: {role,name\|help\|any,nth,count}` 或 `{x,y,count}`，两者都可带 `button`（`left`（默认）/`right`/`middle`）与 `dx`/`dy` | 节点按 AX 索引点（走 AXPress）；`{x,y}` 走真实鼠标坐标。`count` 原样透传给 KimiCU，那四条通道**产生不出 DOM 的 `dblclick`**（判据与修正见「已知边界」）——要双击类交互请用 `doubleClick`。**`button` 给非左键时改走坐标路径**（M244）：AX 索引路径发的是 AXPress（「按下这个元素」），产不出鼠标右键，而 DOM 的 `contextmenu` 靠真实指针事件；此时套件取该节点 bbox 的中心（`dx`/`dy` 按宽高比例偏移，默认 0.5）注入真实鼠标事件（**cursor-safe，不移动用户指针**）。因此**目标行必须落在窗口可视区内**——树/列表里靠下的条目 AX 报的是内容坐标（实测 40 个 fixture 时 y≈1300 而窗口高 800），出视口时套件按错因报错（「右键目标不在可视区内…请先用 open / 滚动把它带进视口」），不静默；另外该路径要求快照带截图，取不到时同样报错不静默 |
 | `clickNodeText` | `text` | 点 value/title **逐字等于** `text` 的节点（比 `name` 的正则更死板） |
 | `clickInNode` | `target`、`dx`、`dy`、`count` | 点「某个有 bbox 的节点内部」的相对位置（如 `AXTable`）；`count` 同上，未观察到 `dblclick`（判据限制见「已知边界」） |
 | `clickEditor` | `dx`（默认 40）、`dy`（默认 6） | 点编辑器顶部建立渲染层焦点（编辑器内元素无 AX bbox，只能按坐标） |
@@ -145,6 +145,7 @@ steps:
 | `focusWindow` | `retries` | 确保目标窗口在前台（键盘场景的前台纪律，见上） |
 | `key` / `keys` | `key` / `keys: [...]`、`gapMs` | 键盘注入（`ctrl+n`、`cmd+s`、`cmd+/` …）。`keys` 对**整串都是可打印单字符**的序列额外做回读 + 有限重试（≤3）；chord / 混合序列 / 无可读目标一律保持盲发不重试（判定边界见「已知边界」） |
 | `type` | `text`、`clear`、`retries` | 输入到编辑器（内部先真实点击聚焦，避免落陈旧选区）；回读 + 有限重试与 `keys` **同一口径**：只在编辑器字节完全未变时重试（≤3），partial landing 直接报错不重试（判定边界见「已知边界」） |
+| `clipboardRead` | — | 读**系统剪贴板**（M244）：固定 `osascript -e 'the clipboard'`，不接受命令与参数——套件刻意不引入通用 shell 通道（这条口径见 `38-content-width-drag.md` 的登记），只开这一个可断言的读数出口。返回命令 stdout（去掉尾换行）；命令失败即**报错**（不把「读不到」当空）。日常断言用 `clipboard` 断言形态，本动作用于把读数写进证据 |
 | `sleep` | `ms` | 等待 |
 | `record` | `as`、`file` | 记下文件 sha256/mtime，供 `changedSince`/`unchangedSince`/`mtimeNewerThan` 比较 |
 | `recordEditor` | `as` | 记下编辑器文本，供 `editor.unchangedSince` 做**逐字节**比较 |
@@ -181,10 +182,12 @@ steps:
 | `file` | `path`、`exists`、`has`、`not`、`changedSince`、`unchangedSince`、`mtimeUnchangedSince`、`mtimeNewerThan` | `path` 相对验收 vault；`env:` 前缀指隔离配置目录；`xxxSince` 引用 `record` 记下的基线。`unchangedSince` 只比 sha256，`mtimeUnchangedSince` 比 mtime 精确相等——「不落盘」这类判据两个一起用（写了同一份内容时 sha256 相同而 mtime 会推进）。`path` 含 `*` 时按 glob 在父目录里取**匹配文件里 mtime 最新的那一份**再断言（诊断日志按 UTC 日期命名、`env/` 目录跨天复用，写死日期的断言会在之后每天读到上次 run 的旧文件而永久空过——这条是给那类「按日期滚动、目录不重置」的产物用的） |
 | `glob` | `dir`、`pattern`、`min`/`exact` | 文件名由 app 决定的产物（崩溃备份、另存副本）用 glob 断言 |
 | `window` | `moved: true/false` 或 `width: N` | 窗口几何（M236）：`moved` 对比**动作前**的 window_bounds 基线（步骤须有 `do`，位移 ≥8pt 才算动——标题栏拖拽移动窗口的判据）；`width` 断言生效宽度（±8pt 容差，对窗口管理器钳制后的真实值，不对请求值） |
+| `clipboard` | `has` / `not` / `exact` | 在**系统剪贴板文本**上匹配（M244）：与 `clipboardRead` 共用同一条固定 `osascript` 命令；`has`/`not` 按子串或 `/…/` 正则，`exact` 逐字等于。**读不到一律 FAIL**——不许在不可观测的窗口里下结论（REVIEW.md 第 2 条：「读不到」被当成「为空」时 `not` 类断言会退化成恒真） |
 | `shot` | 名称 | 截图 + AX dump 留档 |
 
-**占位符**（M236 起）：expect 字符串里可写 `$appName` / `$appVersion`，加载时从本 checkout 的
-`src-tauri/tauri.conf.json` 读真值代入（worktree 跑就取 worktree 的 conf，与被测构建同源）——
+**占位符**（M236 起）：expect 字符串里可写 `$appName` / `$appVersion`（加载时从本 checkout 的
+`src-tauri/tauri.conf.json` 读真值代入）与 `$vault`（M244：合成验收 vault 的绝对路径，随
+`LUMIR_ACCEPTANCE_VAULT` 走——剪贴板类断言要比对绝对路径时用它，场景 MUST NOT 硬编码 `/tmp`）（worktree 跑就取 worktree 的 conf，与被测构建同源）——
 场景 MUST NOT 硬编码版本号副本（真源唯一，REVIEW.md 第 8 条），版本 bump 后场景跟着真源走。
 
 匹配值：字符串按**子串**；`/.../` 包起来按正则。注意**正则一律带 `m` flag**（`lib/execute.mjs` 的 `matcher()`），

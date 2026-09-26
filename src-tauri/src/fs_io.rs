@@ -275,6 +275,211 @@ pub fn resolve_in_vault(root: &Path, rel: &str) -> Result<PathBuf, CommandError>
     Ok(canon)
 }
 
+/// 路径的父段（vault 相对，`/` 分隔）：`a/b/c` → `a/b`，无父段则空串。
+fn parent_rel_of(rel: &str) -> &str {
+    match rel.rfind('/') {
+        Some(i) => &rel[..i],
+        None => "",
+    }
+}
+
+/// 拼接 vault 相对路径（父段为空串即根下条目）。
+fn join_rel(parent_rel: &str, name: &str) -> String {
+    if parent_rel.is_empty() {
+        name.to_string()
+    } else {
+        format!("{parent_rel}/{name}")
+    }
+}
+
+/// 新建 / 改名的末段名校验（**唯一一份**，五个写类命令共用；忽略集复用 [`is_ignored`]
+/// 的真源，不另抄一份列表——REVIEW.md 第 8 条）。
+///
+/// 规则（design §2.3）：非空、不含 `/`、不是 `.` / `..`、不命中枚举忽略集。忽略集那条
+/// 不是洁癖：`.git` 这类名字建/改出来不进文件树、watch 事件也被 `rel_string` 吞掉，
+/// 用户在界面上既看不到也删不掉——静默丢失的温床，因此在入口就拒绝。
+pub fn validate_new_name(name: &str) -> Result<(), CommandError> {
+    if name.is_empty() {
+        return Err(CommandError::new("fs_name_invalid", "名称不能为空"));
+    }
+    if name.contains('/') {
+        return Err(CommandError::new(
+            "fs_name_invalid",
+            format!("名称不能包含斜杠：{name}"),
+        ));
+    }
+    if name == "." || name == ".." {
+        return Err(CommandError::new(
+            "fs_name_invalid",
+            format!("{name} 不是有效的名称"),
+        ));
+    }
+    if is_ignored(std::ffi::OsStr::new(name)) {
+        return Err(CommandError::new(
+            "fs_name_invalid",
+            format!("{name} 在忽略集内，建成后不会出现在文件树里"),
+        ));
+    }
+    Ok(())
+}
+
+/// 新建 / 改名的目标解析变体（写类命令的**共用一个入口**，安全边界不分散）。
+///
+/// 与 [`resolve_in_vault`] 的差别：目标**允许不存在**。因此父目录仍走
+/// `resolve_in_vault`（继承全部逃逸防护：绝对路径 / `..` / 符号链接逃逸），
+/// 末段名单独过 [`validate_new_name`]，join 之后只做 `symlink_metadata` 存在性探测
+/// ——已存在即 `fs_already_exists`（不跟随后续 canonicalize，目标本来就允许不存在）。
+/// 这条探测是**早失败的人话错误**，不是「撞名不覆盖」的保证本身——两种调用方的保证来源
+/// 不同，别在这里读出一条不存在的原子性：
+///
+/// - [`create_file_entry`] / [`create_dir_entry`]：保证来自创建调用本身
+///   （`create_new(true)` / `create_dir` 撞名即失败），**不存在**检查-创建窗口。
+/// - [`rename_entry`]：`std::fs::rename` 的 POSIX 语义是**原子替换**已存在的目标，因此
+///   这里的探测与随后的 `rename` 之间确实有一个检查-执行窗口（`rename_entry` 在写路径上
+///   又显式复查了一次，把窗口收窄到两次系统调用之间；真要做到零窗口需要平台的原子排他改名，
+///   本批不做——[`rename_entry`] 的注释写明取舍）。
+pub fn resolve_new_in_vault(
+    root: &Path,
+    parent_rel: &str,
+    name: &str,
+) -> Result<PathBuf, CommandError> {
+    validate_new_name(name)?;
+    let parent = if parent_rel.is_empty() {
+        root.canonicalize().map_err(|e| {
+            CommandError::new(
+                "fs_root_invalid",
+                format!("无法解析 vault 根 {}：{e}", root.display()),
+            )
+        })?
+    } else {
+        resolve_in_vault(root, parent_rel)?
+    };
+    let meta = std::fs::metadata(&parent)
+        .map_err(|e| CommandError::new("fs_read_failed", format!("无法访问 {parent_rel}：{e}")))?;
+    if !meta.is_dir() {
+        return Err(CommandError::new(
+            "fs_path_invalid",
+            format!("{parent_rel} 不是目录"),
+        ));
+    }
+    let target = parent.join(name);
+    if std::fs::symlink_metadata(&target).is_ok() {
+        return Err(CommandError::new(
+            "fs_already_exists",
+            format!("已存在同名条目：{}", join_rel(parent_rel, name)),
+        ));
+    }
+    Ok(target)
+}
+
+/// 移到系统废纸篓（裁决点 2）：删除必须可恢复，MUST NOT 提供永久删除路径。
+///
+/// 目录连子孙整棵入篓由 `trash` 的平台语义承担（macOS = NSFileManager 的 trashItem，
+/// 在 Finder 里可整体放回）。失败即报错且**不留半删除状态**——crate 的删除是单次系统
+/// 调用语义，这也是提示语里「未删除任何内容」承诺的依据（design §3.1）。
+pub fn trash_entry(root: &Path, rel: &str) -> Result<(), CommandError> {
+    let abs = resolve_in_vault(root, rel)?;
+    // 空 rel 已在 resolve_in_vault 里被拒（fs_path_invalid）；这里再挡一次「解析结果
+    // 就是 vault 根」的形态（防御性：vault 根永远不进废纸篓）。
+    let canon_root = root.canonicalize().map_err(|e| {
+        CommandError::new(
+            "fs_root_invalid",
+            format!("无法解析 vault 根 {}：{e}", root.display()),
+        )
+    })?;
+    if abs == canon_root {
+        return Err(CommandError::new(
+            "fs_trash_failed",
+            format!("不能把 vault 根目录移到废纸篓：{rel}"),
+        ));
+    }
+    trash::delete(&abs).map_err(|e| {
+        // trash::Error 的 Display 是内部 Debug 结构（英文、带字段名），人话在前、
+        // 原始错误附在尾部只作排查线索。
+        CommandError::new(
+            "fs_trash_failed",
+            format!("移到废纸篓失败：{rel}——未删除任何内容（{e}）"),
+        )
+    })
+}
+
+/// 同目录改末段名（v1 不支持跨目录移动，proposal 非目标）。源走 [`resolve_in_vault`]，
+/// 目标走 [`resolve_new_in_vault`]（父 = 源的父目录），并在**写路径上再复查一次**目标是否
+/// 已存在——MUST NOT 覆盖既有条目。返回改名后的 vault 相对路径。
+///
+/// 为什么写路径要再查一次：`std::fs::rename` 的 POSIX 语义是**原子替换**已存在的目标
+/// （不是「撞名即失败」），所以 `resolve_new_in_vault` 里那次探测与这里的 `rename` 之间
+/// 存在真实的检查-执行窗口——窗口内外部进程在目标名建出的文件会被静默覆盖。这个复查把窗口
+/// 收窄到两次系统调用之间，代价是一次 `symlink_metadata`；风险本身极低（单用户本地 vault、
+/// 亚毫秒窗口、需外部进程精准撞名），失败方向也安全（宁可多报一次「已存在」也不覆盖）。
+/// 真要做到零窗口需要平台的原子排他改名（macOS 的 `renamex_np(RENAME_EXCL)`，其余平台各有
+/// 对应物），本批不做：那要引 libc/平台分支，收益与风险不成比例。**因此「撞名不覆盖」在
+/// rename 这条路上是「复查 + 极窄窗口」，不是原子保证**——别在别处读成更强的东西。
+pub fn rename_entry(root: &Path, rel: &str, new_name: &str) -> Result<String, CommandError> {
+    let from = resolve_in_vault(root, rel)?;
+    let parent_rel = parent_rel_of(rel).to_string();
+    let to = resolve_new_in_vault(root, &parent_rel, new_name)?;
+    // 写路径复查（见上面注释）：与 create 路径同一个错误码与同一句话，前端不必分辨来源。
+    if std::fs::symlink_metadata(&to).is_ok() {
+        return Err(CommandError::new(
+            "fs_already_exists",
+            format!("已存在同名条目：{}", join_rel(&parent_rel, new_name)),
+        ));
+    }
+    std::fs::rename(&from, &to).map_err(|e| {
+        CommandError::new(
+            "fs_rename_failed",
+            format!("改名失败：{rel} → {new_name}（{e}）"),
+        )
+    })?;
+    Ok(join_rel(&parent_rel, new_name))
+}
+
+/// 在目录下新建**空文件**（§3.5）：目标走 [`resolve_new_in_vault`]，创建用
+/// `create_new(true)` 的原子语义——撞名由内核裁定，MUST NOT 覆盖既有文件。
+/// 返回新建条目的 vault 相对路径。
+pub fn create_file_entry(
+    root: &Path,
+    parent_rel: &str,
+    name: &str,
+) -> Result<String, CommandError> {
+    let target = resolve_new_in_vault(root, parent_rel, name)?;
+    let path = join_rel(parent_rel, name);
+    match std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&target)
+    {
+        Ok(_) => Ok(path),
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Err(CommandError::new(
+            "fs_already_exists",
+            format!("已存在同名条目：{path}"),
+        )),
+        Err(e) => Err(CommandError::new(
+            "fs_create_failed",
+            format!("无法新建 {path}：{e}"),
+        )),
+    }
+}
+
+/// 在目录下新建子目录（§3.6）：与 [`create_file_entry`] 同构，`create_dir` 本身撞名即报
+/// `AlreadyExists`，原子语义等价。新建目录 MUST NOT 自动展开父目录（折叠态是用户状态）。
+pub fn create_dir_entry(root: &Path, parent_rel: &str, name: &str) -> Result<String, CommandError> {
+    let target = resolve_new_in_vault(root, parent_rel, name)?;
+    let path = join_rel(parent_rel, name);
+    match std::fs::create_dir(&target) {
+        Ok(()) => Ok(path),
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Err(CommandError::new(
+            "fs_already_exists",
+            format!("已存在同名条目：{path}"),
+        )),
+        Err(e) => Err(CommandError::new(
+            "fs_create_failed",
+            format!("无法新建 {path}：{e}"),
+        )),
+    }
+}
+
 /// 单文件 mtime（Unix 毫秒，M218 doc-meta「修改于」的数据源）：路径口径与读取链路
 /// 同一个 `resolve_in_vault`；mtime 取不到（权限 / 平台不支持）为 `Ok(None)`，
 /// 与 `FsEntry.mtime_ms` 同口径。
@@ -1117,5 +1322,210 @@ mod tests {
         std::fs::write(v.0.join("after-drop.md"), "x").unwrap();
         // debounce 线程随 channel 断开退出；不应再收到任何批次
         assert!(rx.recv_timeout(Duration::from_millis(500)).is_err());
+    }
+
+    #[test]
+    fn validate_new_name_rejects_dot_slash_ignored_and_accepts_normal() {
+        for bad in ["", "a/b", ".", "..", ".git", ".DS_Store", "node_modules"] {
+            let err = validate_new_name(bad).unwrap_err();
+            assert_eq!(err.code, "fs_name_invalid", "case: {bad:?}");
+        }
+        // 合法点文件不受忽略集牵连（`.gitignore` 不在 IGNORED_NAMES，也不命中 tmp 模式）
+        for ok in ["note.md", "笔记.md", ".gitignore", "a.txt"] {
+            assert!(validate_new_name(ok).is_ok(), "case: {ok:?}");
+        }
+    }
+
+    #[test]
+    fn resolve_new_rejects_escape_bad_names_and_collisions() {
+        let v = TempVault::with_fixture();
+        let root = &v.0;
+        // 父目录逃逸：绝对路径与 `..` 穿越都被 resolve_in_vault 挡住
+        for parent in ["../outside", "/etc", "sub/../../etc"] {
+            let err = resolve_new_in_vault(root, parent, "x.md").unwrap_err();
+            assert_eq!(err.code, "fs_path_escape", "parent: {parent}");
+        }
+        // 末段名非法：空 / 含斜杠 / 点 / 点点 / 忽略集三种
+        for name in ["", "a/b", ".", "..", ".git", ".DS_Store", "node_modules"] {
+            let err = resolve_new_in_vault(root, "", name).unwrap_err();
+            assert_eq!(err.code, "fs_name_invalid", "name: {name:?}");
+        }
+        // 撞名：既有文件与既有目录都要挡住
+        for name in ["note.md", "sub"] {
+            let err = resolve_new_in_vault(root, "", name).unwrap_err();
+            assert_eq!(err.code, "fs_already_exists", "name: {name}");
+        }
+        // 父目录不存在 / 父是文件
+        let err = resolve_new_in_vault(root, "missing", "x.md").unwrap_err();
+        assert_eq!(err.code, "fs_not_found");
+        let err = resolve_new_in_vault(root, "note.md", "x.md").unwrap_err();
+        assert_eq!(err.code, "fs_path_invalid");
+        // 正常：根下与子目录下，返回父的规范化路径 + join(name)（目标允许不存在）
+        let canon = root.canonicalize().unwrap();
+        assert_eq!(
+            resolve_new_in_vault(root, "", "new.md").unwrap(),
+            canon.join("new.md")
+        );
+        assert_eq!(
+            resolve_new_in_vault(root, "sub/deep", "new.md").unwrap(),
+            canon.join("sub/deep/new.md")
+        );
+    }
+
+    #[test]
+    fn rename_moves_within_parent_and_never_overwrites() {
+        let v = TempVault::with_fixture();
+        let root = &v.0;
+        assert_eq!(
+            rename_entry(root, "note.md", "renamed.md").unwrap(),
+            "renamed.md"
+        );
+        assert!(!root.join("note.md").exists());
+        assert_eq!(
+            std::fs::read_to_string(root.join("renamed.md")).unwrap(),
+            "# hello"
+        );
+        // 嵌套路径：父段由源路径派生，返回路径带父段
+        assert_eq!(
+            rename_entry(root, "sub/deep/a.txt", "b.txt").unwrap(),
+            "sub/deep/b.txt"
+        );
+        assert!(root.join("sub/deep/b.txt").exists());
+        // 目录改名连同子孙一起走
+        assert_eq!(rename_entry(root, "sub", "sub2").unwrap(), "sub2");
+        assert_eq!(
+            std::fs::read_to_string(root.join("sub2/deep/b.txt")).unwrap(),
+            "a"
+        );
+        // 撞名：目标与源都逐字节不变
+        let err = rename_entry(root, "renamed.md", "main.rs").unwrap_err();
+        assert_eq!(err.code, "fs_already_exists");
+        assert_eq!(
+            std::fs::read_to_string(root.join("main.rs")).unwrap(),
+            "fn main() {}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(root.join("renamed.md")).unwrap(),
+            "# hello"
+        );
+        // 源不存在 / 新名非法（非法时源不动）
+        let err = rename_entry(root, "missing.md", "x.md").unwrap_err();
+        assert_eq!(err.code, "fs_not_found");
+        let err = rename_entry(root, "renamed.md", ".git").unwrap_err();
+        assert_eq!(err.code, "fs_name_invalid");
+        assert!(root.join("renamed.md").exists());
+    }
+
+    /// 撞名必须被挡住（r1 评审 P2-2）：`std::fs::rename` 的 POSIX 语义是原子替换已存在的
+    /// 目标，因此「撞名不覆盖」不能只靠 `resolve_new_in_vault` 的探测。这条单测钉的是**可观测
+    /// 契约**：rename 到已存在的名字必须报 `fs_already_exists`（与 create 路径同一个码、同一句
+    /// 话），源与目标逐字节不变——普通文件与既有目录两种形态都覆盖。
+    ///
+    /// **它钉不到窗口**：探测与复查之间那段检查-执行窗口无法用确定性测试构造（要在两次系统
+    /// 调用之间插入外部进程建文件），所以这里证明的是「结果不覆盖」，不是「零窗口」；窗口的
+    /// 取舍与代价写在 [`rename_entry`] 的注释里。防线上它管住的是「写路径整个失去撞名判定」
+    /// 这类改动（例如某次重构改成不经 `resolve_new_in_vault` 直接 rename）。
+    #[test]
+    fn rename_refuses_existing_target_on_write_path() {
+        let v = TempVault::with_fixture();
+        let root = &v.0;
+        // 目标已存在（普通文件）：报错、两边逐字节不变
+        let err = rename_entry(root, "note.md", "main.rs").unwrap_err();
+        assert_eq!(err.code, "fs_already_exists");
+        assert!(
+            err.message.contains("已存在同名条目：main.rs"),
+            "人话里要点名撞的条目：{}",
+            err.message
+        );
+        assert_eq!(
+            std::fs::read_to_string(root.join("note.md")).unwrap(),
+            "# hello"
+        );
+        assert_eq!(
+            std::fs::read_to_string(root.join("main.rs")).unwrap(),
+            "fn main() {}"
+        );
+        // 目标已存在（目录）：同样挡住（rename 到目录名下会替换空目录或报 ENOTDIR，
+        // 两种都不是我们要的语义）
+        let err = rename_entry(root, "note.md", "sub").unwrap_err();
+        assert_eq!(err.code, "fs_already_exists");
+        assert!(root.join("sub/deep/a.txt").exists(), "既有目录不得被动");
+        assert!(root.join("note.md").exists());
+        // 忽略集名与非法名走的是另一条分支（保持既有语义）
+        assert_eq!(
+            rename_entry(root, "note.md", ".git").unwrap_err().code,
+            "fs_name_invalid"
+        );
+    }
+
+    #[test]
+    fn create_file_and_dir_are_atomic_and_refuse_collision() {
+        let v = TempVault::with_fixture();
+        let root = &v.0;
+        assert_eq!(
+            create_file_entry(root, "sub", "new.md").unwrap(),
+            "sub/new.md"
+        );
+        let meta = std::fs::metadata(root.join("sub/new.md")).unwrap();
+        assert!(meta.is_file());
+        assert_eq!(meta.len(), 0, "新建的是空文件");
+        assert_eq!(create_dir_entry(root, "", "newdir").unwrap(), "newdir");
+        assert!(root.join("newdir").is_dir());
+        // 撞名不覆盖：既有文件逐字节不变
+        let err = create_file_entry(root, "", "note.md").unwrap_err();
+        assert_eq!(err.code, "fs_already_exists");
+        assert_eq!(
+            std::fs::read_to_string(root.join("note.md")).unwrap(),
+            "# hello"
+        );
+        let err = create_dir_entry(root, "", "sub").unwrap_err();
+        assert_eq!(err.code, "fs_already_exists");
+        // 忽略集名 / 逃逸父 / 父不存在
+        let err = create_file_entry(root, "", "node_modules").unwrap_err();
+        assert_eq!(err.code, "fs_name_invalid");
+        let err = create_dir_entry(root, "../outside", "x").unwrap_err();
+        assert_eq!(err.code, "fs_path_escape");
+        let err = create_file_entry(root, "missing", "x.md").unwrap_err();
+        assert_eq!(err.code, "fs_not_found");
+        // 成功不是空口承诺：新建的两个条目真的在磁盘上
+        assert!(root.join("sub/new.md").exists() && root.join("newdir").exists());
+    }
+
+    /// 删除 = 移废纸篓。**成功路径真的会往用户的废纸篓里放一个条目**：macOS 下
+    /// `trash::os_limited`（list / restore）不参与编译，测试内无法把它放回。因此测试文件
+    /// 用可辨识的名字（`lumir-trash-test-<pid>.txt`）且内容为空，人工清理一眼可辨；
+    /// 「可恢复」这条产品承诺由 `trash` 自身的平台语义与真机场景 47 承担。
+    #[test]
+    fn trash_moves_entry_out_of_vault_and_reports_human_errors() {
+        let v = TempVault::with_fixture();
+        let root = &v.0;
+        let rel = format!("lumir-trash-test-{}.txt", std::process::id());
+        let victim = root.join(&rel);
+        std::fs::write(&victim, "").unwrap();
+        trash_entry(root, &rel).expect("移到废纸篓");
+        assert!(!victim.exists(), "入篓后 vault 内不应再有该条目");
+        assert!(
+            root.join("note.md").exists(),
+            "只动目标条目，vault 其余内容不变"
+        );
+        // 错误路径一：目标不存在（菜单开着期间被外部移走）
+        let err = trash_entry(root, "missing.md").unwrap_err();
+        assert_eq!(err.code, "fs_not_found");
+        // 错误路径二：空路径（防御性，vault 根永不进废纸篓）
+        let err = trash_entry(root, "").unwrap_err();
+        assert_eq!(err.code, "fs_path_invalid");
+        assert!(root.join("note.md").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn trash_refuses_vault_root_reached_through_symlink() {
+        let v = TempVault::with_fixture();
+        let root = &v.0;
+        // vault 内指向 vault 根的 symlink：resolve_in_vault 归一后正好是根，必须挡住
+        std::os::unix::fs::symlink(root, root.join("loop")).unwrap();
+        let err = trash_entry(root, "loop").unwrap_err();
+        assert_eq!(err.code, "fs_trash_failed", "vault 根本身永不进废纸篓");
+        assert!(root.join("note.md").exists());
     }
 }

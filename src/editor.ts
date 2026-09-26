@@ -31,6 +31,7 @@ import type { ListIndentDirection } from "./list-indent";
 import { createInvokeAttachmentProvider, codeLanguageOfPath, fileClassOfPath, isEditablePath } from "./preview/attachments";
 import type { AttachmentProvider } from "./preview/attachments";
 import { bindingHighlight } from "./code-identifiers";
+import { remapPathAfterRename } from "./tree";
 import { LANGUAGES, TOKEN_GROUPS } from "./preview/code";
 import type { TokenRole } from "./preview/code";
 import type { CommandRunner, EditorCommandId } from "./keys";
@@ -980,6 +981,14 @@ export interface EditorHandle {
    */
   reloadSession(session: EditorSession, doc: string, path: string | undefined, requestId?: number): void;
   /**
+   * 改名后就地 remap 打开中的会话路径（M244 裁决点 5，菜单发起的重命名专用）：
+   * `from` 单个会话替换、`from/` 子树全部前缀替换。**只改路径**——内容、选区、滚动
+   * 位置、dirty 与磁盘 revision 基准全部原样保留（改名不改字节，CAS 依旧有效）。
+   * 返回被 remap 的会话数（0 = 没有打开中的文档命中，调用方无需做别的同步）。
+   * 扩展名变化会改 mode / editable，这里一并按新路径重裁。
+   */
+  remapSessionPaths(from: string, to: string): number;
+  /**
    * 激活会话：把 view 的 state 换成它那一份，并恢复该会话的滚动位置。
    * 同步调用、无异步等待——切换只换 state，不重新解析文档。
    */
@@ -1862,6 +1871,50 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
       emitReady("decoration-ready");
       emitReady("frontmatter-ready");
       schedulePaint(serial);
+    },
+    remapSessionPaths(from, to) {
+      // 菜单发起的重命名（M244，裁决点 5）：**只改路径**，不碰内容 / 选区 / 滚动 / dirty
+      // ——改名不改字节，save-controller 的磁盘 revision 基准因此依旧有效（CAS 不失效），
+      // 也不必重锚自动保存。路径是若干旁路状态的键（mtimeCache 在这里；save-controller
+      // 的 revisions / paused / timers 按路径查会话，改完自然落到新键上，旧键成为死条目），
+      // 所以旧键在这里废掉、新键重取。
+      let remapped = 0;
+      for (const session of sessions) {
+        const path = session.path;
+        if (path === undefined) continue;
+        const next = remapPathAfterRename(path, from, to);
+        if (next === undefined) continue;
+        remapped += 1;
+        mtimeCache.delete(path);
+        session.path = next;
+        // 扩展名可能变了（a.md → a.txt）：mode 与可编辑性按新路径重裁，内容不动。
+        const mode = modeForPath(next, defaultMode);
+        const editable = isEditablePath(next);
+        const modeChanged = mode !== session.mode || editable !== session.editable;
+        session.mode = mode;
+        session.editable = editable;
+        mtimeCache.delete(next);
+        ensureMtime(next);
+        // 前台会话经 dispatch 生效（updateListener 把新 state 回写 session.state），
+        // 后台会话只换代它的 state——与 reconfigureWrap / reloadSession 的既有分岔同形。
+        // 路径进装饰层的基准（previewContext.currentFilePath 活读 active.path）与
+        // doc-meta 查表（fileMtime），因此前台必须重建一次装饰，哪怕模式没变。
+        if (session === active) {
+          readyPath = next;
+          syncProjection();
+          view.dispatch({
+            effects: [
+              ...(modeChanged ? modeAndWrapEffects(mode, next, editable) : []),
+              previewRefresh.of(null),
+            ],
+          });
+        } else if (modeChanged) {
+          session.state = session.state.update({
+            effects: modeAndWrapEffects(mode, next, editable),
+          }).state;
+        }
+      }
+      return remapped;
     },
     activateSession(session: EditorSession) {
       activate(session);

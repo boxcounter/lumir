@@ -168,6 +168,42 @@ export function linkResolveNote(from: string, target: string): Promise<string | 
 export function linkOpenPath(from: string, target: string): Promise<void> {
   return invoke<void>("link_open_path", { from, target });
 }
+
+// ---------------------------------------------------------------------------
+// 文件级操作（M244，change file-tree-context-menu）：右键菜单的五个动作
+//
+// 全部只作用于 vault 内路径（判定与 IO 在 Rust 侧的同一套边界里）；错误信封与上面各条
+// 同形，调用点只拿 Promise。命名空间按后端命令名（`fs_*`）——与 `createFile`（另存为链路
+// 的通用建文件）是两件事，MUST NOT 互相调用。
+// ---------------------------------------------------------------------------
+
+/** 删除 = **移到系统废纸篓**（裁决点 2，无永久删除入口）。失败时后端保证未删除任何内容
+ *  （`fs_trash_failed` 的人话里明说）。 */
+export function fsTrashEntry(rel: string): Promise<void> {
+  return invoke<void>("fs_trash_entry", { rel });
+}
+
+/** 同目录改末段名（裁决点 3 的内联编辑提交）。撞名 reject `fs_already_exists`，MUST NOT
+ *  覆盖；返回改名后的 vault 相对路径，供打开中 session 的路径 remap（裁决点 5）使用。 */
+export function fsRenameEntry(rel: string, newName: string): Promise<string> {
+  return invoke<string>("fs_rename_entry", { rel, new_name: newName });
+}
+
+/** 目录下新建空文件（§3.5）：`create_new` 原子语义，撞名 reject `fs_already_exists`。
+ *  返回新建条目的 vault 相对路径（自动打开用它，不等 watcher 回响）。 */
+export function fsCreateFile(parentRel: string, name: string): Promise<string> {
+  return invoke<string>("fs_create_file", { parent_rel: parentRel, name });
+}
+
+/** 目录下新建子目录（§3.6）：语义同上；新建目录不自动展开父目录。 */
+export function fsCreateDir(parentRel: string, name: string): Promise<string> {
+  return invoke<string>("fs_create_dir", { parent_rel: parentRel, name });
+}
+
+/** 在系统文件管理器里定位并选中该条目（§3.4；macOS = Finder）。不产生任何文件系统变更。 */
+export function fsRevealInFinder(rel: string): Promise<void> {
+  return invoke<void>("fs_reveal_in_finder", { rel });
+}
 export const vaultRemap = (id: string, path: string): Promise<VaultWorkspace> => invoke<VaultWorkspace>("vault_remap", { id, path });
 
 // ---------------------------------------------------------------------------

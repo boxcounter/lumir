@@ -29,9 +29,9 @@ import { envHome, mkdirp, readText, repoRoot, sleep, vaultDir } from "./util.mjs
 export const ACTIONS = new Set([
   "settle", "sleep", "key", "keys", "type", "click", "clickNodeText", "clickInNode", "clickEditor",
   "doubleClick", "drag", "focusWindow", "open", "configWrite", "restart", "record", "recordEditor", "vaultWrite",
-  "vaultAppend", "vaultRm", "vaultSparse", "resizeWindow",
+  "vaultAppend", "vaultRm", "vaultSparse", "resizeWindow", "clipboardRead",
 ]);
-export const EXPECT_KINDS = new Set(["ax", "editor", "file", "glob", "shot", "window"]);
+export const EXPECT_KINDS = new Set(["ax", "editor", "file", "glob", "shot", "window", "clipboard"]);
 
 /** 静态校验一个场景，返回问题列表（空 = 通过）。 */
 export function checkScenario(scenario) {
@@ -50,6 +50,8 @@ export function checkScenario(scenario) {
     if (step.do === "keys" && !Array.isArray(step.keys)) push(`${at} do=keys 需要 keys 数组`);
     if (step.do === "key" && !step.key) push(`${at} do=key 需要 key`);
     if (step.do === "doubleClick" && !step.target) push(`${at} do=doubleClick 需要 target（节点或 {x,y} 窗口局部坐标）`);
+    if (step.do === "click" && step.target?.button !== undefined && !["left", "right", "middle"].includes(step.target.button))
+      push(`${at} do=click 的 target.button 只能是 left/right/middle，实际 ${JSON.stringify(step.target.button)}`);
     if (step.do === "drag" && (!step.target || (step.dx === undefined && step.dy === undefined)))
       push(`${at} do=drag 需要 target（带 bbox 的节点、{x,y} 窗口局部坐标或 textareaEdge）与 dx/dy 位移（窗口局部点）`);
     if (step.do === "resizeWindow" && typeof step.width !== "number")
@@ -67,6 +69,8 @@ export function checkScenario(scenario) {
         push(`${at} expect[${j}] ax 断言缺 has/not/count/focused（写错字段名会静默变成恒真断言）`);
       else if (kinds[0] === "window" && !["moved", "width"].some((k) => exp.window[k] !== undefined))
         push(`${at} expect[${j}] window 断言缺 moved/width`);
+      else if (kinds[0] === "clipboard" && !["has", "not", "exact"].some((k) => exp.clipboard[k] !== undefined))
+        push(`${at} expect[${j}] clipboard 断言缺 has/not/exact（写错字段名会静默变成恒真断言）`);
     }
   }
   return problems;
@@ -80,7 +84,13 @@ export function checkScenario(scenario) {
  */
 async function appMetaTokens() {
   const conf = JSON.parse(await readText(path.join(repoRoot(), "src-tauri/tauri.conf.json")));
-  return { $appName: String(conf.productName), $appVersion: String(conf.version) };
+  return {
+    $appName: String(conf.productName),
+    $appVersion: String(conf.version),
+    // 合成验收 vault 的绝对路径（M244）：剪贴板类断言要比对**绝对路径**，而它随
+    // LUMIR_ACCEPTANCE_VAULT 覆写而变——场景 MUST NOT 硬编码 /tmp 那一份。
+    $vault: vaultDir(),
+  };
 }
 
 /** 深度遍历 YAML 产物，字符串里的占位符全部替换。 */
@@ -161,11 +171,25 @@ async function resolveSpecFile(p) {
  * `count` 原样透传给 KimiCU（实测：即使 count=2，WKWebView 里也不产生 DOM 的 `dblclick`，
  * 见 cu.click 与 README「已知边界」）。
  */
-async function clickWithRetry(cu, pid, x, y, { retries = 3, count } = {}) {
+/**
+ * 读系统剪贴板（M244）：**只有这一条固定命令**——套件刻意不引入通用 shell 通道
+ *（38-content-width-drag 记过这条口径），这里要的只是一个可断言的读数出口。
+ * 返回值区分「读到空串」与「读失败」：后者由调用方一律判 FAIL，不许当成空。
+ */
+function readClipboard() {
+  try {
+    const out = execFileSync("/usr/bin/osascript", ["-e", "the clipboard"], { encoding: "utf8" });
+    return { ok: true, text: out.replace(/\r?\n$/, "") };
+  } catch (e) {
+    return { ok: false, text: "", error: e instanceof Error ? e.message : String(e) };
+  }
+}
+
+async function clickWithRetry(cu, pid, x, y, { retries = 3, count, button } = {}) {
   let lastErr;
   for (let i = 0; i < retries; i++) {
     try {
-      return await cu.click(pid, { x, y, count });
+      return await cu.click(pid, { x, y, count, ...(button ? { button } : {}) });
     } catch (e) {
       lastErr = e;
       await cu.state(pid, { mode: "full" });
@@ -307,6 +331,30 @@ export async function runScenario(ctx, scenario) {
         return ok ? pass(label, `命中 ${n} 次`) : fail(`${label}（期望命中 ${exact ?? `${min ?? ""}..${max ?? ""}`}，实际 ${n}）`, "", ax);
       }
       return fail(`${label}（ax 断言缺少 has/not/count/focused）`, "", ax);
+    }
+    if (expect.clipboard !== undefined) {
+      // 剪贴板的断言形态（M244）：与 clipboardRead 动作共用同一个固定命令。
+      // **读不到一律 FAIL**，不许在不可观测的窗口里下结论（REVIEW.md 第 2 条：
+      // 「读不到」被当成「为空」时，not 类断言会退化成恒真）。
+      const spec = expect.clipboard;
+      const clip = readClipboard();
+      if (!clip.ok) {
+        return fail(`${label}（剪贴板不可读：${clip.error}）`, "读不到一律判 FAIL，不在不可观测的窗口下结论");
+      }
+      if (spec.exact !== undefined) {
+        if (clip.text === String(spec.exact)) return pass(label, `剪贴板 = ${clip.text}`);
+        return fail(`${label}（期望剪贴板逐字等于 ${JSON.stringify(spec.exact)}，实际 ${JSON.stringify(clip.text)}）`);
+      }
+      if (spec.has !== undefined) {
+        const m = matcher(spec.has);
+        return m.test(clip.text)
+          ? pass(label, `剪贴板 = ${clip.text}`)
+          : fail(`${label}（期望剪贴板含 ${m.show}，实际 ${JSON.stringify(clip.text)}）`);
+      }
+      const m = matcher(spec.not);
+      return m.test(clip.text)
+        ? fail(`${label}（期望剪贴板不含 ${m.show}，实际 ${JSON.stringify(clip.text)}）`)
+        : pass(label, `剪贴板 = ${clip.text}`);
     }
     if (expect.editor) {
       const spec = expect.editor;
@@ -728,8 +776,19 @@ async function doAction(step, { ctx, cu, scenario, vars, pid, evidence }) {
       const t = step.target ?? {};
       // `count` 两条路径都如实透传（M184 实测：坐标路径与 AX 索引路径在 WKWebView 里**都不
       // 产生** DOM 的 `dblclick`，见 README「已知边界」——要验双击类交互时别指望它）。
-      if (t.x !== undefined) return cu.click(p, { x: t.x, y: t.y, ...(t.count ? { count: t.count } : {}) });
-      const ax = await readAx(cu, p);
+      // `button` 两条路径都透传（M244）：右键是上下文菜单唯一的真实入口，而 KimiCU 的
+      // click 本来就支持 `button: right|middle`（lib/cu.mjs 的 click 早已带这个参数，
+      // 之前只是场景层没把它接出来）。左键仍是默认值，未写 button 的行为一字不变。
+      const button = t.button ? { button: t.button } : {};
+      if (t.x !== undefined) {
+        return cu.click(p, { x: t.x, y: t.y, ...button, ...(t.count ? { count: t.count } : {}) });
+      }
+      // 非左键且目标是**节点**时改走坐标路径（M244）：AX 索引路径发的是 AXPress——
+      // 「按下这个元素」，产不出鼠标右键（DOM 的 `contextmenu` 靠真实指针事件）。
+      // 因此需要一个带 bbox 的快照（full 才有截图坐标），在节点中心注入真实鼠标事件
+      //（cursor-safe，不移动用户指针）。左键 / 未写 button 的行为一字不变。
+      const pointerButton = t.button !== undefined && t.button !== "left";
+      const ax = pointerButton ? await readAxForScreenPoint(cu, p) : await readAx(cu, p);
       const node =
         t.help !== undefined
           ? findByHelp(ax.nodes, { role: t.role, help: t.help, nth: t.nth ?? 0 })
@@ -737,7 +796,33 @@ async function doAction(step, { ctx, cu, scenario, vars, pid, evidence }) {
             ? findByAny(ax.nodes, { role: t.role, any: t.any, nth: t.nth ?? 0 })
             : findNode(ax.nodes, { role: t.role, name: t.name, nth: t.nth ?? 0 });
       if (!node) throw new Error(`找不到可点节点 ${JSON.stringify(t)}`);
-      return cu.click(p, { index: node.index, ...(t.count ? { count: t.count } : {}) });
+      if (pointerButton) {
+        if (!node.bbox) throw new Error(`节点没有 bbox，无法用 ${t.button} 键点击：${JSON.stringify(t)}`);
+        const { x, y, w, h } = node.bbox;
+        const px = x + w * (t.dx ?? 0.5);
+        const py = y + h * (t.dy ?? 0.5);
+        // 坐标必须落在窗口可视区内：树里的条目可能远在视口之外（AX 报的是内容坐标，
+        // 例如 40 个 fixture 时靠后的行 y≈1300 而窗口高 800），此时注入坐标只会得到
+        // KimiCU 的 `screenshot coordinate is outside the last get_app_state image`
+        // ——那句错误看不出真实成因。这里提前给一句能指出下一步的话（M244 实测）。
+        const bounds = windowBounds(ax.text);
+        if (bounds && (px > bounds.w || py > bounds.h || px < 0 || py < 0)) {
+          throw new Error(
+            `${t.button} 键目标不在可视区内（节点 @${Math.round(px)},${Math.round(py)}，窗口 ${bounds.w}×${bounds.h}）：` +
+              `请先用 open / 滚动把该行带进视口再右键（右键走真实指针事件，坐标必须在窗口内）`,
+          );
+        }
+        if (!ax.image) {
+          throw new Error(`取不到窗口截图，无法用 ${t.button} 键在坐标上点击：节点 ${JSON.stringify(t)}`);
+        }
+        return clickWithRetry(cu, p, px, py, { button: t.button });
+      }
+      return cu.click(p, { index: node.index, ...button, ...(t.count ? { count: t.count } : {}) });
+    }
+    case "clipboardRead": {
+      const clip = readClipboard();
+      if (!clip.ok) throw new Error(`读剪贴板失败：${clip.error}`);
+      return clip.text;
     }
     case "clickNodeText": {
       const ax = await readAx(cu, p);
