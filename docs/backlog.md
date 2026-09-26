@@ -1176,6 +1176,38 @@
    target」）需要一个能写该文件的动作（随下次碰 REVIEW.md 的 mission 顺带做即可）。
    长期方案候选仍是本节第 2 条的「worktree 共享 `CARGO_TARGET_DIR`」与「待 Alex 裁决」第 8 条，与本条不冲突。
 
+### 块级横滚容器失去焦点入口（M239 登记，2026-09-26，待裁决）
+
+**症状**：change `list-tab-indent` 把编辑器内 `Tab` 绑给列表缩进命令（`editor.list-indent`）之后，
+块级横滚容器（围栏 / 缩进代码块与 grid 表格的 `.cm-lp-block-scroll`，`tabindex=0`）**没有任何
+真机验通的路径**能让它进入「持有焦点」状态 ⇒ M132 收编、M180 泛化的那五条 widget 滚动键
+（`←` `→` `Home` `End` `Escape`）当前无从触发。
+
+**证据**（全部真机，2026-09-26，git 外）：
+- 全量跑 `test-results/acceptance/2026-09-26-m239-full/`：`21-wrap-default` 由同日 20:45 的 PASS 变
+  FAIL，两条断言实际均为 `focused=AXTextArea`（那是「用 `Tab` 移入容器」的旧入口）。
+- 改点容器后 `test-results/acceptance/2026-09-26-m239-21/`：`AXPress` 点
+  `role=region` → AXGroup 的容器节点**焦点不动**，两次断言仍红；AX dump 里该节点既无 bbox 也无
+  `AXPress` 动作（`ax/03-*`、`04-*`）。
+- 代码侧：全仓没有任何命令把焦点送进容器（`src/preview/livePreview.ts` 只有 `view.focus()` 的退出
+  方向：`:365` 的 widget-escape、`:456`）；容器只有 `tabindex=0` 等着原生遍历 ✗。
+
+**受影响面**：容器本身的 `overflow-x: auto` 仍在，鼠标 / 触控板横滚照常可用；被切断的是
+「容器持有焦点」这一状态与它的加速键（120px 步进、`Home`/`End` 端点、`Escape` 交还）。
+living spec 两处已随本 change 改写口径（`keymap-commands` 的「轨道 D 的 widget 滚动键纳入统一
+键位表」与 `editor-live-preview` 的「折行渲染与代码块横滚容器」，delta 在
+`openspec/changes/list-tab-indent/specs/`），**未删**键位语义（键还在表里、命中条件不变），只把
+「入口」如实记为不存在。
+
+**候选处置**（任选其一，须经裁决再动代码）：
+1. **新键 / 新命令送回焦点**（推荐）：例如 `editor.focus-block-scroll` 绑一条空闲键位（Emacs 系的
+   `⌃⌥→` 之类），命中后把焦点交给当前光标所在块的横滚容器；容器内的五条键与 `Escape` 交还逻辑原样
+   复用，等于把 M132 的整套能力接回来。
+2. **确认容器的可点区域**：容器若有可见的 padding / 边缘可点（真机目前没找到），把「点容器」写进
+   spec 并让场景 21 按坐标点那条边。
+3. **接受移除**：则 `keymap-commands` 那五条 widget 滚动键与 `livePreview.ts` 的命令实现一并退场
+   （连同表格容器），spec 也要删——这是删除既有能力，代价最大。
+
 ## 待真机验收
 
 行为判定已下沉为 agent 可执行场景（入口 [scripts/acceptance/](../scripts/acceptance/README.md)，

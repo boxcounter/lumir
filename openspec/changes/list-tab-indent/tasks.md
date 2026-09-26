@@ -13,54 +13,54 @@ D2: c. 缩进后重排有序列表源码编号；D3: a. 无操作；D4: a. 无�
 
 ## 1. 键位层登记（src/keys.ts）
 
-- [ ] 1.1 `EDITOR_CORE_COMMAND_IDS` 增 `editor.list-indent` / `editor.list-outdent`
+- [x] 1.1 `EDITOR_CORE_COMMAND_IDS` 增 `editor.list-indent` / `editor.list-outdent`
       （`src/keys.ts` 顶部清单；编辑器内核组，scope 随组派生为 editor）
-- [ ] 1.2 `KEY_BINDINGS` 增 `Tab` → `editor.list-indent`、`Shift-Tab` → `editor.list-outdent`
+- [x] 1.2 `KEY_BINDINGS` 增 `Tab` → `editor.list-indent`、`Shift-Tab` → `editor.list-outdent`
       （scope editor）；doc 写清冲突核对：表内无 `Tab` / `Shift-Tab` token（`Ctrl-Tab` /
       `Ctrl-Shift-Tab` 归一化后是不同 token）、应用无补全扩展、CM 无 indentWithTab、
       原生焦点遍历被接管是 D1 知情接受的代价
-- [ ] 1.3 `tests/unit/keys.test.ts` 既有不变量（无重复绑定 / 无孤儿命令 / KEYLESS 对账）
+- [x] 1.3 `tests/unit/keys.test.ts` 既有不变量（无重复绑定 / 无孤儿命令 / KEYLESS 对账）
       对新条目自动生效；确认绿，不为新条目新写表级断言（既有断言已覆盖）
 
 ## 2. 命令实现（src/editor.ts）
 
-- [ ] 2.1 纯函数 `listIndentChange(state, dir: "indent" | "outdent")`：按 design §2 状态机
+- [x] 2.1 纯函数 `listIndentChange(state, dir: "indent" | "outdent")`：按 design §2 状态机
       判定归属（`syntaxTree` + `resolveInner` 取最内 ListItem），按 §3 写回规则产出
       changes（或 null = no-op）；形态比照 `src/cell-geometry.ts` 的纯函数先例，
       headless 可测
-- [ ] 2.2 runner 装配进 `commands` 记录：readOnly 提前返回；单次 dispatch 带
+- [x] 2.2 runner 装配进 `commands` 记录：readOnly 提前返回；单次 dispatch 带
       `userEvent: "input.indent"` / `"input.outdent"`；选区交给 CM change mapping，
       不显式重设
-- [ ] 2.3 引用内列表的插入 / 删除点在最内层 `>` 前缀之后（逻辑参照
+- [x] 2.3 引用内列表的插入 / 删除点在最内层 `>` 前缀之后（逻辑参照
       `src/preview/lists.ts:310-324` 的「跳过连续 `>` 与空格」）
 
 ## 3. 单测（tests/unit/）
 
-- [ ] 3.1 新文件 `tests/unit/list-indent.test.ts`，真 EditorState + markdown 语言解析
+- [x] 3.1 新文件 `tests/unit/list-indent.test.ts`，真 EditorState + markdown 语言解析
       （先例 = `tests/unit/cell-geometry.test.ts`：真 EditorState + 真 markdown 解析器，
       文件头有该做法的记录）：
       indent 一层（无序项首行 + 续行 + 子树同一 delta 平移；无序列表 delta = 2）、
       outdent 一层、嵌套列表只动归属项
-- [ ] 3.2 边界：顶层项 outdent = null（no-op）；**无上一同级项**（列表第一项）indent = null
+- [x] 3.2 边界：顶层项 outdent = null（no-op）；**无上一同级项**（列表第一项）indent = null
       （无可嵌套目标，且写入会制造不可见空白 diff——D4c 的同一理由）；非列表行 / 代码块内 = null；
       行首空白不足一层步长的行宽容移除；行首 tab 读取宽容、写入只写空格
-- [ ] 3.3 引用内列表：`> - a` indent 后 `>   - a`（`>` 后 2 空格），嵌套引用同口径
-- [ ] 3.4 有序列表缩进 / 凸排后源码编号按新归属重排为规范序号（D2c）：被平移的有序项编号 = 它
+- [x] 3.3 引用内列表：`> - a` indent 后 `>   - a`（`>` 后 2 空格），嵌套引用同口径
+- [x] 3.4 有序列表缩进 / 凸排后源码编号按新归属重排为规范序号（D2c）：被平移的有序项编号 = 它
       在新分组内的序号（`1. x` / `2. y` 的 `2. y` 缩进成子项后写回 `1.`）、其原分组中序号随之
       变化的兄弟项一并改写（`1. a` / `2. b` / `3. c` / `4. d` 缩进 `3. c` 后 `4. d` → `3. d`）；
       任务标记 `[ ]` / `[x]` 与标记字符逐字节不变
-- [ ] 3.5 撤销集成：dispatch 后一次 `undo` 还原整次平移（含子树），dirty 随之收窄
-- [ ] 3.6 `node tests/unit/run.mjs` 全绿（含既有计数）
+- [x] 3.5 撤销集成：dispatch 后一次 `undo` 还原整次平移（含子树），dirty 随之收窄
+- [x] 3.6 `node tests/unit/run.mjs` 全绿（含既有计数）
 
 ## 4. spec 增量归档准备
 
-- [ ] 4.1 `specs/keymap-commands/spec.md` 的 ADDED requirement 与最终实现逐句对账
+- [x] 4.1 `specs/keymap-commands/spec.md` 的 ADDED requirement 与最终实现逐句对账
       （实现期发现口径偏差时先改 spec 再写代码，不反向漂移）
 
 ## 5. 门禁
 
-- [ ] 5.1 `bash scripts/gate.sh quick` 全绿，输出留档 `test-results/m239/`
-- [ ] 5.2 `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` 通过
+- [x] 5.1 `bash scripts/gate.sh quick` 全绿，输出留档 `test-results/m239/`
+- [x] 5.2 `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` 通过
 
 ## 6. 真机验收（agent 执行，不进 CI；随实现同 PR）
 
@@ -73,10 +73,31 @@ D2: c. 缩进后重排有序列表源码编号；D3: a. 无操作；D4: a. 无�
 撞号，经 M231 广播指出后让号改取 43。实现期新增场景前先核对
 `scripts/acceptance/scenarios/` 的既有编号与本表，不再「续现有序列」盲取。
 
-- [ ] 6.1 新增场景 `scripts/acceptance/scenarios/43-list-tab-indent.md`：合成 vault
+- [x] 6.1 新增场景 `scripts/acceptance/scenarios/43-list-tab-indent.md`：合成 vault
       嵌套列表 fixture，KimiCU 注入 TAB / SHIFT+TAB，回读文档断言（缩进后源码、
       顶层 outdent 后逐字节不变、undo 一次还原）；断言走「回读 + 字节比对」，
       不用注入自报当判据（REVIEW.md 第 5 条）
-- [ ] 6.2 场景含非列表行 TAB 无操作断言（文档与 dirty 均不变）与截图留档
-- [ ] 6.3 `node scripts/acceptance/run.mjs --check 43` 静态校验绿；真机跑通后证据落
+- [x] 6.2 场景含非列表行 TAB 无操作断言（文档与 dirty 均不变）与截图留档
+- [x] 6.3 `node scripts/acceptance/run.mjs --check 43` 静态校验绿；真机跑通后证据落
       `test-results/acceptance/`（git 外）
+
+### 6.4 实现期发现（等 Alex 裁决，未落槌前不改 spec / 场景）
+
+- [ ] 6.4 **TAB 接管打破了「块级横滚容器的键盘可达性」**（真机全量复跑抓到的既有行为回归）：
+      现场 `test-results/acceptance/2026-09-26-m239-full/`（git 外）——`21-wrap-default` 由同日
+      20:45 的 PASS 变 FAIL（`Tab 把焦点移进代码块容器` 两条断言实际 `focused=AXTextArea`）。
+      机制：容器带 `tabindex="0"`（`src/preview/livePreview.ts:271`、`:330`），原本**唯一**的键盘
+      入口就是从编辑器按 `Tab` 走原生焦点遍历；本 change 把编辑器内 `Tab` 绑给列表缩进后该键被
+      `preventDefault` 吃掉，而全仓没有任何命令会把焦点送进容器（只有 `view.focus()` 的退出方向：
+      `livePreview.ts:365` 的 widget-escape、`:456`）⇒ 容器内的 `←` / `→` / `Home` / `End` /
+      `Escape` 这套键（M132 收编、M180 泛化）变成鼠标专属。
+      冲突的两处 living spec：`openspec/specs/editor-live-preview/spec.md:360-366`（Scenario 标题
+      就是「代码块容器的键盘可达性」）与 `openspec/specs/keymap-commands/spec.md:264-270`
+      （都用「用 `Tab` 把焦点移入代码块横滚容器」这个前提）。
+      选项：**A** 接受降级——本 change 的 spec delta 加一条 MODIFIED requirement（两处场景改写为
+      「点容器进入」），并同步改 `scripts/acceptance/scenarios/21-wrap-default.md` 那一步（点
+      `AXGroup`「Markdown 代码块 1」，其余滚动键与逐字节断言一条不动）；**B** 另给一条新键 / 新命令
+      保留键盘入口（占新键位，宜作独立 change，本 change 先按 A 收口并把 B 记进 `docs/backlog.md`）；
+      **C** 把 TAB 接管收窄为「光标在列表项内才缩进」（= 提案 D4b，Alex 已否决）。
+      **落槌前不改 spec / 场景**：场景 21 的 FAIL 与两份 spec 的原文是本次冲突的现场证据，改早了
+      等于把证据抹掉（口径先于代码，见 4.1 与 AGENTS.md 的「先改 spec 再写代码」）。

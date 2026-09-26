@@ -44,13 +44,13 @@ steps:
       - label: 焦点在编辑器内容区（Tab 的起点确定，才谈得上「Tab 进容器」）
         ax: { focused: "AXTextArea" }
       - shot: 编辑器聚焦
-  - name: Tab 把焦点移进代码块容器
-    do: key
-    key: "tab"
+  - name: 点击代码块容器把焦点移进（编辑器内 Tab 已归列表缩进命令 list-tab-indent，不再是入口）
+    do: click
+    target: { role: AXGroup, any: "Markdown 代码块 1" }
     expect:
       - label: 焦点进入代码块容器（容器是 role=region → AXGroup，成为唯一的 focused 节点）
         ax: { focused: "AXGroup" }
-      - shot: Tab 之后
+      - shot: 点击之后
   - name: 容器焦点内按 → 横滚 120px
     do: key
     key: "right"
@@ -98,3 +98,18 @@ steps:
 滚动的**幅度**在真机侧只能看截图（横滚位置不在 AX 通道里），120px 步进与 End/Home 的机器断言在
 视觉层（`tests/visual/scenes/render-codeblock.spec.ts` 的容器键盘场景）。
 
+## 现场记录：本场景的容器焦点入口（M239，2026-09-26）
+
+本场景原先用「编辑器内按 `Tab`」把焦点送进代码块横滚容器——那是产品当时的唯一键盘入口。M239
+（change `list-tab-indent`，Alex 裁决 D1a）把编辑器内 `Tab` 绑给列表缩进命令之后：
+
+- **`Tab` 入口不复存在**：键位层命中即消费（`preventDefault`），原生焦点遍历走不到容器。本场景
+  因此改成「点容器」，但——
+- **点击入口未验通**：本文件现在的步骤用 `AXPress` 点 `role=region` → AXGroup 的容器节点，
+  实测焦点不动（`focused=AXTextArea`，两次断言都红；证据
+  `test-results/acceptance/2026-09-26-m239-21/21-wrap-default/`）。AX 里该容器节点既没有 bbox，
+  也没有 `AXPress` 动作，按节点点不动它。
+- 结论：**块级横滚容器的五个滚动键（`←` `→` `Home` `End` `Escape`）当前无从触发**。容器本身
+  `overflow-x: auto` 仍在，鼠标 / 触控板横滚照常可用；被切断的是「容器持有焦点」这一状态及其
+  加速键。恢复入口（新键 / 新命令，或确认容器的可点区域）已记进 `docs/backlog.md`，等裁决。
+- 本场景的其余断言（容器在场、滚动键的语义、文档不被改动、纵向节奏）不受影响，仍照常执行。

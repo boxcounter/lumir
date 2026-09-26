@@ -18,9 +18,10 @@ import { ensureSyntaxTree, syntaxTree } from "@codemirror/language";
 // ---------------------------------------------------------------------------
 //
 // `listIndentChange` 是纯函数：只读 EditorState（文档 + 语法树），产出一组 CM changes
-//（`null` = 无操作）；`applyListIndent` 是 runner（readOnly 提前返回 + 单次 dispatch，
-// 选区交由 CM 的 change mapping，不显式重设）。口径与实测依据见
-// `openspec/changes/list-tab-indent` 的 design §2/§3；这里只记实现期才需要的机械约定：
+//（`null` = 无操作）。runner（readOnly 提前返回 + 单次 dispatch，选区交由 CM 的 change
+// mapping、不显式重设）留在 `src/editor.ts` 的 commands 记录里——那一半要真的 EditorView。
+// 口径与实测依据见 `openspec/changes/list-tab-indent` 的 design §2/§3；这里只记实现期才需要的
+// 机械约定：
 //
 // - **行首结构性前缀** = 行首连续的 `>` / 空格 / tab。插入与删除都落在该前缀之后、marker
 //   之前（与 `src/preview/lists.ts` 的组扫描同一落点口径），引用内列表因此天然「加在最内层
@@ -180,9 +181,6 @@ export function listIndentChange(state: EditorState, dir: ListIndentDirection): 
   const found = listItemAt(state, state.selection.main.head);
   if (!found) return null;
   const { item, list } = found;
-  const doc = state.doc;
-  const mark = item.getChild("ListMark");
-  if (!mark) return null;
   const lines = listItemLines(state, item);
   const edits: { from: number; to: number; insert: string }[] = [];
   const renumbered = new Map<number, { to: number; insert: string }>();
