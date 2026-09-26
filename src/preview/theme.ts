@@ -41,17 +41,25 @@ export const CODEBLOCK_NOWRAP_CLASS = "cm-lp-codeblock-nowrap";
  *  代码块要折行就得自己把它覆盖回来（否则「文件不折 / 代码块折」这条组合没有落点）。 */
 export const CODEBLOCK_WRAP_CLASS = "cm-lp-codeblock-wrap";
 
-/** 折行口径的出厂默认（M180）：与 Rust `EditorConfig::default()` 的 `line_wrap` /
- *  `code_block_wrap` 是同一语义的两份写值（`src-tauri/src/config.rs` 的
+/** 折行口径的出厂默认（M180；M247 起三项）：与 Rust `EditorConfig::default()` 的 `line_wrap` /
+ *  `code_block_wrap` / `code_mode_line_wrap` 是同一语义的两份写值（`src-tauri/src/config.rs` 的
  *  `impl Default for EditorConfig` 是那边的真源）。配置到达前（启动早期）按这里的值跑；
- *  两侧各有单测钉住各自的默认值，改一处必须同步另一处（REVIEW.md 第 8 条）。 */
+ *  两侧各有单测钉住各自的默认值，改一处必须同步另一处（REVIEW.md 第 8 条）。
+ *
+ *  第三项是**出厂分叉**的落点（M247）：md 折（`true`）/ code 不折（`false`）。它**不跟随**
+ *  `DEFAULT_LINE_WRAP`——跟随会让分叉随全局默认漂移。 */
 export const DEFAULT_LINE_WRAP = true;
 export const DEFAULT_CODE_BLOCK_WRAP = false;
+export const DEFAULT_CODE_MODE_LINE_WRAP = false;
 
-/** 折行口径（M180，D1 裁决 = 应用运行级）：一份值管全部会话。 */
+/** 折行口径（M180，D1 裁决 = 应用运行级）：一份值管全部会话，按会话模式取对应的轴。 */
 export interface WrapSettings {
+  /** md 模式正文行（`editor.line_wrap`）；对 code 模式无可观测效果。 */
   readonly lineWrap: boolean;
+  /** md 模式的围栏 / 缩进代码块行（`editor.code_block_wrap`）；对 code 模式无可观测效果。 */
   readonly codeBlockWrap: boolean;
+  /** code 模式正文行（`editor.code_mode_line_wrap`，M247）；对 md 模式无可观测效果。 */
+  readonly codeModeLineWrap: boolean;
 }
 
 /** 折行口径的判定结果：两个正交轴各自的结论。 */
@@ -63,17 +71,18 @@ export interface WrapSpec {
 }
 
 /**
- * 「一元素一条规则」的唯一判定点（M180）：代码块行由 `codeBlockWrap` 裁决、其余所有行由
- * `lineWrap` 裁决，两个轴互不改写。判定与装配分开，是为了让四组合能被单测直接断言
- * （装配扩展要 DOM，判定不要）；`src/editor.ts` 的 `wrapExtensions` 据此装扩展。
+ * 「一元素一条规则」的唯一判定点（M180；M247 起正文行按模式分叉）：代码块行由 `codeBlockWrap`
+ * 裁决、正文行由**该模式自己的**折行键裁决（md → `lineWrap`，code → `codeModeLineWrap`），
+ * 各轴互不改写。判定与装配分开，是为了让各组合能被单测直接断言（装配扩展要 DOM，判定不要）；
+ * `src/editor.ts` 的 `wrapExtensions` 据此装扩展。
  *
- * code 模式恒为 `null`：围栏 / 缩进代码块只在 md live preview 里渲染，code 模式没有可作用的
- * 元素——装一个没有消费者的 class 就是假声明（REVIEW.md 第 9 条）。
+ * code 模式恒为 `null` 代码块层：围栏 / 缩进代码块只在 md live preview 里渲染，code 模式没有
+ * 可作用的元素——装一个没有消费者的 class 就是假声明（REVIEW.md 第 9 条）。
  */
-export function wrapSpec(mode: EditorMode, lineWrap: boolean, codeBlockWrap: boolean): WrapSpec {
+export function wrapSpec(mode: EditorMode, settings: WrapSettings): WrapSpec {
   return {
-    lineWrapping: lineWrap,
-    codeBlockClass: mode !== "md" ? null : codeBlockWrap ? CODEBLOCK_WRAP_CLASS : CODEBLOCK_NOWRAP_CLASS,
+    lineWrapping: mode === "md" ? settings.lineWrap : settings.codeModeLineWrap,
+    codeBlockClass: mode !== "md" ? null : settings.codeBlockWrap ? CODEBLOCK_WRAP_CLASS : CODEBLOCK_NOWRAP_CLASS,
   };
 }
 

@@ -99,15 +99,29 @@ impl Default for AppConfig {
 pub struct EditorConfig {
     /// 编辑器模式（ADR 0002 §2 单内核双模式）。
     pub mode: EditorMode,
-    /// 文件级折行（change line-wrap-options）：`true`（默认）时正文行在阅读栏内折行，
-    /// `false` 时长行不折、由编辑区（`.cm-scroller`）横向平移呈现。只管正文行——围栏 /
-    /// 缩进代码块行由 `code_block_wrap` 裁决（「一元素一条规则」）。TS 侧出厂默认同值，
-    /// 见 `src/editor.ts` 的 `DEFAULT_LINE_WRAP`（两处写值各有单测钉住）。
+    /// md 模式的文件级折行（change line-wrap-options）：`true`（默认）时正文行在阅读栏内
+    /// 折行，`false` 时长行不折、由编辑区（`.cm-scroller`）横向平移呈现。只管 md 模式的正文
+    /// 行——围栏 / 缩进代码块行由 `code_block_wrap` 裁决（「一元素一条规则」），code 模式的
+    /// 正文行由 `code_mode_line_wrap` 裁决（M247 起两模式分叉，本键不再管 code 模式）。
+    /// TS 侧出厂默认同值，见 `src/preview/theme.ts` 的 `DEFAULT_LINE_WRAP`（两处写值各有
+    /// 单测钉住）。
     pub line_wrap: bool,
     /// 代码块折行：`false`（默认）时 md live preview 里的围栏 / 缩进代码块不折行、由块级
     /// 横滚容器承载；`true` 时在阅读栏内折行（M138 以来的现状）。作用面只有 md 模式——
     /// 非 md 文件没有围栏渲染，对它们无可观测效果（不是漏实现）。
     pub code_block_wrap: bool,
+    /// code 模式正文行的折行（M247，change code-mode-line-wrap）：`false`（默认）时长行不折、
+    /// 由编辑区横向平移呈现，`true` 时在阅读栏内折行。
+    ///
+    /// **键缺席 = 出厂 `false`（即 code 模式不折行）**，与 md 模式的出厂 `line_wrap = true`
+    /// 构成「md 折 / code 不折」的出厂分叉（VS Code / JetBrains 同口径）；显式写 `true` 则听
+    /// 用户（把 code 模式也折起来）。本键**不跟随** `line_wrap`——跟随会让缺省值随全局取值
+    /// 漂移，出厂分叉随之失效。
+    ///
+    /// 作用面只有 code 模式：md 模式的正文行仍由 `line_wrap` 裁决，本键对 md 无可观测效果
+    /// （不是漏实现）。TS 侧出厂默认同值，见 `src/preview/theme.ts` 的
+    /// `DEFAULT_CODE_MODE_LINE_WRAP`（两处写值各有单测钉住）。
+    pub code_mode_line_wrap: bool,
     /// 正文（比例）字体族（change typography-and-zoom）：CSS `font-family` 值，`None` =
     /// 沿用基线观感（`src/style.css` 的 `--font-sans`）。只在启动装载时读一次——本能力不做
     /// 热重载，改字体需重启（字号另有运行期步进命令，不落盘）。
@@ -135,6 +149,7 @@ impl Default for EditorConfig {
             mode: EditorMode::Md,
             line_wrap: true,
             code_block_wrap: false,
+            code_mode_line_wrap: false,
             font_family: None,
             mono_font_family: None,
             font_size: DEFAULT_FONT_SIZE,
@@ -284,8 +299,14 @@ struct RawEditorConfig {
     /// `Option<bool>` 在 serde 解析期即失败，整份 `RawConfig` 落回默认（全部默认 + 一条
     /// warning），与 `mode` 给错类型时同路。这是既有解析模型的性质，本 change 如实记录并用
     /// 单测钉住，不发明「逐字段类型容忍」——那会与 `editor.mode` 形成同类不同治。
+    /// 两项都只管 md 模式（M247 起 code 模式的正文行归下一项）。
     line_wrap: Option<bool>,
     code_block_wrap: Option<bool>,
+    /// code 模式正文行的折行覆盖键（M247，change code-mode-line-wrap）：与折行两项同路——
+    /// 字段缺失 → `None` → `validate()` 回落到 `EditorConfig::default()`（那里是 `false`，
+    /// 即出厂分叉「code 不折」），**不是**跟随 `line_wrap`。类型不符（`"code_mode_line_wrap":
+    /// "yes"`）在解析期失败 → 整文件回落，与 `line_wrap` 给错类型同路。
+    code_mode_line_wrap: Option<bool>,
     /// 排版三项（change typography-and-zoom）。前两项与 `mode` 同路：`Option<String>` 遇到
     /// 类型不符（`"font_family": 16`）在解析期失败 → 整文件回落。
     font_family: Option<String>,
@@ -400,6 +421,7 @@ fn validate(raw: RawConfig) -> (AppConfig, Vec<String>) {
     let mut mode = EditorMode::Md;
     let mut line_wrap = defaults.editor.line_wrap;
     let mut code_block_wrap = defaults.editor.code_block_wrap;
+    let mut code_mode_line_wrap = defaults.editor.code_mode_line_wrap;
     if let Some(raw_mode) = raw.editor.mode.as_deref() {
         match raw_mode {
             "md" => mode = EditorMode::Md,
@@ -418,6 +440,12 @@ fn validate(raw: RawConfig) -> (AppConfig, Vec<String>) {
     }
     if let Some(value) = raw.editor.code_block_wrap {
         code_block_wrap = value;
+    }
+    // code 模式正文行的折行覆盖键（M247）：口径与上两项**完全同形**（缺字段回落默认、不告警），
+    // 差别只在默认值——`EditorConfig::default()` 给的是 `false`（出厂分叉「code 不折」），
+    // 因此这里**不读** `line_wrap`，两个模式各取各的默认。
+    if let Some(value) = raw.editor.code_mode_line_wrap {
+        code_mode_line_wrap = value;
     }
     // 排版三项（typography-and-zoom）：两项字体族**只挡空串 / 纯空白**（→ None = 沿用基线 +
     // warning），值的 CSS 合法性由前端 `CSS.supports` 判定（形状在此、语义在前端的既有分层）；
@@ -496,6 +524,7 @@ fn validate(raw: RawConfig) -> (AppConfig, Vec<String>) {
                 mode,
                 line_wrap,
                 code_block_wrap,
+                code_mode_line_wrap,
                 font_family,
                 mono_font_family,
                 font_size,
@@ -931,6 +960,64 @@ mod tests {
             snap.config.last_vault, None,
             "同一份文件里的合法字段同样落回默认"
         );
+        assert_eq!(snap.warnings.len(), 1, "{:?}", snap.warnings);
+        assert!(snap.warnings[0].contains("不是合法 JSON"));
+    }
+
+    #[test]
+    fn missing_code_mode_line_wrap_takes_factory_false() {
+        // M247（change code-mode-line-wrap）：键缺席 = 出厂 `false`（code 模式不折行）——这是
+        // 「md 折 / code 不折」出厂分叉的配置面形态，不产生 warning。
+        // **判别性在第二组**：显式 `line_wrap: true` 在场时它仍必须是 `false`——口径是
+        // 「code 模式的缺省是本键自己的出厂值」，MUST NOT 跟随全局 `line_wrap`（跟随会让
+        // 出厂分叉随用户改全局折行而失效）。只测第一组的话，把实现写成 `line_wrap` 的副本
+        // 也能绿（REVIEW.md 第 1 条）。
+        for raw in [
+            r#"{"version":1,"editor":{"mode":"code"}}"#,
+            r#"{"version":1,"editor":{"mode":"code","line_wrap":true}}"#,
+        ] {
+            let snap = load_from(&TempFile::new(raw).0);
+            assert!(
+                !snap.config.editor.code_mode_line_wrap,
+                "{raw}：缺省应为出厂 false"
+            );
+            assert!(snap.config.editor.line_wrap, "{raw}：md 侧口径不受影响");
+            assert!(snap.warnings.is_empty(), "{raw}: {:?}", snap.warnings);
+        }
+    }
+
+    #[test]
+    fn explicit_code_mode_line_wrap_is_loaded() {
+        // 显式设置则听用户：`true` 把 code 模式也折起来，`false` 与缺省同效（三态里的后两态）。
+        let on =
+            load_from(&TempFile::new(r#"{"editor":{"mode":"code","code_mode_line_wrap":true}}"#).0);
+        assert!(on.config.editor.code_mode_line_wrap);
+        assert!(on.warnings.is_empty(), "{:?}", on.warnings);
+
+        let off = load_from(
+            &TempFile::new(
+                r#"{"editor":{"mode":"code","line_wrap":true,"code_mode_line_wrap":false}}"#,
+            )
+            .0,
+        );
+        assert!(!off.config.editor.code_mode_line_wrap);
+        assert!(off.config.editor.line_wrap, "两键互不改写（各管各的模式）");
+        assert!(off.warnings.is_empty(), "{:?}", off.warnings);
+    }
+
+    #[test]
+    fn wrong_type_code_mode_line_wrap_falls_back_entire_file() {
+        // 边界如实记录（与 wrong_type_line_wrap_falls_back_entire_file 同路）：
+        // `Option<bool>` 遇到类型不符在 serde 解析期失败 → **整文件回落**（全部默认 + 一条
+        // warning），MUST NOT 出现「一部分字段按配置、一部分按默认」的混合态。
+        let f = TempFile::new(
+            r#"{"last_vault":"/tmp/vault","editor":{"mode":"code","code_mode_line_wrap":"yes"}}"#,
+        );
+        let snap = load_from(&f.0);
+        assert_eq!(snap.config, AppConfig::default(), "整份配置应落回默认");
+        assert!(!snap.config.editor.code_mode_line_wrap, "回到出厂 false");
+        assert_eq!(snap.config.editor.mode, EditorMode::Md);
+        assert_eq!(snap.config.last_vault, None, "合法字段同样落回默认");
         assert_eq!(snap.warnings.len(), 1, "{:?}", snap.warnings);
         assert!(snap.warnings[0].contains("不是合法 JSON"));
     }

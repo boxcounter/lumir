@@ -442,6 +442,16 @@
     单键比 per-language 表成比例；② 出厂默认直接分叉（code 默认 false）——md 折 / code 不折是
     行业通行出厂口径（VS Code / JetBrains 出厂不折行），不是个人怪癖；「配置即数据」约束下个人
     偏好的居所是配置文件而非硬编码。
+    **已裁已落地（M247，2026-09-27）**：键名定为 `editor.code_mode_line_wrap`（布尔，出厂 `false`），
+    全链落地——`config.rs`（字段 + 宽容镜像 + 逐字段回落 + 三条单测）、`src/preview/theme.ts`
+    （`WrapSettings` 第三轴、`DEFAULT_CODE_MODE_LINE_WRAP`、`wrapSpec` 按模式取轴）、`src/editor.ts`
+    （运行期真源第三轴 + `toggleLineWrap` 按前台会话模式选轴）、`src/main.ts`（配置消费点）、
+    bindings 重导出。**语义收紧一处（本 mission 写死，覆盖上面 ① 的措辞）**：①里的「缺省跟随全局
+    `line_wrap`」与 ②的「出厂分叉」在 `line_wrap = true` 时字面冲突——跟随会让 code 出厂折行；采 ②
+    为准：缺省值 = 本键自己的出厂 `false`，MUST NOT 读 `line_wrap`（spec 的「code 模式缺字段时
+    不跟随 line_wrap」scenario 钉这条）。证据：`openspec/changes/code-mode-line-wrap/`
+    （proposal/design/tasks + `editor-live-preview` delta）、`tests/unit/wrap.test.ts`、
+    `tests/visual/scenes/m247-code-mode-line-wrap.spec.ts`。
 36. **配置项可发现性**（2026-09-26，Alex 使用反馈发起探讨，tower 登记；**2026-09-26 Alex 裁决：
     采纳两步走**——① 配置参考文档随 #35 同批落地；② describe-config 面板中期另立项）：`config.json`
     只落用户显式设过的键，完整键面（`editor.*` 6 键 / `ui.*` 2 键 / `keys` 表 / `log.level`）与
@@ -452,6 +462,12 @@
     design §2），另覆盖 `reading-positions/`、`logs/`）；② 中期应用内 `describe-config` 面板
     （照 `describe-bindings` 模式：每键当前生效值 / 出厂值 / 改法）。**明确不推荐**「写全量默认
     进 config.json」——会把缺字段跟随出厂默认钉死成旧值，与合并写纪律冲突。
+    **① 已裁已落地（M247，2026-09-27）**：`docs/specs/config-reference.md` 新建——顶层 4 项 +
+    `[editor]` 7 键（含 #35 的新键）+ `[ui]` 2 键的键值表（逐键给类型 / 默认 / 取值范围 / 生效时机 /
+    `config.rs` 真源行号）、解析容错口径节（逐字段回落 vs 整文件回落）、写回纪律节（合并写、
+    未知键保留、不推荐写全量默认）、配置目录布局节（`workspaces/` 现名 + #37 更名前向注记 /
+    `vault-sessions/` / `reading-positions/` / `logs/`，同一 vault 实体刻意分存的生产原因引
+    `vault_session.rs` 头注释）。**② 保持「中期另立项」不动**——本 mission 未做面板、未留钩子。
 37. **配置目录改名 `workspaces/` → `vault-registry/`**（2026-09-26，Alex 裁决：**改**——他
     对 tower「不建议动」的唯一不同意见）：`workspaces/` 装的是 vault 注册表（身份：id ↔ path、
     治理标记、`last_opened_at`），名字与「工作区状态」语义错位，与 `vault-sessions/` 并置时

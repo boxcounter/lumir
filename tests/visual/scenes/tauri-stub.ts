@@ -85,6 +85,10 @@ export interface VaultFixture {
     mode?: "md" | "code";
     line_wrap?: boolean;
     code_block_wrap?: boolean;
+    /** code 模式正文行的折行（M247，change code-mode-line-wrap）：缺省 `false` = 出厂分叉
+     *  「md 折 / code 不折」（与 Rust `EditorConfig::default()` 的 `code_mode_line_wrap`
+     *  同值）。它**不跟随** `line_wrap`——桩也不替它跟随，否则场景会按错的口径跑。 */
+    code_mode_line_wrap?: boolean;
     /** 正文族（M195）：`null` = 沿用基线观感（与 Rust 侧 `Option<String>` 的 None 同义）。 */
     font_family?: string | null;
     /** 等宽族（M195）：口径同 `font_family`（**与列表标记渲染/测量同源的那个 token**）。 */
@@ -333,6 +337,8 @@ export async function stubTauri(page: Page, vault: VaultFixture | null): Promise
               // DEFAULT_CODE_BLOCK_WRAP，两处不同值会让场景按错的折行口径跑。
               line_wrap: current?.config?.line_wrap ?? true,
               code_block_wrap: current?.config?.code_block_wrap ?? false,
+              // M247 的第三轴：缺省 false = 出厂分叉「code 不折」（与 Rust 侧同值）。
+              code_mode_line_wrap: current?.config?.code_mode_line_wrap ?? false,
               // M195 的排版口径：缺省与 Rust `EditorConfig::default()` 逐项同值（null = 基线族、
               // 15 = 出厂字号——D1 裁决后 Rust 侧 DEFAULT_FONT_SIZE 与 src/style.css 的
               // `--editor-font-size` 都是 15），因此**不传这三个字段的既有场景天然跑出厂默认

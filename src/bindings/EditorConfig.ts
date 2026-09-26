@@ -7,10 +7,12 @@ export type EditorConfig = {
  */
 mode: EditorMode, 
 /**
- * 文件级折行（change line-wrap-options）：`true`（默认）时正文行在阅读栏内折行，
- * `false` 时长行不折、由编辑区（`.cm-scroller`）横向平移呈现。只管正文行——围栏 /
- * 缩进代码块行由 `code_block_wrap` 裁决（「一元素一条规则」）。TS 侧出厂默认同值，
- * 见 `src/editor.ts` 的 `DEFAULT_LINE_WRAP`（两处写值各有单测钉住）。
+ * md 模式的文件级折行（change line-wrap-options）：`true`（默认）时正文行在阅读栏内
+ * 折行，`false` 时长行不折、由编辑区（`.cm-scroller`）横向平移呈现。只管 md 模式的正文
+ * 行——围栏 / 缩进代码块行由 `code_block_wrap` 裁决（「一元素一条规则」），code 模式的
+ * 正文行由 `code_mode_line_wrap` 裁决（M247 起两模式分叉，本键不再管 code 模式）。
+ * TS 侧出厂默认同值，见 `src/preview/theme.ts` 的 `DEFAULT_LINE_WRAP`（两处写值各有
+ * 单测钉住）。
  */
 line_wrap: boolean, 
 /**
@@ -19,6 +21,20 @@ line_wrap: boolean,
  * 非 md 文件没有围栏渲染，对它们无可观测效果（不是漏实现）。
  */
 code_block_wrap: boolean, 
+/**
+ * code 模式正文行的折行（M247，change code-mode-line-wrap）：`false`（默认）时长行不折、
+ * 由编辑区横向平移呈现，`true` 时在阅读栏内折行。
+ *
+ * **键缺席 = 出厂 `false`（即 code 模式不折行）**，与 md 模式的出厂 `line_wrap = true`
+ * 构成「md 折 / code 不折」的出厂分叉（VS Code / JetBrains 同口径）；显式写 `true` 则听
+ * 用户（把 code 模式也折起来）。本键**不跟随** `line_wrap`——跟随会让缺省值随全局取值
+ * 漂移，出厂分叉随之失效。
+ *
+ * 作用面只有 code 模式：md 模式的正文行仍由 `line_wrap` 裁决，本键对 md 无可观测效果
+ * （不是漏实现）。TS 侧出厂默认同值，见 `src/preview/theme.ts` 的
+ * `DEFAULT_CODE_MODE_LINE_WRAP`（两处写值各有单测钉住）。
+ */
+code_mode_line_wrap: boolean, 
 /**
  * 正文（比例）字体族（change typography-and-zoom）：CSS `font-family` 值，`None` =
  * 沿用基线观感（`src/style.css` 的 `--font-sans`）。只在启动装载时读一次——本能力不做
