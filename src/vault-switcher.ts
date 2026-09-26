@@ -180,7 +180,7 @@ export function shortPath(path: string, segments = 3): string {
 }
 
 /** 两个路径是否指同一处（重定位的占用判定）。只归一去尾斜杠——更强的比较要在文件系统上做
- *  （canonicalize），那是后端的语义（workspaces.rs 的 find_by_path），前端不复制一份近似实现。
+ *  （canonicalize），那是后端的语义（vault_registry.rs 的 find_by_path），前端不复制一份近似实现。
  *  已知边界：注册表存的是 canonicalize 后的路径，系统目录选择器给出的是原样路径，走 /tmp
  *  这类软链接的 vault 上两者可能不相等。 */
 export function samePath(a: string, b: string): boolean {

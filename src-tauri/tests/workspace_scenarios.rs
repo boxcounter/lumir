@@ -1,4 +1,4 @@
-use lumir_lib::{commands, config, fs_io, link_graph::LinkGraph, vault_session, workspaces::*};
+use lumir_lib::{commands, config, fs_io, link_graph::LinkGraph, vault_registry::*, vault_session};
 use std::{fs, path::PathBuf, sync::Mutex};
 
 static ENV: Mutex<()> = Mutex::new(());
@@ -49,7 +49,7 @@ fn scenario_reconcile_reuses_persisted_vault_identity() {
     vault_register("persisted-id".into(), path.clone()).unwrap();
     reconcile_vault(std::path::Path::new(&path)).unwrap();
     reconcile_vault(std::path::Path::new(&path)).unwrap();
-    let dir = config::config_dir().unwrap().join("workspaces");
+    let dir = config::config_dir().unwrap().join("vault-registry");
     assert_eq!(fs::read_dir(&dir).unwrap().count(), 1);
     let v: VaultWorkspace =
         serde_json::from_str(&fs::read_to_string(dir.join("persisted-id.json")).unwrap()).unwrap();
@@ -68,7 +68,12 @@ fn scenario_remap_preserves_identity_and_updates_last_vault() {
     fs::write(config::config_dir().unwrap().join("config.json"), "42").unwrap();
     vault_remap("stable".into(), new.clone()).unwrap();
     let v: VaultWorkspace = serde_json::from_str(
-        &fs::read_to_string(config::config_dir().unwrap().join("workspaces/stable.json")).unwrap(),
+        &fs::read_to_string(
+            config::config_dir()
+                .unwrap()
+                .join("vault-registry/stable.json"),
+        )
+        .unwrap(),
     )
     .unwrap();
     assert_eq!(v.id, "stable");
@@ -125,7 +130,7 @@ fn scenario_unregistered_path_hits_remap_gate_only_with_ghost_entries() {
 }
 
 fn registry_dir() -> PathBuf {
-    config::config_dir().unwrap().join("workspaces")
+    config::config_dir().unwrap().join("vault-registry")
 }
 
 fn read_entry(id: &str) -> VaultWorkspace {
@@ -337,7 +342,7 @@ fn scenario_restore_applies_when_user_open_did_not_commit() {
 // M162（change multi-vault-workspaces）：打开记账、注册表列表与按 vault 的会话存储。
 //
 // 覆盖 change tasks 1.1 / 1.2 / 1.5 / 2.3 / 2.4 的判定面。记账与列表都用生产路径上的
-// 函数（`commands::remember_open` / `workspaces::list_vaults` / `vault_session::*`），
+// 函数（`commands::remember_open` / `vault_registry::list_vaults` / `vault_session::*`），
 // 不是测试专用替身；打开链路里需要 `AppHandle` 的那一段（command 注册、async 派发）由
 // 真机验收覆盖。
 // ---------------------------------------------------------------------------

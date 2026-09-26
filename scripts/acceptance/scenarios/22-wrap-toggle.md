@@ -92,7 +92,7 @@ steps:
 （`tests/visual/scenes/render-codeblock.spec.ts` 的「应用级口径（D1）」场景：两标签 + 切回）。
 
 **config.json 断言的采样纪律**（M166 评审备录）：两次采样之间**不得触发 vault 打开 / 重映射**——
-`vault_remap`（`src-tauri/src/workspaces.rs`）与 `write_last_vault_to`（`src-tauri/src/commands.rs`）
+`vault_remap`（`src-tauri/src/vault_registry.rs`）与 `write_last_vault_to`（`src-tauri/src/commands.rs`）
 都会写 config.json，`merge_last_vault` 写进去的内容含 `version` 字段。因此基线记在「文件已打开、
 vault 已装载」之后，中间只按折行键，不碰打开/切换动作。
 

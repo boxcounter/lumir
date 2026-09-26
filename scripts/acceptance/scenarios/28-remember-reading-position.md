@@ -108,6 +108,6 @@ steps:
   属手感范畴归 Alex。
 - **位置文件按 vault 稳定 id 命名（id 是 pid 派生的）**，故断言用 `env:reading-positions/*.json` 的
   glob 形式（取最新一份），不写死文件名。
-- **per-scenario 隔离**：`run.mjs` 已为这个新目录加 `resetPositions()`（与 recovery / workspaces /
+- **per-scenario 隔离**：`run.mjs` 已为这个新目录加 `resetPositions()`（与 recovery / vault-registry /
   vault-sessions 同因）——否则上一场景（或昨天那次 run）留在隔离配置目录里的位置会让本场景一打开
   文件就换位置。

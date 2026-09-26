@@ -43,6 +43,10 @@ export function checkScenario(scenario) {
   for (const [i, e] of (scenario.seed?.registry ?? []).entries()) {
     if (!e?.id || !e?.path) push(`seed.registry[${i}] 需要 id 与 path`);
   }
+  // 旧名注册表（M248）：迁移场景 48 用它构造「升级前现场」，校验口径与现名同一条。
+  for (const [i, e] of (scenario.seed?.legacyRegistry ?? []).entries()) {
+    if (!e?.id || !e?.path) push(`seed.legacyRegistry[${i}] 需要 id 与 path`);
+  }
   for (const [i, step] of (scenario.steps ?? []).entries()) {
     const at = `steps[${i}]${step.name ? `(${step.name})` : ""}`;
     if (!step.name) push(`${at} 缺少 name`);

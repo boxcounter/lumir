@@ -98,7 +98,7 @@ pub struct VaultInfo {
     /// vault 根目录绝对路径。
     pub root: String,
     pub entries: Vec<FsEntry>,
-    pub remap_candidates: Vec<crate::workspaces::VaultWorkspace>,
+    pub remap_candidates: Vec<crate::vault_registry::VaultWorkspace>,
 }
 
 /// 前端启动时查询的 vault 状态。
@@ -192,7 +192,7 @@ impl VaultState {
         let inner = self.inner.lock().expect("vault state poisoned");
         let vault = match &inner.root {
             Some(root) => Some(VaultInfo {
-                vault_id: crate::workspaces::reconcile_vault(root)?.id,
+                vault_id: crate::vault_registry::reconcile_vault(root)?.id,
                 root: root.display().to_string(),
                 entries: fs_io::scan_workspace(root)?,
                 remap_candidates: vec![],
@@ -278,7 +278,7 @@ pub struct PreparedVaultOpen {
 pub enum PreparedOpen {
     Remap {
         root: PathBuf,
-        candidates: Vec<crate::workspaces::VaultWorkspace>,
+        candidates: Vec<crate::vault_registry::VaultWorkspace>,
     },
     /// Boxed：`PreparedVaultOpen` 比 Remap 分支大一个数量级（clippy::large_enum_variant）。
     Ready(Box<PreparedVaultOpen>),
@@ -294,12 +294,12 @@ pub fn prepare_vault_open(
     // 已注册 vault）。门判定只读——reconcile_vault 对未注册路径有注册 side effect，
     // 不能用来探测「目标未注册」。
     if !force_new {
-        if let Some(candidates) = crate::workspaces::remap_gate(&root)? {
+        if let Some(candidates) = crate::vault_registry::remap_gate(&root)? {
             return Ok(PreparedOpen::Remap { root, candidates });
         }
     }
     // Register/reconcile stable vault identity before opening.
-    let workspace = crate::workspaces::reconcile_vault(&root)?;
+    let workspace = crate::vault_registry::reconcile_vault(&root)?;
     // 顺序：先 watch（FSEvents 流起点在此刻）再全量枚举，消除 scan→watch 的
     // 事件空窗；枚举结果随后播种进 watcher 的已知路径集（修正重放的误报 Create）。
     let app_for_watch = app.clone();
@@ -522,7 +522,7 @@ pub fn remember_open(info: &VaultInfo) {
         return;
     }
     remember_last_vault(Path::new(&info.root));
-    crate::workspaces::mark_opened(&info.vault_id);
+    crate::vault_registry::mark_opened(&info.vault_id);
 }
 
 /// 调系统目录选择器打开 vault；用户取消返回 Ok(None)，不产生错误状态。

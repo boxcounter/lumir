@@ -30,10 +30,12 @@ const readDirectory = async name => {
     return { file, content: await readFile(resolved, "utf8") };
   }));
 };
-const workspaces = await readDirectory("workspaces");
+// 注册表目录名是 `vault-registry/`（M248 更名，backlog #37）。快照字段仍叫 `workspaces`
+// ——那是证据 schema 的既有键，历史证据（docs/design-parity-contract/evidence/**）同键。
+const registry = await readDirectory("vault-registry");
 const snapshot = {
   stage, capturedAt: new Date().toISOString(), manifest,
-  workspaces: workspaces.map(item => { const w = JSON.parse(item.content); return { id: w.id, path: w.path === path.join(run, "vault") ? "<run>/vault" : "<redacted>" }; }),
+  workspaces: registry.map(item => { const w = JSON.parse(item.content); return { id: w.id, path: w.path === path.join(run, "vault") ? "<run>/vault" : "<redacted>" }; }),
 };
 try { await mkdir(path.join(run, "evidence")); } catch (error) { if (error.code !== "EEXIST") throw error; }
 const evidence = await checkedPath("evidence");

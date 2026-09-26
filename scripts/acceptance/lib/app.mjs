@@ -112,14 +112,23 @@ export async function resetSecondVault() {
   return vault;
 }
 
+/** 注册表目录名（Rust 侧 `vault_registry` 的 `REGISTRY_DIR_NAME` 同源字面量）。 */
+export const REGISTRY_DIR = "vault-registry";
+/** 注册表目录的旧名（M248 更名前）：只作迁移场景 48 的预置源，app 启动时会被搬走。 */
+export const LEGACY_REGISTRY_DIR = "workspaces";
+
 /**
- * 清空 vault 注册表（隔离配置目录下的 `workspaces/`）。
+ * 清空 vault 注册表（隔离配置目录下的 `vault-registry/`）。
  * 为什么必须做：注册表决定列表浮层里有哪些行、以及「按路径命中的 id」。多 vault 场景会预置
  * 注册项，残留到下一场景会让「单 vault」的预期看到两行（跨场景串场，与 recovery 同因）。
+ *
+ * 旧名目录一并清（M248）：场景 48 会把注册项预置进旧的 `workspaces/`，要等 app 启动才被搬走
+ * ——只清新名的话，上一轮的旧目录会残留到下一场景，并在那次启动里被迁移进新名。
  */
 export async function resetRegistry() {
-  const dir = path.join(envHome(), "lumir", "workspaces");
+  const dir = path.join(envHome(), "lumir", REGISTRY_DIR);
   await rm(dir, { recursive: true, force: true });
+  await rm(path.join(envHome(), "lumir", LEGACY_REGISTRY_DIR), { recursive: true, force: true });
   return dir;
 }
 
@@ -134,7 +143,7 @@ export async function resetSessions() {
   return dir;
 }
 
-/** 清掉按 vault 的阅读位置（M194，change remember-reading-position）。与 recovery / workspaces /
+/** 清掉按 vault 的阅读位置（M194，change remember-reading-position）。与 recovery / vault-registry /
  *  vault-sessions 同因：它也在隔离配置目录下，残留会让下一个场景（或明天重跑本场景时）一打开文件
  *  就恢复上一轮留下的位置，而「本轮之前不存在」「mtime 已推进」这类断言正是靠这份空目录区分
  *  「本轮写的」与「上轮残留的」。 */
@@ -144,20 +153,23 @@ export async function resetPositions() {
   return dir;
 }
 
-/** 注册项 id 的合法字符（与 Rust 侧 `workspaces::valid_id` 同源：id 同时是文件名，
+/** 注册项 id 的合法字符（与 Rust 侧 `vault_registry::valid_id` 同源：id 同时是文件名，
  *  因此这是路径逃逸防护）。套件里显式校验，让写错 id 在动作处就报错而不是落一个读不回的盘。 */
 const ID_RE = /^[A-Za-z0-9_-]{1,128}$/;
 
-/** 预置一条 vault 注册项（`<env>/lumir/workspaces/<id>.json`）——「这个目录已经是我的 vault」
+/** 预置一条 vault 注册项（`<env>/lumir/<dirName>/<id>.json`）——「这个目录已经是我的 vault」
  *  这一状态只能由注册表表达，而真机上走到它的唯一通道是系统目录选择器（套件不驱动原生
  *  对话框，见 README「已知边界」），因此多 vault 场景从预置注册表起步。
  *
  *  路径先 realpath：注册表存的是 canonicalize 后的路径（`reconcile_vault`），而 macOS 的
  *  `/tmp` 是 `/private/tmp` 的软链接——不归一的话 app 打开同一目录时会 `find_by_path` 落空、
- *  另生成一个 id，预置的会话（按 id 存放）就对不上了。 */
-export async function writeRegistryEntry({ id, path: vaultPath, lastOpenedAt, missingSince, archivedAt }) {
+ *  另生成一个 id，预置的会话（按 id 存放）就对不上了。
+ *
+ *  `dirName` 由下面两个薄包装给：现名与旧名。旧名那个只服务迁移场景（48）——它要构造的是
+ *  「更名落地之前那台机器」的现场（注册项在 `workspaces/` 里） */
+async function writeRegistryEntryInto(dirName, { id, path: vaultPath, lastOpenedAt, missingSince, archivedAt }) {
   if (!ID_RE.test(id ?? "")) throw new CuError(`注册项 id 非法：${JSON.stringify(id)}（只允许字母数字与 -_）`);
-  const dir = await mkdirp(path.join(envHome(), "lumir", "workspaces"));
+  const dir = await mkdirp(path.join(envHome(), "lumir", dirName));
   let real = vaultPath;
   try {
     real = realpathSync(vaultPath);
@@ -170,6 +182,16 @@ export async function writeRegistryEntry({ id, path: vaultPath, lastOpenedAt, mi
   if (archivedAt !== undefined) entry.archived_at = archivedAt;
   await writeFile(path.join(dir, `${id}.json`), `${JSON.stringify(entry, null, 2)}\n`);
   return entry;
+}
+
+/** 现名目录（`vault-registry/`）下的一条注册项。 */
+export async function writeRegistryEntry(entry) {
+  return writeRegistryEntryInto(REGISTRY_DIR, entry);
+}
+
+/** 旧名目录（`workspaces/`）下的一条注册项——迁移场景（48）的「升级前现场」。 */
+export async function writeLegacyRegistryEntry(entry) {
+  return writeRegistryEntryInto(LEGACY_REGISTRY_DIR, entry);
 }
 
 /** 预置一个 vault 的标签会话（`<env>/lumir/vault-sessions/<id>.json`）。
@@ -191,17 +213,31 @@ function resolveSeedPath(p) {
   return p;
 }
 
-/** 应用场景 frontmatter 的 `seed` 块（注册表 + 会话预置）。
+/** 应用场景 frontmatter 的 `seed` 块（注册表 + 旧名注册表 + 会话预置）。
  *
  *  **必须在起 app 之前跑**（run.mjs 在每个场景的 launchApp 之前调用）：app 打开一个未注册
  *  目录时会立刻给它分配一个自动 id 并落盘，事后再预置同路径的注册项会让列表里出现两行指向
- *  同一目录（一行自动 id、一行预置 id），`find_by_path` 命中哪一行还不确定。 */
+ *  同一目录（一行自动 id、一行预置 id），`find_by_path` 命中哪一行还不确定。
+ *
+ *  `legacyRegistry`（M248）写进**旧名**目录 `workspaces/`，供迁移场景 48 构造「升级前现场」，
+ *  与其他块同一时点、同一纪律。 */
 export async function prepareSeed(seed) {
-  const written = { registry: [], sessions: [] };
+  const written = { registry: [], legacyRegistry: [], sessions: [] };
   if (!seed) return written;
   for (const e of seed.registry ?? []) {
     written.registry.push(
       await writeRegistryEntry({
+        id: e.id,
+        path: resolveSeedPath(e.path),
+        lastOpenedAt: e.lastOpenedAt,
+        missingSince: e.missingSince,
+        archivedAt: e.archivedAt,
+      }),
+    );
+  }
+  for (const e of seed.legacyRegistry ?? []) {
+    written.legacyRegistry.push(
+      await writeLegacyRegistryEntry({
         id: e.id,
         path: resolveSeedPath(e.path),
         lastOpenedAt: e.lastOpenedAt,
