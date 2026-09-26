@@ -16,8 +16,15 @@ import type { Page } from "@playwright/test";
 import { stubTauri } from "./tauri-stub";
 
 /** 场景文档：一段足以撑满栏宽的长行（列缘矩形可读）+ 若干短行。 */
+/** 首段刻意长于两个栏宽的可容纳量（约 990 字符 = 6 遍下句）：文字宽 672px（框宽 760）下约 12 个可视行、
+ *  828px（拖到 920 后被 pane 钳住）下约 10 个——折行数明显不同且离折行边界有富余。
+ *  为什么要这么长（M236 2026-09-26 改默认 760 时踩到）：原稿是一遍（165 字符），在 592px（框宽 680）
+ *  下 3 行、752px 下 2 行，断言成立；改 760 后 672px 已是 2 行、拖宽后仍 2 行，「行盒变矮」这条
+ *  会假红——判据落在折行边界附近就等于把断言绑死在字体度量上（CI 与本机字族不同）。 */
+const PARAGRAPH =
+  "Ordinary paragraph with enough words to wrap across the reading column so that the width of the column is measurable and the wrap count changes when the column widens. ";
 const DOC = [
-  "Ordinary paragraph with enough words to wrap across the reading column so that the width of the column is measurable and the wrap count changes when the column widens.",
+  PARAGRAPH.repeat(6).trim(),
   "",
   ...Array.from({ length: 30 }, (_, i) => `line ${String(i + 1).padStart(2, "0")} filler`),
   "",
@@ -142,9 +149,16 @@ test("右缘向右拖 80px → 栏宽 +160（对称律），live 生效，松手
   expect(await uiValueWrites(page)).toEqual([]);
   await page.mouse.up();
   expect(await uiValueWrites(page)).toEqual([{ key: "content_width", value: 920 }]);
-  // 内容列随之变宽
-  const contentWidth = await page.evaluate(() => document.querySelector(".cm-content")!.getBoundingClientRect().width);
-  expect(contentWidth).toBe(920);
+  // 内容列随之变宽——但**要看两个不同的量**：token 是 920，视口里渲染出的列宽被 pane 容量钳住。
+  // 中列轨道是 `minmax(0, var(--layout-doc-measure))`，语义是**上限**；两侧各留 24px 最小轨道，
+  // 所以实际列宽 = min(token, paneWidth − 48)。760 + 160 = 920 > 964 − 48 = 916 ⇒ 这里读到 916。
+  // （M228 时默认 680、拖到 840 < 916，两个量恰好相等，这条钳制因此一直没被断言暴露。）
+  const geo = await page.evaluate(() => ({
+    contentWidth: document.querySelector(".cm-content")!.getBoundingClientRect().width,
+    paneWidth: document.querySelector(".pane-editor")!.getBoundingClientRect().width,
+  }));
+  expect(geo.contentWidth).toBeCloseTo(geo.paneWidth - 48, 0);
+  expect(geo.contentWidth).toBeGreaterThan(840); // 确实比默认 760 宽出一档
   // 折行重算真的发生了：同一行文本在更宽的列里占更少的可视行
   const heightAfter = await firstLineHeight();
   expect(heightAfter, `折点重算后行盒应变矮（${heightBefore} → ${heightAfter}）`).toBeLessThan(heightBefore);
