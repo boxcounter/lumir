@@ -487,6 +487,12 @@
     另一件事；④ 真机场景 `48-vault-registry-migration`（套件新增 `seed.legacyRegistry` 预置通道与
     `resetRegistry()` 同清新旧两名目录）。文档面同步：`docs/specs/config-reference.md` §4 改为现状描述
     并删 #35 写的前向注记；历史文档（change `multi-vault-workspaces` 等）仍按原口径不改写。
+    **合同文本同步（M250，2026-09-27）**：living spec 的注册表路径此前仍写旧名（`openspec/specs/
+    vault-workspace/spec.md:49`），与实现矛盾——新增 change `sync-vault-registry-dir-spec`
+    （MODIFIED「vault 注册表与显式重映射」：路径字面改 `~/.config/lumir/vault-registry/` + 迁移口径段 +
+    新增 scenario「旧注册表目录在启动时迁移」，其余条款逐字携带）并同批把 delta 应用到 living spec
+    （两侧同名 requirement 正文 sha256 相同 ⇒ 归档是幂等替换）。`validate --all --strict` 28/28 绿；
+    归档节点 2 待 Alex（见「待 Alex 裁决」第 38 条）。至此本条 ①②③④ 与文档面全部落地。
 
 32. **change `product-version-display` 待归档跟踪**（2026-09-26，M236 登记，**待 Alex 节点 2**）：流程口径要求
     每个 change 在实现 PR 合并时即落一条待归档记录（`docs/process/openspec-workflow.md` 的批次收尾
@@ -528,6 +534,17 @@
     44-theme-live-switch.md`）；文案新增 D122（主题钮的悬停提示 / 读屏名）与 D123（写盘失败 toast）；
     附带修订两处既有自述：`35-restyle-three-themes` 正文的「不存在运行期切换通道」与本文件
     restyle 段里「`[ui] theme` 的『重启生效』口径」。
+
+38. **change `sync-vault-registry-dir-spec` 待归档跟踪**（2026-09-27，M250 登记，**待 Alex 节点 2**）：
+    流程口径要求每个 change 在实现 PR 合并时即落一条待归档记录（`docs/process/openspec-workflow.md`
+    的批次收尾 checklist 第一条）。本 change 是 **retro 型**（实现先于规格：M248 已合并 `d989197`，
+    而 living spec 的注册表路径仍是旧名、与实现矛盾），**无代码 diff**；制品 = delta（MODIFIED ×1，
+    路径字面 + 迁移口径段 + 新增 scenario）+ living spec 同步落盘（两侧同名 requirement 正文
+    `sha256` 相同，归档是幂等替换）。**节点 1 由 M248 的 #37 裁决覆盖**（改名 + 启动迁移是 Alex
+    2026-09-26 已裁行为，proposal 的「裁决记录」节写明这一点）。归档对账要点预记：delta 与 living spec
+    逐句一致、requirement 名在 living spec 出现恰好一次、`validate --all --strict` 28/28；节点 2 通过后
+    `npx --yes @fission-ai/openspec@1.12.0 archive sync-vault-registry-dir-spec --yes`，预期 living
+    spec **零 diff**。
 
 ## 待修 findings（不阻塞）
 
@@ -1035,6 +1052,25 @@
   改写为 phys_footprint 测量值并注明与 200 时代的测量差异）。修订前分叉已在
   `openspec/specs/perf-measurement/spec.md` 与 `tests/perf/thresholds.json` 双处标注。finding
   `20260918-worker-perf-gate-improve-m174-follow-up-adr-0002-6-200mb-ci-250mb.md`。
+
+- **「changeFilter 兜底防线」失实断言的清扫**（M250 落地，2026-09-27，**scope 内已全落；两处已转 M249**）：
+  finding `20260927-worker-editable-non-md-bug-editor-ts-changefilter-m101-false` 的处方①（全仓 grep
+  `changeFilter`、按真实机制改写失实断言）在本批收口。**错误前提**是：本仓的 `@codemirror/state`（6.7.4）下
+  旧形态 `currentMode !== "md" ? [] : true` 里的 `[]` 是**空操作**（`ChangeSet.filter` 的入参是扁平
+  position 对，空数组走越界分支把全部 change 原样保留），放宽与否都不吞键；真拦得住的是返回 `false`
+  （M241 起）。**已落**：① `src/editor.ts:896-899` 的过期 doc（原称「`changeFilter` 的拦截闭包读 `mode`」）
+  改写为按 `currentEditable` 投影的真实机制，`:1434` / `:1501` 两处兜底正文复核本就准确；②
+  `openspec/changes/editable-non-md-files/` 的 `design.md`（§2.2 末节 + 「四处窄门」句）与 `proposal.md`
+  （§2 的 P1 清单 + 裁决点 D3 表行 + 「按文件类」条）各加一条更正注记（**不改写原文**）；③
+  `openspec/changes/list-tab-indent/design.md` 的「任何绕过 DOM 的程序化 dispatch 都会被拦」与 S6 行同款，
+  加更正注记。**转 M249 的两处**（tower 2026-09-27 裁决：与 M249 的活 scope 同文件，避免 merge 撞车）：
+  `scripts/acceptance/scenarios/43-list-tab-indent.md` 的步骤名与「只读模式」小结各一处「changeFilter 再
+  兜一层」——由 M249（worker-gate-hygiene）顺手落，**不计为本批缺口**。另
+  `tests/visual/scenes/m130-text-open-trap.spec.ts:19` 的注释经复核**判为准确**（它说的是当前返回 `false`
+  形态下「漏同步 `syncProjection` 会吞键」，与真实机制一致），无需改。**独立复现证据**（M250 探针，
+  `@codemirror/state` 6.7.4）：`changeFilter` 返回 `[]` → 变更落地 `"helloZZZ\n"`、返回 `false` → 被拦
+  `"hello\n"`；另有 M241 的 `test-results/m241/reverse-input/README.md`（m130 场景 9/9 绿 + 探针
+  `PROBE STATE="hello\nZZZ"`）。
 
 ### openspec 归档制品与实验脚本
 
@@ -1784,3 +1820,37 @@ living spec 两处已随本 change 改写口径（`keymap-commands` 的「轨道
   **连带修正**：本修复让全量场景从「非 overlay」切到「真 overlay」（视口 768 → 800），凡把视口高度
   烘进断言的场景都要重算——扫描后只有 `scripts/acceptance/scenarios/33-image-lightbox.md` 烘了绝对坐标
   （三条读数按 `水平 40+(1120-w)/2`、`垂直 40+(720-h)/2` 重算，场景内写明推导）。
+
+- 2026-09-27：**文档合同卫生批（M250）**（`feat/docs-contract-hygiene-m250`）：living spec 路径同步 +
+  changeFilter 文字面清扫 + 场景 39 悬案入 `REVIEW.md` + `tab-cycle-keys` 任务对账，四件。
+  ① **living spec 路径同步**：M248 的注册表更名（`workspaces/` → `vault-registry/`，merge `d989197`）
+  此前只在代码与 `docs/specs/config-reference.md` 落地，living spec 仍写旧名——新增 change
+  `sync-vault-registry-dir-spec`（MODIFIED ×1：路径字面 + 迁移口径 + 新增迁移 scenario，其余条款逐字
+  携带）并同批把 delta 应用到 `openspec/specs/vault-workspace/spec.md`；两侧同名 requirement 正文
+  `sha256` 相同（`0856d8db…`）⇒ 归档是幂等替换。`validate --all --strict` 28/28。节点 2 待 Alex（「待 Alex
+  裁决」第 38 条）。② **changeFilter 文字面（scope 内）**：改掉 `src/editor.ts:896-899` 的过期 doc（原称
+  「`changeFilter` 的拦截闭包读 `mode`」，M241 后闭包读 `currentEditable` 投影），并核 `:1434` / `:1501`
+  两处兜底正文已与真实机制一致。**tower 2026-09-27 裁决把 scope 扩入** `openspec/changes/editable-non-md-files/**`
+  与 `openspec/changes/list-tab-indent/design.md`（两处失实断言最集中的落点），按「不改写历史结论原文、只加更正
+  注记」落：`editable-non-md-files` 的 `design.md`（§2.2 末节 + 「四处窄门」句）与 `proposal.md`（§2 的 P1 清单 +
+  裁决点 D3 表行 + 「按文件类」条）各一条注记、`list-tab-indent/design.md`（「任何绕过 DOM 的程序化 dispatch 都会
+  被拦」+ S6 行）一条注记。**转 M249 两处**（与 M249 的活 scope 同文件，避免 merge 撞车）：
+  `scripts/acceptance/scenarios/43-list-tab-indent.md` 的两处「changeFilter 再兜一层」由 M249 顺手落，**不计为
+  本批缺口**；`tests/visual/scenes/m130-text-open-trap.spec.ts:19` 的注释经复核**判为准确**（说的是当前返回
+  `false` 形态下漏同步 `syncProjection` 会吞键），无需改。**独立复现**（`@codemirror/state` 6.7.4 探针）：
+  `changeFilter` 返回 `[]` 时 change 照常落地、返回 `false` 才拦——与 M241 的
+  `test-results/m241/reverse-input/README.md` 一致。
+  **M101/M97 复盘结论**：M97 的只读结论**确实只靠旧 changeFilter 成立**（M101 的提交自述逐字：「M97 只靠
+  changeFilter 在事务层拒绝，contenteditable 恒为 true，真实 WKWebView 的 AX 注入 / IME 组合路径下 DOM
+  回滚不可靠，文本滞留内存并误标 dirty」）；该缺口已在 M101 当年闭合（视图层 `editable(false)` /
+  `readOnly(true)` 拒收 + 真机复验 + `tests/visual/scenes/save-guard.spec.ts` 四场景），M241 把该行改成
+  `false` 后 dispatch 层兜底才第一次真实存在（判据 = m130 的切标签序列用例 + m241 探针）。**逐仓复查未发现
+  任何以「changeFilter / 程序化 dispatch」为目标的验收断言**（`tests/**`、`scripts/acceptance/**` 里
+  `changeFilter` 只出现在注释中）⇒ **无需要补的真判据**；清扫的逐处结论见「待修 findings」的「文档指针与
+  门禁清单」节。③ **场景 39 mousedown 悬案**：依 finding
+  `20260926-worker-fix-pack-improve-39-mousedown-preventdefault` 收进 `REVIEW.md` **第 16 条**（四段式，
+  根因照录「未定位」+ 候选机制，未虚构因果）。④ **`tab-cycle-keys` 任务对账**：11 个未勾项里 10 项对照
+  master 已合并实现（`c672be7`）逐条核实属实并勾选（键位表两条绑定 + 两条 doc + 文件头 M242 留痕 / 单测
+  定点断言与 token 形态专测 / spec 对账无偏差 / 场景 45 与真机 2/2 PASS），第 11 项（§5.1 归档评审核对）
+  如实不勾——它是节点 2 的动作。证据：`openspec/changes/sync-vault-registry-dir-spec/**`、`REVIEW.md`
+  第 16 条、`src/editor.ts` 注释、`gate quick` 9/9 PASS（SKIP 1 = `tsc-visual` 依赖未装）、单测 375/375。

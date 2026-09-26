@@ -893,9 +893,16 @@ export interface EditorSession {
   /** 相对 cleanDoc 是否有改动。 */
   dirty: boolean;
   /**
-   * 该会话的编辑器模式。**逐会话**存在这里而不是内核的一个单值：`changeFilter` 的拦截
-   * 闭包读它，切标签时必须与 state 一起换，否则前台是 code 会话而模式变量还停在 md，
-   * 拦截会错判（install 期 setMode 也可能改模式，故不能只按路径反推）。
+   * 该会话的编辑器模式。**逐会话**存在这里而不是内核的一个单值：视图层扩展按它装配
+   *（`modeExtensions`：md 装 live preview、code 装 gutter 与语言高亮），切标签 / 装载 /
+   * 重命名都必须与 state 一起换，否则前台是 code 会话而模式变量还停在 md，重配会装错那一套
+   *（install 期 setMode 也可能改模式，故不能只按路径反推）；折行命令按前台会话模式选轴
+   *（`toggleLineWrap`）、保存链路按它取语言名，读的也都是这里那一份。
+   *
+   * 历史注记（M241，change editable-non-md-files）：本字段在 M130 期还兼作 `changeFilter`
+   * 的拦截投影（当时判据是「非 md 全拦」）；该判据已换成按会话 `editable`，投影随之改为
+   * `currentEditable`（见其注释），**changeFilter 不再读模式**——本字段的存在理由只剩上面
+   * 那类装配与分支消费点。
    */
   mode: EditorMode;
   /**

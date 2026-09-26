@@ -99,6 +99,12 @@ worker 动工前、reviewer 给出 verdict 前逐条过一遍。每条按「症�
 - 证据：提交 `58b54bd`；`scripts/acceptance/README.md:51-53`；`tests/visual/README.md:53-55`；`tests/visual/playwright.config.ts:3-4`；「vite preview 服务 dist」操作坑的实测 finding `.tower/comms/findings/20260917-reviewer-tabs-improve-review-md-3-mermaid-952px-960px-m149.md`。
 - 防线：下次写会碰全局状态的功能时，先确认落点在 `XDG_CONFIG_HOME` / 临时目录而不是 `~/.config`；跑视觉门禁前设 `LUMIR_VISUAL_PORT` 并确认无人占用；结论异常时先查 dist 是不是本次构建的；手动单跑 playwright 场景前先 `pnpm build`——webServer 是 `vite preview`，服务的是 dist 构建产物而不是 src 编译结果，改了 `src/` 不重建则改动不生效、反向验证会假绿（`gate.sh visual` 自带 build，只有手动迭代才踩）。
 
+**16. 标题栏内元素上的 `mousedown` preventDefault 会静默打断窗口拖拽（真机场景 39 判红，成因未定位）**
+- 症状：标题栏（`.titlebar` 带 `data-tauri-drag-region="deep"`）内任何元素挂了 `mousedown` + `preventDefault()`（「别抢焦点」是很自然的写法）之后，**真机**场景 39 的「标识块上按下拖拽窗口成立」稳定判红——`window_bounds` Δ=(0,0)，窗口纹丝不动，**无任何报错**，而拖拽落点根本不经过那个元素。chromium 层与 CI 都看不见（视觉门禁照绿），最容易被当成本机环境问题放过。单次现场，但形态是「静默失效 + 判据只存在于本地真机门禁」⇒ 按收录门槛的「单次但代价高」收。
+- 根因：**未定位**。坐实的差异因子只有那一条监听（M238 的六行二分表）；机制候选照录 finding、均未坐实：tauri 2.11.5 的 `src/window/scripts/drag.js` 只在 document 的 mousedown 上按 `isDragRegion(composedPath)` 判定，**不检查 `defaultPrevented`**，按源码推不出因果；可能与 WKWebView 在「页面上存在阻止默认行为的 mousedown 监听」时的窗口激活 / 事件投递路径有关。
+- 证据：M238（2026-09-26）二分表——修复版全量（容器级 click + 容器级 mousedown）FAIL ×3、只回退 `src/tabs.ts` PASS ×1、回退 + 补容器级 click PASS ×2、再补回容器级 mousedown FAIL ×1；现场 `test-results/acceptance/2026-09-26/39-titlebar-identity/`；原卷 `.tower/comms/findings/20260926-worker-fix-pack-improve-39-mousedown-preventdefault.md`。M238 的处置即此：容器级 mousedown 未采用（容器级 click 已满足需求），原监听留在按钮上，并在 `src/tabs.ts` 就地留注释。
+- 防线：动过标题栏内元素的事件监听后，本地跑一次 `node scripts/acceptance/run.mjs 39`（这条判据只在真机层）；「阻止默认行为」不要挂在容器级元素上——需要它时挂在具体按钮上，并就地留一条指向本条的注释。
+
 ## 五、等待方式（agent 运行时）
 
 **14. 用分钟级 sleep 盲等后台任务或等回话**

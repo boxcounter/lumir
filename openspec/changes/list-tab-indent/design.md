@@ -57,6 +57,15 @@
   与 :1416 附近），任何绕过 DOM 的程序化 dispatch 都会被拦；命令实现自身也按
   `state.readOnly` 提前返回（与 M132 编辑键同口径）。
 
+> **更正注记（M250，2026-09-27；不改写上文原文）**：本条「任何绕过 DOM 的程序化 dispatch 都会被拦」
+> 与下面判据表 S6 行的「readOnly 提前返回 + changeFilter 兜底」在当时**不成立**——当时的 changeFilter
+> 判据返回 `[]`，而 `[]` 在本仓的 `@codemirror/state`（6.7.4）下是**空操作**（`ChangeSet.filter` 的入参
+> 是扁平 position 对，空数组走越界分支把全部 change 原样保留），它拦不住任何程序化 dispatch；当时真正
+> 拦住输入的是视图层 `EditorState.readOnly`（DOM 输入入口拒收）与命令自身的 `state.readOnly` 提前返回。
+> M241 把该判据改成返回 `false` 之后，dispatch 层这条兜底才真实存在。真实机制：**视图层 `editable(false)`
+> / `readOnly(true)` 拒收 DOM 输入 + `changeFilter` 返回 `false` 兜底程序化 dispatch（M241 起）**。来源
+> finding `20260927-worker-editable-non-md-bug-editor-ts-changefilter-m101-false`。
+
 ## 2. 交互状态机（按选区 head 归属判定）
 
 判据：取 `state.selection.main.head` 所在行，经 `syntaxTree` 的 `resolveInner` 向上找
