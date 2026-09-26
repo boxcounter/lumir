@@ -28,7 +28,7 @@ import { cellClamp, cellContentEdge } from "./cell-geometry";
 import type { CellClamp } from "./cell-geometry";
 import { listIndentChange } from "./list-indent";
 import type { ListIndentDirection } from "./list-indent";
-import { createInvokeAttachmentProvider, codeLanguage, extensionOf, fileClass } from "./preview/attachments";
+import { createInvokeAttachmentProvider, codeLanguage, extensionOf, fileClass, isEditablePath } from "./preview/attachments";
 import type { AttachmentProvider } from "./preview/attachments";
 import { bindingHighlight } from "./code-identifiers";
 import { LANGUAGES, TOKEN_GROUPS } from "./preview/code";
@@ -892,11 +892,20 @@ export interface EditorSession {
   /** 相对 cleanDoc 是否有改动。 */
   dirty: boolean;
   /**
-   * 该会话的编辑器模式。**逐会话**存在这里而不是内核的一个单值：`changeFilter` 的
-   * 非 md 拦截闭包读它，切标签时必须与 state 一起换，否则前台是 code 会话而模式变量
-   * 还停在 md，拦截会错判（install 期 setMode 也可能改模式，故不能只按路径反推）。
+   * 该会话的编辑器模式。**逐会话**存在这里而不是内核的一个单值：`changeFilter` 的拦截
+   * 闭包读它，切标签时必须与 state 一起换，否则前台是 code 会话而模式变量还停在 md，
+   * 拦截会错判（install 期 setMode 也可能改模式，故不能只按路径反推）。
    */
   mode: EditorMode;
+  /**
+   * 该会话是否可编辑（editable-non-md-files，裁决 D1「注册表全量文本类」）。取值 = 无文件
+   * 上下文（空态 / 新建）或 `fileClass(extensionOf(path)) ∈ {md, code, text}`——判据只有
+   * `attachments.ts` 的 `isEditablePath` 一处（REVIEW.md 第 8 条）。同 `mode` 一样是**逐会话**
+   * 的：`modeExtensions` 按它装视图层 editability（`editable` / `readOnly` / `aria-readonly`），
+   * dispatch 层的 `changeFilter` 按它的实例级投影放行，保存链路的 `saveBaseline` 也读它
+   *（save-controller.ts）。装载与激活时必须与 state / mode 一起同步（见 syncProjection）。
+   */
+  editable: boolean;
   /**
    * 「可被复用」的临时会话标记（M149 预览标签）。内核**不读**这个字段——它是装配层
    * 的标签属性：单击文件树建立的会话标 true，下一次单击树文件就地替换它而不新开标签；
@@ -1078,12 +1087,16 @@ const codeHighlight = syntaxHighlighting(
 );
 
 /** 打开文件时的模式裁决（M130 方向 A）：.md/.markdown → md；其余**一切已打开的文件**
- *  一律 code（只读）——不再回落配置默认。旧口径把 .php/.svelte/.txt 等未收录扩展交给
+ *  一律 code——不再回落配置默认。旧口径把 .php/.svelte/.txt 等未收录扩展交给
  *  defaultMode，出厂为 md：文件可编辑、可 dirty，却没有磁盘 revision 可保存（main.ts
  *  只为 md 登记 revision），Cmd+S 静默失败，dirty 又锁死切换与退出。无扩展名线索的
- *  文件（basename 无点如 LICENSE/Makefile）同样是「非 md」，一并只读（tower 裁决 M130
+ *  文件（basename 无点如 LICENSE/Makefile）同样是「非 md」，一并走 code（tower 裁决 M130
  *  评审：D4「非 md 即只读」优先于任务书「ext 缺失保持 fallback」的字面）。
- *  配置默认基线只对「没有文件上下文」的文档有意义：path 缺失（空态 / 新建 / reset）。 */
+ *  配置默认基线只对「没有文件上下文」的文档有意义：path 缺失（空态 / 新建 / reset）。
+ *
+ *  **模式与可编辑性正交**（editable-non-md-files）：本函数只裁决模式，M130 的只读部分已
+ *  解除——code 模式对文本类可编辑，判据见 `isEditablePath`（不回落到这里，也不随
+ *  `editor.mode` 漂移）。 */
 function modeForPath(path: string | undefined, fallback: EditorMode): EditorMode {
   if (path === undefined) return fallback;
   return fileClass(extensionOf(path)) === "md" ? "md" : "code";
@@ -1115,10 +1128,12 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
   /** 折行口径的 Compartment（M180）：正文行的 `lineWrapping` 与代码块行的内容级 class 都装在
    *  它里面，翻转走一次 reconfigure（与 modeCompartment 并列同形）。 */
   const wrapCompartment = new Compartment();
-  // 前台会话模式的**投影**：changeFilter 的闭包在 state 创建时就绑好了，只能读实例变量，
-  // 所以模式真源放在会话上（EditorSession.mode），这里只是把它投给创建期闭包。
-  // 唯一写入点是 syncMode()，由激活 / 装载 / setMode 三处调用——不构成第二份真源。
-  let currentMode = initialMode;
+  // 前台会话「可编辑性」的**投影**：changeFilter 的闭包在 state 创建时就绑好了，只能读实例
+  // 变量，所以真源放在会话上（EditorSession.editable），这里只是把它投给创建期闭包。
+  // 唯一写入点是 syncProjection()，由激活 / 装载 / setMode 三处调用——不构成第二份真源。
+  // （M130 时这里是模式投影 `currentMode`，只服务「非 md 拦截」；该拦截按文件类放宽后
+  // 模式不再被闭包读取，投影随判据一并换成 editable。）
+  let currentEditable = true;
   // 配置默认基线：createSession 对无文件上下文（path 缺失）文档的回落锚在这里；
   // 只有 setMode（配置加载 / 用户显式切换）会移动它，装载本身不改。
   let defaultMode = initialMode;
@@ -1289,7 +1304,7 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
     view.dom.ownerDocument.getSelection()?.removeAllRanges();
   }
 
-  function modeExtensions(mode: EditorMode, path?: string): Extension[] {
+  function modeExtensions(mode: EditorMode, path: string | undefined, editable: boolean): Extension[] {
     // md 走 lezer markdown 解析器（高亮规则维持 M1 以来口径不动）；
     // code 按扩展名选 legacy-modes StreamLanguage（M120），未知扩展纯文本不着色。
     const highlight: Extension[] = mode === "md"
@@ -1385,15 +1400,18 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
       ".cm-cursor, .cm-dropCursor": { borderLeftColor: "var(--text)" },
       "&.cm-focused .cm-selectionBackground": { backgroundColor: "var(--sel)" },
     });
-    // 可编辑性随模式收敛进 Compartment（M101 验收修复）：非 md 模式必须是
-    // 视图层只读——editable(false) 摘掉 contenteditable，readOnly(true) 让 CM6
-    // 在 DOM 输入入口（beforeinput / EditContext / drop / paste / 输入法组合）
-    // 直接拒收，不依赖 changeFilter 事后回滚 DOM（真实 WKWebView 的 AX 文本注入
-    // 与 IME 组合路径下回滚不可靠，文本会滞留内存并误标 dirty）。
+    // 可编辑性随会话标志装进 Compartment（editable-non-md-files）：此前硬绑
+    // `mode === "md"`（M101 的只读合同），现在按**文件类**——md 与注册表文本类
+    // （code/text）都可编辑，image/binary 不进编辑器（树侧分流 + 提示，见 tree.ts）。
+    // 视图层先拒收：`editable(false)` 摘掉 contenteditable，`readOnly(true)` 让 CM6
+    // 在 DOM 输入入口（beforeinput / EditContext / drop / paste / 输入法组合）直接拒收；
+    // dispatch 层还有 changeFilter 兜底（见 sessionState），两层同判据。
+    // 注意只翻这里不翻 changeFilter 会得到**假可编辑**编辑器：contenteditable 在场、
+    // 视觉断言全绿，但按键在 dispatch 层被吞（REVIEW.md 第 1 条同族陷阱）。
     const editability: Extension[] = [
-      EditorView.editable.of(mode === "md"),
-      EditorState.readOnly.of(mode !== "md"),
-      EditorView.contentAttributes.of({ tabindex: "0", "aria-readonly": String(mode !== "md") }),
+      EditorView.editable.of(editable),
+      EditorState.readOnly.of(!editable),
+      EditorView.contentAttributes.of({ tabindex: "0", "aria-readonly": String(!editable) }),
     ];
     return mode === "md"
       ? [...editability, ...highlight, baseTheme, livePreview(previewContext), endMarker]
@@ -1405,11 +1423,12 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
    * 模式变了，md 专属的 live preview 要跟着换；折行也要跟着重配，因为代码块内容级 class
    * 只在 md 模式有意义（`wrapSpec` 的 mode 分支），只重配模式会让 code → md 切回来的代码块
    * 丢掉那一层。折行值取自应用运行期的 `wrap`（应用级口径下所有会话取值一致，任何一次
-   * state 重建都取当前值）。
+   * state 重建都取当前值）。视图层可编辑性装在**模式**这个 Compartment 里（它与模式同批
+   * 装载/重配，见 modeExtensions），因此这里随 mode 一起传下去。
    */
-  function modeAndWrapEffects(mode: EditorMode, path: string | undefined): StateEffect<unknown>[] {
+  function modeAndWrapEffects(mode: EditorMode, path: string | undefined, editable: boolean): StateEffect<unknown>[] {
     return [
-      modeCompartment.reconfigure(modeExtensions(mode, path)),
+      modeCompartment.reconfigure(modeExtensions(mode, path, editable)),
       wrapCompartment.reconfigure(wrapExtensions(mode, wrap)),
     ];
   }
@@ -1419,7 +1438,7 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
    * 对象）：撤销史 / 语法树 / 搜索查询都是 StateField，必须逐会话独立，否则标签之间
    * 会共享一个撤销栈。创建期扩展逐条有据，见下面各段注释。
    */
-  function sessionState(doc: string, path: string | undefined, mode: EditorMode, settings: WrapSettings): EditorState {
+  function sessionState(doc: string, path: string | undefined, mode: EditorMode, editable: boolean, settings: WrapSettings): EditorState {
     return EditorState.create({
       doc,
       extensions: [
@@ -1432,8 +1451,8 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
         // - trustedLoad 装载事务带 Transaction.addToHistory.of(false)：不进栈，并把旧事件
         //   映射力竭后丢弃（见 dispatchTrusted 注释）。
         // - changeFilter 不拦撤销：CM 的 undo/redo 事务带 filter:false 绕过变更过滤器，
-        //   但命令本身在 state.readOnly 时返回 false（非 md 只读模式下撤销必然无事发生），
-        //   与「非 md 文档不可变更」的既有保证一致。
+        //   命令本身也只在 `state.readOnly` 时返回 false——editable-non-md-files 后只有
+        //   image/binary 类（不进编辑器）会是 readOnly，文本类会话的撤销照常生效。
         // - dirty 判定不变：仍以文本与 cleanDoc 比较为准，因此撤销回到已保存内容时
         //   dirty 自然收窄为 false（不依赖撤销栈位置，见 updateListener）。
         // - 撤销史**逐会话独立**（M149）：history 是 StateField，每个 state 自带一份栈；
@@ -1452,12 +1471,13 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
         // 这类会改文档的控件）。panel 的 Compartment 之外落点也意味着模式热切换（装载时的
         // reconfigure）不会把它连带重建——面板与查询跨文件保留，与编辑器行为一致。
         lumirSearch(),
-        modeCompartment.of(modeExtensions(mode, path)),
-        // 兜底防线：editability 已随模式在视图层拒收输入，changeFilter 再挡住任何
-        // 绕过 DOM 输入路径的程序化 dispatch（trustedLoad 标记的装载事务除外）。
-        // 闭包读的是实例级 currentMode——切标签时必须同步（activateSession），否则
-        // 前台是 code 会话而 currentMode 还停在 md，非 md 的拦截会错判。
-        EditorState.changeFilter.of((tr) => tr.docChanged && currentMode !== "md" && !tr.annotation(trustedLoad) ? [] : true),
+        modeCompartment.of(modeExtensions(mode, path, editable)),
+        // 兜底防线：editability 已按会话 editable 在视图层拒收输入，changeFilter 再挡住任何
+        // 绕过 DOM 输入路径的程序化 dispatch（trustedLoad 标记的装载事务除外）——两处同判据。
+        // 闭包读的是实例级 currentEditable——切标签时必须同步（syncProjection），否则
+        // 前台是可编辑会话而投影还停在只读，输入会被错判吞掉（REVIEW.md 第 1 条：只翻
+        // 视图层会得到「contenteditable 在场但按键被吞」的假可编辑编辑器）。
+        EditorState.changeFilter.of((tr) => tr.docChanged && !currentEditable && !tr.annotation(trustedLoad) ? false : true),
         EditorView.updateListener.of((update) => {
           collectAppendedExtensions(update);
           // 前台会话的 state 回写（M149）：装配层与保存链路都按会话读文档全文与选区，
@@ -1480,11 +1500,15 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
   }
 
   function makeSession(doc: string, path: string | undefined, mode: EditorMode): EditorSession {
+    // 可编辑性按文件类裁决（唯一判据在 attachments.ts 的 isEditablePath）：无路径（空态 /
+    // 新建）可编辑；有路径时 md/code/text 可编辑，image/binary 不可（它们不进编辑器）。
+    const editable = isEditablePath(path);
     return {
       id: ++sessionSerial,
-      state: sessionState(doc, path, mode, wrap),
+      state: sessionState(doc, path, mode, editable, wrap),
       path,
       mode,
+      editable,
       cleanDoc: doc,
       dirty: false,
       preview: false,
@@ -1615,9 +1639,10 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
   // 会话操作（M149）：切标签 = 换 state，不重建 view、不重新解析文档
   // ---------------------------------------------------------------------------
 
-  /** 把前台会话的模式投影给创建期闭包（见 currentMode 声明处）。 */
-  function syncMode(): void {
-    currentMode = active.mode;
+  /** 把前台会话的可编辑性投影给创建期闭包（见 currentEditable 声明处）。装载与激活都必须
+   *  调用它——漏掉一处就会出现「前台是 A 会话、闭包按 B 判」的错判。 */
+  function syncProjection(): void {
+    currentEditable = active.editable;
   }
 
   /**
@@ -1628,18 +1653,18 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
    * 而「打开新文件后面板与查询仍在」是 M139 以来的既有行为（见 src/search.ts 的
    * panel 注释）。后台会话的重载同理，只是派生完不往 view 上派发。
    */
-  function loadedState(state: EditorState, doc: string, mode: EditorMode, path: string | undefined): EditorState {
+  function loadedState(state: EditorState, doc: string, mode: EditorMode, path: string | undefined, editable: boolean): EditorState {
     return state.update({
       changes: { from: 0, to: state.doc.length, insert: doc },
       selection: { anchor: 0 },
-      // 模式与折行两个 Compartment 一起重配（M180）：装载可能把会话从 md 换成 code
-      //（非 md 只读），代码块内容级 class 的有无取决于 mode，只重配模式会留下它。
-      effects: modeAndWrapEffects(mode, path),
+      // 模式（含视图层可编辑性）与折行两个 Compartment 一起重配（M180）：装载可能把会话
+      // 从 md 换成 code，代码块内容级 class 的有无取决于 mode，只重配模式会留下它。
+      effects: modeAndWrapEffects(mode, path, editable),
       annotations: [trustedLoad.of(true), Transaction.addToHistory.of(false)],
     }).state;
   }
 
-  /** 激活会话本体：换 state + 恢复该会话的滚动位置 + 同步模式上下文。 */
+  /** 激活会话本体：换 state + 恢复该会话的滚动位置 + 同步模式/可编辑性上下文。 */
   function activate(session: EditorSession): void {
     if (session === active) return;
     // 离开前把滚动位置记回前台会话：滚动不在 state 里（只存在于 scrollDOM），
@@ -1648,7 +1673,7 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
     // 直接写 scrollDOM.scrollTop 会被 CM 的滚动锚点维护逻辑改掉（M149 实测差 242px）。
     active.scroll = view.scrollSnapshot();
     active = session;
-    syncMode();
+    syncProjection();
     readyPath = session.path;
     ensureMtime(session.path);
     // 在途的 paint 事件作废：它属于刚切走的那个会话。
@@ -1762,9 +1787,10 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
       defaultMode = mode;
       if (mode === active.mode) return;
       active.mode = mode;
-      syncMode();
-      // 模式与折行一起重配：代码块内容级 class 只在 md 模式有意义（见 modeAndWrapEffects）。
-      view.dispatch({ effects: modeAndWrapEffects(mode, active.path) });
+      syncProjection();
+      // 模式（含视图层可编辑性）与折行一起重配：代码块内容级 class 只在 md 模式有意义
+      //（见 modeAndWrapEffects）。可编辑性不随模式漂移，取会话上那一份（active.editable）。
+      view.dispatch({ effects: modeAndWrapEffects(mode, active.path, active.editable) });
     },
     mode: () => active.mode,
     setWrap,
@@ -1792,8 +1818,12 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
     },
     reloadSession(session: EditorSession, doc: string, path: string | undefined, requestId?: number) {
       const mode = modeForPath(path, defaultMode);
+      // 可编辑性按文件类（与 mode 正交，唯一判据 isEditablePath）：path 一换就要一起改，
+      // 否则会话会停在上一份文件的编辑性上。
+      const editable = isEditablePath(path);
       session.path = path;
       session.mode = mode;
+      session.editable = editable;
       session.cleanDoc = doc;
       // 装载 = 磁盘内容以这次为准（打开 / 外部重载 / 恢复备份）：mtime 缓存一律废掉重取。
       if (path !== undefined) mtimeCache.delete(path);
@@ -1803,14 +1833,14 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
       if (session !== active) {
         // 后台会话（外部变更自动重载 / 恢复备份）：只换代它的 state，不碰 view，
         // 也不发装载阶段事件——那些事件的消费者（视觉门禁截图、诊断日志）看的是前台。
-        session.state = loadedState(session.state, doc, mode, path);
+        session.state = loadedState(session.state, doc, mode, path, editable);
         setSessionDirty(session, false);
         return;
       }
       readyPath = path;
       readyRequestId = requestId;
       const serial = ++readySerial;
-      syncMode();
+      syncProjection();
       dispatchTrusted({
         changes: { from: 0, to: view.state.doc.length, insert: doc },
         // 显式复位选区与滚动（M110 真实桌面缺陷排查）：替换整篇文档后 CM 会把
@@ -1818,7 +1848,7 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
         // 滚动复位用直接赋值而非 scrollIntoView 效果：后者带 scrollMargin，文档
         // 溢出视口时会把 pos 0 对齐到视口顶而主动下滚，页首 padding 被顶出画。
         selection: { anchor: 0 },
-        effects: modeAndWrapEffects(mode, path),
+        effects: modeAndWrapEffects(mode, path, editable),
       });
       // 新装载的文档从篇首开始：这里用直接赋值而不是 scrollIntoView 效果（M110 真实
       // 桌面缺陷排查）——后者带 scrollMargin，文档溢出视口时会把 pos 0 对齐到视口顶而

@@ -5,7 +5,7 @@
 // 一条断言失败不阻断后续步骤，好让一次运行把该场景的问题一次暴露齐。
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { appendFile, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { appendFile, open, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import yaml from "js-yaml";
 import { findNode, windowBounds } from "./ax.mjs";
@@ -29,7 +29,7 @@ import { envHome, mkdirp, readText, repoRoot, sleep, vaultDir } from "./util.mjs
 export const ACTIONS = new Set([
   "settle", "sleep", "key", "keys", "type", "click", "clickNodeText", "clickInNode", "clickEditor",
   "doubleClick", "drag", "focusWindow", "open", "configWrite", "restart", "record", "recordEditor", "vaultWrite",
-  "vaultAppend", "vaultRm", "resizeWindow",
+  "vaultAppend", "vaultRm", "vaultSparse", "resizeWindow",
 ]);
 export const EXPECT_KINDS = new Set(["ax", "editor", "file", "glob", "shot", "window"]);
 
@@ -54,6 +54,9 @@ export function checkScenario(scenario) {
       push(`${at} do=drag 需要 target（带 bbox 的节点、{x,y} 窗口局部坐标或 textareaEdge）与 dx/dy 位移（窗口局部点）`);
     if (step.do === "resizeWindow" && typeof step.width !== "number")
       push(`${at} do=resizeWindow 需要数值 width（height 缺省保持当前）`);
+    if (step.do === "vaultSparse" && (!Number.isInteger(step.size) || step.size <= 0))
+      push(`${at} do=vaultSparse 需要正整数 size（字节）`);
+    if (step.do === "vaultSparse" && !step.file) push(`${at} do=vaultSparse 需要 file`);
     for (const [j, exp] of (step.expect ?? []).entries()) {
       const kinds = Object.keys(exp).filter((k) => k !== "label");
       if (kinds.length !== 1) push(`${at} expect[${j}] 应恰好一个断言形态，实际 ${JSON.stringify(kinds)}`);
@@ -948,6 +951,25 @@ async function doAction(step, { ctx, cu, scenario, vars, pid, evidence }) {
       const file = path.join(vaultDir(), step.file);
       await appendFile(file, step.content ?? "");
       return file;
+    }
+    case "vaultSparse": {
+      // 稀疏文件（M241，editable-non-md-files 场景 42）：`ftruncate` 出一个「大小 = size
+      // 字节、内容为零、几乎不占磁盘」的文件。用途只有一个——把 app 的**按大小拒绝**
+      // 分支（`ATTACHMENT_MAX_BYTES` 50MB）在真机上变成可达：提交一份 50MB+ 的实体
+      // fixture 不可接受，`vaultWrite` 的 content 是字符串也造不出来。
+      // `step.size` 是**大小**（字节，必须 > 0）；文件若已存在会被截断到该大小（幂等）。
+      const file = path.join(vaultDir(), step.file);
+      if (!Number.isInteger(step.size) || step.size <= 0) {
+        throw new Error(`do=vaultSparse 需要正整数 size（字节），收到 ${JSON.stringify(step.size)}`);
+      }
+      await mkdirp(path.dirname(file));
+      const handle = await open(file, "w");
+      try {
+        await handle.truncate(step.size);
+      } finally {
+        await handle.close();
+      }
+      return `${file}（${step.size} 字节，稀疏）`;
     }
     case "restart":
       await ctx.restartApp({ requireVault: step.requireVault !== false });

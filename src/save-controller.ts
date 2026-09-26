@@ -20,6 +20,7 @@ import type { FsChangeKind } from "./bindings/FsChangeKind";
 import { logEvent } from "./diagnostics";
 import type { EditorHandle } from "./editor";
 import {
+  createFile,
   documentSave,
   errorMessage,
   fsReadSnapshot,
@@ -31,6 +32,7 @@ import {
   recoveryList,
   wikilinkCreate,
 } from "./ipc";
+import { extensionOf, fileClass } from "./preview/attachments";
 
 /** dirty 守卫提示（无法切换 / 无法退出）的标识类：dirty 清除时整批撤下。 */
 export const SAVE_GUARD_TOAST_CLASS = "toast-dirty-guard";
@@ -72,8 +74,8 @@ export type ToastFn = (
 export interface VaultSwitchBlock {
   /** 有未保存修改的标签数（判据：任一**有路径**的标签 dirty）。 */
   dirtyCount: number;
-  /** 这些脏标签里是否有**不可保存**的（非 md / 未登记 CAS 基准）——有则「保存并切换」
-   *  这条出口给不出来（走不通的建议不给，change task 4.2）。 */
+  /** 这些脏标签里是否有**不可保存**的（不可编辑文件类 / 未登记 CAS 基准）——有则「保存并
+   *  切换」这条出口给不出来（走不通的建议不给，change task 4.2）。 */
   hasUnsaveable: boolean;
 }
 
@@ -83,8 +85,12 @@ export interface SaveControllerDeps {
   container: HTMLElement;
   toast: ToastFn;
   /** 另存为新文件 / 恢复备份后切换打开（main 的 openFile：含模式裁决与树/标签同步）。
-   *  intent 为 "current"：两条链路都是「当前文档换个落点」，必须就地替换前台标签。 */
-  openFile: (path: string, kind: "md" | "code" | "text" | "binary", intent?: OpenIntent) => Promise<void>;
+   *  intent 为 "current"：两条链路都是「当前文档换个落点」，必须就地替换前台标签。
+   *
+   *  **不带 kind**：这两条链路打开的落点由「已创建/已存在的 vault 相对路径」唯一确定，
+   *  文件分类是扩展名注册表的事——由装配层用 `openKind(path)` 现取（同一真源，
+   *  MUST NOT 让本模块按 md / 非 md 各判一次；M130 的 `"md"` 硬编码正是这类错配）。 */
+  openFile: (path: string, intent?: OpenIntent) => Promise<void>;
   /** wikilink 解析缓存整批失效（内容/来源已换）。 */
   invalidateResolve: () => void;
   /** 撤下「暂不支持预览」覆盖层（重载成功后）。 */
@@ -116,8 +122,8 @@ export interface SaveController {
    * 恒同增同减，合并为一个计数器）。 */
   beginSwitch(): number;
   isCurrent(serial: number): boolean;
-  /** 读快照成功后登记某个文档的磁盘 revision（CAS 基准）。非 md 传 undefined——
-   *  该文档随后不可保存，见 saveBaseline。 */
+  /** 读快照成功后登记某个文档的磁盘 revision（CAS 基准）。不可编辑的文件类传 undefined——
+   *  该文档不可保存，见 saveBaseline。 */
   noteOpened(path: string, revision: string | undefined): void;
   /** vault 装载 / 复位：清空全部文档的展示状态、世代自增、撤下暂停态、定时器与恢复提示。 */
   noteVaultReset(): void;
@@ -145,6 +151,31 @@ const SAVE_ERROR_HINTS: Record<string, string> = {
   fs_not_found: "保存失败：文件已被外部删除或移动，内存中的修改未丢失",
 };
 
+/** 「另存为新文件」的非 md 候选相对路径（editable-non-md-files §3.8）：目录不变，
+ *  basename 变 `原名-恢复{suffix}`，**扩展名原样保留**（`config.yaml` → `config-恢复.yaml`；
+ *  无扩展名的 `LICENSE` → `LICENSE-恢复`）。dotfile（`.gitignore`）按无扩展名处理——
+ *  整体当原名，副本仍是点文件（`.gitignore-恢复`），不会变成 `-恢复.gitignore`。
+ *
+ *  纯函数、无依赖：单测在 tests/unit/save-controller.test.ts 逐形态断言（扩展名保留是
+ *  spec fs-io「非 md 另存保留原扩展名」的直接判据）。 */
+export function recoveryCopyPath(fromPath: string, suffix: string): string {
+  const slash = fromPath.lastIndexOf("/");
+  const dir = slash < 0 ? "" : fromPath.slice(0, slash + 1);
+  const base = fromPath.slice(slash + 1);
+  const dot = base.lastIndexOf(".");
+  const stem = dot <= 0 ? base : base.slice(0, dot);
+  const ext = dot <= 0 ? "" : base.slice(dot);
+  return `${dir}${stem}-恢复${suffix}${ext}`;
+}
+
+/** md 另存用的 wikilink 目标名（去目录、去 `.md`/`.markdown` 扩展名 + 恢复序号）。
+ *  md 链路经 `wikilink_create` → `create_target` 拼回 `.md`，因此这里**不带**扩展名——
+ *  与 M124 起的既有行为逐字一致，本 change 不动这条链路。 */
+function markdownRecoveryName(fromPath: string, suffix: string): string {
+  const base = fromPath.slice(fromPath.lastIndexOf("/") + 1);
+  return `${base.replace(/\.(md|markdown)$/i, "")}-恢复${suffix}`;
+}
+
 export function createSaveController(deps: SaveControllerDeps): SaveController {
   const { editor, toast } = deps;
 
@@ -152,7 +183,7 @@ export function createSaveController(deps: SaveControllerDeps): SaveController {
    *  保存链路**不用**它做失效判据——判据是「目标路径的标签是否还在」（见 saveDocument），
    *  否则开一个新标签会把另一个标签在途的自动保存结果误丢。 */
   let serial = 0;
-  /** path → 磁盘 revision（CAS 基准）。非 md 文档登记 undefined。 */
+  /** path → 磁盘 revision（CAS 基准）。不可编辑的文件类（image/binary，不进编辑器）不登记。 */
   const revisions = new Map<string, string | undefined>();
   /** 在途保存的路径（原先是单文档的 saveInFlight 布尔）。 */
   const saving = new Set<string>();
@@ -227,12 +258,17 @@ export function createSaveController(deps: SaveControllerDeps): SaveController {
     return editor.activeSession().path;
   }
 
-  /** 前台文档的落盘基准（CAS 用 revision）；不可保存返回 null——非 md 是只读 code 模式
-   *（M130 方向 A），无 revision 表示没有基准（非 md 未登记，或 md 尚未读到快照），
-   *  两者写回去都会失败或无从校验。 */
+  /** 前台文档的落盘基准（CAS 用 revision）；不可保存返回 null——判据是**会话的可编辑标志**
+   *（editable-non-md-files：md 与注册表文本类均为真，image/binary 不进编辑器因而恒为假），
+   *  无 revision 表示这个可编辑文档还没登记基准（尚未读到快照）。两处都为 null 时写回去
+   *  要么被后端拒、要么无从校验。
+   *
+   *  与编辑器的视图层/派发层可编辑性**同一真源**（会话 editable 标志，来自注册表的
+   *  isEditablePath）——MUST NOT 在这里再按模式或扩展名判一次（M130 的保存死态根因正是
+   *  两处各持一份判据）。 */
   function saveBaseline(path: string): string | null {
     const session = sessionOf(path);
-    if (session === undefined || session.mode !== "md") return null;
+    if (session === undefined || !session.editable) return null;
     return revisions.get(path) ?? null;
   }
 
@@ -240,7 +276,7 @@ export function createSaveController(deps: SaveControllerDeps): SaveController {
    *  动作——当前唯一调用点是打开文件时前台是**未命名文档**：它没有路径，内容只活在内存
    *  里，被复用掉就等于丢弃；有文件路径的前台标签之间是标签切换，不丢内容，因此不设守卫。
    *
-   *  无落盘基准的 dirty（未打开文件 / 非 md / 未登记 revision，M130）不能沿用
+   *  无落盘基准的 dirty（未打开文件 / 不可编辑文件类 / 未登记 revision）不能沿用
    *  「请先保存（Cmd+S）」——那是一条走不通的建议；改指撤销修改，给出真正的出口。 */
   function guard(action: string): boolean {
     const path = displayedPath();
@@ -253,7 +289,7 @@ export function createSaveController(deps: SaveControllerDeps): SaveController {
     if (!isDirty(path)) return true;
     const blocked = saveBaseline(path) === null
       ? `当前文档不支持保存，无法${action}；请按 Cmd+Z 撤销修改`
-      : `当前 Markdown 有未保存修改，无法${action}；请先保存（Cmd+S）`;
+      : `当前文档有未保存修改，无法${action}；请先保存（Cmd+S）`;
     toast(blocked).classList.add(SAVE_GUARD_TOAST_CLASS);
     return false;
   }
@@ -312,14 +348,17 @@ export function createSaveController(deps: SaveControllerDeps): SaveController {
   /** 手动 Cmd+S 不可达时的人话反馈（M130 兜底）：dirty 却无法保存时 MUST NOT 静默
    *  return——dirty 会锁死切换文件 / 切换 vault / 退出，静默失败把用户困在「提示让他
    *  按 Cmd+S，而 Cmd+S 无效」的死态。提示必须给出脱离 dirty 的动作（Cmd+Z 撤销）。
-   *  两种成因文案不同，按前台文档有没有路径分：没有路径（空态 / 新建文档）说明「修改
-   *  仍在编辑器内」，有路径（非 md，M130 方向 A）说明「只保存 Markdown」这条能力边界。
+   *
+   *  触发面（editable-non-md-files 收窄后）：已打开的可编辑文本类文件都登记了磁盘 revision，
+   *  所以真正可达的只有两种——没有打开文件（空态 / 新建文档），与「有路径但尚未读到快照 /
+   *  未登记基准」。前者的文案说「修改仍在编辑器内」，后者说「尚未可保存」。旧的
+   *  「Lumir 只保存 Markdown 文件」随非 md 可保存而废止（它现在是一句假话）。
    *  自动保存路径不调用本函数（每 2s 一次会砸提示），其跳过口径见 reconcile。 */
   function reportUnsaveable(path: string | undefined): void {
     toast(
       path === undefined
         ? "当前没有打开的文件，无法保存；修改仍在编辑器内（按 Cmd+Z 可撤销）"
-        : "当前文件不支持保存：Lumir 只保存 Markdown 文件；修改仍在编辑器内（按 Cmd+Z 可撤销）",
+        : "当前文件尚未可保存（未登记磁盘版本）；修改仍在编辑器内（按 Cmd+Z 可撤销）",
     ).classList.add(SAVE_GUARD_TOAST_CLASS);
   }
 
@@ -466,19 +505,28 @@ export function createSaveController(deps: SaveControllerDeps): SaveController {
     ], true);
   }
 
-  /** 另存为新文件：经 wikilink_create（后端 create_note，O_EXCL 语义不覆盖既有
-   * 文件）在同目录建「原名-恢复.md」，把内存内容写入后切过去；撞名自动加序号
-   * 重试（-2..-5，见 spec fs-io 的崩溃恢复 requirement）。
+  /** 另存为新文件：在同目录建恢复副本，把内存内容写入后切过去；撞名自动加序号
+   *  重试（-2..-5，见 spec fs-io 的崩溃恢复 requirement）。
+   *
+   *  副本名保留**原扩展名**（editable-non-md-files §3.8）：`note.txt` → `note-恢复.txt`、
+   *  无扩展名的 `LICENSE` → `LICENSE-恢复`。两条创建链路按文件类分派：
+   *  - md 走既有 `wikilink_create`（`[[原名-恢复]]`，create_target 拼 `.md`）——语义与
+   *    文案零改动；
+   *  - 非 md 文本走通用 `create_file`（显式路径，不拼 `.md`）——否则 `config.yaml` 会被
+   *    恢复成 `config-恢复.md`，错误的文件类型。
+   *  两条链路的写纪律同源（O_EXCL 不覆盖既有文件、补齐中间目录、vault 内路径校验）。
    *
    *  M149：就地替换前台标签（intent "current"）——另存的对象就是当前这份文档，
    *  原路径已被外部删除，没有理由为它再留一个标签。 */
   async function saveAsNewFile(fromPath: string): Promise<void> {
-    const stem = fromPath.slice(fromPath.lastIndexOf("/") + 1).replace(/\.(md|markdown)$/i, "");
     const content = contentOf(fromPath);
     if (content === null) return;
+    const markdown = fileClass(extensionOf(fromPath)) === "md";
     for (const suffix of ["", "-2", "-3", "-4", "-5"]) {
       try {
-        const { created } = await wikilinkCreate(fromPath, `[[${stem}-恢复${suffix}]]`);
+        const created = markdown
+          ? (await wikilinkCreate(fromPath, `[[${markdownRecoveryName(fromPath, suffix)}]]`)).created
+          : await createFile(recoveryCopyPath(fromPath, suffix));
         const snapshot = await fsReadSnapshot(created); // 空文件 revision 作 CAS 基准
         await documentSave(created, snapshot.revision, content);
         // 缓冲内容已落到新文件，本地 dirty 处置完毕——否则随后的就地替换会把
@@ -487,11 +535,12 @@ export function createSaveController(deps: SaveControllerDeps): SaveController {
         resumeAutosave(fromPath, "saved_as_new");
         // 旧路径的备份随内容迁走（旧文件已被外部删除，其备份不再可恢复）。
         void recoveryDiscard(fromPath).catch(() => {});
-        await deps.openFile(created, "md", "current");
+        await deps.openFile(created, "current");
         toast(`已另存为：${created}`, [], false, "success");
         return;
       } catch (e) {
-        if (isCommandError(e) && e.code === "wikilink_target_exists") continue;
+        // 撞名重试：md 链路与通用创建链路各有一个「已存在」错误码（其余错误直接报）。
+        if (isCommandError(e) && (e.code === "wikilink_target_exists" || e.code === "create_file_exists")) continue;
         toast(errorMessage(e));
         return;
       }
@@ -555,7 +604,8 @@ export function createSaveController(deps: SaveControllerDeps): SaveController {
   /** 分流（M124 + M127 + M149）：保存进行中的批次跳过——自身保存也产生事件，由
    *  reloadDocument 的 revision 比对丢弃；外部删除无法重载，只提示内容仍保留；
    *  dirty 时把选择权交给用户（sticky 浮条而非 modal，不打断打字）；未 dirty 自动
-   *  重载并提示。仅 md 模式：展示中的 md 才有内存修改可丢失。
+   *  重载并提示。判据是「已打开文档」——editable-non-md-files 后 md 与非 md 文本一视同仁
+   *（watch 事件本就不按扩展名过滤：只要它有会话可丢内容，就要处置）。
    *  M127：dirty 分流一律暂停自动保存——磁盘已有更新版本，自动保存不能硬冲 CAS。
    *  M149：判据与提示一律带路径——多标签下同一个浮条区要能说清是哪一份文档，
    *  且**后台标签同样处置**（旧实现只查 displayedPath，后台标签的变更会漏报）。 */
@@ -610,8 +660,8 @@ export function createSaveController(deps: SaveControllerDeps): SaveController {
 
   /** debounce 到期：自动保存一次；无法保存（暂停 / 未完全落盘）时把 dirty 内容
    * 落崩溃备份——进程崩溃 / 强杀后下次启动仍有内容可恢复。
-   * 无落盘基准（saveBaseline 为 null：非 md / 未登记 revision）直接返回：这类内容
-   * 没有任何保存路径能写回磁盘，备份只会在下次启动弹出一个无法闭环的恢复提示。 */
+   * 无落盘基准（saveBaseline 为 null：不可编辑文件类 / 未登记 revision）直接返回：这类
+   * 内容没有任何保存路径能写回磁盘，备份只会在下次启动弹出一个无法闭环的恢复提示。 */
   async function reconcile(path: string): Promise<void> {
     if (saveBaseline(path) === null || !isDirty(path)) return;
     if ((paused.get(path)?.size ?? 0) > 0 || saving.has(path)) {
@@ -625,10 +675,11 @@ export function createSaveController(deps: SaveControllerDeps): SaveController {
    *  基准 revision 取编辑器已知的磁盘 revision（saveBaseline 保证非 null），它是
    *  恢复侧判定「备份之后磁盘是否被外部修改」的唯一依据。
    *
-   *  M130 显式跳过无落盘基准的 dirty 内容（非 md / 未登记 revision）：备份的唯一用途
-   *  是经恢复入口把内容写回磁盘，而写回必须走保存链路（要求 md 模式 + CAS 基准）——
-   *  为这类内容写备份只会留下一个无法闭环的恢复提示。这是显式裁决，不是「静默没有
-   *  备份」：决策记录见 openspec change non-md-readonly-open。 */
+   *  M130 显式跳过无落盘基准的 dirty 内容（不可编辑文件类 / 未登记 revision）：备份的唯一
+   *  用途是经恢复入口把内容写回磁盘，而写回必须走保存链路（CAS 基准）——为这类内容写备份
+   *  只会留下一个无法闭环的恢复提示。这是显式裁决，不是「静默没有备份」：决策记录见
+   *  openspec change non-md-readonly-open，触发面经 editable-non-md-files 收窄（已打开的非
+   *  md 文本文件均登记磁盘 revision，天然进入备份路径，不再是本条款的触发面）。 */
   async function backupDirty(path: string): Promise<void> {
     const revision = saveBaseline(path);
     const content = contentOf(path);
@@ -690,7 +741,7 @@ export function createSaveController(deps: SaveControllerDeps): SaveController {
       toast(errorMessage(e));
       return;
     }
-    await deps.openFile(path, "md", "current");
+    await deps.openFile(path, "current");
     const session = sessionOf(path);
     if (session === undefined || saveBaseline(path) === null) return; // 切换被守卫拦下 / 未装载
     revisions.set(path, baseRevision ?? UNKNOWN_BASE_REVISION);

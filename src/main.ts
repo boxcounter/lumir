@@ -58,7 +58,7 @@ import type { FsEntry } from "./bindings/FsEntry";
 import type { UiTheme } from "./bindings/UiTheme";
 import type { VaultInfo } from "./bindings/VaultInfo";
 import type { VaultListEntry } from "./bindings/VaultListEntry";
-import { codeLanguage, extensionOf, mimeTypeOf, resolveByNameUnique } from "./preview/attachments";
+import { codeLanguage, extensionOf, isEditablePath, mimeTypeOf, resolveByNameUnique } from "./preview/attachments";
 import { openSearch } from "./search";
 import "./style.css";
 // 搜索 panel 的样式单列一个文件（M139）：与并行 mission 的 src/style.css 隔离，
@@ -221,9 +221,10 @@ const save = createSaveController({
   container: shell.editor,
   toast,
   // intent 原样转发：装配层是唯一知道「落到哪个标签」的地方（save-controller 只在
-  // 另存为新文件 / 恢复崩溃备份两条链路上指定 "current"）。
-  openFile: async (path, kind, intent) => {
-    await openFile(path, kind, intent);
+  // 另存为新文件 / 恢复崩溃备份两条链路上指定 "current"）。kind 也在这里现取——
+  // 落点路径已确定，分类归扩展名注册表（`openKind`），save-controller 不持第二份判据。
+  openFile: async (path, intent) => {
+    await openFile(path, openKind(path), intent);
   },
   invalidateResolve: () => linkFollow.invalidate(),
   showEditor: () => showEditor(),
@@ -414,9 +415,13 @@ function afterLoad(): void {
 }
 
 // 打开文件：读出文本交给内核装载——模式裁决（以扩展名注册表为唯一事实源：
-// .md/.markdown → md 模式；其余已打开的文件一律只读 code，含未知扩展与 basename
+// .md/.markdown → md 模式；其余已打开的文件一律 code，含未知扩展与 basename
 // 无点的文件，M130 方向 A）和附件相对路径解析依赖的 currentFilePath 都在内核里完成
 //（spec「模式配置来源」）。不支持的二进制 → 提示而非报错弹窗。
+//
+// 可编辑性同源于注册表（editable-non-md-files）：md / code / text 三类进可编辑 code/md
+// 模式并登记磁盘 revision；image/binary 按 kind 在下面提前分流（fileClass 的 image/binary
+// 两类的 openKind 都是 "binary"），因此不在这里重复判定。
 //
 // 落点由 intent 决定（M149，Alex 已裁决）：
 //   - 文档内链接跟随 / 另存为新文件 / 恢复备份 → "current"（**默认值**）：当前标签跟随
@@ -464,9 +469,10 @@ async function openFile(
     if (!save.isCurrent(request)) return false;
     // 守卫复查：请求在途期间前台可能已经换过（并发打开 / 用户切走）。
     if (editor.activeSession().path === undefined && !save.guard("切换文件")) return false;
-    // 只有 md 进保存链路（登记磁盘 revision）；非 md 以只读 code 模式打开，不存在
-    // dirty，也不该被任何保存入口接受（M130）。
-    save.noteOpened(path, kind === "md" ? snapshot.revision : undefined);
+    // 可编辑文本类（注册表 md/code/text）进保存链路并登记磁盘 revision——dirty 有真实
+    // 出口（Cmd+S / 自动保存 / 冲突恢复 / 崩溃备份全部可达，editable-non-md-files 裁决 D3）。
+    // 判据取 isEditablePath（与编辑器会话的 editable 标志同源同一真源），MUST NOT 另写集合。
+    save.noteOpened(path, isEditablePath(path) ? snapshot.revision : undefined);
     const session = tabs.targetSessionFor(intent);
     tabs.activateTab(session); // 已在同一会话上时是 no-op
     // 解析缓存整批失效必须在装载**之前**（save-controller.ts 外部重载路径的同序写法）：
@@ -505,7 +511,7 @@ window.addEventListener("beforeunload", (event) => {
   // 判据是「任一标签有未保存修改」：多标签下只看前台文档会让后台标签的修改被静默丢弃。
   if (!editor.sessions().some((session) => session.dirty)) return;
   event.preventDefault();
-  event.returnValue = "当前 Markdown 有未保存修改";
+  event.returnValue = "当前有未保存修改";
 });
 
 // ---------------------------------------------------------------------------

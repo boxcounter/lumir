@@ -429,7 +429,9 @@ test("§7-6 code 模式 + 折行关闭：纵向与横向偏移一起还原", asy
   await stubTauri(page, { ...fixture(), config: { line_wrap: false } });
   await page.goto("/");
   await open(page, "long.txt", "// 第 001 行");
-  await expect(page.locator(".cm-content")).toHaveAttribute("contenteditable", "false");
+  // 非 md 文本自 editable-non-md-files 起可编辑（M130 的只读口径已解除）；本用例钉的
+  // 是 code 模式的横向/纵向恢复，前置形态改为「已进编辑器」。
+  await expect(page.locator(".cm-content")).toHaveAttribute("contenteditable", "true");
 
   // 横向可平移的前提：正文比容器宽（实测记录这两条，不假定）
   const widths = await page.evaluate(() => {

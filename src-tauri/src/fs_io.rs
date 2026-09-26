@@ -5,7 +5,8 @@
 //! 类型——watch 以 `impl Fn(Vec<FsChange>)` 回调交付纯数据，由 commands 层
 //! 决定如何 emit 成 `fs:entry_changed` 事件。
 //!
-//! Markdown 文档保存使用同目录临时文件替换目标；其它文件仍只读。
+//! 文本文档保存使用同目录临时文件替换目标：可保存面是注册表全部文本类（md / code / text
+//! 三族，editable-non-md-files 起），image/binary 类扩展名被拒绝（见 [`save_document`]）。
 //! 枚举路径顺带惰性清除超龄的跨进程保存 tmp ghost（磁盘隐形累积治理，
 //! 阈值见 [`GHOST_TMP_MAX_AGE`]，在途写入不受影响）。
 
@@ -22,7 +23,7 @@ use crate::commands::CommandError;
 /// 硬编码忽略集（裁决点 C）：一等公民的是文件类型，不是 VCS 内部目录。
 /// `.git` 含数万对象文件，枚举它会直接威胁性能合同（ADR 0002 §6）。
 /// 枚举与 watch 共用此集合；本 change 内不可配置。保存临时文件
-/// （`.{name}.lumir-{pid}`，见 [`save_markdown`]）经 `is_ignored` 的模式
+/// （`.{name}.lumir-{pid}`，见 [`save_document`]）经 `is_ignored` 的模式
 /// 规则一并忽略：进程崩溃会留下 ghost，ghost 不进文件树、不产生 watch 事件。
 pub const IGNORED_NAMES: [&str; 3] = [".git", ".DS_Store", "node_modules"];
 
@@ -339,18 +340,49 @@ pub fn read_text_snapshot(root: &Path, rel: &str) -> Result<(String, String), Co
     Ok((content, revision))
 }
 
-pub fn save_markdown(
+/// `document_save` 拒绝保存的扩展名（image / binary 两类，升序）。
+///
+/// **事实源是前端的 `src/preview/attachments.ts` 注册表**（image MIME 键 + 二进制扩展名
+/// 两张表），本表是 Rust 侧的第二份——为的是「前端 bug 不得把内存内容写进图片/二进制路径」
+/// 这条后端防线（M130 起有，editable-non-md-files 把 md 白名单换成这张拒绝清单）。
+/// 两侧逐项对账的机器检查在 `tests/unit/registry-drift.test.ts`：它读本文件、解析本表、
+/// 与注册表求差集，任一侧漂移即红（REVIEW.md 第 8 条——同一语义两处真源、改动只落一处）。
+/// 改本表之前先改注册表。
+const SAVE_REJECTED_EXTENSIONS: [&str; 47] = [
+    "7z", "app", "avi", "avif", "bmp", "class", "db", "dll", "dmg", "doc", "docx", "dylib", "exe",
+    "fig", "flac", "gif", "gz", "heic", "icns", "ico", "jar", "jpeg", "jpg", "mkv", "mov", "mp3",
+    "mp4", "otf", "pdf", "png", "ppt", "pptx", "rar", "sketch", "so", "sqlite", "svg", "tar",
+    "ttf", "wasm", "wav", "webp", "woff", "woff2", "xls", "xlsx", "zip",
+];
+
+/// 路径的扩展名（小写、不含点）；basename 无点（`LICENSE`/`Makefile`）返回空串——与
+/// `src/preview/attachments.ts` 的 `extensionOf` 同口径（只按 basename 里最后一个点切分，
+/// dotfile `.gitignore` 因此得到 `gitignore`）。
+fn extension_of(rel: &str) -> String {
+    let base = rel.rsplit('/').next().unwrap_or(rel);
+    match base.rfind('.') {
+        Some(dot) => base[dot + 1..].to_ascii_lowercase(),
+        None => String::new(),
+    }
+}
+
+/// 保存 vault 内文本文档：原子替换 + revision CAS。
+///
+/// 可保存面（editable-non-md-files，裁决 D1/D3）= 注册表全部文本类：`.md`/`.markdown`、
+/// 已知代码扩展、未收录扩展、dotfile 与 basename 无点的文件——即除 image/binary 之外的一切。
+/// 守卫从 md 白名单翻转为**拒绝清单**（[`SAVE_REJECTED_EXTENSIONS`]）：image/binary 类扩展名
+/// 返回 `fs_read_only`，MUST NOT 写入任何字节。（原函数名 `save_markdown` 随语义放宽改为
+/// `save_document`；command 名 `document_save` 本来就叫 document，前端 IPC 零改动。）
+pub fn save_document(
     root: &Path,
     rel: &str,
     expected_revision: &str,
     content: &str,
 ) -> Result<String, CommandError> {
-    if !rel.to_ascii_lowercase().ends_with(".md")
-        && !rel.to_ascii_lowercase().ends_with(".markdown")
-    {
+    if SAVE_REJECTED_EXTENSIONS.contains(&extension_of(rel).as_str()) {
         return Err(CommandError::new(
             "fs_read_only",
-            "仅支持保存 Markdown 文件",
+            "不支持保存该文件类型（图片 / 二进制文件）",
         ));
     }
     let target = resolve_in_vault(root, rel)?;
@@ -367,7 +399,7 @@ pub fn save_markdown(
     let name = target
         .file_name()
         .and_then(|n| n.to_str())
-        .unwrap_or("document.md");
+        .unwrap_or("document");
     let tmp = parent.join(format!(".{name}.lumir-{}", std::process::id()));
     // create_new 撞上同名文件 = 上次保存进程崩溃留下的 ghost（tmp 名含自身
     // pid，活着的进程互不挡道）：删除 ghost 重试一次；再失败才是真错误。
@@ -921,16 +953,75 @@ mod tests {
     }
 
     #[test]
-    fn markdown_save_checks_revision_and_replaces_atomically() {
+    fn document_save_checks_revision_and_replaces_atomically() {
         let v = TempVault::with_fixture();
         let revision = file_revision(&v.0, "note.md").unwrap();
-        let next = save_markdown(&v.0, "note.md", &revision, "# changed").unwrap();
+        let next = save_document(&v.0, "note.md", &revision, "# changed").unwrap();
         assert_ne!(revision, next);
         assert_eq!(read_text_file(&v.0, "note.md").unwrap(), "# changed");
-        let err = save_markdown(&v.0, "note.md", &revision, "stale").unwrap_err();
+        let err = save_document(&v.0, "note.md", &revision, "stale").unwrap_err();
         assert_eq!(err.code, "document_conflict");
-        let err = save_markdown(&v.0, "main.rs", &next, "nope").unwrap_err();
-        assert_eq!(err.code, "fs_read_only");
+    }
+
+    /// 裁决 D1 的落点：可保存面 = 注册表全部文本类（md / 代码扩展 / 未收录扩展 /
+    /// 无扩展名），image/binary 类被拒。拒绝清单是 Rust 侧第二份表，与
+    /// `src/preview/attachments.ts` 的对账在 tests/unit/registry-drift.test.ts。
+    #[test]
+    fn document_save_allows_text_classes_and_rejects_image_binary() {
+        let v = TempVault::with_fixture();
+        // 文本类全部放行，且真的原子替换落盘
+        for rel in ["note.md", "main.rs", "LICENSE", "sub/deep/a.txt"] {
+            let revision = file_revision(&v.0, rel).unwrap();
+            let next = save_document(&v.0, rel, &revision, "edited").unwrap();
+            assert_ne!(revision, next, "{rel} 保存后 revision 应变");
+            assert_eq!(read_text_file(&v.0, rel).unwrap(), "edited", "{rel} 应落盘");
+        }
+        // image / binary 类被拒——且**发生在任何 IO 之前**（这些路径在 fixture 里不存在，
+        // 若守卫晚于 resolve_in_vault 就会返回 fs_not_found 而不是 fs_read_only）
+        for rel in [
+            "pic.png",
+            "logo.jpg",
+            "manual.pdf",
+            "bundle.zip",
+            "song.mp3",
+        ] {
+            let err = save_document(&v.0, rel, "any", "nope").unwrap_err();
+            assert_eq!(err.code, "fs_read_only", "{rel} 必须被拒");
+        }
+    }
+
+    /// 拒绝清单的判定只按 basename 的最后一个点切分（与 attachments.ts 的 extensionOf 同口径）：
+    /// 目录名里的点 / 大小写 / dotfile 都不能骗过守卫，也不能误伤文本类。
+    #[test]
+    fn document_save_extension_classification_matches_registry_rules() {
+        let v = TempVault::with_fixture();
+        // 大小写不敏感（.PNG 同样是图片）
+        assert_eq!(
+            save_document(&v.0, "pic.PNG", "any", "x").unwrap_err().code,
+            "fs_read_only"
+        );
+        // 扩展名只看 basename：目录名含 .png 不构成拒绝理由
+        std::fs::create_dir_all(v.0.join("a.png")).unwrap();
+        std::fs::write(v.0.join("a.png/notes"), "orig").unwrap();
+        let revision = file_revision(&v.0, "a.png/notes").unwrap();
+        assert!(save_document(&v.0, "a.png/notes", &revision, "ok").is_ok());
+        // dotfile 的「扩展名」是点后整串（.gitignore → gitignore），未收录即文本类
+        std::fs::write(v.0.join(".gitignore"), "orig").unwrap();
+        let revision = file_revision(&v.0, ".gitignore").unwrap();
+        assert!(save_document(&v.0, ".gitignore", &revision, "ok").is_ok());
+    }
+
+    #[test]
+    fn document_save_recovers_from_stale_ghost_tmp() {
+        let v = TempVault::with_fixture();
+        // 预置与本次保存同名的 ghost（同 pid）：create_new 撞车须删除后重试成功
+        let ghost = v.0.join(format!(".note.md.lumir-{}", std::process::id()));
+        std::fs::write(&ghost, "stale ghost").unwrap();
+        let revision = file_revision(&v.0, "note.md").unwrap();
+        let next = save_document(&v.0, "note.md", &revision, "# recovered").unwrap();
+        assert_ne!(revision, next);
+        assert_eq!(read_text_file(&v.0, "note.md").unwrap(), "# recovered");
+        assert!(!ghost.exists(), "ghost 应已被删除重试清理");
     }
 
     #[test]
@@ -946,19 +1037,6 @@ mod tests {
             "paths: {paths:?}"
         );
         assert!(paths.contains(&".hidden.conf"), "paths: {paths:?}");
-    }
-
-    #[test]
-    fn markdown_save_recovers_from_stale_ghost_tmp() {
-        let v = TempVault::with_fixture();
-        // 预置与本次保存同名的 ghost（同 pid）：create_new 撞车须删除后重试成功
-        let ghost = v.0.join(format!(".note.md.lumir-{}", std::process::id()));
-        std::fs::write(&ghost, "stale ghost").unwrap();
-        let revision = file_revision(&v.0, "note.md").unwrap();
-        let next = save_markdown(&v.0, "note.md", &revision, "# recovered").unwrap();
-        assert_ne!(revision, next);
-        assert_eq!(read_text_file(&v.0, "note.md").unwrap(), "# recovered");
-        assert!(!ghost.exists(), "ghost 应已被删除重试清理");
     }
 
     #[test]
@@ -1010,7 +1088,7 @@ mod tests {
         std::thread::sleep(Duration::from_millis(500));
         // 一次完整保存 = tmp 创建 + rename 替换：事件流只许出现目标文件
         let revision = file_revision(&v.0, "note.md").unwrap();
-        save_markdown(&v.0, "note.md", &revision, "# via save").unwrap();
+        save_document(&v.0, "note.md", &revision, "# via save").unwrap();
 
         let batch = rx
             .recv_timeout(Duration::from_secs(5))

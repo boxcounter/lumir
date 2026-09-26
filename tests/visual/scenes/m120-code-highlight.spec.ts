@@ -35,7 +35,7 @@ async function tokenColor(page: import("@playwright/test").Page, token: string):
   }, token);
 }
 
-test("打开 .ts 文件：关键字/字符串/数字 token 着色且编辑器保持只读", async ({ page }) => {
+test("打开 .ts 文件：关键字/字符串/数字 token 着色且编辑器可编辑", async ({ page }) => {
   await stubTauri(page, {
     entries: [{ path: "util.ts", kind: "file", size: TS_DOC.length, mtime_ms: 0 }],
     files: { "util.ts": TS_DOC },
@@ -43,10 +43,11 @@ test("打开 .ts 文件：关键字/字符串/数字 token 着色且编辑器保
   await page.goto("/");
   await page.locator('.ft-row[title="util.ts"]').click();
 
-  // 只读合同（M97/M101）：contenteditable 摘除、aria-readonly、code 模式带行号 gutter
+  // 可编辑合同（editable-non-md-files）与 code 模式特征：contenteditable 在场、
+  // 无 aria-readonly 只读态、带行号 gutter。M97/M101 的只读合同已随本 change 解除。
   const content = page.locator(".cm-content");
-  await expect(content).toHaveAttribute("contenteditable", "false");
-  await expect(content).toHaveAttribute("aria-readonly", "true");
+  await expect(content).toHaveAttribute("contenteditable", "true");
+  await expect(content).toHaveAttribute("aria-readonly", "false");
   await expect(page.locator(".cm-gutters")).toHaveCount(1);
 
   // 高亮 token（expect.poll 等语法树推进）：关键字/字符串/数字分别取主题语义色
@@ -54,10 +55,13 @@ test("打开 .ts 文件：关键字/字符串/数字 token 着色且编辑器保
   await expect.poll(() => tokenColor(page, '"node:crypto"')).toBe(LIGHT.string);
   await expect.poll(() => tokenColor(page, "42")).toBe(LIGHT.number);
 
-  // 输入被拒收，文档内容不变
+  // 输入进文档（editable-non-md-files 翻转了旧断言「输入被拒收」）：回读文档文本判据，
+  // 属性在场不等于按键能进文档（REVIEW.md 第 1 条的假可编辑形态）。
   await content.click({ position: { x: 100, y: 60 } });
   await page.keyboard.type("XYZ");
-  expect(await readDocument(page)).toBe(TS_DOC);
+  const edited = await readDocument(page);
+  expect(edited).not.toBe(TS_DOC);
+  expect(edited).toContain("XYZ");
 });
 
 test("打开 .json 文件：键取属性色、与字符串值分色，数字与 bool 仍取字面量色", async ({ page }) => {
@@ -81,7 +85,9 @@ test("打开 .json 文件：键取属性色、与字符串值分色，数字与 
   });
   await page.goto("/");
   await page.locator('.ft-row[title="config.json"]').click();
-  await expect(page.locator(".cm-content")).toHaveAttribute("contenteditable", "false");
+  // 可编辑合同（editable-non-md-files）：非 md 的 code 会话不再只读
+  await expect(page.locator(".cm-content")).toHaveAttribute("contenteditable", "true");
+  await expect(page.locator(".cm-content")).toHaveAttribute("aria-readonly", "false");
   // legacy javascript(json) mode 把键标成复合 token `string property`：property 由
   // JSON_TOKEN_TABLE（preview/code.ts，editor.ts 同源 import）解析成 tags.propertyName，
   // 键因此同时带 string 与 propertyName 两个 tag。HighlightStyle 的条目序即优先级——
