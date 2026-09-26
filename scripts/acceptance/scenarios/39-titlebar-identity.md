@@ -9,8 +9,9 @@ steps:
   - name: 标识块在场：产品名与版本号（值从 tauri.conf.json 读入，不硬编码）
     do: settle
     expect:
-      - label: AX 树含产品名（$appName = tauri.conf.json 的 productName）
-        ax: { has: "$appName" }
+      - label: 标识块整体上屏——产品名与版本号落在同一个 AX 文本节点内（真机实测 WKWebView 把三段
+          合并成一个静态文本「Lumir 0.0.0」；分隔符 aria-hidden 不出现，故此处按「相邻」判而非按「·」判）
+        ax: { has: "/$appName[^\\n]{0,4}$appVersion/" }
       - label: AX 树含版本号（$appVersion = tauri.conf.json 的 version，逐字节比对靠占位符代入保证）
         ax: { has: "$appVersion" }
       - label: 宽窗下 modeline 右段不带版本号（展示位互斥：版本号在标题栏）
@@ -25,8 +26,9 @@ steps:
         window: { width: 520 }
       - label: modeline 右段拼出版本号（「… UTF-8 · $appVersion」形态）
         ax: { has: "/UTF-8 · $appVersion/" }
-      - label: 产品名仍留标题栏（退让只拆版本号）
-        ax: { has: "$appName" }
+      - label: 版本号与产品名已拆开——没有任何 AX 文本节点同时含两者（该断言在宽窗下必须 FAIL，
+          实测过：宽窗 dump 的「Lumir 0.0.0」节点会让它命中）
+        ax: { not: "/$appName[^\\n]{0,4}$appVersion/" }
       - shot: 标识块-窄窗520-退让
 
   - name: 拉宽恢复：回到 1200，版本号回标题栏、modeline 右段恢复原状
@@ -37,8 +39,8 @@ steps:
         window: { width: 1200 }
       - label: modeline 右段不再带版本号
         ax: { not: "/UTF-8 · $appVersion/" }
-      - label: 版本号回到标题栏（AX 仍含版本号字形）
-        ax: { has: "$appVersion" }
+      - label: 版本号回到标题栏——产品名与版本号重新合体在同一 AX 文本节点内
+        ax: { has: "/$appName[^\\n]{0,4}$appVersion/" }
       - shot: 标识块-恢复宽窗
 
   - name: 标识块上按下拖拽窗口成立（drag region 不被标识块阻断）
@@ -89,9 +91,17 @@ steps:
 
 ## 已知边界
 
-- **AX 树里版本号的落位粒度**：WKWebView 把三段 span 暴露为独立静态文本节点（分隔符「·」
-  标了 aria-hidden 不出现），「版本号在标题栏还是 modeline」的区分靠 `/UTF-8 · $appVersion/`
-  这条拼接断言（该串只可能由 modeline 右段产生——标题栏里「·」被 aria-hidden，拼不出它）。
+- **AX 树里标识块的粒度（真机实测，2026-09-26）**：WKWebView 把标题栏的
+  `ti-name / ti-sep / ti-version` 三段**合并成一个静态文本节点**（宽窗 dump：`AXStaticText = "Lumir 0.0.0"`；
+  分隔符「·」标了 `aria-hidden` 不出现，三段之间只剩一个空格）。modeline 侧同理：路径、meta、
+  版本号被并成一个节点（窄窗 dump：`AXStaticText = "identity.md Markdown · 8 行 · UTF-8 · 0.0.0"`）。
+  因此「版本号在标题栏还是 modeline」只能靠两条互补判据定位：`has "/UTF-8 · $appVersion/"`
+  （该串只可能由 modeline 右段产生）与 `has "/$appName[^\n]{0,4}$appVersion/"`
+  （两者相邻 = 合体在标题栏）——两条在宽 / 窄窗下取值相反，互为反向输入。
+- **`AX 树含产品名` 这类子串断言在这里没有区分度**（REVIEW.md 第 1 条）：窗口标题是「Lumir」，
+  AX dump 里 `AXApplication "Lumir"` / `AXWindow "Lumir"` / `AXWebArea (Lumir)` / 菜单项都不来自标识块，
+  所以「含 Lumir」在标识块整个隐藏时照样 PASS——ACL 漏配那一轮实测正是如此（版本号四条断言全红、
+  产品名断言照绿）。本场景因此改成上面两条互补判据，MUST NOT 退回 `has: "$appName"` 形态。
 - **configWrite 重启后不重开文档**：主题三步只断言标识块在场（它不属于任何文档），
   编辑器内容不是本场景的判据面。
 - **resizeWindow 的生效值以窗口管理器为准**：若将来给窗口配 min-width 且 >520，本场景的

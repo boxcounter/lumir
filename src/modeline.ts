@@ -73,24 +73,12 @@ export interface TitlebarIdentity {
   show(meta: AppMeta): void;
   /** 元信息读取失败：标识块整体隐藏（宁可不显示，不显示假版本号）。 */
   fail(): void;
-  /** 卸下宽窄监听（装配层长期持有，正常不调用；留给测试与热重载）。 */
-  detach(): void;
 }
 
-/** 宽窄判定的最小接口——生产是 window.matchMedia 的结果，测试注入假 query。 */
-export interface NarrowQuery {
-  matches: boolean;
-  addEventListener(type: "change", listener: () => void): void;
-  removeEventListener(type: "change", listener: () => void): void;
-}
-
-/** 把视图模型应用到 DOM，并监听窗口宽窄变化（matchMedia，零轮询）。 */
-export function createTitlebarIdentity(
-  dom: IdentityDom,
-  query?: NarrowQuery,
-): TitlebarIdentity {
-  const mq: NarrowQuery =
-    query ?? window.matchMedia(`(max-width: ${IDENTITY_NARROW_PX - 1}px)`);
+/** 把视图模型应用到 DOM，并监听窗口宽窄变化（matchMedia，零轮询）。
+ *  监听器随窗口存活、不卸下：标识块与 app 同生命周期，装配层没有卸载时机。 */
+export function createTitlebarIdentity(dom: IdentityDom): TitlebarIdentity {
+  const mq = window.matchMedia(`(max-width: ${IDENTITY_NARROW_PX - 1}px)`);
   let meta: AppMeta | null = null;
   const apply = (): void => {
     const view = identityView(meta, mq.matches);
@@ -113,9 +101,6 @@ export function createTitlebarIdentity(
     fail() {
       meta = null;
       apply();
-    },
-    detach() {
-      mq.removeEventListener("change", apply);
     },
   };
 }
