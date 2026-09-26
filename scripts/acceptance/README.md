@@ -41,6 +41,22 @@ runner 在启动前做预检，不满足直接退出且不产生半截证据：
 的前台归属；**拿不到前台就报 FAIL**，不静默跳过、也不改用 `set_value` 伪造键盘语义（`set_value`
 不经键位分发链路，验不到 `keys.ts`）。副作用：跑套件期间 Lumir 窗口会到前台。
 
+**启动实例的窗口形态自检**（M236，修 backlog:366）：`waitAppReady` 每次就绪（含 `restart` 后重启）
+都反查一遍「webview 铺满整窗」——`AXScrollArea` 的顶边与高度对 `AXWindow` 的差 ≤4px。不是 overlay
+就报 FAIL 并点名成因。
+
+为什么要有这条：套件用 `pnpm tauri dev --config '<json>'` 覆写窗口位置，而 tauri 的 `--config` 是
+深合并、**数组按下标整体替换**——`app.windows[0]` 会被传进去的对象整根替掉。早先这里手抄
+`title/width/height`，`titleBarStyle: "Overlay"` 与 `hiddenTitle: true` 因此被**静默**丢掉：套件实例
+长出原生标题栏（窗口多一行、webview 让出 32pt、屏幕上还出现窗口标题「Lumir」），**全程零报错**，
+于是「真机验证窗口级配置」这一类断言在套件里永远验不到（M213 实测对照见
+`test-results/m213/titlebar/readings.md` §4；M236 的修前/修后对照见
+`test-results/m236/baseline-review/backlog366-before-after/`）。
+
+配置侧的纪律：`lib/app.mjs` 的 `launchApp` **从 `src-tauri/tauri.conf.json` 读 `app.windows[0]` 原件
+再 spread**（窗口配置只有一份真源，REVIEW.md 第 8 条），只叠 `x/y/focus`。读不到窗口对象就抛错，
+不回落手抄一份——回到手抄就是回到这个坑。**新增窗口级配置键时不需要改本套件**。
+
 **磁盘水位绕过**：`LUMIR_ACCEPTANCE_ALLOW_LOW_DISK=1` 可越过 2G 阈值，**只在 target 已热、本次不会
 触发 Rust 重编**（实际磁盘需求仅几 MB）时使用；绕过会写进 run.log 留痕，不静默。
 

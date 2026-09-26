@@ -107,3 +107,28 @@ D3 采纳），本清单已按裁决改写。**
   故本 change **不 archive**（按裁决要求不强行 archive）。
   「登记进 `docs/backlog.md`」这一动作**超出本 mission 的 scope**（scope 不含 `docs/`），
   已按协议改为发 finding 交 tower 处置，不越界改文件。
+
+## 5. 验收套件 harness 修复（M236 执行期追加，tower 2026-09-26 裁决）
+
+- [x] 5.1 修 `scripts/acceptance/lib/app.mjs` 的 `--config` 覆盖丢掉 `app.windows[0]` 窗口级配置
+  （backlog.md 待修 findings 的 medium 条，M213 登记）：tauri 的 `--config` 是深合并但**数组按下标
+  整体替换**，原先手抄 `title/width/height` 让 `titleBarStyle: "Overlay"` / `hiddenTitle: true`
+  被静默吃掉，套件实例因此长原生标题栏（窗口多一行）。
+  改法：从 `src-tauri/tauri.conf.json` 读 `app.windows[0]` 原件再 spread（窗口配置单一真源，
+  REVIEW.md 第 8 条），只叠 `x/y/focus`；读不到窗口对象直接抛错，不回落手抄。
+- [x] 5.2 补运行期反查自检 `assertOverlayChrome`（`lib/drive.mjs`，接在 `waitAppReady` 的就绪点上，
+  `restart` 后重启同样过）：`AXScrollArea` 顶边与高度对 `AXWindow` 的差 >4px 即 FAIL 并点名成因。
+
+  反向输入实测（REVIEW.md 第 1 条）：把 `windows` 临时改回手抄写法跑场景 39 →
+  自检报 `AXWindow 1200×800 @0` vs `AXScrollArea 1200×768 @32`（顶边差 32、高度差 32），
+  场景 FAIL（`test-results/m236/reverse-probe-backlog366-buggy-config.log`）；
+  改回 spread 后场景 39 **1/1 PASS**（`acceptance-39-backlog366-fixed.log`），
+  AX 读数 `AXScrollArea @0,0 1152×768` 与窗口重合（修前是 `@0,31 1152×737`）。
+- [x] 5.3 文档：`scripts/acceptance/README.md` 的「起实例前的环境纪律」节补「启动实例的窗口形态
+  自检」与配置侧纪律（新增窗口级键不需要改套件）。
+
+  判据达成情况（tower 验收口径「套件起实例后截图/AX 确认无原生标题栏行」）：截图与 AX 双证据见
+  `test-results/m236/baseline-review/backlog366-before-after/`（修前两行 / 修后单行，红灯叠在
+  tab 栏上）。
+  **残留**：backlog.md 那一条的**核销动作**同样落在 scope 之外（`docs/` 不在 scope globs 内），
+  与 §4.1 一并发 finding 交 tower 处置，本 change 不越界改 `docs/backlog.md`。
