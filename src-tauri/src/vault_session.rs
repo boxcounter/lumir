@@ -1,7 +1,7 @@
 //! 按 vault 的标签会话持久化（change multi-vault-workspaces，design §2/§3）。
 //!
 //! **为什么与注册项分开存放**（design §2）：注册项文件是身份（id ↔ path，remap 的锚点），
-//! 它的读取路径对解析失败一律跳过（`workspaces.rs` 的三处读取）——把易变的界面状态混进
+//! 它的读取路径对解析失败一律跳过（`vault_registry.rs` 的三处读取）——把易变的界面状态混进
 //! 身份文件，一次会话写坏就会升级成「vault 从列表与 remap 候选中消失」。会话单独落在
 //! `vault-sessions/<id>.json` 后，损坏的最大后果只是「没有标签历史」。
 //!
@@ -13,7 +13,7 @@
 //! **生命周期**：注册项只归档不删除，会话文件不参与注册表治理（`sweep_registry` 不碰它），
 //! 也不做删除；孤儿文件只可能来自手工操作，属无害残留。
 
-use crate::{commands::CommandError, config, workspaces};
+use crate::{commands::CommandError, config, vault_registry};
 use serde::{Deserialize, Serialize};
 use std::{
     fs,
@@ -109,7 +109,7 @@ pub(crate) fn valid_entry(entry: &str) -> bool {
     })
 }
 
-/// 落盘（目录可注入）：tmp + rename 原子替换，与注册项落盘（`workspaces::write_entry`）
+/// 落盘（目录可注入）：tmp + rename 原子替换，与注册项落盘（`vault_registry::write_entry`）
 /// 同纪律。返回 io::Result——降级语义由调用方给（见 [`vault_session_put`]）。
 fn save_to(dir: &Path, id: &str, session: &VaultSession) -> std::io::Result<()> {
     fs::create_dir_all(dir)?;
@@ -124,7 +124,7 @@ fn save_to(dir: &Path, id: &str, session: &VaultSession) -> std::io::Result<()> 
 /// 读某 vault 的标签会话；无历史返回 null（不是错误——首次打开 / 损坏 / 版本不匹配都走这条路）。
 #[tauri::command(rename_all = "snake_case")]
 pub fn vault_session_get(vault_id: String) -> Result<Option<VaultSession>, CommandError> {
-    workspaces::valid_id(&vault_id)?;
+    vault_registry::valid_id(&vault_id)?;
     Ok(load_from(&sessions_dir()?, &vault_id))
 }
 
@@ -132,7 +132,7 @@ pub fn vault_session_get(vault_id: String) -> Result<Option<VaultSession>, Comma
 ///
 /// 写失败返回 `Ok(())` 并记 warning——与 `last_vault` 写失败同口径（M127），MUST NOT 拦停
 /// 切换与打开：会话只影响「下次打开这个 vault 时恢复什么」，不值得让用户的一次切换失败。
-/// 只有 `vault_id` 非法才返回错误信封：id 是文件名，这是路径逃逸防护（`workspaces::valid_id`），
+/// 只有 `vault_id` 非法才返回错误信封：id 是文件名，这是路径逃逸防护（`vault_registry::valid_id`），
 /// 不是写失败。
 #[tauri::command(rename_all = "snake_case")]
 pub fn vault_session_put(
@@ -140,14 +140,14 @@ pub fn vault_session_put(
     tabs: Vec<String>,
     active: Option<String>,
 ) -> Result<(), CommandError> {
-    workspaces::valid_id(&vault_id)?;
+    vault_registry::valid_id(&vault_id)?;
     let dir = sessions_dir()?;
     // 入口同一校验（见 [`sanitize`]）：盘上不出现绝对路径 / 越界条目。
     let session = sanitize(VaultSession {
         version: SESSION_VERSION,
         tabs,
         active,
-        updated_at: workspaces::now_ms(),
+        updated_at: vault_registry::now_ms(),
     });
     if let Err(e) = save_to(&dir, &vault_id, &session) {
         eprintln!(

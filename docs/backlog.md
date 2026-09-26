@@ -477,6 +477,16 @@
     `vault_registry.rs` 连带引用更新（commands/lib/reading_position/recovery/vault_session），
     保持名实一致；④ 验收套件隔离 `XDG_CONFIG_HOME` 下补迁移场景（旧目录 + 文件 → 启动后新目录
     可见、注册项不丢）。历史文档（multi-vault-workspaces 等 change 名）不改写。
+    **已落地（M248，2026-09-27）**：① 目录名 = `vault-registry/`，真源是 `src-tauri/src/vault_registry.rs`
+    的 `REGISTRY_DIR_NAME`；② 迁移 = 启动路径上一次 `fs::rename`（同目录同文件系统，原子；新目录已存在
+    则不动作；rename 失败原地保留、下次启动重试），四态单测落在同文件的 `#[cfg(test)] mod tests`，迁移
+    记一条 `vault_registry_migrated` 诊断事件（`logging` 新增事件名，`src/bindings/LogEventName.ts` 增量
+    一行字面量）；③ 模块 `workspaces.rs` → `vault_registry.rs`，`commands` / `lib` / `reading_position`
+    / `vault_session` 的引用与注释一并同步；**类型名 `VaultWorkspace` 与 `workspace_read|write|path`
+    错误码刻意保留**——它们经 ts-rs 进 `src/bindings/`、被前端 import，改名会波及 webview 契约面，属
+    另一件事；④ 真机场景 `48-vault-registry-migration`（套件新增 `seed.legacyRegistry` 预置通道与
+    `resetRegistry()` 同清新旧两名目录）。文档面同步：`docs/specs/config-reference.md` §4 改为现状描述
+    并删 #35 写的前向注记；历史文档（change `multi-vault-workspaces` 等）仍按原口径不改写。
 
 32. **change `product-version-display` 待归档跟踪**（2026-09-26，M236 登记，**待 Alex 节点 2**）：流程口径要求
     每个 change 在实现 PR 合并时即落一条待归档记录（`docs/process/openspec-workflow.md` 的批次收尾

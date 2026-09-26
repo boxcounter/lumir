@@ -7,13 +7,13 @@ const prepare = () => execFileSync(process.execPath, ["scripts/visual/prepare-is
 const snapshot = (run, stage) => JSON.parse(execFileSync(process.execPath, ["scripts/visual/snapshot-isolated.mjs", run, stage], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }));
 test("unique runs do not inherit workspace; evidence redacts and fails closed", async () => {
   const old = prepare();
-  await mkdir(path.join(old, "config/lumir/workspaces"));
-  await writeFile(path.join(old, "config/lumir/workspaces/stale.json"), JSON.stringify({ id: "stale-vault", path: "/tmp/stale" }));
+  await mkdir(path.join(old, "config/lumir/vault-registry"));
+  await writeFile(path.join(old, "config/lumir/vault-registry/stale.json"), JSON.stringify({ id: "stale-vault", path: "/tmp/stale" }));
   const run = prepare();
   assert.notEqual(old, run);
   assert.deepEqual(snapshot(run, "before-create").workspaces, []);
-  await mkdir(path.join(run, "config/lumir/workspaces"));
-  await writeFile(path.join(run, "config/lumir/workspaces/test.json"), JSON.stringify({ id: "test-vault", path: path.join(run, "vault") }));
+  await mkdir(path.join(run, "config/lumir/vault-registry"));
+  await writeFile(path.join(run, "config/lumir/vault-registry/test.json"), JSON.stringify({ id: "test-vault", path: path.join(run, "vault") }));
   const after = snapshot(run, "after-create");
   assert.equal(after.workspaces[0].path, "<run>/vault");
   const restart = snapshot(run, "after-restart");
@@ -21,8 +21,8 @@ test("unique runs do not inherit workspace; evidence redacts and fails closed", 
   assert.throws(() => snapshot(run, "after-restart"));
   assert.throws(() => snapshot(path.dirname(run), "before-create"));
   const bad = prepare();
-  await mkdir(path.join(bad, "config/lumir/workspaces"));
-  await writeFile(path.join(bad, "config/lumir/workspaces/bad.json"), "{");
+  await mkdir(path.join(bad, "config/lumir/vault-registry"));
+  await writeFile(path.join(bad, "config/lumir/vault-registry/bad.json"), "{");
   assert.throws(() => snapshot(bad, "before-create"));
 });
 test("manifest and evidence symlinks fail without copying private fields or writing outside run", async () => {

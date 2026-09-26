@@ -103,7 +103,7 @@
 | 路径 | 内容 | 性质 |
 |---|---|---|
 | `config.json` | 本文档 §1 的全部键 | 用户手编的输入面（「配置即数据」，ADR 0002 §5） |
-| `workspaces/` | vault 注册表：`<vault-id>.json`，装 id ↔ path、治理标记、`last_opened_at` | **身份**（该 vault 是谁、在哪）；只归档不删除 |
+| `vault-registry/` | vault 注册表：`<vault-id>.json`，装 id ↔ path、治理标记、`last_opened_at` | **身份**（该 vault 是谁、在哪）；只归档不删除 |
 | `vault-sessions/` | 标签会话：`<vault-id>.json`（`tabs` / `active` / `updated_at`） | **易变状态**（上次开着哪些标签） |
 | `reading-positions/` | 阅读位置：`<vault-id>.json`（按文件路径记滚动位置） | **易变状态** |
 | `logs/` | 诊断日志：`YYYY-MM-DD.jsonl`（UTC 日期，每行一个 JSON 事件） | 只落本地、不外发、不进 vault |
@@ -113,7 +113,12 @@
 界面状态混进身份文件，一次会话写坏就会升级成「vault 从列表与 remap 候选中消失」。会话单独落盘后，
 损坏的最大后果只是「没有标签历史」。两个目录名对仗（注册表 / 会话）正是这条分存关系的表达。
 
-> **前向注记（backlog #37，2026-09-26 Alex 裁决：改）**：`workspaces/` 这个名字与「工作区状态」语义错位
-> （它与 `vault-sessions/` 并置时容易被读成两个业务概念），将更名为 **`vault-registry/`**。落地形态是
-> 启动时一次性 `fs::rename`（同目录同文件系统，原子；新目录已存在则不动作）+ 一条诊断事件。本文档在
-> 更名落地时同步更新本节——在那之前，真源（`workspaces.rs:68`）报出的仍是 `workspaces/`。
+**目录名的来历**（M248，backlog #37 落地）：本目录原叫 `workspaces/`，与「工作区状态」语义错位——
+与 `vault-sessions/` 并置时容易被读成两个业务概念。现名 `vault-registry/` 让「同一 vault 实体的两个
+面」（身份 / 会话）从名字可读。存量机器上的旧名目录由**启动时一次 `fs::rename`** 迁移：同目录同文件
+系统、原子；新目录已存在则不动作（rename 到非空目录本就失败），失败则旧目录原地保留、下次启动重试；
+迁移成功 / 被跳过 / 失败各记一条 `vault_registry_migrated` 诊断事件（稳态不记）。真源是
+`src-tauri/src/vault_registry.rs` 的 `REGISTRY_DIR_NAME` 与 `migrate_legacy_registry_dir`。
+
+**历史文档不改写**：change `multi-vault-workspaces` 等制品里出现的 `workspaces/` 按当时事实保留；
+本节的现状描述以真源为准。

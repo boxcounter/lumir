@@ -15,8 +15,8 @@ pub mod logging;
 pub mod reading_position;
 pub mod ready;
 pub mod recovery;
+pub mod vault_registry;
 pub mod vault_session;
-pub mod workspaces;
 
 #[cfg(target_os = "macos")]
 use tauri::menu::{Menu, MenuItemBuilder, MenuItemKind};
@@ -98,10 +98,10 @@ pub fn run() {
             commands::fs_create_file,
             commands::fs_create_dir,
             commands::fs_reveal_in_finder,
-            workspaces::vault_register,
-            workspaces::vault_remap,
+            vault_registry::vault_register,
+            vault_registry::vault_remap,
             // 多 vault（M162）：列表 + 按 vault 的标签会话（前端在 M163 接）
-            workspaces::vault_list,
+            vault_registry::vault_list,
             vault_session::vault_session_get,
             vault_session::vault_session_put,
             // 文档阅读位置（M194，change remember-reading-position）：与标签会话分开存
@@ -112,6 +112,10 @@ pub fn run() {
             // 诊断日志先初始化：`[log] level` 在第一条事件之前生效（level = off 时
             // 整条链路都不落盘，见 logging 模块头）。
             logging::init();
+            // 注册表目录改名的一次性迁移（M248，backlog #37）：位置钉死在「配置目录已可解析
+            // （logging::init 刚解析过）之后、任何注册表读者之前」——两个读者是紧随其后的
+            // 启动恢复线程与前端 command（后者要等本回调返回）。同步跑完，读者看到的只有新名。
+            vault_registry::migrate_legacy_registry_dir_at_startup();
             ready::emit_ready(started);
             #[cfg(target_os = "macos")]
             install_menu_overrides(app.handle())?;
@@ -450,7 +454,7 @@ impl RestoreGuard {
             .state::<commands::VaultState>()
             .finish_restore(self.generation, outcome);
         if let Some(id) = opened_id.filter(|_| applied) {
-            crate::workspaces::mark_opened(&id);
+            crate::vault_registry::mark_opened(&id);
         }
         self.signal();
     }

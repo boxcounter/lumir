@@ -19,7 +19,7 @@
 //! **容量**：每个 vault 的条目数有上限（[`MAX_ENTRIES`]），超出按写入时刻最旧者淘汰——只防
 //! 无界增长，不做「按时效失效」（「几个月前读一半的书」不该因为时间被丢掉，design §3 候选②）。
 
-use crate::{commands::CommandError, config, vault_session, workspaces};
+use crate::{commands::CommandError, config, vault_registry, vault_session};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
@@ -129,7 +129,7 @@ fn valid_entry(entry: &ReadingPositionEntry) -> bool {
     entry.pos.is_finite() && entry.pos >= 0.0 && entry.y.is_finite() && entry.x.is_finite()
 }
 
-/// 落盘（目录可注入）：tmp + rename 原子替换，与注册项落盘（`workspaces::write_entry`）同纪律。
+/// 落盘（目录可注入）：tmp + rename 原子替换，与注册项落盘（`vault_registry::write_entry`）同纪律。
 /// 返回 io::Result——降级语义由调用方给（见 [`reading_position_put`]）。
 fn save_to(dir: &Path, id: &str, positions: &ReadingPositions) -> std::io::Result<()> {
     fs::create_dir_all(dir)?;
@@ -144,7 +144,7 @@ fn save_to(dir: &Path, id: &str, positions: &ReadingPositions) -> std::io::Resul
 /// 读某 vault 的阅读位置；无历史返回 null（不是错误——首次读到 / 损坏 / 版本不匹配都走这条路）。
 #[tauri::command(rename_all = "snake_case")]
 pub fn reading_position_get(vault_id: String) -> Result<Option<ReadingPositions>, CommandError> {
-    workspaces::valid_id(&vault_id)?;
+    vault_registry::valid_id(&vault_id)?;
     Ok(load_from(&positions_dir()?, &vault_id))
 }
 
@@ -155,13 +155,13 @@ pub fn reading_position_get(vault_id: String) -> Result<Option<ReadingPositions>
 ///
 /// 写失败返回 `Ok(())` 并记 warning——与 `last_vault`、标签会话写失败同口径：位置只影响「下次
 /// 打开这份文档从哪里开始」，不值得让用户的一次切换或退出失败。只有 `vault_id` 非法才返回错误
-/// 信封：id 是文件名，这是路径逃逸防护（`workspaces::valid_id`），不是写失败。
+/// 信封：id 是文件名，这是路径逃逸防护（`vault_registry::valid_id`），不是写失败。
 #[tauri::command(rename_all = "snake_case")]
 pub fn reading_position_put(
     vault_id: String,
     entries: HashMap<String, ReadingPositionEntry>,
 ) -> Result<(), CommandError> {
-    workspaces::valid_id(&vault_id)?;
+    vault_registry::valid_id(&vault_id)?;
     let dir = positions_dir()?;
     // 入口同一校验（见 [`sanitize`]）：盘上不出现绝对路径 / 越界键，条目数不超上限。
     let positions = sanitize(ReadingPositions {

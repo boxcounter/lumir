@@ -64,7 +64,7 @@ runner 在启动前做预检，不满足直接退出且不产生半截证据：
 
 | 隔离项 | 做法 | 为什么 |
 |---|---|---|
-| 配置目录 | app 进程带 `XDG_CONFIG_HOME=<结果目录>/../env` 启动，套件自带 `config.json`；**每场景清空其中的 `recovery/`、`workspaces/`、`vault-sessions/`** | `src-tauri/src/config.rs` 优先读 `XDG_CONFIG_HOME`；用户的 `~/.config/lumir` 全程不读不写。三个子目录都必须清：崩溃备份在配置目录下而非 vault 里（不清会让上一场景的备份串场——实证：08c 恢复出了 keys.md 的内容）；`workspaces/` 决定列表浮层有几行、按路径命中哪个 id；`vault-sessions/` 决定装载后恢复哪些标签。后两者是 M164 补的（多 vault 场景会预置它们，残留会让下一场景看到上一场景的 vault 列表与标签） |
+| 配置目录 | app 进程带 `XDG_CONFIG_HOME=<结果目录>/../env` 启动，套件自带 `config.json`；**每场景清空其中的 `recovery/`、`vault-registry/`（含更名前的旧目录 `workspaces/`）、`vault-sessions/`** | `src-tauri/src/config.rs` 优先读 `XDG_CONFIG_HOME`；用户的 `~/.config/lumir` 全程不读不写。三个子目录都必须清：崩溃备份在配置目录下而非 vault 里（不清会让上一场景的备份串场——实证：08c 恢复出了 keys.md 的内容）；`vault-registry/` 决定列表浮层有几行、按路径命中哪个 id；`vault-sessions/` 决定装载后恢复哪些标签。后两者是 M164 补的（多 vault 场景会预置它们，残留会让下一场景看到上一场景的 vault 列表与标签）。旧名目录一并清是 M248 补的：迁移场景 48 把注册项预置在 `workspaces/` 里等 app 搬走，只清新名会让它残留到下一场景 |
 | 验收 vault（两个） | `/tmp/lumir-m102-acceptance` 与 `/tmp/lumir-m102-acceptance-b`，每次运行分别重置为 `fixtures/` 与 `fixtures/second-vault/` 的精确副本 | 合成 vault；用户真实 vault（`/Users/boxcounter/Downloads/Everything-copy`）永不写入（`assertSafeTargets()` 对两个 vault 与配置目录都兜底拒绝）。第二个 vault 是多 vault 场景的切换目标，文件名与第一个刻意不重叠 |
 | 端口 | dev server 走 `LUMIR_ACCEPTANCE_PORT`（默认 1430），经 `--config` 覆写 | 绝不与 Alex 手头的 `pnpm tauri dev` 抢 1420 |
 
@@ -114,7 +114,8 @@ steps:
 
 | 键 | 形状 | 落点 |
 |---|---|---|
-| `seed.registry[]` | `{ id, path, lastOpenedAt?, missingSince?, archivedAt? }` | `<隔离配置>/lumir/workspaces/<id>.json`（一条一个文件，与 Rust 侧注册表同形） |
+| `seed.registry[]` | `{ id, path, lastOpenedAt?, missingSince?, archivedAt? }` | `<隔离配置>/lumir/vault-registry/<id>.json`（一条一个文件，与 Rust 侧注册表同形） |
+| `seed.legacyRegistry[]` | 同上 | `<隔离配置>/lumir/workspaces/<id>.json`（**旧名**目录，M248）：只服务迁移场景 48，用来构造「更名落地之前」的现场；app 启动时把它整个搬进 `vault-registry/` |
 | `seed.sessions{}` | `{ <id>: { tabs: [...], active } }` | `<隔离配置>/lumir/vault-sessions/<id>.json` |
 
 - `path` 支持两个记号：`$vault` / `$vault2` 指套件的两个合成 vault（不写死 `/tmp` 路径，
@@ -125,7 +126,7 @@ steps:
 - `path` 会先 `realpath`：注册表存的是 canonicalize 后的路径（`reconcile_vault`），而 macOS 的
   `/tmp` 是 `/private/tmp` 的软链接——不归一的话 app 打开同一目录时 `find_by_path` 落空、另生成
   一个 id，预置的会话（按 id 存放）就对不上了。
-- `id` 只允许字母数字与 `-_`（与 Rust 的 `workspaces::valid_id` 同源：id 同时是文件名，这是路径
+- `id` 只允许字母数字与 `-_`（与 Rust 的 `vault_registry::valid_id` 同源：id 同时是文件名，这是路径
   逃逸防护）；写错在动作处即报错，不会落一个读不回的盘。
 
 ### 动作（`do`）

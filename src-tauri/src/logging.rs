@@ -96,6 +96,10 @@ pub enum LogEventName {
     /// 应用元信息（产品名 / 版本号）读取失败（M236）：标题栏标识块随之整体隐藏。
     /// 常见成因是 capabilities 漏配 core:app:allow-name / allow-version（ACL 拒绝）。
     AppMetaUnavailable,
+    /// 旧注册表目录 `workspaces/` → `vault-registry/` 的启动迁移（M248，backlog #37）。
+    /// `outcome` 取 migrated / skipped_target_exists / failed；稳态（无旧目录）不记——
+    /// 迁移一辈子只发生一次，每次启动记一条「无事可做」只会把日志刷成噪音。
+    VaultRegistryMigrated,
 }
 
 impl LogEventName {
@@ -113,6 +117,7 @@ impl LogEventName {
             Self::SlowCallback => "slow_callback",
             Self::LinkOpen => "link_open",
             Self::AppMetaUnavailable => "app_meta_unavailable",
+            Self::VaultRegistryMigrated => "vault_registry_migrated",
         }
     }
 
@@ -149,6 +154,9 @@ impl LogEventName {
             Self::LinkOpen => &["category", "scheme", "outcome"],
             // 只记错误摘要（ACL 拒绝的 message 是权限名，不含用户数据）。
             Self::AppMetaUnavailable => &["message"],
+            // 只记终局字面量（migrated / skipped_target_exists / failed）：目录名是常量，
+            // 路径本身没有诊断价值，也就不进负载。
+            Self::VaultRegistryMigrated => &["outcome"],
         }
     }
 }
@@ -434,6 +442,21 @@ fn recovery_restored_to(sink: &Sink, path: &str) {
     emit(
         sink,
         Event::new(LogEventName::RecoveryRestored).field("path", path),
+    );
+}
+
+/// Rust 侧埋点：旧注册表目录的一次性迁移（M248，backlog #37；调用点是
+/// `vault_registry::migrate_legacy_registry_dir_at_startup`）。`outcome` 取迁移终局
+/// （migrated / skipped_target_exists / failed）——迁移只发生一次，但没有这条记录就无法从
+/// 日志判断「这台机器上到底迁没迁」。
+pub fn vault_registry_migrated(outcome: &str) {
+    vault_registry_migrated_to(global(), outcome);
+}
+
+fn vault_registry_migrated_to(sink: &Sink, outcome: &str) {
+    emit(
+        sink,
+        Event::new(LogEventName::VaultRegistryMigrated).field("outcome", outcome),
     );
 }
 
@@ -775,6 +798,7 @@ mod tests {
             LogEventName::RenderError,
             LogEventName::ConfigWarning,
             LogEventName::SlowCallback,
+            LogEventName::VaultRegistryMigrated,
         ] {
             let text = name.as_str();
             assert!(
