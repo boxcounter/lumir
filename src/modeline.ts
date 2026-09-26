@@ -38,7 +38,9 @@ export interface IdentityView {
   name: string;
   /** 标题栏版本号段文本（visible 且未退让时有效）。 */
   version: string;
-  /** modeline 右段版本号段文本（含前导分隔，「 · 0.0.0」形态；仅退让时有效）。 */
+  /** modeline 右段版本号段文本（含前导分隔，形如「 · 1.2.3」；仅退让时有效）。
+   *  示例写成通用版本号而不是本仓当前值：字面抄一份版本号会在每次 bump 后腐掉
+   *  （M238 r2 收口时把原来那处的 `0.0.0` 去字面化）。 */
   modelineText: string;
 }
 

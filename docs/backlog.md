@@ -382,25 +382,26 @@
     （`tests/visual/scenes/tauri-stub.ts` 的 `{ name: "Lumir", version: "0.1.0" }`）与
     `tests/visual/scenes/titlebar-identity.spec.ts` 的 `VERSION`（两处刻意各写一份：桩模拟后端、
     场景断言「前端如实显示后端给的值」）；真机场景 39 的两处 dump 示例同步改准（断言本身早就走
-    `$appVersion` 占位符，从 `tauri.conf.json` 读真值）。**此后口径**（本条即 canonical 记录）：
+    `$appVersion` 占位符，从 `tauri.conf.json` 读真值）；**Cargo 侧两处随同批改（r2 追加）**——
+    `src-tauri/Cargo.toml:3` 与 `src-tauri/Cargo.lock` 的 `[[package]] name = "lumir"` 一并落 `0.1.0`，
+    理由见下条。**此后口径**（本条即 canonical 记录）：
     批次收尾时按 semver bump——**功能批 MINOR、缺陷批 PATCH**（0.x 期间），唯一真源
     `src-tauri/tauri.conf.json` 的 `version`，`package.json` 的 `version` 同步跟随，随批次 push；
-    改真源副本时按上列清单逐处跟改（桩 / 场景示例 / 文档示例）。**未落地的一格**：把 bump 动作写进
+    改真源副本时按上列清单逐处跟改（桩 / 场景示例 / 文档示例 / **`src-tauri/Cargo.toml` +
+    `src-tauri/Cargo.lock`**）。**未落地的一格**：把 bump 动作写进
     `docs/process/openspec-workflow.md` 的「批次收尾 checklist」不在 M238 的 scope 内，待 tower 补。
-    **Cargo 侧版本的处置（r1 P2-4，2026-09-26 查证后定：不跟随、不影响运行时）**：
-    `src-tauri/Cargo.toml:3` 与 `Cargo.lock` 仍写 `0.0.0`，本次**有意不改**，依据两条——
-    ① **它不是版本来源**：tauri 的配置 schema 明写 `version` 字段「If removed the version number from
-    `Cargo.toml` is used」（`node_modules/@tauri-apps/cli/config.schema.json:34`，同句还写「recommended
-    to manage the app versioning in the Tauri config」），本仓的 `tauri.conf.json` 有这个字段，
-    Cargo.toml 的号因此只在**有人删掉那个字段**时才会生效；② **实测佐证**：M238 的真机场景 39
-    （断言 AX 树含 `$appVersion`，占位符从 `tauri.conf.json` 读真值）在 Cargo.toml 仍为 `0.0.0` 的
-    状态下 PASS —— 运行期读到的就是配置里那个 `0.1.0`。
-    **但它是同一语义的第三份拷贝，是「将来踩坑」的形态**：谁删掉配置里的 `version`（或在别的
-    change 里改成「用 package.json 路径」），应用版本会**静默回落**到 Cargo.toml 的陈旧号。
-    M238 不改它的唯一原因是 **scope 不含 `src-tauri/Cargo.toml` / `Cargo.lock`**（简报 scope 只有
-    `src-tauri/tauri.conf.json`）；tower 若要收掉这个隐患，需要把这两个文件纳入 scope 后随下一个
-    bump 一并改（改动量：Cargo.toml 一行 + Cargo.lock 的 `[[package]] name = "lumir"` 一行）。
-    **非副本、无需动**（r1 同批核过）：`tests/visual/package.json`（独立私有包）、
+    **Cargo 侧纳入跟改清单（r1 P2-4 提出 → r2 落地）**：`src-tauri/Cargo.toml:3` 与 `Cargo.lock` 的
+    `[[package]] name = "lumir"` 的 `version` 本次**已随批改为 `0.1.0`**（tower r2 裁决：不接受
+    「有意不跟随」——它是同一语义的第三份拷贝，留着正是 REVIEW.md 第 8 条要灭的隐患）。
+    **为什么要跟改（r1 的查证结论保留在此当理由）**：① tauri 的配置 schema 明写 `version` 字段
+    「If removed the version number from `Cargo.toml` is used」
+    （`node_modules/@tauri-apps/cli/config.schema.json:34`，同句还写「recommended to manage the app
+    versioning in the Tauri config」）——**字段在场时 Cargo 侧不是版本来源**，但一旦有人删掉该字段
+    （或在别的 change 里把它改成指向 package.json 的路径），应用版本会**静默回落**到 Cargo 侧那个号，
+    陈旧号因此是「将来踩坑」的形态；② 实测佐证该字段当前确实压过 Cargo：M238 的真机场景 39（断言
+    AX 树含 `$appVersion`，占位符从 `tauri.conf.json` 读真值）在 Cargo 侧仍是 `0.0.0` 的状态下 PASS
+    ——运行期读到的就是配置里那个 `0.1.0`。两处一起跟改后，「运行时取哪个」与「仓里躺着哪个」
+    不再有分叉。**非副本、无需动**（r1 同批核过）：`tests/visual/package.json`（独立私有包）、
     `scripts/visual/table-probe72/tauri.conf.json`（独立探针工程）、`tests/unit/modeline.test.ts` 的
     `0.0.0`（渲染输入 fixture，不是真源副本）。
 34. **gate.sh PASS 时删临时日志，看不到逐用例读数**（2026-09-25，M214 worker-restyle-r4-baseline
