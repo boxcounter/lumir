@@ -360,6 +360,56 @@
     修前两档恒为 11.48px）。② 门禁断言：`tests/visual/scenes/end-marker.spec.ts` 新增
     「backlog #31：标记字号跟随内容字号」——两档（15px / 24px）各断言标记字号 = 0.8 × 内容字号、
     线段长 = 4 × 标记字号，并前置断言两页内容字号确实不同（否则比值判据会在「两页一样」上空转）。
+32. **watch 增量不覆盖外部新建目录：文件树不刷新（重启可见）**（2026-09-25，M221 finding，
+    worker-fix-closeout，low；**2026-09-26 Alex 裁决：修**——「你在 Finder 里整理 vault 是常态操作，
+    树不刷新会显得 app 死了」，派修复 mission，watch 增量覆盖「新建目录」）：app 运行中经外部在
+    vault 里新建目录（含文件）后，文件树 60 秒内不刷新出该目录行；重启后可见（重启重扫）。既有的
+    watch 增量刷新疑似不覆盖「新建目录」形态（外部新建**文件**是否有同样问题未测，修复时一并查明）。
+    落点：`src/tree.ts` × 后端 fs watch（`src-tauri/src/fs_io.rs` watch 注册段）；验收场景 36 现按
+    「restart 后可见」口径落地，修复后应改为断言**运行中**刷新。finding
+    `20260925-worker-fix-closeout-bug-watch.md`。
+33. **版本号 bump 策略**（2026-09-25，M225 finding，worker-proposal-version，low；
+    **2026-09-26 Alex 裁决：按 semantic versioning**）：版本号真源 `src-tauri/tauri.conf.json:4` 的
+    `version` 是占位 `"0.0.0"`（`package.json:3` 同），仓内无任何 bump 工具链或发布流程
+    （`bundle.active = false`）。M236 把产品名+版本号常显到标题栏后界面会如实显示 0.0.0。
+    **执行口径（tower 按 semver 裁决细化）**：起始 0.1.0；0.x 期间 MINOR = 功能批次、PATCH = 缺陷
+    修复批；bump 时机 = 每个合并批次收尾由 tower 执行、随批次 push；唯一真源 tauri.conf.json，
+    package.json 同步跟 bump；首次 bump（0.0.0 → 0.1.0）随下一个缺陷/工具批落地。bump 动作补进
+    批次收尾 checklist。finding
+    `20260925-worker-proposal-version-idea-tauri-conf-json-version-0-0-0-0-0-0.md`。
+34. **gate.sh PASS 时删临时日志，看不到逐用例读数**（2026-09-25，M214 worker-restyle-r4-baseline
+    提的改进点，tower 转录登记，low；**2026-09-26 Alex 裁决：改**——PASS 也保留日志并打印路径）：
+    `scripts/gate.sh` 的 `run_gate` 只在 FAIL 时打印日志路径，PASS 即删临时日志——门禁输出只有
+    一行 `GATE PASS visual-regression`，用例数、逐用例读数都看不到；M214 当时不得不改用
+    `scripts/visual/run.sh` 同端口补跑一次才把「34 张逐张比对通过」落成可 grep 的证据。落地：
+    PASS 时保留日志、输出打印一行路径（不展开内容），临时文件不再即删。
+35. **分模式折行默认（md 折 / code 不折）**（2026-09-26，Alex 使用反馈发起探讨，tower 登记；
+    **2026-09-26 Alex 裁决：采纳 tower 建议**——机制=覆盖键 + 出厂分叉）：现状
+    `[editor] line_wrap`（默认 true）是全局单键，`code_block_wrap` 只管 md 围栏块；M231（非 md
+    可编辑）落地后 code 模式是一等表面，长代码行被全局折行基本不可读。落地口径：① 机制 = 可选
+    覆盖键（如 `editor.code_mode_line_wrap`，缺省跟随全局 `line_wrap`）——只有 md/code 两个模式，
+    单键比 per-language 表成比例；② 出厂默认直接分叉（code 默认 false）——md 折 / code 不折是
+    行业通行出厂口径（VS Code / JetBrains 出厂不折行），不是个人怪癖；「配置即数据」约束下个人
+    偏好的居所是配置文件而非硬编码。
+36. **配置项可发现性**（2026-09-26，Alex 使用反馈发起探讨，tower 登记；**2026-09-26 Alex 裁决：
+    采纳两步走**——① 配置参考文档随 #35 同批落地；② describe-config 面板中期另立项）：`config.json`
+    只落用户显式设过的键，完整键面（`editor.*` 6 键 / `ui.*` 2 键 / `keys` 表 / `log.level`）与
+    默认值只写在 `config.rs` 注释里，用户无从知晓有什么可配。落地口径：① 配置参考文档
+    （canonical 键值表：类型 / 默认 / 取值范围 / 生效时机，真源对齐 `config.rs`；附配置目录布局节
+    ——`vault-registry/` = vault 注册表（身份，#37 更名后）、`vault-sessions/` = 标签会话（易变
+    状态），两者同一 vault 实体刻意分存（`vault_session.rs` 头注释 / multi-vault-workspaces
+    design §2），另覆盖 `reading-positions/`、`logs/`）；② 中期应用内 `describe-config` 面板
+    （照 `describe-bindings` 模式：每键当前生效值 / 出厂值 / 改法）。**明确不推荐**「写全量默认
+    进 config.json」——会把缺字段跟随出厂默认钉死成旧值，与合并写纪律冲突。
+37. **配置目录改名 `workspaces/` → `vault-registry/`**（2026-09-26，Alex 裁决：**改**——他
+    对 tower「不建议动」的唯一不同意见）：`workspaces/` 装的是 vault 注册表（身份：id ↔ path、
+    治理标记、`last_opened_at`），名字与「工作区状态」语义错位，与 `vault-sessions/` 并置时
+    误导为两个业务概念。落地口径：① 目录名改 `vault-registry/`（与 `vault-sessions/` 对仗，
+    「同一 vault 实体的两个面」从名字可读）；② 迁移 = 启动时一次性 `fs::rename`（同目录同文件
+    系统，原子；新目录已存在则不动作），迁移记一条诊断事件；③ Rust 模块 `workspaces.rs` →
+    `vault_registry.rs` 连带引用更新（commands/lib/reading_position/recovery/vault_session），
+    保持名实一致；④ 验收套件隔离 `XDG_CONFIG_HOME` 下补迁移场景（旧目录 + 文件 → 启动后新目录
+    可见、注册项不丢）。历史文档（multi-vault-workspaces 等 change 名）不改写。
 
 ## 待修 findings（不阻塞）
 
@@ -923,8 +973,9 @@
 与「已核销」语义相反，按维护规则（「核销后移入文末」）迁回本节；条目正文除各自补的「状态」行外未改。
 末条 C11 为本 mission 补建。）
 
-- 2026-09-25：**0.001 容差实测吞掉小元素删除**（M214 finding，improve）：§8.4 假绿防线删 modeline
-  右段，像素差 **199 px** < 预算 960 ⇒ 像素层通过，拦住它的是 R3 新加的结构断言。建议：为
+- 2026-09-25：**0.001 容差实测吞掉小元素删除**（M214 finding，improve；**2026-09-26 Alex 裁决：
+  采纳建议——为小元素补元素级基线**，派视觉门禁增强 mission）：§8.4 假绿防线删 modeline
+  右段，像素差 **199 px** < 预算 960 ⇒ 像素层通过，拦住它的是 R3 新加的结构断言。落地：为
   `.modeline-*` 级别的小元素补**元素级**基线（元素 crop 的像素预算远小于整页），或按元素重要度
   分级预算。与既有「整页 0.001 容差」条目（mermaid 952/960 同族）合并阅读。
 - 2026-09-25：**搜索面板 / lightbox / toast 无视觉基线覆盖**（M214 登记，tower 裁决口径）：34 张
@@ -939,12 +990,14 @@
   接受的取舍 2d，待真机补验）：A1 doc-meta 块的 mtime 缓存在 `markCleanOf`（保存落盘）后的刷新路径
   只有单测与探针覆盖，本批验收集合不含真机保存动作。后续 dogfood 真机批补验：保存后 doc-meta 行的
   「修改于」时间应刷新为落盘时刻。
-- 2026-09-25：**restyle R4 基线过目包已备齐待 Alex**（M214，唯一挂起项）：34 张一次性重建
-  （`--update-snapshots=all`，mtimes 同批）+ 逐张差异读数（34/34 远超容差，无静默假绿）+ 删除元素
-  核对（24 张必须刷新全刷新）+ 假绿防线（已还原）+ 过目入口 `test-results/m214/index.html`
-  （旧→新对照 + 变化原因 + 定稿图指向）。**Alex 逐张过目批准后**：resume worker-restyle-r4-baseline
-  入库（基线提交 → sha256 逐张与 `baselines-after/sha256.txt` 对账 → 全量门禁绿 → 评审 → 合并），
-  流程按 M164/M199 立范。worker 与 wt-214 待命不释放。
+- 2026-09-25：**restyle R4 基线过目包已备齐待 Alex**（M214，唯一挂起项；**2026-09-26 核销 = mission
+  销单**：Alex 裁决「好。我同意。」——交付物被后续批次取代，按它入库反而会回滚新基线）：34 张
+  一次性重建（`--update-snapshots=all`，mtimes 同批）+ 逐张差异读数（34/34 远超容差，无静默假绿）
+  + 删除元素核对（24 张必须刷新全刷新）+ 假绿防线（已还原），批二 34 张曾提交分支 `d96ee84`
+  （未合并）。**取代路径**：M228 合并时基线分两波经 Alex 过目更新；M236 以 `=all` 全量重建同 34 张
+  （restyle+heading+标识块+760 最新形态，逐张审计硬判据，Alex 授权本批）。残余价值去向：周边表面
+  36 张补拍留档 `test-results/m214/peripheral/`，真基线化由上一条（搜索面板/lightbox/toast 零覆盖）
+  承接、随元素级基线 mission 顺带。wt-214 已释放。
 - **code 模式 eink keyword 700 缺口：`HighlightStyle` 路径无法按 `data-theme` 限定**（2026-09-25，M220
   建条，依据 M216 gap 报告 §2.3 #11，low，**机制缺口 / 待立项**）：eink 规则②（tokens 文档 §eink
   规则 2）要求 keyword 在 eink 下升到 700。**围栏代码块侧已实现**——`src/preview/theme.ts:238` 的
