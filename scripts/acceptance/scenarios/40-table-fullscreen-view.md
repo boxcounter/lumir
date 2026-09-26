@@ -10,8 +10,8 @@ config:
 steps:
   - name: 终态：非矩形表整块降级（无 grid DOM）、正常表渲染为 grid（两条一起钉，负向断言才有区分度）
     expect:
-      - label: 非矩形表的降级归因文案在场（保留原始 Markdown）
-        ax: { has: "第 1 行单元格数与表头不符" }
+      - label: 非矩形表的降级归因文案在场（保留原始 Markdown）——行号是 fixture 第 3 行
+        ax: { has: "第 3 行单元格数与表头不符（应为 2 列）" }
       - label: 正常表渲染成 AX 表（唯一的 grid 表 ⇒ 它就是命令的靶子）
         ax: { has: "AXTable (Markdown 表格 1)" }
       - label: 正常表的源码态不在渲染正文里（确实渲染成表了）
