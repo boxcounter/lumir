@@ -126,6 +126,18 @@
       核销口径：`rg 680` 全仓清扫后剩余命中**逐条确认与栏宽无关**——`--fw-display: 680`（字重）、
       `.lumir-bindings-panel` 的 `max-width: 680px`（键位面板宽，S15/S16 有意偏离值）、
       `src/preview/theme.ts` 的 680 字重规则、`tests/perf/fixtures/markdown-1mb.md` 的语料内容。
+- [x] 7.4 **（2026-09-26 修订追加）** 视觉基线重建：本 change 的栏宽改动（680→760）与 product-version-display
+      的标识块同批 `--update`（Alex 2026-09-26 批准）。命令
+      `LUMIR_VISUAL_PORT=4274 bash scripts/visual/run.sh --update --update-snapshots=all`——**用 `=all`
+      而非默认 changed**：标识块在整页里的差异只有 125px（< 0.001 容差的 960px 额度），默认模式会
+      「比对通过」而永不重写、内容陈旧恒绿（REVIEW.md 第 3 条）。
+      逐张核对 34 张（`test-results/m236/baseline-review/baseline-rebuild-760/`）：4 张逐字节相同、
+      22 张像素差（其中 21 张标题栏区恒 226px = 标识块那段）、8 张元素尺寸变化
+      （binding-highlight `680×733 → 760×733`、codeblock 行 `564×20 → 644×20`、
+      wrap-codeblock-scrolled `592×75 → 672×75` 都是 +80 = 栏宽差），
+      **侧栏非零基线数 0（34/34）**。`toc-popover-long` 168px 残留的归因实验结果是与本 change 无关
+      （栏宽临时回 680 重跑该场景 4/4，新基线仍成立）——它是容差内长期陈旧，已如实登记为「归因不完整」。
+      更新前后 sha256 清单 + 审计表 + 对照图同目录；更新后 `gate.sh visual` **12/12 PASS**。
 
 ## 8. 收口
 

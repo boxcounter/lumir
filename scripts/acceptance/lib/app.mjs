@@ -280,7 +280,16 @@ export async function launchApp({ port = acceptPort(), timeoutMs = 300_000, logF
     app: {
       // 先铺原件（titleBarStyle / hiddenTitle / title / width / height …），再只叠本轮要改的
       // 位置与焦点。spread 顺序即优先级：右边覆盖左边。
-      windows: [{ ...baseWindow, x: 120, y: 80, focus: true }],
+      //
+      // 位置从 (120, 80) 挪到 (8, 40)（M236 实测）：窗口宽 1200（显式覆写，见下），而 x=120 时
+      // 120 + 1200 = 1320 超出 1280 逻辑宽的屏幕，**窗口管理器会把它钳到 1160**——于是任何
+      // 「先把窗口调到 1200」的真机断言（场景 39 的拉伸恢复档）在 1280 宽的机器上必然 FAIL，
+      // 而失败信号看起来像产品侧问题。x=8 / y=40 仍在屏内（菜单栏下方、屏右缘之内）：
+      // 8 + 1200 = 1208 ≤ 1280。窗口宽度本身仍由 `src-tauri/tauri.conf.json` 决定（1200），
+      // 这里只改摆放 —— 比「把窗口挪一下再设尺寸」的重试逻辑简单，且对所有场景一致。
+      // 已知边界：屏幕逻辑宽 < 1208 的机器上 1200 宽的窗口放不下，会如实被钳（这类机器上
+      // 场景 39 的 `window.width` 断言会 FAIL —— 那是环境信号，不是产品缺陷）。
+      windows: [{ ...baseWindow, x: 8, y: 40, focus: true }],
     },
   };
   const child = spawn(

@@ -70,10 +70,14 @@ D3 采纳），本清单已按裁决改写。**
   等既有整页基线的画面里——`bash scripts/gate.sh visual` 跑红后，逐一核对受影响整页基线
   清单，截图 Alex 过目再 `--update`
 
-  **已核对、未更新、待 Alex 裁决**。过目包：`test-results/m236/baseline-review/`（含
-  34 张基线逐张分类、来源 diff 产物、真机 6 张截图、两个日志）。结论：受影响的 21 张整页
+  **已核对 → 已过目 → 已批准并重建（2026-09-26）**。过目包：`test-results/m236/baseline-review/`
+  （含 34 张基线逐张分类、来源 diff 产物、真机 6 张截图、两个日志）。结论：受影响的 21 张整页
   基线**在 0.001 容差下静默绿**（差异仅 125px < 960px 容差，REVIEW.md 第 3 条的新现场），
-  只有 2 张标签栏元素基线因尺寸变化硬 FAIL。**基线一律未改**，等 Alex 批准后才跑 `--update`。
+  只有 2 张标签栏元素基线因尺寸变化硬 FAIL。
+  Alex 2026-09-26 裁决「标识块形态认可」→ **批准重建**，与同批的栏宽 680→760 一起
+  `--update --update-snapshots=all`（为何用 `=all` 而非 changed、34 张逐张核对结论、
+  sha256 清单与对照图：`test-results/m236/baseline-review/baseline-rebuild-760/`；
+  侧栏非零 0/34，整页差异 bbox 恒为标识块那一段）。更新后 `gate.sh visual` **12/12 PASS**。
 - [x] 3.4 真机验收场景 **`scripts/acceptance/scenarios/39-titlebar-identity.md`**（编号接
   38-content-width-drag；端口与隔离纪律照旧，1420/1430 不碰）：标识块显示「Lumir ·
   0.0.0」且版本号与 src-tauri/tauri.conf.json 的 version 逐字节一致（读文件比对，不硬编码

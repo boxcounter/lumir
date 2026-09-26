@@ -31,8 +31,8 @@ steps:
     target: { textareaEdge: "right" }
     dx: 80
     expect:
-      - label: config.json 出现了 ui.content_width = 920（D3：松手写一次，通用键值合并写通道；位移确定值，钉字面量）
-        file: { path: "env:config.json", has: '"content_width": 920' }
+      - label: config.json 出现了 ui.content_width ≈ 920（D3：松手写一次，通用键值合并写通道；±8px 的来由见「已知边界」）
+        file: { path: "env:config.json", has: '/"content_width": 9(1[2-9]|2[0-8])/' }
       - label: 合并写不抹其他键：version / last_vault / editor.mode 仍在
         file: { path: "env:config.json", has: '"version": 1' }
       - label: editor.mode 仍在（合并写的相邻键存活证据）
@@ -48,15 +48,15 @@ steps:
     target: { textareaEdge: "left" }
     dx: -40
     expect:
-      - label: content_width = 1000（合并写通道第二次落盘，左缘手柄对称生效）
-        file: { path: "env:config.json", has: '"content_width": 1000' }
+      - label: content_width ≈ 1000（合并写通道第二次落盘，左缘手柄对称生效；±8px 见「已知边界」）
+        file: { path: "env:config.json", has: '/"content_width": (99[2-9]|100[0-8])/' }
       - shot: 拖拽后-栏宽收回
 
   - name: 重启后栏宽保持（D3 的持久化语义：config.json 的值被启动读取）
     do: restart
     expect:
-      - label: 重启后 config.json 的 content_width = 1000 仍在（持久化不是运行期假象）
-        file: { path: "env:config.json", has: '"content_width": 1000' }
+      - label: 重启后 config.json 的 content_width ≈ 1000 仍在（持久化不是运行期假象；同上 ±8px）
+        file: { path: "env:config.json", has: '/"content_width": (99[2-9]|100[0-8])/' }
       - label: 重启后 vault 照常装载（栏宽配置不挡启动链路；重启不自动重开文档——与场景 28 同口径）
         ax: { has: "这个 vault 还没有打开的文件" }
 
@@ -88,9 +88,16 @@ teardown:
   Rust 侧 `config_set_ui_value` 的 cargo test 覆盖。
 - **拖拽帧耗（1MB 文档）不进本套件**：性能探针归 mission 的 6.5 任务（playwright chromium
   一次性探针，数据落 `test-results/m228/`），真机手感归 Alex。
-- dx 是**窗口局部点**（CGEvent 通道与 doubleClick 同口径，不经过截图像素的 0.96 缩放），
-  因此栏宽增量是确定值（±80pt → 宽度 ±160），断言钉字面量 920 / 1000 / 760（760 为 2026-09-26
-  修订后的默认值与下限）。
+- dx 是**窗口局部点**（CGEvent 通道与 doubleClick 同口径，不经过截图像素的 0.96 缩放）。
+  但通道的**实测精度不是逐位确定**：栏宽增量 = 2 × 指针位移，通道的 ±1–2px 抖动在这一层被放大到
+  ±4px——M236 实测「场景 38 单跑 3 轮」里有一轮左缘 −40pt 落在 **997**（期望 1000，差 3px），
+  另两轮正好 1000。因此**两处「拖后值」断言写成 ±8px 的区间**（regex 带宽：
+  `9(1[2-9]|2[0-8])` = 912–928、`(99[2-9]|100[0-8])` = 992–1008）；**下限钳制那条仍钉死 760**
+  （dx=−400 远超越界阈值，通道抖动影响不到它）。
+  **为什么放宽不算降覆盖**：对称律的精确值（= 2 × 位移）在 chromium 层用合成鼠标事件逐值钉死
+  （`tests/visual/scenes/content-width.spec.ts` 的 760 → 920 / 860 / 880 / 触顶 1200），
+  真机这层要验的是**端到端管线**（真指针 → 手柄 → token → 合并写 → config.json → 重启读回）；
+  在这个带宽里，1× 实现（差一半）或拖了不生效（差 80）照样会红。
 - **拖拽起止点都必须在窗口内**（harness 显式越界报错，防坐标空间错乱假现场）——钳制档
   用 -400pt（远超 120pt 的钳制阈值）而不是「拖出窗外」来表达大幅往窄。
 - **起拖点取编辑器列缘（textareaEdge）而不是手柄节点**：WKWebView 把 `role=separator` 暴露成
