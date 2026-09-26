@@ -1,5 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import { readFileSync } from "node:fs";
+import { expectScreenshot } from "./expect-screenshot";
 import { stubTauri } from "./tauri-stub";
 import { readDocument } from "./parity-checks";
 
@@ -476,6 +477,22 @@ test("M184 双击打开遮罩、三条关闭路径与焦点归还", async ({ pag
 
   // 全程不改写文档（ADR 0003 §3）：解引用、按键、三次关闭、三次撤销之后逐字节回到原文。
   expect(await readDocument(page)).toBe(images);
+});
+
+test("M246 lightbox 元素级基线：遮罩 + 放大图的形态钉住", async ({ page }) => {
+  // 默认 1200x800 视口（基线统一口径）；行为合同（三条关闭路径 / 焦点归还 / 适配口径）
+  // 归上面 M184 组，本条只钉视觉形态——lightbox 是零基线覆盖的三个周边表面之一（M214 登记）。
+  await page.route("**/example.invalid/**", (route) => route.abort());
+  await open(page, images, "images.md", undefined, imageAssets);
+  await inlineImage(page, REFS.fixed).dblclick();
+  const overlay = page.locator(LIGHTBOX_OVERLAY);
+  await expect(overlay).toBeVisible();
+  // 等放大图真的画出来再拍（否则把「还没布局」拍进基线）
+  await waitForLightboxImage(page);
+  await expect(overlay.locator("img")).toHaveAttribute("alt", REFS.fixed);
+  await expectScreenshot(overlay, "lightbox-overlay.png");
+  await page.keyboard.press("Escape");
+  await expect(overlay).toBeHidden();
 });
 
 test("M184 放大口径：宽图与高图都不越出遮罩、小图不放大", async ({ page }) => {

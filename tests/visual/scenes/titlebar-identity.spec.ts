@@ -1,8 +1,10 @@
 // 标题栏产品标识块场景（M236，change product-version-display）。
 //
 // 判据一律是**读数**（DOM 文本、hidden 状态、getComputedStyle、boundingBox 几何），
-// 不是「某个函数被调用过」。结构层场景：无整页像素断言（标识块的视觉归属由既有整页基线
-// 的自然更新覆盖，base: app-main 等）；CI 的 LUMIR_VISUAL_STRUCTURAL=1 下本场景全量照跑。
+// 不是「某个函数被调用过」。唯一例外是 M246 补的标识块元素级像素基线：三段文字的字形墨
+// ≪ 整页 0.001 容差的 960px 预算，「由既有整页基线的自然更新覆盖」等于没有覆盖
+// （REVIEW.md 第 3 条同族），所以形态由元素 crop 钉住；CI 的 LUMIR_VISUAL_STRUCTURAL=1
+// 下该断言按 pixel-skip 留痕跳过，其余全量照跑。
 //
 // 覆盖（对应 specs delta「产品名与版本号常显」四条 scenario）：
 //   1. 常显与真源一致：空态（tabstrip hidden）下标识块在场、三段文案形态、钉右端；
@@ -13,6 +15,7 @@
 
 import { expect, test } from "@playwright/test";
 import type { Page } from "@playwright/test";
+import { expectScreenshot } from "./expect-screenshot";
 import { DEMO_VAULT, stubTauri } from "./tauri-stub";
 import type { VaultFixture } from "./tauri-stub";
 
@@ -54,6 +57,8 @@ test("空态主界面：标识块在场、三段文案、钉右端（tabstrip hi
   const viewport = page.viewportSize()!;
   // 右缘 = 视口宽 - 标题栏右 padding（--sp-6 = 12px），±1px 吸收亚像素
   expect(Math.abs(box.x + box.width - (viewport.width - 12))).toBeLessThanOrEqual(1);
+  // 元素级基线（M246）：三段文字的字形墨被整页 0.001 容差吞掉，形态只能由元素 crop 钉住
+  await expectScreenshot(block, "titlebar-identity-block.png");
 });
 
 test("有标签时仍钉右端、不参与收缩（flex:none）", async ({ page }) => {
