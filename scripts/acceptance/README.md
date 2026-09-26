@@ -134,7 +134,7 @@ steps:
 | 动作 | 参数 | 说明 |
 |---|---|---|
 | （省略） | — | 只做断言 |
-| `settle` | — | 读一次 AX 快照并落定（等价于「什么都不做、只等一拍」，用于纯断言步骤前的稳定） |
+| `settle` | — | **真 settle**（M249）：连续两次 AX 快照**逐字节一致**才返回，用于纯断言步骤前的稳定。编辑器在位时直接复用 `lib/drive.mjs` 的 `settle()`；「还没打开文件」的两类引导态走同口径的无编辑器门版本。15s 未收敛则退回单次读取并在证据里落一条 note，**不**因此判 FAIL。语义与「外部写入后先留一拍」的口径见下节 |
 | `open` | `file`、`marker` | 点左栏文件名打开，等编辑器出现 marker |
 | `click` | `target: {role,name\|help\|any,nth,count}` 或 `{x,y,count}`，两者都可带 `button`（`left`（默认）/`right`/`middle`）与 `dx`/`dy` | 节点按 AX 索引点（走 AXPress）；`{x,y}` 走真实鼠标坐标。`count` 原样透传给 KimiCU，那四条通道**产生不出 DOM 的 `dblclick`**（判据与修正见「已知边界」）——要双击类交互请用 `doubleClick`。**`button` 给非左键时改走坐标路径**（M244）：AX 索引路径发的是 AXPress（「按下这个元素」），产不出鼠标右键，而 DOM 的 `contextmenu` 靠真实指针事件；此时套件取该节点 bbox 的中心（`dx`/`dy` 按宽高比例偏移，默认 0.5）注入真实鼠标事件（**cursor-safe，不移动用户指针**）。因此**目标行必须落在窗口可视区内**——树/列表里靠下的条目 AX 报的是内容坐标（实测 40 个 fixture 时 y≈1300 而窗口高 800），出视口时套件按错因报错（「右键目标不在可视区内…请先用 open / 滚动把它带进视口」），不静默；另外该路径要求快照带截图，取不到时同样报错不静默 |
 | `clickNodeText` | `text` | 点 value/title **逐字等于** `text` 的节点（比 `name` 的正则更死板） |
@@ -154,6 +154,24 @@ steps:
 | `vaultRm` | `file` 或 `files` | 从外部**真删除**（不存在即报错）——触发 `fs_not_found` 与「保存冲突」是两条不同分支 |
 | `configWrite` | `lastVault`、`keys`、`restart`、`requireVault`、`theme`、`contentWidth`、排版三项 | 改写隔离 config.json（默认重启 app）。`lastVault` **缺省沿用当前值**（显式给才覆盖）——启动恢复的失效路径靠它把 `last_vault` 指向一个不存在的目录；`requireVault: false` 只放宽本步重启的就绪门（见下条）。`theme` / `contentWidth` / 排版三项同样**缺省沿用当前值**（M228 起含 `ui.content_width`）：一次 configWrite MUST NOT 把前面设过的键连表抹掉 |
 | `restart` | `requireVault` | 重启 app（崩溃恢复类场景） |
+
+### `do: settle` 的真实语义与「外部写入后先留一拍」（M249）
+
+`do: settle` = **真 settle**：连续两次 AX 快照逐字节一致才返回（编辑器在位时直接复用
+`lib/drive.mjs` 的 `settle()`；「已装载 vault 但一个标签都没有」与「未打开空态」这两类合法终态
+里 `AXTextArea` 本就不存在，走同口径的无编辑器门版本）。15s 仍未收敛时退回最后一次读取、在证据
+里落一条 note，**不**把这一步升级成 FAIL——settle 只是断言前的稳定等待，界面是否真的收敛由场景
+自己的断言证明。改口径前的旧实现是**单次** `readAx`（名实不符），来历与现场见 finding
+`20260927-worker-watch-mkdir-improve-vaultwrite-ax-do-settle-60`。
+
+**外部写入后先留一拍（≥1s）再读 AX**：`vaultWrite` / `vaultAppend` / `vaultRm` / `vaultSparse`
+之后紧跟的**第一次** AX 读取会与那次 DOM 刷新抢——M245 五轮真机探针实测：写盘后立刻读会漏掉新增
+的树行（`AXButton (restyle-dir)` 整行不在 dump 里），先等一拍（200ms 足矣，口径取 ≥1s 留裕量）再
+读则必过；而这个漏读会**级联**成假缺陷（目录行读不到 → 下一步点不到它 → 再下一步等它折叠着的子行
+→ 60s 超时，看起来就是「几十秒不刷新」，M245 据此翻转了一次根因）。写这类场景时不要拿「写入后
+立刻读」当判据：先 `do: sleep {ms: 1000}`（或 `do: settle`——真 settle 本身就要求连续两次一致，
+两次之间的 700ms 就是那一拍）再读 AX。既存场景里手写的 `sleep 1000` / `sleep 1200` / `sleep 1500`
+是同一口径。
 
 **就绪门与 `requireVault`**（M159 起）：每次起/重启实例后套件等「左栏文件树 + 编辑器节点就位」
 （`lib/drive.mjs` 的 `waitAppReady`）。严格门的判据是「树头部的 vault 入口按钮（形态 A，
@@ -223,6 +241,29 @@ Alex 抽审路径：先看 `summary.md`，再进 FAIL 场景看 `steps.md` + `sh
 - **不做手感/审美判定**：表头双击选中手感、表格宽度观感、WKWebView 下的翻屏节奏等归 Alex；
   套件只留截图证据（与 `tests/visual/README.md` 同一原则）。
 - **不进 CI（v0）**：macos runner 跑真机 Tauri 成本高、失败模式多，稳定后再评。
+- **键盘注入通道的两类不可达（M249 固化；判据按类落通道）**：KimiCU 的 `press_key` 有两类键在
+  WKWebView 上产不出期望的事件，用它们当判据的场景会得到假 FAIL（反过来，「按了也没变」这类**负向**
+  断言在键没落地时恒真）。两类都有独立归因实测，别当成产品缺陷去追：
+
+  1. **`Tab` / `Shift-Tab`**（M240 实测，finding `20260926-worker-impl-table-fs-bug-tab-shift-tab-wkwebview-m239-43-master.md`）：
+     注入报 `ok`，但 Tab 的 keydown 从未到达 DOM（三路归因：单独复跑仍红 → 不是丢键抖动；`git checkout`
+     回到实现前的 `src/` 仍红 → 不是后续 change 引入；chromium 探针里 Tab / Shift+Tab 的列表缩进行为
+     正常 → 不是产品缺陷）。**判据落 chromium**：`tests/visual/scenes/m239-list-tab-indent.spec.ts`
+     （真 CM + 真键位层，断言按键 → 缩进写回）。真机侧（场景 43）只验**命令链路**——经 `[keys]` 把
+     `editor.list-indent` / `editor.list-outdent` 绑到通道可达的 `Cmd-j` / `Cmd-Shift-j` 再验源码写回；
+     **TAB 默认绑定那条「按键 → 命令」的链路在真机上未验**（chromium 覆盖）。
+  2. **Shift 隐含符号的 token 形态**（M242 实测，finding `20260927-worker-tab-cycle-keys-bug-shift-token.md`）：
+     注入 `cmd+shift+rightbracket` 落地的是 `key="]" + shiftKey`（Shift 标志在、字符没被替换），应用
+     归一成 `Cmd-Shift-]`，而硬件给的是 `key="}"` → `Cmd-}`；字面量形态 `cmd+}` 被 KimiCU 的键名表
+     直接拒（`unknown key`；键名表用 `rightbracket` / `leftbracket`，不是 xdotool 的 `bracketright`）。
+     ⇒ token 含 **Shift 隐含符号**（`_+{}|:"<>?~!@#$%^&*()`，即 `src/keys.ts` 的 `SHIFT_IMPLIED_KEYS`）
+     的默认绑定在真机通道上验不到（M195 的 `Cmd-+`、M242 的 `Cmd-}` / `Cmd-{` 都在此列）。**判据落
+     chromium**：`tests/visual/scenes/m242-tab-cycle-key-tokens.spec.ts`（Playwright 按 US 布局自己算
+     Shift 后的字符 ⇒ `key="}"` 的事件命中 `Cmd-}`）；token 的表内形态另有 `tests/unit/keys.test.ts` 专测。
+
+  **两类共通的纪律**：键盘类场景的**负向断言**必须配一条同通道可达的**正观测**（同一场景里先有一次
+  成功的注入证明通道通着，再判「没变」）；红了先按丢键复跑一次再判产品缺陷（丢键是间歇的，REVIEW.md
+  第 11 条）。
 - **清理实例只认「自己起的那个进程组」，禁止用模式匹配 `pkill`**（2026-09-18 M164 的教训，实测代价：
   误伤了用户手头那份 dogfood 实例）：`pkill -f "target/debug/lumir"` 这类按**二进制路径**匹配的模式会连带
   命中用户的实例——同一个二进制路径，只有进程组不同（M164 实测：Alex 的 1420 会话连同它的 vite dev server

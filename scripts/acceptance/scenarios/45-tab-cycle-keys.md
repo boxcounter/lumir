@@ -174,7 +174,7 @@ steps:
    （逐字节比较）。
 3. `⌘W` 关标签的右邻接管口径（作为把标签收窄到 1 个的顺带覆盖，不是本 change 的新行为）。
 
-**本场景不验**：`⌘}` / `⌘{` 自己的「按键 → 切标签」链路。真机通道做不到，原因与实测证据见下一节
+**本场景不验**：`⌘}` / `⌘{` 自己的「按键 → 切标签」链路在**真机通道**上的落地。真机通道做不到，原因与实测证据见下一节
 ——按 mission 纪律如实登记为**未验**，不写成已验（REVIEW.md 第 6 条）。
 
 ## ⌘} / ⌘{ 在真机通道上验不了——原因与实测证据
@@ -207,9 +207,15 @@ steps:
   （`key="}"` + `metaKey` + `shiftKey`）归一成 `Cmd-}`，与表内写法**必须相等**；并反向断言
   `Cmd-Shift-]` / `Cmd-Shift-[` **不在表内**（这两个形态永不命中，写错就是静默失配）。
 - **命令实现与环绕语义**：本场景上面那六步（同两条命令、同一份 `cycleTab`）。
-- **仍未覆盖的那一环**：真实 WKWebView 对硬件 ⌘⇧] 给出 `key="}"` 这一步。建议的替代通道是
-  chromium（`tests/visual`，Playwright 按 US 布局自己算 Shift 后的字符）——本 change 的产物范围
-  不含 `tests/visual/**`，已作为 finding 上报，留给后续 mission 或 KimiCU 通道修复。
+- **键位层那一环（M249 已补）**：chromium 通道
+  `tests/visual/scenes/m242-tab-cycle-key-tokens.spec.ts`——Playwright 按 US 布局自己算 Shift 后的
+  字符（`BracketRight` 的 shifted 形态 = `}`），产出的正是**硬件形态**事件（`key="}"` + `shiftKey`），
+  断言它命中 `⌘}` → tab.next / `⌘{` → tab.prev；并附一条边界固化用例：KimiCU 形态的事件
+  （`key="]"` + `shiftKey` ⇒ `Cmd-Shift-]`）**不**命中，表只收硬件形态 token（D2 裁决）。原 finding
+  `20260927-worker-tab-cycle-keys-bug-shift-token.md` 的「留给后续 mission」由此收口。
+- **仍未覆盖的那一环**：真实 WKWebView 对硬件 ⌘⇧] 是否给出 `key="}"`——chromium 的键盘布局模型与
+  WKWebView 是两套实现，这一步只有真机通道能证，而它正是通道产不出的事件。**所以本场景的 PASS 不
+  等于「⌘} / ⌘{ 在真机验过」**（REVIEW.md 第 6 条）。
 
 ## 断言口径
 
@@ -231,7 +237,10 @@ steps:
 
 ## 已知边界（如实登记，不读成「全量已验」）
 
-- **⌘} / ⌘{ 的按键链路未验**（见上节；原因 = 通道产不出该 token，非产品缺陷）。
+- **⌘} / ⌘{ 的按键链路未验**（见上节；原因 = 通道产不出该 token，非产品缺陷——键位层那一段已由
+  `tests/visual/scenes/m242-tab-cycle-key-tokens.spec.ts` 覆盖，真机通道这一环仍是缺口）。
+- **同类边界统一登记在** `scripts/acceptance/README.md` 的「键盘注入通道的两类不可达」（Tab / Shift-Tab
+  与 Shift 隐含符号 token），本节只留本场景相关的结论。
 - **注入通道丢键**：`press_key` 对 WKWebView 间歇整批丢键（REVIEW.md 第 11 条，同机第二个实例
   显著加剧）。**红了先按丢键复跑一次再判产品缺陷**——丢键的表现就是激活标签读数没变。
 - **不做手感判定**：标签切换的动画 / 高亮观感归 Alex，本场景只留截图。

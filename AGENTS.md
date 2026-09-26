@@ -30,6 +30,8 @@ Lumir：本地文本工作台，当前阶段定位为 Emacs keybinding PKM（[AD
 
 与 CI 对应：`rust.yml` / `visual.yml` / `perf.yml` / `docs-check.yml`（PR 与 master push 强制）。本地全绿才允许提交合并请求；基线数字（测试数、场景数）以最近一次全绿输出为准，不背口头值。
 
+`bindings-drift` 与提交纪律（M249）：改过 ts-rs 导出面的 change 会重导出 `src/bindings/**`，「先 `git add` / commit 这些重导出产物、再跑 `quick`」是**预期行为**——未进索引的漂移照旧报红并提示先 `git add`，已 `git add` 未 commit 只打一条 INFO，不再是一条假 FAIL（判据与来历见 `scripts/gate.sh` 头部注释）。
+
 视觉门禁**分层**（2026-09-18 Alex 裁决，依据 [tests/visual/README.md](tests/visual/README.md)）：
 CI 的 `visual.yml` 只跑结构 / 计算属性断言（置 `LUMIR_VISUAL_STRUCTURAL=1`，22 处整页像素断言跳过），
 整页 / 元素像素对比归本地 `scripts/gate.sh visual`。动过视觉相关代码（`src/style.css`、

@@ -14,6 +14,11 @@
 # PASS 也留日志（backlog #34 的 2026-09-26 Alex 裁决）：只有一行 GATE PASS 时看不到用例数
 # 与逐用例读数，复盘要用「34 张逐张比对通过」这类可 grep 的证据就得重跑一次。日志落在系统
 # 临时目录（mktemp -t，`$TMPDIR` 下），按门禁名命名，不随本次运行删除；FAIL 额外回显末 30 行。
+#
+# bindings-drift 与「本地全绿才允许提交」的关系（M249）：改过 ts-rs 导出面的 change 会重导出
+# src/bindings/**，重导出后先跑 quick 时那些改动还没进索引——未 staged 报红并提示先 `git add`；
+# 已 `git add` 未 commit 只打 INFO、不判 FAIL。即「先 add/commit bindings，再跑 quick」是预期
+# 行为，不再是一条假 FAIL。
 set -uo pipefail
 cd "$(dirname "$0")/.."
 
@@ -62,12 +67,31 @@ run_gate cargo-fmt cargo fmt --check --manifest-path src-tauri/Cargo.toml
 run_gate cargo-clippy cargo clippy --all-targets --manifest-path src-tauri/Cargo.toml -- -D warnings
 # cargo test 同时是 ADR 0003 §4 fixture 测试集与 ts-rs bindings 导出的载体
 run_gate cargo-test cargo test --manifest-path src-tauri/Cargo.toml
-# bindings 漂移检查须在 cargo test（重导出）之后。判据取「工作区相对索引的任何差异」而非
-# `git diff`：后者只看已跟踪文件，新导出的 bindings 文件（untracked）不会让它报红，
-# 而那正是这类漂移最常见的形态。两种差异（M 与 ??）现在都进 gate 日志并如实报红。
+# bindings 漂移检查须在 cargo test（重导出）之后。判据按 staged / unstaged 分流（M249，采纳
+# finding 20260927-worker-line-wrap 的 3+1 组合）：
+#   - **未 staged / 未跟踪**（工作区相对索引有差异）→ FAIL 并提示先 `git add`。这是真漂移：
+#     重导出的结果没进索引，提交上去就是「bindings 没随代码走」。
+#   - **已 staged、未 commit**（索引相对 HEAD 有差异）→ 只打 INFO，不判 FAIL。「本地全绿才允许
+#     提交」的纪律下，改过 ts-rs 导出面的 change 必然先经历这一态；旧判据（`--porcelain` 非空即红）
+#     把它与真漂移合成同一条红信号，于是每个这类 change 都要吃一次假 FAIL（M247 实证：` M
+#     src/bindings/EditorConfig.ts` 在 `git add` 后仍红，只有 commit 才绿）。
+#   CI 的新检出上不存在「已 staged 未 commit」态（工作区 = 索引 = HEAD），故本分流不影响 CI 侧
+#   「bindings 没随代码提交」这条判据的效力。
 run_gate bindings-drift bash -c '
-  dirty=$(git status --porcelain -- src/bindings/)
-  if [ -n "$dirty" ]; then printf "%s\n" "$dirty"; exit 1; fi
+  status=$(git status --porcelain -- src/bindings/)
+  if [ -z "$status" ]; then exit 0; fi
+  # porcelain v1 每行前两位是 XY（X = 索引态、Y = 工作区态）：Y 为空格即「已 staged」，
+  # 其余（含未跟踪的 ??）都是「未 staged」；`MM`（staged 之后又改）同样归未 staged。
+  staged=$(printf "%s\n" "$status" | grep -E "^[^ ?] " || true)
+  unstaged=$(printf "%s\n" "$status" | grep -vE "^[^ ?] " || true)
+  if [ -n "$staged" ]; then
+    printf "INFO bindings 重导出已 git add、尚未 commit（本条门禁不判 FAIL；提交后本条即绿）：\n%s\n" "$staged"
+  fi
+  if [ -n "$unstaged" ]; then
+    printf "FAIL 以下 bindings 漂移尚未进索引（重导出的结果没 git add），先 git add 再重跑：\n%s\n" "$unstaged"
+    exit 1
+  fi
+  exit 0
 '
 run_gate tsc-root pnpm exec tsc --noEmit
 if [ -d tests/visual/node_modules ]; then
