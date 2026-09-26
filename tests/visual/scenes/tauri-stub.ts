@@ -67,7 +67,7 @@ export interface VaultFixture {
   /** wikilink_create 桩：链接原文 → 创建后的 vault 相对路径（同时写入 files）。 */
   creates?: Record<string, string>;
   /** 应用元信息桩（M236，product-version-display）：`plugin:app|name` / `plugin:app|version`
-   *  两条内置 invoke 路由的应答。缺省 = 与真源同值（"Lumir" / "0.0.0"，真源在
+   *  两条内置 invoke 路由的应答。缺省 = 与真源同值（"Lumir" / "0.1.0"，真源在
    *  src-tauri/tauri.conf.json——这里是**桩侧模拟后端**，不是前端硬编码副本）；显式给
    *  `false` = 两条路由不存在（模拟 ACL 拒绝 / 无后端，验标识块的失败降级路径）。 */
   appMeta?: { name: string; version: string } | false;
@@ -430,7 +430,7 @@ export async function stubTauri(page: Page, vault: VaultFixture | null): Promise
         if (cmd === "plugin:app|name" || cmd === "plugin:app|version") {
           const meta = current?.appMeta;
           if (meta !== false) {
-            const value = meta ?? { name: "Lumir", version: "0.0.0" };
+            const value = meta ?? { name: "Lumir", version: "0.1.0" };
             return cmd === "plugin:app|name" ? value.name : value.version;
           }
         }

@@ -77,6 +77,26 @@ export function createTabs(deps: TabsDeps): TabsHandle {
         // 预览（临时）标签：标题走斜体。多标签下「这一篇会不会被下一次单击顶掉」必须有
         // 可见线索，否则用户以为它已经固定住了。
         tab.classList.toggle("is-preview", session.preview);
+        // 整区可点（M238，Alex 2026-09-26 报告）：点标签的**任意区域**都切换，只有 × 除外。
+        // 当时的现场是「只有点文件名文字才切换」——动作绑在 `.tab-open` 上，而那个按钮的
+        // 盒被 `.tab` 的 `align-items: center` 压成行高、又不覆盖标签的左右内边距，实测
+        // 只有中间那块 54×15 的文字盒是热的（标签 103×29，四条边都是死区）。
+        //
+        // 为什么绑容器不绑按钮：按钮的盒由 flex 布局算，「撑满标签」的两种做法都动几何——
+        // 负 margin 方案实测能补上左侧 12px 与上下的行高，但**标签右内边距（12px）与 1px
+        // 透明边框仍是死区**（打开的盒右缘只到 x=321，而标签到 345、× 到 332），且它靠
+        // 「改 flex 基础尺寸」换来的覆盖要逐处核基线；把按钮移出文档流则会打断标签宽度的
+        // 计算。绑在容器上对布局零改动：命中的是整个 `.tab` 盒，× 的 click 自己
+        // stopPropagation（下一段），因此 × 仍是独立控件。
+        //
+        // **这里只绑 click，不绑 mousedown**（M238 真机实测，别照抄按钮上那条 preventDefault）：
+        // 给 `.tab` 加 `mousedown` + `preventDefault()` 之后，真机验收场景 39 的「标识块上按下
+        // 拖拽窗口成立」稳定失败（`window.moved` 判红、窗口坐标 Δ=(0,0)，1/1 复现；去掉这一条
+        // 即 2/2 PASS——同一次实验里 click 那条一直保留）。拖拽落点在窗口 (1160,21)，是标题栏
+        // 右端的标识块、根本不经过标签，因此成因**未定位**；结论按实测走：不加它，标签的空白区
+        // 照样切换（本 change 的断言覆盖），代价只是从空白区按下时不再阻止默认行为（焦点 / 选择）。
+        // 想把它加回来的人：先跑 `node scripts/acceptance/run.mjs 39`。
+        tab.addEventListener("click", () => activateTab(session));
 
         const open = document.createElement("button");
         open.type = "button";
@@ -87,8 +107,9 @@ export function createTabs(deps: TabsDeps): TabsHandle {
         //（同名文件分散在不同目录时要能分辨，文案 D91）。
         open.setAttribute("aria-label", session.dirty ? `${name}（未保存）` : name);
         open.title = path;
+        // 按钮上的这条与 M149 起逐字相同（点标签不该抢编辑器焦点、不拖出选区）。它不在
+        // 拖拽问题的那条路径上（拖拽落点在标题栏右端的标识块），保留原样。
         open.addEventListener("mousedown", (event) => event.preventDefault());
-        open.addEventListener("click", () => activateTab(session));
 
         const dot = document.createElement("span");
         dot.className = "tab-dirty";
@@ -120,6 +141,29 @@ export function createTabs(deps: TabsDeps): TabsHandle {
     // 「内容不下挫」，实测就是被这一拍打红的（全量跑 3px、单跑 ≤1px，典型的竞态形态）。
     // requestMeasure 由 CM 合并，代价只有一次测量。
     editor.view.requestMeasure();
+    // 全量重建之后活跃标签可能落在滚动视口之外（键盘切换 / 新建标签都不会自带横向滚动），
+    // 这里的对齐是「活跃标签必须完整可见」这条不变量的唯一落点。
+    ensureActiveVisible();
+  }
+
+  /** 活跃标签完整可见于标签栏的滚动视口（M238）。溢出由 `.tabstrip` 的横向滚动承载，
+   *  而**只有**用户手势或浏览器默认行为会滚动它：⌘1–9 / ⌃⇥ / ⌘W 后的落点 / 新建标签都会
+   *  让活跃标签停在视口外——用户看到的是「切了，但看不出切到哪」（Alex 2026-09-26 现场，
+   *  红箭头指向的正是被裁掉的那一条）。
+   *
+   *  判据用矩形而不是 `scrollWidth`：算的是真实可视区（padding 盒，`clientLeft` 之外的
+   *  `clientWidth` 段），左内边距与当前滚动位置都自动落进去。只朝**需要的那一侧**补差
+   *  （`nearest` 语义）——活跃标签已在视口内时一个像素都不动，否则每次重绘都会把用户
+   *  手动滚出来的位置抹掉。 */
+  function ensureActiveVisible(): void {
+    const active = mount.querySelector<HTMLElement>(".tab.is-active");
+    if (active === null || mount.clientWidth === 0) return;
+    const box = mount.getBoundingClientRect();
+    const viewLeft = box.left + mount.clientLeft;
+    const viewRight = viewLeft + mount.clientWidth;
+    const rect = active.getBoundingClientRect();
+    if (rect.left < viewLeft) mount.scrollLeft -= viewLeft - rect.left;
+    else if (rect.right > viewRight) mount.scrollLeft += rect.right - viewRight;
   }
 
   function activateTab(session: EditorSession): void {

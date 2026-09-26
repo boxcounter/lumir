@@ -377,12 +377,42 @@
     package.json 同步跟 bump；首次 bump（0.0.0 → 0.1.0）随下一个缺陷/工具批落地。bump 动作补进
     批次收尾 checklist。finding
     `20260925-worker-proposal-version-idea-tauri-conf-json-version-0-0-0-0-0-0.md`。
+    **已裁已落地（M238，2026-09-26）**：首次 bump 落 `0.0.0 → 0.1.0`——`src-tauri/tauri.conf.json:4`
+    与 `package.json:3` 同步；两处「真源副本」同批跟改（REVIEW.md 第 8 条）：视觉桩的缺省 appMeta
+    （`tests/visual/scenes/tauri-stub.ts` 的 `{ name: "Lumir", version: "0.1.0" }`）与
+    `tests/visual/scenes/titlebar-identity.spec.ts` 的 `VERSION`（两处刻意各写一份：桩模拟后端、
+    场景断言「前端如实显示后端给的值」）；真机场景 39 的两处 dump 示例同步改准（断言本身早就走
+    `$appVersion` 占位符，从 `tauri.conf.json` 读真值）；**Cargo 侧两处随同批改（r2 追加）**——
+    `src-tauri/Cargo.toml:3` 与 `src-tauri/Cargo.lock` 的 `[[package]] name = "lumir"` 一并落 `0.1.0`，
+    理由见下条。**此后口径**（本条即 canonical 记录）：
+    批次收尾时按 semver bump——**功能批 MINOR、缺陷批 PATCH**（0.x 期间），唯一真源
+    `src-tauri/tauri.conf.json` 的 `version`，`package.json` 的 `version` 同步跟随，随批次 push；
+    改真源副本时按上列清单逐处跟改（桩 / 场景示例 / 文档示例 / **`src-tauri/Cargo.toml` +
+    `src-tauri/Cargo.lock`**）。**未落地的一格**：把 bump 动作写进
+    `docs/process/openspec-workflow.md` 的「批次收尾 checklist」不在 M238 的 scope 内，待 tower 补。
+    **Cargo 侧纳入跟改清单（r1 P2-4 提出 → r2 落地）**：`src-tauri/Cargo.toml:3` 与 `Cargo.lock` 的
+    `[[package]] name = "lumir"` 的 `version` 本次**已随批改为 `0.1.0`**（tower r2 裁决：不接受
+    「有意不跟随」——它是同一语义的第三份拷贝，留着正是 REVIEW.md 第 8 条要灭的隐患）。
+    **为什么要跟改（r1 的查证结论保留在此当理由）**：① tauri 的配置 schema 明写 `version` 字段
+    「If removed the version number from `Cargo.toml` is used」
+    （`node_modules/@tauri-apps/cli/config.schema.json:34`，同句还写「recommended to manage the app
+    versioning in the Tauri config」）——**字段在场时 Cargo 侧不是版本来源**，但一旦有人删掉该字段
+    （或在别的 change 里把它改成指向 package.json 的路径），应用版本会**静默回落**到 Cargo 侧那个号，
+    陈旧号因此是「将来踩坑」的形态；② 实测佐证该字段当前确实压过 Cargo：M238 的真机场景 39（断言
+    AX 树含 `$appVersion`，占位符从 `tauri.conf.json` 读真值）在 Cargo 侧仍是 `0.0.0` 的状态下 PASS
+    ——运行期读到的就是配置里那个 `0.1.0`。两处一起跟改后，「运行时取哪个」与「仓里躺着哪个」
+    不再有分叉。**非副本、无需动**（r1 同批核过）：`tests/visual/package.json`（独立私有包）、
+    `scripts/visual/table-probe72/tauri.conf.json`（独立探针工程）、`tests/unit/modeline.test.ts` 的
+    `0.0.0`（渲染输入 fixture，不是真源副本）。
 34. **gate.sh PASS 时删临时日志，看不到逐用例读数**（2026-09-25，M214 worker-restyle-r4-baseline
     提的改进点，tower 转录登记，low；**2026-09-26 Alex 裁决：改**——PASS 也保留日志并打印路径）：
     `scripts/gate.sh` 的 `run_gate` 只在 FAIL 时打印日志路径，PASS 即删临时日志——门禁输出只有
     一行 `GATE PASS visual-regression`，用例数、逐用例读数都看不到；M214 当时不得不改用
     `scripts/visual/run.sh` 同端口补跑一次才把「34 张逐张比对通过」落成可 grep 的证据。落地：
     PASS 时保留日志、输出打印一行路径（不展开内容），临时文件不再即删。
+    **已裁已落地（M238，2026-09-26）**：`run_gate` 的 PASS 分支去掉 `rm -f "$log"`、PASS 行改为
+    `GATE PASS <名> <耗时>s — 完整日志：<路径>`（FAIL 行为不变：路径 + 末 30 行回显）；脚本头部
+    注释同步写明「PASS 也留日志」的理由与落点。日志走 `mktemp -t`（`$TMPDIR` 下），按门禁名命名。
 35. **分模式折行默认（md 折 / code 不折）**（2026-09-26，Alex 使用反馈发起探讨，tower 登记；
     **2026-09-26 Alex 裁决：采纳 tower 建议**——机制=覆盖键 + 出厂分叉）：现状
     `[editor] line_wrap`（默认 true）是全局单键，`code_block_wrap` 只管 md 围栏块；M231（非 md
@@ -1209,10 +1239,17 @@
 14. **TOC 大纲 popover**（M148）—— `13-toc`（17 步 / 32 断言）：masthead 当前位置指示段、
     ⌘⇧O 浮层开合、↑↓ 导航不穿透到编辑器、Enter 跳转后光标恰在标题行尾、空 heading 文档给 toast。
     配色与几何由视觉门禁元素级基线 `toc-popover-chromium-darwin.png` 守。
-15. **多标签**（M149）—— `14-tabs`（43 断言）：单击预览替换 / 首次输入或双击固定 / ⌘1–9 直达 /
-    ⌃⇥ 循环 / ⌘W 关当前标签（未命名 dirty 才确认）/ 后台标签外部删除被浮条点名。
+15. **多标签**（M149）—— `14-tabs`（**51 断言** / 21 步；M238 起由 43 增至 51）：单击预览替换 /
+    首次输入或双击固定 / ⌘1–9 直达 / ⌃⇥ 循环 / ⌘W 关当前标签（未命名 dirty 才确认）/
+    后台标签外部删除被浮条点名。
     **语义变化（Alex 使用习惯）**：⌘W 从关窗变为关当前标签（菜单「关闭」项保留但无加速键，
     退出走 ⌘Q / 红灯）；有路径的标签间切换不再有 dirty 守卫；切换 vault 升级为任一标签 dirty 即拦。
+    **M238（2026-09-26）新增两段**：① 标签**整区可点**——凑满三个标签 + 各点边缘 / 空白区即切换、
+    `×` 仍独立（点击可表达的判据在真机，几何与 hit-area 的严格断言在 chromium
+    `tests/visual/scenes/m149-tabs.spec.ts`）；② 标签栏**溢出时活跃标签完整可见**——三标签 + 窗口
+    收窄到 520（标签栏可视区随之收窄）+ `⌘1` 再 `⌘3` 直达最后一个，真机只留截图证据（本套件读不到
+    标签 bbox，矩形判据在 chromium 同一条用例里，含「手动滚走即判红」的反向配对）。
+    证据 `test-results/acceptance/2026-09-26/14-tabs/`（51 PASS / 55.5s）。
 16. **启动自动恢复 last_vault**（M159，2026-09-17）—— `16-startup-restore`（10 断言 / 29.4s）：
     默认 config（`last_vault` = 验收 vault）启动后自动进入 vault（树里出现文件）且**不残留**「恢复中」
     提示；`last_vault` 指向不存在目录后重启 → 未打开空态 + 「上次打开的 vault 已不可用：{路径}，
@@ -1285,6 +1322,13 @@
     恒不显示 → **2/14** 红）留档 `test-results/m189/acceptance-27-reverse-fail/`。证据
     `test-results/acceptance/2026-09-21/27-document-end-marker/`。归档为
     `openspec/changes/archive/2026-09-25-document-end-marker/`（2026-09-25 节点 2）。
+    **M238（2026-09-26）三处变化**：① 可见文案由「到底了」改为「**— End —**」（Alex 裁决，
+    场景断言与说明同步改；deck D114 两列同形）；② 挂载改为推迟到 CM 测量周期之外（一帧落地，
+    双帧实测会把阅读位置恢复推离 13px，见 `tests/visual/scenes/reading-position-probe.spec.ts`
+    的 §7-3）；③ 正文行的尺寸口径与标记在场解耦（`minmax(max-content, 1fr)` + 行尺寸口径不再由
+    scroller class 键控），位置不变量的判据落在 chromium 层新增的两条用例（跨判据两方向翻转 +
+    「行尺寸口径不得由 class 键控」回归探针，修前实测红：`|markerTop−contentBottom| = 1369.7`）。
+    复跑读数 `test-results/acceptance/2026-09-26/27-document-end-marker/`（14 断言 / 27.7s PASS）。
 24. **restyle 主题通道与骨架落位**（M213，2026-09-25）—— `34-restyle-theme-skeleton`：
     `ui.theme: "eink"` 经**配置通道**（front-matter 的 `config`，与 `font_size` / `[keys]` 同形）
     起一个实例 → 断言 `env:config.json` 里确实是 `eink`、应用起得来、骨架与信息落位三点各自在场

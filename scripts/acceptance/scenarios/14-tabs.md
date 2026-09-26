@@ -158,6 +158,57 @@ steps:
         editor: { has: "标签场景 B" }
       - label: 标签栏重新出现（空态是隐藏，不是「关掉就没了」）
         ax: { count: { pattern: "关闭 ", exact: 1 } }
+
+  # —— M238（2026-09-26 Alex 报告）：标签栏溢出时「活跃标签必须完整可见」——
+  # 真机通道读不到标签的 bbox（本套件没有几何断言通道），这条不变量的**判据**在 chromium 层
+  # （`tests/visual/scenes/m149-tabs.spec.ts` 的「标签溢出：活跃标签恒完整可见」，含反向配对）；
+  # 本场景只留一条**人可读的截图证据**：窄窗 + 三个标签（可视区必然溢出）+ 从第 1 个跳到第 3 个。
+  - name: 凑满三个标签（每轮先键入把当前预览标签固定住，下一次 open 才会另开标签）
+    do: type
+    text: "PIN1"
+    expect:
+      - label: 输入落进文档（首次输入即固定，标签随之 dirty）
+        editor: { has: "PIN1" }
+
+  - name: 打开第二个文件——前一个已固定，因此另开一个新标签
+    do: open
+    file: callout.md
+    marker: "Callout 场景"
+    expect:
+      - label: 两个标签并存
+        ax: { count: { pattern: "关闭 ", exact: 2 } }
+
+  - name: 键入把第二个标签也固定住
+    do: type
+    text: "PIN2"
+    expect:
+      - label: 输入落进文档
+        editor: { has: "PIN2" }
+
+  - name: 打开第三个文件
+    do: open
+    file: plain.md
+    marker: "纯文本基线"
+    expect:
+      - label: 三个标签并存
+        ax: { count: { pattern: "关闭 ", exact: 3 } }
+
+  - name: 窗口收窄到 520——标签栏可视区随之收窄，三个标签必然溢出
+    do: resizeWindow
+    width: 520
+    expect:
+      - label: 窗口宽度生效值 ≈520（AX 钳制后的真实值，±8pt）
+        window: { width: 520 }
+
+  - name: ⌘1 回到第一个标签，再 ⌘3 直达第三个（它原本滚在可视区之外）
+    do: keys
+    keys: ["cmd+1", "cmd+3"]
+    expect:
+      - label: 第三个标签的正文上屏（切换真的发生了，不是「按了没反应」）
+        editor: { has: "纯文本基线" }
+      - label: 三个标签都还在（切换不关标签）
+        ax: { count: { pattern: "关闭 ", exact: 3 } }
+      - shot: 窄窗三标签-⌘3 直达最后一个（截图上第三个标签没有被裁）
 ---
 # 14-tabs —— 多标签（M149）
 
@@ -222,6 +273,11 @@ steps:
 - **标签栏自身的视觉**（激活高亮 / 预览斜体 / dirty 点 / 溢出横滚）：整页容差
   `maxDiffPixelRatio: 0.001`（1200×800 ≈ 960 px）会吞掉整条标签栏，所以视觉回归放在元素级
   基线上（`tab-bar-*.png`）。
+- **标签栏溢出时「活跃标签必须完整可见」（M238 新增）**：判据在 chromium 层
+  （`tests/visual/scenes/m149-tabs.spec.ts` 的「标签溢出：活跃标签恒完整可见」——矩形包含判据 +
+  「手动滚走 → 同一判据判红」的反向配对），本场景末段只留截图证据（窄窗三标签 + ⌘3 直达最后一个）。
+  同批的「标签整区可点」也在那条视觉场景里判（含 `×` 右侧内边距这类容器级命中区才覆盖得到的点），
+  真机侧的点按通道没有修饰键、也读不到标签 bbox，判不动。
 
 ## 环境与副作用
 

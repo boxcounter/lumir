@@ -12,7 +12,7 @@ steps:
     file: end-marker-long.md
     expect:
       - label: 编辑器文档文本里没有标记的文案（标记不是正文内容）
-        editor: { not: "到底了" }
+        editor: { not: "— End —" }
       - shot: 长文首屏
   - name: 建立渲染层焦点（后面的翻屏键要落到编辑器上）
     do: clickEditor
@@ -20,7 +20,7 @@ steps:
       - label: 编辑器已就位（AXTextArea 可读）
         editor: { has: "这一段是长文的第 1 段" }
       - label: 首屏（尚未滚动）标记的可读文本节点已在 AX 里（M178 现场：AX 文本不等于可见；**不是可见性判据**，见文末覆盖边界）
-        ax: { count: { pattern: "/AXStaticText = \"到底了\"/", exact: 1 } }
+        ax: { count: { pattern: "/AXStaticText = \"— End —\"/", exact: 1 } }
   - name: 翻到文档末尾
     do: keys
     keys: ["ctrl+v", "ctrl+v", "ctrl+v", "ctrl+v", "ctrl+v", "ctrl+v", "ctrl+v", "ctrl+v"]
@@ -31,9 +31,9 @@ steps:
       - label: 末段正文在文档文本里（文档内容完整）
         editor: { has: "它的下面是文件的终点" }
       - label: 标记的可读文本节点仍在 AX 里（长文侧正观测）
-        ax: { count: { pattern: "/AXStaticText = \"到底了\"/", exact: 1 } }
+        ax: { count: { pattern: "/AXStaticText = \"— End —\"/", exact: 1 } }
       - label: 标记的文案不在编辑器文档文本里（渲染不写文档）
-        editor: { not: "到底了" }
+        editor: { not: "— End —" }
       - label: 磁盘文件逐字节未变（ADR 0003 §3）
         file: { path: end-marker-long.md, unchangedSince: 长文文件 }
       - shot: 长文滚到底
@@ -49,30 +49,30 @@ steps:
       - label: 末段正文在文档文本里（正观测：AX 读的是这份文档）
         editor: { has: "第三段，也是最后一段" }
       - label: AX 树里没有标记的可读文本节点（一屏装得下时元素不在 DOM 里，不是「藏在视口外」）
-        ax: { not: "到底了" }
+        ax: { not: "— End —" }
       - label: 编辑器文档文本里也没有标记的文案
-        editor: { not: "到底了" }
+        editor: { not: "— End —" }
       - label: 磁盘文件逐字节未变
         file: { path: end-marker-short.md, unchangedSince: 短文件 }
       - shot: 短文
 ---
 
 说明：本场景是 change `document-end-marker`（M189）的真机取证。两侧用**同一个匹配器**：长文那两步必须命中
-标记的可读文本节点（`AXStaticText = "到底了"`），短文那一步必须完全不命中——「不命中」因此不是恒真的空转
+标记的可读文本节点（`AXStaticText = "— End —"`），短文那一步必须完全不命中——「不命中」因此不是恒真的空转
 （REVIEW.md 第 2 条），也同时证明 AX 读数本身是活的。
 
 ## 覆盖边界（如实标注，不许读成「已验证」）
 
 - **真机通道读不到标记的几何**：WKWebView 在这条 AX 通道里只给 `AXButton` / `AXImage` / `AXScrollArea` 一类节点 bbox，
   纯文本节点（`AXTextArea` 自身、行内 `AXStaticText`）**没有 `@x,y W×H`**。实测现场（`ax/03-长文滚到底.txt`）：
-  标记的节点是 `- [192] AXStaticText = "到底了"`、与 `AXTextArea` 同级（不在 textbox 里），无 bbox。
+  标记的节点是 `- [192] AXStaticText = "— End —"`、与 `AXTextArea` 同级（不在 textbox 里），无 bbox。
   因此「可见性」这条**不在真机通道判**，判据落在：
   1. **chromium 层**（`tests/visual/scenes/end-marker.spec.ts`）：渲染盒宽高非零、水平居中、落在正文内容盒之下、
      滚到底时落在滚动容器内、线段总宽 < 栏宽一半——几何断言齐全；
   2. **截图证据**（本场景的 `shots/`，人可读、Alex 抽审用）；
   3. **缺席判据**（本场景）：短文侧连节点都不存在（元素根本不在 DOM 里），长文侧节点存在——这一对是可断言的，
      但它证的是「标记在不在文档场景里」，**不是**「在不在视口里」。
-- **不要用「AX 里有『到底了』」当可见性判据**：M178 的现场（`docs/backlog.md:293-304`）说的是不可见元素照样有 AX 文本；
+- **不要用「AX 里有『— End —』」当可见性判据**：M178 的现场（`docs/backlog.md:293-304`）说的是不可见元素照样有 AX 文本；
   本场景 `建立渲染层焦点` 那一步就实测到了这一点——标记在首屏下方、节点已在 AX 里。所以那条断言只当**在场**证据用。
   那一步之前先 `clickEditor`：标记的挂载要等编辑器首个测量周期（CM 的 `requestMeasure` 走 rAF），
   窗口被挡住时 rAF 会被 WKWebView 饿住（本批次实测：套件拿不到前台的那次运行里，装载后立刻读 AX 读不到节点，
@@ -82,3 +82,10 @@ steps:
   磁盘逐字节 + `editor.not`（文档文本里没有标记文案）+ 标记节点在 textbox 之外。
 - **反向验证**（REVIEW.md 第 1 条）：把标记的挂载去掉（回退到本 change 的实现前代码）后重跑本场景，
   长文那两步的节点断言必须 FAIL——没有这一步的 PASS 不算数。
+- **M238（2026-09-26）的三处变化**：① 文案由「到底了」改为「— End —」（Alex 裁决）——本场景所有
+  断言与说明已同步；② 标记的挂载改为**推迟到 CM 测量周期之外**落地（`src/preview/endMarker.ts` 的
+  **单帧**——一帧即离开测量周期；双帧实测会把阅读位置恢复推离 13px，源码注释里已写「别改回双帧」），
+  上一条注里「等首个测量周期」的说法因此变成「等测量周期 + 一帧」，rAF 被饿住的窗口相应长一帧——
+  通道边界不变，仍以 `clickEditor` 提起窗口顶掉它；③ **标记的位置不变量（恒贴正文内容盒之下）不在本通道判**
+  （真机读不到几何），判据在 chromium 层 `end-marker.spec.ts` 文件末两条用例（跨视口判据两方向翻转 + 
+  「行尺寸口径不得由 scroller class 键控」的回归探针）与本场景的 `长文滚到底` 截图（人可读的旁证）。
