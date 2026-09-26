@@ -63,9 +63,9 @@
   占位后按新主题 settle（SVG 内联色跟到新 token，用 MutationObserver 记状态序列）、
   每次切换一次 `config_set_ui_value`；**不新增像素基线**（design §4 末行）。
   反向验证：四条必须 FAIL 的输入实测全红（日志 `test-results/m237/reverse-validation.log`）。
-  改动 `tests/visual/scenes/**` 后本地跑了 `bash scripts/gate.sh visual`（`visual-regression` 291s PASS，
-  全量 419 条；唯一 FAIL 是提交前的 `bindings-drift`，属预期——`src/bindings/UiConfig.ts` 随 ts-rs 重导出
-  更新，提交后即绿）。同批修掉两处被本改动**打破的既有断言**：`titlebar-identity.spec.ts` 的
+  改动 `tests/visual/scenes/**` 后本地跑了 `bash scripts/gate.sh visual`——**提交后终态 12/12 PASS**
+  （`visual-regression` 292s，全量 419 条；首跑 11/12，唯一 FAIL 是提交前的 `bindings-drift`，属预期——`src/bindings/UiConfig.ts` 随 ts-rs 重导出
+  更新，提交后即绿；提交后的完整日志 `test-results/m237/gate-visual-final.log`）。同批修掉两处被本改动**打破的既有断言**：`titlebar-identity.spec.ts` 的
   `.modeline-right` 整体文本断言（右段最末多了指示钮，判据拆成 meta 段锚定 + 版本号段清空）、
   `mermaid.spec.ts` 的世界代守卫用例（见 §4.1 的落点修正）。
   **像素层如实登记**：指示钮整块 ≈821 px² < 0.001 档的 960 px 预算，整页基线的像素对比结构性
