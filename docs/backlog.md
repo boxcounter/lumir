@@ -423,6 +423,28 @@
     的 tasks.md §1–§5 已逐条勾选并附证据指针；真机判据为场景 39（`scripts/acceptance/scenarios/
     39-titlebar-identity.md`，1/1 PASS）。
 
+33. **change `live-theme-switch` 待归档跟踪**（2026-09-26，M237 登记，**待 Alex 节点 2**）：流程口径要求
+    每个 change 在实现 PR 合并时即落一条待归档记录（`docs/process/openspec-workflow.md` 的批次收尾
+    checklist 第一条）。本 change（提案节点 1 已于 2026-09-25 通过，D1/D2/D3 裁决见 `proposal.md`
+    头部）**实现已完成、未归档**，卡在两件事上：
+    ① **视觉门禁对本 change 的可见变化是「看不见」的（如实登记，不是绿灯）**——modeline 右段新增
+    主题指示钮（`.modeline-theme`，可见文本 = 当前主题名），该元素实测整块 **41.6×19.75 ≈ 821 px²**
+    （证据 `test-results/m237/chip-area-probe.log`），而 1200×800 下 `maxDiffPixelRatio: 0.001` 的预算是
+    **960 px**：即使钮内每个像素都变，diff 比例也只有 0.000856 < 0.001。后果是**全量视觉套件照绿**，
+    但那不等于「基线与界面一致」——21 张整页基线现在都少了这个钮。按 AGENTS.md 硬规则「基线更新是
+    人肉裁决点」，本批**一律未改基线**（等 Alex 决定是否随下一批重建）。**这是 REVIEW.md 第 3 条的同族
+    现场**（容差按「最小真实变化的下限」核算时，41×20 量级的新增元素在 0.001 档结构性不可见）；若 Alex
+    认为该收，落点是给这类小元素补元素级基线（标识块已有先例）或收紧容差，二者都不在本 change 的
+    scope 内（proposal 明写「不动视觉基线口径」）。
+    ② **归档顺序**——本 change 的 `specs/ui-design-system/spec.md` delta 含 **MODIFIED Requirements**，
+    而它依赖的 `restyle-ui-tokens-v1` **仍未归档**（`openspec list`：49/51 tasks），此时 archive 会被拒。
+    按裁决「不强行 archive」，等 ① 有结论、② 的前置 change 归档后再走节点 2。归档对账要点预记：本 change
+    的 tasks.md §1–§5 已逐条勾选并附证据指针（含两处**过时项修正**：§3.1 不新增 Rust 命令、走 M228 的
+    通用合并写 IPC；§4.3 场景号 44）；真机判据为场景 44（`scripts/acceptance/scenarios/
+    44-theme-live-switch.md`）；文案新增 D122（主题钮的悬停提示 / 读屏名）与 D123（写盘失败 toast）；
+    附带修订两处既有自述：`35-restyle-three-themes` 正文的「不存在运行期切换通道」与本文件
+    restyle 段里「`[ui] theme` 的『重启生效』口径」。
+
 ## 待修 findings（不阻塞）
 
 - ~~**验收套件的 `--config` 覆盖会静默丢掉 `app.windows[0]` 里的窗口级配置**（2026-09-25，M213 登记，
@@ -448,6 +470,14 @@
   「在 webview 里 `page.evaluate` 等价物」——但真机没有注入 JS 的现成通道，实际仍需工具侧支持；
   ③ 认账现状，把色值类验收统一交给 chromium 结构层 + Alex 抽审截图（M213 采用的就是这条，并已把边界
   写进场景说明）。**关联**：`docs/process/real-machine-acceptance.md` 的通道边界表应补这一行。
+  **部分缓解（M237，2026-09-26，change `live-theme-switch`）**：真机侧现在有了一条**运行期主题状态**
+  的读数通道——modeline 右段的主题指示钮（`.modeline-theme`）可见文本就是当前主题名，悬停提示 /
+  读屏名是 `主题：{主题名}（点击切换）`（文案 D122），KimiCU 的 AX dump 里读得到
+  `AXButton (主题：dark（点击切换）)`。因此「切换命令命中了吗 / 当前是哪一档 / 重启后首帧是哪一档」
+  这三类判据在真机上**可写可 FAIL** 了（场景 `44-theme-live-switch` 就是按它写的，含反向输入实测）。
+  **仍未缓解的部分照旧**：色值、线宽、对比度、eink 九条降级这些**视觉取值**依然只能靠 chromium
+  计算属性 + Alex 抽审（指示钮只说「是哪一档」，不说「看起来对不对」）。上面三条动作候选（工具侧
+  读计算样式 / 新增 `style` 断言形态 / 认账现状）**不因本次缓解而作废**，本项保留。
 - **`openspec/specs/typography/spec.md` 的 `## Purpose` 段已与实现漂移**（2026-09-25，M213 登记，low）：
   Purpose 第 3 段仍写「shell（左栏、**masthead**、浮层、键位面板、搜索面板）不受影响」与「既有整页基线
   （本 change 落地时 **30 张**）逐张零差异」——masthead 已随 restyle 整块删除、基线已全量重建（张数也
@@ -1027,8 +1057,15 @@
   （`@codemirror/language` 的 `interface TagStyle`），但**给了 `class` 的那条就不再接受内联样式**——
   等于逐 role 把配色真源迁到 CSS，工作量与回归面（code 模式既有基线）都在这里。
   (b) **保留 `HighlightStyle`，改由主题切换时重建扩展**：按 `data-theme` 生成两份 HighlightStyle
-  （eink 那份 keyword 700），启动 / 主题切换时 reconfigure 换上。与 `[ui] theme` 的「重启生效」口径
-  一致；代价是一条扩展重建路径与一处新耦合（主题状态 → 编辑器配置）。
+  （eink 那份 keyword 700），启动 / 主题切换时 reconfigure 换上。代价是一条扩展重建路径与一处新
+  耦合（主题状态 → 编辑器配置）。
+  **本条的 (b) 有一条已过时的定语，M237 更正（2026-09-26，change `live-theme-switch`）**：原句后接
+  「与 `[ui] theme` 的『重启生效』口径一致」——那条口径**已被推翻**：`[ui] theme` 现在支持运行期
+  切换（`view.theme-cycle` / ⌘⇧T / modeline 钮，切换即写回），因此 (b) 的「启动 / 主题切换时
+  reconfigure」不再需要把「主题切换」等同于重启——运行期切换的落点已经存在
+  （`src/main.ts` 的 `applyTheme` 是唯一施加点，一条 `view.theme-cycle` 命令即可触发扩展重建）。
+  这不是说 (b) 变简单了：它仍要引入「主题状态 → 编辑器配置」的耦合，而 (a) 的「配色真源迁到 CSS」
+  路径不受本次修订影响；两者的取舍仍待裁决。
   **闭环判据（本条实施时应补）**：断言落在 code 模式侧（eink 下 code 模式 keyword 元素的计算
   `font-weight` = 700）；现有围栏侧断言不能替代。补断言前，code 模式这半条规则维持「已知缺口」。
   **证据**：M216 gap 报告 §2.3 #11 与 §3 规则②行（主 checkout `test-results/m216/gap-report.md`）。
@@ -1244,6 +1281,18 @@
     文件树节点的读数截图，供标题栏与 traffic 灯位核对。**标题栏的三项窗口级证据**（traffic 灯原生绘制、
     标题文字不显示、栏区可拖拽）不在断言里——真机截图 + 拖拽前后的窗口 bounds 读数落
     `test-results/m213/titlebar/`，判定归 Alex（手感/审美不下沉）。
+26. **主题运行期切换**（M237，2026-09-26，change `live-theme-switch`）—— `44-theme-live-switch`
+    （**34 断言 / 55.5s**，证据 `test-results/acceptance/2026-09-26/44-theme-live-switch/`：
+    `steps.md` + 8 张截图 + 8 份 AX dump）：⌘⇧T 连按三次走完 `light → dark → eink → light` 的循环、
+    再点 modeline 主题钮推进一档，**每档**断言当时主题（读数是 modeline 主题钮的 AX 文本
+    `AXButton (主题：{主题名}（点击切换）)`，实测 dump 见 `ax/08-重启-首帧.txt:81`）与
+    `env:config.json` 的 `[ui] theme` 已写回、上一档已被覆盖；含 mermaid 块的文档切换后断言块
+    重渲完成（源码仍不在编辑器文本里、不残留 pending 占位、不降级）；末步重启实例断言首帧即最后
+    切换的那一档（持久性闭环）。**反向验证**（判据换成必须 FAIL 的输入实测 3/3 红：主题没切 /
+    mermaid 源码可见 / 配置未写回）：`test-results/m237/reverse-validation-acceptance.log`。
+    **覆盖边界（场景说明已详述）**：本套件无计算属性通道，色值 / eink 九条降级 / mermaid SVG 内联色
+    这三类**视觉取值**真机判不了——它们由 chromium 场景 `tests/visual/scenes/theme-live-switch.spec.ts`
+    （8 条，含 4 条反向验证）守；指示钮的「是哪一档」与「看起来对不对」是两件事，本场景只判前者。
 
 **已机验到渲染/结构层，行为细节仍缺可观测面**
 

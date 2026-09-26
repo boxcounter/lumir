@@ -7,8 +7,11 @@ import type { UiTheme } from "./UiTheme";
  */
 export type UiConfig = { 
 /**
- * 界面主题，默认 `light`。启动装载时读一次并施加到 `documentElement.dataset.theme`
- * ——与 `editor.mode` 同口径（重启生效）。本版不做运行期切换、不跟随系统主题。
+ * 界面主题，默认 `light`。**启动真源**：启动装载时读一次并施加到
+ * `documentElement.dataset.theme`（首帧主题）；运行期由 `view.theme-cycle`（⌘⇧T）与
+ * modeline 主题钮循环三档，**切换即经 `config_set_ui_value` 回写本字段**，让真源跟上运行态
+ *（M237，change live-theme-switch；与 `editor.font_size` 的「运行期 MUST NOT 回写」不同
+ * ——主题是设备 / 场景级的持久偏好）。取值由 `UiTheme` 闭集合校验；不跟随系统主题。
  */
 theme: UiTheme, 
 /**

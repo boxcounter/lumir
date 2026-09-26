@@ -9,11 +9,14 @@
 // - 失败降级：parse() 预校验 + render catch，回落「提示 + 完整原文围栏块」，
 //   不伪装已支持；装饰只改视图，文档文本不动，选择/复制输出原始 Markdown
 // （与其他 replace 装饰同口径）；
-// - 主题接线（M219，finding 20260925-worker-restyle-r4-baseline-bug-mermaid-*）：
-//   mermaid 把颜色烧进 SVG 内联样式，CSS 变量无法事后跟随，故 initialize 时把
-//   当前主题（<html data-theme>，main.ts 启动装配一次、运行期不切换）的 token
-//   计算值读入 themeVariables（theme: "base"）。mermaid 懒初始化必然发生在主题
-//   写入之后，时机天然对齐；运行期无切换，渲染缓存键因此仍只是源码。
+// - 主题接线（M219 首版，finding 20260925-worker-restyle-r4-baseline-bug-mermaid-*；
+//   M237 起主题可在运行期切换）：mermaid 把颜色烧进 SVG 内联样式，CSS 变量无法事后
+//   跟随，故 initialize 时把当前主题（<html data-theme>）的 token 计算值读入
+//   themeVariables（theme: "base"）。mermaid 懒初始化必然发生在主题写入之后，时机天然
+//   对齐。运行期切换由装配层承担两件事：写 data-theme 之后调 invalidateMermaidTheme()
+//   （initialize 态 + 缓存整体失效、世代号自增），再派发 previewRefresh 让装饰重建；
+//   切换前已入队的渲染在 settle 时按世代号丢弃，旧主题色 SVG 不落地。缓存键因此仍只是
+//   源码——世代号只用于在**写入点**丢弃迟到结果，不进缓存键（失败结果也照旧入缓存）。
 // 本模块顶层不触 DOM、不静态 import mermaid，Node 端测试可直接 import。
 
 import { Decoration, WidgetType } from "@codemirror/view";
@@ -122,6 +125,10 @@ let rendererPromise: Promise<MermaidRenderer> | null = null;
 let initialized = false;
 let queue: Promise<unknown> = Promise.resolve();
 let renderSeq = 0;
+/** 主题世代号（M237，change live-theme-switch）：每次主题失效自增一次。渲染任务**入队时**
+ *  记下当时的世代号，settle 写缓存前比对——不一致说明这份结果是在旧主题下渲的，丢弃
+ *  （见 invalidateMermaidTheme 与 ensureMermaidRender）。 */
+let themeGeneration = 0;
 
 /** 测试钩子：替换 mermaid 加载器（null 复位为 dynamic import）。 */
 export function setMermaidLoaderForTests(loader: (() => Promise<MermaidRenderer>) | null): void {
@@ -232,6 +239,28 @@ export function onMermaidSettled(listener: () => void): () => void {
 }
 
 /**
+ * 主题切换时的失效出口（M237，change live-theme-switch）。三个动作缺一不可：
+ *   - `initialized = false`：下次渲染重新 `initialize(mermaidConfig())`，才会把新主题的
+ *     token 计算值读进 themeVariables（否则新主题的色读不进来，重渲还是旧色）；
+ *   - `renderCache.clear()`：装饰重建时缓存未命中，各块回落 pending 占位并重渲；
+ *   - `themeGeneration += 1`：让**切换前已入队**的渲染在 settle 时被丢弃——不清这一层的话，
+ *     一次 in-flight 的旧主题结果会在 settle 时把旧色 SVG 写回刚清空的缓存，清缓存等于白清。
+ *
+ * **幂等**：mermaid 尚未懒加载（文档里没出现过 ```mermaid 块）时三个动作都是 no-op——
+ * `initialized` 本就是 false、缓存本就空、世代号自增无消费者；首次渲染照旧读新主题的计算值
+ *（懒初始化发生在 `data-theme` 写入之后的既有性质不变）。
+ *
+ * 谁调用：装配层 `src/main.ts` 的 `cycleTheme`，且必须在写完 `data-theme` 之后、
+ * dispatch `previewRefresh` 之前。本模块不自己派发刷新——它顶层不触 DOM、不 import 编辑器，
+ * 渲染队列与装饰层之间的桥在 `src/preview/livePreview.ts`，模块边界不破。
+ */
+export function invalidateMermaidTheme(): void {
+  initialized = false;
+  renderCache.clear();
+  themeGeneration += 1;
+}
+
+/**
  * 取源码的渲染状态：命中缓存直接返回；未命中登记 pending 并
  * 触发后台渲染，settle 后写入缓存并通知 onMermaidSettled。
  */
@@ -241,7 +270,14 @@ export function ensureMermaidRender(source: string): MermaidRenderState {
   if (renderCache.size >= RENDER_CACHE_LIMIT) renderCache.clear();
   const pending: MermaidRenderState = { status: "pending" };
   renderCache.set(source, pending);
+  // 世代号在**入队时**取（不是 settle 回调里现读）：回调执行的那一刻世代号可能已被主题切换
+  // 推进过，那时再读就永远相等、守卫形同不存在（REVIEW.md 第 1 条「看着有覆盖、实际不判」）。
+  const generation = themeGeneration;
   void renderQueued(source).then((result) => {
+    // 迟到的旧主题结果：丢弃——不写缓存、不通知 settle、**不重排队**。重渲由切换时派发的
+    // previewRefresh 承担（装饰重建 → 缓存未命中 → 按新主题重渲同一个 source）；这里再排一次
+    // 只会让同一 source 在队列里排两遍，白白多渲一次。
+    if (generation !== themeGeneration) return;
     renderCache.set(source, result);
     for (const listener of settleListeners) listener();
   });
@@ -253,7 +289,8 @@ export function mermaidRenderCacheSize(): number {
   return renderCache.size;
 }
 
-/** 测试钩子：清空渲染缓存（不含 in-flight 任务，其 settle 仍写缓存）。 */
+/** 测试钩子：清空渲染缓存（不含 in-flight 任务，其 settle 仍写缓存——它不动世代号，
+ *  与主题失效的 `invalidateMermaidTheme` 是两个不同的动作，别混用）。 */
 export function clearMermaidRenderCache(): void {
   renderCache.clear();
 }

@@ -553,6 +553,41 @@ body {
   flex: none;
   color: var(--text-3);
 }
+/* 主题指示钮（M237，change live-theme-switch）：modeline 右段最末的常驻状态位，同时是切换入口
+   （点击 = 循环切下一档，与 `view.theme-cycle` 是同一条实现路径）。形态照 tokens 文档
+   「chip/状态」节（micro 字 + semibold + pill 圆角 + 微底），取色全走 token、零新色值。
+   边框三主题都占位（基础档用 transparent，见下），eink 的「chip 描边化」（eink 规则⑥）只是
+   把它显形（border-color 取 `--border` = eink 的 #000）——线宽与内边距都不变，因此切主题
+   不产生任何位移（主题切换 MUST NOT 引起布局重排）。 */
+.modeline-theme {
+  flex: none;
+  margin-left: var(--sp-6);
+  padding: 1px var(--sp-4);
+  border: 1px solid transparent;
+  border-radius: var(--r-pill);
+  background: var(--hover);
+  font: inherit;
+  font-size: var(--fs-micro);
+  font-weight: var(--fw-semibold);
+  line-height: 1.5;
+  color: var(--text-3);
+  cursor: pointer;
+  transition:
+    color var(--dur-ui) var(--ease-standard),
+    background var(--dur-ui) var(--ease-standard);
+}
+/* 主题还没施加到 `data-theme` 时钮整体不显示（与标题栏标识块同口径：宁可不显示，也不显示
+   一个尚未生效的主题名）。折叠掉它连右段的 12px 外边距一起收走。 */
+.modeline-theme[hidden] {
+  display: none;
+}
+.modeline-theme:hover {
+  color: var(--text);
+}
+:root[data-theme="eink"] .modeline-theme {
+  background: transparent;
+  border-color: var(--border);
+}
 
 /* 文件树 pane = 侧栏：框体底色（与标题栏同色），右缘 1px 结构档 hairline。 */
 .pane-filetree {

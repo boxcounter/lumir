@@ -448,7 +448,8 @@ fn merge_last_vault(value: &mut serde_json::Value, root: &Path) {
 
 /// `[ui]` 表的单键合并写（M228，change content-width-drag，节点 1 裁决 D3：「写回
 /// config.json」+「命令做成通用键值写入」）。第一个调用方是栏宽拖拽松手后的
-/// `ui.content_width` 持久化；**M226 主题切换的 `ui.theme` 将复用同一通道**。
+/// `ui.content_width` 持久化；**M237 主题切换的 `ui.theme` 复用同一通道**（change
+/// live-theme-switch——运行期切换不新增第二个写命令，同一条语义不留两套写通道）。
 /// 前端失败降级为 toast + 诊断日志，运行期值不回滚（与 remember_last_vault 同口径）。
 #[tauri::command(rename_all = "snake_case")]
 pub fn config_set_ui_value(key: String, value: serde_json::Value) -> Result<(), CommandError> {
@@ -964,6 +965,30 @@ pub fn wikilink_create(
 mod tests {
     use super::*;
 
+    /// 临时配置文件（写回类单测用）：文件名带进程号 + 序号，Drop 时删除。
+    /// 与 `config.rs` 测试模块里的同名辅助同形——两个模块各持一份是刻意的：测试辅助不进
+    /// 生产代码的公共面（`pub(crate)` 会把测试脚手架漏进库的表层 API）。
+    struct TempFile(std::path::PathBuf);
+    static SEQ: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+    impl TempFile {
+        fn new(content: &str) -> Self {
+            let path = std::env::temp_dir().join(format!(
+                "lumir-commands-test-{}-{}.json",
+                std::process::id(),
+                SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            ));
+            std::fs::write(&path, content).expect("write temp config");
+            Self(path)
+        }
+    }
+
+    impl Drop for TempFile {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_file(&self.0);
+        }
+    }
+
     #[test]
     fn dirty_state_mirrors_latest_report() {
         let state = DirtyState::default();
@@ -1130,6 +1155,51 @@ mod tests {
         assert_eq!(err.code, "config_write_failed");
         assert!(!good.exists(), "空键不得落盘");
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// M237（change live-theme-switch，D3）：主题切换的写回产物必须是**下次启动读得回**的
+    /// 那一份——写 `ui.theme` 之后 `config::load_from` 从同一路径读回的就是这一档，且 ui 表内
+    /// 其它键（M228 的 `content_width`）与未知字段逐键保留。这条把「写回 → 下次启动首帧」这条
+    /// 链路的两端钉在一起：只测 merge 的纯函数部分测不到「load 认得它」。
+    #[test]
+    fn write_ui_value_theme_round_trips_through_config_load() {
+        let file = TempFile::new(
+            r#"{"version":1,"last_vault":"/tmp/vault","ui":{"content_width":920},"future_field":7}"#,
+        );
+        write_ui_value_to(&file.0, "theme", &serde_json::json!("dark")).expect("写回主题");
+
+        let snap = config::load_from(&file.0);
+        assert_eq!(
+            snap.config.ui.theme,
+            config::UiTheme::Dark,
+            "读回的就是写进去的那一档"
+        );
+        assert!(
+            snap.warnings.is_empty(),
+            "写回产物必须是干净配置（不产生校验 warning）：{:?}",
+            snap.warnings
+        );
+        assert_eq!(snap.config.ui.content_width, 920.0, "ui 表内其它键保留");
+        assert_eq!(snap.config.last_vault.as_deref(), Some("/tmp/vault"));
+        // 未知字段在磁盘上原样保留（写回是合并写，不是整表重写）
+        let text = std::fs::read_to_string(&file.0).expect("读回文件");
+        assert!(text.contains("\"future_field\""), "{text}");
+    }
+
+    /// 写回的三档都是合法的闭集合取值：写哪一档，load 就认哪一档（不做「只对 dark 成立」的
+    /// 单点假设，MUST NOT 只测一档就把三档算作覆盖）。
+    #[test]
+    fn write_ui_value_theme_accepts_every_tier() {
+        for (raw, want) in [
+            ("light", config::UiTheme::Light),
+            ("dark", config::UiTheme::Dark),
+            ("eink", config::UiTheme::Eink),
+        ] {
+            let file = TempFile::new(r#"{"version":1}"#);
+            write_ui_value_to(&file.0, "theme", &serde_json::json!(raw)).expect("写回主题");
+            let snap = config::load_from(&file.0);
+            assert_eq!(snap.config.ui.theme, want, "{raw}");
+        }
     }
 
     /// M127：last_vault 写失败必须降级为 warning（返回 false、不 panic、不传播），

@@ -6,6 +6,7 @@ import { GFM } from "@lezer/markdown";
 import {
   clearMermaidRenderCache,
   ensureMermaidRender,
+  invalidateMermaidTheme,
   mermaidBlockSet,
   mermaidRenderCacheSize,
   onMermaidSettled,
@@ -121,6 +122,193 @@ test("加载失败可重试：一次拒绝不毒化后续渲染", async () => {
 });
 
 
+
+// ---------------------------------------------------------------------------
+// 主题失效：invalidateMermaidTheme 的幂等性与世代号守卫（M237，change live-theme-switch）
+//
+// 主题切换时 mermaid 必须按新主题重渲（颜色烧进 SVG 内联样式，CSS 变量无法事后跟随）。
+// 这四条跑的是真代码（fake 渲染器注入），判据是「缓存里到底是什么」与「render / initialize
+// 被调了几次」这两个可数的事实。
+//
+// 为什么不进 tests/unit：src/preview/mermaid.ts 用了 TS 参数属性（MermaidBlockWidget 的
+// 构造器），Node 的类型剥离（strip-only）拒绝该语法——这正是本文件承载 mermaid 的 Node 侧
+// 单测的既有原因（见 tests/unit/tsconfig.json 的注释）。
+// ---------------------------------------------------------------------------
+
+/** 可控的假渲染器：render 的 settle 由测试显式放行（模拟「切换瞬间在飞」的渲染）。
+ *  每次 render 的产物带 `data-run` 序号——「落地的是哪一次渲染的结果」因此可判（世代号
+ *  守卫的核心判据不是「调了几次」而是「哪一次的结果进了缓存」）。 */
+function deferredRenderer() {
+  const gates: Array<() => void> = [];
+  let renders = 0;
+  const renderer = {
+    initialize: () => {},
+    parse: () => Promise.resolve({}),
+    render: (_id: string, source: string) => {
+      renders++;
+      const run = renders;
+      return new Promise<{ svg: string }>((resolve) => {
+        gates.push(() => resolve({ svg: `<svg data-run="${run}" data-source="${source}"></svg>` }));
+      });
+    },
+  };
+  return {
+    renderer,
+    renderCalls: () => renders,
+    releaseFirst: () => gates.shift()?.(),
+    releaseAll: () => {
+      for (const gate of gates.splice(0)) gate();
+    },
+  };
+}
+
+/** 等微任务队列清空（settle 回调挂在 Promise 链上，落定要让它跑完几拍）。 */
+async function flushMicrotasks(): Promise<void> {
+  for (let i = 0; i < 8; i++) await Promise.resolve();
+}
+
+/** 轮询等到条件成立（默认 2s）。
+ *
+ *  为什么不数微任务拍数：渲染串行队列（`queue`）是**模块级**状态，一次测试里「第 n 次
+ *  render 何时开始」取决于队列前面还有没有在飞的 job——拍数写死会在全量套件里红、单跑绿
+ * （M237 实测：同一条用例单跑 8/8 过、全量里红）。条件轮询对队列位置不敏感，且超时会报错
+ *  而不是静默放过。 */
+async function waitUntil(predicate: () => boolean, message: string, ms = 2000): Promise<void> {
+  const deadline = Date.now() + ms;
+  while (!predicate()) {
+    if (Date.now() > deadline) throw new Error(`waitUntil 超时：${message}`);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+}
+
+test("主题失效：未懒加载时是幂等 no-op（不触发加载、不产出缓存）", async () => {
+  let loads = 0;
+  setMermaidLoaderForTests(() => {
+    loads++;
+    return Promise.resolve(deferredRenderer().renderer);
+  });
+  clearMermaidRenderCache();
+  let settled = 0;
+  const off = onMermaidSettled(() => {
+    settled++;
+  });
+  try {
+    invalidateMermaidTheme();
+    invalidateMermaidTheme(); // 幂等：连调两次与一次等价
+    await flushMicrotasks();
+    expect(loads).toBe(0); // 失效本身 MUST NOT 触发渲染器加载（懒加载只在首个围栏块出现时发生）
+    expect(mermaidRenderCacheSize()).toBe(0);
+    expect(settled).toBe(0);
+  } finally {
+    off();
+    setMermaidLoaderForTests(null);
+    clearMermaidRenderCache();
+  }
+});
+
+test("主题失效：世代号守卫丢弃迟到的旧主题结果（缓存里落地的是新世代那一次的结果）", async () => {
+  const fake = deferredRenderer();
+  setMermaidLoaderForTests(() => Promise.resolve(fake.renderer));
+  clearMermaidRenderCache();
+  let settled = 0;
+  const off = onMermaidSettled(() => {
+    settled++;
+  });
+  const source = "graph TD; A-->B";
+  try {
+    // ① 切换前入队（旧主题那一次）
+    expect(ensureMermaidRender(source).status).toBe("pending");
+    await waitUntil(() => fake.renderCalls() === 1, "旧主题的渲染入队");
+
+    // ② 切换主题：缓存整体清空 + 世代号自增
+    invalidateMermaidTheme();
+    expect(mermaidRenderCacheSize()).toBe(0);
+
+    // ③ 装饰重建路径（previewRefresh）：同一 source 缓存未命中，按新主题再入队一次
+    expect(ensureMermaidRender(source).status).toBe("pending");
+
+    // ④ 放行旧世代那一次：它 settle 时被丢弃（不写缓存、不通知），队列随即轮到新世代那次
+    fake.releaseFirst();
+    await waitUntil(() => fake.renderCalls() === 2, "新世代那次渲染在旧世代 settle 后才开始");
+    expect(settled).toBe(0); // 丢弃的那次 MUST NOT 通知 settle
+    expect(ensureMermaidRender(source).status).toBe("pending"); // 缓存里仍是新世代的 pending
+    expect(mermaidRenderCacheSize()).toBe(1);
+
+    // ⑤ 放行新世代那次：结果落地，且落地的是**新世代的产物**（data-run=2）
+    fake.releaseAll();
+    await waitUntil(() => ensureMermaidRender(source).status === "ok", "新世代渲染 settle");
+    const final = ensureMermaidRender(source);
+    expect(final.status === "ok" && final.svg).toContain('data-run="2"');
+    expect(final.status === "ok" && final.svg).not.toContain('data-run="1"');
+    expect(settled).toBe(1);
+    expect(fake.renderCalls()).toBe(2); // 丢弃 MUST NOT 重排队（重渲由 previewRefresh 重建路径承担）
+  } finally {
+    fake.releaseAll(); // 不留未放行的 gate：队列是模块级的，漏一个会堵住后续用例
+    off();
+    setMermaidLoaderForTests(null);
+    clearMermaidRenderCache();
+  }
+});
+
+test("对照组：未失效时在飞的渲染照常落缓存并通知（证明上一条的判据有区分度）", async () => {
+  const fake = deferredRenderer();
+  setMermaidLoaderForTests(() => Promise.resolve(fake.renderer));
+  clearMermaidRenderCache();
+  let settled = 0;
+  const off = onMermaidSettled(() => {
+    settled++;
+  });
+  const source = "graph TD; C-->D";
+  try {
+    ensureMermaidRender(source);
+    await waitUntil(() => fake.renderCalls() === 1, "渲染入队");
+    fake.releaseAll();
+    await waitUntil(() => ensureMermaidRender(source).status === "ok", "结果落缓存");
+    expect(settled).toBe(1);
+  } finally {
+    fake.releaseAll();
+    off();
+    setMermaidLoaderForTests(null);
+    clearMermaidRenderCache();
+  }
+});
+
+test("主题失效后重渲会重新 initialize（新主题的 token 计算值才读得进来）", async () => {
+  let inits = 0;
+  setMermaidLoaderForTests(() =>
+    Promise.resolve({
+      initialize: () => {
+        inits++;
+      },
+      parse: () => Promise.resolve({}),
+      render: (_id: string, source: string) => Promise.resolve({ svg: `<svg data-source="${source}"></svg>` }),
+    }),
+  );
+  clearMermaidRenderCache();
+  const source = "graph TD; E-->F";
+  try {
+    const first = settleOnce();
+    ensureMermaidRender(source);
+    await first;
+    expect(inits).toBe(1);
+
+    // 缓存命中：不再渲染、也不重复 initialize（既有性质不变）。
+    // MUST NOT 在这里 await 一次 settle：命中路径不产生 settle 通知，等它必然超时
+    //（M237 实测：这条写法在全量套件里 30s 超时，单跑绿——靠上一条用例遗留的 settle 蒙过）
+    expect(ensureMermaidRender(source).status).toBe("ok");
+    expect(inits).toBe(1);
+
+    invalidateMermaidTheme();
+    const third = settleOnce();
+    ensureMermaidRender(source);
+    await third;
+    // initialize 是**全局态**：不复位它，重渲读到的还是旧主题的 token 计算值
+    expect(inits).toBe(2);
+  } finally {
+    setMermaidLoaderForTests(null);
+    clearMermaidRenderCache();
+  }
+});
 
 function blockCount(doc: string, selection?: { anchor: number; head: number }): number {
   const state = EditorState.create({

@@ -55,8 +55,12 @@ modeline 的主题指示钮消解（当前主题名常驻可见，同时是切�
    不阻塞切换：运行期主题保留 + toast 告知「重启后将回到配置文件值」。
    （delta：`ui-design-system` / MODIFIED「三主题与主题选择」）
 
-4. **配置写回通道**：新增 Rust 命令 `config_set_ui_theme`，照 `write_last_vault_to` 模板
-   （合并既有 JSON、tmp+rename 原子写、失败 `CommandError`），前端不等写回结果。
+4. **配置写回通道**：**（实现期修正，2026-09-26，M237；Alex 节点 1 的裁决口径）不新增 Rust
+   命令**——直接复用 M228（change content-width-drag）已落地的**通用合并写 IPC**
+   `config_set_ui_value`（`src-tauri/src/commands.rs:449-483`：serde_json::Value 级合并、保留未知
+   键、tmp+rename 原子写、失败 `CommandError`、ACL 与 invoke handler 清单沿用既有那条）。原稿
+   「新增 `config_set_ui_theme`，照 `write_last_vault_to` 模板」是 M228 落地**之前**的口径；同一条
+   语义不留两套写通道（REVIEW.md 第 8 条）。前端不等写回结果、失败降级为 toast 的口径不变。
    配置即数据（ADR 0002 §5）不变：配置文件仍是启动真源，写回只是让真源跟上运行态。
 
 ## 须提请 Alex 节点 1 裁决的选项
@@ -96,8 +100,12 @@ modeline 的主题指示钮消解（当前主题名常驻可见，同时是切�
     失败 toast、modeline 指示维护；
   - `src/shell.ts`：modeline 右段主题钮容器；`src/keys.ts`：命令 id + ⌘⇧T 绑定；
   - `src/preview/mermaid.ts`：主题失效出口（渲染缓存与 initialize 态按主题世代失效）；
-  - `src-tauri/src/commands.rs` / `config.rs`：`config_set_ui_theme` 命令与校验；
-    ts-rs 重新导出（`src/bindings/UiConfig.ts` 的「重启生效」自述随之刷新）；
+  - `src-tauri/src/commands.rs` / `config.rs`：**实现期修正**——不新增 `config_set_ui_theme`
+    命令，复用 M228 的通用合并写 IPC `config_set_ui_value`（见 What Changes 第 4 条）；只需改
+    `UiConfig` 的 doc comment 并 ts-rs 重新导出（`src/bindings/UiConfig.ts` 的「重启生效」自述随之刷
+    新）。
+  - `src/theme.ts`（新增）：主题域的纯逻辑——三档循环序、当前主题读取、两条可见文案；
+  - `src/style.css`：modeline 主题钮的 chip 样式（样式居所是 style.css，M237 的 scope 已按裁决补入）；
   - `tests/visual/scenes/`：新增三主题切换场景（结构层断言）；
     `scripts/acceptance/scenarios/`：新增真机验收场景。
 - **性能**：切换是 O(1) 的 DOM 属性写入 + mermaid 重建走既有串行队列与有限 settle；无新

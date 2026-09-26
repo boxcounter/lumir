@@ -28,15 +28,18 @@
 //! warning（`{"log": "info"}` 这种错形状也只丢这一项，不拖垮整文件）。`level` 的
 //! 消费方是 src-tauri/src/logging.rs（`off` 时事件丢弃不写盘）。
 //!
-//! ## ui 表（restyle-ui-tokens-v1）
+//! ## ui 表（restyle-ui-tokens-v1，M237 起含运行期切换）
 //!
-//! `{"ui": {"theme": "light" | "dark" | "eink"}}`，默认 `light`。取值校验照 `editor.mode`
+//! `{"ui": {"theme": "light" | "dark" | "eink", "content_width": 760}}`，默认 `light` /
+//! `760`。取值校验照 `editor.mode`
 //! 模板：表内 `theme` 缺失 → 默认；取值不在表内 → warning + 回落默认（ADR 0002 §5：非法
 //! 配置不导致启动失败）。它与 `editor` 一样是**结构化表**（`RawUiConfig`），不是 keys / log
 //! 那种「整表收成 Value」——因此 `{"ui": "dark"}` 这种表的错形状与表内 `"theme": 2` 同路，
 //! 都走**整文件回落**（同族说明见下节）。`theme` 的消费方是前端启动施加处
-//! （`documentElement.dataset.theme`，与 `editor.mode` 同口径：装载时读一次、重启生效）；
-//! Rust 侧只负责读出来并挡住非法值，本版不做运行期切换、不跟随系统。
+//! （`documentElement.dataset.theme`，与 `editor.mode` 同口径：装载时读一次并按它施加首帧）；
+//! M237（change live-theme-switch）起它还支持**运行期切换**——前端命令与 modeline 主题钮
+//! 循环三档，切换即经通用合并写 IPC `config_set_ui_value` 回写本字段（`commands.rs`），让启动
+//! 真源跟上运行态。Rust 侧只负责读出来、挡住非法值、以及提供那条写通道；不跟随系统主题。
 //!
 //! ## 数值字段的打字代价（typography-and-zoom）
 //!
@@ -183,8 +186,11 @@ pub enum EditorMode {
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, TS)]
 #[ts(export, export_to = "../../src/bindings/")]
 pub struct UiConfig {
-    /// 界面主题，默认 `light`。启动装载时读一次并施加到 `documentElement.dataset.theme`
-    /// ——与 `editor.mode` 同口径（重启生效）。本版不做运行期切换、不跟随系统主题。
+    /// 界面主题，默认 `light`。**启动真源**：启动装载时读一次并施加到
+    /// `documentElement.dataset.theme`（首帧主题）；运行期由 `view.theme-cycle`（⌘⇧T）与
+    /// modeline 主题钮循环三档，**切换即经 `config_set_ui_value` 回写本字段**，让真源跟上运行态
+    ///（M237，change live-theme-switch；与 `editor.font_size` 的「运行期 MUST NOT 回写」不同
+    /// ——主题是设备 / 场景级的持久偏好）。取值由 `UiTheme` 闭集合校验；不跟随系统主题。
     pub theme: UiTheme,
     /// 阅读栏宽上限（框宽 px，content-width-drag，M228）：默认 760（D1，2026-09-26 Alex 修订），
     /// 合法区间 `[760, 1200]`（D2——默认值即下限）。启动时装配一次；运行期由栏宽拖拽推进并回写
