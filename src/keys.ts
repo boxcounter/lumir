@@ -72,6 +72,21 @@
 // macOS 系统级，逐条写在 KEY_BINDINGS 那一条的 doc 与它上方的组注释里）。`KEYLESS_COMMAND_IDS`
 // 不变——该命令默认有绑定，MUST NOT 登记进「默认不绑键」清单。
 //
+// M239：表新增两条**有默认绑定**的编辑器命令（`Tab` → `editor.list-indent`、`Shift-Tab` →
+// `editor.list-outdent`，change list-tab-indent 的 D1a/D2c/D3a/D4a/D5a 裁决）。键位占用已核
+//（三条独立来源，逐条可复核）：① 表内无 `Tab` / `Shift-Tab` token——`Ctrl-Tab` /
+// `Ctrl-Shift-Tab`（tab.next / tab.prev，M149）归一化后是不同 token，互不干扰；② 原生菜单
+// accelerator 集合（tauri 的 `Menu::default()` 逐项来自 muda `items/predefined.rs`，清单见
+// 文件头 M149 段）不含 Tab 系；③ macOS 系统级不占用裸 Tab。另核两处「表外会不会有人先接管」：
+// CM 侧未装 `indentWithTab`、也未装 `defaultKeymap` / 任何 `keymap.of`，应用无补全扩展
+//（`indentWithTab` / `autocompletion` / `defaultKeymap` / `keymap.of` 在 src/ 下全仓零命中）
+// ——TAB 此前因此落到原生路径 = webview 焦点遍历（contentDOM 带 `tabindex="0"`，
+// `editor.ts` 的 `EditorView.contentAttributes`）。**该焦点遍历被接管是 D1a 知情接受的代价**：
+// 原生焦点遍历本就不是本应用的导航范式（ADR 0006 的 Emacs keybinding PKM 定位），而「列表编辑
+// 中途焦点跳出编辑器」是缺陷不是能力。两处不受影响：`isTypingKey` 守卫只拦单字符打字键，
+// `Tab` 是多字符键名；且 scope editor 的命令在 contentDOM 之外不命中——焦点在浮层 / 搜索框的
+// 原生输入框里时，Tab 照旧走原生焦点遍历（本层不 consume、不 preventDefault）。
+//
 // 零冲突核对（注册前实测，三条独立来源，逐条可复核）：
 //   - **表内**：本文件即真源，现表无 ⌘W / ⌘数字 / ⌃⇥ 系绑定（⌘W 系为空，⌘ 数字无，⌃Tab 无）。
 //   - **原生菜单 accelerator**：tauri 2.11.5 的 `Menu::default()` 逐项来自 muda 0.19.3
@@ -128,6 +143,12 @@ const EDITOR_CORE_COMMAND_IDS = [
   "editor.extend-line-end",
   "editor.extend-word-forward",
   "editor.extend-word-backward",
+  // M239：列表项缩进 / 凸排（change list-tab-indent）。归内核组是因为实现在 editor.ts 的
+  // commands 记录里（判归属 + 产 changes 的纯函数在 src/list-indent.ts）；作用域随组派生为
+  // editor——「head 在不在列表项内」这个前提由命令自己按语法树判（键位层没有条件分支，
+  // 表内也没有第二条 Tab 系绑定可用）。
+  "editor.list-indent",
+  "editor.list-outdent",
 ] as const;
 
 /** 轨道 D 的 widget 焦点作用域命令（M132 收编进统一表；实现在 livePreview.ts）。
@@ -363,6 +384,21 @@ export const KEY_BINDINGS: readonly KeyBinding[] = [
   { key: "Home", command: "editor.widget-scroll-home", scope: "editor", when: isWidgetKeyTarget, doc: "容器焦点内的 Home：横向滚回最左" },
   { key: "End", command: "editor.widget-scroll-end", scope: "editor", when: isWidgetKeyTarget, doc: "容器焦点内的 End：横向滚到最右" },
   { key: "Escape", command: "editor.widget-escape", scope: "editor", when: isWidgetKeyTarget, doc: "容器焦点内的 Escape：焦点交还编辑器（view.focus()），随后按键回到文本上下文" },
+
+  // ── 编辑器内：列表项缩进 / 凸排（M239，change list-tab-indent）
+  // 语义（Alex 节点 1 裁决）：TAB = 把 head 归属的列表项连同续行与子树整体缩进一层，
+  // Shift-Tab = 对称地凸排一层；到顶（顶层项凸排）与「head 不在任何列表项内」（段落 / 标题 /
+  // 表格 / 代码块内）一律无操作——**命中即消费**（键位层统一吞默认行为），文档逐字节不变、
+  // 不进撤销栈、焦点不跳出编辑器，MUST NOT 把键放回原生路径（D3a / D4a）。
+  // 缩进步长按**语法树**取（上一同级项的内容列 = marker 宽 + 1 空格：`- ` → 2、`1. ` → 3），
+  // 不是固定 2 空格——固定 2 空格在有序列表上不构成嵌套（实测），口径与证据见
+  // change list-tab-indent 的 design §3。
+  // 冲突核对见文件头 M239 段（三条独立来源 + CM 侧无 indentWithTab / defaultKeymap）。
+  // 起作用域 editor：「head 是否在列表项内」由命令按语法树判（键位层不做条件分支——
+  // 这里也不用 `when`：`when` 表达的是「同一物理键在不同焦点下语义不同」，而本键的语义不随
+  // 焦点变，只随文档结构变；结构判定的单一来源留在命令侧，避免两处各判一次而漂移）。
+  { key: "Tab", command: "editor.list-indent", scope: "editor", doc: "列表项缩进一层（TAB，Alex 点名）：head 归属的 ListItem 连同续行与子列表整体平移（步长 = 该层 marker 宽 + 1 空格，见 change list-tab-indent design §3），有序列表按新归属重排源码编号（D2c）。非列表行 / 代码块内无操作（D4a）——命中即消费，焦点不跳出编辑器。接管了编辑器内 TAB 的原生焦点遍历，这是 D1a 知情接受的代价；焦点在浮层 / 搜索框的原生输入框里时本绑定不命中（editor 作用域），Tab 照旧走原生焦点遍历" },
+  { key: "Shift-Tab", command: "editor.list-outdent", scope: "editor", doc: "列表项凸排一层（⇧TAB）——凸到祖先列表项的缩进层级（按语法树取，不是机械减 2；行首空白不足的行宽容移除、行首 tab 按一层读取宽容处理），有序列表按新归属重排源码编号（D2c）。列表项已在顶层时无操作（D3a）：文档逐字节不变、不进撤销栈；非列表行 / 代码块内同样无操作（D4a）" },
 
   // ── 全局
   { key: "Cmd-s", command: "document.save", scope: "global", doc: "D3 裁决：⌘S 是唯一保存键；⌃S 解绑（预留给 isearch），不再触发保存" },
