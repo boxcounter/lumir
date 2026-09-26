@@ -186,3 +186,22 @@ acceptance-scenario-numbering-m234-47.md`）。
       指出下一步的错误信息（右键目标出视口时明确报「节点 @x,y 超出窗口 W×H，请先把它带进视口」），
       避免下一位作者再撞 KimiCU 那句看不出成因的
       `screenshot coordinate is outside the last get_app_state image`。
+
+## 8. r1 复审处置（2026-09-27，worker-tree-menu）
+
+评审文件 `.tower/comms/reviews/review-feat-implement-file-tree-context-menu-m234-reviewer-tree-menu-r1.md`
+（verdict `p2-3items` / fix-then-merge，reviewed commit `47c3ffa`）。三条 P2 + 两项流程项逐条处置：
+
+| 条目 | 处置 | 落点与证据 |
+|---|---|---|
+| P2-1 注释指向不存在的测试文件 | 改注释里的文件名为 `tests/unit/tree-paths.test.ts` 并写出那一条用例名 | `src/tree.ts` 的 `IGNORED_NAMES` doc 注释 |
+| P2-2 `resolve_new_in_vault` 注释言过其实（rename 会原子替换目标） | ① `rename_entry` **写路径加显式复查**：`rename` 前 `symlink_metadata` 命中即返回与 create 路径同一个 `fs_already_exists`，不允许静默覆盖（窗口收窄到两次系统调用之间）；② doc 注释改准——create 两条路径的保证来自 `create_new(true)` / `create_dir`（无窗口），rename 是「复查 + 极窄窗口」不是原子保证，零窗口需要平台原子排他改名，本批不引；③ 补单测 `rename_refuses_existing_target_on_write_path`（撞名目标为**文件**与**目录**两种形态都不覆盖、源与目标逐字节不变、错误码与 message 点名撞的条目） | `src-tauri/src/fs_io.rs` 的 `resolve_new_in_vault` / `rename_entry` 注释与测试模块。**该单测钉不到窗口本身**（无法在两次系统调用之间插入外部进程），这点写在测试注释里 |
+| P2-3 仅大小写改名在大小写不敏感 FS 不可达且提示误导 | 按 tower 裁决**不做两步改名**，登记为已知限制（含影响、fail-safe 方向、为什么不修、将来要修时的落点） | `design.md` §7.1（新增「已知限制」节）+ `docs/backlog.md`「记录在案」两条（另一条是 P2-2 的窗口取舍，§7.2） |
+| 流程项① README 补登记 | 补三行 + 一行占位符：`clipboardRead` 动作、`clipboard` 断言形态（读不到一律 FAIL）、`click` 的 `button`（非左键走 bbox 中心真实鼠标事件 + 目标须在可视区内）、`$vault` 占位符 | `scripts/acceptance/README.md` 的动作表 / 断言表 / 占位符段 |
+| 流程项② 真机证据镜像 | 场景目录 `cp -R` 到主 checkout `test-results/acceptance/2026-09-26/47-file-tree-context-menu/`（git 外、不入 git），并把该现象写进同目录索引：`summary.md` 补 47 行 + 两轮来源与混合证据的备注、`results.json` 补条目、`run.log` 追加两轮结果行 | 主 checkout `/Users/boxcounter/Code/Boxcounter/lumir/test-results/acceptance/2026-09-26/`（证据区；`shots/`、`ax/` 是两轮同名截图互相覆盖后的混合体，`steps.md` 与表内读数是最后一轮） |
+
+处置后门禁（`cargo test` 与 fmt/clippy 都在 `gate.sh quick` 内）：`GATE RESULT: 10/10 PASS（SKIP 0）`——
+`cargo-test` 的 lib 用例 **160 passed**（上一轮 159 + 本轮新增的 `rename_refuses_existing_target_on_write_path`）、
+`unit-tests` **368 passed**（前端单测本轮无新增，上一轮已计入）、`bindings-drift` / `tsc-root` / `tsc-visual` /
+`tsc-unit` / `docs-check` / `openspec-validate` 全 PASS；另跑
+`npx --yes @fission-ai/openspec@1.12.0 validate file-tree-context-menu --strict` → `Change 'file-tree-context-menu' is valid`。

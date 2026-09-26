@@ -1524,6 +1524,21 @@ living spec 两处已随本 change 改写口径（`keymap-commands` 的「轨道
   裁决，不急。finding `20260918-worker-m132-m115-bug-scrollbar-gutter-stable-scrollwidth-15px.md`。
 - **toml 的表头 `[x]` / `[[x]]` 与布尔、日期共用 legacy mode 的同一个 `atom` token，tokenTable 分不开**（M179，2026-09-18，low）：`@codemirror/legacy-modes@6.5.4` 的 `mode/toml.js:44,57,59` 三处 `return "atom"` 分别对应节头、日期、`true`/`false`；M179 给 yaml 挂的 tokenTable 只按 token 名映射，无法「只把节头改成属性色」——故 toml 的表头与数字、布尔同取字面量色 `rgb(160,94,28)`。观感上 toml 仍有四色区分（键属性蓝、字符串绿、注释灰、字面量棕），与 rust / json 块同档，M179 据此裁决**接受现状**，并把这条记进 `openspec` 的「Markdown 渲染保真」requirement 的「已知例外」段落（与 rust 字符字面量那条并列，不再只列 rust）。**若要修**：只能 patch / fork vendored `mode/toml.js` 让节头产出独立 token 名，再在 `TOKEN_GROUPS` 给它一个角色（`TokenRole` 与 `src/editor.ts` 的 `CODE_COLORS` 两处穷尽检查同步）——等于 fork 依赖，M179 明确非目标。回归保护已在位：`tests/visual/scenes/render-codeblock.spec.ts` 有 toml 六类 token 的取色断言 + 元素级基线 `render-codeblock-toml-line.png`。
 
+- **仅大小写改名不可达（大小写不敏感文件系统）**（2026-09-27，M244 r1 评审 P2-3，**记录在案**）：
+  `note.md` → `NOTE.md` 在 macOS 默认 APFS（大小写不敏感）上走不通——前端同缀预检放行（集合里只有
+  `note.md`），后端 `fs_io::resolve_new_in_vault` 的 `symlink_metadata` 在目标路径上命中**源文件自己**
+  → `fs_already_exists`，行内提示「已存在同名条目：NOTE.md」，而树里并没有这个条目，提示对用户是误导的。
+  **方向 fail-safe**（拒绝而非覆盖，磁盘逐字节不变），**tower 已裁（2026-09-27）：本批不做两步改名，登记为已知限制**。
+  要修时的落点：`fs_io::rename_entry`（识别「目标存在且与源同一个文件」时先改临时名再改目标名，失败路径
+  从一步变两步、要自带回滚与文案），顺带把提示改成能解释「同名但大小写不同」的那一句（需 `文案-Copy.md` 新编号）。
+  现状与取舍同时登记在 `openspec/changes/file-tree-context-menu/design.md` §7.1。
+- **rename 的「撞名不覆盖」是复查 + 极窄窗口，不是原子保证**（2026-09-27，M244 r1 评审 P2-2，**记录在案**）：
+  `std::fs::rename` 的 POSIX 语义是原子替换已存在的目标，因此 `resolve_new_in_vault` 的探测与随后
+  `rename` 之间有真实的检查-执行窗口（窗口内外部进程在目标名建出的文件会被静默覆盖）。现状：`rename_entry`
+  在写路径上再复查一次，把窗口收窄到两次系统调用之间；零窗口需要平台原子排他改名（macOS
+  `renamex_np(RENAME_EXCL)` 等），引 libc 与平台分支的收益与风险不成比例，**本批不引**。
+  登记在 `openspec/changes/file-tree-context-menu/design.md` §7.2。
+
 ## 已核销（留痕，定期清理）
 
 - 2026-09-16：**文件内搜索 v0**（M139，merge `647f519`）：`@codemirror/search` 6.7.2 能力底座 +

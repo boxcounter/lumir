@@ -329,8 +329,15 @@ pub fn validate_new_name(name: &str) -> Result<(), CommandError> {
 /// `resolve_in_vault`（继承全部逃逸防护：绝对路径 / `..` / 符号链接逃逸），
 /// 末段名单独过 [`validate_new_name`]，join 之后只做 `symlink_metadata` 存在性探测
 /// ——已存在即 `fs_already_exists`（不跟随后续 canonicalize，目标本来就允许不存在）。
-/// 这条探测是**早失败的人话错误**；「撞名不覆盖」的原子语义最终由调用方的
-/// `create_new` / `rename` 裁定（不存在「检查-创建」竞态窗口的假安全感）。
+/// 这条探测是**早失败的人话错误**，不是「撞名不覆盖」的保证本身——两种调用方的保证来源
+/// 不同，别在这里读出一条不存在的原子性：
+///
+/// - [`create_file_entry`] / [`create_dir_entry`]：保证来自创建调用本身
+///   （`create_new(true)` / `create_dir` 撞名即失败），**不存在**检查-创建窗口。
+/// - [`rename_entry`]：`std::fs::rename` 的 POSIX 语义是**原子替换**已存在的目标，因此
+///   这里的探测与随后的 `rename` 之间确实有一个检查-执行窗口（`rename_entry` 在写路径上
+///   又显式复查了一次，把窗口收窄到两次系统调用之间；真要做到零窗口需要平台的原子排他改名，
+///   本批不做——[`rename_entry`] 的注释写明取舍）。
 pub fn resolve_new_in_vault(
     root: &Path,
     parent_rel: &str,
@@ -397,12 +404,28 @@ pub fn trash_entry(root: &Path, rel: &str) -> Result<(), CommandError> {
 }
 
 /// 同目录改末段名（v1 不支持跨目录移动，proposal 非目标）。源走 [`resolve_in_vault`]，
-/// 目标走 [`resolve_new_in_vault`]（父 = 源的父目录）——撞名在 `rename` 之前就被拒绝，
-/// MUST NOT 覆盖既有条目。返回改名后的 vault 相对路径。
+/// 目标走 [`resolve_new_in_vault`]（父 = 源的父目录），并在**写路径上再复查一次**目标是否
+/// 已存在——MUST NOT 覆盖既有条目。返回改名后的 vault 相对路径。
+///
+/// 为什么写路径要再查一次：`std::fs::rename` 的 POSIX 语义是**原子替换**已存在的目标
+/// （不是「撞名即失败」），所以 `resolve_new_in_vault` 里那次探测与这里的 `rename` 之间
+/// 存在真实的检查-执行窗口——窗口内外部进程在目标名建出的文件会被静默覆盖。这个复查把窗口
+/// 收窄到两次系统调用之间，代价是一次 `symlink_metadata`；风险本身极低（单用户本地 vault、
+/// 亚毫秒窗口、需外部进程精准撞名），失败方向也安全（宁可多报一次「已存在」也不覆盖）。
+/// 真要做到零窗口需要平台的原子排他改名（macOS 的 `renamex_np(RENAME_EXCL)`，其余平台各有
+/// 对应物），本批不做：那要引 libc/平台分支，收益与风险不成比例。**因此「撞名不覆盖」在
+/// rename 这条路上是「复查 + 极窄窗口」，不是原子保证**——别在别处读成更强的东西。
 pub fn rename_entry(root: &Path, rel: &str, new_name: &str) -> Result<String, CommandError> {
     let from = resolve_in_vault(root, rel)?;
     let parent_rel = parent_rel_of(rel).to_string();
     let to = resolve_new_in_vault(root, &parent_rel, new_name)?;
+    // 写路径复查（见上面注释）：与 create 路径同一个错误码与同一句话，前端不必分辨来源。
+    if std::fs::symlink_metadata(&to).is_ok() {
+        return Err(CommandError::new(
+            "fs_already_exists",
+            format!("已存在同名条目：{}", join_rel(&parent_rel, new_name)),
+        ));
+    }
     std::fs::rename(&from, &to).map_err(|e| {
         CommandError::new(
             "fs_rename_failed",
@@ -1391,6 +1414,48 @@ mod tests {
         let err = rename_entry(root, "renamed.md", ".git").unwrap_err();
         assert_eq!(err.code, "fs_name_invalid");
         assert!(root.join("renamed.md").exists());
+    }
+
+    /// 撞名必须被挡住（r1 评审 P2-2）：`std::fs::rename` 的 POSIX 语义是原子替换已存在的
+    /// 目标，因此「撞名不覆盖」不能只靠 `resolve_new_in_vault` 的探测。这条单测钉的是**可观测
+    /// 契约**：rename 到已存在的名字必须报 `fs_already_exists`（与 create 路径同一个码、同一句
+    /// 话），源与目标逐字节不变——普通文件与既有目录两种形态都覆盖。
+    ///
+    /// **它钉不到窗口**：探测与复查之间那段检查-执行窗口无法用确定性测试构造（要在两次系统
+    /// 调用之间插入外部进程建文件），所以这里证明的是「结果不覆盖」，不是「零窗口」；窗口的
+    /// 取舍与代价写在 [`rename_entry`] 的注释里。防线上它管住的是「写路径整个失去撞名判定」
+    /// 这类改动（例如某次重构改成不经 `resolve_new_in_vault` 直接 rename）。
+    #[test]
+    fn rename_refuses_existing_target_on_write_path() {
+        let v = TempVault::with_fixture();
+        let root = &v.0;
+        // 目标已存在（普通文件）：报错、两边逐字节不变
+        let err = rename_entry(root, "note.md", "main.rs").unwrap_err();
+        assert_eq!(err.code, "fs_already_exists");
+        assert!(
+            err.message.contains("已存在同名条目：main.rs"),
+            "人话里要点名撞的条目：{}",
+            err.message
+        );
+        assert_eq!(
+            std::fs::read_to_string(root.join("note.md")).unwrap(),
+            "# hello"
+        );
+        assert_eq!(
+            std::fs::read_to_string(root.join("main.rs")).unwrap(),
+            "fn main() {}"
+        );
+        // 目标已存在（目录）：同样挡住（rename 到目录名下会替换空目录或报 ENOTDIR，
+        // 两种都不是我们要的语义）
+        let err = rename_entry(root, "note.md", "sub").unwrap_err();
+        assert_eq!(err.code, "fs_already_exists");
+        assert!(root.join("sub/deep/a.txt").exists(), "既有目录不得被动");
+        assert!(root.join("note.md").exists());
+        // 忽略集名与非法名走的是另一条分支（保持既有语义）
+        assert_eq!(
+            rename_entry(root, "note.md", ".git").unwrap_err().code,
+            "fs_name_invalid"
+        );
     }
 
     #[test]

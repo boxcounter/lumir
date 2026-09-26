@@ -23,7 +23,8 @@ export type DisplayKind = "dir" | "md" | "image" | "other";
  * **权威是 `src-tauri/src/fs_io.rs` 的 `IGNORED_NAMES`**：命中的名字建成/改成之后不进
  * 文件树、watch 事件也被吞掉，用户在界面上既看不到也删不掉。这里抄一份只为「提交前就
  * 说清」，不承担判定职责（后端仍会拒）；两份的逐项对账在
- * `tests/unit/tree-inline-edit.test.ts`（它解析那份 Rust 源比对，漂移即红——
+ * `tests/unit/tree-paths.test.ts` 的「忽略集与 Rust 侧 IGNORED_NAMES 逐项对账」（它解析
+ * 那份 Rust 源比对，漂移即红——
  * 与 `registry-drift.test.ts` 守 `SAVE_REJECTED_EXTENSIONS` 同一手法，REVIEW.md 第 8 条）。
  */
 export const IGNORED_NAMES = [".git", ".DS_Store", "node_modules"];
