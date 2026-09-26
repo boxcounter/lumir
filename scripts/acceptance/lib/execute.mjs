@@ -19,6 +19,8 @@ import {
   pressKey,
   readAx,
   resizeWindowAX,
+  settle,
+  StepError,
   tryForeground,
   typeInEditor,
   waitUntil,
@@ -212,6 +214,10 @@ const TEXT_FIELD_ROLES = new Set(["AXTextField", "AXSearchField", "AXSecureTextF
 
 /** 单个可打印字符（非空白 ASCII）：keys 动作里只有这种键名有唯一的文本语义。 */
 const PRINTABLE_KEY_RE = /^[\x21-\x7e]$/;
+
+/** `do: settle` 的等待上限（M249）。15s 是「两次一致」的宽裕上界（每拍 700ms），同时给
+ *  「界面一直不收敛」这种异常收一个可预期的代价——到点走兜底，不无限等。 */
+const SETTLE_TIMEOUT_MS = 15_000;
 
 /**
  * keys 动作的回读目标——「键盘往哪儿落」必须可证，否则回读会盯错节点：
@@ -574,6 +580,61 @@ async function noteIfFocusLost(ctx, pid) {
     "若后续键盘断言 FAIL，先按 tower 纪律排除 frontmost-required 因素再判 app 缺陷";
 }
 
+/** `do: settle` 的真实语义（M249）：**连续两次 AX 快照逐字节一致**才算界面已落定。
+ *
+ * 为什么改（finding 20260927-worker-watch-mkdir-improve-vaultwrite-ax-do-settle-60）：旧实现
+ * 是单次 `readAx`，与动作名不符——写场景的人按名字理解成「等界面稳定」，于是
+ * `vaultWrite` → 立刻 `settle` → AX 断言会与那次 DOM 刷新抢（实测：外部写入后紧跟的第一次读
+ * 会漏掉新增的树行，先留一拍再读必过），并级联成「几十秒不刷新」的假缺陷（M245 已翻转）。
+ *
+ * 编辑器在位时直接复用 `drive.mjs` 的 `settle()`（同一口径的 canonical 实现）；不在位时走
+ * `settleEditorless`——那两种合法终态里 `AXTextArea` 本就不存在，带编辑器门会白等满超时。
+ * 超时一律**兜底**：退回最后一次读取 + 落一条 note，不把这步升级成动作 FAIL——settle 只是
+ * 断言前的稳定等待，界面是否真的收敛由场景自己的断言证明（AX 里有持续微抖元素时把 settle
+ * 判红会让本来正常的场景无故变红）。 */
+async function settleAction(cu, pid, evidence) {
+  const probe = await readAx(cu, pid);
+  if (probe.textarea) {
+    try {
+      return await settle(cu, pid, { timeoutMs: SETTLE_TIMEOUT_MS });
+    } catch (e) {
+      if (!(e instanceof StepError)) throw e;
+      evidence?.record({
+        kind: "note",
+        text:
+          `do: settle：界面在 ${SETTLE_TIMEOUT_MS}ms 内没有连续两次一致的 AX 快照（${e.message}）——` +
+          "已退回单次读取继续，本步不因此判 FAIL",
+      });
+      return readAx(cu, pid);
+    }
+  }
+  return settleEditorless(cu, pid, evidence);
+}
+
+/** `do: settle` 在**没有编辑器节点**的合法终态下的等待（M249）。
+ *
+ * 两种终态（都是正观测，见 waitAppReady）：已装载 vault 但一个标签都没有（D107 引导层盖住
+ * 正文，M163 起的启动常态）、未打开 vault 的空态。两者里 `AXTextArea` 都不存在，`drive.mjs`
+ * 的 `settle()` 的编辑器门因此永远不成立。等待口径与它一致（连续两次 AX 快照逐字节相同），
+ * 只是不带编辑器门；超时同样只落 note、不抛错。 */
+async function settleEditorless(cu, pid, evidence) {
+  const deadline = Date.now() + SETTLE_TIMEOUT_MS;
+  let prev = await readAx(cu, pid);
+  while (Date.now() < deadline) {
+    await sleep(700);
+    const ax = await readAx(cu, pid);
+    if (prev.text === ax.text) return ax;
+    prev = ax;
+  }
+  evidence?.record({
+    kind: "note",
+    text:
+      `do: settle：界面（本步无编辑器节点）在 ${SETTLE_TIMEOUT_MS}ms 内没有连续两次一致的 AX 快照——` +
+      "已退回最后一次读取继续，本步不因此判 FAIL",
+  });
+  return prev;
+}
+
 async function doAction(step, { ctx, cu, scenario, vars, pid, evidence }) {
   const p = pid();
   switch (step.do) {
@@ -581,7 +642,7 @@ async function doAction(step, { ctx, cu, scenario, vars, pid, evidence }) {
     case "none":
       return;
     case "settle":
-      return readAx(cu, p);
+      return settleAction(cu, p, evidence);
     case "sleep":
       return sleep(step.ms ?? 1000);
     case "key":
