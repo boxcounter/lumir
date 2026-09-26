@@ -34,13 +34,11 @@ steps:
       - label: 嵌套文件落盘（harness 支持嵌套 vaultWrite）
         file: { path: restyle-dir/note-in-dir.md, has: "目录内文档" }
 
-  - name: 重启让文件树重扫（watch 不拾取外部新建目录，finding 20260925-worker-fix-closeout-bug-watch）
-    do: restart
-
-  - name: 目录行进树并展开：chevron 与选中行的对齐留读数
-    do: settle
+  - name: 等 watch 增量把新目录刷新进树（同一进程内，不重启）
+    do: sleep
+    ms: 1000
     expect:
-      - label: 目录行 restyle-dir 在文件树（重启后全量重扫把新目录带进来）
+      - label: 目录行 restyle-dir 由 watch 增量刷新进树（运行中可见，不重启）
         ax: { has: "restyle-dir" }
 
   - name: 点开目录行：chevron 旋转展开、子文件行出现（缩进对齐的观感归截图）
@@ -78,15 +76,24 @@ steps:
    `tests/visual/scenes/doc-title.spec.ts` 守（计算属性层），真机只留截图供 Alex 抽审。
 2. **callout 双段标签（C7）**：zh 类型名 + 自定义标题都在场、源码 `[!note]` 不透显。
    双段的字号/字重/族色（12.5px/650 + 13px/550）由 chromium 场景 `callout.spec.ts` 守。
-3. **文件树目录 chevron**：真目录行（vaultWrite 嵌套路径造出，随后 restart 让树重扫）的
-   chevron 槽位、展开旋转与选中行缩进对齐——AX dump 的 bbox 是读数证据，对齐观感归 Alex
-   抽审（手感/审美不下沉）。
+3. **文件树目录 chevron**：真目录行（vaultWrite 嵌套路径造出，**不重启**、由 watch 增量刷新
+   进树）的 chevron 槽位、展开旋转与选中行缩进对齐——AX dump 的 bbox 是读数证据，对齐观感归
+   Alex 抽审（手感/审美不下沉）。
 
 ## 已知边界
 
 - vaultWrite 的嵌套路径支持（mkdirp）与 resetVault 的目录清理由本场景同 PR 引入
   （`scripts/acceptance/lib/`）：目录不跨场景残留。
-- **watch 不拾取外部新建目录**：vaultWrite 落盘后文件树 60s 内不出现新目录，重启 app 才可见
-  （finding `20260925-worker-fix-closeout-bug-watch`）。本场景在 vaultWrite 后插一步
-  `do: restart` 绕行；产品修复后应删掉这步并恢复「watch 增量刷新」判据。
+- **vaultWrite 之后必须给一拍再读 AX**（M245 实测，判据不变、只修观测口径）：后端 watch 增量
+  在合成 vault 上实测 `flush − 文件 mtime = 104–122ms`（M245 真机日志），新目录行 200ms 内已
+  进 DOM；但**紧跟写入的第一次 AX 读取**会与那次刷新抢——AX 枚举本身占着 webview 主线程，
+  读到的那一份快照可能还差这一行。M245 五轮真机探针：写完立刻读必 FAIL，先 `sleep 200` 再读
+  必 PASS，其后每一次读都 PASS。故这里固定 `sleep 1000`（与 47 的 1200 / 07c 的 2000 同一
+  惯例）。**原 finding 的「60 秒内不刷新」是断言链的级联假象**：第一读漏掉目录行 → 下一步点
+  不到目录行 → 再下一步 `open restyle-dir/note-in-dir.md` 等的是「左栏出现子文件行」，而目录
+  折叠时子行永远不会出现，于是 60s 超时。watch 增量**本就覆盖外部新建目录**，后端与前端各有
+  单测钉住（`src-tauri/src/fs_io.rs` 的两个 watch/refine 测试、`tests/unit/tree-increment.test.ts`）。
+- 外部新建**文件**（非目录）同一条 watch 路径、无此问题：场景 47 的「树里有 aaa-menu.md /
+  aab-tab.md」与「目录行已在树里」三条断言在 2026-09-26 全量真机运行里 PASS
+  （证据 `test-results/acceptance/2026-09-26/47-file-tree-context-menu/`）。
 - chevron 的 0.12s 旋转过渡、对齐像素级观感不进机器判据（同 13-toc 的手感项口径）。
