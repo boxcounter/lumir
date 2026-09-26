@@ -380,7 +380,7 @@
     ⑤ 外部新建**文件**（原 finding 未测的那一半）同一条 watch 路径、无此问题：场景 47 的
     「树里有 aaa-menu.md / aab-tab.md」「目录行已在树里」三条断言在本分支真机运行 PASS
     （`test-results/acceptance/m245-final/47-file-tree-context-menu/steps.md`）。
-    **落地（M245，分支 `feat/fix-watch-external-mkdir-tree-refresh-m2`，提交 `06a64c7`）**：验收场景 36
+    **落地（M245，分支 `feat/fix-watch-external-mkdir-tree-refresh-m2`，提交 `06a64c7`，合并 `b6ecfd7`）**：验收场景 36
     删掉 `do: restart` 绕行步，断言翻为「运行中刷新可见」（前置 `sleep 1000` 只取观测时序，判据未
     弱化，口径写进场景「已知边界」）；后端补 `watch_delivers_external_new_dir_with_nested_file` 与
     `refine_with_known_keeps_new_dir_created_and_normalizes_seeded_replay`（Rust lib 162 全绿）；
