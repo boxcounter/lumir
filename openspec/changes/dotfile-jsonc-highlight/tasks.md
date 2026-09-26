@@ -87,15 +87,23 @@ mode（jsonc）、D3 只收 `.gitignore` / `.gitattributes` 两个精确 basenam
 **46 = dotfile-jsonc-highlight（本 change）**，取号前已全仓 grep
 `scenarios/46` 无撞号（2026-09-26，含全部在途 worktree 的 openspec/changes）。
 
-- [ ] 7.1 新增场景 `scripts/acceptance/scenarios/46-dotfile-jsonc-highlight.md`：
+- [x] 7.1 新增场景 `scripts/acceptance/scenarios/46-dotfile-jsonc-highlight.md`：
       合成 vault 预置 `.gitignore` / `.gitattributes` / `x.jsonc` / `.secret`
       fixture，逐一打开，断言 = 编辑器文档文本逐字节回读（ADR 0003 §3）+ AX /
       截图留档着色现场（注释 / 键值 / 取色 token 的 DOM 类名断言）；`.secret`
       对照组断言无着色类名。断言走「回读 + 字节比对」，不用注入自报当判据
       （REVIEW.md 第 5 条）；不可读一律判 FAIL，不把缺失值当空值（第 2 条）
-- [ ] 7.2 条件项：若实现期 M231 已合入，场景 46 顺手补「三类文件可编辑」冒烟断言
+      ——**实现期口径修正（2026-09-27，M243）**：本套件**没有 DOM 类名断言通道**
+      （编辑器内容是 `AXTextArea.value`，高亮 span 不进 AX 树），故「DOM 类名 /
+      取色 token」断言落在 `tests/unit/dotfile-jsonc.test.ts`（`highlightCode` 驱动，
+      与围栏同一条路径），场景侧改以达到**同一判别力**的出口覆盖：状态栏语言名
+      （`gitignore` / `gitattributes` / `jsonc` vs 对照组的 `Plain text`）+ 整篇文档
+      回读 + 打开前后 sha256 比 + 截图留档（scene 正文「着色为什么只有截图」节）。
+- [x] 7.2 条件项：若实现期 M231 已合入，场景 46 顺手补「三类文件可编辑」冒烟断言
       （编辑 → 回读 → 保存落盘字节一致）；未合入则本项标注「未验（M231 未落地）」，
       可编辑行为断言归 M231 场景 41/42
-- [ ] 7.3 `node scripts/acceptance/run.mjs --check 46` 静态校验绿；真机跑通后证据落
+      ——M231 已合入 ⇒ 本项条件成立：三类各做一次「键入 → 回读文档文本 → 反向铺底
+      （探针不在盘上）→ ⌘S → 落盘 + 后段内容未写残」，真机 46/46 断言 PASS
+- [x] 7.3 `node scripts/acceptance/run.mjs --check 46` 静态校验绿；真机跑通后证据落
       `test-results/acceptance/`（git 外），跑前确认 1420 / 1430 无 Lumir 实例
       （REVIEW.md 第 11 条）
