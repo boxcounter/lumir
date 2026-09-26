@@ -12,7 +12,11 @@
 
 命令 SHALL 带命中条件（`when`）：遮罩已打开时命中（此时命令 = 关闭，toggle）；否则 caret 落在一张
 当前渲染为 grid 的表内、或该表的滚动容器持有焦点时命中（打开）。命中条件不满足时 SHALL NOT 消费
-事件（不 `preventDefault`），同名按键在别处照旧走原生路径。作用域取 `global` 而非 `editor` 的理由
+事件（不 `preventDefault`），同名按键在别处照旧走原生路径。条件 SHALL 由**命令级门**
+（`KeymapContext.commandGate`，`src/keys.ts`）承担：绑定层的 `when` 只拿得到事件、拿不到编辑器
+状态（「caret 在不在某张渲染为 grid 的表内」需要 EditorState），而 `[keys]` 覆盖产出的绑定也没有
+`when` 字段（`applyKeyOverrides` 只换「键 → 命令」的对应）——条件是命令实现方的判定位，键位层只
+留一个可选的钩子。作用域取 `global` 而非 `editor` 的理由
 SHALL 记录在绑定来由里：遮罩打开时焦点在遮罩内（不在编辑器内容区内），`editor` 作用域会让
 「再执行一次同一命令关闭」失效（`toc.toggle` 同款理由）。
 

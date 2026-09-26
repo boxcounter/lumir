@@ -1,7 +1,7 @@
 import { createShell } from "./shell";
 import { createEditor } from "./editor";
 import { applyKeyOverrides, KEY_BINDINGS, Keymap } from "./keys";
-import type { CommandRunner, CommandRuntime, KeyBinding, KeyOverrides } from "./keys";
+import type { CommandId, CommandRunner, CommandRuntime, KeyBinding, KeyOverrides } from "./keys";
 import { baseName, createFileTree, openKind } from "./tree";
 import {
   configGet,
@@ -28,6 +28,8 @@ import { createSaveController, SAVE_GUARD_TOAST_CLASS } from "./save-controller"
 import { getName, getVersion } from "@tauri-apps/api/app";
 import { createToc } from "./toc";
 import { createImageLightbox } from "./lightbox";
+import { createTableFullscreen } from "./table-fullscreen";
+import { tableFullscreenTarget } from "./preview/livePreview";
 import {
   createGuardPromptPresenter,
   createVaultRemapPrompt,
@@ -110,6 +112,15 @@ const lightbox = createImageLightbox({
   restoreFocus: () => editor.view.focus(),
 });
 editor.setLightbox(lightbox);
+
+// 表格放大全屏查看（M240，D3 双入口：命令 + 表格 hover 触发钮）：能力与 DOM 在
+// src/table-fullscreen.ts，装配侧只给它两样看不到的东西——挂点（与 lightbox / 键位面板同款）
+// 与关闭后把焦点交还编辑器。遮罩 DOM 惰性建立：文档打开路径与键入路径上零新增工作。
+const tableFullscreen = createTableFullscreen({
+  mount: shell.root,
+  restoreFocus: () => editor.view.focus(),
+});
+editor.setTableFullscreen(tableFullscreen);
 
 // 栏宽拖拽手柄（M228，change content-width-drag）：DOM 在 shell（编辑器 pane 的覆盖层），
 // 控制器在 src/content-width.ts；装配侧给三样东西——当前宽度的读写口（editor 闭包真源）、
@@ -610,6 +621,19 @@ const commands: CommandRuntime = {
   // 标签（M149）：能力与切换在 editor 的会话 API，装配层只做两件它才知道的事——
   // 切换后的表现层对齐（tabs.activateTab → syncActiveDocument）与关标签的确认（都在 src/tabs.ts）。
   // `tab.close` 关的是**前台**标签；逐标签关闭钮走同一条 closeTab（同一个确认）。
+  // 表格放大全屏查看（M240，裁决点 1/2/4）：能力与遮罩 DOM 在 src/table-fullscreen.ts，
+  // 命令只做「命中判定 + 两个动作」——遮罩已开 = 关闭（toggle，D4 的第三条关闭路径），否则把
+  // 命中的那张表打开。命中条件不满足时什么都不做；**条件不满足时不消费事件**那条由下面
+  // keymapContext 的命令级门承担（绑定层表达不了，理由见 keys.ts 的 KeymapContext）。
+  "table.toggle-fullscreen": () => {
+    if (tableFullscreen.isOpen()) {
+      tableFullscreen.close("toggle");
+      return;
+    }
+    const target = tableFullscreenTarget(editor.view);
+    if (target === null) return;
+    tableFullscreen.open(target.table, target.label);
+  },
   "tab.close": () => {
     void tabs.closeTab(editor.activeSession());
   },
@@ -625,6 +649,16 @@ const commands: CommandRuntime = {
 const keymapContext = {
   isEditorEvent: (event: KeyboardEvent) =>
     event.target instanceof Node && editor.view.contentDOM.contains(event.target),
+  // 命令级命中条件（M240，理由见 keys.ts 的 KeymapContext.commandGate）：`table.toggle-fullscreen`
+  // 的命中条件需要编辑器状态（caret 在不在渲染为 grid 的表内 / 容器是否持焦），而
+  // `[keys]` 覆盖产出的绑定没有 `when` 字段——条件因此落在命令实现方。不满足时返回 false，
+  // 分发器**不消费事件**、不 preventDefault，同名按键照旧走原生路径（spec 的
+  // 「命中条件不满足时不消费事件」scenario）。
+  // 遮罩已开时恒为真：「再执行一次同一命令关闭」这条关闭路径必须可达——无论 caret 当时在哪。
+  commandGate: (command: CommandId) =>
+    command !== "table.toggle-fullscreen" ||
+    tableFullscreen.isOpen() ||
+    tableFullscreenTarget(editor.view) !== null,
 };
 let detachKeymap = new Keymap().attach(window, commands, keymapContext);
 

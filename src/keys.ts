@@ -201,6 +201,15 @@ export const NON_TAB_GLOBAL_COMMAND_IDS = [
   "toc.toggle",
   // M163：⌘O 打开 vault 切换器（能力、浮层与会话在 src/vault-switcher.ts，装配在 main.ts）
   "vault.switcher",
+  // M240：表格放大全屏查看（change table-fullscreen-view，节点 1 裁决 D1–D4）。前缀取
+  // `table.`：它作用的对象是**一张表**，不属于 `editor.*`（编辑器内核）/ `view.*`（应用运行期
+  // 显示口径）任何一族，前缀与作用域因此不互相打脸——作用域为 global 是理由决定的：遮罩打开时
+  // 焦点在遮罩里（不在 contentDOM 内），`editor` 作用域会让「再执行一次同一命令关闭」失效
+  //（`toc.toggle` 同款理由）。它**默认不绑键**（D3 裁决：本版没有证据表明它是高频动作），
+  // 登记进 KEYLESS_COMMAND_IDS；鼠标路径由表格 hover 触发钮承担（D3 的双入口，
+  // 实现在 src/preview/table-trigger.ts，遮罩本体在 src/table-fullscreen.ts）。
+  // 命中条件见 KeymapContext.commandGate 的说明（条件需要编辑器状态，绑定层表达不了）。
+  "table.toggle-fullscreen",
   // M180：折行开关（能力与状态在 editor.ts，装配在 main.ts）。取 `view.` 前缀而不是
   // `editor.`：本仓的既有约定是 `editor.` 前缀 = 编辑器作用域命令，而这两条作用于**应用
   // 运行期的显示口径**（与 tab.*、toc.toggle 同族），作用域由清单派生为 global——
@@ -250,6 +259,10 @@ export const KEYLESS_COMMAND_IDS: readonly string[] = [
   // 而本版键位层不支持多段 chord），用户按需经 [keys] 绑定。
   "view.toggle-line-wrap",
   "view.toggle-code-block-wrap",
+  // M240：表格放大全屏查看——D3 裁决给了它**鼠标入口**（表格 hover 触发钮），键盘入口
+  // 默认不占物理组合；用户要键位就经 [keys] 绑（绑定后命中条件由命令级门承担，
+  // 见 KeymapContext.commandGate）。
+  "table.toggle-fullscreen",
 ];
 
 export type EditorCommandId = (typeof EDITOR_COMMAND_IDS)[number];
@@ -462,6 +475,19 @@ export type CommandRuntime = Record<CommandId, CommandRunner>;
 export interface KeymapContext {
   /** 事件目标是否落在编辑器内容区内（含其中的 widget，如表格滚动容器）。 */
   isEditorEvent(event: KeyboardEvent): boolean;
+  /**
+   * 命令级命中条件（M240）：返回 `false` 时该绑定不接管、事件原样留给原生路径
+   *（不 `preventDefault`），语义与 `KeyBinding.when` 相同。
+   *
+   * 为什么另开一个口子而不是继续用 `when`：`when` 的入参只有事件，而「caret 在不在某张
+   * 当前渲染为 grid 的表内」这类条件需要编辑器状态；更直接的约束是 **`[keys]` 覆盖产出的
+   * 绑定根本没有 `when` 字段**（`applyKeyOverrides` 只换「键 → 命令」的对应，见其说明），
+   * 于是默认不绑键的命令（M180 先例）永远带不上条件。条件本体归命令实现方（装配层
+   * `src/main.ts`，它持有 EditorView），键位层只留这个可选的判定位。
+   *
+   * 缺省（不传）时恒真——既有绑定的行为逐条不变。
+   */
+  commandGate?(command: CommandId, event: KeyboardEvent): boolean;
 }
 
 /**
@@ -714,6 +740,8 @@ export class Keymap {
       if (binding.scope === "editor" && !ctx.isEditorEvent(event)) return; // 作用域外：不消费
       // 条件不满足（如表格容器键在文本里）：不消费、不 preventDefault，按键留给原生路径
       if (binding.when !== undefined && !binding.when(event)) return;
+      // 命令级命中条件（M240）：与 when 同语义，只是条件归命令实现方（理由见 KeymapContext）。
+      if (ctx.commandGate?.(binding.command, event) === false) return;
       event.preventDefault();
       runtime[binding.command](event);
       return;

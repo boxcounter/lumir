@@ -74,15 +74,30 @@
    唯一例外是**外部修改重载**（watch 链路）——文档代际变化时遮罩 SHALL 关闭且不抢焦点
    （视同 `blur` 兜底），不留「看旧表」的第三种状态。
 
-实现期必须处理的克隆卫生（写进 [tasks.md](tasks.md) 2.x 的验收口径）：
+实现期必须处理的克隆卫生（写进 [tasks.md](tasks.md) 2.x 的验收口径；**下面两条是实测后的定稿，
+与本节初稿的推断不同处已按 tasks 1.3 的纪律回改**）：
 
-- **摘除 CM 运行态残留**：`img.cm-widgetBuffer` 与占位 span（既有 CSS `display:none` 已兜住，
-  但克隆里应物理摘除或继续依赖同一条规则——二选一，实现期定，断言钉住「克隆文本与源表逐字节一致」）；
-  选区背景 / 光标层（若 CM 以 DOM 层绘制 selection，克隆不得带走——快照里没有「当前选区」）。
-- **样式作用域**：仓内表格规则是全局选择器（`.cm-lp-table …`，`src/style.css:825-916`），克隆脱离
-  `.cm-editor` 后仍然命中；但 CM 注入的基础主题（`.cm-line` 的字体/行高等）是 scope 到编辑器根的，
-  克隆**不继承**——遮罩容器要显式补齐字体/字号/行高 token（`--font` / 正文锚字号 / `--lh-ui`），
-  使快照与文档内表格的计算样式一致。这条用视觉场景的计算样式断言钉住，不靠肉眼。
+- **摘除 CM 运行态残留**：`img.cm-widgetBuffer`（CM 在隐藏 replace 位置插的零宽 buffer）与
+  **触发钮**（本 change 自己加的 `Decoration.widget`）、以及 **`.cm-gap`**（CM 对「未渲染区」的
+  占位，实测 700 行表里它带着 16,651px 的未渲染内容高度——留着会让快照出现一块与任何内容都不
+  对应的空白）。三者都**物理摘除**，不依赖 CSS 规则。断言钉住「克隆文本与源表逐字节一致」+
+  「克隆里这三类节点计数为 0」。
+- **选区**：**实测本应用未装 `drawSelection`**（`src/` 全仓零命中，DOM 里没有
+  `.cm-selectionLayer` / `.cm-cursorLayer`），选区是原生 DOM 选区——克隆在脱离文档的树里天然
+  不带选区视觉。选择器仍按 `.cm-selectionLayer` / `.cm-cursorLayer` 清一遍，纯防御（将来装上
+  drawSelection 时不会静默带上「当前选区」这个编辑态假 affordance）。
+- **样式作用域**：本节初稿的推断**只对了一半，实测范围更广**。仓内表格规则是全局选择器
+  （`.cm-lp-table …`，`src/style.css`），克隆脱离 `.cm-editor` 后仍然命中 ✓；但 CM 主题
+  （`livePreviewTheme` / `codeBindingTheme` 等全部 `EditorView.theme` 规则）**整批**都 scope 到
+  编辑器根的生成类上（实测编辑器根为 `cm-editor ͼ1 ͼ2 ͼm ͼ14 ͼ5`，规则形如
+  `.ͼ1 .cm-lp-inline-code { … }`），克隆脱离后**一条都不命中**——不止基础主题的字体/行高：
+  `.cm-lp-inline-code` 退回 sans / 13.5px（实测该列 max-content 因此短 9px，列宽 74.78px →
+  65.75px），`.cm-lp-link*` 丢 accent 色与上标标记。处置因此分两层：
+  ① 遮罩容器显式补齐字体 / 字号 / 行高 / 字色（取 `--editor-font-family` / `--editor-font-size` /
+  `--lh-ui` 这些**编辑器作用域 token**，与运行期字号步进同源）；② 装快照时把源元素所在编辑器根上
+  的**主题 scope 类**（非 `cm-` 前缀的那些生成类）镜像到快照容器上——这样同一批规则重新命中克隆，
+  而规则值仍只有 `src/preview/theme.ts` 一处（**镜像而非复制**，规避 REVIEW.md 第 8 条）。
+  代价是对 CM 的 scope 机制有一处依赖，守卫是计算样式断言（CM 换掉该机制时断言红，不静默降级）。
 - **id / aria 引用**：克隆里的 `aria-colindex` 等属性原样保留（读屏结构不丢）；若将来出现 `id`
   引用（当前表格 DOM 无 `id`），克隆时摘除。
 
@@ -104,16 +119,25 @@
 ## 4. 入口接线（推荐项：命令，默认不绑键）
 
 - 命令 id `table.toggle-fullscreen`，进 `COMMAND_IDS` / `GLOBAL_COMMAND_IDS`，登记
-  `KEYLESS_COMMAND_IDS`（默认不绑键是要签字的决定，不是遗漏——`src/keys.ts:204-216` 的口径）。
-- 作用域 `global` + `when` 命中条件：遮罩开着 → 关闭（toggle）；否则 caret 在已渲染 grid 的表内
-  或表格滚动容器持焦 → 打开。取 global 的理由照 `toc.toggle`：遮罩开着时焦点在遮罩里，
-  `editor` 作用域下「再按一次关闭」不成立。`when` 不满足时不消费事件（M132 的既有语义）。
-- 定位用既有零件：caret 位置 → `tableAt(tableModels(state, discoveryRange).models, pos)`
-  （`src/preview/table.ts:160-171`，二分）；「该表当前渲染为 grid」= `table.rectangular && !table.degraded`
-  ——降级表/非矩形表的命中条件天然为假，**无入口是结构性事实**（proposal §二）。
-- 装配照 M184：`PreviewContext` 增可选口子（`tableFullscreen(): TableFullscreenHandle | null`，
-  未接线返回 `null`，同 `lightbox()` 口径），`src/main.ts` 建遮罩（挂点 `shell.root`、
-  `restoreFocus: () => editor.view.focus()`）并注入。
+  `KEYLESS_COMMAND_IDS`（默认不绑键是要签字的决定，不是遗漏——`src/keys.ts` 的口径）。
+- 作用域 `global` + 命中条件：遮罩开着 → 关闭（toggle）；否则 caret 在已渲染 grid 的表内或表格
+  滚动容器持焦 → 打开。取 global 的理由照 `toc.toggle`：遮罩开着时焦点在遮罩里，`editor` 作用域下
+  「再按一次关闭」不成立。条件**由命令级门承担**（实现期定稿）：绑定层的 `when` 只拿得到事件、
+  拿不到编辑器状态，而 `[keys]` 覆盖产出的绑定没有 `when` 字段——`KeymapContext.commandGate`
+  是键位层留的那个口子，门为假时不消费事件（不 `preventDefault`，M132 的既有语义）。
+- 定位用既有零件：caret 位置 → `fullscreenTableAt(tableModels(state, discoveryRange).models, pos)`
+  （`tableAt` 二分 + `rectangular && !degraded` 两个条件，`src/preview/table.ts`）；「容器持焦」
+  这条走 DOM（容器元素本身就是「渲染为 grid」的证据），两条路径都回到「要克隆的 grid 元素 +
+  它既有的 `aria-label`」——降级表/非矩形表的命中条件天然为假，**无入口是结构性事实**（proposal §二）。
+- 装配照 M184：`PreviewContext` 增口子（`tableFullscreen(): TableFullscreen | null`，未接线返回
+  `null`，同 `lightbox()` 口径），`src/main.ts` 建遮罩（挂点 `shell.root`、
+  `restoreFocus: () => editor.view.focus()`）并注入。**scope 补记**：`PreviewContext` 的对象字面量
+  在 `src/editor.ts`（M184 的注入点也在那里），该文件不在 M240 的初始 scope 内，经 tower 裁决扩入
+  （2026-09-26，mission scope 已留痕）——4 行改动，与 M184 逐条同形。
+- **鼠标入口**（D3 的双入口之另一侧）：表格右上角内侧的 hover 触发钮，锚定表格可视盒坐标系
+  （第三层 BlockWrapper `.cm-lp-table-slot` + 一个绝对定位的 `Decoration.widget`，机制与理由
+  见 `src/preview/table-trigger.ts` 文件头）；形态纪律逐条按 M235 划稿
+  （`design/prototypes/table-fs-trigger/` 的 `inside-corners-hover`），读屏名取 deck D124。
 - `[keys]` 绑定后生效；键位面板自动列出未绑定行（D66 口径）。
 
 ## 5. 关闭路径：与 M184 逐条同款 + toggle
@@ -143,10 +167,19 @@
   MUST NOT 为全屏引入全文档扫描。若将来放宽 64 KiB 上限（另一个 change），本 capability 的
   快照成本随上限同步有界，不需要改合同。
 - **惰性建 DOM**：遮罩节点首次打开时才建（M184 同款）；文档打开路径与键入路径零新增工作
-  （ADR 0002 §6 的打开 1MB <100ms 与 keypress-to-paint <16ms 不因此放宽）。
-- **打开成本**：一次子树克隆 + 一次样式重算，O(表格 DOM)。实现期实测一张接近 64 KiB 上限的表
-  （读数写进 PR）；预期毫秒级，若实测超出「用户主动动作可感知」档，如实记为已知边界并另立 finding，
-  不押优化。
+  （ADR 0002 §6 的打开 1MB <100ms 与 keypress-to-paint <16ms 不因此放宽）。触发钮按 decoration
+  装配（与表格的 BlockWrapper 同一份 models），打开路径不因它多一次扫描。
+- **打开成本**：一次子树克隆 + 一次样式重算，O(表格 DOM)。**实测**（chromium 1200×800，
+  tasks 2.4 的读数落 `test-results/acceptance/2026-09-26/table-fullscreen-before/open-cost.json`）：
+  近上限夹具（700 行 / 60,764 B / 29,940 chars，两个降级判据都在 64 KiB 之下）打开总耗时
+  **3.4ms**（事件分发链 3.4ms + 样式与布局 0ms），快照 496 节点 / 1,678 字符 / 宽 454.83px
+  （= 文档内 grid 宽）。远在「用户主动动作可感知」档之下，不押优化。
+- **视口语义是真正的上界（实测修正）**：CM 只渲染视口附近的行，因此快照的规模不由表源码大小
+  决定，而由**打开那一刻已渲染的那部分**决定——同一夹具在浏览器里只渲染 49 行，未渲染区以
+  `.cm-gap` 占位（16,651px）。推论两条：① 成本上界比 §6 初稿的估计更小；② **长表在全屏里只看
+  到已渲染的部分**（不是缺陷，是「打开那一刻渲染态 grid 的副本」的字面口径），如实写进 spec 的
+  已知边界与 PR——完整快照需要另一条渲染路径（design §8 已否决的「从 TableModel 重建」那一类），
+  是另一个 change。
 - **字节通道**：零新增——快照来自既有 DOM，不调 `fs_read_attachment`，`src-tauri/**` 零改动。
 
 ## 7. 与既有交互的边界（逐条核对，防误伤）
@@ -178,9 +211,10 @@
 
 | 项 | 状态 | 处置 |
 |---|---|---|
-| 克隆脱离 `.cm-editor` 后的计算样式保真（CM 注入主题不继承） | 机制推断（CM6 主题 scoped 到编辑器根），未实测 | [tasks.md](tasks.md) 1.1 现状读数 + 5.x 计算样式断言；发现差异时只补遮罩容器的 token 级样式，不改仓内表格规则 |
-| 克隆里 CM selection 层的形态（DOM 层 vs 原生选区） | 未核对源码 | 实现期核 `@codemirror/view` 的 drawSelection 配置；断言「克隆无可选区残留」 |
-| 接近 64 KiB 上限表的打开耗时 | 未测 | [tasks.md](tasks.md) 2.x 实测读数落 `test-results/`；超档如实记边界 |
+| 克隆脱离 `.cm-editor` 后的计算样式保真（CM 注入主题不继承） | **已实测定论**：CM 主题**整批** scope 到编辑器根（实测 `cm-editor ͼ1 ͼ2 ͼm ͼ14 ͼ5`），丢的不止基础主题——行内代码退回 sans、链接丢 accent 色 | §2 已按实测回改；处置 = 容器补 token + 镜像主题 scope 类（不复制规则值），守卫是 5.4 的计算样式断言（反向验证留档 `test-results/acceptance/2026-09-26/table-fullscreen-before/reverse-1-theme-scope.log`） |
+| 克隆里 CM selection 层的形态（DOM 层 vs 原生选区） | **已实测定论**：本应用未装 `drawSelection`，选区是原生 DOM 选区、DOM 里没有选区层 | 选择器仍清一遍（纯防御）；读数落 1.1 的 `readings.json` |
+| 接近 64 KiB 上限表的打开耗时 | **已实测**：3.4ms（夹具 700 行 / 60,764 B），快照 496 节点 | 不需要记已知边界；读数落 `open-cost.json` |
+| 长表（高于视口）在全屏里只看到已渲染的部分 | **实测发现**（CM 只渲染视口附近的行） | 写进 spec 已知边界 + `docs/backlog.md`；完整快照是另一个 change |
 | 「遮罩开着时文档被外部重载」的真机行为 | 设计口径（按 `blur` 关闭），未真机验证 | 真机场景 40 覆盖；观感归 Alex |
 | 宽表在遮罩内双向滚动的手感（触控板惯性、横向优先） | 未验 | 手感归 Alex dogfood，套件只留截图（AGENTS.md 分工） |
 | 克隆内图片不响应双击（快照只读语义） | 设计决定 | 写进 spec 已知边界；若 Alex 期望「全屏里还能再放大图」，是另一个 change |
@@ -191,8 +225,10 @@
 - **单测层**：遮罩状态机（四条关闭路径回同一 `close`、toggle、文档代际关闭）、命令命中条件
   （caret 在/不在表内、降级表、容器持焦）。
 - **视觉层（chromium，CI）**：打开/三条关闭/toggle、不穿透与 `Tab` 留驻、快照保真（文本逐字节 +
-  计算样式 + inline 形态）、降级表/非矩形表无入口（负向断言配对正观测）、文档与选区逐值不变、
-  三主题各一张遮罩证据截图；反向验证先红后绿。
+  计算样式 + inline 形态）、降级表/非矩形表无入口（负向断言配对正观测）、宽表可滚/窄表不滚、
+  容器持焦命中、文档与选区逐值不变；两条反向验证（关掉主题 scope 镜像 / 关掉克隆卫生）各留红灯
+  证据。全部落在 `tests/visual/scenes/m240-table-fullscreen.spec.ts`（8 例）与读数探针
+  `m240-table-fullscreen-readings.spec.ts`。
 - **真机层（WKWebView）**：场景 **40-table-fullscreen-view**——推荐项下经 `[keys]` 绑定触发
   （`09b-keys-config` 的配置注入先例），断言遮罩 AX 几何非零、表格文本在场、`Esc` 关闭后焦点回编辑器、
   `editor.unchangedSince` 与磁盘 `unchangedSince` 两条独立断言。

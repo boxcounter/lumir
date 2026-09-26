@@ -170,6 +170,22 @@ export function tableAt(tables: readonly TableModel[], from: number, to = from):
   return undefined;
 }
 
+/**
+ * 可放大的表（M240，change table-fullscreen-view 的裁决点 3）：`pos` 落在一张**当前渲染为
+ * grid** 的表内时返回它，否则 undefined。
+ *
+ * 判据是既有渲染条件的补集，不是新条件：装饰层只为 `rectangular && !degraded` 的表建
+ * `.cm-lp-table` 子树（见 livePreview 的 tableWrappers / buildDecorations 同一份 filter），
+ * 因此「降级表与非矩形表没有任何打开路径」是**结构性事实**——不需要一条「这表不能放大」的
+ * 分支，更 MUST NOT 用降级提示或「强制放大」旁路模拟（proposal §二）。
+ *
+ * 纯函数（只吃 TableModel 列表与位置），单测直接构造模型断言五条命中情形（tests/unit）。
+ */
+export function fullscreenTableAt(tables: readonly TableModel[], pos: number): TableModel | undefined {
+  const table = tableAt(tables, pos);
+  return table !== undefined && table.rectangular && !table.degraded ? table : undefined;
+}
+
 export function tableRowsInRange(table: TableModel, from: number, to: number): TableRow[] {
   let low = 0;
   let high = table.rows.length;

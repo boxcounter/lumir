@@ -60,6 +60,8 @@ function ctxFor(path: string | undefined, mtimeMs: number | null = null): Previe
     attachmentProvider: () => null,
     wikilinkResolver: () => null,
     lightbox: () => null,
+    // 表格全屏遮罩（M240）：本层不测遮罩，未接线即 null（同 lightbox）。
+    tableFullscreen: () => null,
     fileMtime: () => mtimeMs,
   };
 }

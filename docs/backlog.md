@@ -484,6 +484,45 @@
 
 ## 待修 findings（不阻塞）
 
+### 门禁（M240 现场发现，2026-09-26）
+
+- **master 视觉门禁红：M239 的两条列表命令未归组，键位面板多出兜底「其他」组**（high）：
+  `editor.list-indent` / `editor.list-outdent`（change list-tab-indent，M239）加进了
+  `src/keys.ts` 的 `EDITOR_CORE_COMMAND_IDS`，但没有加进 `src/bindings-panel.ts` 的
+  `BINDING_GROUPS`；面板的兜底逻辑（`render()` 里对 `COMMAND_IDS` 求「未归组」的差集）因此
+  渲染出一个「其他」组，`tests/visual/scenes/m133-describe-bindings.spec.ts` 的两条断言
+  （分组标题清单、未绑定行成因）当场红。**这是 master 上的既存红**：M240 用
+  `git stash push -- src tests`（摘掉本 change 全部源码与本层测试改动）后 `pnpm build` 重跑
+  同一场景，**同样 2 failed / 4 passed**；直接读数显示「其他」组的内容逐字为那两条 id
+  （M240 新增的 `table.toggle-fullscreen` 正确落在「全局」组）。
+  **修法**：在 `BINDING_GROUPS` 里给两条命令补一个分组（新增「列表缩进」或并入「移动与选择」），
+  改完跑 `LUMIR_VISUAL_PORT=<自选> bash scripts/gate.sh visual` 确认 m133 两条转绿。
+  **防复发建议**：`BINDING_GROUPS` 的兜底「其他」是「新命令忘归组」的静默出口（M133 的有意设计，
+  保证命令不从面板消失），代价是漏归组只表现为别人的场景红——建议补一条单测对账
+  （`COMMAND_IDS` 每条都有组、零「其他」），把发现点前移到引入该命令的 change。
+  完整现场（含 stash 对照命令与读数）见 finding
+  `.tower/comms/findings/20260926-worker-impl-table-fs-bug-master-m239.md`。
+
+### 表格全屏（M240 登记，2026-09-26）
+
+- **长表在全屏遮罩里只看到「已渲染的那部分」**（medium，follow-up change 候选）：快照 = 打开那一刻
+  渲染态 grid 的深克隆，而 CM 的 DOM 随视口有界——实测（chromium 1200×800）700 行 / 60,764 B 的表
+  只渲染 49 行，其余以 `.cm-gap` 占位（16,651px；克隆时按卫生摘除，所以快照是紧凑的 49 行）。
+  后果：打开一张远高于视口的表的全屏视图，只能看到视口附近的行；关闭、在文档里往下滚、再打开才能
+  看到下一段。**这是「打开那一刻渲染态 grid 的副本」的字面口径**（spec 已把它写进已知边界），不是
+  缺陷，但它是「看一眼整张表」这一诉求在**行方向**上的缺口。完整快照需要另一条渲染路径（design §8
+  已否决的「从 TableModel + 源码切片重建」那一类，理由是丢 inline 渲染）或 CM 侧的整块渲染能力。
+  **动作**：立项时先答「行方向的完整呈现是否必要」——宽表（列方向）是本 change 的由来，长表的阅读
+  在文档里本来就是滚动；若要做，优先考虑「快照分段补齐」而不是第二套渲染口径。
+  证据：`test-results/acceptance/2026-09-26/table-fullscreen-before/open-cost.json`。
+- **视觉套件 README 的「22 处像素断言」与现状不符**（low，文档漂移）：`tests/visual/README.md:48` 与
+  `.github/workflows/visual.yml` 的注释都写「22 处整页像素断言跳过」，M240 实测当前
+  `expectScreenshot` 调用点 **34 处**、`tests/visual/baselines/` 下 **34 张 png**（1:1 对应）——
+  数字是 M173（2026-09-18）时代的，此后场景增长未回写。本 change 只动了 `tests/visual/**` 与
+  `scripts/**`，`visual.yml` 不在 mission scope 内，故不就地改（改一处会与另一处不一致）。
+  **动作**：一处改动同时更新 README 与 workflow 注释，并把「基线数字以最近一次全绿输出的『逐张比对
+  通过』计数为准」写进 README 的基线纪律段。
+
 - ~~**验收套件的 `--config` 覆盖会静默丢掉 `app.windows[0]` 里的窗口级配置**（2026-09-25，M213 登记，
   **medium**）~~ **2026-09-26 M236 已修**：worker 的修法是「从 `src-tauri/tauri.conf.json` 读
   `app.windows[0]` 原件再 spread」，并加运行期自检 `assertOverlayChrome`；修前/修后对照、反向输入
