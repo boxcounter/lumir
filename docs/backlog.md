@@ -568,6 +568,10 @@
     deck 的 English 列）。依据是界面语言是中文、全仓唯一不跟界面语言走的可见文案仍只有 D114 的 END。
     若 Alex 要菜单直接上英文，改动面是 `src/tabs.ts` 的三个常量 + deck 两列对调 + 一条视觉断言
     （`tests/visual/scenes/tab-menu.spec.ts` 的菜单文案断言）。
+    **已裁决（2026-09-27，Alex「上屏」英文）**：菜单三项改英文上屏由 M257 落地并合并（`cd9142d`：
+    `src/tabs.ts` 三常量改 Close / Close Other Tabs / Close Tabs to the Right，deck D149–D151 双列对调、
+    原中文措辞移右列备查）。场景 50 与 change spec 的中文文案残留归 M266 收口。本条待节点 2 归档时
+    一并核销。
 
 ## 待修 findings（不阻塞）
 
@@ -598,6 +602,15 @@
 `src/main.ts` 的 scope，未就地收口，已在 tree.ts 注释与 mission 报告登记（reviewer 复核为 P2、
 不阻塞合并）。**触发条件**：任一后续 mission 改到 `src/main.ts` 该区域时，把 :582 的拼接换成
 调用 `relativePathOf`，删掉副本。
+
+### math/mermaid 显露判定未接按压快照（M259 登记，2026-09-27）
+
+M259 修的「按压期间落点判定跨布局」缺陷类在 `src/preview/math.ts:315`、`:359` 与
+`src/preview/mermaid.ts:395` 原样存在——这三处的显露判定仍读**活选区**而非按压快照，同样可能在
+点击/按压期间因布局位移产生落点漂移。M259 未改它们（不在条款适用面内、无对应验收场景），只落了
+finding（`.tower/comms/findings/20260927-worker-bold-click-bug-math-mermaid-m259-livepreview.md`）。
+**触发条件**：任一后续 mission 动 math/mermaid 显露逻辑，或 Alex 在公式/图表上点出同类误选时，
+把这三处改读 `reveal-gate.ts` 的按压快照（M259 已提供机制与属性测试模板）。
 
 ### M256 全量回归现场（2026-09-27 批次收尾）
 
