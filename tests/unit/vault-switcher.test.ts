@@ -37,9 +37,9 @@ const flush = async () => {
   await new Promise((resolve) => setImmediate(resolve));
 };
 
-/** 会话条目只需 path / preview 两个字段（sessionSnapshot 的读点）。 */
-function tab(path: string, preview = false): EditorSession {
-  return { path, preview } as unknown as EditorSession;
+/** 会话条目只需 path 一个字段（sessionSnapshot 的读点）。 */
+function tab(path: string): EditorSession {
+  return { path } as unknown as EditorSession;
 }
 
 function fileEntry(path: string): FsEntry {
@@ -58,16 +58,20 @@ function listRow(over: Partial<VaultListEntry> & { id: string }): VaultListEntry
 }
 
 // ---------------------------------------------------------------------------
-// 会话过滤：预览不入盘 / 顺序保留 / 激活项落空
+// 会话过滤：全部有路径的标签入盘 / 顺序保留 / 激活项落空
 // ---------------------------------------------------------------------------
 
-test("sessionSnapshot：预览标签不入盘、顺序按打开顺序、激活项被裁掉时落 null", () => {
-  const sessions = [tab("a.md"), tab("b.md", true), tab("c.md")];
-  assert.deepEqual(sessionSnapshot(sessions, "c.md"), { tabs: ["a.md", "c.md"], active: "c.md" });
-  // 前台是预览标签：它不在入盘集合里，激活项落 null（恢复侧退化到第一个可打开的）
-  assert.deepEqual(sessionSnapshot(sessions, "b.md"), { tabs: ["a.md", "c.md"], active: null });
-  // 没有前台（未命名文档）：激活项同样落 null
-  assert.deepEqual(sessionSnapshot(sessions, undefined), { tabs: ["a.md", "c.md"], active: null });
+test("sessionSnapshot：全部标签入盘、顺序按打开顺序、激活项不在集合里时落 null", () => {
+  const sessions = [tab("a.md"), tab("b.md"), tab("c.md")];
+  assert.deepEqual(sessionSnapshot(sessions, "c.md"), { tabs: ["a.md", "b.md", "c.md"], active: "c.md" });
+  // M254 之前这里还有一层「预览标签不入盘」的过滤：预览机制退场后标签只有一种形态，
+  // 每个有路径的标签都是正式标签、都该被记住（下面这条断言就是那层过滤的回归点）。
+  assert.deepEqual(sessionSnapshot(sessions, "b.md"), { tabs: ["a.md", "b.md", "c.md"], active: "b.md" });
+  // 没有前台（未命名文档）：激活项落 null（恢复侧退化到第一个可打开的）
+  assert.deepEqual(sessionSnapshot(sessions, undefined), {
+    tabs: ["a.md", "b.md", "c.md"],
+    active: null,
+  });
   assert.deepEqual(sessionSnapshot([], undefined), { tabs: [], active: null });
 });
 
@@ -226,7 +230,7 @@ test("会话存储：变化后防抖写盘，同内容不重复排期", async ()
   mock.timers.enable({ apis: ["setTimeout"] });
   try {
     const rig = createStoreRig();
-    rig.setSessions(tab("a.md"), tab("b.md", true));
+    rig.setSessions(tab("a.md"), tab("b.md"));
     rig.setActivePath("a.md");
     await rig.store.onVaultLoaded("vault-a", []);
 
@@ -235,7 +239,7 @@ test("会话存储：变化后防抖写盘，同内容不重复排期", async ()
     rig.store.sessionChanged(); // 同内容再回调一次：不重置窗口、不重复排期
     mock.timers.tick(SESSION_WRITE_DEBOUNCE_MS);
     await flush();
-    assert.deepEqual(rig.writes, [{ vaultId: "vault-a", tabs: ["a.md"], active: "a.md" }]);
+    assert.deepEqual(rig.writes, [{ vaultId: "vault-a", tabs: ["a.md", "b.md"], active: "a.md" }]);
   } finally {
     mock.timers.reset();
   }
@@ -623,24 +627,11 @@ test("守卫提示呈现：先撤下既有浮条，同文案的第二次请求�
 });
 
 // ---------------------------------------------------------------------------
-// 会话存储补充（M163 r1 P2-2）：预览→固定的提升属集合变化
+// 会话存储补充（M163 r1 P2-2）：「集合变化必须沿同一条防抖写盘」这一条覆盖在下面
+// 「变化后防抖写盘」两个用例里。M254 之前这里还有一个专门的用例讲「预览标签被提升为
+// 固定后要再报一次集合变化」——预览机制退场后没有「提升」这个动作，用例随之删除
+//（那条链路的回归防线由上面两个用例承担：写盘集合就是全部有路径的标签）。
 // ---------------------------------------------------------------------------
-
-test("会话存储：预览标签被提升为固定后，下一次变化信号必须把它写进去（P2-2 的语义面）", async () => {
-  const rig = createStoreRig();
-  const promoted = tab("b.md", true);
-  rig.setSessions(tab("a.md"), promoted);
-  rig.setActivePath("a.md");
-  await rig.store.onVaultLoaded("vault-a", []);
-  await rig.store.flush();
-  assert.deepEqual(rig.writes.at(-1)!.tabs, ["a.md"], "预览标签不入盘");
-
-  // 首次输入即固定（M149）：提升后装配层在同一处再报一次集合变化
-  promoted.preview = false;
-  rig.store.sessionChanged();
-  await rig.store.flush();
-  assert.deepEqual(rig.writes.at(-1)!.tabs, ["a.md", "b.md"]);
-});
 
 // ---------------------------------------------------------------------------
 // 浮层：渲染与交互（最小假 DOM——浮层那一层是唯一有 DOM 的代码，这里用替身把它的行为

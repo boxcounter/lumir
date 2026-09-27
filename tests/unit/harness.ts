@@ -222,7 +222,6 @@ export function createEditorDouble(): EditorDouble {
         dirty: false,
         mode: options.mode ?? "md",
         editable: options.editable ?? isEditablePath(path),
-        preview: false,
         scroll: undefined,
       };
       if (existing !== undefined) list[list.indexOf(existing)] = session;

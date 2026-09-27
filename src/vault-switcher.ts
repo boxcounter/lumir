@@ -102,16 +102,17 @@ export interface SessionSnapshot {
 }
 
 /** 构造入盘内容（**唯一**构造点）。两条口径都在这里：
- *   - 预览（临时）标签不入盘：它是随时会被顶掉的槽位，恢复它等于在恢复结果里埋一个会
- *     消失的项（spec「按 vault 持久化标签列表」）；
- *   - 激活项不在入盘集合里时落为 null（例如前台是个预览标签）——恢复侧据此退化到第一个
- *     可打开的标签，不在盘上留一个指向不存在条目的值。 */
+ *   - 全部**有路径**的标签都入盘，按打开顺序（M254 之前这里还过滤掉「预览（临时）标签」——
+ *     预览机制随 change preview-tab-removal 退场后，标签只有一种形态，没有「随时会被顶掉的
+ *     槽位」这回事）；
+ *   - 激活项不在入盘集合里时落为 null（例如前台是没有路径的空文档）——恢复侧据此退化到
+ *     第一个可打开的标签，不在盘上留一个指向不存在条目的值。 */
 export function sessionSnapshot(
   sessions: readonly EditorSession[],
   activePath: string | undefined,
 ): SessionSnapshot {
   const tabs = sessions
-    .filter((session) => session.path !== undefined && !session.preview)
+    .filter((session) => session.path !== undefined)
     .map((session) => session.path as string);
   const active = activePath !== undefined && tabs.includes(activePath) ? activePath : null;
   return { tabs, active };

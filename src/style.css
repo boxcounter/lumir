@@ -472,10 +472,6 @@ body {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-/* 预览标签：标题走斜体（临时态的唯一视觉线索——单击树文件建立、开下一篇时被替换）。 */
-.tab.is-preview .tab-name {
-  font-style: italic;
-}
 /* dirty 点：与 modeline 的「（未保存）」同源（同一 dirty 状态的两个可见面）。
    定稿 .tab .t-dot（index.html:165）：6×6 CSS 圆点，不再是 10px 文字字形 ●（字形偏大
    且有基线偏移风险）。元素常驻 DOM、clean 时 hidden 收起，占位不随保存状态跳动。 */
@@ -1652,15 +1648,20 @@ body {
 }
 
 /* ===========================================================================
-   文件树条目操作（M244，change file-tree-context-menu）：右键菜单浮层、行内联输入、
-   删除确认对话框。**本节是追加的新 section**，不改上面任何既有规则。
+   条目操作与浮层菜单（M244 文件树条目操作引入，M254 起菜单皮肤两处共用）：
+   文件树条目的右键菜单（src/tree-menu.ts 的 TreeContextMenu）与标签的右键菜单
+   （src/tabs.ts 的 TabContextMenu）共用**同一套声明**——本节头几组规则的选择器写成
+   「两个类名」而不是复制一份样式块：外观因此只有一个真源，改一处同时影响两处
+   （.ft-menu = 树菜单，.tab-menu = 标签菜单）。本节其余部分（行内联输入、删除确认框）
+   仍只服务文件树条目操作——它们不是共用皮肤的一部分。
    浮层壳沿用 vault 切换器那一份 recipe（--preview-bg + 1px --border + --shadow-raise +
    r10，z-index 15）；模态遮罩沿用键位面板那一份（fixed inset 0 + --scrim + z-index 20）。
-   定位由 src/tree-menu.ts 用指针位置算出来（挂点是 app-shell，左栏容器 overflow:auto）。
+   定位由各自的模块用指针位置算出来（挂点是 app-shell，左栏与标签栏都会裁掉挂进来的浮层）。
    =========================================================================== */
 
 /* 菜单浮层：宽度由内容决定（菜单文案是短词），最大宽度限制住超长文案。 */
-.ft-menu {
+.ft-menu,
+.tab-menu {
   position: absolute;
   top: 0;
   left: 0;
@@ -1681,10 +1682,12 @@ body {
 }
 /* 优先级 0-2-0 > `.ft-menu` 的 0-1-0：写了 display: flex 之后这条隐藏才生效
    （同一坑在 .vault-pop / .lumir-toc 上都踩过）。 */
-.ft-menu[hidden] {
+.ft-menu[hidden],
+.tab-menu[hidden] {
   display: none;
 }
-.ft-menu-item {
+.ft-menu-item,
+.tab-menu-item {
   display: block;
   width: 100%;
   padding: 5px var(--sp-4);
@@ -1696,16 +1699,19 @@ body {
   text-align: left;
   cursor: pointer;
 }
-.ft-menu-item:hover {
+.ft-menu-item:hover,
+.tab-menu-item:hover {
   background: var(--hover);
 }
 /* 键盘游标（与 .vault-row.is-active / .lumir-toc-item.is-active 同形）：底色 + 内描边，
    悬停规则排在它之前，选中压过悬停。 */
-.ft-menu-item.is-active {
+.ft-menu-item.is-active,
+.tab-menu-item.is-active {
   background: var(--sel);
   box-shadow: inset 0 0 0 1px currentColor;
 }
-/* 破坏性项（移到废纸篓）：固定尾部、以分隔线隔开，颜色用 --danger。 */
+/* 破坏性项（移到废纸篓）：固定尾部、以分隔线隔开，颜色用 --danger。标签菜单没有这一档，
+   因此下面这条不给 .tab-menu-item 加对。 */
 .ft-menu-item.is-danger {
   color: var(--danger);
 }
@@ -1717,14 +1723,16 @@ body {
   border-top: 1px solid var(--border-soft);
 }
 /* eink 规则④：选中项黑底反白（菜单项没有子元素写自己的颜色，单条规则即可）。 */
-:root[data-theme="eink"] .ft-menu-item.is-active {
+:root[data-theme="eink"] .ft-menu-item.is-active,
+:root[data-theme="eink"] .tab-menu-item.is-active {
   color: var(--sel-text);
 }
 :root[data-theme="eink"] .ft-menu-item.is-danger.is-active {
   color: var(--sel-text);
 }
 /* eink 规则⑧：焦点 / 选中用线宽表达，不用色差——浮层边框加粗到 1.4px。 */
-:root[data-theme="eink"] .ft-menu {
+:root[data-theme="eink"] .ft-menu,
+:root[data-theme="eink"] .tab-menu {
   border-width: 1.4px;
 }
 

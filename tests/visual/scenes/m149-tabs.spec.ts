@@ -53,6 +53,15 @@ function scrollTop(page: Page): Promise<number> {
   return page.locator(".cm-scroller").evaluate((el) => el.scrollTop);
 }
 
+/** 标签标题的计算字形（按标签栏顺序）。M254「预览斜体退场」的判据：全是 normal。
+ *  取计算属性而不是类名——类名已经不存在，而计算属性正是用户看到的那一层：
+ *  即便将来有人用别的规则（第三处选择器、行内样式）把斜体加回来，这条也会红。 */
+function tabNameFontStyles(page: Page): Promise<string[]> {
+  return page.locator(".tab-name").evaluateAll((els) =>
+    els.map((el) => getComputedStyle(el as HTMLElement).fontStyle),
+  );
+}
+
 /** 视口顶部那一行的文本——滚动位置的**语义**判据。
  *
  *  为什么不比 scrollTop 数值：恢复走的是 CM 的 `scrollTarget`，它由 CM 自己的测量周期
@@ -70,7 +79,7 @@ function topVisibleLine(page: Page): Promise<string> {
   });
 }
 
-test("标签栏：空态隐藏、单标签常驻、预览斜体、dirty 点（元素级基线）", async ({ page }) => {
+test("标签栏：空态隐藏、单标签常驻、无预览字形、dirty 点（元素级基线）", async ({ page }) => {
   await stubTauri(page, VAULT);
   await page.goto("/");
 
@@ -84,57 +93,57 @@ test("标签栏：空态隐藏、单标签常驻、预览斜体、dirty 点（�
   await expect(strip).toBeVisible();
   await expect(page.locator(".tab")).toHaveCount(1);
   await expect(page.locator(".tab-name")).toHaveText("alpha.md");
-  // 单击树文件 = 预览标签：标题斜体（临时态的唯一视觉线索）。
-  await expect(page.locator(".tab").first()).toHaveClass(/is-preview/);
+  // M254：单击树文件开的就是正式标签——标签标题只有一种字形（预览斜体已退场）。
+  // 判据取**计算属性**而不是类名：类名没了，断言读的是用户真正看到的那一层
+  //（REVIEW.md 第 1 条——判据要能红，也不能被「class 还在但样式被别的规则盖住」骗过）。
+  const singleStyle = await tabNameFontStyles(page);
+  expect(singleStyle).toEqual(["normal"]);
   await expect(page.locator(".tab").first()).toHaveClass(/is-active/);
   await expect(page.locator(".tab-dirty")).toBeHidden();
 
-  await expectScreenshot(strip, "tab-bar-preview.png");
+  await expectScreenshot(strip, "tab-bar-single.png");
 
-  // 「首次输入即固定」：内容第一次变化就清掉预览标记，并亮起 dirty 点。
+  // 「首次输入」不再有任何提升动作（M254 之前它会清掉预览标记）：dirty 点亮起，字形不变。
   await page.locator(".cm-content").click();
   await page.keyboard.type("X");
   await expect(page.locator(".cm-content")).toContainText("X");
-  await expect(page.locator(".tab").first()).not.toHaveClass(/is-preview/);
   await expect(page.locator(".tab-dirty")).toBeVisible();
+  expect(await tabNameFontStyles(page)).toEqual(["normal"]);
   // 读屏名带上该标签自己的未保存状态（文案 D90）。
   await expect(page.locator(".tab-open")).toHaveAttribute("aria-label", /alpha\.md（未保存）/);
 
   await expectScreenshot(strip, "tab-bar-dirty.png");
 });
 
-test("打开意图：单击复用预览标签、⌘-点击新开固定标签、双击固定住已有预览标签", async ({ page }) => {
+test("打开意图：单击 / ⌘-点击 / 双击都是开一个标签（不再互相顶掉）", async ({ page }) => {
   await stubTauri(page, VAULT);
   await page.goto("/");
 
   await page.locator('.ft-row[title="alpha.md"]').click();
   await expect(page.locator(".cm-content")).toContainText("Alpha 的第一段");
 
-  // 单击第二次：复用预览标签（alpha 被就地替换成 beta，标签总数不变、位置不变）。
+  // 单击第二个文件：新开一个标签，alpha 的标签保留（M254 之前它会被就地顶掉）。
   await page.locator('.ft-row[title="beta.md"]').click();
   await expect(page.locator(".cm-content")).toContainText("Beta 的第一段");
-  await expect(page.locator(".tab")).toHaveCount(1);
-  await expect(page.locator(".tab-name")).toHaveText("beta.md");
+  await expect(page.locator(".tab")).toHaveCount(2);
+  await expect(page.locator(".tab.is-active .tab-name")).toHaveText("beta.md");
+  // 顺序 = 打开顺序，第一个仍是 alpha（新标签追加在尾部，不改既有位置）。
+  await expect(page.locator(".tab-name")).toHaveText(["alpha.md", "beta.md"]);
 
-  // ⌘-点击 = 新开固定标签。
+  // ⌘-点击一个已打开的文件：同一文件不重复开，只是切过去（与单击同一条落点）。
   await page.locator('.ft-row[title="alpha.md"]').click({ modifiers: ["Meta"] });
   await expect(page.locator(".tab")).toHaveCount(2);
   await expect(page.locator(".tab.is-active .tab-name")).toHaveText("alpha.md");
-  await expect(page.locator(".tab.is-active")).not.toHaveClass(/is-preview/);
 
-  // 双击一个已打开的预览标签 = 固定住它（第一次单击把它开成预览，第二次单击走
-  // 「已打开 → 切过去」并因 pinned 意图清掉预览标记）。
+  // 双击同样不新开（浏览器在 dblclick 前先派发两次 click，两次都落在这条短路上）。
   await page.locator('.ft-row[title="beta.md"]').dblclick();
   await expect(page.locator(".tab.is-active .tab-name")).toHaveText("beta.md");
-  await expect(page.locator(".tab.is-active")).not.toHaveClass(/is-preview/);
   await expect(page.locator(".tab")).toHaveCount(2);
+  // 两个标签的字形仍然一致（没有「刚打开的那一个」是斜体这种事）
+  expect(await tabNameFontStyles(page)).toEqual(["normal", "normal"]);
 
-  // 固定之后，单击树文件不再顶掉它：alpha 已开过 → 切过去；新文件才另开。
-  await page.locator('.ft-row[title="alpha.md"]').click();
-  await expect(page.locator(".tab")).toHaveCount(2);
-
-  // 元素级基线：两个固定标签并存 + 激活态（预览斜体在上面那条基线里）。
-  await expectScreenshot(page.locator(".tabstrip"), "tab-bar-two-pinned.png");
+  // 元素级基线：两个标签并存 + 激活态。
+  await expectScreenshot(page.locator(".tabstrip"), "tab-bar-two-tabs.png");
 });
 
 test("切标签保留滚动位置与撤销史（逐标签，不重新解析、不清栈）", async ({ page }) => {
