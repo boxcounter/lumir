@@ -197,9 +197,9 @@ const flush = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 
 test("项集：三项、顺序固定、文案逐字（deck D148–D151）", () => {
   assert.equal(TAB_MENU_LABEL, "标签操作");
   assert.deepEqual(tabMenuItems(), [
-    { action: "close", label: "关闭" },
-    { action: "close-others", label: "关闭其他标签" },
-    { action: "close-right", label: "关闭右侧标签" },
+    { action: "close", label: "Close" },
+    { action: "close-others", label: "Close Other Tabs" },
+    { action: "close-right", label: "Close Tabs to the Right" },
   ]);
 });
 
@@ -222,7 +222,7 @@ test("打开菜单：三项在场、持焦点、游标落首项、皮肤类两�
   assert.equal(rig.element.classList.contains("tab-menu"), true);
   assert.equal(rig.element.classList.contains("ft-menu"), false, "MUST NOT 带树菜单的类名");
   const labels = rig.element.texts();
-  assert.deepEqual(labels, ["关闭", "关闭其他标签", "关闭右侧标签"]);
+  assert.deepEqual(labels, ["Close", "Close Other Tabs", "Close Tabs to the Right"]);
   const items = rig.element.find("ft-menu-item");
   assert.equal(items.length, 3);
   assert.equal(items[0].classList.contains("is-active"), true, "打开即把游标放在首项");

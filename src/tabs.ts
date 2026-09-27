@@ -36,12 +36,13 @@ import { baseName } from "./tree";
 /** 标签右键菜单的读屏名（`role=menu` 的 aria-label）。不叫「右键菜单」：键盘路径也能开，
  *  读屏用户没有「右键」这个概念（与 D125 文件树菜单同口径）。 */
 export const TAB_MENU_LABEL = "标签操作";
-/** 菜单三项（D149–D151）。**英文列是 Alex 2026-09-27 给的原文**（Close / Close Other Tabs /
- *  Close Tabs to the Right），逐字保留在 deck 里；上屏中文是 deck 的中文列（界面语言是中文，
- *  全仓唯一不跟界面语言走的可见文案仍只有 D114 的 END）。 */
-export const TAB_MENU_CLOSE = "关闭";
-export const TAB_MENU_CLOSE_OTHERS = "关闭其他标签";
-export const TAB_MENU_CLOSE_RIGHT = "关闭右侧标签";
+/** 菜单三项（D149–D151）。**上屏英文是 Alex 2026-09-27 的裁决**（M254 菜单初上屏为中文，
+ *  Alex 答复「上屏」给英文）：Close / Close Other Tabs / Close Tabs to the Right 是 Alex 给的
+ *  原文，逐字保留；deck 里两列因此对调（上屏文案在 English 列，原中文措辞移到中文列备查）。
+ *  不跟界面语言走的可见文案由此不止 D114 的 END 一处。 */
+export const TAB_MENU_CLOSE = "Close";
+export const TAB_MENU_CLOSE_OTHERS = "Close Other Tabs";
+export const TAB_MENU_CLOSE_RIGHT = "Close Tabs to the Right";
 
 export type TabMenuAction = "close" | "close-others" | "close-right";
 

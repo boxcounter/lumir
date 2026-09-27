@@ -364,13 +364,16 @@ test("零标签时 ⌘W 无操作：未命名文档不是标签（reviewer r1 P2
 });
 
 // ---------------------------------------------------------------------------
-// M238：标签的整区可点 与「活跃标签恒完整可见」
+// M238：标签的整区可点 与「活跃标签恒完整可见」；M257：溢出形态本身
 //
-// 两条都是 Alex 2026-09-26 真机截图报告的缺陷（红箭头指的就是被裁掉的活跃标签）：
+// 三条都是 Alex 真机截图报告的缺陷（M238 的红箭头指的是被裁掉的活跃标签；M257 的
+// 红箭头是遮挡标签下缘的横向滚动条、蓝箭头是最右标签与产品名挤在一起）：
 //   1. 只有点文件名文字才切换——动作原来绑在 `.tab-open` 上，而那个按钮的盒被
 //      `align-items: center` 压成行高、又不覆盖标签的左右内边距，实测热区只有 54×15
 //      （标签 103×29）；四条边全是死区。
 //   2. 键盘切换（⌘1–9 / ⌃⇥）与新建标签都不会横向滚动标签栏，活跃标签停在视口之外。
+//   3. 溢出时横向滚动条不美观且遮挡标签（WKWebView 悬浮条压在标签下缘上）、最右标签
+//      与标题栏右端的产品标识块之间没有间距（M257，2026-09-27 dogfood）。
 // 断言一律落**矩形读数**（可视区与标签盒的包含关系），不用 class 或 scrollLeft 数值
 //（REVIEW.md 第 1 条）；「活跃标签读不到」判 FAIL，不当成「无需滚动」（第 2 条）。
 // ---------------------------------------------------------------------------
@@ -450,7 +453,7 @@ test("标签整区可点：点边缘与空白区也切换，× 仍独立（M238�
   await expect(page.locator(".tab-name")).toHaveText("beta.md");
 });
 
-test("标签溢出：活跃标签恒完整可见（键盘直达 / 循环 / 关闭后的落点，M238）", async ({ page }) => {
+test("标签溢出：活跃标签恒完整可见（键盘直达 / 循环 / 关闭后的落点，M238）＋ 溢出形态（M257：无滚动条、右缘间距）", async ({ page }) => {
   const count = 12;
   await stubTauri(page, overflowVault(count));
   await page.goto("/");
@@ -500,4 +503,34 @@ test("标签溢出：活跃标签恒完整可见（键盘直达 / 循环 / 关�
   await expect(page.locator(".tab")).toHaveCount(count - 1);
   const afterClose = await activeTabFullyVisible(page);
   expect(afterClose.ok, `关闭后的落点：${afterClose.detail}`).toBe(true);
+
+  // M257（Alex dogfood 的红/蓝箭头）：溢出形态的两条几何不变量。
+  //   ① 横向滚动条不占布局高度：chromium 的经典滚动条会把 clientHeight 吃掉一条
+  //     （scrollbar-width: thin 时代差 ~7px），none 之后与 offsetHeight 相等；WKWebView
+  //      的悬浮条遮挡由同一声明消除（那条只有真机看得见，chromium 这条守布局面）。
+  //   ② 标签区右缘与产品标识块之间恒有 --sp-3 的间距（.tabstrip 的 margin-right）。
+  // 此刻仍在溢出态（关了一个还剩 11 个），两条判据才不是空转（上面的 scrollWidth >
+  // clientWidth 已坐实溢出）。
+  const geometry = await page.evaluate(() => {
+    const strip = document.querySelector(".tabstrip") as HTMLElement;
+    const identity = document.querySelector(".titlebar-identity") as HTMLElement;
+    const probe = document.createElement("div");
+    probe.style.width = "var(--sp-3)";
+    document.body.append(probe);
+    const sp3 = parseFloat(getComputedStyle(probe).width);
+    probe.remove();
+    return {
+      offsetHeight: strip.offsetHeight,
+      clientHeight: strip.clientHeight,
+      gap: identity.getBoundingClientRect().left - strip.getBoundingClientRect().right,
+      sp3,
+    };
+  });
+  expect(geometry.clientHeight, "横向滚动条占用了布局高度").toBe(geometry.offsetHeight);
+  expect(Math.abs(geometry.gap - geometry.sp3), `右缘间距应为 --sp-3（${geometry.sp3}px），实测 ${geometry.gap}px`).toBeLessThanOrEqual(1);
+
+  // 元素级基线：溢出态的整条标题栏（无滚动条 + 右缘间距 + 最右标签裁在滚动口内）。
+  // 溢出形态只有元素 crop 钉得住——整页 0.001 容差（1200×800 ≈ 960px）吞得掉一条
+  // 42px 高标题栏里的滚动条（REVIEW.md 第 3 条）。
+  await expectScreenshot(page.locator(".titlebar"), "titlebar-overflow.png");
 });
