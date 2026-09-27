@@ -81,6 +81,15 @@
 
 真机场景取 **54**。依据：master `scripts/acceptance/scenarios/` 现有最大编号 **50**（`50-tab-context-menu.md`）；**51–53 按 tower 的批次安排预留给同批在飞的三份提案**（M261 goto-line command / M262 code-block fullscreen / M263 block-copy affordance，各取一场景）。实现期动工前须按既定纪律（`openspec/changes/archive/2026-09-27-list-tab-indent/tasks.md` §6 的口径）再核一次目录与那三份 change 的 tasks.md 编号声明，不盲取。
 
+**实现期核验留痕（M272，2026-09-27，维持 54）**：三层核对结论一致，**无冲突，不取 61**。
+
+1. `ls scripts/acceptance/scenarios/` 实测：当前最大编号 **53**（`53-bold-click-selection.md`），**54–60 一个都不存在**；
+2. 跨全部分支 `git log --all --name-only -- scripts/acceptance/scenarios/` 扫描：**没有任何 54+ 文件被创建过**；
+3. 54 就是本 change（M260 提案）**自己声明的号**，且四份在飞 change 的编号声明互相印证（`goto-line-command` tasks.md:70「54 归 M260」、`ui-language-i18n` tasks.md:132 同句、`code-block-fullscreen` 57、`block-copy-affordance` 58）。
+   HANDOFF.md:14 的「51–58 全✓ 59=M264✓ 60=M268✓；下一可用 61」指的是**新声明**用的下一个号，不是「54 被第三方占用」。
+
+tower 裁决（2026-09-27）采纳上述核验结论：bare-url 取 **54**、enter-auto-indent 取 **59**。
+
 ## 7. 文案 deck
 
 - [x] 7.1 `git diff 文案-Copy.md` 为空：三种新形态复用既有可见文字（`↗︎` 尾标与链接样式），不产生新读屏名、不产生新提示。

@@ -101,6 +101,12 @@ md 列表续行 / D5 = a 只关新增的两处）全部按**推荐项**落地，
 change 的编号声明**（对冲条款：本表是登记时的快照，不是终局）；若 59 已被他人取用，按当时最大
 编号顺延并在本节留痕。
 
+**实现期核验留痕（M272，2026-09-27，维持 59）**：`ls scripts/acceptance/scenarios/` 实测最大编号
+**53**；跨全部分支 `git log --all --name-only -- scripts/acceptance/scenarios/` 扫描**没有任何 54+
+文件被创建过**；**59 归本 change（M264 提案，tower 简报指派）**，与本表登记的快照一致。同批的
+`bare-url-cmd-click` 取 54（其自身 tasks.md §6 声明，三层核对同样无冲突）。HANDOFF.md:14 的
+「59=M264✓」正是本 change。**无冲突，未顺延。**
+
 - [x] 6.1 套件侧扩展两处：`lib/app.mjs` 的 `writeConfig()` 多认 `autoIndent`；
       `lib/execute.mjs` 的 `configWrite` case 加 `autoIndent`（缺省**沿用当前值**，与
       `theme` / `contentWidth` 同形）
