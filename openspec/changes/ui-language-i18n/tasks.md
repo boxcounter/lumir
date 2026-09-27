@@ -51,8 +51,8 @@
   **验收口径**：D64 的 9 条、D66 的 2 条、D69 的 2 条各自的键与格内顺序逐条相等；D67 整体一条（不被切分）——四条断言各自可单独读出。
 - [ ] 3.4 `tests/unit/copy.test.ts`：漂移门禁（全量 + 键集合一一对应 + 两列占位名同名）+ 取值门禁（AST 扫描，允许清单只有文案表与 `src/keys.ts` 的 `doc`，逐条写明理由）。
   **验收口径**：1.3 的两条红灯在此转绿；**往文案表里改一个字**后漂移门禁必须红；**在任一模块写一条中文串**后取值门禁必须红（两次反向验证各自留档）。
-- [ ] 3.5 既有 9 个按 deck 行断言的单测（`end-marker` / `image-widget` / `tree-menu` / `tree-paths` / `list-filter` / `theme` / `content-width` / `tab-menu` / `table-fullscreen`）改为断言文案表条目，断言对象仍是 deck 行（规范文本不变，路径改成经表的键）。
-  **验收口径**：`node tests/unit/run.mjs` 绿；这些用例的失败信息仍能指出是 deck 的哪一行不一致。
+- [ ] 3.5 既有 **9 个**触及可见文案的单测改为断言文案表条目（断言对象仍是 deck 行——规范文本不变，路径改成经表的键）。其中 **2 个在运行期解析 deck**（`end-marker` / `image-widget`，各带 `deckRow()` helper + `readFileSync`），**7 个把措辞写死成字面量**（`tree-menu` / `tree-paths` / `list-filter` / `theme` / `content-width` / `tab-menu` / `table-fullscreen`；其中 `tree-paths` 断的是 Rust 侧 `fs_io.rs` 的同源措辞，5 个在注释里引用 D 编号）——**单独改 deck 不会让那 7 个变红**，这正是本 change 把覆盖面收敛成一张表 + 一条全量门禁的论据。
+  **验收口径**：`node tests/unit/run.mjs` 绿；改造后这 9 个的失败信息都能指出是 deck 的哪一行不一致（改造前只有 2 个具备这种能力）。
 - [ ] 3.6 （条件项：D9 取推荐项才做）**上屏列锁定**条目：文案表条目带锁列属性，`t()` 对锁列条目忽略当前界面语言；漂移门禁断言锁列方向与 deck 的「设计意图」列一致；MUST 断言 `zh` 界面下上屏的是锁定列（**不是**中文列里的备查措辞）。
   **验收口径**：`zh` 与 `en` 两种界面语言下 D149–D151 的渲染文本逐字相同、且等于 deck 的 English 列；把锁列属性摘掉后该断言必须红（反向验证留档）。
 
@@ -129,21 +129,21 @@
 
 ### 编号声明
 
-真机场景取 **55**。依据：master `scripts/acceptance/scenarios/` 现有编号最大 **50**（`50-tab-context-menu.md`）；本批在飞的提案已声明：**51–53** 留给 M261（goto-line command）/ M262（code-block fullscreen）/ M263（block-copy affordance），**54** 由 `bare-url-cmd-click`（M260）声明（见该 change 的 `tasks.md` §6 与 `openspec/changes/bare-url-cmd-click/`）。实现期动工前须按既定纪律（`openspec/changes/archive/2026-09-27-list-tab-indent/tasks.md` §6 与 `openspec/changes/archive/2026-09-27-live-theme-switch/tasks.md` 的口径）**再核一次目录与那四份 change 的编号声明**，不盲取。
+真机场景取 **55**。依据（2026-09-27 对 master `8dbbb89` 实测）：`scripts/acceptance/scenarios/` 现有**文件**的最大编号是 **52**（`52-dir-rename-expand.md`，M258）；`51-tab-overflow.md` 是 M257 的场景（已合并 `cd9142d`）。其余号由在飞的手持：**53 = M259**（其广播登记）、**54 = M260**（change `bare-url-cmd-click`，其 `tasks.md` §6 已声明该号，提案在 master）、**56 = M261**（change `goto-line-command`，其 `tasks.md` §6 取 56 并明写「**55 归 M267**」）。因此本 change 取 **55**，与 M261 的声明互相印证。实现期动工前须按既定纪律（`openspec/changes/archive/2026-09-27-list-tab-indent/tasks.md` §6 的口径）**再核一次目录与在飞 change 的编号声明**，不盲取。
 
 ## 10. 文案 deck
 
 - [ ] 10.1 `文案-Copy.md` 的「编号沿革」段补本批的 D 区间（D152 起的用途说明）与「文案实现备注」段的实现落点（表模块 + 漂移测试路径），语言无关条目（含两列同形的新条目）在该段写明。
   **验收口径**：新段的写法与既有各批同构（读一遍 D125–D151 那几段即知体例）；deck 里不再出现「界面语言是中文」这类已过时的断言——`文案-Copy.md` 的编号沿革段与 `src/tabs.ts:41` 的注释各有一处（同一条论断两处真源，本 change 一并改准）。
-- [ ] 10.2 D149–D151（标签菜单三项）与 M257 的关系按裁决 D9 定稿：取推荐项（默认）则**保持 M257 的形态**（`src/tabs.ts` 三常量英文串、deck 两列对调、上屏取 English 列、原中文措辞留中文列备查），本 change 只把它们登记为**上屏列锁定**条目（3.6）；取备选则两列各说各的语言、上屏随语言切换，并要求 M257 同批回退三常量、deck 双列与两处文案断言。
-  **验收口径**：实现期先核 M257 是否已合并（`git log --oneline -- src/tabs.ts 文案-Copy.md` 看那三处是否已带英文串与两列对调）；deck 行、`src/tabs.ts` 常量、`tests/unit/tab-menu.test.ts`、`tests/visual/scenes/tab-menu.spec.ts` 与文案表的锁列属性五者一致。
+- [ ] 10.2 D149–D151（标签菜单三项）与 M257 定稿：**M257 已合并（merge `cd9142d`），master 上 `src/tabs.ts` 三常量已是英文串、deck 两列已对调**——D9 取推荐项（默认）时现状即目标，本 change 只把它们登记为**上屏列锁定**条目（3.6）、不动那三处串；D9 取备选（随语言走）则要**回退 M257 的裁决**：三常量改回中文、deck 双列复位、`tests/unit/tab-menu.test.ts` 与 `tests/visual/scenes/tab-menu.spec.ts` 两处断言同步。
+  **验收口径**：deck 行、`src/tabs.ts` 常量、`tests/unit/tab-menu.test.ts`、`tests/visual/scenes/tab-menu.spec.ts` 与文案表的锁列属性五者一致；推荐项下 `zh` 与 `en` 两种界面语言的渲染文本逐字相同、且等于 deck 的 English 列。
 
 ## 11. 验证与收官
 
 - [ ] 11.1 `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` 通过，`change/ui-language-i18n` 为 ✓。
 - [ ] 11.2 `bash scripts/gate.sh quick` 与 `LUMIR_VISUAL_PORT=<自选> bash scripts/gate.sh visual` 全绿（视觉侧本地跑，CI 只跑结构层）；真机 `node scripts/acceptance/run.mjs 55` 至少跑一次并留档。
 - [ ] 11.3 `git diff --check` 通过；改动文件集合与 [proposal.md](proposal.md) 的 Impact 清单一致（出现跨 scope 的只读依赖先报 tower 批准）。
-- [ ] 11.4 收官对账：tasks 全部勾选（或标注放弃原因）、spec 增量与实现一致（无实现期静默扩 scope）、living spec 归档另走节点 2；`docs/backlog.md:565-570` 的 M254 待裁决点按合并顺序处置（**M257 先合并**则由 M257 核销，本 change 不动它；**本 change 先合并**则改述为「英文上屏由 `ui-language-i18n` 按上屏列锁定条目承接，落点见 D9」）；`docs/backlog.md` 里新登记的边界（原生菜单半覆盖、键位来由不切、首帧闪烁结论）各落一条。
+- [ ] 11.4 收官对账：tasks 全部勾选（或标注放弃原因）、spec 增量与实现一致（无实现期静默扩 scope）、living spec 归档另走节点 2；`docs/backlog.md:565-570` 的 M254 待裁决点**已随 M257 合并核销**（master `8dbbb89`），本 change 不再改它；`docs/backlog.md` 里新登记的边界（原生菜单半覆盖、键位来由不切、首帧闪烁结论）各落一条。
 
 ## 12. 已声明的边界 / 不做
 
