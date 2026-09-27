@@ -2,7 +2,7 @@
 
 ## Purpose
 
-定义编辑器单内核双模式（ADR 0002 §2）的落地口径：md 模式 = 高亮 + live preview 装饰层且可编辑、code 模式 = 仅高亮且只读（M130 的「非 md 即只读」）、按文件类型选模式、配置 `editor.mode` 仅作无类型线索时的默认；装饰层视口增量构建以满足打开 1MB <100ms 性能合同（ADR 0002 §6）。**编辑态口径**：md 模式下光标/选区触及的结构显露源码（callout 行、标准 Markdown 链接、frontmatter 块、公式与 mermaid widget、分隔线行），显露由选区驱动的装饰重建实现、不改文档——M1 期的只读口径已随编辑能力落地而作废。由 change `add-editor-live-preview` 归档并入（2026-09-05，实现 M19 + M20 接线；真实打开路径 perf 端点的演进义务见 perf-measurement spec），并由 `align-editor-live-preview-spec` 对齐到现状（2026-09-17，同时补记 M138 渲染保真三件套），由 change `code-outline` 归档并入（2026-09-24，实现 M197——代码文件的结构解析（语言分层注册表）与解析缓存），由 change `code-variable-highlight` 归档并入（2026-09-24，实现 M198——双击标识符高亮同一变量及其呈现与生命周期），并由 change `document-end-marker` 归档并入（2026-09-25，实现 M189——正文末尾的「到底了」结束标记：静态显示判据、与作者分隔线可区分的形态，以及「非文档性与几何稳定」两条新增 requirement）。
+定义编辑器单内核双模式（ADR 0002 §2）的落地口径：md 模式 = 高亮 + live preview 装饰层且可编辑、code 模式 = 仅高亮且只读（M130 的「非 md 即只读」）、按文件类型选模式、配置 `editor.mode` 仅作无类型线索时的默认；装饰层视口增量构建以满足打开 1MB <100ms 性能合同（ADR 0002 §6）。**编辑态口径**：md 模式下光标/选区触及的结构显露源码（callout 行、标准 Markdown 链接、frontmatter 块、公式与 mermaid widget、分隔线行），显露由选区驱动的装饰重建实现、不改文档——M1 期的只读口径已随编辑能力落地而作废。由 change `add-editor-live-preview` 归档并入（2026-09-05，实现 M19 + M20 接线；真实打开路径 perf 端点的演进义务见 perf-measurement spec），并由 `align-editor-live-preview-spec` 对齐到现状（2026-09-17，同时补记 M138 渲染保真三件套），由 change `code-outline` 归档并入（2026-09-24，实现 M197——代码文件的结构解析（语言分层注册表）与解析缓存），由 change `code-variable-highlight` 归档并入（2026-09-24，实现 M198——双击标识符高亮同一变量及其呈现与生命周期），并由 change `document-end-marker` 归档并入（2026-09-25，实现 M189——正文末尾的「到底了」结束标记：静态显示判据、与作者分隔线可区分的形态，以及「非文档性与几何稳定」两条新增 requirement），M259（2026-09-27，缺陷修复）补记显露的隐含前提：按压期间的落点判定 MUST NOT 跨布局。
 
 ## Requirements
 

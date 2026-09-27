@@ -13,8 +13,12 @@ import { readDocument } from "./parity-checks";
 // 跨布局」）——两条都断言，缺一不可：
 //   P1 同一屏幕坐标的文档落点映射（pos + assoc）在按下前与按压期间**逐值不变**；
 //   P2 结果选区恒落在「按下点与松手点各自的落点」之间（选区 MUST NOT 被布局位移撑大）。
-// fixture 是 范围类型 × 横向落点 × 抖动幅度 的矩阵；三条区分度对照（真实拖拽必须出选区 /
-// 双击仍选整词 / 键盘落点仍显露）保证上面的断言不是在空输入上空转。
+// fixture 是 范围类型 × 横向落点 × 抖动幅度 的矩阵；反向对照（真实拖拽必须出选区 / 双击仍
+// 选整词 / 键盘落点仍显露 / 按压全程文档不变）保证上面的断言不是在空输入上空转。
+//
+// 修前实测（同一份用例对着 master 的 src 跑）：矩阵第一条用例在**第一格**就红
+//（`段落粗体 frac=0.15 dx=0`：同坐标映射在按下后偏移 1 个字符），拖拽那条也红（选区跨度
+// 被布局位移压成 1 个字符）；修后 5 条全绿。这就是「断言有区分度」的实测依据（REVIEW.md 第 1 条）。
 
 const DOC = `**行首粗** 之后的段落文字。
 
@@ -168,7 +172,7 @@ test("区分度对照：真实拖拽必须出选区（证明上面的断言不�
   await page.waitForTimeout(60);
   const sel = await selection(page);
   expect(sel.empty, "30px 的拖拽应产生非空选区").toBe(false);
-  expect(sel.head - sel.anchor, "选区跨度应与指针位移同量级（不是被布局撑成别的跨度）").toBeGreaterThan(1);
+  expect(sel.head - sel.anchor, "选区跨度应与指针位移同量级（修前被布局位移压成 1 个字符）").toBeGreaterThan(1);
   expect(await readDocument(page)).toBe(DOC);
 });
 
