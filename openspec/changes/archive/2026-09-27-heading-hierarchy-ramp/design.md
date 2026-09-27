@@ -4,7 +4,7 @@
 
 - 裁决（2026-09-25，Alex，M224 notes）：选定稿 A 纯字号阶梯。三稿对比原型与截图包留档
   `design/prototypes/heading-hierarchy/`（base/a/b/c × 三主题，14 张截图 @2x）。
-- 基线文本：[design-tokens-v1.md](../../../docs/specs/design-tokens-v1.md) §字体
+- 基线文本：[design-tokens-v1.md](../../../../docs/specs/design-tokens-v1.md) §字体
   （字号阶梯 12 档、字重阶梯 7 档、标题负字距档）与现行实现
   `src/preview/theme.ts:117-122`、`src/preview/livePreview.ts:894-898`。
 

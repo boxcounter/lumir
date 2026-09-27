@@ -1,7 +1,7 @@
 # Design: restyle-ui-tokens-v1
 
 本 change 的现状盘点（逐条给文件:行号）、落点、机制选择与被否决方案。值的唯一权威文本是
-[design-tokens-v1.md](../../../docs/specs/design-tokens-v1.md)，本文件不复制 token 值，
+[design-tokens-v1.md](../../../../docs/specs/design-tokens-v1.md)，本文件不复制 token 值，
 只写「这些值怎么进代码」。
 
 ## 1. 现状盘点
@@ -76,7 +76,7 @@
 
 ### 2.6 callout 语义收敛（D2 裁决 = 本 change 内收敛，2026-09-24）
 
-节点 1 裁决 D2 采纳备选：13 类 callout 在本 change 内收敛为五族语义色。**映射表与四条规则的唯一权威文本是 [design-tokens-v1.md](../../../docs/specs/design-tokens-v1.md) §callout 语义收敛（v1.2 增补）**（蓝 4：note/abstract/info/todo；绿 2：tip/success；琥珀 2：question/warning；红 3：failure/danger/bug；灰 2：example/quote），此处只写落法，不复制映射：
+节点 1 裁决 D2 采纳备选：13 类 callout 在本 change 内收敛为五族语义色。**映射表与四条规则的唯一权威文本是 [design-tokens-v1.md](../../../../docs/specs/design-tokens-v1.md) §callout 语义收敛（v1.2 增补）**（蓝 4：note/abstract/info/todo；绿 2：tip/success；琥珀 2：question/warning；红 3：failure/danger/bug；灰 2：example/quote），此处只写落法，不复制映射：
 
 - 每类 callout 的 `--callout-<type>` 色值改指所属族的语义 token（`--accent` / `--ok` / `--pending` / `--danger` / `--text-3`），底色取对应 tint（`--accent-tint` / `--ok-tint` / `--pending-tint` / `--danger-tint` / `--agent-bg`）；红系 tint 用 v1.2 新增的 `--danger-tint`。
 - **`color-mix` 现混色全部退场**：`theme.ts:112` 的 `color-mix(in srgb, var(--callout-c) var(--callout-tint), var(--bg))` 整段删除，底色直接取 tint token——tint 本身就是按三主题逐档调好的，不再运行期混色。
@@ -87,7 +87,7 @@
 
 原型定稿图未直接呈现周边表面。处置口径：**换皮不改交互**——每个表面由「已定稿组件
 样式 + token」类推组装；浮层壳没有类推依据的部分指向 tokens v1.1 新增的
-`--shadow-raise` / `--scrim`（[design-tokens-v1.md](../../../docs/specs/design-tokens-v1.md)
+`--shadow-raise` / `--scrim`（[design-tokens-v1.md](../../../../docs/specs/design-tokens-v1.md)
 §浮层 elevation 与遮罩）。实现按本表逐行执行，**任何偏离表内类推关系的取值都必须
 记录**（落 `test-results/<mission>/peripheral-surfaces.md`，逐表面写取值来源）。
 

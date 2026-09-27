@@ -6,20 +6,6 @@
 
 ## Requirements
 
-### Requirement: 单内核双模式落地
-
-编辑器 SHALL 保持单一 CM6 内核、两种模式（ADR 0002 §2）：md 模式 = 语法高亮 + live preview 装饰层；code 模式 = 仅语法高亮。模式切换 SHALL 经既有 Compartment 热切换完成，MUST NOT 重建 EditorView、MUST NOT 丢失文档状态。打开文件时 SHALL 按扩展名注册表（`src/preview/attachments.ts` 的单一事实源）选择模式：`.md`/`.markdown` 用 md 模式；**其余一切已打开的文件一律用只读 code 模式**（含未收录扩展、dotfile 与 basename 无点的文件）——有语言包则高亮、无则纯文本；只有没有文件上下文（path 缺失）的文档才回落配置 `editor.mode`。md 模式之外编辑器 MUST NOT 可编辑（`editable(false)` + `readOnly(true)` 的视图层只读合同）。初始模式由配置 `editor.mode` 决定（既有接线保留）。
-
-#### Scenario: 按文件类型选模式
-
-- **WHEN** 用户在文件树点击一个 `.rs` 文件后又点击一个 `.md` 文件
-- **THEN** 前者以 code 模式（仅高亮）打开，后者以 md 模式（高亮 + 装饰层）打开，切换不重建编辑器视图
-
-#### Scenario: 非 md 文本文件只读打开
-
-- **WHEN** 用户在配置 `editor.mode = md`（出厂值）下点击一个 `.php`、`.svelte`、`.txt`、未知扩展文件，或 `LICENSE`/`Makefile` 这类 basename 无点的文件
-- **THEN** 该文件以只读 code 模式打开：视图层不可编辑（`contenteditable` 摘除、`aria-readonly`），输入被拒收，不产生 dirty，后续 Cmd+S 不进入保存链路
-
 ### Requirement: live preview 装饰层
 
 md 模式下系统 SHALL 用 CM6 decoration 实现 live preview：标题按级别呈现字号/字重、加粗/斜体/删除线隐藏标记符并渲染字形、列表符号美化、引用块样式、行内代码与代码块背景。装饰层 SHALL 采用视口增量构建（⚠ 裁决点 D，推荐项：只为可见区域构建 decoration，滚动时增量更新），MUST NOT 在打开文档时全量构建——打开 1MB Markdown <100ms 是 CI 绝对阈值（ADR 0002 §6）。该视口增量义务不含 frontmatter properties 区块——跨行 replace 装饰受 CM6 视口插件硬限制，其构建策略见 frontmatter-properties spec（StateField + 文档变更时重算 + 首部扫描有界）。**编辑态口径**（M1 只读期已结束，md 模式可编辑）：光标或选区触及的结构 SHALL 显露源码——callout 行（含其内容行的行内标记）、**强调范围（`**加粗**` / `*斜体*` / `~~删除线~~`，M168）**、标准 Markdown 链接（整条）、frontmatter 块、公式与 mermaid widget、分隔线行；显露 SHALL 由选区驱动的装饰重建实现，MUST NOT 改写文档。装饰 MUST NOT 改变文档源码（ADR 0003 §3 铁律）。
@@ -65,7 +51,7 @@ md 模式下系统 SHALL 用 CM6 decoration 实现 live preview：标题按级�
 
 ### Requirement: 模式配置来源
 
-初始编辑器模式 SHALL 来自配置 `editor.mode`（config.rs 既有字段，ts-rs 导出）；该配置 SHALL 只作用于没有文件上下文的文档（空态 / 新建 / reset）。打开文件时的模式 SHALL 由扩展名注册表唯一裁决：`.md`/`.markdown` → md 模式；其余一切已打开的文件（含未收录扩展、dotfile 与 basename 无点的文件）→ 只读 code 模式，**MUST NOT 回落 `editor.mode`**。该裁决 MUST NOT 随 `editor.mode` 的取值漂移：把配置在 `md` 与 `code` 之间切换不改变任何已打开文件的模式。
+初始编辑器模式 SHALL 来自配置 `editor.mode`（config.rs 既有字段，ts-rs 导出）；该配置 SHALL 只作用于没有文件上下文的文档（空态 / 新建 / reset）。打开文件时的模式 SHALL 由扩展名注册表唯一裁决：`.md`/`.markdown` → md 模式；其余一切已打开的文件（含未收录扩展、dotfile 与 basename 无点的文件）→ code 模式，**MUST NOT 回落 `editor.mode`**。该裁决 MUST NOT 随 `editor.mode` 的取值漂移：把配置在 `md` 与 `code` 之间切换不改变任何已打开文件的模式。
 
 #### Scenario: 配置默认与文件类型优先
 
@@ -75,12 +61,12 @@ md 模式下系统 SHALL 用 CM6 decoration 实现 live preview：标题按级�
 #### Scenario: 未收录扩展不回落配置默认
 
 - **WHEN** `editor.mode = md` 且用户打开 `.log`、`.csv` 或 `.xyz` 这类未收录扩展的文件
-- **THEN** 文件以只读 code 模式打开（无语言包时按纯文本显示原文），MUST NOT 进入可编辑 md 模式，不产生 dirty
+- **THEN** 文件以 code 模式打开（可编辑；无语言包时按纯文本显示原文），MUST NOT 进入 md 模式或套用其装饰层
 
 #### Scenario: 无扩展名文件一并不回落配置默认
 
 - **WHEN** 用户打开 basename 无点的文件（如 `LICENSE`、`Makefile`）
-- **THEN** 文件以只读 code 模式打开，MUST NOT 按 `editor.mode` 进入可编辑模式（M130 评审裁决：D4「非 md 即只读」优先于任务书「ext 缺失保持 fallback」的字面）
+- **THEN** 文件以 code 模式打开（可编辑），MUST NOT 按 `editor.mode` 进入 md 模式（M130 评审裁决的模式语义保留：非 md 不走 md 模式；editable-non-md-files 解除的只是只读）
 
 ### Requirement: JSON 键名与值分色
 
@@ -177,7 +163,7 @@ md 模式下，标准 Markdown 链接 `[title](target)`（lezer 语法树的 `Li
 md 模式 SHALL 在基础装饰之外渲染下列三类结构（M138 落地），三者均 MUST NOT 改写文档内容（`EditorState.doc` 与磁盘文件逐字节不变，ADR 0003 §3 铁律）：
 
 1. **分隔线**：`---` / `***` / `___` 主题行 SHALL 渲染为一条横线（replace widget，读屏名「分隔线」），渲染态 MUST NOT 露出源码标记。**文档首部 frontmatter 块内的 `---` 定界符 MUST NOT 被当作分隔线**（frontmatter 判定复用既有唯一实现，toc 与装饰层不得各写一份）。横线的宽度 SHALL 取阅读栏宽，本体 SHALL 不参与行高计算；光标或选区触及该行时 SHALL 显露源码（否则作者既看不到光标也看不到刚敲入的字符）。
-2. **围栏代码块着色**：带 info string 且语言在收录表内的围栏代码块 SHALL 按该语言着色，token 色值 MUST 只取自既有 editorial token（MUST NOT 为此新增颜色）；同一段代码经围栏渲染与整文件（code 模式）打开时 SHALL 得到同一套 tag 与配色，MUST NOT 出现两侧漂移。**该一致性 SHALL 由两侧共用同一张语言表（`src/preview/code.ts` 的 `LANGUAGES`）保证，MUST NOT 由两侧各自维护一份语言或配色表。** 语言相关的键名口径按各自 capability 条目处置：json 见「JSON 键名与值分色」，yaml 见「YAML 代码块的键名配色」。info string 缺失、语言不在收录表内时 SHALL 保持纯文本（源码逐字保留，MUST NOT 用近似 parser 冒充着色）。块级 mermaid 走自身的 widget 渲染路径，不适用本条。围栏代码块的分隔行与源码 SHALL 保持可选中的原文，装饰 MUST NOT 吞掉字符。着色 SHALL 受单一代码块长度上限约束（超过即回落纯文本，MUST NOT 因语言不同而放宽）。**已知例外（如实记录，缺陷在案）**：（a）rust 的字符 / 字节字符字面量（simpleMode 的 `string.special` 复合 token）在围栏里丢 tag、取正文色，与 code 模式不一致——影响面已枚举（收录语言里只有 rust），finding 与修法见 `docs/backlog.md` 的「rust 字符字面量在围栏代码块里不着色」条；（b）toml 的表头 `[x]` 与 `true` / `false`、日期共用 legacy mode 的同一个 `atom` token（`@codemirror/legacy-modes` 的 `mode/toml.js:44,57,59`），tokenTable 按 token 名映射、分不开三者，因此表头取的是字面量色（与数字、布尔同色）——两侧口径一致（不构成漂移），修它需要改 vendored mode 的词法，本 capability 记为接受现状，记 `docs/backlog.md`。本条「两侧同 tag 同配色」在（b）上成立、在（a）修复前不成立，MUST NOT 被读作已满足。
+2. **围栏代码块着色**：带 info string 且语言在收录表内的围栏代码块 SHALL 按该语言着色，token 色值 MUST 取自 design tokens 的语法高亮 token（`--tk-k` keyword / `--tk-s` string / `--tk-n` number / `--tk-c` comment，三主题各一份值；MUST NOT 在 token 层之外引入字面色值，MUST NOT 再借用 callout 色或正文层级色充当高亮色）；同一段代码经围栏渲染与整文件（code 模式）打开时 SHALL 得到同一套 tag 与配色，MUST NOT 出现两侧漂移。**该一致性 SHALL 由两侧共用同一张语言表（`src/preview/code.ts` 的 `LANGUAGES`）保证，MUST NOT 由两侧各自维护一份语言或配色表。** 语言相关的键名口径按各自 capability 条目处置：json 见「JSON 键名与值分色」，yaml 见「YAML 代码块的键名配色」。info string 缺失、语言不在收录表内时 SHALL 保持纯文本（源码逐字保留，MUST NOT 用近似 parser 冒充着色）。块级 mermaid 走自身的 widget 渲染路径，不适用本条。围栏代码块的分隔行与源码 SHALL 保持可选中的原文，装饰 MUST NOT 吞掉字符。着色 SHALL 受单一代码块长度上限约束（超过即回落纯文本，MUST NOT 因语言不同而放宽）。**已知例外（如实记录，缺陷在案）**：（a）rust 的字符 / 字节字符字面量（simpleMode 的 `string.special` 复合 token）在围栏里丢 tag、取正文色，与 code 模式不一致——影响面已枚举（收录语言里只有 rust），finding 与修法见 `docs/backlog.md` 的「rust 字符字面量在围栏代码块里不着色」条；（b）toml 的表头 `[x]` 与 `true` / `false`、日期共用 legacy mode 的同一个 `atom` token（`@codemirror/legacy-modes` 的 `mode/toml.js:44,57,59`），tokenTable 按 token 名映射、分不开三者，因此表头取的是字面量色（与数字、布尔同色）——两侧口径一致（不构成漂移），修它需要改 vendored mode 的词法，本 capability 记为接受现状，记 `docs/backlog.md`。本条「两侧同 tag 同配色」在（b）上成立、在（a）修复前不成立，MUST NOT 被读作已满足。
 3. **引用内列表**：引用块（含嵌套引用 `> >`）内的有序 / 无序 / 任务列表 SHALL 与正文里的列表走同一套标记装饰与正文对齐——行首连续的 `>` 与紧随空格、以及列表标记 SHALL 在渲染态被隐藏；callout 内的列表与普通引用内的列表同一口径（callout 本就是 blockquote）。嵌套层级、多位编号与任务状态 SHALL 保留，MUST NOT 重新编号或写入任务状态。
 
 三项装饰 SHALL 遵守本 spec 的视口增量纪律（`live preview 装饰层` requirement）：只为可见区域构建，MUST NOT 因这三项在打开文档时引入全量构建。
@@ -195,7 +181,7 @@ md 模式 SHALL 在基础装饰之外渲染下列三类结构（M138 落地）�
 #### Scenario: 收录语言着色、未收录语言保持纯文本
 
 - **WHEN** md 文档里有两个围栏代码块，一个 info string 为 `python`、另一个为 `brainfuck`（不在收录表内）
-- **THEN** python 块按语言取色（色值来自既有 editorial token），brainfuck 块按纯文本显示且源码逐字可读可选中；同一段 python 代码在只读 `.py` 文件（code 模式）里取到同一套配色
+- **THEN** python 块按语言取色（色值取自 `--tk-*` 语法高亮 token），brainfuck 块按纯文本显示且源码逐字可读可选中；同一段 python 代码在只读 `.py` 文件（code 模式）里取到同一套配色
 
 #### Scenario: 两侧语言与配色表同源
 
@@ -248,39 +234,53 @@ yaml 文档里的**映射键**（`key:` 与 `- key:` 两种形态的键）SHALL 
 
 ### Requirement: 折行口径与配置来源
 
-`~/.config/lumir/config.json` 的 `[editor]` 表 SHALL 支持两个布尔项，键名与 Rust 字段名逐字一致
-（沿用 `EditorConfig` 无 `serde(rename)` 的既有口径，`src-tauri/src/config.rs:70-75`）：
+`~/.config/lumir/config.json` 的 `[editor]` 表 SHALL 支持三个布尔项，键名与 Rust 字段名逐字一致
+（沿用 `EditorConfig` 无 `serde(rename)` 的既有口径，`src-tauri/src/config.rs`）：
 
-- `editor.line_wrap`：文件级折行，`true`（默认）/ `false`。`true` 时正文行在阅读栏内折行，
+- `editor.line_wrap`：**md 模式**的正文行折行，`true`（默认）/ `false`。`true` 时正文行在阅读栏内折行，
   `false` 时长行不折、由编辑区横向平移呈现。
 - `editor.code_block_wrap`：代码块折行，`false`（默认）/ `true`。作用对象只有 md live preview 里的
-  围栏与缩进代码块（代码块**不是 widget**，是行装饰：`src/preview/livePreview.ts:792-798`）。
+  围栏与缩进代码块（代码块**不是 widget**，是行装饰：`src/preview/livePreview.ts`）。
+- `editor.code_mode_line_wrap`（本 change 新增）：**code 模式**的正文行折行，`false`（默认）/ `true`。
 
-两项 SHALL 与既有 `editor.mode` 走同一条装配链——各类型 `impl Default`（`config.rs:77-83`）、
-宽容解析镜像上的 `#[serde(default)]`（`:142-146`）、`validate()` 逐字段回落到默认（`:237-247`）——
-MUST NOT 为它们另开一条装载路径。取值不合法时 MUST 走既有 config warning 语义、不得导致启动失败
-（ADR 0002 §5）：warning 出口沿用现状（console + 诊断日志的 `config_warning` 事件，
-`src/main.ts:811-814`），本 change MUST NOT 新增 UI 面。
+**出厂口径是分叉的**：`line_wrap` 默认 `true`、`code_mode_line_wrap` 默认 `false`——同一份出厂配置下
+md 折行、code 不折行。`code_mode_line_wrap` MUST NOT 跟随 `line_wrap`：键缺席 = 上列的出厂 `false`，
+显式写 `true` 才把 code 模式也折起来。跟随口径被明确否决——它会让缺省值随用户改 `line_wrap` 漂移，
+出厂分叉随之失效。两键的作用面互不重叠（各管各的模式），MUST NOT 互相改写。
 
-**已知边界（如实记录）**：类型不符（如 `"line_wrap": "yes"`）会在解析期让整份宽容结构失败、走整文件
-回落（全部默认 + warning，`config.rs:200-209`），与 `editor.mode` 给错类型时同路。本 change MUST NOT
-引入「逐字段类型容忍」——那是解析模型的变更，不应附带在新增字段里；实现 SHALL 用一条单测把这条
-边界钉住，MUST NOT 把它读成「配置项没问题」。
+三项 SHALL 与既有 `editor.mode` 走同一条装配链——各类型 `impl Default`
+（`src-tauri/src/config.rs` 的 `impl Default for EditorConfig`）、宽容解析镜像上的 `#[serde(default)]`、
+`validate()` 逐字段回落到默认——MUST NOT 为它们另开一条装载路径。取值不合法时 MUST 走既有 config
+warning 语义、不得导致启动失败（ADR 0002 §5）：warning 出口沿用现状（console + 诊断日志的
+`config_warning` 事件，`src/main.ts`），本 change MUST NOT 新增 UI 面。
 
-装载时点 SHALL 与现状一致：只在启动装载（`src/main.ts:805` 是全仓唯一的 `config_get` 消费点，
-无 watcher、无第二次读取），改配置需重启；运行期的口径变更由「折行开关的瞬态口径」承担。配置格式
-随现状（config.rs 的「JSON 而非 TOML」选型，`config.rs:17-22`），本 change 不做格式迁移。新增字段
-SHALL 经 ts-rs 导出到 `src/bindings/` 并受 bindings 漂移门禁约束（`scripts/gate.sh:61-70`）。
+**已知边界（如实记录）**：类型不符（如 `"line_wrap": "yes"` 或 `"code_mode_line_wrap": "yes"`）会在
+解析期让整份宽容结构失败、走整文件回落（全部默认 + warning），与 `editor.mode` 给错类型时同路。
+本 change MUST NOT 引入「逐字段类型容忍」——那是解析模型的变更，不应附带在新增字段里；实现 SHALL 用
+单测把这条边界逐键钉住，MUST NOT 把它读成「配置项没问题」。
 
-两个配置项是**输入面**：应用 MUST NOT 因运行期的折行翻转回写 `config.json`，MUST NOT 做 per-file 的
+装载时点 SHALL 与现状一致：只在启动装载（`src/main.ts` 是全仓唯一的 `config_get` 消费点，无 watcher、
+无第二次读取），改配置需重启；运行期的口径变更由「折行开关的瞬态口径」承担。配置格式随现状
+（config.rs 的「JSON 而非 TOML」选型），本 change 不做格式迁移。新增字段 SHALL 经 ts-rs 导出到
+`src/bindings/` 并受 bindings 漂移门禁约束（`scripts/gate.sh`）。
+
+三个配置项是**输入面**：应用 MUST NOT 因运行期的折行翻转回写 `config.json`，MUST NOT 做 per-file 的
 折行状态持久化（对比 Emacs：`toggle-truncate-lines` 只做 buffer-local 翻转、不落盘
 [Line Truncation](https://www.gnu.org/software/emacs/manual/html_node/emacs/Line-Truncation.html)）。
 
 #### Scenario: 缺字段时取默认
 
-- **WHEN** `config.json` 的 `[editor]` 表里没有这两个字段（旧配置原样启动）
-- **THEN** 正文行折行、代码块不折行（`line_wrap = true`、`code_block_wrap = false`）；不产生任何
-  config warning
+- **WHEN** `config.json` 的 `[editor]` 表里没有这三个字段（旧配置原样启动）
+- **THEN** md 模式的正文行折行、md 的代码块不折行、code 模式的正文行不折行
+  （`line_wrap = true`、`code_block_wrap = false`、`code_mode_line_wrap = false`）；不产生任何 config warning
+- **AND** 键缺席时取到的就是**出厂分叉**（md 折 / code 不折）——本 change 的出厂口径即上列三项默认值，
+  不需要用户配置任何东西
+
+#### Scenario: code 模式缺字段时不跟随 line_wrap
+
+- **WHEN** 配置 `{"editor": {"line_wrap": true}}`（显式打开 md 折行）后打开一个非 md 文件，其某行长于栏宽
+- **THEN** 该行**不折行**——code 模式读的是 `code_mode_line_wrap`（缺席即出厂 `false`），
+  `line_wrap` 的取值对它无可观测效果
 
 #### Scenario: 显式关闭文件级折行
 
@@ -293,56 +293,67 @@ SHALL 经 ts-rs 导出到 `src/bindings/` 并受 bindings 漂移门禁约束（`
 - **WHEN** 配置 `{"editor": {"code_block_wrap": true}}` 后启动，打开一份含超长代码行的 Markdown
 - **THEN** 代码块的长行在阅读栏内折行（与 M138 以来的现状一致），MUST NOT 出现块内横向滚动容器
 
+#### Scenario: 显式打开 code 模式折行
+
+- **WHEN** 配置 `{"editor": {"code_mode_line_wrap": true}}` 后打开一个非 md 文件，其某行长于栏宽
+- **THEN** 该行在阅读栏内折行；md 文档的呈现不受影响（`line_wrap` / `code_block_wrap` 各按自己的值生效）
+
 #### Scenario: 类型不符走整文件回落
 
-- **WHEN** 配置 `{"editor": {"line_wrap": "yes", "mode": "md"}, "keys": {"Cmd-s": null}}` 后启动
+- **WHEN** 配置 `{"editor": {"code_mode_line_wrap": "yes", "mode": "md"}, "keys": {"Cmd-s": null}}` 后启动
 - **THEN** 产生 warning（console 与诊断日志的 `config_warning` 事件），整份配置按默认解释（这是本
   requirement 如实记录的既有边界，与 `editor.mode` 给错类型同路）；应用照常启动、可编辑
-- **AND** 该边界 SHALL 由一条单测钉住（断言此时 `line_wrap` 与 `mode` 同时回到默认，MUST NOT 出现
-  「部分字段按配置、部分按默认」的混合态）
+- **AND** 该边界 SHALL 由单测钉住（断言此时 `code_mode_line_wrap`、`mode` 与同文件里的合法字段**一起**
+  回到默认，MUST NOT 出现「部分字段按配置、部分按默认」的混合态）
 
 ### Requirement: 折行渲染与代码块横滚容器
 
-折行的判定 SHALL 是「一元素一条规则」：代码块行（围栏 / 缩进代码块）由 `editor.code_block_wrap`
-裁决，其余所有行（含只读 code 模式的正文行）由 `editor.line_wrap` 裁决；两者 MUST NOT 互相改写。
-四条生效路径 SHALL 为：
+折行的判定 SHALL 是「一元素一条规则」：代码块行（围栏 / 缩进代码块）由 `editor.code_block_wrap` 裁决，
+**正文行由该模式自己的折行键**裁决——md 模式的正文行由 `editor.line_wrap`、code 模式的正文行由
+`editor.code_mode_line_wrap`（本 change 新增的分叉）；任一轴 MUST NOT 改写另一轴。两个模式各自的生效路径
+SHALL 为：
 
-| `editor.line_wrap` | `editor.code_block_wrap` | 正文行 | 代码块 |
+| 模式 | 正文行 | 代码块层 |
+|---|---|---|
+| md | `editor.line_wrap`：`true`（默认）栏内折行；`false` 不折、编辑区横向平移 | `editor.code_block_wrap`：`false`（默认）不折、块级横滚容器；`true` 栏内折行 |
+| code | `editor.code_mode_line_wrap`：`false`（默认）不折、编辑区横向平移；`true` 栏内折行 | 无作用对象：非 md 没有围栏渲染，MUST NOT 装内容级 class、MUST NOT 产生容器 |
+
+md 模式内部的两轴四组合（既有口径，本 change 不改）：
+
+| `editor.line_wrap` | `editor.code_block_wrap` | md 正文行 | md 代码块 |
 |---|---|---|---|
 | `true` | `false` | 栏内折行 | 不折行，块内横向滚动 |
 | `true` | `true` | 栏内折行 | 栏内折行 |
 | `false` | `false` | 不折行，编辑区横向平移 | 不折行，块内横向滚动 |
 | `false` | `true` | 不折行，编辑区横向平移 | 栏内折行 |
 
-文件级口径为「不折行」时，编辑区 MUST NOT 折行（`.cm-content` 落回 `white-space: pre`），超长行
+任一模式的文件级口径为「不折行」时，编辑区 MUST NOT 折行（`.cm-content` 落回 `white-space: pre`），超长行
 SHALL 由 `.cm-scroller` 的横向滚动到达——「Horizontal scrolling automatically causes line
 truncation」是本条的对齐口径（[Line Truncation](https://www.gnu.org/software/emacs/manual/html_node/emacs/Line-Truncation.html)），
-MUST NOT 使用会让内容不可达的方案（如 `overflow: hidden` 式的静默裁切）。
+MUST NOT 使用会让内容不可达的方案（如 `overflow: hidden` 式的静默裁切）。**「不折行」的两个模式走的是同一条
+呈现路径**（同一份 `.cm-content` 口径与同一个 `.cm-scroller`）：本 change MUST NOT 为 code 模式另造一套横向
+平移机制。
 
 代码块口径为「不折行」时，块内每行 SHALL 不折行（行级 `white-space` 压回 `pre`、`overflow-wrap`
 回到 `normal`），且该块 SHALL 由一个**块级横滚容器**承载，使超长行在容器内横向滚动。容器 SHALL：
 
-- 复用 CM6 的 `BlockWrapper` 机制（与表格容器同一机制，`src/preview/livePreview.ts:234-279`）；
+- 复用 CM6 的 `BlockWrapper` 机制（与表格容器同一机制，`src/preview/livePreview.ts`）；
   MUST NOT 把代码块替换为 replace widget——源码 SHALL 保持可选中的原文、md 模式下仍可编辑；
-- 可聚焦（`tabindex=0`）并带 `region` 角色与读屏可读的名字（与表格容器既有形态一致，
-  `src/preview/livePreview.ts:262`）；
+- 可聚焦（`tabindex=0`）并带 `region` 角色与读屏可读的名字（与表格容器既有形态一致）；
 - 与表格滚动容器**共用同一「块级横滚容器」判据**，使既有五条 widget 滚动键（`←` `→` `Home` `End`
-  `Escape`）对代码块同样生效；判据的 class 单一来源 SHALL 在 `src/keys.ts`（见
-  `keymap-commands` 的「轨道 D 的 widget 滚动键纳入统一键位表」）。MUST NOT 为实现横滚另加一条
+  `Escape`）对代码块同样生效；判据的 class 单一来源 SHALL 在 `src/keys.ts`。MUST NOT 为实现横滚另加一条
   `keydown` 路径（键位通路仍只有统一键位表一条）；
-- 提供代码块底板：横向滚到右侧时 MUST NOT 露出无底色的空白（底色仍取自既有 `--bg-2` 与 token 配色，
-  `src/preview/theme.ts:59`、`:63-68`）；
+- 提供代码块底板：横向滚到右侧时 MUST NOT 露出无底色的空白（底色仍取自既有 token）；
 - MUST NOT 引入额外的纵向内外边距：翻转开关带来的几何变化 SHALL 只来自折行本身。任何必要的间距
-  SHALL 用 padding 表达、MUST NOT 用 margin（CM 按 border-box 量行高，margin 对高度图不可见，
-  口径见 `src/preview/theme.ts:96-100`、`src/style.css:284-288` 的 M110 注释）；表格容器的
-  `padding-block: 12px` MUST NOT 被照抄（它会把代码块下方所有行推走）。
+  SHALL 用 padding 表达、MUST NOT 用 margin（CM 按 border-box 量行高，margin 对高度图不可见）；表格容器的
+  `padding-block` MUST NOT 被照抄（它会把代码块下方所有行推走）。
 
 两项口径 SHALL 遵守本 spec 的视口增量纪律（「live preview 装饰层」requirement）：块发现与装饰构建
 MUST NOT 因本 change 变成全文档扫描。任何一项 MUST NOT 改写文档（`EditorState.doc` 与磁盘文件逐字节
 不变，ADR 0003 §3）。
 
-既有例外原样保留：表格 cell 有自己的 `white-space: pre-wrap`（`src/style.css:325-326`）、块级公式与
-mermaid 走自身 widget 渲染路径、表格容器自己的 `overflow-x: auto`——三者 MUST NOT 被本 change 改变。
+既有例外原样保留：表格 cell 有自己的 `white-space: pre-wrap`、块级公式与 mermaid 走自身 widget 渲染
+路径、表格容器自己的 `overflow-x: auto`——三者 MUST NOT 被本 change 改变。
 
 #### Scenario: 默认口径下代码块不折行且块内可滚
 
@@ -360,7 +371,7 @@ mermaid 走自身 widget 渲染路径、表格容器自己的 `overflow-x: auto`
 
 - **WHEN** 默认配置下打开含超长代码行的 Markdown，用 `Tab` 把焦点移入代码块横滚容器，依次按 `→`、
   `End`、`Home`、`Escape`
-- **THEN** 容器横向滚动 120px、滚到最右、回到最左，`Escape` 把焦点交还编辑器内容区（行为与表格滚动
+- **THEN** 容器横向滚动、滚到最右、回到最左，`Escape` 把焦点交还编辑器内容区（行为与表格滚动
   容器一致）；全程文档内容逐字节不变、编辑器光标位置不变
 
 #### Scenario: 横滚到右端不露白底
@@ -377,30 +388,46 @@ mermaid 走自身 widget 渲染路径、表格容器自己的 `overflow-x: auto`
 
 #### Scenario: 只读 code 模式的正文行走文件级口径
 
-- **WHEN** 默认配置下打开一个非 md 文件（只读 code 模式），其某行长于栏宽
-- **THEN** 该行按 `editor.line_wrap`（默认折行）呈现——`editor.code_block_wrap` 对 code 模式没有
-  作用对象，MUST NOT 产生容器、MUST NOT 报错或提示
+> scenario 名沿用改动前的写法（「文件级口径」在 M180 时代指 `editor.line_wrap`）：本 change 起 code 模式
+> 的正文行改由 `editor.code_mode_line_wrap` 裁决，名字保留是为了让归档对账逐条可追，**语义以本条正文为准**。
+
+- **WHEN** 默认配置下打开一个非 md 文件（code 模式），其某行长于栏宽
+- **THEN** 该行不折行（`code_mode_line_wrap` 出厂 `false`），超宽部分由编辑区（`.cm-scroller`）横向
+  滚动到达、MUST NOT 被裁掉且无法到达；`editor.code_block_wrap` 对 code 模式没有作用对象，MUST NOT
+  产生容器、MUST NOT 报错或提示
+- **AND** 在同一份配置下打开一份 Markdown 时，其超长正文行仍照常折行（分叉的两半同框可判）
+- **AND** 显式写 `{"editor": {"code_mode_line_wrap": true}}` 时该行改为在阅读栏内折行（覆盖键生效）
 
 ### Requirement: 折行开关的瞬态口径
 
 折行的运行期翻转 SHALL 由两条命令承担，命令的 id、作用域、默认不绑键与面板口径见 `keymap-commands`
 的「折行开关命令」requirement；本 requirement 只定**状态语义**。
 
-折行口径的**运行期真源是应用运行期的一个值**（D1 裁决，2026-09-18）：两条命令的翻转 SHALL 作用于
-**全部会话**，翻转后所有标签页（含当时不在前台的）SHALL 立即呈现同一口径，MUST NOT 出现「前台变了、
-后台标签页还是旧口径」的错位；翻转 SHALL 立即生效，且 MUST NOT 改写文档（`EditorState.doc` 与磁盘
-文件逐字节不变，ADR 0003 §3）、MUST NOT 进撤销栈、MUST NOT 改变 dirty、MUST NOT 落盘
-（`config.json` 的内容与 mtime 在翻转前后逐字节不变）、MUST NOT 做 per-file 持久化。
+`view.toggle-line-wrap` 翻的是**前台会话模式对应的那一个正文行轴**（本 change 明确的口径）：
+前台是 md 会话时翻 `line_wrap`、前台是 code 会话时翻 `code_mode_line_wrap`。理由：code 模式的正文行已
+只读 `code_mode_line_wrap`，若该命令恒翻 `line_wrap`，它在 code 模式下按下去将没有任何可见效果——
+与 `keymap-commands` 的「配置绑定后真的能触发」正面冲突（该 scenario 要求「折行呈现立即变化、不是
+无反应」）。`view.toggle-code-block-wrap` 的作用面不变（md 的围栏 / 缩进代码块），对 code 模式无可观测
+效果。两条命令的 id、作用域（`global`）、默认不绑键状态 MUST NOT 因本 change 改变。
 
-粒度上本 change 自觉偏离 Emacs 的对应物：`toggle-truncate-lines` 只把 `truncate-lines` 在**当前
-buffer** 内变成局部值（[Line Truncation](https://www.gnu.org/software/emacs/manual/html_node/emacs/Line-Truncation.html)），
-而本 change 取应用运行期（Alex D1 原话「应用级。」）。由此两条推论 SHALL 成立：一，切标签页
-SHALL NOT 改变折行口径；二，新标签页 SHALL 取**当前应用态**而不是配置默认——配置项给的是启动时的
-起点，命令给的是运行期口径，重载/新建会话都不得退回配置值。重启后 SHALL 回到配置值（运行期值不持久化）。
+折行口径的**运行期真源是应用运行期的一组值**（D1 裁决，2026-09-18；本 change 起是三个轴）：两条命令的
+翻转 SHALL 作用于**全部会话**，翻转后所有标签页（含当时不在前台的）SHALL 立即呈现同一口径，MUST NOT
+出现「前台变了、后台标签页还是旧口径」的错位。三个轴各自独立：翻转 code 模式的轴 MUST NOT 改写 md
+模式的两个轴（反之亦然）——分叉在运行期同样成立，命令只改「你眼前那个折行」。翻转 SHALL 立即生效，
+且 MUST NOT 改写文档（`EditorState.doc` 与磁盘文件逐字节不变，ADR 0003 §3）、MUST NOT 进撤销栈、
+MUST NOT 改变 dirty、MUST NOT 落盘（`config.json` 的内容与 mtime 在翻转前后逐字节不变）、MUST NOT
+做 per-file 持久化。
+
+粒度上本 change 与既有口径一致（M180 的 D1，自 Emacs 的对应物 `toggle-truncate-lines` 有意偏离：
+后者只把 `truncate-lines` 在**当前 buffer** 内变成局部值
+[Line Truncation](https://www.gnu.org/software/emacs/manual/html_node/emacs/Line-Truncation.html)）：
+翻转是应用运行期的显示口径。由此两条推论 SHALL 成立：一，切标签页 SHALL NOT 改变折行口径；二，新标签页
+SHALL 取**当前应用态**而不是配置默认——配置项给的是启动时的起点，命令给的是运行期口径，重载/新建会话
+都不得退回配置值。重启后 SHALL 回到配置值（运行期值不持久化）。
 
 本版 MUST NOT 为翻转提供 toast 播报或常驻指示（无 mode line）：翻转的可见结果即反馈。**已知观测
 缺口（如实记录）**：当文档里没有超长行 / 没有代码块时，翻转没有可见效果，用户与 agent 都无法从界面上
-读出当前状态。这是本版的自觉取舍（理由与替代落点见 proposal 的非目标）；若 dogfood 后确认为真实
+读出当前状态。这是本版的自觉取舍（理由与替代落点见既有 change 的非目标）；若 dogfood 后确认为真实
 痛点，按手感证据另提 change。
 
 #### Scenario: 翻转立即生效、全体标签页一致且不落盘
@@ -410,6 +437,13 @@ SHALL NOT 改变折行口径；二，新标签页 SHALL 取**当前应用态**�
 - **THEN** 折行口径立即变化（正文行与代码块按各自口径重新呈现）；切到那个后台标签页看到的同样是
   新口径；`config.json` 逐字节不变、mtime 不变；文档内容逐字节不变、dirty 不变、撤销栈不含本次
   翻转带来的条目
+
+#### Scenario: code 模式下翻转的是 code 模式的轴
+
+- **WHEN** 前台是 code 会话（非 md 文件，某行长于栏宽），通过 `[keys]` 触发 `view.toggle-line-wrap`
+- **THEN** 该长行立即变为折行（再按一次回到不折行）——命令在 code 模式下 MUST NOT 是「按了没反应」；
+- **AND** 切到任一 md 会话，其正文行的折行口径 MUST NOT 因这次翻转改变（三轴独立：翻 code 那一轴
+  不改写 md 的两个轴）
 
 #### Scenario: 切标签页不改变折行口径
 
@@ -429,7 +463,7 @@ SHALL NOT 改变折行口径；二，新标签页 SHALL 取**当前应用态**�
 
 ### Requirement: 代码文件的结构解析（语言分层注册表）
 
-只读 code 模式（见「单内核双模式落地」）下的**结构信息** SHALL 由一张单一来源的**分层注册表**裁决：
+code 模式（见「单内核双模式与可编辑性落地」）下的**结构信息** SHALL 由一张单一来源的**分层注册表**裁决：
 「语言 → 是否有可用的结构解析器」。该表 SHALL 与既有的语言表（`src/preview/code.ts` 的 `LANGUAGES`，
 键类型为 `preview/attachments.ts` 推导出的 `CodeLanguage`）同源、逐语言一一对应，MUST NOT 在消费者侧
 （大纲、标识符高亮等）另写一份语言或能力清单。表的内容 SHALL 按下面两条判据裁决，两条都可逐门复核：
@@ -505,7 +539,7 @@ MUST NOT 在同一份内容上重复解析；③ 内容相同即命中缓存—�
 
 ### Requirement: 双击标识符高亮同一变量
 
-在只读 code 模式（见「单内核双模式落地」）下，双击一个标识符后，系统 SHALL 高亮该标识符在**当前文件**
+在code 模式（见「单内核双模式与可编辑性落地」）下，双击一个标识符后，系统 SHALL 高亮该标识符在**当前文件**
 里语法上属于**同一变量**的全部出现位置。判据 SHALL 全部落在结构解析树（见「代码文件的结构解析（语言
 分层注册表）」）上，MUST NOT 使用正则、子串 / 全词匹配、或任何以选区文本为判据的文本匹配。
 
@@ -728,3 +762,235 @@ MUST NOT 直接拿含标记贡献的滚动高度判定（那是同一 requiremen
 - **WHEN** 打开一份同时在正文里含作者手写分隔线、且内容超过一屏的文档，读两类元素的几何与配色
 - **THEN** 两类元素都在场；分隔线的横线撑满阅读栏宽，标记的横线总宽小于阅读栏宽的一半且夹着文本；
   标记文字色为弱化色、线段色为发丝线色，两者的朱红通道均未被使用
+
+### Requirement: 标题层级阶梯（H1–H6）
+
+md 模式渲染态的标题 SHALL 按六级阶梯呈现，层级辨识度 SHALL 由字号单变量承担
+（2026-09-25 Alex 裁决，三稿对比原型留档 `design/prototypes/heading-hierarchy/`）。
+相对编辑器内容字号（`--editor-font-size`，出厂 15px）的字号比值 SHALL 逐档为
+H1 `21/15`、H2 `18/15`、H3 `16/15`、H4 `1`、H5 `14/15`、H6 `13/15`（出厂基准读数
+21/18/16/15/14/13px）；字重 SHALL 全档统一 `650`——字重 MUST NOT 承担层级区分；
+字距 SHALL 取标题负字距档 `-0.009 / -0.007 / -0.005 / -0.004 / -0.002 / 0` em
+（H1–H6 随字号递减）。
+
+任何级别 MUST NOT 使用装饰手段承担层级（底线、竖杠、斜体、颜色变化）；H6 的
+`italic` 与次级文字色（`--text-2`）旧形态 SHALL 退场。阶梯值 SHALL 经 token 层
+（`--fs-h1`–`--fs-h6` = 21/18/16/15/14/13）取值，渲染层 MUST NOT 写字面值；
+H4/H6 与正文档/UI 档同值时 SHALL 用独立命名的语义 token（`--fs-h4`/`--fs-h6`），
+MUST NOT 跨语义引用 `--fs-body`/`--fs-ui`。三主题 SHALL 共享同一套阶梯值
+（排版基因共享，只分档对比度）。
+
+标题块距（上/下）SHALL 为 H1 `24px/9px`、H2 `20px/6px`、H3 `16px/5px`（定稿出处
+沿用）、H4 `14px/5px`、H5 `12px/4px`、H6 `10px/4px`（补档，间距阶梯内取值）；
+H4–H6 MUST NOT 再取零块距。H4 与正文同字号（15px）是裁决知情接受的代价，其与正文的
+区分 SHALL 由 `650` vs `400` 的字重差与块距承担。
+
+编辑器内容字号变化（配置或字号步进命令）时，六级标题 SHALL 按上表同一比值随动，
+MUST NOT 出现「正文变了标题不变」的脱钩。本条 SHALL 由计算属性断言钉住（逐档读
+`cm-lp-h1..h6`），MUST NOT 靠截图目测充当判据。
+
+#### Scenario: 六级逐档取值
+
+- **WHEN** 以出厂默认（内容字号 15px）打开含 `#` 到 `######` 六级标题的 Markdown
+- **THEN** `.cm-lp-h1..h6` 的计算字号逐档为 21/18/16/15/14/13px、字重全为 650、
+  字距逐档为 -0.009/-0.007/-0.005/-0.004/-0.002/0em；H2 与 H3 的字号差为 2px——
+  辨识度全部由字号承担
+
+#### Scenario: 零装饰
+
+- **WHEN** 查看任一 H6 标题行
+- **THEN** 无 italic、颜色取 `--text`（与正文同色 token）；旧形态（italic + `--text-2`）
+  的计算样式读数不在场
+
+#### Scenario: 阶梯随字号步进随动
+
+- **WHEN** 出厂默认下按一次 `⌘=`（内容字号 15→17）
+- **THEN** 六级标题按同一比值随动（如 H1 渲染为 17×21/15 对应的计算字号），
+  六级间的相对关系不变
+
+#### Scenario: 三主题同值
+
+- **WHEN** 分别以 light / dark / eink 主题打开同一份含六级标题的文档
+- **THEN** 六档的字号、字重、字距、块距逐项一致；eink 下不出现额外的层级色或装饰线
+
+### Requirement: 单内核双模式与可编辑性落地
+
+编辑器 SHALL 保持单一 CM6 内核、两种模式（ADR 0002 §2）：md 模式 = 语法高亮 + live preview 装饰层；code 模式 = 仅语法高亮（纯文本形态，无装饰层）。模式切换 SHALL 经既有 Compartment 热切换完成，MUST NOT 重建 EditorView、MUST NOT 丢失文档状态。打开文件时 SHALL 按扩展名注册表（`src/preview/attachments.ts` 的单一事实源）选择模式：`.md`/`.markdown` 用 md 模式；**其余一切已打开的文件一律用 code 模式**（含未收录扩展、dotfile 与 basename 无点的文件）——有语言包则高亮、无则纯文本；只有没有文件上下文（path 缺失）的文档才回落配置 `editor.mode`。
+
+可编辑性 SHALL 按文件类裁决（editable-non-md-files，M130「非 md 即只读」的只读部分自此翻转，模式裁决语义保留）：md 模式恒可编辑；code 模式对注册表文本类（`fileClass` 为 `code` 或 `text`）文件**可编辑**——纯文本编辑 + 语法高亮，undo/redo、dirty、保存链路与 md 同口径；image/binary 类 MUST NOT 进入编辑器（分流与提示见 file-tree spec）。code 模式 MUST NOT 引入 live preview 装饰层。初始模式由配置 `editor.mode` 决定（既有接线保留）。
+
+#### Scenario: 按文件类型选模式
+
+- **WHEN** 用户在文件树点击一个 `.rs` 文件后又点击一个 `.md` 文件
+- **THEN** 前者以 code 模式（仅高亮）打开，后者以 md 模式（高亮 + 装饰层）打开，切换不重建编辑器视图
+
+#### Scenario: 非 md 文本文件可编辑打开
+
+- **WHEN** 用户在配置 `editor.mode = md`（出厂值）下点击一个 `.php`、`.svelte`、`.txt`、未知扩展文件，或 `LICENSE`/`Makefile` 这类 basename 无点的文件
+- **THEN** 该文件以可编辑 code 模式打开：视图层可编辑（`contenteditable` 在场、无 `aria-readonly` 只读态），键入/撤销生效并产生 dirty，Cmd+S 进入保存链路；无语言包时按纯文本显示原文
+
+### Requirement: dotfile 与 JSONC 文件的语法高亮
+
+打开 `.gitignore`、`.gitattributes`（按 basename **精确、大小写敏感**匹配）与
+`.jsonc`（按扩展名）文件时，编辑器 SHALL 以 code 模式按对应语言着色：gitignore 的
+`#` 注释、行首 `!` 取反标记与行尾 `/` 目录标记、gitattributes 的属性名与
+`attr=value` 值、jsonc 的 `//` 与 `/* */` 注释、对象键、字符串、数字与布尔各归其
+语义配色。文件名匹配 SHALL 优先于扩展名匹配（basename 约定是比扩展名更具体的信号）；
+两个匹配表的键集 MUST 不重叠。未收录的 dotfile 与未收录扩展名 SHALL 保持纯文本
+（MUST NOT 用近似 parser 冒充着色——既有口径不变）。配色 MUST 只取自既有 editorial
+token，MUST NOT 为本次新增颜色。着色 MUST NOT 改写文档内容，`EditorState.doc` 与
+磁盘文件逐字节不变（ADR 0003 §3 铁律）。同一段内容在围栏代码块（`gitignore` /
+`gitattributes` / `jsonc` 三个 info string）与整文件打开时 SHALL 得到同一套 tag 与
+配色——该一致性
+SHALL 由两侧共用同一张语言表（`src/preview/code.ts` 的 `LANGUAGES`）保证，MUST NOT
+由两侧各自维护。
+
+#### Scenario: .gitignore 的注释与取反着色
+
+- **WHEN** 用户打开内容为 `# comment`、`!keep.txt`、`build/` 三行的 `.gitignore`
+  文件（code 模式）
+- **THEN** `#` 至行尾取注释配色、行首 `!` 与行尾 `/` 取关键字配色，模式本体保持
+  正文色，文档逐字节不变
+
+#### Scenario: .gitattributes 的属性与值着色
+
+- **WHEN** 用户打开内容为 `*.md text eol=lf` 的 `.gitattributes` 文件
+- **THEN** `text` / `eol` 取属性名配色、`lf` 取字符串配色、`#` 注释行取注释配色，
+  行首 pattern 保持正文色
+
+#### Scenario: .jsonc 的注释与尾逗号
+
+- **WHEN** 用户打开含 `//` 行注释、`/* */` 块注释与对象尾逗号的 `.jsonc` 文件
+- **THEN** 注释取注释配色、对象键取属性名配色、字符串值与数字各归其配色，尾逗号
+  不产生 error 着色；同一段内容在 md 围栏 `jsonc` 代码块里取到同一套配色
+
+#### Scenario: 未收录 dotfile 保持纯文本
+
+- **WHEN** 用户打开 `.secret`、`.env.local` 等未收录的 dotfile
+- **THEN** 文件仍以 code 模式打开但按纯文本显示原文，不着色
+
+#### Scenario: 文件名匹配优先于扩展名
+
+- **WHEN** 某 basename 同时能命中文件名表与扩展名表（构造用例）
+- **THEN** 按文件名表的条目裁决分类与语言
+
+### Requirement: dotfile 与 JSONC 文件的可编辑性
+
+`.gitignore`、`.gitattributes`、`.jsonc` 文件 SHALL 随注册表文件类（code 类）经
+非 md 文本文件可编辑通道（change `editable-non-md-files`，M231）可编辑：编辑产生
+dirty、Cmd+S 与自动保存、CAS 冲突恢复、崩溃备份、外部修改重载与 md 走同一保存链路。
+可编辑性 SHALL 只由注册表文件类推导——本 capability MUST NOT 为这三类文件单设
+可编辑开关或第二份白名单（REVIEW.md 第 8 条双表漂移防线）。若可编辑通道按白名单
+形态落地，这三类 SHALL 在白名单内。可编辑通道落地前，三类文件维持只读 code 模式
+（着色不受影响）。
+
+#### Scenario: 三类文件随可编辑通道可编辑
+
+- **WHEN** 非 md 可编辑通道已落地，用户打开 `.gitignore`（或 `.gitattributes` /
+  `.jsonc`）并编辑、保存
+- **THEN** 编辑落盘成功，保存链路（Cmd+S / 自动保存 / 冲突恢复）与 md 同口径；
+  可编辑性的来源是注册表文件类，不存在仅作用于这三类文件的独立开关
+
+### Requirement: 表格放大全屏查看
+
+md 模式下经 live preview 渲染为 grid 的 pipe table SHALL 支持经命令 `table.toggle-fullscreen`
+打开应用内全屏遮罩查看。命令的命中条件 SHALL 为下列之一：① 遮罩已打开（此时命令 = 关闭，
+toggle）；② 编辑器 caret 落在一张**当前渲染为 grid** 的表内；③ 该表的滚动容器持有焦点。
+命中条件不满足时命令 MUST NOT 消费事件（事件原样留给原生路径）。**降级表与非矩形表没有任何
+打开路径**——它们没有 grid DOM（>64 KiB 源码或非矩形整块回退为源码的既有口径），「无入口」
+SHALL 是「该表当前渲染为 grid」这一事实的结构性结果，MUST NOT 用降级提示或「强制放大」旁路模拟。
+
+打开路径 SHALL 有两条（裁决点 3 的 D3 裁决：命令 + 表格 hover 触发钮双入口）：① 上面的命令；
+② 表格右上角内侧的 hover 触发钮——四角框字形、`aria-label` 取 `文案-Copy.md` D124，零新 token、
+无阴影、eink 黑框反白（热态黑底反白），静止态零足迹。触发钮 SHALL 锚定在**表格可视盒**的坐标系
+（表格内容横滚时钮不动），且 SHALL 只对渲染为 grid 的表存在——降级表没有 `.cm-lp-table` 子树，
+钮无处可挂，因此「降级表没有钮」与「降级表没有命令入口」是同一个结构性事实的两面。
+
+全屏内容 SHALL 是该表打开那一刻渲染态 grid 的**只读快照副本**（含 cell 内已渲染的链接 / 行内代码 /
+图片等 inline 形态），SHALL 由深克隆既有渲染 DOM 得到，MUST NOT 搬动 CM 管理的原 DOM 节点，
+MUST NOT 从源码切片重建第二套呈现口径（那会丢掉全部 inline 渲染）。快照只读 SHALL 是结构性的
+（克隆不带事件监听、不在编辑器 contenteditable 子树内），MUST NOT 以开关模拟。快照内表格 SHALL 按
+自然尺寸呈现、不缩放不压缩，超出遮罩可视区的部分由遮罩内容器双向滚动承载。
+
+遮罩 SHALL 覆盖窗口内容区并定位在文档流之外（打开与关闭 MUST NOT 引起文档区几何变化），SHALL 是
+模态层：`role="dialog"` + `aria-modal="true"`，打开即持有焦点，持焦期间 `editor` 作用域的键
+MUST NOT 穿透到文档，`Tab` SHALL 留在遮罩内；读屏名 SHALL 复用表格容器既有标签的同一来源
+（`Markdown 表格 N`），MUST NOT 另写一份字面量。关闭路径 SHALL 有四条：`Esc`（遮罩上就地消费，
+复用键位层 token 归一化，MUST NOT 为同一物理组合在统一键位表注册第二条绑定）、点击遮罩
+（表格以外的区域）、再次执行 `table.toggle-fullscreen`（toggle）、焦点离开遮罩（`blur` 兜底，
+MUST NOT 抢焦点）；四条 SHALL 回到同一个关闭实现，前三条关闭后焦点 SHALL 交还编辑器。
+打开与关闭 SHALL NOT 改写文档（`EditorState.doc` 与磁盘文件逐字节不变，ADR 0003 §3）、
+SHALL NOT 改变选区或光标落点；表格的选区显露口径本 change 不加不减。文档代际变化（外部修改
+重载）时遮罩 SHALL 关闭且 MUST NOT 抢焦点（视同 `blur` 兜底）——MUST NOT 留下「遮罩里是旧表、
+文档里已是新表」的状态。
+
+遮罩与快照的样式 MUST 只取既有 design token（`--scrim` / `--preview-bg` / `--border` /
+`--shadow-raise` / `--r10` 等），MUST NOT 新增 token 与组件级色值；三主题（light / dark / eink）
+SHALL 由 token 体系自然成立，eink 按既有浮层规则（无阴影、实心黑框升级线宽）。
+
+#### Scenario: 打开、快照与四条关闭路径
+
+- **WHEN** caret 在一张已渲染 grid 的表内，执行 `table.toggle-fullscreen`；随后依次按四组动作验证：
+  按 `Esc`、再次打开后点击表格以外的遮罩区域、再次打开后再执行一次同一命令、再次打开后把焦点移到
+  遮罩之外
+- **THEN** 每次打开时遮罩可见且其中的表格快照渲染盒宽高非零、内容与文档内表格可见文本逐字节一致；
+  四条路径都让遮罩从可见变为不可见；前三条关闭后焦点回到编辑器（随后的 `⌃D` 真的删掉一个字符）；
+  `blur` 路径关闭且不抢焦点；全程文档内容与选区逐字节 / 逐值不变
+
+#### Scenario: 降级表与非矩形表没有打开路径
+
+- **WHEN** 在同一份文档里，caret 先后落在一张降级表（>64 KiB 源码）与一张非矩形表内，分别执行
+  `table.toggle-fullscreen`；随后 caret 移进同文档里一张正常渲染的表再执行一次
+- **THEN** 前两次都不出现遮罩、事件不被消费（原样留给原生路径）、不出现任何提示；最后一次正常
+  打开遮罩——正观测保证「不出现」不是恒真
+
+#### Scenario: 触发钮只对渲染为 grid 的表存在，且静止态零足迹
+
+- **WHEN** 打开一份含正常表与非矩形（降级）表的文档，在静止态读 DOM、读屏树与表格几何；随后把
+  指针移到正常表的可视盒上
+- **THEN** 静止态：正常表的触发钮不可见（定位/绘制层面不存在，不进读屏树、不接收指针），表格的
+  渲染盒与不含它时逐值相同；hover 后钮出现在表格可视盒右上角内侧、压在首行之上；降级表没有钮
+  （没有 `.cm-lp-table` 子树可挂）
+
+#### Scenario: 遮罩持焦期间编辑键不穿透
+
+- **WHEN** 打开遮罩后依次按 `⌃D`、`⌃K`、`⌃A`、`Tab` 与若干字符键
+- **THEN** 文档内容与光标位置逐字节不变（编辑键不穿透，`Tab` 不把焦点送出遮罩），遮罩仍持有焦点
+
+#### Scenario: 快照保真——inline 形态与自然尺寸
+
+- **WHEN** 打开一张 cell 内含行内代码、链接与图片引用的表的全屏遮罩；再对一张自然宽超过遮罩可用
+  宽度的宽表打开遮罩
+- **THEN** 前者的快照里行内代码 / 链接标记 / 图片保持渲染形态（不退回源码）；后者的快照按自然尺寸
+  呈现且遮罩内容器横向可滚（不缩放、不压缩）
+
+#### Scenario: 文档代际变化时遮罩退场
+
+- **WHEN** 遮罩打开期间文档因外部修改重载（文档代际推进）
+- **THEN** 遮罩关闭且不抢焦点（焦点去向由重载链路自身决定），不留「遮罩里是旧表」的状态
+
+### Requirement: 全屏查看的快照与性能边界
+
+全屏遮罩的 DOM SHALL 惰性建立（首次打开时建，MUST NOT 在文档打开路径上预建）；打开与关闭
+MUST NOT 在键入路径与文档打开路径上新增解析或测量工作（ADR 0002 §6 的性能合同不因本能力放宽）。
+打开动作 MUST NOT 触发全文档扫描——表格发现保持视口有界（既有 `tableDiscoveryRange` 纪律），
+命令的表格定位 SHALL 复用缓存的表格模型。快照 MUST NOT 新增任何字节读取路径（不调附件读取、
+不动 Rust 侧）；快照成本由「可渲染表源码 ≤64 KiB」的既有降级阈值天然有界，本 change 不设新上限。
+
+已知边界（如实记录，本版不做）：键盘入口只有命令、默认不绑键（用户经 `[keys]` 绑定后生效），
+鼠标入口是 hover 触发钮（裁决点 3 的 D3 双入口）；快照 = 打开那一刻**已渲染**的那部分表格
+——CM 的 DOM 随视口有界（实测：700 行 / 60,764 B 的表只渲染 49 行），长表在全屏里只看到视口附近
+的行，完整快照需要另一条渲染路径，是另一个 change；快照内的图片不响应双击再放大（快照只读语义
+的应有之义；cell 内的图片引用今天不渲染为 widget 附件）；无文档内多表导航；遮罩内表格双向滚动的
+手感归 dogfood 验收。
+
+#### Scenario: 文档打开路径零新增
+
+- **WHEN** 打开一份含多张表格的文档但一次都不执行 `table.toggle-fullscreen`，读 DOM
+- **THEN** 文档的 DOM 里不存在全屏遮罩节点（惰性建立）；打开路径的解析与测量工作与本能力引入前
+  一致
+
+#### Scenario: 定位不触发全文档扫描
+
+- **WHEN** 在一份大文档中部的一张表内执行 `table.toggle-fullscreen`
+- **THEN** 表格定位经既有视口有界的缓存模型完成（无全文档表格扫描），遮罩正常打开

@@ -65,7 +65,7 @@
    克隆原样带走（`<img>` 的 `src` 是同一字符串，浏览器按 URL 串键控复用已解码位图——M184 实测，
    `src/lightbox.ts` 文件头）。重建一条「从 TableModel + 源码切片画一张静态表」的旁路则会丢掉全部
    inline 渲染（cell 内的 `` `code` ``、链接、`![img]` 全退回原文），是同一张表的两套呈现口径——
-   [REVIEW.md](../../../REVIEW.md) 第 8 条的形态，否决。
+   [REVIEW.md](../../../../REVIEW.md) 第 8 条的形态，否决。
 2. **不搬动**：CM 装饰 DOM 归 CM 管，把节点**搬**进遮罩会让编辑器布局与装饰状态脱节
    （M184 否决「搬 `<img>`」的同款理由，`open-image-lightbox` design §3）。克隆是唯一不碰原件的做法。
 3. **只读是结构性的**：克隆不带事件监听、不在 CM 的 contenteditable 子树内，没有编辑路径可言——

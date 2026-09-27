@@ -1,7 +1,7 @@
 # Tasks: table-fullscreen-view
 
 任务口径：每条给出**验收口径**（判据 + 证据落点）。「证据」指可 `ls` 的路径或可复算的命令输出，
-不是「跑过了」的口头声明（[REVIEW.md](../../../REVIEW.md) 第 7 条）。
+不是「跑过了」的口头声明（[REVIEW.md](../../../../REVIEW.md) 第 7 条）。
 
 **提案阶段状态（M229，2026-09-25）**：本 change 只到节点 1，以下任务**全部未开工**——`[ ]` 是提案
 阶段的默认状态。实现批次接手时按第 1 节的现状读数起手，并把每条任务勾选时的证据指针补进本文件。
@@ -173,9 +173,12 @@
 
 - [x] 8.1 `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` 通过，`change/table-fullscreen-view`
       为 ✓。
-- [ ] 8.2 `bash scripts/gate.sh quick` 与 `LUMIR_VISUAL_PORT=<自选> bash scripts/gate.sh visual`
+- [x] 8.2 `bash scripts/gate.sh quick` 与 `LUMIR_VISUAL_PORT=<自选> bash scripts/gate.sh visual`
       全绿（视觉侧本地跑，CI 只跑结构层）；真机套件 `node scripts/acceptance/run.mjs 40` 至少跑一次
       并留档（合并后、Alex 验收前，AGENTS.md 执行时机）。
+      **节点 2 补勾（M253，2026-09-27）**：下面「状态（M240 收尾）」里本项要求的三个判据都已达成
+      （quick 10/10、visual 12/12、真机 40 = 1/1 PASS 且留档），原未勾是**漏勾不是未做**；
+      归档后 `validate --all --strict` 19/19 绿。
       **状态（M240 收尾，2026-09-26）**：`gate.sh quick` **10/10 PASS**；
       `LUMIR_VISUAL_PORT=4273 bash scripts/gate.sh visual` = **12/12 PASS**（原先的 11/12 里那一条
       是 m133 的 master 既存红，已由本批次顺手收，commit `e686cdd`；本 change 的 9 条场景全绿、

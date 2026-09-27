@@ -105,6 +105,8 @@
 - [ ] 6.4 写失败降级场景：**真机未验**（harness 无 chmod/shell 通道，套件刻意不引入——场景 38
       「已知边界」已登记）；改由 chromium「写盘失败」场景（failures 注入，toast D121 + 不回滚 +
       config_warning 断言全绿）与 Rust `config_set_ui_value` 单测覆盖
+      **节点 2 判定（M253，2026-09-27）**：真机通道确实不存在（套件刻意不引入 chmod/shell），
+      按「任务未勾 + 正当理由」归档；覆盖面由上面那两条替代证据承担，本条不冒称真机已验。
 - [x] 6.5 大文档拖拽帧实测（1MB 探针文档、折行开、playwright chromium 一次性探针）：拖拽帧间隔
       p50 8.3ms / max 9.4ms、0 帧超 16.7ms 预算，live 拖拽（D4）达标不走退路；数据落
       `test-results/m228/drag-frames.json`（与 acceptance 证据同级惯例，git 外），design §4-2
@@ -143,8 +145,11 @@
 
 - [x] 8.1 `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` 通过
 - [x] 8.2 `scripts/gate.sh quick` 全绿（10/10 PASS，bindings 漂移随提交转绿）
-- [ ] 8.3 归档对账（`docs/process/openspec-workflow.md` 批次收尾 checklist）：本 change 新建
+- [x] 8.3 归档对账（`docs/process/openspec-workflow.md` 批次收尾 checklist）：本 change 新建
       capability `content-width`，归档后须手写 living spec 的 Purpose 替换占位（archive 的
       `TBD` 会让 validate 报红）
+      **已闭环（M253，2026-09-27）**：`openspec/specs/content-width/spec.md` 的 Purpose 已手写；
+      归档后 `validate --all --strict` 28/28 绿（归档件从 `changes/content-width-drag/` 移到
+      `changes/archive/2026-09-27-content-width-drag/`，件内相对链接同步加一级）。
 - [x] 8.4 把「实现期必须验证」的结论回填 design §4：逐条标注实测结果（成立 / 走退路 / 转为
       已知边界），不留「待验」字样进归档

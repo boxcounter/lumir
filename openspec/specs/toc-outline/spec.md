@@ -229,7 +229,7 @@ SHALL 在 `src/toc.ts`。该命令 SHALL 同时是 `app.describe-bindings` 面�
 
 ### Requirement: 代码文件的符号大纲
 
-在只读 code 模式（`editor-live-preview` 的「单内核双模式落地」）下，`⌘⇧O`（命令 `toc.toggle`）与点击
+在 code 模式（`editor-live-preview` 的「单内核双模式与可编辑性落地」）下，`⌘⇧O`（命令 `toc.toggle`）与点击
 位置指示段 SHALL 展开与 md 同一套大纲浮层，列出该文件的**符号条目**。条目数据来源 SHALL 是结构解析
 树（见「代码文件的结构解析（语言分层注册表）」），MUST NOT 由正则、缩进、关键字扫描或任何文本匹配
 产出。

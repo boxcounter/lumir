@@ -247,6 +247,15 @@ macOS 原生菜单 MUST NOT 提供第二套撤销：Edit 子菜单 MUST NOT 保�
 MUST NOT 依赖全局焦点猜测。行为 SHALL 与迁移前一致：左右各 120px 步进、`Home` 横向回最左、`End`
 横向到最右、`Escape` 把焦点交还编辑器。
 
+**焦点入口（本 change 后的实测状态，如实记录）**：编辑器内容区里的 `Tab` 已被列表缩进命令
+`editor.list-indent` 接管（见本 change 的「列表项缩进键（TAB / SHIFT+TAB）」requirement，Alex 裁决
+D1a）⇒ 从编辑器按 `Tab` 走原生焦点遍历这条**唯一**入口不再存在。容器本身仍是 `tabindex=0`、
+键位分发与命中条件**均不变**，但**当前没有任何真机验通的路径**把焦点送进容器：场景 21 实测
+`AXPress` 点容器节点（`role=region` → AXGroup）不改变焦点（`focused=AXTextArea`，证据
+`test-results/acceptance/2026-09-26-m239-21/21-wrap-default/`），AX 里该节点既无 bbox 也无
+`AXPress` 动作。因此本 requirement 与场景 MUST NOT 再以「用 `Tab` 移入容器」为前提；恢复焦点入口的
+候选（新键 / 新命令，或确认容器的可点区域）记在 `docs/backlog.md`，由后续 change 处置。
+
 本 requirement 取代 change `keymap-unify` 增量中「widget 自己的焦点作用域键（Escape / Home / End /
 左右方向键）仍由该 widget 现有手柄先消费，本层对已消费事件让路」一句——该句描述的是收编前的分工，
 已不再成立，归档时已按本 requirement 修订（原句见
@@ -264,8 +273,10 @@ MUST NOT 依赖全局焦点猜测。行为 SHALL 与迁移前一致：左右各 
 
 #### Scenario: 代码块容器与表格容器同判据同行为
 
-- **WHEN** 默认折行口径下打开含超长代码行的 Markdown，用 `Tab` 把焦点移入代码块横滚容器，依次按下
-  `→`、`End`、`Home`、`Escape`
+- **WHEN** 默认折行口径下打开含超长代码行的 Markdown，焦点落在代码块横滚容器上时——**本版起真机没有
+  产品入口**（编辑器内 `Tab` 已归列表缩进命令、点容器不生效，见上文），键盘行为由 chromium 层
+  `tests/visual/scenes/render-codeblock.spec.ts` 以**编程聚焦**承担——依次按下 `→`、`End`、`Home`、
+  `Escape`
 - **THEN** 与表格容器完全同形的结果：横向滚动 120px、滚到最右、回到最左，`Escape` 把焦点交还编辑器
   内容区；全程文档内容逐字节不变。MUST NOT 出现「容器焦点了但方向键无反应」的第三种状态
 
@@ -427,17 +438,24 @@ token 一条绑定」，而其中 `↑↓` / `⌃N` / `⌃P` 已被 `editor.curs
 `tab.goto-1` … `tab.goto-9`（九条各一个 id：命令层没有参数通道，序号只能落在 id 上，
 这样 `[keys]` 配置重绑与键位面板都能如实显示「⌘3 → tab.goto-3」）。作用域一律 SHALL 为
 `global`（标签是窗口级对象，焦点在文件树 / 搜索框 / 大纲浮层里时同样要能切，与 ⌘F / ⌘⇧O
-同一理由），实现 SHALL 落在装配层（`src/main.ts`），能力（会话与切换）SHALL 在
-`src/editor.ts`。
+同一理由），实现 SHALL 落在装配层（`src/main.ts`），能力 SHALL 在 `src/editor.ts`
+（会话 API）与 `src/tabs.ts`（标签栏与切换 / 循环，M151 从装配层抽出）。
 
 默认绑定 SHALL 为：`⌘W` → `tab.close`、`⌃⇥` → `tab.next`、`⌃⇧⇥` → `tab.prev`、
-`⌘1`…`⌘9` → `tab.goto-1` … `tab.goto-9`。全部 SHALL 进 `KEY_BINDINGS` 与
+`⌘}` → `tab.next`、`⌘{` → `tab.prev`、`⌘1`…`⌘9` → `tab.goto-1` … `tab.goto-9`。
+`⌘}` / `⌘{` 物理上是 `⇧⌘]` / `⇧⌘[`（US 布局上 `}` / `{` 必须按 Shift；方向映射按
+macOS 惯例：`}` 侧 = 下一个、`{` 侧 = 上一个），键位表内的 token 形态 SHALL 是
+`Cmd-}` / `Cmd-{`（`{` / `}` ∈ SHIFT_IMPLIED_KEYS，Shift 已隐含在字符里），MUST NOT
+写成 `Cmd-Shift-[` / `Cmd-Shift-]`（归一化后永不命中）。同一命令两条绑定（`⌃⇥` 与
+`⌘}` 同指 `tab.next`、`⌃⇧⇥` 与 `⌘{` 同指 `tab.prev`）SHALL 走同一个命令实现，
+MUST NOT 因触发键不同而行为分叉。全部 SHALL 进 `KEY_BINDINGS` 与
 `GLOBAL_COMMAND_IDS`，因此 `[keys]` 配置 SHALL 能像其余命令一样对它们重绑或解绑，
 `app.describe-bindings` 面板 SHALL 自动列出它们（面板渲染的是生效表与 `COMMAND_IDS`）；
 每条绑定的 `doc` 字段 SHALL 写明取该键的来由与作用域理由。
 
 序号越界（标签数少于序号）SHALL 为无操作——MUST NOT 退化为「跳到最后一个」这类隐式兜底。
-`⌃⇥` / `⌃⇧⇥` 在标签数少于 2 时 SHALL 为无操作。
+`⌃⇥` / `⌃⇧⇥` / `⌘}` / `⌘{` 在标签数少于 2 时 SHALL 为无操作；循环切换在首 / 尾
+标签处 SHALL 环绕（末端回卷到第一个、首端回卷到最后一个）。
 
 #### Scenario: 表的不变量在新增绑定后仍成立
 
@@ -448,6 +466,12 @@ token 一条绑定」，而其中 `↑↓` / `⌃N` / `⌃P` 已被 `editor.curs
 
 - **WHEN** 打开的标签数少于按下的序号（如只有 2 个标签时按 ⌘5），或标签数少于 2 时按 ⌃⇥
 - **THEN** 前台标签不变，不出现任何隐式兜底跳转
+
+#### Scenario: ⌘} / ⌘{ 与 ⌃⇥ 系同命令同语义
+
+- **WHEN** 打开三个标签且前台是第二个，按 `⌘}`（物理 `⇧⌘]`）一次，再按 `⌘{`（物理 `⇧⌘[`）两次
+- **THEN** 第一次后前台切到第三个标签；随后两次依次切到第二个、再回卷到第一个
+  （与 `⌃⇥` / `⌃⇧⇥` 走同一条 `tab.next` / `tab.prev` 实现，环绕口径逐字相同）
 
 #### Scenario: 键位冲突核对的留痕
 
@@ -654,3 +678,179 @@ SHALL 能像其余命令一样把它们绑上键：两条 id 都在 `COMMAND_IDS
 
 - **WHEN** 对账 `COMMAND_IDS` / `KEY_BINDINGS` / `KEYLESS_COMMAND_IDS` 三者
 - **THEN** 三条新命令都有默认绑定、不在默认不绑键清单里；清单内容与新增前一致（三项对账的判据不放松）
+
+### Requirement: 主题切换命令（view.theme-cycle）
+
+主题切换 SHALL 由统一键位表分发一条全局命令：`view.theme-cycle`（循环 light → dark → eink →
+light，行为定义见 `ui-design-system` 的「三主题与主题选择」）。它 SHALL 进
+`NON_TAB_GLOBAL_COMMAND_IDS`（作用域因此机械派生为 `global`——焦点在左栏 / 搜索框 / 浮层 /
+面板里时同样命中），MUST NOT 取 `editor.` 前缀（本仓 `editor.` 前缀 = 编辑器作用域命令，
+前缀与作用域 MUST NOT 互相打脸）。命令实现 SHALL 落在装配层（`src/main.ts`）。
+
+默认键位 SHALL 是 `⌘⇧T`（语义取「T = Theme」；⌘ 系归 mac 惯例），绑定 SHALL 附来由说明
+（表即文档）。键位占用 SHALL 由三条独立来源核实并写进实现说明：① 表内（`src/keys.ts` 即
+真源，⌘⇧ 系现有 ⇧⌘Z（重做）与 ⇧⌘O（toc.toggle）两条，⌘⇧T 不在其中）；② 原生菜单 accelerator 集合（muda 的预置项 = ⌘C / ⌘X /
+⌘V / ⌘Z / ⇧⌘Z / ⌘A / ⌘M / ⌃⌘F / ⌘H / ⌥⌘H / ⌘W / ⌘Q，不含 ⌘⇧T）；③ 系统级（⌘⇧T 不是
+macOS 的预置菜单键；浏览器「重开标签页」语义不适用于本应用）。该命令默认有绑定，因此
+`KEYLESS_COMMAND_IDS` SHALL 保持不变（MUST NOT 把它登记为「默认不绑键」）。
+
+绑定写法 SHALL 与运行期事件 token 同源（`Cmd-Shift-T`），且 SHALL 是单段、无空白——用户可
+用 `[keys]` 重绑 / 解绑（MUST NOT 采用含空白的多段 chord 作默认键位，那会让用户无法重绑）。
+
+#### Scenario: 默认键位命中
+
+- **WHEN** 焦点在编辑器内按 `⌘⇧T`
+- **THEN** 主题按 light → dark → eink 循环切到下一档，经统一分发器执行，行为与
+  `ui-design-system` 的「运行期切换即时生效」一致
+
+#### Scenario: 焦点不在编辑器内同样命中
+
+- **WHEN** 焦点在左栏文件树（或键位面板 / 搜索框）上按 `⌘⇧T`
+- **THEN** 主题同样切换一档（作用域为 `global` 的绑定与焦点无关）
+
+#### Scenario: 可重绑与解绑
+
+- **WHEN** 在 `[keys]` 里把 `⌘⇧T` 重绑到别的键、或把 `view.theme-cycle` 解绑
+- **THEN** 重绑后新键生效、原键不再触发切换；解绑后该命令在键位面板里显示为未绑定并给出
+  成因说明（既有面板口径）
+
+#### Scenario: 无孤儿命令对账不变
+
+- **WHEN** 对账 `COMMAND_IDS` / `KEY_BINDINGS` / `KEYLESS_COMMAND_IDS` 三者
+- **THEN** 新命令有默认绑定、不在默认不绑键清单里；清单内容与新增前一致（三项对账的判据
+  不放松）
+
+### Requirement: 列表项缩进键（TAB / SHIFT+TAB）
+
+编辑器 SHALL 提供列表项缩进命令 `editor.list-indent` 与 `editor.list-outdent`，默认绑定
+`Tab` 与 `Shift-Tab`，scope `editor`，经统一键位表分发（命令 id 入 `COMMAND_IDS`，
+绑定入 `KEY_BINDINGS` 并附来由；[keys] 配置可重绑 / 解绑，describe-bindings 面板渲染
+生效表时自动收录）。编辑器内 TAB 的原生焦点遍历 SHALL 被接管（D1 裁决的知情代价）；
+`Ctrl-Tab` / `Ctrl-Shift-Tab` 的标签切换绑定归一化后是与 `Tab` / `Shift-Tab` 不同的
+token，两者 MUST 互不干扰。
+
+光标（选区 head）归属的判定 SHALL 走语法树：取 head 所在行经 `resolveInner` 向上归最近的
+`ListItem`（光标在子项行时归属子项）。命中列表项时，TAB SHALL 把该 `ListItem` 节点覆盖的
+全部行（首行、续行、子列表行）整体平移一层：**一层的步长 SHALL 由语法树导出**——等于该层
+标记的内容列宽（marker 宽度 + 其后空格数：`- ` → 2、`1. ` → 3、`10. ` → 4），MUST NOT 写成
+固定 2 空格（固定 2 空格在有序列表上不构成嵌套，缩进会退化成不可见的空白 diff）；写入侧
+MUST NOT 出现 tab 字符；引用块内的列表，插入 / 删除点 SHALL 在最内层 `>` 前缀之后。
+SHIFT+TAB 对称地把该节点平移回**其祖先列表项所处的缩进层**（同样按语法树取，不是机械减
+固定值）：每行 SHALL 移除不超过该层步长的前导空白（不足时移除该行全部前导空白；行首 tab
+按一层读取宽容处理）。
+
+写回 SHALL 遵守最小写回（ADR 0003 §3 铁律的编辑态推论）：一次平移的 changes MUST 只含
+行首空白区间与**有序列表项序号的区间**——有序列表的源码字面编号 SHALL 按新归属重排为规范
+序号（D2c 裁决）：**受影响的分组**= 被平移项的原分组（它离开的兄弟序列）与它平移后落入的
+分组（缩进时新建的子分组），两组内的全部有序项 SHALL 改写为该组内 1 起递增的序号（原组中
+位置前移的兄弟项因此一并改写）；不在上述两处分组内的有序项（含被平移项子树内部的子分组）
+MUST NOT 改写。任务标记 `[ ]` / `[x]` 与列表标记字符 MUST NOT 改写，列表之外的任何行
+MUST NOT 触及。一次 TAB / SHIFT+TAB SHALL 是单次 dispatch（带 `userEvent`），⌘Z 一次
+撤销 SHALL 还原整次平移。
+
+收口行为：列表项已在顶层（行首无空白可减）时 SHIFT+TAB SHALL 无操作；head 归属的列表项
+**没有上一同级项**（它是所在列表的第一项）时 TAB SHALL 无操作——没有可嵌套的父项，写入
+只会留下不可见的空白 diff；head 不在任何 `ListItem` 内（普通段落、标题、表格、空行、
+围栏 / 缩进代码块内）时 TAB 与 SHIFT+TAB SHALL 无操作；非空选区 SHALL 按 head 所在项处理
+（批量缩进不在本版）。「无操作」= 命令不 dispatch：文档逐字节不变、不进撤销栈、dirty 不变、
+焦点不跳出编辑器——「命中即消费」沿用「统一键位分发表」的既有纪律，MUST NOT 把按键放回
+原生路径。只读模式（非 md 文件）下两条命令 SHALL 一律不动文档。
+
+#### Scenario: 列表项内 TAB 增加缩进
+
+- **WHEN** 光标在 `- a`（顶层无序项，含续行或子项）的正文内按下 TAB
+- **THEN** 该项节点覆盖的每一行行首各增加一层步长的空格（`- ` 的步长为 2，得 `  - a`；
+  续行与子项同步平移），光标随编辑映射保持在同一项内，文档其余部分逐字节不变
+
+#### Scenario: SHIFT+TAB 减少缩进并在顶层无操作
+
+- **WHEN** 光标在 `  - a`（一层嵌套项）内按下 SHIFT+TAB，随后再按一次 SHIFT+TAB
+- **THEN** 第一次后该项回到顶层（`- a`）；第二次该项已无任何行首空白，文档逐字节不变、
+  撤销栈不增长、焦点留在编辑器内
+
+#### Scenario: 有序列表缩进后按新归属重排源码编号
+
+- **WHEN** 光标在 `1. x\n2. y` 的 `2. y` 项内按下 TAB
+- **THEN** 源码变为 `1. x\n   1. y`——`2. y` 成为 `1. x` 的子项（步长 = `1. ` 的内容列宽 3），
+  其源码编号按新归属重排为所在分组的规范序号 `1.`；再按一次 SHIFT+TAB 凸回顶层后源码恢复
+  `1. x\n2. y`（编号重排回原分组的规范序号 `2.`）。任务标记 `[ ]` / `[x]` 与标记字符
+  全程逐字节不动
+
+#### Scenario: 有序列表缩进后原分组的兄弟项一并重排
+
+- **WHEN** 光标在 `1. a\n2. b\n3. c\n4. d` 的 `3. c` 项内按下 TAB
+- **THEN** 源码变为 `1. a\n2. b\n   1. c\n3. d`——被平移项在新分组内重排为 `1.`，原分组中
+  位置前移的 `4. d` 一并重排为 `3. d`（两组各自按 1 起递增的规范序号收口）
+
+#### Scenario: 没有上一同级项时 TAB 无操作
+
+- **WHEN** 光标在 `- a\n- b` 的第一项 `- a` 内按下 TAB
+- **THEN** 文档逐字节不变、不进撤销栈、dirty 不变、焦点不跳出编辑器（没有可嵌套的父项，
+  写入只会留下不可见的空白 diff）
+
+#### Scenario: 引用内列表的缩进落在引用标记之后
+
+- **WHEN** 光标在 `> - a` 的列表项内按下 TAB
+- **THEN** 源码变为 `>   - a`（一层步长的空格加在最内层 `>` 前缀之后），引用结构不变
+
+#### Scenario: 非列表上下文无操作
+
+- **WHEN** 光标在普通段落 / 标题 / 表格行 / 围栏代码块内按下 TAB 或 SHIFT+TAB
+- **THEN** 文档逐字节不变、不进撤销栈、dirty 不变、焦点不跳出编辑器（不插入空白、
+  不走原生焦点遍历）
+
+#### Scenario: 撤销一次还原整次平移
+
+- **WHEN** 对含续行与子项的列表项按下 TAB，随后按下 ⌘Z
+- **THEN** 一次撤销即还原整次平移（所有行回到平移前），文档与平移前逐字节相同
+
+#### Scenario: 只读模式下缩进键不动文档
+
+- **WHEN** 以只读 code 模式打开含列表形态文本的非 md 文件，按下 TAB / SHIFT+TAB
+- **THEN** 文档内容与之前逐字节相同（只读保证不因新增命令而放宽）
+
+### Requirement: 表格全屏查看命令——table.toggle-fullscreen
+
+系统 SHALL 提供命令 `table.toggle-fullscreen` 承担「打开 / 关闭当前表格的全屏遮罩」，命令 id SHALL 为
+`table.toggle-fullscreen`，作用域 SHALL 为 `global`，**默认不绑键**并 SHALL 登记进默认不绑键清单
+（`src/keys.ts` 的 `KEYLESS_COMMAND_IDS`）——「默认不占键位」是要签字的决定：本版没有证据表明它是
+高频动作，用户按需经 `[keys]` 绑定（M180 折行开关先例）。实现 SHALL 落在装配层（`src/main.ts`），
+遮罩能力本体 SHALL 在自己的模块（`src/table-fullscreen.ts`）。
+
+命令 SHALL 带命中条件（`when`）：遮罩已打开时命中（此时命令 = 关闭，toggle）；否则 caret 落在一张
+当前渲染为 grid 的表内、或该表的滚动容器持有焦点时命中（打开）。命中条件不满足时 SHALL NOT 消费
+事件（不 `preventDefault`），同名按键在别处照旧走原生路径。条件 SHALL 由**命令级门**
+（`KeymapContext.commandGate`，`src/keys.ts`）承担：绑定层的 `when` 只拿得到事件、拿不到编辑器
+状态（「caret 在不在某张渲染为 grid 的表内」需要 EditorState），而 `[keys]` 覆盖产出的绑定也没有
+`when` 字段（`applyKeyOverrides` 只换「键 → 命令」的对应）——条件是命令实现方的判定位，键位层只
+留一个可选的钩子。作用域取 `global` 而非 `editor` 的理由
+SHALL 记录在绑定来由里：遮罩打开时焦点在遮罩内（不在编辑器内容区内），`editor` 作用域会让
+「再执行一次同一命令关闭」失效（`toc.toggle` 同款理由）。
+
+该命令 SHALL 进 `COMMAND_IDS` 与 `GLOBAL_COMMAND_IDS`，因此 `[keys]` 配置 SHALL 能像其余命令一样
+对它绑定 / 重绑 / 解绑，`app.describe-bindings` 面板 SHALL 自动列出它——默认不绑键时该行显示
+「未绑定」并说清成因与下一步（既有 D66 口径：默认不占键位 → 可用 `[keys]` 绑定），MUST NOT 让
+命令从视野里消失。
+
+遮罩自己的就地键（`Esc` 关闭、`Tab` 留驻）SHALL NOT 进本表：表的不变量是「一个 token 一条绑定」，
+`Esc` 已被 `editor.widget-escape`（带 `when` 条件）占用；遮罩内就地消费 + 阻止默认行为，使 window
+上的分发器对已消费事件让路——不构成同一物理键的第二条分发映射。
+
+#### Scenario: 表的不变量在新命令登记后仍成立
+
+- **WHEN** 装配应用（构造分发器并注入命令实现），并对账 `COMMAND_IDS`、`KEY_BINDINGS` 与
+  `KEYLESS_COMMAND_IDS` 三者
+- **THEN** 表内无重复绑定、每条命令恰好满足「有绑定」或「在默认不绑键清单里」之一、清单里没有
+  `COMMAND_IDS` 之外的 id、清单与绑定表无交集，装配不抛错
+
+#### Scenario: 默认不绑键时面板与配置都能看到它
+
+- **WHEN** 不在任何 `[keys]` 覆盖下按 `⌘/` 打开键位面板；另一轮用 `[keys]` 给
+  `table.toggle-fullscreen` 绑一个组合后再按 `⌘/`
+- **THEN** 第一轮面板里有该命令一行、键位列显示「未绑定」并注明「默认不占键位，可经 `[keys]`
+  绑定」；第二轮该命令对应的键位显示为新绑定，且绑定后命令在表内命中条件满足时生效
+
+#### Scenario: 命中条件不满足时不消费事件
+
+- **WHEN** caret 在表外（普通段落）时执行该命令对应的键位
+- **THEN** 事件不被消费（原样留给原生路径），文档与选区不变，遮罩不出现

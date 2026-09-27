@@ -136,3 +136,11 @@
   落地」；顺带清扫各 requirement 前提注记与 scenario 措辞里残留的「只读 code 模式」
   描述（配色一致性等行为断言本身不变）——清扫面若超出本 change delta 已覆盖的
   requirement，按既有 archive recon 流程另立收口，不在归档动作里夹带
+  **执行记录（M253 节点 2，2026-09-27）**：第一句的引用清扫**已完成**——`editor-live-preview`
+  的 `:428`/`:504` 与 `toc-outline:232` 三处指针改指「单内核双模式与可编辑性落地」，
+  `grep -rn '单内核双模式落地' openspec/specs/` 归零。**「只读 code 模式」那一半没夹带**：
+  实测清扫面超出本 delta 覆盖的 requirement，且其中三条 `keymap-commands` scenario 属
+  **行为断言随 M241 变假**（`⌘Z` / 编辑键 / TAB 判「文档不变」），不是措辞问题——按本条自己的
+  边界规则另立收口，已发 finding：
+  `.tower/comms/findings/20260927-worker-archive-sweep-bug-m241-code-living-spec-code-keymap-commands-scenario-editor-l.md`。
+  本条保持未勾，等该 finding 的裁决。
