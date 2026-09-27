@@ -545,8 +545,51 @@
     逐句一致、requirement 名在 living spec 出现恰好一次、`validate --all --strict` 28/28；节点 2 通过后
     `npx --yes @fission-ai/openspec@1.12.0 archive sync-vault-registry-dir-spec --yes`，预期 living
     spec **零 diff**。
+    **状态更新（2026-09-27，M254 收口）**：归档**已执行**——`5ac43e3`（master，M255 的
+    `6f301b4` 「归档 sync-vault-registry-dir-spec 并复核幂等」，节点 2 已授权）把该 change 移入
+    `openspec/changes/archive/2026-09-27-sync-vault-registry-dir-spec/`，living spec 的注册表路径与
+    迁移口径已并入，无代码 diff。本条核销。（M254 的分支 base 早于该合并，因此本分支上
+    `openspec list` 仍会列出它——不是漏归档，是合并顺序。）
+
+
+39. **M254 两个 change 待归档跟踪 + 一个待裁决点**（2026-09-27，worker-tab-strip 登记，**待 Alex 节点 2**）：
+    同批两个 change：`tab-strip-context-menu`（标签右键菜单三条关闭路径，ADDED ×1）与
+    `preview-tab-removal`（移除预览标签机制：`multi-tabs` 一条 REMOVED + 一条 ADDED + 一条 MODIFIED，
+    `vault-workspace` 两条 MODIFIED）。节点 1 的口径已由 tower 2026-09-27 的裁决覆盖（标签菜单三条关闭
+    路径 + 移除预览机制 + 扩 scope 到 `src/editor.ts` / `src/vault-switcher.ts` / 场景 14、31），
+    本条是实现 PR 合并时的待归档记录（`docs/process/openspec-workflow.md` 的批次收尾 checklist 第一条）。
+    归档对账要点预记：delta 与 living spec 逐条对账——`preview-tab-removal` 的 MODIFIED 块保留了三个
+    历史 scenario 名（`dirty 与预览态在标签上可见` / `预览标签不入盘` / `固定标签语义`），理由写在 delta
+    正文与该 change 的 design §三（OpenSpec 1.12 的 MODIFIED 块不允许改 scenario 名，改名通道是整条
+    REMOVED + 新增承接条）；`validate --all --strict` 期望 21 passed / 0 failed；真机判据为场景 50
+    （实现期另改齐 14 / 31 两条既有场景的预览断言）；文案新增 D148–D151、改述 D99。
+    待裁决点：**菜单三项的上屏语言**——Alex 给的原文是英文（Close / Close Other Tabs /
+    Close Tabs to the Right），而上屏取的是中文列（关闭 / 关闭其他标签 / 关闭右侧标签；英文原文逐字进
+    deck 的 English 列）。依据是界面语言是中文、全仓唯一不跟界面语言走的可见文案仍只有 D114 的 END。
+    若 Alex 要菜单直接上英文，改动面是 `src/tabs.ts` 的三个常量 + deck 两列对调 + 一条视觉断言
+    （`tests/visual/scenes/tab-menu.spec.ts` 的菜单文案断言）。
 
 ## 待修 findings（不阻塞）
+
+### 预览机制移除的遗留项（M254 登记，2026-09-27）
+
+`preview-tab-removal`（M254）把预览标签机制整体移除了：行为面（单击树文件一律开正式标签、
+`is-preview` 斜体删除、「首次输入即固定」的提升监听删除）+ 数据面（`EditorSession.preview` 字段与
+`src/vault-switcher.ts` 的入盘过滤删除，tower 2026-09-27 批准扩 scope）。落地后只剩两处**不在本批
+改动面内**的残留，都不影响行为：
+
+1. `src/save-controller.ts` 的 `OpenIntent` union（约 :50-59）仍写着 `"current" | "preview" | "pinned"`。
+   装配层已加显式适配（`src/main.ts` 的 openFile 包装里「非 "current" 一律按 "new" 处理」，附注释），
+   因此行为正确；但 union 本身仍保留两个已无意义的取值，`preview` 这个名字会继续误导读者。
+   收窄它是一次独立的小改动（union + 注释；调用点两条都只传 `"current"`，可顺带考虑删掉这个参数）。
+2. `src/bindings/VaultSession.ts` 的文档注释仍是「有序的 vault 相对路径（固定标签；预览标签不入盘，
+   design §4.2）」。它是 ts-rs 从 Rust 侧 doc comment 生成的产物，而 doc comment 的源在 `src-tauri/`
+   （本批的改动面之外）。改法：动 Rust 侧注释 + 重导出 bindings（`cargo test` 会重写 `src/bindings/**`）。
+   **同一句错误自述还留在** `openspec/specs/vault-workspace/spec.md` 吗？——没有：那条已由
+   `preview-tab-removal` 的 MODIFIED delta 改掉（归档后 living spec 同步）。
+
+**触发条件**：任一后续 mission 碰到这两个文件中的任何一个时顺手做掉（第 1 条无行为变化、无需真机；
+第 2 条要跑一次 `cargo test` 重导出）。
 
 ### 验收套件（M240 现场发现，2026-09-26）
 
@@ -568,6 +611,13 @@
   证据：`test-results/acceptance/2026-09-26-m240-full/43-list-tab-indent/steps.md`（FAIL 现场）、
   `…/2026-09-26-m240-rerun43/`、`…/2026-09-26-m240-attrib43/`（pre-M240 同红）；finding
   `.tower/comms/findings/20260926-worker-impl-table-fs-bug-tab-shift-tab-wkwebview-m239-43-master.md`。
+
+- **套件每次运行都会重写证据目录的索引文件 ⇒ 多 mission 共用同一日期目录时互相覆盖**（low，M254
+  登记，2026-09-27；同一现场 M243 也遇到过并手工重建过索引）：`scripts/acceptance/run.mjs` 每次运行
+  重写 `test-results/acceptance/<日期>/summary.md` / `results.json` / `run.log` / `app.log`，而各场景
+  目录（`<场景 id>/`）是保留的。一天里跑多次单场景（批次里最常见）之后，索引只反映最后一次 run。
+  修法（未做，属套件改动）：按场景增量更新索引（存在则并入一行），或把索引文件名带上 run id。
+  现场：M254 收口时按各场景目录重建了 2026-09-27 的索引（四个场景，见该目录 `summary.md` 的说明）。
 
 ### 门禁（M240 现场发现，2026-09-26）
 

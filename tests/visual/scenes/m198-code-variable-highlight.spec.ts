@@ -680,11 +680,20 @@ test("生命周期：光标移走即清除、点另一个变量改为新源、�
     positions(doc, [{ after: "const LIMIT = 1;\n  return ", at: "LIMIT" }, { after: "return LIMIT + ", at: "LIMIT" }]),
   );
 
-  // ③ 切文件：新文件零装饰，且回到原文件也不残留（装载即空选区）
+  // ③ 切文件：新文件在自己**新开的标签**里是空选区 ⇒ 零装饰；回到原文件时它已经是另一个标签，
+  //    单击只是切过去（M254：不再就地替换）——装饰按那个标签自己的选区重建（逐标签保留语义），
+  //    不是「残留」，也不是「清零」。
   await open(page, "binding.py", "LIMIT = 42");
   expect(await decorations(page)).toEqual([]);
   await open(page, "binding-shadow.js", "const LIMIT = 42;");
-  expect(await decorations(page)).toEqual([]);
+  await expect
+    .poll(() => decorations(page))
+    .toEqual(
+      positions(doc, [
+        { after: "const LIMIT = 1;\n  return ", at: "LIMIT" },
+        { after: "return LIMIT + ", at: "LIMIT" },
+      ]),
+    );
 });
 
 test("md 模式与 T3 语言：双击标识符零装饰、零提示（不退回字符匹配）", async ({ page }) => {

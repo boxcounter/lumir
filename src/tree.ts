@@ -117,11 +117,10 @@ export function openKind(path: string): OpenKind {
 }
 
 export interface FileTreeCallbacks {
-  /** 打开文件：按 openKind 分类交给装配层处理。`intent` 是打开意图（M149 多标签）——
-   *  `"pinned"` = 新开固定标签，`"preview"` = 复用预览标签。判定形态由树决定（它是唯一
-   *  看得到点击事件的地方）：**⌘-点击 = "pinned"**，其余单击 = "preview"，双击由 dblclick
-   *  事件单独给出 "pinned"。 */
-  onOpenFile(path: string, kind: OpenKind, intent: "preview" | "pinned"): void;
+  /** 打开文件：按 openKind 分类交给装配层处理。**不带意图**（M254）：预览标签机制随
+   *  change preview-tab-removal 退场后，单击 / 双击 / ⌘-点击树文件都是「开一个标签」，
+   *  三者没有可区分的落点，树因此不再判定意图——落点归装配层一处（"new"）。 */
+  onOpenFile(path: string, kind: OpenKind): void;
   /** 未打开 vault 空态里的「打开 vault」按钮（文案 D6）：走目录选择器链路。 */
   onOpenVault(): void;
   /** 树头部 vault 切换器入口（形态 A，M163）的点击：打开列表浮层。
@@ -325,14 +324,15 @@ export function createFileTree(mount: HTMLElement, cb: FileTreeCallbacks): FileT
     if (node.entry.kind === "dir") {
       row.addEventListener("click", () => toggle(node));
     } else {
-      const open = (intent: "preview" | "pinned") =>
-        cb.onOpenFile(node.entry.path, openKind(node.entry.path), intent);
-      // 单击 = 复用预览标签；⌘-点击 = 新固定标签（M149 语义，Alex 已裁决）。
-      // 双击另发一次 "pinned"：浏览器在 dblclick 之前会先派发两次 click，那两次落在
-      // 「同一文件已打开 → 切过去」的路径上，随后这次 pinned 把它固定住——这正是
-      // 「双击 = 固定」的落点，不需要在树里做时间窗去抖。
-      row.addEventListener("click", (event) => open(event.metaKey ? "pinned" : "preview"));
-      row.addEventListener("dblclick", () => open("pinned"));
+      // 单击 / 双击 / ⌘-点击都是「打开这个文件」（M254）。**没有修饰键分支**了：原来的
+      // 「⌘-点击 = 新固定标签」是相对「单击 = 复用预览标签」而言的，预览机制退场后两者
+      // 落到同一个落点（新开一个标签），继续读 event.metaKey 只会留下一条永不生效的分支。
+      //
+      // dblclick 也一并删掉：浏览器在 dblclick 之前会先派发两次 click，两次都走打开——
+      // 第一次建标签，第二次命中「同一个文件已经打开 → 切到既有标签」的短路。所以双击的
+      // 可观察结果是「打开」这同一个，多一条监听只是重复。
+      const open = () => cb.onOpenFile(node.entry.path, openKind(node.entry.path));
+      row.addEventListener("click", open);
     }
     return row;
   }

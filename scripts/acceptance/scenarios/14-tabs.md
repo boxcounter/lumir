@@ -1,31 +1,31 @@
 ---
 id: "14-tabs"
 item: 14
-title: 多标签——预览替换 / 首次输入固定 / 序号直达 / 循环切换 / 关闭确认 / 外部变更点名后台标签
+title: 多标签——单击即开标签 / 序号直达 / 循环切换 / 关闭确认 / 外部变更点名后台标签
 fixtures: [tabs-a.md, tabs-b.md, tabs-long.md]
 open: tabs-a.md
 marker: "标签场景 A"
 steps:
-  - name: 首个标签就位（单击树文件 = 预览标签）
+  - name: 首个标签就位（单击树文件 = 直接开一个正式标签）
     do: settle
     expect:
-      - shot: 单标签预览态
+      - shot: 单标签
       - label: 编辑器装载 tabs-a
         editor: { has: "标签场景 A" }
       - label: 标签栏只有一个标签（每个标签恰好一个关闭钮，读屏名「关闭 <文件名>」）
         ax: { count: { pattern: "关闭 ", exact: 1 } }
-      - label: 预览标签的读屏名不带未保存后缀
+      - label: 刚打开、还没编辑的标签读屏名不带未保存后缀
         ax: { count: { pattern: "（未保存）", exact: 0 } }
 
-  - name: 键入内容——首次输入即固定（标签转 dirty）
+  - name: 键入内容（标签转 dirty）
     do: type
     text: "QQQ"
     expect:
-      - shot: 首次输入
+      - shot: 键入后
       - label: 输入真的落进文档
         editor: { has: "QQQ" }
 
-  - name: 单击第二个文件——预览标签已被固定，因此另开一个新标签
+  - name: 单击第二个文件——新开一个标签（不再顶掉上一篇）
     do: open
     file: tabs-b.md
     marker: "标签场景 B"
@@ -33,7 +33,7 @@ steps:
       - shot: 两个标签
       - label: 第二个文件上屏
         editor: { has: "标签场景 B" }
-      - label: 现在有两个标签（不是替换：若是替换，上一步的输入会连内容一起消失）
+      - label: 现在有两个标签（M254 之前单击会复用预览标签就地替换，上一步的输入会连内容一起消失）
         ax: { count: { pattern: "关闭 ", exact: 2 } }
 
   - name: ⌘1 直达第一个标签
@@ -148,7 +148,7 @@ steps:
       - label: modeline 回到无当前文件
         ax: { has: "无当前文件" }
 
-  - name: 空态之后还能继续开（未命名空文档被复用成新的预览标签）
+  - name: 空态之后还能继续开（空文档会话被复用成新标签）
     do: open
     file: tabs-b.md
     marker: "标签场景 B"
@@ -163,14 +163,14 @@ steps:
   # 真机通道读不到标签的 bbox（本套件没有几何断言通道），这条不变量的**判据**在 chromium 层
   # （`tests/visual/scenes/m149-tabs.spec.ts` 的「标签溢出：活跃标签恒完整可见」，含反向配对）；
   # 本场景只留一条**人可读的截图证据**：窄窗 + 三个标签（可视区必然溢出）+ 从第 1 个跳到第 3 个。
-  - name: 凑满三个标签（每轮先键入把当前预览标签固定住，下一次 open 才会另开标签）
+  - name: 凑满三个标签（M254 起每轮 open 都另开一个标签，不再需要先键入把预览态固定住）
     do: type
     text: "PIN1"
     expect:
-      - label: 输入落进文档（首次输入即固定，标签随之 dirty）
+      - label: 输入落进文档（标签随之 dirty）
         editor: { has: "PIN1" }
 
-  - name: 打开第二个文件——前一个已固定，因此另开一个新标签
+  - name: 打开第二个文件——另开一个新标签
     do: open
     file: callout.md
     marker: "Callout 场景"
@@ -217,7 +217,8 @@ steps:
 标签的**能力面**（会话与切换）在 `src/editor.ts`，**装配面**（标签栏、打开意图、命令）在
 `src/main.ts`。本场景走真机通道，验只有在真实 WKWebView + 真实键盘下才成立的事：
 
-1. **打开 / 固定语义**：单击树文件建预览标签、首次输入即固定（固定后单击别的文件另开标签）、
+1. **打开语义**：单击树文件直接开一个标签（M254 起不再有预览标签这一形态——那个机制随
+   change `preview-tab-removal` 退场，Alex 2026-09-27 的斜体反馈），再单击别的文件另开一个、
    关掉全部标签后仍能继续开。
 2. **键位**：`⌘1` / `⌘2` 直达、`⌃⇥` 循环、`⌘W` 关当前标签（干净直接关、dirty 先确认、
    关掉当前标签后前台交给邻座）。
@@ -270,7 +271,7 @@ steps:
   对 File / Window 两处 id 各断言一次，与 M131 当年的深度相同）；「菜单事件 → 关标签」这条
   前端链路由视觉场景用 `fireMenuCommand(page, "close")` 覆盖。真机上「菜单的关闭项不再带 ⌘W」
   是目视项，见 mission 报告。
-- **标签栏自身的视觉**（激活高亮 / 预览斜体 / dirty 点 / 溢出横滚）：整页容差
+- **标签栏自身的视觉**（激活高亮 / dirty 点 / 溢出横滚）：整页容差
   `maxDiffPixelRatio: 0.001`（1200×800 ≈ 960 px）会吞掉整条标签栏，所以视觉回归放在元素级
   基线上（`tab-bar-*.png`）。
 - **标签栏溢出时「活跃标签必须完整可见」（M238 新增）**：判据在 chromium 层

@@ -189,16 +189,31 @@ function showEditor() {
 // tone "success" 给浮条加 ✓ 前缀（定稿 direction-c 屏 5 toast），只用于「用户
 // 动作已成功完成」的确认；错误 / 警告 / 纯信息保持 neutral 不带 ✓（语义口径，
 // tower 裁决 2026-09-25）。
+//
+// M254 起多一个尾部参数 `onDismiss`：**sticky 浮条被点掉**（用户没有选任何出口、只把
+// 浮条关掉）时通知调用方。批量关闭（标签右键菜单的「关闭其他 / 右侧」）靠它知道该停手：
+// 那条路径逐个问脏标签，用户点掉浮条等于「没答复」，后面的标签一律不动。动作钮的点击
+// MUST NOT 走这一路（见下面的 stopPropagation），因此它只表示「浮条被点掉」这一种情形。
+// 自动消隐的浮条不通知——它们没有「被用户点掉」以外的生命周期事件可报。
 type ToastTone = "neutral" | "success";
 function toast(
   text: string,
   actions: Array<{ label: string; run(): void }> = [],
   sticky = false,
   tone: ToastTone = "neutral",
+  onDismiss?: () => void,
 ): HTMLElement {
   if (sticky) {
     for (const el of shell.editor.querySelectorAll<HTMLElement>(".lumir-toast[data-sticky-text]")) {
-      if (el.dataset.stickyText === text) return el;
+      if (el.dataset.stickyText !== text) continue;
+      // M254（reviewer r1 P2-1）：去重命中时返回的是**旧**元素，本次调用的 actions / onDismiss
+      // 一律不接上线。对「关标签确认」那条链路（`src/tabs.ts` 的 showCloseConfirm）这等于
+      // **本次提问拿不到自己的答复**：它在批量关闭里等的是「这个标签关掉了没有」，而答复挂在
+      // 本次调用的回调上。就地调用 onDismiss 把这件事如实报回去——调用方按「没答复」处理
+      //（`settle(false)`），批量在该标签之前干净停手，MUST NOT 静默挂起一个永不 resolve 的
+      // 批量动作。其余 sticky 调用方不传 onDismiss，行为一字不变。
+      onDismiss?.();
+      return el;
     }
   }
   const el = document.createElement("div");
@@ -218,7 +233,11 @@ function toast(
     btn.type = "button";
     btn.textContent = action.label;
     btn.className = "toast-action";
-    btn.addEventListener("click", () => {
+    btn.addEventListener("click", (event) => {
+      // 动作钮的点击不得冒到浮条本体那条「点掉即关闭」的监听上（M254）：那条现在还要
+      // 通知 onDismiss，而钮已经给出答复（选了某个出口）。少了这一行，「保存并关闭」这条
+      // 异步出口会被紧随其后的 done(false) 抢先作废——批量关闭在保存落地前就停手了。
+      event.stopPropagation();
       el.remove();
       action.run();
     });
@@ -226,7 +245,10 @@ function toast(
   }
   if (sticky) {
     el.dataset.stickyText = text;
-    el.addEventListener("click", () => el.remove());
+    el.addEventListener("click", () => {
+      el.remove();
+      onDismiss?.();
+    });
   }
   shell.editor.append(el);
   if (!sticky) setTimeout(() => el.remove(), actions.length ? 8000 : 3500);
@@ -240,11 +262,15 @@ const save = createSaveController({
   editor,
   container: shell.editor,
   toast,
-  // intent 原样转发：装配层是唯一知道「落到哪个标签」的地方（save-controller 只在
-  // 另存为新文件 / 恢复崩溃备份两条链路上指定 "current"）。kind 也在这里现取——
-  // 落点路径已确定，分类归扩展名注册表（`openKind`），save-controller 不持第二份判据。
+  // 落点意图在这里收敛（M254）：save-controller 的 `OpenIntent` 里还留着 "preview" /
+  // "pinned" 两个取值（它不在本 mission 的改动面内），但它实际只在「另存为新文件 / 恢复
+  // 崩溃备份」两条链路上传值，而那两条都是 "current"（当前这份文档换个落点）。非 "current"
+  // 一律按「新开一个标签」处理——预览机制退场后，"pinned" 与 "preview" 的差别（会不会被
+  // 下一次单击顶掉）已经不存在，两者落到同一个落点。等 save-controller 的 union 收窄成
+  // `"current"`（或删掉这个参数）后，这一层适配可以整个删掉。kind 也在这里现取——落点路径
+  // 已确定，分类归扩展名注册表（`openKind`），save-controller 不持第二份判据。
   openFile: async (path, intent) => {
-    await openFile(path, openKind(path), intent);
+    await openFile(path, openKind(path), intent === "current" ? "current" : "new");
   },
   invalidateResolve: () => linkFollow.invalidate(),
   showEditor: () => showEditor(),
@@ -282,14 +308,22 @@ editor.onReady((event) => {
 });
 
 // ---------------------------------------------------------------------------
-// 标签（M149）：会话模型、标签栏 DOM 与切换 / 关闭动作在 src/tabs.ts，这里只装配——
-// 把本文件才知道的入口交给它（save / 解析缓存失效 / 覆盖层 / 同步点，逐项见 TabsDeps）。
+// 标签（M149）：会话模型、标签栏 DOM、切换 / 关闭动作与标签右键菜单（M254）在
+// src/tabs.ts，这里只装配——把本文件才知道的入口交给它（save / 解析缓存失效 / 覆盖层 /
+// 同步点 / 浮层挂点 / 提示出口，逐项见 TabsDeps）。
 // ---------------------------------------------------------------------------
 
 const tabs = createTabs({
   editor,
   mount: shell.tabStrip,
-  toast,
+  // 菜单挂点取 app-shell 根：标签栏是横向滚动容器（.tabstrip 的 overflow-x: auto），
+  // 菜单挂进去会被它裁掉——与文件树菜单、vault 浮层同一条理由。
+  overlayMount: shell.root,
+  // 适配一层：tabs 只关心「选没选出口」，不关心 tone；tone 固定 neutral（关标签确认是
+  // 警告语气，不是成功态）。
+  toast: (text, actions, sticky, onDismiss) => {
+    toast(text, actions, sticky, "neutral", onDismiss);
+  },
   saveCurrent: () => save.save(),
   invalidateResolve: () => linkFollow.invalidate(),
   showEditor: () => showEditor(),
@@ -409,9 +443,12 @@ const switcher: VaultSwitcherHandle = createVaultSwitcher({
   focusEditor: () => editor.view.focus(),
   getSession: (vaultId) => vaultSessionGet(vaultId),
   putSession: (vaultId, paths, active) => vaultSessionPut(vaultId, paths, active),
-  // 恢复用**固定标签**意图逐个打开（预览意图会让第二个起顶掉前一个，只剩最后一个），
-  // 且不上屏失败覆盖层：恢复是批量动作，单个文件的失败由计数提示承担（见 vault-switcher）。
-  openPinned: (path) => openFile(path, openKind(path), "pinned", true),
+  // 恢复时逐个打开**新标签**（M254 前叫「固定标签意图」：预览机制退场后，恢复必须让每个
+  // 文件各占一个标签，否则第二个起会把前一个顶掉，只剩最后一个），且不上屏失败覆盖层：
+  // 恢复是批量动作，单个文件的失败由计数提示承担（见 vault-switcher）。
+  // 键名 `openPinned` 由 vault-switcher 的 deps 定（它那边不在本 mission 的改动面内），
+  // 落点意图按 M254 的新口径取 "new"——每个文件新开一个标签。
+  openPinned: (path) => openFile(path, openKind(path), "new", true),
   activate: (path) => {
     const session = editor.sessionForPath(path);
     if (session !== undefined) tabs.activateTab(session);
@@ -570,9 +607,11 @@ async function submitInlineEdit(request: InlineEditRequest): Promise<void> {
       const created = await fsCreateFile(request.parentRel, request.name);
       tree.endInlineEdit(true);
       // 新建文件成功即自动打开（§3.5）：**不等 watcher 回响**——打开走读取链路，与树的
-      // 展示互不依赖。意图取 "pinned"：新建是用户的显式动作，值得一个自己的固定标签
-      //（"preview" 会被下一次单击顶掉）。md / 其余类型由 openKind 一处裁决。
-      void openFile(created, openKind(created), "pinned");
+      // 展示互不依赖。意图取 "new"：新建是用户的显式动作，值得一个自己的标签（M254 起
+      // 「自己的标签」就是唯一的标签形态——预览机制已退场，但落点意图仍要显式写出来：
+      // openFile 的默认值是 "current"，那是「就地替换前台文档」）。
+      // md / 其余类型由 openKind 一处裁决。
+      void openFile(created, openKind(created), "new");
       return;
     }
     await fsCreateDir(request.parentRel, request.name);
@@ -646,11 +685,11 @@ function afterLoad(): void {
 // 模式并登记磁盘 revision；image/binary 按 kind 在下面提前分流（fileClass 的 image/binary
 // 两类的 openKind 都是 "binary"），因此不在这里重复判定。
 //
-// 落点由 intent 决定（M149，Alex 已裁决）：
-//   - 文档内链接跟随 / 另存为新文件 / 恢复备份 → "current"（**默认值**）：当前标签跟随
-//     换文档——这是 M144/M145 既有语义，也是「不传就退化成 M149 之前的行为」这个保守兜底；
-//   - 单击文件树 → "preview"：复用预览标签，旧预览被就地替换，不新开；
-//   - 双击 / ⌘-点击文件树 → "pinned"：新开固定标签。
+// 落点由 intent 决定（M254 起只剩两个取值，预览机制已退场）：
+//   - "current"（**默认值**）：当前标签跟随换文档——文档内链接跟随 / 另存为新文件 /
+//     恢复备份三条链路都是「当前这份文档换个落点」，也是「不传就退化成 M149 之前的
+//     行为」这个保守兜底；
+//   - "new"：新开一个标签（单击 / 双击 / ⌘-点击文件树、新建文件后的自动打开、会话恢复）。
 //
 // 返回「这次打开是否成功」——只有 M163 的会话恢复读它（逐个打开、失败的计入跳过数）。
 // `quiet` 为真时**不上屏失败覆盖层**：恢复是逐标签的批量动作，单个文件的失败不该把正文
@@ -658,7 +697,7 @@ function afterLoad(): void {
 async function openFile(
   path: string,
   kind: "md" | "code" | "text" | "binary",
-  intent: "preview" | "pinned" | "current" = "current",
+  intent: "new" | "current" = "current",
   quiet = false,
 ): Promise<boolean> {
   // 唯一保留的 dirty 守卫：前台是**未命名文档**（没有路径）。它的内容没有落盘基准，
@@ -667,8 +706,8 @@ async function openFile(
   // 见 openspec change add-multi-tabs 的 proposal「语义变化」一节）。
   if (editor.activeSession().path === undefined && !save.guard("切换文件")) return false;
   // 已经打开的文件一律切到既有标签：不重复开、也不重读（非 md 只读，重读只会把用户
-  // 正在看的位置顶掉）。三种意图都适用；双击 / ⌘-点击一个已打开的**预览**标签 = 把它
-  // 固定住——这正是「双击 = 固定」的落点（第一次单击已把它开成预览，这边收尾）。
+  // 正在看的位置顶掉）。两种意图都适用（M254 之前还有一步「双击 / ⌘-点击一个已打开的
+  // 预览标签 = 把它固定住」，预览机制退场后这一步自动消失）。
   //
   // 这一条必须放在 showNotice 与 beginSwitch 之前：切换是同步的，既不需要「正在打开」
   // 这一步，提前 return 也绝不会把「正在打开 / 暂不支持预览」覆盖层留在编辑器上
@@ -676,7 +715,6 @@ async function openFile(
   //  此后所有点击都被它 intercept——视觉场景 wikilink.spec.ts 就是这样红的）。
   const existing = editor.sessionForPath(path);
   if (existing !== undefined) {
-    if (intent === "pinned") existing.preview = false;
     showEditor(); // 撤下一次更早的、已被这次同步切换取代的「正在打开」覆盖层
     tabs.activateTab(existing);
     return true;
@@ -1007,28 +1045,15 @@ editor.onDirty((dirty) => {
   syncBackendDirty();
 });
 
-// modeline 的行数随文档变化（每次键入都可能改行数）。走内核已有的 onDocChanged
-// （它已在用一个：预览标签「首次输入即固定」），不新开一条监听通道——行数是
-// rope 上的缓存字段，读一次 + 条件写 DOM 的代价不构成新的键入路径负担。
+// modeline 的行数随文档变化（每次键入都可能改行数）。走内核已有的 onDocChanged，
+// 不新开一条监听通道——行数是 rope 上的缓存字段，读一次 + 条件写 DOM 的代价不构成新的
+// 键入路径负担。（M254 之前这条监听的注释还举了「预览标签首次输入即固定」这个同类消费者；
+// 预览机制退场后它只剩行数这一个消费者，通道本身不动。）
 editor.onDocChanged(() => syncModelineMeta());
 
-// 预览标签「首次输入即固定」（M149，Alex 口径）：编辑动作落在预览标签上就说明用户
-// 打算留着它，此后单击文件树不再顶掉它。
-//
-// 判据是「docChanged 且 dirty」而不是单看 docChanged：**装载也走 docChanged**（打开文件 /
-// 外部重载 / 恢复备份都是整篇替换），而装载不是「开始编辑」。装载后 cleanDoc 已与内容对齐、
-// dirty 为 false，据此把两者分开——不必让内核再为此加一个来源参数。
-editor.onDocChanged(() => {
-  const session = editor.activeSession();
-  if (!session.dirty || !session.preview) return;
-  session.preview = false;
-  tabs.renderTabs();
-  // 提升即「可持久化集合」多了一个成员（预览标签不入盘，spec「按 vault 持久化标签列表」），
-  // 属一次**集合变化**，必须沿同一条防抖写盘——否则崩溃窗口里这个提升会丢（M163 r1 P2-2）。
-  // 这里不经 syncActiveDocument（那会连 modeline / 大纲 / 树高亮一起重算，而这一步只改了
-  // 一个会话的属性），直接调会话侧的通知口。
-  switcher.sessionChanged();
-});
+// M254：这里原先还有一条「预览标签首次输入即固定」的 onDocChanged（编辑动作落在预览标签上
+// 就把它提升为固定标签，并沿会话侧通知口防抖落盘）。预览机制随 change preview-tab-removal
+// 退场后，标签只有一种形态，没有可提升的状态——整块删除，不留空壳监听。
 
 // DirtyState 防滞留（M107）：后端的 dirty 镜像在 webview 重载（开发者刷新 /
 // 崩溃重载）后可能滞留 stale true，退出守卫将永久拦截。前端是唯一事实源，
@@ -1160,9 +1185,9 @@ function pickVault(forceNew = false): void {
 }
 
 tree = createFileTree(shell.treeMount, {
-  // 打开意图由树判定（它是唯一看得到点击事件的地方）：单击 = 复用预览标签，
-  // 双击 / ⌘-点击 = 新固定标签（M149 语义，Alex 已裁决）。
-  onOpenFile: (path, kind, intent) => void openFile(path, kind, intent),
+  // 打开文件的落点：树已经不再判定意图（M254）——单击 / 双击 / ⌘-点击一律是「开一个标签」，
+  // 预览机制退场后这三者没有可区分的落点，判定权因此收回装配层一处（"new"）。
+  onOpenFile: (path, kind) => void openFile(path, kind, "new"),
   // 空态按钮（未装载 vault 时唯一入口）与浮层底部的「新增 vault…」同一条链路。
   onOpenVault: () => requestAddVault(),
   // 树头部的常驻入口（形态 A）：展开 / 收起列表浮层。

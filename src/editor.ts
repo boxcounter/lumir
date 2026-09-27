@@ -915,13 +915,6 @@ export interface EditorSession {
    */
   editable: boolean;
   /**
-   * 「可被复用」的临时会话标记（M149 预览标签）。内核**不读**这个字段——它是装配层
-   * 的标签属性：单击文件树建立的会话标 true，下一次单击树文件就地替换它而不新开标签；
-   * 双击或首次输入即置 false（固定）。放在会话上而不是装配层的 Map 里，是因为
-   * 会话被关闭时这个标记必须随之消失，两处各存一份必然漂移（REVIEW.md 第 8 条）。
-   */
-  preview: boolean;
-  /**
    * 离开该会话时的滚动位置快照（`view.scrollSnapshot()` 的产物）。**滚动不在 CM state 里**
    *（只存在于 scrollDOM），所以必须逐会话单独存，否则切标签会继承上一篇的滚动位置。
    *
@@ -1537,7 +1530,6 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
       editable,
       cleanDoc: doc,
       dirty: false,
-      preview: false,
       scroll: undefined,
     };
   }

@@ -839,7 +839,8 @@ test("应用级口径（D1）：翻转作用于全部会话，新标签页取当
   await page.waitForTimeout(80);
   expect(await codeWhiteSpace()).toBe("break-spaces");
 
-  // 让 A 成为固定标签（首次输入即固定，M149 口径）：第二个文件因此另开标签而不是替换预览标签
+  // 让 A 先键入一下（M254 起单击本来就开正式标签；这里仍保留键入，避免断言依赖「没编辑过的标签
+  // 会不会被顶掉」这类已退场的语义）
   await page.locator(".cm-content").click();
   await page.evaluate(() => {
     const view = (document.querySelector(".cm-content") as unknown as { cmTile: { root: { view: any } } }).cmTile.root.view;
