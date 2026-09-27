@@ -11,6 +11,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import {
   IGNORED_NAMES,
+  relativePathOf,
   remapPathAfterRename,
   validateEntryName,
   vaultAbsolutePath,
@@ -81,4 +82,13 @@ test("改名后的路径 remap：文件单条替换、目录前缀替换、其�
   assert.equal(remapPathAfterRename("subx/a.md", "sub", "sub2"), undefined);
   assert.equal(remapPathAfterRename("other/a.md", "sub/a.md", "sub/b.md"), undefined);
   assert.equal(remapPathAfterRename("sub/a.md.bak", "sub/a.md", "sub/b.md"), undefined);
+});
+
+test("父目录 + 末段名 = 完整相对路径（M258：展开态搬家与回响抑制共用的那一条拼接）", () => {
+  assert.equal(relativePathOf("", "a.md"), "a.md");
+  assert.equal(relativePathOf("sub", "a.md"), "sub/a.md");
+  assert.equal(relativePathOf("sub/deep", "a.md"), "sub/deep/a.md");
+  // 反向：与 remapPathAfterRename 同一套路径语义（改名后的新路径必须能被 remap 认出来）
+  const to = relativePathOf("sub", "b.md");
+  assert.equal(remapPathAfterRename("sub/a.md", "sub/a.md", to), "sub/b.md");
 });
