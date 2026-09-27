@@ -591,6 +591,14 @@
 **触发条件**：任一后续 mission 碰到这两个文件中的任何一个时顺手做掉（第 1 条无行为变化、无需真机；
 第 2 条要跑一次 `cargo test` 重导出）。
 
+### 路径拼接同形副本（M258 登记，2026-09-27）
+
+`src/main.ts:582` 有一处「父路径 + 末段名」的拼接逻辑，与 M258 在 `src/tree.ts` 新增的
+`relativePathOf`（该拼接的规范居所）是同形副本（REVIEW.md 第 8 条同族）。M258 不持有
+`src/main.ts` 的 scope，未就地收口，已在 tree.ts 注释与 mission 报告登记（reviewer 复核为 P2、
+不阻塞合并）。**触发条件**：任一后续 mission 改到 `src/main.ts` 该区域时，把 :582 的拼接换成
+调用 `relativePathOf`，删掉副本。
+
 ### M256 全量回归现场（2026-09-27 批次收尾）
 
 M256（分支 `feat/final-acceptance-regression-sweep-m256`）跑了**全量真机套件**：57 场景，串行独占
