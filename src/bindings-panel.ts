@@ -39,7 +39,9 @@ export const BINDING_GROUPS: ReadonlyArray<{ title: string; commands: readonly C
   { title: "扩选", commands: ["editor.extend-char-forward", "editor.extend-char-backward", "editor.extend-line-down", "editor.extend-line-up", "editor.extend-line-start", "editor.extend-line-end", "editor.extend-word-forward", "editor.extend-word-backward"] },
   { title: "删除", commands: ["editor.delete-char-forward", "editor.delete-char-backward", "editor.transpose-chars", "editor.delete-word-forward", "editor.delete-word-backward"] },
   { title: "kill-yank", commands: ["editor.kill-line", "editor.yank"] },
-  { title: "翻屏", commands: ["editor.scroll-page-down", "editor.scroll-page-up", "editor.recenter"] },
+  // M281：跳转到行（change goto-line-command）与 ⌃L 的 recenter 同属「重定位」——它改的是
+  // 光标位置与滚动（落点复用 revealLine），与「移动与选择」的逐字符/逐行移动不是一族。
+  { title: "翻屏", commands: ["editor.scroll-page-down", "editor.scroll-page-up", "editor.recenter", "editor.goto-line"] },
   { title: "撤销", commands: ["editor.undo", "editor.redo"] },
   // M239 的两条列表结构命令（Tab / ⇧Tab）单列一组：它们改写的是**列表项的嵌套层级**
   // （连同续行与子树整体平移），与「移动与选择」（只动光标 / 选区）和「删除」都不是一族。

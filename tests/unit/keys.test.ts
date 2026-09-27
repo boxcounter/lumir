@@ -650,6 +650,67 @@ test("主题切换命令可由 [keys] 重绑 / 解绑（默认键位单段无空
 });
 
 // ---------------------------------------------------------------------------
+// 跳转到行（M281，change goto-line-command）
+// ---------------------------------------------------------------------------
+
+test("跳转到行命令：⌥G 的 token 形态（含 Alt 按物理键）、作用域 editor、有绑定不在默认不绑键清单", () => {
+  assert.ok(commandIds.includes("editor.goto-line"), "editor.goto-line 不在 COMMAND_IDS");
+  assert.ok(
+    editorCommandIds.includes("editor.goto-line"),
+    "落在内核组 = 作用域派生成 editor：命令改的是编辑器光标与滚动，焦点在浮层 / 左栏里时不该命中（与 ⌃N 一族同边界）",
+  );
+  // 事件侧与表内必须同 token：真机 ⌥G 的 `key` 是 Alt 层替换出来的 "©"（macOS US 布局），
+  // 只有 `code`（KeyG）能判别用户按的键——表内因此 MUST 写 `Alt-KeyG`。
+  const event = { key: "©", code: "KeyG", metaKey: false, ctrlKey: false, altKey: true, shiftKey: false };
+  const token = normalizeKey("Alt-KeyG");
+  assert.equal(keyToken(event), token, "⌥G 的事件 token 与表内写法必须相等（写 Alt-g 会永久不命中）");
+  assert.equal(token, "Alt-KeyG");
+  const binding = KEY_BINDINGS.find((item) => normalizeKey(item.key) === token);
+  assert.equal(binding?.command, "editor.goto-line");
+  assert.equal(binding?.scope, "editor");
+  assert.ok((binding?.doc.length ?? 0) > 0, "绑定必须带来由说明（表即文档）");
+  // 三条独立来源的核实结论要写进 doc（表即文档的口径，不写在别处）
+  assert.ok(binding?.doc.includes("表内"));
+  assert.ok(binding?.doc.includes("原生菜单"));
+  assert.ok(binding?.doc.includes("macOS"));
+  assert.ok(
+    !KEYLESS_COMMAND_IDS.includes("editor.goto-line"),
+    "该命令默认有绑定，MUST NOT 登记为默认不绑键",
+  );
+  // 与同族的 ⌥ 系键位是不同的 token（防止「表内已存在该键」的误判）
+  for (const neighbor of ["Alt-KeyV", "Alt-KeyD", "Alt-KeyB", "Alt-KeyF"]) {
+    assert.notEqual(normalizeKey(neighbor), token);
+  }
+});
+
+test("跳转到行命令可由 [keys] 重绑 / 解绑（默认键位单段无空白）", () => {
+  assert.ok(!/\s/.test("Alt-KeyG"), "默认键位含空白会让用户无法重绑（chord 本版不支持）");
+  // 重绑：⌃J → editor.goto-line（作用域仍由命令清单派生成 editor，不随配置漂移）
+  const rebound = applyKeyOverrides({ "Ctrl-j": "editor.goto-line" });
+  assert.deepEqual(rebound.warnings, []);
+  const moved = rebound.bindings.find((binding) => normalizeKey(binding.key) === "Ctrl-J");
+  assert.equal(moved?.command, "editor.goto-line");
+  assert.equal(moved?.scope, "editor");
+  // 未覆盖的默认绑定逐条保留（重绑只多一条新 token，不改动其余任何一条）
+  assert.equal(rebound.bindings.length, KEY_BINDINGS.length + 1);
+  for (const binding of KEY_BINDINGS) {
+    const kept = rebound.bindings.find((item) => normalizeKey(item.key) === normalizeKey(binding.key));
+    assert.equal(kept?.command, binding.command, `${binding.key} 的默认绑定被改动`);
+  }
+  // 解绑：⌥G 不再指向任何命令，该命令在生效表里随之没有绑定（键位面板据此显示未绑定）
+  const unbound = applyKeyOverrides({ "Alt-KeyG": null });
+  assert.deepEqual(unbound.warnings, []);
+  assert.equal(
+    unbound.bindings.find((binding) => normalizeKey(binding.key) === "Alt-KeyG"),
+    undefined,
+  );
+  assert.equal(
+    unbound.bindings.find((binding) => binding.command === "editor.goto-line"),
+    undefined,
+  );
+});
+
+// ---------------------------------------------------------------------------
 // 命令级命中条件（M240，KeymapContext.commandGate）
 // ---------------------------------------------------------------------------
 

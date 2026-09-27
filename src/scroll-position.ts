@@ -41,9 +41,10 @@ export interface ScrollReadings {
  *  `x` 取**原始 `scrollLeft`**（不是「字符盒相对容器左的偏移」）：横向那条通道
  *  （`scrollIntoView` 的非快照分支）会先减去 `getScrollMargins(view).left`，而本仓的 gutter
  *  插件正好提供这个 left（固定列宽）——实测把「相对容器左的偏移」当 xMargin 会系统性偏
- *  一个 gutter 宽（code 模式实测 34px）。CM 自己的**快照**分支存的就是原始 `scrollLeft`、
- *  恢复时也直接赋值给 `scrollDOM.scrollLeft`（`dist/index.js` 的快照分支），本实现与它同口径，
- *  横向因此按构造精确。
+ *  一个 gutter 宽（code 模式实测 34px；**M281 起 md 模式也有常驻行号 gutter**，该值因此在
+ *  md 上同样非零，两种模式都按同一条口径处理）。CM 自己的**快照**分支存的就是原始
+ *  `scrollLeft`、恢复时也直接赋值给 `scrollDOM.scrollLeft`（`dist/index.js` 的快照分支），
+ *  本实现与它同口径，横向因此按构造精确。
  *
  *  另一个容易看错的口径是 `pos` 的取法：`lineBlockAtHeight(scrollTop)` 取的是**高度等于
  *  scrollTop 的那一行块**，而文档原点（height 0）在页首内边距之下，所以它比「视口顶那一行」

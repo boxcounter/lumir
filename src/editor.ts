@@ -1,6 +1,6 @@
 import { Annotation, Compartment, EditorSelection, EditorState, Prec, StateEffect, Transaction, findClusterBreak } from "@codemirror/state";
 import type { Extension, SelectionRange, Text } from "@codemirror/state";
-import { EditorView, keymap, lineNumbers, highlightActiveLine } from "@codemirror/view";
+import { EditorView, keymap, lineNumbers, highlightActiveLine, highlightActiveLineGutter } from "@codemirror/view";
 import type { ViewUpdate } from "@codemirror/view";
 
 /** 滚动位置快照的类型（`view.scrollSnapshot()` 的产物）。CM 不导出 ScrollTarget 类型，
@@ -22,6 +22,7 @@ import type { BlockCopyRange } from "./preview/block-copy";
 import type { CodeBlockFullscreenPort } from "./preview/block-trigger";
 import type { ImageLightbox } from "./lightbox";
 import type { TableFullscreen } from "./table-fullscreen";
+import type { GotoLinePromptPort } from "./goto-line";
 import { detectFrontmatter } from "./preview/frontmatter";
 import { findMathSpans } from "./preview/math";
 import type { MathSpan } from "./preview/math";
@@ -1067,10 +1068,22 @@ export interface EditorHandle {
    * 注入块级复制能力（M277，触发钮与 `block.copy` 共用一个口子）；未注入时复制钮点击无反应。
    */
   setBlockCopy(copy: { copy(range: BlockCopyRange): void } | null): void;
+  /**
+   * 注入跳转到行的输入条（M281，change goto-line-command；能力与浮层 DOM 在
+   * `src/goto-line.ts`）。命令执行时才读这个口子，注入**不**触发装饰重建（与上面几个
+   * 「装饰层构建期读口子」的注入点不同）。未注入时 `editor.goto-line` 无操作。
+   */
+  setGotoLinePrompt(prompt: GotoLinePromptPort | null): void;
   /** 强制重建装饰（解析缓存更新 / watch 增量后调用）。 */
   refreshPreview(): void;
   /** 滚动定位到 1-based 行号并把光标移到行首（wikilink 锚点跳转用）。 */
   revealLine(line: number): void;
+  /**
+   * 同上，但**先把焦点交还编辑器**再落点（M281，change goto-line-command 的确认路径）：
+   * 输入条收起后焦点若还停在浮层（或已落到 body），只 dispatch 选区不会让 caret 可见。
+   * 落点与滚动复用同一份实现，调用方 MUST NOT 自己拼「行号 → 位置 → 滚动」的算式。
+   */
+  jumpToLine(line: number): void;
   /**
    * 读当前前台视图的阅读位置（捕获侧唯一构造点；值语义见 src/scroll-position.ts，view 侧
    * 实现在 src/scroll-position-view.ts）。
@@ -1287,6 +1300,11 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
   let codeBlockFullscreen: CodeBlockFullscreenPort | null = null;
   /** 块级复制能力（M277）：装配层注入；未注入时复制钮仍在、点了没反应。 */
   let blockCopy: { copy(range: BlockCopyRange): void } | null = null;
+  /** 跳转到行的输入条（M281）：装配层注入（能力与浮层 DOM 在 src/goto-line.ts）。
+   *  **命令执行时才读**（不是装饰层构建期读），因此注入不需要触发重建——与上面几个
+   *  「装饰层在构建期读口子」的注入点不同（那些要 previewRefresh）。未注入时命令无操作
+   *  （纯桩 / 维护性装配：能力没接上就不假装能打开）。 */
+  let gotoLinePrompt: GotoLinePromptPort | null = null;
   const readyListeners = new Set<EditorReadyListener>();
   let readyPath: string | undefined;
   let readyRequestId: number | undefined;
@@ -1487,6 +1505,11 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
       // `.doc { max-width:664px;
       // padding:32px 44px 20px }`（border-box）同构（框宽 − 88px 内边距 = 文字宽）。
       //
+      // md 也有行号 gutter（M281，change goto-line-command 的 D4 改判）：**模板不为它改写**
+      // ——gutter 落在这条模板的**左侧空余轨道**（col 1，`justifySelf: end` 贴正文列左缘），
+      // 因此「正文列居中」这条守恒条款逐值不变（gutter 在场只改左轨道里放什么，不改轨道宽度；
+      // 几何判据见 tests/visual/scenes/m281-goto-line.spec.ts 的实测断言）。
+      //
       // code 模式（design §4 未决项 1 的另一半，口径落地见 test-results/m212/）：模板不变
       // （行的左列要容下 gutter），中列同样换成定值。行为口径：`minmax(max-content, 1fr)`
       // 的 gutter 列与 `minmax(0, 1fr)` 的右列都是弹性轨道，中列的非弹性轨道先被撑满到
@@ -1507,14 +1530,21 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
         textAlign: "start", textIndent: "0", hangingPunctuation: "none", textAutospace: "no-autospace",
       },
       ".cm-line": { padding: "0" },
-      // gutter（code 模式的只读行号）：提示档文字色 + 框体底色 + 结构档右缘（tokens 文档
+      // gutter 的**两模式共用落点**：提示档文字色 + 框体底色 + 结构档右缘（tokens 文档
       // 的 bg 层级：--frame 是「窗口框体/标题栏/侧栏/modeline」档，gutter 与它们同居框体面）。
+      // M281（change goto-line-command 的 D4 改判）起 md 也有行号 gutter，**md 的几何与配色
+      // 真源不在这里**：md 侧去掉底色与右缘、并把 gridRow 挪到与正文同行（有 doc-title 落点时
+      // 正文在 row 2），那些规则与 md 的其它 grid 真源同居（src/preview/theme.ts 的 gutter 段，
+      // 选择器带 `.cm-scroller` 锚点以确定性压过本条 base 规则——两条都是 CM theme，
+      // CSS 先后顺序不是可依赖的契约）。本条只保证 **code 模式**的既有形态逐值不变。 */
       ".cm-gutters": {
         gridColumn: "1", gridRow: "1", justifySelf: "start", alignSelf: "stretch",
         color: "var(--text-3)",
         backgroundColor: "var(--frame)",
         borderRight: "1px solid var(--border)",
       },
+      // 当前行行号底色（M281）：两个模式都装 `highlightActiveLineGutter()`，只给行号加底、
+      // 不改正文行的底色（md 阅读视图的正文行没有整行底色，`highlightActiveLine` 不装）。
       // 当前行底色取 `--hover`（交互反馈档）：它与「同一变量绑定匹配」的 `--code-bg` 底纹
       // 必须不同——同值会让刚双击那一行上的匹配隐形（M198 的原始缺陷形态，见 theme.ts 的
       // codeBindingTheme 注释）。
@@ -1545,9 +1575,19 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
       EditorState.readOnly.of(!editable),
       EditorView.contentAttributes.of({ tabindex: "0", "aria-readonly": String(!editable) }),
     ];
+    // 行号可见面（M281，change goto-line-command 的 D4 改判）：**两个模式都常驻行号 gutter**
+    // ——md 不再豁免（Alex 原话：「我有时候需要查看 line number」）。行号是源文档逻辑行号
+    //（CM 行块 → `doc.lineAt().number`），与跳转落点（`revealLine`）同一口径；gutter 的在场
+    // 与任何命令无关，本 change 不提供关闭它的命令 / 键位 / 配置项。
+    // 两个模式装同一套 `lineNumbers()` + `highlightActiveLineGutter()`，**不装**
+    // `highlightActiveLine`（正文行的整行底色不在本 change 内；md 阅读视图本就没有它——
+    // 当前行只由行号底色指出，见 src/editor.ts 的 `.cm-activeLineGutter` 规则）。
+    // 几何与配色的模式差异全在 md 侧的样式真源（src/preview/theme.ts 的 gutter 段）；
+    // 这里的 baseTheme 是两模式共用的落点（col 1 / row 1），md 的 gridRow 由那边覆写。
+    const lineNumberGutter: Extension[] = [lineNumbers(), highlightActiveLineGutter()];
     return mode === "md"
-      ? [...editability, ...highlight, baseTheme, livePreview(previewContext), endMarker, autoIndentKeymap]
-      : [...editability, ...highlight, baseTheme, codeBindingTheme, lineNumbers(), highlightActiveLine(), autoIndentKeymap];
+      ? [...editability, ...highlight, baseTheme, livePreview(previewContext), endMarker, ...lineNumberGutter, autoIndentKeymap]
+      : [...editability, ...highlight, baseTheme, codeBindingTheme, ...lineNumberGutter, highlightActiveLine(), autoIndentKeymap];
   }
 
   /**
@@ -1773,6 +1813,15 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
     "editor.list-outdent": () => {
       applyListIndent(view, "outdent");
     },
+    // M281：按行号跳转（change goto-line-command）。命令只做一件事——把「当前行号 + 总行数」
+    // 交给注入的输入条（`src/goto-line.ts`）；确认后的落点由 `jumpToLine` 承担（它复用既有
+    // `revealLine` 的落点与滚动，见那边的说明）。零文档改动：这里不 dispatch 任何事务。
+    // 输入条开着期间前台会话被换掉（切标签 / 外部打开请求置换）时由装配层在唯一同步点
+    // （`syncActiveDocument`）收起它且不跳转——落点行号只对打开时那份文档有意义。
+    "editor.goto-line": () => {
+      if (gotoLinePrompt === null) return;
+      gotoLinePrompt.open(view.state.doc.lineAt(view.state.selection.main.head).number, view.state.doc.lines);
+    },
   };
 
   // ---------------------------------------------------------------------------
@@ -1923,6 +1972,19 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
     }
     wrap = merged;
     reconfigureWrap();
+  }
+
+  /** 1-based 行号 → 行首落点 + 居中滚动的**唯一实现**（M281 抽出）：公共面 `revealLine`
+   *  （wikilink 锚点跳转）与 goto-line 的确认路径（`jumpToLine`）共用同一份算式——MUST NOT
+   *  各写一套（REVIEW.md 第 8 条：同一语义两处真源即漂移）。越界在这里钳制（`1..doc.lines`），
+   *  因此调用方不必自己判界。 */
+  function revealLineAt(line: number): void {
+    const n = Math.max(1, Math.min(line, view.state.doc.lines));
+    const pos = view.state.doc.line(n).from;
+    view.dispatch({
+      selection: { anchor: pos },
+      effects: EditorView.scrollIntoView(pos, { y: "center" }),
+    });
   }
 
   return {
@@ -2152,6 +2214,11 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
       // 同 setTableFullscreen：复制触发钮的点击接线在构建期读这个口子。
       view.dispatch({ effects: previewRefresh.of(null) });
     },
+    setGotoLinePrompt(next: GotoLinePromptPort | null) {
+      // **不**派发 previewRefresh（与上面几个注入点的差别）：这个口子在命令执行时才被读
+      // （`editor.goto-line` 的闭包），不参与任何装饰构建，注入不改变已渲染的任何东西。
+      gotoLinePrompt = next;
+    },
     focusPreservingReadingPosition() {
       // 三段实现（取位置 → 聚焦 → 写回）在 src/scroll-position-view.ts：M280 起它不再是 facade
       // 私有物——src/toc.ts / src/search.ts / src/preview/livePreview.ts 那几条同样「以
@@ -2162,12 +2229,14 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
       view.dispatch({ effects: previewRefresh.of(null) });
     },
     revealLine(line: number) {
-      const n = Math.max(1, Math.min(line, view.state.doc.lines));
-      const pos = view.state.doc.line(n).from;
-      view.dispatch({
-        selection: { anchor: pos },
-        effects: EditorView.scrollIntoView(pos, { y: "center" }),
-      });
+      revealLineAt(line);
+    },
+    jumpToLine(line: number) {
+      // goto-line 的确认路径（M281）：**先把焦点交还编辑器再落点**——输入条收起后若焦点还在
+      // 浮层（或已经落到 body），只 dispatch 选区不会让 caret 可见，后续按键也不会落回文本
+      // 上下文。落点与滚动复用同一份 `revealLineAt`（MUST NOT 另写一套算式，REVIEW.md 第 8 条）。
+      view.focus();
+      revealLineAt(line);
     },
     readScrollPosition(): ScrollPosition | null {
       return readScrollPosition(view);

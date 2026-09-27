@@ -35,6 +35,7 @@ import { getName, getVersion } from "@tauri-apps/api/app";
 import { createToc } from "./toc";
 import { createImageLightbox } from "./lightbox";
 import { createTableFullscreen } from "./table-fullscreen";
+import { createGotoLinePrompt } from "./goto-line";
 import { createCodeBlockFullscreen } from "./code-block-fullscreen";
 import { blockCopyTarget, codeBlockFullscreenTarget, tableFullscreenTarget } from "./preview/livePreview";
 import { blockCopyText } from "./preview/block-copy";
@@ -176,6 +177,19 @@ editor.setCodeBlockFullscreen({
 editor.setBlockCopy({
   copy: (range: BlockCopyRange) => void copyBlockContent(range),
 });
+
+// 跳转到行（M281，change goto-line-command）：能力与浮层 DOM 在 src/goto-line.ts，装配侧给它
+// 三样看不到的东西——挂点（`shell.modeline`，与 .lumir-toc 同挂点同定位：浮层贴 modeline 上沿
+// 向上展开）、确认回调（编辑器的 `jumpToLine`：先把焦点交还编辑器再走既有 `revealLine`，
+// 落点算式只有一处）、以及取消 / 收起时的交还焦点（`focusPreservingReadingPosition`——
+// **MUST NOT 裸 `editor.view.focus()`**：浮层关闭不得改变阅读位置，见 src/scroll-position-view.ts）。
+// 浮层 DOM 随装配建立（一次性），打开 / 收起只是 hidden 翻转：文档打开路径与键入路径零新增工作。
+const gotoLine = createGotoLinePrompt({
+  mount: shell.modeline,
+  onJump: (line) => editor.jumpToLine(line),
+  restoreFocus: () => editor.focusPreservingReadingPosition(),
+});
+editor.setGotoLinePrompt(gotoLine);
 
 /** 块级复制的反馈文案（文案 deck D154 / D155）。块类型词只写一处：这里的「表格 / 代码块」与
  *  `block-trigger.ts` 的 `blockCopyLabel`（D153 读屏名）取自同一对词，读屏名与 toast 因此不会
@@ -722,6 +736,10 @@ editor.onScroll(() => readingPositions.scrolled());
  *  别处的读点一律改为问 editor.activeSession()，不再各自存副本。 */
 function syncActiveDocument(): void {
   const session = editor.activeSession();
+  // 跳转到行的输入条**不跨会话**（M281）：落点行号只对打开时那份文档有意义，前台文档一换就
+  // 收起且不跳转（切标签 / 被外部打开请求置换两条路径都汇到这里）。收起时把焦点交还编辑器
+  //（用户接下来的按键应落在新文档上；`focusPreservingReadingPosition` 不改变阅读位置）。
+  gotoLine.close();
   // resolve 的 from 基准不在这里同步：它由 link-follow.ts 的 resolveBase() 活读前台会话
   //（见那边的注释，那份副本曾在装载时序上造成一整批 wikilink 停在 pending）。
   syncDirtyIndicator();

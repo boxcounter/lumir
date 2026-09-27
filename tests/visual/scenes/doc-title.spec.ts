@@ -123,20 +123,24 @@ test("无 fm：钉在文档首行之前；根目录文件省略路径段", async
   const segments = await page.locator(".cm-lp-doc-meta").evaluate((el) => [...el.children].map((c) => c.textContent));
   expect(segments).toEqual(["5 行", "·", "修改于 9月20日"]);
 
-  // 位置：块是 `.cm-scroller` 的第一个子元素（M222 拓扑：document-top 落点是 scroller 级
-  // 真实 DOM 节点，grid 行编排 title 行 1 / 正文行 2，见 theme.ts 的 DOC_TITLE_TOP_CLASS 段），
-  // 几何上在文档首行之前
+  // 位置：块是 `.cm-scroller` 里**应用自己的**第一个子元素（M222 拓扑：document-top 落点是
+  // scroller 级真实 DOM 节点，grid 行编排 title 行 1 / 正文行 2，见 theme.ts 的
+  // DOC_TITLE_TOP_CLASS 段），几何上在文档首行之前。
+  // M281 修订：CM 的 gutter 列（`.cm-gutters`，md 起也有行号）被插在 `.cm-content` 之前，
+  // 于是它成了 scroller 的第一个元素——判据因此从「第一个子元素」改成「它之前只有 CM 自己的
+  // gutter 列」，语义（标题块之上没有别的应用节点）保持不变。
   const first = await page.evaluate(() => {
     const scroller = document.querySelector(".cm-scroller")!;
     const titleOuter = document.querySelector(".cm-lp-doc-title-outer")!;
     const firstLine = document.querySelector(".cm-content .cm-line")!;
+    const before = [...scroller.children].slice(0, [...scroller.children].indexOf(titleOuter));
     return {
-      isFirstChild: scroller.firstElementChild === titleOuter,
+      isFirstAppChild: before.every((el) => el.classList.contains("cm-gutters")),
       titleBottom: titleOuter.getBoundingClientRect().bottom,
       bodyTop: firstLine.getBoundingClientRect().top,
     };
   });
-  expect(first.isFirstChild).toBe(true);
+  expect(first.isFirstAppChild).toBe(true);
   expect(first.titleBottom).toBeLessThanOrEqual(first.bodyTop + 1);
 });
 

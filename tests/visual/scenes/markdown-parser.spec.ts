@@ -109,7 +109,10 @@ test('worker error retries and compartment reconfiguration completes', async ({ 
   expect(await page.evaluate(() => (window as any).experimentOf().mode('code'))).toBe('code');
   await expect(page.locator('.cm-lineNumbers')).toBeVisible();
   expect(await page.evaluate(() => (window as any).experimentOf().mode('md'))).toBe('md');
-  await expect(page.locator('.cm-lineNumbers')).toHaveCount(0);
+  // 模式判据从 `.cm-lineNumbers` 换掉（M281）：行号 gutter 不再是 code 模式的特征——md 也装
+  // 常驻行号（change goto-line-command 的 D4 改判）。这里改判 live preview 的 md 独占行类
+  // （`cm-lp-paragraph` 由 livePreview 在 md 分支里加，code 分支没有装饰层）。
+  await expect(page.locator('.cm-line.cm-lp-paragraph').first()).toBeVisible();
   await page.evaluate(() => (window as any).experimentOf().reset());
   await expect.poll(() => page.evaluate(() => (window as any).experimentOf().available())).toBe(true);
   await page.evaluate(() => (window as any).experimentOf().destroy());

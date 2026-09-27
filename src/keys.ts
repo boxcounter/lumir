@@ -164,6 +164,10 @@ const EDITOR_CORE_COMMAND_IDS = [
   "editor.scroll-page-down",
   "editor.scroll-page-up",
   "editor.recenter",
+  // M281：按行号跳转（change goto-line-command 的 D1 裁决）。归内核组 = 作用域为 editor：
+  // 命令改的是编辑器文档的光标位置与滚动，与 ⌃N / ⌥V 一族同边界（焦点在文件树 / 浮层里时
+  // 先点回正文）。默认键位 `Alt-KeyG` 有绑定，MUST NOT 登记进 KEYLESS_COMMAND_IDS。
+  "editor.goto-line",
   // M132：shift-extend 扩选（v0 不做 mark mode）
   "editor.extend-char-forward",
   "editor.extend-char-backward",
@@ -414,6 +418,26 @@ export const KEY_BINDINGS: readonly KeyBinding[] = [
   { key: "Ctrl-v", command: "editor.scroll-page-down", scope: "editor", doc: "Emacs C-v（scroll-up）：视口向后翻一屏，光标不动——阅读推进用，不给原生路径（原生滚动与 CM 视口重建叠加会整屏跳变，M103 同族）" },
   { key: "Alt-KeyV", command: "editor.scroll-page-up", scope: "editor", doc: "Emacs M-v（scroll-down）；含 Alt 的组合按物理键判定（Alt 层把 v 换成 √，e.key 认不出，见文件头 token 口径）" },
   { key: "Ctrl-l", command: "editor.recenter", scope: "editor", doc: "Emacs C-l：把光标行滚到视口居中（revealLine 同款 y:\"center\"；v0 不做 Emacs 的三段循环）" },
+  // M281（change goto-line-command 的 D1 裁决）：按行号跳转。Emacs 的 `goto-line` 是两段
+  // chord（`M-g M-g` / `M-g g`），而 `[keys]` 拒绝含空白的键位（src-tauri/src/config.rs 的
+  // validate_keys）——把默认键位押在 chord 上等于让用户改不了键（M195 对 `C-x C-=` 的既有裁决）。
+  // 故取 `M-g` 的**单段近亲** ⌥G：它是 Emacs 里 `M-g` 前缀按下的第一段，也与 M132 的
+  // ⌥ 系同族（Alt-KeyV / Alt-KeyD / Alt-KeyB / Alt-KeyF 已是 `Alt-KeyX` 形态）。
+  // token 形态是这条最大的静默失配风险：含 Alt 的组合按物理键（KeyboardEvent.code）判定——
+  // macOS 的 Alt 层把 G 换成 `©`，`e.key` 判不出用户按的键，故 MUST 写 `Alt-KeyG`，
+  // MUST NOT 写 `Alt-g` / 任何基于字符的形态（写错不报错、只是永远不命中）。
+  // 冲突已核（零冲突，三条独立来源）：① 表内——本文件即真源，`Alt-KeyG` 现表无绑定
+  //（⌥V / ⌥D / ⌥B / ⌥F 是不同 token）；② 原生菜单 accelerator——tauri 的 `Menu::default()`
+  // 逐项来自 muda 的 `items/predefined.rs`，清单见文件头 M149 段，**唯一的 ⌥ 系预置是 ⌥⌘H**，
+  // 且本应用自建项里唯一带 accelerator 的是 `CmdOrCtrl+Q`（src-tauri/src/lib.rs）；菜单键等价
+  // 只截获带 accelerator 的项（M149 对 ⌘W 的实证），⌥G 因此会到达 webview 的 keydown；
+  // ③ 系统级——macOS 不给系统菜单预置 ⌥G（Option 系预置都是 ⌥⌘ 组合，如 ⌥⌘Esc / ⌥⌘D）。
+  // 真正会「抢」⌥G 的是文本输入系统的特殊字符层（US 布局上 ⌥G 打出 `©`），它在本分发器的
+  // **下游**：命中绑定时 preventDefault 即挡住（同族先例 Alt-KeyV 的 `√` 已在真机跑过）。
+  // 输入条打开期间这一层不参与（焦点在浮层里，`editor` 作用域判定不命中），那条路径由
+  // 输入条自己就地消费（src/goto-line.ts），否则「再按一次同键」会把 `©` 打进行号框。
+  // 单段、无空白 ⇒ 可经 `[keys]` 重绑 / 解绑。
+  { key: "Alt-KeyG", command: "editor.goto-line", scope: "editor", doc: "按行号跳转（Emacs `M-g g` 的单段近亲，⌥G）：打开 modeline 之上的小浮层输入条（预填当前行号、显示 `共 M 行`），Enter 落到第 n 行行首并滚到视口居中，Escape / ⌃G 取消，越界静默钳到文档边界（D1/D2/D3 裁决）。落点复用既有 revealLine（MUST NOT 另写算式）；零文档改动、不进撤销栈、不碰 dirty。冲突已核（零冲突，三条独立来源）：表内无 ⌥G；原生菜单 accelerator 集合里 ⌥ 系只有 ⌥⌘H；macOS 系统级不占用 ⌥G。含 Alt 的组合按物理键判定 ⇒ token MUST 写 `Alt-KeyG`（Alt 层把 G 换成 `©`，写 `Alt-g` 永不命中）" },
 
   // ── 编辑器内：删除与转置（M132 档 1；表格 cell 内一律钳到 cell 边界，绝不跨过隐藏管道符）
   { key: "Ctrl-d", command: "editor.delete-char-forward", scope: "editor", doc: "Emacs C-d；表格 cell 内钳到 cell 尾（M129 survey 实证：跨过隐藏管道符即破坏表格结构）" },

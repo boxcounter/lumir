@@ -572,8 +572,58 @@
     `src/tabs.ts` 三常量改 Close / Close Other Tabs / Close Tabs to the Right，deck D149–D151 双列对调、
     原中文措辞移右列备查）。场景 50 与 change spec 的中文文案残留归 M266 收口。本条待节点 2 归档时
     一并核销。
+40. **归档 change `goto-line-command`**（M281 实现，2026-09-27，**待 Alex 节点 2**）：
+    Alex 原话「增加类似 Emacs 那样跳转到指定行号的快捷键」；节点 1 裁决（2026-09-27）已落定 D1/D2/D3
+    并**改判 D4**（md 不再豁免行号 gutter）。M261 交付提案、M271 按裁决修订、M281 实现。本条是
+    `docs/process/openspec-workflow.md` 批次收尾 checklist 第一条要求的待归档记录。
+    归档对账要点预记：delta（`keymap-commands` 一条 ADDED ×1，10 条 scenario）与实现逐条对账；归档时
+    living spec 落 `openspec/specs/keymap-commands/spec.md`；`validate --all --strict` 期望 22 passed /
+    0 failed（M254 那批是 21）。**两处与本文件的既有登记不同步，归档时要读准**：
+    ① md 的常驻行号 gutter 在真机 AX 树里不可读（CM 给 `.cm-gutters` 带 `aria-hidden`），真机只留截图
+    证据，几何判据在 chromium 层；② 图片行之后的行号会低约一个文字盒（CM 高度表 vs DOM 行盒的既有
+    差，非本 change 引入）——见下面「md 行含 inline widget 时的高度表差」条。
+    归档时若 Alex 对 md gutter 的观感（贴正文列左缘的位置、无底色）有改判，改动面是
+    `src/preview/theme.ts` 的 gutter 段 + 整页基线重拍。
 
 ## 待修 findings（不阻塞）
+
+### md 行含 inline widget 时的高度表差（M281 现场发现，2026-09-27，medium）
+
+**症状（新可见面）**：md 装上常驻行号 gutter（change `goto-line-command` 的 D4 改判）之后，**图片 /
+行内公式所在的那一行之后**的行号整体低约一个文字盒（实测 Δ18px）。行号与它自己的行对齐，但下一行
+起就偏。图片行的行号本身不动（那一行是「模型差值」的发生地，不是受害者）。
+
+**读数（chromium 1200×800，`tests/visual/scenes/m281-goto-line.spec.ts` 的探针现场）**：
+320×120 的 SVG 图片行（`.cm-lp-image`，`margin: 6px 0`，`display: inline-block`）：
+
+| 口径 | 该行高度 |
+|---|---|
+| CM 的 `viewportLineBlocks`（高度表） | **165.5** |
+| DOM 的 `.cm-line` rect | **147.5** |
+
+`view.contentHeight` = 297.19，DOM 侧对应高度少 18px（差值 18 = 该行的文字盒高 33.5 与
+`max(widget, 文字盒)` 之差的一部分，实测三次都稳定，不是测量时序）。
+
+**根因（未坐实到源码，机制候选照录）**：CM 的 `viewportLineBlocks` 对**含 inline replace widget
+的复合行**把高度算成「widget 的 border-box（含 margin）」+ 「该行的文字盒高」，而浏览器把两者排进
+**同一个行盒**（重叠，不叠加）。表格（block replace widget，`cm-lp-table-slot`）没有这个问题：
+实测 CM 的 73.5 与 DOM 的 73.5 逐值相同。frontmatter 覆盖的行没有行号是另一码事（aria-hidden 之外
+的块级替换，见 change design §1.4）。
+
+**这不是本 change 引入的（已用改动前的构建反证）**：`git stash push -- src/` 后重建再测同一 fixture，
+`viewportLineBlocks` 仍是 165.5、`contentHeight` 仍多 18px（当时没有 gutter，所以肉眼不可见）。
+⇒ **gutter 只是把 CM 自己的模型差显形了**；同一差值今天还影响一切按 `blockTop/height` 换算的路径
+（`posAtCoords` / `lineBlockAtHeight` / 阅读位置捕获），只是那些路径的判据都没有覆盖「图片之后的行」。
+
+**复现**：在 md 文档里放一张会渲染成功的图片，跳到图片之后的任意行，比较 `.cm-lineNumbers`
+的 gutter 元素顶边与该行 `.cm-line` 的 rect 顶边（差值 ≈ 18px）。
+
+**建议处置（不在 M281 范围内，另立 mission）**：先判定 CM 的高度模型能否被 widget 形态影响——若把
+「图片独占一行」渲染为 **block replace widget**（像 frontmatter / 块级数学那样带 `-outer` 包装 +
+padding 间距）能让模型与 DOM 重合，那就是最小改动（顺带修掉 `posAtCoords` 在此处的 18px 偏差）；
+否则要在 CM 侧找测量入口（`measureVisibleLineHeights` / widget 高度测量）或接受该偏差并把
+gutter 的对照口径改成「相对 CM 模型」——后者只是把缺陷写进断言，不建议。
+证据与探针读数：`.tower/comms/findings/20260927-worker-impl-goto-line-bug-md-inline-widget-heightmap.md`。
 
 ### 预览机制移除的遗留项（M254 登记，2026-09-27）
 
