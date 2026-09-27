@@ -266,12 +266,21 @@ export function literalLinkOfNode(node: SyntaxNode, doc: DocText): LiteralLink |
  * `standardLinkAt` 完全相同：打开一份**首字符就是裸 URL** 的文件时选区复位到 0，
  * 恰是 URL 节点的起点，`resolveInner(pos, 0)` 会给出父节点（Paragraph / Document）。
  * 语法树同步推进的理由也同款（大文档刚打开时快照可能还没覆盖到光标处）。
+ *
+ * 另补一条**末位端点**（M272 真实桌面验收实测到）：光标停在 `<https://x>|` 里 `>` 那个位置上
+ *（= URL 节点的 `to`）时，两侧 `resolveInner` 都落到尖括号 / 父节点上，取不到 URL——而渲染态下
+ * 那个位置**就是 URL 文本的末尾**，用户认的就是「光标在链接上」（与起点算在链接上同一条口径）。
+ * 因此往左邻位再问一次，且只接受「该 URL 的末位正好是 pos」的结果，避免把相邻文本的链接误算进来。
  */
 export function literalLinkAt(state: EditorState, pos: number): LiteralLink | null {
   const tree = ensureSyntaxTree(state, pos, 25) ?? syntaxTree(state);
   for (const side of [0, 1] as const) {
     const link = literalLinkOfNode(tree.resolveInner(pos, side), state.doc);
     if (link !== null) return link;
+  }
+  if (pos > 0) {
+    const left = literalLinkOfNode(tree.resolveInner(pos - 1, 0), state.doc);
+    if (left !== null && left.to === pos) return left;
   }
   return null;
 }

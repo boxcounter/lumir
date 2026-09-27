@@ -33,7 +33,7 @@ const BARE = "https://example.invalid/bare";
 const AUTO = "https://example.invalid/auto";
 const DEF = "https://example.invalid/home";
 const REF_DEF = "https://example.invalid/ref";
-const CELL_BARE = "https://example.invalid/cell-bare";
+const CELL_BARE = "https://example.invalid/table-cell-url";
 // ↗︎ = U+2197 + U+FE0E（变体选择符 VS15，强制文字表现而非 emoji）；→ = U+2192。
 const EXT = "\u2197\uFE0E";
 const INT = "\u2192";
@@ -277,8 +277,10 @@ test("光标落在裸 URL / 定义行上撤下装饰（D6），离开即恢复",
   await expect(page.locator(".cm-lp-link")).toHaveCount(LINKS - 1);
   await expect(page.locator(".cm-lp-link-mark")).toHaveCount(LINKS - 1);
 
-  // 定义行：光标落在整条定义行内（含 `[homepage]: ` 前缀）同样撤下
-  await setCursor(page, links.indexOf("[homepage]:") + 2);
+  // 定义行：光标落在整条定义行内（含 `[homepage]: ` 前缀）同样撤下。
+  // 定位必须带 URL——fixture 的正文段落里也出现过 `[homepage]: ` 这个字面（反引号包裹的说明文字），
+  // 用 `indexOf("[homepage]:")` 会落到那一行上（第一版就这么错了一次）。
+  await setCursor(page, links.indexOf(`[homepage]: ${DEF}`) + 2);
   await expect(page.locator(".cm-lp-link", { hasText: DEF })).toHaveCount(0);
 
   // 离开：恢复
@@ -373,20 +375,53 @@ test("字面 URL 的激活：⌘⏎ 与 ⌘-Click 各自可单独触发（键盘
   await page.keyboard.press("Meta+Enter");
   await expect.poll(async () => openedUrls(page)).toEqual([BARE, DEF, AUTO]);
 
+  // 末位端点：光标停在 URL 节点的 `to`（渲染态下就是 URL 文本的末尾、尖括号 `>` 的位置）
+  // 同样算「在链接上」——与标准链接「起点算在链接上」同一条口径（真机场景 54 实测到这条，
+  // 当时光标停在自动链接末位按 ⌘⏎ 无反应）。
+  await setCursor(page, links.indexOf(AUTO) + AUTO.length);
+  await page.keyboard.press("Meta+Enter");
+  await expect.poll(async () => openedUrls(page)).toEqual([BARE, DEF, AUTO, AUTO]);
+
   // 无 scheme 的字面 URL 上 ⌘⏎ 无操作：不装饰也不激活（不产生任何打开请求）
   await setCursor(page, links.indexOf("www.example.invalid") + 4);
   await page.keyboard.press("Meta+Enter");
   await setCursor(page, links.indexOf("xmpp:") + 6);
   await page.keyboard.press("Meta+Enter");
-  expect(await openedUrls(page)).toEqual([BARE, DEF, AUTO]);
+  expect(await openedUrls(page)).toEqual([BARE, DEF, AUTO, AUTO]);
 
   // 引用点（`[ref]` / `[正文][ref]`）同样无操作：拿不到目标就不猜
   await setCursor(page, links.indexOf("[ref] 保持原文") + 2);
   await page.keyboard.press("Meta+Enter");
-  expect(await openedUrls(page)).toEqual([BARE, DEF, AUTO]);
+  expect(await openedUrls(page)).toEqual([BARE, DEF, AUTO, AUTO]);
 
   // 文档始终没被这些激活路径碰过
   expect(await readDocument(page)).toBe(links);
+});
+
+test("定义行的前缀不是链接本体：光标在 `[homepage]: ` 上 ⌘⏎ 无操作，移到 URL 上才生效", async ({ page }) => {
+  // 装饰面与激活面的**判据差异**（真机场景 54 第一版栽在这里，换算到本层钉住）：
+  // 装饰的显露范围是整条定义行（含前缀），而激活要求**光标落在 `URL` 区间内**。
+  // 打开这个文件时选区复位到 0 —— 0 在前缀里，⌘⏎ 因此**不该**打开任何东西。
+  const doc = "[homepage]: https://example.invalid/def\n\n正文段落。\n";
+  await openDoc(page, "def.md", doc);
+  await expect(page.locator(".cm-lp-link")).toHaveCount(1);
+
+  // 起点（前缀内）：无操作
+  await setCursor(page, 0);
+  await page.keyboard.press("Meta+Enter");
+  expect(await openedUrls(page), "前缀不是 URL 节点，⌘⏎ 在这里无操作").toEqual([]);
+
+  // 前缀内任意位置同样无操作（区分度：不是「只有 0 特例」）
+  await setCursor(page, 3);
+  await page.keyboard.press("Meta+Enter");
+  expect(await openedUrls(page)).toEqual([]);
+
+  // 移到 URL 区间内（行尾 = URL 末位）：打开
+  await setCursor(page, doc.indexOf("https://example.invalid/def") + 4);
+  await page.keyboard.press("Meta+Enter");
+  await expect.poll(async () => openedUrls(page)).toEqual(["https://example.invalid/def"]);
+  // 激活不改文档
+  expect(await readDocument(page)).toBe(doc);
 });
 
 test("相对路径 md 链接：⌘⏎ 走应用内跳转，打开目标笔记", async ({ page }) => {

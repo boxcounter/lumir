@@ -48,4 +48,4 @@ const url = "https://example.invalid/in-fence";
 | --- | --- |
 | [表格内外链](https://example.invalid/cell) | 单元格文本 |
 | [表格内笔记](guide.md) | 第二条 |
-| https://example.invalid/cell-bare | cell 内裸 URL |
+| https://example.invalid/table-cell-url | cell 内裸 URL |

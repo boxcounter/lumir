@@ -2,7 +2,7 @@
 id: "59-enter-auto-indent"
 item: 59
 title: Enter 换行自动缩进的真机链路——code 模式继承语法缩进、无缩进规则的语言沿用当前行、md 围栏内沿用当前行且不续列表标记、md 列表续行不变、auto_indent=false 回退
-fixtures: [enter-indent.js, enter-indent.toml, enter-indent.md, enter-indent-list.md, enter-indent-fence.md]
+fixtures: [enter-indent.js, enter-indent-off.js, enter-indent.toml, enter-indent.md, enter-indent-list.md, enter-indent-fence.md]
 open: enter-indent.js
 marker: "const alpha"
 steps:
@@ -35,7 +35,7 @@ steps:
   - name: 打开 toml fixture（第 3 行 `  [tool]` 带两空格，toml 没有缩进规则）
     do: open
     file: enter-indent.toml
-    marker: "[tool]"
+    marker: "root = true"
   - name: 建立编辑器焦点（点编辑器顶边；键盘注入的前置）
     do: clickEditor
     expect:
@@ -67,9 +67,14 @@ steps:
   - name: 光标移到第 3 行（普通段落）行尾
     do: keys
     keys: ["ctrl+n", "ctrl+n", "ctrl+e"]
-  - name: 记录编辑器文本基线（Enter 到底有没有落地，靠它判）
-    do: recordEditor
-    as: 段落基线
+  - name: 记录 md fixture 的文件基线（Enter 有没有落地的正观测走**磁盘**）
+    # 为什么不用 `recordEditor` 立即读编辑器：Enter 是盲发注入（丢键不重试），而落盘要经 2s
+    # 防抖——磁盘判据与后面的负向断言在同一条时间线上（都等 2.6s），比「按完立刻读 AX」稳。
+    # 代价如实登记：这条正观测不区分「光标在第 3 行」与「光标仍在第 1 行」（两处按 Enter 的结果
+    # 都是平换行），落点由本场景的第一步（`clickEditor` 落在第 1 行）与 `ctrl+n` 的次数共同约束。
+    do: record
+    as: md基线
+    file: enter-indent.md
   - name: 按 Enter
     do: key
     key: "return"
@@ -77,8 +82,8 @@ steps:
     do: sleep
     ms: 2600
     expect:
-      - label: 正观测：Enter 确实落地（文档变了）——「不缩进」这类负向断言必须配它，否则丢键会假绿
-        editor: { changedSince: 段落基线 }
+      - label: 正观测：Enter 确实落地（文件被写过）——「不缩进」这类负向断言必须配它，否则丢键会假绿
+        file: { path: enter-indent.md, changedSince: md基线 }
       - label: 没有凭空加缩进（全文没有只含空白的行）
         file: { path: enter-indent.md, not: '/^ +$/' }
       - shot: md-段落-平换行
@@ -87,7 +92,7 @@ steps:
   - name: 打开列表 fixture
     do: open
     file: enter-indent-list.md
-    marker: "- alpha"
+    marker: "alpha"
   - name: 建立编辑器焦点
     do: clickEditor
   - name: 光标移到 `- alpha` 行尾（第 3 行）
@@ -110,7 +115,7 @@ steps:
   - name: 打开围栏 fixture
     do: open
     file: enter-indent-fence.md
-    marker: "beta();"
+    marker: "gamma"
   - name: 建立编辑器焦点
     do: clickEditor
   - name: 光标移动到块内那一行（第 4 行）行尾
@@ -140,7 +145,7 @@ steps:
   - name: 重开列表 fixture
     do: open
     file: enter-indent-list.md
-    marker: "- alpha"
+    marker: "alpha"
   - name: 建立编辑器焦点
     do: clickEditor
   - name: 光标移到 `- alpha` 行尾
@@ -160,15 +165,26 @@ steps:
       - shot: 关配置-md-列表仍续行
 
   # 6b：code 模式的自动缩进回退（关配置后 Enter 落回浏览器默认 = 裸换行）
-  - name: 重开 js fixture（光标点顶边后落在第 1 行）
+  # **刻意用一份没被前面的用例碰过的 fixture**（`enter-indent-off.js`）：用例 1 已经在
+  # `enter-indent.js` 里留下一行「恰好两个空格」，拿同一个文件判 `not: '/^  $/'` 会恒红
+  # ——负向断言的现场必须是干净的起点（断言对象被自己前面的步骤污染过），这是写本场景时
+  # 第一版踩到的坑，如实留在这里。
+  - name: 打开未被前面用例碰过的 js fixture（光标点顶边后落在第 1 行）
     do: open
-    file: enter-indent.js
-    marker: "const alpha"
+    # marker 会被 `lib/drive.mjs` 的 openFile 用 `new RegExp(marker)` 编译：写 `()` 时它被当成
+    # **空捕获组**，模式实际是「const gamma =  => {」（`()` 位置变成两个空格）⇒ 永远匹配不上
+    # （M272 实测：这一条把 `open` 拖成 60s 超时，而文件其实已经打开）。只取不含正则元字符的子串。
+    file: enter-indent-off.js
+    marker: "const gamma"
   - name: 建立编辑器焦点
     do: clickEditor
-  - name: 记录编辑器文本基线
-    do: recordEditor
+    expect:
+      - label: 起点干净：这份 fixture 里没有「只含两个空格」的行（下面那条负向断言因此有区分度）
+        file: { path: enter-indent-off.js, not: '/^  $/' }
+  - name: 记录文件基线（同用例 3：正观测走磁盘）
+    do: record
     as: 关配置基线
+    file: enter-indent-off.js
   - name: 光标到行尾后按 Enter
     do: keys
     keys: ["ctrl+e", "return"]
@@ -176,10 +192,12 @@ steps:
     do: sleep
     ms: 2600
     expect:
-      - label: 正观测：Enter 确实落地（文档变了）——丢键时这条会红，而不是让下面那条负向断言空过
-        editor: { changedSince: 关配置基线 }
+      - label: 正观测：Enter 确实落地（文件被写过）——丢键时这条会红，而不是让下面那条负向断言空过
+        file: { path: enter-indent-off.js, changedSince: 关配置基线 }
       - label: 没有缩进行 ⇒ code 模式回到本 change 之前的行为
-        file: { path: enter-indent.js, not: '/^  $/' }
+        file: { path: enter-indent-off.js, not: '/^  $/' }
+      - label: 配对对照：同一个能力**开着**配置时是会缩进的（用例 1 的 fixture 里有那一行）
+        file: { path: enter-indent.js, has: '/^  $/' }
       - shot: 关闭配置-回退
 teardown:
   - label: 收尾：js fixture 里那两行 `const alpha = () => {` 与 `  return alpha;` 仍在

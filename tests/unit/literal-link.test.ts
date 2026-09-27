@@ -55,6 +55,30 @@ test("裸 URL：命中 URL 节点自身，尾标落在它末尾，露出范围�
   assert.ok(hit(doc, "https://example.invalid/bare", "https://example.invalid/bare".length - 1), "末位前一个字符");
 });
 
+test("三种形态的两个端点都能命中：起点与末位（渲染态下用户认的「在链接上」）", () => {
+  // 起点：见下一条（选区复位到 0 的现场）。
+  // 末位：`<https://x>|` 里 `>` 那个位置（= URL 节点的 `to`）在渲染态下就是 URL 文本的末尾
+  // ——两侧 `resolveInner` 都取不到 URL，靠 literalLinkAt 的末位补判命中（M272 真实桌面
+  // 验收实测到：光标停在自动链接末位按 ⌘⏎ 原本无反应）。
+  const cases: Array<[label: string, doc: string, url: string]> = [
+    ["裸 URL", "正文 https://example.invalid/bare 在此。\n", "https://example.invalid/bare"],
+    ["定义行", "[homepage]: https://example.invalid/home\n", "https://example.invalid/home"],
+    ["角括号自动链接", "<https://example.invalid/auto>\n", "https://example.invalid/auto"],
+  ];
+  for (const [label, doc, url] of cases) {
+    const from = doc.indexOf(url);
+    const state = stateOf(doc);
+    assert.ok(literalLinkAt(state, from), `${label}：起点命中`);
+    assert.equal(
+      literalLinkAt(state, from + url.length)?.form.url,
+      url,
+      `${label}：末位（URL 节点 to）命中`,
+    );
+    // 相邻位置的区分度：末位**之后**一个位置不再算（下一字符是空格 / `>` / 换行）
+    assert.equal(literalLinkAt(state, from + url.length + 1), null, `${label}：末位之后不命中`);
+  }
+});
+
 test("文档首字符即裸 URL：光标在 0（打开文件时选区复位的位置）同样命中", () => {
   // 与 standardLinkAt 的同款两侧试起点：`resolveInner(0, 0)` 给的是 Paragraph，
   // 只有 side 1 才从该位置开始取。这条断了的表现是 ⌘⏎ 静默无反应。
