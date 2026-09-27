@@ -240,6 +240,17 @@ Alex 抽审路径：先看 `summary.md`，再进 FAIL 场景看 `steps.md` + `sh
 
 - **不做手感/审美判定**：表头双击选中手感、表格宽度观感、WKWebView 下的翻屏节奏等归 Alex；
   套件只留截图证据（与 `tests/visual/README.md` 同一原则）。
+- **没有滚动动作，也滚不动（M252 三轮探针）**：套件不提供 `do: scroll`——M252 按 tower 批准试做过
+  （MCP `scroll` + 节点 bbox 中心 / 原始坐标），结论是**这条通道在本 app 上产不出滚动**：
+  ① 点路径先报 `no cached geometry — call get_app_state first`（必须先有一次带截图的 `mode=full`
+  快照打底，补上后该错误消失）；② 随后四种组合（树行 bbox 中心 × `page` 正/负、左栏 padding 点、
+  legacy `dy`）全部返回 `no scroll movement / already at end`，即 KimiCU 在该点上找不到可滚动的
+  元素（`doubleClick` / `drag` 早有同类前科，两者最终都改走 `swift + CGEvent` 注入，见下条）。
+  因此**「先滚动容器再断言」类场景当前不可写**：受影响的是「左栏滚到中部后 ⌘O 浮层被裁」这类
+  定位缺陷（判据只能退到代码级复算 + 端到端链路）。可行修法见 finding
+  `20260927-worker-vault-switch-fb-improve-scroll-m252.md`：给 `lib/cgevent-click.swift` 加一个
+  wheel mode（与 `doubleClick`/`drag` 同一条已验证的注入通道），再在 `lib/cu.mjs` 的 `scroll`
+  封装里透传 x/y。
 - **不进 CI（v0）**：macos runner 跑真机 Tauri 成本高、失败模式多，稳定后再评。
 - **键盘注入通道的两类不可达（M249 固化；判据按类落通道）**：KimiCU 的 `press_key` 有两类键在
   WKWebView 上产不出期望的事件，用它们当判据的场景会得到假 FAIL（反过来，「按了也没变」这类**负向**

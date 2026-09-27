@@ -6,13 +6,10 @@ fixtures: [callout.md, end-marker-long.md, end-marker-short.md, headings-ramp.md
 seed:
   registry:
     - { id: acc-a, path: $vault, lastOpenedAt: 1757000002000 }
-    # 第二个 vault 写 `$vault-b` 而不是 `$vault2`：execute.mjs 的占位符替换是
-    # `"$vault2".replaceAll("$vault", <vault 路径>)`，`$vault2` 会被前缀吃掉成
-    # `<vault 路径>2`（一个不存在的目录 → 该行变成「路径不可用」）。`$vault-b` 与
-    # `secondVaultDir()` 的兜底口径（`${vaultDir()}-b`）逐字一致，两种写法都成立。
-    # 这条套件缺陷已随 M252 落 finding（`scripts/acceptance/lib/execute.mjs` 的
-    # `appMetaTokens`/`substituteTokens`，修法是按 token 长度倒序替换或加词边界）。
-    - { id: acc-b, path: $vault-b, lastOpenedAt: 1757000001000 }
+    # 第二 vault 的惯用记号 `$vault2`（由 app.mjs 的 resolveSeedPath 解析成 secondVaultDir()）。
+    # M252 修掉了 execute.mjs 占位符替换的前缀吞噬（`$vault` 曾把 `$vault2` 吃成 `<vault>2`，
+    # 17/19/32 的第二 vault 因此变成不存在的路径）——本场景已回归惯用写法。
+    - { id: acc-b, path: $vault2, lastOpenedAt: 1757000001000 }
   # A 的会话 = 验收 vault 里全部可打开的 fixture（46 个标签）。**为什么要这么多**：套件单次
   # AX 快照的实测延迟是秒级（见正文「覆盖边界」），装载指示这类瞬时状态要在快照里出现，装载
   # 窗口必须显著长于那次延迟——合成 vault 只有 65 个文件，只能靠「把会话塞满 + 给 vault 塞
@@ -164,11 +161,17 @@ steps:
 
 ## 覆盖边界（如实记录，别读成「已覆盖」）
 
-- **「左栏滚到中部」这个前置状态造不出来**：套件的动作表里没有 scroll，`src/tree.ts` 也没有任何
-  `scrollIntoView`（打开文件不会把树行滚进视口），`resizeWindow` 不改变 `scrollTop`，键盘通道进不了
-  树（Tab 在 WKWebView 上不落地，见 README「已知边界」）。因此本场景验的是**未滚动**下的列表完整
-  与端到端切换闭环；「入口被滚出视口后浮层贴视口上沿」那条只有代码级复算（`place` 的夹取算式）
-  与人工复算，没有自动化判据——建议给套件加一个 scroll 动作（已随 M252 落 finding）。
+- **「左栏滚到中部」这个前置状态造不出来（M252 实测三轮探针）**：套件的动作表里没有 scroll，
+  `src/tree.ts` 也没有任何 `scrollIntoView`（打开文件不会把树行滚进视口），`resizeWindow` 不改变
+  `scrollTop`，键盘通道进不了树（Tab 在 WKWebView 上不落地）。M252 按 tower 批准试做了 `do: scroll`
+  动作（MCP `scroll` + 节点 bbox 中心）：三次探针的结论是**这条通道在本 app 上滚不动**——
+  先要 `no cached geometry`（点路径必须有一次带截图的快照打底，补上后消失），随后四种组合
+  （树行中心 / 左栏 padding 点 × page 正负 / legacy dy）全部返回 `no scroll movement / already at end`，
+  即 KimiCU 的 MCP scroll 在该点上找不到可滚元素（`doubleClick` / `drag` 早有同类前科，它们最终
+  都改走 `swift + CGEvent` 注入）。因此本场景仍是**未滚动**下的列表完整与端到端切换闭环；
+  「入口被滚出视口后浮层贴视口上沿」那条只有代码级复算（`place` 的夹取算式）与人工复算，
+  没有自动化判据。缺口、探针证据与可行修法（给 `lib/cgevent-click.swift` 加 wheel mode）见
+  finding `20260927-worker-vault-switch-fb-improve-scroll-m252.md` 的后续记录。
 - **为什么给 A 塞 12 个 16MB 稀疏 md（`big-*.md`）**：套件单次 AX 快照的往返延迟是**秒级**——
   43 个标签（恢复实测 1180ms）那一轮，紧随点击的快照读到的已经是「装载完成」态（43 个标签全在、
   无指示节点）。指示这类瞬时状态要在快照里出现，装载窗口必须显著长于那次延迟；合成 vault 只有

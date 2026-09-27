@@ -39,9 +39,14 @@
 
 ## 6. 交付状态与外部依赖（合并前必读）
 
-- **`src/style.css` 的改动不在本分支的提交里**（tower 2026-09-27 裁决：该文件临时划给 M251，先合并）。改动留在 wt-252 的工作区未 commit：
-  - `.vault-loading`（12px 转圈、tokens 取色、`@keyframes vault-loading-spin`、`prefers-reduced-motion` 分支）——**没有它，指示元素就是裸 span：AX 节点照常出现（本轮真机断言验的是这一点），但没有可见的环**；
+- **`src/style.css` 已落地**（2026-09-27 收尾批）：`rebase` 到 M251 合并后的 master（`8153355`，与它在 style.css 的树行段无重叠、零冲突）后提交为 `8c067db`：
+  - `.vault-loading`（12px 转圈、tokens 取色、`@keyframes vault-loading-spin`、`prefers-reduced-motion` 分支）；
   - `.vault-pop` 上方注释里「定位夹进挂点矩形」那句。
-  合并前需由 tower 把 `src/style.css` 加回 M252 scope（merge gate 会拒），并把这份工作区改动一并提交（或授权 worker rebase 后再提交）。
-- **tower 批准的 `scroll` 动作没有实现**（scope 扩到 `scripts/acceptance/lib/execute.mjs` + `README.md` 的批准在本轮收尾阶段才读到，未动工）。按批准的备选口径如实登记：浮层几何那条仍是「代码级复算 + 端到端链路」，缺口与建议实现形态见 finding `20260927-worker-vault-switch-fb-improve-scroll-m252.md`。若仍要补，本 mission 可被 resume 一个聚焦任务。
+  落地后重跑 `scripts/gate.sh visual`（隔离端口 4319）：**12/12 PASS，视觉回归 310s 全绿、零基线失配、零 `--update`**（`hidden` 常态对整页与元素级基线无影响）。
+- **`scroll` 动作：试做三轮后按批准口径停手，代码已回退**（scope 含 `execute.mjs` + `README.md`）。
+  - 三轮探针的结论：KimiCU 的 MCP `scroll` 在本 app 上**产不出滚动**——点路径先要一次带截图的 `get_app_state` 打底（`no cached geometry`），补上后四种组合（树行 bbox 中心 × `page` 正负、左栏 padding 点、legacy `dy`）恒定报 `no scroll movement / already at end`。现场：`test-results/acceptance/2026-09-27-m252-scrollprobe{,2}/49-scroll-probe/`。
+  - 因此 `ACTIONS` / `checkScenario` / 动作实现 / README 动作表都已回退到无 scroll 的状态；README 的「已知边界」新增一条写清这条通道不可用 + 探针数据。
+  - 可行修法是照 `doubleClick`/`drag` 改走 `swift + CGEvent`（wheel mode），需动 `lib/cgevent-click.swift` 与 `lib/cu.mjs`（都不在本 mission scope）——已落 finding `20260927-worker-vault-switch-fb-improve-mcp-scroll-wkwebview-…-cgevent-wheel.md`。
+  - **后果（如实记账）**：场景 49 仍是「未滚动」口径，「入口被滚出视口后浮层贴视口上沿」只有代码级复算（`place` 的夹取算式）与人工复算，**没有自动化判据**；原计划的反向验证（旧 `place` → 该步变红）随之无法执行。
+- **`$vault2` 占位符缺陷已修**（同批 scope）：`execute.mjs` 的 `substituteTokens` 改成**词边界替换**（token 后紧跟 `[A-Za-z0-9_]` 时不替换）——`$vault2` 原样交给 `resolveSeedPath`（→ `secondVaultDir()`），`$vault-b` 仍照常替换（`-` 不是标识符字符）。验证：`loadScenario` + `prepareSeed` 端到端跑到 `acc-b → /private/tmp/lumir-m102-acceptance-b`（修前是 `/tmp/lumir-m102-acceptance2`，不存在）；场景 49 里我自己的 `$vault-b` 规避写法已回归惯用记号 `$vault2` 并删掉就地注记。
 - **本轮真机运行的 AX 快照退化**（KimiCU 服务坏态：`element_count: 1`、只剩窗口壳）出现过两次，按套件 README 的既有边界处理（不改场景）；另有一次 39 的红是**另一个 agent 的并行真机实例抢前台**所致，安静复跑即 PASS（`test-results/acceptance/2026-09-27-m252-39/`）。同机多个 mission 同时跑真机套件会互相污染（前台 + 共享 `/tmp` 合成 vault + 共享隔离配置目录），建议 tower 层串行化。
