@@ -33,7 +33,7 @@
 - [x] 5.2 `tests/visual/scenes/m182-image-first-open-width.spec.ts`：warm 路径由「单击另一个文件再单击回来」改为「关掉标签再单击打开」——原流程在 M254 之前是**就地替换（重新装载）**，现在单击只切标签（不装载、且保留该标签自己的滚动位置 ⇒ 渲染范围比首开窄，末尾图片不在 DOM 里）。实测证据见 review-request：同一序列改用 ⌘-点击（改前改后同一条代码路径）复现同一读数，证明这不是本 change 引入的行为变化
 - [x] 5.3 `tests/visual/scenes/m198-code-variable-highlight.spec.ts`：「切文件不残留」第三步改写——回到原文件现在是切到它自己的标签，装饰按那个标签的选区重建（逐标签保留语义），断言随之改成「新文件零装饰 + 切回按原选区重建」
 - [x] 5.4 `tests/visual/scenes/readiness.spec.ts`：A/B/A 的第三次打开改为「先关掉 a 的标签再单击打开」——单击一个已打开的文件不再装载、因此不再派发 ready 事件（本用例要判的是「同一条路径的第二次装载把 ready 绑对」，必须走一次真正的装载）
-- [x] 5.5 `tests/visual/scenes/tab-menu.spec.ts` 新增场景里的 `.ft-menu` 类名撞车修掉（见同批 change 的 design §二：标签菜单只带 `.tab-menu`，否则树菜单按 `.ft-menu` 找菜单的 12 条用例全变成 strict violation）
+- [x] 5.5 `tests/visual/scenes/tab-menu.spec.ts` 新增场景里的 `.ft-menu` 类名撞车修掉（见同批 change 的 design §二：标签菜单只带 `.tab-menu`，否则树菜单按 `.ft-menu` 找菜单的 14 条用例全变成 strict violation）
 
 ## 6. 验证
 
@@ -45,7 +45,7 @@
 
 ## 7. 基线处置
 
-- [x] 7.1 全量视觉跑一遍，列出失配清单；逐张判定「失配是否恰为去斜体的预期效果」（第一轮 19 failed 逐条归因：2 条改名基线的「缺失即写」、12 条标签菜单类名撞车、3 条判据前提被本 change 改变的用例、2 条见 §5；归因全文见 `visual-full-run1.log` 与过目包）
+- [x] 7.1 全量视觉跑一遍，列出失配清单；逐张判定「失配是否恰为去斜体的预期效果」（第一轮 19 failed 逐条归因：2 条改名基线的「缺失即写」、14 条标签菜单类名撞车、3 条判据前提被本 change 改变的用例【2+14+3=19，数字与 `visual-full-run1.log` 一致】；归因全文见 `visual-full-run1.log` 与过目包）
 - [x] 7.2 生成前后对照过目包（主 checkout `test-results/m254/baseline-review/`：四张图 + 两张删除 + 逐张读数与人工读图结论）
 - [x] 7.3 只重建判定通过的基线（两张改名重建 + 两张新增），删除两张失去对象的旧名基线；零静默更新——`tab-bar-dirty` / `tab-close-confirm-toast` 两张 sha256 未变即为「只动了该动的」的证明
 

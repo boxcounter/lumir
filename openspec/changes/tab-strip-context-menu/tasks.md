@@ -41,3 +41,18 @@
 
 - [x] 6.1 `docs/backlog.md` 登记同批落地与核销（第 39 条待归档跟踪 + 「待修 findings」的遗留项）
 - [x] 6.2 review-request 逐任务对账
+
+## 7. review r1（2026-09-27）后的修复
+
+- [x] 7.1 P2-1（toast 的 sticky 去重吞掉批量关闭的答复通道）：按 reviewer 的**选项 1** 修——`src/main.ts`
+      的去重命中分支就地调用本次调用的 `onDismiss`，`showCloseConfirm` 按「没答复」处理、批量在该标签
+      之前干净停手（不留一个永不 resolve 的批量动作）。其余 sticky 调用方不传 `onDismiss`，行为不变
+- [x] 7.2 配一条断言：`tests/visual/scenes/tab-menu.spec.ts` 的「脏标签：已有确认在场时批量关闭干净停手
+      （不静默挂起、不多弹一条确认）」——先 ⌘W 让确认在场不答复，再走菜单「关闭其他标签」，断言标签数
+      不变、确认浮条仍只有一条、等一拍仍不变、既有确认仍可用
+- [x] 7.3 **如实登记该断言的判别力边界**：回退 `src/main.ts` 的修复后同一断言仍 PASS——「promise 挂起」
+      与「干净停手」在可见面上完全相同，DOM 层判不开二者。断言钉的是合同面（不静默关掉队列里更靠后的
+      干净标签、不冒出第二条确认）；修复本身的价值是控制流保证。另一条可选语义（「跳过已在问的那一条、
+      继续关其余」，可被断言判开、更贴「关闭其他标签」的字面承诺）需新一轮裁决，见 review-request
+- [x] 7.4 reviewer 的非计项 nit：review-request 与过目包 README 里的「12 条 tree-menu」实为 **14 条**
+      （2 + 14 + 3 = 19，与 `visual-full-run1.log` 一致）——过目包 README 与本文档 §7 已勘误

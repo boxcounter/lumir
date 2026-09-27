@@ -205,7 +205,15 @@ function toast(
 ): HTMLElement {
   if (sticky) {
     for (const el of shell.editor.querySelectorAll<HTMLElement>(".lumir-toast[data-sticky-text]")) {
-      if (el.dataset.stickyText === text) return el;
+      if (el.dataset.stickyText !== text) continue;
+      // M254（reviewer r1 P2-1）：去重命中时返回的是**旧**元素，本次调用的 actions / onDismiss
+      // 一律不接上线。对「关标签确认」那条链路（`src/tabs.ts` 的 showCloseConfirm）这等于
+      // **本次提问拿不到自己的答复**：它在批量关闭里等的是「这个标签关掉了没有」，而答复挂在
+      // 本次调用的回调上。就地调用 onDismiss 把这件事如实报回去——调用方按「没答复」处理
+      //（`settle(false)`），批量在该标签之前干净停手，MUST NOT 静默挂起一个永不 resolve 的
+      // 批量动作。其余 sticky 调用方不传 onDismiss，行为一字不变。
+      onDismiss?.();
+      return el;
     }
   }
   const el = document.createElement("div");

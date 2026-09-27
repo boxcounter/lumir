@@ -239,6 +239,45 @@ test("脏标签：确认流逐条弹、取消即停手（后面的标签一个�
   expect(await fileText(page, "beta.md")).not.toContain("BBB");
 });
 
+test("脏标签：已有确认在场时批量关闭干净停手（不静默挂起、不多弹一条确认）", async ({ page }) => {
+  await stubTauri(page, VAULT);
+  await page.goto("/");
+  await openTabs(page, ["alpha.md", "beta.md", "gamma.md"]);
+
+  // 先让 beta 的关闭确认在场且**不答复**：走 ⌘W（与菜单无关的那条既有路径）。
+  // sticky 浮条按设计常驻，这个前置状态完全合法（reviewer r1 P2-1 的触发条件）。
+  await page.locator(".tab-open", { hasText: "beta.md" }).click();
+  await dirty(page, "BBB");
+  await page.keyboard.press("Meta+w");
+  const confirm = page.locator(".lumir-toast", { hasText: "关闭后修改将丢失" });
+  await expect(confirm).toBeVisible();
+  await expect(confirm).toHaveCount(1);
+  await page.locator(".tab-open", { hasText: "alpha.md" }).click();
+
+  // 批量路径的目标 = [beta(脏、确认已在场), gamma(干净)]。走到 beta 时 `toast()` 的 sticky
+  // 去重命中旧浮条——修之前，本次调用的 onDismiss 不接上线，批量 promise 永远不 resolve
+  //（后续标签不关、零反馈）。修的语义：去重命中就地报告「本次提问拿不到自己的答复」，
+  // 批量在 beta 之前停手。
+  await openTabMenu(page, "alpha.md");
+  await menuItem(page, "关闭其他标签").click();
+
+  await expect(page.locator(".tab")).toHaveCount(3);
+  // 确认浮条仍然只有一条：批量 MUST NOT 再弹第二条把答复挂到没人接的回调上。
+  await expect(page.locator(".lumir-toast", { hasText: "关闭后修改将丢失" })).toHaveCount(1);
+  // 停手是稳定的：等一拍再读，标签数与浮条数都不变（合同面——不静默关掉 gamma、
+  // 也不在屏幕上留第二条确认）。注：「promise 挂起」与「干净停手」在这一刻的可见状态
+  // 相同（两者都什么都不做），可观测面判不开二者；能判的是上面两条合同。
+  await page.waitForTimeout(1200);
+  await expect(page.locator(".tab")).toHaveCount(3);
+  await expect(page.locator(".lumir-toast", { hasText: "关闭后修改将丢失" })).toHaveCount(1);
+
+  // 既有的那条确认仍然可用（批量没有把它顶掉或改挂回调）：答「放弃修改并关闭」→ beta 关掉，
+  // gamma 留下（批量早已停手，不会借这次答复继续）。
+  await confirm.getByRole("button", { name: "放弃修改并关闭" }).click();
+  await expect(page.locator(".tab")).toHaveCount(2);
+  await expect(page.locator(".tab-name")).toHaveText(["alpha.md", "gamma.md"]);
+});
+
 test("脏标签：点掉确认浮条同样停手（不算「默认放弃」）", async ({ page }) => {
   await stubTauri(page, VAULT);
   await page.goto("/");
