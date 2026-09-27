@@ -355,6 +355,10 @@ const INDENT_UNIT = 2;
  * （回落既有纯文本渲染），与表格 64 KiB 降级同量级。
  */
 const MAX_HIGHLIGHT_CHARS = 64 * 1024;
+
+/** 单块着色上限的对外读数（M277 的代码块全屏复用同一条上界，MUST NOT 另立新阈值——
+ *  REVIEW.md 第 8 条：同一语义一处真源）。 */
+export const MAX_CODE_HIGHLIGHT_CHARS = MAX_HIGHLIGHT_CHARS;
 const CACHE_LIMIT = 32;
 
 const EMPTY: readonly CodeToken[] = [];

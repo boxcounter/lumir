@@ -1,6 +1,6 @@
 import { createShell } from "./shell";
 import { createEditor } from "./editor";
-import { applyKeyOverrides, KEY_BINDINGS, Keymap } from "./keys";
+import { applyKeyOverrides, BLOCK_SCROLL_CLASS, KEY_BINDINGS, Keymap } from "./keys";
 import type { CommandId, CommandRunner, CommandRuntime, KeyBinding, KeyOverrides } from "./keys";
 import { baseName, createFileTree, openKind, vaultAbsolutePath } from "./tree";
 import type { InlineEditRequest, OpenKind } from "./tree";
@@ -35,7 +35,10 @@ import { getName, getVersion } from "@tauri-apps/api/app";
 import { createToc } from "./toc";
 import { createImageLightbox } from "./lightbox";
 import { createTableFullscreen } from "./table-fullscreen";
-import { tableFullscreenTarget } from "./preview/livePreview";
+import { createCodeBlockFullscreen } from "./code-block-fullscreen";
+import { blockCopyTarget, codeBlockFullscreenTarget, tableFullscreenTarget } from "./preview/livePreview";
+import { blockCopyText } from "./preview/block-copy";
+import type { BlockCopyRange } from "./preview/block-copy";
 import {
   createGuardPromptPresenter,
   createVaultLoadingIndicator,
@@ -141,6 +144,62 @@ const tableFullscreen = createTableFullscreen({
   restoreFocus: () => editor.view.focus(),
 });
 editor.setTableFullscreen(tableFullscreen);
+
+// 代码块放大全屏查看（M277，change code-block-fullscreen；双入口：命令 +
+// 代码块 hover 触发钮）。与表格侧的**唯一形态差异**是 `restoreFocus`：它 MUST NOT 照抄
+// `editor.view.focus()`——M274 实测证明 WebKit 下那次聚焦会把阅读位置拽回（scrollTop
+// 2750 → 0，chromium 结构性看不见）。这里注入 editor 的原语（取阅读位置 → focus → 经编辑器
+// 滚动通道写回），见 src/editor.ts 的 focusPreservingReadingPosition。
+const codeBlockFullscreen = createCodeBlockFullscreen({
+  mount: shell.root,
+  restoreFocus: () => editor.focusPreservingReadingPosition(),
+  themeScopeSource: () => editor.view.dom,
+});
+// 装饰层拿到的是「按块起点打开」的**端口**（不是遮罩本体）：呈现计划在点击那一刻按当前
+// `EditorState` 现取，读屏名复用文档内容器同一份生成处（见 livePreview 的 codeBlockLabel）。
+editor.setCodeBlockFullscreen({
+  open(from) {
+    const target = codeBlockFullscreenTarget(editor.view, from);
+    if (target === null) return;
+    codeBlockFullscreen.open(target.render, target.label);
+  },
+});
+
+// 块级复制（M277，change block-copy-affordance）：触发钮与 `block.copy` 命令共用一个口子，
+// 内容口径只有一处（`src/preview/block-copy.ts`）。剪贴板走既有纯前端通道
+// （navigator.clipboard.writeText，M244 已实证），零插件、零后端命令、零 capabilities 增量。
+editor.setBlockCopy({
+  copy: (range: BlockCopyRange) => void copyBlockContent(range),
+});
+
+/** 块级复制的反馈文案（文案 deck D154 / D155）。块类型词只写一处：这里的「表格 / 代码块」与
+ *  `block-trigger.ts` 的 `blockCopyLabel`（D153 读屏名）取自同一对词，读屏名与 toast 因此不会
+ *  各写一份（改一处即两处同步）。 */
+const COPIED_TABLE_TOAST = "已复制表格";
+const COPIED_CODE_BLOCK_TOAST = "已复制代码块";
+const COPY_BLOCK_FAILED_TOAST = (reason: string): string => `复制失败：${reason}`;
+
+/**
+ * 复制一个块的内容（M277）：内容在**触发那一刻**从当前 `EditorState` 现取（不缓存文本——
+ * 装饰重建 / 外部重载后取到的就是最新文档），写剪贴板 + toast 反馈。
+ *
+ * 成功 = success tone 的 D154（与「已复制完整路径」D137 同族）；失败（剪贴板不可用 / 权限被拒）
+ * 给 D155 的 toast 并另记一条 console 线索（M244 同款处置：诊断事件名是 Rust 侧白名单，
+ * 不借一个语义不符的既有事件名）。MUST NOT 静默。
+ */
+async function copyBlockContent(range: BlockCopyRange): Promise<void> {
+  const text = blockCopyText(editor.view.state, range);
+  const done = range.kind === "table" ? COPIED_TABLE_TOAST : COPIED_CODE_BLOCK_TOAST;
+  const noun = range.kind === "table" ? "表格" : "代码块";
+  try {
+    await navigator.clipboard.writeText(text);
+    toast(done, [], false, "success");
+  } catch (e) {
+    const reason = errorMessage(e);
+    console.warn(`lumir: 复制${noun}失败：${reason}`);
+    toast(COPY_BLOCK_FAILED_TOAST(reason));
+  }
+}
 
 // 栏宽拖拽手柄（M228，change content-width-drag）：DOM 在 shell（编辑器 pane 的覆盖层），
 // 控制器在 src/content-width.ts；装配侧给三样东西——当前宽度的读写口（editor 闭包真源）、
@@ -901,6 +960,21 @@ const commands: CommandRuntime = {
     if (target === null) return;
     tableFullscreen.open(target.table, target.label);
   },
+  // 代码块放大全屏查看（M277）：与表格侧同形——遮罩已开 = 关闭（toggle），否则按命中判据找块
+  // （caret 在块内；容器持焦这条在命令的 gate 里另判）并打开。内容取自「打开那一刻」的
+  // EditorState（codeBlockFullscreenTarget 现取整块源码 + 按行 / token 切分）。
+  "code-block.toggle-fullscreen": () => {
+    if (codeBlockFullscreen.isOpen()) {
+      codeBlockFullscreen.close("toggle");
+      return;
+    }
+    const target = codeBlockFullscreenTarget(editor.view, editor.view.state.selection.main.head);
+    if (target === null) return;
+    codeBlockFullscreen.open(target.render, target.label);
+  },
+  // 块级复制（M277）：命中判据不满足时什么都不做（事件不被消费由下面的命令级门承担）。
+  // 命令实现本身在 editor.ts 的 commands 记录里（`block.copy` 的作用域是 editor，内核组；
+  // 内容口径与复制钮逐字相同——都经 `copyBlockContent`）。
   "tab.close": () => {
     void tabs.closeTab(editor.activeSession());
   },
@@ -922,11 +996,37 @@ const keymapContext = {
   // 分发器**不消费事件**、不 preventDefault，同名按键照旧走原生路径（spec 的
   // 「命中条件不满足时不消费事件」scenario）。
   // 遮罩已开时恒为真：「再执行一次同一命令关闭」这条关闭路径必须可达——无论 caret 当时在哪。
-  commandGate: (command: CommandId) =>
-    command !== "table.toggle-fullscreen" ||
-    tableFullscreen.isOpen() ||
-    tableFullscreenTarget(editor.view) !== null,
+  // M277 的两条命令同款：`code-block.toggle-fullscreen` 在遮罩已开时恒真（toggle 关闭可达），
+  // 否则要求命中一块代码块（caret 在块内或块的横滚容器持焦——容器持焦那条是 DOM 事实，
+  // 与 tableFullscreenTarget 的入口 ① 同口径）；`block.copy` 要求命中一个可复制的块。
+  commandGate: (command: CommandId) => {
+    if (command === "table.toggle-fullscreen") {
+      return tableFullscreen.isOpen() || tableFullscreenTarget(editor.view) !== null;
+    }
+    if (command === "code-block.toggle-fullscreen") {
+      return codeBlockFullscreen.isOpen() || codeBlockCommandTarget() !== null;
+    }
+    if (command === "block.copy") {
+      return blockCopyTarget(editor.view) !== null;
+    }
+    return true;
+  },
 };
+
+/**
+ * `code-block.toggle-fullscreen` 的命中判定：内容目标（caret 在块内），或**该块的横滚容器持焦**
+ * （滑鼠用户点了容器时 caret 可能还在别处，与 `tableFullscreenTarget` 的入口 ① 同口径）。
+ * 折行口径下块内没有容器，第二条自然为假——结构性事实，不模拟。
+ */
+function codeBlockCommandTarget() {
+  const active = editor.view.dom.ownerDocument.activeElement;
+  if (active instanceof Element && active.classList.contains(BLOCK_SCROLL_CLASS)) {
+    const from = editor.view.posAtDOM(active, 0);
+    const target = codeBlockFullscreenTarget(editor.view, from);
+    if (target !== null) return target;
+  }
+  return codeBlockFullscreenTarget(editor.view, editor.view.state.selection.main.head);
+}
 let detachKeymap = new Keymap().attach(window, commands, keymapContext);
 
 /** 应用配置里的 [keys] 覆盖（M132）：先挂默认表、配置到位后重挂，避免「启动瞬间按键

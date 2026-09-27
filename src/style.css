@@ -994,20 +994,20 @@ body {
   position: relative;
 }
 
-/* 表格全屏触发钮（M240，M235 划稿推荐档 `inside-corners-hover` 的形态纪律逐条落点）：
-   位置 = 右上角内侧叠放（top/right 6px，压在表格可视区右上角，零文档几何变化）；
+/* 块级动作钮的**共享形态类**（M277 抽取，四个消费者：表格复制 / 表格放大 / 代码块复制 /
+   代码块放大）。形态纪律逐条来自 M235 划稿的推荐档 `inside-corners-hover`（M240 已落地）：
+   位置 = 右上角内侧叠放（各钮自己的位置 class 给 top/right，见下）；
    壳 = --preview-bg + 1px --border hairline，圆角 r6（小型控件档），尺寸 26×24
    （design-tokens-v1.md:212 的 `--layout-tb-btn` 侧栏内变体——本仓没有 30×28 那个 token 的
    消费者，故此处按 tokens 文档写值），图标色 --text-2 → 热态 --text，过渡 --dur-hover；
    **无阴影**（两档阴影分别专用 active tab 与浮层，内容区平铺 chrome 不投影，tokens v1 规则 7）；
    **零新 token、零组件级新增色值**。
-   出现时机 = hover 表格容器才出现：静止态 visibility: hidden + opacity: 0——不出现、不占位
-   （绝对定位，不进任何流）、不进读屏树、不进任何整页基线（5.8 的静止态零足迹）。可发现性
-   缺口由命令入口承担，这正是 D3 双入口的分工。 */
-.lumir-table-fs-trigger {
-  position: absolute;
-  top: 6px;
-  right: 6px;
+   出现时机 = hover 块的可视盒才出现：静止态 visibility: hidden + opacity: 0——不出现、不占位
+   （绝对定位，不进任何流）、不进读屏树、不进任何整页基线（静止态零足迹）。可发现性缺口由命令
+   入口承担，这正是双入口的分工。
+   M277 起形态规则只有这一处：各钮自己的 class **只写位置偏移**，MUST NOT 再抄一份形态
+   （REVIEW.md 第 8 条）。 */
+.lumir-block-trigger {
   z-index: 2;
   display: flex;
   align-items: center;
@@ -1026,10 +1026,29 @@ body {
      隐去（而非仅透明）是刻意的：静止态不进读屏树、不可聚焦、不接收指针。 */
   transition: opacity var(--dur-hover) var(--ease-standard), visibility 0s linear var(--dur-hover);
 }
-/* hover 表格可视盒即浮现；键盘焦点落在钮上（focus-visible）同样浮现——hover 之外的唯一入口，
-   保持「可见即可用」。 */
-.cm-lp-table-slot:hover .lumir-table-fs-trigger,
-.lumir-table-fs-trigger:focus-visible {
+
+/* 位置偏移（每个钮一处，形态在共享类上）：
+   放大钮贴可视盒右上角内侧（M240 的既有几何，一字不动）；复制钮贴它左侧、间隙 4px
+   （26 + 4 + 6 = 36），尺寸与放大钮相同——组内自左至右「复制 → 放大」。
+   「放大贴角、复制在左」的硬理由是**不动已落地的东西**：放大钮的位置、断言选择器与基线
+   全部保持逐值不变，本 change 只往左长一格。 */
+.lumir-table-fs-trigger,
+.lumir-codeblock-fs-trigger {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+}
+.lumir-block-copy-trigger {
+  position: absolute;
+  top: 6px;
+  right: 36px;
+}
+
+/* hover 块的可视盒即浮现（表格与代码块的 slot 同判据）；键盘焦点落在钮上（focus-visible）
+   同样浮现——hover 之外的唯一入口，保持「可见即可用」。 */
+.cm-lp-table-slot:hover .lumir-block-trigger,
+.cm-lp-codeblock-slot:hover .lumir-block-trigger,
+.lumir-block-trigger:focus-visible {
   opacity: 1;
   visibility: visible;
   color: var(--text);
@@ -1037,15 +1056,23 @@ body {
 }
 /* eink 规则③⑤：白底实心黑框（无灰底可用的翻转口径，同 .cm-lp-codeblock-scroll）；
    规则④：热态黑底反白（同 `.tb-btn.on` 的处理）。 */
-:root[data-theme="eink"] .lumir-table-fs-trigger {
+:root[data-theme="eink"] .lumir-block-trigger {
   background: #fff;
   border-color: #000;
   color: #000;
 }
-:root[data-theme="eink"] .cm-lp-table-slot:hover .lumir-table-fs-trigger,
-:root[data-theme="eink"] .lumir-table-fs-trigger:focus-visible {
+:root[data-theme="eink"] .cm-lp-table-slot:hover .lumir-block-trigger,
+:root[data-theme="eink"] .cm-lp-codeblock-slot:hover .lumir-block-trigger,
+:root[data-theme="eink"] .lumir-block-trigger:focus-visible {
   background: #000;
   color: #fff;
+}
+
+/* 代码块动作钮的坐标系统（M277，BlockWrapper rank 20 = 最外）：与 .cm-lp-table-slot 同机制，
+   唯一职责是给钮当包含块。零足迹：无背景 / 边框 / 内外边距 / overflow——因此 M180 的
+   「代码块折行时块内 MUST NOT 出现横向滚动容器」口径不变（slot 只是定位层）。 */
+.cm-lp-codeblock-slot {
+  position: relative;
 }
 
 .cm-lp-table-scroll {
@@ -1141,9 +1168,11 @@ body {
 }
 /* 行内被 Decoration.replace 隐藏的管道符仍留有 CM6 的 img.cm-widgetBuffer / 占位 span；
    它们是自动放置的 grid item，会各撑出一条隐式行（约 1em），实测行高 92px 远超单元格 33px。
-   唯一豁免是 M240 的表格全屏触发钮：它 `position: absolute`（不在流里、不生成隐式行，
-   见 .lumir-table-fs-trigger），本来就该显示。 */
-.cm-lp-table .cm-lp-table-row > :not(.cm-lp-table-cell):not(.lumir-table-fs-trigger) {
+   唯一豁免是块级动作钮（M240 的表格全屏钮 + M277 的复制钮）：它们 `position: absolute`
+   （不在流里、不生成隐式行，见 .lumir-block-trigger），本来就该显示。
+   M277 起豁免写成共享类 `.lumir-block-trigger`——新增钮只要带共享类就自动获得豁免，
+   MUST NOT 在这里逐个列类名（漏一个的表现正是「钮尺寸为 0」，M277 实现期实测踩到过）。 */
+.cm-lp-table .cm-lp-table-row > :not(.cm-lp-table-cell):not(.lumir-block-trigger) {
   display: none;
 }
 .cm-lp-table-cell-empty {
@@ -1341,6 +1370,75 @@ body {
   font-size: var(--editor-font-size);
   line-height: var(--lh-ui);
   color: var(--text);
+}
+
+/* 代码块放大全屏查看（M277，change code-block-fullscreen）：与表格全屏**同一份浮层配方**
+   （--scrim 遮罩 + --preview-bg / 1px --border / --shadow-raise / r10 面板壳），差异只有两处，
+   都是内容形态决定的：
+     1. 面板壳宽度取满遮罩可用宽（`width: 100%`）——本能力的价值正是「在更大的画布上看」，
+        壳宽因此不是由内容撑开而是吃满可用宽（阅读栏默认 760px，窗口远宽于此）；
+     2. 壳内是**按行重建**的内容（不是克隆），行 / token 复用文档内代码块的既有 class 与既有
+        规则——主题 scope 由 src/overlay-scope.ts 镜像，MUST NOT 在此另写一套行样式或色值映射
+        （REVIEW.md 第 8 条）。
+   折行 / 横滚口径**沿用配置**（浮层内不设第二个开关）：带 `.cm-lp-codeblock-nowrap` 时内容按
+   自然宽（`width: max-content`）呈现、超长行由壳横向滚动到达；带 `.cm-lp-codeblock-wrap` 时
+   内容按壳宽（`width: 100%`）折行、不出现横向滚动。这两个 class 与 `.cm-content` 上那两个同名，
+   theme.ts 的折行规则用 `:is(.cm-content, .lumir-codeblock-fs-content)` 让同一份规则值两处命中。 */
+.lumir-codeblock-fs-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--sp-12);
+  background: var(--scrim);
+  outline: none;
+}
+/* author 的 display:flex 会盖掉 UA 的 [hidden] 规则，显式补回（同 .lumir-table-fs-overlay）。 */
+.lumir-codeblock-fs-overlay[hidden] {
+  display: none;
+}
+.lumir-codeblock-fs-panel {
+  width: 100%;
+  max-width: 100%;
+  max-height: 100%;
+  padding: var(--sp-9) var(--sp-10);
+  background: var(--preview-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--r10);
+  box-shadow: var(--shadow-raise);
+  overflow: auto;
+}
+/* eink 规则⑦⑧：浮层阴影退场、边框升级 1.4px 实心黑（模态强调档）；--scrim 以明度差保留。 */
+:root[data-theme="eink"] .lumir-codeblock-fs-panel {
+  border: 1.4px solid #000;
+  box-shadow: none;
+}
+/* 内容容器：底板与圆角取文档内代码块横滚容器的同一视觉语言（--code-bg + r8 + 同一份内边距），
+   字体 / 字号 / 行高取编辑器作用域 token（与运行期字号步进同源，不各写一份常量）。 */
+.lumir-codeblock-fs-content {
+  width: max-content;
+  max-width: 100%;
+  padding: 9px var(--sp-7) var(--sp-5);
+  background-color: var(--code-bg);
+  border-radius: var(--r8);
+  font-family: var(--editor-font-family);
+  font-size: var(--editor-font-size);
+  line-height: var(--lh-ui);
+  color: var(--text);
+  /* 只读是结构性的（内容不在编辑器 contenteditable 子树内），但文本 MUST 保持原生可选可复制。 */
+  user-select: text;
+}
+/* 折行口径：内容按壳宽折行（行规则由 theme.ts 给出，见上）。 */
+.lumir-codeblock-fs-content.cm-lp-codeblock-wrap {
+  width: 100%;
+  max-width: none;
+}
+/* eink 规则⑤：无灰底可用 → 翻转为白底黑框（同 .cm-lp-codeblock-scroll）。 */
+:root[data-theme="eink"] .lumir-codeblock-fs-content {
+  background-color: #fff;
+  border: 1px solid #000;
 }
 
 /* 轻量大纲浮层（M148）：绝对定位贴**指示段上方**，不占任何常驻空间。

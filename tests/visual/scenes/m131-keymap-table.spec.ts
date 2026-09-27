@@ -69,9 +69,13 @@ test("键位表不变量：无重复键、每绑定有归属命令、命令无�
     const owner = binding.scope === "editor" ? EDITOR_COMMAND_IDS : GLOBAL_COMMAND_IDS;
     expect(owner, `${binding.key} 的命令 ${binding.command} 与作用域 ${binding.scope} 不匹配`).toContain(binding.command);
   }
-  // 编辑器命令全部带上，避免「命令实现了但没人绑」（折行命令不在 editor 组，不受这条约束）
+  // 编辑器命令要么带上绑定、要么显式登记为「默认不绑键」——M277 起这条口径与上面那条对账同形：
+  // `block.copy`（change block-copy-affordance 的裁决点 5）是**有意不占物理组合**的 editor 作用域
+  // 命令，鼠标入口是块上的 hover 复制钮。只写「编辑器命令都有绑定」会把这类有意不绑键的设计
+  // 判成错（M277 落地时本场景如实红过一条），因此这里必须与 `KEYLESS_COMMAND_IDS` 一起判。
   for (const command of EDITOR_COMMAND_IDS) {
-    expect(KEY_BINDINGS.filter((binding) => binding.command === command).length).toBeGreaterThan(0);
+    const bound = KEY_BINDINGS.some((binding) => binding.command === command);
+    expect(bound || KEYLESS_COMMAND_IDS.includes(command), `编辑器命令 ${command} 既没有绑定、也不在默认不绑键清单里`).toBe(true);
   }
 });
 

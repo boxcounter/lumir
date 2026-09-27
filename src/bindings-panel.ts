@@ -48,6 +48,11 @@ export const BINDING_GROUPS: ReadonlyArray<{ title: string; commands: readonly C
   // 漏过一次（master 视觉门禁红，M240 顺手收）。现在由 tests/unit/bindings-panel.test.ts
   // 的「零兜底组」对账守住。
   { title: "列表缩进", commands: ["editor.list-indent", "editor.list-outdent"] },
+  // M277：块级复制（change block-copy-affordance）单列一组——它作用的对象是**文档里的一个块**
+  // （表格 / 代码块），与光标族、列表族都不是一族。同批的代码块全屏命令（作用域 global）留在
+  // 「全局」组：那一组的成员定义就是 NON_TAB_GLOBAL_COMMAND_IDS，挪出来会与它重复渲染
+  // （分组互斥是硬约束，见文件头）。
+  { title: "块", commands: ["block.copy"] },
   { title: "widget", commands: WIDGET_COMMAND_IDS },
   // M149：标签单列一组（而不是并进「全局」）——⌘W 的语义变化与 ⌘1–9 的九条直达是
   // dogfood 期最需要一眼核对的两件事，混在全局组里不容易看全。两组必须**互斥**：

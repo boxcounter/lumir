@@ -842,6 +842,13 @@ proposal.md:77）与 M267（`ui-language-i18n`，proposal.md:90「新增 D152 �
 动因：deck 规则是「只追加、不复用」，而代码注释与单测字面量按 D 编号引用文案，撞号会让这些引用
 指错条目。**触发条件**：M267 过节点 1 进实现时，第一个 task 先做这步重基。
 
+**M277 实现期补记（2026-09-27，两块 change 同批落地）**：`code-block-fullscreen` 的提案期声明是
+**D152**（与 M261 撞号，且在 tower 裁决之前写成），实现期按同一条裁决改取 **D156**——于是 deck 的
+占用变成 **D152 = M261（保留空号，未落地）**、**D153–D155 = block-copy-affordance（M277 已落地）**、
+**D156 = code-block-fullscreen（M277 已落地）**。⇒ **M267 的重基起点随之改为 D157 起**（原预计
+D156），`ui-language-i18n` 实现时仍需按当时末位再核一次（不盲取）。deck 的编号沿革段（`文案-Copy.md`）
+与本条同步记着这次改号。
+
 ### table-trigger.ts 注释 deck 编号漂移（M262 登记，2026-09-27）
 
 `src/preview/table-trigger.ts:30` 与 `:42` 两条注释把表格全屏触发钮的读屏名写成「文案 deck D120」，
@@ -850,6 +857,35 @@ proposal.md:77）与 M267（`ui-language-i18n`，proposal.md:90「新增 D152 �
 按「末位 D119 ⇒ 取 D120」写，实现期落到 D124 后只改了单测与 deck、漏改这两条注释。finding：
 `.tower/comms/findings/20260927-worker-proposal-code-fs-b-improve-table-trigger-ts-deck-d120-d124-d120.md`。
 **触发条件**：任一后续 mission 碰到 `src/preview/table-trigger.ts` 时顺手把两处 D120 改成 D124。
+**已核销（M277，2026-09-27）**：两处注释已改为 D124（M277 恰好动到这个文件——给块级动作钮抽共享类
+时逐行过了一遍），并在该处注明这次改动的来历。
+
+### M277 实现期登记的已知边界：块级复制与代码块全屏（2026-09-27）
+
+M277（`block-copy-affordance` + `code-block-fullscreen` 的实现批）落地时**如实登记**的边界，
+都不是缺陷、也都不是「以后再修」的待办，写在这里是为了让后续 mission 不必重新发现一遍：
+
+1. **复制结果恒为 LF 换行**（`src/preview/block-copy.ts` 的文件头）：切片取自 `EditorState`
+   （`Text.of` 把 CRLF 归一成 `lineBreak`），因此 CRLF 源文件复制出来的也是 LF。这是「从模型复制、
+   不从磁盘复制」的既有语义，不是本能力引入的行为。
+2. **代码块没有大小上限，表格有**：表格 >64 KiB 整块降级为源码（无 grid DOM、无入口），代码块
+   没有降级——点击复制是对整块源码的一次同步 `sliceString`。落地时未专门量超大块（≥512 KiB）的
+   点击到 toast 时延（`block-copy-affordance` tasks 5.4 的这一档如实记为**未测量**）。
+3. **窄块上的钮会向左溢出**：按钮组锚点是块的 slot 右缘（= 栏宽右缘），固定宽 56px（复制 + 放大 +
+   间隙），窄块上这组钮悬在表右侧的内容区上方，hover 期间才出现。跨块的观感归 Alex dogfood。
+4. **全屏浮层里 >64 KiB 的块退化为单块纯文本**：文档内该块仍是逐行排版（只是不着色），浮层里
+   没有头部条与行样式——设计决定（复用既有的着色阈值，不另立新阈值），观感差如实登记。
+5. **命令路径的块定位是视口有界的**（`src/preview/livePreview.ts` 的 `codeBlockAt` 复用装饰层的
+   `tableDiscoveryRange`：视口 ± max(首行长 × 2, 2048)）：caret 留在原处、视口滚出该范围之后再按
+   `code-block.toggle-fullscreen` 或 `block.copy`，会**静默不动作**（命中判据取不到块）。真机场景 62
+   的操作幅度刻意落在 2048px 以内。要覆盖「视口滚得很远、caret 留在原块」这条，需要一条不依赖
+   装饰层发现范围的块定位（例如按 caret 位置在语法树上直接解析 + 单独产块序数）——是另一个 change，
+   登记在此不夹带（M277 已另开 finding 给 tower）。
+6. **浮层的 `blur` 兜底关闭路径真机未覆盖**（`code-block-fullscreen` tasks 6.1 的登记）：在不换文档的
+   前提下没有稳定的注入通道把焦点交给别处；单测覆盖「blur 关闭且不抢焦点」，真机侧 MUST NOT 拿
+   Esc 路径的绿灯冒充它。
+7. **两条新命令默认不绑键**（`block.copy` / `code-block.toggle-fullscreen`）：鼠标入口分别是块上的
+   复制钮与放大钮（hover 才出现），键盘入口需用户经 `[keys]` 绑定。`⌘/` 面板会列出它们的「未绑定」行。
 
 ### M252 装载指示立论在打开段不成立（M268 登记，2026-09-27）
 
@@ -863,6 +899,24 @@ proposal.md:77）与 M267（`ui-language-i18n`，proposal.md:90「新增 D152 �
 （打开段指示只取「在场」判据），M268 的 delta 已带同一条边界、两处不冲突；② `vault_open_path`
 是否异步化等 M268 tasks 1.2 的 watch 段读数再定；③ 顺带统一 `vault_open`（async）/ `vault_open_path`
 （同步）两条 path 的线程语义。
+
+### 验收套件的三处口径限制（M277 现场发现，2026-09-27，前两处已随 M277 落地修正）
+
+1. **剪贴板读数的行尾被 AppleScript 改写（已修）**：`osascript -e 'the clipboard'` 把粘贴板文本按
+   **经典 Mac 行尾**（CR）返回，而 app 侧写的是 LF。此前 `clipboard: { exact }` 对**多行内容**必然
+   假红（场景 47 是单行，一直没暴露）。M277 在 `scripts/acceptance/lib/execute.mjs` 的 `readClipboard()`
+   里加行尾归一（`\r\n` / `\r` → `\n`），README 的两处口径已同步；场景 61 的多行 `exact` 断言因此才可能。
+2. **`editor.unchangedSince` 读的是 AX 渲染文本，不是文档模型（已在 M277 的场景里改走磁盘判据）**：
+   实测「点一下渲染为 grid 的表」之后，AX 文本会多出一个换行（渲染态随 caret 是否落在渲染块里变化），
+   **而文档与磁盘逐字节未变**（磁盘 sha256 断言同时 PASS）。⇒ 真机层的「不改写源文件」判据改成
+   `file.unchangedSince`（sha256）；**文档模型层**的逐字节判据在 chromium 场景（`readDocument` 直接读
+   CM state）。将来若有人想用 `editor.unchangedSince` 守「不改文档」，这条限制要先知道。
+3. **注入通道的可靠性与可点节点面（M277 现场，未修，属环境/工具面）**：长 chain（8–19 个 chord）
+   在盲发注入下会丢键或重复键（实测：⌃N ×3 有时走 6 行）；AX 里**只有 token span 组 / AXTable 一类
+   节点带 bbox**，块内纯文本节点与 mermaid widget 都报「找不到带 bbox 的节点」。稳定写法：
+   「一次点击锚点（`AXTable` / 编辑器首行）+ 4–7 步短链 + 每个目标块 ≥4 行（给 ±1 容错）」，
+   并且每条 `clipboard.exact` 都要配一条正向见证（toast），否则「剪贴板里的旧值恰好等于期望值」
+   会假绿（M277 实测踩到两次）。M277 的场景 61/62 是按这条口径写的，可作为模板。
 
 ### 验收套件（M240 现场发现，2026-09-26）
 
@@ -1103,6 +1157,13 @@ proposal.md:77）与 M267（`ui-language-i18n`，proposal.md:90「新增 D152 �
   `focusPreservingReadingPosition()`（scrollSnapshot → focus → dispatch），四处调用点统一改用，
   main.ts 的 vault 切换器两个 dep（readingPosition / restoreReadingPosition）可顺带收回；spec 条款措辞
   收口时上移到编辑器/交互维度。finding `20260921-worker-vault-scroll-idea-must-not-m186-vault.md`。
+
+  **部分落地（M277，2026-09-27）**：`src/editor.ts` 的 `focusPreservingReadingPosition()` 已按同一份
+  收敛建议实现（取阅读位置 → `view.focus()` → 经 `readScrollPosition` / `applyScrollPosition` 写回，
+  三步同帧、MUST NOT 裸写滚动容器），`src/code-block-fullscreen.ts` 的 `restoreFocus` 已经用它
+  （M274 实测：WebKit 下裸 `focus()` 把 `scrollTop` 从 2750 拽到 0）。**仍未收口的是上面那四条**：
+  `src/toc.ts`（大纲 Esc）、`src/search.ts`（⌘F 关闭）、`src/main.ts` 的图片遮罩与键位面板仍用裸
+  `view.focus()`（以及表格全屏——它今天也还是裸 `view.focus()`，同族缺陷待同一批收口）。
 
 ### 未复现
 

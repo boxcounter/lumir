@@ -259,14 +259,18 @@ export const livePreviewTheme = EditorView.theme({
   // 选择器带 .cm-content 前缀（0,3,0）压过基础主题的 .cm-lineWrapping（0,2,0）——
   // 「不折行」要把继承下来的 break-spaces / overflow-wrap:anywhere 一起压回 pre / normal，
   // 只改 white-space 不够（overflow-wrap 是继承属性，会把 pre 的长行再切碎）。
-  [`.cm-content.${CODEBLOCK_NOWRAP_CLASS} .cm-line.cm-lp-codeblock-line`]: {
+  [`:is(.cm-content, .lumir-codeblock-fs-content).${CODEBLOCK_NOWRAP_CLASS} .cm-line.cm-lp-codeblock-line`]: {
     whiteSpace: "pre",
     wordBreak: "normal",
     overflowWrap: "normal",
   },
   // 「文件不折行 + 代码块折行」这条组合的落点：.cm-content 落回 white-space: pre 时，
   // 代码块要自己把折行口径覆盖回来。
-  [`.cm-content.${CODEBLOCK_WRAP_CLASS} .cm-line.cm-lp-codeblock-line`]: {
+  // M277 起选择器用 `:is(.cm-content, .lumir-codeblock-fs-content)`：代码块全屏浮层的内容容器
+  // 也带同一个折行 class，让**同一份规则值**在两处命中（浮层 MUST NOT 另写一套折行规则——
+  // REVIEW.md 第 8 条）。浮层脱离编辑器根，靠 overlay-scope 的主题 scope 镜像让本规则的前缀
+  // （生成类）重新成立，因此这里的 `.cm-lp-codeblock-fs-content` 分支也必须是**后代选择器**。
+  [`:is(.cm-content, .lumir-codeblock-fs-content).${CODEBLOCK_WRAP_CLASS} .cm-line.cm-lp-codeblock-line`]: {
     whiteSpace: "break-spaces",
     wordBreak: "break-word",
     overflowWrap: "anywhere",

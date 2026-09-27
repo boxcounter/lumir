@@ -146,7 +146,7 @@ steps:
 | `focusWindow` | `retries` | 确保目标窗口在前台（键盘场景的前台纪律，见上） |
 | `key` / `keys` | `key` / `keys: [...]`、`gapMs` | 键盘注入（`ctrl+n`、`cmd+s`、`cmd+/` …）。`keys` 对**整串都是可打印单字符**的序列额外做回读 + 有限重试（≤3）；chord / 混合序列 / 无可读目标一律保持盲发不重试（判定边界见「已知边界」） |
 | `type` | `text`、`clear`、`retries` | 输入到编辑器（内部先真实点击聚焦，避免落陈旧选区）；回读 + 有限重试与 `keys` **同一口径**：只在编辑器字节完全未变时重试（≤3），partial landing 直接报错不重试（判定边界见「已知边界」） |
-| `clipboardRead` | — | 读**系统剪贴板**（M244）：固定 `osascript -e 'the clipboard'`，不接受命令与参数——套件刻意不引入通用 shell 通道（这条口径见 `38-content-width-drag.md` 的登记），只开这一个可断言的读数出口。返回命令 stdout（去掉尾换行）；命令失败即**报错**（不把「读不到」当空）。日常断言用 `clipboard` 断言形态，本动作用于把读数写进证据 |
+| `clipboardRead` | — | 读**系统剪贴板**（M244）：固定 `osascript -e 'the clipboard'`，不接受命令与参数——套件刻意不引入通用 shell 通道（这条口径见 `38-content-width-drag.md` 的登记），只开这一个可断言的读数出口。返回命令 stdout 并做**行尾归一**（`\r\n` / `\r` → `\n`，再去掉一个尾换行）——AppleScript 把粘贴板文本按经典 Mac 行尾（CR）返回，不归一的话多行内容的 `exact` 断言必然假红（app 侧写的是 LF；M277 实测）；命令失败即**报错**（不把「读不到」当空）。日常断言用 `clipboard` 断言形态，本动作用于把读数写进证据 |
 | `sleep` | `ms` | 等待 |
 | `record` | `as`、`file` | 记下文件 sha256/mtime，供 `changedSince`/`unchangedSince`/`mtimeNewerThan` 比较。`file` **支持 glob**（与 file 断言同源：取匹配文件里 mtime 最新那一份——诊断日志这类「文件名由 app 决定」的产物要用它）；**目标不存在即报错**，不把基线记成 null（null 基线在 `mtimeNewerThan` 那边会退化成「0 基线」的假绿，M272 补） |
 | `recordEditor` | `as` | 记下编辑器文本，供 `editor.unchangedSince` 做**逐字节**比较 |
@@ -201,7 +201,7 @@ steps:
 | `file` | `path`、`exists`、`has`、`not`、`changedSince`、`unchangedSince`、`mtimeUnchangedSince`、`mtimeNewerThan` | `path` 相对验收 vault；`env:` 前缀指隔离配置目录；`xxxSince` 引用 `record` 记下的基线。`unchangedSince` 只比 sha256，`mtimeUnchangedSince` 比 mtime 精确相等——「不落盘」这类判据两个一起用（写了同一份内容时 sha256 相同而 mtime 会推进）。`path` 含 `*` 时按 glob 在父目录里取**匹配文件里 mtime 最新的那一份**再断言（诊断日志按 UTC 日期命名、`env/` 目录跨天复用，写死日期的断言会在之后每天读到上次 run 的旧文件而永久空过——这条是给那类「按日期滚动、目录不重置」的产物用的） |
 | `glob` | `dir`、`pattern`、`min`/`exact` | 文件名由 app 决定的产物（崩溃备份、另存副本）用 glob 断言 |
 | `window` | `moved: true/false` 或 `width: N` | 窗口几何（M236）：`moved` 对比**动作前**的 window_bounds 基线（步骤须有 `do`，位移 ≥8pt 才算动——标题栏拖拽移动窗口的判据）；`width` 断言生效宽度（±8pt 容差，对窗口管理器钳制后的真实值，不对请求值） |
-| `clipboard` | `has` / `not` / `exact` | 在**系统剪贴板文本**上匹配（M244）：与 `clipboardRead` 共用同一条固定 `osascript` 命令；`has`/`not` 按子串或 `/…/` 正则，`exact` 逐字等于。**读不到一律 FAIL**——不许在不可观测的窗口里下结论（REVIEW.md 第 2 条：「读不到」被当成「为空」时 `not` 类断言会退化成恒真） |
+| `clipboard` | `has` / `not` / `exact` | 在**系统剪贴板文本**上匹配（M244）：与 `clipboardRead` 共用同一条固定 `osascript` 命令（含上面那条行尾归一，因此多行内容可以直接写 `exact`）；`has`/`not` 按子串或 `/…/` 正则，`exact` 逐字等于。**读不到一律 FAIL**——不许在不可观测的窗口里下结论（REVIEW.md 第 2 条：「读不到」被当成「为空」时 `not` 类断言会退化成恒真） |
 | `shot` | 名称 | 截图 + AX dump 留档 |
 
 **占位符**（M236 起）：expect 字符串里可写 `$appName` / `$appVersion`（加载时从本 checkout 的
