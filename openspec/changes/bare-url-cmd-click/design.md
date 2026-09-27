@@ -152,7 +152,7 @@ node openspec/changes/bare-url-cmd-click/evidence/lezer-node-forms.mjs
 
 ## 10. 验收面（与 tasks.md 对应）
 
-- **合同层**：`editor-live-preview` 的 MODIFIED requirement（4 条新 scenario + 既有 6 条 scenario 逐条保留，其中 1 条按新口径改写）。
+- **合同层**：`editor-live-preview` 的 MODIFIED requirement（scenario 总数 11 条 = 新增 5 条 + 改写 1 条 + 逐条保留 5 条，与 [proposal.md](proposal.md) 的 Impact 同口径）。
 - **单测层（纯逻辑）**：新形态的节点识别与区间（等价于 `standardLinkParts` 的位置断言）、「带 scheme」前提（`www.` / 裸邮箱 / `xmpp:` 一律不入选）、分类复用（新形态的目标喂进 `classifyLinkTarget` 得 `external`）。
 - **视觉层（chromium，CI 结构层 + 本地像素层）**：装饰形态（类名、`title`、尾标文字与顺序）、`LINKS` / `MARKS` 计数更新、⌘-Click 与 ⌘⏎ 各开一次（stub 记账 `__openedUrls`）、无 scheme 字面保持原文（负向断言必须配正观测，REVIEW.md 第 2 条）、引用点保持原文、代码块 / HTML / frontmatter 保持原文、光标显露、`EditorState.doc` 与磁盘逐字节不变。
 - **真机层（WKWebView）**：场景 **54**（编号声明见 tasks.md §6）——`⌘⏎` 触发（套件无法表达 ⌘-Click），断言装饰态上屏（尾标在场）+ 诊断日志 `link_open`（`category=external` / `outcome=opened`，与 `12-links` 同款通道）+ `unchangedSince` 不改写源文件。
