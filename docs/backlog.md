@@ -591,6 +591,149 @@
 **触发条件**：任一后续 mission 碰到这两个文件中的任何一个时顺手做掉（第 1 条无行为变化、无需真机；
 第 2 条要跑一次 `cargo test` 重导出）。
 
+### M256 全量回归现场（2026-09-27 批次收尾）
+
+M256（分支 `feat/final-acceptance-regression-sweep-m256`）跑了**全量真机套件**：57 场景，串行独占
+（`node scripts/acceptance/run.mjs`，`caffeinate -dimsu` 包住，1430 专用口，1420 全程未碰）。
+读数 **49 PASS / 8 FAIL**；逐场景结论与耗时见「待真机验收」的 **M256 全量回归总表**，
+证据 `test-results/acceptance/2026-09-27/`（git 外）。本节登记本批**新确认**的 finding；
+M254 已登记的两条（`OpenIntent` union / `VaultSession.ts` 注释、套件索引重写）不在本节重复——
+索引那条的**新现场**补写在了原条目里，`$vault2` 前缀吞噬已由 `8758756` 修好、无残留动作。
+
+**M254 移除预览标签机制改了三条场景的前提（陈旧断言，需派活）**（medium）：
+`93bb24b` 删掉了「预览标签不入盘」的过滤（`src/vault-switcher.ts` 的 `sessionSnapshot`，注释自述
+「全部**有路径**的标签都入盘」），于是**单击树文件打开的标签会进入下次启动的恢复集合**。三条场景
+的判据建立在那条过滤还在的前提上，本批全部转红：
+- `28-remember-reading-position` / `38-content-width-drag` 都断言「重启后没有标签（空 vault 引导
+  在场）」。M254 之前单击开的文件是预览标签、不入盘 ⇒ 重启确实一个标签都没有；现在重启会把
+  `toc-long.md` / `keys.md` 恢复出来（现场 `…/28-…/steps.md`、`…/38-…/steps.md` 的 AX dump：
+  `AXTabGroup` 里那条 `AXRadioButton` 就是被恢复的标签）。
+- `29-typography-and-zoom`：重启后 `do: open` 命中的是**已被恢复的同名标签**，而 `openFile` 对
+  已打开的同路径短路（只激活、不新建），于是「全新装载」这条前提不成立、AX 渲染行快照是上一轮的
+  ⇒「配置的 32px 让第 3 章挤出渲染行」判红。指纹很清楚：同一场景后面几步（先 `⌘W` 关标签再
+  `open`）的同类断言**全部 PASS**。第二处红（末步「编辑器文档文本逐字节不变」）是同一条前提的
+  下游，**未单独定位**（报告里 before/now 被截到 400 字，建议下一批在失败步补一次 `recordEditor` 对照）。
+**动作**：三条场景改成不依赖「重启后无标签」（restart 前清会话文件，或把断言改成「恢复出的就是
+本场景那一份」）。**这不是产品缺陷**——让全部标签入盘是 M254 已批准的改动。
+**待 Alex 的产品面观察（不阻塞）**：单击树文件看一眼，现在会**永久进入下次启动的恢复集合**
+（预览机制原有的作用之一正是「随手看看不留痕」）。若这个副作用不可接受，那是产品决策，
+场景侧跟着改口径即可。
+
+**M254 移除预览机制改了「文件切换后编辑器视图是否复用」（陈旧断言）**（low）：
+`31-code-variable-highlight` 断言「搜索状态跨文件保留」（`⌘F` 后 `AXTextField = "limit"`）。
+M254 之前单击树文件是预览意图，就地替换同一个标签（同一个 `EditorView`），CM 的 search state
+因此存活；现在一律 `new` ⇒ 新标签 = 新视图 = 空查询。现场：`…/31-…/ax/05-*.txt` 里
+`AXTextField (查找)` **没有 Value**（对照 `ax/03-*.txt` 的 `AXTextField = "limit"`），且标签栏同时
+挂着 `.js` 与 `.lua` 两个标签（旧机制下前者会被就地替换）。**动作**：改断言（每个标签各自持搜索
+状态是分标签编辑器的正常语义），或明确要求跨标签保留并当产品改动立项。
+
+**`32-list-filter` 自 2026-09-25 起的那条红定位完毕：断言写死了 UI 不上屏的绝对路径**（low，
+陈旧断言；与「验收套件（M240 现场发现）」里 2026-09-26 那条同源，此处是定位结论）：M217 裁决后
+vault 列表行**不再显示路径**（`src/vault-switcher.ts:828-830` 就地注释：「路径次行按 Alex 裁决裁掉
+（M217，gap 表 #12）：单行制收敛后路径不再上屏」），行文本是 `<显示名> <摘要>`
+（现场 `…/32-…/ax/09-*.txt`：`lumir-m102-acceptance-b 还没有打开过文件`），绝对路径只在**不可用**
+行里以「路径不可用：…」形态出现。因此 2026-09-26 登记的两个候选（「前置失败」/「真实回归」）
+都不成立：`-b` 那一行在场且显示名正确（M252 的 `$vault2` 占位符修复 `8758756` 已在 master 生效）。
+**动作**：把该断言改成显示名（或删掉），把「路径不可用」形态留给覆盖它的场景。
+
+**套件：`button: right` 坐标通道取不到窗口截图 ⇒ 场景 47 / 50 整段 FAIL**（medium；
+M244 / M249 / M251 / M252 / M254 同族，M254 已落 finding，本条为收口登记）：现场错误逐条是
+`取不到窗口截图，无法用 right 键在坐标上点击`（`scripts/acceptance/lib/execute.mjs` 的 click
+右键分支），并级联出「找不到可点节点」与末端磁盘断言 FAIL。M254 的新证据（**同刻** KimiCU 自己的
+`get_app_state(mode=full)` 能取到 1151×768 的图，窗口在前台、套件 `ensureForeground` 报「已取得」）
+指向**套件侧取图路径**：`readAxForScreenPoint` 的重试条件只看 `window-local` + `windowBounds`，
+**不检查 `ax.image`**。修法（M254 finding 的两条建议原样保留）：把 `ax.image` 并进重试条件，
+或让坐标注入复用上一次 full 快照的 image。**不得当产品缺陷**：47 / 50 的右键链路退回 chromium 层
+（`tests/visual/scenes/tree-menu.spec.ts` / `tab-menu.spec.ts`）。本批另记 47 的两条**次级**现象：
+① 右键目标在视口外时套件按错因报错（`@122,1397`，窗口 1200×800）——已知边界（套件无 scroll 动作），
+不是缺陷；② 两条 `do: keys` 步报 `press_key 失败：error: empty key DSL`（场景 YAML 里 `keys` 数组
+非空、`--check` 通过，本地成因**未定位**，按原样登记供套件侧排查）。
+
+**`open` 到不了视口外树行的预测被本批实跑证伪（41 / 42 全绿）**（low，口径订正）：
+M251 的 finding 推断 `41` / `42` 的 `open: notes.txt`「机制上必然卡 60s」（该 finding 自己也注明
+「本批未验证」）。本批两条**都 PASS**（51.3s / 33.2s）。现场：`41-…/ax/01-起点-txt.txt` 里
+`notes.txt` 就在 `@15,380`（窗口 800 高），AX 里同时还有 `@15,-220` 这种视口**之上**的行，
+而 `openFile`（`lib/drive.mjs`）只做「等 AX 里出现该行按钮 → AXPress」，没有任何滚动逻辑 ⇒
+这一轮里该行**够得到**。**机制未坐实**：M251 那次为何够不到，本批留下的候选是「AX 快照被截断」
+而非「行不在视口内」——本批所有 dump 都带 `truncated: true`，而 47 的 dump 里树只暴露了三行
+（`menu-sub` / `.gitattributes` / `.gitignore`）。**结论按现状写**：M251 finding 里「AX 只暴露
+可视范围内的行」这句至少不完整，别把它当成「41/42 必卡」的依据；**右键坐标路径**另有硬约束
+（必须在视口内，47 的 `@122,1397` 报错即此），这条是坐实的。
+
+**真机通道：单次 AX 快照往返在秒级、`mode=full`（带截图）更慢**（medium，M252 finding；本批旁证）：
+M252 三次实测（43 个标签那轮读到的是装载完成态；把装载撑到 4.6s 后 `shot` 仍拍不到装载中的画面，
+三张截图逐字节相同）。本批的旁证见下一条（43）。**动作**：README「已知边界」补一节——延迟量级 +
+瞬时状态判据的写法（把窗口撑到数秒，或改用「状态变化前后两次读数差」这类不依赖绝对时刻的形式）；
+`readAx` 返回值带读时刻并写进 `steps.md`。
+
+**场景 43 的红换了一种成因，且本批未定位**（medium，需派活）：M240 登记的红是「`do: key tab`
+不落地」（那次场景走 Tab）。M249 已把 43 改成经 `[keys]` 绑到 `⌘J` / `⌘⇧J`，并在
+`test-results/acceptance/2026-09-27-m249/43-list-tab-indent/` **PASS 过**——所以本批的红**不是**
+M240 那条通道问题。本批现场（**连跑两次读数逐字相同**）：第一次缩进（`- bravo` → `  - bravoq`）的
+**编辑器内已缩进**（`ax/04-*.txt` 的渲染文本是 `◦ bravoq`，`⌘Z` 后回到 `– bravoq`），但同一步之后
+`sleep 2600` 再读盘仍是 `- alpha\n- bravoq\n`；同一轮里有序列表 / 引用内列表 / 嵌套列表三条同类
+断言**全部 PASS**（都落了盘）⇒ 现象是「**命令生效、2.6s 内未落盘**」，最可能是注入 + 快照耗时
+（上一条）把 2.6s 等待窗口挤穿，但**未坐实**（不能排除保存链路在该时点的真实问题）。**动作**：
+下一批把该步等待加长到 6s 复跑一次，并读隔离配置的诊断日志（`document_save`）判定是窗口问题还是
+保存问题；顺带修一处**判据强度**问题——紧随其后那条「一次撤销把整次平移还原（源文件回到
+`- bravoq`）」在缩进从未发生时**恒真**（本批就是这么空过的），应先断言缩进已落盘、再断言撤销还原。
+
+**会话恢复的「已跳过」提示把两种成因合成一句**（low，M252 finding）：`src/vault-switcher.ts` 的
+`restore()` 用一个计数 `plan.skipped + (plan.open.length - opened.length)`，却只给 D108 的
+「N 个文件已不在这个 vault 里，已跳过」——文件**还在** vault 里但打不开（类型不支持 / 编码非法）时
+提示与事实相反（M252 实测：`notes.txt` / `nonmd-config.yaml` 就在盘上）。**动作**：deck 增/拆一条
+（「不在 vault 里」/「打不开」分开计数与呈现），实现侧两处调用点同步改。
+
+**过目包读数两套口径并存**（low，M251 reviewer 的观察项）：`test-results/m251/baseline-review/`
+的 `pixel-diff.json` 用 worker 自写的计数器给 `overThreshold=84`，而 README 叙述的口径是 playwright
+（threshold 0.2 下 62 额度内）与零容差探针（158px / ratio 0.0025）——两套数字并存时读者无法判断
+该信哪个。**动作**：后续过目包统一用 playwright 读数，或显式标注自写计数器的口径与换算关系。
+
+**归档不重写相对链接、目录深度 +1 无门禁**（low，M253 finding）：`openspec archive` 移动目录但不改
+制品内的相对链接；M150 修 17 处、M253 修 25 处（含 living spec 侧两处反向 −2 级，其一
+`specs/ui-design-system/spec.md:11` 是**新建 capability 一出生就带死链**），早期批次
+（`2026-09-05-*` / `2026-09-12-remove-threads-and-theme`）至今残留 6 处死链；`docs-check.sh` 明写
+不校验 OpenSpec 侧、`openspec validate` 不查链接可达性 ⇒ 没有任何门禁会红。**动作**：
+`scripts/openspec-links.sh`（遍历 `openspec/**/*.md`，对 `](相对路径)` 做 `exists()` 并逐条打印，
+挂进 `gate.sh quick` 与 CI 的 docs-check 一路）；退一步的最低防线是把「归档后逐一核对相对链接
+可达性」写进 `docs/process/openspec-workflow.md` 的批次收尾 checklist。
+
+**M241 翻转 code 模式可编辑性后，living spec 仍断言「只读 code 模式」**（medium，M253 finding；
+按 M150 的 retro change 形态另立一件）：`openspec/specs/keymap-commands/spec.md` 的三条 scenario
+（`:130` / `:182` / `:795`）仍判「只读 code 模式」下 ⌘Z / 编辑键 / 缩进键「无事发生」，而
+`editable-non-md-files` 已明确注册表文本类在 code 模式可编辑（`src/editor.ts:1480-1481` 就地注释）；
+`openspec/specs/editor-live-preview/spec.md:5` 的 Purpose 与同文件 `:778` 的 requirement 直接矛盾；
+另有 10 处 `只读 code 模式` 模式名失真（`editor-live-preview` 4 / `content-width` 3 /
+`keymap-commands` 3）。第 1 类是**行为断言变了**，改写等于替 Alex 决定「code 模式还有没有只读形态」，
+属语义裁决，需节点 1。同族提醒：M249 已把验收场景 43 的「只读时缩进无效」改成「不可达、不构成
+覆盖声明」，同语义的 living spec 未同步（两处真源只改了一处，REVIEW.md 第 8 条）。
+
+**restyle 归档件 §8.4（假绿防线反向验证）保留未勾**（low，M253 归档对账的如实登记）：
+`openspec/changes/archive/2026-09-27-restyle-ui-tokens-v1/tasks.md` 的 §8.4「8.2 重建后人为删掉一个
+可见元素、确认门禁 FAIL」未做，承接方 R4（M214）**已 abandoned**；等价动作只被 M246 的「为高危
+小元素补元素级基线」部分代替（那解决的是「预算吞掉小变化」，不是「删元素后门禁确实会红」这条
+反证本身）。**动作**：要么补一次删元素反证并留读数，要么把该条从「待做」改成「已知缺口、由元素级
+基线承担」并写清理由——两者都要有人勾一下，不要留在归档件里当悬空的复选框。
+
+**`slow_callback` 的 spec 口径未跟上 M252 的广义用法**（low，reviewer-vault-switch）：M252 在
+`src/main.ts` 加了 `phaseMs()`，装载三段（`vault_load_open` / `vault_load_tree` / `vault_load_restore`）
+超 250ms 也各写一条 `slow_callback`（与 `src/diagnostics.ts` 的 `sampleCallback` 同通道），而
+`openspec/specs/diagnostics/spec.md` 的描述仍是「同步回调超 16ms」。**动作**：由 diagnostics
+capability 的后续 mission 把描述改成「被采样耗时点（同步回调或异步阶段）超各自阈值即记一条，
+`name` 区分族」，并注明两类阈值（16ms / 250ms）的来历。
+
+**幂等复核的取块口径要剔块尾空行**（low，M255 reviewer 的观察项）：归档幂等按「delta 与 living
+spec 同名 requirement 正文块 sha256 相等」判，而「截到下一 `### Requirement:`」这个口径会把
+living spec 侧的**块尾分隔空行**一并取进来，于是两块 sha256 不等而实质内容相同（M255 实测：
+diff 仅 `47a48 >` 一行空行；剔除尾随空行后同为 `68796fc7…`）。**动作**：后续同类复核把口径写清
+（剔尾随空行后再比），执行记录里别写「逐字节相同」而实际用了不同的取块口径。
+
+**白屏陷阱纪律的补充前提：`cargo build --features custom-protocol` 之前要先 `pnpm build`**
+（low，本批现场）：worktree 里第一次跑 `cargo build --features custom-protocol` 直接失败——
+`src/lib.rs:146` 的 `tauri::generate_context!()` 在 `frontendDist`（`../dist`）不存在时 proc macro
+panic（`error: could not compile lumir (lib)`）。**顺序是先 `pnpm build` 再 `cargo build`**；
+AGENTS.md 的白屏陷阱条目只写了「起实例前先 cargo build」，后批照抄时别漏这一步。
+
 ### 验收套件（M240 现场发现，2026-09-26）
 
 - **Tab / Shift-Tab 注入在 WKWebView 不生效 ⇒ list-tab-indent（M239）的场景 43 在 master 上恒红**（medium，
@@ -608,6 +751,11 @@
   登记该通道缺口，并把 43 改成经 `[keys]` 绑到通道可达的组合来验命令本身（场景内写明默认绑定那条
   路径待修）；② 正解——查 KimiCU 的 `press_key("tab")` 实际发出的键名 / keycode，修通后 43 原样跑绿。
   两条都建议顺手把「负向断言必须配通道可达的正观测」写进 README 的判据纪律。
+  **状态更新（2026-09-27，M249 + M256）**：① 方案已落地——场景 43 改成经 `[keys]` 把
+  `editor.list-indent` / `editor.list-outdent` 绑到 `⌘J` / `⌘⇧J`，并在 M249 的批次里 PASS 过
+  （`test-results/acceptance/2026-09-27-m249/43-list-tab-indent/`）；② 通道缺口本身已固化进
+  `scripts/acceptance/README.md` 的「键盘注入通道的两类不可达」；③ 但 43 在 M256 的全量批里**又红了**，
+  且**不是这一条**——成因是「命令生效、磁盘 2.6s 内未落盘」，见「M256 全量回归现场」的同名条目。
   证据：`test-results/acceptance/2026-09-26-m240-full/43-list-tab-indent/steps.md`（FAIL 现场）、
   `…/2026-09-26-m240-rerun43/`、`…/2026-09-26-m240-attrib43/`（pre-M240 同红）；finding
   `.tower/comms/findings/20260926-worker-impl-table-fs-bug-tab-shift-tab-wkwebview-m239-43-master.md`。
@@ -618,6 +766,13 @@
   目录（`<场景 id>/`）是保留的。一天里跑多次单场景（批次里最常见）之后，索引只反映最后一次 run。
   修法（未做，属套件改动）：按场景增量更新索引（存在则并入一行），或把索引文件名带上 run id。
   现场：M254 收口时按各场景目录重建了 2026-09-27 的索引（四个场景，见该目录 `summary.md` 的说明）。
+  **补一条同日现场（M256，2026-09-27）**：被覆盖的不只是索引——**每个场景的 `<场景 id>/` 目录也会被
+  同日后续 run 整目录重写**。M256 的全量批把同一天早先 M251 / M252 / M254 留下的
+  `2026-09-27/{14-tabs,27-document-end-marker,47-file-tree-context-menu,49-vault-switch-feedback,50-tab-context-menu}/`
+  换成了本批的现场（本批按任务书要求仍落 `2026-09-27`，未另开日期目录）。因此引用同一天**同名场景
+  目录**的 finding，证据指针会在下一次 run 后指向别人的现场；写 finding 时请改引**场景之外的**目录
+  （如 `test-results/m251/**`、`test-results/acceptance/2026-09-27-m252d/**` 这类带 mission 后缀的），
+  或在文件名里限定「哪一批跑的那一份」。
 
 ### 门禁（M240 现场发现，2026-09-26）
 
@@ -705,6 +860,12 @@
   **待定位**：要么是该场景对「第二个 vault 是否已注册」的前置失败（筛选前的那一步骤断了，`) 命中行」
   自然不在），要么是 2026-09-25 那批（M236 的套件窗口/`--config` 改动）引入的真实回归——**未经定位，
   不作结论**。归属调查建议放在下一批的套件收口里（本 change 的 scope 不含它）。
+  **定位结论（2026-09-27，M256 全量回归）**：两个候选**都不成立**——是**断言写死了一个不上屏的
+  形态**。`-b` 那一行在场且显示名正确（M252 的 `$vault2` 占位符修复 `8758756` 已生效），
+  红在那条断言要求 AX 含绝对路径 `/private/tmp/lumir-m102-acceptance-b`，而 M217 裁决后
+  vault 列表行**不再显示路径**（`src/vault-switcher.ts:828-830` 就地注释「路径次行按 Alex 裁决
+  裁掉（M217，gap 表 #12）」），行文本只有 `<显示名> <摘要>`。完整现场与动作见「待修 findings」
+  的「M256 全量回归现场」同名条目。
 
 - **`list-filter` 归档时如实留下的四处覆盖缺口 / 措辞落差**（2026-09-24，M205 登记，low）：
   ① delta scenario「单字符绑定不进统一键位表」里「表内没有任何单字符绑定」这条**无断言**（现只覆盖 ⌃S 那条，
@@ -1425,14 +1586,105 @@ living spec 两处已随本 change 改写口径（`keymap-commands` 的「轨道
 设计见 [docs/process/real-machine-acceptance.md](process/real-machine-acceptance.md)）；手感/审美项仍归 Alex。
 
 分类依据 = **证据目录里真实 PASS 的场景**，不是「场景写了就算覆盖」。最近一次全量实跑：
-**M164 批次（本地 2026-09-18 凌晨；证据目录按 UTC 记为 `2026-09-17`）——26 场景 / 26 PASS 0 FAIL**
-（`node scripts/acceptance/run.mjs`，含本批新增的 17/18/19 与 M160 遗留项的 `13-toc` 复跑），
-证据 `test-results/acceptance/2026-09-17/`（git 外，`summary.md` + 各场景 `steps.md`/`shots/`/`ax/`）。
-上一次全量：M149 批次（2026-09-17）22/22 @ `fab134c`。**本批的套件改动**（M164）：就绪门改判形态 A 的
+**M256（2026-09-27，批次收尾）——57 场景 / 49 PASS / 8 FAIL**（`node scripts/acceptance/run.mjs`，
+`caffeinate -dimsu` 包住、串行独占 1430），证据 `test-results/acceptance/2026-09-27/`（git 外，
+`summary.md` + 各场景 `steps.md`/`shots/`/`ax/`）。上一次全量：M240 批次（2026-09-26）49 场景 /
+47 PASS / 2 FAIL（`32-list-filter`、`43-list-tab-indent`）；更早 M164 批次（本地 2026-09-18 凌晨，
+证据目录按 UTC 记为 `2026-09-17`）26/26 PASS，其套件改动与运行纪律（就绪门改判形态 A、窗口经
+`--config` 钉主屏、每场景清 `workspaces/` 与 `vault-sessions/`、新增 `seed` 与第二个合成 vault、
+`caffeinate -dimsu` 包住）见本文件「多 vault 收口遗留」一节。
+
+### M256 全量回归总表（2026-09-27）
+
+前提已 `lsof` 复核：1420 / 1430 起跑前后均无监听、无 `target/debug/lumir` 残留；磁盘 35Gi 可用；
+套件自带隔离配置与两个合成 vault（`~/.config/lumir` 与用户真实 vault 全程未读写）。
+
+| 场景 | 结果 | 断言 | 失败 | 耗时 |
+|---|---|---|---|---|
+| `01-mermaid-click` | PASS | 9 | 0 | 22.3s |
+| `02-math-click` | PASS | 8 | 0 | 22.7s |
+| `03-table-ctrl-np` | PASS | 15 | 0 | 28.4s |
+| `05-cell-math` | PASS | 8 | 0 | 15.8s |
+| `06-callout-and-width` | PASS | 10 | 0 | 23.6s |
+| `07-recovery-paths` | PASS | 10 | 0 | 15.0s |
+| `07b-recovery-saveas` | PASS | 12 | 0 | 22.2s |
+| `07c-external-reload` | PASS | 6 | 0 | 14.5s |
+| `08-autosave` | PASS | 6 | 0 | 21.7s |
+| `08b-autosave-pause` | PASS | 13 | 0 | 26.7s |
+| `08c-crash-recovery` | PASS | 11 | 0 | 31.7s |
+| `08d-crash-discard` | PASS | 7 | 0 | 30.9s |
+| `08e-force-overwrite` | PASS | 12 | 0 | 21.0s |
+| `09-emacs-keys` | PASS | 15 | 0 | 22.4s |
+| `09b-keys-config` | PASS | 6 | 0 | 27.6s |
+| `12-links` | PASS | 53 | 0 | 52.4s |
+| `13-toc` | PASS | 49 | 0 | 49.2s |
+| `14-tabs` | PASS | 51 | 0 | 52.6s |
+| `16-startup-restore` | PASS | 10 | 0 | 21.3s |
+| `17-multi-vault-switch` | PASS | 38 | 0 | 37.0s |
+| `18-vault-session-restore` | PASS | 7 | 0 | 18.7s |
+| `19-vault-switch-guard` | PASS | 35 | 0 | 27.6s |
+| `20-image-fallback` | PASS | 17 | 0 | 14.0s |
+| `21-wrap-default` | PASS | 15 | 0 | 22.8s |
+| `22-wrap-toggle` | PASS | 17 | 0 | 26.2s |
+| `23-image-first-open-width` | PASS | 9 | 0 | 20.8s |
+| `24-table-cell-ctrl-e-seq` | PASS | 11 | 0 | 21.7s |
+| `25-vault-list-close-keeps-reading-position` | PASS | 26 | 0 | 29.2s |
+| `26-svg-scroll-stability` | PASS | 17 | 0 | 33.9s |
+| `27-document-end-marker` | PASS | 19 | 0 | 35.3s |
+| `28-remember-reading-position` | **FAIL** | 17 | 1 | 40.6s |
+| `29-typography-and-zoom` | **FAIL** | 29 | 2 | 68.8s |
+| `30-code-outline` | PASS | 38 | 0 | 52.5s |
+| `31-code-variable-highlight` | **FAIL** | 27 | 4 | 38.8s |
+| `32-list-filter` | **FAIL** | 47 | 1 | 47.7s |
+| `33-image-lightbox` | PASS | 36 | 0 | 34.7s |
+| `34-restyle-theme-skeleton` | PASS | 16 | 0 | 28.5s |
+| `35-restyle-three-themes` | PASS | 16 | 0 | 59.6s |
+| `36-restyle-content` | PASS | 14 | 0 | 21.0s |
+| `37-heading-hierarchy` | PASS | 11 | 0 | 14.4s |
+| `38-content-width-drag` | **FAIL** | 17 | 1 | 30.5s |
+| `39-titlebar-identity` | PASS | 19 | 0 | 48.2s |
+| `40-table-fullscreen-view` | PASS | 30 | 0 | 38.1s |
+| `41-editable-non-md-files` | PASS | 58 | 0 | 51.3s |
+| `42-non-md-edit-guardrails` | PASS | 29 | 0 | 33.2s |
+| `43-list-tab-indent` | **FAIL** | 66 | 2 | 84.0s |
+| `44-theme-live-switch` | PASS | 38 | 0 | 52.3s |
+| `45-tab-cycle-keys` | PASS | 44 | 0 | 28.6s |
+| `46-dotfile-jsonc-highlight` | PASS | 46 | 0 | 48.9s |
+| `47-file-tree-context-menu` | **FAIL** | 80 | 45 | 108.2s |
+| `48-vault-registry-migration` | PASS | 17 | 0 | 18.0s |
+| `49-vault-switch-feedback` | PASS | 22 | 0 | 26.6s |
+| `50-tab-context-menu` | **FAIL** | 24 | 12 | 17.2s |
+| `render-markdown` | PASS | 14 | 0 | 18.3s |
+| `render-table-degrade` | PASS | 9 | 0 | 13.3s |
+| `search-01-find` | PASS | 22 | 0 | 26.2s |
+| `search-02-binding` | PASS | 10 | 0 | 27.8s |
+
+**8 条红的一行结论**（详细归因与动作见「待修 findings」的「M256 全量回归现场」）：
+
+- `28` / `38` —— **陈旧断言**：判据是「重启后没有标签（空 vault 引导在场）」，而 M254 移除预览
+  机制后标签一律入盘、重启会恢复，空 vault 引导不再出现。非产品缺陷。
+- `29` —— **陈旧断言**（同上族）：重启后 `do: open` 命中的是已被恢复的同名标签，`openFile` 对
+  同路径短路 ⇒ 「全新装载」前提不成立，渲染行快照是上一轮的。同场景后面先 `⌘W` 再 `open` 的
+  同类断言全 PASS 即为指纹。第二处红（末步逐字节比较）未单独定位。
+- `31` —— **陈旧断言**：断言「搜索状态跨文件保留」；M254 前是预览标签就地替换（同一个
+  `EditorView`），现在新标签 = 新视图 = 空查询。
+- `32` —— **陈旧断言**：断言 AX 含 vault 的绝对路径，而 M217 裁决后列表行不再上屏路径
+  （`src/vault-switcher.ts:828-830`）。第二个 vault 本身注册正确。
+- `43` —— **未定位（need triage）**：编辑器内已缩进、`sleep 2600` 后磁盘仍是旧内容；同一轮里
+  有序 / 引用 / 嵌套三条同类断言都落了盘。命令生效而落盘窗口被挤穿的嫌疑最大，但需加长等待 +
+  读 `document_save` 诊断日志坐实。**不是** M240 登记的那条 Tab 通道红（M249 已改走 ⌘J 并 PASS 过）。
+- `47` / `50` —— **套件通道边界**：`button: right` 取不到窗口截图（M244 / M249 / M251 / M252 /
+  M254 同族），右键类断言整段 FAIL 并级联出下游红；判定退回 chromium 层，**不判产品缺陷**。
+  `47` 另含一条已知边界（右键目标在视口外）与两条 `empty key DSL` 的套件侧未定位异常。
+- 并发污染 / 探针污染：本批**未出现**（串行独占、单实例、起跑前已复核端口与进程）。
+  同日的证据目录覆盖问题见「待修 findings」的「套件每次运行都会重写证据目录的索引文件」条。
+
+**M164 批次的套件改动（历史读数，保留原文要点）**：就绪门改判形态 A 的
 入口读屏名（`AXPopUpButton`，不是 `AXButton`——写死角色会让整套在启动就超时）、窗口经 `--config`
 定位到主屏（否则 macOS 会把窗口放到屏幕外、键盘注入整批不落地）、每场景增清 `workspaces/` 与
 `vault-sessions/`、新增 `seed`（注册表 / 会话预置）与第二个合成 vault。**运行纪律**：无人值守批次用
-`caffeinate -dimsu <cmd>` 包住（见「多 vault 收口遗留」里的实测现场）。
+`caffeinate -dimsu <cmd>` 包住（见「多 vault 收口遗留」里的实测现场）；本批另加一条——
+`cargo build --features custom-protocol` 之前必须先 `pnpm build`（见「M256 全量回归现场」末条）。
 
 **M159 单场景实跑（2026-09-17，非全量）**：`16-startup-restore` **PASS / 10 断言 / 0 失败 / 29.4s**
 （`node scripts/acceptance/run.mjs 16`，证据 `test-results/acceptance/2026-09-17/16-startup-restore/`，
