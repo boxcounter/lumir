@@ -15,8 +15,9 @@ const DOC = "# 标题\n\n内容段落。\n";
 
 // 分组标题与顺序：与 src/bindings-panel.ts 的 BINDING_GROUPS 逐一对应（列表缩进组随 M240
 // 补上——M239 的两条命令漏归组时这里会多出兜底「其他」，本场景因此红过；现在另由
-// tests/unit/bindings-panel.test.ts 的「零兜底组」对账在 unit 层守住）。
-const GROUPS = ["移动与选择", "扩选", "删除", "kill-yank", "翻屏", "撤销", "列表缩进", "widget", "标签", "全局"];
+// tests/unit/bindings-panel.test.ts 的「零兜底组」对账在 unit 层守住。M277 新增「块」组：
+// 块级复制一条命令，理由见 bindings-panel.ts）。
+const GROUPS = ["移动与选择", "扩选", "删除", "kill-yank", "翻屏", "撤销", "列表缩进", "块", "widget", "标签", "全局"];
 
 /** 装载 vault 并等配置到位（[keys] 覆盖在 config_get 之后才挂上分发器）。 */
 async function openVault(page: Page, config?: { keys?: Record<string, string | null> }): Promise<void> {
@@ -66,7 +67,7 @@ test("⌘/ 打开面板：列出生效表里全部键位并按功能族分组", 
   await focusEditor(page, DOC.length);
   await openPanel(page);
 
-  // 分组标题与顺序（9 组覆盖全部命令，无兜底分组；「全局」组的成员来自
+  // 分组标题与顺序（11 组覆盖全部命令，无兜底分组；「全局」组的成员来自
   // NON_TAB_GLOBAL_COMMAND_IDS，「标签」组单列——两组必须互斥，理由见 bindings-panel.ts）
   expect(await page.locator(".lumir-bindings-group-title").allTextContents()).toEqual(GROUPS);
 

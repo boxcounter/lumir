@@ -192,11 +192,18 @@ async function resolveSpecFile(p) {
  * 读系统剪贴板（M244）：**只有这一条固定命令**——套件刻意不引入通用 shell 通道
  *（38-content-width-drag 记过这条口径），这里要的只是一个可断言的读数出口。
  * 返回值区分「读到空串」与「读失败」：后者由调用方一律判 FAIL，不许当成空。
+ *
+ * **行尾归一（M277 补，实测踩到）**：AppleScript 把粘贴板的文本强制按**经典 Mac 行尾**（CR）
+ * 返回——`osascript -e 'the clipboard'` 读一份用 `\n` 写进去的多行文本，拿回来的是 `\r` 分隔的。
+ * 不归一的话，多行内容的 `clipboard: { exact }` 断言**必然**假红（app 侧写的是 LF）。因此这里把
+ * CRLF / CR 统一成 LF，再去掉 AppleScript 附加的那一个尾换行。单行内容（如场景 47 的完整路径）
+ * 不受影响；归一不改变「读到空串 vs 读失败」的区分，也不吞内容差异。
  */
 function readClipboard() {
   try {
     const out = execFileSync("/usr/bin/osascript", ["-e", "the clipboard"], { encoding: "utf8" });
-    return { ok: true, text: out.replace(/\r?\n$/, "") };
+    const normalized = out.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+    return { ok: true, text: normalized.replace(/\n$/, "") };
   } catch (e) {
     return { ok: false, text: "", error: e instanceof Error ? e.message : String(e) };
   }

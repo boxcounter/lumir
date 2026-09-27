@@ -384,15 +384,11 @@ export function mermaidBlockSet(state: EditorState): DecorationSet {
   }
   if (!maybe) return Decoration.none;
   const tree = syntaxTree(state);
-  const fm = detectFrontmatter(doc);
   const decos: Range<Decoration>[] = [];
   tree.iterate({
     enter(ref) {
       if (ref.name !== "FencedCode") return;
-      const info = ref.node.getChild("CodeInfo");
-      if (!info || doc.sliceString(info.from, info.to).trim() !== "mermaid") return;
-      if (fm !== null && ref.from >= fm.from && ref.to <= fm.to) return;
-      if (state.selection.ranges.some((r) => r.from < ref.to && r.to > ref.from)) return;
+      if (!isMermaidDiagram(state, ref.node)) return;
       const codeText = ref.node.getChild("CodeText");
       const source = codeText ? doc.sliceString(codeText.from, codeText.to).trim() : "";
       const raw = doc.sliceString(ref.from, ref.to);
@@ -406,4 +402,20 @@ export function mermaidBlockSet(state: EditorState): DecorationSet {
     },
   });
   return Decoration.set(decos, true);
+}
+
+/**
+ * 该围栏块是否是一个**当前渲染为图表**的 mermaid 块（判据的单一来源：M277 的块级触发钮也按
+ * 它决定「图表态没有钮」——被 widget 整块替换的块里没有源码行可挂；点图表显露源码后条件转假，
+ * 钮随之出现）。
+ *
+ * 三条与 `mermaidBlockSet` 逐字一致，故抽在这里而不是第二处重写：info string 是 mermaid、
+ * 不在 frontmatter 内、选区未触及该块（选区触及时显露源码，是既有的编辑进入路径）。
+ */
+export function isMermaidDiagram(state: EditorState, node: { from: number; to: number; getChild(name: string): { from: number; to: number } | null }): boolean {
+  const info = node.getChild("CodeInfo");
+  if (info === null || state.doc.sliceString(info.from, info.to).trim() !== "mermaid") return false;
+  const fm = detectFrontmatter(state.doc);
+  if (fm !== null && node.from >= fm.from && node.to <= fm.to) return false;
+  return !state.selection.ranges.some((r) => r.from < node.to && r.to > node.from);
 }

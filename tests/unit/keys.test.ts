@@ -715,3 +715,64 @@ test("表格全屏命令：在全局命令清单里、默认不绑键、可经 [
   assert.equal(normalizeKey(bound?.key ?? ""), "Cmd-J");
   assert.equal(bound?.scope, "global");
 });
+
+// ---------------------------------------------------------------------------
+// M277：代码块全屏与块级复制两条命令的登记（change code-block-fullscreen /
+// block-copy-affordance）
+// ---------------------------------------------------------------------------
+
+test("代码块全屏命令：全局作用域、默认不绑键、可经 [keys] 绑上并生效", () => {
+  assert.ok((COMMAND_IDS as readonly string[]).includes("code-block.toggle-fullscreen"));
+  assert.ok((NON_TAB_GLOBAL_COMMAND_IDS as readonly string[]).includes("code-block.toggle-fullscreen"));
+  assert.ok(
+    !(EDITOR_COMMAND_IDS as readonly string[]).includes("code-block.toggle-fullscreen"),
+    "作用域必须派生为 global——遮罩持焦时「再执行一次关闭」必须可达（同 table.toggle-fullscreen）",
+  );
+  assert.ok(KEYLESS_COMMAND_IDS.includes("code-block.toggle-fullscreen"), "鼠标入口已有一条，键盘入口默认不占物理组合");
+  assert.equal(
+    KEY_BINDINGS.find((binding) => binding.command === "code-block.toggle-fullscreen"),
+    undefined,
+    "登记进默认不绑键清单即不得再带默认绑定",
+  );
+  const rebound = applyKeyOverrides({ "Cmd-j": "code-block.toggle-fullscreen" });
+  assert.deepEqual(rebound.warnings, []);
+  const bound = rebound.bindings.find((binding) => binding.command === "code-block.toggle-fullscreen");
+  assert.equal(normalizeKey(bound?.key ?? ""), "Cmd-J");
+  assert.equal(bound?.scope, "global");
+});
+
+test("块级复制命令：editor 作用域、默认不绑键，且命中条件不满足时不消费事件", () => {
+  assert.ok((COMMAND_IDS as readonly string[]).includes("block.copy"));
+  assert.ok((EDITOR_COMMAND_IDS as readonly string[]).includes("block.copy"), "作用域必须派生为 editor");
+  assert.ok(
+    !(NON_TAB_GLOBAL_COMMAND_IDS as readonly string[]).includes("block.copy"),
+    "复制没有「焦点在遮罩里」的第二种状态，MUST NOT 放权到 global",
+  );
+  assert.ok(KEYLESS_COMMAND_IDS.includes("block.copy"), "双击入口由 hover 复制钮承担，键盘入口默认不占物理组合");
+  assert.equal(
+    KEY_BINDINGS.find((binding) => binding.command === "block.copy"),
+    undefined,
+    "登记进默认不绑键清单即不得再带默认绑定",
+  );
+
+  // 命中条件（caret 在渲染为 grid 的表内 / 代码块内）落在装配层的命令级门：为假时事件不被消费。
+  const host = fakeWindow();
+  const { runtime, runs } = recordingRuntime();
+  const bindings: KeyBinding[] = [{ key: "Cmd-j", command: "block.copy", scope: "editor", doc: "" }];
+  let hit = false;
+  new Keymap(bindings).attach(host.target, runtime, {
+    isEditorEvent: () => true,
+    commandGate: (command) => command !== "block.copy" || hit,
+  });
+
+  const miss = keyEvent({ key: "j", metaKey: true });
+  host.fire(miss);
+  assert.equal(miss.defaultPrevented, false, "命中条件不满足时不消费事件（原样留给原生路径）");
+  assert.deepEqual(runs, []);
+
+  hit = true;
+  const ok = keyEvent({ key: "j", metaKey: true });
+  host.fire(ok);
+  assert.equal(ok.defaultPrevented, true);
+  assert.deepEqual(runs, ["block.copy"]);
+});

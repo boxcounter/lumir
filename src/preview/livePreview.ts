@@ -25,7 +25,7 @@ import type { ImageLightbox } from "../lightbox";
 import { findWikilinkSpans } from "./wikilinks";
 import { classifyLinkTarget, literalLinkOfNode, standardLinkParts } from "./links";
 import { collectInlineMath, isInsideCodeContext, mathBlockSet } from "./math";
-import { mermaidBlockSet, onMermaidSettled } from "./mermaid";
+import { isMermaidDiagram, mermaidBlockSet, onMermaidSettled } from "./mermaid";
 import { calloutMarkerDecorations, calloutOnLine, detectCallout } from "./callout";
 import {
   beginPointerPress,
@@ -42,6 +42,14 @@ import type { LinkResolveResult } from "../bindings/LinkResolveResult";
 import { BlockWrapper } from "@codemirror/view";
 import { findTables, fullscreenTableAt, tableAt, tableRowsInRange, degradationNotice, type TableModel } from "./table";
 import { TABLE_SLOT_CLASS, TableFullscreenTrigger } from "./table-trigger";
+import {
+  CODEBLOCK_SLOT_CLASS,
+  BlockCopyTrigger,
+  CodeBlockFullscreenTrigger,
+} from "./block-trigger";
+import type { CodeBlockFullscreenPort } from "./block-trigger";
+import { codeBlockContent, codeBlockNodeAt, type BlockCopyRange } from "./block-copy";
+import { planCodeBlock, type CodeBlockRender } from "./code-block-content";
 import type { TableFullscreen } from "../table-fullscreen";
 import { highlightCode } from "./code";
 import { BLOCK_SCROLL_CLASS, TABLE_SCROLL_CLASS, WIDGET_SCROLL_STEP_PX } from "../keys";
@@ -77,6 +85,11 @@ export interface PreviewContext {
    *  「表渲染为 grid」的结构事实渲染），只是点它没反应（与 lightbox() 未接线时双击图片没反应
    *  同一口径：能力没装配是结构性表现，不是一条要维护的开关）。 */
   tableFullscreen(): TableFullscreen | null;
+/** 代码块放大全屏查看的口子（M277）；未接线时返回 null——代码块工具钮仍在（它由装饰层按
+ *  「块内有没有源码行」的结构事实渲染），只是点它没反应（与 tableFullscreen() 同口径）。 */
+  codeBlockFullscreen(): CodeBlockFullscreenPort | null;
+  /** 块级复制能力的口子（M277）；未接线时返回 null——复制钮仍在，只是点它没反应。 */
+  blockCopy(): { copy(range: BlockCopyRange): void } | null;
   /** 文件 mtime（Unix 毫秒，doc-meta「修改于」的数据源，M218 A1）：缓存命中返回值，
    *  未命中返回 undefined（pending）——实现方后台取数，到达后派发 previewRefresh
    *  触发重建（wikilinkResolver 同款范式）。取不到 mtime 时缓存 null。 */
@@ -377,35 +390,147 @@ export function tableFullscreenTarget(view: EditorView): TableFullscreenTarget |
  * 要求那种口径下 MUST NOT 出现块内横向滚动容器）。
  */
 export function codeBlockWrappers(view: EditorView) {
+  const wrappers: Range<BlockWrapper>[] = codeBlocksIn(view).map((block) =>
+    BlockWrapper.create({
+      tagName: "div",
+      rank: 10,
+      attributes: {
+        class: `${BLOCK_SCROLL_CLASS} cm-lp-codeblock-scroll`,
+        role: "region",
+        "aria-label": codeBlockLabel(block.index),
+        tabindex: "0",
+      },
+    }).range(block.from, block.to),
+  );
+  return BlockWrapper.set(wrappers, true);
+}
+
+/**
+ * 代码块触发钮的坐标系统（M277，BlockWrapper rank 20 = 最外）：`position: relative` 的唯一
+ * 职责是给钮当包含块，机制与 `.cm-lp-table-slot` 逐条相同（见 ./table-trigger 的文件头）。
+ *
+ * 与 `codeBlockWrappers` 的**关键差异**：本层在 md 模式**无条件安装**（`src/editor.ts` 的
+ * `wrapExtensions`），与 `editor.code_block_wrap` 无关——否则「打开代码块折行后复制钮无声消失」
+ * 会变成一条要维护的开关，而它本该是结构性的。零足迹：无背景 / 边框 / 内外边距 / overflow，
+ * 因此 M180 的「代码块折行时块内 MUST NOT 出现横向滚动容器」口径不变（slot 只是定位层）。
+ */
+export function codeBlockSlotWrappers(view: EditorView) {
+  const wrappers: Range<BlockWrapper>[] = codeBlocksIn(view).map((block) =>
+    BlockWrapper.create({
+      tagName: "div",
+      rank: 20,
+      attributes: { class: CODEBLOCK_SLOT_CLASS },
+    }).range(block.from, block.to),
+  );
+  return BlockWrapper.set(wrappers, true);
+}
+
+/** 一个代码块在装饰层眼里的全部事实（触发钮、命中判定与全屏内容共用同一份遍历）。 */
+export interface CodeBlockInfo {
+  /** 块范围（对齐整行，与容器同口径）。 */
+  from: number;
+  to: number;
+  /** 块序数（读屏名 `Markdown 代码块 N` 里的 N）。 */
+  index: number;
+  /** info string（语言标记）；无则空串。 */
+  info: string;
+  /** 首行是否围栏行（`CodeMark`）——决定全屏里有没有头部条。 */
+  head: boolean;
+  /** 语法树节点（内容切片用）。 */
+  node: SyntaxNode;
+}
+
+const codeBlockLabel = (index: number): string => `Markdown 代码块 ${index}`;
+
+/**
+ * 视口有界的代码块遍历（单一来源）：`codeBlockWrappers`、`codeBlockSlotWrappers` 与
+ * `codeBlockAt` 全部走这一份，因此「触发钮挂在哪一块」「读屏名里的 N」与「命令命中哪一块」
+ * 三处不可能漂移（REVIEW.md 第 8 条）。范围按整行取，与表格容器同口径。
+ */
+function codeBlocksIn(view: EditorView): CodeBlockInfo[] {
   const { from, to } = tableDiscoveryRange(view);
   const doc = view.state.doc;
-  const wrappers: Range<BlockWrapper>[] = [];
+  const blocks: CodeBlockInfo[] = [];
   let index = 0;
   parseCoveredTree(view.state, to).iterate({
     from,
     to,
     enter(ref) {
       if (ref.name !== "FencedCode" && ref.name !== "CodeBlock") return;
-      // 容器范围按**整行**取：起点对齐行首，终点对齐末行行尾（节点可能停在行内），
-      // 与表格容器的取法同口径。
       const start = doc.lineAt(ref.from).from;
       const end = Math.min(Math.max(doc.lineAt(Math.max(ref.from, ref.to - 1)).to, ref.to), doc.length);
       index++;
-      wrappers.push(
-        BlockWrapper.create({
-          tagName: "div",
-          rank: 10,
-          attributes: {
-            class: `${BLOCK_SCROLL_CLASS} cm-lp-codeblock-scroll`,
-            role: "region",
-            "aria-label": `Markdown 代码块 ${index}`,
-            tabindex: "0",
-          },
-        }).range(start, end),
-      );
+      const infoNode = ref.node.getChild("CodeInfo");
+      blocks.push({
+        from: start,
+        to: end,
+        index,
+        info: infoNode === null ? "" : doc.sliceString(infoNode.from, infoNode.to),
+        head: ref.node.getChild("CodeMark") !== null,
+        node: ref.node,
+      });
     },
   });
-  return BlockWrapper.set(wrappers, true);
+  return blocks;
+}
+
+/**
+ * caret / 某位置落在哪个代码块里（`code-block.toggle-fullscreen` 与 `block.copy` 的命中判据）。
+ *
+ * 「在不在块里」沿用 `codeblockOnLine` 的既有判定（`codeBlockNodeAt`，MUST NOT 另写一份语法树
+ * 上溯），块的 from / to / 序数 / info 由与装饰层**同一份遍历**给出。树未覆盖到该块时返回
+ * null——命令因此不动作，而不是拿半成品去开浮层。
+ */
+export function codeBlockAt(view: EditorView, pos: number): CodeBlockInfo | null {
+  if (codeBlockNodeAt(view.state, pos) === null) return null;
+  const clamped = Math.min(Math.max(pos, 0), view.state.doc.length);
+  return codeBlocksIn(view).find((block) => clamped >= block.from && clamped <= block.to) ?? null;
+}
+
+/** 代码块全屏浮层要的两样东西：按行 / token 切好的呈现计划 + 该块既有的读屏名。 */
+export interface CodeBlockFullscreenTarget {
+  render: CodeBlockRender;
+  label: string;
+}
+
+function codeBlockRender(view: EditorView, block: CodeBlockInfo): CodeBlockRender {
+  const doc = view.state.doc;
+  const source = doc.sliceString(block.from, block.to);
+  const textNode = block.node.getChild("CodeText");
+  // 内容文本取 `codeBlockContent`（块内全部 CodeText 按序拼接）：64 KiB 上界的判据与复制口径
+  // 同源。着色偏移只对围栏块有意义（缩进块没有 info string ⇒ `highlightCode` 恒定返回空表），
+  // 因此缩进块的偏移即使与 `source` 不线性对应也不影响 token 切分（见 ./code-block-content）。
+  return planCodeBlock(
+    source,
+    textNode === null ? 0 : textNode.from - block.from,
+    codeBlockContent(doc, block.node),
+    block.head,
+    block.info,
+  );
+}
+
+/** 触发钮点击与命令入口共同的「这块代码块的全屏内容」。 */
+export function codeBlockFullscreenTarget(view: EditorView, from: number): CodeBlockFullscreenTarget | null {
+  const block = codeBlockAt(view, from);
+  if (block === null) return null;
+  return { render: codeBlockRender(view, block), label: codeBlockLabel(block.index) };
+}
+
+/**
+ * `block.copy` 的命中判据（M277）：caret 落在一张**当前渲染为 grid** 的表内，或落在一个围栏 /
+ * 缩进代码块内。命中返回要复制的文档范围，否则 null。
+ *
+ * 两条判据都取自语法树与表格模型（MUST NOT 读 DOM）；范围内的文本由 `src/preview/block-copy.ts`
+ * 现取——触发钮与命令入口共用同一份口径。优先序不需要定：表格 cell 里没有块级节点，两条判据
+ * 天然互斥（design §5）。
+ */
+export function blockCopyTarget(view: EditorView): BlockCopyRange | null {
+  const { from, to } = tableDiscoveryRange(view);
+  const head = view.state.selection.main.head;
+  const table = fullscreenTableAt(tableModels(view.state, from, to).models, head);
+  if (table !== undefined) return { kind: "table", from: table.from, to: table.to };
+  const block = codeBlockAt(view, head);
+  return block === null ? null : { kind: "codeblock", from: block.from, to: block.to };
 }
 
 /**
@@ -704,17 +829,26 @@ function buildDecorations(view: EditorView, ctx: PreviewContext): DecorationSet 
   const { from, to } = tableDiscoveryRange(view);
   const tables = tableModels(view.state, from, to).models;
 
-  // 表格全屏触发钮（M240，D3 的鼠标入口）：每张**渲染为 grid** 的表一个（判据与
-  // tableWrappers 的 BlockWrapper 完全一致——同一份 models、同一个矩形性 + 非降级条件），
-  // 挂在表头行行首，DOM 是绝对定位的按钮（见 ./table-trigger 的坐标系统说明）。
-  // 降级表 / 非矩形表天然没有它：那两类没有 `.cm-lp-table` 子树，装饰也不会走到这里。
+  // 表格动作钮群（M240 的放大 + M277 的复制，D3 的双入口）：每张**渲染为 grid** 的表一组
+  // （判据与 tableWrappers 的 BlockWrapper 完全一致——同一份 models、同一个矩形性 + 非降级
+  // 条件），挂在表头行行首，DOM 是绝对定位的按钮（见 ./block-trigger 的坐标系统说明）。
+  // 降级表 / 非矩形表天然没有它们：那两类没有 `.cm-lp-table` 子树，装饰也不会走到这里。
+  // 组内自左至右「复制 → 放大」——复制钮的偏移因此固定在放大钮左侧（见 style.css）。
   for (const table of tables) {
     if (table.degraded || !table.rectangular) continue;
+    const head = view.state.doc.lineAt(table.from).from;
+    const range = { kind: "table", from: table.from, to: table.to } as const;
+    decos.push(
+      Decoration.widget({
+        widget: new BlockCopyTrigger(range, () => ctx.blockCopy()),
+        side: -1,
+      }).range(head),
+    );
     decos.push(
       Decoration.widget({
         widget: new TableFullscreenTrigger(() => ctx.tableFullscreen()),
         side: -1,
-      }).range(view.state.doc.lineAt(table.from).from),
+      }).range(head),
     );
   }
 
@@ -1055,6 +1189,24 @@ function collectSyntaxDecorations(
           decos.push(Decoration.line({ class: classes }).range(l.from));
         }
         collectCodeTokens(view, ref.node, vrFrom, vrTo, decos);
+        // 块级动作钮群（M277）：复制 + 放大，挂在该块**首行行首**，DOM 是绝对定位的按钮；
+        // 最近的定位祖先是 slot 层（rank 20，见 codeBlockSlotWrappers），因此内容横滚时钮不动。
+        // 「图表态的 mermaid 块没有钮」是结构性的：它被 widget 整块替换、块内没有源码行可挂
+        //（判据复用 mermaid.ts 的 isMermaidDiagram，点图表显露源码后条件转假，钮随之出现）。
+        if (!isMermaidDiagram(view.state, ref.node)) {
+          decos.push(
+            Decoration.widget({
+              widget: new BlockCopyTrigger({ kind: "codeblock", from: ref.from, to: ref.to }, () => ctx.blockCopy()),
+              side: -1,
+            }).range(ref.from),
+          );
+          decos.push(
+            Decoration.widget({
+              widget: new CodeBlockFullscreenTrigger(ref.from, () => ctx.codeBlockFullscreen()),
+              side: -1,
+            }).range(ref.from),
+          );
+        }
         return false;
       }
 

@@ -179,6 +179,13 @@ const EDITOR_CORE_COMMAND_IDS = [
   // 表内也没有第二条 Tab 系绑定可用）。
   "editor.list-indent",
   "editor.list-outdent",
+  // M277：块级复制（change block-copy-affordance，裁决点 5 取推荐项「给键盘入口」）。
+  // 归 editor 组 = 作用域为 editor：复制没有「焦点在遮罩里」的第二种状态（与
+  // `table.toggle-fullscreen` 取 global 的理由不同），且命中判据（caret 落在渲染为 grid 的表内
+  // 或代码块内）本身要求编辑器持焦。**默认不绑键**，登记进 KEYLESS_COMMAND_IDS——鼠标路径由
+  // 块上的 hover 复制钮承担（双入口，实现在 src/preview/block-trigger.ts，实现在 main.ts）。
+  // 命中条件见 KeymapContext.commandGate 的说明（条件需要编辑器状态，绑定层表达不了）。
+  "block.copy",
 ] as const;
 
 /** 轨道 D 的 widget 焦点作用域命令（M132 收编进统一表；实现在 livePreview.ts）。
@@ -240,6 +247,14 @@ export const NON_TAB_GLOBAL_COMMAND_IDS = [
   // 实现在 src/preview/table-trigger.ts，遮罩本体在 src/table-fullscreen.ts）。
   // 命中条件见 KeymapContext.commandGate 的说明（条件需要编辑器状态，绑定层表达不了）。
   "table.toggle-fullscreen",
+  // M277：代码块放大全屏查看（change code-block-fullscreen）。前缀取 `code-block.`：它作用的
+  // 对象是**一块代码块**，与 `table.toggle-fullscreen` 同族（都不是 `editor.*` / `view.*` 的
+  // 成员，前缀与作用域因此不互相打脸）。作用域为 global 是理由决定的：遮罩打开时焦点在遮罩里
+  // （不在 contentDOM 内），`editor` 作用域会让「再执行一次同一命令关闭」失效（同
+  // `table.toggle-fullscreen` / `toc.toggle`）。**默认不绑键**，登记进 KEYLESS_COMMAND_IDS；
+  // 鼠标路径由代码块 hover 触发钮承担（实现在 src/preview/block-trigger.ts，遮罩本体在
+  // src/code-block-fullscreen.ts）。命中条件见 KeymapContext.commandGate。
+  "code-block.toggle-fullscreen",
   // M180：折行开关（能力与状态在 editor.ts，装配在 main.ts）。取 `view.` 前缀而不是
   // `editor.`：本仓的既有约定是 `editor.` 前缀 = 编辑器作用域命令，而这两条作用于**应用
   // 运行期的显示口径**（与 tab.*、toc.toggle 同族），作用域由清单派生为 global——
@@ -293,6 +308,12 @@ export const KEYLESS_COMMAND_IDS: readonly string[] = [
   // 默认不占物理组合；用户要键位就经 [keys] 绑（绑定后命中条件由命令级门承担，
   // 见 KeymapContext.commandGate）。
   "table.toggle-fullscreen",
+  // M277：代码块放大全屏查看（change code-block-fullscreen）——与表格全屏同一条裁决形态：
+  // 鼠标入口是代码块 hover 触发钮，键盘入口默认不占物理组合；用户要键位就经 [keys] 绑。
+  "code-block.toggle-fullscreen",
+  // M277：块级复制（change block-copy-affordance，裁决点 5）——鼠标入口是块上的 hover 复制钮，
+  // 键盘入口默认不占物理组合（同 M180 / M240 先例）。
+  "block.copy",
 ];
 
 export type EditorCommandId = (typeof EDITOR_COMMAND_IDS)[number];

@@ -62,6 +62,9 @@ function ctxFor(path: string | undefined, mtimeMs: number | null = null): Previe
     lightbox: () => null,
     // 表格全屏遮罩（M240）：本层不测遮罩，未接线即 null（同 lightbox）。
     tableFullscreen: () => null,
+    // 代码块全屏与块级复制（M277）：同上，本层不测这两条能力。
+    codeBlockFullscreen: () => null,
+    blockCopy: () => null,
     fileMtime: () => mtimeMs,
   };
 }

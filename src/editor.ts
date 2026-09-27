@@ -15,9 +15,11 @@ import { tags } from "@lezer/highlight";
 import { GFM } from "@lezer/markdown";
 import type { EditorMode } from "./bindings/EditorMode";
 import { livePreview, previewRefresh, widgetCommands } from "./preview/livePreview";
-import { codeBlockWrappers } from "./preview/livePreview";
+import { blockCopyTarget, codeBlockSlotWrappers, codeBlockWrappers } from "./preview/livePreview";
 import { endMarker } from "./preview/endMarker";
 import type { PreviewContext, WikilinkResolver } from "./preview/livePreview";
+import type { BlockCopyRange } from "./preview/block-copy";
+import type { CodeBlockFullscreenPort } from "./preview/block-trigger";
 import type { ImageLightbox } from "./lightbox";
 import type { TableFullscreen } from "./table-fullscreen";
 import { detectFrontmatter } from "./preview/frontmatter";
@@ -1039,6 +1041,15 @@ export interface EditorHandle {
    * （同 `setLightbox` 口径：能力未接线是结构性表现，不是一条要维护的开关）。
    */
   setTableFullscreen(fullscreen: TableFullscreen | null): void;
+  /**
+   * 注入代码块放大全屏查看的口子（M277）；未注入时代码块工具钮点击无反应（同 `setLightbox`
+   * 口径：能力未接线是结构性表现，不是一条要维护的开关）。
+   */
+  setCodeBlockFullscreen(port: CodeBlockFullscreenPort | null): void;
+  /**
+   * 注入块级复制能力（M277，触发钮与 `block.copy` 共用一个口子）；未注入时复制钮点击无反应。
+   */
+  setBlockCopy(copy: { copy(range: BlockCopyRange): void } | null): void;
   /** 强制重建装饰（解析缓存更新 / watch 增量后调用）。 */
   refreshPreview(): void;
   /** 滚动定位到 1-based 行号并把光标移到行首（wikilink 锚点跳转用）。 */
@@ -1053,6 +1064,13 @@ export interface EditorHandle {
    * 位置不可读、或落点即篇首时**静默不施加**（沿用复位结果），不抛错、不提示。
    */
   applyScrollPosition(position: ScrollPosition): void;
+  /**
+   * 把焦点交还编辑器**且不改变阅读位置**（M277；收敛建议见 docs/backlog.md 的
+   * 「交还焦点 MUST NOT 改阅读位置」条）：取阅读位置 → `view.focus()` → 经上面两个原语写回，
+   * 三步同帧。写回 MUST NOT 裸写滚动容器——CM 的滚动锚点簿记会把它改掉。浮层类关闭路径
+   * （代码块全屏）用它代替裸 `view.focus()`，理由与真机读数见 src/code-block-fullscreen.ts。
+   */
+  focusPreservingReadingPosition(): void;
   /** 订阅前台滚动容器的滚动信号（捕获侧的信号源）；返回退订函数。 */
   onScroll(listener: () => void): () => void;
   /** 前台会话是否相对它的 dirty 基准有改动。 */
@@ -1139,6 +1157,13 @@ function wrapExtensions(mode: EditorMode, settings: WrapSettings): Extension[] {
   if (mode === "md" && !settings.codeBlockWrap) {
     extensions.push(EditorView.blockWrappers.of(codeBlockWrappers));
   }
+  // 代码块动作钮的坐标系统（M277）：**无条件**装（与 `codeBlockWrap` 无关）——否则「打开
+  // 代码块折行后复制 / 放大钮无声消失」会变成一条要维护的开关，而它本该是结构性的。本层零
+  // 足迹（无背景 / 边框 / 内外边距 / overflow），不改变块的渲染盒，也不构成横向滚动容器
+  //（M180 的口径不变）。
+  if (mode === "md") {
+    extensions.push(EditorView.blockWrappers.of(codeBlockSlotWrappers));
+  }
   return extensions;
 }
 
@@ -1224,6 +1249,10 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
   let lightbox: ImageLightbox | null = null;
   /** 表格放大全屏查看的遮罩（M240）：同上，装配层注入。 */
   let tableFullscreen: TableFullscreen | null = null;
+  /** 代码块放大全屏查看的口子（M277）：装配层注入，装饰层只经 PreviewContext 取用。 */
+  let codeBlockFullscreen: CodeBlockFullscreenPort | null = null;
+  /** 块级复制能力（M277）：装配层注入；未注入时复制钮仍在、点了没反应。 */
+  let blockCopy: { copy(range: BlockCopyRange): void } | null = null;
   const readyListeners = new Set<EditorReadyListener>();
   let readyPath: string | undefined;
   let readyRequestId: number | undefined;
@@ -1346,6 +1375,8 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
     wikilinkResolver: () => wikilinkResolver,
     lightbox: () => lightbox,
     tableFullscreen: () => tableFullscreen,
+    codeBlockFullscreen: () => codeBlockFullscreen,
+    blockCopy: () => blockCopy,
     fileMtime: (path) => mtimeCache.get(path),
   };
 
@@ -1600,6 +1631,15 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
     // 轨道 D 的 widget 命令（M132）：实现在 livePreview.ts，在此与内核命令同一个记录里
     // 装配——统一表的每条绑定都必须有归属实现，分组只表达「谁提供实现」。
     ...widgetCommands(view),
+    // 块级复制（M277，change block-copy-affordance 的裁决点 5）：命中判据取自语法树与表格
+    // 模型（livePreview 的 blockCopyTarget，MUST NOT 读 DOM），复制动作经装配层注入的口子
+    // ——内容切片、剪贴板写入与 toast 全在装配层（`src/main.ts`），这里只做「命中哪一块」。
+    // 未接线（纯桩 / 维护性调用）时命中也不动作：能力没装配是结构性表现。
+    "block.copy": () => {
+      const range = blockCopyTarget(view);
+      if (range === null) return;
+      blockCopy?.copy(range);
+    },
     "editor.cursor-up": () => {
       moveCaretVertically(view, false);
     },
@@ -2059,7 +2099,28 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
       // 同 setLightbox：装饰层在构建期读这个口子（表格全屏触发钮的点击接线），注入后重建一次。
       view.dispatch({ effects: previewRefresh.of(null) });
     },
-    refreshPreview() {
+    setCodeBlockFullscreen(next: CodeBlockFullscreenPort | null) {
+      codeBlockFullscreen = next;
+      // 同 setTableFullscreen：代码块放大触发钮的点击接线在构建期读这个口子。
+      view.dispatch({ effects: previewRefresh.of(null) });
+    },
+    setBlockCopy(next: { copy(range: BlockCopyRange): void } | null) {
+      blockCopy = next;
+      // 同 setTableFullscreen：复制触发钮的点击接线在构建期读这个口子。
+      view.dispatch({ effects: previewRefresh.of(null) });
+    },
+    focusPreservingReadingPosition() {
+      // 取阅读位置 → 聚焦 → 写回，三步同帧、顺序不可换（M277，change code-block-fullscreen
+      // design §5.1）：把焦点放进编辑器是**浏览器**接管的视口动作（聚焦时保证光标可见），
+      // 快照取在聚焦之后就成了被改过的值——那正是缺陷本身。M274 的实测：只要绕过 CM 的
+      // `focusPreventScroll` 交还焦点，WebKit 下 `scrollTop` 2750 → 0（整屏跳）。
+      //
+      // 写回走编辑器自己的滚动通道（上面两个原语），**MUST NOT 裸写滚动容器**——CM 的滚动
+      // 锚点簿记会把它改掉（M149 实测差 242px，同一族）。位置读不出来就只聚焦（不写半个值）。
+      const position = this.readScrollPosition();
+      view.focus();
+      if (position !== null) this.applyScrollPosition(position);
+    },    refreshPreview() {
       view.dispatch({ effects: previewRefresh.of(null) });
     },
     revealLine(line: number) {
