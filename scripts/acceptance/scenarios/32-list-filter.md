@@ -233,10 +233,14 @@ steps:
     keys: ["b"]
     expect:
       - shot: 输入 b 之后的 vault 列表
-      - label: 被筛掉的那一行连路径行一起消失（当前 vault 的行不再在列表里）
-        ax: { not: "/\\/private\\/tmp\\/lumir-m102-acceptance(?!-)/" }
-      - label: 命中的那一行还在（`-b` 那个 vault 的完整路径）
-        ax: { has: "/private/tmp/lumir-m102-acceptance-b" }
+      - label: 被筛掉的那一行不在列表里（当前 vault 的**行**不再上屏）
+        # M217 裁决后列表行是单行制、**路径不再上屏**（`src/vault-switcher.ts` 就地注释：路径次行
+        # 按裁决裁掉，行文本 = 「显示名 + 摘要」）：拿绝对路径当判据会恒真——正是「看着更强、其实
+        # 恒真」那类假绿（M256 现场定位）。判据改锚在**行节点**上：树头部那条读屏名（AXPopUpButton）
+        # 含同一个名字，用 `AXStaticText (` 前缀把它排除在外，`(?!-b)` 再把命中的那一行排除。
+        ax: { not: "/AXStaticText \\(lumir-m102-acceptance(?!-b)/" }
+      - label: 命中的那一行还在（`-b` 那个 vault 的显示名）
+        ax: { has: "/AXStaticText \\(lumir-m102-acceptance-b/" }
       - label: 「新增 vault…」不受筛选影响（它不在列表里；判据同上是它的读屏名）
         ax: { has: "选择一个目录作为新 vault" }
       - label: 当前 vault 没有被改动（树头部名称不变）

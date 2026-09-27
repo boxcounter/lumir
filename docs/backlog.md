@@ -621,7 +621,7 @@ M256（分支 `feat/final-acceptance-regression-sweep-m256`）跑了**全量真�
 M254 已登记的两条（`OpenIntent` union / `VaultSession.ts` 注释、套件索引重写）不在本节重复——
 索引那条的**新现场**补写在了原条目里，`$vault2` 前缀吞噬已由 `8758756` 修好、无残留动作。
 
-**M254 移除预览标签机制改了三条场景的前提（陈旧断言，需派活）**（medium）：
+~~**M254 移除预览标签机制改了三条场景的前提（陈旧断言，需派活）**（medium）~~ **已修（M266：28 / 29 / 38 三条按现状对齐，真机 PASS；现场见「M266 陈旧断言清理」节）**：
 `93bb24b` 删掉了「预览标签不入盘」的过滤（`src/vault-switcher.ts` 的 `sessionSnapshot`，注释自述
 「全部**有路径**的标签都入盘」），于是**单击树文件打开的标签会进入下次启动的恢复集合**。三条场景
 的判据建立在那条过滤还在的前提上，本批全部转红：
@@ -640,7 +640,7 @@ M254 已登记的两条（`OpenIntent` union / `VaultSession.ts` 注释、套件
 （预览机制原有的作用之一正是「随手看看不留痕」）。若这个副作用不可接受，那是产品决策，
 场景侧跟着改口径即可。
 
-**M254 移除预览机制改了「文件切换后编辑器视图是否复用」（陈旧断言）**（low）：
+~~**M254 移除预览机制改了「文件切换后编辑器视图是否复用」（陈旧断言）**（low）~~ **已修（M266：lua / md 两段改成「先断言空查询、再重敲」，三段同形，真机 PASS）**：
 `31-code-variable-highlight` 断言「搜索状态跨文件保留」（`⌘F` 后 `AXTextField = "limit"`）。
 M254 之前单击树文件是预览意图，就地替换同一个标签（同一个 `EditorView`），CM 的 search state
 因此存活；现在一律 `new` ⇒ 新标签 = 新视图 = 空查询。现场：`…/31-…/ax/05-*.txt` 里
@@ -648,8 +648,7 @@ M254 之前单击树文件是预览意图，就地替换同一个标签（同一
 挂着 `.js` 与 `.lua` 两个标签（旧机制下前者会被就地替换）。**动作**：改断言（每个标签各自持搜索
 状态是分标签编辑器的正常语义），或明确要求跨标签保留并当产品改动立项。
 
-**`32-list-filter` 自 2026-09-25 起的那条红定位完毕：断言写死了 UI 不上屏的绝对路径**（low，
-陈旧断言；与「验收套件（M240 现场发现）」里 2026-09-26 那条同源，此处是定位结论）：M217 裁决后
+~~**`32-list-filter` 自 2026-09-25 起的那条红定位完毕：断言写死了 UI 不上屏的绝对路径**（low，陈旧断言；与「验收套件（M240 现场发现）」里 2026-09-26 那条同源，此处是定位结论）~~ **已修（M266：断言改成行节点判据 `AXStaticText (…`，真机 PASS）**：M217 裁决后
 vault 列表行**不再显示路径**（`src/vault-switcher.ts:828-830` 就地注释：「路径次行按 Alex 裁决裁掉
 （M217，gap 表 #12）：单行制收敛后路径不再上屏」），行文本是 `<显示名> <摘要>`
 （现场 `…/32-…/ax/09-*.txt`：`lumir-m102-acceptance-b 还没有打开过文件`），绝对路径只在**不可用**
@@ -657,8 +656,7 @@ vault 列表行**不再显示路径**（`src/vault-switcher.ts:828-830` 就地�
 都不成立：`-b` 那一行在场且显示名正确（M252 的 `$vault2` 占位符修复 `8758756` 已在 master 生效）。
 **动作**：把该断言改成显示名（或删掉），把「路径不可用」形态留给覆盖它的场景。
 
-**套件：`button: right` 坐标通道取不到窗口截图 ⇒ 场景 47 / 50 整段 FAIL**（medium；
-M244 / M249 / M251 / M252 / M254 同族，M254 已落 finding，本条为收口登记）：现场错误逐条是
+~~**套件：`button: right` 坐标通道取不到窗口截图 ⇒ 场景 47 / 50 整段 FAIL**（medium；M244 / M249 / M251 / M252 / M254 同族，M254 已落 finding，本条为收口登记）~~ **已修（M266：改读带截图的 `mode=full` 快照，见「M266 陈旧断言清理」节）**：现场错误逐条是
 `取不到窗口截图，无法用 right 键在坐标上点击`（`scripts/acceptance/lib/execute.mjs` 的 click
 右键分支），并级联出「找不到可点节点」与末端磁盘断言 FAIL。M254 的新证据（**同刻** KimiCU 自己的
 `get_app_state(mode=full)` 能取到 1151×768 的图，窗口在前台、套件 `ensureForeground` 报「已取得」）
@@ -687,7 +685,7 @@ M252 三次实测（43 个标签那轮读到的是装载完成态；把装载撑
 瞬时状态判据的写法（把窗口撑到数秒，或改用「状态变化前后两次读数差」这类不依赖绝对时刻的形式）；
 `readAx` 返回值带读时刻并写进 `steps.md`。
 
-**场景 43 的红换了一种成因，且本批未定位**（medium，需派活）：M240 登记的红是「`do: key tab`
+~~**场景 43 的红换了一种成因，且本批未定位**（medium，需派活）~~ **已定位（M266：自动保存自身的 fs 回声被判成「外部修改」而暂停自动保存；已立 finding）**：M240 登记的红是「`do: key tab`
 不落地」（那次场景走 Tab）。M249 已把 43 改成经 `[keys]` 绑到 `⌘J` / `⌘⇧J`，并在
 `test-results/acceptance/2026-09-27-m249/43-list-tab-indent/` **PASS 过**——所以本批的红**不是**
 M240 那条通道问题。本批现场（**连跑两次读数逐字相同**）：第一次缩进（`- bravo` → `  - bravoq`）的
@@ -754,6 +752,80 @@ diff 仅 `47a48 >` 一行空行；剔除尾随空行后同为 `68796fc7…`）�
 `src/lib.rs:146` 的 `tauri::generate_context!()` 在 `frontendDist`（`../dist`）不存在时 proc macro
 panic（`error: could not compile lumir (lib)`）。**顺序是先 `pnpm build` 再 `cargo build`**；
 AGENTS.md 的白屏陷阱条目只写了「起实例前先 cargo build」，后批照抄时别漏这一步。
+
+### M266 陈旧断言清理与套件右键通道修复（2026-09-27）
+
+M266（分支 `feat/stale-scene-assertion-cleanup-m266`）按 Alex 裁决清理 M254 / M217 留下的陈旧断言，
+并修掉套件 `button: right` 的取图通道。**真机读数：28 / 29 / 31 / 32 / 38 / 43 / 50 七条全部 PASS**
+（第一轮 4/7；29 与 50 各余一条断言形态错、43 的真因未定位，三处修完后第二轮 3/3）。证据
+`test-results/acceptance/2026-09-27/`（git 外）；另存一份**不会被同日后续 run 覆盖**的副本在
+`test-results/m266/scenarios/`（同一天目录里的场景目录会被后来的 run 整目录重写，这是既有 finding
+「套件每次运行都会重写证据目录」的同族），两轮的运行日志在该目录的同级 `run{1,2}-*.log`。
+
+**M254 改了三条场景的前提（28 / 29 / 38）——已按现状对齐**：`93bb24b` 之后「单击树文件打开的标签
+也入盘」，重启会把它恢复出来。改法按场景语义各取其一：
+
+- `28` / `38`：断言从「重启后没有标签（空 vault 引导在场）」改成**正观测**——「恢复出的就是本场景
+  那一份」（`AXRadioButton (toc-long.md)` / `(keys.md)`）+ 同一对位置 / 正文断言。28 还多一条
+  「第 15 章两行在渲染行里」，比旧写法强（旧写法只有负向断言，编辑器根本没装载时会空过）。
+- `29`：问题不是断言本身，而是**前提不成立**——重启恢复出的同名标签让 `open` 走「同路径短路激活」
+  （不重新装载），读到的 AX 是启动恢复那一刻的、不是全新的。修法：`configWrite` 之前补一步 `⌘W`
+  关标签（+ 等会话落盘），重启落在空文档态、`open` 走真正的装载路径，本场景五次「改字号 → 判定」
+  因此完全同形。**顺带纠正一处口径**：关掉最后一个标签落在「无当前文件」的空文档态，**不是** D107
+  的空 vault 引导（M266 实测；29 的断言已按此写）。
+
+**`31-code-variable-highlight`：查询词按标签重敲（对齐 M254 的分标签编辑器语义）**：旧断言假设
+「搜索状态跨文件保留」，那建立在预览机制「就地替换同一个 `EditorView`」之上；现在一律新标签 = 新视图
+= 空查询（M256 现场：lua / md 两段的 `AXTextField (查找)` 没有 Value）。每个文件段先断言「查询为空
+（0/0）」作正观测，再重敲一遍，三段落的通道完全同形。
+
+**`32-list-filter`：路径断言改成行节点断言（M217 起路径不上屏）**：旧断言找的是 vault 的绝对路径，
+而 M217 裁决后列表行是单行制、路径次行已裁掉——旧断言在健康机器上**恒真**（「看着更强、其实恒真」
+那类假绿）。现改成 `AXStaticText (lumir-m102-acceptance-b …)` 形（`(?!-b)` 把命中的那一行排除）；
+树头部那条同名读屏名是 `AXPopUpButton`，不会被误命中。
+
+**套件 `button: right` 的取图通道修好了（47 / 50 的整段 FAIL 由此收口）**：旧实现用 `mode=ax` 的快照
+找节点 bbox，又要求 `ax.image` 在场——而 mode=ax 的快照**按设计不带图**（header 自述
+`screenshot: none — no image attached`），于是这条路径**必然**报「取不到窗口截图」（M244 / M249 /
+M251 / M252 / M254 同族）。修法：新增 `readAxWithScreenshot`（`lib/execute.mjs`），坐标路径改读
+`mode=full`——同一份快照既带图、bbox 又是**截图像素**口径（与 `click` 的 x,y 同空间），顺带修掉
+「可视区上界拿屏幕点 1200×800 去比截图像素」的混用。**同一次实跑即验通**：场景 50 的三条路径（含
+脏标签拦截 + 三出口 + 放弃后批量继续）全部走通。
+
+**场景 50 / 51 的 `Close` 锚定断言恒不匹配（断言形态错；50 已修、51 另立 finding）**：
+`/^AXMenuItem \(Close\)$/m` 在真机上永远不匹配——AX dump 的节点行形如
+`- [366] AXMenuItem (Close) @290,25 …`，行首是缩进与索引，而 `m` 下 `^`/`$` 只认行首行尾。
+**50 已改成带括号的项名** `/AXMenuItem \(Close\)/`（另两项的项名里不含 `(Close)` 这个子串，既不必
+加锚点也不会三项全中）；**51 不在本 mission 的 scope**，已按规矩落 finding
+`.tower/comms/findings/20260927-worker-stale-scene-cleanup-bug-51-close.md`。
+
+**场景 43 的红因定案：不是「等得不够」，是自动保存自身的 fs 回声被判成了「外部修改」**（medium，
+**产品缺陷**；finding `.tower/comms/findings/20260927-worker-stale-scene-cleanup-bug-fs-dirty-43.md`）：
+M266 把该步等待由 2600 加长到 6000 复跑**仍然红**——由此证伪 M256 留下的「注入 + 快照耗时把 2.6s
+窗口挤穿」这一支。真因读数：诊断日志（`env:lumir/logs/2026-09-27.jsonl`）在同一秒记下
+`save_external_change(path=list-indent-bullet.md)` + `autosave_paused(reason=external)`，而该文件此刻
+的 mtime 正是**应用自己那次自动保存**的时刻，两条相隔 177ms——「外部修改」是**自己写盘的回声**。
+机制：`src/save-controller.ts` 的 `handleExternalChange` 只在 `saving.has(path)`（保存进行中）时抑制
+自身事件，保存一结束抑制即撤；回声到达时若缓冲区**已重新 dirty**，走 `if (isDirty(path))` 分支——
+该分支**不做 revision 比对**（干净的兄弟分支有 `reloadDocument(onlyIfChanged)`），直接暂停自动保存 +
+弹「检测到外部修改」。后果：这次改动永不落盘（只留一份崩溃备份）。
+**场景侧的对策是避开窗口而不是修产品**：先一步 `sleep 3000` + 断言见证字符已落盘，让第一次保存与它的
+回声走完再按 ⌘J；判据面另留一条护栏 `ax: { not: "检测到外部修改" }`（竞态回来时红在这一条）。
+真机侧**没有任何场景覆盖这条竞态**——它只能由 chromium 桩确定性复现（修法与验证口径见 finding）。
+
+**顺带纠正一条套件事实**：诊断日志白名单里**没有「保存成功」这类正向事件**（`src/bindings/LogEventName.ts`
+只有 `save_conflict` / `autosave_paused` / `recovery_written` 这类）。M256 建议的「读 `document_save`
+诊断日志判定是窗口问题还是保存问题」**在现有事件集下做不到**——「有没有保存」只能从磁盘内容与 mtime
+判；真出异步问题时读 `env:lumir/logs/<日期>.jsonl` 的 `save_external_change` / `autosave_paused` 这一对
+（M266 就是这么定案的）。
+
+**视觉基线两张按 Alex 已认可的口径重建**：`tests/visual/baselines/tree-menu.spec.ts-snapshots/` 的
+`context-menu-file` / `context-menu-dir` 两张元素基线随 M251 的「菜单作用行高亮」各差 23px（角上圆角
+透出作用行底色），本轮按 `test-results/m251/baseline-review/tree-menu-menu-target/` 里 Alex 认可的观感
+重建——重建产物与过目包里的 `*-after.png` **逐字节相同**（`cmp` 复核）。同目录第三张
+`context-menu-file-trash-active` 同因差 5 字节，但**不在 Alex 过目包内**，本轮**未重建**（已改回），
+留待一次过目后再一并更新。这两张基线只出现在 `tests/visual/scenes/tree-menu.spec.ts` 的元素级断言里
+（全仓 grep），没有任何整页基线把它们包含在内。
 
 ### 验收套件（M240 现场发现，2026-09-26）
 

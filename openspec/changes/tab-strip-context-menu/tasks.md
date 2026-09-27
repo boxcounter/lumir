@@ -56,3 +56,27 @@
       继续关其余」，可被断言判开、更贴「关闭其他标签」的字面承诺）需新一轮裁决，见 review-request
 - [x] 7.4 reviewer 的非计项 nit：review-request 与过目包 README 里的「12 条 tree-menu」实为 **14 条**
       （2 + 14 + 3 = 19，与 `visual-full-run1.log` 一致）——过目包 README 与本文档 §7 已勘误
+
+## 8. M266：上屏语言翻转（M257）后的措辞同步与套件侧收口（2026-09-27）
+
+- [x] 8.1 M257 把菜单三项改成**英文上屏**（Close / Close Other Tabs / Close Tabs to the Right）后，
+      `specs/multi-tabs/spec.md` 的 requirement 与全部 scenario 文本、design §一/§三/§五、proposal 的
+      What Changes 与 Non-goals 逐处改为英文措辞；design §四整节改写为「M257 已翻转」的现口径
+      （原中文措辞只在那里作为历史记录保留，不再被当作上屏文案）
+- [x] 8.2 验收场景 50 的中文菜单断言随之改成英文（写法照抄场景 51：`Close` 用锚定正则
+      `/^AXMenuItem \(Close\)$/m`，另两项是完整独立串）。改前它在健康机器上是**必红**的——
+      场景断言中文、`src/tabs.ts` 的三个常量已是英文
+- [x] 8.3 套件 `button: right` 的取图通道修好（`scripts/acceptance/lib/execute.mjs` 的
+      `readAxWithScreenshot`）：旧实现用 `mode=ax` 的快照找 bbox 又要求 `ax.image` 在场，而 mode=ax
+      **按设计不带图**，于是这条路径必然报「取不到窗口截图」（M244 / M249 / M251 / M252 / M254 同族，
+      场景 47 / 50 整段 FAIL 的成因）。改读 `mode=full`（同一份快照既带图、bbox 又是截图像素口径，
+      与 `click` 的 x,y 同空间），并把「可视区上界」从屏幕点改成截图像素
+- [x] 8.4 **修正 8.2 的写法**：`/^AXMenuItem \(Close\)$/m` 在真机上**恒不匹配**（AX dump 的节点行是
+      `- [366] AXMenuItem (Close) @290,25 …`，行首有缩进与索引，`m` 下 `^`/`$` 只认行首行尾）。
+      场景 50 改用带括号的项名 `/AXMenuItem \(Close\)/`（另两项的项名里不含 `(Close)`，既不必加锚点
+      也不会三项全中）；**场景 51 不在本 mission 的 scope**，已落 finding
+      `.tower/comms/findings/20260927-worker-stale-scene-cleanup-bug-51-close.md`
+- [x] 8.5 真机复跑（M266，`test-results/acceptance/2026-09-27/`）：修通道 + 改英文后场景 50
+      **PASS（46 条断言 / 0 失败 / 31.8s）**——三条关闭路径、右键不改上下文、Esc 收起、脏标签三出口
+      与「取消即停手 / 放弃后批量继续」全部在真实 WKWebView + 真实指针事件下走通。这是本 change 的
+      真机判定**第一次**真正落地（M254 / M257 两轮都卡在通道上）

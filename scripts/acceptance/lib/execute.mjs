@@ -864,7 +864,7 @@ async function doAction(step, { ctx, cu, scenario, vars, pid, evidence }) {
       // 因此需要一个带 bbox 的快照（full 才有截图坐标），在节点中心注入真实鼠标事件
       //（cursor-safe，不移动用户指针）。左键 / 未写 button 的行为一字不变。
       const pointerButton = t.button !== undefined && t.button !== "left";
-      const ax = pointerButton ? await readAxForScreenPoint(cu, p) : await readAx(cu, p);
+      const ax = pointerButton ? await readAxWithScreenshot(cu, p) : await readAx(cu, p);
       const node =
         t.help !== undefined
           ? findByHelp(ax.nodes, { role: t.role, help: t.help, nth: t.nth ?? 0 })
@@ -881,15 +881,18 @@ async function doAction(step, { ctx, cu, scenario, vars, pid, evidence }) {
         // 例如 40 个 fixture 时靠后的行 y≈1300 而窗口高 800），此时注入坐标只会得到
         // KimiCU 的 `screenshot coordinate is outside the last get_app_state image`
         // ——那句错误看不出真实成因。这里提前给一句能指出下一步的话（M244 实测）。
+        // 可视区上界取**截图像素**（与 px/py 同空间）：带图的 dump 里 `screenshot: 1152×768 px`
+        // 才是坐标通道的边界，而 `window_bounds` 是屏幕点（1200×800）——两者混用会把
+        // 1152–1200 那一条带算成「在视口内」，KimiCU 仍会拒绝该坐标。
+        const shot = screenshotSize(ax.text);
         const bounds = windowBounds(ax.text);
-        if (bounds && (px > bounds.w || py > bounds.h || px < 0 || py < 0)) {
+        const vw = shot?.w ?? bounds?.w;
+        const vh = shot?.h ?? bounds?.h;
+        if (vw && vh && (px > vw || py > vh || px < 0 || py < 0)) {
           throw new Error(
-            `${t.button} 键目标不在可视区内（节点 @${Math.round(px)},${Math.round(py)}，窗口 ${bounds.w}×${bounds.h}）：` +
+            `${t.button} 键目标不在可视区内（节点 @${Math.round(px)},${Math.round(py)}，可视区 ${vw}×${vh}）：` +
               `请先用 open / 滚动把该行带进视口再右键（右键走真实指针事件，坐标必须在窗口内）`,
           );
-        }
-        if (!ax.image) {
-          throw new Error(`取不到窗口截图，无法用 ${t.button} 键在坐标上点击：节点 ${JSON.stringify(t)}`);
         }
         return clickWithRetry(cu, p, px, py, { button: t.button });
       }
@@ -1139,6 +1142,40 @@ async function doAction(step, { ctx, cu, scenario, vars, pid, evidence }) {
     default:
       throw new Error(`未知动作 do=${step.do}`);
   }
+}
+
+/** 坐标注入（`click` 的非左键路径）要的那份快照：**带截图的 mode=full**。
+ *
+ *  为什么不复用 `readAxForScreenPoint`（mode=ax）：KimiCU 的 `click` x,y 是**截图像素**，且它要求
+ *  「最后一次 `get_app_state` 带图」——而 mode=ax 的快照按设计不带图（header 自述
+ *  `screenshot: none — no image attached`）。旧实现用 mode=ax 找 bbox、又要求 `ax.image` 在场，
+ *  于是 `button: right` 的节点路径**必然**走到 `取不到窗口截图` 那条错因（M244 / M249 / M251 /
+ *  M252 / M254 同族；M256 的 47 / 50 整段 FAIL 即此）。mode=full 的 bbox 本来就是截图像素口径
+ *  （header 自述 `bbox @x,y w×h and click/scroll/drag x,y are screenshot pixels`），一份快照同时
+ *  满足「有图」与「坐标同空间」两件事。
+ *
+ *  截图偶发缺席（KimiCU 服务退化，README「已知边界」）时重试几拍再判死；判死时如实报通道取不到图，
+ *  不静默换一个坐标空间去点。 */
+async function readAxWithScreenshot(cu, pid, { retries = 3 } = {}) {
+  let last = null;
+  for (let i = 0; i < retries; i++) {
+    const ax = await readAx(cu, pid, { mode: "full" });
+    last = ax;
+    if (ax.image && screenshotSize(ax.text)) return ax;
+    await sleep(700);
+  }
+  throw new Error(
+    `取不到窗口截图，无法用坐标注入点击（连试 ${retries} 次 mode=full 都无图，末次 element_count=` +
+      `${last?.nodes.length ?? 0}）——KimiCU 的截图通道退化，见 README「已知边界」的「AX 快照可能退化」条` +
+      `（处理办法是重启 KimiCU 服务，不是改场景）`,
+  );
+}
+
+/** 截图尺寸（header 的 `screenshot: 1152×768 px`）：坐标注入通道的可视区上界，与 bbox 同一空间。
+ *  无图时 header 写的是 `screenshot: none — …`，解析不到即 null（调用方退到 window_bounds）。 */
+function screenshotSize(axText) {
+  const m = /screenshot:\s*(\d+)×(\d+)\s*px/.exec(axText);
+  return m ? { w: +m[1], h: +m[2] } : null;
 }
 
 /** `doubleClick` 用的 AX 读数：必须是**窗口局部坐标口径**（mode=ax，带 window_bounds）。

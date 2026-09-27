@@ -57,10 +57,12 @@ steps:
     expect:
       - label: 重启后 config.json 的 content_width ≈ 1000 仍在（持久化不是运行期假象；同上 ±8px）
         file: { path: "env:config.json", has: '/"content_width": (99[2-9]|100[0-8])/' }
-      - label: 重启后 vault 照常装载（栏宽配置不挡启动链路；重启不自动重开文档——与场景 28 同口径）
-        ax: { has: "这个 vault 还没有打开的文件" }
+      - label: 重启后 vault 照常装载（栏宽配置不挡启动链路；M254 起单击开的标签也入盘，重启会把它恢复出来）
+        ax: { has: "/AXRadioButton \\(keys\\.md\\)/" }
+      - label: 恢复出的正文可读（启动链路端到端：配置读回 → 编辑器装载，不报错不白屏）
+        editor: { has: "键位场景" }
 
-  - name: 重开 keys.md：栏宽配置下编辑器照常装载
+  - name: 重开 keys.md（它已随启动恢复在场，这一步走的是「同路径短路激活」）
     do: open
     file: keys.md
     expect:
