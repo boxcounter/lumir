@@ -51,6 +51,27 @@ md 模式的围栏 / 缩进代码块今天已完整渲染：行装饰 + 头部�
   所以「整块呈现」的 DOM 规模需要一条**新的**边界口径（见 What Changes 第 4 条与
   [design.md](design.md) §6）。
 
+### 三、同族缺陷的形态修正：交还焦点 MUST 保住阅读位置（M274 实测，2026-09-27）
+
+本 change 的关闭形态原本照 M240 表格式样写成 `restoreFocus: () => editor.view.focus()`，
+与 M240 逐字同形（`src/table-fullscreen.ts:207` + `src/main.ts:139-143`）。M274 的实测证明这条链
+在 WebKit 下有缺陷：
+
+- 只把 `restoreFocus` 那一步换成裸 `contentDOM.focus()`、其余一字不动 ⇒ WebKit 下 `Esc` 关闭时
+  `scrollTop` **2750 → 0**（整屏跳；chromium 完全不动，所以视觉门禁结构性看不见）。
+- `blur` 兜底那条路径（不交还焦点的那条）在 WebKit 下**无需任何改造即跳**。
+- 挡住它的是 CM6 的 `focusPreventScroll`（`EditorView.focus()` 内部）。真机边界如实记录：
+  系统 WKWebView 的 UA 没有 `Version/x.y` token（M274 真机实测）⇒ CM 的 `safari_version` 恒为 0
+  ⇒ Safari-26 分支在真机**永不触发**，走 CM focus 的关闭路径在真机**是安全的**；
+  但只要绕过 CM 交还焦点，WebKit 即跳。
+
+修法沿用 M186 已裁决的口径（`docs/backlog.md:1095-1105` 的收敛建议）：`restoreFocus` 写成
+**取阅读位置 → `view.focus()` → 写回**，写回走编辑器自身的滚动通道
+（`readScrollPosition()` / `applyScrollPosition()`，装配侧注入点 `src/main.ts:634-635`），
+MUST NOT 裸写滚动容器；若 M274 的修复已先落地 `editor.focusPreservingReadingPosition()`，
+直接复用它。file:line、逐层判别力与证据索引见 [design.md](design.md) §5.1，
+证据原文在 `test-results/m278/REPORT.md` §5 / §6。
+
 ## What Changes
 
 （以下按各裁决点的**推荐项**写；裁决改备选时按裁决点表的「备选」列改写 delta 与 tasks，不静默扩 scope。）
@@ -94,8 +115,11 @@ md 模式的围栏 / 缩进代码块今天已完整渲染：行装饰 + 头部�
 
 6. **关闭交互与表格全屏逐条同款**：`Esc`（遮罩上就地消费，不进统一键位表）、点击遮罩
    （面板以外区域）、再次执行 `code-block.toggle-fullscreen`（toggle）、焦点兜底
-   （`blur` 关闭且不抢焦点）；四条回同一个 `close`，前三条关闭后焦点交还编辑器。
-   遮罩持焦期间 `editor` 作用域的键不穿透、`Tab` 留在遮罩内。
+   （`blur` 关闭且不抢焦点）；四条回同一个 `close`，前三条关闭后焦点交还编辑器
+   **且交还 MUST NOT 改变阅读位置**——关闭前后编辑器滚动容器的 `scrollTop` / `scrollLeft` 与当前
+   渲染的行逐值不变；交还 SHALL 走编辑器自身的滚动通道（`readScrollPosition()` /
+   `applyScrollPosition()`），MUST NOT 裸写滚动容器。形态、依据（M274 实测）与真机边界见
+   [design.md](design.md) §5.1。遮罩持焦期间 `editor` 作用域的键不穿透、`Tab` 留在遮罩内。
 
 7. **打开与关闭都不碰文档**：`EditorState.doc` 与磁盘文件逐字节不变（ADR 0003 §3）、
    选区与光标落点不变；文档代际变化（外部修改重载）时遮罩按 `blur` 口径关闭且不抢焦点。
@@ -155,7 +179,9 @@ md 模式的围栏 / 缩进代码块今天已完整渲染：行装饰 + 头部�
   新增 `src/preview/codeblock-trigger.ts`（触发钮 + slot class，照 `src/preview/table-trigger.ts`）；
   `src/preview/livePreview.ts`（slot 包装层、命中判定 `codeBlockAt`、`PreviewContext` 增一个可选口子，
   同 `lightbox()` / `tableFullscreen()` 先例）；`src/editor.ts`（`wrapExtensions` 装 slot 层 +
-  ctx 注入）；`src/main.ts`（装配：挂点、`restoreFocus`、命令实现与门）；`src/keys.ts`
+  ctx 注入；**若 M274 的修复未先落地，则在此实现 `focusPreservingReadingPosition()`**
+  ——design §5.1，落地状态实现期核对）；`src/main.ts`（装配：挂点、`restoreFocus` 走三步序列或上述
+  原语、命令实现与门）；`src/keys.ts`
   （命令 id + `KEYLESS_COMMAND_IDS`）；`src/style.css`（浮层内容与触发钮的少量规则，零新 token）；
   `文案-Copy.md`（D152 一行 + 文末「文案实现备注」一段）。`src-tauri/**` 零改动。
 - 影响的文档：`docs/specs/config-reference.md` 的 `editor.code_block_wrap` 行**不改**
