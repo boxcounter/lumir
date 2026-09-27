@@ -827,6 +827,38 @@ M266 把该步等待由 2600 加长到 6000 复跑**仍然红**——由此证�
 留待一次过目后再一并更新。这两张基线只出现在 `tests/visual/scenes/tree-menu.spec.ts` 的元素级断言里
 （全仓 grep），没有任何整页基线把它们包含在内。
 
+### 文案 deck D152 编号碰撞（M263 登记，2026-09-27；tower 已裁决分配）
+
+`文案-Copy.md` 末位是 D151，而两份已合并提案都声明「从 D152 起」：M261（`goto-line-command`，
+proposal.md:77）与 M267（`ui-language-i18n`，proposal.md:90「新增 D152 起」）。finding：
+`.tower/comms/findings/20260927-worker-proposal-block-copy-bug-deck-d152-change-m261-goto-line-m267-ui-language-i18n.md`。
+**tower 裁决（2026-09-27）**：M261（先合并、体量小）占 D152 起；**M267 实现期必须把 deck 起点重基到
+当时末位续接**（预计 D156 起——M263 已占 D153–D155），并同步改它 proposal / tasks 里的编号声明段。
+动因：deck 规则是「只追加、不复用」，而代码注释与单测字面量按 D 编号引用文案，撞号会让这些引用
+指错条目。**触发条件**：M267 过节点 1 进实现时，第一个 task 先做这步重基。
+
+### table-trigger.ts 注释 deck 编号漂移（M262 登记，2026-09-27）
+
+`src/preview/table-trigger.ts:30` 与 `:42` 两条注释把表格全屏触发钮的读屏名写成「文案 deck D120」，
+实际条目是 **D124**（`文案-Copy.md:116` / `:171`）；D120 是栏宽拖拽手柄（`src/content-width.ts:28`）。
+断言侧没漂（`tests/unit/table-fullscreen.test.ts:194-196` 写的是 D124），纯注释失真。成因：M240 提案期
+按「末位 D119 ⇒ 取 D120」写，实现期落到 D124 后只改了单测与 deck、漏改这两条注释。finding：
+`.tower/comms/findings/20260927-worker-proposal-code-fs-b-improve-table-trigger-ts-deck-d120-d124-d120.md`。
+**触发条件**：任一后续 mission 碰到 `src/preview/table-trigger.ts` 时顺手把两处 D120 改成 D124。
+
+### M252 装载指示立论在打开段不成立（M268 登记，2026-09-27）
+
+已合并未归档的 change `vault-switch-feedback`（M252）的 proposal 立论「等待期间事件循环是空的、界面
+会重绘」只在**会话恢复段**（纯 JS 异步）成立；**打开段**由 `src-tauri/src/commands.rs:555` 的
+`vault_open_path` 承担——它是**不带 `async`** 的同步 command、在主线程内联执行（对照 `:531` 的
+`vault_open` 是 async），该段 webview 不能重绘、指示只能静止。Alex 报的「愣住几秒后才出现系统转圈」
+很可能就是这一段的 beachball，不是 Lumir 的指示。finding：
+`.tower/comms/findings/20260927-worker-proposal-vault-restore-improve-m252-vault-open-path-command.md`。
+**动作**：① 归档 `vault-switch-feedback` 前在它自己的 spec 增量「装载的即时反馈」里补一句已知边界
+（打开段指示只取「在场」判据），M268 的 delta 已带同一条边界、两处不冲突；② `vault_open_path`
+是否异步化等 M268 tasks 1.2 的 watch 段读数再定；③ 顺带统一 `vault_open`（async）/ `vault_open_path`
+（同步）两条 path 的线程语义。
+
 ### 验收套件（M240 现场发现，2026-09-26）
 
 - **Tab / Shift-Tab 注入在 WKWebView 不生效 ⇒ list-tab-indent（M239）的场景 43 在 master 上恒红**（medium，
