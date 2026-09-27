@@ -134,7 +134,7 @@
 - [ ] 9.4 启动首帧闪烁的真机复核（与 1.4 同判据，在真实 WKWebView 下再测一次，chromium 的结论不作数；配置取 `ui.language = zh`——默认语言已裁为 `en`，闪烁风险落在 `zh` 用户）。
   **验收口径**：结论与帧证据落结果目录；测出闪烁必须闭环（否则本 change 不达验收）。
 - [ ] 9.5 日志 / 告警面**不进语言面**的真机核对（终裁的负向断言）：切换语言前后各触发一条配置告警，断言日志负载的 `message` 与事件名 `config_warning`、`source` 字段、等级**逐字相同**（不随界面语言变化）。
-  **验收口径**：负向断言（日志文本未变）要有一条正观测（同一次交互里界面文案确实换了语言）配对（REVIEW.md 第 2 条）；从 `env/config/lumir/logs/*.jsonl` 读回原文留档。
+  **验收口径**：负向断言（日志文本未变）要有一条正观测（同一次交互里界面文案确实换了语言）配对（REVIEW.md 第 2 条）；从 `env/lumir/logs/*.jsonl` 读回原文留档（`config_dir()` = `$XDG_CONFIG_HOME/lumir`，日志写 `<config_dir>/logs/`，与 9.1 的 `env/lumir/config.json` 同根）。
 
 ### 编号声明
 
