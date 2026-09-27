@@ -218,6 +218,12 @@ M140 r1 评审实证：`/PAUSE-PROBE[\\s\\S]*$/` 在 `m` 下恒真（`[\s\S]*` �
 `/^.*"category":"asset".*"outcome":"opened".*$/`——不加锚点的 `.*` 会被文件里别的事件满足，断言退化成
 「两串都在文件里出现过」（M145 的 `12-links` 用这个形态断言 `link_open` 的类别与结果）。
 
+第三处边界：`m` 下的 `^` **只认行首、不跳过前导空白**，所以「按项名锚定一行」在 AX dump 上写不出来——
+节点行形如 `- [366] AXMenuItem (Close) @290,25 157×26`，前面是缩进与 `[索引]`，`/^AXMenuItem \(Close\)$/m`
+恒不匹配（M266 实测对照：同一次 dump 里 `Close Other Tabs` / `Close Tabs to the Right` 两条子串断言
+PASS，只有锚定那条 FAIL）。要锚定这类行，把 `- [\d+] ` 前缀写进模式，或索性只锚在**带括号的项名**上
+（`/AXMenuItem \(Close\)/`——另两项的项名里都不含 `(Close)` 这个子串）。
+
 ## 证据布局（`test-results/acceptance/<日期>/`，git 外）
 
 ```
