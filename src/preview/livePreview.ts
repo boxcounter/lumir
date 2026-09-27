@@ -38,6 +38,7 @@ import {
 } from "./reveal-gate";
 import { docTitleForFrontmatter, docTitleTop } from "./doc-title";
 import { sampleCallback } from "../diagnostics";
+import { focusPreservingReadingPosition } from "../scroll-position-view";
 import type { LinkResolveResult } from "../bindings/LinkResolveResult";
 import { BlockWrapper } from "@codemirror/view";
 import { findTables, fullscreenTableAt, tableAt, tableRowsInRange, degradationNotice, type TableModel } from "./table";
@@ -559,7 +560,9 @@ export function widgetCommands(view: EditorView): Record<WidgetCommandId, Comman
     "editor.widget-scroll-home": (event) => onContainer(event, (el) => { el.scrollLeft = 0; }),
     "editor.widget-scroll-end": (event) => onContainer(event, (el) => { el.scrollLeft = el.scrollWidth; }),
     // Escape 不滚动：把焦点交还编辑器（随后按键回到文本上下文），与原手柄同语义。
-    "editor.widget-escape": (event) => onContainer(event, () => { view.focus(); }),
+    // 交还焦点走 focusPreservingReadingPosition（M280）：容器持焦期间 caret 可能在视口之外
+    // （Tab 进来时同步过一次 DOM 选区、之后视口又滚走了），裸 focus 会把视口拽回光标处。
+    "editor.widget-escape": (event) => onContainer(event, () => { focusPreservingReadingPosition(view); }),
   };
 }
 

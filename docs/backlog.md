@@ -898,6 +898,68 @@ M277（`block-copy-affordance` + `code-block-fullscreen` 的实现批）落地�
 7. **两条新命令默认不绑键**（`block.copy` / `code-block.toggle-fullscreen`）：鼠标入口分别是块上的
    复制钮与放大钮（hover 才出现），键盘入口需用户经 `[keys]` 绑定。`⌘/` 面板会列出它们的「未绑定」行。
 
+### M280 现场发现：ESC 跳变的两个副产物与两条残余（2026-09-27）
+
+M280（修阅读位置原语 + 统一全部交还焦点调用点）的**未收口项**，逐条给出机制链、优先级与建议归属。
+M279 报告 §5 的两条副产物在列，判定为**都不随本修复收口**：
+
+1. **跳变那一拍会被落盘成阅读位置 `pos 0`（high，待修，M279 已开 finding
+   `20260927-worker-survey-esc-jump-bug-esc-pos-0-anchor-0.md`；建议归属：remember-reading-position
+   的下一个 change 或独立小 mission）**。机制链：`src/reading-position.ts:192-208` 的 `scrolled()`
+   在**滚动事件里同步**读 `deps.readPosition()`（`src/main.ts` 注入 `editor.readScrollPosition`），
+   读到的时刻早于 CM 的测量周期——而本修复的写回正是在测量周期里落地（`view.dispatch` 的
+   `scrollIntoView` 效果）。⇒ 引擎聚焦揭示造成的 `scrollTop S → 0` 那一拍若先派发了 scroll 事件，
+   捕获到的仍是 `pos 0`；1s 防抖到期后写盘，而 `applyScrollPosition` 对 `anchor === 0` 刻意不施加
+   （M110 口径）⇒ 此后每次打开都从篇首开始。**实证**：M279 的 T5（`test-results/m279/readings/`）
+   与 Alex 那份文件盘上的 `pos 0 / y 114`（47 条里 19 条 pos 0）。**M280 的对照读数（两半都给，
+   判据不依赖具体数值）**：修后在 `webkit-realua` 场景里越过 1s 防抖，桩收到的
+   `reading_position_put` 载荷是**跳变前的那个真实锚**（锚 = 视口顶那一行的文档位置，`pos` 在
+   1600 量级），**不是 `pos 0`**——即这一几何下没有把用户位置改写成篇首。`y` 逐轮有亚像素级
+   差异（同一份代码两轮实测 72.6 / 74.5），而 `test-results/m280/scene-readings/table-esc.json`
+   会被后续每一轮 gate 覆写，因此此处**只记判据、不记具体读数**；要引用数值以当轮现场为准
+   （`gate-visual-regression.log` 的 `readingPositionPuts tail` 行）。**但机制仍开着**（捕获读在
+   滚动事件的同步回调里，而临时 0 与写回落在同一帧，谁先谁后不由产品代码决定），因此本条
+   **保持待修**，修法与验收连同新的探针（注入滚动事件时间线 + 载荷逐次比对）一起做。修法候选：① 交还焦点前后一小段
+   窗口内的捕获整体忽略（本模块自己持有一个「正在交还焦点」标记，MUST NOT 靠时间猜测）；
+   ② 落盘前把「与上一份 pending 指向同一处」的判据从 `samePosition` 放宽到「锚相同即不覆盖」。
+   ①更贴合「谁在动这个视口」的语义，倾向 ①。
+2. **外部改写当前文档 ⇒ 重载复位篇首 + 遮罩不自关（high，待修，M279 已开 finding
+   `20260927-worker-survey-esc-jump-bug-item.md`；建议归属：overlay/外部变更专项）**。机制链：重载走 `src/main.ts` 的外部变更分流，没有经过 `openFile` 的
+   `readingPositions.restoreFor` ⇒ 阅读位置不恢复；`src/table-fullscreen.ts:173-176` 的注释声称
+   `blur` 兜底同时兜住「文档代际变化（外部重载）」，M279 的 T6 实测**没有**触发（`scrollTop
+   1543 → 0`、遮罩 `hidden=false` 仍开着）。本修复不碰这两条（它们与「聚焦揭示」无关）。
+3. **残余：vault 切换器仍走第二份通道（low，待收）**。`src/vault-switcher.ts:739-744` 的
+   `handOffFocus()` 用 CM 自己的 `scrollSnapshot()` / 快照 effect，而全仓其余路径已统一到
+   `src/scroll-position-view.ts` 的原语——同一语义两处实现（REVIEW.md 第 8 条）。M280 未收的理由：
+   它 M186 起就有保护、真机场景 25 PASS 过三次，换通道要重跑真机；收口时按「先跑场景 25，再换」
+   的顺序做。
+4. **残余：捕获锚落在文档原点时运行期不写回（low，待收）**。`applyScrollPosition` 的
+   `anchor === 0` 早退沿用装载口径（M110 的页首内边距）。触发条件窄（视口停在最上沿 + 引擎揭示
+   下方 caret 才会体现），收口时要连带核对 M110 的页首 44px 内边距与 `tests/unit/scroll-position.test.ts`
+   的两条往返断言。
+5. **验收套件表达不了 CL-1 的判据（medium，待修；归属：验收套件表达力专项，与下面的
+   「套件缺 `scroll` 动作」同族）**。M280 试图为条款补两条真机场景（表格 / 代码块全屏 ESC），
+   实测**做不出可证伪的判据**，器材侧三条硬约束逐条给实测：
+   - 套件没有 `scrollTop` 读数、也没有 `scroll` 动作 ⇒ 「位置没变」只能靠「渲染行是否在场」间接判；
+   - 「渲染行」的间接判据依赖 AX 文本窗口，而 M280 真机实测该窗口宽达 ~2500–3600px
+     （现场：视口在文档末尾时，视口上方 ~2400px 处的表格行与文档首行仍在 AX 树里——
+     `test-results/acceptance/2026-09-27/63-*` 的 ax dump），因此负向那半（"上方那块已不在渲染行里"）
+     在 ~2400px 量级的间距上恒真；
+   - 拉大间距被**代码侧**卡死：命令入口的块定位走 `tableDiscoveryRange`（视口 ± max(首行长×2, 2048)
+     **字符**），caret 距视口顶超过 ~2048 字符时命令静默不动作 ⇒ 「caret 在视口上方 ≥ 一屏 + 命令
+     可达」这条带子的宽度不足以超过 AX 窗口。鼠标触发钮入口（`activeElement` 所属容器，不受该范围
+     限制）才是能拉大间距的那条，但套件没有 `hover` 动作、触发钮只在 hover 时进 AX 树。
+   ⇒ 结论：**在补齐「`scroll` 读数/动作」或「`hover` 动作」之前，CL-1 的真机判据只能靠人肉**
+   （Alex 按最小三条件各做一次，M279 §7.2 已提过这条代价）。M280 因此**没有**留下红场景，
+   真机层的证据是场景 40 与 62 的 PASS（两条关闭路径的**回归护栏**：修前修后都绿，不构成 CL-1
+   通过的证据——判别证据在 `webkit-realua` 层，见条款文档的「判别层」表）。
+
+6. **方法学告警（medium，已开 finding）**：「Playwright WebKit + 真机同款 UA」**不等于**系统
+   WKWebView 的行为。M274 的离屏探针测得系统 WKWebView **尊重** `focus({preventScroll:true})`，
+   M279 在同一 UA 的 Playwright WebKit 上测得**无视**它并揭示范（`scrollTop 1560 → 0`）。两处读数
+   互斥、未定性 ⇒ 涉及 WebKit 分支的判据在真机层与 Playwright 层可能给出相反结论，而**真机层才是
+   终审**。finding `20260927-worker-impl-esc-jump-improve-playwright-webkit-ua-wkwebview-preventscroll-webkit-playwrig.md`（本 mission 开）。
+
 ### M252 装载指示立论在打开段不成立（M268 登记，2026-09-27）
 
 已合并未归档的 change `vault-switch-feedback`（M252）的 proposal 立论「等待期间事件循环是空的、界面
@@ -1172,9 +1234,19 @@ M277（`block-copy-affordance` + `code-block-fullscreen` 的实现批）落地�
   **部分落地（M277，2026-09-27）**：`src/editor.ts` 的 `focusPreservingReadingPosition()` 已按同一份
   收敛建议实现（取阅读位置 → `view.focus()` → 经 `readScrollPosition` / `applyScrollPosition` 写回，
   三步同帧、MUST NOT 裸写滚动容器），`src/code-block-fullscreen.ts` 的 `restoreFocus` 已经用它
-  （M274 实测：WebKit 下裸 `focus()` 把 `scrollTop` 从 2750 拽到 0）。**仍未收口的是上面那四条**：
+  （M274 实测：WebKit 下裸 `focus()` 把 `scrollTop` 从 2750 拽到 0）。~~**仍未收口的是上面那四条**：
   `src/toc.ts`（大纲 Esc）、`src/search.ts`（⌘F 关闭）、`src/main.ts` 的图片遮罩与键位面板仍用裸
-  `view.focus()`（以及表格全屏——它今天也还是裸 `view.focus()`，同族缺陷待同一批收口）。
+  `view.focus()`（以及表格全屏——它今天也还是裸 `view.focus()`，同族缺陷待同一批收口）。~~
+
+  ~~**已收口（M280，2026-09-27）**~~：上面那五处（四条 + 表格全屏）全部改走原语；原语本身搬进
+  `src/scroll-position-view.ts`（facade 只转发），并修掉第二半根因——运行期**不许**在聚焦后就地
+  复核落点（那一拍布局还没反映引擎的滚动，差值恒为 0 ⇒ 写回被自己那句「落点 ≤ 0」吃掉，M279 的
+  T4b 实测）。条款落在 [docs/design-parity-contract/overlay-close-reading-position.md](../design-parity-contract/overlay-close-reading-position.md)
+  的 CL-1（含输入分布与判别层表）；判别用例 `tests/visual/scenes/m280-overlay-esc-scroll.spec.ts`
+  的 `webkit-realua` project（真机同款 UA）；真机层只拿到场景 40/62 的回归护栏（见下条 5）。
+  **仍未收口的残余两条**另行登记：
+  ① vault 切换器仍走 CM 的 `scrollSnapshot` 通道（同一语义的第二份实现，REVIEW.md 第 8 条）；
+  ② 捕获锚落在文档原点时运行期不写回（M110 口径的遗留，触发条件窄）。
 
 ### 未复现
 
