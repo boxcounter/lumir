@@ -36,3 +36,12 @@
 - [x] 5.2 `openspec/changes/vault-switch-feedback/` 的三个制品与本文件的勾选状态按实际证据写（未验的一律写明「未验」）
 - [x] 5.3 `39-titlebar-identity` 复跑结论（无并行实例时）
 - [x] 5.4 另落三条 finding：AX 快照延迟秒级（`…-improve-ax-toast.md`）、`$vault2` 被前缀替换（`…-bug-vault-vault2-…md`）、会话恢复「已跳过」文案把两种成因合成一句（`…-bug-vault.md`）
+
+## 6. 交付状态与外部依赖（合并前必读）
+
+- **`src/style.css` 的改动不在本分支的提交里**（tower 2026-09-27 裁决：该文件临时划给 M251，先合并）。改动留在 wt-252 的工作区未 commit：
+  - `.vault-loading`（12px 转圈、tokens 取色、`@keyframes vault-loading-spin`、`prefers-reduced-motion` 分支）——**没有它，指示元素就是裸 span：AX 节点照常出现（本轮真机断言验的是这一点），但没有可见的环**；
+  - `.vault-pop` 上方注释里「定位夹进挂点矩形」那句。
+  合并前需由 tower 把 `src/style.css` 加回 M252 scope（merge gate 会拒），并把这份工作区改动一并提交（或授权 worker rebase 后再提交）。
+- **tower 批准的 `scroll` 动作没有实现**（scope 扩到 `scripts/acceptance/lib/execute.mjs` + `README.md` 的批准在本轮收尾阶段才读到，未动工）。按批准的备选口径如实登记：浮层几何那条仍是「代码级复算 + 端到端链路」，缺口与建议实现形态见 finding `20260927-worker-vault-switch-fb-improve-scroll-m252.md`。若仍要补，本 mission 可被 resume 一个聚焦任务。
+- **本轮真机运行的 AX 快照退化**（KimiCU 服务坏态：`element_count: 1`、只剩窗口壳）出现过两次，按套件 README 的既有边界处理（不改场景）；另有一次 39 的红是**另一个 agent 的并行真机实例抢前台**所致，安静复跑即 PASS（`test-results/acceptance/2026-09-27-m252-39/`）。同机多个 mission 同时跑真机套件会互相污染（前台 + 共享 `/tmp` 合成 vault + 共享隔离配置目录），建议 tower 层串行化。
