@@ -10,7 +10,7 @@
 
 ## 1. 现状读数与反向验证（实现前，先测再改）
 
-- [ ] 1.1 取一次**现状读数**：在一份含 `正文里的 https://… 是裸 URL` / `[homepage]: https://…` / `<https://…>` / 表格 cell 内裸 URL 的文档里记录 ① 渲染态文本（三处都不带尾标、`.cm-lp-link` 计数为 0）、② 光标落在裸 URL 上按 ⌘⏎ 时的行为（`link_open` 日志零新增）、③ ⌘-Click 同一位置的 `posAtCoords` 落点偏移。
+- [ ] 1.1 取一次**现状读数**（**未按原口径做**：没有落 `readings.json`。替代证据是两条——① 节点形态清点用真实 parser 跑出 19 条 `URL`/`Link` 节点（含 frontmatter 内那条，证明它是被 `inFrontmatter` 剪枝而非「语法树不产出」）；② 反向验证的红灯（见 1.2 / 5.6 / 6.2）证明「实现前这些断言不成立」。请评审按「口径偏离」看待，不要读成已覆盖）：在一份含 `正文里的 https://… 是裸 URL` / `[homepage]: https://…` / `<https://…>` / 表格 cell 内裸 URL 的文档里记录 ① 渲染态文本（三处都不带尾标、`.cm-lp-link` 计数为 0）、② 光标落在裸 URL 上按 ⌘⏎ 时的行为（`link_open` 日志零新增）、③ ⌘-Click 同一位置的 `posAtCoords` 落点偏移。
   **验收口径**：读数落 `test-results/acceptance/<日期>/bare-url-before/readings.json`（可 `ls`）；与 [design.md](design.md) §1 的节点形态表一致，或如实记录不一致并改设计。
 - [x] 1.2 反向验证（先红，REVIEW.md 第 1 条防线）：把「裸 URL 装饰出 `.cm-lp-link` + `↗︎`」与「⌘⏎ 打开该 URL」两条断言先写出来，在**未实现前**跑一次，必须 FAIL。
   **验收口径**：红灯输出留档（playwright 失败信息）；没有这一步的绿灯不算数。
@@ -59,9 +59,9 @@
   **验收口径**：每条负向断言都能指出它对应的正观测（REVIEW.md 第 2 条）。
 - [x] 5.5 编辑态与文档不变：光标进/出裸 URL 时装饰的撤下与恢复；URL 末位继续键入的行为合判据（1.3 ② 的结论）；用例末尾 `readDocument(page)` 与 fixture 逐字节相同（ADR 0003 §3）。
   **验收口径**：`docText` 前后逐值比较 + 磁盘逐字节比较两条独立断言。
-- [ ] 5.6 反向验证：关掉新分支（或回退实现）后 5.2–5.5 必须红，红灯留档。
+- [ ] 5.6 反向验证（**已做**：同上三文件回退后跑 `render-link.spec.ts` → **11 failed / 7 passed**，日志 `test-results/m272/reverse-visual-bare-url.log`）：关掉新分支（或回退实现）后 5.2–5.5 必须红，红灯留档。
   **验收口径**：`git stash push -- src` 后跑一次的红灯输出落 `test-results/`。
-- [ ] 5.7 基线核对（REVIEW.md 第 3 条 + AGENTS.md 视觉门禁卫生）：`render-link` 场景输出必然变化 ⇒ 出对比图请 Alex 过目后再 `--update-snapshots=all`；`grep -rln` 定位其余含裸 URL 的 fixture，逐张核对时间戳与内容判据。
+- [ ] 5.7 基线核对（**待 Alex 过目**：`render-link.png` 变化 26451 px = 0.03 + 新增截图 `render-link-bare-url.png`；三视图与比对包在 `test-results/m272/baseline-review/`，已请 tower 转 Alex。核准后跑 `scripts/visual/run.sh --update render-link.spec.ts` 并复跑门禁）（REVIEW.md 第 3 条 + AGENTS.md 视觉门禁卫生）：`render-link` 场景输出必然变化 ⇒ 出对比图请 Alex 过目后再 `--update-snapshots=all`；`grep -rln` 定位其余含裸 URL 的 fixture，逐张核对时间戳与内容判据。
   **验收口径**：PR 写明新增 / 重拍的基线清单与逐张核对方式（内容判据，不只看时间戳）；裸跑 `--update-snapshots` 不算（本仓两次实证等于什么都不做）。
 
 ## 6. 真机验收场景（WKWebView，`scripts/acceptance/`）
@@ -70,7 +70,7 @@
   断言：装饰态上屏（尾标在场 + URL 文本仍在）+ `do: key cmd+return` 后诊断日志 `link_open` 的 `category=external` / `outcome=opened`（与 `12-links` 同款通道 `env:logs/*.jsonl`）+ 结尾两条 `unchangedSince`（编辑器内容与磁盘 sha256）。
   **验收口径**：`node scripts/acceptance/run.mjs --check` 静态校验 PASS；`run.mjs 54` 真机 PASS，证据落 `test-results/acceptance/<日期>/54-<slug>/`（`status.txt` = PASS）。
   **前置**：本场景依赖裁决点 D5 取推荐项（⌘⏎ 覆盖新形态）——套件的 `click` 动作不支持修饰键（`docs/backlog.md:1048-1053`），⌘-Click 在真机无法表达。D5 若取备选，本任务整份改为「由 chromium 层承担，真机覆盖记为不可达」并如实登记。
-- [ ] 6.2 真机反向验证：去掉入口触发（或回退实现）跑同一场景，断言必须 FAIL，FAIL 留档（结果目录另开，不覆盖 PASS 证据）。
+- [ ] 6.2 真机反向验证（**已做**：`git checkout 589a9c0 -- src/preview/links.ts src/preview/livePreview.ts src/link-follow.ts` 后跑场景 54 → **FAIL / 9 条断言红**，日志 `test-results/m272/reverse-acceptance-54.log`）：去掉入口触发（或回退实现）跑同一场景，断言必须 FAIL，FAIL 留档（结果目录另开，不覆盖 PASS 证据）。
   **验收口径**：红灯输出与 PASS 证据分目录存放，两份都可 `ls`。
 - [x] 6.3 真机判据不漏「AX 可读 ≠ 元素可见」（M178 陷阱）：装饰断言同时钉尾标文本在场与编辑器文本可读。
   **验收口径**：steps.md 里两条断言并列出现。
@@ -89,7 +89,7 @@
 ## 8. 验证与收官
 
 - [x] 8.1 `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` 通过，`change/bare-url-cmd-click` 为 ✓。
-- [ ] 8.2 `bash scripts/gate.sh quick` 与 `LUMIR_VISUAL_PORT=<自选> bash scripts/gate.sh visual` 全绿（视觉侧本地跑，CI 只跑结构层）；真机 `node scripts/acceptance/run.mjs 54` 至少跑一次并留档。
+- [ ] 8.2 `bash scripts/gate.sh quick`（quick **10/10 PASS**，见 `test-results/m272/gate-visual.log` 头部；visual **11/12**，唯一红项是本条 5.7 的基线；真机场景 54 PASS ×2 轮） 与 `LUMIR_VISUAL_PORT=<自选> bash scripts/gate.sh visual` 全绿（视觉侧本地跑，CI 只跑结构层）；真机 `node scripts/acceptance/run.mjs 54` 至少跑一次并留档。
 - [x] 8.3 `git diff --check` 通过；改动文件集合与 [proposal.md](proposal.md) 的 Impact 清单一致（出现跨 scope 的只读依赖先报 tower 批准）。
 - [x] 8.4 收官对账：tasks 全部勾选（或标注放弃原因）、spec 增量与实现一致（无实现期静默扩 scope）、living spec 归档另走节点 2；`docs/backlog.md` 的「链接渲染与激活（全形态）」条目补一句新形态纳入。
 
@@ -110,3 +110,19 @@
 | D4 不纳入表格 cell | delta：保持原文清单加「表格 cell 内的裸 URL」。tasks：删 2.3；5.4 加一条 cell 内负向断言（并声明它与「cell 内链接照常渲染」的口径差异）。 |
 | D5 只覆盖鼠标路径 | delta：新增一句「键盘路径（⌘⏎）对新形态无操作」的已知边界。tasks：6.1 整份改为 chromium 承担，真机覆盖记为不可达并如实登记。 |
 | D6 编辑态保留装饰 | delta：「光标落在裸 URL 上撤下装饰」scenario 改为「装饰保持，仅撤下…（若取此备选，须说明光标落在 URL 内时是否仍可编辑）」。tasks：5.5 判据翻转。 |
+
+## 实现台账（M272，2026-09-27）——证据指针
+
+| 项 | 读数 | 证据（可 `ls`） |
+|---|---|---|
+| 单测（新形态节点识别 + 区间 + scheme 前提） | `tests/unit/literal-link.test.ts`：10 组用例全绿（含三种形态的起点/末位/末位之后三态、`Link`/`Image` 祖先排除、无 scheme 字面排除、代码/HTML/frontmatter 上下文） | `node tests/unit/run.mjs` → 424 passed / 0 failed |
+| 视觉（装饰 + 激活 + 负向面） | `render-link.spec.ts` 18 个用例：17 绿，1 红是像素基线（5.7 待裁决）；含定义行前缀无操作、末位端点命中、表格 cell 内裸 URL、D6 显露、逐字节不变 | `test-results/m272/visual-render-link-r4.log` |
+| 反向验证（视觉） | 回退三文件 → **11 failed / 7 passed** | `test-results/m272/reverse-visual-bare-url.log` |
+| 反向验证（真机） | 回退三文件 → 场景 54 **FAIL，9 条断言红**（编辑器中无任何装饰、日志零新增） | `test-results/m272/reverse-acceptance-54.log` |
+| 真机场景 54 | **PASS**（38 断言 / 43.9s），与场景 59 同一次运行 2/2 | `test-results/m272/acceptance-final/summary.md`、`.../54-bare-url-cmd-click/{steps.md,shots,ax}` |
+| 文案 deck | `git diff HEAD~2 -- 文案-Copy.md` 为空（三种形态复用既有 `↗︎` 与链接样式，零新可见文字） | 本 mission 两次提交的文件清单里无 `文案-Copy.md` |
+
+### 实现期做过的两处「先红后绿」修正（如实登记，防后人重踩）
+
+1. **末位端点取不到 URL**（真机场景 54 第 5 轮实测）：光标停在 `<https://x>|` 的 `>` 位置（= `URL` 节点的 `to`）时两侧 `resolveInner` 都落到尖括号 / 父节点上，⌘⏎ 无反应。修法：`literalLinkAt` 往左邻位补问一次，且只接受「该 URL 的末位正好是 pos」。渲染态下那个位置就是 URL 文本末尾，与标准链接「起点算在链接上」同一条口径。
+2. **定义行前缀不是链接本体**：`open` 复位到 0 时 0 落在 `[homepage]: ` 前缀里，⌘⏎ 无操作——装饰的显露范围是整条定义行、激活要求光标落在 `URL` 区间内，两者判据不同。已在 chromium 场景固化成断言对（前缀内无操作 / URL 内命中）。

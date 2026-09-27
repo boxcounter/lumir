@@ -77,7 +77,7 @@ md 列表续行 / D5 = a 只关新增的两处）全部按**推荐项**落地，
       `KeyboardEvent`（`page.keyboard.press("Enter")`），判据落 CM 文档源码（`readDocument`）。
       用例：code 模式语法缩进；md 围栏内沿用缩进；**md 列表续行不被本 change 打断**；
       `auto_indent = false` 回退；`Shift-Enter` 维持裸换行（Non-goals 的不对称）
-- [ ] 4.2 场景零像素基线（只做文档文本断言）；按 AGENTS.md：动过 `tests/visual/scenes/**`
+- [ ] 4.2 场景零像素基线（**已复核**：本 change 的 chromium 场景 `m264-enter-auto-indent.spec.ts` 只做 `readDocument` 文档文本断言、零像素断言；`gate.sh visual` 里该场景 8/8 绿。整页基线变化只来自 `render-link`（bare-url 那一半），与此 change 无关）（只做文档文本断言）；按 AGENTS.md：动过 `tests/visual/scenes/**`
       后本地跑一次 `bash scripts/gate.sh visual`，预期**零基线更新**（`--update` 前须 Alex 过目）
 
 ## 5. spec 增量对账
@@ -109,7 +109,7 @@ change 的编号声明**（对冲条款：本表是登记时的快照，不是�
 - [x] 6.3 新增 `scripts/acceptance/scenarios/59-enter-auto-indent.md`（草案照抄后按实际行号
       校准）：六组用例——code 语法缩进 / toml 沿用当前行 / md 段落平换行 / md 列表续行不变 /
       md 围栏内沿用缩进且不续列表标记 / `auto_indent = false` 回退（6a 列表仍续行、6b code 回退）
-- [ ] 6.4 `node scripts/acceptance/run.mjs --check 59` 静态校验绿；真机跑通后证据落
+- [ ] 6.4 `node scripts/acceptance/run.mjs --check 59`（静态校验绿；真机 **PASS**（29 断言 / 95.2s），与场景 54 同一次运行 2/2，证据 `test-results/m272/acceptance-final/`） 静态校验绿；真机跑通后证据落
       `test-results/acceptance/`（git 外）。**纪律**：`Enter` 是 chord 类盲发注入 ⇒ 负向断言
       一律配 `editor.changedSince` / `file.changedSince` 正观测（design §4.1 与 §7），红了先按丢键复跑一次
 - [x] 6.5 `scripts/acceptance/README.md` 的 `configWrite` 行补上 `autoIndent` 这个键名
@@ -117,8 +117,28 @@ change 的编号声明**（对冲条款：本表是登记时的快照，不是�
 ## 7. 验证
 
 - [x] 7.1 `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` 通过
-- [ ] 7.2 `bash scripts/gate.sh quick` 全绿，输出留档 `test-results/m264/`
-- [ ] 7.3 `bash scripts/gate.sh visual` 本地全绿（本 change 动过 `src/editor.ts` 与
+- [ ] 7.2 `bash scripts/gate.sh quick` 全绿（**10/10 PASS**，日志 `test-results/m272/gate-visual.log` 头部；落点按本 mission 统一在 `test-results/m272/` 而非 `m264/`——两个 change 合并在同一 mission 实现）
+- [ ] 7.3 `bash scripts/gate.sh visual` 本地全绿（**11/12**：唯一红项是 `render-link` 的整页基线，属 bare-url 那一半的预期变化、待 Alex 过目后 `--update`；本 change 的 chromium 场景与其余 494 条断言全绿）（本 change 动过 `src/editor.ts` 与
       `tests/visual/scenes/**`）——预期零基线更新；若出现整页像素差异，按缺陷处理
-- [ ] 7.4 节点 2（归档评审）前的收口：本清单全勾或标注放弃原因；spec 增量与实现一致；
+- [ ] 7.4 节点 2（归档评审）前的收口（本清单除上面四条「待裁决/待归档」外全勾；spec 增量与实现逐条对账见 5.1 的 5 处 diff；`proposal.md` 的裁决记录已补 Alex 原话——见文末台账）：本清单全勾或标注放弃原因；spec 增量与实现一致；
       `proposal.md` 的裁决记录已补 Alex 原话
+
+## 实现台账（M272，2026-09-27）——证据指针
+
+| 项 | 读数 | 证据（可 `ls`） |
+|---|---|---|
+| Rust 配置（第四个键三态 + 类型不符整文件回落） | `config.rs` 新增 3 条单测；`cargo test` 174 passed / 0 failed | `test-results/m272/cargo-test2.log` |
+| bindings 重导出 | `src/bindings/EditorConfig.ts` 含 `auto_indent: boolean`（ts-rs 生成）；`bindings-drift` PASS | `src/bindings/EditorConfig.ts` |
+| 判定单测（矩阵 + 三态投影） | `tests/unit/enter-indent.test.ts` 17 组用例（6 门有缩进规则语言 / 4 门无规则 / md 围栏与缩进块 / md 段落 / md 列表与引用委派 / 只读 / 关配置 / 出厂常量） | `node tests/unit/run.mjs` → 424 passed |
+| chromium 键位链路 | `m264-enter-auto-indent.spec.ts` 8 用例全绿（含 `Shift-Enter` 维持裸换行、关配置回退、列表续行不被本 change 打断、一次撤销一步） | `test-results/m272/gate-visual.log`（该场景 8 passed） |
+| 真机场景 59 | **PASS**（29 断言 / 95.2s） | `test-results/m272/acceptance-final/ 59-enter-auto-indent/{steps.md,shots}` |
+| spec 增量对账（tasks 5.1） | living spec 与 delta 的 diff **恰好 5 个 hunk**，与 proposal Impact 的五处对账清单一一对应 | `test-results/m272/spec-delta-reconcile.diff` |
+| 文档 | `docs/specs/config-reference.md` 补 `editor.auto_indent` 行 + 分工段 + 整文件回落清单；`src/keys.ts` 的 M239 段更正条 | 本 mission 的提交清单 |
+
+### Alex 节点 1 裁决原话（2026-09-27）
+
+> 「# enter-auto-indent 无异议。」
+
+五项裁决点（D1 机制落点 / D2 默认 true / D3 围栏内不做语法缩进 / D4 不接管 md 列表续行 /
+D5 只关新增的两处）全部按**推荐项**实现，delta 与任务清单未按备选改写。原话同时记入
+`proposal.md` 的「裁决记录」节。
