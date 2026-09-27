@@ -827,6 +827,11 @@ M266 把该步等待由 2600 加长到 6000 复跑**仍然红**——由此证�
 留待一次过目后再一并更新。这两张基线只出现在 `tests/visual/scenes/tree-menu.spec.ts` 的元素级断言里
 （全仓 grep），没有任何整页基线把它们包含在内。
 
+**场景 50 正文一处陈旧指向（M269 登记，low，纯文档）**：`50-tab-context-menu.md:200-206` 末句
+「场景 51 的那条待其 owner 修」在 M269 落地后不成立（51 已改同形子串写法）。finding：
+`.tower/comms/findings/20260927-worker-scene51-close-improve-50-51-owner-m269.md`（附建议改写文本）。
+**触发条件**：任一后续 mission 碰到场景 50 文件时顺手把时态改成历史口径。
+
 ### 文案 deck D152 编号碰撞（M263 登记，2026-09-27；tower 已裁决分配）
 
 `文案-Copy.md` 末位是 D151，而两份已合并提案都声明「从 D152 起」：M261（`goto-line-command`，
