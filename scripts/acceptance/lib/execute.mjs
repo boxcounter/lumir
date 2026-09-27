@@ -99,11 +99,22 @@ async function appMetaTokens() {
   };
 }
 
-/** 深度遍历 YAML 产物，字符串里的占位符全部替换。 */
+/** 深度遍历 YAML 产物，字符串里的占位符全部替换。
+ *
+ *  **词边界替换**（M252 finding）：`$vault`（本表）与种子里的第二 vault 惯用记号 `$vault2`
+ *  共享前缀——用 `replaceAll` 会把 `$vault2` 吃成 `<vault 路径>2`（一个不存在的目录），
+ *  凡在 `seed` 里写 `$vault2` 的场景（17 / 19 / 32）第二 vault 都会变成「路径不可用」行。
+ *  因此 token 后面**紧跟标识符字符（字母 / 数字 / 下划线）时不替换**：
+ *   - `$vault2` 原样留给 `app.mjs` 的 `resolveSeedPath`（它按 `secondVaultDir()` 解析）；
+ *   - `$vault-b` 照常替换（`-` 不是标识符字符）——它与 `secondVaultDir()` 的兜底口径
+ *     `${vaultDir()}-b` 逐字一致，两种写法都落到同一个目录。
+ *  `$appName` / `$appVersion` 同样受这条边界保护（`$appNameX` 之类不会被误吃）。 */
 function substituteTokens(value, tokens) {
   if (typeof value === "string") {
     let out = value;
-    for (const [token, text] of Object.entries(tokens)) out = out.replaceAll(token, text);
+    for (const [token, text] of Object.entries(tokens)) {
+      out = out.replace(new RegExp(`${token.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![A-Za-z0-9_])`, "g"), text);
+    }
     return out;
   }
   if (Array.isArray(value)) return value.map((v) => substituteTokens(v, tokens));
