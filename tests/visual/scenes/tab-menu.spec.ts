@@ -46,7 +46,7 @@ async function openTabMenu(page: Page, name: string): Promise<void> {
   await expect(page.locator(".tab-menu")).toBeVisible();
 }
 
-/** 菜单项（按读屏名精确匹配——「关闭」是「关闭其他标签」「关闭右侧标签」的前缀，
+/** 菜单项（按读屏名精确匹配——「Close」是「Close Other Tabs」「Close Tabs to the Right」的前缀，
  *  模糊匹配会一次命中三项，strict 模式直接报错）。 */
 function menuItem(page: Page, label: string) {
   return page.getByRole("menuitem", { name: label, exact: true });
@@ -101,13 +101,13 @@ test("右键标签：三项菜单在场、不改上下文、Esc 收起并归还�
   await expect(menu).toHaveAttribute("role", "menu");
   await expect(menu).toHaveAttribute("aria-label", "标签操作");
   expect(await page.locator(".tab-menu .ft-menu-item").allTextContents()).toEqual([
-    "关闭",
-    "关闭其他标签",
-    "关闭右侧标签",
+    "Close",
+    "Close Other Tabs",
+    "Close Tabs to the Right",
   ]);
   // 打开即持焦点，游标落在首项（键盘路径不用先按一次 ↓）
   await expect(menu).toBeFocused();
-  await expect(page.locator(".tab-menu .ft-menu-item.is-active")).toHaveText("关闭");
+  await expect(page.locator(".tab-menu .ft-menu-item.is-active")).toHaveText("Close");
   await expect(menu).toHaveAttribute("aria-activedescendant", "tab-menu-item-0");
   // 只有语义类 `.tab-menu`：皮肤是 style.css 里 `.ft-menu, .tab-menu` 那一对选择器给出的，
   // 带上 `ft-menu` 会让两份菜单同时命中 `.ft-menu`（树菜单的断言因此变成 strict violation）。
@@ -122,13 +122,13 @@ test("右键标签：三项菜单在场、不改上下文、Esc 收起并归还�
   // 键盘游标走到第三项：选中底色与首项不同（元素基线各留一张）
   await page.keyboard.press("ArrowDown");
   await page.keyboard.press("ArrowDown");
-  await expect(page.locator(".tab-menu .ft-menu-item.is-active")).toHaveText("关闭右侧标签");
+  await expect(page.locator(".tab-menu .ft-menu-item.is-active")).toHaveText("Close Tabs to the Right");
   await expectScreenshot(menu, "tab-menu-close-right-active.png");
   // 越界钳制：末项再前进不动
   await page.keyboard.press("Control+n");
-  await expect(page.locator(".tab-menu .ft-menu-item.is-active")).toHaveText("关闭右侧标签");
+  await expect(page.locator(".tab-menu .ft-menu-item.is-active")).toHaveText("Close Tabs to the Right");
   await page.keyboard.press("Control+p");
-  await expect(page.locator(".tab-menu .ft-menu-item.is-active")).toHaveText("关闭其他标签");
+  await expect(page.locator(".tab-menu .ft-menu-item.is-active")).toHaveText("Close Other Tabs");
 
   // Esc：菜单收起、不执行任何动作，焦点回到触发它的那个标签
   await page.keyboard.press("Escape");
@@ -143,14 +143,14 @@ test("右键标签：三项菜单在场、不改上下文、Esc 收起并归还�
   await expect(page.locator(".tab")).toHaveCount(3);
 });
 
-test("关闭：只关右键落在的那一条，其它标签与前台的落点都不受影响", async ({ page }) => {
+test("Close：只关右键落在的那一条，其它标签与前台的落点都不受影响", async ({ page }) => {
   await stubTauri(page, VAULT);
   await page.goto("/");
   await openTabs(page, ["alpha.md", "beta.md", "gamma.md"]);
 
   // 前台保持 gamma（右键 beta、点关闭；被关掉的不是前台标签）
   await openTabMenu(page, "beta.md");
-  await menuItem(page, "关闭").click();
+  await menuItem(page, "Close").click();
   await expect(page.locator(".tab")).toHaveCount(2);
   await expect(page.locator(".tab-name")).toHaveText(["alpha.md", "gamma.md"]);
   await expect(page.locator(".tab.is-active .tab-name")).toHaveText("gamma.md");
@@ -158,20 +158,20 @@ test("关闭：只关右键落在的那一条，其它标签与前台的落点�
   await expect(page.locator(".tab.is-active .tab-open")).toBeFocused();
 });
 
-test("关闭其他标签：只剩右键那一条（它成为前台，右键时它并不在前台）", async ({ page }) => {
+test("Close Other Tabs：只剩右键那一条（它成为前台，右键时它并不在前台）", async ({ page }) => {
   await stubTauri(page, VAULT);
   await page.goto("/");
   await openTabs(page, ["alpha.md", "beta.md", "gamma.md"]);
 
   await openTabMenu(page, "alpha.md");
-  await menuItem(page, "关闭其他标签").click();
+  await menuItem(page, "Close Other Tabs").click();
   await expect(page.locator(".tab")).toHaveCount(1);
   await expect(page.locator(".tab-name")).toHaveText("alpha.md");
   await expect(page.locator(".tab.is-active .tab-name")).toHaveText("alpha.md");
   await expect(page.locator(".cm-content")).toContainText("Alpha 的第一段");
 });
 
-test("关闭右侧标签：只关右侧，左侧与锚点都留下", async ({ page }) => {
+test("Close Tabs to the Right：只关右侧，左侧与锚点都留下", async ({ page }) => {
   await stubTauri(page, VAULT);
   await page.goto("/");
   await openTabs(page, ["alpha.md", "beta.md", "gamma.md", "delta.md"]);
@@ -180,14 +180,14 @@ test("关闭右侧标签：只关右侧，左侧与锚点都留下", async ({ pa
   await expect(page.locator(".tab.is-active .tab-name")).toHaveText("alpha.md");
 
   await openTabMenu(page, "beta.md");
-  await menuItem(page, "关闭右侧标签").click();
+  await menuItem(page, "Close Tabs to the Right").click();
   await expect(page.locator(".tab")).toHaveCount(2);
   await expect(page.locator(".tab-name")).toHaveText(["alpha.md", "beta.md"]);
   await expect(page.locator(".tab.is-active .tab-name")).toHaveText("alpha.md");
 
   // 边界：最右一条没有右侧——空动作，不报错、不弹提示
   await openTabMenu(page, "beta.md");
-  await menuItem(page, "关闭右侧标签").click();
+  await menuItem(page, "Close Tabs to the Right").click();
   await expect(page.locator(".tab")).toHaveCount(2);
   await expect(page.locator(".lumir-toast")).toHaveCount(0);
 });
@@ -205,9 +205,9 @@ test("脏标签：确认流逐条弹、取消即停手（后面的标签一个�
   await page.locator(".tab-open", { hasText: "beta.md" }).click();
   await dirty(page, "BBB");
 
-  // 「关闭」命中脏标签本身：先确认，不直接关
+  // 「Close」命中脏标签本身：先确认，不直接关
   await openTabMenu(page, "beta.md");
-  await menuItem(page, "关闭").click();
+  await menuItem(page, "Close").click();
   const confirm = page.locator(".lumir-toast", { hasText: "关闭后修改将丢失" });
   await expect(confirm).toBeVisible();
   await expect(confirm.getByRole("button", { name: "保存并关闭" })).toBeVisible();
@@ -220,7 +220,7 @@ test("脏标签：确认流逐条弹、取消即停手（后面的标签一个�
 
   // 批量路径：目标 = [beta(脏), gamma(干净)]——先弹 beta 的确认，此时 gamma 必须还在
   await openTabMenu(page, "alpha.md");
-  await menuItem(page, "关闭其他标签").click();
+  await menuItem(page, "Close Other Tabs").click();
   const batchConfirm = page.locator(".lumir-toast", { hasText: "关闭后修改将丢失" });
   await expect(batchConfirm).toHaveCount(1, { timeout: 5000 });
   await expect(page.locator(".tab")).toHaveCount(3);
@@ -231,7 +231,7 @@ test("脏标签：确认流逐条弹、取消即停手（后面的标签一个�
 
   // 再来一次，这次选「放弃修改并关闭」：beta 关掉之后批量继续，gamma（干净）也被关掉
   await openTabMenu(page, "alpha.md");
-  await menuItem(page, "关闭其他标签").click();
+  await menuItem(page, "Close Other Tabs").click();
   await page.locator(".lumir-toast", { hasText: "关闭后修改将丢失" }).getByRole("button", { name: "放弃修改并关闭" }).click();
   await expect(page.locator(".tab")).toHaveCount(1);
   await expect(page.locator(".tab-name")).toHaveText("alpha.md");
@@ -259,7 +259,7 @@ test("脏标签：已有确认在场时批量关闭干净停手（不静默挂�
   //（后续标签不关、零反馈）。修的语义：去重命中就地报告「本次提问拿不到自己的答复」，
   // 批量在 beta 之前停手。
   await openTabMenu(page, "alpha.md");
-  await menuItem(page, "关闭其他标签").click();
+  await menuItem(page, "Close Other Tabs").click();
 
   await expect(page.locator(".tab")).toHaveCount(3);
   // 确认浮条仍然只有一条：批量 MUST NOT 再弹第二条把答复挂到没人接的回调上。
@@ -288,7 +288,7 @@ test("脏标签：点掉确认浮条同样停手（不算「默认放弃」）",
   await page.locator(".tab-open", { hasText: "alpha.md" }).click();
 
   await openTabMenu(page, "alpha.md");
-  await menuItem(page, "关闭其他标签").click();
+  await menuItem(page, "Close Other Tabs").click();
   const confirm = page.locator(".lumir-toast", { hasText: "关闭后修改将丢失" });
   await expect(confirm).toBeVisible();
   // 点浮条本体（不是任何动作钮）：浮条收起，标签一个都不关
@@ -309,7 +309,7 @@ test("脏标签：选「保存并关闭」后批量继续——动作钮的点�
 
   // 目标 = [beta(脏), gamma(干净)]：beta 走保存并关闭，gamma 应当紧接着被关掉
   await openTabMenu(page, "alpha.md");
-  await menuItem(page, "关闭其他标签").click();
+  await menuItem(page, "Close Other Tabs").click();
   await page
     .locator(".lumir-toast", { hasText: "关闭后修改将丢失" })
     .getByRole("button", { name: "保存并关闭" })

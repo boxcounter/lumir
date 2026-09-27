@@ -335,11 +335,24 @@ body {
   flex: 1 1 auto;
   min-width: 0;
   padding-left: var(--sp-3);
+  /* 右缘与产品标识块之间恒留 --sp-3（M257，Alex dogfood 报告的蓝箭头缺陷：溢出时最右
+     标签与「Lumir · 0.1.0」挤在一起）。用 margin 而不是 padding-right：WebKit 的横向
+     滚动容器可能不把 inline-end padding 算进可滚动区，margin 在两个引擎里都同样生效。
+     标识块自身的 margin-left:auto 管「钉右端」，这条管「不贴上」——两者不冲突。 */
+  margin-right: var(--sp-3);
   /* 溢出：v1 只做横向滚动（不做拖拽排序 / 不折叠成下拉）。溢出时标签自身宽度不变，
-     正文列宽也不受影响——滚动条占的是本行高度。 */
+     正文列宽也不受影响。
+     M257（Alex dogfood 报告的红箭头缺陷：横向滚动条不美观、悬浮态下遮挡标签下缘）：
+     滚动条整个不显示——与浏览器标签条同形态（Safari / Chrome 的标签条都没有滚动条）。
+     滚动能力保留：触控板横向手势照走，键盘切换由 ensureActiveVisible 程序化对齐
+     （src/tabs.ts）。两条声明都要：scrollbar-width 管标准通道，::-webkit-scrollbar
+     兜 WKWebView 与 chromium 的经典滚动条（缺了它，chromium 的 thin 条仍占布局高度）。 */
   overflow-x: auto;
   overflow-y: hidden;
-  scrollbar-width: thin;
+  scrollbar-width: none;
+}
+.tabstrip::-webkit-scrollbar {
+  display: none;
 }
 /* author 的 display:flex 会盖掉 UA 的 [hidden] 规则，显式补回（同 .editor-notice） */
 .tabstrip[hidden] {

@@ -72,6 +72,19 @@ test("有标签时仍钉右端、不参与收缩（flex:none）", async ({ page 
   // 标识块在标签区之后（与最后一个 tab 不重叠、位于其右）
   const tabBox = (await page.locator(".tab").last().boundingBox())!;
   expect(box.x).toBeGreaterThanOrEqual(tabBox.x + tabBox.width - 1);
+  // M257（Alex dogfood 蓝箭头）：标签区右缘与标识块之间恒有 --sp-3 的间距
+  //（.tabstrip 的 margin-right；溢出态的几何判据在 m149-tabs.spec.ts 的溢出用例里，
+  // 这里钉的是「有标签时这条间距就成立」的常态面）。
+  const stripBox = (await page.locator(".tabstrip").boundingBox())!;
+  const sp3 = await page.evaluate(() => {
+    const probe = document.createElement("div");
+    probe.style.width = "var(--sp-3)";
+    document.body.append(probe);
+    const value = parseFloat(getComputedStyle(probe).width);
+    probe.remove();
+    return value;
+  });
+  expect(Math.abs(box.x - stripBox.x - stripBox.width - sp3)).toBeLessThanOrEqual(1);
 });
 
 for (const theme of ["light", "dark", "eink"] as const) {
