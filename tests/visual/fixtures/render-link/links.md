@@ -1,6 +1,7 @@
 ---
 title: 链接场景
 tags: [render]
+link: https://example.invalid/in-fm
 ---
 
 # 链接
@@ -17,9 +18,25 @@ tags: [render]
 
 缺失 [不存在的笔记](missing.md) 仍然装饰，激活时才提示。
 
-裸网址 https://example.invalid/bare 与自动链接 <https://example.invalid/auto> 都不是标准链接形态。
+裸网址 https://example.invalid/bare 与自动链接 <https://example.invalid/auto> 都是外链形态（M272）。
 
-`[代码里的](https://example.invalid/code)` 不渲染。
+链接定义行（`[homepage]: ` 前缀保持原文，只有 URL 可点）：
+
+[homepage]: https://example.invalid/home
+
+引用点 [正文][ref] 与 [ref] 保持原文，只有定义行的 URL 可点。
+
+[ref]: https://example.invalid/ref
+
+无 scheme 的字面 URL 保持原文：www.example.invalid、邮箱 someone@example.invalid、xmpp:someone@example.invalid。
+
+`[代码里的](https://example.invalid/code)` 与 `https://example.invalid/in-code` 不渲染。
+
+```js
+const url = "https://example.invalid/in-fence";
+```
+
+<!-- https://example.invalid/in-comment -->
 
 邮件 [写邮件](mailto:someone@example.invalid) 也是外链。
 
@@ -31,3 +48,4 @@ tags: [render]
 | --- | --- |
 | [表格内外链](https://example.invalid/cell) | 单元格文本 |
 | [表格内笔记](guide.md) | 第二条 |
+| https://example.invalid/cell-bare | cell 内裸 URL |

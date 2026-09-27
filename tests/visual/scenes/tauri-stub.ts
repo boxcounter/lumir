@@ -89,6 +89,10 @@ export interface VaultFixture {
      *  「md 折 / code 不折」（与 Rust `EditorConfig::default()` 的 `code_mode_line_wrap`
      *  同值）。它**不跟随** `line_wrap`——桩也不替它跟随，否则场景会按错的口径跑。 */
     code_mode_line_wrap?: boolean;
+    /** `Enter` 自动缩进（M272，change enter-auto-indent）：缺省 `true` = 出厂值（与 Rust
+     *  `EditorConfig::default()` 的 `auto_indent` 同值）。场景要验「关掉配置后回退」时从这里
+     *  给 `false`——它走的是 `src/main.ts` 的真实配置消费点（`editor.setAutoIndent`）。 */
+    auto_indent?: boolean;
     /** 正文族（M195）：`null` = 沿用基线观感（与 Rust 侧 `Option<String>` 的 None 同义）。 */
     font_family?: string | null;
     /** 等宽族（M195）：口径同 `font_family`（**与列表标记渲染/测量同源的那个 token**）。 */
@@ -339,6 +343,10 @@ export async function stubTauri(page: Page, vault: VaultFixture | null): Promise
               code_block_wrap: current?.config?.code_block_wrap ?? false,
               // M247 的第三轴：缺省 false = 出厂分叉「code 不折」（与 Rust 侧同值）。
               code_mode_line_wrap: current?.config?.code_mode_line_wrap ?? false,
+              // M272 的 Enter 自动缩进：缺省 `true` = 出厂值（与 Rust `EditorConfig::default()`
+              // 的 `auto_indent` 同值）。**必须给默认值**：`undefined` 传到
+              // `editor.setAutoIndent` 会被当成假值，桩漏一个字段就会让全部场景静默关掉这个能力。
+              auto_indent: current?.config?.auto_indent ?? true,
               // M195 的排版口径：缺省与 Rust `EditorConfig::default()` 逐项同值（null = 基线族、
               // 15 = 出厂字号——D1 裁决后 Rust 侧 DEFAULT_FONT_SIZE 与 src/style.css 的
               // `--editor-font-size` 都是 15），因此**不传这三个字段的既有场景天然跑出厂默认

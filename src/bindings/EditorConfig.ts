@@ -36,6 +36,20 @@ code_block_wrap: boolean,
  */
 code_mode_line_wrap: boolean, 
 /**
+ * `Enter` 换行的自动缩进（change enter-auto-indent）：`true`（默认）时 code 模式与 md 的
+ * 围栏 / 缩进代码块内按 `Enter` 会按语法缩进（无缩进规则的语言沿用当前行行首空白）；
+ * `false` 时这两处回到本 change 之前的行为（裸换行）。
+ *
+ * **键缺席 = 出厂 `true`**，且本键**不跟随**任何别的键（与 `code_mode_line_wrap` 同一条
+ * 口径：缺省值只由本键自己的出厂值决定）。
+ *
+ * 作用面只有本 change 新增的两处：md 的列表项 / 引用续行是编辑器内核自带语言包的行为，
+ * **本键对它无可观测效果**（`false` 时列表里按 Enter 仍会续写标记）——这是 D5a 的显式
+ * 口径，不是漏实现。TS 侧出厂默认同值，见 `src/enter-indent.ts` 的 `DEFAULT_AUTO_INDENT`
+ * （两处写值各有单测钉住）。
+ */
+auto_indent: boolean, 
+/**
  * 正文（比例）字体族（change typography-and-zoom）：CSS `font-family` 值，`None` =
  * 沿用基线观感（`src/style.css` 的 `--font-sans`）。只在启动装载时读一次——本能力不做
  * 热重载，改字体需重启（字号另有运行期步进命令，不落盘）。

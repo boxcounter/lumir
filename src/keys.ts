@@ -78,14 +78,24 @@
 // `Ctrl-Shift-Tab`（tab.next / tab.prev，M149）归一化后是不同 token，互不干扰；② 原生菜单
 // accelerator 集合（tauri 的 `Menu::default()` 逐项来自 muda `items/predefined.rs`，清单见
 // 文件头 M149 段）不含 Tab 系；③ macOS 系统级不占用裸 Tab。另核两处「表外会不会有人先接管」：
-// CM 侧未装 `indentWithTab`、也未装 `defaultKeymap` / 任何 `keymap.of`，应用无补全扩展
-//（`indentWithTab` / `autocompletion` / `defaultKeymap` / `keymap.of` 在 src/ 下全仓零命中）
+// CM 侧未装 `indentWithTab`、未装 `defaultKeymap`，本应用自己也没有别处 `keymap.of`
+//（三者在 src/ 下全仓零命中——**这条只对「无缩进 / 换行键位」成立**，见下面的更正条）
 // ——TAB 此前因此落到原生路径 = webview 焦点遍历（contentDOM 带 `tabindex="0"`，
 // `editor.ts` 的 `EditorView.contentAttributes`）。**该焦点遍历被接管是 D1a 知情接受的代价**：
 // 原生焦点遍历本就不是本应用的导航范式（ADR 0006 的 Emacs keybinding PKM 定位），而「列表编辑
 // 中途焦点跳出编辑器」是缺陷不是能力。两处不受影响：`isTypingKey` 守卫只拦单字符打字键，
 // `Tab` 是多字符键名；且 scope editor 的命令在 contentDOM 之外不命中——焦点在浮层 / 搜索框的
 // 原生输入框里时，Tab 照旧走原生焦点遍历（本层不 consume、不 preventDefault）。
+//
+// **更正（M272，change enter-auto-indent 顺带校正）**：上面那句「CM 侧……任何 `keymap.of` 全仓
+// 零命中」**字面为真、读成「编辑器里没有任何 CM keymap」就是假的**——`@codemirror/lang-markdown`
+// 的 `markdown()` 默认 `addKeymap: true`，把一份 `markdownKeymap` 以 `Prec.high` 装进了编辑器
+//（`Enter` → `insertNewlineContinueMarkup` 续写列表 / 引用标记、`Backspace` → 删除标记），
+// 而 `editor.ts` 的 `markdownConfig` 没关它。M272 又在内核里加了**唯一一处**本应用自己的
+// `keymap.of`（`Enter` → 先委派上游、未命中才 `insertNewlineAndIndent`，`Prec.highest`）。
+// 两处都**不在本表内**（`Enter` 与 `Backspace` 至今不是表内 token）：本表仍是唯一的**可重绑 /
+// 可展示**键位面，`Enter` 因此不进 `[keys]`、不进键位面板——这是 D1a 知情接受的代价，
+// 不是漏登记（理由见 `editor.ts` 的 autoIndentKeymap 注释与 change 的 design §1.3）。
 //
 // M242：表新增两条**有默认绑定**的全局标签命令（`⌘}` → `tab.next`、`⌘{` → `tab.prev`，change
 // tab-cycle-keys 的 D1/D2/D3 裁决）。零新命令 id——与 M149 的 `tab.next` / `tab.prev` 逐字同语义，

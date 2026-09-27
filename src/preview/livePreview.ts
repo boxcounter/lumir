@@ -23,7 +23,7 @@ import {
 import type { AttachmentProvider, ImageOpenHandler } from "./attachments";
 import type { ImageLightbox } from "../lightbox";
 import { findWikilinkSpans } from "./wikilinks";
-import { classifyLinkTarget, standardLinkParts } from "./links";
+import { classifyLinkTarget, literalLinkOfNode, standardLinkParts } from "./links";
 import { collectInlineMath, isInsideCodeContext, mathBlockSet } from "./math";
 import { mermaidBlockSet, onMermaidSettled } from "./mermaid";
 import { calloutMarkerDecorations, calloutOnLine, detectCallout } from "./callout";
@@ -907,11 +907,14 @@ function collectSyntaxDecorations(
       // 表格内放行 inline 装饰（InlineCode / 强调系，cell 里的 `code`、**粗体**
       // 应有 live preview 样式）；块级与 replace 型装饰仍跳过，避免干扰 grid
       // 布局。降级表格整棵剪枝，保留原始 Markdown。
+      // `URL`（M272 的裸 URL / 定义行 / 角括号自动链接）与 `Link` 同档放行：cell 内外
+      // 的同一串 URL 行为必须一致（D4）。
       const table = tableAt(tables, ref.from, ref.to);
       if (table?.degraded) return false;
       const name = ref.name;
       if (table && name !== "InlineCode" && name !== "Emphasis" &&
-          name !== "StrongEmphasis" && name !== "Strikethrough" && name !== "Link") return;
+          name !== "StrongEmphasis" && name !== "Strikethrough" && name !== "Link" &&
+          name !== "URL") return;
 
       if (name === "Paragraph" && ref.node.parent?.name === "Document") {
         const first = doc.lineAt(ref.from);
@@ -1112,6 +1115,40 @@ function collectSyntaxDecorations(
           }).range(ref.to),
         );
         return;
+      }
+
+      // 字面 URL（M272）：裸 URL（形态 2）、链接定义行的 URL 部分（形态 3）、角括号自动
+      // 链接（形态 4）。URL 本身就是原文，因此**不隐藏任何字符**——装饰只有链接样式与尾标；
+      // 唯一的隐藏是形态 4 的两个尖括号（语法定界符，按标准链接隐藏 `[` / `(` 同款）。
+      // 白名单外 scheme 与无 scheme 的字面（`www.` / 裸邮箱）由 literalLinkOfNode 挡在
+      // 门外，保持原文；`Link` / `Image` 内的 `URL` 节点同样由它排除（那些归 Link 分支）。
+      if (name === "URL") {
+        const literal = literalLinkOfNode(ref.node, doc);
+        if (!literal) return false;
+        // 编辑态撤下装饰（D6）：与标准链接同一条「选区触及即整条显露」判据，不另立一套
+        // 编辑态语义。表现为链接色与尾标撤下，URL 原文在场（它从来没有被隐藏）。
+        if (touchesSelection(literal.revealFrom, literal.revealTo)) return false;
+        // 跨槽的装饰会吞并相邻 cell（同 Link 分支的防御性收窄，见那里的说明）。
+        if (table) {
+          const slot = tableRowsInRange(table, ref.from, ref.from)[0]?.slots.find(
+            (s) => ref.from >= s.from && ref.to <= s.to,
+          );
+          if (!slot) return false;
+        }
+        decos.push(
+          Decoration.mark({
+            class: "cm-lp-link",
+            attributes: { title: literal.form.url },
+          }).range(literal.from, literal.to),
+        );
+        for (const mark of literal.angleMarks) hideMark(view, mark.from, mark.to, decos, false, false);
+        decos.push(
+          Decoration.widget({
+            widget: new LinkMarkWidget(EXTERNAL_LINK_MARK),
+            side: 1,
+          }).range(literal.markAt),
+        );
+        return false;
       }
       return;
     },

@@ -5,31 +5,47 @@ import { stubTauri, openedUrls, openedPaths, noteResolves, logEvents, fileText }
 import { readDocument } from "./parity-checks";
 import { classifyLinkTarget } from "../../../src/preview/links";
 
-// 标准 Markdown 链接的 live preview 渲染与激活（M144 引入外链，M145 补齐全形态矩阵）。
+// 链接的 live preview 渲染与激活（M144 引入外链，M145 补齐全形态矩阵，M272 把判定面从
+// `Link` 节点扩到 `URL` 节点：裸 URL / 链接定义行 / 角括号自动链接）。
 //
-// 三个口径在本场景钉住：
+// 四个口径在本场景钉住：
 // 1. **分类**——装饰与激活的判据只有目标原文（links.ts 的 classifyLinkTarget）：
 //    http/https/mailto = 外链，相对路径 md = 应用内跳转，相对路径非 md = vault 内资产，
 //    纯锚点 = 应用内语义（当前只提示），白名单外 scheme = 原文不装饰。
 // 2. **渲染**——`[title](target)` 呈现为 `title` + 尾部标记（↗︎ 会离开本应用 / → 应用内
-//    跳转），括号与目标源码被 replace 装饰隐藏，**文档逐字节不变**（ADR 0003 §3 铁律）。
-// 3. **激活**——⌘⏎ 与 ⌘-Click 走同一条 `link.follow`。真机上外链的终点是系统浏览器、
-//    资产的终点是系统默认应用；chromium 里由桩的 invoke 路由记账（`open_external_url`
-//    → `window.__openedUrls`，`link_open_path` → `window.__openedPaths`），所以本场景能
-//    断言「开的是哪个目标」而**不真的唤起浏览器或打开文件**（Rust 侧的校验由 cargo 单测
-//    与真机验收场景覆盖）。
+//    跳转），括号与目标源码被 replace 装饰隐藏；M272 的三种字面形态**没有可隐藏的源码**
+//    （URL 本身就是原文），唯一的隐藏是角括号自动链接的两个尖括号。文档逐字节不变
+//    （ADR 0003 §3 铁律）。
+// 3. **激活**——⌘⏎ 与 ⌘-Click 走同一条 `link.follow`，M272 之后同样覆盖三种字面形态。
+//    真机上外链的终点是系统浏览器、资产的终点是系统默认应用；chromium 里由桩的 invoke 路由
+//    记账（`open_external_url` → `window.__openedUrls`，`link_open_path` → `window.__openedPaths`），
+//    所以本场景能断言「开的是哪个目标」而**不真的唤起浏览器或打开文件**
+//    （Rust 侧的校验由 cargo 单测与真机验收场景 12 / 54 覆盖）。
+// 4. **不装饰的面**——白名单外 scheme、无 scheme 的字面（`www.` / 裸邮箱 / `xmpp:`）、引用式
+//    链接的引用点、行内代码、围栏代码块、HTML 注释、frontmatter：一律原文。
 
 const links = readFileSync(new URL("../fixtures/render-link/links.md", import.meta.url), "utf8");
 const SITE = "https://example.invalid/site";
 const MAIL = "mailto:someone@example.invalid";
 const WRAPPED = "https://example.invalid/wrapped";
 const CELL = "https://example.invalid/cell";
+const BARE = "https://example.invalid/bare";
+const AUTO = "https://example.invalid/auto";
+const DEF = "https://example.invalid/home";
+const REF_DEF = "https://example.invalid/ref";
+const CELL_BARE = "https://example.invalid/cell-bare";
 // ↗︎ = U+2197 + U+FE0E（变体选择符 VS15，强制文字表现而非 emoji）；→ = U+2192。
 const EXT = "\u2197\uFE0E";
 const INT = "\u2192";
-// 装饰掉的链接数（javascript: 那条保持原文）与按文档顺序排列的标记。
-const LINKS = 13;
-const MARKS = [EXT, INT, INT, INT, INT, INT, EXT, EXT, INT, EXT, EXT, EXT, INT];
+// 装饰掉的链接数（javascript: 那条、引用点与四种「不装饰」现场之外）与按文档顺序排列的标记。
+const LINKS = 18;
+const MARKS = [
+  EXT, INT, INT, INT, INT, INT, EXT, EXT, INT, // 九条标准链接（形态 1）
+  EXT, EXT, // 裸 URL + 角括号自动链接
+  EXT, EXT, // 定义行 `[homepage]:` 与 `[ref]:`
+  EXT, EXT, // mailto 与尖括号包裹
+  EXT, INT, EXT, // 表格：标准外链、标准内链、cell 内裸 URL
+];
 
 /** 形态分类是纯函数：直接钉住整张矩阵，不依赖渲染。 */
 test("链接形态分类：外链 / 应用内 / 资产 / 锚点 / 不可用", () => {
@@ -115,7 +131,7 @@ async function setCursor(page: Page, pos: number): Promise<void> {
 test("全部形态都装饰：标记语义正确，白名单外 scheme 保持原文，文档逐字节不变", async ({ page }) => {
   await open(page);
 
-  // 13 条链接都渲染成 title + 标记，标记按文档顺序与类别一一对应
+  // 18 条链接都渲染成 title + 标记，标记按文档顺序与类别一一对应
   await expect(page.locator(".cm-lp-link")).toHaveCount(LINKS);
   await expect(page.locator(".cm-lp-link-mark")).toHaveCount(LINKS);
   expect(await page.locator(".cm-lp-link-mark").allInnerTexts()).toEqual(MARKS);
@@ -134,11 +150,11 @@ test("全部形态都装饰：标记语义正确，白名单外 scheme 保持原
   await expect(page.locator(".cm-lp-link", { hasText: "说明书" })).toHaveAttribute("title", "docs/manual.pdf");
   await expect(page.locator(".cm-lp-link", { hasText: "本地笔记" })).toHaveAttribute("title", "note.md");
 
-  // 白名单外 scheme、自动链接、裸网址、行内代码里的链接一律原文
+  // 白名单外 scheme、行内代码里的链接、围栏里的 URL 一律原文
   expect(rendered).toContain("[别开我](javascript:alert(1))");
-  expect(rendered).toContain("https://example.invalid/bare");
-  expect(rendered).toContain("<https://example.invalid/auto>");
   expect(rendered).toContain("`[代码里的](https://example.invalid/code)`");
+  expect(rendered).toContain("`https://example.invalid/in-code`");
+  expect(rendered).toContain('const url = "https://example.invalid/in-fence";');
 
   // 渲染不写文档（源码保护）
   expect(await readDocument(page)).toBe(links);
@@ -146,11 +162,62 @@ test("全部形态都装饰：标记语义正确，白名单外 scheme 保持原
   await expectScreenshot(page, "render-link.png");
 });
 
-test("表格 cell 内的链接照常渲染，表格仍是 grid", async ({ page }) => {
-  // spec delta 的「表格 cell 内的链接」场景：链接整条落在某个 cell 内时照常渲染，
-  // 且外链与内链各走各的类别。反例（链接标题里出现**未转义**管道符）不需要断言：
-  // 那种写法会把行切成两个 cell，lezer 至此不再产出 Link 节点（实测：`| [x | y](u) |`
-  // 里只有 URL 节点、没有 Link），该处自然保持原文；表格自身还会因为 cell 数多于表头
+test("字面 URL 三种形态：裸 URL / 定义行 / 角括号自动链接各自装饰为外链", async ({ page }) => {
+  await open(page);
+
+  // 形态 2：裸 URL 文本本身仍在场（它就是原文，没有可隐藏的源码），装饰是链接样式 + 尾标
+  const bare = page.locator(".cm-lp-link", { hasText: BARE });
+  await expect(bare).toHaveCount(1);
+  await expect(bare).toHaveAttribute("title", BARE);
+  const rendered = await page.locator(".cm-content").innerText();
+  expect(rendered, "裸 URL 的文本 MUST NOT 被隐藏").toContain(BARE);
+
+  // 形态 4：角括号自动链接——两个尖括号被隐藏（与标准链接隐藏 `[` / `(` 同款），URL 文本可见
+  await expect(page.locator(".cm-lp-link", { hasText: AUTO })).toHaveAttribute("title", AUTO);
+  expect(rendered).toContain(AUTO);
+  expect(rendered, "尖括号是语法定界符，随目标一起被装饰隐藏").not.toContain(`<${AUTO}>`);
+
+  // 形态 3：定义行只装饰 URL 部分，`[homepage]: ` 前缀保持原文；`[ref]:` 同款
+  await expect(page.locator(".cm-lp-link", { hasText: DEF })).toHaveAttribute("title", DEF);
+  await expect(page.locator(".cm-lp-link", { hasText: REF_DEF })).toHaveAttribute("title", REF_DEF);
+  expect(rendered).toContain(`[homepage]: ${DEF}`);
+  expect(rendered).toContain(`[ref]: ${REF_DEF}`);
+  // 引用点保持原文（lezer 不把定义处的 URL 挂到引用点）
+  expect(rendered).toContain("[正文][ref] 与 [ref] 保持原文");
+  expect(rendered).not.toContain("正文][ref] ↗");
+
+  // 文档逐字节不变
+  expect(await readDocument(page)).toBe(links);
+
+  await expectScreenshot(page, "render-link-bare-url.png");
+});
+
+test("不装饰的面：无 scheme 字面 / 白名单外 scheme / frontmatter 里的 URL 一律原文", async ({ page }) => {
+  await open(page);
+  const rendered = await page.locator(".cm-content").innerText();
+
+  // 无 scheme 的字面（`www.` / 裸邮箱）没有 `URL` 节点的白名单 scheme ⇒ 保持原文；
+  // 白名单外的 `xmpp:` 同理。三条都在同一行里，且同一份文档里的裸 URL 是正观测
+  //（REVIEW.md 第 2 条：负向断言必须配正观测，否则「查询恒 null」也绿）。
+  expect(rendered).toContain("www.example.invalid");
+  expect(rendered).toContain("someone@example.invalid");
+  expect(rendered).toContain("xmpp:someone@example.invalid");
+  expect(await page.locator(".cm-lp-link", { hasText: "www.example.invalid" })).toHaveCount(0);
+  expect(await page.locator(".cm-lp-link", { hasText: "xmpp:" })).toHaveCount(0);
+  await expect(page.locator(".cm-lp-link", { hasText: BARE })).toHaveCount(1);
+
+  // frontmatter 里的 URL 不装饰。**这条断言比它看起来弱**，如实记账：frontmatter 块被
+  // FrontmatterWidget 整块替换，块内的 mark 装饰本来就不渲染——因此这里能证明的是「上屏的
+  // 那一份里没有链接」，「不装饰」的真正依据是装饰循环的第一句 `inFrontmatter` 剪枝
+  //（在 `name` 分派之前，见 livePreview 的 collectSyntaxDecorations）。
+  expect(await page.locator(".cm-lp-frontmatter")).toHaveCount(1);
+  expect(await page.locator(".cm-lp-link", { hasText: "in-fm" })).toHaveCount(0);
+});
+
+test("表格 cell 内的链接与裸 URL 照常渲染，表格仍是 grid", async ({ page }) => {
+  // spec delta 的「表格 cell 内的链接」场景 + M272 的 D4 推荐项（cell 内的裸 URL 同口径）。
+  // 反例（链接标题里出现**未转义**管道符）不需要断言：那种写法会把行切成两个 cell，
+  // lezer 至此不再产出 Link 节点，该处自然保持原文；表格自身还会因为 cell 数多于表头
   // 而整块降级（表格合同，另有场景）。
   await open(page);
 
@@ -160,15 +227,17 @@ test("表格 cell 内的链接照常渲染，表格仍是 grid", async ({ page }
   await expect(external).toHaveAttribute("title", CELL);
   const internal = page.locator(".cm-lp-table .cm-lp-link", { hasText: "表格内笔记" });
   await expect(internal).toHaveAttribute("title", "guide.md");
-  // cell 内的两个标记：外链 ↗︎、内链 →
-  expect(await page.locator(".cm-lp-table .cm-lp-link-mark").allInnerTexts()).toEqual([EXT, INT]);
+  // cell 内的裸 URL 与 cell 外的裸 URL 同一个口径（D4：不纳入会留下第二种语义）
+  await expect(page.locator(".cm-lp-table .cm-lp-link", { hasText: CELL_BARE })).toHaveAttribute("title", CELL_BARE);
+  // cell 内的三个标记：外链 ↗︎、内链 →、裸 URL ↗︎
+  expect(await page.locator(".cm-lp-table .cm-lp-link-mark").allInnerTexts()).toEqual([EXT, INT, EXT]);
 
   // 渲染态下 cell 内的目标源码同样被隐藏，显示文本是 title
   const rendered = await page.locator(".cm-content").innerText();
   expect(rendered).toContain("表格内外链");
   expect(rendered).not.toContain(CELL);
-  expect(rendered).not.toContain("example.invalid/cell2");
-  // cell 文本没有被链接装饰吞掉：同一行的第二列仍在
+  // cell 文本没有被链接装饰吞掉：同一行的第二列仍在（裸 URL 那条的尾标会改变 cell 内容宽度，
+  // 因此同时钉住「表格仍是 grid」与「其余 cell 内容在场」）
   expect(rendered).toContain("单元格文本");
   expect(await readDocument(page)).toBe(links);
 });
@@ -199,16 +268,57 @@ test("光标落在链接上显露源码，离开即恢复渲染", async ({ page 
   expect(await readDocument(page)).toBe(links);
 });
 
-test("光标停在链接起点也开得动（文档首字符即外链）", async ({ page }) => {
-  // 真实情形：打开一份首行就是外链的笔记，选区复位到 0——恰好是链接的起点。
+test("光标落在裸 URL / 定义行上撤下装饰（D6），离开即恢复", async ({ page }) => {
+  await open(page);
+  const bareStart = links.indexOf(BARE);
+
+  // 光标进裸 URL 中间：该处链接样式与尾标撤下（URL 原文本来就在场）
+  await setCursor(page, bareStart + 4);
+  await expect(page.locator(".cm-lp-link")).toHaveCount(LINKS - 1);
+  await expect(page.locator(".cm-lp-link-mark")).toHaveCount(LINKS - 1);
+
+  // 定义行：光标落在整条定义行内（含 `[homepage]: ` 前缀）同样撤下
+  await setCursor(page, links.indexOf("[homepage]:") + 2);
+  await expect(page.locator(".cm-lp-link", { hasText: DEF })).toHaveCount(0);
+
+  // 离开：恢复
+  await setCursor(page, 0);
+  await expect(page.locator(".cm-lp-link")).toHaveCount(LINKS);
+  await expect(page.locator(".cm-lp-link", { hasText: DEF })).toHaveCount(1);
+  expect(await readDocument(page)).toBe(links);
+});
+
+test("光标落在裸 URL 末位后继续键入：字符落在 URL 之后，无死区（design §9 未决项的实测）", async ({ page }) => {
+  await open(page);
+  const bareEnd = links.indexOf(BARE) + BARE.length;
+
+  // 末位是**严格重叠**判据的边界（光标恰在 URL 之后、尾标 widget 之前）：这里实测的是
+  // 「按键落点与刚敲的字符没被 widget 吃掉」——设计期标为未验的那一条。
+  await setCursor(page, bareEnd);
+  await page.keyboard.type("q");
+
+  const doc = await readDocument(page);
+  expect(doc, "键入的字符必须紧跟在 URL 之后（尾标 widget 不吞按键）").toContain(`${BARE}q`);
+  // 文档确实被改了（正观测：这条断言不能只看「包含」——键入没落地时上面那条是红的）
+  expect(doc.length).toBe(links.length + 1);
+});
+
+test("光标停在链接起点也开得动（文档首字符即外链 / 即裸 URL）", async ({ page }) => {
+  // 真实情形：打开一份首行就是链接的笔记，选区复位到 0——恰好是链接的起点。
   // 这条路曾经断在 `resolveInner(pos, 0)` 上：起点处它给的是父节点（Paragraph /
-  // Document）而不是 Link，⌘⏎ 静默无反应（无声失败最坏）。这里钉住起点可命中。
+  // Document）而不是 Link，⌘⏎ 静默无反应（无声失败最坏）。M272 给字面 URL 用了同款两侧试起点。
   const doc = "[起点外链](https://example.invalid/start)\n\n后续正文。\n";
   await openDoc(page, "start.md", doc);
   await expect(page.locator(".cm-lp-link")).toHaveCount(1);
 
   await page.keyboard.press("Meta+Enter");
   await expect.poll(async () => openedUrls(page)).toEqual(["https://example.invalid/start"]);
+
+  const bareDoc = "https://example.invalid/bare-start\n\n后续正文。\n";
+  await openDoc(page, "bare-start.md", bareDoc);
+  await expect(page.locator(".cm-lp-link")).toHaveCount(1);
+  await page.keyboard.press("Meta+Enter");
+  await expect.poll(async () => openedUrls(page)).toEqual(["https://example.invalid/bare-start"]);
 });
 
 test("⌘⏎ 与 ⌘-Click 打开外链：目标取自正文，非链接处无操作", async ({ page }) => {
@@ -243,6 +353,40 @@ test("⌘⏎ 与 ⌘-Click 打开外链：目标取自正文，非链接处无�
   });
   expect(selectionInEditor).toBe(true);
   expect(await openedUrls(page)).toEqual([SITE, MAIL, WRAPPED]);
+});
+
+test("字面 URL 的激活：⌘⏎ 与 ⌘-Click 各自可单独触发（键盘 / 鼠标两条路径）", async ({ page }) => {
+  await open(page);
+
+  // 键盘路径（⌘⏎）：裸 URL
+  await setCursor(page, links.indexOf(BARE) + 2);
+  await page.keyboard.press("Meta+Enter");
+  await expect.poll(async () => openedUrls(page)).toEqual([BARE]);
+
+  // 鼠标路径（⌘-Click）：定义行的 URL 部分——点击落在被装饰的 URL 上，开的是 URL 而不是
+  // 带前缀的整行原文
+  await page.locator(".cm-lp-link", { hasText: DEF }).click({ modifiers: ["Meta"] });
+  await expect.poll(async () => openedUrls(page)).toEqual([BARE, DEF]);
+
+  // 角括号自动链接：开的是括号里的 URL
+  await setCursor(page, links.indexOf(AUTO) + 2);
+  await page.keyboard.press("Meta+Enter");
+  await expect.poll(async () => openedUrls(page)).toEqual([BARE, DEF, AUTO]);
+
+  // 无 scheme 的字面 URL 上 ⌘⏎ 无操作：不装饰也不激活（不产生任何打开请求）
+  await setCursor(page, links.indexOf("www.example.invalid") + 4);
+  await page.keyboard.press("Meta+Enter");
+  await setCursor(page, links.indexOf("xmpp:") + 6);
+  await page.keyboard.press("Meta+Enter");
+  expect(await openedUrls(page)).toEqual([BARE, DEF, AUTO]);
+
+  // 引用点（`[ref]` / `[正文][ref]`）同样无操作：拿不到目标就不猜
+  await setCursor(page, links.indexOf("[ref] 保持原文") + 2);
+  await page.keyboard.press("Meta+Enter");
+  expect(await openedUrls(page)).toEqual([BARE, DEF, AUTO]);
+
+  // 文档始终没被这些激活路径碰过
+  expect(await readDocument(page)).toBe(links);
 });
 
 test("相对路径 md 链接：⌘⏎ 走应用内跳转，打开目标笔记", async ({ page }) => {

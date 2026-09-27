@@ -1,9 +1,15 @@
-// 标准 Markdown 链接的定位与形态分类（M144 起，M145 扩到全形态）。
+// 标准 Markdown 链接与字面 URL 的定位与形态分类（M144 起，M145 扩到全形态，
+// M272 把判定面从 `Link` 节点扩到 `URL` 节点）。
 //
-// 装饰层与激活路径都要回答同一个问题——「这个位置上是不是标准链接、它指向哪、属于
-// 哪一类」。本模块是该问题在前端的唯一答案，且它**不自己写词法**：标准链接的语法判定
+// 装饰层与激活路径都要回答同一个问题——「这个位置上是不是链接、它指向哪、属于
+// 哪一类」。本模块是该问题在前端的唯一答案，且它**不自己写词法**：链接的语法判定
 // 一律取自 lezer 语法树（`Link` 节点 + `URL` 子节点），与 wikilinks.ts 的纪律同源
 //（那里必须手写词法是因为 Obsidian 方言没有语法树；标准 Markdown 有）。
+//
+// 判定面是四种节点形态（M272）：① 标准链接 `[title](target)` 的 `URL` 子节点；
+// ② 裸 URL（GFM 的 `Autolink` 扩展把正文里的字面 URL 直接产出为 `URL` 节点）；
+// ③ 链接定义行 `[tag]: url` 的 `URL` 子节点；④ 角括号自动链接 `<https://…>`。
+// ① 走 standardLinkAt，②③④ 走 literalLinkAt——两条入口共用同一份分类实现。
 //
 // 分类的判据只有两条，且都取自目标原文（不看文件是否存在——装饰与激活解耦，
 // 「解析得到吗」是激活时才问的问题）：
@@ -13,8 +19,9 @@
 //    结尾或没有扩展名 = vault 内笔记（`→`，应用内跳转），目录（以 `/` 结尾）或其它
 //    扩展名 = vault 内资产（`↗︎`，交系统默认应用）。
 //
-// 引用式链接（`[text][ref]`、`[ref]`）不在范围内：lezer 不把链接定义里的 URL 挂到
-// 引用处，拿不到目标就不该猜，一律当普通文本。
+// 引用式链接的**引用点**（`[text][ref]`、`[ref]`）不在范围内：lezer 不把链接定义里的
+// URL 挂到引用处，拿不到目标就不该猜，一律当普通文本。定义行那一侧的 URL 在范围内
+//（形态 3，M272）——它是独立的 `URL` 子节点，取得到。
 
 import { ensureSyntaxTree, syntaxTree } from "@codemirror/language";
 import type { EditorState } from "@codemirror/state";
@@ -58,6 +65,29 @@ export interface StandardLinkParts {
 /** 光标位置上的一条标准链接：三段位置 + 形态分类。 */
 export interface StandardLink extends StandardLinkParts {
   form: LinkForm;
+}
+
+/**
+ * 一条字面 URL（形态 2 / 3 / 4，M272）的位置、原文与分类结果。
+ *
+ * 与 `StandardLink` 的区别是它**没有可隐藏的链接源码**：URL 原文本身就是呈现文本，
+ * 所以要藏的东西只有形态 4 的两个尖括号（`angleMarks`）。
+ */
+export interface LiteralLink {
+  /** 目标区间（`URL` 节点自身）。 */
+  from: number;
+  to: number;
+  /** URL 原文。 */
+  target: string;
+  /** 分类结果——本入口只产出 `external`，见 literalLinkOfNode 的三条前提。 */
+  form: Extract<LinkForm, { kind: "external" }>;
+  /** 尾标 widget 的落点：形态 4 在 `Autolink` 节点末尾（尖括号被隐藏），其余在 URL 末尾。 */
+  markAt: number;
+  /** 显露判据的范围：形态 4 含两个尖括号、形态 3 是整条定义行、形态 2 就是 URL 自己。 */
+  revealFrom: number;
+  revealTo: number;
+  /** 形态 4 的两个尖括号（`LinkMark`），调用方负责隐藏。 */
+  angleMarks: readonly { from: number; to: number }[];
 }
 
 const URL_SCHEME = /^([A-Za-z][A-Za-z0-9+.-]*):/;
@@ -163,3 +193,86 @@ function linkOfNode(node: SyntaxNode, doc: DocText): StandardLink | null {
   }
   return null;
 }
+
+// ---------------------------------------------------------------------------
+// 字面 URL：形态 2 / 3 / 4（M272）
+// ---------------------------------------------------------------------------
+
+/**
+ * 一个 `URL` 节点 → 字面 URL（形态 2 / 3 / 4）；不属于本形态时 null。
+ *
+ * 三条前提缺一不可：
+ * 1. **命中 `URL` 节点**（自节点或它最近的 `URL` 祖先）；
+ * 2. **祖先链里既没有 `Link` 也没有 `Image`**——`[title](target)` 的目标与
+ *    `[**https://x**](u)` 这类标签内的 URL 都归 standardLinkParts 管，这里再接一手
+ *    会让同一处叠出两层链接样式；`Image` 同款（既有分支在 `Image` 上剪枝）；
+ * 3. **原文按 classifyLinkTarget 归入外链**——这一条同时挡掉两类不该点开的字面：
+ *    白名单外 scheme（`xmpp:` / `javascript:` 字面，分类是 blocked）与 GFM 字面形态里
+ *    **没有 scheme** 的 `www.example.com` / 裸邮箱（分类是 vault 内资产，按资产处理就要把
+ *    网页当 vault 内相对路径交给 Rust 校验，语义是错的）。判据取自同一份分类实现，
+ *    本函数不另写一份 scheme 清单。
+ *
+ * 尾标落点与显露范围按形态分：形态 4 的尖括号是语法定界符（按标准链接的 `[` / `(` 同款
+ * 隐藏），尾标因此落在 `Autolink` 末尾、显露范围含尖括号；形态 3 的 `[tag]: ` 前缀是定义行
+ * 的语法而非链接本体，保持原文可见，显露范围取整条定义行（「整条链接显露」与标准链接同款）。
+ */
+export function literalLinkOfNode(node: SyntaxNode, doc: DocText): LiteralLink | null {
+  let url: SyntaxNode | null = null;
+  for (let n: SyntaxNode | null = node; n; n = n.parent) {
+    if (n.name === "URL") {
+      url = n;
+      break;
+    }
+  }
+  if (url === null) return null;
+  for (let n = url.parent; n; n = n.parent) {
+    if (n.name === "Link" || n.name === "Image") return null;
+  }
+  const target = doc.sliceString(url.from, url.to);
+  const form = classifyLinkTarget(target);
+  if (form.kind !== "external") return null;
+  const parent = url.parent;
+  if (parent !== null && parent.name === "Autolink") {
+    const angleMarks: { from: number; to: number }[] = [];
+    for (let child = parent.firstChild; child; child = child.nextSibling) {
+      if (child.name === "LinkMark") angleMarks.push({ from: child.from, to: child.to });
+    }
+    return {
+      from: url.from,
+      to: url.to,
+      target,
+      form,
+      markAt: parent.to,
+      revealFrom: parent.from,
+      revealTo: parent.to,
+      angleMarks,
+    };
+  }
+  const definition = parent !== null && parent.name === "LinkReference" ? parent : null;
+  return {
+    from: url.from,
+    to: url.to,
+    target,
+    form,
+    markAt: url.to,
+    revealFrom: definition === null ? url.from : definition.from,
+    revealTo: definition === null ? url.to : definition.to,
+    angleMarks: [],
+  };
+}
+
+/**
+ * 光标位置上的字面 URL（没有则 null）。两侧 `resolveInner` 试起点的理由与
+ * `standardLinkAt` 完全相同：打开一份**首字符就是裸 URL** 的文件时选区复位到 0，
+ * 恰是 URL 节点的起点，`resolveInner(pos, 0)` 会给出父节点（Paragraph / Document）。
+ * 语法树同步推进的理由也同款（大文档刚打开时快照可能还没覆盖到光标处）。
+ */
+export function literalLinkAt(state: EditorState, pos: number): LiteralLink | null {
+  const tree = ensureSyntaxTree(state, pos, 25) ?? syntaxTree(state);
+  for (const side of [0, 1] as const) {
+    const link = literalLinkOfNode(tree.resolveInner(pos, side), state.doc);
+    if (link !== null) return link;
+  }
+  return null;
+}
+

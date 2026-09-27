@@ -933,6 +933,10 @@ async function doAction(step, { ctx, cu, scenario, vars, pid, evidence }) {
         keys: step.keys !== undefined ? step.keys : cur.keys,
         // 排版三项（M195）：缺省**沿用当前值**，与 keys 同形——否则一次 configWrite 会把上一个
         // 场景／本场景前面设过的 font_size 悄悄抹掉（那正是「改了配置却没生效」最难查的形态）。
+        // Enter 自动缩进（M272）：口径与 keys / 排版三项**完全同形**——缺省沿用当前值，
+        // 否则一次 configWrite 会把前面设过的 auto_indent 悄悄抹回出厂 true
+        //（「改了配置却没生效」里最难查的那一类：改的是 false，看起来是 true）。
+        autoIndent: step.autoIndent !== undefined ? step.autoIndent : cur.editor?.auto_indent,
         fontFamily: step.fontFamily !== undefined ? step.fontFamily : cur.editor?.font_family,
         monoFontFamily: step.monoFontFamily !== undefined ? step.monoFontFamily : cur.editor?.mono_font_family,
         fontSize: step.fontSize !== undefined ? step.fontSize : cur.editor?.font_size,
