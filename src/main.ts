@@ -38,6 +38,7 @@ import { createTableFullscreen } from "./table-fullscreen";
 import { tableFullscreenTarget } from "./preview/livePreview";
 import {
   createGuardPromptPresenter,
+  createVaultLoadingIndicator,
   createVaultRemapPrompt,
   createVaultSwitcher,
   createVaultSwitchGate,
@@ -306,6 +307,43 @@ const tabs = createTabs({
  *  指路，不伪造内容（也不残留上一次 vault 的正文——那已被 editor.reset 作废）。 */
 const EMPTY_VAULT_TEXT = "这个 vault 还没有打开的文件。在左栏选一个文件开始。";
 
+// ---------------------------------------------------------------------------
+// 装载的即时反馈与阶段读数（M252，Alex 真机反馈原话：「切换 vault 时，会卡住几秒。我会愣住，
+// 以为刚才点击没点中，然后才出现系统的转圈提示，我才明白在加载中」）
+// ---------------------------------------------------------------------------
+
+/** 装载指示：标题栏右端的无文案转圈（形态与口径在 src/vault-switcher.ts 的工厂里）。
+ *  **常态 hidden**，只在「用户发起的装载 + 它之后的会话恢复」这一段出现——空闲态的标题栏
+ *  布局与像素逐值不变。 */
+const vaultLoading = createVaultLoadingIndicator(shell.titlebar);
+
+/** 装载阶段的耗时读数（定位「几秒卡在哪一段」，读法见下面的 phaseMs）。
+ *  阈值取 250ms：低于它的装载在真机上感知不到等待，记下来只会稀释日志。 */
+const VAULT_PHASE_SLOW_MS = 250;
+
+/** 把一段装载阶段的耗时落进诊断日志：只在超过阈值时写一条 `slow_callback`（既有事件名 +
+ *  白名单字段 name/ms，不新增事件、不动 Rust 侧——与 src/toc.ts 的 code_structure_parse
+ *  同一条通道）。读数落在 `<config>/lumir/logs/*.jsonl` 里 grep `vault_load` 即可，
+ *  Alex 真实 vault 上的「几秒」也能因此就地量出来，不必等 agent 复现。 */
+function phaseMs(startedAt: number, name: string): void {
+  const ms = performance.now() - startedAt;
+  if (ms > VAULT_PHASE_SLOW_MS) logEvent("slow_callback", { name, ms: ms.toFixed(1) });
+}
+
+/** 用户发起的装载共用一层壳：起指示 → run → 失败时立刻收（失败路径上不会有会话恢复，
+ *  指示必须由这里撤下）。**成功路径的收口不在这里**——它挂在装载后的会话恢复跑完那一刻
+ *  （见 applyVault 尾部）：恢复是逐标签异步的，Alex 感知到的「卡住几秒」正落在这一段，
+ *  指示要盖住它才算「加载完成才消失」。 */
+async function loadUserVault(run: () => Promise<void>): Promise<void> {
+  vaultLoading.begin();
+  try {
+    await run();
+  } catch (e) {
+    vaultLoading.end();
+    throw e;
+  }
+}
+
 /** 守卫类粘性提示的出口：先撤下既有守卫浮条再挂新的（M163 r1 P2-1——toast 的 sticky 去重按
  *  文案命中会复用旧元素，而守卫浮条的动作带着「切到哪一个」，复用等于把后一次请求的 proceed
  *  丢掉；来由见 src/vault-switcher.ts 的 createGuardPromptPresenter）。 */
@@ -335,9 +373,12 @@ const remapPrompt = createVaultRemapPrompt({
   // 与 dirty 无关——挂上族标会让一次成功的保存把它一并撤下，用户手上那条路径确认提示就没了。
   notify: (text, actions) => void toast(text, actions, true),
   displayName: (path) => baseName(path),
+  // 用户发起的装载：装载指示从「作为新 vault 打开」这个动作的时点起（M252）。
   openPath: async (path) => {
-    const opened = await vaultOpenPath(path, true);
-    await applyVault(opened.root, opened.entries, opened.vault_id, false);
+    await loadUserVault(async () => {
+      const opened = await vaultOpenPath(path, true);
+      await applyVault(opened.root, opened.entries, opened.vault_id, false);
+    });
   },
   remap: async (id, path) => {
     await vaultRemap(id, path);
@@ -1026,10 +1067,18 @@ function guardVaultSwitch(proceed: () => Promise<void> | void): boolean {
 }
 
 /** 打开目标 vault 并装载（切换 / 重定位共用）：打开失败就抛出去，由门与闸统一给一条失败
- *  提示（目标打开失败保留当前上下文，MUST NOT 把文件树抹成空态）。 */
+ *  提示（目标打开失败保留当前上下文，MUST NOT 把文件树抹成空态）。
+ *
+ *  这里也是「切换」这条通道给出即时反馈的地方（M252）：装载指示从**用户点下列表行的那个
+ *  时刻**起（浮层收起与指示几乎同帧，见 src/vault-switcher.ts 的行点击路径），一路盖到
+ *  目标 vault 的会话恢复跑完；`vault_open_path` 的耗时另记一条阶段读数。 */
 async function switchToVault(path: string): Promise<void> {
-  const info = await vaultOpenPath(path, false);
-  await applyVault(info.root, info.entries, info.vault_id, false);
+  await loadUserVault(async () => {
+    const openedAt = performance.now();
+    const info = await vaultOpenPath(path, false);
+    phaseMs(openedAt, "vault_load_open");
+    await applyVault(info.root, info.entries, info.vault_id, false);
+  });
 }
 
 /** 新增 vault（浮层底部的唯一新增入口）：先过 dirty 前置门，再走既有目录选择器链路。
@@ -1097,8 +1146,10 @@ function pickVault(forceNew = false): void {
         return;
       }
       // 非 remap 成功路径：选择器返回后的微任务里立刻装载，中间没有用户输入窗口（dirty 门
-      // 已在弹选择器之前跑过），不需要在这里再拦一次。
-      void applyVault(info.root, info.entries, info.vault_id, false);
+      // 已在弹选择器之前跑过），不需要在这里再拦一次。装载指示同一条通道（M252），起点取
+      // **选择器返回之后**——原生选择器自己开着的那段时间不该转（那是用户在挑目录，不是
+      // 在等 Lumir）。
+      void loadUserVault(() => applyVault(info.root, info.entries, info.vault_id, false));
     })
     .catch((e) => {
       // 已有 vault 时打开失败（如改选了一个不可读目录）不得把既有树抹成
@@ -1168,7 +1219,11 @@ async function applyVault(
   editor.setWikilinkResolver(linkFollow.resolver);
   // vault 名的展示位只有一处：侧栏头的切换器入口（tree.setVault 内部按同一个 baseName
   // 渲染），本文件不再往另一个元素上写一份副本。
+  // 这一步是同步的整树重建，也是装载路径上**唯一**的主线程重活（大 vault 上可能数百 ms）：
+  // 单独量一条读数，好与 Rust 侧的打开、逐标签的恢复分开看（M252 的阶段定位）。
+  const treeAt = performance.now();
   tree.setVault(root, entries);
+  phaseMs(treeAt, "vault_load_tree");
   // 表现层一次对齐：modeline 路径回「无当前文件」、标签栏隐藏（空态）、树高亮清空、
   // 大纲指示段收起、后端 dirty 镜像复位。放在 setVault 之后：setVault 重绘整棵树，
   // 之后再由它把树高亮刷成「无当前文件」。
@@ -1179,7 +1234,14 @@ async function applyVault(
   // 装载后恢复该 vault 的标签列表（M163）：逐标签异步装载，不阻塞树与首帧；恢复途中若又
   // 换了一次 vault，本次恢复整体作废（vault-switcher 的世代号）。上面的位置镜像已经就绪，
   // 逐个标签装载时会走各自的恢复。
-  void switcher.onVaultLoaded(vaultId, entries);
+  //
+  // 这个 Promise 也是「装载指示什么时候该消失」的唯一信号（M252）：它在恢复跑完后 resolve，
+  // 那一刻整窗上下文才真的就绪。启动恢复路径没有开指示，`end()` 在那里是 no-op（引用计数）。
+  const restoreAt = performance.now();
+  void switcher.onVaultLoaded(vaultId, entries).finally(() => {
+    phaseMs(restoreAt, "vault_load_restore");
+    vaultLoading.end();
+  });
 }
 
 // watch 增量事件流 → 附件索引与文件树同步打补丁（都不全量重扫）。

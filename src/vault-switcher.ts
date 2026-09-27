@@ -5,7 +5,8 @@
 //   - 入口 DOM 与空态在 src/tree.ts（树头部是它的领地）；浮层与定位在这里，与 .lumir-toc
 //     同一手法：绝对定位、不占常驻行高、关闭即消失。挂点取 app-shell 根——左栏的两个容器
 //     （.pane-filetree / .tree-pane）都是 overflow:auto，浮层挂进去会被裁掉，而口径 12 明确
-//     允许它溢出左栏（320px 宽 vs 244px 栏宽）。
+//     允许它溢出左栏（320px 宽 vs 244px 栏宽）。挂点矩形同时是定位的**夹取范围**：入口本身在
+//     左栏的滚动容器里，被滚出视口时浮层必须照样完整可见（M252 修的那条，见 place）。
 //   - 打开链路（vault_open_path / vault_open + 整窗复位）在装配层 main.ts：它是唯一知道
 //     「当前 vault 是什么、树与编辑器怎么复位」的地方。本模块只**发请求**（requestSwitch /
 //     requestAdd / requestRelocate）并把列表行交过去，不自己调后端命令。
@@ -869,14 +870,37 @@ class VaultSwitcher implements VaultSwitcherHandle {
     row.scrollIntoView({ block: "nearest" });
   }
 
-  /** 把浮层对到入口下方（左端与入口对齐，右端不越出窗口）。 */
+  /** 把浮层对到入口下方（左端与入口对齐，右端不越出窗口），纵向**夹在挂点矩形内**。
+   *
+   *  为什么要夹（M252，Alex 真机反馈 4）：入口（树头部的 `.ft-vault`）在左栏的滚动容器里、
+   *  不是 sticky——左栏滚到中部时它的视口矩形整个跑到挂点上方，旧的算式
+   *  `anchor.bottom - host.top + 4` 于是给出一个远在窗口之上的负 top，浮层整块落在视口外：
+   *  用户看不见列表，也就切不到任何 vault。夹进 [0, 挂点高 - 浮层高 - 边距] 之后：
+   *   - 入口在视口内（含部分可见）时，结果与夹之前逐像素一致——正常情形不引入任何位移；
+   *   - 入口被滚出视口时浮层贴在视口上沿，列表完整可见、自身可滚（`.vault-list` 的 overflow）。
+   *
+   *  浮层高度取实测值：常态上限是 CSS 的 60vh；纵向余量比它还小时（窗口很矮 / 入口很靠下）
+   *  再把 max-height 压到实测可用空间。写 inline 的 max-height 前先清空一次——否则上一次
+   *  打开时留下的压缩值会被当成本次的内容高度量进去（浮层会一直矮着）。 */
   private place(entry: HTMLElement): void {
     const anchor = entry.getBoundingClientRect();
     const host = this.deps.mount.getBoundingClientRect();
-    const left = anchor.left - host.left;
-    this.popover.style.top = `${anchor.bottom - host.top + 4}px`;
-    const max = Math.max(0, host.width - this.popover.offsetWidth - 8);
-    this.popover.style.left = `${Math.min(Math.max(left, 0), max)}px`;
+    const gap = 4;
+    const margin = 8;
+    // 先回到 CSS 的高度上限再量：inline 的 max-height 是上一次打开的残留（见上）。
+    this.popover.style.maxHeight = "";
+    const height = this.popover.offsetHeight || 0;
+    // 横向：与入口左端对齐，右端不越出挂点（宽度允许溢出左栏，见 style.css 的口径 12）。
+    const maxLeft = Math.max(0, host.width - this.popover.offsetWidth - margin);
+    this.popover.style.left = `${Math.min(Math.max(anchor.left - host.left, 0), maxLeft)}px`;
+    // 纵向：入口下沿起、夹在挂点内（负 top 就是这次要修的那条）。
+    const top = Math.min(
+      Math.max(anchor.bottom - host.top + gap, 0),
+      Math.max(0, host.height - height - margin),
+    );
+    this.popover.style.top = `${top}px`;
+    const room = host.height - top - margin;
+    if (height > room) this.popover.style.maxHeight = `${Math.max(0, room)}px`;
   }
 
   private move(delta: number): void {
@@ -938,4 +962,50 @@ function errorText(e: unknown): string {
     if (typeof message === "string") return message;
   }
   return String(e);
+}
+
+// ---------------------------------------------------------------------------
+// 装载指示（M252，Alex 真机反馈 2）：标题栏右段的**无文案**转圈
+// ---------------------------------------------------------------------------
+
+/** 装载指示的读写面。`begin` / `end` 成对使用；未配对的 `end` 是 no-op。 */
+export interface VaultLoadingIndicator {
+  /** 一次装载窗口开始（可叠：装载本身与它之后的会话恢复各算一次，见 `end` 的说明）。 */
+  begin(): void;
+  /** 一次装载窗口结束。没有在途窗口时是 no-op。 */
+  end(): void;
+}
+
+/** 建立装载指示：`host` 末端追加一个转圈元素（标题栏右段、产品标识块右侧）。
+ *
+ *  口径与来由（设计依据见 openspec/changes/vault-switch-feedback/design.md）：
+ *   - **无文案**：只有一圈旋转的描边，不新增任何用户可见文本，也不给读屏名（文案 deck 是单一
+ *     来源，本指示不对应其中任何一条；由此带来的可访问性缺口记在该 change 的「已知边界」）。
+ *   - **常态 `hidden`**（`display:none`）：不占宽度、不影响标题栏任何既有元素的排布——空闲态
+ *     的像素与基线逐像素不变（起停期间才有像素变化）。
+ *   - **引用计数而非布尔**：指示覆盖「打开目标 vault + 装载后的会话恢复」两段，而恢复是逐标签
+ *     异步的——用户在一次恢复途中再切一次时两段会叠，计数保证前一段结束时不会把后一段的指示
+ *     一并撤下（后一段的总时长才是用户感知的等待）。
+ *   - 元素落在标题栏的拖拽区内，**不挂任何事件监听**（REVIEW.md 第 16 条：标题栏内元素的
+ *     监听会静默打断窗口拖拽，本元素没有交互面，也就不需要监听）。 */
+export function createVaultLoadingIndicator(host: HTMLElement): VaultLoadingIndicator {
+  const el = document.createElement("span");
+  el.className = "vault-loading";
+  // role=progressbar：转圈本身就是「不确定进度」的指示，用它保住 AT 面的语义。**不给读屏名**
+  // （无文案口径）——代价与边界见 change design 的「已知边界」。
+  el.setAttribute("role", "progressbar");
+  el.hidden = true;
+  host.append(el);
+  let pending = 0;
+  return {
+    begin(): void {
+      pending += 1;
+      el.hidden = false;
+    },
+    end(): void {
+      if (pending === 0) return;
+      pending -= 1;
+      if (pending === 0) el.hidden = true;
+    },
+  };
 }
