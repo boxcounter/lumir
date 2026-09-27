@@ -1,7 +1,7 @@
 # Tasks: restyle-ui-tokens-v1
 
 任务口径：每条给出**验收口径**（判据 + 证据落点）。「证据」指可 `ls` 的路径或可复算的命令输出，
-不是「跑过了」的口头声明（[REVIEW.md](../../../REVIEW.md) 第 7 条）。
+不是「跑过了」的口头声明（[REVIEW.md](../../../../REVIEW.md) 第 7 条）。
 
 **前置条件**：`typography-and-zoom` 已归档（proposal §与活跃 change 的关系：两份 delta 都改
 `src/style.css` 的 `:root`，不并行）。
@@ -10,7 +10,7 @@
 
 - **D1 = 15px**（采纳推荐）→ 3.4 保留。
 - **D2 = 本 change 内收敛 callout**（采纳备选）→ 已新增 6.5「callout 语义收敛落地」；映射表随
-  tokens v1.2 落 [design-tokens-v1.md](../../../docs/specs/design-tokens-v1.md) §callout 语义收敛，
+  tokens v1.2 落 [design-tokens-v1.md](../../../../docs/specs/design-tokens-v1.md) §callout 语义收敛，
   样式可视化经原型 `?screen=6` 三主题截图验证；§8 基线核对含 callout 场景。
 - **D3 = `[ui] theme` 配置**（采纳推荐）→ §2 按推荐形态执行。
 
@@ -20,7 +20,7 @@
   字号 / 行高关键值，以及 34 张基线的 sha256 清单。
   **验收口径**：读数与 sha256 清单落 `test-results/<mission>/restyle-before/`（可 `ls`）；
   基线张数 = 34（`find tests/visual/baselines -name '*.png' | wc -l`）。
-- [x] 1.2 反向验证（先红，[REVIEW.md](../../../REVIEW.md) 第 1 条）：先写三条新判据——
+- [x] 1.2 反向验证（先红，[REVIEW.md](../../../../REVIEW.md) 第 1 条）：先写三条新判据——
   ①「`data-theme="dark"` 下正文底色为 `#222326`」②「masthead 不存在」③「modeline 存在且含
   文件路径」——未实现前跑一次，三条都必须 FAIL，且红落在判据本身（不是「选择器写错」）。
   **验收口径**：红灯日志落 `test-results/<mission>/red-before-implementation.log`。
@@ -47,7 +47,7 @@
 ## 3. token 层与主题机制（前端）
 
 - [x] 3.1 `src/style.css` 的 `:root` 全量重建：色彩 29 个 × 三主题块 + 非色 token 一组
-  （字体 / 间距 / 圆角 / 布局 / 动效），值与 [design-tokens-v1.md](../../../docs/specs/design-tokens-v1.md)
+  （字体 / 间距 / 圆角 / 布局 / 动效），值与 [design-tokens-v1.md](../../../../docs/specs/design-tokens-v1.md)
   逐项一致；旧 token 一组不留别名。
   **验收口径**：diff 落 `src/style.css` 一个文件；抽 10 个值与 tokens 文档对照（对照表落
   `test-results/<mission>/token-spot-check.md`）；1.3 的 `rg` 命令对 `src/style.css` 零命中旧名。
@@ -140,7 +140,7 @@
   **验收口径**：`lists.spec.ts` 与表格场景的断言在新栏宽下全绿；若栏宽落法影响 marker 测量
   （canvas 按字号量、与栏宽无关，但悬挂缩进常量可能联动），差异如实记录。
 - [x] 6.5 **callout 语义收敛落地**（D2 裁决 = 本 change 内收敛）：13 类按
-  [design-tokens-v1.md](../../../docs/specs/design-tokens-v1.md) §callout 语义收敛（v1.2）
+  [design-tokens-v1.md](../../../../docs/specs/design-tokens-v1.md) §callout 语义收敛（v1.2）
   的映射表换色——`--callout-<type>` 色值改指所属族语义 token（`--accent` / `--ok` /
   `--pending` / `--danger` / `--text-3`），底色改指族 tint token（红系用 v1.2 新增的
   `--danger-tint`）；`theme.ts` 的 `color-mix` callout 底色整段退场（tint 逐档调好，不再
@@ -186,6 +186,13 @@
   > `render-codeblock` ×10 / `render-hr` ×1 / `render-link` ×1 / `render-quote-list` ×1 /
   > `toc-outline` ×2 / `typography` ×2 / `wikilink` ×1）+「R3 新增场景不含像素断言、张数仍 34」
   > 这条口径。
+  >
+  > **节点 2 判定（M253，2026-09-27）**：本条与 §8.4 的承接方 R4（M214）**已 abandoned**，
+  > 但「34 张基线全量重建 + 交 Alex 过目」这件事在后批实际发生（`content-width-drag/tasks.md`
+  > §7.4 记录 2026-09-26 以 `--update-snapshots=all` 重建 34 张、逐张核对表落
+  > `test-results/m236/baseline-review/baseline-rebuild-760/`、Alex 同批批准、其后 `gate.sh visual`
+  > 12/12 PASS）。两份 8.x 按「任务未勾 + 承接方已由后批以等价动作完成」归档；本处保留未勾，
+  > 以免把「R3 未做」误读成事实。
 - [x] 8.3 **删除元素核对**（视觉门禁卫生，tests/visual/README.md §删除/移动 UI 元素后的核对）：
   masthead（及双线装饰）、旧标签栏行、旧侧栏样式——`rg -n 'masthead|双线' tests/visual/scenes`
   找出引用过的场景，核对其整页基线时间戳全部随 8.2 刷新；没刷新的逐张说明原因。
@@ -197,7 +204,7 @@
   > tests/visual/scenes` 零命中；callout 图标引用全部改指 `.cm-lp-callout-type`）；
   > ② 核对表骨架落 `test-results/m213/deleted-elements-scenes.md`（34 行，含基线 → 场景映射）。
   > 时间戳核对动作（`ls -lT`）按批次纪律归 R4。
-- [ ] 8.4 假绿防线（[REVIEW.md](../../../REVIEW.md) 第 3 条）：8.2 重建后，人为删掉一个可见
+- [ ] 8.4 假绿防线（[REVIEW.md](../../../../REVIEW.md) 第 3 条）：8.2 重建后，人为删掉一个可见
   元素（如 modeline 右段）跑一次门禁，确认**确实 FAIL**，再还原。
   **验收口径**：FAIL 输出与还原后全绿输出都落 `test-results/<mission>/baseline-rebuild.md`。
 
@@ -206,6 +213,12 @@
   > （临时改一个值 → 对应断言必须红，见 7.2 与 `restyle-*` 场景的负向断言 + 本 mission 的
   > eink 反向验证）已完成，但那验的是「断言有区分度」，不是「容差没吞掉真实变化」——
   > 后者只能在 R4 重建批次里做。
+  >
+  > **节点 2 判定（M253，2026-09-27）**：与 §8.2 同源——承接方 R4（M214）已 abandoned；后批确实
+  > 落了 §8.2 的「34 张全量重建 + Alex 过目」（证据见 §8.2 的节点 2 注），但**没有**任何记录落在
+  > 本条要求的「人为删掉一个可见元素确认门禁确实 FAIL」这一反向验证上。故本条**至今未做**，
+  > 保留未勾、如实记账，不并入 §8.2 的既有动作冒称已验；后续若要补，须在像素层跑（结构层门禁
+  > 判不出容差是否吞掉真实变化）。
 
 ## 9. 真机验收场景（`scripts/acceptance/`）
 

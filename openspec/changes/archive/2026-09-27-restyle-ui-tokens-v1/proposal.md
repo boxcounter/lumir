@@ -10,9 +10,9 @@
 
 | # | 事实 | 锚点（可复核） |
 |---|---|---|
-| 1 | 方向 C「驾驶舱」骨架已定稿：三栏（文件树 / 正文 / 右栏 dock 预留位），**本次实现范围 = 无 agent 的三栏骨架 + 无衬线表皮 × 三主题**；屏 2/3（agent）、composer 变体推迟到 agent 特性立项 | [design-brief-v1.md](../../../docs/specs/design-brief-v1.md) §裁决记录（2026-09-24） |
+| 1 | 方向 C「驾驶舱」骨架已定稿：三栏（文件树 / 正文 / 右栏 dock 预留位），**本次实现范围 = 无 agent 的三栏骨架 + 无衬线表皮 × 三主题**；屏 2/3（agent）、composer 变体推迟到 agent 特性立项 | [design-brief-v1.md](../../../../docs/specs/design-brief-v1.md) §裁决记录（2026-09-24） |
 | 2 | 最终样式 6 图（主界面 + 内容类型 × light/dark/eink）经你检查，结论「挺喜欢，无必须改项」 | `design/prototypes/final-review/`（6 张 PNG）；brief §裁决记录同条 |
-| 3 | tokens 已全量提取成文：103 个（色彩 32 / 字体 29 / 间距 14 / 圆角 8 / 布局 16 / 动效 4），含三主题对照表、9 条 eink 降级规则、浮层 elevation 与遮罩（v1.1 增补）、callout 13 类五族语义收敛（v1.2 增补，节点 1 裁决 D2）、以及与现行实现的新旧差距对照 | [design-tokens-v1.md](../../../docs/specs/design-tokens-v1.md) |
+| 3 | tokens 已全量提取成文：103 个（色彩 32 / 字体 29 / 间距 14 / 圆角 8 / 布局 16 / 动效 4），含三主题对照表、9 条 eink 降级规则、浮层 elevation 与遮罩（v1.1 增补）、callout 13 类五族语义收敛（v1.2 增补，节点 1 裁决 D2）、以及与现行实现的新旧差距对照 | [design-tokens-v1.md](../../../../docs/specs/design-tokens-v1.md) |
 | 4 | 现行实现是**单主题米色 editorial**：`--bg:#f6f3ea` / `--accent:#b23a2c`（红）/ `--font-display`（宋体标题）/ `--measure:80%` / `--nav-width:244px`，无主题机制 | `src/style.css:6-13`；新旧逐项映射见 tokens 文档 §与现行实现的差距 |
 | 5 | 现行编辑器渲染色与 callout 色耦合：语法高亮 `cm-lp-tok-*` 借用 `--dim` / `--accent` / `--callout-tip` / `--callout-warning` 等，token 层没有独立的语法高亮语义 | `src/preview/theme.ts:157-162` |
 
@@ -52,7 +52,7 @@
 **裁决记录（节点 1，2026-09-24）**：
 
 - **D1 = 15px**（采纳推荐）：`--editor-font-size` 出厂默认 15px。
-- **D2 = 本 change 内收敛**（采纳备选，**未采纳推荐**）：callout 13 类收敛为五族语义色，映射表与规则已落 [design-tokens-v1.md](../../../docs/specs/design-tokens-v1.md) §callout 语义收敛（v1.2 增补）；样式可视化验收屏见 `design/prototypes/direction-c/?screen=6`（三主题各一屏）。
+- **D2 = 本 change 内收敛**（采纳备选，**未采纳推荐**）：callout 13 类收敛为五族语义色，映射表与规则已落 [design-tokens-v1.md](../../../../docs/specs/design-tokens-v1.md) §callout 语义收敛（v1.2 增补）；样式可视化验收屏见 `design/prototypes/direction-c/?screen=6`（三主题各一屏）。
 - **D3 = `[ui] theme` 配置**（采纳推荐）。
 
 **未列入裁决面的硬约束**（写进 delta）：不改写源文件（ADR 0003 §3，本 change 只改显示）；不触碰性能合同（ADR 0002 §6，纯样式变更，无新解析、无新 IO）；配置即数据 + schema 校验（ADR 0002 §5，`[ui]` 表走既有 validate 模板）；**不做 agent 栏的任何像素**（右栏只有骨架预留位）；基线重建是你逐张过目的批次动作（AGENTS.md 硬规则）。
@@ -63,7 +63,7 @@
 
 | 本 change 的条款 | 为什么落在这里 |
 |---|---|
-| token 层、三主题与选择机制、eink 规则、骨架布局、chrome 表面纪律、基线处置 | 这些是**跨 capability 的视觉合同**，没有现成的 living spec 居所（ADR 0006 §3 的单套排版基线今天只在 `src/style.css` 里）。新建 `ui-design-system` 并以 [design-tokens-v1.md](../../../docs/specs/design-tokens-v1.md) 为权威文本（spec 引用、不复制全文，照 perf-measurement 的先例） |
+| token 层、三主题与选择机制、eink 规则、骨架布局、chrome 表面纪律、基线处置 | 这些是**跨 capability 的视觉合同**，没有现成的 living spec 居所（ADR 0006 §3 的单套排版基线今天只在 `src/style.css` 里）。新建 `ui-design-system` 并以 [design-tokens-v1.md](../../../../docs/specs/design-tokens-v1.md) 为权威文本（spec 引用、不复制全文，照 perf-measurement 的先例） |
 | properties 区块的形态更新（`.fm` 属性区） | 归 `frontmatter-properties`：该 capability 已有「frontmatter 解析为 properties 区块」requirement，本 change 改的是它的**形态条款**（键值表格 → 定稿属性区），解析、StateField 构建、性能纪律一字不动 |
 | 语法高亮改指 `--tk-*`、标题族退场、内容类型样式 | 归 `editor-live-preview` 的「Markdown 渲染保真」requirement：它今天写着「token 色值 MUST 只取自既有 editorial token」——token 层整体替换，该条款必须同步改写，否则 living spec 与实现直接矛盾 |
 | 标签迁入标题栏、tab 形态 | 归 `multi-tabs` 的「标签栏的显示与形态」：显示判据、dirty 点、关闭按钮等口径不变，位置与形态条款更新 |

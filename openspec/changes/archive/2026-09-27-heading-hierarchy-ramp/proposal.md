@@ -12,7 +12,7 @@ Alex 原话：「增加不同层级 heading（H1 H2 H3 ……）的辨识度，�
 
 | 层级 | 现行值 | 出处 |
 |---|---|---|
-| H1 | 19px / 650 | [design-tokens-v1.md](../../../docs/specs/design-tokens-v1.md) §字号阶梯 |
+| H1 | 19px / 650 | [design-tokens-v1.md](../../../../docs/specs/design-tokens-v1.md) §字号阶梯 |
 | H2 | 16.5px / 650 | 同上；与 H3 只差 1.5px |
 | H3 | 15px / 650（**与正文同字号**） | 同上；`src/preview/theme.ts:119` |
 | H4 / H5 | 15px / 600（阶梯无定义，实现补档） | `src/preview/theme.ts:120-121` |
@@ -21,7 +21,7 @@ Alex 原话：「增加不同层级 heading（H1 H2 H3 ……）的辨识度，�
 H2↔H3 是 1.5px 级差 + 同字重，H3–H5 与正文同字号只靠字重——扫读时层级不可预判。
 
 流程：本提案走「先出稿再裁决」（Alex 流程裁决，M224）。三稿对比原型与截图包已过目：
-[design/prototypes/heading-hierarchy/](../../../design/prototypes/heading-hierarchy/)
+[design/prototypes/heading-hierarchy/](../../../../design/prototypes/heading-hierarchy/)
 （base 现行对照 + 稿 A 纯字号阶梯 / 稿 B 双族制 / 稿 C 结构信号，× light/dark/eink）。
 
 **裁决记录（2026-09-25，Alex，M224 notes）**：裁决原文逐字：「我选择 A」——即三稿对比中的
@@ -39,7 +39,7 @@ H4 起字号 ≤ 正文（与正文的区分由 650 vs 400 字重差承担）、
 
 2. **token 层登记**：`--fs-h1` 19→21、`--fs-h2` 16.5→18，新增 `--fs-h3/h4/h5/h6` =
    16/15/14/13；字号阶梯移除失去唯一消费者的 19 与 16.5 两档（推论而非条文强制：
-   「阶梯不留失去消费者的档」，原型出处仍在 direction-c，详见 design §3.1）。[design-tokens-v1.md](../../../docs/specs/design-tokens-v1.md)
+   「阶梯不留失去消费者的档」，原型出处仍在 direction-c，详见 design §3.1）。[design-tokens-v1.md](../../../../docs/specs/design-tokens-v1.md)
    的字号阶梯、字重语义（650 档由「h1/h2/h3」改「h1–h6」）、标题负字距档、统计数同步修订
    （映射表见 design.md §差距映射）。
 

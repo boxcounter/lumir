@@ -67,11 +67,15 @@ wt-233 的 `dotfile-jsonc-highlight/tasks.md` §7 文首）、
 
 ## 5. 收口
 
-- [ ] 5.1 归档评审时核对：delta 的 MODIFIED requirement 与 living spec 的合入结果逐句
+- [x] 5.1 归档评审时核对：delta 的 MODIFIED requirement 与 living spec 的合入结果逐句
       一致；14-tabs 既有场景未因本 change 改变（⌃⇥ 系绑定与行为不动）
-      **未勾原因（M250 逐条核实，2026-09-27）**：这是**节点 2（归档评审）的动作**，本 change 尚未归档
-      （`openspec/changes/tab-cycle-keys/` 仍在活跃列表）；同批的可核部分已在下面「核实记录」里落证据，
-      节点 2 时按本项口径再核一次 delta 与 living 的合入结果即可。
+      **节点 2 已核（M253，2026-09-27）**：① 逐句一致——脚本比对归档件
+      `specs/keymap-commands/spec.md` 与 living `openspec/specs/keymap-commands/spec.md` 的
+      「标签命令族——关闭 / 循环切换 / 序号直达」正文，whitespace-normalized 后**完全相同**；
+      归档后 `validate --all --strict` 22/22 绿。② 14-tabs 未受影响——`git show --stat c672be7`
+      （M242 的 merge）只动 `45-tab-cycle-keys.md` / `src/keys.ts` / `tests/unit/keys.test.ts`，
+      `scripts/acceptance/scenarios/14-tabs.md` 的最近改动是 M238（`f995237`）；M250 记录的真机
+      `run.mjs 14 45` = 2/2 PASS（14-tabs 51 断言 / 0 失败）同向印证。
 
 ## 核实记录（M250 逐条对照 master 已合并实现，2026-09-27）
 
@@ -92,4 +96,4 @@ wt-233 的 `dotfile-jsonc-highlight/tasks.md` §7 文首）、
 | 4.1 | 属实 | `scripts/acceptance/scenarios/45-tab-cycle-keys.md` 已落库，`--check 45` 静态校验通过（本批实测） |
 | 4.2 | 属实（含如实登记的未验面） | 场景 45：`⌃⇥` 逐次后移并在末端回卷、`⌃⇧⇥` 首端回卷、单标签两键逐字节无操作、8 张截图；`⌘}` / `⌘{` **自身的按键链路未验**（KimiCU 通道产不出该 token），原因与三份探针日志写在场景正文「⌘} / ⌘{ 在真机通道上验不了」节 |
 | 4.3 | 属实 | 真机 `caffeinate -dimsu node scripts/acceptance/run.mjs 14 45` → **2/2 PASS**（45：44 断言 / 0 失败 / 29.6s；14-tabs：51 / 0 / 48.1s）；证据目录 `test-results/acceptance/2026-09-26/45-tab-cycle-keys/`、日志 `test-results/m232/acceptance-14-45-final.log` |
-| 5.1 | **不勾** | 节点 2（归档评审）的动作，本 change 仍在活跃列表（见该项「未勾原因」） |
+| 5.1 | 属实（节点 2 已核，M253） | 归档件 delta 与 living `openspec/specs/keymap-commands/spec.md` 的「标签命令族——关闭 / 循环切换 / 序号直达」正文 whitespace-normalized 后**相同**；14-tabs 场景未出现在 M242 的 merge `c672be7` 的改动清单里（`git show --stat`），其最近改动是 M238；详见 §5.1 的节点 2 记录 |

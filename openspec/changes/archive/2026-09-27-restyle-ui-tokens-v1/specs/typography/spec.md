@@ -3,7 +3,7 @@
 ### Requirement: 编辑器排版的 token 层与其配置来源
 
 排版基线 SHALL 在 token 层（`src/style.css` 的 `:root`，值的唯一权威文本是
-[design-tokens-v1.md](../../../../../docs/specs/design-tokens-v1.md)）之上提供一层**编辑器作用域**的
+[design-tokens-v1.md](../../../../../../docs/specs/design-tokens-v1.md)）之上提供一层**编辑器作用域**的
 token：`--editor-font-family`（正文族，默认引用 `--font-sans`）、`--editor-mono-family`（等宽族，
 默认引用 `--font-mono`）、`--editor-font-size`（编辑器内容字号，默认 `15px`）。编辑器内的一切字体族
 与字号引用 SHALL 走这一层，MUST NOT 直接引用 shell 基线 token；shell（左栏文件树、标题栏、modeline、
