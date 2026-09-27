@@ -101,10 +101,18 @@
       **验收口径**：hover 前钮不进读屏树、不可聚焦、不接收指针（DOM + AX 两条）；hover 后出现在
       块可视盒右上角内侧；内容横滚时钮不动（几何断言）。
 - [ ] 3.5 接线：`PreviewContext` 增可选口子（`codeBlockFullscreen()`，未接线返回 `null`，同
-      `lightbox()` / `tableFullscreen()` 口径），`src/main.ts` 装配（挂点 `shell.root`、
-      `restoreFocus: () => editor.view.focus()`）与命令级门。
+      `lightbox()` / `tableFullscreen()` 口径），`src/main.ts` 装配（挂点 `shell.root`）与命令级门。
+      **`restoreFocus` 写成「取阅读位置 → `view.focus()` → 写回」**（design §5.1）：取快照 MUST 在
+      聚焦之前、三步同帧；写回走 `src/editor.ts:2027-2090` 的 `readScrollPosition()` /
+      `applyScrollPosition()`（装配侧注入点 `src/main.ts:634-635` 的 `readPosition` / `applyPosition`），
+      **MUST NOT 裸写 `scrollDOM.scrollTop`**（CM 的滚动锚点簿记会改掉它）。
+      **落地次序核对**：实现期先核 M274 的修复是否已落地 `editor.focusPreservingReadingPosition()`
+      ——已落地则直接复用该原语（不再在本 change 里写三步序列），未落地则按上式实现；
+      两种情形都写进 PR（REVIEW.md 第 8 条：同一语义不两处实现）。
       **验收口径**：未接线路径（单测 / 桩）不抛错、命令命中条件为假；`git diff --stat src-tauri/`
-      为空。
+      为空；`git diff src/main.ts` 的浮层装配段里，`restoreFocus` 指向三步序列或复用的原语，
+      且**新增行里不出现 `scrollDOM.scrollTop` / `scrollLeft` 的赋值**（`src/main.ts:440` 那条
+      M149 的既有注释不算，判据按 diff 的新增行看，不按全文件 grep）。
 - [ ] 3.6 code 模式（非 md 文件）与块外：命中条件为假、不消费事件、无提示、无容器。
       **验收口径**：行为判据（命令触发后浮层计数为 0 且事件落到原生路径）+ 同场景正观测
       （md 文档里 caret 进块后触发成功）——负向断言 MUST 配正观测（REVIEW.md 第 2 条）。
@@ -130,7 +138,16 @@
       锚点，不用 class 存在（REVIEW.md 第 1 条）；1.2 的红灯在此转绿。
 - [ ] 5.2 三条关闭路径（`Esc` / 点击遮罩 / toggle）各一条断言 + 关闭后焦点在编辑器
       （行为判据：关闭后 `⌃D` 真的删掉一个字符，前后 `docText` 差异恰好是那个字符，再 `⌘Z` 复位）。
-      **验收口径**：三条路径各自可单独读出，MUST NOT 合并成一条「关闭后浮层不可见」。
+      **同一组必须带位置不变量**：先把编辑器滚到离文档顶超过一屏的位置、caret 留在视口之外，
+      记录关闭前后的 `scrollTop` / `scrollLeft` 与当前渲染行的文档位置，三者**逐值不变**。只断
+      「焦点回编辑器」会让「焦点对了、阅读位置被拽走」的形态静默通过——M240 漏掉的正是这一面，
+      形态与依据见 design §5.1。
+      **如实标注覆盖层**：这组读数在 chromium 上**读得到、判不出**（M274 §2.2 的消融实验里
+      chromium 全绿、WebKit 才跳）⇒ 本层是回归护栏，**判别层是真机场景 57（§6.1）的渲染行读数
+      与 `blur` 兜底路径**（真机 AX 不暴露 `scrollTop`，判据只能用渲染行，见 §6.1 的边界说明）；
+      实现期 MUST NOT 只凭本层绿灯宣称这条已验。
+      **验收口径**：三条路径各自可单独读出，MUST NOT 合并成一条「关闭后浮层不可见」；
+      焦点断言与位置断言分成两条可分别读出的判据。
 - [ ] 5.3 不穿透与不动文档：浮层打开期间按 `⌃D` / `⌃K` / `⌃A` / `Tab` / 字符键，断言 `docText`
       逐字节不变、caret 不动、焦点仍在浮层；打开与关闭前后 `docText` / caret 逐值不变；
       用例末尾 `readDocument(page)` 与 fixture 逐字节相同（ADR 0003 §3）。
@@ -149,10 +166,13 @@
 
 - [ ] 6.1 新增场景 `scripts/acceptance/scenarios/57-code-block-fullscreen.md` + fixture
       （编号声明见 §0；实现期动工前再核一次目录）。fixture 一份 md 含：① 一块短围栏块
-      （含超长行）、② 一块长块（行数明显超过一屏）、③ 一块缩进代码块、④ 一段正文段落。
+      （含超长行）、② 一块长块（行数明显超过一屏）、③ 一块缩进代码块、④ 一段正文段落；
+      **文档总长 ≥3 屏，且首 / 尾各有一段可辨识的行串**（首尾相距 ≥3 屏才互不落在 AX 渲染窗内）
+      ——阅读位置不变量的判据用「哪些行在 AX 渲染行里」（口径见本条的判别层说明与场景 25 的说明节）。
       触发走 `[keys]` 配置绑定（`09b-keys-config` 先例，推荐项默认不绑键）。
       断言：浮层 AX 几何非零 + 块内一段**只在视口外**的文本在场（两条一起钉，防「AX 文本可读 ≠
-      元素可见」）；`Esc` 关闭后焦点回编辑器；块外 / 正文段落里触发无浮层（配对正观测）；
+      元素可见」）；`Esc` 关闭后焦点回编辑器**且阅读位置不变**（渲染行判据对）；
+      块外 / 正文段落里触发无浮层（配对正观测）；
       末尾 `editor.unchangedSince` 与磁盘 `unchangedSince` 两条独立断言（ADR 0003 §3）。
       **场景草案**（front-matter 与步骤骨架，实现期直接落文件）：
 
@@ -173,6 +193,12 @@
               ax: { has: "AXGroup (Markdown 代码块 1)" }   # role 以实现期实测的 AX 原文为准
             - label: 长块的首行文本在场（下面用它证明浮层里能看到「不止视口那一段」）
               ax: { has: "<长块关键词-A>" }
+            - label: 文档首两行在渲染行里（位置判据的正观测支点）
+              ax: { has: "<文档首两行合并串>" }
+            # AX 只给可见区 ± ~1000px 的行建节点（判据口径见场景 25 的说明节）；
+            # fixture 须 ≥3 屏且首 / 尾各有可辨识的行串
+            - label: 文档尾两行此刻不在 AX 里
+              ax: { not: "<文档尾两行合并串>" }
             - shot: 终态
         - name: 基线：记录编辑器内容与磁盘 sha256（供末尾两条 unchangedSince 比较）
           do: recordEditor
@@ -200,18 +226,29 @@
           do: clickInNode
           target: { role: "AXGroup", any: "Markdown 代码块 2" }
           expect: []
+        # 位置前置：⌃V（editor.scroll-page-down）只滚视口、不动光标 ⇒ caret 仍留在长块里、已在
+        # 视口上方，正是 M274 判定的触发条件；次数以实现期实测为准，要保证长块整块离开视口
+        - name: 位置前置：⌃V 翻屏把视口移到文档尾部，caret 留在视口之外
+          do: keys
+          keys: [ "ctrl+v", "ctrl+v", "ctrl+v", "ctrl+v", "ctrl+v", "ctrl+v", "ctrl+v", "ctrl+v" ]
+          expect:
+            - label: 长块的首行文本已不在渲染行里（视口真的离开了长块，与浮层里那条同串对照）
+              ax: { not: "<长块关键词-A>" }
+            # 正观测：AX 此刻读得到，后面的负向断言不得在「读不到」上空转（场景 25 的判据对）
+            - label: 文档尾两行在渲染行里
+              ax: { has: "<文档尾两行合并串>" }
         - name: 执行 code-block.toggle-fullscreen（经 [keys] 绑定的 ⌘J）
           do: key
           key: "cmd+j"
           expect:
             - label: 浮层里的内容几何读数非零（不可见元素在 AX 里照样有文本行，所以判几何）
               ax: { count: { pattern: "/AX\\w+ \\(Markdown 代码块 2\\) @\\d+,\\d+ [1-9]\\d*×[1-9]\\d*/", exact: 1 } }
-            - label: **只在视口外**的那段文本在场（整块呈现的判据；视口切片方案在这里必红）
+            - label: "**只在视口外**的那段文本在场（整块呈现的判据；视口切片方案在这里必红）"
               ax: { has: "<长块关键词-B（位于块尾）>" }
             - label: AX 树被模态接管（标签栏从树里消失 ⇒ 上两条判的是浮层里那份）
               ax: { not: "关闭 code-block-fullscreen.md" }
             - shot: 浮层打开
-        - name: 关闭路径一：Esc（就地消费）关闭并交还焦点
+        - name: 关闭路径一：Esc（就地消费）关闭并交还焦点，且阅读位置不动
           do: key
           key: "escape"
           expect:
@@ -219,11 +256,18 @@
               ax: { has: "关闭 code-block-fullscreen.md" }
             - label: 焦点回到编辑器
               ax: { focused: "AXTextArea" }
+            # 阅读位置不变量：正观测 + 负向两条一起钉。位置被拽走的形态在这里红（AX 不暴露
+            # scrollTop，判据用被测行为自己产出的渲染行，口径与场景 25 同款）
+            - label: "**阅读位置不变量**：文档尾两行仍在渲染行里（与位置前置步同一条串）"
+              ax: { has: "<文档尾两行合并串>" }
+            - label: 长块首行仍不在渲染行里（负向那一半，防上一条在「读不到」上空转）
+              ax: { not: "<长块关键词-A>" }
             - shot: Esc 关闭后
         - name: 关闭路径二：点遮罩（面板以外区域）
-          # 先证浮层开着 → 点 (600,60) → 断言退场 + 焦点回编辑器（照场景 40 的分步写法）
+          # 先证浮层开着 → 点 (600,60) → 断言退场 + 焦点回编辑器 + 阅读位置不变量
+          #（与关闭路径一同款的两条渲染行断言：文档尾两行仍在、长块首行仍不在）
         - name: 关闭路径三：再次执行同一命令（toggle）
-          # 先证浮层开着 → 再按 ⌘J → 断言退场 + 焦点回编辑器
+          # 先证浮层开着 → 再按 ⌘J → 断言退场 + 焦点回编辑器 + 阅读位置不变量（同上两条）
         - name: 缩进代码块同样可放大（正观测：它不是「无入口」的一类）
           # caret 进缩进块 → ⌘J → 断言几何非零 + 文本在场 → Esc
         - name: 全程不改写源文件（ADR 0003 §3）
@@ -240,6 +284,16 @@
       `test-results/acceptance/<日期>/57-code-block-fullscreen/`（`status.txt` = PASS）；
       实现期以实测的 AX 原文替换草案里 `#` 标注的占位判据（role 名与特征串），
       MUST NOT 把「未实测的匹配器」留进场景。
+
+      **阅读位置不变量的判别层与表达力边界（如实标注，M274 §6.2 / 场景 25 的说明节）**：
+      套件不暴露 `scrollTop`（整窗只有一个 `AXScrollArea`），也不提供 `scroll` 动作
+      （`docs/backlog.md` 的「套件缺 scroll 动作与页内采样」条，M252 实测该通道在本 app 上产不出滚动），
+      所以本场景用**渲染行**当判据（AX 只给可见区 ± ~1000px 的行建节点）。这条判据在真机是**判别层**
+      ——chromium 层结构性看不见该缺陷（M274 §2.2 的消融实验：chromium 全绿、WebKit 才跳），
+      但表达力上只覆盖整屏级跳变，小幅漂移属手感、归 Alex 人肉（同场景 25 的口径）。
+      另如实记录：能驱动的关闭路径是「⌥V/⌃V 翻屏把视口移开 + caret 留在块内」这一族；
+      `blur` 兜底（焦点被别处拿走）在真机的驱动方式由实现期定，若无法在不换文档的前提下驱动，
+      就在 PR 里如实写「该路径真机未覆盖」——MUST NOT 拿 ESC 路径的绿灯冒充它。
 - [ ] 6.2 真机反向验证：去掉入口触发（把场景 front-matter 的 `config.keys` 改成不绑定）后复跑
       同一场景，正观测侧断言必须 FAIL，FAIL 留档（结果目录另开，不覆盖 PASS 证据）。
 - [ ] 6.3 不改写源文件的真机判据：`editor.unchangedSince` 与磁盘 `unchangedSince` 两条独立断言

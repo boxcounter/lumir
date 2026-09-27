@@ -197,10 +197,12 @@ M240 实测 700 行的表在浏览器里只渲染 49 行、未渲染区以 `.cm-
 ### 4.3 装配
 
 照 M240：`PreviewContext` 增一个可选口子（`codeBlockFullscreen()`，未接线返回 `null`，
-与 `lightbox()` / `tableFullscreen()` 同口径），`src/main.ts` 建浮层（挂点 `shell.root`、
-`restoreFocus: () => editor.view.focus()`）并注入。`src/editor.ts` 的 ctx 注入点与
-`wrapExtensions` 各加少量行（scope 说明：这两个文件在 M240 曾按同一理由扩入 scope，
-本 change 的 Impact 清单已含它们）。
+与 `lightbox()` / `tableFullscreen()` 同口径），`src/main.ts` 建浮层（挂点 `shell.root`）并注入。
+**`restoreFocus` MUST NOT 照抄 M240 的 `() => editor.view.focus()`**：它写成「取阅读位置 →
+`view.focus()` → 写回」的三步序列（形态、依据与真机边界见 §5.1）；若 M274 的修复批次已先落地
+`editor.focusPreservingReadingPosition()`，直接复用该原语，MUST NOT 在本 change 里另抄一份三步序列。
+`src/editor.ts` 的 ctx 注入点与 `wrapExtensions` 各加少量行（scope 说明：这两个文件在 M240 曾按
+同一理由扩入 scope，本 change 的 Impact 清单已含它们）。
 
 ## 5. 关闭路径：与 M240 逐条同款
 
@@ -214,6 +216,44 @@ M240 实测 700 行的表在浏览器里只渲染 49 行、未渲染区以 `.cm-
 四条回同一个 `close(reason)` 单入口。持焦期间：`editor` 作用域键不穿透、`Tab`/`⇧Tab` 留驻；
 浮层内滚动走**原生**路径（滚轮 / 触控板 / 方向键在可滚动焦点元素上原生滚动，不占统一键位表）。
 打开与关闭前后：`EditorState.doc` / 磁盘文件逐字节不变、选区与 caret 逐值不变（ADR 0003 §3）。
+
+### 5.1 关闭交还焦点 MUST NOT 改变阅读位置（M274 实测，2026-09-27）
+
+前三条关闭路径把焦点交还编辑器时，MUST NOT 让阅读位置跟着动。形态沿用 M186 已裁决的口径
+（收敛建议 `docs/backlog.md:1095-1105`，先例 `src/vault-switcher.ts:729-744` 的 `handOffFocus()`）：
+
+1. **取阅读位置 → `view.focus()` → 写回**，三步同帧、顺序不可换。取快照 MUST 在聚焦之前：
+   把焦点放进编辑器是**浏览器**接管的视口动作（聚焦时保证光标可见），聚焦后再取就取到了被改过的值
+   ——那正是缺陷本身。
+2. 写回 MUST 走**编辑器自己的滚动通道**：`src/editor.ts:2027-2090` 的 `readScrollPosition()` /
+   `applyScrollPosition()`（后者内部是 `EditorView.scrollIntoView` 的 dispatch；装配侧注入点
+   `src/main.ts:634-635` 的 `readPosition` / `applyPosition`）。MUST NOT 裸写
+   `view.scrollDOM.scrollTop`——CM 的滚动锚点簿记会把它改掉（`src/editor.ts:921-923` 的 M149
+   实测差 242px 与 §3 末段的锚定累计是同一族；横向的既有口径走 `requestAnimationFrame`，
+   `src/editor.ts:2088-2098`）。
+3. **优先复用**：若 M274 的修复批次先落地 `editor.focusPreservingReadingPosition()`
+   （同一份收敛建议的落地形态），本 change 直接复用它，MUST NOT 再抄一份三步序列（REVIEW.md
+   第 8 条）。实现期先核对落地状态，两种情形都写进 PR。
+
+**依据（M274 survey 实测）**：消融实验只把 `restoreFocus` 那一步换成裸 `contentDOM.focus()`、
+其余一字不动 ⇒ WebKit 下 `Esc` 关闭时 `scrollTop` **2750 → 0**（整屏跳；滚动事件时间线
+`[[992, 0]]`，即引擎在一次事件里完成），**chromium 完全不动**。`blur` 兜底那条路径在 WebKit 下
+**无需任何改造即跳**。读数与现场（主 checkout，git 外）：
+`test-results/m278/readings/G-ablation-raw-focus.json`、`readings/E-caret-above-blur.json`；
+报告 `test-results/m278/REPORT.md` §2.2 / §5 / §6。
+
+**真机边界（如实写清）**：CM6 的 `EditorView.focus()` 走 `focusPreventScroll`
+（`node_modules/@codemirror/view/dist/index.js:8618-8623`、`:698-720`），它是这条链在 WebKit 下
+**唯一**的防线。系统 WKWebView 的 UA 没有 `Version/x.y` token（M274 真机实测），CM 的
+`safari_version` 因此恒为 0，`:703` 的 Safari-26 分支（强制走 fallback）在真机**永不触发**——
+关闭路径在真机走的是 `preventScroll` 被尊重的那一支，**这一步在真机是安全的**。于是边界有两条：
+① 只要交还焦点绕过 CM（裸 focus，或由别处把焦点交还编辑器），WebKit 即跳；② chromium 层
+**结构性看不见**这个缺陷（M274 的消融实验里 chromium 全绿、WebKit 才跳），视觉 / 结构门禁不能
+替代这条判断——逐层的判别力见 tasks.md §5.2 与 §6.1。
+
+**`blur` 兜底那条路径不在此列**：焦点归用户指向的那个元素，位置不回写、也不得由本应用改写
+（该路径「不抢焦点」的语义 MUST NOT 改）。但它恰是实测会跳的那条（E 用例），所以 spec 显式写清
+这条例外，不靠「没写就没人动」。
 
 ## 6. 内容边界与性能
 
@@ -271,6 +311,7 @@ M240 实测 700 行的表在浏览器里只渲染 49 行、未渲染区以 `.cm-
 
 | 项 | 状态 | 处置 |
 |---|---|---|
+| 关闭交还焦点把阅读位置拽走（同族缺陷族的第 5 个落点，M240 表格全屏已实证） | 机制已测清（M274，2026-09-27）；本 change 的形态照 M240 抄会踩同一条 | 形态按 §5.1 的三步序列收口（或复用 M274 的 `editor.focusPreservingReadingPosition()`）；守卫是 tasks 5.2 的位置不变量断言 + 真机场景 57 的渲染行读数（chromium 层结构性看不见，不得只凭它宣称已验） |
 | 重建后的观感与文档内不一致（字体 / 行高 / 头部条 / 底板） | 已知风险（M240 实测过同族：CM 主题整批 scope 到编辑器根） | 复用 M240 已验证的「镜像主题 scope 类 + 容器补编辑器作用域 token」机制；守卫是计算样式断言（文档内块 vs 浮层内容逐项对照），M240 5.4 同款 |
 | 浮层内容容器的行样式会不会成为第二份真源 | 设计上已收口（复用既有 class 与既有规则） | 视觉断言钉住计算样式；若实现期发现必须新写行样式，回来改 design 而不是就地复制 |
 | 触发钮进整页基线（内容区第二个 chrome 元素） | 可判 | 静止态 `visibility: hidden`（M240 零基线变化的同款机制）；基线核对按 REVIEW.md 第 3 条逐张走内容判据 |
@@ -291,8 +332,11 @@ M240 实测 700 行的表在浏览器里只渲染 49 行、未渲染区以 `.cm-
   内容保真（文本逐字节 + 计算样式）、折行两口径（不折行 ⇒ `scrollWidth > clientWidth`；
   折行 ⇒ 无横向滚动）、长块不截断（含超出视口的部分）、>64 KiB 退化分支、
   缩进代码块可变大、code 模式无入口（负向断言配正观测，REVIEW.md 第 2 条）、
-  文档与选区逐值不变；反向验证（关掉 scope 镜像 / 关掉命中的块判定）各留红灯证据。
-- **真机层（WKWebView）**：场景 **57**（草案见 [tasks.md](tasks.md) §6）。
+  文档与选区逐值不变、**关闭前后阅读位置逐值不变**（`scrollTop` / `scrollLeft` / 渲染行，
+  见 tasks 5.2）；反向验证（关掉 scope 镜像 / 关掉命中的块判定）各留红灯证据。
+- **真机层（WKWebView）**：场景 **57**（草案见 [tasks.md](tasks.md) §6）——含关闭前后的渲染行读数
+  （阅读位置不变量的**判别层**；真机 AX 不暴露 `scrollTop`，判据只能用渲染行；chromium 层结构性
+  看不见，边界见 §5.1）。
 - **不改写源文件**：三层都断言 `EditorState.doc` / 磁盘逐字节不变（ADR 0003 §3）。
 - **基线**：推荐项下静止态零视觉变化（slot 层零足迹 + 钮 rest 态不绘制），预期零基线更新；
   浮层观感截图留 `test-results/` 请 Alex 过目（基线更新是人肉裁决点，`tests/visual/README.md`）。
