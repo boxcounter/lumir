@@ -28,10 +28,14 @@
 - [x] 2.5 迁移条款逐条对齐实现、无发明语义：四态 + 启动调用点 + 诊断事件均有代码锚点
       （证据表见 design §3）
 
-## 3. 归档对账（待 Alex 节点 2，不在本 mission 面内）
+## 3. 归档对账（M255 执行，Alex 节点 2 已授权）
 
-- [ ] 3.1 **归档评审（Alex 节点 2）**：核 delta 与 living spec 合入结果逐句一致、requirement 名在
+- [x] 3.1 **归档评审（Alex 节点 2）**：核 delta 与 living spec 合入结果逐句一致、requirement 名在
       living spec 里出现恰好一次、无实现期静默扩 scope；通过后执行
       `npx --yes @fission-ai/openspec@1.12.0 archive sync-vault-registry-dir-spec --yes`
-      （预期幂等：living spec 零 diff）。**未勾原因**：节点 2 是 Alex 的硬门禁，本 mission 只落
-      change 制品 + living spec 同步，归档动作留给节点 2 之后
+      （预期幂等：living spec 零 diff）。
+      **M255 执行记录**：Alex 2026-09-27 授权节点 2 全开，本件归档随 M255 落地。归档前复核：
+      delta 与 living 的同名 requirement 正文（`### Requirement: vault 注册表与显式重映射` 至下一
+      `### Requirement:` 前）sha256 均为 `0856d8dbd639a46b555a6a6205064e1569caef59e17ea9088a5e8c4e3ede4e1e`，
+      逐字节相同；requirement 名在 living spec 出现恰好一次；`## 3` 之外无未勾任务。归档后
+      `git diff openspec/specs/vault-workspace/` 为空（幂等成立），`validate --all --strict` 全绿
