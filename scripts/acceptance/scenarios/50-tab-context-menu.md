@@ -24,12 +24,13 @@ steps:
     do: click
     target: { role: AXRadioButton, name: "^tabs-a\\.md$", button: right }
     expect:
-      - label: 菜单里有「关闭」
-        ax: { has: "/^AXMenuItem \\(关闭\\)$/m" }
-      - label: 菜单里有「关闭其他标签」
-        ax: { has: "关闭其他标签" }
-      - label: 菜单里有「关闭右侧标签」
-        ax: { has: "关闭右侧标签" }
+      - label: 菜单里有「Close」（判据锚在**带括号的项名**上：`Close Other Tabs` / `Close Tabs to the Right`
+          里都不含 `(Close)` 这个子串，因此这条既不必加锚点也不会三项全中）
+        ax: { has: "/AXMenuItem \\(Close\\)/" }
+      - label: 菜单里有「Close Other Tabs」
+        ax: { has: "Close Other Tabs" }
+      - label: 菜单里有「Close Tabs to the Right」
+        ax: { has: "Close Tabs to the Right" }
       - label: 右键不改上下文：前台仍是 tabs-long（右键只决定菜单作用于哪一条）
         ax: { has: "/AXRadioButton \\(tabs-long\\.md\\) Value: true/" }
       - label: 标签总数不变
@@ -40,20 +41,20 @@ steps:
     do: key
     key: "escape"
     expect:
-      - label: 菜单已收起（「关闭其他标签」不在 AX 里）
-        ax: { not: "关闭其他标签" }
+      - label: 菜单已收起（「Close Other Tabs」不在 AX 里）
+        ax: { not: "Close Other Tabs" }
       - label: 收起动作不关任何标签
         ax: { count: { pattern: "关闭 ", exact: 3 } }
 
-  - name: 右键第二个标签 → 「关闭右侧标签」——只关右侧那一个
+  - name: 右键第二个标签 → 「Close Tabs to the Right」——只关右侧那一个
     do: click
     target: { role: AXRadioButton, name: "^tabs-b\\.md$", button: right }
     expect:
       - label: 菜单在场
-        ax: { has: "关闭右侧标签" }
-  - name: 点「关闭右侧标签」
+        ax: { has: "Close Tabs to the Right" }
+  - name: 点「Close Tabs to the Right」
     do: click
-    target: { any: "关闭右侧标签" }
+    target: { any: "Close Tabs to the Right" }
     expect:
       - shot: 关闭右侧之后
       - label: 只剩两个标签（tabs-b 与其右侧的 tabs-long 里的后者被关掉）
@@ -63,15 +64,15 @@ steps:
       - label: 被关掉的 tabs-long 不再有标签
         ax: { not: "/AXRadioButton \\(tabs-long\\.md\\)/" }
 
-  - name: 右键第一个标签 → 「关闭其他标签」——只剩它自己
+  - name: 右键第一个标签 → 「Close Other Tabs」——只剩它自己
     do: click
     target: { role: AXRadioButton, name: "^tabs-a\\.md$", button: right }
     expect:
       - label: 菜单在场
-        ax: { has: "关闭其他标签" }
-  - name: 点「关闭其他标签」
+        ax: { has: "Close Other Tabs" }
+  - name: 点「Close Other Tabs」
     do: click
-    target: { any: "关闭其他标签" }
+    target: { any: "Close Other Tabs" }
     expect:
       - shot: 关闭其他之后
       - label: 标签栏只剩右键的那一条
@@ -108,15 +109,15 @@ steps:
       - label: 内存里的修改没丢
         editor: { has: "MENU-DIRTY" }
 
-  - name: 右键第一个标签 → 「关闭其他标签」被脏标签拦下（复用 M149 的三出口确认）
+  - name: 右键第一个标签 → 「Close Other Tabs」被脏标签拦下（复用 M149 的三出口确认）
     do: click
     target: { role: AXRadioButton, name: "^tabs-a\\.md$", button: right }
     expect:
       - label: 菜单在场
-        ax: { has: "关闭其他标签" }
-  - name: 点「关闭其他标签」
+        ax: { has: "Close Other Tabs" }
+  - name: 点「Close Other Tabs」
     do: click
-    target: { any: "关闭其他标签" }
+    target: { any: "Close Other Tabs" }
     expect:
       - shot: 脏标签拦截浮条
       - label: 提示点名那一份文档（D92）
@@ -147,10 +148,10 @@ steps:
     target: { role: AXRadioButton, name: "^tabs-a\\.md$", button: right }
     expect:
       - label: 菜单在场
-        ax: { has: "关闭其他标签" }
-  - name: 点「关闭其他标签」
+        ax: { has: "Close Other Tabs" }
+  - name: 点「Close Other Tabs」
     do: click
-    target: { any: "关闭其他标签" }
+    target: { any: "Close Other Tabs" }
     expect:
       - label: 又一次拦下（守卫不因用户刚取消过而放行）
         ax: { has: "「tabs-b.md」有未保存修改，关闭后修改将丢失" }
@@ -183,25 +184,28 @@ M254（change `tab-strip-context-menu`）新增的标签右键菜单在**真实 
 
 ## 通道与已知边界（撞上就如实登记，不判产品缺陷）
 
-- **右键走真实指针坐标 —— 本机实测撞上通道边界（2026-09-27，两轮复现）**：`button: right` 要求
-  快照带截图，而本机 KimiCU 在这条路径上两轮都返回无截图的快照，套件按设计报错不静默
-  （`取不到窗口截图，无法用 right 键在坐标上点击`）。**登记为通道边界，不判产品缺陷**；产品判定由
-  chromium 层（`tests/visual/scenes/tab-menu.spec.ts`）承担。
-  补充证据（绕过套件通道、用 KimiCU MCP 直接注入同一个实例）：三条路径里的「关闭其他标签」
-  （含脏标签拦截 + 三出口 + 放弃后批量继续）与「关闭右侧标签」、以及「右键不改上下文」「Esc 收起
-  + 焦点归还触发菜单的那一条标签」**都在真机上验过**，读数与 AX 原文摘录见
-  `test-results/m254/real-machine-probe.md`（git 外）。套件下一步的改进方向也记在那里：
-  `lib/cu.mjs` 的取图加一次重试，或复用上一次 full 快照的 image。
-
-  现场读法：撞上该边界时本场景会**从第一个右键步骤起整段 FAIL**（后续「点菜单项」也因菜单未开而
-  找不到节点），这不是产品没弹菜单——先看证据目录的 `steps.md` 第一条失败是不是「取不到窗口截图」。
+- **右键走真实指针坐标 —— 通道边界已由 M266 修好（2026-09-27）**：`button: right` 要求快照带截图，
+  而旧实现用 `mode=ax` 去找 bbox——**那种快照按设计不带图**（header 自述
+  `screenshot: none — no image attached`），于是这条路径**必然**报
+  `取不到窗口截图，无法用 right 键在坐标上点击`（M244 / M249 / M251 / M252 / M254 同族，M254 另立
+  finding）。M266 改读 `mode=full`（`scripts/acceptance/lib/execute.mjs` 的
+  `readAxWithScreenshot`：同一份快照既带图、bbox 又是截图像素口径，与 `click` 的 x,y 同空间），
+  并在**同一次实跑**里验通：本场景 46 条断言只余 1 条红（且与右键无关），三条路径 + 脏标签拦截
+  全部走通。**这条不是产品缺陷**——产品判定另有 chromium 层（`tests/visual/scenes/tab-menu.spec.ts`）
+  的同批覆盖。
 - **脏标签的窗口期**：自动保存的防抖是停止输入后 2s，靠「刚键入」抢窗口在实测里抢不到
   （M164 的结论，见套件 README 的「dirty 拦截门的可测窗口很窄」）。本场景因此照抄场景 19 的
   做法：键入之后**外部改写同一个文件**制造冲突——冲突待决期间自动保存暂停，dirty 变成持久态，
   与注入耗时无关。
-- **菜单项按读屏名点击**：「关闭」是另外两项的前缀，用 `any: "关闭"` 会命中错的那一项（甚至命中
-  标签的「关闭 <文件名>」按钮）。因此单点「关闭」这类项必须用锚定正则 `/^关闭$/`；另两项
-  是完整的独立串，用子串即可。
-- **`Close` 单点路径不在本场景**：它的落点与「关闭其他标签」逐条相同（都是 `closeTab` →
+- **菜单项按读屏名点击（M257 起三项英文上屏）**：`Close` 是另两项的前缀，用 `any: "Close"` 会命中
+  错的那一项；单点它取**带括号的项名** `/AXMenuItem \(Close\)/`（另两项的项名里都不含 `(Close)`
+  这个子串，因此这条既不必加锚点也不会三项全中）。**不要照抄场景 51 的
+  `/^AXMenuItem \(Close\)$/m`**：AX dump 的节点行形如 `- [366] AXMenuItem (Close) @290,25 …`，
+  行首是缩进与索引，`^` 在 `m` 下只认**行首**，锚定形态在真机上恒不匹配（M266 实测：同一次
+  dump 里 `Close Other Tabs` / `Close Tabs to the Right` 两条子串断言 PASS，只有锚定那条 FAIL）。
+  场景 51 的那条待其 owner 修（本 mission 不在其 scope）。**标签自身的关闭钮读屏名仍带中文**
+  （`关闭 <文件名>`，D90 未随 M257 改语言）——所以本场景的标签数断言仍写
+  `count: { pattern: "关闭 " }`，与菜单项不冲突。
+- **`Close` 单点路径不在本场景**：它的落点与 `Close Other Tabs` 逐条相同（都是 `closeTab` →
   同一确认流），真机上再走一遍只增加通道风险；覆盖面由 chromium 场景的
   「关闭：只关右键落在的那一条」承担。

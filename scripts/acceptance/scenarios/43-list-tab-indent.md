@@ -74,6 +74,16 @@ steps:
         editor: { has: "bravoq" }
       - shot: 落点见证
 
+  - name: 等这次键入的自动保存落盘（并等它自己的 fs 回声走完，见正文「红因定位」）
+    # 这一步不是凑等待：M266 定位出「第二次保存被误判成外部修改」的红因就落在这个窗口里
+    # （自身写盘的回声在 dirty 时被当外部修改 ⇒ 自动保存被暂停），故先把第一次保存**证实**
+    # 落盘再按 ⌘J。判据本身也是正观测：磁盘此时确实是本场景写下的版本。
+    do: sleep
+    ms: 3000
+    expect:
+      - label: 见证字符 q 已落盘（第二次保存因此是在「磁盘 = 本场景这一版」之上发生的）
+        file: { path: list-indent-bullet.md, has: "/^- bravoq$/" }
+
   - name: 按 ⌘J：整项缩进一层（步长 = 上一同级项 alpha 的内容列 2）
     do: key
     key: "cmd+j"
@@ -81,10 +91,18 @@ steps:
       - label: 焦点仍留在编辑器正文里
         ax: { focused: "AXTextArea" }
 
-  - name: 等自动保存落盘（2s 防抖；这里刻意不用 ⌘S——丢键会让下面的文件断言读到旧内容而假绿）
+  - name: 等自动保存落盘（2s 防抖 + 裕量；这里刻意不用 ⌘S——丢键会让下面的文件断言读到旧内容而假绿）
+    # 等待长度维持 2600：M266 实测把它加长到 6000 **不能**让这一步转绿（红因是自动保存被暂停，
+    # 不是等得不够），因此不靠加长等待掩盖问题。两件事实留给后批，省得再查一遍：
+    # ① 诊断日志白名单里没有「保存成功」这类正向事件（只有 save_conflict / autosave_paused /
+    #    recovery_written 这类，见 `src/bindings/LogEventName.ts`）——「有没有保存」只能从磁盘
+    #    内容与 mtime 判；② 真出这类事时，`env:lumir/logs/<日期>.jsonl` 里会留下
+    #    `save_external_change` + `autosave_paused(reason=external)` 两条（M266 就是靠它定案的）。
     do: sleep
     ms: 2600
     expect:
+      - label: 这次改动没有引出「检测到外部修改」提示（自身写盘的回声不许被当成外部修改，见正文「红因定位」）
+        ax: { not: "检测到外部修改" }
       - label: 源文件里 bravo 变成 2 空格缩进（`  - bravoq`）
         file: { path: list-indent-bullet.md, has: "/^  - bravoq$/" }
       - label: 反向：原来那一行不再存在（判据带行锚点，不是子串互含）
@@ -92,6 +110,13 @@ steps:
       - label: 上一同级项 alpha 逐字节未动（只动归属项）
         file: { path: list-indent-bullet.md, has: "/^- alpha$/" }
       - shot: bravo-缩进写回
+
+  - name: 记下缩进后的磁盘基线（下一条「一次撤销还原」必须与它比较）
+    # M266 补：撤销断言在缩进**从未落盘**时恒真（源文件本来就回到 `- bravoq`，M256 就是这么
+    # 空过的）。先记一份缩进后的基线，撤销步再断言「sha256 与它不同」——缩进没发生时这条会红。
+    do: record
+    as: 缩进后基线
+    file: list-indent-bullet.md
 
   - name: 一次 ⌘Z：单次 dispatch 应被撤销史归成一步（见证字符 q 是另一次输入，不受影响）
     do: key
@@ -104,6 +129,8 @@ steps:
         file: { path: list-indent-bullet.md, has: "/^- bravoq$/" }
       - label: 反向：`  - bravoq` 不再存在
         file: { path: list-indent-bullet.md, not: "/^  - bravoq$/" }
+      - label: 撤销真的写了一次盘（与「缩进后基线」不同——缩进从未落盘时这条会红，堵死空过）
+        file: { path: list-indent-bullet.md, changedSince: 缩进后基线 }
       - shot: 一次撤销后
 
   - name: 换文件：有序列表（`1. uno` / `2. dos`）
@@ -354,6 +381,36 @@ Alex 节点 1 裁决（D1a / D2c / D3a / D4a / D5a）把 `Tab` / `Shift-Tab` 绑
 - **不靠一次按键链去数行**：曾用 `⌃P × 20 回锚 → ⌃N × n` 定位，丢一个键整条链就错位（现场：本想
   缩进第 6 行，实际缩进了第 4 行）。现在每个用例用**独立 fixture + 只下移 1 行**（新开的会话光标在
   offset 0），且落点由见证字符证实。
+
+## 红因定位：M256 / M266 那条「编辑器里缩进了、磁盘没跟上」的真因（2026-09-27，M266）
+
+M240 那轮登记的红是**通道**问题（`Tab` 不落地，已由 M249 改走 `⌘J` 收口）；M256 与 M266 的红
+**不是它**——真因是**自身写盘的回声被判成了「外部修改」，自动保存因此被暂停**。现场与证据：
+
+- 现场（M266 实跑，三个读数互相印证）：编辑器里确实缩进了（`ax/04` 的 `AXStaticText = "◦ bravoq"`，
+  顶层是 `– bravoq`）；磁盘仍是 `- alpha\n- bravoq\n`（只含见证字符 q）；同一份 AX dump 里带着
+  **`检测到外部修改：「list-indent-bullet.md」` + 「重载（放弃我的修改）」**浮条。
+- 定案读数：`env:lumir/logs/2026-09-27.jsonl`（隔离配置目录，git 外）在同一秒记下
+  ```
+  {"change":"modified","event":"save_external_change","path":"list-indent-bullet.md","ts":"…T07:39:52.322Z"}
+  {"event":"autosave_paused","path":"list-indent-bullet.md","reason":"external","ts":"…T07:39:52.322Z"}
+  {"event":"recovery_written","path":"list-indent-bullet.md","ts":"…T07:39:54.271Z"}
+  ```
+  而该文件此刻的 mtime 是 `…52.145Z`——**就是应用自己刚刚那次自动保存**。两条读数相隔 177 ms：
+  「外部修改」这个事件是应用**自己写盘的回声**（FSEvents 延迟），不是任何外部改动。
+- 机制（代码面）：`src/save-controller.ts` 的 `handleExternalChange` 只有一条自身写盘抑制——
+  `saving.has(path)`（保存进行中忽略事件）。保存一结束抑制就撤，而回声随后才到；此时若缓冲区
+  **又已 dirty**（本例：回声到达前的 177 ms 里 ⌘J 落了地），走的是 `if (isDirty(path))` 分支——
+  该分支**不做任何 revision / 回声比对**（干净的兄弟分支有 `reloadDocument(onlyIfChanged)`），
+  直接暂停自动保存并弹冲突浮条。后果：这次修改永不落盘（只留一份崩溃备份）。
+- 为什么只有第一个用例红：其余三个用例里 `q` 与 ⌘J 落在同一步、相隔很近，自动保存只在**最后**
+  一次改动后 2s 触发一次——回声到达时缓冲区不再 dirty，走干净分支自然被识别成回声。
+- **本场景侧的对策**：先一步 `sleep 3000` + 断言见证字符已落盘，让第一次保存与它的回声彻底走完
+  再按 ⌘J（见步骤注释）。这是**避开窗口**，不是修产品：该竞态本身归 finding
+  `.tower/comms/findings/20260927-worker-stale-scene-cleanup-bug-fs-dirty-43.md`
+  与 `docs/backlog.md`，**本场景不覆盖它**（真机侧没有任何场景覆盖「同一次保存的回声与下一次编辑
+  抢窗口」）。判据面上的护栏留在缩进那一步：`ax: { not: "检测到外部修改" }`——竞态若回来，红的是
+  这一条（而不是让人再从头猜「命令没生效」）。
 
 ## 已知边界
 

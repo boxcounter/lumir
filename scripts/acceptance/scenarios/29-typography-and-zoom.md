@@ -28,6 +28,26 @@ steps:
     as: 长文文件
     file: toc-long.md
 
+  - name: 注入前确保窗口在前台（⌘W 是 global 绑定，但注入要落在前台窗口里）
+    do: focusWindow
+
+  - name: 关掉标签（⌘W）——让这次重启没有标签可恢复（M254 起单击开的标签也入盘）
+    # 为什么必须先关：M254 之后启动会把 toc-long.md 恢复出来，而 `open` 对**已打开的同路径**
+    # 只做「激活」（不重新装载），下一步读到的 AX 快照就是**启动恢复那一刻**的、不是本场景
+    # 要的「全新装载」——32px 档位判据因此在旧写法下判红（M256 现场）。关掉它，重启后落在
+    # 空 vault 态，`open` 走真正的装载路径，与后面每个「⌘W → 重新打开」的循环同形。
+    do: key
+    key: "cmd+w"
+
+  - name: 等会话落盘（防抖 1s）并确认前提成立
+    do: sleep
+    ms: 1500
+    expect:
+      - label: 标签已关掉（M254 起标签一律入盘；不关掉的话重启会恢复它，下一步的「全新装载」就不成立）
+        ax: { not: "/AXRadioButton \\(toc-long\\.md\\)/" }
+      - label: 编辑器回到空文档态（正观测：关掉最后一个标签落在「无当前文件」，不是 D107 的空 vault 引导）
+        ax: { has: "无当前文件" }
+
   - name: 配置通道端到端：font_size 32 写进隔离配置并重启（配置面的唯一入口）
     do: configWrite
     fontSize: 32
@@ -233,6 +253,11 @@ steps:
 - 所以每个「改字号 → 判定」的循环都写成三步：**按键批次 → ⌘W 关标签 → 重新打开 → 读 AX**。
   首轮/次轮都没做这一步，红的两条（⌘0、放大）是**仪器**的错，不是产品的错——两次运行的
   `shots/` 截图都显示字号确实按预期变了（见 `test-results/m195/acceptance-r2-*/`）。
+- **配置通道那一次循环（M266 补）**：`configWrite` 之前的 `⌘W` 不能省。M254 起单击树文件打开的
+  标签也入盘，重启会把 `toc-long.md` 恢复出来，而 `open` 对已打开的同路径只做「激活」——不关掉
+  的话这一步读到的 AX 是**启动恢复那一刻**的（不是全新装载），「32px 把第 3 章挤出渲染行」在
+  M256 就是这样判红的（同场景后面先 `⌘W` 再 `open` 的同类断言全 PASS，即为指纹）。关掉标签后
+  重启落在空 vault 态，`open` 走真正的装载路径，本场景五次「改字号 → 判定」因此完全同形。
 
 **这套仪器分辨不出 12px 与 15px**（两者 AX 渲染行清单逐字节相同）：所以本场景的结论口径是
 「字号落在 32px 那一档的内 / 外」，不是「精确等于 12px」——精确档位由
@@ -251,10 +276,10 @@ steps:
 
 | 基线 | record 点 | 该文件在此之后的写者 | 结论 |
 |---|---|---|---|
-| `长文文件`（`toc-long.md`） | 第 3 步（configWrite 之前） | 本场景无任何写 vault 的动作（字号步进只改样式；`configWrite`/`restart` 不碰 vault；无 `vaultWrite`/`type` 步） | ✅ |
-| `配置写后基线`（`env:config.json`） | 第 7 步（**configWrite + 重启 + 重新打开 + 建立焦点之后**） | 写 `config.json` 的路径只有两条：① 套件自己的 `writeConfig`（第 4 步，之后不再调）；② Rust 的 `remember_open` → `remember_last_vault`，**只在用户主动打开 vault 时调**，且代码注释明确「启动恢复不调本函数」（`src-tauri/src/commands.rs:462-470`）。本场景第 4 步之后没有 vault 打开动作 | ✅ |
+| `长文文件`（`toc-long.md`） | 步骤「记录源文件基线」（**`configWrite` 之前**） | 本场景无任何写 vault 的动作（字号步进只改样式；`configWrite`/`restart` 不碰 vault；无 `vaultWrite`/`type` 步） | ✅ |
+| `配置写后基线`（`env:config.json`） | 步骤「记录**写后**基线」（**configWrite + 重启 + 重新打开 + 建立焦点之后**） | 写 `config.json` 的路径只有两条：① 套件自己的 `writeConfig`（`configWrite` 步，之后不再调）；② Rust 的 `remember_open` → `remember_last_vault`，**只在用户主动打开 vault 时调**，且代码注释明确「启动恢复不调本函数」（`src-tauri/src/commands.rs:462-470`）。本场景 `configWrite` 之后没有 vault 打开动作 | ✅ |
 
-反面教材（r1 P1-1 的原状）：基线若取在第 4 步 configWrite **之前**，末步就是拿「写后文件」比「写前基线」——
+反面教材（r1 P1-1 的原状）：基线若取在 `configWrite` **之前**，末步就是拿「写后文件」比「写前基线」——
 sha256 与 mtime 都必然不同，与屏幕是否解锁无关，一跑就红。修法即上表的取点，并让基线步自己断言
 「这份基线确实含 `font_size: 32`」——基线内容本身进判据，取错点会当场红在这一步，而不是拖到末步才以
 「内容已变」的面目暴露。
