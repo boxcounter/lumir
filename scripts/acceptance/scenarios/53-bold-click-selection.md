@@ -59,13 +59,20 @@ steps:
     do: sleep
     ms: 2600
     expect:
+      - label: 见证字符落在**点击坐标对应的位置上**（e 与 f 之间：插入成 `abcde0f…` 或替换掉 f 成 `abcde0…`，两种都算落点正确）
+        file: { path: bold-click.md, has: "/^\\*\\*abcde0/" }
+      - label: 反向：落点前移一个字符（`abcd0…` = 布局位移把同一坐标映射到靠前字符的签名）不存在——这一对互为区分度对照
+        file: { path: bold-click.md, not: "/^\\*\\*abcd0/" }
       - label: 粗体行仍是 20 或 21 个字符位（至多被一次点击抖动的原生语义消费 1 个字符）
         file: { path: bold-click.md, has: "/^\\*\\*[a-z0-9]{20,21}\\*\\*$/" }
-      - label: 反向：19 个字符位（消费掉 2 个 = 布局位移的签名）不存在——这一对互为区分度对照
-        file: { path: bold-click.md, not: "/^\\*\\*[a-z0-9]{19}\\*\\*$/" }
       - label: 普通文本那一行逐字节未动（只动粗体行）
         file: { path: bold-click.md, has: "/^点击粗体之前这一行是普通文本。$/" }
       - shot: 见证字符落点
+
+  - name: 记下点击后的文件基线（下一步的「点击不消费字符」判据比它）
+    do: record
+    as: 点击后基线
+    file: bold-click.md
 
   - name: 同一处**不带位移**点一下（= Alex 报告的那一次单击：不带抖动的点击不应产生任何选区）
     do: click
@@ -73,8 +80,8 @@ steps:
     expect:
       - label: 源码仍显露（落点仍在粗体范围里）
         editor: { has: "**" }
-      - label: 无位移的点击不改文档
-        file: { path: bold-click.md, has: "/^\\*\\*[a-z0-9]{20,21}\\*\\*$/" }
+      - label: 无位移的点击不改文档（sha256 + mtime 双比）
+        file: { path: bold-click.md, unchangedSince: 点击后基线, mtimeUnchangedSince: 点击后基线 }
       - shot: 无位移点击后
 
   - name: 键入第二个见证字符
@@ -88,10 +95,12 @@ steps:
     do: sleep
     ms: 2600
     expect:
-      - label: 无位移的点击 + 一次键入 = 纯插入：比上一步多 1 个字符位（21 或 22）
+      - label: 无位移的点击 + 一次键入 = 纯插入：字符位比上一步多 1（21 或 22）
         file: { path: bold-click.md, has: "/^\\*\\*[a-z0-9]{21,22}\\*\\*$/" }
-      - label: 反向：19 或 20 个字符位不存在（无位移的点击若消费过字符，位数会卡在上一档）
+      - label: 反向：点击若消费过字符，位数会卡在上一档（20 或 21 中的较低者）——19/20 位不存在
         file: { path: bold-click.md, not: "/^\\*\\*[a-z0-9]{19,20}\\*\\*$/" }
+      - label: 前一步的落点前缀未被吃掉（无位移的点击没有把见证字符卷进选区）
+        file: { path: bold-click.md, has: "/^\\*\\*abcde0/" }
       - shot: 第二次点击后
 teardown:
   - label: 收尾：粗体行停在「两次点击 + 两次键入」的形态（21 或 22 个字符位，含 0 与 9）
