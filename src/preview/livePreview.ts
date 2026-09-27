@@ -27,6 +27,15 @@ import { classifyLinkTarget, standardLinkParts } from "./links";
 import { collectInlineMath, isInsideCodeContext, mathBlockSet } from "./math";
 import { mermaidBlockSet, onMermaidSettled } from "./mermaid";
 import { calloutMarkerDecorations, calloutOnLine, detectCallout } from "./callout";
+import {
+  beginPointerPress,
+  detachPointerPress,
+  pointerPressField,
+  pointerPressFrame,
+  rangeRevealsSource,
+  revealSelection,
+  touchesSource,
+} from "./reveal-gate";
 import { docTitleForFrontmatter, docTitleTop } from "./doc-title";
 import { sampleCallback } from "../diagnostics";
 import type { LinkResolveResult } from "../bindings/LinkResolveResult";
@@ -435,6 +444,27 @@ export function widgetCommands(view: EditorView): Record<WidgetCommandId, Comman
 // frontmatterDecorations）；无 fm 落点是 scroller 级节点 docTitleTop。
 // ---------------------------------------------------------------------------
 
+/** 指针按压窗口的接线（M259）：按下开窗（冻住显露判定用的选区），抬起 / 失焦 / 视图销毁
+ *  关窗。窗口语义与关闭路径见 ./reveal-gate。返回 false 是刻意的——落点仍归 CM 的鼠标
+ *  选区，这里只记一个窗口，不消费事件。 */
+const pointerPressWindow = ViewPlugin.fromClass(
+  class {
+    constructor(readonly view: EditorView) {}
+
+    destroy() {
+      detachPointerPress(this.view);
+    }
+  },
+  {
+    eventHandlers: {
+      mousedown(event, view) {
+        if ((event as MouseEvent).button === 0) beginPointerPress(view);
+        return false;
+      },
+    },
+  },
+);
+
 export function livePreview(ctx: PreviewContext) {
   // frontmatter 的 replace 跨行，而插件装饰不允许替换换行符（CM6 硬限制），
   // 故走 StateField：文档或选区变化时重算，且 detectFrontmatter 从文档首部扫描、
@@ -446,7 +476,9 @@ export function livePreview(ctx: PreviewContext) {
       return frontmatterSet(state);
     },
     update(value, tr) {
-      return tr.docChanged || tr.selection || tr.effects.some((e) => e.is(previewRefresh))
+      return tr.docChanged ||
+        tr.selection ||
+        tr.effects.some((e) => e.is(previewRefresh) || e.is(pointerPressFrame))
         ? frontmatterSet(tr.state)
         : value;
     },
@@ -460,7 +492,9 @@ export function livePreview(ctx: PreviewContext) {
       Decoration.replace({
         widget: new FrontmatterWidget(
           fm.inner,
-          state.selection.ranges.some((range) => range.from <= fm.from && range.to >= fm.to),
+          // 判据选区取 revealSelection（M259）：按压期间用按下瞬间的快照，
+          // 同一份理由见 ./reveal-gate。
+          revealSelection(state).ranges.some((range) => range.from <= fm.from && range.to >= fm.to),
           docTitleForFrontmatter(state, ctx, fm),
         ),
         block: true,
@@ -472,6 +506,9 @@ export function livePreview(ctx: PreviewContext) {
     livePreviewTheme,
     // 无 fm 落点的 doc-title（scroller 级节点，M222——不走 CM 装饰，原因见 doc-title.ts 文件头）。
     docTitleTop(ctx, previewRefresh),
+    // 指针按压窗口（M259）：只影响显露判定用哪个选区，不产生任何装饰。
+    pointerPressField,
+    pointerPressWindow,
     frontmatterDecorations,
     mathBlockDecorations,
     mermaidBlockDecorations,
@@ -546,7 +583,9 @@ export function livePreview(ctx: PreviewContext) {
 
         update(u: ViewUpdate) {
           const forced = u.transactions.some((tr) =>
-            tr.effects.some((e) => e.is(previewRefresh)),
+            // pointerPressFrame：按压窗口的开 / 关本身不改变选区，但它决定显露判定用
+            // 哪个选区（M259）——不开这条触发条件，解冻那一刻的装饰不会重建。
+            tr.effects.some((e) => e.is(previewRefresh) || e.is(pointerPressFrame)),
           );
           if (
             forced ||
@@ -827,9 +866,9 @@ function collectSyntaxDecorations(
   const { doc } = view.state;
   // 光标/选区严格落入某范围时该处显露源码（M110：callout/引用行的编辑进入
   // 路径——光标所在行显示 > 与 [!type] 原文，其余行保持渲染态）。严格重叠
-  // 口径与 math/mermaid 的选区显露一致（空光标在行首不触发）。
-  const touchesSelection = (from: number, to: number): boolean =>
-    view.state.selection.ranges.some((r) => r.from < to && r.to > from);
+  // 口径与 math/mermaid 的选区显露一致（空光标在行首不触发）。判据与判据选区
+  // 的唯一出处是 ./reveal-gate（M259：按压期间取按下瞬间的快照）。
+  const touchesSelection = (from: number, to: number): boolean => touchesSource(view.state, from, to);
   // callout 内容行的 inline 格式源码显露（M119 真实桌面缺陷：光标进入 callout
   // 行时该行「加粗」仍是渲染态而非编辑态）。口径同 M110 的行级显露：选区触及
   // 节点所跨行即跳过样式与标记隐藏装饰，源码原样可见。仅 detectCallout 命中的
@@ -856,8 +895,10 @@ function collectSyntaxDecorations(
   // 显露才能让「光标所在范围」始终有可编辑的原文。适用面只看渲染态是否隐藏标记：
   // 强调系（Emphasis / StrongEmphasis / Strikethrough）隐藏 `*` / `_` / `~`；
   // 行内代码不隐藏反引号（渲染态既有 `` `code` `` 原文），故不并入本条。
+  // 判据与判据选区同样出自 ./reveal-gate（M259 的缺陷就落在这条判据上：点击粗体时
+  // `**` 的重新占宽把光标下的文字右移，按压期间的落点重算因此偏移 1–2 字符）。
   const revealRangeSource = (from: number, to: number): boolean =>
-    view.state.selection.ranges.some((r) => r.from <= to && r.to >= from);
+    rangeRevealsSource(view.state, from, to);
   syntaxTree(view.state).iterate({
     from: vrFrom,
     to: vrTo,
