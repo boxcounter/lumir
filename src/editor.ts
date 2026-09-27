@@ -884,6 +884,13 @@ export type EditorReadyListener = (event: EditorReadyEvent) => void;
  * 会话对象是**活的**：内核在激活期间每次 dispatch 后回写 `state`，切走时回写滚动位置；
  * 装配层据此渲染标签栏，不要再自己缓存一份。
  */
+/** 改名后一条会话的路径迁移（`remapSessionPaths` 的返回值）：调用方据此迁移按路径键控的
+ *  旁路状态（当前唯一消费者是保存链路的 `noteRenamed`）。 */
+export interface SessionPathRemap {
+  from: string;
+  to: string;
+}
+
 export interface EditorSession {
   /** 会话 id（单调递增，供标签栏做 DOM key / 断言；顺序由 sessions() 的数组序决定）。 */
   readonly id: number;
@@ -995,10 +1002,13 @@ export interface EditorHandle {
    * 改名后就地 remap 打开中的会话路径（M244 裁决点 5，菜单发起的重命名专用）：
    * `from` 单个会话替换、`from/` 子树全部前缀替换。**只改路径**——内容、选区、滚动
    * 位置、dirty 与磁盘 revision 基准全部原样保留（改名不改字节，CAS 依旧有效）。
-   * 返回被 remap 的会话数（0 = 没有打开中的文档命中，调用方无需做别的同步）。
    * 扩展名变化会改 mode / editable，这里一并按新路径重裁。
+   * 返回**被 remap 的路径对**（`from` → `to`，按会话创建顺序；空数组 = 没有打开中的文档
+   * 命中）：调用方据此把**同样按路径键控**的旁路状态迁到新键上——当前唯一消费者是保存链路
+   * 的 `noteRenamed`（磁盘 revision 基准 + 崩溃备份；见 save-controller 的注释）。
+   * 目录改名时这里逐会话给出前缀替换后的新路径，调用方逐条喂进去即可。
    */
-  remapSessionPaths(from: string, to: string): number;
+  remapSessionPaths(from: string, to: string): readonly SessionPathRemap[];
   /**
    * 激活会话：把 view 的 state 换成它那一份，并恢复该会话的滚动位置。
    * 同步调用、无异步等待——切换只换 state，不重新解析文档。
@@ -1996,17 +2006,17 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
     },
     remapSessionPaths(from, to) {
       // 菜单发起的重命名（M244，裁决点 5）：**只改路径**，不碰内容 / 选区 / 滚动 / dirty
-      // ——改名不改字节，save-controller 的磁盘 revision 基准因此依旧有效（CAS 不失效），
-      // 也不必重锚备份定时器。路径是若干旁路状态的键（mtimeCache 在这里；save-controller
-      // 的 revisions / timers 按路径查会话，改完自然落到新键上，旧键成为死条目），
-      // 所以旧键在这里废掉、新键重取。
-      let remapped = 0;
+      // ——改名不改字节，磁盘 revision 基准因此依旧有效（CAS 不失效）。路径是若干旁路状态的
+      // 键：mtimeCache 在这里（旧键废掉、新键重取）；**保存链路那份键在它自己的表里**，
+      // 这里改不到——返回路径对交给装配层调 save-controller 的 `noteRenamed` 去迁
+      //（r1 评审 P2-2：不迁会让新路径落到「未登记磁盘版本」的不可保存态、旧路径的备份成孤儿）。
+      const remapped: SessionPathRemap[] = [];
       for (const session of sessions) {
         const path = session.path;
         if (path === undefined) continue;
         const next = remapPathAfterRename(path, from, to);
         if (next === undefined) continue;
-        remapped += 1;
+        remapped.push({ from: path, to: next });
         mtimeCache.delete(path);
         session.path = next;
         // 扩展名可能变了（a.md → a.txt）：mode 与可编辑性按新路径重裁，内容不动。

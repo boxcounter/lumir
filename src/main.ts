@@ -655,7 +655,13 @@ async function submitInlineEdit(request: InlineEditRequest): Promise<void> {
     }
     // 打开中的文档就地 remap（裁决点 5）：dirty 内容、revision 基准（改名不改字节，CAS
     // 依旧有效）、滚动与光标全部保留；扩展名变化时 mode / editable 由 remap 内部重裁。
-    editor.remapSessionPaths(request.path, renamed);
+    // 返回的路径对逐条喂给保存链路（M278 r1 的第五条路径）：它的 revision 基准与崩溃备份
+    // 同样按路径键控，而改名换的正是那个键——不迁的话新路径会落到「未登记磁盘版本」的
+    // 不可保存态，旧路径那份备份成为孤儿（下次启动弹一个打不开的恢复提示）。
+    // 目录改名时 remap 逐会话给出前缀替换后的新路径，这里天然是批量。
+    for (const remap of editor.remapSessionPaths(request.path, renamed)) {
+      save.noteRenamed(remap.from, remap.to);
+    }
     tree.endInlineEdit(true);
     // 表现层一次对齐：modeline 的路径段、标签栏可见文本与 `dataset.path`、树高亮、标签
     // 会话落盘、阅读位置 flush——「当前文档」在装配层的唯一同步点。

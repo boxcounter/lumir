@@ -146,3 +146,30 @@
 - **5.6 的 finding 已在提案期（M276）落盘**：`.tower/comms/findings/20260927-worker-proposal-remove-autosav-bug-enter-auto-indent-delta-scenario.md`；
   该 delta 的改述仍归那个 change 的 owner（本 change 的 delta 不覆盖它）。
 - **未执行**：§4.4（条件项，D2 已采纳 ⇒ 未触发）、§8.2（节点 2 归档，等 Alex）。
+
+### 9.1 r1 评审驱动的增量（reviewer-remove-autosave-impl，2026-09-27，verdict p2-2items / fix-then-merge）
+
+两条 P2 都在本批修完（tower 裁决：P2-2 不转 backlog）。逐条对账：
+
+- **P2-1（正向交错，已修）**：`dispatchExternalChange` 的 `known = revisions.get(path)` 由
+  `await fsReadSnapshot` **之前**挪到**之后**（紧挨 `sessionOf` 复查）。原位置会让「读在途期间完成的
+  保存 #2」推进的基准进不了比对 ⇒ 判成外部修改 ⇒ dirty 分支弹带破坏性动作的 sticky 提示，而磁盘上
+  没有第三方写入。反例自检：把取样挪回 `await` 之前，新增用例「读在途期间完成的那次保存也算进来」
+  如实变红（453 pass / 1 fail），挪回后 454 pass / 0 fail。
+  **同一次评审的「反向交错」（读返回 R1、基准已到 R2）按评审口径不修**——它是「复用这次读取换一倍 IO」
+  的固有代价、且由保存 #2 自己产生的下一条 watch 事件自愈；已在 `docs/backlog.md`「待修 findings」节
+  记账（现象 / 自愈机制 / 为何本批不处理）。
+- **P2-2（改名路径备份孤儿，已修）**：新增 `noteRenamed(from, to)`——旧键备份作废、`revisions` 基准
+  迁到新键、仍 dirty 的会话按新键**立即**补一份备份（不留「旧备份已清、下次键入才有新备份」的空窗），
+  旧键那条待写定时器随键作废；目标路径已有备份时**以新写为准**（`recovery_backup` 是覆盖式写入，而
+  缓冲是此刻最新的那一份，理由写在实现处注释）。这是备份生命周期的**第五条**路径（前四条：保存成功 /
+  撤销回到基线 / 关标签放弃 / 切 vault 放弃），落点与调用面：
+  `editor.remapSessionPaths` 改为返回 `SessionPathRemap[]`（`{from, to}`，目录改名逐会话给出前缀替换后的
+  新路径），装配层 `src/main.ts` 的改名流程逐条喂给 `save.noteRenamed`。
+  **顺带修掉一条同源缺陷**（探针实测坐实）：`revisions` 按路径键控而改名只换会话路径，此前改名后新路径
+  会落进 `saveBaseline` 的 null 分支——打开中的文档在 app 内改名后**不可保存**（⌘S 只给「当前文件尚未可
+  保存（未登记磁盘版本）」，一个字都写不出去）。基准随键迁移即修复；回归见
+  `tests/visual/scenes/tree-menu.spec.ts` 的「改名 dirty 文档：备份资源随路径迁移」与单测的两条改名用例。
+  **既存用例的一处口径修正**：`tree-menu.spec.ts` 原「改名…含反向验证」用例只 fire `modified` 事件、不改
+  磁盘——它此前靠「改名后新路径没有基准 ⇒ 判不出回声」偶然通过；基准迁移后该事件按设计就是回声，故补上
+  真实的 `externalWrite`（该用例注释本来就写着「被**真实**外部修改时」，现在名副其实）。

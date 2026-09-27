@@ -139,6 +139,11 @@ export interface SaveController {
   /** 清除某路径的崩溃备份（「关标签时放弃修改」这类不经 dirty 跃迁的放弃动作的出口）。
    *  dirty 转 clean 的常规路径由本模块自己的订阅覆盖，无须调用方显式调用。 */
   forgetBackup(path: string): void;
+  /** app 内改名后把按路径键控的状态迁到新键上（**备份生命周期的第五条路径**，r1 评审 P2-2）：
+   *  旧路径的备份作废，磁盘 revision 基准迁到新键（改名不改字节，CAS 依旧有效），仍 dirty
+   *  的会话按新路径立即补一份备份。目录改名由调用方对每个受影响的会话路径各调一次
+   *  （`editor.remapSessionPaths` 返回的路径对逐条喂进来）。 */
+  noteRenamed(from: string, to: string): void;
   /** dirty 清除时整批撤下守卫提示（保存成功 / 重载）。 */
   clearGuardToasts(): void;
   /** 退出/关窗被 dirty 守卫拦截的提示（sticky，属守卫提示族）。 */
@@ -235,6 +240,35 @@ export function createSaveController(deps: SaveControllerDeps): SaveController {
    *  「恢复提示的丢弃动作」另有一条带 toast 的同族函数（discardBackup），别混。 */
   function forgetBackup(path: string): void {
     void recoveryDiscard(path).catch(() => {});
+  }
+
+  /** app 内改名（菜单改名，M244）后把按路径键控的状态迁到新键上——备份生命周期的**第五条**
+   *  路径（r1 评审 P2-2）。前四条（保存成功 / 撤销回基线 / 关标签放弃 / 切 vault 放弃）清的都是
+   *  **当前路径**的备份，而改名换的正是这个键：不迁的话，dirty 文档的那份备份会留在旧路径上成
+   *  孤儿——随后在新路径上「保存成功」或「放弃修改」清的都是新路径，旧路径那份要到下次启动才
+   *  以「发现未保存的崩溃备份」出现，而它指向的文件已经不存在（「恢复内容」打不开，只有
+   *  「丢弃备份」能清）。M278 之前备份只在冲突待决时罕有落盘、这个洞极窄；备份改成「每次停顿
+   *  满窗口就写一份」之后，每一次 app 内改名都会踩到它。
+   *
+   *  基准一并迁移：改名不改字节（M244 的口径），CAS 基准因此仍然有效，而它在按路径键控的表里
+   *  ——不迁的话新路径会落进 `saveBaseline` 的 null 分支，文档此后不可保存（⌘S 只会给
+   *  「尚未可保存（未登记磁盘版本）」），直到重新打开该文件。
+   *
+   *  目标路径已有备份时的取舍：先清旧路径、再按新路径写一份（`recovery_backup` 是覆盖式写入，
+   *  同一 (vault, 相对路径) 只留最新一份）。**以新写为准**是这里唯一的保守口径——目标路径若真
+   *  有残留备份，那也是一份指向不存在 / 已被改名的文件的陈旧内容，而被改名会话的内存缓冲是此刻
+   *  最新的那一份。 */
+  function noteRenamed(from: string, to: string): void {
+    if (from === to) return;
+    if (revisions.has(from)) {
+      revisions.set(to, revisions.get(from));
+      revisions.delete(from);
+    }
+    cancelBackupTimer(from); // 旧键的待写定时器随键一起作废（否则它到期后又落回旧路径）
+    forgetBackup(from);
+    const session = sessionOf(to);
+    if (session === undefined || !session.dirty) return;
+    void backupDirty(to); // 立即补一份：不留「旧备份已清、下次键入才有新备份」的空窗
   }
 
   // ---------------------------------------------------------------------------
@@ -609,7 +643,18 @@ export function createSaveController(deps: SaveControllerDeps): SaveController {
    *  一次真实的外部修改。
    *
    *  这一层的读取代替了 clean 分支原本那次读（见 reloadDocument 的 snapshot 参数），
-   *  净增的 IO 只有「读失败」这一条降级路径。 */
+   *  净增的 IO 只有「读失败」这一条降级路径。
+   *
+   *  **基准取在读取之后**（r1 评审 P2-1）：读在途期间用户完全可能再按一次 ⌘S——保存 #2
+   *  完成会把基准推进到 R2，而它自己的回声（携带 R1 的那条事件）正是在读这条链上。若基准
+   *  取在 await 之前，比对就成了「R2 === R1」不成立 ⇒ 判成外部修改 ⇒ dirty 分支弹 sticky
+   *  「检测到外部修改」（带「重载（放弃我的修改）」这个破坏性动作），而磁盘上根本没有第三方
+   *  写入——正是 D2 要消灭的那种误判。取最新基准才是正确口径，clean 分支的
+   *  `onlyIfChanged` 复查用的也是最新基准（那里反证了这条）。
+   *
+   *  反向交错（读返回的是写入前的 R1、而基准已到 R2）不在此列：那份 snapshot 会被 clean
+   *  分支复用，把 R1 的内容重载进缓冲；它由保存 #2 自己产生的下一条 watch 事件自愈，属
+   *  「复用这次读取换一倍 IO」的固有代价，已在 `docs/backlog.md` 记账。 */
   async function dispatchExternalChange(path: string, kind: FsChangeKind): Promise<void> {
     if (saving.has(path) || sessionOf(path) === undefined) return;
     if (kind === "deleted") {
@@ -617,7 +662,6 @@ export function createSaveController(deps: SaveControllerDeps): SaveController {
       toast(`${nameOf(path)}当前文件已被外部删除；编辑器中的内容未丢失`, [], true);
       return;
     }
-    const known = revisions.get(path);
     let snapshot: ReadSnapshot | null = null;
     try {
       snapshot = await fsReadSnapshot(path);
@@ -626,6 +670,8 @@ export function createSaveController(deps: SaveControllerDeps): SaveController {
     }
     // 读取期间文档可能被关掉 / vault 被切走：处置对象已不在，丢弃。
     if (sessionOf(path) === undefined) return;
+    // 基准与 snapshot 同一条时间线取（读在途期间的保存必须算进来，见上面两段）。
+    const known = revisions.get(path);
     if (snapshot !== null && known !== undefined && snapshot.revision === known) {
       return; // 自身的写入回声：磁盘内容与已知基准一致，没有任何外部写入
     }
@@ -781,8 +827,9 @@ export function createSaveController(deps: SaveControllerDeps): SaveController {
   // 作废——备份的语义是「有一份未落盘的内容」，为 false 时它没有意义。这一个落点覆盖
   // 撤销 / 重做回到基线、重新载入（放弃我的修改），与三条保存路径（保存成功 / 强制覆盖 /
   // 另存为新文件，它们另在动作处显式清除，重复清除是幂等的空操作）。
-  // 不经这里的两条放弃路径各自显式清除：关标签放弃（tabs.ts 经 forgetBackup）、
-  // 切 vault 放弃（noteVaultReset 批量清）。
+  // 不经这里的三条路径各自显式处理：关标签放弃（tabs.ts 经 forgetBackup）、
+  // 切 vault 放弃（noteVaultReset 批量清），以及**改名迁移**（noteRenamed——它换的是键本身，
+  // 不只是清一份备份）。
   editor.onSessionDirty((session, dirty) => {
     if (dirty) return;
     const path = session.path;
@@ -809,6 +856,7 @@ export function createSaveController(deps: SaveControllerDeps): SaveController {
     },
     handleExternalChange,
     forgetBackup,
+    noteRenamed,
     clearGuardToasts,
     showQuitBlocked,
     checkRecovery,

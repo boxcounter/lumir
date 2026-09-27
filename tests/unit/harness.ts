@@ -160,6 +160,9 @@ export interface EditorDouble {
   edit(path: string | undefined, content: string): void;
   activate(path: string | undefined): void;
   close(path: string | undefined): void;
+  /** 改名（真内核 `remapSessionPaths` 的替身）：**只换路径**——内容、dirty 与基准全不动，
+   *  与 M244「改名不改字节」的口径一致。保存链路侧的迁移由 `controller.noteRenamed` 承担。 */
+  rename(from: string, to: string): void;
   /** reloadSession 的调用记录（外部修改 / 强制重载链路的断言）。 */
   reloads: Array<{ path: string | undefined; content: string }>;
 }
@@ -258,6 +261,12 @@ export function createEditorDouble(): EditorDouble {
     close(path) {
       const session = find(path);
       if (session !== undefined) implemented.closeSession(session);
+    },
+    rename(from, to) {
+      const session = find(from);
+      if (session === undefined) throw new Error(`rename: 没有打开 ${from}`);
+      session.path = to;
+      session.editable = isEditablePath(to);
     },
   };
 }

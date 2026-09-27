@@ -471,6 +471,124 @@ test("自身写盘回声（D2）：保存后立刻再键入，回声到达时不
   stopTimers(rig);
 });
 
+test("自身写盘回声（D2）：读在途期间完成的那次保存也算进来（基准取在读取之后）", async () => {
+  // r1 评审 P2-1：基准若在 `await fsReadSnapshot` **之前**取样，读在途期间的保存 #2 推进的
+  // 基准就进不了比对——「R2 === R1」不成立 ⇒ 判成外部修改 ⇒ dirty 分支弹 sticky 提示，
+  // 而磁盘上根本没有第三方写入。本用例把那段交错钉出来。
+  const rig = createRig();
+  rig.backend.handle("document_save", () => "rev-2");
+  rig.editor.open("a.md", "# A");
+  rig.controller.noteOpened("a.md", "rev-1");
+  rig.editor.edit("a.md", "# A 改");
+  await rig.controller.save(); // 保存 #1（基准 → rev-2）
+  assert.equal(rig.editor.handle.sessionForPath("a.md")!.dirty, false);
+
+  // 回声（保存 #1 产生的 modified 事件）到达并进入读取；读在途期间用户又按了 ⌘S（保存 #2
+  // 完成、基准推进到 rev-3）并继续键入。
+  rig.backend.handle("fs_read_snapshot", async () => {
+    rig.backend.handle("document_save", () => "rev-3");
+    rig.editor.edit("a.md", "# A 改 2");
+    await rig.controller.save(); // 保存 #2（`save()` 的返回是 void，判据取会话状态）
+    assert.equal(rig.editor.handle.sessionForPath("a.md")!.dirty, false, "保存 #2 在读在途期间完成");
+    rig.editor.edit("a.md", "# A 改 3"); // 用户继续键入 ⇒ 缓冲区重新 dirty
+    return { revision: "rev-3", content: "# A 改 3" };
+  });
+
+  rig.controller.handleExternalChange("a.md", "modified");
+  await flush();
+
+  // 判据按**文本**取而不是按 toast 计数：交错里的那次保存自己也会留一条「已保存」。
+  assert.equal(
+    rig.toasts.live().filter((t) => t.text.includes("检测到外部修改")).length,
+    0,
+    "读之后取的基准把保存 #2 算进来了 ⇒ 是回声，不弹提示",
+  );
+  assert.equal(rig.editor.reloads.length, 0, "回声不得重载");
+  assert.equal(rig.editor.handle.sessionForPath("a.md")!.state.doc.toString(), "# A 改 3");
+  stopTimers(rig);
+});
+
+test("改名迁移（P2-2）：旧键备份作废、基准随键迁移、dirty 会话按新键立即补一份", async () => {
+  mock.timers.enable({ apis: ["setTimeout"] });
+  try {
+    const rig = createRig();
+    rig.editor.open("a.md", "# A");
+    rig.controller.noteOpened("a.md", "rev-1");
+    rig.editor.edit("a.md", "# A 改");
+    rig.backend.reset();
+
+    rig.editor.rename("a.md", "b.md"); // 真内核 remapSessionPaths 的替身（只换路径）
+    rig.controller.noteRenamed("a.md", "b.md");
+    await flush();
+
+    assert.deepEqual(
+      rig.backend.argsOf("recovery_discard").map((args) => args.path),
+      ["a.md"],
+      "旧路径的备份随改名作废（否则下次启动弹一个指向已改名文件的恢复提示）",
+    );
+    const backup = rig.backend.argsOf("recovery_backup")[0];
+    assert.equal(backup.path, "b.md", "dirty 内容按新路径立即补一份");
+    assert.equal(backup.content, "# A 改");
+    assert.equal(backup.base_revision, "rev-1", "CAS 基准随键迁移（改名不改字节）");
+
+    // 旧键那条待写定时器随键作废：跨过一个窗口后不得再冒出第二份写入。
+    mock.timers.tick(RECOVERY_DEBOUNCE_MS);
+    await flush();
+    assert.equal(rig.backend.countOf("recovery_backup"), 1, "旧键的定时器不得再写一份");
+    assert.deepEqual(
+      rig.backend.argsOf("recovery_backup").map((args) => args.path),
+      ["b.md"],
+    );
+
+    // 基准迁移的直接后果：改名后 ⌘S 仍能保存（不迁则新路径落进「未登记磁盘版本」的不可保存态）。
+    rig.backend.handle("document_save", () => "rev-2");
+    await rig.controller.save();
+    const written = rig.backend.argsOf("document_save").at(-1)!;
+    assert.equal(written.path, "b.md");
+    assert.equal(written.expected_revision, "rev-1", "CAS 基准确实是改名前那一个");
+    assert.equal(rig.editor.handle.sessionForPath("b.md")!.dirty, false);
+    stopTimers(rig);
+  } finally {
+    mock.timers.reset();
+  }
+});
+
+test("改名迁移：clean 会话只清旧备份、不补新备份；目录改名逐会话同口径（批量）", async () => {
+  const rig = createRig();
+  rig.editor.open("sub/a.md", "# A");
+  rig.controller.noteOpened("sub/a.md", "rev-1");
+  rig.editor.open("sub/deep/b.md", "# B");
+  rig.controller.noteOpened("sub/deep/b.md", "rev-2");
+  rig.editor.edit("sub/a.md", "# A 改");
+  rig.editor.edit("sub/deep/b.md", "# B 改");
+  // 先让 a.md 回到基线（clean）——它不该再补备份，但旧键仍要清。
+  rig.editor.handle.markCleanOf("sub/a.md", "# A 改");
+  rig.backend.reset();
+
+  // 目录改名：装配层把 remapSessionPaths 返回的路径对逐条喂进来。
+  for (const [from, to] of [
+    ["sub/a.md", "sub2/a.md"],
+    ["sub/deep/b.md", "sub2/deep/b.md"],
+  ]) {
+    rig.editor.rename(from, to);
+    rig.controller.noteRenamed(from, to);
+  }
+  await flush();
+
+  assert.deepEqual(
+    rig.backend.argsOf("recovery_discard").map((args) => args.path),
+    ["sub/a.md", "sub/deep/b.md"],
+    "每个受影响会话的旧键都要清（含已 clean 的那一份残留）",
+  );
+  assert.deepEqual(
+    rig.backend.argsOf("recovery_backup").map((args) => args.path),
+    ["sub2/deep/b.md"],
+    "只有仍 dirty 的那个按新键补一份",
+  );
+  assert.equal(rig.backend.argsOf("recovery_backup")[0].base_revision, "rev-2");
+  stopTimers(rig);
+});
+
 test("自身写盘回声：磁盘读取失败按「不是回声」降级（宁可多提示一次）", async () => {
   const rig = createRig();
   rig.backend.handle("fs_read_snapshot", () => {
