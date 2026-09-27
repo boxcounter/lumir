@@ -817,6 +817,80 @@ fn refine_with_known(
     }
 }
 
+/// 批次里"从无到有"的目录（Created + dir）要把**子孙**一并补进这一批（M258）。
+///
+/// 为什么必须在这一层补：FSEvents 对目录改名（app 内右键重命名、外部 `mv` 进 vault、解包一个
+/// 已带内容的目录）**只报目录本身这一个新路径**，子孙一个都不进事件流（M258 真机探针逐字
+/// 实测：`[Deleted tutorial, Created tutorials(dir)]`）。而前端收到 `deleted:old` 必须按级联
+/// 清掉旧子树（`src/tree.ts` 的 applyChanges），收到 `created:new` 只能建出一个**空**的目录
+/// 节点——重命名后的目录因此在树里永远展不开（改回原名同理，新一轮又是 deleted + created），
+/// 直到重启全量重扫。
+///
+/// 不变量（本条即它的落点）：**增量收敛后的模型 = 同一时刻的全量枚举**。前端只按事件流打补丁，
+/// 所以「磁盘上存在、事件流却没提过」的条目必须由这一层（唯一读得到磁盘现状的一层）补出来。
+/// 批次切分也吃不掉这条：debounce 把改名的两个方向拆成两批时，`created:new` 那一批自带整棵
+/// 子树，前端照样收敛出完整目录。
+///
+/// 已在批次里的路径不覆盖（它自带的 kind / entry_kind 由 [`refine_with_known`] 按磁盘现状定过，
+/// 更权威）；补出来的路径写进 `known`——前端随这一批已经知道它存在，后续事件按 Modified 归因。
+/// 忽略集与相对路径口径沿用 [`rel_string`]（与全量枚举同源），符号链接不跟随（`file_type()`）。
+fn expand_new_dir_subtrees(
+    root: &Path,
+    known: &mut std::collections::HashSet<String>,
+    batch: &mut Vec<FsChange>,
+) {
+    // 广度优先：新出现的目录入队，展开时发现的子目录继续入队（父的条目先于子的条目入批次）。
+    let mut queue: Vec<String> = Vec::new();
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for c in batch.iter() {
+        if c.kind == FsChangeKind::Created
+            && c.entry_kind == Some(FsEntryKind::Dir)
+            && seen.insert(c.path.clone())
+        {
+            queue.push(c.path.clone());
+        }
+    }
+    let mut index = 0;
+    while index < queue.len() {
+        let rel_dir = queue[index].clone();
+        index += 1;
+        let Ok(rd) = std::fs::read_dir(root.join(&rel_dir)) else {
+            continue; // 扫描期间被删：下一次事件会把它带走
+        };
+        for item in rd.flatten() {
+            let name = item.file_name();
+            if is_ignored(&name) {
+                continue;
+            }
+            let Ok(file_type) = item.file_type() else {
+                continue; // 扫描期间被删的条目直接跳过（同 scan_workspace）
+            };
+            let path = item.path();
+            // rel_string 在忽略集内或无法转换时返回 None（与枚举同口径）
+            let Some(rel) = rel_string(root, &path) else {
+                continue;
+            };
+            let entry_kind = if file_type.is_dir() {
+                FsEntryKind::Dir
+            } else {
+                FsEntryKind::File
+            };
+            if entry_kind == FsEntryKind::Dir && seen.insert(rel.clone()) {
+                queue.push(rel.clone());
+            }
+            if batch.iter().any(|c| c.path == rel) {
+                continue; // 自带事件：refine 已按磁盘现状定过 kind / entry_kind
+            }
+            batch.push(FsChange {
+                kind: FsChangeKind::Created,
+                path: rel.clone(),
+                entry_kind: Some(entry_kind),
+            });
+            known.insert(rel);
+        }
+    }
+}
+
 /// 正在运行的 vault 监听器；drop 即停止监听（debounce 线程随 channel 断开退出）。
 pub struct VaultWatcher {
     _watcher: notify::RecommendedWatcher,
@@ -882,11 +956,12 @@ pub fn watch(
         .spawn(move || {
             let flush = |pending: &mut Vec<FsChange>| {
                 let mut batch = dedup(std::mem::take(pending));
-                refine_with_known(
-                    &root_for_flush,
-                    &mut known_for_flush.lock().expect("known paths poisoned"),
-                    &mut batch,
-                );
+                {
+                    let mut known = known_for_flush.lock().expect("known paths poisoned");
+                    refine_with_known(&root_for_flush, &mut known, &mut batch);
+                    // M258：新出现的目录要把子孙一起带出去（改名只报目录本身，前端补不出来）
+                    expand_new_dir_subtrees(&root_for_flush, &mut known, &mut batch);
+                }
                 if !batch.is_empty() {
                     on_batch(batch);
                 }
@@ -1203,6 +1278,99 @@ mod tests {
         assert_eq!(file_entry.entry_kind, Some(FsEntryKind::File));
     }
 
+    /// 收一批（多批合并）增量：`DEBOUNCE` 会把一次改名拆成多批，断言要看的是「这段时间里
+    /// 前端一共被告知了什么」——单批口径会在批次切分上假红/假绿。
+    fn collect_batches(rx: &mpsc::Receiver<Vec<FsChange>>, window: Duration) -> Vec<FsChange> {
+        let deadline = std::time::Instant::now() + window;
+        let mut out = Vec::new();
+        loop {
+            let left = deadline.saturating_duration_since(std::time::Instant::now());
+            if left.is_zero() {
+                return out;
+            }
+            match rx.recv_timeout(left) {
+                Ok(batch) => out.extend(batch),
+                Err(_) => return out,
+            }
+        }
+    }
+
+    /// M258 的后端回归锚点：**目录改名后，增量必须让前端把该目录的整棵子树收敛出来**。
+    ///
+    /// 现场（Alex 2026-09-27，`openspec-tutorial` → `openspec-tutorials`）：FSEvents 对目录
+    /// 改名只报目录本身这一个新路径，子孙一个都不报。前端按 `deleted:old` 级联清掉旧子树
+    /// （`src/tree.ts` 的 applyChanges）、按 `created:new` 建出一个**空的**目录节点 ⇒ 重命名后的
+    /// 目录在树里永远展不开（改回原名亦然），直到重启全量重扫。不变量：**增量收敛后的模型 =
+    /// 同一时刻的全量枚举**——所以新路径下的每个条目都必须有增量条目送达。
+    ///
+    /// 两个方向都测（改名 + 改回原名），与用户报告的路径逐字同形。
+    #[test]
+    fn watch_dir_rename_delivers_full_subtree() {
+        let v = TempVault::new();
+        std::fs::create_dir_all(v.0.join("tutorial/deep")).unwrap();
+        std::fs::write(v.0.join("tutorial/a.md"), "# a\n").unwrap();
+        std::fs::write(v.0.join("tutorial/deep/b.txt"), "b\n").unwrap();
+        std::thread::sleep(Duration::from_millis(700));
+        let (tx, rx) = mpsc::channel::<Vec<FsChange>>();
+        let watcher = watch(&v.0, move |batch| {
+            tx.send(batch).expect("send batch");
+        })
+        .expect("watch");
+        let entries = scan_workspace(&v.0).expect("scan");
+        watcher.seed(entries.iter().map(|e| e.path.clone()));
+        std::thread::sleep(Duration::from_millis(500));
+
+        // 方向一：tutorial → tutorials（用户现场：加一个 s）
+        std::fs::rename(v.0.join("tutorial"), v.0.join("tutorials")).unwrap();
+        let renamed = collect_batches(&rx, Duration::from_millis(1500));
+        let view = |path: &str| renamed.iter().find(|c| c.path == path);
+        for (path, kind) in [
+            ("tutorials", FsEntryKind::Dir),
+            ("tutorials/a.md", FsEntryKind::File),
+            ("tutorials/deep", FsEntryKind::Dir),
+            ("tutorials/deep/b.txt", FsEntryKind::File),
+        ] {
+            let Some(entry) = view(path) else {
+                panic!("改名后新路径 {path} 必须进增量（前端靠它建出子树），批次：{renamed:?}");
+            };
+            assert_ne!(
+                entry.kind,
+                FsChangeKind::Deleted,
+                "{path} 在磁盘上存在，不得报成删除，批次：{renamed:?}"
+            );
+            assert_eq!(
+                entry.entry_kind,
+                Some(kind),
+                "{path} 的 entry_kind 必须由磁盘元数据填准，批次：{renamed:?}"
+            );
+        }
+        assert!(
+            renamed
+                .iter()
+                .any(|c| c.path == "tutorial" && c.kind == FsChangeKind::Deleted),
+            "旧路径要报删除（前端据此摘掉旧行），批次：{renamed:?}"
+        );
+
+        // 方向二：改回原名（用户报告「改回旧名字依然无法展开」的那一半）
+        std::fs::rename(v.0.join("tutorials"), v.0.join("tutorial")).unwrap();
+        let restored = collect_batches(&rx, Duration::from_millis(1500));
+        for path in [
+            "tutorial",
+            "tutorial/a.md",
+            "tutorial/deep",
+            "tutorial/deep/b.txt",
+        ] {
+            let Some(entry) = restored.iter().find(|c| c.path == path) else {
+                panic!("改回原名后 {path} 必须进增量，批次：{restored:?}");
+            };
+            assert_ne!(
+                entry.kind,
+                FsChangeKind::Deleted,
+                "{path} 在磁盘上存在，不得报成删除，批次：{restored:?}"
+            );
+        }
+    }
+
     /// `refine_with_known` 的三条口径（seed 行为）逐条钉住——外部新建目录那条 finding 若再被
     /// 怀疑，先看这里：播种集只影响**已在集内**的路径（重放的 Create 修正为 Modified），
     /// 新目录仍是 Created，消失的路径一律 Deleted。
@@ -1249,6 +1417,117 @@ mod tests {
         assert_eq!(changes[2].kind, FsChangeKind::Deleted);
         assert_eq!(changes[2].entry_kind, None, "deleted 一律不带 entry_kind");
         assert!(known.contains("brand-new-dir"), "新目录应进已知集");
+    }
+
+    /// `expand_new_dir_subtrees` 的纯函数那一半（M258）：不管事件形状如何，新出现的目录都要
+    /// 把子孙补全——批次覆盖该子树在磁盘上的**全部**条目（逐条 kind / entry_kind 与磁盘一致、
+    /// 父先于子），忽略集命中的名字一条都不进，已带事件的路径不重复也不被覆盖。
+    ///
+    /// 与 `watch_dir_rename_delivers_full_subtree`（跑真 FSEvents 流）分工：那条证明「改名真的
+    /// 只报目录本身、修复后批次够用」，这条在不依赖事件时序的形状矩阵上钉住补全判定本身。
+    #[test]
+    fn expand_new_dir_subtrees_covers_subtree_and_respects_ignore_set() {
+        let v = TempVault::new();
+        // 形状：层深 3、宽度 3，混入三类忽略集条目（目录 / 文件 / 保存 tmp ghost）
+        let shape: &[(&str, FsEntryKind)] = &[
+            ("outer/a.md", FsEntryKind::File),
+            ("outer/deep", FsEntryKind::Dir),
+            ("outer/deep/b.txt", FsEntryKind::File),
+            ("outer/deep/deeper", FsEntryKind::Dir),
+            ("outer/deep/deeper/c.md", FsEntryKind::File),
+            ("outer/sib", FsEntryKind::Dir),
+            ("outer/sib/d.md", FsEntryKind::File),
+            ("outer/node_modules/pkg/index.js", FsEntryKind::File),
+            ("outer/.DS_Store", FsEntryKind::File),
+            ("outer/.note.md.lumir-123", FsEntryKind::File),
+        ];
+        let mut expected: Vec<(&str, FsEntryKind)> = vec![("outer", FsEntryKind::Dir)];
+        for (rel, kind) in shape {
+            let full = v.0.join(rel);
+            match kind {
+                FsEntryKind::Dir => std::fs::create_dir_all(&full).unwrap(),
+                FsEntryKind::File => {
+                    std::fs::create_dir_all(full.parent().unwrap()).unwrap();
+                    std::fs::write(&full, "x").unwrap();
+                }
+            }
+            if rel.contains("node_modules")
+                || rel.contains(".DS_Store")
+                || rel.ends_with("lumir-123")
+            {
+                continue; // 忽略集命中：磁盘上有，但不得进批次（与枚举同口径）
+            }
+            expected.push((rel, *kind));
+        }
+
+        let mut known = std::collections::HashSet::new();
+        let mut batch = vec![FsChange {
+            kind: FsChangeKind::Created,
+            path: "outer".into(),
+            entry_kind: Some(FsEntryKind::Dir),
+        }];
+        expand_new_dir_subtrees(&v.0, &mut known, &mut batch);
+
+        for (rel, kind) in &expected {
+            let Some(hit) = batch.iter().find(|c| c.path == *rel) else {
+                panic!("{rel} 必须在批次里（前端靠它建出子树），批次：{batch:?}");
+            };
+            assert_eq!(hit.kind, FsChangeKind::Created, "{rel}");
+            assert_eq!(hit.entry_kind, Some(*kind), "{rel} 的类型必须与磁盘一致");
+        }
+        // 反向：不多不少——批次里的条目数 = 该子树里未被忽略的条目数
+        assert_eq!(batch.len(), expected.len(), "批次：{batch:?}");
+        // 父先于子（前端按路径深度排序后逐个 upsert；批次自身也保持这个次序）
+        for (rel, _) in &expected {
+            let Some((parent, _)) = rel.rsplit_once('/') else {
+                continue;
+            };
+            let child_at = batch.iter().position(|c| c.path == *rel).unwrap();
+            let parent_at = batch.iter().position(|c| c.path == parent).unwrap();
+            assert!(parent_at < child_at, "{parent} 必须先于 {rel} 入批次");
+        }
+        // 补出来的路径进已知集：后续事件按 Modified 归因，不重复报 Created
+        //（批次里原本就有的那条由 refine_with_known 负责写 known，这条测试没跑 refine）
+        for (rel, _) in &expected {
+            if *rel == "outer" {
+                continue;
+            }
+            assert!(known.contains(*rel), "{rel} 应进已知集");
+        }
+
+        // 已带事件的路径不重复、不被覆盖（它自带的 kind 由 refine 按磁盘现状定过，更权威）
+        let mut batch_with_event = vec![
+            FsChange {
+                kind: FsChangeKind::Created,
+                path: "outer".into(),
+                entry_kind: Some(FsEntryKind::Dir),
+            },
+            FsChange {
+                kind: FsChangeKind::Modified,
+                path: "outer/deep".into(),
+                entry_kind: Some(FsEntryKind::Dir),
+            },
+        ];
+        expand_new_dir_subtrees(
+            &v.0,
+            &mut std::collections::HashSet::new(),
+            &mut batch_with_event,
+        );
+        let dupes: Vec<&FsChange> = batch_with_event
+            .iter()
+            .filter(|c| c.path == "outer/deep")
+            .collect();
+        assert_eq!(dupes.len(), 1, "同一路径只留一条：{batch_with_event:?}");
+        assert_eq!(dupes[0].kind, FsChangeKind::Modified, "既有条目不得被覆盖");
+
+        // 反向输入：只有**文件**新建时不得凭空补出任何条目（补全只对目录生效）
+        let mut file_only = vec![FsChange {
+            kind: FsChangeKind::Created,
+            path: "outer/a.md".into(),
+            entry_kind: Some(FsEntryKind::File),
+        }];
+        expand_new_dir_subtrees(&v.0, &mut std::collections::HashSet::new(), &mut file_only);
+        assert_eq!(file_only.len(), 1, "文件不进补全路径：{file_only:?}");
     }
 
     #[test]

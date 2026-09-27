@@ -83,6 +83,16 @@ export function remapPathAfterRename(
   if (path.startsWith(`${from}/`)) return to + path.slice(from.length);
   return undefined;
 }
+/**
+ * 父目录相对路径 + 末段名 → 完整相对路径（根为 `""` 时就是末段名本身）。这是这条拼接的
+ * **规范居所**（M258）：树用它把改名后的展开态搬到新路径，装配层用它登记改名回响抑制
+ * （`src/main.ts` 的 submitInlineEdit 里有一份同形副本，两处必须同一条公式——
+ * main.ts 不在本 mission 的 scope 内，未就地收口，已在 mission 报告里登记）。
+ */
+export function relativePathOf(parentRel: string, name: string): string {
+  return parentRel === "" ? name : `${parentRel}/${name}`;
+}
+
 /** 路径 → 末段（basename）。**全前端唯一一份**（REVIEW.md 第 8 条）：文件树的行名与
  *  vault 名（都落在这里的侧栏头，M211 起 vault 名没有第二个展示位）、标签可见文本
  *  （tabs.ts）、切换器列表行与守卫提示（vault-switcher.ts / main.ts）全部消费它。空末段
@@ -488,6 +498,16 @@ export function createFileTree(mount: HTMLElement, cb: FileTreeCallbacks): FileT
 
   let editing: InlineEdit | null = null;
 
+  /** 树自己发起的改名（M258）：提交那一刻登记 `from → to`（预测的新路径，与装配层 invoke 的
+   *  请求同一个公式 `relativePathOf`），用来把「这一批事件是那次改名的回响」认出来——重命名
+   *  后的目录的展开态随目录一起搬到新路径。改名失败（`endInlineEdit(false)`）即撤。
+   *
+   *  只登记**自己发起**的那一次、不做「同一批次里删了 X 又新建 Y」的通用配对：那样「删 A 建 B」
+   *  在同一 debounce 窗口内到达时会被误判成改名，把 A 的展开态搬到 B 上（`expanded` 里可能
+   *  正好有 A 的整棵前缀）。外部发起的改名没有登记，收敛路径与既不登记时一致（后端补出的
+   *  子孙条目照常把子树建全，只是展开态不迁移——见 tests/unit/tree-rename.test.ts 的边界条）。 */
+  let pendingRename: { from: string; to: string } | undefined;
+
   /** 同缀既有条目名（撞名预检的数据源）；rename 时排除条目自己。 */
   function siblingNames(parentRel: string, exclude?: string): Set<string> {
     const names = new Set<string>();
@@ -659,6 +679,12 @@ export function createFileTree(mount: HTMLElement, cb: FileTreeCallbacks): FileT
       return;
     }
     state.submitting = true;
+    // 改名提交即登记（M258）：回响批次到达时要认出「这是我自己发起的那次改名」，才能把展开态
+    // 搬到新路径。登记在提交时而不是成功返回后——回响与 invoke 的返回走两条通道，事件可能先到
+    // （失败路径由 endInlineEdit(false) 撤销登记）。
+    if (state.mode === "rename") {
+      pendingRename = { from: state.path, to: relativePathOf(state.parentRel, name) };
+    }
     cb.onInlineEditSubmit({
       mode: state.mode,
       path: state.path,
@@ -685,8 +711,10 @@ export function createFileTree(mount: HTMLElement, cb: FileTreeCallbacks): FileT
       vaultName = baseName(root);
       expanded.clear();
       // 整棵树换掉：编辑中的行随 DOM 一起消失，编辑态必须一起作废（否则 editing 会
-      // 指着已脱离文档的输入框，后续 beginRename 全被它挡住）。
+      // 指着已脱离文档的输入框，后续 beginRename 全被它挡住）。待认领的改名登记同理作废：
+      // 换 vault 后的批次与它无关（M258）。
       editing = null;
+      pendingRename = undefined;
       renderAll(entries);
       mount.replaceChildren(rootEl);
     },
@@ -723,6 +751,9 @@ export function createFileTree(mount: HTMLElement, cb: FileTreeCallbacks): FileT
         return;
       }
       // 失败：留在编辑态并把原因写在行内（后端是权威——前端预检没拦住的那几类都经这里）。
+      // 这次改名在磁盘上没有发生，撤销待认领的登记（M258）——否则下一条真事件的 deleted 可能
+      // 撞上同一个旧路径，把展开态搬到一个不存在的新路径上。
+      pendingRename = undefined;
       state.submitting = false;
       if (reason !== undefined && reason !== "") {
         state.error.textContent = reason;
@@ -738,6 +769,27 @@ export function createFileTree(mount: HTMLElement, cb: FileTreeCallbacks): FileT
       const sorted = [...changes].sort(
         (a, b) => a.path.split("/").length - b.path.split("/").length,
       );
+      // 改名回响到达：把展开态从旧路径搬到新路径（M258）。必须在处理 deleted 之前做——
+      // 级联删除的 pruneExpanded(old) 会清掉旧前缀，而迁到新前缀的条目不受它影响；反过来
+      // （先删后迁）展开态就随旧子树一起没了，重命名后的目录在树里会掉一档成折叠态。
+      //
+      // 判据是「批次里有我登记过的那次改名的 deleted:from」：自己发起 → 磁盘上必定已经改完
+      // （登记只在提交后、失败即撤），搬展开态是**解释回响**而不是自绘树补丁（新行走的还是
+      // created:to 那条收敛通道）。expanded 是路径键集合，文件改名的迁移是空动作（文件不在
+      // 里面），目录改名连子孙前缀一起搬（remapPathAfterRename 的唯一一份前缀逻辑）。
+      if (
+        pendingRename !== undefined &&
+        sorted.some((c) => c.kind === "deleted" && c.path === pendingRename?.from)
+      ) {
+        const { from, to } = pendingRename;
+        pendingRename = undefined;
+        for (const path of [...expanded]) {
+          const next = remapPathAfterRename(path, from, to);
+          if (next === undefined) continue;
+          expanded.delete(path);
+          expanded.add(next);
+        }
+      }
       for (const change of sorted) {
         const parentPath = parentOf(change.path);
         const parent = nodes.get(parentPath);
@@ -803,6 +855,7 @@ export function createFileTree(mount: HTMLElement, cb: FileTreeCallbacks): FileT
       // 时无列表入口」这条口径就落在这一句上（entryEl 一并置空，命令据此无操作）。
       entryEl = undefined;
       editing = null;
+      pendingRename = undefined;
       const empty = document.createElement("div");
       empty.className = "ft-empty";
       if (notice) {

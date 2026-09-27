@@ -26,6 +26,18 @@ vault 打开期间系统 SHALL 监听文件系统变更，并经 `fs:entry_chang
 
 打开中文件被外部变更命中时，webview SHALL 处置：编辑器未 dirty 时自动重载磁盘内容并提示；dirty 时给出 sticky 提示（非 modal）让用户选择「重载（放弃我的修改）」或「保留我的版本」；外部删除时提示内容仍保留在编辑器中。应用自身保存产生的 watch 事件 SHALL 经 revision 比对丢弃（revision 未变即不重载）。
 
+目录条目**从无到有**（该批次的条目类型为 created 且磁盘上是目录）时，同一批次 SHALL 一并带出该目录下的全部条目（递归、与枚举同忽略集、父先于子），使**增量收敛后的模型与同一时刻的全量枚举一致**。依据：FSEvents（macOS 实际事件源）对目录改名只报目录本身一条路径，子孙一个都不进事件流——M258 真机探针实测批次逐字为 `[deleted:旧路径, created:新路径(dir)]`（`src-tauri/src/fs_io.rs` 的测试 `watch_dir_rename_delivers_full_subtree` 复现），而前端只能按事件流打补丁、读不到磁盘；缺这一层，改名后的目录在前端只能建出一个空节点（永远展不开，直到重启全量重扫）。补的这一层是唯一读得到磁盘现状（ground truth）的一层。
+
+#### Scenario: 目录改名后批次带出整棵子树
+
+- **WHEN** vault 里的目录 `a`（含 `a/x.md` 与 `a/deep/y.txt`）被改名为 `b`（app 内重命名或外部 `mv`）
+- **THEN** 该批增量含 `deleted:a` 与 `created:b`（目录），并含 `created:b/x.md`、`created:b/deep`、`created:b/deep/y.txt`（entry_kind 与磁盘一致）；批次内父先于子
+
+#### Scenario: 改名两个方向被 debounce 拆成两批也不漏
+
+- **WHEN** 一次目录改名产生的 `deleted:旧` 与 `created:新` 落在两个 debounce 批次里
+- **THEN** `created:新` 那一批自带整棵子树，前端收敛出的目录仍是完整可展开的
+
 #### Scenario: 外部变更实时到达
 
 - **WHEN** vault 打开期间，另一个程序在 vault 内新建、修改、删除文件
