@@ -379,6 +379,39 @@ body {
   color: var(--text-2);
 }
 
+/* vault 装载指示（M252，Alex 真机反馈 2）：标题栏右端、产品标识块右侧的一个**无文案**转圈。
+   起停由 src/vault-switcher.ts 的 createVaultLoadingIndicator 写 `hidden`，覆盖「打开目标
+   vault + 装载后的会话恢复」这一段——用户点完列表行到目标 vault 就绪之间的即时反馈。
+   口径：
+   - 常态 `hidden`（本规则不写 display，UA 的 `[hidden] { display: none }` 直接生效，同
+     .titlebar-identity 的补回理由）：不占宽度，空闲态标题栏逐像素不变。
+   - 尺寸与配色全取既有 token（无新值）：12px 圆环，2px 描边取 `--border`、顶边取 `--accent`
+     ——旋转时就是「有一段是暖色」的不确定进度环。eink 档两色同为 `#000`（该档系统性退色），
+     环是纯黑的、**旋转看不出来**，此时指示靠「环的出现与消失」表达（与 design 的已知边界一致）。
+   - 「加载中」这件事必须有可见的**动**：0.8s 一圈的旋转比静止图形更容易在余光里被认出来
+     （Alex 的原话是「我会愣住，以为刚才点击没点中」）。`prefers-reduced-motion` 下不旋转，
+     环本身仍在（指示不因省动效而消失）。 */
+.vault-loading {
+  flex: none;
+  width: 12px;
+  height: 12px;
+  margin-left: var(--sp-3);
+  border: 2px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: vault-loading-spin 0.8s linear infinite;
+}
+@keyframes vault-loading-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .vault-loading {
+    animation: none;
+  }
+}
+
 /* 标签（M149 多标签，M211 迁入标题栏）：形态按定稿——高 29 / max-width 230 /
    active 靠 `--shadow-pop` 表达「与正文同平面相连」（eink 无阴影，改 1.4px 描边强调档）。 */
 .tab {
@@ -1436,8 +1469,10 @@ body {
    消失；壳同 #1（--preview-bg + 1px --border + --shadow-raise）。宽度 320px 允许溢出
    左栏（236px）：收进栏内就得再砍行内信息（显示名 + 摘要两段 + 失效行）。
    挂点是 app-shell（左栏两个容器都 overflow:auto，浮层挂进去会被裁切），定位由
-   src/vault-switcher.ts 用入口的视口矩形算出来。max-height 用 vh：随窗口重排即时生效，
-   不需要 JS 监听 resize。 */
+   src/vault-switcher.ts 用入口的视口矩形算出来、并**夹在挂点矩形内**（M252：入口本身在
+   左栏的滚动容器里，被滚出视口时纵向必须贴住视口上沿，否则整块落到窗口外）。
+   max-height 用 vh：随窗口重排即时生效，不需要 JS 监听 resize；纵向余量比这个上限还小时
+   由 place 压到实测可用空间（inline，列表仍是唯一滚动容器）。 */
 .vault-pop {
   position: absolute;
   top: 0;
