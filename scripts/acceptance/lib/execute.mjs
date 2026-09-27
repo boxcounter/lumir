@@ -933,6 +933,10 @@ async function doAction(step, { ctx, cu, scenario, vars, pid, evidence }) {
         keys: step.keys !== undefined ? step.keys : cur.keys,
         // 排版三项（M195）：缺省**沿用当前值**，与 keys 同形——否则一次 configWrite 会把上一个
         // 场景／本场景前面设过的 font_size 悄悄抹掉（那正是「改了配置却没生效」最难查的形态）。
+        // Enter 自动缩进（M272）：口径与 keys / 排版三项**完全同形**——缺省沿用当前值，
+        // 否则一次 configWrite 会把前面设过的 auto_indent 悄悄抹回出厂 true
+        //（「改了配置却没生效」里最难查的那一类：改的是 false，看起来是 true）。
+        autoIndent: step.autoIndent !== undefined ? step.autoIndent : cur.editor?.auto_indent,
         fontFamily: step.fontFamily !== undefined ? step.fontFamily : cur.editor?.font_family,
         monoFontFamily: step.monoFontFamily !== undefined ? step.monoFontFamily : cur.editor?.mono_font_family,
         fontSize: step.fontSize !== undefined ? step.fontSize : cur.editor?.font_size,
@@ -1075,9 +1079,18 @@ async function doAction(step, { ctx, cu, scenario, vars, pid, evidence }) {
       // 路径、基线成 null——`unchangedSince` 于是报「内容已变：undefined -> …」（方向是安全的
       // 假红），但同一个 null 基线在 `mtimeNewerThan` 那边会退化成「0 基线」的假绿。统一走
       // resolveSpecPath：`env:` 前缀、绝对路径与 vault 相对路径三种写法都按 file 断言的口径解析。
-      const file = resolveSpecPath(step.file);
-      vars[step.as ?? step.name] = await fileInfo(file);
-      return vars[step.as ?? step.name];
+      // 路径解析与 file 断言**同源**（走 resolveSpecFile，含 glob）：M272 实测到的一条静默坑——
+      // `resolveSpecPath` 不展开 glob，诊断日志这类「文件名由 app 决定」的产物会记成 null 基线，
+      // 而 `mtimeNewerThan` 的 null 基线会退化成「0 基线」（README 已记过这条假绿形态），
+      // 其余 `*Since` 则报「未记录基线」。这里两条一起堵：支持 glob 取 mtime 最新一份，
+      // 且目标不存在即报错（不把「读不到」记成 null）。
+      const file = await resolveSpecFile(step.file);
+      const info = await fileInfo(file);
+      if (!info) {
+        throw new Error(`记录基线失败：${step.file} 不存在（基线记成 null 会让配对断言退化）`);
+      }
+      vars[step.as ?? step.name] = info;
+      return info;
     }
     case "recordEditor": {
       // 记录编辑器文本，供 editor.unchangedSince 做逐字节比较（负向匹配不够强）。

@@ -513,3 +513,23 @@ fixture 设计（实现期创建，内容与上面的行号 / `ctrl+n` 次数必
 
 视觉基线：新增 chromium 场景**只做文档文本断言**（`readDocument`），不引入像素断言 ⇒ 预计零基线
 更新；若实现触发了任何整页像素差异，按缺陷处理并按 AGENTS.md 的硬规则走 Alex 人肉过目。
+
+## 9. 实现注记（M272，2026-09-27）
+
+1. **「一条 `Prec.highest` 键位」的命令体落在 `src/enter-indent.ts`，而不是 `src/editor.ts` 的内联闭包**
+   （§2.1 的伪码是口径，不是文件落点）。原因是一条既有约束，不是口味：`tests/unit` 跑在 Node 的
+   `--experimental-strip-types` 下（`tests/unit/run.mjs` 的选型），而 `src/editor.ts` 的模块图里有
+   多处 **TypeScript 参数属性**（`src/preview/livePreview.ts` / `math.ts` / `mermaid.ts` 的 widget 类）
+   ——剥离器对会生成代码的语法直接抛 `ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX` ⇒ **单测无法 import
+   `src/editor.ts`**（全仓至今只有 `import type`，编译期擦除）。判定单独成模块后，§8 的 unit 层跑的是
+   **生产那份判定本身**，不是复刻（REVIEW.md 第 8 条）。装配点仍是 `editor.ts` 的 `modeExtensions`。
+   **MUST NOT 把它并回 `editor.ts`**：并回去等于把 unit 层的覆盖降级到 chromium 层（判定错与键位链路错
+   在那层不可区分）。tower 裁决（2026-09-27）同此判断。
+2. **配置三态的两侧钉法**：Rust 侧（键解析、出厂默认、类型不符的整文件回落）由 `src-tauri/src/config.rs`
+   的三条新单测钉住；TS 侧钉的是**出厂常量与 Rust 同值**（`DEFAULT_AUTO_INDENT`）与**判定在
+   `true` / `false` 下的行为**。TS 侧没有配置解析层（`src/main.ts` 只把 Rust 给的值透传给
+   `editor.setAutoIndent`），在那里再写一份解析就是第二处真源。
+3. **`record` 的 glob 支持**（真机场景 59 的副产物）：套件 `lib/execute.mjs` 的 `record` 原先只走
+   `resolveSpecPath`（不展开 glob），对诊断日志这类「文件名由 app 决定」的产物会把基线记成 `null`
+   ——与其配对的 `changedSince` 报「未记录基线」（安全红），而 `mtimeNewerThan` 会退化成「0 基线」的
+   假绿。M272 顺手把它改成与 file 断言同源的 `resolveSpecFile`，并在目标不存在时报错。

@@ -122,6 +122,18 @@ pub struct EditorConfig {
     /// （不是漏实现）。TS 侧出厂默认同值，见 `src/preview/theme.ts` 的
     /// `DEFAULT_CODE_MODE_LINE_WRAP`（两处写值各有单测钉住）。
     pub code_mode_line_wrap: bool,
+    /// `Enter` 换行的自动缩进（change enter-auto-indent）：`true`（默认）时 code 模式与 md 的
+    /// 围栏 / 缩进代码块内按 `Enter` 会按语法缩进（无缩进规则的语言沿用当前行行首空白）；
+    /// `false` 时这两处回到本 change 之前的行为（裸换行）。
+    ///
+    /// **键缺席 = 出厂 `true`**，且本键**不跟随**任何别的键（与 `code_mode_line_wrap` 同一条
+    /// 口径：缺省值只由本键自己的出厂值决定）。
+    ///
+    /// 作用面只有本 change 新增的两处：md 的列表项 / 引用续行是编辑器内核自带语言包的行为，
+    /// **本键对它无可观测效果**（`false` 时列表里按 Enter 仍会续写标记）——这是 D5a 的显式
+    /// 口径，不是漏实现。TS 侧出厂默认同值，见 `src/enter-indent.ts` 的 `DEFAULT_AUTO_INDENT`
+    /// （两处写值各有单测钉住）。
+    pub auto_indent: bool,
     /// 正文（比例）字体族（change typography-and-zoom）：CSS `font-family` 值，`None` =
     /// 沿用基线观感（`src/style.css` 的 `--font-sans`）。只在启动装载时读一次——本能力不做
     /// 热重载，改字体需重启（字号另有运行期步进命令，不落盘）。
@@ -150,6 +162,7 @@ impl Default for EditorConfig {
             line_wrap: true,
             code_block_wrap: false,
             code_mode_line_wrap: false,
+            auto_indent: true,
             font_family: None,
             mono_font_family: None,
             font_size: DEFAULT_FONT_SIZE,
@@ -307,6 +320,11 @@ struct RawEditorConfig {
     /// 即出厂分叉「code 不折」），**不是**跟随 `line_wrap`。类型不符（`"code_mode_line_wrap":
     /// "yes"`）在解析期失败 → 整文件回落，与 `line_wrap` 给错类型同路。
     code_mode_line_wrap: Option<bool>,
+    /// `Enter` 自动缩进的覆盖键（M272，change enter-auto-indent）：口径与折行三项**同形**——
+    /// 字段缺失 → `None` → `validate()` 回落到 `EditorConfig::default()`（那里是 `true`），
+    /// **不跟随任何别的键**。类型不符（`"auto_indent": "yes"`）在解析期失败 → 整文件回落，
+    /// 与 `line_wrap` 给错类型同路。
+    auto_indent: Option<bool>,
     /// 排版三项（change typography-and-zoom）。前两项与 `mode` 同路：`Option<String>` 遇到
     /// 类型不符（`"font_family": 16`）在解析期失败 → 整文件回落。
     font_family: Option<String>,
@@ -422,6 +440,7 @@ fn validate(raw: RawConfig) -> (AppConfig, Vec<String>) {
     let mut line_wrap = defaults.editor.line_wrap;
     let mut code_block_wrap = defaults.editor.code_block_wrap;
     let mut code_mode_line_wrap = defaults.editor.code_mode_line_wrap;
+    let mut auto_indent = defaults.editor.auto_indent;
     if let Some(raw_mode) = raw.editor.mode.as_deref() {
         match raw_mode {
             "md" => mode = EditorMode::Md,
@@ -446,6 +465,12 @@ fn validate(raw: RawConfig) -> (AppConfig, Vec<String>) {
     // 因此这里**不读** `line_wrap`，两个模式各取各的默认。
     if let Some(value) = raw.editor.code_mode_line_wrap {
         code_mode_line_wrap = value;
+    }
+    // `Enter` 自动缩进（M272，change enter-auto-indent）：与上三项**完全同形**（缺字段回落
+    // 默认、不告警），默认值由 `EditorConfig::default()` 给（`true`），因此这里同样**不读**
+    // 任何别的键。类型不符到不了这里——解析期整份配置就回落了（单测钉住）。
+    if let Some(value) = raw.editor.auto_indent {
+        auto_indent = value;
     }
     // 排版三项（typography-and-zoom）：两项字体族**只挡空串 / 纯空白**（→ None = 沿用基线 +
     // warning），值的 CSS 合法性由前端 `CSS.supports` 判定（形状在此、语义在前端的既有分层）；
@@ -525,6 +550,7 @@ fn validate(raw: RawConfig) -> (AppConfig, Vec<String>) {
                 line_wrap,
                 code_block_wrap,
                 code_mode_line_wrap,
+                auto_indent,
                 font_family,
                 mono_font_family,
                 font_size,
@@ -1016,6 +1042,61 @@ mod tests {
         let snap = load_from(&f.0);
         assert_eq!(snap.config, AppConfig::default(), "整份配置应落回默认");
         assert!(!snap.config.editor.code_mode_line_wrap, "回到出厂 false");
+        assert_eq!(snap.config.editor.mode, EditorMode::Md);
+        assert_eq!(snap.config.last_vault, None, "合法字段同样落回默认");
+        assert_eq!(snap.warnings.len(), 1, "{:?}", snap.warnings);
+        assert!(snap.warnings[0].contains("不是合法 JSON"));
+    }
+
+    #[test]
+    fn missing_auto_indent_takes_factory_true() {
+        // M272（change enter-auto-indent）：键缺席 = 出厂 `true`，不产生 warning。
+        // **判别性在第二组**：显式把两个折行键都写成 `false` 时它仍必须是 `true`——口径是
+        // 「缺省值只由本键自己的出厂值决定、不跟随任何别的键」（跟随会让出厂口径随用户改折行
+        // 而漂移）。只测第一组的话，把实现写成别的键的副本也能绿（REVIEW.md 第 1 条）。
+        for raw in [
+            r#"{"version":1,"editor":{"mode":"code"}}"#,
+            r#"{"version":1,"editor":{"mode":"code","line_wrap":false,"code_mode_line_wrap":false}}"#,
+        ] {
+            let snap = load_from(&TempFile::new(raw).0);
+            assert!(snap.config.editor.auto_indent, "{raw}：缺省应为出厂 true");
+            assert!(snap.warnings.is_empty(), "{raw}: {:?}", snap.warnings);
+        }
+    }
+
+    #[test]
+    fn explicit_auto_indent_is_loaded() {
+        // 显式 `false` 关掉自动缩进（三态里的第三态）；显式 `true` 与缺省同效但必须被读出。
+        let off = load_from(&TempFile::new(r#"{"editor":{"mode":"code","auto_indent":false}}"#).0);
+        assert!(!off.config.editor.auto_indent);
+        assert!(off.warnings.is_empty(), "{:?}", off.warnings);
+
+        let on = load_from(
+            &TempFile::new(
+                r#"{"editor":{"mode":"code","auto_indent":true,"code_mode_line_wrap":true}}"#,
+            )
+            .0,
+        );
+        assert!(on.config.editor.auto_indent);
+        assert!(
+            on.config.editor.code_mode_line_wrap,
+            "两键互不改写（同一条装配链上的独立字段）"
+        );
+        assert!(on.warnings.is_empty(), "{:?}", on.warnings);
+    }
+
+    #[test]
+    fn wrong_type_auto_indent_falls_back_entire_file() {
+        // 边界如实记录（与 wrong_type_line_wrap_falls_back_entire_file 同路）：`Option<bool>`
+        // 遇到类型不符在 serde 解析期失败 → **整文件回落**（全部默认 + 一条 warning），
+        // MUST NOT 出现「一部分字段按配置、一部分按默认」的混合态；本 change MUST NOT 引入
+        // 逐字段类型容忍。
+        let f = TempFile::new(
+            r#"{"last_vault":"/tmp/vault","editor":{"mode":"code","auto_indent":"yes"}}"#,
+        );
+        let snap = load_from(&f.0);
+        assert_eq!(snap.config, AppConfig::default(), "整份配置应落回默认");
+        assert!(snap.config.editor.auto_indent, "回到出厂 true");
         assert_eq!(snap.config.editor.mode, EditorMode::Md);
         assert_eq!(snap.config.last_vault, None, "合法字段同样落回默认");
         assert_eq!(snap.warnings.len(), 1, "{:?}", snap.warnings);

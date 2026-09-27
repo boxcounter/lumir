@@ -38,6 +38,7 @@ export async function writeConfig({
   mode = "md",
   lineWrap = undefined,
   codeBlockWrap = undefined,
+  autoIndent = undefined,
   fontFamily = undefined,
   monoFontFamily = undefined,
   fontSize = undefined,
@@ -50,6 +51,8 @@ export async function writeConfig({
   const editor = { mode };
   if (lineWrap !== undefined) editor.line_wrap = lineWrap;
   if (codeBlockWrap !== undefined) editor.code_block_wrap = codeBlockWrap;
+  // Enter 自动缩进（M272，change enter-auto-indent）：与折行三键同一条装配链的配置面。
+  if (autoIndent !== undefined) editor.auto_indent = autoIndent;
   if (fontFamily !== undefined) editor.font_family = fontFamily;
   if (monoFontFamily !== undefined) editor.mono_font_family = monoFontFamily;
   if (fontSize !== undefined) editor.font_size = fontSize;

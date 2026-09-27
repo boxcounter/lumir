@@ -1,0 +1,3 @@
+const gamma = () => {
+  return gamma;
+}

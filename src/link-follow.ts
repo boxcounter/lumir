@@ -20,7 +20,7 @@ import {
   openExternalUrl,
   wikilinkCreate,
 } from "./ipc";
-import { standardLinkAt } from "./preview/links";
+import { literalLinkAt, standardLinkAt } from "./preview/links";
 import { findWikilinkSpans } from "./preview/wikilinks";
 import type { WikilinkResolver } from "./preview/livePreview";
 import { openKind } from "./tree";
@@ -201,11 +201,15 @@ export function createLinkFollow(deps: LinkFollowDeps): LinkFollowHandle {
   }
 
   /**
-   * 光标/点击处的链接（M144 起外链，M145 扩到全形态）：wikilink 或标准 Markdown 链接。
+   * 光标/点击处的链接（M144 起外链，M145 扩到全形态，M272 扩到字面 URL）：wikilink、
+   * 标准 Markdown 链接，或裸 URL / 链接定义行的 URL / 角括号自动链接。
    *
    * wikilink 优先且路径逐字未动：`[[x]]` 在语法树里也是一个没有 URL 子节点的 `Link`
    * 节点，标准链接判定天然不命中它，两者不会互相抢；顺序写死仍是有意的——wikilink 的
-   * 语义只有 Rust link_graph 一份，先问它。
+   * 语义只有 Rust link_graph 一份，先问它。第三段（字面 URL）与标准链接互斥：
+   * `literalLinkAt` 只认祖先链里没有 `Link` / `Image` 的 `URL` 节点。
+   *
+   * 判定次序：wikilink → 标准链接 → 字面 URL（前一条命中即返回，三条互不重叠）。
    *
    * vault 上下文（打开中的 md 文件）是 vault 内跳转类链接的前提：`[x](note.md)` 与
    * `[x](./doc.pdf)` 的解析基准就是当前文件，没有它就不算可激活的链接。外链与纯锚点
@@ -226,7 +230,14 @@ export function createLinkFollow(deps: LinkFollowDeps): LinkFollowHandle {
       return resolveBase() === undefined ? null : { kind: "wikilink", raw };
     }
     const link = standardLinkAt(editor.view.state, pos);
-    if (link === null) return null;
+    if (link === null) {
+      // 第三段查询（M272）：字面 URL（裸 URL / 链接定义行的 URL / 角括号自动链接）。
+      // 这一类只产出外链——白名单外的 scheme 与无 scheme 的字面（`www.` / 裸邮箱）在
+      // links.ts 的查询阶段就返回 null，与渲染层的「保持原文」自洽。键盘路径（⌘⏎）与
+      // 鼠标路径（⌘-Click）共用本次判定，两条路径因此同时覆盖新形态。
+      const literal = literalLinkAt(editor.view.state, pos);
+      return literal === null ? null : { kind: "external", url: literal.form.url };
+    }
     switch (link.form.kind) {
       case "external":
         return { kind: "external", url: link.form.url };
@@ -327,6 +338,7 @@ export function createLinkFollow(deps: LinkFollowDeps): LinkFollowHandle {
   // 路径就地判定（收窄前是 e.metaKey || e.ctrlKey，与拆分前的键盘口径同源）。
   // M144：鼠标路径同样覆盖外链——外链不需要 vault 上下文，故不再以 currentPath 提前返回。
   // M145：同一条路径覆盖全部可激活形态（应用内跳转类仍要求 vault 上下文，判定在 linkTargetAt）。
+  // M272：字面 URL（裸 URL / 定义行 / 角括号自动链接）由同一判定自动获得 ⌘-Click——本监听零改动。
   editor.view.dom.addEventListener("mousedown", (e) => {
     if (e.button !== 0) return;
     if (!e.metaKey) return;

@@ -1861,6 +1861,11 @@ living spec 两处已随本 change 改写口径（`keymap-commands` 的「轨道
     URL 原文）/ wikilink 跳转与未创建不建文件 / 相对路径 md 跳进目标笔记 / 解析不到只 toast /
     锚点只提示 / 不可用形态不装饰也不激活；`link_open` 的 `category`（external / internal-md /
     asset / anchor / blocked-scheme）逐类断言。
+    **M272（2026-09-27）扩面**：判定面从 `Link` 节点扩到 `URL` 节点——**裸 URL 与链接定义行的
+    URL 纳入判定面**（含角括号自动链接），三者的装饰、⌘⏎ 激活与「光标触及撤下装饰」由场景
+    `54-bare-url-cmd-click` 真机验收；引用点 `[text][ref]` / `[ref]` 与无 scheme 的字面
+    （`www.` / 裸邮箱 / `xmpp:`）仍保持原文（半覆盖，如实登记在 change 的边界节）。
+
 14. **TOC 大纲 popover**（M148）—— `13-toc`（17 步 / 32 断言）：masthead 当前位置指示段、
     ⌘⇧O 浮层开合、↑↓ 导航不穿透到编辑器、Enter 跳转后光标恰在标题行尾、空 heading 文档给 toast。
     配色与几何由视觉门禁元素级基线 `toc-popover-chromium-darwin.png` 守。

@@ -33,9 +33,10 @@
 | `editor.line_wrap` | boolean | `true` | `true` / `false` | 启动装载读一次（改配置需重启）；运行期由 `view.toggle-line-wrap`（前台是 md 会话时）瞬态翻转，**不回写** | `config.rs:108` |
 | `editor.code_block_wrap` | boolean | `false` | `true` / `false` | 启动装载读一次（改配置需重启）；运行期由 `view.toggle-code-block-wrap` 瞬态翻转，**不回写** | `config.rs:112` |
 | `editor.code_mode_line_wrap` | boolean | `false` | `true` / `false` | 启动装载读一次（改配置需重启）；运行期由 `view.toggle-line-wrap`（前台是 code 会话时）瞬态翻转，**不回写**（M247 新增） | `config.rs:124` |
-| `editor.font_family` | string \| null | `null`（沿用基线 `--font-sans`） | 任意 CSS `font-family` 值；**空串 / 纯空白**判为笔误 → 回落 `null` + warning | 启动装载读一次（本能力不做热重载，改字体需重启） | `config.rs:132` |
-| `editor.mono_font_family` | string \| null | `null`（沿用基线 `--font-mono`） | 同 `font_family` | 同上 | `config.rs:135` |
-| `editor.font_size` | number | `15` | 闭区间 `[12, 32]`，区间外回落 `15` + warning | 启动装载读一次；运行期由三条 `view.text-scale-*` 命令步进，**不回写** | `config.rs:143`、`:170-175` |
+| `editor.auto_indent` | boolean | `true` | `true` / `false` | 启动装载读一次（改配置需重启）；**无运行期开关**（M272 新增） | `config.rs:136` |
+| `editor.font_family` | string \| null | `null`（沿用基线 `--font-sans`） | 任意 CSS `font-family` 值；**空串 / 纯空白**判为笔误 → 回落 `null` + warning | 启动装载读一次（本能力不做热重载，改字体需重启） | `config.rs:144` |
+| `editor.mono_font_family` | string \| null | `null`（沿用基线 `--font-mono`） | 同 `font_family` | 同上 | `config.rs:147` |
+| `editor.font_size` | number | `15` | 闭区间 `[12, 32]`，区间外回落 `15` + warning | 启动装载读一次；运行期由三条 `view.text-scale-*` 命令步进，**不回写** | `config.rs:155`、`:482-490` |
 
 折行三键的分工（「一元素一条规则」，判定点在 `src/preview/theme.ts` 的 `wrapSpec`）：
 
@@ -53,6 +54,12 @@
 `view.toggle-line-wrap` 翻的是**前台会话模式**对应的那一轴（md 会话 → `line_wrap`，code 会话 →
 `code_mode_line_wrap`）：两个模式的正文行各有自己的键，命令按你眼前那个折行来翻。它只改运行期显示
 口径，不改本文件的任何键。
+
+`editor.auto_indent`（M272，change enter-auto-indent）不在折行三键的作用面内：它管**按 `Enter` 换行后
+新行的缩进**，作用面是 code 模式与 md 的围栏 / 缩进代码块内（有缩进规则的语言取语法缩进，其余沿用光标
+所在行的行首空白）。`false` 时这两处回到裸换行；**md 的列表项 / 引用续行不受本键影响**——那是编辑器
+内核自带语言包的既有行为，关掉本键仍会续写标记（这是显式口径，不是漏实现）。本键没有运行期开关命令，
+也不跟随任何别的键：键缺席 = 出厂 `true`。
 
 字号的两项字体族只挡「空串 / 纯空白」，**值的 CSS 合法性由前端判定**（`CSS.supports`）——Rust 侧不复制
 一份 CSS 语法知识，与 `keys` 表「形状在 Rust、语义在前端」的分层同口径。
@@ -75,7 +82,8 @@
 - **逐字段回落**：取值非法（如 `editor.mode` 写 `"weird"`、`log.level` 写 `"verbose"`、`font_size` 越界）
   只回退该字段到出厂默认 + 一条人话 warning，其余字段照常生效，**不得导致启动失败**（ADR 0002 §5）。
 - **整文件回落**：整份文件不是合法 JSON，或**字段类型不符**（如 `"line_wrap": "yes"`、
-  `"font_size": "15"`、`"code_mode_line_wrap": "yes"`、`"ui": "dark"`），则整份配置按出厂默认解释 +
+  `"font_size": "15"`、`"code_mode_line_wrap": "yes"`、`"auto_indent": "yes"`、`"ui": "dark"`），
+  则整份配置按出厂默认解释 +
   一条 warning（连 `last_vault` 一起丢）。这是既有解析模型的性质（不等同于逐字段回落），单测逐条钉住
   （`config.rs` 的 `wrong_type_*_falls_back_entire_file` 族）。本仓**不提供**「逐字段类型容忍」。
 - **warning 出口**：console + 诊断日志的 `config_warning` 事件（无 UI 面）。

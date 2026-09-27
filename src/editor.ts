@@ -1,6 +1,6 @@
-import { Annotation, Compartment, EditorSelection, EditorState, StateEffect, Transaction, findClusterBreak } from "@codemirror/state";
+import { Annotation, Compartment, EditorSelection, EditorState, Prec, StateEffect, Transaction, findClusterBreak } from "@codemirror/state";
 import type { Extension, SelectionRange, Text } from "@codemirror/state";
-import { EditorView, lineNumbers, highlightActiveLine } from "@codemirror/view";
+import { EditorView, keymap, lineNumbers, highlightActiveLine } from "@codemirror/view";
 import type { ViewUpdate } from "@codemirror/view";
 
 /** 滚动位置快照的类型（`view.scrollSnapshot()` 的产物）。CM 不导出 ScrollTarget 类型，
@@ -8,6 +8,7 @@ import type { ViewUpdate } from "@codemirror/view";
 export type ScrollSnapshot = ReturnType<EditorView["scrollSnapshot"]>;
 import { history, redo, undo } from "@codemirror/commands";
 import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
+import { DEFAULT_AUTO_INDENT, enterWithAutoIndent } from "./enter-indent";
 import { HighlightStyle, syntaxHighlighting, syntaxTree, ensureSyntaxTree } from "@codemirror/language";
 import type { Language } from "@codemirror/language";
 import { tags } from "@lezer/highlight";
@@ -948,6 +949,13 @@ export interface EditorHandle {
   setWrap(next: Partial<WrapSettings>): void;
   /** 当前应用运行期的折行口径（只读快照：命令层据此翻转，断言据此读值）。 */
   wrapSettings(): WrapSettings;
+  /**
+   * 设置 `Enter` 自动缩进的开关（change enter-auto-indent）：装配层在 `config_get` 之后
+   * 调用一次（与 `setWrap` / `applyTypography` 同一处）。启动装载一次的口径——不落盘、
+   * 不回写 config.json，本 change 不提供运行期开关命令。不重配扩展、不重建 state：
+   * 该标志在命令执行时读取（与 `currentEditable` 同一形态），切标签与新建会话自动取当前值。
+   */
+  setAutoIndent(next: boolean): void;
   /** 翻转正文行折行——翻的是**前台会话模式**对应的那一轴（md → `lineWrap`，code →
    *  `codeModeLineWrap`，M247）；应用运行期状态，该模式的全部会话同步生效。 */
   toggleLineWrap(): void;
@@ -1134,6 +1142,26 @@ function wrapExtensions(mode: EditorMode, settings: WrapSettings): Extension[] {
   return extensions;
 }
 
+/**
+ * `editor.auto_indent` 的 TypeScript 侧出厂默认与 `Enter` 的命令体都在
+ * `src/enter-indent.ts`（单独一个模块的理由：判定要能在 `tests/unit` 被直接跑到，而
+ * `src/editor.ts` 的模块图里有 TypeScript 参数属性，Node 的类型剥离口径吃不下——见该文件头）。
+ * 这里只负责**装配**：把它装成 `Prec.highest` 的 `Enter` 键位。
+ *
+ * 优先级取 `Prec.highest`：同一 keyspec 上优先级高的处理器先跑，返回 false 才轮到上游
+ * `markdown()` 用 `Prec.high` 装进来的 `markdownKeymap`（`addKeymap` 默认 true）。
+ * **先委派上游**是这条实现的核心：上游在列表项 / 引用里返回 true（续写标记、保持层级——既有行为，
+ * 本 change MUST NOT 改变），在围栏 / 缩进代码块 / 段落里返回 false，委派因此**恰好**等于
+ * 「只接管本来没人管的那部分」，不必自己抄一份上下文判据（REVIEW.md 第 8 条）。
+ *
+ * code 模式没有 md 语法树、也没有上游键位，直接自动缩进（同一命令体内的分支）。
+ * `Enter` **不进** `src/keys.ts` 的 KEY_BINDINGS：表内绑定表达不了「光标在围栏代码块内」这个
+ * 语法上下文判据，且表内「命中即消费、MUST NOT 放回原生路径」的纪律会与「在列表 / 引用里让位给
+ * 上游续行」直接冲突（裁决 D1a，代价见 `src/keys.ts` 的更正条）。
+ *
+ * `Shift-Enter` 天然不受影响：CM 的键位查表在按住 Shift 时只查 `Shift-Enter`
+ *（`runHandlers` 的 `modifiers(name, event, !isChar)`，Enter 不是单字符键），本绑定收不到它。
+ */
 export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md", markdownConfig: Parameters<typeof markdown>[0] = { base: markdownLanguage, extensions: [GFM] }): EditorHandle {
   const modeCompartment = new Compartment();
   /** 折行口径的 Compartment（M180）：正文行的 `lineWrapping` 与代码块行的内容级 class 都装在
@@ -1148,6 +1176,13 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
   // 配置默认基线：createSession 对无文件上下文（path 缺失）文档的回落锚在这里；
   // 只有 setMode（配置加载 / 用户显式切换）会移动它，装载本身不改。
   let defaultMode = initialMode;
+  /**
+   * `Enter` 自动缩进的开关（`editor.auto_indent`，change enter-auto-indent）：配置在启动时
+   * 喂一次初值（`setAutoIndent`），之后不再变（本 change 不加运行期开关命令）。它是**命令执行
+   * 时读取的实例变量**、不是 state 扩展的一部分，因此不需要 Compartment、也不需要重配——
+   * 与 `currentEditable` 同一形态（那里是 changeFilter 的创建期闭包读它）。
+   */
+  let autoIndent = DEFAULT_AUTO_INDENT;
   /**
    * 折行口径的**应用运行期真源**（M180，D1 裁决原文「应用级」，见 `setWrap`）：一份值管全部
    * 会话——翻转时遍历 session 逐个重配，新建 / 装载会话都从这里起步。这里**不是**「新标签页的
@@ -1324,6 +1359,14 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
   }
 
   function modeExtensions(mode: EditorMode, path: string | undefined, editable: boolean): Extension[] {
+    // `Enter` 的自动缩进键位（change enter-auto-indent）：命令体在 `src/enter-indent.ts`
+    //（单独模块的理由见那里），这里只装它。判定与优先级的设计说明在同名注释块上方。
+    const autoIndentKeymap = Prec.highest(
+      keymap.of([{
+        key: "Enter",
+        run: (view) => enterWithAutoIndent(view, mode, autoIndent),
+      }]),
+    );
     // md 走 lezer markdown 解析器（高亮规则维持 M1 以来口径不动）；
     // code 按扩展名选 legacy-modes StreamLanguage（M120），未知扩展纯文本不着色。
     const highlight: Extension[] = mode === "md"
@@ -1433,8 +1476,8 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
       EditorView.contentAttributes.of({ tabindex: "0", "aria-readonly": String(!editable) }),
     ];
     return mode === "md"
-      ? [...editability, ...highlight, baseTheme, livePreview(previewContext), endMarker]
-      : [...editability, ...highlight, baseTheme, codeBindingTheme, lineNumbers(), highlightActiveLine()];
+      ? [...editability, ...highlight, baseTheme, livePreview(previewContext), endMarker, autoIndentKeymap]
+      : [...editability, ...highlight, baseTheme, codeBindingTheme, lineNumbers(), highlightActiveLine(), autoIndentKeymap];
   }
 
   /**
@@ -1820,6 +1863,9 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
     mode: () => active.mode,
     setWrap,
     wrapSettings: () => ({ ...wrap }),
+    setAutoIndent(next: boolean) {
+      autoIndent = next;
+    },
     toggleLineWrap() {
       // M247（change code-mode-line-wrap）：正文行的折行按**前台会话的模式**翻对应轴——md →
       // `lineWrap`、code → `codeModeLineWrap`。为什么不做「只翻 lineWrap」：code 模式的正文行

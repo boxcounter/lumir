@@ -1391,6 +1391,12 @@ configGet().then((snapshot) => {
     codeBlockWrap: snapshot.config.editor.code_block_wrap,
     codeModeLineWrap: snapshot.config.editor.code_mode_line_wrap,
   });
+  // Enter 自动缩进（change enter-auto-indent）：与上面三项同属「配置到位后施加一次」的启动
+  // 装配落点区，**不新增第二条装载路径**（编辑器的唯一入口是 setAutoIndent）。键缺席时 Rust 侧
+  // 取到的就是出厂 `true`（键不跟随任何别的键）；`false` 只回退本 change 新增的两处
+  //（code 模式 / md 围栏与缩进代码块内），md 的列表 / 引用续行是上游行为、不受本键影响
+  //（裁决 D5a 的显式不对称，spec 的「关闭自动缩进」scenario 有对应断言）。
+  editor.setAutoIndent(snapshot.config.editor.auto_indent);
   // 排版口径（M195，change typography-and-zoom）：配置给的是**启动时的基准**——字号在运行期
   // 由三条 `view.text-scale-*` 命令步进，运行期 MUST NOT 回写这里（config.json 的内容与 mtime
   // 在步进前后逐字节不变）。字体族只在启动读一次（本 change 不做热重载，改字体需重启）。

@@ -1,0 +1,3 @@
+const alpha = () => {
+  return alpha;
+}

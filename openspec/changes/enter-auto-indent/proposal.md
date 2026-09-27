@@ -180,6 +180,17 @@ md 的列表 / 引用处反而是唯一已经工作的地方。
 
 ## 裁决记录
 
-**待填**：本稿为本 mission 的唯一产物，实现待**节点 1（提案评审）**通过后开始。Alex 落槌后按
-list-tab-indent 的先例办理：原话逐字记入本节，凡与推荐项不一致的裁决**先回改 `specs/` 增量与
-`tasks.md` 再动代码**（口径先于代码），本节的选项表与理由保留作历史档。
+**Alex 节点 1（2026-09-27）原话（逐字）**：
+
+> 「# enter-auto-indent 无异议。」
+
+即 D1–D5 五项**全部按推荐项**落地（D1a 机制落点在编辑器内核的 `Prec.highest` 键位、不进
+`KEY_BINDINGS`；D2a `editor.auto_indent` 默认 `true`；D3a 围栏内不做语法缩进；D4a 不接管 md
+列表 / 引用续行、只把它写进 living spec；D5a `auto_indent = false` 只关本 change 新增的两处），
+`specs/` 增量与 `tasks.md` **未按备选改写**（口径先于代码：无需回改）。
+
+实现合并执行归 M272（与 `bare-url-cmd-click` 同批）。实现期的两处结构性偏差（命令体独立成
+`src/enter-indent.ts`、配置三态的两侧钉法）如实登记在 `tasks.md` 的「实现期台账」节与
+`design.md` §9。
+
+本节的选项表与理由保留作历史档。
