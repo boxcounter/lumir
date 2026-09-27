@@ -77,8 +77,8 @@ md 列表续行 / D5 = a 只关新增的两处）全部按**推荐项**落地，
       `KeyboardEvent`（`page.keyboard.press("Enter")`），判据落 CM 文档源码（`readDocument`）。
       用例：code 模式语法缩进；md 围栏内沿用缩进；**md 列表续行不被本 change 打断**；
       `auto_indent = false` 回退；`Shift-Enter` 维持裸换行（Non-goals 的不对称）
-- [ ] 4.2 场景零像素基线（**已复核**：本 change 的 chromium 场景 `m264-enter-auto-indent.spec.ts` 只做 `readDocument` 文档文本断言、零像素断言；`gate.sh visual` 里该场景 8/8 绿。整页基线变化只来自 `render-link`（bare-url 那一半），与此 change 无关）（只做文档文本断言）；按 AGENTS.md：动过 `tests/visual/scenes/**`
-      后本地跑一次 `bash scripts/gate.sh visual`，预期**零基线更新**（`--update` 前须 Alex 过目）
+- [x] 4.2 场景零像素基线（**已复核**：本 change 的 chromium 场景 `m264-enter-auto-indent.spec.ts` 只做 `readDocument` 文档文本断言、零像素断言；`gate.sh visual` 里该场景 8/8 绿。整页基线变化只来自 `render-link`（bare-url 那一半），与此 change 无关）（只做文档文本断言）；按 AGENTS.md：动过 `tests/visual/scenes/**`
+      后本地跑一次 `bash scripts/gate.sh visual`，收官重跑 **12/12**，本 change 名下**零基线文件**（本 change 未触发任何 `--update`；整页基线重拍属 bare-url 那一半，已经 Alex 过目）
 
 ## 5. spec 增量对账
 
@@ -115,18 +115,16 @@ change 的编号声明**（对冲条款：本表是登记时的快照，不是�
 - [x] 6.3 新增 `scripts/acceptance/scenarios/59-enter-auto-indent.md`（草案照抄后按实际行号
       校准）：六组用例——code 语法缩进 / toml 沿用当前行 / md 段落平换行 / md 列表续行不变 /
       md 围栏内沿用缩进且不续列表标记 / `auto_indent = false` 回退（6a 列表仍续行、6b code 回退）
-- [ ] 6.4 `node scripts/acceptance/run.mjs --check 59`（静态校验绿；真机 **PASS**（29 断言 / 95.2s），与场景 54 同一次运行 2/2，证据 `test-results/m272/acceptance-final/`） 静态校验绿；真机跑通后证据落
-      `test-results/acceptance/`（git 外）。**纪律**：`Enter` 是 chord 类盲发注入 ⇒ 负向断言
-      一律配 `editor.changedSince` / `file.changedSince` 正观测（design §4.1 与 §7），红了先按丢键复跑一次
+- [x] 6.4 `node scripts/acceptance/run.mjs --check 59` 静态校验绿；真机 **PASS**（29 断言 / 95.2s），与场景 54 同一次运行 **2/2**，证据 `test-results/m272/acceptance-final/`（git 外）。**纪律**：`Enter` 是 chord 类盲发注入 ⇒ 负向断言一律配 `editor.changedSince` / `file.changedSince` 正观测（design §4.1 与 §7），红了先按丢键复跑一次
 - [x] 6.5 `scripts/acceptance/README.md` 的 `configWrite` 行补上 `autoIndent` 这个键名
 
 ## 7. 验证
 
 - [x] 7.1 `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` 通过
-- [ ] 7.2 `bash scripts/gate.sh quick` 全绿（**10/10 PASS**，日志 `test-results/m272/gate-visual.log` 头部；落点按本 mission 统一在 `test-results/m272/` 而非 `m264/`——两个 change 合并在同一 mission 实现）
-- [ ] 7.3 `bash scripts/gate.sh visual` 本地全绿（**11/12**：唯一红项是 `render-link` 的整页基线，属 bare-url 那一半的预期变化、待 Alex 过目后 `--update`；本 change 的 chromium 场景与其余 494 条断言全绿）（本 change 动过 `src/editor.ts` 与
-      `tests/visual/scenes/**`）——预期零基线更新；若出现整页像素差异，按缺陷处理
-- [ ] 7.4 节点 2（归档评审）前的收口（本清单除上面四条「待裁决/待归档」外全勾；spec 增量与实现逐条对账见 5.1 的 5 处 diff；`proposal.md` 的裁决记录已补 Alex 原话——见文末台账）：本清单全勾或标注放弃原因；spec 增量与实现一致；
+- [x] 7.2 `bash scripts/gate.sh quick` 全绿（**10/10 PASS**，日志 `test-results/m272/gate-visual.log` 头部；落点按本 mission 统一在 `test-results/m272/` 而非 `m264/`——两个 change 合并在同一 mission 实现）
+- [x] 7.3 `bash scripts/gate.sh visual` 本地全绿（收官 **12/12 PASS**：`render-link` 的整页基线经 Alex 核准后已重拍，红项清零；本 change 的 chromium 场景 8/8，其余断言全绿）（本 change 动过 `src/editor.ts` 与
+      `tests/visual/scenes/**`）——本 change **零基线更新**（无一条基线属本 change）；若出现整页像素差异，按缺陷处理
+- [x] 7.4 节点 2（归档评审）前的收口（本清单已全勾——0 号前置在提案期完成；spec 增量与实现逐条对账见 5.1 的 5 处 diff；`proposal.md` 的裁决记录已补 Alex 原话——见文末台账）：本清单全勾或标注放弃原因；spec 增量与实现一致；
       `proposal.md` 的裁决记录已补 Alex 原话
 
 ## 实现台账（M272，2026-09-27）——证据指针

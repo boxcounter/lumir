@@ -59,10 +59,11 @@
   **验收口径**：每条负向断言都能指出它对应的正观测（REVIEW.md 第 2 条）。
 - [x] 5.5 编辑态与文档不变：光标进/出裸 URL 时装饰的撤下与恢复；URL 末位继续键入的行为合判据（1.3 ② 的结论）；用例末尾 `readDocument(page)` 与 fixture 逐字节相同（ADR 0003 §3）。
   **验收口径**：`docText` 前后逐值比较 + 磁盘逐字节比较两条独立断言。
-- [ ] 5.6 反向验证（**已做**：同上三文件回退后跑 `render-link.spec.ts` → **11 failed / 7 passed**，日志 `test-results/m272/reverse-visual-bare-url.log`）：关掉新分支（或回退实现）后 5.2–5.5 必须红，红灯留档。
-  **验收口径**：`git stash push -- src` 后跑一次的红灯输出落 `test-results/`。
-- [ ] 5.7 基线核对（**待 Alex 过目**：`render-link.png` 变化 26451 px = 0.03 + 新增截图 `render-link-bare-url.png`；三视图与比对包在 `test-results/m272/baseline-review/`，已请 tower 转 Alex。核准后跑 `scripts/visual/run.sh --update render-link.spec.ts` 并复跑门禁）（REVIEW.md 第 3 条 + AGENTS.md 视觉门禁卫生）：`render-link` 场景输出必然变化 ⇒ 出对比图请 Alex 过目后再 `--update-snapshots=all`；`grep -rln` 定位其余含裸 URL 的 fixture，逐张核对时间戳与内容判据。
-  **验收口径**：PR 写明新增 / 重拍的基线清单与逐张核对方式（内容判据，不只看时间戳）；裸跑 `--update-snapshots` 不算（本仓两次实证等于什么都不做）。
+- [x] 5.6 反向验证（**已做**；口径偏离：用 `git checkout 589a9c0 -- src/preview/links.ts src/preview/livePreview.ts src/link-follow.ts` 回退三文件，未用 `git stash push -- src`；实质相同——都是「关掉新分支后跑同一场景」）：回退后跑 `render-link.spec.ts` → **11 failed / 7 passed**，关掉新分支后 5.2–5.5 如期变红。
+  **验收口径**：红灯输出落 `test-results/m272/reverse-visual-bare-url.log`；方法偏离见本行括注，请评审按「口径偏离」读，不读成未验。
+- [x] 5.7 基线核对（**Alex 已核准并已重拍**，2026-09-27）（REVIEW.md 第 3 条 + AGENTS.md 视觉门禁卫生）：`render-link.png` 变化 26451 px = 0.03 + 新增截图 `render-link-bare-url.png`；三视图与比对包在 `test-results/m272/baseline-review/`，Alex 过目后执行重拍。
+  **执行与逐张核对**：`scripts/visual/run.sh --update render-link.spec.ts` 这条写法**不可用**——playwright 的 `--update-snapshots [mode]` 是可选参数，会把文件过滤器当 mode 值吞掉并硬报错（已开 finding 给 tower）；实际执行 `LUMIR_VISUAL_PORT=4297 pnpm --dir tests/visual exec playwright test --update-snapshots=changed render-link.spec.ts`。落盘 **51 → 52** 张：`find tests/visual/baselines -name '*.png'` 逐张比 mtime，**只有 render-link 两张刷新**（重拍 `render-link-chromium-darwin.png` + 新增 `render-link-bare-url-chromium-darwin.png`），其余 **50 张 mtime 未动**；无 UI 元素被删除或移动。两张新基线的 sha256 与 Alex 过目的 actual 逐字节相同（`fe673939086c…`，旧基线 `cfafbf2c…`）。复跑门禁 **12/12**。
+  **验收口径**：新增 / 重拍的基线清单与逐张核对方式见本行上一段（内容判据 + mtime 判据双落，不止看时间戳）；裸跑 `--update-snapshots` 不算（本仓两次实证等于什么都不做）。
 
 ## 6. 真机验收场景（WKWebView，`scripts/acceptance/`）
 
@@ -70,7 +71,7 @@
   断言：装饰态上屏（尾标在场 + URL 文本仍在）+ `do: key cmd+return` 后诊断日志 `link_open` 的 `category=external` / `outcome=opened`（与 `12-links` 同款通道 `env:logs/*.jsonl`）+ 结尾两条 `unchangedSince`（编辑器内容与磁盘 sha256）。
   **验收口径**：`node scripts/acceptance/run.mjs --check` 静态校验 PASS；`run.mjs 54` 真机 PASS，证据落 `test-results/acceptance/<日期>/54-<slug>/`（`status.txt` = PASS）。
   **前置**：本场景依赖裁决点 D5 取推荐项（⌘⏎ 覆盖新形态）——套件的 `click` 动作不支持修饰键（`docs/backlog.md:1048-1053`），⌘-Click 在真机无法表达。D5 若取备选，本任务整份改为「由 chromium 层承担，真机覆盖记为不可达」并如实登记。
-- [ ] 6.2 真机反向验证（**已做**：`git checkout 589a9c0 -- src/preview/links.ts src/preview/livePreview.ts src/link-follow.ts` 后跑场景 54 → **FAIL / 9 条断言红**，日志 `test-results/m272/reverse-acceptance-54.log`）：去掉入口触发（或回退实现）跑同一场景，断言必须 FAIL，FAIL 留档（结果目录另开，不覆盖 PASS 证据）。
+- [x] 6.2 真机反向验证（**已做**：`git checkout 589a9c0 -- src/preview/links.ts src/preview/livePreview.ts src/link-follow.ts` 后跑场景 54 → **FAIL / 9 条断言红**，日志 `test-results/m272/reverse-acceptance-54.log`）：去掉入口触发（或回退实现）跑同一场景，断言必须 FAIL，FAIL 留档（结果目录另开，不覆盖 PASS 证据）。
   **验收口径**：红灯输出与 PASS 证据分目录存放，两份都可 `ls`。
 - [x] 6.3 真机判据不漏「AX 可读 ≠ 元素可见」（M178 陷阱）：装饰断言同时钉尾标文本在场与编辑器文本可读。
   **验收口径**：steps.md 里两条断言并列出现。
@@ -98,7 +99,8 @@ tower 裁决（2026-09-27）采纳上述核验结论：bare-url 取 **54**、ent
 ## 8. 验证与收官
 
 - [x] 8.1 `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` 通过，`change/bare-url-cmd-click` 为 ✓。
-- [ ] 8.2 `bash scripts/gate.sh quick`（quick **10/10 PASS**，见 `test-results/m272/gate-visual.log` 头部；visual **11/12**，唯一红项是本条 5.7 的基线；真机场景 54 PASS ×2 轮） 与 `LUMIR_VISUAL_PORT=<自选> bash scripts/gate.sh visual` 全绿（视觉侧本地跑，CI 只跑结构层）；真机 `node scripts/acceptance/run.mjs 54` 至少跑一次并留档。
+- [x] 8.2 `bash scripts/gate.sh quick`（quick **10/10 PASS**）与 `LUMIR_VISUAL_PORT=4297 bash scripts/gate.sh visual`（**12/12 PASS，SKIP 0**；视觉侧本地全量像素，`pixel-skip` 0 条）全绿（视觉侧本地跑，CI 只跑结构层）；真机 `node scripts/acceptance/run.mjs 54` PASS ×2 轮并留档。
+  **收官读数（2026-09-27，tip `2da95bb`）**：quick 10/10；visual 12/12，其中 `visual-regression` 门 **498 passed / 1 skipped / 0 failed**（唯一 skip 是 `m240-table-fullscreen.spec.ts` 的「观感截图（不进基线）」既有用例；`render-link` 18/18 含两条像素断言）；`unit-tests` 424 passed / 0 failed；`cargo-test` 全绿；`openspec-validate` 27/27。落点按本 mission 统一在 `test-results/m272/`。
 - [x] 8.3 `git diff --check` 通过；改动文件集合与 [proposal.md](proposal.md) 的 Impact 清单一致（出现跨 scope 的只读依赖先报 tower 批准）。
 - [x] 8.4 收官对账：tasks 全部勾选（或标注放弃原因）、spec 增量与实现一致（无实现期静默扩 scope）、living spec 归档另走节点 2；`docs/backlog.md` 的「链接渲染与激活（全形态）」条目补一句新形态纳入。
 
