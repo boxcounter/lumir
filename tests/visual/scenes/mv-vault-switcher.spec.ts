@@ -187,7 +187,8 @@ test("键盘：↓ 只在可用行之间走，Enter 撞当前项只收起浮层"
 test("Enter 切到目标 vault：目标装载 + 切换前把当前 vault 的会话落盘", async ({ page }) => {
   await stubTauri(page, { ...DEMO_VAULT, vaults: REGISTRY, switchTo: VAULT_B_FIXTURE });
   await page.goto("/");
-  // 两个**固定**标签（双击 = pinned；预览标签不入会话，用它验不到落盘内容）
+  // 两个标签（双击开一个、单击另一个文件再开一个——M254 起单击也开正式标签；
+  // 全部有路径的标签都入会话，落盘内容用它验得到）
   await page.locator('.ft-row[title="README.md"]').dblclick();
   await page.locator('.ft-row[title="docs"]').click();
   await page.locator('.ft-row[title="docs/guide.md"]').dblclick();

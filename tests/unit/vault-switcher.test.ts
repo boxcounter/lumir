@@ -113,7 +113,7 @@ test("restorePlan：激活项不可用退化为第一个可打开的；没有历
     skipped: 0,
     active: "a.md",
   });
-  // 激活项是 null（上次前台是预览标签）
+  // 激活项是 null（上次前台是没有路径的空文档——会话里存不下这种前台）
   assert.equal(restorePlan(sessionOf(["a.md"], null), available).active, "a.md");
   // 没有历史（会话缺失 / 损坏都走这条路）
   assert.deepEqual(restorePlan(null, available), { open: [], skipped: 0, active: null });

@@ -101,7 +101,7 @@ test("出口「保存并切换」：保存成功才切换，会话按稳定 id �
   await expect(page.locator('.ft-row[title="inbox.md"]')).toBeVisible();
   await expect(page.locator('.ft-row[title="README.md"]')).toHaveCount(0);
 
-  // 切换前 flush：当前 vault 的会话落盘（键入固定住了那个预览标签，所以它入盘）
+  // 切换前 flush：当前 vault 的会话落盘（M254 起全部有路径的标签都入盘；这里键入是为了让内容真改动）
   await expect.poll(async () => (await sessionPuts(page)).at(-1)).toEqual({
     vault_id: VAULT_A,
     tabs: ["README.md"],
