@@ -209,6 +209,36 @@ const DIR_CARET_SVG =
 const VAULT_CARET_SVG =
   '<svg width="10" height="10" viewBox="0 0 10 10" fill="none"><path d="M2.5 4L5 6.5L7.5 4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>';
 
+/** 一条行带的盒子（视口坐标），只取判定用得到的四个量。 */
+export interface RowBand {
+  left: number;
+  right: number;
+  top: number;
+  bottom: number;
+}
+
+/**
+ * 行带命中的**唯一判定**（M251 的纯函数部分，DOM 接线在 createFileTree 里）：
+ * 返回 `bands` 里命中的下标，未命中返回 `-1`。
+ *
+ * 判据（不变量「右键目标行 = 菜单作用行」的可证伪表述）：y 落在某行带的纵向区间之内
+ * （含边界），且 x 不早于该行带的左缘——**右缘不设界**，因为行元素右缘到面板右缘之间那条带
+ * （`.filetree` 的右内边距）在用户眼里仍属于这一行；`x` 不可能越过面板（事件只在树容器内触发）。
+ * 行带在纵向上互不重叠（一行的行元素与它的子列表不重叠），因此至多一条命中。
+ *
+ * 拆成纯函数是为了让这条判据能在**零 DOM** 的单测层钉死（`tests/unit/tree-rows.test.ts`）：
+ * 形状与边界（行带之间的缝、行左缘之外、空列表）都能扫，而那些正是只靠一条案例断言看不出的输入。
+ */
+export function rowBandHit(bands: readonly RowBand[], x: number, y: number): number {
+  for (let i = 0; i < bands.length; i += 1) {
+    const band = bands[i];
+    if (y < band.top || y > band.bottom) continue;
+    if (x < band.left) continue;
+    return i;
+  }
+  return -1;
+}
+
 export function createFileTree(mount: HTMLElement, cb: FileTreeCallbacks): FileTree {
   // 全量模型：path → Node；根路径为 ""。展开状态独立保存，刷新不丢（spec 3.3）。
   const nodes = new Map<string, Node>();
@@ -219,6 +249,47 @@ export function createFileTree(mount: HTMLElement, cb: FileTreeCallbacks): FileT
 
   const rootEl = document.createElement("div");
   rootEl.className = "filetree";
+
+  /** 一行的链接带的判定（M251 的不变量：**右键目标行 = 菜单作用行**）。① 事件目标落在行元素
+   *  内（caret / 名字 / 名字右侧被 `.ft-name` 的 `flex:1` 撑住的空白）→ 就是那一行；② 否则按几何
+   *  找「纵向落在某行行带内、横向不早于该行左缘」的行——覆盖行元素右缘到面板边缘那一条带
+   *  （`.filetree` 的右内边距 ~9px：`button.ft-row` 的盒子止于内边距之前，而行在用户眼里是
+   *  「这一行」直到面板右缘）。几何那一半的判据是纯函数 `rowBandHit`（单测层钉死）。
+   *
+   *  编辑中的行（`.ft-row.is-editing`：重命名 / 新建）不参与——M244 §2.3 要求编辑期间该行的
+   *  右键交互被抑制；编辑行是 div 版行元素，抑制在这里一次生效（不在调用点各写一遍）。
+   *  缩进区（行左缘之外）同样不参与：那里不属于任何一行（与 M251 之前的命中面一致）。 */
+  function rowLiAt(target: EventTarget | null, x: number, y: number): HTMLLIElement | null {
+    if (target instanceof Element) {
+      const inside = target.closest<HTMLElement>(".ft-row");
+      if (inside !== null) {
+        return inside.classList.contains("is-editing") ? null : inside.closest<HTMLLIElement>(".ft-item");
+      }
+    }
+    const rows = [...rootEl.querySelectorAll<HTMLElement>(".ft-row:not(.is-editing)")];
+    const bands = rows.map((row) => row.getBoundingClientRect());
+    const hit = rowBandHit(bands, x, y);
+    return hit < 0 ? null : rows[hit].closest<HTMLLIElement>(".ft-item");
+  }
+
+  // 右键监听挂在**容器**上（M251），不在每行的行元素上：行元素覆盖不到它右侧那条带。
+  // 解析不到行时**不**拦系统菜单（面板空白 / 树头部 / 空态照旧，与 M251 之前的行为一致）。
+  rootEl.addEventListener("contextmenu", (event) => {
+    const li = rowLiAt(event.target, event.clientX, event.clientY);
+    const node = li === null ? undefined : nodes.get(li.dataset.path ?? "");
+    if (li === null || node === undefined) return;
+    event.preventDefault();
+    cb.onContextMenu(
+      {
+        path: node.entry.path,
+        kind: node.entry.kind === "dir" ? "dir" : "file",
+        name: baseName(node.entry.path),
+        // 焦点归还的锚点仍是行元素本身（菜单关闭后 focus 它）。
+        anchor: li.querySelector<HTMLElement>(".ft-row") ?? li,
+      },
+      { x: event.clientX, y: event.clientY },
+    );
+  });
 
   function sortedChildren(node: Node): Node[] {
     return [...(node.children?.values() ?? [])].sort(byTreeOrder);
@@ -247,18 +318,9 @@ export function createFileTree(mount: HTMLElement, cb: FileTreeCallbacks): FileT
     // 右键（M244）：拦下系统菜单并把「哪一行」交给装配层。**不改上下文**——这里不调
     // onOpenFile，也不动 currentPath / 标签（右键即改选中是 Finder 的语义，而本树的
     // 「选中」等于「打开」，代价不对称，保持保守）。
-    row.addEventListener("contextmenu", (event) => {
-      event.preventDefault();
-      cb.onContextMenu(
-        {
-          path: node.entry.path,
-          kind: node.entry.kind === "dir" ? "dir" : "file",
-          name: baseName(node.entry.path),
-          anchor: row,
-        },
-        { x: event.clientX, y: event.clientY },
-      );
-    });
+    //
+    // **监听挂在容器上（M251）**，不在行元素上：见 rootEl 那处 `contextmenu` 的注释——
+    // 行元素只覆盖自己的盒子，而「这一行」在用户眼里还包括它右侧到面板边缘的那几像素。
 
     if (node.entry.kind === "dir") {
       row.addEventListener("click", () => toggle(node));

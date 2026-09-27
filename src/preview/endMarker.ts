@@ -1,4 +1,4 @@
-// 正文末尾的「— End —」标记（change document-end-marker）。
+// 正文末尾的「END」标记（change document-end-marker）。
 //
 // 它是应用 chrome，不是文档内容，因此**挂在 `.cm-scroller` 上、与 `.cm-content` 同级**：
 // 不进 `EditorState.doc`、不进保存字节、不被 ⌘A / ⌘F 取用（ADR 0003 §3），也不进 CM 的
@@ -17,6 +17,24 @@
 // 周期尾段（`scrollIntoView` + 新一轮 `measure`）读到被自己改动过的几何。正文行的尺寸口径
 // 另已改为**与标记在场无关**（`src/preview/theme.ts` 的 `.cm-scroller` 段），两处一起保证
 // 「标记恒贴在正文内容盒之下」这条不变量。
+//
+// **元素生命周期 ⊆ 插件实例生命周期（M251 的结构性修复）**：元素可以晚于 `destroy` 被挂回来。
+// 现场（Alex 2026-09-27 真机报告：`— End —` 出现在非 markdown 文件的正文右侧空白区）与实测
+// 病因：换模式（md → code）时 `EditorView.setState` 确实先 `destroy` 了本插件（`.cm-scroller`
+// 上的标记元素在同一帧被摘掉），但**销毁前排进 CM 测量队列的请求在销毁后照常执行**——CM 的
+// `requestMeasure` 没有取消口，`destroy` 只能取消它自己排的动画帧，取消不了这一趟。那一趟测量
+// 走回本模块的 `write`，排下新的一帧，帧回调把元素重新挂回 `.cm-scroller`；此时 state 已经不含
+// 本插件，元素就此成为孤儿。孤儿在 code 模式的后果正是用户看到的那一幕：code 模式的
+// `.cm-scroller` 是三列 grid 且行 1 的前两列已被 gutter 与 `.cm-content` 占住，元素没有 md 那套
+// 定位声明（`theme.ts` 只把那些声明随 live preview 一起装进 md 分支），自动落位到行 1 第 3 列
+// （正文右侧的空白列）。
+//
+// 不变量（`openspec/specs/editor-live-preview/spec.md`「正文末尾的结束标记」：标记 SHALL 只出现
+// 在 md 模式，code 模式 MUST NOT 出现标记）：**任意时刻元素的存在与否恒等于「当前 state 装配了
+// 本插件且判据成立」**；插件销毁后，任何在途的测量 / 帧回调 MUST NOT 再触碰 DOM。实现见
+// `destroyed` 标志与 `schedule` / `apply` 的守卫——判据侧的单条 case 覆盖不了这条，因为触发它的
+// 是**模式切换的历史**（源模式 × 目标模式 × 切换时元素在场与否），回归测试是
+// `tests/visual/scenes/end-marker.spec.ts` 的模式切换矩阵属性用例。
 
 import { EditorView, ViewPlugin } from "@codemirror/view";
 import type { ViewUpdate } from "@codemirror/view";
@@ -25,9 +43,9 @@ export const END_MARKER_CLASS = "cm-lp-end-marker";
 export const END_MARKER_LINE_CLASS = "cm-lp-end-marker-line";
 export const END_MARKER_TEXT_CLASS = "cm-lp-end-marker-text";
 
-/** 标记的可见文案（Alex 2026-09-26 裁决「改用『— End —』」，替代原中文串；单一来源，
- *  `tests/unit/end-marker.test.ts` 按 deck 逐字断言）。 */
-export const END_MARKER_TEXT = "— End —";
+/** 标记的可见文案（Alex 2026-09-27 裁决：改用「END」，无破折号，替代 M238 的「— End —」；
+ *  单一来源，`tests/unit/end-marker.test.ts` 按 deck D114 逐字断言）。 */
+export const END_MARKER_TEXT = "END";
 
 /**
  * 出现判据（本 change 的唯一判定点，纯函数）：**不含标记的内容高度 > 可用视口高度**时显示。
@@ -78,6 +96,9 @@ class EndMarkerView {
   private pending = false;
   /** 已排的动画帧句柄（0 = 没排队）。 */
   private frame = 0;
+  /** 已销毁（M251）：销毁后在途的测量 / 帧回调一律不得再触碰 DOM，理由见文件头的
+   *  「元素生命周期 ⊆ 插件实例生命周期」段。 */
+  private destroyed = false;
   private readonly observer: ResizeObserver;
   private readonly request: {
     key: unknown;
@@ -120,6 +141,9 @@ class EndMarkerView {
   }
 
   destroy(): void {
+    // 先立销毁标志再收尾（M251）：`marker.remove()` 之后仍可能有在途的一趟测量回来调
+    // `schedule`（CM 的测量队列取消不掉，见文件头），标志是那条路上唯一的闸门。
+    this.destroyed = true;
     this.observer.disconnect();
     this.cancelFrame();
     this.marker.remove();
@@ -128,6 +152,9 @@ class EndMarkerView {
   /** 记录期望的在场态并（必要时）排一次落地。排队期间重复的请求被合并：以最后一次期望为准，
    *  已排的那一帧不重排——反复排帧会让 patch 永远追不上期望值。 */
   private schedule(visible: boolean): void {
+    // 销毁后一律空动作（M251）：这一步的调用方可能是**已经排进 CM 测量队列**的那一趟
+    //（销毁发生在它之前），此时 state 已不含本插件，任何落地都会造出孤儿元素。
+    if (this.destroyed) return;
     if (visible === this.attached && this.frame === 0) return;
     this.pending = visible;
     if (this.frame !== 0) return;
@@ -155,6 +182,7 @@ class EndMarkerView {
    *  几何（正文内容盒）一个像素都没变，没有需要对齐的东西；在这个窗口里多排一趟测量只会让 CM
    *  拿在途的滚动锚点再算一次 scrollTop（ADR 0002 §6 的「不新增测量」在这条路径同样成立）。 */
   private apply(visible: boolean): void {
+    if (this.destroyed) return;
     if (visible === this.attached) return;
     this.attached = visible;
     if (visible) this.view.scrollDOM.append(this.marker);

@@ -307,6 +307,89 @@ test("目录下新建文件：内联命名、命令参数、回响收敛树并�
   await expect(page.locator('.ft-row[title="docs/note.md"]')).toBeVisible();
 });
 
+// ---------------------------------------------------------------------------
+// M251：菜单作用行高亮（tower 裁决的 A 形态）
+//
+// Alex 2026-09-27 真机报告：「右键点击那一行但不在文件名上，它不会被选中」——他要的是
+// 「菜单作用在哪一行」的**视觉反馈**。裁决：那一行获得一个**只在菜单开着时在场**的高亮
+// （`MENU_TARGET_CLASS = is-menu-target`），不复用 `.is-current`（后者是「当前打开的文档」，
+// 右键不改上下文，两个语义混用一个类会让「哪一行是打开的」失去信号）。
+// 样式在 `src/style.css` 的树行段：底色取 `--sel`、不加 550 字重（强度低于 `.is-current`），
+// 且**压过 `:hover`**——菜单在指针位置弹出，指针下的那一行本来就是 hover 态，让 hover 盖过它
+// 等于没有反馈。装卸的唯一真源是 `src/tree-menu.ts` 的 `open` / `close`。
+// ---------------------------------------------------------------------------
+
+/** 把某个 CSS 变量在**当前主题下**解析成计算值（不给测试硬编码色值：token 换值时断言跟着走）。 */
+async function resolveToken(page: Page, token: string): Promise<string> {
+  return page.evaluate((name) => {
+    const probe = document.createElement("div");
+    probe.style.color = `var(${name})`;
+    probe.style.backgroundColor = `var(${name})`;
+    document.body.append(probe);
+    const style = getComputedStyle(probe);
+    const out = `${style.backgroundColor}|${style.color}`;
+    probe.remove();
+    return out;
+  }, token);
+}
+
+test("M251：菜单作用行高亮只在菜单开着时在场，且离场后底色复原（同指针位置对照）", async ({ page }) => {
+  await stubTauri(page, { ...DEMO_VAULT, root: VAULT_ROOT });
+  await page.goto("/");
+  const row = page.locator('.ft-row[title="README.md"]');
+  const readRow = () =>
+    row.evaluate((el) => {
+      const style = getComputedStyle(el);
+      return { bg: style.backgroundColor, weight: style.fontWeight, color: style.color };
+    });
+
+  await openMenu(page, "README.md");
+  // 作用行 = 唯一带标记的那一行（其余行不许带——「哪一行」有区分度）
+  await expect(row).toHaveClass(new RegExp("is-menu-target"));
+  await expect(page.locator(".ft-row.is-menu-target")).toHaveCount(1);
+  // 底色就是选中档 token（不硬编码色值：与 --sel 在当前主题下的解析值逐字节相等）。
+  // 用 toHaveCSS 而不是读一次：`.ft-row` 的 background 有 0.1s 过渡，读一次会读到过渡中间值。
+  const sel = (await resolveToken(page, "--sel")).split("|")[0];
+  await expect(row).toHaveCSS("background-color", sel);
+  // 强度低于 .is-current：字重不动（is-current 会加 550）
+  expect(await readRow().then((r) => r.weight)).toBe("400");
+
+  // 反向对照：**不移动指针**、只关菜单（Esc）——底色变化因此只能归给这个 class，不能是 hover
+  await page.keyboard.press("Escape");
+  await expect(page.locator(".ft-menu")).toBeHidden();
+  await expect(row).not.toHaveClass(new RegExp("is-menu-target"));
+  await expect(row).not.toHaveCSS("background-color", sel);
+  expect(await readRow().then((r) => r.weight)).toBe("400");
+
+  // Esc 之外的第二条关闭路径（点菜单项）同样要撤高亮
+  await openMenu(page, "README.md");
+  await expect(row).toHaveClass(new RegExp("is-menu-target"));
+  await page.locator(".ft-menu .ft-menu-item", { hasText: "复制完整路径" }).click();
+  await expect(row).not.toHaveClass(new RegExp("is-menu-target"));
+  // 第三条：点菜单外面（外部 mousedown 关闭）
+  await openMenu(page, "README.md");
+  await expect(row).toHaveClass(new RegExp("is-menu-target"));
+  await page.mouse.click(600, 400);
+  await expect(page.locator(".ft-menu")).toBeHidden();
+  await expect(page.locator(".ft-row.is-menu-target")).toHaveCount(0);
+});
+
+test("M251：eink 档下菜单作用行同为黑底反白（可读性规则不因 hover 穿透）", async ({ page }) => {
+  await stubTauri(page, { ...DEMO_VAULT, root: VAULT_ROOT, config: { theme: "eink" } });
+  await page.goto("/");
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "eink");
+
+  await openMenu(page, "README.md");
+  const target = page.locator('.ft-row[title="README.md"]');
+  const selBg = (await resolveToken(page, "--sel")).split("|")[0];
+  const selText = (await resolveToken(page, "--sel-text")).split("|")[1];
+  await expect(target).toHaveCSS("background-color", selBg);
+  await expect(target).toHaveCSS("color", selText);
+  // 组件内次级元素也手工反白（行内没有颜色继承链：.ft-name / .ft-caret 各自写了字色）
+  await expect(target.locator(".ft-name")).toHaveCSS("color", selText);
+  await expect(target.locator(".ft-caret")).toHaveCSS("color", selText);
+});
+
 test("目录下新建子目录：命令参数与树收敛，不自动展开", async ({ page }) => {
   await stubTauri(page, { ...DEMO_VAULT, root: VAULT_ROOT });
   await page.goto("/");
@@ -323,4 +406,56 @@ test("目录下新建子目录：命令参数与树收敛，不自动展开", as
   await expect(page.locator('.ft-row[title="docs/deep"]')).toBeVisible();
   // 新建出来的目录自己不展开（折叠态是用户状态，树不主动改）
   await expect(page.locator('.ft-row[title="docs/deep/a.md"]')).toHaveCount(0);
+});
+
+// ---------------------------------------------------------------------------
+// M251：右键目标行 = 菜单作用行（不变量）
+//
+// Alex 2026-09-27 真机报告：「如果光标不在文件名或目录名上，它不会被选中（右键点击 .env.example
+// 的右侧，也就是那一行但是不在文件名上）」。实测两段（见 review-request 的证据包）：
+//   ① 行元素自己的盒子里（名字右侧被 `.ft-name` 的 `flex:1` 撑住的空白、以及行元素右缘之前）
+//      右键本来就作用于该行——M244 之后监听挂在行元素上，命中面 = 它的盒子；
+//   ② 缺的是**行元素右缘到面板右缘之间那条带**（`.filetree` 的右内边距，实测 ~9px：
+//      `button.ft-row` 的盒子止于内边距之前）。用户在那一带上点右键时说的仍是「这一行」。
+// 修法：命中判定提升到**容器**层（`src/tree.ts` 的 `rowLiAt`），行内/行右侧带同一判定；面板空白、
+// 树头部、编辑中的行照旧不参与（后者的抑制是 M244 §2.3 的既有要求）。零视觉变化——行元素的
+// 盒子、hover / 选中底色的范围一个像素都没动。
+// ---------------------------------------------------------------------------
+
+test("M251：右键落在行右侧的空白带也作用于该行（含面板右内边距）", async ({ page }) => {
+  await stubTauri(page, { ...DEMO_VAULT, root: VAULT_ROOT });
+  await page.goto("/");
+
+  const row = page.locator('.ft-row[title="README.md"]');
+  await expect(row).toBeVisible();
+  // 反向铺底：这一行此刻不是当前文档（下面断言的「作用行」因此不是「已经是当前行」的空转）
+  await expect(row).toHaveAttribute("aria-current", "false");
+  const box = await row.boundingBox();
+  const tree = await page.locator(".filetree").boundingBox();
+  if (!box || !tree) throw new Error("缺少行 / 树容器的 bbox");
+  const y = box.y + box.height / 2;
+
+  /** 在某个横向落点右键，并用「菜单动作落在哪一行」反查菜单的作用行：选「重命名…」后
+   *  输入框的行内读屏名带的是该行的名字（比看菜单在屏幕上出现的位置更有区分度）。 */
+  const rightClickAt = async (x: number): Promise<void> => {
+    await page.mouse.click(x, y, { button: "right" });
+    await expect(page.locator(".ft-menu")).toBeVisible();
+    await page.locator(".ft-menu .ft-menu-item", { hasText: "重命名…" }).click();
+    await expect(page.locator(".ft-edit")).toHaveAttribute("aria-label", "重命名 README.md");
+    await page.keyboard.press("Escape");
+    await expect(page.locator(".ft-edit")).toHaveCount(0);
+  };
+
+  // ① 行元素盒子内、名字右侧的空白区（`.ft-name` 弹性撑满的那一段）
+  await rightClickAt(box.x + box.width * 0.9);
+  // ② 行元素右缘之外、树容器右缘之内（面板右内边距）——M251 之前这里连菜单都不出
+  await rightClickAt(tree.x + tree.width - 2);
+
+  // 不变量之外的两条边界：面板空白与树头部不参与（解析不到行时不拦系统菜单、更不弹应用菜单）
+  await page.mouse.click(tree.x + 60, tree.y + tree.height - 4, { button: "right" });
+  await expect(page.locator(".ft-menu")).toBeHidden();
+  await page.mouse.click(tree.x + tree.width - 2, tree.y + 4, { button: "right" });
+  await expect(page.locator(".ft-menu")).toBeHidden();
+  // 右键全程不改上下文（M244 的不变量，M251 不碰它）
+  await expect(page.locator(".tab")).toHaveCount(0);
 });

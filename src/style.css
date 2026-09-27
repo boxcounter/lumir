@@ -808,6 +808,25 @@ body {
 .ft-row:hover {
   background: var(--hover);
 }
+/* 菜单作用行（M251，change file-tree-context-menu 的 M251 增量）：右键出的菜单作用在哪一行，
+   那一行就带这个 class，在场期**严格等于「菜单开着」**（装卸的唯一真源是
+   `src/tree-menu.ts` 的 `open` / `close`；不复用 `.is-current`——后者是「当前打开的文档」，
+   由装配层随标签切换写，右键不改上下文）。
+   底色取选中档 `--sel`、**不加 550 字重**：强度低于 `.is-current`，一眼是「这一行被点中了」。
+   **必须排在 `:hover` 之后**（同特异性、后声明者胜）：菜单就在指针位置弹出，指针下的那一行本来
+   就是 hover 态，让 hover 盖过它等于没有反馈（`.is-current` 的次序相反——那里是「悬停反馈压过
+   常驻选中底色」，见上一条）。不取 `--hover` 作本行底色：那与指针自身的悬停反馈同值，等于没有反馈。 */
+.ft-row.is-menu-target {
+  background: var(--sel);
+}
+/* eink 规则④：菜单作用行同为黑底，文字与次级元素手工反白（与 .ft-row.is-current 同一条规则）。
+   **这里不带 `:not(:hover)` 排除**——与 .is-current 的那条刻意不同：本行底色压过 `:hover`（见上），
+   底色恒为 --sel（eink 档 = 纯黑），此时若让悬停态掉回常字色就是黑底黑字、不可读。 */
+:root[data-theme="eink"] .ft-row.is-menu-target,
+:root[data-theme="eink"] .ft-row.is-menu-target .ft-name,
+:root[data-theme="eink"] .ft-row.is-menu-target .ft-caret {
+  color: var(--sel-text);
+}
 /* 目录 caret（定稿 index.html:211-214）：9×9 细线 SVG chevron 居中在 14×14 槽位里，
    展开 = 同一 chevron 旋转 90°（0.12s 过渡），文件行的空槽位同宽保持对齐。 */
 .ft-caret {
