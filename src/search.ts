@@ -42,6 +42,7 @@ import {
   setSearchQuery,
 } from "@codemirror/search";
 import { keyToken } from "./keys";
+import { focusPreservingReadingPosition } from "./scroll-position-view";
 
 /** 计数上限：与官方 selectMatches / 高亮器同一量级（1000）。超过就只报下界（显示 1000+），
  *  不为一篇超大文档的精确计数拖住每次按键。 */
@@ -240,11 +241,16 @@ export function openSearch(view: EditorView): void {
   openSearchPanel(view);
 }
 
-/** 关闭 panel 并把焦点交还编辑器（Esc / ⌃G / × 的落点）。 */
+/** 关闭 panel 并把焦点交还编辑器（Esc / ⌃G / × 的落点）。
+ *
+ *  交还焦点走 `focusPreservingReadingPosition`（M280 收口）：把焦点放进编辑器是浏览器接管的
+ *  视口动作，裸 `view.focus()` 会把视口拽回光标处——搜索期间视口通常已经离开光标（`findNext`
+ *  跳远、用户滚着读），那一拍就是「关掉搜索，正文自己跳走」。
+ *  （条款见 docs/design-parity-contract/overlay-close-reading-position.md。） */
 function closeSearch(view: EditorView): void {
   if (!searchPanelOpen(view.state)) return;
   // 先交焦点再关：官方 closeSearchPanel 只在「焦点在 panel 内」时才还原焦点，这里显式
   // 还原，把「Esc 之后手不离键盘继续编辑」变成不依赖时序的保证。
-  view.focus();
+  focusPreservingReadingPosition(view);
   closeSearchPanel(view);
 }

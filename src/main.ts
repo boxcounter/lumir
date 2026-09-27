@@ -130,26 +130,31 @@ editor.setAttachmentProvider({
 // 图片放大查看（M184，双击内联图片 → 应用内遮罩）：能力与 DOM 在 src/lightbox.ts，装配侧只给
 // 它两样看不到的东西——挂点（app-shell 根，与键位面板同款）与关闭后把焦点交还编辑器。
 // 遮罩 DOM 惰性建立：文档打开路径与键入路径上零新增工作。
+// **交还焦点走 `editor.focusPreservingReadingPosition()`，MUST NOT 写成裸 `editor.view.focus()`**
+// （M280）：把焦点放进编辑器是浏览器接管的视口动作，裸 focus 会把视口拽回光标处——浮层关闭
+// 「不得改变阅读位置」是硬条款（docs/design-parity-contract/overlay-close-reading-position.md）。
 const lightbox = createImageLightbox({
   mount: shell.root,
-  restoreFocus: () => editor.view.focus(),
+  restoreFocus: () => editor.focusPreservingReadingPosition(),
 });
 editor.setLightbox(lightbox);
 
 // 表格放大全屏查看（M240，D3 双入口：命令 + 表格 hover 触发钮）：能力与 DOM 在
 // src/table-fullscreen.ts，装配侧只给它两样看不到的东西——挂点（与 lightbox / 键位面板同款）
 // 与关闭后把焦点交还编辑器。遮罩 DOM 惰性建立：文档打开路径与键入路径上零新增工作。
+// **M280 补齐**：这里此前是裸 `editor.view.focus()`——同一形态的第 5 个落点，M240 当时漏改
+// （M279 §6 必修第 1 条）。现在与代码块/图片遮罩/键位面板走同一份原语。
 const tableFullscreen = createTableFullscreen({
   mount: shell.root,
-  restoreFocus: () => editor.view.focus(),
+  restoreFocus: () => editor.focusPreservingReadingPosition(),
 });
 editor.setTableFullscreen(tableFullscreen);
 
 // 代码块放大全屏查看（M277，change code-block-fullscreen；双入口：命令 +
-// 代码块 hover 触发钮）。与表格侧的**唯一形态差异**是 `restoreFocus`：它 MUST NOT 照抄
-// `editor.view.focus()`——M274 实测证明 WebKit 下那次聚焦会把阅读位置拽回（scrollTop
-// 2750 → 0，chromium 结构性看不见）。这里注入 editor 的原语（取阅读位置 → focus → 经编辑器
-// 滚动通道写回），见 src/editor.ts 的 focusPreservingReadingPosition。
+// 代码块 hover 触发钮）。`restoreFocus` 与表格侧**形态一致**（M280 起两侧逐字同一份）：
+// MUST NOT 照抄裸 `editor.view.focus()`——M274 实测证明 WebKit 下那次聚焦会把阅读位置拽回
+// （scrollTop 2750 → 0，chromium 结构性看不见）。这里注入 editor 的原语（取阅读位置 → focus →
+// 经编辑器滚动通道写回），见 src/scroll-position-view.ts 的 focusPreservingReadingPosition。
 const codeBlockFullscreen = createCodeBlockFullscreen({
   mount: shell.root,
   restoreFocus: () => editor.focusPreservingReadingPosition(),
@@ -699,7 +704,10 @@ async function submitInlineEdit(request: InlineEditRequest): Promise<void> {
 const readingPositions = createReadingPositionStore({
   activePath: () => save.displayedPath(),
   readPosition: () => editor.readScrollPosition(),
-  applyPosition: (position) => editor.applyScrollPosition(position),
+  // 装载口径（M280 拆开）：装载复位之后读数取在 scrollTop = 0 上，落点 ≤ 0 即「这条历史就是
+  // 篇首」，静默不施加（保 M110 的页首内边距）。运行期那条（切标签 / 交还焦点）的口径不同，
+  // 见 `applyScrollPosition`——两者不可互换。
+  applyPosition: (position) => editor.applyLoadedScrollPosition(position),
   getPositions: (vaultId) => readingPositionGet(vaultId),
   putPositions: (vaultId, entries) => readingPositionPut(vaultId, entries),
   warn: (text) => toast(text),
@@ -1068,7 +1076,8 @@ let effectiveBindings: readonly KeyBinding[] = KEY_BINDINGS;
 const bindingsPanel = createBindingsPanel({
   mount: shell.root,
   bindings: () => effectiveBindings,
-  restoreFocus: () => editor.view.focus(),
+  // 交还焦点同图片遮罩 / 表格全屏（M280 收口）：MUST NOT 裸 `editor.view.focus()`。
+  restoreFocus: () => editor.focusPreservingReadingPosition(),
 });
 
 // 原生 Edit 菜单的撤销 / 重做项与 File/Window 的关闭项（lib.rs 的自定义项，都不带

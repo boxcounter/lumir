@@ -7,6 +7,9 @@ declare module "node:fs" {
   export function readFileSync(path: string | URL, encoding: string): string;
   export function writeFileSync(path: string | URL, data: string): void;
   export function mkdirSync(path: string | URL, options: { recursive: boolean }): void;
+  /** M280：playwright.config.ts 用它判「本机有没有 Playwright 的 webkit 构建」（CI 只装
+   *  chromium，缺构建时那个 project 不挂）。 */
+  export function existsSync(path: string | URL): boolean;
 }
 declare module "node:path" {
   export function join(...parts: string[]): string;

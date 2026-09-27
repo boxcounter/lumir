@@ -67,6 +67,7 @@ import { keyToken } from "./keys";
 import { FILTER_LABEL, FILTER_PLACEHOLDER, NO_MATCH_TEXT, createListFilter } from "./list-filter";
 import type { ListFilter } from "./list-filter";
 import { sampleCallback } from "./diagnostics";
+import { focusPreservingReadingPosition } from "./scroll-position-view";
 // frontmatter 范围的唯一真源（tower 批准 M148 的只读复用，2026-09-17）：lezer 的 markdown
 // 解析器不认识 YAML frontmatter，首部 `---` 块里一行 `# x`（YAML 注释）会被解析成
 // ATXHeading1——不排除它就会在大纲里多出一条幽灵条目。语义只有这一份实现（editor.ts 与
@@ -569,6 +570,10 @@ class Toc implements TocHandle {
    * 收起浮层。`restoreFocus` 为假时不抢焦点——焦点本来就去了别处（Tab 到别的控件、点了别的
    * 窗口）时把焦点拽回编辑器是无礼的；Esc / Enter / 再按一次 ⌘⇧O 这些「在浮层里做的关闭」
    * 才需要交还焦点。
+   *
+   * 交还焦点走 `focusPreservingReadingPosition`（M280 收口）：把焦点放进编辑器是浏览器接管的
+   * 视口动作，裸 `view.focus()` 会把视口拽回光标处——光标在视口外时表现为「收起大纲，正文
+   * 自己跳走」（条款见 docs/design-parity-contract/overlay-close-reading-position.md）。
    */
   private close(restoreFocus = true): void {
     if (!this.open) return;
@@ -577,7 +582,7 @@ class Toc implements TocHandle {
     // 查询与游标随关闭丢弃（spec）：下次打开从空查询与全量态起点开始。
     this.input.value = "";
     this.filter.reset();
-    if (restoreFocus) this.view.focus();
+    if (restoreFocus) focusPreservingReadingPosition(this.view);
   }
 
   /**
