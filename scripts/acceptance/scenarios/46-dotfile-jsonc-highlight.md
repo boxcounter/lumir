@@ -121,7 +121,7 @@ steps:
   - name: ⌘S 保存（chord 盲发不重试——丢键时下面的磁盘断言会红，按 README 复跑一次再判）
     do: key
     key: "cmd+s"
-  - name: 等 600ms（**短于** 2s 自动保存防抖）后核对落盘
+  - name: 等 600ms（留一拍给 IPC 落盘；写盘只由 ⌘S 触发）后核对落盘
     do: sleep
     ms: 600
     expect:
@@ -254,8 +254,9 @@ JSON 键与字符串值的着色断言由 `tests/unit/dotfile-jsonc.test.ts` 覆
 ## 已知边界
 
 - **⌘S 是 chord，套件盲发不重试**（README）。`⟨探针已落盘⟩` 红 ⇒ 先复跑一次再判产品缺陷。
-- **⌘S 与自动保存的区分窗口不在本场景**：本场景只要求「键入在文档里、探针最终在盘上」，
-  不判「落盘只可能由 ⌘S 造成」（2s 防抖 vs 注入耗时的赛跑归 `41-editable-non-md-files`）。
+- **落盘的判别力**：本场景只要求「键入在文档里、探针最终在盘上」，不另做「落盘只可能由 ⌘S
+  造成」的论证——自动保存已于 M278 移除，写盘只由用户的显式动作触发，这条论证在
+  `41-editable-non-md-files` 里以「保存前的反向铺底」形态存在（不做重复覆盖）。
 - **不做手感判定**：配色的观感（哪一类 token 更醒目、`!` / `/` 的着色强度）归 Alex，本场景只留截图。
 - **不覆盖**：① 编辑链路的完整护栏（冲突 / 撤销 / 另存为）归 `41` / `42`；② md 围栏里
   `gitignore` / `gitattributes` / `jsonc` 三个 info string 的着色由 `tests/unit/dotfile-jsonc.test.ts`

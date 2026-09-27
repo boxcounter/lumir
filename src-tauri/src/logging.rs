@@ -76,10 +76,6 @@ pub enum LogEventName {
     SaveConflict,
     /// 外部修改命中打开中的文档（watch 事件流）。
     SaveExternalChange,
-    /// 自动保存暂停（冲突 / 外部修改 / 目标被删）。
-    AutosavePaused,
-    /// 自动保存恢复（暂停态解除）。
-    AutosaveResumed,
     /// 崩溃备份写入。
     RecoveryWritten,
     /// 崩溃备份被恢复入口取走。
@@ -108,8 +104,6 @@ impl LogEventName {
         match self {
             Self::SaveConflict => "save_conflict",
             Self::SaveExternalChange => "save_external_change",
-            Self::AutosavePaused => "autosave_paused",
-            Self::AutosaveResumed => "autosave_resumed",
             Self::RecoveryWritten => "recovery_written",
             Self::RecoveryRestored => "recovery_restored",
             Self::RenderError => "render_error",
@@ -127,7 +121,6 @@ impl LogEventName {
     fn level(self) -> &'static str {
         match self {
             Self::SaveConflict
-            | Self::AutosavePaused
             | Self::ConfigWarning
             | Self::AppMetaUnavailable
             | Self::SlowCallback => "warn",
@@ -141,7 +134,6 @@ impl LogEventName {
         match self {
             Self::SaveConflict => &["path", "code"],
             Self::SaveExternalChange => &["path", "change"],
-            Self::AutosavePaused | Self::AutosaveResumed => &["path", "reason"],
             Self::RecoveryWritten | Self::RecoveryRestored => &["path"],
             // stage/code 是分类后的结果；原始错误文本（含文档片段）不入日志。
             Self::RenderError => &["kind", "stage", "code"],
@@ -420,7 +412,7 @@ fn save_conflict_to(sink: &Sink, path: &str, code: &str) {
 }
 
 /// Rust 侧埋点：崩溃备份写入成功（`commands::recovery_backup`）。
-/// 频率由前端的自动保存 debounce 与暂停态决定（暂停中每停止输入 2s 一次）。
+/// 频率由前端崩溃备份的 debounce 决定（dirty 后停止输入满窗口一次，M278 起备份有自己的触发）。
 pub fn recovery_written(path: &str) {
     recovery_written_to(global(), path);
 }
@@ -791,8 +783,6 @@ mod tests {
         for name in [
             LogEventName::SaveConflict,
             LogEventName::SaveExternalChange,
-            LogEventName::AutosavePaused,
-            LogEventName::AutosaveResumed,
             LogEventName::RecoveryWritten,
             LogEventName::RecoveryRestored,
             LogEventName::RenderError,

@@ -33,7 +33,7 @@ steps:
     expect:
       - shot: ctrl-s-重绑后
       - label: 重绑后 ⌃S 触发保存
-        ax: { has: "/已保存|已自动保存/" }
+        ax: { has: "已保存" }
 ---
 
 说明：配置走隔离的 `XDG_CONFIG_HOME`，绝不动用户的 `~/.config/lumir`；`keys` 表的形状校验在

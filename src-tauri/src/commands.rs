@@ -678,7 +678,7 @@ pub fn document_set_dirty(
 }
 
 /// 前端诊断事件统一入口（change add-diagnostics-logging）：前端不自行写日志文件，
-/// 关键事件（渲染失败、autosave 跃迁、config warning、慢回调采样、外部修改命中）
+/// 关键事件（渲染失败、保存冲突、崩溃备份、config warning、慢回调采样、外部修改命中）
 /// 全部经这一条命令交给 Rust 侧落盘。
 ///
 /// 事件名是 [`crate::logging::LogEventName`] 枚举——事件集与字段白名单的唯一来源在

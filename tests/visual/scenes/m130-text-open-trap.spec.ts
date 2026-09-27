@@ -8,7 +8,7 @@ import { DEMO_VAULT, dirtyReports, documentWrites, fileText, stubTauri } from ".
 // revision 可保存 → 死态」）。
 //
 // **本 change 的新口径**（注册表全量文本类可编辑）：md / code / text 三族以**可编辑** code
-// 模式打开（纯文本 + 既有语法高亮，无 live preview 装饰层），撤销 / dirty / Cmd+S / 自动保存
+// 模式打开（纯文本 + 既有语法高亮，无 live preview 装饰层），撤销 / dirty / Cmd+S / 崩溃备份
 // / 冲突恢复与 md 走同一条链路（`saveDocument` + `saveBaseline` 的 editable 闸）。image / binary
 // 类不进编辑器，维持「暂不支持预览」。
 //

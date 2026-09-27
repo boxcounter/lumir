@@ -16,7 +16,7 @@ node tests/unit/run.mjs     # = pnpm test
 | 被测文件 | 覆盖内容 |
 |---|---|
 | `src/keys.ts` | token 归一化（别名 / 定序 / Shift 隐含符号）、`keyToken` 的事件口径（含 Alt 按物理键判定）、键位表的不变量（token 唯一、作用域与命令组一致、⌘1–9 与 `TAB_GOTO_IDS` 一一对应）、分发器（作用域 / `when` / 已消费让路 / IME / chord 超时 / 缺实现抛错）、`applyKeyOverrides` 的重绑与 warning |
-| `src/save-controller.ts` | dirty 守卫三分支、保存成功 / 冲突 / 目标被外部删除、自动保存 debounce 与崩溃备份、外部修改分流（clean / dirty / deleted）、另存为逃生口、世代号、诊断埋点跃迁去重 |
+| `src/save-controller.ts` | dirty 守卫三分支、保存成功 / 冲突 / 目标被外部删除、崩溃备份的触发与生命周期（含撤销回基线 / 切 vault 放弃的清备份）、自身写盘回声判据与其读失败降级、外部修改分流（clean / dirty / deleted）、另存为逃生口、世代号、诊断埋点 |
 | `src/lightbox.ts` | 图片放大查看的遮罩状态机（M184）：打开的动作顺序（载入 → 显示 → 持焦）、`Esc` 的就地消费、三条用户关闭路径都交还焦点 / 焦点兜底不抢焦点、已关闭后的迟到关闭是空操作 |
 | `src/bindings-panel.ts` | 键位面板分组的不变量（M240 顺手收 M239 的漏登记）：`COMMAND_IDS` 每条都有组（零兜底「其他」）/ 组里无幻影 id / 分组互斥且条目总数 = 命令总数——兜底组是「新命令忘归组」的静默出口，这三条把它变成 unit 层红灯 |
 | `src/table-fullscreen.ts` + `src/preview/table.ts` | 表格放大全屏查看（M240，change table-fullscreen-view）：遮罩状态机（打开的动作顺序、`Esc` 就地消费、三条用户关闭路径都交还焦点 / 焦点兜底不抢焦点、已关闭后的迟到关闭是空操作、toggle 的开-关-开）、`fullscreenTableAt` 的命中判据（caret 在渲染为 grid 的表内 / 表外 / 降级表内 / 非矩形表内 / 空表集）、触发钮读屏名与 deck D124 的对账 |

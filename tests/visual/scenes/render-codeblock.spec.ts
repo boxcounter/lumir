@@ -856,9 +856,12 @@ test("应用级口径（D1）：翻转作用于全部会话，新标签页取当
   await scrollToLine(page, CODE_NEEDLE);
   expect(await codeWhiteSpace(), "新标签页必须取当前应用态，而不是退回配置默认").toBe("break-spaces");
 
-  // 切回标签 A：口径仍是翻转后的值（切标签不改变折行口径）
+  // 切回标签 A：口径仍是翻转后的值（切标签不改变折行口径）。
+  // 用 toContainText 而不是逐字相等：上面往 A 里键入过 `x`，而自动保存已移除（M278）——
+  // dirty 不会再被定时器清掉，modeline 因此带「（未保存）」后缀。断言的对象是「切回来的是 A」，
+  // 路径段是判据（`wrap2.md` 不含子串 `wrap.md`，区分度不受影响）。
   await page.locator(".tab").first().click();
-  await expect(page.locator(".modeline-path")).toHaveText("wrap.md");
+  await expect(page.locator(".modeline-path")).toContainText("wrap.md");
   await scrollToLine(page, CODE_NEEDLE);
   expect(await codeWhiteSpace(), "切标签 MUST NOT 改变折行口径").toBe("break-spaces");
 });

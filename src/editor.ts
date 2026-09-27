@@ -1077,9 +1077,16 @@ export interface EditorHandle {
   isDirty(): boolean;
   onDirty(listener: (dirty: boolean) => void): () => void;
   /**
-   * 监听**前台会话**的内容变化（每次 docChanged）。保存链路的自动保存排期挂这里。
+   * 监听**任一会话**的 dirty 跃迁（逐会话、带路径）。保存链路据此让崩溃备份的生命周期
+   * 与 dirty 对齐（dirty 转 clean ⇒ 该路径的备份作废，M278）：撤销 / 重做回到基线、
+   * 重新载入（放弃我的修改）这两条路径不经任何保存动作，只有这里看得到。只在**值真的
+   * 变化**时通知（与 updateDirty / setSessionDirty 的早返回同口径），调用方不必自己去重。
+   */
+  onSessionDirty(listener: (session: EditorSession, dirty: boolean) => void): () => void;
+  /**
+   * 监听**前台会话**的内容变化（每次 docChanged）。保存链路的崩溃备份排期挂这里。
    * M149 之前它由 save-controller 往 view 上 appendConfig 一个 updateListener 实现；
-   * appendConfig 只作用于当时那一个 state，新建会话会漏掉它——自动保存因此会静默失效，
+   * appendConfig 只作用于当时那一个 state，新建会话会漏掉它——备份排期因此会静默失效，
    * 所以改成内核的正式回调（回调进所有会话，与 appendConfig 无关）。
    */
   onDocChanged(listener: () => void): () => void;
@@ -1258,7 +1265,10 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
   let readyRequestId: number | undefined;
   let readySerial = 0;
   const dirtyListeners = new Set<(dirty: boolean) => void>();
-  /** 文档内容变化（docChanged）的订阅者：保存链路的自动保存排期挂在这里，取代
+  /** 逐会话的 dirty 跃迁订阅者（与 dirtyListeners 的区别：带会话，且**后台会话**也算）。
+   *  保存链路用它把崩溃备份的生命周期挂在 dirty 上（M278）。 */
+  const sessionDirtyListeners = new Set<(session: EditorSession, dirty: boolean) => void>();
+  /** 文档内容变化（docChanged）的订阅者：保存链路的崩溃备份排期挂在这里，取代
    *  save-controller 原先往 view 上 appendConfig 一个 updateListener 的写法
    *（那条路径由 M149 收编——扩展追加只作用于当时那一个 state，新建会话会漏掉它）。 */
   const docChangedListeners = new Set<() => void>();
@@ -1309,6 +1319,7 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
     if (active.dirty === next) return;
     active.dirty = next;
     dirtyListeners.forEach((listener) => listener(next));
+    sessionDirtyListeners.forEach((listener) => listener(active, next));
   }
 
   /**
@@ -1324,6 +1335,7 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
     if (session.dirty === next) return;
     session.dirty = next;
     dirtyListeners.forEach((listener) => listener(next));
+    sessionDirtyListeners.forEach((listener) => listener(session, next));
   }
 
   function emitReady(phase: EditorReadyPhase): void {
@@ -1985,8 +1997,8 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
     remapSessionPaths(from, to) {
       // 菜单发起的重命名（M244，裁决点 5）：**只改路径**，不碰内容 / 选区 / 滚动 / dirty
       // ——改名不改字节，save-controller 的磁盘 revision 基准因此依旧有效（CAS 不失效），
-      // 也不必重锚自动保存。路径是若干旁路状态的键（mtimeCache 在这里；save-controller
-      // 的 revisions / paused / timers 按路径查会话，改完自然落到新键上，旧键成为死条目），
+      // 也不必重锚备份定时器。路径是若干旁路状态的键（mtimeCache 在这里；save-controller
+      // 的 revisions / timers 按路径查会话，改完自然落到新键上，旧键成为死条目），
       // 所以旧键在这里废掉、新键重取。
       let remapped = 0;
       for (const session of sessions) {
@@ -2077,6 +2089,10 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
     },
     isDirty: () => active.dirty,
     onDirty(listener) { dirtyListeners.add(listener); return () => dirtyListeners.delete(listener); },
+    onSessionDirty(listener) {
+      sessionDirtyListeners.add(listener);
+      return () => sessionDirtyListeners.delete(listener);
+    },
     onDocChanged(listener) { docChangedListeners.add(listener); return () => docChangedListeners.delete(listener); },
     setAttachmentProvider(next: AttachmentProvider) {
       provider = next;

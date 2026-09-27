@@ -21,9 +21,12 @@ steps:
   - name: 按 Enter（第 1 行以 `{` 结尾 ⇒ 语法缩进应给 2 空格）
     do: key
     key: "return"
-  - name: 等自动保存落盘（2s 防抖，刻意不用 ⌘S）
+  - name: 按 ⌘S 落盘（M278 起写盘只由用户的显式动作触发；⌘S 发两次换一次丢键的容错）
+    do: keys
+    keys: ["cmd+s", "cmd+s"]
+  - name: 落盘后核对
     do: sleep
-    ms: 2600
+    ms: 1200
     expect:
       - label: 源文件出现「只有两个空格」的新行 —— 语法缩进落地的唯一正判据
         file: { path: enter-indent.js, has: '/^  $/' }
@@ -47,9 +50,12 @@ steps:
   - name: 按 Enter
     do: key
     key: "return"
-  - name: 等自动保存落盘
+  - name: 按 ⌘S 落盘（⌘S 发两次换一次丢键的容错）
+    do: keys
+    keys: ["cmd+s", "cmd+s"]
+  - name: 落盘后核对
     do: sleep
-    ms: 2600
+    ms: 1200
     expect:
       - label: 新行沿用该行的两个空格（不是行首、也不是凭空一层）
         file: { path: enter-indent.toml, has: '/^  $/' }
@@ -68,8 +74,9 @@ steps:
     do: keys
     keys: ["ctrl+n", "ctrl+n", "ctrl+e"]
   - name: 记录 md fixture 的文件基线（Enter 有没有落地的正观测走**磁盘**）
-    # 为什么不用 `recordEditor` 立即读编辑器：Enter 是盲发注入（丢键不重试），而落盘要经 2s
-    # 防抖——磁盘判据与后面的负向断言在同一条时间线上（都等 2.6s），比「按完立刻读 AX」稳。
+    # 为什么不用 `recordEditor` 立即读编辑器：Enter 是盲发注入（丢键不重试），而落盘要经一次
+    # ⌘S + IPC——磁盘判据与后面的负向断言在同一条时间线上（都等 ⌘S 之后的 1.2s），比
+    # 「按完立刻读 AX」稳（M278 之前这里等的是 2s 自动保存防抖，自动保存已整条移除）。
     # 代价如实登记：这条正观测不区分「光标在第 3 行」与「光标仍在第 1 行」（两处按 Enter 的结果
     # 都是平换行），落点由本场景的第一步（`clickEditor` 落在第 1 行）与 `ctrl+n` 的次数共同约束。
     do: record
@@ -78,9 +85,12 @@ steps:
   - name: 按 Enter
     do: key
     key: "return"
-  - name: 等自动保存落盘
+  - name: 按 ⌘S 落盘（⌘S 发两次换一次丢键的容错）
+    do: keys
+    keys: ["cmd+s", "cmd+s"]
+  - name: 落盘后核对
     do: sleep
-    ms: 2600
+    ms: 1200
     expect:
       - label: 正观测：Enter 确实落地（文件被写过）——「不缩进」这类负向断言必须配它，否则丢键会假绿
         file: { path: enter-indent.md, changedSince: md基线 }
@@ -101,9 +111,12 @@ steps:
   - name: 按 Enter
     do: key
     key: "return"
-  - name: 等自动保存落盘
+  - name: 按 ⌘S 落盘（⌘S 发两次换一次丢键的容错）
+    do: keys
+    keys: ["cmd+s", "cmd+s"]
+  - name: 落盘后核对
     do: sleep
-    ms: 2600
+    ms: 1200
     expect:
       - label: 续写同级标记（`- ` 行出现）—— 上游续行未被本 change 打断的唯一判据
         file: { path: enter-indent-list.md, has: '/^- $/' }
@@ -124,9 +137,12 @@ steps:
   - name: 按 Enter
     do: key
     key: "return"
-  - name: 等自动保存落盘
+  - name: 按 ⌘S 落盘（⌘S 发两次换一次丢键的容错）
+    do: keys
+    keys: ["cmd+s", "cmd+s"]
+  - name: 落盘后核对
     do: sleep
-    ms: 2600
+    ms: 1200
     expect:
       - label: 新行沿用块内该行的两个空格
         file: { path: enter-indent-fence.md, has: '/^  $/' }
@@ -154,9 +170,12 @@ steps:
   - name: 按 Enter
     do: key
     key: "return"
-  - name: 等自动保存落盘
+  - name: 按 ⌘S 落盘（⌘S 发两次换一次丢键的容错）
+    do: keys
+    keys: ["cmd+s", "cmd+s"]
+  - name: 落盘后核对
     do: sleep
-    ms: 2600
+    ms: 1200
     expect:
       - label: 正观测：文件又变了（Enter 落地）
         file: { path: enter-indent-list.md, changedSince: 列表基线 }
@@ -188,9 +207,12 @@ steps:
   - name: 光标到行尾后按 Enter
     do: keys
     keys: ["ctrl+e", "return"]
-  - name: 等自动保存落盘
+  - name: 按 ⌘S 落盘（⌘S 发两次换一次丢键的容错）
+    do: keys
+    keys: ["cmd+s", "cmd+s"]
+  - name: 落盘后核对
     do: sleep
-    ms: 2600
+    ms: 1200
     expect:
       - label: 正观测：Enter 确实落地（文件被写过）——丢键时这条会红，而不是让下面那条负向断言空过
         file: { path: enter-indent-off.js, changedSince: 关配置基线 }
@@ -228,7 +250,8 @@ fixture 与那批探针逐条同源）。判定层（判定函数本体、委派
 `tests/unit/enter-indent.test.ts` 覆盖；键位链路（`Prec.highest` 的优先级、上游键位让位、
 `Shift-Enter` 不命中、配置经 `src/main.ts` 的消费点到达编辑器）由 chromium 场景
 `tests/visual/scenes/m264-enter-auto-indent.spec.ts` 覆盖；本场景管**真机 WKWebView 的按键 →
-落盘闭环**、自动保存时序，以及 `configWrite` 重启后的回退。
+落盘闭环**（每步按 ⌘S 显式落盘；M278 之前这里靠 2s 自动保存，该路径已随自动保存整条移除），
+以及 `configWrite` 重启后的回退。
 
 ## 判据的写法纪律（两条本能力特有的坑）
 

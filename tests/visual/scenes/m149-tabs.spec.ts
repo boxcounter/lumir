@@ -38,6 +38,35 @@ const VAULT: VaultFixture = {
   links: {},
 };
 
+/** 恢复目录的轻量桩：只记 `recovery_backup` 的落点与内容（崩溃备份的路径键控判据）。
+ *  与 `save-hardening-autosave.spec.ts` 的同族桩同形，但不预置任何备份——本文件的
+ *  用例只关心「定时器到期时写到谁的路径上」。 */
+async function stubRecovery(page: Page): Promise<void> {
+  await page.addInitScript(() => {
+    const w = window as unknown as Record<string, any>;
+    const invoke = w.__TAURI_INTERNALS__.invoke as (cmd: string, args: any) => unknown;
+    w.__recoveryStore = {} as Record<string, string>;
+    w.__TAURI_INTERNALS__.invoke = async (cmd: string, args: any) => {
+      if (cmd === "recovery_backup") {
+        (w.__recoveryStore as Record<string, string>)[args.path] = args.content;
+        return null;
+      }
+      if (cmd === "recovery_discard") {
+        delete (w.__recoveryStore as Record<string, string>)[args.path];
+        return null;
+      }
+      if (cmd === "recovery_list") return Object.keys(w.__recoveryStore as Record<string, string>);
+      return invoke(cmd, args);
+    };
+  });
+}
+
+async function recoveryStore(page: Page): Promise<Record<string, string>> {
+  return page.evaluate(
+    () => (window as unknown as { __recoveryStore: Record<string, string> }).__recoveryStore,
+  );
+}
+
 const LONG_VAULT: VaultFixture = {
   entries: [
     { path: "long.md", kind: "file", size: LONG.length, mtime_ms: 0 },
@@ -262,6 +291,32 @@ test("⌘W 关当前标签：干净标签直接关，dirty 标签先给三个出
   expect(emptyTitlebar.trafficWidth).toBe(236);
 });
 
+test("放弃修改并关闭：该路径的崩溃备份同步清除（备份的生命周期与 dirty 对齐）", async ({ page }) => {
+  await stubTauri(page, VAULT);
+  await stubRecovery(page);
+  await page.goto("/");
+  const content = page.locator(".cm-content");
+
+  await page.locator('.ft-row[title="alpha.md"]').click();
+  await content.click();
+  await page.keyboard.type("AAA");
+  // 前提：备份确实落盘（等它自己的 debounce 到期）。
+  await expect
+    .poll(async () => Object.keys(await recoveryStore(page)), { timeout: 6000 })
+    .toEqual(["alpha.md"]);
+
+  // 关标签走既有的三出口确认；选「放弃修改并关闭」= 用户明确不要这份修改了。
+  await page.keyboard.press("Meta+w");
+  const confirm = page.locator(".lumir-toast", { hasText: "关闭后修改将丢失" });
+  await expect(confirm).toBeVisible();
+  await confirm.getByRole("button", { name: "放弃修改并关闭" }).click();
+  await expect(page.locator(".tab")).toHaveCount(0);
+
+  // 这条放弃路径不经 dirty 转 clean 的跃迁（会话被直接摘掉），备份由关闭出口显式清除——
+  // 不清的话下次启动会追问「要不要恢复一份用户刚明确丢弃的内容」（M278）。
+  await expect.poll(async () => (await recoveryStore(page))).toEqual({});
+});
+
 // ---------------------------------------------------------------------------
 // 逐标签的保存粒度（reviewer r1 P2-3：这三条是 per-tab 粒度升级的核心行为合同，
 // 此前只有真机场景的间接覆盖、或根本没有回归防线——重引入共享状态不会有任何测试变红）
@@ -271,14 +326,12 @@ test("⌘S 只存前台标签：另一个标签的未保存内容不落盘", asy
   await page.goto("/");
   const content = page.locator(".cm-content");
 
-  // 标签一：改脏 alpha，随后用一次外部写入把它钉在「自动保存已暂停」态——否则 2s 后
-  // 自动保存会把 alpha 也落盘，这条用例就分不出「⌘S 只存前台」了。
+  // 标签一：改脏 alpha。自动保存已整条移除（M278），dirty 天然持久——不再需要「外部写入
+  // 造冲突把它钉在暂停态」这类前置。
   await page.locator('.ft-row[title="alpha.md"]').click();
   await content.click();
   await page.keyboard.type("AAA");
-  await externalWrite(page, "alpha.md", ALPHA);
-  await fireFsEvent(page, [{ kind: "modified", path: "alpha.md", entry_kind: "file" }]);
-  await expect(page.locator(".lumir-toast", { hasText: "检测到外部修改" })).toBeVisible();
+  await expect(page.locator(".tab", { hasText: "alpha.md" }).locator(".tab-dirty")).toBeVisible();
 
   // 标签二：新开 beta、改脏，让它当前台。
   await page.locator('.ft-row[title="beta.md"]').click({ modifiers: ["Meta"] });
@@ -295,23 +348,28 @@ test("⌘S 只存前台标签：另一个标签的未保存内容不落盘", asy
   await expect(page.locator(".tab", { hasText: "alpha.md" }).locator(".tab-dirty")).toBeVisible();
 });
 
-test("自动保存的 debounce 逐标签独立：切标签不把待写内容带到新文档", async ({ page }) => {
+test("崩溃备份的 debounce 逐标签独立：切标签不把待写内容带到新文档", async ({ page }) => {
   await stubTauri(page, VAULT);
+  await stubRecovery(page);
   await page.goto("/");
 
   await page.locator('.ft-row[title="alpha.md"]').click();
   await page.locator(".cm-content").click();
   await page.keyboard.type("AAA");
-  // 立刻另开 beta 并切过去：alpha 的 debounce 还在跑，而前台已经不是它了。
+  // 立刻另开 beta 并切过去：alpha 的备份 debounce 还在跑，而前台已经不是它了。
   await page.locator('.ft-row[title="beta.md"]').click({ modifiers: ["Meta"] });
   await expect(page.locator(".cm-content")).toContainText("Beta 的第一段");
 
-  // debounce 到期后写的是 alpha——它自己的路径与内容。若定时器是共享的、到点再去读
-  // 「当前前台是谁」，写的就会是 beta，而 alpha 永远等不到落盘（这正是代码注释里
-  // 「把 A 的内容写进 B 的路径」那类静默数据损坏的回归点）。
-  await expect.poll(() => fileText(page, "alpha.md"), { timeout: 6000 }).toContain("AAA");
-  expect(await fileText(page, "beta.md")).not.toContain("AAA");
-  // beta 也没被别人的写入算到自己头上：它仍是干净的。
+  // 到期后写进恢复目录的是 alpha 自己的路径与内容。若定时器是共享的、到点再去读
+  // 「当前前台是谁」，恢复时给出的就会是「beta 路径 + alpha 内容」这种静默错位
+  //（自动保存移除后，崩溃备份是 dirty 内容唯一的定时写入者）。
+  await expect
+    .poll(async () => Object.keys(await recoveryStore(page)), { timeout: 6000 })
+    .toEqual(["alpha.md"]);
+  expect((await recoveryStore(page))["alpha.md"]).toContain("AAA");
+  // 双方在 vault 内的文件都没有被改写（备份 ≠ 保存），beta 仍是干净的。
+  expect(await fileText(page, "alpha.md")).toBe(ALPHA);
+  expect(await fileText(page, "beta.md")).toBe(BETA);
   await expect(page.locator(".tab", { hasText: "beta.md" }).locator(".tab-dirty")).toBeHidden();
 });
 

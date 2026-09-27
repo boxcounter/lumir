@@ -55,9 +55,12 @@ steps:
       - label: 见证字符已落地（它在粗体范围里，源码此刻是显露态）
         editor: { has: "0" }
 
-  - name: 等自动保存落盘（2s 防抖）
+  - name: 按 ⌘S 落盘（⌘S 发两次换一次丢键的容错）
+    do: keys
+    keys: ["cmd+s", "cmd+s"]
+  - name: 落盘后核对落点
     do: sleep
-    ms: 2600
+    ms: 1200
     expect:
       - label: 见证字符落在**点击坐标对应的位置上**（e 与 f 之间：插入成 `abcde0f…` 或替换掉 f 成 `abcde0…`，两种都算落点正确）
         file: { path: bold-click.md, has: "/^\\*\\*abcde0/" }
@@ -91,9 +94,12 @@ steps:
       - label: 第二个见证字符已落地
         editor: { has: "9" }
 
-  - name: 等自动保存落盘
+  - name: 按 ⌘S 落盘（⌘S 发两次换一次丢键的容错）
+    do: keys
+    keys: ["cmd+s", "cmd+s"]
+  - name: 落盘后核对字符位
     do: sleep
-    ms: 2600
+    ms: 1200
     expect:
       - label: 无位移的点击 + 一次键入 = 纯插入：字符位比上一步多 1（21 或 22）
         file: { path: bold-click.md, has: "/^\\*\\*[a-z0-9]{21,22}\\*\\*$/" }
