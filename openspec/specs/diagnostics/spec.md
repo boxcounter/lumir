@@ -2,7 +2,7 @@
 
 ## Purpose
 
-定义运行时诊断日志的落地口径：关键事件（保存冲突、崩溃备份与恢复、外部修改、autosave 暂停/恢复、渲染失败、config warning、慢回调、链接激活）以 JSONL 写入 `<config_dir>/logs/` 的按日滚动文件，经单一 `log_event` invoke 入口转发、字段白名单校验、非阻塞批量落盘，且不记文档正文与键入内容、不写 vault、不外发网络。由 change `add-diagnostics-logging` 归档并入（2026-09-17，实现 M134）。
+定义运行时诊断日志的落地口径：关键事件（保存冲突、崩溃备份与恢复、外部修改、渲染失败、config warning、慢回调、链接激活）以 JSONL 写入 `<config_dir>/logs/` 的按日滚动文件，经单一 `log_event` invoke 入口转发、字段白名单校验、非阻塞批量落盘，且不记文档正文与键入内容、不写 vault、不外发网络。由 change `add-diagnostics-logging` 归档并入（2026-09-17，实现 M134）。
 
 ## Requirements
 

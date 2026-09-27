@@ -15,16 +15,14 @@ steps:
     expect:
       - label: 输入已生效
         editor: { has: "CRASH-DISCARD-ME" }
-  - name: 外部改写造成冲突待决
-    do: vaultWrite
-    file: plain.md
-    content: "# 纯文本基线\n\n外部版本。\n"
-  - name: 等崩溃备份落盘
+  - name: 等崩溃备份自己的 debounce 到期（停止输入满 2s + 裕量）
     do: sleep
     ms: 4000
     expect:
       - label: 崩溃备份已落盘
         glob: { dir: "env:recovery", pattern: ".*", min: 1 }
+      - label: 前提成立：vault 内的文件没被改写（写盘只由 ⌘S 触发，备份 ≠ 保存）
+        file: { path: plain.md, not: "CRASH-DISCARD-ME" }
   - name: 硬停机后重启
     do: restart
     expect:
@@ -42,5 +40,6 @@ steps:
         editor: { not: "CRASH-DISCARD-ME" }
 ---
 
-说明：与 08c 同一现场生成路径，只换动作——验证「丢弃备份」确实丢弃（反馈文案 + 内容没进编辑器），
-而不是与「恢复内容」共用一条实现。两条动作分开成场景，避免一个场景里连续两次重启把现场搞混。
+说明：与 08c 同一现场生成路径（dirty 后等崩溃备份自己的 debounce 到期），只换动作——验证「丢弃
+备份」确实丢弃（反馈文案 + 内容没进编辑器），而不是与「恢复内容」共用一条实现。两条动作分开成场景，
+避免一个场景里连续两次重启把现场搞混。

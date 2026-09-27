@@ -292,18 +292,20 @@ Alex 抽审路径：先看 `summary.md`，再进 FAIL 场景看 `steps.md` + `sh
   「target WebArea did not acquire stable keyboard focus」，键盘注入整批不落地、场景里出现一串与产品无关的
   FAIL。跑真机批次时把命令包在 `caffeinate -dimsu <cmd>` 里；套件的 `launchApp` 也已把窗口位置经 `--config`
   钉在主屏（见 `lib/app.mjs` 的说明），两条一起用。
-- **dirty 拦截门的可测窗口很窄**（M164 实测）：切换 vault 的 dirty 前置判据是「任一**有路径**的标签
-  dirty」（`src/save-controller.ts` 的 `vaultSwitchBlock`），而自动保存的防抖是**停止输入后 2s**
-  （`AUTOSAVE_DEBOUNCE_MS`）——落盘后 dirty 收回 false。所以「改完就走」这条真实窗口只有 2s，而本套件
-  的键盘注入每键约 250ms + 一次 MCP 往返（`keys` 的 `gapMs` 默认 250），跨步或多键串都抢不到：
-  - 抢窗口的两种写法都**实测不成立**（跨步必然等到自动保存，门不触发、直接切走；把刷新字符与
-    `⌘O`/`↓`/`Enter` 塞进同一个 `keys` 步仍 2s 以上）。`19-vault-switch-guard` 因此改用
-    **外部改写成冲突**制造**持久** dirty——冲突待决期间自动保存暂停（08b 覆盖该行为），守卫可以稳定
-    触发，不再与注入耗时赛跑；
-  - **未覆盖**：保存并切换在**保存能闭环**时「保存成功 → 继续切换」那条顺路（真机抢不到窗口）。
-    由 chromium 视觉通道覆盖：`tests/visual/scenes/mv-vault-switch-guard.spec.ts`（四条用例：拦下文案与
-    三出口 / 取消 / 保存并切换 / 放弃修改并切换，含 `document_save` 写动作级判据）。**不要把 19 的
-    PASS 读成「三条出口的每条顺路都在真机验过」**；
+- **dirty 拦截门的可测窗口**（M164 实测，**M278 起窗口约束消失**）：切换 vault 的 dirty 前置判据是
+  「任一**有路径**的标签 dirty」（`src/save-controller.ts` 的 `vaultSwitchBlock`）。M278 之前自动保存的
+  防抖是**停止输入后 2s**（`AUTOSAVE_DEBOUNCE_MS`）——落盘后 dirty 收回 false，于是「改完就走」这条
+  真实窗口只有 2s，而本套件的键盘注入每键约 250ms + 一次 MCP 往返（`keys` 的 `gapMs` 默认 250），
+  跨步或多键串都抢不到（两种抢法都实测不成立）。**自动保存已整条移除（change `remove-autosave`）：
+  写盘只由用户的显式动作触发，dirty 由构造就持久**，这层窗口顾虑不复存在。`19-vault-switch-guard`
+  仍用**外部改写成冲突**，但它现在的作用是把「保存并切换」停在**保存未闭环**态（该场景验的就是
+  「保存未闭环则不切走 + 沿用既有出口」），不再是让 dirty 变持久的手段；`50-tab-context-menu` 同批
+  保留的一次外部改写则用来把磁盘钉在已知版本上（末步断言「放弃修改 ≠ 写盘」）；
+  - **未覆盖**：保存并切换在**保存能闭环**时「保存成功 → 继续切换」那条顺路。M278 之前它卡在
+    「2s 窗口抢不到」，现在改完立刻切即可复现，但**19 仍未覆盖它**（要不要补是另一个决定）。
+    当前该路径由 chromium 视觉通道覆盖：`tests/visual/scenes/mv-vault-switch-guard.spec.ts`（四条用例：
+    拦下文案与三出口 / 取消 / 保存并切换 / 放弃修改并切换，含 `document_save` 写动作级判据）。
+    **不要把 19 的 PASS 读成「三条出口的每条顺路都在真机验过」**；
   - 同族未覆盖：不可保存的脏标签（无落盘基准）不给「保存并切换」这条分支，在
     `tests/unit/vault-switcher.test.ts` 的状态机口径里。
 

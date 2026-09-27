@@ -1,6 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import { expectScreenshot } from "./expect-screenshot";
-import { DEMO_VAULT, fireFsEvent, fsMutations, stubTauri } from "./tauri-stub";
+import { DEMO_VAULT, externalWrite, fileText, fireFsEvent, fsMutations, stubTauri } from "./tauri-stub";
 
 // 文件树条目操作的视觉与 DOM 回归（M244，change file-tree-context-menu）。
 //
@@ -29,6 +29,34 @@ async function openMenu(page: Page, path: string): Promise<void> {
 /** 菜单项文案（顺序即项集顺序）。 */
 async function menuLabels(page: Page): Promise<string[]> {
   return page.locator(".ft-menu .ft-menu-item").allTextContents();
+}
+
+/** 恢复目录的轻量桩：只记 `recovery_backup` / `recovery_discard` 的落点与内容（备份归属判据）。
+ *  与 `save-hardening-autosave.spec.ts` 的同族桩同形，不预置任何备份。 */
+async function stubRecovery(page: Page): Promise<void> {
+  await page.addInitScript(() => {
+    const w = window as unknown as Record<string, any>;
+    const invoke = w.__TAURI_INTERNALS__.invoke as (cmd: string, args: any) => unknown;
+    w.__recoveryStore = {} as Record<string, string>;
+    w.__TAURI_INTERNALS__.invoke = async (cmd: string, args: any) => {
+      if (cmd === "recovery_backup") {
+        (w.__recoveryStore as Record<string, string>)[args.path] = args.content;
+        return null;
+      }
+      if (cmd === "recovery_discard") {
+        delete (w.__recoveryStore as Record<string, string>)[args.path];
+        return null;
+      }
+      if (cmd === "recovery_list") return Object.keys(w.__recoveryStore as Record<string, string>);
+      return invoke(cmd, args);
+    };
+  });
+}
+
+async function recoveryStore(page: Page): Promise<Record<string, string>> {
+  return page.evaluate(
+    () => (window as unknown as { __recoveryStore: Record<string, string> }).__recoveryStore,
+  );
 }
 
 /** 打开一个**固定**标签并让它变 dirty（未保存标记出现即证明 dirty 已生效）。 */
@@ -188,8 +216,48 @@ test("改名打开中的 dirty 文件：tab 就地 remap、回响不误报（含
 
   // 反向验证（REVIEW.md 第 1 条：上面的负向断言必须有区分度）：同一个 dirty 文件被**真实**
   // 外部修改时，「检测到外部修改」提示必须照常出现。不出现就说明上面的负向断言恒真。
+  // **必须真的改磁盘**（`externalWrite`）：改名已把磁盘 revision 基准迁到新路径（M278 r1），
+  // 只 fire 事件而磁盘内容不动的话，读数与会话基准一致 ⇒ 按设计就该被当成回声丢弃。
+  await externalWrite(page, "RENAMED.md", "# External version\n");
   await fireFsEvent(page, [{ kind: "modified", path: "RENAMED.md", entry_kind: "file" }]);
   await expect(page.locator(".lumir-toast", { hasText: "检测到外部修改" })).toBeVisible();
+});
+
+test("改名 dirty 文档：备份资源随路径迁移（旧键作废、新键补一份、改名后仍可保存）", async ({ page }) => {
+  // M278 r1 评审 P2-2：备份与磁盘 revision 基准都按**路径**键控，而改名换的正是那个键。
+  // 不迁的话：旧路径的备份成孤儿（下次启动弹一个指向已改名文件的恢复提示），新路径落进
+  // 「未登记磁盘版本」的不可保存态（⌘S 被 reportUnsaveable 挡回、一个字都写不出去）。
+  await stubTauri(page, { ...DEMO_VAULT, root: VAULT_ROOT });
+  await stubRecovery(page);
+  await page.goto("/");
+
+  await page.locator('.ft-row[title="README.md"]').click();
+  await page.locator(".cm-content").click();
+  await page.keyboard.type("ZZQ");
+  await expect(page.locator(".modeline-path")).toContainText("未保存");
+  // 前提：备份确实按旧路径落盘（等它自己的 debounce 到期）。
+  await expect
+    .poll(async () => Object.keys(await recoveryStore(page)), { timeout: 6000 })
+    .toEqual(["README.md"]);
+
+  await openMenu(page, "README.md");
+  await page.locator(".ft-menu .ft-menu-item", { hasText: "重命名…" }).click();
+  await page.locator('.ft-item[data-path="README.md"] .ft-edit').fill("RENAMED.md");
+  await page.keyboard.press("Enter");
+  await expect(page.locator(".tab.is-active")).toHaveAttribute("data-path", "RENAMED.md");
+
+  // 备份跟着路径走：旧键那份作废，新键立即补一份（内容含刚键入的探针）
+  await expect.poll(async () => Object.keys(await recoveryStore(page))).toEqual(["RENAMED.md"]);
+  expect((await recoveryStore(page))["RENAMED.md"]).toContain("ZZQ");
+
+  // 基准随键迁移 ⇒ 改名后 ⌘S 仍是真实可达的保存（这是「不可保存态」那条缺陷的反证）
+  await page.locator(".cm-content").click();
+  await page.keyboard.press("Meta+s");
+  await expect.poll(() => fileText(page, "RENAMED.md")).toContain("ZZQ");
+  await expect(page.locator(".modeline-path")).not.toContainText("未保存");
+  await expect(page.locator(".lumir-toast", { hasText: "尚未可保存" })).toHaveCount(0);
+  // 保存成功 ⇒ 备份清空（新键那份也随 dirty 转 clean 作废）
+  await expect.poll(async () => recoveryStore(page)).toEqual({});
 });
 
 test("删除确认框：文件与目录两种正文，确认后调命令、回响收敛树", async ({ page }) => {

@@ -43,7 +43,7 @@ import type { ListFilter } from "./list-filter";
 import type { ToastAction, VaultSwitchBlock } from "./save-controller";
 
 /** 会话落盘的防抖窗口（ms）：标签集合 / 顺序 / 激活项变化后合并到这一档。
- *  比自动保存（2s）短：会话只有几百字节，且它是「下次打开恢复什么」的唯一凭据，
+ *  比崩溃备份窗口（2s，`RECOVERY_DEBOUNCE_MS`）短：会话只有几百字节，且它是「下次打开恢复什么」的唯一凭据，
  *  丢一次就是一段可感知的体验落差。切换前与退出前另有 flush（MUST NOT 只依赖它）。 */
 export const SESSION_WRITE_DEBOUNCE_MS = 1000;
 

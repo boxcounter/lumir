@@ -884,6 +884,13 @@ export type EditorReadyListener = (event: EditorReadyEvent) => void;
  * 会话对象是**活的**：内核在激活期间每次 dispatch 后回写 `state`，切走时回写滚动位置；
  * 装配层据此渲染标签栏，不要再自己缓存一份。
  */
+/** 改名后一条会话的路径迁移（`remapSessionPaths` 的返回值）：调用方据此迁移按路径键控的
+ *  旁路状态（当前唯一消费者是保存链路的 `noteRenamed`）。 */
+export interface SessionPathRemap {
+  from: string;
+  to: string;
+}
+
 export interface EditorSession {
   /** 会话 id（单调递增，供标签栏做 DOM key / 断言；顺序由 sessions() 的数组序决定）。 */
   readonly id: number;
@@ -995,10 +1002,13 @@ export interface EditorHandle {
    * 改名后就地 remap 打开中的会话路径（M244 裁决点 5，菜单发起的重命名专用）：
    * `from` 单个会话替换、`from/` 子树全部前缀替换。**只改路径**——内容、选区、滚动
    * 位置、dirty 与磁盘 revision 基准全部原样保留（改名不改字节，CAS 依旧有效）。
-   * 返回被 remap 的会话数（0 = 没有打开中的文档命中，调用方无需做别的同步）。
    * 扩展名变化会改 mode / editable，这里一并按新路径重裁。
+   * 返回**被 remap 的路径对**（`from` → `to`，按会话创建顺序；空数组 = 没有打开中的文档
+   * 命中）：调用方据此把**同样按路径键控**的旁路状态迁到新键上——当前唯一消费者是保存链路
+   * 的 `noteRenamed`（磁盘 revision 基准 + 崩溃备份；见 save-controller 的注释）。
+   * 目录改名时这里逐会话给出前缀替换后的新路径，调用方逐条喂进去即可。
    */
-  remapSessionPaths(from: string, to: string): number;
+  remapSessionPaths(from: string, to: string): readonly SessionPathRemap[];
   /**
    * 激活会话：把 view 的 state 换成它那一份，并恢复该会话的滚动位置。
    * 同步调用、无异步等待——切换只换 state，不重新解析文档。
@@ -1077,9 +1087,16 @@ export interface EditorHandle {
   isDirty(): boolean;
   onDirty(listener: (dirty: boolean) => void): () => void;
   /**
-   * 监听**前台会话**的内容变化（每次 docChanged）。保存链路的自动保存排期挂这里。
+   * 监听**任一会话**的 dirty 跃迁（逐会话、带路径）。保存链路据此让崩溃备份的生命周期
+   * 与 dirty 对齐（dirty 转 clean ⇒ 该路径的备份作废，M278）：撤销 / 重做回到基线、
+   * 重新载入（放弃我的修改）这两条路径不经任何保存动作，只有这里看得到。只在**值真的
+   * 变化**时通知（与 updateDirty / setSessionDirty 的早返回同口径），调用方不必自己去重。
+   */
+  onSessionDirty(listener: (session: EditorSession, dirty: boolean) => void): () => void;
+  /**
+   * 监听**前台会话**的内容变化（每次 docChanged）。保存链路的崩溃备份排期挂这里。
    * M149 之前它由 save-controller 往 view 上 appendConfig 一个 updateListener 实现；
-   * appendConfig 只作用于当时那一个 state，新建会话会漏掉它——自动保存因此会静默失效，
+   * appendConfig 只作用于当时那一个 state，新建会话会漏掉它——备份排期因此会静默失效，
    * 所以改成内核的正式回调（回调进所有会话，与 appendConfig 无关）。
    */
   onDocChanged(listener: () => void): () => void;
@@ -1258,7 +1275,10 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
   let readyRequestId: number | undefined;
   let readySerial = 0;
   const dirtyListeners = new Set<(dirty: boolean) => void>();
-  /** 文档内容变化（docChanged）的订阅者：保存链路的自动保存排期挂在这里，取代
+  /** 逐会话的 dirty 跃迁订阅者（与 dirtyListeners 的区别：带会话，且**后台会话**也算）。
+   *  保存链路用它把崩溃备份的生命周期挂在 dirty 上（M278）。 */
+  const sessionDirtyListeners = new Set<(session: EditorSession, dirty: boolean) => void>();
+  /** 文档内容变化（docChanged）的订阅者：保存链路的崩溃备份排期挂在这里，取代
    *  save-controller 原先往 view 上 appendConfig 一个 updateListener 的写法
    *（那条路径由 M149 收编——扩展追加只作用于当时那一个 state，新建会话会漏掉它）。 */
   const docChangedListeners = new Set<() => void>();
@@ -1309,6 +1329,7 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
     if (active.dirty === next) return;
     active.dirty = next;
     dirtyListeners.forEach((listener) => listener(next));
+    sessionDirtyListeners.forEach((listener) => listener(active, next));
   }
 
   /**
@@ -1324,6 +1345,7 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
     if (session.dirty === next) return;
     session.dirty = next;
     dirtyListeners.forEach((listener) => listener(next));
+    sessionDirtyListeners.forEach((listener) => listener(session, next));
   }
 
   function emitReady(phase: EditorReadyPhase): void {
@@ -1984,17 +2006,17 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
     },
     remapSessionPaths(from, to) {
       // 菜单发起的重命名（M244，裁决点 5）：**只改路径**，不碰内容 / 选区 / 滚动 / dirty
-      // ——改名不改字节，save-controller 的磁盘 revision 基准因此依旧有效（CAS 不失效），
-      // 也不必重锚自动保存。路径是若干旁路状态的键（mtimeCache 在这里；save-controller
-      // 的 revisions / paused / timers 按路径查会话，改完自然落到新键上，旧键成为死条目），
-      // 所以旧键在这里废掉、新键重取。
-      let remapped = 0;
+      // ——改名不改字节，磁盘 revision 基准因此依旧有效（CAS 不失效）。路径是若干旁路状态的
+      // 键：mtimeCache 在这里（旧键废掉、新键重取）；**保存链路那份键在它自己的表里**，
+      // 这里改不到——返回路径对交给装配层调 save-controller 的 `noteRenamed` 去迁
+      //（r1 评审 P2-2：不迁会让新路径落到「未登记磁盘版本」的不可保存态、旧路径的备份成孤儿）。
+      const remapped: SessionPathRemap[] = [];
       for (const session of sessions) {
         const path = session.path;
         if (path === undefined) continue;
         const next = remapPathAfterRename(path, from, to);
         if (next === undefined) continue;
-        remapped += 1;
+        remapped.push({ from: path, to: next });
         mtimeCache.delete(path);
         session.path = next;
         // 扩展名可能变了（a.md → a.txt）：mode 与可编辑性按新路径重裁，内容不动。
@@ -2077,6 +2099,10 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
     },
     isDirty: () => active.dirty,
     onDirty(listener) { dirtyListeners.add(listener); return () => dirtyListeners.delete(listener); },
+    onSessionDirty(listener) {
+      sessionDirtyListeners.add(listener);
+      return () => sessionDirtyListeners.delete(listener);
+    },
     onDocChanged(listener) { docChangedListeners.add(listener); return () => docChangedListeners.delete(listener); },
     setAttachmentProvider(next: AttachmentProvider) {
       provider = next;

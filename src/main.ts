@@ -384,6 +384,8 @@ const tabs = createTabs({
     toast(text, actions, sticky, "neutral", onDismiss);
   },
   saveCurrent: () => save.save(),
+  // 「放弃修改并关闭」这条出口不产生 dirty 跃迁（会话直接被摘掉），备份得由它显式清除。
+  forgetBackup: (path) => save.forgetBackup(path),
   invalidateResolve: () => linkFollow.invalidate(),
   showEditor: () => showEditor(),
   syncActiveDocument: () => syncActiveDocument(),
@@ -619,8 +621,8 @@ async function revealInFinder(rel: string): Promise<void> {
 /**
  * 移到废纸篓（裁决点 2）：删除经确认框已是两步，这里只负责调命令与失败提示。
  * 成功的**表现**由 watcher 的 deleted 统一收敛：树节点消失（级联子孙）、命中打开中的
- * 文档时走既有的 `handleExternalChange`（暂停自动保存 + sticky「内容未丢失」，不特判、
- * 不抑制——design §3.1）。失败则本就没有事件，提示里明说「未删除任何内容」。
+ * 文档时走既有的 `handleExternalChange`（sticky「内容未丢失」，不特判、不抑制——
+ * design §3.1）。失败则本就没有事件，提示里明说「未删除任何内容」。
  */
 async function trashEntry(rel: string): Promise<void> {
   try {
@@ -653,7 +655,13 @@ async function submitInlineEdit(request: InlineEditRequest): Promise<void> {
     }
     // 打开中的文档就地 remap（裁决点 5）：dirty 内容、revision 基准（改名不改字节，CAS
     // 依旧有效）、滚动与光标全部保留；扩展名变化时 mode / editable 由 remap 内部重裁。
-    editor.remapSessionPaths(request.path, renamed);
+    // 返回的路径对逐条喂给保存链路（M278 r1 的第五条路径）：它的 revision 基准与崩溃备份
+    // 同样按路径键控，而改名换的正是那个键——不迁的话新路径会落到「未登记磁盘版本」的
+    // 不可保存态，旧路径那份备份成为孤儿（下次启动弹一个打不开的恢复提示）。
+    // 目录改名时 remap 逐会话给出前缀替换后的新路径，这里天然是批量。
+    for (const remap of editor.remapSessionPaths(request.path, renamed)) {
+      save.noteRenamed(remap.from, remap.to);
+    }
     tree.endInlineEdit(true);
     // 表现层一次对齐：modeline 的路径段、标签栏可见文本与 `dataset.path`、树高亮、标签
     // 会话落盘、阅读位置 flush——「当前文档」在装配层的唯一同步点。
@@ -790,7 +798,7 @@ async function openFile(
     // 守卫复查：请求在途期间前台可能已经换过（并发打开 / 用户切走）。
     if (editor.activeSession().path === undefined && !save.guard("切换文件")) return false;
     // 可编辑文本类（注册表 md/code/text）进保存链路并登记磁盘 revision——dirty 有真实
-    // 出口（Cmd+S / 自动保存 / 冲突恢复 / 崩溃备份全部可达，editable-non-md-files 裁决 D3）。
+    // 出口（Cmd+S / 冲突恢复 / 崩溃备份全部可达，editable-non-md-files 裁决 D3）。
     // 判据取 isEditablePath（与编辑器会话的 editable 标志同源同一真源），MUST NOT 另写集合。
     save.noteOpened(path, isEditablePath(path) ? snapshot.revision : undefined);
     const session = tabs.targetSessionFor(intent);

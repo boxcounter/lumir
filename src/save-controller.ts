@@ -1,22 +1,25 @@
-// 保存链路（手动保存 / 冲突恢复 / 外部修改处置 / 自动保存 / 崩溃备份）的唯一持有者。
+// 保存链路（手动保存 / 冲突恢复 / 外部修改处置 / 崩溃备份）的唯一持有者。
 // M127 从 main.ts 抽出：main.ts 收敛为装配层，本模块持有全部保存相关状态与决策。
 //
 // 状态边界（M149 多标签后按**路径**键控）：每个打开文档的 path / revision / 在途标记 /
-// 自动保存暂停原因都在这里，键是 vault 相对路径。main.ts 不再自行维护副本，只经
+// 备份定时器都在这里，键是 vault 相对路径。main.ts 不再自行维护副本，只经
 // displayedPath()（前台标签的路径）、beginSwitch()、noteOpened()、noteVaultReset()、
 // vaultSwitchBlock() / saveAllDirty()（切换 vault 的前置判据与「保存并切换」出口，M163
 // 起提示与三动作由装配层在拦下它的地方给出）与本模块交互。
 //
 // 为什么从「当前展示文档」升级成「按路径」（M149）：多标签下「当前展示的文档」不再唯一，
-// 自动保存的 debounce 必须逐标签独立——旧实现只有一个 reconcileTimer，切标签会把待写的
-// 定时器带到新文档上（把 A 的内容写进 B 的路径，静默数据损坏）。逐路径键控同时给出
-// 「后台标签被外部修改也要如实处置」的能力（旧实现只查 displayedPath，多标签会漏报）。
+// 定时器必须逐标签独立——旧实现只有一个 reconcileTimer，切标签会把待写的定时器带到新
+// 文档上（把 A 的内容写进 B 的路径，静默数据损坏）。逐路径键控同时给出「后台标签被外部
+// 修改也要如实处置」的能力（旧实现只查 displayedPath，多标签会漏报）。
 //
-// 自动保存与 dogfood 场景（Lumir ↔ Obsidian 来回）：存在未解决冲突、外部修改待决或
-// 保存目标已被外部删除时，自动保存 MUST 暂停（不硬冲 CAS），dirty 内容改走崩溃备份；
-// 暂停态由成功的保存或重新载入清除。
+// **写盘时机归作者**（M278，change remove-autosave 裁决移除自动保存）：本模块不再有任何
+// 「编辑器 dirty 即自行落盘」的路径——`⌘S`（连同冲突处置的两个动作与另存为新文件）是唯一
+// 写 vault 内文档的入口。dirty 内容改由两条机制覆盖：**退出 / 切文件 / 切 vault / 关标签的
+// dirty 守卫**（主动离开）与**崩溃备份**（被动中断）。备份的触发也从「自动保存失败分支」
+// 改成自有 debounce（RECOVERY_DEBOUNCE_MS），生命周期与 dirty 对齐（回到基线即清除）。
 
 import type { FsChangeKind } from "./bindings/FsChangeKind";
+import type { ReadSnapshot } from "./bindings/ReadSnapshot";
 import { logEvent } from "./diagnostics";
 import type { EditorHandle } from "./editor";
 import {
@@ -37,10 +40,11 @@ import { extensionOf, fileClass } from "./preview/attachments";
 /** dirty 守卫提示（无法切换 / 无法退出）的标识类：dirty 清除时整批撤下。 */
 export const SAVE_GUARD_TOAST_CLASS = "toast-dirty-guard";
 
-/** 自动保存 debounce：停止输入后 2s。**停止输入**是语义关键——每次文档变化重置，
- * 连续打字期间不落盘（避免半句内容触发一串 CAS 写入）；2s 是「短暂停顿不打扰、
- * 长停顿已落盘」的折中。M149 起每个标签各有一份该定时器，互不重置。 */
-export const AUTOSAVE_DEBOUNCE_MS = 2000;
+/** 崩溃备份 debounce：停止输入后 2s。**停止输入**是语义关键——每次文档变化重置，
+ * 连续打字期间不写（避免半句内容触发一串写入）；2s 是「短暂停顿不打扰、长停顿已备份」
+ * 的折中，与自动保存移除前的窗口值等价（那时也是「停止输入 2s 后内容才离开内存」，只是
+ * 目的地从 vault 换成恢复目录）。M149 起每个标签各有一份该定时器，互不重置。 */
+export const RECOVERY_DEBOUNCE_MS = 2000;
 
 /** 备份元数据里没有 CAS 基准（老格式备份 / 元数据读取失败）时用的哨兵：它不等于
  *  任何磁盘 revision，随后的保存必定按 CAS 报冲突，用户必须显式处置——宁可多一次
@@ -130,8 +134,16 @@ export interface SaveController {
   /** 手动保存（Cmd+S）：只存**前台**标签；当前文档不可保存而又有修改时必须给出可见
    *  反馈，MUST NOT 静默。 */
   save(): Promise<void>;
-  /** watch 命中已打开文档的处置（M124 分流 + M127 暂停自动保存 + M149 按路径）。 */
+  /** watch 命中已打开文档的处置（M124 分流 + M149 按路径 + M278 自身写盘回声判据）。 */
   handleExternalChange(path: string, kind: FsChangeKind): void;
+  /** 清除某路径的崩溃备份（「关标签时放弃修改」这类不经 dirty 跃迁的放弃动作的出口）。
+   *  dirty 转 clean 的常规路径由本模块自己的订阅覆盖，无须调用方显式调用。 */
+  forgetBackup(path: string): void;
+  /** app 内改名后把按路径键控的状态迁到新键上（**备份生命周期的第五条路径**，r1 评审 P2-2）：
+   *  旧路径的备份作废，磁盘 revision 基准迁到新键（改名不改字节，CAS 依旧有效），仍 dirty
+   *  的会话按新路径立即补一份备份。目录改名由调用方对每个受影响的会话路径各调一次
+   *  （`editor.remapSessionPaths` 返回的路径对逐条喂进来）。 */
+  noteRenamed(from: string, to: string): void;
   /** dirty 清除时整批撤下守卫提示（保存成功 / 重载）。 */
   clearGuardToasts(): void;
   /** 退出/关窗被 dirty 守卫拦截的提示（sticky，属守卫提示族）。 */
@@ -181,15 +193,15 @@ export function createSaveController(deps: SaveControllerDeps): SaveController {
 
   /** 文件打开世代号：兼作装载事务的 requestId（main 的 openFile 用它丢弃迟到的快照）。
    *  保存链路**不用**它做失效判据——判据是「目标路径的标签是否还在」（见 saveDocument），
-   *  否则开一个新标签会把另一个标签在途的自动保存结果误丢。 */
+   *  否则开一个新标签会把另一个标签在途的保存结果误丢。 */
   let serial = 0;
   /** path → 磁盘 revision（CAS 基准）。不可编辑的文件类（image/binary，不进编辑器）不登记。 */
   const revisions = new Map<string, string | undefined>();
   /** 在途保存的路径（原先是单文档的 saveInFlight 布尔）。 */
   const saving = new Set<string>();
-  /** 自动保存暂停原因，按路径：path → {conflict|external|not-found}。任一在场即不自动保存。 */
-  const paused = new Map<string, Set<string>>();
-  /** 自动保存 debounce 定时器，按路径（M149：逐标签独立，切标签不互相重置）。 */
+  /** 崩溃备份 debounce 定时器，按路径（M149：逐标签独立，切标签不互相重置）。
+   *  它是 dirty 内容目前**唯一**的定时写入者，路径键控因此更要紧：错位的代价从
+   *  「写错文件」变成「恢复时给出错路径的内容」。 */
   const timers = new Map<string, number>();
   /** 崩溃备份恢复提示的浮条（换 vault 时整批撤下，避免提示指向旧 vault）。 */
   const recoveryPrompts = new Set<HTMLElement>();
@@ -211,43 +223,52 @@ export function createSaveController(deps: SaveControllerDeps): SaveController {
     return sessionOf(path)?.dirty ?? false;
   }
 
-  /** 暂停自动保存 + 诊断埋点：只在**跃迁**（该路径从无暂停原因到有）时记一条，
-   *  否则暂停期间每 2s 一次 reconcile 会把日志灌满。 */
-  function pauseAutosave(path: string, reason: string): void {
-    const reasons = paused.get(path) ?? new Set<string>();
-    const transition = reasons.size === 0;
-    reasons.add(reason);
-    paused.set(path, reasons);
-    if (transition) logEvent("autosave_paused", { path, reason });
-  }
-
-  /** 暂停态解除（同一文档重新可自动保存）+ 诊断埋点。文档切换 / vault 复位经
-   *  forget 清空暂停集合时**不记**：那是「上一份文档的处置随文档一起作废」，不是自动
-   *  保存恢复——记成 resumed 会误导读日志的人。 */
-  function resumeAutosave(path: string, reason: string): void {
-    const reasons = paused.get(path);
-    if (reasons === undefined) return;
-    paused.delete(path);
-    if (reasons.size > 0) logEvent("autosave_resumed", { path, reason });
-  }
-
   function saveErrorMessage(e: unknown): string {
     if (isCommandError(e)) return SAVE_ERROR_HINTS[e.code] ?? `保存失败：${e.message}`;
     return `保存失败：${errorMessage(e)}`;
   }
 
-  function cancelReconcile(path: string): void {
+  /** 取消该路径待写的崩溃备份定时器（切文件 / 重新打开 / 内容再变时调用）。 */
+  function cancelBackupTimer(path: string): void {
     const timer = timers.get(path);
     if (timer === undefined) return;
     window.clearTimeout(timer);
     timers.delete(path);
   }
 
-  function cancelScheduledState(path: string): void {
-    // 直接删而不过 resumeAutosave：这里的解除是「上一份文档的处置随文档一起作废」
-    //（切文件 / 切 vault），不是自动保存对当前文档恢复可用，不该记 resumed。
-    paused.delete(path);
-    cancelReconcile(path);
+  /** 清除某路径的崩溃备份：幂等、失败只作罢（备份的清理不得反过来打断编辑路径）。
+   *  「恢复提示的丢弃动作」另有一条带 toast 的同族函数（discardBackup），别混。 */
+  function forgetBackup(path: string): void {
+    void recoveryDiscard(path).catch(() => {});
+  }
+
+  /** app 内改名（菜单改名，M244）后把按路径键控的状态迁到新键上——备份生命周期的**第五条**
+   *  路径（r1 评审 P2-2）。前四条（保存成功 / 撤销回基线 / 关标签放弃 / 切 vault 放弃）清的都是
+   *  **当前路径**的备份，而改名换的正是这个键：不迁的话，dirty 文档的那份备份会留在旧路径上成
+   *  孤儿——随后在新路径上「保存成功」或「放弃修改」清的都是新路径，旧路径那份要到下次启动才
+   *  以「发现未保存的崩溃备份」出现，而它指向的文件已经不存在（「恢复内容」打不开，只有
+   *  「丢弃备份」能清）。M278 之前备份只在冲突待决时罕有落盘、这个洞极窄；备份改成「每次停顿
+   *  满窗口就写一份」之后，每一次 app 内改名都会踩到它。
+   *
+   *  基准一并迁移：改名不改字节（M244 的口径），CAS 基准因此仍然有效，而它在按路径键控的表里
+   *  ——不迁的话新路径会落进 `saveBaseline` 的 null 分支，文档此后不可保存（⌘S 只会给
+   *  「尚未可保存（未登记磁盘版本）」），直到重新打开该文件。
+   *
+   *  目标路径已有备份时的取舍：先清旧路径、再按新路径写一份（`recovery_backup` 是覆盖式写入，
+   *  同一 (vault, 相对路径) 只留最新一份）。**以新写为准**是这里唯一的保守口径——目标路径若真
+   *  有残留备份，那也是一份指向不存在 / 已被改名的文件的陈旧内容，而被改名会话的内存缓冲是此刻
+   *  最新的那一份。 */
+  function noteRenamed(from: string, to: string): void {
+    if (from === to) return;
+    if (revisions.has(from)) {
+      revisions.set(to, revisions.get(from));
+      revisions.delete(from);
+    }
+    cancelBackupTimer(from); // 旧键的待写定时器随键一起作废（否则它到期后又落回旧路径）
+    forgetBackup(from);
+    const session = sessionOf(to);
+    if (session === undefined || !session.dirty) return;
+    void backupDirty(to); // 立即补一份：不留「旧备份已清、下次键入才有新备份」的空窗
   }
 
   // ---------------------------------------------------------------------------
@@ -319,14 +340,19 @@ export function createSaveController(deps: SaveControllerDeps): SaveController {
 
   function noteOpened(path: string, revision: string | undefined): void {
     revisions.set(path, revision);
-    cancelScheduledState(path);
+    cancelBackupTimer(path);
   }
 
   function noteVaultReset(): void {
     ++serial;
+    // vault 复位会把全部标签一起作废，被放弃的 dirty 内容随之一并作废——它们的备份同步
+    // 清除，否则下次启动会追问「要不要恢复你刚明确放弃的内容」（切 vault 的
+    // 「放弃修改并切换」出口正走这条路径）。
+    for (const session of editor.sessions()) {
+      if (session.path !== undefined && session.dirty) forgetBackup(session.path);
+    }
     revisions.clear();
     saving.clear();
-    paused.clear();
     for (const timer of timers.values()) window.clearTimeout(timer);
     timers.clear();
     removeRecoveryPrompts();
@@ -353,7 +379,7 @@ export function createSaveController(deps: SaveControllerDeps): SaveController {
    *  所以真正可达的只有两种——没有打开文件（空态 / 新建文档），与「有路径但尚未读到快照 /
    *  未登记基准」。前者的文案说「修改仍在编辑器内」，后者说「尚未可保存」。旧的
    *  「Lumir 只保存 Markdown 文件」随非 md 可保存而废止（它现在是一句假话）。
-   *  自动保存路径不调用本函数（每 2s 一次会砸提示），其跳过口径见 reconcile。 */
+   *  备份路径不调用本函数（每 2s 一次会砸提示），其跳过口径见 backupDirty。 */
   function reportUnsaveable(path: string | undefined): void {
     toast(
       path === undefined
@@ -368,11 +394,12 @@ export function createSaveController(deps: SaveControllerDeps): SaveController {
     return `「${path}」`;
   }
 
-  /** 保存指定文档；返回「内存内容是否已完全落盘（dirty 已清除）」。 */
-  async function saveDocument(auto: boolean, path: string): Promise<boolean> {
+  /** 保存指定文档；返回「内存内容是否已完全落盘（dirty 已清除）」。唯一调用面是用户的
+   *  显式动作（`⌘S` / 冲突处置的强制覆盖 / 切换 vault 的「保存并切换」）。 */
+  async function saveDocument(path: string): Promise<boolean> {
     const expectedRevision = saveBaseline(path);
     if (expectedRevision === null) {
-      if (!auto && isDirty(path)) reportUnsaveable(path);
+      if (isDirty(path)) reportUnsaveable(path);
       return false;
     }
     if (saving.has(path) || !isDirty(path)) return false;
@@ -387,26 +414,18 @@ export function createSaveController(deps: SaveControllerDeps): SaveController {
       revisions.set(path, revision);
       if (contentOf(path) === content) {
         editor.markCleanOf(path, content);
-        resumeAutosave(path, "saved"); // 已与磁盘同步：冲突/外部修改待决状态一并解除
-        void recoveryDiscard(path).catch(() => {}); // 保存成功即清除崩溃备份
-        toast(auto ? "已自动保存" : "已保存", [], false, "success");
+        forgetBackup(path); // 保存成功即清除崩溃备份（幂等；dirty 转 clean 的订阅亦会清）
+        toast("已保存", [], false, "success");
         return true;
       }
-      toast(
-        auto ? "已自动保存当前快照，仍有未保存修改" : "已保存当前快照，仍有未保存修改",
-        [],
-        false,
-        "success",
-      );
+      toast("已保存当前快照，仍有未保存修改", [], false, "success");
       return false;
     } catch (e) {
       if (isCommandError(e) && e.code === "document_conflict") {
         // CAS 失败：重试必败（revision 已变），纯文案会把用户修改锁死在内存——
         // dirtyGuard 与退出守卫又堵死切换/退出，必须给逃生口（M124）。
-        pauseAutosave(path, "conflict");
         showConflictPrompt(path);
       } else if (isCommandError(e) && e.code === "fs_not_found") {
-        pauseAutosave(path, "not-found");
         showNotFoundPrompt(path);
       } else {
         toast(saveErrorWithPath(e, path));
@@ -430,7 +449,7 @@ export function createSaveController(deps: SaveControllerDeps): SaveController {
     for (const session of editor.sessions()) {
       const path = session.path;
       if (path === undefined || !session.dirty) continue;
-      await saveDocument(false, path);
+      await saveDocument(path);
     }
     return !editor.sessions().some((session) => session.path !== undefined && session.dirty);
   }
@@ -476,19 +495,16 @@ export function createSaveController(deps: SaveControllerDeps): SaveController {
       revisions.set(path, revision);
       if (contentOf(path) === content) {
         editor.markCleanOf(path, content);
-        resumeAutosave(path, "force_saved");
-        void recoveryDiscard(path).catch(() => {});
+        forgetBackup(path);
         toast("已强制覆盖保存", [], false, "success");
       } else {
         toast("已强制覆盖保存当前快照，仍有未保存修改", [], false, "success");
       }
     } catch (e) {
       if (isCommandError(e) && e.code === "document_conflict") {
-        pauseAutosave(path, "conflict");
         showConflictPrompt(path);
       } else if (isCommandError(e) && e.code === "fs_not_found") {
         // 冲突处置期间文件又被外部删除：同样走另存出口。
-        pauseAutosave(path, "not-found");
         showNotFoundPrompt(path);
       } else {
         toast(saveErrorWithPath(e, path));
@@ -532,9 +548,8 @@ export function createSaveController(deps: SaveControllerDeps): SaveController {
         // 缓冲内容已落到新文件，本地 dirty 处置完毕——否则随后的就地替换会把
         // 新文件标成「已修改」或让旧标签停在已删除文件上。
         editor.markCleanOf(fromPath, content);
-        resumeAutosave(fromPath, "saved_as_new");
         // 旧路径的备份随内容迁走（旧文件已被外部删除，其备份不再可恢复）。
-        void recoveryDiscard(fromPath).catch(() => {});
+        forgetBackup(fromPath);
         await deps.openFile(created, "current");
         toast(`已另存为：${created}`, [], false, "success");
         return;
@@ -556,12 +571,13 @@ export function createSaveController(deps: SaveControllerDeps): SaveController {
    *  调用方自行承担处置语义（冲突放弃 / watch 外部修改）。
    *  onlyIfChanged：revision 未变即跳过（自身保存也触发 watch Modified，避免每次
    *  保存后重载闪烁、光标复位）；应用前发现用户已开始输入（dirty）也放弃。
+   *  snapshot：调用方（watch 分流）已经为回声判据读过一次磁盘时直接复用，不重复读。
    *
    *  M149：目标可以是**后台标签**（多标签下外部修改会命中非前台文档）。后台标签的就地
    *  换代由 editor.reloadSession 完成，不抢前台、不重置用户正在看的那一份的滚动位置。 */
   async function reloadDocument(
     path: string,
-    opts: { onlyIfChanged?: boolean } = {},
+    opts: { onlyIfChanged?: boolean; snapshot?: ReadSnapshot } = {},
   ): Promise<boolean> {
     if (sessionOf(path) === undefined || saveBaseline(path) === null) return false;
     // 覆盖层（暂不支持预览 / 读取错误）在场时前台文档不在编辑态，重载会把它藏起来。
@@ -569,7 +585,7 @@ export function createSaveController(deps: SaveControllerDeps): SaveController {
     if (path === displayedPath() && !deps.isNoticeHidden()) return false;
     const request = serial;
     try {
-      const snapshot = await fsReadSnapshot(path);
+      const snapshot = opts.snapshot ?? (await fsReadSnapshot(path));
       if (request !== serial || sessionOf(path) === undefined) return false;
       if (opts.onlyIfChanged && (snapshot.revision === revisions.get(path) || isDirty(path))) {
         return false;
@@ -589,10 +605,10 @@ export function createSaveController(deps: SaveControllerDeps): SaveController {
     }
   }
 
-  /** 重新载入（放弃我的修改）：冲突处置与 watch 重载共用的入口，给出完成反馈。 */
+  /** 重新载入（放弃我的修改）：冲突处置与 watch 重载共用的入口，给出完成反馈。
+   *  载入即「内存内容回到磁盘基准」——该路径的备份由 dirty 转 clean 的订阅清掉。 */
   async function discardAndReload(path: string): Promise<void> {
     if (await reloadDocument(path)) {
-      resumeAutosave(path, "reloaded"); // 内容已回到磁盘版本，暂停态随冲突一并解除
       toast(`${nameOf(path)}已重新载入磁盘内容`, [], false, "success");
     }
   }
@@ -601,25 +617,66 @@ export function createSaveController(deps: SaveControllerDeps): SaveController {
   // watch 命中已打开文档
   // ---------------------------------------------------------------------------
 
-  /** 分流（M124 + M127 + M149）：保存进行中的批次跳过——自身保存也产生事件，由
-   *  reloadDocument 的 revision 比对丢弃；外部删除无法重载，只提示内容仍保留；
+  /** 分流（M124 + M149 + M278）：保存进行中的批次跳过（快速路径，但不再是唯一防线）；
+   *  外部删除无法重载，只提示内容仍保留；**自身写盘回声**按 revision 判据丢弃；
    *  dirty 时把选择权交给用户（sticky 浮条而非 modal，不打断打字）；未 dirty 自动
    *  重载并提示。判据是「已打开文档」——editable-non-md-files 后 md 与非 md 文本一视同仁
    *（watch 事件本就不按扩展名过滤：只要它有会话可丢内容，就要处置）。
-   *  M127：dirty 分流一律暂停自动保存——磁盘已有更新版本，自动保存不能硬冲 CAS。
    *  M149：判据与提示一律带路径——多标签下同一个浮条区要能说清是哪一份文档，
    *  且**后台标签同样处置**（旧实现只查 displayedPath，后台标签的变更会漏报）。 */
   function handleExternalChange(path: string, kind: FsChangeKind): void {
+    void dispatchExternalChange(path, kind);
+  }
+
+  /** 判据本体（异步：回声判定要读一次磁盘 revision）。
+   *
+   *  **自身写盘的回声**（M278，change remove-autosave 的 D2）：一次保存与它产生的
+   *  FSEvents 事件之间有一二百毫秒的窗口（M266 实测记下相隔 177ms 的一对诊断日志），
+   *  窗口内用户若已重新键入，缓冲区就是 dirty 的。旧判据「保存进行中」（saving.has）
+   *  在保存结束那一刻即撤，而 clean 分支的 revision 比对（reloadDocument 的
+   *  onlyIfChanged）又只作用于干净文档——dirty 分支不做任何比对，于是自己的写入被报成
+   *  「检测到外部修改」，它给出的「重载（放弃我的修改）」会让用户丢掉刚敲进去的内容。
+   *
+   *  现行判据与 dirty 无关：读一次磁盘 revision 与会话已知基准比对，一致即回声，直接
+   *  返回、不产生任何用户可见处置；只有不一致（磁盘确有第三方写入）才进入 dirty / clean
+   *  分流。读取失败（无后端 / IO 错）按「不是回声」降级——宁可多提示一次，也不静默忽略
+   *  一次真实的外部修改。
+   *
+   *  这一层的读取代替了 clean 分支原本那次读（见 reloadDocument 的 snapshot 参数），
+   *  净增的 IO 只有「读失败」这一条降级路径。
+   *
+   *  **基准取在读取之后**（r1 评审 P2-1）：读在途期间用户完全可能再按一次 ⌘S——保存 #2
+   *  完成会把基准推进到 R2，而它自己的回声（携带 R1 的那条事件）正是在读这条链上。若基准
+   *  取在 await 之前，比对就成了「R2 === R1」不成立 ⇒ 判成外部修改 ⇒ dirty 分支弹 sticky
+   *  「检测到外部修改」（带「重载（放弃我的修改）」这个破坏性动作），而磁盘上根本没有第三方
+   *  写入——正是 D2 要消灭的那种误判。取最新基准才是正确口径，clean 分支的
+   *  `onlyIfChanged` 复查用的也是最新基准（那里反证了这条）。
+   *
+   *  反向交错（读返回的是写入前的 R1、而基准已到 R2）不在此列：那份 snapshot 会被 clean
+   *  分支复用，把 R1 的内容重载进缓冲；它由保存 #2 自己产生的下一条 watch 事件自愈，属
+   *  「复用这次读取换一倍 IO」的固有代价，已在 `docs/backlog.md` 记账。 */
+  async function dispatchExternalChange(path: string, kind: FsChangeKind): Promise<void> {
     if (saving.has(path) || sessionOf(path) === undefined) return;
     if (kind === "deleted") {
       logExternalChange(path, kind);
-      pauseAutosave(path, "not-found");
       toast(`${nameOf(path)}当前文件已被外部删除；编辑器中的内容未丢失`, [], true);
       return;
     }
+    let snapshot: ReadSnapshot | null = null;
+    try {
+      snapshot = await fsReadSnapshot(path);
+    } catch {
+      snapshot = null;
+    }
+    // 读取期间文档可能被关掉 / vault 被切走：处置对象已不在，丢弃。
+    if (sessionOf(path) === undefined) return;
+    // 基准与 snapshot 同一条时间线取（读在途期间的保存必须算进来，见上面两段）。
+    const known = revisions.get(path);
+    if (snapshot !== null && known !== undefined && snapshot.revision === known) {
+      return; // 自身的写入回声：磁盘内容与已知基准一致，没有任何外部写入
+    }
     if (isDirty(path)) {
       logExternalChange(path, kind);
-      pauseAutosave(path, "external");
       toast(
         `检测到外部修改：${nameOf(path)}`,
         [
@@ -629,7 +686,10 @@ export function createSaveController(deps: SaveControllerDeps): SaveController {
         true,
       );
     } else {
-      void reloadDocument(path, { onlyIfChanged: true }).then((reloaded) => {
+      void reloadDocument(path, {
+        onlyIfChanged: true,
+        ...(snapshot === null ? {} : { snapshot }),
+      }).then((reloaded) => {
         if (!reloaded) return; // 回声：revision 与本次保存的结果一致，磁盘没有变化
         logExternalChange(path, kind);
         toast(`${nameOf(path)}检测到外部修改，已自动重载`);
@@ -646,29 +706,19 @@ export function createSaveController(deps: SaveControllerDeps): SaveController {
   }
 
   // ---------------------------------------------------------------------------
-  // 自动保存（停止输入 debounce）+ 崩溃备份
+  // 崩溃备份（自有 debounce）
   // ---------------------------------------------------------------------------
 
+  /** 文档内容变化 → 排期一次崩溃备份。**停止输入**是语义关键：每次变化重置窗口，
+   *  连续输入期间不写（本条承接被移除的「自动保存与暂停边界」里的同名不变量，约束对象
+   *  由落盘改为备份写入）。 */
   function onDocChanged(path: string | undefined): void {
     if (path === undefined || !isDirty(path)) return; // 装载/复位导致的文档替换不排期
-    cancelReconcile(path);
+    cancelBackupTimer(path);
     timers.set(path, window.setTimeout(() => {
       timers.delete(path);
-      void reconcile(path);
-    }, AUTOSAVE_DEBOUNCE_MS));
-  }
-
-  /** debounce 到期：自动保存一次；无法保存（暂停 / 未完全落盘）时把 dirty 内容
-   * 落崩溃备份——进程崩溃 / 强杀后下次启动仍有内容可恢复。
-   * 无落盘基准（saveBaseline 为 null：不可编辑文件类 / 未登记 revision）直接返回：这类
-   * 内容没有任何保存路径能写回磁盘，备份只会在下次启动弹出一个无法闭环的恢复提示。 */
-  async function reconcile(path: string): Promise<void> {
-    if (saveBaseline(path) === null || !isDirty(path)) return;
-    if ((paused.get(path)?.size ?? 0) > 0 || saving.has(path)) {
-      await backupDirty(path);
-      return;
-    }
-    if (!(await saveDocument(true, path))) await backupDirty(path);
+      void backupDirty(path);
+    }, RECOVERY_DEBOUNCE_MS));
   }
 
   /** 崩溃备份：写失败 / 无后端（纯浏览器预览桩）只作罢，不打断编辑。
@@ -762,16 +812,30 @@ export function createSaveController(deps: SaveControllerDeps): SaveController {
     }
   }
 
-  // 文档内容变化 → 自动保存 debounce。M149 起由内核的 onDocChanged 回调提供（原先
+  // 文档内容变化 → 崩溃备份 debounce。M149 起由内核的 onDocChanged 回调提供（原先
   // save-controller 自己往 view 上 appendConfig 一个 updateListener，那条路径只作用于
-  // 当时那一个 state——切标签后自动保存会静默失效，见 editor.ts 的 appendedExtensions）。
+  // 当时那一个 state——切标签后备份排期会静默失效，见 editor.ts 的 appendedExtensions）。
   // 回调不带参数，路径取前台标签：只有前台标签能被编辑（后台标签收到的是程序化重载，
-  // 那条路径不排期自动保存——它本来就是「与磁盘同步」的动作）。
+  // 那条路径不排期备份——它本来就是「与磁盘同步」的动作）。
   //
   // 标签被关闭时不需要额外的清理钩子：noteOpened（重新打开同一路径时）会把该路径的
-  // 暂停态、定时器与 revision 一并重置，而失效的定时器到期后 reconcile 会因为
-  // saveBaseline 返回 null 直接返回——不会写错文档。
+  // 定时器与 revision 一并重置，而失效的定时器到期后 backupDirty 会因为 saveBaseline
+  // 返回 null 直接返回——不会写错文档。
   editor.onDocChanged(() => onDocChanged(editor.activeSession().path));
+
+  // 备份的生命周期与 dirty 对齐（M278）：逐标签的 dirty 由 true 转 false ⇒ 该路径的备份
+  // 作废——备份的语义是「有一份未落盘的内容」，为 false 时它没有意义。这一个落点覆盖
+  // 撤销 / 重做回到基线、重新载入（放弃我的修改），与三条保存路径（保存成功 / 强制覆盖 /
+  // 另存为新文件，它们另在动作处显式清除，重复清除是幂等的空操作）。
+  // 不经这里的三条路径各自显式处理：关标签放弃（tabs.ts 经 forgetBackup）、
+  // 切 vault 放弃（noteVaultReset 批量清），以及**改名迁移**（noteRenamed——它换的是键本身，
+  // 不只是清一份备份）。
+  editor.onSessionDirty((session, dirty) => {
+    if (dirty) return;
+    const path = session.path;
+    if (path === undefined) return;
+    forgetBackup(path);
+  });
 
   return {
     displayedPath,
@@ -788,9 +852,11 @@ export function createSaveController(deps: SaveControllerDeps): SaveController {
         if (editor.isDirty()) reportUnsaveable(path);
         return;
       }
-      await saveDocument(false, path);
+      await saveDocument(path);
     },
     handleExternalChange,
+    forgetBackup,
+    noteRenamed,
     clearGuardToasts,
     showQuitBlocked,
     checkRecovery,

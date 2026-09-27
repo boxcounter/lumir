@@ -32,7 +32,7 @@ steps:
     key: "cmd+s"
     expect:
       - shot: 保存之后
-      - label: 未保存标记撤下（手动保存或已到期的自动保存都已闭环——本步只判「不再 dirty」，不判是哪条路径写的）
+      - label: 未保存标记撤下（写盘只由用户的显式动作触发；本步只判「不再 dirty」，不判是哪条路径写的）
         ax: { not: "（未保存）" }
       - label: 磁盘上确有这次输入（固定下来的内容真的落盘了）
         file: { path: tabs-a.md, has: "APIN" }

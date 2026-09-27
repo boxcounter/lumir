@@ -29,7 +29,7 @@ AI-only 模式下（ADR 0004）「待真机验收」清单只增不减，全部�
 | 5 cell 内公式渲染 + 点击编辑 | 渲染与点击可脚本化；手感 Alex |
 | 6 Callout 显露、cell 内 `$$`、表格宽度 | 显露/渲染可脚本化；宽度手感 Alex |
 | 7 M124 三条恢复路径 | 行为可脚本化；WKWebView 手感 Alex |
-| 8 M127 自动保存/暂停/崩溃恢复双动作 | 可脚本化（磁盘轮询断言） |
+| 8 M127 崩溃备份与恢复双动作（自动保存已于 M278 移除） | 可脚本化（磁盘轮询断言） |
 | 9 Emacs 键位全套、⌘Z 真机路径、[keys] 实操、⌘/ 面板 | 行为可脚本化（⌘Z 是否被视图层级吃掉可判定）；手感 Alex |
 
 **与现有门禁的分工**：tests/visual 守布局/配色/间距像素（chromium 近似、CI 强制）；本套件守**真实 WKWebView 下的行为正确性**（本地 agent 执行、不进 CI v0）。两者不重叠。
@@ -77,6 +77,6 @@ AI-only 模式下（ADR 0004）「待真机验收」清单只增不减，全部�
 | 5 cell 内公式渲染 + 点击编辑 | `05-cell-math`（渲染层验；点击进编辑不可回读） |
 | 6 Callout 显露 / cell 内 `$$` / 表格宽度 | `06-callout-and-width`（渲染层验；宽度只留证据） |
 | 7 M124 恢复路径 | `07-recovery-paths`、`07b-recovery-saveas`、`07c-external-reload`（三条全验） |
-| 8 M127 自动保存链路 | `08-autosave`、`08b-autosave-pause`、`08c-crash-recovery`、`08d-crash-discard`、`08e-force-overwrite`（四子行为全验） |
+| 8 M127 崩溃备份链路（M278 起不再含自动保存） | `08c-crash-recovery`、`08d-crash-discard`、`08e-force-overwrite`（三条全验）。`08-autosave` 与 `08b-autosave-pause` 断言的是**已移除**的自动保存（磁盘落盘、冲突期暂停），随 change `remove-autosave`（M278）一并删除；「编辑内容不丢」的覆盖由 `43`/`41`/`42`/`46` 的显式保存断言承接 |
 | 9 Emacs 键位 / ⌘Z 真机路径 / ⌘/ 面板 / `[keys]` | `09-emacs-keys`、`09b-keys-config`（行为全验） |
 | 4 表头双击选中手感 | 不下沉（Alex） |

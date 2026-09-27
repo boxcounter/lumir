@@ -143,6 +143,7 @@ type ImplementedEditor = Pick<
   | "isDirty"
   | "markCleanOf"
   | "onDocChanged"
+  | "onSessionDirty"
   | "reloadSession"
   | "activateSession"
   | "closeSession"
@@ -155,10 +156,13 @@ export interface EditorDouble {
    *  「不可编辑文件类」的会话（image/binary 形态——生产中它们不进编辑器，这里只为覆盖
    *  saveBaseline 的不可保存分支）。 */
   open(path: string | undefined, content: string, options?: { mode?: EditorMode; editable?: boolean }): EditorSession;
-  /** 改内容：换 state、按 cleanDoc 重算 dirty，并触发 onDocChanged（自动保存排期靠它）。 */
+  /** 改内容：换 state、按 cleanDoc 重算 dirty，并触发 onDocChanged（崩溃备份排期靠它）。 */
   edit(path: string | undefined, content: string): void;
   activate(path: string | undefined): void;
   close(path: string | undefined): void;
+  /** 改名（真内核 `remapSessionPaths` 的替身）：**只换路径**——内容、dirty 与基准全不动，
+   *  与 M244「改名不改字节」的口径一致。保存链路侧的迁移由 `controller.noteRenamed` 承担。 */
+  rename(from: string, to: string): void;
   /** reloadSession 的调用记录（外部修改 / 强制重载链路的断言）。 */
   reloads: Array<{ path: string | undefined; content: string }>;
 }
@@ -169,9 +173,18 @@ export function createEditorDouble(): EditorDouble {
   let active: EditorSession | undefined;
   let nextId = 1;
   const listeners = new Set<() => void>();
+  /** 逐会话的 dirty 跃迁订阅者（真编辑器 onSessionDirty 的替身）：只在值真的变化时通知。 */
+  const sessionDirtyListeners = new Set<(session: EditorSession, dirty: boolean) => void>();
 
   const find = (path: string | undefined) => list.find((session) => session.path === path);
   const stateOf = (content: string) => EditorState.create({ doc: content });
+
+  /** 与真编辑器同口径：值真变才广播（早返回），保存链路据此对齐备份生命周期。 */
+  function setDirty(session: EditorSession, next: boolean): void {
+    if (session.dirty === next) return;
+    session.dirty = next;
+    for (const listener of sessionDirtyListeners) listener(session, next);
+  }
 
   const implemented: ImplementedEditor = {
     sessionForPath: (path) => find(path),
@@ -182,11 +195,15 @@ export function createEditorDouble(): EditorDouble {
       const session = find(path);
       if (session === undefined) return;
       session.cleanDoc = content;
-      session.dirty = session.state.doc.toString() !== content;
+      setDirty(session, session.state.doc.toString() !== content);
     },
     onDocChanged: (listener) => {
       listeners.add(listener);
       return () => void listeners.delete(listener);
+    },
+    onSessionDirty: (listener) => {
+      sessionDirtyListeners.add(listener);
+      return () => void sessionDirtyListeners.delete(listener);
     },
     reloadSession: (session, doc, path) => {
       session.path = path;
@@ -194,7 +211,7 @@ export function createEditorDouble(): EditorDouble {
       session.editable = isEditablePath(path);
       session.state = stateOf(doc);
       session.cleanDoc = doc;
-      session.dirty = false;
+      setDirty(session, false);
       reloads.push({ path, content: doc });
     },
     activateSession: (session) => void (active = session),
@@ -233,7 +250,7 @@ export function createEditorDouble(): EditorDouble {
       const session = find(path);
       if (session === undefined) throw new Error(`edit: 没有打开 ${path}`);
       session.state = stateOf(content);
-      session.dirty = content !== session.cleanDoc;
+      setDirty(session, content !== session.cleanDoc);
       for (const listener of listeners) listener();
     },
     activate(path) {
@@ -244,6 +261,12 @@ export function createEditorDouble(): EditorDouble {
     close(path) {
       const session = find(path);
       if (session !== undefined) implemented.closeSession(session);
+    },
+    rename(from, to) {
+      const session = find(from);
+      if (session === undefined) throw new Error(`rename: 没有打开 ${from}`);
+      session.path = to;
+      session.editable = isEditablePath(to);
     },
   };
 }

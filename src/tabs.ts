@@ -122,6 +122,9 @@ export interface TabsDeps {
   ) => void;
   /** 保存**前台**文档（main 的 save.save）；关标签确认里的「保存并关闭」用它。 */
   saveCurrent: () => Promise<void>;
+  /** 清除某路径的崩溃备份（main 的 save.forgetBackup）：「放弃修改并关闭」把会话直接摘掉，
+   *  没有 dirty 转 clean 的跃迁可挂，备份只能由这条出口显式清除（M278）。 */
+  forgetBackup: (path: string) => void;
   /** wikilink 解析缓存整批失效（from 基准随前台文档而变，能力在 src/link-follow.ts）。 */
   invalidateResolve: () => void;
   /** 撤下「暂不支持预览」覆盖层（切换 / 关闭标签后）。 */
@@ -147,8 +150,17 @@ export interface TabsHandle {
 }
 
 export function createTabs(deps: TabsDeps): TabsHandle {
-  const { editor, mount, overlayMount, toast, saveCurrent, invalidateResolve, showEditor, syncActiveDocument } =
-    deps;
+  const {
+    editor,
+    mount,
+    overlayMount,
+    toast,
+    saveCurrent,
+    forgetBackup,
+    invalidateResolve,
+    showEditor,
+    syncActiveDocument,
+  } = deps;
 
   // 右键菜单本体（M254）：菜单与确认框的界面形态在本模块，动作也在这里——与文件树菜单的
   // 分工不同（那边的动作在装配层，因为它要 vault 根、后端命令与树的内联编辑；标签的关闭
@@ -344,6 +356,9 @@ export function createTabs(deps: TabsDeps): TabsHandle {
         {
           label: "放弃修改并关闭",
           run: () => {
+            // 放弃修改 = 内存内容不再要了：该路径的崩溃备份同步作废，否则下次启动会追问
+            // 要不要恢复一份用户刚明确丢弃的内容（备份的生命周期与 dirty 对齐，M278）。
+            forgetBackup(path);
             closeTabNow(session);
             settle(true);
           },

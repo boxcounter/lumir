@@ -5,9 +5,10 @@ import { readDocument } from "./parity-checks";
 // M131 键位统一层的行为回归：⌘ / ⌃ 拆分、⌃A 语义变更（行首）、撤销 / 重做、
 // 保存键唯一、以及作用域（global / editor 各自不越界、widget 焦点委托同一命令层）。
 //
-// 时间口径：自动保存 debounce 为 2s（AUTOSAVE_DEBOUNCE_MS）。需要断言 dirty 的场景
-// 一律用「没有打开文件」的编辑器（saveBaseline 为 null → 自动保存与备份都不插手），
-// 或者把「输入 → 按键」压在同一窗口内完成，避免自动保存把 dirty 提前清掉。
+// 时间口径（M278 起）：写盘只由用户的显式动作触发（自动保存已整条移除），dirty 不会被
+// 任何定时器清掉；dirty 内容唯一的定时写入是崩溃备份（debounce 2s，RECOVERY_DEBOUNCE_MS），
+// 它只写配置目录下的恢复目录、不动 vault 内的文件。需要断言 dirty / 未落盘的场景因此不会
+// 被时序带偏；「没有打开文件」的编辑器仍是最稳的落点（saveBaseline 为 null → 备份也不插手）。
 
 const DOC = "# 标题\n\n第一段内容。\n第二行内容。\n\n末段。\n";
 // 行号：1=标题 2=空 3=第一段 4=第二行 5=空 6=末段
@@ -283,7 +284,7 @@ test("⌘S 唯一保存：⌃S 不再触发保存（D3）", async ({ page }) => 
 
   // ⌃S 解绑（预留给 isearch）：既不得写入磁盘，也不得清 dirty
   await page.keyboard.press("Control+s");
-  await page.waitForTimeout(400); // 远小于 2s 自动保存 debounce
+  await page.waitForTimeout(400); // 留一拍；写盘只由 ⌘S 触发，没有别的路径会写这个文件
   expect(await page.evaluate(() => (window as unknown as { __fileText(p: string): string | undefined }).__fileText("save.md"))).toBe(original);
   await expect(page.locator(".lumir-toast", { hasText: /^✓已保存$/ })).toHaveCount(0);
   await expect(unsavedMark(page)).toBeVisible();

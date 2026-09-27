@@ -99,9 +99,12 @@ steps:
       - label: dirty 出现
         ax: { has: "（未保存）" }
 
-  - name: 等自动保存落盘
+  - name: 按 ⌘S 落盘（⌘S 发两次换一次丢键的容错）
+    do: keys
+    keys: ["cmd+s", "cmd+s"]
+  - name: 落盘后核对
     do: sleep
-    ms: 2600
+    ms: 1200
     expect:
       - label: 文本类照常落盘（护栏只挡二进制与非 UTF-8）
         file: { path: notes.txt, has: "GUARD241" }

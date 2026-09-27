@@ -153,7 +153,7 @@ test("[keys] 解绑：⌘S 不再保存（键位让回原生路径）", async ({
   await setSelection(page, doc.length);
   await page.keyboard.type("x");
   await page.keyboard.press("Meta+s");
-  await page.waitForTimeout(400); // 远小于 2s 自动保存 debounce
+  await page.waitForTimeout(400); // 留一拍；写盘只由 ⌘S 触发，没有别的路径会写这个文件
   expect(
     await page.evaluate(() => (window as unknown as { __fileText(p: string): string | undefined }).__fileText("u.md")),
     "解绑后 ⌘S 不得再触发保存",

@@ -1,12 +1,12 @@
 // src/save-controller.ts 的状态机单测：dirty 守卫、保存链路（成功 / 冲突 / 目标被删）、
-// 自动保存 debounce 与崩溃备份、外部修改分流、另存为逃生口、世代号与诊断埋点。
+// 崩溃备份的触发与生命周期、自身写盘回声判据、外部修改分流、另存为逃生口、世代号与诊断埋点。
 //
 // 这些判定此前只能靠浏览器场景间接兜底（228 个用例里只有少数几条覆盖保存链路），
 // 而它们大多与 DOM / 渲染无关——是纯状态迁移（M153）。
 
 import { mock, test } from "node:test";
 import assert from "node:assert/strict";
-import { AUTOSAVE_DEBOUNCE_MS, SAVE_GUARD_TOAST_CLASS, recoveryCopyPath } from "../../src/save-controller.ts";
+import { RECOVERY_DEBOUNCE_MS, SAVE_GUARD_TOAST_CLASS, recoveryCopyPath } from "../../src/save-controller.ts";
 import { commandError, createRig } from "./harness.ts";
 import type { Rig } from "./harness.ts";
 
@@ -16,7 +16,7 @@ const flush = async () => {
   await new Promise((resolve) => setImmediate(resolve));
 };
 
-/** 收尾：清掉自动保存排期的定时器（否则测试结束后它还会跑一次真的 reconcile）。 */
+/** 收尾：清掉崩溃备份排期的定时器（否则测试结束后它还会跑一次真的备份写入）。 */
 const stopTimers = (rig: Rig) => rig.controller.noteVaultReset();
 
 test("guard：无路径 / 不可编辑文件类 / 未登记基准 / 有基准，各给出口，clean 直接放行", () => {
@@ -151,7 +151,11 @@ test("save：成功后 revision 前进、dirty 清除、崩溃备份作废", asy
   const session = rig.editor.handle.sessionForPath("a.md")!;
   assert.equal(session.dirty, false);
   assert.equal(session.cleanDoc, "# A 改");
-  assert.equal(rig.backend.countOf("recovery_discard"), 1, "保存成功即作废崩溃备份");
+  assert.deepEqual(
+    [...new Set(rig.backend.argsOf("recovery_discard").map((args) => args.path))],
+    ["a.md"],
+    "保存成功即作废崩溃备份（动作处显式清除 + dirty 转 clean 的订阅各清一次，幂等）",
+  );
   assert.ok(rig.toasts.texts().includes("已保存"));
 
   // 已 clean：再按 ⌘S 不发写入
@@ -194,7 +198,7 @@ test("save：不可保存的 dirty 文档按 ⌘S 必须给人话反馈，不静
   stopTimers(rig);
 });
 
-test("save：冲突给 sticky 恢复提示（放弃 / 强覆），内容留在内存并暂停自动保存", async () => {
+test("save：冲突给 sticky 恢复提示（放弃 / 强覆），内容留在内存且不落盘", async () => {
   const rig = createRig();
   rig.backend.handle("document_save", () => {
     throw commandError("document_conflict", "磁盘上的版本更新");
@@ -212,40 +216,39 @@ test("save：冲突给 sticky 恢复提示（放弃 / 强覆），内容留在�
   );
   assert.match(prompt.text, /保存冲突/);
   assert.equal(rig.editor.handle.sessionForPath("a.md")!.dirty, true, "失败不得丢内容");
-  assert.ok(
-    rig.backend.logEvents.some(
-      (record) => record.event === "autosave_paused" && record.fields.reason === "conflict",
-    ),
-  );
+  assert.equal(rig.backend.argsOf("document_save").at(-1)!.expected_revision, "rev-1");
   stopTimers(rig);
 });
 
-test("自动保存：停止输入满 debounce 才落盘", async () => {
+test("崩溃备份：停止输入满 debounce 才写，连续输入期间不写（无任何自动落盘）", async () => {
   mock.timers.enable({ apis: ["setTimeout"] });
   try {
     const rig = createRig();
-    rig.backend.handle("document_save", () => "rev-2");
     rig.editor.open("a.md", "# A");
     rig.controller.noteOpened("a.md", "rev-1");
     rig.editor.edit("a.md", "# A 1");
-    rig.editor.edit("a.md", "# A 2");
 
-    mock.timers.tick(AUTOSAVE_DEBOUNCE_MS - 1);
-    assert.equal(rig.backend.countOf("document_save"), 0, "连续输入期间不落盘");
+    mock.timers.tick(RECOVERY_DEBOUNCE_MS - 1);
+    assert.equal(rig.backend.countOf("recovery_backup"), 0, "窗口未到不得写备份");
+    rig.editor.edit("a.md", "# A 2"); // 每次内容变化重置窗口
+    mock.timers.tick(RECOVERY_DEBOUNCE_MS - 1);
+    assert.equal(rig.backend.countOf("recovery_backup"), 0, "连续输入期间不得写备份");
     mock.timers.tick(1);
     await flush();
 
-    assert.equal(rig.backend.countOf("document_save"), 1);
-    assert.equal(rig.backend.argsOf("document_save")[0].content, "# A 2");
-    assert.equal(rig.editor.handle.sessionForPath("a.md")!.dirty, false);
-    assert.ok(rig.toasts.texts().includes("已自动保存"));
+    const backup = rig.backend.argsOf("recovery_backup")[0];
+    assert.equal(backup.path, "a.md");
+    assert.equal(backup.content, "# A 2");
+    assert.equal(backup.base_revision, "rev-1", "备份基准取编辑器已知的磁盘 revision");
+    assert.equal(rig.backend.countOf("document_save"), 0, "备份不得被当作落盘（备份≠保存）");
+    assert.equal(rig.editor.handle.sessionForPath("a.md")!.dirty, true, "备份不清 dirty");
     stopTimers(rig);
   } finally {
     mock.timers.reset();
   }
 });
 
-test("自动保存：冲突暂停期间只写崩溃备份，不硬冲 CAS", async () => {
+test("崩溃备份：冲突之后也不自动重试写盘，dirty 内容只剩备份这一条定时写入", async () => {
   mock.timers.enable({ apis: ["setTimeout"] });
   try {
     const rig = createRig();
@@ -255,27 +258,71 @@ test("自动保存：冲突暂停期间只写崩溃备份，不硬冲 CAS", asyn
     rig.editor.open("a.md", "# A");
     rig.controller.noteOpened("a.md", "rev-1");
     rig.editor.edit("a.md", "# A 改");
-    await rig.controller.save(); // 制造冲突 → 暂停自动保存
+    await rig.controller.save(); // 制造冲突（CAS 已变，重试必败）
     rig.backend.reset();
 
     rig.editor.edit("a.md", "# A 改 2");
-    mock.timers.tick(AUTOSAVE_DEBOUNCE_MS);
+    mock.timers.tick(RECOVERY_DEBOUNCE_MS);
     await flush();
 
-    assert.equal(rig.backend.countOf("document_save"), 0, "暂停期间不得硬冲 CAS");
-    const backup = rig.backend.argsOf("recovery_backup")[0];
-    assert.equal(backup.path, "a.md");
-    assert.equal(backup.content, "# A 改 2");
-    assert.equal(backup.base_revision, "rev-1", "备份基准取编辑器已知的磁盘 revision");
+    assert.equal(rig.backend.countOf("document_save"), 0, "不得硬冲 CAS");
+    assert.equal(rig.backend.argsOf("recovery_backup")[0].content, "# A 改 2");
     stopTimers(rig);
   } finally {
     mock.timers.reset();
   }
 });
 
+test("备份生命周期：内容回到磁盘基线（撤销 / 重做）即清除该路径的备份", async () => {
+  mock.timers.enable({ apis: ["setTimeout"] });
+  try {
+    const rig = createRig();
+    rig.editor.open("a.md", "# A");
+    rig.controller.noteOpened("a.md", "rev-1");
+    rig.editor.edit("a.md", "# A 改");
+    mock.timers.tick(RECOVERY_DEBOUNCE_MS);
+    await flush();
+    assert.equal(rig.backend.countOf("recovery_backup"), 1, "前提：备份已落盘");
+
+    rig.backend.reset();
+    rig.editor.edit("a.md", "# A"); // 撤销回到已保存基线：dirty 转 false
+    await flush();
+
+    assert.deepEqual(
+      rig.backend.argsOf("recovery_discard").map((args) => args.path),
+      ["a.md"],
+      "回到基线即作废备份（否则下次启动会追问要不要恢复用户已撤销的内容）",
+    );
+    stopTimers(rig);
+  } finally {
+    mock.timers.reset();
+  }
+});
+
+test("备份生命周期：切换 vault（放弃修改）清除被放弃标签的备份", async () => {
+  const rig = createRig();
+  rig.editor.open("a.md", "# A");
+  rig.controller.noteOpened("a.md", "rev-1");
+  rig.editor.open("b.md", "# B");
+  rig.controller.noteOpened("b.md", "rev-1");
+  rig.editor.edit("a.md", "# A 改"); // 只有 a 被放弃
+  rig.backend.reset();
+
+  rig.controller.noteVaultReset();
+
+  assert.deepEqual(
+    rig.backend.argsOf("recovery_discard").map((args) => args.path),
+    ["a.md"],
+    "切 vault 会作废全部标签：被放弃的 dirty 内容连备份一起清，干净的标签不必清",
+  );
+  assert.equal(rig.editor.handle.sessionForPath("a.md")!.dirty, true);
+});
+
 test("handleExternalChange：clean 自动重载、dirty 交给用户、删除只提示", async () => {
   const rig = createRig();
-  rig.backend.handle("fs_read_snapshot", () => ({ revision: "rev-2", content: "# 磁盘版" }));
+  // 磁盘 revision 可变：回声判据（D2）读的就是它，反复返回同一个值会被正确判成回声。
+  let disk = { revision: "rev-2", content: "# 磁盘版" };
+  rig.backend.handle("fs_read_snapshot", () => disk);
   rig.editor.open("a.md", "# A");
   rig.controller.noteOpened("a.md", "rev-1");
 
@@ -287,8 +334,10 @@ test("handleExternalChange：clean 自动重载、dirty 交给用户、删除只
   assert.equal(rig.deps.invalidateResolveCalls, 1, "内容已换，wikilink 解析缓存要整批失效");
 
   // dirty：把选择权交给用户（sticky 浮条，不打断打字），不自动覆盖
+  disk = { revision: "rev-3", content: "# 磁盘又改" }; // 磁盘确实又变了
   rig.editor.edit("a.md", "# 我的修改");
   rig.controller.handleExternalChange("a.md", "modified");
+  await flush();
   const prompt = rig.toasts.live().at(-1)!;
   assert.equal(prompt.sticky, true);
   assert.deepEqual(
@@ -398,29 +447,182 @@ test("beginSwitch / isCurrent：世代号单调，换 vault 后旧世代一律�
   assert.equal(rig.controller.isCurrent(second), false);
 });
 
-test("诊断埋点：暂停只在跃迁时记一条，重新载入后记 resumed", async () => {
+test("自身写盘回声（D2）：保存后立刻再键入，回声到达时不误报外部修改", async () => {
   const rig = createRig();
-  rig.backend.handle("document_save", () => {
-    throw commandError("document_conflict", "磁盘上的版本更新");
+  rig.backend.handle("document_save", () => "rev-2");
+  rig.backend.handle("fs_read_snapshot", () => ({ revision: "rev-2", content: "# A 改" }));
+  rig.editor.open("a.md", "# A");
+  rig.controller.noteOpened("a.md", "rev-1");
+  rig.editor.edit("a.md", "# A 改");
+  await rig.controller.save();
+  assert.equal(rig.editor.handle.sessionForPath("a.md")!.dirty, false);
+  rig.backend.reset();
+
+  // 回声到达前继续键入（M266 实测的 177ms 窗口）：缓冲区重新 dirty
+  rig.editor.edit("a.md", "# A 改 2");
+  const before = rig.toasts.live().length; // 已有的是保存成功那条 toast
+  rig.controller.handleExternalChange("a.md", "modified");
+  await flush();
+
+  assert.equal(rig.toasts.live().length, before, "回声不得产生任何用户可见处置");
+  assert.equal(rig.editor.reloads.length, 0, "回声不得重载，缓冲与选区不动");
+  assert.equal(rig.editor.handle.sessionForPath("a.md")!.state.doc.toString(), "# A 改 2");
+  assert.equal(rig.backend.logEvents.length, 0, "回声不是外部修改，不记 save_external_change");
+  stopTimers(rig);
+});
+
+test("自身写盘回声（D2）：读在途期间完成的那次保存也算进来（基准取在读取之后）", async () => {
+  // r1 评审 P2-1：基准若在 `await fsReadSnapshot` **之前**取样，读在途期间的保存 #2 推进的
+  // 基准就进不了比对——「R2 === R1」不成立 ⇒ 判成外部修改 ⇒ dirty 分支弹 sticky 提示，
+  // 而磁盘上根本没有第三方写入。本用例把那段交错钉出来。
+  const rig = createRig();
+  rig.backend.handle("document_save", () => "rev-2");
+  rig.editor.open("a.md", "# A");
+  rig.controller.noteOpened("a.md", "rev-1");
+  rig.editor.edit("a.md", "# A 改");
+  await rig.controller.save(); // 保存 #1（基准 → rev-2）
+  assert.equal(rig.editor.handle.sessionForPath("a.md")!.dirty, false);
+
+  // 回声（保存 #1 产生的 modified 事件）到达并进入读取；读在途期间用户又按了 ⌘S（保存 #2
+  // 完成、基准推进到 rev-3）并继续键入。
+  rig.backend.handle("fs_read_snapshot", async () => {
+    rig.backend.handle("document_save", () => "rev-3");
+    rig.editor.edit("a.md", "# A 改 2");
+    await rig.controller.save(); // 保存 #2（`save()` 的返回是 void，判据取会话状态）
+    assert.equal(rig.editor.handle.sessionForPath("a.md")!.dirty, false, "保存 #2 在读在途期间完成");
+    rig.editor.edit("a.md", "# A 改 3"); // 用户继续键入 ⇒ 缓冲区重新 dirty
+    return { revision: "rev-3", content: "# A 改 3" };
+  });
+
+  rig.controller.handleExternalChange("a.md", "modified");
+  await flush();
+
+  // 判据按**文本**取而不是按 toast 计数：交错里的那次保存自己也会留一条「已保存」。
+  assert.equal(
+    rig.toasts.live().filter((t) => t.text.includes("检测到外部修改")).length,
+    0,
+    "读之后取的基准把保存 #2 算进来了 ⇒ 是回声，不弹提示",
+  );
+  assert.equal(rig.editor.reloads.length, 0, "回声不得重载");
+  assert.equal(rig.editor.handle.sessionForPath("a.md")!.state.doc.toString(), "# A 改 3");
+  stopTimers(rig);
+});
+
+test("改名迁移（P2-2）：旧键备份作废、基准随键迁移、dirty 会话按新键立即补一份", async () => {
+  mock.timers.enable({ apis: ["setTimeout"] });
+  try {
+    const rig = createRig();
+    rig.editor.open("a.md", "# A");
+    rig.controller.noteOpened("a.md", "rev-1");
+    rig.editor.edit("a.md", "# A 改");
+    rig.backend.reset();
+
+    rig.editor.rename("a.md", "b.md"); // 真内核 remapSessionPaths 的替身（只换路径）
+    rig.controller.noteRenamed("a.md", "b.md");
+    await flush();
+
+    assert.deepEqual(
+      rig.backend.argsOf("recovery_discard").map((args) => args.path),
+      ["a.md"],
+      "旧路径的备份随改名作废（否则下次启动弹一个指向已改名文件的恢复提示）",
+    );
+    const backup = rig.backend.argsOf("recovery_backup")[0];
+    assert.equal(backup.path, "b.md", "dirty 内容按新路径立即补一份");
+    assert.equal(backup.content, "# A 改");
+    assert.equal(backup.base_revision, "rev-1", "CAS 基准随键迁移（改名不改字节）");
+
+    // 旧键那条待写定时器随键作废：跨过一个窗口后不得再冒出第二份写入。
+    mock.timers.tick(RECOVERY_DEBOUNCE_MS);
+    await flush();
+    assert.equal(rig.backend.countOf("recovery_backup"), 1, "旧键的定时器不得再写一份");
+    assert.deepEqual(
+      rig.backend.argsOf("recovery_backup").map((args) => args.path),
+      ["b.md"],
+    );
+
+    // 基准迁移的直接后果：改名后 ⌘S 仍能保存（不迁则新路径落进「未登记磁盘版本」的不可保存态）。
+    rig.backend.handle("document_save", () => "rev-2");
+    await rig.controller.save();
+    const written = rig.backend.argsOf("document_save").at(-1)!;
+    assert.equal(written.path, "b.md");
+    assert.equal(written.expected_revision, "rev-1", "CAS 基准确实是改名前那一个");
+    assert.equal(rig.editor.handle.sessionForPath("b.md")!.dirty, false);
+    stopTimers(rig);
+  } finally {
+    mock.timers.reset();
+  }
+});
+
+test("改名迁移：clean 会话只清旧备份、不补新备份；目录改名逐会话同口径（批量）", async () => {
+  const rig = createRig();
+  rig.editor.open("sub/a.md", "# A");
+  rig.controller.noteOpened("sub/a.md", "rev-1");
+  rig.editor.open("sub/deep/b.md", "# B");
+  rig.controller.noteOpened("sub/deep/b.md", "rev-2");
+  rig.editor.edit("sub/a.md", "# A 改");
+  rig.editor.edit("sub/deep/b.md", "# B 改");
+  // 先让 a.md 回到基线（clean）——它不该再补备份，但旧键仍要清。
+  rig.editor.handle.markCleanOf("sub/a.md", "# A 改");
+  rig.backend.reset();
+
+  // 目录改名：装配层把 remapSessionPaths 返回的路径对逐条喂进来。
+  for (const [from, to] of [
+    ["sub/a.md", "sub2/a.md"],
+    ["sub/deep/b.md", "sub2/deep/b.md"],
+  ]) {
+    rig.editor.rename(from, to);
+    rig.controller.noteRenamed(from, to);
+  }
+  await flush();
+
+  assert.deepEqual(
+    rig.backend.argsOf("recovery_discard").map((args) => args.path),
+    ["sub/a.md", "sub/deep/b.md"],
+    "每个受影响会话的旧键都要清（含已 clean 的那一份残留）",
+  );
+  assert.deepEqual(
+    rig.backend.argsOf("recovery_backup").map((args) => args.path),
+    ["sub2/deep/b.md"],
+    "只有仍 dirty 的那个按新键补一份",
+  );
+  assert.equal(rig.backend.argsOf("recovery_backup")[0].base_revision, "rev-2");
+  stopTimers(rig);
+});
+
+test("自身写盘回声：磁盘读取失败按「不是回声」降级（宁可多提示一次）", async () => {
+  const rig = createRig();
+  rig.backend.handle("fs_read_snapshot", () => {
+    throw commandError("fs_read_failed", "读不到");
   });
   rig.editor.open("a.md", "# A");
   rig.controller.noteOpened("a.md", "rev-1");
-  rig.editor.edit("a.md", "# A 1");
-  await rig.controller.save();
-  rig.editor.edit("a.md", "# A 2");
-  await rig.controller.save();
+  rig.editor.edit("a.md", "# A 改");
 
-  const paused = rig.backend.logEvents.filter((record) => record.event === "autosave_paused");
-  assert.equal(paused.length, 1, "连续两次冲突只该记一条暂停（跃迁才记）");
-
-  rig.backend.handle("fs_read_snapshot", () => ({ revision: "rev-9", content: "# 磁盘版" }));
-  rig.toasts.live().at(-1)!.actions[0].run();
+  rig.controller.handleExternalChange("a.md", "modified");
   await flush();
-  assert.ok(
-    rig.backend.logEvents.some(
-      (record) => record.event === "autosave_resumed" && record.fields.reason === "reloaded",
-    ),
-    "重新载入后要记 resumed",
+
+  assert.match(rig.toasts.live().at(-1)!.text, /检测到外部修改/, "读失败不得静默忽略真实的外部修改");
+  stopTimers(rig);
+});
+
+test("诊断埋点：外部修改命中打开中文件记一条 save_external_change；回声不记", async () => {
+  const rig = createRig();
+  rig.backend.handle("fs_read_snapshot", () => ({ revision: "rev-9", content: "# 磁盘版" }));
+  rig.editor.open("a.md", "# A");
+  rig.controller.noteOpened("a.md", "rev-1");
+  rig.editor.edit("a.md", "# A 1");
+  rig.controller.handleExternalChange("a.md", "modified");
+  await flush();
+
+  assert.equal(
+    rig.backend.logEvents.filter((record) => record.event === "save_external_change").length,
+    1,
   );
+
+  rig.backend.reset();
+  rig.backend.handle("fs_read_snapshot", () => ({ revision: "rev-1", content: "# A 1" }));
+  rig.controller.handleExternalChange("a.md", "modified");
+  await flush();
+  assert.equal(rig.backend.logEvents.length, 0, "revision 一致即自身的写入回声，不记事件");
   stopTimers(rig);
 });
