@@ -40,7 +40,7 @@ async function twoTabs(page: Page): Promise<void> {
 test("⌘⇧]（硬件形态：key=`}` + shiftKey）命中 `Cmd-}` → tab.next，末端回卷", async ({ page }) => {
   await twoTabs(page);
 
-  // 已激活的是最后一个标签：netx 回卷到第一个（D1 的环绕裁决）
+  // 已激活的是最后一个标签：next 回卷到第一个（D1 的环绕裁决）
   await page.keyboard.press("Meta+Shift+BracketRight");
   await expect(activeTab(page)).toHaveText("alpha.md");
   // 切标签必须真的换文档（只有 modeline/高亮变了不算）

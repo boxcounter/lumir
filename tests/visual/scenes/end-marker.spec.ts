@@ -4,7 +4,7 @@ import { expectScreenshot } from "./expect-screenshot";
 import { stubTauri } from "./tauri-stub";
 import { copyFresh, readDocument } from "./parity-checks";
 
-// 正文末尾的「— End —」标记（change document-end-marker）：
+// 正文末尾的「END」标记（change document-end-marker）：
 //   判据 = 不含标记的内容高度 > 可用视口高度（静态、重算型、MUST NOT 读滚动位置）；
 //   形态 = 短线夹字（--border-soft 发丝线 + --text-3 弱化字），MUST NOT 与作者手写的通栏分隔线同形；
 //   硬约束 = 不进 EditorState.doc / 不进保存字节 / 不被 ⌘A 带出 / 不被 ⌘F 命中 /
@@ -17,6 +17,7 @@ const FIXTURES = {
   "end-marker-long.md": readFileSync(new URL("../fixtures/end-marker/long.md", import.meta.url), "utf8"),
   "end-marker-short.md": readFileSync(new URL("../fixtures/end-marker/short.md", import.meta.url), "utf8"),
   "end-marker-band.md": readFileSync(new URL("../fixtures/end-marker/band.md", import.meta.url), "utf8"),
+  "end-marker-code-long.txt": readFileSync(new URL("../fixtures/end-marker/code-long.txt", import.meta.url), "utf8"),
 } as const;
 const NOTE = "end-marker-note.txt";
 const NOTE_SOURCE = "纯文本没有 live preview 装饰层：code 模式不该出现标记。\n";
@@ -25,16 +26,19 @@ const MARKER = ".cm-lp-end-marker";
 const MARKER_LINE = ".cm-lp-end-marker-line";
 const MARKER_TEXT = ".cm-lp-end-marker-text";
 /** deck D114 的可见文案（单一来源在 src/preview/endMarker.ts，此处按 deck 逐字再来一份）。
- *  M238 起是英文（Alex 2026-09-26 裁决），中英两列同形。 */
-const TEXT = "— End —";
+ *  M238 起是英文，M251（Alex 2026-09-27 裁决）去掉破折号改为「END」，中英两列同形。 */
+const TEXT = "END";
 const TEXT_3 = "rgb(169, 167, 155)"; // --text-3（提示档：标记文字）
 const HAIRLINE = "rgb(237, 236, 231)"; // --border-soft（层次档发丝线）
 const ACCENT = "rgb(58, 95, 205)"; // --accent（新色板的链接色：标记 MUST NOT 使用）
 
-const MARKER_FOR: Record<string, string> = {
+/** 各 fixture 的「打开完成」判据文本（各取一段特征串；code 类 fixture 取它自己的正文）。 */
+const NEEDLE_FOR: Record<string, string> = {
   "end-marker-long.md": "结束标记场景（长文）",
   "end-marker-short.md": "结束标记场景（短文）",
   "end-marker-band.md": "结束标记场景（临界带）",
+  "end-marker-code-long.txt": "普通文本 fixture",
+  [NOTE]: "纯文本没有 live preview",
 };
 
 async function stub(page: Page): Promise<void> {
@@ -45,11 +49,18 @@ async function stub(page: Page): Promise<void> {
   });
 }
 
-/** 打开一篇 fixture 文档：点左栏文件名，等它的标题上屏。 */
-async function open(page: Page, file: keyof typeof FIXTURES | typeof NOTE): Promise<void> {
-  const needle = file === NOTE ? "纯文本没有 live preview" : MARKER_FOR[file];
-  await page.locator(`.ft-row[title="${file}"]`).click();
-  await expect(page.locator(".cm-content")).toContainText(needle);
+/** 打开一篇 fixture 文档：点左栏文件名，等它的一段特征文本上屏。
+ *  `via` 区分两条打开路径：`click` = 预览标签复用（同一标签内换模式）、`dblclick` = 固定新标签
+ *  （换标签 + 换模式）。M251 的矩阵属性测试两条都走。 */
+async function open(
+  page: Page,
+  file: keyof typeof FIXTURES | typeof NOTE,
+  via: "click" | "dblclick" = "click",
+): Promise<void> {
+  const row = page.locator(`.ft-row[title="${file}"]`);
+  if (via === "dblclick") await row.dblclick();
+  else await row.click();
+  await expect(page.locator(".cm-content")).toContainText(NEEDLE_FOR[file]);
 }
 
 const scroller = (page: Page) => page.locator(".cm-scroller");
@@ -189,7 +200,7 @@ test("判据不随滚动位置变化，滚动高度在所有滚动位置恒定",
   const middle = await readMarker(page);
   await scrollTo(page, "bottom");
   const bottom = await readMarker(page);
-  // 滚到底：标记进入视口（「— End —」在文档末尾这一次滚动里被看见）
+  // 滚到底：标记进入视口（「END」在文档末尾这一次滚动里被看见）
   const visibleAtBottom = await page.evaluate(() => {
     const el = document.querySelector(".cm-scroller") as HTMLElement;
     const rect = (document.querySelector(".cm-lp-end-marker") as HTMLElement).getBoundingClientRect();
@@ -491,4 +502,140 @@ test("M238 回归探针：正文行的尺寸口径不得由滚动容器的 class
   expect(after.contentHeight).toBeCloseTo(before.contentHeight, 0);
   expect(after.markerTop).not.toBeNull();
   expect(Math.abs((after.markerTop ?? 0) - after.contentBottom)).toBeLessThanOrEqual(1);
+});
+
+// ---------------------------------------------------------------------------
+// M251：元素生命周期 ⊆ 插件实例生命周期（属性测试）
+//
+// 缺陷现场（Alex 2026-09-27 真机报告）：非 markdown 文件（.gitignore / NOTICE / lefthook.yml）
+// 里「END」出现在正文右侧的空白列。病因是**模式切换的历史**，不是某一份文档：md 长文 → 非 md
+// 文件的切换里，销毁前排进 CM 测量队列的那一趟在销毁后照常执行，走回插件的 write 排下一帧，
+// 帧回调把元素挂回 `.cm-scroller`；此时 state 已不含本插件，元素成了孤儿——而 code 模式的
+// `.cm-scroller` 同样是三列 grid（行 1 前两列被 gutter 与正文占住），孤儿自动落位到第 3 列，
+// 于是显示在正文右侧的空白区。机制与不变量见 `src/preview/endMarker.ts` 的文件头。
+//
+// 为什么必须用**矩阵属性测试**而不是再加一条 case：判据侧的单条用例（本文件上面那条
+// 「code 模式没有标记」）走的路径里没有在途测量，照旧绿（REVIEW.md 第 3 条同族：判据看着有
+// 覆盖、实际不判这一类输入）。这条测试扫的输入维度是**切换历史**：源模式 × 目标模式 × 打开
+// 方式（预览标签复用 / 固定新标签），并断言不变量本身——「元素在场 ⇔ 当前是 md 模式且判据成立」，
+// 在场时另判两条几何（与正文同列、落在正文内容盒之下）。
+// ---------------------------------------------------------------------------
+
+/** 让测量与落地帧都跑完再读数：不等就等于在「还没落定」的窗口上断言（假绿/假红的老家）。 */
+async function settleFrames(page: Page, frames = 4): Promise<void> {
+  await page.evaluate(
+    (n) =>
+      new Promise<void>((resolve) => {
+        let left = n;
+        const step = (): void => {
+          left -= 1;
+          if (left <= 0) resolve();
+          else requestAnimationFrame(step);
+        };
+        requestAnimationFrame(step);
+      }),
+    frames,
+  );
+}
+
+interface MarkerReading {
+  /** 当前模式：code 由行号 gutter 表达、md 由 live preview 的内容级 class 表达（两模式独占）。 */
+  mode: "md" | "code";
+  count: number;
+  /** 判据的实测值（不含标记的内容高度 > 可用视口高度）。 */
+  criterion: boolean;
+  marker: { left: number; width: number; top: number } | null;
+  content: { left: number; width: number; bottom: number };
+}
+
+async function readMarkerState(page: Page): Promise<MarkerReading> {
+  const contentHeight = await naturalContentHeight(page);
+  return page.evaluate(
+    (natural) => {
+      const content = document.querySelector(".cm-content") as HTMLElement;
+      const el = document.querySelector(".cm-scroller") as HTMLElement;
+      const markers = [...document.querySelectorAll<HTMLElement>(".cm-lp-end-marker")];
+      const contentRect = content.getBoundingClientRect();
+      const markerRect = markers[0]?.getBoundingClientRect();
+      const code = document.querySelector(".cm-lineNumbers") !== null;
+      const preview = content.classList.contains("cm-lp-codeblock-nowrap");
+      if (code === preview) throw new Error(`模式判据不成立：code=${code} preview=${preview}`);
+      return {
+        mode: code ? "code" : "md",
+        count: markers.length,
+        criterion: natural > el.clientHeight,
+        marker: markerRect
+          ? { left: markerRect.left, width: markerRect.width, top: markerRect.top }
+          : null,
+        content: { left: contentRect.left, width: contentRect.width, bottom: contentRect.bottom },
+      };
+    },
+    contentHeight,
+  );
+}
+
+/** 三种 fixture 恰好覆盖「md 长文（判据成立）/ md 短文（判据不成立）/ 非 md 长文」三态。 */
+const MATRIX_FILES = [
+  "end-marker-long.md",
+  "end-marker-short.md",
+  "end-marker-code-long.txt",
+  NOTE,
+] as const;
+
+/** 切换历史：六个有向非同文件对 + 两条更长的往返（第二条把「code → md → code」走两遍）。 */
+const MATRIX_SEQUENCES: readonly (readonly (typeof MATRIX_FILES)[number][])[] = [
+  ["end-marker-long.md", "end-marker-code-long.txt"],
+  ["end-marker-code-long.txt", "end-marker-long.md"],
+  ["end-marker-long.md", "end-marker-short.md"],
+  ["end-marker-short.md", "end-marker-long.md"],
+  ["end-marker-short.md", "end-marker-code-long.txt"],
+  ["end-marker-code-long.txt", "end-marker-short.md"],
+  ["end-marker-long.md", "end-marker-code-long.txt", "end-marker-long.md", "end-marker-short.md"],
+  [NOTE, "end-marker-long.md", "end-marker-code-long.txt", NOTE],
+];
+
+test("M251 属性：任意切换历史下车，标记在场恒等于「当前是 md 且判据成立」", async ({ page }) => {
+  await stub(page);
+  await page.goto("/");
+
+  // 正向锚点：md 长文先把标记请上台，后面每一条「不在场」才不是恒真的空转（REVIEW.md 第 2 条）。
+  await open(page, "end-marker-long.md");
+  await settleFrames(page);
+  const anchor = await readMarkerState(page);
+  expect(anchor.mode).toBe("md");
+  expect(anchor.count).toBe(1);
+  expect(anchor.criterion).toBe(true);
+
+  for (const via of ["click", "dblclick"] as const) {
+    for (const sequence of MATRIX_SEQUENCES) {
+      for (const file of sequence) {
+        await open(page, file, via);
+        await settleFrames(page);
+        const first = await readMarkerState(page);
+        // 第二次读数：孤儿元素是在切换之后的一帧里挂回来的，读一次可能赶在它前面。
+        await settleFrames(page);
+        const second = await readMarkerState(page);
+        const where = `${via} ${sequence.join(" → ")} @ ${file}`;
+
+        for (const read of [first, second]) {
+          // 判据本身的自洽：长文 / 短文两态必须各自对上判据，否则下面那条等价式没有输入。
+          if (file === "end-marker-long.md") expect(read.criterion, `${where}：长文该超一屏`).toBe(true);
+          if (file === "end-marker-short.md" || file === NOTE) {
+            expect(read.criterion, `${where}：短文不该超一屏`).toBe(false);
+          }
+          expect(read.mode, `${where}：模式`).toBe(file.endsWith(".md") ? "md" : "code");
+          // **不变量**：元素在场 ⇔ 当前是 md 且判据成立。code 模式下恒为 0，与历史无关。
+          expect(read.count, `${where}：标记在场数`).toBe(read.mode === "md" && read.criterion ? 1 : 0);
+          if (read.count === 1 && read.marker !== null) {
+            // 几何：标记不漂出内容列（左右缘与正文对齐）、且落在正文内容盒之下。
+            expect(Math.abs(read.marker.left - read.content.left), `${where}：标记左缘`).toBeLessThanOrEqual(1);
+            expect(Math.abs(read.marker.width - read.content.width), `${where}：标记宽度`).toBeLessThanOrEqual(1);
+            expect(read.marker.top, `${where}：标记在正文内容盒之上`).toBeGreaterThanOrEqual(
+              read.content.bottom - 1,
+            );
+          }
+        }
+      }
+    }
+  }
 });

@@ -487,7 +487,7 @@ export const livePreviewTheme = EditorView.theme({
   // 按图片自己算，于是收敛到栏宽。两个终态由「布局时状态块在不在场」决定 —— 正是本不变量
   // 禁止的时序依赖。给包装盒一个与在场内容无关的确定宽度（栏宽）后，两条路径的包含块相同，
   // 终态必然一致；图片本身仍按固有宽度 + `max-width: 100%` 渲染，小图不拉伸。
-  // 正文末尾的「— End —」标记（document-end-marker）：与正文同列、紧随内容之下的 chrome。
+  // 正文末尾的「END」标记（document-end-marker）：与正文同列、紧随内容之下的 chrome。
   // 元素挂在 .cm-scroller 上（与 .cm-content 同级，装配见 src/preview/endMarker.ts），
   // 因此不进 CM 的 DOM 观察子树 / heightmap / 按视口增量构建的装饰层；显隐是**在场与否**，
   // 由 endMarker.ts 的判据决定（一屏装得下时元素不在 DOM 里）。
@@ -537,6 +537,13 @@ export const livePreviewTheme = EditorView.theme({
   //（层次档 --border-soft；长度 4em 随上面那个字号基准缩放，仍远短于阅读栏宽的一半）。
   // 与 .cm-lp-hr 的结构差别是**双重**的——定宽短线段（不是 inlineSize:100% 的通栏线）+ 夹着文字；
   // 只靠「更短」不够：用户分不清「这条是作者写的分隔」与「这条是应用说完了」。
+  //
+  // **定位与模式的关系（M251 的现场教训）**：这几条（gridColumn / gridRow）是本模块随
+  // live preview 一起装进 md 分支的，**code 模式没有它们**。一旦标记元素在 code 模式下在场
+  // （历史形态见 src/preview/endMarker.ts 文件头的「元素生命周期 ⊆ 插件实例生命周期」段），
+  // 它就没有任何定位声明、自动落位到 `.cm-scroller` 三列 grid 的行 1 第 3 列——正是 Alex
+  // 2026-09-27 看到的「标记漂在正文右侧的空白列」。根因修在生命周期（元素不越界到场），
+  // 这里的位置声明不为那种失控兜底：兜底会让「元素为什么在场」失去信号。
   ".cm-lp-end-marker-line": { inlineSize: "4em", blockSize: "0", borderTop: "1px solid var(--border-soft)" },
   // 文字：弱化色（提示档）+ 上面的字距——一眼是装饰，不是正文。
   ".cm-lp-end-marker-text": { lineHeight: "1.4" },

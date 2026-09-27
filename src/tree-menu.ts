@@ -25,6 +25,17 @@ import { keyToken } from "./keys";
 // 文案（编号见 文案-Copy.md 的 D125 起；本模块是它们唯一一份字面量）
 // ---------------------------------------------------------------------------
 
+/** 「这一行是当前菜单的作用行」的在场标记（M251）：由本模块在 `open` / `close` 装卸——菜单开着
+ *  的唯一真源就在这里，别处（装配层 / 树）MUST NOT 各判一次（REVIEW.md 第 8 条）。
+ *
+ *  语义与样式落在两处，逐条记明：`src/style.css` 的 `.ft-row.is-menu-target`（取选中档 `--sel`、
+ *  不加 550 字重，强度低于 `.is-current`，并压过 `:hover`）；断言在
+ *  `tests/visual/scenes/tree-menu.spec.ts`。**不复用 `is-current`**：后者的语义是「当前打开的
+ *  文档」，由装配层随标签切换写（`src/main.ts` 的 `syncActiveDocument`），而右键不改上下文
+ *  （design §2.1）——两个语义混用一个类会让「哪一行是打开的」失去信号。
+ *  也不用 `--hover`：菜单在指针位置弹出，指针下的那一行本来就是 hover 态，用 hover 色等于没有反馈。 */
+export const MENU_TARGET_CLASS = "is-menu-target";
+
 /** 浮层的读屏名（`role=menu` 的 aria-label）。 */
 export const MENU_LABEL = "条目操作";
 /** 文件 / 目录行的菜单项（§2.2 的项集定义）：破坏性项固定尾部、以分隔线隔开。 */
@@ -160,7 +171,11 @@ class TreeContextMenu implements TreeContextMenuHandle {
   }
 
   open(target: TreeMenuTarget, at: { x: number; y: number }): void {
+    // 上一个作用行的标记先撤：菜单从 A 行换到 B 行时，A 行 MUST NOT 留着高亮（它已经不再是
+    // 作用行了）。同一行重复打开时这句是空动作。
+    this.target?.anchor.classList.remove(MENU_TARGET_CLASS);
     this.target = target;
+    target.anchor.classList.add(MENU_TARGET_CLASS);
     this.render(target.kind);
     this.open_ = true;
     this.menu.hidden = false;
@@ -182,6 +197,9 @@ class TreeContextMenu implements TreeContextMenuHandle {
     this.actions = [];
     this.activeIndex = -1;
     const anchor = this.target?.anchor;
+    // 作用行高亮随菜单一起离场（M251）：两条关闭路径（Esc / 选外部点击）都在这里收口，
+    // 因此标记的在场期严格等于「菜单开着」。锚点行已被 watcher 收敛掉时这是空动作。
+    anchor?.classList.remove(MENU_TARGET_CLASS);
     this.target = undefined;
     if (!restoreFocus) return;
     // 焦点归还触发它的那一行（spec：关闭后焦点归还文件树）。行已被 watcher 收敛掉时

@@ -1127,6 +1127,19 @@
   第 3 条的证据**（那是 REVIEW.md 的文件，需一个能写它的动作顺带做）。**给后续跑视觉门禁的人**：
   动过会删除/移动 UI 的场景后，`rg` 出引用该元素的场景 → `--update-snapshots=all` 重建 →
   sha256 对比找出「内容变了但没报警」的那几张，别只看门禁颜色。
+  **M251（2026-09-27）两个新现场，同一机制**：① 「END」文案改动（`— End —` → `END`）在
+  `end-marker.png`（760×82，额度 62px）上真实差异 **158 像素**（零容差读数
+  `158 pixels (ratio 0.0025)`，见 `test-results/m251/baseline-review/end-marker/tolerance-probe-ratio0.log`），
+  但全量视觉套件照绿（468 passed / 1 skipped）——`threshold 0.2` 先把字形反锯齿的浅色差滤掉，
+  剩下的超阈值像素落在 62 之内；② 新增的菜单作用行高亮（`is-menu-target`，取 `--sel` 底色）
+  让 `context-menu-file.png` / `context-menu-dir.png`（160×131，额度 ≈21px）各差 **23 像素**，
+  差异**只在菜单左上角的圆角处**（`.ft-menu` 有 10px radius，角上透出底下那一行的新底色），
+  菜单本体零变化；零容差读数与前后图见 `test-results/m251/baseline-review/tree-menu-menu-target/`。
+  两张**未重建**（新 UI 的观感是 Alex 的人肉裁决点，且任务书给的约束是「其它基线零触碰」），
+  读数与重建命令留在那个目录的 README 里待裁决。end-marker 那张按任务书授权重建了
+  （过目包 `test-results/m251/baseline-review/end-marker/`，含 before/after/差异叠加三图与 sha256）。
+  **再次实证裸 `--update-snapshots` 在容差内等于什么都不做**（本批在 end-marker 那张上实测：
+  裸跑后 sha256 与 HEAD 逐字节相同，必须 `--update-snapshots=all`）。
 - **真机 app 窗口会被放到屏幕外，键盘注入随即整批不落地**（M164 实测，2026-09-18，medium）：
   无人值守的批次里实测 `window_bounds x=193 y=1076`（内置屏只有 ~982pt 高），此后 KimiCU 的
   `type_text` 直接报「target WebArea did not acquire stable keyboard focus; no keys were sent」，
@@ -1509,6 +1522,23 @@ living spec 两处已随本 change 改写口径（`keymap-commands` 的「轨道
     scroller class 键控），位置不变量的判据落在 chromium 层新增的两条用例（跨判据两方向翻转 +
     「行尺寸口径不得由 class 键控」回归探针，修前实测红：`|markerTop−contentBottom| = 1369.7`）。
     复跑读数 `test-results/acceptance/2026-09-26/27-document-end-marker/`（14 断言 / 27.7s PASS）。
+    **M251（2026-09-27）两处变化**：① 可见文案**去掉破折号**改为「**END**」（Alex 裁决；deck D114
+    两列同形照旧），本场景的匹配器（`AXStaticText = "END"`）与说明同步改；② 修掉「**非 md 文件里
+    标记漂在正文右侧空白区**」（Alex 真机报告：`.gitignore` / `NOTICE` / `lefthook.yml` 等）——
+    根因是**模式切换的历史**：md → code 的 `EditorView.setState` 里插件确实被 `destroy`、元素当场离场，
+    但**销毁前排进 CM 测量队列的请求在销毁后照常执行**（CM 的 `requestMeasure` 没有取消口），
+    那一趟走回插件的 `write` 排下新的一帧，帧回调把元素挂回 `.cm-scroller`；此时 state 已不含该插件，
+    元素成了孤儿——而 code 模式的 `.cm-scroller` 同样是三列 grid（行 1 前两列被 gutter 与正文占住），
+    孤儿没有 md 那套定位声明，自动落位到第 3 列，于是显示在正文右侧的空白列。修法是**生命周期守卫**
+    （`src/preview/endMarker.ts` 的 `destroyed` 标志 + `schedule`/`apply` 守卫），不变量是
+    「元素在场 ⇔ 当前 state 装配了该插件且判据成立」；**不变量级的矩阵属性测试**在 chromium 层
+    （`end-marker.spec.ts` 的「M251 属性」用例扫 源模式 × 目标模式 × 打开方式，修前实测红：
+    `dblclick end-marker-long.md → end-marker-code-long.txt` 处 `Expected 0 / Received 1`）。
+    证据与前后图见 `test-results/m251/`；**真机复跑读数：19 断言 / 0 FAIL / 32.2s**（本场景由 14 断言
+    增至 19，证据 `test-results/acceptance/2026-09-27/27-document-end-marker/`，新增那一步的截图
+    `shots/03-非_md_文件_标记应已离场_.jpeg` 可直接肉眼复核：code 模式 + 正文列干净、无游离标记）。
+    首跑在新增那一步 FAIL 的现场与成因（`open` 的目标文件名排序靠后 → 树里那一行不在 AX 可达范围内）
+    登记在场景的「已知边界」，原始日志 `test-results/m251/acceptance-27.log`。
 24. **restyle 主题通道与骨架落位**（M213，2026-09-25）—— `34-restyle-theme-skeleton`：
     `ui.theme: "eink"` 经**配置通道**（front-matter 的 `config`，与 `font_size` / `[keys]` 同形）
     起一个实例 → 断言 `env:config.json` 里确实是 `eink`、应用起得来、骨架与信息落位三点各自在场
@@ -1535,6 +1565,27 @@ living spec 两处已随本 change 改写口径（`keymap-commands` 的「轨道
     **覆盖边界（场景说明已详述）**：本套件无计算属性通道，色值 / eink 九条降级 / mermaid SVG 内联色
     这三类**视觉取值**真机判不了——它们由 chromium 场景 `tests/visual/scenes/theme-live-switch.spec.ts`
     （8 条，含 4 条反向验证）守；指示钮的「是哪一档」与「看起来对不对」是两件事，本场景只判前者。
+27. **文件树条目右键菜单的 M251 增量：命中面与作用行高亮**（2026-09-27，M251，change
+    `file-tree-context-menu`）—— `47-file-tree-context-menu` 新增一步「右键点在行的空白区（名字右侧、
+    行盒右缘之内）也作用于该行」。三件事逐个登记：
+    ① **右键目标行 = 菜单作用行**：命中判定从每行元素提升到**树容器**（`src/tree.ts` 的 `rowLiAt` +
+    纯函数 `rowBandHit`）：行元素内任意横向位置、以及**行元素右缘到面板右缘之间那条带**
+    （`.filetree` 的右内边距，实测 ~9px）都作用于该行；树头部 / 面板空白 / 编辑中的行照旧不参与。
+    真机侧判「名字右侧的空白区」（`dx` 比例落点），**右内边距那条带只在 chromium 层判**（真机坐标
+    通道只能表达节点 bbox 内的比例，越界那条带无法按比例表达；判据在
+    `tests/visual/scenes/tree-menu.spec.ts` 的「M251：右键落在行右侧的空白带也作用于该行」，
+    按容器 bbox 实测）。修前实测：同一落点 `menu=false`（旧监听在行元素上）。
+    ② **作用行高亮**（`is-menu-target`，只在菜单开着时在场）：**真机侧只能给截图**（套件无计算属性
+    通道，与第 26 项的边界同因），取值判据在 chromium 层两条用例（在场/离场 + 同指针位置对照 +
+    eink 黑底反白）。形态是 tower 裁决的 A 形态（不改树的选中语义、不动 tab）。
+    ③ **两张菜单基线出现 23px 真实差异（未重建，待裁决）**：新高亮让菜单左上角圆角处透出的底色变化，
+    零容差读数见 `test-results/m251/baseline-review/tree-menu-menu-target/`（含前后图与差异图）；
+    新 UI 的观感是 Alex 的人肉裁决点，因此没有跟着重建。
+    **本批真机执行情况（如实登记，不读成「真机已验」）**：场景 47 在本机**卡在第一条右键步**——
+    `button: right` 的坐标路径要求一张窗口截图，KimiCU 本机取不到（`取不到窗口截图，无法用 right 键在
+    坐标上点击`），其后依赖菜单节点的步骤级联失败（原始日志 `test-results/m251/acceptance-47.log`；
+    与 M244 / M249 的同一现场同因，是通道限制不是产品缺陷）。所以 ①② 的**真机判据本批未取得**，
+    判定全部由 chromium 层承担（两条 M251 用例，含「删掉容器级命中即红」的反向验证）。
 
 **已机验到渲染/结构层，行为细节仍缺可观测面**
 
