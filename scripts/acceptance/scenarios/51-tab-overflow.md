@@ -91,8 +91,9 @@ steps:
     target: { role: AXRadioButton, name: "^image-width-probe-other\\.md$", button: right }
     expect:
       - shot: 溢出态-英文菜单
-      - label: 菜单里有「Close」（锚定正则——它是另两项的前缀，子串会三项全中）
-        ax: { has: "/^AXMenuItem \\(Close\\)$/m" }
+      - label: 菜单里有「Close」（判据锚在带括号的项名上——`Close Other Tabs` / `Close Tabs to the Right`
+          里都不含 `(Close)` 这个子串，因此既不必加锚点也不会三项全中）
+        ax: { has: "/AXMenuItem \\(Close\\)/" }
       - label: 菜单里有「Close Other Tabs」
         ax: { has: "Close Other Tabs" }
       - label: 菜单里有「Close Tabs to the Right」
@@ -131,13 +132,14 @@ M257（tab-overflow-english-menu）的两件事在**真实 WKWebView** 下的表
 
 ## 通道与已知边界（撞上就如实登记，不判产品缺陷）
 
-- **右键走真实指针坐标 —— 本机实测撞上通道边界（2026-09-27，一轮复现）**：`button: right` 要求
-  快照带截图，而本机 KimiCU 在这条路径上返回无截图的快照，套件按设计报错不静默
-  （`取不到窗口截图，无法用 right 键在坐标上点击`）。**登记为通道边界，不判产品缺陷**；
-  菜单英文的判定由 chromium 层（`tests/visual/scenes/tab-menu.spec.ts`）承担。
-  补充证据（绕过套件通道、用 KimiCU MCP 直接对 `--keep-app` 保留的同一实例右键）：
-  三项逐字为 Close / Close Other Tabs / Close Tabs to the Right、游标在首项、右键不改上下文，
-  AX 原文摘录与截图见 `test-results/m257/menu-english-probe.md`（git 外）。
+- **右键取图通道（M257 登记的通道边界，M266 已修）**：`button: right` 要求快照带截图，而 M257 时的
+  实现读的是 `mode=ax` 的快照（按设计不带图），这条路径因此必然报「取不到窗口截图，无法用 right 键
+  在坐标上点击」——当时登记为通道边界、不判产品缺陷。M266 改读 `mode=full`（同一份快照既带图、
+  bbox 又是截图像素口径），场景 50 在同一次实跑里验通，本场景 M269 复跑亦 PASS（证据
+  `test-results/m269/`，git 外）。M257 绕过套件通道的旁证（用 KimiCU MCP 直接对 `--keep-app`
+  保留的实例右键：三项逐字 Close / Close Other Tabs / Close Tabs to the Right、游标在首项、
+  右键不改上下文）仍留档在 `test-results/m257/menu-english-probe.md`（git 外）。菜单英文上屏的
+  权威判定在 chromium 层（`tests/visual/scenes/tab-menu.spec.ts`）。
 - **AX 暴露滚出视口的标签（本场景实测）**：13 个标签的精确计数在溢出态下 PASS——标签栏的
   AX 树不受滚动裁剪（与 M251 文件树「只暴露可视行」的现场不同形）。
 - **注入通道丢键**：`press_key` 对 WKWebView 间歇整批丢键（REVIEW.md 第 11 条）。激活标签
