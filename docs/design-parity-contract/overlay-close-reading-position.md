@@ -29,10 +29,12 @@ M277（代码块全屏）各自踩到一次、M274/M279 两次调查给出机制
 **判据（每条都必须能 FAIL）**：
 
 1. **真机同款 UA 的 WebKit 分支下**（无 `Version/` token）：关闭前 / 关闭后的 `scrollTop`
-   逐值相同（容差 ≤ 1px，仅吸收读数舍入）。消费者：
-   `tests/visual/scenes/m280-overlay-esc-scroll.spec.ts`（`webkit-realua` project）。
-2. **chromeium 分支**：同一份场景照跑，作结构性回归护栏（chromium 对这个机制结构性看不见，
-   它的绿灯**不构成**条款通过的证据）。
+   逐值相同（容差 ≤ 1px，仅吸收读数舍入）。**判别消费者**：
+   `tests/visual/scenes/m280-overlay-esc-scroll.spec.ts` 在 `webkit-realua` project 下的那一遍
+   （同一份 spec 在 chromium 下也跑，见下条 2）。
+2. **chromium 分支**：**同一份场景照跑**（chromium project 没有 testMatch 限制，两条判据共用
+   一个 spec 文件），作结构性回归护栏——它对这个机制结构性看不见，绿灯**不构成**条款通过的证据；
+   留着是因为「场景能跑、前提断言成立」本身也要有回归（fixture 或前提被改坏时它先红）。
 3. **真机层**：**暂无可用判据**。M280 试做过表格 / 代码块两条真机场景，因器材三约束做不出可证伪的
    判据（无 `scrollTop` 读数、AX 文本窗口宽达 ~2500–3600px、命令入口的块定位范围把「caret 在视口
    上方」的可用带子压到 ~2048 字符以内），场景未留在套件里；逐条实测与补齐路径见 docs/backlog.md
@@ -70,7 +72,7 @@ M277（代码块全屏）各自踩到一次、M274/M279 两次调查给出机制
 
 | | 装载（`applyLoadedScrollPosition`） | 运行期（`applyScrollPosition`） |
 |---|---|---|
-| 调用点 | `src/main.ts` 的 `readingPositions.applyPosition`（装载复位之后） | 交还焦点、切标签、切模式 |
+| 调用点 | `src/main.ts` 的 `readingPositions.applyPosition`（装载复位之后） | **只有** `focusPreservingReadingPosition`（交还焦点的全部调用点，`src/scroll-position-view.ts`）。**切标签 / 切模式不经这里**——`src/editor.ts` 的 `activate()` 走 CM 自己的 `scrollSnapshot` 通道（同文件 `:1812`），两个口径互不覆盖 |
 | 读数基准 | `scrollTop = 0`（装载复位） | 当前 `scrollTop` |
 | 同一算式的含义 | **绝对落点** | **差值**（还差多少才到位） |
 | 早退 | 锚 = 0，或落点 ≤ 0（保 M110 的页首 44px 内边距） | 只有锚 = 0（**不许**按落点复核，见下） |

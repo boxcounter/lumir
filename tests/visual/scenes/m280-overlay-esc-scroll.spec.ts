@@ -1,17 +1,21 @@
-// M280 浮层关闭交还焦点**不得改变阅读位置**（真机同款 UA 的 WebKit 分支，唯一判别层）。
+// M280 浮层关闭交还焦点**不得改变阅读位置**——判别层是**真机同款 UA 的 WebKit 分支**。
 //
 // 条款：docs/design-parity-contract/overlay-close-reading-position.md（CL-1）。
 // 不变量：「浮层「打开 → 持焦 → 关闭交还焦点」这一串动作，MUST NOT 改变编辑器滚动容器的
 // `scrollTop` / `scrollLeft`」——关闭前读数与关闭后读数逐值相同（本文件取 ±1px 的显示舍入余量，
 // 实测两态相差一个整屏，不靠余量判定）。
 //
-// 为什么只在 webkit-realua 项目跑（playwright.config.ts 的 REAL_WEBKIT_UA）：
-//   - chromium 结构性看不见这个缺陷（聚焦揭示在 chromium 上被 preventScroll 挡住，M274 实证）；
-//   - Playwright WebKit 的**默认 UA** 带 `Version/26.x` token，CM6 据此关掉 `preventScroll`、
-//     改走它自己的 `getScrollStack` 同步回写栈（`@codemirror/view/dist/index.js:703`）——
-//     缺陷被 CM 的兜底抹平，**修前修后都绿**（M279 实测的假绿陷阱）。
-//   真机 WKWebView 的 UA 没有 `Version/` token（M274 真机实测），走的是「原生 preventScroll、
-//   没有任何回写兜底」那一支。本项目就是那一支。
+// 本文件在两个 project 下都跑，但**只有 webkit-realua 有判别力**（条款文档的判别层表）：
+//   - chromium（结构性护栏，判据第 2 条）：照跑同一份断言。看不见这个缺陷——聚焦揭示在
+//     chromium 上被 `preventScroll` 挡住（M274 实证）；它的绿灯**不构成**条款通过的证据，
+//     留着是为了让「场景能跑、前提断言成立」这件事本身也有回归（前提断言一旦被 fixture 改动
+//     破坏，chromium 这一支会先红）。
+//   - webkit-realua（`playwright.config.ts` 的 REAL_WEBKIT_UA，UA 无 `Version/` token）：
+//     真机 WKWebView 走的就是「原生 preventScroll、没有任何回写兜底」那一支，缺陷在这一支上
+//     可复现（M279 §2 的 T4/T4b）。**默认 UA 的 Playwright WebKit 不在此列**——它带
+//     `Version/26.x` token，CM6 据此关掉 `preventScroll`、改走它自己的 `getScrollStack` 同步
+//     回写栈（`@codemirror/view/dist/index.js:703`），缺陷被 CM 的兜底抹平，**修前修后都绿**
+//     （M279 实测的假绿陷阱）；因此本项目单独换 UA，而不是改用默认 UA 的 webkit project。
 //
 // 输入分布（条款要求的三条件，逐条在用例里断言，不靠设置步骤暗示）：
 //   ① 真机同款 UA（由项目提供）；

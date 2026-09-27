@@ -1081,8 +1081,10 @@ export interface EditorHandle {
    * 恢复侧唯一入口，**两个口径分开**（M280 拆开，实测依据见 src/scroll-position-view.ts）：
    *   - `applyLoadedScrollPosition`：装载复位（`scrollTop = 0`）之后施加落盘位置——读数是绝对
    *     落点，落点 ≤ 0 即「这条历史就落在篇首」，静默不施加（保 M110 的页首内边距）；
-   *   - `applyScrollPosition`：运行期（切标签 / 交还焦点）施加——读数在当前 `scrollTop` 上，
-   *     同一算式退化成差值而不是落点，因此**唯一的早退是锚落在文档原点**，其余一律 dispatch。
+   *   - `applyScrollPosition`：运行期施加——读数在当前 `scrollTop` 上，同一算式退化成差值而不是
+   *     落点，因此**唯一的早退是锚落在文档原点**，其余一律 dispatch。**当前唯一消费者是下面那条
+   *     `focusPreservingReadingPosition`**（交还焦点的全部调用点）；切标签 / 切模式**不**经这里，
+   *     那条路走 CM 自己的 `scrollSnapshot` 通道（见 `activate()`）。
    * 两者都不抛错、不提示；位置不可读时静默沿用现状。
    */
   applyLoadedScrollPosition(position: ScrollPosition): void;
