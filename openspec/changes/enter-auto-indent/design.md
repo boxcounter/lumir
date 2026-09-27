@@ -17,10 +17,10 @@
 
 - 上游键位的定义与安装：`node_modules/.pnpm/@codemirror+lang-markdown@6.5.2/node_modules/@codemirror/lang-markdown/dist/index.js`
   `:398-401`（`markdownKeymap = [{ key: "Enter", run: insertNewlineContinueMarkup }, { key: "Backspace", ... }]`）、
-  `:406`（`addKeymap = true` 默认值）、`:423-424`（`support.push(Prec.high(keymap.of(markdownKeymap)))`）。
+  `:407`（`addKeymap = true` 默认值）、`:423-424`（`support.push(Prec.high(keymap.of(markdownKeymap)))`）。
 - 围栏内主动退出：同文件 `:124-126`（`if (cur.name == "FencedCode") return context;`）、
-  `:206-213`（`context` 为空即 `dont = { range }`）、`:295`（`if (dont) return false`）。
-  上游自己的文档注释 `:288-292` 明写「should not be used as the only binding for Enter」。
+  `:206-213`（`context` 为空即 `dont = { range }`）、`:280-281`（`if (dont) / return false`）。
+  上游自己的文档注释 `:292-294` 明写「should not be used as the only binding for Enter」。
 - 本仓未关掉它：`src/editor.ts:1137` 的 `createEditor(parent, initialMode = "md", markdownConfig =
   { base: markdownLanguage, extensions: [GFM] })`；唯一调用点 `src/main.ts:97` 不传第二 / 第三个
   参数（全仓 `addKeymap` 零命中）⇒ `markdown(markdownConfig)`（`src/editor.ts:1331`）走默认值。
@@ -30,8 +30,9 @@
   `indentOnInput` / `keymap.of` 在 `src/` 下零命中（`src/keys.ts:81-82` 的 M239 段载明这是**有意
   取舍**）。`@codemirror/commands` 的 import 只有 `history, redo, undo`（`src/editor.ts:9`）。
 - `Enter` 不被浏览器之外的人拦：`@codemirror/view` 的 `beforeinput` 处理器只在 **Chrome Android**
-  上伪造 Enter / Backspace 键（`.../view@6.43.11/dist/index.js:5330-5336` 与 `:4719-4724` 的
-  `PendingKeys` 表），macOS 上 Enter 走浏览器默认 + CM 的 DOM 观察器读入。
+  上伪造 Enter / Backspace 键（`.../view@6.43.11/dist/index.js:5312-5320` 的注释与
+  `PendingKeys.find(...)` → `delayAndroidKey(...)`；`PendingKeys` 表在 `:4719-4724`），macOS 上
+  Enter 走浏览器默认 + CM 的 DOM 观察器读入。
 
 > **对 `src/keys.ts:81-82` 的更正（本 change 的实现项之一）**：那句「CM 侧未装 `indentWithTab`、
 > 也未装 `defaultKeymap` / 任何 `keymap.of`……在 src/ 下全仓零命中」字面为真，但被读成「编辑器里
@@ -45,8 +46,8 @@
   （`:806-818`，出厂 `"  "` 两个空格）、`getIndentation(context, pos)`（`:849-863`，先问
   `indentService`，再查语法树节点的 `indentNodeProp`，都没有则返回 `null`）。
 - `@codemirror/commands@6.11.0`：`insertNewlineAndIndent`（`dist/index.js:1533`，= `newlineAndIndent(false)`）
-  的实现 `:1534-1556` —— 它调 `getIndentation`，**取到 `null` 时回落到「当前行的行首空白列宽」**
-  （`:1543-1546` 的 `countColumn(/^\s*/.exec(...))`）。这条回落就是「无缩进规则的语言沿用当前行缩进」
+  的实现 `:1538-1566` —— 它调 `getIndentation`，**取到 `null` 时回落到「当前行的行首空白列宽」**
+  （`:1548-1550` 的 `countColumn(/^\s*/.exec(...))`）。这条回落就是「无缩进规则的语言沿用当前行缩进」
   的机制来源，不需要我们自己写。
 - 语言侧：`StreamLanguage` 把 `indentNodeProp` 挂在 Document 节点上（`@codemirror/language`
   `:2572` 的 `indentNodeProp.add(() => cx => lang.getIndent(cx))`），`getIndent` 调 stream parser 的
@@ -93,7 +94,7 @@ function enterWithAutoIndent(view) {
    「You can add multiple keymaps to an editor. Their priorities determine their precedence (the ones
    specified early or with high priority get checked first). When a handler has returned `true` for a
    given key, no further handlers are called.」`buildKeymap` 把同键的多个 handler 按 facet 值顺序
-   追加进 `run` 数组（`:9138-9145`）⇒ 我们返回 `false` 时上游 `Prec.high` 的
+   追加进 `run` 数组（`:9129-9135` 的 `binding.run.push(command)`）⇒ 我们返回 `false` 时上游 `Prec.high` 的
    `insertNewlineContinueMarkup` 照常执行。
 2. **委派比自己重写判据稳**：上游的「我在不在列表 / 引用里」判据是它自己的
    `markdownLanguage.isActiveAt` + `getContext`（`:204-213`），自己抄一份 = 两份真源（REVIEW.md
@@ -137,7 +138,7 @@ function enterWithAutoIndent(view) {
 
 ## 3. 可观测的边界（如实登记，写进 spec 或 Non-goals）
 
-1. **`insertNewlineAndIndent` 会吃掉光标之后的行尾空白**（`@codemirror/commands` `:1546` 的
+1. **`insertNewlineAndIndent` 会吃掉光标之后的行尾空白**（`@codemirror/commands` `:1551` 的
    `while (to < line.to && /\s/.test(...)) to++`）。即在被接管的上下文里，`Enter` 除了插新行还会
    让**当前行**丢掉行尾空白——这是 CM 标准行为（VS Code 同口径），但与浏览器默认的「裸插入」有
    一处可观测差异。spec 的 scenario 不假装它不存在。

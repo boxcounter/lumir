@@ -25,7 +25,7 @@ Alex 原话（2026-09-27，逐字）：
 **2. 「md 模式完全没有 Enter 处理器」这个说法不成立（本提案对任务书前提的实测更正）。**
 `@codemirror/lang-markdown` 的 `markdown()` 默认 `addKeymap = true`，它把一份 `markdownKeymap`
 以 `Prec.high` 装进了编辑器（`node_modules/.pnpm/@codemirror+lang-markdown@6.5.2/.../dist/index.js:398-401`
-定义、`:406` 默认值、`:423-424` 安装），其中 `Enter → insertNewlineContinueMarkup`。而本仓
+定义、`:407` 默认值、`:423-424` 安装），其中 `Enter → insertNewlineContinueMarkup`。而本仓
 `createEditor` 的默认 `markdownConfig` 是 `{ base: markdownLanguage, extensions: [GFM] }`
 （`src/editor.ts:1137`），唯一调用点 `src/main.ts:97` 未传 `addKeymap: false`。
 
@@ -39,9 +39,10 @@ Alex 原话（2026-09-27，逐字）：
 ```
 
 **该命令在围栏代码块内主动放弃**：它遇 `FencedCode` 祖先时 `getContext()` 直接返回空
-（同文件 `:124-126`），命令据此 `return false`（`:206-213`、`:295`；本 mission 实测：围栏内
-无论光标在哪一行，上游 `handled=false`）。此时 Enter 落回浏览器默认 ⇒ 零缩进。
-上游自己的文档注释还专门警告过这条（`:288-292`：「The command does nothing in non-Markdown
+（同文件 `:124-126`），命令据此 `return false`（`:206-213` 判 `dont`、`:280-281` 的
+`if (dont) return false`；本 mission 实测：围栏内无论光标在哪一行，上游 `handled=false`）。
+此时 Enter 落回浏览器默认 ⇒ 零缩进。
+上游自己的文档注释还专门警告过这条（`:292-294`：「The command does nothing in non-Markdown
 context, so it should not be used as the only binding for Enter」）。
 
 **结论：这是缺失能力，不是 bug。** 两处上下文都是「没人接管 Enter」，而不是「接管了但算错」；
@@ -140,9 +141,18 @@ md 的列表 / 引用处反而是唯一已经工作的地方。
 
 - **影响的 specs**：`editor-live-preview`
   - ADDED 一条 requirement「Enter 换行与自动缩进」（行为逐上下文 + `editor.auto_indent` 的配置口径）。
-  - MODIFIED 一条 requirement「折行口径与配置来源」：原句「`[editor]` 表 SHALL 支持**三个布尔项**」
-    在新增第四个键后当场失真，必须同步（改动极小：把「三个布尔项」限定为「三个折行布尔项」并
-    指向新 requirement；其余正文与七个 scenario 逐字保留）。
+  - MODIFIED 一条 requirement「折行口径与配置来源」：新增第四个 `[editor]` 键后原句失真，必须同步。
+    改动面**只在折行限定词与第四键指向**，共五处（逐条列明，供归档时对账；清单与两份文本的 `diff`
+    实测一致）：
+
+    1. 首句「`[editor]` 表 SHALL 支持三个布尔项」→「…支持三个**折行**布尔项」；
+    2. 新增一段指向：第四个布尔键 `editor.auto_indent` 不在本 requirement 作用面内，口径见新 requirement；
+    3. 「三项 SHALL 与既有 `editor.mode` 走同一条装配链」→「三个折行项（连同 `editor.auto_indent`）
+       SHALL…」（该段因插入文字重新折行，逐字内容除该限定词外一致）；
+    4. 「三个配置项是**输入面**」→「折行三个配置项是**输入面**」；
+    5. Scenario「缺字段时取默认」里的「没有这三个字段」→「没有这三个**折行**字段」。
+
+    除这五处之外，正文与七个 scenario 与 living spec 逐字一致（防归档时的静默改写）。
   - `keymap-commands` **不改**：零新命令 id、零新表内绑定（D1a 的落点不在表内），「统一键位分发表」
     的纪律原样成立。
 - **影响的代码/系统（实现期）**：`src-tauri/src/config.rs`（`EditorConfig` 增 `auto_indent` +

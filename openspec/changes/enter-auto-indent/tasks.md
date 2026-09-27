@@ -72,8 +72,11 @@ AGENTS.md 的「先改 spec 再写代码」），并把原话逐字记入 `propo
 ## 5. spec 增量对账
 
 - [ ] 5.1 `specs/editor-live-preview/spec.md` 的 ADDED / MODIFIED 与最终实现逐句对账：实现期
-      发现口径偏差时**先改 spec 再写代码**，不反向漂移；MODIFIED 那段除「三个布尔项」一句外
-      必须与 living spec 逐字一致（防归档时的静默改写）
+      发现口径偏差时**先改 spec 再写代码**，不反向漂移。MODIFIED 那段的豁免面 = `proposal.md`
+      「Impact」列的五处对账清单（折行限定词 ×4 + 第四键指向段 ×1）；**这五处之外必须与 living
+      spec 逐字一致**，清单本身若在实现期有增删，须同步改 `proposal.md` 的清单（防归档时的静默
+      改写）。对账手法：把 living spec 的该 requirement 与增量的 MODIFIED 段逐行 `diff`，差异条数
+      与清单条数一致才算过——`proposal.md` 的清单就是按这个 `diff` 实测写出来的
 
 ## 6. 真机验收（agent 执行，不进 CI；随实现同 PR）
 
