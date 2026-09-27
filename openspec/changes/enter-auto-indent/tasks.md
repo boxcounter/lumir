@@ -77,8 +77,15 @@ AGENTS.md 的「先改 spec 再写代码」），并把原话逐字记入 `propo
 
 ## 6. 真机验收（agent 执行，不进 CI；随实现同 PR）
 
-编号按 tower registry：**59 = enter-auto-indent**（HANDOFF 的占用表「M264 起从 59 派」）。
-草案全文见 `design.md` §7，落地时按 fixture 实际行号核对 `ctrl+n` 次数。
+编号按 tower registry：**59 = enter-auto-indent**。草案全文见 `design.md` §7，落地时按 fixture
+实际行号核对 `ctrl+n` 次数。
+
+**编号声明（按 M230/M234 起的编号协议，2026-09-27 登记）**：本 change 取 **59**
+（`scripts/acceptance/scenarios/59-enter-auto-indent.md`）。依据：HANDOFF 的占用表记「M264 起从
+**59** 派」；在飞 change 已登记 51 = M257、52 = M258、53 = M259、54 = M260、55 = M267、
+56 = M261、57 = M262、58 = M263（各自的 tasks.md / 广播）。**实现期动工前再核一次目录与在飞
+change 的编号声明**（对冲条款：本表是登记时的快照，不是终局）；若 59 已被他人取用，按当时最大
+编号顺延并在本节留痕。
 
 - [ ] 6.1 套件侧扩展两处：`lib/app.mjs` 的 `writeConfig()` 多认 `autoIndent`；
       `lib/execute.mjs` 的 `configWrite` case 加 `autoIndent`（缺省**沿用当前值**，与
