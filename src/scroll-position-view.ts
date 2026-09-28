@@ -55,7 +55,9 @@ function writeBack(view: EditorView, position: ScrollPosition, anchor: number): 
       yMargin: position.y,
       // 横向**不**交给这个效果：非快照分支会先减掉 getScrollMargins(view).left，而本仓的
       // gutter 插件正好提供它（固定列宽）——拿捕获值当 xMargin 会系统性偏一个 gutter 宽
-      //（code 模式实测 34px；M281 起 md 模式也有常驻行号 gutter，两种模式同判据）。
+      //（code 模式实测 34px；M281 起 md 也有行号 gutter，档位见 `[ui] markdown_line_numbers`
+      // ——该值在 md 上**在场时才非零**（`always` 档或 `on-demand` 档下输入条打开期间），
+      // 不在场时为 0，两种情形本口径都按原始 scrollLeft 处理）。
       // 这里只要求「横向别动锚的位置」，横向量在下面直接赋值。
       x: "nearest",
       xMargin: 0,

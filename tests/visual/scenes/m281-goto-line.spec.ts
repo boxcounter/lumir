@@ -4,14 +4,15 @@ import type { VaultFixture } from "./tauri-stub";
 import { expectScreenshot } from "./expect-screenshot";
 import { GOTO_LINE_LABEL, GOTO_LINE_PLACEHOLDER, gotoLineTotalText } from "../../../src/goto-line";
 
-// M281（change goto-line-command）的键位链路 / 浮层形态 / md 常驻行号 gutter 三层回归。
+// M281（change goto-line-command）的键位链路 / 浮层形态 / md 行号 gutter 三层回归。
 //
 // 本层的分工（别与另外两层重复，也别留缺口）：
 //   - `tests/unit/goto-line.test.ts`：`resolveGotoLine` 的输入矩阵与文案常量（纯函数层）。
 //   - `tests/unit/keys.test.ts`：表的不变量与 `[keys]` 重绑（表层）。
 //   - 本场景：**键位链路 + DOM 形态 + 实测几何**——真 CM view + 真实 DOM KeyboardEvent
-//     （`page.keyboard.press("Alt+g")`）→ keys.ts 的分发器 → 命令 → 输入条；以及 md 的常驻
-//     行号 gutter（正文列仍居中、行号贴正文列左缘、纵向对准、窄窗不被裁）。
+//     （`page.keyboard.press("Alt+g")`）→ keys.ts 的分发器 → 命令 → 输入条；以及 md 的
+//     行号 gutter（在场时机随档位，见下方「md 行号 gutter（D4 二次改判的三档）」分节头；
+//     正文列仍居中、行号贴正文列左缘、纵向对准、窄窗不被裁）。
 //   - `scripts/acceptance/scenarios/56-goto-line.md`：真机 WKWebView 上的同一链路 + 零写盘。
 //
 // 判据一律落在**实测 rect**（不用 CSS 声明值）与 CM 文档状态上：`.cm-scroller` 的列模板 /
