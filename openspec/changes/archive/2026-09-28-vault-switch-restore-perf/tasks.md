@@ -14,7 +14,7 @@
   **验收口径**：读数与 M154 的 111.2ms、M252 的 21–30ms/标签 并列可比；**MUST NOT** 复用稀疏单行文件放大器（M265 §三的假象）。
 - [x] 1.4 恢复段的成本拆分：用真机日志里「标签数 vs `vault_load_restore` 毫秒数」的关系，估出每标签固定成本与随规模成本；在 design 的 §1 表格里把「未验」改成实测值。
 - [x] 1.5 Alex 侧的自助读数（零成本）：请 Alex 在本机切一次真实 vault 后 grep `~/.config/lumir/logs/*.jsonl` 的 `vault_load`，把四行读数贴回（**agent MUST NOT 打开他的真实 vault**：会写 registry / last_vault 到 `~/.config/lumir`）。
-  **未做（外部依赖）**：需要 Alex 在自己机器上切一次真实 vault 后 grep `~/.config/lumir/logs/*.jsonl`（agent 打开他的真实 vault 会写 registry / last_vault，纪律不允许）。裁决点 2 / 3 已按 1.3 的合成真实形状读数定夺（见 4.2 / 5.1）。
+  **已完成（2026-09-28 回填）**：Alex 报回真实 vault 的 `vault_load_restore` 段读数——**改动前 422 / 418 / 408 / 471ms**（09-27～09-28 早），**M283 合并后 49 / 35 / 49 / 120 / 64 / 55ms** ⇒ 真实环境恢复段从 ~420–470ms 降到 35–120ms，与合成形状 vault 的 1182 → 20ms 同方向。裁决点 2 / 3 仍按 1.3 的合成真实形状读数定夺（见 4.2 / 5.1）。**回填由 M287 归档批执行**，读数来源是 Alex 本机自助读数；同一读数记在 `docs/backlog.md` 的「vault 切换没有 perf 门禁端点」节。
   **验收口径**：读数进 review-request / design；裁决点 2 / 3 按它定夺。
 
 ## 2. 反馈窗口：指示覆盖写盘段（对应 spec 的「装载的即时反馈」）
@@ -137,7 +137,7 @@
 | 1.2 `vault_open_watch` 读数 | 完成 | `src-tauri/src/commands.rs` 的 `prepare_vault_open` 打点 + `logging::slow_callback` 助手（事件名/字段复用白名单）+ 单测 `rust_side_slow_callback_lands_same_shape_as_frontend` |
 | 1.3 真实形状读数 | 完成 | `src-tauri/tests/vault_open_readings.rs`（生成器与 `seed.bulkVault` 同形状）+ 场景 60 的真机日志；`test-results/m283/` |
 | 1.4 恢复段成本拆分 | 完成 | design §1 表格已改成实测值（25–30ms/标签，取 `before-probe/` 的在档读数；跨规模对照闭合「未验」） |
-| 1.5 Alex 自助读数 | **未做（外部依赖）** | 需要 Alex 在本机 grep 自己的日志（agent 不得打开他的真实 vault）；裁决点 2/3 已由 1.3 的等效读数定夺 |
+| 1.5 Alex 自助读数 | **完成（2026-09-28 回填，M287 归档批执行）** | 改动前 422 / 418 / 408 / 471ms → M283 合并后 49 / 35 / 49 / 120 / 64 / 55ms（真实 vault `vault_load_restore`，Alex 本机自助读数）；与合成形状 vault 的 1182 → 20ms 同方向，量级差异取自 vault 形状。`docs/backlog.md` 的「vault 切换没有 perf 门禁端点」节同记 |
 | 2.1 指示覆盖写盘段 | 完成 | `VaultSwitchGateDeps.saveAllWindow`（装配层注入 `vaultLoading`）+ `saveThenRun` 的 begin/end 收口 |
 | 2.2 单测（三出口时序） | 完成 | `tests/unit/vault-switcher.test.ts` 的「指示窗口」组 5 条（begin 早于 saveAll、干净路径不开、未闭环撤下、抛错撤下、取消/放弃不开） |
 | 2.3 真机第 5 步 | **部分**（见「偏离 1」） | 正观测改由探针承担；场景 60 保留「守卫浮条三条出口 + 此刻无指示」的负向配对 |

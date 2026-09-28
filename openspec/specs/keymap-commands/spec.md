@@ -109,12 +109,12 @@
 
 编辑器 SHALL 提供撤销与重做能力，撤销栈由 CM 的 history 扩展持有（线性双栈 `done` / `undone`，暂不提供 Emacs 链式 undo）。绑定：`⌘Z` = 撤销、`⌘⇧Z` = 重做、`⌃/` = 撤销（Emacs 规范绑定）、`⌃_` = 撤销（Emacs 别名）、`⌃⌥_` = 重做（Emacs 系别名）。同一命令 SHALL 既是键盘路径也是菜单路径的落点。
 
-文档装载事务（打开文件、外部重载、vault 复位产生的整篇替换）SHALL NOT 进入撤销史，且 SHALL 使被替换掉的旧撤销事件失效——撤销 MUST NOT 跨文档把上一个文档的内容搬进当前文档。撤销 / 重做产生的文档变化 SHALL 与保存链路保持一致：dirty SHALL 仍以「当前文本与已保存基线比较」判定，因此撤销回到已保存内容时 dirty SHALL 收窄为 false；撤销 / 重做 SHALL 照常参与自动保存 debounce 与 dirty 守卫。
+文档装载事务（打开文件、外部重载、vault 复位产生的整篇替换）SHALL NOT 进入撤销史，且 SHALL 使被替换掉的旧撤销事件失效——撤销 MUST NOT 跨文档把上一个文档的内容搬进当前文档。撤销 / 重做产生的文档变化 SHALL 与保存链路保持一致：dirty SHALL 仍以「当前文本与已保存基线比较」判定，因此撤销回到已保存内容时 dirty SHALL 收窄为 false；撤销 / 重做 SHALL 照常参与 dirty 守卫与崩溃备份的 debounce——撤销回到已保存基线时，该路径的崩溃备份同时作废（备份随 dirty 生命周期，见 `fs-io` 的「崩溃备份与恢复入口」）。本 change 之前这里的约束对象还包含自动保存的 debounce 参与，该参与随自动保存整条移除。
 
 #### Scenario: 撤销回到已保存内容
 
 - **WHEN** 打开一个已保存文件，输入若干字符使文档 dirty，然后按下 ⌘Z
-- **THEN** 文档回到打开时的内容，dirty 收窄为 false（masthead 未保存标记与后端 dirty 镜像一并复位）
+- **THEN** 文档回到打开时的内容，dirty 收窄为 false（masthead 未保存标记与后端 dirty 镜像一并复位）；若该路径此前已留下崩溃备份，该备份同时被清除（下次启动不再出现恢复提示）
 
 #### Scenario: Emacs 别名与重做
 
@@ -854,3 +854,193 @@ SHALL 记录在绑定来由里：遮罩打开时焦点在遮罩内（不在编�
 
 - **WHEN** caret 在表外（普通段落）时执行该命令对应的键位
 - **THEN** 事件不被消费（原样留给原生路径），文档与选区不变，遮罩不出现
+
+### Requirement: 块级复制命令——block.copy
+
+系统 SHALL 提供命令 `block.copy` 承担「复制 caret 所在的块（表格或代码块）的内容到剪贴板」，
+命令 id SHALL 为 `block.copy`，作用域 SHALL 为 `editor`，**默认不绑键**并 SHALL 登记进默认不绑键清单
+（`src/keys.ts` 的 `KEYLESS_COMMAND_IDS`）——「默认不占键位」是要签字的决定：用户按需经 `[keys]` 绑定
+（M180 折行开关 / M240 表格全屏同一先例）。
+
+作用域取 `editor` 而非 `global`：与 `table.toggle-fullscreen` 取 `global` 的理由不同——那条命令要在
+遮罩持焦（焦点不在编辑器内容区）时仍能关闭，复制没有第二种焦点状态，且命中判据本身要求 caret 在编辑器里，
+故 MUST NOT 放权到 `global`。
+
+命令 SHALL 带命中条件：caret 落在一张**当前渲染为 grid** 的 pipe table 内，或落在一个围栏 / 缩进代码块内时
+命中；命中条件不满足时 SHALL NOT 消费事件（不 `preventDefault`），同名按键在别处照旧走原生路径。
+条件 SHALL 由命令级门（`KeymapContext.commandGate`）承担——理由与 `table.toggle-fullscreen` 逐条相同
+（绑定层的 `when` 拿不到编辑器状态，`[keys]` 覆盖产出的绑定也没有 `when` 字段）。
+两条判据 SHALL 都取自语法树与表格模型（MUST NOT 读 DOM），复制内容口径 SHALL 与触发钮逐字相同
+（表格 = 源码切片含表头分隔行；代码块 = 纯内容不含围栏行与语法缩进）。
+
+该命令 SHALL 进 `COMMAND_IDS`，因此 `[keys]` 配置 SHALL 能像其余命令一样对它绑定 / 重绑 / 解绑，
+`app.describe-bindings` 面板 SHALL 自动列出它——默认不绑键时该行显示「未绑定」并说清成因与下一步
+（既有 D66 口径），MUST NOT 让命令从视野里消失。
+
+#### Scenario: 表的不变量在新命令登记后仍成立
+
+- **WHEN** 装配应用（构造分发器并注入命令实现），并对账 `COMMAND_IDS`、`KEY_BINDINGS` 与
+  `KEYLESS_COMMAND_IDS` 三者
+- **THEN** 表内无重复绑定、每条命令恰好满足「有绑定」或「在默认不绑键清单里」之一、清单里没有
+  `COMMAND_IDS` 之外的 id、清单与绑定表无交集，装配不抛错
+
+#### Scenario: 命中条件不满足时不消费事件，且不复制任何东西
+
+- **WHEN** caret 在普通段落里执行该命令对应的键位（同一会话里此前已成功复制过一次块）
+- **THEN** 事件不被消费（原样留给原生路径）、文档与选区不变、剪贴板保持上一次的内容、
+  不出现成功 toast；随后在同一份文档的表格内执行同一键位，剪贴板变为该表的源码——
+  后一步是前一步的反面证据，保证前一步的「无变化」不是「键没送到」的同义反复
+
+#### Scenario: 默认不绑键时面板与配置都能看到它
+
+- **WHEN** 不在任何 `[keys]` 覆盖下按 `⌘/` 打开键位面板；另一轮用 `[keys]` 给 `block.copy`
+  绑一个组合后再按 `⌘/`
+- **THEN** 第一轮面板里有该命令一行、键位列显示「未绑定」并注明「默认不占键位，可经 `[keys]` 绑定」；
+  第二轮该命令对应的键位显示为新绑定，且绑定后在命中条件满足时真的复制成功（剪贴板变化 + 成功 toast）
+
+### Requirement: 代码块全屏查看命令——code-block.toggle-fullscreen
+
+系统 SHALL 提供命令 `code-block.toggle-fullscreen` 承担「打开 / 关闭当前代码块的全屏遮罩」，
+命令 id SHALL 为 `code-block.toggle-fullscreen`，作用域 SHALL 为 `global`，**默认不绑键**并 SHALL
+登记进默认不绑键清单（`src/keys.ts` 的 `KEYLESS_COMMAND_IDS`）——「默认不占键位」是要签字的决定：
+本版没有证据表明它是高频动作，用户按需经 `[keys]` 绑定（M180 折行开关先例）。
+实现 SHALL 落在装配层（`src/main.ts`），遮罩能力本体 SHALL 在自己的模块
+（`src/code-block-fullscreen.ts`）；鼠标入口（代码块 hover 触发钮）SHALL 由渲染层承担，
+命令入口与它 MUST NOT 各写一份命中判定。
+
+命令 SHALL 带命中条件（`when`）：遮罩已打开时命中（此时命令 = 关闭，toggle）；否则编辑器 caret
+落在一块代码块内、或该块的块级横滚容器持有焦点时命中（打开）。命中条件不满足时 SHALL NOT 消费
+事件（不 `preventDefault`），同名按键在别处照旧走原生路径。条件 SHALL 由**命令级门**
+（`KeymapContext.commandGate`，`src/keys.ts`）承担——绑定层的 `when` 只拿得到事件、拿不到编辑器
+状态（「caret 在不在代码块内」「折行口径下容器存不存在」都需要 `EditorState`），而 `[keys]` 覆盖
+产出的绑定也没有 `when` 字段。作用域取 `global` 而非 `editor` 的理由 SHALL 记录在绑定来由里：
+遮罩打开时焦点在遮罩内（不在编辑器内容区内），`editor` 作用域会让「再执行一次同一命令关闭」失效
+（`toc.toggle` / `table.toggle-fullscreen` 同款理由）。
+
+该命令 SHALL 进 `COMMAND_IDS` 与 `GLOBAL_COMMAND_IDS`，因此 `[keys]` 配置 SHALL 能像其余命令一样
+对它绑定 / 重绑 / 解绑，`app.describe-bindings` 面板 SHALL 自动列出它——默认不绑键时该行显示
+「未绑定」并说清成因与下一步（既有 D66 口径），MUST NOT 让命令从视野里消失。
+
+遮罩自己的就地键（`Esc` 关闭、`Tab` 留驻）SHALL NOT 进本表：表的不变量是「一个 token 一条绑定」，
+`Esc` 已被 `editor.widget-escape`（带 `when` 条件）占用；遮罩内就地消费 + 阻止默认行为，使 window
+上的分发器对已消费事件让路——不构成同一物理键的第二条分发映射。浮层内的滚动 SHALL 走原生路径，
+MUST NOT 为它新增绑定。
+
+#### Scenario: 表的不变量在新命令登记后仍成立
+
+- **WHEN** 装配应用（构造分发器并注入命令实现），并对账 `COMMAND_IDS`、`KEY_BINDINGS` 与
+  `KEYLESS_COMMAND_IDS` 三者
+- **THEN** 表内无重复绑定、每条命令恰好满足「有绑定」或「在默认不绑键清单里」之一、清单里没有
+  `COMMAND_IDS` 之外的 id、清单与绑定表无交集，装配不抛错
+
+#### Scenario: 默认不绑键时面板与配置都能看到它
+
+- **WHEN** 不在任何 `[keys]` 覆盖下按 `⌘/` 打开键位面板；另一轮用 `[keys]` 给
+  `code-block.toggle-fullscreen` 绑一个组合后再按 `⌘/`
+- **THEN** 第一轮面板里有该命令一行、键位列显示「未绑定」并注明「默认不占键位，可经 `[keys]`
+  绑定」；第二轮该命令对应的键位显示为新绑定，且绑定后命令在表内命中条件满足时生效
+
+#### Scenario: 命中条件不满足时不消费事件
+
+- **WHEN** caret 在代码块外（普通段落）时执行该命令对应的键位；另在 code 模式（非 md 文件）内
+  执行同一次
+- **THEN** 两种情形下事件都不被消费（原样留给原生路径），文档与选区不变，遮罩不出现
+
+### Requirement: 跳转到指定行命令（editor.goto-line）
+
+编辑器 SHALL 提供「按行号定位」的能力，命令 id 为 `editor.goto-line`，实现 SHALL 落在编辑器内核（`src/editor.ts` 的 commands 记录），并 SHALL 经统一键位表（`src/keys.ts` 的 `KEY_BINDINGS` + 分发器）分发——MUST NOT 另开旁路（编辑器 keymap、`domEventHandlers`、裸 window 监听各注册一份同一物理组合，是「统一键位分发表」点名的漂移形态）。
+
+默认键位 SHALL 是 `⌥G`，token MUST 写 `Alt-KeyG`：含 Alt 的组合按物理键（`KeyboardEvent.code`）判定——macOS 的 Alt 层替换字符（⌥G 的 `event.key` 是 `©`），`e.key` 判不出用户按的是哪个键（与既有的 `Alt-KeyV` / `Alt-KeyD` / `Alt-KeyB` / `Alt-KeyF` 同款口径）。键位占用 SHALL 按三条独立来源核实（表内 / 原生菜单 accelerator / macOS 系统级），结论 SHALL 写在绑定对象的 `doc` 与实现处注释里（表即文档）。作用域 SHALL 随命令归属机械派生为 `editor`（命令 id 属编辑器内核组，前缀与作用域 MUST NOT 互相打脸）：`⌥G` 是「⌥ 系 Emacs 键位集」（M132）的成员，与 ⌃N/⌃P/⌃F/⌃B/⌃E、⌥V、⌥D、⌥⌫ 同族。绑定 SHALL 可经 `[keys]` 重绑 / 解绑：默认键位是单段、无空白，配置层的形态校验因此放行（含空白的 chord 会被拒，见本 requirement 末尾的已知边界）。
+
+行号口径 SHALL 在 md 与只读 code 模式下是**同一条**：计数单位是 `view.state.doc` 的**源文档逻辑行**（硬换行分隔、1 基、总行数 = `doc.lines`），软换行（视觉行）MUST NOT 参与计数——因此两个模式跳到的行号都与各自 gutter 显示的行号一致。**md 模式的行号 gutter SHALL 可配置**：`[ui] markdown_line_numbers` SHALL 取 `"on-demand"`（默认）/ `"always"` / `"off"` 三档之一，取值由 Rust 侧闭集合校验、只管 md；`"on-demand"` 下 gutter SHALL 在 md 文档打开时不在场、在跳转输入条打开时装上、在输入条收起（Enter / Escape / `⌃G` / `focusout` 到浮层之外 / 前台会话切换）时卸除；`"always"` 下 SHALL 常驻在场、与任何命令无关；`"off"` 下 SHALL 恒不在场（输入条打开时也不在场）。**code 模式的行号 gutter SHALL 恒常显、MUST NOT 进这个配置**（Alex 二次改判，2026-09-28：「显示行号是可配置的，markdown 默认不显示、go-to-line 时出现、完成后隐藏。代码默认显示」）。gutter 在场时装的是同一套 `lineNumbers()`（行号即源文档逻辑行号），当前行的行号 SHALL 有高亮（`highlightActiveLineGutter`，只给行号加底、MUST NOT 改正文行的底色）。**装 / 卸 gutter SHALL NOT 改变正文列的几何**——正文列仍居中、行号贴正文列左缘且不被裁切，开关瞬间 `.cm-content` 的实测 rect 逐值不变（判据见 change 的 design §5.2 第 1 条）。本 change MUST NOT 提供**运行期**切换档位的命令 / 键位 / UI：档位 SHALL 在装载时读取一次并生效到全部会话，运行期 MUST NOT 回写。触发命令 SHALL 呈现一个小浮层输入条：输入框 SHALL 预填当前行号（1 基）并全选，SHALL 只接受数字字符（其余按键在输入框内不产生字符），并 SHALL 显示文档总行数（`共 M 行`）——输入条与 md 的 gutter 是行号可见面的两处，modeline 右段不动（它仍只给总行数）。
+
+确认（Enter）SHALL 把光标移到第 n 行行首并把该行滚到视口居中：落点 SHALL 复用编辑器既有的 1-based 行定位原语（`revealLine`，其滚动口径与 `editor.recenter`、wikilink 锚点跳转同为 `scrollIntoView` 的 `y:"center"`），MUST NOT 另写一套落点算式。完成后焦点 SHALL 交还编辑器（后续按键落回文本上下文）。整条路径 MUST NOT 改动文档（ADR 0003 §3）、MUST NOT 进撤销栈、MUST NOT 改 dirty、MUST NOT 触发写盘。
+
+数字的解释与钳制 SHALL 只有一条规则：输入的数字按 `[1, 总行数]` 钳制后的值即落点（Emacs `goto-line` 的 `(forward-line (1- line))` 到头即停口径：越界不报错、停在文档边界）；解析不出数字（空串）时 SHALL 按预填值解释，因此空输入 + Enter 是「停在当前行」。取消（Escape 或 `⌃G`）SHALL 收起输入条且不动光标、不动选区、不动文档；焦点离开输入条（focusout 到浮层之外）与前台会话发生切换（切标签 / 被外部打开请求置换）SHALL 同样收起且**不跳转**——落点行号只对打开时的那份文档有意义，MUST NOT 跨会话跳转。输入条打开期间再按同键 SHALL 就地消费为无操作（不重复打开、不清空已输入内容、不把 Alt 层字符打进输入框）。
+
+输入条自己的键（Enter / Escape / `⌃G` / `⌥G`）MUST NOT 进 `KEY_BINDINGS`：表内一个 token 只能有一条绑定，Escape 已归 `editor.widget-escape`（带 `when` 条件），这些键由输入条就地消费——理由与既有的搜索面板 / 大纲浮层 / vault 切换器同款（作用域判定看事件目标是否在 contentDOM 内，而输入条持有焦点时事件目标在浮层里，表内绑定不命中，两处不构成同一物理键的第二条分发路径）。
+
+已知边界（如实记录，MUST NOT 当成缺陷回头修）：① 焦点不在编辑器内容区时 `⌥G` 不命中（`editor` 作用域的既有边界，与 ⌃N 一族相同）；② 不做 Emacs 的 `goto-line-history`（行号历史）与 `goto-line` 的 `push-mark` 回跳（本仓 v0 无 mark ring）；③ 不做 `M-g` 家族的其它成员（`M-g c` 按字符位置、`M-g TAB` 按列）；④ 输入面只有行号一种语法，不做百分比 / 字符位置 / 列的输入形式；⑤ md 的 gutter 在**被块级替换覆盖的源行**上没有行号（frontmatter 区块恒缺——它始终是一个块级 replace widget；块级数学 / mermaid 在该块因光标落进其内部而回退为源码时补上）——这是 CM 的 gutter 对 widget 行块的默认行为，本 change 不为它新增 `lineNumberWidgetMarker` 提供者；⑥ md 的 gutter 档位只在**装载时**读取、重启生效，没有命令 / 键位 / UI 能在运行期切换（`always` / `off` 并非「随时 toggle」，见 requirement 正文）。
+
+#### Scenario: 表的不变量与三条来源的冲突核对
+
+- **WHEN** 装配应用（构造分发器并注入命令实现），并对 `⌥G` 的三条来源逐条复核
+- **THEN** 表内无重复绑定、`editor.goto-line` 既有实现也不在默认不绑键清单里，装配不抛错；`Alt-KeyG` 是表内新 token（与 ⌥V / ⌥D / ⌥B / ⌥F 的既有 token 不同）；原生菜单 accelerator 集合里没有 ⌥G（预置项里唯一的 ⌥ 系是 ⌥⌘H）；macOS 系统级不占用 ⌥G——三条结论各自在绑定对象的 `doc` 里可读
+
+#### Scenario: md 模式跳到指定行
+
+- **WHEN** 打开一个 md 文档，按 `⌥G`，在输入条里键入 `n`（`n` 在 `[1, 总行数]` 内）后按 Enter
+- **THEN** 光标落在第 `n` 行的行首（不是第 `n` 个视觉行、不是第 `n` 个字符），该行滚到视口居中，且第 `n` 行在 gutter 里的行号就是 `n`（`on-demand` 档下 gutter 因输入条在场而在场，见「md 模式的行号 gutter 三档」）；文档逐字节不变、dirty 不变、没有写盘；随后按键落在编辑器上（焦点已交还）
+
+#### Scenario: md 模式的行号 gutter 三档
+
+- **WHEN** 以 `[ui] markdown_line_numbers` 的三种取值分别启动应用并打开同一份 md 文档（含 frontmatter 区块）
+- **THEN** `"on-demand"`（默认）：打开时没有行号 gutter，按 `⌥G` 打开输入条后 gutter 在场且行号 = 源文档逻辑行号（1 基、与 `doc.lines` 同口径）、当前行的行号有高亮而正文行底色不变，输入条收起后 gutter 重新消失；`"always"`：gutter 常驻在场，与是否按过命令无关，输入条的开 / 关不改变它的在场；`"off"`：任何时刻都没有 gutter（输入条打开时也没有）。三档下正文列都仍居中、行号贴正文列左缘且不被裁切，frontmatter 区块覆盖的源行没有行号（块级替换折成 widget 行块的既有边界）；**装 / 卸 gutter 的瞬间正文列几何逐值不变**（`"on-demand"` 档下用实测 rect 核，宽窗与窄窗各一次）
+
+#### Scenario: 档位由配置装载、不进运行期
+
+- **WHEN** 配置文件里 `[ui] markdown_line_numbers` 缺失 / 取三档内任一值 / 取档外值（如 `"toggle"`）
+- **THEN** 缺失时按默认 `"on-demand"` 生效且不产生 warning；取档内值时按该档生效；取档外值时回落 `"on-demand"` 并产生一条人话 warning（与 `ui.theme` 同款）；三档都只在装载时读一次——装载后改配置不改变当前会话，且不存在切换它的命令 / 键位 / UI
+
+#### Scenario: code 模式与 md 模式同一行号口径
+
+- **WHEN** 以只读 code 模式打开一个非 md 文件，按 `⌥G` 键入 `n` 后按 Enter；随后把同一份内容以 md 模式打开，重复同一动作
+- **THEN** 两次落点都是同一行的同一位置（第 `n` 行行首），且与各自模式 gutter 里该行的行号一致（code 恒有 gutter；md 的 gutter 在输入条打开期间在场，见「md 模式的行号 gutter 三档」）；文档逐字节不变（只读保证不因本命令放宽）；模式只改呈现，不改行号口径
+
+#### Scenario: 输入条预填当前行号与总行数
+
+- **WHEN** 光标停在第 `k` 行时按 `⌥G`
+- **THEN** 输入框已预填 `k`（全选态，键入即替换）、提示行显示 `共 M 行`（`M` = `doc.lines`）；输入框只接受数字字符（键入字母不产生字符，输入串仍是原值）
+
+#### Scenario: 越界与零值的钳制
+
+- **WHEN** 在总行数为 `M` 的文档里分别输入 `M + 10` 与 `0`（或直接清空后输入 `0`）后按 Enter
+- **THEN** 前者的落点是第 `M` 行（最后一行）的行首、后者是第 1 行的行首；两次都不报错、不加提示、不阻塞，文档逐字节不变
+
+#### Scenario: 空输入、取消与失效路径
+
+- **WHEN** 打开输入条后分别：① 直接按 Enter；② 按 Escape；③ 再打开一次按 `⌃G`；④ 再打开后点浮层之外的区域；⑤ 再打开后按 `⌘1` 切到另一个标签
+- **THEN** ① 落在打开时的当前行（无位移，预填值的含义）；② ③ ④ 收起输入条、光标与选区与文档全部不变；⑤ 收起且**不跳转**（前台文档已换，落点行号对它无意义）
+
+#### Scenario: 打开期间再按同键无操作
+
+- **WHEN** 输入条已打开、输入框里已有内容时按下 `⌥G`
+- **THEN** 输入条不重复打开、已输入内容不被清空、也没有 Alt 层字符（`©`）被打进输入框；随后仍可正常键入数字并按 Enter 完成跳转
+
+#### Scenario: [keys] 重绑与解绑
+
+- **WHEN** 配置 `{"keys": {"Ctrl-j": "editor.goto-line"}}` 后启动并按 `⌃J`；再以 `{"keys": {"Alt-KeyG": null}}` 启动并按 `⌥G`
+- **THEN** 前者照常打开输入条（重绑生效）；后者不打开输入条、该按键落回原生路径（解绑生效）；其余默认绑定逐条不变
+
+#### Scenario: 键位面板与命令清单一致
+
+- **WHEN** 按 `⌘/` 打开键位查看面板
+- **THEN** 生效表里出现 `⌥G → editor.goto-line` 一行（带绑定对象的来由说明）；经 `[keys]` 重绑后该行显示用户配置的键位与「用户配置重绑」来由；命令不在「未绑定」行里（它有默认绑定）
+
+### Requirement: 界面语言切换命令（view.language-cycle）
+
+界面语言切换 SHALL 由统一键位表分发一条全局命令：`view.language-cycle`（在 `zh` / `en` 两档之间切换，行为定义见 `ui-language` 的「运行期语言切换与单一施加点」与「语言切换入口与指示钮」）。它 SHALL 进 `NON_TAB_GLOBAL_COMMAND_IDS`（作用域因此机械派生为 `global`——焦点在左栏 / 搜索框 / 浮层 / 面板里时同样命中），MUST NOT 取 `editor.` 前缀（本仓 `editor.` 前缀 = 编辑器作用域命令，前缀与作用域 MUST NOT 互相打脸）。命令实现 SHALL 落在装配层（`src/main.ts`），并与 modeline 的语言指示钮共用同一条实现路径。
+
+默认键位 SHALL 是 `⌘⇧L`（语义取「L = Language」；⌘ 系归 mac 惯例），绑定 SHALL 有一条来由说明——`doc` 字段指向文案表的键，文本本身归文案表（节点 1 裁决后键位来由纳入语言面，见 `ui-language` 的「文案真源与运行时文案表」）。键位占用 SHALL 由三条独立来源核实并写进实现说明：① 表内（`src/keys.ts` 即真源，⌘⇧ 系现有 `Cmd-Shift-z`（重做）、`Cmd-Shift-o`（`toc.toggle`）与 `Cmd-Shift-T`（`view.theme-cycle`）三条，`Cmd-Shift-L` 不在其中）；② 原生菜单 accelerator 集合（muda 预置项 = ⌘C / ⌘X / ⌘V / ⌘Z / ⇧⌘Z / ⌘A / ⌘M / ⌃⌘F / ⌘H / ⌥⌘H / ⌘W / ⌘Q，不含 ⌘⇧L）；③ 系统级（⌘⇧L 不是 macOS 预置菜单键）。该命令默认有绑定，因此 `KEYLESS_COMMAND_IDS` SHALL 保持不变（MUST NOT 把它登记为「默认不绑键」）。
+
+绑定写法 SHALL 与运行期事件 token 同源（`Cmd-Shift-L`），且 SHALL 是单段、无空白——用户可用 `[keys]` 重绑 / 解绑（MUST NOT 采用含空白的多段 chord 作默认键位，那会让用户无法重绑）。
+
+#### Scenario: 默认键位命中
+
+- **WHEN** 焦点在编辑器内按 `⌘⇧L`
+- **THEN** 语言在 `zh` / `en` 之间切换，经统一分发器执行，行为与 `ui-language` 的「运行期语言切换与单一施加点」一致
+
+#### Scenario: 焦点不在编辑器内同样命中
+
+- **WHEN** 焦点在左栏文件树（或键位面板 / 搜索框 / 浮层）上按 `⌘⇧L`
+- **THEN** 语言同样切换（作用域为 `global` 的绑定与焦点无关）
+
+#### Scenario: 可重绑与解绑
+
+- **WHEN** 在 `[keys]` 里把 `⌘⇧L` 重绑到别的键、或把 `view.language-cycle` 解绑
+- **THEN** 重绑后新键生效、原键不再触发切换；解绑后该命令在键位面板里显示为未绑定并给出成因说明（既有面板口径）；modeline 的语言指示钮仍然可用（它是另一条同源入口）
+
+#### Scenario: 无孤儿命令对账不变
+
+- **WHEN** 对账 `COMMAND_IDS` / `KEY_BINDINGS` / `KEYLESS_COMMAND_IDS` 三者
+- **THEN** 新命令有默认绑定、不在默认不绑键清单里；清单内容除新增这一条外与新增前一致（三项对账的判据不放松）

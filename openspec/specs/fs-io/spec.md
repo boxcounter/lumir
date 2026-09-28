@@ -24,7 +24,7 @@
 
 vault 打开期间系统 SHALL 监听文件系统变更，并经 `fs:entry_changed` 事件（commands.rs `<domain>:<event>` 命名约定）向 webview 推送增量，事件 payload SHALL 携带变更类型（created / modified / deleted）与相对路径。连续事件 SHALL 在 debounce 窗口内合并推送，窗口初始值 100ms、可随实测调整（⚠ 裁决点 B：逐条增量而非"tree dirty"重扫信号）。watch SHALL 与枚举共用同一忽略集；忽略集 SHALL 覆盖保存临时文件模式——`.` 开头且含 `.lumir-` 的名字（如 `.note.md.lumir-123`），临时文件及其 ghost MUST NOT 进入事件流或文件树，合法点文件（如 `.obsidian/` 配置）不受影响。vault 关闭或替换时 watch SHALL 停止。
 
-打开中文件被外部变更命中时，webview SHALL 处置：编辑器未 dirty 时自动重载磁盘内容并提示；dirty 时给出 sticky 提示（非 modal）让用户选择「重载（放弃我的修改）」或「保留我的版本」；外部删除时提示内容仍保留在编辑器中。应用自身保存产生的 watch 事件 SHALL 经 revision 比对丢弃（revision 未变即不重载）。
+打开中文件被外部变更命中时，webview SHALL 处置：编辑器未 dirty 时自动重载磁盘内容并提示；dirty 时给出 sticky 提示（非 modal）让用户选择「重载（放弃我的修改）」或「保留我的版本」；外部删除时提示内容仍保留在编辑器中。**自身写盘的回声 SHALL 被识别并丢弃**：命中打开中文件的 `modified` 事件到达时，webview SHALL 先读一次磁盘 revision（与 CAS 基准同 sha256 口径）并与该会话已知的基准比对，一致即判为应用自己那次写入的 FSEvents 回声，SHALL NOT 产生任何用户可见处置（不弹「检测到外部修改」、不弹处置浮条、不动缓冲与选区）；只有 revision 不一致（磁盘确有第三方写入）才进入上句的 dirty 分流处置。该判据 MUST NOT 依赖编辑器当前是否 dirty——「保存完成」与「回声到达」之间存在一二百毫秒的窗口（M266 实测记下相隔 177ms 的一对诊断日志，见 change 的 design §4），窗口内用户若已重新键入，dirty 分流会把自己的写入误报成外部修改，而它给出的「重载（放弃我的修改）」会让用户丢掉刚敲进去的内容。判据必须与 dirty 无关，MUST NOT 只靠「保存进行中」这一个瞬时标记抑制。
 
 目录条目**从无到有**（该批次的条目类型为 created 且磁盘上是目录）时，同一批次 SHALL 一并带出该目录下的全部条目（递归、与枚举同忽略集、父先于子），使**增量收敛后的模型与同一时刻的全量枚举一致**。依据：FSEvents（macOS 实际事件源）对目录改名只报目录本身一条路径，子孙一个都不进事件流——M258 真机探针实测批次逐字为 `[deleted:旧路径, created:新路径(dir)]`（`src-tauri/src/fs_io.rs` 的测试 `watch_dir_rename_delivers_full_subtree` 复现），而前端只能按事件流打补丁、读不到磁盘；缺这一层，改名后的目录在前端只能建出一个空节点（永远展不开，直到重启全量重扫）。补的这一层是唯一读得到磁盘现状（ground truth）的一层。
 
@@ -62,6 +62,11 @@ vault 打开期间系统 SHALL 监听文件系统变更，并经 `fs:entry_chang
 
 - **WHEN** watch 增量命中当前打开的文件且变更类型为 deleted
 - **THEN** webview 提示文件已被外部删除、编辑器中的内容未丢失
+
+#### Scenario: 自身写盘的回声在 dirty 时也不误报外部修改
+
+- **WHEN** 用户按 `⌘S` 保存成功后，在回声到达前（约一二百毫秒内）继续键入，使编辑器重新 dirty；随后该次保存产生的 `modified` 事件到达
+- **THEN** webview 读到磁盘 revision 与会话已知基准一致，判为自身写盘回声：不弹「检测到外部修改」、不出处置浮条、缓冲与选区不动；磁盘内容保持用户保存时的那一份
 
 ### Requirement: 文本文件读取
 
@@ -102,6 +107,8 @@ fs-io 所有按路径读取的接口 SHALL 校验目标路径解析后不逃逸 
 
 保存临时文件属于进程内垃圾：`document_save` 的 `create_new` 撞上同名残留文件（上次保存进程崩溃的 ghost）时 SHALL 删除该 ghost 并重试一次；重试仍失败才返回 `document_write_failed`。
 
+本 change 只改一处行为口径：**本 requirement 覆盖的落盘入口全部是用户显式动作**（`⌘S`、冲突处置的两个动作、另存为新文件）——自动保存不再是本 requirement 的调用方，「非 md 文本保存走同一链路」的判据因此只剩显式动作一条（本 change 之前该 scenario 的括号里还写着「或自动保存 debounce 到期」）。CAS 边界、原子替换、冲突与另存处置的口径 MUST NOT 因本 change 改动。
+
 #### Scenario: CAS 冲突拒绝静默覆盖
 
 - **WHEN** 磁盘文件已被外部修改，webview 以旧 `expected_revision` 调用 `document_save`
@@ -109,7 +116,7 @@ fs-io 所有按路径读取的接口 SHALL 校验目标路径解析后不逃逸 
 
 #### Scenario: 非 md 文本保存走同一链路
 
-- **WHEN** 用户编辑一份 `.yaml` / `.txt` 文件后按 Cmd+S（或自动保存 debounce 到期）
+- **WHEN** 用户编辑一份 `.yaml` / `.txt` 文件后按 Cmd+S
 - **THEN** 原子替换落盘、dirty 清除；磁盘被外部修改过时返回 `document_conflict` 并给出与 Markdown 同形的两个恢复动作
 
 #### Scenario: 非 md 另存保留原扩展名
@@ -161,51 +168,36 @@ fs-io 所有按路径读取的接口 SHALL 校验目标路径解析后不逃逸 
 - **WHEN** 枚举时同一目录下存在 mtime 在阈值内的 `.lumir-` 临时文件，以及 `.hidden.conf` 这类合法点文件
 - **THEN** 二者均被保留，合法点文件正常出现在枚举结果中
 
-### Requirement: 自动保存与暂停边界
-
-编辑器内容 dirty 时，webview SHALL 在停止输入 debounce 窗口（初始值 2000ms，可随实测调整）到期后自动保存当前文档；每次文档内容变化 SHALL 重置该窗口，连续输入期间 MUST NOT 落盘。自动保存成功后 dirty 的清除语义 SHALL 与手动保存完全一致（清除内存标记、撤下 dirty 守卫提示、向后端 `document_set_dirty` 镜像 false），退出守卫随之放行。
-
-自动保存 MUST 在以下任一状态暂停，MUST NOT 以陈旧 `expected_revision` 重试 CAS 写入：存在未解决的 `document_conflict`（冲突提示已出现且未处置）；watch 命中打开中文件的外部修改且编辑器 dirty（用户尚未在提示上选择）；保存目标已被外部删除或移动。暂停态 SHALL 由成功的保存或重新载入清除。
-
-#### Scenario: 停止输入后自动保存
-
-- **WHEN** 用户编辑 Markdown 后停止输入超过 debounce 窗口
-- **THEN** 文档被自动保存，磁盘内容与编辑器一致，dirty 标记清除，退出守卫放行
-
-#### Scenario: 连续输入不落盘
-
-- **WHEN** 用户在 debounce 窗口内持续输入（每次内容变化重置窗口）
-- **THEN** 期间不发起保存写入，直到真正停止输入
-
-#### Scenario: 冲突未处置时自动保存暂停
-
-- **WHEN** 一次保存返回 `document_conflict` 且冲突提示仍未被处置，用户继续编辑并停止输入
-- **THEN** 不发起任何保存写入（不重试 CAS），磁盘保持外部版本，内存修改保持 dirty
-
-#### Scenario: 外部修改待决时自动保存暂停
-
-- **WHEN** watch 命中打开中文件的外部修改且编辑器 dirty，用户在 sticky 提示上尚未选择
-- **THEN** 不发起保存写入，磁盘保持外部程序写入的版本
-
 ### Requirement: 崩溃备份与恢复入口
 
-编辑器 dirty 内容 SHALL 在 debounce 窗口到期后仍未落盘时（自动保存暂停或保存失败）写入应用恢复目录，位置 SHALL 为 `<config_dir>/recovery/<vault-key>/<path-key>`：`vault-key` 由 vault 根唯一确定，`path-key` 由 vault 相对路径可逆编码为单层文件名。备份 MUST NOT 写入 vault 内的文档路径；配置目录不在 vault 内时（常规部署）备份不进枚举结果与 watch 事件流。同一 (vault, 相对路径) SHALL 只保留最新一份备份（覆盖式写入）。每次写入 SHALL 一并记录备份那时的磁盘 revision 作为 CAS 基准（恢复侧对账用）。保存成功（手动保存、自动保存、强制覆盖保存、另存为新文件）后 SHALL 清除该路径的备份。无落盘基准的 dirty 内容（未打开文件 / 未登记磁盘 revision）SHALL 显式跳过备份：备份的用途是经恢复入口把内容写回磁盘，而写回必须走保存链路（CAS 基准），为这类内容写备份只会留下无法闭环的恢复提示。（editable-non-md-files 后，已打开的非 md 文本文件均登记磁盘 revision，天然进入备份路径，不再是本条款的触发面。）
+编辑器 dirty 内容 SHALL 在**它自己的** debounce 窗口到期后写入应用恢复目录——触发不再依附任何保存动作（本 change 之前，备份挂在自动保存的失败分支上：只有自动保存暂停或写失败才落盘）。每次文档内容变化 SHALL 重置该窗口；窗口到期时该文档仍 dirty 即 SHALL 写一份备份，连续输入期间 MUST NOT 写。窗口初始值与实测定档见 change 的 design §3（裁决点 D1）。
+
+备份位置 SHALL 为 `<config_dir>/recovery/<vault-key>/<path-key>`：`vault-key` 由 vault 根唯一确定，`path-key` 由 vault 相对路径可逆编码为单层文件名。备份 MUST NOT 写入 vault 内的文档路径；配置目录不在 vault 内时（常规部署）备份不进枚举结果与 watch 事件流。同一 (vault, 相对路径) SHALL 只保留最新一份备份（覆盖式写入）。每次写入 SHALL 一并记录备份那时的磁盘 revision 作为 CAS 基准（恢复侧对账用）。备份的 debounce 定时器 SHALL 按文档路径键控，MUST NOT 存在跨标签共享的单值（`multi-tabs` 的「保存粒度按标签隔离」）。
+
+**备份的生命周期 SHALL 与 dirty 对齐**（本 change 新增的条款，依据见 change 的 design §5）：内存内容回到「与磁盘基准逐字节相同」时，该路径的备份 SHALL 被清除——手动保存成功、强制覆盖保存、另存为新文件、撤销 / 重做回到已保存基线、重新载入（放弃我的修改）、关闭标签时放弃修改、切换 vault 时放弃修改，全部 SHALL 清除对应路径的备份。MUST NOT 让一份不再对应当前未保存内容的备份在下次启动时弹出恢复提示：备份从「冲突待决时的罕见避险」变成「每次停止输入都会写的常规状态」之后，不清除会退化成「用户明明撤销 / 放弃了修改，下次启动却被追问要不要恢复」的系统性噪音（本 change 之前这条路径已存在，只是备份罕有落盘而少被看见）。
+
+**app 内改名**（文件树菜单的重命名，含目录前缀改名）SHALL 把该路径的备份一并迁到新路径：旧路径的备份 SHALL 被清除，仍 dirty 的会话 SHALL 按新路径立即重新写入一份。备份与磁盘 revision 基准都按**路径**键控，而改名换的正是这个键——不迁的话旧路径会留下一份孤儿备份，下次启动弹出一个指向**已被改名、打不开**的文件的恢复提示，而新路径则落进「未登记磁盘版本」的不可保存态（r1 评审的 P2-2；本 change 把备份从「冲突待决时的罕见落盘」改成「每次停止输入满一个窗口就写」之后，这条路径从极窄变成常规暴露面）。
+
+无落盘基准的 dirty 内容（未打开文件 / 未登记磁盘 revision）SHALL 显式跳过备份：备份的用途是经恢复入口把内容写回磁盘，而写回必须走保存链路（CAS 基准），为这类内容写备份只会留下无法闭环的恢复提示。（editable-non-md-files 后，已打开的非 md 文本文件均登记磁盘 revision，天然进入备份路径，不再是本条款的触发面。）
 
 vault 装载完成后 webview SHALL 枚举当前 vault 的残留备份并逐个给出恢复提示：提示为 sticky（处置前不自动消隐），提供「恢复内容」与「丢弃备份」两个动作。「恢复内容」SHALL 打开该文件，并以备份记录的 revision 作为保存基准——MUST NOT 把恢复时刻的磁盘 revision 吸收为新基准——再把备份内容放入编辑器缓冲并保持未保存状态。磁盘在备份之后被外部修改时，随后的保存 SHALL 按 CAS 语义返回 `document_conflict` 并要求用户处置，MUST NOT 静默改写较新的磁盘版本；备份未记录基准（信封之前的老格式 / 元数据不可读）时 SHALL 同样以冲突收场，不得静默改写。「丢弃备份」SHALL 删除备份且不改动编辑器。
 
+备份的写入 MUST NOT 落在键入到绘制的路径上（ADR 0002 §6）：窗口到期才写、写入走异步 IPC，键击之间 MUST NOT 出现备份写入。
+
 #### Scenario: 暂停期间留下备份
 
-- **WHEN** 自动保存因冲突 / 外部修改待决而暂停，编辑器仍有 dirty 内容
+- **WHEN** 用户编辑一份已登记磁盘 revision 的文档后停止输入满 debounce 窗口，文档仍是 dirty（无冲突、无外部修改待决——本 change 之前这一步依赖自动保存暂停）
 - **THEN** 该内容与当时的磁盘 revision（CAS 基准）被写入配置目录下的恢复目录（不写入 vault 内路径），常规部署下文件树与 watch 事件流不出现该文件
+- （scenario 名保留自 M127 的自动保存暂停口径：暂停态已随自动保存整条移除，open spec 的 MODIFIED 块不允许改 scenario 名，改名通道是整条移除 + 新增；本条断言已按新触发口径重写）
 
 #### Scenario: 非 md 文本的 dirty 内容照常备份
 
-- **WHEN** 自动保存 debounce 到期而保存未落盘（暂停或失败），当前文档是已登记磁盘 revision 的非 md 文本文件
+- **WHEN** 备份 debounce 到期而文档仍是 dirty，当前文档是已登记磁盘 revision 的非 md 文本文件
 - **THEN** 其 dirty 内容与 CAS 基准照常写入恢复目录，下次启动出现该路径的恢复提示
 
 #### Scenario: 无落盘基准不留备份
 
-- **WHEN** 自动保存 debounce 到期，而当前文档未登记磁盘 revision（未打开文件的空态 / 新建文档）
+- **WHEN** 备份 debounce 到期，而当前文档未登记磁盘 revision（未打开文件的空态 / 新建文档）
 - **THEN** 不写备份；下次启动不会出现该路径的恢复提示（该内容本来就没有任何保存路径可写回磁盘）
 
 #### Scenario: 保存成功清除备份
@@ -228,6 +220,21 @@ vault 装载完成后 webview SHALL 枚举当前 vault 的残留备份并逐个�
 - **WHEN** 用户对残留备份选择「恢复内容」，且磁盘上的文件已被外部修改
 - **THEN** 备份内容进入编辑器并保持未保存状态，磁盘不被立即改写；随后的保存按 CAS 语义返回冲突并要求用户处置
 
+#### Scenario: 连续输入期间不写备份
+
+- **WHEN** 用户在备份 debounce 窗口内持续输入（每次内容变化重置窗口）
+- **THEN** 期间恢复目录里该路径的备份不变，直到真正停止输入满一个窗口（本条承接自被移除的「自动保存与暂停边界」的「连续输入不落盘」，约束对象由落盘改为备份写入）
+
+#### Scenario: 放弃修改与撤销回到基线清除备份
+
+- **WHEN** 某路径已经留下备份，随后用户的动作让内存内容回到磁盘基准（撤销 / 重做回到已保存内容，或经「重新载入（放弃我的修改）」/ 关闭标签放弃修改 / 切换 vault 放弃修改）
+- **THEN** 该路径的备份被删除，下次启动对该路径不再出现恢复提示；恢复目录里 MUST NOT 留下一份内容已被用户明确放弃的备份
+
+#### Scenario: app 内改名时备份随路径迁移
+
+- **WHEN** 打开中的 dirty 文档已经留下崩溃备份，用户经文件树菜单把它改名（单文件改名，或目录前缀改名下的任一打开中会话）
+- **THEN** 旧路径的备份被清除、仍 dirty 的会话立刻按新路径写入一份（内容与 CAS 基准随键迁移）；下次启动不对旧路径弹恢复提示，且该文档改名后仍可正常保存（不落进「未登记磁盘版本」的不可保存态）
+
 ### Requirement: 不可保存文档的保存反馈
 
 编辑器 dirty 而当前展示文档没有落盘能力时（未打开文件 / 未登记磁盘 revision），手动保存（Cmd+S）MUST 给出可见反馈：说明该文档不支持保存，并指出脱离 dirty 的动作（撤销修改）。MUST NOT 静默返回。dirty 状态切换文件 / 切换 vault 的守卫提示同样 MUST NOT 建议「请先保存（Cmd+S）」这条在该状态下走不通的动作，SHALL 指向撤销修改。dirty 会拦截切换文件、切换 vault 与退出（M101 守卫），因此静默或误导性的守卫提示等价于把用户锁在一个没有出口的状态里。
@@ -248,8 +255,8 @@ vault 装载完成后 webview SHALL 枚举当前 vault 的残留备份并逐个�
 
 #### Scenario: 无落盘基准不写崩溃备份
 
-- **WHEN** 自动保存 debounce 到期，而当前文档未登记磁盘 revision（空态 / 新建文档），且编辑器有 dirty 内容
-- **THEN** 不写崩溃备份也不排期保存，且不产生恢复提示（该跳过为显式裁决，记录于 change non-md-readonly-open，触发面经 editable-non-md-files 收窄）
+- **WHEN** 备份 debounce 到期，而当前文档未登记磁盘 revision（空态 / 新建文档），且编辑器有 dirty 内容
+- **THEN** 不写崩溃备份（也不排期任何自动落盘），且不产生恢复提示（该跳过为显式裁决，记录于 change non-md-readonly-open，触发面经 editable-non-md-files 收窄）
 
 ### Requirement: 文件级操作（删除 / 重命名 / 新建 / 定位）
 
@@ -298,7 +305,8 @@ session 替换；目录 = 其下全部打开 session 的前缀替换），保留
 做一次性归因抑制：`deleted:old` 与 `created:new` 两个事件都在 session 链路跳过（树与索引照常
 收敛），MUST NOT 触发「已被外部删除」或「检测到外部修改」处置。抑制条目消费即清或超时即清，
 MUST NOT 常驻。app 内发起的删除命中
-打开中的文档时 SHALL 沿用既有 watcher 删除处置（tab 保留、自动保存暂停、提示内容未丢失），
+打开中的文档时 SHALL 沿用既有 watcher 删除处置（tab 保留、提示内容未丢失、该路径的 dirty 内容
+与其 CAS 基准照常留在崩溃备份里），
 不另开分支。外部发起的删除/改名 SHALL 完全沿用 watcher 现状处置。
 
 #### Scenario: app 内改名打开中的文件不误报
@@ -315,4 +323,5 @@ MUST NOT 常驻。app 内发起的删除命中
 #### Scenario: app 内删除打开中的文件沿用现状处置
 
 - **WHEN** 打开中的 `a.md` 经右键菜单确认删除
-- **THEN** tab 保留、自动保存暂停、sticky 提示内容未丢失（与外部删除同一处置）
+- **THEN** tab 保留、sticky 提示内容未丢失（与外部删除同一处置），该路径的 dirty 内容与
+  磁盘基准照常可按恢复入口取回

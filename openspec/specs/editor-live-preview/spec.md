@@ -21,6 +21,8 @@ md 模式下系统 SHALL 用 CM6 decoration 实现 live preview：标题按级�
 
 **按压期间的落点判定 MUST NOT 跨布局**（M259，真实桌面缺陷）：显露一落地就改变布局——被隐藏的定界符重新占宽（`**` 约 12px 量级）。而从指针按下（`mousedown`）到抬起（`mouseup`）之间，同一屏幕坐标 SHALL 始终映射到同一文档位置：判据选区在这段窗口内 MUST 取**按下瞬间的选区快照**，MUST NOT 取按压期间指针落下的活选区。否则按下时按当时布局算出的落点与之后每次指针移动按新布局重算的落点会落在不同位置，两个落点被当作一次拖拽，在一次点击（指针抖动即足以触发）上产生「误选中一个字符」的幻影选区，落点也不再是用户瞄准的那一个。适用面是**全部选区驱动的显露**（本节的节点范围级与行级、以及 frontmatter 块的显露），不是只修强调范围。快照窗口的关闭路径 MUST 覆盖抬起、失焦与文档变化三条——缺任一条，判据会永久停在被冻住的那一帧（静默失效）。
 
+**选区可见范围 MUST 等于编辑器选区范围**（M277 报告 §6 的合同落点，M285 落地）：任意引擎下，选区覆盖的每一个渲染态字符 SHALL 显示选中底色；显露（reveal）与由此产生的 DOM 重建 MUST NOT 让选区覆盖范围内的任何一段失去选中呈现，也 MUST NOT 让选区外出现选中呈现。判据是「**逐字符的选中底色覆盖 = `EditorState.selection`**」，MUST NOT 取「复制内容正确」——复制走 CM6 自己的状态，在这类缺陷里照常正确（M277 报告 §1 的现场）。选中呈现 SHALL 由编辑器自己的选中层绘制（`drawSelection()` 的 `.cm-selectionLayer`，底色取 `--sel`），MUST NOT 只依赖浏览器原生选区：原生选区的绘制与「解冻那一拍的装饰重建」落在同一帧，WebKit 下不把重建出来的文本节点画进选中层（M273 survey 的缺陷机理）。本条适用面是**全部渲染态范围类型**（粗体 / 斜体 / 删除线 / 行内 code / 纯文本）；判据层 MUST 同时有 chromium 结构层与真机层——**chromium 的像素层对本条是假绿**（无头引擎会把原生选区重新同步到新建的文本节点，M285 实测 4 条交互路径 × 3 主题的逐字符底色全绿），真机 WKWebView 的逐像素取色才是终审（验收场景 64；结构层用例 `tests/visual/scenes/m285-selection-layer.spec.ts`）。
+
 #### Scenario: 标记符隐藏
 
 - **WHEN** md 模式打开含 `**加粗**` 与 `# 标题` 的文档
@@ -55,6 +57,11 @@ md 模式下系统 SHALL 用 CM6 decoration 实现 live preview：标题按级�
 
 - **WHEN** 文档含被隐藏定界符的强调范围（渲染态），指针在该范围内的任意横向落点按下，并在按住期间作一次小于一个字符宽度的位移（点击抖动量级）后抬起
 - **THEN** 结果选区与「同一落点、无位移按下」的结果逐值相同——光标落在按下坐标对应的文档位置上、MUST NOT 产生非空选区；同一屏幕坐标的文档落点映射在按下与抬起之间逐值不变；抬起后显露照常跟随（光标落在范围内时该范围显露为原文）。区分度对照：位移达到真实拖拽量级时仍按拖拽语义产生选区；同一落点双击仍选整个词；指针窗口关闭后（抬起 / 失焦 / 文档变化）显露即刻跟随活选区
+
+#### Scenario: 选区可见范围等于编辑器选区范围
+
+- **WHEN** 文档含 `**加粗**`、`*斜体*`、`~~删除线~~`、行内 code 与纯文本五种范围，在三种主题下分别经「范围外正向拖拽 / 范围内按下 / 反向拖拽 / 程序化设选区」建立跨越这些范围的选区（含解冻那一拍触发的装饰重建）
+- **THEN** 选区覆盖的每一个渲染态字符都显示选中底色、选区外的字符都不显示——逐字符的底色覆盖与 `EditorState.selection` 逐值相等，MUST NOT 出现「某一段没有选中呈现」的洞；三种主题下底色与 `--sel` 的取值关系同真
 
 ### Requirement: 模式配置来源
 
@@ -115,7 +122,16 @@ md 模式 SHALL 按 [GFM spec §4.10](https://github.github.com/gfm/#tables-exte
 
 ### Requirement: 标准 Markdown 链接的形态分类与 live preview 渲染
 
-md 模式下，标准 Markdown 链接 `[title](target)`（lezer 语法树的 `Link` 节点 + `URL` 子节点，非引用式、非自动链接、非图片）SHALL 按其**目标原文**归入五类之一，分类实现 SHALL 只有前端一份（`src/preview/links.ts` 的 `classifyLinkTarget`），装饰层与激活路径共用同一个结果：
+md 模式下的链接判定 SHALL 取自 lezer 语法树（`src/editor.ts` 的 `markdownConfig` = `markdownLanguage` + `GFM`）里的 `URL` 节点，判定面 SHALL 覆盖四种节点形态：
+
+1. **标准链接** `[title](target)`：`Link` 节点的 `URL` 子节点（M144 / M145 落地，本 change 后逐条不变）。
+2. **裸 URL**：正文流里的 `http:` / `https:` / `mailto:` 字面 URL——GFM 的 `Autolink` 扩展把它直接产出为一个 `URL` 节点（父节点既不是 `Link` 也不是 `Image`），段落、列表项与引用块内一视同仁；表格 cell 内同样装饰是裁决点 D4 的推荐项（取备选时按 [proposal.md](../../../proposal.md) 的改写指引收窄）。
+3. **链接定义行** `[tag]: url`：`LinkReference` 节点的 `URL` 子节点（`[tag]: ` 前缀是同一节点的 `LinkLabel` 与 `LinkMark`）。
+4. **角括号自动链接** `<https://…>`：`Autolink` 节点的 `URL` 子节点（尖括号是同一节点的两个 `LinkMark`）。判据与形态 2 同一条——这是裁决点 D1 的推荐项，取备选（排除本形态）时本款整条删除。
+
+本 requirement 的名称沿用 M144 的标题，作为 requirement 的稳定身份（归档合并按标题匹配）——标题里的「标准 Markdown 链接」是 M144 引入时的措辞，本 change 后其判定面是上面四种形态，不再限于 `[title](target)` 一种。
+
+分类 SHALL 仍只有前端一份实现（`src/preview/links.ts` 的 `classifyLinkTarget`），装饰层与激活路径共用同一个结果；下面五类分类与各款口径对本 requirement 的全部四种形态同等适用：
 
 1. **外链**：目标带 `http` / `https` / `mailto` scheme（大小写不敏感）→ 渲染为显示文本 `title` 加尾部标记 `↗︎`（U+2197 后跟 U+FE0E 变体选择符 VS15，强制文字表现而非 emoji）。
 2. **应用内笔记**：目标无 scheme 且路径段（丢掉 `#fragment` 后）末段以 `.md` 结尾**或没有扩展名** → 渲染为 `title` 加尾部标记 `→`（U+2192）。
@@ -123,27 +139,53 @@ md 模式下，标准 Markdown 链接 `[title](target)`（lezer 语法树的 `Li
 4. **纯锚点**：目标以 `#` 开头 → 渲染为 `title` 加尾部标记 `→`。
 5. **不可用**：schema 不在白名单内（`javascript:` / `file:` / 应用自定义协议）、目标为空、或目标解码后含控制字符 → SHALL 保持原文，MUST NOT 有任何装饰（没有链接样式、没有尾标、没有 `title` 属性）。
 
-`title` SHALL 取 `[` 与 `]` 之间的显示文本；`[`、`]` 与 `(target)` 三段源码 SHALL 被装饰隐藏，MUST NOT 出现在渲染态。隐藏与标记 SHALL 只存在于装饰层：`EditorState.doc` 与磁盘文件逐字节不变（ADR 0003 §3 铁律），装饰层的视口增量纪律不变。
+形态 1 的 `title` SHALL 取 `[` 与 `]` 之间的显示文本；`[`、`]` 与 `(target)` 三段源码 SHALL 被装饰隐藏，MUST NOT 出现在渲染态。隐藏与标记 SHALL 只存在于装饰层：`EditorState.doc` 与磁盘文件逐字节不变（ADR 0003 §3 铁律），装饰层的视口增量纪律不变。
+
+**形态 2 / 3 / 4 的装饰形态**：目标区间 SHALL 被标记为链接（`src/preview/theme.ts:611` 的 `.cm-lp-link`，与标准链接的显示文本同一类，零新 token、零新色值），`title` 属性给出解码后的 URL，尾部 SHALL 追加 `↗︎` 标记 widget（与标准链接的外链尾标同一份实现、同一份可见文字）。这三种形态**没有可隐藏的链接源码**（URL 本身就是原文）——MUST NOT 为「看起来像标准链接」而额外隐藏任何字符；唯一的例外是形态 4 的两个尖括号，按标准链接的 `[` / `(` 同款隐藏（尖括号是语法定界符，不是目标的一部分）。形态 3 SHALL 只装饰 URL 部分：`[tag]: ` 前缀属定义行的语法，SHALL 保持原文（整行隐藏是另一个形态，见 [proposal.md](../../../proposal.md) 的 Non-goals 与裁决点 D3）。
+
+**形态 2 / 3 / 4 的可装饰前提是「节点原文带白名单 scheme」**（`http` / `https` / `mailto`，大小写不敏感）：GFM 的字面 URL 形态里 `www.example.com` 与裸邮箱 `a@b.example.com` **没有 scheme**，`classifyLinkTarget` 会把它们判成 vault 内资产（末段带 `.com` 一类的扩展名），而按资产处理意味着把这两个串当 vault 内相对路径交给 Rust 校验——那是错误的语义。因此这类无 scheme 的字面 URL SHALL 保持原文，MUST NOT 装饰、MUST NOT 产生打开入口（判据是「有没有 scheme」这条硬事实，不是「像不像 URL」的猜测）。
+
+**保持原文（不装饰、无打开入口、语法树上下文天然排除——前端 MUST NOT 另写一套上下文判定）的形态**（逐条为不变量）：引用式链接的**引用点** `[text][ref]` / `[ref]`（lezer 不把定义处的 URL 挂到引用点，拿不到目标就不该猜——本 change 只装饰定义行那一侧的 URL）；白名单外 scheme（`javascript:` / `file:` / 应用自定义协议，含 GFM 字面形态能产出的 `xmpp:`）；**大写字面的 scheme**（`HTTPS://…`——GFM 的字面自动链接只认小写 `http://` / `https://` / `mailto:`，那种写法根本不产出 `URL` 节点，因此同样保持原文；这是上游语法树的结论，不是本 change 的收窄，分类实现本身仍是大小写不敏感的，`[x](HTTPS://…)` 照旧可点）；行内代码、围栏代码块与缩进代码块（这些上下文里的节点是 `CodeText` / `InlineCode`，没有 `URL` 节点）；HTML 块与 HTML 注释（同样没有 `URL` 节点）；frontmatter 块（由既有的 frontmatter 剪枝排除——语法树本身不认识 frontmatter，这一条是剪枝顺序的产物，MUST NOT 依赖「语法树会排除它」）。
 
 目标 SHALL 经被装饰的链接元素的 `title` 属性保留可取（悬停可见、读屏可取）——外链接解码后的 URL，其余类别给目标原文；源码里的目标被隐藏后，信息 MUST NOT 丢失。标记自身 SHALL 是装饰性元素（`aria-hidden`），MUST NOT 成为无名的可读内容。
 
 **分类判据只看目标原文，不看文件是否存在**（装饰与激活解耦）：解析得到吗、能不能打开，都是激活时才问的问题。因此「目标不存在」的链接照常装饰，代价由激活路径的人话提示承担，而不是让渲染层去猜。
 
-光标或选区触及该链接时，系统 SHALL 显露整条链接的源码（含括号、目标与显示文本内的强调标记），显露口径与既有 callout 首行的源码显露一致：编辑态下作者看到的仍是原文，且长目标被隐藏后 MUST NOT 在链接中间产生「按键而光标不动」的死区。显露由选区驱动的装饰重建实现，MUST NOT 改写文档。
+光标或选区触及该链接时，系统 SHALL 显露整条链接的源码（含括号、目标与显示文本内的强调标记），显露口径与既有 callout 首行的源码显露一致：编辑态下作者看到的仍是原文，且长目标被隐藏后 MUST NOT 在链接中间产生「按键而光标不动」的死区。显露由选区驱动的装饰重建实现，MUST NOT 改写文档。对形态 2 / 3 / 4 而言「源码」就是 URL 原文本身（形态 4 含尖括号），显露的实际效果是撤下链接样式与尾标——判据与标准链接同款（严格重叠），MUST NOT 另立一套编辑态语义。
 
-行内代码与围栏代码块内的链接 SHALL NOT 渲染（语法树上下文天然排除，前端 MUST NOT 另写一套上下文判定）。
+本 requirement MUST NOT 改变 wikilink（`[[…]]`）的渲染路径：三态显示、span 定位与 `![[…]]` 的附件/嵌入分流一律不动。`[[x]]` 在语法树里是一个不带 `URL` 子节点的 `Link` 节点，本 requirement 的 `URL` 判据天然不命中它。
 
-本 requirement MUST NOT 改变 wikilink（`[[…]]`）的渲染路径：三态显示、span 定位与 `![[…]]` 的附件/嵌入分流一律不动。引用式链接（`[text][ref]` / `[ref]`）与自动链接（`<https://…>`）SHALL 保持原文：前者 lezer 不把定义处的 URL 挂到引用点、拿不到目标，后者不是 `[title](target)` 形态。
+本 change MUST NOT 改变标准链接（形态 1）的任何既有行为：五类分类、`title` 属性、三段源码隐藏、尾标、光标显露、表格 cell 内照常渲染、未转义管道符处保持原文——逐条不变，并由既有断言（`tests/visual/scenes/render-link.spec.ts`、`scripts/acceptance/scenarios/12-links.md`）守。
 
 #### Scenario: 外链与应用内链接各自渲染出正确的标记
 
 - **WHEN** 打开一份含 `[示例站点](https://example.invalid/site)`、`[写邮件](mailto:someone@example.invalid)`、`[包裹形式](<https://example.invalid/wrapped>)`、`[本地笔记](note.md)`、`[上层笔记](../top.md)`、`[配置](配置)`、`[说明书](docs/manual.pdf)`、`[资料目录](docs/)` 与 `[去标题](#链接)` 的 Markdown
 - **THEN** 前三条渲染为显示文本加尾部 `↗︎`，`[本地笔记]`、`[上层笔记]`、`[配置]`、`[去标题]` 渲染为显示文本加尾部 `→`，`[说明书]` 与 `[资料目录]` 渲染为显示文本加尾部 `↗︎`；所有目标源码在渲染态不可见，`title` 属性给出对应目标，文档内容逐字节不变
 
+#### Scenario: 裸 URL 与链接定义行各自装饰为外链
+
+- **WHEN** 打开一份含 `正文里的 https://example.invalid/bare 是裸 URL。` 与 `[homepage]: https://example.invalid/home` 两行的 Markdown
+- **THEN** 第一个 URL 上屏为带链接样式的 `https://example.invalid/bare`（文本本身保持可见，因为它就是原文）并在其后出现 `↗︎`；第二行的 URL 部分同样带链接样式与 `↗︎`，而 `[homepage]: ` 前缀保持原文；两处的 `title` 属性分别是两个解码后的 URL；`EditorState.doc` 与磁盘文件逐字节不变
+
+#### Scenario: 角括号自动链接装饰为外链
+
+- **WHEN** 打开一份含 `<https://example.invalid/angle>` 的 Markdown（裁决点 D1 取推荐项时适用）
+- **THEN** 上屏为 `https://example.invalid/angle` 加尾部 `↗︎`——两个尖括号被装饰隐藏，与标准链接隐藏 `[` / `(` 同款；光标触及该节点时尖括号随原文显露
+
+#### Scenario: 无 scheme 的字面 URL 保持原文
+
+- **WHEN** 同一份文档里含 `www.example.invalid`、裸邮箱 `someone@example.invalid` 与 `xmpp:someone@example.invalid`
+- **THEN** 三处一律原样显示，没有链接样式、没有尾标、不产生任何打开入口（前两者没有 scheme，会被归类为 vault 内资产——那是错误的语义；后者 scheme 不在白名单内）；激活路径在同样位置上 SHALL 无操作，MUST NOT 产生任何打开请求
+
+#### Scenario: 引用式链接的引用点保持原文
+
+- **WHEN** 文档里有 `[正文][ref]` 与 `[ref]` 两个引用点，以及 `[ref]: https://example.invalid/ref` 定义行
+- **THEN** 两个引用点一律原样显示、不产生打开入口（lezer 不把定义处的 URL 挂到引用点）；定义行的 URL 部分装饰为外链（本 change 的范围）；文档逐字节不变
+
 #### Scenario: 不可用形态保持原文
 
-- **WHEN** 同一份文档里含 `[别开我](javascript:alert(1))`、自动链接 `<https://example.invalid/auto>`、裸网址、引用式链接与行内代码里的 `` `[代码里的](https://example.invalid/code)` ``
-- **THEN** 这些位置一律原样显示 Markdown 源码，没有链接样式、没有尾标，也不产生任何打开入口
+- **WHEN** 同一份文档里含 `[别开我](javascript:alert(1))`、行内代码里的 `` `[代码里的](https://example.invalid/code)` ``、围栏代码块里的 `https://example.invalid/in-fence` 与 HTML 注释里的 `<!-- https://example.invalid/in-comment -->`
+- **THEN** 这些位置一律原样显示 Markdown 源码，没有链接样式、没有尾标，也不产生任何打开入口（代码块与 HTML 上下文由语法树天然排除：那些位置的节点是 `CodeText` / `CommentBlock`，没有 `URL` 节点）
 
 #### Scenario: 目标不存在的链接照常装饰
 
@@ -154,6 +196,11 @@ md 模式下，标准 Markdown 链接 `[title](target)`（lezer 语法树的 `Li
 
 - **WHEN** 把光标移到某条链接的显示文本内
 - **THEN** 该链接整条显露源码（`[示例站点](https://example.invalid/site)`、`[本地笔记](note.md)` 同样），其余链接仍是渲染态；光标移开后又恢复渲染态，两种状态下 `EditorState.doc` 都不变
+
+#### Scenario: 光标落在裸 URL 上撤下装饰
+
+- **WHEN** 把光标移进 `正文里的 https://example.invalid/bare 是裸 URL。` 里的 URL 中间，随后把光标移开
+- **THEN** 光标在 URL 内时该处的链接样式与 `↗︎` 尾标撤下（呈现为普通正文文本），移开后恢复；两种状态下 URL 原文都在场、`EditorState.doc` 逐字节不变；光标停在 URL 的**末位**时 MUST NOT 出现「按键而光标不动」的死区（尾标是插在正文流中的 widget，落点手感由实现期实测钉住）
 
 #### Scenario: 表格 cell 内的链接
 
@@ -241,7 +288,7 @@ yaml 文档里的**映射键**（`key:` 与 `- key:` 两种形态的键）SHALL 
 
 ### Requirement: 折行口径与配置来源
 
-`~/.config/lumir/config.json` 的 `[editor]` 表 SHALL 支持三个布尔项，键名与 Rust 字段名逐字一致
+`~/.config/lumir/config.json` 的 `[editor]` 表 SHALL 支持三个**折行**布尔项，键名与 Rust 字段名逐字一致
 （沿用 `EditorConfig` 无 `serde(rename)` 的既有口径，`src-tauri/src/config.rs`）：
 
 - `editor.line_wrap`：**md 模式**的正文行折行，`true`（默认）/ `false`。`true` 时正文行在阅读栏内折行，
@@ -250,16 +297,20 @@ yaml 文档里的**映射键**（`key:` 与 `- key:` 两种形态的键）SHALL 
   围栏与缩进代码块（代码块**不是 widget**，是行装饰：`src/preview/livePreview.ts`）。
 - `editor.code_mode_line_wrap`（本 change 新增）：**code 模式**的正文行折行，`false`（默认）/ `true`。
 
+`[editor]` 表的第四个布尔键 `editor.auto_indent`（Enter 自动缩进）不在本 requirement 的作用面内，
+它的口径见「Enter 换行与自动缩进」；本 requirement 只管折行三键，MUST NOT 被读成「`[editor]` 表
+只有三个布尔键」。
+
 **出厂口径是分叉的**：`line_wrap` 默认 `true`、`code_mode_line_wrap` 默认 `false`——同一份出厂配置下
 md 折行、code 不折行。`code_mode_line_wrap` MUST NOT 跟随 `line_wrap`：键缺席 = 上列的出厂 `false`，
 显式写 `true` 才把 code 模式也折起来。跟随口径被明确否决——它会让缺省值随用户改 `line_wrap` 漂移，
 出厂分叉随之失效。两键的作用面互不重叠（各管各的模式），MUST NOT 互相改写。
 
-三项 SHALL 与既有 `editor.mode` 走同一条装配链——各类型 `impl Default`
-（`src-tauri/src/config.rs` 的 `impl Default for EditorConfig`）、宽容解析镜像上的 `#[serde(default)]`、
-`validate()` 逐字段回落到默认——MUST NOT 为它们另开一条装载路径。取值不合法时 MUST 走既有 config
-warning 语义、不得导致启动失败（ADR 0002 §5）：warning 出口沿用现状（console + 诊断日志的
-`config_warning` 事件，`src/main.ts`），本 change MUST NOT 新增 UI 面。
+三个折行项（连同 `editor.auto_indent`）SHALL 与既有 `editor.mode` 走同一条装配链——各类型
+`impl Default`（`src-tauri/src/config.rs` 的 `impl Default for EditorConfig`）、宽容解析镜像上的
+`#[serde(default)]`、`validate()` 逐字段回落到默认——MUST NOT 为它们另开一条装载路径。取值不合法时
+MUST 走既有 config warning 语义、不得导致启动失败（ADR 0002 §5）：warning 出口沿用现状（console +
+诊断日志的 `config_warning` 事件，`src/main.ts`），本 change MUST NOT 新增 UI 面。
 
 **已知边界（如实记录）**：类型不符（如 `"line_wrap": "yes"` 或 `"code_mode_line_wrap": "yes"`）会在
 解析期让整份宽容结构失败、走整文件回落（全部默认 + warning），与 `editor.mode` 给错类型时同路。
@@ -271,13 +322,13 @@ warning 语义、不得导致启动失败（ADR 0002 §5）：warning 出口沿�
 （config.rs 的「JSON 而非 TOML」选型），本 change 不做格式迁移。新增字段 SHALL 经 ts-rs 导出到
 `src/bindings/` 并受 bindings 漂移门禁约束（`scripts/gate.sh`）。
 
-三个配置项是**输入面**：应用 MUST NOT 因运行期的折行翻转回写 `config.json`，MUST NOT 做 per-file 的
+折行三个配置项是**输入面**：应用 MUST NOT 因运行期的折行翻转回写 `config.json`，MUST NOT 做 per-file 的
 折行状态持久化（对比 Emacs：`toggle-truncate-lines` 只做 buffer-local 翻转、不落盘
 [Line Truncation](https://www.gnu.org/software/emacs/manual/html_node/emacs/Line-Truncation.html)）。
 
 #### Scenario: 缺字段时取默认
 
-- **WHEN** `config.json` 的 `[editor]` 表里没有这三个字段（旧配置原样启动）
+- **WHEN** `config.json` 的 `[editor]` 表里没有这三个折行字段（旧配置原样启动）
 - **THEN** md 模式的正文行折行、md 的代码块不折行、code 模式的正文行不折行
   （`line_wrap = true`、`code_block_wrap = false`、`code_mode_line_wrap = false`）；不产生任何 config warning
 - **AND** 键缺席时取到的就是**出厂分叉**（md 折 / code 不折）——本 change 的出厂口径即上列三项默认值，
@@ -885,17 +936,20 @@ SHALL 由两侧共用同一张语言表（`src/preview/code.ts` 的 `LANGUAGES`�
 
 `.gitignore`、`.gitattributes`、`.jsonc` 文件 SHALL 随注册表文件类（code 类）经
 非 md 文本文件可编辑通道（change `editable-non-md-files`，M231）可编辑：编辑产生
-dirty、Cmd+S 与自动保存、CAS 冲突恢复、崩溃备份、外部修改重载与 md 走同一保存链路。
+dirty、Cmd+S、CAS 冲突恢复、崩溃备份、外部修改重载与 md 走同一保存链路。
 可编辑性 SHALL 只由注册表文件类推导——本 capability MUST NOT 为这三类文件单设
 可编辑开关或第二份白名单（REVIEW.md 第 8 条双表漂移防线）。若可编辑通道按白名单
 形态落地，这三类 SHALL 在白名单内。可编辑通道落地前，三类文件维持只读 code 模式
 （着色不受影响）。
 
+（本 change 只把「自动保存」从保存链路的列举中删掉：自动保存整条移除后，这三类文件
+与 md 的共同保存链路是 Cmd+S / CAS 冲突恢复 / 崩溃备份 / 外部修改重载。）
+
 #### Scenario: 三类文件随可编辑通道可编辑
 
 - **WHEN** 非 md 可编辑通道已落地，用户打开 `.gitignore`（或 `.gitattributes` /
   `.jsonc`）并编辑、保存
-- **THEN** 编辑落盘成功，保存链路（Cmd+S / 自动保存 / 冲突恢复）与 md 同口径；
+- **THEN** 编辑落盘成功，保存链路（Cmd+S / 冲突恢复 / 崩溃备份）与 md 同口径；
   可编辑性的来源是注册表文件类，不存在仅作用于这三类文件的独立开关
 
 ### Requirement: 表格放大全屏查看
@@ -1001,3 +1055,325 @@ MUST NOT 在键入路径与文档打开路径上新增解析或测量工作（AD
 
 - **WHEN** 在一份大文档中部的一张表内执行 `table.toggle-fullscreen`
 - **THEN** 表格定位经既有视口有界的缓存模型完成（无全文档表格扫描），遮罩正常打开
+
+### Requirement: Enter 换行与自动缩进
+
+`Enter` 在可编辑会话中的换行行为 SHALL 按**光标所在的结构上下文**分派，逐条口径如下
+（各条的实测依据与来源见 change 的 `design.md` §1 / §4）：
+
+- **md 模式的列表项 / 引用内**：`Enter` SHALL 续写同级标记并保持该项的嵌套层级（无序项续标记、
+  有序项续下一个序号、引用续 `> `）。这条是**既有行为**（编辑器内核所装 markdown 语言支持包
+  自带的键位），本 change MUST NOT 改变它。
+- **code 模式**：`Enter` SHALL 插入换行，且新行的缩进 SHALL 取该文件语言的**语法缩进**（由编辑器
+  内核的缩进服务按语法树判定）；该语言没有缩进规则时（如 `shell` / `toml` / `yaml` / 未收录扩展
+  的纯文本），SHALL 沿用光标所在行的行首空白。
+- **md 模式的围栏代码块与缩进代码块内**：`Enter` SHALL 插入换行并沿用光标所在行的行首空白。
+  MUST NOT 在该上下文里续写列表标记（围栏内的 `- x` 是代码文本，不是列表项）。本 change MUST NOT
+  为围栏内容引入语法级缩进——围栏内容在编辑器的语法树里没有子语言，本 change 如实登记这条能力
+  边界，MUST NOT 假装已覆盖。
+- **md 模式的正文段落**：光标所在行行首无空白时，`Enter` 的呈现 SHALL 与现状一致（平换行，
+  MUST NOT 凭空加缩进）。
+
+缩进的写入单位 SHALL 是编辑器内核算法的出厂缩进单位（两个空格），与仓内既有 2 空格惯例一致；
+本 change MUST NOT 为某门语言单设 4 空格。一次 `Enter` SHALL 是一次撤销步（MUST NOT 产生两步撤销）。
+只读会话（`EditorState.readOnly`）里 `Enter` MUST NOT 产生任何文档变更。
+
+**配置键 `editor.auto_indent`**（`[editor]` 表，布尔，**默认 `true`**）：`false` 时上列「code 模式」
+与「md 的围栏 / 缩进代码块内」两条 SHALL 回到本 change 之前的行为（裸换行）；md 的列表 / 引用续行
+MUST NOT 受本键影响（本键的作用面只有本 change 新增的两处，这条不对称是本 change 的显式口径，
+不是漏实现）。键缺席 = 出厂 `true`，MUST NOT 跟随任何别的键。该键 SHALL 与 `editor.mode` 及三个
+折行键走同一条装配链（各类型 `impl Default`、宽容解析镜像上的 `#[serde(default)]`、`validate()`
+逐字段回落、ts-rs 导出、启动时装载一次）；类型不符 MUST 走既有的整文件回落（与 `line_wrap` 同路），
+本 change MUST NOT 引入逐字段类型容忍。
+
+`Enter` MUST NOT 被登记进统一键位表（`src/keys.ts` 的 `KEY_BINDINGS`）：它的分派点在编辑器内核内
+（由 markdown 语言支持包自带的 `Enter` 键位优先，未命中才自动缩进）。代价如实登记：`Enter` 不进
+`[keys]` 的重绑面、不进键位查看面板——理由与备选见 change 的 `proposal.md` 裁决项 D1 与
+`design.md` §1.3。本 change MUST NOT 新增命令 id。
+
+`Shift-Enter` MUST NOT 被本 change 改变：它维持现状（裸换行）。因此 code 模式下两个键的行为从此不同
+——这是知情的不对称（`Shift-Enter` 成为「插一个不缩进的裸换行」的逃生口），也是本 change 的显式
+Non-goal。
+
+#### Scenario: code 模式继承语法缩进
+
+- **WHEN** 打开一份 `.js` 文件，光标移到 `const alpha = () => {` 的行尾并按下 `Enter`
+- **THEN** 新行缩进两个空格（该语言的语法缩进，缩进单位为编辑器出厂值）
+- **AND** 一次撤销即回到按键前的文档（一步撤销），磁盘文件在显式保存（`⌘S`）后逐字节等于编辑器内容
+
+#### Scenario: 语言无缩进规则时沿用当前行
+
+- **WHEN** 打开一份 `.toml`（或 `.sh` / `.yaml` / 未收录扩展的纯文本）文件，光标移到 `  [a]` 的
+  行尾并按下 `Enter`
+- **THEN** 新行沿用该行的两个空格（MUST NOT 退化成行首，也 MUST NOT 凭空增加一层）
+
+#### Scenario: md 围栏代码块内沿用当前行缩进且不续列表标记
+
+- **WHEN** md 文档里有 ```js 围栏代码块，光标在块内 `  if (x) {` 的行尾按 `Enter`
+- **THEN** 新行缩进两个空格
+- **AND** 块内的 `- x` 行按 `Enter` MUST NOT 被续写成 `- `（围栏内是代码文本，不是列表项）
+
+#### Scenario: md 列表与引用的续行不变
+
+- **WHEN** 在 md 的 `- alpha`（或嵌套的 `  - bravo`、有序的 `2. dos`、`> quoted`）行尾按 `Enter`
+- **THEN** 续写同级标记并保持层级（无序 → `- `、嵌套 → `  - `、有序 → 下一个序号、引用 → `> `），
+  与本次变更之前逐字节一致
+
+#### Scenario: md 正文段落平换行
+
+- **WHEN** 在 md 的普通段落（行首无空白）行尾按 `Enter`
+- **THEN** 新行不带任何缩进——呈现与本次变更之前一致，MUST NOT 凭空加缩进
+
+#### Scenario: 关闭自动缩进
+
+- **WHEN** 配置 `{"editor": {"auto_indent": false}}` 后启动，在 code 模式的文件里按 `Enter`
+- **THEN** 新行为裸换行（退回本次变更之前的行为）
+- **AND** 同样配置下，md 的 `- alpha` 行按 `Enter` 仍续写 `- `（本键 MUST NOT 关掉既有的续行行为）
+
+#### Scenario: 缺字段时的默认与类型边界
+
+- **WHEN** `config.json` 的 `[editor]` 表里没有 `auto_indent`（旧配置原样启动）
+- **THEN** 取出厂 `true`（code 模式与 md 的围栏 / 缩进代码块内均自动缩进），不产生任何 config warning
+- **AND** `"auto_indent": "yes"` 这类类型不符 SHALL 走既有的整文件回落（全部默认 + warning，与
+  `line_wrap` 同路），该边界 SHALL 由单测钉住；本 change MUST NOT 引入逐字段类型容忍
+
+### Requirement: 块级复制触发钮（表格与代码块）
+
+md 模式下，**渲染为 grid 的 pipe table** 与**围栏 / 缩进代码块** SHALL 各带一个「复制」触发钮。
+触发钮 SHALL 与既有全屏（放大）触发钮同族：壳 = `--preview-bg` + 1px `--border`、圆角 r6、
+尺寸 26×24、图标色 `--text-2` → 热态 `--text`、无阴影、过渡 `--dur-hover`、eink 白底黑框 /
+热态黑底反白，MUST NOT 新增 token 或组件级色值。
+
+两个钮 SHALL 构成**一个右锚定的横向按钮群**：放大钮 SHALL 位于块可视盒右上角内侧
+（`top: 6px; right: 6px`），复制钮 SHALL 贴其左侧（间隙 4px ⇒ `top: 6px; right: 36px`），
+组内自左至右 SHALL 为「复制 → 放大」。放大钮的位置与形态在本 change 中 MUST NOT 改变。
+组的锚点 SHALL 是块的**可视盒**坐标系（表格 = 横滚容器的可视区，代码块 = 其容器）——
+块内容横向滚动时钮 MUST NOT 随之移动，因此钮的定位包含块 SHALL 落在横滚容器之外
+（沿用既有的块级 slot 层，rank 20）。
+
+出现时机 SHALL 为 hover 块的可视盒（或钮自身 `focus-visible`）：静止态钮 SHALL 零足迹——
+不可见、不占位、不进读屏树、不可聚焦、不接收指针，MUST NOT 出现在任何静止态整页基线里。
+
+代码块侧 SHALL 有独立的零足迹 slot 层（`position: relative`，无 padding / margin / 背景 / 边框 /
+overflow），且 SHALL 在 md 模式下**不依赖折行设置**存在——「代码块折行」打开时块内 MUST NOT 出现
+横向滚动容器（既有口径不变），但复制钮 SHALL 仍然存在。
+
+复制钮 SHALL 有 `aria-label`（`文案-Copy.md` D153：「复制表格」/「复制代码块」），块编号
+MUST NOT 下沉到按钮文案——上下文由容器既有的 `Markdown 表格 N` / `Markdown 代码块 N` 标签提供。
+
+点击复制钮 SHALL NOT 改写文档（`EditorState.doc` 与磁盘文件逐字节不变，ADR 0003 §3）、
+SHALL NOT 改变选区或光标落点。**降级表与非矩形表 MUST NOT 有复制钮**（它们没有 grid DOM）；
+**被 widget 整块替换的围栏块（mermaid 图表态）MUST NOT 有复制钮**（块内没有源码行可挂）——
+两处「没有钮」SHALL 是结构性结果，MUST NOT 用降级提示或旁路入口模拟。
+
+#### Scenario: 静止态零足迹，hover 浮现两钮
+
+- **WHEN** 打开一份含渲染为 grid 的表与围栏代码块的文档，在静止态读 DOM、读屏树与块几何；
+  随后把指针移到表格的可视盒上，再移到代码块的可视盒上
+- **THEN** 静止态：复制钮与放大钮都不可见（不在读屏树、不可聚焦、不接收指针），块的渲染盒
+  与不含钮时逐值相同；hover 表格后**两个钮同时**出现在可视盒右上角内侧，复制钮在放大钮左侧、
+  间隙 4px、两钮尺寸相同；hover 代码块后同样两个钮出现（代码块折行开 / 关两种口径下都在）
+
+#### Scenario: 结构性边界——降级表、非矩形表与 mermaid 图表态没有复制钮
+
+- **WHEN** 在同一份文档里依次查看一张降级表（>64 KiB 源码）、一张非矩形表、一个渲染为图表的
+  mermaid 围栏块与一个普通围栏代码块，各自 hover 其可视盒
+- **THEN** 前三者都没有复制钮（没有可挂载的子树 / 块内没有源码行）、也不出现任何提示；
+  普通围栏代码块的复制钮正常出现——正观测保证「没有钮」不是恒真的空断言
+
+#### Scenario: 内容横滚时钮不动，点击不改文档
+
+- **WHEN** 对一张自然宽超过栏宽的宽表：横向滚动其内容到最右，再点一次复制钮
+- **THEN** 钮在横滚前后相对可视盒的位置逐值不变、始终完整可见；点击后文档内容、选区与光标落点
+  逐字节 / 逐值不变，且该表仍是同一张 grid 表（未被折叠成源码）
+
+### Requirement: 块级复制的内容与反馈
+
+复制内容 SHALL 取自**文档模型**（`EditorState` 的文本），MUST NOT 从渲染态 DOM 取文本
+（渲染态里表头分隔行不存在、cell 内是渲染后的 inline 形态、被 widget 替换的块里没有源码行）。
+切片 SHALL 在触发那一刻现取，MUST NOT 缓存跨帧的文本或元素引用。
+
+- **表格**：复制内容 SHALL 是该表在文档里的**源码切片**（`Table` 语法节点范围）——含表头分隔行、
+  含用户原有的对齐填充与短行写法；前后 MUST NOT 补空行，MUST NOT 追加尾换行。
+- **代码块**：复制内容 SHALL 是**纯内容**——围栏块 SHALL 不含围栏行与语言标记（取 `CodeText` 子节点
+  文本）；缩进代码块 SHALL 不含「它是代码块」的那层语法缩进、SHALL 保留内容自身的相对缩进
+  （按序拼接块内 `CodeText` 子节点文本，节点之间的间隙即语法缩进，MUST NOT 计入）；
+  MUST NOT 追加尾换行（空块复制空串）。
+- 同一份内容口径 SHALL 同时适用于触发钮与命令入口（`block.copy`），MUST NOT 两处各写一套。
+
+剪贴板写入 SHALL 复用既有纯前端通道（`navigator.clipboard.writeText`，M244 先例），
+MUST NOT 引入剪贴板插件、MUST NOT 新增后端命令或 capabilities。
+
+成功反馈 SHALL 走既有 toast 机制、成功 tone（✓ 前缀），文案取 `文案-Copy.md` D154
+（「已复制表格」/「已复制代码块」，与触发钮读屏名同词）；写入失败（剪贴板不可用 / 权限被拒）
+SHALL 给 D155（「复制失败：{原因}」）的 toast 并另记一条 console 线索，MUST NOT 静默、
+MUST NOT 报成功。
+
+本 change MUST NOT 新增配置项与 token，`src-tauri/**` MUST NOT 改动。
+
+#### Scenario: 表格复制 = 文档里的源码，不是屏幕上的样子
+
+- **WHEN** 对一张写在文档里的表（表头分隔行在渲染态被隐藏、末列表头带用户自己写的对齐填充）
+  触发复制，随后读系统剪贴板
+- **THEN** 剪贴板内容与该表在文档里的源码逐字节相同——含表头分隔行、含原有对齐填充，
+  不含首尾多余空行、不含尾换行
+
+#### Scenario: 代码块复制 = 纯内容（围栏与缩进两种形态）
+
+- **WHEN** 对一个内容自带相对缩进的围栏代码块、一个含更深缩进行的缩进代码块、一个空围栏块
+  各触发一次复制，随后读系统剪贴板
+- **THEN** 围栏块的结果不含围栏行与语言标记、无尾换行；缩进块的结果不含 4 空格那层语法缩进、
+  保留更深那行的相对缩进；空块的结果是空串；三者的结果都不是「屏幕上的 DOM 文本」
+
+#### Scenario: 剪贴板不可用时不谎报成功
+
+- **WHEN** 让剪贴板写入失败（测试注入拒绝 / 权限被拒）后触发一次复制
+- **THEN** 出现 D155 的失败 toast、不出现 D154 的成功 toast，文档与剪贴板均不变
+
+### Requirement: 代码块放大全屏查看
+
+md 模式下经 live preview 渲染的**围栏代码块与缩进代码块** SHALL 支持经命令
+`code-block.toggle-fullscreen` 打开应用内全屏遮罩查看。命令的命中条件 SHALL 为下列之一：
+① 遮罩已打开（此时命令 = 关闭，toggle）；② 编辑器 caret 落在某块代码块内；③ 该块的块级横滚容器
+持有焦点。命中条件不满足时命令 MUST NOT 消费事件（事件原样留给原生路径）。
+
+**code 模式（非 md 文件）没有任何打开路径**——code 模式没有 live preview 装饰层、没有围栏渲染、
+没有「块」这个对象，也没有块级容器（本 capability 的「单内核双模式与可编辑性落地」与
+「折行渲染与代码块横滚容器」两条既有条款）。「code 模式无入口」SHALL 是该结构性事实的结果，
+MUST NOT 用开关、提示或「整份文件放大」的旁路模拟；本 capability MUST NOT 因本能力在 code 模式
+产生任何容器、入口或提示。**折行口径下 ③ 同样为假**（`editor.code_block_wrap = true` 时
+MUST NOT 存在块内横滚容器），这也是结构性结果；② 在两种折行口径下都成立。
+
+打开路径 SHALL 有两条（与表格全屏同一裁决形态：命令 + 内容区 hover 触发钮）：
+① 上面的命令；② 代码块右上角内侧的 hover 触发钮——四角框字形、`aria-label` 取 `文案-Copy.md`
+D152、零新 token、无阴影、eink 黑框反白（热态黑底反白），静止态零足迹（`visibility: hidden`：
+不绘制、不占位、不进读屏树、不接收指针）。触发钮 SHALL 锚定在**块可视盒**的坐标系
+（块内容横滚时钮不动），且 SHALL 只对代码块存在——它挂在**无条件存在**的块级 slot 包装层上，
+因此「折行口径下没有块内容器」不构成第二条规则。
+
+全屏内容 SHALL 是该代码块的**整块源码**——`EditorState` 里该块的全部行，MUST NOT 随编辑器视口
+截断（CM 只渲染视口附近的行，截断会让长块在全屏里读到一半而无路可走）。内容的呈现 SHALL 复用
+文档内代码块的**同一份呈现口径**：行与头部条取既有 class（`cm-lp-codeblock-line` /
+`cm-lp-codeblock-head`）、着色取既有着色实现的同一函数（`highlightCode`）与既有 token class
+（`cm-lp-tok-*`），块的**首行**在该块带 `CodeMark`（即围栏块的起始围栏）时 SHALL 以头部条形态呈现
+（既有口径：围栏行即头部条，尾围栏是普通代码行；缩进代码块没有围栏行，因此没有头部条）。浮层 MUST NOT 另写语言表、色值映射或行样式，MUST NOT 出现行号、
+编辑入口或第三套文本布局。只读 SHALL 是结构性的（内容不在编辑器的 `contenteditable` 子树内、
+不带事件监听），MUST NOT 以开关模拟；文本 SHALL 保持原生可选可复制（MUST NOT `user-select: none`）。
+
+浮层内容 SHALL 按**当前** `editor.code_block_wrap` 口径呈现，MUST NOT 在浮层内引入第二个折行开关
+或第三份折行状态：`false`（默认）时行不折行、超长行由浮层容器横向滚动到达；`true` 时行在浮层
+栏内折行、MUST NOT 出现横向滚动。浮层容器 SHALL 由浮层自己的滚动容器承载双向滚动，滚动走**原生**
+路径（滚轮 / 触控板 / 方向键），MUST NOT 为此新增统一键位表条目；浮层容器 MUST NOT 复用块级横滚
+容器的 class 判据（`cm-lp-block-scroll`），以免浮层内的方向键被 widget 键路径接管。
+
+遮罩 SHALL 覆盖窗口内容区并定位在文档流之外（打开与关闭 MUST NOT 引起文档区几何变化），SHALL 是
+模态层：`role="dialog"` + `aria-modal="true"`，打开即持有焦点，持焦期间 `editor` 作用域的键
+MUST NOT 穿透到文档，`Tab` SHALL 留在遮罩内；读屏名 SHALL 由与文档内容器**同一份生成处**产出
+（`Markdown 代码块 N`），MUST NOT 另写一份字面量。关闭路径 SHALL 有四条：`Esc`（遮罩上就地消费，
+复用键位层 token 归一化，MUST NOT 为同一物理组合在统一键位表注册第二条绑定）、点击遮罩
+（面板以外的区域）、再次执行 `code-block.toggle-fullscreen`（toggle）、焦点离开遮罩（`blur` 兜底，
+MUST NOT 抢焦点）；四条 SHALL 回到同一个关闭实现，前三条关闭后焦点 SHALL 交还编辑器，
+**且该交还 MUST NOT 改变编辑器的阅读位置**：关闭前后编辑器滚动容器的 `scrollTop` / `scrollLeft`
+与当前渲染的行的文档位置 SHALL 逐值不变。交还 SHALL 走编辑器自身的滚动通道
+（`readScrollPosition()` / `applyScrollPosition()`），本能力 MUST NOT 直接写滚动容器的滚动量。
+`blur` 兜底路径 MUST NOT 写回位置——焦点去向由触发它的一方决定，本能力 MUST NOT 用旧位置把视口
+拽回去。打开与关闭 SHALL NOT 改写文档（`EditorState.doc` 与磁盘文件逐字节不变，ADR 0003 §3），
+SHALL NOT 改变选区或光标落点。文档代际变化（外部修改重载）时遮罩 SHALL 关闭且 MUST NOT 抢焦点
+（视同 `blur` 兜底）——MUST NOT 留下「遮罩里是旧代码、文档里已是新代码」的状态。
+
+遮罩与内容的样式 MUST 只取既有 design token（`--scrim` / `--preview-bg` / `--border` /
+`--shadow-raise` / `--r10` / `--code-bg` / `--r8` 等），MUST NOT 新增 token 与组件级色值；
+三主题（light / dark / eink）SHALL 由 token 体系自然成立，eink 按既有浮层规则（无阴影、
+实心黑框升级线宽）。
+
+#### Scenario: 打开、整块内容与四条关闭路径
+
+- **WHEN** caret 在一块渲染态代码块内，执行 `code-block.toggle-fullscreen`；随后依次按四组动作验证：
+  按 `Esc`、再次打开后点击面板以外的遮罩区域、再次打开后再执行一次同一命令、再次打开后把焦点移到
+  遮罩之外
+- **THEN** 每次打开时遮罩可见且内容渲染盒宽高非零；内容文本与**该块源码**逐字节一致，**包括位于
+  文档视口之外的那些行**（长块尤其要判这一条）；四条路径都让遮罩从可见变为不可见；前三条关闭后
+  焦点回到编辑器（随后的 `⌃D` 真的删掉一个字符）且阅读位置逐值不变（下一条 scenario）；
+  `blur` 路径关闭且不抢焦点；全程文档内容与选区逐字节 / 逐值不变
+
+#### Scenario: 关闭交还焦点不改变阅读位置
+
+- **WHEN** 把编辑器滚到离文档顶超过一屏的位置、caret 留在视口之外，打开遮罩，再依次经 `Esc`、
+  点击遮罩与再次执行同一命令三条路径各关闭一次
+- **THEN** 每次关闭前后编辑器滚动容器的 `scrollTop` 与 `scrollLeft` 逐值相同，当前渲染的行的
+  文档位置逐值相同（焦点回到编辑器不以移动视口为代价）；`blur` 兜底关闭不回写位置、也不把视口
+  拽回旧位置
+
+#### Scenario: 块外与 code 模式没有打开路径，块内与容器持焦有
+
+- **WHEN** caret 落在正文段落里执行该命令；再打开一个非 md 文件（code 模式）执行同一命令；
+  再把 caret 移进同一份 md 文档里的一块代码块执行一次；最后让该块的横滚容器持有焦点再执行一次
+- **THEN** 前两次都不出现遮罩、事件不被消费（原样留给原生路径）、不出现任何提示；后两次都正常
+  打开遮罩——正观测保证「不出现」不是恒真
+
+#### Scenario: 折行两口径下的内容与横滚
+
+- **WHEN** 默认配置（`editor.code_block_wrap = false`）下对一块含超长行的代码块打开遮罩，读内容
+  容器的滚动几何；再以 `code_block_wrap = true` 打开同一块，读同一读数
+- **THEN** 前者行不折行且内容容器横向可滚（`scrollWidth > clientWidth`，滚动后 `scrollLeft` 变化）；
+  后者的行在浮层内折行且不出现横向滚动；两次的呈现口径与该配置下文档内的折行行为一致；浮层内
+  不存在任何折行开关
+
+#### Scenario: 遮罩持焦期间编辑键不穿透，文本仍可选
+
+- **WHEN** 打开遮罩后依次按 `⌃D`、`⌃K`、`⌃A`、`Tab` 与若干字符键；随后在浮层内容上做一次文本选中
+- **THEN** 文档内容与光标位置逐字节不变（编辑键不穿透，`Tab` 不把焦点送出遮罩），遮罩仍持有焦点；
+  文本可被原生选中（只读是结构性的，不是「不可选」）
+
+#### Scenario: 触发钮只对代码块存在，且静止态零足迹
+
+- **WHEN** 打开一份含代码块与普通正文段落的 md 文档，在静止态读 DOM、读屏树与块几何；随后把指针
+  移到该块的可视盒上；再对一份 `code_block_wrap = true` 的同一文档重复一次
+- **THEN** 静止态：钮不可见（定位/绘制层面不存在，不进读屏树、不接收指针），块的渲染盒与不含它时
+  逐值相同；hover 后钮出现在块可视盒右上角内侧；两种折行口径下钮都在（slot 层无条件存在）；
+  块内容横滚时钮的位置不动
+
+#### Scenario: 文档代际变化时遮罩退场
+
+- **WHEN** 遮罩打开期间文档因外部修改重载（文档代际推进）
+- **THEN** 遮罩关闭且不抢焦点（焦点去向由重载链路自身决定），不留「遮罩里是旧代码」的状态
+
+### Requirement: 全屏内容的重建与性能边界
+
+全屏内容的呈现 SHALL 来自该块的源码文本与既有着色实现，SHALL NOT 依赖编辑器当前已渲染的那部分
+DOM（视口语义），因此 MUST NOT 出现「只显示文档视口内那几行」的截断。着色 SHALL 复用文档内
+代码块使用的同一份实现与同一份语言表（单一来源），MUST NOT 为浮层另立第二份语言表或色值映射
+（REVIEW.md 第 8 条）。
+
+遮罩的 DOM SHALL 惰性建立（首次打开时建，MUST NOT 在文档打开路径上预建）；打开与关闭 MUST NOT
+在键入路径与文档打开路径上新增解析或测量工作（ADR 0002 §6 的性能合同不因本能力放宽）。
+打开动作 MUST NOT 触发全文档扫描——块定位 SHALL 复用与装饰层**同一发现范围**（视口有界）的
+同一遍历；命令的块查找复用既有的「某位置是否属于代码块」判定，MUST NOT 另写一份语法树遍历。
+打开成本 SHALL 与块源码长度成线性关系；本 change MUST NOT 新增任何字节读取路径（不调附件读取、
+不动 Rust 侧）。
+
+**内容规模 SHALL 以既有的单块着色上限（64 KiB）为界**（MUST NOT 为全屏另立新阈值）：
+不超过上限的块以「行 + token」呈现；超过上限的块 SHALL 以**单块纯文本**呈现整块源码
+（同一份源码、逐字节一致；不逐行建 DOM、不着色，行样式由浮层容器承担）。两种呈现都必须覆盖整块。
+
+已知边界（如实记录，本版不做）：键盘入口只有命令、默认不绑键（用户经 `[keys]` 绑定后生效），
+鼠标入口是 hover 触发钮；**超过 64 KiB 的块在浮层里的观感与文档内不同**（文档内仍是逐行排版、
+只是不着色，浮层退化为单块纯文本）；浮层内没有行号、搜索、跳转与多块导航（「上一块 / 下一块」）；
+浮层内的滚动手感与长块观感归 dogfood 验收。
+
+#### Scenario: 文档打开路径零新增
+
+- **WHEN** 打开一份含多块代码块的文档但一次都不执行 `code-block.toggle-fullscreen`，读 DOM
+- **THEN** 文档的 DOM 里不存在全屏遮罩节点（惰性建立）；打开路径的解析与测量工作与本能力引入前
+  一致
+
+#### Scenario: 定位不触发全文档扫描
+
+- **WHEN** 在一份大文档中部的一块代码块内执行 `code-block.toggle-fullscreen`
+- **THEN** 块定位经与装饰层同一份视口有界的遍历完成（无全文档扫描），遮罩正常打开
+
+#### Scenario: 超限块以单块纯文本呈现整块
+
+- **WHEN** 对一块源码超过单块着色上限（64 KiB）的代码块执行该命令，读浮层内容的文本与其节点数
+- **THEN** 文本与整块源码逐字节一致（含超出文档视口的行）；内容节点数有界、不随行数线性增长
+  （未逐行建 DOM）；该块在文档内的既有呈现与折行口径不受影响

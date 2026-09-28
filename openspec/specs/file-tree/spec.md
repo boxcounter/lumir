@@ -62,7 +62,7 @@
 #### Scenario: 非 md 文本文件可编辑打开
 
 - **WHEN** 用户在配置 `editor.mode = md` 下点击 `.php` / `.txt` / 未知扩展文件 / `LICENSE`（basename 无点）
-- **THEN** 编辑器以可编辑 code 模式打开该文件原文：可键入、产生未保存状态，Cmd+S 与自动保存真实可达（保存链路同 md），不会出现 Cmd+S 无效的保存死态
+- **THEN** 编辑器以可编辑 code 模式打开该文件原文：可键入、产生未保存状态，Cmd+S 真实可达（保存链路同 md），不会出现 Cmd+S 无效的保存死态
 
 #### Scenario: md 文件仍可编辑
 

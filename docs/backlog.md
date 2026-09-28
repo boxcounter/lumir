@@ -13,6 +13,9 @@
 1. **历史敏感信息是否 filter-repo**：M111/M115 历史提交中的真实文件名；`docs/design-parity-contract/evidence/*.log` 约 20 行本机路径。tower 建议不必（仓库 M3 前不公开）。遗留自批次一。
 2. **demo 右侧探针栏去留**：版面/文案决策，建议随 theme 重做一并处理。遗留自批次二。
 3. **「保留我的版本」后自动保存暂停但用户无感知**：无回归；提示文案留 UX 重做阶段。遗留自批次二。
+   **已失效（2026-09-28，M287 归档批）**：自动保存整条移除（change `remove-autosave`，M278，2026-09-27 合并）
+   后「自动保存暂停」这个状态不再存在，本条随之作废。冲突处置后若仍有「用户不知道文档仍是 dirty」的提示
+   诉求，那要针对**显式保存**路径重开一条新条目（本条不再承接）。
 4. **宽表横向溢出裁切是否预期**：实测溢出 1549pt vs 栏宽 766pt，AX 层完整。待 Alex 对照设计规格确认。遗留自桌面复验（M116 期）。
 5. **Emacs 档 3 与全产品键位**：isearch / mark / region / ⌃X 前缀，及左栏 tree/shell 零键盘支持——待 UX 重做会话与 dogfood 反馈后立项。批次三遗留。
 6. ~~**openspec 归档 `add-diagnostics-logging`**（M134 已合并，2026-09-16）：实现与文档已入库，归档评审待 Alex 点头。~~ **2026-09-17 M150 已按批次授权执行**（Alex 对整体 review 的裁决「好，采纳。你动手吧」含归档节点 2 批量授权）：归档为 `openspec/changes/archive/2026-09-17-add-diagnostics-logging`，living spec 落 `openspec/specs/diagnostics/spec.md`；其未勾任务 4.2（`gate.sh all` 全绿）就地标注改由 CI perf.yml 承担（本地 `all` 因既有内存合同超标不可能全绿，见本条下方第 7 项），核销记录见「已核销」。
@@ -572,6 +575,10 @@
     `src/tabs.ts` 三常量改 Close / Close Other Tabs / Close Tabs to the Right，deck D149–D151 双列对调、
     原中文措辞移右列备查）。场景 50 与 change spec 的中文文案残留归 M266 收口。本条待节点 2 归档时
     一并核销。
+    **归档动作已执行（2026-09-28，M287 归档批）**：两个 change 都已归档（`openspec/changes/archive/2026-09-28-tab-strip-context-menu` / `…-preview-tab-removal`），`multi-tabs` 的
+    REMOVED ×1 + ADDED ×1 + MODIFIED ×1 与 `vault-workspace` 的两条 MODIFIED 逐字落进 living spec
+    （逐 requirement 字节比对，`openspec list` 已空）。**Alex 节点 2 的过目包见 M287 的 review-request**，
+    本条随该评审一并核销。
 40. **归档 change `goto-line-command`**（M281 实现，2026-09-27；**2026-09-28 Alex 二次改判 D4**，**待 Alex 节点 2**）：
     Alex 原话「增加类似 Emacs 那样跳转到指定行号的快捷键」；节点 1 裁决（2026-09-27）已落定 D1/D2/D3
     并**改判 D4**（md 不再豁免行号 gutter）；**二次改判（2026-09-28）把 D4 收成可配置三档**——
@@ -594,6 +601,10 @@
     `src/preview/theme.ts` 的 gutter 段 + `always` 档的整页基线重拍；若要**运行期**切换档位（照 Emacs
     `display-line-numbers` 的随时 toggle），那是一个新 change（`[ui]` 回写通道 + 一个命令 / 键位 / UI
     落点，先例是 `ui.theme` 的 modeline 主题钮）。
+    **归档动作已执行（2026-09-28，M287 归档批）**：已归档为
+    `openspec/changes/archive/2026-09-28-goto-line-command`，delta 的 ADDED ×1（11 条 scenario）逐字落进
+    `openspec/specs/keymap-commands/spec.md`；归档当时的基线读数 **18 passed / 0 failed**（不背口头值）。
+    **Alex 节点 2 的过目包见 M287 的 review-request**，本条随该评审一并核销。
 
 ## 待修 findings（不阻塞）
 
@@ -648,6 +659,14 @@ M154 的 737ms 出现在 45MB md 的 4× 合成规模，不是当前档）。它
 才做。可复用的现成件：套件的 `seed.bulkVault`（生成同形状的合成 vault，
 `scripts/acceptance/lib/app.mjs`）与 release 读数 harness（`src-tauri/tests/vault_open_readings.rs`）。
 
+**M283 任务 1.5 的真实 vault 读数已回填（2026-09-28，Alex 在本机自助读数）**：`vault_load_restore` 段
+——改动前 **422 / 418 / 408 / 471ms**（09-27～09-28 早，四次切真实 vault），M283 合并后
+**49 / 35 / 49 / 120 / 64 / 55ms**（六次）。⇒ **真实环境的恢复段从 ~420–470ms 降到 35–120ms**，与合成
+形状 vault 的 **1182 → 20ms** 同方向；量级差异来自 vault 形状（真实 vault 的 per-tab 固定成本里含
+随索引规模增长的那部分——链接解析 / 附件索引查询，正是 M283 `design.md` §1 标「未验」的那一项）。
+**这条读数同时是本节的现场**：它只能靠人肉 grep `~/.config/lumir/logs/*.jsonl` 拿到，优化效果若被
+后续改动静默回退，没有任何门禁会红。
+
 ### 三份 vault change 的归档顺序（硬依赖，M283 登记，2026-09-28）
 
 `vault-switch-feedback` → `preview-tab-removal` → `vault-switch-restore-perf`，**顺序不可换**：
@@ -656,6 +675,11 @@ M154 的 737ms 出现在 45MB md 的 4× 合成规模，不是当前档）。它
 `preview-tab-removal` 改写）。前者不先归档，`openspec archive` 会因「requirement 在 living spec 里找不到」
 拒绝本 delta。**验收口径**：归档前跑 `npx --yes @fission-ai/openspec@1.12.0 list` 确认那两份已从活跃列表
 消失。
+
+**已执行（M287 归档批，2026-09-28）**：三份按上式顺序归档完毕（`openspec/changes/archive/2026-09-28-*`），
+两条 MODIFIED 的落地正文与各自最新一份 delta 逐字相等；另核了「后一份 delta 是否完整承接前一份」——
+两条都成立（`装载后恢复标签列表` 的 M283 版把 M254 版的义务全部保留并加上「当帧建壳 + 内容按需」的
+两段语义，只丢了两处沿革注记）。
 
 ### md 行含 inline widget 时的高度表差（M281 现场发现，2026-09-27，medium）
 
@@ -1477,6 +1501,7 @@ M279 报告 §5 的两条副产物在列，判定为**都不随本修复收口**
   2026-09-16），下次复现后查 `<config_dir>/lumir/logs/<UTC日期>.jsonl` 的事件序列定位。
 - **视觉套件 `markdown-parser` 的 `large-mixed` 偶发失败**（M144 一次，低）：整轮视觉回归里它 `page.evaluate: TypeError: Cannot read properties of undefined (reading 'metrics')` 失败一次（该用例把 `mixed` 文档重复 2000 次喂给解析实验，并挂 CDP profiler 采样），单独重跑与随后整轮重跑都 10/10 PASS。现场没有留下可归因的线索（不是本批次的改动路径——该 fixture 是独立的 vite 子应用，不加载 `src/`）。**给后续跑 `gate.sh visual` 的人**：它若偶发报红，先单独重跑该 spec 再判断，别当成自己的回归。
 - **`paragraph.spec.ts`「普通段首对齐 640」全量轮瞬态失败一次**（reviewer-toc finding，2026-09-17）：程序设 DOM 选区后下一拍 `getSelection()` 读到 `""`（预期 `普通段落不再缩进`）；隔离复跑 2/2 PASS、第二轮全量 8/8 PASS，与 M148 diff 无因果（toc 不产生装载后的编辑器 dispatch）。疑似全量负载下 CM 装饰重建把文本节点替换、Range 脱离导致选区坍缩——既有测试的时序敏感面；若发生在 CI 会红掉无关 mission 的门禁。修法：选区断言改为「同一 evaluate 内设选区并立即回读」，或读取端加 `expect.poll` 重试（`tests/visual/scenes/paragraph.spec.ts:38-39`）。finding `20260917-reviewer-toc-bug-paragraph-spec-ts-640-flake.md`。
+- **表格 / 代码块全屏 ESC 关闭时的视口跳变**（M274 survey，2026-09-28 裁决降优先级）：M274 在 Alex 的真实文档 + 他的 config（`content_width 1200` + eink）上实跑**没能复现**——caret 关在视口下方 ~800px、`⌘J` 开遮罩、`ESC`，视口读数一动不动；叠加「WebKit 只在 caret 位于视口上方时揭示」的实测 ⇒ 他的那次跳变（视口向下）不是关闭路径的聚焦揭示。当时排除了延迟揭示、选区同步、外部 fs 变更期间关闭与配置差异，剩余候选与判别实验落在 M274 报告 §7（CM 锚定累计 dist / 触控板惯性 / 未命中几何；真机 hover 钮路径因后台窗口不触发 CSS `:hover` 未能驱动）。**Alex 2026-09-28 裁决**：当前 master **不能复现** ⇒ §7 的判别实验**降优先级**，不排后续 mission；该跳变若再现，按 §7 的三条候选重开（相关收口：M280 的 CL-1「交还焦点 MUST NOT 改阅读位置」与 M286 的外部重载收口都在其后落地，本裁决未对它们的因果署名）。
 
 ### 验收套件（M144 实测出的表达力缺口）
 
@@ -2998,6 +3023,12 @@ WebKit 没把重建出来的那段画进选中层 ⇒ 粗体段是一个「洞�
 
 **真机侧判据**（场景 64）：见「先红后绿」与「M285 新增的 pixel 断言通道」。
 
+**M273 两问的关闭（Alex 2026-09-28 裁决，dogfood 实证）**：① 选中底色 α≈0.77（当时疑似 eink + 失焦
+dimming）——Alex dogfood 后答「**已好**」⇒ 本条修复在真实手感上成立，不再跟踪；② 行内 code 药丸
+padding 窄条不染色（M277 报告 §5 的独立小观感项，survey 当时建议另立）——Alex 裁决「**不立**」⇒ 不立项、
+不收进待办（`test-results/m277/findings.md` §5 与 finding
+`20260927-worker-survey-bold-sel-m277-improve-code-padding-selection.md` 留档即可）。
+
 ### B. 标签段读屏名不在 relabel 通道（M284 照出的产品缺陷）
 
 `src/shell.ts` 的标签段读屏名只在构造期取一次 `t("D88")`——那时配置还没到达，取值落默认档 `en`，
@@ -3049,9 +3080,13 @@ BMP 后取采样方块主色）。细节与边界见 `scripts/acceptance/README.
   里同一条 `drag` 路径先（v1）把文档截断成 `…**粗体段wo`、后（v3）在文末追加 `hao`，两次都是拼音串
   （环境里有中文输入法在跑，合成鼠标事件触发了它的预编辑提交；真手拖拽不经这条通道）。已记进
   套件 README 的「已知边界」。该时序的几何不变量由 chromium 的 `m259` 场景覆盖。
-- **`openspec/specs/editor-live-preview/spec.md` 的合同条款未落**：M277 报告 §6 建议新增一条不变量
+- ~~**`openspec/specs/editor-live-preview/spec.md` 的合同条款未落**：M277 报告 §6 建议新增一条不变量
   （「选区可见范围 MUST 等于编辑器选区范围」）。本批 scope 不含 `openspec/**`，故只把结构判据落成
-  测试（`m285-selection-layer.spec.ts`），条款落点留给后续 proposal/归档批。
+  测试（`m285-selection-layer.spec.ts`），条款落点留给后续 proposal/归档批。~~
+  **已落（M287 归档批，2026-09-28）**：条款作为不变量段落 + 配套 scenario 落进
+  `openspec/specs/editor-live-preview/spec.md` 的 `Requirement: live preview 装饰层`（M277 §6 指定的
+  落点，与 M259 那条同层），`openspec validate --all --strict` 绿。判据层按条款要求写成「chromium 结构层
+  + 真机层」，并写明 chromium 的像素层对本条是假绿。
 - **基线未动**：装 `drawSelection` 动了编辑器的绘制层，但整套视觉回归（含 22 处整页 / 元素像素断言）
   **一条基线都没红**——实测那些场景里没有「有选区的编辑器」形态。两条新场景（`m285-selection-layer`
   与 m282 的那条）都是结构 / 计算属性断言，不新增整页基线。
