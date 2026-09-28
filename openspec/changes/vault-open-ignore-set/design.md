@@ -28,7 +28,7 @@
 | 前端装配 | `applyVault`（附件路径过滤）+ `tree.setVault`（给全部条目建 `Node`/`Map`；DOM 只挂根级） | 194k 条目的建表是 O(n)、个位数~十位数 ms 级；`vault_load_tree` 在 09-26/27/28 三天真机日志里**一次都没出现**（>250ms 才记）⇒ 不是主因 | 结构性有据；整段耗时**未单独测** |
 | 真机打开段 | 同上 | 同一条路径的真机日志读数：09-27 `265 / 2,661 / 297 / 4,883 / 6,616 / 5,146 / 3,951 / 4,999ms`，09-28 `12,416 / 5,501 / 12,695ms` ⇒ **跨度 48×** | 有读数（但 `~/.config/lumir/logs/` 属 Alex 本机，agent 不读） |
 | VCS 忽略规则 | **今天完全不读**（`Cargo.toml` 无 `ignore` / `globset` / `walkdir` 依赖；代码里没有任何读 `.gitignore` 的路径） | Alex 真 vault 的 `.gitignore` 覆盖 `node_modules/` / `.pnpm-store/` / `dist/` / `src-tauri/target/` / `perf-results/` / `test-results/` / `*.log` / `.DS_Store` / `HANDOFF.md`；`.tower/` 只在 `.git/info/exclude:7` | 走查有据（M289）；本 change 的输入 |
-| **枚举 = 可见集 = 树的数据来源**（本 change 要拆开的同一性） | `scan_workspace` 的输出被六个消费点直接当作「vault 里有什么」 | 六个消费点：文件树模型（`src/tree.ts` 的 `setVault`）、链接索引（`VaultState::build_graph`）、附件索引（`src/main.ts` 的 `attachmentPaths`）、会话恢复的「在不在 vault 内」判据（`src/vault-switcher.ts:137-155` 的 `planRestore`）、阅读位置（`src/reading-position.ts`）、watch 事件过滤（`fs_io::rel_string`） | 走查有据；§4.7 逐条给口径 |
+| **枚举 = 可见集 = 树的数据来源**（本 change 要拆开的同一性） | `scan_workspace` 的输出被六个消费点直接当作「vault 里有什么」 | 六个消费点：文件树模型（`src/tree.ts` 的 `setVault`）、链接索引（`VaultState::build_graph`）、附件索引（`src/main.ts` 的 `attachmentPaths`）、会话恢复的「在不在 vault 内」判据（`src/vault-switcher.ts` 的 `restorePlan`）、阅读位置（`src/reading-position.ts` 的 `onVaultLoaded` / `pruneEntries`）、watch 事件过滤（`fs_io::rel_string`） | 走查有据；§4.7 逐条给口径 |
 
 **复现命令**（M289 用的就是它，未改一行代码；harness 命中已存在的 `$TMPDIR/lumir-m283-real-shape` 即复用）：
 
@@ -160,22 +160,24 @@ ADR 0001 的原文是「全文件类型一等公民」——**一等公民的是
 
 ### 4.4 watch 侧如何复现同一判定
 
-判定必须与枚举侧同源（spec 的既有条款：watch 与枚举共用同一忽略集），但事件路径有三种枚举侧没有的难处：拿不到条目类型、被删条目 stat 不到、以及**惰性子树内部的变更不该无条件投递**（`.tower/worktrees` 里的 agent 活动会变成事件风暴）。
+判定必须与枚举侧同源（spec 的既有条款：watch 与枚举共用同一份规则表），但事件路径有两种枚举侧没有的难处：**用户规则命中的子树内部的变更不该无条件投递**（`.tower/worktrees` 里的 agent 活动会变成事件风暴），以及**被删路径 stat 不到**（拿不到类型，无法判定目录限定模式）。
 
-**判定规则（逐组件，只看最后组件之外的祖先）**：
+**判定规则（两来源分别处理）**：
 
 ```
 对事件路径 P（vault 相对）：
-  若任一「祖先组件」（P 去掉最后一段后的每个前缀）命中内置规则        → 丢弃
-  若任一「祖先组件」命中用户规则 且 该祖先不在已按需展开集合          → 丢弃
-  否则                                                            → 投递
+  若任一组件（含最后一段）命中内置规则                            → 丢弃
+  若任一「祖先组件」（P 去掉最后一段后的每个前缀）命中用户规则
+     且 该祖先不在已按需展开集合                                  → 丢弃
+  否则                                                          → 投递
 ```
 
 三条要点：
 
-1. **最后一段不参与规则判定**：条目自身的行级事件（新建 / 删除 / 改名）总是投递——行的增删必须实时（否则用户删掉 `.local` 后树里留一个死行）。这也顺手消掉了「被删路径拿不到类型、无法判定目录限定规则」的歧义。
-2. **祖先命中规则但已物化 ⇒ 投递**：用户展开过的目录，其下的变事实时可见（打开中的文档因此照常得到「外部修改」处置）。用户没展开过 ⇒ 不投递，事件风暴天然被挡在注意力之外（`.tower/worktrees/**` 的 agent churn 与今天一样不进 webview）。
-3. **内置规则的祖先一律丢弃**（不设物化例外）：内置规则命中的条目连行都没有，谈不上展开。
+1. **内置规则对全部组件照判（含最后一段）**：内置规则是**名字的纯函数**——它不含目录限定模式，判一个组件既不需要 stat 也不需要类型，所以「被删路径拿不到类型」的难处在这里根本不存在。而它的语义本来就是**类型无关**（叫 `target` 的文件与目录一样无行），因此这一行的增删事件 MUST NOT 投递。**今日的 `rel_string`（[fs_io.rs:128](../../../src-tauri/src/fs_io.rs#L128)）正是全段判定的行为，本 change 保持不变**。
+   > **r2 评审 P1-2 的修法**：早期草案把最后一段从**一切**规则判定中豁免，理由是「行级事件必须实时」。那条理由只对**用户规则**成立——用户规则命中的条目**本来就有行**（惰性可见）。对内置规则豁免会让外部 `cargo build` / `npm install` 产出的 `created:target` / `created:node_modules` 透到前端，而树的 `applyChanges`（[src/tree.ts:772](../../../src/tree.ts#L772)）不做隐藏名过滤 ⇒ 树里插出一行**枚举永远不会产生的幻影行**（子孙事件仍被祖先判定挡下，留下孤零零的死行，重开才消失），违反「增量收敛后的模型与同一时刻的全量枚举一致」与 file-tree 的「内置规则名字不出现在树里」。
+2. **用户规则只看祖先，最后一段一律投递**：与内置规则相反，末段是否命中用户规则**不改变「有没有行」这个事实**（命中 ⇒ 惰性行；不命中 ⇒ 普通行），所以两种情况下投递都对；而这一行的出现/消失必须实时（否则用户删掉 `.local` 后树里留一个死行）。加上「祖先必定是目录」这一事实（前缀组件不可能是文件），**用户规则侧一次 stat 都不需要**——目录限定模式（`foo/`）在祖先上可无歧义判定，末段不判也就无从歧义。
+3. **用户规则的祖先：未物化 ⇒ 不投递**（`.tower/worktrees/**` 的 agent churn 不进 webview）；**已物化 ⇒ 投递**（用户展开过的地方保持实时，打开中的文档因此照常得到「外部修改」处置）。内置规则的祖先一律丢弃（连行都没有，谈不上展开）。
 
 **同一判定在两处跑的机制**：`fs_io` 现在刻意不依赖 tauri 类型（ADR 0002 §7），且过滤发生在 `fs_io::watch` 的回调里。做法是把策略对象**下传**：`fs_io::IgnorePolicy`（纯 std 类型：**一份规则表**——内置规则匹配器 + 用户规则匹配器栈 + `Arc<Mutex<HashSet<PathBuf>>>` 的物化集合）由 `commands.rs` 构造并同时交给 `scan_workspace` / `watch` / `fs_scan_dir` / `expand_new_dir_subtrees` / `validate_new_name`——**一份策略，五个使用点**（REVIEW.md 第 8 条：同一语义只能有一个真源）。
 
@@ -207,11 +209,11 @@ ADR 0001 的原文是「全文件类型一等公民」——**一等公民的是
 | 文件树模型（`src/tree.ts`） | 显示**全部**条目（含惰性行）；惰性目录的子孙按需拉取 | 改：展开惰性目录 → `fs_scan_dir` 合并；`lazy` 标记区分空目录 |
 | 链接索引（`VaultState::build_graph`） | 只由主动枚举的条目建出 | 不改代码，改口径（§4.6）+ spec 条款 |
 | 附件索引（`src/main.ts` 的 `attachmentPaths`） | 同上 | 不改代码，口径写进 spec 边界 |
-| 会话恢复的「在不在 vault 内」（`src/vault-switcher.ts:137-155`） | **不再只看枚举集合**：条目集里没有的路径，补一次 vault 内存在探测（只探测会话里的那几条路径，不改写任何文件）；存在即照常恢复 | 改：新增一条探测（可复用 `fs_file_meta` 或等价命令），跳过计数仍**由枚举 + 探测的结果在装载完成时给出**（口径不变，来源多一个） |
-| 阅读位置（`src/reading-position.ts`） | 按路径键控，与集合无关 | 不改 |
+| 会话恢复的「在不在 vault 内」（`src/vault-switcher.ts` 的 `restorePlan`，[:145](../../../src/vault-switcher.ts#L145)） | **不再只看枚举集合**：条目集里没有的路径，补一次 vault 内存在探测（只探测会话里的那几条路径，不改写任何文件）；存在即照常恢复 | 改：新增**批量**存在探测（§4.11），跳过计数仍**由枚举 + 探测的结果在装载完成时给出**（口径不变，来源多一个） |
+| 阅读位置（`src/reading-position.ts` 的 `onVaultLoaded`，[:241-266](../../../src/reading-position.ts#L241)） | **同样不能再只看枚举集合**（r2 评审 P1-1 更正了本文早先「与集合无关 → 不改」的错误论断）：它从 `entries` 建 `available` 并对**存量键**跑 `pruneEntries`，而惰性文件（如 `.local/教程.md`）永不在枚举里 ⇒ 它们的阅读位置**每次装载都被剪掉**、随后 flush 持久化 | 改：prune 判据与会话恢复同口径——条目集里没有的键先过一次**批量存在探测**（§4.11），存在即保留；探测失败才剪 |
 | watch 事件过滤（`fs_io::rel_string`） | 见 §4.4 | 改 |
 
-> 会话恢复这条不是洁癖：**没有它，用户从 `.local` 打开的教程在下次启动时会被判成「已删除」并跳过**——他刚被允许打开的东西又被系统丢掉。
+> 这两条不是洁癖：**没有它们，用户从 `.local` 打开的教程会被系统丢掉两次**——下次启动时被 `restorePlan` 判成「已删除」并跳过（会话里没有这个标签了），而且它的阅读位置在**每次装载**时都被 `pruneEntries` 剪掉（读了也白读）。两条都正中 Alex 裁决里的原话场景，口径必须一起改。
 
 ### 4.8 匹配器选型：引 `ignore` crate（新依赖）
 
@@ -247,6 +249,15 @@ ADR 0001 的原文是「全文件类型一等公民」——**一等公民的是
 
 **例 2：`.tower/`（275,180 文件 / 35G，在 `.git/info/exclude` 里）**
 枚举出 `.tower` 一行（`lazy: true`）→ 打开段为它付的钱：一次 dirent 读取；active 枚举从 170,317 文件掉到 **1,658**（M289 实测 66ms）。用户不点它，agent 的 churn 一个事件都不进 webview（未物化）；他真点了，就按层付费（`.tower` → `worktrees` / `comms` → …，每层一次 `read_dir`）。
+
+### 4.11 `fs_paths_exist`：被枚举集之外的存在探测（两个消费点共用的读口）
+
+§4.7 的会话恢复与阅读位置都要问同一个问题：「这个路径在 vault 里还在吗？」——而它**不在装载时的枚举结果里**（惰性可见的文件永不进枚举）。实现口径：
+
+- **新增一条批量命令 `fs_paths_exist(paths)`**：收一组 vault 相对路径，返回其中**确实存在**的那些（每条都过与读取路径同源的 vault 内校验；只 stat、不改写任何文件，ADR 0003 的「不改写源文件」不因它放宽）。
+- **为什么批量而不是逐条**：两个消费点的候选数都不小（会话条目数；阅读位置镜像的键上限见 `READING_POSITION_MAX_ENTRIES = 200`），逐条走 IPC 会把 N 次往返叠在装载路径上。一次命令、一次往返、N 次 stat（每条 ~µs 级）——上界因此是**可算的**，且不随 vault 规模增长（只随「用户读过/开过多少条目」增长）。
+- **为什么不复用现成的 `fs_file_mtime`**（[commands.rs:664](../../../src-tauri/src/commands.rs#L664)）：它是**单路径**命令、且语义是「取 mtime」（doc-meta 用），逐条调用即回到 N 次 IPC 往返；本 change **不新增**第二种「按路径读元数据」的语义，只加一个专用的存在探测。
+- **口径**：探测结果是「存在 / 不存在」二值；返回集合里没有的路径即「不在 vault 内」（会话恢复计入跳过、阅读位置被剪）。探测本身**MUST NOT** 被用来放宽任何边界（越界路径一律视为不存在并拒读）。
 
 ## 5. 打开段与按需枚举移出 IPC 主线程
 
@@ -349,11 +360,12 @@ M283 在场景 60 里实测到：套件读 AX 需要主线程空闲，而打开�
 | `src-tauri/src/commands.rs` `vault_open_path` | 加 `#[command(async)]`；注释写明线程语义已与 `vault_open` 拉平 | §5 |
 | `src-tauri/src/commands.rs` `fs_scan_dir` command（新） | `#[command(async)]` + vault 内路径校验 + 打点 | §4.3 / §5.2 / §6.2 |
 | `src-tauri/src/commands.rs` `VaultState` | 持有当前 `IgnorePolicy`（含物化集合）；装载时重建 | §4.3 / §4.4 |
-| `src-tauri/src/commands.rs` 会话恢复的存在探测 | 新增一条探测入口（或复用 `fs_file_meta`），不改写任何文件 | §4.7 |
+| `src-tauri/src/commands.rs` `fs_paths_exist`（新） | 批量存在探测（vault 内路径校验 + 只 stat）；供会话恢复与阅读位置共用 | §4.11 |
 | `src/bindings/**`（ts-rs 重导出） | `FsEntry` 新增 `lazy` | §4.3 |
 | `src/tree.ts` | 惰性目录展开走 `fs_scan_dir` 并按路径合并；`lazy` 与「空目录」区分 | §4.7 / §7.2 |
 | `src/main.ts` | 装配新命令；附件索引口径（只由主动枚举建出）保持并写注释 | §4.6 / §4.7 |
-| `src/vault-switcher.ts` `planRestore` | 「在不在 vault 内」补存在探测（条目集 + 探测），跳过计数口径不变 | §4.7 |
+| `src/vault-switcher.ts` `restorePlan` | 「在不在 vault 内」补批量存在探测（条目集 + 探测），跳过计数口径不变 | §4.7 / §4.11 |
+| `src/reading-position.ts` `onVaultLoaded` | `pruneEntries` 前对「不在条目集里」的存量键补同一次批量存在探测，存在即保留（r2 评审 P1-1） | §4.7 / §4.11 |
 | `scripts/acceptance/lib/app.mjs` `generateBulkVault` | 加构建产物族探针（内置规则）+ `.gitignore`（含一条取反）/ `.git/info/exclude` 用户规则探针 | §9.3 |
 | `scripts/acceptance/scenarios/67-*.md` | 新场景（草案见本 change 的 `acceptance-scenario.md`） | §9 |
 | `docs/backlog.md` | 待归档跟踪；M289 读数落 canon（现在只在 `.tower/comms/` 的 inbox 消息里）；`wikilink_create` 的重复文件风险与「规则热生效」两条后续候选 | proposal「影响」 |
@@ -369,7 +381,7 @@ Alex 裁决 2 的「忽略项必须可见」**推翻了本仓一条既有同一�
 | 3 | watch 判定 = 名字的纯函数（无状态、可在 fs_io 内自洽） | 需要策略对象 + 物化集合（跨层传、有生命周期、随 vault 重建） | **改实现结构**（后端） |
 | 4 | 依赖面：`Cargo.toml` 无 ignore 类依赖 | 新增 `ignore` crate（§4.8）——**合并之后它同时承载内置规则与用户规则** | **新增依赖**（已确认接受） |
 | 5 | 导出面：`FsEntry` 是「路径 / 类型 / 大小 / mtime」四元组 | 新增 `lazy` 字段（ts-rs 重导出 `src/bindings/**`） | **改契约**（前端全部消费点重新编译即得，行为面已逐条列在 §4.7） |
-| 6 | 会话恢复的「在不在 vault 内」= 在枚举集合里 | 集合 + 存在探测 | **改判据**（不改用户可见语义：仍是在 vault 里的文件才恢复） |
+| 6 | 「在不在 vault 内」= 在枚举集合里（两个消费点：会话恢复的 `restorePlan`、阅读位置的 `pruneEntries`） | 集合 + 批量存在探测（`fs_paths_exist`） | **改判据**（不改用户可见语义：仍是在 vault 里的文件才恢复 / 才保留位置；新增一条只读命令） |
 | 7 | 链接 / 附件索引覆盖「vault 里的一切」 | 覆盖「主动枚举的那部分」；惰性区域解析降级（含 `wikilink_create` 的重复文件风险） | **收窄能力边界**（写入 spec 的已知边界） |
 | 8 | 忽略判定 = 名字等值（`is_ignored`）+ 一条独立的 VCS 规则路径（B 案原形态会是第二套机制） | **合并成一份规则表、一个匹配器**（内置规则也编进匹配器）；来源决定去向（内置不可见 / 用户惰性可见）；`is_ignored` 的名字等值判定退役 | **改实现结构**（消掉一种硬编码特例；语义等价由对拍测试钉住——含「同名文件也隐藏」不改判） |
 

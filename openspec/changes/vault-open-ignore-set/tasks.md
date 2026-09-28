@@ -43,8 +43,8 @@
 
 ## 4. watch 判定与物化登记（对应 fs-io「watch 增量事件流」）
 
-- [ ] 4.1 `src-tauri/src/fs_io.rs`：事件判定换成 §4.4 的逐组件规则（内置规则祖先丢弃；用户规则祖先未物化丢弃；否则投递；最后一段不判规则 ⇒ 行级事件总是投递）。
-  **验收口径**：单测：未物化的惰性目录内部变更**不**产生事件；物化后**产生**事件；惰性条目自身的 created/deleted 总产生事件；内置规则命中的目录下的变更一律不产生事件（含祖先链上更深的情形）。
+- [ ] 4.1 `src-tauri/src/fs_io.rs`：事件判定换成 §4.4 的两来源规则——**内置规则对全部组件（含最后一段）照判**；**用户规则只判祖先**（未物化丢弃），最后一段一律投递。**MUST NOT** 把最后一段从一切判定中豁免（r2 评审 P1-2：那会让外部构建产出的 `created:target` 透到前端，而 `src/tree.ts` 的 `applyChanges` 不做隐藏名过滤 ⇒ 树里插出枚举永远不会产生的幻影行）。
+  **验收口径**：单测覆盖五条分支——① 未物化的用户规则目录内部变更**不**产生事件；② 物化后**产生**事件；③ 用户规则命中的条目自身的 created/deleted **总**产生事件（含末段）；④ 内置规则命中的**祖先**下的变更不产生事件；⑤**内置规则命中的末段**（外部 `mkdir target` / `npm install` 造出 `node_modules`）同样不产生事件。第 ⑤ 条是本轮新增的分支，MUST NOT 漏。
 - [ ] 4.2 `VaultState` 持有所述策略，装载时重建（物化集合 MUST NOT 跨 vault 串用）；`prepare_vault_open` 把它交给 watch / scan / graph / `fs_scan_dir` / 子树展开 / 名字校验。
   **验收口径**：单测（或 Rust 集成测试）——切换 vault 后上一 vault 的物化登记不生效。
 - [ ] 4.3 目录改名那条既有通道（`deleted:旧` + `created:新(dir)` 带子树）按新策略收口：创建出来的目录若命中规则，只带一行（惰性），不带子孙；旧路径的物化登记随 `deleted` 清除。
@@ -54,9 +54,11 @@
 
 - [ ] 5.1 链接索引（`build_graph`）与附件索引（`src/main.ts` 的 `attachmentPaths`）：只由主动枚举的条目建出；**按需展开的结果 MUST NOT 补进索引**。
   **验收口径**：单测（Rust）——含惰性目录的 vault 上，`build_graph` 的条目集与主动枚举一致；展开后仍一致（前端侧在 `src/main.ts` 就地写注释说明口径，不在展开路径上调索引相关代码）。
-- [ ] 5.2 会话恢复的「在不在 vault 内」：`src/vault-switcher.ts` 的 `planRestore` 不再只看条目集——新增一次存在探测（后端入口；可复用 `fs_file_meta` 或等价命令，只探测不改写；代价上界 = 会话条目数）；跳过计数仍在装载完成时给出。
-  **验收口径**：单测（`tests/unit/vault-switcher.test.ts`）——条目集里没有但探测存在的路径**照常恢复**且不进跳过计数；探测失败才计跳过；探测不得并发发起（沿用既有的逐条串行口径）。
+- [ ] 5.2 会话恢复的「在不在 vault 内」：`src/vault-switcher.ts` 的 **`restorePlan`**（[:145](../../../src/vault-switcher.ts#L145)）不再只看条目集——对「不在条目集里」的条目调一次**批量**存在探测（新增命令 `fs_paths_exist`，§4.11 与 fs-io 的「vault 内路径存在探测」；只 stat、不改写；一次 IPC 往返）；跳过计数仍在装载完成时给出。
+  **验收口径**：单测（`tests/unit/vault-switcher.test.ts`）——条目集里没有但探测存在的路径**照常恢复**且不进跳过计数；探测失败才计跳过；探测是**一次**批量调用，MUST NOT 逐条发起（避免 N 次 IPC 往返）。
 - [ ] 5.3 写清三条已知边界（spec 已写，实现期在代码注释里给指针）：惰性区域 wikilink / 附件的解析降级；`wikilink_create` 对惰性目标可能造重复文件（本 change 不改）；规则不热生效。
+- [ ] 5.4 **阅读位置（r2 评审 P1-1，spec 面落在 vault-workspace「按 vault 持久化阅读位置」的第 4 条 MODIFIED）**：`src/reading-position.ts` 的 `onVaultLoaded`（[:241-266](../../../src/reading-position.ts#L241)）今天从枚举 `entries` 建 `available` 并 `pruneEntries`——惰性文件（`.local/教程.md`）永不在枚举里 ⇒ 它的阅读位置**每次装载都被剪掉**。改成与会话恢复同口径：条目集里没有的**存量键**先过一次同一份批量存在探测（5.2 的 `fs_paths_exist`，可合并成同一次调用），存在即保留；探测失败才剪。
+  **验收口径**：单测（`tests/unit/reading-position.test.ts` 或同族）——`entries` 不含但探测存在的键**保留**在镜像里、且下次 flush 仍落盘；探测失败的键被剪；`capEntries` 的上限口径不变（`READING_POSITION_MAX_ENTRIES = 200`，探测候选数受它约束）。
 
 ## 6. 文件树：惰性行可见 + 按需展开（对应 file-tree 两条 MODIFIED）
 
@@ -91,10 +93,11 @@
 
 - [ ] 9.1 `scripts/acceptance/lib/app.mjs` 的 `generateBulkVault`：加两类探针——① 内置规则构建产物族（根下 `target/` / `dist/` / `test-results/` 各带若干 md）；② 用户规则（写一份 `.gitignore` 声明 `.local/` **并带一条取反 `!target/`**，写一份 `.git/info/exclude` 声明另一个目录，两者各带一个 md）——取反那条让真机也有一条「内置不可被推翻」的判据。形状参数与 Rust 侧 harness 一起核。
   **验收口径**：`node scripts/acceptance/run.mjs --check` PASS；场景 60（既有 `bulkVault: {}` 调用方）不受影响仍 PASS。
+  **注意**：场景里还有一条**运行时**探针不靠 fixture——用 `vaultWrite`（它 `mkdirp` 父目录）在根下写 `target/probe.md`，等一拍后断言树里**没有** `target` 行（r2 评审 P1-2 的真机判据；正见证是同一步写进可见目录的文件必须出现）。
 - [ ] 9.2 把本 change 的 `acceptance-scenario.md` 草案落成 `scripts/acceptance/scenarios/67-<slug>.md`：`id` 用 67（**动工前按 proposal 的「编号声明」再核一次目录与在飞 change**，被占则取下一个可用号）。
   **验收口径**：`--check` PASS；`node scripts/acceptance/run.mjs 67` 真机 PASS，证据落 `test-results/acceptance/<日期>/67-*/`（`status.txt` = PASS）。
-- [ ] 9.3 三组判据各自做反向验证（REVIEW.md 第 1 条）：① 内置规则 → 把内置表回退成 3 个名字 ⇒「构建产物目录不在树里」FAIL；② 用户规则 → 把规则读取关掉（或把用户规则命中的条目标成内置）⇒「`.local` 行在树里 / 展开可见」FAIL；③ 打开段 → 见 7.2；④ 读数通道 → 临时摘掉埋点 ⇒ 末步 FAIL。
-  **验收口径**：四次先红后绿的现场都在档；`MUST NOT` 只把「场景写了」当覆盖（REVIEW.md 第 6 条）。
+- [ ] 9.3 各条判据逐个做反向验证（REVIEW.md 第 1 条）：① 内置规则 → 把内置表回退成 3 个名字 ⇒「构建产物目录不在树里」FAIL；② 用户规则 → 把规则读取关掉（或把用户规则命中的条目标成内置）⇒「`.local` 行在树里 / 展开可见」FAIL；③ 打开段 → 见 7.2；④ 读数通道 → 临时摘掉埋点 ⇒ 末步 FAIL；⑤ **幻影行判据** → 把 watch 的末段判定改回「一切规则都豁免最后一段」⇒「外部新建 `target` 后树里没有该行」FAIL（r2 评审 P1-2 的直接判据）。
+  **验收口径**：五次先红后绿的现场都在档；`MUST NOT` 只把「场景写了」当覆盖（REVIEW.md 第 6 条）。
 - [ ] 9.4 场景的「覆盖边界」逐条复核，**MUST NOT** 把「快照延迟下分辨不了」的事写成已覆盖；放大器 MUST NOT 放进惰性探针目录（design §9.4）。
 - [ ] 9.5 放大器口径复核：场景日志里的 `vault_load_open` MUST NOT 被当成规模读数（场景 60 已立此惯例）。
 

@@ -61,6 +61,28 @@ steps:
         ax: { not: "/AXButton \\(test-results\\)/" }
       - shot: 01-起始态
 
+  # 运行时探针（不靠 fixture）：外部在 vault 根造一个命中内置规则的目录（`vaultWrite` 会 mkdirp
+  # 父目录）。它的 `created` 事件 MUST NOT 进树——否则树里会出现一行枚举永远不会产生的幻影行
+  # （r2 评审 P1-2）。**负向断言必须配正向见证**：同一步在 vault 根写一个普通文件，它必须出现，
+  # 证明事件确实已被处理过（否则「读得太早」会让负向断言假绿，REVIEW.md 第 1/2 条）。
+  - name: 外部写入：根下普通文件（正见证）与 target/probe.md（命中内置规则）
+    do: vaultWrite
+    file: external-probe.md
+    content: "外部写入的正见证"
+  - name: 外部写入 target/probe.md
+    do: vaultWrite
+    file: target/probe.md
+    content: "外部构建产出"
+  - name: 等一拍再读 AX（写后立刻读会与 DOM 刷新抢）
+    do: sleep
+    ms: 1200
+    expect:
+      - label: 正见证：根下的普通文件出现了（事件已被处理）
+        ax: { has: "external-probe.md" }
+      - label: 反见证：target 行不出现（幻影行判据；修前这里会红）
+        ax: { not: "/AXButton \(target\)/" }
+      - shot: 02-外部-target-不出现
+
   - name: 展开用户规则命中的 .local（按需枚举一层）
     do: click
     target: { role: AXButton, name: "^\\.local$" }
@@ -197,4 +219,9 @@ steps:
   仍有一拍卡顿」。
 - **树行与 vault 列表行的 AX 形态**（`AXButton (名字)`）按 M245 的现场写；首轮真机读一次 dump 确认，
   若形态不同按实际改断言（改的是断言形式，不是判据）。
+- **「幻影行」判据依赖同一步的正向见证**（第 2 组前的那个运行时探针）：只写 `target/probe.md`
+  而不断言正见证，会在「事件还没被处理」的空输入上假绿——该步两条件必须在**同一快照**里成立。
+- **阅读位置与会话恢复的存在探测不在本条覆盖内**：两者是「惰性文件被枚举集之外的判据误剪」的
+  修复（r2 评审 P1-1 及同族），判据落在单测层（tasks 5.2 / 5.4）——本套件对滚动位置没有通道
+  （场景 60 已立同款记录）。
 ```

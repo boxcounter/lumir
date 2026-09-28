@@ -81,12 +81,12 @@ M289 已向 tower 报了一条 finding：`.tower/`（275,180 文件 / 35G）就�
 2. **去向按规则来源分：内置 ⇒ 不可见，用户 ⇒ 惰性可见**（spec delta：`fs-io` 新增一条「按需枚举目录」requirement + MODIFIED「watch 增量事件流」；`file-tree` 两条 MODIFIED）：
    - 判定顺序固定：**内置规则先判、命中即不可见**（用户规则里的取反——如 `.gitignore` 写 `!target/`——MUST NOT 把它放回来；论证见 design §2.6：内置规则是产品判断，且它的不可见性同时是性能护栏，不能由用户一行编辑关掉）；否则**用户规则命中 ⇒ 出一行**（`lazy` 标记）、**不递归**；否则正常枚举并递归；
    - 文件树展开惰性目录时经新命令 `fs_scan_dir(dir)` 按需拉取**一层**（同源分类），并把这层结果合并进模型；
-   - watch：内置规则祖先的事件一律丢弃；用户规则祖先的事件只在「该目录已被按需展开过」时投递（否则 `.tower/worktrees/**` 的 agent churn 会变成事件风暴）；条目自身的行级增删改总是投递（树里的行必须实时）；
+   - watch：**内置规则对全部组件（含最后一段）照判**——外部构建产出 `target` / `node_modules` 一个事件都不投递（否则树里会插出枚举永远不会产生的幻影行）；**用户规则只判祖先**，未按需展开过的目录其内部变更不投递（否则 `.tower/worktrees/**` 的 agent churn 会变成事件风暴），而用户规则命中的条目**自身**的增删改总是投递（它本来就有行，行必须实时）；
    - 索引：惰性条目不进链接索引与附件索引（确定性——索引的输入是磁盘 + 规则的纯函数，不是 UI 历史）；指向惰性区域的 `[[wikilink]]` / `![[img]]` 解析降级，如实写进 spec 的已知边界；
    - 规则读什么：内置规则 + `<root>/.gitignore`（含递归途中的嵌套）+ `<root>/.git/info/exclude`；**不读全局 excludes**；用户规则之间按 git 口径定优先级（深层 `.gitignore` > 浅层 > `info/exclude`）；**生效时点 = vault 装载时编译一次**（`.gitignore` 改动下次装载生效——可见集不随规则变化，故用户可感知的后果极小，而热生效要新开「重编 + 重扫 + 前端整体替换模型」通道）；
    - 匹配语义由 `ignore` crate 提供（gitignore 完整语义：`!` / 锚定 / `**` / 目录限定），**内置规则与用户规则共用同一个匹配器**——「少一种硬编码特例」就是这一步落到实处；**这是本 change 唯一的依赖新增**（已随影响面确认接受）。
    - **等价承诺**：「任意深度 / 同名文件与目录一视同仁 / 大小写敏感 / `.lumir-` 临时文件不进树」逐条与今日一致，由一条对拍测试钉住（design §2.3），不是口头承诺。
-3. **会话恢复的「在不在 vault 内」补一次存在探测**（spec delta：`vault-workspace`「装载后恢复标签列表」MODIFIED）：不再只看枚举集合——否则用户从 `.local` 打开的教程下次启动会被判成「已删除」。跳过计数口径不变。
+3. **「在不在 vault 内」的判据补一次存在探测（两个消费点）**（spec delta：`vault-workspace`「装载后恢复标签列表」MODIFIED + `fs-io` 新增「vault 内路径存在探测」）：① 会话恢复（`restorePlan`）不再只看枚举集合——否则用户从 `.local` 打开的教程下次启动会被判成「已删除」并跳过；② **阅读位置（`reading-position` 的 `onVaultLoaded` / `pruneEntries`）同病**——它今天也从枚举建 `available` 并剪掉镜像里不在集合中的键，惰性文件的阅读位置**每次装载都被剪掉**。两者共用一条**批量**存在探测命令 `fs_paths_exist`（只 stat、一次 IPC 往返、上界随会话条目数 / 阅读位置键上限 200）；跳过计数与上限口径不变。
 4. **打开段与按需枚举移出 IPC 主线程**（spec delta：`vault-workspace`「vault 打开」MODIFIED）。`vault_open_path` 与新命令 `fs_scan_dir` 都标 `#[command(async)]`，与既有 `vault_open` 的线程语义拉平；顺带把响应序列化也移出主线程（tauri 2.11.5 的 async 路径在 tokio 任务里做 `IpcResponse::body()` 的 `serde_json::to_string`）。理由：内置规则名单永远追不上用户 vault，而这一条把最坏情况从「整窗死帧」变成「界面活着、指示在动」。
 5. **改写「装载的即时反馈」的已知边界**（spec delta：`vault-workspace` MODIFIED）。现条文写着「打开段由同步 command 承担 ⇒ 该段期间 webview 不能重绘、指示只能静止显示、用户看到的是 beachball」；第 4 条改完这句话就过期了：打开段不再整段冻结，**剩余边界**是打开段结束后的前端装配（payload 解析 + 树/索引装配）与新增的「按需展开」那段异步等待。
 6. **打开段两条分段读数 + 按需枚举一条**（无 spec 变更，走既有 `slow_callback` 事件族）：`vault_open_scan` / `vault_open_graph`（无条件记录）与 `vault_scan_dir`（250ms 阈值）；配合前端既有 `vault_load_open` 做减法，即可把打开段切成 scan / graph / 序列化+传输+解析 三段——这是闭合「真机 5,501ms vs 合成 3,110ms 的 2.4s 缺口」的唯一手段。
@@ -107,15 +107,16 @@ M289 已向 tower 报了一条 finding：`.tower/`（275,180 文件 / 35G）就�
 ## Impact
 
 - **影响的 specs**：
-  - `fs-io`：2 条 MODIFIED（「全类型递归枚举」——两类忽略 + 16 名名单 + 惰性标记 + 规则来源；「watch 增量事件流」——逐组件判定 + 物化登记）、1 条 ADDED（「按需枚举目录」）
+  - `fs-io`：2 条 MODIFIED（「全类型递归枚举」——一份规则表 + 来源决定去向 + 16 条内置规则 + 惰性标记；「watch 增量事件流」——两来源分开的组件判定 + 物化登记）、2 条 ADDED（「按需枚举目录」；「vault 内路径存在探测」）
   - `file-tree`：2 条 MODIFIED（「全类型文件树展示」——可见集含惰性行、数据来源补按需命令；「watch 驱动的增量刷新」——惰性目录的按需获取与合并）
-  - `vault-workspace`：3 条 MODIFIED（「vault 打开」——打开段在主线程之外；「装载的即时反馈」——已知边界改写；「装载后恢复标签列表」——「在不在 vault 内」的判据补存在探测）
+  - `vault-workspace`：4 条 MODIFIED（「vault 打开」——打开段在主线程之外；「装载的即时反馈」——已知边界改写；「装载后恢复标签列表」——跳过判据补存在探测；「按 vault 持久化阅读位置」——剔除判据补同一次批量探测，否则惰性文件的阅读位置每次装载都被剪掉）
 - **影响的代码/系统**：
   - `src-tauri/Cargo.toml`：新增依赖 `ignore`（唯一新增依赖）
   - `src-tauri/src/fs_io.rs`：`IGNORED_NAMES` **退役**为内置规则表（16 条名字字面量 + `.*.lumir-*`，编进匹配器）、新的 `IgnorePolicy`（一份规则表 + 物化集合，来源决定去向）、`scan_workspace`（`lazy` 行、不递归）、`rel_string`（逐组件判定）、新 `fs_scan_dir`、`expand_new_dir_subtrees` / `validate_new_name` 沿用同一策略、忽略计数诊断（新 `LogEventName::VaultScanIgnored`）、一条「内置匹配器 ≡ 今日名字等值判定」的对拍测试
   - `src-tauri/src/commands.rs`：`prepare_vault_open`（编译规则、构造策略、scan/graph 打点）、`vault_open_path` 与 `fs_scan_dir` 的 `#[command(async)]`、`VaultState` 持有策略、会话恢复的存在探测入口
   - `src/bindings/**`：`FsEntry` 新增 `lazy`（ts-rs 重导出，进索引后跑门禁）
-  - `src/tree.ts` / `src/main.ts` / `src/vault-switcher.ts`：惰性目录按需展开与合并、附件索引口径注释、恢复判据补探测
+  - `src-tauri/src/commands.rs`：新增 `fs_paths_exist`（批量存在探测，供会话恢复与阅读位置共用）
+  - `src/tree.ts` / `src/main.ts` / `src/vault-switcher.ts` / `src/reading-position.ts`：惰性目录按需展开与合并、附件索引口径注释、恢复与阅读位置的判据补探测
   - `scripts/acceptance/lib/app.mjs` + `scenarios/67-*.md`：探针与场景
   - `docs/backlog.md`：待归档跟踪；M289 读数落 canon；`wikilink_create` 重复文件风险与「规则热生效」两条后续候选
 - **关联约束**：
@@ -136,5 +137,5 @@ M289 已向 tower 报了一条 finding：`.tower/`（275,180 文件 / 35G）就�
 
 ## 编号声明
 
-- **真机场景取 67**（试占）。依据（2026-09-28 动工前核对）：`scripts/acceptance/scenarios/` 现有编号最大 **65**（`65-external-reload-reading-position.md`）；**66 已被在飞的 M288 占用**（`feat/fix-code-block-selection-visibility-m288` 的 `scripts/acceptance/scenarios/66-code-block-selection.md`，尚未合并到 master）。**对冲条款**：实现期动工前 SHALL 再核一次目录与各在飞 change 的编号声明，被占则取当时的下一个可用号。
+- **真机场景取 67**（试占）。依据（2026-09-28 修订时复核）：`scripts/acceptance/scenarios/` 现有编号最大 **66**（`66-code-block-selection.md` 已随 M288 并入 master），**67 是当前的下一个可用号**。**对冲条款**：实现期动工前 SHALL 再核一次目录与各在飞 change 的编号声明，被占则取当时的下一个可用号。
 - **文案 deck：本 change 预期零新增用户可见文案**。内置规则是静默的（不新增句子）；惰性行沿用树行既有形态（不新增文案，也不加加载指示）；被隐藏名字的新建/改名拒绝沿用既有 `fs_name_invalid` 文案模板。若实现期确需新增（例如按需展开的等待文案），按 deck「只追加、不复用」的规则取**当时末位的下一个可用编号**（2026-09-28 核对末位是 **D321**），动工前再核一次，不盲取。
