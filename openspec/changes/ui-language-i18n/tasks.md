@@ -220,12 +220,12 @@
 | 6.1 指示钮形态 | 完成 | 与主题钮同族：右段末尾、初始 `hidden`、点击切换、`title` 与 `aria-label` 齐备；三主题下共用同一组选择器（eink 覆盖一并加） |
 | 6.2 双入口同源 | 完成 | `cycleLanguage` 一处实现、两种调用（命令 + 钮的 click 监听）；把 click 监听摘掉命令照样工作 |
 | 7.1–7.5 单测 | 完成 | `tests/unit/copy.test.ts`（15 条用例）：漂移 / 取值 / 占位名 / 多串格 / `t()` 插值与缺参 / `tPlural` 复数 / `Intl` 三族 / 语言域纯逻辑（结构替身，不造 DOM）/ 重绘注册顺序 |
-| 8.1 基线全量重拍 | **未做（等基线裁决）** | 视觉桩把语言钉在 `zh`（覆盖选择见 `tests/visual/scenes/tauri-stub.ts` 的注释与 backlog 条目），因此**本批不重拍任何基线**；`en` 面由新场景覆盖。**禁止自行 `--update`** |
-| 8.2 zh 迁移中性对照 | 部分 | 桩钉 `zh` 时「迁移中性」由同一批基线直接承担（相对时间那一处按 `Intl` 归一，见 backlog）；全量对照读数见 PR 的 `gate visual` 输出 |
+| 8.1 基线重拍 | 完成（**Alex 已批准，定向重拍 2 张**） | tower 转 Alex 批准（2026-09-28T03:23:24Z）后**定向**重拍 `app-main.png` 与 `modeline-bar.png`：`bash scripts/visual/run.sh --update -g "未打开 vault 的空态主界面\|modeline 条带"`（用例级过滤，**不是** `--update-snapshots=all`——`app-main.spec.ts` 自己还有第二张基线 `filetree-open`）。核对：`git status tests/visual/baselines` **恰好 2 个 M**、其余 22 个零 diff；抽检 4 张 sha256 逐字节未变。重拍后 `gate visual` **12/12 PASS**、视觉逐用例 **543 passed / 0 failed / 1 skipped**。证据落 `test-results/m282/baseline-review/README.md`（含执行记录与 sha256 前后快照） |
+| 8.2 zh 迁移中性对照 | 完成 | 桩钉 `zh` ⇒「迁移中性」由同一批基线在**重拍前后直接承担**：重拍只动了 2 张、且成因是新增的语言 chip（不是文案变化）；其余 22 张基线重拍前后逐字节相同（sha256 抽检 4 张 + `git status` 全量）⇒ zh 侧的文案迁移是纯搬运，只有 `Intl` 那处相对时间空格按 design §6.2 归一 |
 | 8.3 en 面新场景 | 完成（未跑） | `tests/visual/scenes/m282-ui-language.spec.ts`（chrome 文案 + 切换 + 不残留中文的负向断言 + 往返幂等 + 上屏列锁定）；**本批只跑到 tsc 通过，未跑像素/结构套件**（套件跑在 `gate visual` 里，见 PR 读数） |
 | 8.4 预览装饰随切换重建 | 完成（未跑） | 同上场景的「附件未找到」widget 判据（`toDOM()` 的文本） |
 | 8.5 反向验证（注释掉重绘段即红） | 完成 | 临时注释 `applyLanguage` 里 `runRelabels(); editor.refreshPreview();` 两行后跑 m282 场景：**3 failed / 4 passed**（红的三条正是「切换后长驻 chrome 与预览装饰同步」那三条）；还原后 `git diff src/main.ts` 为空（逐字节一致）。读数落 `test-results/m282/reverse-validation/README.md` |
-| 8.6 基线处置纪律 | 完成 | 「新增基线 = 0、重拍基线 = 0」（桩钉 zh 的覆盖选择），逐张过目不适用 |
+| 8.6 基线处置纪律 | 完成 | **新增基线 = 0、重拍基线 = 2**（`app-main.png` / `modeline-bar.png`，均在 Alex 批准的范围内、逐张过目后定向重拍）；**没有裸跑 `--update-snapshots`**（用 `-g` 收到两条用例，日志逐行写着哪两张被 re-generate） |
 | 9.1 真机场景 55 | 完成 | `node scripts/acceptance/run.mjs 55-ui-language-switch` 真机 **1/1 PASS**（48.7s，`ui.language = zh` 起点 → ⌘⇧L 切 en → chrome/装饰上屏英文 → 写回 config.json → 点钮切回 zh → 再切 en → 重启首帧即配置语言 + 结尾磁盘 `unchangedSince`）；证据落 `test-results/acceptance/2026-09-28/55-ui-language-switch/`（`status.txt` = PASS）。**过程中发现并修掉一处真缺陷**：`scripts/acceptance/lib/drive.mjs` 的就绪判据写死了中文措辞（D96/D5/D6/D107），默认语言改 `en` 后套件在启动就超时 ⇒ 四组措辞各接受两档（判据的意图是「入口在场」而不是「它是中文」） |
 | 9.2–9.5 真机其余项 | 部分 | 9.4（首帧闪烁的真机复核）**完成**（见 1.4：逐帧读数，未测出闪烁）；9.2（真机反向验证：去掉切换接线跑同一场景应红）与 9.5（日志/告警面不随语言变）**未做**；9.3（AX 可读 ≠ 元素可见）在场景里以「文本在场 + 编辑器文本可读」的并列断言满足 |
 | 10.1 deck 沿革与实现备注 | 完成 | 沿革段补 D159–D320 的区间与三条形态约定；实现备注段补运行时表与门禁的落点；D114 行的「全仓唯一一处」过时断言按本 change 改准 |
@@ -234,5 +234,5 @@
 | 11.1 openspec validate | 完成 | `gate quick` 的 `openspec-validate` PASS |
 | 11.2 门禁 | 完成 | `gate quick` **10/10 PASS（SKIP 0）**；`gate visual`（端口 4399）全量套件读数见 PR（除**既知 2 条等裁决基线**外全绿）；`run.mjs --check` 64/64 PASS；`git diff --check` 仅剩 ts-rs 生成的 `src/bindings/UiConfig.ts` 行尾空格（任务书豁免） |
 | 11.3 `git diff --check` 与 Impact | 完成 | `git diff --check` 无输出（`src/bindings` 生成行尾空格除外）；改动文件集合与 Impact 一致（无 ADR / 无 living spec 改动） |
-| 11.4 收官对账 | 部分 | 本表即对账；新的边界条目已落 `docs/backlog.md` 的 M282 遗留节 |
+| 11.4 收官对账 | 完成 | 本表即对账；边界与遗留条目已落 `docs/backlog.md` 的 M282 遗留节（已闭合项就地划掉并写明闭合方式）；`gate visual` 的「等基线裁决」项清零 |
 | 12.1 / 12.2 边界 | 完成 | 非目标逐条守住：`src-tauri/src/lib.rs` 无菜单项改动、`rg "i18next|formatjs|intl-messageformat" package.json pnpm-lock.yaml` 零命中、日志 / 告警文本与事件名零改动、派生文件名仍是字面量（标 `i18n-exempt: data`）；十条已知边界中 ①②③④⑥⑨ 已在 spec 与代码注释里落，⑤⑩ 如实登记为未验 / 覆盖选择 |
