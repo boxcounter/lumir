@@ -2,11 +2,11 @@
 id: "60-vault-switch-restore"
 item: 60
 title: vault 切换的写盘段反馈与「标签栏当帧齐、正文按需装载」
-# 界面语言**显式钉为 en**（M282 起出厂默认就是 en，见 `src-tauri/src/config.rs` 的
-# `UiLanguage::En`）：本场景的断言里有几处是 chrome 文案（树头部、守卫浮条、dirty 标记、
-# 空 vault 引导），钉住之后它们不随默认语言的改判漂移。**注**：套件里 14/17/18/49/50 等
-# 旧场景仍断言中文文案（M282 改默认语言时未同步），它们在 en 面下会红——那是套件的存量问题
-# （已登记 finding），不是本场景的形态。
+# 界面语言**显式钉为 en**（本场景的断言里有几处是 chrome 文案：树头部、守卫浮条、dirty 标记、
+# 空 vault 引导，都取文案表的 en 列）。**套件默认面是 `zh`**（run.mjs 的 `SUITE_LANGUAGE`，理由与
+# 两侧覆盖边界见套件 README 的「语言面」节）：存量场景的 chrome 断言全取 zh 列，只有本场景断言
+# en 列，因此在身上钉住。M282 把产品出厂默认裁成 en 时，跟随默认值的那些场景整批静默变红
+# （M284 修的正是这个根因）。
 config:
   language: en
 seed:

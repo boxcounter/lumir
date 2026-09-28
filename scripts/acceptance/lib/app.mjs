@@ -24,6 +24,22 @@ export function fixturesDir() {
   return path.join(repoRoot(), "scripts/acceptance/fixtures");
 }
 
+/** 场景 front-matter `config:` 允许的键（M284）——**单点真源**：run.mjs 的折算（在起 app 之前
+ *  写进隔离 config.json）与 execute.mjs 的静态校验（`--check`）共用这一份，免得两处漂移
+ *  （REVIEW.md 第 8 条）。键名即 `writeConfig()` 的同名参数，**传了才写**、缺省走应用出厂口径。 */
+export const SCENARIO_CONFIG_KEYS = [
+  "lineWrap",
+  "codeBlockWrap",
+  "autoIndent",
+  "fontFamily",
+  "monoFontFamily",
+  "fontSize",
+  "theme",
+  "contentWidth",
+  "language",
+  "keys",
+];
+
 /** 写隔离 config.json。`keys` 不传时整体不写该字段（默认无覆盖）。
  *  M180（change line-wrap-options）起支持 `lineWrap` / `codeBlockWrap`：**传了才写进 editor 表**
  *  ——两项缺失时应用走 Rust 侧 `Default`（line_wrap = true、code_block_wrap = false），

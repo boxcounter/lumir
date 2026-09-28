@@ -9,7 +9,7 @@ import { appendFile, open, readdir, readFile, rm, stat, writeFile } from "node:f
 import path from "node:path";
 import yaml from "js-yaml";
 import { findNode, windowBounds } from "./ax.mjs";
-import { copyFixture, readConfig, writeConfig } from "./app.mjs";
+import { copyFixture, SCENARIO_CONFIG_KEYS } from "./app.mjs";
 import {
   clickNode,
   frontmostPid,
@@ -61,6 +61,19 @@ export function checkScenario(scenario) {
         else if (!Number.isInteger(v) || v <= 0) push(`seed.bulkVault.${k} 需要正整数，实际 ${JSON.stringify(v)}`);
       }
     }
+  }
+  // **语言面**（M284）：断言里的 chrome 文案是**某一档语言**的取值（`src/copy-data.ts` 的 zh / en
+  // 两列各一份）。套件自己钉住默认面（run.mjs 的 `SUITE_LANGUAGE`，见 README「语言面」），场景
+  // 只在需要别的面时用 `config.language` 覆盖——因此这里校验的是「声明了就必须是合法档」，而不是
+  // 「必须声明」：跟随**套件**默认是设计，跟随**产品**默认才是 M282 那个假红的成因。
+  // 沿革：M282 把产品出厂默认从 zh 裁成 en，50 余个断言中文文案的场景随之在默认面下系统性假红
+  // （finding `.tower/comms/findings/20260928-worker-impl-vault-perf-bug-m282-en-27-chrome.md`）。
+  const lang = scenario.config?.language;
+  if (lang !== undefined && lang !== "zh" && lang !== "en") {
+    push(`config.language 只能是 zh/en（实际 ${JSON.stringify(lang)}）——写错会静默落回产品出厂口径`);
+  }
+  for (const k of Object.keys(scenario.config ?? {})) {
+    if (!SCENARIO_CONFIG_KEYS.includes(k)) push(`config 未知键 ${k}（拼错即静默不生效，允许：${SCENARIO_CONFIG_KEYS.join(" / ")}）`);
   }
   for (const [i, step] of (scenario.steps ?? []).entries()) {
     const at = `steps[${i}]${step.name ? `(${step.name})` : ""}`;
@@ -544,21 +557,10 @@ export async function runScenario(ctx, scenario) {
   let result = null;
   try {
     if (scenario.fixtures) for (const f of scenario.fixtures) await copyFixture(f);
-    if (scenario.config) {
-      // 排版三项（M195）/ 主题（M210）/ 栏宽（M228）与 [keys] 同形：传了才写，缺省即出厂口径
-      await writeConfig({
-        mode: "md",
-        keys: scenario.config.keys,
-        fontFamily: scenario.config.fontFamily,
-        monoFontFamily: scenario.config.monoFontFamily,
-        fontSize: scenario.config.fontSize,
-        theme: scenario.config.theme,
-        contentWidth: scenario.config.contentWidth,
-        // 界面语言（M282）同形：传了才写，缺省即出厂口径（`en`）。
-        language: scenario.config.language,
-      });
-      await ctx.restartApp();
-    }
+    // 场景 front-matter 的 `config:` **不在这里生效**：它由 run.mjs 在 `launchApp()` 之前
+    // 折进隔离 config.json（M284）——早先在这里是「起一次 app → 写配置 → 重启」，每个声明
+    // config 的场景都多付一次重启。折叠之后 app 的**首帧**就是场景声明的起点，语义更强
+    // （与 backlog:366 的「窗口配置只有一份真源」同一取向）。
     if (scenario.open) {
       await openFile(cu, ctx.pid, scenario.open, { marker: scenario.marker });
       evidence.record({ kind: "note", text: `已打开 ${scenario.open}` });

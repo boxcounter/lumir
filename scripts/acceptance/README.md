@@ -83,7 +83,7 @@ title: Mermaid 图表点击进源码编辑
 fixtures: [mermaid.md]       # 场景开始前覆盖进验收 vault 的 fixture
 open: mermaid.md             # 用左栏点击打开的文件
 marker: "Mermaid 场景"       # 等编辑器出现该内容才算打开成功
-config: { keys: {...} }      # 可选：覆盖隔离 config.json（触发重跑 app）
+config: { keys: {...} }      # 可选：覆盖隔离 config.json（**起 app 之前**写，不触发重跑 app）
 seed:                        # 可选：预置隔离配置里的注册表 / 会话（**起 app 之前**写）
   registry:
     - { id: acc-a, path: $vault, lastOpenedAt: 1757000002000 }
@@ -105,6 +105,37 @@ steps:
         editor: { has: "A[入口] --> B[出口]" }
 ---
 ```
+
+### front-matter 的 `config:`（起 app 之前写）
+
+`config` 里的键**在 `launchApp()` 之前**折进隔离 `config.json`（M284 起；早先它由场景执行期的
+第二次写 + 一次 `restart` 生效，每个声明 config 的场景都多付一次重启）。语义因此更强：**app 的
+首帧就是场景声明的起点**。允许的键是 `lib/app.mjs` 的 `SCENARIO_CONFIG_KEYS`（与 `writeConfig()`
+的同名参数一一对应，`--check` 用同一份挡拼错），缺省不写 = 走应用出厂口径。
+
+### 语言面（M284）
+
+界面语言（`[ui] language`）**由套件钉住**，不跟随产品的出厂默认：
+
+| | 取值 | 为什么 |
+|---|---|---|
+| 套件默认 | **`zh`**（`run.mjs` 的 `SUITE_LANGUAGE`） | 存量场景的 chrome 断言（`关闭 {name}` / `保存并切换` / `vault：{name}（点击查看全部 vault）` / `（未保存）` / `Markdown 表格 {n}` / 右键菜单 7 项 …）全部取文案表的 **zh 列**，M282 之前已逐条评审过；改断言到 en 面是 403 条 matcher 的机械改写（去重口径逐场景求和，见 `docs/backlog.md` 的 M284 节），风险与收益不成比例 |
+| 覆盖方式 | front-matter 的 `config: { language: "en" }` | 场景要验 en 面就在自己身上钉（场景 60 是例子）；写错值由 `--check` 挡 |
+
+**为什么必须有这一条**：chrome 文案只可能是**某一档**语言的取值，而产品的出厂默认会变——M282
+（change `ui-language-i18n`）把它从 `zh` 裁成 `en` 之后，跟随默认值的 **54 个场景**在默认面下整批
+静默变红，失败形态与真实产品缺陷一模一样（finding
+`.tower/comms/findings/20260928-worker-impl-vault-perf-bug-m282-en-27-chrome.md`）。钉住之后，
+产品的默认值再改也不会动到套件。
+
+**两侧的覆盖边界（如实登记）**：
+
+- `zh` 面：本套件全量 + 视觉套件（`tests/visual/scenes/tauri-stub.ts` 的桩同样钉 `zh`，同一取向）；
+- `en` 面：本套件场景 **55**（⌘⇧L 切换、切换前后两档都断言）与 **60**（front-matter 钉 `en`，
+  走完切换守卫三出口 + 空 vault 引导 + dirty 标记）；视觉 `tests/visual/scenes/m282-ui-language.spec.ts`
+  （直接用 `src/copy-data.ts` 的 `COPY` 取值）；文案表本身的漂移/占位门禁在 `tests/unit/copy.test.ts`。
+- 因此**产品出厂默认面（en）在真机上的整场景覆盖只有 55 / 60 两块**——这是本条选择的已知代价，
+  与视觉层同一条（`docs/backlog.md`「M282 遗留」节已登记视觉侧的同款代价）。
 
 ### 预置状态（`seed`）
 

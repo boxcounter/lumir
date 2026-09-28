@@ -2045,15 +2045,114 @@ living spec 两处已随本 change 改写口径（`keymap-commands` 的「轨道
 设计见 [docs/process/real-machine-acceptance.md](process/real-machine-acceptance.md)）；手感/审美项仍归 Alex。
 
 分类依据 = **证据目录里真实 PASS 的场景**，不是「场景写了就算覆盖」。最近一次全量实跑：
-**M256（2026-09-27，批次收尾）——57 场景 / 49 PASS / 8 FAIL**（`node scripts/acceptance/run.mjs`，
-`caffeinate -dimsu` 包住、串行独占 1430），证据 `test-results/acceptance/2026-09-27/`（git 外，
-`summary.md` + 各场景 `steps.md`/`shots/`/`ax/`）。上一次全量：M240 批次（2026-09-26）49 场景 /
-47 PASS / 2 FAIL（`32-list-filter`、`43-list-tab-indent`）；更早 M164 批次（本地 2026-09-18 凌晨，
+**M284（2026-09-28，语言面修复批）——65 场景 / 57 PASS / 8 FAIL**（`node scripts/acceptance/run.mjs`，
+`caffeinate -dimsu` 包住、串行独占 1430），证据 `test-results/acceptance/2026-09-28/`（git 外，
+`summary.md` + 各场景 `steps.md`/`shots/`/`ax/`）；8 条红逐条归因见下面的 M284 总表。**上一次全量：
+M256（2026-09-27）——57 场景 / 49 PASS / 8 FAIL，那是 M282 改判默认语言之前的现场（场景当时跑在 zh
+面），读数不再可复现**：M256 的 8 条红（28/29/31/32/38/43/47/50）与本批的 8 条红（见下）只有 **28、
+47** 两条重合，其余是 M266/M277/M278/M280/M281/M283 各批修完或新增的。M256 的表格保留在下面仅作
+沿革对照。**上一次全量：
+M240 批次（2026-09-26）49 场景 / 47 PASS / 2 FAIL（`32-list-filter`、`43-list-tab-indent`）**；更早 M164 批次（本地 2026-09-18 凌晨，
 证据目录按 UTC 记为 `2026-09-17`）26/26 PASS，其套件改动与运行纪律（就绪门改判形态 A、窗口经
 `--config` 钉主屏、每场景清 `workspaces/` 与 `vault-sessions/`、新增 `seed` 与第二个合成 vault、
 `caffeinate -dimsu` 包住）见本文件「多 vault 收口遗留」一节。
 
-### M256 全量回归总表（2026-09-27）
+### M284 全量回归总表（2026-09-28）
+
+前提已 `lsof` 复核：1420 / 1430 起跑前后均无监听、无 `target/debug/lumir` 残留；磁盘 21G 可用；
+套件自带隔离配置与两个合成 vault（`~/.config/lumir` 与用户真实 vault 全程未读写）；`caffeinate -dimsu`
+包住、串行独占 1430。**65 场景 / 57 PASS / 8 FAIL，1685 断言 / 53 条失败断言，总耗时 2496s。**
+
+| 场景 | 结果 | 断言 | 失败 | 耗时 |
+|---|---|---|---|---|
+| `01-mermaid-click` | PASS | 9 | 0 | 13.2s |
+| `02-math-click` | PASS | 8 | 0 | 20.9s |
+| `03-table-ctrl-np` | PASS | 15 | 0 | 28.6s |
+| `05-cell-math` | PASS | 8 | 0 | 16.4s |
+| `06-callout-and-width` | PASS | 10 | 0 | 25.2s |
+| `07-recovery-paths` | PASS | 10 | 0 | 15.4s |
+| `07b-recovery-saveas` | PASS | 12 | 0 | 22.1s |
+| `07c-external-reload` | PASS | 6 | 0 | 14.9s |
+| `08c-crash-recovery` | PASS | 15 | 0 | 35.4s |
+| `08d-crash-discard` | PASS | 8 | 0 | 31.8s |
+| `08e-force-overwrite` | PASS | 12 | 0 | 21.2s |
+| `09-emacs-keys` | PASS | 15 | 0 | 22.6s |
+| `09b-keys-config` | PASS | 6 | 0 | 18.6s |
+| `12-links` | PASS | 53 | 0 | 55.4s |
+| `13-toc` | PASS | 49 | 0 | 47.3s |
+| `14-tabs` | PASS | 51 | 0 | 74.7s |
+| `16-startup-restore` | PASS | 10 | 0 | 20.7s |
+| `17-multi-vault-switch` | PASS | 38 | 0 | 36.4s |
+| `18-vault-session-restore` | PASS | 7 | 0 | 19.2s |
+| `19-vault-switch-guard` | PASS | 35 | 0 | 26.4s |
+| `20-image-fallback` | PASS | 17 | 0 | 13.9s |
+| `21-wrap-default` | PASS | 15 | 0 | 21.4s |
+| `22-wrap-toggle` | PASS | 17 | 0 | 18.3s |
+| `23-image-first-open-width` | PASS | 9 | 0 | 20.7s |
+| `24-table-cell-ctrl-e-seq` | PASS | 11 | 0 | 27.2s |
+| `25-vault-list-close-keeps-reading-position` | PASS | 26 | 0 | 28.9s |
+| `26-svg-scroll-stability` | PASS | 17 | 0 | 33.6s |
+| `27-document-end-marker` | PASS | 19 | 0 | 33.1s |
+| `28-remember-reading-position` | **FAIL** | 16 | 6 | 103.5s |
+| `29-typography-and-zoom` | PASS | 31 | 0 | 87.4s |
+| `30-code-outline` | PASS | 38 | 0 | 53.5s |
+| `31-code-variable-highlight` | PASS | 29 | 0 | 47.5s |
+| `32-list-filter` | PASS | 47 | 0 | 47.5s |
+| `33-image-lightbox` | PASS | 36 | 0 | 34.5s |
+| `34-restyle-theme-skeleton` | PASS | 16 | 0 | 19.5s |
+| `35-restyle-three-themes` | **FAIL** | 16 | 1 | 61.9s |
+| `36-restyle-content` | PASS | 14 | 0 | 21.0s |
+| `37-heading-hierarchy` | PASS | 11 | 0 | 14.8s |
+| `38-content-width-drag` | PASS | 18 | 0 | 30.9s |
+| `39-titlebar-identity` | **FAIL** | 19 | 1 | 49.0s |
+| `40-table-fullscreen-view` | PASS | 30 | 0 | 29.5s |
+| `41-editable-non-md-files` | PASS | 58 | 0 | 51.1s |
+| `42-non-md-edit-guardrails` | PASS | 29 | 0 | 34.5s |
+| `43-list-tab-indent` | PASS | 70 | 0 | 76.8s |
+| `44-theme-live-switch` | PASS | 38 | 0 | 57.2s |
+| `45-tab-cycle-keys` | PASS | 44 | 0 | 48.7s |
+| `46-dotfile-jsonc-highlight` | PASS | 46 | 0 | 50.7s |
+| `47-file-tree-context-menu` | **FAIL** | 101 | 23 | 98.3s |
+| `48-vault-registry-migration` | PASS | 17 | 0 | 18.6s |
+| `49-vault-switch-feedback` | **FAIL** | 22 | 1 | 25.2s |
+| `50-tab-context-menu` | PASS | 46 | 0 | 40.8s |
+| `51-tab-overflow` | PASS | 25 | 0 | 28.2s |
+| `52-dir-rename-expand` | **FAIL** | 32 | 15 | 36.0s |
+| `53-bold-click-selection` | **FAIL** | 23 | 4 | 43.4s |
+| `54-bare-url-cmd-click` | PASS | 38 | 0 | 42.7s |
+| `55-ui-language-switch` | PASS | 29 | 0 | 42.1s |
+| `56-goto-line` | PASS | 39 | 0 | 55.7s |
+| `59-enter-auto-indent` | **FAIL** | 29 | 2 | 116.9s |
+| `60-vault-switch-restore` | PASS | 39 | 0 | 51.7s |
+| `61-block-copy` | PASS | 31 | 0 | 57.9s |
+| `62-code-block-fullscreen` | PASS | 45 | 0 | 60.0s |
+| `render-markdown` | PASS | 14 | 0 | 19.8s |
+| `render-table-degrade` | PASS | 9 | 0 | 13.9s |
+| `search-01-find` | PASS | 22 | 0 | 42.1s |
+| `search-02-binding` | PASS | 10 | 0 | 19.8s |
+
+#### 8 条红逐条归因（每条都复跑过一轮，读数 `test-results/acceptance/2026-09-28-rerun-reds/`）
+
+复跑 **4/8 转绿**、**4 条稳定红**；**无一条由 M284 的语言面改动引入**（本批只动 `scripts/acceptance/**`
+与本文档，`src/**`、`src-tauri/**` 零 diff）。当轮读数的环境因子：跑批期间 Alex 在用机，
+`Chrome`(pid 1103) / `Ghostty`(pid 1206) / `Lark`(pid 5842) 反复抢走前台 ⇒ 依赖「目标窗口前台且未被遮挡」
+的键鼠注入类断言区间性失效（套件自己的 `前台焦点：未取得` 行是现场证据）。
+
+| 场景 | 本轮现象 | 复跑 | 归因 |
+|---|---|---|---|
+| `28` | 视口类断言（「第 1 章两行不在渲染行里」）+ `env:reading-positions/*.json` 不存在 | PASS | **判据本身不稳**：README「已知边界」已记「AXTextArea.value 会截断、`行在不在 AX 里`不是视口判据」（M281 实测），28 用的正是这条形态 ⇒ 随快照截断位置摇摆。**待修**（改判据形态），不是产品缺陷 |
+| `35` | `/AXTabGroup \(打开的文档\)/` 读到 `Open documents` | FAIL | **产品缺陷**（M284 新发现，finding `20260928-worker-fix-zh-scenarios-bug-relabel-zh-axtabgroup-en.md`：`src/shell.ts:89` 的标签段读屏名无 relabel 通道）。**本批的 zh 面把它照出来了**——若按「断言改 en」的修法，这条会被永久掩盖 |
+| `39` | 标识块上拖拽窗口成立 → `Δ=(0,0)` | PASS | **环境**：CGEvent 拖拽落在最上层那扇窗上（跑批时前台在别的 app）。REVIEW.md 第 16 条的同类症状另见，但那需要 DOM 里存在 `mousedown`+preventDefault 的监听（本批未复核到新增） |
+| `47` | `press_key 失败：error: empty key DSL`（`keys` 里的裸 `-`）+ 级联 23 条 | FAIL | **套件注入通道已知未修**（finding `20260927-worker-impl-remove-autosave-bug-keys-kimicu-press-key-empty-key-dsl-47-52.md`；本文件 M256 节亦有登记）。建议单独派一个套件 mission |
+| `49` | 「装载指示此刻在场」（`AXProgressIndicator`）读不到 | FAIL | **M283 之后的已知窗口问题**：M283 的 finding 已证「同步 command 阻塞期间主线程不空闲、AX 读不到节点；本 change 又把恢复段压到毫秒级」，指示窗口在真机上没有可读部分（本文件「M252 装载指示立论在打开段不成立」同族）。49 的快照采样窗口因此不够；**修法是探针口径**（M283 在场景 60 已按此处置），不是产品缺陷 |
+| `52` | 同 `47` 的 `empty key DSL`（新名 `ren-subx` 含 `-`）+ 级联 15 条 | FAIL | 同 `47` |
+| `53` | 拖拽类动作「目标窗口不在前台」（实测前台 pid=1206 = Ghostty）+ 见证字符未落地 | PASS | **环境**（前台被抢） |
+| `59` | 两条「正观测：Enter 确实落地」sha256 未变 | PASS | **环境**（键盘注入丢键；当轮 59 相关步骤重试到 116.9s）。丢键是间歇的，REVIEW.md 第 11 条要求先按丢键复跑再判产品缺陷——复跑即绿 |
+
+⇒ **本批把语言面假红清干净了**（语言面无一条红），剩下的 4 条稳定红各有归属：1 条产品缺陷（已 file
+finding）、2 条套件注入通道缺陷（既有 finding）、1 条 M283 已定的窗口口径问题。
+
+### M256 全量回归总表（2026-09-27，**M282 之前的现场**：场景当时跑在 zh 面，读数不再可复现）
 
 前提已 `lsof` 复核：1420 / 1430 起跑前后均无监听、无 `target/debug/lumir` 残留；磁盘 35Gi 可用；
 套件自带隔离配置与两个合成 vault（`~/.config/lumir` 与用户真实 vault 全程未读写）。
@@ -2716,3 +2815,85 @@ living spec 两处已随本 change 改写口径（`keymap-commands` 的「轨道
 - **日志文本语言的口径待确认（沿 proposal 的报备）**：终裁说「日志消息固定用英文」，而现状日志
   `message` 是中文（事件名 / 字段名是英文标识符）。本批按「日志面不进语言面、文本不动」执行，
   未改写任何日志文本。
+
+## M284（验收套件语言面修复，2026-09-28）
+
+### 修的是什么
+
+M282（change `ui-language-i18n`）把 `[ui] language` 的**出厂默认从 `zh` 裁成 `en`**，但验收套件里
+断言 chrome 文案（`关闭 {name}` / `保存并切换` / `vault：{name}（点击查看全部 vault）` / `（未保存）` /
+`Markdown 表格 1` / 右键菜单 7 项 …）的场景**从没钉过语言**——它们一直隐式跟随产品默认值。默认值一
+改，这些断言在默认面下整批变红，而失败形态与真实产品缺陷一模一样（M283 首轮真机跑撞上，现场
+`test-results/m283/before-run-language-face/`）。**根因不是「钉错了语言」，是「没钉」。**
+
+### 盘点（实测，不是 finding 里那个 27）
+
+机械口径（探针脚本与读数落 `test-results/m284/inventory.{txt,json}`，脚本 `copy2.mjs` / `inv4.mjs` 同目录）：
+把场景 front-matter 里**真正送给 AX 匹配器**的字段（`ax.has/not/focused/count.pattern`、`target.name/
+any/help`、`clickNodeText.text`、`clipboard.*`）全部抽出，与 `src/copy-data.ts` 的**字面片段**（按
+`{占位名}` 切分，不做 trim；CJK 片段 ≥3 字符、纯 ASCII 片段 ≥4 字符）做双向包含比对。
+
+| 读数 | 值 |
+|---|---|
+| 场景总数 | 65 |
+| 断言里的 matcher 总数 | 867 |
+| **消费了文案表某条目字面片段的场景** | **54 / 65** |
+| 命中记录数（同一条 matcher 命中多个文案键时**重复计**） | 759 |
+| **被命中的 matcher 条数（去重口径：同一场景内同一个 `where` 只计一次，再逐场景求和——与上面「按场景逐条对照」的口径一致）** | **403** |
+
+（**口径记账（M284 r1 评审 P2-1）**：本表首版写的是 379——那是探针**中间版本**的读数，改了字面片段
+切分口径后没回改；`inventory.json` 的三个可复现数是：raw hits **759**、逐场景去重 **403**、
+跨场景全局去重 **137**。下文提到的「403 条 matcher」一律指逐场景去重那一档。）
+
+finding 报的「约 27 个」是拿四条中文串 grep 出来的**下限**；实际面更大——finding 没列的还有
+`Markdown 表格 {n}`（表格 widget 的读屏名）、`Markdown 代码块 {n}`、`关闭 {name}`（标签列）、
+`（未保存）`（D90）、`保存并切换` / `放弃修改并切换`（D110.x）、`关闭其他标签` / `关闭右侧标签`（D150/D151）、
+`主题：{theme}（点击切换）`（D122）、`键位（生效中）`（D63）、`输入以筛选` / `没有匹配的条目`（D117/D118）
+这些面。口径是**静态启发式**，已知两侧误差：**欠包含**（`/A|B/` 正则形态的 matcher 与短于阈值的片段
+会漏检）与**少量过包含**（`vault` 这类 ASCII 短串会把个别 fixture 文本算进来）。要按场景逐条对照，
+看 `test-results/m284/inventory.json` 的 `hits[].where` / `.val`。
+
+### 修法：套件自己钉住语言面（不是逐场景改断言）
+
+| | 决定 | 理由 |
+|---|---|---|
+| 机制 | `run.mjs` 的 `SUITE_LANGUAGE = "zh"`：每个场景起 app 之前把 `[ui] language` 写进隔离 `config.json` | 一条线消掉整类问题：套件不再依赖**产品**默认值，产品的默认值以后再改也不会动到套件 |
+| 取值 | `zh`（存量断言取的就是 zh 列） | 另一条路是把 403 条 matcher 改写成 en 列——机械改写 + 逐条核对插值/复数/`Intl` 格式，风险与收益不成比例；且断言是 M282 之前逐条评审过的制品 |
+| 先例 | 与视觉层同一条：`tests/visual/scenes/tauri-stub.ts` 的桩同样钉 `zh`（`en` 面交给 `m282-ui-language.spec.ts`） | 两层的覆盖选择一致，代价一次说清（见下） |
+| 覆盖方式 | 场景要验别的面就自己钉：front-matter `config: { language: "en" }`（场景 60） | 场景 55 两端都断言，保持 `zh` 起点 |
+| 静态门 | `run.mjs --check` 校验 `config.language ∈ {zh, en}` 且 `config` 的键在白名单内（`lib/app.mjs` 的 `SCENARIO_CONFIG_KEYS`，单点真源） | 拼错即静默落回产品默认——正是本批要根除的形态 |
+
+**顺带修掉的一处代价**：`config:` 原先在场景执行期写第二次并触发一次 app 重启；本批折进 `launchApp()`
+之前的那次写（首帧即场景声明的起点，与 backlog:366 的「窗口配置只有一份真源」同一取向）。因此钉语言
+面**不额外花重启**，全量批还比原来少 11 次重启（原先声明 `config` 的场景）。
+
+**反向验证（先红后绿，REVIEW.md 第 1 条）**：把 `SUITE_LANGUAGE` 临时改成 `en` 跑场景 16 →
+**FAIL**（AX dump 里 `AXButton (Open vault)` / `Open a folder as a vault…`，现场
+`test-results/m284/reverse-en-face/`）；改回 `zh` 复跑 → **PASS**（`test-results/m284/precheck-zh/`，
+同批 34 / 09b 也 PASS，证明 `theme` / `keys` 从场景 `config` 折到起 app 之前同样生效）。
+
+### 覆盖边界（如实登记）
+
+- `zh` 面：本套件全量 + 视觉套件（桩钉 `zh`）；
+- `en` 面：本套件场景 **55**（⌘⇧L 切换，两端都断言）与 **60**（钉 `en`，走完守卫三出口 / 空 vault 引导 /
+  dirty 标记 / 标签计数）；视觉 `m282-ui-language.spec.ts`（直接 import `COPY`）；文案表本身的漂移与占位
+  门禁在 `tests/unit/copy.test.ts`。
+- 因此**产品出厂默认面（`en`）在真机上的整场景覆盖只有 55 / 60 两块**——这是本批选择的已知代价，与
+  上面「M282 遗留」里视觉侧的同款代价并列。
+- **本批没做**：把 403 条 matcher 改写成 en 列（见上表理由）。若 Alex 要求套件整体代表出厂默认面，
+  那是一次独立的重写批。
+
+### 本批顺带发现（都已 file finding，不在本批修）
+
+1. **`src/shell.ts:89` 的标签段读屏名不在 relabel 通道**（medium，真机实证）：配置 `zh` 时
+   `AXTabGroup` 停在 `Open documents`。同一类型的长驻 chrome 违反点**只有这一处**（其余 6 类都已有
+   `onRelabel`，逐项 file:line 见 finding）。finding：`20260928-worker-fix-zh-scenarios-bug-relabel-zh-axtabgroup-en.md`。
+   **这就是场景 35 在本批全量里唯一那条红**——它是**产品缺陷**，不是套件问题（本批的 zh 面把 M282 的
+   迁移缺口照出来了；若按「断言改 en」的那条修法，这条缺陷会被永久掩盖）。
+2. **preview widget 的 `eq()` 语言盲区**（low–medium，静态实证）：一批 widget 的 `eq()` 只比语言无关
+   字段，`applyLanguage` 依赖的 `refreshPreview()` 因而不重建 DOM，`toDOM()` 里的 `t()` 钉死在首次渲染
+   那一档（含**可见文本**的 mermaid/frontmatter/math 一类）。清单与对照组在同一个 finding 里。
+3. **启动恢复 notice 在 en 面泄漏中文**（low，实测）：`src-tauri/src/lib.rs:513` 的
+   `"上次打开的 vault 已不可用：{last}，请重新选择目录"` 是硬编码中文串、不走文案表——reverse-en 跑
+   的 AX dump 里可见「中文前缀 + 英文尾巴」混排。这条**已在 change `ui-language-i18n` 的 tasks 5.5 里
+   记为未勾选项**，故不另立 finding，只在这里记账。
