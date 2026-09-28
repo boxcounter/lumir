@@ -20,9 +20,14 @@ export interface OverlaySurface<T> {
   restoreFocus(): void;
 }
 
-/** 四条关闭路径。前三条是用户路径（关闭后交还焦点），`blur` 是焦点兜底（不抢焦点）——
- *  它同时兜住「浮层之上另开了面板」「窗口失活」「文档代际变化（外部重载）」三件事。 */
-export type OverlayCloseReason = "escape" | "overlay" | "toggle" | "blur";
+/** 五条关闭路径。前四条是用户路径（关闭后交还焦点），`blur` 是焦点兜底（不抢焦点）——
+ *  它兜住「浮层之上另开了面板」与「窗口失活」两件事。
+ *
+ *  **「文档代际变化（外部重载）」不在它的射程**（M286 实测证伪，原注释声称它兜住三件事）：
+ *  重载不移动焦点（`reloadSession` 不调 `view.focus()`），遮罩一直持焦 ⇒ 那条 blur 从不触发，
+ *  遮罩会停在一份**已经不存在的内容**上。文档换代改由调用方在重载处**显式**关闭
+ *  （`document`），见 src/main.ts 的 `closeDocumentOverlays`。 */
+export type OverlayCloseReason = "escape" | "overlay" | "toggle" | "blur" | "document";
 
 export interface OverlayState<T> {
   isOpen(): boolean;
@@ -52,6 +57,9 @@ export function createOverlayState<T>(surface: OverlaySurface<T>): OverlayState<
       if (!open) return;
       open = false;
       surface.hide();
+      // `blur` 是唯一**不**交还焦点的一条：焦点本来就去了别处（另开了面板 / 窗口失活），抢回来
+      // 就是第二条缺陷。`document`（文档代际变化）交还焦点——视口换代不是用户发起的焦点去向，
+      // 「关掉当前层之后键盘回到正文」才是可继续阅读的状态（与三条用户路径同口径）。
       if (reason !== "blur") surface.restoreFocus();
     },
     handleKeyToken(token) {

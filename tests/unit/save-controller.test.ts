@@ -385,6 +385,48 @@ test("handleExternalChange：clean 自动重载、dirty 交给用户、删除只
   stopTimers(rig);
 });
 
+test("外部重载前台文档：按装载口径恢复阅读位置 + 让文档派生浮层退出（M286）；后台标签两者都不做", async () => {
+  const rig = createRig();
+  let disk = { revision: "rev-2", content: "# 磁盘版" };
+  rig.backend.handle("fs_read_snapshot", () => disk);
+  rig.editor.open("a.md", "# A");
+  rig.controller.noteOpened("a.md", "rev-1");
+
+  rig.controller.handleExternalChange("a.md", "modified");
+  await flush();
+  assert.deepEqual(rig.editor.reloads, [{ path: "a.md", content: "# 磁盘版" }]);
+  assert.deepEqual(
+    rig.deps.restoreReadingPositionCalls,
+    ["a.md"],
+    "重载把视口复位到篇首（reloadSession 的既有复位）：不补这一句读者就从篇首重新开始（M279 的 T6）",
+  );
+  assert.equal(rig.deps.documentReplacedCalls, 1, "内容取自旧一份文档的浮层必须退出");
+
+  // 后台标签的就地重载：没有视口也没有浮层，两者都不许被调用
+  rig.editor.open("b.md", "# B");
+  rig.controller.noteOpened("b.md", "rev-1");
+  disk = { revision: "rev-9", content: "# B 磁盘版" };
+  rig.controller.handleExternalChange("b.md", "modified");
+  await flush();
+  assert.equal(rig.editor.reloads.length, 2);
+  assert.deepEqual(rig.deps.restoreReadingPositionCalls, ["a.md", "b.md"], "b 已是前台，仍算前台重载");
+  assert.equal(rig.deps.documentReplacedCalls, 2);
+
+  // 真正的前台是 a.md 时重载 b.md：后台标签只换代 state
+  rig.editor.activate("a.md");
+  disk = { revision: "rev-10", content: "# B 再改" };
+  rig.controller.handleExternalChange("b.md", "modified");
+  await flush();
+  assert.equal(rig.editor.reloads.length, 3);
+  assert.deepEqual(
+    rig.deps.restoreReadingPositionCalls,
+    ["a.md", "b.md"],
+    "后台标签的重载不得拽走前台的阅读位置，也不得关掉前台的浮层",
+  );
+  assert.equal(rig.deps.documentReplacedCalls, 2);
+  stopTimers(rig);
+});
+
 test("保存目标被外部删除：另存为新文件走建文件 → 写入 → 就地替换前台标签", async () => {
   const rig = createRig();
   rig.backend.handle("document_save", () => {

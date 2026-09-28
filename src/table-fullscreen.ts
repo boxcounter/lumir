@@ -56,8 +56,10 @@ export interface TableFullscreen {
  *  内容类型是 HTMLElement（快照源元素）：状态机原样透传给 surface.load。 */
 export type TableFullscreenSurface = OverlaySurface<HTMLElement>;
 
-/** 四条关闭路径。前三条是用户路径（关闭后交还焦点），`blur` 是焦点兜底（不抢焦点）——
- *  它同时兜住「遮罩之上另开了面板」「窗口失活」「文档代际变化（外部重载）」三件事。
+/** 五条关闭路径。前三条是用户路径（关闭后交还焦点），`document` 是**文档代际变化**（外部重载
+ *  把正文换掉：快照内容已不存在，调用方在重载处显式关闭，同样交还焦点），`blur` 是焦点兜底
+ *  （不抢焦点）——只兜住「遮罩之上另开了面板」与「窗口失活」两件事，**不兜文档代际变化**
+ *  （M286 实测证伪：重载不移动焦点，那条 blur 从不触发）。
  *  M277 起取值来源是 src/overlay-state.ts（三处浮层共用同一份状态机，REVIEW.md 第 8 条）。 */
 export type TableFullscreenCloseReason = OverlayCloseReason;
 
@@ -170,9 +172,13 @@ export function createTableFullscreen(options: TableFullscreenOptions): TableFul
       // 先于 window 上的分发器消费：分发器对已消费事件（defaultPrevented）让路。
       event.preventDefault();
     });
-    // 焦点离开遮罩即关闭，且不抢焦点（照 src/toc.ts 的口径）：它同时兜住「在遮罩之上另开了
-    // 面板」（global 作用域的命令在模态层上照常生效，新面板抢走焦点）、窗口失活，以及
-    // **文档代际变化**（外部修改重载把焦点交还给编辑器/文档区）三件事。
+    // 焦点离开遮罩即关闭，且不抢焦点（照 src/toc.ts 的口径）：它兜住「在遮罩之上另开了面板」
+    //（global 作用域的命令在模态层上照常生效，新面板抢走焦点）与「窗口失活」两件事。
+    //
+    // **文档代际变化不在它的射程**（M286 改正这条注释，原稿声称它兜住三件事）：外部改写当前
+    // 文档时 app 会就地重载，而重载**不移动焦点**（`reloadSession` 不调 `view.focus()`）——
+    // M279 的 T6 实测遮罩一直持焦、这条 blur 从不触发，遮罩因此停在一份已不存在的内容上。
+    // 现在由装配层在重载处显式 `close("document")`（`src/main.ts` 的 `closeDocumentOverlays`）。
     overlay.addEventListener("blur", () => created.close("blur"));
 
     state = created;

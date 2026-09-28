@@ -298,6 +298,9 @@ export interface Rig {
     opened: Array<{ path: string; intent: string | undefined }>;
     invalidateResolveCalls: number;
     showEditorCalls: number;
+    /** 重载后的装载后对齐（M286）：恢复阅读位置的逐次路径、遮罩收口的次数。 */
+    restoreReadingPositionCalls: string[];
+    documentReplacedCalls: number;
   };
   /** 覆盖 deps.isNoticeHidden（覆盖层在场时 reloudDocument 会自我放弃）。 */
   noticeHidden(hidden: boolean): void;
@@ -308,7 +311,13 @@ export function createRig(): Rig {
   const editor = createEditorDouble();
   const toasts = createToastHost();
   let hidden = true;
-  const deps: Rig["deps"] = { opened: [], invalidateResolveCalls: 0, showEditorCalls: 0 };
+  const deps: Rig["deps"] = {
+    opened: [],
+    invalidateResolveCalls: 0,
+    showEditorCalls: 0,
+    restoreReadingPositionCalls: [],
+    documentReplacedCalls: 0,
+  };
   const controller = createSaveController({
     editor: editor.handle,
     container: toasts.container,
@@ -320,6 +329,8 @@ export function createRig(): Rig {
     invalidateResolve: () => void (deps.invalidateResolveCalls += 1),
     showEditor: () => void (deps.showEditorCalls += 1),
     isNoticeHidden: () => hidden,
+    restoreReadingPosition: (path) => void deps.restoreReadingPositionCalls.push(path),
+    documentReplaced: () => void (deps.documentReplacedCalls += 1),
   });
   return {
     backend,

@@ -1055,9 +1055,10 @@ M277（`block-copy-affordance` + `code-block-fullscreen` 的实现批）落地�
 M280（修阅读位置原语 + 统一全部交还焦点调用点）的**未收口项**，逐条给出机制链、优先级与建议归属。
 M279 报告 §5 的两条副产物在列，判定为**都不随本修复收口**：
 
-1. **跳变那一拍会被落盘成阅读位置 `pos 0`（high，待修，M279 已开 finding
+1. ~~**跳变那一拍会被落盘成阅读位置 `pos 0`（high，待修，M279 已开 finding
    `20260927-worker-survey-esc-jump-bug-esc-pos-0-anchor-0.md`；建议归属：remember-reading-position
-   的下一个 change 或独立小 mission）**。机制链：`src/reading-position.ts:192-208` 的 `scrolled()`
+   的下一个 change 或独立小 mission）**~~ **已修（M286，2026-09-28）**——修法与读数见本条末尾的
+   「M286 收口」段；下面是当时的机制链原稿（留档）。机制链：`src/reading-position.ts:192-208` 的 `scrolled()`
    在**滚动事件里同步**读 `deps.readPosition()`（`src/main.ts` 注入 `editor.readScrollPosition`），
    读到的时刻早于 CM 的测量周期——而本修复的写回正是在测量周期里落地（`view.dispatch` 的
    `scrollIntoView` 效果）。⇒ 引擎聚焦揭示造成的 `scrollTop S → 0` 那一拍若先派发了 scroll 事件，
@@ -1075,11 +1076,62 @@ M279 报告 §5 的两条副产物在列，判定为**都不随本修复收口**
    窗口内的捕获整体忽略（本模块自己持有一个「正在交还焦点」标记，MUST NOT 靠时间猜测）；
    ② 落盘前把「与上一份 pending 指向同一处」的判据从 `samePosition` 放宽到「锚相同即不覆盖」。
    ①更贴合「谁在动这个视口」的语义，倾向 ①。
-2. **外部改写当前文档 ⇒ 重载复位篇首 + 遮罩不自关（high，待修，M279 已开 finding
-   `20260927-worker-survey-esc-jump-bug-item.md`；建议归属：overlay/外部变更专项）**。机制链：重载走 `src/main.ts` 的外部变更分流，没有经过 `openFile` 的
+   **M286 收口（2026-09-28，mission M286）**：条款落在
+   `docs/design-parity-contract/overlay-close-reading-position.md` 的 **CL-2**（应用自身造成的视口
+   变动 MUST NOT 进入阅读位置）；按候选 ① 落地——新增 `src/viewport-transition.ts`
+   （纯计数器、无 DOM 无时钟的窗口标记），**开窗方是推视口的一方**：`focusPreservingReadingPosition`
+   （交还焦点原语）与 `editor.reloadSession`（装载复位 `scrollTop = 0`）都经
+   `src/scroll-position-view.ts` 的 `duringViewportTransition` 把这段动作包进窗口，窗口在**下一帧**
+   关闭（那一拍 CM 的测量周期已把 `scrollIntoView` 的 `scrollTarget` 落到 DOM 上）；捕获侧唯一消费点
+   是 `scrolled()` 的一条早退：窗口内到达的滚动事件**整体忽略**（不读位置、不排期，且不打断已排期的
+   落盘）。忽略整个窗口而不是「只忽略篇首」：中间态的口径由引擎决定（实测过 `0` 与 `-1`）。
+   **判据与证据**：不变量在 `tests/unit/reading-position.test.ts`（转场窗口一组：中间态不进待写集合、
+   不打断已排期的落盘、窗口不粘住捕获）+ `tests/unit/viewport-transition.test.ts`（嵌套安全）；
+   消融（删掉那条早退）后单测如实红在 `0 !== 1200`（`test-results/m286/ablation-gate-unit.log`）。
+   product 层：`tests/visual/scenes/m280-overlay-esc-scroll.spec.ts` 追加两条载荷判据（落盘位置必须
+   落在 ESC 前那一拍的真实锚、整个流程不许出现 `pos 0`），并**断言前提**（webkit-realua 支必须看到
+   引擎真的动过视口：`focus` 调用 `before 1540 → after 0`）——修后载荷是 `pos 1628`（真锚，不是 0）。
+   同一族的第二条来源（装载复位的中间态）也一并关掉，确定性实证见本条下方第 7 项。
+   **如实登记的两点**：① M280 之后这条本已是**竞态**而非稳态复现（跳变修好后，中间态通常在下一帧
+   被写回覆盖，载荷多在愈合后落盘）——本修的增量是**把竞态关掉**，不是修一个当下稳定可复现的现场；
+   ② 窗口边界是「下一个 rAF」，引擎若把中间态维持到第二帧之后本窗口不覆盖（实测未见）。
+2. ~~**外部改写当前文档 ⇒ 重载复位篇首 + 遮罩不自关（high，待修，M279 已开 finding
+   `20260927-worker-survey-esc-jump-bug-item.md`；建议归属：overlay/外部变更专项）**~~
+   **已修（M286，2026-09-28）**——下面是当时的机制链原稿（留档）。机制链：重载走 `src/main.ts` 的外部变更分流，没有经过 `openFile` 的
    `readingPositions.restoreFor` ⇒ 阅读位置不恢复；`src/table-fullscreen.ts:173-176` 的注释声称
    `blur` 兜底同时兜住「文档代际变化（外部重载）」，M279 的 T6 实测**没有**触发（`scrollTop
    1543 → 0`、遮罩 `hidden=false` 仍开着）。本修复不碰这两条（它们与「聚焦揭示」无关）。
+   **M286 收口（2026-09-28，mission M286）**：条款落在
+   `docs/design-parity-contract/overlay-close-reading-position.md` 的 **CL-3**（文档就地重载 MUST 与
+   装载同口径收口：视口 + 由文档派生的浮层）。两条分开修，方向都是 finding 的建议。
+   ① **阅读位置恢复**：`src/save-controller.ts` 的 `reloadDocument` 在前台文档重载后调新 dep
+   `restoreReadingPosition(path)`（装配层实现为同一个 `readingPositions.restoreFor`——**与 `openFile`
+   同一条口子**，不新造第二条恢复路径）；顺带把 `restoreFor` 的取值从「只读盘上镜像」改成
+   `pending ?? mirror`：外部写在用户刚滚过之后的 1s 防抖窗口里到达时，镜像是上一次落盘的位置
+   （差可达一屏），待写那份才是「用户此刻在哪」。
+   ② **遮罩退出**：新 dep `documentReplaced()` 由装配层实现为 `src/main.ts` 的
+   `closeDocumentOverlays()`（表格全屏 + 代码块全屏显式 `close("document")`）。取的是 finding 的
+   第二条建议（把「文档代际变化」做成**显式信号**），而不是修 blur 兜底——重载不动焦点这件事是
+   结构性的（`reloadSession` 不调 `view.focus()`），指望焦点副作用的那条兜底没有可靠触发点。
+   `overlay-state.ts` 因此新增第五条关闭路径 `document`（与三条用户路径同口径：**交还焦点**，
+   键盘回到正文），并把「blur 兜住三件事」这句**与实测不符**的注释在 `overlay-state.ts` /
+   `table-fullscreen.ts` / `code-block-fullscreen.ts` 三处就地改正。
+   **判据与证据**：`tests/visual/scenes/m286-external-reload-viewport.spec.ts`（chromium）第一条：
+   重载后 `scrollTop` 逐值回到重载前（`1541 → 1541`，行号同为第 53 行）、遮罩 `hidden=true`、
+   载荷里不出现 `pos 0` 且最后一份落在重载前那一行；第二条（负向）：外部改写**后台**标签时
+   **不拽走前台视口、不关前台遮罩**。消融（去掉两处 dep 调用）后第一条如实红：
+   `重载前 scrollTop=1541、重载后=0`，且 `afterOverlayOpen: true`（`test-results/m286/ablation-reload-deps.log`
+   与同目录的证据 json），第二条照旧绿。真机层新增场景 **65**（`scripts/acceptance/scenarios/65-external-reload-reading-position.md`
+   + fixture `reading-position-reload.md`：⌃V 到尾部 → ⌘J 开表格全屏 → 外部末尾追加 → 断言「第 15 章
+   两行在渲染行里 / 第 1 章两行不在」+ 遮罩已退出 + 内容已重载），邻近护栏场景 07c 同批重跑。
+   **真机读数（2026-09-28，wt-286，隔离端口 1430）**：07c **PASS 20.2s**、65 **PASS 35.2s**（2/2）；
+   场景 65 的**反向验证**（去掉那两处 dep 调用重跑）**1/1 FAIL**——遮罩未退出 + 第 15 章离场（与 T6
+   同症状），恢复后复跑 **1/1 PASS**。证据 `test-results/acceptance/2026-09-28-m286/`（git 外，已同步
+   主 checkout）。
+   **残余（如实登记）**：图片遮罩（`src/lightbox.ts`）**未**纳入 `closeDocumentOverlays`——`ImageLightbox`
+   的对外面只有 `open`（没有关闭口子），且它的状态机是 M184 留下的**第二份实现**（未走
+   `src/overlay-state.ts`）。它是同一族（放大图复用内联 `<img>` 的 src，文档换代后那份 DOM 可能已不在），
+   收它要动公开接口 + 合并那份重复状态机，超出本 mission 射程，见下方第 7 项。
 3. **残余：vault 切换器仍走第二份通道（low，待收）**。`src/vault-switcher.ts:739-744` 的
    `handOffFocus()` 用 CM 自己的 `scrollSnapshot()` / 快照 effect，而全仓其余路径已统一到
    `src/scroll-position-view.ts` 的原语——同一语义两处实现（REVIEW.md 第 8 条）。M280 未收的理由：
@@ -1111,6 +1163,25 @@ M279 报告 §5 的两条副产物在列，判定为**都不随本修复收口**
    M279 在同一 UA 的 Playwright WebKit 上测得**无视**它并揭示范（`scrollTop 1560 → 0`）。两处读数
    互斥、未定性 ⇒ 涉及 WebKit 分支的判据在真机层与 Playwright 层可能给出相反结论，而**真机层才是
    终审**。finding `20260927-worker-impl-esc-jump-improve-playwright-webkit-ua-wkwebview-preventscroll-webkit-playwrig.md`（本 mission 开）。
+
+7. **残余：图片遮罩（lightbox）不随文档代际变化退出（low，待收；M286 新登记）**。M286 把
+   「内容取自旧一份文档的浮层随重载退出」收在 `src/main.ts` 的 `closeDocumentOverlays()` 里，但只
+   覆盖表格全屏与代码块全屏两处——**图片遮罩是同一族**（放大图复用内联 `<img>` 的 src，文档换代
+   后那份 DOM 可能已不在，遮罩却仍显示旧图），未收的两个具体理由：① `ImageLightbox` 的对外接口
+   **只有 `open`**（闭合路径全部在遮罩内部自治，`src/lightbox.ts:36-40`），装配层拿不到关闭口子；
+   ② 它的状态机是 M184 留下的**第二份实现**（`createLightboxState`，未走 `src/overlay-state.ts`）
+   ——同一语义两处实现（REVIEW.md 第 8 条）。收口顺序建议：先把 lightbox 的状态机并到
+   `src/overlay-state.ts` + 给它一条 `close("document")`，再把它加进 `closeDocumentOverlays()`；
+   合并那份状态机本身值得一条独立小 mission（它同时消掉 M277 那次抽取留下的例外）。
+
+8. **M286 的确定性实证（补充第 1 条，供后人复核捕获让位窗口的必要性）**：装载复位那条中间态
+   （`reloadSession` 的 `scrollTop = 0`）在**消融掉窗口**之后会如实落盘成 finding 记录的那个形态。
+   现场：把 `src/editor.ts` 的 `reloadSession` 窗口与 `src/save-controller.ts` 的两处重载 dep 一起
+   消融，跑 `tests/visual/scenes/m286-external-reload-viewport.spec.ts`，桩收到第二份载荷
+   `{"pos":0,"y":115.109375}`（与 finding 引用的真实 vault `pos 0 / y 114`、M279 T5 的 `y 115.58`
+   同形态）；只把窗口放回去（deps 仍消融）时不再出现 `pos 0`——即**读侧的恢复与写侧的让位是两半
+   独立防线**：窗口关掉的是「把中间态写进盘」，恢复关掉的是「视口停在篇首」。日志与逐轮读数
+   `test-results/m286/ablation-reload-deps-and-load-window.log` + `.evidence.json`（git 外）。
 
 ### M252 装载指示立论在打开段不成立（M268 登记，2026-09-27）
 

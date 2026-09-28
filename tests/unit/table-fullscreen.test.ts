@@ -86,10 +86,26 @@ test("三条用户关闭路径都交还焦点，焦点兜底（blur）不抢焦�
   state.open(TABLE, LABEL);
   calls.length = 0;
   state.close("blur");
-  // 焦点本来就去了别处（在遮罩之上另开面板 / 窗口失活 / 文档代际变化）：拽回编辑器是无礼的
-  //（src/toc.ts 的同一口径）。
+  // 焦点本来就去了别处（在遮罩之上另开面板 / 窗口失活）：拽回编辑器是无礼的（src/toc.ts 的同一口径）。
+  // **文档代际变化不在 blur 的射程**（M286 改正旧注释）：外部重载不移动焦点，那条 blur 从不触发，
+  // 重载处改走显式关闭 —— 下面是它单独一条（同样交还焦点）。
   assert.deepEqual(calls, ["hide"]);
   assert.equal(state.isOpen(), false);
+});
+
+test("文档代际变化（外部重载）显式关闭：交还焦点（与三条用户路径同口径）", () => {
+  const { calls, surface } = fakeSurface();
+  const state = createTableFullscreenState(surface);
+  state.open(TABLE, LABEL);
+  calls.length = 0;
+  state.close("document");
+  assert.deepEqual(calls, ["hide", "restoreFocus"], "键盘要回到正文，视口才能继续跟人走");
+  assert.equal(state.isOpen(), false);
+
+  // 没开时是空操作（装配层无条件调用它，不必自己先判 isOpen）
+  calls.length = 0;
+  state.close("document");
+  assert.deepEqual(calls, []);
 });
 
 test("关闭之后的迟到关闭是空操作：不重复收尾、不再抢焦点", () => {
