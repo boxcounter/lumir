@@ -109,10 +109,11 @@ test('worker error retries and compartment reconfiguration completes', async ({ 
   expect(await page.evaluate(() => (window as any).experimentOf().mode('code'))).toBe('code');
   await expect(page.locator('.cm-lineNumbers')).toBeVisible();
   expect(await page.evaluate(() => (window as any).experimentOf().mode('md'))).toBe('md');
-  // 模式判据从 `.cm-lineNumbers` 换掉（M281）：行号 gutter 不再是 code 模式的特征——md 也装
-  // 常驻行号（change goto-line-command 的 D4 改判）。这里改判 live preview 的 md 独占行类
-  // （`cm-lp-paragraph` 由 livePreview 在 md 分支里加，code 分支没有装饰层）。
-  await expect(page.locator('.cm-line.cm-lp-paragraph').first()).toBeVisible();
+  // 模式判据**保持原样**（M281 的 D4 二次改判后）：md 的 gutter 默认 on-demand ⇒ 切到 md 后
+  // 行号列不在场，`.cm-lineNumbers` 的计数仍是 0。这条断言同时也把「默认档下 md 没有行号」
+  // 钉住了（比换成 md 独占行类更强，故回到原判据）。若档位改成 `always`，这里会红——那时
+  // 该改的是这条判据本身，而不是预先放宽。
+  await expect(page.locator('.cm-lineNumbers')).toHaveCount(0);
   await page.evaluate(() => (window as any).experimentOf().reset());
   await expect.poll(() => page.evaluate(() => (window as any).experimentOf().available())).toBe(true);
   await page.evaluate(() => (window as any).experimentOf().destroy());

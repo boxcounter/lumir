@@ -69,7 +69,7 @@ const NON_EDITOR = ["logo.png", "bundle.zip"];
 /** 注册表文本类：可编辑 code 模式打开（M130 前它们是「只读 code」，更早前是「可编辑 md」）。 */
 const EDITABLE = Object.keys(FILES).filter((path) => path !== "readme.md" && !NON_EDITOR.includes(path));
 
-test("非 md 文本文件一律以可编辑 code 模式打开（可编辑、无只读态、无 live preview 装饰层）", async ({ page }) => {
+test("非 md 文本文件一律以可编辑 code 模式打开（可编辑、无只读态、有行号）", async ({ page }) => {
   await stubTauri(page, VAULT);
   await page.goto("/");
   const content = page.locator(".cm-content");
@@ -81,11 +81,10 @@ test("非 md 文本文件一律以可编辑 code 模式打开（可编辑、无�
     // 可编辑合同（editable-non-md-files）：contenteditable 在场、无 aria-readonly 只读态
     await expect(content).toHaveAttribute("contenteditable", "true");
     await expect(content).toHaveAttribute("aria-readonly", "false");
-    // code 模式特征（M281 修订：行号 gutter 不再是独占特征——md 也装了常驻行号，
-    // change goto-line-command 的 D4 改判）。改判 live preview 的内容级折行 class 不在场
-    // （`wrapSpec` 在 code 模式恒为 null，围栏渲染层只在 md 存在）。
+    // code 模式的形态特征：行号 gutter 恒常显（M281 的 D4 二次改判后这条判据**保持原样**——
+    // code 侧不进配置，与 md 的 `on-demand` 默认档无关；md 的 gutter 在场时机另由
+    // tests/visual/scenes/m281-goto-line.spec.ts 覆盖）
     await expect(page.locator(".cm-gutters")).toHaveCount(1);
-    await expect(page.locator(".cm-content.cm-lp-codeblock-nowrap, .cm-content.cm-lp-codeblock-wrap")).toHaveCount(0);
   }
 
   // 对照：md 文件照旧可编辑（保存链路不受本 change 影响）

@@ -60,6 +60,10 @@ export interface GotoLinePromptOptions {
   /** 取消 / 收起时把焦点交还编辑器（`editor.focusPreservingReadingPosition()`，MUST NOT 裸
    *  `view.focus()`——浮层关闭不得改变阅读位置，见 src/scroll-position-view.ts）。 */
   restoreFocus(): void;
+  /** 输入条在场状态发生跃迁时回调（M281 的 D4 二次改判）：`on-demand` 档下 md 的行号 gutter
+   *  随它装 / 卸。只在**跃迁**时调用（打开→收起、收起→打开各一次；重复 open 不重复通知），
+   *  且与「跳转」正交——收起路径（取消 / 失焦 / 会话切换）同样通知。 */
+  onVisibilityChange?(open: boolean): void;
 }
 
 export interface GotoLinePrompt extends GotoLinePromptPort {
@@ -92,11 +96,14 @@ export function createGotoLinePrompt(options: GotoLinePromptOptions): GotoLinePr
   let totalLines = 1;
 
   /** 收起 DOM 与状态，**不碰焦点**（焦点该去哪由调用方决定：确认走 onJump、取消走 restoreFocus、
-   *  失焦时谁都不碰）。 */
+   *  失焦时谁都不碰）。只在真的从「在场」跃迁到「不在场」时通知装配层——`close()` 的 `!opened`
+   *  早退与重复 open 因此都不会重复通知。 */
   function dismiss(): void {
+    const wasOpen = opened;
     opened = false;
     popover.hidden = true;
     input.value = "";
+    if (wasOpen) options.onVisibilityChange?.(false);
   }
 
   function close(restoreFocus = true): void {
@@ -169,6 +176,7 @@ export function createGotoLinePrompt(options: GotoLinePromptOptions): GotoLinePr
 
   return {
     open(defaultLine, total) {
+      const wasOpen = opened;
       fallbackLine = defaultLine;
       totalLines = total;
       hint.textContent = gotoLineTotalText(total);
@@ -179,6 +187,9 @@ export function createGotoLinePrompt(options: GotoLinePromptOptions): GotoLinePr
       // 这一下按出来的读数）。
       input.focus();
       input.select();
+      // 通知放在聚焦之后：装配层据此装 md 的 gutter（一次 CM 重配），输入框此时已持焦，
+      // 重配不会与聚焦动作抢时序。
+      if (!wasOpen) options.onVisibilityChange?.(true);
     },
     close,
     isOpen: () => opened,

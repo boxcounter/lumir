@@ -1,14 +1,14 @@
 ---
 id: "56-goto-line"
 item: 56
-title: 跳转到行命令的真机链路——⌥G 打开输入条（预填当前行号 + `共 M 行`）、Enter 落到目标行（落点由 modeline 指示段与预填值双证）、越界静默钳到末行、取消不动光标与文档、[keys] 重绑通道
+title: 跳转到行命令的真机链路——⌥G 打开输入条（预填当前行号 + `共 M 行`）、行号列随输入条出现并在收起后隐藏（`on-demand` 默认档）、Enter 落到目标行（落点由 modeline 指示段与预填值双证）、越界静默钳到末行、取消不动光标与文档、[keys] 重绑通道
 fixtures: [goto-line-long.md]
 open: goto-line-long.md
 marker: "段一"
 config:
   keys: { "Ctrl-j": "editor.goto-line" }
 steps:
-  - name: 起点：文档已打开、光标在首行、输入条不在场
+  - name: 起点：文档已打开、光标在首行、输入条不在场、行号列也不在场（默认档）
     do: settle
     expect:
       - label: 正向锚点——文档可读（本 fixture 第 2 行）
@@ -19,7 +19,7 @@ steps:
         ax: { not: "AXTextField" }
       - label: "[keys] 覆盖已写进隔离配置（步 10/12 的重绑通道靠它；没写进去则那两步全程空转）"
         file: { path: env:config.json, has: "\"Ctrl-j\": \"editor.goto-line\"" }
-      - shot: 起点-常驻行号-gutter
+      - shot: 起点-输入条与行号列都不在场
 
   - name: 建立编辑器焦点（点编辑器顶边；光标落在首行 = 预填值的来源）
     do: clickEditor
@@ -42,7 +42,7 @@ steps:
         ax: { has: "共 49 行" }
       - label: 焦点在输入框里（keys 动作的回读目标因此是它，字符真的落进行号框而不是编辑器）
         ax: { focused: "AXTextField" }
-      - shot: alt+g-输入条打开（同屏可见 md 的常驻行号 gutter）
+      - shot: alt+g-输入条打开-行号列随之出现
 
   - name: 键入 39（逐位注入；输入条打开时预填值已全选 ⇒ 键入即替换）
     do: keys
@@ -63,6 +63,7 @@ steps:
         file: { path: goto-line-long.md, unchangedSince: 文档基线, mtimeUnchangedSince: 文档基线 }
       - label: 没有变 dirty（跳转不改 dirty）
         ax: { not: "（未保存）" }
+      - shot: Enter-后-输入条与行号列都已收起
 
   - name: 落点读数：再开一次输入条，读预填（预填值 = 光标所在行号，故它是「跳到了第几行」的直接读数）
     do: key
@@ -171,6 +172,10 @@ fixture：`goto-line-long.md`，48 行正文 + 尾换行（`doc.lines` = 49）�
 （1 / 12 / 23 / 34 / 45 行），第 39 行是 `JUMP-TARGET-39`，第 48 行是 `LAST-LINE-MARKER`。
 行号与打印的「第 N 行」逐一对齐，便于人工核对。
 
+md 行号 gutter 走**默认档 `on-demand`**（`[ui] markdown_line_numbers` 缺席 = 不带这条配置，
+与出厂口径同值）：打开文档时没有行号列，`⌥G` 打开输入条时出现、收起后隐藏——本场景的三张
+配对截图（步 1 / 步 4 / 步 6）就是这条口径的真机证据。
+
 ## 判据为什么这样写（实现期实测校正后的口径）
 
 - **默认键通道**：步 4/8/12/15 走 `alt+g`——套件的 `key` 动作支持 Alt 组合（先例 26 号场景的
@@ -200,10 +205,14 @@ fixture：`goto-line-long.md`，48 行正文 + 尾换行（`doc.lines` = 49）�
 
 ## 覆盖边界（如实记账，别读成「全验过」）
 
-- **md 的常驻行号 gutter 在真机上的「在场」只能用截图证据**：CM 给 `.cm-gutters` 带
-  `aria-hidden="true"`，WKWebView 的 AX 树里没有它（本场景的 `shot` 逐张留档，供 Alex 过目）。
-  行号与源行号一致、贴正文列左缘、正文列仍居中、纵向对准、窄窗不被裁这些**几何判据**在 chromium
-  层断言（`tests/visual/scenes/m281-goto-line.spec.ts`，实测 rect）。
+- **md 行号 gutter 的在场只能用截图证据**（AX 通道看不见它）：CM 给 `.cm-gutters` 带
+  `aria-hidden="true"`，WKWebView 的 AX 树里没有它。本场景的覆盖方式是**三张配对截图**——
+  步 1（打开文档：输入条与行号列都不在场 = 默认 `on-demand` 档的「markdown 默认不显示」）、
+  步 4（`⌥G` 打开输入条：行号列随之出现）、步 6（Enter 收起：输入条与行号列都已收起）。
+  行号与源行号一致、贴正文列左缘、正文列仍居中、纵向对准、窄窗不被裁、以及**开关瞬间正文列
+  不跳动**这些**几何判据**在 chromium 层断言（`tests/visual/scenes/m281-goto-line.spec.ts`，
+  实测 rect）。本场景不设 `ui.markdown_line_numbers`（走默认 `on-demand`）；`always` / `off`
+  两档的在场时机同样在 chromium 层覆盖（那里能改配置起两轮），真机不再多花一次启动成本。
 - **输入条的读屏名（deck D152）在真机 AX 里读不到**（实测 `AXTextField = "1"`，没有 label/help）：
   真机侧判「框在场 + 值正确 + 焦点在它身上」，`aria-label` 的断言在 chromium 层（同一常量）。
 - **README 的一句已知边界被本场景证伪（已落 finding）**：`scripts/acceptance/README.md` 写

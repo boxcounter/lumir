@@ -572,26 +572,37 @@
     `src/tabs.ts` 三常量改 Close / Close Other Tabs / Close Tabs to the Right，deck D149–D151 双列对调、
     原中文措辞移右列备查）。场景 50 与 change spec 的中文文案残留归 M266 收口。本条待节点 2 归档时
     一并核销。
-40. **归档 change `goto-line-command`**（M281 实现，2026-09-27，**待 Alex 节点 2**）：
+40. **归档 change `goto-line-command`**（M281 实现，2026-09-27；**2026-09-28 Alex 二次改判 D4**，**待 Alex 节点 2**）：
     Alex 原话「增加类似 Emacs 那样跳转到指定行号的快捷键」；节点 1 裁决（2026-09-27）已落定 D1/D2/D3
-    并**改判 D4**（md 不再豁免行号 gutter）。M261 交付提案、M271 按裁决修订、M281 实现。本条是
-    `docs/process/openspec-workflow.md` 批次收尾 checklist 第一条要求的待归档记录。
-    归档对账要点预记：delta（`keymap-commands` 一条 ADDED ×1，10 条 scenario）与实现逐条对账；归档时
-    living spec 落 `openspec/specs/keymap-commands/spec.md`；`validate --all --strict` 期望 22 passed /
-    0 failed（M254 那批是 21）。**两处与本文件的既有登记不同步，归档时要读准**：
-    ① md 的常驻行号 gutter 在真机 AX 树里不可读（CM 给 `.cm-gutters` 带 `aria-hidden`），真机只留截图
-    证据，几何判据在 chromium 层；② 图片行之后的行号会低约一个文字盒（CM 高度表 vs DOM 行盒的既有
-    差，非本 change 引入）——见下面「md 行含 inline widget 时的高度表差」条。
+    并**改判 D4**（md 不再豁免行号 gutter）；**二次改判（2026-09-28）把 D4 收成可配置三档**——
+    `[ui] markdown_line_numbers = "on-demand"（默认）/ "always" / "off"`，只管 md；code 恒常显、
+    不进配置（Alex 原话：「显示行号是可配置的，markdown 默认不显示、go-to-line 时出现、完成后隐藏。
+    代码默认显示」）。M261 交付提案、M271 按第一次裁决修订、M281 实现 + 中途按二次改判转向（先 amend
+    提案再改实现）。本条是 `docs/process/openspec-workflow.md` 批次收尾 checklist 第一条要求的待归档记录。
+    归档对账要点预记：delta（`keymap-commands` 一条 ADDED ×1，**11 条 scenario**）与实现逐条对账；归档时
+    living spec 落 `openspec/specs/keymap-commands/spec.md`；`validate --all --strict` 的 passed 数按
+    归档当时的基线核（不背口头值）。
+    **三处与本文件的既有登记不同步，归档时要读准**：
+    ① md 的行号 gutter 在真机 AX 树里不可读（CM 给 `.cm-gutters` 带 `aria-hidden`），真机只留截图证据
+    （场景 56 的步 1 / 步 4 / 步 6 三张配对图），几何判据在 chromium 层；
+    ② 图片行之后的行号会低约一个文字盒（CM 高度表 vs DOM 行盒的既有差，非本 change 引入）——见下面
+    「md 行含 inline widget 时的高度表差」条；
+    ③ **md 默认档下没有行号列**，因此整页视觉基线对 master 零 diff（22 张常显形态的重拍随二次改判作废）；
+    只有本 change 自己新增的两张场景基线（`m281-md-gutter` = `always` 档常驻形态、`m281-goto-prompt` =
+    `on-demand` 档输入条打开态）。
     归档时若 Alex 对 md gutter 的观感（贴正文列左缘的位置、无底色）有改判，改动面是
-    `src/preview/theme.ts` 的 gutter 段 + 整页基线重拍。
+    `src/preview/theme.ts` 的 gutter 段 + `always` 档的整页基线重拍；若要**运行期**切换档位（照 Emacs
+    `display-line-numbers` 的随时 toggle），那是一个新 change（`[ui]` 回写通道 + 一个命令 / 键位 / UI
+    落点，先例是 `ui.theme` 的 modeline 主题钮）。
 
 ## 待修 findings（不阻塞）
 
 ### md 行含 inline widget 时的高度表差（M281 现场发现，2026-09-27，medium）
 
-**症状（新可见面）**：md 装上常驻行号 gutter（change `goto-line-command` 的 D4 改判）之后，**图片 /
+**症状（新可见面）**：md 的行号 gutter **在场期间**（`always` 档，或 `on-demand` 档下跳转输入条打开时）——**图片 /
 行内公式所在的那一行之后**的行号整体低约一个文字盒（实测 Δ18px）。行号与它自己的行对齐，但下一行
 起就偏。图片行的行号本身不动（那一行是「模型差值」的发生地，不是受害者）。
+默认档（`on-demand`）下 md 平时没有行号列，所以这个差值只在输入条打开期间可见。
 
 **读数（chromium 1200×800，`tests/visual/scenes/m281-goto-line.spec.ts` 的探针现场）**：
 320×120 的 SVG 图片行（`.cm-lp-image`，`margin: 6px 0`，`display: inline-block`）：
@@ -623,7 +634,38 @@
 padding 间距）能让模型与 DOM 重合，那就是最小改动（顺带修掉 `posAtCoords` 在此处的 18px 偏差）；
 否则要在 CM 侧找测量入口（`measureVisibleLineHeights` / widget 高度测量）或接受该偏差并把
 gutter 的对照口径改成「相对 CM 模型」——后者只是把缺陷写进断言，不建议。
-证据与探针读数：`.tower/comms/findings/20260927-worker-impl-goto-line-bug-md-inline-widget-heightmap.md`。
+证据与探针读数：`.tower/comms/findings/20260927-worker-impl-goto-line-bug-md-inline-widget-cm-dom-m281-gutter-18px.md`。
+
+### 整页基线在标签栏 / 标题栏文字行已陈旧（M281 现场发现，2026-09-27，medium）
+
+**症状**：**改动前的**构建与入库整页基线在窗口顶部那一行（标签栏文字行 + 标题栏标识块，bbox 全在
+`y 15..27`）就已经差 **40–420px**——16 张整页基线里 14 张如此，而 `0.001 × 1200 × 800 = 960px`
+的容差把这些全吞了。⇒ 这批基线在像素层早已陈旧，门禁却一直绿（假绿风险，AGENTS.md 的视觉门禁
+卫生条同族）。
+
+**发现方式**：M281 的基线过目包用 tolerance=0 的探针把全部像素断言逼出 diff 产物，另跑了一遍
+**改动前**的构建做对照，于是分离出「本 change 的足迹（A）」与「改动前↔入库基线（B）」两个差值。
+
+**与本 change 的关系**：**无关**。B 是在改动前的构建上测的，且 bbox 全在窗口顶部那一行（本 change
+只动正文列左侧的 gutter 与 modeline 上方的浮层）。M281 的二次改判后基线不再重拍，因此这条**继续
+挂账**：下次有人重拍这批基线时会顺手把它写进基线，届时若想先分清「历史遗留 vs 真回归」，需单独
+复现一次（用改动前的构建与基线对照）。
+
+证据：`.tower/comms/findings/20260927-worker-impl-goto-line-bug-y-15-27-40-420px-0-001.md`；
+量具 `test-results/m281/baseline-review/{baseline-report.py,diff-region-analyze.py}`。
+
+### gutter 的 1px 右缘声明被同文件规则关掉（M281 现场发现，2026-09-27，low）
+
+**症状**：`src/editor.ts` 的 baseTheme 给 `.cm-gutters` 声明了 `border-right: 1px solid var(--border)`，
+但同文件核心扩展列表里的 `EditorView.theme({ ".cm-gutters-before": { border: "none" } })` 把它关掉——
+两个模式实测 computed `border-right-style` 都是 `none`。声明与生效不符；change `goto-line-command`
+的 design §5.2 第 3 条「md 去掉右缘」是拿「code 模式有那条线」当前提写的，前提实际不成立。
+
+**影响**：文档与注释让读者以为共享模式下有一道 gutter 分隔线。若将来有人「修好」它，code 模式的
+整页基线会变（有意的视觉改动，要 Alex 过目）。M281 的 md 规则不依赖这条线（它显式 `border: none`），
+故本 change 不受影响。
+
+证据：`.tower/comms/findings/20260927-worker-impl-goto-line-improve-gutter-1px-basetheme-cm-gutters-before-border-none-none.md`。
 
 ### 预览机制移除的遗留项（M254 登记，2026-09-27）
 

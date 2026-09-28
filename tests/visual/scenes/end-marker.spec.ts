@@ -276,12 +276,9 @@ test("code 模式没有标记；文末光标与全选都不影响显示", async 
   await stub(page);
   await page.goto("/");
 
-  // code 模式（.txt）：没有 live preview 装饰层，也就没有标记。行号 gutter **不再**是 code
-  // 模式的特征（M281 起 md 也有常驻行号——change goto-line-command 的 D4 改判），故这里改判
-  // 「live preview 的内容级折行 class 不在场」（wrapSpec 在 code 模式恒为 null）。
+  // code 模式（.txt）：没有 live preview 装饰层，也就没有标记
   await open(page, NOTE);
   await expect(marker(page)).toHaveCount(0);
-  await expect(page.locator(".cm-content.cm-lp-codeblock-nowrap, .cm-content.cm-lp-codeblock-wrap")).toHaveCount(0);
   await expect(page.locator(".cm-lineNumbers").first()).toBeVisible();
 
   // md 长文：标记在场（在场态由元素本身表达——M238 起滚动容器上不再有在场态 class，
@@ -543,8 +540,11 @@ async function settleFrames(page: Page, frames = 4): Promise<void> {
 }
 
 interface MarkerReading {
-  /** 当前模式：由 live preview 的内容级 class 表达（**只有 md 分支挂它**，见下方 readMarkerState
-   *  的判据说明——M281 起行号 gutter 不再是 code 模式独占的特征）。 */
+  /** 当前模式：code 由行号 gutter 表达、md 由 live preview 的内容级折行 class 表达。
+   *  **这条两信号判据在 M281 的 D4 二次改判后保持原样**：默认档 `on-demand` 下 md 打开时
+   *  没有 gutter，因此 `.cm-lineNumbers` 仍等价于「这个 test 跑在 code 模式」。场景不设
+   *  `ui.markdown_line_numbers`，故 `always` / `off` 档不在本文件的覆盖面内；若日后把默认档
+   *  改成 `always`，这里会抛「模式判据不成立」——那是要重新裁决的信号，MUST NOT 预先放宽。 */
   mode: "md" | "code";
   count: number;
   /** 判据的实测值（不含标记的内容高度 > 可用视口高度）。 */
@@ -562,15 +562,11 @@ async function readMarkerState(page: Page): Promise<MarkerReading> {
       const markers = [...document.querySelectorAll<HTMLElement>(".cm-lp-end-marker")];
       const contentRect = content.getBoundingClientRect();
       const markerRect = markers[0]?.getBoundingClientRect();
-      // 模式判据（M281 修订）：`.cm-lineNumbers` **不再是** code 模式的特征——md 也装常驻行号
-      // gutter（change goto-line-command 的 D4 改判，Alex 要求 md 可查看行号）。留在这里的判据
-      // 是 live preview 的内容级折行 class：`src/preview/theme.ts` 的 `wrapSpec` 在 code 模式
-      // 恒为 null（围栏 / 缩进代码块的渲染层只在 md 存在），故这个 class 是 md 独占的。
-      // 两个 token 都要认（`code_block_wrap` 的开关决定其哪个在场），只认一个会在另一种配置下假红。
-      const preview =
-        content.classList.contains("cm-lp-codeblock-nowrap") || content.classList.contains("cm-lp-codeblock-wrap");
+      const code = document.querySelector(".cm-lineNumbers") !== null;
+      const preview = content.classList.contains("cm-lp-codeblock-nowrap");
+      if (code === preview) throw new Error(`模式判据不成立：code=${code} preview=${preview}`);
       return {
-        mode: preview ? "md" : "code",
+        mode: code ? "code" : "md",
         count: markers.length,
         criterion: natural > el.clientHeight,
         marker: markerRect

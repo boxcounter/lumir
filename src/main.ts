@@ -188,6 +188,10 @@ const gotoLine = createGotoLinePrompt({
   mount: shell.modeline,
   onJump: (line) => editor.jumpToLine(line),
   restoreFocus: () => editor.focusPreservingReadingPosition(),
+  // `on-demand` 档（md 行号 gutter 的默认档，D4 二次改判）下 gutter 随输入条装 / 卸：
+  // 装配层只做「把在场状态转给编辑器」这一件事，安装与卸除的判据在 editor.ts 的
+  // `mdGutterExtensions()`（单一来源）。
+  onVisibilityChange: (open) => editor.setGotoLineGutterVisible(open),
 });
 editor.setGotoLinePrompt(gotoLine);
 
@@ -1556,6 +1560,12 @@ configGet().then((snapshot) => {
   // 拖拽推进并回写 `ui.content_width`（D3），因此不存在「运行期态 vs 配置默认」的双真源。
   // 前端不判区间（Rust 侧 validate 已越界回落默认 + warning，与主题同口径）。
   editor.setContentWidth(snapshot.config.ui.content_width);
+  // md 行号 gutter 档位（M281 的 D4 二次改判，2026-09-28）：三档 `on-demand`（默认）/ `always`
+  // / `off` 只管 md，code 恒常显。与 `ui.theme` 的**差别**：它没有运行期切换的落点，因此是
+  // **装载时读一次、运行期 MUST NOT 回写**（同 `editor.mode` / `editor.font_size`）——本 change
+  // 不提供切换它的命令 / 键位 / UI。**前端不判非法值**：取值是闭集合，合法性已由 Rust 侧
+  // validate 保证（三档之外 warning + 回落 on-demand，REVIEW.md 第 8 条）。
+  editor.setMarkdownLineNumbers(snapshot.config.ui.markdown_line_numbers);
   // 主题（restyle-ui-tokens-v1 的启动真源 + M237 的运行期切换）：`[ui] theme` 是**启动真源**，
   // 装载时经 applyTheme 施加到 `<html data-theme>`——token 层的三组块按这个属性取色，全部着色面
   // 即时跟随。运行期由 `view.theme-cycle`（⌘⇧T）/ modeline 主题钮推进并回写配置文件，因此不存在
