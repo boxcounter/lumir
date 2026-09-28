@@ -1,4 +1,6 @@
-// 阅读位置的 **view 侧**三个原语（M280）：捕获 / 两个口径的恢复 / 「交还焦点不改变阅读位置」。
+// 阅读位置的 **view 侧**原语（M280 三个：捕获 / 两个口径的恢复 / 「交还焦点不改变阅读位置」；
+// M286 起多一个**捕获让位窗口**的包装器 `duringViewportTransition`——应用自己推视口的动作
+// 一律经它开窗，见 src/viewport-transition.ts）。
 //
 // 为什么与 src/scroll-position.ts 分开：那边是**值形态与两个算式**的纯代数（不 import 编辑器
 // 内核，tests/unit 秒级可测，见那份文件头）；这边只做「读 view 的哪个数、dispatch 哪个效果」。
@@ -14,6 +16,30 @@ import { EditorSelection } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import { positionFromReadings, restoreScrollTop } from "./scroll-position";
 import type { ScrollPosition } from "./scroll-position";
+import { beginViewportTransition, endViewportTransition } from "./viewport-transition";
+
+/**
+ * 把一段「应用自己推动视口」的动作包进捕获让位窗口（窗口语义见 src/viewport-transition.ts）。
+ *
+ * **窗口在下一帧关闭**，这是本仓能给出的最紧的确定性边界：本模块发放的写回是
+ * `EditorView.scrollIntoView` 效果，CM 只在它的测量周期（`measure()`，由 rAF 驱动、注册于
+ * dispatch 那一拍）才把 `viewState.scrollTarget` 落到 DOM 上（`@codemirror/view` 的
+ * `measure()` 尾部消费它），因此「写回已落地」的那一拍就是下一个 rAF 回调——本包装器注册的
+ * 关窗回调排在包内注册的一切 rAF 之后，读到的已是目标位置（或用户自己推动的位置）。
+ *
+ * **MUST NOT 换成任何时长量**（`setTimeout(…, 200)` 之类）：中间态与写回同帧还是跨帧由引擎
+ * 决定，没有可用的固定时长。残留（如实登记）：引擎若把中间态维持到第二帧之后（M279/M280 的
+ * 读数里写回都在下一拍落地，未见过），本窗口不覆盖那一拍——那时捕获读到的仍是引擎留下的
+ * 位置，与本加固之前的行为一致。
+ */
+export function duringViewportTransition(run: () => void): void {
+  beginViewportTransition();
+  try {
+    run();
+  } finally {
+    requestAnimationFrame(() => endViewportTransition());
+  }
+}
 
 /**
  * 捕获当前视口的阅读位置。锚取「高度等于 `scrollTop` 的行块起点」（公开方法、语义是「相对文档
@@ -140,13 +166,19 @@ export function applyLoadedScrollPosition(view: EditorView, position: ScrollPosi
  * 点了别处 / 切了标签），这一拍 MUST NOT 再拿旧位置把视口拽回去——那时视口的主人是用户。
  *
  * 位置读不出来（锚处没有可量的字符盒）时只聚焦，不写半个值。
+ *
+ * **整段动作包在捕获让位窗口里**（M286）：聚焦揭示是**引擎**接管的位移，它把视口拽到 caret
+ * 处那一拍会派发滚动事件——那读到的不是用户的位置。窗口覆盖「取位置 → 聚焦 → 写回落地」整段，
+ * 窗口内的滚动事件被捕获侧整体忽略（`src/reading-position.ts` 的 `scrolled`）。
  */
 export function focusPreservingReadingPosition(view: EditorView): void {
   const position = readScrollPosition(view);
-  view.focus();
-  if (position === null) return;
-  applyScrollPosition(view, position);
-  requestAnimationFrame(() => {
-    if (view.hasFocus) applyScrollPosition(view, position);
+  duringViewportTransition(() => {
+    view.focus();
+    if (position === null) return;
+    applyScrollPosition(view, position);
+    requestAnimationFrame(() => {
+      if (view.hasFocus) applyScrollPosition(view, position);
+    });
   });
 }

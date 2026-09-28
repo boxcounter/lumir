@@ -165,8 +165,10 @@ export function createCodeBlockFullscreen(options: CodeBlockFullscreenOptions): 
       if (!created.handleKeyToken(token)) return;
       event.preventDefault();
     });
-    // 焦点离开遮罩即关闭，且不抢焦点（照 src/toc.ts 的口径）：兜住「遮罩之上另开了面板」、
-    // 窗口失活，以及**文档代际变化**（外部修改重载把焦点交还给编辑器/文档区）三件事。
+    // 焦点离开遮罩即关闭，且不抢焦点（照 src/toc.ts 的口径）：兜住「遮罩之上另开了面板」与
+    // 窗口失活两件事。**文档代际变化不在它的射程**（M286 改正，原稿声称它兜住三件事）：重载
+    // 不移动焦点，这条 blur 在外部重载下从不触发——那一路由装配层显式 `close("document")`
+    //（src/main.ts 的 `closeDocumentOverlays`），口径与表格全屏逐字相同。
     overlay.addEventListener("blur", () => created.close("blur"));
 
     state = created;

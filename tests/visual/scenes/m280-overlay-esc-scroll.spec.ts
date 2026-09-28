@@ -36,6 +36,11 @@
 //     `editor.view.focus()` 后它如实变红（test-results/m280/ablation-codeblock-bare-focus.log）。
 //   - 命令入口（⌘J）同样只作护栏：命中条件要求 caret 在块内 ⇒ caret 必然在视口内，引擎的聚焦
 //     揭示不成立（M279 的 T1/T2）。
+//
+// M286 增补（同一个 spec，判的是**写盘侧**）：表格用例再加两条断言——越过 1s 落盘防抖后的
+// `reading_position_put` 载荷必须落在 ESC 前那处真实锚（行号差 ≤1）、且整个流程的载荷里不许出现
+// `pos 0`。它们判的是「交还焦点这一拍有没有把用户位置改写成篇首」（M279 的 finding：
+// `20260927-worker-survey-esc-jump-bug-esc-pos-0-anchor-0.md`），与视口判据是两半。
 
 import { expect, test, type Page } from "@playwright/test";
 import { mkdirSync, writeFileSync } from "node:fs";
@@ -80,7 +85,10 @@ const TABLE_DOC = `# 表格全屏阅读位置\n\n${INTRO}\n\n${TABLE}\n\n${TAIL}
 const CODE_DOC = `# 代码块全屏阅读位置\n\n${INTRO}\n\n${CODE}\n\n${TAIL}\n`;
 
 type CmView = {
-  state: { doc: { toString(): string; length: number }; selection: { main: { head: number; anchor: number } } };
+  state: {
+    doc: { toString(): string; length: number; lineAt(pos: number): { number: number } };
+    selection: { main: { head: number; anchor: number } };
+  };
   scrollDOM: HTMLElement;
   contentDOM: HTMLElement;
   coordsAtPos(pos: number, side?: number): { top: number; bottom: number } | null;
@@ -287,10 +295,17 @@ async function stage(page: Page, kind: "table" | "codeblock"): Promise<Reading> 
   return open;
 }
 
-/** 打开 → ESC 关闭，返回三段读数与滚动时间线。 */
+/** 打开 → ESC 关闭，返回三段读数、滚动时间线与**捕获侧参照**（ESC 前那一拍的真实锚及其行号）。 */
 async function escFlow(page: Page, kind: "table" | "codeblock") {
   const open = await stage(page, kind);
   const before = await reading(page);
+  // 捕获侧判据的参照锚：与产品捕获侧**同一条公式**（`lineBlockAtHeight(scrollTop).from`，
+  // 见 src/scroll-position-view.ts）。取在 ESC 之前——那才是用户离开的位置。
+  const anchor = await page.evaluate(() => {
+    const view = window.__m280!;
+    const from = view.lineBlockAtHeight(view.scrollDOM.scrollTop).from;
+    return { from, line: view.state.doc.lineAt(from).number };
+  });
   const t0 = await page.evaluate(() => Math.round(performance.now()));
   await page.keyboard.press("Escape");
   await page.waitForTimeout(60);
@@ -302,7 +317,7 @@ async function escFlow(page: Page, kind: "table" | "codeblock") {
     (since) => (window.__m280Calls ?? []).filter((c) => c.t >= since),
     t0,
   );
-  return { open, before, at60, after, log, calls };
+  return { open, before, at60, after, log, calls, anchor };
 }
 
 function report(name: string, r: Awaited<ReturnType<typeof escFlow>>): void {
@@ -328,17 +343,49 @@ async function dumpEvidence(name: string, payloads: unknown[]): Promise<void> {
   writeFileSync(new URL(`${name}.json`, EVIDENCE_DIR).pathname, JSON.stringify(payloads, null, 2));
 }
 
-test("CL-1 表格全屏：ESC 关闭交还焦点后 scrollTop 恒等", async ({ page }) => {
+test("CL-1 表格全屏：ESC 关闭交还焦点后 scrollTop 恒等", async ({ page, browserName }) => {
   await openDoc(page, TABLE_DOC);
   const r = await escFlow(page, "table");
   report("table-esc", r);
-  // 副产物读数（M279 §5 的第 2 条：跳变会被落盘成阅读位置 pos 0）：越过 1s 落盘防抖之后把
-  // 桩收到的载荷取出来——写进证据供判定，不作断言（捕获时点与写回时点是两个时刻，这里量的是
-  // 「修复之后还有没有 pos 0 落盘」这一事实）。
+  // 捕获侧的不变量（M286，finding `20260927-worker-survey-esc-jump-bug-esc-pos-0-anchor-0.md`）：
+  // 越过 1s 落盘防抖之后，桩收到的载荷 MUST NOT 是跳变那一拍的中间态（篇首 / 0），而应是**跳变
+  // 前用户所在的那处真实锚**。这是「同一个交还焦点动作在**写盘侧**也留下正确读数」的判据——
+  // 上一条只管视口本身，载荷判的是阅读位置能力有没有被这一拍改写。失败时报告里同时有
+  // `scrollLog(t,top)` 时间线与载荷原文，能分清「跳变没修好」与「跳变修好了但载荷仍被中间态覆盖」。
+  //
+  // **前提断言**（REVIEW.md 第 1 条：判据不许在「没发生」上空转）：只有 webkit-realua 那一支里
+  // 引擎真的动过视口（M279 的聚焦揭示），载荷判据在那里才有输入；chromium 支的 `preventScroll`
+  // 把揭示整个挡住（`focusCalls` 里 `before === after`），本判据在那支上退化成回归护栏——如实
+  // 断言这个差异，不假装两支等价。
+  if (browserName === "webkit") {
+    const focusCall = r.calls.find((c) => c.el.startsWith("cm-content"));
+    expect(focusCall, "webkit-realua 支必须看到那次 focus 调用（否则载荷判据没有输入）").toBeDefined();
+    expect(
+      Math.abs(focusCall!.after - focusCall!.before),
+      `引擎必须真的动过视口（实测 before=${focusCall!.before} → after=${focusCall!.after}）——` +
+        "没动过就说明这一支没走聚焦揭示那条路径，下面的载荷判据变成无输入的空转",
+    ).toBeGreaterThan(0);
+  }
   await page.waitForTimeout(1300);
   const puts = await readingPositionPuts(page);
   console.log(`   readingPositionPuts tail: ${JSON.stringify(puts.slice(-2))}`);
   await dumpEvidence("table-esc", [r.open, r.before, r.at60, r.after, { readingPositionPuts: puts.slice(-2) }]);
+  const payload = puts.at(-1)?.entries?.["scene.md"];
+  expect(payload, "载荷必须存在（捕获侧真的写过盘，否则下面的判据没有输入）").toBeDefined();
+  const payloadLine = await page.evaluate(
+    (pos) => window.__m280!.state.doc.lineAt(pos).number,
+    payload!.pos,
+  );
+  expect(
+    Math.abs(payloadLine - r.anchor.line),
+    `落盘位置 ${JSON.stringify(payload)}（第 ${payloadLine} 行）必须落在 ESC 前那一拍的真实锚` +
+      `（第 ${r.anchor.line} 行，pos ${r.anchor.from}）——中间态会落在篇首`,
+  ).toBeLessThanOrEqual(1);
+  expect(payload!.pos, "篇首是这一族缺陷的落盘形态：任何一次落盘都不许出现").toBeGreaterThan(0);
+  expect(
+    puts.filter((p) => p.entries?.["scene.md"]?.pos === 0),
+    "整个流程的载荷里都不许出现 pos 0（M279 实测的落盘形态：19/47 条）",
+  ).toEqual([]);
   expect(
     Math.abs(r.after.scrollTop - r.before.scrollTop),
     `关闭前 scrollTop=${r.before.scrollTop}、关闭后=${r.after.scrollTop}（时间线 ${JSON.stringify(r.log)}）`,

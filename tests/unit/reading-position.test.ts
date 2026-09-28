@@ -21,6 +21,10 @@ import {
   pruneEntries,
   samePosition,
 } from "../../src/reading-position.ts";
+import {
+  beginViewportTransition,
+  endViewportTransition,
+} from "../../src/viewport-transition.ts";
 import type { ReadingPositionMap, ReadingPositionStore } from "../../src/reading-position.ts";
 
 /** 让 await 链跑完（mock timers 只接管 setTimeout，setImmediate 仍是真家伙）。 */
@@ -278,6 +282,102 @@ test("前台是未命名文档（没有路径）或视口不可读时不记录",
 });
 
 // ---------------------------------------------------------------------------
+// 捕获让位窗口（M286）：应用自己推视口的中间态不许落盘
+// ---------------------------------------------------------------------------
+
+/**
+ * 不变量（M286）：**应用自己推动视口的窗口内到达的滚动事件，MUST NOT 进入待写集合**。
+ *
+ * 现场（finding `20260927-worker-survey-esc-jump-bug-esc-pos-0-anchor-0.md`）：ESC 关闭浮层
+ * 交还焦点时，引擎的聚焦揭示把视口从 1543 拽到 0 / −1（实测两种都出现过），那一拍派发的滚动
+ * 事件若被捕获，写盘的就是篇首；而恢复侧对 `anchor === 0` 刻意不施加（M110）⇒ 该文档此后每次
+ * 打开都从篇首开始。窗口标记在 src/viewport-transition.ts，这里的 `beginViewportTransition`
+ * 就是开窗方（真实现是交还焦点原语与 editor.reloadSession）用的同一对函数。
+ *
+ * 反向验证（本条的非空性）：同一条输入在**没有窗口**时如实落盘中间态——见下一个用例。
+ * 去掉 `scrolled` 里那条早退，本组第一、二条即变红。
+ */
+test("转场窗口内的滚动事件整体忽略：中间态不进待写集合，也不打断已排期的落盘", async () => {
+  mock.timers.enable({ apis: ["setTimeout"] });
+  try {
+    const rig = createRig();
+    rig.activePath = "a.md";
+    rig.files["vault-a"] = file({ "a.md": at(1150) });
+    await load(rig, "vault-a");
+
+    // ① 用户滚到 1200：窗口还没开，这一拍如实进待写集合（真实次序：用户先滚，再交还焦点）
+    rig.view = position(1200);
+    rig.store.scrolled();
+
+    // ② 交还焦点：窗口开（真实现是 focusPreservingReadingPosition），引擎把视口拽到中间态，
+    //    滚动事件照常派发——窗口内的这些事件都不是用户的位置
+    beginViewportTransition();
+    for (const transient of [position(0), position(0, 115.58), position(0, -3)]) {
+      rig.view = transient;
+      rig.store.scrolled();
+    }
+    // ③ 关窗（真实现是写回落地后的下一帧）；防抖未被中间态重置，按原时刻到期
+    endViewportTransition();
+    mock.timers.tick(READING_POSITION_DEBOUNCE_MS);
+    await flush();
+
+    assert.equal(rig.writes.length, 1, "排期仍在：中间态既不改写待写内容、也不重置窗口");
+    const written = rig.writes[0].entries["a.md"];
+    assert.equal(written?.pos, 1200, "落盘的是用户离开的位置，不是中间态");
+    assert.equal(written?.y, 48);
+
+    // ④ 中间态的**值**一个都不许出现（按值判会漏：实测中间态有 0 与 −1 两种口径）
+    for (const [key, entry] of Object.entries(rig.writes[0].entries)) {
+      assert.notEqual(entry?.pos, 0, `键 ${key} 的落盘位置不许是篇首`);
+    }
+  } finally {
+    mock.timers.reset();
+  }
+});
+
+test("空窗对照：同一条中间态在没有窗口时如实落盘（证明上面那条不是在空转）", async () => {
+  mock.timers.enable({ apis: ["setTimeout"] });
+  try {
+    const rig = createRig();
+    rig.activePath = "a.md";
+    await load(rig, "vault-a");
+
+    rig.view = position(0); // 无窗口：这就是一次普通的滚动事件
+    rig.store.scrolled();
+    mock.timers.tick(READING_POSITION_DEBOUNCE_MS);
+    await flush();
+
+    assert.equal(rig.writes.length, 1, "捕获的输入面是真的：窗口缺席时它照常落盘");
+    assert.equal(rig.writes[0].entries["a.md"]?.pos, 0);
+  } finally {
+    mock.timers.reset();
+  }
+});
+
+test("窗口内忽略，但用户自己的下一次滚动照常捕获（窗口不粘住捕获）", async () => {
+  mock.timers.enable({ apis: ["setTimeout"] });
+  try {
+    const rig = createRig();
+    rig.activePath = "a.md";
+    await load(rig, "vault-a");
+
+    beginViewportTransition();
+    rig.view = position(0);
+    rig.store.scrolled();
+    endViewportTransition();
+
+    rig.view = position(2400); // 窗口之后用户自己滚动
+    rig.store.scrolled();
+    mock.timers.tick(READING_POSITION_DEBOUNCE_MS);
+    await flush();
+    assert.equal(rig.writes.length, 1);
+    assert.equal(rig.writes[0].entries["a.md"]?.pos, 2400);
+  } finally {
+    mock.timers.reset();
+  }
+});
+
+// ---------------------------------------------------------------------------
 // 清理与上限（挂在装载那一次枚举上）
 // ---------------------------------------------------------------------------
 
@@ -380,6 +480,37 @@ test("降级四种：读不到 / 无历史 / 版本不符（后端已归成 null
   const fresh = createRig();
   fresh.store.restoreFor("a.md");
   assert.deepEqual(fresh.applied, []);
+});
+
+test("恢复优先用**待写位置**（比盘上镜像新）：重载要的是「用户此刻在哪」（M286）", async () => {
+  mock.timers.enable({ apis: ["setTimeout"] });
+  try {
+    const rig = createRig();
+    rig.activePath = "a.md";
+    rig.files["vault-a"] = file({ "a.md": at(1000) });
+    await load(rig, "vault-a");
+
+    // 用户滚到 3000：进了待写集合、防抖还没到期 ⇒ 镜像仍是盘上那份 1000
+    rig.view = position(3000);
+    rig.store.scrolled();
+    assert.equal(rig.writes.length, 0, "防抖窗口内还没落盘");
+
+    rig.store.restoreFor("a.md");
+    assert.deepEqual(
+      rig.applied,
+      [position(3000)],
+      "外部写在用户刚滚过之后到达时，镜像是上一次落盘的位置（差可达一屏）——恢复要取新那份",
+    );
+
+    // 盘上有历史、但没有待写内容：照旧用镜像（装载路径的常例）
+    mock.timers.tick(READING_POSITION_DEBOUNCE_MS);
+    await flush();
+    rig.applied.length = 0;
+    rig.store.restoreFor("a.md");
+    assert.deepEqual(rig.applied, [position(3000)], "落盘之后镜像与待写一致");
+  } finally {
+    mock.timers.reset();
+  }
 });
 
 test("装载途中又装载一次 vault：前一次读回的位置绝不许落到新 vault 的镜像里", async () => {

@@ -191,6 +191,25 @@ editor.setBlockCopy({
   copy: (range: BlockCopyRange) => void copyBlockContent(range),
 });
 
+/** 文档代际变化（前台文档被就地重载）后，**内容取自旧一份文档**的浮层退出（M286）。
+ *
+ *  两份全屏遮罩的快照都是**打开那一刻**渲染态 DOM 的深克隆（`src/table-fullscreen.ts` /
+ *  `src/code-block-fullscreen.ts` 的 load）：文档换代之后继续挂着就是展示一份已不存在的内容。
+ *  改前这里只有遮罩自己的 blur 兜底，而注释声称它兜住「文档代际变化」——M279 的 T6 实测
+ *  **从不触发**（重载不移动焦点，遮罩一直持焦）。现在是显式信号（`documentReplaced` 这条 dep）
+ *  + 显式关闭，关闭路径是共用的 `document`（交还焦点，键盘回到正文，与三条用户路径同口径）。
+ *
+ *  关闭是空操作安全的：遮罩没开时 `close` 直接返回。
+ *
+ *  **图片遮罩（lightbox）不在这里**：它是同一族（放大图复用内联 `<img>` 的 src，文档换代后
+ *  那份 DOM 可能已不在），但 `ImageLightbox` 的对外面只有 `open`——没有关闭口子，且它的状态机
+ *  是 M184 留下的**第二份实现**（未走 src/overlay-state.ts）。收它要动公开接口与那份重复状态机，
+ *  不在本 mission 的射程内，已按纪律登记残余（docs/backlog.md 的 M280 节）。 */
+function closeDocumentOverlays(): void {
+  tableFullscreen.close("document");
+  codeBlockFullscreen.close("document");
+}
+
 // 跳转到行（M281，change goto-line-command）：能力与浮层 DOM 在 src/goto-line.ts，装配侧给它
 // 三样看不到的东西——挂点（`shell.modeline`，与 .lumir-toc 同挂点同定位：浮层贴 modeline 上沿
 // 向上展开）、确认回调（编辑器的 `jumpToLine`：先把焦点交还编辑器再走既有 `revealLine`，
@@ -372,6 +391,11 @@ const save = createSaveController({
   invalidateResolve: () => linkFollow.invalidate(),
   showEditor: () => showEditor(),
   isNoticeHidden: () => notice.hidden,
+  // 外部改写 / 冲突放弃的**就地重载**（M286）：这一路不走 openFile，因此阅读位置与遮罩收口
+  // 都必须在重载处补上——前者与 openFile 的 `restoreFor` 是同一个 store 的同一条口子，
+  // 后者见下面 `closeDocumentOverlays` 的说明。
+  restoreReadingPosition: (path) => readingPositions.restoreFor(path),
+  documentReplaced: () => closeDocumentOverlays(),
 });
 
 function emitReadiness(name: string, detail: object = {}): void {

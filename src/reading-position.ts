@@ -16,12 +16,22 @@
 //
 // 运行期内的切标签通道**一字不动**：运行期位置仍是 CM 的逐标签内存快照（`EditorSession.scroll`），
 // 本模块只在装载（冷路径）上读盘与写盘。
+//
+// 捕获侧的不变量（M286，条款正文见 docs/design-parity-contract/overlay-close-reading-position.md 的
+// **CL-2**）：**只记录用户自己造成的视口位置**。
+// 应用自己推动视口的动作（交还焦点的聚焦揭示、装载复位）在引擎里是「中间态 → 目标位置」两拍，
+// 中间态那一拍若被捕获，写盘的就是篇首、而恢复侧对 `anchor === 0` 不施加（M110）⇒ 阅读位置
+// 静默丢失（finding `20260927-worker-survey-esc-jump-bug-esc-pos-0-anchor-0.md`）。实现是
+// 「推视口的一方开窗、窗口内捕获整体忽略」——窗口标记在 src/viewport-transition.ts，`scrolled`
+// 里的那一条早退是唯一消费点，开窗方是 src/scroll-position-view.ts 的
+// `duringViewportTransition`（交还焦点原语）与 src/editor.ts 的 `reloadSession`（装载复位）。
 
 import type { FsEntry } from "./bindings/FsEntry";
 import type { ReadingPositionEntry } from "./bindings/ReadingPositionEntry";
 import type { ReadingPositions } from "./bindings/ReadingPositions";
 import type { ScrollPosition } from "./scroll-position";
 import { errorMessage } from "./ipc";
+import { viewportTransitionInFlight } from "./viewport-transition";
 
 /** 落盘防抖窗口（ms）：滚动停止后合并到这一档。与标签会话同一个量级
  *  （`src/vault-switcher.ts` 的 `SESSION_WRITE_DEBOUNCE_MS`）——位置只有几百字节，但它决定
@@ -57,7 +67,8 @@ export interface ReadingPositionStore {
   scrolled(): void;
   /** 把待写内容立刻落盘（切文件 / 切标签 / 切 vault 前、退出前）。 */
   flush(): Promise<void>;
-  /** 打开某文档后恢复它的位置（装载复位之后、文档已进入 view 时调用）。 */
+  /** 打开某文档后恢复它的位置（装载复位之后、文档已进入 view 时调用）；重载路径共用同一条
+   *  （M286：外部改写 / 冲突放弃的就地重载也要按装载口径恢复）。待写内容优先于盘上镜像。 */
   restoreFor(path: string): void;
   /** 装载 vault 完成：登记 vault id、读一次位置文件建内存镜像、按本次枚举清理不在 vault 内的键。 */
   onVaultLoaded(vaultId: string, entries: readonly FsEntry[]): Promise<void>;
@@ -191,6 +202,13 @@ export function createReadingPositionStore(
 
   function scrolled(): void {
     if (currentId === undefined) return;
+    // 应用自己正在推视口（交还焦点的聚焦揭示 / 装载复位）：窗口内到达的滚动事件忽略——那时
+    // 滚动容器上可能是**中间态**（实测过 `0` 与 `-1`），用户真正离开的位置要等本应用自己的
+    // 写回落地（窗口语义与边界见 src/viewport-transition.ts + src/scroll-position-view.ts）。
+    // 忽略的是**整个窗口**而不是「只忽略篇首」这类值判据：中间态的口径随引擎与几何变化，按值
+    // 判一定会漏。这里直接返回，已排期的落盘不受影响（pending 与定时器都留在原地）——ESC 前
+    // 刚滚过的位置因此照旧会在窗口之后落盘，不会被一次交还焦点抹掉。
+    if (viewportTransitionInFlight()) return;
     const path = deps.activePath();
     if (path === undefined) return; // 前台是未命名文档：没有可记的键
     const position = deps.readPosition();
@@ -209,12 +227,15 @@ export function createReadingPositionStore(
 
   function restoreFor(path: string): void {
     if (currentId === undefined) return;
-    const entry = mirror[path];
-    if (entry === undefined) return; // 没有历史：从篇首开始，不给任何提示
+    // **待写内容优先于盘上镜像**（M286）：pending 里的位置比镜像新——它就是「用户此刻所在的
+    // 位置」。重载路径尤其需要这一条：外部写在用户刚滚过之后的 1s 防抖窗口里到达时，镜像还是
+    // 上一次落盘的位置（差可达一屏），而这一路（与装载路径）要的正是「别把读者拽走」。
+    const position = pending.get(path) ?? asPosition(mirror[path]);
+    if (position === undefined) return; // 没有历史：从篇首开始，不给任何提示
     // 只在它仍是前台文档时施加：装载是逐标签的异步批量动作，期间用户可能已经切走——用盘上
     // 的位置拽走正在读别人的人，是这条能力最容易做错的那一处。
     if (deps.activePath() !== path) return;
-    deps.applyPosition({ pos: entry.pos, y: entry.y, x: entry.x });
+    deps.applyPosition({ pos: position.pos, y: position.y, x: position.x });
   }
 
   async function onVaultLoaded(vaultId: string, entries: readonly FsEntry[]): Promise<void> {

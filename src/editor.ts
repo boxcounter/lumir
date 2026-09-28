@@ -47,11 +47,13 @@ import { CONTENT_WIDTH_TOKEN, DEFAULT_CONTENT_WIDTH, clampContentWidth } from ".
 import type { TextScaleDirection, TypographySettings } from "./typography";
 import { lumirSearch } from "./search";
 import type { ScrollPosition } from "./scroll-position";
-// 阅读位置 view 侧三段（捕获 / 两个口径的恢复 / 交还焦点原语）在 src/scroll-position-view.ts：
-// facade 只转发，其余「以 view.focus() 交还焦点」的模块直接用同一份实现。
+// 阅读位置 view 侧原语（捕获 / 两个口径的恢复 / 交还焦点 / 视口让位窗口）在
+// src/scroll-position-view.ts：facade 只转发，其余「以 view.focus() 交还焦点」的模块直接用
+// 同一份实现。
 import {
   applyLoadedScrollPosition,
   applyScrollPosition,
+  duringViewportTransition,
   focusPreservingReadingPosition,
   readScrollPosition,
 } from "./scroll-position-view";
@@ -2191,20 +2193,26 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
       readyRequestId = requestId;
       const serial = ++readySerial;
       syncProjection();
-      dispatchTrusted({
-        changes: { from: 0, to: view.state.doc.length, insert: doc },
-        // 显式复位选区与滚动（M110 真实桌面缺陷排查）：替换整篇文档后 CM 会把
-        // 旧选区映射进新文档、滚动位置也继承上一篇——新文件应从文档起点开始。
-        // 滚动复位用直接赋值而非 scrollIntoView 效果：后者带 scrollMargin，文档
-        // 溢出视口时会把 pos 0 对齐到视口顶而主动下滚，页首 padding 被顶出画。
-        selection: { anchor: 0 },
-        effects: modeAndWrapEffects(mode, path, editable),
+      // 视口那两步（换文档 + 复位到篇首）都包在捕获让位窗口里（M286）：装载复位是**应用自己
+      // 推动**的位移，中间态（`scrollTop = 0`）会在滚动容器上派发一次滚动事件，而目标位置由
+      // 调用方紧随其后的 `readingPositions.restoreFor` 经 CM 的测量周期施加（openFile 与外部
+      // 重载同序）。窗口的边界与理由见 src/scroll-position-view.ts 的 `duringViewportTransition`。
+      duringViewportTransition(() => {
+        dispatchTrusted({
+          changes: { from: 0, to: view.state.doc.length, insert: doc },
+          // 显式复位选区与滚动（M110 真实桌面缺陷排查）：替换整篇文档后 CM 会把
+          // 旧选区映射进新文档、滚动位置也继承上一篇——新文件应从文档起点开始。
+          // 滚动复位用直接赋值而非 scrollIntoView 效果：后者带 scrollMargin，文档
+          // 溢出视口时会把 pos 0 对齐到视口顶而主动下滚，页首 padding 被顶出画。
+          selection: { anchor: 0 },
+          effects: modeAndWrapEffects(mode, path, editable),
+        });
+        // 新装载的文档从篇首开始：这里用直接赋值而不是 scrollIntoView 效果（M110 真实
+        // 桌面缺陷排查）——后者带 scrollMargin，文档溢出视口时会把 pos 0 对齐到视口顶而
+        // 主动下滚，页首 padding 被顶出画。
+        view.scrollDOM.scrollTop = 0;
+        view.scrollDOM.scrollLeft = 0;
       });
-      // 新装载的文档从篇首开始：这里用直接赋值而不是 scrollIntoView 效果（M110 真实
-      // 桌面缺陷排查）——后者带 scrollMargin，文档溢出视口时会把 pos 0 对齐到视口顶而
-      // 主动下滚，页首 padding 被顶出画。
-      view.scrollDOM.scrollTop = 0;
-      view.scrollDOM.scrollLeft = 0;
       updateDirty(false);
       collapseDomSelectionIfBlurred();
       emitReady("source-ready");

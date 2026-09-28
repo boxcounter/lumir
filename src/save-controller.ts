@@ -103,6 +103,16 @@ export interface SaveControllerDeps {
   showEditor: () => void;
   /** 覆盖层是否处于隐藏（普通编辑态）；覆盖层在场时不重载文档。 */
   isNoticeHidden: () => boolean;
+  /** 前台文档**就地重载**之后按装载口径恢复阅读位置（M286）：重载把视口复位到篇首
+   *  （`editor.reloadSession` 的既有复位），不补这一句读者就会从篇首重新开始——与
+   *  `openFile` 走的 `readingPositions.restoreFor` 是同一条（M279 的 T6 实证）。
+   *  实现方（装配层）MUST 用同一个 store，MUST NOT 自己读盘。 */
+  restoreReadingPosition: (path: string) => void;
+  /** 前台文档被**就地重载**：内容取自旧一份文档的浮层必须退出（M286）。表格 / 代码块全屏的
+   *  快照是**打开那一刻**渲染态 DOM 的深克隆——文档换代之后继续挂着就是展示已不存在的内容；
+   *  改前这里只有遮罩自己的 blur 兜底（注释声称它兜住「文档代际变化」），实测不触发。
+   *  只在前台文档重载时调用（后台标签只换代它的 state，没有视口也没有浮层）。 */
+  documentReplaced: () => void;
 }
 
 export interface SaveController {
@@ -602,7 +612,16 @@ export function createSaveController(deps: SaveControllerDeps): SaveController {
       const session = sessionOf(path);
       if (session === undefined) return false;
       editor.reloadSession(session, snapshot.content, path, request);
-      if (path === displayedPath()) deps.showEditor();
+      if (path === displayedPath()) {
+        // 装载后对齐（次序与 `openFile` 的 `loadSessionContent` 一致：先恢复阅读位置，再让
+        // 表现层收口）。重载刚把视口复位到篇首，落盘位置在这里补施——M279 的 T6：外部改写
+        // 当前文档后视口停在篇首（这一路此前不经 `openFile` 的 `restoreFor`）。
+        deps.restoreReadingPosition(path);
+        // 文档代际已换：内容取自旧一份文档的浮层退出（M279 的 T6：遮罩停在屏幕上、展示的是
+        // 已不存在的内容；blur 兜底实测不触发）。
+        deps.documentReplaced();
+        deps.showEditor();
+      }
       return true;
     } catch (e) {
       if (request !== serial) return false;
