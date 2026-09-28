@@ -125,7 +125,11 @@ test("无 fm：钉在文档首行之前；根目录文件省略路径段", async
 
   // 位置：块是 `.cm-scroller` 的第一个子元素（M222 拓扑：document-top 落点是 scroller 级
   // 真实 DOM 节点，grid 行编排 title 行 1 / 正文行 2，见 theme.ts 的 DOC_TITLE_TOP_CLASS 段），
-  // 几何上在文档首行之前
+  // 几何上在文档首行之前。
+  // M281 二次改判后这条判据**保持原样**（md 的 gutter 默认 on-demand ⇒ 文档打开时不在场，
+  // `.cm-scroller` 的第一个子元素仍是 title 块）；若把 `ui.markdown_line_numbers` 改成 `always`
+  // 或改默认档，gutter 会被插在 `.cm-content` 之前而抢走首位——那时这条会红，正是要重新裁决
+  // 的信号，MUST NOT 预先放宽成「它之前只有 gutter 列」。
   const first = await page.evaluate(() => {
     const scroller = document.querySelector(".cm-scroller")!;
     const titleOuter = document.querySelector(".cm-lp-doc-title-outer")!;

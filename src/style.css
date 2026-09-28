@@ -1559,7 +1559,8 @@ body {
 /* eink 规则⑧：filter 输入的聚焦强调走**线宽**档（下划线形态在 eink 无颜色可用）——
    取三档里的最强档 1.6px（与 composer focus 同值，见 design §2.7 #1 的偏差记录）。 */
 :root[data-theme="eink"] .lumir-toc-input:focus,
-:root[data-theme="eink"] .vault-filter:focus {
+:root[data-theme="eink"] .vault-filter:focus,
+:root[data-theme="eink"] .lumir-goto-input:focus {
   border-bottom-width: 1.6px;
 }
 /* 提示常驻可见是 requirement（不是观感偏好）：flex 会压缩它，故不允许收缩。 */
@@ -1570,6 +1571,60 @@ body {
   border-top: 1px solid var(--border-soft);
   font-size: var(--fs-label);
   color: var(--text-3);
+}
+
+/* 跳转到行的输入条（M281，change goto-line-command 的 D2 裁决）：挂点与定位口径与 .lumir-toc
+   **完全同款**（挂 modeline、`bottom: 100%` 向上展开、左端偏移取同一份 --sp-7），只是内容只有
+   一行——输入框 + `共 M 行` 提示。壳同浮层配方（--preview-bg / 1px --border / --shadow-raise
+   / r10，tokens v1.1；eink 无阴影、分层改由白底黑框承担的口径随 tokens 层继承）。宽度定值
+   200px：比大纲浮层的 300px 窄——它没有列表，只有一行动态内容。 */
+.lumir-goto {
+  position: absolute;
+  bottom: 100%;
+  left: var(--sp-7);
+  z-index: 15;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-4);
+  width: 200px;
+  padding: var(--sp-3) var(--sp-6);
+  background: var(--preview-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--r10);
+  box-shadow: var(--shadow-raise);
+}
+/* 优先级 0-2-0 > `.lumir-goto` 的 0-1-0：加了 display: flex 之后这里的隐藏仍然生效
+   （同 `.lumir-toc[hidden]`）。 */
+.lumir-goto[hidden] {
+  display: none;
+}
+/* 输入框：下划线形态（底线 --border、focus 转 --accent），与 .lumir-toc-input 同形——不引入
+   第二种输入形态。tabular-nums 让数字宽度稳定（预填值换成别的位数时框内不跳）。 */
+.lumir-goto-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+  padding: 3px 2px;
+  border: none;
+  border-bottom: 1px solid var(--border);
+  border-radius: 0;
+  background: transparent;
+  color: var(--text);
+  font-family: var(--font-sans);
+  font-size: var(--fs-ui-s);
+  font-variant-numeric: tabular-nums;
+}
+.lumir-goto-input:focus {
+  outline: none;
+  border-bottom-color: var(--accent);
+}
+/* 提示（`共 M 行`）：不可压缩——越界是静默钳制，这句是用户判断「我要的行号超出了文档」的
+   唯一依据（文案 deck D158）。 */
+.lumir-goto-hint {
+  flex: 0 0 auto;
+  font-size: var(--fs-label);
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
 }
 
 /* vault 切换器浮层（M163）：与 .lumir-toc 同一手法——绝对定位、不占任何常驻行高、关闭即

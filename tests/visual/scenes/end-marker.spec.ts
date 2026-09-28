@@ -540,7 +540,11 @@ async function settleFrames(page: Page, frames = 4): Promise<void> {
 }
 
 interface MarkerReading {
-  /** 当前模式：code 由行号 gutter 表达、md 由 live preview 的内容级 class 表达（两模式独占）。 */
+  /** 当前模式：code 由行号 gutter 表达、md 由 live preview 的内容级折行 class 表达。
+   *  **这条两信号判据在 M281 的 D4 二次改判后保持原样**：默认档 `on-demand` 下 md 打开时
+   *  没有 gutter，因此 `.cm-lineNumbers` 仍等价于「这个 test 跑在 code 模式」。场景不设
+   *  `ui.markdown_line_numbers`，故 `always` / `off` 档不在本文件的覆盖面内；若日后把默认档
+   *  改成 `always`，这里会抛「模式判据不成立」——那是要重新裁决的信号，MUST NOT 预先放宽。 */
   mode: "md" | "code";
   count: number;
   /** 判据的实测值（不含标记的内容高度 > 可用视口高度）。 */

@@ -109,6 +109,10 @@ test('worker error retries and compartment reconfiguration completes', async ({ 
   expect(await page.evaluate(() => (window as any).experimentOf().mode('code'))).toBe('code');
   await expect(page.locator('.cm-lineNumbers')).toBeVisible();
   expect(await page.evaluate(() => (window as any).experimentOf().mode('md'))).toBe('md');
+  // 模式判据**保持原样**（M281 的 D4 二次改判后）：md 的 gutter 默认 on-demand ⇒ 切到 md 后
+  // 行号列不在场，`.cm-lineNumbers` 的计数仍是 0。这条断言同时也把「默认档下 md 没有行号」
+  // 钉住了（比换成 md 独占行类更强，故回到原判据）。若档位改成 `always`，这里会红——那时
+  // 该改的是这条判据本身，而不是预先放宽。
   await expect(page.locator('.cm-lineNumbers')).toHaveCount(0);
   await page.evaluate(() => (window as any).experimentOf().reset());
   await expect.poll(() => page.evaluate(() => (window as any).experimentOf().available())).toBe(true);

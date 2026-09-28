@@ -30,8 +30,9 @@
 //!
 //! ## ui 表（restyle-ui-tokens-v1，M237 起含运行期切换）
 //!
-//! `{"ui": {"theme": "light" | "dark" | "eink", "content_width": 760}}`，默认 `light` /
-//! `760`。取值校验照 `editor.mode`
+//! `{"ui": {"theme": "light" | "dark" | "eink", "content_width": 760,` +
+//! `"markdown_line_numbers": "on-demand" | "always" | "off"}}`，默认 `light` / `760` /
+//! `on-demand`。取值校验照 `editor.mode`
 //! 模板：表内 `theme` 缺失 → 默认；取值不在表内 → warning + 回落默认（ADR 0002 §5：非法
 //! 配置不导致启动失败）。它与 `editor` 一样是**结构化表**（`RawUiConfig`），不是 keys / log
 //! 那种「整表收成 Value」——因此 `{"ui": "dark"}` 这种表的错形状与表内 `"theme": 2` 同路，
@@ -40,6 +41,10 @@
 //! M237（change live-theme-switch）起它还支持**运行期切换**——前端命令与 modeline 主题钮
 //! 循环三档，切换即经通用合并写 IPC `config_set_ui_value` 回写本字段（`commands.rs`），让启动
 //! 真源跟上运行态。Rust 侧只负责读出来、挡住非法值、以及提供那条写通道；不跟随系统主题。
+//! `markdown_line_numbers`（change goto-line-command 的 D4 二次改判，2026-09-28）与 `theme`
+//! 的**差别在消费方**：它没有运行期切换的落点，因此是**装载时读一次、运行期 MUST NOT 回写**
+//!（与 `editor.mode` / `editor.font_size` 同路）；消费方是前端启动施加处（`src/main.ts` 把它
+//! 喂给 `editor.setMarkdownLineNumbers`）。
 //!
 //! ## 数值字段的打字代价（typography-and-zoom）
 //!
@@ -227,6 +232,12 @@ pub struct UiConfig {
     /// 类型不符（`"content_width": "760"`）与 `font_size` 同路：serde 解析期失败 →
     /// 整文件回落。
     pub content_width: f64,
+    /// md 模式行号 gutter 的在场档位（change goto-line-command 的 D4 二次改判，2026-09-28），
+    /// 默认 `on-demand`。**只管 md**：只读 code 模式的行号 gutter 恒常显、不读本键。
+    /// 与 `editor.mode` / `editor.font_size` 同路：**装载时读一次、运行期 MUST NOT 回写**
+    ///（本 change 不提供切换它的命令 / 键位 / UI，因此没有 live 切换的触发源——与 `theme`
+    /// 的差别正在这里，`theme` 有 modeline 主题钮那个落点）。
+    pub markdown_line_numbers: MarkdownLineNumbers,
 }
 
 impl Default for UiConfig {
@@ -234,6 +245,7 @@ impl Default for UiConfig {
         Self {
             theme: UiTheme::Light,
             content_width: DEFAULT_CONTENT_WIDTH,
+            markdown_line_numbers: MarkdownLineNumbers::OnDemand,
         }
     }
 }
@@ -249,6 +261,24 @@ pub enum UiTheme {
     Light,
     Dark,
     Eink,
+}
+
+/// md 模式行号 gutter 的在场档位（change goto-line-command 的 D4 二次改判，2026-09-28）。
+/// 它不切换任何 token，只决定 `lineNumbers()` 在 md 模式何时在场：
+/// `on-demand` = 默认档，md 文档打开时无行号，跳转输入条（`⌥G`）在场时显示、收起后隐藏；
+/// `always` = md 常驻显示行号；
+/// `off` = md 恒不显示行号。
+/// **闭集合**：取值校验在 Rust 侧完成，前端拿到的必是这三档之一，不再判非法（与 `UiTheme`
+/// / `EditorMode` / `LogLevel` 同一形态）。**只管 md**：code 模式的行号恒常显，不读本键。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, TS)]
+#[ts(export, export_to = "../../src/bindings/")]
+pub enum MarkdownLineNumbers {
+    #[serde(rename = "on-demand")]
+    OnDemand,
+    #[serde(rename = "always")]
+    Always,
+    #[serde(rename = "off")]
+    Off,
 }
 
 /// 诊断日志配置（`[log]` 表）。
@@ -345,6 +375,11 @@ struct RawUiConfig {
     /// 栏宽（content-width-drag，M228）：数值字段，类型不符（`"content_width": "760"`）
     /// 在解析期失败 → 整文件回落（与 `font_size` 先例同型同路，不发明逐字段容忍）。
     content_width: Option<f64>,
+    /// md 行号 gutter 档位（change goto-line-command 的 D4 二次改判）：取值是闭集合
+    /// （`on-demand` / `always` / `off`），非法值到不了这里——在 `validate()` 里回落 + warning
+    ///（与 `theme` 同路）。类型不符（`"markdown_line_numbers": 2`）在 serde 解析期失败 →
+    /// 整文件回落。
+    markdown_line_numbers: Option<String>,
 }
 
 /// 配置目录（ADR 0002 §5 路径规则）。无法确定 home 是唯一的致命错误。
@@ -535,6 +570,21 @@ fn validate(raw: RawConfig) -> (AppConfig, Vec<String>) {
         }
     }
 
+    // md 行号 gutter 档位（change goto-line-command 的 D4 二次改判，2026-09-28）：取值校验照
+    // `theme` 模板——缺字段回落默认（不告警）、取值不在三档内回落默认 + 人话 warning；
+    // 类型不符到不了这里（解析期整文件回落，见 `RawUiConfig` 的注释）。
+    let mut markdown_line_numbers = defaults.ui.markdown_line_numbers;
+    if let Some(raw_tier) = raw.ui.markdown_line_numbers.as_deref() {
+        match raw_tier {
+            "on-demand" => markdown_line_numbers = MarkdownLineNumbers::OnDemand,
+            "always" => markdown_line_numbers = MarkdownLineNumbers::Always,
+            "off" => markdown_line_numbers = MarkdownLineNumbers::Off,
+            other => warnings.push(format!(
+                "配置项 ui.markdown_line_numbers 取值 \"{other}\" 非法（可选：on-demand、always、off），已回退为 on-demand"
+            )),
+        }
+    }
+
     let (keys, mut key_warnings) = validate_keys(raw.keys);
     warnings.append(&mut key_warnings);
 
@@ -558,6 +608,7 @@ fn validate(raw: RawConfig) -> (AppConfig, Vec<String>) {
             ui: UiConfig {
                 theme,
                 content_width,
+                markdown_line_numbers,
             },
             keys,
             log,
@@ -1224,6 +1275,72 @@ mod tests {
         let snap = load_from(&f.0);
         assert_eq!(snap.config.ui.theme, UiTheme::Light);
         assert!(snap.warnings.is_empty(), "{:?}", snap.warnings);
+    }
+
+    #[test]
+    fn missing_markdown_line_numbers_defaults_to_on_demand() {
+        // change goto-line-command 的 D4 二次改判：`ui.markdown_line_numbers` 是**新增**键，
+        // 老配置没有它 ⇒ 默认 `on-demand` 且**不告警**（比照 missing_ui_table_defaults_to_light
+        // 的缺字段口径）。同表其它字段照常解析。
+        let f = TempFile::new(r#"{"ui":{"theme":"dark"}}"#);
+        let snap = load_from(&f.0);
+        assert_eq!(
+            snap.config.ui.markdown_line_numbers,
+            MarkdownLineNumbers::OnDemand
+        );
+        assert_eq!(snap.config.ui.theme, UiTheme::Dark);
+        assert!(snap.warnings.is_empty(), "{:?}", snap.warnings);
+    }
+
+    #[test]
+    fn ui_markdown_line_numbers_accepts_three_tiers() {
+        // 三档闭集合逐个过一遍（含显式写默认档）；都不产生 warning。
+        for (raw, want) in [
+            ("on-demand", MarkdownLineNumbers::OnDemand),
+            ("always", MarkdownLineNumbers::Always),
+            ("off", MarkdownLineNumbers::Off),
+        ] {
+            let f = TempFile::new(&format!(r#"{{"ui":{{"markdown_line_numbers":"{raw}"}}}}"#));
+            let snap = load_from(&f.0);
+            assert_eq!(snap.config.ui.markdown_line_numbers, want, "{raw}");
+            assert!(snap.warnings.is_empty(), "{raw}: {:?}", snap.warnings);
+        }
+    }
+
+    #[test]
+    fn illegal_ui_markdown_line_numbers_warns_and_falls_back_to_on_demand() {
+        // 档外值走 warning + 回落默认（比照 illegal_ui_theme_warns_and_falls_back_to_light）；
+        // 同一份配置里的合法字段照常生效。
+        let f =
+            TempFile::new(r#"{"ui":{"markdown_line_numbers":"toggle"},"last_vault":"/tmp/vault"}"#);
+        let snap = load_from(&f.0);
+        assert_eq!(
+            snap.config.ui.markdown_line_numbers,
+            MarkdownLineNumbers::OnDemand
+        );
+        assert_eq!(snap.config.last_vault.as_deref(), Some("/tmp/vault"));
+        assert_eq!(snap.warnings.len(), 1, "{:?}", snap.warnings);
+        assert!(
+            snap.warnings[0].contains("ui.markdown_line_numbers"),
+            "{:?}",
+            snap.warnings
+        );
+    }
+
+    #[test]
+    fn wrong_type_ui_markdown_line_numbers_falls_back_entire_file() {
+        // 表内类型不符（`"markdown_line_numbers": 2`）与 `ui.theme` 同路：`RawUiConfig` 是结构化
+        // 镜像，serde 解析期失败 ⇒ **整文件回落**（含同表的 theme、以及 last_vault）——不发明
+        // 逐字段类型容忍。
+        let f = TempFile::new(
+            r#"{"last_vault":"/tmp/vault","ui":{"markdown_line_numbers":2,"theme":"dark"}}"#,
+        );
+        let snap = load_from(&f.0);
+        assert_eq!(snap.config, AppConfig::default());
+        assert_eq!(snap.config.ui.theme, UiTheme::Light);
+        assert_eq!(snap.config.last_vault, None);
+        assert_eq!(snap.warnings.len(), 1, "{:?}", snap.warnings);
+        assert!(snap.warnings[0].contains("不是合法 JSON"));
     }
 
     #[test]

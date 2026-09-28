@@ -81,7 +81,9 @@ test("非 md 文本文件一律以可编辑 code 模式打开（可编辑、无�
     // 可编辑合同（editable-non-md-files）：contenteditable 在场、无 aria-readonly 只读态
     await expect(content).toHaveAttribute("contenteditable", "true");
     await expect(content).toHaveAttribute("aria-readonly", "false");
-    // code 模式特征（行号 gutter；md 模式没有）
+    // code 模式的形态特征：行号 gutter 恒常显（M281 的 D4 二次改判后这条判据**保持原样**——
+    // code 侧不进配置，与 md 的 `on-demand` 默认档无关；md 的 gutter 在场时机另由
+    // tests/visual/scenes/m281-goto-line.spec.ts 覆盖）
     await expect(page.locator(".cm-gutters")).toHaveCount(1);
   }
 

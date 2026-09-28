@@ -382,6 +382,34 @@ export const livePreviewTheme = EditorView.theme({
   },
   [`.cm-scroller.${DOC_TITLE_TOP_CLASS} .cm-lp-end-marker`]: { gridRow: "3" },
 
+  // md 的行号 gutter（M281，change goto-line-command 的 D4 改判 + 2026-09-28 二次改判的三档）——**md 这一侧的几何与
+  // 配色真源在这里**，与 doc-title / end-marker 的 grid 真源同居（上面那段与下方 end-marker 段）：
+  // - 落点与正文**同行**：base 规则的 `gridRow: "1"`（src/editor.ts 的 baseTheme）在有 doc-title
+  //   落点时会把行号整体上移一个标题高度（那时 `.cm-content` 在 row 2，见上面那三条），所以这里
+  //   把 row 与 col 一起写；列模板**不为 gutter 改写**（正文列因此仍居中，见 src/editor.ts 的
+  //   阅读栏宽注释），gutter 落在左侧空余轨道内。
+  // - `justifySelf: end`：贴正文列左缘——左轨道宽裕时行号不会漂到窗口最左边（距离正文 44px
+  //   内边距之外仍紧邻栏宽框）。
+  // - 配色只留提示档文字色：去掉 `--frame` 底与右缘分隔线。阅读视图是「正文居中、无框体面」的
+  //   观感，多一块底色与一条竖线会把行号读成 UI 边框（口径见 change design §5.2 第 3 条）。
+  // - 选择器带 `.cm-scroller >` 锚点（不是裸 `.cm-gutters`）：两条规则都是 CM theme，生成的
+  //   CSS 先后顺序不是可依赖的契约，这里用更高的特异性**确定性地**压过 src/editor.ts 的 base
+  //   规则；`border: "none"`（而不是只写 borderRight）连带把 CM 基础主题给 `.cm-gutters-before`
+  //   的 1px 右缘也一并关掉——`border-style: none` 不受宽度规则先后影响。
+  // 行号 = 源文档逻辑行号（CM 行块 → `doc.lineAt().number`，与跳转落点同一口径）；被块级替换
+  // 覆盖的源行没有行号（frontmatter 区块恒缺）是 CM 对 widget 行块的既有行为，本 change 不新增
+  // `lineNumberWidgetMarker` 提供者。
+  ".cm-scroller > .cm-gutters": {
+    gridColumn: "1",
+    gridRow: "1",
+    justifySelf: "end",
+    alignSelf: "stretch",
+    color: "var(--text-3)",
+    backgroundColor: "transparent",
+    border: "none",
+  },
+  [`.cm-scroller.${DOC_TITLE_TOP_CLASS} > .cm-gutters`]: { gridRow: "2" },
+
   // frontmatter properties 区块（块级 replace widget）→ 定稿的 `.fm` 属性区形态
   //（design/prototypes/direction-c 屏 4）：agent-bg 浅底 + r8 圆角 + `8px 14px 9px` 内边距
   //（tokens 文档 §间距阶梯点名的「fm 区 padding」高频出处），置于文档最顶部（widget 只对

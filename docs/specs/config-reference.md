@@ -70,11 +70,18 @@
 |---|---|---|---|---|---|
 | `ui.theme` | string 枚举 | `"light"` | `"light"` \| `"dark"` \| `"eink"` | 启动装载施加一次（写 `documentElement.dataset.theme`）；运行期由 `view.theme-cycle` / modeline 主题钮切换，**切换即回写本键** | `config.rs:209` |
 | `ui.content_width` | number | `760` | 闭区间 `[760, 1200]`，区间外回落 `760` + warning | 启动时装配一次；运行期由阅读栏拖拽推进，**松手回写本键** | `config.rs:216`、`:183-189` |
+| `ui.markdown_line_numbers` | string 枚举 | `"on-demand"` | `"on-demand"` \| `"always"` \| `"off"`，档外回落 `"on-demand"` + warning | **仅启动装载时读一次**（喂给编辑器的 md 行号 gutter 档位）；**运行期不回写、无切换命令** | `config.rs:240`、`:275`、`:576` |
 
-`ui` 的这两个键与 `editor.font_size` 的差别是**持久偏好 vs 瞬态口径**：主题与栏宽是用户显式选择的结果，
-切换即回写（让下次启动的真源跟上运行态）；字号步进与折行翻转是瞬态显示口径，不落盘、重启回到配置值。
-`ui` 是结构化表：表内取值非法 → 回落该字段 + warning；整表错形状（如 `"ui": "dark"`）或表内类型不符
-（如 `"theme": 2`）走整文件回落（见 §2）。
+`ui.markdown_line_numbers` 只管 **md 模式**的行号 gutter 在场时机：`on-demand`（默认）= 打开 md 文档时无行号，
+按 `⌥G`（`editor.goto-line`）打开跳转输入条时行号出现、输入条收起后隐藏；`always` = md 常驻显示行号；
+`off` = md 恒不显示。**code 模式的行号 gutter 恒常显，不读本键**。它没有运行期切换的落点，
+因此是「装载时读一次、运行期 MUST NOT 回写」的瞬态口径（同 `editor.font_size` / `editor.mode`），
+与上面两个**持久偏好**（主题 / 栏宽有切换落点、切换即回写）分属两类。
+
+`ui` 的这几个键与 `editor.font_size` 的差别是**持久偏好 vs 瞬态口径**：主题与栏宽是用户显式选择的结果，
+切换即回写（让下次启动的真源跟上运行态）；字号步进、折行翻转与 md 行号档位是瞬态显示口径，不落盘、
+重启回到配置值。`ui` 是结构化表：表内取值非法 → 回落该字段 + warning；整表错形状（如 `"ui": "dark"`）或表内类型不符
+（如 `"theme": 2`、`"markdown_line_numbers": 2`）走整文件回落（见 §2）。
 
 ## 2. 解析与容错口径
 
@@ -82,7 +89,8 @@
 - **逐字段回落**：取值非法（如 `editor.mode` 写 `"weird"`、`log.level` 写 `"verbose"`、`font_size` 越界）
   只回退该字段到出厂默认 + 一条人话 warning，其余字段照常生效，**不得导致启动失败**（ADR 0002 §5）。
 - **整文件回落**：整份文件不是合法 JSON，或**字段类型不符**（如 `"line_wrap": "yes"`、
-  `"font_size": "15"`、`"code_mode_line_wrap": "yes"`、`"auto_indent": "yes"`、`"ui": "dark"`），
+  `"font_size": "15"`、`"code_mode_line_wrap": "yes"`、`"auto_indent": "yes"`、`"ui": "dark"`、
+  `"markdown_line_numbers": 2`），
   则整份配置按出厂默认解释 +
   一条 warning（连 `last_vault` 一起丢）。这是既有解析模型的性质（不等同于逐字段回落），单测逐条钉住
   （`config.rs` 的 `wrong_type_*_falls_back_entire_file` 族）。本仓**不提供**「逐字段类型容忍」。
