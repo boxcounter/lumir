@@ -185,11 +185,21 @@ test("规则④：选中态黑底反白，组件内次级元素手工反白", as
 
 test("规则⑤：浅底区块翻转为白底黑框（代码块 / frontmatter）", async ({ page }) => {
   await openEink(page);
+  // M288 起代码块的底色（含这一档的白底黑框）由容器的负 z-index 伪元素承担——容器自己的
+  // `background` 会让位（它是 in-flow 背景，会盖住 drawSelection 的负 z-index 选区层）。
+  // 「浅底区块翻成白底黑框」这条口径不变，只是读取得从容器换到它的底板伪元素上。
   const code = await page.locator(".cm-lp-codeblock-scroll").evaluate((el) => {
     const style = getComputedStyle(el);
-    return { background: style.backgroundColor, width: style.borderTopWidth, color: style.borderTopColor };
+    const base = getComputedStyle(el, "::before");
+    return {
+      background: base.backgroundColor,
+      width: style.borderTopWidth,
+      color: style.borderTopColor,
+      band: getComputedStyle(el, "::after").backgroundColor,
+    };
   });
-  expect(code.background).toBe("rgb(255, 255, 255)");
+  expect(code.background, "规则⑤：代码块底板 = 白底").toBe("rgb(255, 255, 255)");
+  expect(code.band, "规则⑤：只有底板翻转，行区带仍是 --code-bg 的灰").toBe("rgb(240, 240, 240)");
   expect(code.width).toBe("1px");
   expect(code.color).toBe("rgb(0, 0, 0)");
   const fm = await page.locator(".cm-lp-frontmatter").evaluate((el) => {

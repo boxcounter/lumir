@@ -227,8 +227,14 @@ export const livePreviewTheme = EditorView.theme({
   },
 
   // 代码块（tokens 文档 §字号阶梯「12（doc-meta·代码块·文件路径）」+ §行高「1.55」）：
-  // 代码文字 mono 12px/1.55（em 比值 12 ÷ 正文锚 15 = .8），底板 --code-bg。eink 的白底黑框
-  // 在横滚容器那一半（src/style.css 的 .cm-lp-codeblock-scroll），此处只管行。
+  // 代码文字 mono 12px/1.55（em 比值 12 ÷ 正文锚 15 = .8），行区带 --code-bg。
+  // 行区带的**主要落点是 src/style.css 的 `.cm-lp-codeblock-scroll::after`**（M288）：行背景是
+  // in-flow 块的背景，会整块盖住 drawSelection 画在负 z-index 层上的选区。这里的 `backgroundColor`
+  // 因此只服务三类场合，且都由 `:has()` 的让位判据保证不与容器那份叠色：
+  //   · 代码块折行档（`editor.code_block_wrap: true`，没有横滚容器）；
+  //   · 容器比行装饰晚一两帧出现的那一拍（兜底，避免「没有底色的代码块」）；
+  //   · 全屏浮层的行（`.lumir-codeblock-fs-content` 的用户，浮层没有选区层，形态逐像素不变）。
+  // eink 的白底黑框在横滚容器那一半（src/style.css），此处只管行。
   ".cm-line.cm-lp-codeblock-line": {
     backgroundColor: "var(--code-bg)",
     fontFamily: "var(--editor-mono-family)",

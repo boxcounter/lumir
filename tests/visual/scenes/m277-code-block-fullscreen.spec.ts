@@ -296,10 +296,22 @@ test("5.4 内容保真：计算样式与文档内代码块逐项一致（字体 
     const docLine = docContent.querySelector(".cm-line.cm-lp-codeblock-line")!;
     const content = document.querySelector(".lumir-codeblock-fs-content")!;
     const overlayLine = content.querySelector(".cm-line.cm-lp-codeblock-line")!;
-    return { docContainer: pick(docContent), overlayContainer: pick(content), docLine: pick(docLine), overlayLine: pick(overlayLine) };
+    return {
+      docContainer: pick(docContent),
+      overlayContainer: pick(content),
+      docLine: pick(docLine),
+      overlayLine: pick(overlayLine),
+      /** 文档内代码块的底板（M288 起是容器的负 z-index 伪元素，不再是容器自己的 background）。 */
+      docUnderlay: { backgroundColor: getComputedStyle(docContent, "::before").backgroundColor },
+    };
   });
-  // 内容容器的底板与文档内横滚容器同源（--code-bg），行样式由镜像的主题 scope 命中既有规则。
-  expect(styles.overlayContainer?.backgroundColor).toBe(styles.docContainer?.backgroundColor);
+  // 内容容器的底板与文档内代码块的底**板**同源（--code-bg）；行样式由镜像的主题 scope 命中既有规则。
+  // **底板这一项为什么与容器自己的样式比不了**（M288）：文档内代码块的底色 MUST NOT 落在容器自己
+  // 身上——容器（与行）的 background 是 in-flow 背景，会整块盖住 drawSelection 画在负 z-index 层
+  // 上的选区；因此它搬到了容器的 `::before` 上，容器的 `backgroundColor` 变成 transparent。
+  // 浮层没有选区层，底板照旧落在它的内容容器上。两边比的是**底板的色**（同一个 --code-bg），
+  // 不是它由哪个元素承担——这条判据的语义（浮层里的代码块与文档里的看起来一致）不变。
+  expect(styles.overlayContainer?.backgroundColor).toBe(styles.docUnderlay?.backgroundColor);
   expect(styles.overlayLine?.fontFamily).toBe(styles.docLine?.fontFamily);
   expect(styles.overlayLine?.fontSize).toBe(styles.docLine?.fontSize);
   expect(styles.overlayLine?.lineHeight).toBe(styles.docLine?.lineHeight);
