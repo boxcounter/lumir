@@ -9,7 +9,7 @@ import { stubTauri } from "./tauri-stub";
 //   ① 色彩退场（含 tint = transparent）        → 「规则①」
 //   ② 字重 / 明度承担对比（keyword 700、comment 灰）→ 「规则②」
 //   ③ 实心黑 hairline（结构档黑、层次档保留灰）  → 「规则③」
-//   ④ 选中态黑底反白（含组件内次级元素手工反白） → 「规则④」
+//   ④ 选中态 = 明度带 + 黑字（组件内次级元素取 --sel-text） → 「规则④」
 //   ⑤ 浅底区块翻白底黑框（代码块 / fm）         → 「规则⑤」
 //   ⑥ chip 描边化                              → 「规则⑥」
 //   ⑦ 阴影退场                                  → 「规则⑦」
@@ -163,7 +163,7 @@ test("规则④（M291 收窄）：选中态 = 明度带 + 黑字，反白整条
     .poll(() => row.evaluate((el) => getComputedStyle(el).backgroundColor), { message: "选中行底色 = --sel（明度带）" })
     .toBe("rgb(185, 185, 185)");
   expect(await row.evaluate((el) => getComputedStyle(el.querySelector(".ft-name")!).color)).toBe("rgb(0, 0, 0)");
-  // 次级元素（caret / 当前标记）与文字一样手工反白——行内没有颜色继承链
+  // 次级元素（caret / 当前标记）与文字一样取 --sel-text——行内没有颜色继承链
   const secondary = await row.evaluate((el) => {
     const caret = el.querySelector(".ft-caret");
     const mark = el.querySelector(".ft-current-mark");

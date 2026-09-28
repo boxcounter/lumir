@@ -1142,8 +1142,10 @@ body {
   color: var(--text);
   transition-delay: 0s;
 }
-/* eink 规则③⑤：白底实心黑框（无灰底可用的翻转口径，同 .cm-lp-codeblock-scroll）；
-   规则④：热态黑底反白（同 `.tb-btn.on` 的处理）。 */
+/* eink 规则③⑤：白底实心黑框（无灰底可用的翻转口径，同 .cm-lp-codeblock-scroll）。
+   热态是**硬编码**黑底白字（同 `.tb-btn.on` 与搜索面板的实心档；对比 255，可读）——
+   **不在 `--sel` 族面内**：M291 把 eink 的选中族改成明度带 + 黑字时它不受影响。
+   是否同样退场待 Alex 裁决（docs/backlog.md 的 M291 节已记账）。 */
 :root[data-theme="eink"] .lumir-block-trigger {
   background: #fff;
   border-color: #000;
@@ -1624,7 +1626,8 @@ body {
 /* 当前段（定稿 .pop-row.cur，index.html:706）：常驻 --sel + 550——「我在哪个标题下」不随
    键盘游标离开而消失。与游标的共存规则（M217 worker 定并记录）：游标 is-active 用同一底色
    加 inset 1px 描边（currentColor）——两态同列时叠加可辨（底色+550+描边），分列时游标仍
-   指得出来；描边取 currentColor，eink 反白后随文字一起翻白，不需要第二份颜色规则。 */
+   指得出来；描边取 currentColor——eink 下选中前景是正文黑字（M291 起不再反白），描边随之
+   取黑，不需要第二份颜色规则。 */
 .lumir-toc-item.is-current {
   background: var(--sel);
   font-weight: var(--fw-emphasis);

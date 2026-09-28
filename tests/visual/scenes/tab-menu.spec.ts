@@ -323,7 +323,7 @@ test("脏标签：选「保存并关闭」后批量继续——动作钮的点�
   await expect.poll(() => fileText(page, "beta.md")).toContain("BBB");
 });
 
-test("M254：共用皮肤在 eink 档下同为黑底反白（标签菜单也吃这套规则）", async ({ page }) => {
+test("M254：共用皮肤在 eink 档下同为选中底色 + 选中前景（标签菜单也吃这套规则）", async ({ page }) => {
   await stubTauri(page, { ...VAULT, config: { theme: "eink" } });
   await page.goto("/");
   await expect(page.locator("html")).toHaveAttribute("data-theme", "eink");
@@ -351,7 +351,7 @@ test("M254：共用皮肤在 eink 档下同为黑底反白（标签菜单也吃�
   const activeColorRule = shared.find(
     (text) => text.includes("--sel-text") && text.includes(".tab-menu-item.is-active"),
   );
-  expect(activeColorRule, "eink 选中反白规则").toBeDefined();
+  expect(activeColorRule, "eink 选中态前景规则").toBeDefined();
   expect(activeColorRule).toContain(".ft-menu-item.is-active");
   await page.keyboard.press("Escape");
 });
