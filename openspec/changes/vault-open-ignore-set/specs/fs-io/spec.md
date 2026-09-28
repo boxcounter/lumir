@@ -22,7 +22,15 @@
 
 **规则表的来源与判定顺序**：内置规则 SHALL **先判且命中即定格**——用户规则里的取反（如 `.gitignore` 写 `!target/`）MUST NOT 把内置规则命中的条目放回可见集（理由：内置规则表达的是「按结构不是内容」的产品判断，且它的不可见性同时是性能护栏，允许被一行编辑推翻等于把「打开 vault 会不会卡几秒」交给用户配置；出口是改内置名单走 change、或产品侧另做显式的「显示被忽略项」开关）。用户规则之间 SHALL 按 git 口径决定优先级：深层 `.gitignore` > 浅层 `.gitignore` > `<root>/.git/info/exclude`，同一路径上最深的匹配决定（忽略与取反都在用户规则集内解析）。
 
-用户规则的来源 SHALL 为 `<root>/.gitignore` 与递归途中的嵌套 `.gitignore`、以及 `<root>/.git/info/exclude`（仅当 `<root>/.git` 是目录；`.git` 是文件——linked worktree 的 gitlink——时不读，避免把 vault 边界之外的状态读进来）。MUST NOT 读全局 excludes 文件（`core.excludesFile` 在 vault 之外）。匹配 SHALL 按 gitignore 语义（取反 `!`、`/` 锚定、`**`、目录限定、注释与转义、大小写规则），并包含「祖先被排除 ⇒ 子孙全被排除」这一既有语义 ⇒ 用户规则命中的子树内部一切仍是惰性（「按需枚举目录」因此不必在惰性子树里重读 `.gitignore`）。规则表 SHALL 在 vault 装载时编译**一次**（内置规则与用户规则用同一类匹配器解释）；规则文件自身的变更 SHALL 在**下一次装载**生效（本会话不重编；可见集不随规则变化，规则只决定哪些子树被主动枚举，代价与依据见 change 的 design §4.5）。
+**用户规则的来源由配置项给出**：`<config>/config.json` 的 `vault.rule_files`（vault 相对路径列表，默认 `[".gitignore", ".git/info/exclude"]`；缺节 / 缺键 / 配置文件不存在 ⇒ 用默认值）SHALL 决定读哪些规则文件；每一项 SHALL 按「**vault 根的规则文件**」解释（模式相对 vault 根匹配，MUST NOT 被当成「相对该文件所在目录」的规则）。语义：
+
+- **空列表 ⇒ 无用户规则来源**：只剩内置规则（非 git vault 的等价行为）。这是**彻底**的——列表里不含 `.gitignore` 时，递归途中的嵌套 `.gitignore` 同样 SHALL NOT 被读取（嵌套逐层读取是「`.gitignore` 这个来源」的固有语义，MUST NOT 被做成第二个配置面）；列表含 `.gitignore` 时嵌套照常逐层叠加。
+- **文件不存在或不是常规文件 ⇒ 静默跳过**：MUST NOT 报错、MUST NOT 产生 warning（`.git/info/exclude` 在非 git vault 里本就不存在，这是常态）。
+- **非法项逐项忽略 + 一条人话 config warning**：非字符串 / 绝对路径 / 含 `..` / 空串都算非法（ADR 0002 §5：逐字段校验、非法值人话 warning、不得导致启动失败）；其余项 SHALL 照常生效，MUST NOT 因为一项非法而丢弃整份配置或回退整字段默认值。
+- **生效时点**：配置 SHALL 在 vault 装载时读取（MUST NOT 用启动期缓存钉住它），其改动与规则文件内容的改动同为**下一次装载**生效。
+- **与内置规则的关系**：该配置只决定「用户规则从哪些文件读」，MUST NOT 影响内置规则——后者恒定生效、不在配置面内、不可被用户规则的取反推翻。
+
+默认列表下的行为与本文此前的写法逐条一致：`<root>/.gitignore` 与递归途中的嵌套 `.gitignore`、以及 `<root>/.git/info/exclude`（仅当 `<root>/.git` 是目录；`.git` 是文件——linked worktree 的 gitlink——时不读，避免把 vault 边界之外的状态读进来）。MUST NOT 读全局 excludes 文件（`core.excludesFile` 在 vault 之外）。匹配 SHALL 按 gitignore 语义（取反 `!`、`/` 锚定、`**`、目录限定、注释与转义、大小写规则），并包含「祖先被排除 ⇒ 子孙全被排除」这一既有语义 ⇒ 用户规则命中的子树内部一切仍是惰性（「按需枚举目录」因此不必在惰性子树里重读 `.gitignore`）。规则表 SHALL 在 vault 装载时编译**一次**（内置规则与用户规则用同一类匹配器解释）；规则文件自身的变更 SHALL 在**下一次装载**生效（本会话不重编；可见集不随规则变化，规则只决定哪些子树被主动枚举，代价与依据见 change 的 design §4.5）。
 
 **惰性标记的语义**：true 表示本条目的子树 / 索引面未枚举——目录的子孙不在本次结果里（展开时经「按需枚举目录」拉取一层），文件不进链接索引与附件索引。前端 SHALL 用它区分「空目录」与「惰性目录」。
 
@@ -79,6 +87,31 @@
 
 - **WHEN** vault 根的 `.gitignore` 里既有 `target/` 的取反（如 `!target/`），磁盘上 `target/` 目录存在
 - **THEN** `target` 及其子孙仍不出现、仍不被枚举（内置规则先判且命中即定格）；同一份 `.gitignore` 里对**用户规则**的取反（如忽略 `drafts/` 但 `!drafts/keep/`）照常生效
+
+#### Scenario: 默认配置等效于今日行为
+
+- **WHEN** `config.json` 没有 `vault` 节（或没有 `rule_files` 键），vault 根有 `.gitignore`、`.git/info/exclude` 与一个嵌套 `.gitignore`
+- **THEN** 三者的规则都生效（与默认列表 `[".gitignore", ".git/info/exclude"]` 一致）：命中的条目按用户规则出惰性行，嵌套目录里的规则同样生效
+
+#### Scenario: 空列表只剩内置规则
+
+- **WHEN** `vault.rule_files` 被设为 `[]`，vault 根的 `.gitignore` 声明 `.local/`，且磁盘上有 `target/`
+- **THEN** `.local/` 不再被当成用户规则命中——它是普通目录（照常递归枚举、不再是惰性行）；`target/` 仍因内置规则不可见（配置 MUST NOT 影响内置规则）
+
+#### Scenario: 列表里的文件不存在时静默跳过
+
+- **WHEN** `vault.rule_files` 含 `.git/info/exclude`，而该 vault 不是 git 仓库（文件不存在）
+- **THEN** 不报错、不产生 warning，其余来源照常生效
+
+#### Scenario: 非法项逐项忽略且其余项照常生效
+
+- **WHEN** `vault.rule_files` 为 `["/etc/hosts", "../outside", "", ".gitignore"]`（前三项非法）
+- **THEN** 前三项被逐项忽略并各给一条人话 config warning，`.gitignore` 照常生效；启动与装载 MUST NOT 因此失败，其余配置字段 MUST NOT 被回退默认值
+
+#### Scenario: 配置改动下次装载生效
+
+- **WHEN** 用户在会话中把 `vault.rule_files` 改成 `[]`（或改写它的内容）
+- **THEN** 本次会话的枚举形态不变（规则表已在装载时编译）；下次装载该 vault 后新配置生效
 
 #### Scenario: 规则变更下次装载生效
 

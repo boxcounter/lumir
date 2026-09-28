@@ -29,8 +29,11 @@
   **验收口径**：单测覆盖三分支 + **内置优先于用户规则**（`.gitignore` 写 `!target/` 时 `target` 仍是 Hidden）+ 用户规则内部的取反生效（`drafts/` 忽略 + `!drafts/keep/` 放回）+「祖先被排除 ⇒ 子孙全被排除」+「最后一段不判规则」；`fs_io` MUST NOT 出现 `tauri::` 依赖（能编译即证）。
 - [ ] 2.3 用户规则的来源与优先级：`<root>/.gitignore` + 递归途中的嵌套 `.gitignore` + `<root>/.git/info/exclude`（仅当 `.git` 是目录）；优先级按 git 口径（深层 `.gitignore` > 浅层 > `info/exclude`）；**不读全局 excludes**；在 vault 装载时编译一次。
   **验收口径**：单测逐条：`.gitignore` 生效 / `info/exclude` 生效 / 两份来源冲突时深层 `.gitignore` 决定 / 全局 excludes **不**生效 / `.git` 是文件（gitlink）时不读 `info/exclude` / 非 git 仓库但有 `.gitignore` 时仍生效。
-- [ ] 2.4 规则变更的生效时点：本会话不重编，下次装载生效；把这条写进代码注释与 spec 的已知边界。
-  **验收口径**：单测——改了 `.gitignore` 后同一会话内枚举形态不变；重新构造策略（模拟下次装载）后形态改变。
+- [ ] 2.4 规则变更的生效时点：本会话不重编，下次装载生效（规则文件**内容**的改动与 `vault.rule_files` **配置**的改动同口径）；把这条写进代码注释与 spec 的已知边界。
+  **验收口径**：单测——改了 `.gitignore`（或 `vault.rule_files`）后同一会话内枚举形态不变；重新构造策略（模拟下次装载）后形态改变。
+- [ ] 2.5 **配置项 `vault.rule_files`（r6，Alex 定案第 7 条）**：`src-tauri/src/config.rs` 新增 `[vault]` 节与 `VaultConfig { rule_files: Vec<String> }`（`#[serde(default)]`，默认 `[".gitignore", ".git/info/exclude"]`；该字段在 `RawConfig` 那层收成 `Vec<serde_json::Value>` **逐项**校验）；`prepare_vault_open` 装载时读配置（`config::load()` 按需读盘，**MUST NOT** 引入启动期缓存）并据此编译用户规则。
+  **验收口径**（五条语义逐条单测，对应 spec 的 5 条 scenario）：① 缺节 / 缺键 ⇒ 默认列表（与今日行为逐条一致）；② `[]` ⇒ 无用户规则来源（`.local/` 变普通目录被递归枚举，`target/` 仍隐藏——**配置 MUST NOT 影响内置规则**）；③ 列表里的文件不存在 / 不是常规文件 ⇒ 静默跳过、不报错无 warning；④ 非法项（非字符串 / 绝对路径 / 含 `..` / 空串）逐项忽略 + 一条人话 `config_warning`，其余项照常生效、其余字段不回退默认；⑤ 配置改动下次装载生效。
+  **消费者**（REVIEW.md 第 9 条）：配置值的唯一消费者是「构造 `IgnorePolicy` 时编译用户规则」这一步——在 `VaultConfig` 的文档注释里点名，不留悬空配置项。
 
 ## 3. 按需枚举命令与 `lazy` 标记（对应 fs-io「按需枚举目录」+ file-tree）
 
@@ -94,6 +97,7 @@
 - [ ] 9.1 `scripts/acceptance/lib/app.mjs` 的 `generateBulkVault`：加两类探针——① 内置规则构建产物族（根下 `target/` / `dist/` / `test-results/` 各带若干 md）；② 用户规则（写一份 `.gitignore` 声明 `.local/` **并带一条取反 `!target/`**，写一份 `.git/info/exclude` 声明另一个目录，两者各带一个 md）——取反那条让真机也有一条「内置不可被推翻」的判据。形状参数与 Rust 侧 harness 一起核。
   **验收口径**：`node scripts/acceptance/run.mjs --check` PASS；场景 60（既有 `bulkVault: {}` 调用方）不受影响仍 PASS。
   **注意**：场景里还有一条**运行时**探针不靠 fixture——用 `vaultWrite`（它 `mkdirp` 父目录）在根下写 `target/probe.md`，等一拍后断言树里**没有** `target` 行（r2 评审 P1-2 的真机判据；正见证是同一步写进可见目录的文件必须出现）。
+  **本 change 不覆盖配置项的真机语义**：场景 67 走**默认** `vault.rule_files`；套件的 `config:` 白名单（`SCENARIO_CONFIG_KEYS`）**不**为它新增键——配置项语义由 2.5 的单测覆盖（真机侧只覆盖「默认配置下行为不变」）。
 - [ ] 9.2 把本 change 的 `acceptance-scenario.md` 草案落成 `scripts/acceptance/scenarios/67-<slug>.md`：`id` 用 67（**动工前按 proposal 的「编号声明」再核一次目录与在飞 change**，被占则取下一个可用号）。
   **验收口径**：`--check` PASS；`node scripts/acceptance/run.mjs 67` 真机 PASS，证据落 `test-results/acceptance/<日期>/67-*/`（`status.txt` = PASS）。
 - [ ] 9.3 各条判据逐个做反向验证（REVIEW.md 第 1 条）：① 内置规则 → 把内置表回退成 3 个名字 ⇒「构建产物目录不在树里」FAIL；② 用户规则 → 把规则读取关掉（或把用户规则命中的条目标成内置）⇒「`.local` 行在树里 / 展开可见」FAIL；③ 打开段 → 见 7.2；④ 读数通道 → 临时摘掉埋点 ⇒ 末步 FAIL；⑤ **幻影行判据** → 把 watch 的末段判定改回「一切规则都豁免最后一段」⇒「外部新建 `target` 后树里没有该行」FAIL（r2 评审 P1-2 的直接判据）。
@@ -112,7 +116,7 @@
 
 ## 11. 收口与外部依赖
 
-- [ ] 11.1 `docs/backlog.md`：登记本 change 的待归档跟踪；把 M289 survey 的读数落成可 grep 的条目（现在只存在于 `.tower/comms/` 的一条 inbox 消息里，而 `.tower/**` 不入 git——证据要有 canonical 居所）；登记三条后续候选（`wikilink_create` 的重复文件风险、规则热生效、「显示被忽略项」的显式开关——内置规则不可被 `.gitignore` 取反推翻之后，它是用户想读构建产物时的正当出口）；裁决未采纳项（A3、C 案）记「未采纳 + 理由」。
+- [ ] 11.1 `docs/backlog.md`：登记本 change 的待归档跟踪（含 `vault.rule_files` 的 per-vault 覆盖候选——本 change 只做全局列表）；把 M289 survey 的读数落成可 grep 的条目（现在只存在于 `.tower/comms/` 的一条 inbox 消息里，而 `.tower/**` 不入 git——证据要有 canonical 居所）；登记三条后续候选（`wikilink_create` 的重复文件风险、规则热生效、「显示被忽略项」的显式开关——内置规则不可被 `.gitignore` 取反推翻之后，它是用户想读构建产物时的正当出口）；裁决未采纳项（A3、C 案）记「未采纳 + 理由」。
   **验收口径**：条目可 grep（含日期、读数、文件指针）。
 - [ ] 11.2 若 Alex 对 design §11 的影响面提出回收（例如 B 案另立 change）：按 proposal 的裁决改法回退 spec delta 与任务组，**不静默缩水**。
 - [ ] 11.3 review-request 逐任务对账（含裁决点、delta 与实现的一致性、design 的未验项清单、影响面清单的落地核对）

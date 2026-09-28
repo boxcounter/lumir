@@ -77,7 +77,7 @@ Alex 问：「硬编码隐藏类是否可以和 .gitignore 合并、而不是单
 
 ### 2.5 用户规则的来源、优先级与语义
 
-- **来源**：`<root>/.gitignore` 与递归途中的嵌套 `.gitignore`、`<root>/.git/info/exclude`（仅当 `<root>/.git` 是目录）。**MUST NOT 读全局 excludes**（`core.excludesFile` 在 vault 之外，读它等于让 vault 之外的状态决定 vault 内的可见集）。
+- **来源**：由配置项 `vault.rule_files` 给出（默认 `[".gitignore", ".git/info/exclude"]`，vault 相对路径；Rust 侧 `AppConfig.vault`）——见 §2.9。默认值下的行为与本文此前的写法逐条一致：`<root>/.gitignore` 与递归途中的嵌套 `.gitignore`、`<root>/.git/info/exclude`（仅当 `<root>/.git` 是目录）。**MUST NOT 读全局 excludes**（`core.excludesFile` 在 vault 之外，读它等于让 vault 之外的状态决定 vault 内的可见集）。
 - **优先级（按 git 口径）**：深层 `.gitignore` > 浅层 `.gitignore` > `info/exclude`；同一路径上**最深的匹配决定**（忽略与取反都在用户规则集内解析）。
 - **语义**：gitignore 全套——取反 `!`、`/` 锚定、`**`、目录限定（尾斜杠）、注释与转义、大小写规则，含「**祖先被排除 ⇒ 子孙全被排除**」⇒ 用户规则命中的子树内部一切仍是惰性（「按需枚举目录」因此不必在惰性子树里重读 `.gitignore`）。
 - **编译时机**：vault 装载时一次；规则文件自身变更**下次装载生效**（依据见 §4.5）。
@@ -102,6 +102,36 @@ Alex 问：「硬编码隐藏类是否可以和 .gitignore 合并、而不是单
 ### 2.8 性能注记（必须复测，不得默认不变）
 
 今日每个条目是 3 次字节比较；合并后是 globset 匹配（ripgrep 同源，预编译）。走访的条目数已被收窄（Alex 的 vault 收窄后 ~31k 量级），预期可忽略，但**必须用 M289 的 harness 复测**（tasks 8.3）——「等价的语义、不同的实现」不能靠推断宣称没有代价。若实测成为热点，允许从**同一份规则表**派生一个等价的名字集合快路径（派生只许由表生成，且要有一条「表 ≡ 快路径」的测试钉住），MUST NOT 另手写一份名单。
+
+### 2.9 配置项 `vault.rule_files`：用户规则的来源（r6，Alex 定案第 7 条）
+
+Alex 定案：**内置默认规则保留（16 名，行为同现状），同时引入配置项「规则文件列表」**（他原本提议「去掉内置规则、只做配置项」，tower 给出三个洞后采纳「两个都要」）。本节的落点是**配置项只决定「用户规则从哪些文件读」**，与内置规则无关。
+
+**形态**（本仓第一个 `[vault]` 节）：
+
+```json
+{ "vault": { "rule_files": [".gitignore", ".git/info/exclude"] } }
+```
+
+- 每个值是一个 **vault 相对路径**；装载 vault 时逐个读取，按 gitignore 语义编译后与内置规则拼进同一份规则表（§2.1）。
+- Rust 侧形状：`AppConfig.vault: VaultConfig`（`#[serde(default)]`）+ `VaultConfig { rule_files: Vec<String> }`，缺省值即上面两条；缺节 / 缺键 / 配置文件不存在 ⇒ 用默认值（`config::load_from` 的既有形状）。
+
+**语义细节（指令要求「你定并写明理由」）**：
+
+1. **空列表 = 没有用户规则来源**（只剩内置规则）——这正是「非 git vault 的等价行为」（没有 `.gitignore` 可守）。这里的「没有」是**彻底**的：列表里不含 `.gitignore` ⇒ 连递归途中的嵌套 `.gitignore` 也不读。
+   理由：嵌套逐层读取是 **`.gitignore` 这个来源自身的语义**（gitignore 的固有行为），不是第二个可配置来源；把「嵌套要不要读」做成独立开关，等于给 Alex 没提的第二个配置面，收益为零而解释成本翻倍。换句话说——**列表里出现 `.gitignore` = 开启整套 gitignore 语义（根级 + 嵌套）；不出现 = 完全不读 `.gitignore`**。
+2. **列表项一律按「vault 根的规则文件」解释**（模式相对 vault 根匹配）。所以把一个子目录里的 `.gitignore` 单列进来，不会让它变成「相对该子目录」的规则——嵌套 `.gitignore` 交给递归途中的语义处理，不由列表表达。这是刻意的简化：列表是「来源清单」，不是「规则作用域的声明」。
+3. **文件不存在或不是常规文件 ⇒ 静默跳过、不报错、不给 warning**。这是常态而不是异常：`.git/info/exclude` 在非 git vault 里本来就不存在。
+4. **非法项逐项忽略 + 一条人话 config warning**：非字符串 / 绝对路径 / 含 `..` / 空串都算非法（ADR 0002 §5 的配置即数据纪律：逐字段校验、非法值人话 warning、**不得导致启动失败**）。其余项照常生效；**MUST NOT** 因为一项非法而把整份配置回退默认值（那会让用户的一个笔误悄悄改掉别的设置）。**实现提示**：该字段在 `RawConfig` 那一层收成 `Vec<serde_json::Value>` 再逐项校验（与既有字段同路）——直接写成 `Vec<String>` 会让一个非法元素把整份配置打回默认。
+5. **生效时点**：与已定案口径一致——规则表在 **vault 装载时**编译一次；`config.json` 的改动同样**下次装载生效**。实现上不需要重启：`config::load()` 本来就是「按需读盘」（每次调用读文件），所以在 `prepare_vault_open` 里读一次即拿到最新值——**MUST NOT** 为这个配置项引入启动期缓存把这条口径做坏。
+6. **全局一份列表，而非 per-vault**（tower 倾向，我采纳并给出理由）：
+   - 现有 per-vault 状态一律落在**按 vault 分文件的配置目录子目录**里（`vault-registry/<id>.json`、`vault-sessions/<id>.json`、`reading-positions/<id>.json`），而 `config.json` 是**一份全局文件**。per-vault 覆盖要新增一个 per-vault 文件 + 覆盖/合并规则 + 一条前端写入通道——那是**另一个配置面**，本 change 不做（Non-goal，登记为后续候选）。
+   - 需求侧：规则**文件名**是约定（`.gitignore` / `.git/info/exclude`），实践上不随 vault 变；真要「这个 vault 别读 exclude」，本 change 给不了按 vault 区分的开关——如实记为已知边界，不作暗示。
+   - 形态上仍然自洽：**全局一份列表 + 每个 vault 各自解析**（列表项是 vault 相对路径，同一份列表在多个 vault 上各自生效）。
+
+**与既有边界的重申（不因配置项而变）**：内置规则**恒定生效**、不在配置面内、不可被用户规则的取反推翻（§2.6）；「内置 ⇒ 不可见 / 用户 ⇒ 惰性可见」的来源分类不变（§2.2）。配置项只决定**用户规则从哪些文件读**。
+
+**配置语义写在哪儿**：与它控制的行为同处一条 requirement（fs-io「全类型递归枚举」），不另立「配置表」requirement——两个 capability 各写一半会让「忽略规则的来源」出现第二个真源（REVIEW.md 第 8 条）。（对照：`log` 配置表之所以自成一条，是因为它控制的是 diagnostics 自己的能力。）
 
 ## 3. 内置规则的代价（A1 + A2）
 
@@ -315,7 +345,8 @@ ADR 0001 的原文是「全文件类型一等公民」——**一等公民的是
 - **「内置规则误伤」的真实发生率**：无法测——本 change 只保证诊断日志里能读到忽略计数（§3.3），不保证体验上可发现。
 - **惰性条目的解析降级率**：无法测（依赖用户的链接习惯）；口径已定（§4.6），后果已写进 spec。
 - **`wikilink_create` 对惰性目标可能造出重复文件**：既有行为，B 案把触发面变宽（§4.6）；本 change 不改它。
-- **规则不热生效**：改了 `.gitignore` 本会话不重编（§4.5）；可见集不变，只影响「哪些子树被主动索引」。
+- **规则不热生效**：改了 `.gitignore`（或改了 `vault.rule_files`）本会话不重编（§4.5 / §2.9）；可见集不变，只影响「哪些子树被主动索引」。
+- **`vault.rule_files` 的真机覆盖**：本 change 不新增套件的场景配置键，配置项语义由单测覆盖（真机场景 67 走默认列表）；「配置项在真机上生效」这件事**未验**。
 
 ## 9. 真机场景 67 的判据设计
 
@@ -356,7 +387,8 @@ M283 在场景 60 里实测到：套件读 AX 需要主线程空闲，而打开�
 | `src-tauri/src/fs_io.rs` `fs_scan_dir`（新） | 一层枚举 + 同源分类 + 物化登记 | §4.3 |
 | `src-tauri/src/fs_io.rs` `expand_new_dir_subtrees` / `validate_new_name` | 沿用 `IgnorePolicy`（内置规则照旧拒绝；用户规则命中的名字不拒绝） | §3.2 / spec delta |
 | `src-tauri/src/fs_io.rs` 枚举收口 | 新增`VaultScanIgnored` 忽略计数（含 `LogEventName` 白名单登记） | §3.3 |
-| `src-tauri/src/commands.rs` `prepare_vault_open` | 编译 VCS 规则、构造 `IgnorePolicy` 并交给 watch / scan / graph；scan / graph 两处打点 | §4.5 / §6.2 |
+| `src-tauri/src/commands.rs` `prepare_vault_open` | 读配置 `vault.rule_files`（缺省用默认列表）、编译用户规则、构造 `IgnorePolicy` 并交给 watch / scan / graph；scan / graph 两处打点 | §2.9 / §4.5 / §6.2 |
+| `src-tauri/src/config.rs` `AppConfig.vault` / `VaultConfig`（新） | 新增 `[vault]` 节与 `rule_files`（`#[serde(default)]` + 默认列表）；非法项逐项忽略并给人话 warning（`config_warning` 事件族），不得导致启动失败 | §2.9 |
 | `src-tauri/src/commands.rs` `vault_open_path` | 加 `#[command(async)]`；注释写明线程语义已与 `vault_open` 拉平 | §5 |
 | `src-tauri/src/commands.rs` `fs_scan_dir` command（新） | `#[command(async)]` + vault 内路径校验 + 打点 | §4.3 / §5.2 / §6.2 |
 | `src-tauri/src/commands.rs` `VaultState` | 持有当前 `IgnorePolicy`（含物化集合）；装载时重建 | §4.3 / §4.4 |
@@ -384,5 +416,6 @@ Alex 裁决 2 的「忽略项必须可见」**推翻了本仓一条既有同一�
 | 6 | 「在不在 vault 内」= 在枚举集合里（两个消费点：会话恢复的 `restorePlan`、阅读位置的 `pruneEntries`） | 集合 + 批量存在探测（`fs_paths_exist`） | **改判据**（不改用户可见语义：仍是在 vault 里的文件才恢复 / 才保留位置；新增一条只读命令） |
 | 7 | 链接 / 附件索引覆盖「vault 里的一切」 | 覆盖「主动枚举的那部分」；惰性区域解析降级（含 `wikilink_create` 的重复文件风险） | **收窄能力边界**（写入 spec 的已知边界） |
 | 8 | 忽略判定 = 名字等值（`is_ignored`）+ 一条独立的 VCS 规则路径（B 案原形态会是第二套机制） | **合并成一份规则表、一个匹配器**（内置规则也编进匹配器）；来源决定去向（内置不可见 / 用户惰性可见）；`is_ignored` 的名字等值判定退役 | **改实现结构**（消掉一种硬编码特例；语义等价由对拍测试钉住——含「同名文件也隐藏」不改判） |
+| 9 | 配置面：`config.json` 只有 `version` / `last_vault` / `editor` / `ui` / `keys` / `log`（无 vault 行为配置） | 新增 `[vault]` 节与 `rule_files`（用户规则来源清单，默认 `[".gitignore", ".git/info/exclude"]`）；内置规则**不在**配置面内 | **新增配置面**（ADR 0002 §5 配置即数据；Alex 定案第 7 条「两个都要」） |
 
 **没有变的部分（同样明确）**：vault 内路径约束（ADR 0002 §3 的安全边界）、附件大小上限、保存链路与 CAS、watch 的 debounce 与自身写盘回声判据、性能合同数字（ADR 0002 §6）、文案 deck（零新增）；**以及内置规则在语义上的等价承诺**——「任意深度 / 同名文件与目录一视同仁 / 大小写敏感 / `.lumir-` 临时文件不进树」逐条与今日一致（§2.3，由对拍测试钉住，不是口头承诺）。**本清单已于 2026-09-28 经 tower 转达 Alex 并经他确认接受**（含 `wikilink_create` 触发面变宽与惰性区域的解析降级）；下面这段回退口径保留为记录——若日后要回收，按它执行，不静默缩水。回收档位：**只保留内置规则扩集与 async 化**（回到 2840bc1 的形态，B 案另立 change），届时 spec delta 与 tasks 按提案的裁决改法一并回退。
