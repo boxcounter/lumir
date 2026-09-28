@@ -55,8 +55,8 @@
 
 ## 5. 索引与消费面口径（对应 fs-io 的确定性条款 + vault-workspace 的恢复条款）
 
-- [ ] 5.1 索引口径三条路径全覆盖（**装载 / 按需展开 / watch 增量**）：只由主动枚举的条目建出；按需展开的结果 MUST NOT 补进索引；**watch 增量也不许把惰性条目带进索引**（r2/r3 评审 P1-3）——`apply_fs_changes`（commands.rs）对 created / modified 且 `lazy` 的事件 MUST NOT `graph.upsert`，`src/main.ts` 的 `fs:entry_changed` 处理对 created 且 `lazy` 的事件 MUST NOT `attachmentPaths.push`；**deleted 方向两处都无条件移除**（幂等，且不消费 `lazy`——绕开「被删路径 stat 不到」的歧义）。
-  **验收口径**：① 单测（Rust）——含惰性目录的 vault 上 `build_graph` 的条目集与主动枚举一致，展开后仍一致；② 单测（Rust）——投递一条「用户规则命中的 md」的 created 事件后 `graph` **不含**该路径（同一条事件前后 graph 的条目集逐条相等），而树侧仍收到该事件；③ 单测（前端，`main.ts` 装配层或视觉场景桩）——同一条事件不 push 进 `attachmentPaths`、也不从里面移除别的东西；④ 反向验证：把两处 `lazy` 判定摘掉 ⇒ ②③ 必须红（先红后绿）。
+- [ ] 5.1 索引口径三条路径全覆盖（**装载 / 按需展开 / watch 增量**）：只由主动枚举的条目建出；按需展开的结果 MUST NOT 补进索引；**watch 增量也不许把惰性条目带进索引**（r2/r3 评审 P1-3）——`apply_fs_changes`（commands.rs）对 created / modified 且 `lazy` 的事件 MUST NOT `graph.upsert`，`src/main.ts` 的 `fs:entry_changed` 处理对 created / modified（即非 deleted——既有分支两者同路）且 `lazy` 的事件 MUST NOT `attachmentPaths.push`；**deleted 方向两处都无条件移除**（幂等，且不消费 `lazy`——绕开「被删路径 stat 不到」的歧义）。
+  **验收口径**：① 单测（Rust）——含惰性目录的 vault 上 `build_graph` 的条目集与主动枚举一致，展开后仍一致；② 单测（Rust）——投递一条「用户规则命中的 md」的 created 事件后 `graph` **不含**该路径（同一条事件前后 graph 的条目集逐条相等），而树侧仍收到该事件；③ 单测（前端，`main.ts` 装配层或视觉场景桩）——**created 与 modified 两条**惰性事件都不 push 进 `attachmentPaths`、也不从里面移除别的东西（modified 是 r3 评审 P2-1 指出的漏词：既有分支 `if deleted … else push` 对两者同路）；④ 反向验证：把两处 `lazy` 判定摘掉 ⇒ ②③ 必须红（先红后绿）。
 - [ ] 5.2 会话恢复的「在不在 vault 内」：`src/vault-switcher.ts` 的 **`restorePlan`**（[:145](../../../src/vault-switcher.ts#L145)）不再只看条目集——对「不在条目集里」的条目调一次**批量**存在探测（新增命令 `fs_paths_exist`，§4.11 与 fs-io 的「vault 内路径存在探测」；只 stat、不改写；一次 IPC 往返）；跳过计数仍在装载完成时给出。
   **验收口径**：单测（`tests/unit/vault-switcher.test.ts`）——条目集里没有但探测存在的路径**照常恢复**且不进跳过计数；探测失败才计跳过；探测是**一次**批量调用，MUST NOT 逐条发起（避免 N 次 IPC 往返）。
 - [ ] 5.3 写清三条已知边界（spec 已写，实现期在代码注释里给指针）：惰性区域 wikilink / 附件的解析降级；`wikilink_create` 对惰性目标可能造重复文件（本 change 不改）；规则不热生效。

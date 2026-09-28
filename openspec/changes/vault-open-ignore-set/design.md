@@ -236,7 +236,7 @@ ADR 0001 的原文是「全文件类型一等公民」——**一等公民的是
 **watch 增量路径同样适用（r2/r3 评审 P1-3）**：§4.4 的判定让「用户规则命中的条目自身」的事件**必然投递**（行的增删要实时——这是设计意图），而两处索引的增量更新原本是**无分类的全量 upsert**：
 
 - Rust 侧 `VaultState::apply_fs_changes`（[commands.rs:265](../../../src-tauri/src/commands.rs#L265)）：对每条非目录的 created / modified 事件无条件 `graph.upsert`；
-- 前端 `main.ts` 的 `fs:entry_changed` 处理（[:1651](../../../src/main.ts#L1651)）：对每条 created 文件事件无条件 `attachmentPaths.push`。
+- 前端 `main.ts` 的 `fs:entry_changed` 处理（[:1651](../../../src/main.ts#L1651)）：对每条 created / modified 文件事件无条件 `attachmentPaths.push`（既有分支是 `if deleted … else push`，两者同路）。
 
 今天这没问题，因为 `rel_string` 把被忽略的路径全滤掉了；**按来源分开之后**，惰性条目的事件会到达这两处 ⇒ 惰性条目在会话中途进索引。必然触发的例子就在 Alex 的真实 vault 里：他的 `.gitignore` 含 `HANDOFF.md`（§1 自己盘点过）⇒ 任何外部改写它都会让它进 `LinkGraph` ⇒ `[[HANDOFF]]` **本会话内可解析、重开后不可解析**——索引从「磁盘 + 规则的纯函数」退化成「事件历史的函数」，正是本条与 spec 的确定性条款禁止的。
 
@@ -257,7 +257,7 @@ ADR 0001 的原文是「全文件类型一等公民」——**一等公民的是
 |---|---|---|
 | 文件树模型（`src/tree.ts`） | 显示**全部**条目（含惰性行）；惰性目录的子孙按需拉取 | 改：展开惰性目录 → `fs_scan_dir` 合并；`lazy` 标记区分空目录 |
 | 链接索引（`VaultState::build_graph` + `apply_fs_changes`） | 只由主动枚举的条目建出；**增量路径**同样跳过惰性条目（created / modified 且 `lazy` ⇒ 不 upsert；deleted ⇒ 无条件移除） | 改代码（两行）：`apply_fs_changes` 消费 `FsChange.lazy` |
-| 附件索引（`src/main.ts` 的 `attachmentPaths`） | 同上（增量路径跳过 `lazy` 的 created；deleted 照旧移除） | 改代码（一行）：`fs:entry_changed` 处理里判 `change.lazy` |
+| 附件索引（`src/main.ts` 的 `attachmentPaths`） | 同上（增量路径跳过 `lazy` 的 created **与 modified**——既有分支是 `if deleted … else push`，两者同路；deleted 照旧移除） | 改代码（一行）：`fs:entry_changed` 处理里判 `change.lazy` |
 | 会话恢复的「在不在 vault 内」（`src/vault-switcher.ts` 的 `restorePlan`，[:145](../../../src/vault-switcher.ts#L145)） | **不再只看枚举集合**：条目集里没有的路径，补一次 vault 内存在探测（只探测会话里的那几条路径，不改写任何文件）；存在即照常恢复 | 改：新增**批量**存在探测（§4.11），跳过计数仍**由枚举 + 探测的结果在装载完成时给出**（口径不变，来源多一个） |
 | 阅读位置（`src/reading-position.ts` 的 `onVaultLoaded`，[:241-266](../../../src/reading-position.ts#L241)） | **同样不能再只看枚举集合**（r2 评审 P1-1 更正了本文早先「与集合无关 → 不改」的错误论断）：它从 `entries` 建 `available` 并对**存量键**跑 `pruneEntries`，而惰性文件（如 `.local/教程.md`）永不在枚举里 ⇒ 它们的阅读位置**每次装载都被剪掉**、随后 flush 持久化 | 改：prune 判据与会话恢复同口径——条目集里没有的键先过一次**批量存在探测**（§4.11），存在即保留；探测失败才剪 |
 | watch 事件过滤（`fs_io::rel_string`） | 见 §4.4 | 改 |
@@ -414,7 +414,7 @@ M283 在场景 60 里实测到：套件读 AX 需要主线程空闲，而打开�
 | `src-tauri/src/commands.rs` `fs_paths_exist`（新） | 批量存在探测（vault 内路径校验 + 只 stat）；供会话恢复与阅读位置共用 | §4.11 |
 | `src/bindings/**`（ts-rs 重导出） | `FsEntry` 新增 `lazy`（§4.3）与 `FsChange` 新增 `lazy`（§4.6）——**两处导出面变更** | §4.3 / §4.6 |
 | `src-tauri/src/commands.rs` `apply_fs_changes` | 增量索引跳过惰性条目：created / modified 且 `lazy` ⇒ 不 upsert；deleted ⇒ 无条件移除 | §4.6 |
-| `src/main.ts` 的 `fs:entry_changed` 处理 | 附件索引增量跳过 `lazy` 的 created 事件（deleted 照旧无条件移除） | §4.6 |
+| `src/main.ts` 的 `fs:entry_changed` 处理 | 附件索引增量跳过 `lazy` 的 created / modified 事件（deleted 照旧无条件移除） | §4.6 |
 | `src/tree.ts` | 惰性目录展开走 `fs_scan_dir` 并按路径合并；`lazy` 与「空目录」区分 | §4.7 / §7.2 |
 | `src/main.ts` | 装配新命令；附件索引口径（只由主动枚举建出）保持并写注释 | §4.6 / §4.7 |
 | `src/vault-switcher.ts` `restorePlan` | 「在不在 vault 内」补批量存在探测（条目集 + 探测），跳过计数口径不变 | §4.7 / §4.11 |

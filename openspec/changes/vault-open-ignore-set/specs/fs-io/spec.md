@@ -134,7 +134,7 @@ vault 打开期间系统 SHALL 监听文件系统变更，并经 `fs:entry_chang
 
 于是被用户规则挡住的目录**内部**的变更只在用户展开过它之后才进入事件流；被内置规则挡住的条目一个事件都不投递（与今日行为一致，代价与理由见 change 的 design §4.4）。
 
-**投递的事件 MUST NOT 让惰性条目进入索引**（本 change 新增的下游口径；依据是「索引 = 磁盘 + 规则的纯函数」，见「全类型递归枚举」）：用户规则命中的条目，其事件虽然要投递（树的可见性依赖它），但两处索引的增量更新 SHALL 消费 payload 的惰性标记并跳过它——链接索引（`apply_fs_changes`）：created / modified 且惰性 ⇒ MUST NOT upsert；附件索引（前端）：created 且惰性 ⇒ MUST NOT push。**deleted 方向 SHALL 无条件移除**（幂等：本来不在索引里就是空操作），因此该方向 MUST NOT 消费惰性标记——这也绕开了「被删路径 stat 不到、目录限定模式判不准类型」的歧义。反例（本 change 之前必然发生、之后必须不发生）：`HANDOFF.md` 被 `.gitignore` 声明，外部改写它 ⇒ 事件投递 ⇒ 它一度进入链接索引 ⇒ `[[HANDOFF]]` 在**本会话内**可解析、重开后不可解析。vault 关闭或替换时 watch SHALL 停止。
+**投递的事件 MUST NOT 让惰性条目进入索引**（本 change 新增的下游口径；依据是「索引 = 磁盘 + 规则的纯函数」，见「全类型递归枚举」）：用户规则命中的条目，其事件虽然要投递（树的可见性依赖它），但两处索引的增量更新 SHALL 消费 payload 的惰性标记并跳过它——链接索引（`apply_fs_changes`）：created / modified 且惰性 ⇒ MUST NOT upsert；附件索引（前端）：created / modified（即**非 deleted**——既有分支对这两者同路）且惰性 ⇒ MUST NOT push。**deleted 方向 SHALL 无条件移除**（幂等：本来不在索引里就是空操作），因此该方向 MUST NOT 消费惰性标记——这也绕开了「被删路径 stat 不到、目录限定模式判不准类型」的歧义。反例（本 change 之前必然发生、之后必须不发生）：`HANDOFF.md` 被 `.gitignore` 声明，外部改写它 ⇒ 事件投递 ⇒ 它一度进入链接索引 ⇒ `[[HANDOFF]]` 在**本会话内**可解析、重开后不可解析。vault 关闭或替换时 watch SHALL 停止。
 
 打开中文件被外部变更命中时，webview SHALL 处置：编辑器未 dirty 时自动重载磁盘内容并提示；dirty 时给出 sticky 提示（非 modal）让用户选择「重载（放弃我的修改）」或「保留我的版本」；外部删除时提示内容仍保留在编辑器中。**自身写盘的回声 SHALL 被识别并丢弃**：命中打开中文件的 `modified` 事件到达时，webview SHALL 先读一次磁盘 revision（与 CAS 基准同 sha256 口径）并与该会话已知的基准比对，一致即判为应用自己那次写入的 FSEvents 回声，SHALL NOT 产生任何用户可见处置（不弹「检测到外部修改」、不弹处置浮条、不动缓冲与选区）；只有 revision 不一致（磁盘确有第三方写入）才进入上句的 dirty 分流处置。该判据 MUST NOT 依赖编辑器当前是否 dirty——「保存完成」与「回声到达」之间存在一二百毫秒的窗口（M266 实测记下相隔 177ms 的一对诊断日志，见 change 的 design §4），窗口内用户若已重新键入，dirty 分流会把自己的写入误报成外部修改，而它给出的「重载（放弃我的修改）」会让用户丢掉刚敲进去的内容。判据必须与 dirty 无关，MUST NOT 只靠「保存进行中」这一个瞬时标记抑制。
 
