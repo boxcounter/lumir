@@ -7,7 +7,9 @@
 > 两处按首轮真机现场补：① `seed.bulkVault` 的两类探针参数（任务 9.1 新增）；
 > ② 树行与 vault 列表行的 AX 形态（本草案按 M245 现场记的 `AXButton (名字)`、场景 60 的行选择器写，
 > 首轮真机读一次 dump 再定稿）。
-> 本草案已按 Alex 节点 1 裁决（2026-09-28）加入**惰性类可见性**判据（第二组）。
+> 本草案已按 Alex 节点 1 裁决（2026-09-28）加入**用户规则可见性**判据（第一组的后半），
+> 并按同日的**机制合并指令**补上「用户规则的取反不能推翻内置规则」这条真机判据
+> （fixture 的 `.gitignore` 里故意写一条 `!target/`）。
 
 ```markdown
 ---
@@ -21,19 +23,21 @@ config:
 seed:
   # 仓库形状：bulkVault 生成真实形状的内容（2142 文件 / 426 目录 / 1341 md）。
   # 两类探针（任务 9.1 新增的参数）：
-  #   ignoredDirs —— 隐藏类构建产物族，落在 vault **根**下（树默认收起，探针必须落在根级才断得到）
-  #   lazyDirs    —— 惰性类：写一份 .gitignore 声明 .local/、一份 .git/info/exclude 声明 .excluded-dir/，
-  #                  并在这两个目录里各生成一个 md（`.local/tutorial.md` 内容含 marker「本地教程正文」），
-  #                  生成器要为它们写死内容（本场景第 3 步按 marker 断言正文就位）
+  #   ignoredDirs —— 内置规则构建产物族，落在 vault **根**下（树默认收起，探针必须落在根级才断得到）
+  #   lazyDirs    —— 用户规则：写一份 .gitignore（声明 .local/ **并带一条取反 `!target/`**）、
+  #                  一份 .git/info/exclude（声明 .excluded-dir/），并在这两个目录里各生成一个 md
+  #                  （`.local/tutorial.md` 的内容含 marker「本地教程正文」，生成器要写死内容——
+  #                  本场景第 3 步按 marker 断言正文就位）。
+  #                  取反那条是刻意的：真机上也要有一条「用户规则不能把内置规则命中的条目放回来」的判据。
   bulkVault:
     ignoredDirs: { target: 400, dist: 200, test-results: 150 }
-    lazyDirs: { gitignore: [".local"], exclude: [".excluded-dir"] }
+    lazyDirs: { gitignore: [".local"], gitignoreNegations: ["target/"], exclude: [".excluded-dir"] }
   registry:
     - { id: acc-a, path: $vault, lastOpenedAt: 1757000002000 }
     - { id: acc-b, path: $vault2, lastOpenedAt: 1757000001000 }
 steps:
   # ================= 第一组：两类忽略的可见性 =================
-  - name: 起始态：真内容与惰性目录在树里，隐藏类不在
+  - name: 起始态：真内容与用户规则目录在树里，内置规则命中的不在
     do: settle
     expect:
       # 正向见证（负向断言要有输入才不是空过；REVIEW.md 第 2 条）
@@ -41,13 +45,15 @@ steps:
         ax: { has: "/AXButton \\(area-00\\)/" }
       - label: 真内容的文件行在树里
         ax: { has: "note-0000.md" }
-      # 惰性类：被 .gitignore / info/exclude 挡住，但行必须可见（Alex 裁决 2026-09-28）
+      # 用户规则：被 .gitignore / info/exclude 挡住，但行必须可见（Alex 裁决 2026-09-28）
       - label: .gitignore 声明的 .local 行在树里
         ax: { has: "/AXButton \\(\\.local\\)/" }
       - label: info/exclude 声明的 .excluded-dir 行在树里
         ax: { has: "/AXButton \\(\\.excluded-dir\\)/" }
-      # 隐藏类：三行都不在（本 change 的差异面）
-      - label: target 目录不进树
+      # 内置规则：三行都不在（本 change 的差异面）
+      # 注意 fixture 的 .gitignore 里有一条 `!target/`（取反）——它同样不能把 target 放回来
+      # （机制合并指令的边界口径：内置规则先判且命中即定格）
+      - label: target 目录不进树（即使 .gitignore 写了 !target/）
         ax: { not: "/AXButton \\(target\\)/" }
       - label: dist 目录不进树
         ax: { not: "/AXButton \\(dist\\)/" }
@@ -55,15 +61,15 @@ steps:
         ax: { not: "/AXButton \\(test-results\\)/" }
       - shot: 01-起始态
 
-  - name: 展开惰性目录 .local（按需枚举一层）
+  - name: 展开用户规则命中的 .local（按需枚举一层）
     do: click
     target: { role: AXButton, name: "^\\.local$" }
     expect:
-      - label: 惰性目录展开后，其中的文件出现在树里
+      - label: 展开后，其中的文件出现在树里
         ax: { has: "tutorial.md" }
       - shot: 02-展开-local
 
-  - name: 读惰性目录里的文件（它不在索引里，但打开链路是路径直读）
+  - name: 读用户规则目录里的文件（它不在索引里，但打开链路是路径直读）
     do: open
     file: tutorial.md
     marker: "本地教程正文"
@@ -138,7 +144,7 @@ steps:
         ax: { has: "Vaults: lumir-m102-acceptance (click to see all vaults)" }
       - label: 真内容仍在树里（装载没把树弄丢）
         ax: { has: "/AXButton \\(area-00\\)/" }
-      - label: 惰性目录行仍在树里（可见性不因切换丢失）
+      - label: 用户规则命中的目录行仍在树里（可见性不因切换丢失）
         ax: { has: "/AXButton \\(\\.local\\)/" }
       - shot: 06-A-稳定态
 
@@ -151,7 +157,7 @@ steps:
         file: { path: "env:logs/*.jsonl", has: '/^.*"event":"slow_callback".*"name":"vault_open_graph".*$/' }
       - label: 前端打开段总时长读数在盘上（放大器把这一段撑到远超 250ms 阈值）
         file: { path: "env:logs/*.jsonl", has: '/^.*"event":"slow_callback".*"name":"vault_load_open".*$/' }
-      - label: 隐藏类忽略计数在盘上（本 change 新增的事件名）
+      - label: 内置规则的忽略计数在盘上（本 change 新增的事件名）
         file: { path: "env:logs/*.jsonl", has: '/^.*"event":"vault_scan_ignored".*$/' }
       - shot: 07-读数现场
 ---
@@ -160,8 +166,9 @@ steps:
 
 本场景验三组判据：
 
-1. **两类忽略的可见性**（Alex 节点 1 裁决的硬性约束）：隐藏类（`target` / `dist` / `test-results`）
-   不出现在树里；惰性类（`.gitignore` 声明的 `.local` 与 `info/exclude` 声明的 `.excluded-dir`）
+1. **两个来源的可见性**（Alex 节点 1 裁决的硬性约束）：内置规则命中的（`target` / `dist` / `test-results`）
+   不出现在树里——**且 fixture 里那条 `!target/` 取反不能把它放回来**（机制合并指令的边界口径）；
+   用户规则命中的（`.gitignore` 声明的 `.local` 与 `info/exclude` 声明的 `.excluded-dir`）
    **行在树里、可展开、可打开读到正文**。这一组必须配正向见证（真内容的行在场），否则负向断言
    可能在「树根本没渲染」的空输入上假绿（REVIEW.md 第 2 条）。
 2. **打开段不冻结界面**：切回仓库形状的 A 期间取一次快照，`AXProgressIndicator` 与界面节点都可读，
@@ -169,7 +176,7 @@ steps:
    快照只回 `element_count: 1`）——这是 M283 从场景 60 撤下的那条正观测，本 change 把打开段移出
    主线程之后它可以立起来。
 3. **读数通道还活着**：`vault_open_scan` / `vault_open_graph`（本 change 新增）、前端
-   `vault_load_open`、隐藏类忽略计数 `vault_scan_ignored` 四条都在日志里。
+   `vault_load_open`、内置规则的忽略计数 `vault_scan_ignored` 四条都在日志里。
 
 ## 覆盖边界（如实记录，别读成「已覆盖」）
 
@@ -180,10 +187,10 @@ steps:
 - **20×8MB 是测量放大器**（照抄场景 60 的口径）：它把「切回 A」的打开段撑到秒级，否则打开段在收窄
   之后只剩毫秒级、指示这类瞬时状态落不进快照。**MUST NOT** 拿本场景日志里的 `vault_load_open`
   当规模读数。
-- **惰性子树的实时性不在本条覆盖内**：未被展开过的惰性目录内部的变更**不进事件流**（设计如此，
+- **用户规则命中的子树，其实时性不在本条覆盖内**：未被展开过的惰性目录内部的变更**不进事件流**（设计如此，
   见 spec 的 watch 口径）；本条只覆盖「可见 + 可展开 + 可读」。物化后的事件投递由单测覆盖
   （tasks 4.1），真机侧不作断言（造「展开后外部改文件」的现场成本高、收益低）。
-- **索引降级不在本条覆盖内**：惰性区域的 `[[wikilink]]` 解析为 unresolved 是 spec 写明的已知边界，
+- **索引降级不在本条覆盖内**：用户规则命中的区域的 `[[wikilink]]` 解析为 unresolved 是 spec 写明的已知边界，
   本条不断言它。
 - **前端装配段不在本条覆盖内**：打开段结束后的 payload 解析与树/索引装配仍跑在 webview 主线程
   （本 change 的已知边界）；放大器是稀疏大文件、条目数不变，因此**不覆盖**「条目数极大时装配段
