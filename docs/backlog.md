@@ -3164,6 +3164,10 @@ BMP 后取采样方块主色）。细节与边界见 `scripts/acceptance/README.
   `--preview-bg` + `--text`（hot 只是字色深一档），只有 eink 需要一整块实心底。**同族残留（登记待
   裁决，本批未改）**：搜索面板的两处实心档（大小写开关「开」态、当前搜索匹配）与代码块 / frontmatter
   区的 eink 黑框仍是字面值（与 `--accent-fill` 那对 / `--border` 在这一档同值，行为未变）。
+  **（M293 已核销，2026-09-29）**：这批字面值已按收敛规则 1 归位到 `--accent-fill` 那对与
+  `--border`（三主题渲染值逐值不变，核对表见本文件末的 M293 节）；同批随 scope 扩宽一并收了
+  `src/preview/theme.ts` 侧的 frontmatter 盒 / 两个 chip 描边 / callout 左色条。仍留在字面值上的
+  只剩「面」族（`#fff` 白底四处）与 callout 类型标签的一处前景色（同节列明，未动）。
 - **r3 复现路径的验证（已跑完，结论 PASS，先红后绿都在档）**：Alex 给的路径
   （`docs/design-parity-contract/README.md`，从「另见的上一行」拖到「2026-09-06」，跨引用块与标题，
   **等 1 秒**）在**他的原文件区域**（前 20 行逐字，eink）上实测：
@@ -3209,3 +3213,81 @@ BMP 后取采样方块主色）。细节与边界见 `scripts/acceptance/README.
   选区层），其中不透明的几处预期 100% 盖住选区。
 - 门禁：gate quick 10/10、gate visual 12/12（556 passed / 1 skipped，22 处像素对比零基线 diff、
   未做 --update）；三处既有计算样式断言按新落点更新（理由就地注明；reviewer 复核确认保住原不变量）。
+
+## M293 eink 字面值归位 token（2026-09-29，Alex 裁决「改。你可以安排时就动手。」，已修）
+
+- **缘起**：M291 r3 的 review-request 登记了同族硬编码残留（搜索面板两处**实心档** = 大小写开关
+  「开」态与当前搜索匹配、代码块 / frontmatter 区的 eink 黑框），当时判「与 token 同值、行为未变，
+  不属 M291 的裁决面」。本 mission 单独一批收，依据是 `docs/specs/design-tokens-v1.md` 的
+  **收敛规则 1**（eink 的手工反白语义上属于既有 token 的 eink 值，收敛时归位、不新增色）。
+  tower 2026-09-29 按 task 2 的需要把本 mission 的 scope 扩到 `src/preview/theme.ts`（frontmatter
+  半边的唯一真源在那里）。
+- **不变量**：**归位后三主题渲染值逐值不变**——纯收敛，不是改设计。因此本批**零基线更新**：
+  若哪张既有像素基线变红，那是「值变了」的警报，不是「基线该更新」。
+- **判据两层（缺一层即假绿）**：
+  ① **值**：元素的计算色 == 归属 token 的计算值（三主题）；
+  ② **归属**：把归属 token 临时改成一个三主题都不用的探测色（`rgb(7,8,9)`），该元素的计算色
+  MUST 跟着变——**写死字面值的声明不会跟着变**。②才是「不再硬编码」的判据（REVIEW.md 第 1 条）。
+  实证（先红后绿）：修前跑 `tests/visual/scenes/m293-eink-literal-tokens.spec.ts`，eink 的 4 条用例
+  全红在 ②（读到 `rgb(0,0,0)` 纹丝不动）、① 全绿；修后 12/12 绿。
+- **归位清单（11 条规则 / 3 个文件；线宽一律不动）**：
+
+| 文件:行 | 选择器（eink 覆盖块） | 属性 | 原字面值 | 归位 token |
+|---|---|---|---|---|
+| `src/search-panel.css:108` | `:root[data-theme="eink"] .lumir-search-case.is-on` | background / color | `#000` / `#fff` | `--accent-fill` / `--accent-fill-text` |
+| `src/search-panel.css:143` | `:root[data-theme="eink"] … .cm-searchMatch-selected` | background / color | `#000` / `#fff` | 同上 |
+| `src/style.css:1051` | `:root[data-theme="eink"] .cm-lp-codeblock-scroll` | border | `1px solid #000` | `1px solid var(--border)` |
+| `src/style.css:955` | `:root[data-theme="eink"] .ft-open-btn` | border-color | `#000` | `var(--border)` |
+| `src/style.css:1456` | `:root[data-theme="eink"] .lumir-table-fs-panel` | border | `1.4px solid #000` | `1.4px solid var(--border)` |
+| `src/style.css:1512` | `:root[data-theme="eink"] .lumir-codeblock-fs-panel` | border | `1.4px solid #000` | 同上 |
+| `src/style.css:1541` | `:root[data-theme="eink"] .lumir-codeblock-fs-content` | border | `1px solid #000` | `1px solid var(--border)` |
+| `src/preview/theme.ts:198` | `:root[data-theme="eink"] & .cm-line.cm-lp-callout-line` | borderLeftColor | `#000` | `var(--border)`（与引用块 `2px` 竖线同属结构档：`theme.ts:156` 本就是 `2px solid var(--border)`） |
+| `src/preview/theme.ts:449` | `:root[data-theme="eink"] & .cm-lp-frontmatter` | border | `1px solid #000` | `1px solid var(--border)` |
+| `src/preview/theme.ts:490` | `:root[data-theme="eink"] & .cm-lp-fm-status` | border | `1px solid #000` | `1px solid var(--border)` |
+| `src/preview/theme.ts:506` | `:root[data-theme="eink"] & .cm-lp-tag` | border | `1px solid #000` | `1px solid var(--border)` |
+
+- **三主题值不变核对表**（chromium，计算色；`test-results/m293/readings-{before,after}.txt` 逐字节
+  `diff` 为空——4 组 × 3 主题共 12 条读数行，含各 token 的计算值）：
+
+| 读数面 | light | dark | eink（归位前 → 归位后） |
+|---|---|---|---|
+| `.lumir-search-case.is-on` 底 / 字 | `rgb(238,241,251)` / `rgb(58,95,205)` | `rgba(128,152,232,.15)` / `rgb(139,163,239)` | `rgb(0,0,0)` / `rgb(255,255,255)`（同值） |
+| `.cm-searchMatch-selected` 底 / 字 | `rgb(58,95,205)` / `rgb(255,255,255)` | `rgb(100,126,207)` / `rgb(255,255,255)` | `rgb(0,0,0)` / `rgb(255,255,255)`（同值） |
+| `.cm-lp-codeblock-scroll` 框 | 无框 | 无框 | `1px solid rgb(0,0,0)`（同值） |
+| `.ft-open-btn` 框 | `1px solid rgb(227,226,221)` | `1px solid rgba(255,255,255,.094)` | `1px solid rgb(0,0,0)`（同值） |
+| 两处全屏面板（`.lumir-{table,codeblock}-fs-panel`）框 | `1px solid rgb(227,226,221)` | `1px solid rgba(255,255,255,.094)` | `1px solid rgb(0,0,0)`（声明 1.4px，见下注；同值） |
+| `.lumir-codeblock-fs-content` 框 | 无框 | 无框 | `1px solid rgb(0,0,0)`（同值） |
+| `.cm-lp-frontmatter` 框 | 无框 | 无框 | `1px solid rgb(0,0,0)`（同值） |
+| `.cm-lp-fm-status` / `.cm-lp-tag` 框 | 无框 | 无框 | `1px solid rgb(0,0,0)`（同值） |
+| `.cm-line.cm-lp-callout-line` 左色条 | `2px solid rgb(58,95,205)` | `2px solid rgb(139,163,239)` | `2px solid rgb(0,0,0)`（同值） |
+
+  **注（本批新查实的平台口径）**：chromium 在 `deviceScaleFactor=1`（视觉门禁与 CI 的口径）下把
+  1.4px 边框折成整数档，`getComputedStyle` 读回 `1px` ⇒ 规则⑧的 1.4px 强调档在**视觉层没有判别力**，
+  这一层只能钉「有框 + 色 = `--border`」；该档的可辨差异要到真机（WKWebView，dsf=2）才成立。
+  已写进 `docs/specs/design-tokens-v1.md` 的字面值归位节。
+
+- **本批不动（不属裁决的两族，逐条理由）**：
+
+| 位置 | 字面值 | 不动的理由 |
+|---|---|---|
+| `src/style.css:1049` `.cm-lp-codeblock-scroll::before`（eink） | `background-color: #fff` | 属「面」族（规则⑤的**白底**半边），不是「实心强调 / 边框」；eink 下 `#fff` 与 4 个 token 同值（`--preview-bg` / `--frame` / `--content-bg` / `--agent-bg`），归位要先定语义位 |
+| `src/style.css:1542` `.lumir-codeblock-fs-content`（eink） | 同上 | 同上 |
+| `src/preview/theme.ts:198` `.cm-line.cm-lp-callout-line`（eink） | `backgroundColor: "#fff"` | 同上 |
+| `src/preview/theme.ts:449` `.cm-lp-frontmatter`（eink） | 同上 | 同上；**附加**：这一处的覆盖在本档是**冗余**的（基规则读 `--agent-bg`，eink 的 `--agent-bg` 也是 `#ffffff`）——归位到 `var(--agent-bg)` 或直接删都能值不变，两种收法都行，等裁决 |
+| `src/preview/theme.ts:202` `.cm-lp-callout-type`（eink） | `color: "#000"` | **前景色**，不是两族；且 eink 下与 `--accent` / `--ok` / `--pending` / `--danger` / `--text` 同值（五族合一），归位要先定语义位（族色还是正文色） |
+
+- **判据与证据**：
+  - 新增场景 `tests/visual/scenes/m293-eink-literal-tokens.spec.ts`（12 用例 = 4 组 × 3 主题：
+    实心强调族 / 边框族（文档内 + 两处全屏浮层）/ 边框族（打开入口）/ 边框族（内容面 frontmatter +
+    两个 chip + callout 色条）；每组都断言「值 == 归属 token」并做 token 探测归属判据）。
+  - 先红后绿：`test-results/m293/before.log`（eink 4 条红在归属判据 + light/dark 8 条绿）、
+    `after.log`（12 passed）；读数对照 `readings-{before,after}.txt`（diff 为空）。
+  - **旁证（既有断言在原值层面照绿）**：`restyle-eink.spec.ts` 的规则⑤⑥用例断言的是**硬编码 rgb
+    值**（代码块底板白 / frontmatter 白底黑框 / chip 1px 黑框），本批若不值变它们必然红——它们照绿
+    即「值不变」的第二条独立证据。
+  - 门禁：见本 mission 的 review-request（视觉全量本地跑、**零基线 diff、未做 `--update`**）。
+- **核销**：本文件 M291 节的 r3 同族残留清单（搜索面板两处实心档 + 代码块 / frontmatter 黑框）
+  核销；同批随 scope 扩宽收了 `theme.ts` 侧的 frontmatter 盒 / 两个 chip / callout 色条。
+- **留给后批的一条现场**：`docs/specs/design-tokens-v1.md` 的「字面值归位」节已把两族口径与两层判据
+  写成规则——下次再遇到 eink 硬编码，直接按「角色（实心底 / 边框）→ token」归位 + 补 token 探测
+  判据，不要按「哪个 token 恰好也是这个值」反查（eink 下 `#000` 与 5 个 token 同值，反查会选错语义位）。

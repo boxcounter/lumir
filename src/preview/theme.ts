@@ -189,7 +189,16 @@ export const livePreviewTheme = EditorView.theme({
   ".cm-lp-callout-fam-pending .cm-lp-callout-type": { color: "var(--pending)" },
   ".cm-lp-callout-fam-danger .cm-lp-callout-type": { color: "var(--danger)" },
   ".cm-lp-callout-fam-neutral .cm-lp-callout-type": { color: "var(--text-3)" },
-  [`:root[data-theme="eink"] & .cm-line.cm-lp-callout-line`]: { borderLeftColor: "#000", backgroundColor: "#fff" },
+  // eink：色条全黑（规则①——五族语义色在该档同值 `#000`，灰族否则会留在 `--text-3` 的灰上）。
+  // 色条色按 M293 归位到 `--border`（角色归位：它是这一行的**边框**；与字面值 `#000` 逐值相同，
+  // M291 r3 对触发钮的「框 → --border」是同一口径）。`backgroundColor: "#fff"` 是规则⑤的
+  // **白底**半边——不属本批裁决的「实心强调 / 边框」两族，且 `#fff` 在 eink 与四个 token 同值
+  // （`--preview-bg` / `--frame` / `--content-bg` / `--agent-bg`），归位前要先定语义位 ⇒
+  // 本批不动（登记见 docs/backlog.md 的 M293 节）。
+  [`:root[data-theme="eink"] & .cm-line.cm-lp-callout-line`]: { borderLeftColor: "var(--border)", backgroundColor: "#fff" },
+  // 类型标签的族色在 eink 全族合一后取黑字：这个 `#000` 是**前景色**，不属本批裁决的
+  // 「实心强调 / 边框」两族，且 eink 下它与 `--accent` / `--ok` / `--pending` / `--danger` /
+  // `--text` 同值——归位要先定语义位（族色还是正文色），本批不动（登记同上）。
   [`:root[data-theme="eink"] & .cm-lp-callout-type`]: { color: "#000" },
   ".cm-line.cm-lp-callout-first": { borderRadius: "0 var(--r6) 0 0", paddingTop: "var(--sp-3)" },
   // 定稿 co padding 下侧 7px（index.html:652，sp 阶梯无 7px 档，写字面值）。
@@ -434,8 +443,10 @@ export const livePreviewTheme = EditorView.theme({
     backgroundColor: "var(--agent-bg)",
   },
   // eink 规则⑤：浅底区块翻转为白底黑框（代码块那一半在 src/style.css 的
-  // .cm-lp-codeblock-scroll，同一条规则的两个落点）。
-  [`:root[data-theme="eink"] & .cm-lp-frontmatter`]: { backgroundColor: "#fff", border: "1px solid #000" },
+  // .cm-lp-codeblock-scroll，同一条规则的两个落点）。黑框按 M293 归位 `--border`（eink =
+  // `#000000`，与字面值同值、**逐值不变**）；`backgroundColor: "#fff"` 是同一规则的**白底**
+  // 半边，不属本批裁决的两族且 eink 下有四个同值 token ⇒ 本批不动（登记见 docs/backlog.md）。
+  [`:root[data-theme="eink"] & .cm-lp-frontmatter`]: { backgroundColor: "#fff", border: "1px solid var(--border)" },
   ".cm-lp-fm-table": { borderCollapse: "collapse", width: "100%" },
   // 字段名列：mono 11px（--fs-label 档）+ 提示档灰 + 定宽 `--layout-fm-key-w`（104px，
   // tokens 文档 §布局尺寸）；值列 13px（--fs-ui 档）正文色。两列字号都是绝对值 ÷ 15 的 em，
@@ -474,8 +485,9 @@ export const livePreviewTheme = EditorView.theme({
   '.cm-lp-fm-status[data-fm-status="open"], .cm-lp-fm-status[data-fm-status="active"], .cm-lp-fm-status[data-fm-status="proposed"], .cm-lp-fm-status[data-fm-status="draft"]': { color: "var(--pending)", backgroundColor: "var(--pending-tint)" },
   '.cm-lp-fm-status[data-fm-status="superseded"], .cm-lp-fm-status[data-fm-status="blocked"], .cm-lp-fm-status[data-fm-status="failed"], .cm-lp-fm-status[data-fm-status="rejected"]': { color: "var(--danger)", backgroundColor: "var(--danger-tint)" },
   // eink 规则⑥：chip 描边化（底色退场——tint 在 eink 本就是 transparent；状态语义改由文案 +
-  // 圆点承担，颜色档由 token 层的语义色全黑自然给出）。
-  [`:root[data-theme="eink"] & .cm-lp-fm-status`]: { backgroundColor: "transparent", border: "1px solid #000" },
+  // 圆点承担，颜色档由 token 层的语义色全黑自然给出）。描边色按 M293 归位 `--border`
+  // （eink = `#000000`，与字面值同值、**逐值不变**）；线宽 1px 不动。
+  [`:root[data-theme="eink"] & .cm-lp-fm-status`]: { backgroundColor: "transparent", border: "1px solid var(--border)" },
   // tags 的 tag 形态：同一套中性 chip 配方（提示档灰 + hover 底 + pill + 10px/600，
   // tokens 文档 §chip 与 §字号阶梯「10（fm 内 chip）」）。
   ".cm-lp-tag": {
@@ -489,8 +501,9 @@ export const livePreviewTheme = EditorView.theme({
     fontWeight: "600",
   },
   // eink 规则⑥的外推（M216 gap 表 §2.3 #12）：规则口径是「**全部** chip 1px 黑框、
-  // 底色退场」，与 fm status chip 同一配方的 tags chip 同规处理。
-  [`:root[data-theme="eink"] & .cm-lp-tag`]: { backgroundColor: "transparent", border: "1px solid #000" },
+  // 底色退场」，与 fm status chip 同一配方的 tags chip 同规处理。描边色按 M293 归位
+  // `--border`（与字面值同值、**逐值不变**）；线宽 1px 不动。
+  [`:root[data-theme="eink"] & .cm-lp-tag`]: { backgroundColor: "transparent", border: "1px solid var(--border)" },
   // 解析失败提示：否定语义取 --danger 文字（tokens 文档 §语义色：danger 是「驳回文字，
   // 不填充」），底用 hover 档；原文照旧完整保留在 .cm-lp-fm-raw（mono / 次级色）。
   ".cm-lp-fm-error": {
