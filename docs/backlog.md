@@ -1603,9 +1603,10 @@ M279 报告 §5 的两条副产物在列，判定为**都不随本修复收口**
 ### 门禁测量与 CI 环境（治理批遗留）
 
 - **`fs_io::tests::watch_dir_rename_delivers_full_subtree` 时序 flake（M283 r1 评审现场，2026-09-28，low，待观察）**：
-  reviewer-vault-perf-m283 独立复跑 `scripts/gate.sh quick` 时 `cargo test` 红了这一条；随后**隔离复跑该用例与
-  全量复跑 `gate quick` 均转绿**，且 M283 的 diff 不含 `src-tauri/src/fs_io.rs`（`git diff --name-only` 可核）
-  ⇒ 判定为该用例自身的时序敏感面，与 M283 无因果。
+  reviewer-vault-perf-m283 独立复跑 `scripts/gate.sh quick` 时 `cargo test` 红了这一条，红的是
+  「改回原名后 tutorial 必须进增量，批次：**`[]`**」——即整个收集窗口里**一个批次都没到**；
+  随后**隔离复跑该用例与全量复跑 `gate quick` 均转绿**，且 M283 的 diff 不含
+  `src-tauri/src/fs_io.rs`（`git diff --name-only` 可核）⇒ 判定为该用例自身的时序敏感面，与 M283 无因果。
   **形态（代码事实）**：它是真 FSEvents 流上的用例（`src-tauri/src/fs_io.rs:1353`）——固定 `sleep 700ms`
   建好目录树 → 起 watch + `seed` → 固定 `sleep 500ms` → `rename` 后 `collect_batches(&rx, 1500ms)`
   收批次，再逐条断言「改名后的新路径必须进增量」，**没有重试**。FSEvents 的合并窗口（`DEBOUNCE`）与机器
