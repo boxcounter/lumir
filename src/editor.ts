@@ -1,6 +1,6 @@
 import { Annotation, Compartment, EditorSelection, EditorState, Prec, StateEffect, Transaction, findClusterBreak } from "@codemirror/state";
 import type { Extension, SelectionRange, Text } from "@codemirror/state";
-import { EditorView, keymap, lineNumbers, highlightActiveLine, highlightActiveLineGutter } from "@codemirror/view";
+import { EditorView, drawSelection, keymap, lineNumbers, highlightActiveLine, highlightActiveLineGutter } from "@codemirror/view";
 import type { ViewUpdate } from "@codemirror/view";
 
 /** 滚动位置快照的类型（`view.scrollSnapshot()` 的产物）。CM 不导出 ScrollTarget 类型，
@@ -1614,17 +1614,26 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
       // codeBindingTheme 注释）。
       ".cm-activeLine": { backgroundColor: "var(--hover)" },
       ".cm-activeLineGutter": { backgroundColor: "var(--hover)", color: "var(--text)" },
-      ".cm-selectionBackground, ::selection": {
-        backgroundColor: "var(--sel)",
-      },
-      // 选中前景：light/dark 不写（继承 --text）；eink 黑底反白（tokens 文档 eink 规则④），
+      // 选中底色 / 选中前景（M285 起是 drawSelection 自绘层的落点，**本文件是唯一一处**）：
+      //   · `.cm-selectionBackground` 必须 `!important`：CM 的 base theme 自带一条
+      //     `.ͼ2.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground
+      //      { background: #d7d4f0 }`（实测从 `document.styleSheets` 逐条读出），它是 5 个类的
+      //     选择器；应用自己的主题规则只有 2–3 个类，特异性上必然输 ⇒ 不写 `!important` 时
+      //     选区底色会落到库默认的淡紫（实测 rgb(215,212,240)），`--sel` 被静默架空。
+      //   · `::selection` **不写** `!important`：drawSelection 的 `hideNativeSelection` 把编辑器内
+      //     原生选区的**底色**置透明（`!important` + 更细的选择器），这里有意让库赢——原生层与
+      //     自绘层同时上色会叠成两层。它的 `color` 不受影响，eink 的黑底反白靠的就是这一半。
+      ".cm-selectionBackground": { backgroundColor: "var(--sel) !important" },
+      "::selection": { backgroundColor: "var(--sel)" },
+      // 选中前景：light/dark 不写（继承 --text）；eink 是黑底反白（tokens 文档 eink 规则④）、
       // `--sel-text` 也只在该档有定义。
-      [`:root[data-theme="eink"] & .cm-selectionBackground, :root[data-theme="eink"] & ::selection`]: {
+      [`:root[data-theme="eink"] & ::selection`]: {
         backgroundColor: "var(--sel)",
         color: "var(--sel-text)",
       },
+      // 光标色：`drawSelection()` 装上后光标由 CM 自绘（`.cm-cursor`）、原生 caret 被置透明；
+      // 本条此前是「声明了没有消费者」的存量，M285 起是真的生效路径。
       ".cm-cursor, .cm-dropCursor": { borderLeftColor: "var(--text)" },
-      "&.cm-focused .cm-selectionBackground": { backgroundColor: "var(--sel)" },
     });
     // 可编辑性随会话标志装进 Compartment（editable-non-md-files）：此前硬绑
     // `mode === "md"`（M101 的只读合同），现在按**文件类**——md 与注册表文本类
@@ -1722,6 +1731,22 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
         // - 撤销史**逐会话独立**（M149）：history 是 StateField，每个 state 自带一份栈；
         //   切标签走 view.setState，栈跟着 state 走，切回来仍能撤销。
         history(),
+        // 选区自绘（M285，缺陷修复）：`drawSelection()` 让选区与光标由 CM 自己的 state 画在
+        // `.cm-selectionLayer` / `.cm-cursorLayer` 上，**不再走浏览器原生选区**。修的是这么一条
+        // 真实缺陷（M273 survey 定位，全量报告 test-results/m277/findings.md）：
+        // md 的 live preview 在 mouseup 解冻那一拍重建强调段（`**粗体**` 显露）的 DOM，WebKit 没有
+        // 把重建出来的那段文字画进选中层 ⇒ 选中跨粗体时粗体段无选中底色（复制内容却是对的，因为
+        // 复制走 CM 的 state）。chromium 层渲不出这个洞（4 路径 × 3 主题全绿），所以这条缺陷在
+        // 像素门禁下是假绿——判据落在「选区底色的几何由 CM 自己算」这条结构事实上：
+        // `tests/visual/scenes/m285-selection-layer.spec.ts`（结构层）与真机场景 64（像素层）。
+        // 装在**模式无关的基础层**（md 与 code 同一条路径）：`src/preview/theme.ts` 与
+        // `baseTheme` 里的 `.cm-selectionBackground` 规则此前是「声明了没有消费者」的存量
+        // （REVIEW.md 第 9 条），装上之后它们才是选中底色的真源；`::selection` 那条退成
+        // 原生路径的兜底（drawSelection 会把自己范围内的原生选区底色置为透明）。
+        // 副作用（须知）：光标也交给 CM 画（`.cm-cursor`，原生 caret 被置为 transparent），
+        // 与原生 caret 的形态略有差别；`src/table-fullscreen.ts` 的快照拒绝表里那两条选择器
+        // 从「纯防御」变成「真拦得住」。
+        drawSelection(),
         // 键位分发在 window 层（keys.ts），但 CM 的 DOM 观察器只为「有插件注册 keydown」的
         // 事件挂监听，并在把事件交给手柄前 forceFlush 掉尚未读入的 DOM 变更（快速输入 /
         // 输入法 / 外部注入）。这条空手柄不处理任何键，只为让 keydown 留在观察列表里：

@@ -2141,7 +2141,7 @@ M240 批次（2026-09-26）49 场景 / 47 PASS / 2 FAIL（`32-list-filter`、`43
 | 场景 | 本轮现象 | 复跑 | 归因 |
 |---|---|---|---|
 | `28` | 视口类断言（「第 1 章两行不在渲染行里」）+ `env:reading-positions/*.json` 不存在 | PASS | **判据本身不稳**：README「已知边界」已记「AXTextArea.value 会截断、`行在不在 AX 里`不是视口判据」（M281 实测），28 用的正是这条形态 ⇒ 随快照截断位置摇摆。**待修**（改判据形态），不是产品缺陷 |
-| `35` | `/AXTabGroup \(打开的文档\)/` 读到 `Open documents` | FAIL | **产品缺陷**（M284 新发现，finding `20260928-worker-fix-zh-scenarios-bug-relabel-zh-axtabgroup-en.md`：`src/shell.ts:89` 的标签段读屏名无 relabel 通道）。**本批的 zh 面把它照出来了**——若按「断言改 en」的修法，这条会被永久掩盖 |
+| `35` | `/AXTabGroup \(打开的文档\)/` 读到 `Open documents` | FAIL | **产品缺陷**（M284 新发现，finding `20260928-worker-fix-zh-scenarios-bug-relabel-zh-axtabgroup-en.md`：`src/shell.ts:89` 的标签段读屏名无 relabel 通道）。**本批的 zh 面把它照出来了**——若按「断言改 en」的修法，这条会被永久掩盖。**已修（M285，2026-09-28）**：`shell.ts` 的标签段读屏名挂进 `onRelabel`；场景 35 先红后绿，见本文件末的「M285」节 |
 | `39` | 标识块上拖拽窗口成立 → `Δ=(0,0)` | PASS | **环境**：CGEvent 拖拽落在最上层那扇窗上（跑批时前台在别的 app）。REVIEW.md 第 16 条的同类症状另见，但那需要 DOM 里存在 `mousedown`+preventDefault 的监听（本批未复核到新增） |
 | `47` | `press_key 失败：error: empty key DSL`（`keys` 里的裸 `-`）+ 级联 23 条 | FAIL | **套件注入通道已知未修**（finding `20260927-worker-impl-remove-autosave-bug-keys-kimicu-press-key-empty-key-dsl-47-52.md`；本文件 M256 节亦有登记）。建议单独派一个套件 mission |
 | `49` | 「装载指示此刻在场」（`AXProgressIndicator`）读不到 | FAIL | **M283 之后的已知窗口问题**：M283 的 finding 已证「同步 command 阻塞期间主线程不空闲、AX 读不到节点；本 change 又把恢复段压到毫秒级」，指示窗口在真机上没有可读部分（本文件「M252 装载指示立论在打开段不成立」同族）。49 的快照采样窗口因此不够；**修法是探针口径**（M283 在场景 60 已按此处置），不是产品缺陷 |
@@ -2897,3 +2897,90 @@ finding 报的「约 27 个」是拿四条中文串 grep 出来的**下限**；�
    `"上次打开的 vault 已不可用：{last}，请重新选择目录"` 是硬编码中文串、不走文案表——reverse-en 跑
    的 AX dump 里可见「中文前缀 + 英文尾巴」混排。这条**已在 change `ui-language-i18n` 的 tasks 5.5 里
    记为未勾选项**，故不另立 finding，只在这里记账。
+
+## M285（选区自绘 + 标签段读屏名，2026-09-28）
+
+两个真机缺陷一批修。分支 `feat/fix-bold-selection-drawselection-and-tab`（**核销**：M284 那句
+「场景 35 唯一稳定红」的成因，即下面 B）。
+
+### A. 选中跨粗体时粗体段没有选中底色（M273 survey 定位）
+
+**根因**（全量报告 `test-results/m277/findings.md`）：编辑器没装 CM6 的 `drawSelection()`，可见高亮
+全靠浏览器原生选区；md 的 live preview 在 `mouseup` 解冻那一拍重建强调段（`**粗体**` 显露）的 DOM，
+WebKit 没把重建出来的那段画进选中层 ⇒ 粗体段是一个「洞」（而复制内容是对的——复制走 CM 的 state）。
+
+**修法**（四个落点，后两条是实现期实测才发现必须一起做的）：
+
+| 落点 | 改动 | 为什么 |
+|---|---|---|
+| `src/editor.ts` sessionState | 装 `drawSelection()`（模式无关的基础层） | 选区与光标改由 CM 的 state 画在 `.cm-selectionLayer` / `.cm-cursorLayer` 上，绕开「原生选区的绘制 vs 装饰重建」那条同帧竞态；此前 `.cm-selectionBackground` / `.cm-cursor` 那几条规则是「声明了没有消费者」的存量（REVIEW.md 第 9 条） |
+| `src/editor.ts` baseTheme | `.cm-selectionBackground` 的底色加 `!important` | CM base theme 自带 `.ͼ2.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground { #d7d4f0 }`——**5 个类的选择器**（实测把 `document.styleSheets` 里所有含 `cm-selectionBackground` 的规则逐条读出来），应用自己的 2–3 类规则特异性上必然输；不写 `!important` 时选区会变成库默认**淡紫**（chromium 实测 `rgb(215,212,240)`），`--sel` 被静默架空。`::selection` 那条**不写** `!important`（要有意让 `hideNativeSelection` 赢，否则原生层与自绘层叠成两层）；eink 的反白靠它的 `color` 生效（`hideNativeSelection` 只写 backgroundColor） |
+| `src/preview/theme.ts` | 删掉与 baseTheme **逐字重复**的一份选中底色 / 光标声明 | 两处写入点（REVIEW.md 第 8 条）；选择底色的真源收口到 `editor.ts` 的 baseTheme（两模式共用） |
+| `src/table-fullscreen.ts`（仅注释） | 快照拒绝表那两条选择器从「纯防御」改成「真拦得住」 | M285 起这两个层真实在场；旧注释自述「实测本应用未装 drawSelection」已成错误自述 |
+
+**chromium 侧判据**（`tests/visual/scenes/m285-selection-layer.spec.ts`，6 条，结构层）：逐字符
+`.cm-selectionBackground` 覆盖 = CM 选区（5 种范围类型 × 3 主题）、显露态（源码可见、装饰已撤）
+不回退、鼠标按压窗口内与抬起后都覆盖、空选区时零覆盖层、选区外字符零覆盖；色值判据是
+`.cm-selectionBackground` 的计算样式 == `--sel`、eink 的 `::selection` 前景 == `--sel-text`。
+**它不能替代真机判据**：chromium 的像素层对这条缺陷是假绿（survey 实测 4 条交互路径 × 3 主题逐字符
+底色全绿——无头引擎在装饰重建后会把原生选区重新同步到新建的文本节点）。
+
+**真机侧判据**（场景 64）：见「先红后绿」与「M285 新增的 pixel 断言通道」。
+
+### B. 标签段读屏名不在 relabel 通道（M284 照出的产品缺陷）
+
+`src/shell.ts` 的标签段读屏名只在构造期取一次 `t("D88")`——那时配置还没到达，取值落默认档 `en`，
+且全文没有 `onRelabel` 注册 ⇒ 配置 `zh` 时读屏名永久停在 `Open documents`（M282 design §5.2 的
+不变量「承载语言相关文案的长驻元素 MUST 有一条能在运行期重跑它的写入路径」被违反）。
+修法：抽成 `applyTabStripLabel()`（**保持单一写入点**）并挂进 `onRelabel`，与 `src/toc.ts` 的指示段、
+`src/tree.ts` 的树头入口同形。判据两层：真机场景 35（`AXTabGroup (打开的文档)`）+ chromium
+`tests/visual/scenes/m282-ui-language.spec.ts` 的「标签段的读屏名跟着语言走」（zh 桩下取中文列、
+⌘⇧L 切 en 后取英文列——同一 DOM 元素上的值随语言变，证明重绘回调真的注册了）。
+
+### 先红后绿（真机，`node scripts/acceptance/run.mjs 64 35`，两轮）
+
+| 场景 | 修前（`src/` 摘掉两处修复） | 修后 |
+|---|---|---|
+| `35` | **FAIL**（1 条红）：`AXTabGroup (Open documents)` —— zh 面里唯一一处英文 | **PASS** |
+| `64` | **FAIL**（1/21 条红）：「第 1 行行尾空白 vs 选区内文字」应同色却不同（`#fdfdfd` / `#e8e8e0`，最大通道差 **29** > 容差 8） | **PASS**（21/21） |
+
+证据（git 外，均已同步到主 checkout）：`test-results/m285/pre-fix/`、`test-results/m285/post-fix/`
+（两轮的 `steps.md` / `shots/` / `ax/` 全量）；标定探针现场
+`test-results/acceptance/2026-09-28/m285-probe/{light,eink}-v3/`。
+
+**判据为什么是「行尾空白」而不是「某个洞」**：M273 的洞只在鼠标那条时序（`mouseup` 解冻 → 装饰重建）
+出现，而合成的 CGEvent 拖拽在本机不可用（见下「已知边界」）⇒ 真机判据改判**绘制来源**：跨段选区的
+**开放端**由 CM 自己的几何算出（`rectanglesForRange` 对未闭合的一侧取内容框内缘 ⇒ 整行涂到正文栏
+右缘），原生选区不涂这一块。这一条的区分度已由上面两轮实测钉住（修前 29 / 修后 ≤ 2）。
+「粗体段底色 == 选区内普通文字底色」那条在两轮里都 PASS —— 它在**这条通道上**没有区分度（键盘建立的
+选区不触发那一拍重建），它的价值是钉住缺陷的主体读数不回归；如实登记，不当作区分度证据。
+
+**顺带实测到的两处口径**（不是本批引入，登记备查）：
+
+- **eink 档的选中底色在修前不是 token 值**：原生选区在真机渲染成 `#333333`（实测），修后由 CM 画的
+  是恰好 `--sel`（`#000000`）。即本修法顺带让「选中底色 == token」在像素层成立。
+- **键盘建立的选区不进 DOM 选区（窗口非前台时）**：`⌘C` 在真机对这类选区复制不到内容（原生 ⌘C 需要
+  key window；窗口在前台时正常——两轮实测：pre-fix 轮「前台焦点：已取得」时 DOM 选区有内容、
+  post-fix 轮前台未取得时剪贴板是上一个 app 的残留）。**场景 64 因此只把剪贴板当「读数」记进证据、
+  不写断言**（`do: clipboardRead`）。真机上前台是场景级前置条件（套件 README 的「键盘场景的前台
+  纪律」），不是本批引入的行为。
+
+### M285 新增的 pixel 断言通道（真机取色的第一处通道）
+
+渲染类缺陷在真机的既有通道里**全不可见**（AX 读不到选区、文件与剪贴板只看内容），M273 的 survey 把
+这类判据落到「逐字符底色」上，而真机此前只有截图没有取色通道。本批补上：`lib/pixel.mjs` +
+`expect.pixel`（`same` / `differ` / `contrast` 三种相对关系，窗口局部坐标采样、窗口截图经 `sips` 转
+BMP 后取采样方块主色）。细节与边界见 `scripts/acceptance/README.md` 的断言表与 `pixel` 小节。
+
+### 已知边界与未覆盖
+
+- **鼠标路径那一拍（缺陷的原始触发时序）在真机没有被场景覆盖**：合成拖拽在本机不可用——三轮探针
+  里同一条 `drag` 路径先（v1）把文档截断成 `…**粗体段wo`、后（v3）在文末追加 `hao`，两次都是拼音串
+  （环境里有中文输入法在跑，合成鼠标事件触发了它的预编辑提交；真手拖拽不经这条通道）。已记进
+  套件 README 的「已知边界」。该时序的几何不变量由 chromium 的 `m259` 场景覆盖。
+- **`openspec/specs/editor-live-preview/spec.md` 的合同条款未落**：M277 报告 §6 建议新增一条不变量
+  （「选区可见范围 MUST 等于编辑器选区范围」）。本批 scope 不含 `openspec/**`，故只把结构判据落成
+  测试（`m285-selection-layer.spec.ts`），条款落点留给后续 proposal/归档批。
+- **基线未动**：装 `drawSelection` 动了编辑器的绘制层，但整套视觉回归（含 22 处整页 / 元素像素断言）
+  **一条基线都没红**——实测那些场景里没有「有选区的编辑器」形态。两条新场景（`m285-selection-layer`
+  与 m282 的那条）都是结构 / 计算属性断言，不新增整页基线。

@@ -10,6 +10,7 @@ import path from "node:path";
 import yaml from "js-yaml";
 import { findNode, windowBounds } from "./ax.mjs";
 import { copyFixture, SCENARIO_CONFIG_KEYS } from "./app.mjs";
+import { DEFAULT_MIN_DIFF, DEFAULT_PATCH, DEFAULT_TOL, colorDiff, decodeScreenshot, dominantColor, formatColor, lumaSpread } from "./pixel.mjs";
 import {
   clickNode,
   frontmostPid,
@@ -33,7 +34,7 @@ export const ACTIONS = new Set([
   "doubleClick", "drag", "focusWindow", "open", "configWrite", "restart", "record", "recordEditor", "vaultWrite",
   "vaultAppend", "vaultRm", "vaultSparse", "resizeWindow", "clipboardRead",
 ]);
-export const EXPECT_KINDS = new Set(["ax", "editor", "file", "glob", "shot", "window", "clipboard"]);
+export const EXPECT_KINDS = new Set(["ax", "editor", "file", "glob", "shot", "window", "clipboard", "pixel"]);
 
 /** 静态校验一个场景，返回问题列表（空 = 通过）。 */
 export function checkScenario(scenario) {
@@ -105,6 +106,32 @@ export function checkScenario(scenario) {
         push(`${at} expect[${j}] window 断言缺 moved/width`);
       else if (kinds[0] === "clipboard" && !["has", "not", "exact"].some((k) => exp.clipboard[k] !== undefined))
         push(`${at} expect[${j}] clipboard 断言缺 has/not/exact（写错字段名会静默变成恒真断言）`);
+      else if (kinds[0] === "pixel") {
+        // 像素断言（M285）：`same` / `differ` 各是一组采样点对，每组至少两个点；点必须有数值
+        // x/y。字段名写错 = 断言恒真（本套件最该挡的假绿形态，见 README 的「断言」表）。
+        const spec = exp.pixel;
+        const groups = [["same", spec.same], ["differ", spec.differ]];
+        if (!groups.some(([, g]) => Array.isArray(g) && g.length > 0) && !(spec.contrast ?? []).length)
+          push(`${at} expect[${j}] pixel 断言缺 same/differ/contrast（写错字段名会静默变成恒真断言）`);
+        for (const [key, group] of groups) {
+          if (group === undefined) continue;
+          if (!Array.isArray(group) || group.length === 0) push(`${at} expect[${j}] pixel.${key} 必须是非空数组`);
+          for (const [g, points] of (group ?? []).entries()) {
+            if (!Array.isArray(points) || points.length < 2)
+              push(`${at} expect[${j}] pixel.${key}[${g}] 至少两个采样点（一个点的「同色」恒真）`);
+            for (const [p, pt] of (points ?? []).entries()) {
+              if (typeof pt?.x !== "number" || typeof pt?.y !== "number")
+                push(`${at} expect[${j}] pixel.${key}[${g}][${p}] 缺数值 x/y（窗口局部点，与 click/drag 同一空间）`);
+            }
+          }
+        }
+        for (const [p, pt] of (spec.contrast ?? []).entries()) {
+          if (typeof pt?.x !== "number" || typeof pt?.y !== "number")
+            push(`${at} expect[${j}] pixel.contrast[${p}] 缺数值 x/y`);
+          // 阈值必须显式给：contrast 是**绝对阈值**断言，缺省值会让「写错的键」静默变成另一条断言。
+          if (typeof pt?.min !== "number") push(`${at} expect[${j}] pixel.contrast[${p}] 缺 min（亮度跨度的下限）`);
+        }
+      }
     }
   }
   return problems;
@@ -411,6 +438,73 @@ export async function runScenario(ctx, scenario) {
       return m.test(clip.text)
         ? fail(`${label}（期望剪贴板不含 ${m.show}，实际 ${JSON.stringify(clip.text)}）`)
         : pass(label, `剪贴板 = ${clip.text}`);
+    }
+    if (expect.pixel !== undefined) {
+      // 像素断言（M285）：在**窗口截图**上按窗口局部点取底色。通道与边界见 lib/pixel.mjs。
+      // 取不到图 / 取不到坐标口径一律 FAIL——不许在不可观测的窗口里下结论（REVIEW.md 第 2 条：
+      // 「读不到」被当成「空」时负向断言会退化成恒真）。
+      const spec = expect.pixel;
+      const ax = state.ax ?? (await readAxWithScreenshot(cu, ctx.pid));
+      state.ax = ax;
+      if (!ax.image) return fail(`${label}（取不到窗口截图，像素断言无法判定）`, "按 README「已知边界」的 KimiCU 截图通道条处理", ax);
+      const bounds = windowBounds(ax.text);
+      const shot = screenshotSize(ax.text);
+      if (!bounds || !shot) {
+        return fail(
+          `${label}（AX 快照缺 window_bounds 或截图尺寸，算不出两点之间的换算）`,
+          `window_bounds=${JSON.stringify(bounds)} / screenshot=${JSON.stringify(shot)}`,
+          ax,
+        );
+      }
+      const patch = spec.patch ?? DEFAULT_PATCH;
+      const tol = spec.tol ?? DEFAULT_TOL;
+      const minDiff = spec.min ?? DEFAULT_MIN_DIFF;
+      const img = decodeScreenshot(ax.image);
+      try {
+        // 采样点写窗口局部点，这里换算到截图像素（两个读数都来自同一份 AX 快照的 header）。
+        const sample = (pt) => {
+          const px = Math.round((pt.x * shot.w) / bounds.w);
+          const py = Math.round((pt.y * shot.h) / bounds.h);
+          const color = dominantColor(img, px, py, patch);
+          if (color === null) throw new Error(`采样点 ${pt.x},${pt.y}（截图像素 ${px},${py}）落在图外`);
+          return { pt, px, py, color, as: pt.as ?? `${pt.x},${pt.y}` };
+        };
+        const groups = [
+          ...(spec.same ?? []).map((points) => ({ key: "same", points })),
+          ...(spec.differ ?? []).map((points) => ({ key: "differ", points })),
+        ];
+        const readings = [];
+        const problems = [];
+        for (const { key, points } of groups) {
+          const samples = points.map(sample);
+          for (const s of samples) readings.push(`${key}: ${s.as} @窗口(${s.pt.x},${s.pt.y}) → ${formatColor(s.color)}`);
+          const head = samples[0];
+          for (const other of samples.slice(1)) {
+            const diff = colorDiff(head.color, other.color);
+            const pair = `${head.as} vs ${other.as}（${formatColor(head.color)} / ${formatColor(other.color)}，最大通道差 ${diff}）`;
+            if (key === "same" && diff > tol) problems.push(`应同色却不同：${pair}（容差 ${tol}）`);
+            if (key === "differ" && diff < minDiff) problems.push(`应异色却相近：${pair}（下限 ${minDiff}）`);
+          }
+        }
+        // 亮度跨度（`contrast`）：判「这一块里真有字形」（eink 的反白字色若丢了就是这一条红）。
+        for (const point of spec.contrast ?? []) {
+          const s = sample(point);
+          const spread = lumaSpread(img, s.px, s.py, patch);
+          if (spread === null) {
+            problems.push(`${s.as} @窗口(${point.x},${point.y})：采样点落在图外`);
+            continue;
+          }
+          readings.push(`contrast: ${s.as} @窗口(${point.x},${point.y}) → 亮度 ${spread.min}..${spread.max}（跨度 ${spread.spread}）`);
+          if (spread.spread < point.min) {
+            problems.push(`对比不足：${s.as} 的亮度跨度 ${spread.spread} < ${point.min}（这一块里没有可辨的字形）`);
+          }
+        }
+        const detail = `换算 ${bounds.w}pt→${shot.w}px / 方块 ${patch}px；${readings.join("；")}`;
+        if (problems.length > 0) return fail(`${label}（${problems.join("；")}）`, detail, ax);
+        return pass(label, detail);
+      } finally {
+        img.close();
+      }
     }
     if (expect.editor) {
       const spec = expect.editor;
@@ -1265,6 +1359,10 @@ function describeExpect(expect) {
   if (expect.editor) return `编辑器 ${expect.editor.has !== undefined ? `含 ${matcher(expect.editor.has).show}` : `不含 ${matcher(expect.editor.not).show}`}`;
   if (expect.file) return `文件 ${expect.file.path} ${JSON.stringify(Object.keys(expect.file).filter((k) => k !== "path" && k !== "label"))}`;
   if (expect.window) return `窗口 ${JSON.stringify(expect.window)}`;
+  if (expect.pixel) {
+    const n = (expect.pixel.same?.length ?? 0) + (expect.pixel.differ?.length ?? 0) + (expect.pixel.contrast?.length ?? 0);
+    return `像素底色（${n} 组采样点）`;
+  }
   if (expect.shot) return `截图证据 ${expect.shot}`;
   return JSON.stringify(expect).slice(0, 80);
 }
