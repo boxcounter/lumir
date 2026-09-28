@@ -442,7 +442,7 @@ test("M251：菜单作用行高亮只在菜单开着时在场，且离场后底�
   await expect(page.locator(".ft-row.is-menu-target")).toHaveCount(0);
 });
 
-test("M251：eink 档下菜单作用行同为黑底反白（可读性规则不因 hover 穿透）", async ({ page }) => {
+test("M251：eink 档下菜单作用行同为选中底色 + 选中前景（可读性不因 hover 穿透）", async ({ page }) => {
   await stubTauri(page, { ...DEMO_VAULT, root: VAULT_ROOT, config: { theme: "eink" } });
   await page.goto("/");
   await expect(page.locator("html")).toHaveAttribute("data-theme", "eink");
@@ -453,7 +453,7 @@ test("M251：eink 档下菜单作用行同为黑底反白（可读性规则不�
   const selText = (await resolveToken(page, "--sel-text")).split("|")[1];
   await expect(target).toHaveCSS("background-color", selBg);
   await expect(target).toHaveCSS("color", selText);
-  // 组件内次级元素也手工反白（行内没有颜色继承链：.ft-name / .ft-caret 各自写了字色）
+  // 组件内次级元素也取 --sel-text（行内没有颜色继承链：.ft-name / .ft-caret 各自写了字色）
   await expect(target.locator(".ft-name")).toHaveCSS("color", selText);
   await expect(target.locator(".ft-caret")).toHaveCSS("color", selText);
 });

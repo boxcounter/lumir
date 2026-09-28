@@ -486,7 +486,7 @@ export async function runScenario(ctx, scenario) {
             if (key === "differ" && diff < minDiff) problems.push(`应异色却相近：${pair}（下限 ${minDiff}）`);
           }
         }
-        // 亮度跨度（`contrast`）：判「这一块里真有字形」（eink 的反白字色若丢了就是这一条红）。
+        // 亮度跨度（`contrast`）：判「这一块里真有字形」（选中区里字色若与底色撞上，就是这一条红）。
         for (const point of spec.contrast ?? []) {
           const s = sample(point);
           const spread = lumaSpread(img, s.px, s.py, patch);

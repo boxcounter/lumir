@@ -219,7 +219,7 @@ test.describe("选区自绘：逐字符覆盖 = 编辑器选区（drawSelection�
     expect(await readDocument(page), "整条指针路径都不改文档（ADR 0003 §3）").toBe(DOC);
   });
 
-  test("三主题：选区底色取 --sel；eink 档的选中前景取 --sel-text（黑底反白不丢）", async ({ page }) => {
+  test("三主题：选区带取 --sel-band；eink 档的编辑器内原生选区不复白（M291 的口径变化）", async ({ page }) => {
     for (const theme of ["light", "dark", "eink"] as const) {
       await openDoc(page, theme);
       const [from, to] = selectionOf(SPANS[0]);
@@ -243,17 +243,35 @@ test.describe("选区自绘：逐字符覆盖 = 编辑器选区（drawSelection�
         const content = document.querySelector<HTMLElement>(".cm-content")!;
         return {
           painted: getComputedStyle(bg).backgroundColor,
+          band: resolve("var(--sel-band)").background,
           sel: resolve("var(--sel)").background,
           nativeSelection: getComputedStyle(content, "::selection").color,
-          selText: resolve("var(--sel-text)").color,
+          text: resolve("var(--text)").color,
         };
       });
-      expect(colors.painted, `${theme}：自绘的选区底色必须恰好是 --sel`).toBe(colors.sel);
+      // M291 的口径变化：编辑器选区带的真源从 `--sel` 换成 `--sel-band`（`--sel` 留给 chrome 的
+      // 选中态——树行 / 浮层当前项 / frontmatter 显露态，那里前景是显式写的）。理由是**承载面不同**：
+      // 编辑器选区画在文字之下、前景改不了，下界还要压住代码块的行区带（`--code-bg`）。
+      // 见 docs/specs/design-tokens-v1.md §编辑器选区带。
+      expect(colors.painted, `${theme}：自绘的选区带必须恰好是 --sel-band`).toBe(colors.band);
       if (theme === "eink") {
-        // 黑底靠自绘的选区底色，反白靠 `::selection` 的前景色——`drawSelection` 只把原生选区的
-        // **底色**置透明（`hideNativeSelection` 只写 backgroundColor），字色仍由 `::selection` 给。
-        // 这条断的就是「反白没随着换绘制通道一起丢」。
-        expect(colors.nativeSelection, "eink：选中文字的前景色必须是 --sel-text（黑底反白）").toBe(colors.selText);
+        // **eink 例外（M291）**：这一档的明度带同时服务 chrome 与编辑器（`--sel` 也已按规则④
+        // 改成明度带），两个 token 同值是设计结果，不是漏改。
+        expect(colors.band === colors.sel, "eink：--sel-band 与 --sel 同值（明度带同时服务两侧）").toBe(true);
+      } else {
+        expect(
+          colors.band === colors.sel,
+          `${theme}：--sel-band MUST NOT 与 --sel 同值（编辑器带还要压住 --code-bg，下界比 chrome 的选中档重）`,
+        ).toBe(false);
+      }
+      if (theme === "eink") {
+        // M291 的另一处口径变化（原断言在这里读 `--sel-text`）：eink 的「黑底反白」在编辑器里
+        // **只有一半成立**——`::selection { color }` 盖不过语法着色 span 的显式色（`.cm-lp-tok-*`
+        // 是 `#000`/`#6e6e6e`），于是选中区里被着色的一段仍是黑字压黑底（真机读数：着色处亮度跨度 0、
+        // 未着色处 224）。带改成明度带（`--sel-band` = `#b9b9b9`）后，编辑器内原生选区的字色 MUST
+        // 复位成 `--text`——**这条断的就是「复位没随着换带一起落地」**；`--sel-text` 仍服务 chrome 侧
+        // 的显式反白（见 src/style.css 与 tests/visual/scenes/restyle-eink.spec.ts 的规则④断言）。
+        expect(colors.nativeSelection, "eink：编辑器内原生选区的字色必须复位成 --text（不是 --sel-text）").toBe(colors.text);
       }
     }
   });

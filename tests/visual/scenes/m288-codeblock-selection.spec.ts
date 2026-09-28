@@ -29,7 +29,7 @@ import { decodeScreenshot, dominantColor, colorDiff, formatColor, lumaSpread } f
 //   · dark 的 `--sel` 半透明（white .075）⇒ 合成色本来就随表面变，绝对判据不成立；改用相对判据
 //     「选中处 MUST 与同块未选中处可辨（≥ MIN）」。**如实登记：dark 这条修前也成立（14）**，
 //     它不是区分度判据而是回归守卫（防止块底色被改回不透明、或选区层被压到块底色之下）。
-//   · eink 另有反白语义判据（黑底 + 仍有可辨字形），与 M285 场景 64 的 eink 条同口径。
+//   · eink 另有字形语义判据（M291 起是明度带 + 黑字：带内仍须有可辨字形），与 M285 场景 64 的 eink 条同口径。
 //
 // **为什么判据落像素层**：AX 读不到选区（acceptance README 的「光标/选区不可断言」）；而结构层
 // 对本条缺陷**无区分度**——`.cm-selectionBackground` 的几何覆盖修前也是对的（矩形在、字符也在
@@ -93,7 +93,7 @@ interface Reading {
   plainSelected: { r: number; g: number; b: number } | null;
   /** 块外正文**未被选中**处的底色。 */
   plainUnselected: { r: number; g: number; b: number } | null;
-  /** 选中处的亮度跨度（eink 反白字形的唯一可判读数）。 */
+  /** 选中处的亮度跨度（eink 带内字形的可判读数）。 */
   spread: number | null;
   selLayerZ: string;
   lineBg: string;
@@ -211,8 +211,13 @@ test.describe("M288：代码块底色盖不住选区（不变量）", () => {
         if (theme === "dark") assertDiffersFromSurface(r, name);
         else assertSameAsPlain(r, name);
         if (theme === "eink") {
-          expect(r.codeSelected!.r + r.codeSelected!.g + r.codeSelected!.b, `${name}：eink 的块内选中处必须是黑底（--sel）`).toBeLessThan(60);
-          expect(r.spread ?? 0, `${name}：eink 的块内选中处仍有可辨字形（黑底白字，反白没丢）`).toBeGreaterThanOrEqual(60);
+          // **口径变化（M291）**：eink 的选区带不再是纯黑——规则④ 的「黑底反白」整条退场
+          // （编辑器侧的反白够不到被装饰重建的文字、chrome 侧全靠 `:not(:hover)` 兜底，
+          // 见 docs/specs/design-tokens-v1.md §选区族）。本档的签名改为「明度带 + 黑字」：
+          // 带 MUST 不是近黑，带内的字形 MUST 仍有可辨的亮度跨度（这条阈值不变）。
+          // 原断言读的是 v1 的反白形态（黑底 sum < 60 + 白字跨度），在本档已不成立。
+          expect(r.codeSelected!.r, `${name}：eink 的块内选中处是明度带（--sel-band），不再是纯黑`).toBeGreaterThan(120);
+          expect(r.spread ?? 0, `${name}：eink 的块内选中处仍有可辨字形（黑字压明度带，反白不再参与）`).toBeGreaterThanOrEqual(60);
         }
       }
     }

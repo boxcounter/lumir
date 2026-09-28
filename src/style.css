@@ -23,6 +23,9 @@
   --text-2: #6e6c61;
   --text-3: #a9a79b;
   --sel: #e8e7e1;
+  /* 编辑器选区带（v1.3，M291）：画在**文字之下**的填充，下界由 `--code-bg` 决定
+     （见 docs/specs/design-tokens-v1.md §编辑器选区带）。 */
+  --sel-band: #c6c5bf;
   --hover: rgba(0, 0, 0, 0.038);
   --accent: #3a5fcd;
   --accent-fill: #3a5fcd;
@@ -58,6 +61,11 @@
   --text-2: #9b9a91;
   --text-3: #62615b;
   --sel: rgba(255, 255, 255, 0.075);
+  /* 编辑器选区带：深色档语汇是半透明白（--border .095 / --hover .05 / --code-bg .05），选区取这一族
+     里**满足两条判据的最小档**——取值上界由「与承载面可辨（≥40）」定，再往下取会同时压掉暗档文字
+     （`--tk-c` 的灰与带同量级，见 tokens 文档 §编辑器选区带的代价登记）。半透明 ⇒ 合成色随承载面变，
+     本档的判据是「与未选中处可辨」而不是「两处逐值相等」。 */
+  --sel-band: rgba(255, 255, 255, 0.22);
   --hover: rgba(255, 255, 255, 0.05);
   --accent: #8ba3ef;
   --accent-fill: #647ecf;
@@ -84,8 +92,15 @@
 }
 /* eink = 系统性降级档，不是「第三套色板」：色彩全退场（--accent 与全部语义色 = #000、
    全部 -tint = transparent）、层次改由字重 / 明度 / 线宽承担（tokens 文档 §eink 规则）。
-   `--sel-text` 只有本档定义（light/dark 的选中前景 = --text，见对照表的「—」），
-   因此下游只允许在 eink 覆盖块里读它。 */
+   选区族在 M291 整体重定（规则④ 收窄，见 tokens 文档 §编辑器选区带 与 §eink 规则④）：
+   `--sel` 从纯黑改**明度带** `#b9b9b9`、`--sel-text` 从白改**黑字**——「黑底反白」整条退场，
+   因为反白的两条实现路径都不可靠：编辑器侧靠原生选区的 `::selection { color }`（装饰重建后
+   WKWebView 不把重建出的文字画进选中层 ⇒ 显露段被吞，Alex 的引用块粗体现场）；chrome 侧靠
+   `--sel-text` + 逐表面的 `:not(:hover)` 排除条款（`--hover` 档会压过选中底色，白字压浅底
+   ＝「白字灰底」，Alex 判定不可用）。改成黑字后，任选区内文字与被压着的底色都可辨，
+   `:not(:hover)` 那批兜底条款随之删除（本文件里都留了就地说明）。
+   `--sel-text` 取 `--text` 的值（eink 两档同值）：它仍是「选中底色上的前景」这一语义位的名字，
+   下游规则照旧读它，只是值不再需要与正文色分家。 */
 :root[data-theme="eink"] {
   --frame: #ffffff;
   --agent-bg: #ffffff;
@@ -96,8 +111,12 @@
   --text: #000000;
   --text-2: #3d3d3d;
   --text-3: #6e6e6e;
-  --sel: #000000;
-  --sel-text: #ffffff;
+  --sel: #b9b9b9;
+  --sel-text: #000000;
+  /* 编辑器选区带（v1.3，M291）：规则④的「黑底反白」在编辑器不可达（选区画在文字之下、
+     前景改不了）⇒ 本档回落为**明度带**（规则②的合法手段）。取 `--border-soft` 的 eink 值，
+     零新增色；黑字压它的对比 ≈10.7:1。chrome 侧同批改为同值（见上面的族说明）。 */
+  --sel-band: #b9b9b9;
   --hover: rgba(0, 0, 0, 0.06);
   --accent: #000000;
   --accent-fill: #000000;
@@ -258,7 +277,11 @@ body {
   font-variant-numeric: tabular-nums;
   -webkit-font-smoothing: antialiased;
 }
-/* 选中前景：light/dark 不写（继承 --text），eink 是黑底反白（规则④）。 */
+/* 选中前景：light/dark 不写（继承 --text）；eink 写 `--sel-text`（M291 起该档的值 = 正文色，
+   规则④ 的「黑底反白」整条退场，见 tokens 文档 §eink 规则④——明度带 + 黑字）。这一条对
+   **编辑器内的原生选区**同样成立且够用：编辑器选区画在文字之下的那一层是 `.cm-selectionBackground`
+   （真源在 `src/editor.ts` 的 baseTheme），文字色只需是正文色即可与明度带互辨。
+   `::selection` 的规则一律住在本文件；那一层**不是同一属性**，不构成第二处写入点。 */
 ::selection {
   background: var(--accent-tint);
 }
@@ -865,9 +888,9 @@ body {
 .ft-row.is-menu-target {
   background: var(--sel);
 }
-/* eink 规则④：菜单作用行同为黑底，文字与次级元素手工反白（与 .ft-row.is-current 同一条规则）。
-   **这里不带 `:not(:hover)` 排除**——与 .is-current 的那条刻意不同：本行底色压过 `:hover`（见上），
-   底色恒为 --sel（eink 档 = 纯黑），此时若让悬停态掉回常字色就是黑底黑字、不可读。 */
+/* eink：菜单作用行的前景取 `--sel-text`（次级元素手工带上，行内没有现成的颜色继承链）。
+   M291 起 eink 的 `--sel-text` = 正文黑字、`--sel` = 明度带 ⇒ 这条只是把「选中底色上的前景」
+   说清楚，悬停组合同样可读（不必再逐表面排除 `:hover`）。 */
 :root[data-theme="eink"] .ft-row.is-menu-target,
 :root[data-theme="eink"] .ft-row.is-menu-target .ft-name,
 :root[data-theme="eink"] .ft-row.is-menu-target .ft-caret {
@@ -891,14 +914,14 @@ body {
 .ft-caret svg {
   display: block;
 }
-/* eink 规则④：选中态黑底反白，组件内次级元素手工反白（行内没有现成的颜色继承链——
+/* eink：当前行的前景取 `--sel-text`（次级元素手工带上，行内没有现成的颜色继承链——
    .ft-name / .ft-caret 各自写了 --text / --text-3）。
-   **`:hover` 必须排除**：`--hover` 档（rgba 黑 6%）压过选中底色（同一心智模型：悬停反馈压过常驻
-   选中底色，见 .cm-activeLine 与 .lumir-toc-item 的两处同形），此时底色是近白、若文字仍是
-   `--sel-text`（白）就是白底白字不可读。排除后悬停态回到常字色（黑），可读性由同一个模型保证。 */
-:root[data-theme="eink"] .ft-row.is-current:not(:hover),
-:root[data-theme="eink"] .ft-row.is-current:not(:hover) .ft-name,
-:root[data-theme="eink"] .ft-row.is-current:not(:hover) .ft-caret {
+   **M291 起不再排除 `:hover`**：`--hover` 档会压过选中底色，此前只有 `:not(:hover)` 那条排除
+   能让文字回到常字色而不落到「白字压浅底」；现在 `--sel-text` = 正文黑字，两种状态都可读，
+   兜底条款因此删除（留着的只能让人误以为它还在承担可读性）。 */
+:root[data-theme="eink"] .ft-row.is-current,
+:root[data-theme="eink"] .ft-row.is-current .ft-name,
+:root[data-theme="eink"] .ft-row.is-current .ft-caret {
   color: var(--sel-text);
 }
 .ft-empty {
@@ -1119,18 +1142,24 @@ body {
   color: var(--text);
   transition-delay: 0s;
 }
-/* eink 规则③⑤：白底实心黑框（无灰底可用的翻转口径，同 .cm-lp-codeblock-scroll）；
-   规则④：热态黑底反白（同 `.tb-btn.on` 的处理）。 */
+/* eink 规则③⑤：静止态白底黑框（无灰底可用的翻转口径，同 .cm-lp-codeblock-scroll）；
+   三个字面值（`#fff` / `#000` / `#000`）按 tokens 文档收敛规则 1 归位到既有 token——是本档
+   语义上的同一个值，不是新取向。
+   **热态 = 选中族**（`--sel` 明度带 + `--sel-text` 黑字），M291 r3 Alex 裁决：
+   此前这里是硬编码黑底白字（对比 255），而 eink 的选中族已整体改为明度带 + 黑字
+   （tokens 文档 §选区族）——热态与它同族才一致，硬编码随之退场。**light/dark 一侧没有硬编码
+   可退**（基础规则就是 `--preview-bg` + `--text`）：它们的 hot 只是字色深一档，只有 eink 需要
+   一整块实心底（其余按扭/实心档仍走 `--accent-fill` / `--accent-fill-text` 那一族，不在此处）。 */
 :root[data-theme="eink"] .lumir-block-trigger {
-  background: #fff;
-  border-color: #000;
-  color: #000;
+  background: var(--preview-bg);
+  border-color: var(--border);
+  color: var(--text);
 }
 :root[data-theme="eink"] .cm-lp-table-slot:hover .lumir-block-trigger,
 :root[data-theme="eink"] .cm-lp-codeblock-slot:hover .lumir-block-trigger,
 :root[data-theme="eink"] .lumir-block-trigger:focus-visible {
-  background: #000;
-  color: #fff;
+  background: var(--sel);
+  color: var(--sel-text);
 }
 
 /* 代码块动作钮的坐标系统（M277，BlockWrapper rank 20 = 最外）：与 .cm-lp-table-slot 同机制，
@@ -1601,7 +1630,8 @@ body {
 /* 当前段（定稿 .pop-row.cur，index.html:706）：常驻 --sel + 550——「我在哪个标题下」不随
    键盘游标离开而消失。与游标的共存规则（M217 worker 定并记录）：游标 is-active 用同一底色
    加 inset 1px 描边（currentColor）——两态同列时叠加可辨（底色+550+描边），分列时游标仍
-   指得出来；描边取 currentColor，eink 反白后随文字一起翻白，不需要第二份颜色规则。 */
+   指得出来；描边取 currentColor——eink 下选中前景是正文黑字（M291 起不再反白），描边随之
+   取黑，不需要第二份颜色规则。 */
 .lumir-toc-item.is-current {
   background: var(--sel);
   font-weight: var(--fw-emphasis);
@@ -1615,10 +1645,10 @@ body {
 .lumir-toc-item:hover {
   background: var(--hover);
 }
-/* eink 规则④：选中项反白（当前段与键盘游标同底色，同一条反白规则）。同样排除 `:hover`
-   （理由见 .ft-row.is-current 那处：悬停底色压过选中底色，此时文字必须回到常字色，否则白底白字）。 */
-:root[data-theme="eink"] .lumir-toc-item.is-current:not(:hover),
-:root[data-theme="eink"] .lumir-toc-item.is-active:not(:hover) {
+/* eink：选中项的前景取 `--sel-text`（当前段与键盘游标同底色，同一条规则）。
+   M291 起不再排除 `:hover`（理由同 .ft-row.is-current：黑字下两种状态都可读）。 */
+:root[data-theme="eink"] .lumir-toc-item.is-current,
+:root[data-theme="eink"] .lumir-toc-item.is-active {
   color: var(--sel-text);
 }
 /* eink 规则⑧：filter 输入的聚焦强调走**线宽**档（下划线形态在 eink 无颜色可用）——
@@ -1862,8 +1892,9 @@ body {
 .vault-add-plus {
   color: var(--text-3);
 }
-/* eink 规则④：选中行（当前项与键盘游标同底色）的黑底反白要覆盖行内各自写了颜色的
-   次级元素——含 ✓ 槽位（.vault-dot，平时是 accent 色）。 */
+/* eink：选中行（当前项与键盘游标同底色）的前景要覆盖行内各自写了颜色的次级元素
+   ——含 ✓ 槽位（.vault-dot，平时是 accent 色）。M291 起 `--sel-text` = 正文黑字、
+   `--sel` = 明度带；`--hover` 压过选中底色的组合同样可读。 */
 :root[data-theme="eink"] .vault-row.is-current,
 :root[data-theme="eink"] .vault-row.is-current .vault-dot,
 :root[data-theme="eink"] .vault-row.is-current .vault-row-name,
@@ -1953,7 +1984,7 @@ body {
   margin: var(--sp-2) 0;
   border-top: 1px solid var(--border-soft);
 }
-/* eink 规则④：选中项黑底反白（菜单项没有子元素写自己的颜色，单条规则即可）。 */
+/* eink：选中项的前景取 `--sel-text`（菜单项没有子元素写自己的颜色，单条规则即可）。 */
 :root[data-theme="eink"] .ft-menu-item.is-active,
 :root[data-theme="eink"] .tab-menu-item.is-active {
   color: var(--sel-text);

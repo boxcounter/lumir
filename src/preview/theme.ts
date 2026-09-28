@@ -135,8 +135,8 @@ export const livePreviewTheme = EditorView.theme({
   // 段落间距走末行 padding（CM 无 margin 折叠模型：间距阶梯的「段落 8」落在段末行，
   // 类名由 livePreview 按「段落最后一行」加）。
   ".cm-line.cm-lp-paragraph-end": { paddingBottom: "var(--sp-4)" },
-  // frontmatter widget 被选区覆盖时的反白（显露态）：底色取 --sel；前景 light/dark 不写，
-  // eink 取 --sel-text（同选中态的降级口径）。
+  // frontmatter widget 被选区覆盖时的选中态（显露态）：底色取 --sel；前景 light/dark 不写，
+  // eink 取 --sel-text（M291 起该档的值 = 正文黑字，与选中族同一口径）。
   ".cm-lp-frontmatter.cm-lp-frontmatter-selected": { backgroundColor: "var(--sel)" },
   ".cm-lp-frontmatter.cm-lp-frontmatter-selected *": { backgroundColor: "transparent" },
   [`:root[data-theme="eink"] & .cm-lp-frontmatter.cm-lp-frontmatter-selected,

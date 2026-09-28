@@ -119,16 +119,16 @@ toast 告知「重启后将回到配置文件值」。主题指示钮与相关 c
 eink 主题 SHALL 按 tokens 文档 §eink 规则 的 9 条系统性降级（不是换一套色板）：
 ①色彩全退场（accent 与语义色 = `#000`，全部 tint = `transparent`）；②对比改由字重与明度
 承担（语法高亮 keyword 700 纯黑、comment 降灰）；③hairline 结构档实心黑、层次档保留灰；
-④选中态黑底反白，组件内次级元素（badge / chip / ghost 项）SHALL 同步手工反白；⑤浅底区块
+④选中态取**明度带 + 黑字**（M291 起「黑底反白」整条退场，见 docs/specs/design-tokens-v1.md §选区族），组件内次级元素（badge / chip / ghost 项）SHALL 同步取选中前景 `--sel-text`；⑤浅底区块
 （代码块 / frontmatter 区）翻转为白底黑框；⑥chip 描边化；⑦阴影全退场；⑧强调档改由线宽
 承担（1.2–1.6px）；⑨wikilink 从药丸降级为下划线。eink 下组件内的字面色值 SHALL 只出现在
-这套反白/降级规则里，MUST NOT 散落成各组件自造的灰。
+这套选中/降级规则里，MUST NOT 散落成各组件自造的灰。
 
 #### Scenario: eink 下信息不依赖色相
 
 - **WHEN** 以 eink 主题打开含代码块、frontmatter、wikilink、选中树行的文档
 - **THEN** 代码注释与代码凭明度区分（灰 vs 黑）、keyword 凭字重区分（700）；fm 区与代码块
-  为白底黑框；选中树行黑底反白；wikilink 以下划线标识；全屏无任何彩色像素
+  为白底黑框；选中树行为明度带 + 黑字；wikilink 以下划线标识；全屏无任何彩色像素
 
 #### Scenario: eink 的强调档是线宽
 
@@ -167,7 +167,7 @@ macOS 标题栏 SHALL 为 overlay 形态（traffic 灯保持原生绘制，标�
 全部 chrome 表面（文件树 / 标签 / 搜索面板 / 键位面板 / 大纲浮层 / toast / vault 切换浮层）
 SHALL 改吃 token 层取值，且 MUST NOT 因此改变任何行为语义（显示判据、键位、焦点流、读屏名
 逐项不变）。文件树行 SHALL 为：行高 25px、层级缩进 `8px + 14px × 层深`、选中态底色
-`--sel`（eink 黑底反白）、hover 底色 `--hover`。hover 与过渡 SHALL 收敛为 0.1s / 0.12s 两档
+`--sel`（eink = 明度带 `#b9b9b9` + 黑字）、hover 底色 `--hover`。hover 与过渡 SHALL 收敛为 0.1s / 0.12s 两档
 （`--dur-hover` / `--dur-ui`，统一 `ease`），全仓 MUST NOT 出现第三个过渡时长；动效只有
 hover 过渡与（随 agent 特性启用的）pulse 呼吸，MUST NOT 新增入场动画或弹性曲线。
 

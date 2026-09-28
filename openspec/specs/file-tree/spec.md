@@ -8,7 +8,7 @@
 
 ### Requirement: 全类型文件树展示
 
-系统 SHALL 在 app-shell 的侧栏（宽 236px，见 ui-design-system「应用骨架布局」）挂载文件树，展示当前 vault 的全类型条目（目录可折叠，默认排序：目录在前、同缀按名称）。条目 SHALL 显示文件名与类型区分（至少区分目录 / Markdown / 图片等可预览附件 / 其他）。树的行形态 SHALL 取 design tokens：行高 25px、层级缩进 `8px + 14px × 层深`、选中态底色 `--sel`、hover 底色 `--hover`；eink 主题下选中态 SHALL 为黑底反白，行内次级元素（徽标 / ghost 项）SHALL 同步反白（eink 降级规则 ④）。树的数据来源 SHALL 为 fs-io 的枚举结果与 watch 增量事件，webview MUST NOT 直接访问文件系统（ADR 0002 §3）。
+系统 SHALL 在 app-shell 的侧栏（宽 236px，见 ui-design-system「应用骨架布局」）挂载文件树，展示当前 vault 的全类型条目（目录可折叠，默认排序：目录在前、同缀按名称）。条目 SHALL 显示文件名与类型区分（至少区分目录 / Markdown / 图片等可预览附件 / 其他）。树的行形态 SHALL 取 design tokens：行高 25px、层级缩进 `8px + 14px × 层深`、选中态底色 `--sel`、hover 底色 `--hover`；eink 主题下选中态 SHALL 为**明度带 + 黑字**（`--sel` = `#b9b9b9`、`--sel-text` = 正文色），行内次级元素（徽标 / ghost 项）SHALL 同步取 `--sel-text`。M291 起 eink 降级规则 ④ 的「黑底反白」整条退场（两条实现路径都不可靠，理由与修前/修后读数见 docs/specs/design-tokens-v1.md §选区族）。树的数据来源 SHALL 为 fs-io 的枚举结果与 watch 增量事件，webview MUST NOT 直接访问文件系统（ADR 0002 §3）。
 
 #### Scenario: 全类型混合展示
 
@@ -18,7 +18,7 @@
 #### Scenario: 行形态与层级缩进
 
 - **WHEN** 展开三层嵌套目录并选中其中一个文件
-- **THEN** 各行高 25px，缩进按 `8px + 14px × 层深` 逐级递增；选中行取选中态底色（eink 下黑底反白）
+- **THEN** 各行高 25px，缩进按 `8px + 14px × 层深` 逐级递增；选中行取选中态底色（eink 下为明度带 + 黑字）
 
 ### Requirement: watch 驱动的增量刷新
 

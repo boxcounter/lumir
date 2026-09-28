@@ -278,7 +278,7 @@ function vaultEntryLabel(vaultName: string): string {
 /** 目录 caret（定稿 direction-c/index.html:211-214、:798-820）：9×9 细线 SVG chevron，
  *  展开 = 同一 chevron 旋转 90°（`.ft-caret.is-open` 的 transform + 0.12s 过渡在 CSS 侧），
  *  不再是折叠/展开两个字形（▸/▾）的跳切。stroke 取 currentColor，颜色仍由 .ft-caret 的
- *  --text-3 与 eink 反白规则承担。 */
+ *  --text-3 与 eink 的选中态前景（--sel-text）承担。 */
 const DIR_CARET_SVG =
   '<svg width="9" height="9" viewBox="0 0 9 9" fill="none"><path d="M3 1.8L6.2 4.5L3 7.2" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>';
 

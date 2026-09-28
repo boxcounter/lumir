@@ -97,7 +97,11 @@
   letter-spacing: 0.02em;
 }
 /* 大小写开关的「开」态：唯一带底色的按钮，一眼可辨。
-   eink 下 tint 退场（规则①），改走「黑底反白」——与 .tb-btn.on / .queue-count 同一条规则④。 */
+   eink 下 tint 退场（规则①），改走「实心强调」取向：本处是**硬编码** `#000` 底 + `#fff` 字，
+   与 `--accent-fill` / `--accent-fill-text` 在这一档恰好同值（`#000` / `#ffffff`）。
+   **它不是 `--sel` 族**（M291 起 eink 的选中态是明度带 + 黑字），故不受选中族改写影响；
+   要不要把这两处字面值也按收敛规则 1 归位到 `--accent-fill` 那对 token，见 docs/backlog.md
+   的 M291 节（登记为待裁决，不在本批改）。 */
 .lumir-search-case.is-on {
   background: var(--accent-tint);
   color: var(--accent);
@@ -129,7 +133,8 @@
   color: var(--accent-fill-text);
 }
 /* eink：tint 全 transparent（规则①），高亮改由下划线承担（规则⑨同一手法）；当前匹配走
-   黑底反白（规则④）。 */
+   实心档（硬编码 `#000` 底 + `#fff` 字，与 `--accent-fill` / `--accent-fill-text` 在这一档同值；
+   独立于 `--sel` 族）。 */
 :root[data-theme="eink"] .cm-editor .cm-content .cm-searchMatch {
   background: transparent;
   text-decoration: underline;
