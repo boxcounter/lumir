@@ -242,3 +242,50 @@ test("切到有历史的 vault：按会话恢复标签列表与激活项", async
   // 有标签就不再是空态：引导层不残留
   await expect(page.locator(".editor-notice")).toBeHidden();
 });
+
+test("壳态装载在途时关掉该标签：不把已关闭的会话置为前台（M283 r1 P2-1）", async ({ page }) => {
+  // 现场：vault 会话恢复的第二步是「装载激活项的内容」，而**标签栏在第一步（建壳）就已经齐了**
+  // ——用户在读盘在途的那几毫秒里点得到那个 ×。两条装载路径都在读盘前早早绑定了会话对象，
+  // 而 `isCurrent(request)` 只挡 vault 切换（`editor.reset()`），不挡单个标签关闭
+  // （`closeTabNow` 不动 `beginSwitch` 的 serial）⇒ 读回后会把一个已脱离会话表的壳置为前台：
+  // 正文显示已关闭标签的内容、标签栏里却没有它。
+  //
+  // 这条用例是那个时序的钉子：把目标文件的读盘拖 400ms，在窗口内关掉它。
+  await stubTauri(page, {
+    ...DEMO_VAULT,
+    vaults: REGISTRY,
+    switchTo: VAULT_B_FIXTURE,
+    sessions: { [VAULT_B]: { tabs: ["inbox.md", "note.md"], active: "note.md" } },
+  });
+  await page.goto("/");
+  // 注入延迟：只拖目标文件那一次读盘（其余命令原样透传）。测试侧的注入，产品代码不含开关。
+  await page.evaluate(() => {
+    const internals = (window as unknown as {
+      __TAURI_INTERNALS__: { invoke: (cmd: string, args: Record<string, unknown>) => unknown };
+    }).__TAURI_INTERNALS__;
+    const original = internals.invoke.bind(internals);
+    internals.invoke = (cmd, args) =>
+      cmd === "fs_read_snapshot" && args?.path === "note.md"
+        ? new Promise((resolve) => setTimeout(() => void resolve(original(cmd, args)), 400))
+        : original(cmd, args);
+  });
+
+  await openSwitcher(page);
+  await page.keyboard.press("ArrowDown");
+  await page.keyboard.press("Enter");
+  // 装载窗口内：两个壳都在标签栏里（这正是缺陷可发生的条件）
+  await expect(page.locator(".tab")).toHaveCount(2);
+
+  await page.locator('.tab[data-path="note.md"] .tab-close').click();
+
+  // 固定等过延迟窗口：判据必须落在「读盘回来之后」。这里不能用自动重试的断言顶替——
+  // 它在窗口关闭前就通过，缺陷会被漏掉（去掉成员复查后本用例必须红，现场见
+  // test-results/m283/p2-1-ghost-session/）。
+  await page.waitForTimeout(800);
+
+  // 关掉的标签不回来；前台是活着的那个标签，正文也是它的
+  await expect(page.locator(".tab")).toHaveCount(1);
+  await expect(page.locator(".tab.is-active .tab-name")).toHaveText("inbox.md");
+  await expect(page.locator(".cm-content")).toContainText("第二个 vault 的收件箱");
+  await expect(page.locator(".cm-content")).not.toContainText("第二个 vault 的笔记");
+});

@@ -332,6 +332,10 @@ pub fn prepare_vault_open(
     // 事件空窗；枚举结果随后播种进 watcher 的已知路径集（修正重放的误报 Create）。
     let app_for_watch = app.clone();
     let watch_root = root.clone();
+    // watch 建流的耗时单独记一条读数（M283 的 1.2）：它落在同一段主线程里（本 command 是
+    // 同步 command，见 `vault_open_path` 的注释），而此前**从未测过**——「指示静止 +
+    // beachball」的窗口有没有它、要不要把整段移出主线程（裁决点 3）都挂在这个数上。
+    let watch_started = std::time::Instant::now();
     let watcher = fs_io::watch(&watch_root, move |changes: Vec<FsChange>| {
         // 链接索引随事件流增量更新（先于 emit：前端收到事件时索引已新）
         app_for_watch
@@ -340,6 +344,10 @@ pub fn prepare_vault_open(
         // webview 尚未就绪时 emit 失败无害：前端启动后经 vault_current 拉全量
         let _ = app_for_watch.emit("fs:entry_changed", FsEntryChangedEvent { changes });
     })?;
+    crate::logging::slow_callback(
+        "vault_open_watch",
+        &format!("{:.1}", watch_started.elapsed().as_secs_f64() * 1000.0),
+    );
     let entries = fs_io::scan_workspace(&root)?;
     watcher.seed(entries.iter().map(|e| e.path.clone()));
     let graph = VaultState::build_graph(&root, &entries);

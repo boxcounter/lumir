@@ -208,6 +208,17 @@ export interface VaultSwitchGateDeps {
   block(): VaultSwitchBlock | null;
   /** 保存**全部**可保存的脏标签；返回是否已全部闭环（false 时 MUST NOT 继续切换）。 */
   saveAll(): Promise<boolean>;
+  /** 「保存并切换」写盘段的指示窗口（M283 修的反馈缺口，对应 spec「保存并切换：SHALL 在开始
+   *  保存全部脏标签**之前**就出现指示」）。
+   *
+   *  指示的起点必须在**出口被选定的那一刻**：写盘发生在 `proceed()` 之前，而装载指示原先起于
+   *  `proceed()` 内的装载壳里——两者之间是一段零反馈（M265 survey §五-1：dirty 时用户已经选
+   *  了「保存并切换」，界面却与「什么都没发生」不可区分）。
+   *
+   *  开关经 deps 注入（装配层传装载指示的句柄；不接指示的环境传 no-op），本模块仍是可脱离 DOM
+   *  单测的纯状态机——它只调 begin/end，不认识 DOM。begin/end 在这里成对收口：写盘一结束就
+   *  撤下，紧跟着的 `proceed()` 会在同一批微任务里接管（见 saveThenRun 的注释）。 */
+  saveAllWindow: VaultLoadingIndicator;
   /** 当前 vault 的显示名（提示点名用）。 */
   currentName(): string;
   /** 拦下时的人话提示（sticky 三动作浮条；守卫提示的标识类由装配层补）。 */
@@ -251,9 +262,21 @@ export function createVaultSwitchGate(deps: VaultSwitchGateDeps): VaultSwitchGat
   async function saveThenRun(proceed: () => Promise<void> | void): Promise<void> {
     if (!(await claim())) return;
     try {
-      // 保存未闭环（冲突 / 写失败 / 无落盘基准）就不继续切换：保存链路已经给出提示与出口，
-      // 这里再切等于替用户做了他没做的决定。
-      if (!(await deps.saveAll())) return;
+      // 写盘段是用户选定这条出口之后在等的活：指示从**这里**起（M283），覆盖整个写盘过程。
+      // begin/end 在这一小段里成对收口——写盘一结束就撤下，紧接着 `proceed()` 的装载壳
+      // （`loadUserVault`）在同一批微任务里 `begin()` 接管，中间不让出浏览器渲染，因此
+      // 指示不会闪一下再亮；写盘未闭环（冲突 / 写失败 / 无落盘基准）或写盘抛错时它就此
+      // 撤下，与「不继续切换」同一条路（spec「保存未闭环时指示撤下」）。
+      deps.saveAllWindow.begin();
+      let saved: boolean;
+      try {
+        // 保存未闭环就不继续切换：保存链路已经给出提示与出口，这里再切等于替用户做了
+        // 他没做的决定。
+        saved = await deps.saveAll();
+      } finally {
+        deps.saveAllWindow.end();
+      }
+      if (!saved) return;
       await proceed();
     } catch (e) {
       deps.fail(errorText(e));
@@ -381,15 +404,27 @@ export interface VaultSessionStoreDeps {
   /** 读 / 写某 vault 的标签会话（装配层给 ipc 封装）。 */
   getSession(vaultId: string): Promise<VaultSession | null>;
   putSession(vaultId: string, tabs: string[], active: string | null): Promise<void>;
-  /** 按**固定标签**意图打开一个文件；返回是否成功。失败不落编辑器覆盖层（恢复是逐标签的
-   *  批量动作，单个文件的失败不该把正文换成错误提示）。 */
+  /** 为会话里的一个条目**建壳**（M283，change vault-switch-restore-perf 的 3.1/3.2）：同步、
+   *  当帧，产出「有路径、内容未装载」的标签。返回是否建成——不可打开的文件类（image/binary）
+   *  返回 false，由调用方计入跳过数（与它此前走 `openPinned` 必然失败同口径，行为不变）。
+   *
+   *  这是「标签的存在」与「文档内容的装载」拆成两步的落点：建壳是同步的，所以标签栏、
+   *  顺序、激活项与会话快照在装载完成的那一帧就是完整列表所应有的样子，**等待不再随标签数
+   *  增长**（恢复段的成本从 N 次内容装载降为 1 次）。 */
+  createShell(path: string): boolean;
+  /** 装载某个条目的**文档内容**并激活它（走既有打开链路 `openFile`）；返回是否成功。
+   *  M283 起只对「存储的激活项」与它失败时的退化候选调用，其余标签留到首次成为前台。 */
   openPinned(path: string): Promise<boolean>;
-  /** 激活某个已打开的标签（恢复存储的激活项）。 */
+  /** 激活某个已打开的标签（恢复存储的激活项，或内容装载时已激活）。 */
   activate(path: string): void;
   /** 恢复结束、一个标签都没恢复出来：空 vault 首入态。 */
   onEmptyVault(): void;
   /** 一条提示（恢复跳过的计数提示）。 */
   toast(text: string): void;
+  /** 建壳完成、内容装载开始前的一拍（M283）：装配层据此把标签栏刷成完整列表——壳已经在编辑器
+   *  的会话表里，但「渲染」是下一个同步点的事，不刷的话标签栏要等到激活项的内容装载完才齐，
+   *  spec 的「装载完成的那一帧标签栏就是完整的」就落不到画面上。无 DOM 的实现传 no-op。 */
+  shellsBuilt(): void;
   /** 会话读写失败的人话提示（只降级，不拦停动作）。 */
   warn(text: string): void;
 }
@@ -400,8 +435,10 @@ export interface VaultSessionStore {
   /** 把待写内容立刻落盘（切换前 / 退出前）。没有待写内容也会写一份当前快照——退出路径上
    *  没有第二次机会，多写一次几百字节比漏一次便宜。 */
   flush(): Promise<void>;
-  /** 当前 vault 装载完成：登记当前项（写盘的键）并按会话恢复标签列表。
-   *  返回的 Promise 在恢复结束后 resolve（测试与「恢复完成」这类观察点要用）。 */
+  /** 当前 vault 装载完成：登记当前项（写盘的键），按会话**先建壳、再装载激活项的正文**
+   *  （M283 的 3.2：标签栏当帧齐，内容按需）。
+   *  返回的 Promise 在「壳建齐 + 激活项内容装载完 + 跳过计数给出」那一刻 resolve（测试与
+   *  「装载完成」这类观察点要用它——它也决定装载指示什么时候退场）。 */
   onVaultLoaded(vaultId: string, entries: readonly FsEntry[]): Promise<void>;
 }
 
@@ -412,7 +449,7 @@ export function createVaultSessionStore(deps: VaultSessionStoreDeps): VaultSessi
   /** 待写内容与防抖定时器。 */
   let pending: SessionSnapshot | null = null;
   let timer: ReturnType<typeof setTimeout> | null = null;
-  /** 恢复世代：每次装载自增。逐标签装载是异步的，用户可能在恢复途中切走——旧 vault 的
+  /** 恢复世代：每次装载自增。建壳之后的**内容装载**是异步的，用户可能在恢复途中切走——旧 vault 的
    *  标签绝不许落到新 vault 的编辑器里，因此每一步都复查世代（M156 的让位规则同族：
    *  被让位的那次恢复整体丢弃，而不是只丢一半）。 */
   let restoreGen = 0;
@@ -449,25 +486,57 @@ export function createVaultSessionStore(deps: VaultSessionStoreDeps): VaultSessi
       entries.filter((entry) => entry.kind === "file").map((entry) => entry.path),
     );
     const plan = restorePlan(session, available);
-    const opened: string[] = [];
-    // 一律用**固定标签**意图逐个打开：预览语义会就地顶掉前一个标签，逐个下来只剩最后一个
-    // （design §4.1 的推导，已写进 spec）。
+
+    // 第一步（同步、当帧）：按存储顺序建壳。标签的存在 / 顺序 / 路径 / 激活项与会话快照在
+    // 这一刻就位——「所有标签一次回来」这条外部契约因此与内容装载的耗时脱钩（M283 的 3.2；
+    // 纯惰性案会在这里丢掉标签列表，进而把会话文件写成 1 条，见 design §3.1，已否决）。
+    // 建不成壳的（不可打开的文件类）计入跳过数：与它此前必然装载失败同口径。
+    const shells: string[] = [];
     for (const path of plan.open) {
-      if (gen !== restoreGen) return;
-      if (await deps.openPinned(path)) opened.push(path);
+      if (deps.createShell(path)) shells.push(path);
     }
-    if (gen !== restoreGen) return;
-    // 一次计数提示：不在 vault 里的条目 + 在 vault 里却打不开的条目（MUST NOT 逐个报错）。
-    const skipped = plan.skipped + (plan.open.length - opened.length);
-    if (skipped > 0) deps.toast(skippedText(skipped));
-    if (opened.length === 0) {
-      // 全部不可用（或本来就没有历史）：空 vault 首入态——标签栏隐藏（没有标签自然隐藏）
-      // + 正文一句引导，不伪造内容。
+    if (plan.open.length === 0) {
+      // 全部条目都不在 vault 内（或本来就没有历史）：空 vault 首入态——不建任何壳，
+      // 标签栏因此隐藏（MUST NOT 伪造内容）。
+      if (plan.skipped > 0) deps.toast(skippedText(plan.skipped));
       deps.onEmptyVault();
       return;
     }
-    const active = plan.active !== null && opened.includes(plan.active) ? plan.active : opened[0];
-    deps.activate(active);
+    // 建壳完成的一拍：装配层把标签栏刷成完整列表（这一刻的 HTML 就是终态所应有的样子）。
+    deps.shellsBuilt();
+
+    // 第二步：装载**文档内容**。存储的激活项当场装载；它不可读时按存储顺序退化为下一个能读的
+    // （「激活项不可用 → 退化为第一个可打开的标签」，spec 的原句）。其余标签的内容留到它们
+    // 首次成为前台（M283 的 3.5：`openFile` 里那条既有链路会各自恢复阅读位置）。
+    const order =
+      plan.active === null
+        ? shells
+        : [plan.active, ...shells.filter((path) => path !== plan.active)];
+    let loaded: string | null = null;
+    let failed = 0;
+    for (const path of order) {
+      if (gen !== restoreGen) return;
+      if (await deps.openPinned(path)) {
+        loaded = path;
+        break;
+      }
+      failed += 1;
+    }
+    if (gen !== restoreGen) return;
+    // 一次计数提示：不在 vault 的条目 + 建不成壳的 + 内容装载失败过的那几个（MUST NOT 逐个报错，
+    // 也 MUST NOT 因为内容推迟装载而推迟或消失）。退化循环里**失败过的每一次**都计入，
+    // 一个都没装载成功时就是全部候选（不是「全部减一」）。
+    const skipped = plan.skipped + (plan.open.length - shells.length) + failed;
+    if (skipped > 0) deps.toast(skippedText(skipped));
+    if (loaded === null) {
+      // 一个都没装载成功：标签栏里留着的壳是**合法**的会话条目（路径确实来自会话，只是内容
+      // 读不出来——例如超过读取上限的大文件）。交给装配层分两种呈现：没有有路径的会话时才是
+      // 空 vault 首入态；有标签时不说「还没有打开的文件」这句假话（其实现见 main.ts 的
+      // onEmptyVault）。用户点开某个标签时按需装载会**非静默**地再试一次并把失败上屏。
+      deps.onEmptyVault();
+      return;
+    }
+    deps.activate(loaded);
   }
 
   function sessionChanged(): void {
@@ -973,11 +1042,15 @@ class VaultSwitcher implements VaultSwitcherHandle {
 // 装载指示（M252，Alex 真机反馈 2）：标题栏右段的**无文案**转圈
 // ---------------------------------------------------------------------------
 
-/** 装载指示的读写面。`begin` / `end` 成对使用；未配对的 `end` 是 no-op。 */
+/** 装载指示的读写面。`begin` / `end` 成对使用；未配对的 `end` 是 no-op。
+ *
+ *  两个使用面（第二个是 M283 加的）：**装载窗口**（装载本身与它之后的会话恢复各算一次）
+ *  与**「保存并切换」的写盘窗口**（切换门在写盘前起、写盘后收）。两者共用同一个引用计数，
+ *  因此切换流程里「写盘 → 装载 → 恢复」三段是连续在场的一个窗口，中间不闪。 */
 export interface VaultLoadingIndicator {
-  /** 一次装载窗口开始（可叠：装载本身与它之后的会话恢复各算一次，见 `end` 的说明）。 */
+  /** 一次窗口开始（可叠：写盘、装载、会话恢复各算一次，见上面的说明）。 */
   begin(): void;
-  /** 一次装载窗口结束。没有在途窗口时是 no-op。 */
+  /** 一次窗口结束。没有在途窗口时是 no-op。 */
   end(): void;
 }
 
@@ -988,9 +1061,9 @@ export interface VaultLoadingIndicator {
  *     来源，本指示不对应其中任何一条；由此带来的可访问性缺口记在该 change 的「已知边界」）。
  *   - **常态 `hidden`**（`display:none`）：不占宽度、不影响标题栏任何既有元素的排布——空闲态
  *     的像素与基线逐像素不变（起停期间才有像素变化）。
- *   - **引用计数而非布尔**：指示覆盖「打开目标 vault + 装载后的会话恢复」两段，而恢复是逐标签
- *     异步的——用户在一次恢复途中再切一次时两段会叠，计数保证前一段结束时不会把后一段的指示
- *     一并撤下（后一段的总时长才是用户感知的等待）。
+ *   - **引用计数而非布尔**：指示覆盖「保存并切换的写盘段 + 打开目标 vault + 装载后的会话恢复」
+ *     三段（M283 起第一段也计入），而它们都在同一批微任务链上——用户在一次恢复途中再切一次时
+ *     两段会叠，计数保证前一段结束时不会把后一段的指示一并撤下（后一段的总时长才是用户感知的等待）。
  *   - 元素落在标题栏的拖拽区内，**不挂任何事件监听**（REVIEW.md 第 16 条：标题栏内元素的
  *     监听会静默打断窗口拖拽，本元素没有交互面，也就不需要监听）。 */
 export function createVaultLoadingIndicator(host: HTMLElement): VaultLoadingIndicator {

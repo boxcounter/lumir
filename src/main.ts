@@ -1,5 +1,6 @@
 import { createShell } from "./shell";
 import { createEditor } from "./editor";
+import type { EditorSession } from "./editor";
 import { applyKeyOverrides, BLOCK_SCROLL_CLASS, KEY_BINDINGS, Keymap } from "./keys";
 import type { CommandId, CommandRunner, CommandRuntime, KeyBinding, KeyOverrides } from "./keys";
 import { baseName, createFileTree, openKind, vaultAbsolutePath } from "./tree";
@@ -432,7 +433,7 @@ const tabs = createTabs({
 // 多 vault 切换器（M163，change multi-vault-workspaces 的 3.x / 4.x）：列表浮层、切换流程的
 // 请求侧、按 vault 的标签会话与装载后恢复都在 src/vault-switcher.ts。这里只装配它看不到的
 // 东西：树头部入口、当前 vault 的打开链路（dirty 前置门 + vault_open_path + 装载）、
-// 会话的 ipc、以及恢复时逐标签打开文件的那条既有链路（openFile）。
+// 会话的 ipc、以及恢复时装载内容的那条既有链路（openFile）。
 // ---------------------------------------------------------------------------
 
 /** 空 vault 首入态的引导（文案 D107）：装载完成而一个标签都没能恢复出来时，正文给一句
@@ -456,15 +457,22 @@ const VAULT_PHASE_SLOW_MS = 250;
 /** 把一段装载阶段的耗时落进诊断日志：只在超过阈值时写一条 `slow_callback`（既有事件名 +
  *  白名单字段 name/ms，不新增事件、不动 Rust 侧——与 src/toc.ts 的 code_structure_parse
  *  同一条通道）。读数落在 `<config>/lumir/logs/*.jsonl` 里 grep `vault_load` 即可，
- *  Alex 真实 vault 上的「几秒」也能因此就地量出来，不必等 agent 复现。 */
-function phaseMs(startedAt: number, name: string): void {
+ *  Alex 真实 vault 上的「几秒」也能因此就地量出来，不必等 agent 复现。
+ *
+ *  `always` 用于**本 change 动过的那一段**（恢复段，M283）：阈值口径下「变快了」会表现成
+ *  「日志里没有这一行」，与「这一段没跑」不可区分——改动的卖点因此无法被读数证明。其余段
+ *  （open / tree）沿用阈值：它们不因本 change 改变，读数用 release harness
+ *  （`src-tauri/tests/vault_open_readings.rs`）量。 */
+function phaseMs(startedAt: number, name: string, always = false): void {
   const ms = performance.now() - startedAt;
-  if (ms > VAULT_PHASE_SLOW_MS) logEvent("slow_callback", { name, ms: ms.toFixed(1) });
+  if (!always && ms <= VAULT_PHASE_SLOW_MS) return;
+  logEvent("slow_callback", { name, ms: ms.toFixed(1) });
 }
 
 /** 用户发起的装载共用一层壳：起指示 → run → 失败时立刻收（失败路径上不会有会话恢复，
  *  指示必须由这里撤下）。**成功路径的收口不在这里**——它挂在装载后的会话恢复跑完那一刻
- *  （见 applyVault 尾部）：恢复是逐标签异步的，Alex 感知到的「卡住几秒」正落在这一段，
+ *  （见 applyVault 尾部）：会话恢复（建壳 + 激活项的内容装载）是异步的，而 M283 之前 Alex
+ *  感知到的「卡住几秒」正落在「逐标签装载内容」这一段（现在只剩一次装载），
  *  指示要盖住它才算「加载完成才消失」。 */
 async function loadUserVault(run: () => Promise<void>): Promise<void> {
   vaultLoading.begin();
@@ -490,7 +498,19 @@ const showGuardPrompt = createGuardPromptPresenter({
  *  DOM 单测）。判据来自 save-controller 的 vaultSwitchBlock（M149 口径原样）。 */
 const switchGate = createVaultSwitchGate({
   block: () => save.vaultSwitchBlock(),
-  saveAll: () => save.saveAllDirty(),
+  // 「保存并切换」的写盘段：只在这里补一条读数（`vault_load_flush`，M283 的 1.1）。
+  // 干净路径不走这里，因此不会出现这条读数——「有没有写盘」与「有没有这条读数」一一对应。
+  saveAll: async () => {
+    const startedAt = performance.now();
+    try {
+      return await save.saveAllDirty();
+    } finally {
+      phaseMs(startedAt, "vault_load_flush");
+    }
+  },
+  // 写盘段的指示窗口（M283 的 2.1）：同一个引用计数与装载壳共用，因此「写盘 → 装载 → 会话
+  // 恢复」是一个连续在场的窗口（两段之间的交接见 vault-switcher.ts 的 saveThenRun）。
+  saveAllWindow: vaultLoading,
   currentName: () => vaultName,
   notify: (text, actions) => showGuardPrompt(text, actions),
   fail: (message) => toast(message),
@@ -541,17 +561,37 @@ const switcher: VaultSwitcherHandle = createVaultSwitcher({
   focusEditor: () => editor.view.focus(),
   getSession: (vaultId) => vaultSessionGet(vaultId),
   putSession: (vaultId, paths, active) => vaultSessionPut(vaultId, paths, active),
-  // 恢复时逐个打开**新标签**（M254 前叫「固定标签意图」：预览机制退场后，恢复必须让每个
-  // 文件各占一个标签，否则第二个起会把前一个顶掉，只剩最后一个），且不上屏失败覆盖层：
-  // 恢复是批量动作，单个文件的失败由计数提示承担（见 vault-switcher）。
+  // 会话恢复的第一步（M283 的 3.2）：**当帧建壳**——为每个条目建一个「有路径、内容未装载」的
+  // 标签。不可打开的文件类（image/binary）不成壳，交回 store 计入跳过数（与它此前必然装载
+  // 失败同口径，行为不变）。
+  createShell: (path) => {
+    if (openKind(path) === "binary") return false;
+    editor.createShellSession(path);
+    return true;
+  },
+  // 壳建齐的一拍把标签栏刷成完整列表（`syncActiveDocument` 是渲染标签栏的唯一落点）。
+  shellsBuilt: () => syncActiveDocument(),
+  // 装载**文档内容**（恢复时只对激活项与它的退化候选调用；其余标签留到首次成为前台）：
+  // 走既有打开链路，壳态标签落进它自己的会话（`openFile` 的壳态分支），不新建标签；
+  // `quiet` 为真时不上屏失败覆盖层——批量路径的失败由一次计数提示承担。
   // 键名 `openPinned` 由 vault-switcher 的 deps 定（它那边不在本 mission 的改动面内），
-  // 落点意图按 M254 的新口径取 "new"——每个文件新开一个标签。
+  // 落点意图按 M254 的新口径取 "new"——每个文件新开一个标签（壳态命中时不新开）。
   openPinned: (path) => openFile(path, openKind(path), "new", true),
   activate: (path) => {
     const session = editor.sessionForPath(path);
     if (session !== undefined) tabs.activateTab(session);
   },
-  onEmptyVault: () => showNotice(EMPTY_VAULT_TEXT()),
+  onEmptyVault: () =>
+    // 一个标签都没恢复出来时的落点。两种到达方式（M283 起）：
+    //   1. 会话里没有任何可用条目（或本来就没有历史）⇒ **空 vault 首入态**：标签栏本来就空
+    //      （没有会话就一个壳都不建），正文给一句 D107 的引导；
+    //   2. 壳建出来了、但激活项与全部退化候选的正文都读不出来（例如会话里只有超过读取上限的
+    //      大文件）⇒ 标签栏里确实有标签，**不说「还没有打开的文件」这句假话**，只撤下覆盖层
+    //      让标签栏自己说话（每个标签的真实状态在它被点开时由打开链路的既有提示呈现——
+    //      那时 `quiet=false`，失败会上屏）。
+    editor.sessions().some((session) => session.path !== undefined)
+      ? showEditor()
+      : showNotice(EMPTY_VAULT_TEXT()),
   warn: (text) => toast(text),
 });
 
@@ -777,6 +817,10 @@ function syncActiveDocument(): void {
   // 同步点，滚动停止后的防抖是主路径、这里是补漏——MUST NOT 只依赖定时器（切走之后没有第二次
   // 机会），也 MUST NOT 只依赖退出路径（那条路径的 invoke 是异步的，可能赶不上界面拆除）。
   void readingPositions.flush();
+  // 壳态标签（vault 会话恢复的第一步的产物）首次成为前台时装载它的内容（M283 的 3.5）。
+  // 挂在这一个同步点上：标签点击 / ⌃⇥ 轮换 / 关标签后的相邻激活 / 树里点开一个已在会话里的
+  // 文件，全部经过它——别处不必各埋一个「记得装载」的钩子。
+  ensureActiveSessionLoaded();
 }
 
 /** 装载完成后的表现层对齐（打开 / 重载共用）。
@@ -802,20 +846,35 @@ function afterLoad(): void {
 //     行为」这个保守兜底；
 //   - "new"：新开一个标签（单击 / 双击 / ⌘-点击文件树、新建文件后的自动打开、会话恢复）。
 //
-// 返回「这次打开是否成功」——只有 M163 的会话恢复读它（逐个打开、失败的计入跳过数）。
-// `quiet` 为真时**不上屏失败覆盖层**：恢复是逐标签的批量动作，单个文件的失败不该把正文
-// 换成错误提示（spec：跳过并给一次计数提示）；其余调用方沿用既有表现，不看返回值。
+// 返回「这次打开是否成功」——只有 M163 的会话恢复读它（M283 起：**只有激活项那一次**，失败时
+// 按存储顺序退化到下一个候选；其余标签的内容留到首次成为前台）。
+// `quiet` 为真时**不上屏失败覆盖层**：批量路径里单个文件的失败由一次计数提示承担
+//（spec：跳过并给一次计数提示）；其余调用方沿用既有表现，不看返回值。
 async function openFile(
   path: string,
   kind: "md" | "code" | "text" | "binary",
   intent: "new" | "current" = "current",
   quiet = false,
 ): Promise<boolean> {
+  // 壳态标签（vault 会话恢复建出来、内容还没装载，M283 的 3.1）：把内容填进**它自己**的
+  // 标签，不新建标签（标签栏点击那条路径另有触发点，见 ensureActiveSessionLoaded）。
+  const existing = editor.sessionForPath(path);
   // 唯一保留的 dirty 守卫：前台是**未命名文档**（没有路径）。它的内容没有落盘基准，
   // 就地替换等于丢弃草稿，另开标签又会让草稿失去落点——沿用 M130 的守卫与文案。
   // 有文件路径的标签之间是标签切换，不丢内容，因此不设守卫（M149 的语义变化，
   // 见 openspec change add-multi-tabs 的 proposal「语义变化」一节）。
+  //
+  // 壳态分支排在它**之后**：走这条分支的动作（树里点开一个已在会话里的文件）与「点一个已打开
+  // 的文件」是同一件事的两态，守卫口径必须一致；会话恢复那条批量路径进入时前台是装载刚复位出的
+  // 空文档（clean），守卫照常放行。
   if (editor.activeSession().path === undefined && !save.guard(t("D209"))) return false;
+  if (existing !== undefined && !existing.loaded) {
+    // 经 `withSessionLoad` 登记在途：装载里的 `tabs.activateTab` 会经同步点回调到
+    // `ensureActiveSessionLoaded`，不登记就会为同一个文件并发发起第二次装载。
+    return withSessionLoad(existing, () =>
+      loadSessionContent(() => existing, path, kind, quiet),
+    );
+  }
   // 已经打开的文件一律切到既有标签：不重复开、也不重读（非 md 只读，重读只会把用户
   // 正在看的位置顶掉）。两种意图都适用（M254 之前还有一步「双击 / ⌘-点击一个已打开的
   // 预览标签 = 把它固定住」，预览机制退场后这一步自动消失）。
@@ -824,12 +883,29 @@ async function openFile(
   // 这一步，提前 return 也绝不会把「正在打开 / 暂不支持预览」覆盖层留在编辑器上
   //（M149 实测缺陷：留下过一次，`.editor-notice` 从此盖住整块正文且不再撤下，表现为
   //  此后所有点击都被它 intercept——视觉场景 wikilink.spec.ts 就是这样红的）。
-  const existing = editor.sessionForPath(path);
   if (existing !== undefined) {
     showEditor(); // 撤下一次更早的、已被这次同步切换取代的「正在打开」覆盖层
     tabs.activateTab(existing);
     return true;
   }
+  // 新开一个标签（"new"）或就地替换前台标签（"current"）：会话在快照读成之后才落点——
+  // 读失败的请求不许留下一个多余的空标签。
+  return loadSessionContent(() => tabs.targetSessionFor(intent), path, kind, quiet);
+}
+
+/** 内容装载的共同体（M283 起被两条路径共用）：壳态标签的「填充」与新文件的「打开」是同一件事
+ *  ——读快照 → 登记落盘基准 → 落到一个会话上 → 装载事务 → 恢复阅读位置。
+ *
+ *  `resolveSession` 在**快照读成之后**才调用（调用方据此决定落在哪个会话上：壳态标签是它自己，
+ *  新打开是 `targetSessionFor`），因此读失败不会留下多余的空标签；它返回的会话必须仍在编辑器
+ *  的会话表里——`isCurrent(request)` 的复查挡的就是「读在途期间 vault 被换掉
+ *  （`editor.reset()` 清空了会话表）」那条路径。 */
+async function loadSessionContent(
+  resolveSession: () => EditorSession,
+  path: string,
+  kind: "md" | "code" | "text" | "binary",
+  quiet: boolean,
+): Promise<boolean> {
   const request = save.beginSwitch();
   if (kind === "binary") {
     if (!quiet) showNotice(t("D25", { path }));
@@ -845,7 +921,15 @@ async function openFile(
     // 出口（Cmd+S / 冲突恢复 / 崩溃备份全部可达，editable-non-md-files 裁决 D3）。
     // 判据取 isEditablePath（与编辑器会话的 editable 标志同源同一真源），MUST NOT 另写集合。
     save.noteOpened(path, isEditablePath(path) ? snapshot.revision : undefined);
-    const session = tabs.targetSessionFor(intent);
+    const session = resolveSession();
+    // 成员复查（M283 r1 P2-1）：`resolveSession` 的两条路径都可能在读盘**之前**就绑定了会话对象
+    // （壳态的两条装载路径——`openFile` 的壳态分支与 `ensureActiveSessionLoaded`——都是早绑定），
+    // 而用户能在这次 IPC 在途期间关掉那个标签：`closeTabNow` 只动会话表与标签栏，**不碰**
+    // `beginSwitch` 的 serial，因此上面那条 `isCurrent` 挡不住它。不复查的话随后的
+    // `tabs.activateTab` 会把一个已脱离会话表的壳置为前台——正文显示已关闭标签的内容、标签栏里
+    // 却没有它（无数据丢失，但状态机出格）。按失败收口：调用方（会话恢复）据此退化到下一个候选，
+    // 用户看到的是一次正常的恢复。新标签路径（`tabs.targetSessionFor`）晚绑定，结构上不可能命中。
+    if (!editor.sessions().includes(session)) return false;
     tabs.activateTab(session); // 已在同一会话上时是 no-op
     // 解析缓存整批失效必须在装载**之前**（save-controller.ts 外部重载路径的同序写法）：
     // 装饰层在 reloadSession 的装载事务里首次构建并发起 link_graph_resolve（在途），
@@ -863,6 +947,8 @@ async function openFile(
     // 挂点在这一条分支里（而不是在 openFile 之上）就是「已打开的标签不被盘上的位置拽走」这条
     // 判据的实现方式：同一个文件已经在某个标签里打开时，上面那个 short-circuit 直接 return，
     // 根本走不到这里。store 还会再核一次「它仍是前台文档」（装载是异步的，期间用户可能切走）。
+    // M283 起它同样是**壳态标签首次成为前台**时恢复阅读位置的那一步（结果与今天一致，时间点
+    // 从「装载完成时」后移到「首次成为前台时」——spec 已把这条写成可观察结果不变的边界）。
     readingPositions.restoreFor(path);
     afterLoad();
     return true;
@@ -872,6 +958,36 @@ async function openFile(
     return false;
   }
 }
+
+/** 壳态标签的内容装载：唯一触发点是**它成为前台**（M283 的 3.5）。挂在唯一的同步点
+ *  （`syncActiveDocument`）上——标签点击 / ⌃⇥ 轮换 / 关标签后的相邻激活 / 树里点开一个已在
+ *  会话里的文件，都经过它。
+ *
+ *  在途用集合挡重入：`loadSessionContent` 自己会 `tabs.activateTab`，那又是一次同步点回调。
+ *  **会话恢复那条路径也必须登记在途**（`withSessionLoad`）——不然它自己的装载会被这一次回调
+ *  再发起一遍（同文件两次 IPC + 两次装载事务；M283 的探针里实测到它会把落点抢到别的标签上）。
+ *  失败**不留失败标记**——下一次同步点会再试一次（用户再点一次这个标签就是一次重试），且失败
+ *  按用户动作上屏（`quiet=false`：点标签是一次明确的用户动作，静默失败会让人以为文档是空的）。 */
+function ensureActiveSessionLoaded(): void {
+  const session = editor.activeSession();
+  const path = session.path;
+  if (path === undefined || session.loaded) return;
+  if (shellLoadsInFlight.has(session.id)) return;
+  void withSessionLoad(session, () =>
+    loadSessionContent(() => session, path, openKind(path), false),
+  );
+}
+
+/** 登记「某个会话的内容装载在途」，跑完自动摘掉。所有发起装载的路径都必须经它——包括
+ *  会话恢复（`openPinned` → `openFile` 的壳态分支），否则同步点上的按需触发会重复发起一次。 */
+function withSessionLoad(session: EditorSession, run: () => Promise<boolean>): Promise<boolean> {
+  shellLoadsInFlight.add(session.id);
+  return run().finally(() => shellLoadsInFlight.delete(session.id));
+}
+
+/** 在途的壳态装载（会话 id）。放在这里而不是会话对象上：它是一次装载过程的局部状态，不属于
+ *  会话本身（`loaded` 才是装载的终态）。 */
+const shellLoadsInFlight = new Set<number>();
 
 window.addEventListener("beforeunload", (event) => {
   // 退出前把标签会话 flush 掉（M163，MUST NOT 只依赖防抖定时器——正常退出与「放弃修改并
@@ -1471,7 +1587,7 @@ async function applyVault(
   // vault 名的展示位只有一处：侧栏头的切换器入口（tree.setVault 内部按同一个 baseName
   // 渲染），本文件不再往另一个元素上写一份副本。
   // 这一步是同步的整树重建，也是装载路径上**唯一**的主线程重活（大 vault 上可能数百 ms）：
-  // 单独量一条读数，好与 Rust 侧的打开、逐标签的恢复分开看（M252 的阶段定位）。
+  // 单独量一条读数，好与 Rust 侧的打开、会话恢复分开看（M252 的阶段定位）。
   const treeAt = performance.now();
   tree.setVault(root, entries);
   phaseMs(treeAt, "vault_load_tree");
@@ -1482,15 +1598,17 @@ async function applyVault(
   showEditor(); // 旧 vault 的「暂不支持预览」覆盖层一并撤下
   // 残留崩溃备份的恢复入口（M127）：装载完成后才有 vault 上下文可定位备份。
   void save.checkRecovery();
-  // 装载后恢复该 vault 的标签列表（M163）：逐标签异步装载，不阻塞树与首帧；恢复途中若又
-  // 换了一次 vault，本次恢复整体作废（vault-switcher 的世代号）。上面的位置镜像已经就绪，
-  // 逐个标签装载时会走各自的恢复。
+  // 装载后恢复该 vault 的标签列表（M163；M283 起先按存储顺序建壳、内容只装激活项）：异步，
+  // 不阻塞树与首帧；恢复途中若又换了一次 vault，本次恢复整体作废（vault-switcher 的世代号）。
+  // 上面的位置镜像已经就绪，激活项的内容装载会走它自己那份阅读位置的恢复（其余标签在首次
+  // 成为前台时各走一次）。
   //
-  // 这个 Promise 也是「装载指示什么时候该消失」的唯一信号（M252）：它在恢复跑完后 resolve，
-  // 那一刻整窗上下文才真的就绪。启动恢复路径没有开指示，`end()` 在那里是 no-op（引用计数）。
+  // 这个 Promise 也是「装载指示什么时候该消失」的唯一信号（M252）：它在「壳建齐 + 激活项内容
+  // 装载完」那一刻 resolve（M283 起恢复段的等待与标签数脱钩，见 design §3.3），那一刻整窗
+  // 上下文才真的就绪。启动恢复路径没有开指示，`end()` 在那里是 no-op（引用计数）。
   const restoreAt = performance.now();
   void switcher.onVaultLoaded(vaultId, entries).finally(() => {
-    phaseMs(restoreAt, "vault_load_restore");
+    phaseMs(restoreAt, "vault_load_restore", true);
     vaultLoading.end();
   });
 }

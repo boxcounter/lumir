@@ -25,7 +25,7 @@ import {
   typeInEditor,
   waitUntil,
 } from "./drive.mjs";
-import { envHome, mkdirp, readText, repoRoot, sleep, vaultDir } from "./util.mjs";
+import { envHome, mkdirp, readText, repoRoot, secondVaultDir, sleep, vaultDir } from "./util.mjs";
 
 /** 动作与断言的白名单：`--check` 用它做静态校验，避免写错 key 要等一整轮真机才发现。 */
 export const ACTIONS = new Set([
@@ -49,6 +49,19 @@ export function checkScenario(scenario) {
   for (const [i, e] of (scenario.seed?.legacyRegistry ?? []).entries()) {
     if (!e?.id || !e?.path) push(`seed.legacyRegistry[${i}] 需要 id 与 path`);
   }
+  // 批量真实形状 vault（M283）：形状参数写错会静默退化成缺省值（生成出来不是那个规模），
+  // 与「断言字段名写错 = 恒真」同类，因此在静态检查里挡住。
+  const bulk = scenario.seed?.bulkVault;
+  if (bulk !== undefined && bulk !== true) {
+    if (typeof bulk !== "object" || bulk === null) push("seed.bulkVault 只能是 true 或形状参数对象");
+    else {
+      for (const [k, v] of Object.entries(bulk)) {
+        if (!["markdown", "files", "dirs", "mdBytes", "maxMdBytes", "ignoredMd"].includes(k))
+          push(`seed.bulkVault 未知参数 ${k}（写错即静默用缺省值）`);
+        else if (!Number.isInteger(v) || v <= 0) push(`seed.bulkVault.${k} 需要正整数，实际 ${JSON.stringify(v)}`);
+      }
+    }
+  }
   for (const [i, step] of (scenario.steps ?? []).entries()) {
     const at = `steps[${i}]${step.name ? `(${step.name})` : ""}`;
     if (!step.name) push(`${at} 缺少 name`);
@@ -65,6 +78,8 @@ export function checkScenario(scenario) {
     if (step.do === "vaultSparse" && (!Number.isInteger(step.size) || step.size <= 0))
       push(`${at} do=vaultSparse 需要正整数 size（字节）`);
     if (step.do === "vaultSparse" && !step.file) push(`${at} do=vaultSparse 需要 file`);
+    if (step.do === "vaultSparse" && step.vault !== undefined && step.vault !== "second")
+      push(`${at} do=vaultSparse 的 vault 只能是 "second"（缺省 = 验收 vault）`);
     for (const [j, exp] of (step.expect ?? []).entries()) {
       const kinds = Object.keys(exp).filter((k) => k !== "label");
       if (kinds.length !== 1) push(`${at} expect[${j}] 应恰好一个断言形态，实际 ${JSON.stringify(kinds)}`);
@@ -1147,7 +1162,10 @@ async function doAction(step, { ctx, cu, scenario, vars, pid, evidence }) {
       // 分支（`ATTACHMENT_MAX_BYTES` 50MB）在真机上变成可达：提交一份 50MB+ 的实体
       // fixture 不可接受，`vaultWrite` 的 content 是字符串也造不出来。
       // `step.size` 是**大小**（字节，必须 > 0）；文件若已存在会被截断到该大小（幂等）。
-      const file = path.join(vaultDir(), step.file);
+      // `step.vault: "second"` 指定第二个合成 vault（M283 场景 60 需要给**切换目标**撑窗口
+      // ——指示那条断言追的是「切到目标 vault 的装载窗口」，放大器必须落在目标一侧）；
+      // 缺省仍是验收 vault（既有场景逐字不变）。
+      const file = path.join(step.vault === "second" ? secondVaultDir() : vaultDir(), step.file);
       if (!Number.isInteger(step.size) || step.size <= 0) {
         throw new Error(`do=vaultSparse 需要正整数 size（字节），收到 ${JSON.stringify(step.size)}`);
       }

@@ -75,6 +75,17 @@ test("sessionSnapshot：全部标签入盘、顺序按打开顺序、激活项�
   assert.deepEqual(sessionSnapshot([], undefined), { tabs: [], active: null });
 });
 
+test("sessionSnapshot：**壳态标签一样入盘**（M283 的 3.1：纯惰性案会把会话写成 1 条）", () => {
+  // 壳 = 有路径、内容未装载（`loaded === false`）。入盘判据只看 `path`，与装载状态无关——
+  // 这正是「先建壳」能让会话快照保持完整的原因（design §3.1：纯惰性案在恢复后 1 秒内把
+  // 40 条会话写成 1 条，用户的标签列表被这一次切换永久删掉）。
+  const shell = { path: "a.md", loaded: false } as unknown as EditorSession;
+  assert.deepEqual(sessionSnapshot([shell], "a.md"), { tabs: ["a.md"], active: "a.md" });
+  // 未命名文档（无路径）仍不入盘
+  const blank = { path: undefined, loaded: true } as unknown as EditorSession;
+  assert.deepEqual(sessionSnapshot([blank, shell], undefined), { tabs: ["a.md"], active: null });
+});
+
 test("sameSnapshot：逐项比较（顺序也算），用于决定要不要排期写盘", () => {
   const a = { tabs: ["a.md", "b.md"], active: "b.md" };
   assert.equal(sameSnapshot(a, { tabs: ["a.md", "b.md"], active: "b.md" }), true);
@@ -174,7 +185,13 @@ interface StoreRig {
   writes: Array<{ vaultId: string; tabs: string[]; active: string | null }>;
   warns: string[];
   toasts: string[];
+  /** 内容被装载出来的条目（`openPinned` 成功的那几次）。 */
   opened: string[];
+  /** 建了壳的条目（M283：恢复的第一步，当帧、按存储顺序）。 */
+  shells: string[];
+  /** 建壳与装载内容落在**同一条**调用时间线上（`shell:a.md` / `open:a.md`）——本 change 的
+   *  判据是「壳先齐、内容只装激活项」，只看两个集合分不出先后。 */
+  calls: string[];
   activated: string[];
   emptyVaults: number;
   /** 会话读取口：默认 null（没有历史）。 */
@@ -182,6 +199,8 @@ interface StoreRig {
   /** 打不开的条目（在 vault 里但读失败）。 */
   failOpen: Set<string>;
   setWritesFail(fail: boolean): void;
+  /** 让内容装载慢一拍（一次 setImmediate）：用于构造「装载在途时又切了一次 vault」的现场。 */
+  setOpenSlow(next: boolean): void;
 }
 
 function createStoreRig(): StoreRig {
@@ -189,6 +208,7 @@ function createStoreRig(): StoreRig {
   let activePath: string | undefined;
   let getSession: (vaultId: string) => Promise<VaultSession | null> = async () => null;
   let writesFail = false;
+  let openSlow = false;
   const rig: StoreRig = {
     store: undefined as unknown as ReturnType<typeof createVaultSessionStore>,
     sessions: [],
@@ -201,11 +221,14 @@ function createStoreRig(): StoreRig {
     warns: [],
     toasts: [],
     opened: [],
+    shells: [],
+    calls: [],
     activated: [],
     emptyVaults: 0,
     setGetSession: (fn) => void (getSession = fn),
     failOpen: new Set<string>(),
     setWritesFail: (fail) => void (writesFail = fail),
+    setOpenSlow: (next) => void (openSlow = next),
   };
   rig.store = createVaultSessionStore({
     sessions: () => sessions,
@@ -215,7 +238,17 @@ function createStoreRig(): StoreRig {
       if (writesFail) throw new Error("磁盘只读");
       rig.writes.push({ vaultId, tabs, active });
     },
+    // 建壳是同步的（恢复的第一步），内容装载是异步的（第二步）——两者与「刷标签栏」那一拍
+    // 落在同一条时间线上（`shellsBuilt` 是标签栏渲染的触发点，见 store deps 的说明）。
+    createShell: (path) => {
+      rig.shells.push(path);
+      rig.calls.push(`shell:${path}`);
+      return true;
+    },
+    shellsBuilt: () => void rig.calls.push("shellsBuilt"),
     openPinned: async (path) => {
+      rig.calls.push(`open:${path}`);
+      if (openSlow) await new Promise((resolve) => setImmediate(resolve));
       if (rig.failOpen.has(path)) return false;
       rig.opened.push(path);
       return true;
@@ -280,7 +313,11 @@ test("会话存储：写失败只降级（一条 warning，不抛出、不拦停
   assert.equal(rig.writes.length, 0);
 });
 
-test("装载后恢复：按会话以固定标签意图逐个打开、激活存储的激活项，跳过计数只报一次", async () => {
+// ---------------------------------------------------------------------------
+// 装载后恢复（M283 的新结构）：当帧建壳 → 只装载激活项 → 其余按需
+// ---------------------------------------------------------------------------
+
+test("装载后恢复：当帧按存储顺序建壳，内容只装载存储的激活项，跳过计数只报一次", async () => {
   const rig = createStoreRig();
   rig.setGetSession(async () =>
     sessionOf(["a.md", "/etc/passwd", "docs/c.md"], "docs/c.md"),
@@ -290,35 +327,53 @@ test("装载后恢复：按会话以固定标签意图逐个打开、激活存�
     fileEntry("docs/c.md"),
     { path: "docs", kind: "dir", size: 0, mtime_ms: null },
   ]);
-  assert.deepEqual(rig.opened, ["a.md", "docs/c.md"]);
+  // 壳：按存储顺序、越界条目（/etc/passwd）与不在 vault 的条目都不在其中
+  assert.deepEqual(rig.shells, ["a.md", "docs/c.md"], "壳按存储顺序建齐（标签的存在与顺序在此刻就位）");
+  // 内容：只装激活项，其余的文档内容留到它们首次成为前台
+  assert.deepEqual(rig.opened, ["docs/c.md"], "非激活标签在装载期 MUST NOT 装载内容");
   assert.deepEqual(rig.activated, ["docs/c.md"]);
   assert.deepEqual(rig.toasts, [skippedText(1)]);
   assert.equal(rig.emptyVaults, 0);
+  // 时序：两个壳都先于任何内容装载（这是「等待与标签数脱钩」这条契约的机械形态）
+  assert.deepEqual(rig.calls, ["shell:a.md", "shell:docs/c.md", "shellsBuilt", "open:docs/c.md"]);
 });
 
-test("装载后恢复：激活项不可用退化为第一个可打开的；文件打不开也算跳过", async () => {
+test("装载后恢复：存储的激活项不在 vault 里 → 装载落点是恢复计划给出的第一个条目", async () => {
   const rig = createStoreRig();
   rig.setGetSession(async () => sessionOf(["a.md", "gone.md", "c.md"], "gone.md"));
-  rig.failOpen.add("c.md"); // 在 vault 里但读失败（openPinned 报失败）
   await rig.store.onVaultLoaded("vault-a", [
     fileEntry("a.md"),
     fileEntry("c.md"),
   ]);
-  assert.deepEqual(rig.opened, ["a.md"], "打不开的条目没有真的被打开");
-  assert.deepEqual(rig.activated, ["a.md"], "激活项不可用 → 退化为第一个可打开的");
-  assert.deepEqual(rig.toasts, [skippedText(2)]); // 缺失 1 + 打不开 1，一次计数
+  assert.deepEqual(rig.shells, ["a.md", "c.md"], "不在 vault 的条目不成壳");
+  assert.deepEqual(rig.opened, ["a.md"], "退化到第一个条目：只有它的内容在装载期装载");
+  assert.deepEqual(rig.activated, ["a.md"]);
+  assert.deepEqual(rig.toasts, [skippedText(1)]); // 缺失 1（不逐个报错）
 });
 
-test("装载后恢复：没有历史或全部不可用 → 空 vault 首入态", async () => {
+test("装载后恢复：激活项的内容读失败 → 退化为下一个能读的标签，跳过计数含失败的尝试", async () => {
+  const rig = createStoreRig();
+  rig.setGetSession(async () => sessionOf(["a.md", "c.md"], "c.md"));
+  rig.failOpen.add("c.md"); // 在 vault 里但读失败
+  await rig.store.onVaultLoaded("vault-a", [fileEntry("a.md"), fileEntry("c.md")]);
+  assert.deepEqual(rig.opened, ["a.md"], "读失败的激活项没有把内容装进来");
+  assert.deepEqual(rig.activated, ["a.md"], "退化到下一个能读的标签（两个标签都建了壳）");
+  assert.deepEqual(rig.calls, ["shell:a.md", "shell:c.md", "shellsBuilt", "open:c.md", "open:a.md"]);
+  assert.deepEqual(rig.toasts, [skippedText(1)], "一次计数：读失败的那个");
+});
+
+test("装载后恢复：没有历史或全部不可用 → 空 vault 首入态（不建任何壳）", async () => {
   const rig = createStoreRig();
   await rig.store.onVaultLoaded("vault-a", [fileEntry("a.md")]);
   assert.equal(rig.emptyVaults, 1, "没有历史（会话缺失）也要给空态引导");
   assert.deepEqual(rig.opened, []);
+  assert.deepEqual(rig.shells, []);
   assert.deepEqual(rig.toasts, [], "本来就没有历史，不报「跳过 N 个」");
 
   rig.setGetSession(async () => sessionOf(["x.md"], "x.md"));
   await rig.store.onVaultLoaded("vault-a", [fileEntry("a.md")]);
   assert.equal(rig.emptyVaults, 2);
+  assert.deepEqual(rig.shells, [], "全部条目都不在 vault 里 ⇒ 一个壳都不建（标签栏隐藏）");
   assert.deepEqual(rig.toasts, [skippedText(1)]);
 });
 
@@ -335,7 +390,23 @@ test("装载后恢复：装载期间又装载一次 vault，前一次的恢复�
   await rig.store.onVaultLoaded("vault-b", [fileEntry("b.md")]); // 用户已抢到别的 vault
   await first;
   assert.deepEqual(rig.opened, [], "被让位的那次恢复不许往新 vault 里放旧标签");
+  assert.deepEqual(rig.shells, [], "被让位的那次连壳都不许建（壳在装载后的同一拍里，没有可交错的 await）");
   assert.equal(rig.emptyVaults, 1, "让位后按 vault-b 的会话走：没有历史 → 空态");
+});
+
+test("装载后恢复：内容装载途中又装载一次 vault，前一批不许激活（世代在收口处比对）", async () => {
+  const rig = createStoreRig();
+  rig.setGetSession(async (vaultId) => (vaultId === "vault-a" ? sessionOf(["a.md"], "a.md") : null));
+  rig.setOpenSlow(true); // 内容装载慢一拍：壳已经建好、装载还在途
+  const first = rig.store.onVaultLoaded("vault-a", [fileEntry("a.md")]);
+  // 让第一次走到内容装载（壳已经建好、`openPinned` 在途），此时用户又切了一次
+  await new Promise((resolve) => setImmediate(resolve));
+  rig.setOpenSlow(false);
+  const second = rig.store.onVaultLoaded("vault-b", [fileEntry("b.md")]);
+  await Promise.all([first, second]);
+  assert.deepEqual(rig.shells, ["a.md"], "壳只在第一次装载的当帧建过一次（第二次没有会话历史）");
+  assert.deepEqual(rig.activated, [], "被让位的那一批不许激活任何标签");
+  assert.equal(rig.emptyVaults, 1, "最后落的是 vault-b 的空态");
 });
 
 // ---------------------------------------------------------------------------
@@ -348,27 +419,41 @@ interface GateRig {
   failures: string[];
   proceeded: number;
   saveAllCalls: number;
+  /** 门内动作的调用次序（`begin` / `saveAll` / `end` / `proceed`）——指示窗口的时序断言
+   *  用它与写盘、继续这两步排在**同一条时间线**上（M283 的 2.2）。 */
+  calls: string[];
   setBlock(block: VaultSwitchBlock | null): void;
   setSaveAll(result: boolean): void;
+  setSaveAllThrow(next: boolean): void;
 }
 
 function createGateRig(): GateRig {
   let block: VaultSwitchBlock | null = null;
   let saveAllResult = true;
+  let saveAllThrows = false;
   const rig: GateRig = {
     gate: undefined as unknown as ReturnType<typeof createVaultSwitchGate>,
     notices: [],
     failures: [],
     proceeded: 0,
     saveAllCalls: 0,
+    calls: [],
     setBlock: (next) => void (block = next),
     setSaveAll: (result) => void (saveAllResult = result),
+    setSaveAllThrow: (next) => void (saveAllThrows = next),
   };
   rig.gate = createVaultSwitchGate({
     block: () => block,
     saveAll: async () => {
       rig.saveAllCalls += 1;
+      rig.calls.push("saveAll");
+      if (saveAllThrows) throw new Error("写盘失败");
       return saveAllResult;
+    },
+    // 指示的假句柄：只记开合（真句柄是装配层的引用计数转圈，见 vault-switcher 的工厂）。
+    saveAllWindow: {
+      begin: () => void rig.calls.push("begin"),
+      end: () => void rig.calls.push("end"),
     },
     currentName: () => "vault-a",
     notify: (text, actions) => void rig.notices.push({ text, actions }),
@@ -377,7 +462,10 @@ function createGateRig(): GateRig {
   return rig;
 }
 
-const proceed = (rig: GateRig) => () => void (rig.proceeded += 1);
+const proceed = (rig: GateRig) => () => {
+  rig.calls.push("proceed");
+  rig.proceeded += 1;
+};
 
 test("切换门：干净放行；dirty 拦下给三动作，保存未闭环不继续，保存闭环才继续", async () => {
   const rig = createGateRig();
@@ -425,6 +513,68 @@ test("切换门：放弃修改并切换直接继续，不走保存", async () =>
   await flush();
   assert.equal(rig.proceeded, 1);
   assert.equal(rig.saveAllCalls, 0);
+});
+
+// ---------------------------------------------------------------------------
+// 「保存并切换」的写盘段指示窗口（M283 的 2.1 / 2.2）：三种出口的开关时序逐条断言
+//
+// 判据是**次序**：写盘段的 begin 必须早于 saveAll、end 必须紧随其后，且中间没有别的动作
+// ——「指示在写盘开始前就出现」这条 spec 文本因此落在断言上，而不是靠实现自觉。
+// 反向验证（M283 的 2.4）：把 begin/end 挪回 proceed 内的装载壳（即删掉这里的成对收口），
+// 第一条用例会当场红（calls 变成 ["saveAll","proceed"]）。
+// ---------------------------------------------------------------------------
+
+test("指示窗口：保存并切换的写盘段包住 saveAll，紧接装载（指示不在装载完才起）", async () => {
+  const rig = createGateRig();
+  rig.setBlock({ dirtyCount: 2, hasUnsaveable: false });
+  rig.gate.request(proceed(rig));
+  rig.notices[0].actions[0].run();
+  await flush();
+  assert.deepEqual(rig.calls, ["begin", "saveAll", "end", "proceed"]);
+});
+
+test("指示窗口：干净路径不经过写盘段（指示由装载壳自己起）", async () => {
+  const rig = createGateRig();
+  assert.equal(rig.gate.request(proceed(rig)), true);
+  await flush();
+  assert.deepEqual(rig.calls, ["proceed"]);
+});
+
+test("指示窗口：写盘未闭环 ⇒ 指示撤下且不切换", async () => {
+  const rig = createGateRig();
+  rig.setBlock({ dirtyCount: 1, hasUnsaveable: false });
+  rig.setSaveAll(false);
+  rig.gate.request(proceed(rig));
+  rig.notices[0].actions[0].run();
+  await flush();
+  assert.deepEqual(rig.calls, ["begin", "saveAll", "end"]);
+  assert.equal(rig.proceeded, 0);
+});
+
+test("指示窗口：写盘抛错 ⇒ 指示仍撤下，只留一条失败提示", async () => {
+  const rig = createGateRig();
+  rig.setBlock({ dirtyCount: 1, hasUnsaveable: false });
+  rig.setSaveAllThrow(true);
+  rig.gate.request(proceed(rig));
+  rig.notices[0].actions[0].run();
+  await flush();
+  assert.deepEqual(rig.calls, ["begin", "saveAll", "end"]);
+  assert.deepEqual(rig.failures, ["写盘失败"]);
+});
+
+test("指示窗口：取消不开指示；放弃修改并切换也不开（它不写盘）", async () => {
+  const rig = createGateRig();
+  rig.setBlock({ dirtyCount: 1, hasUnsaveable: false });
+  rig.gate.request(proceed(rig));
+  rig.notices[0].actions[2].run(); // 取消
+  await flush();
+  assert.deepEqual(rig.calls, [], "取消 ⇒ 没有任何工作在进行，MUST NOT 出现指示");
+
+  rig.setBlock({ dirtyCount: 1, hasUnsaveable: false });
+  rig.gate.request(proceed(rig));
+  rig.notices.at(-1)!.actions[1].run(); // 放弃修改并切换
+  await flush();
+  assert.deepEqual(rig.calls, ["proceed"], "不写盘 ⇒ 门不开指示（由装载壳起）");
 });
 
 test("切换门：不可保存的脏标签不给「保存并切换」（那是一条走不通的建议）", async () => {
@@ -484,6 +634,8 @@ function createRemapRig(): RemapRig {
   const gate = createVaultSwitchGate({
     block: () => block,
     saveAll: async () => saveAllResult,
+    // 指示的假句柄（本组用例不验指示时序，只要求门拿得到那个口子）。
+    saveAllWindow: { begin: () => {}, end: () => {} },
     currentName: () => "vault-a",
     notify: (text, actions) => {
       rig.calls.push("guard-notify");
@@ -873,6 +1025,9 @@ function createSwitcherRig(rows: VaultListEntry[]): SwitcherRig {
     getSession: async () => null,
     putSession: async () => {},
     openPinned: async () => true,
+    // M283 的两个新口子：本组用例（浮层 DOM 与阅读位置）不碰会话恢复，给最小替身。
+    createShell: () => true,
+    shellsBuilt: () => {},
     activate: () => {},
     onEmptyVault: () => {},
     warn: (text) => void rig.warns.push(text),
@@ -947,6 +1102,8 @@ test("浮层：未装载 vault（入口不存在）时打开是无操作", () =>
     getSession: async () => null,
     putSession: async () => {},
     openPinned: async () => true,
+    createShell: () => true,
+    shellsBuilt: () => {},
     activate: () => {},
     onEmptyVault: () => {},
     warn: () => {},

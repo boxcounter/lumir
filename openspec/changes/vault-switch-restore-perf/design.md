@@ -10,10 +10,10 @@
 
 | 段 | 现状机制（代码落点） | 量级 / 证据 | 状态 |
 |---|---|---|---|
-| 切前写盘 | `saveThenRun` → `await deps.saveAll()`（`src/vault-switcher.ts:250-256`；`deps.saveAll` = `save.saveAllDirty()`，`src/main.ts:395`），指示在 `proceed()` 内 `loadUserVault.begin()`（`src/main.ts:371-372`）才起 | 未测；按 M154 写入地板（fsync ≈4ms、1MB ≈10ms、50MB 443ms）推，脏文档各数百 ms 量级 | **未测** |
-| 打开（`vault_open_path`） | 不带 `async` 的 command（`src-tauri/src/commands.rs:555`）⇒ Tauri 语义下**主线程内联执行**：`reconcile_vault` → `fs_io::watch()`（FSEvents 建流，426 目录）→ `scan_workspace` → `build_graph`（`src-tauri/src/commands.rs:317`） | 同 vault 直测：scan 14.0ms + build_graph 111.2ms ≈ 125ms（M154）；**watch 建流从未测过** | 部分有读数 |
-| 树重建 | `setVault` → `expanded.clear()`（`src/tree.ts:712`）→ `renderAll`；`renderAll` 只对根级子节点 `mountNode`（`src/tree.ts:457`，`mountNode` 见 `:398`） | DOM 行数 = 根级条目数 = 22–24 行；真正的成本是给 2567 个条目建 `Node`/`Map`（O(n)，个位数 ms） | 有读数（结构性） |
-| 逐标签恢复 | `for (const path of plan.open) { if (gen !== restoreGen) return; if (await deps.openPinned(path)) opened.push(path); }`（`src/vault-switcher.ts:454-457`）；`openPinned` = `openFile(path, openKind(path), "new", true)`（`src/main.ts:451`） | 46 个标签 992–1359ms、14 个标签 390ms ⇒ **≈21–30ms/标签**（`vault-switch-feedback/tasks.md` 3.2 的真机读数，取自场景 49 的合成 vault） | **有读数，但规模未验**（见下） |
+| 切前写盘 | `saveThenRun` → `await deps.saveAll()`（`src/vault-switcher.ts`；`deps.saveAll` = `save.saveAllDirty()`，`src/main.ts`），指示原在 `proceed()` 内的装载壳里才起（M283 起在写盘前起） | M283 补了 `vault_load_flush` 埋点（阈值 250ms）：验收场景（1 个脏标签、几十 ms）**未触发**，因此本条仍**未测出**；埋点已就位，Alex 在自己 vault 上带着较大的脏文档切一次即可拿到 | **未测（埋点已就位）** |
+| 打开（`vault_open_path`） | 不带 `async` 的 command（`src-tauri/src/commands.rs`）⇒ Tauri 语义下**主线程内联执行**：`reconcile_vault` → `fs_io::watch()` → `scan_workspace` → `build_graph` | **M283 实测**（复刻真实形状的合成 vault：2142 文件 / 426 目录 / 1341 md / 6.7MB）——release 直测**两次独立运行**：`scan_workspace` **10.6–13.0ms**、`build_graph` **81.5–94.4ms**、合计 **≈92–107ms**（M154 在同一真实 vault 上的 14.0 + 111.2ms 同量级）；`watch` 建流 **0.4–1.6ms**（debug 真机 0.4–0.5ms / release harness 1.5–1.6ms）——**裁决点 3 的答案**；debug 构建的 app 里 `vault_load_open` 实测 **612–630ms**（≈92–107ms 的 6×，debug 的 Rust 不快，两者不可混比） | **有读数** |
+| 树重建 | `setVault` → `expanded.clear()` → `renderAll`；`renderAll` 只对根级子节点 `mountNode` | DOM 行数 = 根级条目数 = 22–24 行；真正的成本是给 2567 个条目建 `Node`/`Map`（O(n)，个位数 ms） | 有读数（结构性） |
+| 逐标签恢复 | `for (const path of plan.open) await deps.openPinned(path)`（M283 前）→ M283 起「当帧建壳 + 内容按需」 | M252：46 个标签 992–1359ms（≈21–30ms/标签，77 条目的合成 vault）。**M283 在真实形状的 vault（2567 条目）上复测：40 个标签 984–1182ms ⇒ ≈25–30ms/标签**（单变量探针复测，在档读数见 `test-results/m283/before-probe/logs.jsonl`）——**与 77 条目 vault 上的读数同档 ⇒ per-tab 成本基本不随 vault 规模增长**（原先「未验」的那条由此闭合）；改动后同一场景的恢复段见 §1.1 的对照 | **有读数（含跨规模对照）** |
 
 **恢复段读数的外推边界（如实记）**：场景 49 的会话是 46 个 fixture **小文件**（那几个 8MB 稀疏文件是塞进 vault 撑开 `vault_load_open` 观察窗的放大器，不在会话里，见 `scripts/acceptance/scenarios/49-vault-switch-feedback.md` 的 seed 说明与「覆盖边界」节）。所以 21–30ms/标签 **不是**文件读取代价，而是每标签的固定成本：IPC 往返（`fsReadSnapshot`）+ `editor.createSession()` + `tabs.activateTab` + `editor.reloadSession`（装载走前台路径：`EditorState.create` + 视图事务 + 装饰层 + 就绪事件）+ `readingPositions.restoreFor` + `afterLoad`。固定成本这一性质让它可以跨文件大小外推，**但不能保证跨 vault 规模外推**——该读数取自 77 个条目的合成 vault，真实 vault 是 2567 条目 / 1341 md；per-tab 成本里若有随 vault 索引规模增长的成分（链接解析、附件索引查询），真实 vault 上会更大。**这一条未验，且它是「恢复段是唯一到秒级的段」这个结论的关键依赖。**
 
@@ -43,6 +43,23 @@
 - 「放弃修改并切换」「取消」两条出口不变：前者不写盘、出口执行后由 `proceed()` 起指示；后者不装载，MUST NOT 出现指示。
 - 「新增 vault…」通道不受影响（选择器返回后起指示，已经是对的）。
 - 落地位置：指示的 `begin/end` 装配在 `src/main.ts`（`vaultLoading`），出口时序在 `src/vault-switcher.ts` 的 `saveThenRun`；两者的依赖注入关系（`deps` 里要不要暴露指示开关）由实现期选最小心脏——**倾向**让 `deps.saveAll` 的调用方（装配层）包一层 `loadUserVault`，避免把 UI 句柄塞进 `vault-switcher` 的 deps（它现在是可脱离 DOM 单测的纯状态机，这条性质不要丢）。
+
+### 2.3 实现落点（M283）
+
+指示的开关**经 deps 注入切换门**（`VaultSwitchGateDeps.saveAllWindow: VaultLoadingIndicator`，
+装配层传 `vaultLoading` 本身），`saveThenRun` 在 `await deps.saveAll()` 之前 `begin()`、写完
+（或写失败/未闭环）立刻 `end()`：写盘的 `end` 与随后 `proceed()` 里装载壳的 `begin` 落在同一批
+微任务里（中间不让出渲染），指示因此是一个不闪的连续窗口。
+
+- 「保存并切换」：写盘前起指示（本 change 修的缺口）；
+- 「放弃修改并切换」：不起（不写盘，指示由装载壳自己起）；
+- 「取消」：不起。
+
+`src/main.ts` 的 `saveAll` 另包一层 `phaseMs(..., "vault_load_flush")`（任务 1.1 的读数；干净
+路径不走这里，所以那一段不会出现这条读数）。**为什么不把 UI 句柄塞进 vault-switcher**：注入的是
+一对 `begin/end`（`VaultLoadingIndicator` 接口，本来就存在），模块仍是可脱离 DOM 单测的纯状态机
+——单测里传一个记账的假句柄即可逐条断言开关时序（`tests/unit/vault-switcher.test.ts` 的
+「指示窗口」组）。
 
 ## 3. 会话恢复：三案与推荐结构
 
@@ -81,6 +98,35 @@
   4. **未装载标签被激活时的时延**：一次 `openFile`（21–30ms 量级）在点击后落地，仍在「正在打开：{path}」覆盖层的既有语义内。**若这条时延在真机上可感**，实现期应先量再决定要不要给「壳态首次激活」加一条更轻的反馈；本 change 不预设新文案（见 proposal 的编号声明）。
   5. **崩溃备份 / 恢复入口**：`save.checkRecovery()` 在装载后跑，与壳态无交互（它按备份文件工作）。
 
+### 3.6 实现落点（M283，按裁决点 1 的推荐案落地）
+
+- **`src/editor.ts`**：`EditorSession.loaded`（内容是否已装载）；`createShellSession(path)`
+  （`path` / `mode` / `editable` 就位、内容为空、`loaded === false`，**不取 mtime**）；
+  `reloadSession` 装载时置 `loaded = true`；`activate()` 里 `ensureMtime` 按 `loaded` 门控
+  （壳态跳过那一次 IPC）。无路径的会话（未命名空文档）恒 `loaded = true`。
+- **`src/vault-switcher.ts`**：`VaultSessionStoreDeps` 加 `createShell(path): boolean` 与
+  `shellsBuilt()`，`openPinned` 的语义收窄为「装载**文档内容**」。`restore` 结构：
+  ① 同步按 `plan.open` 顺序建壳（建不成壳的计入跳过数：不可打开的文件类）；
+  ② `plan.open` 为空 ⇒ 空 vault 首入态（不建任何壳，标签栏因此隐藏）；
+  ③ `deps.shellsBuilt()`——装配层在此把标签栏刷成完整列表（「装载完成的那一帧标签栏就是完整的」
+  这条契约因此不依赖后续任何异步步骤）；
+  ④ 只装载**激活项**的内容，读失败时按存储顺序退化为下一个能读的（spec 的退化句）；
+  ⑤ 一次计数提示；全部装载失败时交装配层分流（见下）。
+- **`src/main.ts`**：`openFile` 拆出共用的 `loadSessionContent(resolveSession, …)`——壳态标签的
+  「填充」与新文件的「打开」是同一件事（读快照 → 登记基准 → 落到会话上 → 装载事务 → 恢复阅读
+  位置），`resolveSession` 在快照读成**之后**才调用（读失败不留空标签）。壳态分支在未命名文档
+  守卫**之后**（与「点一个已打开的文件」同一条守卫口径）。按需装载的唯一触发点挂在
+  `syncActiveDocument` 上（`ensureActiveSessionLoaded`，会话 id 集合挡重入），`quiet = false`
+  ——点标签是一次明确的用户动作，失败要上屏。
+- **`onEmptyVault` 分两态**（实现期补的边界）：① 会话里没有任何可用条目 ⇒ 空 vault 首入态
+  （标签栏本来就空 + D107 引导）；② 壳建出来了但正文全读不出来（例如会话里只有超过读取上限的
+  大文件）⇒ **标签栏留着那些标签**，不说「还没有打开的文件」这句假话（只撤覆盖层），失败在用户
+  点开该标签时由按需装载的既有提示上屏。老实现只有前一种（失败的 openPinned 不留标签），这条
+  是「先建壳」带来的新形态，行为差异如实记在这里。
+- **未装载标签的语义**：`dirty` 恒 false（`cleanDoc` 为空串）⇒ 不进 `vaultSwitchBlock`、
+  不进 `saveAllDirty`、也不算「无落盘基准」（`saveBaseline` 只对脏标签有意义）。单测钉在
+  `tests/unit/save-controller.test.ts`。
+
 ### 3.5 备选：整批并发填内容（裁决点 1 的另一选项）
 
 若 Alex 不接「按需」，则取「先建壳 + 整批立即并发填充」：标签栏当帧齐（同 §3.3），随后并发发起全部装载（请求令牌与世代让位按 §3.2 的收口改法处理），最终内容与今天逐标签串行的结果一致。**收益上限 = 21–30ms/标签里 IPC 占比的那部分**（JS 侧建 state / 事务 / 装饰仍是单线程串行，无法并行）——该占比未测，所以这个选项的收益在读数出来前无法承诺。
@@ -92,7 +138,7 @@
 | 做法 | `read_text_file` 每次经 `resolve_in_vault` 做两次 `canonicalize`；把 `canonicalize(root)` 提到循环外 + 加一条「已校验批量读」路径 | 建图前比对 mtime/size，只重读变更文件并复用上次的图 |
 | 收益 | M154 实测：1341 个 md 上 `read_text_file` 70.2ms → 裸读 24.6ms 量级，即砍 `build_graph` 约 40%（≈45ms） | 上限 = 消掉 `build_graph` 整段 111.2ms（scan 14ms 仍必须做：要知道什么变了就得枚举） |
 | 成本 / 风险 | 一处调用层重构；不引入新状态、无失效正确性问题 | 缓存键、失效条件、跨进程/跨会话的一致性；风险与改动面都大一档 |
-| 结论 | **按读数决定是否纳入**（`vault_load_open` 真实读数 >250ms 就纳入） | **暂缓**：真实 vault 7MB md 远未到需要缓存的规模（M154 的 737ms 出现在 45MB md 的 4× 合成规模） |
+| 结论 | **推迟**（M283 实测：打开段合计 ≈92–107ms « 250ms 阈值，收益上限实测 ≈26–33ms；账记 `docs/backlog.md`） | **暂缓**：真实 vault 7MB md 远未到需要缓存的规模（M154 的 737ms 出现在 45MB md 的 4× 合成规模） |
 
 **建图整段的绝对上限是 111.2ms**：即使做满也把「几秒」变成「几秒减 0.1 秒」。它是本 change 里最便宜的改动（相对增量建图），所以排在恢复段之后而不是之前。
 
@@ -110,7 +156,7 @@ finding 的前提「主线程一次建出 8000+ 行 DOM」与代码不符：
 
 ### 6.1 `vault_open_path` 移出主线程（裁决点 3）
 
-`#[tauri::command(async)]` 一档的改动（或按 M159 的两阶段 `prepare`/`commit` 复用，把 IO 段搬到 worker）。**未核实**：`State<'_, VaultState>` 借用与 `Send` 约束在这个签名下的可行性、以及「两个用户发起的打开交错」的世代替换语义（今天由前端 `inFlight` 串行化，移到后端后要确认没有新的交错面）。收益上限 = 打开段总耗时（读数前未知；已知 scan+build_graph ≈125ms，**watch 建流未测**）。
+**M283 定夺：暂缓**（读数见 §7.1：watch 建流 0.4–1.6ms、打开段合计 ≈92–107ms release，都远低于「显著」的量级；async 化收益上限就是打开段总时长）。以下是当时的方案记录：`#[tauri::command(async)]` 一档的改动（或按 M159 的两阶段 `prepare`/`commit` 复用，把 IO 段搬到 worker）。**未核实**：`State<'_, VaultState>` 借用与 `Send` 约束在这个签名下的可行性、以及「两个用户发起的打开交错」的世代替换语义（今天由前端 `inFlight` 串行化，移到后端后要确认没有新的交错面）。收益上限 = 打开段总耗时（读数前未知；已知 scan+build_graph ≈92–107ms（M283 实测），**watch 建流未测**）。
 
 ### 6.2 启动恢复路径
 
@@ -139,6 +185,23 @@ M159 已把启动恢复移出主线程，本 change 不碰它（`last_vault` 自
 | 4 | perf 门禁是否新增切换端点 | —（是合同语义问题，不是读数问题） | 不新增，缺口留 §6.4 |
 | 5 | 编号（场景 60 / 文案 deck） | 目录与 deck 的当时末位 | 见 proposal 的编号声明 |
 
+### 7.1 M283 的读数与裁决落点（实现期填，2026-09-28）
+
+工具与口径：release 直调生产函数（`cargo test --release --test vault_open_readings -- --ignored
+--nocapture`，合成本地 vault 与场景 60 的 `seed.bulkVault` 同形状）；真机读数取验收场景 60 的日志
+（`env:logs/*.jsonl`，同一台机器、debug 构建的 app）。
+
+| 读数 | 值 | 支撑的裁决 / 结论 |
+|---|---|---|
+| `scan_workspace` | 10.6 / 13.0ms（中位，release 两次运行） | 打开段的可优化项之一，无悬念 |
+| `build_graph` | 81.5 / 94.4ms（中位，release 两次运行；其中一次含 271ms 的冷缓存离群样本） | **裁决点 2：`vault_load_open` ≈92–107ms « 250ms ⇒ 建图局部优化不纳入本 change**（账记 `docs/backlog.md`：增量建图暂缓 + canonicalize 外提的收益上限实测 ≈26ms，不是 M154 估的 ≈45ms） |
+| `build_graph`（canonicalize 外提 + 批量读，仅估上限的复刻） | 55.7 / 61.7ms（中位，release 两次运行） | 同上：即使做满也只省 ≈26–33ms |
+| `watch`（FSEvents 建流） | 1.5–1.6ms（release 中位，两次运行）/ 0.4–0.5ms（真机日志） | **裁决点 3：远低于 100ms ⇒ `vault_open_path` 的 async 化暂缓**（`src-tauri/src/commands.rs` 的 `vault_open_watch` 读数已就位，Alex 的真实 vault 上也能自查） |
+| `vault_load_open`（真机，真实形状 A） | 612–630ms（debug 构建，改动前后同档） | 与 release 的 92–107ms 不可混比；Alex 的发布版对应 release 侧 |
+| `vault_load_restore`（真机，A = 2567 条目，40 标签，**改动前**） | 984 / 997 / 1182ms ⇒ **≈25–30ms/标签**（单变量探针复测，`before-probe/`） | 裁决点 1 的推荐案依据；与 M252 在 77 条目 vault 上的 21–30ms/标签同档 ⇒ 跨规模无显著放大（§1 的「未验」闭合） |
+| `vault_load_restore`（同场景，**改动后**） | 见 §1.1 的对照 | 3.6 的验收读数 |
+| `vault_load_flush` | 验收场景里未出现（脏标签只有 1 个、低于 250ms 阈值） | 1.1 的埋点已就位；本条读数需 Alex 在自己 vault 上带较大脏文档切一次 |
+
 读数怎么拿（三种渠道，都不需要 agent 碰 Alex 的真实 vault）：
 
 1. **零成本**：Alex 自己切一次真实 vault，grep `~/.config/lumir/logs/*.jsonl` 的 `vault_load`（M252 的 `phaseMs` 已经把三段埋好）。补上本 change 的 `saveAll` 段与 watch 段读数后，这一条就能直接回答「几秒卡在哪」。
@@ -147,9 +210,9 @@ M159 已把启动恢复移出主线程，本 change 不碰它（`last_vault` 自
 
 ## 8. 已知边界与未验项（如实记）
 
-1. **打开段指示静止**：§2.1 的机制推导（同步 command 占主线程 ⇒ 不能重绘）未实测；未测前 MUST NOT 把「指示在打开段照常转动」写进任何验收判据。
-2. **恢复段读数跨 vault 规模未验**：§1 末尾。它是裁决点 1 收益幅度的唯一未知量。
-3. **watch 建流耗时未测**：426 个目录的 FSEvents 建流成本（§1 第二行）。
+1. **打开段指示静止**：§2.1 的机制推导（同步 command 占主线程 ⇒ 不能重绘）**未直接实测**。M283 的间接证据：场景 60 在「切到 B」那一步（打开段被 20×8MB 放大器撑到 7.5s 量级）断言指示在场并 PASS ⇒「指示在打开段**在场**」有实测支撑；「动画在推进」仍无判据（本 change 不改指示形态，spec delta 的边界写的也正是「只要求在场」）。
+2. **恢复段读数跨 vault 规模**：**已闭合**（M283）：真实形状 vault（2567 条目）上 40 标签 = 984–1182ms（≈25–30ms/标签），与 M252 在 77 条目 vault 上的 21–30ms/标签同档 ⇒ per-tab 成本基本不随 vault 规模增长。
+3. **watch 建流耗时**：**已测**（M283）：release 中位 1.5–1.6ms、真机（debug app）0.4–0.5ms ⇒ 裁决点 3 取「暂缓 async 化」。
 4. **`readingPositions.onVaultLoaded` 的成本**：装载路径上按条目剔除不在 vault 内的键（内存镜像即时剔除），它在 2567 条目上的成本未单独测过；它在指示窗口内（`applyVault` 前段），不在恢复段读数里。
 5. **未装载标签的外部变更检测时点后移**（§3.4 风险 1）：行为变化，delta 的边界里写明。
 6. **按需装载下标签激活时延**（§3.4 风险 4）：真机是否可感，本 change 不预设结论。

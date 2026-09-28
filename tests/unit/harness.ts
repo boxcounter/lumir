@@ -158,6 +158,10 @@ export interface EditorDouble {
   open(path: string | undefined, content: string, options?: { mode?: EditorMode; editable?: boolean }): EditorSession;
   /** 改内容：换 state、按 cleanDoc 重算 dirty，并触发 onDocChanged（崩溃备份排期靠它）。 */
   edit(path: string | undefined, content: string): void;
+  /** 造一个**壳态**标签（M283）：有路径、内容为空、`loaded === false`、没有落盘基准。
+   *  与 `open(path, "")` 的差别只有 `loaded` 这一个标志——save-controller 的判定不读它
+   *  （壳的 `dirty` 恒 false），因此这条替身同时钉住「未装载 ⇒ 不拦切换、不进保存」。 */
+  openShell(path: string): EditorSession;
   activate(path: string | undefined): void;
   close(path: string | undefined): void;
   /** 改名（真内核 `remapSessionPaths` 的替身）：**只换路径**——内容、dirty 与基准全不动，
@@ -234,6 +238,10 @@ export function createEditorDouble(): EditorDouble {
       const session: EditorSession = {
         id: nextId++,
         path,
+        // 假编辑器的会话一律是「内容已装载」（M283 的壳态在真编辑器里由 createShellSession 造，
+        // 本替身不给它建模——save-controller 的判定只读 dirty 与 path，壳态的语义等价于
+        // 「有 path、dirty=false、无 basis」）。
+        loaded: true,
         state: stateOf(content),
         cleanDoc: content,
         dirty: false,
@@ -252,6 +260,11 @@ export function createEditorDouble(): EditorDouble {
       session.state = stateOf(content);
       setDirty(session, content !== session.cleanDoc);
       for (const listener of listeners) listener();
+    },
+    openShell(path) {
+      const session = this.open(path, "");
+      session.loaded = false;
+      return session;
     },
     activate(path) {
       const session = find(path);

@@ -907,6 +907,22 @@ export interface EditorSession {
   state: EditorState;
   /** 文档的 vault 相对路径；未命名文档（空态 / 新建）为 undefined。 */
   path: string | undefined;
+  /**
+   * 该会话的**文档内容是否已装载**（M283，change vault-switch-restore-perf 的 3.1）。
+   *
+   * vault 会话恢复的第一步（建壳）产出的标签是「`path` / `mode` / `editable` 就位、内容为空、
+   * `loaded === false`」的**壳**：它已是一个真实标签（顺序、路径标题、会话快照全按真标签工作），
+   * 正文留到它**首次成为前台**时装载（`reloadSession` 是那条装载路径，它把本字段置真）。
+   * 无路径的会话（未命名空文档）没有盘上内容可等，恒为 true。
+   *
+   * 两个读点：`activate()` 里的 `ensureMtime`（壳态跳过——那是每标签一次的 IPC，留到装载时）
+   * 与装配层的按需装载触发（`src/main.ts` 的 `syncActiveDocument`）。
+   *
+   * **dirty 语义不看它**：壳的 `cleanDoc` 是空串、`dirty` 恒 false——未装载的内容没有可丢的修改，
+   * 因此它既不拦「切换 vault / 退出」（`vaultSwitchBlock`）、也不进「保存全部脏标签」
+   * （`saveAllDirty`），更不会被当成「无落盘基准」（`saveBaseline` 只对有本字段为真的会话有意义）。
+   */
+  loaded: boolean;
   /** dirty 判定基准：最近一次装载或保存时的全文。 */
   cleanDoc: string;
   /** 相对 cleanDoc 是否有改动。 */
@@ -1002,6 +1018,16 @@ export interface EditorHandle {
    * 装载时按路径裁决。
    */
   createSession(): EditorSession;
+  /**
+   * 建一个**壳会话**（M283，change vault-switch-restore-perf 的 3.1）：`path` / `mode` /
+   * `editable` 就位、内容为空、`loaded === false`。vault 会话恢复的第一步用它——建壳是同步的、
+   * 极便宜的（空文档 + 一次 `EditorState` 构造），所以标签栏与 `sessionSnapshot` 在装载完成的
+   * 那一帧就拿到完整列表，而**每标签一次的 IPC**（`ensureMtime`）与正文装载留到它首次成为前台
+   * （`reloadSession`）。
+   *
+   * 不激活、不装载内容——调用方按存储顺序建完壳后自己决定激活哪一个。
+   */
+  createShellSession(path: string): EditorSession;
   /**
    * 用新内容改写一个既有会话（外部重载 / 放弃我的修改 / 恢复崩溃备份）。
    * 目标会话不在前台时只换它的 state，不碰 view。
@@ -1737,7 +1763,7 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
     });
   }
 
-  function makeSession(doc: string, path: string | undefined, mode: EditorMode): EditorSession {
+  function makeSession(doc: string, path: string | undefined, mode: EditorMode, loaded = true): EditorSession {
     // 可编辑性按文件类裁决（唯一判据在 attachments.ts 的 isEditablePath）：无路径（空态 /
     // 新建）可编辑；有路径时 md/code/text 可编辑，image/binary 不可（它们不进编辑器）。
     const editable = isEditablePath(path);
@@ -1745,6 +1771,7 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
       id: ++sessionSerial,
       state: sessionState(doc, path, mode, editable, wrap),
       path,
+      loaded,
       mode,
       editable,
       cleanDoc: doc,
@@ -1930,7 +1957,9 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
     active = session;
     syncProjection();
     readyPath = session.path;
-    ensureMtime(session.path);
+    // 壳态（内容未装载）不取 mtime：那是每标签一次的 IPC，而壳的正文本来就没有可标注的
+    // doc-meta（M283）；装载时 `reloadSession` 会补上，随后前台重建装饰时缓存已就位。
+    if (session.loaded) ensureMtime(session.path);
     // 在途的 paint 事件作废：它属于刚切走的那个会话。
     ++readySerial;
     // 只换 state——撤销史 / 语法树 / 选区 / 搜索查询都在 state 里跟着走，不重新解析。
@@ -2103,6 +2132,13 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
       sessions.push(session);
       return session;
     },
+    createShellSession(path: string) {
+      // 壳：路径与模式就位、内容为空（`loaded === false`）。**不取 mtime**——那是每标签一次的
+      // IPC，按需装载的价值正落在「不给未访问的标签付这笔钱」；`reloadSession` 会在内容装载时补。
+      const session = makeSession("", path, modeForPath(path, defaultMode), false);
+      sessions.push(session);
+      return session;
+    },
     reloadSession(session: EditorSession, doc: string, path: string | undefined, requestId?: number) {
       const mode = modeForPath(path, defaultMode);
       // 可编辑性按文件类（与 mode 正交，唯一判据 isEditablePath）：path 一换就要一起改，
@@ -2111,6 +2147,8 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
       session.path = path;
       session.mode = mode;
       session.editable = editable;
+      // 内容进来了（壳会话的「填充」这一步也走这里，M283）：`loaded` 置真之后按需装载不再触发。
+      session.loaded = true;
       session.cleanDoc = doc;
       // 装载 = 磁盘内容以这次为准（打开 / 外部重载 / 恢复备份）：mtime 缓存一律废掉重取。
       if (path !== undefined) mtimeCache.delete(path);
