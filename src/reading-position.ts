@@ -58,6 +58,15 @@ export interface ReadingPositionStoreDeps {
   getPositions(vaultId: string): Promise<ReadingPositions | null>;
   /** 写某 vault 的阅读位置表（整份镜像；写失败由后端降级为 warning）。 */
   putPositions(vaultId: string, entries: ReadingPositionMap): Promise<void>;
+  /** 一组 vault 相对路径的**批量**存在探测（后端 `fs_paths_exist`），返回其中确实存在的那些。
+   *
+   *  它补的是「装载时的枚举结果不再是 vault 内文件的全集」这件事：被 vault 自己的忽略声明
+   *  挡住的惰性条目（在文件树里可见、可打开）永不进枚举，它们的阅读位置 MUST NOT 每次装载
+   *  都被剪掉（change vault-open-ignore-set 的 spec「按 vault 持久化阅读位置」第 4 条）。
+   *  **批量**：候选数上界是镜像的键数（`READING_POSITION_MAX_ENTRIES`），逐键走 IPC 会把
+   *  N 次往返叠在装载路径上。MUST NOT 逐条发起。探测失败按「都不存在」处置（与只看枚举
+   *  集合的旧行为一致）。 */
+  pathsExist(paths: string[]): Promise<string[]>;
   /** 位置读写失败的人话提示（只降级，不拦停打开 / 切换 / 退出）。 */
   warn(text: string): void;
 }
@@ -258,12 +267,32 @@ export function createReadingPositionStore(
       file = null; // 读不到等价于「没有阅读位置历史」，不影响这次装载
     }
     if (gen !== loadGen) return; // 读盘途中又装载了一次 vault：本次结果整体作废
-    // 清理挂在**已有的一次枚举**上（装载时本就拿到的全量条目表）：零新增 IO、零新增读取。
+    // 清理挂在**已有的一次枚举**上（装载时本就拿到的全量条目表）：零新增 IO、零新增读取；
+    // 不在枚举结果里的键另过**一次**批量存在探测（见下面的注释）。
     const available = new Set(
       entries.filter((entry) => entry.kind === "file").map((entry) => entry.path),
     );
+    const stored = file?.entries ?? {};
+    // 判据 MUST NOT 只看本次枚举结果：惰性条目（`.local/教程.md`）在文件树里可见、可打开，
+    // 却永不进枚举——只看 `available` 会让它的阅读位置**每次装载都被剪掉**（读了也白读），
+    // 那正是 Alex 裁决原话里的场景。存在即保留，探测失败才剪。
+    const missing = Object.keys(stored).filter((key) => !available.has(key));
+    let present = new Set<string>();
+    if (missing.length > 0) {
+      // 探测面上界与镜像同一处上限：手改过的超限文件也不放大探测面（`capEntries` 的淘汰
+      // 口径与镜像一致——被它淘汰的候选本来就等于「不存在」，结果与不裁剪时相同）。
+      const bounded = capEntries(
+        Object.fromEntries(missing.map((key) => [key, stored[key] ?? { pos: 0, y: 0, x: 0, at: 0 }])),
+      );
+      try {
+        present = new Set(await deps.pathsExist(Object.keys(bounded)));
+      } catch {
+        present = new Set(); // 探测失败等价于「都不在 vault 内」（与只看枚举集合时同结果）
+      }
+      if (gen !== loadGen) return; // 探测是新的 await：再查一次世代（同上面那一次）
+    }
     // 上限在镜像上就收口：手改过的文件可能带来超限内容，下一次落盘（乃至内存镜像）都不许超过它。
-    mirror = capEntries(pruneEntries(file?.entries ?? {}, available));
+    mirror = capEntries(pruneEntries(stored, new Set([...available, ...present])));
     // **这是防线，不是冗余**（reviewer r2 实测：单删这一行，「窗口期的捕获不许落进新 vault」那条
     // 单测即如实变红）。窗口期的捕获**会照常落进 pending**——那一刻键还是旧键、`scrolled()` 不区分
     // 键的新旧，照旧捕获（这正是「窗口期内的捕获仍归旧键」那条单测的前提）。危险在于它的防抖触发

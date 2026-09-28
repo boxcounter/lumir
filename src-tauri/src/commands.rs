@@ -147,9 +147,17 @@ pub struct VaultState {
     inner: Mutex<VaultInner>,
 }
 
+/// 已打开的 vault：根路径 + **本次装载编译的规则表**（change vault-open-ignore-set §4.5：
+/// 规则表在装载时编译一次、随 vault 存活；物化集合也活在这里，随 vault 重建，
+/// MUST NOT 跨 vault 串用）。
+struct OpenVault {
+    root: PathBuf,
+    policy: fs_io::IgnorePolicy,
+}
+
 #[derive(Default)]
 struct VaultInner {
-    root: Option<PathBuf>,
+    vault: Option<OpenVault>,
     /// drop 即停止监听（见 fs_io::VaultWatcher）。
     watcher: Option<VaultWatcher>,
     /// 启动恢复失败的人话提示，前端经 vault_current 取走后仍保留（幂等）。
@@ -179,10 +187,11 @@ impl VaultInner {
             root,
             watcher,
             graph,
+            policy,
             ..
         } = prepared;
         self.watcher = Some(watcher);
-        self.root = Some(root);
+        self.vault = Some(OpenVault { root, policy });
         self.notice = None;
         self.graph = graph;
         self.generation += 1;
@@ -203,7 +212,7 @@ impl VaultState {
     pub fn finish_restore(&self, generation: u64, outcome: RestoreOutcome) -> bool {
         let mut inner = self.inner.lock().expect("vault state poisoned");
         inner.restore_pending = false;
-        if inner.generation != generation || inner.root.is_some() {
+        if inner.generation != generation || inner.vault.is_some() {
             return false;
         }
         match outcome {
@@ -215,14 +224,14 @@ impl VaultState {
     }
 
     /// 当前状态快照（`vault_current` command 与测试共用）：vault 非空时按 root 重新对账
-    /// 稳定身份并全量枚举。
+    /// 稳定身份并全量枚举（用**当前** vault 的规则表——枚举结果必须与装载时的口径一致）。
     pub fn status(&self) -> Result<VaultStatus, CommandError> {
         let inner = self.inner.lock().expect("vault state poisoned");
-        let vault = match &inner.root {
-            Some(root) => Some(VaultInfo {
-                vault_id: crate::vault_registry::reconcile_vault(root)?.id,
-                root: root.display().to_string(),
-                entries: fs_io::scan_workspace(root)?,
+        let vault = match &inner.vault {
+            Some(vault) => Some(VaultInfo {
+                vault_id: crate::vault_registry::reconcile_vault(&vault.root)?.id,
+                root: vault.root.display().to_string(),
+                entries: fs_io::scan_workspace(&vault.root, &vault.policy)?,
                 remap_candidates: vec![],
             }),
             None => None,
@@ -238,16 +247,36 @@ impl VaultState {
         self.inner
             .lock()
             .expect("vault state poisoned")
-            .root
-            .clone()
+            .vault
+            .as_ref()
+            .map(|vault| vault.root.clone())
+            .ok_or_else(|| CommandError::new("vault_not_open", "尚未打开 vault，请先选择目录"))
+    }
+
+    /// 当前 vault 的根 + 规则表（`fs_scan_dir` / `fs_scan_workspace` / 存在探测共用）。
+    fn root_and_policy(&self) -> Result<(PathBuf, fs_io::IgnorePolicy), CommandError> {
+        self.inner
+            .lock()
+            .expect("vault state poisoned")
+            .vault
+            .as_ref()
+            .map(|vault| (vault.root.clone(), vault.policy.clone()))
             .ok_or_else(|| CommandError::new("vault_not_open", "尚未打开 vault，请先选择目录"))
     }
 
     /// 全量枚举结果建链接索引（open_vault 与测试共用）。
+    ///
+    /// **惰性条目不进索引**（§4.6 的装载路径）：索引的输入是「主动枚举的条目」，MUST NOT 依赖
+    /// UI 交互历史（同一 vault 两次打开的解析结果一致）——用户展开过惰性目录也不改变这一点。
+    ///
+    /// **已知边界**（spec「全类型递归枚举」的已知边界段，实现期在此给出指针）：指向惰性区域的
+    /// `[[wikilink]]` 与 `![[img.png]]` 因此解析为 `unresolved` / 找不到附件——用户在文件树里
+    /// 展开那个目录、点开文件**照常可读**（打开链路是路径直读，不查索引）。这条降级是有意的
+    /// （索引的确定性优先），不是漏实现。
     fn build_graph(root: &Path, entries: &[FsEntry]) -> LinkGraph {
         let mut graph = LinkGraph::new();
         for e in entries {
-            if e.kind != fs_io::FsEntryKind::File {
+            if e.kind != fs_io::FsEntryKind::File || e.lazy {
                 continue;
             }
             let content = if link_graph::is_markdown(&e.path) {
@@ -262,15 +291,26 @@ impl VaultState {
     }
 
     /// watch 增量 → 链接索引就地更新（tasks 1.4：复用 fs:entry_changed 事件流）。
+    ///
+    /// **增量路径同样不许把惰性条目带进索引**（§4.6，r2/r3 评审 P1-3）：`lazy` 标记由后端在
+    /// 过滤 / 投递那一步用同一份规则表算出，这里只消费、MUST NOT 重算。反例（本 change 之前
+    /// 必然发生）：`HANDOFF.md` 被 `.gitignore` 声明，外部改写它 ⇒ 事件投递 ⇒ 它一度进入链接
+    /// 索引 ⇒ `[[HANDOFF]]` 本会话内可解析、重开后不可解析。
+    ///
+    /// **deleted 方向无条件移除**（幂等：本来不在索引里就是空操作）：因此该方向不消费 `lazy`
+    /// ——这也绕开了「被删路径 stat 不到、目录限定模式判不准类型」的歧义。
     pub fn apply_fs_changes(&self, changes: &[FsChange]) {
         let mut inner = self.inner.lock().expect("vault state poisoned");
-        let Some(root) = inner.root.clone() else {
+        let Some(root) = inner.vault.as_ref().map(|vault| vault.root.clone()) else {
             return;
         };
         for c in changes {
             match c.kind {
                 fs_io::FsChangeKind::Deleted => inner.graph.remove(&c.path),
                 _ => {
+                    if c.lazy {
+                        continue; // 惰性条目：树照常收行，索引不收（§4.6）
+                    }
                     if c.entry_kind == Some(fs_io::FsEntryKind::Dir) {
                         continue; // 目录本身不进候选全集
                     }
@@ -299,6 +339,10 @@ pub struct PreparedVaultOpen {
     pub watcher: VaultWatcher,
     /// 全量枚举结果建出的链接索引。
     pub graph: LinkGraph,
+    /// 本次装载编译的规则表（change vault-open-ignore-set §4.5）：随 vault 一起提交、
+    /// 一起被替换——它是「一份策略、五个使用点」的那一份（枚举 / 按需枚举 / watch /
+    /// 子树补全 / 名字校验）。
+    pub policy: fs_io::IgnorePolicy,
 }
 
 /// [`prepare_vault_open`] 的两种结果：真正备好的打开，或 remap 候选短路（**没有**打开
@@ -328,15 +372,24 @@ pub fn prepare_vault_open(
     }
     // Register/reconcile stable vault identity before opening.
     let workspace = crate::vault_registry::reconcile_vault(&root)?;
+    // 规则表在**装载时编译一次**（spec「全类型递归枚举」）：现场读一次配置取用户规则的来源
+    // 清单（`config::load()` 本来就是按需读盘，MUST NOT 为它引入启动期缓存——那会把
+    // 「配置改动下次装载生效」这条口径做坏）。配置读不到（配置目录不可确定）时用出厂默认
+    // 清单：打开 vault 是主结果，不该被一次配置读取失败拦停。
+    let rule_files = config::load()
+        .map(|snapshot| snapshot.config.vault.rule_files)
+        .unwrap_or_else(|_| config::VaultConfig::default().rule_files);
+    let policy = fs_io::IgnorePolicy::load(&root, &rule_files);
     // 顺序：先 watch（FSEvents 流起点在此刻）再全量枚举，消除 scan→watch 的
     // 事件空窗；枚举结果随后播种进 watcher 的已知路径集（修正重放的误报 Create）。
     let app_for_watch = app.clone();
     let watch_root = root.clone();
-    // watch 建流的耗时单独记一条读数（M283 的 1.2）：它落在同一段主线程里（本 command 是
-    // 同步 command，见 `vault_open_path` 的注释），而此前**从未测过**——「指示静止 +
-    // beachball」的窗口有没有它、要不要把整段移出主线程（裁决点 3）都挂在这个数上。
+    // watch 建流的耗时单独记一条读数（M283 的 1.2）：它落在这段里，而此前**从未测过**
+    // ——「指示静止 + beachball」的窗口有没有它、要不要把整段移出主线程（裁决点 3）都挂在
+    // 这个数上。本 change 起 `vault_open_path` 已是 `#[command(async)]`（见其注释），整段
+    // 不再占 IPC 主线程；这条读数照旧保留，它是「三段各占多少」的对照。
     let watch_started = std::time::Instant::now();
-    let watcher = fs_io::watch(&watch_root, move |changes: Vec<FsChange>| {
+    let watcher = fs_io::watch(&watch_root, &policy, move |changes: Vec<FsChange>| {
         // 链接索引随事件流增量更新（先于 emit：前端收到事件时索引已新）
         app_for_watch
             .state::<VaultState>()
@@ -348,15 +401,30 @@ pub fn prepare_vault_open(
         "vault_open_watch",
         &format!("{:.1}", watch_started.elapsed().as_secs_f64() * 1000.0),
     );
-    let entries = fs_io::scan_workspace(&root)?;
+    // 打开段的**分段读数**（change vault-open-ignore-set §6.2）：两条都**无条件记录**
+    //（与 `vault_open_watch` 同口径，阈值不是这里的判据）——「日志里没有这一行」与「它很快」
+    // 事后不可区分。真机跑一次之后：`vault_load_open`（前端总时长）− 本两条 ≈ 序列化 + 传输
+    // + JSON.parse，那正是「真机 5.5s vs 合成 3.1s」缺口归因要的那个残差。
+    let scan_started = std::time::Instant::now();
+    let entries = fs_io::scan_workspace(&root, &policy)?;
+    crate::logging::slow_callback(
+        "vault_open_scan",
+        &format!("{:.1}", scan_started.elapsed().as_secs_f64() * 1000.0),
+    );
     watcher.seed(entries.iter().map(|e| e.path.clone()));
+    let graph_started = std::time::Instant::now();
     let graph = VaultState::build_graph(&root, &entries);
+    crate::logging::slow_callback(
+        "vault_open_graph",
+        &format!("{:.1}", graph_started.elapsed().as_secs_f64() * 1000.0),
+    );
     Ok(PreparedOpen::Ready(Box::new(PreparedVaultOpen {
         root,
         vault_id: workspace.id,
         entries,
         watcher,
         graph,
+        policy,
     })))
 }
 
@@ -610,7 +678,18 @@ pub async fn vault_open(
 /// 按已知路径直接打开 vault（无目录选择器）：仅用于重映射确认后的重开——
 /// 路径来自用户刚刚在选择器里选中的 VaultInfo.root，确认动作（作为新 vault /
 /// 确认映射）不应再弹一次选择器让用户重选同一目录。
-#[tauri::command(rename_all = "snake_case")]
+///
+/// **线程语义**（change vault-open-ignore-set §5）：标 `#[command(async)]`（保持同步 `fn`
+/// 形态，tauri 宏生成 `sync_threadpool` 语义——body 在 async 运行时的 worker 上执行，不占 IPC
+/// 主线程；返回值的 JSON 序列化同在那个 worker 里）。此前它与 `vault_open`（本来就是
+/// `async fn`）跑同一段 `open_vault` 工作却一条在主线程内联、一条不在，用户可观察的差别是
+/// 打开段期间 webview 能否重绘（条目数大的 vault 上整窗不可交互、进度指示静止、只能等）。
+/// 本 change 把 outlier 拉平：两条 path 的线程语义一致。
+///
+/// 已知不完美（与 `vault_open` 同形，不引入形态分叉）：body 里是**阻塞式文件 IO**，跑在
+/// async 运行时的 worker 上会占住一个 worker（不是 `spawn_blocking`）。同仓 `vault_open`
+/// 已是这个形态，且没有读数表明需要改成 `spawn_blocking`。
+#[tauri::command(async, rename_all = "snake_case")]
 pub fn vault_open_path(
     app: tauri::AppHandle,
     state: tauri::State<'_, VaultState>,
@@ -634,7 +713,55 @@ pub fn vault_current(state: tauri::State<'_, VaultState>) -> Result<VaultStatus,
 pub fn fs_scan_workspace(
     state: tauri::State<'_, VaultState>,
 ) -> Result<Vec<FsEntry>, CommandError> {
-    fs_io::scan_workspace(&state.root()?)
+    let (root, policy) = state.root_and_policy()?;
+    fs_io::scan_workspace(&root, &policy)
+}
+
+/// 按需枚举一个目录的**一层**条目（change vault-open-ignore-set §4.3）：文件树展开惰性目录时
+/// 的唯一取数通道。惰性条目的子孙不在装载时的枚举结果里，树 MUST NOT 把它们当作空目录渲染。
+///
+/// 分类口径与 [`fs_scan_workspace`] 完全同源（内置规则丢弃、用户规则命中出一行且 `lazy`、
+/// 其余正常），且**只枚举一层**、不递归下钻。路径走与所有读取路径同源的 vault 内校验
+///（MUST NOT 为按需枚举放松边界）；目标不存在 / 不是目录 ⇒ 人话 `CommandError`。
+///
+/// **线程语义**（§5.2）：标 `#[command(async)]`（同 `vault_open_path`）。一次展开可能是几万条
+///（`.tower/worktrees` 下层），不能占 IPC 主线程。
+///
+/// 成功返回即把该目录登记进**物化集合**（watch 判定惰性子树事件是否实时的唯一开关）。
+#[tauri::command(async, rename_all = "snake_case")]
+pub fn fs_scan_dir(
+    state: tauri::State<'_, VaultState>,
+    dir: &str,
+) -> Result<Vec<FsEntry>, CommandError> {
+    let (root, policy) = state.root_and_policy()?;
+    // 一次展开的读数（§6.2）：**有条件**（阈值 250ms，与前端 `phaseMs` 同口径）——展开一个
+    // 条目数很大的目录时用户会看到明确的等待，值得留一条；小目录不记，不稀释日志。
+    let started = std::time::Instant::now();
+    let entries = fs_io::scan_dir(&root, &policy, dir)?;
+    let ms = started.elapsed().as_secs_f64() * 1000.0;
+    if ms >= 250.0 {
+        crate::logging::slow_callback("vault_scan_dir", &format!("{ms:.1}"));
+    }
+    Ok(entries)
+}
+
+/// 批量探测一组 vault 相对路径是否存在（change vault-open-ignore-set §4.11）：返回其中确实
+/// 存在的那些。消费方是会话恢复的「在不在 vault 内」判定与阅读位置的存量键修剪——两者都不能
+/// 只看装载时的枚举结果（被用户规则命中的惰性文件在树里可见、可打开，却永不进枚举）。
+///
+/// **批量**而不是逐条：两个消费点的候选数都不小（会话条目数、阅读位置键上限 200），逐条走 IPC
+/// 会把 N 次往返叠在装载路径上。一次命令、一次往返、N 次 stat。
+///
+/// 越界（绝对路径 / `..` / 符号链接逃逸）与不存在的路径一律不出现在返回集合里、且不逐条报错
+///（两者对调用方同义）；边界校验本身照旧执行，越界路径不会被 stat。本命令只 stat，
+/// MUST NOT 创建 / 改写 / 删除任何文件。
+#[tauri::command]
+pub fn fs_paths_exist(
+    state: tauri::State<'_, VaultState>,
+    paths: Vec<String>,
+) -> Result<Vec<String>, CommandError> {
+    let root = state.root()?;
+    Ok(fs_io::paths_exist(&root, &paths))
 }
 
 /// 读 vault 内文本文件与绑定 revision 快照（UTF-8）。
@@ -855,7 +982,7 @@ pub fn link_resolve_note(
     target: String,
 ) -> Result<Option<String>, CommandError> {
     let inner = state.inner.lock().expect("vault state poisoned");
-    if inner.root.is_none() {
+    if inner.vault.is_none() {
         return Err(CommandError::new(
             "vault_not_open",
             "尚未打开 vault，请先选择目录",
@@ -995,7 +1122,7 @@ pub fn link_graph_resolve(
     link: &str,
 ) -> Result<LinkResolveResult, CommandError> {
     let inner = state.inner.lock().expect("vault state poisoned");
-    if inner.root.is_none() {
+    if inner.vault.is_none() {
         return Err(CommandError::new(
             "vault_not_open",
             "尚未打开 vault，请先选择目录",
@@ -1005,6 +1132,12 @@ pub fn link_graph_resolve(
 }
 
 /// 未创建链接一键创建（spec §4.4，裁决点 I）：当前文件所在目录建空文件
+///
+/// **已知边界**（spec「全类型递归枚举」的已知边界段，实现期在此给出指针）：本命令按确定性路径
+/// 创建空文件、目标已存在则报错，**不做全 vault 搜索**。因此对一个「真实存在于惰性目录、但索引
+/// 里没有」的名字点「创建」会产生一个**重复文件**——这条风险在 change vault-open-ignore-set
+/// 之前就存在（任何未索引的名字都如此），引入用户规则只是把触发面变宽；本 change 不改它
+///（日后若要收，方向是「创建前做一次有界的同名探测」），已登记为后续候选。
 /// （from 在 vault 根时建于根；target 含 `/` 时按 vault 根相对并补中间目录）。
 /// MUST NOT 覆盖或改写任何既有文件（ADR 0003 §3 铁律）：目标已存在 = 索引过期，
 /// 报 wikilink_target_exists，前端重新解析。
@@ -1016,8 +1149,9 @@ pub fn wikilink_create(
 ) -> Result<CreateNoteResult, CommandError> {
     let mut inner = state.inner.lock().expect("vault state poisoned");
     let root = inner
-        .root
-        .clone()
+        .vault
+        .as_ref()
+        .map(|vault| vault.root.clone())
         .ok_or_else(|| CommandError::new("vault_not_open", "尚未打开 vault，请先选择目录"))?;
     let created = inner.graph.create_note(&root, from, link)?;
     Ok(CreateNoteResult { created })
@@ -1036,8 +1170,9 @@ pub fn create_file(
 ) -> Result<String, CommandError> {
     let mut inner = state.inner.lock().expect("vault state poisoned");
     let root = inner
-        .root
-        .clone()
+        .vault
+        .as_ref()
+        .map(|vault| vault.root.clone())
         .ok_or_else(|| CommandError::new("vault_not_open", "尚未打开 vault，请先选择目录"))?;
     inner.graph.create_file(&root, path)
 }
@@ -1422,16 +1557,18 @@ mod tests {
         }
     }
 
-    /// 已备好的打开结果（prepare 的产物）。状态机测试不关心 entries/graph——提交只是搬移
-    /// 它们，因此取空。
+    /// 已备好的打开结果（prepare 的产物）。状态机测试不关心 entries/graph/policy——提交只是
+    /// 搬移它们，因此取空（规则表用空清单：没有用户规则来源，只剩内置规则）。
     fn prepared(vault: &TempVault) -> PreparedVaultOpen {
         let root = vault.path();
         PreparedVaultOpen {
             root: root.clone(),
             vault_id: "test-vault".into(),
             entries: vec![],
-            watcher: fs_io::watch(&root, |_| {}).expect("watch temp vault"),
+            watcher: fs_io::watch(&root, &fs_io::IgnorePolicy::load(&root, &[]), |_| {})
+                .expect("watch temp vault"),
             graph: LinkGraph::new(),
+            policy: fs_io::IgnorePolicy::load(&root, &[]),
         }
     }
 
@@ -1440,8 +1577,9 @@ mod tests {
             .inner
             .lock()
             .expect("vault state poisoned")
-            .root
-            .clone()
+            .vault
+            .as_ref()
+            .map(|vault| vault.root.clone())
     }
 
     fn notice_of(state: &VaultState) -> Option<String> {
@@ -1631,6 +1769,217 @@ mod tests {
         assert_eq!(
             terminal.notice.as_deref(),
             Some("上次打开的 vault 已不可用：/gone")
+        );
+    }
+    // -----------------------------------------------------------------------
+    // M292（change vault-open-ignore-set）：索引口径与规则表随 vault 重建
+    // -----------------------------------------------------------------------
+
+    /// 建一个**已提交**的 vault：真目录 + 真规则表 + 真索引（走生产同一条装配路径），
+    /// 供索引口径与策略生命周期的断言使用。
+    fn committed_state(root: &Path, rule_files: &[&str]) -> VaultState {
+        let files: Vec<String> = rule_files.iter().map(|s| s.to_string()).collect();
+        let policy = fs_io::IgnorePolicy::load(root, &files);
+        let entries = fs_io::scan_workspace(root, &policy).expect("scan");
+        let graph = VaultState::build_graph(root, &entries);
+        let state = VaultState::default();
+        commit_vault_open(
+            &state,
+            PreparedVaultOpen {
+                root: root.to_path_buf(),
+                vault_id: "test-vault".into(),
+                entries,
+                watcher: fs_io::watch(root, &policy, |_| {}).expect("watch temp vault"),
+                graph,
+                policy,
+            },
+        );
+        state
+    }
+
+    /// 链接索引里能不能解析出某个相对路径（`resolve_relative` 只查文件全集，是索引可见性的
+    /// 最小可观察面）。
+    fn indexed(state: &VaultState, from: &str, target: &str) -> Option<String> {
+        state
+            .inner
+            .lock()
+            .expect("vault state poisoned")
+            .graph
+            .resolve_relative(from, target)
+    }
+
+    /// tasks 5.1 ①②：装载路径与 watch 增量路径**都不许**把惰性条目带进链接索引
+    ///（索引是磁盘 + 规则的纯函数，不是事件历史的函数）；deleted 方向无条件移除。
+    ///
+    /// 反例（本 change 之前必然发生）：`HANDOFF.md` 被 `.gitignore` 声明，外部改写它 ⇒ 事件
+    /// 投递 ⇒ 它一度进入索引 ⇒ `[[HANDOFF]]` 本会话内可解析、重开后不可解析。
+    #[test]
+    fn lazy_entries_never_enter_the_link_index() {
+        let v = TempVault::new("lazy-index");
+        let root = &v.0;
+        std::fs::create_dir_all(root.join(".local")).unwrap();
+        std::fs::write(root.join(".local/tutorial.md"), "# 教程").unwrap();
+        std::fs::write(root.join("visible.md"), "# 可见").unwrap();
+        std::fs::write(root.join("index.md"), "# 索引").unwrap();
+        std::fs::write(root.join(".gitignore"), ".local/\nHANDOFF.md\n").unwrap();
+        std::fs::write(root.join("HANDOFF.md"), "# 交接").unwrap();
+        let state = committed_state(root, &[".gitignore"]);
+
+        // 装载路径：主动枚举的条目进索引，惰性条目一个都不进
+        assert_eq!(
+            indexed(&state, "index.md", "visible.md").as_deref(),
+            Some("visible.md")
+        );
+        assert_eq!(
+            indexed(&state, "index.md", ".local/tutorial.md"),
+            None,
+            "惰性目录里的文件 MUST NOT 进索引"
+        );
+        assert_eq!(
+            indexed(&state, "index.md", "HANDOFF.md"),
+            None,
+            "用户规则命中的条目 MUST NOT 进索引（哪怕它是一个真实存在的 md）"
+        );
+
+        // 增量路径：惰性事件到达（树照常收行）但索引不动；非惰性事件照常进索引
+        state.apply_fs_changes(&[FsChange {
+            kind: fs_io::FsChangeKind::Created,
+            path: ".local/tutorial.md".into(),
+            entry_kind: Some(fs_io::FsEntryKind::File),
+            lazy: true,
+        }]);
+        assert_eq!(indexed(&state, "index.md", ".local/tutorial.md"), None);
+        state.apply_fs_changes(&[FsChange {
+            kind: fs_io::FsChangeKind::Modified,
+            path: "HANDOFF.md".into(),
+            entry_kind: Some(fs_io::FsEntryKind::File),
+            lazy: true,
+        }]);
+        assert_eq!(
+            indexed(&state, "index.md", "HANDOFF.md"),
+            None,
+            "modified 与 created 同路：惰性事件都不许 upsert"
+        );
+        assert_eq!(
+            indexed(&state, "index.md", "visible.md").as_deref(),
+            Some("visible.md"),
+            "别的东西不受影响"
+        );
+        state.apply_fs_changes(&[FsChange {
+            kind: fs_io::FsChangeKind::Created,
+            path: "later.md".into(),
+            entry_kind: Some(fs_io::FsEntryKind::File),
+            lazy: false,
+        }]);
+        assert_eq!(
+            indexed(&state, "index.md", "later.md").as_deref(),
+            Some("later.md"),
+            "非惰性条目照常进索引"
+        );
+
+        // deleted 方向无条件移除（不消费 lazy）：已经（错误地）在索引里也要被摘掉
+        state.apply_fs_changes(&[FsChange {
+            kind: fs_io::FsChangeKind::Deleted,
+            path: "later.md".into(),
+            entry_kind: None,
+            lazy: false,
+        }]);
+        assert_eq!(indexed(&state, "index.md", "later.md"), None);
+    }
+
+    /// tasks 4.2：切换 vault 后规则表**整体重建**——上一 vault 的物化登记不生效，新 vault 用
+    /// 自己的 `.gitignore` 判定（策略随 [`VaultInner::commit`] 一起被替换）。
+    #[test]
+    fn vault_switch_rebuilds_policy_and_drops_previous_materialization() {
+        let a = TempVault::new("policy-a");
+        std::fs::create_dir_all(a.0.join(".local")).unwrap();
+        std::fs::write(a.0.join(".gitignore"), ".local/\n").unwrap();
+        let b = TempVault::new("policy-b");
+        std::fs::create_dir_all(b.0.join("other")).unwrap();
+
+        let state = committed_state(&a.0, &[".gitignore"]);
+        let (root_a, policy_a) = state.root_and_policy().expect("root a");
+        assert_eq!(root_a, a.0);
+        assert_eq!(
+            policy_a.classify(".local", true),
+            fs_io::EntryClass::Lazy,
+            "A 的规则生效"
+        );
+        fs_io::scan_dir(&root_a, &policy_a, ".local").expect("展开 A 的惰性目录");
+        assert!(policy_a.is_materialized(".local"), "A 上登记了物化");
+
+        // 切到 B：策略整体替换
+        let state_b = committed_state(&b.0, &[".gitignore"]);
+        let (root_b, policy_b) = state_b.root_and_policy().expect("root b");
+        assert_eq!(root_b, b.0);
+        assert!(
+            !policy_b.is_materialized(".local"),
+            "上一 vault 的物化登记 MUST NOT 在新 vault 上生效"
+        );
+        assert_eq!(
+            policy_b.classify(".local", true),
+            fs_io::EntryClass::Visible,
+            "B 没有那条规则"
+        );
+        // 同一个状态对象上再开一次（模拟用户切回 A 再切到 B）：提交即整体替换
+        commit_vault_open(
+            &state,
+            PreparedVaultOpen {
+                root: b.0.clone(),
+                vault_id: "test-vault".into(),
+                entries: vec![],
+                watcher: fs_io::watch(&b.0, &policy_b, |_| {}).expect("watch b"),
+                graph: LinkGraph::new(),
+                policy: policy_b.clone(),
+            },
+        );
+        let (_, policy_now) = state.root_and_policy().expect("root now");
+        assert!(
+            !policy_now.is_materialized(".local"),
+            "切换后旧登记不再可见"
+        );
+    }
+
+    /// tasks 5.1 的装载面：`build_graph` 只吃主动枚举的条目——惰性条目（哪怕后端把它放进了
+    /// entries 列表）一个都不进索引。
+    #[test]
+    fn build_graph_skips_lazy_entries() {
+        let v = TempVault::new("build-graph-lazy");
+        let root = &v.0;
+        std::fs::create_dir_all(root.join(".local")).unwrap();
+        std::fs::write(root.join(".local/tutorial.md"), "# t").unwrap();
+        std::fs::write(root.join("note.md"), "# n").unwrap();
+        // 惰性**文件**（用户规则命中的一份真 md）：它是 `build_graph` 必须按 `lazy` 跳过的
+        // 那一类条目——惰性目录的子孙根本不进枚举结果，只靠目录那一条测不出这个守卫。
+        std::fs::write(root.join("HANDOFF.md"), "# h").unwrap();
+        std::fs::write(root.join(".gitignore"), ".local/\nHANDOFF.md\n").unwrap();
+        let policy = fs_io::IgnorePolicy::load(root, &[".gitignore".to_string()]);
+        let entries = fs_io::scan_workspace(root, &policy).expect("scan");
+        // 前提：惰性条目确实在 entries 里（惰性可见）——目录与文件两种形态各一条
+        assert!(
+            entries.iter().any(|e| e.path == ".local" && e.lazy),
+            "惰性目录必须在枚举结果里：{entries:?}"
+        );
+        assert!(
+            entries
+                .iter()
+                .any(|e| e.path == "HANDOFF.md" && e.lazy && e.kind == fs_io::FsEntryKind::File),
+            "惰性文件必须在枚举结果里：{entries:?}"
+        );
+        let graph = VaultState::build_graph(root, &entries);
+        assert_eq!(
+            graph.resolve_relative("note.md", "note.md").as_deref(),
+            Some("note.md")
+        );
+        assert_eq!(
+            graph.resolve_relative("note.md", ".local/tutorial.md"),
+            None,
+            "惰性目录里的条目 MUST NOT 进链接索引"
+        );
+        assert_eq!(
+            graph.resolve_relative("note.md", "HANDOFF.md"),
+            None,
+            "惰性**文件**同样 MUST NOT 进链接索引（它是 lazy 守卫的直接判据）"
         );
     }
 }

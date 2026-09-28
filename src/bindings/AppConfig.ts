@@ -2,6 +2,7 @@
 import type { EditorConfig } from "./EditorConfig";
 import type { LogConfig } from "./LogConfig";
 import type { UiConfig } from "./UiConfig";
+import type { VaultConfig } from "./VaultConfig";
 
 /**
  * 生效配置（唯一类型定义点，TS 类型由 ts-rs 导出）。
@@ -25,4 +26,8 @@ keys: { [key in string]?: string | null },
 /**
  * 运行时诊断日志（add-diagnostics-logging）：事件落盘等级。
  */
-log: LogConfig, };
+log: LogConfig, 
+/**
+ * vault 行为配置（change vault-open-ignore-set 的 r6）：`[vault]` 表。
+ */
+vault: VaultConfig, };

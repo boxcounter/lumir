@@ -42,8 +42,8 @@ function tab(path: string): EditorSession {
   return { path } as unknown as EditorSession;
 }
 
-function fileEntry(path: string): FsEntry {
-  return { path, kind: "file", size: 0, mtime_ms: null };
+function fileEntry(path: string, lazy = false): FsEntry {
+  return { path, kind: "file", size: 0, mtime_ms: null, lazy };
 }
 
 function listRow(over: Partial<VaultListEntry> & { id: string }): VaultListEntry {
@@ -198,6 +198,10 @@ interface StoreRig {
   setGetSession(fn: (vaultId: string) => Promise<VaultSession | null>): void;
   /** 打不开的条目（在 vault 里但读失败）。 */
   failOpen: Set<string>;
+  /** 批量存在探测的假实现（默认「都不在 vault 内」= 只看枚举集合的旧口径）。 */
+  pathsExistImpl: (paths: string[]) => Promise<string[]>;
+  /** 探测调用记录：断言「一次批量、MUST NOT 逐条发起」用。 */
+  probes: string[][];
   setWritesFail(fail: boolean): void;
   /** 让内容装载慢一拍（一次 setImmediate）：用于构造「装载在途时又切了一次 vault」的现场。 */
   setOpenSlow(next: boolean): void;
@@ -227,6 +231,8 @@ function createStoreRig(): StoreRig {
     emptyVaults: 0,
     setGetSession: (fn) => void (getSession = fn),
     failOpen: new Set<string>(),
+    pathsExistImpl: async () => [],
+    probes: [],
     setWritesFail: (fail) => void (writesFail = fail),
     setOpenSlow: (next) => void (openSlow = next),
   };
@@ -237,6 +243,10 @@ function createStoreRig(): StoreRig {
     putSession: async (vaultId, tabs, active) => {
       if (writesFail) throw new Error("磁盘只读");
       rig.writes.push({ vaultId, tabs, active });
+    },
+    pathsExist: (paths) => {
+      rig.probes.push([...paths]);
+      return rig.pathsExistImpl(paths);
     },
     // 建壳是同步的（恢复的第一步），内容装载是异步的（第二步）——两者与「刷标签栏」那一拍
     // 落在同一条时间线上（`shellsBuilt` 是标签栏渲染的触发点，见 store deps 的说明）。
@@ -325,7 +335,7 @@ test("装载后恢复：当帧按存储顺序建壳，内容只装载存储的�
   await rig.store.onVaultLoaded("vault-a", [
     fileEntry("a.md"),
     fileEntry("docs/c.md"),
-    { path: "docs", kind: "dir", size: 0, mtime_ms: null },
+    { path: "docs", kind: "dir", size: 0, mtime_ms: null, lazy: false },
   ]);
   // 壳：按存储顺序、越界条目（/etc/passwd）与不在 vault 的条目都不在其中
   assert.deepEqual(rig.shells, ["a.md", "docs/c.md"], "壳按存储顺序建齐（标签的存在与顺序在此刻就位）");
@@ -360,6 +370,43 @@ test("装载后恢复：激活项的内容读失败 → 退化为下一个能读
   assert.deepEqual(rig.activated, ["a.md"], "退化到下一个能读的标签（两个标签都建了壳）");
   assert.deepEqual(rig.calls, ["shell:a.md", "shell:c.md", "shellsBuilt", "open:c.md", "open:a.md"]);
   assert.deepEqual(rig.toasts, [skippedText(1)], "一次计数：读失败的那个");
+});
+
+test("装载后恢复：不在枚举集里但探测存在的条目照常恢复（惰性文件不被判成已删除）", async () => {
+  const rig = createStoreRig();
+  // 探测的假后端：`.local/tutorial.md` 在磁盘上（被 vault 自己的 .gitignore 挡住、未进枚举），
+  // `gone.md` 确实不在了。
+  rig.pathsExistImpl = async (paths) => paths.filter((path) => path === ".local/tutorial.md");
+  rig.setGetSession(async () => sessionOf([".local/tutorial.md", "gone.md"], ".local/tutorial.md"));
+  await rig.store.onVaultLoaded("vault-a", [fileEntry("a.md")]);
+
+  assert.deepEqual(
+    rig.probes,
+    [[".local/tutorial.md", "gone.md"]],
+    "一次批量探测：入参是那批「不在枚举条目集里」的路径，MUST NOT 逐条发起",
+  );
+  assert.deepEqual(rig.shells, [".local/tutorial.md"], "探测存在的条目照常建壳（标签回来）");
+  assert.deepEqual(rig.opened, [".local/tutorial.md"], "存储的激活项就是它：内容照常装载");
+  assert.deepEqual(rig.toasts, [skippedText(1)], "只有探测失败的条目计入跳过");
+});
+
+test("装载后恢复：条目全在枚举集里时一次探测都不发（零新增 IPC）", async () => {
+  const rig = createStoreRig();
+  rig.setGetSession(async () => sessionOf(["a.md"], "a.md"));
+  await rig.store.onVaultLoaded("vault-a", [fileEntry("a.md")]);
+  assert.deepEqual(rig.probes, []);
+  assert.deepEqual(rig.shells, ["a.md"]);
+});
+
+test("装载后恢复：探测失败等价于「不在 vault 内」（与只看枚举集合的旧行为一致）", async () => {
+  const rig = createStoreRig();
+  rig.pathsExistImpl = async () => {
+    throw { code: "io", message: "后端不可用" };
+  };
+  rig.setGetSession(async () => sessionOf(["a.md", "gone.md"], "a.md"));
+  await rig.store.onVaultLoaded("vault-a", [fileEntry("a.md")]);
+  assert.deepEqual(rig.shells, ["a.md"]);
+  assert.deepEqual(rig.toasts, [skippedText(1)]);
 });
 
 test("装载后恢复：没有历史或全部不可用 → 空 vault 首入态（不建任何壳）", async () => {
@@ -1024,6 +1071,8 @@ function createSwitcherRig(rows: VaultListEntry[]): SwitcherRig {
     },
     getSession: async () => null,
     putSession: async () => {},
+    // 本组用例不碰存在探测：默认「都不在 vault 内」（= 只看枚举集合的旧口径）。
+    pathsExist: async () => [],
     openPinned: async () => true,
     // M283 的两个新口子：本组用例（浮层 DOM 与阅读位置）不碰会话恢复，给最小替身。
     createShell: () => true,
@@ -1101,6 +1150,7 @@ test("浮层：未装载 vault（入口不存在）时打开是无操作", () =>
     focusEditor: () => {},
     getSession: async () => null,
     putSession: async () => {},
+    pathsExist: async () => [],
     openPinned: async () => true,
     createShell: () => true,
     shellsBuilt: () => {},

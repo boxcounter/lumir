@@ -3,7 +3,7 @@ import type { FsChangeKind } from "./FsChangeKind";
 import type { FsEntryKind } from "./FsEntryKind";
 
 /**
- * 单条增量：变更类型 + 相对路径。
+ * 单条增量：变更类型 + 相对路径 + **惰性标记**。
  */
 export type FsChange = { kind: FsChangeKind, 
 /**
@@ -13,4 +13,15 @@ path: string,
 /**
  * 条目类型（file/dir），deleted 时为 null——前端据此知道新增节点是文件还是目录。
  */
-entry_kind: FsEntryKind | null, };
+entry_kind: FsEntryKind | null, 
+/**
+ * 惰性标记：与 [`FsEntry::lazy`] **同一处口径**（用户规则命中 ⇒ true）。后端在过滤 /
+ * 投递那一步用同一份规则表算出，下游 MUST NOT 重算（那会引出第二份规则实现）。
+ *
+ * 消费方是两处**索引增量补丁**（`commands::apply_fs_changes` 的 `graph.upsert` 与
+ * `src/main.ts` 的 `attachmentPaths.push`）：created / modified 且 `lazy` ⇒ 不许进索引
+ *（索引是磁盘 + 规则的纯函数，不是事件历史的函数）。**deleted 方向无条件移除**、不消费
+ * 本字段——幂等，且绕开「被删路径 stat 不到、目录限定模式判不准类型」的歧义。
+ * 树侧的可见性不受它影响：惰性条目照样有行。
+ */
+lazy: boolean, };

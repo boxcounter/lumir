@@ -47,6 +47,23 @@ tauri-plugin-opener = "2"
 # 被否决的替代是 osascript 驱动 Finder（外部进程 + 注入面，design §4.6）与
 # `std::fs::remove_file`（永久删除，产品裁决明确不提供）。
 trash = "5"
+# 忽略规则匹配器（change vault-open-ignore-set §4.8）：**只用它的 `gitignore` 模块**
+#（`ignore::gitignore`，ripgrep 同源的 gitignore 语义实现），不换掉本仓自己的遍历实现。
+#
+# 为什么是它：本 change 的产品语义是「按用户写的规则办事」（vault 自己的 `.gitignore` /
+# `.git/info/exclude` 决定哪些子树被主动枚举），规则解释错了就等于产品承诺没兑现——`!` 取反
+# 与排除目录的交互、`/` 锚定边界、`**` 语义、注释与转义、目录限定（尾斜杠）这几处的子集实现
+# 必然猜错，猜错的后果是「该隐藏的没隐藏」（性能回落）或「该显示的没显示」（正是 Alex 那条
+# 「忽略项在左栏仍然可见」的约束要防的）。
+#
+# 合并之后它同时承载两件事：**内置规则**（`fs_io::BUILTIN_NAMES` 的 16 个名字字面量 + 两条
+# 临时文件模式，用 `GitignoreBuilder::add_line` 编进去）与**用户规则**——两类共用同一类匹配器，
+# 判定链只有一条（内置先判且命中即定格 → 用户规则最深匹配决定 → 其余可见），不再有「名字等值」
+# 与「规则匹配」两套实现（`is_ignored` 随之退役）。
+#
+# 代价：连带 globset / bstr / crossbeam-* 等传递依赖（见 Cargo.lock 的 5 个新增 `[[package]]`）。
+# 被否决的替代是手写 gitignore 子集（零新增依赖，但子集必然猜错，见上）。
+ignore = "0.4"
 
 [features]
 # 生产构建开关（Tauri 2 官方模板约定，名称必须恰为 custom-protocol）：

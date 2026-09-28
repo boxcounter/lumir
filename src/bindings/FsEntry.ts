@@ -2,7 +2,12 @@
 import type { FsEntryKind } from "./FsEntryKind";
 
 /**
- * 枚举条目：相对路径（`/` 分隔）、类型、大小、mtime（Unix 毫秒）。
+ * 枚举条目：相对路径（`/` 分隔）、类型、大小、mtime（Unix 毫秒），以及**惰性标记**。
+ *
+ * `lazy`（change vault-open-ignore-set §4.3）：true 表示这一条的**子树 / 索引面未枚举**——
+ * 目录的子孙不在本次结果里（展开时经 `fs_scan_dir` 拉取一层），文件不进链接索引与附件索引。
+ * 前端靠它区分「空目录」与「惰性目录」（没有这个标记，两者在模型里长得一样）。
+ * 语义与 [`FsChange::lazy`] 同源：**用户规则命中 ⇒ 惰性**（内置规则命中的条目根本不出现）。
  */
 export type FsEntry = { 
 /**
@@ -16,4 +21,8 @@ size: number,
 /**
  * 修改时间（Unix 毫秒）；取不到时为 null。
  */
-mtime_ms: number | null, };
+mtime_ms: number | null, 
+/**
+ * 惰性条目（用户规则命中）：可见但未主动枚举，见本结构体的注释。
+ */
+lazy: boolean, };

@@ -132,11 +132,19 @@ export interface RestorePlan {
   active: string | null;
 }
 
-/** `available` 是**本次枚举出来的 vault 条目集合**（文件树的那一份）。所有过滤都归结为
- *  「在不在这个集合里」：
- *   - 已删除 / 已移出 vault 的条目 → 不在集合里 → 跳过；
- *   - 绝对路径、含 `..`、越出 vault 的条目（会话文件在配置目录里，可被手工改写）→ 同样不在
- *     集合里 → 跳过，MUST NOT 被打开（ADR 0003 的边界不因会话文件放宽）。
+/** `available` 是**本次枚举出来的 vault 条目集合**（文件树的那一份），`present` 是
+ *  「不在枚举集里、但经批量存在探测确认仍在 vault 内」的补集（可缺省 = 空集）。
+ *
+ *  为什么需要第二个集合（change vault-open-ignore-set 的 spec「装载后恢复标签列表」）：
+ *  被 vault 自己的 VCS 忽略声明挡住、因而未进枚举结果的条目**同样是 vault 内文件**——
+ *  它们在文件树里可见、可打开，只是不进索引。只看 `available` 会把用户从 `.local` 打开的
+ *  教程判成「已删除」并跳过，下次启动标签就没了。
+ *
+ *  所有过滤仍归结为「在不在这个并集里」：
+ *   - 已删除 / 已移出 vault 的条目 → 两边都不在 → 跳过；
+ *   - 绝对路径、含 `..`、越出 vault 的条目（会话文件在配置目录里，可被手工改写）→ 探测也
+ *     不会把它们报成存在（探测与读取路径共用同源的 vault 内校验）→ 跳过，MUST NOT 被打开
+ *     （ADR 0003 的边界不因会话文件放宽）。
  *  前端**不**另写一份「合法 vault 相对路径」的判定：那是后端 `vault_session::sanitize` 的
  *  语义（REVIEW.md 第 8 条），集合归属已经完整覆盖它。
  *
@@ -145,9 +153,10 @@ export interface RestorePlan {
 export function restorePlan(
   session: VaultSession | null,
   available: ReadonlySet<string>,
+  present: ReadonlySet<string> = new Set(),
 ): RestorePlan {
   const stored = session?.tabs ?? [];
-  const open = stored.filter((path) => available.has(path));
+  const open = stored.filter((path) => available.has(path) || present.has(path));
   const storedActive = session?.active ?? null;
   const usable = storedActive !== null && open.includes(storedActive);
   return {
@@ -404,6 +413,12 @@ export interface VaultSessionStoreDeps {
   /** 读 / 写某 vault 的标签会话（装配层给 ipc 封装）。 */
   getSession(vaultId: string): Promise<VaultSession | null>;
   putSession(vaultId: string, tabs: string[], active: string | null): Promise<void>;
+  /** 一组 vault 相对路径的**批量**存在探测（后端 `fs_paths_exist`），返回其中确实存在的那些。
+   *
+   *  存在探测而不是「在枚举集合里」的原因见 [`restorePlan`]；**批量**而不是逐条是因为候选数
+   *  不小（会话条目数），逐条走 IPC 会把 N 次往返叠在装载路径上。MUST NOT 逐条发起。
+   *  探测失败（后端不可用等）按「都不存在」处置——与只看枚举集合的旧行为一致。 */
+  pathsExist(paths: string[]): Promise<string[]>;
   /** 为会话里的一个条目**建壳**（M283，change vault-switch-restore-perf 的 3.1/3.2）：同步、
    *  当帧，产出「有路径、内容未装载」的标签。返回是否建成——不可打开的文件类（image/binary）
    *  返回 false，由调用方计入跳过数（与它此前走 `openPinned` 必然失败同口径，行为不变）。
@@ -485,7 +500,21 @@ export function createVaultSessionStore(deps: VaultSessionStoreDeps): VaultSessi
     const available = new Set(
       entries.filter((entry) => entry.kind === "file").map((entry) => entry.path),
     );
-    const plan = restorePlan(session, available);
+    // 不在枚举集里的条目先过一次**批量**存在探测：惰性条目（被 vault 自己的忽略声明挡住、
+    // 因而未进枚举）同样是 vault 内文件，在文件树里可见可打开（spec「装载后恢复标签列表」）。
+    // 探测是一次新的 await，之后必须**再查一次世代**——用户可能在探测途中切走，那次恢复的
+    // 结果整体作废（同 `getSession` 之后那一次检查）。
+    const missing = (session?.tabs ?? []).filter((path) => !available.has(path));
+    let present = new Set<string>();
+    if (missing.length > 0) {
+      try {
+        present = new Set(await deps.pathsExist(missing));
+      } catch {
+        present = new Set(); // 探测失败等价于「都不在 vault 内」（与只看枚举集合时同结果）
+      }
+      if (gen !== restoreGen) return;
+    }
+    const plan = restorePlan(session, available, present);
 
     // 第一步（同步、当帧）：按存储顺序建壳。标签的存在 / 顺序 / 路径 / 激活项与会话快照在
     // 这一刻就位——「所有标签一次回来」这条外部契约因此与内容装载的耗时脱钩（M283 的 3.2；

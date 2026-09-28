@@ -18,16 +18,39 @@ import type { TreeMenuTarget } from "./tree-menu";
 export type DisplayKind = "dir" | "md" | "image" | "other";
 
 /**
- * 枚举忽略集的前端副本（内联编辑的提示性预检用）。
+ * 内置规则名字表的前端副本（内联编辑的提示性**预检**用，不是过滤）。
  *
- * **权威是 `src-tauri/src/fs_io.rs` 的 `IGNORED_NAMES`**：命中的名字建成/改成之后不进
- * 文件树、watch 事件也被吞掉，用户在界面上既看不到也删不掉。这里抄一份只为「提交前就
- * 说清」，不承担判定职责（后端仍会拒）；两份的逐项对账在
- * `tests/unit/tree-paths.test.ts` 的「忽略集与 Rust 侧 IGNORED_NAMES 逐项对账」（它解析
- * 那份 Rust 源比对，漂移即红——
- * 与 `registry-drift.test.ts` 守 `SAVE_REJECTED_EXTENSIONS` 同一手法，REVIEW.md 第 8 条）。
+ * **权威是 `src-tauri/src/fs_io.rs` 的 `BUILTIN_NAMES`**（16 个名字字面量）：命中的名字建成 /
+ * 改成之后不进文件树、watch 事件也被挡下，用户在界面上既看不到也删不掉。这里抄一份只为
+ * 「提交前就说清」，不承担判定职责（后端仍会拒，且它才是唯一判定实现）。两类的其余部分
+ * ——保存临时文件模式两条（`.lumir-*` / `.*.lumir-*`）——**不在**本表里：它们不是名字，前端
+ * 预检覆盖不到，由后端在提交时拒绝并给出人话原因。
+ *
+ * 逐项对账在 `tests/unit/tree-paths.test.ts` 的「内置名字表与 Rust 侧 BUILTIN_NAMES 逐项对账」
+ * （它解析那份 Rust 源比对，漂移即红——与 `registry-drift.test.ts` 守
+ * `SAVE_REJECTED_EXTENSIONS` 同一手法，REVIEW.md 第 8 条）。
+ *
+ * **用户规则**（vault 自己的 `.gitignore` / `.git/info/exclude`）命中的名字**不在这里**：
+ * 那样名字本来就可见、可打开，只是不进索引，新建 / 改名 MUST NOT 被拒（design §3.2）。
  */
-export const IGNORED_NAMES = [".git", ".DS_Store", "node_modules"];
+export const IGNORED_NAMES = [
+  ".git",
+  ".DS_Store",
+  "node_modules",
+  ".venv",
+  "venv",
+  "__pycache__",
+  ".next",
+  ".nuxt",
+  ".cache",
+  ".pnpm-store",
+  ".tox",
+  ".gradle",
+  "test-results",
+  "perf-results",
+  "target",
+  "dist",
+];
 
 /**
  * vault 根的绝对路径 + 树内相对路径（M244「复制完整路径」的**唯一一份**拼接，
@@ -93,8 +116,38 @@ export function relativePathOf(parentRel: string, name: string): string {
   return parentRel === "" ? name : `${parentRel}/${name}`;
 }
 
-/** 路径 → 末段（basename）。**全前端唯一一份**（REVIEW.md 第 8 条）：文件树的行名与
- *  vault 名（都落在这里的侧栏头，M211 起 vault 名没有第二个展示位）、标签可见文本
+/**
+ * 附件索引的增量补丁（change vault-open-ignore-set §4.6 的**前端一半**）：一条 `fs:entry_changed`
+ * 增量怎么改「vault 内可作为附件的文件路径」这份索引。**纯判定 + 就地追加**，返回更新后的数组
+ * （追加是就地 `push`：大批量事件下 MUST NOT 每条都拷一遍十万级的数组）。
+ *
+ * 三条口径：
+ *  - **deleted ⇒ 无条件移除**（含子孙前缀，与 `applyChanges` 的级联删除同口径）；该方向
+ *    **不消费 `lazy`**——幂等（本来不在索引里就是空操作），也绕开「被删路径 stat 不到、
+ *    目录限定模式判不准类型」的歧义。
+ *  - **created / modified 且 `lazy` ⇒ 不进索引**（两者同路：既有分支本来就是一个 else 支，
+ *    这是 r3 评审 P2-1 点出的漏词）。反例：`HANDOFF.md` 被 `.gitignore` 声明时，外部改写它
+ *    会让 `[[HANDOFF]]` 本会话内可解析、重开后不可解析——索引是磁盘 + 规则的纯函数，
+ *    不是事件历史的函数。
+ *  - 其余文件条目 ⇒ 补进索引（幂等：已在里面就不动）。
+ *
+ * **为什么住在这个模块**：它与文件树共用同一条事件流与同一份路径语义（级联删除口径必须一致），
+ * 而 `src/main.ts`（真正的消费者）无法被单测层导入——它顶层 import 了 `./style.css` 并且一上手
+ * 就要挂载 app。抽成纯函数放这里，是为了让这三条口径能被直接单测（REVIEW.md 第 1 条：判定落不到
+ * 可复现的断言上就等于没有）。
+ */
+export function patchAttachmentPaths(paths: string[], change: FsChange): string[] {
+  if (change.kind === "deleted") {
+    return paths.filter((p) => p !== change.path && !p.startsWith(`${change.path}/`));
+  }
+  if (change.lazy) return paths;
+  if ((change.entry_kind ?? "file") !== "file") return paths;
+  if (paths.includes(change.path)) return paths;
+  paths.push(change.path);
+  return paths;
+}
+
+/** 路径 → 末段（basename）。**全前端唯一一份**（REVIEW.md 第 8 条）：文件树的行名与 *  vault 名（都落在这里的侧栏头，M211 起 vault 名没有第二个展示位）、标签可见文本
  *  （tabs.ts）、切换器列表行与守卫提示（vault-switcher.ts / main.ts）全部消费它。空末段
  *  （路径以 `/` 收尾）回落到整串，与「根目录 / 空串」这类退化输入下的既有口径一致。
  *
@@ -144,6 +197,15 @@ export interface FileTreeCallbacks {
   /** 内联编辑提交（重命名 / 新建共用同一形态）：装配层去调后端命令，结果经
    *  `endInlineEdit` 回到树上——只有装配层知道后端与 tab 联动。 */
   onInlineEditSubmit(request: InlineEditRequest): void;
+  /**
+   * 惰性目录展开取数（后端 `fs_scan_dir`，change vault-open-ignore-set §4.3）：返回该目录的
+   * **一层**条目（分类口径与全量枚举同源）。被 vault 自己的忽略声明挡住的目录，其子孙不在
+   * 装载时的枚举结果里——展开它时才按需拉一层。
+   *
+   * 失败时**必须 reject**（装配层已负责提示）：树只在成功时把该目录标记成「已取回」，
+   * 失败留给下次展开重试；MUST NOT 吞成空数组，那会把一次失败渲染成「空目录」。
+   */
+  onExpandLazyDir(path: string): Promise<FsEntry[]>;
 }
 
 /** 内联编辑的提交请求（树 → 装配层）。 */
@@ -186,6 +248,10 @@ interface Node {
   entry: FsEntry;
   /** 子节点按名称索引；文件为 null。 */
   children: Map<string, Node> | null;
+  /** 惰性目录（用户规则命中）：子孙**不在**装载时的枚举结果里，展开时经 `onExpandLazyDir`
+   *  取回一层。它是「空目录」与「惰性目录」在模型里的唯一区分点（`src/tree.ts` 的
+   *  `expandNode` 靠它决定要不要发命令）。文件恒为 false。 */
+  lazy: boolean;
   li?: HTMLLIElement;
   childrenUl?: HTMLUListElement;
 }
@@ -254,6 +320,10 @@ export function createFileTree(mount: HTMLElement, cb: FileTreeCallbacks): FileT
   // 全量模型：path → Node；根路径为 ""。展开状态独立保存，刷新不丢（spec 3.3）。
   const nodes = new Map<string, Node>();
   const expanded = new Set<string>();
+  /** 子孙已按需取回的惰性目录（`onExpandLazyDir` 成功过）；换 vault 时清空。 */
+  const lazyFetched = new Set<string>();
+  /** 取数在途的惰性目录：同一目录只发一次命令（重复展开 / 与事件并发时靠它去重）。 */
+  const lazyFetching = new Set<string>();
   let vaultName = "";
   /** 树头部的切换器入口（形态 A）：未装载 vault 时不存在（空态整块替换）。 */
   let entryEl: HTMLButtonElement | undefined;
@@ -368,9 +438,7 @@ export function createFileTree(mount: HTMLElement, cb: FileTreeCallbacks): FileT
       li.append(ul);
       node.childrenUl = ul;
       syncCaret(node);
-      if (expanded.has(node.entry.path)) {
-        for (const child of sortedChildren(node)) mountNode(child, ul);
-      }
+      if (expanded.has(node.entry.path)) renderChildren(node);
     }
     return li;
   }
@@ -379,14 +447,81 @@ export function createFileTree(mount: HTMLElement, cb: FileTreeCallbacks): FileT
     node.li?.querySelector(".ft-caret")?.classList.toggle("is-open", expanded.has(node.entry.path));
   }
 
+  /**
+   * 渲染一个目录节点的子行。`expandNode`、惰性目录取数回来的重渲染、以及「节点挂载时已处于
+   * 展开态」这三种情况共用这一份，MUST NOT 各写一套挂载逻辑。
+   *
+   * 行内编辑的**临时行**要放回首位：惰性目录的取数是异步的，回来时用户可能正在这个目录下
+   * 新建（`beginCreate` 在子列表首位插了输入框）——直接 `replaceChildren` 会把输入框连同
+   * 已敲的内容一起抹掉。临时行没有 `dataset.path`，所以先摘下来、挂完子行再 `prepend` 回去。
+   */
+  function renderChildren(node: Node) {
+    const ul = node.childrenUl;
+    if (ul === undefined) return;
+    const keep =
+      editing !== null && editing.tempLi !== undefined && editing.parentRel === node.entry.path
+        ? editing.tempLi
+        : undefined;
+    ul.replaceChildren();
+    for (const child of sortedChildren(node)) mountNode(child, ul);
+    if (keep !== undefined) ul.prepend(keep);
+  }
+
   /** 展开目录节点（渲染子节点、去掉 hidden）——toggle 的展开支与「新建时确保父目录可见」
-   *  共用这一份，MUST NOT 在两处各写一套挂载逻辑。 */
+   *  共用这一份。惰性目录在此发起按需取数（MUST NOT 阻塞界面，也不渲染成空目录）。 */
   function expandNode(node: Node) {
     if (node.childrenUl === undefined) return;
     expanded.add(node.entry.path);
-    node.childrenUl.replaceChildren();
-    for (const child of sortedChildren(node)) mountNode(child, node.childrenUl);
     node.childrenUl.hidden = false;
+    if (node.lazy && !lazyFetched.has(node.entry.path)) {
+      void fetchLazyChildren(node);
+      return; // 取数在途：这一拍子列表本来就空（子孙不在枚举结果里，不是「空目录」）
+    }
+    renderChildren(node);
+  }
+
+  /**
+   * 惰性目录按需取数（后端 `fs_scan_dir`，只一层）：结果按路径合并进模型，然后重渲染子行。
+   * 失败不标记已取回——下次展开重试；提示归装配层（`onExpandLazyDir` 的 reject）。
+   *
+   * 重复展开 / 展开与取数并发时靠 `lazyFetching` 去重（同一目录只发一次命令）；取数回来的
+   * 合并是**按路径 upsert**，不覆盖用户在同一拍里做的别的操作（模型与 DOM 都只动这一层）。
+   */
+  async function fetchLazyChildren(node: Node): Promise<void> {
+    const path = node.entry.path;
+    if (lazyFetching.has(path)) return;
+    lazyFetching.add(path);
+    let entries: FsEntry[];
+    try {
+      entries = await cb.onExpandLazyDir(path);
+    } catch {
+      lazyFetching.delete(path);
+      return;
+    }
+    lazyFetching.delete(path);
+    lazyFetched.add(path);
+    for (const entry of entries) mergeEntry(node, entry);
+    if (expanded.has(path)) renderChildren(node);
+    // 合并进来的子目录若自己也是惰性的，等它被展开时再走同一条通道（不在这里递归取数：
+    // 「点开哪一层付哪一层」正是本能力的代价模型）。
+  }
+
+  /** 把一条条目合并进模型（惰性目录取数的落点）：路径已存在则更新条目、保留既有子节点。 */
+  function mergeEntry(parent: Node, entry: FsEntry) {
+    const existing = nodes.get(entry.path);
+    if (existing !== undefined) {
+      existing.entry = entry;
+      existing.lazy = entry.lazy === true;
+      if (entry.kind === "dir" && existing.children === null) existing.children = new Map();
+      return;
+    }
+    const node: Node = {
+      entry,
+      children: entry.kind === "dir" ? new Map() : null,
+      lazy: entry.lazy === true,
+    };
+    nodes.set(entry.path, node);
+    parent.children?.set(baseName(entry.path), node);
   }
 
   function toggle(node: Node) {
@@ -413,14 +548,16 @@ export function createFileTree(mount: HTMLElement, cb: FileTreeCallbacks): FileT
   function renderAll(entries: FsEntry[]) {
     nodes.clear();
     const root: Node = {
-      entry: { path: "", kind: "dir", size: 0, mtime_ms: null },
+      entry: { path: "", kind: "dir", size: 0, mtime_ms: null, lazy: false },
       children: new Map(),
+      lazy: false,
     };
     nodes.set("", root);
     for (const entry of entries) {
       const node: Node = {
         entry,
         children: entry.kind === "dir" ? new Map() : null,
+        lazy: entry.lazy === true,
       };
       nodes.set(entry.path, node);
       const parent = nodes.get(parentOf(entry.path));
@@ -468,6 +605,14 @@ export function createFileTree(mount: HTMLElement, cb: FileTreeCallbacks): FileT
   function pruneExpanded(path: string) {
     for (const p of [...expanded]) {
       if (p === path || p.startsWith(path + "/")) expanded.delete(p);
+    }
+  }
+
+  /** 路径被删时连同它的「已取回」登记一起清掉：同名新目录重建后必须重新按需取数
+   *  （残留登记会让它展开时直接渲染成空目录——那正是「MUST NOT 渲染成空目录」要防的形态）。 */
+  function pruneLazyFetched(path: string) {
+    for (const p of [...lazyFetched]) {
+      if (p === path || p.startsWith(path + "/")) lazyFetched.delete(p);
     }
   }
 
@@ -716,6 +861,8 @@ export function createFileTree(mount: HTMLElement, cb: FileTreeCallbacks): FileT
     setVault(root, entries) {
       vaultName = baseName(root);
       expanded.clear();
+      lazyFetched.clear();
+      lazyFetching.clear();
       // 整棵树换掉：编辑中的行随 DOM 一起消失，编辑态必须一起作废（否则 editing 会
       // 指着已脱离文档的输入框，后续 beginRename 全被它挡住）。待认领的改名登记同理作废：
       // 换 vault 后的批次与它无关（M258）。
@@ -816,6 +963,7 @@ export function createFileTree(mount: HTMLElement, cb: FileTreeCallbacks): FileT
               }
             }
             pruneExpanded(change.path);
+            pruneLazyFetched(change.path);
           }
           // 正在编辑的那一条被外部删掉了：编辑态作废（那一行的输入框已随 DOM 消失，
           // 留着 editing 会把后续的 beginRename / beginCreate 全部挡掉）。
@@ -830,8 +978,15 @@ export function createFileTree(mount: HTMLElement, cb: FileTreeCallbacks): FileT
 
         // created / modified 统一按 upsert 处理：FSEvents 对两者区分是 best-effort
         //（见 fs_io.rs 的 kind 修正注释），前端对"已存在节点的 created"必须健壮。
+        // `lazy` 由后端按同一份规则表算出（用户规则命中 ⇒ true），前端**只消费、不重算**
+        //（design §4.6：下游重算会引出第二份规则实现）。它决定这一条展开时要不要走按需取数。
         if (existing) {
-          if (change.entry_kind) existing.entry = { ...existing.entry, kind: change.entry_kind };
+          existing.entry = {
+            ...existing.entry,
+            kind: change.entry_kind ?? existing.entry.kind,
+            lazy: change.lazy === true,
+          };
+          existing.lazy = change.lazy === true;
           continue; // 树不展示 size/mtime，modified 无视觉变化
         }
         const node: Node = {
@@ -840,8 +995,10 @@ export function createFileTree(mount: HTMLElement, cb: FileTreeCallbacks): FileT
             kind: change.entry_kind ?? "file",
             size: 0,
             mtime_ms: null,
+            lazy: change.lazy === true,
           },
           children: change.entry_kind === "dir" ? new Map() : null,
+          lazy: change.lazy === true,
         };
         nodes.set(change.path, node);
         parent.children?.set(name, node);

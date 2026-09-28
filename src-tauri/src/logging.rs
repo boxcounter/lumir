@@ -96,6 +96,11 @@ pub enum LogEventName {
     /// `outcome` 取 migrated / skipped_target_exists / failed；稳态（无旧目录）不记——
     /// 迁移一辈子只发生一次，每次启动记一条「无事可做」只会把日志刷成噪音。
     VaultRegistryMigrated,
+    /// 全量枚举收口处**被内置规则剪掉**的条目数（change vault-open-ignore-set §3.3）。
+    /// 消费方：用户报「我的文件不见了」时的第一诊断依据——内置规则是启发式的（按名字
+    /// 猜「这不是内容」），误伤时唯一能把它与「用户规则命中（惰性可见）」区分的读数。
+    /// **只有计数，没有路径或名字原文**（本模块的隐私边界，见模块头）。
+    VaultScanIgnored,
 }
 
 impl LogEventName {
@@ -112,6 +117,7 @@ impl LogEventName {
             Self::LinkOpen => "link_open",
             Self::AppMetaUnavailable => "app_meta_unavailable",
             Self::VaultRegistryMigrated => "vault_registry_migrated",
+            Self::VaultScanIgnored => "vault_scan_ignored",
         }
     }
 
@@ -149,6 +155,9 @@ impl LogEventName {
             // 只记终局字面量（migrated / skipped_target_exists / failed）：目录名是常量，
             // 路径本身没有诊断价值，也就不进负载。
             Self::VaultRegistryMigrated => &["outcome"],
+            // **只有计数**（十进制字符串）：被剪掉的是哪些条目属于用户内容，落盘即是隐私
+            // 边界之外的东西（见模块头）。要的就是「有一批条目被内置规则剪掉了」这一个事实。
+            Self::VaultScanIgnored => &["count"],
         }
     }
 }
@@ -469,6 +478,24 @@ fn link_open_to(sink: &Sink, category: &str, outcome: &str, scheme: Option<&str>
         event = event.field("scheme", scheme);
     }
     emit(sink, event);
+}
+
+/// Rust 侧埋点：全量枚举收口处被**内置规则**剪掉的条目数（change vault-open-ignore-set
+/// §3.3；调用点是 `fs_io::scan_workspace_at` 的收口）。消费者见
+/// [`LogEventName::VaultScanIgnored`]；负载只有计数，MUST NOT 加路径 / 名字字段。
+///
+/// 为什么是「一条读数」而不是一个 UI：内置规则误伤一个用户文件时，用户看到的是「我的文件
+/// 不见了」，而我们从界面上无法区分「被内置规则隐藏」与「本来就没有」。这条计数让
+/// `grep vault_scan_ignored` 能直接回答是哪一个。代价可忽略：vault 打开是低频用户动作。
+pub fn vault_scan_ignored(count: usize) {
+    vault_scan_ignored_to(global(), count);
+}
+
+fn vault_scan_ignored_to(sink: &Sink, count: usize) {
+    emit(
+        sink,
+        Event::new(LogEventName::VaultScanIgnored).field("count", count.to_string()),
+    );
 }
 
 /// Rust 侧埋点：vault 打开段的**分段读数**（M283，change vault-switch-restore-perf 的 1.2；
@@ -1070,5 +1097,44 @@ mod tests {
         // 公共包装在测试构建下同样只是丢弃，不产生文件
         save_conflict("docs/a.md", "document_conflict");
         flush();
+    }
+    /// 忽略计数诊断（change vault-open-ignore-set §3.3，tasks 1.4）：事件名与字段白名单都
+    /// 只在代码里（`LogEventName::VaultScanIgnored` / `allowed_fields`），这里钉住三件事——
+    /// ① 落盘一行、事件名可 `grep vault_scan_ignored`；② 负载**只有** `count`；
+    /// ③ 消费者写在事件名的文档注释里（「用户报文件不见了时的第一诊断依据」）。
+    #[test]
+    fn vault_scan_ignored_lands_count_only() {
+        let dir = TempDir::new();
+        let sink = sink(dir.path(), LogLevel::Info);
+        vault_scan_ignored_to(&sink, 129_655);
+        sink.flush();
+        let lines = read_lines(dir.path());
+        assert_eq!(lines.len(), 1);
+        assert_eq!(lines[0]["event"], "vault_scan_ignored");
+        assert_eq!(lines[0]["level"], "info");
+        assert_eq!(lines[0]["count"], "129655");
+        // 字段面就是白名单本身：多一个字段都进不去（白名单是机制化护栏，不是约定）
+        assert_eq!(
+            LogEventName::VaultScanIgnored.allowed_fields(),
+            &["count"],
+            "负载只有计数——路径与名字原文属隐私边界之外"
+        );
+    }
+
+    /// 反向输入：把路径当字段塞进这条事件会被白名单拒绝（前端入口）——「MUST NOT 记路径或
+    /// 名字原文」这条边界因此是机制化的，不靠实现者自觉。
+    #[test]
+    fn vault_scan_ignored_rejects_path_fields() {
+        let dir = TempDir::new();
+        let sink = sink(dir.path(), LogLevel::Info);
+        let err = log_frontend_event_to(
+            &sink,
+            LogEventName::VaultScanIgnored,
+            fields(&[("count", "3"), ("path", "notes/target/plan.md")]),
+        )
+        .unwrap_err();
+        assert_eq!(err.code, "log_event_rejected");
+        sink.flush();
+        assert!(read_lines(dir.path()).is_empty(), "被拒的负载不得落盘");
     }
 }
