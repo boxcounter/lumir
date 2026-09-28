@@ -3157,6 +3157,22 @@ BMP 后取采样方块主色）。细节与边界见 `scripts/acceptance/README.
   in-flow 底色仍画在选区带之上（选中时那一段读到的是它自己的底而不是带色）——M288 已登记的同类
   表面、M291 只保证「那里的字可读」，覆盖问题见 finding
   `20260928-worker-selection-contrast-m291-improve-inline-surface-band-coverage`。
+- **r3（Alex 追加裁决）**：`.lumir-block-trigger` 在 eink 下的**热态**原先是硬编码黑底白字
+  （`src/style.css` 的 eink 块），按 M291 的方向**退场**——改为选中族（`--sel` 明度带 + `--sel-text`
+  黑字），同时把该块静止态的三处字面值（`#fff`/`#000`/`#000`）按收敛规则 1 归位到
+  `--preview-bg` / `--border` / `--text`（值不变）。**light/dark 没有硬编码可退**：基础规则本就取
+  `--preview-bg` + `--text`（hot 只是字色深一档），只有 eink 需要一整块实心底。**同族残留（登记待
+  裁决，本批未改）**：搜索面板的两处实心档（大小写开关「开」态、当前搜索匹配）与代码块 / frontmatter
+  区的 eink 黑框仍是字面值（与 `--accent-fill` 那对 / `--border` 在这一档同值，行为未变）。
+- **r3 复现路径的验证（如实登记）**：Alex 给的路径（`docs/design-parity-contract/README.md`，从「另见的上一行」
+  拖到「2026-09-06」，跨引用块与标题，**等 1 秒**）在本分支上按「结构等价的复刻品」实测**通过**：
+  eink 下拖选 + 等 1.2s 后，选中区内三处粗体段（`状态：失效…` / `另见` 行）与行内 code 药丸的字形
+  跨度分别 ≈150 / 95 / 182（阈值 60），带 = `#b9b9b9` 对纸 70，文档 sha256 未被手势改动。用**他的原文件**
+  重跑了三轮（把文件内容写进验收 vault）：三轮都因**真机通道退化**而无法判定——像素断言拿不到窗口截图
+  （`取不到窗口截图，像素断言无法判定`，README 已知边界），且拖选/键盘注入都没有建立起选区（带读数
+  `#ffffff` 对 `#ffffff`）。按 M277 的先例，头号嫌疑是**同机另有一个 Lumir dev 实例在 1420 上**（套件
+  日志每轮都报「1420 端口被占用」），它会把窗口前台/注入落点搅乱——处置建议：请 Alex 暂退 1420 实例后
+  我再按原路径复跑一次（探针脚本已留在 `test-results/m291/repro-real-*` 的 step 记录里，重建成本几分钟）。
 - **核销**：M288 的 finding `20260928-worker-codeblock-selection-m28-improve-m288-sel-code-bg-11-callout-code.md`
   的「11 够不够」人裁决点由本 mission 回答（不够 ⇒ 已按 `--sel-band` 收口），finding 核销；
   callout 色与 code-bg 的关系未变，那半条不在本 mission 面内。

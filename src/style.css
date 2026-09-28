@@ -1142,20 +1142,24 @@ body {
   color: var(--text);
   transition-delay: 0s;
 }
-/* eink 规则③⑤：白底实心黑框（无灰底可用的翻转口径，同 .cm-lp-codeblock-scroll）。
-   热态是**硬编码**黑底白字（同 `.tb-btn.on` 与搜索面板的实心档；对比 255，可读）——
-   **不在 `--sel` 族面内**：M291 把 eink 的选中族改成明度带 + 黑字时它不受影响。
-   是否同样退场待 Alex 裁决（docs/backlog.md 的 M291 节已记账）。 */
+/* eink 规则③⑤：静止态白底黑框（无灰底可用的翻转口径，同 .cm-lp-codeblock-scroll）；
+   三个字面值（`#fff` / `#000` / `#000`）按 tokens 文档收敛规则 1 归位到既有 token——是本档
+   语义上的同一个值，不是新取向。
+   **热态 = 选中族**（`--sel` 明度带 + `--sel-text` 黑字），M291 r3 Alex 裁决：
+   此前这里是硬编码黑底白字（对比 255），而 eink 的选中族已整体改为明度带 + 黑字
+   （tokens 文档 §选区族）——热态与它同族才一致，硬编码随之退场。**light/dark 一侧没有硬编码
+   可退**（基础规则就是 `--preview-bg` + `--text`）：它们的 hot 只是字色深一档，只有 eink 需要
+   一整块实心底（其余按扭/实心档仍走 `--accent-fill` / `--accent-fill-text` 那一族，不在此处）。 */
 :root[data-theme="eink"] .lumir-block-trigger {
-  background: #fff;
-  border-color: #000;
-  color: #000;
+  background: var(--preview-bg);
+  border-color: var(--border);
+  color: var(--text);
 }
 :root[data-theme="eink"] .cm-lp-table-slot:hover .lumir-block-trigger,
 :root[data-theme="eink"] .cm-lp-codeblock-slot:hover .lumir-block-trigger,
 :root[data-theme="eink"] .lumir-block-trigger:focus-visible {
-  background: #000;
-  color: #fff;
+  background: var(--sel);
+  color: var(--sel-text);
 }
 
 /* 代码块动作钮的坐标系统（M277，BlockWrapper rank 20 = 最外）：与 .cm-lp-table-slot 同机制，

@@ -269,3 +269,49 @@ test("5.3g 命令路径：非矩形表与 mermaid 图表态都不命中（没有
   await page.keyboard.press(TRIGGER_PRESS);
   await expect.poll(() => clipboard(page)).toBe("graph TD;\n  Start-->Stop;");
 });
+
+test("M291 r3：触发钮热态取选中族（eink = 明度带 + 黑字，硬编码黑底白字退场）", async ({ page, context }) => {
+  // Alex 2026-09-28 r3 裁决：`.lumir-block-trigger` 在 eink 下的热态原先硬编码 `#000` 底 + `#fff` 字，
+  // 按 M291 的方向退场——改为选中族（`--sel` 明度带 + `--sel-text` 黑字），与 eink 已整体改过的
+  // 选中态一致（tokens 文档 §选区族）。静止态三处字面值同时按收敛规则 1 归位到 token（值不变）。
+  await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+  await stubTauri(page, {
+    entries: [{ path: DOC, kind: "file", size: SOURCE.length, mtime_ms: 0 }],
+    files: { [DOC]: SOURCE },
+    config: { theme: "eink", keys: { [TRIGGER_KEY]: "block.copy" } },
+  });
+  await page.goto("/");
+  await page.locator(`.ft-row[title="${DOC}"]`).click();
+  await expect.poll(() => configGets(page)).toBeGreaterThan(0);
+
+  const read = () =>
+    page.locator(`${COPY_TRIGGER}`).first().evaluate((el) => {
+      const probe = (v: string) => {
+        const d = document.createElement("div");
+        d.style.background = v;
+        document.body.appendChild(d);
+        const out = getComputedStyle(d).backgroundColor;
+        d.remove();
+        return out;
+      };
+      const cs = getComputedStyle(el);
+      return { bg: cs.backgroundColor, color: cs.color, sel: probe("var(--sel)"), selText: probe("var(--sel-text)") };
+    });
+  const nums = (s: string) => (s.match(/\d+/g) ?? ["0", "0", "0"]).map(Number);
+  const diff = (a: string, b: string) => Math.max(...[0, 1, 2].map((i) => Math.abs(nums(a)[i] - nums(b)[i])));
+
+  // 静止态：白底黑框（规则⑤）——token 化后与 `--preview-bg` / `--text` 同值（逐值不变）。
+  await page.mouse.move(0, 0);
+  const resting = await read();
+  expect(resting.bg, "eink 静止态底色 = 白底（--preview-bg）").toBe("rgb(255, 255, 255)");
+
+  // 热态：hover 后取选中族。
+  await page.hover(".cm-lp-table-slot");
+  await expect
+    .poll(() => page.locator(COPY_TRIGGER).first().evaluate((el) => getComputedStyle(el).visibility))
+    .toBe("visible");
+  const hot = await read();
+  expect(hot.bg, "eink 热态底色 = --sel（明度带）").toBe(hot.sel);
+  expect(hot.color, "eink 热态前景 = --sel-text（黑字）").toBe(hot.selText);
+  expect(diff(hot.color, hot.bg), `eink 热态文字 MUST 与底色可辨（差 ${diff(hot.color, hot.bg)} ≥ 40）`).toBeGreaterThanOrEqual(40);
+});
