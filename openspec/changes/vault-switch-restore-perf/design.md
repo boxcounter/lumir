@@ -13,7 +13,7 @@
 | 切前写盘 | `saveThenRun` → `await deps.saveAll()`（`src/vault-switcher.ts`；`deps.saveAll` = `save.saveAllDirty()`，`src/main.ts`），指示原在 `proceed()` 内的装载壳里才起（M283 起在写盘前起） | M283 补了 `vault_load_flush` 埋点（阈值 250ms）：验收场景（1 个脏标签、几十 ms）**未触发**，因此本条仍**未测出**；埋点已就位，Alex 在自己 vault 上带着较大的脏文档切一次即可拿到 | **未测（埋点已就位）** |
 | 打开（`vault_open_path`） | 不带 `async` 的 command（`src-tauri/src/commands.rs`）⇒ Tauri 语义下**主线程内联执行**：`reconcile_vault` → `fs_io::watch()` → `scan_workspace` → `build_graph` | **M283 实测**（复刻真实形状的合成 vault：2142 文件 / 426 目录 / 1341 md / 6.7MB）——release 直测**两次独立运行**：`scan_workspace` **10.6–13.0ms**、`build_graph` **81.5–94.4ms**、合计 **≈92–107ms**（M154 在同一真实 vault 上的 14.0 + 111.2ms 同量级）；`watch` 建流 **0.4–1.6ms**（debug 真机 0.4–0.5ms / release harness 1.5–1.6ms）——**裁决点 3 的答案**；debug 构建的 app 里 `vault_load_open` 实测 **612–630ms**（≈92–107ms 的 6×，debug 的 Rust 不快，两者不可混比） | **有读数** |
 | 树重建 | `setVault` → `expanded.clear()` → `renderAll`；`renderAll` 只对根级子节点 `mountNode` | DOM 行数 = 根级条目数 = 22–24 行；真正的成本是给 2567 个条目建 `Node`/`Map`（O(n)，个位数 ms） | 有读数（结构性） |
-| 逐标签恢复 | `for (const path of plan.open) await deps.openPinned(path)`（M283 前）→ M283 起「当帧建壳 + 内容按需」 | M252：46 个标签 992–1359ms（≈21–30ms/标签，77 条目的合成 vault）。**M283 在真实形状的 vault（2567 条目）上复测：40 个标签 901–1056ms ⇒ ≈22–26ms/标签**——**与 77 条目 vault 上的读数同档 ⇒ per-tab 成本基本不随 vault 规模增长**（原先「未验」的那条由此闭合）；改动后同一场景的恢复段见 §1.1 的对照 | **有读数（含跨规模对照）** |
+| 逐标签恢复 | `for (const path of plan.open) await deps.openPinned(path)`（M283 前）→ M283 起「当帧建壳 + 内容按需」 | M252：46 个标签 992–1359ms（≈21–30ms/标签，77 条目的合成 vault）。**M283 在真实形状的 vault（2567 条目）上复测：40 个标签 984–1182ms ⇒ ≈25–30ms/标签**（单变量探针复测，在档读数见 `test-results/m283/before-probe/logs.jsonl`）——**与 77 条目 vault 上的读数同档 ⇒ per-tab 成本基本不随 vault 规模增长**（原先「未验」的那条由此闭合）；改动后同一场景的恢复段见 §1.1 的对照 | **有读数（含跨规模对照）** |
 
 **恢复段读数的外推边界（如实记）**：场景 49 的会话是 46 个 fixture **小文件**（那几个 8MB 稀疏文件是塞进 vault 撑开 `vault_load_open` 观察窗的放大器，不在会话里，见 `scripts/acceptance/scenarios/49-vault-switch-feedback.md` 的 seed 说明与「覆盖边界」节）。所以 21–30ms/标签 **不是**文件读取代价，而是每标签的固定成本：IPC 往返（`fsReadSnapshot`）+ `editor.createSession()` + `tabs.activateTab` + `editor.reloadSession`（装载走前台路径：`EditorState.create` + 视图事务 + 装饰层 + 就绪事件）+ `readingPositions.restoreFor` + `afterLoad`。固定成本这一性质让它可以跨文件大小外推，**但不能保证跨 vault 规模外推**——该读数取自 77 个条目的合成 vault，真实 vault 是 2567 条目 / 1341 md；per-tab 成本里若有随 vault 索引规模增长的成分（链接解析、附件索引查询），真实 vault 上会更大。**这一条未验，且它是「恢复段是唯一到秒级的段」这个结论的关键依赖。**
 
@@ -198,7 +198,7 @@ M159 已把启动恢复移出主线程，本 change 不碰它（`last_vault` 自
 | `build_graph`（canonicalize 外提 + 批量读，仅估上限的复刻） | 55.7 / 61.7ms（中位，release 两次运行） | 同上：即使做满也只省 ≈26–33ms |
 | `watch`（FSEvents 建流） | 1.5–1.6ms（release 中位，两次运行）/ 0.4–0.5ms（真机日志） | **裁决点 3：远低于 100ms ⇒ `vault_open_path` 的 async 化暂缓**（`src-tauri/src/commands.rs` 的 `vault_open_watch` 读数已就位，Alex 的真实 vault 上也能自查） |
 | `vault_load_open`（真机，真实形状 A） | 612–630ms（debug 构建，改动前后同档） | 与 release 的 92–107ms 不可混比；Alex 的发布版对应 release 侧 |
-| `vault_load_restore`（真机，A = 2567 条目，40 标签，**改动前**） | 901 / 909 / 1008 / 1056ms ⇒ **≈22–26ms/标签** | 裁决点 1 的推荐案依据；与 M252 在 77 条目 vault 上的 21–30ms/标签同档 ⇒ 跨规模无显著放大（§1 的「未验」闭合） |
+| `vault_load_restore`（真机，A = 2567 条目，40 标签，**改动前**） | 984 / 997 / 1182ms ⇒ **≈25–30ms/标签**（单变量探针复测，`before-probe/`） | 裁决点 1 的推荐案依据；与 M252 在 77 条目 vault 上的 21–30ms/标签同档 ⇒ 跨规模无显著放大（§1 的「未验」闭合） |
 | `vault_load_restore`（同场景，**改动后**） | 见 §1.1 的对照 | 3.6 的验收读数 |
 | `vault_load_flush` | 验收场景里未出现（脏标签只有 1 个、低于 250ms 阈值） | 1.1 的埋点已就位；本条读数需 Alex 在自己 vault 上带较大脏文档切一次 |
 
@@ -211,7 +211,7 @@ M159 已把启动恢复移出主线程，本 change 不碰它（`last_vault` 自
 ## 8. 已知边界与未验项（如实记）
 
 1. **打开段指示静止**：§2.1 的机制推导（同步 command 占主线程 ⇒ 不能重绘）**未直接实测**。M283 的间接证据：场景 60 在「切到 B」那一步（打开段被 20×8MB 放大器撑到 7.5s 量级）断言指示在场并 PASS ⇒「指示在打开段**在场**」有实测支撑；「动画在推进」仍无判据（本 change 不改指示形态，spec delta 的边界写的也正是「只要求在场」）。
-2. **恢复段读数跨 vault 规模**：**已闭合**（M283）：真实形状 vault（2567 条目）上 40 标签 = 901–1056ms（≈22–26ms/标签），与 M252 在 77 条目 vault 上的 21–30ms/标签同档 ⇒ per-tab 成本基本不随 vault 规模增长。
+2. **恢复段读数跨 vault 规模**：**已闭合**（M283）：真实形状 vault（2567 条目）上 40 标签 = 984–1182ms（≈25–30ms/标签），与 M252 在 77 条目 vault 上的 21–30ms/标签同档 ⇒ per-tab 成本基本不随 vault 规模增长。
 3. **watch 建流耗时**：**已测**（M283）：release 中位 1.5–1.6ms、真机（debug app）0.4–0.5ms ⇒ 裁决点 3 取「暂缓 async 化」。
 4. **`readingPositions.onVaultLoaded` 的成本**：装载路径上按条目剔除不在 vault 内的键（内存镜像即时剔除），它在 2567 条目上的成本未单独测过；它在指示窗口内（`applyVault` 前段），不在恢复段读数里。
 5. **未装载标签的外部变更检测时点后移**（§3.4 风险 1）：行为变化，delta 的边界里写明。

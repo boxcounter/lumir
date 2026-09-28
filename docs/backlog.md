@@ -1602,6 +1602,20 @@ M279 报告 §5 的两条副产物在列，判定为**都不随本修复收口**
 
 ### 门禁测量与 CI 环境（治理批遗留）
 
+- **`fs_io::tests::watch_dir_rename_delivers_full_subtree` 时序 flake（M283 r1 评审现场，2026-09-28，low，待观察）**：
+  reviewer-vault-perf-m283 独立复跑 `scripts/gate.sh quick` 时 `cargo test` 红了这一条；随后**隔离复跑该用例与
+  全量复跑 `gate quick` 均转绿**，且 M283 的 diff 不含 `src-tauri/src/fs_io.rs`（`git diff --name-only` 可核）
+  ⇒ 判定为该用例自身的时序敏感面，与 M283 无因果。
+  **形态（代码事实）**：它是真 FSEvents 流上的用例（`src-tauri/src/fs_io.rs:1353`）——固定 `sleep 700ms`
+  建好目录树 → 起 watch + `seed` → 固定 `sleep 500ms` → `rename` 后 `collect_batches(&rx, 1500ms)`
+  收批次，再逐条断言「改名后的新路径必须进增量」，**没有重试**。FSEvents 的合并窗口（`DEBOUNCE`）与机器
+  负载都会影响批次到达时刻，窗口外到达即 panic（成因**未坐实**，本轮只有一次红、无重复读数）。
+  **影响**：它在 `gate quick` 的 `cargo test` 里，负载高的机器上偶发红会打断无关 mission 的自验
+  （本次就是评审侧首轮撞上、复跑转绿——reviewer 的判定与处置见评审 r1 的 Decision）。
+  **修法方向（未做，动前先复现）**：断言侧改成带 deadline 的轮询（`wait_until(condition, deadline)`
+  代替「固定窗口收集后一次性断言」），或把 debounce 窗口做成可注入参数让用例不受环境负载影响；
+  先按「拉高负载跑 N 轮」记录红率，再决定阈值。
+
 - **keypress-to-paint 读数疑似帧量化，统计量宜从 median 改 min/p10**（M174 评审副产物观察，
   2026-09-18，low，**待裁决（是否立项改统计口径）**）：CI 的 9 次 keypress 读数（22.35–53.20ms）
   与 33.3ms 帧间隔呈量化关系，median 对这类量化分布既不敏感也不稳定；min / p10 更贴近「最好可达」

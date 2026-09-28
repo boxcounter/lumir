@@ -922,6 +922,14 @@ async function loadSessionContent(
     // 判据取 isEditablePath（与编辑器会话的 editable 标志同源同一真源），MUST NOT 另写集合。
     save.noteOpened(path, isEditablePath(path) ? snapshot.revision : undefined);
     const session = resolveSession();
+    // 成员复查（M283 r1 P2-1）：`resolveSession` 的两条路径都可能在读盘**之前**就绑定了会话对象
+    // （壳态的两条装载路径——`openFile` 的壳态分支与 `ensureActiveSessionLoaded`——都是早绑定），
+    // 而用户能在这次 IPC 在途期间关掉那个标签：`closeTabNow` 只动会话表与标签栏，**不碰**
+    // `beginSwitch` 的 serial，因此上面那条 `isCurrent` 挡不住它。不复查的话随后的
+    // `tabs.activateTab` 会把一个已脱离会话表的壳置为前台——正文显示已关闭标签的内容、标签栏里
+    // 却没有它（无数据丢失，但状态机出格）。按失败收口：调用方（会话恢复）据此退化到下一个候选，
+    // 用户看到的是一次正常的恢复。新标签路径（`tabs.targetSessionFor`）晚绑定，结构上不可能命中。
+    if (!editor.sessions().includes(session)) return false;
     tabs.activateTab(session); // 已在同一会话上时是 no-op
     // 解析缓存整批失效必须在装载**之前**（save-controller.ts 外部重载路径的同序写法）：
     // 装饰层在 reloadSession 的装载事务里首次构建并发起 link_graph_resolve（在途），

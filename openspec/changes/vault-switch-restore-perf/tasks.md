@@ -109,7 +109,7 @@
 | `build_graph`（release 中位，两次运行） | 81.5 / 94.4ms | **裁决点 2 取「推迟」**（打开段合计 ≈92–107ms « 250ms） |
 | `build_graph` canonicalize 外提复刻（仅估上限，两次运行） | 55.7 / 61.7ms ⇒ 收益上限 ≈26–33ms | 同上（M154 当时估 ≈45ms） |
 | `watch` 建流（release 中位两次 / 真机） | 1.5–1.6ms / 0.4–0.5ms | **裁决点 3 取「暂缓」**（« 100ms） |
-| `vault_load_restore`（40 标签，真实形状 vault，**改动前**） | 984 / 997 / 1182ms ⇒ ≈25–30ms/标签（单变量探针复测，`before-probe/`；首轮 901–1056ms 同档） | 裁决点 1 的推荐案依据；与 M252 的 77 条目 vault 读数同档 ⇒ 跨规模无放大 |
+| `vault_load_restore`（40 标签，真实形状 vault，**改动前**） | 984 / 997 / 1182ms ⇒ ≈25–30ms/标签（单变量探针复测，`before-probe/logs.jsonl`） | 裁决点 1 的推荐案依据；与 M252 的 77 条目 vault 读数同档 ⇒ 跨规模无放大 |
 | `vault_load_restore`（同场景，**改动后**） | **20ms**（切回 A）/ 30–31ms（启动恢复） | 3.6 的验收读数：与标签数脱钩（≈32–54×） |
 | `vault_load_open`（切回 A，debug / release） | 612–630ms / ≈92–107ms | 本 change 不动这一段（改动前后同档） |
 | `vault_load_flush` | 干净路径 0 条（两轮）；注入 8s 写盘段 ⇒ 8013ms 一条 | 1.1 的埋点（阈值口径沿用 250ms） |
@@ -136,7 +136,7 @@
 | 1.1 `vault_load_flush` 埋点 | 完成 | `src/main.ts` 的 `saveAll` 包装（脏路径专有）；干净路径 0 条（两轮日志）；正向路径在探针注入版里落 8013ms |
 | 1.2 `vault_open_watch` 读数 | 完成 | `src-tauri/src/commands.rs` 的 `prepare_vault_open` 打点 + `logging::slow_callback` 助手（事件名/字段复用白名单）+ 单测 `rust_side_slow_callback_lands_same_shape_as_frontend` |
 | 1.3 真实形状读数 | 完成 | `src-tauri/tests/vault_open_readings.rs`（生成器与 `seed.bulkVault` 同形状）+ 场景 60 的真机日志；`test-results/m283/` |
-| 1.4 恢复段成本拆分 | 完成 | design §1 表格已改成实测值（22–26ms/标签；跨规模对照闭合「未验」） |
+| 1.4 恢复段成本拆分 | 完成 | design §1 表格已改成实测值（25–30ms/标签，取 `before-probe/` 的在档读数；跨规模对照闭合「未验」） |
 | 1.5 Alex 自助读数 | **未做（外部依赖）** | 需要 Alex 在本机 grep 自己的日志（agent 不得打开他的真实 vault）；裁决点 2/3 已由 1.3 的等效读数定夺 |
 | 2.1 指示覆盖写盘段 | 完成 | `VaultSwitchGateDeps.saveAllWindow`（装配层注入 `vaultLoading`）+ `saveThenRun` 的 begin/end 收口 |
 | 2.2 单测（三出口时序） | 完成 | `tests/unit/vault-switcher.test.ts` 的「指示窗口」组 5 条（begin 早于 saveAll、干净路径不开、未闭环撤下、抛错撤下、取消/放弃不开） |
@@ -178,3 +178,15 @@
 `toc-plain.md`）。修法：`src/main.ts` 的 `withSessionLoad` 把两条路径收进同一个在途标记
 （会话恢复的 `openPinned` 也走它），eager 探针复跑转为 PASS。现场与前后两次探针证据见
 `test-results/m283/README.md` §4.1 与 `before-probe/`。
+
+### 五、r1 评审的两条 P2 处置（M283 r2）
+
+| finding | 处置 | 证据 |
+|---|---|---|
+| P2-1（code）壳态装载在途时关标签 ⇒ 幽灵会话被置前台 | 已修：`loadSessionContent` 在 `resolveSession()` 之后加成员复查（`!editor.sessions().includes(session)` ⇒ 按失败收口），并补一条时序回归用例 | 回归用例 `tests/visual/scenes/mv-vault-switcher.spec.ts` 的「壳态装载在途时关掉该标签」：**修前红**（`element(s) not found`——幽灵置前台后标签栏里没有 `is-active`）、**修后绿**；两次运行日志与失败现场在 `test-results/m283/p2-1-ghost-session/` |
+| P2-2（docs/evidence）README 索引指向不存在的 `before-run/` | 已修：索引改指 `before-run-language-face/`（FAIL，首轮撞 M282 默认语言 en 的存量假红）与 `before-probe/`（PASS，改动前读数的**唯一**来源）；`design.md` §1/§7.1/§8 与 tasks 的「改动前」读数一并改成在档的 984/997/1182ms（≈25–30ms/标签），并写明 MUST NOT 再引「901–1056ms」 | `test-results/m283/README.md` 的文件索引表与 §2 的取证说明；`docs/backlog.md` 另记 reviewer 撞到的 `fs_io::tests::watch_dir_rename_delivers_full_subtree` 时序 flake |
+
+**回归用例为什么落在视觉套件而不是单测**：缺陷在装配层（`src/main.ts` 的 `loadSessionContent`），本仓对装配层的
+行为判据既有分工是「chromium 视觉场景（真 app + 桩后端）」+「真机验收场景」——`main.ts` 是入口模块，
+import 即建整个 app，单测层不可用。用例用注入延迟（`page.evaluate` 包装 `__TAURI_INTERNALS__.invoke`）
+制造「读盘在途 + 标签栏已齐」的窗口，产品代码里不含任何测试开关。
