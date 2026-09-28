@@ -133,7 +133,9 @@ test("summaryText：当前项说「现在打开」，无历史说没有打开过
   const now = 1_700_000_000_000;
   assert.equal(summaryText(0, null, now, false), "还没有打开过文件");
   assert.equal(summaryText(3, now - 5_000, now, true), "3 个标签 · 现在打开");
-  assert.equal(summaryText(2, now - 5 * 60_000, now, false), "2 个标签 · 5 分钟前");
+  // 相对时间档走 `Intl.RelativeTimeFormat`（design §6.2）：zh 下不再有数字与量词之间的空格
+  // （`5 分钟前` → `5分钟前`）——这是本 change 唯一一处 zh 可见文案的措辞变化，由 `Intl` 产出。
+  assert.equal(summaryText(2, now - 5 * 60_000, now, false), "2 个标签 · 5分钟前");
   assert.equal(summaryText(1, null, now, false), "1 个标签");
 });
 
@@ -142,10 +144,10 @@ test("relativeTime：分钟 / 小时 / 昨天 / 天 / 绝对日期六档，时�
   const at = (ms: number) => relativeTime(now - ms, now);
   assert.equal(at(-60_000), "刚刚"); // 时钟回拨（记录时间在将来）不产出负数
   assert.equal(at(30_000), "刚刚");
-  assert.equal(at(5 * 60_000), "5 分钟前");
-  assert.equal(at(90 * 60_000), "1 小时前");
+  assert.equal(at(5 * 60_000), "5分钟前");
+  assert.equal(at(90 * 60_000), "1小时前");
   assert.equal(at(30 * 60 * 60_000), "昨天");
-  assert.equal(at(3 * 24 * 60 * 60_000), "3 天前");
+  assert.equal(at(3 * 24 * 60 * 60_000), "3天前");
   const absolute = relativeTime(now - 30 * 24 * 60 * 60_000, now);
   assert.match(absolute, /^\d{4}-\d{2}-\d{2}$/);
   assert.equal(relativeTime(null, now), "");
@@ -1139,7 +1141,7 @@ test("浮层：点入口不收起（closer 排除入口），点浮层外收起�
 test("listRow helper：摘要与列表行字段同源（tab_count / last_opened_at 直接来自契约）", () => {
   const now = 1_700_000_000_000;
   const row = listRow({ id: "notes", tab_count: 2, last_opened_at: now - 3 * 60_000 });
-  assert.equal(summaryText(row.tab_count, row.last_opened_at, now, false), "2 个标签 · 3 分钟前");
+  assert.equal(summaryText(row.tab_count, row.last_opened_at, now, false), "2 个标签 · 3分钟前");
   assert.equal(row.available, true);
 });
 
@@ -1205,7 +1207,7 @@ test("浮层筛选：无命中保持浮层 + 一行提示，新增入口照常�
   assert.equal(rig.list().hidden, true, "列表让位给提示行");
   const empty = rig.popover().find("vault-empty")[0];
   assert.equal(empty.hidden, false);
-  assert.equal(empty.textContent, NO_MATCH_TEXT, "文案与 list-filter 的常量同源（deck D117）");
+  assert.equal(empty.textContent, NO_MATCH_TEXT(), "文案与 list-filter 的常量同源（deck D117）");
   // 分隔线与「新增 vault…」不受筛选影响：摆脱空结果的唯一入口必须还在
   assert.equal(rig.popover().find("vault-sep")[0].hidden, false);
   assert.equal(rig.popover().find("vault-add")[0].hidden, false);

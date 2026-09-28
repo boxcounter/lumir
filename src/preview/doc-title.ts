@@ -27,6 +27,7 @@ import { detectFrontmatter } from "./frontmatter";
 import type { FrontmatterBlock } from "./frontmatter";
 import { docDirFromPath, docTitleFromPath, formatDocDate } from "./doc-meta";
 import type { PreviewContext } from "./livePreview";
+import { formatNumber, t, tPlural } from "../copy";
 
 /** doc-title 的落点（判定唯一来源；合同 I1）。 */
 export type DocTitlePlacement = "none" | "after-frontmatter" | "document-top";
@@ -120,8 +121,8 @@ export function buildDocTitleDOM(data: DocTitleData): HTMLElement {
   };
   const segments: string[] = [];
   if (data.dir !== "") segments.push(data.dir);
-  segments.push(`${data.lines} 行`);
-  if (data.mtimeMs !== null) segments.push(`修改于 ${formatDocDate(data.mtimeMs)}`);
+  segments.push(tPlural("D225", data.lines, { lines: formatNumber(data.lines) }));
+  if (data.mtimeMs !== null) segments.push(t("D226", { date: formatDocDate(data.mtimeMs) }));
   segments.forEach((text, i) => {
     if (i > 0) sep();
     segment(text);

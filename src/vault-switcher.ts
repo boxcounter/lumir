@@ -39,6 +39,7 @@ import type { EditorSession, ScrollSnapshot } from "./editor";
 // 统一口径判断按键（自写一份解析是 REVIEW.md 第 8 条那类漂移的温床）。
 import { keyToken } from "./keys";
 import { FILTER_LABEL, FILTER_PLACEHOLDER, NO_MATCH_TEXT, createListFilter } from "./list-filter";
+import { errorText, formatRelative, t, tPlural } from "./copy";
 import type { ListFilter } from "./list-filter";
 import type { ToastAction, VaultSwitchBlock } from "./save-controller";
 
@@ -53,23 +54,23 @@ export const SESSION_WRITE_DEBOUNCE_MS = 1000;
 // ---------------------------------------------------------------------------
 
 /** D97 浮层读屏名。 */
-const POPOVER_LABEL = "vault";
+const POPOVER_LABEL = (): string => t("D97");
 /** D98 当前项的唯一标记。 */
-const CURRENT_FLAG = "当前";
+const CURRENT_FLAG = (): string => t("D98");
 /** D99 行摘要：当前项说「现在打开」，没有历史的行单独给 D101 的串。 */
-const SUMMARY_CURRENT = "现在打开";
+const SUMMARY_CURRENT = (): string => t("D99.2");
 /** D101 没有标签历史的摘要。 */
-const NO_TABS_TEXT = "还没有打开过文件";
+const NO_TABS_TEXT = (): string => t("D101");
 /** D102 失效行的成因。 */
-const MISSING_TEXT = "路径不可用：目录被移动，或所在卷未挂载";
+const MISSING_TEXT = (): string => t("D102");
 /** D103 失效行的动作。 */
-const RELOCATE_TEXT = "重新定位…";
+const RELOCATE_TEXT = (): string => t("D103");
 /** D104 浮层底部新增入口（形态 A 下浮层内唯一的新增入口）。 */
-const ADD_TEXT = "新增 vault…";
-const ADD_TITLE = "选择一个目录作为新 vault";
+const ADD_TEXT = (): string => t("D104.1");
+const ADD_TITLE = (): string => t("D104.2");
 /** D108 恢复时跳过缺失文件的计数提示（一次一条，MUST NOT 逐个报错）。 */
 export function skippedText(count: number): string {
-  return `${count} 个文件已不在这个 vault 里，已跳过`;
+  return tPlural("D108", count, { n: count });
 }
 
 /** D99 行摘要的模板（入参是后端给的 `tab_count` 与 `last_opened_at`）。 */
@@ -79,11 +80,11 @@ export function summaryText(
   now: number,
   current: boolean,
 ): string {
-  if (tabCount === 0) return NO_TABS_TEXT;
-  if (current) return `${tabCount} 个标签 · ${SUMMARY_CURRENT}`;
+  if (tabCount === 0) return NO_TABS_TEXT();
+  if (current) return tPlural("D99.1", tabCount, { n: tabCount, when: SUMMARY_CURRENT() });
   const when = relativeTime(lastOpenedAt, now);
   // 没有打开记录的老注册项（M163 之前登记的）：只给数字，不编一个时间出来。
-  return when === "" ? `${tabCount} 个标签` : `${tabCount} 个标签 · ${when}`;
+  return when === "" ? tPlural("D99.3", tabCount, { n: tabCount }) : tPlural("D99.1", tabCount, { n: tabCount, when });
 }
 
 /** 浮层条目 id 前缀（aria-activedescendant 用；同页唯一即可）。 */
@@ -162,13 +163,13 @@ export function restorePlan(
 export function relativeTime(at: number | null, now: number): string {
   if (at === null) return "";
   const minutes = Math.floor((now - at) / 60_000);
-  if (minutes < 1) return "刚刚";
-  if (minutes < 60) return `${minutes} 分钟前`;
+  if (minutes < 1) return t("D100.1");
+  if (minutes < 60) return formatRelative(-minutes, "minute");
   const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours} 小时前`;
-  if (hours < 48) return "昨天";
+  if (hours < 24) return formatRelative(-hours, "hour");
+  if (hours < 48) return formatRelative(-1, "day");
   const days = Math.floor(hours / 24);
-  if (days < 7) return `${days} 天前`;
+  if (days < 7) return formatRelative(-days, "day");
   const date = new Date(at);
   const pad = (value: number) => String(value).padStart(2, "0");
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
@@ -199,7 +200,7 @@ export function samePath(a: string, b: string): boolean {
  *  dirty 点承担（D90），因此这里不逐个列文件（那会变成第二处真源）。数量是「要不要放弃」
  *  这个决定的度量，判据又是全体标签，所以给数量而非文件名。 */
 export function vaultGuardText(vaultName: string, dirtyCount: number): string {
-  return `「${vaultName}」里有 ${dirtyCount} 个标签有未保存修改，切换会丢弃这些修改`;
+  return tPlural("D109", dirtyCount, { vault: vaultName, n: dirtyCount });
 }
 
 export interface VaultSwitchGateDeps {
@@ -273,11 +274,11 @@ export function createVaultSwitchGate(deps: VaultSwitchGateDeps): VaultSwitchGat
       // 不可保存的脏标签不给「保存并切换」：那是一条走不通的建议（无落盘基准的内容没有任何
       // 保存路径能写回磁盘），只留「放弃」与「取消」两条真出口。
       if (!block.hasUnsaveable) {
-        actions.push({ label: "保存并切换", run: () => void saveThenRun(proceed) });
+        actions.push({ label: t("D110.1"), run: () => void saveThenRun(proceed) });
       }
       actions.push(
-        { label: "放弃修改并切换", run: () => void run(proceed) },
-        { label: "取消", run: () => {} },
+        { label: t("D110.2"), run: () => void run(proceed) },
+        { label: t("D110.3"), run: () => {} },
       );
       deps.notify(vaultGuardText(deps.currentName(), block.dirtyCount), actions);
       return false;
@@ -351,11 +352,11 @@ export function createVaultRemapPrompt(deps: VaultRemapPromptDeps): VaultRemapPr
       // 调用方只在有候选时摆浮条；空数组不摆（不产出没有出口的提示）。
       if (top === undefined) return;
       deps.notify(
-        `「${deps.displayName(info.root)}」尚未注册为 vault；发现可能已移动的 vault：${top.path}`,
+        t("D243", { name: deps.displayName(info.root), candidate: top.path }),
         [
-          { label: "作为新 vault 打开", run: () => reopen(info.root) },
+          { label: t("D244"), run: () => reopen(info.root) },
           {
-            label: "确认映射到此路径",
+            label: t("D245"),
             run: () => {
               void deps
                 .remap(top.id, info.root)
@@ -584,34 +585,34 @@ class VaultSwitcher implements VaultSwitcherHandle {
     input.setAttribute("role", "combobox");
     input.setAttribute("aria-expanded", "true");
     input.setAttribute("aria-controls", LIST_ID);
-    input.setAttribute("aria-label", FILTER_LABEL);
-    input.placeholder = FILTER_PLACEHOLDER;
+    input.setAttribute("aria-label", FILTER_LABEL());
+    input.placeholder = FILTER_PLACEHOLDER();
     input.autocomplete = "off";
     input.spellcheck = false;
     const list = document.createElement("div");
     list.className = "vault-list";
     list.id = LIST_ID;
     list.setAttribute("role", "listbox");
-    list.setAttribute("aria-label", POPOVER_LABEL);
+    list.setAttribute("aria-label", POPOVER_LABEL());
     list.tabIndex = -1;
     // 无命中态的一行提示（D117）：列表让位给它，浮层保持打开、「新增 vault…」照常可用。
     const empty = document.createElement("p");
     empty.className = "vault-empty";
-    empty.textContent = NO_MATCH_TEXT;
+    empty.textContent = NO_MATCH_TEXT();
     empty.hidden = true;
     const separator = document.createElement("div");
     separator.className = "vault-sep";
     const addRow = document.createElement("button");
     addRow.type = "button";
     addRow.className = "vault-add";
-    addRow.title = ADD_TITLE;
-    addRow.setAttribute("aria-label", ADD_TITLE);
+    addRow.title = ADD_TITLE();
+    addRow.setAttribute("aria-label", ADD_TITLE());
     const plus = document.createElement("span");
     plus.className = "vault-add-plus";
     plus.setAttribute("aria-hidden", "true");
-    plus.textContent = "＋";
+    plus.textContent = "＋"; // i18n-exempt: glyph
     const addLabel = document.createElement("span");
-    addLabel.textContent = ADD_TEXT;
+    addLabel.textContent = ADD_TEXT();
     addRow.append(plus, addLabel);
     popover.append(input, list, empty, separator, addRow);
     deps.mount.append(popover);
@@ -821,7 +822,7 @@ class VaultSwitcher implements VaultSwitcherHandle {
     if (current) {
       const flag = document.createElement("span");
       flag.className = "vault-row-flag";
-      flag.textContent = CURRENT_FLAG;
+      flag.textContent = CURRENT_FLAG();
       top.append(flag);
     }
     el.append(top, this.subLine(summaryText(row.tab_count, row.last_opened_at, now, current)));
@@ -834,10 +835,10 @@ class VaultSwitcher implements VaultSwitcherHandle {
         this.deps.requestSwitch(row);
       });
     } else {
-      el.append(this.subLine(MISSING_TEXT, "is-warn"));
+      el.append(this.subLine(MISSING_TEXT(), "is-warn"));
       const action = document.createElement("span");
       action.className = "vault-row-act";
-      action.textContent = RELOCATE_TEXT;
+      action.textContent = RELOCATE_TEXT();
       el.append(action);
       // 键盘路径与鼠标路径共用同一个落点（同一份 siblings 供占用判定）。
       el.addEventListener("click", () => {
@@ -953,16 +954,6 @@ class VaultSwitcher implements VaultSwitcherHandle {
     }
     event.preventDefault();
   }
-}
-
-/** 命令错误信封 / 任意异常 → 人话（与 ipc.ts 的 errorMessage 同口径；本模块不 import
- *  ipc.ts，避免让纯逻辑单测把 Tauri 运行时拖进来）。 */
-function errorText(e: unknown): string {
-  if (typeof e === "object" && e !== null) {
-    const message = (e as { message?: unknown }).message;
-    if (typeof message === "string") return message;
-  }
-  return String(e);
 }
 
 // ---------------------------------------------------------------------------

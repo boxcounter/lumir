@@ -4,6 +4,7 @@ import type { EditorState, Range } from "@codemirror/state";
 import { Decoration, EditorView, ViewPlugin, WidgetType } from "@codemirror/view";
 import type { DecorationSet, ViewUpdate } from "@codemirror/view";
 import { EDITOR_FONT_FAMILY_TOKEN } from "../typography";
+import { t } from "../copy";
 
 type Node = ReturnType<typeof syntaxTree>["topNode"];
 interface Group { width: number; body: number; depth: number; labels: ReadonlyMap<number, string> }
@@ -59,7 +60,7 @@ class ListMarker extends WidgetType {
       const task = document.createElement("span");
       task.className = "cm-lp-task-marker";
       task.textContent = this.task;
-      task.setAttribute("aria-label", this.task.toLowerCase() === "[x]" ? "已完成" : "未完成");
+      task.setAttribute("aria-label", this.task.toLowerCase() === "[x]" ? t("D227") : t("D228"));
       span.append(task);
     }
     return span;

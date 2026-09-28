@@ -372,6 +372,13 @@ export async function stubTauri(page: Page, vault: VaultFixture | null): Promise
               // `UiConfig::default()` 同值。桩必须带上这个键——启动装配层的读取顺序在
               // `ui.content_width` 之后，缺键会得到 undefined 而让 md 的 gutter 静默不装。
               markdown_line_numbers: current?.config?.markdown_line_numbers ?? "on-demand",
+              // 界面语言（M282，change ui-language-i18n）：桩缺省的 **`zh`** 与产品的出厂默认
+              // （`en`，Rust `UiConfig::default()`）**不同**，这是有意的——既有整页基线全是
+              // `zh` 形态，桩把界面语言钉在 `zh` 才能让这套基线继续作「结构与外观」的回归面
+              //（`en` 面由 tests/visual/scenes/m282-ui-language.spec.ts 单独覆盖）。
+              // 桩必须带上这个键：缺键会让 `applyLanguage` 读到 undefined，`<html lang>` 落回
+              // 默认档 `en`，于是每一条基线都因为「桩没跟上契约」而变红。
+              language: current?.config?.language ?? "zh",
             },
             keys: current?.config?.keys ?? {},
           },

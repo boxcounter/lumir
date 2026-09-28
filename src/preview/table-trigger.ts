@@ -32,6 +32,7 @@
 
 import { WidgetType } from "@codemirror/view";
 import { BLOCK_TRIGGER_CLASS, CORNERS_ICON } from "./block-trigger";
+import { t } from "../copy";
 
 /** 触发钮的坐标系统（BlockWrapper，rank 20）：`position: relative` 的唯一职责是给钮当包含块。
  *  常量在此声明而非 livePreview.ts，因为它是**钮的存在理由**；样式在 src/style.css。 */
@@ -42,7 +43,7 @@ export const TABLE_SLOT_CLASS = "cm-lp-table-slot";
 export const TABLE_TRIGGER_CLASS = "lumir-table-fs-trigger";
 
 /** 触发钮的读屏名（文案 deck D124，`文案-Copy.md` 与本常量逐字一致）。 */
-export const TABLE_TRIGGER_LABEL = "放大查看表格";
+export const TABLE_TRIGGER_LABEL = (): string => t("D124");
 
 /** 四角框图标在 ./block-trigger（复制钮与代码块放大钮共用同一份字形，MUST NOT 各抄一份）。 */
 
@@ -70,7 +71,7 @@ export class TableFullscreenTrigger extends WidgetType {
   toDOM(): HTMLElement {
     const button = document.createElement("button");
     button.className = `${BLOCK_TRIGGER_CLASS} ${TABLE_TRIGGER_CLASS}`;
-    button.setAttribute("aria-label", TABLE_TRIGGER_LABEL);
+    button.setAttribute("aria-label", TABLE_TRIGGER_LABEL());
     button.innerHTML = CORNERS_ICON;
     // 点击不该扰动文档：mousedown 的默认行为会把焦点与 caret 挪走（CM 对 widget 内的事件
     // 本就 ignoreEvent，这里再加一道显式防线，与 M184 放大图的 mousedown 手法同款）。

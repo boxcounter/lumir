@@ -28,6 +28,7 @@
 //   `findNext` 仍会把选区移过去；具体行为见 completion report。
 
 import type { EditorState, Extension } from "@codemirror/state";
+import { t } from "./copy";
 import { EditorView } from "@codemirror/view";
 import type { Panel, ViewUpdate } from "@codemirror/view";
 import {
@@ -78,8 +79,8 @@ function tallyMatches(state: EditorState, query: SearchQuery): MatchTally {
 
 /** 面板里的计数文案：`当前/总数`；未选中任何匹配时「0/总数」；超过上限报下界。 */
 function tallyLabel(tally: MatchTally): string {
-  if (tally.capped) return `${tally.total}+`;
-  return `${tally.index < 0 ? 0 : tally.index + 1}/${tally.total}`;
+  if (tally.capped) return t("D72.2", { total: tally.total });
+  return t("D72.1", { current: tally.index < 0 ? 0 : tally.index + 1, total: tally.total });
 }
 
 /**
@@ -107,13 +108,13 @@ class LumirSearchPanel implements Panel {
 
     const label = document.createElement("span");
     label.className = "lumir-search-label";
-    label.textContent = "查找";
+    label.textContent = t("D68");
 
     const input = document.createElement("input");
     input.type = "text";
     input.className = "lumir-search-input";
     input.setAttribute("main-field", "true");
-    input.setAttribute("aria-label", "查找");
+    input.setAttribute("aria-label", t("D68"));
     input.spellcheck = false;
     input.autocomplete = "off";
     this.input = input;
@@ -124,12 +125,12 @@ class LumirSearchPanel implements Panel {
     count.setAttribute("aria-live", "polite");
     this.count = count;
 
-    this.stepPrev = this.makeButton("上一个", "lumir-search-button", () => findPrevious(this.view));
-    this.stepNext = this.makeButton("下一个", "lumir-search-button", () => findNext(this.view));
+    this.stepPrev = this.makeButton(t("D69.1"), "lumir-search-button", () => findPrevious(this.view));
+    this.stepNext = this.makeButton(t("D69.2"), "lumir-search-button", () => findNext(this.view));
     this.caseToggle = this.makeButton("Aa", "lumir-search-button lumir-search-case", () => this.toggleCase());
-    this.caseToggle.setAttribute("aria-label", "区分大小写");
+    this.caseToggle.setAttribute("aria-label", t("D70"));
     const close = this.makeButton("×", "lumir-search-button lumir-search-close", () => closeSearch(this.view));
-    close.setAttribute("aria-label", "关闭");
+    close.setAttribute("aria-label", t("D71"));
 
     this.dom.append(label, input, count, this.stepPrev, this.stepNext, this.caseToggle, close);
 

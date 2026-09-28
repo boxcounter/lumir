@@ -90,9 +90,12 @@ export function createListFilter(): ListFilter {
 // （vault 浮层没有提示行，大纲的提示行只覆盖导航键），漂移会让两处对同一个动作说两种话。
 // ---------------------------------------------------------------------------
 
-/** D117 无命中提示（浮层保持打开，显示在列表区）。 */
-export const NO_MATCH_TEXT = "没有匹配的条目";
-/** D118 输入框占位（可发现性的主要出口）。 */
-export const FILTER_PLACEHOLDER = "输入以筛选";
-/** D119 输入框读屏名。 */
-export const FILTER_LABEL = "筛选";
+import { t } from "./copy";
+
+/** D117 无命中提示（浮层保持打开，显示在列表区）。**函数**而不是常量：两处浮层在打开时
+ *  取值，语言切换后新开的浮层自然是新语言（M282 起文案经 `t()` 取值）。 */
+export const NO_MATCH_TEXT = (): string => t("D117");
+/** D118 输入框占位（可发现性的主要出口）。函数理由同 `NO_MATCH_TEXT`。 */
+export const FILTER_PLACEHOLDER = (): string => t("D118");
+/** D119 输入框读屏名。函数理由同 `NO_MATCH_TEXT`。 */
+export const FILTER_LABEL = (): string => t("D119");

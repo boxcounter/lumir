@@ -139,6 +139,10 @@
 // 全部 cfg(macos)），因此该口径变化无实害。将来若跨平台，需重新引入平台门（给 ⌃ 系绑定
 // 加平台维度，或把 ⌃N 一类让回系统惯例）。
 
+// 键位来由的文本住在文案表（M282，change ui-language-i18n 的 D8 裁决）——本文件只留
+// 「绑定 → 文案表键」的引用，因此是纯类型导入（类型剥离后不留任何运行期依赖）。
+import type { CopyKey } from "./copy-data";
+
 export type KeyScope = "global" | "editor";
 
 /** 编辑器内核侧命令 id（实现落在 editor.ts 的 commands 记录）。 */
@@ -278,6 +282,11 @@ export const NON_TAB_GLOBAL_COMMAND_IDS = [
   // 字号同族），作用域由本清单派生为 global——焦点在左栏 / 搜索框 / 键位面板 / 浮层里时同样要
   // 能切。它**有**默认绑定（⌘⇧T），因此 MUST NOT 登记进 KEYLESS_COMMAND_IDS。
   "view.theme-cycle",
+  // M282：界面语言循环切换（change ui-language-i18n，节点 1 裁决 D1/D3）。取 `view.` 前缀而不是
+  // `editor.`：它改的是**应用运行期**的显示口径（与 M180 的折行、M195 的字号、M237 的主题同族），
+  // 作用域由本清单派生为 global——焦点在左栏 / 搜索框 / 键位面板 / 浮层里时同样要能切。
+  // 它**有**默认绑定（⌘⇧L），因此 MUST NOT 登记进 KEYLESS_COMMAND_IDS。
+  "view.language-cycle",
 ] as const;
 
 /** 全局命令 id（实现落在装配层 main.ts）：非标签部分 + 标签部分。 */
@@ -336,8 +345,15 @@ export interface KeyBinding {
    * 内容区内」，表达不了这一层，故单列一个条件。
    */
   when?: (event: KeyboardEvent) => boolean;
-  /** 这条绑定的归属与来由——表即文档，新绑定必须写清为什么是它。 */
-  doc: string;
+  /** 这条绑定的归属与来由——**表即文档**，新绑定必须写清为什么是它。
+   *
+   *  M282（change ui-language-i18n 的 D8 裁决）起这里存的是**文案表的键**而不是文本：来由是
+   *  可见文案（键位面板逐条显示），因此随界面语言切换取列；文本住在 src/copy-data.ts，两列在
+   *  `文案-Copy.md` 里并排评审。取值的实现点只有 `src/bindings-panel.ts` 一处（MUST NOT
+   *  在本层渲染），键与 `COMMAND_IDS` 一样由单测对账。 */
+  docKey: CopyKey;
+  /** 来由模板的插值参数（只有需要序号的模板用得上——⌘1–⌘9 九条绑定共用 D259）。 */
+  docParams?: Record<string, string | number>;
 }
 
 /** 块级横滚容器的 class（M180）：livePreview 的表格滚动容器与代码块滚动容器**共用**它——
@@ -373,7 +389,7 @@ const TAB_GOTO_BINDINGS: readonly KeyBinding[] = TAB_GOTO_IDS.map((command, inde
   key: `Cmd-${index + 1}`,
   command,
   scope: "global",
-  doc: `⌘${index + 1} 直达第 ${index + 1} 个标签（M149，Alex 明确要求「坐上 ⌘1–9 直达」）；取 global——焦点在文件树 / 搜索框 / 大纲浮层里时同样要能直达。超出标签数时无操作。冲突已核（零冲突）：⌘ 数字不在 tauri 默认菜单的 accelerator 集合里（见文件头 M149 段），表内亦无 ⌘ 数字绑定`,
+  docKey: "D259", docParams: { n: index + 1 },
 }));
 
 /**
@@ -391,33 +407,33 @@ const TAB_GOTO_BINDINGS: readonly KeyBinding[] = TAB_GOTO_IDS.map((command, inde
  */
 export const KEY_BINDINGS: readonly KeyBinding[] = [
   // ── 编辑器内：垂直移动（M103 硬化路径：逐视觉行 + 跨原子块钳制 + SelectionRange 揭示）
-  { key: "ArrowDown", command: "editor.cursor-down", scope: "editor", doc: "全平台接管：原生 contenteditable 路径越出视口时整屏跳变（M103）" },
-  { key: "ArrowUp", command: "editor.cursor-up", scope: "editor", doc: "同上（M103）" },
-  { key: "Ctrl-n", command: "editor.cursor-down", scope: "editor", doc: "macOS 文本系统 Emacs 惯例 ⌃N；原生路径跨原子块落点错误（M110 同族）" },
-  { key: "Ctrl-p", command: "editor.cursor-up", scope: "editor", doc: "macOS 文本系统 Emacs 惯例 ⌃P" },
+  { key: "ArrowDown", command: "editor.cursor-down", scope: "editor", docKey: "D260" },
+  { key: "ArrowUp", command: "editor.cursor-up", scope: "editor", docKey: "D261" },
+  { key: "Ctrl-n", command: "editor.cursor-down", scope: "editor", docKey: "D262" },
+  { key: "Ctrl-p", command: "editor.cursor-up", scope: "editor", docKey: "D263" },
 
   // ── 编辑器内：水平移动（M110/M111 硬化路径：原子块跨入钳制 + 退化测量回退）
-  { key: "Ctrl-f", command: "editor.cursor-forward", scope: "editor", doc: "原生 caret 进不了 replace 公式 widget，边界回弹（M110/M111）" },
-  { key: "Ctrl-b", command: "editor.cursor-backward", scope: "editor", doc: "同上（M110/M111）" },
+  { key: "Ctrl-f", command: "editor.cursor-forward", scope: "editor", docKey: "D264" },
+  { key: "Ctrl-b", command: "editor.cursor-backward", scope: "editor", docKey: "D265" },
 
   // ── 编辑器内：行首 / 行尾（对称的一对；⌃E 既有，⌃A 本 mission 新增）
-  { key: "Ctrl-e", command: "editor.line-end", scope: "editor", doc: "行尾；落点藏进隐藏 replace 时回退到最后可停靠位（M118）" },
-  { key: "Ctrl-a", command: "editor.line-start", scope: "editor", doc: "D2 裁决：⌃A = 行首（Emacs C-a），与 ⌃E 对称；全选改由 ⌘A 承担" },
+  { key: "Ctrl-e", command: "editor.line-end", scope: "editor", docKey: "D266" },
+  { key: "Ctrl-a", command: "editor.line-start", scope: "editor", docKey: "D267" },
 
   // ── 编辑器内：全选（⌘ 系归 mac 惯例）
-  { key: "Cmd-a", command: "editor.select-all", scope: "editor", doc: "D1/D2：⌘A 保留全选，与 macOS 原生 Edit 菜单同键（菜单项不带 accelerator 时由本层兜底，见 lib.rs）" },
+  { key: "Cmd-a", command: "editor.select-all", scope: "editor", docKey: "D268" },
 
   // ── 编辑器内：撤销 / 重做（M131 新增能力，CM history 线性双栈，见 editor.ts）
-  { key: "Cmd-z", command: "editor.undo", scope: "editor", doc: "mac 惯例撤销；原生 Edit 菜单的 Undo 项已让出该键（lib.rs）" },
-  { key: "Cmd-Shift-z", command: "editor.redo", scope: "editor", doc: "mac 惯例重做；原生 Edit 菜单的 Redo 项已让出该键（lib.rs）" },
-  { key: "Ctrl-/", command: "editor.undo", scope: "editor", doc: "Emacs 规范绑定 C-/" },
-  { key: "Ctrl-_", command: "editor.undo", scope: "editor", doc: "Emacs 别名 C-_（mac 物理为 ⌃⇧-，token 口径见上）" },
-  { key: "Ctrl-Alt-Minus", command: "editor.redo", scope: "editor", doc: "Emacs 系重做别名 ⌃⌥_（mac 键盘物理为 ⌃⌥⇧-；Alt 层把 - 换成 —，故按物理键 Minus 判定，见上）" },
+  { key: "Cmd-z", command: "editor.undo", scope: "editor", docKey: "D269" },
+  { key: "Cmd-Shift-z", command: "editor.redo", scope: "editor", docKey: "D270" },
+  { key: "Ctrl-/", command: "editor.undo", scope: "editor", docKey: "D271" },
+  { key: "Ctrl-_", command: "editor.undo", scope: "editor", docKey: "D272" },
+  { key: "Ctrl-Alt-Minus", command: "editor.redo", scope: "editor", docKey: "D273" },
 
   // ── 编辑器内：翻屏与重定位（M132 档 1）
-  { key: "Ctrl-v", command: "editor.scroll-page-down", scope: "editor", doc: "Emacs C-v（scroll-up）：视口向后翻一屏，光标不动——阅读推进用，不给原生路径（原生滚动与 CM 视口重建叠加会整屏跳变，M103 同族）" },
-  { key: "Alt-KeyV", command: "editor.scroll-page-up", scope: "editor", doc: "Emacs M-v（scroll-down）；含 Alt 的组合按物理键判定（Alt 层把 v 换成 √，e.key 认不出，见文件头 token 口径）" },
-  { key: "Ctrl-l", command: "editor.recenter", scope: "editor", doc: "Emacs C-l：把光标行滚到视口居中（revealLine 同款 y:\"center\"；v0 不做 Emacs 的三段循环）" },
+  { key: "Ctrl-v", command: "editor.scroll-page-down", scope: "editor", docKey: "D274" },
+  { key: "Alt-KeyV", command: "editor.scroll-page-up", scope: "editor", docKey: "D275" },
+  { key: "Ctrl-l", command: "editor.recenter", scope: "editor", docKey: "D276" },
   // M281（change goto-line-command 的 D1 裁决）：按行号跳转。Emacs 的 `goto-line` 是两段
   // chord（`M-g M-g` / `M-g g`），而 `[keys]` 拒绝含空白的键位（src-tauri/src/config.rs 的
   // validate_keys）——把默认键位押在 chord 上等于让用户改不了键（M195 对 `C-x C-=` 的既有裁决）。
@@ -437,29 +453,29 @@ export const KEY_BINDINGS: readonly KeyBinding[] = [
   // 输入条打开期间这一层不参与（焦点在浮层里，`editor` 作用域判定不命中），那条路径由
   // 输入条自己就地消费（src/goto-line.ts），否则「再按一次同键」会把 `©` 打进行号框。
   // 单段、无空白 ⇒ 可经 `[keys]` 重绑 / 解绑。
-  { key: "Alt-KeyG", command: "editor.goto-line", scope: "editor", doc: "按行号跳转（Emacs `M-g g` 的单段近亲，⌥G）：打开 modeline 之上的小浮层输入条（预填当前行号、显示 `共 M 行`），Enter 落到第 n 行行首并滚到视口居中，Escape / ⌃G 取消，越界静默钳到文档边界（D1/D2/D3 裁决）。落点复用既有 revealLine（MUST NOT 另写算式）；零文档改动、不进撤销栈、不碰 dirty。冲突已核（零冲突，三条独立来源）：表内无 ⌥G；原生菜单 accelerator 集合里 ⌥ 系只有 ⌥⌘H；macOS 系统级不占用 ⌥G。含 Alt 的组合按物理键判定 ⇒ token MUST 写 `Alt-KeyG`（Alt 层把 G 换成 `©`，写 `Alt-g` 永不命中）" },
+  { key: "Alt-KeyG", command: "editor.goto-line", scope: "editor", docKey: "D277" },
 
   // ── 编辑器内：删除与转置（M132 档 1；表格 cell 内一律钳到 cell 边界，绝不跨过隐藏管道符）
-  { key: "Ctrl-d", command: "editor.delete-char-forward", scope: "editor", doc: "Emacs C-d；表格 cell 内钳到 cell 尾（M129 survey 实证：跨过隐藏管道符即破坏表格结构）" },
-  { key: "Ctrl-h", command: "editor.delete-char-backward", scope: "editor", doc: "Emacs C-h（macOS 文本系统的退格键位）；cell 边界同上" },
-  { key: "Ctrl-t", command: "editor.transpose-chars", scope: "editor", doc: "Emacs C-t：转置光标两侧字符并把光标移到两者之后（行尾时转置前两个）" },
-  { key: "Alt-KeyD", command: "editor.delete-word-forward", scope: "editor", doc: "Emacs M-d kill-word（Alt 层把 d 换成 ∂，按物理键判定）；cell 边界同 ⌃D" },
-  { key: "Alt-Backspace", command: "editor.delete-word-backward", scope: "editor", doc: "Emacs M-DEL backward-kill-word（真机 ⌥⌫）；cell 边界同上" },
+  { key: "Ctrl-d", command: "editor.delete-char-forward", scope: "editor", docKey: "D278" },
+  { key: "Ctrl-h", command: "editor.delete-char-backward", scope: "editor", docKey: "D279" },
+  { key: "Ctrl-t", command: "editor.transpose-chars", scope: "editor", docKey: "D280" },
+  { key: "Alt-KeyD", command: "editor.delete-word-forward", scope: "editor", docKey: "D281" },
+  { key: "Alt-Backspace", command: "editor.delete-word-backward", scope: "editor", docKey: "D282" },
 
   // ── 编辑器内：kill / yank（M132 档 2；单槽 kill buffer，kill ring 后续）
-  { key: "Ctrl-k", command: "editor.kill-line", scope: "editor", doc: "Emacs C-k：kill 到行尾（已在行尾则连带换行，Emacs 口径）；表格 cell 内只到 cell 尾，绝不跨过隐藏管道符" },
-  { key: "Ctrl-y", command: "editor.yank", scope: "editor", doc: "Emacs C-y：插入 kill buffer（单槽；连续 ⌃K 的内容追加进同一槽，等价 Emacs 的连续 kill 合并）" },
-  { key: "Ctrl-g", command: "editor.keyboard-quit", scope: "editor", doc: "Emacs C-g keyboard-quit：撤下进行中的选择（折叠为光标）；多段 chord 的 pending 本就在无关键上自动清空" },
+  { key: "Ctrl-k", command: "editor.kill-line", scope: "editor", docKey: "D283" },
+  { key: "Ctrl-y", command: "editor.yank", scope: "editor", docKey: "D284" },
+  { key: "Ctrl-g", command: "editor.keyboard-quit", scope: "editor", docKey: "D285" },
 
   // ── 编辑器内：shift-extend 扩选（M132；v0 不做 mark mode，选区只有 anchor/head 两端）
-  { key: "Ctrl-Shift-f", command: "editor.extend-char-forward", scope: "editor", doc: "macOS 文本系统的 ⌃⇧F（⌃F 的扩选变体）：保持 anchor，head 逐字符前移（沿用 ⌃F 的硬化落点）" },
-  { key: "Ctrl-Shift-b", command: "editor.extend-char-backward", scope: "editor", doc: "同上，⌃⇧B" },
-  { key: "Ctrl-Shift-n", command: "editor.extend-line-down", scope: "editor", doc: "⌃⇧N：按垂直移动的硬化落点向下扩选（跨原子块钳制与表格行路由同 ⌃N，只多保留 anchor）" },
-  { key: "Ctrl-Shift-p", command: "editor.extend-line-up", scope: "editor", doc: "同上，⌃⇧P" },
-  { key: "Ctrl-Shift-a", command: "editor.extend-line-start", scope: "editor", doc: "⌃⇧A：扩选到行首（落点口径同 ⌃A，含隐藏 replace 退化回退）" },
-  { key: "Ctrl-Shift-e", command: "editor.extend-line-end", scope: "editor", doc: "⌃⇧E：扩选到行尾（落点口径同 ⌃E）" },
-  { key: "Alt-KeyF", command: "editor.extend-word-forward", scope: "editor", doc: "⌥⇧F：按词向后扩选；含 Alt 的组合按物理键且 Shift 不参与判定（M131 token 口径），故与 ⌥F 同 token——v0 未绑 ⌥F 的单词移动，见 openspec change emacs-keys-pack 的 shift-extend requirement「本版已知限制」" },
-  { key: "Alt-KeyB", command: "editor.extend-word-backward", scope: "editor", doc: "⌥⇧B：按词向前扩选；token 口径同 ⌥⇧F" },
+  { key: "Ctrl-Shift-f", command: "editor.extend-char-forward", scope: "editor", docKey: "D286" },
+  { key: "Ctrl-Shift-b", command: "editor.extend-char-backward", scope: "editor", docKey: "D287" },
+  { key: "Ctrl-Shift-n", command: "editor.extend-line-down", scope: "editor", docKey: "D288" },
+  { key: "Ctrl-Shift-p", command: "editor.extend-line-up", scope: "editor", docKey: "D289" },
+  { key: "Ctrl-Shift-a", command: "editor.extend-line-start", scope: "editor", docKey: "D290" },
+  { key: "Ctrl-Shift-e", command: "editor.extend-line-end", scope: "editor", docKey: "D291" },
+  { key: "Alt-KeyF", command: "editor.extend-word-forward", scope: "editor", docKey: "D292" },
+  { key: "Alt-KeyB", command: "editor.extend-word-backward", scope: "editor", docKey: "D293" },
 
   // ── 编辑器内：轨道 D 的**块级横滚容器**焦点键（M132 从 livePreview 手柄收编；M180 从
   // 「表格滚动容器」泛化为「块级横滚容器」：表格容器与围栏 / 缩进代码块的横滚容器共用同一个
@@ -467,11 +483,11 @@ export const KEY_BINDINGS: readonly KeyBinding[] = [
   // when 把命中限定在「容器自身持有这次按键的焦点」：文本编辑中的 Home / End / 左右方向键 /
   // Escape 必须照旧走原生 caret 路径，光标落在块内文本时（事件目标在容器内、但活动元素是
   // 编辑器内容区）也归 caret。
-  { key: "ArrowLeft", command: "editor.widget-scroll-left", scope: "editor", when: isWidgetKeyTarget, doc: "块级横滚容器焦点内的 ←（原手柄的 120px 步进）；when 保证文本编辑中的 ← 不受影响" },
-  { key: "ArrowRight", command: "editor.widget-scroll-right", scope: "editor", when: isWidgetKeyTarget, doc: "容器焦点内的 →（原手柄口径）；表格与代码块容器同判据同行为" },
-  { key: "Home", command: "editor.widget-scroll-home", scope: "editor", when: isWidgetKeyTarget, doc: "容器焦点内的 Home：横向滚回最左" },
-  { key: "End", command: "editor.widget-scroll-end", scope: "editor", when: isWidgetKeyTarget, doc: "容器焦点内的 End：横向滚到最右" },
-  { key: "Escape", command: "editor.widget-escape", scope: "editor", when: isWidgetKeyTarget, doc: "容器焦点内的 Escape：焦点交还编辑器（view.focus()），随后按键回到文本上下文" },
+  { key: "ArrowLeft", command: "editor.widget-scroll-left", scope: "editor", when: isWidgetKeyTarget, docKey: "D294" },
+  { key: "ArrowRight", command: "editor.widget-scroll-right", scope: "editor", when: isWidgetKeyTarget, docKey: "D295" },
+  { key: "Home", command: "editor.widget-scroll-home", scope: "editor", when: isWidgetKeyTarget, docKey: "D296" },
+  { key: "End", command: "editor.widget-scroll-end", scope: "editor", when: isWidgetKeyTarget, docKey: "D297" },
+  { key: "Escape", command: "editor.widget-escape", scope: "editor", when: isWidgetKeyTarget, docKey: "D298" },
 
   // ── 编辑器内：列表项缩进 / 凸排（M239，change list-tab-indent）
   // 语义（Alex 节点 1 裁决）：TAB = 把 head 归属的列表项连同续行与子树整体缩进一层，
@@ -485,16 +501,16 @@ export const KEY_BINDINGS: readonly KeyBinding[] = [
   // 起作用域 editor：「head 是否在列表项内」由命令按语法树判（键位层不做条件分支——
   // 这里也不用 `when`：`when` 表达的是「同一物理键在不同焦点下语义不同」，而本键的语义不随
   // 焦点变，只随文档结构变；结构判定的单一来源留在命令侧，避免两处各判一次而漂移）。
-  { key: "Tab", command: "editor.list-indent", scope: "editor", doc: "列表项缩进一层（TAB，Alex 点名）：head 归属的 ListItem 连同续行与子列表整体平移（步长 = 该层 marker 宽 + 1 空格，见 change list-tab-indent design §3），有序列表按新归属重排源码编号（D2c）。非列表行 / 代码块内无操作（D4a）——命中即消费，焦点不跳出编辑器。接管了编辑器内 TAB 的原生焦点遍历，这是 D1a 知情接受的代价；焦点在浮层 / 搜索框的原生输入框里时本绑定不命中（editor 作用域），Tab 照旧走原生焦点遍历" },
-  { key: "Shift-Tab", command: "editor.list-outdent", scope: "editor", doc: "列表项凸排一层（⇧TAB）——凸到祖先列表项的缩进层级（按语法树取，不是机械减 2；行首空白不足的行宽容移除、行首 tab 按一层读取宽容处理），有序列表按新归属重排源码编号（D2c）。列表项已在顶层时无操作（D3a）：文档逐字节不变、不进撤销栈；非列表行 / 代码块内同样无操作（D4a）" },
+  { key: "Tab", command: "editor.list-indent", scope: "editor", docKey: "D299" },
+  { key: "Shift-Tab", command: "editor.list-outdent", scope: "editor", docKey: "D300" },
 
   // ── 全局
-  { key: "Cmd-s", command: "document.save", scope: "global", doc: "D3 裁决：⌘S 是唯一保存键；⌃S 解绑（预留给 isearch），不再触发保存" },
-  { key: "Cmd-Enter", command: "link.follow", scope: "global", doc: "轨道 A 原样迁入（键位与作用域不变，迁移前挂在 window 上）；M144 起命令跟随光标/选区处的**链接**：外链经 Rust 交给系统浏览器，wikilink 走既有跳转链路——同一条命令，不再只管 wikilink" },
-  { key: "Cmd-/", command: "app.describe-bindings", scope: "global", doc: "键位查看面板（M133）：mac 帮助惯例的简化形态——系统「帮助」菜单的 accelerator 实为 ⇧⌘?（Cmd-?），该键在本应用的原生菜单下会先被系统 Help 菜单截获，故取 ⌘/；Emacs 的 C-h b（describe-bindings）不可用——⌃H 已被后删字符占用" },
-  { key: "Cmd-f", command: "app.search-open", scope: "global", doc: "文件内搜索（M139）：mac 惯例的查找键；取 global 而非 editor——焦点在文件树或已打开的搜索框里时同样要能开（已打开则把焦点移回输入框）。⌃F 已被 Emacs C-f（前移字符）占用，故沿用 ⌘ 系" },
-  { key: "Cmd-Shift-o", command: "toc.toggle", scope: "global", doc: "轻量大纲（M148）：⌘⇧O 展开/收起 modeline 左段的标题路径浮层（M211 前它挂在已删除的标题区）。取 global 而非 editor——浮层打开时焦点在浮层里（不在 contentDOM 内），再按要能收起；空标题文档也要能走到提示。冲突已核（零冲突）：表内 ⌘⇧ 系只有 ⇧⌘Z（重做），原生菜单的 accelerator 集合里 ⌘⇧ 系也只有 ⇧⌘Z（muda predefined：Redo），macOS 的 Help 子菜单在 tauri 默认菜单里为空" },
-  { key: "Cmd-o", command: "vault.switcher", scope: "global", doc: "打开 vault 切换器（M163，change multi-vault-workspaces 的口径 13）：⌘O 是 mac 惯例的「打开」，而 vault 的打开与切换此前零键位，与 ADR 0006 的 Emacs keybinding PKM 定位不符。取 global 而非 editor——浮层打开时焦点在浮层里（不在 contentDOM 内），再按要能收起；未装载 vault 时无操作。冲突已核（零冲突，三条独立来源）：① 表内 ⌘O 无绑定（本文件即真源）；② 原生菜单 accelerator 集合里没有 ⌘O——tauri 2.11.5 的 `Menu::default()` 逐项来自 muda 0.19.3 `items/predefined.rs` 的 `accelerator()`（Copy ⌘C / Cut ⌘X / Paste ⌘V / Undo ⌘Z / Redo ⇧⌘Z / SelectAll ⌘A / Minimize ⌘M / Fullscreen ⌃⌘F / Hide ⌘H / HideOthers ⌥⌘H / CloseWindow ⌘W / Quit ⌘Q，见该文件 :301-342），File 子菜单在 macOS 上只有一项预置 Close（M149 已把它换成不带 accelerator 的自定义项）；③ macOS 不给任何系统菜单预置 ⌘O（「打开…」由应用自建，本应用不建）。浮层内的 ↑↓ / Enter / Esc 就地在浮层内消费、不进本表（理由同 M148 那条：同 token 已被 editor.cursor-up / cursor-down / editor.widget-escape 占用）" },
+  { key: "Cmd-s", command: "document.save", scope: "global", docKey: "D301" },
+  { key: "Cmd-Enter", command: "link.follow", scope: "global", docKey: "D302" },
+  { key: "Cmd-/", command: "app.describe-bindings", scope: "global", docKey: "D303" },
+  { key: "Cmd-f", command: "app.search-open", scope: "global", docKey: "D304" },
+  { key: "Cmd-Shift-o", command: "toc.toggle", scope: "global", docKey: "D305" },
+  { key: "Cmd-o", command: "vault.switcher", scope: "global", docKey: "D306" },
 
   // ── 全局：编辑器内容字号步进（M195，change typography-and-zoom）
   // 语义取自 Emacs 的 text-scale-adjust（C-x C-= / C-x C-- / C-x C-0，步进倍率 1.1、钳 [12,32]、
@@ -513,10 +529,10 @@ export const KEY_BINDINGS: readonly KeyBinding[] = [
   //   + shiftKey → 归一成 `Cmd-Shift-=`（不命中）。这条差异写在 typography 场景的注释里，
   //   不用「注入过就算验过」当判据。
   // - 同一命令两条绑定是表内既有形态（撤销既有 `Ctrl-/` 与 `Ctrl-_` 两条），不构成冲突。
-  { key: "Cmd-=", command: "view.text-scale-up", scope: "global", doc: "放大编辑器内容字号一档（×1.1 取整，钳 [12,32]）：mac / 浏览器惯例的放大键。取 global 而非 editor——字号是应用运行期的显示口径，焦点在左栏 / 搜索框 / 浮层里时同样要能改（与 M180 的折行开关同族）。只改**文字**大小，不是整体界面缩放（MUST NOT 启用 Tauri 的 webview 缩放热键，理由见 keymap-commands 的 delta）" },
-  { key: "Cmd-+", command: "view.text-scale-up", scope: "global", doc: "同上，⌘⇧= 的字符形态（真机 event.key 为 \"+\"）：浏览器对放大同时接受 ⌘= 与 ⌘+，两条绑定指向同一条命令。token 形态的实测记录见本组上方的注释" },
-  { key: "Cmd--", command: "view.text-scale-down", scope: "global", doc: "缩小编辑器内容字号一档（÷1.1 取整，钳 [12,32]）。token MUST 写 `Cmd--`（⌘− 的事件 token 形态），写 `Cmd-Minus` 会静默不命中——理由见本组上方的注释" },
-  { key: "Cmd-0", command: "view.text-scale-reset", scope: "global", doc: "回到**配置字号**（不是出厂 16px）：Emacs 的 `C-x C-0` 是「restore the default (global) font size」，本仓的 global 就是配置值。运行期字号不落盘、不回写 config.json（D5 裁决，与 M180 的折行开关同纪律）" },
+  { key: "Cmd-=", command: "view.text-scale-up", scope: "global", docKey: "D307" },
+  { key: "Cmd-+", command: "view.text-scale-up", scope: "global", docKey: "D308" },
+  { key: "Cmd--", command: "view.text-scale-down", scope: "global", docKey: "D309" },
+  { key: "Cmd-0", command: "view.text-scale-reset", scope: "global", docKey: "D310" },
 
   // ── 全局：主题循环切换（M237，change live-theme-switch）
   // 循环序 light → dark → eink → light（D1 裁决，实现在 main.ts 的 cycleTheme，与本表同在
@@ -529,14 +545,17 @@ export const KEY_BINDINGS: readonly KeyBinding[] = [
   // ③ macOS 系统级不占用 ⌘⇧T（浏览器「重开刚关掉的标签页」语义不适用于本应用）。
   // token 形态 `Cmd-Shift-T` 单段、无空白——用户经 [keys] 可重绑 / 解绑（含空白的多段 chord
   // 会被配置层拒绝，把默认键位押在 chord 上等于让用户改不了键）。
-  { key: "Cmd-Shift-T", command: "view.theme-cycle", scope: "global", doc: "主题按 light → dark → eink 循环切到下一档（M237，D1/D2 裁决），切换即写回配置 `[ui] theme`（写失败降级为 toast，运行期主题不回滚）。取 global——焦点在左栏 / 搜索框 / 浮层里时同样要能切。冲突已核（零冲突，三条独立来源）：① 表内 ⌘⇧ 系只有 ⇧⌘Z（重做）与 ⇧⌘O（toc.toggle）两条，⌘⇧T 不在其中；② 原生菜单 accelerator 集合（muda 0.19.3 的 predefined，清单见文件头 M149 段）不含 ⌘⇧T；③ macOS 不预置 ⌘⇧T。可经 [keys] 重绑 / 解绑" },
+  { key: "Cmd-Shift-T", command: "view.theme-cycle", scope: "global", docKey: "D311" },
+  // M282：⌘⇧L 循环切换界面语言（change ui-language-i18n 的 D3 裁决）。三条冲突来源的复核写在
+  // 表条目 D318 的正文里（表即文档，MUST NOT 在本文件另抄一份）。
+  { key: "Cmd-Shift-L", command: "view.language-cycle", scope: "global", docKey: "D318" },
 
   // ── 全局：标签（M149；M242 追加 ⌘} / ⌘{ 两条绑定，来由与冲突核对见文件头 M242 段）
-  { key: "Cmd-w", command: "tab.close", scope: "global", doc: "关当前标签（dirty 时先确认）；取 global 而非 editor——焦点在文件树 / 搜索框 / 大纲浮层里时同样要能关。**这个键原本被原生菜单的预置 Close 项占着**（muda 给 CloseWindow 的 accelerator 就是 ⌘W，菜单键等价在 NSApplication 分发阶段截获，webview 的 keydown 收不到）：M149 在 src-tauri/src/lib.rs 按 M131 先例把 File / Window 两个子菜单的预置 Close 换成不带加速键的自定义项让出该键，见那边的函数注释。语义随之从「关窗」变为「关标签」（tower 2026-09-17 裁决），退出仍走 ⌘Q（有 dirty 守卫）与红灯" },
-  { key: "Ctrl-Tab", command: "tab.next", scope: "global", doc: "循环切到下一个标签（末端回卷到第一个）；取 global——切标签是窗口级动作，不该依赖焦点在哪。冲突已核（零冲突）：tauri 默认菜单的 accelerator 集合里没有 ⌃⇥，macOS 的窗口循环键是 ⌘` 而非 ⌃⇥，表内亦无 ⌃ 系 Tab 绑定。" },
-  { key: "Ctrl-Shift-Tab", command: "tab.prev", scope: "global", doc: "循环切到上一个标签（首端回卷到最后一个），与 ⌃⇥ 成对；冲突核实同 ⌃⇥。" },
-  { key: "Cmd-}", command: "tab.next", scope: "global", doc: "⌘} 循环切到下一个标签（末端回卷到第一个；少于 2 个标签时无操作——cycleTab 既有行为），与 ⌃⇥ 同指 tab.next，零新命令、零行为分叉（M242）。方向映射取 macOS 惯例（WebKit 快捷键文档的 Show next tab = ⇧⌘}，Safari / Firefox 同键）：⌘} 物理是 ⇧⌘]（US 布局上 } 必须按 Shift）。token MUST 写 `Cmd-}`：事件 key 是字符 `}`、Shift 已隐含在字符里（`}` ∈ SHIFT_IMPLIED_KEYS），归一成 `Cmd-}`；写 `Cmd-Shift-]` 永不命中（静默失配，机制见文件头 M195 段）。取 global——切标签是窗口级动作。冲突已核（零冲突，三条独立来源）：① 表内无 `⌘}` / `⌘{`（本文件即真源），⌃⇥ 归一后是不同 token；② 原生菜单 accelerator 集合（tauri 的 Menu::default() 逐项来自 muda predefined，清单见文件头 M149 段）不含 ⇧⌘] / ⇧⌘[；③ macOS 不预置这对键（窗口循环键是 ⌘`）" },
-  { key: "Cmd-{", command: "tab.prev", scope: "global", doc: "⌘{ 循环切到上一个标签（首端回卷到最后一个；少于 2 个标签时无操作——cycleTab 既有行为），与 ⌃⇧⇥ 同指 tab.prev，零新命令（M242）。方向映射取 macOS 惯例（WebKit 快捷键文档的 Show previous tab = ⇧⌘{）：⌘{ 物理是 ⇧⌘[（US 布局上 { 必须按 Shift）。token MUST 写 `Cmd-{`：事件 key 是字符 `{`、Shift 已隐含在字符里（`{` ∈ SHIFT_IMPLIED_KEYS），归一成 `Cmd-{`；写 `Cmd-Shift-[` 永不命中（静默失配，机制见文件头 M195 段）。取 global——切标签是窗口级动作。冲突已核（零冲突，三条独立来源）：① 表内无 `⌘{` / `⌘}`（本文件即真源），⌃⇧⇥ 归一后是不同 token；② 原生菜单 accelerator 集合（tauri 的 Menu::default() 逐项来自 muda predefined，清单见文件头 M149 段）不含 ⇧⌘[ / ⇧⌘]；③ macOS 不预置这对键（窗口循环键是 ⌘`）" },
+  { key: "Cmd-w", command: "tab.close", scope: "global", docKey: "D312" },
+  { key: "Ctrl-Tab", command: "tab.next", scope: "global", docKey: "D313" },
+  { key: "Ctrl-Shift-Tab", command: "tab.prev", scope: "global", docKey: "D314" },
+  { key: "Cmd-}", command: "tab.next", scope: "global", docKey: "D315" },
+  { key: "Cmd-{", command: "tab.prev", scope: "global", docKey: "D316" },
   ...TAB_GOTO_BINDINGS,
 ];
 
@@ -627,7 +646,7 @@ export function normalizeKey(raw: string): string {
     mods.add(prefix);
   }
   const key = parts.slice(index).join("-");
-  if (key === "") throw new Error(`键位 token 缺键名：${raw}`);
+  if (key === "") throw new Error(`键位 token 缺键名：${raw}`); // i18n-exempt: log
   const named = key.length === 1 ? key.toUpperCase() : key;
   if (SHIFT_IMPLIED_KEYS.has(named)) mods.delete("Shift");
   return [...MODIFIER_ORDER.filter((mod) => mods.has(mod)), named].join("-");
@@ -691,23 +710,23 @@ export function applyKeyOverrides(
   for (const [rawKey, command] of Object.entries(overrides)) {
     const raw = (rawKey ?? "").trim();
     if (raw === "" || /\s/.test(raw)) {
-      warnings.push(`配置项 keys 里的键位 "${rawKey}" 非法（空或含空白；多段 chord 暂不支持），已忽略`);
+      warnings.push(`配置项 keys 里的键位 "${rawKey}" 非法（空或含空白；多段 chord 暂不支持），已忽略`); // i18n-exempt: log
       continue;
     }
     let token: string;
     try {
       token = normalizeKey(raw);
     } catch {
-      warnings.push(`配置项 keys 里的键位 "${rawKey}" 无法解析（缺键名），已忽略`);
+      warnings.push(`配置项 keys 里的键位 "${rawKey}" 无法解析（缺键名），已忽略`); // i18n-exempt: log
       continue;
     }
     if (command === null || command === undefined) {
       if (byToken.delete(token)) continue;
-      warnings.push(`配置项 keys 解绑了 ${rawKey}，但它没有默认绑定，已忽略`);
+      warnings.push(`配置项 keys 解绑了 ${rawKey}，但它没有默认绑定，已忽略`); // i18n-exempt: log
       continue;
     }
     if (!(COMMAND_IDS as readonly string[]).includes(command)) {
-      warnings.push(`配置项 keys.${rawKey} 的命令 "${command}" 未知，已忽略该覆盖（保留默认绑定）`);
+      warnings.push(`配置项 keys.${rawKey} 的命令 "${command}" 未知，已忽略该覆盖（保留默认绑定）`); // i18n-exempt: log
       continue;
     }
     const scope: KeyScope = (EDITOR_COMMAND_IDS as readonly string[]).includes(command) ? "editor" : "global";
@@ -715,7 +734,10 @@ export function applyKeyOverrides(
       key: raw,
       command: command as CommandId,
       scope,
-      doc: `用户配置重绑（~/.config/lumir 的 keys 表）：${raw} → ${command}`,
+      // 运行期合成的绑定也要有来由（面板逐条显示）：文本同样进文案表（D320），
+      // 只是参数由这里在运行期给出——MUST NOT 在 keys.ts 里另写一份字面量。
+      docKey: "D320",
+      docParams: { key: raw, command },
     });
   }
   return { bindings: [...byToken.values()], warnings };
@@ -746,7 +768,7 @@ export class Keymap {
       }
       // 一条键位只能有一个归属：重复即是表写错了（旧实现是后注册者覆盖前者，静默）。
       if (node.binding) {
-        throw new Error(`键位表重复绑定：${binding.key} 与 ${node.binding.key} 归一到同一序列`);
+        throw new Error(`键位表重复绑定：${binding.key} 与 ${node.binding.key} 归一到同一序列`); // i18n-exempt: log
       }
       node.binding = binding;
     }
@@ -756,7 +778,7 @@ export class Keymap {
   attach(target: Window, runtime: CommandRuntime, ctx: KeymapContext): () => void {
     for (const binding of this.bindings) {
       if (runtime[binding.command] === undefined) {
-        throw new Error(`键位表绑定 ${binding.key} → ${binding.command} 没有命令实现`);
+        throw new Error(`键位表绑定 ${binding.key} → ${binding.command} 没有命令实现`); // i18n-exempt: log
       }
     }
     const onKeydown = (event: KeyboardEvent) => this.handle(event, runtime, ctx);

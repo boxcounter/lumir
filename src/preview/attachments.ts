@@ -26,6 +26,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { WidgetType } from "@codemirror/view";
 import { errorMessage } from "../ipc";
+import { t } from "../copy";
 
 /** 扩展名的打开/展示分类。md = Markdown（md 模式，可编辑 + live preview）；
  *  code = code 模式（有语言包则高亮，无则纯文本）；image = 图片附件；
@@ -305,17 +306,17 @@ export interface ImageBox {
 
 /** 图片态文案（deck D111–D113），与 `文案-Copy.md` 逐字一致：本组函数是那三条的唯一真源。 */
 export function imageLoadingText(rawRef: string): string {
-  return `加载中… ${rawRef}`;
+  return t("D111", { ref: rawRef });
 }
 
 export function imageReadErrorText(rawRef: string, reason: string): string {
-  return `图片读取失败：${rawRef}（${reason}）`;
+  return t("D112", { ref: rawRef, reason });
 }
 
 /** 终态不可见的占位文案：成因中立（`<img>` 的 error 不携带原因，编不出准确成因），
  *  原始引用文本一律保留（alt 与路径都在其中）。 */
 export function imageFallbackText(rawRef: string): string {
-  return `图片无法显示：${rawRef}`;
+  return t("D113", { ref: rawRef });
 }
 
 /** 终态可见判据（纯函数）：替换区的**可见尺寸**非零才算画出来了。
@@ -602,7 +603,7 @@ export class AttachmentNoticeWidget extends WidgetType {
   toDOM(): HTMLElement {
     const el = document.createElement("span");
     el.className = "cm-lp-embed-unsupported";
-    el.textContent = `${this.message}：${this.rawRef}`;
+    el.textContent = t("D224", { message: this.message, ref: this.rawRef });
     return el;
   }
 }

@@ -10,7 +10,7 @@ import { fireVaultRestoreFinished, setBackendVault, stubTauri, type VaultFixture
 //
 // 判别力已反向验证（REVIEW.md 第 1 条的防线，删断言前请重做这一步）：把 `src/main.ts` 的
 // 让位门（`applyRestoreFinished` 里的 `!vaultLoaded`）与进行态分支（`status.restore_pending ?
-// RESTORING_NOTICE : …`）分别去掉后，本文件 4 条用例应有 **3 条转红**（第 1/3/4 条）；只绿不红
+// RESTORING_NOTICE() : …`）分别去掉后，本文件 4 条用例应有 **3 条转红**（第 1/3/4 条）；只绿不红
 // 说明断言已退化成恒真。
 
 /** 恢复中：`vault_current` 按后端契约回 vault=null + restore_pending=true（尚未提交）。 */
@@ -30,13 +30,13 @@ const TAKEOVER: VaultFixture & { root: string } = {
   root: "/Users/alex/mine-vault",
 };
 
-const RESTORING_NOTICE = "正在恢复上次打开的 vault……";
+const RESTORING_NOTICE() = "正在恢复上次打开的 vault……";
 
 test("恢复中态 = 未打开空态布局 + 恢复中提示行 + 打开入口仍在", async ({ page }) => {
   await stubTauri(page, RESTORING);
   await page.goto("/");
   await expect(page.locator(".ft-empty")).toBeVisible();
-  await expect(page.locator(".ft-notice")).toHaveText(RESTORING_NOTICE);
+  await expect(page.locator(".ft-notice")).toHaveText(RESTORING_NOTICE());
   // 与**终态**空态同一份说明行与同一个入口（D5/D6）：布局零新增，入口保留
   //（design §4.3 + §7 A4 的裁决「恢复期间保留打开入口」）。
   await expect(page.locator(".ft-hint")).toHaveText("打开一个目录作为 vault，开始浏览全部文件。");
@@ -58,7 +58,7 @@ test("未打开终态没有提示行——恢复中态与终态可区分", async
 test("恢复完成信号唤醒一次权威拉取，无需用户操作进入该 vault", async ({ page }) => {
   await stubTauri(page, RESTORING);
   await page.goto("/");
-  await expect(page.locator(".ft-notice")).toHaveText(RESTORING_NOTICE);
+  await expect(page.locator(".ft-notice")).toHaveText(RESTORING_NOTICE());
 
   // 后端恢复线程提交完成（vault_current 从此应答已打开）并发出完成信号
   await setBackendVault(page, RESTORED);

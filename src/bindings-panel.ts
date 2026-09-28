@@ -24,6 +24,9 @@ import {
   WIDGET_COMMAND_IDS,
 } from "./keys";
 import type { CommandId, KeyBinding } from "./keys";
+import { t } from "./copy";
+import { onRelabel } from "./copy";
+import type { CopyKey } from "./copy-data";
 
 /** 面板的功能分组：只列命令 id，键位与作用域一律从生效表读。
  *  9 个分组覆盖全部命令（不做文本改写的选择类命令——⌘A 全选、⌃G 撤下选择——归
@@ -34,34 +37,34 @@ import type { CommandId, KeyBinding } from "./keys";
  *  都有组 ⇒ 零兜底组 / 组里无幻影 id / 分组互斥）。兜底组的存在意味着「漏归组」本身不会
  *  报错，只有别人场景里的分组标题断言会红（M239 实证：红在 m133 的视觉场景上，跨了 mission
  *  才发现）；对账放进 unit 层，漏归组在引入它的那次改动里就红。 */
-export const BINDING_GROUPS: ReadonlyArray<{ title: string; commands: readonly CommandId[] }> = [
-  { title: "移动与选择", commands: ["editor.cursor-up", "editor.cursor-down", "editor.cursor-forward", "editor.cursor-backward", "editor.line-start", "editor.line-end", "editor.select-all", "editor.keyboard-quit"] },
-  { title: "扩选", commands: ["editor.extend-char-forward", "editor.extend-char-backward", "editor.extend-line-down", "editor.extend-line-up", "editor.extend-line-start", "editor.extend-line-end", "editor.extend-word-forward", "editor.extend-word-backward"] },
-  { title: "删除", commands: ["editor.delete-char-forward", "editor.delete-char-backward", "editor.transpose-chars", "editor.delete-word-forward", "editor.delete-word-backward"] },
-  { title: "kill-yank", commands: ["editor.kill-line", "editor.yank"] },
+export const BINDING_GROUPS: ReadonlyArray<{ titleKey: CopyKey; commands: readonly CommandId[] }> = [
+  { titleKey: "D64.1", commands: ["editor.cursor-up", "editor.cursor-down", "editor.cursor-forward", "editor.cursor-backward", "editor.line-start", "editor.line-end", "editor.select-all", "editor.keyboard-quit"] },
+  { titleKey: "D64.2", commands: ["editor.extend-char-forward", "editor.extend-char-backward", "editor.extend-line-down", "editor.extend-line-up", "editor.extend-line-start", "editor.extend-line-end", "editor.extend-word-forward", "editor.extend-word-backward"] },
+  { titleKey: "D64.3", commands: ["editor.delete-char-forward", "editor.delete-char-backward", "editor.transpose-chars", "editor.delete-word-forward", "editor.delete-word-backward"] },
+  { titleKey: "D64.4", commands: ["editor.kill-line", "editor.yank"] },
   // M281：跳转到行（change goto-line-command）与 ⌃L 的 recenter 同属「重定位」——它改的是
   // 光标位置与滚动（落点复用 revealLine），与「移动与选择」的逐字符/逐行移动不是一族。
-  { title: "翻屏", commands: ["editor.scroll-page-down", "editor.scroll-page-up", "editor.recenter", "editor.goto-line"] },
-  { title: "撤销", commands: ["editor.undo", "editor.redo"] },
+  { titleKey: "D64.5", commands: ["editor.scroll-page-down", "editor.scroll-page-up", "editor.recenter", "editor.goto-line"] },
+  { titleKey: "D64.6", commands: ["editor.undo", "editor.redo"] },
   // M239 的两条列表结构命令（Tab / ⇧Tab）单列一组：它们改写的是**列表项的嵌套层级**
   // （连同续行与子树整体平移），与「移动与选择」（只动光标 / 选区）和「删除」都不是一族。
   // 归组去重是面板的硬约束：漏登记的命令会落进末尾的兜底「其他」组，那条兜底是 M133 的
   // 有意设计（新命令不从面板消失），但代价是漏归组只表现为「别处场景红」——M239 就这么
   // 漏过一次（master 视觉门禁红，M240 顺手收）。现在由 tests/unit/bindings-panel.test.ts
   // 的「零兜底组」对账守住。
-  { title: "列表缩进", commands: ["editor.list-indent", "editor.list-outdent"] },
+  { titleKey: "D64.7", commands: ["editor.list-indent", "editor.list-outdent"] },
   // M277：块级复制（change block-copy-affordance）单列一组——它作用的对象是**文档里的一个块**
   // （表格 / 代码块），与光标族、列表族都不是一族。同批的代码块全屏命令（作用域 global）留在
   // 「全局」组：那一组的成员定义就是 NON_TAB_GLOBAL_COMMAND_IDS，挪出来会与它重复渲染
   // （分组互斥是硬约束，见文件头）。
-  { title: "块", commands: ["block.copy"] },
-  { title: "widget", commands: WIDGET_COMMAND_IDS },
+  { titleKey: "D64.8", commands: ["block.copy"] },
+  { titleKey: "D64.9", commands: WIDGET_COMMAND_IDS },
   // M149：标签单列一组（而不是并进「全局」）——⌘W 的语义变化与 ⌘1–9 的九条直达是
   // dogfood 期最需要一眼核对的两件事，混在全局组里不容易看全。两组必须**互斥**：
   // 「全局」组用 keys.ts 的 NON_TAB_GLOBAL_COMMAND_IDS，否则同一命令会被两个分组
   // 各渲染一行（面板行数翻倍，「每条命令一行」的口径被破坏）。
-  { title: "标签", commands: TAB_COMMAND_IDS },
-  { title: "全局", commands: NON_TAB_GLOBAL_COMMAND_IDS },
+  { titleKey: "D64.10", commands: TAB_COMMAND_IDS },
+  { titleKey: "D64.11", commands: NON_TAB_GLOBAL_COMMAND_IDS },
 ];
 
 /** 面板自己的关闭键（token 口径与表内绑定同源，见下面 keydown 监听）。 */
@@ -90,27 +93,38 @@ export function createBindingsPanel(options: BindingsPanelOptions): BindingsPane
   panel.tabIndex = -1;
   panel.setAttribute("role", "dialog");
   panel.setAttribute("aria-modal", "true");
-  panel.setAttribute("aria-label", "键位（生效中）");
 
   const title = document.createElement("h2");
   title.className = "lumir-bindings-title";
-  title.textContent = "键位（生效中）";
   const body = document.createElement("div");
   body.className = "lumir-bindings-body";
   const hint = document.createElement("p");
   hint.className = "lumir-bindings-hint";
-  hint.textContent = "Esc / ⌃G 或点击遮罩关闭";
   panel.append(title, body, hint);
   overlay.append(panel);
   options.mount.append(overlay);
+
+  /** 面板的静态文案（标题 / 关闭提示 / 读屏名 / 「未绑定」与两种成因说明）。三处都是
+   *  **长驻 DOM**（面板在启动时建好、只是 hidden），所以语言切换后必须重写——`relabel()`
+   *  由装配层的 `applyLanguage` 按注册顺序调用（design §5.2 的不变量）。 */
+  function relabel(): void {
+    const heading = t("D63");
+    panel.setAttribute("aria-label", heading);
+    title.textContent = heading;
+    hint.textContent = t("D67");
+    unboundLabel = t("D65");
+    unboundNotices = [t("D66.1"), t("D66.2")];
+    if (!overlay.hidden) render();
+  }
+
+  let unboundLabel = "";
+  let unboundNotices: [string, string] = ["", ""];
 
   /** 未绑定行的说明（M180，文案 D66）：两种成因**分开**说，并各自指出下一步。此前是一句
    *  通用的「配置解绑或尚未绑定」，把「有意不占键位」读成过渡态——新命令（折行开关）默认就
    *  不占键位，读不出成因会让人以为它坏了。成因判定用 keys.ts 的默认不绑键清单，不另立一份。 */
   function unboundNotice(command: CommandId): string {
-    return KEYLESS_COMMAND_IDS.includes(command)
-      ? "默认不占键位（有意如此）——可在 [keys] 里绑定"
-      : "已被配置解绑——可在 [keys] 里重新绑定";
+    return KEYLESS_COMMAND_IDS.includes(command) ? unboundNotices[0] : unboundNotices[1];
   }
 
   /** 一行：一条绑定，或一条「未绑定」命令（binding 为 null）。 */
@@ -120,13 +134,13 @@ export function createBindingsPanel(options: BindingsPanelOptions): BindingsPane
     row.dataset.command = command;
     const key = document.createElement("span");
     key.className = "lumir-bindings-key";
-    key.textContent = binding?.key ?? "未绑定";
+    key.textContent = binding?.key ?? unboundLabel;
     const id = document.createElement("span");
     id.className = "lumir-bindings-command";
     id.textContent = command;
     const doc = document.createElement("span");
     doc.className = "lumir-bindings-doc";
-    doc.textContent = binding?.doc ?? unboundNotice(command);
+    doc.textContent = binding === null ? unboundNotice(command) : t(binding.docKey, binding.docParams);
     row.append(key, id, doc);
     return row;
   }
@@ -142,10 +156,10 @@ export function createBindingsPanel(options: BindingsPanelOptions): BindingsPane
     const assigned = new Set<string>();
     const groups = BINDING_GROUPS.map((group) => {
       for (const command of group.commands) assigned.add(command);
-      return { title: group.title, commands: [...group.commands] as CommandId[] };
+      return { title: t(group.titleKey), commands: [...group.commands] as CommandId[] };
     });
     const rest = COMMAND_IDS.filter((command) => !assigned.has(command));
-    if (rest.length > 0) groups.push({ title: "其他", commands: rest });
+    if (rest.length > 0) groups.push({ title: t("D64.12"), commands: rest });
 
     body.replaceChildren();
     for (const group of groups) {
@@ -196,6 +210,9 @@ export function createBindingsPanel(options: BindingsPanelOptions): BindingsPane
     event.preventDefault();
     toggle();
   });
+
+  relabel();
+  onRelabel(relabel);
 
   return { toggle };
 }

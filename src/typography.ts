@@ -109,7 +109,7 @@ export function planTypography(
     const combined = baseline.trim() === "" ? value : `${value}, ${baseline}`;
     if (!isFamilyValid(combined)) {
       warnings.push(
-        `配置项 editor.${field} 的取值 ${JSON.stringify(value)} 不是合法的 CSS 字族值，已回退为基线字体`,
+        `配置项 editor.${field} 的取值 ${JSON.stringify(value)} 不是合法的 CSS 字族值，已回退为基线字体`, // i18n-exempt: log
       );
       return null;
     }

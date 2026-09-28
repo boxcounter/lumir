@@ -8,6 +8,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { COPY } from "../../src/copy-data.ts";
 import {
   FILTER_LABEL,
   FILTER_PLACEHOLDER,
@@ -101,7 +102,11 @@ test("查询状态：置空回全量、首条命中为起点、关闭丢弃查�
 });
 
 test("两处浮层共用的文案常量（文案-Copy.md D117–D119 逐字）", () => {
-  assert.equal(NO_MATCH_TEXT, "没有匹配的条目");
-  assert.equal(FILTER_PLACEHOLDER, "输入以筛选");
-  assert.equal(FILTER_LABEL, "筛选");
+  // 规范文本的唯一居所是文案表（deck D117–D119），三个常量只是取值点（M282）
+  assert.equal(NO_MATCH_TEXT(), COPY["D117"].zh);
+  assert.equal(FILTER_PLACEHOLDER(), COPY["D118"].zh);
+  assert.equal(FILTER_LABEL(), COPY["D119"].zh);
+  assert.equal(NO_MATCH_TEXT(), "没有匹配的条目");
+  assert.equal(FILTER_PLACEHOLDER(), "输入以筛选");
+  assert.equal(FILTER_LABEL(), "筛选");
 });

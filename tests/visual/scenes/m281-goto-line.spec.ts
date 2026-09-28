@@ -269,8 +269,8 @@ test("⌥G 打开输入条：预填当前行号 + 共 M 行 + 只收数字；Ent
   await expect(gotoInput(page)).toHaveValue("12"); // 预填 = 打开时的当前行号
   await expect(gotoHint(page)).toHaveText(gotoLineTotalText(await totalLines(page)));
   // 输入框的读屏名与占位常量的单一来源是 src/goto-line.ts（文案 deck D152 / D157）。
-  await expect(gotoInput(page)).toHaveAttribute("aria-label", GOTO_LINE_LABEL);
-  await expect(gotoInput(page)).toHaveAttribute("placeholder", GOTO_LINE_PLACEHOLDER);
+  await expect(gotoInput(page)).toHaveAttribute("aria-label", GOTO_LINE_LABEL());
+  await expect(gotoInput(page)).toHaveAttribute("placeholder", GOTO_LINE_PLACEHOLDER());
   // 打开即全选：键入即替换（判据是「直接键入得到新值」而不是拼接）。
   await page.keyboard.type("37");
   await expect(gotoInput(page)).toHaveValue("37");

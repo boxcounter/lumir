@@ -4,6 +4,8 @@
 
 import { mock, test } from "node:test";
 import assert from "node:assert/strict";
+import { t } from "../../src/copy.ts";
+import type { CopyKey } from "../../src/copy-data.ts";
 import {
   BLOCK_SCROLL_CLASS,
   COMMAND_IDS,
@@ -24,6 +26,14 @@ import type { CommandRuntime, KeyBinding } from "../../src/keys.ts";
 // ---------------------------------------------------------------------------
 // token 归一化
 // ---------------------------------------------------------------------------
+
+
+/** 绑定的来由文本（M282 起绑定只存文案表的键，文本住在 src/copy-data.ts）。
+ *  这里显式按 `zh` 取值——既有断言的措辞判据（「表内」/「WebKit」/「muda」）是中文列的写法，
+ *  `en` 面的断言在 tests/unit/copy.test.ts 的漂移门禁里（两列与 deck 逐字相等）。 */
+function docTextOf(binding: { docKey: CopyKey; docParams?: Record<string, string | number> }): string {
+  return t(binding.docKey, binding.docParams, "zh");
+}
 
 test("normalizeKey：修饰别名归一、定序固定、键名单字符大写", () => {
   assert.equal(normalizeKey("cmd-s"), "Cmd-S");
@@ -102,7 +112,7 @@ test("KEY_BINDINGS：token 唯一、命令都在 COMMAND_IDS 里、作用域与�
       editorCommandIds.includes(binding.command) ? "editor" : "global",
       `${binding.key} 的作用域与 ${binding.command} 的命令组不一致`,
     );
-    assert.ok(binding.doc.length > 0, `${binding.key} 缺少来由说明（表即文档）`);
+    assert.ok(docTextOf(binding).length > 0, `${binding.key} 缺少来由说明（表即文档）`);
   }
   // 构造期再兜一次：表本身能建成（不抛重复键）
   assert.doesNotThrow(() => new Keymap());
@@ -163,10 +173,10 @@ test("⌘} / ⌘{ 的 token 形态：真机事件与表内写法同 token，写 
   for (const key of ["Cmd-}", "Cmd-{"]) {
     const binding = KEY_BINDINGS.find((item) => normalizeKey(item.key) === key);
     assert.equal(binding?.scope, "global", `${key} 的作用域应为 global（切标签是窗口级动作）`);
-    assert.ok((binding?.doc.length ?? 0) > 0, `${key} 的绑定必须带来由说明（表即文档）`);
+    assert.ok(docTextOf(binding).length > 0, `${key} 的绑定必须带来由说明（表即文档）`);
     // 方向映射的惯例依据与三条来源的冲突核对结论写进 doc（表即文档的口径）
-    assert.ok(binding?.doc.includes("WebKit"), `${key} 的 doc 应写明方向映射的 macOS / WebKit 惯例依据`);
-    assert.ok(binding?.doc.includes("muda") || binding?.doc.includes("原生菜单"));
+    assert.ok(docTextOf(binding).includes("WebKit"), `${key} 的 doc 应写明方向映射的 macOS / WebKit 惯例依据`);
+    assert.ok(docTextOf(binding).includes("muda") || docTextOf(binding).includes("原生菜单"));
   }
 });
 
@@ -524,7 +534,7 @@ test("字号步进命令：四条默认绑定齐全、作用域派生成 global�
     const binding = KEY_BINDINGS.find((item) => normalizeKey(item.key) === token);
     assert.equal(binding?.command, command, `${key} 应绑定 ${command}（实际：${binding?.command}）`);
     assert.equal(binding?.scope, "global", `${key} 的作用域应为 global`);
-    assert.ok((binding?.doc.length ?? 0) > 0, `${key} 的绑定必须带来由说明（表即文档）`);
+    assert.ok(docTextOf(binding).length > 0, `${key} 的绑定必须带来由说明（表即文档）`);
   }
   for (const command of ["view.text-scale-up", "view.text-scale-down", "view.text-scale-reset"]) {
     assert.ok(
@@ -610,7 +620,7 @@ test("主题切换命令：⌘⇧T 的 token 形态、作用域 global、不在�
   const binding = KEY_BINDINGS.find((item) => normalizeKey(item.key) === token);
   assert.equal(binding?.command, "view.theme-cycle");
   assert.equal(binding?.scope, "global");
-  assert.ok((binding?.doc.length ?? 0) > 0, "绑定必须带来由说明（表即文档）");
+  assert.ok(docTextOf(binding).length > 0, "绑定必须带来由说明（表即文档）");
   // 键位面板的「全局」组 = NON_TAB_GLOBAL_COMMAND_IDS（src/bindings-panel.ts 的分组表），
   // 因此本命令在清单里 ⇒ 面板的全局组里就有这一行（task 2.2 的「如实列出」）。
   assert.ok(
@@ -618,9 +628,9 @@ test("主题切换命令：⌘⇧T 的 token 形态、作用域 global、不在�
     "不在 NON_TAB_GLOBAL_COMMAND_IDS（面板全局组的成员来源）里",
   );
   // 文档里要能看到三条冲突来源的核实结论（表即文档的口径，写进 doc 而不是别处）
-  assert.ok(binding?.doc.includes("表内"));
-  assert.ok(binding?.doc.includes("muda") || binding?.doc.includes("原生菜单"));
-  assert.ok(binding?.doc.includes("macOS"));
+  assert.ok(docTextOf(binding).includes("表内"));
+  assert.ok(docTextOf(binding).includes("muda") || docTextOf(binding).includes("原生菜单"));
+  assert.ok(docTextOf(binding).includes("macOS"));
   assert.ok(
     !KEYLESS_COMMAND_IDS.includes("view.theme-cycle"),
     "该命令默认有绑定，MUST NOT 登记为默认不绑键（它在默认键位上是可用入口）",
@@ -668,11 +678,11 @@ test("跳转到行命令：⌥G 的 token 形态（含 Alt 按物理键）、作
   const binding = KEY_BINDINGS.find((item) => normalizeKey(item.key) === token);
   assert.equal(binding?.command, "editor.goto-line");
   assert.equal(binding?.scope, "editor");
-  assert.ok((binding?.doc.length ?? 0) > 0, "绑定必须带来由说明（表即文档）");
+  assert.ok(docTextOf(binding).length > 0, "绑定必须带来由说明（表即文档）");
   // 三条独立来源的核实结论要写进 doc（表即文档的口径，不写在别处）
-  assert.ok(binding?.doc.includes("表内"));
-  assert.ok(binding?.doc.includes("原生菜单"));
-  assert.ok(binding?.doc.includes("macOS"));
+  assert.ok(docTextOf(binding).includes("表内"));
+  assert.ok(docTextOf(binding).includes("原生菜单"));
+  assert.ok(docTextOf(binding).includes("macOS"));
   assert.ok(
     !KEYLESS_COMMAND_IDS.includes("editor.goto-line"),
     "该命令默认有绑定，MUST NOT 登记为默认不绑键",
