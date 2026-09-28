@@ -144,18 +144,25 @@ test("规则③：hairline——结构档实心黑、层次档保留灰", async 
   expect(sidebarBorder).toBe("rgb(0, 0, 0)");
 });
 
-test("规则④：选中态黑底反白，组件内次级元素手工反白", async ({ page }) => {
+test("规则④（M291 收窄）：选中态 = 明度带 + 黑字，反白整条退场", async ({ page }) => {
+  // **口径变化（M291，Alex 2026-09-28 裁决）**：eink 的选中态不再反白。原设计是「`--sel` 纯黑 +
+  // `--sel-text` 白字」，但它两条实现路径都不可靠：① chrome 侧的反白要逐表面排除 `:hover`
+  // （`--hover` 会压过选中底色 ⇒ 白字压浅底，Alex 原话「现在是白字灰底，我人眼几乎看不清字是什么」）；
+  // ② 编辑器侧的反白只能落在原生选区的 `::selection { color }` 上，装饰重建（显露）后的文字
+  // 拿不到它。改为规则②的合法手段：`--sel` = 明度带 `#b9b9b9`、`--sel-text` = 正文黑字。
+  // 理由与读数：docs/specs/design-tokens-v1.md §eink 规则④ / §编辑器选区带；判据在
+  // tests/visual/scenes/m291-selection-contrast.spec.ts（chrome 侧含 hover 组合 + 区分度自证）。
   await openEink(page);
   // 指针移开文件树：悬停底色（`--hover`）在同一心智模型下压过选中底色（`.ft-row:hover` 声明在
   // `.ft-row.is-current` 之后），指针停在该行上时读到的不是本规则要验的形态。
   await page.mouse.move(640, 700);
   const row = page.locator(".ft-row.is-current").first();
   await expect(row).toHaveCount(1);
-  // 过渡（0.1s）落定后再读：底色从 --hover 切到 --sel 的中间帧是插值出来的半透明黑
+  // 过渡（0.1s）落定后再读
   await expect
-    .poll(() => row.evaluate((el) => getComputedStyle(el).backgroundColor), { message: "选中行底色 = --sel" })
-    .toBe("rgb(0, 0, 0)");
-  expect(await row.evaluate((el) => getComputedStyle(el.querySelector(".ft-name")!).color)).toBe("rgb(255, 255, 255)");
+    .poll(() => row.evaluate((el) => getComputedStyle(el).backgroundColor), { message: "选中行底色 = --sel（明度带）" })
+    .toBe("rgb(185, 185, 185)");
+  expect(await row.evaluate((el) => getComputedStyle(el.querySelector(".ft-name")!).color)).toBe("rgb(0, 0, 0)");
   // 次级元素（caret / 当前标记）与文字一样手工反白——行内没有颜色继承链
   const secondary = await row.evaluate((el) => {
     const caret = el.querySelector(".ft-caret");
@@ -166,21 +173,22 @@ test("规则④：选中态黑底反白，组件内次级元素手工反白", as
     };
   });
   for (const [name, value] of Object.entries(secondary)) {
-    if (value !== null) expect(value, `${name} 应手工反白`).toBe("rgb(255, 255, 255)");
+    if (value !== null) expect(value, `${name} 也应取 --sel-text（行内没有颜色继承链）`).toBe("rgb(0, 0, 0)");
   }
-  // 配套：悬停态不是白底白字（`:hover` 下底色回到 --hover，文字必须回到常字色）
+  // 配套：悬停态（`:hover` 压过选中底色、底色回到 --hover）文字同样可读——M291 起这不再需要
+  // 任何 `:not(:hover)` 排除条款兜底（前景是黑字，两种状态都可读）。
   await row.hover();
   await expect
     .poll(() => row.evaluate((el) => getComputedStyle(el).backgroundColor), { message: "悬停态底色 = --hover" })
     .toBe("rgba(0, 0, 0, 0.06)");
   expect(
     await row.evaluate((el) => getComputedStyle(el.querySelector(".ft-name")!).color),
-    "悬停态文字必须可读（不能是白的）",
+    "悬停态文字必须可读",
   ).toBe("rgb(0, 0, 0)");
-  // token 层：选中前景只由 eink 定义（light / dark 不写这一条）
+  // token 层：选中前景只由 eink 定义（light / dark 不写这一条）；M291 起该档两个值都落在明度轴上。
   const sel = await tokenColors(page, ["--sel", "--sel-text"]);
-  expect(sel["--sel"]).toBe("rgb(0, 0, 0)");
-  expect(sel["--sel-text"]).toBe("rgb(255, 255, 255)");
+  expect(sel["--sel"]).toBe("rgb(185, 185, 185)");
+  expect(sel["--sel-text"]).toBe("rgb(0, 0, 0)");
 });
 
 test("规则⑤：浅底区块翻转为白底黑框（代码块 / frontmatter）", async ({ page }) => {

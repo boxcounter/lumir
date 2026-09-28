@@ -211,8 +211,13 @@ test.describe("M288：代码块底色盖不住选区（不变量）", () => {
         if (theme === "dark") assertDiffersFromSurface(r, name);
         else assertSameAsPlain(r, name);
         if (theme === "eink") {
-          expect(r.codeSelected!.r + r.codeSelected!.g + r.codeSelected!.b, `${name}：eink 的块内选中处必须是黑底（--sel）`).toBeLessThan(60);
-          expect(r.spread ?? 0, `${name}：eink 的块内选中处仍有可辨字形（黑底白字，反白没丢）`).toBeGreaterThanOrEqual(60);
+          // **口径变化（M291）**：eink 的选区带不再是纯黑——规则④ 的「黑底反白」整条退场
+          // （编辑器侧的反白够不到被装饰重建的文字、chrome 侧全靠 `:not(:hover)` 兜底，
+          // 见 docs/specs/design-tokens-v1.md §选区族）。本档的签名改为「明度带 + 黑字」：
+          // 带 MUST 不是近黑，带内的字形 MUST 仍有可辨的亮度跨度（这条阈值不变）。
+          // 原断言读的是 v1 的反白形态（黑底 sum < 60 + 白字跨度），在本档已不成立。
+          expect(r.codeSelected!.r, `${name}：eink 的块内选中处是明度带（--sel-band），不再是纯黑`).toBeGreaterThan(120);
+          expect(r.spread ?? 0, `${name}：eink 的块内选中处仍有可辨字形（黑字压明度带，反白不再参与）`).toBeGreaterThanOrEqual(60);
         }
       }
     }

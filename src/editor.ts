@@ -1616,23 +1616,28 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
       // codeBindingTheme 注释）。
       ".cm-activeLine": { backgroundColor: "var(--hover)" },
       ".cm-activeLineGutter": { backgroundColor: "var(--hover)", color: "var(--text)" },
-      // 选中底色 / 选中前景（M285 起是 drawSelection 自绘层的落点，**本文件是唯一一处**）：
+      // 选中底色 / 选中前景（M285 起是 drawSelection 自绘层的落点，**本文件是唯一一处**；
+      // M291 起底色改取 `--sel-band`，两处口径变化逐条写在下面）：
       //   · `.cm-selectionBackground` 必须 `!important`：CM 的 base theme 自带一条
       //     `.ͼ2.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground
       //      { background: #d7d4f0 }`（实测从 `document.styleSheets` 逐条读出），它是 5 个类的
       //     选择器；应用自己的主题规则只有 2–3 个类，特异性上必然输 ⇒ 不写 `!important` 时
-      //     选区底色会落到库默认的淡紫（实测 rgb(215,212,240)），`--sel` 被静默架空。
-      //   · `::selection` **不写** `!important`：drawSelection 的 `hideNativeSelection` 把编辑器内
-      //     原生选区的**底色**置透明（`!important` + 更细的选择器），这里有意让库赢——原生层与
-      //     自绘层同时上色会叠成两层。它的 `color` 不受影响，eink 的黑底反白靠的就是这一半。
-      ".cm-selectionBackground": { backgroundColor: "var(--sel) !important" },
-      "::selection": { backgroundColor: "var(--sel)" },
-      // 选中前景：light/dark 不写（继承 --text）；eink 是黑底反白（tokens 文档 eink 规则④）、
-      // `--sel-text` 也只在该档有定义。
-      [`:root[data-theme="eink"] & ::selection`]: {
-        backgroundColor: "var(--sel)",
-        color: "var(--sel-text)",
-      },
+      //     选区底色会落到库默认的淡紫（实测 rgb(215,212,240)），token 被静默架空。
+      //   · 底色取 `--sel-band` 而不是 `--sel`（M291）：编辑器选区是**画在文字之下**的填充，
+      //     前景改不了，下界因此还要压住 `--code-bg`（代码块的行区带）；`--sel` 留给 chrome 的
+      //     选中态（树行 / 浮层当前项 / frontmatter 显露态——那里前景是显式写的，反白成立）。
+      //   · 本主题**不写** `::selection` 的底色：drawSelection 的 `hideNativeSelection` 用
+      //     `!important` 把编辑器内原生选区的底色置透明，裸声明永远输——M285 那条是死声明，
+      //     M291 删掉，免得它成为选区底色的第二处写入点。
+      //   · eink 不再依赖「选中文字反白」这条路（M291，tokens 文档 §eink 规则④）：选区带是
+      //     **明度带**（`--sel-band` = `#b9b9b9`）、文字保持正文色 ⇒ 任选区内文字都可辨。反白
+      //     之所以整条退场：它的实现只能落在原生选区的 `::selection { color }` 上，而那段样式只
+      //     作用于**仍被原生选区覆盖**的文字——选区驱动的装饰重建（显露）会把那段 DOM 重建出来，
+      //     WebKit 不把重建出的节点画进选中层（M273 的机理；M285 只修了**底色**那一半）。Alex 的
+      //     现场是引用块里的粗体段（显露时被重建）：同一条选区里普通文字正常、粗体段被吞。
+      //     底色 / 字色的规则分工：底色在本文件（CM 自绘那一层），`::selection` 的前景在
+      //     `src/style.css`（那里的 eink 值已是黑字，两条规则同值是刻意的一致，不是两处真源）。
+      ".cm-selectionBackground": { backgroundColor: "var(--sel-band) !important" },
       // 光标色：`drawSelection()` 装上后光标由 CM 自绘（`.cm-cursor`）、原生 caret 被置透明；
       // 本条此前是「声明了没有消费者」的存量，M285 起是真的生效路径。
       ".cm-cursor, .cm-dropCursor": { borderLeftColor: "var(--text)" },
