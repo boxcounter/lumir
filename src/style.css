@@ -976,17 +976,78 @@ body {
    表格的「透明 padding」手法（padding 会被底色/边框包住）。块外间距由块间分隔行高度承担
    （M216 gap #1 间距阶梯的通道，livePreview.ts），本规则只管容器本体。
    底板是必需的：滚到右侧时行盒之外没有底色（.cm-lp-codeblock-line 的背景只覆盖行盒宽度），
-   而容器自己的背景不随内容滚动，正好铺满可见区域。
+   而底板不随内容滚动，正好铺满可见区域。
    eink 规则⑤：无灰底可用 → 翻转为白底黑框（与 frontmatter 区同一条规则，preview 侧的
    另一半在 src/preview/theme.ts）；黑框同形 r8（定稿 index.html:366，圆角由基规则给出）。 */
 .cm-lp-codeblock-scroll {
-  background-color: var(--code-bg);
   border-radius: var(--r8);
   padding: 9px var(--sp-7) var(--sp-5);
 }
-:root[data-theme="eink"] .cm-lp-codeblock-scroll {
+/* 块底色由两个伪元素承担，画在**选区层之下**（M288）：
+   `drawSelection` 把选区画在 `.cm-scroller` 里一个负 z-index 的层上（CM 的 `layer({above:false})`
+   ⇒ `z-index = -1 - pos`，实测 -2），而 `background` 是 in-flow 块的背景、按 CSS 绘制顺序排在
+   负 z-index 层**之后** ⇒ 代码块里的选中处与未选中处逐像素同色（真机三主题实测：light / eink
+   差 0，dark 只透出约 1/2）。修法 MUST NOT 是抬选区层——那会把它抬到文字之上、`--sel` 把字盖掉。
+   两个伪元素的几何与「容器 + 行底色」逐像素同源：
+     ::before = 底板（铺满块盒；r8 圆角；eink 白底）；
+     ::after  = 行区带 = **行盒并集** == 容器的内容盒（`padding: inherit` 取容器那一份 padding，
+                不另抄一份值；`background-clip: content-box` 把它裁到内容盒）。
+   dark 的半透明 --code-bg 与 eink 的白底黑框让底板 / 行区带不同值，两层因此合并不得。
+   包含块：容器**自己不定位**——它是横滚容器，一旦 `position: relative`，块级动作钮（绝对定位，
+   DOM 挂在行内）的包含块就从 slot 变成容器、横滚时跟着内容滚走（M240 的口径，M288 实测
+   钮 x 992 → 692）。容器 static 时两个伪元素的包含块落到祖先 slot（与容器同盒，见
+   .cm-lp-codeblock-slot 与其说明）。
+   z 值取 -4 / -3（都低于实测的选区层 -2）：CM 的层序若再变，靠 m288 的像素断言（真机侧
+   场景 66）照出来，而不是靠这两个常量本身。 */
+.cm-lp-codeblock-scroll::before,
+.cm-lp-codeblock-scroll::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  box-sizing: border-box;
+}
+.cm-lp-codeblock-scroll::before {
+  z-index: -4;
+  background-color: var(--code-bg);
+  border-radius: var(--r8);
+}
+.cm-lp-codeblock-scroll::after {
+  z-index: -3;
+  padding: inherit;
+  background-color: var(--code-bg);
+  background-clip: content-box;
+  /* eink 的容器有 1px 黑框，行区带的内容盒要跟着内缩那一圈才与行盒并集重合。不写死 1px：
+     `inherit` 取容器自己的 border-width（light / dark 为 0，此时这三条无足迹）。 */
+  border-width: inherit;
+  border-style: solid;
+  border-color: transparent;
+}
+:root[data-theme="eink"] .cm-lp-codeblock-scroll::before {
   background-color: #fff;
+}
+:root[data-theme="eink"] .cm-lp-codeblock-scroll {
   border: 1px solid #000;
+}
+/* 折行档的块底色（`editor.code_block_wrap: true`）：此时没有横滚容器，块底色就是行底色，
+   改由 slot 的负 z-index 底板承担（行盒并集 == slot 盒）。容器在场时这里不装——底板与行区带
+   由上面容器的两个伪元素承担，两处都画会叠成两层。 */
+.cm-lp-codeblock-slot:not(:has(> .cm-lp-codeblock-scroll))::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -4;
+  background-color: var(--code-bg);
+}
+/* 横滚容器在场 ⇒ 行区带由上面的 ::after 承担（几何与行盒并集重合）；折行档 ⇒ 由 slot 的底板
+   承担。行自身那份 `--code-bg`（src/preview/theme.ts 的 `.cm-line.cm-lp-codeblock-line`）
+   两种档位都让位，两个理由：
+   ① 两处都画会叠成两层——dark 的 --code-bg 是半透明，叠出来比设计值更亮一块；
+   ② 行背景是 in-flow 块的背景，正是盖住选区层的那一层。
+   判据挂 slot 的在场（md 模式无条件装、与行装饰同一个来源），MUST NOT 挂容器的在场：容器比
+   行装饰晚一两帧出现时，行底色已经让位、底板却还没到，会出现「没有底色的代码块」。
+   全屏浮层的行不在 `.cm-content` 里，不受本条影响（浮层没有选区层，形态逐像素不变）。 */
+.cm-content:has(.cm-lp-codeblock-slot) .cm-line.cm-lp-codeblock-line {
+  background-color: transparent;
 }
 /* 表格全屏触发钮的坐标系统（M240，BlockWrapper rank 20 = 最外）：唯一职责是给触发钮当包含块。
    钮是 `.cm-lp-table` 子树里的绝对定位元素（Decoration.widget，见 src/preview/table-trigger.ts），

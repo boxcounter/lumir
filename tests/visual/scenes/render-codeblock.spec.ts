@@ -542,6 +542,11 @@ async function scrollToEnd(el: ReturnType<Page["locator"]>) {
       textRight: range.getBoundingClientRect().right,
       edgeRight: edge.right,
       probeBackground: probe instanceof HTMLElement ? getComputedStyle(probe).backgroundColor : "",
+      /** 右缘探针是否仍落在**本容器内**：M288 起底板是容器的负 z-index 伪元素，
+       *  `elementFromPoint` 看不到伪元素（它给出的是容器或它的行，两者的 background 都是
+       *  transparent）——「那一列不露白」因此改由「探针仍在块内 + 底板伪元素存在且不透明」
+       *  联合判（见下方用例的注释）。 */
+      probeInside: probe instanceof HTMLElement && box.contains(probe),
     };
   });
 }
@@ -737,21 +742,31 @@ test("容器不改变纵向节奏；滚到右端不露白底（底板取自 --bg
   expect(await page.locator(".cm-lp-codeblock-scroll").count(), "折回不折行时容器应装回").toBeGreaterThan(0);
   expect(Math.abs((await topOf("[[hooks]]")) - before), "装回容器同样不得挪动其下方内容").toBeLessThanOrEqual(0.5);
 
-  // 底板：滚到最右后，容器右缘那一列的计算底色必须与代码行同色（滚出去的行盒不再覆盖那里）
+  // 底板：滚到最右后，容器右缘那一列必须有底色（滚出去的行盒不再覆盖那里）。
+  // M288 起底板搬到了容器的负 z-index 伪元素上（`.cm-lp-codeblock-scroll::before/::after`）：
+  // 容器自己的 `background` 是 in-flow 块的背景，会整块盖住 drawSelection 画在负 z-index 层
+  // 上的选区（M288 的缺陷），因此它 MUST NOT 再落在容器身上。随之有两处口径变化：
+  //   · 「底板是什么色 / 在不在」改读伪元素——`elementFromPoint` 看不到伪元素；
+  //   · 「右缘那一列不露白」由「探针仍落在块内」+「底板伪元素存在且不透明、`inset: 0` 铺满
+  //     容器盒」+「容器不定位（伪元素的包含块是横滚容器之外的 slot，底板不随内容滚动）」
+  //     联合给出；**渲染结果**另有 `wrap-codeblock-scrolled-to-end.png` 这张整页基线钉着
+  //     （滚到最右的现场，基线零 diff 即渲染未变）。
   await page.locator('.ft-row[title="wrap.md"]').click();
   await expect(page.locator(".modeline-path")).toHaveText("wrap.md");
   await scrollToLine(page, CODE_NEEDLE);
   const box = await codeContainer(page);
+  const underlay = await page.locator(".cm-lp-codeblock-scroll", { hasText: CODE_NEEDLE }).first().evaluate((el) => ({
+    base: getComputedStyle(el, "::before").backgroundColor,
+    band: getComputedStyle(el, "::after").backgroundColor,
+    position: getComputedStyle(el).position,
+  }));
   const end = await scrollToEnd(page.locator(".cm-lp-codeblock-scroll", { hasText: CODE_NEEDLE }).first());
   expect(end.scrollLeft, "底板断言只有在真的滚起来之后才有意义").toBeGreaterThan(0);
-  expect(box.background, "容器底板与代码行同色（同一个 --bg-2），不得透明").toBe(
-    await page
-      .locator(".cm-line", { hasText: CODE_NEEDLE })
-      .first()
-      .evaluate((el) => getComputedStyle(el).backgroundColor),
-  );
-  expect(box.background).not.toBe("rgba(0, 0, 0, 0)");
-  expect(end.probeBackground, "容器右缘那一列不得露出无底色的空白").toBe(box.background);
+  expect(underlay.base, "容器底板（负 z-index 伪元素）不得透明").not.toBe("rgba(0, 0, 0, 0)");
+  expect(underlay.base, "底板与行区带同色（同一个 --code-bg）").toBe(underlay.band);
+  expect(underlay.position, "容器 MUST NOT 定位：底板伪元素的包含块要落在横滚容器之外的 slot 上").toBe("static");
+  expect(end.probeInside, "容器右缘那一列必须仍落在代码块内（不得是块外的空白）").toBe(true);
+  expect(box.background, "容器自身不再带底色（M288：它会让位给负 z-index 底板）").toBe("rgba(0, 0, 0, 0)");
 });
 
 test("启动口径来自配置：line_wrap=false 正文不折、code_block_wrap=true 不装容器", async ({ page }) => {
