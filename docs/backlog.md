@@ -2611,28 +2611,25 @@ living spec 两处已随本 change 改写口径（`keymap-commands` 的「轨道
 
 ## M282（change `ui-language-i18n` 实现批，2026-09-28）遗留
 
-- **后端错误文案的参数面（D6 的后半）未落地：`CommandError.params` 尚未存在**。现状：`src/copy.ts`
-  的 `errorText(e)` 已按 `code` 渲染（`ERROR_COPY` 覆盖 48 个 code），但只有**无占位名**的那批 code
-  能上屏英文（`vault_not_open` / `config_write_failed` / `fs_read_only` / `document_conflict` /
-  `fs_name_invalid` 等）；带占位名的 code（`fs_not_found` / `fs_read_failed` / `fs_already_exists` /
-  `open_url_rejected` / `link_path_rejected` / `recovery_*` / `fs_rename_failed` / `fs_too_large` …）
-  在 en 界面下走 `errorText` 的缺参兜底，回落成 Rust 的**中文** `message`。**待裁决/待修**：
-  ① `CommandError` 加 `params: HashMap<String,String>`（`#[serde(default, skip_serializing_if = "HashMap::is_empty")]`，
-  ts-rs 侧 `params?: Record<string, string>`）+ `with_params(...)` 构造链；
-  ② 按「模板里的 `{name}` 就是 Rust `format!` 的内联变量名」补参数，`e` 一类的 Display 值映射成
-  `reason`（文案表统一用 `{reason}`）；③ 补一条「每个带占位名的 code 至少有一个构造点提供了全部占位名」
-  的门禁（`tests/unit/error-text.test.ts` 的扩展或 Rust 侧单测）。**不做也没坏**：兜底是当前行为，
-  无回归；但 en 界面下「最先撞见」的那批提示仍是中文，正是 D6 要消灭的半覆盖。
+- ~~**后端错误文案的参数面（D6 的后半）未落地**~~ **2026-09-28 已闭合**：`CommandError` 加 `params`
+  （空时不序列化）+ `param(k, v)` 链式构造；35 处构造点按「模板里的 `{name}` 就是 Rust `format!` 的
+  内联变量名」补参数（`e` 一类的 Display 值映射成 `reason`）；`tests/unit/error-text.test.ts` 立了两条
+  机械门禁（code 集合与 `ERROR_COPY` 一一对应 + **每处构造点都提供该 code 文案的全部占位名**），
+  en 界面下带参数的 code 上屏英文且参数插值正确（不再回落中文 `message`）。
 - **验收套件把「环境无效运行」与「产品判红」都表达成 0/1 PASS + 退出码 1**（M281 的 low finding，
   `.tower/comms/findings/20260928-worker-impl-goto-line-c-improve-0-1-pass-1.md`）：环境类失败
   （磁盘水位、app 没起来、端口被占）与产品类失败在读数上不可区分，复盘时要人读 run.log。**待修**：
   run.mjs 的退出码分档（0 = 全 PASS、1 = 有产品失败、2 = 环境无效），`status.txt` 同步分档。
-- **原生目录选择器标题未按语言取值**（tasks §5.4）：`src-tauri/src/commands.rs` 的
-  `.set_title("选择 vault 目录")` 仍是固定中文。默认语言改判 `en` 后，未配置用户看到的是中文标题
-  （与界面其余部分不同语言）。**待修**：弹出时读一次 `config::load()` 的语言再设标题。
-- **启动首帧闪烁未实测**（tasks §1.4 / §9.4）：`ui.language` 经异步 `config_get` 到达，而 shell 与
-  树空态在配置到达前就已挂载 ⇒ 配置为 `zh` 的用户可能先闪一帧英文。**未验**（本批未起真机实例），
-  结论与帧证据留在 PR 的覆盖声明里；**待修**：按 design §9 的两条候选缓解之一实测并闭环。
+- ~~**原生目录选择器标题未按语言取值**~~ **2026-09-28 已闭合**：`commands.rs` 的 `picker_title()` 在
+  弹出时读一次 `config::load()` 的语言（`current_ui_language()`）再设标题，两档文案落在 deck 的
+  D321（**全仓唯一一处 Rust 持有可见文案的地方**，理由与边界写在那一行的设计意图列里）；已弹出的
+  对话框不跟随切换（如实登记）。
+- ~~**启动首帧闪烁未实测**~~ **2026-09-28 已实测、未测出可见闪烁**：真机（`ui.language = zh` 的隔离
+  环境）逐帧采样（每帧记 `document.documentElement.lang` + 可见文本长度 + modeline/树文本），首帧
+  确实还没有语言属性（文案层在那 16ms 里按默认档 `en` 取值），但**首帧没有任何语言相关的可见文案**
+  （modeline 左段与文件树都为空——承载文案的 chrome 都在配置到达之后才写入），第二帧起就是配置语言。
+  逐帧读数落 `test-results/m282/ui-language-startup-flash/README.md`；两条候选缓解因此不采用
+  （现状的写入次序已经满足缓解 ①，缓解 ② 会换来「配置到位前整窗空白」）。
 - **视觉层的覆盖选择如实登记**：`tests/visual/scenes/tauri-stub.ts` 的桩把界面语言**钉在 `zh`**
   （与产品出厂默认 `en` 不同），理由是既有整页基线全是 zh 形态、它们承担「结构与外观」的回归面；
   `en` 面由新场景 `tests/visual/scenes/m282-ui-language.spec.ts` 覆盖。**代价**：视觉套件不再代表

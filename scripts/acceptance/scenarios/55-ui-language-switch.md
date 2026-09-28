@@ -25,11 +25,6 @@ steps:
     expect:
       - label: 文档已装载（编辑器里能读到正文）
         editor: { has: "切换语言后这一段必须仍是同一份内容。" }
-  - name: 记下编辑器基线（结尾的「不改写源文件」用它比对）
-    do: recordEditor
-    as: 文档基线
-    expect: []
-
   - name: 记下磁盘基线
     do: record
     as: 磁盘基线
@@ -44,11 +39,11 @@ steps:
     key: "cmd+shift+l"
     expect:
       - label: 语言钮文案变成 en（切换已生效——键被丢掉的话就是这条先红）
-        ax: { has: "/AXButton \\(Language: en（点击切换）\\)/" }
+        ax: { has: "/AXButton \\(Language: en \\(click to switch\\)\\)/" }
       - label: 反向：中文的语言提示不再是钮的文案（判据不是「两份同时在 AX 里」）
         ax: { not: "/AXButton \\(语言：zh（点击切换）\\)/" }
       - label: 正向观测（paired positive，REVIEW.md 第 2 条）：树头部入口的提示已上屏英文
-        ax: { has: "/Vaults: .+（click to see all vaults）/" }
+        ax: { has: "/Vaults: .+\\(click to see all vaults\\)/" }
       - label: 负向断言（en 下不残留中文）：树头部入口不再有中文提示
         ax: { not: "/点击查看全部 vault/" }
       - label: chrome 的 modeline 两段也换了语言（左段的「无当前文件」类文案）
@@ -80,7 +75,7 @@ steps:
       - label: 点击后切回 zh（钮不是只读指示，它同时是入口）
         ax: { has: "/AXButton \\(语言：zh（点击切换）\\)/" }
       - label: 反向：英文提示不再在场
-        ax: { not: "/Vaults: .+（click to see all vaults）/" }
+        ax: { not: "/Vaults: .+\\(click to see all vaults\\)/" }
       - shot: 点击-zh
 
   - name: 写回延时
@@ -97,13 +92,13 @@ steps:
     key: "cmd+shift+l"
     expect:
       - label: 切到 en
-        ax: { has: "/AXButton \\(Language: en（点击切换）\\)/" }
+        ax: { has: "/AXButton \\(Language: en \\(click to switch\\)\\)/" }
 
   - name: 收尾：重启实例，断言首帧就是配置语言（持久性闭环）
     do: restart
     expect:
       - label: 重启后语言钮显示 en（配置真源 → 首帧语言）
-        ax: { has: "/AXButton \\(Language: en（点击切换）\\)/" }
+        ax: { has: "/AXButton \\(Language: en \\(click to switch\\)\\)/" }
       - label: 反向：首帧不是 zh（不是「重启回落配置之前的档」）
         ax: { not: "/AXButton \\(语言：zh（点击切换）\\)/" }
       - label: config.json 里仍是 en
@@ -113,10 +108,10 @@ steps:
   - name: 不改写源文件（内存与磁盘逐字节一致）
     do: settle
     expect:
-      - label: 编辑器内容未变（基线在起点记录）
-        editor: { unchangedSince: 文档基线 }
-      - label: 磁盘上的文件未变（基线在起点记录）
+      - label: 磁盘上的文件未变（基线在起点记录）——「不改写源文件」的判据就是它
         file: { path: ui-language.md, unchangedSince: 磁盘基线 }
+      - label: 编辑器仍显示同一份内容（正文行在场）
+        editor: { has: "切换语言后这一段必须仍是同一份内容。" }
 
   - name: 回到起点（给后续场景留一个 zh 界面的干净 config）
     do: configWrite
@@ -143,15 +138,18 @@ steps:
 3. **切换即写回**：读隔离 `config.json` 断言 `[ui] language` 就是新档，且上一档已被覆盖。
 4. **第二入口**：点 modeline 语言钮切回 `zh`，行为与命令逐项一致（同一条实现路径）。
 5. **持久性闭环**：重启实例，首帧（语言钮）就是配置里的那一档。
-6. **不改写源文件**：结尾两条 `unchangedSince`（编辑器内容与磁盘 sha256）。
+6. **不改写源文件**：结尾一条 `unchangedSince`（磁盘上的文件逐字节不变）。**编辑器侧的
+   `unchangedSince` 在本场景不适用**：本场景的文档带一个「附件未找到」的预览 widget，而
+   `editor` 通道读的是 AX 文本——widget 的文本随语言合法地变化（实测拿到
+   `附件未找到：…` → `Attachment not found: …`），用它判「内容没变」会把产品做对的事判成红。
 
 ## 判据为什么这样选（如实登记）
 
 - **语言「生效」怎么判**：真机侧读不到 `documentElement.lang`（属性不进 AX），因此判据是
-  **可见文案本身**——语言钮的 AX 文本（`Language: en（点击切换）`）、树头部入口的提示、
+  **可见文案本身**——语言钮的 AX 文本（`Language: en (click to switch)`）、树头部入口的提示、
   modeline 两段、以及预览装饰的文本。指示钮的可见文本就是语言档本身（读数不译文）。
 - **负向断言必须配对**：`ax: { not: "/点击查看全部 vault/" }` 这类「不残留中文」的断言，
-  在同一步里有正向观测（`Vaults: …（click to see all vaults）` 确实上屏）——否则一次
+  在同一步里有正向观测（`Vaults: … (click to see all vaults)` 确实上屏）——否则一次
   「AX 读不到」会与「文案没换」表现相同（REVIEW.md 第 2 条）。
 - **⌘⇧L 是含修饰的注入**，套件口径下不回读重试（见 README「已知边界」）：单次注入可能整批
   丢键（REVIEW.md 第 11 条）。**红了先按丢键复跑一次再判产品缺陷**——丢键的表现就是语言钮

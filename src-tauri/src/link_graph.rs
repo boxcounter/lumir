@@ -815,6 +815,7 @@ impl LinkGraph {
         create_new_vault_file(&root_canonical, rel).map_err(|e| {
             if e.kind() == std::io::ErrorKind::AlreadyExists {
                 CommandError::new("create_file_exists", format!("目标已存在：{rel}"))
+                    .param("rel", rel)
             } else if is_unsafe_creation_error(&e) {
                 CommandError::new("create_file_invalid_path", format!("目标路径不安全：{e}"))
             } else {

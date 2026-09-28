@@ -148,9 +148,13 @@ const COPY_TABLE = {
   D80: { zh: "→", en: "→" },
   D81: { zh: "链接目标不存在：{raw}", en: "Link target not found: {raw}" },
   D82: { zh: "暂不支持锚点跳转", en: "Anchor jump is not supported yet" },
+  // D83：`link_path_rejected` 的两个构造点各带一个**不同的成因**（「它不在 vault 内」/
+  // 「路径含非 UTF-8 字符」），而成因本身是语言相关的文本——按 D6(a) 的「一条覆盖式句子」
+  // 处置时**只保留稳定的对象参数**，成因由上屏句与 `message`（日志）分担（细节措辞有损失，
+  // 是这条裁决的明账）。
   D83: {
-    zh: "打不开这个目标：{target}——{reason}",
-    en: "Can't open this target: {target} — {reason}",
+    zh: "打不开这个目标：{target}",
+    en: "Can't open this target: {target}",
   },
   D84: {
     zh: "这份文档还没有标题，大纲为空",
@@ -580,6 +584,14 @@ const COPY_TABLE = {
   D320: {
     zh: "用户配置重绑（~/.config/lumir 的 keys 表）：{key} → {command}",
     en: "Rebound by user config (~/.config/lumir, the keys table): {key} → {command}",
+  },
+  // D321：**消费者是 Rust 侧**（`src-tauri/src/commands.rs` 的 `picker_title`），前端不取值——
+  // 原生目录选择器由 OS 绘制，跑在 webview 之外的 Rust 进程里，前端拿不到也改不了。这是全仓
+  // 唯一一处 Rust 持有可见文案的地方（有意的第二处落点，不是漏迁移）：deck 的 D321 是它的
+  // 评审面，Rust 的 `En` 分支与这里的 en 列逐字一致。
+  D321: {
+    zh: "选择 vault 目录",
+    en: "Choose a vault folder",
   },
 } satisfies Record<string, CopyEntry>;
 

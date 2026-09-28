@@ -527,6 +527,7 @@ fn rejected(reason: String) -> CommandError {
         "log_event_rejected",
         format!("诊断事件被拒（负载不符合白名单）：{reason}"),
     )
+    .param("reason", reason)
 }
 
 /// 落盘一条事件；字段不在白名单时打 stderr 并丢弃——埋点是旁路，绝不影响业务结果。

@@ -156,12 +156,12 @@ export interface ErrorEnvelope {
  * `message`，同时留一条 console 线索（诊断面，不进 UI）。宁可显示一句中文，也不让一次
  * 「忘了补参数」把提示变成异常。日志与诊断面仍走 `message`（`errorMessage`），不随语言变。
  */
-export function errorText(e: unknown): string {
+export function errorText(e: unknown, lang: Language = currentLanguage()): string {
   if (!isErrorEnvelope(e)) return messageOf(e);
   const key = ERROR_COPY[e.code];
   if (key === undefined) return e.message;
   try {
-    return t(key, e.params ?? undefined);
+    return t(key, e.params ?? undefined, lang);
   } catch (err) {
     console.warn(`lumir: 错误文案缺参（${key}）：${String(err)}`);
     return e.message;
