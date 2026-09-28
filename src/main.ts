@@ -3,7 +3,7 @@ import { createEditor } from "./editor";
 import type { EditorSession } from "./editor";
 import { applyKeyOverrides, BLOCK_SCROLL_CLASS, KEY_BINDINGS, Keymap } from "./keys";
 import type { CommandId, CommandRunner, CommandRuntime, KeyBinding, KeyOverrides } from "./keys";
-import { baseName, createFileTree, openKind, vaultAbsolutePath } from "./tree";
+import { baseName, createFileTree, openKind, patchAttachmentPaths, vaultAbsolutePath } from "./tree";
 import type { InlineEditRequest, OpenKind } from "./tree";
 import {
   configGet,
@@ -32,6 +32,7 @@ import {
   vaultSessionPut,
 } from "./ipc";
 import { createSaveController, SAVE_GUARD_TOAST_CLASS } from "./save-controller";
+import { invoke } from "@tauri-apps/api/core";
 import { getName, getVersion } from "@tauri-apps/api/app";
 import { createToc } from "./toc";
 import { createImageLightbox } from "./lightbox";
@@ -105,6 +106,29 @@ import "./search-panel.css";
 const app = document.querySelector<HTMLElement>("#app");
 if (!app) {
   throw new Error("#app mount point missing");
+}
+
+// ---------------------------------------------------------------------------
+// 本 change 新增的两条后端命令封装（change vault-open-ignore-set）
+//
+// **待收编**：按仓内既有分层，所有 command 调用应当经 `src/ipc.ts` 进出（那个文件头写着
+// 「所有 command 调用与后端事件订阅经此模块进出」）。本 mission 的 scope 不含 `src/ipc.ts`
+// ——与 M127 当年的处境同形（那次封装暂居 `src/save-ipc.ts`，M132 才收编回 ipc.ts，来历记在
+// `src/ipc.ts` 的文件头）。照同一条办：两条封装暂居装配层，收编由后续 mission 完成。
+// 这不是「多开一条通道」：命令名、参数名与后端 `commands.rs` 的定义逐字一致，形态与
+// `ipc.ts` 里那三十来条封装完全同构。
+// ---------------------------------------------------------------------------
+
+/** 按需枚举一个目录的**一层**条目（后端 `fs_scan_dir`）：文件树展开惰性目录时的唯一取数通道。
+ *  失败 reject 人话 `CommandError`（越界 / 不存在 / 不是目录 / 读失败），调用方负责提示。 */
+function fsScanDir(dir: string): Promise<FsEntry[]> {
+  return invoke<FsEntry[]>("fs_scan_dir", { dir });
+}
+
+/** 批量探测一组 vault 相对路径是否存在（后端 `fs_paths_exist`）：返回其中确实存在的那些。
+ *  会话恢复与阅读位置共用这一个读口（一次命令、一次往返、N 次 stat）。 */
+function fsPathsExist(paths: string[]): Promise<string[]> {
+  return invoke<string[]>("fs_paths_exist", { paths });
 }
 
 // M1 装配：app-shell 三栏 + 编辑器单内核 + 键位框架 + 全类型文件树
@@ -585,6 +609,9 @@ const switcher: VaultSwitcherHandle = createVaultSwitcher({
   focusEditor: () => editor.view.focus(),
   getSession: (vaultId) => vaultSessionGet(vaultId),
   putSession: (vaultId, paths, active) => vaultSessionPut(vaultId, paths, active),
+  // 会话恢复的「在不在 vault 内」同样补一次批量存在探测（spec「装载后恢复标签列表」）：
+  // 惰性条目不在枚举结果里，但它们是真文件——用户从 `.local` 打开的教程下次启动照常回来。
+  pathsExist: (paths) => fsPathsExist(paths),
   // 会话恢复的第一步（M283 的 3.2）：**当帧建壳**——为每个条目建一个「有路径、内容未装载」的
   // 标签。不可打开的文件类（image/binary）不成壳，交回 store 计入跳过数（与它此前必然装载
   // 失败同口径，行为不变）。
@@ -806,6 +833,10 @@ const readingPositions = createReadingPositionStore({
   applyPosition: (position) => editor.applyLoadedScrollPosition(position),
   getPositions: (vaultId) => readingPositionGet(vaultId),
   putPositions: (vaultId, entries) => readingPositionPut(vaultId, entries),
+  // 「这个路径还在不在 vault 里」的**批量**读口（change vault-open-ignore-set §4.11）：装载时的
+  // 枚举结果不再是 vault 内文件的全集——被 vault 自己的忽略声明挡住的惰性文件在树里可见、
+  // 可打开，却永不进枚举，它们的阅读位置 MUST NOT 每次装载都被剪掉。
+  pathsExist: (paths) => fsPathsExist(paths),
   warn: (text) => toast(text),
 });
 
@@ -1563,6 +1594,16 @@ tree = createFileTree(shell.treeMount, {
   onContextMenu: (target, at) => treeMenu.open(target, at),
   // 内联编辑提交（重命名 / 新建共用）。
   onInlineEditSubmit: (request) => void submitInlineEdit(request),
+  // 惰性目录展开取数（design §4.3）：一次一层。失败**必须**透出去（提示 + reject），
+  // 树据此不把它标记成「已取回」——吞成空数组会把一次失败渲染成「空目录」。
+  onExpandLazyDir: async (path) => {
+    try {
+      return await fsScanDir(path);
+    } catch (e) {
+      toast(errorMessage(e));
+      throw e;
+    }
+  },
 });
 
 /** 装载 vault 的最后防线版（空态打开 / 启动恢复）：dirty 时拦下并就地给出三条出口，出口
@@ -1601,7 +1642,10 @@ async function applyVault(
   // 分工不同——两个名字太像，这里是唯一的区分点，改名/改语义前先读 design §6.2。
   emitReadiness("vault-ready", { root, vaultId, restored });
   save.noteVaultReset();
-  attachmentPaths = entries.filter((e) => e.kind === "file").map((e) => e.path);
+  // 附件索引只由**主动枚举**的条目建出（design §4.6）：惰性条目在树里可见、可打开，但
+  // 不进索引——索引的输入必须是磁盘 + 规则的纯函数，不能取决于用户点开过哪些目录
+  //（`![[img.png]]` 指向惰性目录里的图片解析为找不到是已知边界）。
+  attachmentPaths = entries.filter((e) => e.kind === "file" && !e.lazy).map((e) => e.path);
   // 链接索引已在后端随 vault 打开建立；换世代使旧 vault 的在途 resolve
   // 回调全部作废，解析缓存与单链接降级集合整批失效（两件事在 link-follow 里成对）。
   linkFollow.resetForVault();
@@ -1644,17 +1688,9 @@ async function applyVault(
 onFsEntryChanged((changes) => {
   sampleCallback("fs_entry_changed", () => {
     for (const change of changes) {
-      if (change.kind === "deleted") {
-        // 目录删除连同子孙一起出索引（与 tree.applyChanges 的级联删除同口径）
-        attachmentPaths = attachmentPaths.filter(
-          (p) => p !== change.path && !p.startsWith(`${change.path}/`),
-        );
-      } else if (
-        (change.entry_kind ?? "file") === "file" &&
-        !attachmentPaths.includes(change.path)
-      ) {
-        attachmentPaths.push(change.path);
-      }
+      // 附件索引的口径（「哪些事件能改索引」）是 `patchAttachmentPaths` 的纯函数那一份：
+      // 惰性条目不进索引、deleted 无条件移除、其余文件条目照旧。装配层只把结果写回。
+      attachmentPaths = patchAttachmentPaths(attachmentPaths, change);
     }
     // 已打开文件被外部变更（Lumir ↔ Obsidian 来回编辑的高频路径，M124）：附件索引与
     // 文件树照常吃增量，文档内容另行处置（save 控制器内分流）。M149：判据是**全部**

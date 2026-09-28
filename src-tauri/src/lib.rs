@@ -71,6 +71,10 @@ pub fn run() {
             commands::vault_open_path,
             commands::vault_current,
             commands::fs_scan_workspace,
+            // 按需枚举（change vault-open-ignore-set §4.3）：惰性目录展开时的一层取数。
+            commands::fs_scan_dir,
+            // 批量存在探测（同 change §4.11）：会话恢复与阅读位置共用。
+            commands::fs_paths_exist,
             commands::fs_read_snapshot,
             commands::fs_read_attachment,
             commands::fs_file_revision,

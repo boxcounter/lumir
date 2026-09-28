@@ -90,6 +90,8 @@ pub struct AppConfig {
     pub keys: HashMap<String, Option<String>>,
     /// 运行时诊断日志（add-diagnostics-logging）：事件落盘等级。
     pub log: LogConfig,
+    /// vault 行为配置（change vault-open-ignore-set 的 r6）：`[vault]` 表。
+    pub vault: VaultConfig,
 }
 
 impl Default for AppConfig {
@@ -101,6 +103,46 @@ impl Default for AppConfig {
             ui: UiConfig::default(),
             keys: HashMap::new(),
             log: LogConfig::default(),
+            vault: VaultConfig::default(),
+        }
+    }
+}
+
+/// 用户忽略规则的来源清单（`[vault]` 表的默认值，change vault-open-ignore-set §2.9）。
+///
+/// **两条默认值合起来 = 今日行为**：`<root>/.gitignore`（含递归途中的嵌套 `.gitignore`）与
+/// `<root>/.git/info/exclude`（仅当 `.git` 是目录）。顺序即声明顺序；真正的优先级由
+/// `fs_io::IgnorePolicy` 按 git 口径定（深层 `.gitignore` > 浅层 > `info/exclude`）。
+pub const DEFAULT_RULE_FILES: [&str; 2] = [".gitignore", ".git/info/exclude"];
+
+/// `[vault]` 表（change vault-open-ignore-set 的 r6，Alex 裁决第 7 条）：决定**用户规则**
+/// 从哪些文件读——内置规则（`fs_io::BUILTIN_NAMES` 那 16 个名字 + 临时文件模式）恒定生效、
+/// **不在**配置面内，也不可被用户规则的取反推翻（§2.6）。
+///
+/// **唯一消费者**：`commands::prepare_vault_open` 构造 `fs_io::IgnorePolicy` 时的那一步
+///（把清单里的 vault 相对路径逐个读成 gitignore 规则）——本字段没有第二个读点，`config_get`
+/// 只是把它原样交给前端展示（REVIEW.md 第 9 条：配置项声明即被消费）。因此它的生效时点是
+/// **vault 装载时**（每次装载现场读一次配置，MUST NOT 用启动期缓存钉住），改动下次装载生效。
+#[derive(Debug, Clone, PartialEq, Serialize, TS)]
+#[ts(export, export_to = "../../src/bindings/")]
+pub struct VaultConfig {
+    /// 用户规则的来源清单：每个值是**vault 相对路径**，一律按「vault 根的规则文件」解释
+    ///（模式相对 vault 根匹配，MUST NOT 被当成「相对该文件所在目录」的规则）。
+    ///
+    /// - **空列表 = 没有用户规则来源**：只剩内置规则（= 非 git vault 的等价行为）。这是
+    ///   彻底的——列表里不含 `.gitignore` 时，递归途中的嵌套 `.gitignore` 同样不读（嵌套
+    ///   逐层读取是「`.gitignore` 这个来源」的固有语义，不是第二个配置面）。
+    /// - 文件不存在 / 不是常规文件 ⇒ 静默跳过（`.git/info/exclude` 在非 git vault 里本来就
+    ///   不存在，这是常态而不是异常）。
+    /// - 非法项（非字符串 / 绝对路径 / 含 `..` / 空串）逐项忽略并各给一条人话 warning，
+    ///   其余项照常生效——MUST NOT 因为一项非法而把整份配置（含别的字段）回退默认值。
+    pub rule_files: Vec<String>,
+}
+
+impl Default for VaultConfig {
+    fn default() -> Self {
+        Self {
+            rule_files: DEFAULT_RULE_FILES.iter().map(|s| s.to_string()).collect(),
         }
     }
 }
@@ -357,6 +399,20 @@ struct RawConfig {
     keys: serde_json::Value,
     /// [log] 表同理收成 Value：错形状（如 `"log": "info"`）只丢这一项，不拖垮整文件。
     log: serde_json::Value,
+    /// `[vault]` 表（change vault-open-ignore-set §2.9）：`rule_files` 收成
+    /// `Vec<serde_json::Value>` 再**逐项**校验——直接写成 `Vec<String>` 会让一个非法元素
+    ///（例如误写了一个数字）在 serde 解析期失败，把整份配置（含 `last_vault`）打回默认。
+    /// 代价（如实记，与 `editor.font_size` 给错类型同族）：**整个字段给错类型**（`"rule_files":
+    /// ".gitignore"`）仍走解析期失败 → 整文件回落，这条由单测钉住。
+    vault: RawVaultConfig,
+}
+
+/// `[vault]` 表的解析镜像。`rule_files` 缺席（缺节 / 缺键）→ `None` → 用默认清单；
+/// 显式 `[]` → `Some(vec![])` → 没有用户规则来源。两者语义不同，不能混为一谈。
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+struct RawVaultConfig {
+    rule_files: Option<Vec<serde_json::Value>>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -635,6 +691,9 @@ fn validate(raw: RawConfig) -> (AppConfig, Vec<String>) {
     let (log, mut log_warnings) = validate_log(raw.log);
     warnings.append(&mut log_warnings);
 
+    let (vault, mut vault_warnings) = validate_vault(raw.vault);
+    warnings.append(&mut vault_warnings);
+
     (
         AppConfig {
             version,
@@ -657,9 +716,60 @@ fn validate(raw: RawConfig) -> (AppConfig, Vec<String>) {
             },
             keys,
             log,
+            vault,
         },
         warnings,
     )
+}
+
+/// `[vault]` 表的校验（change vault-open-ignore-set §2.9）：`rule_files` 缺席 ⇒ 默认清单
+/// （不告警）；显式给出 ⇒ **逐项**校验，非法项丢弃并各给一条人话 warning，其余项照常生效
+///（ADR 0002 §5：逐字段校验、非法值人话 warning、不得导致启动失败，也 MUST NOT 因为一项
+/// 非法把其余字段一起回退）。
+///
+/// 合法项 = 非空、相对路径、不含 `..` 组件的 vault 相对路径。「文件是否存在」不在这里判定
+/// ——那是装载时按 vault 根逐个探测的事，且「不存在」是常态（`.git/info/exclude` 在非 git
+/// vault 里就没有），MUST NOT 报错、MUST NOT 给 warning。
+fn validate_vault(raw: RawVaultConfig) -> (VaultConfig, Vec<String>) {
+    let defaults = VaultConfig::default();
+    let mut warnings = Vec::new();
+    let Some(items) = raw.rule_files else {
+        return (defaults, warnings); // 缺节 / 缺键：与今日行为逐条一致
+    };
+    let mut rule_files = Vec::with_capacity(items.len());
+    for (index, item) in items.iter().enumerate() {
+        let Some(text) = item.as_str() else {
+            warnings.push(format!(
+                "配置项 vault.rule_files 的第 {} 项不是字符串，已忽略",
+                index + 1
+            ));
+            continue;
+        };
+        if text.trim().is_empty() {
+            warnings.push(format!(
+                "配置项 vault.rule_files 的第 {} 项为空，已忽略",
+                index + 1
+            ));
+            continue;
+        }
+        if Path::new(text).is_absolute() {
+            warnings.push(format!(
+                "配置项 vault.rule_files 的 \"{text}\" 是绝对路径（规则文件必须是 vault 相对路径），已忽略"
+            ));
+            continue;
+        }
+        if Path::new(text)
+            .components()
+            .any(|c| matches!(c, std::path::Component::ParentDir))
+        {
+            warnings.push(format!(
+                "配置项 vault.rule_files 的 \"{text}\" 含 ..（不允许越出 vault 根），已忽略"
+            ));
+            continue;
+        }
+        rule_files.push(text.to_string());
+    }
+    (VaultConfig { rule_files }, warnings)
 }
 
 /// [keys] 表的形状校验（M132）：逐项判定，非法项丢弃并附人话 warning，其余项照常生效。
@@ -1488,5 +1598,119 @@ mod tests {
                 snap.warnings
             );
         }
+    }
+    // -----------------------------------------------------------------------
+    // `[vault]` 表（change vault-open-ignore-set §2.9，Alex 定案第 7 条）
+    // -----------------------------------------------------------------------
+
+    /// 语义①：缺节 / 缺键 ⇒ 出厂默认清单（与今日行为逐条一致），不产生 warning。
+    #[test]
+    fn vault_rule_files_defaults_when_section_or_key_is_missing() {
+        for raw in [
+            r#"{"version":1,"last_vault":"/tmp/vault"}"#,
+            r#"{"version":1,"last_vault":"/tmp/vault","vault":{}}"#,
+            r#"{"version":1,"last_vault":"/tmp/vault","vault":{"future":1}}"#,
+        ] {
+            let snap = load_from(&TempFile::new(raw).0);
+            assert_eq!(
+                snap.config.vault.rule_files,
+                vec![".gitignore".to_string(), ".git/info/exclude".to_string()],
+                "{raw}"
+            );
+            assert!(snap.warnings.is_empty(), "{raw}: {:?}", snap.warnings);
+            assert_eq!(snap.config.last_vault.as_deref(), Some("/tmp/vault"));
+        }
+    }
+
+    /// 语义②：显式 `[]` ⇒ 没有用户规则来源（只剩内置规则）——与「缺键」是**两种不同的配置**，
+    /// 不能混为一谈（前者是用户的显式选择，后者是没写过）。
+    #[test]
+    fn vault_rule_files_empty_list_means_no_user_rule_source() {
+        let snap = load_from(&TempFile::new(r#"{"vault":{"rule_files":[]}}"#).0);
+        assert!(snap.config.vault.rule_files.is_empty());
+        assert!(snap.warnings.is_empty(), "{:?}", snap.warnings);
+        assert_ne!(
+            snap.config.vault.rule_files,
+            AppConfig::default().vault.rule_files,
+            "空列表必须与出厂默认区分开"
+        );
+    }
+
+    /// 语义④：非法项**逐项**忽略并各给一条人话 warning，其余项照常生效，其余字段 MUST NOT
+    /// 被回退默认值（ADR 0002 §5：一项笔误不该改掉别的设置）。
+    #[test]
+    fn vault_rule_files_invalid_items_are_dropped_one_by_one_with_warnings() {
+        let raw = r#"{"last_vault":"/tmp/vault","vault":{"rule_files":["/etc/hosts","../outside","",42,".gitignore","sub/.rules"]}}"#;
+        let snap = load_from(&TempFile::new(raw).0);
+        assert_eq!(
+            snap.config.vault.rule_files,
+            vec![".gitignore".to_string(), "sub/.rules".to_string()],
+            "非法项丢掉、合法项按原顺序保留"
+        );
+        assert_eq!(snap.warnings.len(), 4, "{:?}", snap.warnings);
+        for (index, needle) in [
+            (0, "绝对路径"),
+            (1, "含 .."),
+            (2, "为空"),
+            (3, "不是字符串"),
+        ] {
+            assert!(
+                snap.warnings[index].contains(needle),
+                "第 {index} 条 warning 应点名 {needle}：{:?}",
+                snap.warnings
+            );
+            assert!(
+                snap.warnings[index].contains("vault.rule_files"),
+                "{:?}",
+                snap.warnings
+            );
+        }
+        // 其余字段不回退
+        assert_eq!(snap.config.last_vault.as_deref(), Some("/tmp/vault"));
+        assert_eq!(snap.config.editor, EditorConfig::default());
+    }
+
+    /// 语义③的**磁盘面**在 fs_io 一侧（文件不存在 / 不是常规文件 ⇒ 静默跳过）；这里钉住
+    /// 「配置层不因为一个不存在的路径而报错或告警」——路径存在性不是配置校验的事。
+    #[test]
+    fn vault_rule_files_nonexistent_paths_are_not_a_config_error() {
+        let snap = load_from(&TempFile::new(r#"{"vault":{"rule_files":[".git/info/exclude"]}}"#).0);
+        assert_eq!(
+            snap.config.vault.rule_files,
+            vec![".git/info/exclude".to_string()]
+        );
+        assert!(snap.warnings.is_empty(), "{:?}", snap.warnings);
+    }
+
+    /// 边界如实记录（与 `wrong_type_font_size_falls_back_entire_file` / `wrong_type_ui_theme_*`
+    /// 同路）：`rule_files` **整体给错类型**（不是数组）在 serde 解析期失败 → 整文件回落。
+    /// 逐项校验解决的是「一个元素非法」，不是「字段本身形状错」——后者是既有解析模型的性质，
+    /// 本 change 不发明逐字段类型容忍（那会与 `editor.mode` 形成同类不同治）。
+    #[test]
+    fn wrong_type_vault_rule_files_falls_back_entire_file() {
+        for raw in [
+            r#"{"last_vault":"/tmp/vault","vault":{"rule_files":".gitignore"}}"#,
+            r#"{"last_vault":"/tmp/vault","vault":{"rule_files":{"a":1}}}"#,
+            r#"{"last_vault":"/tmp/vault","vault":"x"}"#,
+        ] {
+            let snap = load_from(&TempFile::new(raw).0);
+            assert_eq!(snap.config, AppConfig::default(), "{raw} 应整份落回默认");
+            assert_eq!(snap.config.last_vault, None, "{raw}");
+            assert_eq!(snap.warnings.len(), 1, "{raw}: {:?}", snap.warnings);
+            assert!(snap.warnings[0].contains("不是合法 JSON"), "{raw}");
+        }
+    }
+
+    /// 合法配置不产生任何 warning：`[vault]` 与其它结构表同口径（写回产物必须是干净配置）。
+    #[test]
+    fn valid_vault_section_is_clean() {
+        let snap = load_from(
+            &TempFile::new(r#"{"vault":{"rule_files":[".gitignore","docs/.gitignore"]}}"#).0,
+        );
+        assert_eq!(
+            snap.config.vault.rule_files,
+            vec![".gitignore".to_string(), "docs/.gitignore".to_string()]
+        );
+        assert!(snap.warnings.is_empty(), "{:?}", snap.warnings);
     }
 }

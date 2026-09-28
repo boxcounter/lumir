@@ -27,7 +27,17 @@
 //! 合成 vault（`$TMPDIR/lumir-m283-real-shape`，已存在则复用，`LUMIR_M283_REGENERATE=1`
 //! 强制重建）。
 
-use lumir_lib::fs_io::{scan_workspace, watch, FsEntry, FsEntryKind};
+use lumir_lib::fs_io::{scan_workspace, watch, FsEntry, FsEntryKind, IgnorePolicy};
+
+/// 生产口径的忽略策略（出厂 `vault.rule_files` 清单）：harness / 场景装配要走生产路径的
+/// 同一份规则表，不能用一个「什么都不忽略」的近似——那会让读数与行为都不代表发布形态。
+fn production_policy(root: &std::path::Path) -> IgnorePolicy {
+    let rule_files: Vec<String> = lumir_lib::config::DEFAULT_RULE_FILES
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+    IgnorePolicy::load(root, &rule_files)
+}
 use lumir_lib::link_graph::{is_markdown, LinkGraph};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
@@ -127,7 +137,8 @@ fn md_body(size: usize, seed: u64) -> String {
 fn ensure_shape_vault(dir: &Path) -> PathBuf {
     let regenerate = std::env::var("LUMIR_M283_REGENERATE").is_ok();
     if dir.is_dir() && !regenerate {
-        let entries = scan_workspace(dir).expect("scan existing synthetic vault");
+        let entries =
+            scan_workspace(dir, &production_policy(dir)).expect("scan existing synthetic vault");
         println!(
             "复用已存在的合成 vault：{}（scan 可见 {} 项 / md {}）",
             dir.display(),
@@ -275,7 +286,7 @@ fn vault_open_segments_on_real_shape_vault() {
     let dir = shape_dir();
     let root = ensure_shape_vault(&dir);
 
-    let entries = scan_workspace(&root).expect("scan synthetic vault");
+    let entries = scan_workspace(&root, &production_policy(&root)).expect("scan synthetic vault");
     let files: Vec<&FsEntry> = entries
         .iter()
         .filter(|e| e.kind == FsEntryKind::File)
@@ -318,7 +329,7 @@ fn vault_open_segments_on_real_shape_vault() {
     let mut scan_samples = Vec::new();
     for _ in 0..RUNS {
         let t = Instant::now();
-        let out = scan_workspace(&root).expect("scan");
+        let out = scan_workspace(&root, &production_policy(&root)).expect("scan");
         scan_samples.push(ms(t.elapsed()));
         std::hint::black_box(&out);
     }
@@ -350,7 +361,7 @@ fn vault_open_segments_on_real_shape_vault() {
     let mut watch_samples = Vec::new();
     for _ in 0..RUNS {
         let t = Instant::now();
-        let watcher = watch(&root, |_changes| {}).expect("watch");
+        let watcher = watch(&root, &production_policy(&root), |_changes| {}).expect("watch");
         watch_samples.push(ms(t.elapsed()));
         drop(watcher);
     }

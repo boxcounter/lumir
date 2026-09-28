@@ -33,8 +33,8 @@ const flush = async () => {
   await new Promise((resolve) => setImmediate(resolve));
 };
 
-function fileEntry(path: string): FsEntry {
-  return { path, kind: "file", size: 0, mtime_ms: null };
+function fileEntry(path: string, lazy = false): FsEntry {
+  return { path, kind: "file", size: 0, mtime_ms: null, lazy };
 }
 
 function at(pos: number, y = 48, x = 0, time = 1_700_000_000_000): ReadingPositionEntry {
@@ -64,6 +64,10 @@ interface Rig {
   failWrite: boolean;
   writes: Array<{ vaultId: string; entries: ReadingPositionMap }>;
   warns: string[];
+  /** 批量存在探测的假实现：默认「都不在 vault 内」（= 只看枚举集合的旧口径）。 */
+  pathsExistImpl: (paths: string[]) => Promise<string[]>;
+  /** 探测调用记录：断言「一次批量、MUST NOT 逐条发起」用。 */
+  probes: string[][];
 }
 
 function createRig(): Rig {
@@ -81,6 +85,8 @@ function createRig(): Rig {
     failWrite: false,
     writes: [],
     warns: [],
+    pathsExistImpl: async () => [],
+    probes: [],
   };
   rig.store = createReadingPositionStore({
     activePath: () => rig.activePath,
@@ -90,6 +96,10 @@ function createRig(): Rig {
     putPositions: async (vaultId, entries) => {
       if (rig.failWrite) throw { code: "io", message: "磁盘只读" };
       rig.writes.push({ vaultId, entries });
+    },
+    pathsExist: (paths) => {
+      rig.probes.push([...paths]);
+      return rig.pathsExistImpl(paths);
     },
     warn: (text) => void rig.warns.push(text),
   });
@@ -616,4 +626,67 @@ test("窗口期内的捕获仍归旧键：在装载完成前落盘，写的是�
   } finally {
     mock.timers.reset();
   }
+});
+
+// ---------------------------------------------------------------------------
+// 惰性可见文件的阅读位置（change vault-open-ignore-set，spec「按 vault 持久化阅读位置」第 4 条）
+//
+// 判据 MUST NOT 只看本次枚举结果：被 vault 自己的忽略声明挡住、因而从未进枚举的惰性条目
+// （`.local/教程.md`）在文件树里可见、可打开——只看 `available` 会让它的阅读位置**每次装载
+// 都被剪掉**（读了也白读）。存在即保留，探测失败才剪。
+// ---------------------------------------------------------------------------
+
+test("装载清理：不在枚举集里但探测存在的键保留（惰性文件的阅读位置不被剪）", async () => {
+  const rig = createRig();
+  rig.activePath = "a.md";
+  rig.files["vault-a"] = file({
+    "a.md": at(10),
+    ".local/tutorial.md": at(20),
+    "gone.md": at(30),
+  });
+  rig.pathsExistImpl = async (paths) => paths.filter((p) => p === ".local/tutorial.md");
+  await load(rig, "vault-a", [fileEntry("a.md")]);
+
+  assert.deepEqual(rig.probes, [[".local/tutorial.md", "gone.md"]], "一次批量探测，入参是那批不在枚举集里的键");
+  rig.view = position(500);
+  rig.store.scrolled();
+  await rig.store.flush();
+  assert.deepEqual(
+    Object.keys(rig.writes[0].entries).sort(),
+    [".local/tutorial.md", "a.md"],
+    "探测存在的键留在镜像里并落盘；探测失败的键被剪",
+  );
+});
+
+test("装载清理：探测失败等价于「都不在 vault 内」（与只看枚举集合的旧行为一致）", async () => {
+  const rig = createRig();
+  rig.activePath = "a.md";
+  rig.files["vault-a"] = file({ "a.md": at(10), ".local/tutorial.md": at(20) });
+  rig.pathsExistImpl = async () => {
+    throw { code: "io", message: "后端不可用" };
+  };
+  await load(rig, "vault-a", [fileEntry("a.md")]);
+  rig.view = position(500);
+  rig.store.scrolled();
+  await rig.store.flush();
+  assert.deepEqual(Object.keys(rig.writes[0].entries), ["a.md"]);
+});
+
+test("装载清理：条目全在枚举集里时不发存在探测（零新增 IPC）", async () => {
+  const rig = createRig();
+  rig.files["vault-a"] = file({ "a.md": at(10) });
+  await load(rig, "vault-a", [fileEntry("a.md")]);
+  assert.deepEqual(rig.probes, [], "没有候选就不该发命令");
+});
+
+test("装载清理：探测的候选数受镜像上限约束（手改过的超限文件不放大探测面）", async () => {
+  const rig = createRig();
+  const stored: Record<string, ReadingPositionEntry> = {};
+  for (let i = 0; i < READING_POSITION_MAX_ENTRIES + 50; i += 1) {
+    stored[`gone-${String(i).padStart(3, "0")}.md`] = at(i, 48, 0, i);
+  }
+  rig.files["vault-a"] = { version: 1, entries: stored };
+  await load(rig, "vault-a", []);
+  assert.equal(rig.probes.length, 1, "仍然是一次批量调用");
+  assert.equal(rig.probes[0].length, READING_POSITION_MAX_ENTRIES, "候选数被同一处上限收口");
 });

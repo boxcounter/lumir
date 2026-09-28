@@ -10,22 +10,365 @@
 //! 枚举路径顺带惰性清除超龄的跨进程保存 tmp ghost（磁盘隐形累积治理，
 //! 阈值见 [`GHOST_TMP_MAX_AGE`]，在途写入不受影响）。
 
+use ignore::gitignore::{Gitignore, GitignoreBuilder};
+use ignore::Match;
 use notify::{EventKind, RecursiveMode, Watcher};
 use serde::Serialize;
+use std::collections::HashSet;
 use std::path::{Component, Path, PathBuf};
-use std::sync::mpsc;
-use std::sync::Mutex;
+use std::sync::{mpsc, Arc, Mutex, OnceLock};
 use std::time::{Duration, SystemTime};
 use ts_rs::TS;
 
 use crate::commands::CommandError;
 
-/// 硬编码忽略集（裁决点 C）：一等公民的是文件类型，不是 VCS 内部目录。
-/// `.git` 含数万对象文件，枚举它会直接威胁性能合同（ADR 0002 §6）。
-/// 枚举与 watch 共用此集合；本 change 内不可配置。保存临时文件
-/// （`.{name}.lumir-{pid}`，见 [`save_document`]）经 `is_ignored` 的模式
-/// 规则一并忽略：进程崩溃会留下 ghost，ghost 不进文件树、不产生 watch 事件。
-pub const IGNORED_NAMES: [&str; 3] = [".git", ".DS_Store", "node_modules"];
+/// 内置规则的名字字面量（16 条，**无尾斜杠**；change vault-open-ignore-set §2.4）。
+///
+/// **书写形式有语义**：gitignore 语义下无斜杠模式在**任意深度**匹配同名的**文件与目录** ⇒
+/// 与今日的名字等值判定逐条等价（既有 scenario「同名文件与目录一视同仁」因此保留、不改判）。
+/// 写成 `target/` 会变成「只隐藏目录、同名文件可见」——那是有意的改判，本 change 不做。
+///
+/// 这是**产品硬编码**（「按结构不是内容」：`.git` 是对象库、`node_modules` 是依赖副本、
+/// `target` 是构建产物），不在配置面内、不可被用户规则的取反推翻（§2.6），要改它得走
+/// change proposal。A3 档（`build` / `out` / `vendor`）经 Alex 2026-09-28 裁决**不纳入**：
+/// 通用英文词的误伤概率高于收窄收益（且它们若写进了 `.gitignore`，照样落进用户规则、惰性可见）。
+///
+/// 前端 `src/tree.ts` 的内联编辑预检复制了这份名字表（只为「提交前就说清」，判定职责仍在
+/// 后端），两侧逐项对账在 `tests/unit/tree-paths.test.ts`——解析的正是本声明。
+pub const BUILTIN_NAMES: [&str; 16] = [
+    // 既有三条
+    ".git",
+    ".DS_Store",
+    "node_modules",
+    // A1 生态专名（工具链固定输出名）
+    ".venv",
+    "venv",
+    "__pycache__",
+    ".next",
+    ".nuxt",
+    ".cache",
+    ".pnpm-store",
+    ".tox",
+    ".gradle",
+    "test-results",
+    "perf-results",
+    // A2 工具链常用词
+    "target",
+    "dist",
+];
+
+/// 保存临时文件模式（两条）。**必须两条**才能与既有判据「`.` 开头且含 `.lumir-`」逐条等价：
+/// - `.lumir-*` —— 名字在**开头**就是 `.lumir-`（`.lumir-notes.md` / `.lumir-` / `.lumir-1`）；
+/// - `.*.lumir-*` —— 首个 `.` 之后另有内容再出现 `.lumir-`（本 app 产生的
+///   `.{目标名}.lumir-{pid}`，如 `.note.md.lumir-123`，以及 `..lumir-1`）。
+///
+/// 只写后者会漏掉「以 `.lumir-` 开头」的名字（r2/r3 评审用真 `git check-ignore` 实测过
+/// `.lumir-notes.md`）——那等于顺手把一个今天隐藏的文件改成可见，对拍测试也会红。
+const LUMIR_TMP_PATTERNS: [&str; 2] = [".lumir-*", ".*.lumir-*"];
+
+/// 用字面量行建一个 gitignore 匹配器。根固定为 `.`：本仓的规则一律按「相对匹配器所属目录」
+/// 的路径喂进来（内置规则与用户规则同口径），`ignore` crate 对根 `.` 有专门的「不剥前缀」
+/// 分支，正是我们要的（`Gitignore::strip` 的 `.` 特例）。
+fn build_matcher<'a>(lines: impl IntoIterator<Item = &'a str>) -> Gitignore {
+    let mut builder = GitignoreBuilder::new(".");
+    for line in lines {
+        // 字面量由本文件持有：写错在编译期不可见，在这里以 panic 暴露（不是用户输入路径）
+        builder
+            .add_line(None, line)
+            .expect("内置规则字面量必须合法");
+    }
+    builder.build().unwrap_or_else(|_| empty_matcher())
+}
+
+/// 空匹配器（永不命中）。用于「规则文件编译失败」的降级：一份写坏的 `.gitignore` 不该让
+/// 整次枚举失败，也不该变成「隐藏一切」。
+fn empty_matcher() -> Gitignore {
+    GitignoreBuilder::new(".")
+        .build()
+        .expect("空匹配器必须可构造")
+}
+
+/// 内置规则匹配器（进程内唯一，构造一次；表见 [`BUILTIN_NAMES`] 与 [`LUMIR_TMP_PATTERNS`]）。
+///
+/// 内置表是**常量**，因此这里是它唯一的实例化点——`validate_new_name` 与 `IgnorePolicy`
+/// 共用同一份匹配器，不存在第二份名单或第二个判定实现（REVIEW.md 第 8 条）。
+///
+/// 它与用户规则**不是同一个对象**，而是同一类匹配器 + 判定链上先判且命中即定格（§2.2/§2.6）：
+/// 若把两者编进同一个 `Gitignore`，用户写下的 `!target/` 会按「后者胜」推翻内置规则——那正是
+/// §2.6 明令禁止的（性能护栏不能由一行编辑关掉）。
+fn builtin_matcher() -> &'static Gitignore {
+    static MATCHER: OnceLock<Gitignore> = OnceLock::new();
+    MATCHER.get_or_init(|| {
+        build_matcher(
+            BUILTIN_NAMES
+                .iter()
+                .chain(LUMIR_TMP_PATTERNS.iter())
+                .copied(),
+        )
+    })
+}
+
+/// 临时文件模式匹配器（与内置表共用 [`LUMIR_TMP_PATTERNS`] 这一份字面量）。
+/// 消费者是 ghost 惰性清除（[`remove_ghost_tmp_if_stale`]）；判定新名字是否命中内置规则
+/// 走的是 [`builtin_matcher`]，这里只回答「是不是保存 tmp 形态」。
+fn lumir_tmp_matcher() -> &'static Gitignore {
+    static MATCHER: OnceLock<Gitignore> = OnceLock::new();
+    MATCHER.get_or_init(|| build_matcher(LUMIR_TMP_PATTERNS.iter().copied()))
+}
+
+/// 名字是否命中内置规则（**末段名**判定，`validate_new_name` 与前端预检的权威）。
+///
+/// 用户规则**不参与**：用户可以照常新建 / 改名成被 `.gitignore` 匹配的名字——它本来就可见、
+/// 可打开，只是不进索引（§3.2）。
+pub fn is_builtin_name(name: &str) -> bool {
+    builtin_matcher()
+        .matched_path_or_any_parents(name, false)
+        .is_ignore()
+}
+
+/// 条目按当前规则表的去向（spec「全类型递归枚举」：**来源决定去向**）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EntryClass {
+    /// **内置规则**命中 ⇒ 不可见：不进枚举结果、不进 watch 事件流、不进索引，子树不枚举
+    ///（行为与今日的硬编码名单逐条一致）。
+    Hidden,
+    /// **用户规则**命中 ⇒ 惰性可见：出一行（`lazy: true`）、不递归、不进索引。
+    Lazy,
+    /// 其余 ⇒ 出一行（`lazy: false`）、递归、进索引。
+    Visible,
+}
+
+/// 用户规则的单个来源（`<root>/.gitignore`、递归途中的嵌套 `.gitignore`、`<root>/.git/info/exclude`）。
+struct UserSource {
+    /// 规则文件所在目录的 vault 相对路径（`""` = vault 根）。判定时用它把路径折成本地相对
+    /// 形式——`.gitignore` 的模式只对它所在的目录及其子孙有意义。
+    dir: String,
+    matcher: Gitignore,
+}
+
+/// 一份规则表 + 物化集合（change vault-open-ignore-set §2.1 / §4.4）：纯 std 类型、
+/// **不引 tauri**（ADR 0002 §7），由 `commands.rs` 在 vault 装载时构造，交给
+/// `scan_workspace` / `scan_dir` / `watch` / `expand_new_dir_subtrees` / `validate_new_name`
+/// 五个使用点——一份策略、五个使用点，MUST NOT 在下游各自再造一份判定（REVIEW.md 第 8 条）。
+///
+/// 判定链固定为 §2.2 的三步：**内置先判且命中即定格 → 用户规则（最深匹配决定）→ 其余可见**。
+///
+/// **生效时点**：装载时编译一次，随 vault 存活；规则文件与 `vault.rule_files` 的改动一律
+/// **下次装载**生效（本会话不重编，依据见 design §4.5——可见集不随规则变化，变的只是「哪些
+/// 子树被主动枚举」）。
+#[derive(Clone)]
+pub struct IgnorePolicy {
+    inner: Arc<IgnorePolicyInner>,
+}
+
+struct IgnorePolicyInner {
+    /// vault 根（读嵌套 `.gitignore` 用）。
+    root: PathBuf,
+    /// 用户规则来源，**优先级从高到低**排列（深层 `.gitignore` > 浅层 > `info/exclude`）。
+    /// 判定取「第一个给出确定结论的来源」——即 git 的「最深匹配决定」。
+    sources: Mutex<Vec<UserSource>>,
+    /// `.gitignore` 这个来源是否启用：只有它出现在规则文件清单里才读递归途中的嵌套
+    /// `.gitignore`（列表 = 来源清单，不是「规则作用域的声明」，见 design §2.9 语义 1/2）。
+    nested_gitignore: bool,
+    /// 已登记过嵌套 `.gitignore` 探读的目录（`""` 为根）。惰性：只探一次。
+    nested_seen: Mutex<HashSet<String>>,
+    /// 「已按需展开」的目录集合（vault 相对路径）——watch 判定惰性子树是否实时的唯一依据。
+    /// 随 vault 装载重建，MUST NOT 跨 vault 串用。
+    materialized: Mutex<HashSet<String>>,
+}
+
+impl IgnorePolicy {
+    /// 装载时构造（`commands::prepare_vault_open` 调用）：编译内置规则（进程内常量匹配器）
+    /// 与 `rule_files` 清单里的用户规则。
+    ///
+    /// 清单里每一项都按**「vault 根的规则文件」**解释（§2.9 语义 2）：读的是它自己那个路径，
+    /// 但模式一律**相对 vault 根**匹配——所以 `.git/info/exclude` 与根 `.gitignore` 的匹配
+    /// 作用域都是整个 vault（前者不是「相对 `.git/info`」的规则）。同深度（都在 vault 根）
+    /// 按**清单顺序**决定优先级，因此出厂清单 `[".gitignore", ".git/info/exclude"]` 下
+    /// 根 `.gitignore` 优先于 `info/exclude`，与 git 口径一致。
+    ///
+    /// 文件不存在 / 不是常规文件 ⇒ 静默跳过（`.git/info/exclude` 在非 git vault 里本来就不存在，
+    /// 这是常态）。嵌套 `.gitignore` 不在这里读——它们由枚举 / 按需枚举递归途中逐层登记
+    ///（[`Self::register_nested`]）。
+    pub fn load(root: &Path, rule_files: &[String]) -> IgnorePolicy {
+        let mut sources: Vec<UserSource> = Vec::new();
+        let mut nested_gitignore = false;
+        for file in rule_files {
+            // 只有 `.gitignore` 这一个来源带「嵌套逐层读取」的固有语义；别的来源
+            //（如 `.git/info/exclude`）只在它自己的那个路径上生效。
+            if file == ".gitignore" {
+                nested_gitignore = true;
+            }
+            if let Some(matcher) = read_rule_file(root, file) {
+                insert_source(&mut sources, "", matcher);
+            }
+        }
+        IgnorePolicy {
+            inner: Arc::new(IgnorePolicyInner {
+                root: root.to_path_buf(),
+                sources: Mutex::new(sources),
+                nested_gitignore,
+                nested_seen: Mutex::new(HashSet::new()),
+                materialized: Mutex::new(HashSet::new()),
+            }),
+        }
+    }
+
+    /// 判定一个条目（vault 相对路径 + 磁盘类型）的去向。判定顺序是唯一的一条链（§2.2）。
+    pub fn classify(&self, rel: &str, is_dir: bool) -> EntryClass {
+        if is_builtin_hidden(rel, is_dir) {
+            return EntryClass::Hidden;
+        }
+        if self.user_ignored(rel, is_dir) {
+            return EntryClass::Lazy;
+        }
+        EntryClass::Visible
+    }
+
+    /// 用户规则是否命中（含 gitignore 的「祖先被排除 ⇒ 子孙全被排除」语义）。
+    ///
+    /// 按优先级从高到低问每个来源，**第一个给出确定结论的来源决定**（忽略 ⇒ true，
+    /// 取反 ⇒ false）——这正是 git「同一路径上最深的匹配决定」的口径，也让用户规则内部的
+    /// 取反（`drafts/` 忽略 + `!drafts/keep/` 放回）照常生效。
+    pub fn user_ignored(&self, rel: &str, is_dir: bool) -> bool {
+        let sources = self.inner.sources.lock().expect("ignore sources poisoned");
+        for source in sources.iter() {
+            let Some(local) = relative_to_dir(&source.dir, rel) else {
+                continue; // 规则只对它所在目录及其子孙有意义
+            };
+            match source.matcher.matched_path_or_any_parents(local, is_dir) {
+                Match::Ignore(_) => return true,
+                Match::Whitelist(_) => return false,
+                Match::None => {}
+            }
+        }
+        false
+    }
+
+    /// 登记某个目录里可能存在的嵌套 `.gitignore`（遍历进入该目录时调用；惰性、只探一次）。
+    ///
+    /// 代价是一次 `read_to_string` 的失败尝试（目录数 ≈ 目录数），换来「嵌套规则与枚举同源」。
+    /// 只在 `.gitignore` 这个来源启用时探读；`fs_scan_dir` 成功返回时也走同一条（用户展开
+    /// 惰性目录后，它自己那份 `.gitignore` 立刻参与判定）。
+    fn register_nested(&self, dir_rel: &str) {
+        if !self.inner.nested_gitignore || dir_rel.is_empty() {
+            // 根 `.gitignore` 已由 [`Self::load`] 按 `rule_files` 登记过：这里再读一次只会
+            // 往来源表里插一份等价副本（判定结果不变，白付一次读盘）。
+            return;
+        }
+        {
+            let mut seen = self.inner.nested_seen.lock().expect("nested seen poisoned");
+            if !seen.insert(dir_rel.to_string()) {
+                return;
+            }
+        }
+        let file = join_rel(dir_rel, ".gitignore");
+        let Ok(text) = std::fs::read_to_string(self.inner.root.join(&file)) else {
+            return; // 不存在 / 不是常规文件：静默跳过（常态）
+        };
+        let mut builder = GitignoreBuilder::new(".");
+        for line in text.lines() {
+            // 单行写错只丢那一行：一份有笔误的 .gitignore 不该让整个 vault 的判定变脸
+            let _ = builder.add_line(None, line);
+        }
+        let matcher = builder.build().unwrap_or_else(|_| empty_matcher());
+        let mut sources = self.inner.sources.lock().expect("ignore sources poisoned");
+        insert_source(&mut sources, dir_rel, matcher);
+    }
+
+    /// 登记「该目录已按需展开」（`fs_scan_dir` 成功返回时调用）：它是 watch 判定惰性子树
+    /// 事件是否实时的唯一开关（§4.4）。
+    fn mark_materialized(&self, dir_rel: &str) {
+        self.inner
+            .materialized
+            .lock()
+            .expect("materialized poisoned")
+            .insert(dir_rel.to_string());
+    }
+
+    /// 该目录是否已被按需展开过。
+    ///
+    /// `pub(crate)`：命令层的「切换 vault 后上一 vault 的物化登记不生效」这条不变量要在
+    /// `commands` 的测试里直接观察（物化集合跨 vault 串用是静默的性能问题，不靠推断宣称没有）。
+    pub(crate) fn is_materialized(&self, dir_rel: &str) -> bool {
+        self.inner
+            .materialized
+            .lock()
+            .expect("materialized poisoned")
+            .contains(dir_rel)
+    }
+
+    /// 清除某个路径的物化登记（含其子孙）：目录被删 / 改名后旧路径不再“展开着”，
+    /// 新路径的登记由用户下次展开时重建（§4.3）。
+    fn forget_materialized(&self, rel: &str) {
+        let mut materialized = self
+            .inner
+            .materialized
+            .lock()
+            .expect("materialized poisoned");
+        materialized.retain(|p| p != rel && !p.starts_with(&format!("{rel}/")));
+    }
+}
+
+/// 把一个来源按优先级插进来源表：**深度大者在前**（深层 `.gitignore` > 浅层 > vault 根的
+/// `.gitignore` / `info/exclude`），同深度按进入顺序（即清单顺序）——所以出厂清单
+/// `[".gitignore", ".git/info/exclude"]` 下根 `.gitignore` 优先于 `info/exclude`。
+/// 判定从前往后取第一个确定结论，正是 git 的「最深匹配决定」。
+fn insert_source(sources: &mut Vec<UserSource>, dir: &str, matcher: Gitignore) {
+    let depth = source_depth(dir);
+    let at = sources
+        .iter()
+        .position(|s| source_depth(&s.dir) < depth)
+        .unwrap_or(sources.len());
+    sources.insert(
+        at,
+        UserSource {
+            dir: dir.to_string(),
+            matcher,
+        },
+    );
+}
+
+fn source_depth(dir: &str) -> usize {
+    if dir.is_empty() {
+        0
+    } else {
+        dir.split('/').count()
+    }
+}
+
+/// 读一份用户规则文件（vault 相对路径）并编译成匹配器；不存在 / 不是常规文件 / 读不开 ⇒ None。
+///
+/// 读的是**原样路径**而不是 `resolve_in_vault` 的结果：符号链接形态的 `.gitignore`
+///（共享忽略设置的一种常见做法）照常生效，与 git 的行为一致。
+fn read_rule_file(root: &Path, file: &str) -> Option<Gitignore> {
+    let text = std::fs::read_to_string(root.join(file)).ok()?;
+    let mut builder = GitignoreBuilder::new(".");
+    for line in text.lines() {
+        let _ = builder.add_line(None, line);
+    }
+    Some(builder.build().unwrap_or_else(|_| empty_matcher()))
+}
+
+/// `rel` 相对 `dir` 的本地路径（`dir` 为空串即根，返回 `rel` 本身）；`rel` 不在 `dir` 之下
+/// 时返回 None（该来源不参与判定）。
+fn relative_to_dir<'a>(dir: &str, rel: &'a str) -> Option<&'a str> {
+    if dir.is_empty() {
+        return Some(rel);
+    }
+    if rel == dir {
+        return None; // 规则文件所在目录自身不由它自己的模式判定
+    }
+    rel.strip_prefix(dir)?.strip_prefix('/')
+}
+
+/// 路径是否命中内置规则（任一组件，含最后一段）。内置规则是**名字的纯函数**——不含目录限定
+/// 模式，判定既不需要 stat 也不需要条目类型。
+fn is_builtin_hidden(rel: &str, is_dir: bool) -> bool {
+    builtin_matcher()
+        .matched_path_or_any_parents(rel, is_dir)
+        .is_ignore()
+}
 
 /// 单附件大小上限（spec：建议 50MB），防止误读大文件撑破常驻内存合同。
 pub const ATTACHMENT_MAX_BYTES: u64 = 50 * 1024 * 1024;
@@ -48,7 +391,12 @@ pub enum FsEntryKind {
     Dir,
 }
 
-/// 枚举条目：相对路径（`/` 分隔）、类型、大小、mtime（Unix 毫秒）。
+/// 枚举条目：相对路径（`/` 分隔）、类型、大小、mtime（Unix 毫秒），以及**惰性标记**。
+///
+/// `lazy`（change vault-open-ignore-set §4.3）：true 表示这一条的**子树 / 索引面未枚举**——
+/// 目录的子孙不在本次结果里（展开时经 `fs_scan_dir` 拉取一层），文件不进链接索引与附件索引。
+/// 前端靠它区分「空目录」与「惰性目录」（没有这个标记，两者在模型里长得一样）。
+/// 语义与 [`FsChange::lazy`] 同源：**用户规则命中 ⇒ 惰性**（内置规则命中的条目根本不出现）。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
 #[ts(export, export_to = "../../src/bindings/")]
 pub struct FsEntry {
@@ -61,6 +409,8 @@ pub struct FsEntry {
     /// 修改时间（Unix 毫秒）；取不到时为 null。
     #[ts(type = "number | null")]
     pub mtime_ms: Option<i64>,
+    /// 惰性条目（用户规则命中）：可见但未主动枚举，见本结构体的注释。
+    pub lazy: bool,
 }
 
 /// watch 增量类型。
@@ -73,7 +423,7 @@ pub enum FsChangeKind {
     Deleted,
 }
 
-/// 单条增量：变更类型 + 相对路径。
+/// 单条增量：变更类型 + 相对路径 + **惰性标记**。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
 #[ts(export, export_to = "../../src/bindings/")]
 pub struct FsChange {
@@ -82,6 +432,15 @@ pub struct FsChange {
     pub path: String,
     /// 条目类型（file/dir），deleted 时为 null——前端据此知道新增节点是文件还是目录。
     pub entry_kind: Option<FsEntryKind>,
+    /// 惰性标记：与 [`FsEntry::lazy`] **同一处口径**（用户规则命中 ⇒ true）。后端在过滤 /
+    /// 投递那一步用同一份规则表算出，下游 MUST NOT 重算（那会引出第二份规则实现）。
+    ///
+    /// 消费方是两处**索引增量补丁**（`commands::apply_fs_changes` 的 `graph.upsert` 与
+    /// `src/main.ts` 的 `attachmentPaths.push`）：created / modified 且 `lazy` ⇒ 不许进索引
+    ///（索引是磁盘 + 规则的纯函数，不是事件历史的函数）。**deleted 方向无条件移除**、不消费
+    /// 本字段——幂等，且绕开「被删路径 stat 不到、目录限定模式判不准类型」的歧义。
+    /// 树侧的可见性不受它影响：惰性条目照样有行。
+    pub lazy: bool,
 }
 
 /// `fs:entry_changed` 事件 payload：debounce 窗口合并后的一批增量（同路径去重，后发生者胜）。
@@ -91,18 +450,14 @@ pub struct FsEntryChangedEvent {
     pub changes: Vec<FsChange>,
 }
 
-/// 保存临时文件模式：`.` 开头且含 `.lumir-`（如 `.note.md.lumir-123`）。
+/// 保存临时文件模式判定（`.` 开头且含 `.lumir-`，如 `.note.md.lumir-123`）。
 /// 精确匹配模式而非全部点文件——vault 里合法的 `.obsidian` 配置目录等
-/// 仍须正常枚举。
+/// 仍须正常枚举。字面量与内置表共用 [`LUMIR_TMP_PATTERNS`]（不另写一份判据）。
 fn is_lumir_tmp(name: &std::ffi::OsStr) -> bool {
     match name.to_str() {
-        Some(s) => s.starts_with('.') && s.contains(".lumir-"),
+        Some(s) => lumir_tmp_matcher().matched(s, false).is_ignore(),
         None => false,
     }
-}
-
-fn is_ignored(name: &std::ffi::OsStr) -> bool {
-    IGNORED_NAMES.iter().any(|n| name == *n) || is_lumir_tmp(name)
 }
 
 /// 超龄 ghost tmp 惰性清除（best-effort）：仅删「名字命中 tmp 模式 + 是普通
@@ -125,18 +480,16 @@ fn remove_ghost_tmp_if_stale(path: &Path, now: SystemTime) -> bool {
     age >= GHOST_TMP_MAX_AGE && std::fs::remove_file(path).is_ok()
 }
 
-/// 把绝对路径转成相对 vault 根的 `/` 分隔字符串；在忽略集内或无法转换时返回 None。
+/// 绝对路径 → vault 相对路径（`/` 分隔）；不在 vault 内 / 含非普通组件 / 非 UTF-8 / 空路径时 None。
+///
+/// **不做任何忽略判定**：这一层只管路径形态（枚举侧、watch 侧、改名补全三处共用一份），去向由
+/// [`IgnorePolicy::classify`]（枚举）与 [`watch_verdict`]（事件）裁决——同一语义不留两处实现。
 fn rel_string(root: &Path, path: &Path) -> Option<String> {
     let rel = path.strip_prefix(root).ok()?;
     let mut parts = Vec::new();
     for c in rel.components() {
         match c {
-            Component::Normal(s) => {
-                if is_ignored(s) {
-                    return None;
-                }
-                parts.push(s.to_str()?);
-            }
+            Component::Normal(s) => parts.push(s.to_str()?),
             _ => return None,
         }
     }
@@ -147,21 +500,76 @@ fn rel_string(root: &Path, path: &Path) -> Option<String> {
     }
 }
 
+/// 事件路径的投递判定（§4.4 的两来源规则），返回 `(vault 相对路径, lazy 标记)`；None = 丢弃。
+///
+/// ```text
+/// 若任一组件（含最后一段）命中内置规则                          → 丢弃
+/// 若任一「祖先组件」命中用户规则 且 该祖先不在已按需展开集合     → 丢弃
+/// 否则                                                        → 投递
+/// ```
+///
+/// 三条要点（逐字见 spec「watch 增量事件流」）：
+/// 1. **内置规则对全部组件照判**（含最后一段）：它是名字的纯函数、语义类型无关，命中的条目
+///    在枚举结果里**没有行** ⇒ 这一行的增删事件 MUST NOT 投递，否则树里会出现一行枚举永远
+///    不会产生的幻影行（前端 `applyChanges` 不做隐藏名过滤）。`is_dir` 未知（被删路径拿不到
+///    类型）也不影响——无斜杠模式对文件与目录一视同仁。
+/// 2. **用户规则只看祖先，最后一段一律投递**：末段是否命中并不改变「有没有行」这个事实
+///    （命中 ⇒ 惰性行；不命中 ⇒ 普通行），两种情况下投递都正确；而行的出现 / 消失必须实时
+///    （否则外部删掉 `.local` 后树里留一个死行）。前缀组件必定是目录，因此这里一次 stat 都不需要。
+/// 3. **用户规则的祖先：未物化 ⇒ 不投递**（`.tower/worktrees/**` 的 agent churn 不进 webview）；
+///    已物化 ⇒ 投递（用户展开过的地方保持实时）。
+///
+/// `lazy` 由这里按同一份规则表算出并随事件带给前端：投递与否由「祖先」决定，但这一条**自身**
+/// 的去向另有下游消费者（两处索引增量补丁，§4.6）——MUST NOT 让下游各自重算。
+fn watch_verdict(
+    policy: &IgnorePolicy,
+    root: &Path,
+    path: &Path,
+    is_dir: Option<bool>,
+) -> Option<(String, bool)> {
+    let rel = rel_string(root, path)?;
+    if is_builtin_hidden(&rel, is_dir.unwrap_or(false)) {
+        return None;
+    }
+    let parts: Vec<&str> = rel.split('/').collect();
+    for index in 0..parts.len().saturating_sub(1) {
+        let ancestor = parts[..=index].join("/");
+        if policy.user_ignored(&ancestor, true) && !policy.is_materialized(&ancestor) {
+            return None;
+        }
+    }
+    // 末段不参与「投不投递」的判定，但这一条自身的去向要判（惰性 ⇒ 不进索引）。
+    let lazy = policy.user_ignored(&rel, is_dir.unwrap_or(false));
+    Some((rel, lazy))
+}
+
 fn mtime_ms(meta: &std::fs::Metadata) -> Option<i64> {
     let t = meta.modified().ok()?;
     let d = t.duration_since(std::time::UNIX_EPOCH).ok()?;
     Some(d.as_millis() as i64)
 }
 
-/// 全类型递归枚举（不按扩展名过滤，按 [`IGNORED_NAMES`] 过滤）。
+/// 全类型递归枚举（不按扩展名过滤，去向由 [`IgnorePolicy`] 裁决）。
 /// 结果按路径排序，保证确定性；目录在前、同缀按名称的展示排序由文件树 UI 负责。
 /// 顺带做保存临时文件 ghost 的惰性清除（超龄才删，见 [`GHOST_TMP_MAX_AGE`]）。
-pub fn scan_workspace(root: &Path) -> Result<Vec<FsEntry>, CommandError> {
-    scan_workspace_at(root, SystemTime::now())
+pub fn scan_workspace(root: &Path, policy: &IgnorePolicy) -> Result<Vec<FsEntry>, CommandError> {
+    scan_workspace_at(root, policy, SystemTime::now())
 }
 
 /// 枚举实现本体；`now` 可注入，使 ghost tmp 的年龄判定在测试中确定可控。
-fn scan_workspace_at(root: &Path, now: SystemTime) -> Result<Vec<FsEntry>, CommandError> {
+///
+/// 分类口径（spec「全类型递归枚举」，一处实现）：内置规则命中 ⇒ 丢弃且不递归；用户规则命中
+/// ⇒ 出一行（`lazy: true`）且不递归；其余 ⇒ 出一行（`lazy: false`）并递归。
+///
+/// 收口处记一条 [被内置规则剪掉的条目数](crate::logging::vault_scan_ignored)（含被剪掉的目录
+/// 自身，不含其未枚举的子孙）——它是「我的文件不见了」时的第一诊断依据；**只有计数**，不记
+/// 路径或名字原文（隐私边界）。`fs_scan_dir` 不记这条：按需展开是高频次动作，逐次计数只会把
+/// 日志刷成噪音，而它回答不了「vault 里有什么被剪掉了」。
+fn scan_workspace_at(
+    root: &Path,
+    policy: &IgnorePolicy,
+    now: SystemTime,
+) -> Result<Vec<FsEntry>, CommandError> {
     if !root.is_dir() {
         return Err(CommandError::new(
             "fs_root_not_dir",
@@ -170,8 +578,14 @@ fn scan_workspace_at(root: &Path, now: SystemTime) -> Result<Vec<FsEntry>, Comma
         .param("root", root.display()));
     }
     let mut entries = Vec::new();
+    let mut ignored = 0usize;
     let mut stack = vec![root.to_path_buf()];
     while let Some(dir) = stack.pop() {
+        // 进入一个目录：先登记它自己那份嵌套 .gitignore（`.gitignore` 来源启用时），
+        // 让它对**本层**条目立刻生效（嵌套逐层叠加，见 §4.2）。
+        if let Some(dir_rel) = rel_dir_string(root, &dir) {
+            policy.register_nested(&dir_rel);
+        }
         let rd = std::fs::read_dir(&dir).map_err(|e| {
             CommandError::new(
                 "fs_scan_failed",
@@ -190,14 +604,6 @@ fn scan_workspace_at(root: &Path, now: SystemTime) -> Result<Vec<FsEntry>, Comma
                 .param("reason", e.to_string())
             })?;
             let name = item.file_name();
-            if is_ignored(&name) {
-                // 跨进程崩溃残留的 tmp ghost 在磁盘隐形累积：枚举路径顺带清除
-                // 超龄者；在途保存的 tmp（毫秒级）与合法点文件都不受影响
-                if is_lumir_tmp(&name) {
-                    remove_ghost_tmp_if_stale(&item.path(), now);
-                }
-                continue;
-            }
             let path = item.path();
             // file_type() 不跟随 symlink：指向目录的 symlink 不递归展开。
             // 否则循环 symlink 会沿链接重复枚举直至 ELOOP 让 open_vault 失败，
@@ -216,22 +622,180 @@ fn scan_workspace_at(root: &Path, now: SystemTime) -> Result<Vec<FsEntry>, Comma
             let Some(rel) = rel_string(root, &path) else {
                 continue;
             };
-            if kind == FsEntryKind::Dir {
-                stack.push(path.clone());
+            match policy.classify(&rel, kind == FsEntryKind::Dir) {
+                EntryClass::Hidden => {
+                    // 跨进程崩溃残留的 tmp ghost 在磁盘隐形累积：枚举路径顺带清除
+                    // 超龄者；在途保存的 tmp（毫秒级）与合法点文件都不受影响
+                    if is_lumir_tmp(&name) {
+                        remove_ghost_tmp_if_stale(&path, now);
+                    }
+                    ignored += 1;
+                    continue;
+                }
+                // 用户规则命中：出一行、不递归（「祖先被排除 ⇒ 子孙全被排除」的落点）
+                EntryClass::Lazy => {}
+                EntryClass::Visible => {
+                    if kind == FsEntryKind::Dir {
+                        stack.push(path.clone());
+                    }
+                }
             }
             // symlink_metadata 不跟随：symlink 条目取链接自身的元数据，
             // 避免对循环 symlink follow 时撞 ELOOP。
             let meta = std::fs::symlink_metadata(&path).ok();
+            let lazy = lazy_of(policy, &rel, kind == FsEntryKind::Dir);
             entries.push(FsEntry {
                 path: rel,
                 kind,
                 size: meta.as_ref().filter(|m| m.is_file()).map_or(0, |m| m.len()),
                 mtime_ms: meta.as_ref().and_then(mtime_ms),
+                lazy,
             });
         }
     }
     entries.sort_by(|a, b| a.path.cmp(&b.path));
+    if ignored > 0 {
+        crate::logging::vault_scan_ignored(ignored);
+    }
     Ok(entries)
+}
+
+/// 按需枚举**一层**（change vault-open-ignore-set §4.3 的 `fs_scan_dir`）：
+/// 分类口径与 [`scan_workspace`] 完全同源（内置规则丢弃、用户规则命中出一行且 `lazy: true`、
+/// 其余出一行），但 MUST NOT 递归下钻。
+///
+/// 目标路径走与所有读取路径同源的 vault 内校验（[`resolve_in_vault`]，MUST NOT 为按需枚举
+/// 放松边界）；不存在 ⇒ `fs_not_found`，不是目录 ⇒ `fs_path_invalid`（人话）。
+///
+/// 成功返回即把该目录登记进**物化集合**：它是 watch 判定惰性子树事件是否实时的唯一开关
+///（§4.4）。登记随 vault 装载重建，MUST NOT 跨 vault 串用。
+pub fn scan_dir(
+    root: &Path,
+    policy: &IgnorePolicy,
+    dir_rel: &str,
+) -> Result<Vec<FsEntry>, CommandError> {
+    let dir = resolve_in_vault(root, dir_rel)?;
+    let meta = std::fs::metadata(&dir).map_err(|e| {
+        CommandError::new("fs_read_failed", format!("无法访问 {dir_rel}：{e}"))
+            .param("rel", dir_rel)
+            .param("reason", e.to_string())
+    })?;
+    if !meta.is_dir() {
+        return Err(CommandError::new(
+            "fs_path_invalid",
+            format!("{dir_rel} 不是目录"),
+        ));
+    }
+    // 惰性子树内部不重读它的 .gitignore（祖先已排除，结论不会变，§4.2）；但用户展开的正是一个
+    // 惰性目录时，它自己那份 `.gitignore` 必须先登记——本层条目要按它判。
+    if !dir_rel.is_empty() {
+        policy.register_nested(dir_rel);
+    }
+    let rd = std::fs::read_dir(&dir).map_err(|e| {
+        CommandError::new(
+            "fs_scan_failed",
+            format!("无法读取目录 {}：{e}", dir.display()),
+        )
+        .param("rel", dir.display())
+        .param("reason", e.to_string())
+    })?;
+    let mut entries = Vec::new();
+    for item in rd {
+        let item = item.map_err(|e| {
+            CommandError::new(
+                "fs_scan_failed",
+                format!("无法读取目录 {} 下的条目：{e}", dir.display()),
+            )
+            .param("rel", dir.display())
+            .param("reason", e.to_string())
+        })?;
+        let name = item.file_name();
+        let path = item.path();
+        let ft = match item.file_type() {
+            Ok(ft) => ft,
+            Err(_) => continue, // 枚举期间被删的条目直接跳过（同 scan_workspace）
+        };
+        let Some(name_str) = name.to_str() else {
+            continue;
+        };
+        // vault 相对路径在本函数里**按 dir_rel 拼接**得到，而不是对绝对路径做 strip_prefix：
+        // `resolve_in_vault` 返回的是规范化后的路径（macOS 上 `/var` → `/private/var`），
+        // 与调用方给的 root 原样前缀未必相等——strip 一旦失配会把整层条目静默丢光。
+        let rel = join_rel(dir_rel, name_str);
+        let kind = if ft.is_dir() {
+            FsEntryKind::Dir
+        } else {
+            FsEntryKind::File
+        };
+        match policy.classify(&rel, kind == FsEntryKind::Dir) {
+            EntryClass::Hidden => {
+                if is_lumir_tmp(&name) {
+                    remove_ghost_tmp_if_stale(&path, SystemTime::now());
+                }
+                continue;
+            }
+            EntryClass::Lazy => {}
+            EntryClass::Visible => {}
+        }
+        let meta = std::fs::symlink_metadata(&path).ok();
+        let lazy = policy.user_ignored(&rel, kind == FsEntryKind::Dir);
+        entries.push(FsEntry {
+            path: rel,
+            kind,
+            size: meta.as_ref().filter(|m| m.is_file()).map_or(0, |m| m.len()),
+            mtime_ms: meta.as_ref().and_then(mtime_ms),
+            lazy,
+        });
+    }
+    entries.sort_by(|a, b| a.path.cmp(&b.path));
+    if !dir_rel.is_empty() {
+        policy.mark_materialized(dir_rel);
+    }
+    Ok(entries)
+}
+
+/// vault 内路径的**批量存在探测**（change vault-open-ignore-set §4.11）：收一组 vault 相对
+/// 路径，返回其中确实存在的那些（保持入参顺序、去重）。
+///
+/// 存在的理由：「装载时的枚举结果不再是 vault 内文件的全集」——被用户规则命中的惰性条目
+///（含其子树里的文件）在文件树里可见、可打开，却永不进枚举结果，所以「这个路径还在不在
+/// vault 里」的判据不能只看枚举集（消费方：会话恢复的跳过计数、阅读位置的存量键修剪）。
+///
+/// **这是路径约束的有意例外**：越界（绝对路径 / `..` / 符号链接逃逸）与不存在对调用方同义
+/// （都不在 vault 内），逐条报错会让调用方无法区分二者、也没有任何处置差异。例外仅限「不逐条
+/// 返回错误」：边界校验本身照旧执行（[`resolve_in_vault`]，形状越界在任何文件系统访问之前
+/// 就被拒），越界路径 MUST NOT 被 stat、MUST NOT 读到 vault 外的任何信息，也 MUST NOT 因此
+/// 放宽任何读取路径的约束。本函数只 stat，MUST NOT 创建 / 改写 / 删除任何文件。
+pub fn paths_exist(root: &Path, paths: &[String]) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for rel in paths {
+        if out.iter().any(|seen| seen == rel) {
+            continue;
+        }
+        if resolve_in_vault(root, rel).is_ok() {
+            out.push(rel.clone());
+        }
+    }
+    out
+}
+
+/// 目录绝对路径 → vault 相对路径（`""` = 根）；不是 vault 内路径时为 None。
+fn rel_dir_string(root: &Path, dir: &Path) -> Option<String> {
+    let parts: Vec<&str> = dir
+        .strip_prefix(root)
+        .ok()?
+        .components()
+        .filter_map(|c| match c {
+            Component::Normal(s) => s.to_str(),
+            _ => None,
+        })
+        .collect();
+    Some(parts.join("/"))
+}
+
+/// 单个条目的惰性标记：用户规则命中 ⇒ true（`scan_workspace` 用；懒封装只为可读）。
+fn lazy_of(policy: &IgnorePolicy, rel: &str, is_dir: bool) -> bool {
+    policy.user_ignored(rel, is_dir)
 }
 
 /// vault 内路径约束（安全边界，不依赖调用方自觉）：
@@ -303,12 +867,14 @@ fn join_rel(parent_rel: &str, name: &str) -> String {
     }
 }
 
-/// 新建 / 改名的末段名校验（**唯一一份**，五个写类命令共用；忽略集复用 [`is_ignored`]
-/// 的真源，不另抄一份列表——REVIEW.md 第 8 条）。
+/// 新建 / 改名的末段名校验（**唯一一份**，五个写类命令共用；内置规则复用
+/// [`builtin_matcher`] 的同一份表，不另抄一份列表——REVIEW.md 第 8 条）。
 ///
-/// 规则（design §2.3）：非空、不含 `/`、不是 `.` / `..`、不命中枚举忽略集。忽略集那条
-/// 不是洁癖：`.git` 这类名字建/改出来不进文件树、watch 事件也被 `rel_string` 吞掉，
-/// 用户在界面上既看不到也删不掉——静默丢失的温床，因此在入口就拒绝。
+/// 规则（design §2.3）：非空、不含 `/`、不是 `.` / `..`、不命中**内置规则**。最后那条
+/// 不是洁癖：`.git` / `target` 这类名字建/改出来不进文件树、watch 事件也被挡下，用户在界面上
+/// 既看不到也删不掉——静默丢失的温床，因此在入口就拒绝。
+///
+/// **用户规则命中的名字 MUST NOT 被拒绝**（§3.2）：那样名字本来就可见、可打开，只是不进索引。
 pub fn validate_new_name(name: &str) -> Result<(), CommandError> {
     if name.is_empty() {
         return Err(CommandError::new("fs_name_invalid", "名称不能为空"));
@@ -325,7 +891,7 @@ pub fn validate_new_name(name: &str) -> Result<(), CommandError> {
             format!("{name} 不是有效的名称"),
         ));
     }
-    if is_ignored(std::ffi::OsStr::new(name)) {
+    if is_builtin_name(name) {
         return Err(CommandError::new(
             "fs_name_invalid",
             format!("{name} 在忽略集内，建成后不会出现在文件树里"),
@@ -744,11 +1310,14 @@ pub fn base64_encode(data: &[u8]) -> String {
     out
 }
 
-/// 把 notify 事件映射为增量清单（过滤忽略集、转相对路径）。
+/// 把 notify 事件映射为增量清单（按 [`watch_verdict`] 过滤、转相对路径）。
 /// 改名按 deleted(from) + created(to) 处理；FSEvents 的 Name(Any) 拆不出方向，
 /// 由 flush 时的存在性探测兜底（见 [`refine_with_known`]）。
 /// Metadata-only 事件（xattr 噪声）直接丢弃，避免污染 dedup 后的 kind。
-fn map_event(root: &Path, ev: &notify::Event) -> Vec<FsChange> {
+///
+/// `lazy` 在这里只是占位（`false`）：事件本身不带条目类型，精确判定要看磁盘现状，因此在
+/// [`refine_with_known`] 里按 `entry_kind` 填准（created / modified 时类型已知，§4.6）。
+fn map_event(root: &Path, policy: &IgnorePolicy, ev: &notify::Event) -> Vec<FsChange> {
     use notify::event::{ModifyKind, RenameMode};
     let kind = match &ev.kind {
         EventKind::Create(_) => Some(FsChangeKind::Created),
@@ -759,18 +1328,20 @@ fn map_event(root: &Path, ev: &notify::Event) -> Vec<FsChange> {
             // paths = [from, to]：拆成 deleted + created
             if ev.paths.len() == 2 {
                 let mut out = Vec::new();
-                if let Some(p) = rel_string(root, &ev.paths[0]) {
+                if let Some((p, _)) = watch_verdict(policy, root, &ev.paths[0], None) {
                     out.push(FsChange {
                         kind: FsChangeKind::Deleted,
                         path: p,
                         entry_kind: None,
+                        lazy: false,
                     });
                 }
-                if let Some(p) = rel_string(root, &ev.paths[1]) {
+                if let Some((p, _)) = watch_verdict(policy, root, &ev.paths[1], None) {
                     out.push(FsChange {
                         kind: FsChangeKind::Created,
                         path: p,
                         entry_kind: None,
+                        lazy: false,
                     });
                 }
                 return out;
@@ -786,11 +1357,12 @@ fn map_event(root: &Path, ev: &notify::Event) -> Vec<FsChange> {
     let Some(kind) = kind else { return Vec::new() };
     ev.paths
         .iter()
-        .filter_map(|p| rel_string(root, p))
-        .map(|path| FsChange {
+        .filter_map(|p| watch_verdict(policy, root, p, None))
+        .map(|(path, _)| FsChange {
             kind,
             path,
             entry_kind: None,
+            lazy: false,
         })
         .collect()
 }
@@ -829,9 +1401,14 @@ fn dedup(changes: Vec<FsChange>) -> Vec<FsChange> {
 ///   播种了全量枚举结果后，已知路径的 Created 修正为 Modified；
 /// - 删除/改名常被上报为粗粒度 Modify，路径已不存在的统一修正为 Deleted；
 /// - Deleted 但路径仍存在（窗口内删了又建）按 upsert 处理。
+///
+/// 同时按磁盘现状把 [`FsChange::lazy`] 填准（§4.6）：created / modified 时条目类型由
+/// `entry_kind` 已知，可精确判定；被删路径 stat 不到 ⇒ 保持 `false`（deleted 方向的下游
+/// 无条件移除，MUST NOT 消费这个字段，见 [`FsChange::lazy`] 的注释）。
 fn refine_with_known(
     root: &Path,
-    known: &mut std::collections::HashSet<String>,
+    policy: &IgnorePolicy,
+    known: &mut HashSet<String>,
     changes: &mut [FsChange],
 ) {
     for c in changes.iter_mut() {
@@ -848,9 +1425,15 @@ fn refine_with_known(
         let exists = meta.is_some();
         if !exists {
             c.kind = FsChangeKind::Deleted;
+            c.lazy = false;
             known.remove(&c.path);
+            // 被删路径的物化登记随之一并清除（§4.3）：目录被删 / 改名后旧路径不再「展开着」，
+            // 新路径的登记由用户下次展开时重建（登记只影响惰性子树的实时性，不影响可见性）。
+            policy.forget_materialized(&c.path);
             continue;
         }
+        let is_dir = c.entry_kind == Some(FsEntryKind::Dir);
+        c.lazy = lazy_of(policy, &c.path, is_dir);
         let is_new = known.insert(c.path.clone());
         c.kind = if is_new {
             FsChangeKind::Created
@@ -876,18 +1459,24 @@ fn refine_with_known(
 ///
 /// 已在批次里的路径不覆盖（它自带的 kind / entry_kind 由 [`refine_with_known`] 按磁盘现状定过，
 /// 更权威）；补出来的路径写进 `known`——前端随这一批已经知道它存在，后续事件按 Modified 归因。
-/// 忽略集与相对路径口径沿用 [`rel_string`]（与全量枚举同源），符号链接不跟随（`file_type()`）。
+/// 相对路径口径沿用 [`rel_string`]（与全量枚举同源），符号链接不跟随（`file_type()`）。
+///
+/// **惰性子树不补**（§4.3）：新出现的目录若命中用户规则，本批次只带出它**这一行**
+///（`lazy: true`），MUST NOT 带出子孙——那正是「按需枚举」的代价模型；它被展开时由
+/// `fs_scan_dir` 取回一层。命中内置规则的条目一条都不进（与枚举同口径）。
 fn expand_new_dir_subtrees(
     root: &Path,
-    known: &mut std::collections::HashSet<String>,
+    policy: &IgnorePolicy,
+    known: &mut HashSet<String>,
     batch: &mut Vec<FsChange>,
 ) {
     // 广度优先：新出现的目录入队，展开时发现的子目录继续入队（父的条目先于子的条目入批次）。
     let mut queue: Vec<String> = Vec::new();
-    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut seen: HashSet<String> = HashSet::new();
     for c in batch.iter() {
         if c.kind == FsChangeKind::Created
             && c.entry_kind == Some(FsEntryKind::Dir)
+            && !c.lazy
             && seen.insert(c.path.clone())
         {
             queue.push(c.path.clone());
@@ -901,15 +1490,11 @@ fn expand_new_dir_subtrees(
             continue; // 扫描期间被删：下一次事件会把它带走
         };
         for item in rd.flatten() {
-            let name = item.file_name();
-            if is_ignored(&name) {
-                continue;
-            }
             let Ok(file_type) = item.file_type() else {
                 continue; // 扫描期间被删的条目直接跳过（同 scan_workspace）
             };
             let path = item.path();
-            // rel_string 在忽略集内或无法转换时返回 None（与枚举同口径）
+            // 与枚举同口径：不是 vault 内路径 / 无法转字符串的条目一律跳过
             let Some(rel) = rel_string(root, &path) else {
                 continue;
             };
@@ -918,7 +1503,13 @@ fn expand_new_dir_subtrees(
             } else {
                 FsEntryKind::File
             };
-            if entry_kind == FsEntryKind::Dir && seen.insert(rel.clone()) {
+            let is_dir = entry_kind == FsEntryKind::Dir;
+            let lazy = match policy.classify(&rel, is_dir) {
+                EntryClass::Hidden => continue, // 内置规则命中：连行都没有，不进批次
+                EntryClass::Lazy => true,
+                EntryClass::Visible => false,
+            };
+            if is_dir && !lazy && seen.insert(rel.clone()) {
                 queue.push(rel.clone());
             }
             if batch.iter().any(|c| c.path == rel) {
@@ -928,6 +1519,7 @@ fn expand_new_dir_subtrees(
                 kind: FsChangeKind::Created,
                 path: rel.clone(),
                 entry_kind: Some(entry_kind),
+                lazy,
             });
             known.insert(rel);
         }
@@ -937,7 +1529,7 @@ fn expand_new_dir_subtrees(
 /// 正在运行的 vault 监听器；drop 即停止监听（debounce 线程随 channel 断开退出）。
 pub struct VaultWatcher {
     _watcher: notify::RecommendedWatcher,
-    known: std::sync::Arc<Mutex<std::collections::HashSet<String>>>,
+    known: Arc<Mutex<HashSet<String>>>,
 }
 
 impl VaultWatcher {
@@ -952,9 +1544,11 @@ impl VaultWatcher {
 }
 
 /// 启动 vault 监听：事件经 [`DEBOUNCE`] 窗口合并去重后，以批次回调交付。
-/// 与枚举共用同一忽略集。回调里不许 panic（会杀死 debounce 线程）。
+/// 与枚举共用**同一份规则表**（[`IgnorePolicy`]：两来源的判定见 [`watch_verdict`]）。
+/// 回调里不许 panic（会杀死 debounce 线程）。
 pub fn watch(
     root: &Path,
+    policy: &IgnorePolicy,
     on_batch: impl Fn(Vec<FsChange>) + Send + 'static,
 ) -> Result<VaultWatcher, CommandError> {
     // macOS 上 FSEvents 报告的是解析符号链接后的路径（/tmp → /private/tmp，
@@ -969,10 +1563,11 @@ pub fn watch(
     })?;
     let (tx, rx) = mpsc::channel::<Vec<FsChange>>();
     let root_owned = root.clone();
+    let policy_for_events = policy.clone();
     let mut watcher = notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
         match res {
             Ok(ev) => {
-                let changes = map_event(&root_owned, &ev);
+                let changes = map_event(&root_owned, &policy_for_events, &ev);
                 if !changes.is_empty() {
                     // receiver 已断开说明 VaultWatcher 已 drop，发送失败直接忽略
                     let _ = tx.send(changes);
@@ -993,9 +1588,10 @@ pub fn watch(
 
     // debounce 线程：等到第一批事件后，持续收直到静默满一个窗口，
     // 再合并去重 + 已知路径集修正 kind，然后推送。
-    let known = std::sync::Arc::new(Mutex::new(std::collections::HashSet::new()));
+    let known = Arc::new(Mutex::new(HashSet::new()));
     let known_for_flush = known.clone();
     let root_for_flush = root.clone();
+    let policy_for_flush = policy.clone();
     std::thread::Builder::new()
         .name("lumir-fs-debounce".into())
         .spawn(move || {
@@ -1003,9 +1599,15 @@ pub fn watch(
                 let mut batch = dedup(std::mem::take(pending));
                 {
                     let mut known = known_for_flush.lock().expect("known paths poisoned");
-                    refine_with_known(&root_for_flush, &mut known, &mut batch);
-                    // M258：新出现的目录要把子孙一起带出去（改名只报目录本身，前端补不出来）
-                    expand_new_dir_subtrees(&root_for_flush, &mut known, &mut batch);
+                    refine_with_known(&root_for_flush, &policy_for_flush, &mut known, &mut batch);
+                    // M258：新出现的目录要把子孙一起带出去（改名只报目录本身，前端补不出来）；
+                    // 惰性目录只带一行（§4.3）。
+                    expand_new_dir_subtrees(
+                        &root_for_flush,
+                        &policy_for_flush,
+                        &mut known,
+                        &mut batch,
+                    );
                 }
                 if !batch.is_empty() {
                     on_batch(batch);
@@ -1087,10 +1689,28 @@ mod tests {
         }
     }
 
+    impl TempVault {
+        /// 无用户规则来源的策略（只剩内置规则）：既有断言大多只关心内置规则。
+        fn policy(&self) -> IgnorePolicy {
+            IgnorePolicy::load(&self.0, &[])
+        }
+
+        /// 指定用户规则来源清单的策略（`vault.rule_files` 的形状）。
+        fn policy_with(&self, rule_files: &[&str]) -> IgnorePolicy {
+            let list: Vec<String> = rule_files.iter().map(|s| s.to_string()).collect();
+            IgnorePolicy::load(&self.0, &list)
+        }
+
+        /// 出厂默认清单（`[".gitignore", ".git/info/exclude"]`）。
+        fn default_policy(&self) -> IgnorePolicy {
+            self.policy_with(&[".gitignore", ".git/info/exclude"])
+        }
+    }
+
     #[test]
     fn scan_lists_all_types_and_applies_ignore_set() {
         let v = TempVault::with_fixture();
-        let entries = scan_workspace(&v.0).expect("scan");
+        let entries = scan_workspace(&v.0, &v.policy()).expect("scan");
         let paths: Vec<&str> = entries.iter().map(|e| e.path.as_str()).collect();
         assert!(paths.contains(&"note.md"));
         assert!(paths.contains(&"main.rs"));
@@ -1121,7 +1741,7 @@ mod tests {
         let v = TempVault::new();
         let f = v.0.join("f.txt");
         std::fs::write(&f, "x").unwrap();
-        let err = scan_workspace(&f).unwrap_err();
+        let err = scan_workspace(&f, &v.policy()).unwrap_err();
         assert_eq!(err.code, "fs_root_not_dir");
     }
 
@@ -1131,7 +1751,7 @@ mod tests {
         let v = TempVault::with_fixture();
         // 循环 symlink：sub/loop 指回 vault 根。跟随会沿链接重复枚举直至 ELOOP。
         std::os::unix::fs::symlink(&v.0, v.0.join("sub/loop")).unwrap();
-        let entries = scan_workspace(&v.0).expect("symlink 循环不应导致扫描失败");
+        let entries = scan_workspace(&v.0, &v.policy()).expect("symlink 循环不应导致扫描失败");
         let paths: Vec<&str> = entries.iter().map(|e| e.path.as_str()).collect();
         // symlink 条目按文件列出，不递归展开
         assert!(paths.contains(&"sub/loop"));
@@ -1154,7 +1774,7 @@ mod tests {
         std::fs::create_dir_all(outside.0.join("attachments/deep")).unwrap();
         std::fs::write(outside.0.join("attachments/deep/x.png"), [0u8; 4]).unwrap();
         std::os::unix::fs::symlink(outside.0.join("attachments"), v.0.join("attachments")).unwrap();
-        let entries = scan_workspace(&v.0).expect("scan");
+        let entries = scan_workspace(&v.0, &v.policy()).expect("scan");
         let paths: Vec<&str> = entries.iter().map(|e| e.path.as_str()).collect();
         // symlink 本身作为条目出现，但 vault 外的内容不被枚举进树
         assert!(paths.contains(&"attachments"));
@@ -1237,12 +1857,12 @@ mod tests {
         // 落在 fixture 之后，否则首批事件会带上 fixture 的 Create 标志。
         std::thread::sleep(Duration::from_millis(700));
         let (tx, rx) = mpsc::channel::<Vec<FsChange>>();
-        let watcher = watch(&v.0, move |batch| {
+        let watcher = watch(&v.0, &v.policy(), move |batch| {
             tx.send(batch).expect("send batch");
         })
         .expect("watch");
         // 与 open_vault 同序：watch 后枚举播种，已知路径的重放 Create 修正为 Modified
-        let entries = scan_workspace(&v.0).expect("scan");
+        let entries = scan_workspace(&v.0, &v.policy()).expect("scan");
         watcher.seed(entries.iter().map(|e| e.path.clone()));
 
         // FSEvents 流注册需要时间；注册完成前的变更会以粗粒度 kind 上报
@@ -1288,12 +1908,12 @@ mod tests {
         // FSEvents 流起点对齐：先静置，避免 fixture 的 Create 混进断言用的批次（同既有两个 watch 测试）
         std::thread::sleep(Duration::from_millis(700));
         let (tx, rx) = mpsc::channel::<Vec<FsChange>>();
-        let watcher = watch(&v.0, move |batch| {
+        let watcher = watch(&v.0, &v.policy(), move |batch| {
             tx.send(batch).expect("send batch");
         })
         .expect("watch");
         // 与 open_vault 同序：watch 后枚举播种（此刻 restyle-dir 还不存在）
-        let entries = scan_workspace(&v.0).expect("scan");
+        let entries = scan_workspace(&v.0, &v.policy()).expect("scan");
         watcher.seed(entries.iter().map(|e| e.path.clone()));
 
         std::thread::sleep(Duration::from_millis(500));
@@ -1357,11 +1977,11 @@ mod tests {
         std::fs::write(v.0.join("tutorial/deep/b.txt"), "b\n").unwrap();
         std::thread::sleep(Duration::from_millis(700));
         let (tx, rx) = mpsc::channel::<Vec<FsChange>>();
-        let watcher = watch(&v.0, move |batch| {
+        let watcher = watch(&v.0, &v.policy(), move |batch| {
             tx.send(batch).expect("send batch");
         })
         .expect("watch");
-        let entries = scan_workspace(&v.0).expect("scan");
+        let entries = scan_workspace(&v.0, &v.policy()).expect("scan");
         watcher.seed(entries.iter().map(|e| e.path.clone()));
         std::thread::sleep(Duration::from_millis(500));
 
@@ -1424,29 +2044,31 @@ mod tests {
         let v = TempVault::new();
         std::fs::create_dir_all(v.0.join("seeded-dir")).unwrap();
         std::fs::create_dir_all(v.0.join("brand-new-dir")).unwrap();
-        let mut known: std::collections::HashSet<String> =
-            ["seeded-dir".to_string()].into_iter().collect();
+        let mut known: HashSet<String> = ["seeded-dir".to_string()].into_iter().collect();
         let mut changes = vec![
             // 播种过的路径被 FSEvents 重放为 Create → 修正为 Modified（不得当成新建）
             FsChange {
                 kind: FsChangeKind::Created,
                 path: "seeded-dir".into(),
                 entry_kind: None,
+                lazy: false,
             },
             // 不在播种集里的新目录 → 保持 Created，且 entry_kind 填成 dir
             FsChange {
                 kind: FsChangeKind::Created,
                 path: "brand-new-dir".into(),
                 entry_kind: None,
+                lazy: false,
             },
             // 路径已不存在 → 一律 Deleted（无论事件说它是什么）
             FsChange {
                 kind: FsChangeKind::Modified,
                 path: "gone-dir".into(),
                 entry_kind: None,
+                lazy: false,
             },
         ];
-        refine_with_known(&v.0, &mut known, &mut changes);
+        refine_with_known(&v.0, &v.policy(), &mut known, &mut changes);
         assert_eq!(
             changes[0].kind,
             FsChangeKind::Modified,
@@ -1505,13 +2127,14 @@ mod tests {
             expected.push((rel, *kind));
         }
 
-        let mut known = std::collections::HashSet::new();
+        let mut known = HashSet::new();
         let mut batch = vec![FsChange {
             kind: FsChangeKind::Created,
             path: "outer".into(),
             entry_kind: Some(FsEntryKind::Dir),
+            lazy: false,
         }];
-        expand_new_dir_subtrees(&v.0, &mut known, &mut batch);
+        expand_new_dir_subtrees(&v.0, &v.policy(), &mut known, &mut batch);
 
         for (rel, kind) in &expected {
             let Some(hit) = batch.iter().find(|c| c.path == *rel) else {
@@ -1546,16 +2169,19 @@ mod tests {
                 kind: FsChangeKind::Created,
                 path: "outer".into(),
                 entry_kind: Some(FsEntryKind::Dir),
+                lazy: false,
             },
             FsChange {
                 kind: FsChangeKind::Modified,
                 path: "outer/deep".into(),
                 entry_kind: Some(FsEntryKind::Dir),
+                lazy: false,
             },
         ];
         expand_new_dir_subtrees(
             &v.0,
-            &mut std::collections::HashSet::new(),
+            &v.policy(),
+            &mut HashSet::new(),
             &mut batch_with_event,
         );
         let dupes: Vec<&FsChange> = batch_with_event
@@ -1570,8 +2196,9 @@ mod tests {
             kind: FsChangeKind::Created,
             path: "outer/a.md".into(),
             entry_kind: Some(FsEntryKind::File),
+            lazy: false,
         }];
-        expand_new_dir_subtrees(&v.0, &mut std::collections::HashSet::new(), &mut file_only);
+        expand_new_dir_subtrees(&v.0, &v.policy(), &mut HashSet::new(), &mut file_only);
         assert_eq!(file_only.len(), 1, "文件不进补全路径：{file_only:?}");
     }
 
@@ -1653,7 +2280,7 @@ mod tests {
         // 崩溃残留的 ghost 与合法点文件并存：模式只吞 `.lumir-` tmp
         std::fs::write(v.0.join(".note.md.lumir-4242"), "ghost").unwrap();
         std::fs::write(v.0.join(".hidden.conf"), "cfg").unwrap();
-        let entries = scan_workspace(&v.0).expect("scan");
+        let entries = scan_workspace(&v.0, &v.policy()).expect("scan");
         let paths: Vec<&str> = entries.iter().map(|e| e.path.as_str()).collect();
         assert!(
             !paths.iter().any(|p| p.contains(".lumir-")),
@@ -1674,7 +2301,7 @@ mod tests {
         // now 前拨过阈值（不依赖改 mtime 的额外依赖）：三个文件都「超龄」，
         // 只有 lumir tmp 被清除，合法点文件必须留存
         let aged = SystemTime::now() + GHOST_TMP_MAX_AGE + Duration::from_secs(1);
-        let entries = scan_workspace_at(&v.0, aged).expect("scan");
+        let entries = scan_workspace_at(&v.0, &v.policy(), aged).expect("scan");
         assert!(!ghost_root.exists(), "超龄 ghost tmp 应被清除");
         assert!(!ghost_nested.exists(), "嵌套目录内的超龄 ghost 也应被清除");
         assert!(dotfile.exists(), "合法点文件不得被清除");
@@ -1692,7 +2319,7 @@ mod tests {
         let fresh = v.0.join(".note.md.lumir-4242");
         std::fs::write(&fresh, "in-flight").unwrap();
         // 未超龄：在途保存的 tmp 不得被清除（同进程 tmp 生命周期为毫秒级）
-        let _ = scan_workspace(&v.0).expect("scan");
+        let _ = scan_workspace(&v.0, &v.policy()).expect("scan");
         assert!(fresh.exists(), "未超龄的 tmp 不删");
     }
 
@@ -1701,11 +2328,11 @@ mod tests {
         let v = TempVault::with_fixture();
         std::thread::sleep(Duration::from_millis(700));
         let (tx, rx) = mpsc::channel::<Vec<FsChange>>();
-        let watcher = watch(&v.0, move |batch| {
+        let watcher = watch(&v.0, &v.policy(), move |batch| {
             tx.send(batch).expect("send batch");
         })
         .expect("watch");
-        let entries = scan_workspace(&v.0).expect("scan");
+        let entries = scan_workspace(&v.0, &v.policy()).expect("scan");
         watcher.seed(entries.iter().map(|e| e.path.clone()));
 
         std::thread::sleep(Duration::from_millis(500));
@@ -1732,7 +2359,7 @@ mod tests {
     fn watch_stops_when_dropped() {
         let v = TempVault::with_fixture();
         let (tx, rx) = mpsc::channel::<Vec<FsChange>>();
-        let w = watch(&v.0, move |batch| {
+        let w = watch(&v.0, &v.policy(), move |batch| {
             let _ = tx.send(batch);
         })
         .expect("watch");
@@ -1748,7 +2375,7 @@ mod tests {
             let err = validate_new_name(bad).unwrap_err();
             assert_eq!(err.code, "fs_name_invalid", "case: {bad:?}");
         }
-        // 合法点文件不受忽略集牵连（`.gitignore` 不在 IGNORED_NAMES，也不命中 tmp 模式）
+        // 合法点文件不受内置规则牵连（`.gitignore` 不在 BUILTIN_NAMES，也不命中临时文件模式）
         for ok in ["note.md", "笔记.md", ".gitignore", "a.txt"] {
             assert!(validate_new_name(ok).is_ok(), "case: {ok:?}");
         }
@@ -1945,5 +2572,654 @@ mod tests {
         let err = trash_entry(root, "loop").unwrap_err();
         assert_eq!(err.code, "fs_trash_failed", "vault 根本身永不进废纸篓");
         assert!(root.join("note.md").exists());
+    }
+    // -----------------------------------------------------------------------
+    // change vault-open-ignore-set：一份规则表（内置 + 用户）、按需枚举、watch 判定
+    // -----------------------------------------------------------------------
+
+    /// 内置规则的**表本身**（tasks 1.1）：16 个名字逐条命中、临时文件模式两条命中，
+    /// 名字相近的（`targets` / `dist-old` / `Target`）与 A3 档（`build` / `out` / `vendor`）
+    /// 都不命中——它们是精确名字字面量，不是前缀或通配匹配。
+    #[test]
+    fn builtin_table_matches_exactly_the_declared_names_and_tmp_patterns() {
+        for name in BUILTIN_NAMES {
+            assert!(is_builtin_name(name), "{name} 必须命中内置规则");
+            // 同名**目录**一视同仁（无尾斜杠字面量的 gitignore 语义）
+            assert!(is_builtin_hidden(name, true), "{name} 作为目录同样命中");
+        }
+        for name in [
+            ".lumir-",
+            ".lumir-1",
+            ".lumir-notes.md",
+            "..lumir-1",
+            ".a.lumir-1",
+            ".note.md.lumir-1",
+        ] {
+            assert!(is_builtin_name(name), "临时文件模式必须命中 {name}");
+        }
+        for name in [
+            "Target",
+            "target.md",
+            "targets",
+            "dist-old",
+            "builds",
+            // A3 档经 Alex 2026-09-28 裁决不纳入
+            "build",
+            "out",
+            "vendor",
+            // 合法点文件与「以 .lumir- 之外的形式」出现的名字
+            ".hidden.conf",
+            "note.md.lumir-1",
+            "a.lumir-1",
+            "notes",
+        ] {
+            assert!(!is_builtin_name(name), "{name} MUST NOT 命中内置规则");
+        }
+    }
+
+    /// 对拍测试（tasks 1.2）：同一份 corpus 同时跑「今日判据」与「新内置匹配器」，逐条断言
+    /// **完全一致、零例外**——不许有「已知差异例外」，任何不一致都是规则写少了。
+    ///
+    /// 「今日判据」的口径 = 名字等值 + `starts_with('.') && contains(".lumir-")`；名字等值那一半
+    /// 按**同一份 16 条名字表**求值（本 change 把名单从 3 条扩到 16 条是**有意的裁决**，不是
+    /// 对拍要证明的东西）——这条测试钉的是**模式语义**的等价：无斜杠字面量 ≡ 任意深度同名，
+    /// 两条临时文件模式 ≡ 「`.` 开头且含 `.lumir-`」。临时文件模式必须**两条**：只写
+    /// `.*.lumir-*` 会漏掉「以 `.lumir-` 开头」的名字（r2/r3 评审用真 `git check-ignore`
+    /// 实测过 `.lumir-notes.md`）。
+    #[test]
+    fn builtin_rules_are_equivalent_to_the_legacy_predicate_on_a_name_corpus() {
+        fn legacy_name(name: &str) -> bool {
+            BUILTIN_NAMES.contains(&name) || (name.starts_with('.') && name.contains(".lumir-"))
+        }
+        fn legacy_path(rel: &str) -> bool {
+            rel.split('/').any(legacy_name)
+        }
+        let corpus = [
+            "target",
+            "Target",
+            "target.md",
+            "dist-old",
+            "builds",
+            "build",
+            "out",
+            "vendor",
+            ".DS_Store",
+            "node_modules",
+            ".venv",
+            ".pnpm-store",
+            ".a.lumir-1",
+            "..lumir-1",
+            ".lumir-",
+            ".lumir-1",
+            ".lumir-notes.md",
+            "note.md.lumir-1",
+            // 相近名字与合法点文件（反向输入：不许把不该剪的剪掉）
+            "targets",
+            "dist-old-2",
+            ".hidden.conf",
+            "node_modules_backup",
+            "notes",
+            // 嵌套路径：任一组件命中即命中
+            "a/target/x.md",
+            "a/.git/config",
+            "target/x.md",
+            "a/b/node_modules/c.js",
+            "a/targets/x.md",
+            "a/dist-old/y.md",
+        ];
+        for rel in corpus {
+            assert_eq!(
+                is_builtin_hidden(rel, false),
+                legacy_path(rel),
+                "corpus 差异（规则写少了或写多了）：{rel}"
+            );
+            assert_eq!(
+                is_builtin_hidden(rel, true),
+                legacy_path(rel),
+                "corpus 差异（目录形态）：{rel}"
+            );
+        }
+    }
+
+    /// 枚举侧（tasks 1.1）：内置规则命中的条目与**整棵子树**都不出现，A3 档与名字相近的
+    /// 目录照常枚举。
+    #[test]
+    fn scan_hides_builtin_output_dirs_with_their_subtrees_and_keeps_near_names() {
+        let v = TempVault::new();
+        let r = &v.0;
+        std::fs::create_dir_all(r.join("target/debug")).unwrap();
+        std::fs::write(r.join("target/debug/x"), "x").unwrap();
+        std::fs::create_dir_all(r.join("dist")).unwrap();
+        std::fs::write(r.join("dist/bundle.js"), "x").unwrap();
+        std::fs::create_dir_all(r.join("crfates/venv/lib")).unwrap();
+        std::fs::write(r.join("crfates/venv/lib/site.py"), "x").unwrap();
+        std::fs::write(r.join("crfates/venv/keep.md"), "x").unwrap();
+        std::fs::create_dir_all(r.join("a/b/.pnpm-store")).unwrap();
+        std::fs::write(r.join("a/b/.pnpm-store/blob"), "x").unwrap();
+        // A3 档：不收
+        for dir in ["build", "out", "vendor"] {
+            std::fs::create_dir_all(r.join(dir)).unwrap();
+            std::fs::write(r.join(dir).join("f.txt"), "x").unwrap();
+        }
+        // 名字相近的
+        for dir in ["targets", "dist-old", "builds"] {
+            std::fs::create_dir_all(r.join(dir)).unwrap();
+            std::fs::write(r.join(dir).join("f.txt"), "x").unwrap();
+        }
+        let entries = scan_workspace(r, &v.policy()).expect("scan");
+        let paths: Vec<&str> = entries.iter().map(|e| e.path.as_str()).collect();
+        for hidden in [
+            "target",
+            "target/debug",
+            "target/debug/x",
+            "dist",
+            "dist/bundle.js",
+            "crfates/venv",
+            "crfates/venv/keep.md",
+            "a/b/.pnpm-store",
+        ] {
+            assert!(!paths.contains(&hidden), "{hidden} 必须不可见：{paths:?}");
+        }
+        for visible in [
+            "build",
+            "build/f.txt",
+            "out",
+            "out/f.txt",
+            "vendor",
+            "vendor/f.txt",
+            "targets",
+            "targets/f.txt",
+            "dist-old",
+            "dist-old/f.txt",
+            "builds",
+            "builds/f.txt",
+        ] {
+            assert!(
+                paths.contains(&visible),
+                "{visible} 必须照常可见：{paths:?}"
+            );
+        }
+        // 惰性标记：全是 false（没有任何用户规则来源）
+        assert!(entries.iter().all(|e| !e.lazy), "{entries:?}");
+    }
+
+    /// 判定链的三步（tasks 2.2）：内置 ⇒ Hidden（**命中即定格**，用户规则的取反推不翻）、
+    /// 用户规则 ⇒ Lazy、其余 ⇒ Visible。用户规则**内部**的取反照常生效。
+    #[test]
+    fn classify_has_three_branches_and_builtin_wins_over_user_negation() {
+        let v = TempVault::new();
+        std::fs::write(
+            v.0.join(".gitignore"),
+            ".local/\n!target/\ndrafts/\n!drafts/keep/\n",
+        )
+        .unwrap();
+        let p = v.default_policy();
+        // 内置先判、命中即定格（`!target/` 不能把它放回可见集）
+        assert_eq!(p.classify("target", true), EntryClass::Hidden);
+        assert_eq!(p.classify("target", false), EntryClass::Hidden);
+        // 反向输入（让「先判」这条真的可证伪）：用户规则**自己也忽略**同一个内置名字
+        // ——若把用户规则提到前面判，这条会被降级成「惰性可见」，与 §2.2 的判定顺序不符。
+        let v2 = TempVault::new();
+        std::fs::write(v2.0.join(".gitignore"), "target/\n").unwrap();
+        let p2 = v2.default_policy();
+        assert_eq!(
+            p2.classify("target", true),
+            EntryClass::Hidden,
+            "用户规则不能把内置规则命中的条目降级成惰性可见"
+        );
+        // 用户规则命中 ⇒ 惰性可见
+        assert_eq!(p.classify(".local", true), EntryClass::Lazy);
+        assert_eq!(p.classify("drafts", true), EntryClass::Lazy);
+        // 「祖先被排除 ⇒ 子孙全被排除」
+        assert_eq!(p.classify(".local/deep", true), EntryClass::Lazy);
+        assert_eq!(p.classify(".local/deep/x.md", false), EntryClass::Lazy);
+        // 用户规则**内部**的取反生效
+        assert_eq!(p.classify("drafts/keep", true), EntryClass::Visible);
+        assert_eq!(p.classify("drafts/keep/x.md", false), EntryClass::Visible);
+        // 其余
+        assert_eq!(p.classify("notes.md", false), EntryClass::Visible);
+        assert_eq!(p.classify("notes/today.md", false), EntryClass::Visible);
+    }
+
+    /// 用户规则的来源与优先级（tasks 2.3）：`.gitignore`（含递归途中的**嵌套** `.gitignore`）
+    /// 与 `.git/info/exclude` 三条来源都生效；优先级按 git 口径——深层 `.gitignore` > 浅层 >
+    /// `info/exclude`，「同一路径上最深的匹配决定」。
+    #[test]
+    fn user_rules_come_from_gitignore_and_info_exclude_with_git_precedence() {
+        let v = TempVault::new();
+        let r = &v.0;
+        std::fs::create_dir_all(r.join(".git/info")).unwrap();
+        std::fs::create_dir_all(r.join("sub")).unwrap();
+        std::fs::write(r.join(".gitignore"), "root-ignored/\nx/\n").unwrap();
+        std::fs::write(r.join(".git/info/exclude"), "excluded/\n").unwrap();
+        // 非 git 仓库也有 .gitignore：本 vault 其实有 .git，这条覆盖由下一个测试承担
+        std::fs::write(r.join("sub/.gitignore"), "!x/\nsub-ignored/\n").unwrap();
+        for dir in ["root-ignored", "excluded", "x", "sub/x", "sub/sub-ignored"] {
+            std::fs::create_dir_all(r.join(dir)).unwrap();
+        }
+        let p = v.default_policy();
+        // 嵌套 .gitignore 在**递归进入可见目录时**逐层叠加（§4.2），因此先跑一次枚举
+        scan_workspace(r, &p).expect("scan");
+        assert_eq!(
+            p.classify("root-ignored", true),
+            EntryClass::Lazy,
+            ".gitignore 生效"
+        );
+        assert_eq!(
+            p.classify("excluded", true),
+            EntryClass::Lazy,
+            "info/exclude 生效"
+        );
+        assert_eq!(
+            p.classify("sub/sub-ignored", true),
+            EntryClass::Lazy,
+            "嵌套 .gitignore 生效"
+        );
+        assert_eq!(
+            p.classify("x", true),
+            EntryClass::Lazy,
+            "浅层 .gitignore 命中"
+        );
+        assert_eq!(
+            p.classify("sub/x", true),
+            EntryClass::Visible,
+            "深层 .gitignore 的取反覆盖浅层的忽略（最深匹配决定）"
+        );
+        // `.git` 是**目录**：info/exclude 被读；`.git` 自身是内置规则 ⇒ 不可见
+        assert_eq!(p.classify(".git", true), EntryClass::Hidden);
+    }
+
+    /// 非 git 仓库（无 `.git`）里的 `.gitignore` 照样生效；`.git` 是**文件**（linked worktree
+    /// 的 gitlink）时不读 `info/exclude`——真身在 gitdir 里，跟着 gitlink 走会把 vault 边界
+    /// 之外的配置读进来（§4.9）。
+    #[test]
+    fn gitignore_works_without_git_dir_and_gitlink_never_follows() {
+        let v = TempVault::new();
+        std::fs::create_dir_all(v.0.join("plain-ignored")).unwrap();
+        std::fs::write(v.0.join(".gitignore"), "plain-ignored/\n").unwrap();
+        let p = v.default_policy();
+        assert_eq!(
+            p.classify("plain-ignored", true),
+            EntryClass::Lazy,
+            "非 git 仓库里的 .gitignore 仍然是用户的声明"
+        );
+
+        // gitlink 形态：`.git` 是一个文件，真身在 vault 之外的另一棵目录里
+        let outside = TempVault::new();
+        std::fs::create_dir_all(outside.0.join("info")).unwrap();
+        std::fs::write(outside.0.join("info/exclude"), "linked-ignored/\n").unwrap();
+        let v2 = TempVault::new();
+        std::fs::create_dir_all(v2.0.join("linked-ignored")).unwrap();
+        std::fs::write(
+            v2.0.join(".git"),
+            format!("gitdir: {}\n", outside.0.display()),
+        )
+        .unwrap();
+        let p2 = v2.default_policy();
+        assert_eq!(
+            p2.classify("linked-ignored", true),
+            EntryClass::Visible,
+            "gitlink 指向的 gitdir 里的 exclude MUST NOT 被读（vault 之外的状态不参与判定）"
+        );
+    }
+
+    /// 「全局 excludes 不参与」（spec scenario）：vault **之外**的忽略声明一律不读——本 capability
+    /// MUST NOT 读取 vault 之外的忽略配置。
+    #[test]
+    fn rules_outside_the_vault_are_never_read() {
+        let parent = TempVault::new();
+        let root = parent.0.join("vault");
+        std::fs::create_dir_all(root.join("outside-dir")).unwrap();
+        std::fs::write(parent.0.join(".gitignore"), "outside-dir/\n").unwrap();
+        let p = IgnorePolicy::load(&root, &[".gitignore".to_string()]);
+        assert_eq!(
+            p.classify("outside-dir", true),
+            EntryClass::Visible,
+            "父目录的 .gitignore 不是这个 vault 的规则来源"
+        );
+    }
+
+    /// 规则表的生效时点（tasks 2.4）：装载时编译一次，规则文件内容的改动**下次装载**才生效
+    /// （本会话不重编——可见集不随规则变化，变的只是「哪些子树被主动枚举」）。
+    #[test]
+    fn rule_changes_take_effect_at_the_next_load_only() {
+        let v = TempVault::new();
+        std::fs::create_dir_all(v.0.join("drafts")).unwrap();
+        std::fs::write(v.0.join(".gitignore"), "").unwrap();
+        let p = v.default_policy();
+        assert_eq!(p.classify("drafts", true), EntryClass::Visible);
+
+        std::fs::write(v.0.join(".gitignore"), "drafts/\n").unwrap();
+        assert_eq!(
+            p.classify("drafts", true),
+            EntryClass::Visible,
+            "本会话不重编：规则表在装载时就编译好了"
+        );
+        let reloaded = v.default_policy();
+        assert_eq!(
+            reloaded.classify("drafts", true),
+            EntryClass::Lazy,
+            "下次装载（重新构造策略）后新规则生效"
+        );
+    }
+
+    /// 空清单 = 没有用户规则来源（tasks 2.5 语义②的后端面）：只剩内置规则，配置 MUST NOT
+    /// 影响内置规则。
+    #[test]
+    fn empty_rule_list_leaves_only_builtin_rules() {
+        let v = TempVault::new();
+        std::fs::create_dir_all(v.0.join(".local")).unwrap();
+        std::fs::create_dir_all(v.0.join("target")).unwrap();
+        std::fs::write(v.0.join(".gitignore"), ".local/\n").unwrap();
+        let p = v.policy_with(&[]);
+        assert_eq!(
+            p.classify(".local", true),
+            EntryClass::Visible,
+            "清单为空 ⇒ 连 .gitignore 也不读（非 git vault 的等价行为）"
+        );
+        assert_eq!(
+            p.classify(".local/x.md", false),
+            EntryClass::Visible,
+            "子孙照常递归枚举"
+        );
+        assert_eq!(
+            p.classify("target", true),
+            EntryClass::Hidden,
+            "内置规则恒定生效、不在配置面内"
+        );
+    }
+
+    /// 惰性目录出行为一行、子孙不进枚举（spec scenario）；`.local` 之外的内容照常递归。
+    #[test]
+    fn scan_emits_one_lazy_row_for_user_ignored_dir_and_skips_its_descendants() {
+        let v = TempVault::new();
+        let r = &v.0;
+        std::fs::create_dir_all(r.join(".local/deep")).unwrap();
+        std::fs::write(r.join(".local/tutorial.md"), "t").unwrap();
+        std::fs::write(r.join(".local/deep/x.md"), "x").unwrap();
+        std::fs::create_dir_all(r.join("notes")).unwrap();
+        std::fs::write(r.join("notes/a.md"), "a").unwrap();
+        std::fs::write(r.join(".gitignore"), ".local/\n").unwrap();
+        let entries = scan_workspace(r, &v.default_policy()).expect("scan");
+        let by_path = |p: &str| entries.iter().find(|e| e.path == p);
+        let local = by_path(".local").expect(".local 必须在结果里（惰性可见）");
+        assert_eq!(local.kind, FsEntryKind::Dir);
+        assert!(local.lazy, "用户规则命中的目录惰性标记为 true");
+        assert!(by_path(".local/tutorial.md").is_none(), "子孙不进本次枚举");
+        assert!(by_path(".local/deep").is_none(), "子孙不进本次枚举");
+        let outside = by_path("notes/a.md").expect("其余内容照常递归枚举");
+        assert!(!outside.lazy);
+    }
+
+    /// 按需枚举（tasks 3.2）：**一层**、分类口径同源、成功即登记物化。
+    #[test]
+    fn scan_dir_returns_one_level_and_registers_materialization() {
+        let v = TempVault::new();
+        let r = &v.0;
+        std::fs::create_dir_all(r.join(".local/deep")).unwrap();
+        std::fs::write(r.join(".local/tutorial.md"), "t").unwrap();
+        std::fs::write(r.join(".local/deep/hidden.md"), "h").unwrap();
+        std::fs::write(r.join(".local/target"), "x").unwrap();
+        std::fs::write(r.join(".gitignore"), ".local/\n").unwrap();
+        let p = v.default_policy();
+        assert!(!p.is_materialized(".local"));
+        let entries = scan_dir(r, &p, ".local").expect("展开惰性目录");
+        let paths: Vec<&str> = entries.iter().map(|e| e.path.as_str()).collect();
+        assert_eq!(
+            paths,
+            vec![".local/deep", ".local/tutorial.md"],
+            "只返回一层（无子孙），且内置规则命中的 .local/target 被丢弃"
+        );
+        let deep = entries.iter().find(|e| e.path == ".local/deep").unwrap();
+        assert!(deep.lazy, "惰性子目录同样出惰性行");
+        let file = entries
+            .iter()
+            .find(|e| e.path == ".local/tutorial.md")
+            .unwrap();
+        assert!(file.lazy, "惰性文件不进索引 ⇒ 惰性标记为 true");
+        assert!(p.is_materialized(".local"), "成功返回即登记物化");
+
+        // 对可见目录调用同样合法（结果与装载时枚举里该目录的子条目集合一致）
+        std::fs::create_dir_all(r.join("notes")).unwrap();
+        std::fs::write(r.join("notes/a.md"), "a").unwrap();
+        let visible = scan_dir(r, &p, "notes").expect("对可见目录调用");
+        assert_eq!(visible.len(), 1);
+        assert_eq!(visible[0].path, "notes/a.md");
+        assert!(!visible[0].lazy);
+    }
+
+    /// 按需枚举的边界（tasks 3.2）：越界 / 不存在 / 不是目录都给人话错误，且不读 vault 之外。
+    #[test]
+    fn scan_dir_rejects_out_of_bounds_missing_and_non_dirs() {
+        let v = TempVault::with_fixture();
+        let p = v.policy();
+        for bad in ["../outside", "/etc", "sub/../../etc"] {
+            let err = scan_dir(&v.0, &p, bad).unwrap_err();
+            assert_eq!(err.code, "fs_path_escape", "case: {bad}");
+        }
+        assert_eq!(
+            scan_dir(&v.0, &p, "missing").unwrap_err().code,
+            "fs_not_found"
+        );
+        assert_eq!(
+            scan_dir(&v.0, &p, "note.md").unwrap_err().code,
+            "fs_path_invalid",
+            "目标不是目录"
+        );
+        assert_eq!(scan_dir(&v.0, &p, "").unwrap_err().code, "fs_path_invalid");
+        // 失败的调用 MUST NOT 留下物化登记（登记只在成功路径上）
+        assert!(!p.is_materialized("note.md"));
+    }
+
+    /// watch 判定的六条分支（tasks 4.1）——判定本体是纯函数 [`watch_verdict`]，这里逐条钉死：
+    /// ① 未物化的用户规则目录内部变更**不**产生事件；② 物化后**产生**；③ 用户规则命中的
+    /// 条目自身的 created / deleted **总**产生（末段不判用户规则）；④ 内置规则命中的**祖先**
+    /// 下的变更不产生；⑤ 内置规则命中的**末段**同样不产生（幻影行判据）；⑥ 投递的事件带回
+    /// **正确**的 `lazy`。
+    #[test]
+    fn watch_verdict_covers_the_six_branches() {
+        let v = TempVault::new();
+        let r = &v.0;
+        std::fs::create_dir_all(r.join(".local/deep")).unwrap();
+        std::fs::write(r.join(".gitignore"), ".local/\nHANDOFF.md\n").unwrap();
+        let p = v.default_policy();
+        let abs = |rel: &str| r.join(rel);
+        let verdict = |rel: &str, is_dir: Option<bool>| watch_verdict(&p, r, &abs(rel), is_dir);
+
+        // ① 未物化：`.local` 命中用户规则且未展开 ⇒ 内部变更一律不投递
+        assert_eq!(verdict(".local/a.md", Some(false)), None);
+        assert_eq!(verdict(".local/deep/x.md", Some(false)), None);
+        // ② 物化后：照常投递（用户展开过的地方保持实时）
+        p.mark_materialized(".local");
+        assert_eq!(
+            verdict(".local/a.md", Some(false)),
+            Some((".local/a.md".to_string(), true))
+        );
+        p.forget_materialized(".local");
+
+        // ③ 用户规则命中的条目**自身**的增删总投递（末段不参与用户规则判定）
+        assert_eq!(
+            verdict(".local", Some(true)),
+            Some((".local".to_string(), true)),
+            "未展开的惰性目录自身的新建 / 删除必须实时"
+        );
+        assert_eq!(
+            verdict("HANDOFF.md", Some(false)),
+            Some(("HANDOFF.md".to_string(), true)),
+            "用户规则命中的文件自身的行级事件总是投递"
+        );
+        // ⑥ 投递的事件带回正确的 lazy（用户规则命中 ⇒ true，其余 ⇒ false）
+        assert_eq!(
+            verdict("notes.md", Some(false)),
+            Some(("notes.md".to_string(), false))
+        );
+        // ④ 内置规则命中的**祖先**下的变更不投递
+        assert_eq!(verdict("target/debug/x", Some(false)), None);
+        assert_eq!(verdict("a/node_modules/pkg/i.js", Some(false)), None);
+        // ⑤ 内置规则命中的**末段**同样不投递（外部 `mkdir target` / `npm install` 的幻影行判据）
+        assert_eq!(verdict("target", Some(true)), None, "mkdired 的目录");
+        assert_eq!(verdict("a/b/target", Some(true)), None);
+        assert_eq!(verdict("node_modules", Some(true)), None);
+        assert_eq!(verdict("a/dist", Some(true)), None);
+        // 保存临时文件形态同样不进事件流
+        assert_eq!(verdict(".note.md.lumir-1", Some(false)), None);
+        assert_eq!(verdict(".lumir-notes.md", Some(false)), None);
+        // vault 根自身的事件没有可投递的行
+        assert_eq!(watch_verdict(&p, r, r, None), None);
+    }
+
+    /// 物化开关的**端到端**一处（tasks 4.1 的分支 ①②，跑真 FSEvents 流）：未展开的惰性目录
+    /// 内部变更一个都不进事件流；`fs_scan_dir`（物化）之后同一目录内的变更照常到达。
+    #[test]
+    fn watch_delivers_inside_lazy_dir_only_after_materialization() {
+        let v = TempVault::new();
+        std::fs::create_dir_all(v.0.join(".local")).unwrap();
+        std::fs::write(v.0.join(".gitignore"), ".local/\n").unwrap();
+        std::thread::sleep(Duration::from_millis(700));
+        let policy = v.default_policy();
+        let (tx, rx) = mpsc::channel::<Vec<FsChange>>();
+        let watcher = watch(&v.0, &policy, move |batch| {
+            tx.send(batch).expect("send batch");
+        })
+        .expect("watch");
+        let entries = scan_workspace(&v.0, &policy).expect("scan");
+        watcher.seed(entries.iter().map(|e| e.path.clone()));
+        std::thread::sleep(Duration::from_millis(500));
+
+        // ① 未物化：`.local` 内新建文件不产生事件
+        std::fs::write(v.0.join(".local/a.md"), "a").unwrap();
+        let before = collect_batches(&rx, Duration::from_millis(1200));
+        assert!(
+            !before.iter().any(|c| c.path == ".local/a.md"),
+            "未展开的惰性子树内部变更 MUST NOT 进事件流：{before:?}"
+        );
+
+        // 物化（= 用户展开它，走的是 `fs_scan_dir` 同一条登记）
+        let scanned = scan_dir(&v.0, &policy, ".local").expect("展开");
+        assert_eq!(scanned.len(), 1);
+        assert!(policy.is_materialized(".local"));
+
+        // ② 物化后：同一目录内的变更照常到达，且带回 lazy 标记
+        std::fs::write(v.0.join(".local/b.md"), "b").unwrap();
+        let after = collect_batches(&rx, Duration::from_millis(2000));
+        let hit = after
+            .iter()
+            .find(|c| c.path == ".local/b.md")
+            .unwrap_or_else(|| panic!("物化后 `.local/b.md` 必须进事件流：{after:?}"));
+        assert_eq!(hit.kind, FsChangeKind::Created);
+        assert!(
+            hit.lazy,
+            "惰性条目的事件必须带回 lazy=true（下游索引据此跳过）"
+        );
+    }
+
+    /// 目录改名通道的惰性收口（tasks 4.3）：新出现的目录若命中用户规则，本批次只带出它
+    /// **这一行**，MUST NOT 带出子孙；内置规则命中的条目一条都不进。
+    #[test]
+    fn expand_new_dir_subtrees_stops_at_a_lazy_dir() {
+        let v = TempVault::new();
+        let r = &v.0;
+        std::fs::write(r.join(".gitignore"), ".local/\n").unwrap();
+        std::fs::create_dir_all(r.join("outer/.local/deep")).unwrap();
+        std::fs::write(r.join("outer/.local/deep/x.md"), "x").unwrap();
+        std::fs::write(r.join("outer/note.md"), "n").unwrap();
+        std::fs::create_dir_all(r.join("outer/target")).unwrap();
+        std::fs::write(r.join("outer/target/bin"), "b").unwrap();
+        let p = v.default_policy();
+        let mut known = HashSet::new();
+        let mut batch = vec![FsChange {
+            kind: FsChangeKind::Created,
+            path: "outer".into(),
+            entry_kind: Some(FsEntryKind::Dir),
+            lazy: false,
+        }];
+        expand_new_dir_subtrees(r, &p, &mut known, &mut batch);
+        let find = |rel: &str| batch.iter().find(|c| c.path == rel);
+        assert!(
+            find("outer/note.md").is_some(),
+            "可见条目照常带出：{batch:?}"
+        );
+        let lazy_dir = find("outer/.local").expect("惰性目录自身要带一行：{batch:?}");
+        assert!(lazy_dir.lazy, "带出的惰性行必须标 lazy=true");
+        assert!(
+            find("outer/.local/deep").is_none() && find("outer/.local/deep/x.md").is_none(),
+            "惰性目录 MUST NOT 带出子孙：{batch:?}"
+        );
+        assert!(
+            find("outer/target").is_none(),
+            "内置规则命中的条目一条都不进批次：{batch:?}"
+        );
+    }
+
+    /// 被删路径的物化登记随之清除（tasks 4.3）：登记只影响惰性子树的实时性，不影响可见性；
+    /// 新路径的登记由用户下次展开时重建。
+    #[test]
+    fn deleted_paths_clear_their_materialization_registration() {
+        let v = TempVault::new();
+        let p = v.default_policy();
+        p.mark_materialized(".tower");
+        p.mark_materialized(".tower/comms");
+        p.mark_materialized(".local");
+        assert!(p.is_materialized(".tower/comms"));
+
+        let mut known: HashSet<String> = [".tower/comms/x.md".to_string()].into_iter().collect();
+        let mut changes = vec![FsChange {
+            kind: FsChangeKind::Deleted,
+            path: ".tower".into(),
+            entry_kind: None,
+            lazy: false,
+        }];
+        refine_with_known(&v.0, &p, &mut known, &mut changes);
+        assert_eq!(changes[0].kind, FsChangeKind::Deleted);
+        assert!(!p.is_materialized(".tower"), "旧路径的登记随删除清除");
+        assert!(!p.is_materialized(".tower/comms"), "子孙前缀的登记一并清除");
+        assert!(p.is_materialized(".local"), "别的路径不受影响");
+    }
+
+    /// 批量存在探测（§4.11）：存在的子集按入参顺序返回、去重；越界与不存在的都不在集合里。
+    #[test]
+    fn paths_exist_returns_only_present_in_vault_paths() {
+        let v = TempVault::with_fixture();
+        let ask = vec![
+            "note.md".to_string(),
+            "sub/deep/a.txt".to_string(),
+            "sub".to_string(),
+            "missing.md".to_string(),
+            "../outside".to_string(),
+            "/etc/passwd".to_string(),
+            "sub/../../etc/passwd".to_string(),
+            "note.md".to_string(), // 重复项只回一次
+        ];
+        let found = paths_exist(&v.0, &ask);
+        assert_eq!(found, vec!["note.md", "sub/deep/a.txt", "sub"]);
+        assert!(paths_exist(&v.0, &[]).is_empty());
+    }
+
+    /// 用户规则命中的名字**不**被 `validate_new_name` 拒绝（§3.2）；内置规则命中的照旧拒绝。
+    #[test]
+    fn validate_new_name_ignores_user_rules_but_rejects_builtin_names() {
+        // 单段名判定不经过任何 vault 上下文：用户规则（`.gitignore`）在名字层面不参与
+        for ok in ["targets", "dist-old", "drafts", "HANDOFF.md", ".local"] {
+            assert!(validate_new_name(ok).is_ok(), "case: {ok}");
+        }
+        for bad in ["target", "dist", ".venv", ".pnpm-store", "node_modules"] {
+            let err = validate_new_name(bad).unwrap_err();
+            assert_eq!(err.code, "fs_name_invalid", "case: {bad}");
+        }
+    }
+
+    /// 两份策略的物化集合互不相干（tasks 4.2 的下半：集合随 vault 装载重建，MUST NOT 串用）。
+    #[test]
+    fn policies_do_not_share_materialization() {
+        let a = TempVault::new();
+        let b = TempVault::new();
+        let pa = a.policy();
+        let pb = b.policy();
+        pa.mark_materialized(".tower");
+        assert!(pa.is_materialized(".tower"));
+        assert!(
+            !pb.is_materialized(".tower"),
+            "另一份策略（另一个 vault）不得共享物化登记"
+        );
     }
 }

@@ -1,6 +1,16 @@
 use lumir_lib::{commands, config, fs_io, link_graph::LinkGraph, vault_registry::*, vault_session};
 use std::{fs, path::PathBuf, sync::Mutex};
 
+/// 生产口径的忽略策略（出厂 `vault.rule_files` 清单）：harness / 场景装配要走生产路径的
+/// 同一份规则表，不能用一个「什么都不忽略」的近似——那会让读数与行为都不代表发布形态。
+fn production_policy(root: &std::path::Path) -> fs_io::IgnorePolicy {
+    let rule_files: Vec<String> = config::DEFAULT_RULE_FILES
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+    fs_io::IgnorePolicy::load(root, &rule_files)
+}
+
 static ENV: Mutex<()> = Mutex::new(());
 
 struct Fixture {
@@ -281,8 +291,9 @@ fn prepared_open(root: &str) -> commands::PreparedVaultOpen {
         root: path.clone(),
         vault_id: "test-vault".into(),
         entries: vec![],
-        watcher: fs_io::watch(&path, |_| {}).expect("watch temp vault"),
+        watcher: fs_io::watch(&path, &production_policy(&path), |_| {}).expect("watch temp vault"),
         graph: LinkGraph::new(),
+        policy: production_policy(&path),
     }
 }
 

@@ -189,12 +189,17 @@ function installFakeDocument(): void {
 // 夹具
 // ---------------------------------------------------------------------------
 
-function entry(path: string, kind: FsEntryKind): FsEntry {
-  return { path, kind, size: 0, mtime_ms: null };
+function entry(path: string, kind: FsEntryKind, lazy = false): FsEntry {
+  return { path, kind, size: 0, mtime_ms: null, lazy };
 }
 
-function change(kind: FsChangeKind, path: string, entryKind: FsEntryKind | null): FsChange {
-  return { kind, path, entry_kind: entryKind };
+function change(
+  kind: FsChangeKind,
+  path: string,
+  entryKind: FsEntryKind | null,
+  lazy = false,
+): FsChange {
+  return { kind, path, entry_kind: entryKind, lazy };
 }
 
 function keydown(key: string): FakeEvent {
@@ -243,6 +248,7 @@ function rig(entries: FsEntry[]): Rig {
     onOpenVaultSwitcher: () => {},
     onContextMenu: () => {},
     onInlineEditSubmit: (request) => void submitted.push(request),
+    onExpandLazyDir: () => Promise.resolve([]),
   };
   const tree = createFileTree(mount as unknown as HTMLElement, cb);
   tree.setVault("/vault", entries);

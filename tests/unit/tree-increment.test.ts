@@ -17,7 +17,7 @@ import type { FsChange } from "../../src/bindings/FsChange.ts";
 import type { FsChangeKind } from "../../src/bindings/FsChangeKind.ts";
 import type { FsEntry } from "../../src/bindings/FsEntry.ts";
 import type { FsEntryKind } from "../../src/bindings/FsEntryKind.ts";
-import { createFileTree } from "../../src/tree.ts";
+import { createFileTree, patchAttachmentPaths } from "../../src/tree.ts";
 import type { FileTree, FileTreeCallbacks } from "../../src/tree.ts";
 
 // ---------------------------------------------------------------------------
@@ -172,12 +172,17 @@ function installFakeDocument(): void {
 // 夹具与读数口
 // ---------------------------------------------------------------------------
 
-function entry(path: string, kind: FsEntryKind): FsEntry {
-  return { path, kind, size: 0, mtime_ms: null };
+function entry(path: string, kind: FsEntryKind, lazy = false): FsEntry {
+  return { path, kind, size: 0, mtime_ms: null, lazy };
 }
 
-function change(kind: FsChangeKind, path: string, entryKind: FsEntryKind | null): FsChange {
-  return { kind, path, entry_kind: entryKind };
+function change(
+  kind: FsChangeKind,
+  path: string,
+  entryKind: FsEntryKind | null,
+  lazy = false,
+): FsChange {
+  return { kind, path, entry_kind: entryKind, lazy };
 }
 
 function noopCallbacks(): FileTreeCallbacks {
@@ -187,6 +192,7 @@ function noopCallbacks(): FileTreeCallbacks {
     onOpenVaultSwitcher: () => {},
     onContextMenu: () => {},
     onInlineEditSubmit: () => {},
+    onExpandLazyDir: () => Promise.resolve([]),
   };
 }
 
@@ -301,4 +307,167 @@ test("外部删除目录：目录行连同其中条目一起从树上消失", ()
     false,
     "被删目录的子树不得留下孤儿行",
   );
+});
+
+// ---------------------------------------------------------------------------
+// 惰性条目（change vault-open-ignore-set §4.3）：被 vault 自己的忽略声明挡住的目录
+// **行可见**、子孙按需取回一层。这一组钉住展开通道的三条口径：取数走命令、取数在途
+// 不渲染成「空目录」也不重复发命令、失败不标记已取回（下次展开重试）。
+// ---------------------------------------------------------------------------
+
+/** 惰性目录专用的脚手架：能记录按需取数的调用，并能手动放行 / 让它失败。 */
+function lazyRig(initial: FsEntry[]): {
+  tree: FileTree;
+  requested: string[];
+  /** 让下一次取数返回这些条目（放行在途的那一次）。 */
+  resolveWith: (entries: FsEntry[]) => void;
+  failNext: () => void;
+  childrenOf: (path: string) => string[];
+  rowOf: (path: string) => FakeEl;
+  click: (path: string) => void;
+} {
+  installFakeDocument();
+  const mount = new FakeEl("div");
+  const requested: string[] = [];
+  let pending: { resolve: (entries: FsEntry[]) => void; reject: (e: unknown) => void } | null = null;
+  const callbacks: FileTreeCallbacks = {
+    ...noopCallbacks(),
+    onExpandLazyDir: (path) => {
+      requested.push(path);
+      return new Promise<FsEntry[]>((resolve, reject) => {
+        pending = { resolve, reject };
+      });
+    },
+  };
+  const tree = createFileTree(mount as unknown as HTMLElement, callbacks);
+  tree.setVault("/vault", initial);
+  const liOf = (path: string) => mount.querySelectorAll(".ft-item").find((n) => n.dataset.path === path);
+  const rowOf = (path: string) => {
+    const row = liOf(path)?.querySelector(".ft-row");
+    assert.ok(row !== null && row !== undefined, `要点的行 ${path} 必须在 DOM 里`);
+    return row;
+  };
+  return {
+    tree,
+    requested,
+    resolveWith: (entries) => pending?.resolve(entries),
+    failNext: () => pending?.reject(new Error("fs_scan_failed")),
+    childrenOf: (path) =>
+      (liOf(path)?.querySelector(".ft-children")?.children ?? []).map((li) => li.dataset.path),
+    rowOf,
+    click: (path) => rowOf(path).fire("click"),
+  };
+}
+
+/** 让微任务链跑完（取数回调是 promise 链，不是同步的）。 */
+const flushMicrotasks = async () => {
+  await new Promise((resolve) => setImmediate(resolve));
+  await new Promise((resolve) => setImmediate(resolve));
+};
+
+test("惰性目录展开：发一次按需取数，子行按排序并入，取数在途不渲染成空目录", async () => {
+  const r = lazyRig([
+    { path: ".local", kind: "dir", size: 0, mtime_ms: null, lazy: true },
+    entry("notes.md", "file"),
+  ]);
+  r.click(".local");
+  assert.deepEqual(r.requested, [".local"], "展开惰性目录必须发一次按需取数命令");
+  assert.deepEqual(
+    r.childrenOf(".local"),
+    [],
+    "取数在途：子列表为空（子孙本来就不在装载结果里）——它不是「已取回的空目录」",
+  );
+  assert.equal(r.rowOf(".local").querySelector(".ft-caret")?.classes.has("is-open"), true);
+
+  // 在途收起再展开：MUST NOT 重复发命令（同一次取数回来即可）
+  r.click(".local");
+  r.click(".local");
+  assert.deepEqual(r.requested, [".local"], "取数在途重复展开不重复发命令");
+
+  r.resolveWith([
+    entry(".local/tutorial.md", "file", true),
+    { path: ".local/deep", kind: "dir", size: 0, mtime_ms: null, lazy: true },
+  ]);
+  await flushMicrotasks();
+  assert.deepEqual(
+    r.childrenOf(".local"),
+    [".local/deep", ".local/tutorial.md"],
+    "取回后子行按既有排序并入（目录在前）",
+  );
+  // 已取回：再收起 / 展开不再发命令
+  r.click(".local");
+  r.click(".local");
+  assert.deepEqual(r.requested, [".local"], "已取回的惰性目录不再发命令");
+  assert.deepEqual(r.childrenOf(".local"), [".local/deep", ".local/tutorial.md"]);
+});
+
+test("惰性目录取数失败：不标记已取回、不渲染成空目录，下次展开重试", async () => {
+  const r = lazyRig([{ path: ".local", kind: "dir", size: 0, mtime_ms: null, lazy: true }]);
+  r.click(".local");
+  r.failNext();
+  await flushMicrotasks();
+  assert.deepEqual(r.childrenOf(".local"), [], "失败后这一层仍是空的（不伪造条目）");
+  r.click(".local"); // 收起
+  r.click(".local"); // 再展开 → 重试
+  assert.deepEqual(r.requested, [".local", ".local"], "失败过的目录下次展开必须重试");
+  r.resolveWith([entry(".local/tutorial.md", "file", true)]);
+  await flushMicrotasks();
+  assert.deepEqual(r.childrenOf(".local"), [".local/tutorial.md"]);
+});
+
+test("增量插入的惰性目录仍是未取回态：展开走按需取数；非惰性目录不发命令", () => {
+  const r = lazyRig([entry("a.md", "file")]);
+  r.tree.applyChanges([change("created", ".local", "dir", true)]);
+  r.tree.applyChanges([change("created", "plain", "dir")]);
+  r.click(".local");
+  assert.deepEqual(r.requested, [".local"], "created 事件带回 lazy⇒true 时，展开仍走按需取数");
+  r.click("plain");
+  assert.deepEqual(r.requested, [".local"], "非惰性目录的子孙已在装载/补全结果里，不发命令");
+});
+
+test("换 vault 后惰性目录的「已取回」登记作废：新 vault 的展开重新取数", async () => {
+  const r = lazyRig([{ path: ".local", kind: "dir", size: 0, mtime_ms: null, lazy: true }]);
+  r.click(".local");
+  r.resolveWith([entry(".local/tutorial.md", "file", true)]);
+  await flushMicrotasks();
+  assert.deepEqual(r.childrenOf(".local"), [".local/tutorial.md"]);
+
+  r.tree.setVault("/vault", [
+    { path: ".local", kind: "dir", size: 0, mtime_ms: null, lazy: true },
+  ]);
+  r.click(".local");
+  assert.deepEqual(r.requested, [".local", ".local"], "换 vault 后重新取数");
+});
+
+// ---------------------------------------------------------------------------
+// 附件索引的增量口径（change vault-open-ignore-set §4.6 的前端一半）
+//
+// 反例（本 change 之前必然发生）：`HANDOFF.md` 被 `.gitignore` 声明，外部改写它 ⇒ 事件投递
+// ⇒ 它一度进附件索引 ⇒ 重开后又不在——索引从「磁盘 + 规则的纯函数」退化成「事件历史的函数」。
+// ---------------------------------------------------------------------------
+
+test("附件索引增量：惰性条目的 created 与 modified 都不进索引，deleted 无条件移除", () => {
+  // created 与 modified **同路**（r3 评审 P2-1 的漏词：既有分支就是一个 else 支）
+  for (const kind of ["created", "modified"] as const) {
+    const paths = ["a.md"];
+    assert.deepEqual(
+      patchAttachmentPaths(paths, change(kind, "HANDOFF.md", "file", true)),
+      ["a.md"],
+      `${kind} 的惰性文件 MUST NOT 进附件索引`,
+    );
+  }
+  // 非惰性的照旧进索引（幂等）
+  assert.deepEqual(patchAttachmentPaths(["a.md"], change("created", "b.md", "file")), ["a.md", "b.md"]);
+  assert.deepEqual(patchAttachmentPaths(["a.md"], change("modified", "a.md", "file")), ["a.md"]);
+  // 目录条目不进索引
+  assert.deepEqual(patchAttachmentPaths(["a.md"], change("created", "docs", "dir")), ["a.md"]);
+  // deleted：无条件移除（含子孙级联），且**不消费 lazy**——惰性文件本来就不在索引里，
+  // 删除方向仍是空操作；真正在索引里的条目被删时必须摘掉。
+  assert.deepEqual(
+    patchAttachmentPaths(["docs/c.md", "docs", "a.md"], change("deleted", "docs", null)),
+    ["a.md"],
+    "目录删除连同子孙一起出索引（与树 applyChanges 的级联删除同口径）",
+  );
+  const gone = patchAttachmentPaths(["HANDOFF.md"], change("deleted", "HANDOFF.md", null, true));
+  assert.deepEqual(gone, [], "deleted 不消费 lazy：索引里有就一定要摘掉（幂等）");
 });

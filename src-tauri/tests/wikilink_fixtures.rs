@@ -6,6 +6,17 @@
 //! fixture 只读：createCases 在临时副本上执行，不改动仓内 vault。
 
 use lumir_lib::fs_io;
+use lumir_lib::fs_io::IgnorePolicy;
+
+/// 生产口径的忽略策略（出厂 `vault.rule_files` 清单）：harness / 场景装配要走生产路径的
+/// 同一份规则表，不能用一个「什么都不忽略」的近似——那会让读数与行为都不代表发布形态。
+fn production_policy(root: &std::path::Path) -> IgnorePolicy {
+    let rule_files: Vec<String> = lumir_lib::config::DEFAULT_RULE_FILES
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+    IgnorePolicy::load(root, &rule_files)
+}
 use lumir_lib::link_graph::{parse_links, AnchorStatus, LinkGraph, LinkStatus};
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
@@ -94,7 +105,8 @@ fn load_cases() -> Cases {
 
 /// 从 vault 目录建图：全量枚举 + 读取全部 .md 内容（与 open_vault 的建图路径同口径）。
 fn build_graph(root: &Path) -> LinkGraph {
-    let entries = fs_io::scan_workspace(root).expect("scan fixture vault");
+    let entries =
+        fs_io::scan_workspace(root, &production_policy(root)).expect("scan fixture vault");
     let mut graph = LinkGraph::new();
     for e in &entries {
         if e.kind != lumir_lib::fs_io::FsEntryKind::File {
@@ -229,7 +241,7 @@ fn copy_dir(src: &Path, dst: &Path) {
 /// vault 快照：相对路径 → 内容字节（用于"既有文件零改动"断言）。
 fn snapshot(root: &Path) -> Vec<(String, Vec<u8>)> {
     let mut out = Vec::new();
-    let entries = fs_io::scan_workspace(root).expect("scan temp vault");
+    let entries = fs_io::scan_workspace(root, &production_policy(root)).expect("scan temp vault");
     for e in entries {
         if e.kind == fs_io::FsEntryKind::File {
             out.push((
