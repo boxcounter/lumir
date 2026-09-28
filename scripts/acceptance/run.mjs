@@ -25,6 +25,7 @@ import {
   resetSecondVault,
   resetSessions,
   resetVault,
+  SCENARIO_CONFIG_KEYS,
   stopApp,
   writeConfig,
 } from "./lib/app.mjs";
@@ -37,6 +38,18 @@ const args = process.argv.slice(2);
 const keepApp = args.includes("--keep-app");
 const filters = args.filter((a) => !a.startsWith("--"));
 const scenariosDir = path.join(repoRoot(), "scripts/acceptance/scenarios");
+
+/**
+ * 套件的**语言面**（M284）：所有场景默认跑在这一档界面语言下，场景可用 front-matter 的
+ * `config: { language: … }` 覆盖（场景 60 钉 `en`）。
+ *
+ * 为什么要由套件自己钉住、而不是跟随产品的出厂默认：`[ui] language` 的出厂值会变（M282 把它
+ * 从 `zh` 裁成 `en`），而断言里的 chrome 文案（`关闭 `/`保存并切换`/`vault：…`）只可能是**某一
+ * 档**语言的取值——跟随默认值的场景会在默认值改判的那一刻整批静默变红（M284 的 finding：
+ * `.tower/comms/findings/20260928-worker-impl-vault-perf-bug-m282-en-27-chrome.md`）。
+ * 取值与两侧覆盖边界见套件 README 的「语言面」节（canonical 居所）。
+ */
+const SUITE_LANGUAGE = "zh";
 
 async function listScenarios() {
   const names = (await readdir(scenariosDir)).filter((n) => n.endsWith(".md")).sort();
@@ -149,7 +162,20 @@ async function main() {
       await resetPositions(); // 阅读位置（M194）：同上，残留会让下一场景一打开文件就换位置
       // 场景自己的注册表 / 会话预置：**必须在 launchApp 之前**（见 prepareSeed 的说明）。
       await prepareSeed(scenario.seed);
-      await writeConfig({ mode: "md" });
+      const scenarioConfig = Object.fromEntries(
+        SCENARIO_CONFIG_KEYS.filter((k) => scenario.config?.[k] !== undefined).map((k) => [k, scenario.config[k]]),
+      );
+      // 场景 front-matter 的 `config:`：**在起 app 之前**写进隔离 config.json（M284）。
+      // 早先这里是裸 `writeConfig({mode:"md"})`，场景配置靠 runScenario 里的第二次写 + 一次重启
+      // 生效。折叠到这里之后 app 的**首帧**就是场景声明的起点（与 backlog:366「窗口配置只有一份
+      // 真源」同一取向），也省掉每次约 6–8s 的重启。
+      // 键的白名单是 `SCENARIO_CONFIG_KEYS`（单点真源，`--check` 用同一份挡拼错）；缺省值在场
+      // 时不传（传 `undefined` 会被 writeConfig 忽略，故先滤掉）。
+      await writeConfig({
+        mode: "md",
+        language: SUITE_LANGUAGE,
+        ...scenarioConfig,
+      });
       if (handle) await stopApp(handle);
       handle = await launchApp({ logFile: path.join(root, "app.log") });
       await sleep(1200);

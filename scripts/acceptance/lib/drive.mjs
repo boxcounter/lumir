@@ -67,6 +67,8 @@ export async function settle(cu, pid, { timeoutMs = 30_000 } = {}) {
  * 场景 55 在默认 en 下 30s 未就绪）。因此四组措辞各接受两档：判据的意图是「那个入口在场」，
  * 不是「它是中文的」；语言的判定归场景自己的断言（`ax: { has: ... }` 按文案表取值）。
  * 措辞逐字取自 `src/copy-data.ts` 的 zh / en 列（同一份真源，改文案时这里会一起红）。
+ * 界面语言由套件钉住（run.mjs 的 `SUITE_LANGUAGE`，M284），见 README 的「语言面」节——
+ * 这里的判据接受两档是**为了就绪门与语言面解耦**：门判「那个入口在场」，语言面的判定归场景断言。
  */
 const LANG_PATTERNS = {
   header: /点击查看全部 vault|click to see all vaults/,
