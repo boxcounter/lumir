@@ -31,7 +31,7 @@ export interface CopyEntry {
   lock?: "zh" | "en";
 }
 
-export const COPY = {
+const COPY_TABLE = {
   // -------------------------------------------------------------------------
   // 既有 deck 条目（D1–D158）。多串格的展开与格内顺序见 §格内序。
   // -------------------------------------------------------------------------
@@ -583,8 +583,16 @@ export const COPY = {
   },
 } satisfies Record<string, CopyEntry>;
 
-/** 文案表的键（D 编号，多串格带 `.N` 后缀）。 */
-export type CopyKey = keyof typeof COPY;
+/** 文案表的键（D 编号，多串格带 `.N` 后缀）——由表数据推导，加一条即多一个键。 */
+export type CopyKey = keyof typeof COPY_TABLE;
+
+/**
+ * 文案表（运行时唯一取值入口）。这里做一次**类型加宽**：数据用 `satisfies` 保留每个键的字面
+ * 类型（`CopyKey` 因此是 320 个字面量的联合），而取值侧一律按 `CopyEntry` 看——`enOne` /
+ * `lock` 这类可选属性只声明在少数条目上，不加宽的话 `COPY.D1.enOne` 会被推成「不存在」
+ *（消费者是泛型遍历，不是逐键访问）。
+ */
+export const COPY: Record<CopyKey, CopyEntry> = COPY_TABLE;
 
 /**
  * 后端错误 `code` → 文案表键（change ui-language-i18n 的 D6 裁决：**前端按 code 渲染**，

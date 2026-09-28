@@ -539,6 +539,8 @@ export async function runScenario(ctx, scenario) {
         fontSize: scenario.config.fontSize,
         theme: scenario.config.theme,
         contentWidth: scenario.config.contentWidth,
+        // 界面语言（M282）同形：传了才写，缺省即出厂口径（`en`）。
+        language: scenario.config.language,
       });
       await ctx.restartApp();
     }
@@ -952,6 +954,9 @@ async function doAction(step, { ctx, cu, scenario, vars, pid, evidence }) {
         theme: step.theme !== undefined ? step.theme : cur.ui?.theme,
         // 栏宽（M228）同形沿用：一次 configWrite MUST NOT 抹掉 `ui.content_width`。
         contentWidth: step.contentWidth !== undefined ? step.contentWidth : cur.ui?.content_width,
+        // 界面语言（M282）同形沿用：一次 configWrite MUST NOT 抹掉 `ui.language`
+        //（本场景的第一步就要把语言设成 zh，后续步骤若抹掉它，语言切换的起点就没了）。
+        language: step.language !== undefined ? step.language : cur.ui?.language,
       };
       await writeConfig(next);
       // requireVault: false 只对本步的重启生效（该步期待「未打开空态」，就绪门里「树里有

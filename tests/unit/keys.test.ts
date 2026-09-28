@@ -31,8 +31,10 @@ import type { CommandRuntime, KeyBinding } from "../../src/keys.ts";
 /** 绑定的来由文本（M282 起绑定只存文案表的键，文本住在 src/copy-data.ts）。
  *  这里显式按 `zh` 取值——既有断言的措辞判据（「表内」/「WebKit」/「muda」）是中文列的写法，
  *  `en` 面的断言在 tests/unit/copy.test.ts 的漂移门禁里（两列与 deck 逐字相等）。 */
-function docTextOf(binding: { docKey: CopyKey; docParams?: Record<string, string | number> }): string {
-  return t(binding.docKey, binding.docParams, "zh");
+function docTextOf(
+  binding: { docKey: CopyKey; docParams?: Record<string, string | number> } | undefined,
+): string {
+  return binding === undefined ? "" : t(binding.docKey, binding.docParams, "zh");
 }
 
 test("normalizeKey：修饰别名归一、定序固定、键名单字符大写", () => {
@@ -194,8 +196,8 @@ test("⌘} / ⌘{ 可由 [keys] 重绑 / 解绑（默认键位单段无空白）
 
 test("Keymap：同一序列绑两次是表写错了，构造即抛错", () => {
   const duplicate: KeyBinding[] = [
-    { key: "Cmd-s", command: "document.save", scope: "global", doc: "" },
-    { key: "cmd-S", command: "document.save", scope: "global", doc: "" },
+    { key: "Cmd-s", command: "document.save", scope: "global", docKey: "D259" },
+    { key: "cmd-S", command: "document.save", scope: "global", docKey: "D259" },
   ];
   assert.throws(() => new Keymap(duplicate), /重复绑定/);
 });
@@ -287,8 +289,8 @@ test("Keymap：事件目标是编辑器之外的可编辑宿主时，只拦打�
   const host = fakeWindow();
   const { runtime, runs } = recordingRuntime();
   const bindings: KeyBinding[] = [
-    { key: "s", command: "document.save", scope: "global", doc: "" },
-    { key: "Cmd-Shift-o", command: "toc.toggle", scope: "global", doc: "" },
+    { key: "s", command: "document.save", scope: "global", docKey: "D259" },
+    { key: "Cmd-Shift-o", command: "toc.toggle", scope: "global", docKey: "D259" },
   ];
   let inEditor = false;
   new Keymap(bindings).attach(host.target, runtime, { isEditorEvent: () => inEditor });
@@ -405,7 +407,7 @@ test("Keymap：多段 chord 要先吞下第一段，超时后 pending 清空", (
     const host = fakeWindow();
     const { runtime, runs } = recordingRuntime();
     const chorded: KeyBinding[] = [
-      { key: "Ctrl-x Ctrl-s", command: "document.save", scope: "global", doc: "两段 chord" },
+      { key: "Ctrl-x Ctrl-s", command: "document.save", scope: "global", docKey: "D259" },
     ];
     new Keymap(chorded).attach(host.target, runtime, { isEditorEvent: () => true });
 
@@ -729,8 +731,8 @@ test("Keymap：命令级门为假时不消费事件、不执行命令；为真�
   const { runtime, runs } = recordingRuntime();
   const bindings: KeyBinding[] = [
     // 形态与 [keys] 覆盖产出的绑定一致：没有 when 字段（条件只能来自命令级门）。
-    { key: "Cmd-j", command: "table.toggle-fullscreen", scope: "global", doc: "" },
-    { key: "Cmd-s", command: "document.save", scope: "global", doc: "" },
+    { key: "Cmd-j", command: "table.toggle-fullscreen", scope: "global", docKey: "D259" },
+    { key: "Cmd-s", command: "document.save", scope: "global", docKey: "D259" },
   ];
   let hit = false;
   new Keymap(bindings).attach(host.target, runtime, {
@@ -760,7 +762,7 @@ test("Keymap：命令级门为假时不消费事件、不执行命令；为真�
 test("Keymap：不传 commandGate 时行为与既有逐条一致（缺省恒真）", () => {
   const host = fakeWindow();
   const { runtime, runs } = recordingRuntime();
-  const bindings: KeyBinding[] = [{ key: "Cmd-j", command: "table.toggle-fullscreen", scope: "global", doc: "" }];
+  const bindings: KeyBinding[] = [{ key: "Cmd-j", command: "table.toggle-fullscreen", scope: "global", docKey: "D259" }];
   new Keymap(bindings).attach(host.target, runtime, { isEditorEvent: () => true });
 
   const event = keyEvent({ key: "j", metaKey: true });
@@ -829,7 +831,7 @@ test("块级复制命令：editor 作用域、默认不绑键，且命中条件�
   // 命中条件（caret 在渲染为 grid 的表内 / 代码块内）落在装配层的命令级门：为假时事件不被消费。
   const host = fakeWindow();
   const { runtime, runs } = recordingRuntime();
-  const bindings: KeyBinding[] = [{ key: "Cmd-j", command: "block.copy", scope: "editor", doc: "" }];
+  const bindings: KeyBinding[] = [{ key: "Cmd-j", command: "block.copy", scope: "editor", docKey: "D259" }];
   let hit = false;
   new Keymap(bindings).attach(host.target, runtime, {
     isEditorEvent: () => true,

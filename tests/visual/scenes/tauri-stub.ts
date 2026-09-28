@@ -115,6 +115,10 @@ export interface VaultFixture {
      *  `UiConfig::default()` 同值）——不传的场景天然跑「md 默认无行号、输入条在场时出现」，
      *  不会因为桩扩了形状而变形态。越界值的回落 + warning 归 Rust 侧（cargo test）。 */
     markdown_line_numbers?: "on-demand" | "always" | "off";
+    /** 界面语言（M282，change ui-language-i18n）：桩缺省 `zh`（**与产品的出厂默认 `en` 不同**，
+     *  理由见 mockConfig 处的注释——既有整页基线是 zh 形态，钉住它才让基线继续作「结构与外观」
+     *  的回归面）。场景要验 en 面时从这里给 `"en"`。 */
+    language?: "en" | "zh";
     keys?: Record<string, string | null>;
     warnings?: string[];
   };

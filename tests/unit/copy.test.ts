@@ -186,11 +186,15 @@ test("两列同形条目（D77 / D80 / D114）不分语言", () => {
 test("t()：正常插值，缺参报错（不静默留空位），多传参数不报错", () => {
   assert.equal(t("D20", { heading: "标题一" }, "zh"), "标题未找到：标题一");
   assert.equal(t("D20", { heading: "H1" }, "en"), "Heading not found: H1");
-  assert.throws(
-    () => t("D20", {}, "zh"),
-    (error: Error) => error.message.includes("D20") && error.message.includes("heading"),
-    "缺参必须抛错，且错误信息带键名与缺失的占位名",
-  );
+  let thrown: unknown;
+  try {
+    t("D20", {}, "zh");
+  } catch (error) {
+    thrown = error;
+  }
+  // 缺参必须抛错，且错误信息带键名与缺失的占位名（不然上屏的是一个查不出来的空槽）
+  assert.ok(thrown instanceof Error, "缺参必须抛错");
+  assert.ok(thrown.message.includes("D20") && thrown.message.includes("heading"), thrown.message);
   assert.equal(t("D20", { heading: "H1", extra: "x" }, "en"), "Heading not found: H1");
 });
 

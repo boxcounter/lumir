@@ -2608,3 +2608,39 @@ living spec 两处已随本 change 改写口径（`keymap-commands` 的「轨道
   定点断言与 token 形态专测 / spec 对账无偏差 / 场景 45 与真机 2/2 PASS），第 11 项（§5.1 归档评审核对）
   如实不勾——它是节点 2 的动作。证据：`openspec/changes/sync-vault-registry-dir-spec/**`、`REVIEW.md`
   第 16 条、`src/editor.ts` 注释、`gate quick` 9/9 PASS（SKIP 1 = `tsc-visual` 依赖未装）、单测 375/375。
+
+## M282（change `ui-language-i18n` 实现批，2026-09-28）遗留
+
+- **后端错误文案的参数面（D6 的后半）未落地：`CommandError.params` 尚未存在**。现状：`src/copy.ts`
+  的 `errorText(e)` 已按 `code` 渲染（`ERROR_COPY` 覆盖 48 个 code），但只有**无占位名**的那批 code
+  能上屏英文（`vault_not_open` / `config_write_failed` / `fs_read_only` / `document_conflict` /
+  `fs_name_invalid` 等）；带占位名的 code（`fs_not_found` / `fs_read_failed` / `fs_already_exists` /
+  `open_url_rejected` / `link_path_rejected` / `recovery_*` / `fs_rename_failed` / `fs_too_large` …）
+  在 en 界面下走 `errorText` 的缺参兜底，回落成 Rust 的**中文** `message`。**待裁决/待修**：
+  ① `CommandError` 加 `params: HashMap<String,String>`（`#[serde(default, skip_serializing_if = "HashMap::is_empty")]`，
+  ts-rs 侧 `params?: Record<string, string>`）+ `with_params(...)` 构造链；
+  ② 按「模板里的 `{name}` 就是 Rust `format!` 的内联变量名」补参数，`e` 一类的 Display 值映射成
+  `reason`（文案表统一用 `{reason}`）；③ 补一条「每个带占位名的 code 至少有一个构造点提供了全部占位名」
+  的门禁（`tests/unit/error-text.test.ts` 的扩展或 Rust 侧单测）。**不做也没坏**：兜底是当前行为，
+  无回归；但 en 界面下「最先撞见」的那批提示仍是中文，正是 D6 要消灭的半覆盖。
+- **验收套件把「环境无效运行」与「产品判红」都表达成 0/1 PASS + 退出码 1**（M281 的 low finding，
+  `.tower/comms/findings/20260928-worker-impl-goto-line-c-improve-0-1-pass-1.md`）：环境类失败
+  （磁盘水位、app 没起来、端口被占）与产品类失败在读数上不可区分，复盘时要人读 run.log。**待修**：
+  run.mjs 的退出码分档（0 = 全 PASS、1 = 有产品失败、2 = 环境无效），`status.txt` 同步分档。
+- **原生目录选择器标题未按语言取值**（tasks §5.4）：`src-tauri/src/commands.rs` 的
+  `.set_title("选择 vault 目录")` 仍是固定中文。默认语言改判 `en` 后，未配置用户看到的是中文标题
+  （与界面其余部分不同语言）。**待修**：弹出时读一次 `config::load()` 的语言再设标题。
+- **启动首帧闪烁未实测**（tasks §1.4 / §9.4）：`ui.language` 经异步 `config_get` 到达，而 shell 与
+  树空态在配置到达前就已挂载 ⇒ 配置为 `zh` 的用户可能先闪一帧英文。**未验**（本批未起真机实例），
+  结论与帧证据留在 PR 的覆盖声明里；**待修**：按 design §9 的两条候选缓解之一实测并闭环。
+- **视觉层的覆盖选择如实登记**：`tests/visual/scenes/tauri-stub.ts` 的桩把界面语言**钉在 `zh`**
+  （与产品出厂默认 `en` 不同），理由是既有整页基线全是 zh 形态、它们承担「结构与外观」的回归面；
+  `en` 面由新场景 `tests/visual/scenes/m282-ui-language.spec.ts` 覆盖。**代价**：视觉套件不再代表
+  产品的默认语言面；若要让基线代表默认语言，需一次性重拍全部整页基线（人肉裁决点）。
+- **zh 侧唯一一处可见措辞变化**：`src/vault-switcher.ts` 的相对时间改走
+  `Intl.RelativeTimeFormat`，zh 下的数字与量词之间不再有空格（`5 分钟前` → `5分钟前`）。这是
+  design §6.2「相对时间走 Intl」的直接后果，已在 `tests/unit/vault-switcher.test.ts` 就地标注；
+  若 Alex 要保留空格，则相对时间不能走 `Intl`（回到查表），两条不能同时成立。
+- **日志文本语言的口径待确认（沿 proposal 的报备）**：终裁说「日志消息固定用英文」，而现状日志
+  `message` 是中文（事件名 / 字段名是英文标识符）。本批按「日志面不进语言面、文本不动」执行，
+  未改写任何日志文本。
