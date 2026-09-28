@@ -68,7 +68,7 @@ import type { TreeMenuAction, TreeMenuTarget } from "./tree-menu";
 import { createLinkFollow } from "./link-follow";
 import { createTabs } from "./tabs";
 import { createBindingsPanel } from "./bindings-panel";
-import { WIDTH_SAVE_FAILED_TEXT, createContentWidthDrag } from "./content-width";
+import { WIDTH_HANDLE_LABEL, WIDTH_SAVE_FAILED_TEXT, createContentWidthDrag } from "./content-width";
 import { createTitlebarIdentity } from "./modeline";
 import {
   THEME_INDICATOR_LABEL,
@@ -92,6 +92,7 @@ import { logEvent, sampleCallback } from "./diagnostics";
 import type { FsEntry } from "./bindings/FsEntry";
 import type { UiTheme } from "./bindings/UiTheme";
 import type { VaultInfo } from "./bindings/VaultInfo";
+import type { VaultStatus } from "./bindings/VaultStatus";
 import type { VaultListEntry } from "./bindings/VaultListEntry";
 import { extensionOf, codeLanguageOfPath, isEditablePath, mimeTypeOf, resolveByNameUnique } from "./preview/attachments";
 import { openSearch } from "./search";
@@ -1224,6 +1225,20 @@ function syncModelineMeta(): void {
 onRelabel(() => {
   syncDirtyIndicator();
   syncModelineMeta();
+  // 主题钮的悬停提示 / 读屏名由 `applyTheme` 写，而它在启动块里跑在 `applyLanguage` **之前**
+  //（那时 `<html lang>` 还没写，取值落到默认档）——这里按当前主题重写一遍。
+  const theme = currentTheme(document.documentElement);
+  if (theme !== null) applyTheme(theme);
+  // 树空态那一行必须**重新取值**而不是重放旧字符串：`RESTORING_NOTICE()` 在显示的那一刻就
+  // 解析成了字符串，重放等于把切换前的语言钉死（同族的还有后端透传的 notice，那是真值，原样重放）。
+  if (lastVaultStatus !== null && lastVaultStatus.vault === null && !vaultLoaded) {
+    tree.showEmpty(lastVaultStatus.restore_pending ? RESTORING_NOTICE() : lastVaultStatus.notice);
+  }
+  // 栏宽手柄的读屏名：`createShell` 在挂载时写死（D120），它没有「打开」这个点时重写的机会，
+  // 因此必须走重绘注册（design §5.2 的不变量：挂载后无法重写的语言相关文本 MUST NOT 存在）。
+  const handleLabel = WIDTH_HANDLE_LABEL();
+  shell.widthHandles.left.setAttribute("aria-label", handleLabel);
+  shell.widthHandles.right.setAttribute("aria-label", handleLabel);
 });
 
 /** 已推给后端的 dirty 镜像值（M149）：只在**变化**时上报。
@@ -1541,9 +1556,12 @@ const RESTORING_NOTICE = (): string => t("D95");
  *  ——启动时完成信号与首次拉取可能同时到达，重复装载会白走一遍编辑器整批复位与崩溃备份入口；
  *  ② 尚未到终态的空态只在**没装载过**时呈现——装载之后再到达的「恢复中 / 无 vault」响应是
  *  更早那次拉取的迟到响应，不能把已装载的树降级成空态。 */
+let lastVaultStatus: VaultStatus | null = null;
+
 function refreshVaultStatus(): Promise<void> {
   return vaultCurrent()
     .then((status) => {
+      lastVaultStatus = status;
       if (status.vault) {
         if (status.vault.root === loadedRoot) return;
         loadVault(status.vault.root, status.vault.entries, status.vault.vault_id, true);

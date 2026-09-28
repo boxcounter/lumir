@@ -1,4 +1,11 @@
 import type { Page } from "@playwright/test";
+import { setLanguageRoot } from "../../../src/copy";
+
+// 场景**在 Node 侧**解析文案时的语言档（M282，change ui-language-i18n）：locale 的决定权在
+// 浏览器里（`<html lang>` 由被测应用按 `ui.language` 写），而场景对纯函数 / 常量的断言发生在
+// Node——把这一侧的读取口钉在 `zh`（与桩的 `ui.language = "zh"` 同一档），否则「Node 侧取到 en、
+// 页面渲染 zh」会让断言以不相干的理由变红（实测：相对时间 / 降级归因句 / 键位来由三类）。
+setLanguageRoot(() => ({ lang: "zh-Hans" }));
 
 // 无 Tauri 后端的 chromium 里跑真实前端：按 @tauri-apps/api 的
 // __TAURI_INTERNALS__ 形状打桩（参考 node_modules/@tauri-apps/api/mocks.js），

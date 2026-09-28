@@ -552,6 +552,8 @@ class VaultSwitcher implements VaultSwitcherHandle {
   private readonly list: HTMLDivElement;
   private readonly empty: HTMLParagraphElement;
   private readonly addRow: HTMLButtonElement;
+  /** 底部新增入口的可见文本（D104 的前半）：构造期写死，打开时重写（同 popover 的其余静态文案）。 */
+  private readonly addLabel: HTMLSpanElement;
   private readonly separator: HTMLDivElement;
   /** 匹配与查询状态的唯一实现（与大纲浮层共用同一份，见文件头）。 */
   private readonly filter: ListFilter = createListFilter();
@@ -614,6 +616,7 @@ class VaultSwitcher implements VaultSwitcherHandle {
     const addLabel = document.createElement("span");
     addLabel.textContent = ADD_TEXT();
     addRow.append(plus, addLabel);
+    this.addLabel = addLabel;
     popover.append(input, list, empty, separator, addRow);
     deps.mount.append(popover);
     this.popover = popover;
@@ -692,6 +695,16 @@ class VaultSwitcher implements VaultSwitcherHandle {
     const entry = this.deps.entry();
     if (entry === undefined) return; // 未装载 vault：没有列表入口，命令也无操作
     const token = ++this.openToken;
+    // 浮层壳的静态文案（列表读屏名 / 筛选框的读屏名与占位 / 底部新增入口的提示）在**构造期**
+    // 写在 DOM 上，而构造早于配置到位——每次打开重写一遍（design §5.2 的不变量；打开是它
+    // 唯一可见的时刻，因此这是最省的「可重跑写入路径」）。
+    this.list.setAttribute("aria-label", POPOVER_LABEL());
+    this.input.setAttribute("aria-label", FILTER_LABEL());
+    this.input.placeholder = FILTER_PLACEHOLDER();
+    this.addRow.title = ADD_TITLE();
+    this.addRow.setAttribute("aria-label", ADD_TITLE());
+    this.addLabel.textContent = ADD_TEXT();
+    this.empty.textContent = NO_MATCH_TEXT();
     // 打开 = 空查询 + 全量态起点：查询随关闭丢弃（spec），这里显式清一遍。
     this.input.value = "";
     this.filter.reset();

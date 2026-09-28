@@ -181,6 +181,10 @@ export function createGotoLinePrompt(options: GotoLinePromptOptions): GotoLinePr
       const wasOpen = opened;
       fallbackLine = defaultLine;
       totalLines = total;
+      // 输入条的读屏名与占位在构造期写在 DOM 上（挂载早于配置到位），打开时重写一遍
+      //（design §5.2 的不变量：挂载后的语言相关文本 MUST 有一条可重跑的写入路径）。
+      input.setAttribute("aria-label", GOTO_LINE_LABEL());
+      input.placeholder = GOTO_LINE_PLACEHOLDER();
       hint.textContent = gotoLineTotalText(total);
       input.value = String(defaultLine);
       popover.hidden = false;

@@ -178,6 +178,9 @@ class TreeContextMenu implements TreeContextMenuHandle {
     this.target?.anchor.classList.remove(MENU_TARGET_CLASS);
     this.target = target;
     target.anchor.classList.add(MENU_TARGET_CLASS);
+    // 菜单壳的读屏名在**构造期**就写在 DOM 上（挂载早于配置到位），每次打开重写一遍——
+    // 打开是它唯一可见的时刻，因此这是最省的「可重跑写入路径」（design §5.2 的不变量）。
+    this.menu.setAttribute("aria-label", MENU_LABEL());
     this.render(target.kind);
     this.open_ = true;
     this.menu.hidden = false;

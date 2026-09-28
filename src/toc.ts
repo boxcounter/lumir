@@ -65,7 +65,7 @@ import { itemIndexAt, itemPath, peekStructureEntries, structureEntries, supports
 import type { StructureEntry } from "./code-structure";
 import { keyToken } from "./keys";
 import { FILTER_LABEL, FILTER_PLACEHOLDER, NO_MATCH_TEXT, createListFilter } from "./list-filter";
-import { t } from "./copy";
+import { onRelabel, t } from "./copy";
 import type { ListFilter } from "./list-filter";
 import { sampleCallback } from "./diagnostics";
 import { focusPreservingReadingPosition } from "./scroll-position-view";
@@ -258,6 +258,8 @@ class Toc implements TocHandle {
   private readonly input: HTMLInputElement;
   private readonly list: HTMLDivElement;
   private readonly empty: HTMLParagraphElement;
+  /** 浮层底部的键位提示行（D86）：构造期写死，语言切换后经 `relabel()` 重写。 */
+  private readonly hint: HTMLParagraphElement;
   private readonly hasFile: () => boolean;
   private readonly context: () => TocContext;
   private readonly toast: (text: string) => void;
@@ -337,8 +339,14 @@ class Toc implements TocHandle {
     this.input = input;
     this.list = list;
     this.empty = empty;
+    this.hint = hint;
 
     this.indicator.title = INDICATOR_TITLE();
+    // 指示段的标题是**常驻 chrome**（浮层没开时它也在），因此除了打开时刷新，还要挂进重绘注册：
+    // 语言切换后即使不打开浮层，悬停提示也必须是新语言（design §5.2 的不变量）。
+    onRelabel(() => {
+      this.indicator.title = INDICATOR_TITLE();
+    });
     // mousedown 不夺焦点：焦点留在编辑器（或浮层）时，点击只是「切换」，不会先触发浮层的
     // blur 关闭再重新打开（那会让开→关→开连成一串）。
     this.indicator.addEventListener("mousedown", (event) => event.preventDefault());
@@ -378,7 +386,19 @@ class Toc implements TocHandle {
     this.attach();
   }
 
+  /** 浮层的静态文案（指示段提示 / 列表读屏名 / 筛选框的读屏名与占位 / 底部提示行）在**构造期**
+   *  写在 DOM 上，而构造早于配置到位——重绘注册负责在语言切换后重写（design §5.2 的不变量）。 */
+  private relabel(): void {
+    this.indicator.title = INDICATOR_TITLE();
+    this.list.setAttribute("aria-label", POPOVER_LABEL());
+    this.input.setAttribute("aria-label", FILTER_LABEL());
+    this.input.placeholder = FILTER_PLACEHOLDER();
+    this.hint.textContent = POPOVER_HINT();
+    this.empty.textContent = NO_MATCH_TEXT();
+  }
+
   toggle(): void {
+    this.relabel(); // 打开是浮层唯一可见的时刻，顺便把构造期写死的文案刷新一遍
     if (this.open) {
       this.close();
       return;

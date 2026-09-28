@@ -563,6 +563,9 @@ class TabContextMenu implements TabContextMenuHandle {
 
   open(session: EditorSession, at: { x: number; y: number }): void {
     this.target = session;
+    // 菜单壳的读屏名在**构造期**写在 DOM 上（挂载早于配置到位），每次打开重写一遍——
+    // 打开是它唯一可见的时刻（M282 的 design §5.2 不变量）。
+    this.menu.setAttribute("aria-label", TAB_MENU_LABEL());
     this.render();
     this.open_ = true;
     this.menu.hidden = false;

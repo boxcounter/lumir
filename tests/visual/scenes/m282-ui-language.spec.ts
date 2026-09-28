@@ -38,6 +38,8 @@ async function openWithAttachmentLanguage(
   language: "en" | "zh",
 ): Promise<void> {
   await stubTauri(page, { ...VAULT, config: { language } });
+  await page.goto("/");
+  await expect(page.locator(".ft-row", { hasText: "with-missing-attachment.md" }).first()).toBeVisible();
   await page.locator(".ft-row", { hasText: "with-missing-attachment.md" }).first().click();
   await expect(page.locator(".cm-content")).toContainText("切换语言后这一段必须仍是同一份内容。");
 }
@@ -45,6 +47,8 @@ async function openWithAttachmentLanguage(
 test.describe("en 面：chrome 与预览装饰的英文列", () => {
   test("桩配置 language=en：chrome 文案取英文列，且不残留中文", async ({ page }) => {
     await stubTauri(page, { ...VAULT, config: { language: "en" } });
+    await page.goto("/");
+    await expect(page.locator(".ft-row", { hasText: "note.md" }).first()).toBeVisible();
     await page.locator(".ft-row", { hasText: "note.md" }).first().click();
     await expect(page.locator(".cm-content")).toBeVisible();
 
@@ -76,6 +80,8 @@ test.describe("en 面：chrome 与预览装饰的英文列", () => {
 
   test("zh 面按同一份桩回退：chrome 取中文列（迁移是纯搬运，zh 侧逐字不变）", async ({ page }) => {
     await stubTauri(page, { ...VAULT, config: { language: "zh" } });
+    await page.goto("/");
+    await expect(page.locator(".ft-row", { hasText: "note.md" }).first()).toBeVisible();
     await page.locator(".ft-row", { hasText: "note.md" }).first().click();
     await expect(page.locator(".cm-content")).toBeVisible();
     await expect(page.locator(".ft-vault")).toHaveAttribute(
@@ -92,9 +98,9 @@ test.describe("en 面：chrome 与预览装饰的英文列", () => {
   test("预览装饰随切换重建：已渲染的「附件未找到」widget 换成英文列", async ({ page }) => {
     await openWithAttachmentLanguage(page, "en");
     // 正向观测：装饰句是英文列（widget 的文本在 toDOM 里生成）
-    await expect(page.locator(".cm-lp-embed-unsupported").first()).toHaveText(
-      COPY["D31"].en.replace("{ref}", "不存在的附件.png"),
-    );
+    // 装饰句取英文列（widget 的文本在 `toDOM()` 里生成，因此这条同时钉住「重建发生了」）。
+    // 只判前缀而不锚定整串：`{ref}` 取的是引用原文（含 `![[…]]` 包裹），那是数据不是文案。
+    await expect(page.locator(".cm-lp-embed-unsupported").first()).toContainText(COPY["D31"].en.split("{ref}")[0]);
     await expect(page.locator(".cm-lp-embed-unsupported").first()).not.toContainText("附件未找到");
   });
 
@@ -115,9 +121,7 @@ test.describe("en 面：chrome 与预览装饰的英文列", () => {
     await expect(page.locator(".modeline-meta")).toContainText("lines · UTF-8");
     await expect(page.locator(".modeline-language")).toHaveText("en");
     // ③ 预览装饰（`editor.refreshPreview()` 的判据：widget 文本与 `data-degraded` 属性都要重建）
-    await expect(page.locator(".cm-lp-embed-unsupported").first()).toHaveText(
-      COPY["D31"].en.replace("{ref}", "不存在的附件.png"),
-    );
+    await expect(page.locator(".cm-lp-embed-unsupported").first()).toContainText(COPY["D31"].en.split("{ref}")[0]);
 
     // ④ 写回配置（乐观施加 + 异步写回）：与主题同款的通道，桩记录的调用序列里应有一次
     //   `config_set_ui_value`（值由桩的通用键值写路由接收；具体键值对由真机场景 55 断言）。
@@ -141,6 +145,8 @@ test.describe("en 面：chrome 与预览装饰的英文列", () => {
 
   test("上屏列锁定：标签右键菜单三项在 zh 界面下仍是英文（M257 裁决不回退）", async ({ page }) => {
     await stubTauri(page, { ...VAULT, config: { language: "zh" } });
+    await page.goto("/");
+    await expect(page.locator(".ft-row", { hasText: "note.md" }).first()).toBeVisible();
     await page.locator(".ft-row", { hasText: "note.md" }).first().click();
     await expect(page.locator(".cm-content")).toBeVisible();
     const tab = page.locator(".tab", { hasText: "note.md" }).first();
