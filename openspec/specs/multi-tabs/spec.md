@@ -16,7 +16,7 @@ MUST NOT 在切换时重新解析文档。
 切走再切回时它们 SHALL 原样回来：撤销栈 MUST NOT 被清空，语法树 MUST NOT 被重新解析。
 
 标签顺序 SHALL 等于打开顺序。每个标签 SHALL 逐标签持有：文档路径、dirty 判定基准
-（cleanDoc）、dirty 标记、预览标记、离开时的滚动位置。
+（cleanDoc）、dirty 标记、离开时的滚动位置。
 
 滚动位置 MUST 单独逐标签存取——它不在 `EditorState` 里（只存在于 `scrollDOM`），
 因此切换标签 MUST NOT 继承上一篇的滚动位置。
