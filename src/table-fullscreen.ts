@@ -84,10 +84,10 @@ export function createTableFullscreenState(surface: TableFullscreenSurface): Tab
  *     **高度**，留着会让快照出现一块与任何内容都不对应的空白（实测读数见 tasks 2.4 的现场）。
  *     摘掉之后快照 = 打开那一刻**已渲染**的那部分表格——这正是「打开那一刻渲染态 grid 的副本」
  *     的字面口径；「长表只看到已渲染的部分」写进 change 的已知边界。
- *   - 选区层：**实测本应用未装 `drawSelection`**（1.1 读数：DOM 里没有 `.cm-selectionLayer` /
- *     `.cm-cursorLayer`，选区走原生 DOM 选区），克隆在脱离文档的树里天然不带选区视觉。选择器
- *     仍列一遍是纯粹的防御——将来装上 drawSelection 或把选区层挪进内容区时，快照不会静默带上
- *     「当前选区」这个编辑态假 affordance。
+ *   - 选区层：M285（装 `drawSelection`）之前本应用走原生 DOM 选区、DOM 里没有 `.cm-selectionLayer`
+ *     / `.cm-cursorLayer`（1.1 读数）；**M285 起这两个层真实在场**，克隆会连「当前选区」这个
+ *     编辑态假 affordance 一起带走。因此下面这两个选择器从「纯防御」变成真拦得住的那一条——
+ *     快照是只读物，不该留着「编辑器运行态」的痕迹。
  */
 /** 快照容器的 class（样式、主题 scope 镜像与断言三处共用一份字面量）。 */
 const SNAPSHOT_CLASS = "lumir-table-fs-snapshot";

@@ -111,15 +111,9 @@ export const codeBindingTheme = EditorView.theme({
 export const livePreviewTheme = EditorView.theme({
   ".cm-editor": { color: "var(--text)", backgroundColor: "var(--content-bg)", fontFamily: "var(--editor-font-family)" },
   ".cm-line.cm-lp-block-separator": { fontSize: "0", lineHeight: "0", height: "0", minHeight: "0" },
-  // 选中前景：light/dark 不写（继承 --text）；eink 是黑底反白（tokens 文档 eink 规则④）。
-  // `--sel-text` 只在 eink 档有定义（见 src/style.css 的 token 区注释），因此它只出现在
-  // 下面的 eink 覆盖里。
-  ".cm-selectionBackground, ::selection": { backgroundColor: "var(--sel)" },
-  [`:root[data-theme="eink"] & .cm-selectionBackground, :root[data-theme="eink"] & ::selection`]: {
-    backgroundColor: "var(--sel)",
-    color: "var(--sel-text)",
-  },
-  ".cm-cursor, .cm-dropCursor": { borderLeftColor: "var(--text)" },
+  // 选中底色 / 选中前景 / 光标色**不在这里**：这三条的真源在 `src/editor.ts` 的 baseTheme
+  // （两模式共用，M285 起以 `.cm-selectionBackground` 为唯一落点）。此前本文件里重复了一份同值
+  // 声明，与 baseTheme 构成两处写入点（REVIEW.md 第 8 条），M285 一并收口。
   // 标题层级阶梯（change heading-hierarchy-ramp，稿 A 裁决 2026-09-25）：H1–H6 六级纯字号阶梯
   // 21/18/16/15/14/13，字重全档 650（字重不承担层级），零装饰（H6 的 italic 与 --text-2 退场——
   // italic 对 CJK 是伪斜体，颜色承担层级在 eink 下不成立）。字号经 token 取值：

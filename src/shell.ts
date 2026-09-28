@@ -1,6 +1,6 @@
 // app-shell 布局骨架 —— M1 接缝（架构复查 P2-7）。
 import { WIDTH_HANDLE_LABEL } from "./content-width";
-import { t } from "./copy";
+import { onRelabel, t } from "./copy";
 // 只建容器：标题栏（traffic 灯区 + 标签 + 产品标识块）/ 侧栏 / 编辑器 / modeline 四区，
 // 与文件树 / 编辑器的挂载点。文件树由 src/tree.ts 挂载（add-vault-workspace）；大纲的
 // 当前位置指示段与浮层由 src/toc.ts 维护（M148，M211 从已删除的标题区迁到 modeline）；
@@ -86,7 +86,18 @@ export function createShell(mount: HTMLElement): AppShell {
   const tabStrip = document.createElement("nav");
   tabStrip.className = "tabstrip";
   tabStrip.setAttribute("role", "tablist");
-  tabStrip.setAttribute("aria-label", t("D88"));
+  // 读屏名的写入路径（M285）：**唯一写入点**，且能在运行期重跑。此前它只在构造期取一次
+  // `t("D88")`——而本模块在配置到达之前构造（`index.html` 无 `lang`，取值落默认档 en），
+  // 配置为 zh 时读屏名就永久停在 `Open documents`（M284 finding：真机场景 35 在
+  // `ui.language = zh` 下红在 `AXTabGroup (Open documents)`，而同一屏其余 chrome 都是 zh）。
+  // 违反的不变量是 M282 design §5.2 的「任何承载语言相关文案的长驻元素 MUST 有一条能在运行期
+  // 重跑它的写入路径」；修法就是这条路径（与 `src/toc.ts` 的指示段 / `src/tree.ts` 的树头
+  // 入口同形）。`renderTabs` 只重建标签条目、不碰容器，因此容器这条不能寄望于它。
+  const applyTabStripLabel = (): void => {
+    tabStrip.setAttribute("aria-label", t("D88"));
+  };
+  applyTabStripLabel();
+  onRelabel(applyTabStripLabel);
   tabStrip.hidden = true;
   // 右端产品标识块（M236，D1 裁决：右端）：纯展示文本（span 不是 clickable 元素，
   // drag.js 不为它阻断拖拽——标识块上按下拖拽窗口仍成立，场景 39 覆盖）。三段分离是

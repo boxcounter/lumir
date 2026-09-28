@@ -159,6 +159,22 @@ test.describe("en 面：chrome 与预览装饰的英文列", () => {
     await expect(menu.getByRole("menuitem", { name: COPY["D151"].en, exact: true })).toBeVisible();
   });
 
+  // M285：标签段的读屏名（D88）是**构造期**写死的长驻 chrome（`src/shell.ts` 装配时取一次
+  // `t("D88")`，而那时配置还没到达、取值落默认档 `en`），此前没有重跑路径 ⇒ zh 配置下
+  // `AXTabGroup` 永久停在 `Open documents`（M284 的真机现场：同一屏其余 chrome 都是 zh，只有
+  // 标签段是 en；finding `20260928-...-relabel-zh-axtabgroup-en.md`）。修法是把它抽成函数并挂进
+  // `onRelabel`——本用例判的就是那条重跑路径真的接上了：同一元素上的值随语言切换而变。
+  test("标签段的读屏名跟着语言走（M285：容器 aria-label 的重跑路径）", async ({ page }) => {
+    await openWithAttachmentLanguage(page, "zh");
+    // 起点：zh 桩下标签段在场（有打开的文件），读屏名取中文列——修前这里是英文列
+    await expect(page.locator(".tabstrip")).toHaveAttribute("aria-label", COPY["D88"].zh);
+    // 反向：同一 DOM 元素上切到 en 后取英文列（证明那不是「zh 恰好等于初始值」的巧合）
+    await page.locator(".cm-content").click();
+    await page.keyboard.press("Meta+Shift+L");
+    await expect(page.locator(".modeline-language")).toHaveText("en");
+    await expect(page.locator(".tabstrip")).toHaveAttribute("aria-label", COPY["D88"].en);
+  });
+
   test("取值门禁的运行时对照：zh 与 en 两态下同一元素的文本只差语言列（单一取值点）", async ({ page }) => {
     await openWithAttachmentLanguage(page, "en");
     const enText = await page.locator(".ft-vault").getAttribute("aria-label");
