@@ -118,8 +118,116 @@ export async function resetSecondVault() {
   return vault;
 }
 
+/** 生成「复刻真实形状」的批量 vault 内容（M283，change vault-switch-restore-perf 的 1.3）。
+ *
+ *  形状口径（M265 §一 在真实 vault 上实测的 scan-visible 规模）：**2142 文件 / 426 目录 /
+ *  1341 个 md / 7.01MB md**、行长正常（~78 字符/行，含标题与 wikilink）、含一个
+ *  `node_modules` 用于验证 `IGNORED_NAMES` 生效。收益：验收与读数都跑在**与 Alex 真实 vault
+ *  同形状**的合成 vault 上——M252 的稀疏单行放大器（48ms/MB）已被 M265 判为测量假象，
+ *  **MUST NOT** 再拿它当规模口径。
+ *
+ *  为什么生成而不是入库：7MB × 2500 个文件进仓库是不可接受的体积；生成是确定性的（固定种子），
+ *  跑一次约 1–3s，产物在 /tmp（套件按场景重置）。与 Rust 侧的读数 harness
+ *  （`src-tauri/tests/vault_open_readings.rs`，同形状参数、独立实现）互为旁证：**两边是同一份
+ *  fixture 规格的两个实现**，改形状时一起改（那条是 release 直调生产函数的读数工具，这条给真机
+ *  场景用）。
+ *
+ *  `spec` 可覆盖任一档（缺省即真实形状）：markdown / files / dirs / mdBytes / maxMdBytes / ignoredMd。 */
+export async function generateBulkVault(spec = {}) {
+  const mdCount = spec.markdown ?? 1341;
+  const otherCount = spec.files ?? 2142 - mdCount;
+  const dirCount = spec.dirs ?? 425; // 含根共 426
+  const mdBytes = spec.mdBytes ?? 7_010_000;
+  const maxMd = spec.maxMdBytes ?? 239_000;
+  const ignoredMd = spec.ignoredMd ?? 40;
+  const vault = vaultDir();
+  await mkdirp(vault);
+
+  // 确定性伪随机（xorshift64）：同一档参数每次生成逐字节一致，读数可复现。
+  let seed = 0x283n;
+  const rnd = (n) => {
+    seed ^= seed << 13n;
+    seed ^= seed >> 7n;
+    seed ^= seed << 17n;
+    seed &= 0xffffffffffffffffn;
+    return Number(seed % BigInt(Math.max(1, n)));
+  };
+  const words = ["vault", "index", "notes", "graph", "render", "preview", "buffer", "session",
+    "restore", "measure", "committed", "frozen", "reader", "window", "scroll", "target"];
+  const body = (size) => {
+    const chunks = ["# 合成读数样本\n\n", "> 复刻真实 vault 的文件形状：行长正常、md 正文、含 wikilink。\n\n"];
+    let len = chunks[0].length + chunks[1].length;
+    let line = 0;
+    while (len < size) {
+      let piece;
+      switch (line % 9) {
+        case 0: piece = `## 小节 ${line}\n`; break;
+        case 1: case 2: case 3: {
+          const ws = [];
+          for (let i = 0; i < 13; i += 1) ws.push(words[rnd(words.length)]);
+          piece = `${ws.join(" ")}\n`;
+          break;
+        }
+        case 4: piece = `- 条目 ${line}：[[notes-${rnd(400)}]]\n`; break;
+        case 5: piece = `  - 子条目 ${line}\n`; break;
+        case 6: piece = `| 列 A | 列 B ${line} |\n| --- | --- |\n| 1 | 2 |\n`; break;
+        case 7: piece = `\`\`\`text\ncode line ${line}\n\`\`\`\n`; break;
+        default: piece = `\n段落分隔 ${line}\n\n`;
+      }
+      chunks.push(piece);
+      len += piece.length;
+      line += 1;
+    }
+    return chunks.join("");
+  };
+
+  // 目录树：24 个一级目录 + 401 个子目录（真实 vault 根级 24 项、目录合计 426）。
+  const dirs = [];
+  const topCount = Math.min(24, dirCount);
+  for (let i = 0; i < topCount; i += 1) {
+    const dir = path.join(vault, `area-${String(i).padStart(2, "0")}`);
+    await mkdirp(dir);
+    dirs.push(dir);
+  }
+  let made = topCount;
+  while (made < dirCount) {
+    const parent = dirs[rnd(topCount)];
+    const dir = path.join(parent, `sub-${String(made).padStart(3, "0")}`);
+    await mkdirp(dir);
+    dirs.push(dir);
+    made += 1;
+  }
+
+  // md 文件：按 mdBytes 反推主体档的平均值，再叠 20 个数十 KB 与一个 239KB 的极值
+  //（真实分布的形状）。mdBytes 因此是真参数（改它读数规模跟着变）。
+  const bulk = mdCount - 21;
+  const bulkAvg = Math.max(1_000, Math.floor((mdBytes - 20 * 35_000 - maxMd) / bulk));
+  for (let i = 0; i < mdCount; i += 1) {
+    const size = i + 1 === mdCount
+      ? maxMd
+      : i < bulk ? bulkAvg - 500 + rnd(1_000) : 35_000;
+    await writeFile(path.join(dirs[i % dirs.length], `note-${String(i).padStart(4, "0")}.md`), body(size));
+  }
+  // 其余文件（真实 vault 的另外 801 个：图片 / 配置 / 代码）。
+  for (let i = 0; i < otherCount; i += 1) {
+    const dir = dirs[(i * 7) % dirs.length];
+    const kind = i % 4;
+    const name = kind === 0 ? `asset-${i}.txt` : kind === 1 ? `data-${i}.json` : kind === 2 ? `img-${i}.svg` : `script-${i}.js`;
+    const content = kind === 0 ? "纯文本附件\n" : kind === 1 ? '{"v":1}\n' : kind === 2 ? "<svg/>\n" : "export const v = 1;\n";
+    await writeFile(path.join(dir, name), content);
+  }
+  // 忽略生效的探针：`node_modules` 下的 md MUST NOT 进枚举（Rust 侧 IGNORED_NAMES）。
+  const nm = path.join(vault, "node_modules", "left-pad");
+  await mkdirp(nm);
+  for (let i = 0; i < ignoredMd; i += 1) {
+    await writeFile(path.join(nm, `ignored-${String(i).padStart(2, "0")}.md`), body(2_000));
+  }
+  // 实测字节数交给调用方核（生成是分档近似：mdBytes 是目标，不是逐字节保证）。
+  return { vault, markdown: mdCount, mdBytes, files: mdCount + otherCount, dirs: made, ignoredMd };
+}
 /** 注册表目录名（Rust 侧 `vault_registry` 的 `REGISTRY_DIR_NAME` 同源字面量）。 */
 export const REGISTRY_DIR = "vault-registry";
+
 /** 注册表目录的旧名（M248 更名前）：只作迁移场景 48 的预置源，app 启动时会被搬走。 */
 export const LEGACY_REGISTRY_DIR = "workspaces";
 
@@ -228,8 +336,13 @@ function resolveSeedPath(p) {
  *  `legacyRegistry`（M248）写进**旧名**目录 `workspaces/`，供迁移场景 48 构造「升级前现场」，
  *  与其他块同一时点、同一纪律。 */
 export async function prepareSeed(seed) {
-  const written = { registry: [], legacyRegistry: [], sessions: [] };
+  const written = { registry: [], legacyRegistry: [], sessions: [], bulkVault: null };
   if (!seed) return written;
+  // 复刻真实形状的批量内容（M283）：先重置（调用方已做）再生成，之后才是注册表 / 会话
+  // ——会话里的路径必须指向真实存在的文件，否则恢复时会按「不在 vault 内」跳过。
+  if (seed.bulkVault) {
+    written.bulkVault = await generateBulkVault(seed.bulkVault === true ? {} : seed.bulkVault);
+  }
   for (const e of seed.registry ?? []) {
     written.registry.push(
       await writeRegistryEntry({

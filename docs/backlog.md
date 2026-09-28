@@ -597,6 +597,66 @@
 
 ## 待修 findings（不阻塞）
 
+### 增量建图：暂缓（M283 登记，2026-09-28）
+
+**结论**：`build_graph` 的持久化缓存（mtime/size 比对，只重读变更文件）**本阶段不做**。
+
+**当时的读数（release 直测，复刻真实形状的合成 vault：2142 文件 / 426 目录 / 1341 md / 6.7MB）**：
+`scan_workspace` 中位 **10.6ms**、`build_graph` 中位 **81.5ms**（harness：
+`src-tauri/tests/vault_open_readings.rs`，`cargo test --release --test vault_open_readings -- --ignored
+--nocapture`）。与 M154 在同一真实 vault 上的 14.0 / 111.2ms 同量级。
+
+**理由**：收益上限 = 消掉这 81.5ms 里的读盘部分（`scan` 10.6ms 仍必须做——要知道什么变了就得枚举），
+而代价是引入缓存键、失效条件与跨会话一致性（M265 §四-1 判定「真实 vault 远未到值得上缓存的规模」；
+M154 的 737ms 出现在 45MB md 的 4× 合成规模，不是当前档）。它改不到「几秒」这个量级——「几秒」的那段
+是会话恢复（见 change `vault-switch-restore-perf`）。
+
+**若要做，优先局部优化**（M154 §7）：`read_text_file` 每次经 `resolve_in_vault` 做**两次**
+`canonicalize`（`src-tauri/src/fs_io.rs:262,271`），1341 个 md 上 `canonicalize(root)` 是 1341 次冗余
+系统调用。**同一个 harness 测了这条的上限：外提 + 批量读的复刻实现 55.7ms / 生产复刻 81.5ms ⇒ 收益
+≈25.9ms**，而不是 M154 当时估的 ≈45ms（那时用的是纯裸读对比，没有算 fs 缓存与 vnode 命中）。改动面是
+一处调用层重构、无新状态，但**必须自带逃逸校验**（`resolve_in_vault` 的符号链接分支被 6 个既有测试
+钉着：`resolve_rejects_escape_and_absolute`、`resolve_rejects_symlink_escape`、
+`scan_does_not_follow_symlink_loop`、`scan_does_not_expand_external_symlink`、
+`trash_refuses_vault_root_reached_through_symlink`、`resolve_new_rejects_escape_bad_names_and_collisions`）。
+裁决点 2 的口径是「`vault_load_open` >250ms 才纳入」，实测 92.2ms（scan + build_graph，不含 watch/IPC）
+⇒ **本次不纳入**，账记在这里。
+
+### 树 DOM 虚拟化：否决（M283 登记，2026-09-28）
+
+**结论**：不做。**否决依据是代码结构，不是估算**（M265 §四-2 的建议落点）：
+
+- `renderRow` 只由 `mountNode` 调用（`src/tree.ts:398`）；
+- `renderAll` 只对**根级**子节点调 `mountNode`（`src/tree.ts:457`），目录子节点仅在该目录已展开时挂载；
+- `setVault` 先 `expanded.clear()`（`src/tree.ts:712`）。
+
+⇒ 切换路径上的 DOM 行数 = **根级条目数**（该 vault 根级 22–24 行），不是「主线程一次建出 8000+ 行」。
+虚拟化的目标场景（展开一个几千项的大目录）在这个 vault 上也不存在（最大可见目录 22 项）。收益按代码
+结构接近 0，代价是跨 capability 的高风险重写（滚动与坐标映射、选择与复制、树行自身状态）。真正的成本
+只是给 2567 个条目建 `Node`/`Map`（O(n)，个位数 ms），随 M283 的 `vault_load_tree` 读数一并留档。
+
+### vault 切换没有 perf 门禁端点（M283 登记，2026-09-28，待 Alex 裁决是否立项）
+
+**现状**：`scripts/perf/` 只有 `cold-start` / `keypress-to-paint` / `memory` / `open-file` 四个端点，
+**没有 vault 切换端点** ⇒ 切换的优化效果没有任何门禁能锁住（可被后续改动静默回退）。与「待 Alex 裁决」
+第 12 条（同类缺口）同族。
+
+**为什么不顺手加**：这是**性能合同语义的扩张**（ADR 0002 §6 的四条合同不含切换；新增门禁数字要先定
+「绝对阈值还是相对回归」），不是加一个脚本。端点草案（合成真实形状 vault ≈2500 项 / 1341 md / 7MB +
+40 标签会话；测「点击切换 → 目标 vault 就绪」的墙钟，并同记三段 `phaseMs`）留在 change
+`openspec/changes/vault-switch-restore-perf/design.md` §6.4 与裁决点 4：**本 change 不新增**，另立 change
+才做。可复用的现成件：套件的 `seed.bulkVault`（生成同形状的合成 vault，
+`scripts/acceptance/lib/app.mjs`）与 release 读数 harness（`src-tauri/tests/vault_open_readings.rs`）。
+
+### 三份 vault change 的归档顺序（硬依赖，M283 登记，2026-09-28）
+
+`vault-switch-feedback` → `preview-tab-removal` → `vault-switch-restore-perf`，**顺序不可换**：
+`vault-switch-restore-perf` 的 spec delta 有两条 MODIFIED，其基线正文现在分别落在那两份**未归档** change
+的 delta 里（「装载的即时反馈」只在 `vault-switch-feedback` 里、「装载后恢复标签列表」由
+`preview-tab-removal` 改写）。前者不先归档，`openspec archive` 会因「requirement 在 living spec 里找不到」
+拒绝本 delta。**验收口径**：归档前跑 `npx --yes @fission-ai/openspec@1.12.0 list` 确认那两份已从活跃列表
+消失。
+
 ### md 行含 inline widget 时的高度表差（M281 现场发现，2026-09-27，medium）
 
 **症状（新可见面）**：md 的行号 gutter **在场期间**（`always` 档，或 `on-demand` 档下跳转输入条打开时）——**图片 /

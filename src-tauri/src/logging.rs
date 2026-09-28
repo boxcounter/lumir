@@ -471,6 +471,31 @@ fn link_open_to(sink: &Sink, category: &str, outcome: &str, scheme: Option<&str>
     emit(sink, event);
 }
 
+/// Rust 侧埋点：vault 打开段的**分段读数**（M283，change vault-switch-restore-perf 的 1.2；
+/// 调用点是 `commands::prepare_vault_open` 里 `fs_io::watch()` 的前后打点）。
+///
+/// 与前端 `phaseMs`（`src/main.ts`）共用**同一个事件名与字段**（`slow_callback` /
+/// name / ms）：`grep vault_load` 一次拿到前后端各段，读数可比（M252 的三段、M154 的
+/// scan / build_graph 都在这条通道上）。字段白名单与事件名都不新造（`allowed_fields`
+/// 里 `SlowCallback => ["name", "ms"]`）。
+///
+/// **刻意不设阈值**（与前端 `phaseMs` 的 250ms 口径不同）：`vault_open_watch` 这一条的
+/// 存在理由是回答「FSEvents 建流是否显著」这个是非题，而「日志里没有这一行」与「它很快」
+/// 在事后不可区分——阈值会把「没超阈值」写成「没有读数」。开销可忽略：vault 打开是低频的
+/// 用户动作，一次打开最多一条。
+pub fn slow_callback(name: &str, ms: &str) {
+    slow_callback_to(global(), name, ms);
+}
+
+fn slow_callback_to(sink: &Sink, name: &str, ms: &str) {
+    emit(
+        sink,
+        Event::new(LogEventName::SlowCallback)
+            .field("name", name)
+            .field("ms", ms),
+    );
+}
+
 /// 前端经 `log_event` 命令转发的入口：白名单外负载**显式拒绝**（返回错误信封），
 /// 不落盘（spec「invoke 入口 SHALL 校验事件名与字段白名单」）。
 pub fn log_frontend_event(
@@ -885,6 +910,23 @@ mod tests {
         assert_eq!(lines[0]["level"], "warn");
         assert_eq!(lines[0]["name"], "fs_entry_changed");
         assert_eq!(lines[2]["ms"], "21.5");
+    }
+
+    /// Rust 侧埋点与前端同一条通道、同一种行形（M283 的 `vault_open_watch`）：新增的
+    /// `slow_callback` 助手落下的行必须与前端 `phaseMs` 的行逐字段同形——两边的读数靠
+    /// 同一个 grep（`vault_load` / `vault_open_watch`）一起读出来。
+    #[test]
+    fn rust_side_slow_callback_lands_same_shape_as_frontend() {
+        let dir = TempDir::new();
+        let sink = sink(dir.path(), LogLevel::Info);
+        slow_callback_to(&sink, "vault_open_watch", "12.3");
+        sink.flush();
+        let lines = read_lines(dir.path());
+        assert_eq!(lines.len(), 1, "一条读数落一行");
+        assert_eq!(lines[0]["event"], "slow_callback");
+        assert_eq!(lines[0]["level"], "warn");
+        assert_eq!(lines[0]["name"], "vault_open_watch");
+        assert_eq!(lines[0]["ms"], "12.3");
     }
 
     /// `[log] level = "off"`：事件丢弃不写盘，连 logs 目录都不创建。

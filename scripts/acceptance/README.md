@@ -117,6 +117,7 @@ steps:
 | `seed.registry[]` | `{ id, path, lastOpenedAt?, missingSince?, archivedAt? }` | `<隔离配置>/lumir/vault-registry/<id>.json`（一条一个文件，与 Rust 侧注册表同形） |
 | `seed.legacyRegistry[]` | 同上 | `<隔离配置>/lumir/workspaces/<id>.json`（**旧名**目录，M248）：只服务迁移场景 48，用来构造「更名落地之前」的现场；app 启动时把它整个搬进 `vault-registry/` |
 | `seed.sessions{}` | `{ <id>: { tabs: [...], active } }` | `<隔离配置>/lumir/vault-sessions/<id>.json` |
+| `seed.bulkVault` | `true` 或 `{ markdown?, files?, dirs?, mdBytes?, maxMdBytes?, ignoredMd? }` | **生成**到验收 vault（`$vault`）里（M283）：复刻真实 vault 的 scan-visible 形状——默认 `2142` 文件 / `426` 目录 / `1341` 个 md / ≈`7MB`、行长正常（约 78 字符/行，含标题与 wikilink）、根下带一个 `node_modules`（验证 `IGNORED_NAMES` 忽略生效）。与 Rust 侧读数 harness（`src-tauri/tests/vault_open_readings.rs`）同形状参数，**改形状时两边一起改** |
 
 - `path` 支持两个记号：`$vault` / `$vault2` 指套件的两个合成 vault（不写死 `/tmp` 路径，
   `LUMIR_ACCEPTANCE_VAULT` 覆写时场景跟着走）；其余按绝对路径原样用。
@@ -152,6 +153,7 @@ steps:
 | `recordEditor` | `as` | 记下编辑器文本，供 `editor.unchangedSince` 做**逐字节**比较 |
 | `vaultWrite` / `vaultAppend` | `file`、`content` | 从外部改写验收 vault（模拟外部修改） |
 | `vaultRm` | `file` 或 `files` | 从外部**真删除**（不存在即报错）——触发 `fs_not_found` 与「保存冲突」是两条不同分支 |
+| `vaultSparse` | `file`、`size`（正整数，字节）、`vault?` | `ftruncate` 出一个「大小 = size、内容为零、几乎不占磁盘」的稀疏文件。用途：把 app 的**按大小拒绝**分支（50MB 上限）变成可达，或给**瞬时状态**（装载指示这类）撑开观察窗（场景 49 / 60）。`vault: "second"` 指定写入第二个合成 vault——**撑窗口的放大器必须落在切换目标那一侧**（场景 60：切换目标是 B，窗口就在 B 的装载段）；缺省是验收 vault |
 | `configWrite` | `lastVault`、`keys`、`restart`、`requireVault`、`theme`、`contentWidth`、排版三项、`autoIndent` | 改写隔离 config.json（默认重启 app）。`lastVault` **缺省沿用当前值**（显式给才覆盖）——启动恢复的失效路径靠它把 `last_vault` 指向一个不存在的目录；`requireVault: false` 只放宽本步重启的就绪门（见下条）。`theme` / `contentWidth` / 排版三项 / `autoIndent`（M272，`editor.auto_indent`）同样**缺省沿用当前值**（M228 起含 `ui.content_width`）：一次 configWrite MUST NOT 把前面设过的键连表抹掉 |
 | `restart` | `requireVault` | 重启 app（崩溃恢复类场景） |
 

@@ -94,8 +94,35 @@ test("vaultSwitchBlock：任一标签有未保存修改就给判据，无脏标�
   stopTimers(rig);
 });
 
-test("saveAllDirty：逐个保存全部可保存的脏标签，未闭环返回 false", async () => {
+test("未装载标签（壳态）不拦切换 / 退出，也不进「保存全部脏标签」（M283 的 3.4）", async () => {
   const rig = createRig();
+  rig.backend.handle("document_save", (args) => `rev-2-${args.path}`);
+  rig.editor.open("a.md", "# A");
+  rig.controller.noteOpened("a.md", "rev-1");
+  // 壳态标签：有路径、内容未装载、没有任何落盘基准（vault 会话恢复的第一步的产物）
+  const shell = rig.editor.openShell("b.md");
+
+  assert.equal(shell.loaded, false);
+  assert.equal(rig.controller.vaultSwitchBlock(), null, "壳不是 dirty ⇒ 切换 / 退出不被拦下");
+
+  rig.editor.edit("a.md", "# A 改");
+  assert.deepEqual(
+    rig.controller.vaultSwitchBlock(),
+    { dirtyCount: 1, hasUnsaveable: false },
+    "只有真的脏标签计入；壳态 MUST NOT 因为「没有落盘基准」被算进来",
+  );
+
+  assert.equal(await rig.controller.saveAllDirty(), true);
+  assert.deepEqual(
+    rig.backend.argsOf("document_save").map((args) => args.path),
+    ["a.md"],
+    "保存全部脏标签跳过壳态（它的内容还没进内存，没有可写的缓冲）",
+  );
+  assert.equal(rig.editor.handle.sessionForPath("b.md")!.loaded, false, "壳态保持未装载");
+  stopTimers(rig);
+});
+
+test("saveAllDirty：逐个保存全部可保存的脏标签，未闭环返回 false", async () => {  const rig = createRig();
   rig.backend.handle("document_save", (args) => `rev-2-${args.path}`);
   rig.editor.open("a.md", "# A");
   rig.controller.noteOpened("a.md", "rev-1");
