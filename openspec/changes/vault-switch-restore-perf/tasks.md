@@ -186,6 +186,8 @@
 | P2-1（code）壳态装载在途时关标签 ⇒ 幽灵会话被置前台 | 已修：`loadSessionContent` 在 `resolveSession()` 之后加成员复查（`!editor.sessions().includes(session)` ⇒ 按失败收口），并补一条时序回归用例 | 回归用例 `tests/visual/scenes/mv-vault-switcher.spec.ts` 的「壳态装载在途时关掉该标签」：**修前红**（`element(s) not found`——幽灵置前台后标签栏里没有 `is-active`）、**修后绿**；两次运行日志与失败现场在 `test-results/m283/p2-1-ghost-session/` |
 | P2-2（docs/evidence）README 索引指向不存在的 `before-run/` | 已修：索引改指 `before-run-language-face/`（FAIL，首轮撞 M282 默认语言 en 的存量假红）与 `before-probe/`（PASS，改动前读数的**唯一**来源）；`design.md` §1/§7.1/§8 与 tasks 的「改动前」读数一并改成在档的 984/997/1182ms（≈25–30ms/标签），并写明 MUST NOT 再引「901–1056ms」 | `test-results/m283/README.md` 的文件索引表与 §2 的取证说明；`docs/backlog.md` 另记 reviewer 撞到的 `fs_io::tests::watch_dir_rename_delivers_full_subtree` 时序 flake |
 
+**r2 门禁读数**（tip `e1a6c12`）：`gate quick` **10/10 PASS**；`gate visual` **12/12 PASS**（视觉套件 544 passed / 1 skipped，比 r1 那次多 1 条——正是上面这条回归用例；`tests/visual/baselines` **零 diff**）。读数摘录落 `test-results/m283/r1-r2-gates.txt`。
+
 **回归用例为什么落在视觉套件而不是单测**：缺陷在装配层（`src/main.ts` 的 `loadSessionContent`），本仓对装配层的
 行为判据既有分工是「chromium 视觉场景（真 app + 桩后端）」+「真机验收场景」——`main.ts` 是入口模块，
 import 即建整个 app，单测层不可用。用例用注入延迟（`page.evaluate` 包装 `__TAURI_INTERNALS__.invoke`）
