@@ -318,7 +318,7 @@ steps:
   末步只断言「这两条读数在盘上」——它管的是**读数通道还活着**（本 change 新增的两条埋点不至于
   被静默摘掉），不是耗时。
 - **`vault_load_open` / `vault_load_tree` 在本场景的日志里可能缺席**：两者沿用 M252 的 250ms 阈值，
-  而真实形状 vault 上 open ≈ 92ms（release 直测：scan 10.6ms + build_graph 81.5ms，harness 见
+  而真实形状 vault 上 open ≈92–107ms（release 直测两次：scan 10.6/13.0ms + build_graph 81.5/94.4ms，harness 见
   `src-tauri/tests/vault_open_readings.rs`）⇒ 低于阈值就不记。这是 M252 的既定口径，本 change 不动；
   想要那两段的数就用那个 harness。恢复段刻意改成**无条件记录**（本 change 动的是它，阈值会把
   「变快了」写成「没有这一行」）。

@@ -602,24 +602,24 @@
 **结论**：`build_graph` 的持久化缓存（mtime/size 比对，只重读变更文件）**本阶段不做**。
 
 **当时的读数（release 直测，复刻真实形状的合成 vault：2142 文件 / 426 目录 / 1341 md / 6.7MB）**：
-`scan_workspace` 中位 **10.6ms**、`build_graph` 中位 **81.5ms**（harness：
+`scan_workspace` 中位 **10.6 / 13.0ms**、`build_graph` 中位 **81.5 / 94.4ms**（两次独立运行；harness：
 `src-tauri/tests/vault_open_readings.rs`，`cargo test --release --test vault_open_readings -- --ignored
 --nocapture`）。与 M154 在同一真实 vault 上的 14.0 / 111.2ms 同量级。
 
-**理由**：收益上限 = 消掉这 81.5ms 里的读盘部分（`scan` 10.6ms 仍必须做——要知道什么变了就得枚举），
+**理由**：收益上限 = 消掉这 81.5–94.4ms 里的读盘部分（`scan` 10.6ms 仍必须做——要知道什么变了就得枚举），
 而代价是引入缓存键、失效条件与跨会话一致性（M265 §四-1 判定「真实 vault 远未到值得上缓存的规模」；
 M154 的 737ms 出现在 45MB md 的 4× 合成规模，不是当前档）。它改不到「几秒」这个量级——「几秒」的那段
 是会话恢复（见 change `vault-switch-restore-perf`）。
 
 **若要做，优先局部优化**（M154 §7）：`read_text_file` 每次经 `resolve_in_vault` 做**两次**
 `canonicalize`（`src-tauri/src/fs_io.rs:262,271`），1341 个 md 上 `canonicalize(root)` 是 1341 次冗余
-系统调用。**同一个 harness 测了这条的上限：外提 + 批量读的复刻实现 55.7ms / 生产复刻 81.5ms ⇒ 收益
-≈25.9ms**，而不是 M154 当时估的 ≈45ms（那时用的是纯裸读对比，没有算 fs 缓存与 vnode 命中）。改动面是
+系统调用。**同一个 harness 测了这条的上限：外提 + 批量读的复刻实现 55.7 / 61.7ms 对生产复刻 81.5 /
+94.4ms ⇒ 收益 ≈26–33ms**，而不是 M154 当时估的 ≈45ms（那时用的是纯裸读对比，没有算 fs 缓存与 vnode 命中）。改动面是
 一处调用层重构、无新状态，但**必须自带逃逸校验**（`resolve_in_vault` 的符号链接分支被 6 个既有测试
 钉着：`resolve_rejects_escape_and_absolute`、`resolve_rejects_symlink_escape`、
 `scan_does_not_follow_symlink_loop`、`scan_does_not_expand_external_symlink`、
 `trash_refuses_vault_root_reached_through_symlink`、`resolve_new_rejects_escape_bad_names_and_collisions`）。
-裁决点 2 的口径是「`vault_load_open` >250ms 才纳入」，实测 92.2ms（scan + build_graph，不含 watch/IPC）
+裁决点 2 的口径是「`vault_load_open` >250ms 才纳入」，实测 92–107ms（scan + build_graph，不含 watch/IPC）
 ⇒ **本次不纳入**，账记在这里。
 
 ### 树 DOM 虚拟化：否决（M283 登记，2026-09-28）

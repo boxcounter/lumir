@@ -43,7 +43,7 @@
 ## 4. 建图与树：局部优化按读数决定，两个否决项落账（裁决点 2）
 
 - [x] 4.1 若裁决点 2 取「纳入」：`src-tauri/src/fs_io.rs` / 读取路径把 `canonicalize(root)` 提到循环外 + 加「已校验批量读」路径（M154 §7）。
-  **不适用**：裁决点 2 取「推迟」（读数 `vault_load_open` ≈92ms « 250ms，见 4.2 与 design §7.1）。
+  **不适用**：裁决点 2 取「推迟」（读数 `vault_load_open` ≈92–107ms « 250ms，见 4.2 与 design §7.1）。
   **验收口径**：1341 个 md 的 `build_graph` 读数前后对比落档；`cargo test` 全绿；不改变任何文件读取的语义与错误分支（越界 / 符号链接 / 权限路径的既有测试不改判据）。
 - [x] 4.2 若裁决点 2 取「推迟」：在 design 与本文件标注推迟理由与当时的读数，不静默跳过。
 - [x] 4.3 增量建图：确认**不做**，把暂缓理由（上限 111.2ms + 缓存失效风险）写进 `docs/backlog.md`。
@@ -54,7 +54,7 @@
 
 - [x] 5.1 按 1.2 的 watch 读数与 open 段总时长定夺：显著（>100ms 量级）则纳入本 change，否则记「暂缓 + 当时读数」。
 - [x] 5.2 若纳入：`vault_open_path` 走 `#[tauri::command(async)]` 或复用 M159 的两阶段 `prepare` / `commit`（先核实 `State` 借用与 `Send` 约束，本轮未核实）。
-  **不适用**：裁决点 3 取「暂缓」（watch 建流实测 0.4–1.5ms « 100ms，见 5.1）。
+  **不适用**：裁决点 3 取「暂缓」（watch 建流实测 0.4–1.6ms « 100ms，见 5.1）。
   **验收口径**：打开段不再占主线程（真机上切换期间指示仍在推进/无 beachball，或按当时可观测的证据记实）；前端 `inFlight` 串行化语义不变。
 - [x] 5.3 若纳入：`cargo test` 全绿 + 真机复验场景 60 与 25 / 17（多 vault 切换的既有场景）。
   **不适用**：同 5.2；场景 25 / 17 的复验另由本 change 的真机批次顺带覆盖（本 change 未动 open 段）。
@@ -105,13 +105,13 @@
 
 | 读数 | 值 | 支撑 |
 |---|---|---|
-| `scan_workspace`（release 中位） | 10.6ms | 打开段 |
-| `build_graph`（release 中位） | 81.5ms | **裁决点 2 取「推迟」**（打开段合计 ≈92ms « 250ms） |
-| `build_graph` canonicalize 外提复刻（仅估上限） | 55.7ms ⇒ 收益上限 ≈25.9ms | 同上（M154 当时估 ≈45ms） |
-| `watch` 建流（release 中位 / 真机） | 1.5ms / 0.4–0.5ms | **裁决点 3 取「暂缓」**（« 100ms） |
+| `scan_workspace`（release 中位，两次运行） | 10.6 / 13.0ms | 打开段 |
+| `build_graph`（release 中位，两次运行） | 81.5 / 94.4ms | **裁决点 2 取「推迟」**（打开段合计 ≈92–107ms « 250ms） |
+| `build_graph` canonicalize 外提复刻（仅估上限，两次运行） | 55.7 / 61.7ms ⇒ 收益上限 ≈26–33ms | 同上（M154 当时估 ≈45ms） |
+| `watch` 建流（release 中位两次 / 真机） | 1.5–1.6ms / 0.4–0.5ms | **裁决点 3 取「暂缓」**（« 100ms） |
 | `vault_load_restore`（40 标签，真实形状 vault，**改动前**） | 984 / 997 / 1182ms ⇒ ≈25–30ms/标签（单变量探针复测，`before-probe/`；首轮 901–1056ms 同档） | 裁决点 1 的推荐案依据；与 M252 的 77 条目 vault 读数同档 ⇒ 跨规模无放大 |
 | `vault_load_restore`（同场景，**改动后**） | **20ms**（切回 A）/ 30–31ms（启动恢复） | 3.6 的验收读数：与标签数脱钩（≈32–54×） |
-| `vault_load_open`（切回 A，debug / release） | 627ms / ≈92ms | 本 change 不动这一段（两轮读数同档：改动前 617ms） |
+| `vault_load_open`（切回 A，debug / release） | 612–630ms / ≈92–107ms | 本 change 不动这一段（改动前后同档） |
 | `vault_load_flush` | 干净路径 0 条（两轮）；注入 8s 写盘段 ⇒ 8013ms 一条 | 1.1 的埋点（阈值口径沿用 250ms） |
 | `vault_open_watch` | 0.4–0.5ms（两轮同档） | 1.2 的埋点（刻意无阈值） |
 
@@ -148,11 +148,11 @@
 | 3.4 dirty 语义 | 完成 | 壳的 `dirty` 恒 false ⇒ 不进 `vaultSwitchBlock` / `saveAllDirty` / 不算无基准；单测 `未装载标签（壳态）不拦切换 / 退出…` |
 | 3.5 阅读位置 | 完成 | 与打开共用 `loadSessionContent` ⇒ `readingPositions.restoreFor` 在内容装载时跑；无独立断言（滚动在本套件没有通道，同 49 的记录） |
 | 3.6 读数复验 | 完成 | 40 标签：改动前 1182ms → 改动后 20ms（同场景同机器；before 侧为单变量探针复测） |
-| 4.1 建图局部优化 | 不适用 | 裁决点 2 取「推迟」（读数 ≈92ms « 250ms） |
-| 4.2 推迟落账 | 完成 | 本文件与 design §4/§7.1 标注推迟理由与读数 |
+| 4.1 建图局部优化 | 不适用 | 裁决点 2 取「推迟」（读数 ≈92–107ms « 250ms） |
+| 4.2 推迟落账 | 完成 | 本文件与 design §4/§7.1 标注推迟理由与读数（两次独立运行都在档） |
 | 4.3 增量建图暂缓 | 完成 | `docs/backlog.md`「增量建图：暂缓（M283 登记）」 |
 | 4.4 树 DOM 虚拟化否决 | 完成 | `docs/backlog.md`「树 DOM 虚拟化：否决（M283 登记）」 |
-| 5.1 打开段是否移出主线程 | 完成 | 定夺为「暂缓」：watch 0.4–1.5ms、open 段合计 ≈92ms（release） |
+| 5.1 打开段是否移出主线程 | 完成 | 定夺为「暂缓」：watch 0.4–1.6ms、open 段合计 ≈92–107ms（release） |
 | 5.2 / 5.3 async 化 | 不适用 | 同上 |
 | 6.1 场景 60 落地 | 完成 | `scripts/acceptance/scenarios/60-vault-switch-restore.md`；`--check` PASS；真机 1/1 PASS（43.7s） |
 | 6.2 反向验证（场景判据） | 完成 | 同 2.4 |
@@ -160,8 +160,8 @@
 | 6.4 编号再核 | 完成 | 目录内 60 空闲（现有 48–56、59、61、62），无在飞 change 声明 60（60 已被本 change 试占） |
 | 7.1 openspec validate --strict | 完成 | 28 passed / 0 failed（`vault-switch-feedback` 未归档导致的 INFO 是 proposal 声明的工具级依赖） |
 | 7.2 docs-check | 完成 | `docs-check: PASS` |
-| 7.3 gate quick | 完成 | 见 review-request 的门禁读数 |
-| 7.4 gate visual | 完成 | 未动 `src/style.css` / `src/preview/**` / 视觉场景，但恢复路径的行为变化会被 `mv-vault-switcher` 场景覆盖，因此**主动跑一遍** |
+| 7.3 gate quick | 完成 | **10/10 PASS（SKIP 0）**：fmt / clippy / cargo test / bindings-drift / tsc×3 / unit 488 / docs-check / openspec-validate |
+| 7.4 gate visual | 完成 | **12/12 PASS（SKIP 0）**，含 `visual-regression` 377s——整页基线**零 diff、未做任何 `--update`**（本 change 不动视觉面，`mv-vault-switcher` 的「切到有历史的 vault」场景照旧通过）。首轮 11/12 的唯一红项是 `cargo-fmt`（读数 harness 的文件，已 `cargo fmt` 后复跑 12/12） |
 | 7.5 真机场景 60 | 完成 | `test-results/acceptance/2026-09-28/60-vault-switch-restore/status.txt` = PASS |
 | 7.6 读数对账 | 完成 | design §1 / §7.1 / §8 逐条改成实测或标注未验 |
 | 8.1 归档顺序 | 记录 | `docs/backlog.md`「三份 vault change 的归档顺序」；本 mission 不做归档 |
