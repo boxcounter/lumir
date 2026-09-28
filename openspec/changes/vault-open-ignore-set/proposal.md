@@ -83,7 +83,7 @@ M289 已向 tower 报了一条 finding：`.tower/`（275,180 文件 / 35G）就�
    - 判定顺序固定：**内置规则先判、命中即不可见**（用户规则里的取反——如 `.gitignore` 写 `!target/`——MUST NOT 把它放回来；论证见 design §2.6：内置规则是产品判断，且它的不可见性同时是性能护栏，不能由用户一行编辑关掉）；否则**用户规则命中 ⇒ 出一行**（`lazy` 标记）、**不递归**；否则正常枚举并递归；
    - 文件树展开惰性目录时经新命令 `fs_scan_dir(dir)` 按需拉取**一层**（同源分类），并把这层结果合并进模型；
    - watch：**内置规则对全部组件（含最后一段）照判**——外部构建产出 `target` / `node_modules` 一个事件都不投递（否则树里会插出枚举永远不会产生的幻影行）；**用户规则只判祖先**，未按需展开过的目录其内部变更不投递（否则 `.tower/worktrees/**` 的 agent churn 会变成事件风暴），而用户规则命中的条目**自身**的增删改总是投递（它本来就有行，行必须实时）；
-   - 索引：惰性条目不进链接索引与附件索引（确定性——索引的输入是磁盘 + 规则的纯函数，不是 UI 历史）；指向惰性区域的 `[[wikilink]]` / `![[img]]` 解析降级，如实写进 spec 的已知边界；
+   - 索引：惰性条目不进链接索引与附件索引（确定性——索引的输入是磁盘 + 规则的纯函数，不是 UI 历史）；**三条路径都覆盖**：装载建索引、按需展开、以及 watch 增量（事件 payload 带惰性标记，两处索引补丁跳过它、删除方向无条件移除）；指向惰性区域的 `[[wikilink]]` / `![[img]]` 解析降级，如实写进 spec 的已知边界；
    - 规则读什么：内置规则（恒定）+ 配置项 `vault.rule_files` 列出的规则文件（默认 `[".gitignore", ".git/info/exclude"]`，vault 相对路径；空列表 = 无用户规则来源；列表含 `.gitignore` 时嵌套 `.gitignore` 照常逐层读取；文件不存在静默跳过；非法项逐项忽略并给 config warning）；**不读全局 excludes**；用户规则之间按 git 口径定优先级（深层 `.gitignore` > 浅层 > `info/exclude`）；**生效时点 = vault 装载时编译一次**（规则内容或 `vault.rule_files` 的改动都下次装载生效——可见集不随规则变化，故用户可感知的后果极小，而热生效要新开「重编 + 重扫 + 前端整体替换模型」通道）；
    - 匹配语义由 `ignore` crate 提供（gitignore 完整语义：`!` / 锚定 / `**` / 目录限定），**内置规则与用户规则共用同一个匹配器**——「少一种硬编码特例」就是这一步落到实处；**这是本 change 唯一的依赖新增**（已随影响面确认接受）。
    - **等价承诺**：「任意深度 / 同名文件与目录一视同仁 / 大小写敏感 / `.lumir-` 临时文件不进树」逐条与今日一致，由一条对拍测试钉住（design §2.3），不是口头承诺。
@@ -119,7 +119,7 @@ M289 已向 tower 报了一条 finding：`.tower/`（275,180 文件 / 35G）就�
   - `src-tauri/src/commands.rs`（装配）：`prepare_vault_open` 装载时读该配置并据此编译用户规则
   - `src-tauri/src/fs_io.rs`：`IGNORED_NAMES` **退役**为内置规则表（16 条名字字面量 + `.*.lumir-*`，编进匹配器）、新的 `IgnorePolicy`（一份规则表 + 物化集合，来源决定去向）、`scan_workspace`（`lazy` 行、不递归）、`rel_string`（逐组件判定）、新 `fs_scan_dir`、`expand_new_dir_subtrees` / `validate_new_name` 沿用同一策略、忽略计数诊断（新 `LogEventName::VaultScanIgnored`）、一条「内置匹配器 ≡ 今日名字等值判定」的对拍测试
   - `src-tauri/src/commands.rs`：`prepare_vault_open`（编译规则、构造策略、scan/graph 打点）、`vault_open_path` 与 `fs_scan_dir` 的 `#[command(async)]`、`VaultState` 持有策略、会话恢复的存在探测入口
-  - `src/bindings/**`：`FsEntry` 新增 `lazy`（ts-rs 重导出，进索引后跑门禁）
+  - `src/bindings/**`：**两处导出面变更**——`FsEntry` 与 `FsChange` 各新增 `lazy`（ts-rs 重导出，进索引后跑门禁）
   - `src-tauri/src/commands.rs`：新增 `fs_paths_exist`（批量存在探测，供会话恢复与阅读位置共用）
   - `src/tree.ts` / `src/main.ts` / `src/vault-switcher.ts` / `src/reading-position.ts`：惰性目录按需展开与合并、附件索引口径注释、恢复与阅读位置的判据补探测
   - `scripts/acceptance/lib/app.mjs` + `scenarios/67-*.md`：探针与场景

@@ -59,8 +59,12 @@ Alex 问：「硬编码隐藏类是否可以和 .gitignore 合并、而不是单
 
 - **书写形式**：内置规则 SHALL 用**无尾斜杠的名字字面量**（`target`，不是 `target/`）。gitignore 语义下，无斜杠模式匹配**任意深度上同名的文件与目录** ⇒ 与今日 `is_ignored` 的名字等值判定逐条等价，既有 scenario「同名文件与目录一视同仁」**保留、不改判**（一个名为 `target` 的无扩展名文件仍被隐藏）。写成 `target/` 会变成「只隐藏目录、同名文件可见」——那是**有意的改判**，本 change 不做（无收益，且会让既有断言失效）。
 - 另两条等价：**任意深度**（无斜杠模式在任意层匹配）与**大小写敏感**（gitignore 默认大小写敏感，与逐字节等值同向）。
-- **临时文件模式并入**：`.lumir-` 的判据（今日为「`.` 开头且含 `.lumir-`」）写成内置规则行 `.*.lumir-*`，覆盖本 app 实际产生的两种形态 `.{目标名}.lumir-{pid}`（如 `.note.md.lumir-123`）与 `..lumir-{pid}`；ghost 的惰性清除仍由既有函数按同一模式判定（两处共用一份模式字面量）。
-- **等价性由一条对拍测试钉住**（不靠人眼）：对一份名字 corpus 同时跑「今日等值判据」与「新内置匹配器」，逐条断言一致。corpus 至少含 `target` / `Target` / `target.md` / `dist-old` / `builds` / `build` / `out` / `vendor` / `.DS_Store` / `node_modules` / `.venv` / `.pnpm-store` / `.a.lumir-1` / `..lumir-1` / `.lumir-notes.md` / `note.md.lumir-1`，以及嵌套路径（`a/target/x.md`、`a/.git/config`）。**已知且可接受的差异**（测试里显式标注，不许静默）：名字恰为 `.lumir-`（临时文件没有目标名）的条目今日命中、新表不命中——本 app 产生的临时文件恒带目标名，该形态不出现。
+- **临时文件模式并入（两条，与今日判据**逐条等价**）**：今日判据是「`.` 开头且含 `.lumir-`」。它需要两条 gitignore 规则才能覆盖全：
+  - `.lumir-*` —— 名字在**开头**就是 `.lumir-`（如 `.lumir-notes.md`、`.lumir-`、`.lumir-1`）；
+  - `.*.lumir-*` —— 首个 `.` 之后还有一段内容，再出现 `.lumir-`（覆盖本 app 实际产生的 `.{目标名}.lumir-{pid}`，如 `.note.md.lumir-123`，以及 `..lumir-1`）。
+  两条合起来的匹配集合 = 「`.` 开头且含 `.lumir-`」，**没有剩余差异**。ghost 的惰性清除仍由既有函数按同一判据判定（两处共用一份模式字面量）。
+  > **r2/r3 评审 P2-a 的处置（比评审建议更进一步）**：评审用真 `git check-ignore` 实测指出，只写 `.*.lumir-*` 时 **`.lumir-notes.md` 这类「以 `.lumir-` 开头」的名字今日隐藏、新模式可见**——差异类不止 `.lumir-` 一个名字。评审接受「披露即可」，但本 change 的条款是「内置规则与既有行为**逐条等价**、不改判」，而少写一条规则等于**顺手把一个行为改了**（一个今天隐藏的文件会突然出现在树里），且对拍测试必然红。因此这里选择**补足规则**而不是披露差异：等价承诺完整、对拍测试无例外，代价为零（多一行字面量，不新增任何隐藏面——被它命中的名字今天本来就隐藏）。
+- **等价性由一条对拍测试钉住**（不靠人眼）：对一份名字 corpus 同时跑「今日等值判据」与「新内置匹配器」，逐条断言**完全一致**（零例外）。corpus 至少含 `target` / `Target` / `target.md` / `dist-old` / `builds` / `build` / `out` / `vendor` / `.DS_Store` / `node_modules` / `.venv` / `.pnpm-store` / `.a.lumir-1` / `..lumir-1` / `.lumir-` / `.lumir-1` / `.lumir-notes.md` / `note.md.lumir-1`，以及嵌套路径（`a/target/x.md`、`a/.git/config`）。
 - **用户规则不受这条约束**：`.gitignore` 里的 `foo/` 与 `foo` 按 gitignore 语义各自解释（用户写什么就是什么）。
 
 ### 2.4 内置规则的清单（16 个名字 + 1 条临时文件模式）
@@ -209,6 +213,8 @@ ADR 0001 的原文是「全文件类型一等公民」——**一等公民的是
 2. **用户规则只看祖先，最后一段一律投递**：与内置规则相反，末段是否命中用户规则**不改变「有没有行」这个事实**（命中 ⇒ 惰性行；不命中 ⇒ 普通行），所以两种情况下投递都对；而这一行的出现/消失必须实时（否则用户删掉 `.local` 后树里留一个死行）。加上「祖先必定是目录」这一事实（前缀组件不可能是文件），**用户规则侧一次 stat 都不需要**——目录限定模式（`foo/`）在祖先上可无歧义判定，末段不判也就无从歧义。
 3. **用户规则的祖先：未物化 ⇒ 不投递**（`.tower/worktrees/**` 的 agent churn 不进 webview）；**已物化 ⇒ 投递**（用户展开过的地方保持实时，打开中的文档因此照常得到「外部修改」处置）。内置规则的祖先一律丢弃（连行都没有，谈不上展开）。
 
+**投递的事件 SHALL 携带惰性标记**（`FsChange.lazy`）：投递与否由「祖先」决定，但**这一条自身的去向**（惰性 / 普通）另有下游消费者（两处索引增量补丁，§4.6）——所以在同一个判定点把标记算出来带给前端，MUST NOT 让下游各自重算（那会引出第二份规则实现）。
+
 **同一判定在两处跑的机制**：`fs_io` 现在刻意不依赖 tauri 类型（ADR 0002 §7），且过滤发生在 `fs_io::watch` 的回调里。做法是把策略对象**下传**：`fs_io::IgnorePolicy`（纯 std 类型：**一份规则表**——内置规则匹配器 + 用户规则匹配器栈 + `Arc<Mutex<HashSet<PathBuf>>>` 的物化集合）由 `commands.rs` 构造并同时交给 `scan_workspace` / `watch` / `fs_scan_dir` / `expand_new_dir_subtrees` / `validate_new_name`——**一份策略，五个使用点**（REVIEW.md 第 8 条：同一语义只能有一个真源）。
 
 > 实现期性能注记（不改判据）：事件路径的判定现在也走匹配器（内置规则与用户规则各一次），比名字等值贵。若成为热点，允许按「祖先组件 → 判定结果」做进程内缓存，但**语义 MUST NOT 变**（缓存失效面 = 规则重编 + 物化集合变化）。
@@ -227,6 +233,19 @@ ADR 0001 的原文是「全文件类型一等公民」——**一等公民的是
 
 **为什么不让「展开」把条目补进索引**：那会让同一份文档的 wikilink 解析结果取决于**用户点过哪些目录**（`wikilink-resolution` 的既有条款明写「同一 vault 两次打开的解析结果 MUST 一致（确定性）」）。索引的输入必须是磁盘 + 规则的纯函数，不是 UI 历史。
 
+**watch 增量路径同样适用（r2/r3 评审 P1-3）**：§4.4 的判定让「用户规则命中的条目自身」的事件**必然投递**（行的增删要实时——这是设计意图），而两处索引的增量更新原本是**无分类的全量 upsert**：
+
+- Rust 侧 `VaultState::apply_fs_changes`（[commands.rs:265](../../../src-tauri/src/commands.rs#L265)）：对每条非目录的 created / modified 事件无条件 `graph.upsert`；
+- 前端 `main.ts` 的 `fs:entry_changed` 处理（[:1651](../../../src/main.ts#L1651)）：对每条 created 文件事件无条件 `attachmentPaths.push`。
+
+今天这没问题，因为 `rel_string` 把被忽略的路径全滤掉了；**按来源分开之后**，惰性条目的事件会到达这两处 ⇒ 惰性条目在会话中途进索引。必然触发的例子就在 Alex 的真实 vault 里：他的 `.gitignore` 含 `HANDOFF.md`（§1 自己盘点过）⇒ 任何外部改写它都会让它进 `LinkGraph` ⇒ `[[HANDOFF]]` **本会话内可解析、重开后不可解析**——索引从「磁盘 + 规则的纯函数」退化成「事件历史的函数」，正是本条与 spec 的确定性条款禁止的。
+
+**口径（收敛成一句话）**：**投递的事件 MUST NOT 让惰性条目进入索引**。
+
+- 事件 payload（`FsChange`）SHALL 携带**惰性标记**（`lazy`，与 `FsEntry.lazy` 同义；第二处 ts-rs 导出面变更），由后端在过滤/投递那一步用同一份规则表算出（created / modified 时条目类型由 `entry_kind` 已知，可精确判定）。
+- 两处索引补丁 SHALL 跳过 `lazy` 事件：created / modified 且 `lazy` ⇒ 不 upsert / 不 push；**deleted ⇒ 无条件移除**（幂等：本来不在索引里就是空操作，因此删除方向不需要判类型，也就绕开了「被删路径 stat 不到、目录限定模式判不准」的歧义——该方向 MUST NOT 消费 `lazy`）。
+- 树照常收行（惰性行的可见性不受影响）。
+
 **后果（如实记，写进 spec 的已知边界）**：
 
 - 指向惰性区域的 `[[wikilink]]` 解析为 `unresolved`；`![[img.png]]` 若图片在惰性目录里同样找不到。用户在树里点开那个文件**照常可读**（打开链路是路径直读，不查索引）。
@@ -237,8 +256,8 @@ ADR 0001 的原文是「全文件类型一等公民」——**一等公民的是
 | 消费点 | 口径 | 动作 |
 |---|---|---|
 | 文件树模型（`src/tree.ts`） | 显示**全部**条目（含惰性行）；惰性目录的子孙按需拉取 | 改：展开惰性目录 → `fs_scan_dir` 合并；`lazy` 标记区分空目录 |
-| 链接索引（`VaultState::build_graph`） | 只由主动枚举的条目建出 | 不改代码，改口径（§4.6）+ spec 条款 |
-| 附件索引（`src/main.ts` 的 `attachmentPaths`） | 同上 | 不改代码，口径写进 spec 边界 |
+| 链接索引（`VaultState::build_graph` + `apply_fs_changes`） | 只由主动枚举的条目建出；**增量路径**同样跳过惰性条目（created / modified 且 `lazy` ⇒ 不 upsert；deleted ⇒ 无条件移除） | 改代码（两行）：`apply_fs_changes` 消费 `FsChange.lazy` |
+| 附件索引（`src/main.ts` 的 `attachmentPaths`） | 同上（增量路径跳过 `lazy` 的 created；deleted 照旧移除） | 改代码（一行）：`fs:entry_changed` 处理里判 `change.lazy` |
 | 会话恢复的「在不在 vault 内」（`src/vault-switcher.ts` 的 `restorePlan`，[:145](../../../src/vault-switcher.ts#L145)） | **不再只看枚举集合**：条目集里没有的路径，补一次 vault 内存在探测（只探测会话里的那几条路径，不改写任何文件）；存在即照常恢复 | 改：新增**批量**存在探测（§4.11），跳过计数仍**由枚举 + 探测的结果在装载完成时给出**（口径不变，来源多一个） |
 | 阅读位置（`src/reading-position.ts` 的 `onVaultLoaded`，[:241-266](../../../src/reading-position.ts#L241)） | **同样不能再只看枚举集合**（r2 评审 P1-1 更正了本文早先「与集合无关 → 不改」的错误论断）：它从 `entries` 建 `available` 并对**存量键**跑 `pruneEntries`，而惰性文件（如 `.local/教程.md`）永不在枚举里 ⇒ 它们的阅读位置**每次装载都被剪掉**、随后 flush 持久化 | 改：prune 判据与会话恢复同口径——条目集里没有的键先过一次**批量存在探测**（§4.11），存在即保留；探测失败才剪 |
 | watch 事件过滤（`fs_io::rel_string`） | 见 §4.4 | 改 |
@@ -393,7 +412,9 @@ M283 在场景 60 里实测到：套件读 AX 需要主线程空闲，而打开�
 | `src-tauri/src/commands.rs` `fs_scan_dir` command（新） | `#[command(async)]` + vault 内路径校验 + 打点 | §4.3 / §5.2 / §6.2 |
 | `src-tauri/src/commands.rs` `VaultState` | 持有当前 `IgnorePolicy`（含物化集合）；装载时重建 | §4.3 / §4.4 |
 | `src-tauri/src/commands.rs` `fs_paths_exist`（新） | 批量存在探测（vault 内路径校验 + 只 stat）；供会话恢复与阅读位置共用 | §4.11 |
-| `src/bindings/**`（ts-rs 重导出） | `FsEntry` 新增 `lazy` | §4.3 |
+| `src/bindings/**`（ts-rs 重导出） | `FsEntry` 新增 `lazy`（§4.3）与 `FsChange` 新增 `lazy`（§4.6）——**两处导出面变更** | §4.3 / §4.6 |
+| `src-tauri/src/commands.rs` `apply_fs_changes` | 增量索引跳过惰性条目：created / modified 且 `lazy` ⇒ 不 upsert；deleted ⇒ 无条件移除 | §4.6 |
+| `src/main.ts` 的 `fs:entry_changed` 处理 | 附件索引增量跳过 `lazy` 的 created 事件（deleted 照旧无条件移除） | §4.6 |
 | `src/tree.ts` | 惰性目录展开走 `fs_scan_dir` 并按路径合并；`lazy` 与「空目录」区分 | §4.7 / §7.2 |
 | `src/main.ts` | 装配新命令；附件索引口径（只由主动枚举建出）保持并写注释 | §4.6 / §4.7 |
 | `src/vault-switcher.ts` `restorePlan` | 「在不在 vault 内」补批量存在探测（条目集 + 探测），跳过计数口径不变 | §4.7 / §4.11 |
@@ -412,7 +433,7 @@ Alex 裁决 2 的「忽略项必须可见」**推翻了本仓一条既有同一�
 | 2 | 树模型 = 枚举快照（`setVault` 一次性建满） | 快照 + 按需层（展开惰性目录发命令合并） | **改实现结构**（前端） |
 | 3 | watch 判定 = 名字的纯函数（无状态、可在 fs_io 内自洽） | 需要策略对象 + 物化集合（跨层传、有生命周期、随 vault 重建） | **改实现结构**（后端） |
 | 4 | 依赖面：`Cargo.toml` 无 ignore 类依赖 | 新增 `ignore` crate（§4.8）——**合并之后它同时承载内置规则与用户规则** | **新增依赖**（已确认接受） |
-| 5 | 导出面：`FsEntry` 是「路径 / 类型 / 大小 / mtime」四元组 | 新增 `lazy` 字段（ts-rs 重导出 `src/bindings/**`） | **改契约**（前端全部消费点重新编译即得，行为面已逐条列在 §4.7） |
+| 5 | 导出面：`FsEntry` 是「路径 / 类型 / 大小 / mtime」四元组；`FsChange` 是「kind / path / entry_kind」 | 两者各新增 `lazy` 字段（**两处** ts-rs 重导出 `src/bindings/**`） | **改契约**（前端全部消费点重新编译即得，行为面已逐条列在 §4.7） |
 | 6 | 「在不在 vault 内」= 在枚举集合里（两个消费点：会话恢复的 `restorePlan`、阅读位置的 `pruneEntries`） | 集合 + 批量存在探测（`fs_paths_exist`） | **改判据**（不改用户可见语义：仍是在 vault 里的文件才恢复 / 才保留位置；新增一条只读命令） |
 | 7 | 链接 / 附件索引覆盖「vault 里的一切」 | 覆盖「主动枚举的那部分」；惰性区域解析降级（含 `wikilink_create` 的重复文件风险） | **收窄能力边界**（写入 spec 的已知边界） |
 | 8 | 忽略判定 = 名字等值（`is_ignored`）+ 一条独立的 VCS 规则路径（B 案原形态会是第二套机制） | **合并成一份规则表、一个匹配器**（内置规则也编进匹配器）；来源决定去向（内置不可见 / 用户惰性可见）；`is_ignored` 的名字等值判定退役 | **改实现结构**（消掉一种硬编码特例；语义等价由对拍测试钉住——含「同名文件也隐藏」不改判） |

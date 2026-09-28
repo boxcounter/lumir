@@ -13,8 +13,8 @@
 
 - [ ] 1.1 `src-tauri/src/fs_io.rs`：`IGNORED_NAMES` **退役**，改为**内置规则表**——16 条名字字面量（既有 3 + A1 11 + A2 `target` / `dist`；**不含** `build` / `out` / `vendor`）+ 1 条临时文件模式 `.*.lumir-*`，用 `GitignoreBuilder::add_line` 编进匹配器（与用户规则**同一个**匹配器）。
   **验收口径**：`cargo test` 全绿；单测逐条钉住新表（枚举侧：命中的条目与子孙都不出现；判据侧：`dist-old` / `targets` / `Target` 不被命中，`build` / `out` / `vendor` **不**被命中）。
-- [ ] 1.2 **对拍测试（等价性由机制保证，不靠人眼）**：对一份名字 corpus 同时跑「今日名字等值判据（名字等值 + `starts_with('.') && contains('.lumir-')`）」与「新内置匹配器」，逐条断言一致。
-  **验收口径**：corpus 至少含 `target` / `Target` / `target.md` / `dist-old` / `builds` / `build` / `out` / `vendor` / `.DS_Store` / `node_modules` / `.venv` / `.pnpm-store` / `.a.lumir-1` / `..lumir-1` / `.lumir-notes.md` / `note.md.lumir-1` + 嵌套路径（`a/target/x.md`、`a/.git/config`）；**已知可接受差异**（名字恰为 `.lumir-`）在测试里显式标注、不许静默。
+- [ ] 1.2 **对拍测试（等价性由机制保证，不靠人眼）**：对一份名字 corpus 同时跑「今日名字等值判据（名字等值 + `starts_with('.') && contains('.lumir-')`）」与「新内置匹配器」，逐条断言**完全一致、零例外**（临时文件模式写成**两条** `.lumir-*` + `.*.lumir-*` 才等价——只写后者会漏掉「以 `.lumir-` 开头」的名字，r2/r3 评审 P2-a 实测 `.lumir-notes.md` 就是这么漏的）。
+  **验收口径**：corpus 至少含 `target` / `Target` / `target.md` / `dist-old` / `builds` / `build` / `out` / `vendor` / `.DS_Store` / `node_modules` / `.venv` / `.pnpm-store` / `.a.lumir-1` / `..lumir-1` / `.lumir-` / `.lumir-1` / `.lumir-notes.md` / `note.md.lumir-1` + 嵌套路径（`a/target/x.md`、`a/.git/config`）；**不许有「已知差异例外」**——任何不一致都是规则写少了，回去补规则。
 - [ ] 1.3 核对使用点仍走同一份表（枚举 `read_dir` 循环、`expand_new_dir_subtrees`、`validate_new_name`、watch 判定），**表只有一处**、`is_ignored` 的等值分支删干净。
   **验收口径**：`rg -n "IGNORED_NAMES|is_ignored" src-tauri/src` 的命中面与 design §10 一致（REVIEW.md 第 8 条）；`fs_io` MUST NOT 残留第二份名单或第二个判定实现。
 - [ ] 1.4 忽略计数诊断（design §3.3）：枚举收口记一行「被内置规则剪掉的条目数」。
@@ -37,8 +37,8 @@
 
 ## 3. 按需枚举命令与 `lazy` 标记（对应 fs-io「按需枚举目录」+ file-tree）
 
-- [ ] 3.1 `FsEntry` 新增 `lazy: bool`（ts-rs 导出面变更）；`scan_workspace` 为惰性条目填 true，其余 false。
-  **验收口径**：`src/bindings/**` 重导出并 `git add`（`bindings-drift` 门禁的既有纪律）；前端全部消费点重新编译通过。
+- [ ] 3.1 **两处导出面**：`FsEntry` 新增 `lazy: bool`（`scan_workspace` 为惰性条目填 true，其余 false），`FsChange` 新增 `lazy: bool`（watch 投递时按同一份规则表算出；见 4.1 与 5.1）。
+  **验收口径**：`src/bindings/**` 重导出并 `git add`（`bindings-drift` 门禁的既有纪律）；前端全部消费点重新编译通过；两个结构体的 `lazy` 语义在注释里指向同一处口径（「用户规则命中 ⇒ 惰性」，§4.3 / §4.6）。
 - [ ] 3.2 `src-tauri/src/fs_io.rs` + `commands.rs`：新增 `fs_scan_dir(dir)`——**一层**枚举、分类口径与枚举同源、走与读取同源的 vault 内校验（MUST NOT 放松边界）、目标不存在/不是目录给人话 `CommandError`、成功即把该目录登记进物化集合。
   **验收口径**：单测：一层（不递归）/ 惰性子目录仍出 `lazy` 行 / 越界路径（`..`、绝对路径、符号链接逃逸）返回 `CommandError` / 物化登记可观察（登记后该目录下的变更进入事件流，见 4.2）。
 - [ ] 3.3 该 command 标 `#[command(async)]`（口径同 7.1）。
@@ -47,7 +47,7 @@
 ## 4. watch 判定与物化登记（对应 fs-io「watch 增量事件流」）
 
 - [ ] 4.1 `src-tauri/src/fs_io.rs`：事件判定换成 §4.4 的两来源规则——**内置规则对全部组件（含最后一段）照判**；**用户规则只判祖先**（未物化丢弃），最后一段一律投递。**MUST NOT** 把最后一段从一切判定中豁免（r2 评审 P1-2：那会让外部构建产出的 `created:target` 透到前端，而 `src/tree.ts` 的 `applyChanges` 不做隐藏名过滤 ⇒ 树里插出枚举永远不会产生的幻影行）。
-  **验收口径**：单测覆盖五条分支——① 未物化的用户规则目录内部变更**不**产生事件；② 物化后**产生**事件；③ 用户规则命中的条目自身的 created/deleted **总**产生事件（含末段）；④ 内置规则命中的**祖先**下的变更不产生事件；⑤**内置规则命中的末段**（外部 `mkdir target` / `npm install` 造出 `node_modules`）同样不产生事件。第 ⑤ 条是本轮新增的分支，MUST NOT 漏。
+  **验收口径**：单测覆盖六条分支——① 未物化的用户规则目录内部变更**不**产生事件；② 物化后**产生**事件；③ 用户规则命中的条目自身的 created/deleted **总**产生事件（含末段）；④ 内置规则命中的**祖先**下的变更不产生事件；⑤**内置规则命中的末段**（外部 `mkdir target` / `npm install` 造出 `node_modules`）同样不产生事件；⑥ **投递的事件带回正确的 `lazy` 标记**（用户规则命中 ⇒ true，其余 ⇒ false）——这是 5.1 两处索引补丁的唯一输入，MUST NOT 漏。
 - [ ] 4.2 `VaultState` 持有所述策略，装载时重建（物化集合 MUST NOT 跨 vault 串用）；`prepare_vault_open` 把它交给 watch / scan / graph / `fs_scan_dir` / 子树展开 / 名字校验。
   **验收口径**：单测（或 Rust 集成测试）——切换 vault 后上一 vault 的物化登记不生效。
 - [ ] 4.3 目录改名那条既有通道（`deleted:旧` + `created:新(dir)` 带子树）按新策略收口：创建出来的目录若命中规则，只带一行（惰性），不带子孙；旧路径的物化登记随 `deleted` 清除。
@@ -55,8 +55,8 @@
 
 ## 5. 索引与消费面口径（对应 fs-io 的确定性条款 + vault-workspace 的恢复条款）
 
-- [ ] 5.1 链接索引（`build_graph`）与附件索引（`src/main.ts` 的 `attachmentPaths`）：只由主动枚举的条目建出；**按需展开的结果 MUST NOT 补进索引**。
-  **验收口径**：单测（Rust）——含惰性目录的 vault 上，`build_graph` 的条目集与主动枚举一致；展开后仍一致（前端侧在 `src/main.ts` 就地写注释说明口径，不在展开路径上调索引相关代码）。
+- [ ] 5.1 索引口径三条路径全覆盖（**装载 / 按需展开 / watch 增量**）：只由主动枚举的条目建出；按需展开的结果 MUST NOT 补进索引；**watch 增量也不许把惰性条目带进索引**（r2/r3 评审 P1-3）——`apply_fs_changes`（commands.rs）对 created / modified 且 `lazy` 的事件 MUST NOT `graph.upsert`，`src/main.ts` 的 `fs:entry_changed` 处理对 created 且 `lazy` 的事件 MUST NOT `attachmentPaths.push`；**deleted 方向两处都无条件移除**（幂等，且不消费 `lazy`——绕开「被删路径 stat 不到」的歧义）。
+  **验收口径**：① 单测（Rust）——含惰性目录的 vault 上 `build_graph` 的条目集与主动枚举一致，展开后仍一致；② 单测（Rust）——投递一条「用户规则命中的 md」的 created 事件后 `graph` **不含**该路径（同一条事件前后 graph 的条目集逐条相等），而树侧仍收到该事件；③ 单测（前端，`main.ts` 装配层或视觉场景桩）——同一条事件不 push 进 `attachmentPaths`、也不从里面移除别的东西；④ 反向验证：把两处 `lazy` 判定摘掉 ⇒ ②③ 必须红（先红后绿）。
 - [ ] 5.2 会话恢复的「在不在 vault 内」：`src/vault-switcher.ts` 的 **`restorePlan`**（[:145](../../../src/vault-switcher.ts#L145)）不再只看条目集——对「不在条目集里」的条目调一次**批量**存在探测（新增命令 `fs_paths_exist`，§4.11 与 fs-io 的「vault 内路径存在探测」；只 stat、不改写；一次 IPC 往返）；跳过计数仍在装载完成时给出。
   **验收口径**：单测（`tests/unit/vault-switcher.test.ts`）——条目集里没有但探测存在的路径**照常恢复**且不进跳过计数；探测失败才计跳过；探测是**一次**批量调用，MUST NOT 逐条发起（避免 N 次 IPC 往返）。
 - [ ] 5.3 写清三条已知边界（spec 已写，实现期在代码注释里给指针）：惰性区域 wikilink / 附件的解析降级；`wikilink_create` 对惰性目标可能造重复文件（本 change 不改）；规则不热生效。
@@ -123,8 +123,8 @@
 
 ### 编号声明
 
-真机场景取 **67**（试占）。依据（2026-09-28 起草时核对）：`scripts/acceptance/scenarios/` 现有编号最大 **65**；
-**66 已被在飞的 M288 占用**（`feat/fix-code-block-selection-visibility-m288` 的 `66-code-block-selection.md`）。
+真机场景取 **67**（试占）。依据（2026-09-28 修订时复核，与 proposal 的编号声明同口径）：`scripts/acceptance/scenarios/`
+现有编号最大 **66**（`66-code-block-selection.md` 已随 M288 并入 master），**67 是当前的下一个可用号**。
 **实现期动工前 SHALL 再核一次目录与各在飞 change 的编号声明**，不盲取。
 文案 deck：本 change **预期零新增用户可见文案**（内置规则静默；惰性行沿用树行既有形态，不加加载指示；
 被隐藏名字的新建/改名沿用既有 `fs_name_invalid` 模板）。若实现期确需新增，取当时末位的下一个可用编号
