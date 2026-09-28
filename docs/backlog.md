@@ -3090,3 +3090,29 @@ BMP 后取采样方块主色）。细节与边界见 `scripts/acceptance/README.
 - **基线未动**：装 `drawSelection` 动了编辑器的绘制层，但整套视觉回归（含 22 处整页 / 元素像素断言）
   **一条基线都没红**——实测那些场景里没有「有选区的编辑器」形态。两条新场景（`m285-selection-layer`
   与 m282 的那条）都是结构 / 计算属性断言，不新增整页基线。
+
+## M288 代码块内选区不可见（2026-09-28，已修 dac89c0，合并 eef2556）
+
+- 现象：md 的围栏代码块里扩选 / 拖选看不见选区（Alex 报告；他猜「撞色」）。
+- 定性（机制）：**绘制顺序**。drawSelection 的 `.cm-selectionLayer` 是 `.cm-scroller` 里的
+  **负** z-index 层（CM `layer({above:false})` ⇒ `-1 - pos`，实测 **-2**），而块底色（容器 +
+  行两个 in-flow 背景）按 CSS 绘制顺序排在它之后 ⇒ 整块盖住。真机三主题修前读数：light 差 0、
+  eink 差 0、dark 差 14（半透明 --code-bg 恰好透出来，故 dark 修前也可辨 **= 非缺陷档**）。
+- 修法：块底色搬到容器的两个负 z-index 伪元素（`::before` 底板 / `::after` 行区带，
+  `padding: inherit` + `background-clip: content-box` 让行区带与容器 padding 同源）；折行档
+  由 `.cm-lp-codeblock-slot::before` 承担；行底色在 slot 在场时让位（`:has()`）。
+  **容器与行 MUST NOT 定位**——否则块级动作钮的包含块从 slot 变成容器、横滚时跟着内容滚
+  （M240 口径，实测钮 x 992 → 692）。零新增 token、不动 drawSelection 装配。
+- **残差（待 Alex 裁决）**：修后 light 的块内选区与块底色仍只差 **11**（`--sel` #e8e7e1 vs
+  `--code-bg` #f2f1ec；正文档差 21），dark 14、eink 240。要更重只能改 token（`--sel` /
+  `--code-bg`，真源 docs/specs/design-tokens-v1.md）或给块内选区造更重的变体（需动 drawSelection
+  装配或新增 token）——finding 已记（`20260928-worker-codeblock-selection-m28-improve-m288-sel-code-bg-11-callout-code.md`）。
+- 判据：chromium `tests/visual/scenes/m288-codeblock-selection.spec.ts`（三主题 × 两种折行口径 ×
+  四种选区形态 + 区分度自证；修前 2 failed → 修后 3 passed）；真机场景 **66**（修前 FAIL 0/1 →
+  修后 PASS 1/1，三主题读数在档）。**未给 m285-selection-layer spec 加 code 块分支**：那条几何覆盖
+  对本缺陷无区分度（加了是假绿）。
+- 同类表面（**机制推演、未逐一实测**，候选另立 survey）：行内 code 药丸 / callout 行底色 /
+  frontmatter 区 / code 模式的变量底纹——同一机制（.cm-content 内的 in-flow 底色盖住负 z-index
+  选区层），其中不透明的几处预期 100% 盖住选区。
+- 门禁：gate quick 10/10、gate visual 12/12（556 passed / 1 skipped，22 处像素对比零基线 diff、
+  未做 --update）；三处既有计算样式断言按新落点更新（理由就地注明；reviewer 复核确认保住原不变量）。
