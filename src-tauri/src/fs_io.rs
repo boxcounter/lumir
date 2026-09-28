@@ -245,11 +245,14 @@ impl IgnorePolicy {
         false
     }
 
-    /// 登记某个目录里可能存在的嵌套 `.gitignore`（遍历进入该目录时调用；惰性、只探一次）。
+    /// 登记某个目录里可能存在的嵌套 `.gitignore`（**递归进入可见目录**时调用；惰性、只探一次）。
     ///
     /// 代价是一次 `read_to_string` 的失败尝试（目录数 ≈ 目录数），换来「嵌套规则与枚举同源」。
-    /// 只在 `.gitignore` 这个来源启用时探读；`fs_scan_dir` 成功返回时也走同一条（用户展开
-    /// 惰性目录后，它自己那份 `.gitignore` 立刻参与判定）。
+    /// 只在 `.gitignore` 这个来源启用时探读。
+    ///
+    /// **唯一的调用点是 `scan_workspace_at`**：规则栈只在递归进入**可见**目录时逐层叠加。
+    /// 惰性子树内部 MUST NOT 读它的 `.gitignore`（祖先已排除，结论不会变；真读了会让嵌套来源的
+    /// 白名单短路根来源的祖先排除判定，见 [`scan_dir`] 里那段说明与 M292 r1 评审 P1-1）。
     fn register_nested(&self, dir_rel: &str) {
         if !self.inner.nested_gitignore || dir_rel.is_empty() {
             // 根 `.gitignore` 已由 [`Self::load`] 按 `rule_files` 登记过：这里再读一次只会
@@ -686,11 +689,16 @@ pub fn scan_dir(
             format!("{dir_rel} 不是目录"),
         ));
     }
-    // 惰性子树内部不重读它的 .gitignore（祖先已排除，结论不会变，§4.2）；但用户展开的正是一个
-    // 惰性目录时，它自己那份 `.gitignore` 必须先登记——本层条目要按它判。
-    if !dir_rel.is_empty() {
-        policy.register_nested(dir_rel);
-    }
+    // **这里刻意不读该目录自带的 `.gitignore`**（M292 r1 评审 P1-1 的落点，design §4.2/§4.9）：
+    //
+    // - 用户展开的目录**是惰性目录**时（本命令的主要形态），它的祖先已被排除——gitignore 的
+    //   「祖先被排除 ⇒ 子孙全被排除」意味着该子树内部一切仍是惰性，**不必**也不许在子树里重读
+    //   规则。真读了会出事：嵌套来源的 Whitelist（如 `.local/.gitignore` 里的 `!keep.md`）是
+    //   比根来源更深的「确定结论」，会短路掉根来源的祖先排除判定 ⇒ `keep.md` 从 Lazy 翻成
+    //   Visible ⇒ 索引的纯函数口径、惰性展开（翻成 Visible 的子目录展开即空目录）与物化事件闸
+    //   三处一起破，且违反 git 语义（排除目录下不可 re-include）。
+    // - 用户对**可见**目录调用本命令时，该目录的嵌套 `.gitignore` 在装载时的递归枚举里已经由
+    //   `scan_workspace_at` 登记过；会话内新建的目录则按「规则改动下次装载生效」等到下次装载。
     let rd = std::fs::read_dir(&dir).map_err(|e| {
         CommandError::new(
             "fs_scan_failed",
@@ -3220,6 +3228,70 @@ mod tests {
         assert!(
             !pb.is_materialized(".tower"),
             "另一份策略（另一个 vault）不得共享物化登记"
+        );
+    }
+    /// 回归（M292 r1 评审 **P1-1**）：**惰性子树内部不读它的 `.gitignore`**（design §4.2/§4.9、
+    /// spec「祖先被排除 ⇒ 子孙全被排除」、git 语义「排除目录下不可 re-include」）。
+    ///
+    /// 现场：根规则把 `.local/` 排除，而 `.local/.gitignore` 里有一行白名单（`!keep.md` /
+    /// `!deep/`）。若展开惰性目录时把这份嵌套规则登记进来源表，嵌套来源的 Whitelist 会比根来源
+    /// 的祖先排除**更深**、从而成为「第一个确定结论」⇒ 子条目从 Lazy 翻成 Visible，三处一起破：
+    /// 索引的纯函数口径（被翻条目的 created/modified 会 upsert 进链接索引）、惰性展开（翻成
+    /// Visible 的子目录展开即空目录）、物化事件闸（未物化的子树事件照投）。
+    ///
+    /// 判据分三面：`scan_dir` 返回的行、`scan_dir` 之后的 `classify`、以及事件判定带回的 `lazy`。
+    #[test]
+    fn scan_dir_never_reads_gitignore_inside_a_lazy_subtree() {
+        let v = TempVault::new();
+        let r = &v.0;
+        std::fs::create_dir_all(r.join(".local/deep")).unwrap();
+        std::fs::write(r.join(".local/keep.md"), "k").unwrap();
+        std::fs::write(r.join(".local/other.md"), "o").unwrap();
+        std::fs::write(r.join(".local/deep/x.md"), "x").unwrap();
+        std::fs::write(r.join(".gitignore"), ".local/\n").unwrap();
+        // 惰性子树**内部**自带的规则文件：白名单（本测试的引信）+ 一条自己的忽略行
+        std::fs::write(
+            r.join(".local/.gitignore"),
+            "!keep.md\n!deep/\ninner-ignored/\n",
+        )
+        .unwrap();
+        let p = v.default_policy();
+        assert_eq!(p.classify(".local", true), EntryClass::Lazy);
+        assert_eq!(p.classify(".local/keep.md", false), EntryClass::Lazy);
+
+        let entries = scan_dir(r, &p, ".local").expect("展开惰性目录");
+        for entry in &entries {
+            assert!(
+                entry.lazy,
+                "{} 必须仍是惰性（祖先被排除 ⇒ 子孙全被排除）：{entries:?}",
+                entry.path
+            );
+        }
+        assert!(
+            entries.iter().any(|e| e.path == ".local/keep.md"),
+            "白名单行 MUST NOT 把 keep.md 从结果里翻出去：{entries:?}"
+        );
+        assert!(
+            entries.iter().any(|e| e.path == ".local/deep" && e.lazy),
+            "被白名单 `!deep/` 点名的子目录同样仍是惰性：{entries:?}"
+        );
+
+        // scan_dir 之后（物化登记已发生）判定不变：子树内部的规则一行都没被读进来
+        assert_eq!(p.classify(".local/keep.md", false), EntryClass::Lazy);
+        assert_eq!(p.classify(".local/deep", true), EntryClass::Lazy);
+        assert_eq!(p.classify(".local/deep/x.md", false), EntryClass::Lazy);
+
+        // 事件判定同源：物化之后**投递**（那一行的增删要实时），但带回 lazy=true——
+        // 两处索引（`apply_fs_changes` / `patchAttachmentPaths`）据此跳过它。
+        assert_eq!(
+            watch_verdict(&p, r, &r.join(".local/keep.md"), Some(false)),
+            Some((".local/keep.md".to_string(), true)),
+            "惰性子树内部的条目即使已物化也必须带回 lazy=true"
+        );
+        assert_eq!(
+            watch_verdict(&p, r, &r.join(".local/deep/x.md"), Some(false)),
+            None,
+            "未物化的子目录内部仍被物化闸挡下（白名单不许把它翻成「不是惰性」）"
         );
     }
 }
