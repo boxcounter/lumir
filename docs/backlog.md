@@ -1180,8 +1180,8 @@ M279 报告 §5 的两条副产物在列，判定为**都不随本修复收口**
    消融，跑 `tests/visual/scenes/m286-external-reload-viewport.spec.ts`，桩收到第二份载荷
    `{"pos":0,"y":115.109375}`（与 finding 引用的真实 vault `pos 0 / y 114`、M279 T5 的 `y 115.58`
    同形态）；只把窗口放回去（deps 仍消融）时不再出现 `pos 0`——即**读侧的恢复与写侧的让位是两半
-   独立防线**：窗口关掉的是「把中间态写进盘」，恢复关掉的是「视口停在篇首」。日志
-   `test-results/m286/ablation-reload-deps-and-load-window.log`（git 外）。
+   独立防线**：窗口关掉的是「把中间态写进盘」，恢复关掉的是「视口停在篇首」。日志与逐轮读数
+   `test-results/m286/ablation-reload-deps-and-load-window.log` + `.evidence.json`（git 外）。
 
 ### M252 装载指示立论在打开段不成立（M268 登记，2026-09-27）
 

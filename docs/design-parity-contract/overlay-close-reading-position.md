@@ -112,7 +112,7 @@ M277（代码块全屏）各自踩到一次、M274/M279 两次调查给出机制
    不出现 `pos 0`；第二条用例（负向）——外部改写后台标签时前台视口与遮罩都不动。
    **消融**：去掉 `src/save-controller.ts` 的两处 dep 调用 ⇒ 第一条如实红
    （`重载前 scrollTop=1541、重载后=0`、`afterOverlayOpen: true`），第二条照旧绿
-   （`test-results/m286/ablation-reload-deps.log`，git 外）。
+   （`test-results/m286/ablation-reload-deps.log` + 同目录的 `ablation-reload-deps.evidence.json`，git 外）。
 2. **真机层（系统 WKWebView）**：场景 **65**（`scripts/acceptance/scenarios/65-external-reload-reading-position.md`）
    ——⌃V 到文档尾部 → ⌘J 开表格全屏 → 外部在**末尾追加**一段 → 断言「第 15 章两行在渲染行里 /
    第 1 章两行不在」+ 遮罩已退出 + 内容已重载；邻近护栏场景 07c（外部重载本身）同批重跑。
