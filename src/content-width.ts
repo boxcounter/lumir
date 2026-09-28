@@ -22,15 +22,18 @@ export const DEFAULT_CONTENT_WIDTH = 760;
  *  拖拽只能往宽调）。与 Rust 侧的
  *  `CONTENT_WIDTH_MIN` / `CONTENT_WIDTH_MAX` 同值：Rust 侧管**配置值**的合法区间
  * （越界回落默认 + warning），这里管**运行期拖拽**的钳制。 */
+import { t } from "./copy";
+
 export const CONTENT_WIDTH_MIN = 760;
 export const CONTENT_WIDTH_MAX = 1200;
 
-/** 手柄读屏名（文案 D120）。产品命名以提案为准：内容区域宽度拖拽调整。 */
-export const WIDTH_HANDLE_LABEL = "调整内容宽度";
+/** 手柄读屏名（文案 D120）。产品命名以提案为准：内容区域宽度拖拽调整。
+ *  **函数**而不是常量：读屏名是可见文案，语言切换后由装配层重跑写入点取新值
+ *（`src/theme.ts` 的两条同族；M282 起文案一律经 `t()` 取值）。 */
+export const WIDTH_HANDLE_LABEL = (): string => t("D120");
 
-/** 写盘失败 toast（文案 D121）：`{原因}` 处填后端错误人话。运行期宽度不回滚。 */
-export const WIDTH_SAVE_FAILED_TEXT = (reason: string): string =>
-  `内容宽度没能存进配置：${reason}（本次调整仍生效，重启后恢复）`;
+/** 写盘失败 toast（文案 D121）：`{reason}` 处填后端错误人话。运行期宽度不回滚。 */
+export const WIDTH_SAVE_FAILED_TEXT = (reason: string): string => t("D121", { reason });
 
 /** 把任意栏宽读数归一进合法区间（越界时取端点）。 */
 export function clampContentWidth(width: number): number {

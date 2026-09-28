@@ -41,10 +41,10 @@ export function vaultAbsolutePath(root: string, rel: string): string {
 
 /** 内联编辑的文案（编号见 文案-Copy.md 的 D125 起）：新建时的输入框占位与三条读屏名。
  *  编辑框中「非法原因」的措辞与 `src-tauri/src/fs_io.rs` 的同名分支一致（见 validateEntryName）。 */
-export const UNNAMED_TEXT = "未命名";
-export const RENAME_INPUT_LABEL = (name: string): string => `重命名 ${name}`;
-export const NEW_FILE_INPUT_LABEL = "新建文件的名称";
-export const NEW_DIR_INPUT_LABEL = "新建子目录的名称";
+export const UNNAMED_TEXT = (): string => t("D139");
+export const RENAME_INPUT_LABEL = (name: string): string => t("D140", { name });
+export const NEW_FILE_INPUT_LABEL = (): string => t("D141");
+export const NEW_DIR_INPUT_LABEL = (): string => t("D142");
 
 /**
  * 内联编辑的末段名校验（导出是为了让校验矩阵直接单测，不必先造一棵树）：
@@ -57,11 +57,11 @@ export const NEW_DIR_INPUT_LABEL = "新建子目录的名称";
  */
 export function validateEntryName(raw: string, siblings: ReadonlySet<string>): string | undefined {
   const name = raw.trim();
-  if (name.length === 0) return "名称不能为空";
-  if (name.includes("/")) return `名称不能包含斜杠：${name}`;
-  if (name === "." || name === "..") return `${name} 不是有效的名称`;
-  if (IGNORED_NAMES.includes(name)) return `${name} 在忽略集内，建成后不会出现在文件树里`;
-  if (siblings.has(name)) return `已存在同名条目：${name}`;
+  if (name.length === 0) return t("D143");
+  if (name.includes("/")) return t("D144", { name });
+  if (name === "." || name === "..") return t("D145", { name });
+  if (IGNORED_NAMES.includes(name)) return t("D146", { name });
+  if (siblings.has(name)) return t("D147", { target: name });
   return undefined;
 }
 
@@ -147,6 +147,8 @@ export interface FileTreeCallbacks {
 }
 
 /** 内联编辑的提交请求（树 → 装配层）。 */
+import { onRelabel, t } from "./copy";
+
 export interface InlineEditRequest {
   /** rename = 改既有条目；create-file / create-dir = 在目录下新建。 */
   mode: "rename" | "create-file" | "create-dir";
@@ -204,7 +206,7 @@ function parentOf(path: string): string {
 /** 切换器入口的悬停提示与读屏名（文案 D96）：入口是 vault 名称本身，纯文本看不出它可点，
  *  提示必须给出动作与收益（「点击查看全部 vault」）——同一句话两处复用，不写两份。 */
 function vaultEntryLabel(vaultName: string): string {
-  return `vault：${vaultName}（点击查看全部 vault）`;
+  return t("D96", { name: vaultName });
 }
 
 /** 目录 caret（定稿 direction-c/index.html:211-214、:798-820）：9×9 细线 SVG chevron，
@@ -255,6 +257,9 @@ export function createFileTree(mount: HTMLElement, cb: FileTreeCallbacks): FileT
   let vaultName = "";
   /** 树头部的切换器入口（形态 A）：未装载 vault 时不存在（空态整块替换）。 */
   let entryEl: HTMLButtonElement | undefined;
+  /** 空态当前显示的提示行（`undefined` = 不在空态）。语言切换后要能原样重建空态，
+   *  否则「正在恢复上次打开的 vault……」这类长驻文本会停在切换前的语言上。 */
+  let emptyNotice: string | null | undefined;
 
   const rootEl = document.createElement("div");
   rootEl.className = "filetree";
@@ -424,6 +429,7 @@ export function createFileTree(mount: HTMLElement, cb: FileTreeCallbacks): FileT
     }
 
     rootEl.replaceChildren();
+    emptyNotice = undefined;
     const header = document.createElement("div");
     header.className = "ft-header";
     // 常驻切换入口（形态 A，M163）：**vault 名称本身即入口** + caret 作可点提示，现状的
@@ -633,7 +639,7 @@ export function createFileTree(mount: HTMLElement, cb: FileTreeCallbacks): FileT
         ? rootEl.querySelector<HTMLUListElement>(".ft-root-list")
         : parent.childrenUl;
     if (ul === undefined || ul === null) return;
-    const { row, input, error } = editRow(kind, UNNAMED_TEXT);
+    const { row, input, error } = editRow(kind, UNNAMED_TEXT());
     const li = document.createElement("li");
     li.className = "ft-item is-new";
     li.append(row);
@@ -655,7 +661,7 @@ export function createFileTree(mount: HTMLElement, cb: FileTreeCallbacks): FileT
     editing = state;
     const siblings = siblingNames(parentRel);
     wireEdit(state, siblings);
-    input.setAttribute("aria-label", kind === "dir" ? NEW_DIR_INPUT_LABEL : NEW_FILE_INPUT_LABEL);
+    input.setAttribute("aria-label", kind === "dir" ? NEW_DIR_INPUT_LABEL() : NEW_FILE_INPUT_LABEL());
     input.focus();
   }
 
@@ -702,7 +708,7 @@ export function createFileTree(mount: HTMLElement, cb: FileTreeCallbacks): FileT
     });
   }
 
-  return {
+  const tree: FileTree = {
     setCurrentPath(path) {
       currentPath = path;
       syncCurrent();
@@ -854,6 +860,7 @@ export function createFileTree(mount: HTMLElement, cb: FileTreeCallbacks): FileT
       // 空态整块替换掉整棵树，入口随之从 DOM 消失——「未装载 vault（含启动恢复进行中）
       // 时无列表入口」这条口径就落在这一句上（entryEl 一并置空，命令据此无操作）。
       entryEl = undefined;
+      emptyNotice = notice;
       editing = null;
       pendingRename = undefined;
       const empty = document.createElement("div");
@@ -866,14 +873,27 @@ export function createFileTree(mount: HTMLElement, cb: FileTreeCallbacks): FileT
       }
       const hint = document.createElement("p");
       hint.className = "ft-hint";
-      hint.textContent = "打开一个目录作为 vault，开始浏览全部文件。";
+      hint.textContent = t("D5");
       const btn = document.createElement("button");
       btn.type = "button";
       btn.className = "ft-open-btn";
-      btn.textContent = "打开 vault";
+      btn.textContent = t("D6");
       btn.addEventListener("click", () => cb.onOpenVault());
       empty.append(hint, btn);
       mount.replaceChildren(empty);
     },
   };
+
+  // 语言切换后重写长驻文本（design §5.2 的不变量）：树头部入口的 title / aria-label 是
+  // 装载时写死的，空态（含「正在恢复上次打开的 vault……」）也是整块建出来的——两条都要能
+  // 在运行期重跑。`setVault` / `showEmpty` 分别在装载与切空态时覆盖这两个写入点。
+  onRelabel(() => {
+    if (entryEl !== undefined) {
+      entryEl.title = vaultEntryLabel(vaultName);
+      entryEl.setAttribute("aria-label", vaultEntryLabel(vaultName));
+    }
+    if (emptyNotice !== undefined) tree.showEmpty(emptyNotice);
+  });
+
+  return tree;
 }

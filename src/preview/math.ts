@@ -18,6 +18,7 @@ import { detectFrontmatter } from "./frontmatter";
 import { findClosingRun, runLen } from "./lexical";
 import { findTables, tableAt } from "./table";
 import type { TableModel } from "./table";
+import { t } from "../copy";
 
 export interface MathSpan {
   /** 整条公式的范围 `[from, to)`，含定界 `$` / `$$`。 */
@@ -227,7 +228,7 @@ class InlineMathWidget extends WidgetType {
     } else {
       el.classList.add("cm-lp-math-fallback");
       el.textContent = this.raw;
-      el.title = `公式解析失败：${result.error}`;
+      el.title = t("D217", { reason: result.error });
     }
     el.addEventListener("mousedown", (event) => enterMathSource(event, view, el, this.display ? 2 : 1, this.raw.length));
     return el;
@@ -255,7 +256,7 @@ class BlockMathWidget extends WidgetType {
       box.classList.add("cm-lp-math-fallback");
       const err = document.createElement("div");
       err.className = "cm-lp-math-error";
-      err.textContent = `公式解析失败：${result.error}`;
+      err.textContent = t("D217", { reason: result.error });
       const raw = document.createElement("pre");
       raw.className = "cm-lp-math-raw";
       raw.textContent = this.raw;

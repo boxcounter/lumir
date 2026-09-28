@@ -68,7 +68,7 @@ import type { TreeMenuAction, TreeMenuTarget } from "./tree-menu";
 import { createLinkFollow } from "./link-follow";
 import { createTabs } from "./tabs";
 import { createBindingsPanel } from "./bindings-panel";
-import { WIDTH_SAVE_FAILED_TEXT, createContentWidthDrag } from "./content-width";
+import { WIDTH_HANDLE_LABEL, WIDTH_SAVE_FAILED_TEXT, createContentWidthDrag } from "./content-width";
 import { createTitlebarIdentity } from "./modeline";
 import {
   THEME_INDICATOR_LABEL,
@@ -76,11 +76,23 @@ import {
   currentTheme,
   nextTheme,
 } from "./theme";
+import {
+  currentLanguage,
+  formatNumber,
+  languageTag,
+  nextLanguage,
+  onRelabel,
+  runRelabels,
+  t,
+  tPlural,
+} from "./copy";
+import type { Language } from "./copy";
 import { invalidateMermaidTheme } from "./preview/mermaid";
 import { logEvent, sampleCallback } from "./diagnostics";
 import type { FsEntry } from "./bindings/FsEntry";
 import type { UiTheme } from "./bindings/UiTheme";
 import type { VaultInfo } from "./bindings/VaultInfo";
+import type { VaultStatus } from "./bindings/VaultStatus";
 import type { VaultListEntry } from "./bindings/VaultListEntry";
 import { extensionOf, codeLanguageOfPath, isEditablePath, mimeTypeOf, resolveByNameUnique } from "./preview/attachments";
 import { openSearch } from "./search";
@@ -198,9 +210,9 @@ editor.setGotoLinePrompt(gotoLine);
 /** 块级复制的反馈文案（文案 deck D154 / D155）。块类型词只写一处：这里的「表格 / 代码块」与
  *  `block-trigger.ts` 的 `blockCopyLabel`（D153 读屏名）取自同一对词，读屏名与 toast 因此不会
  *  各写一份（改一处即两处同步）。 */
-const COPIED_TABLE_TOAST = "已复制表格";
-const COPIED_CODE_BLOCK_TOAST = "已复制代码块";
-const COPY_BLOCK_FAILED_TOAST = (reason: string): string => `复制失败：${reason}`;
+const COPIED_TABLE_TOAST = (): string => t("D154", { block: t("D203") });
+const COPIED_CODE_BLOCK_TOAST = (): string => t("D154", { block: t("D204") });
+const COPY_BLOCK_FAILED_TOAST = (reason: string): string => t("D155", { reason });
 
 /**
  * 复制一个块的内容（M277）：内容在**触发那一刻**从当前 `EditorState` 现取（不缓存文本——
@@ -212,14 +224,16 @@ const COPY_BLOCK_FAILED_TOAST = (reason: string): string => `复制失败：${re
  */
 async function copyBlockContent(range: BlockCopyRange): Promise<void> {
   const text = blockCopyText(editor.view.state, range);
-  const done = range.kind === "table" ? COPIED_TABLE_TOAST : COPIED_CODE_BLOCK_TOAST;
-  const noun = range.kind === "table" ? "表格" : "代码块";
+  const done = range.kind === "table" ? COPIED_TABLE_TOAST() : COPIED_CODE_BLOCK_TOAST();
+  // console 线索里那个块类型词与上屏同源（同一个表条目），只是日志面固定用中文取值——
+  // 诊断文本不进语言面，但**不另写一份字面量**（同一条串两处真源正是 REVIEW.md 第 8 条要防的）。
+  const noun = t(range.kind === "table" ? "D203" : "D204", undefined, "zh");
   try {
     await navigator.clipboard.writeText(text);
     toast(done, [], false, "success");
   } catch (e) {
     const reason = errorMessage(e);
-    console.warn(`lumir: 复制${noun}失败：${reason}`);
+    console.warn(`lumir: 复制${noun}失败：${reason}`); // i18n-exempt: log
     toast(COPY_BLOCK_FAILED_TOAST(reason));
   }
 }
@@ -423,7 +437,7 @@ const tabs = createTabs({
 
 /** 空 vault 首入态的引导（文案 D107）：装载完成而一个标签都没能恢复出来时，正文给一句
  *  指路，不伪造内容（也不残留上一次 vault 的正文——那已被 editor.reset 作废）。 */
-const EMPTY_VAULT_TEXT = "这个 vault 还没有打开的文件。在左栏选一个文件开始。";
+const EMPTY_VAULT_TEXT = (): string => t("D107");
 
 // ---------------------------------------------------------------------------
 // 装载的即时反馈与阶段读数（M252，Alex 真机反馈原话：「切换 vault 时，会卡住几秒。我会愣住，
@@ -537,7 +551,7 @@ const switcher: VaultSwitcherHandle = createVaultSwitcher({
     const session = editor.sessionForPath(path);
     if (session !== undefined) tabs.activateTab(session);
   },
-  onEmptyVault: () => showNotice(EMPTY_VAULT_TEXT),
+  onEmptyVault: () => showNotice(EMPTY_VAULT_TEXT()),
   warn: (text) => toast(text),
 });
 
@@ -595,14 +609,14 @@ function runTreeAction(action: TreeMenuAction, target: TreeMenuTarget): void {
     case "trash":
       trashPending = target;
       trashConfirm.open({
-        title: TRASH_CONFIRM_TITLE,
+        title: TRASH_CONFIRM_TITLE(),
         // 目录那一档明示「连同其中全部内容」（裁决点 2 的护栏：删除必须两步 + 可恢复）。
         body:
           target.kind === "dir"
             ? TRASH_CONFIRM_DIR_BODY(target.name)
             : TRASH_CONFIRM_FILE_BODY(target.name),
-        confirmLabel: TRASH_CONFIRM_OK,
-        cancelLabel: DIALOG_CANCEL,
+        confirmLabel: TRASH_CONFIRM_OK(),
+        cancelLabel: DIALOG_CANCEL(),
       });
       return;
   }
@@ -624,10 +638,10 @@ async function copyVaultPath(rel: string): Promise<void> {
   const absolute = vaultAbsolutePath(root, rel);
   try {
     await navigator.clipboard.writeText(absolute);
-    toast(COPIED_PATH_TOAST, [], false, "success");
+    toast(COPIED_PATH_TOAST(), [], false, "success");
   } catch (e) {
     const reason = errorMessage(e);
-    console.warn(`lumir: 复制路径失败（${rel}）：${reason}`);
+    console.warn(`lumir: 复制路径失败（${rel}）：${reason}`); // i18n-exempt: log
     toast(COPY_PATH_FAILED_TOAST(reason));
   }
 }
@@ -801,7 +815,7 @@ async function openFile(
   // 就地替换等于丢弃草稿，另开标签又会让草稿失去落点——沿用 M130 的守卫与文案。
   // 有文件路径的标签之间是标签切换，不丢内容，因此不设守卫（M149 的语义变化，
   // 见 openspec change add-multi-tabs 的 proposal「语义变化」一节）。
-  if (editor.activeSession().path === undefined && !save.guard("切换文件")) return false;
+  if (editor.activeSession().path === undefined && !save.guard(t("D209"))) return false;
   // 已经打开的文件一律切到既有标签：不重复开、也不重读（非 md 只读，重读只会把用户
   // 正在看的位置顶掉）。两种意图都适用（M254 之前还有一步「双击 / ⌘-点击一个已打开的
   // 预览标签 = 把它固定住」，预览机制退场后这一步自动消失）。
@@ -818,15 +832,15 @@ async function openFile(
   }
   const request = save.beginSwitch();
   if (kind === "binary") {
-    if (!quiet) showNotice(`暂不支持预览：${path}`);
+    if (!quiet) showNotice(t("D25", { path }));
     return false;
   }
-  showNotice(`正在打开：${path}`);
+  showNotice(t("D205", { path }));
   try {
     const snapshot = await fsReadSnapshot(path);
     if (!save.isCurrent(request)) return false;
     // 守卫复查：请求在途期间前台可能已经换过（并发打开 / 用户切走）。
-    if (editor.activeSession().path === undefined && !save.guard("切换文件")) return false;
+    if (editor.activeSession().path === undefined && !save.guard(t("D209"))) return false;
     // 可编辑文本类（注册表 md/code/text）进保存链路并登记磁盘 revision——dirty 有真实
     // 出口（Cmd+S / 冲突恢复 / 崩溃备份全部可达，editable-non-md-files 裁决 D3）。
     // 判据取 isEditablePath（与编辑器会话的 editable 标志同源同一真源），MUST NOT 另写集合。
@@ -869,7 +883,7 @@ window.addEventListener("beforeunload", (event) => {
   // 判据是「任一标签有未保存修改」：多标签下只看前台文档会让后台标签的修改被静默丢弃。
   if (!editor.sessions().some((session) => session.dirty)) return;
   event.preventDefault();
-  event.returnValue = "当前有未保存修改";
+  event.returnValue = t("D206");
 });
 
 // ---------------------------------------------------------------------------
@@ -940,6 +954,52 @@ function cycleTheme(): void {
 shell.modelineTheme.addEventListener("click", cycleTheme);
 
 // ---------------------------------------------------------------------------
+// 界面语言（M282，change ui-language-i18n 的 D1/D2/D3 裁决）：运行期切换的单一施加点与循环命令。
+//
+// 真源分层（design §5.1）：`config.json` 的 `[ui] language` = **启动真源**，`<html lang>` =
+// **运行期唯一生效面**（顺带修掉 index.html 原先写死的 `lang="en"` 与全界面不符）。文案层的
+// 取值一律读 `<html lang>`（src/copy.ts 的 currentLanguage），本文件**不另存一份当前语言**。
+//
+// applyLanguage 是**唯一施加点**：启动装配（本文件末尾 configGet 块内）与运行期切换都经它，
+// MUST NOT 出现第二处写 `<html lang>` 的地方（与 applyTheme 同款纪律，REVIEW.md 第 8 条）。
+// 语言的派生物比主题多得多（全部可见字符串），因此施加点还要跑一遍 `runRelabels()`：长驻
+// chrome 的模块在挂载时把串写死了，不重写就不会变（design §5.2 的不变量）。
+// ---------------------------------------------------------------------------
+
+/** 施加语言：写 `<html lang>`（`zh-Hans` / `en`，BCP-47）+ 刷新 modeline 指示钮 + 按注册顺序
+ *  跑长驻 chrome 的重绘 + 让编辑器重建预览装饰（widget 的文本在 `toDOM()` 里生成，表格降级
+ *  归因句还经 `data-degraded` 属性被 CSS `attr()` 取用——**属性不重建就不会变**）。
+ *
+ *  `lang` 取 Rust 侧 `UiLanguage` 闭集合，前端不判非法值（合法性已由 Rust validate 保证，
+ *  再判一次就是同一条语义的第二处真源）。 */
+function applyLanguage(lang: Language): void {
+  document.documentElement.lang = languageTag(lang);
+  shell.modelineLanguage.textContent = lang;
+  const label = t("D317", { lang });
+  shell.modelineLanguage.title = label;
+  shell.modelineLanguage.setAttribute("aria-label", label);
+  shell.modelineLanguage.hidden = false;
+  runRelabels();
+  editor.refreshPreview();
+}
+
+/** 循环切换到另一档（命令 `view.language-cycle` 与 modeline 语言钮的**同一条实现路径**，
+ *  design §5.3：不调命令分发器，两处直接调它）。顺序是有意的：先施加（`<html lang>` 与全部
+ *  长驻 chrome / 预览装饰都是新语言），再写回配置——写回失败只影响持久化，运行期语言**不回滚**
+ *（与主题写回同款降级口径）。 */
+function cycleLanguage(): void {
+  const next = nextLanguage(currentLanguage(document.documentElement));
+  applyLanguage(next);
+  configSetUiValue("language", next).catch((e: unknown) => {
+    toast(t("D319", { reason: errorMessage(e) }));
+    logEvent("config_warning", { source: "language", message: errorMessage(e) });
+  });
+}
+
+// modeline 语言钮的点击 = 同一条实现路径（click 事件本身不需要被消费，语义全在 cycleLanguage 里）。
+shell.modelineLanguage.addEventListener("click", cycleLanguage);
+
+// ---------------------------------------------------------------------------
 // 统一键位层（M131）：唯一分发表在 keys.ts，装配在这里——编辑器侧命令由 editor 提供，
 // 装配侧命令（保存）在下面就地实现，链接跟随与标签那几条转各自模块的句柄（M151）。
 // 原先散落的四条旁路（keys.ts 的 window trie、editor 的 CM keymap 与 domEventHandlers、
@@ -982,6 +1042,10 @@ const commands: CommandRuntime = {
   // 命令实现就是上面的 cycleTheme（与 modeline 主题钮共用同一条路径，见那段注释）。
   // 默认键位 ⌘⇧T 在 keys.ts 的 KEY_BINDINGS 里（冲突核实与 token 形态见那一条的 doc）。
   "view.theme-cycle": () => cycleTheme(),
+  // 界面语言循环切换（M282，change ui-language-i18n 的 D1/D2/D3 裁决）：en ↔ zh 循环，命令实现
+  // 就是上面的 cycleLanguage（与 modeline 语言钮共用同一条路径，见那段注释）。默认键位 ⌘⇧L 在
+  // keys.ts 的 KEY_BINDINGS 里（三条冲突来源的复核与 token 形态见那一条的 docKey 指向的表条目）。
+  "view.language-cycle": () => cycleLanguage(),
   // 标签（M149）：能力与切换在 editor 的会话 API，装配层只做两件它才知道的事——
   // 切换后的表现层对齐（tabs.activateTab → syncActiveDocument）与关标签的确认（都在 src/tabs.ts）。
   // `tab.close` 关的是**前台**标签；逐标签关闭钮走同一条 closeTab（同一个确认）。
@@ -1126,8 +1190,9 @@ function syncDirtyIndicator(): void {
   const path = session.path;
   // 定稿口径（index.html:1225）：路径段分隔符写作「 / 」（带空格）。session.path 是
   // vault 相对路径（不含前导 /），直接全量替换即可。
-  const display = path === undefined ? "无当前文件" : path.replaceAll("/", " / ");
-  shell.modelinePath.textContent = session.dirty && path !== undefined ? `${display}（未保存）` : display;
+  const display = path === undefined ? t("D207") : path.replaceAll("/", " / ");
+  shell.modelinePath.textContent =
+    session.dirty && path !== undefined ? t("D90", { name: display }) : display;
 }
 
 /** modeline 右段（`语法 · 行数 · UTF-8`）——design §4-2 的实现期结论，口径「**只读派生、
@@ -1150,9 +1215,31 @@ function syncModelineMeta(): void {
   const language = session.mode === "md"
     ? "Markdown"
     : codeLanguageOfPath(session.path ?? "") ?? "Plain text";
-  const text = `${language} · ${lines} 行 · UTF-8`;
+  const text = tPlural("D208", lines, { language, lines: formatNumber(lines) });
   if (shell.modelineMeta.textContent !== text) shell.modelineMeta.textContent = text;
 }
+
+// 语言切换后重写 modeline 的两段长驻文本（左段的路径 / 未保存标记、右段的「语法 · 行数 ·
+// 编码」）：它们是「文档变化时才写」的派生文本，不随语言自动更新，因此必须有一条能在运行期
+// 重跑它们的路径（design §5.2 的不变量）。同步主题 / 字号等重绘也走这里，避免各自为例外接线。
+onRelabel(() => {
+  syncDirtyIndicator();
+  syncModelineMeta();
+  // 主题钮的悬停提示 / 读屏名由 `applyTheme` 写，而它在启动块里跑在 `applyLanguage` **之前**
+  //（那时 `<html lang>` 还没写，取值落到默认档）——这里按当前主题重写一遍。
+  const theme = currentTheme(document.documentElement);
+  if (theme !== null) applyTheme(theme);
+  // 树空态那一行必须**重新取值**而不是重放旧字符串：`RESTORING_NOTICE()` 在显示的那一刻就
+  // 解析成了字符串，重放等于把切换前的语言钉死（同族的还有后端透传的 notice，那是真值，原样重放）。
+  if (lastVaultStatus !== null && lastVaultStatus.vault === null && !vaultLoaded) {
+    tree.showEmpty(lastVaultStatus.restore_pending ? RESTORING_NOTICE() : lastVaultStatus.notice);
+  }
+  // 栏宽手柄的读屏名：`createShell` 在挂载时写死（D120），它没有「打开」这个点时重写的机会，
+  // 因此必须走重绘注册（design §5.2 的不变量：挂载后无法重写的语言相关文本 MUST NOT 存在）。
+  const handleLabel = WIDTH_HANDLE_LABEL();
+  shell.widthHandles.left.setAttribute("aria-label", handleLabel);
+  shell.widthHandles.right.setAttribute("aria-label", handleLabel);
+});
 
 /** 已推给后端的 dirty 镜像值（M149）：只在**变化**时上报。
  *
@@ -1282,8 +1369,8 @@ async function requestRelocate(
     if (loadedRoot !== undefined) await vaultOpenPath(loadedRoot, true).catch(() => {});
     toast(
       occupied !== undefined
-        ? `这个目录已经是「${occupied.name}」的路径，不能用来重新定位`
-        : `这个目录没法用来重新定位「${row.name}」；请选择该 vault 现在所在的目录`,
+        ? t("D105", { name: occupied.name })
+        : t("D106", { name: row.name }),
     );
     return;
   }
@@ -1461,7 +1548,7 @@ onFsEntryChanged((changes) => {
 
 // 恢复中态的提示行（文案-Copy.md D95）。复用未打开空态的布局，只换提示行：零新样式、
 // 零布局变化，「打开 vault」入口天然保留（用户可在恢复期间抢先改选目录，design §4.3）。
-const RESTORING_NOTICE = "正在恢复上次打开的 vault……";
+const RESTORING_NOTICE = (): string => t("D95");
 
 /** 拉一次权威 vault 状态：已打开就装载，否则按终态（恢复中 / 恢复失败 / 无 vault）显示空态。
  *
@@ -1469,14 +1556,17 @@ const RESTORING_NOTICE = "正在恢复上次打开的 vault……";
  *  ——启动时完成信号与首次拉取可能同时到达，重复装载会白走一遍编辑器整批复位与崩溃备份入口；
  *  ② 尚未到终态的空态只在**没装载过**时呈现——装载之后再到达的「恢复中 / 无 vault」响应是
  *  更早那次拉取的迟到响应，不能把已装载的树降级成空态。 */
+let lastVaultStatus: VaultStatus | null = null;
+
 function refreshVaultStatus(): Promise<void> {
   return vaultCurrent()
     .then((status) => {
+      lastVaultStatus = status;
       if (status.vault) {
         if (status.vault.root === loadedRoot) return;
         loadVault(status.vault.root, status.vault.entries, status.vault.vault_id, true);
       } else if (!vaultLoaded) {
-        tree.showEmpty(status.restore_pending ? RESTORING_NOTICE : status.notice);
+        tree.showEmpty(status.restore_pending ? RESTORING_NOTICE() : status.notice);
       }
     })
     .catch((e) => {
@@ -1581,6 +1671,15 @@ configGet().then((snapshot) => {
   // 生效，modeline 主题钮停在初始 hidden），失败面收窄到真正依赖主题的地方。测试桩的补齐见
   // tests/visual/scenes/tauri-stub.ts。
   applyTheme(snapshot.config.ui.theme);
+  // 界面语言（change ui-language-i18n，M282）：`[ui] language` 是**启动真源**，装载时经
+  // applyLanguage 施加到 `<html lang>` 并由文案层按它取值；运行期由 `view.language-cycle`
+  // （⌘⇧L）/ modeline 语言钮推进并回写配置文件，两处都走上面那个**唯一施加点**。
+  // **前端不判非法值**：取值是闭集合（en|zh），合法性已由 Rust 侧 validate 保证
+  //（非法值 warning + 回落 en，REVIEW.md 第 8 条）。不跟随系统语言（非目标）。
+  //
+  // 与 applyTheme 相邻、同属块内末尾一族（design §5.1）：桩环境缺 `ui` 表时只让语言不施加，
+  // 失败面收窄到真正依赖语言的地方（文案层回落到 DEFAULT_LANGUAGE，不抛错）。
+  applyLanguage(snapshot.config.ui.language);
 }).catch(() => {});
 
 // app-ready 只表示 webview/application shell 已挂载，不等价于 vault 恢复或编辑器首帧。

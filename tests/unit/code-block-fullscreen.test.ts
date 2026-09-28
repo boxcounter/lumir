@@ -203,7 +203,7 @@ test("超过单块着色上限：整块以单块纯文本呈现，源码逐字�
 // ---------------------------------------------------------------------------
 
 test("块级触发钮的读屏名与文案 deck 逐字一致", () => {
-  assert.equal(CODEBLOCK_FS_TRIGGER_LABEL, "放大查看代码块");
+  assert.equal(CODEBLOCK_FS_TRIGGER_LABEL(), "放大查看代码块");
   assert.equal(blockCopyLabel("table"), "复制表格");
   assert.equal(blockCopyLabel("codeblock"), "复制代码块");
 });

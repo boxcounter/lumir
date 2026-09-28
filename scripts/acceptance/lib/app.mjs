@@ -44,6 +44,8 @@ export async function writeConfig({
   fontSize = undefined,
   theme = undefined,
   contentWidth = undefined,
+  // 界面语言（M282，change ui-language-i18n）：与 theme / contentWidth 同形，缺省沿用当前值。
+  language = undefined,
   keys = undefined,
 } = {}) {
   const dir = path.join(envHome(), "lumir");
@@ -60,6 +62,7 @@ export async function writeConfig({
   const ui = {};
   if (theme !== undefined) ui.theme = theme;
   if (contentWidth !== undefined) ui.content_width = contentWidth;
+  if (language !== undefined) ui.language = language;
   if (Object.keys(ui).length > 0) cfg.ui = ui;
   if (keys !== undefined) cfg.keys = keys;
   await writeFile(path.join(dir, "config.json"), `${JSON.stringify(cfg, null, 2)}\n`);

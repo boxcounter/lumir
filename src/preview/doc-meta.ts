@@ -7,6 +7,8 @@
 // 跑 src/*.ts，从 livePreview.ts 导入会拖入整个装饰层依赖图（含参数属性等剥离模式
 // 不支持的语法）。
 
+import { formatDate } from "../copy";
+
 /** doc-title 的显示名：文件 basename 去扩展名（定稿实例：「2026 R&D Strategy」）。 */
 export function docTitleFromPath(path: string): string {
   const base = path.slice(path.lastIndexOf("/") + 1);
@@ -25,7 +27,7 @@ export function docDirFromPath(path: string): string {
  *  now 可注入以便单测钉住跨年分支。 */
 export function formatDocDate(mtimeMs: number, now: Date = new Date()): string {
   const d = new Date(mtimeMs);
-  return d.getFullYear() === now.getFullYear()
-    ? `${d.getMonth() + 1}月${d.getDate()}日`
-    : `${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日`;
+  // 日期格式走 `Intl` 而不是查表（design §6.2）：`zh-Hans` 给「9月22日」/「2025年7月1日」，
+  // `en` 给「September 22」/「July 1, 2025」——年月日的有无与顺序都是语言规则，手拼不得。
+  return formatDate(d, d.getFullYear() === now.getFullYear() ? "short" : "long");
 }

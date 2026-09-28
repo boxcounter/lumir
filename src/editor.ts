@@ -67,7 +67,7 @@ import { fsFileMtime } from "./ipc";
 // 选区、搜索查询、模式配置都在 state 里跟着走，因此切回来不重新解析、不丢撤销栈。
 // 会话的公共面见 EditorSession / EditorHandle；装配层（src/main.ts）负责标签栏与打开意图。
 
-const SAMPLE = `\
+const SAMPLE = `\ // i18n-exempt: data
 ---
 title: Lumir live preview 演示
 tags: [demo, m1]

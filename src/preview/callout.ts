@@ -26,6 +26,8 @@
 import { Decoration, WidgetType } from "@codemirror/view";
 import type { Range, Text } from "@codemirror/state";
 import { syntaxTree } from "@codemirror/language";
+import { currentLanguage, t } from "../copy";
+import type { CopyKey } from "../copy-data";
 
 // @lezer/common 不是直接依赖（见 lists.ts 同口径），SyntaxNode 类型从 syntaxTree 推导。
 type SyntaxNode = ReturnType<typeof syntaxTree>["topNode"];
@@ -55,9 +57,11 @@ export interface CalloutInfo {
   firstLineFrom: number;
   firstLineTo: number;
   lastLineTo: number;
-  /** 中文类型标签（双段标签的前段，恒在场）：已知类型为 13 类映射表值，未知类型为原文类型名。 */
+  /** 双段标签的前段（已知类型 = 13 类映射表的**当前语言**取值，未知类型 = 原文类型名）。
+   *  取值在装饰构建时定下，语言切换经 `editor.refreshPreview()` 重建（design §5.2）。 */
   zhLabel: string;
-  /** 英文类型名（双段标签的后段）：已知类型为归一化小写名；未知类型为 null（只渲染前段）。 */
+  /** 双段标签的后段（Obsidian 的规范类型名）：`zh` 界面下恒在场（沿革与可辨性，M218 C7），
+   *  `en` 界面下为 null——那时规范名本身就是前段，再跟一段是重复。未知类型恒为 null。 */
   enLabel: string | null;
 }
 
@@ -65,29 +69,29 @@ export interface CalloutInfo {
 // 类型表：规范类型 + Obsidian 别名（大小写不敏感，存储小写）。
 // ---------------------------------------------------------------------------
 
-const CALLOUT_TYPES = new Map<string, { canonical: string; zh: string; family: CalloutFamily }>();
+const CALLOUT_TYPES = new Map<string, { canonical: string; copyKey: CopyKey; family: CalloutFamily }>();
 
-function register(canonical: string, zh: string, family: CalloutFamily, aliases: string[]): void {
-  for (const name of [canonical, ...aliases]) CALLOUT_TYPES.set(name, { canonical, zh, family });
+function register(canonical: string, copyKey: CopyKey, family: CalloutFamily, aliases: string[]): void {
+  for (const name of [canonical, ...aliases]) CALLOUT_TYPES.set(name, { canonical, copyKey, family });
 }
 
 // 族归属与理由逐类见 tokens 文档 §callout 语义收敛的映射表：abstract / todo 是映射里
 // 争议最大的两类（teal 无对应色相 / todo 是常态清单而非紧迫警示），此处按 v1.2 的裁决落。
 // 中文类型标签逐类对照定稿原型的 13 类实例（direction-c/index.html:927-943，M216 gap 表
 // §2.3 #7 的判据出处）：笔记/摘要/信息/待办/提示/成功/疑问/警告/失败/危险/缺陷/示例/引用。
-register("note", "笔记", "info", []);
-register("abstract", "摘要", "info", ["summary", "tldr"]);
-register("info", "信息", "info", []);
-register("todo", "待办", "info", []);
-register("tip", "提示", "ok", ["hint", "important"]);
-register("success", "成功", "ok", ["check", "done"]);
-register("question", "疑问", "pending", ["help", "faq"]);
-register("warning", "警告", "pending", ["caution", "attention"]);
-register("failure", "失败", "danger", ["fail", "missing"]);
-register("danger", "危险", "danger", ["error"]);
-register("bug", "缺陷", "danger", []);
-register("example", "示例", "neutral", []);
-register("quote", "引用", "neutral", ["cite"]);
+register("note", "D246", "info", []);
+register("abstract", "D247", "info", ["summary", "tldr"]);
+register("info", "D248", "info", []);
+register("todo", "D249", "info", []);
+register("tip", "D250", "ok", ["hint", "important"]);
+register("success", "D251", "ok", ["check", "done"]);
+register("question", "D252", "pending", ["help", "faq"]);
+register("warning", "D253", "pending", ["caution", "attention"]);
+register("failure", "D254", "danger", ["fail", "missing"]);
+register("danger", "D255", "danger", ["error"]);
+register("bug", "D256", "danger", []);
+register("example", "D257", "neutral", []);
+register("quote", "D258", "neutral", ["cite"]);
 
 // ---------------------------------------------------------------------------
 // 解析：blockquote 首行第一个 QuoteMark 之后的内容须以 [!type] 开头。
@@ -136,8 +140,8 @@ export function detectCallout(doc: Text, node: SyntaxNode): CalloutInfo | null {
     markerTo,
     titleFrom,
     titleTo,
-    zhLabel: entry?.zh ?? m[2],
-    enLabel: entry?.canonical ?? null,
+    zhLabel: entry === undefined ? m[2] : t(entry.copyKey),
+    enLabel: entry === undefined || currentLanguage() === "en" ? null : entry.canonical,
     firstLineFrom: firstLine.from,
     firstLineTo: firstLine.to,
     lastLineTo: doc.lineAt(node.to).to,

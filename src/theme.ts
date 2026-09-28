@@ -13,6 +13,7 @@
 //     SVG 内联样式，CSS 变量跟不上，只能重渲）。
 
 import type { UiTheme } from "./bindings/UiTheme";
+import { t } from "./copy";
 
 /** 三档循环序（change live-theme-switch 的 D1 裁决）：light → dark → eink → light。
  *  顺序是**配置面之外**的一条口径，因此在本模块只写一次——命令实现与场景都引用它，
@@ -45,7 +46,7 @@ export function nextTheme(current: UiTheme | null): UiTheme {
  *（与 D96 的 vault 入口同形），可见文本是主题名本身——配置值逐字，dogfood 时
  *「我这是哪个主题」可以直接对上 config.json 的 `[ui] theme`，不经过一层翻译。
  */
-export const THEME_INDICATOR_LABEL = (theme: UiTheme): string => `主题：${theme}（点击切换）`;
+export const THEME_INDICATOR_LABEL = (theme: UiTheme): string => t("D122", { theme });
 
 /**
  * 写盘失败 toast（文案 D123）：`{原因}` 处填后端错误信封的人话（D121 同口径）。
@@ -54,5 +55,4 @@ export const THEME_INDICATOR_LABEL = (theme: UiTheme): string => `主题：${the
  * 主题。MUST NOT 点名某个具体主题——写失败时运行期态与文件态分叉，前端说不出文件里到底是
  * 哪一档（上一档的写回也可能失败过），点名就是伪造一个读不到的读数（REVIEW.md 第 2 条）。
  */
-export const THEME_SAVE_FAILED_TEXT = (reason: string): string =>
-  `主题已切换，但写入配置失败，重启后将回到配置文件里的主题（${reason}）`;
+export const THEME_SAVE_FAILED_TEXT = (reason: string): string => t("D123", { reason });

@@ -55,6 +55,7 @@ import type { TableFullscreen } from "../table-fullscreen";
 import { highlightCode } from "./code";
 import { BLOCK_SCROLL_CLASS, TABLE_SCROLL_CLASS, WIDGET_SCROLL_STEP_PX } from "../keys";
 import type { CommandRunner, WidgetCommandId } from "../keys";
+import { t } from "../copy";
 
 // @lezer/common 不是直接依赖（callout.ts 同口径），SyntaxNode 类型从 syntaxTree 推导。
 type SyntaxNode = ReturnType<typeof syntaxTree>["topNode"];
@@ -123,13 +124,13 @@ class WikilinkWidget extends WidgetType {
     el.textContent = this.label;
     if (this.status === "ambiguous") {
       // 歧义标识 + 悬停候选列表（spec §4.1：跳转前即可见）
-      el.title = `同名候选：\n${this.candidates.join("\n")}`;
+      el.title = t("D215", { candidates: this.candidates.join("\n") });
       const badge = document.createElement("sup");
       badge.className = "cm-lp-wikilink-badge";
-      badge.textContent = "歧义";
+      badge.textContent = t("D34");
       el.append(badge);
     } else if (this.status === "unresolved") {
-      el.title = `${this.raw}（未创建，点击创建）`;
+      el.title = t("D216", { raw: this.raw });
     } else {
       el.title = this.raw;
     }
@@ -154,7 +155,7 @@ class HorizontalRuleWidget extends WidgetType {
     // 横线本身没有可读文本（源码 `---` 已被替换），补一个读屏名，别让它成为
     // 无名的 separator（foundation-markdown §5「装饰隐藏标记时仍保留可理解的
     // 读屏文本或等价语义」）。
-    rule.setAttribute("aria-label", "分隔线");
+    rule.setAttribute("aria-label", t("D76"));
     return rule;
   }
 }
@@ -209,7 +210,7 @@ class EmptyTableCellWidget extends WidgetType {
     cell.className = "cm-lp-table-cell cm-lp-table-cell-empty";
     cell.setAttribute("role", this.header ? "columnheader" : "cell");
     cell.setAttribute("aria-colindex", String(this.column));
-    cell.setAttribute("aria-label", "空单元格");
+    cell.setAttribute("aria-label", t("D210"));
     cell.style.cssText = `grid-column:${this.column};text-align:${this.align}`;
     return cell;
   }
@@ -292,7 +293,7 @@ function tableWrappers(view: EditorView) {
     .filter((table) => table.rectangular && !table.degraded)
     .flatMap((table, index) => {
       const start = view.state.doc.lineAt(table.from).from;
-      const label = `Markdown 表格 ${index + 1}`;
+      const label = t("D211", { index: index + 1 });
       return [
         // 触发钮的坐标系统（M240，rank 20 = 最外）：`position: relative` 让全屏触发钮
         // （绝对定位，见 ./table-trigger 的「别抄成跟着内容滚」）以**表格可视盒**为包含块，
@@ -441,7 +442,7 @@ export interface CodeBlockInfo {
   node: SyntaxNode;
 }
 
-const codeBlockLabel = (index: number): string => `Markdown 代码块 ${index}`;
+const codeBlockLabel = (index: number): string => t("D212", { index });
 
 /**
  * 视口有界的代码块遍历（单一来源）：`codeBlockWrappers`、`codeBlockSlotWrappers` 与
@@ -1332,7 +1333,7 @@ function buildStandardImage(
   const provider = ctx.attachmentProvider();
   if (!provider) {
     return Decoration.replace({
-      widget: new AttachmentNoticeWidget("附件读取未接线", rawRef),
+      widget: new AttachmentNoticeWidget(t("D32"), rawRef),
     });
   }
   const path = resolveImagePath(target, ctx.currentFilePath());
@@ -1401,20 +1402,20 @@ function buildWikilink(
   }
   // spec §6：块引用不支持，显示原文与提示。
   if (result.status === "unsupported") {
-    return Decoration.replace({ widget: new AttachmentNoticeWidget("块引用不支持", raw) });
+    return Decoration.replace({ widget: new AttachmentNoticeWidget(t("D213"), raw) });
   }
   if (embed) {
     // spec §5 双语义判别：附件引用渲染 / 笔记嵌入提示 / 缺失占位。
     if (result.status === "unresolved") {
-      return Decoration.replace({ widget: new AttachmentNoticeWidget("附件未找到", raw) });
+      return Decoration.replace({ widget: new AttachmentNoticeWidget(t("D214"), raw) });
     }
     if (result.embed_target === "note") {
-      return Decoration.replace({ widget: new AttachmentNoticeWidget("内容嵌入不支持", raw) });
+      return Decoration.replace({ widget: new AttachmentNoticeWidget(t("D33"), raw) });
     }
     const provider = ctx.attachmentProvider();
     const path = result.path;
     if (!provider || path === null) {
-      return Decoration.replace({ widget: new AttachmentNoticeWidget("附件读取未接线", raw) });
+      return Decoration.replace({ widget: new AttachmentNoticeWidget(t("D32"), raw) });
     }
     return Decoration.replace({
       widget: new ImageWidget(path, () => provider.readDataUrl(path), raw, imageOpenHandler(ctx)),
@@ -1435,18 +1436,18 @@ function buildWikiEmbedWidget(rawRef: string, inner: string, ctx: PreviewContext
 
   // ![[note]] 等笔记内容嵌入不做（ADR 0003 §2）：原文 + 人话提示。
   if (!isImageName(target)) {
-    return new AttachmentNoticeWidget("内容嵌入不支持", rawRef);
+    return new AttachmentNoticeWidget(t("D33"), rawRef);
   }
 
   const provider = ctx.attachmentProvider();
   if (!provider) {
-    return new AttachmentNoticeWidget("附件读取未接线", rawRef);
+    return new AttachmentNoticeWidget(t("D32"), rawRef);
   }
 
   // 带目录前缀按 vault 相对路径直接用；裸文件名按裁决点 F「文件名唯一匹配」解析。
   const path = target.includes("/") ? target.replace(/^\.?\//, "") : provider.resolveByName(target);
   if (path === null) {
-    return new AttachmentNoticeWidget("附件未找到", rawRef);
+    return new AttachmentNoticeWidget(t("D214"), rawRef);
   }
   return new ImageWidget(path, () => provider.readDataUrl(path), rawRef, imageOpenHandler(ctx));
 }

@@ -229,7 +229,7 @@ test("打开菜单：渲染对应项集、无新建项（文件）、持焦点�
   assert.equal(rig.menu.isOpen(), true);
   assert.equal(rig.element.hidden, false);
   assert.equal(rig.element.getAttribute("role"), "menu");
-  assert.equal(rig.element.getAttribute("aria-label"), MENU_LABEL);
+  assert.equal(rig.element.getAttribute("aria-label"), MENU_LABEL());
   assert.equal(rig.element.focused, true, "打开即持焦点");
   const labels = rig.element.texts();
   assert.ok(labels.includes("重命名…") && labels.includes("移到废纸篓…"), labels.join("|"));

@@ -2608,3 +2608,36 @@ living spec 两处已随本 change 改写口径（`keymap-commands` 的「轨道
   定点断言与 token 形态专测 / spec 对账无偏差 / 场景 45 与真机 2/2 PASS），第 11 项（§5.1 归档评审核对）
   如实不勾——它是节点 2 的动作。证据：`openspec/changes/sync-vault-registry-dir-spec/**`、`REVIEW.md`
   第 16 条、`src/editor.ts` 注释、`gate quick` 9/9 PASS（SKIP 1 = `tsc-visual` 依赖未装）、单测 375/375。
+
+## M282（change `ui-language-i18n` 实现批，2026-09-28）遗留
+
+- ~~**后端错误文案的参数面（D6 的后半）未落地**~~ **2026-09-28 已闭合**：`CommandError` 加 `params`
+  （空时不序列化）+ `param(k, v)` 链式构造；35 处构造点按「模板里的 `{name}` 就是 Rust `format!` 的
+  内联变量名」补参数（`e` 一类的 Display 值映射成 `reason`）；`tests/unit/error-text.test.ts` 立了两条
+  机械门禁（code 集合与 `ERROR_COPY` 一一对应 + **每处构造点都提供该 code 文案的全部占位名**），
+  en 界面下带参数的 code 上屏英文且参数插值正确（不再回落中文 `message`）。
+- **验收套件把「环境无效运行」与「产品判红」都表达成 0/1 PASS + 退出码 1**（M281 的 low finding，
+  `.tower/comms/findings/20260928-worker-impl-goto-line-c-improve-0-1-pass-1.md`）：环境类失败
+  （磁盘水位、app 没起来、端口被占）与产品类失败在读数上不可区分，复盘时要人读 run.log。**待修**：
+  run.mjs 的退出码分档（0 = 全 PASS、1 = 有产品失败、2 = 环境无效），`status.txt` 同步分档。
+- ~~**原生目录选择器标题未按语言取值**~~ **2026-09-28 已闭合**：`commands.rs` 的 `picker_title()` 在
+  弹出时读一次 `config::load()` 的语言（`current_ui_language()`）再设标题，两档文案落在 deck 的
+  D321（**全仓唯一一处 Rust 持有可见文案的地方**，理由与边界写在那一行的设计意图列里）；已弹出的
+  对话框不跟随切换（如实登记）。
+- ~~**启动首帧闪烁未实测**~~ **2026-09-28 已实测、未测出可见闪烁**：真机（`ui.language = zh` 的隔离
+  环境）逐帧采样（每帧记 `document.documentElement.lang` + 可见文本长度 + modeline/树文本），首帧
+  确实还没有语言属性（文案层在那 16ms 里按默认档 `en` 取值），但**首帧没有任何语言相关的可见文案**
+  （modeline 左段与文件树都为空——承载文案的 chrome 都在配置到达之后才写入），第二帧起就是配置语言。
+  逐帧读数落 `test-results/m282/ui-language-startup-flash/README.md`；两条候选缓解因此不采用
+  （现状的写入次序已经满足缓解 ①，缓解 ② 会换来「配置到位前整窗空白」）。
+- **视觉层的覆盖选择如实登记**：`tests/visual/scenes/tauri-stub.ts` 的桩把界面语言**钉在 `zh`**
+  （与产品出厂默认 `en` 不同），理由是既有整页基线全是 zh 形态、它们承担「结构与外观」的回归面；
+  `en` 面由新场景 `tests/visual/scenes/m282-ui-language.spec.ts` 覆盖。**代价**：视觉套件不再代表
+  产品的默认语言面；若要让基线代表默认语言，需一次性重拍全部整页基线（人肉裁决点）。
+- **zh 侧唯一一处可见措辞变化**：`src/vault-switcher.ts` 的相对时间改走
+  `Intl.RelativeTimeFormat`，zh 下的数字与量词之间不再有空格（`5 分钟前` → `5分钟前`）。这是
+  design §6.2「相对时间走 Intl」的直接后果，已在 `tests/unit/vault-switcher.test.ts` 就地标注；
+  若 Alex 要保留空格，则相对时间不能走 `Intl`（回到查表），两条不能同时成立。
+- **日志文本语言的口径待确认（沿 proposal 的报备）**：终裁说「日志消息固定用英文」，而现状日志
+  `message` 是中文（事件名 / 字段名是英文标识符）。本批按「日志面不进语言面、文本不动」执行，
+  未改写任何日志文本。

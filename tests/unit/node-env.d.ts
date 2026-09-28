@@ -38,6 +38,22 @@ declare module "node:assert/strict" {
 // 用例读仓内文本 fixture（如 文案-Copy.md 的 deck 表格行）用到的两个读点。
 declare module "node:fs" {
   export function readFileSync(path: URL | string, encoding: "utf8"): string;
+  export function readdirSync(path: URL | string): string[];
+  export function statSync(path: URL | string): { isDirectory(): boolean };
+}
+
+declare module "node:path" {
+  export function join(...parts: string[]): string;
+  export function resolve(...parts: string[]): string;
+  export function relative(from: string, to: string): string;
+  export function dirname(p: string): string;
+  const path: {
+    join: typeof join;
+    resolve: typeof resolve;
+    relative: typeof relative;
+    dirname: typeof dirname;
+  };
+  export default path;
 }
 
 declare module "node:url" {

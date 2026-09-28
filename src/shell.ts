@@ -1,5 +1,6 @@
 // app-shell 布局骨架 —— M1 接缝（架构复查 P2-7）。
 import { WIDTH_HANDLE_LABEL } from "./content-width";
+import { t } from "./copy";
 // 只建容器：标题栏（traffic 灯区 + 标签 + 产品标识块）/ 侧栏 / 编辑器 / modeline 四区，
 // 与文件树 / 编辑器的挂载点。文件树由 src/tree.ts 挂载（add-vault-workspace）；大纲的
 // 当前位置指示段与浮层由 src/toc.ts 维护（M148，M211 从已删除的标题区迁到 modeline）；
@@ -52,6 +53,11 @@ export interface AppShell {
    *  初始 hidden：主题还没施加到 `<html data-theme>` 就永远不显示——宁可不显示，也不显示
    *  一个尚未生效的主题名（与标题栏标识块同口径）。 */
   modelineTheme: HTMLButtonElement;
+  /** modeline 右段的语言指示钮（M282，change ui-language-i18n 的 D3 裁决，照主题钮形态）：
+   *  可见文本 = 当前语言档（`en` / `zh` 逐字，读数不译文），点击 = 循环切到另一档（与
+   *  `view.language-cycle` 是**同一条**实现路径，接线在 src/main.ts）。文案由 `applyLanguage`
+   *  写；初始 hidden——语言还没施加到 `<html lang>` 就永远不显示。 */
+  modelineLanguage: HTMLButtonElement;
 }
 
 function pane(className: string, label: string): HTMLElement {
@@ -80,7 +86,7 @@ export function createShell(mount: HTMLElement): AppShell {
   const tabStrip = document.createElement("nav");
   tabStrip.className = "tabstrip";
   tabStrip.setAttribute("role", "tablist");
-  tabStrip.setAttribute("aria-label", "打开的文档");
+  tabStrip.setAttribute("aria-label", t("D88"));
   tabStrip.hidden = true;
   // 右端产品标识块（M236，D1 裁决：右端）：纯展示文本（span 不是 clickable 元素，
   // drag.js 不为它阻断拖拽——标识块上按下拖拽窗口仍成立，场景 39 覆盖）。三段分离是
@@ -118,7 +124,7 @@ export function createShell(mount: HTMLElement): AppShell {
     el.className = `content-width-handle content-width-handle-${side}`;
     el.setAttribute("role", "separator");
     el.setAttribute("aria-orientation", "vertical");
-    el.setAttribute("aria-label", WIDTH_HANDLE_LABEL);
+    el.setAttribute("aria-label", WIDTH_HANDLE_LABEL());
     el.tabIndex = 0;
     return el;
   };
@@ -158,9 +164,17 @@ export function createShell(mount: HTMLElement): AppShell {
   modelineTheme.type = "button";
   modelineTheme.className = "modeline-theme";
   modelineTheme.hidden = true;
+  // 语言指示钮（M282，change ui-language-i18n 的 D3 裁决）：与主题钮同族——可见文本 = 当前
+  // 语言档（`en` / `zh` 逐字，即 `[ui] language` 的配置值，属读数不属文案）、点击 = 循环切到
+  // 另一档（与 `view.language-cycle` 是**同一条**实现路径）。文案（悬停提示与读屏名）由
+  // src/main.ts 的 applyLanguage 写；初始 hidden：语言还没施加到 `<html lang>` 就永远不显示。
+  const modelineLanguage = document.createElement("button");
+  modelineLanguage.type = "button";
+  modelineLanguage.className = "modeline-language";
+  modelineLanguage.hidden = true;
   const right = document.createElement("div");
   right.className = "modeline-right";
-  right.append(modelineMeta, modelineVersion, modelineTheme);
+  right.append(modelineMeta, modelineVersion, modelineTheme, modelineLanguage);
   modeline.append(left, right);
 
   root.append(titlebar, fileTree, editor, modeline);
@@ -180,5 +194,6 @@ export function createShell(mount: HTMLElement): AppShell {
     modelineMeta,
     modelineVersion,
     modelineTheme,
+    modelineLanguage,
   };
 }

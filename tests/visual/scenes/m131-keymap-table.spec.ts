@@ -1,4 +1,6 @@
 import { expect, test } from "@playwright/test";
+import { t } from "../../../src/copy";
+import type { CopyKey } from "../../../src/copy-data";
 import {
   COMMAND_IDS,
   EDITOR_COMMAND_IDS,
@@ -15,6 +17,11 @@ import {
 //   1. 表能建起来（无重复键、每条绑定都有归属命令）；
 //   2. ⌘ 与 ⌃ 真的拆开了（不存在合并口径，⌃A / ⌘A / ⌃S / ⌘S 各自归位）；
 //   3. 表里的写法真能被运行期事件命中（token 归一化的往返），否则绑定是死的。
+
+/** 绑定的来由文本（M282 起绑定只存文案表的键）；显式按 `zh` 取值——本套件跑在 zh 面。 */
+function docTextOf(binding: { docKey: CopyKey; docParams?: Record<string, string | number> }): string {
+  return t(binding.docKey, binding.docParams, "zh");
+}
 
 /** 从表内 token 反推一次真实按键事件（用于验证「表里写的能被事件命中」）。
  *  键名同时喂给 key 与 code：表内含 Alt 的组合按物理键（code）判定，非 Alt 组合只看 key。 */
@@ -45,7 +52,8 @@ test("键位表不变量：无重复键、每绑定有归属命令、命令无�
   expect(new Set(tokens).size).toBe(KEY_BINDINGS.length);
 
   for (const binding of KEY_BINDINGS) {
-    expect(binding.doc.trim(), `${binding.key} 缺少归属说明`).not.toBe("");
+    // 来由文本的居所是文案表（M282：绑定只存 docKey），显式按 zh 取值——本套件跑在 zh 面
+    expect(docTextOf(binding).trim(), `${binding.key} 缺少归属说明`).not.toBe("");
     expect(COMMAND_IDS, `${binding.key} 的 ${binding.command} 不在命令清单里`).toContain(binding.command);
     expect(["global", "editor"]).toContain(binding.scope);
   }

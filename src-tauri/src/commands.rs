@@ -49,14 +49,27 @@ pub struct ReadSnapshot {
 }
 use crate::link_graph::{self, CreateNoteResult, LinkGraph, LinkResolveResult};
 
-/// command 错误信封（serde 序列化，前端可直接展示 `message`）。
+/// command 错误信封（serde 序列化）。
+///
+/// **职责分层（M282，change ui-language-i18n 的 D6 裁决）**：
+///   - `code` = 上屏文案的**键**：前端按它取文案表的条目（`src/copy.ts` 的 `errorText`），
+///     因此上屏文本随界面语言切换；
+///   - `params` = 那条文案要插的值（**按需携带**）：键名与文案表里的 `{占位名}` 同名；
+///   - `message` = **诊断日志的内容**与**未知 code 的兜底**（固定中文，不随界面语言变）——
+///     code 已知时 MUST NOT 直接上屏。
 #[derive(Debug, Clone, Serialize, TS)]
 #[ts(export, export_to = "../../src/bindings/")]
 pub struct CommandError {
     /// 机器可判定的稳定标识，snake_case。
     pub code: String,
-    /// 人话错误（中文），前端可直接展示。
+    /// 人话错误（中文）：日志内容与未知 code 的兜底，**不随界面语言变**。
     pub message: String,
+    /// 上屏文案的参数（键名 = `src/copy-data.ts` 里那条文案的 `{占位名}`）。
+    /// **空时不序列化**（`skip_serializing_if`），因此 TS 侧要按「可能缺席」读
+    ///（`src/copy.ts` 的 `ErrorEnvelope.params?` 就是这么声明的——ts-rs 的 `#[ts(optional)]`
+    /// 只接受 `Option<T>` 字段，这里不改类型，只在生成物上留一句注记）。
+    #[serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")]
+    pub params: std::collections::HashMap<String, String>,
 }
 
 impl CommandError {
@@ -64,7 +77,22 @@ impl CommandError {
         Self {
             code: code.into(),
             message: message.into(),
+            params: std::collections::HashMap::new(),
         }
+    }
+
+    /// 补一个上屏文案的参数（键名与文案表里那条文案的 `{占位名}` 同名）。可链式调用：
+    /// `CommandError::new(code, msg).param("rel", rel).param("reason", e.to_string())`。
+    ///
+    /// 口径（M282，change ui-language-i18n 的 D6 裁决）：**模板里的 `{name}` 就是 Rust
+    /// `format!` 的内联变量名**，值一般原样传（`&str` / `String` / `Path::display()`）；
+    /// `{e}` 一类的 Display 值统一映射成 `reason`（文案表用 `{reason}`）。链式而不是数组
+    /// 字面量：数组要求元素同型（`&str` 与 `String` 混不进一个数组），链式让每个参数各自
+    /// 泛型化。**同一个 code 的每个构造点都必须提供该 code 文案的全部占位名**——缺一个，
+    /// 前端 `t()` 会因缺参抛错并回落到中文 `message`（有一条门禁盯着这件事）。
+    pub fn param<K: Into<String>, V: ToString>(mut self, key: K, value: V) -> Self {
+        self.params.insert(key.into(), value.to_string());
+        self
     }
 }
 
@@ -510,6 +538,29 @@ fn warn_last_vault_failed(e: &CommandError) {
     eprintln!("lumir: 记录 last_vault 失败（vault 已打开，本次忽略）：{e}");
 }
 
+/// 读一次当前生效的界面语言（M282，change ui-language-i18n 的 D6 裁决：「由操作系统渲染的
+/// 界面文本无法运行期切换 —— 后端在弹出时读一次当前语言并据此取值；已弹出的对话框不跟随」）。
+///
+/// 配置读不到（首次启动 / 配置损坏）时按出厂默认 `En`（与 `UiConfig::default().language` 同值）
+/// ——这里 MUST NOT 让一次标题取值把「打开 vault」这条链路打红。
+fn current_ui_language() -> crate::config::UiLanguage {
+    crate::config::load()
+        .map(|snapshot| snapshot.config.ui.language)
+        .unwrap_or(crate::config::UiLanguage::En)
+}
+
+/// 原生目录选择器的标题（OS 渲染，前端不可达）。两档文案与 `文案-Copy.md` 的 D321 逐字一致。
+///
+/// **这是全仓唯一一处 Rust 侧持有可见文案的地方**，理由在 D321 的设计意图列里写着：那个对话框
+/// 由 OS 画，跑在 webview 之外的 Rust 进程里，前端拿不到也改不了。因此它是**有意的第二处**
+/// 文案落点，不是漏迁移的残留——deck 的 D321 就是它的评审面，英文列与这里的 `En` 分支逐字对应。
+fn picker_title(language: crate::config::UiLanguage) -> &'static str {
+    match language {
+        crate::config::UiLanguage::Zh => "选择 vault 目录",
+        crate::config::UiLanguage::En => "Choose a vault folder",
+    }
+}
+
 /// 打开成功后的记账（M127 的 `last_vault` + M162 的注册项 `last_opened_at`）：两者在
 /// **同一次成功路径**上写，都只降级 warning（打开是主结果，两者都只影响下次启动与列表顺序）。
 ///
@@ -534,7 +585,7 @@ pub async fn vault_open(
     force_new: bool,
 ) -> Result<Option<VaultInfo>, CommandError> {
     let picked = rfd::AsyncFileDialog::new()
-        .set_title("选择 vault 目录")
+        .set_title(picker_title(current_ui_language()))
         .pick_folder()
         .await;
     let Some(handle) = picked else {
@@ -760,7 +811,8 @@ pub fn open_external_url(app: tauri::AppHandle, url: String) -> Result<(), Comma
         return Err(CommandError::new(
             "open_url_rejected",
             format!("打不开这类链接：{url}——只支持 http、https、mailto"),
-        ));
+        )
+        .param("raw", url));
     };
     match app.opener().open_url(target, None::<&str>) {
         Ok(()) => {
@@ -769,10 +821,10 @@ pub fn open_external_url(app: tauri::AppHandle, url: String) -> Result<(), Comma
         }
         Err(e) => {
             crate::logging::link_open("external", "failed", Some(scheme));
-            Err(CommandError::new(
-                "open_url_failed",
-                format!("打开链接失败：{e}"),
-            ))
+            Err(
+                CommandError::new("open_url_failed", format!("打开链接失败：{e}"))
+                    .param("reason", e.to_string()),
+            )
         }
     }
 }
@@ -826,7 +878,8 @@ pub fn link_open_path(
         return Err(CommandError::new(
             "link_path_rejected",
             format!("打不开这个目标：{target}——它不在 vault 内"),
-        ));
+        )
+        .param("target", target));
     };
     let abs = match fs_io::resolve_in_vault(&root, &rel) {
         Ok(abs) => abs,
@@ -840,7 +893,8 @@ pub fn link_open_path(
         return Err(CommandError::new(
             "link_path_rejected",
             format!("打不开这个目标：{rel}——路径含非 UTF-8 字符"),
-        ));
+        )
+        .param("target", rel));
     };
     match app.opener().open_path(abs, None::<&str>) {
         Ok(()) => {
@@ -849,10 +903,10 @@ pub fn link_open_path(
         }
         Err(e) => {
             crate::logging::link_open("asset", "failed", None);
-            Err(CommandError::new(
-                "link_path_failed",
-                format!("打开文件失败：{e}"),
-            ))
+            Err(
+                CommandError::new("link_path_failed", format!("打开文件失败：{e}"))
+                    .param("reason", e.to_string()),
+            )
         }
     }
 }
@@ -1054,13 +1108,15 @@ pub fn fs_reveal_in_finder(
         return Err(CommandError::new(
             "fs_reveal_failed",
             format!("无法定位 {rel}——路径含非 UTF-8 字符"),
-        ));
+        )
+        .param("rel", rel));
     };
     app.opener().reveal_item_in_dir(abs).map_err(|e| {
         CommandError::new(
             "fs_reveal_failed",
             format!("无法在 Finder 中显示 {rel}：{e}"),
         )
+        .param("rel", rel)
     })
 }
 

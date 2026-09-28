@@ -71,6 +71,15 @@
 | `ui.theme` | string 枚举 | `"light"` | `"light"` \| `"dark"` \| `"eink"` | 启动装载施加一次（写 `documentElement.dataset.theme`）；运行期由 `view.theme-cycle` / modeline 主题钮切换，**切换即回写本键** | `config.rs:209` |
 | `ui.content_width` | number | `760` | 闭区间 `[760, 1200]`，区间外回落 `760` + warning | 启动时装配一次；运行期由阅读栏拖拽推进，**松手回写本键** | `config.rs:216`、`:183-189` |
 | `ui.markdown_line_numbers` | string 枚举 | `"on-demand"` | `"on-demand"` \| `"always"` \| `"off"`，档外回落 `"on-demand"` + warning | **仅启动装载时读一次**（喂给编辑器的 md 行号 gutter 档位）；**运行期不回写、无切换命令** | `config.rs:240`、`:275`、`:576` |
+| `ui.language` | string 枚举 | `"en"` | `"en"` \| `"zh"`，档外回落 `"en"` + warning | 启动装载施加一次（写 `documentElement.lang`，文档与预览装饰按它取值）；运行期由 `view.language-cycle` / modeline 语言钮切换，**切换即回写本键** | `config.rs:248`、`:283`、`:600` |
+
+`ui.language` 是**界面文案的语言档**（change ui-language-i18n，M282；默认 `en`，Alex 2026-09-27 节点 1 裁决）。
+它只管**界面文案的取值列**：文档内容、frontmatter 值、文件名与路径、以及只进诊断日志 / 配置告警的文本
+（`console.warn` 的句子、`ConfigSnapshot.warnings`、日志事件名 / 等级 / 字段名 / 集合值字段、`CommandError.code`）
+都**不随它变**（后者的理由是诊断面向开发者、语言固定）。迁移后的文案取值入口是 `src/copy.ts` 的
+`t(key, params?)`（表在 `src/copy-data.ts`，键 = `文案-Copy.md` 的 D 编号）；写回走通用合并写 IPC
+（`config_set_ui_value("language", …)`），**写通道不校验取值**——手写非法值由下次启动的 `validate()`
+兜（与 `ui.theme` 同款既有边界）。
 
 `ui.markdown_line_numbers` 只管 **md 模式**的行号 gutter 在场时机：`on-demand`（默认）= 打开 md 文档时无行号，
 按 `⌥G`（`editor.goto-line`）打开跳转输入条时行号出现、输入条收起后隐藏；`always` = md 常驻显示行号；
@@ -81,7 +90,7 @@
 `ui` 的这几个键与 `editor.font_size` 的差别是**持久偏好 vs 瞬态口径**：主题与栏宽是用户显式选择的结果，
 切换即回写（让下次启动的真源跟上运行态）；字号步进、折行翻转与 md 行号档位是瞬态显示口径，不落盘、
 重启回到配置值。`ui` 是结构化表：表内取值非法 → 回落该字段 + warning；整表错形状（如 `"ui": "dark"`）或表内类型不符
-（如 `"theme": 2`、`"markdown_line_numbers": 2`）走整文件回落（见 §2）。
+（如 `"theme": 2`、`"markdown_line_numbers": 2`、`"language": 2`）走整文件回落（见 §2）。
 
 ## 2. 解析与容错口径
 
@@ -104,7 +113,7 @@
 1. **未知键原样保留**——写通道不认识 `future_field` 也不会把它删掉；
 2. **没写过的键始终缺席**，因此永远跟随出厂默认（而不是被钉死成写入当时的旧值）。
 
-当前只有三个键会被回写：`last_vault`（打开成功）、`ui.theme`（主题切换）、`ui.content_width`（栏宽拖拽松手）。
+当前只有四个键会被回写：`last_vault`（打开成功）、`ui.theme`（主题切换）、`ui.content_width`（栏宽拖拽松手）、`ui.language`（语言切换）。
 `version` 由写通道补齐，纪律是「仅在缺失或不高于当前 schema 时写入」（高版本配置不降回）。
 
 **不推荐**把全量默认写进 `config.json`（手写或让应用生成都不推荐）：那会把每个缺字段的「跟随出厂默认」

@@ -496,7 +496,10 @@ pub async fn vault_list() -> Result<Vec<VaultListEntry>, CommandError> {
     let sessions = crate::vault_session::sessions_dir()?;
     tauri::async_runtime::spawn_blocking(move || list_vaults(&registry, &sessions))
         .await
-        .map_err(|e| CommandError::new("vault_list_failed", format!("读取 vault 列表失败：{e}")))?
+        .map_err(|e| {
+            CommandError::new("vault_list_failed", format!("读取 vault 列表失败：{e}"))
+                .param("reason", e.to_string())
+        })?
 }
 
 // ---------------------------------------------------------------------------

@@ -124,7 +124,9 @@ fn load_in(base: &Path, root: &Path, rel: &str) -> Result<Option<BackupEntry>, C
             return Err(CommandError::new(
                 "recovery_read_failed",
                 format!("无法读取崩溃备份 {}：{e}", path.display()),
-            ))
+            )
+            .param("path", path.display())
+            .param("reason", e.to_string()))
         }
     };
     Ok(Some(parse_backup(&text)))
@@ -152,7 +154,9 @@ fn discard_in(base: &Path, root: &Path, rel: &str) -> Result<(), CommandError> {
         Err(e) => Err(CommandError::new(
             "recovery_discard_failed",
             format!("无法删除崩溃备份 {}：{e}", path.display()),
-        )),
+        )
+        .param("path", path.display())
+        .param("reason", e.to_string())),
     }
 }
 
@@ -165,7 +169,8 @@ fn list_in(base: &Path, root: &Path) -> Result<Vec<String>, CommandError> {
             return Err(CommandError::new(
                 "recovery_list_failed",
                 format!("无法枚举恢复目录 {}：{e}", dir.display()),
-            ))
+            )
+            .param("reason", e.to_string()))
         }
     };
     let mut out = Vec::new();
@@ -214,10 +219,10 @@ fn validate_rel(rel: &str) -> Result<&str, CommandError> {
     if ok {
         Ok(rel)
     } else {
-        Err(CommandError::new(
-            "recovery_invalid_path",
-            format!("崩溃备份路径非法：{rel}"),
-        ))
+        Err(
+            CommandError::new("recovery_invalid_path", format!("崩溃备份路径非法：{rel}"))
+                .param("rel", rel),
+        )
     }
 }
 

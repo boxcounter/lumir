@@ -13,6 +13,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { COPY } from "../../src/copy-data.ts";
 import { createTableFullscreenState } from "../../src/table-fullscreen.ts";
 import type { TableFullscreenSurface } from "../../src/table-fullscreen.ts";
 import { fullscreenTableAt, tableAt } from "../../src/preview/table.ts";
@@ -194,7 +195,8 @@ test("fullscreenTableAt：空表集 / 边界位置不抛错", () => {
 test("触发钮读屏名与文案 deck D124 逐字一致", async () => {
   const { TABLE_TRIGGER_LABEL, TABLE_TRIGGER_CLASS, TABLE_SLOT_CLASS } = await import("../../src/preview/table-trigger.ts");
   // deck（文案-Copy.md）里 D124 的中文列就是这一串；两边漂移即红（与 D120/D122 的同款对账）。
-  assert.equal(TABLE_TRIGGER_LABEL, "放大查看表格");
+  assert.equal(TABLE_TRIGGER_LABEL(), "放大查看表格");
+  assert.equal(TABLE_TRIGGER_LABEL(), COPY["D124"].zh, "常量与文案表同源（deck D124）");
   // 三个常量是样式 / 测试 / 克隆卫生共用的单一来源：改一处即三处一致，故这里也钉住取值。
   assert.equal(TABLE_TRIGGER_CLASS, "lumir-table-fs-trigger");
   assert.equal(TABLE_SLOT_CLASS, "cm-lp-table-slot");

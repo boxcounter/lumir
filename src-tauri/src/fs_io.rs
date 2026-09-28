@@ -166,7 +166,8 @@ fn scan_workspace_at(root: &Path, now: SystemTime) -> Result<Vec<FsEntry>, Comma
         return Err(CommandError::new(
             "fs_root_not_dir",
             format!("vault 路径不是目录：{}", root.display()),
-        ));
+        )
+        .param("root", root.display()));
     }
     let mut entries = Vec::new();
     let mut stack = vec![root.to_path_buf()];
@@ -176,6 +177,8 @@ fn scan_workspace_at(root: &Path, now: SystemTime) -> Result<Vec<FsEntry>, Comma
                 "fs_scan_failed",
                 format!("无法读取目录 {}：{e}", dir.display()),
             )
+            .param("rel", dir.display())
+            .param("reason", e.to_string())
         })?;
         for item in rd {
             let item = item.map_err(|e| {
@@ -183,6 +186,8 @@ fn scan_workspace_at(root: &Path, now: SystemTime) -> Result<Vec<FsEntry>, Comma
                     "fs_scan_failed",
                     format!("无法读取目录 {} 下的条目：{e}", dir.display()),
                 )
+                .param("rel", dir.display())
+                .param("reason", e.to_string())
             })?;
             let name = item.file_name();
             if is_ignored(&name) {
@@ -241,23 +246,26 @@ pub fn resolve_in_vault(root: &Path, rel: &str) -> Result<PathBuf, CommandError>
         return Err(CommandError::new(
             "fs_path_escape",
             format!("只允许 vault 内的相对路径：{rel}"),
-        ));
+        )
+        .param("rel", rel));
     }
     if rel_path
         .components()
         .any(|c| matches!(c, Component::ParentDir))
     {
-        return Err(CommandError::new(
-            "fs_path_escape",
-            format!("路径不允许包含 ..：{rel}"),
-        ));
+        return Err(
+            CommandError::new("fs_path_escape", format!("路径不允许包含 ..：{rel}"))
+                .param("rel", rel),
+        );
     }
     let candidate = root.join(rel_path);
     let canon = candidate.canonicalize().map_err(|e| {
         if e.kind() == std::io::ErrorKind::NotFound {
-            CommandError::new("fs_not_found", format!("文件不存在：{rel}"))
+            CommandError::new("fs_not_found", format!("文件不存在：{rel}")).param("rel", rel)
         } else {
             CommandError::new("fs_read_failed", format!("无法访问 {rel}：{e}"))
+                .param("rel", rel)
+                .param("reason", e.to_string())
         }
     })?;
     let canon_root = root.canonicalize().map_err(|e| {
@@ -265,12 +273,15 @@ pub fn resolve_in_vault(root: &Path, rel: &str) -> Result<PathBuf, CommandError>
             "fs_root_invalid",
             format!("无法解析 vault 根 {}：{e}", root.display()),
         )
+        .param("root", root.display())
+        .param("reason", e.to_string())
     })?;
     if !canon.starts_with(&canon_root) {
         return Err(CommandError::new(
             "fs_path_escape",
             format!("路径指向 vault 之外（符号链接逃逸）：{rel}"),
-        ));
+        )
+        .param("rel", rel));
     }
     Ok(canon)
 }
@@ -350,12 +361,17 @@ pub fn resolve_new_in_vault(
                 "fs_root_invalid",
                 format!("无法解析 vault 根 {}：{e}", root.display()),
             )
+            .param("root", root.display())
+            .param("reason", e.to_string())
         })?
     } else {
         resolve_in_vault(root, parent_rel)?
     };
-    let meta = std::fs::metadata(&parent)
-        .map_err(|e| CommandError::new("fs_read_failed", format!("无法访问 {parent_rel}：{e}")))?;
+    let meta = std::fs::metadata(&parent).map_err(|e| {
+        CommandError::new("fs_read_failed", format!("无法访问 {parent_rel}：{e}"))
+            .param("rel", parent_rel)
+            .param("reason", e.to_string())
+    })?;
     if !meta.is_dir() {
         return Err(CommandError::new(
             "fs_path_invalid",
@@ -367,7 +383,8 @@ pub fn resolve_new_in_vault(
         return Err(CommandError::new(
             "fs_already_exists",
             format!("已存在同名条目：{}", join_rel(parent_rel, name)),
-        ));
+        )
+        .param("path", join_rel(parent_rel, name)));
     }
     Ok(target)
 }
@@ -386,12 +403,15 @@ pub fn trash_entry(root: &Path, rel: &str) -> Result<(), CommandError> {
             "fs_root_invalid",
             format!("无法解析 vault 根 {}：{e}", root.display()),
         )
+        .param("root", root.display())
+        .param("reason", e.to_string())
     })?;
     if abs == canon_root {
         return Err(CommandError::new(
             "fs_trash_failed",
             format!("不能把 vault 根目录移到废纸篓：{rel}"),
-        ));
+        )
+        .param("rel", rel));
     }
     trash::delete(&abs).map_err(|e| {
         // trash::Error 的 Display 是内部 Debug 结构（英文、带字段名），人话在前、
@@ -400,6 +420,7 @@ pub fn trash_entry(root: &Path, rel: &str) -> Result<(), CommandError> {
             "fs_trash_failed",
             format!("移到废纸篓失败：{rel}——未删除任何内容（{e}）"),
         )
+        .param("rel", rel)
     })
 }
 
@@ -424,13 +445,17 @@ pub fn rename_entry(root: &Path, rel: &str, new_name: &str) -> Result<String, Co
         return Err(CommandError::new(
             "fs_already_exists",
             format!("已存在同名条目：{}", join_rel(&parent_rel, new_name)),
-        ));
+        )
+        .param("path", join_rel(&parent_rel, new_name)));
     }
     std::fs::rename(&from, &to).map_err(|e| {
         CommandError::new(
             "fs_rename_failed",
             format!("改名失败：{rel} → {new_name}（{e}）"),
         )
+        .param("rel", rel)
+        .param("newName", new_name)
+        .param("reason", e.to_string())
     })?;
     Ok(join_rel(&parent_rel, new_name))
 }
@@ -454,11 +479,13 @@ pub fn create_file_entry(
         Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Err(CommandError::new(
             "fs_already_exists",
             format!("已存在同名条目：{path}"),
-        )),
-        Err(e) => Err(CommandError::new(
-            "fs_create_failed",
-            format!("无法新建 {path}：{e}"),
-        )),
+        )
+        .param("path", path)),
+        Err(e) => Err(
+            CommandError::new("fs_create_failed", format!("无法新建 {path}：{e}"))
+                .param("path", path)
+                .param("reason", e.to_string()),
+        ),
     }
 }
 
@@ -472,11 +499,13 @@ pub fn create_dir_entry(root: &Path, parent_rel: &str, name: &str) -> Result<Str
         Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Err(CommandError::new(
             "fs_already_exists",
             format!("已存在同名条目：{path}"),
-        )),
-        Err(e) => Err(CommandError::new(
-            "fs_create_failed",
-            format!("无法新建 {path}：{e}"),
-        )),
+        )
+        .param("path", path)),
+        Err(e) => Err(
+            CommandError::new("fs_create_failed", format!("无法新建 {path}：{e}"))
+                .param("path", path)
+                .param("reason", e.to_string()),
+        ),
     }
 }
 
@@ -485,21 +514,27 @@ pub fn create_dir_entry(root: &Path, parent_rel: &str, name: &str) -> Result<Str
 /// 与 `FsEntry.mtime_ms` 同口径。
 pub fn file_mtime_ms(root: &Path, rel: &str) -> Result<Option<i64>, CommandError> {
     let path = resolve_in_vault(root, rel)?;
-    let meta = std::fs::metadata(&path)
-        .map_err(|e| CommandError::new("fs_read_failed", format!("无法读取 {rel}：{e}")))?;
+    let meta = std::fs::metadata(&path).map_err(|e| {
+        CommandError::new("fs_read_failed", format!("无法读取 {rel}：{e}"))
+            .param("rel", rel)
+            .param("reason", e.to_string())
+    })?;
     Ok(mtime_ms(&meta))
 }
 
 /// 读取 vault 内文件并校验大小上限（人话错误，不分配超限内存）。
 fn read_file_bytes(root: &Path, rel: &str, max: u64) -> Result<Vec<u8>, CommandError> {
     let path = resolve_in_vault(root, rel)?;
-    let meta = std::fs::metadata(&path)
-        .map_err(|e| CommandError::new("fs_read_failed", format!("无法读取 {rel}：{e}")))?;
+    let meta = std::fs::metadata(&path).map_err(|e| {
+        CommandError::new("fs_read_failed", format!("无法读取 {rel}：{e}"))
+            .param("rel", rel)
+            .param("reason", e.to_string())
+    })?;
     if !meta.is_file() {
-        return Err(CommandError::new(
-            "fs_not_a_file",
-            format!("{rel} 不是文件（可能是目录）"),
-        ));
+        return Err(
+            CommandError::new("fs_not_a_file", format!("{rel} 不是文件（可能是目录）"))
+                .param("rel", rel),
+        );
     }
     if meta.len() > max {
         return Err(CommandError::new(
@@ -509,10 +544,16 @@ fn read_file_bytes(root: &Path, rel: &str, max: u64) -> Result<Vec<u8>, CommandE
                 meta.len() / (1024 * 1024),
                 max / (1024 * 1024)
             ),
-        ));
+        )
+        .param("rel", rel)
+        .param("mb", meta.len() / (1024 * 1024))
+        .param("limit", max / (1024 * 1024)));
     }
-    std::fs::read(&path)
-        .map_err(|e| CommandError::new("fs_read_failed", format!("无法读取 {rel}：{e}")))
+    std::fs::read(&path).map_err(|e| {
+        CommandError::new("fs_read_failed", format!("无法读取 {rel}：{e}"))
+            .param("rel", rel)
+            .param("reason", e.to_string())
+    })
 }
 
 /// 读文本文件：UTF-8 解码，非法编码返回人话错误，不静默替换字符。
@@ -523,6 +564,7 @@ pub fn read_text_file(root: &Path, rel: &str) -> Result<String, CommandError> {
             "fs_invalid_utf8",
             format!("文件 {rel} 不是合法 UTF-8 编码（可能是 GBK 等其他编码），暂不支持读取"),
         )
+        .param("rel", rel)
     })
 }
 
@@ -541,6 +583,7 @@ pub fn read_text_snapshot(root: &Path, rel: &str) -> Result<(String, String), Co
             "fs_invalid_utf8",
             format!("文件 {rel} 不是合法 UTF-8 编码（可能是 GBK 等其他编码），暂不支持读取"),
         )
+        .param("rel", rel)
     })?;
     Ok((content, revision))
 }
@@ -921,6 +964,8 @@ pub fn watch(
             "fs_root_invalid",
             format!("无法解析 vault 根 {}：{e}", root.display()),
         )
+        .param("root", root.display())
+        .param("reason", e.to_string())
     })?;
     let (tx, rx) = mpsc::channel::<Vec<FsChange>>();
     let root_owned = root.clone();

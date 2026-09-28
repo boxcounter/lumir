@@ -25,6 +25,7 @@ import type { EditorView } from "@codemirror/view";
 import type { EditorState, Range } from "@codemirror/state";
 import { syntaxTree } from "@codemirror/language";
 import { logEvent } from "../diagnostics";
+import { t } from "../copy";
 import { detectFrontmatter } from "./frontmatter";
 import { enterReplacedSource } from "./math";
 
@@ -185,14 +186,14 @@ async function doRender(source: string): Promise<MermaidRenderState> {
   const id = `cm-lp-mermaid-${++renderSeq}`;
   let stage: "load" | "render" = "load";
   try {
-    const mermaid = await withTimeout(renderer(), loadTimeoutMs, `渲染器加载超时（${Math.round(loadTimeoutMs / 1000)}s）`);
+    const mermaid = await withTimeout(renderer(), loadTimeoutMs, t("D219", { seconds: Math.round(loadTimeoutMs / 1000) }));
     if (!initialized) {
       mermaid.initialize(mermaidConfig());
       initialized = true;
     }
     stage = "render";
-    await withTimeout(mermaid.parse(source), renderTimeoutMs, `渲染超时（${Math.round(renderTimeoutMs / 1000)}s）`); // 预校验：语法错误在此抛出，不进 render
-    const { svg } = await withTimeout(mermaid.render(id, source), renderTimeoutMs, `渲染超时（${Math.round(renderTimeoutMs / 1000)}s）`);
+    await withTimeout(mermaid.parse(source), renderTimeoutMs, t("D220", { seconds: Math.round(renderTimeoutMs / 1000) })); // 预校验：语法错误在此抛出，不进 render
+    const { svg } = await withTimeout(mermaid.render(id, source), renderTimeoutMs, t("D220", { seconds: Math.round(renderTimeoutMs / 1000) }));
     return { status: "ok", svg };
   } catch (e) {
     // mermaid.render 失败时可能留下 id 为 d<id> 的临时节点，尽力清理。
@@ -211,7 +212,7 @@ async function doRender(source: string): Promise<MermaidRenderState> {
  *  （即文档内容），隐私边界只允许分类后的错误码进日志（见 src-tauri/src/logging.rs 的
  *  白名单）。原因是超时 / 加载失败 / parse-render 三类，够定位「哪一步炸了」。 */
 function mermaidErrorCode(stage: "load" | "render", message: string): string {
-  if (message.includes("超时")) return "timeout";
+  if (message.includes(t("D221", undefined, "zh"))) return "timeout";
   return stage === "load" ? "renderer_load_failed" : "render_failed";
 }
 
@@ -341,15 +342,15 @@ class MermaidBlockWidget extends WidgetType {
       box.title = this.raw;
     } else if (this.state.status === "pending") {
       box.classList.add("cm-lp-mermaid-pending");
-      box.textContent = "Mermaid 图表渲染中…";
+      box.textContent = t("D218");
     } else {
       box.classList.add("cm-lp-mermaid-fallback");
       const err = document.createElement("div");
       err.className = "cm-lp-mermaid-error";
       err.textContent =
         this.state.stage === "load"
-          ? `图表渲染器加载失败：${this.state.message}（可尝试刷新页面重试）`
-          : `图表解析失败：${this.state.message}`;
+          ? t("D222", { reason: this.state.message })
+          : t("D223", { reason: this.state.message });
       const raw = document.createElement("pre");
       raw.className = "cm-lp-mermaid-raw";
       raw.textContent = this.raw;

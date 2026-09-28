@@ -28,6 +28,7 @@ import type { EditorHandle, EditorSession } from "./editor";
 import { TAB_GOTO_IDS, keyToken } from "./keys";
 import type { CommandRunner } from "./keys";
 import { baseName } from "./tree";
+import { onRelabel, t } from "./copy";
 
 // ---------------------------------------------------------------------------
 // 文案（编号见 文案-Copy.md 的 D148 起；本模块是它们唯一一份字面量）
@@ -35,14 +36,14 @@ import { baseName } from "./tree";
 
 /** 标签右键菜单的读屏名（`role=menu` 的 aria-label）。不叫「右键菜单」：键盘路径也能开，
  *  读屏用户没有「右键」这个概念（与 D125 文件树菜单同口径）。 */
-export const TAB_MENU_LABEL = "标签操作";
+export const TAB_MENU_LABEL = (): string => t("D148");
 /** 菜单三项（D149–D151）。**上屏英文是 Alex 2026-09-27 的裁决**（M254 菜单初上屏为中文，
  *  Alex 答复「上屏」给英文）：Close / Close Other Tabs / Close Tabs to the Right 是 Alex 给的
- *  原文，逐字保留；deck 里两列因此对调（上屏文案在 English 列，原中文措辞移到中文列备查）。
- *  不跟界面语言走的可见文案由此不止 D114 的 END 一处。 */
-export const TAB_MENU_CLOSE = "Close";
-export const TAB_MENU_CLOSE_OTHERS = "Close Other Tabs";
-export const TAB_MENU_CLOSE_RIGHT = "Close Tabs to the Right";
+ *  原文、逐字保留。M282 起这三条在文案表里是**上屏列锁定**条目（`lock: "en"`）——无论界面
+ *  语言都取 English 列，`zh` 界面下因此仍是英文（MUST NOT 回落到中文列的沿革备查措辞）。 */
+export const TAB_MENU_CLOSE = (): string => t("D149");
+export const TAB_MENU_CLOSE_OTHERS = (): string => t("D150");
+export const TAB_MENU_CLOSE_RIGHT = (): string => t("D151");
 
 export type TabMenuAction = "close" | "close-others" | "close-right";
 
@@ -54,9 +55,9 @@ export interface TabMenuItem {
 /** 项集（菜单渲染、单测、验收断言三处同源，与文件树菜单的 `menuItemsFor` 同一纪律）。 */
 export function tabMenuItems(): TabMenuItem[] {
   return [
-    { action: "close", label: TAB_MENU_CLOSE },
-    { action: "close-others", label: TAB_MENU_CLOSE_OTHERS },
-    { action: "close-right", label: TAB_MENU_CLOSE_RIGHT },
+    { action: "close", label: TAB_MENU_CLOSE() },
+    { action: "close-others", label: TAB_MENU_CLOSE_OTHERS() },
+    { action: "close-right", label: TAB_MENU_CLOSE_RIGHT() },
   ];
 }
 
@@ -231,7 +232,7 @@ export function createTabs(deps: TabsDeps): TabsHandle {
         open.setAttribute("aria-selected", String(isActive));
         // 读屏名点名文件名 + 它自己的未保存状态（文案 D90）；悬停提示给完整相对路径
         //（同名文件分散在不同目录时要能分辨，文案 D91）。
-        open.setAttribute("aria-label", session.dirty ? `${name}（未保存）` : name);
+        open.setAttribute("aria-label", session.dirty ? t("D90", { name }) : name);
         open.title = path;
         // 按钮上的这条与 M149 起逐字相同（点标签不该抢编辑器焦点、不拖出选区）。它不在
         // 拖拽问题的那条路径上（拖拽落点在标题栏右端的标识块），保留原样。
@@ -249,8 +250,8 @@ export function createTabs(deps: TabsDeps): TabsHandle {
         close.type = "button";
         close.className = "tab-close";
         close.textContent = "×";
-        close.title = `关闭 ${name}`;
-        close.setAttribute("aria-label", `关闭 ${name}`);
+        close.title = t("D89", { name });
+        close.setAttribute("aria-label", t("D89", { name }));
         close.addEventListener("mousedown", (event) => event.preventDefault());
         close.addEventListener("click", (event) => {
           event.stopPropagation();
@@ -350,11 +351,11 @@ export function createTabs(deps: TabsDeps): TabsHandle {
       done(closed);
     };
     toast(
-      `「${path}」有未保存修改，关闭后修改将丢失`,
+      t("D92", { path }),
       [
-        { label: "保存并关闭", run: () => void saveThenClose(session).then(() => settle(!session.dirty)) },
+        { label: t("D93.1"), run: () => void saveThenClose(session).then(() => settle(!session.dirty)) },
         {
-          label: "放弃修改并关闭",
+          label: t("D93.2"),
           run: () => {
             // 放弃修改 = 内存内容不再要了：该路径的崩溃备份同步作废，否则下次启动会追问
             // 要不要恢复一份用户刚明确丢弃的内容（备份的生命周期与 dirty 对齐，M278）。
@@ -363,7 +364,7 @@ export function createTabs(deps: TabsDeps): TabsHandle {
             settle(true);
           },
         },
-        { label: "取消", run: () => settle(false) },
+        { label: t("D93.3"), run: () => settle(false) },
       ],
       true,
       () => settle(false),
@@ -476,6 +477,10 @@ export function createTabs(deps: TabsDeps): TabsHandle {
     return table;
   }
 
+  // 语言切换后重画标签栏：逐标签的读屏名 / 悬停提示（含「（未保存）」与「关闭 {名字}」）
+  // 都是挂载时写死的长驻文本（design §5.2 的不变量）。renderTabs 是全量重建，天然可重跑。
+  onRelabel(renderTabs);
+
   return { renderTabs, activateTab, closeTab, targetSessionFor, cycleTab, gotoCommands };
 }
 
@@ -539,7 +544,7 @@ class TabContextMenu implements TabContextMenuHandle {
     menu.className = "tab-menu";
     menu.hidden = true;
     menu.setAttribute("role", "menu");
-    menu.setAttribute("aria-label", TAB_MENU_LABEL);
+    menu.setAttribute("aria-label", TAB_MENU_LABEL());
     menu.tabIndex = -1;
     menu.addEventListener("keydown", (event) => this.onKeydown(event));
     // 菜单里的项不夺焦点（与树菜单同一手法）：mousedown 一旦夺焦，随后的 click 落在已
@@ -558,6 +563,9 @@ class TabContextMenu implements TabContextMenuHandle {
 
   open(session: EditorSession, at: { x: number; y: number }): void {
     this.target = session;
+    // 菜单壳的读屏名在**构造期**写在 DOM 上（挂载早于配置到位），每次打开重写一遍——
+    // 打开是它唯一可见的时刻（M282 的 design §5.2 不变量）。
+    this.menu.setAttribute("aria-label", TAB_MENU_LABEL());
     this.render();
     this.open_ = true;
     this.menu.hidden = false;

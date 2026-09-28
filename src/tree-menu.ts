@@ -34,27 +34,29 @@ import { keyToken } from "./keys";
  *  文档」，由装配层随标签切换写（`src/main.ts` 的 `syncActiveDocument`），而右键不改上下文
  *  （design §2.1）——两个语义混用一个类会让「哪一行是打开的」失去信号。
  *  也不用 `--hover`：菜单在指针位置弹出，指针下的那一行本来就是 hover 态，用 hover 色等于没有反馈。 */
+import { t } from "./copy";
+
 export const MENU_TARGET_CLASS = "is-menu-target";
 
-/** 浮层的读屏名（`role=menu` 的 aria-label）。 */
-export const MENU_LABEL = "条目操作";
+/** 浮层的读屏名（`role=menu` 的 aria-label）。**函数**：菜单在打开时构建，语言切换后
+ *  新开的菜单自然是新语言（M282 起文案一律经 `t()` 取值，常量因此改成函数）。 */
+export const MENU_LABEL = (): string => t("D125");
 /** 文件 / 目录行的菜单项（§2.2 的项集定义）：破坏性项固定尾部、以分隔线隔开。 */
-export const RENAME_LABEL = "重命名…";
-export const COPY_PATH_LABEL = "复制完整路径";
-export const REVEAL_LABEL = "在 Finder 中显示";
-export const NEW_FILE_LABEL = "新建文件…";
-export const NEW_DIR_LABEL = "新建子目录…";
-export const TRASH_LABEL = "移到废纸篓…";
+export const RENAME_LABEL = (): string => t("D126");
+export const COPY_PATH_LABEL = (): string => t("D127");
+export const REVEAL_LABEL = (): string => t("D128");
+export const NEW_FILE_LABEL = (): string => t("D129");
+export const NEW_DIR_LABEL = (): string => t("D130");
+export const TRASH_LABEL = (): string => t("D131");
 /** 删除确认对话框：目录那一档必须明示「连同其中全部内容」（裁决点 2 的护栏）。 */
-export const TRASH_CONFIRM_TITLE = "移到废纸篓？";
-export const TRASH_CONFIRM_FILE_BODY = (name: string): string => `${name} 会移到系统废纸篓。`;
-export const TRASH_CONFIRM_DIR_BODY = (name: string): string =>
-  `${name} 会连同其中全部内容一起移到系统废纸篓。`;
-export const TRASH_CONFIRM_OK = "移到废纸篓";
-export const DIALOG_CANCEL = "取消";
+export const TRASH_CONFIRM_TITLE = (): string => t("D132");
+export const TRASH_CONFIRM_FILE_BODY = (name: string): string => t("D133", { name });
+export const TRASH_CONFIRM_DIR_BODY = (name: string): string => t("D134", { name });
+export const TRASH_CONFIRM_OK = (): string => t("D135");
+export const DIALOG_CANCEL = (): string => t("D136");
 /** 「复制完整路径」的两条反馈（成功 / 失败）。 */
-export const COPIED_PATH_TOAST = "已复制完整路径";
-export const COPY_PATH_FAILED_TOAST = (reason: string): string => `复制路径失败：${reason}`;
+export const COPIED_PATH_TOAST = (): string => t("D137");
+export const COPY_PATH_FAILED_TOAST = (reason: string): string => t("D138", { reason });
 
 export type TreeMenuAction =
   | "rename"
@@ -92,20 +94,20 @@ const SEPARATOR = "separator";
  */
 export function menuItemsFor(kind: "file" | "dir"): (Row | typeof SEPARATOR)[] {
   const common: Row[] = [
-    { kind: "item", item: { action: "rename", label: RENAME_LABEL } },
-    { kind: "item", item: { action: "copy-path", label: COPY_PATH_LABEL } },
-    { kind: "item", item: { action: "reveal", label: REVEAL_LABEL } },
+    { kind: "item", item: { action: "rename", label: RENAME_LABEL() } },
+    { kind: "item", item: { action: "copy-path", label: COPY_PATH_LABEL() } },
+    { kind: "item", item: { action: "reveal", label: REVEAL_LABEL() } },
   ];
   const rows: (Row | typeof SEPARATOR)[] =
     kind === "dir"
       ? [
-          { kind: "item", item: { action: "new-file", label: NEW_FILE_LABEL } },
-          { kind: "item", item: { action: "new-dir", label: NEW_DIR_LABEL } },
+          { kind: "item", item: { action: "new-file", label: NEW_FILE_LABEL() } },
+          { kind: "item", item: { action: "new-dir", label: NEW_DIR_LABEL() } },
           SEPARATOR,
           ...common,
         ]
       : common;
-  return [...rows, SEPARATOR, { kind: "item", item: { action: "trash", label: TRASH_LABEL } }];
+  return [...rows, SEPARATOR, { kind: "item", item: { action: "trash", label: TRASH_LABEL() } }];
 }
 
 /** 项集里的动作清单（去掉分隔线）；断言与调用方按这个顺序对账。 */
@@ -153,7 +155,7 @@ class TreeContextMenu implements TreeContextMenuHandle {
     menu.className = "ft-menu";
     menu.hidden = true;
     menu.setAttribute("role", "menu");
-    menu.setAttribute("aria-label", MENU_LABEL);
+    menu.setAttribute("aria-label", MENU_LABEL());
     menu.tabIndex = -1;
     menu.addEventListener("keydown", (event) => this.onKeydown(event));
     // 菜单内的项不夺焦点（与 vault 浮层的行同一手法）：mousedown 一旦夺焦，随后的 click
@@ -176,6 +178,9 @@ class TreeContextMenu implements TreeContextMenuHandle {
     this.target?.anchor.classList.remove(MENU_TARGET_CLASS);
     this.target = target;
     target.anchor.classList.add(MENU_TARGET_CLASS);
+    // 菜单壳的读屏名在**构造期**就写在 DOM 上（挂载早于配置到位），每次打开重写一遍——
+    // 打开是它唯一可见的时刻，因此这是最省的「可重跑写入路径」（design §5.2 的不变量）。
+    this.menu.setAttribute("aria-label", MENU_LABEL());
     this.render(target.kind);
     this.open_ = true;
     this.menu.hidden = false;

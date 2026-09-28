@@ -44,7 +44,7 @@ test("键位面板分组：分组互斥（同一命令不得出现在两个组�
   for (const group of BINDING_GROUPS) {
     for (const command of group.commands) {
       total += 1;
-      if (seen.has(command)) duplicated.push(`${command}（${group.title}）`);
+      if (seen.has(command)) duplicated.push(`${command}（${group.titleKey}）`);
       seen.add(command);
     }
   }

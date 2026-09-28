@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { COPY } from "../../../src/copy-data";
 import { fireVaultRestoreFinished, setBackendVault, stubTauri, type VaultFixture } from "./tauri-stub";
 
 // M159（change startup-restore-off-main-thread）：启动三态与让位规则的前端侧。
@@ -30,7 +31,9 @@ const TAKEOVER: VaultFixture & { root: string } = {
   root: "/Users/alex/mine-vault",
 };
 
-const RESTORING_NOTICE = "正在恢复上次打开的 vault……";
+// 文案 D95：规范文本的唯一居所是文案表（src/copy-data.ts），场景从那里取值——
+// MUST NOT 在这里手抄一份字面量（M282 起文案一律经表，deck ↔ 表由单测的漂移门禁钉住）。
+const RESTORING_NOTICE = COPY["D95"].zh;
 
 test("恢复中态 = 未打开空态布局 + 恢复中提示行 + 打开入口仍在", async ({ page }) => {
   await stubTauri(page, RESTORING);

@@ -195,7 +195,7 @@ const flush = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 
 // ---------------------------------------------------------------------------
 
 test("项集：三项、顺序固定、文案逐字（deck D148–D151）", () => {
-  assert.equal(TAB_MENU_LABEL, "标签操作");
+  assert.equal(TAB_MENU_LABEL(), "标签操作");
   assert.deepEqual(tabMenuItems(), [
     { action: "close", label: "Close" },
     { action: "close-others", label: "Close Other Tabs" },
@@ -215,7 +215,7 @@ test("打开菜单：三项在场、持焦点、游标落首项、皮肤类两�
   assert.equal(rig.menu.isOpen(), true);
   assert.equal(rig.element.hidden, false);
   assert.equal(rig.element.getAttribute("role"), "menu");
-  assert.equal(rig.element.getAttribute("aria-label"), TAB_MENU_LABEL);
+  assert.equal(rig.element.getAttribute("aria-label"), TAB_MENU_LABEL());
   assert.equal(rig.element.focused, true, "打开即持焦点");
   // 只有语义类 `.tab-menu`：皮肤来自 style.css 的 `.ft-menu, .tab-menu` 选择器对，带上
   // `ft-menu` 会让两份菜单同时命中那个选择器（树菜单的断言随即变成 strict violation——实测）。

@@ -31,8 +31,8 @@
 //! ## ui 表（restyle-ui-tokens-v1，M237 起含运行期切换）
 //!
 //! `{"ui": {"theme": "light" | "dark" | "eink", "content_width": 760,` +
-//! `"markdown_line_numbers": "on-demand" | "always" | "off"}}`，默认 `light` / `760` /
-//! `on-demand`。取值校验照 `editor.mode`
+//! `"markdown_line_numbers": "on-demand" | "always" | "off",` +
+//! `"language": "en" | "zh"}}`，默认 `light` / `760` / `on-demand` / `en`。取值校验照 `editor.mode`
 //! 模板：表内 `theme` 缺失 → 默认；取值不在表内 → warning + 回落默认（ADR 0002 §5：非法
 //! 配置不导致启动失败）。它与 `editor` 一样是**结构化表**（`RawUiConfig`），不是 keys / log
 //! 那种「整表收成 Value」——因此 `{"ui": "dark"}` 这种表的错形状与表内 `"theme": 2` 同路，
@@ -45,6 +45,12 @@
 //! 的**差别在消费方**：它没有运行期切换的落点，因此是**装载时读一次、运行期 MUST NOT 回写**
 //!（与 `editor.mode` / `editor.font_size` 同路）；消费方是前端启动施加处（`src/main.ts` 把它
 //! 喂给 `editor.setMarkdownLineNumbers`）。
+//!
+//! `language`（change ui-language-i18n，M282）是界面语言：默认 **`en`**（Alex 2026-09-27 节点 1
+//! 裁决），闭集合 `en` / `zh`。消费方与 `theme` 同形——前端启动施加处 `applyLanguage` 写
+//! `documentElement.lang`，运行期由 `view.language-cycle`（⌘⇧L）与 modeline 语言钮切换并
+//! 经 `config_set_ui_value` 回写本字段（写通道不校验，非法值由下次启动的 `validate()` 兜，
+//! 与 `theme` 同款既有边界）。它**只管界面文案**：文档内容、文件名、日志与配置告警都不随它变。
 //!
 //! ## 数值字段的打字代价（typography-and-zoom）
 //!
@@ -238,6 +244,13 @@ pub struct UiConfig {
     ///（本 change 不提供切换它的命令 / 键位 / UI，因此没有 live 切换的触发源——与 `theme`
     /// 的差别正在这里，`theme` 有 modeline 主题钮那个落点）。
     pub markdown_line_numbers: MarkdownLineNumbers,
+    /// 界面语言（change ui-language-i18n，M282）：默认 **`en`**（Alex 2026-09-27 节点 1 裁决
+    /// 「我希望产品的默认语言是英文」）。**启动真源**：启动装载时读一次并由前端
+    /// `applyLanguage` 施加到 `documentElement.lang`；运行期由 `view.language-cycle`（⌘⇧L）与
+    /// modeline 语言钮切换，**切换即经 `config_set_ui_value` 回写本字段**（与 `theme` 同路）。
+    /// 取值由 `UiLanguage` 闭集合校验；**只管界面文案**——文档内容、文件名、日志与配置告警
+    /// 都 MUST NOT 随它变。
+    pub language: UiLanguage,
 }
 
 impl Default for UiConfig {
@@ -246,6 +259,7 @@ impl Default for UiConfig {
             theme: UiTheme::Light,
             content_width: DEFAULT_CONTENT_WIDTH,
             markdown_line_numbers: MarkdownLineNumbers::OnDemand,
+            language: UiLanguage::En,
         }
     }
 }
@@ -261,6 +275,18 @@ pub enum UiTheme {
     Light,
     Dark,
     Eink,
+}
+
+/// 界面语言（change ui-language-i18n，M282）：**闭集合**两档，取值校验在 Rust 侧完成，
+/// 前端拿到的必是这两档之一，不再判非法（与 `UiTheme` / `EditorMode` / `LogLevel` 同一形态）。
+/// 默认 `en`（Alex 2026-09-27 节点 1 裁决）。它**只管界面文案的取值列**：文档内容、文件名、
+/// 日志与配置告警不随它变（日志面固定语言，见 change 的 Non-goals）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, TS)]
+#[serde(rename_all = "lowercase")]
+#[ts(export, export_to = "../../src/bindings/")]
+pub enum UiLanguage {
+    En,
+    Zh,
 }
 
 /// md 模式行号 gutter 的在场档位（change goto-line-command 的 D4 二次改判，2026-09-28）。
@@ -380,6 +406,10 @@ struct RawUiConfig {
     ///（与 `theme` 同路）。类型不符（`"markdown_line_numbers": 2`）在 serde 解析期失败 →
     /// 整文件回落。
     markdown_line_numbers: Option<String>,
+    /// 界面语言（change ui-language-i18n，M282）：取值是闭集合（`en` / `zh`），非法值到不了
+    /// 这里——在 `validate()` 里回落 + warning（与 `theme` 同路）。类型不符（`"language": 2`）
+    /// 在 serde 解析期失败 → 整文件回落。
+    language: Option<String>,
 }
 
 /// 配置目录（ADR 0002 §5 路径规则）。无法确定 home 是唯一的致命错误。
@@ -585,6 +615,20 @@ fn validate(raw: RawConfig) -> (AppConfig, Vec<String>) {
         }
     }
 
+    // 界面语言（change ui-language-i18n，M282）：取值校验照 `theme` 模板——缺字段回落默认
+    // （不告警，默认 `en`）、取值不在两档内回落默认 + 人话 warning；类型不符到不了这里
+    // （解析期整文件回落，见 `RawUiConfig` 的注释）。
+    let mut language = defaults.ui.language;
+    if let Some(raw_language) = raw.ui.language.as_deref() {
+        match raw_language {
+            "en" => language = UiLanguage::En,
+            "zh" => language = UiLanguage::Zh,
+            other => warnings.push(format!(
+                "配置项 ui.language 取值 \"{other}\" 非法（可选：en、zh），已回退为 en"
+            )),
+        }
+    }
+
     let (keys, mut key_warnings) = validate_keys(raw.keys);
     warnings.append(&mut key_warnings);
 
@@ -609,6 +653,7 @@ fn validate(raw: RawConfig) -> (AppConfig, Vec<String>) {
                 theme,
                 content_width,
                 markdown_line_numbers,
+                language,
             },
             keys,
             log,
@@ -1338,6 +1383,58 @@ mod tests {
         let snap = load_from(&f.0);
         assert_eq!(snap.config, AppConfig::default());
         assert_eq!(snap.config.ui.theme, UiTheme::Light);
+        assert_eq!(snap.config.last_vault, None);
+        assert_eq!(snap.warnings.len(), 1, "{:?}", snap.warnings);
+        assert!(snap.warnings[0].contains("不是合法 JSON"));
+    }
+
+    #[test]
+    fn missing_ui_language_defaults_to_en() {
+        // change ui-language-i18n（M282）：`ui.language` 是**新增**键，老配置没有它 ⇒ 默认
+        // `en`（Alex 2026-09-27 节点 1 裁决的判据落点）且**不告警**。同表其它字段照常解析。
+        let f = TempFile::new(r#"{"ui":{"theme":"dark"}}"#);
+        let snap = load_from(&f.0);
+        assert_eq!(snap.config.ui.language, UiLanguage::En);
+        assert_eq!(snap.config.ui.theme, UiTheme::Dark);
+        assert!(snap.warnings.is_empty(), "{:?}", snap.warnings);
+    }
+
+    #[test]
+    fn ui_language_accepts_closed_set() {
+        // 两档闭集合逐个过一遍（含显式写默认档 `en`）；都不产生 warning。
+        for (raw, want) in [("en", UiLanguage::En), ("zh", UiLanguage::Zh)] {
+            let f = TempFile::new(&format!(r#"{{"ui":{{"language":"{raw}"}}}}"#));
+            let snap = load_from(&f.0);
+            assert_eq!(snap.config.ui.language, want, "{raw}");
+            assert!(snap.warnings.is_empty(), "{raw}: {:?}", snap.warnings);
+        }
+    }
+
+    #[test]
+    fn illegal_ui_language_warns_and_falls_back_to_en() {
+        // 闭集合外的值走 warning + 回落默认（比照 illegal_ui_theme_warns_and_falls_back_to_light）；
+        // 同一份配置里的合法字段照常生效。
+        let f = TempFile::new(r#"{"ui":{"language":"ja"},"last_vault":"/tmp/vault"}"#);
+        let snap = load_from(&f.0);
+        assert_eq!(snap.config.ui.language, UiLanguage::En);
+        assert_eq!(snap.config.last_vault.as_deref(), Some("/tmp/vault"));
+        assert_eq!(snap.warnings.len(), 1, "{:?}", snap.warnings);
+        assert!(
+            snap.warnings[0].contains("ui.language"),
+            "{:?}",
+            snap.warnings
+        );
+    }
+
+    #[test]
+    fn wrong_type_ui_language_falls_back_entire_file() {
+        // 表内类型不符（`"language": 2`）与 `ui.theme` 同路：`RawUiConfig` 是结构化镜像，
+        // serde 解析期失败 ⇒ **整文件回落**（含同表的 theme 与 last_vault）——不发明逐字段
+        // 类型容忍。
+        let f = TempFile::new(r#"{"last_vault":"/tmp/vault","ui":{"language":2,"theme":"dark"}}"#);
+        let snap = load_from(&f.0);
+        assert_eq!(snap.config, AppConfig::default());
+        assert_eq!(snap.config.ui.language, UiLanguage::En);
         assert_eq!(snap.config.last_vault, None);
         assert_eq!(snap.warnings.len(), 1, "{:?}", snap.warnings);
         assert!(snap.warnings[0].contains("不是合法 JSON"));

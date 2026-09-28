@@ -15,6 +15,7 @@
 
 import { WidgetType } from "@codemirror/view";
 import type { BlockCopyKind, BlockCopyRange } from "./block-copy";
+import { t } from "../copy";
 
 /** 共享形态类：壳 / 尺寸 / 圆角 / 图标色 / 过渡 / 出现时机 / eink 规则全部挂在它上面
  *（src/style.css）。四个动作钮（表格复制、表格放大、代码块复制、代码块放大）都带它。 */
@@ -36,11 +37,11 @@ export const CODEBLOCK_SLOT_CLASS = "cm-lp-codeblock-slot";
  *  为什么不是 D152：本 change 的原稿声明（D152）与 `docs/backlog.md` 的「文案 deck D152 编号碰撞」
  *  节 tower 裁决（2026-09-27，D152 起归先合并的 M261 `goto-line-command`）撞号，实现期按裁决取
  *  当时的下一个可用编号。deck 的沿革段记着这次改号。 */
-export const CODEBLOCK_FS_TRIGGER_LABEL = "放大查看代码块";
+export const CODEBLOCK_FS_TRIGGER_LABEL = (): string => t("D156");
 
 /** 复制钮的读屏名（文案 deck D153）：块类型词只写一份，toast（D154）复用同一个词。 */
 export function blockCopyLabel(kind: BlockCopyKind): string {
-  return kind === "table" ? "复制表格" : "复制代码块";
+  return t("D153", { block: t(kind === "table" ? "D203" : "D204") });
 }
 
 /** 四角框图标（M235 划稿的 `corners`，1.4px 描边、currentColor）：与 direction-c 的自绘控件
@@ -124,7 +125,7 @@ export class CodeBlockFullscreenTrigger extends WidgetType {
   toDOM(): HTMLElement {
     const button = document.createElement("button");
     button.className = `${BLOCK_TRIGGER_CLASS} ${CODEBLOCK_FS_TRIGGER_CLASS}`;
-    button.setAttribute("aria-label", CODEBLOCK_FS_TRIGGER_LABEL);
+    button.setAttribute("aria-label", CODEBLOCK_FS_TRIGGER_LABEL());
     button.innerHTML = CORNERS_ICON;
     button.addEventListener("mousedown", (event) => event.preventDefault());
     button.addEventListener("click", (event) => {

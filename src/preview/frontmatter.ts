@@ -15,6 +15,7 @@ import { WidgetType } from "@codemirror/view";
 import type { Text } from "@codemirror/state";
 import { buildDocTitleDOM, sameDocTitleData } from "./doc-title";
 import type { DocTitleData } from "./doc-title";
+import { t } from "../copy";
 
 /**
  * fm-outer 携带 doc-title 时的修饰 class（M222 回归 2 修复：title 折叠进 fm widget，
@@ -162,17 +163,17 @@ export class FrontmatterWidget extends WidgetType {
     try {
       value = parseYaml(this.inner);
     } catch (e) {
-      return this.fallback(box, `frontmatter 解析失败：${e instanceof Error ? e.message.split("\n")[0] : String(e)}`);
+      return this.fallback(box, t("D36", { reason: e instanceof Error ? e.message.split("\n")[0] : String(e) }));
     }
     if (value === null || value === undefined) {
       const empty = document.createElement("div");
       empty.className = "cm-lp-fm-empty";
-      empty.textContent = "（空 frontmatter）";
+      empty.textContent = t("D37");
       box.append(empty);
       return box;
     }
     if (typeof value !== "object" || Array.isArray(value)) {
-      return this.fallback(box, "frontmatter 不是键值结构，按原文显示");
+      return this.fallback(box, t("D38"));
     }
 
     const table = document.createElement("table");

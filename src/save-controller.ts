@@ -35,6 +35,8 @@ import {
   recoveryList,
   wikilinkCreate,
 } from "./ipc";
+import { errorText, t } from "./copy";
+import type { CopyKey } from "./copy-data";
 import { extensionOf, fileClass } from "./preview/attachments";
 
 /** dirty 守卫提示（无法切换 / 无法退出）的标识类：dirty 清除时整批撤下。 */
@@ -154,13 +156,13 @@ export interface SaveController {
 
 // 保存失败的界面反馈（M101 验收修复）：冲突 / 写入失败 / 结果未知都必须给出
 // 可理解的提示并说明修改仍保留在内存，不得静默或只剩技术化 message。
-// 冲突与「文件已被外部删除」另有带动作的恢复提示（M124），此处文案是两路共用的
-// 兜底与人话化映射。
-const SAVE_ERROR_HINTS: Record<string, string> = {
-  document_conflict: "保存冲突：文件在磁盘上已被外部修改，内存中的修改未丢失",
-  document_write_failed: "保存失败：无法写入文档，内存中的修改未丢失",
-  document_write_unknown: "保存结果未知：写入可能未生效，请核对文件内容，内存中的修改未丢失",
-  fs_not_found: "保存失败：文件已被外部删除或移动，内存中的修改未丢失",
+//
+// M282（change ui-language-i18n 的 D6 裁决）：文案改由**前端按 code 渲染**（`errorText`，
+// 表条目 D187 / D188 / D41 / D174），本清单只剩**保存语境的差异**——同一个 `fs_not_found`
+// 在通用的文件读路径上是「文件不存在：{rel}」（D174），而在保存路径上要额外交代「修改未丢失」
+//（D47）。其余三个 code 的保存措辞与通用条目逐字相同，因此不再各写一份（REVIEW.md 第 8 条）。
+const SAVE_ERROR_OVERRIDES: Partial<Record<string, CopyKey>> = {
+  fs_not_found: "D47",
 };
 
 /** 「另存为新文件」的非 md 候选相对路径（editable-non-md-files §3.8）：目录不变，
@@ -177,7 +179,7 @@ export function recoveryCopyPath(fromPath: string, suffix: string): string {
   const dot = base.lastIndexOf(".");
   const stem = dot <= 0 ? base : base.slice(0, dot);
   const ext = dot <= 0 ? "" : base.slice(dot);
-  return `${dir}${stem}-恢复${suffix}${ext}`;
+  return `${dir}${stem}-恢复${suffix}${ext}`; // i18n-exempt: data —— 派生文件名进磁盘，是数据不是文案（design §6.3）
 }
 
 /** md 另存用的 wikilink 目标名（去目录、去 `.md`/`.markdown` 扩展名 + 恢复序号）。
@@ -185,7 +187,7 @@ export function recoveryCopyPath(fromPath: string, suffix: string): string {
  *  与 M124 起的既有行为逐字一致，本 change 不动这条链路。 */
 function markdownRecoveryName(fromPath: string, suffix: string): string {
   const base = fromPath.slice(fromPath.lastIndexOf("/") + 1);
-  return `${base.replace(/\.(md|markdown)$/i, "")}-恢复${suffix}`;
+  return `${base.replace(/\.(md|markdown)$/i, "")}-恢复${suffix}`; // i18n-exempt: data —— 同上（wikilink 目标名）
 }
 
 export function createSaveController(deps: SaveControllerDeps): SaveController {
@@ -224,8 +226,14 @@ export function createSaveController(deps: SaveControllerDeps): SaveController {
   }
 
   function saveErrorMessage(e: unknown): string {
-    if (isCommandError(e)) return SAVE_ERROR_HINTS[e.code] ?? `保存失败：${e.message}`;
-    return `保存失败：${errorMessage(e)}`;
+    if (isCommandError(e)) {
+      const override = SAVE_ERROR_OVERRIDES[e.code];
+      if (override !== undefined) return t(override);
+      // 其余 code 统一套「保存失败：{原因}」的外壳，{原因} 由 errorText 按 code 渲染
+      //（en 界面因此也是英文；`message` 只留给日志与未知 code）。
+      return t("D229", { reason: errorText(e) });
+    }
+    return t("D229", { reason: errorMessage(e) });
   }
 
   /** 取消该路径待写的崩溃备份定时器（切文件 / 重新打开 / 内容再变时调用）。 */
@@ -303,14 +311,14 @@ export function createSaveController(deps: SaveControllerDeps): SaveController {
     const path = displayedPath();
     if (path === undefined) {
       if (!editor.isDirty()) return true;
-      toast(`当前文档不支持保存，无法${action}；请按 Cmd+Z 撤销修改`)
+      toast(t("D230", { action }))
         .classList.add(SAVE_GUARD_TOAST_CLASS);
       return false;
     }
     if (!isDirty(path)) return true;
     const blocked = saveBaseline(path) === null
-      ? `当前文档不支持保存，无法${action}；请按 Cmd+Z 撤销修改`
-      : `当前文档有未保存修改，无法${action}；请先保存（Cmd+S）`;
+      ? t("D230", { action })
+      : t("D231", { action });
     toast(blocked).classList.add(SAVE_GUARD_TOAST_CLASS);
     return false;
   }
@@ -363,7 +371,7 @@ export function createSaveController(deps: SaveControllerDeps): SaveController {
   }
 
   function showQuitBlocked(): void {
-    toast("当前有未保存修改，无法退出；请先保存（Cmd+S）", undefined, true)
+    toast(t("D232"), undefined, true)
       .classList.add(SAVE_GUARD_TOAST_CLASS);
   }
 
@@ -382,16 +390,14 @@ export function createSaveController(deps: SaveControllerDeps): SaveController {
    *  备份路径不调用本函数（每 2s 一次会砸提示），其跳过口径见 backupDirty。 */
   function reportUnsaveable(path: string | undefined): void {
     toast(
-      path === undefined
-        ? "当前没有打开的文件，无法保存；修改仍在编辑器内（按 Cmd+Z 可撤销）"
-        : "当前文件尚未可保存（未登记磁盘版本）；修改仍在编辑器内（按 Cmd+Z 可撤销）",
+      path === undefined ? t("D233") : t("D234"),
     ).classList.add(SAVE_GUARD_TOAST_CLASS);
   }
 
   /** toasts 里点名的文档：多标签下每条保存侧提示都必须说清「是哪一份」，
    *  否则用户看到「检测到外部修改」不知道说的是哪个标签（M149）。 */
   function nameOf(path: string): string {
-    return `「${path}」`;
+    return t("D94", { path, message: "" });
   }
 
   /** 保存指定文档；返回「内存内容是否已完全落盘（dirty 已清除）」。唯一调用面是用户的
@@ -415,10 +421,10 @@ export function createSaveController(deps: SaveControllerDeps): SaveController {
       if (contentOf(path) === content) {
         editor.markCleanOf(path, content);
         forgetBackup(path); // 保存成功即清除崩溃备份（幂等；dirty 转 clean 的订阅亦会清）
-        toast("已保存", [], false, "success");
+        toast(t("D235"), [], false, "success");
         return true;
       }
-      toast("已保存当前快照，仍有未保存修改", [], false, "success");
+      toast(t("D236"), [], false, "success");
       return false;
     } catch (e) {
       if (isCommandError(e) && e.code === "document_conflict") {
@@ -438,7 +444,7 @@ export function createSaveController(deps: SaveControllerDeps): SaveController {
 
   /** 保存失败的提示在多标签下必须点名文档：否则「保存失败」不知道是哪个标签。 */
   function saveErrorWithPath(e: unknown, path: string): string {
-    return `${nameOf(path)}${saveErrorMessage(e)}`;
+    return t("D94", { path, message: saveErrorMessage(e) });
   }
 
   /** 保存**全部**脏标签（切换 vault 的「保存并切换」出口用）。顺序保存、逐条独立：一条
@@ -458,10 +464,10 @@ export function createSaveController(deps: SaveControllerDeps): SaveController {
    *  冲突在用户处置前不得自动消隐。 */
   function showConflictPrompt(path: string): void {
     toast(
-      `${nameOf(path)}${SAVE_ERROR_HINTS.document_conflict}`,
+      t("D94", { path, message: t("D41") }),
       [
-        { label: "重新载入（放弃我的修改）", run: () => void discardAndReload(path) },
-        { label: "强制覆盖保存", run: () => void showForceSaveConfirm(path) },
+        { label: t("D42"), run: () => void discardAndReload(path) },
+        { label: t("D43"), run: () => void showForceSaveConfirm(path) },
       ],
       true,
     );
@@ -470,10 +476,10 @@ export function createSaveController(deps: SaveControllerDeps): SaveController {
   /** 强制覆盖的二次确认：文案必须明示将覆盖磁盘上较新的内容（M124 裁决）。 */
   function showForceSaveConfirm(path: string): void {
     toast(
-      `将覆盖磁盘上较新的内容，此操作不可撤销。确认强制覆盖保存「${path}」？`,
+      t("D237", { path }),
       [
-        { label: "覆盖保存", run: () => void forceSaveCurrentFile(path) },
-        { label: "取消", run: () => {} },
+        { label: t("D238"), run: () => void forceSaveCurrentFile(path) },
+        { label: t("D136"), run: () => {} },
       ],
       true,
     );
@@ -496,9 +502,9 @@ export function createSaveController(deps: SaveControllerDeps): SaveController {
       if (contentOf(path) === content) {
         editor.markCleanOf(path, content);
         forgetBackup(path);
-        toast("已强制覆盖保存", [], false, "success");
+        toast(t("D45"), [], false, "success");
       } else {
-        toast("已强制覆盖保存当前快照，仍有未保存修改", [], false, "success");
+        toast(t("D239"), [], false, "success");
       }
     } catch (e) {
       if (isCommandError(e) && e.code === "document_conflict") {
@@ -516,8 +522,8 @@ export function createSaveController(deps: SaveControllerDeps): SaveController {
 
   /** 保存目标已被外部删除：内存修改是最后副本，给出另存入口（M124）。 */
   function showNotFoundPrompt(path: string): void {
-    toast(`${nameOf(path)}${SAVE_ERROR_HINTS.fs_not_found}`, [
-      { label: "另存为新文件", run: () => void saveAsNewFile(path) },
+    toast(t("D94", { path, message: t("D47") }), [
+      { label: t("D48"), run: () => void saveAsNewFile(path) },
     ], true);
   }
 
@@ -551,16 +557,16 @@ export function createSaveController(deps: SaveControllerDeps): SaveController {
         // 旧路径的备份随内容迁走（旧文件已被外部删除，其备份不再可恢复）。
         forgetBackup(fromPath);
         await deps.openFile(created, "current");
-        toast(`已另存为：${created}`, [], false, "success");
+        toast(t("D49", { path: created }), [], false, "success");
         return;
       } catch (e) {
         // 撞名重试：md 链路与通用创建链路各有一个「已存在」错误码（其余错误直接报）。
         if (isCommandError(e) && (e.code === "wikilink_target_exists" || e.code === "create_file_exists")) continue;
-        toast(errorMessage(e));
+        toast(errorText(e));
         return;
       }
     }
-    toast("另存为新文件失败：同名文件已存在，请手动导出");
+    toast(t("D240"));
   }
 
   // ---------------------------------------------------------------------------
@@ -600,7 +606,7 @@ export function createSaveController(deps: SaveControllerDeps): SaveController {
       return true;
     } catch (e) {
       if (request !== serial) return false;
-      toast(errorMessage(e));
+      toast(errorText(e));
       return false;
     }
   }
@@ -609,7 +615,7 @@ export function createSaveController(deps: SaveControllerDeps): SaveController {
    *  载入即「内存内容回到磁盘基准」——该路径的备份由 dirty 转 clean 的订阅清掉。 */
   async function discardAndReload(path: string): Promise<void> {
     if (await reloadDocument(path)) {
-      toast(`${nameOf(path)}已重新载入磁盘内容`, [], false, "success");
+      toast(t("D94", { path, message: t("D46") }), [], false, "success");
     }
   }
 
@@ -659,7 +665,7 @@ export function createSaveController(deps: SaveControllerDeps): SaveController {
     if (saving.has(path) || sessionOf(path) === undefined) return;
     if (kind === "deleted") {
       logExternalChange(path, kind);
-      toast(`${nameOf(path)}当前文件已被外部删除；编辑器中的内容未丢失`, [], true);
+      toast(t("D241", { name: nameOf(path) }), [], true);
       return;
     }
     let snapshot: ReadSnapshot | null = null;
@@ -678,10 +684,10 @@ export function createSaveController(deps: SaveControllerDeps): SaveController {
     if (isDirty(path)) {
       logExternalChange(path, kind);
       toast(
-        `检测到外部修改：${nameOf(path)}`,
+        t("D242", { name: nameOf(path) }),
         [
-          { label: "重载（放弃我的修改）", run: () => void discardAndReload(path) },
-          { label: "保留我的版本", run: () => {} },
+          { label: t("D52"), run: () => void discardAndReload(path) },
+          { label: t("D53"), run: () => {} },
         ],
         true,
       );
@@ -692,7 +698,7 @@ export function createSaveController(deps: SaveControllerDeps): SaveController {
       }).then((reloaded) => {
         if (!reloaded) return; // 回声：revision 与本次保存的结果一致，磁盘没有变化
         logExternalChange(path, kind);
-        toast(`${nameOf(path)}检测到外部修改，已自动重载`);
+        toast(t("D94", { path, message: t("D50") }));
       });
     }
   }
@@ -760,10 +766,10 @@ export function createSaveController(deps: SaveControllerDeps): SaveController {
   /** 残留备份提示：sticky（不得在用户看到前消隐），两个动作各自闭环。 */
   function showRecoveryPrompt(path: string): void {
     const el = toast(
-      `发现未保存的崩溃备份：${path}`,
+      t("D57", { path }),
       [
-        { label: "恢复内容", run: () => void restoreBackup(path) },
-        { label: "丢弃备份", run: () => void discardBackup(path) },
+        { label: t("D58"), run: () => void restoreBackup(path) },
+        { label: t("D59"), run: () => void discardBackup(path) },
       ],
       true,
     );
@@ -783,12 +789,12 @@ export function createSaveController(deps: SaveControllerDeps): SaveController {
     try {
       content = await recoveryLoad(path);
       if (content === null) {
-        toast("崩溃备份已不存在");
+        toast(t("D62"));
         return;
       }
       baseRevision = await recoveryBaseRevision(path).catch(() => null);
     } catch (e) {
-      toast(errorMessage(e));
+      toast(errorText(e));
       return;
     }
     await deps.openFile(path, "current");
@@ -800,15 +806,15 @@ export function createSaveController(deps: SaveControllerDeps): SaveController {
     editor.view.dispatch({
       changes: { from: 0, to: target.doc.length, insert: content },
     });
-    toast("已恢复未保存内容，请保存（Cmd+S）", [], false, "success");
+    toast(t("D60"), [], false, "success");
   }
 
   async function discardBackup(path: string): Promise<void> {
     try {
       await recoveryDiscard(path);
-      toast("已丢弃崩溃备份", [], false, "success");
+      toast(t("D61"), [], false, "success");
     } catch (e) {
-      toast(errorMessage(e));
+      toast(errorText(e));
     }
   }
 

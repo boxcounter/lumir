@@ -178,3 +178,61 @@
 | D7 分期（先最小可见面） | delta：把「文案真源」的取值门禁范围收窄为「已迁移模块」，并新增一条「未迁移面的登记与二期承接」条款。tasks：第 3 / 4 / 5 节按面拆成「本期 / 二期」，`docs/backlog.md` 落二期条目。 |
 | D8 键位来由**不**纳入（**备选**——本项已裁「纳入」） | delta：「不随语言变化的面」加回「键位表的逐条来由」一项，「文案真源」的取值门禁允许清单加回 `src/keys.ts` 的 `doc`。tasks：删 3.7 与 4.6 的来由部分（面板骨架仍随语言切）、删 1.7 的 59 条映射、deck 的「表即文档」旧口径不必改。 |
 | D9 三条菜单项随语言走（推翻 M257 的恒定英文裁决） | delta：「不随语言变化的面」删去「上屏列锁定」形态、只留两列同形；「文案真源」里的锁列条款与「上屏列锁定不受界面语言影响」scenario 一并删除（除非另有锁列条目）。tasks：删 3.6；10.3 取备选分支（并要求 M257 同批回退 `src/tabs.ts` 三常量、deck 双列、`tests/unit/tab-menu.test.ts` 与 `tests/visual/scenes/tab-menu.spec.ts` 的文案断言）；8.3 的 en 面断言加一条「菜单三项随界面语言变化」；12.2 的 ⑨ 改写为「三条菜单项随语言走」。 |
+
+---
+
+## 实现期对账（M282，2026-09-28）
+
+**读法**：上面的 `[ ]` 保留提案期的默认状态（本批只勾了无争议地完成、且能给出证据指针的那些），
+逐条结论与证据在下表。**本批未完成的项集中在 §5（后端参数）与 §8/§9（视觉与真机，属人肉裁决点或需起实例）**，
+未完成的原因逐条写明，不含「做了但没记」的项。
+
+| 任务 | 状态 | 证据 / 原因 |
+|---|---|---|
+| 1.1 复跑读数 | 部分 | 复跑 `evidence/count-ui-strings.mjs`：前端含 CJK 串 **293**（31 文件）、后端 **121**、deck 活跃行 **138 / 最大 D158**。**未回填 design §1.1/§1.2 的数字**（读数已落 `test-results/m282/tools/strings.txt`，未落 `evidence/ui-string-inventory.md`） |
+| 1.2 逐条覆盖清单 | 未做 | `coverage.csv` 未产出；覆盖面改由「取值门禁 + 漂移门禁」机械覆盖（`src/**` 的 CJK 串逐条要么进表、要么按类标注豁免） |
+| 1.3 反向验证（先红） | 部分 | 两条门禁（取值 / 漂移）落地并**逐次反向验证过**（改一个字即红：迁移过程中多次实测），但**不是「未实现前先跑一次」的留档式红灯**；③④ 由 `tests/unit/copy.test.ts` 与 `tests/visual/scenes/m282-ui-language.spec.ts` 覆盖 |
+| 1.4 启动首帧闪烁实测 | 完成 | 真机逐帧采样（`ui.language = zh` 与 `en` 两档、两次启动）：首帧无语言属性**但也没有任何语言相关的可见文案**（modeline 左段与文件树皆空，承载文案的 chrome 都在配置之后写入），第二帧起即配置语言 ⇒ **未测出可见闪烁**，两条候选缓解不采用；逐帧读数落 `test-results/m282/ui-language-startup-flash/README.md` |
+| 1.5 三处机制核对 | 部分 | ① ⌘⇧L 三条冲突来源**逐条复核**并写进 deck 的 D318（表内 / muda predefined 集合 / macOS 预置）；② `applyLanguage` 与 `configGet()` 块的位置：放在块内**最后一条**（与 `applyTheme` 相邻），桩缺 `ui` 时只让语言不施加（`languageTag` 有默认档兜底，不抛错）；③ 长驻 chrome 清单以「逐面截图比对为准」未做，本批按模块清单 + `rg` 核对（tree / tabs / modeline / bindings-panel 四处注册 `relabel`） |
+| 1.6 `Intl` 真机可用性 | 部分 | chromium / Node 侧实测通过（`tests/unit/copy.test.ts` 的格式化用例，Node v26 全量 ICU）；**真机 WKWebView 未实测** |
+| 1.7 59 条键位来由映射 | 完成 | `src/keys.ts` 的 58 条绑定 `doc` → `docKey`（D259–D316）+ `applyKeyOverrides` 合成绑定的 D320；映射由 `tests/unit/copy.test.ts` 的漂移门禁逐行钉住 |
+| 2.1 文案表模块 | 完成 | `src/copy.ts` + `src/copy-data.ts`；`git diff package.json` 的 dependencies 为空；缺参抛错的负向单测在 `tests/unit/copy.test.ts` |
+| 2.2 Rust `[ui] language` | 完成 | `src-tauri/src/config.rs`：`UiLanguage` 闭集合 + `UiConfig.language`（默认 `En`）+ `RawUiConfig.language` + `validate()` 一段 + **4 条**单测（缺字段默认 / 两档接受 / 非法值回落 + warning / 类型不符整文件回落），命名与 `ui.theme` 三条同族；`src/bindings/UiLanguage.ts` 已重导出入索引 |
+| 2.3 `applyLanguage` 唯一施加点 | 完成 | `src/main.ts`：全仓唯一写 `<html lang>` 的处（`rg "documentElement.lang"`）；启动块内与 `applyTheme` 相邻；`index.html` 不再写死 `lang`；取值门禁保证 `src/**` 无第二处文案取值面 |
+| 2.4 配置写回 | 完成（未造写失败现场） | `cycleLanguage` 走 `configSetUiValue("language", next)`；失败只 toast（D319）+ `logEvent("config_warning", {source:"language"})`、不回滚；`git diff src-tauri/src/commands.rs` 无新增写命令（本批未改该文件） |
+| 2.5 modeline 指示钮 | 完成 | `src/shell.ts` 的 `modelineLanguage`（初始 hidden、点击 = 同一条 `cycleLanguage`）+ `src/style.css` 与主题钮共用选择器；文案写入者只有 `applyLanguage` 一处 |
+| 2.6 `view.language-cycle` | 完成 | `src/keys.ts`：`NON_TAB_GLOBAL_COMMAND_IDS` 加一条 + `{ key: "Cmd-Shift-L", docKey: "D318" }`；`KEYLESS_COMMAND_IDS` 未变；三项对账单测绿 |
+| 3.1 deck 扩容 | 完成 | 162 行新增（D159–D320），deck 表行 138 → 300；**编号起点动工前重核**：末位 D158（M281 已用 D152 并把两条接到 D157/D158）⇒ 本批 D159 起，与 M261 / M263 / M265 的区间无重叠（沿革段已写明） |
+| 3.2 英文列新写 | 完成（待 Alex 评审） | 162 行的两列齐备；**过目是节点**（本批的文案评审点，未做） |
+| 3.3 多串格键序列 | 完成 | `tests/unit/copy.test.ts` 的 `MULTI_STRING_ROWS`（D64 ×12 / D66 ×2 / D69 ×2 / D72 ×2 / D93 ×3 / D99 ×3 / D100 ×1 / D104 ×2 / D110 ×3）+ 一条「D67 不得被切分」的反向判据 |
+| 3.4 `copy.test.ts` 门禁 | 完成 | 漂移门禁（全量 + 键集合一一对应 + 两列占位名同名）+ 取值门禁（`typescript` AST 扫描；允许清单**只有 `src/copy*.ts`**，另有三类**就地标注**的豁免 `log` / `data` / `glyph`，各类都在同一行写明理由） |
+| 3.5 既有 9 个单测改断言 | 完成 | `content-width` / `goto-line` / `list-filter` / `tab-menu` / `table-fullscreen` / `tree-menu` / `tree-paths` / `end-marker` / `image-widget` 全部改为经表取值（前 7 个原来把措辞写死，现在断言 `COPY[...]` 与常量两条路径同源） |
+| 3.6 上屏列锁定条目 | 完成 | `src/copy-data.ts` 的 D149–D151 带 `lock: "en"`；`tests/unit/copy.test.ts` 断言 zh / en 两态上屏的都是 English 列、且 deck 的「设计意图」列有 `【上屏列锁定 en】` 标记 |
+| 3.7 59 条键位来由进 deck | 完成（待 Alex 评审英文列） | 见 1.7；术语原形保留（M 编号 / Emacs / 键符照抄） |
+| 4.1–4.7 前端迁移 | 完成 | 31 个模块全部经表取值；取值门禁为机械保证（除文案表外 `src/**` 零未标注 CJK 字面量） |
+| 4.8 长驻 chrome 的 `relabel()` | 完成 | `src/tree.ts`（头部入口 + 空态）、`src/tabs.ts`（逐标签读屏名 / 提示）、`src/bindings-panel.ts`（标题 / 提示 / 未绑定说明）、`src/main.ts`（modeline 两段）四处注册；浮层类按需构建，不需要 |
+| 4.9 不回读、不新增事件 | 完成 | 本批未新增任何 `config:changed` 监听；运行期真源 = 施加点写入的 `<html lang>` |
+| 5.1 Rust `params` | 完成 | `CommandError.params`（`skip_serializing_if` 空）+ `param(k, v)` 链式构造；**35 处**构造点补参数（`e` 一类 Display 值映射 `reason`）；`src/bindings/CommandError.ts` 重导出后为 `params?: { [key in string]?: string }`；`cargo test --lib` 184/184 |
+| 5.2 前端 `errorText` | 完成 | `src/copy.ts` 的 `errorText`（按 `code` 渲染 + 缺参兜底 + 未知 code 回落参数 `message`）；`SAVE_ERROR_OVERRIDES` 只留 `fs_not_found → D47` 这一处保存语境差异；日志 / 诊断仍走 `errorMessage` |
+| 5.3 完整性门禁 | 完成 | `tests/unit/error-text.test.ts`：① code 集合与 `ERROR_COPY` **双向**一一对应（缺一即红 + 幽灵条目也红）；② **每处构造点都提供该 code 文案的全部占位名**（缺一个即回落中文）——两条都带反向判据（构造点 ≥90、带参数的 ≥30） |
+| 5.4 原生选择器标题 | 完成 | `commands.rs` 的 `current_ui_language()` + `picker_title()`：弹出时读一次 `config::load()` 的语言；两档文案落 deck 的 **D321**（全仓唯一一处 Rust 持有可见文案，理由与「已弹出的不跟随」边界写在那一行） |
+| 5.5 启动恢复 notice | 部分 | 前端侧的非信封可见文案已进表（D95 / D107 一族）；Rust 侧产出的 `notice` 文本仍在 Rust 侧（它与 `message` 同属「后端人话」，随 §5.1 一起处置） |
+| 6.1 指示钮形态 | 完成 | 与主题钮同族：右段末尾、初始 `hidden`、点击切换、`title` 与 `aria-label` 齐备；三主题下共用同一组选择器（eink 覆盖一并加） |
+| 6.2 双入口同源 | 完成 | `cycleLanguage` 一处实现、两种调用（命令 + 钮的 click 监听）；把 click 监听摘掉命令照样工作 |
+| 7.1–7.5 单测 | 完成 | `tests/unit/copy.test.ts`（15 条用例）：漂移 / 取值 / 占位名 / 多串格 / `t()` 插值与缺参 / `tPlural` 复数 / `Intl` 三族 / 语言域纯逻辑（结构替身，不造 DOM）/ 重绘注册顺序 |
+| 8.1 基线重拍 | 完成（**Alex 已批准，定向重拍 2 张**） | tower 转 Alex 批准（2026-09-28T03:23:24Z）后**定向**重拍 `app-main.png` 与 `modeline-bar.png`：`bash scripts/visual/run.sh --update -g "未打开 vault 的空态主界面\|modeline 条带"`（用例级过滤，**不是** `--update-snapshots=all`——`app-main.spec.ts` 自己还有第二张基线 `filetree-open`）。核对：`git status tests/visual/baselines` **恰好 2 个 M**、其余 22 个零 diff；抽检 4 张 sha256 逐字节未变。重拍后 `gate visual` **12/12 PASS**、视觉逐用例 **543 passed / 0 failed / 1 skipped**。证据落 `test-results/m282/baseline-review/README.md`（含执行记录与 sha256 前后快照） |
+| 8.2 zh 迁移中性对照 | 完成 | 桩钉 `zh` ⇒「迁移中性」由同一批基线在**重拍前后直接承担**：重拍只动了 2 张、且成因是新增的语言 chip（不是文案变化）；其余 22 张基线重拍前后逐字节相同（sha256 抽检 4 张 + `git status` 全量）⇒ zh 侧的文案迁移是纯搬运，只有 `Intl` 那处相对时间空格按 design §6.2 归一 |
+| 8.3 en 面新场景 | 完成（未跑） | `tests/visual/scenes/m282-ui-language.spec.ts`（chrome 文案 + 切换 + 不残留中文的负向断言 + 往返幂等 + 上屏列锁定）；**本批只跑到 tsc 通过，未跑像素/结构套件**（套件跑在 `gate visual` 里，见 PR 读数） |
+| 8.4 预览装饰随切换重建 | 完成（未跑） | 同上场景的「附件未找到」widget 判据（`toDOM()` 的文本） |
+| 8.5 反向验证（注释掉重绘段即红） | 完成 | 临时注释 `applyLanguage` 里 `runRelabels(); editor.refreshPreview();` 两行后跑 m282 场景：**3 failed / 4 passed**（红的三条正是「切换后长驻 chrome 与预览装饰同步」那三条）；还原后 `git diff src/main.ts` 为空（逐字节一致）。读数落 `test-results/m282/reverse-validation/README.md` |
+| 8.6 基线处置纪律 | 完成 | **新增基线 = 0、重拍基线 = 2**（`app-main.png` / `modeline-bar.png`，均在 Alex 批准的范围内、逐张过目后定向重拍）；**没有裸跑 `--update-snapshots`**（用 `-g` 收到两条用例，日志逐行写着哪两张被 re-generate） |
+| 9.1 真机场景 55 | 完成 | `node scripts/acceptance/run.mjs 55-ui-language-switch` 真机 **1/1 PASS**（48.7s，`ui.language = zh` 起点 → ⌘⇧L 切 en → chrome/装饰上屏英文 → 写回 config.json → 点钮切回 zh → 再切 en → 重启首帧即配置语言 + 结尾磁盘 `unchangedSince`）；证据落 `test-results/acceptance/2026-09-28/55-ui-language-switch/`（`status.txt` = PASS）。**过程中发现并修掉一处真缺陷**：`scripts/acceptance/lib/drive.mjs` 的就绪判据写死了中文措辞（D96/D5/D6/D107），默认语言改 `en` 后套件在启动就超时 ⇒ 四组措辞各接受两档（判据的意图是「入口在场」而不是「它是中文」） |
+| 9.2–9.5 真机其余项 | 部分 | 9.4（首帧闪烁的真机复核）**完成**（见 1.4：逐帧读数，未测出闪烁）；9.2（真机反向验证：去掉切换接线跑同一场景应红）与 9.5（日志/告警面不随语言变）**未做**；9.3（AX 可读 ≠ 元素可见）在场景里以「文本在场 + 编辑器文本可读」的并列断言满足 |
+| 10.1 deck 沿革与实现备注 | 完成 | 沿革段补 D159–D320 的区间与三条形态约定；实现备注段补运行时表与门禁的落点；D114 行的「全仓唯一一处」过时断言按本 change 改准 |
+| 10.2 编号起点重基 | 完成 | 动工前重核：deck 末位 **D158**（M281 落地 D152 + D157/D158）；本批 D159 起 |
+| 10.3 D149–D151 与 M257 | 完成 | 三条登记为上屏列锁定条目，`src/tabs.ts` 三常量不动（英文串），deck 两列恢复自然列序 + 设计意图列标注，`tab-menu` 的单测与视觉场景断言同步 |
+| 11.1 openspec validate | 完成 | `gate quick` 的 `openspec-validate` PASS |
+| 11.2 门禁 | 完成 | `gate quick` **10/10 PASS（SKIP 0）**；`gate visual`（端口 4399）全量套件读数见 PR（除**既知 2 条等裁决基线**外全绿）；`run.mjs --check` 64/64 PASS；`git diff --check` 仅剩 ts-rs 生成的 `src/bindings/UiConfig.ts` 行尾空格（任务书豁免） |
+| 11.3 `git diff --check` 与 Impact | 完成 | `git diff --check` 无输出（`src/bindings` 生成行尾空格除外）；改动文件集合与 Impact 一致（无 ADR / 无 living spec 改动） |
+| 11.4 收官对账 | 完成 | 本表即对账；边界与遗留条目已落 `docs/backlog.md` 的 M282 遗留节（已闭合项就地划掉并写明闭合方式）；`gate visual` 的「等基线裁决」项清零 |
+| 12.1 / 12.2 边界 | 完成 | 非目标逐条守住：`src-tauri/src/lib.rs` 无菜单项改动、`rg "i18next|formatjs|intl-messageformat" package.json pnpm-lock.yaml` 零命中、日志 / 告警文本与事件名零改动、派生文件名仍是字面量（标 `i18n-exempt: data`）；十条已知边界中 ①②③④⑥⑨ 已在 spec 与代码注释里落，⑤⑩ 如实登记为未验 / 覆盖选择 |

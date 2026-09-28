@@ -61,6 +61,20 @@ export async function settle(cu, pid, { timeoutMs = 30_000 } = {}) {
  * 判据是「树 pane 呈现了任一种形态 + 编辑器节点在位」，终态仍由场景自己的断言证明
  * ——不得作为默认口径（默认仍是严格门，见 run.mjs 的 ctx.restartApp）。
  */
+/**
+ * **语言无关的就绪判据**（M282，change ui-language-i18n）：产品默认语言已裁为 `en`，而这里的
+ * 判据原来是写死的中文措辞（D96 / D5 / D6 / D107）——语言一变，套件在**启动就超时**（实测：
+ * 场景 55 在默认 en 下 30s 未就绪）。因此四组措辞各接受两档：判据的意图是「那个入口在场」，
+ * 不是「它是中文的」；语言的判定归场景自己的断言（`ax: { has: ... }` 按文案表取值）。
+ * 措辞逐字取自 `src/copy-data.ts` 的 zh / en 列（同一份真源，改文案时这里会一起红）。
+ */
+const LANG_PATTERNS = {
+  header: /点击查看全部 vault|click to see all vaults/,
+  emptyHint: /打开一个目录作为 vault|Open a folder as a vault/,
+  openVault: /打开 vault|Open vault/,
+  emptyVault: /这个 vault 还没有打开的文件|No files opened in this vault yet/,
+};
+
 export async function waitAppReady(cu, pid, { timeoutMs = 30_000, requireVault = true } = {}) {
   let seen = 0;
   const deadline = Date.now() + timeoutMs;
@@ -71,14 +85,14 @@ export async function waitAppReady(cu, pid, { timeoutMs = 30_000, requireVault =
     // **角色不写死**：入口带 `aria-haspopup="listbox"`，WKWebView 因此把它映射成
     // `AXPopUpButton` 而不是 `AXButton`（2026-09-17 实测：写死 role 会让整个套件在启动就
     // 超时——判据里真正有区分度的是那句读屏名，它只可能来自入口）。
-    const hasHeader = findNode(ax.nodes, { name: /点击查看全部 vault/ }) !== null;
+    const hasHeader = findNode(ax.nodes, { name: LANG_PATTERNS.header }) !== null;
     const hasFiles = ax.nodes.some((n) => n.role === "AXButton" && /\.md$/.test(n.title ?? ""));
     // 未打开空态在 AX 里的稳定标志：空态说明行 + 「打开 vault」入口（D5/D6 的文案）。
-    const hasEmptyState = /打开一个目录作为 vault/.test(ax.text) && /打开 vault/.test(ax.text);
+    const hasEmptyState = LANG_PATTERNS.emptyHint.test(ax.text) && LANG_PATTERNS.openVault.test(ax.text);
     // **已装载 vault 但一个标签都没恢复**（M163 的「空 vault 首入态」）：树头部入口与文件行
     // 都在，但 D107 的引导层盖住正文、编辑器随之从 AX 里消失。这是启动的**常态**（该 vault
     // 还没有会话历史），严格门必须认它——否则每个场景都会在这一步超时。
-    const hasEmptyVaultNotice = /这个 vault 还没有打开的文件/.test(ax.text);
+    const hasEmptyVaultNotice = LANG_PATTERNS.emptyVault.test(ax.text);
     const treeReady = hasHeader && (hasFiles || hasEmptyVaultNotice)
       ? true
       : !requireVault && hasEmptyState;

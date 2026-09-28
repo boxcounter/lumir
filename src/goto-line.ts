@@ -11,17 +11,19 @@
 // `shell.modeline`，`position: absolute; bottom: 100%` 紧贴 modeline 上沿向上展开——这是
 // Emacs echo area 的位置语义在「不占常驻布局」约束下的对应物（design §3.2）。
 import { keyToken } from "./keys";
+import { t, tPlural } from "./copy";
 
-/** 输入框的读屏名（文案 deck D152）。输入框只有数字、没有可见标签，读屏需要一个动作说明。 */
-export const GOTO_LINE_LABEL = "跳转到行";
+/** 输入框的读屏名（文案 deck D152）。输入框只有数字、没有可见标签，读屏需要一个动作说明。
+ *  **函数**而不是常量：浮层每次打开重写这两个属性，语言切换后新开的浮层自然是新语言。 */
+export const GOTO_LINE_LABEL = (): string => t("D152");
 
 /** 输入框的占位（文案 deck D157）。常态看不见——打开即预填当前行号并全选（清空后才露出）。 */
-export const GOTO_LINE_PLACEHOLDER = "行号";
+export const GOTO_LINE_PLACEHOLDER = (): string => t("D157");
 
 /** 总行数提示（文案 deck D158）。越界是**静默钳制**（D3 裁决），`共 M 行` 因此是用户判断
  *  「我要的行号是不是超出了文档」的唯一依据，MUST NOT 删。 */
 export function gotoLineTotalText(total: number): string {
-  return `共 ${total} 行`;
+  return tPlural("D158", total, { total });
 }
 
 /**
@@ -83,8 +85,8 @@ export function createGotoLinePrompt(options: GotoLinePromptOptions): GotoLinePr
   input.inputMode = "numeric";
   input.autocomplete = "off";
   input.spellcheck = false;
-  input.setAttribute("aria-label", GOTO_LINE_LABEL);
-  input.placeholder = GOTO_LINE_PLACEHOLDER;
+  input.setAttribute("aria-label", GOTO_LINE_LABEL());
+  input.placeholder = GOTO_LINE_PLACEHOLDER();
   const hint = document.createElement("span");
   hint.className = "lumir-goto-hint";
   popover.append(input, hint);
@@ -179,6 +181,10 @@ export function createGotoLinePrompt(options: GotoLinePromptOptions): GotoLinePr
       const wasOpen = opened;
       fallbackLine = defaultLine;
       totalLines = total;
+      // 输入条的读屏名与占位在构造期写在 DOM 上（挂载早于配置到位），打开时重写一遍
+      //（design §5.2 的不变量：挂载后的语言相关文本 MUST 有一条可重跑的写入路径）。
+      input.setAttribute("aria-label", GOTO_LINE_LABEL());
+      input.placeholder = GOTO_LINE_PLACEHOLDER();
       hint.textContent = gotoLineTotalText(total);
       input.value = String(defaultLine);
       popover.hidden = false;

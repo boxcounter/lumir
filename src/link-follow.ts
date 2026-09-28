@@ -10,6 +10,7 @@
 //     （main 的 openFile：含模式裁决、保存链路登记与标签意图）、人话提示出口。
 
 import { logEvent } from "./diagnostics";
+import { errorText, t } from "./copy";
 import type { EditorHandle } from "./editor";
 import {
   errorMessage,
@@ -143,7 +144,7 @@ export function createLinkFollow(deps: LinkFollowDeps): LinkFollowHandle {
         result = await linkGraphResolve(from, raw);
         resolveCache.set(`${from}\n${raw}`, result);
       } catch (e) {
-        toast(errorMessage(e));
+        toast(errorText(e));
         return;
       }
     }
@@ -157,19 +158,19 @@ export function createLinkFollow(deps: LinkFollowDeps): LinkFollowHandle {
         if (result.anchor.status === "found" && result.anchor.line !== null) {
           editor.revealLine(result.anchor.line);
         } else if (result.anchor.status === "missing") {
-          toast(`标题未找到：${result.anchor.heading ?? ""}`);
+          toast(t("D20", { heading: result.anchor.heading ?? "" }));
         }
         break;
       }
       case "unresolved":
         // spec §4.3：unresolved 不是错误；§4.4：提供一键创建入口
-        toast(`未创建的链接：${raw}`, [{
-          label: "创建并打开",
+        toast(t("D21", { raw }), [{
+          label: t("D39"),
           run: () => void createForWikilink(from, raw),
         }]);
         break;
       case "unsupported":
-        toast(`块引用不支持：${raw}`);
+        toast(t("D35", { raw }));
         break;
     }
   }
@@ -180,12 +181,12 @@ export function createLinkFollow(deps: LinkFollowDeps): LinkFollowHandle {
       invalidate();
       editor.refreshPreview(); // 创建成功后链接转为正常态（spec §4.4）
       await openFile(created, "md");
-      toast(`已创建：${created}`, [], false, "success");
+      toast(t("D22", { path: created }), [], false, "success");
     } catch (e) {
       // 目标已存在 = 索引过期（spec §4.4）：清缓存重解析而非覆盖
       invalidate();
       editor.refreshPreview();
-      toast(errorMessage(e));
+      toast(errorText(e));
     }
   }
 
@@ -273,7 +274,7 @@ export function createLinkFollow(deps: LinkFollowDeps): LinkFollowHandle {
         break;
       case "anchor":
         logEvent("link_open", { category: "anchor", outcome: "unsupported" });
-        toast("暂不支持锚点跳转");
+        toast(t("D82"));
         break;
     }
   }
@@ -283,7 +284,7 @@ export function createLinkFollow(deps: LinkFollowDeps): LinkFollowHandle {
     try {
       await openExternalUrl(url);
     } catch (e) {
-      toast(errorMessage(e));
+      toast(errorText(e));
     }
   }
 
@@ -303,13 +304,13 @@ export function createLinkFollow(deps: LinkFollowDeps): LinkFollowHandle {
       const path = await linkResolveNote(from, target);
       if (path === null) {
         logEvent("link_open", { category: "internal-md", outcome: "unresolved" });
-        toast(`链接目标不存在：${target}`);
+        toast(t("D81", { raw: target }));
         return;
       }
       logEvent("link_open", { category: "internal-md", outcome: "opened" });
       await openFile(path, openKind(path));
     } catch (e) {
-      toast(errorMessage(e));
+      toast(errorText(e));
     }
   }
 
@@ -321,7 +322,7 @@ export function createLinkFollow(deps: LinkFollowDeps): LinkFollowHandle {
     try {
       await linkOpenPath(from, target);
     } catch (e) {
-      toast(errorMessage(e));
+      toast(errorText(e));
     }
   }
 

@@ -1,4 +1,11 @@
 import type { Page } from "@playwright/test";
+import { setLanguageRoot } from "../../../src/copy";
+
+// 场景**在 Node 侧**解析文案时的语言档（M282，change ui-language-i18n）：locale 的决定权在
+// 浏览器里（`<html lang>` 由被测应用按 `ui.language` 写），而场景对纯函数 / 常量的断言发生在
+// Node——把这一侧的读取口钉在 `zh`（与桩的 `ui.language = "zh"` 同一档），否则「Node 侧取到 en、
+// 页面渲染 zh」会让断言以不相干的理由变红（实测：相对时间 / 降级归因句 / 键位来由三类）。
+setLanguageRoot(() => ({ lang: "zh-Hans" }));
 
 // 无 Tauri 后端的 chromium 里跑真实前端：按 @tauri-apps/api 的
 // __TAURI_INTERNALS__ 形状打桩（参考 node_modules/@tauri-apps/api/mocks.js），
@@ -115,6 +122,10 @@ export interface VaultFixture {
      *  `UiConfig::default()` 同值）——不传的场景天然跑「md 默认无行号、输入条在场时出现」，
      *  不会因为桩扩了形状而变形态。越界值的回落 + warning 归 Rust 侧（cargo test）。 */
     markdown_line_numbers?: "on-demand" | "always" | "off";
+    /** 界面语言（M282，change ui-language-i18n）：桩缺省 `zh`（**与产品的出厂默认 `en` 不同**，
+     *  理由见 mockConfig 处的注释——既有整页基线是 zh 形态，钉住它才让基线继续作「结构与外观」
+     *  的回归面）。场景要验 en 面时从这里给 `"en"`。 */
+    language?: "en" | "zh";
     keys?: Record<string, string | null>;
     warnings?: string[];
   };
@@ -372,6 +383,13 @@ export async function stubTauri(page: Page, vault: VaultFixture | null): Promise
               // `UiConfig::default()` 同值。桩必须带上这个键——启动装配层的读取顺序在
               // `ui.content_width` 之后，缺键会得到 undefined 而让 md 的 gutter 静默不装。
               markdown_line_numbers: current?.config?.markdown_line_numbers ?? "on-demand",
+              // 界面语言（M282，change ui-language-i18n）：桩缺省的 **`zh`** 与产品的出厂默认
+              // （`en`，Rust `UiConfig::default()`）**不同**，这是有意的——既有整页基线全是
+              // `zh` 形态，桩把界面语言钉在 `zh` 才能让这套基线继续作「结构与外观」的回归面
+              //（`en` 面由 tests/visual/scenes/m282-ui-language.spec.ts 单独覆盖）。
+              // 桩必须带上这个键：缺键会让 `applyLanguage` 读到 undefined，`<html lang>` 落回
+              // 默认档 `en`，于是每一条基线都因为「桩没跟上契约」而变红。
+              language: current?.config?.language ?? "zh",
             },
             keys: current?.config?.keys ?? {},
           },

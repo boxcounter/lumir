@@ -65,6 +65,7 @@ import { itemIndexAt, itemPath, peekStructureEntries, structureEntries, supports
 import type { StructureEntry } from "./code-structure";
 import { keyToken } from "./keys";
 import { FILTER_LABEL, FILTER_PLACEHOLDER, NO_MATCH_TEXT, createListFilter } from "./list-filter";
+import { onRelabel, t } from "./copy";
 import type { ListFilter } from "./list-filter";
 import { sampleCallback } from "./diagnostics";
 import { focusPreservingReadingPosition } from "./scroll-position-view";
@@ -147,12 +148,12 @@ const LIST_ID = "lumir-toc-list";
  * 筛选的三条（无匹配提示 / 输入框占位 / 输入框读屏名）不在本文件：它们由两处浮层共用，常量住在
  * **同一个**模块 src/list-filter.ts（D117–D119），本文件只 import。
  */
-const NO_HEADINGS_TEXT = "这份文档还没有标题，大纲为空";
-const NO_SYMBOLS_TEXT = "这份文件没有可提取的符号，大纲为空";
-const NO_STRUCTURE_TEXT = "这份文件类型暂不支持大纲";
-const POPOVER_LABEL = "大纲";
-const POPOVER_HINT = "↑↓ ⌃N⌃P 选择 · Enter 跳转 · Esc 关闭";
-const INDICATOR_TITLE = "点击展开大纲";
+const NO_HEADINGS_TEXT = (): string => t("D84");
+const NO_SYMBOLS_TEXT = (): string => t("D115");
+const NO_STRUCTURE_TEXT = (): string => t("D116");
+const POPOVER_LABEL = (): string => t("D85");
+const POPOVER_HINT = (): string => t("D86");
+const INDICATOR_TITLE = (): string => t("D87");
 /** 条目链的分隔符（纯排版分隔，不承载语义）。 */
 const PATH_SEPARATOR = " › ";
 
@@ -257,6 +258,8 @@ class Toc implements TocHandle {
   private readonly input: HTMLInputElement;
   private readonly list: HTMLDivElement;
   private readonly empty: HTMLParagraphElement;
+  /** 浮层底部的键位提示行（D86）：构造期写死，语言切换后经 `relabel()` 重写。 */
+  private readonly hint: HTMLParagraphElement;
   private readonly hasFile: () => boolean;
   private readonly context: () => TocContext;
   private readonly toast: (text: string) => void;
@@ -311,33 +314,39 @@ class Toc implements TocHandle {
     input.setAttribute("role", "combobox");
     input.setAttribute("aria-expanded", "true");
     input.setAttribute("aria-controls", LIST_ID);
-    input.setAttribute("aria-label", FILTER_LABEL);
-    input.placeholder = FILTER_PLACEHOLDER;
+    input.setAttribute("aria-label", FILTER_LABEL());
+    input.placeholder = FILTER_PLACEHOLDER();
     input.autocomplete = "off";
     input.spellcheck = false;
     const list = document.createElement("div");
     list.className = "lumir-toc-list";
     list.id = LIST_ID;
     list.setAttribute("role", "listbox");
-    list.setAttribute("aria-label", POPOVER_LABEL);
+    list.setAttribute("aria-label", POPOVER_LABEL());
     list.tabIndex = -1;
     // 无命中态的一行提示（D117）：与「文档没有标题」（D84 的 toast）是两件事——那是打开失败，
     // 这是查询没命中，浮层保持打开。
     const empty = document.createElement("p");
     empty.className = "lumir-toc-empty";
-    empty.textContent = NO_MATCH_TEXT;
+    empty.textContent = NO_MATCH_TEXT();
     empty.hidden = true;
     const hint = document.createElement("p");
     hint.className = "lumir-toc-hint";
-    hint.textContent = POPOVER_HINT;
+    hint.textContent = POPOVER_HINT();
     popover.append(input, list, empty, hint);
     options.mount.append(popover);
     this.popover = popover;
     this.input = input;
     this.list = list;
     this.empty = empty;
+    this.hint = hint;
 
-    this.indicator.title = INDICATOR_TITLE;
+    this.indicator.title = INDICATOR_TITLE();
+    // 指示段的标题是**常驻 chrome**（浮层没开时它也在），因此除了打开时刷新，还要挂进重绘注册：
+    // 语言切换后即使不打开浮层，悬停提示也必须是新语言（design §5.2 的不变量）。
+    onRelabel(() => {
+      this.indicator.title = INDICATOR_TITLE();
+    });
     // mousedown 不夺焦点：焦点留在编辑器（或浮层）时，点击只是「切换」，不会先触发浮层的
     // blur 关闭再重新打开（那会让开→关→开连成一串）。
     this.indicator.addEventListener("mousedown", (event) => event.preventDefault());
@@ -377,7 +386,19 @@ class Toc implements TocHandle {
     this.attach();
   }
 
+  /** 浮层的静态文案（指示段提示 / 列表读屏名 / 筛选框的读屏名与占位 / 底部提示行）在**构造期**
+   *  写在 DOM 上，而构造早于配置到位——重绘注册负责在语言切换后重写（design §5.2 的不变量）。 */
+  private relabel(): void {
+    this.indicator.title = INDICATOR_TITLE();
+    this.list.setAttribute("aria-label", POPOVER_LABEL());
+    this.input.setAttribute("aria-label", FILTER_LABEL());
+    this.input.placeholder = FILTER_PLACEHOLDER();
+    this.hint.textContent = POPOVER_HINT();
+    this.empty.textContent = NO_MATCH_TEXT();
+  }
+
   toggle(): void {
+    this.relabel(); // 打开是浮层唯一可见的时刻，顺便把构造期写死的文案刷新一遍
     if (this.open) {
       this.close();
       return;
@@ -387,7 +408,7 @@ class Toc implements TocHandle {
     if (context.mode === "md") {
       entries = headingItems(this.view.state, true);
       if (entries.length === 0) {
-        this.toast(NO_HEADINGS_TEXT);
+        this.toast(NO_HEADINGS_TEXT());
         return;
       }
     } else {
@@ -396,7 +417,7 @@ class Toc implements TocHandle {
       // （「这份文档还没有标题」在代码文件上是一句错话）。
       const language = context.language;
       if (!supportsStructure(language)) {
-        this.toast(NO_STRUCTURE_TEXT);
+        this.toast(NO_STRUCTURE_TEXT());
         return;
       }
       // 首次解析在 1MB 级文件上是一次可感成本（design §1.6 的已知边界），用既有的 slow_callback
@@ -408,7 +429,7 @@ class Toc implements TocHandle {
         sampleCallback("code_structure_parse", () => structureEntries(language as CodeLanguage, this.fullText())),
       );
       if (entries.length === 0) {
-        this.toast(NO_SYMBOLS_TEXT);
+        this.toast(NO_SYMBOLS_TEXT());
         return;
       }
     }

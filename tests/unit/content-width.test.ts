@@ -7,6 +7,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { COPY } from "../../src/copy-data.ts";
 import {
   CONTENT_WIDTH_MAX,
   CONTENT_WIDTH_MIN,
@@ -62,7 +63,9 @@ test("拖拽钳制：从默认只能往宽调，触顶后停在 1200", () => {
 });
 
 test("文案常量与 deck 表格行逐字一致（D120 / D121）", () => {
-  assert.equal(WIDTH_HANDLE_LABEL, "调整内容宽度");
+  // 文案的规范文本在文案表（deck D120），常量只是取值点（M282）
+  assert.equal(WIDTH_HANDLE_LABEL(), "调整内容宽度");
+  assert.equal(WIDTH_HANDLE_LABEL(), COPY.D120.zh, "常量与文案表同源");
   assert.equal(
     WIDTH_SAVE_FAILED_TEXT("磁盘只读"),
     "内容宽度没能存进配置：磁盘只读（本次调整仍生效，重启后恢复）",

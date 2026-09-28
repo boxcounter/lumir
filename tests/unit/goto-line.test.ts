@@ -64,8 +64,8 @@ test("resolveGotoLine：总行数非正数时按 1 行处理（不返回 0 或�
 });
 
 test("文案常量（文案-Copy.md D152 / D157 / D158 逐字）", () => {
-  assert.equal(GOTO_LINE_LABEL, "跳转到行");
-  assert.equal(GOTO_LINE_PLACEHOLDER, "行号");
+  assert.equal(GOTO_LINE_LABEL(), "跳转到行");
+  assert.equal(GOTO_LINE_PLACEHOLDER(), "行号");
   assert.equal(gotoLineTotalText(1), "共 1 行");
   assert.equal(gotoLineTotalText(40), "共 40 行");
   assert.equal(gotoLineTotalText(1234), "共 1234 行");
