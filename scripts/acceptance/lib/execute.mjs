@@ -827,6 +827,13 @@ async function doAction(step, { ctx, cu, scenario, vars, pid, evidence }) {
       const spec = step.waitFor ?? {};
       const has = spec.has ?? [];
       const not = spec.not ?? [];
+      // **运行期兜底**（M296 r2 评审 P2-3）：`--check` 会挡空清单，但 `run.mjs` 的正常执行路径
+      // **不**复跑 `checkScenario`——只走 `--check` 的话，一份空清单能落到真机批里并**静默全过**
+      // （第一轮读取即判成立）。这正是本套件最该挡的假绿形态，因此运行期与静态校验同口径 fail-loud
+      // （与 `vaultSparse` 的运行时 size 复核同一惯例）。
+      if (!has.length && !not.length) {
+        throw new Error("do=waitFor 需要 waitFor.has / waitFor.not 至少一项非空（双空即恒真，不判任何东西）");
+      }
       const timeoutMs = step.timeoutMs ?? 60_000;
       const deadline = Date.now() + timeoutMs;
       const startedAt = Date.now();
