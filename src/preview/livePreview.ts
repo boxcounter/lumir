@@ -992,6 +992,63 @@ function collectCodeTokens(
   }
 }
 
+/**
+ * 行内 code 药丸的选中态分段（M295，Alex 2026-09-29 裁决「选中的药丸 = 选区带的一部分」）。
+ *
+ * 缺陷：药丸自带的底色（theme.ts 的 `.cm-lp-inline-code`）是 **in-flow 行内底色**，按 CSS 绘制
+ * 顺序排在 `drawSelection` 的负 z-index 选区层（`.cm-selectionLayer`）**之后** ⇒ 药丸盒内读到的是
+ * 药丸自己的灰，选中与未选中**逐像素同色**（M288 代码块是同一条机制；M291 已把这批 in-flow 表面
+ * 登记为「未收口」）。M285 的「逐字符覆盖」判据是几何层，对药丸恒真——带矩形确实盖着药丸，
+ * 只是被药丸底色挡住。
+ *
+ * 修法：把被选区盖住的那一段的底色**换挡到 `--sel-band`**（带本身画不出来，只能由药丸自己换挡）。
+ * 选「换挡」而不是「让位（transparent）」是几何决定的：带的矩形按文档位置算、边界落在**文本盒**
+ * 上（实测：选区 == 药丸时带 x 为 464..777、药丸盒 459..782），让位会让药丸两端各露 5px 纸色缺口。
+ *
+ * 拆段的几何不变量是**零位移**：药丸原本是一个盒子（左右各 5px 内边距 + r5 圆角），拆成 N 段后
+ * 每段默认都带一份内边距与圆角，故按**位置**归零——不落在药丸左端的段去掉左内边距与左圆角
+ * （`-flat-left`），不落在右端的去掉右侧（`-flat-right`）。段宽总和与拆前逐值相同、字形坐标不动
+ * （M259 按压窗口的前提：同一屏幕坐标的落点判定 MUST NOT 跨布局）。
+ *
+ * 判据选区取**活选区**（`view.state.selection`），刻意不用 reveal-gate 的按压快照：本改动只改颜色
+ * 与内边距的归属、不改布局，而选区带本身跟随活选区——用药丸高亮才会与带同步（用快照会让药丸的
+ * 高亮滞后到 mouseup）。
+ */
+function pushInlineCodeMarks(
+  decos: Range<Decoration>[],
+  from: number,
+  to: number,
+  ranges: readonly { from: number; to: number }[],
+): void {
+  // 选区与药丸的交集段。CM 的 Selection.ranges 已归一（有序、不重叠），这里仍做一次合并——
+  // 多区间选区命中同一药丸时，不相邻的交集段之间必须保持「未覆盖」形态。
+  const covered: [number, number][] = [];
+  for (const r of ranges) {
+    if (r.from === r.to) continue;
+    const a = Math.max(r.from, from);
+    const b = Math.min(r.to, to);
+    if (a >= b) continue;
+    const last = covered[covered.length - 1];
+    if (last && a <= last[1]) last[1] = Math.max(last[1], b);
+    else covered.push([a, b]);
+  }
+  const push = (a: number, b: number, selected: boolean): void => {
+    if (a >= b) return;
+    const classes = ["cm-lp-inline-code"];
+    if (a > from) classes.push("cm-lp-inline-code-flat-left");
+    if (b < to) classes.push("cm-lp-inline-code-flat-right");
+    if (selected) classes.push("cm-lp-inline-code-sel");
+    decos.push(Decoration.mark({ class: classes.join(" ") }).range(a, b));
+  };
+  let cursor = from;
+  for (const [a, b] of covered) {
+    push(cursor, a, false);
+    push(a, b, true);
+    cursor = b;
+  }
+  push(cursor, to, false);
+}
+
 function collectSyntaxDecorations(
   view: EditorView,
   vrFrom: number,
@@ -1217,7 +1274,8 @@ function collectSyntaxDecorations(
       if (name === "InlineCode") {
         // callout 内容行选区显露：跳过样式，反引号与内容按纯源码显示（M119）。
         if (revealInlineSource(ref)) return false;
-        decos.push(Decoration.mark({ class: "cm-lp-inline-code" }).range(ref.from, ref.to));
+        // M295：被选区盖住的那一段换挡到 `--sel-band`（分段与几何不变量见 pushInlineCodeMarks）。
+        pushInlineCodeMarks(decos, ref.from, ref.to, view.state.selection.ranges);
         return false;
       }
 

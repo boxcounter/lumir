@@ -1067,6 +1067,21 @@ body {
   z-index: -4;
   background-color: var(--code-bg);
 }
+/* eink 规则⑤ 在折行档的落点（M295，Alex 2026-09-29 裁决「顺手收」）：规则⑤ 的黑框原先只挂在
+   横滚容器上，而容器在折行档按既有口径不装（见 src/preview/livePreview.ts 的 codeBlockWrappers）
+   ⇒ 折行档的 eink 代码块退化为一块无框的 `--code-bg` 灰带（M294 的 finding：无框、无白底）。
+   这里按 M294 的归位口径把**框**补在 slot 上：`--border` 1px（与本档容器的黑框同源同宽、同形 r8）。
+   规则⑤ 的**白底半边在本档不可表达**（如实登记，不是漏改）：白底与行区带在容器档靠容器那一圈
+   padding 分层（底板 = 容器盒、行区带 = 容器内容盒），而折行档没有容器、slot 盒与行盒并集逐值
+   重合（实测两侧同为 slot 盒）⇒ 两层无从分开；且本档 `--content-bg` 与纸面同值，写上去是一条
+   零消费者的声明（REVIEW.md 第 9 条）。故本档保留 `--code-bg` 行区带（下面基规则的 slot 底板
+   不动、`::before` 的取值不改），只补框——与 m288 的「块底色 MUST 与块外正文可辨」不变量一致。
+   MUST NOT 为了让白底可见给 slot 加内边距：那会让 eink 折行档的几何与 light / dark 分家
+   （三主题共享结构与排版基因），代价大于收益。 */
+:root[data-theme="eink"] .cm-lp-codeblock-slot:not(:has(> .cm-lp-codeblock-scroll)) {
+  border: 1px solid var(--border);
+  border-radius: var(--r8);
+}
 /* 横滚容器在场 ⇒ 行区带由上面的 ::after 承担（几何与行盒并集重合）；折行档 ⇒ 由 slot 的底板
    承担。行自身那份 `--code-bg`（src/preview/theme.ts 的 `.cm-line.cm-lp-codeblock-line`）
    两种档位都让位，两个理由：

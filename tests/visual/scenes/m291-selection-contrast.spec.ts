@@ -499,10 +499,15 @@ test.describe("M291：选区族对比度（不变量）", () => {
     for (const theme of THEMES) {
       await openDoc(page, theme);
       // 修前形态：light/dark 的带回到 `--sel`（撞色档），eink 回到纯黑 + 白字（反白档）。
+      // M295 追加：药丸的**选中态底色**自 M295 起跟随 `--sel-band`（`theme.ts` 的
+      // `.cm-lp-inline-code-sel`）——所以要造出「白字压浅灰药丸」这个 M291 缺陷形态，必须把药丸
+      // 的底色一并钉回 `--code-bg`（否则带变黑时药丸也跟着变黑，白字压黑底跨度为 246 ⇒ 假红）。
+      // 只补这一条、不动任何阈值：判据与口径都不变，变的是「修前形态」得怎么造。
       await page.addStyleTag({
         content:
           theme === "eink"
-            ? `:root[data-theme] { --sel-band: #000000 !important; --sel: #000000 !important; --sel-text: #ffffff !important; }`
+            ? `:root[data-theme] { --sel-band: #000000 !important; --sel: #000000 !important; --sel-text: #ffffff !important; }` +
+              `.cm-lp-inline-code-sel { background-color: var(--code-bg) !important; }`
             : `:root[data-theme] { --sel-band: var(--sel) !important; }`,
       });
       const [from, to] = selectionRange();

@@ -1,5 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import { stubTauri } from "./tauri-stub";
+import { decodeScreenshot, dominantColor, formatColor } from "../../../scripts/acceptance/lib/pixel.mjs";
 
 // eink 降级规则逐条落地（change restyle-ui-tokens-v1，tasks §7.1）：
 // tokens 文档 §eink 规则 的 9 条各自至少一条计算属性断言。主题经桩的 `config.theme`
@@ -55,6 +56,16 @@ const VAULT = {
 
 async function openEink(page: Page): Promise<void> {
   await stubTauri(page, { ...VAULT, config: { theme: "eink" } });
+  await page.goto("/");
+  await expect.poll(() => page.evaluate(() => document.documentElement.dataset.theme)).toBe("eink");
+  await page.locator('.ft-row[title="doc.md"]').click();
+  await expect(page.locator(".cm-content")).toContainText("正文含");
+}
+
+/** 同一份文档、eink、代码块**折行档**（`editor.code_block_wrap: true`）：此时横滚容器不装，
+ *  规则⑤ 的落点从容器换到 slot（M295）。 */
+async function openEinkWrapped(page: Page): Promise<void> {
+  await stubTauri(page, { ...VAULT, config: { theme: "eink", code_block_wrap: true } });
   await page.goto("/");
   await expect.poll(() => page.evaluate(() => document.documentElement.dataset.theme)).toBe("eink");
   await page.locator('.ft-row[title="doc.md"]').click();
@@ -217,6 +228,65 @@ test("规则⑤：浅底区块翻转为白底黑框（代码块 / frontmatter）
   expect(fm.background).toBe("rgb(255, 255, 255)");
   expect(fm.width).toBe("1px");
   expect(fm.color).toBe("rgb(0, 0, 0)");
+});
+
+test("规则⑤（折行档）：eink 代码块折行时黑框改挂 slot，行区带仍为 --code-bg", async ({ page }) => {
+  // M295：规则⑤ 原先只挂在横滚容器上，而 `editor.code_block_wrap: true` 下按既有口径不装容器
+  // ⇒ 折行档的 eink 代码块是一块无框的 `--code-bg` 灰带（M294 的 finding，两张对照图
+  // test-results/m294/m294-probe-{nowrap,wrap}-eink.png）。修法按 M294 的归位口径把**框**补在
+  // slot 上（白底半边在本档不可表达：slot 盒与行盒并集重合、两层无从分开，理由见
+  // src/style.css 的 eink 折行档那条）。
+  await openEinkWrapped(page);
+  // 前提防空转：折行档 MUST 真的没有横滚容器（没有它，本用例断的就是另一条路径）。
+  await expect(page.locator(".cm-lp-codeblock-scroll"), "折行档 MUST NOT 出现横滚容器").toHaveCount(0);
+
+  const wrap = await page.locator(".cm-lp-codeblock-slot").evaluate((el) => {
+    const style = getComputedStyle(el);
+    return {
+      band: getComputedStyle(el, "::before").backgroundColor,
+      width: style.borderTopWidth,
+      color: style.borderTopColor,
+      radius: style.borderTopLeftRadius,
+      box: el.getBoundingClientRect().toJSON(),
+      lines: [...el.querySelectorAll(".cm-line.cm-lp-codeblock-line")].map((l) => l.getBoundingClientRect().toJSON()),
+    };
+  });
+  // 计算色 == token（两层判据的第一层）。
+  const tokens = await tokenColors(page, ["--code-bg", "--border"]);
+  expect(wrap.width, "规则⑤（折行档）：1px 黑框").toBe("1px");
+  expect(wrap.color, "规则⑤（折行档）：框色 = --border（本档 = 纯黑）").toBe(tokens["--border"]);
+  expect(wrap.radius, "规则⑤（折行档）：与容器档同形 r8").toBe("8px");
+  // 行区带 MUST NOT 被这次补框顺手改白：M294 的两条 MUST NOT 之一（`--code-bg` 在本档另有
+  // 承载者，行区带就是其中之一），也保住 m288 的「块底色 MUST 与块外正文可辨」不变量。
+  expect(wrap.band, "规则⑤（折行档）：行区带仍是 --code-bg 的灰").toBe(tokens["--code-bg"]);
+  expect(wrap.band).toBe("rgb(240, 240, 240)");
+
+  // 探测色跟随（第二层）：从截图里逐点读——框那一列 MUST 读到框色、框内那一列 MUST 读到灰带。
+  const x = Math.round(wrap.box.x);
+  const line = wrap.lines[wrap.lines.length - 1];
+  const y = Math.round(line.y + line.height / 2);
+  const readRow = async () => {
+    const img = decodeScreenshot((await page.screenshot()).toString("base64"));
+    const out: string[] = [];
+    for (let dx = -1; dx <= 3; dx++) {
+      const c = dominantColor(img, x + dx, y, 1);
+      out.push(c ? formatColor(c) : "?");
+    }
+    img.close();
+    return out;
+  };
+  const row = await readRow();
+  console.log(`M295 折行档像素行 x=${x}±(1..3) y=${y}：${row.join(" ")}`);
+  expect(row, "折行档：框那一列 MUST 读到框色 #000000").toContain("#000000");
+  expect(row, "折行档：框内一列 MUST 读到 --code-bg 灰带（行底色在 slot 在场时让位）").toContain("#f0f0f0");
+
+  // 区分度自证（REVIEW.md 第 1 条）：把框按回修前形态（无框）后，框那条 MUST 判红。
+  await page.addStyleTag({
+    content: ':root[data-theme="eink"] .cm-lp-codeblock-slot:not(:has(> .cm-lp-codeblock-scroll)) { border: 0 !important; }',
+  });
+  const rowBefore = await readRow();
+  console.log(`M295 折行档·修前形态像素行：${rowBefore.join(" ")}`);
+  expect(rowBefore, "修前形态：框那一列 MUST NOT 读到框色（本用例因此有区分度）").not.toContain("#000000");
 });
 
 test("规则⑥：chip 描边化（fm status 底色退场、实心黑框）", async ({ page }) => {
