@@ -362,8 +362,10 @@ for (const theme of THEMES) {
 // frontmatter 区（规则⑤的另一半）、fm 状态 chip 与 tags chip（规则⑥）、callout 左色条。
 // 同一批裁决（Alex 2026-09-29）里 tower 把本 mission 的 scope 扩到 theme.ts，理由就是这一组：
 // 它们的字面值与 eink 的 `--border` 同值，行为未变，属「边框族」的收敛面。
-// 同文件里**不动**的两处（`backgroundColor: "#fff"` 的白底半边、callout 类型标签的
-// `color: "#000"` 前景色）不属本批两族，理由与清单见 docs/backlog.md 的 M293 节。
+// 同文件里当时**不动**的两处（`backgroundColor: "#fff"` 的白底半边、callout 类型标签的
+// `color: "#000"` 前景色）不属本批两族，当时登记在 docs/backlog.md 的 M293 节；
+// **M294 已把它们收干净**（面族 → `--content-bg` / 前景 → `--text`，frontmatter 那处冗余覆盖
+// 直接删），判据在 tests/visual/scenes/m294-surface-and-foreground-literals.spec.ts。
 const CONTENT_DOC = "m293-content.md";
 const CONTENT_SOURCE = [
   "---",

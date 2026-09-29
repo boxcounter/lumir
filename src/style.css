@@ -1046,7 +1046,11 @@ body {
   border-color: transparent;
 }
 :root[data-theme="eink"] .cm-lp-codeblock-scroll::before {
-  background-color: #fff;
+  /* 底板翻白的语义位 = **正文面** `--content-bg`（M294，Alex 2026-09-29 裁决「1. 立。」）：
+     规则⑤ 在本档「无灰底可用」⇒ 区块不另立色面，回落成它所在的面；基规则的 `--code-bg`
+     在本档另有承载者（行区带 `::after` 仍是它的灰 `#f0f0f0`，restyle-eink 规则⑤的断言），
+     故这处只能取面族里语义对得上的一档。归位前的字面值 `#fff` 与它在本档同值，**逐值不变**。 */
+  background-color: var(--content-bg);
 }
 :root[data-theme="eink"] .cm-lp-codeblock-scroll {
   /* 边框色归位 `--border`（eink = `#000000`，M293 按收敛规则 1 收口）：归位前的字面值
@@ -1535,11 +1539,11 @@ body {
 }
 /* eink 规则⑤：无灰底可用 → 翻转为白底黑框（同 .cm-lp-codeblock-scroll）。黑框归位 `--border`
    （M293 收敛规则 1，与归位前的字面值同值、**逐值不变**；线宽 1px 不动）。
-   本块的 `background-color: #fff` 是规则⑤的**白底**半边：它与 eink 的四个 token 同值
-   （`--preview-bg` / `--frame` / `--content-bg` / `--agent-bg` 都是 `#ffffff`），归位前要先定
-   语义位——不属本批裁决的「实心强调 / 边框」两族，故本批不动（登记见 docs/backlog.md 的 M293 节）。 */
+   白底归位 **`--content-bg`**（M294，Alex 2026-09-29 裁决「1. 立。」）：与文档内代码块底板
+   同一角色（代码块内容面），两处取同一 token——不因本处坐在全屏浮层里而分家。归位前的字面值
+   `#fff` 与它在本档同值，**逐值不变**（eink 下四个面 token 同值，语义位按角色定）。 */
 :root[data-theme="eink"] .lumir-codeblock-fs-content {
-  background-color: #fff;
+  background-color: var(--content-bg);
   border: 1px solid var(--border);
 }
 

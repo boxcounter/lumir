@@ -3276,6 +3276,11 @@ BMP 后取采样方块主色）。细节与边界见 `scripts/acceptance/README.
 | `src/preview/theme.ts:449` `.cm-lp-frontmatter`（eink） | 同上 | 同上；**附加**：这一处的覆盖在本档是**冗余**的（基规则读 `--agent-bg`，eink 的 `--agent-bg` 也是 `#ffffff`）——归位到 `var(--agent-bg)` 或直接删都能值不变，两种收法都行，等裁决 |
 | `src/preview/theme.ts:202` `.cm-lp-callout-type`（eink） | `color: "#000"` | **前景色**，不是两族；且 eink 下与 `--accent` / `--ok` / `--pending` / `--danger` / `--text` 同值（五族合一），归位要先定语义位（族色还是正文色） |
 
+- **（M294 已核销，2026-09-29）**：上表 5 行按 Alex 2026-09-29 裁决「1. 立；2，删。」全部收干净——
+  4 处「面」字面值逐处定了语义位（代码块底板 / 全屏代码块内容容器 / callout 行 → `--content-bg`；
+  frontmatter 盒那处**冗余覆盖删除**、由基规则 `--agent-bg` 接管）、callout 类型标签的前景归位
+  `--text`（不是族色）。语义位理由、两条 MUST NOT（行区带那一层不动）与读数对照见本文件末的 M294 节。
+
 - **判据与证据**：
   - 新增场景 `tests/visual/scenes/m293-eink-literal-tokens.spec.ts`（12 用例 = 4 组 × 3 主题：
     实心强调族 / 边框族（文档内 + 两处全屏浮层）/ 边框族（打开入口）/ 边框族（内容面 frontmatter +
@@ -3291,3 +3296,49 @@ BMP 后取采样方块主色）。细节与边界见 `scripts/acceptance/README.
 - **留给后批的一条现场**：`docs/specs/design-tokens-v1.md` 的「字面值归位」节已把两族口径与两层判据
   写成规则——下次再遇到 eink 硬编码，直接按「角色（实心底 / 边框）→ token」归位 + 补 token 探测
   判据，不要按「哪个 token 恰好也是这个值」反查（eink 下 `#000` 与 5 个 token 同值，反查会选错语义位）。
+
+## M294「面」族与一处处前景色归位（2026-09-29，Alex 裁决「1. 立；2，删。」，已修）
+
+- **缘起**：M293 把「实心强调 / 边框」两族收干净后，M293 节留了一张「本批不动」清单（4 处
+  `background-color: #fff` 的「面」字面值 + callout 类型标签的 `color: "#000"`）。Alex 2026-09-29
+  裁决把这条尾巴一次收完：「**1. 立；2，删。**」——① 立「面族 / 前景」的语义位口径并归位那 4 处；
+  ② frontmatter 盒那处**冗余**覆盖直接删。依据仍是 tokens 文档的**收敛规则 1**，口径是 M293
+  「角色归位」的推广：按声明在规则里的**角色**选 token，不按字面值反查（eink 下 `#fff` 与四个面
+  token 同值、`#000` 与五个 token 同值，反查必选错语义位）。
+- **不变量**：**归位 / 删除前后三主题渲染值逐值不变**——纯收敛，零基线更新（若哪张既有像素基线
+  变红，那是「值变了」的警报，MUST NOT 用 `--update` 抹平）。
+- **5 处落点与语义位理由**（行号为本批提交时的值）：
+
+| 文件:行 | 选择器（eink） | 属性 | 原字面值 | 处置 | 语义位理由 |
+|---|---|---|---|---|---|
+| `src/style.css:1048` | `.cm-lp-codeblock-scroll::before`（底板） | background-color | `#fff` | → `var(--content-bg)` | 规则⑤ 的「白底」半边：eink「无灰底可用」⇒ 区块**不另立色面**、回落成它所在的面（正文面）。`--code-bg` 在本档另有承载者（行区带 `::after` 仍是 `#f0f0f0` 的灰，见下面的 MUST NOT），取不得 |
+| `src/style.css:1545` | `.lumir-codeblock-fs-content` | background-color | `#fff` | → `var(--content-bg)` | 与上一处**同一角色**（代码块内容面）⇒ 取同一 token，不因它坐在全屏浮层里而分家（否则同一语义在 eink 落到两个 token 上） |
+| `src/preview/theme.ts:197` | `.cm-line.cm-lp-callout-line`（底色） | backgroundColor | `#fff` | → `var(--content-bg)` | tint 在 eink 全退场 ⇒ 底色 = 正文面——tokens 文档 §callout 语义收敛 规则 3 早就把这条写死过（「tint 全 transparent（底色 = `--content-bg`）」），本批是把它推广到代码块 |
+| `src/preview/theme.ts:452` | `.cm-lp-frontmatter` | backgroundColor | `#fff` | **删除**（裁决「2，删。」） | 基规则（`theme.ts:444`）已读 `--agent-bg`——§bg 层级把 frontmatter 区点名为「次级表面」；eink 的 `--agent-bg` 同为 `#ffffff` ⇒ 这处覆盖在本档**冗余**，删后由基规则接管、值不变 |
+| `src/preview/theme.ts:203` | `.cm-lp-callout-type` | color | `#000` | → `var(--text)` | 角色是「五族合一后的**统一前景**」，不是族色：五族族色分散在 `--accent` / `--ok` / `--pending` / `--danger` / `--text-3` 上，**没有一个 token 能代表五族**；规则② 之后 eink 的颜色不承担信息，标签靠文案区分。同口径先例：M291 r3 把触发钮静止态的 `color` 归到 `--text` |
+
+- **两条 MUST NOT（本批查实的既有事实，防后人顺手「修」错）**：
+  1. 代码块在 eink 是**两层**——底板（`::before`，本批归位的那处，白）与**行区带**（`::after`，
+     读 `--code-bg` = `#f0f0f0` 的灰）；`restyle-eink` 规则⑤的用例把这条写成断言（「只有底板翻转」），
+     `--code-bg` 在本档另有消费者（行区带、变量绑定底纹 `theme.ts:108`、mermaid 集群底色）。**MUST NOT
+     把 `--code-bg` 一并翻白**——场景为此单列一条断言钉住行区带的值。
+  2. `.lumir-codeblock-fs-content`（全屏）是**单层**（整块白，没有行区带那一层）——两处取同一 token，
+     但形态不同，改一处不应推及另一处的层数。
+- **判据与证据**（`test-results/m294/`）：
+  - 新场景 `tests/visual/scenes/m294-surface-and-foreground-literals.spec.ts`（6 用例 = 2 组 ×
+    3 主题：面族 4 处 / 前景 1 处）。两层判据（M293 同形）：① 计算色 == 归属 token 的计算值；
+    ② 把归属 token 改成三主题都不用的探测色 `rgb(7, 8, 9)`，元素计算色 MUST 跟着变——**写死字面值
+    的声明不会变**（②用 `expect.soft`，让五位落点的失败在同一轮日志里各自可见）。
+  - 先红后绿（同一份 spec，`git stash` 掉 `src/` 前后各跑一轮）：`before.log` = light / dark 4 条绿 ·
+    **eink 2 条红**，红点全落在 ②——「代码块底板 / 全屏代码块内容容器 / callout 行底色 / frontmatter
+    盒底色 / callout 类型标签」五处**逐一**读到写死的 `rgb(255, 255, 255)` / `rgb(0, 0, 0)` 纹丝不动，
+    ① 全绿；`after.log` = 6 passed。
+  - 三主题读数对照 `readings-{before,after}.txt`（6 行 = 2 组 × 3 主题，每行含 7 个表面读数 + 6 个
+    token 计算值）`diff` **退出码 0、零输出行**（`readings.diff.txt`）。
+  - **旁证（既有断言在原值层面照绿）**：`restyle-eink.spec.ts` 的规则⑤⑥用例断言的是**硬编码 rgb 值**
+    （代码块底板白 / 行区带 `#f0f0f0` / frontmatter 白底黑框 / chip 1px 黑框）——本批若不值变它们必然红，
+    它们照绿即「值不变」的第二条独立证据。
+  - 门禁：视觉全量本地跑，**零基线 diff、未做任何 `--update`**；`cargo` 层未跑的缺口与理由同 M293
+    （磁盘水位）——见本 mission 的 review-request。
+- **核销**：本文件 M293 节的「本批不动（不属裁决的两族）」5 行全部核销；`docs/specs/design-tokens-v1.md`
+  新增「面族与前景区位（v1.5 增补）」节，把这三族角色 → token 的口径与两条 MUST NOT 写成规则。
