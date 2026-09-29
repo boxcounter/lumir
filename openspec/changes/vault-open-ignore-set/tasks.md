@@ -94,17 +94,21 @@
 
 ## 9. 真机验收场景 67
 
-> **状态（M296，2026-09-29）**：9.1 的**代码面**与 9.2 的**落地面**已完成——`generateBulkVault`
-> 新增 `ignoredDirs` / `lazyDirs`（只在 JS 侧）、场景落在
-> `scripts/acceptance/scenarios/67-vault-open-ignore-set.md`、`run.mjs --check` **PASS**（70 场景）。
-> **但 9.1–9.5 全部仍未打勾**：它们每一条的验收口径都含真机 PASS / 先红后绿现场，而这些**一条都
-> 还没跑**——Alex 手头的 `pnpm tauri dev`（1420）在跑，同机第二个 Lumir 实例会显著加剧 KimiCU
-> 丢键假红（REVIEW.md 第 11 条），tower 2026-09-29 裁决「先交离线半边、真机批等 Alex 关 dev 后
-> 排队」。因此本组**没有一条**可以读成已覆盖（REVIEW.md 第 6 条）。
-> 落地时按实现现实改了五处断言形式 / 场景结构（探针只在 JS 侧、放大器挪到切到 B 之后、补
-> `.venv` 运行时探针、补快照完整性见证、`open` 落点写相对路径），逐条记在 `acceptance-scenario.md`
-> 顶部。真机批的执行清单：`run.mjs 67 16 17 19 25 48 60`（7.3 的回归）+ `test-results/m296/`
-> 的性能复采。
+> **状态（M296，2026-09-29，真机批 7/7 PASS）**：9.1 / 9.2 的验收口径已满足——场景落在
+> `scripts/acceptance/scenarios/67-vault-open-ignore-set.md`、`--check` PASS、**`run.mjs 67` 真机
+> PASS**（47 条断言全绿，证据 `test-results/acceptance/2026-09-29-final/67-vault-open-ignore-set/`）；
+> 9.3 的第 ④ 条（读数通道）也由同场景末步覆盖。**9.3 的 ①②③⑤ 四条反向验证（先红后绿）本批未做**，
+> 9.4 / 9.5 的复核结论、以及多 vault 回归（7.3）的 PASS 证据见 `docs/backlog.md` 的「M296」节与
+> `test-results/m296/readings.md`。落地时的五处形式变更（探针只在 JS 侧、放大器挪到切到 B 之后、
+> 补 `.venv` 运行时探针、补快照完整性见证、`open` 落点写相对路径）记在 `acceptance-scenario.md` 顶部。
+> **首跑红了三处、全部是套件等待/断言形式问题（产品零缺陷）**：`do: settle` 不能当「等装载跑完」用
+> （M292 把打开段移出主线程之后，装载期间界面响应 ⇒ `settle` 在途中返回）——为此新增了 `do: waitFor`
+> 动作；另两处是盲发 chord 的时序（17）与 AX 的 `fanout_cap` 截断（67 的完整性见证）。三类都已在
+> 套件 README 固化。
+> **仍未完成**：8.3 的读数复采**部分完成**——release harness 已在本实现上跑通两次（Rust 侧合计
+> 82.3 / 81.4ms，与 M283 时代的同形状 92–107ms 同量级，原始输出 `test-results/m296/rust-harness-release.txt`），
+> 但「收窄后残余」（166,626 文件量级）那一档未跑；8.4（Alex 本机 grep，agent 不能开他的真实 vault）
+> 仍未做。理由见 backlog 的「M296」节 §5。
 
 - [ ] 9.1 `scripts/acceptance/lib/app.mjs` 的 `generateBulkVault`：加两类探针——① 内置规则构建产物族（根下 `target/` / `dist/` / `test-results/` 各带若干 md）；② 用户规则（写一份 `.gitignore` 声明 `.local/` **并带一条取反 `!target/`**，写一份 `.git/info/exclude` 声明另一个目录，两者各带一个 md）——取反那条让真机也有一条「内置不可被推翻」的判据。形状参数与 Rust 侧 harness 一起核。
   **验收口径**：`node scripts/acceptance/run.mjs --check` PASS；场景 60（既有 `bulkVault: {}` 调用方）不受影响仍 PASS。

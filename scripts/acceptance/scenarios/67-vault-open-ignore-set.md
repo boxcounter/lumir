@@ -36,12 +36,16 @@ steps:
         ax: { has: "/AXButton \\(area-00\\)/" }
       - label: 正向见证：真内容的文件行在树里（fixture 落在 vault 根）
         ax: { has: "/AXButton \\(plain\\.md\\)/" }
-      # dump 完整性见证：树是「目录组在前、文件组在后」排的，而 AX 快照若要截断只会从**末尾**丢行。
-      # 只要**任一文件组行**在场，就证明排在它前面的整个目录组都在这一份快照里——而本步四条负向
-      # 断言的目标（target / dist / test-results / node_modules）全是目录组的行，区分度因此成立。
-      # 取一个 resetVault 必拷的 `.md` fixture（`var-highlight.md`）当这个见证。
-      - label: 正向见证：文件组里的一行在场（⇒ 它前面的整个目录组都在快照里）
-        ax: { has: "/AXButton \\(var-highlight\\.md\\)/" }
+      # dump 完整性见证：树是「目录组在前、文件组在后」排的，而 AX 快照要截断只会从**末尾**丢行
+      # （M296 实测多一种截断源：`truncated: [closed_menu, fanout_cap]` —— 根节点子行列表超上限
+      # 时被从末尾截掉）。只要**任一文件组行**在场，就证明排在它前面的整个目录组都在这一份快照
+      # 里——而本步四条负向断言的目标（target / dist / test-results / node_modules）全是目录组的
+      # 行，区分度因此成立。**见证必须取文件组最靠前的行**：字母表靠后的行会被 fanout_cap 截掉
+      # （现场：`var-highlight.md` 被截、`block-copy.md` 在）。两条一起给：文件组首行 + 目录组末行。
+      - label: 正向见证：文件组的一行在场（⇒ 它前面的整个目录组都在快照里）
+        ax: { has: "/AXButton \\(block-copy\\.md\\)/" }
+      - label: 正向见证：目录组排到末位（area-23 在 ⇒ 目录组不是被截断的半截）
+        ax: { has: "/AXButton \\(area-23\\)/" }
       # 用户规则命中：行必须可见（Alex 2026-09-28 裁决；读屏名是 vault 相对路径）
       - label: 用户规则命中：.gitignore 声明的 .local 行在树里
         ax: { has: "/AXButton \\(\\.local\\)/" }
@@ -258,6 +262,17 @@ steps:
         ax: { has: "Vaults: lumir-m102-acceptance-b (click to see all vaults)" }
       - shot: 07-打开段内
 
+  # **等装载完成要用状态驱动，不能用 `settle`**（M296 首跑的现场）：本 change 把打开段移出 IPC
+  # 主线程之后，装载期间界面保持响应、AX 快照逐字节不变 ⇒ `settle` 会在装载**途中**返回（首跑
+  # 实测：它返回时 AX 里还是 `Vaults: …-b` + 指示在场，本步四条断言因此全判红）。`do: waitFor`
+  # 轮询两个**只在切换真正提交后**才成立的观测点：入口按钮换成 A、装载指示退场。
+  - name: 等切回 A 的装载与恢复跑完（状态驱动，最多 90s）
+    do: waitFor
+    waitFor:
+      has: ["Vaults: lumir-m102-acceptance (click to see all vaults)"]
+      not: ["AXProgressIndicator"]
+    timeoutMs: 90000
+
   - name: A 装载完成
     do: settle
     expect:
@@ -267,8 +282,10 @@ steps:
         ax: { has: "Vaults: lumir-m102-acceptance (click to see all vaults)" }
       - label: 真内容仍在树里（装载没把树弄丢）
         ax: { has: "/AXButton \\(area-00\\)/" }
-      - label: 快照完整性见证：文件组的一行在场（⇒ 它前面的目录组整组在快照里，下面的负向断言才有区分度）
-        ax: { has: "/AXButton \\(var-highlight\\.md\\)/" }
+      - label: 快照完整性见证：文件组首行 + 目录组末行（下面的负向断言才有区分度）
+        ax: { has: "/AXButton \\(block-copy\\.md\\)/" }
+      - label: 目录组排到末位（area-23 在 ⇒ 目录组不是被截断的半截）
+        ax: { has: "/AXButton \\(area-23\\)/" }
       - label: 用户规则命中的目录行仍在树里（可见性不因切换丢失）
         ax: { has: "/AXButton \\(\\.local\\)/" }
       - label: 切换后 target 仍不进树（内置规则不因重新装载而松口）
@@ -313,7 +330,7 @@ steps:
 
 | 要判的东西 | 判据 | 为什么是它 |
 |---|---|---|
-| 内置规则命中的条目不可见 | 那四行**不在**同一份 AX 快照里，而同一步有真内容行作正向见证 | 负向断言单独写会在「树根本没渲染」的空输入上假绿（REVIEW.md 第 1/2 条）；判别式写 `AXButton \(名字\)` 而不是裸名字，是因为子行的读屏名是**完整相对路径**，裸名字既会命中别处、也分不出目录行与文件行。**截断面另有一条见证**：树是「目录组在前、文件组在后」，截断只从末尾丢行 ⇒ 只要任一文件组行在场，四个负向断言所在的那个目录组就整组读到了 |
+| 内置规则命中的条目不可见 | 那四行**不在**同一份 AX 快照里，而同一步有真内容行作正向见证 | 负向断言单独写会在「树根本没渲染」的空输入上假绿（REVIEW.md 第 1/2 条）；判别式写 `AXButton \(名字\)` 而不是裸名字，是因为子行的读屏名是**完整相对路径**，裸名字既会命中别处、也分不出目录行与文件行。**截断面另有一对见证**：树是「目录组在前、文件组在后」，截断只从末尾丢行（`closed_menu` / `fanout_cap` 两种源）⇒ 文件组**首行**在场就证明排它前面的整个目录组都在快照里，而四个负向断言的目标全是目录组的行；再配一条目录组**末行**（`area-23`）证明目录组不是被截的半截。取证时踩过一次：见证原先取文件组里字母表最靠后的 `var-highlight.md`，加了 20 个 `big-*.md` 之后 fanout 上限把它截掉了 |
 | 用户规则命中的条目可见 | `.local` / `.excluded-dir` 的**行**在快照里；展开后 `.local/tutorial.md` 的行在；打开后正文出现在编辑器 | 三条覆盖「可见 → 可展开 → 可打开」的完整链路——只判「行在」会漏掉「可见但展不开」（那正是 M258 的形态） |
 | 取反不能推翻内置规则 | `.gitignore` 里写 `!target/` 而 `target` 仍不可见 | 这是 §2.6 的边界口径；没有它，一个把两份规则编进同一个匹配器的实现也能全绿 |
 | 外部写入不产生幻影行 | 同一份快照里 `external-probe.md` 在、`target` 与 `.venv` 都不在 | 只判「不在」会在「事件还没被处理」的空输入上假绿——两个条件必须同一步同快照；`.venv` 是**新建**目录（`target` 早被 fixture 造好，往它里面写只产生子孙事件），只有它能判「最后一段被豁免判定」这个回归形态 |

@@ -82,6 +82,16 @@ steps:
   - name: Esc 收起浮层（浮层内就地消费 Esc，D86 同口径）
     do: key
     key: "escape"
+
+  # Esc / ⌘O 都是**盲发 chord**（套件对 chord 不做回读重试，见 README 的「已知边界」），而紧随
+  # 其后的 AX 读取会与「按键被 app 处理」那一拍抢：M296 首跑就撞上——Esc 的读取发生在收起之前，
+  # ⌘O 又与尚未处理完的 Esc 叠在一起，浮层状态与场景假设错位，后面两步连带失败（点 B 行时
+  # 「找不到可点节点」）。改成轮询可观测终态：两次按键各自确认生效再走下一步。**截图也挪到确认
+  # 之后**——留在按键那一步会拍到打开前的帧（首跑的证据里那张 shot 的 AX dump 里根本没有浮层）。
+  - name: 等浮层收起生效（状态驱动；Esc 是盲发 chord，读得太早会读到收起前的帧）
+    do: waitFor
+    waitFor:
+      not: ["选择一个目录作为新 vault"]
     expect:
       - label: Esc 收起浮层（关闭后列表内容不在 AX 里）
         ax: { not: "选择一个目录作为新 vault" }
@@ -89,6 +99,11 @@ steps:
   - name: ⌘O 再打开一次
     do: key
     key: "cmd+o"
+
+  - name: 等浮层重新出现（状态驱动）
+    do: waitFor
+    waitFor:
+      has: ["选择一个目录作为新 vault"]
     expect:
       - shot: ⌘O 打开的浮层
       - label: 浮层重新出现（D96 的键位路径有效）

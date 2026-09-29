@@ -2173,10 +2173,11 @@ M240 批次（2026-09-26）49 场景 / 47 PASS / 2 FAIL（`32-list-filter`、`43
 `--config` 钉主屏、每场景清 `workspaces/` 与 `vault-sessions/`、新增 `seed` 与第二个合成 vault、
 `caffeinate -dimsu` 包住）见本文件「多 vault 收口遗留」一节。
 
-**待跑：M296 的真机批**（2026-09-29）——新增的场景 `67-vault-open-ignore-set` 已落地、静态校验
-PASS，但**一次都没跑过**（Alex 手头的 dev 实例在 1420 上，等他的窗口期）。该批另含多 vault 回归
-（16 / 17 / 19 / 25 / 48 / 60）与性能复采，清单与现状见本文件末尾的「M296」节。**本节的分类依据是
-证据目录里真实 PASS 的场景，所以 67 在跑完之前不计入任何覆盖。**
+**M296 的真机批已跑完（2026-09-29）**——新增的场景 `67-vault-open-ignore-set` **PASS**，
+多 vault 回归 16 / 17 / 19 / 25 / 48 / 60 **全绿**（`node scripts/acceptance/run.mjs 67 16 17 19 25 48 60`
+→ **7/7 PASS**，证据 `test-results/acceptance/2026-09-29-final/`，git 外）。读数与结论（
+`#[command(async)]` 成立、忽略集收窄在验收 vault 上量不出来、`vault_scan_ignored` 计数）见本文件末尾的
+「M296」节，原始读数落 `test-results/m296/readings.md`。
 
 ### M284 全量回归总表（2026-09-28）
 
@@ -3468,46 +3469,86 @@ BMP 后取采样方块主色）。细节与边界见 `scripts/acceptance/README.
   药丸同机制（选中时读到的是自己的底而不是带色）。callout 行在选区内是「整行染色」还是「随带」
   需要先定语义；不在 M295 面内。另：本 mission 未测**药丸折行**（同一药丸跨行）的形态。
 
-## M296 大 vault 打开忽略集的验收半边（2026-09-29，**场景 67 已落地；真机批待 Alex 窗口期**）
+## M296 大 vault 打开忽略集的验收半边（2026-09-29，**真机批 7/7 PASS**；收窄在验收 vault 上量不出来）
 
 对应 change `openspec/changes/vault-open-ignore-set/`（M290 提案 / M292 实现）。本 mission 是它的
-**验收半边**：把提案的三组判据落成真机可执行场景，外加多 vault 回归与性能复采。
+**验收半边**：把提案的三组判据落成真机可执行场景，外加多 vault 回归与性能复采。**产品代码零改动**。
 
-### 已完成（离线半边，有证据）
+### 1. 场景 67 落地（三组判据）
 
-- **场景 67 落地**：`scripts/acceptance/scenarios/67-vault-open-ignore-set.md`（35 步）。三组判据：
-  ① 两类忽略的可见性（内置规则的 `target` / `dist` / `test-results` / `node_modules` **不在**树里，
-  且根 `.gitignore` 里那条 `!target/` 取反放不回来；用户规则的 `.local` / `.excluded-dir` **行在**
-  树里、可展开、可打开读到正文）；② 外部写入不产生幻影行（`target/probe.md` 与**新建**的
-  `.venv/probe.md`，同一步配 `external-probe.md` 正见证）；③ 打开段不冻结界面（
-  `AXProgressIndicator` + 界面节点 + 「此刻仍是 B」三条**同快照**）。
-- **探针生成器扩了参数**：`scripts/acceptance/lib/app.mjs` 的 `generateBulkVault` 新增
-  `ignoredDirs` / `lazyDirs`（只在 JS 侧——Rust 读数 harness 不生成忽略探针，它们不参与读数口径）；
-  `--check` 的 `seed.bulkVault` 校验同步扩了这两项。**生成器实测**：300ms 生成
-  400+200+150 份构建产物 md + 两份规则文件 + 两个惰性目录及 `tutorial.md`，落点与内容逐项核过
-  （探针落在 `/tmp/lumir-m296-probe`，未碰验收 vault）。
-- **静态校验**：`node scripts/acceptance/run.mjs --check` → **PASS**（70 个场景，含新增的 67）。
-- **文档同步**：套件 README 的 `seed.bulkVault` 行与隔离开（隔离表）按新参数与「根下非 `.md` 残留」
-  口径更新；`openspec/changes/vault-open-ignore-set/acceptance-scenario.md` 顶部记了落地的五处
-  形式变更；`tasks.md` §9 记了状态。
+`scripts/acceptance/scenarios/67-vault-open-ignore-set.md`（35 步，47 条断言全绿）：
 
-### 未完成（**没有 PASS 证据，MUST NOT 读成已覆盖**）
+- **两类忽略的可见性**：内置规则命中的 `target` / `dist` / `test-results` / `node_modules`
+  **不在**树里——且 fixture 根 `.gitignore` 里那条 `!target/` **取反也放不回来**；用户规则命中的
+  `.local`（根 `.gitignore`）与 `.excluded-dir`（根 `.git/info/exclude`）**行在**树里、展开后
+  `.local/tutorial.md` 行出现、点开后正文「本地教程正文」进编辑器。
+- **外部写入不产生幻影行**：`target/probe.md`（子孙事件）与 `.venv/probe.md`（**新建**一个内置
+  规则目录——r2 评审 P1-2 的直接形态），同一步配 `external-probe.md` 正见证证明事件已被处理。
+- **打开段不冻结界面**：放大器撑开的 ~8s 窗口里同一份 AX 快照同时读到 `AXProgressIndicator`、
+  界面节点、以及「此刻入口仍是 B」的**时间见证**（证明快照取自提交之前）。
 
-| 任务 | 状态 | 卡在哪 |
+配套的生成器扩展（`generateBulkVault` 新增 `ignoredDirs` / `lazyDirs`，只在 JS 侧——Rust 读数
+harness 不生成忽略探针，它们不参与读数口径）+ `--check` 的对应校验 + 套件 README 的 2 处口径更新，
+细节见 change 的 `acceptance-scenario.md` 顶部「落地记录」。
+
+### 2. 真机批：**7/7 PASS**
+
+`node scripts/acceptance/run.mjs 67 16 17 19 25 48 60`（实际执行序 16→17→19→25→48→60→67），
+证据 `test-results/acceptance/2026-09-29-final/`（git 外）。**多 vault 回归 16 / 17 / 19 / 25 / 48 / 60
+全绿**，场景 67 首跑即绿。
+
+首跑是 4/7（17 / 60 / 67 红），三处红**全部是套件的等待/断言形式问题，产品零缺陷**——M292 把打开段
+移出主线程之后，`do: settle`（判「界面此刻静止」）不再顺带兼任「等装载跑完」：
+
+| 红项 | 根因 | 修法（只改形式，判据语义不动） |
 |---|---|---|
-| 场景 67 真机 PASS | **未跑** | Alex 手头 `pnpm tauri dev`（1420，主 checkout，今天 09:58 起）在跑；同机第二个 Lumir 实例会显著加剧 KimiCU 丢键假红（REVIEW.md 第 11 条）。tower 2026-09-29 裁决先交离线半边、真机批等 Alex 关 dev 后排队 |
-| 多 vault 回归（16 / 17 / 19 / 25 / 48 / 60） | **未跑** | 同上 |
-| 性能读数复采（合成验收 vault 上的切 vault / 打开耗时；对比 M292 修前 1182ms 档 → 修后 20ms 档） | **未跑** | 同上；读数落 `test-results/m296/` |
+| 60 / 67 切换后的终态断言 | 装载期间界面保持响应、AX 快照逐字节一致 ⇒ `settle` 在装载**途中**返回（返回时仍是旧 vault + 指示在场） | 新增 `do: waitFor`（轮询可观测终态：入口按钮换成目标 vault + 指示退场） |
+| 17 的浮层开合 | `Esc` / `⌘O` 都是**盲发 chord**，紧随的 AX 读取与「按键被处理」那一拍抢，两个按键叠在一起 | 两次按键各自 `do: waitFor` 确认生效 |
+| 67 的完整性见证 | AX 新见一种截断源 `truncated: [closed_menu, fanout_cap]`：根节点子行列表按上限截断，字母表靠后的 `var-highlight.md` 被截掉 | 见证改取文件组**首行**（`block-copy.md`）+ 目录组末行（`area-23`） |
 
-真机批的触发条件与执行清单（`lsof -nP -iTCP:1420 -sTCP:LISTEN` 复核为空 → `run.mjs 67 16 17 19 25 48 60`
-→ 性能复采）见 tower 的 2026-09-29 clarify-answer；本 mission 的 review-request 里也如实登记了这一条。
+**新增能力 `do: waitFor`**（`scripts/acceptance/lib/execute.mjs`，约 30 行）：轮询 `has`/`not` 两份
+字符串清单直到成立，超时**抛错判 FAIL**（不静默），成立时把「第几次读取成立/耗时」记进证据。
+套件 README 的「动作」表、`settle` 行与新增的「`settle` 不是等异步活儿干完」一节是它的 canonical
+居所；`fanout_cap` 那条截断边界也写进了 README 的「已知边界」。
 
-### 本批现场发现（已登记在「待修 findings」）
+### 3. 性能读数：**`#[command(async)]` 成立；忽略集收窄在验收 vault 上量不出来**
 
-- **验收 vault 根下的非 `.md` 残留不被 `resetVault` 清理**（low，会咬人的口径）——见上面那条 finding。
-  本批顺带修正了套件 README 里「重置为 fixtures 的精确副本」这句不准确的表述。
+读数与完整口径见 `test-results/m296/readings.md`（+ `readings.json`），要点：
 
-### 参考读数（M292 侧的真实环境，非本批产物）
+| 读数（同形状、同通道） | M292 前 | M292 后 | 结论 |
+|---|---|---|---|
+| bulk 验收 vault 的「切回」打开段（`vault_load_open`） | **616.0ms**（2026-09-28 批） | **647.0ms**（最终批）/ 639.0ms | **+3~5%，噪声内** |
+| 同段期间界面可响应 | 主线程被同步 command 占住，快照只回 `element_count: 1`（M283 实测，判不了） | 装载全程 AX 可读（67 的三条判据） | **质变，本批最强实证** |
+| `vault_scan_ignored`（内置规则剪掉的内置名条目数） | —（本 change 新增的事件名） | 验收 vault **1**（只有 `node_modules`）/ 带探针时 **5**、外部新建 `.venv` 后 **6** | 机制在跑、计数对得上 |
+| **release harness 的 Rust 侧合计**（`scan + build_graph`，2,142 文件形状，5 次中位） | **92–107ms**（M283 时代同形状） | **82.3 / 81.4ms**（本实现两次跑） | **同量级、无回退**（change tasks 8.3 的复采落地） |
 
-M292 已把 Alex 真实 vault 的恢复段从 422–471ms 降到 35–120ms（他自助 grep 读数，回填在 M283 节）；
-本 mission 要复采的是**合成验收 vault**上的切 vault / 打开耗时，读数落地后补进本节。
+**为什么收窄量不出来**：验收 vault 的可见集本来就等于真内容，**没有可剪的子树**——收窄收益是
+「被剪子树有多大」的函数。真形状上的收益有既有读数（M289 harness，release，166,626 文件 /
+200,274 条目的复刻真 vault 形状）：`scan 1,231.1 + build_graph 1,879.1 = 3,110.2ms` →
+收口后 `14.0 + 51.7 = 65.8ms`（change `design.md` §1）。本批**没有**在验收环境重建那个量级的形状。
+
+**如实入档但不作结论**：20×8MB 放大器把打开段撑到 M292 前 **4,474ms** → M292 后
+**7,619 / 7,643 / 7,915 / 7,953 / 7,986ms**。两个数**不可比**（放大器读数按场景 60/67 的明文声明
+不是规模口径；两次 RUN 相隔 3 小时、机器负载不同，而该段是 debug 构建下对 160MB 零填充 md 做
+正则解析，纯 CPU、对负载敏感）。这是本批唯一一个「看起来是回归」的数字，**没有机制支持**，也不
+构成结论。
+
+### 4. 本批现场发现（已登记 / 已收口）
+
+- **验收 vault 根下的非 `.md` 残留不被 `resetVault` 清理**（low，会咬人的口径）——见「待修 findings」
+  的同名条目；套件 README 里「重置为 fixtures 的精确副本」这句不准确的表述已改准。
+- **`settle` 不能当「等异步活儿干完」用**（§2 第 1 行）——已固化进套件 README 的「动作」表与
+  「已知边界」，连同 `waitFor` 的正确用法。
+- **AX 快照的 `fanout_cap` 截断**（§2 第 3 行）——已写进套件 README 的「已知边界」，含
+  「负向断言的完整性见证要取被截断方向的反面」这条可执行口径。
+
+### 5. 仍未完成（如实登记，MUST NOT 读成已覆盖）
+
+- **change tasks 8.3 的读数复采：部分完成**。`src-tauri/tests/vault_open_readings.rs`（M289 的
+  release harness）**已在本实现上跑通两次**（Rust 侧合计 82.3 / 81.4ms，与 M283 时代的 92–107ms
+  同量级 ⇒ 无回退），原始输出 `test-results/m296/rust-harness-release.txt`。**未跑的是「主动枚举量
+  收窄后残余」那一档**（166,626 文件量级）——harness 自身只生成 2,142 文件的形状，本 mission 未重建
+  那个量级的 fixture，因此 `design.md` §1 的 65.8ms 仍是 M289 的手工收口数，**不是**本实现的实测。
+- **change tasks 8.4**：Alex 在本机切一次真实 vault 后 grep 四条读数——**agent 不能打开他的真实
+  vault**（会写 registry / `last_vault` 到 `~/.config/lumir`），由 tower 另行向他收取。
+- change 的归档（§10 / §11 的门禁项）不在本 mission 面内。

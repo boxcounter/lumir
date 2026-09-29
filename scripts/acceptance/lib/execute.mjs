@@ -30,7 +30,7 @@ import { envHome, mkdirp, readText, repoRoot, secondVaultDir, sleep, vaultDir } 
 
 /** 动作与断言的白名单：`--check` 用它做静态校验，避免写错 key 要等一整轮真机才发现。 */
 export const ACTIONS = new Set([
-  "settle", "sleep", "key", "keys", "type", "click", "clickNodeText", "clickInNode", "clickEditor",
+  "settle", "waitFor", "sleep", "key", "keys", "type", "click", "clickNodeText", "clickInNode", "clickEditor",
   "doubleClick", "drag", "focusWindow", "open", "configWrite", "restart", "record", "recordEditor", "vaultWrite",
   "vaultAppend", "vaultRm", "vaultSparse", "resizeWindow", "clipboardRead",
 ]);
@@ -104,6 +104,23 @@ export function checkScenario(scenario) {
     if (step.do !== undefined && !ACTIONS.has(step.do)) push(`${at} 未知动作 do=${step.do}`);
     if (step.do === "keys" && !Array.isArray(step.keys)) push(`${at} do=keys 需要 keys 数组`);
     if (step.do === "key" && !step.key) push(`${at} do=key 需要 key`);
+    if (step.do === "waitFor") {
+      // 轮询判据（M296）：`has` / `not` 两份字符串清单，至少一项非空；写错键名会静默变成
+      // 「立刻成立」的空条件（本套件最该挡的假绿形态），因此在这里死板校验。
+      const wf = step.waitFor ?? {};
+      const lists = [wf.has, wf.not].filter((v) => v !== undefined);
+      if (!lists.length) push(`${at} do=waitFor 需要 waitFor.has / waitFor.not 至少一项`);
+      for (const [k, v] of [["has", wf.has], ["not", wf.not]]) {
+        if (v === undefined) continue;
+        if (!Array.isArray(v) || v.length === 0 || v.some((s) => typeof s !== "string" || !s))
+          push(`${at} do=waitFor 的 waitFor.${k} 需要非空字符串数组，实际 ${JSON.stringify(v)}`);
+      }
+      for (const k of Object.keys(wf)) {
+        if (!["has", "not"].includes(k)) push(`${at} do=waitFor 未知键 waitFor.${k}（拼错即静默不判）`);
+      }
+      if (step.timeoutMs !== undefined && (!Number.isInteger(step.timeoutMs) || step.timeoutMs <= 0))
+        push(`${at} do=waitFor 的 timeoutMs 需要正整数，实际 ${JSON.stringify(step.timeoutMs)}`);
+    }
     if (step.do === "doubleClick" && !step.target) push(`${at} do=doubleClick 需要 target（节点或 {x,y} 窗口局部坐标）`);
     if (step.do === "click" && step.target?.button !== undefined && !["left", "right", "middle"].includes(step.target.button))
       push(`${at} do=click 的 target.button 只能是 left/right/middle，实际 ${JSON.stringify(step.target.button)}`);
@@ -796,6 +813,45 @@ async function doAction(step, { ctx, cu, scenario, vars, pid, evidence }) {
       return;
     case "settle":
       return settleAction(cu, p, evidence);
+    case "waitFor": {
+      // 轮询「某个状态成立」直到超时（M296）——**状态驱动**的等待，与 `settle` 分工不同：
+      // `settle` 判的是「界面此刻静止」（连续两次 AX 快照逐字节一致），**不能**当「等一件异步
+      // 活儿干完」用：change vault-open-ignore-set 把打开段移出 IPC 主线程之后，装载期间界面
+      // 保持响应、快照逐字节不变 ⇒ `settle` 会在装载**途中**就返回（M296 首跑实测：它返回时
+      // AX 里还是旧 vault 的标签栏 + 装载指示在场）。场景要「等装载完成 / 等某个按键生效」就得
+      // 用本动作轮询一个**可观测的终态**。
+      //
+      // 判据形态与 `ax` 断言同源（`matcher()`：字符串按子串、`/…/` 按正则，正则带 `m` 标志）。
+      // 命中不到就每 700ms 再读一次（一次 `readAx` 本身是秒级往返，实际采样间隔因此是秒级）；
+      // 超时抛错 —— 如实判 FAIL，不静默放过。成立时把「第几次读取成立 / 耗时」记进证据。
+      const spec = step.waitFor ?? {};
+      const has = spec.has ?? [];
+      const not = spec.not ?? [];
+      const timeoutMs = step.timeoutMs ?? 60_000;
+      const deadline = Date.now() + timeoutMs;
+      const startedAt = Date.now();
+      for (let attempt = 1; ; attempt += 1) {
+        const ax = await readAx(cu, p);
+        const missing = has.filter((s) => !matcher(s).test(ax.text));
+        const present = not.filter((s) => matcher(s).test(ax.text));
+        if (missing.length === 0 && present.length === 0) {
+          evidence.record({
+            kind: "note",
+            text: `do=waitFor 第 ${attempt} 次读取成立（用时 ${Date.now() - startedAt}ms）`,
+          });
+          return;
+        }
+        if (Date.now() >= deadline) {
+          throw new Error(
+            `do=waitFor 超时（${timeoutMs}ms / ${attempt} 次读取）：` +
+              `${missing.length ? `仍缺 ${JSON.stringify(missing)}；` : ""}` +
+              `${present.length ? `仍出现（要求不出现）${JSON.stringify(present)}；` : ""}` +
+              "——若是装载类等待，先核错因是不是「等的是 settle 而不是状态」（本动作的注释）。",
+          );
+        }
+        await sleep(700);
+      }
+    }
     case "sleep":
       return sleep(step.ms ?? 1000);
     case "key":

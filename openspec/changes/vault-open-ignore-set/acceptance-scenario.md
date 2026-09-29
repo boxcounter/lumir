@@ -19,10 +19,16 @@
 > 5. **`open` 的落点写成 vault 相对路径**：子行的读屏名是**完整相对路径**（`.local/tutorial.md`），
 >    不是 basename（口径见 `scripts/acceptance/README.md` 与场景 52）。
 >
-> **真机执行状态**：截至本记录，`node scripts/acceptance/run.mjs 67` **尚未跑**——Alex 手头的
-> `pnpm tauri dev` 实例（1420）在跑，同机第二个 Lumir 实例会显著加剧 KimiCU 丢键假红
-> （REVIEW.md 第 11 条），tower 2026-09-29 裁决「先交离线半边、真机批等 Alex 关 dev 后排队」。
-> 因此本草案的三组判据**都还没有真实 PASS 证据**，MUST NOT 读成已覆盖。
+> **真机执行状态（2026-09-29 更新）**：`node scripts/acceptance/run.mjs 67 16 17 19 25 48 60` →
+> **7/7 PASS**（场景 67 单独 47 条断言全绿），证据
+> `test-results/acceptance/2026-09-29-final/`（git 外），读数与控制论结论见
+> `test-results/m296/readings.md`。**首跑是 4/7**（17 / 60 / 67 红），三处红全部是套件的等待 /
+> 断言形式问题、产品零缺陷：`do: settle` 不能当「等装载跑完」用（本 change 把打开段移出主线程
+> 之后，装载期间界面保持响应 ⇒ `settle` 在**途中**返回）⇒ 为此新增了 `do: waitFor` 动作；
+> 17 的两处是盲发 chord 的时序；67 的一处是 AX 的 `fanout_cap` 截断吃掉了原先取在字母表靠后的
+> 完整性见证。三类都已在套件 README 固化（`do: settle` 那一节 + 「已知边界」的 fanout 条）。
+> **仍未完成**：8.3 的「收窄后残余」那一档读数（release harness 已在本实现上跑通，Rust 侧合计
+> 82.3 / 81.4ms，但 166,626 文件量级的 fixture 未重建）；8.4（Alex 本机 grep）。
 >
 > 以下是落地前的草案原文（保留作对照；与落地版的差异以上面五条为准）。
 >
