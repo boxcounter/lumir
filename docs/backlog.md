@@ -3426,10 +3426,19 @@ BMP 后取采样方块主色）。细节与边界见 `scripts/acceptance/README.
     !important }`。理由：M295 起药丸的选中底色跟随 `--sel-band`，而该用例的注入把 `--sel-band`
     设成纯黑（造 M291 的修前形态）⇒ 药丸跟着变黑，白字压黑底跨度为 246、自证反而假红。**只补
     这一条构造、不动任何阈值**——判据与口径不变，变的是「修前形态」得怎么造。
-  - 门禁：视觉全量本地跑（隔离端口），**零基线 diff、未做任何 `--update`**；`cargo` 层按磁盘水位
-    未跑（同 M293 / M294 先例，`src-tauri/` 零改动）。
+  - 门禁：视觉全量本地跑（隔离端口）**587 passed / 1 skipped**（1 skipped 与 M294 基线同）、
+    **零基线 diff**（54 张基线 sha256 逐字节相同、未做任何 `--update`）；quick 层非 Rust 部分全绿；
+    `cargo` 层按磁盘水位未跑（同 M293 / M294 先例，`src-tauri/` 零改动；旁证是本次真机运行完成了
+    一次成功的 `cargo build`）。真机运行把 `CARGO_TARGET_DIR` 指向主仓的 warm target（零 Rust 改动
+    ⇒ 产物等价），以避开本 worktree 的首次全量构建（磁盘 3.6G，REVIEW.md 第 12 条）。
+- **真机复验（scenario 68，1/1 PASS，100.0s）**：before / after 读数——light 药丸内部 `#f2f1ec`
+  → **`#c6c5c0`**（= 药丸外的带色，逐值相同）、eink `#f0f0f0` → **`#b9b9b9`**（同上）、dark
+  `#5c5b5d` → `#79797b`（与未选中药丸差 75）。before 侧复用 M291 的 after 轮 scenario 68 截图
+  （同一台机、同一 fixture、同一口径；M291 分支即「M295 之前」的状态）。**覆盖边界**：scenario 68
+  的形态是「选区**跨过**药丸」；Alex 现场的「选区恰好等于药丸」与「部分选中」两种形态**没有既有
+  验收场景**，而 `scripts/acceptance/scenarios/**` 不在本 mission scope 内 ⇒ 这两种只有 chromium
+  读数（要补真机读数需给临时探针场景的写权限，M291 r3 用过该路径）。
 - **仍在册未收口（同一机制，另立）**：`.cm-content` 内的其他 in-flow 底色——**callout 行底色**
   （含族 tint）、**frontmatter 区**、**code 模式的变量绑定底纹**（`.cm-lp-code-binding`）——三处与
   药丸同机制（选中时读到的是自己的底而不是带色）。callout 行在选区内是「整行染色」还是「随带」
-  需要先定语义；不在 M295 面内。另：本 mission 未测**药丸折行**（同一药丸跨行）的形态，
-  也未测真机 WKWebView 下的同一组读数以外的交互路径。
+  需要先定语义；不在 M295 面内。另：本 mission 未测**药丸折行**（同一药丸跨行）的形态。
