@@ -952,7 +952,7 @@ body {
   background: var(--hover);
 }
 :root[data-theme="eink"] .ft-open-btn {
-  border-color: #000;
+  border-color: var(--border);
 }
 
 /* 编辑器区域的提示覆盖层（暂不支持预览 / 读取错误） */
@@ -1049,7 +1049,9 @@ body {
   background-color: #fff;
 }
 :root[data-theme="eink"] .cm-lp-codeblock-scroll {
-  border: 1px solid #000;
+  /* 边框色归位 `--border`（eink = `#000000`，M293 按收敛规则 1 收口）：归位前的字面值
+     `#000` 与它在本档同值，**逐值不变**；线宽 1px 不动（规则⑤ 的「黑框」）。 */
+  border: 1px solid var(--border);
 }
 /* 折行档的块底色（`editor.code_block_wrap: true`）：此时没有横滚容器，块底色就是行底色，
    改由 slot 的负 z-index 底板承担（行盒并集 == slot 盒）。容器在场时这里不装——底板与行区带
@@ -1449,9 +1451,10 @@ body {
   overflow: auto;
 }
 /* eink 规则⑦⑧：浮层阴影退场、边框升级 1.4px 实心黑（模态强调档）；--scrim 以明度差保留
-   （M184 已验证的遮罩底口径）。 */
+   （M184 已验证的遮罩底口径）。边框色归位 `--border`（eink = `#000000`，M293 收敛规则 1）：
+   与归位前的字面值同值、**逐值不变**，1.4px 的线宽档（规则⑧）不动。 */
 :root[data-theme="eink"] .lumir-table-fs-panel {
-  border: 1.4px solid #000;
+  border: 1.4px solid var(--border);
   box-shadow: none;
 }
 /* 快照容器**显式补齐** CM 注入主题的那几项（design §2 的克隆卫生）：仓内表格规则是全局选择器
@@ -1504,9 +1507,10 @@ body {
   box-shadow: var(--shadow-raise);
   overflow: auto;
 }
-/* eink 规则⑦⑧：浮层阴影退场、边框升级 1.4px 实心黑（模态强调档）；--scrim 以明度差保留。 */
+/* eink 规则⑦⑧：浮层阴影退场、边框升级 1.4px 实心黑（模态强调档）；--scrim 以明度差保留。
+   边框色归位 `--border`（M293 收敛规则 1，与归位前的字面值同值、**逐值不变**；线宽档不动）。 */
 :root[data-theme="eink"] .lumir-codeblock-fs-panel {
-  border: 1.4px solid #000;
+  border: 1.4px solid var(--border);
   box-shadow: none;
 }
 /* 内容容器：底板与圆角取文档内代码块横滚容器的同一视觉语言（--code-bg + r8 + 同一份内边距），
@@ -1529,10 +1533,14 @@ body {
   width: 100%;
   max-width: none;
 }
-/* eink 规则⑤：无灰底可用 → 翻转为白底黑框（同 .cm-lp-codeblock-scroll）。 */
+/* eink 规则⑤：无灰底可用 → 翻转为白底黑框（同 .cm-lp-codeblock-scroll）。黑框归位 `--border`
+   （M293 收敛规则 1，与归位前的字面值同值、**逐值不变**；线宽 1px 不动）。
+   本块的 `background-color: #fff` 是规则⑤的**白底**半边：它与 eink 的四个 token 同值
+   （`--preview-bg` / `--frame` / `--content-bg` / `--agent-bg` 都是 `#ffffff`），归位前要先定
+   语义位——不属本批裁决的「实心强调 / 边框」两族，故本批不动（登记见 docs/backlog.md 的 M293 节）。 */
 :root[data-theme="eink"] .lumir-codeblock-fs-content {
   background-color: #fff;
-  border: 1px solid #000;
+  border: 1px solid var(--border);
 }
 
 /* 轻量大纲浮层（M148）：绝对定位贴**指示段上方**，不占任何常驻空间。

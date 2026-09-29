@@ -441,6 +441,41 @@ hairline 边缘 + bg 色阶三者各司其职，不靠堆叠模糊半径。
 **之上**——本版只保证「那里的字可读」，覆盖问题另立（`docs/backlog.md` 的 M291 节 + finding
 `20260928-worker-selection-contrast-m291-bug-in-flow-code-callout-frontmatter`）。
 
+## 字面值归位（eink 反白 → token；v1.4 增补，2026-09-29）
+
+**缘起**：收敛规则 1 说「组件里只剩 eink 的手工反白（`#000` / `#fff` / …），它们语义上属于既有
+token 的 eink 值，收敛时归位，不新增色」。本条把「归位」落成可执行的两族口径，并给出首批落地
+（M293，Alex 2026-09-29 裁决「改。你可以安排时就动手。」）。
+
+**两族与归属**——**角色归位**：按这条声明在规则里的**角色**选 token（实心底 / 边框），
+不按字面值去反查「哪个 token 恰好也是这个值」（eink 下 `#000` 与多个 token 同值，反查会选错语义位）：
+
+| 角色 | 归属 token | eink 取值 | M293 落点 |
+|---|---|---|---|
+| 实心强调（实心底 + 反白字） | `--accent-fill` / `--accent-fill-text` | `#000000` / `#ffffff` | 搜索面板的大小写开关「开」态、当前搜索匹配 |
+| 边框（黑框 / 描边 / 色条） | `--border` | `#000000` | 代码块横滚容器、frontmatter 盒、fm 状态 chip、tags chip、callout 左色条、两处全屏浮层壳、文件树「打开目录」入口 |
+
+线宽（1.4px = 规则⑧的强调档、1px 的结构档、callout 色条的 2px）**不是色**，归位不动宽度。
+
+**判据（两层，缺一层即假绿）**：
+1. **值**：元素的计算色 == 归属 token 的计算值（三主题；eink 是被改写的那一档）；
+2. **归属**：把归属 token 临时改成一个三主题都不用的探测色，该元素的计算色 MUST 跟着变——
+   写死字面值的声明**不会**跟着变。这一层才是「不再硬编码」的判据（REVIEW.md 第 1 条的防线）。
+   实证：`tests/visual/scenes/m293-eink-literal-tokens.spec.ts`（4 组 × 3 主题）修前跑，eink 三组
+   全红在 ②、① 全绿——「值不变、只是不再硬编码」的签名。
+
+**平台注记**：chromium 在 `deviceScaleFactor=1`（视觉门禁与 CI 的口径）下把 1.4px 边框折成整数档，
+`getComputedStyle` 读回 `1px` ⇒「规则⑧的 1.4px 强调档」在这一层的判别力为零，只能钉「有框 +
+色 = `--border`」；该档的可见差异在真机（WKWebView，dsf=2）。
+
+**尚未归位的「面」字面值**（规则⑤的**白底**半边，4 处）：`background-color: #fff` /
+`backgroundColor: "#fff"`（代码块底板、全屏代码块内容容器、callout 行、frontmatter 盒）。
+它们不属上述两族，且 eink 下 `#fff` 与 `--preview-bg` / `--frame` / `--content-bg` / `--agent-bg`
+同值——归位要先定语义位；其中 **frontmatter 那一处的覆盖在本档是冗余的**（基规则读 `--agent-bg`，
+eink 值同为 `#ffffff`），可归位也可直接删。同类还有 callout 类型标签的 `color: "#000"`（前景色，
+eink 下与 `--accent` / `--ok` / `--pending` / `--danger` / `--text` 同值）。清单与逐条理由见
+`docs/backlog.md` 的 M293 节。
+
 ## 与现行实现的差距（对照 src/style.css）
 
 现行实现是单主题米色 editorial 风（`:root` 一组 token，无主题机制），

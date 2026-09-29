@@ -97,18 +97,17 @@
   letter-spacing: 0.02em;
 }
 /* 大小写开关的「开」态：唯一带底色的按钮，一眼可辨。
-   eink 下 tint 退场（规则①），改走「实心强调」取向：本处是**硬编码** `#000` 底 + `#fff` 字，
-   与 `--accent-fill` / `--accent-fill-text` 在这一档恰好同值（`#000` / `#ffffff`）。
-   **它不是 `--sel` 族**（M291 起 eink 的选中态是明度带 + 黑字），故不受选中族改写影响；
-   要不要把这两处字面值也按收敛规则 1 归位到 `--accent-fill` 那对 token，见 docs/backlog.md
-   的 M291 节（登记为待裁决，不在本批改）。 */
+   eink 下 tint 退场（规则①），改走「实心强调」取向——归位到 `--accent-fill` / `--accent-fill-text`
+   这一对（eink = `#000000` / `#ffffff`，M293 按收敛规则 1 收口，Alex 2026-09-29 裁决；
+   归位前是本处的字面值 `#000` / `#fff`，**逐值不变**：这对 token 本就是为「实心强调」定义的）。
+   **它不是 `--sel` 族**（M291 起 eink 的选中态是明度带 + 黑字），故不受选中族改写影响。 */
 .lumir-search-case.is-on {
   background: var(--accent-tint);
   color: var(--accent);
 }
 :root[data-theme="eink"] .lumir-search-case.is-on {
-  background: #000;
-  color: #fff;
+  background: var(--accent-fill);
+  color: var(--accent-fill-text);
 }
 .lumir-search-close {
   padding: var(--sp-1) var(--sp-4);
@@ -133,15 +132,16 @@
   color: var(--accent-fill-text);
 }
 /* eink：tint 全 transparent（规则①），高亮改由下划线承担（规则⑨同一手法）；当前匹配走
-   实心档（硬编码 `#000` 底 + `#fff` 字，与 `--accent-fill` / `--accent-fill-text` 在这一档同值；
-   独立于 `--sel` 族）。 */
+   实心强调族（M293 归位到 `--accent-fill` / `--accent-fill-text`——与上面基础规则的那对同源，
+   本档的计算值与归位前的字面值 `#000` / `#fff` **逐值相同**；独立于 `--sel` 族）。
+   本块里非冗余的那一半是 `text-decoration: none`：它把上一条的**下划线**收掉，实心档自带层级。 */
 :root[data-theme="eink"] .cm-editor .cm-content .cm-searchMatch {
   background: transparent;
   text-decoration: underline;
   text-underline-offset: 3px;
 }
 :root[data-theme="eink"] .cm-editor .cm-content .cm-searchMatch.cm-searchMatch-selected {
-  background: #000;
-  color: #fff;
+  background: var(--accent-fill);
+  color: var(--accent-fill-text);
   text-decoration: none;
 }
