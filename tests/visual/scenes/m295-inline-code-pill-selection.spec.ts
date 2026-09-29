@@ -251,6 +251,49 @@ function overlaps(a: Box, b: Box): boolean {
   return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
 }
 
+interface Side {
+  /** 药丸盒（拆段后仍应逐值不变）。 */
+  pill: Box;
+  /** 药丸前一个字符 / 后一个字符的字符格（药丸外的布局锚点）。 */
+  before: Box;
+  after: Box;
+  /** 药丸在 DOM 里的段数（拆段会变，geometry 不许变）与其中带选中换挡的段数。 */
+  segments: number;
+  selected: number;
+}
+
+/** 读「药丸盒 + 两侧字符格 + 段数」：零几何位移判据的输入（同一次 evaluate 内取全）。 */
+function readSide(page: Page): Promise<Side> {
+  return page.evaluate(() => {
+    const lines = [...document.querySelectorAll(".cm-line")];
+    const line = lines.find((l) => (l.textContent ?? "").includes("列表项"))!;
+    const view = (document.querySelector(".cm-content") as unknown as { cmTile: { root: { view: any } } }).cmTile.root.view;
+    const raw = "`tests/visual/scenes/paragraph.spec.ts`";
+    const doc = view.state.doc.toString();
+    const pillFrom = doc.indexOf(raw);
+    const pillTo = pillFrom + raw.length;
+    const charBox = (pos: number) => {
+      const a = view.coordsAtPos(pos);
+      const b = view.coordsAtPos(pos + 1);
+      return { x: Math.min(a.left, b.left), y: a.top, w: Math.abs(b.left - a.left), h: a.bottom - a.top };
+    };
+    const marks = [...line.querySelectorAll<HTMLElement>("[class*='cm-lp-inline-code']")];
+    const rects = marks.map((el) => el.getBoundingClientRect());
+    // 段盒的并集：拆段前后并集必须逐值相同（不求 DOMRect.union——那不是所有引擎都有的方法）。
+    const left = Math.min(...rects.map((r) => r.left));
+    const top = Math.min(...rects.map((r) => r.top));
+    const right = Math.max(...rects.map((r) => r.right));
+    const bottom = Math.max(...rects.map((r) => r.bottom));
+    return {
+      pill: { x: left, y: top, w: right - left, h: bottom - top },
+      before: charBox(pillFrom - 2),
+      after: charBox(pillTo + 1),
+      segments: marks.length,
+      selected: marks.filter((el) => el.className.includes("cm-lp-inline-code-sel")).length,
+    };
+  });
+}
+
 test.describe("M295：行内 code 药丸的选中态可辨性", () => {
   test("三主题 × 整行选中：选中态药丸 MUST 与未选中可辨，且未选中药丸 MUST NOT 读成带色", async ({ page }) => {
     for (const theme of THEMES) {
@@ -382,6 +425,39 @@ test.describe("M295：行内 code 药丸的选中态可辨性", () => {
         colorDiff(r.uncovered!, bandRef),
         `${theme}：部分选中时**未覆盖段**（${formatColor(r.uncovered!)}）MUST NOT 读成带色（差 ${colorDiff(r.uncovered!, bandRef)}）`,
       ).toBeGreaterThanOrEqual(MIN);
+    }
+  });
+
+  test("零几何位移：选区进 / 出药丸时，药丸盒与两侧字符格逐值不变（M259 按压窗口的前提）", async ({ page }) => {
+    // 拆段（1 段 → 最多 3 段）是 DOM 结构变化；内边距与圆角按「内边 0」重分配的目的正是让
+    // **盒的几何逐值不变**。M259 的按压窗口依赖这一条：布局在按下与抬起之间 MUST NOT 变，
+    // 否则同一屏幕坐标会映射到不同文档位置、产生幻影选区。
+    await openDoc(page, "light");
+    const raw = `\`${PILL_PATH}\``;
+    const pillFrom = DOC.indexOf(raw);
+    const pillTo = pillFrom + raw.length;
+    const listFrom = DOC.indexOf(MARK_LIST);
+
+    // 基准帧：选区在药丸之外（药丸未被拆段）。
+    await select(page, listFrom, listFrom + 2);
+    const base = await readSide(page);
+    expect(base.segments, "基准帧：药丸 MUST 是单段（选区在药丸外，未拆）").toBe(1);
+    expect(base.selected, "基准帧：药丸 MUST NOT 带选中换挡").toBe(0);
+
+    const cases: [string, number, number][] = [
+      ["完整覆盖", pillFrom, pillTo],
+      ["部分覆盖", listFrom, pillFrom + 3],
+    ];
+    for (const [label, from, to] of cases) {
+      await select(page, from, to);
+      const side = await readSide(page);
+      expect.soft(side.selected, `${label}：药丸 MUST 有被覆盖的段（换挡真的挂上了）`).toBeGreaterThan(0);
+      if (label === "部分覆盖") {
+        expect.soft(side.segments, `${label}：药丸 MUST 被拆成多段（覆盖段 + 未覆盖段）`).toBeGreaterThan(1);
+      }
+      expect(side.pill, `${label}：药丸盒 MUST 与基准帧逐值相同（拆段不引入几何位移）`).toEqual(base.pill);
+      expect(side.before, `${label}：药丸前一个字符格 MUST 与基准帧逐值相同`).toEqual(base.before);
+      expect(side.after, `${label}：药丸后一个字符格 MUST 与基准帧逐值相同`).toEqual(base.after);
     }
   });
 

@@ -326,6 +326,25 @@ export const livePreviewTheme = EditorView.theme({
     padding: "1.5px 5px",
     fontSize: "calc(13em / 15)",
   },
+  // 选中态药丸（M295，Alex 2026-09-29 裁决「选中的药丸 = 选区带的一部分」，真源
+  // docs/specs/design-tokens-v1.md §编辑器选区带）：被选区盖住的那一段底色换挡到 `--sel-band`，
+  // 让带在药丸处**连成一片**。选换挡而不是「让位（transparent）」是几何决定的：带矩形按文档位置
+  // 算、边界落在**文本盒**上（实测带 464..777 vs 药丸盒 459..782），让位会在药丸两端各露 5px
+  // 纸色缺口。零新增色、不动明度梯队（既有档位 `--sel-band` 的第二处消费者）。
+  // 分段与「零几何位移」的依据在 src/preview/livePreview.ts 的 pushInlineCodeMarks。
+  ".cm-lp-inline-code-sel": { backgroundColor: "var(--sel-band)" },
+  // 拆段的内边距 / 圆角按**位置**归零：不落在药丸左端的段去掉左侧，不落在右端的去掉右侧。
+  // 这两条是本 mission 唯一的几何相关声明——它们的职责正是「让拆段后的几何与拆前逐值相同」。
+  ".cm-lp-inline-code-flat-left": {
+    paddingLeft: "0",
+    borderTopLeftRadius: "0",
+    borderBottomLeftRadius: "0",
+  },
+  ".cm-lp-inline-code-flat-right": {
+    paddingRight: "0",
+    borderTopRightRadius: "0",
+    borderBottomRightRadius: "0",
+  },
 
   // 列表（标记测量机制不动，换族与逐级递减的字号档）：标记在正文字族（sans）下右对齐到
   // 正文起点，悬挂缩进由 lists.ts 测量的 `--lp-list-*` 像素值驱动。定稿列表标记体系
