@@ -751,6 +751,26 @@ gutter 的对照口径改成「相对 CM 模型」——后者只是把缺陷写
 
 证据：`.tower/comms/findings/20260927-worker-impl-goto-line-improve-gutter-1px-basetheme-cm-gutters-before-border-none-none.md`。
 
+### 验收 vault 根下的非 `.md` 残留不被 `resetVault` 清理（M296 现场发现，2026-09-29，low）
+
+`scripts/acceptance/lib/app.mjs` 的 `resetVault()` 每次运行只清 vault 根下的 **`.md`** 与**目录**，
+因此场景经 `fixtures:` 带进来的非 `.md` 产物会**跨场景、跨天留着**。实测：跑完 M284 的全量批之后
+`/tmp/lumir-m102-acceptance` 根下留着 40+ 个这类文件，其中 `.gitignore` / `.gitattributes` /
+`.secret` / `x.jsonc` 来自场景 46 的 fixture 列表，`huge.log`（**53MB**）来自场景 42，
+`aaa` / `aaa-nonmd.txt` 来自场景 42 的 `vaultWrite`。
+
+**当前影响：无**（每个依赖这些文件的场景各自用 `fixtures:` 重新拷一份；`.gitignore` 残留声明的
+目录届时都不存在，规则是惰性的）。**但它是一条会咬人的口径**：新场景若「看到某文件在场」就据此
+断言（而不是自己声明 `fixtures:` 或 `vaultWrite` 造），会在**换一台机 / 清一次 `/tmp` 之后**变成
+随机红——正是 REVIEW.md 第 4 条（写死会跨天复用的产物路径）的同族。M296 已把这条口径写进
+`resetVault()` 的注释与套件 README 的隔离表（canonical 居所），并确认场景 67 新增的 `.gitignore`
+探针属同一类残留（它已在场景的「覆盖边界」里如实登记）。
+
+**触发条件 / 修法**：值得单开一个小 mission——把 `resetVault()` 改成「先清空 vault 根下的**一切**
+条目（文件 + 目录），再拷 `fixtures/` 的 `.md`」。风险面是全部 69 个场景（`fixtures:` 拷进来的
+非 `.md` 文件在起 app 之前就位，语义不变），因此需要一次全量真机批来收口，不顺手做。
+同族：`resetSecondVault()` 同样只清 `.md`（第二个 vault 的 fixture 目前只有 `.md`，暂无实害）。
+
 ### 预览机制移除的遗留项（M254 登记，2026-09-27）
 
 `preview-tab-removal`（M254）把预览标签机制整体移除了：行为面（单击树文件一律开正式标签、
@@ -2153,6 +2173,11 @@ M240 批次（2026-09-26）49 场景 / 47 PASS / 2 FAIL（`32-list-filter`、`43
 `--config` 钉主屏、每场景清 `workspaces/` 与 `vault-sessions/`、新增 `seed` 与第二个合成 vault、
 `caffeinate -dimsu` 包住）见本文件「多 vault 收口遗留」一节。
 
+**待跑：M296 的真机批**（2026-09-29）——新增的场景 `67-vault-open-ignore-set` 已落地、静态校验
+PASS，但**一次都没跑过**（Alex 手头的 dev 实例在 1420 上，等他的窗口期）。该批另含多 vault 回归
+（16 / 17 / 19 / 25 / 48 / 60）与性能复采，清单与现状见本文件末尾的「M296」节。**本节的分类依据是
+证据目录里真实 PASS 的场景，所以 67 在跑完之前不计入任何覆盖。**
+
 ### M284 全量回归总表（2026-09-28）
 
 前提已 `lsof` 复核：1420 / 1430 起跑前后均无监听、无 `target/debug/lumir` 残留；磁盘 21G 可用；
@@ -3442,3 +3467,47 @@ BMP 后取采样方块主色）。细节与边界见 `scripts/acceptance/README.
   （含族 tint）、**frontmatter 区**、**code 模式的变量绑定底纹**（`.cm-lp-code-binding`）——三处与
   药丸同机制（选中时读到的是自己的底而不是带色）。callout 行在选区内是「整行染色」还是「随带」
   需要先定语义；不在 M295 面内。另：本 mission 未测**药丸折行**（同一药丸跨行）的形态。
+
+## M296 大 vault 打开忽略集的验收半边（2026-09-29，**场景 67 已落地；真机批待 Alex 窗口期**）
+
+对应 change `openspec/changes/vault-open-ignore-set/`（M290 提案 / M292 实现）。本 mission 是它的
+**验收半边**：把提案的三组判据落成真机可执行场景，外加多 vault 回归与性能复采。
+
+### 已完成（离线半边，有证据）
+
+- **场景 67 落地**：`scripts/acceptance/scenarios/67-vault-open-ignore-set.md`（35 步）。三组判据：
+  ① 两类忽略的可见性（内置规则的 `target` / `dist` / `test-results` / `node_modules` **不在**树里，
+  且根 `.gitignore` 里那条 `!target/` 取反放不回来；用户规则的 `.local` / `.excluded-dir` **行在**
+  树里、可展开、可打开读到正文）；② 外部写入不产生幻影行（`target/probe.md` 与**新建**的
+  `.venv/probe.md`，同一步配 `external-probe.md` 正见证）；③ 打开段不冻结界面（
+  `AXProgressIndicator` + 界面节点 + 「此刻仍是 B」三条**同快照**）。
+- **探针生成器扩了参数**：`scripts/acceptance/lib/app.mjs` 的 `generateBulkVault` 新增
+  `ignoredDirs` / `lazyDirs`（只在 JS 侧——Rust 读数 harness 不生成忽略探针，它们不参与读数口径）；
+  `--check` 的 `seed.bulkVault` 校验同步扩了这两项。**生成器实测**：300ms 生成
+  400+200+150 份构建产物 md + 两份规则文件 + 两个惰性目录及 `tutorial.md`，落点与内容逐项核过
+  （探针落在 `/tmp/lumir-m296-probe`，未碰验收 vault）。
+- **静态校验**：`node scripts/acceptance/run.mjs --check` → **PASS**（70 个场景，含新增的 67）。
+- **文档同步**：套件 README 的 `seed.bulkVault` 行与隔离开（隔离表）按新参数与「根下非 `.md` 残留」
+  口径更新；`openspec/changes/vault-open-ignore-set/acceptance-scenario.md` 顶部记了落地的五处
+  形式变更；`tasks.md` §9 记了状态。
+
+### 未完成（**没有 PASS 证据，MUST NOT 读成已覆盖**）
+
+| 任务 | 状态 | 卡在哪 |
+|---|---|---|
+| 场景 67 真机 PASS | **未跑** | Alex 手头 `pnpm tauri dev`（1420，主 checkout，今天 09:58 起）在跑；同机第二个 Lumir 实例会显著加剧 KimiCU 丢键假红（REVIEW.md 第 11 条）。tower 2026-09-29 裁决先交离线半边、真机批等 Alex 关 dev 后排队 |
+| 多 vault 回归（16 / 17 / 19 / 25 / 48 / 60） | **未跑** | 同上 |
+| 性能读数复采（合成验收 vault 上的切 vault / 打开耗时；对比 M292 修前 1182ms 档 → 修后 20ms 档） | **未跑** | 同上；读数落 `test-results/m296/` |
+
+真机批的触发条件与执行清单（`lsof -nP -iTCP:1420 -sTCP:LISTEN` 复核为空 → `run.mjs 67 16 17 19 25 48 60`
+→ 性能复采）见 tower 的 2026-09-29 clarify-answer；本 mission 的 review-request 里也如实登记了这一条。
+
+### 本批现场发现（已登记在「待修 findings」）
+
+- **验收 vault 根下的非 `.md` 残留不被 `resetVault` 清理**（low，会咬人的口径）——见上面那条 finding。
+  本批顺带修正了套件 README 里「重置为 fixtures 的精确副本」这句不准确的表述。
+
+### 参考读数（M292 侧的真实环境，非本批产物）
+
+M292 已把 Alex 真实 vault 的恢复段从 422–471ms 降到 35–120ms（他自助 grep 读数，回填在 M283 节）；
+本 mission 要复采的是**合成验收 vault**上的切 vault / 打开耗时，读数落地后补进本节。

@@ -56,10 +56,32 @@ export function checkScenario(scenario) {
   if (bulk !== undefined && bulk !== true) {
     if (typeof bulk !== "object" || bulk === null) push("seed.bulkVault 只能是 true 或形状参数对象");
     else {
+      const NUM_KEYS = ["markdown", "files", "dirs", "mdBytes", "maxMdBytes", "ignoredMd"];
+      // 两类忽略探针（M296）：`ignoredDirs` 是「名字 → md 条数」、`lazyDirs` 是三份目录名清单。
+      // 与其余参数同一条口径校验：键名写错 = 静默不生成 = 场景的负向断言在空输入上假绿。
+      const LAZY_KEYS = ["gitignore", "gitignoreNegations", "exclude"];
       for (const [k, v] of Object.entries(bulk)) {
-        if (!["markdown", "files", "dirs", "mdBytes", "maxMdBytes", "ignoredMd"].includes(k))
+        if (NUM_KEYS.includes(k)) {
+          if (!Number.isInteger(v) || v <= 0) push(`seed.bulkVault.${k} 需要正整数，实际 ${JSON.stringify(v)}`);
+        } else if (k === "ignoredDirs") {
+          if (typeof v !== "object" || v === null || Array.isArray(v)) push("seed.bulkVault.ignoredDirs 需要「目录名 → md 条数」对象");
+          else {
+            for (const [name, n] of Object.entries(v)) {
+              if (!Number.isInteger(n) || n <= 0) push(`seed.bulkVault.ignoredDirs.${name} 需要正整数，实际 ${JSON.stringify(n)}`);
+            }
+          }
+        } else if (k === "lazyDirs") {
+          if (typeof v !== "object" || v === null || Array.isArray(v)) push("seed.bulkVault.lazyDirs 需要对象（gitignore / gitignoreNegations / exclude）");
+          else {
+            for (const lk of Object.keys(v)) {
+              if (!LAZY_KEYS.includes(lk)) push(`seed.bulkVault.lazyDirs 未知键 ${lk}（拼错即静默不生成规则文件）`);
+              else if (!Array.isArray(v[lk]) || v[lk].some((s) => typeof s !== "string" || !s))
+                push(`seed.bulkVault.lazyDirs.${lk} 需要非空字符串数组，实际 ${JSON.stringify(v[lk])}`);
+            }
+          }
+        } else {
           push(`seed.bulkVault 未知参数 ${k}（写错即静默用缺省值）`);
-        else if (!Number.isInteger(v) || v <= 0) push(`seed.bulkVault.${k} 需要正整数，实际 ${JSON.stringify(v)}`);
+        }
       }
     }
   }

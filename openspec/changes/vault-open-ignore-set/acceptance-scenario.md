@@ -1,5 +1,31 @@
 # 真机验收场景草案（编号 67）
 
+> **落地记录（M296，2026-09-29）**：本草案已落成
+> [`scripts/acceptance/scenarios/67-vault-open-ignore-set.md`](../../../scripts/acceptance/scenarios/67-vault-open-ignore-set.md)
+> （编号 67 动工前复核过：当时目录最大是 68，67 空闲），`node scripts/acceptance/run.mjs --check`
+> **PASS**（70 个场景全绿）。落地时按首轮实现现实改了五处——**改的是断言形式 / 场景结构，不是判据**：
+>
+> 1. **探针参数落在 JS 侧**（任务 9.1）：`generateBulkVault` 新增 `ignoredDirs` / `lazyDirs`，
+>    只在套件的生成器里；Rust 侧读数 harness 不生成它们（探针只服务可见性判据，不参与读数口径）。
+> 2. **放大器挪到「切到 B 之后」**：先把当前 vault 切到 B，再把 20×8MB 稀疏 md 写进 A——A 此时
+>    不被 watch，写盘不产生增量事件与链接索引 upsert（与场景 60 把放大器写进当时非当前的 B 同一形态）。
+> 3. **运行时探针补了一条 `.venv`**：草案的 `target/probe.md` 只产生「命中内置规则的目录里的
+>    **子孙**」事件，而 r2 P1-2 的幻影行形态是「外部**新建**一个命中内置规则的目录」自身的 created
+>    事件透到前端——`target` 早已由 fixture 造好，判不到这一点，因此另写一份 `.venv/probe.md`
+>    （`vaultWrite` 会 mkdirp 出这个 fixture 没有的内置规则目录）。
+> 4. **补「快照完整性见证」**：树是「目录组在前、文件组在后，各组按名字 localeCompare」，而 AX
+>    快照截断只会从**末尾**丢行——因此同一步多断言一行文件组里最靠后的 fixture 行（`var-highlight.md`），
+>    证明这份快照真的读全了，四条负向断言才有区分度。
+> 5. **`open` 的落点写成 vault 相对路径**：子行的读屏名是**完整相对路径**（`.local/tutorial.md`），
+>    不是 basename（口径见 `scripts/acceptance/README.md` 与场景 52）。
+>
+> **真机执行状态**：截至本记录，`node scripts/acceptance/run.mjs 67` **尚未跑**——Alex 手头的
+> `pnpm tauri dev` 实例（1420）在跑，同机第二个 Lumir 实例会显著加剧 KimiCU 丢键假红
+> （REVIEW.md 第 11 条），tower 2026-09-29 裁决「先交离线半边、真机批等 Alex 关 dev 后排队」。
+> 因此本草案的三组判据**都还没有真实 PASS 证据**，MUST NOT 读成已覆盖。
+>
+> 以下是落地前的草案原文（保留作对照；与落地版的差异以上面五条为准）。
+>
 > **这是草案，不是落地的场景**：实现期任务 9.2 把它落成
 > `scripts/acceptance/scenarios/67-vault-open-ignore-set.md`，落之前 MUST 跑
 > `node scripts/acceptance/run.mjs --check`（静态校验），且 MUST 先核一次编号占用

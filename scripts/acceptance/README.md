@@ -65,7 +65,7 @@ runner 在启动前做预检，不满足直接退出且不产生半截证据：
 | 隔离项 | 做法 | 为什么 |
 |---|---|---|
 | 配置目录 | app 进程带 `XDG_CONFIG_HOME=<结果目录>/../env` 启动，套件自带 `config.json`；**每场景清空其中的 `recovery/`、`vault-registry/`（含更名前的旧目录 `workspaces/`）、`vault-sessions/`** | `src-tauri/src/config.rs` 优先读 `XDG_CONFIG_HOME`；用户的 `~/.config/lumir` 全程不读不写。三个子目录都必须清：崩溃备份在配置目录下而非 vault 里（不清会让上一场景的备份串场——实证：08c 恢复出了 keys.md 的内容）；`vault-registry/` 决定列表浮层有几行、按路径命中哪个 id；`vault-sessions/` 决定装载后恢复哪些标签。后两者是 M164 补的（多 vault 场景会预置它们，残留会让下一场景看到上一场景的 vault 列表与标签）。旧名目录一并清是 M248 补的：迁移场景 48 把注册项预置在 `workspaces/` 里等 app 搬走，只清新名会让它残留到下一场景 |
-| 验收 vault（两个） | `/tmp/lumir-m102-acceptance` 与 `/tmp/lumir-m102-acceptance-b`，每次运行分别重置为 `fixtures/` 与 `fixtures/second-vault/` 的精确副本 | 合成 vault；用户真实 vault（`/Users/boxcounter/Downloads/Everything-copy`）永不写入（`assertSafeTargets()` 对两个 vault 与配置目录都兜底拒绝）。第二个 vault 是多 vault 场景的切换目标，文件名与第一个刻意不重叠 |
+| 验收 vault（两个） | `/tmp/lumir-m102-acceptance` 与 `/tmp/lumir-m102-acceptance-b`，每次运行把 vault **根下**重置为 `fixtures/` 与 `fixtures/second-vault/` 的 `.md` 副本 | 合成 vault；用户真实 vault（`/Users/boxcounter/Downloads/Everything-copy`）永不写入（`assertSafeTargets()` 对两个 vault 与配置目录都兜底拒绝）。第二个 vault 是多 vault 场景的切换目标，文件名与第一个刻意不重叠。**根下的非 `.md` 产物不被这次重置覆盖**（场景 `fixtures:` 带进来的 `.gitignore` / `x.jsonc` / `huge.log` 等会跨场景留着）——已登记在 `docs/backlog.md`，新场景**不要**依赖或假设这类残留（`resetVault` 的注释是这条口径的 canonical 居所） |
 | 端口 | dev server 走 `LUMIR_ACCEPTANCE_PORT`（默认 1430），经 `--config` 覆写 | 绝不与 Alex 手头的 `pnpm tauri dev` 抢 1420 |
 
 app 进程的定位用**进程组**（`pnpm tauri dev` 以 detached 起，自成一组）：Tauri CLI 以相对路径
@@ -148,7 +148,8 @@ steps:
 | `seed.registry[]` | `{ id, path, lastOpenedAt?, missingSince?, archivedAt? }` | `<隔离配置>/lumir/vault-registry/<id>.json`（一条一个文件，与 Rust 侧注册表同形） |
 | `seed.legacyRegistry[]` | 同上 | `<隔离配置>/lumir/workspaces/<id>.json`（**旧名**目录，M248）：只服务迁移场景 48，用来构造「更名落地之前」的现场；app 启动时把它整个搬进 `vault-registry/` |
 | `seed.sessions{}` | `{ <id>: { tabs: [...], active } }` | `<隔离配置>/lumir/vault-sessions/<id>.json` |
-| `seed.bulkVault` | `true` 或 `{ markdown?, files?, dirs?, mdBytes?, maxMdBytes?, ignoredMd? }` | **生成**到验收 vault（`$vault`）里（M283）：复刻真实 vault 的 scan-visible 形状——默认 `2142` 文件 / `426` 目录 / `1341` 个 md / ≈`7MB`、行长正常（约 78 字符/行，含标题与 wikilink）、根下带一个 `node_modules`（验证 `IGNORED_NAMES` 忽略生效）。与 Rust 侧读数 harness（`src-tauri/tests/vault_open_readings.rs`）同形状参数，**改形状时两边一起改** |
+| `seed.bulkVault` | `true` 或 `{ markdown?, files?, dirs?, mdBytes?, maxMdBytes?, ignoredMd?, ignoredDirs?, lazyDirs? }` | **生成**到验收 vault（`$vault`）里（M283）：复刻真实 vault 的 scan-visible 形状——默认 `2142` 文件 / `426` 目录 / `1341` 个 md / ≈`7MB`、行长正常（约 78 字符/行，含标题与 wikilink）、根下带一个 `node_modules`（验证内置规则忽略生效）。前六个参数与 Rust 侧读数 harness（`src-tauri/tests/vault_open_readings.rs`）同形状，**改形状时两边一起改** |
+| ↑ 的两类忽略探针（M296，change `vault-open-ignore-set`） | `ignoredDirs: { <根下目录名>: <md 条数> }`（内置规则的构建产物族）；`lazyDirs: { gitignore: [...], gitignoreNegations: [...], exclude: [...] }`（用户规则：写根 `.gitignore` / 根 `.git/info/exclude`，各目录带一个 `tutorial.md`，正文含 marker「本地教程正文」） | 只服务**可见性判据**（场景 67），不参与任何读数口径，因此**只在 JS 侧**——Rust 读数 harness 不生成它们。探针一律落在 vault **根**下：树的默认态才断得到「这一行在不在」（`ignoredDirs` 命中内置规则 ⇒ 不可见；`lazyDirs` 命中用户规则 ⇒ **行在树里**、展开才枚举）。默认不生成，既有调用方（如场景 60 的 `bulkVault: {}`）逐字节不变 |
 
 - `path` 支持两个记号：`$vault` / `$vault2` 指套件的两个合成 vault（不写死 `/tmp` 路径，
   `LUMIR_ACCEPTANCE_VAULT` 覆写时场景跟着走）；其余按绝对路径原样用。

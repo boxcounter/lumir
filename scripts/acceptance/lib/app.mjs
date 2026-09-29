@@ -102,8 +102,15 @@ export async function resetRecovery() {
   return dir;
 }
 
-/** 把 vault 重置为 fixtures 的精确副本：清 vault 根下的 .md 与目录（合成 vault 的既有
- *  内容形态 + M221 起场景可经 vaultWrite 建嵌套路径——目录不跨场景残留）。 */
+/** 把 vault 重置为 fixtures 的 `.md` 副本：清 vault 根下的 `.md` 与**目录**（合成 vault 的既有
+ *  内容形态 + M221 起场景可经 vaultWrite 建嵌套路径——目录不跨场景残留）。
+ *
+ *  **已知缺口（canonical 居所，M296 登记）**：根下的**非 `.md` 产物**不被这次重置覆盖——场景
+ *  `fixtures:` 带进来的 `.gitignore` / `.gitattributes` / `x.jsonc` / `notes.txt` / `huge.log`
+ *  等等会留到后面的场景（实测：跑完一轮全量批之后 `/tmp/lumir-m102-acceptance` 里有 40+ 个这类
+ *  文件）。它们在本套件里都**是惰性的**（依赖它们的场景各自用 `fixtures:` 重新拷一份），但新场景
+ *  MUST NOT 依赖或假设这类残留存在；要判「某文件在场」就得自己声明 `fixtures:` 或用 `vaultWrite`
+ *  造。清干净它不在本 mission 的改动面内（会牵动全部 69 个场景），已记进 `docs/backlog.md`。 */
 export async function resetVault() {
   const vault = vaultDir();
   await mkdirp(vault);
@@ -134,6 +141,13 @@ export async function resetSecondVault() {
   return vault;
 }
 
+/** 内置规则命中族探针的正文（内容不重要——它 MUST NOT 被读到；条目数才是形状的一部分）。 */
+const IGNORED_PROBE_MD = "# 构建产物探针\n\n这一条命中的是内置规则：不进枚举、不进树。\n";
+
+/** 用户规则命中族探针的正文：**marker 是场景的判据**（`editor.has` 到它就证明惰性文件真的能读）。
+ *  改这一句要同步场景 67 的 marker 断言。 */
+const LAZY_PROBE_MD = "# 本地教程\n\n本地教程正文：这一篇被用户规则挡住，但行在树里、展开可见、打开可读。\n";
+
 /** 生成「复刻真实形状」的批量 vault 内容（M283，change vault-switch-restore-perf 的 1.3）。
  *
  *  形状口径（M265 §一 在真实 vault 上实测的 scan-visible 规模）：**2142 文件 / 426 目录 /
@@ -148,7 +162,20 @@ export async function resetSecondVault() {
  *  fixture 规格的两个实现**，改形状时一起改（那条是 release 直调生产函数的读数工具，这条给真机
  *  场景用）。
  *
- *  `spec` 可覆盖任一档（缺省即真实形状）：markdown / files / dirs / mdBytes / maxMdBytes / ignoredMd。 */
+ *  `spec` 可覆盖任一档（缺省即真实形状）：markdown / files / dirs / mdBytes / maxMdBytes / ignoredMd。
+ *
+ *  另有**两类忽略探针**（M296 / change vault-open-ignore-set §9.3，都是可选的，缺省不生成）：
+ *
+ *  - `ignoredDirs: { <根下目录名>: <该目录里的 md 条数> }` —— 内置规则的构建产物族探针。
+ *    落在 vault **根**下（树的默认态就能判「这一行在不在」，不必先展开）；命中内置规则 ⇒
+ *    这一行与它的子树都不进枚举、不进树。
+ *  - `lazyDirs: { gitignore: [...], gitignoreNegations: [...], exclude: [...] }` —— 用户规则的探针。
+ *    `gitignore` / `exclude` 是写在根 `.gitignore` / 根 `.git/info/exclude` 里的目录名（各带一个
+ *    `tutorial.md`）；`gitignoreNegations` 是追加到根 `.gitignore` 的取反行，用来在真机上也留一条
+ *    「用户规则的取反不能推翻内置规则」的判据（§2.6：内置先判且命中即定格）。
+ *
+ *  **探针参数只在 JS 侧**：Rust 侧读数 harness（`src-tauri/tests/vault_open_readings.rs`）只复刻
+ *  「真实形状」那几档，不生成忽略探针——探针只服务可见性判据，不参与任何读数口径。 */
 export async function generateBulkVault(spec = {}) {
   const mdCount = spec.markdown ?? 1341;
   const otherCount = spec.files ?? 2142 - mdCount;
@@ -237,6 +264,46 @@ export async function generateBulkVault(spec = {}) {
   await mkdirp(nm);
   for (let i = 0; i < ignoredMd; i += 1) {
     await writeFile(path.join(nm, `ignored-${String(i).padStart(2, "0")}.md`), body(2_000));
+  }
+  // ── 两类忽略探针（可选，见函数头的说明）─────────────────────────────────────────────
+  // 内置规则命中族：根下的构建产物目录，每个目录里放 N 个 md。**条数给的是量级，不是判据**：
+  // 判据只有「这一行在不在树里」（`target` / `dist` / `test-results` 是内置表里的名字）。
+  const ignoredDirs = spec.ignoredDirs ?? {};
+  for (const [name, count] of Object.entries(ignoredDirs)) {
+    const dir = path.join(vault, name);
+    await mkdirp(dir);
+    for (let i = 0; i < count; i += 1) {
+      await writeFile(path.join(dir, `artifact-${String(i).padStart(4, "0")}.md`), IGNORED_PROBE_MD);
+    }
+  }
+  // 用户规则命中族：两份规则文件 + 各一个「可见、可展开、可打开」的 md（内容含固定 marker，
+  // 场景按 marker 断言正文就位——见 LAZY_PROBE_MD）。
+  const lazy = spec.lazyDirs ?? null;
+  if (lazy) {
+    const ignoreLines = [];
+    const lazyNames = [];
+    for (const name of lazy.gitignore ?? []) {
+      ignoreLines.push(`${name}/`);
+      lazyNames.push(name);
+    }
+    // 取反行追加在忽略行之后（gitignore 的口径：后行者胜）——真机上要证的正是「它对内置规则无效」。
+    for (const neg of lazy.gitignoreNegations ?? []) ignoreLines.push(`!${neg}`);
+    if (ignoreLines.length) {
+      await writeFile(path.join(vault, ".gitignore"), `# 真机验收场景 67 的用户规则探针（套件生成）\n${ignoreLines.join("\n")}\n`);
+    }
+    const excludeNames = lazy.exclude ?? [];
+    if (excludeNames.length) {
+      await mkdirp(path.join(vault, ".git", "info"));
+      await writeFile(
+        path.join(vault, ".git", "info", "exclude"),
+        `# 真机验收场景 67 的用户规则探针（套件生成）\n${excludeNames.map((n) => `${n}/`).join("\n")}\n`,
+      );
+      lazyNames.push(...excludeNames);
+    }
+    for (const name of lazyNames) {
+      await mkdirp(path.join(vault, name));
+      await writeFile(path.join(vault, name, "tutorial.md"), LAZY_PROBE_MD);
+    }
   }
   // 实测字节数交给调用方核（生成是分档近似：mdBytes 是目标，不是逐字节保证）。
   return { vault, markdown: mdCount, mdBytes, files: mdCount + otherCount, dirs: made, ignoredMd };
