@@ -30,6 +30,13 @@
 | VCS 忽略规则 | **今天完全不读**（`Cargo.toml` 无 `ignore` / `globset` / `walkdir` 依赖；代码里没有任何读 `.gitignore` 的路径） | Alex 真 vault 的 `.gitignore` 覆盖 `node_modules/` / `.pnpm-store/` / `dist/` / `src-tauri/target/` / `perf-results/` / `test-results/` / `*.log` / `.DS_Store` / `HANDOFF.md`；`.tower/` 只在 `.git/info/exclude:7` | 走查有据（M289）；本 change 的输入 |
 | **枚举 = 可见集 = 树的数据来源**（本 change 要拆开的同一性） | `scan_workspace` 的输出被六个消费点直接当作「vault 里有什么」 | 六个消费点：文件树模型（`src/tree.ts` 的 `setVault`）、链接索引（`VaultState::build_graph`）、附件索引（`src/main.ts` 的 `attachmentPaths`）、会话恢复的「在不在 vault 内」判据（`src/vault-switcher.ts` 的 `restorePlan`）、阅读位置（`src/reading-position.ts` 的 `onVaultLoaded` / `pruneEntries`）、watch 事件过滤（`fs_io::rel_string`） | 走查有据；§4.7 逐条给口径 |
 
+**M296 复采（2026-09-29，本实现，release，5 次中位；原始输出 `test-results/m296/rust-harness-release.txt`）**：
+同一器械在同一形状上跑了两次 —— `scan_workspace` **11.3 / 10.8ms**、`build_graph`（生产复刻）
+**71.0 / 70.6ms**，**Rust 侧合计 82.3 / 81.4ms**（`watch` 1.7ms；canonicalize 外提复刻 51.9 / 52.5ms）。
+与上表「对照规模」行的 92–107ms（M283 时代同形状）**同量级 ⇒ 本 change 没有让打开段的 Rust 侧变慢**。
+**「收窄后残余」那一档（1,658 文件 / 2,395 条目）仍未复采**：harness 只生成 2,142 文件的形状，
+166,626 文件量级的 fixture 本 change 未重建 ⇒ 该行的 65.8ms 仍是 M289 的手工收口数（见 §8 的口径警告）。
+
 **复现命令**（M289 用的就是它，未改一行代码；harness 命中已存在的 `$TMPDIR/lumir-m283-real-shape` 即复用）：
 
 ```bash

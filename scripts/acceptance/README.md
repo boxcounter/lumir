@@ -65,7 +65,7 @@ runner 在启动前做预检，不满足直接退出且不产生半截证据：
 | 隔离项 | 做法 | 为什么 |
 |---|---|---|
 | 配置目录 | app 进程带 `XDG_CONFIG_HOME=<结果目录>/../env` 启动，套件自带 `config.json`；**每场景清空其中的 `recovery/`、`vault-registry/`（含更名前的旧目录 `workspaces/`）、`vault-sessions/`** | `src-tauri/src/config.rs` 优先读 `XDG_CONFIG_HOME`；用户的 `~/.config/lumir` 全程不读不写。三个子目录都必须清：崩溃备份在配置目录下而非 vault 里（不清会让上一场景的备份串场——实证：08c 恢复出了 keys.md 的内容）；`vault-registry/` 决定列表浮层有几行、按路径命中哪个 id；`vault-sessions/` 决定装载后恢复哪些标签。后两者是 M164 补的（多 vault 场景会预置它们，残留会让下一场景看到上一场景的 vault 列表与标签）。旧名目录一并清是 M248 补的：迁移场景 48 把注册项预置在 `workspaces/` 里等 app 搬走，只清新名会让它残留到下一场景 |
-| 验收 vault（两个） | `/tmp/lumir-m102-acceptance` 与 `/tmp/lumir-m102-acceptance-b`，每次运行分别重置为 `fixtures/` 与 `fixtures/second-vault/` 的精确副本 | 合成 vault；用户真实 vault（`/Users/boxcounter/Downloads/Everything-copy`）永不写入（`assertSafeTargets()` 对两个 vault 与配置目录都兜底拒绝）。第二个 vault 是多 vault 场景的切换目标，文件名与第一个刻意不重叠 |
+| 验收 vault（两个） | `/tmp/lumir-m102-acceptance` 与 `/tmp/lumir-m102-acceptance-b`，每次运行把 vault **根下**重置为 `fixtures/` 与 `fixtures/second-vault/` 的 `.md` 副本 | 合成 vault；用户真实 vault（`/Users/boxcounter/Downloads/Everything-copy`）永不写入（`assertSafeTargets()` 对两个 vault 与配置目录都兜底拒绝）。第二个 vault 是多 vault 场景的切换目标，文件名与第一个刻意不重叠。**根下的非 `.md` 产物不被这次重置覆盖**（场景 `fixtures:` 带进来的 `.gitignore` / `x.jsonc` / `huge.log` 等会跨场景留着）——已登记在 `docs/backlog.md`，新场景**不要**依赖或假设这类残留（`resetVault` 的注释是这条口径的 canonical 居所） |
 | 端口 | dev server 走 `LUMIR_ACCEPTANCE_PORT`（默认 1430），经 `--config` 覆写 | 绝不与 Alex 手头的 `pnpm tauri dev` 抢 1420 |
 
 app 进程的定位用**进程组**（`pnpm tauri dev` 以 detached 起，自成一组）：Tauri CLI 以相对路径
@@ -148,7 +148,8 @@ steps:
 | `seed.registry[]` | `{ id, path, lastOpenedAt?, missingSince?, archivedAt? }` | `<隔离配置>/lumir/vault-registry/<id>.json`（一条一个文件，与 Rust 侧注册表同形） |
 | `seed.legacyRegistry[]` | 同上 | `<隔离配置>/lumir/workspaces/<id>.json`（**旧名**目录，M248）：只服务迁移场景 48，用来构造「更名落地之前」的现场；app 启动时把它整个搬进 `vault-registry/` |
 | `seed.sessions{}` | `{ <id>: { tabs: [...], active } }` | `<隔离配置>/lumir/vault-sessions/<id>.json` |
-| `seed.bulkVault` | `true` 或 `{ markdown?, files?, dirs?, mdBytes?, maxMdBytes?, ignoredMd? }` | **生成**到验收 vault（`$vault`）里（M283）：复刻真实 vault 的 scan-visible 形状——默认 `2142` 文件 / `426` 目录 / `1341` 个 md / ≈`7MB`、行长正常（约 78 字符/行，含标题与 wikilink）、根下带一个 `node_modules`（验证 `IGNORED_NAMES` 忽略生效）。与 Rust 侧读数 harness（`src-tauri/tests/vault_open_readings.rs`）同形状参数，**改形状时两边一起改** |
+| `seed.bulkVault` | `true` 或 `{ markdown?, files?, dirs?, mdBytes?, maxMdBytes?, ignoredMd?, ignoredDirs?, lazyDirs? }` | **生成**到验收 vault（`$vault`）里（M283）：复刻真实 vault 的 scan-visible 形状——默认 `2142` 文件 / `426` 目录 / `1341` 个 md / ≈`7MB`、行长正常（约 78 字符/行，含标题与 wikilink）、根下带一个 `node_modules`（验证内置规则忽略生效）。前六个参数与 Rust 侧读数 harness（`src-tauri/tests/vault_open_readings.rs`）同形状，**改形状时两边一起改** |
+| ↑ 的两类忽略探针（M296，change `vault-open-ignore-set`） | `ignoredDirs: { <根下目录名>: <md 条数> }`（内置规则的构建产物族）；`lazyDirs: { gitignore: [...], gitignoreNegations: [...], exclude: [...] }`（用户规则：写根 `.gitignore` / 根 `.git/info/exclude`，各目录带一个 `tutorial.md`，正文含 marker「本地教程正文」） | 只服务**可见性判据**（场景 67），不参与任何读数口径，因此**只在 JS 侧**——Rust 读数 harness 不生成它们。探针一律落在 vault **根**下：树的默认态才断得到「这一行在不在」（`ignoredDirs` 命中内置规则 ⇒ 不可见；`lazyDirs` 命中用户规则 ⇒ **行在树里**、展开才枚举）。默认不生成，既有调用方（如场景 60 的 `bulkVault: {}`）逐字节不变 |
 
 - `path` 支持两个记号：`$vault` / `$vault2` 指套件的两个合成 vault（不写死 `/tmp` 路径，
   `LUMIR_ACCEPTANCE_VAULT` 覆写时场景跟着走）；其余按绝对路径原样用。
@@ -166,7 +167,8 @@ steps:
 | 动作 | 参数 | 说明 |
 |---|---|---|
 | （省略） | — | 只做断言 |
-| `settle` | — | **真 settle**（M249）：连续两次 AX 快照**逐字节一致**才返回，用于纯断言步骤前的稳定。编辑器在位时直接复用 `lib/drive.mjs` 的 `settle()`；「还没打开文件」的两类引导态走同口径的无编辑器门版本。15s 未收敛则退回单次读取并在证据里落一条 note，**不**因此判 FAIL。语义与「外部写入后先留一拍」的口径见下节 |
+| `settle` | — | **真 settle**（M249）：连续两次 AX 快照**逐字节一致**才返回，用于纯断言步骤前的稳定。编辑器在位时直接复用 `lib/drive.mjs` 的 `settle()`；「还没打开文件」的两类引导态走同口径的无编辑器门版本。15s 未收敛则退回单次读取并在证据里落一条 note，**不**因此判 FAIL。语义与「外部写入后先留一拍」的口径见下节。**它判的是「界面此刻静止」，不是「异步的活儿干完了」**——要等装载 / 等按键生效请用 `waitFor`（见下条与「已知边界」） |
+| `waitFor` | `waitFor: { has: [...], not: [...] }`（至少一项，非空字符串数组）、`timeoutMs`（缺省 60000） | **轮询一个可观测终态直到成立**（M296）：每轮读一次 AX，全部 `has` 命中且全部 `not` 不命中即返回（成立时把「第几次读取成立 / 耗时」记进证据）；超时**抛错判 FAIL**（不静默放过）。判据形态与 `ax` 断言同源（`matcher()`）。**为什么必须有它**：change `vault-open-ignore-set` 把打开段移出 IPC 主线程之后，装载期间界面保持响应、AX 快照逐字节不变 ⇒ `settle` 会在装载**途中**返回（M296 首跑实测：返回时 AX 里还是旧 vault 的标签栏 + 装载指示在场，于是后面所有断言都对着旧状态判红）。场景里凡是「等某件事发生」的地方都用它，**不要**用 `sleep` 猜时长、也不要用 `settle` 冒充 |
 | `open` | `file`、`marker` | 点左栏文件名打开，等编辑器出现 marker |
 | `click` | `target: {role,name\|help\|any,nth,count}` 或 `{x,y,count}`，两者都可带 `button`（`left`（默认）/`right`/`middle`）与 `dx`/`dy` | 节点按 AX 索引点（走 AXPress）；`{x,y}` 走真实鼠标坐标。`count` 原样透传给 KimiCU，那四条通道**产生不出 DOM 的 `dblclick`**（判据与修正见「已知边界」）——要双击类交互请用 `doubleClick`。**`button` 给非左键时改走坐标路径**（M244）：AX 索引路径发的是 AXPress（「按下这个元素」），产不出鼠标右键，而 DOM 的 `contextmenu` 靠真实指针事件；此时套件取该节点 bbox 的中心（`dx`/`dy` 按宽高比例偏移，默认 0.5）注入真实鼠标事件（**cursor-safe，不移动用户指针**）。因此**目标行必须落在窗口可视区内**——树/列表里靠下的条目 AX 报的是内容坐标（实测 40 个 fixture 时 y≈1300 而窗口高 800），出视口时套件按错因报错（「右键目标不在可视区内…请先用 open / 滚动把它带进视口」），不静默；另外该路径要求快照带截图，取不到时同样报错不静默 |
 | `clickNodeText` | `text` | 点 value/title **逐字等于** `text` 的节点（比 `name` 的正则更死板） |
@@ -205,6 +207,27 @@ steps:
 立刻读」当判据：先 `do: sleep {ms: 1000}`（或 `do: settle`——真 settle 本身就要求连续两次一致，
 两次之间的 700ms 就是那一拍）再读 AX。既存场景里手写的 `sleep 1000` / `sleep 1200` / `sleep 1500`
 是同一口径。
+
+### `settle` 不是「等异步活儿干完」——要等状态就用 `do: waitFor`（M296）
+
+`settle` 的判据是「连续两次 AX 快照逐字节一致」，因此它只回答「界面**此刻**静止」。在
+change `vault-open-ignore-set` 之前，`vault_open_path` 是**同步 command**：装载期间主线程被占住，
+`get_app_state` 只回 `element_count: 1`（没有 `AXTextArea`）⇒ `drive.mjs` 的 `settle()` 的编辑器门
+不成立，于是它**顺带**变成了「等装载跑完」。`#[command(async)]` 落地后界面在装载期间保持响应，
+那个副作用消失——两次快照逐字节一致（旧 vault 的树 + 装载指示在场）⇒ `settle` 在装载**途中**
+就返回。
+
+**现场（M296 首跑，2026-09-29，`test-results/acceptance/2026-09-29/`）**：场景 60 与 67 在切换
+后紧跟 `do: settle`，`settle` 返回时 AX 里仍是切换**前**的 vault（60：A 的 40 个标签 + 指示；
+67：`Vaults:…-b` + 指示），后续断言因此全对着旧状态判红（60 的「B 装载完成」三条 + 后面的
+「按需装载」两步连带超时；67 的「A 装载完成」四条）。**这不是产品缺陷**：同一批里 67 的
+「打开段内可响应」三条（指示 + 界面节点 + 「此刻仍是 B」的时间见证）**全部 PASS**，说明装载
+正在异步正常推进；60 的 AX dump 也证明 B 最终装载成功（树里是 `beta.md` + 20 个 `big-*.md`）。
+
+**口径**：等装载 / 等按键生效 / 等覆盖层收起这类「等一件事发生」的地方，一律
+`do: waitFor` + 一个可观测终态（例：`{ has: ["Vaults: <目标 vault> (click to see all vaults)"],
+not: ["AXProgressIndicator"] }`）；`settle` 只在「判据明确不依赖任何在途异步工作」时用于稳定，
+`sleep` 只用于「已知固定窗口的留一拍」（外部写入那一类），**不要**拿它们猜装载时长。
 
 **就绪门与 `requireVault`**（M159 起）：每次起/重启实例后套件等「左栏文件树 + 编辑器节点就位」
 （`lib/drive.mjs` 的 `waitAppReady`）。严格门的判据是「树头部的 vault 入口按钮（形态 A，
@@ -470,6 +493,14 @@ Alex 抽审路径：先看 `summary.md`，再进 FAIL 场景看 `steps.md` + `sh
   「前端未就绪」，处理办法是重启 KimiCU 服务，不是改场景。退化的树**没有 `window_bounds`**，
   依赖坐标的动作（`doubleClick`）因此会按这条错因报错、不会拿菜单栏的坐标去点（M209 实测：
   一次真机运行里 4 次 `get_app_state` 拿到只剩菜单栏的树，隔几拍又自己恢复）。
+- **AX 快照会按 fanout 上限截断子行列表（M296 实测，截断源写作 `fanout_cap`）**：树行多的页面上
+  （实测：vault 根下 26 个目录 + 94 个文件行），根节点的子行列表会被从**末尾**截掉——现场
+  `truncated: true [closed_menu, fanout_cap]`、`element_count: 299`，目录组 26 行全在、文件组列到
+  字母表的 `t`（`table.md`）就断了（`var-highlight.md` 不在里面）。**截断量与根下条目数
+  相关**：同一场景里加了 20 个 `big-*.md` 之后，切断点从字母表靠后前移到 `table.md`。写「某行不在 AX 里」
+  这类负向断言时，完整性见证要取**被截断方向的反面**（这里是目录组：树是「目录组在前、文件组在后」，
+  取文件组**首行**即证明目录组整组在快照里），不要取字母表靠后的行；正向断言若依赖靠后的行，
+  要么换更靠前的目标，要么改判据形态。
 - **`dblclick`：KimiCU 的四条通道造不出来，`swift + CGEvent` 那条能（M184 实测，M209 修订
   2026-09-25）**：KimiCU 现有通道实测失败的有四条：`click` 的 `count: 2`（坐标路径）、`click` 的
   `count: 2`（AX 索引路径，即 AXPress ×2）、两次独立的 `click`（两次 MCP 往返的间隔超出系统双击

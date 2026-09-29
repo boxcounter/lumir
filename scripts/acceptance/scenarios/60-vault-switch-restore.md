@@ -189,6 +189,19 @@ steps:
     expect:
       - shot: 03-出口后立即
 
+  # **等装载完成要用状态驱动，不能用 `settle`**（M296 首跑的现场）：本 change 把打开段移出 IPC
+  # 主线程之后，装载期间界面保持响应、AX 快照逐字节不变 ⇒ `settle` 会在装载**途中**返回 ——
+  # 首跑实测：它返回时 AX 里还是 A 的 40 个标签 + 指示在场，本步三条断言因此判红，后面的
+  # 「按需装载」两步也跟着超时（当时的场景以为已经切到 B）。这里轮询两个**只在提交后才成立**的
+  # 观测点：入口按钮换成 B、装载指示退场。B 的装载窗口是放大器撑出来的（本批实测
+  # `vault_load_open` = 8,076ms），故超时给到 90s。
+  - name: 等切到 B 的装载跑完（状态驱动，最多 90s）
+    do: waitFor
+    waitFor:
+      has: ["Vaults: lumir-m102-acceptance-b (click to see all vaults)"]
+      not: ["AXProgressIndicator"]
+    timeoutMs: 90000
+
   - name: B 装载完成
     do: settle
     expect:
@@ -215,6 +228,15 @@ steps:
     expect:
       - label: 浮层收起
         ax: { not: "Choose a folder as a new vault" }
+
+  # 同一个状态驱动的等待（理由见上面那次）：这一次的目标 vault 是 A（真实形状 + 40 个标签的
+  # 会话恢复），因此两个观测点之外再等「恢复出来的 40 个标签都在」——那是本步首要断言的前置。
+  - name: 等切回 A 的装载与 40 个标签的恢复跑完（状态驱动，最多 90s）
+    do: waitFor
+    waitFor:
+      has: ["Vaults: lumir-m102-acceptance (click to see all vaults)"]
+      not: ["AXProgressIndicator"]
+    timeoutMs: 90000
 
   - name: 切回 A 完成：标签栏完整、激活项正确
     do: settle
