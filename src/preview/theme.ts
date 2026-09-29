@@ -191,15 +191,16 @@ export const livePreviewTheme = EditorView.theme({
   ".cm-lp-callout-fam-neutral .cm-lp-callout-type": { color: "var(--text-3)" },
   // eink：色条全黑（规则①——五族语义色在该档同值 `#000`，灰族否则会留在 `--text-3` 的灰上）。
   // 色条色按 M293 归位到 `--border`（角色归位：它是这一行的**边框**；与字面值 `#000` 逐值相同，
-  // M291 r3 对触发钮的「框 → --border」是同一口径）。`backgroundColor: "#fff"` 是规则⑤的
-  // **白底**半边——不属本批裁决的「实心强调 / 边框」两族，且 `#fff` 在 eink 与四个 token 同值
-  // （`--preview-bg` / `--frame` / `--content-bg` / `--agent-bg`），归位前要先定语义位 ⇒
-  // 本批不动（登记见 docs/backlog.md 的 M293 节）。
-  [`:root[data-theme="eink"] & .cm-line.cm-lp-callout-line`]: { borderLeftColor: "var(--border)", backgroundColor: "#fff" },
-  // 类型标签的族色在 eink 全族合一后取黑字：这个 `#000` 是**前景色**，不属本批裁决的
-  // 「实心强调 / 边框」两族，且 eink 下它与 `--accent` / `--ok` / `--pending` / `--danger` /
-  // `--text` 同值——归位要先定语义位（族色还是正文色），本批不动（登记同上）。
-  [`:root[data-theme="eink"] & .cm-lp-callout-type`]: { color: "#000" },
+  // M291 r3 对触发钮的「框 → --border」是同一口径）。底色（规则⑤ 的**白底**半边）按 M294 归位到
+  // `--content-bg`：tint 在本档全退场 ⇒ 底色 = 正文面（tokens 文档 §callout 语义收敛 规则 3 的
+  // 既有口径，不是新取的值）；归位前的字面值 `#fff` 与它在本档同值，**逐值不变**。
+  [`:root[data-theme="eink"] & .cm-line.cm-lp-callout-line`]: { borderLeftColor: "var(--border)", backgroundColor: "var(--content-bg)" },
+  // 类型标签在 eink 取**正文色**（M294 归位）：角色是「五族合一后的统一前景」，不是族色——
+  // 五族的族色分散在 `--accent` / `--ok` / `--pending` / `--danger` / `--text-3` 上，没有一个
+  // token 能代表五族；且规则② 之后 eink 的颜色不承担信息，标签靠文案区分。归位前的字面值
+  // `#000` 与它在本档同值，**逐值不变**（M291 r3 把触发钮静止态的 `color` 归到 `--text`，
+  // 本处同一口径）。
+  [`:root[data-theme="eink"] & .cm-lp-callout-type`]: { color: "var(--text)" },
   ".cm-line.cm-lp-callout-first": { borderRadius: "0 var(--r6) 0 0", paddingTop: "var(--sp-3)" },
   // 定稿 co padding 下侧 7px（index.html:652，sp 阶梯无 7px 档，写字面值）。
   ".cm-line.cm-lp-callout-last": { borderRadius: "0 0 var(--r6) 0", paddingBottom: "7px" },
@@ -444,9 +445,11 @@ export const livePreviewTheme = EditorView.theme({
   },
   // eink 规则⑤：浅底区块翻转为白底黑框（代码块那一半在 src/style.css 的
   // .cm-lp-codeblock-scroll，同一条规则的两个落点）。黑框按 M293 归位 `--border`（eink =
-  // `#000000`，与字面值同值、**逐值不变**）；`backgroundColor: "#fff"` 是同一规则的**白底**
-  // 半边，不属本批裁决的两族且 eink 下有四个同值 token ⇒ 本批不动（登记见 docs/backlog.md）。
-  [`:root[data-theme="eink"] & .cm-lp-frontmatter`]: { backgroundColor: "#fff", border: "1px solid var(--border)" },
+  // `#000000`，与字面值同值、**逐值不变**）。**白底那一处按 M294 裁决「2，删。」整条删除**：
+  // 基规则（`& .cm-lp-frontmatter`，上一处声明）读 `--agent-bg`——tokens 文档 §bg 层级把
+  // frontmatter 区点名为「次级表面」；eink 的 `--agent-bg` 同为 `#ffffff` ⇒ 这处覆盖在本档
+  // **冗余**，删掉后基规则接管、渲染值逐值不变（判据见 tests/visual/scenes/m294-*.spec.ts）。
+  [`:root[data-theme="eink"] & .cm-lp-frontmatter`]: { border: "1px solid var(--border)" },
   ".cm-lp-fm-table": { borderCollapse: "collapse", width: "100%" },
   // 字段名列：mono 11px（--fs-label 档）+ 提示档灰 + 定宽 `--layout-fm-key-w`（104px，
   // tokens 文档 §布局尺寸）；值列 13px（--fs-ui 档）正文色。两列字号都是绝对值 ÷ 15 的 em，

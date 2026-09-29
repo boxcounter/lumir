@@ -468,13 +468,46 @@ token 的 eink 值，收敛时归位，不新增色」。本条把「归位」�
 `getComputedStyle` 读回 `1px` ⇒「规则⑧的 1.4px 强调档」在这一层的判别力为零，只能钉「有框 +
 色 = `--border`」；该档的可见差异在真机（WKWebView，dsf=2）。
 
-**尚未归位的「面」字面值**（规则⑤的**白底**半边，4 处）：`background-color: #fff` /
-`backgroundColor: "#fff"`（代码块底板、全屏代码块内容容器、callout 行、frontmatter 盒）。
-它们不属上述两族，且 eink 下 `#fff` 与 `--preview-bg` / `--frame` / `--content-bg` / `--agent-bg`
-同值——归位要先定语义位；其中 **frontmatter 那一处的覆盖在本档是冗余的**（基规则读 `--agent-bg`，
-eink 值同为 `#ffffff`），可归位也可直接删。同类还有 callout 类型标签的 `color: "#000"`（前景色，
-eink 下与 `--accent` / `--ok` / `--pending` / `--danger` / `--text` 同值）。清单与逐条理由见
-`docs/backlog.md` 的 M293 节。
+**「面」字面值 + 一处处前景色（v1.4 登记，v1.5 已归位）**：`background-color: #fff` /
+`backgroundColor: "#fff"`（代码块底板、全屏代码块内容容器、callout 行、frontmatter 盒）与
+callout 类型标签的 `color: "#000"`。登记当时它们不属上述两族，且 eink 下 `#fff` 与
+`--preview-bg` / `--frame` / `--content-bg` / `--agent-bg` 同值（`#000` 与 `--accent` /
+`--ok` / `--pending` / `--danger` / `--text` 同值）——归位要先定语义位。语义位与落点见下节。
+
+### 面族与前景区位（v1.5 增补，2026-09-29）
+
+**缘起**：Alex 2026-09-29 裁决原文「1. 立；2，删。」——① 立本节的语义位口径并归位 v1.4 登记的
+4 处面字面值；② frontmatter 盒那处**冗余**覆盖直接删。落地批次 M294（判据与读数见
+`test-results/m294/`）。
+
+**角色归位表**（口径同 v1.4：按声明在规则里的**角色**选 token，不按字面值反查）：
+
+| 角色 | 归属 token | 依据 |
+|---|---|---|
+| 浅底区块翻白（规则⑤ 的白底半边） | `--content-bg` | eink「无灰底可用」⇒ 区块不另立色面，**回落成它所在的面**（正文面）。先例即本档既有口径：§callout 语义收敛 规则 3「tint 全 transparent（底色 = `--content-bg`）」。三处落点同取此档：代码块底板、全屏代码块内容容器、callout 行 |
+| frontmatter 盒（**次级表面**） | `--agent-bg` | 基规则本就取它（§bg 层级四档里 frontmatter 区就被点名为「次级表面」），eink 该 token 同为 `#ffffff` ⇒ eink 覆盖**冗余**，按裁决直接删（删后由基规则接管，值不变） |
+| 五族合一后的统一前景（callout 类型标签） | `--text` | ❌ 不是「族色」：五族的族色分散在 `--accent` / `--ok` / `--pending` / `--danger` / `--text-3` 上，**没有一个 token 能代表五族**；且规则② 之后 eink 的颜色不承担信息，标签靠文案区分。同口径先例：M291 r3 把触发钮静止态的 `color` 归到 `--text` |
+
+**M294 落点（值逐值不变，零基线更新）**：`src/style.css` 的 `:root[data-theme="eink"]
+.cm-lp-codeblock-scroll::before` 与 `:root[data-theme="eink"] .lumir-codeblock-fs-content`、
+`src/preview/theme.ts` 的 `:root[data-theme="eink"] & .cm-line.cm-lp-callout-line` 底色
+→ `var(--content-bg)`；`… & .cm-lp-frontmatter` 的 `backgroundColor` 声明**删除**；
+`… & .cm-lp-callout-type` → `var(--text)`。
+
+**两条 MUST NOT（本批查实的既有事实，防后人顺手「修」错）**：
+
+1. 代码块在 eink 是**两层**：底板（`::before`，本批归位的那处，白）与行区带（`::after`，读
+   `--code-bg` = `#f0f0f0` 的灰）——restyle-eink 规则⑤的用例把这条写成断言（「只有底板翻转，
+   行区带仍是 `--code-bg` 的灰」）。`--code-bg` 在本档另有消费者（行区带、变量绑定底纹、
+   mermaid 集群底色），**MUST NOT 把 `--code-bg` 一并翻白**。
+2. 全屏代码块内容容器（`.lumir-codeblock-fs-content`）是**单层**（整块白，无行区带那一层）
+   ——它的白与文档内底板的取同一 token，但形态不同，改一处不应推及另一处的层数。
+
+**判据（两层，与 v1.4 同）**：`tests/visual/scenes/m294-surface-and-foreground-literals.spec.ts`
+（6 用例 = 2 组 × 3 主题：面族 4 处 + 类型标签；每组断言「计算色 == 归属 token」并做 token
+探测归属判据）。修前跑：light / dark 4 条绿（基规则本就取对 token）、eink 2 条红在 ②（四处面 +
+一处前景均读到写死的 `rgb(255,255,255)` / `rgb(0, 0, 0)` 纹丝不动）、① 全绿——同样是
+「值不变、只是不再硬编码」的签名。
 
 ## 与现行实现的差距（对照 src/style.css）
 
