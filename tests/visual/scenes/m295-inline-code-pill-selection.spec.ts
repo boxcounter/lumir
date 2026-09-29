@@ -325,6 +325,24 @@ test.describe("M295：行内 code 药丸的选中态可辨性", () => {
         colorDiff(r.pillUnsel[1], r.bandOutside),
         `${theme}：**未选中**态药丸 MUST NOT 读成带色（差 ${colorDiff(r.pillUnsel[1], r.bandOutside)} ≥ ${control}）`,
       ).toBeGreaterThanOrEqual(control);
+
+      // ③ 两层判据的另一层：**计算色 == token**。换挡段（`-sel`）的背景计算值 MUST 恰好等于
+      //    `--sel-band` 的计算值——上面两点是「探测色跟随」（像素层），这条钉住取值来源，
+      //    防止将来把换挡色写成字面值（那样像素仍可能绿，但语义位已经丢掉）。
+      const computed = await page.evaluate(() => {
+        const resolve = (value: string): string => {
+          const probe = document.createElement("div");
+          probe.style.background = value;
+          document.body.appendChild(probe);
+          const out = getComputedStyle(probe).backgroundColor;
+          probe.remove();
+          return out;
+        };
+        const el = document.querySelector<HTMLElement>(".cm-lp-inline-code-sel");
+        return { painted: el ? getComputedStyle(el).backgroundColor : null, token: resolve("var(--sel-band)") };
+      });
+      expect.soft(computed.painted, `${theme}：换挡段 MUST 在场（-sel 挂上了）`).not.toBeNull();
+      expect(computed.painted, `${theme}：换挡段的计算色 MUST 恰好是 --sel-band（${computed.token}）`).toBe(computed.token);
     }
   });
 
