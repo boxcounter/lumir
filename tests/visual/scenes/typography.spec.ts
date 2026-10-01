@@ -687,3 +687,43 @@ test("标题六级阶梯：字号 / 字重 / 字距 / 行高 / 块距逐档读�
     expect(reading.color, `h${row.level} 不取弱化色`).toBe(bodyColor);
   }
 });
+
+/** 六级标题计算字号的**序列化原文**（如 `21px` / `18.1333px`）。**必须逐级读计算值**——
+ *  spec editor-live-preview 的「字号步进随动」条款要求由计算属性断言钉住，MUST NOT 靠截图
+ *  目测充当判据；断言比对序列化原文（浮点读数会把 `21` 与 `21.0000001` 视作同一结果，
+ *  那是把精度误差留在判据里）。 */
+async function headingFontSizeStrings(page: Page): Promise<string[]> {
+  return page.evaluate(() =>
+    [1, 2, 3, 4, 5, 6].map((n) => getComputedStyle(document.querySelector(`.cm-lp-h${n}`)!).fontSize),
+  );
+}
+
+test("标题六级阶梯随字号步进同比随动（spec editor-live-preview「六级标题 SHALL 按上表同一比值随动」）", async ({ page }) => {
+  await open(page, { text: HEADINGS_DOC });
+  // 出厂锚 15px 下的计算值**逐值精确**等于阶梯绝对值（分母是固定锚时 calc 恰好化简成整数；
+  // 换成按比值手写的 em 之类近似写法会在这里露出小数）
+  const anchor = await headingFontSizeStrings(page);
+  expect(anchor).toEqual(["21px", "18px", "16px", "15px", "14px", "13px"]);
+
+  // 放大一档：内容字号 15 → 17px（`nextFontSize` 的 round(15 × 1.1)），标题必须按
+  // 「标题档 ÷ 正文锚」这同一比值放大——正文变大而标题不动就是本条要钉的脱钩形态。
+  await page.locator(".cm-content").click();
+  await page.keyboard.press("Meta+Equal");
+  await expect.poll(() => contentFontSize(page)).toBe(17);
+  const zoomed = await headingFontSizeStrings(page);
+  const ratio = 17 / BASE_FONT_SIZE;
+  RAMP.forEach((row, index) => {
+    expect(parseFloat(zoomed[index]), `放大到 17px 后 h${row.level} 字号`).toBeCloseTo(row.size * ratio, 2);
+  });
+  // 反向判据（REVIEW.md 第 1 条）：断言必须有区分度——正文确实变了，标题若与锚下逐值相同
+  // 就是「没随动」，这条排除「整批字号都没动」这种退化（M299 修复前正是这个形态：正文 17px、
+  // 六级仍为 21/18/16/15/14/13）。
+  expect(zoomed).not.toEqual(anchor);
+  // h4 与正文同字号（稿 A 的知情代价）在任意字号档都成立：两者同乘一个比值。
+  expect(parseFloat(zoomed[3]), "h4 应始终与正文同字号").toBeCloseTo(17, 2);
+
+  // 缩回锚档（⌘0 回到配置值 = 出厂 15px）：逐值落回阶梯绝对值
+  await page.keyboard.press("Meta+Digit0");
+  await expect.poll(() => contentFontSize(page)).toBe(BASE_FONT_SIZE);
+  expect(await headingFontSizeStrings(page)).toEqual(anchor);
+});

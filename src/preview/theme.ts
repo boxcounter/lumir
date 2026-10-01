@@ -15,11 +15,15 @@
 //
 // 字号一律用「阶梯值 ÷ 正文锚」的 em 比值：tokens 文档的字号阶梯（24/21/18/16/15/14/13.5/13/
 // 12.5/12/11.5/11/10.5/10，heading-hierarchy-ramp 起 14 档）是**默认 15px 正文锚**下的绝对值。
-// 两种写法：无对应 `--fs-*` token 的档位写 `calc(Nem / 15)`；标题六级（h1–h6 有独立 token）写
-// `calc(1em * var(--fs-hN) / var(--editor-font-size))`（typed arithmetic，token 单一来源）。
+// 两种写法：无对应 `--fs-*` token 的档位写 `calc(Nem / 15)`（em 相对父级内容字号，天然随
+// `--editor-font-size` 缩放）；标题六级（h1–h6 有独立 token）写
+// `calc(1em * var(--fs-hN) / var(--fs-body))`（typed arithmetic，token 单一来源）。
 // 两者都既随 `--editor-font-size` 缩放（排版能力放大正文时编辑器内一切字号跟随），又在默认锚下
 // **逐像素等于**阶梯值（写成 `0.8667em` 会落到 13.0005px，门禁断言只能退化成区间，那是把精度误差
 // 留在制品里）。
+// 标题那条的**分母 MUST NOT 写成 `var(--editor-font-size)`**（M299 的缺陷形态）：`1em` 量的正是
+// 这个活值，约分后标题恒为绝对 px、正文放大它不动；分母要取固定的阶梯锚 `--fs-body`（详见下条
+// 规则上方的说明）。
 // 子元素上的字号（frontmatter 的 chip 在 13px 的值列里）按它自己的父级写 `calc(Nem / 父级px)`。
 // 唯一例外是末尾标记——它挂在 `.cm-scroller` 上、不继承正文锚，故显式写
 // `calc(var(--editor-font-size) * 0.8)`（backlog #31 的修复，见下）。
@@ -117,19 +121,31 @@ export const livePreviewTheme = EditorView.theme({
   // 标题层级阶梯（change heading-hierarchy-ramp，稿 A 裁决 2026-09-25）：H1–H6 六级纯字号阶梯
   // 21/18/16/15/14/13，字重全档 650（字重不承担层级），零装饰（H6 的 italic 与 --text-2 退场——
   // italic 对 CJK 是伪斜体，颜色承担层级在 eink 下不成立）。字号经 token 取值：
-  // `calc(1em * var(--fs-hN) / var(--editor-font-size))` = 阶梯值 ÷ 当前内容字号 × 1em，
+  // `calc(1em * var(--fs-hN) / var(--fs-body))` = 阶梯值 ÷ **阶梯锚** × 1em，
   // 字号步进 / 配置字号变化时六级按同一比值随动（typed arithmetic，双引擎探针实证：
   // webkit + chromium 的 CSS.supports 与计算值都成立）。680 只许出现在 ≥21px 的字号上——
   // H1 21px 取 650 不触这条许可规则。负字距随字号递减（tokens 文档 §字距）：
   // -0.009/-0.007/-0.005/-0.004/-0.002/0em。
   // 标题行高：h1–h3 随正文 1.7（--lh-reading，定稿未给标题单设行高）；h4–h6 保持 --lh-ui
   //（阶梯修订只动字号/字重/字距与装饰退场，行高不在裁决面内）。
-  ".cm-lp-h1": { fontSize: "calc(1em * var(--fs-h1) / var(--editor-font-size))", fontWeight: "650", lineHeight: "var(--lh-reading)", letterSpacing: "-0.009em" },
-  ".cm-lp-h2": { fontSize: "calc(1em * var(--fs-h2) / var(--editor-font-size))", fontWeight: "650", lineHeight: "var(--lh-reading)", letterSpacing: "-0.007em" },
-  ".cm-lp-h3": { fontSize: "calc(1em * var(--fs-h3) / var(--editor-font-size))", fontWeight: "650", lineHeight: "var(--lh-reading)", letterSpacing: "-0.005em" },
-  ".cm-lp-h4": { fontSize: "calc(1em * var(--fs-h4) / var(--editor-font-size))", fontWeight: "650", lineHeight: "var(--lh-ui)", letterSpacing: "-0.004em" },
-  ".cm-lp-h5": { fontSize: "calc(1em * var(--fs-h5) / var(--editor-font-size))", fontWeight: "650", lineHeight: "var(--lh-ui)", letterSpacing: "-0.002em" },
-  ".cm-lp-h6": { fontSize: "calc(1em * var(--fs-h6) / var(--editor-font-size))", fontWeight: "650", lineHeight: "var(--lh-ui)" },
+  //
+  // **分母为什么是 --fs-body 而不是 --editor-font-size（M299，缺陷形态的 canonical 说明）**：
+  // 选择器 `.cm-lp-hN` 挂在行上，`1em` 量的是父级 `.cm-content` 的字号，而那个字号就是
+  // `--editor-font-size` 本身（src/editor.ts 的 baseTheme）。分母若也取这个**活值**，两条
+  // 同一个数值自我约掉，`calc` 化简成常量 `var(--fs-hN)` ⇒ 标题恒为绝对 px，⌘= / ⌘− 只放大
+  // 正文、标题纹丝不动，最终普通文本的字号大过标题（Alex 2026-10-01 报告，M299 实测读数：
+  // 内容 15→17px 时六级仍为 21/18/16/15/14/13）。分母 MUST 是**固定的阶梯锚**——
+  // 阶梯值 21/18/16/15/14/13 正是 15px 正文锚下的绝对值（tokens 文档 §2「字号阶梯 = 双锚点」），
+  // `--fs-body` = 15px 就是这个锚。于是出厂锚下逐像素等于阶梯值，其余档位按「阶梯值 ÷ 锚」
+  // 这同一比值随动（spec editor-live-preview「六级标题 SHALL 按上表同一比值随动」）。
+  // 注：这里引用 `--fs-body` 是**作归一化分母**，不是把 `--fs-h4` 定义成它的别名——后者
+  //（token 层的跨语义引用）才是 spec 禁止的形态，六级 token 本身仍是各自独立的字面值。
+  ".cm-lp-h1": { fontSize: "calc(1em * var(--fs-h1) / var(--fs-body))", fontWeight: "650", lineHeight: "var(--lh-reading)", letterSpacing: "-0.009em" },
+  ".cm-lp-h2": { fontSize: "calc(1em * var(--fs-h2) / var(--fs-body))", fontWeight: "650", lineHeight: "var(--lh-reading)", letterSpacing: "-0.007em" },
+  ".cm-lp-h3": { fontSize: "calc(1em * var(--fs-h3) / var(--fs-body))", fontWeight: "650", lineHeight: "var(--lh-reading)", letterSpacing: "-0.005em" },
+  ".cm-lp-h4": { fontSize: "calc(1em * var(--fs-h4) / var(--fs-body))", fontWeight: "650", lineHeight: "var(--lh-ui)", letterSpacing: "-0.004em" },
+  ".cm-lp-h5": { fontSize: "calc(1em * var(--fs-h5) / var(--fs-body))", fontWeight: "650", lineHeight: "var(--lh-ui)", letterSpacing: "-0.002em" },
+  ".cm-lp-h6": { fontSize: "calc(1em * var(--fs-h6) / var(--fs-body))", fontWeight: "650", lineHeight: "var(--lh-ui)" },
 
   // 段落左对齐（M216 gap 表 §2.3 #9：定稿是 ragged right，justify + hyphens 是反向偏差）。
   // 段落间距走末行 padding（CM 无 margin 折叠模型：间距阶梯的「段落 8」落在段末行，
