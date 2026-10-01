@@ -2,7 +2,7 @@ import { expect, test, type Page } from "@playwright/test";
 import { expectScreenshot } from "./expect-screenshot";
 import { fileText, stubTauri, type VaultFixture } from "./tauri-stub";
 
-// 标签右键菜单（M254，change tab-strip-context-menu）。
+// 标签右键菜单（M254，change tab-strip-context-menu；M300 增定位项）。
 //
 // 为什么要有这个场景：
 //   1. 菜单浮层是**新增 UI 元素**——元素级基线钉住它的形态（整页容差吞得掉一个 160×96 的
@@ -13,6 +13,9 @@ import { fileText, stubTauri, type VaultFixture } from "./tauri-stub";
 //   3. 一条最容易写错的时序：脏标签选「保存并关闭」时，动作钮的点击 MUST NOT 冒到浮条本体的
 //      「点掉即关」监听上——否则批量关闭会在保存落地之前就停手（后面的标签不被关掉，用户看到的
 //      是「我选了保存并关闭，可是后面那些没关」）。这一条只能在真实事件冒泡路径上验，见最后一个用例。
+//   4. M300 的定位项（「在左栏中定位到此文件」）：它唯一的几何判据是「目标行完整落在左栏可视区」
+//      ——真机套件没有滚动通道（scripts/acceptance/README.md 的「没有滚动动作」条），这条只能在
+//      chromium 层量；用例见本文件末尾。
 //
 // 桩的边界：与 tree-menu.spec.ts 相同——文件级操作由 tauri-stub 做最小模拟，不过滤非法输入。
 
@@ -89,7 +92,7 @@ function einkRuleTexts(page: Page): Promise<string[]> {
   });
 }
 
-test("右键标签：三项菜单在场、不改上下文、Esc 收起并归还焦点（元素级基线）", async ({ page }) => {
+test("右键标签：四项菜单在场、不改上下文、Esc 收起并归还焦点（元素级基线）", async ({ page }) => {
   await stubTauri(page, VAULT);
   await page.goto("/");
   await openTabs(page, ["alpha.md", "beta.md", "gamma.md"]);
@@ -101,13 +104,14 @@ test("右键标签：三项菜单在场、不改上下文、Esc 收起并归还�
   await expect(menu).toHaveAttribute("role", "menu");
   await expect(menu).toHaveAttribute("aria-label", "标签操作");
   expect(await page.locator(".tab-menu .ft-menu-item").allTextContents()).toEqual([
+    "在左栏中定位到此文件",
     "Close",
     "Close Other Tabs",
     "Close Tabs to the Right",
   ]);
-  // 打开即持焦点，游标落在首项（键盘路径不用先按一次 ↓）
+  // 打开即持焦点，游标落在首项（键盘路径不用先按一次 ↓）——M300 起首项是定位项
   await expect(menu).toBeFocused();
-  await expect(page.locator(".tab-menu .ft-menu-item.is-active")).toHaveText("Close");
+  await expect(page.locator(".tab-menu .ft-menu-item.is-active")).toHaveText("在左栏中定位到此文件");
   await expect(menu).toHaveAttribute("aria-activedescendant", "tab-menu-item-0");
   // 只有语义类 `.tab-menu`：皮肤是 style.css 里 `.ft-menu, .tab-menu` 那一对选择器给出的，
   // 带上 `ft-menu` 会让两份菜单同时命中 `.ft-menu`（树菜单的断言因此变成 strict violation）。
@@ -119,7 +123,8 @@ test("右键标签：三项菜单在场、不改上下文、Esc 收起并归还�
 
   await expectScreenshot(menu, "tab-menu.png");
 
-  // 键盘游标走到第三项：选中底色与首项不同（元素基线各留一张）
+  // 键盘游标走到第四项：选中底色与首项不同（元素基线各留一张）
+  await page.keyboard.press("ArrowDown");
   await page.keyboard.press("ArrowDown");
   await page.keyboard.press("ArrowDown");
   await expect(page.locator(".tab-menu .ft-menu-item.is-active")).toHaveText("Close Tabs to the Right");
@@ -354,4 +359,110 @@ test("M254：共用皮肤在 eink 档下同为选中底色 + 选中前景（标�
   expect(activeColorRule, "eink 选中态前景规则").toBeDefined();
   expect(activeColorRule).toContain(".ft-menu-item.is-active");
   await page.keyboard.press("Escape");
+});
+
+// ---------------------------------------------------------------------------
+// M300：定位项（标签菜单 → 左栏文件树）
+//
+// 判据为什么落在这里：真机套件**没有滚动通道**（scripts/acceptance/README.md 的「没有滚动动作，
+// 也滚不动」条，M252 三轮探针实证），因此「目标行被滚进可视区」这条几何判据只有 chromium 层量得
+// 出来；真机场景 69 只补「真实 WKWebView + 真实右键通道」的祖先展开那一段。
+//
+// 判据形态照 M238 的「活跃标签恒完整可见」（tests/visual/scenes/m149-tabs.spec.ts）：一律读**矩形
+// 包含关系**，不读 class、也不读 scrollTop 数值（REVIEW.md 第 1 条——class 断言看不出「展开对了
+// 但没滚」，数值断言则把判据钉在实现的选择上）。读不到目标行一律 FAIL，不当成「无需滚动」（第 2 条）。
+// ---------------------------------------------------------------------------
+
+/** 目标行是否**完整**落在左栏可视区（`.tree-pane` 的 padding 盒）里；读不到行 = FAIL。 */
+async function rowFullyVisible(page: Page, path: string): Promise<{ ok: boolean; detail: string }> {
+  return page.evaluate((want) => {
+    const pane = document.querySelector(".tree-pane") as HTMLElement | null;
+    const li =
+      [...document.querySelectorAll<HTMLElement>(".ft-item")].find((el) => el.dataset.path === want) ?? null;
+    const row = li?.querySelector<HTMLElement>(".ft-row") ?? null;
+    if (pane === null || row === null) {
+      return { ok: false, detail: `读不到左栏或 ${want} 这一行（判 FAIL，不当作无需滚动）` };
+    }
+    const box = pane.getBoundingClientRect();
+    const top = box.top + pane.clientTop;
+    const bottom = top + pane.clientHeight;
+    const rect = row.getBoundingClientRect();
+    return {
+      ok: rect.top >= top - 0.5 && rect.bottom <= bottom + 0.5,
+      detail: `可视区=[${Math.round(top)},${Math.round(bottom)}] 目标行=[${Math.round(rect.top)},${Math.round(rect.bottom)}]`,
+    };
+  }, path);
+}
+
+/** 定位场景的 vault：40 个根级目录（排序上目录在文件之前、行高 25px ⇒ 光根列就 1000px）把后段的
+ *  行挤出左栏；目标落在外层目录的两级子目录下，且**由会话恢复带出来**——本会话从没在树里展开过
+ *  它所在的目录，树模型里那几行根本不在场（这正是定位最需要的形态，也是「先确认可达再动手」那一
+ *  段的判据来源）。 */
+function revealVault(): VaultFixture {
+  const entries: unknown[] = [];
+  const files: Record<string, string> = {};
+  for (let i = 1; i <= 40; i += 1) {
+    const dir = `d-${String(i).padStart(2, "0")}`;
+    const text = `# ${dir}\n\n这一层用来把根列撑满。\n`;
+    entries.push({ path: dir, kind: "dir", size: 0, mtime_ms: 0 });
+    entries.push({ path: `${dir}/note.md`, kind: "file", size: text.length, mtime_ms: 0 });
+    files[`${dir}/note.md`] = text;
+  }
+  const target = "d-40/deep/target.md";
+  const targetText = "# 目标\n\n这一篇在两级子目录里。\n";
+  entries.push({ path: "d-40/deep", kind: "dir", size: 0, mtime_ms: 0 });
+  entries.push({ path: target, kind: "file", size: targetText.length, mtime_ms: 0 });
+  files[target] = targetText;
+  return {
+    entries,
+    files,
+    links: {},
+    // 两个标签：前台是根目录里的那一篇（它的行在树里是**折叠态**，因此树上没有当前行），
+    // 右键落在深标签上——「定位不改上下文」因此有可判的锚点。
+    sessions: {
+      "fixture-vault": { tabs: ["d-01/note.md", target], active: "d-01/note.md" },
+    },
+  };
+}
+
+test("M300 定位项：展开祖先、目标行滚进左栏可视区并成为当前行，前台标签不变", async ({ page }) => {
+  await stubTauri(page, revealVault());
+  await page.goto("/");
+  const target = "d-40/deep/target.md";
+  const row = page.locator(`.ft-item[data-path="${target}"] > .ft-row`);
+
+  // 起点：会话恢复出两个标签，前台是 d-01/note.md；树全折叠——深标签的那一行**根本不在场**
+  await expect(page.locator(".tab-name")).toHaveText(["note.md", "target.md"]);
+  await expect(page.locator(".tab.is-active .tab-name")).toHaveText("note.md");
+  await expect(row).toHaveCount(0);
+  // 左栏确实溢出（否则「滚进可视区」这条在装得下的树上恒真，REVIEW.md 第 2 条）
+  const overflow = await page.evaluate(() => {
+    const pane = document.querySelector(".tree-pane") as HTMLElement;
+    return { scrollHeight: pane.scrollHeight, clientHeight: pane.clientHeight };
+  });
+  expect(overflow.scrollHeight).toBeGreaterThan(overflow.clientHeight);
+  // 反向对照：同一读数口径在「存在但在可视区之外」的行上必须给出 false——根列末行 d-40 只是被
+  // 裁掉（不是没渲染），它证明这条包含判据有区分度，而不是恒真。
+  const offscreen = await rowFullyVisible(page, "d-40");
+  expect(offscreen.ok, `反向对照（应判 false）：${offscreen.detail}`).toBe(false);
+
+  await openTabMenu(page, "target.md");
+  await menuItem(page, "在左栏中定位到此文件").click();
+
+  // 祖先逐级展开：两级目录行都在场，目标行在场
+  await expect(page.locator('.ft-row[title="d-40/deep"]')).toHaveCount(1);
+  await expect(row).toHaveCount(1);
+  // 目标行完整落在左栏可视区里（这一条就是「滚进视口」的判据）
+  const visible = await rowFullyVisible(page, target);
+  expect(visible.ok, visible.detail).toBe(true);
+  // 当前行标记落在目标行上，且**只有**它带这个标记（前台文档是另一篇：定位把当前行带到被定位的
+  // 那一行，multi-tabs「文件树联动与空态」把这条例外写成了规格）
+  await expect(page.locator(".ft-row.is-current")).toHaveCount(1);
+  await expect(row).toHaveClass(/is-current/);
+  await expect(row).toHaveAttribute("aria-current", "true");
+  // 定位不改上下文：前台仍是 note.md，两个标签都还在
+  await expect(page.locator(".tab.is-active .tab-name")).toHaveText("note.md");
+  await expect(page.locator(".tab")).toHaveCount(2);
+  // 菜单已收起（定位不是模态动作）
+  await expect(page.locator(".tab-menu")).toBeHidden();
 });

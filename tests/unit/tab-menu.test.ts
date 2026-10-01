@@ -1,22 +1,25 @@
-// 标签右键菜单（M254，change tab-strip-context-menu）：三条关闭路径的**选择逻辑**与菜单 DOM 行为。
+// 标签右键菜单（M254，change tab-strip-context-menu；M300 增定位项）：四条菜单项的**选择逻辑**
+// 与菜单 DOM 行为。
 //
 // 这一层用最小 DOM 替身跑真代码（与 tests/unit/tree-menu.test.ts 同一手法、同一形状的替身——
 // 两处各持一份是刻意的：替身只实现各自被碰到的那些 DOM 面，抽公共基类会把两边的测试耦合到
 // 同一份「什么都被实现了一点」的假实现上；那条理由逐字见 tree-menu.test.ts 的文件头）。
 //
 // 覆盖什么：
-//   - 项集文案与顺序（对照文案 deck D148–D151，逐字）；
+//   - 项集文案与顺序（对照文案 deck D148–D151 与 D322，逐字）；
 //   - 菜单 DOM 行为：打开持焦点与首项游标、↑↓ / ⌃N⌃P 等价导航与钳制、Enter 触发、Esc 与
 //     外部点击关闭、关闭后焦点归还（归还的是**会话本体**，由装配层现查那一条标签）；
 //   - 三条路径的目标选择（纯函数）：关闭其他 / 关闭右侧的集合与顺序、边界（目标不在列表里）；
 //   - 批量关闭的顺序与停手（closeEach）：前一个没答复就不动下一个，false 之后不再调。
-// 不覆盖什么：三条路径的端到端落点、脏标签的确认流（要真实 toast 与标签栏 DOM）——
-// 归 tests/visual/scenes/tab-menu.spec.ts 与真机场景 50。
+// 不覆盖什么：四条项的端到端落点（定位项落在树上、关闭路径落在标签栏上）、脏标签的确认流
+// （要真实 toast 与标签栏 DOM）——归 tests/visual/scenes/tab-menu.spec.ts 与真机场景 50，定位
+// 项另有 tests/unit/tree-reveal.test.ts（树那一侧的展开 / 滚动 / 当前行）。
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   TAB_MENU_LABEL,
+  TAB_MENU_REVEAL,
   closeEach,
   closeOtherTargets,
   closeRightTargets,
@@ -191,12 +194,16 @@ function menuRig() {
 const flush = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
 
 // ---------------------------------------------------------------------------
-// 项集与文案（deck D148–D151）
+// 项集与文案（deck D148–D151 + D322）
 // ---------------------------------------------------------------------------
 
-test("项集：三项、顺序固定、文案逐字（deck D148–D151）", () => {
+test("项集：四项、顺序固定、文案逐字（deck D322 + D148–D151）", () => {
   assert.equal(TAB_MENU_LABEL(), "标签操作");
+  // 定位项在首位（M300）：单测环境的界面语言钉在 zh，因此它是中文列；三条关闭项是上屏列
+  // 锁定条目（M257 裁决），无论界面语言都取 English 列。
+  assert.equal(TAB_MENU_REVEAL(), "在左栏中定位到此文件");
   assert.deepEqual(tabMenuItems(), [
+    { action: "reveal-in-tree", label: "在左栏中定位到此文件" },
     { action: "close", label: "Close" },
     { action: "close-others", label: "Close Other Tabs" },
     { action: "close-right", label: "Close Tabs to the Right" },
@@ -207,7 +214,7 @@ test("项集：三项、顺序固定、文案逐字（deck D148–D151）", () =
 // 菜单 DOM 行为
 // ---------------------------------------------------------------------------
 
-test("打开菜单：三项在场、持焦点、游标落首项、皮肤类两处共用", () => {
+test("打开菜单：四项在场、持焦点、游标落首项、皮肤类两处共用", () => {
   const rig = menuRig();
   const target = session("a.md");
   rig.menu.open(target, { x: 40, y: 60 });
@@ -222,9 +229,14 @@ test("打开菜单：三项在场、持焦点、游标落首项、皮肤类两�
   assert.equal(rig.element.classList.contains("tab-menu"), true);
   assert.equal(rig.element.classList.contains("ft-menu"), false, "MUST NOT 带树菜单的类名");
   const labels = rig.element.texts();
-  assert.deepEqual(labels, ["Close", "Close Other Tabs", "Close Tabs to the Right"]);
+  assert.deepEqual(labels, [
+    "在左栏中定位到此文件",
+    "Close",
+    "Close Other Tabs",
+    "Close Tabs to the Right",
+  ]);
   const items = rig.element.find("ft-menu-item");
-  assert.equal(items.length, 3);
+  assert.equal(items.length, 4);
   assert.equal(items[0].classList.contains("is-active"), true, "打开即把游标放在首项");
   assert.equal(rig.element.getAttribute("aria-activedescendant"), items[0].id);
   // 菜单里 MUST NOT 出现分隔线（标签菜单没有分组）
@@ -248,10 +260,11 @@ test("键盘：↓ / ⌃N 等价前进、↑ / ⌃P 等价回退且钳制，Ente
   // ⌃N 与 ↓ 落点相同：一次 ⌃N 到第二项
   rig.element.fire("keydown", keydown("n", { ctrlKey: true }));
   assert.equal(items[1].classList.contains("is-active"), true);
-  // 越界钳制在末项
+  // 越界钳制在末项（M300 起共四项，末项仍是 Close Tabs to the Right）
   rig.element.fire("keydown", keydown("n", { ctrlKey: true }));
   rig.element.fire("keydown", keydown("n", { ctrlKey: true }));
-  assert.equal(items[2].classList.contains("is-active"), true, "末项不再前进");
+  rig.element.fire("keydown", keydown("n", { ctrlKey: true }));
+  assert.equal(items[3].classList.contains("is-active"), true, "末项不再前进");
 
   rig.element.fire("keydown", keydown("Enter"));
   assert.deepEqual(
@@ -261,6 +274,26 @@ test("键盘：↓ / ⌃N 等价前进、↑ / ⌃P 等价回退且钳制，Ente
   // 触发即收起，且请求带的是会话本体（装配层据此现查那一条标签）
   assert.equal(rig.selected[0].session, target);
   assert.equal(rig.menu.isOpen(), false);
+});
+
+test("定位项：打开即落首项，回车直接派发 reveal-in-tree（带右键那一条会话）", () => {
+  const rig = menuRig();
+  // 用嵌套路径：定位的落点在树上（同一层只关心「派发的是哪一条会话、什么动作」）
+  const target = session("a/b/c.md");
+  rig.menu.open(target, { x: 0, y: 0 });
+
+  const items = rig.element.find("ft-menu-item");
+  assert.equal(items[0].textContent, TAB_MENU_REVEAL(), "首项即定位项");
+  assert.equal(items[0].classList.contains("is-active"), true);
+  rig.element.fire("keydown", keydown("Enter"));
+
+  assert.deepEqual(
+    rig.selected.map((entry) => entry.action),
+    ["reveal-in-tree"],
+  );
+  assert.equal(rig.selected[0].session, target);
+  assert.equal(rig.menu.isOpen(), false, "触发即收起");
+  assert.deepEqual(rig.focused, [target], "关闭后焦点仍归还触发它的那一条标签");
 });
 
 test("Esc 关闭并归还焦点；外部点击关闭但不抢焦点", () => {

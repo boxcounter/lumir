@@ -1,0 +1,47 @@
+# Tasks: tab-reveal-in-tree
+
+## 1. 规格与文案
+
+- [x] 1.1 `openspec/changes/tab-reveal-in-tree/` 三件套齐备（proposal / tasks / 两份 spec delta），
+      且 proposal 记明 Alex 2026-10-01 的显式需求即提案批准记录
+- [x] 1.2 `src/copy-data.ts` 追加 D322（zh + en），`文案-Copy.md` 追加同一条行（编号只追加）
+- [x] 1.3 `tests/unit/copy.test.ts` 的漂移门禁在两边同改后仍绿
+
+## 2. 文件树：定位能力（`src/tree.ts`）
+
+- [x] 2.1 `FileTree` 接口新增 `revealPath(path: string): void`
+- [x] 2.2 可达确认段：沿路径逐段确认每一段都在模型里且是目录；惰性祖先在这里按需取回一层
+      （取数**不展开**，对用户不可见；取数登记由 `Set` 改 `Map<string, Promise<void>>`，让「在途」
+      可等待——会话恢复出来的深标签可能落在本会话从没展开过的惰性目录下）
+- [x] 2.3 落地段：把确认过的祖先逐级展开（复用 `expandNode`）→ 目标行 `scrollIntoView({ block:
+      "nearest" })` → 标成当前行（与 `syncCurrent` 同一份 DOM 对齐）
+- [x] 2.4 不可达（路径不在模型里 / 惰性取数失败）时全程空动作：不展开、不改当前行、不滚动
+      （先确认再动手，因此不存在「展开了一半才发现走不通」的半截现场）
+
+## 3. 标签菜单（`src/tabs.ts` + `src/main.ts`）
+
+- [x] 3.1 `TabMenuAction` 新增 `"reveal-in-tree"`；`tabMenuItems()` 首项为定位项（D322）
+- [x] 3.2 `runTabMenuAction` 派发到 `TabsDeps.revealInTree(path)`；三条关闭路径逐条不变
+- [x] 3.3 `src/main.ts` 把 `tree.revealPath` 接进 `TabsDeps`（惰性闭包，与 `syncActiveDocument`
+      同一条模式——`tree` 在装配层是 `let` 绑定，赋值晚于 `createTabs`）
+
+## 4. 测试
+
+- [x] 4.1 `tests/unit/tab-menu.test.ts`：项集（四项、顺序、文案逐字）与游标 / Enter 落点按新顺序更新
+- [x] 4.2 `tests/unit/tab-menu.test.ts`：新增一条「选中定位项 → onSelect 收到 `reveal-in-tree` 与
+      右键那一条会话」
+- [x] 4.3 `tests/unit/tree-reveal.test.ts`（新增，6 条）：祖先逐级展开 + 滚动语义 + 当前行；重复定位
+      幂等；路径不可达的空动作（配正向对照）；惰性祖先逐层按需取回；取数同步抛错后不滞留登记、
+      下次重试仍成立
+- [x] 4.4 `tests/visual/scenes/tab-menu.spec.ts`：菜单多一项（两张元素基线更新）与端到端定位用例
+      （祖先展开 + 目标行完整落在左栏可视区 + 该行是唯一当前行 + 前台标签不变）
+- [x] 4.5 `scripts/acceptance/scenarios/69-tab-reveal-in-tree.md`（新增）：真实 WKWebView 下的右键 →
+      选定位项 → 祖先展开、目标行出现（滚动那一条归 chromium，已在场景正文登记）
+
+## 5. 验证
+
+- [ ] 5.1 `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` 通过
+- [ ] 5.2 `scripts/gate.sh quick` 全绿
+- [ ] 5.3 `scripts/gate.sh visual` 全绿（tab-menu 两张元素基线已随菜单增项更新，更新后的截图在
+      完成报告里逐张列出供 Alex 过目）
+- [ ] 5.4 `node scripts/acceptance/run.mjs --check` 通过场景 69 的静态校验（真机跑批由 tower 排期）

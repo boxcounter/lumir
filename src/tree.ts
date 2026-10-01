@@ -226,6 +226,10 @@ export interface FileTree {
   /** 打开 vault 成功：全量装载条目。 */
   setVault(root: string, entries: FsEntry[]): void;
   setCurrentPath(path: string | undefined): void;
+  /** 把一个 vault 相对路径在树里**显现出来**（M300，标签右键菜单的定位项）：展开它的全部祖先、
+   *  把该行滚进视口、并标成当前行。路径不在模型里时是空动作（不展开、不改当前行、不滚动）；
+   *  展开是异步的（惰性祖先要按需取回一层），因此本方法立即返回，落地由树自己收口。 */
+  revealPath(path: string): void;
   /** 消费 fs:entry_changed 增量：局部更新，保持展开状态。 */
   applyChanges(changes: FsChange[]): void;
   /** 未打开 vault 空态；notice 为 last_vault 恢复失败等的人话提示。 */
@@ -322,8 +326,10 @@ export function createFileTree(mount: HTMLElement, cb: FileTreeCallbacks): FileT
   const expanded = new Set<string>();
   /** 子孙已按需取回的惰性目录（`onExpandLazyDir` 成功过）；换 vault 时清空。 */
   const lazyFetched = new Set<string>();
-  /** 取数在途的惰性目录：同一目录只发一次命令（重复展开 / 与事件并发时靠它去重）。 */
-  const lazyFetching = new Set<string>();
+  /** 取数在途的惰性目录 → 那一次取数的 promise（同一目录只发一次命令：重复展开 / 与事件并发
+   *  时靠它去重）。**存 promise 而不是一个登记用的集合**（M300）：`revealPath` 的定位要等祖先
+   *  取回一层才能继续往下走，而只回答「发过没有」的集合在那一刻只能让定位放弃。 */
+  const lazyFetching = new Map<string, Promise<void>>();
   let vaultName = "";
   /** 树头部的切换器入口（形态 A）：未装载 vault 时不存在（空态整块替换）。 */
   let entryEl: HTMLButtonElement | undefined;
@@ -486,24 +492,44 @@ export function createFileTree(mount: HTMLElement, cb: FileTreeCallbacks): FileT
    *
    * 重复展开 / 展开与取数并发时靠 `lazyFetching` 去重（同一目录只发一次命令）；取数回来的
    * 合并是**按路径 upsert**，不覆盖用户在同一拍里做的别的操作（模型与 DOM 都只动这一层）。
+   *
+   * 返回值 = **这一次取数的完成时刻**（同一目录的后续调用拿到同一个 promise）。M300 起
+   * `revealPath` 靠它等祖先落地。promise **不 reject**（失败如实返回，由 `lazyFetched` 回答
+   * 「取到没有」）：调用方之一是事件回调（`expandNode` 那条 `void`），未处理的 rejection 会
+   * 冒成 unhandled。失败时的重试语义与返回值形态互不干扰——失败不入 `lazyFetched`，下次展开
+   * 照旧重发。
    */
-  async function fetchLazyChildren(node: Node): Promise<void> {
+  function fetchLazyChildren(node: Node): Promise<void> {
     const path = node.entry.path;
-    if (lazyFetching.has(path)) return;
-    lazyFetching.add(path);
-    let entries: FsEntry[];
+    const inFlight = lazyFetching.get(path);
+    if (inFlight !== undefined) return inFlight;
+    let pending: Promise<FsEntry[]>;
     try {
-      entries = await cb.onExpandLazyDir(path);
+      // 同步抛错的实现在这里就地收口：这一次取数当场结束、**不进登记表**（下次展开重试，
+      // 与异步失败同一条口径）。放进 async 体里做不到——那儿的第一段是同步跑完的，catch
+      // 会赶在下面的 `lazyFetching.set` 之前把表擦干净，留下一个「已结束」的登记。
+      pending = Promise.resolve(cb.onExpandLazyDir(path));
     } catch {
-      lazyFetching.delete(path);
-      return;
+      return Promise.resolve();
     }
-    lazyFetching.delete(path);
-    lazyFetched.add(path);
-    for (const entry of entries) mergeEntry(node, entry);
-    if (expanded.has(path)) renderChildren(node);
-    // 合并进来的子目录若自己也是惰性的，等它被展开时再走同一条通道（不在这里递归取数：
-    // 「点开哪一层付哪一层」正是本能力的代价模型）。
+    const task = (async () => {
+      let entries: FsEntry[];
+      try {
+        entries = await pending;
+      } catch {
+        lazyFetching.delete(path);
+        return;
+      }
+      lazyFetching.delete(path);
+      lazyFetched.add(path);
+      for (const entry of entries) mergeEntry(node, entry);
+      if (expanded.has(path)) renderChildren(node);
+      // 合并进来的子目录若自己也是惰性的，等它被展开时再走同一条通道（不在这里递归取数：
+      // 「点开哪一层付哪一层」正是本能力的代价模型）。
+    })();
+    // 登记在开工之后是安全的：`await pending` 至少让出一拍，上面那两条 delete 都排在它后面。
+    lazyFetching.set(path, task);
+    return task;
   }
 
   /** 把一条条目合并进模型（惰性目录取数的落点）：路径已存在则更新条目、保留既有子节点。 */
@@ -853,10 +879,71 @@ export function createFileTree(mount: HTMLElement, cb: FileTreeCallbacks): FileT
     });
   }
 
+  /**
+   * 在树里定位一个路径（M300，change tab-reveal-in-tree）：消费者是标签右键菜单的定位项。
+   *
+   *  **两段做，顺序固定**：
+   *  ① **确认可达**（`ancestorChain`）：沿路径逐段确认每一段都在模型里、且是目录。惰性祖先要
+   *     按需取回一层才能回答「这一层有没有下一段」——会话恢复出来的深标签可能落在本会话**从没
+   *     展开过**的惰性目录下，那时目标还不在模型里。取数**不等于**展开：`fetchLazyChildren` 只在
+   *     目录已展开时才重渲染子行，因此确认这一段对用户完全不可见；
+   *  ② **展开 + 落地**：把确认过的祖先由外到内逐级展开（复用 `expandNode`）→ 把目标行标成
+   *     当前行（与 `setCurrentPath` 同一份 DOM 对齐，见 `syncCurrent`）→ 把该行滚进视口。
+   *
+   *  **为什么先确认再动手**：路径不可达（文件已被外部删除 / 换过 vault / 惰性取数失败）时必须是
+   *  **空动作**——不展开任何祖先、不改当前行、不滚动。「边走边展开」的形态在走到一半发现下一段
+   *  不存在时，留下的半截现场比什么都不做更糟：展开了一半的祖先列表是用户没要求的副作用，还会
+   *  让「我在树里的哪儿」失去依据。取数失败并入不可达，理由与「取数失败 MUST NOT 渲染成空目录」
+   *  是同一条（不知道就别假装知道）。
+   *
+   *  与当前行的关系：定位是用户点名「我要看这一行」，因此它把当前行改成目标行；装配层的
+   *  `syncActiveDocument` 会在下一次前台文档变化时按当前标签把它重写（multi-tabs「文件树联动与
+   *  空态」把这条例外写成了规格）。
+   */
+  function revealPath(path: string): void {
+    void reveal(path);
+  }
+
+  /** 路径在树里可达时返回它的**祖先链**（由外到内，不含目标自己）；不可达返回 undefined。
+   *  惰性祖先在这里按需取回一层（只进模型、不进 DOM，见 revealPath 的说明）。 */
+  async function ancestorChain(path: string): Promise<Node[] | undefined> {
+    const segments = path.split("/");
+    const chain: Node[] = [];
+    for (let depth = 1; depth < segments.length; depth += 1) {
+      const prefix = segments.slice(0, depth).join("/");
+      const ancestor = nodes.get(prefix);
+      // 模型里断了（祖先不在 / 不是目录）：不可达——不就地补一个半截的展开
+      if (ancestor === undefined || ancestor.entry.kind !== "dir") return undefined;
+      chain.push(ancestor);
+      if (ancestor.lazy && !lazyFetched.has(prefix)) {
+        await fetchLazyChildren(ancestor);
+        if (!lazyFetched.has(prefix)) return undefined; // 取数失败：不假装可达
+      }
+    }
+    return nodes.has(path) ? chain : undefined;
+  }
+
+  async function reveal(path: string): Promise<void> {
+    const chain = await ancestorChain(path);
+    if (chain === undefined) return;
+    for (const ancestor of chain) {
+      if (!expanded.has(ancestor.entry.path)) expandNode(ancestor);
+    }
+    currentPath = path;
+    syncCurrent();
+    // `block: "nearest"`：目标行已在视口内时一个像素都不动——定位 MUST NOT 把用户手动滚出来的
+    // 位置抹掉（与 tabs.ts 的 ensureActiveVisible 同一条口径）。
+    nodes.get(path)?.li?.querySelector<HTMLElement>(".ft-row")?.scrollIntoView({ block: "nearest" });
+  }
+
   const tree: FileTree = {
     setCurrentPath(path) {
       currentPath = path;
       syncCurrent();
+    },
+
+    revealPath(path) {
+      revealPath(path);
     },
     setVault(root, entries) {
       vaultName = baseName(root);

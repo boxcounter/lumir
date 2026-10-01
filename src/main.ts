@@ -455,7 +455,7 @@ editor.onReady((event) => {
 // ---------------------------------------------------------------------------
 // 标签（M149）：会话模型、标签栏 DOM、切换 / 关闭动作与标签右键菜单（M254）在
 // src/tabs.ts，这里只装配——把本文件才知道的入口交给它（save / 解析缓存失效 / 覆盖层 /
-// 同步点 / 浮层挂点 / 提示出口，逐项见 TabsDeps）。
+// 同步点 / 浮层挂点 / 提示出口 / 树定位（M300），逐项见 TabsDeps）。
 // ---------------------------------------------------------------------------
 
 const tabs = createTabs({
@@ -475,6 +475,10 @@ const tabs = createTabs({
   invalidateResolve: () => linkFollow.invalidate(),
   showEditor: () => showEditor(),
   syncActiveDocument: () => syncActiveDocument(),
+  // 「在左栏中定位到此文件」（M300）：树是下面 `let tree` 绑定的单例，赋值在本行之后——
+  // 闭包在动作发生时读，装配期不读，因此没有时序问题（与 syncActiveDocument 里那次
+  // tree.setCurrentPath 同一条模式）。
+  revealInTree: (path) => tree.revealPath(path),
 });
 
 // ---------------------------------------------------------------------------

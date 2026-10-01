@@ -593,6 +593,14 @@ const COPY_TABLE = {
     zh: "选择 vault 目录",
     en: "Choose a vault folder",
   },
+  // D322：标签右键菜单的定位项（M300，change tab-reveal-in-tree）。中文列是 Alex 2026-10-01
+  // 的需求原话（逐字保留），不是 D128「在 Finder 中显示」——那一条的对象是系统文件管理器，
+  // 这一条是应用内的左栏文件树。普通双语条目（不锁列）：zh 界面下这一项的四周是
+  // D149–D151 三条锁 en 的关闭项，两者的关系与取舍见 deck 该行的设计意图列。
+  D322: {
+    zh: "在左栏中定位到此文件",
+    en: "Reveal in File Tree",
+  },
 } satisfies Record<string, CopyEntry>;
 
 /** 文案表的键（D 编号，多串格带 `.N` 后缀）——由表数据推导，加一条即多一个键。 */

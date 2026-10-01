@@ -10,6 +10,11 @@
 // closeEach / showCloseConfirm 的说明）。菜单浮层与文件树菜单共用一套皮肤（`style.css` 的
 // `.ft-menu` / `.tab-menu` 选择器对），机制各写各的——理由见该 change 的 design。
 //
+// M300（change tab-reveal-in-tree）：菜单**新增首项「在左栏中定位到此文件」**（文案 D322，
+// Alex 2026-10-01 的需求）——把这一条标签的文件交给文件树的 `revealPath`（装配层经
+// `revealInTree` 注入，见 TabsDeps 该字段的说明）。定位项排在首位、三条关闭项的相对顺序不变，
+// 顺序的理由见 `tabMenuItems`。
+//
 // M151 从 main.ts 抽出（M127 的拆分判据「main.ts 收敛为装配层」的续作）。抽出的判据：
 // 会话模型的读写全在 editor 的会话 API，本模块不持有任何状态，只是「会话列表 → 标签栏
 // DOM + 切换/关闭动作」这一层表现与交互；装配侧注入的入口每一个都只有一个职责，
@@ -21,6 +26,9 @@
 //     modeline / 文件树 / 大纲 / 标签栏），因此 activateTab 与 closeTabNow 末了都要回调它。
 //     这条回调与 renderTabs 构成一次「本模块 → 装配层 → 本模块」的往返，与抽出前
 //     两个函数同处一个文件时的调用关系逐字相同。
+//   - revealInTree（M300）：树的句柄在装配层（`tree` 是 `let` 绑定的单例，赋值晚于本模块的
+//     构造），标签模块够不到，因此定位是**唯一**一条绕装配层的菜单动作——与树菜单「浮层在
+//     tree-menu.ts、动作在 main.ts」同形。
 //
 // 关闭确认的未命名文档守卫（reviewer r1 P2-1 的那条）在 closeTab 里，语义见该函数注释。
 
@@ -37,7 +45,13 @@ import { onRelabel, t } from "./copy";
 /** 标签右键菜单的读屏名（`role=menu` 的 aria-label）。不叫「右键菜单」：键盘路径也能开，
  *  读屏用户没有「右键」这个概念（与 D125 文件树菜单同口径）。 */
 export const TAB_MENU_LABEL = (): string => t("D148");
-/** 菜单三项（D149–D151）。**上屏英文是 Alex 2026-09-27 的裁决**（M254 菜单初上屏为中文，
+/** 定位项（D322，M300 / change tab-reveal-in-tree）：把这一条标签的文件在左栏树里显现出来
+ *  （展开祖先 + 滚进视口 + 标成当前行，能力在 `src/tree.ts` 的 `revealPath`）。
+ *  **这与 D128「在 Finder 中显示」不是同一个动作**：那一条的对象是系统文件管理器。
+ *  普通双语条目（不锁列）——`zh` 界面下这一项是中文，与它下面三条锁 en 的关闭项不同语言，
+ *  取舍与两个方向的一行改法记在 deck 该行的设计意图列。 */
+export const TAB_MENU_REVEAL = (): string => t("D322");
+/** 菜单三条关闭项（D149–D151）。**上屏英文是 Alex 2026-09-27 的裁决**（M254 菜单初上屏为中文，
  *  Alex 答复「上屏」给英文）：Close / Close Other Tabs / Close Tabs to the Right 是 Alex 给的
  *  原文、逐字保留。M282 起这三条在文案表里是**上屏列锁定**条目（`lock: "en"`）——无论界面
  *  语言都取 English 列，`zh` 界面下因此仍是英文（MUST NOT 回落到中文列的沿革备查措辞）。 */
@@ -45,16 +59,22 @@ export const TAB_MENU_CLOSE = (): string => t("D149");
 export const TAB_MENU_CLOSE_OTHERS = (): string => t("D150");
 export const TAB_MENU_CLOSE_RIGHT = (): string => t("D151");
 
-export type TabMenuAction = "close" | "close-others" | "close-right";
+export type TabMenuAction = "reveal-in-tree" | "close" | "close-others" | "close-right";
 
 export interface TabMenuItem {
   action: TabMenuAction;
   label: string;
 }
 
-/** 项集（菜单渲染、单测、验收断言三处同源，与文件树菜单的 `menuItemsFor` 同一纪律）。 */
+/** 项集（菜单渲染、单测、验收断言三处同源，与文件树菜单的 `menuItemsFor` 同一纪律）。
+ *
+ *  **定位项在首位**（M300）：标签菜单没有分隔线，顺序因此是唯一的分组表达方式——非破坏性项
+ *  在前、三条关闭路径仍是尾部连续的一块。方向与文件树条目菜单一致（`tree-menu.ts` 的项集里
+ *  `reveal` 排在 `trash` 之前）。副作用：默认游标（首项）从 `Close` 变成定位项，右键后直接
+ *  回车不再关标签。 */
 export function tabMenuItems(): TabMenuItem[] {
   return [
+    { action: "reveal-in-tree", label: TAB_MENU_REVEAL() },
     { action: "close", label: TAB_MENU_CLOSE() },
     { action: "close-others", label: TAB_MENU_CLOSE_OTHERS() },
     { action: "close-right", label: TAB_MENU_CLOSE_RIGHT() },
@@ -132,6 +152,11 @@ export interface TabsDeps {
   showEditor: () => void;
   /** 前台文档变化后的表现层一次对齐（装配层的 syncActiveDocument）。 */
   syncActiveDocument: () => void;
+  /** 「在左栏中定位到此文件」（M300）：把这一个路径交给文件树的 `revealPath`。
+   *  **注入而不是让本模块自己够到树**：树在装配层是 `let` 绑定的单例（赋值晚于 createTabs），
+   *  而标签模块没有、也不该有树的句柄——与 `syncActiveDocument` 同一条接线模式（闭包在动作
+   *  发生时读，不在装配时读）。 */
+  revealInTree: (path: string) => void;
 }
 
 export interface TabsHandle {
@@ -161,11 +186,13 @@ export function createTabs(deps: TabsDeps): TabsHandle {
     invalidateResolve,
     showEditor,
     syncActiveDocument,
+    revealInTree,
   } = deps;
 
   // 右键菜单本体（M254）：菜单与确认框的界面形态在本模块，动作也在这里——与文件树菜单的
-  // 分工不同（那边的动作在装配层，因为它要 vault 根、后端命令与树的内联编辑；标签的关闭
-  // 只要会话 API 与提示出口，本模块全都有，绕一趟装配层只会多一层转发）。
+  // 分工不同（那边的动作在装配层，因为它要 vault 根、后端命令与树的内联编辑；标签的四条
+  // 动作里三条关闭只要会话 API 与提示出口，本模块全都有，绕一趟装配层只会多一层转发）。
+  // M300 起的例外是定位项：它要文件树的句柄，那一份只有装配层有（见 TabsDeps.revealInTree）。
   const tabMenu = createTabContextMenu({
     mount: overlayMount,
     onSelect: (action, session) => runTabMenuAction(action, session),
@@ -390,10 +417,17 @@ export function createTabs(deps: TabsDeps): TabsHandle {
     syncActiveDocument();
   }
 
-  /** 菜单三项的落点。三条路径都经 `resolveClose`：脏标签一律复用 M149 的 sticky 确认，
-   *  不新造确认 UI。「关闭其他 / 右侧」是**批量**——交 closeEach 顺序关，用户取消即停手
-   *  （停手后剩下的标签还在，脏内容一个字节都不动）。 */
+  /** 菜单四项的落点。定位项只把路径交给树（不改前台、不开不关，见 tabMenuItems 的顺序说明）；
+   *  三条关闭路径都经 `resolveClose`：脏标签一律复用 M149 的 sticky 确认，不新造确认 UI。
+   *  「关闭其他 / 右侧」是**批量**——交 closeEach 顺序关，用户取消即停手（停手后剩下的标签
+   *  还在，脏内容一个字节都不动）。 */
   function runTabMenuAction(action: TabMenuAction, session: EditorSession): void {
+    if (action === "reveal-in-tree") {
+      // 标签一定有路径（visibleTabsOf 的口径），这条守卫只是把「没有路径的会话」这条路封死——
+      // 定位的对象是磁盘上的一个文件，没有路径就没有可定位的东西。
+      if (session.path !== undefined) revealInTree(session.path);
+      return;
+    }
     if (action === "close") {
       void closeTab(session);
       return;
@@ -498,7 +532,8 @@ export function createTabs(deps: TabsDeps): TabsHandle {
 //   1. 文件范围：本 mission 的改动面不含 src/tree-menu.ts，抽底层要改它的导出面与类内部，
 //      属另一次改动（跨 mission 的重构不该夹在一个功能 change 里）；
 //   2. 差异不在细节而在**项集来源**：树菜单的项集随条目类型分流（文件 / 目录两套，含分隔线
-//      与破坏性项档），标签菜单是三条固定项；菜单渲染、动作派发与作用元素标记都挂在这个差异上，
+//      与破坏性项档），标签菜单是四条固定项（M300 起；此前三条）；菜单渲染、动作派发与作用
+//      元素标记都挂在这个差异上，
 //      能共用的只有「容器 + 定位 + 键盘游标 + 外点关闭」这一层（约 60 行），抽出来的收益小于
 //      两处同时改动带来的回归面（树菜单有它自己的单测与两条元素基线）；
 //   3. **皮肤是共用的**：外观只有一份声明（`src/style.css` 里 `.ft-menu` / `.tab-menu` 的
