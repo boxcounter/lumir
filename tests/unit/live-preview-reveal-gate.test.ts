@@ -150,3 +150,49 @@ test("相接口径：强调范围含端点相接（M168），行级口径严格�
   assert.equal(touchesSource(state(lineFrom), FROM, TO), false);
   assert.equal(touchesSource(state(FROM + 2), FROM, TO), true);
 });
+
+// ---------------------------------------------------------------------------
+// M297：标题行的显露判据（缺陷：光标放在 Headings 行上仍不出现 `#`，Alex 2026-10-01）。
+//
+// 标题的 `#`（HeaderMark）此前是全仓唯一无条件隐藏、没有 reveal 判据的标记。判据落在
+// **整行含端点相接**：行级（与 QuoteMark / HorizontalRule / callout 同族——`#` 是行级
+// 定界符，不是行内范围），但相接取含端点。取含端点的理由在下一组断言里：标题的 `#` 贴
+// 在行首，空光标停在行首（`line.from`）时严格重叠为假，而「把光标移到行首改 `#`」正是
+// 最自然的编辑入口——抄行级严格重叠会恰好漏掉它。带缩进的 ATX 标题（`  # 标题`）的节点
+// 起点在 `#` 上、不在行首，故判据按**行**取范围而不是按节点取。
+// ---------------------------------------------------------------------------
+
+const HEADING_DOC = "导语段落。\n\n# 一级标题\n\n正文甲。\n\n## 二级标题 ##\n";
+const H1_FROM = HEADING_DOC.indexOf("# 一级标题");
+const H1_TO = H1_FROM + "# 一级标题".length;
+const H2_RAW = "## 二级标题 ##";
+const H2_FROM = HEADING_DOC.indexOf(H2_RAW);
+const H2_TO = H2_FROM + H2_RAW.length;
+
+const headingState = (anchor: number, head = anchor): EditorState =>
+  EditorState.create({ doc: HEADING_DOC, selection: EditorSelection.single(anchor, head) });
+
+test("标题行：整行含端点相接——行首、行内、行尾都显露（M297）", () => {
+  for (const [label, pos] of [
+    ["行首", H1_FROM],
+    ["行内", H1_FROM + 2],
+    ["行尾", H1_TO],
+  ] as const) {
+    assert.equal(rangeRevealsSource(headingState(pos), H1_FROM, H1_TO), true, `${label}应显露`);
+  }
+  // 相邻行不外溢：空行末位（标题行前一位）与下一行首位都把该标题留在渲染态。
+  assert.equal(rangeRevealsSource(headingState(H1_FROM - 1), H1_FROM, H1_TO), false, "上一行末位不显露");
+  assert.equal(rangeRevealsSource(headingState(H1_TO + 1), H1_FROM, H1_TO), false, "下一行首位不显露");
+  // 同一文档里未被触及的另一个标题不受影响——判据是行级，不是「文档里有标题就显露」。
+  assert.equal(rangeRevealsSource(headingState(H1_FROM), H2_FROM, H2_TO), false, "另一标题行不显露");
+});
+
+test("区分度对照：行首空光标在严格重叠口径下判不中（标题不能抄行级严格重叠的理由）", () => {
+  assert.equal(
+    touchesSource(headingState(H1_FROM), H1_FROM, H1_TO),
+    false,
+    "严格重叠在空光标落于行首时为假——抄它会把「光标移到行首改 #」漏掉",
+  );
+  // 行内一位严格重叠同样为真：两条口径只在端点位上分开，不是恒真 / 恒假的空断言。
+  assert.equal(touchesSource(headingState(H1_FROM + 2), H1_FROM, H1_TO), true);
+});
