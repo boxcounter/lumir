@@ -102,6 +102,10 @@ async function readings(page: Page) {
       codeLineFontFamily: getComputedStyle(codeLine).fontFamily,
       headingFontFamily: getComputedStyle(heading).fontFamily,
       headingFontWeight: getComputedStyle(heading).fontWeight,
+      // 标题字号（M299）：「阶梯值 ÷ 正文锚 × 内容字号」在非出厂档位的读数——它同时是
+      // `typography-custom-font-20px` / `typography-font-size-24` 两张基线随本 change 更新的
+      // 原因（旧形态标题恒 21px，与配置字号脱钩）。
+      headingFontSize: getComputedStyle(heading).fontSize,
       singleLineHeight: line.getBoundingClientRect().height,
       // shell 侧（MUST NOT 受排版配置影响）
       fileTreeRowFontSize: getComputedStyle(ftRow).fontSize,
@@ -321,10 +325,20 @@ test("配置生效且只作用于编辑器（正文 / 等宽 / 字号各自取�
   expect(after.rootInlineTokens.family).toBe(`"LXGW WenKai", ${BODY_STACK_RAW}`);
   expect(after.rootInlineTokens.mono).toBe(`"JetBrains Mono", ${MONO_BASELINE}`);
 
-  // 非默认口径的**新增**基线（只增不改，待 Alex 过目后才生效；D6）
+  // 标题字号随配置字号同比随动（M299 起；旧形态标题恒 21px、与配置脱钩）——这正是下面两张
+  // 非默认口径基线在 M299 被重新生成的原因，读数与基线互为证据。
+  expect(after.headingFontSize).toBe("28px"); // H1 = 20 × 21 / 15
+
+  // 非默认口径的**新增**基线（只增不改；M299 按 Alex 授权随「标题随动」重新生成）
   await expectScreenshot(customPage, "typography-custom-font-20px.png");
   const bigPage = await context.newPage();
   await open(bigPage, { config: { font_size: 24 } });
+  const at24 = await bigPage.evaluate(() => ({
+    content: getComputedStyle(document.querySelector(".cm-content")!).fontSize,
+    heading: getComputedStyle(document.querySelector(".cm-lp-h1")!).fontSize,
+  }));
+  expect(at24.content).toBe("24px");
+  expect(at24.heading).toBe("33.6px"); // H1 = 24 × 21 / 15
   await expectScreenshot(bigPage, "typography-font-size-24.png");
 });
 
@@ -672,7 +686,8 @@ test("标题六级阶梯：字号 / 字重 / 字距 / 行高 / 块距逐档读�
         paddingBottom: (el as HTMLElement).style.paddingBottom,
       };
     }, row.level);
-    // 字号经 token 取值（calc(1em * var(--fs-hN) / var(--editor-font-size))，出厂锚 15px）
+    // 字号经 token 取值（calc(1em * var(--fs-hN) / var(--fs-body))，出厂锚 15px；分母是固定锚，
+    // 详见 theme.ts 的同名说明与下方「同比随动」场景）
     expect(parseFloat(reading.fontSize), `h${row.level} 字号`).toBeCloseTo(row.size, 1);
     expect(reading.fontWeight, `h${row.level} 字重`).toBe("650");
     // 字距 em 随本级字号换算成 px；h6 不写规则 → 计算值是 normal（与「0」等价，UA 归一形态）
@@ -686,4 +701,44 @@ test("标题六级阶梯：字号 / 字重 / 字距 / 行高 / 块距逐档读�
     expect(reading.fontStyle, `h${row.level} 无 italic`).toBe("normal");
     expect(reading.color, `h${row.level} 不取弱化色`).toBe(bodyColor);
   }
+});
+
+/** 六级标题计算字号的**序列化原文**（如 `21px` / `18.1333px`）。**必须逐级读计算值**——
+ *  spec editor-live-preview 的「字号步进随动」条款要求由计算属性断言钉住，MUST NOT 靠截图
+ *  目测充当判据；断言比对序列化原文（浮点读数会把 `21` 与 `21.0000001` 视作同一结果，
+ *  那是把精度误差留在判据里）。 */
+async function headingFontSizeStrings(page: Page): Promise<string[]> {
+  return page.evaluate(() =>
+    [1, 2, 3, 4, 5, 6].map((n) => getComputedStyle(document.querySelector(`.cm-lp-h${n}`)!).fontSize),
+  );
+}
+
+test("标题六级阶梯随字号步进同比随动（spec editor-live-preview「六级标题 SHALL 按上表同一比值随动」）", async ({ page }) => {
+  await open(page, { text: HEADINGS_DOC });
+  // 出厂锚 15px 下的计算值**逐值精确**等于阶梯绝对值（分母是固定锚时 calc 恰好化简成整数；
+  // 换成按比值手写的 em 之类近似写法会在这里露出小数）
+  const anchor = await headingFontSizeStrings(page);
+  expect(anchor).toEqual(["21px", "18px", "16px", "15px", "14px", "13px"]);
+
+  // 放大一档：内容字号 15 → 17px（`nextFontSize` 的 round(15 × 1.1)），标题必须按
+  // 「标题档 ÷ 正文锚」这同一比值放大——正文变大而标题不动就是本条要钉的脱钩形态。
+  await page.locator(".cm-content").click();
+  await page.keyboard.press("Meta+Equal");
+  await expect.poll(() => contentFontSize(page)).toBe(17);
+  const zoomed = await headingFontSizeStrings(page);
+  const ratio = 17 / BASE_FONT_SIZE;
+  RAMP.forEach((row, index) => {
+    expect(parseFloat(zoomed[index]), `放大到 17px 后 h${row.level} 字号`).toBeCloseTo(row.size * ratio, 2);
+  });
+  // 反向判据（REVIEW.md 第 1 条）：断言必须有区分度——正文确实变了，标题若与锚下逐值相同
+  // 就是「没随动」，这条排除「整批字号都没动」这种退化（M299 修复前正是这个形态：正文 17px、
+  // 六级仍为 21/18/16/15/14/13）。
+  expect(zoomed).not.toEqual(anchor);
+  // h4 与正文同字号（稿 A 的知情代价）在任意字号档都成立：两者同乘一个比值。
+  expect(parseFloat(zoomed[3]), "h4 应始终与正文同字号").toBeCloseTo(17, 2);
+
+  // 缩回锚档（⌘0 回到配置值 = 出厂 15px）：逐值落回阶梯绝对值
+  await page.keyboard.press("Meta+Digit0");
+  await expect.poll(() => contentFontSize(page)).toBe(BASE_FONT_SIZE);
+  expect(await headingFontSizeStrings(page)).toEqual(anchor);
 });

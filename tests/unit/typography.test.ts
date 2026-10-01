@@ -7,6 +7,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import {
   DEFAULT_FONT_SIZE,
   FONT_SIZE_MAX,
@@ -155,4 +156,41 @@ test("applyTypography 计划：空串 / 纯空白归一为「沿用基线」，�
 test("applyTypography 计划：字号越界时钳进区间（配置面的区间校验在 Rust 侧）", () => {
   assert.equal(planTypography(settings({ fontSize: 100 }), BASELINES, acceptAll).fontSize, FONT_SIZE_MAX);
   assert.equal(planTypography(settings({ fontSize: 2 }), BASELINES, acceptAll).fontSize, FONT_SIZE_MIN);
+});
+
+// ---------------------------------------------------------------------------
+// 标题阶梯公式的分母（M299，Alex 2026-10-01 报告：⌘= 放大后普通文本字号大过标题）
+// ---------------------------------------------------------------------------
+
+/** 六条标题规则的字号表达式（从源码文本取）。`EditorView.theme(spec)` 只把 spec 包进
+ *  StyleModule、不回传可读的规则表（`node_modules/@codemirror/view/dist/index.js` 的
+ *  `static theme`），本层因此按 `doc-title-placement.test.ts` 的口径断言在**源码**上。
+ *  **行为面的判据不在这里**：计算字号由 `tests/visual/scenes/typography.spec.ts` 的
+ *  「标题六级阶梯随字号步进同比随动」逐级读（chromium 层，CI 照跑）；本条是
+ *  `gate.sh quick` 里的快速防线——回归发生时不等到视觉门禁就当场红。 */
+function headingFontSizeExpressions(): Map<number, string> {
+  const source = readFileSync(new URL("../../src/preview/theme.ts", import.meta.url), "utf8");
+  const found = new Map<number, string>();
+  for (const match of source.matchAll(/"\.cm-lp-h([1-6])": \{ fontSize: "([^"]+)"/g)) {
+    found.set(Number(match[1]), match[2]);
+  }
+  return found;
+}
+
+test("标题阶梯公式的分母是固定锚，不是与 1em 同值的活值（M299 的缺陷形态不得回归）", () => {
+  const expressions = headingFontSizeExpressions();
+  assert.equal(expressions.size, 6, "六级标题规则都应能被解析到（源码形态变了要同步这条）");
+  for (const [level, expression] of expressions) {
+    // 阶梯值仍经 token 取值（渲染层不写字面值，spec editor-live-preview 的字号条款）
+    assert.ok(expression.includes(`var(--fs-h${level})`), `h${level} 的字号应经 --fs-h${level} 取值：${expression}`);
+    // 分母 MUST NOT 取 `--editor-font-size`：`1em` 量的是父级 `.cm-content` 的字号，而它就是
+    // 这个 token 的活值，约分后 calc 化简成常量 ⇒ 标题恒为绝对 px、字号步进只放大正文
+    //（M299 实测：内容 15→17px 时六级仍是 21/18/16/15/14/13）。
+    assert.equal(
+      expression.includes("var(--editor-font-size)"),
+      false,
+      `h${level} 的字号分母不得引用活值 --editor-font-size（自我约掉，标题不随缩放）：${expression}`,
+    );
+    assert.ok(expression.includes("/ var(--fs-body))"), `h${level} 的字号分母应是固定的阶梯锚 --fs-body：${expression}`);
+  }
 });
