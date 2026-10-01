@@ -102,6 +102,10 @@ async function readings(page: Page) {
       codeLineFontFamily: getComputedStyle(codeLine).fontFamily,
       headingFontFamily: getComputedStyle(heading).fontFamily,
       headingFontWeight: getComputedStyle(heading).fontWeight,
+      // 标题字号（M299）：「阶梯值 ÷ 正文锚 × 内容字号」在非出厂档位的读数——它同时是
+      // `typography-custom-font-20px` / `typography-font-size-24` 两张基线随本 change 更新的
+      // 原因（旧形态标题恒 21px，与配置字号脱钩）。
+      headingFontSize: getComputedStyle(heading).fontSize,
       singleLineHeight: line.getBoundingClientRect().height,
       // shell 侧（MUST NOT 受排版配置影响）
       fileTreeRowFontSize: getComputedStyle(ftRow).fontSize,
@@ -321,10 +325,20 @@ test("配置生效且只作用于编辑器（正文 / 等宽 / 字号各自取�
   expect(after.rootInlineTokens.family).toBe(`"LXGW WenKai", ${BODY_STACK_RAW}`);
   expect(after.rootInlineTokens.mono).toBe(`"JetBrains Mono", ${MONO_BASELINE}`);
 
-  // 非默认口径的**新增**基线（只增不改，待 Alex 过目后才生效；D6）
+  // 标题字号随配置字号同比随动（M299 起；旧形态标题恒 21px、与配置脱钩）——这正是下面两张
+  // 非默认口径基线在 M299 被重新生成的原因，读数与基线互为证据。
+  expect(after.headingFontSize).toBe("28px"); // H1 = 20 × 21 / 15
+
+  // 非默认口径的**新增**基线（只增不改；M299 按 Alex 授权随「标题随动」重新生成）
   await expectScreenshot(customPage, "typography-custom-font-20px.png");
   const bigPage = await context.newPage();
   await open(bigPage, { config: { font_size: 24 } });
+  const at24 = await bigPage.evaluate(() => ({
+    content: getComputedStyle(document.querySelector(".cm-content")!).fontSize,
+    heading: getComputedStyle(document.querySelector(".cm-lp-h1")!).fontSize,
+  }));
+  expect(at24.content).toBe("24px");
+  expect(at24.heading).toBe("33.6px"); // H1 = 24 × 21 / 15
   await expectScreenshot(bigPage, "typography-font-size-24.png");
 });
 
