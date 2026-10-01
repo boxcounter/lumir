@@ -1152,17 +1152,28 @@ function collectSyntaxDecorations(
         decos.push(
           Decoration.line({ class: `cm-lp-h${level}`, attributes: { style: `padding-top:${top}px;padding-bottom:${bottom}px` } }).range(headingLine.from),
         );
-        // 隐藏开头与结尾的 # 标记串（连同相邻一个空格）。
-        const cursor = ref.node.cursor();
-        if (cursor.firstChild()) {
-          const marks: { from: number; to: number }[] = [];
-          do {
-            if (cursor.name === "HeaderMark") marks.push({ from: cursor.from, to: cursor.to });
-          } while (cursor.nextSibling());
-          marks.forEach((m, i) => {
-            // 首个标记吃掉后面的空格，其余（结尾标记）吃掉前面的空格。
-            hideMark(view, m.from, m.to, decos, i === 0, i !== 0);
-          });
+        // 隐藏开头与结尾的 # 标记串（连同相邻一个空格）——但光标/选区触及该标题行时
+        // 显露原文（M297 缺陷修复：此前无条件隐藏，是本仓唯一没有 reveal 判据的隐藏标记，
+        // 光标落在标题行上仍看不到 `#`、进不了编辑态，Alex 2026-10-01 实测）。
+        // 判据取**整行含端点相接**（`rangeRevealsSource` 施加在 headingLine 上）：行级口径
+        // 与 QuoteMark（:1224）/ HorizontalRule（:1232）/ callout 首行同族——标题的定界符是
+        // 行级概念，不是行内范围；含端点则覆盖行首那一位，严格重叠在空光标落于 `line.from`
+        // 时为假，而「把光标移到行首改 `#`」正是最自然的编辑入口。取行范围而非节点范围还
+        // 照顾带缩进的 ATX 标题（`  # 标题` 的节点起点在 `#` 上、不在行首）。
+        // 只 gate 标记隐藏：标题的字号 / 字重 / 字距等层级样式在显露态照常保留（编辑时仍
+        // 看得出这是几级标题）——与「强调范围显露时撤下样式」的差别在于标题的样式不遮蔽字符。
+        if (!revealRangeSource(headingLine.from, headingLine.to)) {
+          const cursor = ref.node.cursor();
+          if (cursor.firstChild()) {
+            const marks: { from: number; to: number }[] = [];
+            do {
+              if (cursor.name === "HeaderMark") marks.push({ from: cursor.from, to: cursor.to });
+            } while (cursor.nextSibling());
+            marks.forEach((m, i) => {
+              // 首个标记吃掉后面的空格，其余（结尾标记）吃掉前面的空格。
+              hideMark(view, m.from, m.to, decos, i === 0, i !== 0);
+            });
+          }
         }
         return;
       }
