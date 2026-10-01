@@ -608,6 +608,75 @@
 
 ## 待修 findings（不阻塞）
 
+### 整页基线捕获的是「首帧 chrome 态」，0.001 容差长期吞掉真实漂移（M297 现场发现，2026-10-01，medium）
+
+**症状**：M297 动标题显露后 4 张整页基线报红；逐像素拆段发现 diff 有三段——标题行（本次改动，
+约 500-600px）、顶部标签栏（tab 名称斜体变正体）、底部 modeline（语言 chip「zh」从无到有）。
+后两段与本次改动**无关**：DOM 探针证明基线态与当前态在同一构建上都能复现，基线文件里存的是
+**首帧**（tab 未 settle / `applyLanguage` 的语言 chip 还没出现）。base 上这两段 diff 约
+840-990px，恰好贴着全局容差 960px（0.001×1200×800）之内，所以整页对比一直绿；本次改动叠上
+标题行那约 500px 才把它们顶出容差。
+
+**影响**：这几张基线对 chrome 段的判别力当前是 0；任何在其上新增 ≥(960 − 既有漂移) 像素真实
+变化的改动都会撞红，且会被误判成「改动引入的回归」（M297 绕了一轮才定位）。与上面 M281 登记
+的「整页基线在标签栏/标题栏文字行已陈旧」是同族不同段（M281 那条是 y15..27 的 40-420px，
+本条是 tab 斜体 + modeline chip 两段 840-990px）。
+
+**建议处置**：两步一起——(1) 短期：把这些整页基线统一重刷到「settle 后」的同一帧（按场景逐个
+跑、逐个过目）；(2) 结构性：给视觉 harness 的截图入口加一条「chrome 就绪」门（等 `applyLanguage`
+落地或断言 `.modeline-language` 可见后再拍），否则首帧捕获随加载时序漂移、每次都被容差吞掉。
+容差本身不建议在这条里调。
+
+证据：`.tower/comms/findings/20261001-worker-heading-reveal-m297-bug-chrome-0-001-960px.md`。
+
+### m132-emacs-keys 的 ⌃V/⌥V 翻屏在全量负载下 flake（scrollTop 读到 8 而非 0，poll 5s 超时；M288/M298/M299 三次实证，2026-10-01，medium）
+
+**症状**：`tests/visual/scenes/m132-emacs-keys.spec.ts:241` 的
+`expect.poll(scroller.scrollTop).toBe(0)`（⌥V 翻回顶部）在 `gate.sh visual` 全量跑时偶发判红，
+失败读数恒为 Expected 0 / Received 8；单跑该条或该 spec（14/14）必绿。三次现场：09-28 wt-288
+（M288 修前构建上同断言同读数）、10-01 M298（tip 0d3b13d，589 passed / 1 failed）、10-01
+M299（同断言同读数，连续三次）。与任何产品改动无因果（该场景文档 `LONG_DOC` 无任何标题，
+M299 只改标题 fontSize；M298 只碰 CSS hover 层）。
+
+**载荷假说（未坐实）**：失败只出现在全量跑，且同时段常有其他 worktree 在跑自己的全量套件；
+CPU 争用下 CM 滚动/测量循环变慢，5s poll 预算不够。失败时的页面快照显示编辑器正常、光标在
+首行——行为大概率对、超时预算被吃掉。**这是假红**，会把无关 mission 的本地门禁染红，每次代价
+是整轮 8 分钟重跑 + 二分定位。CI `visual.yml` 只跑结构断言，本条只在本地暴露。
+
+**建议处置**：给这条 poll 一个与「界面真静止」同源的判据而非固定 5000ms——或把预算提到覆盖
+全量负载的档（如 15000ms），或 poll 前先等一次滚动收敛。两个 finding 给的两个具体方向：
+(a) 判据放宽到「落在一屏内容差」+ 保留「光标没动」的严格断言承担区分度；(b) 保留严格判据、
+提预算、失败时报读数。**不建议**把期望放宽成「接近 0」吞掉回归（REVIEW.md 第 3 条同族），也
+不建议改真机语义——判别层在真机套件，改口径前先确认全量负载下 8px 的来源（滚动条 gutter /
+平滑滚动残余步进两种候选）。同时评估其余固定短 timeout 的 poll 是否同病。
+
+与既有条目 `docs/backlog.md`「记录在案」段的 m132 scrollLeft 条目不是同一条（那条是
+`scrollLeft + clientWidth >= scrollWidth - 1` 判定必误红）。
+
+证据：`.tower/comms/findings/20261001-worker-zoom-heading-m299-bug-m132-v-v-v-scrolltop-8px-poll-5s.md`、
+`.tower/comms/findings/20261001-worker-block-hover-m298-bug-m132-emacs-keys-v-v-flake-scrolltop-8-0.md`。
+
+### `.tab-menu-item` 选择器是死代码，且有门禁断言在验这条无效果规则的原文（M300 现场发现，2026-10-01，low）
+
+**症状**：`src/style.css` 为「两处菜单共用皮肤」写了 `.ft-menu-item, .tab-menu-item` 选择器对，
+但标签菜单的项元素只带 `ft-menu-item` 类（`src/tabs.ts` 的 `TabContextMenu.render()` 里
+`el.className = "ft-menu-item"`），全仓没有任何元素带 `tab-menu-item` 类——四处
+（style.css:1979/1992/1998/2016）的那一半永远不匹配（REVIEW.md 第 9 条同族）。更值得记的：
+`tests/visual/scenes/tab-menu.spec.ts:356-360` 的 eink 用例断言的是规则**原文**里同时出现
+`.tab-menu-item.is-active` 与 `.ft-menu-item.is-active`（子串断言），对「共用皮肤真的生效」零
+区分度（REVIEW.md 第 1 条同族）；同文件里两条 `toHaveCSS` 才是带效果的断言。
+
+**影响**：无用户可见症状。风险在维护：改皮肤的人按 `.tab-menu-item` 改完发现不生效，或新增第三
+处菜单时把类名写成 `tab-menu-item` 而丢掉皮肤。
+
+**建议处置（二选一，一次做完）**：(1) 推荐——删掉四处死选择器半边，只留 `.ft-menu-item*`，把
+tab-menu.spec.ts 的原文断言改为断言 `.ft-menu-item.is-active` 生效，并在 `src/tabs.ts` render()
+处补一句「项元素沿用 ft-menu-item 共用类名，MUST NOT 另起 tab-menu-item」；(2) 给标签菜单项
+加 `tab-menu-item` 类并对齐选择器。归属建议：一次小的 UI 皮肤卫生 mission，不动行为、基线应零
+变化（若基线有变化，说明死选择器其实在生效，要重判）。
+
+证据：`.tower/comms/findings/20261001-worker-tab-reveal-m300-bug-src-style-css-tab-menu-item.md`。
+
 ### 增量建图：暂缓（M283 登记，2026-09-28）
 
 **结论**：`build_graph` 的持久化缓存（mtime/size 比对，只重读变更文件）**本阶段不做**。
