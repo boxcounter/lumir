@@ -32,14 +32,14 @@ type CmView = {
   contentDOM: HTMLElement;
 };
 
-async function openDoc(page: Page): Promise<void> {
+async function openDoc(page: Page, options: { theme?: "light" | "dark" | "eink" } = {}): Promise<void> {
   await stubTauri(page, {
     entries: [
       { path: DOC, kind: "file", size: SOURCE.length, mtime_ms: 0 },
       { path: "assets/sample.svg", kind: "file", size: SVG.length, mtime_ms: 0 },
     ],
     files: { [DOC]: SOURCE, "assets/sample.svg": SVG },
-    config: { keys: { [TRIGGER_KEY]: "table.toggle-fullscreen" } },
+    config: { keys: { [TRIGGER_KEY]: "table.toggle-fullscreen" }, theme: options.theme ?? "light" },
   });
   await page.goto("/");
   await page.locator(`.ft-row[title="${DOC}"]`).click();
@@ -182,6 +182,47 @@ test("5.1b 触发钮：hover 才出现（静止态不可见、不占位），点
   const reading = await overlayReading(page);
   expect(reading.visible).toBe(true);
   expect(reading.label).toBe("Markdown 表格 1");
+});
+
+test("M298 触发钮自身 hover：dark 档下钮被指到时叠一层 --hover（只在块上时没有）", async ({ page }) => {
+  // Alex 2026-10-01：钮此前只有「出现时机」随块走，自己没有被指到的反馈。判据两条——指针只在块上
+  // （钮刚浮现）时没有那一层；指针落到钮上时在不透底的壳上叠出 `--hover`。深色档的 `--hover` 是
+  // 半透明白（与浅色档反向），单独跑一档免得只在浅色下验过。
+  await openDoc(page, { theme: "dark" });
+  const paint = () =>
+    trigger(page).evaluate((el) => {
+      const probe = (name: string) => {
+        const d = document.createElement("div");
+        d.style.background = `var(${name})`;
+        document.body.appendChild(d);
+        const out = getComputedStyle(d).backgroundColor;
+        d.remove();
+        return out;
+      };
+      const cs = getComputedStyle(el);
+      return {
+        image: cs.backgroundImage,
+        bg: cs.backgroundColor,
+        color: cs.color,
+        previewBg: probe("--preview-bg"),
+        hover: probe("--hover"),
+        text: probe("--text"),
+      };
+    });
+
+  await page.mouse.move(0, 0);
+  await page.hover(".cm-lp-table-slot");
+  await expect.poll(() => paint().then((r) => r.image)).toBe("none");
+  const onBlock = await paint();
+  expect(onBlock.bg, "壳 = --preview-bg（不透底）").toBe(onBlock.previewBg);
+  expect(onBlock.color, "块上的 hover 已把图标提到 --text").toBe(onBlock.text);
+
+  await page.hover(".lumir-table-fs-trigger");
+  await expect.poll(() => paint().then((r) => r.image)).toContain("linear-gradient");
+  const onButton = await paint();
+  expect(onButton.bg, "反馈只是叠的一层：壳的底色逐值不变（不透底）").toBe(onBlock.bg);
+  expect(onButton.color, "反馈层不动前景").toBe(onBlock.color);
+  expect(onButton.image.replace(/\s+/g, ""), "叠的是 --hover 那一档，不是字面值").toContain(onButton.hover.replace(/\s+/g, ""));
 });
 
 test("5.6 宽表在遮罩内横向可滚；窄表不出现滚动条", async ({ page }) => {

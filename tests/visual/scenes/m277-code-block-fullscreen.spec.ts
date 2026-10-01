@@ -53,7 +53,7 @@ const fsTrigger = (page: Page) => page.locator(".lumir-codeblock-fs-trigger").fi
 
 async function openDoc(
   page: Page,
-  options: { codeBlockWrap?: boolean; code?: string; slots?: number } = {},
+  options: { codeBlockWrap?: boolean; code?: string; slots?: number; theme?: "light" | "dark" | "eink" } = {},
 ): Promise<void> {
   await stubTauri(page, {
     entries: [
@@ -61,7 +61,11 @@ async function openDoc(
       { path: "notes.txt", kind: "file", size: 12, mtime_ms: 0 },
     ],
     files: { [DOC]: options.code ?? SOURCE, "notes.txt": "plain text\n" },
-    config: { keys: { [TRIGGER_KEY]: "code-block.toggle-fullscreen" }, code_block_wrap: options.codeBlockWrap ?? false },
+    config: {
+      keys: { [TRIGGER_KEY]: "code-block.toggle-fullscreen" },
+      code_block_wrap: options.codeBlockWrap ?? false,
+      theme: options.theme ?? "light",
+    },
   });
   await page.goto("/");
   await page.locator(`.ft-row[title="${DOC}"]`).click();
@@ -347,6 +351,48 @@ test("5.5 折行两口径：不折行时浮层横向可滚，折行时不出现�
   expect(await page.locator(".cm-lp-codeblock-scroll").count()).toBe(0);
   // 折行口径下触发钮仍在（slot 层无条件存在，这是本 change 的一条不变量）。
   expect(await page.locator(".lumir-codeblock-fs-trigger").count()).toBe(3);
+});
+
+test("M298 触发钮自身 hover：eink 档在 --sel 明度带之上再叠一层 --hover", async ({ page }) => {
+  // Alex 2026-10-01：钮此前只有「出现时机」随块走，自己没有被指到的反馈。eink 是这套层叠最脆的
+  // 一档：热态底色由 `:root[data-theme="eink"] …:hover .lumir-block-trigger` 用 `background` 简写
+  // 给出（简写会把 background-image 一并复位），所以反馈层那条规则必须带上 slot 前缀抬特异性——
+  // 前缀写漏时这里会红，而不是静默少一层（M298 的负对照实测过：裸选择器下这一层不生效）。
+  await openDoc(page, { theme: "eink" });
+  const paint = () =>
+    fsTrigger(page).evaluate((el) => {
+      const probe = (name: string) => {
+        const d = document.createElement("div");
+        d.style.background = `var(${name})`;
+        document.body.appendChild(d);
+        const out = getComputedStyle(d).backgroundColor;
+        d.remove();
+        return out;
+      };
+      const cs = getComputedStyle(el);
+      return {
+        image: cs.backgroundImage,
+        bg: cs.backgroundColor,
+        color: cs.color,
+        sel: probe("--sel"),
+        selText: probe("--sel-text"),
+        hover: probe("--hover"),
+      };
+    });
+
+  await page.mouse.move(0, 0);
+  await page.hover(".cm-lp-codeblock-slot");
+  await expect.poll(() => paint().then((r) => r.image)).toBe("none");
+  const onBlock = await paint();
+  expect(onBlock.bg, "eink 热态底色 = --sel（明度带）").toBe(onBlock.sel);
+  expect(onBlock.color, "eink 热态前景 = --sel-text").toBe(onBlock.selText);
+
+  await page.hover(".lumir-codeblock-fs-trigger");
+  await expect.poll(() => paint().then((r) => r.image)).toContain("linear-gradient");
+  const onButton = await paint();
+  expect(onButton.bg, "反馈层不换底色：仍是 --sel 明度带").toBe(onBlock.sel);
+  expect(onButton.color, "反馈层不换前景：仍是 --sel-text").toBe(onBlock.selText);
+  expect(onButton.image.replace(/\s+/g, ""), "叠的是 --hover 那一档").toContain(onButton.hover.replace(/\s+/g, ""));
 });
 
 test("5.6 内容上界：超限块以单块纯文本呈现整块源码，节点数有界", async ({ page }) => {
