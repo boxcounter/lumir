@@ -686,7 +686,8 @@ test("标题六级阶梯：字号 / 字重 / 字距 / 行高 / 块距逐档读�
         paddingBottom: (el as HTMLElement).style.paddingBottom,
       };
     }, row.level);
-    // 字号经 token 取值（calc(1em * var(--fs-hN) / var(--editor-font-size))，出厂锚 15px）
+    // 字号经 token 取值（calc(1em * var(--fs-hN) / var(--fs-body))，出厂锚 15px；分母是固定锚，
+    // 详见 theme.ts 的同名说明与下方「同比随动」场景）
     expect(parseFloat(reading.fontSize), `h${row.level} 字号`).toBeCloseTo(row.size, 1);
     expect(reading.fontWeight, `h${row.level} 字重`).toBe("650");
     // 字距 em 随本级字号换算成 px；h6 不写规则 → 计算值是 normal（与「0」等价，UA 归一形态）
