@@ -40,8 +40,23 @@
 
 ## 5. 验证
 
-- [ ] 5.1 `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` 通过
-- [ ] 5.2 `scripts/gate.sh quick` 全绿
-- [ ] 5.3 `scripts/gate.sh visual` 全绿（tab-menu 两张元素基线已随菜单增项更新，更新后的截图在
-      完成报告里逐张列出供 Alex 过目）
-- [ ] 5.4 `node scripts/acceptance/run.mjs --check` 通过场景 69 的静态校验（真机跑批由 tower 排期）
+- [x] 5.1 `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` 通过（`✓ change/tab-reveal-in-tree`，总计 20 passed / 0 failed）
+- [x] 5.2 `scripts/gate.sh quick` 全绿（`GATE RESULT: 10/10 PASS`）
+- [x] 5.3 `scripts/gate.sh visual` 全绿（`GATE RESULT: 12/12 PASS`，其中 visual-regression 480s：
+      588 passed / 1 skipped / 0 failed，含两张已更新的 tab-menu 元素基线）
+- [x] 5.4 `node scripts/acceptance/run.mjs --check` 通过（71 个场景静态校验，含新的 69）
+- [ ] 5.5 场景 69 的真机执行（`node scripts/acceptance/run.mjs 69`）：由 tower 排期——同一时刻机上有
+      别的 worktree 在跑视觉套件，真机套件会起第二个 Lumir 实例并抢前台，按 REVIEW.md 第 11 条
+      （第二实例显著加剧键盘丢键）与 README 的前台纪律，本 mission 不并发跑它
+
+## 6. 基线更新清单（人肉裁决点，供 Alex 过目）
+
+本 change 只动了**两张**元素级基线，两张都已按新形态重新生成：
+
+| 基线 | 变化 | 路径 |
+|---|---|---|
+| `tab-menu.png` | 167×88 → 167×116（菜单多一项）；打开态的游标由 `Close` 移到首项「在左栏中定位到此文件」 | `tests/visual/baselines/tab-menu.spec.ts-snapshots/tab-menu-chromium-darwin.png` |
+| `tab-menu-close-right-active.png` | 167×88 → 167×116；游标落在末项 `Close Tabs to the Right`（键盘 ↓×3） | `tests/visual/baselines/tab-menu.spec.ts-snapshots/tab-menu-close-right-active-chromium-darwin.png` |
+
+更新前后的对照副本（git 外）：`test-results/m300-baseline/before/` 与 `.../after/`（各两张）。
+**其余基线零变化**（整页 / 元素全套 588 条照绿）。
