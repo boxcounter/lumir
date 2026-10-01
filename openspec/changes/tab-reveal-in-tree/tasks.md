@@ -51,12 +51,24 @@
 
 ## 6. 基线更新清单（人肉裁决点，供 Alex 过目）
 
-本 change 只动了**两张**元素级基线，两张都已按新形态重新生成：
+本 change 只动了**两张**元素级基线，且各更新过**两轮**（均在 Alex 之前报备，第二轮由 Alex 的裁决
+直接引发）：
 
-| 基线 | 变化 | 路径 |
-|---|---|---|
-| `tab-menu.png` | 167×88 → 167×116（菜单多一项）；打开态的游标由 `Close` 移到首项「在左栏中定位到此文件」 | `tests/visual/baselines/tab-menu.spec.ts-snapshots/tab-menu-chromium-darwin.png` |
-| `tab-menu-close-right-active.png` | 167×88 → 167×116；游标落在末项 `Close Tabs to the Right`（键盘 ↓×3） | `tests/visual/baselines/tab-menu.spec.ts-snapshots/tab-menu-close-right-active-chromium-darwin.png` |
+| 基线 | 第一轮（M300 初版：菜单多一项） | 第二轮（D322 上屏列锁定 en 之后） | 路径 |
+|---|---|---|---|
+| `tab-menu.png` | 167×88 → 167×116，游标移到新的首项 | 167×116 → **167×114**（英文文案比中文短） | `tests/visual/baselines/tab-menu.spec.ts-snapshots/tab-menu-chromium-darwin.png` |
+| `tab-menu-close-right-active.png` | 167×88 → 167×116，游标在末项 | 167×116 → **167×114** | `tests/visual/baselines/tab-menu.spec.ts-snapshots/tab-menu-close-right-active-chromium-darwin.png` |
 
-更新前后的对照副本（git 外）：`test-results/m300-baseline/before/` 与 `.../after/`（各两张）。
-**其余基线零变化**（整页 / 元素全套 588 条照绿）。
+对照副本（git 外）：`test-results/m300-baseline/before`+`after`（第一轮）与
+`test-results/m300-baseline/r1-locked-before`+`r2-locked-after`（第二轮）。**其余基线零变化**
+（整页 / 元素全套照绿）。
+
+## 7. 裁决后的收口（Alex 2026-10-01，复审前的两处裁决）
+
+- **裁决 1（树的高亮跟随被定位行）**：维持现状实现与 `multi-tabs`「文件树联动与空态」的例外条款，
+  零改动。
+- **裁决 2（菜单内语言统一到英文）**：D322 加 `lock: "en"`，上屏文案 `Reveal in File Tree`（中文列
+  保留 Alex 原话作沿革备查）。连带改动：`src/copy-data.ts` / `文案-Copy.md`（标 `【上屏列锁定 en】`）/
+  `src/tabs.ts` 的常量注释 / `tests/unit/tab-menu.test.ts` 的两处断言 / `tests/visual/scenes/tab-menu.spec.ts`
+  的标签与点击目标 / 两张元素基线 / 场景 69 的四条 matcher 与边界说明 / 本 change 的 proposal 与
+  multi-tabs delta 的措辞。判据：单测里「zh 界面下四项都取 English 列」这条断言即锁列判据。

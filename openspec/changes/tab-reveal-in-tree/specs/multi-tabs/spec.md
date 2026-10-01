@@ -12,9 +12,11 @@
 ### Requirement: 标签的关闭操作
 
 标签栏 SHALL 为每个标签提供右键菜单（`role=menu` 浮层，读屏名 D148），四项按固定顺序：
-**在左栏中定位到此文件 / Close / Close Other Tabs / Close Tabs to the Right**。三条关闭项的
-**上屏文案取英文原文**（M257 裁决「上屏」；原中文措辞留在 `文案-Copy.md` 备查。读屏名 D148「标签操作」
-不随本裁决改语言）。新增的定位项（文案 D322）是**普通双语条目**——上屏文案随界面语言取值，不锁定列。
+**Reveal in File Tree / Close / Close Other Tabs / Close Tabs to the Right**。四项的
+**上屏文案 SHALL 一律取英文原文、不随界面语言变**：三条关闭项是 M257 裁决（原中文措辞留在
+`文案-Copy.md` 备查），定位项是 Alex 2026-10-01 的裁决「菜单内语言统一」（其需求原话
+「在左栏中定位到此文件」留在中文列作沿革备查）——`zh` 界面下整条菜单因此都是英文
+（MUST NOT 回落中文列）。读屏名 D148「标签操作」不随这两条裁决改语言。
 
 **定位项 SHALL 排在首位**：标签菜单没有分隔线（本 change 不引入分隔线），顺序因此是唯一的分组表达
 方式——非破坏性项在前、三条关闭路径仍是尾部连续的一块，与文件树条目菜单「非破坏性项在破坏性项之前」
@@ -44,12 +46,13 @@ Right）SHALL 逐个提交关闭：同一时刻 MUST NOT 出现两条确认浮�
 #### Scenario: 右键标签弹出菜单且不改上下文
 
 - **WHEN** 标签栏里有三个标签、前台是第二个，右键第一个标签
-- **THEN** 菜单出现，含「在左栏中定位到此文件 / Close / Close Other Tabs / Close Tabs to the Right」
+- **THEN** 菜单出现，含「Reveal in File Tree / Close / Close Other Tabs / Close Tabs to the Right」
   四项且顺序如上；前台仍是第二个标签（右键不改上下文），标签总数不变
 
 #### Scenario: 定位项把标签的文件在左栏里显现出来
 
-- **WHEN** 前台是标签 A，标签 B 指向 `a/b/c.md`（树里 `a`、`b` 折叠），右键 B 并选「在左栏中定位到此文件」
+- **WHEN** 前台是标签 A，标签 B 指向 `a/b/c.md`（树里 `a`、`b` 折叠），右键 B 并选 Reveal in File Tree
+  定位项
 - **THEN** 树展开 `a`、`b` 并列出 `a/b/c.md`，该行滚进可视区且成为当前行；前台仍是 A，标签总数不变
 
 #### Scenario: 关闭右键那一个标签
@@ -87,9 +90,10 @@ Right）SHALL 逐个提交关闭：同一时刻 MUST NOT 出现两条确认浮�
 文件树的高亮 SHALL 跟随**当前标签**的文件；没有打开任何文件（包括关掉最后一个标签）时 SHALL 清空
 高亮，masthead 的文件名 SHALL 显示「无当前文件」。
 
-**定位请求是这条规则的一个显式例外**：收到「在左栏中定位到此文件」（`file-tree`「在树中定位路径」）
-时，高亮 SHALL 改为跟随**被定位的那一行**——用户此刻点名要看的是那个文件，留着他刚才的标签高亮会让
-「滚到哪儿去了」失去落点。这条例外 SHALL 在下一次前台文档变化时结束：`syncActiveDocument` 那一拍把
+**定位请求是这条规则的一个显式例外**（Alex 2026-10-01 裁决维持）：收到「在树中定位路径」
+（`file-tree` 的同名 requirement；入口是标签菜单的 Reveal in File Tree）时，高亮 SHALL 改为跟随
+**被定位的那一行**——用户此刻点名要看的是那个文件，留着他刚才的标签高亮会让「滚到哪儿去了」失去
+落点。这条例外 SHALL 在下一次前台文档变化时结束：`syncActiveDocument` 那一拍把
 当前行按当前标签重写（其实现见 `src/main.ts`，本 capability 只要求那条重写存在且生效）。
 
 #### Scenario: 切换标签时树高亮跟随

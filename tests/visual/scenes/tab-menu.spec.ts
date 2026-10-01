@@ -13,7 +13,8 @@ import { fileText, stubTauri, type VaultFixture } from "./tauri-stub";
 //   3. 一条最容易写错的时序：脏标签选「保存并关闭」时，动作钮的点击 MUST NOT 冒到浮条本体的
 //      「点掉即关」监听上——否则批量关闭会在保存落地之前就停手（后面的标签不被关掉，用户看到的
 //      是「我选了保存并关闭，可是后面那些没关」）。这一条只能在真实事件冒泡路径上验，见最后一个用例。
-//   4. M300 的定位项（「在左栏中定位到此文件」）：它唯一的几何判据是「目标行完整落在左栏可视区」
+//   4. M300 的定位项（需求原话「在左栏中定位到此文件」；上屏 `Reveal in File Tree`，D322 上屏列
+//      锁定 en）：它唯一的几何判据是「目标行完整落在左栏可视区」
 //      ——真机套件没有滚动通道（scripts/acceptance/README.md 的「没有滚动动作」条），这条只能在
 //      chromium 层量；用例见本文件末尾。
 //
@@ -104,14 +105,14 @@ test("右键标签：四项菜单在场、不改上下文、Esc 收起并归还�
   await expect(menu).toHaveAttribute("role", "menu");
   await expect(menu).toHaveAttribute("aria-label", "标签操作");
   expect(await page.locator(".tab-menu .ft-menu-item").allTextContents()).toEqual([
-    "在左栏中定位到此文件",
+    "Reveal in File Tree",
     "Close",
     "Close Other Tabs",
     "Close Tabs to the Right",
   ]);
   // 打开即持焦点，游标落在首项（键盘路径不用先按一次 ↓）——M300 起首项是定位项
   await expect(menu).toBeFocused();
-  await expect(page.locator(".tab-menu .ft-menu-item.is-active")).toHaveText("在左栏中定位到此文件");
+  await expect(page.locator(".tab-menu .ft-menu-item.is-active")).toHaveText("Reveal in File Tree");
   await expect(menu).toHaveAttribute("aria-activedescendant", "tab-menu-item-0");
   // 只有语义类 `.tab-menu`：皮肤是 style.css 里 `.ft-menu, .tab-menu` 那一对选择器给出的，
   // 带上 `ft-menu` 会让两份菜单同时命中 `.ft-menu`（树菜单的断言因此变成 strict violation）。
@@ -447,7 +448,8 @@ test("M300 定位项：展开祖先、目标行滚进左栏可视区并成为当
   expect(offscreen.ok, `反向对照（应判 false）：${offscreen.detail}`).toBe(false);
 
   await openTabMenu(page, "target.md");
-  await menuItem(page, "在左栏中定位到此文件").click();
+  // 上屏文案是英文（D322 上屏列锁定 en，Alex 2026-10-01 裁决：菜单内语言统一）
+  await menuItem(page, "Reveal in File Tree").click();
 
   // 祖先逐级展开：两级目录行都在场，目标行在场
   await expect(page.locator('.ft-row[title="d-40/deep"]')).toHaveCount(1);

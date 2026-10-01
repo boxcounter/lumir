@@ -199,11 +199,12 @@ const flush = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 
 
 test("项集：四项、顺序固定、文案逐字（deck D322 + D148–D151）", () => {
   assert.equal(TAB_MENU_LABEL(), "标签操作");
-  // 定位项在首位（M300）：单测环境的界面语言钉在 zh，因此它是中文列；三条关闭项是上屏列
-  // 锁定条目（M257 裁决），无论界面语言都取 English 列。
-  assert.equal(TAB_MENU_REVEAL(), "在左栏中定位到此文件");
+  // 四项都是**上屏列锁定 en** 的条目（M257 裁决的三条关闭项 + Alex 2026-10-01 裁决的定位项）：
+  // 单测环境的界面语言钉在 zh，而这里四条取到的都是 English 列——这一条断言就是锁列的判据
+  //（中文列只作沿革备查，「在左栏中定位到此文件」MUST NOT 上屏）。
+  assert.equal(TAB_MENU_REVEAL(), "Reveal in File Tree");
   assert.deepEqual(tabMenuItems(), [
-    { action: "reveal-in-tree", label: "在左栏中定位到此文件" },
+    { action: "reveal-in-tree", label: "Reveal in File Tree" },
     { action: "close", label: "Close" },
     { action: "close-others", label: "Close Other Tabs" },
     { action: "close-right", label: "Close Tabs to the Right" },
@@ -230,7 +231,7 @@ test("打开菜单：四项在场、持焦点、游标落首项、皮肤类两�
   assert.equal(rig.element.classList.contains("ft-menu"), false, "MUST NOT 带树菜单的类名");
   const labels = rig.element.texts();
   assert.deepEqual(labels, [
-    "在左栏中定位到此文件",
+    "Reveal in File Tree",
     "Close",
     "Close Other Tabs",
     "Close Tabs to the Right",

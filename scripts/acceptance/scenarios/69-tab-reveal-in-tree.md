@@ -1,7 +1,7 @@
 ---
 id: "69-tab-reveal-in-tree"
 item: 69
-title: TAB 右键菜单「在左栏中定位到此文件」——展开祖先、目标行现身（真实 WKWebView + 真实右键通道）
+title: TAB 右键菜单定位项（需求原话「在左栏中定位到此文件」，上屏 Reveal in File Tree）——展开祖先、目标行现身（真实 WKWebView + 真实右键通道）
 fixtures: [plain.md]
 steps:
   - name: 就绪起点——树里根层文件行在场（正向锚点：这次 AX 读取是活的）
@@ -76,21 +76,21 @@ steps:
         ax: { count: { pattern: "关闭 ", exact: 1 } }
       - shot: 05-收起后的现场
 
-  - name: 右键那个标签——菜单出现且含定位项（读屏名按文案表 zh 列）
+  - name: 右键那个标签——菜单出现且含定位项（上屏文案是英文：D322 上屏列锁定 en）
     do: click
     target: { role: AXRadioButton, name: "^deep-reveal\\.md$", button: right }
     expect:
-      - label: 菜单里有「在左栏中定位到此文件」
-        ax: { has: "在左栏中定位到此文件" }
+      - label: 菜单里有「Reveal in File Tree」（D322 在 zh 界面下也上屏英文——Alex 2026-10-01 裁决）
+        ax: { has: "Reveal in File Tree" }
       - label: 三条关闭项照旧在场（菜单是增项，不是替换）
         ax: { has: "/AXMenuItem \\(Close\\)/" }
       - label: 右键不改上下文：标签数与前台都不变
         ax: { count: { pattern: "关闭 ", exact: 1 } }
       - shot: 06-标签右键菜单
 
-  - name: 点「在左栏中定位到此文件」——祖先展开、目标行重新现身
+  - name: 点「Reveal in File Tree」——祖先展开、目标行重新现身
     do: click
-    target: { any: "在左栏中定位到此文件" }
+    target: { any: "Reveal in File Tree" }
     expect:
       - label: 一级目录展开
         ax: { has: "/AXButton \\(reveal-outer/reveal-inner\\)/" }
@@ -101,15 +101,17 @@ steps:
       - label: 前台仍是它（定位 MUST NOT 切换标签）
         ax: { has: "/AXRadioButton \\(deep-reveal\\.md\\) Value: true/" }
       - label: 菜单已收起（定位不是模态动作）
-        ax: { not: "在左栏中定位到此文件" }
+        ax: { not: "Reveal in File Tree" }
       - shot: 07-定位之后
 ---
 
 ## 这个场景验什么
 
-M300（change `tab-reveal-in-tree`）为标签右键菜单新增的首项「在左栏中定位到此文件」（Alex
-2026-10-01 的需求原话）在**真实 WKWebView + 真实指针右键通道**下的落点：右键某一条标签 → 选定位项
-→ 左栏把该文件的**全部祖先目录逐级展开**，目标行回到树里。
+M300（change `tab-reveal-in-tree`）为标签右键菜单新增的首项——上屏文案 `Reveal in File Tree`
+（Alex 2026-10-01 的需求原话是「在左栏中定位到此文件」，该措辞留在 `文案-Copy.md` 的中文列；
+同日裁决把这一项设为**上屏列锁定 en**，与三条关闭项口径一致）——在**真实 WKWebView + 真实指针
+右键通道**下的落点：右键某一条标签 → 选定位项 → 左栏把该文件的**全部祖先目录逐级展开**，目标行
+回到树里。
 
 一条端到端的判据链，每一步都配了正向见证（REVIEW.md 第 1/2 条）：
 
@@ -118,7 +120,7 @@ M300（change `tab-reveal-in-tree`）为标签右键菜单新增的首项「在�
 3. 中间用「收起一级目录」把现场还回去，因此最后一步的「行回来了」只可能由定位造成（同一场景里
    先前的两次点击只负责把行渲染出来过一次，收起之后它们的影响已经归零）。
 
-菜单是**增项**而不是替换：同一步里既断言新的中文项在场，也断言 `Close` 三条关闭项照旧（M254 的
+菜单是**增项**而不是替换：同一步里既断言新的定位项在场，也断言 `Close` 三条关闭项照旧（M254 的
 既有行为不因本 change 回退）。
 
 ## 通道与已知边界（撞上就如实登记，不判产品缺陷）
@@ -133,10 +135,11 @@ M300（change `tab-reveal-in-tree`）为标签右键菜单新增的首项「在�
   稳定的读数形态能区分「这一行是当前行」（不像标签的 `aria-selected` 会以 `Value: true` 露出）。
   与其写一条形态未经验证的断言（假红或恒真都不可接受），不如把它留在 chromium 层
   （同一条 M300 用例断言 `.ft-row.is-current` 恰好一条且落在目标行上）。
-- **菜单项按读屏名点击**：`在左栏中定位到此文件` 是这一项在 zh 界面下的上屏文案（D322 是普通
-  双语条目；套件默认钉 zh，见 README 的「语言面」节）。三条关闭项是 M257 的上屏列锁定条目，
-  zh 界面下同为英文——因此 `Close` 单点仍要按带括号的项名匹配（`/AXMenuItem \(Close\)/`），
-  与场景 50 同口径。
+- **菜单项按读屏名点击**：四项**上屏文案全是英文**——D149–D151 是 M257 的锁定条目，D322 是
+  Alex 2026-10-01 裁决的锁定条目（那时 M300 的实现面已按本裁决改过一次：初版 D322 曾是普通双语
+  条目，zh 界面下上屏中文）。套件默认钉 zh（见 README 的「语言面」节），因此 `Reveal in File Tree`
+  与 `Close` 在 zh 界面下都是英文；`Close` 是另两项的前缀，单点它仍要按带括号的项名匹配
+  （`/AXMenuItem \(Close\)/`），与场景 50 同口径。
 - **`块`类断言依赖 fixture**：`block-copy.md` 被当作「文件组最靠前的行」的完整性见证
   （M296 的 `fanout_cap` 截断源）。若 fixture 集合变化导致它不再靠前，正文与断言一起改。
 - **AX dump 的截断方向**：目标文件行在**深层列表**里，与根层文件组的截断互不影响；本场景的

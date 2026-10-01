@@ -10,10 +10,10 @@
 // closeEach / showCloseConfirm 的说明）。菜单浮层与文件树菜单共用一套皮肤（`style.css` 的
 // `.ft-menu` / `.tab-menu` 选择器对），机制各写各的——理由见该 change 的 design。
 //
-// M300（change tab-reveal-in-tree）：菜单**新增首项「在左栏中定位到此文件」**（文案 D322，
-// Alex 2026-10-01 的需求）——把这一条标签的文件交给文件树的 `revealPath`（装配层经
-// `revealInTree` 注入，见 TabsDeps 该字段的说明）。定位项排在首位、三条关闭项的相对顺序不变，
-// 顺序的理由见 `tabMenuItems`。
+// M300（change tab-reveal-in-tree）：菜单**新增首项定位项**（文案 D322，Alex 2026-10-01 的需求
+// 原话「在左栏中定位到此文件」；同日裁决把它的上屏文案锁定为英文 `Reveal in File Tree`）——把这一条
+// 标签的文件交给文件树的 `revealPath`（装配层经 `revealInTree` 注入，见 TabsDeps 该字段的说明）。
+// 定位项排在首位、三条关闭项的相对顺序不变，顺序的理由见 `tabMenuItems`。
 //
 // M151 从 main.ts 抽出（M127 的拆分判据「main.ts 收敛为装配层」的续作）。抽出的判据：
 // 会话模型的读写全在 editor 的会话 API，本模块不持有任何状态，只是「会话列表 → 标签栏
@@ -48,8 +48,9 @@ export const TAB_MENU_LABEL = (): string => t("D148");
 /** 定位项（D322，M300 / change tab-reveal-in-tree）：把这一条标签的文件在左栏树里显现出来
  *  （展开祖先 + 滚进视口 + 标成当前行，能力在 `src/tree.ts` 的 `revealPath`）。
  *  **这与 D128「在 Finder 中显示」不是同一个动作**：那一条的对象是系统文件管理器。
- *  普通双语条目（不锁列）——`zh` 界面下这一项是中文，与它下面三条锁 en 的关闭项不同语言，
- *  取舍与两个方向的一行改法记在 deck 该行的设计意图列。 */
+ *  与下面三条关闭项同一口径：**上屏列锁定 en**（Alex 2026-10-01 裁决「菜单内语言统一」），
+ *  无论界面语言都取 English 列——`zh` 界面下整条菜单因此都是英文（中文措辞留在
+ *  `文案-Copy.md` 的 zh 列作沿革备查）。 */
 export const TAB_MENU_REVEAL = (): string => t("D322");
 /** 菜单三条关闭项（D149–D151）。**上屏英文是 Alex 2026-09-27 的裁决**（M254 菜单初上屏为中文，
  *  Alex 答复「上屏」给英文）：Close / Close Other Tabs / Close Tabs to the Right 是 Alex 给的
