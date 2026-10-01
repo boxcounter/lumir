@@ -9,6 +9,9 @@
 //
 // 值得单独说明的一条：真机层**没有 hover 动作**（套件动作表里没有 hover / mouseMove），
 // 所以「触发钮的鼠标路径」只有本层覆盖——真机场景 61 走命令路径（同 M240 场景 40 的口径）。
+//
+// M298 追加：触发钮**自身**的 hover 反馈（Alex 2026-10-01）。判据是计算属性——钮被指到时在
+// 不透底的壳上叠一层 `--hover`；只在块上（钮刚浮现）时那一层不存在，两者互为负对照。
 
 import { expect, test, type Page } from "@playwright/test";
 import { mkdirSync } from "node:fs";
@@ -270,6 +273,60 @@ test("5.3g 命令路径：非矩形表与 mermaid 图表态都不命中（没有
   await expect.poll(() => clipboard(page)).toBe("graph TD;\n  Start-->Stop;");
 });
 
+/** 触发钮的漆面读数（M298）：叠层 / 底色 / 前景，外加三个 token 的探针值（探针口径同本文件
+ *  M291 那条：把候选值塞进一个 div 再读回计算值，场景里不写 token 字面值的副本）。 */
+function triggerPaint(page: Page, selector: string) {
+  return page.locator(selector).first().evaluate((el) => {
+    const probe = (name: string) => {
+      const d = document.createElement("div");
+      d.style.background = `var(${name})`;
+      document.body.appendChild(d);
+      const out = getComputedStyle(d).backgroundColor;
+      d.remove();
+      return out;
+    };
+    const cs = getComputedStyle(el);
+    return {
+      backgroundImage: cs.backgroundImage,
+      backgroundColor: cs.backgroundColor,
+      color: cs.color,
+      visibility: cs.visibility,
+      previewBg: probe("--preview-bg"),
+      hover: probe("--hover"),
+      text: probe("--text"),
+    };
+  });
+}
+
+const squeeze = (s: string) => s.replace(/\s+/g, "");
+
+/** 钮自身的 hover 反馈（M298）：指针**只在块上**（钮刚浮现、没被指到）时没有反馈层；指针落到
+ *  钮上时在不透底的壳上叠出 `--hover` 那一层。两次读数只差指针位置，互为负对照。 */
+async function expectTriggerHoverFeedback(page: Page, slot: string, button: string): Promise<void> {
+  await page.mouse.move(0, 0);
+  await page.hover(slot);
+  await expect.poll(() => triggerPaint(page, button).then((r) => r.visibility)).toBe("visible");
+  const onBlock = await triggerPaint(page, button);
+  expect(onBlock.backgroundImage, "指针只在块上：没有反馈层").toBe("none");
+  expect(onBlock.backgroundColor, "壳 = --preview-bg（不透底）").toBe(onBlock.previewBg);
+  expect(onBlock.color, "块上的 hover 已把图标提到 --text").toBe(onBlock.text);
+
+  await page.hover(button);
+  await expect.poll(() => triggerPaint(page, button).then((r) => r.backgroundImage)).toContain("linear-gradient");
+  const onButton = await triggerPaint(page, button);
+  expect(onButton.color, "反馈层不动前景").toBe(onBlock.color);
+  expect(onButton.backgroundColor, "反馈只是叠的一层：壳的底色逐值不变（不透底）").toBe(onBlock.backgroundColor);
+  expect(squeeze(onButton.backgroundImage), "叠的是 --hover 那一档，不是字面值").toContain(squeeze(onButton.hover));
+}
+
+test("M298 钮自身 hover：表格与代码块两处、两个钮都叠出一层 --hover（只在块上时没有）", async ({ page, context }) => {
+  await openDoc(page, context);
+  await expectTriggerHoverFeedback(page, ".cm-lp-table-slot", COPY_TRIGGER);
+  await expectTriggerHoverFeedback(page, ".cm-lp-table-slot", `.cm-lp-table-slot ${FS_TRIGGER}`);
+  await expectTriggerHoverFeedback(page, ".cm-lp-codeblock-slot", ".cm-lp-codeblock-slot .lumir-block-copy-trigger");
+  await expectTriggerHoverFeedback(page, ".cm-lp-codeblock-slot", ".cm-lp-codeblock-slot .lumir-codeblock-fs-trigger");
+});
+
 test("M291 r3：触发钮热态取选中族（eink = 明度带 + 黑字，硬编码黑底白字退场）", async ({ page, context }) => {
   // Alex 2026-09-28 r3 裁决：`.lumir-block-trigger` 在 eink 下的热态原先硬编码 `#000` 底 + `#fff` 字，
   // 按 M291 的方向退场——改为选中族（`--sel` 明度带 + `--sel-text` 黑字），与 eink 已整体改过的
@@ -314,4 +371,16 @@ test("M291 r3：触发钮热态取选中族（eink = 明度带 + 黑字，硬编
   expect(hot.bg, "eink 热态底色 = --sel（明度带）").toBe(hot.sel);
   expect(hot.color, "eink 热态前景 = --sel-text（黑字）").toBe(hot.selText);
   expect(diff(hot.color, hot.bg), `eink 热态文字 MUST 与底色可辨（差 ${diff(hot.color, hot.bg)} ≥ 40）`).toBeGreaterThanOrEqual(40);
+
+  // M298 追加：eink 的「钮自身 hover」= 在这条 --sel 明度带之上再叠一层 --hover，底色与前景都不换。
+  // 这一条同时是 eink 侧层叠的判据：那条规则靠 slot 前缀把特异性抬到 `background` 简写之上，
+  // 前缀写漏（或被后人删掉）时这里会红，而不是静默少一层。
+  const imageOf = () => triggerPaint(page, COPY_TRIGGER).then((r) => r.backgroundImage);
+  expect(await imageOf(), "指针只在块上：没有反馈层").toBe("none");
+  await page.hover(COPY_TRIGGER);
+  await expect.poll(imageOf).toContain("linear-gradient");
+  const onButton = await triggerPaint(page, COPY_TRIGGER);
+  expect(onButton.backgroundColor, "eink 反馈层不换底色：仍是 --sel（明度带）").toBe(hot.sel);
+  expect(onButton.color, "eink 反馈层不换前景：仍是 --sel-text").toBe(hot.selText);
+  expect(squeeze(onButton.backgroundImage), "叠的是 --hover 那一档").toContain(squeeze(onButton.hover));
 });

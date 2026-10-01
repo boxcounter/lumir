@@ -155,8 +155,12 @@
   --fs-title: 24px;
   /* 标题阶梯（change heading-hierarchy-ramp，稿 A 裁决 2026-09-25）：H1–H6 六档、语义位独立
      命名——h4 与 --fs-body、h6 与 --fs-ui 同值是巧合而非别名，将来可独立修订（design §3.1）。
-     渲染层（src/preview/theme.ts）经 `calc(1em * var(--fs-hN) / var(--editor-font-size))`
-     取值，em 比值随字号步进随动；19/16.5 两档随旧 H1/H2 退场（阶梯不留失去消费者的档）。 */
+     渲染层（src/preview/theme.ts）按「阶梯值 ÷ **固定** ramp 锚」的 em 比值取值：分子里的 `1em` 取的是
+     父级（.cm-content）的活字号，分母如果也是那个活值，缩放因子就自我约掉、标题钉死在绝对 px
+     ——「正文变大标题不变」的脱钩，spec editor-live-preview 明令 MUST NOT。分母取**固定锚**后，
+     六级标题随 `--editor-font-size` 按同一比值随动，默认 15px 锚下逐像素等于本表的绝对值
+     （21/18/16/15/14/13）。公式与其落差的权威说明在 theme.ts，本处只登记值与随动口径。
+     19/16.5 两档随旧 H1/H2 退场（阶梯不留失去消费者的档）。 */
   --fs-h1: 21px;
   --fs-h2: 18px;
   --fs-h3: 16px;
@@ -1163,6 +1167,22 @@ body {
   color: var(--text);
   transition-delay: 0s;
 }
+
+/* 钮**自身**被指到时的反馈（Alex 2026-10-01：此前只有「出现时机」随块走，钮自己没有 hover）。
+   口径与全仓可点 chrome 同一条（.tab-close:hover / .ft-menu-item:hover）：再叠一档 `--hover`。
+   **只是写法不是 `background: var(--hover)`**：本钮的壳是**不透底**的 `--preview-bg`（上面共享形态类
+   那条「壳 = --preview-bg + 1px --border hairline」的契约，也是 eink 档取实心 `--sel` 的同一条
+   理由），而它按设计浮在块的内容盒之上——量过：宽表的 cell 盒、代码块的行盒都伸到钮下面。把壳
+   直接换成半透明的 `--hover`，钮的观感就取决于它背后恰好压着什么（底下的字从钮里透出来；实测该
+   写法下壳的计算值 = `rgba(0, 0, 0, 0.04)`，不再不透底）。
+   因此底色照旧留在 `background-color` 上，`--hover` 只作叠在它上面的一层（单色 gradient）：三档
+   都不透底，零新 token、零新增色值（合成色随承载面变，与 `--hover` 在别处的用法同一条口径）。
+   图标色不在这里重复声明：指针在钮上必然也在块上（钮是 slot 的后代），上面那条规则已经把
+   前景提到 `--text`（eink 是 `--sel-text`）。 */
+.lumir-block-trigger:hover {
+  background-image: linear-gradient(var(--hover), var(--hover));
+}
+
 /* eink 规则③⑤：静止态白底黑框（无灰底可用的翻转口径，同 .cm-lp-codeblock-scroll）；
    三个字面值（`#fff` / `#000` / `#000`）按 tokens 文档收敛规则 1 归位到既有 token——是本档
    语义上的同一个值，不是新取向。
@@ -1181,6 +1201,16 @@ body {
 :root[data-theme="eink"] .lumir-block-trigger:focus-visible {
   background: var(--sel);
   color: var(--sel-text);
+}
+/* eink 的「钮自身 hover」= 在上一条的 `--sel` 明度带之上再叠一档 `--hover`（与 light / dark 同一
+   机制，只是承载面不同：那两档的壳是 `--preview-bg`，本档是选中的 `--sel`）。
+   选择器**带上 slot 前缀不是语义需要、是特异性需要**：上面那两条 eink 规则都用 `background` 简写，
+   简写会把 `background-image` 一并复位成 `none`，而它们的特异性 (0,3,0) / (0,5,0) 都高于裸的
+   `.lumir-block-trigger:hover` (0,2,0)——不抬到这里，这一层在 eink 下会被静默吃掉（底色与前景仍
+   来自上面那条：`--sel` + `--sel-text`，此处不重复声明值）。 */
+:root[data-theme="eink"] .cm-lp-table-slot:hover .lumir-block-trigger:hover,
+:root[data-theme="eink"] .cm-lp-codeblock-slot:hover .lumir-block-trigger:hover {
+  background-image: linear-gradient(var(--hover), var(--hover));
 }
 
 /* 代码块动作钮的坐标系统（M277，BlockWrapper rank 20 = 最外）：与 .cm-lp-table-slot 同机制，
