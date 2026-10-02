@@ -375,8 +375,9 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   toggleButton.type = "button";
   toggleButton.className = "titlebar-action lumir-hp-toggle";
   toggleButton.setAttribute("aria-pressed", "false");
-  // 「别抢焦点」的 mousedown preventDefault MUST NOT 挂容器级元素（REVIEW.md 第 16 条）——
-  // 这里挂在具体按钮上，与 tabs.ts 那处同口径。
+  // 本钮不需要 mousedown preventDefault：click 后 setOpen 显式移交焦点（开 → composer，
+  // 收 → editor.view），按钮瞬时持焦无所谓；「别抢焦点」的 preventDefault 若真需要，
+  // MUST NOT 挂容器级元素（REVIEW.md 第 16 条）。
   shell.titlebar.insertBefore(toggleButton, shell.titlebarIdentity.block);
 
   // ── DOM：面板本体（dock 列，网格第三列）──────────────────────────────────
