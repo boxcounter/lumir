@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "responses": [
+    {
+      "text": "我来把第二行改掉。",
+      "tool_calls": [
+        {
+          "id": "call_p1",
+          "name": "vault_patch",
+          "arguments": "{\"path\":\"harness-note.md\",\"edits\":[{\"old_string\":\"HNL-BETA 第二行，等待 patch。\",\"new_string\":\"HNL-BETA 第二行，patch 已落盘。\"}]}"
+        }
+      ]
+    },
+    {
+      "text": "第二行处理完了。"
+    }
+  ]
+}

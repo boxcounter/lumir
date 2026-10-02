@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "responses": [
+    {
+      "text": "我先读一下目标文件。",
+      "chunks": ["我先", "读一下目标文件。"],
+      "tool_calls": [
+        {
+          "id": "call_1",
+          "name": "vault_read",
+          "arguments": "{\"path\":\"harness-note.md\"}"
+        }
+      ],
+      "usage": { "input_tokens": 900, "cached_tokens": 300, "output_tokens": 20 }
+    },
+    {
+      "text": "HNL 读完了：阿尔法行在，贝塔行在，伽马行在。",
+      "usage": { "input_tokens": 1400, "cached_tokens": 1000, "output_tokens": 25 }
+    }
+  ]
+}

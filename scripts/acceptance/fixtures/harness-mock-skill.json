@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "responses": [
+    {
+      "text": "我先试试越界名，再加载真正的技能。",
+      "tool_calls": [
+        {
+          "id": "call_s1",
+          "name": "skill_load",
+          "arguments": "{\"name\":\"../outside\"}"
+        },
+        {
+          "id": "call_s2",
+          "name": "skill_load",
+          "arguments": "{\"name\":\"probe-skill\"}"
+        }
+      ]
+    },
+    {
+      "text": "技能密令是 HSK-SECRET-7429，验收回答完毕。"
+    }
+  ]
+}

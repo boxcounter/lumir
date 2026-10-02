@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "responses": [
+    {
+      "text": "验收回答：上下文已收到。",
+      "usage": { "input_tokens": 1000, "cached_tokens": 100, "output_tokens": 10 }
+    }
+  ]
+}

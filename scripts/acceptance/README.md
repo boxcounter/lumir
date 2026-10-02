@@ -113,6 +113,11 @@ steps:
 首帧就是场景声明的起点**。允许的键是 `lib/app.mjs` 的 `SCENARIO_CONFIG_KEYS`（与 `writeConfig()`
 的同名参数一一对应，`--check` 用同一份挡拼错），缺省不写 = 走应用出厂口径。
 
+`harness`（M304，change add-harness-probe §11）是唯一的**嵌套**键：
+`{ provider, fixture, permissions: { allow, deny }, loopMax, warnCtxPct, autoCompact }` → `[harness]` 节
+（camelCase 键名映射到配置文件的 snake_case）。`fixture` 写 `$fixtures/...` 只读引用套件 fixtures
+目录（见下文「占位符」），mock provider 场景（70–77）是样例。
+
 ### 语言面（M284）
 
 界面语言（`[ui] language`）**由套件钉住**，不跟随产品的出厂默认：
@@ -291,6 +296,10 @@ not: ["AXProgressIndicator"] }`）；`settle` 只在「判据明确不依赖任�
 `src-tauri/tauri.conf.json` 读真值代入）与 `$vault`（M244：合成验收 vault 的绝对路径，随
 `LUMIR_ACCEPTANCE_VAULT` 走——剪贴板类断言要比对绝对路径时用它，场景 MUST NOT 硬编码 `/tmp`）（worktree 跑就取 worktree 的 conf，与被测构建同源）——
 场景 MUST NOT 硬编码版本号副本（真源唯一，REVIEW.md 第 8 条），版本 bump 后场景跟着真源走。
+占位符对整个 front-matter 生效（不止 expect）：`config:` 块里同样可写。M304 新增 `$fixtures`
+（套件 fixtures 目录的绝对路径）——**只读引用** fixture 原文（如 harness mock 脚本）用它，
+不要为引用而 `fixtures:` 拷进 vault：拷进去的非 `.md` 文件 resetVault 不清（M296 已知缺口），
+会串红别的场景的「vault 里无 json/tmp 产物」类断言（场景 28/65 实证）。
 
 匹配值：字符串按**子串**；`/.../` 包起来按正则。注意**正则一律带 `m` flag**（`lib/execute.mjs` 的 `matcher()`），
 所以 `^`/`$` 是**行**边界而不是字符串边界：要断言「文档末尾」得写 `(?![\\s\\S])`（负向先行断言后面没有字符）。

@@ -608,6 +608,44 @@
 
 ## 待修 findings（不阻塞）
 
+### harness 上下文节用 "\n\n[" 重解析，用户正文含该序列时压缩重注入串味（M302 转派，2026-10-03，low）
+
+**症状**：`run_turn_for` 把「提问 + 上下文节」拼成一条 user 消息（`{message}\n\n[当前编辑器上下文：…]`），
+随后 `extract_section`（`src-tauri/src/harness/turn.rs:289-292`）用 `message.split("\n\n[").nth(1)`
+把上下文节**从拼好的串里重新解析出来**，存进会话供自动压缩时重注入。用户提问或选区原文里只要
+含有 `\n\n[`（正文里写一个左方括号段落就够），切分点就前移——存下的「上下文节」混进用户正文，
+压缩续聊时这段串味文本被当作上下文节重注入新逻辑会话。
+
+**影响**：不丢数据、不阻断对话；触发后压缩重注入的上下文节被污染（模型看到一段混杂文本），
+属于静默的上下文质量问题。触发面窄（正文恰好含 `\n\n[`），探针期定为 low。
+
+**建议处置**：不要从拼接后的串重解析——`assemble_user_message` 的调用侧本来就持有
+`ContextBlock`，把 `context_section(&block)` 的产物作为结构化值直接传给会话（装配与存储
+共用同一次生成），`extract_section` 整个删除；或最低限度改用 `rsplit` 取**最后一个**
+`\n\n[`（仍是修补，不是根治）。
+
+证据：M302 mission notes（2026-10-02 转派登记）；`src-tauri/src/harness/turn.rs:101-107`
+（拼接）与 `:289-292`（重解析）。
+
+### harness JSONL 文件名 sanitize 有碰撞面：/tmp/a b 与 /tmp/a_b 落同一留存文件（M302 转派，2026-10-03，low）
+
+**症状**：会话 JSONL 留存路径 = `<config_dir>/harness/<sanitize(vault 根)>.jsonl`，
+`sanitize`（`src-tauri/src/harness/jsonl.rs:88-100`）把路径分隔符与空格等非常规字符**统一**
+映成 `_`——`/tmp/a b` 与 `/tmp/a_b` 因此得到同一个文件名 `_tmp_a_b.jsonl`（该函数自己的
+单测 `sanitize_replaces_separators` 就展示了这个映射）。两个这样的 vault 的会话记录会
+append 进同一份 JSONL。
+
+**影响**：不丢记录（append-only 仍成立），但两个 vault 的问答、工具调用与批准决策交织在
+一份文件里，归属混淆；留存是 ADR 0007 双向记录机制的本地一侧，审计口径因此被稀释。
+触发需要 vault 根路径「只差被消毒字符」，日常少见，定 low。
+
+**建议处置**：sanitize 改成可逆编码（如 `_` 自身先转义为 `__`、其余非常规字符按
+`_xHH` 落下），或在文件名后段拼一小段 vault 根路径的哈希（人读前缀 + 机器唯一后缀），
+二选一；改完给 `sanitize` 补一条「碰撞对」单测（`/tmp/a b` vs `/tmp/a_b` 必须不同名）。
+
+证据：M302 mission notes（2026-10-02 转派登记）；`src-tauri/src/harness/jsonl.rs:88-100`
+与 `:107-113`（单测展示的映射实例）。
+
 ### 整页基线捕获的是「首帧 chrome 态」，0.001 容差长期吞掉真实漂移（M297 现场发现，2026-10-01，medium）
 
 **症状**：M297 动标题显露后 4 张整页基线报红；逐像素拆段发现 diff 有三段——标题行（本次改动，
