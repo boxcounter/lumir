@@ -103,7 +103,7 @@ impl Runtime {
             .inner
             .sessions
             .lock()
-            .expect("harness sessions poisoned");
+            .unwrap_or_else(|e| e.into_inner());
         if let Some(existing) = sessions.get(&scope.key()) {
             if existing.is_busy() {
                 return Err(CommandError::new(
@@ -132,7 +132,7 @@ impl Runtime {
             .inner
             .sessions
             .lock()
-            .expect("harness sessions poisoned");
+            .unwrap_or_else(|e| e.into_inner());
         if let Some(s) = sessions.get_mut(&scope.key()) {
             s.set_busy(false);
         }
@@ -149,7 +149,7 @@ impl Runtime {
             .inner
             .sessions
             .lock()
-            .expect("harness sessions poisoned");
+            .unwrap_or_else(|e| e.into_inner());
         let session = sessions
             .get_mut(&scope.key())
             .ok_or_else(|| CommandError::new("harness_no_session", "会话已不存在，批准请求失效"))?;
@@ -168,7 +168,7 @@ impl Runtime {
             .inner
             .sessions
             .lock()
-            .expect("harness sessions poisoned");
+            .unwrap_or_else(|e| e.into_inner());
         let session = sessions
             .get_mut(&scope.key())
             .ok_or_else(|| CommandError::new("harness_no_session", "当前 vault 还没有对话会话"))?;
@@ -181,7 +181,7 @@ impl Runtime {
             .inner
             .sessions
             .lock()
-            .expect("harness sessions poisoned");
+            .unwrap_or_else(|e| e.into_inner());
         match sessions.get(&scope.key()) {
             Some(s) => s.snapshot(config.warn_ctx_pct),
             None => session::StateSnapshot::empty(config.warn_ctx_pct),
@@ -195,7 +195,13 @@ impl Runtime {
             .inner
             .sessions
             .lock()
-            .expect("harness sessions poisoned");
+            .unwrap_or_else(|e| e.into_inner());
+        // 留存可辨识「新会话」动作（r1 P2-1）：先记后丢，JSONL 不受影响地追加。
+        if let Some(session) = sessions.get_mut(&scope.key()) {
+            session
+                .jsonl()
+                .record(&serde_json::json!({"kind": "session_reset"}));
+        }
         sessions.remove(&scope.key());
     }
 }
@@ -236,11 +242,10 @@ pub fn harness_send(
     {
         // 起线程失败：释放 busy，别把会话永远留在占用态。
         runtime_release.release_turn(&scope_release);
-        return Err(CommandError::new(
-            "harness_thread_failed",
-            format!("无法启动对话线程：{e}"),
-        )
-        .param("reason", e.to_string()));
+        return Err(
+            CommandError::new("harness_thread_failed", format!("无法启动对话线程：{e}"))
+                .param("reason", e.to_string()),
+        );
     }
     Ok(())
 }
@@ -288,6 +293,8 @@ pub fn harness_state(
     let scope = vault_scope(&vault)?;
     let config = config::load()?.config.harness;
     let snapshot = runtime.snapshot(&scope, &config);
-    serde_json::to_string(&snapshot)
-        .map_err(|e| CommandError::new("harness_state_failed", format!("无法序列化会话快照：{e}")).param("reason", e.to_string()))
+    serde_json::to_string(&snapshot).map_err(|e| {
+        CommandError::new("harness_state_failed", format!("无法序列化会话快照：{e}"))
+            .param("reason", e.to_string())
+    })
 }

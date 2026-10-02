@@ -24,6 +24,8 @@ pub struct ApprovalRequest {
     pub diff: Option<String>,
     /// CLI 的完整 argv（cli_run）。
     pub argv: Option<Vec<String>>,
+    /// vault_patch 的预览基准 revision（批准执行时作 CAS 基准）。
+    pub revision: Option<String>,
     /// 决定回传通道（sender 在 harness_approve 侧消费）。
     pub tx: Sender<ApprovalDecision>,
 }
@@ -33,6 +35,7 @@ impl ApprovalRequest {
         tool: String,
         diff: Option<String>,
         argv: Option<Vec<String>>,
+        revision: Option<String>,
         tx: Sender<ApprovalDecision>,
     ) -> Self {
         Self {
@@ -40,6 +43,7 @@ impl ApprovalRequest {
             tool,
             diff,
             argv,
+            revision,
             tx,
         }
     }

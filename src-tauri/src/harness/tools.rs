@@ -32,6 +32,9 @@ pub struct ApprovalPreview {
     pub diff: Option<String>,
     /// CLI 的完整 argv（cli_run）。
     pub argv: Option<Vec<String>>,
+    /// vault_patch 的预览基准 revision（批准执行时作 expected_revision 走 CAS——
+    /// 批准窗内文件被改即 document_conflict，落盘不与已批准 diff 分叉）。
+    pub revision: Option<String>,
 }
 
 impl ApprovalPreview {
@@ -39,6 +42,7 @@ impl ApprovalPreview {
         Self {
             diff: None,
             argv: None,
+            revision: None,
         }
     }
 }
@@ -219,10 +223,21 @@ pub fn permission_subject(name: &str, args: &serde_json::Value) -> String {
 
 /// 注册表入口：工具名 + JSON 参数 → JSON 结果。
 pub fn execute(name: &str, args: &serde_json::Value, ctx: &ToolContext) -> ToolOutput {
+    execute_with_revision(name, args, ctx, None)
+}
+
+/// 批准执行入口：写工具带预览基准 revision 走（ask 档采纳后的 CAS 基准；None = 直执行，
+/// revision 取执行时刻当前值——allow 档无批准窗，CAS 只守微窗口）。
+pub fn execute_with_revision(
+    name: &str,
+    args: &serde_json::Value,
+    ctx: &ToolContext,
+    revision: Option<&str>,
+) -> ToolOutput {
     match name {
         "vault_read" => vault_read(args, ctx),
         "vault_search" => vault_search(args, ctx),
-        "vault_patch" => vault_patch(args, ctx),
+        "vault_patch" => vault_patch(args, ctx, revision),
         "vault_create" => vault_create(args, ctx),
         "skill_load" => skill_load(args, ctx),
         "cli_run" => cli_run(args),
@@ -242,10 +257,13 @@ pub fn approval_preview(
             let input = parse_args::<PatchArgs>(args)?;
             let old = fs_io::read_text_file(ctx.root, &input.path)
                 .map_err(|e| ToolOutput::from_command_error(&e))?;
+            let revision = fs_io::file_revision(ctx.root, &input.path)
+                .map_err(|e| ToolOutput::from_command_error(&e))?;
             let new = apply_edits(&old, &input.edits)?;
             Ok(ApprovalPreview {
                 diff: Some(diff::unified_diff(&input.path, &old, &new)),
                 argv: None,
+                revision: Some(revision),
             })
         }
         "vault_create" => {
@@ -253,6 +271,7 @@ pub fn approval_preview(
             Ok(ApprovalPreview {
                 diff: Some(diff::unified_diff(&input.path, "", &input.content)),
                 argv: None,
+                revision: None,
             })
         }
         "cli_run" => {
@@ -262,6 +281,7 @@ pub fn approval_preview(
             Ok(ApprovalPreview {
                 diff: None,
                 argv: Some(argv),
+                revision: None,
             })
         }
         _ => Ok(ApprovalPreview::empty()),
@@ -468,15 +488,23 @@ fn apply_edits(old: &str, edits: &[PatchEdit]) -> Result<String, ToolOutput> {
     Ok(content)
 }
 
-fn vault_patch(args: &serde_json::Value, ctx: &ToolContext) -> ToolOutput {
+/// `expected_revision`：批准档传预览时刻的基准 revision（批准窗 CAS）；None（allow 档）
+/// 取执行时刻当前值。fs_patch_file 内部对账，不一致即 document_conflict。
+fn vault_patch(
+    args: &serde_json::Value,
+    ctx: &ToolContext,
+    expected_revision: Option<&str>,
+) -> ToolOutput {
     let input = match parse_args::<PatchArgs>(args) {
         Ok(input) => input,
         Err(output) => return output,
     };
-    // CAS 基准：执行时刻的当前 revision（预览到批准之间文件被改 ⇒ document_conflict）。
-    let revision = match fs_io::file_revision(ctx.root, &input.path) {
-        Ok(revision) => revision,
-        Err(e) => return ToolOutput::from_command_error(&e),
+    let revision = match expected_revision {
+        Some(revision) => revision.to_string(),
+        None => match fs_io::file_revision(ctx.root, &input.path) {
+            Ok(revision) => revision,
+            Err(e) => return ToolOutput::from_command_error(&e),
+        },
     };
     match fs_io::fs_patch_file(ctx.root, &input.path, &input.edits, &revision) {
         Ok(new_revision) => ToolOutput::ok(serde_json::json!({

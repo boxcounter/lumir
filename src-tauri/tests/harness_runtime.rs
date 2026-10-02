@@ -135,6 +135,19 @@ impl RuntimeExt for Fixture {
     }
 }
 
+/// 某工具的最后一个 tool_call 事件（终态事件 status 必须是契约内的 done——
+/// m303 面板按非 done 即 started 归并，细分状态在 summary）。
+fn last_tool_call_event(sink: &CollectSink, name: &str) -> serde_json::Value {
+    let events = sink.events();
+    let mut found: Option<serde_json::Value> = None;
+    for event in events {
+        if event["type"] == "tool_call" && event["name"] == name {
+            found = Some(event);
+        }
+    }
+    found.unwrap_or_else(|| panic!("没有 {name} 的 tool_call 事件"))
+}
+
 /// 面板消息 role 序列。
 fn panel_roles(fixture: &Fixture, runtime: &Runtime) -> Vec<String> {
     let snapshot = runtime.snapshot(&fixture.scope(), &mock_config());
@@ -283,6 +296,13 @@ fn deny_beats_allow_and_default_layering() {
     let snapshot = runtime.snapshot(&f.scope(), &config);
     let tool = snapshot.messages.iter().find(|m| m.role == "tool").unwrap();
     assert_eq!(tool.status.as_deref(), Some("denied"));
+    // 事件终态 status 必须是契约内的 "done"（细分状态放 summary，r1 P1-1）。
+    let event = last_tool_call_event(&sink, "vault_patch");
+    assert_eq!(event["status"], "done", "{event}");
+    assert!(
+        event["summary"].as_str().unwrap().contains("denied"),
+        "{event}"
+    );
     assert_eq!(
         std::fs::read_to_string(f.vault().join("a.md")).unwrap(),
         "old\n"
@@ -360,6 +380,17 @@ fn ask_gate_approve_executes_and_reject_leaves_disk() {
         let snapshot = runtime.snapshot(&f.scope(), &config);
         let tool = snapshot.messages.iter().find(|m| m.role == "tool").unwrap();
         assert_eq!(tool.status.as_deref(), Some(expected_status));
+        // 事件终态一律 "done"（r1 P1-1）：采纳/拒绝都不发细分值，细分只在 summary。
+        let event = last_tool_call_event(&sink, "vault_patch");
+        assert_eq!(event["status"], "done", "{event}");
+        if approve {
+            assert_eq!(event["summary"], "成功", "{event}");
+        } else {
+            assert!(
+                event["summary"].as_str().unwrap().contains("rejected"),
+                "{event}"
+            );
+        }
         if !approve {
             // 拒绝原因随工具结果回送模型（JSONL 里 tool_result 带 approval_rejected + 原因）。
             assert!(tool.text.as_deref().unwrap().contains("approval_rejected"));
@@ -399,6 +430,13 @@ fn patch_not_unique_error_feeds_back_without_gate() {
     let tool = snapshot.messages.iter().find(|m| m.role == "tool").unwrap();
     assert_eq!(tool.status.as_deref(), Some("error"));
     assert!(tool.text.as_deref().unwrap().contains("patch_not_unique"));
+    // 事件终态 status=done，细分 error 在 summary（r1 P1-1）。
+    let event = last_tool_call_event(&sink, "vault_patch");
+    assert_eq!(event["status"], "done", "{event}");
+    assert!(
+        event["summary"].as_str().unwrap().contains("error"),
+        "{event}"
+    );
     assert_eq!(
         std::fs::read_to_string(f.vault().join("a.md")).unwrap(),
         "dup\nfoo\ndup\n"
@@ -703,6 +741,78 @@ fn unknown_tool_error_feeds_back() {
     let snapshot = runtime.snapshot(&f.scope(), &config);
     let tool = snapshot.messages.iter().find(|m| m.role == "tool").unwrap();
     assert!(tool.text.as_deref().unwrap().contains("tool_unknown"));
+}
+
+#[test]
+fn patch_conflict_when_file_changes_during_approval() {
+    // r1 P2-2：批准窗内用户改了文件（旧内容落盘）——采纳执行必须以预览基准 revision
+    // 走 CAS，变了就 document_conflict 回送模型，落盘不与已批准 diff 静默分叉。
+    let f = Fixture::new("approval-cas");
+    f.write("a.md", "old\n");
+    let config = mock_config();
+    let runtime = f.runtime();
+    runtime.acquire_turn(&f.scope()).unwrap();
+    let sink = CollectSink::default();
+    let script = r#"{"responses": [
+        {"tool_calls": [{"id": "c1", "name": "vault_patch",
+            "arguments": "{\"path\":\"a.md\",\"edits\":[{\"old_string\":\"old\",\"new_string\":\"patched\"}]}"}]},
+        {"text": "文件被改了，我需要重新生成 diff。"}
+    ]}"#;
+    let mut client = MockClient::from_str(script, "cas").unwrap();
+    let worker = {
+        let sink = sink.clone();
+        let runtime = runtime.clone();
+        let scope = f.scope();
+        let config = config.clone();
+        std::thread::spawn(move || {
+            turn::run_turn_for(
+                &sink,
+                &runtime,
+                &scope,
+                &config,
+                "改成 patched".into(),
+                &mut client,
+            );
+        })
+    };
+    sink.wait_for(
+        |events| {
+            events
+                .iter()
+                .any(|e| e.get("type").and_then(|t| t.as_str()) == Some("approval_request"))
+        },
+        "approval_request 事件",
+    );
+    // 批准窗内：文件被外部修改（old_string 在新内容里仍唯一命中——
+    // 若无 CAS 基准，patch 会静默应用到新内容上）。
+    std::fs::write(f.vault().join("a.md"), "old\n用户手改的一行\n").unwrap();
+    let id = sink
+        .events()
+        .into_iter()
+        .find(|e| e.get("type").and_then(|t| t.as_str()) == Some("approval_request"))
+        .unwrap()["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    runtime
+        .with_session(&f.scope(), |s| s.resolve_approval(&id, true, None))
+        .expect("resolve ok")
+        .expect("resolve ok");
+    worker.join().unwrap();
+
+    // 结果：document_conflict 回送模型；磁盘保持用户改后的内容（无分叉、无覆盖）。
+    let snapshot = runtime.snapshot(&f.scope(), &config);
+    let tool = snapshot.messages.iter().find(|m| m.role == "tool").unwrap();
+    assert_eq!(tool.status.as_deref(), Some("error"));
+    assert!(
+        tool.text.as_deref().unwrap().contains("document_conflict"),
+        "{}",
+        tool.text.as_deref().unwrap()
+    );
+    assert_eq!(
+        std::fs::read_to_string(f.vault().join("a.md")).unwrap(),
+        "old\n用户手改的一行\n"
+    );
 }
 
 #[test]

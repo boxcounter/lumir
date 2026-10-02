@@ -107,6 +107,11 @@ pub fn assemble_user_message(message: &str, block: &ContextBlock) -> String {
 }
 
 /// run_turn 的 tauri 入口（command 层 spawn 在 `lumir-harness-llm` 专线程上跑）。
+///
+/// panic 收口（r1 P2-3）：线程中途 panic 若不收口，busy 标志永久残留、
+/// `harness_new_session` 又被 busy 挡住——该 vault 的 harness 到 app 重启前全瘫。
+/// `catch_unwind` 兜底：panic 路径发 error 事件并照常释放 busy（会话锁已改为
+/// poison 容忍，恐慌后仍可取回）。
 pub fn run_turn(
     app: tauri::AppHandle,
     runtime: Runtime,
@@ -124,7 +129,16 @@ pub fn run_turn(
             return;
         }
     };
-    run_turn_for(&sink, &runtime, &scope, &config, message, client.as_mut());
+    let panicked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        run_turn_for(&sink, &runtime, &scope, &config, message, client.as_mut());
+    }))
+    .is_err();
+    if panicked {
+        sink.emit(events::error(
+            "harness_internal_error",
+            "对话线程发生内部错误，本轮已终止；请重试，必要时开新会话",
+        ));
+    }
     runtime.release_turn(&scope);
 }
 
@@ -376,6 +390,7 @@ fn handle_call(
         }
     };
 
+    // 细分终态（面板快照 PanelMessage.status 用）：done / denied / rejected / error。
     let status = if output.succeeded() {
         "done"
     } else {
@@ -385,10 +400,12 @@ fn handle_call(
             _ => "error",
         }
     };
+    // 事件 status 只发契约内的 started|done（m303 面板按非 done 即 started 归并——
+    // 发细分值会产生永不完结的「正在执行」幻影行）；细分状态放 summary（D344 展示）。
     sink.emit(events::tool_call(
         &call.name,
-        status,
-        &summarize_result(&output),
+        "done",
+        &summarize_result(status, &output),
     ));
     let output_text = serde_json::to_string(&output.value).unwrap_or_default();
     let _ = runtime.with_session(scope, |s| {
@@ -447,6 +464,7 @@ fn gated_execute(
         call.name.clone(),
         preview.diff.clone(),
         preview.argv.clone(),
+        preview.revision.clone(),
         tx,
     );
     let id = match runtime.park_approval(scope, request) {
@@ -471,7 +489,9 @@ fn gated_execute(
         }
     };
     if decision.approved {
-        tools::execute(&call.name, args, tctx)
+        // 写工具带预览基准 revision 执行：批准窗内文件被改 ⇒ fs_patch_file CAS
+        // 拒掉（document_conflict 回送模型），落盘不与已批准 diff 分叉。
+        tools::execute_with_revision(&call.name, args, tctx, preview.revision.as_deref())
     } else {
         let reason = decision
             .reason
@@ -610,12 +630,14 @@ fn summarize_args(arguments: &str) -> String {
     }
 }
 
-fn summarize_result(output: &ToolOutput) -> String {
+/// 工具终态摘要（事件 summary 字段）：细分状态 + 结果代码/消息，面板 D344 展示。
+/// `status` 是面板快照层的细分值（done/denied/rejected/error）。
+fn summarize_result(status: &str, output: &ToolOutput) -> String {
     if output.succeeded() {
         "成功".to_string()
     } else {
         format!(
-            "{}: {}",
+            "{status} · {}: {}",
             output.value["code"].as_str().unwrap_or("error"),
             output.value["message"]
                 .as_str()
