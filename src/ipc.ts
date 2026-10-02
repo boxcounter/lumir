@@ -292,3 +292,86 @@ export function recoveryList(): Promise<string[]> {
 export function onMenuCommand(handler: (command: string) => void): Promise<() => void> {
   return listen<string>("app:menu_command", (event) => handler(event.payload));
 }
+
+// ---------------------------------------------------------------------------
+// Harness 对话面板（M303，change add-harness-probe）
+//
+// 命令与事件名是 tower 2026-10-02 钉死的契约（M302 运行时与 M303 面板共用，MUST NOT 改名）。
+// context_json / state 的 JSON 形状见各函数注释；事件 payload 的七类 type 见 HarnessEvent。
+// 运行时（M302）与面板并行开发：解析一律宽容——缺字段按空态处理、不认识的字段忽略，
+// 形状是「我消费的键」而不是「对方发的全部键」，超集演进零改动。
+// ---------------------------------------------------------------------------
+
+/** harness:event 的事件载荷（七类，type 字段判别）。 */
+export type HarnessEvent =
+  | { type: "text_chunk"; text: string }
+  | { type: "tool_call"; name: string; status: "started" | "done"; summary: string }
+  | { type: "approval_request"; id: string; tool: string; diff?: string; argv?: string }
+  | { type: "usage"; ctx_pct: number; cache_pct: number }
+  | { type: "compact"; summary: string }
+  | { type: "done" }
+  | { type: "error"; code: string; message: string };
+
+/** 发送一条消息。context_json 是序列化后的上下文块（src/harness-context.ts 的
+ *  `serializeHarnessContext` 是唯一构造点）：`{"path", "selection":{from_line,to_line,text}}`
+ *  或 `{"path", "viewport_range":{from_line,to_line,text}}`；调用方决定有无上下文（无上下文
+ *  传 null，面板在无路径文档上就这么发）。 */
+export function harnessSend(message: string, context_json: string | null): Promise<void> {
+  return invoke<void>("harness_send", { message, context_json });
+}
+
+/** 对一条待批准项给出采纳 / 拒绝（reason 可选，拒绝原因回送模型）。未决项不自动超时。 */
+export function harnessApprove(request_id: string, approved: boolean, reason?: string): Promise<void> {
+  return invoke<void>("harness_approve", { request_id, approved, reason: reason ?? null });
+}
+
+/** 「新会话」：清空当前 vault 会话的消息历史并重新装配系统上下文。 */
+export function harnessNewSession(): Promise<void> {
+  return invoke<void>("harness_new_session");
+}
+
+/**
+ * 会话快照（JSON String）：webview 重载后面板据此恢复渲染。面板消费的键（宽容解析，
+ * 缺省 = 空态）：`messages[]`（role: "user" | "assistant" | "tool" | "compact"；text /
+ * summary / name / status 字段按 role 取用）、`usage{ctx_pct,cache_pct}`、
+ * `pending_approval{id,tool,diff?,argv?}`、`warn_ctx_pct`（缺省 85）。
+ * 后端不可用（纯浏览器预览 / 命令未注册）时 reject，调用方按「空会话」降级。
+ */
+export function harnessState(): Promise<string> {
+  return invoke<string>("harness_state");
+}
+
+/** 解析 harness:event 的载荷：宽容入口——载荷是 string 时先 JSON.parse；形状不认识的
+ *  事件返回 null（调用方丢弃），绝不抛错打断后续事件。 */
+export function parseHarnessEvent(payload: unknown): HarnessEvent | null {
+  let value: unknown = payload;
+  if (typeof value === "string") {
+    try {
+      value = JSON.parse(value);
+    } catch {
+      return null;
+    }
+  }
+  if (typeof value !== "object" || value === null) return null;
+  const type = (value as { type?: unknown }).type;
+  switch (type) {
+    case "text_chunk":
+    case "tool_call":
+    case "approval_request":
+    case "usage":
+    case "compact":
+    case "done":
+    case "error":
+      return value as HarnessEvent;
+    default:
+      return null;
+  }
+}
+
+/** 订阅 harness 事件流；返回退订函数。 */
+export function onHarnessEvent(handler: (event: HarnessEvent) => void): Promise<() => void> {
+  return listen<unknown>("harness:event", (e) => {
+    const parsed = parseHarnessEvent(e.payload);
+    if (parsed !== null) handler(parsed);
+  });
+}

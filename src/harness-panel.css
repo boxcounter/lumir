@@ -1,0 +1,465 @@
+/* Harness 对话面板的样式（M303，change add-harness-probe）。先例 search-panel.css：与
+   src/style.css 的 shell 规则分开（并行 mission 隔离），token 层同源（style.css 的三组
+   :root[data-theme]），本文件**不自带任何值**——一切取值经 var() 消费 token 层。
+
+   纪律（design §10 + spec harness「对话面板」）：
+   - 平铺面板不吃 elevation（无 shadow）；底色用已预留的 --agent-bg，hairline 分隔；
+   - eink 降级 9 条照守：无色彩语义（tint 在 eink 全 transparent、语义色全 #000——token
+     已保证，组件层只补结构性条款）：代码块白底黑框（规则⑤，落点 = 面板自己的代码块
+     容器）、chip 描边化（规则⑥）、输入框 focus 加粗线宽（规则⑧）；
+   - 代码着色色值**不在本文件**：transcript 容器镜像了 preview 主题的 scope 类
+     （src/overlay-scope.ts），.cm-lp-tok-* 与 .cm-lp-inline-code 的规则值仍只有
+     src/preview/theme.ts 一处。 */
+
+/* ── 标题栏动作钮（toggle）：吃预留的 30×28 token，弱化默认态（灰字无框、hover 给反馈，
+   与搜索 panel 按钮同族）；aria-pressed=true（面板展开）给常驻可辨态 ─────────────── */
+.titlebar-action {
+  flex: none;
+  width: var(--layout-tb-btn-w);
+  height: var(--layout-tb-btn-h);
+  margin-right: var(--sp-3);
+  padding: 0;
+  border: none;
+  border-radius: var(--r4);
+  background: none;
+  color: var(--text-3);
+  font-family: var(--font-sans);
+  font-size: var(--fs-label);
+  font-weight: var(--fw-bold);
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  transition: background var(--dur-ui) var(--ease-standard);
+}
+.titlebar-action:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+.titlebar-action[aria-pressed="true"] {
+  background: var(--accent-tint);
+  color: var(--accent);
+}
+/* eink：tint 全 transparent（规则①），「开」态改走实心强调对（与搜索 panel 大小写开关
+   同一条归位——--accent-fill / --accent-fill-text 本就是为「实心强调」定义的一对）。 */
+:root[data-theme="eink"] .titlebar-action[aria-pressed="true"] {
+  background: var(--accent-fill);
+  color: var(--accent-fill-text);
+}
+
+/* ── 面板本体：dock 列的网格落点（第三列、主行）；列宽由 .app-shell(.dock-open) 管 ──── */
+.lumir-harness {
+  grid-column: 3;
+  grid-row: 2;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--agent-bg);
+  border-left: 1px solid var(--border);
+  color: var(--text);
+  font-family: var(--font-sans);
+  font-size: var(--fs-ui);
+}
+.lumir-harness[hidden] {
+  display: none;
+}
+
+/* ── 头部：标题（小标签形态，与搜索 panel 的「查找」同族）+ 用量读数 + 新会话 ──────── */
+.lumir-hp-head {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  padding: var(--sp-3) var(--sp-4);
+  border-bottom: 1px solid var(--border-soft);
+}
+.lumir-hp-title {
+  flex: none;
+  font-size: var(--fs-label);
+  font-weight: var(--fw-bold);
+  letter-spacing: 0.08em;
+  color: var(--text-2);
+}
+/* 用量读数：等宽 + 右对齐，随数字变化不抖动（搜索 panel 计数的同族形态） */
+.lumir-hp-usage {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: var(--fs-label);
+  color: var(--text-3);
+  text-align: right;
+  white-space: nowrap;
+}
+.lumir-hp-newsession {
+  flex: none;
+  padding: 2px var(--sp-3);
+  border: none;
+  border-radius: var(--r4);
+  background: none;
+  color: var(--text-3);
+  font: inherit;
+  font-size: var(--fs-meta);
+  cursor: pointer;
+  transition: background var(--dur-ui) var(--ease-standard);
+}
+.lumir-hp-newsession:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+
+/* ── 警示条（ctx 越阈值）：pending 族一档，tint 底 + 语义色字；eink 下 tint 退场、
+   字色 #000，可辨性由 hairline 边框与字重承担（规则①②） ───────────────────────── */
+.lumir-hp-warn {
+  padding: var(--sp-3) var(--sp-4);
+  background: var(--pending-tint);
+  color: var(--pending);
+  font-size: var(--fs-meta);
+  line-height: var(--lh-ui);
+  border-bottom: 1px solid var(--border-soft);
+}
+:root[data-theme="eink"] .lumir-hp-warn {
+  font-weight: var(--fw-semibold);
+}
+
+/* ── transcript：消息流 ───────────────────────────────────────────────────── */
+.lumir-hp-transcript {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--sp-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4);
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui);
+}
+.lumir-hp-empty {
+  margin: auto;
+  padding: var(--sp-6);
+  color: var(--text-3);
+  font-size: var(--fs-meta);
+  line-height: var(--lh-ui);
+  text-align: center;
+}
+.lumir-hp-msg-user {
+  align-self: stretch;
+  padding: var(--sp-3) var(--sp-4);
+  background: var(--content-bg);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--r6);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.lumir-hp-msg-assistant {
+  align-self: stretch;
+  min-width: 0;
+  word-break: break-word;
+}
+/* Markdown 块的纵向节奏（面板是 chrome 表面，字号走 shell 阶梯，不碰 --editor-* token） */
+.lumir-hp-msg-assistant h1,
+.lumir-hp-msg-assistant h2,
+.lumir-hp-msg-assistant h3,
+.lumir-hp-msg-assistant h4,
+.lumir-hp-msg-assistant h5,
+.lumir-hp-msg-assistant h6 {
+  margin: var(--sp-4) 0 var(--sp-2);
+  font-weight: var(--fw-bold);
+  line-height: var(--lh-title);
+}
+.lumir-hp-msg-assistant h1 { font-size: var(--fs-h1); }
+.lumir-hp-msg-assistant h2 { font-size: var(--fs-h2); }
+.lumir-hp-msg-assistant h3 { font-size: var(--fs-h3); }
+.lumir-hp-msg-assistant h4 { font-size: var(--fs-h4); }
+.lumir-hp-msg-assistant h5 { font-size: var(--fs-h5); }
+.lumir-hp-msg-assistant h6 { font-size: var(--fs-h6); }
+.lumir-hp-msg-assistant h1:first-child,
+.lumir-hp-msg-assistant h2:first-child,
+.lumir-hp-msg-assistant h3:first-child,
+.lumir-hp-msg-assistant h4:first-child,
+.lumir-hp-msg-assistant h5:first-child,
+.lumir-hp-msg-assistant h6:first-child,
+.lumir-hp-msg-assistant p:first-child,
+.lumir-hp-msg-assistant ul:first-child,
+.lumir-hp-msg-assistant ol:first-child,
+.lumir-hp-msg-assistant pre:first-child,
+.lumir-hp-msg-assistant blockquote:first-child,
+.lumir-hp-msg-assistant table:first-child {
+  margin-top: 0;
+}
+.lumir-hp-msg-assistant p,
+.lumir-hp-msg-assistant ul,
+.lumir-hp-msg-assistant ol,
+.lumir-hp-msg-assistant pre,
+.lumir-hp-msg-assistant blockquote,
+.lumir-hp-msg-assistant table {
+  margin: var(--sp-2) 0;
+}
+.lumir-hp-msg-assistant p:last-child,
+.lumir-hp-msg-assistant ul:last-child,
+.lumir-hp-msg-assistant ol:last-child,
+.lumir-hp-msg-assistant pre:last-child,
+.lumir-hp-msg-assistant blockquote:last-child,
+.lumir-hp-msg-assistant table:last-child {
+  margin-bottom: 0;
+}
+.lumir-hp-msg-assistant ul,
+.lumir-hp-msg-assistant ol {
+  padding-left: var(--sp-9);
+}
+.lumir-hp-msg-assistant blockquote {
+  padding-left: var(--sp-4);
+  border-left: 2px solid var(--border);
+  color: var(--text-2);
+}
+.lumir-hp-msg-assistant hr {
+  border: none;
+  border-top: 1px solid var(--border-soft);
+  margin: var(--sp-4) 0;
+}
+.lumir-hp-msg-assistant table {
+  border-collapse: collapse;
+  font-size: var(--fs-meta);
+}
+.lumir-hp-msg-assistant th,
+.lumir-hp-msg-assistant td {
+  padding: var(--sp-1) var(--sp-3);
+  border: 1px solid var(--border-soft);
+  text-align: left;
+}
+.lumir-hp-msg-assistant th {
+  font-weight: var(--fw-semibold);
+}
+.lumir-hp-link {
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+.lumir-hp-task {
+  font-family: var(--font-mono);
+  color: var(--text-3);
+}
+
+/* 代码块：浅底区块（--code-bg）；eink 翻转为白底黑框（规则⑤——light/dark 靠浅底区分，
+   eink 无灰底可用） */
+.lumir-hp-codeblock {
+  padding: var(--sp-3) var(--sp-4);
+  background: var(--code-bg);
+  border-radius: var(--r6);
+  overflow-x: auto;
+  font-family: var(--font-mono);
+  font-size: var(--fs-ui-s);
+  line-height: var(--lh-code);
+}
+.lumir-hp-codeblock code {
+  font: inherit;
+}
+:root[data-theme="eink"] .lumir-hp-codeblock {
+  background: var(--preview-bg);
+  border: 1px solid var(--border);
+}
+.lumir-hp-rawhtml {
+  color: var(--text-3);
+}
+
+/* ── 工具调用行 ───────────────────────────────────────────────────────────── */
+.lumir-hp-tool {
+  font-size: var(--fs-meta);
+  color: var(--text-3);
+}
+.lumir-hp-tool.is-done {
+  color: var(--text-2);
+}
+
+/* ── 压缩标记：上下 hairline 夹出的一段，摘要可展开 ────────────────────────── */
+.lumir-hp-compact {
+  padding: var(--sp-2) 0;
+  border-top: 1px solid var(--border-soft);
+  border-bottom: 1px solid var(--border-soft);
+  font-size: var(--fs-meta);
+  color: var(--text-2);
+}
+.lumir-hp-compact summary {
+  cursor: pointer;
+  color: var(--text-3);
+}
+.lumir-hp-compact-body {
+  padding-top: var(--sp-2);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* ── 错误行 ───────────────────────────────────────────────────────────────── */
+.lumir-hp-error {
+  padding: var(--sp-2) var(--sp-3);
+  background: var(--danger-tint);
+  color: var(--danger);
+  border-radius: var(--r4);
+  font-size: var(--fs-meta);
+}
+
+/* ── 批准闸：结构档边框的卡片（未决项不自动超时，唯一的出口是点击） ────────── */
+.lumir-hp-approval {
+  padding: var(--sp-3) var(--sp-4);
+  background: var(--content-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--r6);
+}
+.lumir-hp-approval-title {
+  margin-bottom: var(--sp-2);
+  font-size: var(--fs-ui);
+  font-weight: var(--fw-semibold);
+}
+.lumir-hp-diff,
+.lumir-hp-argv {
+  max-height: 240px;
+  overflow: auto;
+  margin: 0 0 var(--sp-2);
+  padding: var(--sp-2) var(--sp-3);
+  background: var(--code-bg);
+  border-radius: var(--r4);
+  font-family: var(--font-mono);
+  font-size: var(--fs-label-s);
+  line-height: var(--lh-code);
+  white-space: pre;
+}
+:root[data-theme="eink"] .lumir-hp-diff,
+:root[data-theme="eink"] .lumir-hp-argv {
+  background: var(--preview-bg);
+  border: 1px solid var(--border);
+}
+.lumir-hp-diff-add {
+  background: var(--ok-tint);
+  color: var(--ok);
+}
+.lumir-hp-diff-del {
+  background: var(--danger-tint);
+  color: var(--danger);
+}
+.lumir-hp-diff-hunk {
+  color: var(--text-3);
+}
+/* eink：tint 退场后增删行同为黑字——+/− 行首字符本就是 unified diff 的语义载体，
+   可辨性不靠色（规则①的正当后果，不另造表达）。 */
+.lumir-hp-reason {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  margin-bottom: var(--sp-2);
+  padding: var(--sp-2) var(--sp-3);
+  border: 1px solid var(--border);
+  border-radius: var(--r4);
+  background: var(--content-bg);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--fs-meta);
+}
+.lumir-hp-reason:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+:root[data-theme="eink"] .lumir-hp-reason:focus {
+  border-color: var(--border);
+  border-width: 1.6px;
+}
+.lumir-hp-approval-actions {
+  display: flex;
+  gap: var(--sp-3);
+}
+.lumir-hp-approval-actions button {
+  padding: var(--sp-2) var(--sp-5);
+  border-radius: var(--r4);
+  font: inherit;
+  font-size: var(--fs-meta);
+  cursor: pointer;
+  transition: background var(--dur-ui) var(--ease-standard);
+}
+.lumir-hp-approval-actions button[data-act="approve"] {
+  border: none;
+  background: var(--accent-fill);
+  color: var(--accent-fill-text);
+}
+.lumir-hp-approval-actions button[data-act="reject"] {
+  border: 1px solid var(--border);
+  background: none;
+  color: var(--text-2);
+}
+.lumir-hp-approval-actions button[data-act="reject"]:hover:not(:disabled) {
+  background: var(--hover);
+  color: var(--text);
+}
+.lumir-hp-approval-actions button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+/* 已决策的批准项留在 transcript 里作记录：降一档明度，按钮已禁用 */
+.lumir-hp-approval.is-approved,
+.lumir-hp-approval.is-rejected {
+  opacity: 0.72;
+}
+
+/* ── 上下文 chip（输入区上方，发送前核对）：描边 chip（eink 规则⑥同形——本就描边、
+   无底色，eink 只把描边提到结构档）；单行省略，全文在 title ─────────────────── */
+.lumir-hp-chip {
+  margin: 0 var(--sp-4);
+  padding: var(--sp-2) var(--sp-3);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--r4);
+  color: var(--text-2);
+  font-size: var(--fs-label-s);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+:root[data-theme="eink"] .lumir-hp-chip {
+  border-color: var(--border);
+}
+.lumir-hp-chip.is-none {
+  color: var(--text-3);
+}
+
+/* ── 输入区：顶部 hairline 与 transcript 分隔；textarea 无框态、focus 出 accent 框
+   （eink 改加粗线宽，规则⑧） ─────────────────────────────────────────────── */
+.lumir-hp-composer-row {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--sp-3);
+  margin-top: var(--sp-2);
+  padding: var(--sp-3) var(--sp-4);
+  border-top: 1px solid var(--border);
+}
+.lumir-hp-composer {
+  flex: 1 1 auto;
+  min-width: 0;
+  resize: none;
+  padding: var(--sp-2) var(--sp-3);
+  border: 1px solid var(--border);
+  border-radius: var(--r4);
+  background: var(--content-bg);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui);
+}
+.lumir-hp-composer:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+:root[data-theme="eink"] .lumir-hp-composer:focus {
+  border-color: var(--border);
+  border-width: 1.6px;
+}
+.lumir-hp-send {
+  flex: none;
+  padding: var(--sp-2) var(--sp-5);
+  border: none;
+  border-radius: var(--r4);
+  background: var(--accent-fill);
+  color: var(--accent-fill-text);
+  font: inherit;
+  font-size: var(--fs-meta);
+  cursor: pointer;
+}
+.lumir-hp-send:disabled {
+  opacity: 0.45;
+  cursor: default;
+}

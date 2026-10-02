@@ -4,6 +4,9 @@
 > [openspec/specs/ui-design-system/spec.md](../../../../specs/ui-design-system/spec.md) 的
 > 「应用骨架布局」。改动面：dock 预留列从零像素接入 harness 面板，标题栏动作钮槽位填入面板 toggle。
 > 面板自身的样式纪律（token 消费、不吃 elevation、eink 降级）在 harness spec「对话面板」条款。
+> （M303 实现期校勘：living spec 的「正文列 664」已被 content-width-drag 批在实现里改为
+> 760 起可拖拽，living spec 尚未跟进——本条 delta 不再钉死数值，改述「既有口径」，避免把
+> 过期数字写回规格。）
 
 ## MODIFIED Requirements
 
@@ -24,13 +27,13 @@ macOS 标题栏 SHALL 为 overlay 形态（traffic 灯保持原生绘制，标�
 #### Scenario: 骨架几何与信息落位
 
 - **WHEN** 打开任意 md 文件
-- **THEN** 侧栏宽 236、标题栏高 42、modeline 高 25、正文列 664 居中、dock 列在面板收起时零像素；
+- **THEN** 侧栏宽 236、标题栏高 42、modeline 高 25、正文列按既有阅读宽口径居中、dock 列在面板收起时零像素；
   modeline 左侧显示当前文件的 vault 相对路径，右侧显示语法 / 行数 / 编码；masthead 不存在
 
 #### Scenario: dock 展开与收起
 
 - **WHEN** 经标题栏 toggle 钮或命令唤起 / 收起 harness 面板
-- **THEN** dock 列在 `0px` 与 `--layout-dock-w` 之间切换，正文列随之伸缩，切换不改变正文阅读宽 664 居中的既有口径
+- **THEN** dock 列在 `0px` 与 `--layout-dock-w` 之间切换，正文列随之伸缩，切换不改变正文阅读宽居中的既有口径
 
 #### Scenario: 空态的标题栏
 

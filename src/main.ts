@@ -98,10 +98,13 @@ import type { VaultStatus } from "./bindings/VaultStatus";
 import type { VaultListEntry } from "./bindings/VaultListEntry";
 import { extensionOf, codeLanguageOfPath, isEditablePath, mimeTypeOf, resolveByNameUnique } from "./preview/attachments";
 import { openSearch } from "./search";
+import { createHarnessPanel } from "./harness-panel";
 import "./style.css";
 // 搜索 panel 的样式单列一个文件（M139）：与并行 mission 的 src/style.css 隔离，
 // 本 mission 的搜索样式一律放这里。
 import "./search-panel.css";
+// harness 对话面板的样式同理单列（M303，change add-harness-probe）。
+import "./harness-panel.css";
 
 const app = document.querySelector<HTMLElement>("#app");
 if (!app) {
@@ -1175,6 +1178,14 @@ function cycleLanguage(): void {
 shell.modelineLanguage.addEventListener("click", cycleLanguage);
 
 // ---------------------------------------------------------------------------
+// Harness 对话面板（M303，change add-harness-probe）：面板本体、流式渲染、上下文组装与
+// 批准闸都在 src/harness-panel.ts（+ src/harness-context.ts / src/harness-panel.css），
+// 这里只做一件事——把 shell 与编辑器句柄交给它。toggle 命令（harness.toggle）在下面的
+// 统一键位层登记，与标题栏 toggle 钮共用面板的同一条 toggle 路径。
+// ---------------------------------------------------------------------------
+const harnessPanel = createHarnessPanel({ shell, editor });
+
+// ---------------------------------------------------------------------------
 // 统一键位层（M131）：唯一分发表在 keys.ts，装配在这里——编辑器侧命令由 editor 提供，
 // 装配侧命令（保存）在下面就地实现，链接跟随与标签那几条转各自模块的句柄（M151）。
 // 原先散落的四条旁路（keys.ts 的 window trie、editor 的 CM keymap 与 domEventHandlers、
@@ -1221,6 +1232,9 @@ const commands: CommandRuntime = {
   // 就是上面的 cycleLanguage（与 modeline 语言钮共用同一条路径，见那段注释）。默认键位 ⌘⇧L 在
   // keys.ts 的 KEY_BINDINGS 里（三条冲突来源的复核与 token 形态见那一条的 docKey 指向的表条目）。
   "view.language-cycle": () => cycleLanguage(),
+  // harness 对话面板唤起 / 收起（M303，change add-harness-probe）：与标题栏 toggle 钮共用面板
+  // 的同一条 toggle 路径。默认键位 ⌘⇧A 在 keys.ts 的 KEY_BINDINGS 里（冲突核实见表条目 D345）。
+  "harness.toggle": () => harnessPanel.toggle(),
   // 标签（M149）：能力与切换在 editor 的会话 API，装配层只做两件它才知道的事——
   // 切换后的表现层对齐（tabs.activateTab → syncActiveDocument）与关标签的确认（都在 src/tabs.ts）。
   // `tab.close` 关的是**前台**标签；逐标签关闭钮走同一条 closeTab（同一个确认）。

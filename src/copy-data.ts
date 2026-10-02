@@ -616,6 +616,105 @@ const COPY_TABLE = {
     en: "Reveal in File Tree",
     lock: "en",
   },
+
+  // -------------------------------------------------------------------------
+  // Harness 对话面板（D326–D348，M303，change add-harness-probe）
+  // 文案随能力走：全部消费点在 src/harness-panel.ts（面板 DOM 与 chip / 批准闸 / 压缩标记）
+  // 与 src/keys.ts（toggle 命令的来由 D345 只留 docKey 引用）。
+  // -------------------------------------------------------------------------
+  D326: {
+    zh: "对话",
+    en: "Chat",
+  },
+  D327: {
+    zh: "对话面板",
+    en: "Chat panel",
+  },
+  D328: {
+    zh: "问点什么…（Enter 发送，⇧Enter 换行）",
+    en: "Ask something… (Enter to send, ⇧Enter for newline)",
+  },
+  D329: {
+    zh: "发送",
+    en: "Send",
+  },
+  D330: {
+    zh: "新会话",
+    en: "New session",
+  },
+  D331: {
+    zh: "上下文：{path} · 选区 {from}–{to} 行",
+    en: "Context: {path} · selection lines {from}–{to}",
+  },
+  D332: {
+    zh: "上下文：{path} · 视口 {from}–{to} 行",
+    en: "Context: {path} · viewport lines {from}–{to}",
+  },
+  D333: {
+    zh: "上下文：无（未打开文件）",
+    en: "Context: none (no file open)",
+  },
+  // 用量条是读数不是措辞（与 D317 的语言档同口径）：两列同形。
+  D334: {
+    zh: "ctx {ctx}% · cache {cache}%",
+    en: "ctx {ctx}% · cache {cache}%",
+  },
+  D335: {
+    zh: "上下文已用 {ctx}%，越过 {warn}% 警示线——继续对话将自动压缩续聊",
+    en: "Context usage {ctx}% is past the {warn}% warning line — further turns will be auto-compacted",
+  },
+  D336: {
+    zh: "采纳",
+    en: "Approve",
+  },
+  D337: {
+    zh: "拒绝",
+    en: "Reject",
+  },
+  D338: {
+    zh: "拒绝原因（可选，回送给模型）",
+    en: "Reason for rejection (optional, sent back to the model)",
+  },
+  D339: {
+    zh: "{tool} 请求修改文件，采纳后才落盘：",
+    en: "{tool} asks to modify a file; nothing is written until approved:",
+  },
+  D340: {
+    zh: "{tool} 请求执行命令，采纳后才运行：",
+    en: "{tool} asks to run a command; nothing runs until approved:",
+  },
+  D341: {
+    zh: "会话已自动压缩（上下文触顶）——以下为摘要，完整历史仍在本地留存",
+    en: "Conversation auto-compacted (context limit hit) — summary below; the full history is kept locally",
+  },
+  D342: {
+    zh: "压缩摘要",
+    en: "Compaction summary",
+  },
+  D343: {
+    zh: "调用工具：{name}",
+    en: "Calling tool: {name}",
+  },
+  D344: {
+    zh: "工具完成：{name} — {summary}",
+    en: "Tool done: {name} — {summary}",
+  },
+  D345: {
+    zh: "唤起 / 收起 harness 对话面板（M303，change add-harness-probe）：右栏 dock 在 0px 与 --layout-dock-w 之间切换，语义取「A = Agent」，⌘ 系归 mac 惯例。取 global——焦点在左栏 / 搜索框 / 浮层里时同样要能唤起；面板打开时焦点在面板的输入框里（不在 contentDOM 内），再按要能收起。冲突已核（零冲突，三条独立来源）：① 表内——keys.ts 即真源，⌘⇧ 系现有 Cmd-Shift-z（重做）/ Cmd-Shift-o（toc.toggle）/ Cmd-Shift-T（view.theme-cycle）/ Cmd-Shift-L（view.language-cycle）四条，⌘⇧A 不在其中；② 原生菜单 accelerator 集合（tauri 的 Menu::default() 逐项来自 muda 的 items/predefined.rs，清单见 keys.ts 文件头 M149 段）不含 ⌘⇧A；③ macOS 系统级不预置 ⌘⇧A（Finder 的「应用程序」快捷键只在 Finder 窗口作用域）。可经 [keys] 重绑 / 解绑",
+    en: "Show / hide the harness chat panel (M303, change add-harness-probe): the right-hand dock switches between 0px and --layout-dock-w; the letter means A = Agent, and the ⌘ family follows mac conventions. Scope is global — it must also work with focus in the left column, the search box or a popover; with the panel open focus is in its input (not inside contentDOM) and pressing again must close it. Conflicts checked (none, three independent sources): (1) the table's ⌘⇧ bindings are ⇧⌘Z (redo) / ⇧⌘O (toc.toggle) / ⇧⌘T (view.theme-cycle) / ⇧⌘L (view.language-cycle) and ⌘⇧A is not among them (keys.ts is the source of truth); (2) the native menu accelerator set (tauri's Menu::default() takes each item from muda's items/predefined.rs, list in the M149 section of the keys.ts header) has no ⌘⇧A; (3) macOS presets no ⌘⇧A (Finder's Applications-folder shortcut is scoped to Finder windows). Can be rebound / unbound via [keys]",
+  },
+  D346: {
+    zh: "与当前文档对话——发送时会携带上方显示的上下文，发送前可核对。",
+    en: "Chat about the current document — the context shown above is sent with your message; check it before sending.",
+  },
+  D347: {
+    zh: "发送失败：{reason}",
+    en: "Send failed: {reason}",
+  },
+  D348: {
+    zh: "错误：{message}",
+    en: "Error: {message}",
+  },
 } satisfies Record<string, CopyEntry>;
 
 /** 文案表的键（D 编号，多串格带 `.N` 后缀）——由表数据推导，加一条即多一个键。 */
