@@ -13,7 +13,7 @@
 use ignore::gitignore::{Gitignore, GitignoreBuilder};
 use ignore::Match;
 use notify::{EventKind, RecursiveMode, Watcher};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::path::{Component, Path, PathBuf};
 use std::sync::{mpsc, Arc, Mutex, OnceLock};
@@ -1188,33 +1188,17 @@ fn extension_of(rel: &str) -> String {
     }
 }
 
-/// 保存 vault 内文本文档：原子替换 + revision CAS。
+/// 文档落盘的共用写核心：同目录 `.lumir-` 临时文件 + `sync_all` + 原子 rename。
 ///
-/// 可保存面（editable-non-md-files，裁决 D1/D3）= 注册表全部文本类：`.md`/`.markdown`、
-/// 已知代码扩展、未收录扩展、dotfile 与 basename 无点的文件——即除 image/binary 之外的一切。
-/// 守卫从 md 白名单翻转为**拒绝清单**（[`SAVE_REJECTED_EXTENSIONS`]）：image/binary 类扩展名
-/// 返回 `fs_read_only`，MUST NOT 写入任何字节。（原函数名 `save_markdown` 随语义放宽改为
-/// `save_document`；command 名 `document_save` 本来就叫 document，前端 IPC 零改动。）
-pub fn save_document(
-    root: &Path,
-    rel: &str,
-    expected_revision: &str,
-    content: &str,
-) -> Result<String, CommandError> {
-    if SAVE_REJECTED_EXTENSIONS.contains(&extension_of(rel).as_str()) {
-        return Err(CommandError::new(
-            "fs_read_only",
-            "不支持保存该文件类型（图片 / 二进制文件）",
-        ));
-    }
-    let target = resolve_in_vault(root, rel)?;
-    let actual = file_revision(root, rel)?;
-    if actual != expected_revision {
-        return Err(CommandError::new(
-            "document_conflict",
-            "文件已被外部修改，请先协调冲突",
-        ));
-    }
+/// `document_save` 与 [`fs_patch_file`] **共用这一份**（REVIEW.md 第 8 条：同一语义不留两处
+/// 实现）——「局部 patch 与整文件保存走同一套写纪律」因此是结构性的，不是巧合。三条纪律：
+/// - **`.lumir-` 标记**：tmp 名形如 `.{name}.lumir-{pid}`，命中忽略集（[`LUMIR_TMP_PATTERNS`]），
+///   因此写入过程不在文件树 / watch 流里留下临时条目（`fs-io` spec 的「局部 patch 写入」把
+///   这层口径称作写盘方的自身标记）；
+/// - **ghost 重试**：`create_new` 撞上同名文件 = 上次保存进程崩溃留下的残留（tmp 名含自身
+///   pid，活着的进程互不挡道），删掉重试一次；再失败才是真错误；
+/// - **失败即清理 tmp**，不留半截目标文件。
+fn write_document_atomic(target: &Path, content: &str) -> Result<(), CommandError> {
     let parent = target
         .parent()
         .ok_or_else(|| CommandError::new("fs_path_invalid", "目标目录无效"))?;
@@ -1223,8 +1207,6 @@ pub fn save_document(
         .and_then(|n| n.to_str())
         .unwrap_or("document");
     let tmp = parent.join(format!(".{name}.lumir-{}", std::process::id()));
-    // create_new 撞上同名文件 = 上次保存进程崩溃留下的 ghost（tmp 名含自身
-    // pid，活着的进程互不挡道）：删除 ghost 重试一次；再失败才是真错误。
     let mut file = match std::fs::OpenOptions::new()
         .write(true)
         .create_new(true)
@@ -1269,19 +1251,258 @@ pub fn save_document(
             format!("文档写入结果未知：{e}"),
         ));
     }
-    if let Err(e) = std::fs::rename(&tmp, &target) {
+    if let Err(e) = std::fs::rename(&tmp, target) {
         let _ = std::fs::remove_file(&tmp);
         return Err(CommandError::new(
             "document_write_unknown",
             format!("文档替换结果未知：{e}"),
         ));
     }
+    Ok(())
+}
+
+/// 保存 vault 内文本文档：原子替换 + revision CAS。
+///
+/// 可保存面（editable-non-md-files，裁决 D1/D3）= 注册表全部文本类：`.md`/`.markdown`、
+/// 已知代码扩展、未收录扩展、dotfile 与 basename 无点的文件——即除 image/binary 之外的一切。
+/// 守卫从 md 白名单翻转为**拒绝清单**（[`SAVE_REJECTED_EXTENSIONS`]）：image/binary 类扩展名
+/// 返回 `fs_read_only`，MUST NOT 写入任何字节。（原函数名 `save_markdown` 随语义放宽改为
+/// `save_document`；command 名 `document_save` 本来就叫 document，前端 IPC 零改动。）
+///
+/// 落盘走 [`write_document_atomic`]——**局部 patch 走的是同一个函数**，两者的写纪律
+/// （`.lumir-` 标记 / ghost 重试 / 原子替换）因此逐条同源。
+pub fn save_document(
+    root: &Path,
+    rel: &str,
+    expected_revision: &str,
+    content: &str,
+) -> Result<String, CommandError> {
+    if SAVE_REJECTED_EXTENSIONS.contains(&extension_of(rel).as_str()) {
+        return Err(CommandError::new(
+            "fs_read_only",
+            "不支持保存该文件类型（图片 / 二进制文件）",
+        ));
+    }
+    let target = resolve_in_vault(root, rel)?;
+    let actual = file_revision(root, rel)?;
+    if actual != expected_revision {
+        return Err(CommandError::new(
+            "document_conflict",
+            "文件已被外部修改，请先协调冲突",
+        ));
+    }
+    write_document_atomic(&target, content)?;
     file_revision(root, rel).map_err(|e| {
         CommandError::new(
             "document_write_unknown",
             format!("文档替换后无法确认结果：{}", e.message),
         )
     })
+}
+
+/// 一次局部编辑（`fs_patch_file` 的输入单元，change add-harness-probe §7）：
+/// 把 `old_string` 换成一处的 `new_string`。字段名与 harness 工具 `vault_patch` 的 JSON 形状
+/// 一致（`{"old_string": …, "new_string": …}`），运行时（M302）可直接反序列化。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PatchEdit {
+    pub old_string: String,
+    pub new_string: String,
+}
+
+/// **唯一**能改写既有文档的能力（change add-harness-probe §7，ADR 0003 §3 在 agent 写入侧的
+/// 延伸）：对 vault 内既有文本文件应用一组编辑。
+///
+/// 不变量（逐条都有单测）：
+/// 1. **唯一命中**：每个 `old_string` 在**应用它的那一刻**的文本里必须恰好命中一次——0 次
+///    返回 `patch_not_found`，多次返回 `patch_not_unique`，错误里带命中次数与编辑序号（回送
+///    模型即可据此重试）。整组编辑因此是全有或全无：失败时文件逐字节不变。
+///    编辑**按数组顺序逐个应用**（后一条看得到前一条的结果）——顺序语义是确定性的，也是
+///    unified diff 预览（M302）能对齐的前提。
+/// 2. **逐字节不变**：只替换命中的那一段，其余字节原样保留（替换在解码后的 `String` 上做，
+///    写回是同一份 `String` 的编码——合法 UTF-8 输入下逐字节等价）。
+/// 3. **CAS**：调用方持有的 `expected_revision`（SHA-256）与当前文件不一致即 `document_conflict`
+///    ——与 [`save_document`] 完全同一套口径（同一份 `file_revision` / 同一句人话）。
+/// 4. **写纪律**：落盘走 [`write_document_atomic`]（与保存同一个函数）：`.lumir-` 临时文件 +
+///    原子 rename，临时文件命中忽略集 ⇒ 不在文件树 / watch 流里冒出自家的临时条目。
+///    被 patch 文件的**打开中会话经既有 watch → 会话刷新通路同步**（`fs:entry_changed` 的
+///    外部变更分流，`src/save-controller.ts`）——本函数 MUST NOT 绕过那条通路去「静默改盘」：
+///    它只负责把磁盘改对，编辑器同步交给既有链路。
+/// 5. **类型守卫**：image/binary 扩展名拒绝（`fs_read_only`，沿用 [`save_document`] 的
+///    [`SAVE_REJECTED_EXTENSIONS`] 口径），判定先于任何 IO。
+///
+/// 空 `edits`、空 `old_string` 返回 `patch_invalid`（空串没有唯一命中语义，不能滑成「插入」）。
+pub fn fs_patch_file(
+    root: &Path,
+    rel: &str,
+    edits: &[PatchEdit],
+    expected_revision: &str,
+) -> Result<String, CommandError> {
+    if SAVE_REJECTED_EXTENSIONS.contains(&extension_of(rel).as_str()) {
+        return Err(CommandError::new(
+            "fs_read_only",
+            "不支持修改该文件类型（图片 / 二进制文件）",
+        ));
+    }
+    if edits.is_empty() {
+        return Err(
+            CommandError::new("patch_invalid", "edits 为空，没有可应用的编辑").param("rel", rel),
+        );
+    }
+    let target = resolve_in_vault(root, rel)?;
+    let bytes = read_file_bytes(root, rel, ATTACHMENT_MAX_BYTES)?;
+    let actual = {
+        use sha2::{Digest, Sha256};
+        format!("{:x}", Sha256::digest(&bytes))
+    };
+    if actual != expected_revision {
+        return Err(
+            CommandError::new("document_conflict", "文件已被外部修改，请先协调冲突")
+                .param("rel", rel),
+        );
+    }
+    let mut content = String::from_utf8(bytes).map_err(|_| {
+        CommandError::new(
+            "fs_invalid_utf8",
+            format!("文件 {rel} 不是合法 UTF-8 编码（可能是 GBK 等其他编码），暂不支持修改"),
+        )
+        .param("rel", rel)
+    })?;
+
+    for (index, edit) in edits.iter().enumerate() {
+        if edit.old_string.is_empty() {
+            return Err(CommandError::new(
+                "patch_invalid",
+                format!("第 {} 处编辑的 old_string 为空串", index + 1),
+            )
+            .param("rel", rel)
+            .param("index", index + 1));
+        }
+        let hits: Vec<usize> = content
+            .match_indices(edit.old_string.as_str())
+            .map(|(start, _)| start)
+            .collect();
+        match hits.as_slice() {
+            [start] => {
+                content.replace_range(*start..*start + edit.old_string.len(), &edit.new_string);
+            }
+            [] => {
+                return Err(CommandError::new(
+                    "patch_not_found",
+                    format!(
+                        "第 {} 处编辑的 old_string 在 {rel} 中命中 0 次（要求恰好 1 次），已拒绝整组编辑",
+                        index + 1
+                    ),
+                )
+                .param("rel", rel)
+                .param("index", index + 1)
+                .param("count", 0));
+            }
+            _ => {
+                let count = hits.len();
+                return Err(CommandError::new(
+                    "patch_not_unique",
+                    format!(
+                        "第 {} 处编辑的 old_string 在 {rel} 中命中 {count} 次（要求恰好 1 次），已拒绝整组编辑",
+                        index + 1
+                    ),
+                )
+                .param("rel", rel)
+                .param("index", index + 1)
+                .param("count", count));
+            }
+        }
+    }
+
+    write_document_atomic(&target, &content)?;
+    file_revision(root, rel).map_err(|e| {
+        CommandError::new(
+            "document_write_unknown",
+            format!("文档替换后无法确认结果：{}", e.message),
+        )
+    })
+}
+
+/// 新建文档（harness 的 `vault_create`，change add-harness-probe §7）：O_EXCL 语义——
+/// 目标已存在即 `fs_already_exists`，MUST NOT 覆盖任何既有内容。
+///
+/// 与 [`create_file_entry`]（建空文件）的差别只有两点：内容由调用方给出；目标按**完整
+/// vault 相对路径**给出（`notes/new.md` 的父段用同一套 [`resolve_new_in_vault`] 校验）。
+/// **父目录必须已存在**（不隐式补建中间目录）：agent 的「新建文档」是一个可预测的窄动作，
+/// 隐式建目录会把一次写入的影响面放大到它没声明过的地方；父目录不存在时回人话错误，模型
+/// 据它改路径或先建目录。
+///
+/// image/binary 扩展名与两个既有写入口同口径拒绝（`fs_read_only`）——文本工具创造出的
+/// `.png` 只会得到文件树里一个打不开、渲染不了的条目。
+pub fn vault_create_file(root: &Path, rel: &str, content: &str) -> Result<String, CommandError> {
+    if SAVE_REJECTED_EXTENSIONS.contains(&extension_of(rel).as_str()) {
+        return Err(CommandError::new(
+            "fs_read_only",
+            "不支持新建该文件类型（图片 / 二进制文件）",
+        ));
+    }
+    let name = match rel.rsplit('/').next() {
+        Some(name) if !name.is_empty() => name,
+        _ => {
+            return Err(
+                CommandError::new("fs_path_invalid", format!("目标路径无效：{rel}"))
+                    .param("rel", rel),
+            )
+        }
+    };
+    // 末段名由 [`resolve_new_in_vault`] 的 [`validate_new_name`] 管（含内置忽略名），但**父段**
+    // 没人管：`.git/new.md` 或 `node_modules/x.md` 会建出一个文件树里看不见、用户也删不掉的
+    // 文件（内置规则的子树整体隐藏）。harness 的路径是模型给的，父段是完全可及的输入，因此在
+    // 这里补上这一段校验（既有 `fs_create_file` 的父段来自树界面选择，够不到这些名字）。
+    for segment in parent_rel_of(rel).split('/').filter(|s| !s.is_empty()) {
+        if is_builtin_name(segment) {
+            return Err(CommandError::new(
+                "fs_name_invalid",
+                format!("{segment} 在忽略集内，建在它里面的文件不会出现在文件树里"),
+            )
+            .param("path", rel));
+        }
+    }
+    let target = resolve_new_in_vault(root, parent_rel_of(rel), name)?;
+    // O_EXCL：撞名由内核裁定（`resolve_new_in_vault` 的早失败只是人话提示，保证在这里）。
+    let mut file = match std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&target)
+    {
+        Ok(file) => file,
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+            return Err(
+                CommandError::new("fs_already_exists", format!("已存在同名条目：{rel}"))
+                    .param("path", rel),
+            )
+        }
+        Err(e) => {
+            return Err(
+                CommandError::new("fs_create_failed", format!("无法新建 {rel}：{e}"))
+                    .param("path", rel)
+                    .param("reason", e.to_string()),
+            )
+        }
+    };
+    use std::io::Write;
+    if let Err(e) = file.write_all(content.as_bytes()) {
+        // 写失败不留半截新文件（新建路径没有「旧内容」可回退，只能删掉自己刚建的这一个）。
+        let _ = std::fs::remove_file(&target);
+        return Err(
+            CommandError::new("fs_create_failed", format!("无法写入 {rel}：{e}"))
+                .param("path", rel)
+                .param("reason", e.to_string()),
+        );
+    }
+    if let Err(e) = file.sync_all() {
+        let _ = std::fs::remove_file(&target);
+        return Err(
+            CommandError::new("fs_create_failed", format!("无法写入 {rel}：{e}"))
+                .param("path", rel)
+                .param("reason", e.to_string()),
+        );
+    }
+    Ok(rel.to_string())
 }
 
 /// 读二进制附件：返回 base64（裁决点 A：invoke + base64 形态）。
@@ -2280,6 +2501,255 @@ mod tests {
         assert_ne!(revision, next);
         assert_eq!(read_text_file(&v.0, "note.md").unwrap(), "# recovered");
         assert!(!ghost.exists(), "ghost 应已被删除重试清理");
+    }
+
+    // -----------------------------------------------------------------------
+    // 局部 patch 写入（change add-harness-probe §7，M301）
+    // -----------------------------------------------------------------------
+
+    fn edit(old: &str, new: &str) -> PatchEdit {
+        PatchEdit {
+            old_string: old.to_string(),
+            new_string: new.to_string(),
+        }
+    }
+
+    fn sha256(bytes: &[u8]) -> String {
+        use sha2::{Digest, Sha256};
+        format!("{:x}", Sha256::digest(bytes))
+    }
+
+    /// 唯一命中替换：命中处被替换，**未触及部分逐字节不变**。断言取前后两段的原始字节与
+    /// sha256（不用「内容字符串相等」——那会放过看不见的重编码差异）。
+    #[test]
+    fn fs_patch_file_replaces_single_match_and_keeps_untouched_bytes() {
+        let v = TempVault::with_fixture();
+        let prefix = "第一段：保持不动。\n\n目标行：";
+        let suffix = "\n\n第三段：保持不动。\n";
+        let original = format!("{prefix}旧的{suffix}");
+        std::fs::write(v.0.join("doc.md"), &original).unwrap();
+        let revision = file_revision(&v.0, "doc.md").unwrap();
+
+        let next = fs_patch_file(&v.0, "doc.md", &[edit("旧的", "新的")], &revision).unwrap();
+
+        assert_ne!(next, revision, "revision 必须前进");
+        assert_eq!(next, file_revision(&v.0, "doc.md").unwrap());
+        let after = std::fs::read(v.0.join("doc.md")).unwrap();
+        assert_eq!(
+            String::from_utf8(after.clone()).unwrap(),
+            format!("{prefix}新的{suffix}")
+        );
+        // 未触及部分：前缀 / 后缀两段与原文件逐字节相同（长度与 sha256 双重断言）
+        assert_eq!(&after[..prefix.len()], prefix.as_bytes());
+        assert_eq!(&after[after.len() - suffix.len()..], suffix.as_bytes());
+        assert_eq!(sha256(&after[..prefix.len()]), sha256(prefix.as_bytes()));
+        assert_eq!(
+            sha256(&after[after.len() - suffix.len()..]),
+            sha256(suffix.as_bytes())
+        );
+    }
+
+    /// 0 次 / 多次命中都拒绝**整组**编辑：文件逐字节不变、revision 不变，错误里带命中次数与
+    /// 编辑序号（回送模型即可据此重试）。
+    #[test]
+    fn fs_patch_file_rejects_zero_and_multiple_matches_without_touching_the_file() {
+        let v = TempVault::with_fixture();
+        std::fs::write(v.0.join("doc.md"), "alpha\nbeta\nalpha\n").unwrap();
+        let before = std::fs::read(v.0.join("doc.md")).unwrap();
+        let revision = file_revision(&v.0, "doc.md").unwrap();
+
+        let err = fs_patch_file(&v.0, "doc.md", &[edit("missing", "x")], &revision).unwrap_err();
+        assert_eq!(err.code, "patch_not_found");
+        assert_eq!(err.params.get("count").map(String::as_str), Some("0"));
+        assert_eq!(err.params.get("index").map(String::as_str), Some("1"));
+
+        let err = fs_patch_file(&v.0, "doc.md", &[edit("alpha", "x")], &revision).unwrap_err();
+        assert_eq!(err.code, "patch_not_unique");
+        assert_eq!(err.params.get("count").map(String::as_str), Some("2"));
+
+        // 合法编辑在前、非法编辑在后：整组拒绝，绝不落半截（前一条不许已经写进文件）
+        let err = fs_patch_file(
+            &v.0,
+            "doc.md",
+            &[edit("beta", "B"), edit("nope", "x")],
+            &revision,
+        )
+        .unwrap_err();
+        assert_eq!(err.code, "patch_not_found");
+        assert_eq!(err.params.get("index").map(String::as_str), Some("2"));
+
+        assert_eq!(
+            sha256(&std::fs::read(v.0.join("doc.md")).unwrap()),
+            sha256(&before),
+            "拒绝路径必须逐字节不变"
+        );
+        assert_eq!(file_revision(&v.0, "doc.md").unwrap(), revision);
+    }
+
+    /// CAS：`expected_revision` 与磁盘不一致 ⇒ `document_conflict`（与 `document_save` 同一
+    /// 错误码与同一句人话），文件不变。
+    #[test]
+    fn fs_patch_file_rejects_stale_revision() {
+        let v = TempVault::with_fixture();
+        let err = fs_patch_file(&v.0, "note.md", &[edit("hello", "hi")], "deadbeef").unwrap_err();
+        assert_eq!(err.code, "document_conflict");
+        assert_eq!(read_text_file(&v.0, "note.md").unwrap(), "# hello");
+    }
+
+    /// image/binary 扩展名拒绝，且**发生在任何 IO 之前**（这些路径在 fixture 里不存在：守卫
+    /// 若晚于 `resolve_in_vault`，返回的会是 fs_not_found 而不是 fs_read_only）。
+    #[test]
+    fn fs_patch_file_rejects_image_and_binary_extensions() {
+        let v = TempVault::with_fixture();
+        for rel in [
+            "pic.png",
+            "logo.jpg",
+            "manual.pdf",
+            "bundle.zip",
+            "song.mp3",
+        ] {
+            let err = fs_patch_file(&v.0, rel, &[edit("a", "b")], "any").unwrap_err();
+            assert_eq!(err.code, "fs_read_only", "{rel} 必须被拒");
+        }
+    }
+
+    /// 空 edits / 空 old_string 是非法请求：空串没有唯一命中语义，MUST NOT 滑成「插入」。
+    #[test]
+    fn fs_patch_file_rejects_empty_request_forms() {
+        let v = TempVault::with_fixture();
+        let revision = file_revision(&v.0, "note.md").unwrap();
+        assert_eq!(
+            fs_patch_file(&v.0, "note.md", &[], &revision)
+                .unwrap_err()
+                .code,
+            "patch_invalid"
+        );
+        assert_eq!(
+            fs_patch_file(&v.0, "note.md", &[edit("", "x")], &revision)
+                .unwrap_err()
+                .code,
+            "patch_invalid"
+        );
+        assert_eq!(read_text_file(&v.0, "note.md").unwrap(), "# hello");
+    }
+
+    /// 编辑按数组顺序逐个应用：后一条看得到前一条的结果（顺序语义是 diff 预览与重试的前提）。
+    #[test]
+    fn fs_patch_file_applies_edits_in_order() {
+        let v = TempVault::with_fixture();
+        std::fs::write(v.0.join("doc.md"), "alpha\n").unwrap();
+        let revision = file_revision(&v.0, "doc.md").unwrap();
+        fs_patch_file(
+            &v.0,
+            "doc.md",
+            &[edit("alpha", "beta"), edit("beta", "gamma")],
+            &revision,
+        )
+        .unwrap();
+        assert_eq!(read_text_file(&v.0, "doc.md").unwrap(), "gamma\n");
+    }
+
+    /// 非 UTF-8 文件拒绝（与读取链路同一个错误码）：命中判定必须先在文本上做。
+    #[test]
+    fn fs_patch_file_rejects_non_utf8_files() {
+        let v = TempVault::with_fixture();
+        std::fs::write(v.0.join("doc.md"), [0xff, 0xfe, 0x00]).unwrap();
+        let revision = file_revision(&v.0, "doc.md").unwrap();
+        let err = fs_patch_file(&v.0, "doc.md", &[edit("a", "b")], &revision).unwrap_err();
+        assert_eq!(err.code, "fs_invalid_utf8");
+    }
+
+    /// patch 与保存走的是同一个写核心（M301 抽出的 [`write_document_atomic`]）：ghost tmp 的
+    /// 删除重试对 patch 同样成立——这条断言同时钉住「两者不是两份实现」。
+    #[test]
+    fn fs_patch_file_recovers_from_stale_ghost_tmp() {
+        let v = TempVault::with_fixture();
+        let ghost = v.0.join(format!(".note.md.lumir-{}", std::process::id()));
+        std::fs::write(&ghost, "ghost").unwrap();
+        let revision = file_revision(&v.0, "note.md").unwrap();
+        fs_patch_file(&v.0, "note.md", &[edit("hello", "patched")], &revision).unwrap();
+        assert_eq!(read_text_file(&v.0, "note.md").unwrap(), "# patched");
+        assert!(!ghost.exists(), "ghost 应已被删除重试清理");
+    }
+
+    /// watch 面（fs-io spec「局部 patch 写入」的落盘条款）：patch 之后事件流里出现的是
+    /// **目标文件**（打开中的编辑器会话正是经这条既有通路（`fs:entry_changed` 的外部变更分流）
+    /// 同步内容的），而 `.lumir-` 临时条目一条都不出现（写盘方的自身标记被忽略集挡下，
+    /// MUST NOT 在文件树 / 事件流里冒出自家的临时条目）。
+    #[test]
+    fn fs_patch_file_emits_target_change_without_tmp_events() {
+        let v = TempVault::with_fixture();
+        std::thread::sleep(Duration::from_millis(700));
+        let (tx, rx) = mpsc::channel::<Vec<FsChange>>();
+        let watcher = watch(&v.0, &v.policy(), move |batch| {
+            tx.send(batch).expect("send batch");
+        })
+        .expect("watch");
+        let entries = scan_workspace(&v.0, &v.policy()).expect("scan");
+        watcher.seed(entries.iter().map(|e| e.path.clone()));
+
+        std::thread::sleep(Duration::from_millis(500));
+        let revision = file_revision(&v.0, "note.md").unwrap();
+        fs_patch_file(&v.0, "note.md", &[edit("hello", "patched")], &revision).unwrap();
+
+        let batch = rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("batch within 5s");
+        assert!(
+            batch
+                .iter()
+                .any(|c| c.path == "note.md" && c.kind == FsChangeKind::Modified),
+            "目标文件的变更必须进入事件流（会话同步走它）：{batch:?}"
+        );
+        assert!(
+            !batch.iter().any(|c| c.path.contains(".lumir-")),
+            "tmp ghost 不得进入事件流：{batch:?}"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // 新建文档（harness 的 vault_create，change add-harness-probe §7，M301）
+    // -----------------------------------------------------------------------
+
+    /// O_EXCL：新建成功写入内容；目标已存在（新建过的或既有的）一律 `fs_already_exists`，
+    /// 原有内容逐字节不变。
+    #[test]
+    fn vault_create_file_is_exclusive_and_never_overwrites() {
+        let v = TempVault::with_fixture();
+        let created = vault_create_file(&v.0, "sub/deep/b.md", "第一版").unwrap();
+        assert_eq!(created, "sub/deep/b.md");
+        assert_eq!(read_text_file(&v.0, "sub/deep/b.md").unwrap(), "第一版");
+
+        let err = vault_create_file(&v.0, "sub/deep/b.md", "第二版").unwrap_err();
+        assert_eq!(err.code, "fs_already_exists");
+        assert_eq!(read_text_file(&v.0, "sub/deep/b.md").unwrap(), "第一版");
+
+        let err = vault_create_file(&v.0, "note.md", "x").unwrap_err();
+        assert_eq!(err.code, "fs_already_exists");
+        assert_eq!(read_text_file(&v.0, "note.md").unwrap(), "# hello");
+    }
+
+    /// 非法目标各自回人话错误且不建任何文件：父目录不存在 / `..` 逃逸 / 内置忽略名（末段与
+    /// 父段两条路）/ image-binary 扩展名 / 空路径。
+    #[test]
+    fn vault_create_file_rejects_invalid_targets() {
+        let v = TempVault::with_fixture();
+        for (rel, code) in [
+            ("missing/new.md", "fs_not_found"),
+            ("../escape.md", "fs_path_escape"),
+            ("pic.png", "fs_read_only"),
+            (".git/new.md", "fs_name_invalid"),
+            ("node_modules/x.md", "fs_name_invalid"),
+            (".DS_Store", "fs_name_invalid"),
+            ("", "fs_path_invalid"),
+            ("/abs/new.md", "fs_path_escape"),
+        ] {
+            let err = vault_create_file(&v.0, rel, "x").unwrap_err();
+            assert_eq!(err.code, code, "{rel}");
+        }
+        assert!(!v.0.join("missing").exists());
+        assert!(!v.0.join(".git/new.md").exists());
+        assert!(!v.0.join("node_modules/x.md").exists());
     }
 
     #[test]

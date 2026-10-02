@@ -550,41 +550,79 @@ fn merge_last_vault(value: &mut serde_json::Value, root: &Path) {
     value["last_vault"] = serde_json::json!(root.display().to_string());
 }
 
+/// 配置表的单键合并写（M301 泛化，change add-harness-probe §11）：把 `section.<key>` 这一个键
+/// 写进 config.json，其余字段（含未知字段与其它表）逐键保留。
+///
+/// 两个调用方、**同一份实现**（不留第二套写通道）：`config_set_ui_value`（前端两个运行期回写点
+/// ——栏宽拖拽、主题 / 语言切换）等价于 `section = "ui"`；本命令是任意表名的泛化入口。
+/// 前端失败降级为 toast + 诊断日志，运行期值不回滚（与 remember_last_vault 同口径）。
+/// **写通道不校验取值**——非法值由下次启动的 `validate()` 兜（既有边界）。
+#[tauri::command(rename_all = "snake_case")]
+pub fn config_set_value(
+    section: String,
+    key: String,
+    value: serde_json::Value,
+) -> Result<(), CommandError> {
+    write_config_value_to(
+        &config::config_dir()?.join("config.json"),
+        &section,
+        &key,
+        &value,
+    )
+}
+
 /// `[ui]` 表的单键合并写（M228，change content-width-drag，节点 1 裁决 D3：「写回
 /// config.json」+「命令做成通用键值写入」）。第一个调用方是栏宽拖拽松手后的
 /// `ui.content_width` 持久化；**M237 主题切换的 `ui.theme` 复用同一通道**（change
 /// live-theme-switch——运行期切换不新增第二个写命令，同一条语义不留两套写通道）。
-/// 前端失败降级为 toast + 诊断日志，运行期值不回滚（与 remember_last_vault 同口径）。
+///
+/// M301 泛化后本命令是 `config_set_value(section = "ui")` 的**同义入口**：命令名与参数形状
+/// 保持不动（前端 `src/ipc.ts` 的 `configSetUiValue` 零改动），实现委托给泛化路径。
 #[tauri::command(rename_all = "snake_case")]
 pub fn config_set_ui_value(key: String, value: serde_json::Value) -> Result<(), CommandError> {
-    write_ui_value_to(&config::config_dir()?.join("config.json"), &key, &value)
+    config_set_value("ui".to_string(), key, value)
 }
 
-/// 指定配置文件路径的 `[ui]` 单键合并写（可测：不依赖真实配置目录）。
-pub(crate) fn write_ui_value_to(
+/// 指定配置文件路径的「表 + 键」合并写（可测：不依赖真实配置目录）。
+pub(crate) fn write_config_value_to(
     path: &Path,
+    section: &str,
     key: &str,
-    ui_value: &serde_json::Value,
+    section_value: &serde_json::Value,
 ) -> Result<(), CommandError> {
+    if section.trim().is_empty() {
+        return Err(CommandError::new(
+            "config_write_failed",
+            "配置表名不能为空".to_string(),
+        ));
+    }
     if key.trim().is_empty() {
         return Err(CommandError::new(
             "config_write_failed",
-            "ui 配置键不能为空".to_string(),
+            format!("{section} 配置键不能为空"),
         ));
     }
     let mut value = read_config_json(path);
-    merge_ui_value(&mut value, key, ui_value);
+    merge_config_value(&mut value, section, key, section_value);
     write_config_json(path, &value)
 }
 
-/// 合并写 `ui.<key>` 的纯函数部分（可测）：只改这一个键，其余字段（含未知字段与其它表）
-/// 逐键保留；`ui` 不是对象时重置为空对象（错形状不拖垮整份配置，与读入侧的宽容同路）。
-fn merge_ui_value(value: &mut serde_json::Value, key: &str, ui_value: &serde_json::Value) {
+/// 合并写 `<section>.<key>` 的纯函数部分（可测）：只改这一个键，其余字段（含未知字段与其它表）
+/// 逐键保留；该表不是对象时重置为空对象（错形状不拖垮整份配置，与读入侧的宽容同路）。
+///
+/// M301 泛化：原 `merge_ui_value` 里写死的 `"ui"` 变成 `section` 参数，
+/// `merge_ui_value(v, k, x)` ≡ `merge_config_value(v, "ui", k, x)`，行为逐条不变。
+fn merge_config_value(
+    value: &mut serde_json::Value,
+    section: &str,
+    key: &str,
+    section_value: &serde_json::Value,
+) {
     bump_config_version(value);
-    if !value.get("ui").is_some_and(|u| u.is_object()) {
-        value["ui"] = serde_json::json!({});
+    if !value.get(section).is_some_and(|entry| entry.is_object()) {
+        value[section] = serde_json::json!({});
     }
-    value["ui"][key] = ui_value.clone();
+    value[section][key] = section_value.clone();
 }
 
 /// 打开成功后的记忆写回：失败降级为 warning，MUST NOT 让整条打开失败（M127
@@ -1393,7 +1431,7 @@ mod tests {
     /// M228（content-width-drag，D3 通用键值合并写）：写 `ui.content_width` 只动这一个键，
     /// 其余字段（`last_vault`、`editor` 表、`keys` 表、未知字段、ui 内其它键）逐键保留。
     #[test]
-    fn merge_ui_value_sets_key_and_preserves_everything_else() {
+    fn merge_config_value_sets_key_and_preserves_everything_else() {
         let mut value = serde_json::json!({
             "version": 1,
             "last_vault": "/tmp/vault",
@@ -1402,7 +1440,7 @@ mod tests {
             "keys": {"view.toggle-wrap": "ctrl+w"},
             "future_field": {"nested": [1, 2]},
         });
-        merge_ui_value(&mut value, "content_width", &serde_json::json!(760));
+        merge_config_value(&mut value, "ui", "content_width", &serde_json::json!(760));
         assert_eq!(value["ui"]["content_width"], serde_json::json!(760));
         assert_eq!(
             value["ui"]["theme"],
@@ -1422,41 +1460,92 @@ mod tests {
         assert_eq!(value["future_field"], serde_json::json!({"nested": [1, 2]}));
     }
 
+    /// M301 泛化（change add-harness-probe §11）：同一份合并写对**任意表名**成立——写
+    /// `harness.loop_max` 时 `ui` / 其它表 / 未知字段逐键保留，且能在同一份配置里先写 ui
+    /// 再写 harness（两个 section 互不覆盖）。
+    #[test]
+    fn merge_config_value_writes_arbitrary_section() {
+        let mut value = serde_json::json!({
+            "version": 1,
+            "last_vault": "/tmp/vault",
+            "ui": {"theme": "dark"},
+            "future_field": 7,
+        });
+        merge_config_value(&mut value, "harness", "loop_max", &serde_json::json!(4));
+        merge_config_value(&mut value, "ui", "content_width", &serde_json::json!(920));
+        assert_eq!(value["harness"]["loop_max"], serde_json::json!(4));
+        assert_eq!(
+            value["ui"],
+            serde_json::json!({"theme": "dark", "content_width": 920})
+        );
+        assert_eq!(value["future_field"], serde_json::json!(7));
+        // 目标表缺席 / 错形状 ⇒ 建成空对象再写这一个键（与 ui 同口径）
+        let mut misshapen = serde_json::json!({"harness": "kimi", "last_vault": "/tmp/vault"});
+        merge_config_value(&mut misshapen, "harness", "loop_max", &serde_json::json!(4));
+        assert_eq!(misshapen["harness"], serde_json::json!({"loop_max": 4}));
+        assert_eq!(misshapen["last_vault"], serde_json::json!("/tmp/vault"));
+    }
+
     /// 既有 `ui` 表错形状（`"ui": "dark"`）时不拖垮整份配置：重置为空对象再写键。
     #[test]
-    fn merge_ui_value_resets_misshapen_ui_table() {
+    fn merge_config_value_resets_misshapen_ui_table() {
         let mut value = serde_json::json!({"ui": "dark", "last_vault": "/tmp/vault"});
-        merge_ui_value(&mut value, "content_width", &serde_json::json!(760));
+        merge_config_value(&mut value, "ui", "content_width", &serde_json::json!(760));
         assert_eq!(value["ui"], serde_json::json!({"content_width": 760}));
         assert_eq!(value["last_vault"], serde_json::json!("/tmp/vault"));
     }
 
     /// version 纪律与 merge_last_vault 共用（bump_config_version）：高版本不降回。
     #[test]
-    fn merge_ui_value_preserves_newer_version() {
+    fn merge_config_value_preserves_newer_version() {
         let mut value = serde_json::json!({"version": 99});
-        merge_ui_value(&mut value, "content_width", &serde_json::json!(760));
+        merge_config_value(&mut value, "ui", "content_width", &serde_json::json!(760));
         assert_eq!(value["version"], serde_json::json!(99));
     }
 
     /// 写失败路径（配置路径的某个上级是文件，create_dir_all 必失败）：返回
-    /// config_write_failed，不 panic；空键同样拒绝且不落盘。
+    /// config_write_failed，不 panic；空键 / 空表名同样拒绝且不落盘。
     #[test]
-    fn write_ui_value_to_reports_write_failure() {
+    fn write_config_value_to_reports_write_failure() {
         let dir = std::env::temp_dir().join(format!("lumir-ui-write-test-{}", std::process::id()));
         std::fs::create_dir_all(&dir).expect("create temp dir");
         let blocker = dir.join("blocker");
         std::fs::write(&blocker, b"not a dir").expect("write blocker file");
         let path = blocker.join("config.json");
-        let err = write_ui_value_to(&path, "content_width", &serde_json::json!(760))
+        let err = write_config_value_to(&path, "ui", "content_width", &serde_json::json!(760))
             .expect_err("写不进的路径必须报错");
         assert_eq!(err.code, "config_write_failed");
         let good = dir.join("config.json");
-        let err =
-            write_ui_value_to(&good, "  ", &serde_json::json!(760)).expect_err("空键必须报错");
+        let err = write_config_value_to(&good, "ui", "  ", &serde_json::json!(760))
+            .expect_err("空键必须报错");
         assert_eq!(err.code, "config_write_failed");
-        assert!(!good.exists(), "空键不得落盘");
+        assert_eq!(err.message, "ui 配置键不能为空", "既有文案逐字不变");
+        let err = write_config_value_to(&good, "  ", "loop_max", &serde_json::json!(4))
+            .expect_err("空表名必须报错");
+        assert_eq!(err.code, "config_write_failed");
+        assert!(!good.exists(), "非法参数不得落盘");
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// M301：泛化入口对 `[harness]` 表同样是「写回 → 下次启动读得回」——写 `harness.provider`
+    /// 后 `config::load_from` 读回的就是这一档，且不产生校验 warning、其它表逐键保留。
+    #[test]
+    fn write_config_value_harness_round_trips_through_config_load() {
+        let file = TempFile::new(
+            r#"{"version":1,"last_vault":"/tmp/vault","ui":{"content_width":920},"future_field":7}"#,
+        );
+        write_config_value_to(&file.0, "harness", "provider", &serde_json::json!("mock"))
+            .expect("写回 provider");
+
+        let snap = config::load_from(&file.0);
+        assert_eq!(snap.config.harness.provider, config::HarnessProvider::Mock);
+        assert!(
+            snap.warnings.is_empty(),
+            "写回产物必须是干净配置：{:?}",
+            snap.warnings
+        );
+        assert_eq!(snap.config.ui.content_width, 920.0, "其它表逐键保留");
+        assert_eq!(snap.config.last_vault.as_deref(), Some("/tmp/vault"));
     }
 
     /// M237（change live-theme-switch，D3）：主题切换的写回产物必须是**下次启动读得回**的
@@ -1468,7 +1557,8 @@ mod tests {
         let file = TempFile::new(
             r#"{"version":1,"last_vault":"/tmp/vault","ui":{"content_width":920},"future_field":7}"#,
         );
-        write_ui_value_to(&file.0, "theme", &serde_json::json!("dark")).expect("写回主题");
+        write_config_value_to(&file.0, "ui", "theme", &serde_json::json!("dark"))
+            .expect("写回主题");
 
         let snap = config::load_from(&file.0);
         assert_eq!(
@@ -1498,7 +1588,8 @@ mod tests {
             ("eink", config::UiTheme::Eink),
         ] {
             let file = TempFile::new(r#"{"version":1}"#);
-            write_ui_value_to(&file.0, "theme", &serde_json::json!(raw)).expect("写回主题");
+            write_config_value_to(&file.0, "ui", "theme", &serde_json::json!(raw))
+                .expect("写回主题");
             let snap = config::load_from(&file.0);
             assert_eq!(snap.config.ui.theme, want, "{raw}");
         }
