@@ -74,8 +74,10 @@ export interface VaultFixture {
   /** wikilink_create 桩：链接原文 → 创建后的 vault 相对路径（同时写入 files）。 */
   creates?: Record<string, string>;
   /** 应用元信息桩（M236，product-version-display）：`plugin:app|name` / `plugin:app|version`
-   *  两条内置 invoke 路由的应答。缺省 = 与真源同值（"Lumir" / "0.2.0"，真源在
-   *  src-tauri/tauri.conf.json——这里是**桩侧模拟后端**，不是前端硬编码副本）；显式给
+   *  两条内置 invoke 路由的应答。缺省 = 固定 fixture 值（"Lumir" / "9.9.9"），**刻意不跟随
+   *  src-tauri/tauri.conf.json 的真版本**：跟随会让每次版本 bump 都推动标题栏像素基线
+   *  （纯数字差异，无判别价值，2026-10-02 Alex 裁决钉死）。「真机上屏的是真实当前版本」
+   *  由真机验收场景 39 用 $appVersion 占位符逐字节比对负责。显式给
    *  `false` = 两条路由不存在（模拟 ACL 拒绝 / 无后端，验标识块的失败降级路径）。 */
   appMeta?: { name: string; version: string } | false;
   /** vault_open 桩：选择器"选中"的目标 vault（root + 完整 fixture）；缺省按用户取消应答 null。 */
@@ -562,7 +564,7 @@ export async function stubTauri(page: Page, vault: VaultFixture | null): Promise
         if (cmd === "plugin:app|name" || cmd === "plugin:app|version") {
           const meta = current?.appMeta;
           if (meta !== false) {
-            const value = meta ?? { name: "Lumir", version: "0.2.0" };
+            const value = meta ?? { name: "Lumir", version: "9.9.9" };
             return cmd === "plugin:app|name" ? value.name : value.version;
           }
         }

@@ -20,9 +20,11 @@ import { DEMO_VAULT, stubTauri } from "./tauri-stub";
 import type { VaultFixture } from "./tauri-stub";
 
 /** 与桩侧 fixture 同值（桩模拟后端，场景断言前端渲染结果——两边各写一份是刻意的：
- *  场景断言的是「前端把后端给的值如实显示出来」，共享变量会让「桩变了场景跟着变」恒真）。 */
+ *  场景断言的是「前端把后端给的值如实显示出来」，共享变量会让「桩变了场景跟着变」恒真）。
+ *  VERSION 是钉死的桩侧 fixture 值，不跟随 tauri.conf.json 真版本（跟随会让每次版本
+ *  bump 都推动本场景的像素基线，纯数字差异无判别价值，2026-10-02 Alex 裁决）。 */
 const NAME = "Lumir";
-const VERSION = "0.2.0";
+const VERSION = "9.9.9";
 
 async function open(page: Page, vault: VaultFixture | null = DEMO_VAULT): Promise<void> {
   await stubTauri(page, vault);
@@ -128,7 +130,7 @@ test("窄窗退让（D2 备选）：<640px 版本号退 modeline 右段尾部，
   await expect(page.locator(".ti-sep")).toBeHidden();
   await expect(page.locator(".ti-name")).toBeVisible(); // 产品名留标题栏
   await expect(page.locator(".modeline-version")).toBeVisible();
-  // 逐字断言 textContent（含前导空格形态「 · 0.2.0」），不用 toHaveText 的空白归一化
+  // 逐字断言 textContent（含前导空格形态「 · 9.9.9」），不用 toHaveText 的空白归一化
   expect(await page.locator(".modeline-version").evaluate((el) => el.textContent)).toBe(` · ${VERSION}`);
   // 拼接形态：modeline 右段整体读作「语法 · 行数 · UTF-8 · 版本号」。
   // 版本号段按 `VERSION` 常量拼进正则（M238：这里原先是写死的 `0\.0\.0`，版本一 bump 就与
