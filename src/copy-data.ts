@@ -401,6 +401,78 @@ const COPY_TABLE = {
   },
 
   // -------------------------------------------------------------------------
+  // Harness 对话运行时错误码（D349–D364，change add-harness-probe，M302）
+  // -------------------------------------------------------------------------
+  // 渲染口径同 D6：前端按 code 渲染、参数来自 Rust 的 `.param()`，Rust `message` 退回兜底。
+  // 多构造点的 code（approval_not_found / harness_busy / harness_no_session /
+  // harness_context_invalid）给**覆盖式无占位**句子——构造点提供的占位名集合不同，
+  // 模板出现未提供的占位名会让 `t()` 缺参抛错（同 D323 的教训）。
+  D349: {
+    zh: "无法创建会话留存目录 {dir}：{reason}",
+    en: "Could not create the session log directory {dir}: {reason}",
+  },
+  D350: {
+    zh: "对话 mock provider 未配置 fixture 路径",
+    en: "The mock provider has no fixture path configured",
+  },
+  D351: {
+    zh: "mock fixture 不可读（{path}）：{reason}",
+    en: "Mock fixture is unreadable ({path}): {reason}",
+  },
+  D352: {
+    zh: "mock fixture（{path}）不是合法 JSON：{reason}",
+    en: "Mock fixture ({path}) is not valid JSON: {reason}",
+  },
+  D353: {
+    zh: "当前 provider 的 api_key 未配置",
+    en: "The active provider's api_key is not configured",
+  },
+  D354: {
+    zh: "LLM 客户端初始化失败：{reason}",
+    en: "Failed to initialize the LLM client: {reason}",
+  },
+  D355: {
+    zh: "LLM 请求发送失败：{reason}",
+    en: "Failed to send the LLM request: {reason}",
+  },
+  D356: {
+    zh: "没有待处理的批准请求",
+    en: "No pending approval request",
+  },
+  D357: {
+    zh: "批准请求已失效，请重试本轮提问",
+    en: "The approval request has expired; please send again",
+  },
+  D358: {
+    zh: "对话上下文块形状非法",
+    en: "The conversation context block is malformed",
+  },
+  D359: {
+    zh: "压缩摘要生成失败（{code}）：{reason}",
+    en: "Failed to generate a compaction summary ({code}): {reason}",
+  },
+  D360: {
+    zh: "压缩摘要为空，无法开新会话",
+    en: "The compaction summary is empty; cannot start a new session",
+  },
+  D361: {
+    zh: "对话正在处理中，请稍后再试",
+    en: "A conversation turn is in progress; please try again shortly",
+  },
+  D362: {
+    zh: "当前 vault 还没有对话会话",
+    en: "This vault has no conversation session yet",
+  },
+  D363: {
+    zh: "无法启动对话线程：{reason}",
+    en: "Could not start the conversation thread: {reason}",
+  },
+  D364: {
+    zh: "无法序列化会话快照：{reason}",
+    en: "Could not serialize the session snapshot: {reason}",
+  },
+
+  // -------------------------------------------------------------------------
   // 前端可见文案（D203–D245）
   // -------------------------------------------------------------------------
   D203: { zh: "表格", en: "table" },
@@ -788,6 +860,23 @@ export const ERROR_COPY: Record<string, CopyKey> = {
   patch_invalid: "D323",
   patch_not_found: "D324",
   patch_not_unique: "D325",
+  // Harness 对话运行时（change add-harness-probe，M302）：D349–D364 的注册。
+  harness_jsonl_failed: "D349",
+  harness_fixture_missing: "D350",
+  harness_fixture_unreadable: "D351",
+  harness_fixture_invalid: "D352",
+  harness_api_key_missing: "D353",
+  harness_http_failed: "D354",
+  harness_network_failed: "D355",
+  approval_not_found: "D356",
+  approval_stale: "D357",
+  harness_context_invalid: "D358",
+  harness_compact_failed: "D359",
+  harness_compact_empty: "D360",
+  harness_busy: "D361",
+  harness_no_session: "D362",
+  harness_thread_failed: "D363",
+  harness_state_failed: "D364",
   open_url_rejected: "D78",
   open_url_failed: "D79",
 };

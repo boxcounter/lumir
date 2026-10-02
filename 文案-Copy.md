@@ -194,6 +194,22 @@
 | D323 | 后端错误信封（按 code 渲染） | 作者 | 补丁请求无效：{rel} | Invalid patch request: {rel} | change add-harness-probe（M301）的局部 patch 写入口新增。同 D202 的渲染口径；**本条模板只能用 `{rel}`**——`patch_invalid` 的两处构造点（`edits` 为空 / `old_string` 为空串）里只有一处带 `{index}`，模板里出现未提供的占位名会让 `t()` 因缺参抛错。 |
 | D324 | 后端错误信封（按 code 渲染） | 作者 | 补丁未命中：{rel} 第 {index} 处编辑的 old_string 未找到（命中 {count} 次） | Patch miss in {rel}: old_string of edit #{index} not found ({count} matches) | change add-harness-probe（M301）：`patch_not_found` 对应「`old_string` 命中 0 次」，`{count}` 恒为 0，编辑序号 `{index}` 从 1 起。回送模型的原因句，措辞与 Rust 侧 `message` 同源。**两列占位名顺序必须一致**（`{rel}` → `{index}` → `{count}`），否则「占位名逐字相同（个数与顺序）」门禁判红。 |
 | D325 | 后端错误信封（按 code 渲染） | 作者 | 补丁不唯一：{rel} 第 {index} 处编辑的 old_string 命中 {count} 次（要求恰好 1 次） | Ambiguous patch in {rel}: old_string of edit #{index} matches {count} times (exactly 1 required) | change add-harness-probe（M301）：`patch_not_unique` 对应「`old_string` 命中多次」，唯一命中是局部 patch 的不变量（ADR 0003 §3 在 agent 写入侧的延伸）。两列占位名顺序同上条。 |
+| D349 | 后端错误信封（按 code 渲染） | 作者 | 无法创建会话留存目录 {dir}：{reason} | Could not create the session log directory {dir}: {reason} | change add-harness-probe（M302 harness 运行时）：会话 JSONL 留存目录创建失败。同 D6 渲染口径。 |
+| D350 | 后端错误信封（按 code 渲染） | 作者 | 对话 mock provider 未配置 fixture 路径 | The mock provider has no fixture path configured | M302：`provider=mock` 但 `harness.providers.mock.fixture` 未配置（验收配置错误的即时报错）。 |
+| D351 | 后端错误信封（按 code 渲染） | 作者 | mock fixture 不可读（{path}）：{reason} | Mock fixture is unreadable ({path}): {reason} | M302：fixture 文件读失败。两列占位名顺序一致（`{path}` → `{reason}`）。 |
+| D352 | 后端错误信封（按 code 渲染） | 作者 | mock fixture（{path}）不是合法 JSON：{reason} | Mock fixture ({path}) is not valid JSON: {reason} | M302：fixture JSON 解析失败。占位名顺序同上条。 |
+| D353 | 后端错误信封（按 code 渲染） | 作者 | 当前 provider 的 api_key 未配置 | The active provider's api_key is not configured | M302：发送前检查（裁决点 2：api_key 明文存 config.json，空 = 未配置）。 |
+| D354 | 后端错误信封（按 code 渲染） | 作者 | LLM 客户端初始化失败：{reason} | Failed to initialize the LLM client: {reason} | M302：reqwest client 构建失败。 |
+| D355 | 后端错误信封（按 code 渲染） | 作者 | LLM 请求发送失败：{reason} | Failed to send the LLM request: {reason} | M302：网络层发送失败（DNS / 连接 / TLS）。 |
+| D356 | 后端错误信封（按 code 渲染） | 作者 | 没有待处理的批准请求 | No pending approval request | M302：`harness_approve` 找不到挂起请求。覆盖式无占位句——两处构造点（无挂起 / id 不匹配）措辞不同，同 D323 教训。 |
+| D357 | 后端错误信封（按 code 渲染） | 作者 | 批准请求已失效，请重试本轮提问 | The approval request has expired; please send again | M302：决定送达时对话线程已结束（会话被重置 / vault 切换）。直接上屏给 Alex 的句子。 |
+| D358 | 后端错误信封（按 code 渲染） | 作者 | 对话上下文块形状非法 | The conversation context block is malformed | M302：`harness_send` 的 context_json 解析失败。三处构造点各带不同细节，取覆盖式无占位句。 |
+| D359 | 后端错误信封（按 code 渲染） | 作者 | 压缩摘要生成失败（{code}）：{reason} | Failed to generate a compaction summary ({code}): {reason} | M302：自动压缩的摘要调用出错（非终态：阈值压缩失败不阻断对话，超限路径失败才上屏）。占位名顺序 `{code}` → `{reason}`。 |
+| D360 | 后端错误信封（按 code 渲染） | 作者 | 压缩摘要为空，无法开新会话 | The compaction summary is empty; cannot start a new session | M302：压缩调用成功但摘要为空——不开逻辑会话，MUST NOT 静默截断历史。 |
+| D361 | 后端错误信封（按 code 渲染） | 作者 | 对话正在处理中，请稍后再试 | A conversation turn is in progress; please try again shortly | M302：一轮一次（busy 协议）——重复 send 与忙时开新会话两处共用。覆盖式无占位句。 |
+| D362 | 后端错误信封（按 code 渲染） | 作者 | 当前 vault 还没有对话会话 | This vault has no conversation session yet | M302：approve / new_session 早于首条提问。 |
+| D363 | 后端错误信封（按 code 渲染） | 作者 | 无法启动对话线程：{reason} | Could not start the conversation thread: {reason} | M302：spawn `lumir-harness-llm` 专线程失败（资源耗尽）；失败前释放 busy，不留在占用态。 |
+| D364 | 后端错误信封（按 code 渲染） | 作者 | 无法序列化会话快照：{reason} | Could not serialize the session snapshot: {reason} | M302：`harness_state` 快照序列化失败（理论路径：面板消费键全是可序列化形状）。 |
 | D203 | 块类型词（复制触发钮与 toast 复用同一份） | 作者 | 表格 | table | D153 / D154 的 `{块类型}` 取值只有这一份词表，MUST NOT 在触发钮或 toast 里另写字面量（M277 的既有口径）。 |
 | D204 | 块类型词（复制触发钮与 toast 复用同一份） | 作者 | 代码块 | code block | D153 / D154 的 `{块类型}` 取值只有这一份词表，MUST NOT 在触发钮或 toast 里另写字面量（M277 的既有口径）。 |
 | D205 | 装配层（打开提示 / modeline 两段） | 作者 | 正在打开：{path} | Opening: {path} | modeline 是长驻 chrome，切换语言后由 `applyLanguage` 的重绘注册重跑写入点（`src/main.ts` 的 `syncDirtyIndicator` / `syncModelineMeta`）。行数走 `Intl.NumberFormat`，en 列另有单数档。 |
