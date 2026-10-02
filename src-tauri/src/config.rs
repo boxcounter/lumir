@@ -52,6 +52,27 @@
 //! 经 `config_set_ui_value` 回写本字段（写通道不校验，非法值由下次启动的 `validate()` 兜，
 //! 与 `theme` 同款既有边界）。它**只管界面文案**：文档内容、文件名、日志与配置告警都不随它变。
 //!
+//! ## harness 表（change add-harness-probe §11，M301）
+//!
+//! `{"harness": {"provider": "kimi" | "deepseek" | "mock", "providers": {…},` +
+//! `"permissions": {"allow": [], "deny": []}, "loop_max": 8, "warn_ctx_pct": 85,` +
+//! `"auto_compact": true}}`——对话运行时（harness）的配置面，取值模板与 `editor` / `ui` 同路：
+//! 表内字段缺失 → 默认（不告警）；闭集合取值非法 → 回落默认 + 人话 warning（ADR 0002 §5：
+//! 非法配置不导致启动失败）；表内字段**类型不符**（`"loop_max": "8"`）与整表错形状
+//! （`"harness": "kimi"`）都在 serde 解析期失败 → **整文件回落**（与 `editor.font_size`
+//! / `ui.content_width` 同路，不发明逐字段类型容忍）。
+//!
+//! `permissions.allow` / `deny` 是**逐项**校验的例外（与 `vault.rule_files` 同形）：清单元素
+//! 收成 `serde_json::Value` 再逐项判定，非法项丢弃并各给一条 warning，其余项照常生效——一项
+//! 笔误不该让整份配置（含 `last_vault`）回退默认。规则**语义**（`tool(模式)` 的匹配）不在
+//! 这里判定：那是 harness 运行时的知识（M302），配置层只管形状（「形状在此、语义在外」的既有
+//! 分层，与 `keys` 表同口径）。
+//!
+//! `api_key` 明文（Alex 裁决点 2）：自用探针期威胁模型低（单机、本人），配置即数据要求人可读
+//! 可改；Revisit 点（任何对外发布动作前改系统钥匙串）记在 ADR 0007 的出域口径里。
+//! 空 `api_key` = 未配置（出厂状态），不是笔误，因此**不告警**；`model` / `base_url` /
+//! `mock.fixture` 的空串是显式的空值输入，回落默认 + warning。
+//!
 //! ## 数值字段的打字代价（typography-and-zoom）
 //!
 //! `editor.font_size` 是本仓**第一个数值配置字段**，错打成字符串的代价比布尔高（多一对
@@ -92,6 +113,9 @@ pub struct AppConfig {
     pub log: LogConfig,
     /// vault 行为配置（change vault-open-ignore-set 的 r6）：`[vault]` 表。
     pub vault: VaultConfig,
+    /// 对话运行时配置（change add-harness-probe §11）：`[harness]` 表。消费方是 harness
+    /// 运行时（M302）：会话建立时读一次 provider 参数、权限规则表与循环上限。
+    pub harness: HarnessConfig,
 }
 
 impl Default for AppConfig {
@@ -104,6 +128,7 @@ impl Default for AppConfig {
             keys: HashMap::new(),
             log: LogConfig::default(),
             vault: VaultConfig::default(),
+            harness: HarnessConfig::default(),
         }
     }
 }
@@ -374,6 +399,141 @@ pub enum LogLevel {
     Off,
 }
 
+// ---------------------------------------------------------------------------
+// `[harness]` 表（change add-harness-probe §11；M301）
+// ---------------------------------------------------------------------------
+
+/// 工具循环上限的出厂默认（design §4）：一次提问里模型最多连续执行几轮工具调用，防失控循环。
+pub const DEFAULT_LOOP_MAX: u32 = 8;
+
+/// 循环上限的合法区间（含端点）：下限 1（0 轮等于没有工具循环）；上限是本探针期的防失控
+/// 护栏——放得过大等于没有上限，而「防失控循环」正是这个键存在的理由。区间外回落默认 + warning。
+pub const LOOP_MAX_MIN: u32 = 1;
+pub const LOOP_MAX_MAX: u32 = 64;
+
+/// 上下文用量警示阈值的出厂默认（design §9）：ctx% 越过它即显示警示条，也是自动压缩的触发点。
+pub const DEFAULT_WARN_CTX_PCT: f64 = 85.0;
+
+/// 警示阈值的合法区间（含端点）：0 会让每一轮都触发压缩，>100 永不触发——两种都让这个键失去意义。
+pub const WARN_CTX_PCT_MIN: f64 = 1.0;
+pub const WARN_CTX_PCT_MAX: f64 = 100.0;
+
+/// 两家 provider 的出厂 model 值（design §11 的示例值，M302 的 provider 预设表以它们为出厂
+/// 默认——**同一语义两处写值**，改一处必须同步另一处，REVIEW.md 第 8 条）。本模块只把它们
+/// 当作「model 为空时回落的对象」；模型清单 / base_url 官方地址 / 上下文窗口表的真源在
+/// harness 运行时的预设表里（M302），配置层不复制一份。
+pub const DEFAULT_KIMI_MODEL: &str = "kimi-k2";
+pub const DEFAULT_DEEPSEEK_MODEL: &str = "deepseek-chat";
+
+/// 对话 provider 三档（change add-harness-probe §11）：`kimi` / `deepseek` 均 OpenAI 兼容契约，
+/// `mock` 是验收专用的 fixture 驱动档（真机验收不依赖真实外部 API）。**闭集合**：取值校验在
+/// Rust 侧完成，运行时拿到的必是三档之一（与 `UiTheme` / `EditorMode` / `LogLevel` 同一形态）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, TS)]
+#[serde(rename_all = "lowercase")]
+#[ts(export, export_to = "../../src/bindings/")]
+pub enum HarnessProvider {
+    Kimi,
+    Deepseek,
+    Mock,
+}
+
+/// `[harness]` 表（change add-harness-probe §11）：对话运行时的配置面。
+///
+/// **生效时点**：会话建立 / 每轮请求时由 harness 运行时读一次（M302），不热重载——与
+/// `editor` / `ui` 的「装载时施加」同路。`api_key` 明文（Alex 裁决点 2，理由见模块头）。
+#[derive(Debug, Clone, PartialEq, Serialize, TS)]
+#[ts(export, export_to = "../../src/bindings/")]
+pub struct HarnessConfig {
+    /// 当前生效的 provider；其余两档的参数照旧保留在 `providers` 里（切回即恢复）。
+    pub provider: HarnessProvider,
+    /// 三家 provider 各自的参数表：`provider` 键切换生效项。
+    pub providers: HarnessProviders,
+    /// 权限规则表（design §6）：deny > allow > 默认分层（读 allow / 写与 CLI ask）。
+    pub permissions: HarnessPermissions,
+    /// 工具循环上限（默认 8，合法区间见 [`LOOP_MAX_MIN`] / [`LOOP_MAX_MAX`]）。
+    pub loop_max: u32,
+    /// 上下文用量警示阈值（百分比，默认 85，合法区间见 [`WARN_CTX_PCT_MIN`] / [`WARN_CTX_PCT_MAX`]）。
+    pub warn_ctx_pct: f64,
+    /// 自动压缩（默认 true）：一轮响应完成后 ctx% 越阈值即自动压缩续聊；false 退化为纯手动。
+    pub auto_compact: bool,
+}
+
+impl Default for HarnessConfig {
+    fn default() -> Self {
+        Self {
+            provider: HarnessProvider::Kimi,
+            providers: HarnessProviders::default(),
+            permissions: HarnessPermissions::default(),
+            loop_max: DEFAULT_LOOP_MAX,
+            warn_ctx_pct: DEFAULT_WARN_CTX_PCT,
+            auto_compact: true,
+        }
+    }
+}
+
+/// `[harness].providers` 表：三家 provider 各一段参数，**都保留**（切 provider 不丢配置）。
+#[derive(Debug, Clone, PartialEq, Serialize, TS)]
+#[ts(export, export_to = "../../src/bindings/")]
+pub struct HarnessProviders {
+    pub kimi: HarnessProviderConfig,
+    pub deepseek: HarnessProviderConfig,
+    /// mock 是 fixture 驱动档，没有网络参数（验收专用）。
+    pub mock: HarnessMockConfig,
+}
+
+/// 单个网络 provider 的参数。
+///
+/// **`Default` 的 `model` 是空串，不是出厂模型名**：出厂模型名按 provider 分档
+/// （[`DEFAULT_KIMI_MODEL`] / [`DEFAULT_DEEPSEEK_MODEL`]），由 [`HarnessProviders::default`]
+/// 分派——这样「kimi 的默认 model」只有一处写值，两个 provider 不会互相串默认。
+/// `api_key` 出厂为空串（未配置）、`base_url` 出厂为 `None`（官方地址）。
+#[derive(Debug, Clone, PartialEq, Default, Serialize, TS)]
+#[ts(export, export_to = "../../src/bindings/")]
+pub struct HarnessProviderConfig {
+    /// API key 明文（裁决点 2）。空串 = 未配置（出厂状态）——发送时由运行时给出人话错误。
+    pub api_key: String,
+    /// 模型 id。空串 / 缺失时按 provider 回落出厂模型名（见 `Default` 的说明）。
+    pub model: String,
+    /// API base URL；`None` = 用该 provider 的官方地址（官方值在运行时的预设表里，M302）。
+    pub base_url: Option<String>,
+}
+
+impl Default for HarnessProviders {
+    fn default() -> Self {
+        Self {
+            kimi: HarnessProviderConfig {
+                model: DEFAULT_KIMI_MODEL.to_string(),
+                ..HarnessProviderConfig::default()
+            },
+            deepseek: HarnessProviderConfig {
+                model: DEFAULT_DEEPSEEK_MODEL.to_string(),
+                ..HarnessProviderConfig::default()
+            },
+            mock: HarnessMockConfig::default(),
+        }
+    }
+}
+
+/// mock provider 的参数（验收专用，design §13）：脚本化响应的 fixture 文件路径。
+/// `None` = 未配置（用 mock 档而未配 fixture 时由运行时给出人话错误）。
+#[derive(Debug, Clone, PartialEq, Default, Serialize, TS)]
+#[ts(export, export_to = "../../src/bindings/")]
+pub struct HarnessMockConfig {
+    pub fixture: Option<String>,
+}
+
+/// `[harness].permissions` 表（design §6）：规则语法 `tool` 或 `tool(模式)` 的字符串清单。
+///
+/// 配置层只保形状（非空字符串、按原顺序去空白），**匹配语义**（前缀 + `*`、deny > allow >
+/// 默认分层）归 harness 运行时（M302）——与 `keys` 表「形状在此、语义在外」同一分层，
+/// 两边各判一半必然漂移（REVIEW.md 第 8 条）。
+#[derive(Debug, Clone, PartialEq, Default, Serialize, TS)]
+#[ts(export, export_to = "../../src/bindings/")]
+pub struct HarnessPermissions {
+    pub allow: Vec<String>,
+    pub deny: Vec<String>,
+}
+
 /// 一次配置加载的结果：生效配置 + 人话 warning 列表 + 实际读取路径。
 #[derive(Debug, Clone, PartialEq, Serialize, TS)]
 #[ts(export, export_to = "../../src/bindings/")]
@@ -405,6 +565,11 @@ struct RawConfig {
     /// 代价（如实记，与 `editor.font_size` 给错类型同族）：**整个字段给错类型**（`"rule_files":
     /// ".gitignore"`）仍走解析期失败 → 整文件回落，这条由单测钉住。
     vault: RawVaultConfig,
+    /// `[harness]` 表（change add-harness-probe §11）：结构化镜像，与 `editor` / `ui` 同路——
+    /// 表内字段**类型不符**（`"loop_max": "8"`、`"auto_compact": "yes"`）或整表错形状
+    /// （`"harness": "kimi"`）都在解析期失败 → 整文件回落。`permissions.allow` / `deny`
+    /// 是逐项校验的例外（收成 `Vec<Value>` 逐项判定，见 [`RawHarnessPermissions`]）。
+    harness: RawHarnessConfig,
 }
 
 /// `[vault]` 表的解析镜像。`rule_files` 缺席（缺节 / 缺键）→ `None` → 用默认清单；
@@ -466,6 +631,55 @@ struct RawUiConfig {
     /// 这里——在 `validate()` 里回落 + warning（与 `theme` 同路）。类型不符（`"language": 2`）
     /// 在 serde 解析期失败 → 整文件回落。
     language: Option<String>,
+}
+
+/// `[harness]` 表的解析镜像（change add-harness-probe §11）：与 `[ui]` 同路的**结构化表**，
+/// 字段全部 `Option<...>`——缺失 → `None` → `validate()` 回落默认（不告警）；取值非法到不了
+/// 这里（在 `validate()` 里回落 + warning）；类型不符在 serde 解析期失败 → 整文件回落。
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+struct RawHarnessConfig {
+    provider: Option<String>,
+    /// 嵌套表也是结构化的：`"providers": "kimi"` 这种错形状 → 整文件回落；
+    /// `api_key` / `model` / `base_url` 给错类型（如 `"api_key": 1`）同路。
+    providers: RawHarnessProviders,
+    permissions: RawHarnessPermissions,
+    loop_max: Option<u32>,
+    warn_ctx_pct: Option<f64>,
+    auto_compact: Option<bool>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+struct RawHarnessProviders {
+    kimi: RawHarnessProviderConfig,
+    deepseek: RawHarnessProviderConfig,
+    mock: RawHarnessMockConfig,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+struct RawHarnessProviderConfig {
+    api_key: Option<String>,
+    model: Option<String>,
+    base_url: Option<String>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+struct RawHarnessMockConfig {
+    fixture: Option<String>,
+}
+
+/// `[harness].permissions` 表的解析镜像：`allow` / `deny` 收成 `Vec<serde_json::Value>` 再
+/// **逐项**校验——直接写成 `Vec<String>` 会让一个非字符串元素在解析期失败，把整份配置（含
+/// `last_vault`）打回默认。与 `[vault].rule_files` 完全同形（含「整个字段给错类型
+/// （`"allow": "cli(ls)"`）仍走整文件回落」这条边界，单测钉住）。
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+struct RawHarnessPermissions {
+    allow: Option<Vec<serde_json::Value>>,
+    deny: Option<Vec<serde_json::Value>>,
 }
 
 /// 配置目录（ADR 0002 §5 路径规则）。无法确定 home 是唯一的致命错误。
@@ -694,6 +908,9 @@ fn validate(raw: RawConfig) -> (AppConfig, Vec<String>) {
     let (vault, mut vault_warnings) = validate_vault(raw.vault);
     warnings.append(&mut vault_warnings);
 
+    let (harness, mut harness_warnings) = validate_harness(raw.harness);
+    warnings.append(&mut harness_warnings);
+
     (
         AppConfig {
             version,
@@ -717,6 +934,7 @@ fn validate(raw: RawConfig) -> (AppConfig, Vec<String>) {
             keys,
             log,
             vault,
+            harness,
         },
         warnings,
     )
@@ -770,6 +988,182 @@ fn validate_vault(raw: RawVaultConfig) -> (VaultConfig, Vec<String>) {
         rule_files.push(text.to_string());
     }
     (VaultConfig { rule_files }, warnings)
+}
+
+/// `[harness]` 表的校验（change add-harness-probe §11）：照 `editor` / `ui` 的模板——缺字段
+/// 回落默认（不告警），闭集合取值非法回落默认 + 人话 warning，数值越界回落默认 + warning；
+/// 类型不符到不了这里（解析期整文件回落，见 [`RawHarnessConfig`]）。
+///
+/// 两处**逐项**校验的例外（与 `vault.rule_files` 同形）：`permissions.allow` / `deny` 的
+/// 非法项逐项丢弃并各给一条 warning，其余项照常生效。空 `api_key` 是「未配置」的出厂状态，
+/// **不告警**（理由见模块头）。
+fn validate_harness(raw: RawHarnessConfig) -> (HarnessConfig, Vec<String>) {
+    let defaults = HarnessConfig::default();
+    let mut warnings = Vec::new();
+
+    let mut provider = defaults.provider;
+    if let Some(raw_provider) = raw.provider.as_deref() {
+        match raw_provider {
+            "kimi" => provider = HarnessProvider::Kimi,
+            "deepseek" => provider = HarnessProvider::Deepseek,
+            "mock" => provider = HarnessProvider::Mock,
+            other => warnings.push(format!(
+                "配置项 harness.provider 取值 \"{other}\" 非法（可选：kimi、deepseek、mock），已回退为 kimi"
+            )),
+        }
+    }
+
+    let kimi = validate_harness_provider(
+        raw.providers.kimi,
+        "kimi",
+        DEFAULT_KIMI_MODEL,
+        &mut warnings,
+    );
+    let deepseek = validate_harness_provider(
+        raw.providers.deepseek,
+        "deepseek",
+        DEFAULT_DEEPSEEK_MODEL,
+        &mut warnings,
+    );
+    let mock = validate_harness_mock(raw.providers.mock, &mut warnings);
+
+    let permissions = HarnessPermissions {
+        allow: validate_harness_rules(raw.permissions.allow, "allow", &mut warnings),
+        deny: validate_harness_rules(raw.permissions.deny, "deny", &mut warnings),
+    };
+
+    let mut loop_max = defaults.loop_max;
+    if let Some(value) = raw.loop_max {
+        if (LOOP_MAX_MIN..=LOOP_MAX_MAX).contains(&value) {
+            loop_max = value;
+        } else {
+            warnings.push(format!(
+                "配置项 harness.loop_max 取值 {value} 超出合法区间 [{LOOP_MAX_MIN}, {LOOP_MAX_MAX}]，已回退为 {DEFAULT_LOOP_MAX}"
+            ));
+        }
+    }
+
+    // 区间判定同时挡 NaN（`contains` 对 NaN 为 false），与 `ui.content_width` 同口径。
+    let mut warn_ctx_pct = defaults.warn_ctx_pct;
+    if let Some(value) = raw.warn_ctx_pct {
+        if (WARN_CTX_PCT_MIN..=WARN_CTX_PCT_MAX).contains(&value) {
+            warn_ctx_pct = value;
+        } else {
+            warnings.push(format!(
+                "配置项 harness.warn_ctx_pct 取值 {value} 超出合法区间 [{WARN_CTX_PCT_MIN}, {WARN_CTX_PCT_MAX}]，已回退为 {DEFAULT_WARN_CTX_PCT}"
+            ));
+        }
+    }
+
+    // bool 只有两种取值，缺字段即回落默认、不告警（与 `editor.line_wrap` 同路）；
+    // 类型不符到不了这里（解析期整文件回落，单测钉住）。
+    let auto_compact = raw.auto_compact.unwrap_or(defaults.auto_compact);
+
+    (
+        HarnessConfig {
+            provider,
+            providers: HarnessProviders {
+                kimi,
+                deepseek,
+                mock,
+            },
+            permissions,
+            loop_max,
+            warn_ctx_pct,
+            auto_compact,
+        },
+        warnings,
+    )
+}
+
+/// 单个 provider 参数的校验：`api_key` 去空白后原样保留（空 = 未配置，不告警）；
+/// `model` 空 → 该 provider 的出厂模型名 + warning；`base_url` 空 → `None`（官方地址）+ warning。
+/// URL 是否可用不在这里判定——那是网络层的事（reqwest 的报错更准），与「形状在此、语义在外」同路。
+fn validate_harness_provider(
+    raw: RawHarnessProviderConfig,
+    provider: &str,
+    default_model: &str,
+    warnings: &mut Vec<String>,
+) -> HarnessProviderConfig {
+    let api_key = raw
+        .api_key
+        .as_deref()
+        .map(str::trim)
+        .unwrap_or("")
+        .to_string();
+    let model = match raw.model.as_deref().map(str::trim) {
+        None => default_model.to_string(),
+        Some("") => {
+            warnings.push(format!(
+                "配置项 harness.providers.{provider}.model 为空，已回退为 {default_model}"
+            ));
+            default_model.to_string()
+        }
+        Some(value) => value.to_string(),
+    };
+    let base_url = match raw.base_url.as_deref().map(str::trim) {
+        None => None,
+        Some("") => {
+            warnings.push(format!(
+                "配置项 harness.providers.{provider}.base_url 为空，已回退为 {provider} 官方地址"
+            ));
+            None
+        }
+        Some(value) => Some(value.to_string()),
+    };
+    HarnessProviderConfig {
+        api_key,
+        model,
+        base_url,
+    }
+}
+
+/// mock 档参数：`fixture` 空 → `None`（未配置）+ warning，与 `base_url` 同口径。
+fn validate_harness_mock(
+    raw: RawHarnessMockConfig,
+    warnings: &mut Vec<String>,
+) -> HarnessMockConfig {
+    let fixture = match raw.fixture.as_deref().map(str::trim) {
+        None => None,
+        Some("") => {
+            warnings.push("配置项 harness.providers.mock.fixture 为空，已按未配置处理".to_string());
+            None
+        }
+        Some(value) => Some(value.to_string()),
+    };
+    HarnessMockConfig { fixture }
+}
+
+/// 权限规则清单的**逐项**校验（与 `vault.rule_files` 同形）：非字符串 / 空串逐项丢弃并各给一条
+/// warning，其余项按原顺序保留。规则的**匹配语义**不在这里判定（见 [`HarnessPermissions`]）。
+fn validate_harness_rules(
+    items: Option<Vec<serde_json::Value>>,
+    key: &str,
+    warnings: &mut Vec<String>,
+) -> Vec<String> {
+    let Some(items) = items else {
+        return Vec::new(); // 缺键 ⇒ 空规则表（= 只有默认分层），不告警
+    };
+    let mut rules = Vec::with_capacity(items.len());
+    for (index, item) in items.iter().enumerate() {
+        let Some(text) = item.as_str() else {
+            warnings.push(format!(
+                "配置项 harness.permissions.{key} 的第 {} 项不是字符串，已忽略",
+                index + 1
+            ));
+            continue;
+        };
+        let trimmed = text.trim();
+        if trimmed.is_empty() {
+            warnings.push(format!(
+                "配置项 harness.permissions.{key} 的第 {} 项为空，已忽略",
+                index + 1
+            ));
+            continue;
+        }
+        rules.push(trimmed.to_string());
+    }
+    rules
 }
 
 /// [keys] 表的形状校验（M132）：逐项判定，非法项丢弃并附人话 warning，其余项照常生效。
@@ -1711,6 +2105,246 @@ mod tests {
             snap.config.vault.rule_files,
             vec![".gitignore".to_string(), "docs/.gitignore".to_string()]
         );
+        assert!(snap.warnings.is_empty(), "{:?}", snap.warnings);
+    }
+
+    // -----------------------------------------------------------------------
+    // `[harness]` 表（change add-harness-probe §11，M301）
+    // -----------------------------------------------------------------------
+
+    /// 语义①：缺节 / 缺键 ⇒ 出厂默认（provider = kimi、loop_max = 8、warn_ctx_pct = 85、
+    /// auto_compact = true、空规则表），且不产生任何 warning（与 `editor` / `ui` 同口径）。
+    #[test]
+    fn harness_missing_section_takes_factory_defaults() {
+        for raw in [
+            r#"{"version":1,"last_vault":"/tmp/vault"}"#,
+            r#"{"version":1,"last_vault":"/tmp/vault","harness":{}}"#,
+            r#"{"version":1,"last_vault":"/tmp/vault","harness":{"future":1}}"#,
+        ] {
+            let snap = load_from(&TempFile::new(raw).0);
+            assert_eq!(snap.config.harness, HarnessConfig::default(), "{raw}");
+            assert_eq!(snap.config.harness.provider, HarnessProvider::Kimi, "{raw}");
+            assert_eq!(snap.config.harness.loop_max, 8, "{raw}");
+            assert_eq!(snap.config.harness.warn_ctx_pct, 85.0, "{raw}");
+            assert!(snap.config.harness.auto_compact, "{raw}");
+            assert_eq!(
+                snap.config.harness.providers.kimi.model, DEFAULT_KIMI_MODEL,
+                "{raw}"
+            );
+            assert_eq!(
+                snap.config.harness.providers.deepseek.model, DEFAULT_DEEPSEEK_MODEL,
+                "{raw}"
+            );
+            assert!(
+                snap.config.harness.providers.kimi.api_key.is_empty(),
+                "{raw}"
+            );
+            assert!(
+                snap.config.harness.providers.mock.fixture.is_none(),
+                "{raw}"
+            );
+            assert!(snap.warnings.is_empty(), "{raw}: {:?}", snap.warnings);
+        }
+    }
+
+    /// 闭集合取值非法 ⇒ 只回退该字段 + 人话 warning，其余字段（含 last_vault）不受影响。
+    #[test]
+    fn harness_illegal_provider_warns_and_falls_back() {
+        let f = TempFile::new(
+            r#"{"last_vault":"/tmp/vault","harness":{"provider":"openai","loop_max":3}}"#,
+        );
+        let snap = load_from(&f.0);
+        assert_eq!(snap.config.harness.provider, HarnessProvider::Kimi);
+        assert_eq!(snap.config.harness.loop_max, 3, "合法字段不回退");
+        assert_eq!(snap.config.last_vault.as_deref(), Some("/tmp/vault"));
+        assert_eq!(snap.warnings.len(), 1, "{:?}", snap.warnings);
+        assert!(
+            snap.warnings[0].contains("harness.provider"),
+            "{:?}",
+            snap.warnings
+        );
+        assert!(snap.warnings[0].contains("openai"), "{:?}", snap.warnings);
+    }
+
+    /// 闭集合三档都能被读到（写回产物必须是干净配置）。
+    #[test]
+    fn harness_provider_accepts_closed_set() {
+        for (raw, expected) in [
+            ("kimi", HarnessProvider::Kimi),
+            ("deepseek", HarnessProvider::Deepseek),
+            ("mock", HarnessProvider::Mock),
+        ] {
+            let f = TempFile::new(&format!(r#"{{"harness":{{"provider":"{raw}"}}}}"#));
+            let snap = load_from(&f.0);
+            assert_eq!(snap.config.harness.provider, expected, "{raw}");
+            assert!(snap.warnings.is_empty(), "{raw}: {:?}", snap.warnings);
+        }
+    }
+
+    /// 完整合法配置：三档 provider 参数、规则表、三个标量都按写值读到，零 warning。
+    #[test]
+    fn harness_full_section_round_trips() {
+        let raw = r#"{
+            "last_vault": "/tmp/vault",
+            "harness": {
+                "provider": "deepseek",
+                "providers": {
+                    "kimi": {"api_key": "sk-kimi", "model": "kimi-custom", "base_url": "https://k.example/v1"},
+                    "deepseek": {"api_key": "sk-deep"},
+                    "mock": {"fixture": "/tmp/fixture.json"}
+                },
+                "permissions": {"allow": ["cli(ls *)", "vault_patch"], "deny": ["cli(rm *)"]},
+                "loop_max": 4,
+                "warn_ctx_pct": 70,
+                "auto_compact": false
+            }
+        }"#;
+        let snap = load_from(&TempFile::new(raw).0);
+        let harness = &snap.config.harness;
+        assert_eq!(harness.provider, HarnessProvider::Deepseek);
+        assert_eq!(harness.providers.kimi.api_key, "sk-kimi");
+        assert_eq!(harness.providers.kimi.model, "kimi-custom");
+        assert_eq!(
+            harness.providers.kimi.base_url.as_deref(),
+            Some("https://k.example/v1")
+        );
+        assert_eq!(harness.providers.deepseek.api_key, "sk-deep");
+        assert_eq!(harness.providers.deepseek.model, DEFAULT_DEEPSEEK_MODEL);
+        assert!(harness.providers.deepseek.base_url.is_none());
+        assert_eq!(
+            harness.providers.mock.fixture.as_deref(),
+            Some("/tmp/fixture.json")
+        );
+        assert_eq!(harness.permissions.allow, vec!["cli(ls *)", "vault_patch"]);
+        assert_eq!(harness.permissions.deny, vec!["cli(rm *)"]);
+        assert_eq!(harness.loop_max, 4);
+        assert_eq!(harness.warn_ctx_pct, 70.0);
+        assert!(!harness.auto_compact);
+        assert!(snap.warnings.is_empty(), "{:?}", snap.warnings);
+    }
+
+    /// 数值字段越界 ⇒ 回落默认 + warning；区间端点在界内（照 `font_size` / `content_width` 模板）。
+    #[test]
+    fn harness_numeric_ranges_fall_back_and_endpoints_hold() {
+        for (raw, loop_max) in [
+            (r#"{"harness":{"loop_max":0}}"#, 8),
+            (r#"{"harness":{"loop_max":999}}"#, 8),
+            (r#"{"harness":{"loop_max":1}}"#, 1),
+            (r#"{"harness":{"loop_max":64}}"#, 64),
+        ] {
+            let snap = load_from(&TempFile::new(raw).0);
+            assert_eq!(snap.config.harness.loop_max, loop_max, "{raw}");
+            let expect_warning = loop_max == 8 && raw.contains("loop_max");
+            assert_eq!(
+                snap.warnings.len(),
+                usize::from(expect_warning),
+                "{raw}: {:?}",
+                snap.warnings
+            );
+        }
+        for (raw, pct, warn) in [
+            (r#"{"harness":{"warn_ctx_pct":0}}"#, 85.0, true),
+            (r#"{"harness":{"warn_ctx_pct":101}}"#, 85.0, true),
+            (r#"{"harness":{"warn_ctx_pct":1}}"#, 1.0, false),
+            (r#"{"harness":{"warn_ctx_pct":100}}"#, 100.0, false),
+            (r#"{"harness":{"warn_ctx_pct":42.5}}"#, 42.5, false),
+        ] {
+            let snap = load_from(&TempFile::new(raw).0);
+            assert_eq!(snap.config.harness.warn_ctx_pct, pct, "{raw}");
+            assert_eq!(
+                snap.warnings.len(),
+                usize::from(warn),
+                "{raw}: {:?}",
+                snap.warnings
+            );
+        }
+    }
+
+    /// 空串的三种口径：`api_key` 空 = 未配置（不告警）；`model` / `base_url` / `mock.fixture`
+    /// 空 = 显式的空值输入，回落 + warning（见模块头）。
+    #[test]
+    fn harness_blank_strings_fall_back_with_documented_warnings() {
+        let raw = r#"{"harness":{"providers":{
+            "kimi":{"api_key":"  ","model":"","base_url":""},
+            "mock":{"fixture":"   "}}}}"#;
+        let snap = load_from(&TempFile::new(raw).0);
+        assert!(snap.config.harness.providers.kimi.api_key.is_empty());
+        assert_eq!(snap.config.harness.providers.kimi.model, DEFAULT_KIMI_MODEL);
+        assert!(snap.config.harness.providers.kimi.base_url.is_none());
+        assert!(snap.config.harness.providers.mock.fixture.is_none());
+        // 三条 warning（model / base_url / fixture），api_key 不产生 warning
+        assert_eq!(snap.warnings.len(), 3, "{:?}", snap.warnings);
+        for needle in [
+            "harness.providers.kimi.model",
+            "harness.providers.kimi.base_url",
+            "harness.providers.mock.fixture",
+        ] {
+            assert!(
+                snap.warnings.iter().any(|w| w.contains(needle)),
+                "缺少 {needle} 的 warning：{:?}",
+                snap.warnings
+            );
+        }
+    }
+
+    /// 规则清单**逐项**校验：非字符串 / 空串（含纯空白）逐项丢弃并各给一条 warning，其余项
+    /// 按原顺序保留（前后空白去掉）；`deny` 与其余字段不受影响。
+    #[test]
+    fn harness_permission_rules_drop_invalid_items_one_by_one() {
+        let raw = r#"{"last_vault":"/tmp/vault","harness":{"permissions":{
+            "allow":["cli(ls *)","",42,"   ","vault_patch","  cli(tavily *)  "],
+            "deny":[null,"cli(rm *)"]}}}"#;
+        let snap = load_from(&TempFile::new(raw).0);
+        assert_eq!(
+            snap.config.harness.permissions.allow,
+            vec!["cli(ls *)", "vault_patch", "cli(tavily *)"]
+        );
+        assert_eq!(snap.config.harness.permissions.deny, vec!["cli(rm *)"]);
+        // 4 条 warning：allow 的第 2 / 3 / 4 项 + deny 的第 1 项
+        assert_eq!(snap.warnings.len(), 4, "{:?}", snap.warnings);
+        assert!(
+            snap.warnings
+                .iter()
+                .all(|w| w.contains("harness.permissions")),
+            "{:?}",
+            snap.warnings
+        );
+        // 其余字段不回退
+        assert_eq!(snap.config.last_vault.as_deref(), Some("/tmp/vault"));
+        assert_eq!(snap.config.editor, EditorConfig::default());
+    }
+
+    /// 边界如实记录（与 `wrong_type_vault_rule_files_*` / `wrong_type_font_size_*` 同路）：
+    /// `[harness]` 表**整体**给错类型、或表内标量给错类型（`"loop_max": "8"`），都在 serde
+    /// 解析期失败 → 整文件回落（连 `last_vault` 一起丢）。逐项校验解决的是「一个元素非法」，
+    /// 不是「字段本身形状错」——后者是既有解析模型的性质，不发明逐字段类型容忍。
+    #[test]
+    fn harness_wrong_types_fall_back_entire_file() {
+        for raw in [
+            r#"{"last_vault":"/tmp/vault","harness":"kimi"}"#,
+            r#"{"last_vault":"/tmp/vault","harness":42}"#,
+            r#"{"last_vault":"/tmp/vault","harness":{"provider":2}}"#,
+            r#"{"last_vault":"/tmp/vault","harness":{"loop_max":"8"}}"#,
+            r#"{"last_vault":"/tmp/vault","harness":{"warn_ctx_pct":"85"}}"#,
+            r#"{"last_vault":"/tmp/vault","harness":{"auto_compact":"yes"}}"#,
+            r#"{"last_vault":"/tmp/vault","harness":{"providers":"kimi"}}"#,
+            r#"{"last_vault":"/tmp/vault","harness":{"providers":{"kimi":{"api_key":1}}}}"#,
+            r#"{"last_vault":"/tmp/vault","harness":{"permissions":{"allow":"cli(ls)"}}}"#,
+        ] {
+            let snap = load_from(&TempFile::new(raw).0);
+            assert_eq!(snap.config, AppConfig::default(), "{raw} 应整份落回默认");
+            assert_eq!(snap.config.last_vault, None, "{raw}");
+            assert_eq!(snap.warnings.len(), 1, "{raw}: {:?}", snap.warnings);
+            assert!(snap.warnings[0].contains("不是合法 JSON"), "{raw}");
+        }
+    }
+
+    /// 显式 `false` / 缺键两种配置的差别要能被分辨：`auto_compact` 缺键 = 出厂 `true`，
+    /// 显式 `false` 必须原样读到（否则用户关不掉自动压缩）。
+    #[test]
+    fn harness_auto_compact_explicit_false_is_kept() {
+        let snap = load_from(&TempFile::new(r#"{"harness":{"auto_compact":false}}"#).0);
+        assert!(!snap.config.harness.auto_compact);
         assert!(snap.warnings.is_empty(), "{:?}", snap.warnings);
     }
 }
