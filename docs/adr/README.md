@@ -38,4 +38,5 @@
 | [0003](0003-obsidian-compatibility-scope.md) | Obsidian 兼容范围 | accepted |
 | [0004](0004-development-and-openness-strategy.md) | 开发与开放策略 | accepted（M2 经 0006 deferred） |
 | [0005](0005-product-ontology-object-model.md) | 产品本体对象模型 | deferred（见 0006） |
-| [0006](0006-agent-positioning-deferred.md) | AI 定位延后与当前阶段重排 | accepted |
+| [0006](0006-agent-positioning-deferred.md) | AI 定位延后与当前阶段重排 | accepted（AI 定位 deferred 经 0007 revisit 转为探索中） |
+| [0007](0007-ai-positioning-probe.md) | AI 定位重启——以使用探针替代定位预判 | accepted |
