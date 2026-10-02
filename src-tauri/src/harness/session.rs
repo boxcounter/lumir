@@ -1,0 +1,283 @@
+//! 会话：一个 vault 的内存态对话状态（design §2「会话边界」）。
+//!
+//! 一个会话同时维护两份视角：
+//! - `input`：OpenAI Responses API 形状的消息项（`session::input_item` 构造），直接喂 LLM；
+//! - `panel`：面板渲染模型（role: user/assistant/tool/compact + text/summary/name/status），
+//!   是 `harness_state` 快照的消息来源（m303 消费形状）。
+//!
+//! 两边随同一个动作一起更新，MUST NOT 各自漂移——面板上看到的与模型看到的永远是同一会话。
+
+use std::path::PathBuf;
+use std::sync::mpsc::Sender;
+
+use serde::Serialize;
+
+use crate::commands::CommandError;
+
+use super::approval::{ApprovalDecision, ApprovalRequest};
+use super::jsonl::JsonlWriter;
+
+/// 面板消息（`harness_state` 快照 `messages[]` 的元素；m303 宽容解析，缺字段=空态）。
+#[derive(Debug, Clone, Serialize)]
+pub struct PanelMessage {
+    /// user / assistant / tool / compact。
+    pub role: String,
+    /// 完整文本（user/assistant 的主内容）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
+    /// 摘要（compact 消息的压缩摘要，面板可展开）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub summary: Option<String>,
+    /// 工具名（tool 消息）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// 工具执行状态（如 done / denied / rejected / error）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub status: Option<String>,
+}
+
+/// 最近一次请求的用量（面板常驻 ctx% / cache% 的数据源）。
+#[derive(Debug, Clone, Copy, Default, Serialize)]
+pub struct UsageSnapshot {
+    /// 上下文窗口已用 %（最近一次 input tokens ÷ 模型窗口，预设表见 [`super::llm`]）。
+    pub ctx_pct: f64,
+    /// cache hit %（cached tokens ÷ input tokens；无 input 时为 0）。
+    pub cache_pct: f64,
+}
+
+impl StateSnapshot {
+    /// 空态快照（无会话 / 未打开 vault）：面板宽容解析下全空即合法。
+    pub fn empty(warn_ctx_pct: f64) -> Self {
+        Self {
+            messages: Vec::new(),
+            usage: UsageSnapshot::default(),
+            pending_approval: None,
+            warn_ctx_pct,
+        }
+    }
+}
+
+/// `harness_state` 返回的快照（键集合是 m303 消费形状的超集）。
+#[derive(Debug, Clone, Serialize)]
+pub struct StateSnapshot {
+    pub messages: Vec<PanelMessage>,
+    pub usage: UsageSnapshot,
+    /// 当前挂起的批准请求（无则 null）。
+    pub pending_approval: Option<PendingApprovalSnapshot>,
+    /// 上下文用量警示阈值（面板警示条用，缺省 85）。
+    pub warn_ctx_pct: f64,
+}
+
+/// 面板可见的批准请求摘要（不含通道 sender）。
+#[derive(Debug, Clone, Serialize)]
+pub struct PendingApprovalSnapshot {
+    pub id: String,
+    pub tool: String,
+    /// 写工具的 unified diff 预览（无则缺省）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub diff: Option<String>,
+    /// CLI 的完整 argv（无则缺省）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub argv: Option<Vec<String>>,
+}
+
+impl PendingApprovalSnapshot {
+    pub fn from_request(r: &ApprovalRequest) -> Self {
+        Self {
+            id: r.id.clone(),
+            tool: r.tool.clone(),
+            diff: r.diff.clone(),
+            argv: r.argv.clone(),
+        }
+    }
+}
+
+/// 一个 vault 的会话。
+pub struct Session {
+    root: PathBuf,
+    /// 系统上下文（固定身份段 + AGENTS.md 双层 + Skill 索引），会话建立时装配一次。
+    system: String,
+    /// LLM 侧消息项（Responses API `input` 形状）。
+    input: Vec<serde_json::Value>,
+    /// 面板渲染消息。
+    panel: Vec<PanelMessage>,
+    usage: UsageSnapshot,
+    busy: bool,
+    /// 挂起的批准请求（一次一个：一轮里 ask 档逐个过闸）。
+    pending: Option<ApprovalRequest>,
+    /// 最近一次提问注入的「当前编辑器上下文」节（压缩续聊时原样重注入）。
+    current_context: Option<String>,
+    jsonl: JsonlWriter,
+}
+
+impl Session {
+    pub fn new(root: PathBuf, system: String, jsonl: JsonlWriter) -> Self {
+        Self {
+            root,
+            system,
+            input: Vec::new(),
+            panel: Vec::new(),
+            usage: UsageSnapshot::default(),
+            busy: false,
+            pending: None,
+            current_context: None,
+            jsonl,
+        }
+    }
+
+    pub fn root(&self) -> &PathBuf {
+        &self.root
+    }
+
+    pub fn system(&self) -> &str {
+        &self.system
+    }
+
+    pub fn is_busy(&self) -> bool {
+        self.busy
+    }
+
+    pub fn set_busy(&mut self, busy: bool) {
+        self.busy = busy;
+    }
+
+    pub fn input(&self) -> &[serde_json::Value] {
+        &self.input
+    }
+
+    pub fn push_input(&mut self, item: serde_json::Value) {
+        self.input.push(item);
+    }
+
+    pub fn replace_input(&mut self, items: Vec<serde_json::Value>) {
+        self.input = items;
+    }
+
+    pub fn push_panel(&mut self, message: PanelMessage) {
+        self.panel.push(message);
+    }
+
+    pub fn set_usage(&mut self, usage: UsageSnapshot) {
+        self.usage = usage;
+    }
+
+    pub fn usage(&self) -> UsageSnapshot {
+        self.usage
+    }
+
+    pub fn jsonl(&mut self) -> &mut JsonlWriter {
+        &mut self.jsonl
+    }
+
+    pub fn set_current_context(&mut self, section: Option<String>) {
+        self.current_context = section;
+    }
+
+    pub fn current_context(&self) -> Option<&str> {
+        self.current_context.as_deref()
+    }
+
+    pub fn snapshot(&self, warn_ctx_pct: f64) -> StateSnapshot {
+        StateSnapshot {
+            messages: self.panel.clone(),
+            usage: self.usage,
+            pending_approval: self
+                .pending
+                .as_ref()
+                .map(PendingApprovalSnapshot::from_request),
+            warn_ctx_pct,
+        }
+    }
+
+    /// 挂起批准请求（工具循环线程 park 前调用；旧请求理应已消费，重复挂起即覆盖并记日志）。
+    pub fn park_approval(&mut self, request: ApprovalRequest) {
+        if self.pending.is_some() {
+            self.jsonl
+                .record(&serde_json::json!({"kind": "approval_overwritten"}));
+        }
+        self.pending = Some(request);
+    }
+
+    /// `harness_approve` 的落点：按 id 找到挂起请求并把决定发回工具循环线程。
+    pub fn resolve_approval(
+        &mut self,
+        request_id: &str,
+        approved: bool,
+        reason: Option<String>,
+    ) -> Result<(), CommandError> {
+        let pending = self
+            .pending
+            .take()
+            .ok_or_else(|| CommandError::new("approval_not_found", "当前没有待批准的请求"))?;
+        if pending.id != request_id {
+            // id 不匹配也视为未找到（不消费请求本身）。
+            self.pending = Some(pending);
+            return Err(CommandError::new(
+                "approval_not_found",
+                format!("批准请求 {request_id} 不存在或已被处理"),
+            ));
+        }
+        let tx: Sender<ApprovalDecision> = pending.tx;
+        self.jsonl.record(&serde_json::json!({
+            "kind": "approval",
+            "id": pending.id,
+            "tool": pending.tool,
+            "decision": if approved { "approved" } else { "rejected" },
+            "reason": reason,
+        }));
+        // 发送失败 = 等待线程已不在（会话被重置等），人话报错即可，不 panic。
+        tx.send(ApprovalDecision { approved, reason }).map_err(|_| {
+            CommandError::new(
+                "approval_stale",
+                "批准请求已失效（对话线程已结束），请重试本轮提问",
+            )
+        })
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Responses API 消息项构造（input 数组的三种角色）
+// ---------------------------------------------------------------------------
+
+/// user 消息项：`{"role":"user","content":[{"type":"input_text","text":...}]}`。
+pub fn user_item(text: &str) -> serde_json::Value {
+    serde_json::json!({
+        "role": "user",
+        "content": [{"type": "input_text", "text": text}],
+    })
+}
+
+/// assistant 消息项（文本 + 可选 reasoning 项原文，reasoning 按各厂规则原样回传）。
+///
+/// Responses API 的回放口径：assistant 输出以 message 项承载（content 用 `output_text`），
+/// reasoning 项（kimi 的 `encrypted_content`）作为独立项紧随其后。deepseek 把 reasoning
+/// 合并进 assistant 消息——它**产出**时就不分项，这里自然无项可带（design §3 回传纪律）。
+pub fn assistant_item(text: &str, reasoning: Option<&serde_json::Value>) -> Vec<serde_json::Value> {
+    let mut items = Vec::new();
+    if let Some(r) = reasoning {
+        items.push(r.clone());
+    }
+    items.push(serde_json::json!({
+        "role": "assistant",
+        "content": [{"type": "output_text", "text": text}],
+    }));
+    items
+}
+
+/// 工具调用与结果对：function_call 项（回放模型自己的调用）+ function_call_output 项。
+pub fn function_call_item(call_id: &str, name: &str, arguments: &str) -> serde_json::Value {
+    serde_json::json!({
+        "type": "function_call",
+        "call_id": call_id,
+        "name": name,
+        "arguments": arguments,
+    })
+}
+
+pub fn function_call_output_item(call_id: &str, output: &str) -> serde_json::Value {
+    serde_json::json!({
+        "type": "function_call_output",
+        "call_id": call_id,
+        "output": output,
+    })
+}

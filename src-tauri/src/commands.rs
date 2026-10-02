@@ -253,8 +253,10 @@ impl VaultState {
             .ok_or_else(|| CommandError::new("vault_not_open", "尚未打开 vault，请先选择目录"))
     }
 
-    /// 当前 vault 的根 + 规则表（`fs_scan_dir` / `fs_scan_workspace` / 存在探测共用）。
-    fn root_and_policy(&self) -> Result<(PathBuf, fs_io::IgnorePolicy), CommandError> {
+    /// 当前 vault 的根 + 规则表（`fs_scan_dir` / `fs_scan_workspace` / 存在探测共用；
+    /// **pub 消费方：harness 运行时（M302）**——会话按 vault 建、工具路径解析与
+    /// vault_search 复用同一份装载时编译的规则表。未打开返回 `vault_not_open`。
+    pub fn root_and_policy(&self) -> Result<(PathBuf, fs_io::IgnorePolicy), CommandError> {
         self.inner
             .lock()
             .expect("vault state poisoned")

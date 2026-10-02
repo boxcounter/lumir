@@ -64,6 +64,11 @@ trash = "5"
 # 代价：连带 globset / bstr / crossbeam-* 等传递依赖（见 Cargo.lock 的 5 个新增 `[[package]]`）。
 # 被否决的替代是手写 gitignore 子集（零新增依赖，但子集必然猜错，见上）。
 ignore = "0.4"
+# 对话运行时（change add-harness-probe §3，M302）：Rust 侧首笔网络依赖。
+# reqwest blocking + rustls（不用 native-tls，避免引入系统 OpenSSL 链路）：SSE 响应按行读取
+# （blocking Response 实现 Read），逐事件解析后经 app.emit 推面板；刻意不引 tokio——
+# 单个顺序 SSE 流没有 async 组合需求，与 lib.rs:410 的既有判断同路。
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls", "json"] }
 
 [features]
 # 生产构建开关（Tauri 2 官方模板约定，名称必须恰为 custom-protocol）：

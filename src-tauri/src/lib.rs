@@ -9,6 +9,7 @@
 pub mod commands;
 pub mod config;
 pub mod fs_io;
+pub mod harness;
 pub mod index;
 pub mod link_graph;
 pub mod logging;
@@ -64,9 +65,12 @@ pub fn run() {
         )
         .manage(commands::VaultState::default())
         .manage(commands::DirtyState::default())
+        .manage(harness::Runtime::default())
         .invoke_handler(tauri::generate_handler![
             commands::config_get,
             commands::config_set_ui_value,
+            // M301 泛化的单键合并写（任意表名；`config_set_ui_value` ≡ section="ui"）。
+            commands::config_set_value,
             commands::vault_open,
             commands::vault_open_path,
             commands::vault_current,
@@ -111,6 +115,12 @@ pub fn run() {
             // 文档阅读位置（M194，change remember-reading-position）：与标签会话分开存
             reading_position::reading_position_get,
             reading_position::reading_position_put,
+            // Harness 对话运行时（M302，change add-harness-probe）：面板（m303）经
+            // 四命令 + `harness:event` 事件消费；LLM 调用在 `lumir-harness-llm` 专线程。
+            harness::harness_send,
+            harness::harness_approve,
+            harness::harness_new_session,
+            harness::harness_state,
         ])
         .setup(move |app| {
             // 诊断日志先初始化：`[log] level` 在第一条事件之前生效（level = off 时
