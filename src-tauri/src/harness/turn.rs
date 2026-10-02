@@ -464,7 +464,6 @@ fn gated_execute(
         call.name.clone(),
         preview.diff.clone(),
         preview.argv.clone(),
-        preview.revision.clone(),
         tx,
     );
     let id = match runtime.park_approval(scope, request) {

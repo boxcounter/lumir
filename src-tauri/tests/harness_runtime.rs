@@ -684,6 +684,12 @@ fn vault_scoping_switch_restore_and_reset() {
     runtime.reset_session(&f.scope());
     let snap = runtime.snapshot(&f.scope(), &config);
     assert!(snap.messages.is_empty(), "重置后空态");
+    // r1 P2-1：重置动作本身留一条 session_reset（JSONL 可辨识「新会话」）。
+    let jsonl_now = std::fs::read_to_string(&jsonl_path).unwrap();
+    assert!(
+        jsonl_now.contains("\"kind\":\"session_reset\""),
+        "{jsonl_now}"
+    );
     // 重置后再问一轮：jsonl 追加（行数增长），文件没被动过。
     runtime.acquire_turn(&f.scope()).unwrap();
     let sink2 = CollectSink::default();

@@ -16,6 +16,10 @@ pub struct ApprovalDecision {
 }
 
 /// 挂起中的批准请求（会话内一次一个）。
+///
+/// revision 不在此携带：CAS 基准由 `gated_execute` 的闭包变量直通执行入口
+/// （`preview.revision` → `execute_with_revision`），请求对象只承载面板可见
+/// 的展示字段（diff/argv）与决定通道。
 #[derive(Debug)]
 pub struct ApprovalRequest {
     pub id: String,
@@ -24,8 +28,6 @@ pub struct ApprovalRequest {
     pub diff: Option<String>,
     /// CLI 的完整 argv（cli_run）。
     pub argv: Option<Vec<String>>,
-    /// vault_patch 的预览基准 revision（批准执行时作 CAS 基准）。
-    pub revision: Option<String>,
     /// 决定回传通道（sender 在 harness_approve 侧消费）。
     pub tx: Sender<ApprovalDecision>,
 }
@@ -35,7 +37,6 @@ impl ApprovalRequest {
         tool: String,
         diff: Option<String>,
         argv: Option<Vec<String>>,
-        revision: Option<String>,
         tx: Sender<ApprovalDecision>,
     ) -> Self {
         Self {
@@ -43,7 +44,6 @@ impl ApprovalRequest {
             tool,
             diff,
             argv,
-            revision,
             tx,
         }
     }
