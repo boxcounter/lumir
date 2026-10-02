@@ -287,6 +287,13 @@ export const NON_TAB_GLOBAL_COMMAND_IDS = [
   // 作用域由本清单派生为 global——焦点在左栏 / 搜索框 / 键位面板 / 浮层里时同样要能切。
   // 它**有**默认绑定（⌘⇧L），因此 MUST NOT 登记进 KEYLESS_COMMAND_IDS。
   "view.language-cycle",
+  // M303：harness 对话面板唤起 / 收起（change add-harness-probe）。前缀取 `harness.`：它作用的
+  // 对象是**那块面板**，不属于 `editor.*`（编辑器内核）/ `view.*`（应用运行期显示口径）任何一族
+  // ——前缀与作用域因此不互相打脸（M240 同款判词）。作用域为 global 是理由决定的：面板打开时
+  // 焦点在面板的输入框里（不在 contentDOM 内），`editor` 作用域会让「再执行一次同一命令收起」
+  // 失效（同 `toc.toggle` / `table.toggle-fullscreen`）。它**有**默认绑定（⌘⇧A，冲突核实
+  // 三条独立来源写在表条目 D345 里），因此 MUST NOT 登记进 KEYLESS_COMMAND_IDS。
+  "harness.toggle",
 ] as const;
 
 /** 全局命令 id（实现落在装配层 main.ts）：非标签部分 + 标签部分。 */
@@ -549,6 +556,9 @@ export const KEY_BINDINGS: readonly KeyBinding[] = [
   // M282：⌘⇧L 循环切换界面语言（change ui-language-i18n 的 D3 裁决）。三条冲突来源的复核写在
   // 表条目 D318 的正文里（表即文档，MUST NOT 在本文件另抄一份）。
   { key: "Cmd-Shift-L", command: "view.language-cycle", scope: "global", docKey: "D318" },
+  // M303：⌘⇧A 唤起 / 收起 harness 对话面板（change add-harness-probe）。三条冲突来源的复核写在
+  // 表条目 D345 的正文里（表即文档，MUST NOT 在本文件另抄一份）。
+  { key: "Cmd-Shift-A", command: "harness.toggle", scope: "global", docKey: "D345" },
 
   // ── 全局：标签（M149；M242 追加 ⌘} / ⌘{ 两条绑定，来由与冲突核对见文件头 M242 段）
   { key: "Cmd-w", command: "tab.close", scope: "global", docKey: "D312" },

@@ -28,12 +28,12 @@
 
 ## 4. 面板 UI 与上下文组装
 
-- [ ] 4.1 上下文组装模块（activePath + 选区 / 视口，只依赖 EditorHandle）+ 注入 chip
-- [ ] 4.2 右栏 dock 接入：网格第三列 `0px` ↔ `--layout-dock-w` 新 token；标题栏 toggle 钮（产品标识块左侧）
-- [ ] 4.3 面板本体：流式渲染（rAF 合帧、纯 DOM）、Markdown 渲染（GFM 基本面 + 代码高亮复用 + 全转义）、工具调用可见、diff 预览 + 采纳 / 拒绝、「新会话」按钮与命令、压缩标记（摘要可展开）
-- [ ] 4.4 用量显示：ctx% / cache hit% 常驻条 + 阈值警示
-- [ ] 4.5 文案全部进 copy-data（D 编号、zh/en）+ `onRelabel` 注册；`src/harness-panel.css` 只消费 token、eink 降级
-- [ ] 4.6 toggle 命令进 keys.ts 命令表
+- [x] 4.1 上下文组装模块（activePath + 选区 / 视口，只依赖 EditorHandle）+ 注入 chip
+- [x] 4.2 右栏 dock 接入：网格第三列 `0px` ↔ `--layout-dock-w` 新 token；标题栏 toggle 钮（产品标识块左侧）
+- [x] 4.3 面板本体：流式渲染（rAF 合帧、纯 DOM）、Markdown 渲染（GFM 基本面 + 代码高亮复用 + 全转义）、工具调用可见、diff 预览 + 采纳 / 拒绝、「新会话」按钮与命令、压缩标记（摘要可展开）
+- [x] 4.4 用量显示：ctx% / cache hit% 常驻条 + 阈值警示
+- [x] 4.5 文案全部进 copy-data（D 编号、zh/en）+ `onRelabel` 注册；`src/harness-panel.css` 只消费 token、eink 降级
+- [x] 4.6 toggle 命令进 keys.ts 命令表
 
 ## 5. 验证
 

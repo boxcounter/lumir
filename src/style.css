@@ -231,6 +231,13 @@
   --layout-tab-h: 29px;
   --layout-tb-btn-w: 30px;
   --layout-tb-btn-h: 28px;
+  /* dock 列宽（M303，change add-harness-probe）：骨架右栏 dock 接入 harness 对话面板后的
+     展开宽度。取值沿用原型期为 agent 栏预留的 --layout-agent-w（348px，tokens 文档
+     §layout）——同一语义位（右栏 agent 面板的宽度），不另起第二个值；token 名按
+     openspec change 的 ui-design-system delta 钉为 --layout-dock-w（delta 是本 token 的
+     规格出处）。收起态没有取值：网格列直接写 0px（见 .app-shell），宽度 token 只在
+     .dock-open 态被消费。 */
+  --layout-dock-w: 348px;
   --layout-tree-row-h: 25px;
   --layout-agent-head-h: 38px;
   --layout-queue-head-h: 34px;
@@ -317,9 +324,10 @@ body {
 
 /* ==========================================================================
    骨架（src/shell.ts）：四区网格。
-   标题栏行（42px，全宽）/ 主行（侧栏 236 + 正文 + dock 预留列）/ modeline 行（25px，全宽）。
-   dock 预留列宽 0、无内容、无边框——「预留」只在结构层：agent 特性落地时改这一列宽度即接入，
-   本版零像素（非目标：agent 栏任何像素）。
+   标题栏行（42px，全宽）/ 主行（侧栏 236 + 正文 + dock 列）/ modeline 行（25px，全宽）。
+   dock 列默认 0px（结构上的列位）；M303（change add-harness-probe）起它承载 harness 对话
+   面板——面板展开时 `.dock-open` 类把列宽切到 --layout-dock-w，收起即回到 0px（行为与原
+   预留位一致，规格见该 change 的 ui-design-system delta）。
    ========================================================================== */
 .app-shell {
   display: grid;
@@ -333,6 +341,13 @@ body {
      overflow:auto，会被裁掉），而口径 12 明确允许它溢出左栏（320px 宽 vs 236px 栏宽），
      所以挂在网格容器上、由它提供定位基准。绝对定位的子元素不参与网格排布，不影响布局。 */
   position: relative;
+}
+/* dock 展开态：第三列从 0px 切到 dock 宽，正文列（minmax(0,1fr)）随之伸缩——切换不改变
+   正文阅读宽居中的既有口径（正文列内的 --layout-doc-measure 居中是列内行为，与列宽无关）。
+   无过渡：面板显隐是瞬时骨架切换，0.1/0.12s 两档动效纪律只覆盖 hover 过渡（spec
+   「chrome 表面与动效纪律」），网格列宽动画不在其中。 */
+.app-shell.dock-open {
+  grid-template-columns: var(--layout-sidebar-w) minmax(0, 1fr) var(--layout-dock-w);
 }
 
 /* 标题栏（取代旧标题区 + 旧标签栏行，两者本 change 已删除）：traffic 灯区 / 标签 / 动作钮三段。
@@ -385,14 +400,11 @@ body {
 .tabstrip[hidden] {
   display: none;
 }
-/* 定稿的标题栏第三段是「动作钮」（30×28，--layout-tb-btn-w/h）。本版**没有**动作钮：本仓
-   标题栏今天没有任何动作钮，原型的两颗是「搜索」与「agent 面板」，而 agent 面板是本 change
-   的显式非目标、给 ⌘F 加一颗鼠标入口又属新增交互面（本 change 的口径是换皮不改交互）。
-   因此这一段不落下 DOM/CSS；--layout-tb-btn-w/h 入库无消费者（预留面，记在
-   test-results/m211/token-spot-check.md）。
-   M236 起标题栏右端已有产品标识块（.titlebar-identity，常显信息位不是动作钮）——未来
-   动作钮接入时排在标识块**左侧**（动作钮靠近内容区、产品标识钉窗口角，macOS 惯例），
-   间距走 --sp-3；不要把标识块挪位（整页视觉基线会漂移）。 */
+/* 定稿的标题栏第三段是「动作钮」（30×28，--layout-tb-btn-w/h）。M303（change
+   add-harness-probe）起本槽位填入第一颗动作钮：harness 面板 toggle（.titlebar-action，
+   样式与 DOM 都在 harness 一侧——src/harness-panel.css / src/harness-panel.ts，与
+   search-panel.css 的 mission 隔离先例同款）。它排在产品标识块**左侧**（动作钮靠近内容区、
+   产品标识钉窗口角，macOS 惯例），间距走 --sp-3；不要把标识块挪位（整页视觉基线会漂移）。 */
 
 /* 产品标识块（M236，change product-version-display，D1 右端 / D3 双档字重）：
    全部现行 token，零新值、零组件级 eink 覆盖（--text-2/--text-3 三主题都有定义）。
