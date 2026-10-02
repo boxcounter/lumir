@@ -62,6 +62,27 @@ CI 的 `visual.yml` 只跑结构 / 计算属性断言（置 `LUMIR_VISUAL_STRUCT
 - **真机复验**：`pnpm tauri dev` 起真实 app，用 KimiCU 操作（pid 用 `ps aux | grep target/debug/lumir` 找）；桌面验收 vault：`/tmp/lumir-m102-acceptance`；用户真实 vault `/Users/boxcounter/Downloads/Everything-copy` **只读**。**白屏陷阱**：`cargo test` 会把 `target/debug/lumir` 重编译为不带 `custom-protocol` 的 dev flavour，此后裸二进制起 app 会去加载 devUrl `http://127.0.0.1:1420` 而整窗白屏；起实例前须重新 `cargo build --features custom-protocol`（或直接用 `pnpm tauri dev`）。批次四 M134 实证，2026-09-16。
 - **配额全瘫 runbook**：tower 主模型与 managed worker/reviewer 同一 Kimi 配额，耗尽即全瘫。恢复：改 `~/.kimi-code/config.toml` 顶层 `default_model = "deepseek/deepseek-flash"`（或 `kimi -m deepseek/deepseek-flash` 起新会话）→ resume 原会话 → tower 从 `.tower/comms/` + `HANDOFF.md` 恢复上下文。
 
+## 子代理模型调度（Alex 裁决 2026-10-02）
+
+动机：Kimi coding plan 配额紧，执行层尽量压到不占配额的模型；安全网是机器验收（gate/测试/验收套件）+ 强 review。分流标准**不是任务难度，而是「失败能否被机器立刻抓住」**。
+
+| 任务类型 | 模型 alias |
+|---|---|
+| 有机器验收的开发（做完须过 gate/测试判定） | `deepseek/deepseek-flash` |
+| 文案/文档/数值类、机械批量活 | `deepseek/deepseek-flash` |
+| 代码库探索、定位类查询（explore） | `deepseek/deepseek-flash` |
+| 无机器验收的判断类开发（交互手感、新功能设计、结构调整） | `kimi-code/kimi-for-coding` |
+| 复杂任务、review、视觉相关（`src/style.css`、`src/preview/**`、视觉场景） | `kimi-code/k3-256k` |
+| k3 1M | **禁用** |
+
+执行规则：
+
+- **显式指定 alias，不依赖默认值**——默认值变了行为会静默漂移。
+- **prompt 写窄**：已知文件路径/行号/测试命令直接写进派发 prompt，砍掉子代理的探索消耗（三个模型都受益）。
+- **优先 resume，少开新实例**；失败升级时 resume 原 agent 换更强模型继续，不同模型重开（重读代码浪费配额），也不同模型原地重试（重复同样失败）。
+- **review 恒为 k3-256k**，但输入收窄：只看 diff + REVIEW.md 相关条目，不做全量代码理解。
+- 拿不准「有无机器验收」时**按没有处理**（升档到 kimi-for-coding），不要为省配额降档。
+
 ## 工作流分工速查
 
 - **开工前必读**：worker 动工前与 reviewer 给 verdict 前先过一遍 [REVIEW.md](REVIEW.md)，逐条对一眼自己的改动面；重复踩到表内某条时把新现场补进该条证据，不另起条目。
