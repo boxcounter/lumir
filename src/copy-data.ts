@@ -386,6 +386,19 @@ const COPY_TABLE = {
   },
   D201: { zh: "无法枚举恢复目录：{reason}", en: "Couldn't list the recovery folder: {reason}" },
   D202: { zh: "崩溃备份路径非法：{rel}", en: "Invalid crash-backup path: {rel}" },
+  // D323–D325：局部 patch 写入口的三条新 code（change add-harness-probe，M301；同 D6 的渲染
+  // 口径，故并入本节）。**D324 / D325 的 `{index}` 从 1 起、`{count}` 是命中次数**；
+  // D323 的模板只可用 `{rel}`——`patch_invalid` 的两处构造点里有一处不带 `{index}`，
+  // 模板出现未提供的占位名会让 `t()` 缺参抛错（同门禁反向判据，见 tests/unit/copy.test.ts）。
+  D323: { zh: "补丁请求无效：{rel}", en: "Invalid patch request: {rel}" },
+  D324: {
+    zh: "补丁未命中：{rel} 第 {index} 处编辑的 old_string 未找到（命中 {count} 次）",
+    en: "Patch miss in {rel}: old_string of edit #{index} not found ({count} matches)",
+  },
+  D325: {
+    zh: "补丁不唯一：{rel} 第 {index} 处编辑的 old_string 命中 {count} 次（要求恰好 1 次）",
+    en: "Ambiguous patch in {rel}: old_string of edit #{index} matches {count} times (exactly 1 required)",
+  },
 
   // -------------------------------------------------------------------------
   // 前端可见文案（D203–D245）
@@ -672,6 +685,10 @@ export const ERROR_COPY: Record<string, CopyKey> = {
   recovery_discard_failed: "D200",
   recovery_list_failed: "D201",
   recovery_invalid_path: "D202",
+  // 局部 patch 写入口（change add-harness-probe，M301）：三条都由 fs_io::fs_patch_file 构造。
+  patch_invalid: "D323",
+  patch_not_found: "D324",
+  patch_not_unique: "D325",
   open_url_rejected: "D78",
   open_url_failed: "D79",
 };
