@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Lumir 应用图标源文件（临时版，2026-10-02 随 0.2.0 首次出安装包而做）。
+
+  设计口径：与产品自身的视觉语言同源，不引入新配色——纸面 / 墨色 / 单一强调色。
+  三套主题（light / dark / eink）里 light 与 eink 都是这套「纸 + 墨」的调性，
+  取 light 主题的既有 token 作值（src/style.css）：
+    content-bg #FDFDFC / frame #F4F4F1 / border #E3E2DD
+    text       #21201A / text-2 #6E6C61 / accent #3A5FCD
+  构图：一页纸（macOS 网格 824×824 居中、圆角 185）+ 四行正文 + 一个行尾光标。
+  「文本工作台」这一件事靠四行字与光标直接说清，不靠字形；缩到 16px 仍分得清。
+
+  重新生成：
+    rsvg-convert -w 1024 -h 1024 src-tauri/icons/icon-source.svg -o /tmp/lumir-icon-1024.png
+    pnpm tauri icon /tmp/lumir-icon-1024.png
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <!-- 纸面：极轻的纵向渐变，避免大色块平得发死 -->
+    <linearGradient id="paper" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FEFEFD"/>
+      <stop offset="1" stop-color="#F1F1EC"/>
+    </linearGradient>
+    <!-- 底部投影：给圆角方形一点厚度，macOS 网格里不贴底 -->
+    <filter id="lift" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="12" stdDeviation="20" flood-color="#21201A" flood-opacity="0.14"/>
+    </filter>
+  </defs>
+
+  <!-- 纸 -->
+  <rect x="100" y="100" width="824" height="824" rx="185" ry="185" fill="url(#paper)" filter="url(#lift)"/>
+  <rect x="101.5" y="101.5" width="821" height="821" rx="183.5" ry="183.5"
+        fill="none" stroke="#E3E2DD" stroke-width="3"/>
+
+  <!-- 正文：一行标题 + 五行正文（左对齐，逐行收短，末行留出光标位） -->
+  <g fill="#21201A">
+    <!-- 标题行：比正文行厚，给版面一个层级 -->
+    <rect x="268" y="272" width="400" height="66" rx="33"/>
+    <!-- 正文行 -->
+    <rect x="268" y="400" width="488" height="40" rx="20"/>
+    <rect x="268" y="478" width="488" height="40" rx="20"/>
+    <rect x="268" y="556" width="452" height="40" rx="20"/>
+    <rect x="268" y="634" width="488" height="40" rx="20"/>
+    <rect x="268" y="712" width="300" height="40" rx="20"/>
+  </g>
+
+  <!-- 行尾光标：唯一强调色，比正文行高，读作「正在写」 -->
+  <rect x="612" y="696" width="54" height="72" rx="27" fill="#3A5FCD"/>
+</svg>

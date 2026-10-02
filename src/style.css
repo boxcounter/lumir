@@ -363,7 +363,7 @@ body {
   min-width: 0;
   padding-left: var(--sp-3);
   /* 右缘与产品标识块之间恒留 --sp-3（M257，Alex dogfood 报告的蓝箭头缺陷：溢出时最右
-     标签与「Lumir · 0.1.0」挤在一起）。用 margin 而不是 padding-right：WebKit 的横向
+     标签与「Lumir · 0.2.0」挤在一起）。用 margin 而不是 padding-right：WebKit 的横向
      滚动容器可能不把 inline-end padding 算进可滚动区，margin 在两个引擎里都同样生效。
      标识块自身的 margin-left:auto 管「钉右端」，这条管「不贴上」——两者不冲突。 */
   margin-right: var(--sp-3);

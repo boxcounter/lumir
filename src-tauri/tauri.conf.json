@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Lumir",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "identifier": "com.lumir.app",
   "build": {
     "beforeDevCommand": "pnpm dev",
@@ -24,8 +24,21 @@
     }
   },
   "bundle": {
-    "active": false,
-    "targets": "all",
-    "icon": []
+    "active": true,
+    "targets": ["app", "dmg"],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "category": "Productivity",
+    "shortDescription": "本地文本工作台",
+    "longDescription": "Lumir 是一个本地优先的 Markdown 文本工作台，带 Emacs 键位与三套主题（light / dark / eink）。所有文件留在你自己的 vault 目录里，不上传、不联网。",
+    "copyright": "Copyright © 2026 Alex",
+    "macOS": {
+      "minimumSystemVersion": "10.15"
+    }
   }
 }

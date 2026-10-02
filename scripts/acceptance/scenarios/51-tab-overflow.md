@@ -29,7 +29,7 @@ steps:
     do: settle
     expect:
       # 两张截图是 Alex 过目两个缺陷位的证据（真机的悬浮滚动条与间距只有截图能看见）：
-      # 红箭头位 = 标签下缘不再有横向滚动条压着；蓝箭头位 = 最右可见标签与「Lumir 0.1.0」之间有间距。
+      # 红箭头位 = 标签下缘不再有横向滚动条压着；蓝箭头位 = 最右可见标签与「Lumir 0.2.0」之间有间距。
       - shot: 溢出态标签栏-起点
       - label: 13 个标签都在（每个标签一个关闭钮；标签栏的 AX 树不受滚动裁剪，2026-09-27 实测命中 13 次）
         ax: { count: { pattern: "关闭 ", exact: 13 } }
@@ -38,7 +38,9 @@ steps:
       - label: 第一个标签的正文上屏（回读通道：AXTextArea.value 就是前台文档）
         editor: { has: "另一篇" }
       - label: 产品标识块仍在——溢出态也没把它挤出标题栏（蓝箭头缺陷位的读屏面）
-        ax: { has: "Lumir 0.1.0" }
+        # 版本号走 $appName / $appVersion 占位符（从 tauri.conf.json 读真值），不硬编码副本
+        # （M236 口径，REVIEW.md 第 8 条）——原来这里写死 "Lumir 0.1.0"，版本一 bump 就假红。
+        ax: { has: "$appName $appVersion" }
 
   - name: 注入前把窗口带到前台（键盘注入的前台纪律，README「起实例前的环境纪律」）
     do: focusWindow
