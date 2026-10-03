@@ -855,3 +855,64 @@ fn cli_run_gated_and_allow_rule_executes() {
     // approval_request 未出现（allow 免闸）。
     assert!(!sink.types().contains(&"approval_request".to_string()));
 }
+
+/// M305 回归（下游一侧）：一轮里 output.calls 的每条调用恰好执行一次、恰好压入一对
+/// function_call / function_call_output，不出现同一 call_id 重复入 input。
+///
+/// 重复入表的根因在 SSE 解析层（output_item.done 与 completed 双收集），已由 llm.rs 的
+/// 单测钉死；MockClient 直接合成 TurnOutput 不走 SSE，所以这里钉的是 handle_call 这一侧：
+/// 只要上游每条调用只给一次，input 里就不会有重复项。两条独立断言合起来覆盖整条链路。
+#[test]
+fn each_call_enters_input_exactly_once() {
+    let f = Fixture::new("dedupe-input");
+    f.write("a.md", "content\n");
+    let runtime = f.runtime();
+    runtime.acquire_turn(&f.scope()).unwrap();
+    let sink = CollectSink::default();
+    let script = r#"{"responses": [
+        {"tool_calls": [
+            {"id": "call_1", "name": "vault_read", "arguments": "{\"path\":\"a.md\"}"},
+            {"id": "call_2", "name": "vault_search", "arguments": "{\"query\":\"content\"}"}
+        ]},
+        {"text": "读完了。"}
+    ]}"#;
+    let mut client = MockClient::from_str(script, "dedupe").unwrap();
+    turn::run_turn_for(
+        &sink,
+        &runtime,
+        &f.scope(),
+        &mock_config(),
+        "读".into(),
+        &mut client,
+    );
+    runtime.release_turn(&f.scope());
+
+    let call_ids: Vec<String> = runtime
+        .with_session(&f.scope(), |s| {
+            s.input()
+                .iter()
+                .filter(|item| item.get("type").and_then(|t| t.as_str()) == Some("function_call"))
+                .map(|item| {
+                    item.get("call_id")
+                        .and_then(|c| c.as_str())
+                        .unwrap_or_default()
+                        .to_string()
+                })
+                .collect()
+        })
+        .unwrap();
+    assert_eq!(
+        call_ids,
+        vec!["call_1", "call_2"],
+        "每条调用恰好入一次 input（无重复 call_id）"
+    );
+
+    // 工具恰好执行 2 次（面板 tool 消息数）。
+    let tool_msgs = runtime
+        .snapshot(&f.scope(), &mock_config())
+        .messages
+        .iter()
+        .filter(|m| m.role == "tool")
+        .count();
+    assert_eq!(tool_msgs, 2);
+}

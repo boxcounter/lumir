@@ -346,8 +346,13 @@ fn parse_sse(
     response: reqwest::blocking::Response,
     preset: &ProviderPreset,
 ) -> Result<TurnOutput, CommandError> {
+    Ok(parse_sse_reader(std::io::BufReader::new(response), preset))
+}
+
+/// SSE 分词与事件分流的读循环，与 transport 解耦（真 client 传响应体，单测传合成字节流），
+/// 协议层行为因此可用字节流直接钉死。
+fn parse_sse_reader<R: BufRead>(reader: R, preset: &ProviderPreset) -> TurnOutput {
     let mut output = TurnOutput::default();
-    let reader = std::io::BufReader::new(response);
     let mut event = String::new();
     let mut data = String::new();
     for line in reader.lines() {
@@ -374,7 +379,7 @@ fn parse_sse(
         // 其余行（注释 / 未知字段）忽略
     }
     // 流结束而无终态事件：不报错，用已收内容（部分厂商截断时无 failed 事件）。
-    Ok(output)
+    output
 }
 
 /// completed/incomplete/failed 已处理标记（用 usage/error 的有无近似终态）。
@@ -446,12 +451,21 @@ fn collect_output_item(item: &serde_json::Value, output: &mut TurnOutput) {
             }
         }
         Some("function_call") => {
+            let call_id = item
+                .get("call_id")
+                .and_then(|c| c.as_str())
+                .unwrap_or_default()
+                .to_string();
+            // 同一个 function_call 会先经 `response.output_item.done`、再随
+            // `response.completed`/`incomplete` 的 `output` 数组各到一次（两处携带同一
+            // call_id）。按 call_id 去重保证每条调用恰好入表一次——否则下游会重复执行工具、
+            // 并把同一 call_id 的 function_call 项重复压入 input，被 provider 以
+            // "Duplicate 'call_id'" 拒绝。
+            if output.calls.iter().any(|c| c.call_id == call_id) {
+                return;
+            }
             output.calls.push(ToolCall {
-                call_id: item
-                    .get("call_id")
-                    .and_then(|c| c.as_str())
-                    .unwrap_or_default()
-                    .to_string(),
+                call_id,
                 name: item
                     .get("name")
                     .and_then(|n| n.as_str())
@@ -760,5 +774,139 @@ mod tests {
             "This model's maximum context length is 65536"
         ));
         assert!(!is_overflow(deepseek, "rate_limit", "slow down"));
+    }
+
+    // ---- M305：SSE 输出项收集去重 ----
+    //
+    // 真 provider 会先发 `response.output_item.done`（携带完整 function_call 项），
+    // 再发 `response.completed`（`response.output` 是全量数组，含同一个项）。两处都调
+    // collect_output_item，function_call 无守卫曾导致每条调用入表两次 ⇒ 工具执行两遍、
+    // 同一 call_id 的 function_call 重复入 input ⇒ provider 以 "Duplicate 'call_id'" 拒绝。
+    // 以下用合成字节流钉死协议层行为（与 transport 解耦的 parse_sse_reader）。
+
+    /// 合成 SSE 字节流喂协议层读循环。
+    fn sse_parse(bytes: &str) -> TurnOutput {
+        parse_sse_reader(
+            std::io::Cursor::new(bytes.as_bytes()),
+            preset(&HarnessProvider::Deepseek),
+        )
+    }
+
+    #[test]
+    fn sse_collects_function_call_once_across_done_and_completed() {
+        let sse = r#"event: response.output_item.done
+data: {"item":{"type":"function_call","call_id":"call_00_abc","name":"vault_read","arguments":"{\"path\":\"a.md\"}"}}
+
+event: response.completed
+data: {"response":{"output":[{"type":"function_call","call_id":"call_00_abc","name":"vault_read","arguments":"{\"path\":\"a.md\"}"}],"usage":{"input_tokens":10,"output_tokens":2}}}
+
+"#;
+        let output = sse_parse(sse);
+        assert_eq!(
+            output.calls.len(),
+            1,
+            "同一 call_id 只应收集一次：{:?}",
+            output.calls
+        );
+        assert_eq!(output.calls[0].call_id, "call_00_abc");
+        assert_eq!(output.calls[0].name, "vault_read");
+        assert_eq!(output.calls[0].arguments, r#"{"path":"a.md"}"#);
+    }
+
+    #[test]
+    fn sse_collects_each_of_multiple_distinct_calls_once_in_order() {
+        let sse = r#"event: response.output_item.done
+data: {"item":{"type":"function_call","call_id":"call_1","name":"vault_read","arguments":"{\"path\":\"a.md\"}"}}
+
+event: response.output_item.done
+data: {"item":{"type":"function_call","call_id":"call_2","name":"vault_search","arguments":"{\"query\":\"needle\"}"}}
+
+event: response.completed
+data: {"response":{"output":[{"type":"function_call","call_id":"call_1","name":"vault_read","arguments":"{\"path\":\"a.md\"}"},{"type":"function_call","call_id":"call_2","name":"vault_search","arguments":"{\"query\":\"needle\"}"}],"usage":{"input_tokens":10,"output_tokens":2}}}
+
+"#;
+        let output = sse_parse(sse);
+        let ids: Vec<&str> = output.calls.iter().map(|c| c.call_id.as_str()).collect();
+        assert_eq!(ids, vec!["call_1", "call_2"], "{:?}", output.calls);
+    }
+
+    /// done + incomplete + completed 三连（incomplete 无 usage 不终止，completed 才终止）
+    /// 也不得让同一条调用重复入表。
+    #[test]
+    fn sse_dedupes_across_done_incomplete_and_completed() {
+        let sse = r#"event: response.output_item.done
+data: {"item":{"type":"function_call","call_id":"call_9","name":"vault_read","arguments":"{\"path\":\"a.md\"}"}}
+
+event: response.incomplete
+data: {"response":{"output":[{"type":"function_call","call_id":"call_9","name":"vault_read","arguments":"{\"path\":\"a.md\"}"}]}}
+
+event: response.completed
+data: {"response":{"output":[{"type":"function_call","call_id":"call_9","name":"vault_read","arguments":"{\"path\":\"a.md\"}"}],"usage":{"input_tokens":10,"output_tokens":2}}}
+
+"#;
+        let output = sse_parse(sse);
+        assert_eq!(output.calls.len(), 1, "{:?}", output.calls);
+    }
+
+    /// 只发 completed（不发 output_item.done）的形态行为不变——kimi 路径若如此，
+    /// 本次改动对它是零行为变化。
+    #[test]
+    fn sse_collects_call_from_completed_only() {
+        let sse = r#"event: response.completed
+data: {"response":{"output":[{"type":"function_call","call_id":"call_x","name":"vault_read","arguments":"{\"path\":\"a.md\"}"}],"usage":{"input_tokens":10,"output_tokens":2}}}
+
+"#;
+        let output = sse_parse(sse);
+        assert_eq!(output.calls.len(), 1);
+        assert_eq!(output.calls[0].call_id, "call_x");
+    }
+
+    /// response.output 数组内同名 call_id 的重复项（协议异常）也只保留一条，
+    /// 避免重复执行与重复入 input。
+    #[test]
+    fn sse_dedupes_repeated_call_id_within_completed_output() {
+        let sse = r#"event: response.completed
+data: {"response":{"output":[{"type":"function_call","call_id":"dup","name":"vault_read","arguments":"{}"},{"type":"function_call","call_id":"dup","name":"vault_read","arguments":"{}"}],"usage":{"input_tokens":10,"output_tokens":2}}}
+
+"#;
+        let output = sse_parse(sse);
+        assert_eq!(output.calls.len(), 1, "{:?}", output.calls);
+    }
+
+    /// reasoning（is_none 守卫）与文本（is_empty 守卫）的幂等性在去重逻辑下仍成立：
+    /// 两个事件都携带时，reasoning 只留一份、message 文本不重复拼接。
+    #[test]
+    fn sse_reasoning_and_text_guards_still_hold() {
+        let sse = r#"event: response.output_item.done
+data: {"item":{"type":"reasoning","id":"rs_1","encrypted_content":"enc"}}
+
+event: response.output_item.done
+data: {"item":{"type":"message","content":[{"type":"output_text","text":"你好"}]}}
+
+event: response.completed
+data: {"response":{"output":[{"type":"reasoning","id":"rs_1","encrypted_content":"enc"},{"type":"message","content":[{"type":"output_text","text":"你好"}]}],"usage":{"input_tokens":10,"output_tokens":2}}}
+
+"#;
+        let output = sse_parse(sse);
+        assert_eq!(output.text, "你好", "message 文本不应因两个事件重复拼接");
+        assert_eq!(output.reasoning.as_ref().unwrap()["id"], "rs_1");
+    }
+
+    /// 流式 text delta 在文本收集里优先于 message 项：message 文本因 text 已非空被跳过，
+    /// 两个事件各带一份也不翻倍。
+    #[test]
+    fn sse_stream_deltas_win_over_duplicated_message_items() {
+        let sse = r#"event: response.output_text.delta
+data: {"delta":"流式"}
+
+event: response.output_item.done
+data: {"item":{"type":"message","content":[{"type":"output_text","text":"流式"}]}}
+
+event: response.completed
+data: {"response":{"output":[{"type":"message","content":[{"type":"output_text","text":"流式"}]}],"usage":{"input_tokens":10,"output_tokens":2}}}
+
+"#;
+        let output = sse_parse(sse);
+        assert_eq!(output.text, "流式");
     }
 }
