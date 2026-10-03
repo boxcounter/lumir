@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "responses": [
+    {
+      "text": "用量验收回答。",
+      "usage": { "input_tokens": 65536, "cached_tokens": 32768, "output_tokens": 10 }
+    }
+  ]
+}

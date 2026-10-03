@@ -1,0 +1,67 @@
+---
+id: "77-harness-skill-load"
+item: 77
+title: Harness ⑧ Skill：索引发现 + skill_load 按需加载 + 根外名拒绝（change add-harness-probe，mock provider）
+open: harness-note.md
+marker: "HNL-ALPHA"
+config:
+  harness:
+    provider: mock
+    fixture: "$fixtures/harness-mock-skill.json"
+steps:
+  - name: 造 vault-wide Skill（<vault>/.agents/skills/probe-skill/SKILL.md）
+    do: vaultWrite
+    file: .agents/skills/probe-skill/SKILL.md
+    content: |
+      ---
+      description: 验收探针技能（M304 场景 77）
+      ---
+
+      # 探针技能
+
+      技能密令：HSK-SECRET-7429。看到本行即证明 skill_load 读到了全文。
+    expect:
+      - label: SKILL.md 已落盘
+        file: { path: .agents/skills/probe-skill/SKILL.md, exists: true }
+
+  - name: 等 watcher 收敛（外部写入后先留一拍再读 AX，README 口径）
+    do: sleep
+    ms: 1200
+
+  - name: ⌘⇧A 唤起面板（首次发送才建会话——Skill 发现发生在会话建立与本轮工具解析时）
+    do: keys
+    keys: ["cmd+shift+a"]
+    expect:
+      - label: 面板出现
+        ax: { has: "/AXButton \\(发送\\)/" }
+
+  - name: 输入提问并 Enter 发送
+    do: keys
+    keys: ["s", "k", "i", "l", "l", "i", "t"]
+  - name: 发送
+    do: key
+    key: enter
+
+  - name: 等两个 skill_load 收尾（越界名被拒 + 正常名成功）
+    do: waitFor
+    waitFor:
+      has: ["验收回答完毕。"]
+    expect:
+      - label: 根外技能名被拒（路径逃逸拒绝）
+        ax: { has: "/error · skill_name_invalid/" }
+      - label: 正常技能加载成功
+        ax: { has: "工具完成：skill_load — 成功" }
+      - label: 回答用上了技能内容（密令来自 SKILL.md 全文）
+        ax: { has: "HSK-SECRET-7429" }
+      - label: JSONL 的 tool_result 带回了 SKILL.md 全文（密令只在文件里）
+        file: { path: "env:harness/*.jsonl", has: "HSK-SECRET-7429" }
+      - shot: 01-skill 加载
+---
+
+spec 判据（harness「Skill 支持 · 索引注入与按需加载」+「路径逃逸拒绝」）：vault-wide
+Skill 根下的技能经 skill_load 按名加载全文；指向根外的名字拒绝并回送错误。
+判据说清两处边界：① 「索引注入系统上下文」本身在真机无直接观测口（mock 不转述
+system）——索引装配由 Rust 单测覆盖（context.rs 的
+assemble_system_skips_missing_agents_and_includes_index），本场景断言它的下游可观测
+事实：skill_load 按名命中 vault-wide 根（发现链路成立）且全文回送模型；② skill 必须
+在首次发送前落盘——会话在首次发送时建立、 Skill 发现随会话装配与每轮工具解析发生。

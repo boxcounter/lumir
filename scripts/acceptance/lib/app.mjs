@@ -38,6 +38,7 @@ export const SCENARIO_CONFIG_KEYS = [
   "contentWidth",
   "language",
   "keys",
+  "harness",
 ];
 
 /** 写隔离 config.json。`keys` 不传时整体不写该字段（默认无覆盖）。
@@ -63,6 +64,12 @@ export async function writeConfig({
   // 界面语言（M282，change ui-language-i18n）：与 theme / contentWidth 同形，缺省沿用当前值。
   language = undefined,
   keys = undefined,
+  // [harness] 节（M304，change add-harness-probe §11）：传了才写。形状：
+  // { provider, fixture, permissions: { allow, deny }, loopMax, warnCtxPct, autoCompact }——
+  // fixture 路径在场景加载期已被 token 替换为绝对路径（mock 脚本用 $fixtures 只读引用套件
+  // fixtures 目录，不拷进 vault——拷进 vault 会留下非 .md 残留，串红场景 28/65 的
+  // 「vault 里无 json/tmp 产物」断言）；$vault / $vault2 精确记号仍可经 resolveSeedPath 解析。
+  harness = undefined,
 } = {}) {
   const dir = path.join(envHome(), "lumir");
   await mkdirp(dir);
@@ -81,6 +88,16 @@ export async function writeConfig({
   if (language !== undefined) ui.language = language;
   if (Object.keys(ui).length > 0) cfg.ui = ui;
   if (keys !== undefined) cfg.keys = keys;
+  if (harness !== undefined) {
+    const h = {};
+    if (harness.provider !== undefined) h.provider = harness.provider;
+    if (harness.fixture !== undefined) h.providers = { mock: { fixture: resolveSeedPath(harness.fixture) } };
+    if (harness.permissions !== undefined) h.permissions = harness.permissions;
+    if (harness.loopMax !== undefined) h.loop_max = harness.loopMax;
+    if (harness.warnCtxPct !== undefined) h.warn_ctx_pct = harness.warnCtxPct;
+    if (harness.autoCompact !== undefined) h.auto_compact = harness.autoCompact;
+    cfg.harness = h;
+  }
   await writeFile(path.join(dir, "config.json"), `${JSON.stringify(cfg, null, 2)}\n`);
   return path.join(dir, "config.json");
 }
@@ -98,6 +115,19 @@ export async function readConfig() {
  */
 export async function resetRecovery() {
   const dir = path.join(envHome(), "lumir", "recovery");
+  await rm(dir, { recursive: true, force: true });
+  return dir;
+}
+
+/**
+ * 清空 harness（对话面板）的 JSONL 留存目录。
+ * 为什么必须做：与 recovery 同因——JSONL 在**隔离配置目录**下（`env/lumir/harness/`），
+ * 只重置 vault 会让上一场景的 tool_call / user_message 记录残留到本场景，file 断言
+ * （尤其「decision=allow 在场」这类正观测）会读到别人的记录而假绿/假红。
+ * 实证：M304 首轮 8 场景连跑，50 条记录全部串在一个文件里。
+ */
+export async function resetHarness() {
+  const dir = path.join(envHome(), "lumir", "harness");
   await rm(dir, { recursive: true, force: true });
   return dir;
 }

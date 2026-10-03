@@ -74,10 +74,12 @@ test("有标签时仍钉右端、不参与收缩（flex:none）", async ({ page 
   // 标识块在标签区之后（与最后一个 tab 不重叠、位于其右）
   const tabBox = (await page.locator(".tab").last().boundingBox())!;
   expect(box.x).toBeGreaterThanOrEqual(tabBox.x + tabBox.width - 1);
-  // M257（Alex dogfood 蓝箭头）：标签区右缘与标识块之间恒有 --sp-3 的间距
-  //（.tabstrip 的 margin-right；溢出态的几何判据在 m149-tabs.spec.ts 的溢出用例里，
-  // 这里钉的是「有标签时这条间距就成立」的常态面）。
+  // M257（Alex dogfood 蓝箭头）：标签区右缘与标识块之间的间距——M303（change
+  // add-harness-probe）起这段间距里站着动作钮槽位（harness 面板 toggle，30px 宽、
+  // 左右各 --sp-3），口径从「恒为 --sp-3」改为「--sp-3 + 动作钮宽 + --sp-3」。
+  // 溢出态的几何判据在 m149-tabs.spec.ts 的溢出用例里，这里钉常态面 + 槽位顺序。
   const stripBox = (await page.locator(".tabstrip").boundingBox())!;
+  const toggleBox = (await page.locator(".lumir-hp-toggle").boundingBox())!;
   const sp3 = await page.evaluate(() => {
     const probe = document.createElement("div");
     probe.style.width = "var(--sp-3)";
@@ -86,7 +88,10 @@ test("有标签时仍钉右端、不参与收缩（flex:none）", async ({ page 
     probe.remove();
     return value;
   });
-  expect(Math.abs(box.x - stripBox.x - stripBox.width - sp3)).toBeLessThanOrEqual(1);
+  // 动作钮在标签区与标识块之间（槽位顺序的正观测，各容 1px 取整）
+  expect(toggleBox.x).toBeGreaterThanOrEqual(stripBox.x + stripBox.width - 1);
+  expect(box.x).toBeGreaterThanOrEqual(toggleBox.x + toggleBox.width - 1);
+  expect(Math.abs(box.x - stripBox.x - stripBox.width - (2 * sp3 + toggleBox.width))).toBeLessThanOrEqual(1);
 });
 
 for (const theme of ["light", "dark", "eink"] as const) {

@@ -9,7 +9,7 @@ import { appendFile, open, readdir, readFile, rm, stat, writeFile } from "node:f
 import path from "node:path";
 import yaml from "js-yaml";
 import { findNode, windowBounds } from "./ax.mjs";
-import { copyFixture, SCENARIO_CONFIG_KEYS } from "./app.mjs";
+import { copyFixture, fixturesDir, SCENARIO_CONFIG_KEYS } from "./app.mjs";
 import { DEFAULT_MIN_DIFF, DEFAULT_PATCH, DEFAULT_TOL, colorDiff, decodeScreenshot, dominantColor, formatColor, lumaSpread } from "./pixel.mjs";
 import {
   clickNode,
@@ -190,6 +190,10 @@ async function appMetaTokens() {
     // 合成验收 vault 的绝对路径（M244）：剪贴板类断言要比对**绝对路径**，而它随
     // LUMIR_ACCEPTANCE_VAULT 覆写而变——场景 MUST NOT 硬编码 /tmp 那一份。
     $vault: vaultDir(),
+    // 套件 fixtures 目录的绝对路径（M304）：只读引用 fixture 原文（如 harness mock 脚本）
+    // 走这个 token——不拷进 vault，避免在 vault 根留下非 .md 残留（resetVault 的 M296 缺口
+    // 不清这类文件，场景 28/65 的「vault 里无 json/tmp 产物」断言会被串红）。
+    $fixtures: fixturesDir(),
   };
 }
 

@@ -130,11 +130,12 @@ test("标签迁入标题栏：打开文件后标签是标题栏的子节点，�
   await stubTauri(page, VAULT);
   await page.goto("/");
 
-  // 空态：标签区隐藏，标题栏的可见子节点 = traffic 灯区 + 右端产品标识块（M236）
+  // 空态：标签区隐藏，标题栏的可见子节点 = traffic 灯区 + 动作钮槽位（M303 起填入
+  // harness 面板 toggle）+ 右端产品标识块（M236）
   const emptyChildren = await page.locator(".titlebar").evaluate((bar) =>
     [...bar.children].filter((child) => (child as HTMLElement).offsetParent !== null).map((c) => c.className),
   );
-  expect(emptyChildren).toEqual(["titlebar-traffic", "titlebar-identity"]);
+  expect(emptyChildren).toEqual(["titlebar-traffic", "titlebar-action lumir-hp-toggle", "titlebar-identity"]);
 
   await open(page, "doc.md", "正文段落");
   // 打开文件后标签在场，且**在标题栏内**（不是自成一个网格行）

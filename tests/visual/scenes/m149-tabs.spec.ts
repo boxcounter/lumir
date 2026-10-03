@@ -278,15 +278,16 @@ test("⌘W 关当前标签：干净标签直接关，dirty 标签先给三个出
   await expect(page.locator(".tab")).toHaveCount(0);
   await expect(page.locator(".tabstrip")).toBeHidden();
   await expect(page.locator(".modeline-path")).toHaveText("无当前文件");
-  // 空态的标题栏：标签区隐藏后是 traffic 灯区 + 右端产品标识块（M236，product-version-display
-  // 的 MODIFIED「空态的标题栏」；本版标题栏无动作钮——tower 裁决，
-  // 见 openspec/changes/restyle-ui-tokens-v1/tasks.md §4.3 的收官对账）。
+  // 空态的标题栏：标签区隐藏后是 traffic 灯区 + 动作钮槽位 + 右端产品标识块（M236，
+  // product-version-display 的 MODIFIED「空态的标题栏」；M303（change add-harness-probe）
+  // 起动作钮槽位填入第一颗钮：harness 面板 toggle——见 src/style.css 标题栏注释与
+  // ui-design-system 的标题栏解剖口径）。
   const emptyTitlebar = await page.locator(".titlebar").evaluate((bar) => {
     const traffic = bar.querySelector<HTMLElement>(".titlebar-traffic")!;
     const visible = [...bar.children].filter((child) => (child as HTMLElement).offsetParent !== null);
     return { children: visible.map((child) => child.className), trafficWidth: traffic.getBoundingClientRect().width };
   });
-  expect(emptyTitlebar.children).toEqual(["titlebar-traffic", "titlebar-identity"]);
+  expect(emptyTitlebar.children).toEqual(["titlebar-traffic", "titlebar-action lumir-hp-toggle", "titlebar-identity"]);
   // traffic 区宽度与侧栏对齐（骨架条款：左缘 traffic 灯区宽 236）
   expect(emptyTitlebar.trafficWidth).toBe(236);
 });
@@ -572,6 +573,7 @@ test("标签溢出：活跃标签恒完整可见（键盘直达 / 循环 / 关�
   const geometry = await page.evaluate(() => {
     const strip = document.querySelector(".tabstrip") as HTMLElement;
     const identity = document.querySelector(".titlebar-identity") as HTMLElement;
+    const toggle = document.querySelector(".lumir-hp-toggle") as HTMLElement;
     const probe = document.createElement("div");
     probe.style.width = "var(--sp-3)";
     document.body.append(probe);
@@ -581,11 +583,21 @@ test("标签溢出：活跃标签恒完整可见（键盘直达 / 循环 / 关�
       offsetHeight: strip.offsetHeight,
       clientHeight: strip.clientHeight,
       gap: identity.getBoundingClientRect().left - strip.getBoundingClientRect().right,
+      toggleWidth: toggle.getBoundingClientRect().width,
+      toggleLeft: toggle.getBoundingClientRect().left,
+      stripRight: strip.getBoundingClientRect().right,
       sp3,
     };
   });
   expect(geometry.clientHeight, "横向滚动条占用了布局高度").toBe(geometry.offsetHeight);
-  expect(Math.abs(geometry.gap - geometry.sp3), `右缘间距应为 --sp-3（${geometry.sp3}px），实测 ${geometry.gap}px`).toBeLessThanOrEqual(1);
+  // 右缘间距（M303 起）= --sp-3（tabstrip margin-right）+ 动作钮宽（--layout-tb-btn-w）
+  // + --sp-3（动作钮 margin-right）——动作钮槽位在标识块左侧（见 titlebar-identity.spec.ts）。
+  expect(
+    Math.abs(geometry.gap - (2 * geometry.sp3 + geometry.toggleWidth)),
+    `右缘间距应为 2×--sp-3 + 动作钮宽（${2 * geometry.sp3 + geometry.toggleWidth}px），实测 ${geometry.gap}px`,
+  ).toBeLessThanOrEqual(1);
+  // 动作钮落在标签区与标识块之间（槽位顺序的正观测）
+  expect(geometry.toggleLeft).toBeGreaterThanOrEqual(geometry.stripRight - 1);
 
   // 元素级基线：溢出态的整条标题栏（无滚动条 + 右缘间距 + 最右标签裁在滚动口内）。
   // 溢出形态只有元素 crop 钉得住——整页 0.001 容差（1200×800 ≈ 960px）吞得掉一条

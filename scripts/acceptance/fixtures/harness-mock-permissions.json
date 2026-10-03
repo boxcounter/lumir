@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "responses": [
+    {
+      "text": "我同时发两个命令。",
+      "tool_calls": [
+        {
+          "id": "call_d1",
+          "name": "cli_run",
+          "arguments": "{\"command\":\"rm\",\"args\":[\"harness-note.md\"]}"
+        },
+        {
+          "id": "call_a1",
+          "name": "cli_run",
+          "arguments": "{\"command\":\"echo\",\"args\":[\"HNE-ALLOWED\"]}"
+        }
+      ]
+    },
+    {
+      "text": "权限验收回答：一拒一放。"
+    }
+  ]
+}

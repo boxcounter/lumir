@@ -1,0 +1,28 @@
+{
+  "version": 1,
+  "responses": [
+    {
+      "text": "先试试撞名新建。",
+      "tool_calls": [
+        {
+          "id": "call_c1",
+          "name": "vault_create",
+          "arguments": "{\"path\":\"harness-note.md\",\"content\":\"HNC-SHOULD-NOT-LAND 不应落盘\"}"
+        }
+      ]
+    },
+    {
+      "text": "撞名被拒了，换个新名字。",
+      "tool_calls": [
+        {
+          "id": "call_c2",
+          "name": "vault_create",
+          "arguments": "{\"path\":\"harness-created.md\",\"content\":\"HNC-NEW 新建落盘内容。\\n\"}"
+        }
+      ]
+    },
+    {
+      "text": "新建完成。"
+    }
+  ]
+}
