@@ -294,6 +294,15 @@ export const NON_TAB_GLOBAL_COMMAND_IDS = [
   // 失效（同 `toc.toggle` / `table.toggle-fullscreen`）。它**有**默认绑定（⌘⇧A，冲突核实
   // 三条独立来源写在表条目 D345 里），因此 MUST NOT 登记进 KEYLESS_COMMAND_IDS。
   "harness.toggle",
+  // M316：双栏（pane-system-split-view 分组 3）。前缀取 `pane.`：三条命令作用的对象是
+  // **分栏容器**（pane-layout 账本），不属于 `editor.*` / `view.*` 任何一族——前缀与作用域
+  // 因此不互相打脸（M240 同款判词）。作用域为 global 是理由决定的：焦点在左栏 / 浮层里时
+  // 同样要能切 pane（同 `view.text-scale-*`）。三条**默认都不绑键**（键位指配归收尾
+  // mission——本 mission 只做命令进表与路由，避免与键位治理双线并行），登记进
+  // KEYLESS_COMMAND_IDS；用户要键位就经 [keys] 绑。
+  "pane.split",
+  "pane.other",
+  "pane.close",
 ] as const;
 
 /** 全局命令 id（实现落在装配层 main.ts）：非标签部分 + 标签部分。 */
@@ -334,6 +343,11 @@ export const KEYLESS_COMMAND_IDS: readonly string[] = [
   // M277：块级复制（change block-copy-affordance，裁决点 5）——鼠标入口是块上的 hover 复制钮，
   // 键盘入口默认不占物理组合（同 M180 / M240 先例）。
   "block.copy",
+  // M316：双栏三条容器命令——本 mission 只做命令进表与路由，键位指配归收尾 mission
+  //（理由见 NON_TAB_GLOBAL_COMMAND_IDS 的 M316 条目）；用户要键位就经 [keys] 绑。
+  "pane.split",
+  "pane.other",
+  "pane.close",
 ];
 
 export type EditorCommandId = (typeof EDITOR_COMMAND_IDS)[number];

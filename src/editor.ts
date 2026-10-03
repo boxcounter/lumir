@@ -1003,6 +1003,16 @@ export interface EditorHandle {
    * 字号。返回值为配置值层面的 warning（非法字族），由装配层按既有口径记 console + 诊断日志。
    */
   applyTypography(settings: TypographySettings): readonly string[];
+  /** 排版口径的运行期只读快照（含字号步进后的当前字号，与 `wrapSettings` 同形）：
+   *  双 pane（M316）新建编辑器实例时据此对齐实例记账。 */
+  typographySettings(): TypographySettings;
+  /**
+   * 把实例内的排版记账对齐到运行期快照（M316 双 pane）：`applyTypography` 表达不了
+   * 「运行期字号 ≠ 配置基线」——它恒把 `baseFontSize` 写成入参字号（⌘0 回落锚），经它注入
+   * 步进后的字号会让新 pane 的 ⌘0 错误地「回到」缩放值而不是配置档。`--editor-*` token 写在
+   * documentElement 上、天然覆盖全部实例，因此这里只补实例记账（+ 一次重测量），不重写 token。
+   */
+  syncRuntimeTypography(settings: TypographySettings): void;
   /** 字号步进一档 / 回到配置字号（应用运行期口径，不落盘）。 */
   textScale(direction: TextScaleDirection): void;
   /**
@@ -1059,6 +1069,17 @@ export interface EditorHandle {
   sessionForPath(path: string): EditorSession | undefined;
   /** 关闭会话：从列表中摘除（脏内容由调用方先行确认）。 */
   closeSession(session: EditorSession): void;
+  /**
+   * 接管一份**来自别的编辑器实例**的会话（M316 双 pane 的 pane 收拢迁移，也是 tasks 4.1
+   * 标签移动的原语）：对象本体（path / dirty / cleanDoc / loaded / 滚动快照 / 选区）原样
+   * 保留、追加进本实例会话表，不激活。`state` 必须经本实例的构造路径重建——mode / 折行 /
+   * 行号 gutter 三处 Compartment 是**逐实例**的，外来 state 里没有本实例的 compartment，
+   * 而 CM 对不在配置树里的 compartment 的重配效果是**静默丢弃**（@codemirror/state 的
+   * CompartmentState.applyTransaction 只写 map、resolve 只认 base 树里的实例）——不重建，
+   * 迁移来的会话会永远停在旧折行 / 模式配置上。**已知代价：撤销史与搜索面板等 StateField
+   * 状态不随迁**（history 是逐 state 的 StateField，无跨 state 迁移通道），记录在案。
+   */
+  adoptSession(session: EditorSession): void;
   /** 按路径标记「已与磁盘同步」：更新 cleanDoc 并清 dirty（保存成功 / 重载后）。 */
   markCleanOf(path: string, content: string): void;
   /** 监听文档装载、装饰和首个 paint 的可观测阶段。 */
@@ -2150,6 +2171,12 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
       setWrap({ codeBlockWrap: !wrap.codeBlockWrap });
     },
     applyTypography: applyTypographySettings,
+    typographySettings: () => ({ ...typography }),
+    syncRuntimeTypography(settings: TypographySettings) {
+      typography = { ...settings };
+      // token 是全局的（documentElement），别的实例已经写过；这里只补实例记账与重测量。
+      view.requestMeasure();
+    },
     textScale,
     setContentWidth,
     contentWidth: () => contentWidth,
@@ -2292,6 +2319,20 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
       const blank = makeSession("", undefined, defaultMode);
       sessions.push(blank);
       activate(blank);
+    },
+    adoptSession(session: EditorSession) {
+      // 跨实例接管：state 经本实例的构造路径重建（理由见接口注释——compartment 逐实例，
+      // 不重建成后的重配会被 CM 静默丢弃）。文档字节不变 ⇒ 原选区偏移在新 state 里仍然
+      // 合法，选区随迁；撤销史 / 搜索面板等 StateField 状态随迁无通道，记录在案。
+      const selection = session.state.selection;
+      session.state = sessionState(
+        session.state.doc.toString(),
+        session.path,
+        session.mode,
+        session.editable,
+        wrap,
+      ).update({ selection }).state;
+      sessions.push(session);
     },
     markCleanOf(path: string, content: string) {
       const session = sessions.find((s) => s.path === path);

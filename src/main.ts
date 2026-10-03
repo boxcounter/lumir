@@ -1,8 +1,15 @@
 import { createShell } from "./shell";
 import { createEditor } from "./editor";
-import type { EditorSession } from "./editor";
-import { applyKeyOverrides, BLOCK_SCROLL_CLASS, KEY_BINDINGS, Keymap } from "./keys";
-import type { CommandId, CommandRunner, CommandRuntime, KeyBinding, KeyOverrides } from "./keys";
+import type { EditorHandle, EditorSession } from "./editor";
+import { applyKeyOverrides, BLOCK_SCROLL_CLASS, EDITOR_COMMAND_IDS, KEY_BINDINGS, Keymap, TAB_GOTO_IDS } from "./keys";
+import type { CommandId, CommandRunner, CommandRuntime, EditorCommandId, KeyBinding, KeyOverrides } from "./keys";
+import { createPaneLayout } from "./pane-layout";
+import type { PaneId } from "./pane-layout";
+import { DEFAULT_AUTO_INDENT } from "./enter-indent";
+import { DEFAULT_FONT_SIZE } from "./typography";
+import type { TypographySettings } from "./typography";
+import type { EditorMode } from "./bindings/EditorMode";
+import type { MarkdownLineNumbers } from "./bindings/MarkdownLineNumbers";
 import { baseName, createFileTree, openKind, patchAttachmentPaths, vaultAbsolutePath } from "./tree";
 import type { InlineEditRequest, OpenKind } from "./tree";
 import {
@@ -69,6 +76,7 @@ import type { TreeMenuAction, TreeMenuTarget } from "./tree-menu";
 // link-follow（解析缓存 + 链接跟随）、tabs（标签栏 DOM）、bindings-panel（键位查看面板）。
 import { createLinkFollow } from "./link-follow";
 import { createTabs } from "./tabs";
+import type { TabsHandle } from "./tabs";
 import { createBindingsPanel } from "./bindings-panel";
 import { WIDTH_HANDLE_LABEL, WIDTH_SAVE_FAILED_TEXT, createContentWidthDrag } from "./content-width";
 import { createTitlebarIdentity } from "./modeline";
@@ -134,11 +142,481 @@ function fsPathsExist(paths: string[]): Promise<string[]> {
   return invoke<string[]>("fs_paths_exist", { paths });
 }
 
-// M1 装配：app-shell 三栏 + 编辑器单内核 + 键位框架 + 全类型文件树
+// M1 装配：app-shell 三栏 + 编辑器内核 + 键位框架 + 全类型文件树
 //（add-vault-workspace），M20 接上附件链路（add-editor-live-preview）。
 // editor.ts 的 EditorHandle 由 editor 波持有，此处只消费，不改其签名。
 const shell = createShell(app);
-const editor = createEditor(shell.editor);
+
+// ---------------------------------------------------------------------------
+// 双 pane 装配（M316，change pane-system-split-view 的 tasks 分组 1/3）：
+// pane-layout 账本管 pane 生命周期与活跃指针；每个 pane 一个 createEditor 实例
+//（design §4「createEditor 双实例化」）。本 mission 的边界：
+//   - 账本只做 **pane 级**接线（split / close / activate）；标签级登记
+//    （openTab / closeTab / moveTab）归 tasks 4.x——在那之前，「哪个会话在哪个 pane」的
+//     唯一真源就是各 pane 编辑器实例自己的会话表，属主路由一律按
+//    `handle.sessions().includes(session)` 现查（不另存第二份归属清单，REVIEW.md 第 8 条）；
+//   - 既有消费者（保存链路 / toc / link-follow / 栏宽拖拽 / 浮层群 / 命令表）拿到的仍是
+//     一个 EditorHandle——下面这份**复合句柄**：写类口径广播到全部 pane（能力一份值管
+//     全部实例，与单实例时代语义一致），读类与动作类解析到**活跃 pane**，会话级操作按
+//     属主 pane 路由，`sessions()` 给并集（退出守卫 / 会话落盘 / watch 处置因此结构上
+//     免费成立）。
+// ---------------------------------------------------------------------------
+
+/** 一个 pane 的装配记录：DOM 槽（编辑器挂载元素 + 标题栏标签槽）与实例句柄。 */
+interface PaneAssembly {
+  mountEl: HTMLElement;
+  stripEl: HTMLElement;
+  handle: EditorHandle;
+  /** 该 pane 的标签条实例；root pane 在下方 tabs 装配块就位，pane B 在 split 时就位。 */
+  tabs: TabsHandle | undefined;
+  /** 该 pane 的订阅与监听的退订函数（disposePaneHandle 时整批跑掉）。 */
+  unsubs: Array<() => void>;
+}
+
+const paneAssemblies = new Map<PaneId, PaneAssembly>();
+
+// 配置期值的跟踪（新 pane 能力同步的真源）：全部只在文件末尾的 configGet 块写一次，
+// 运行期没有改它们的命令（与 editor.ts 各自的「装载时喂一次」口径同源）。初值与
+// editor.ts 的实例初值逐项对齐——split 发生在配置到达之前时，pane B 因此与 root pane
+// 同口径。折行 / 排版 / 栏宽不在这里跟踪：它们是运行期口径，split 时从既有 pane
+//（donor）的只读快照现取（运行期步进后的当前值只有实例记账里有）。
+let currentDefaultMode: EditorMode = "md";
+let currentAutoIndent = DEFAULT_AUTO_INDENT;
+let currentMarkdownLineNumbers: MarkdownLineNumbers = "on-demand";
+let currentTypography: TypographySettings = {
+  fontFamily: null,
+  monoFontFamily: null,
+  fontSize: DEFAULT_FONT_SIZE,
+};
+/** wikilink 解析器的当前值（applyVault 更新；新 pane 的注入重放读同一份）。 */
+let currentResolver: Parameters<EditorHandle["setWikilinkResolver"]>[0] = null;
+
+/** 编辑器能力注入的注册表（tasks 1.3「能力注入收敛为单一遍历全部 pane 入口」）：
+ *  注册即对现存全部 pane 施加，新 pane 在 createPaneHandle 里全量重放——pane B 不靠
+ *  调用方记得补注。 */
+const editorInjections: Array<(handle: EditorHandle) => void> = [];
+function forEachEditor(run: (handle: EditorHandle) => void): void {
+  for (const pane of paneLayout.panes()) run(pane.handle);
+}
+function injectEach(register: (handle: EditorHandle) => void): void {
+  editorInjections.push(register);
+  forEachEditor(register);
+}
+
+/** wikilink 解析器的施加（applyVault 唯一调用点）：更新当前值并广播到全部 pane——
+ *  新 pane 在 createPaneHandle 里读同一份 currentResolver，两处因此不漂
+ *（REVIEW.md 第 8 条）。 */
+function applyWikilinkResolver(
+  resolver: Parameters<EditorHandle["setWikilinkResolver"]>[0],
+): void {
+  currentResolver = resolver;
+  forEachEditor((handle) => handle.setWikilinkResolver(resolver));
+}
+
+/** 编辑器事件订阅的注册表（onReady / onScroll / onDirty / …）：与注入同构——订阅对
+ *  现存全部 pane 挂上、新 pane 自动挂上；返回的退订函数从全部 pane 上摘除。 */
+const paneSubscribers: Array<(handle: EditorHandle) => () => void> = [];
+function onEachEditor(subscribe: (handle: EditorHandle) => () => void): () => void {
+  paneSubscribers.push(subscribe);
+  const unsubs = paneLayout.panes().map((pane) => subscribe(pane.handle));
+  return () => {
+    for (const unsub of unsubs) unsub();
+  };
+}
+
+// 分隔条比例：内存态、初值对半（松手写盘归持久化 mission——本 mission 只做拖拽实时重排）。
+let splitRatio = 0.5;
+/** 拖拽钳制区间：任一 pane 至少留两成宽，再窄标签条与正文都不可用。 */
+const SPLIT_RATIO_MIN = 0.2;
+const SPLIT_RATIO_MAX = 0.8;
+/** 分隔条元素（split 时现建、close 时移除；单 pane DOM 里没有它）。 */
+let dividerEl: HTMLElement | null = null;
+
+const paneLayout = createPaneLayout<EditorSession, EditorHandle>({
+  createHandle: (paneId) => createPaneHandle(paneId),
+  disposeHandle: (handle) => disposePaneHandle(handle),
+});
+
+/** 为一个 pane 建编辑器实例与其 DOM 槽（pane-layout 的 createHandle 注入点）。
+ *  root pane（恒为 id 1）复用 shell 建好的挂载元素与标签槽——单 pane DOM 与 M316 之前
+ *  逐字节一致（零基线更新判据）；pane B 的挂载元素 / 标签槽 / 分隔条全部现建，
+ *  close 时整批移除（见 disposePaneHandle）。 */
+function createPaneHandle(paneId: PaneId): EditorHandle {
+  const rootSlot = paneId === 1;
+  const mountEl = rootSlot ? shell.editorPane : document.createElement("div");
+  const stripEl = rootSlot ? shell.tabStrip : shell.createTabStrip();
+  if (!rootSlot) {
+    mountEl.className = "editor-pane";
+    const divider = document.createElement("div");
+    divider.className = "pane-divider";
+    divider.setAttribute("role", "separator");
+    divider.setAttribute("aria-orientation", "vertical");
+    wireDividerDrag(divider);
+    shell.editor.append(divider, mountEl);
+    shell.tabStrip.after(stripEl);
+    dividerEl = divider;
+  }
+  const handle = createEditor(mountEl);
+  const assembly: PaneAssembly = { mountEl, stripEl, handle, tabs: undefined, unsubs: [] };
+  paneAssemblies.set(paneId, assembly);
+  if (!rootSlot) {
+    // createEditor 的初始会话是 SAMPLE 演示文档（无文件上下文的起步态）——新 pane 从
+    // 未命名空文档起步，不给它复制一份演示文档。
+    handle.reset();
+    // 能力同步：配置期值读装配层跟踪，运行期口径（折行 / 排版 / 栏宽）读既有 pane
+    //（donor）的只读快照。排版的两个成员各管一半：applyTypography 把 baseFontSize 锚回
+    // 配置档（⌘0 回落语义），syncRuntimeTypography 把运行期步进值对齐进实例记账。
+    const donor = paneLayout.panes()[0].handle;
+    handle.setMode(currentDefaultMode);
+    handle.setWrap(donor.wrapSettings());
+    handle.setAutoIndent(currentAutoIndent);
+    handle.applyTypography(currentTypography);
+    handle.syncRuntimeTypography(donor.typographySettings());
+    handle.setContentWidth(donor.contentWidth());
+    handle.setMarkdownLineNumbers(currentMarkdownLineNumbers);
+    handle.setWikilinkResolver(currentResolver);
+  }
+  // 能力注入与事件订阅全量重放（注册表口径，见上面两处注册表的注释）。
+  for (const inject of editorInjections) inject(handle);
+  for (const subscribe of paneSubscribers) assembly.unsubs.push(subscribe(handle));
+  // 焦点进入该 pane 的内容区 → 它成为活跃 pane；焦点移去 chrome 不翻指针
+  //（pane-layout 的 activate 语义：「移出内容区不调用」）。
+  const onFocusIn = (): void => activatePane(paneId);
+  mountEl.addEventListener("focusin", onFocusIn);
+  assembly.unsubs.push(() => mountEl.removeEventListener("focusin", onFocusIn));
+  return handle;
+}
+
+/** 归还一个 pane 的编辑器句柄（pane-layout 的 disposeHandle 注入点）：摘订阅、销毁
+ *  EditorView、拆 DOM 槽。root pane 的 DOM 槽是 shell 的常驻元素，只销毁实例不拆元素
+ *（本 mission 的 close 流程恒收动态 pane，root 槽永不归还——该分支是防御性的）。 */
+function disposePaneHandle(handle: EditorHandle): void {
+  const entry = [...paneAssemblies.entries()].find(([, assembly]) => assembly.handle === handle);
+  if (entry === undefined) return;
+  const [paneId, assembly] = entry;
+  for (const unsub of assembly.unsubs) unsub();
+  handle.view.destroy();
+  if (paneId !== 1) {
+    assembly.mountEl.remove();
+    assembly.stripEl.remove();
+    dividerEl?.remove();
+    dividerEl = null;
+  }
+  paneAssemblies.delete(paneId);
+}
+
+/** 活跃 pane 指针的唯一翻转点（焦点进入 / 标签条交互 / 跨 pane 激活共用）：翻完对齐
+ *  一次表现层——modeline / 树高亮 / 大纲读的都是活跃 pane 的前台文档。 */
+function activatePane(paneId: PaneId): void {
+  if (paneLayout.active().id === paneId) return;
+  paneLayout.activate(paneId);
+  syncActiveDocument();
+}
+
+/** 活跃 pane 的标签条实例。未就位的唯一窗口是 splitActivePane 里 split() 与标签条
+ *  创建之间的同步段——外部调用不可能插进去；缺位即接线错误，就地炸掉（同 pane-layout
+ *  的 paneById 口径），不静默当成无操作。 */
+function activeTabs(): TabsHandle {
+  const tabs = paneAssemblies.get(paneLayout.active().id)?.tabs;
+  if (tabs === undefined) throw new Error("main: 活跃 pane 的标签条实例未就位"); // i18n-exempt: log
+  return tabs;
+}
+
+/** 会话属主 pane 的装配记录（真源 = 各实例会话表，见块头注释）。 */
+function paneEntryOfSession(session: EditorSession): [PaneId, PaneAssembly] | undefined {
+  for (const entry of paneAssemblies.entries()) {
+    if (entry[1].handle.sessions().includes(session)) return entry;
+  }
+  return undefined;
+}
+
+/** 在属主 pane 激活一个会话并把活跃 pane 翻过去（本 mission 的过渡语义：文件开在
+ *  另一 pane 时**切过去**，不移动标签——打开落点移动归 tasks 4.2）。 */
+function activateSessionInOwnerPane(session: EditorSession): void {
+  const entry = paneEntryOfSession(session);
+  if (entry === undefined) return;
+  activatePane(entry[0]);
+  entry[1].tabs?.activateTab(session);
+}
+
+/** 全部 pane 的标签槽各重画一遍（dirty 跃迁 / 同步点）：dirty 点是逐标签的，
+ *  后台 pane 的标签条也要跟着变。 */
+function renderAllTabStrips(): void {
+  for (const assembly of paneAssemblies.values()) assembly.tabs?.renderTabs();
+}
+
+/** 每 pane 一个标签条实例（tabs per-pane，tasks 分组 3）：createTabs 的 editor / mount
+ *  都传该 pane 自己的，会话子列表与标签槽因此天然 per-pane（模型就是实例会话表，
+ *  不另存清单）。用户与该 pane 标签条的交互（点标签 / 关标签）同时把活跃 pane 翻过去——
+ *  窗口级命令（⌘W / ⌃⇥ / ⌘1–9 / 右键菜单）作用于活跃 pane 的标签条（已裁形态）。 */
+function createPaneTabs(paneId: PaneId, handle: EditorHandle, stripEl: HTMLElement): TabsHandle {
+  const raw = createTabs({
+    editor: handle,
+    mount: stripEl,
+    // 菜单挂点取 app-shell 根：标签栏是横向滚动容器（.tabstrip 的 overflow-x: auto），
+    // 菜单挂进去会被它裁掉——与文件树菜单、vault 浮层同一条理由。
+    overlayMount: shell.root,
+    // 适配一层：tabs 只关心「选没选出口」，不关心 tone；tone 固定 neutral（关标签确认是
+    // 警告语气，不是成功态）。
+    toast: (text, actions, sticky, onDismiss) => {
+      toast(text, actions, sticky, "neutral", onDismiss);
+    },
+    saveCurrent: () => save.save(),
+    // 「放弃修改并关闭」这条出口不产生 dirty 跃迁（会话直接被摘掉），备份得由它显式清除。
+    forgetBackup: (path) => save.forgetBackup(path),
+    invalidateResolve: () => linkFollow.invalidate(),
+    showEditor: () => showEditor(),
+    syncActiveDocument: () => syncActiveDocument(),
+    // 树是下面 `let tree` 绑定的单例，赋值在 createPaneTabs 首次调用之后——闭包在动作
+    // 发生时读，装配期不读，因此没有时序问题（与 M149 起就有的那条注释同款模式）。
+    revealInTree: (path) => tree.revealPath(path),
+    keepMountWhenEmpty: () => paneLayout.isSplit(),
+  });
+  return {
+    ...raw,
+    activateTab: (session) => {
+      activatePane(paneId);
+      raw.activateTab(session);
+    },
+    closeTab: (session) => {
+      activatePane(paneId);
+      return raw.closeTab(session);
+    },
+  };
+}
+
+/** 分隔条拖拽：指针每移一次实时重排（比例内存态，钳 [0.2, 0.8]），松手**不写盘**
+ *（持久化归后续 mission）。指针捕获锁定在分隔条上，拖出命中区不中断——形态仿
+ *  src/content-width.ts 的手柄。 */
+function wireDividerDrag(divider: HTMLElement): void {
+  let dragging = false;
+  divider.addEventListener("pointerdown", (event) => {
+    if (event.button !== 0) return;
+    divider.setPointerCapture(event.pointerId);
+    dragging = true;
+    divider.classList.add("dragging");
+    event.preventDefault(); // 命中区内不触发文本选择
+  });
+  divider.addEventListener("pointermove", (event) => {
+    if (!dragging) return;
+    const rect = shell.editor.getBoundingClientRect();
+    if (rect.width === 0) return;
+    splitRatio = Math.min(
+      SPLIT_RATIO_MAX,
+      Math.max(SPLIT_RATIO_MIN, (event.clientX - rect.left) / rect.width),
+    );
+    applySplitRatio();
+  });
+  const endDrag = (): void => {
+    dragging = false;
+    divider.classList.remove("dragging");
+  };
+  divider.addEventListener("pointerup", endDrag);
+  divider.addEventListener("pointercancel", endDrag);
+}
+
+/** 分隔条比例的施加：pane 挂载元素与标题栏标签槽的 inline flexGrow **同源同一份
+ *  splitRatio**（「两槽宽度比例跟随分隔条」是已裁形态）；单 pane 时清空 inline 样式，
+ *  回落 CSS 默认——几何与 M316 之前逐像素一致。 */
+function applySplitRatio(): void {
+  const split = paneLayout.isSplit();
+  for (const [index, assembly] of [...paneAssemblies.values()].entries()) {
+    if (!split) {
+      assembly.mountEl.style.flexGrow = "";
+      assembly.stripEl.style.flexGrow = "";
+      assembly.stripEl.style.flexBasis = "";
+      continue;
+    }
+    const grow = index === 0 ? splitRatio : 1 - splitRatio;
+    assembly.mountEl.style.flexGrow = String(grow);
+    assembly.stripEl.style.flexGrow = String(grow);
+    assembly.stripEl.style.flexBasis = "0";
+  }
+}
+
+/** 分栏态的 chrome 切换：右簇退让（产品标识块整块退 modeline、harness toggle 钮隐藏，
+ *  均为已裁形态）+ 两槽比例 + 标签槽重画。 */
+function applySplitChrome(): void {
+  const split = paneLayout.isSplit();
+  titlebarIdentity.setSplitRetreat(split);
+  harnessPanel.setChromeRetreat(split);
+  applySplitRatio();
+  renderAllTabStrips();
+}
+
+/** `pane.split`：新 pane 恒在活跃 pane 右侧（账本落点规则）并即活跃；能力同步与注入
+ *  重放在 createPaneHandle 里完成，这里只补标签条实例与 chrome 切换。 */
+function splitActivePane(): void {
+  const pane = paneLayout.split(); // 上限二：null = 无操作、无提示（不变量 1）
+  if (pane === null) return;
+  const assembly = paneAssemblies.get(pane.id);
+  if (assembly !== undefined) {
+    assembly.tabs = createPaneTabs(pane.id, pane.handle, assembly.stripEl);
+  }
+  applySplitChrome();
+  pane.handle.focusPreservingReadingPosition();
+  syncActiveDocument();
+}
+
+/** `pane.other`（Emacs other-window 语义）：焦点落目标 pane——交还焦点走
+ *  focusPreservingReadingPosition（M280 口径：聚焦不得把阅读位置拽回光标处）。 */
+function activateOtherPane(): void {
+  if (!paneLayout.activateOther()) return;
+  paneLayout.activeHandle().focusPreservingReadingPosition();
+  syncActiveDocument();
+}
+
+/** `pane.close`（裁决点 2 = 方案 A：不丢标签、不弹关标签确认）：会话先过户、账本后收。
+ *  收尾占据 shell 槽的**恒为 root pane**——它复用 shell 的常驻 DOM 元素（单 pane 判据），
+ *  因此被收的是 root 时先把活跃指针翻给动态 pane、再让账本收它：「被收 pane 的前台成为
+ *  幸存 pane 前台」的语义不变，对齐的只是 DOM 槽位；标签顺序保持视觉上的从左到右
+ *（root 的在前、并进来的在后）。 */
+function closeActivePane(): void {
+  if (!paneLayout.isSplit()) return;
+  const closing = paneLayout.active();
+  const root = paneLayout.panes()[0];
+  const dynamic = paneLayout.panes()[1];
+  const closingForeground = closing.handle.activeSession();
+  // 动态 pane 的会话全量过户进 root：干净且无路径的未命名文档丢弃无损失；dirty 未命名
+  // 必须随迁——它的内容只活在内存里，不迁就是数据丢失。
+  for (const session of [...dynamic.handle.sessions()]) {
+    if (session.path === undefined && !session.dirty) continue;
+    dynamic.handle.closeSession(session); // 源实例摘除（邻居激活等副作用随 view 销毁无害）
+    root.handle.adoptSession(session);
+  }
+  if (closing === dynamic) {
+    paneLayout.close();
+    // 被收 pane 的前台成为幸存 pane 前台（干净空文档已被丢弃的除外——那时幸存 pane
+    // 保持自己的前台）。
+    if (root.handle.sessions().includes(closingForeground)) {
+      root.handle.activateSession(closingForeground);
+    }
+  } else {
+    // 被收的是 root：会话（含刚过户的）已全在 root、前台不动；把活跃指针翻给动态 pane
+    // 再让账本收它，收尾 DOM 槽位恒落 root。
+    paneLayout.activate(dynamic.id);
+    paneLayout.close();
+  }
+  applySplitChrome();
+  root.handle.focusPreservingReadingPosition();
+  syncActiveDocument();
+}
+
+// 既有消费者的统一入口（复合句柄，口径见本块头注释）。单 pane 时全部方法退化为对
+// root pane 那一个实例的直转——逐语义不变的第一判据因此成立在结构上。
+const editor: EditorHandle = {
+  get view() {
+    return paneLayout.activeHandle().view;
+  },
+  // 命令表在装配期预生成、**分发时**按活跃 pane 解析（tasks 分组 3）——下方命令表里的
+  // `...editor.commands` 展开因此逐字不动。
+  commands: Object.fromEntries(
+    EDITOR_COMMAND_IDS.map((id) => [
+      id,
+      (event?: KeyboardEvent) => paneLayout.activeHandle().commands[id](event),
+    ]),
+  ) as Record<EditorCommandId, CommandRunner>,
+  setMode: (mode) => forEachEditor((handle) => handle.setMode(mode)),
+  mode: () => paneLayout.activeHandle().mode(),
+  setWrap: (next) => forEachEditor((handle) => handle.setWrap(next)),
+  wrapSettings: () => paneLayout.activeHandle().wrapSettings(),
+  setAutoIndent: (next) => forEachEditor((handle) => handle.setAutoIndent(next)),
+  toggleLineWrap: () => forEachEditor((handle) => handle.toggleLineWrap()),
+  toggleCodeBlockWrap: () => forEachEditor((handle) => handle.toggleCodeBlockWrap()),
+  applyTypography: (settings) => {
+    // warning 是配置值层面的（非法字族），各实例逐字相同——广播施加、只回第一份。
+    let warnings: readonly string[] = [];
+    forEachEditor((handle) => {
+      const result = handle.applyTypography(settings);
+      if (warnings.length === 0) warnings = result;
+    });
+    return warnings;
+  },
+  typographySettings: () => paneLayout.activeHandle().typographySettings(),
+  syncRuntimeTypography: (settings) =>
+    forEachEditor((handle) => handle.syncRuntimeTypography(settings)),
+  textScale: (direction) => forEachEditor((handle) => handle.textScale(direction)),
+  setContentWidth: (width) => forEachEditor((handle) => handle.setContentWidth(width)),
+  contentWidth: () => paneLayout.activeHandle().contentWidth(),
+  createSession: () => paneLayout.activeHandle().createSession(),
+  // 恢复壳恒落 root pane（tasks 4.x 之前恢复语义不变：壳列表只进一个 pane）。
+  createShellSession: (path) => paneLayout.panes()[0].handle.createShellSession(path),
+  reloadSession: (session, doc, path, requestId) => {
+    (paneEntryOfSession(session)?.[1].handle ?? paneLayout.activeHandle()).reloadSession(
+      session,
+      doc,
+      path,
+      requestId,
+    );
+  },
+  remapSessionPaths: (from, to) =>
+    paneLayout.panes().flatMap((pane) => pane.handle.remapSessionPaths(from, to)),
+  activateSession: (session) => {
+    const entry = paneEntryOfSession(session);
+    if (entry === undefined) return;
+    entry[1].handle.activateSession(session);
+    activatePane(entry[0]);
+  },
+  activeSession: () => paneLayout.activeHandle().activeSession(),
+  sessions: () => paneLayout.panes().flatMap((pane) => pane.handle.sessions()),
+  sessionForPath: (path) => {
+    for (const pane of paneLayout.panes()) {
+      const found = pane.handle.sessionForPath(path);
+      if (found !== undefined) return found;
+    }
+    return undefined;
+  },
+  closeSession: (session) => {
+    (paneEntryOfSession(session)?.[1].handle ?? paneLayout.activeHandle()).closeSession(session);
+  },
+  adoptSession: (session) => paneLayout.activeHandle().adoptSession(session),
+  markCleanOf: (path, content) => forEachEditor((handle) => handle.markCleanOf(path, content)),
+  reset: () => forEachEditor((handle) => handle.reset()),
+  setAttachmentProvider: (provider) =>
+    forEachEditor((handle) => handle.setAttachmentProvider(provider)),
+  setWikilinkResolver: (resolver) =>
+    forEachEditor((handle) => handle.setWikilinkResolver(resolver)),
+  setLightbox: (lightbox) => forEachEditor((handle) => handle.setLightbox(lightbox)),
+  setTableFullscreen: (fullscreen) =>
+    forEachEditor((handle) => handle.setTableFullscreen(fullscreen)),
+  setCodeBlockFullscreen: (port) =>
+    forEachEditor((handle) => handle.setCodeBlockFullscreen(port)),
+  setBlockCopy: (copy) => forEachEditor((handle) => handle.setBlockCopy(copy)),
+  setGotoLinePrompt: (prompt) => forEachEditor((handle) => handle.setGotoLinePrompt(prompt)),
+  setMarkdownLineNumbers: (tier) =>
+    forEachEditor((handle) => handle.setMarkdownLineNumbers(tier)),
+  setGotoLineGutterVisible: (visible) =>
+    forEachEditor((handle) => handle.setGotoLineGutterVisible(visible)),
+  refreshPreview: () => forEachEditor((handle) => handle.refreshPreview()),
+  revealLine: (line) => paneLayout.activeHandle().revealLine(line),
+  jumpToLine: (line) => paneLayout.activeHandle().jumpToLine(line),
+  readScrollPosition: () => paneLayout.activeHandle().readScrollPosition(),
+  applyLoadedScrollPosition: (position) =>
+    paneLayout.activeHandle().applyLoadedScrollPosition(position),
+  applyScrollPosition: (position) => paneLayout.activeHandle().applyScrollPosition(position),
+  focusPreservingReadingPosition: () =>
+    paneLayout.activeHandle().focusPreservingReadingPosition(),
+  isDirty: () => paneLayout.activeHandle().isDirty(),
+  // 订阅全部经注册表（现存 + 未来 pane 都挂上；退订全局摘除）。onScroll / onDocChanged
+  // 门控「仅活跃 pane」：滚动捕获与崩溃备份排期都按活跃 pane 的前台文档记账，非活跃
+  // pane 的事件（程序化重载）进来会记错对象。onDirty / onSessionDirty 不门控——后台
+  // 会话的 dirty 跃迁同样要重画它那 pane 的标签条与退出守卫镜像。
+  onReady: (listener) => onEachEditor((handle) => handle.onReady(listener)),
+  onScroll: (listener) =>
+    onEachEditor((handle) =>
+      handle.onScroll(() => {
+        if (paneLayout.activeHandle() === handle) listener();
+      }),
+    ),
+  onDirty: (listener) => onEachEditor((handle) => handle.onDirty(listener)),
+  onSessionDirty: (listener) => onEachEditor((handle) => handle.onSessionDirty(listener)),
+  onDocChanged: (listener) =>
+    onEachEditor((handle) =>
+      handle.onDocChanged(() => {
+        if (paneLayout.activeHandle() === handle) listener();
+      }),
+    ),
+};
 
 // 附件索引：vault 内全部文件（不含目录）的 vault 相对路径。provider 的
 // resolveByName 闭包活读它，vault 切换 / watch 增量就地更新数组，无需重注。
@@ -159,14 +637,17 @@ let vaultName = "";
 // 索引未命中 → livePreview 出「附件未找到」占位；读取失败 → ImageWidget
 // 原地换「图片读取失败」占位，都不抛错。MIME 取扩展名注册表（M130 收敛后
 // main.ts 不再自维护一份 IMAGE_MIME）。
-editor.setAttachmentProvider({
-  resolveByName: (name) => resolveByNameUnique(attachmentPaths, name),
-  async readDataUrl(path) {
-    const base64 = await fsReadAttachment(path);
-    const mime = mimeTypeOf(extensionOf(path)) ?? "application/octet-stream";
-    return `data:${mime};base64,${base64}`;
-  },
-});
+// M316 起全部能力注入走 injectEach 注册表（现存 pane 立即施加、新 pane 重放，见其上注释）。
+injectEach((handle) =>
+  handle.setAttachmentProvider({
+    resolveByName: (name) => resolveByNameUnique(attachmentPaths, name),
+    async readDataUrl(path) {
+      const base64 = await fsReadAttachment(path);
+      const mime = mimeTypeOf(extensionOf(path)) ?? "application/octet-stream";
+      return `data:${mime};base64,${base64}`;
+    },
+  }),
+);
 
 // 图片放大查看（M184，双击内联图片 → 应用内遮罩）：能力与 DOM 在 src/lightbox.ts，装配侧只给
 // 它两样看不到的东西——挂点（app-shell 根，与键位面板同款）与关闭后把焦点交还编辑器。
@@ -178,7 +659,7 @@ const lightbox = createImageLightbox({
   mount: shell.root,
   restoreFocus: () => editor.focusPreservingReadingPosition(),
 });
-editor.setLightbox(lightbox);
+injectEach((handle) => handle.setLightbox(lightbox));
 
 // 表格放大全屏查看（M240，D3 双入口：命令 + 表格 hover 触发钮）：能力与 DOM 在
 // src/table-fullscreen.ts，装配侧只给它两样看不到的东西——挂点（与 lightbox / 键位面板同款）
@@ -189,7 +670,7 @@ const tableFullscreen = createTableFullscreen({
   mount: shell.root,
   restoreFocus: () => editor.focusPreservingReadingPosition(),
 });
-editor.setTableFullscreen(tableFullscreen);
+injectEach((handle) => handle.setTableFullscreen(tableFullscreen));
 
 // 代码块放大全屏查看（M277，change code-block-fullscreen；双入口：命令 +
 // 代码块 hover 触发钮）。`restoreFocus` 与表格侧**形态一致**（M280 起两侧逐字同一份）：
@@ -203,20 +684,28 @@ const codeBlockFullscreen = createCodeBlockFullscreen({
 });
 // 装饰层拿到的是「按块起点打开」的**端口**（不是遮罩本体）：呈现计划在点击那一刻按当前
 // `EditorState` 现取，读屏名复用文档内容器同一份生成处（见 livePreview 的 codeBlockLabel）。
-editor.setCodeBlockFullscreen({
-  open(from) {
-    const target = codeBlockFullscreenTarget(editor.view, from);
-    if (target === null) return;
-    codeBlockFullscreen.open(target.render, target.label);
-  },
-});
+// M316：端口闭包必须捕获**各 pane 自己的** view——`from` 是发起 pane 的 state 里的位置，
+// 经复合句柄的活跃 view 现取会在「点非活跃 pane 的触发钮」时拿错文档。
+injectEach((handle) =>
+  handle.setCodeBlockFullscreen({
+    open(from) {
+      const target = codeBlockFullscreenTarget(handle.view, from);
+      if (target === null) return;
+      codeBlockFullscreen.open(target.render, target.label);
+    },
+  }),
+);
 
 // 块级复制（M277，change block-copy-affordance）：触发钮与 `block.copy` 命令共用一个口子，
 // 内容口径只有一处（`src/preview/block-copy.ts`）。剪贴板走既有纯前端通道
 // （navigator.clipboard.writeText，M244 已实证），零插件、零后端命令、零 capabilities 增量。
-editor.setBlockCopy({
-  copy: (range: BlockCopyRange) => void copyBlockContent(range),
-});
+// M316：与代码块全屏端口同一条理由，复制口子的闭包捕获各 pane 自己的句柄（range 锚在
+// 发起 pane 的 state 上）。
+injectEach((handle) =>
+  handle.setBlockCopy({
+    copy: (range: BlockCopyRange) => void copyBlockContent(handle, range),
+  }),
+);
 
 /** 文档代际变化（前台文档被就地重载）后，**内容取自旧一份文档**的浮层退出（M286）。
  *
@@ -252,7 +741,7 @@ const gotoLine = createGotoLinePrompt({
   // `mdGutterExtensions()`（单一来源）。
   onVisibilityChange: (open) => editor.setGotoLineGutterVisible(open),
 });
-editor.setGotoLinePrompt(gotoLine);
+injectEach((handle) => handle.setGotoLinePrompt(gotoLine));
 
 /** 块级复制的反馈文案（文案 deck D154 / D155）。块类型词只写一处：这里的「表格 / 代码块」与
  *  `block-trigger.ts` 的 `blockCopyLabel`（D153 读屏名）取自同一对词，读屏名与 toast 因此不会
@@ -269,8 +758,8 @@ const COPY_BLOCK_FAILED_TOAST = (reason: string): string => t("D155", { reason }
  * 给 D155 的 toast 并另记一条 console 线索（M244 同款处置：诊断事件名是 Rust 侧白名单，
  * 不借一个语义不符的既有事件名）。MUST NOT 静默。
  */
-async function copyBlockContent(range: BlockCopyRange): Promise<void> {
-  const text = blockCopyText(editor.view.state, range);
+async function copyBlockContent(handle: EditorHandle, range: BlockCopyRange): Promise<void> {
+  const text = blockCopyText(handle.view.state, range);
   const done = range.kind === "table" ? COPIED_TABLE_TOAST() : COPIED_CODE_BLOCK_TOAST();
   // console 线索里那个块类型词与上屏同源（同一个表条目），只是日志面固定用中文取值——
   // 诊断文本不进语言面，但**不另写一份字面量**（同一条串两处真源正是 REVIEW.md 第 8 条要防的）。
@@ -290,7 +779,10 @@ async function copyBlockContent(range: BlockCopyRange): Promise<void> {
 // 松手后的持久化（D3：通用键值合并写命令 config_set_ui_value，写失败降级为 toast + 诊断
 // 日志，运行期宽度**不回滚**——与 remember_last_vault 的「主结果不受写失败影响」同口径）。
 const widthDrag = createContentWidthDrag({
-  pane: shell.editor,
+  // 坐标参照系 = pane A 挂载元素（覆盖层就挂在它里面；M316 容器化后下沉一层，几何不变）。
+  // 栏宽手柄只有 pane A 槽这一套：栏宽是全局 token，双栏时手柄留在 root pane（已知过渡
+  // 形态，记录在 M316 完成报告）。
+  pane: shell.editorPane,
   overlay: shell.widthHandles.overlay,
   leftHandle: shell.widthHandles.left,
   rightHandle: shell.widthHandles.right,
@@ -435,6 +927,9 @@ function emitReadiness(name: string, detail: object = {}): void {
 // 提示出口（toast：D84 与 M197 的两条新文案）。指示段与浮层都挂 modeline（M211 从旧标题区迁来），
 // 浮层向上展开、不动布局。
 const toc = createToc({
+  // M316 已知过渡形态：构造期定死 root pane 的 view——大纲的 updateListener 只跟
+  // root pane 的文档流，「大纲跟随活跃 pane」归 tasks 2.1（context 回调已是活跃 pane
+  // 活读，标题切换本身不错，只是非 root pane 的键入不触发刷新）。
   view: editor.view,
   indicator: shell.modelineSection,
   mount: shell.modeline,
@@ -459,30 +954,13 @@ editor.onReady((event) => {
 // 标签（M149）：会话模型、标签栏 DOM、切换 / 关闭动作与标签右键菜单（M254）在
 // src/tabs.ts，这里只装配——把本文件才知道的入口交给它（save / 解析缓存失效 / 覆盖层 /
 // 同步点 / 浮层挂点 / 提示出口 / 树定位（M300），逐项见 TabsDeps）。
+// M316 起实例恒经 createPaneTabs 产出（每 pane 一个，口径见该函数注释）；窗口级命令
+// 走 activeTabs()（活跃 pane 的标签条），跨 pane 激活走 activateSessionInOwnerPane。
 // ---------------------------------------------------------------------------
 
-const tabs = createTabs({
-  editor,
-  mount: shell.tabStrip,
-  // 菜单挂点取 app-shell 根：标签栏是横向滚动容器（.tabstrip 的 overflow-x: auto），
-  // 菜单挂进去会被它裁掉——与文件树菜单、vault 浮层同一条理由。
-  overlayMount: shell.root,
-  // 适配一层：tabs 只关心「选没选出口」，不关心 tone；tone 固定 neutral（关标签确认是
-  // 警告语气，不是成功态）。
-  toast: (text, actions, sticky, onDismiss) => {
-    toast(text, actions, sticky, "neutral", onDismiss);
-  },
-  saveCurrent: () => save.save(),
-  // 「放弃修改并关闭」这条出口不产生 dirty 跃迁（会话直接被摘掉），备份得由它显式清除。
-  forgetBackup: (path) => save.forgetBackup(path),
-  invalidateResolve: () => linkFollow.invalidate(),
-  showEditor: () => showEditor(),
-  syncActiveDocument: () => syncActiveDocument(),
-  // 「在左栏中定位到此文件」（M300）：树是下面 `let tree` 绑定的单例，赋值在本行之后——
-  // 闭包在动作发生时读，装配期不读，因此没有时序问题（与 syncActiveDocument 里那次
-  // tree.setCurrentPath 同一条模式）。
-  revealInTree: (path) => tree.revealPath(path),
-});
+const rootPaneAssembly = paneAssemblies.get(1);
+if (rootPaneAssembly === undefined) throw new Error("main: root pane 装配记录缺失"); // i18n-exempt: log
+rootPaneAssembly.tabs = createPaneTabs(1, rootPaneAssembly.handle, rootPaneAssembly.stripEl);
 
 // ---------------------------------------------------------------------------
 // 多 vault 切换器（M163，change multi-vault-workspaces 的 3.x / 4.x）：列表浮层、切换流程的
@@ -637,7 +1115,7 @@ const switcher: VaultSwitcherHandle = createVaultSwitcher({
   openPinned: (path) => openFile(path, openKind(path), "new", true),
   activate: (path) => {
     const session = editor.sessionForPath(path);
-    if (session !== undefined) tabs.activateTab(session);
+    if (session !== undefined) activateSessionInOwnerPane(session);
   },
   onEmptyVault: () =>
     // 一个标签都没恢复出来时的落点。两种到达方式（M283 起）：
@@ -871,7 +1349,7 @@ function syncActiveDocument(): void {
   // 会话切换后栏宽手柄重新贴合列缘（模式 / gutter 进出只改列位置不改列宽，控制器自己的
   // ResizeObserver 看不见位置变化）。
   widthDrag.reposition();
-  tabs.renderTabs();
+  renderAllTabStrips();
   // 标签集合 / 顺序 / 激活项变化后防抖落盘会话（M163）。挂在这个唯一同步点上：切标签、
   // 开文件、关标签都会经过它，别处不必各埋一个「记得写会话」的钩子。
   switcher.sessionChanged();
@@ -947,12 +1425,14 @@ async function openFile(
   //  此后所有点击都被它 intercept——视觉场景 wikilink.spec.ts 就是这样红的）。
   if (existing !== undefined) {
     showEditor(); // 撤下一次更早的、已被这次同步切换取代的「正在打开」覆盖层
-    tabs.activateTab(existing);
+    // M316 过渡语义：文件开在另一 pane 时**切过去**（在属主 pane 激活并翻活跃指针），
+    // 不移动标签——打开落点移动归 tasks 4.2。
+    activateSessionInOwnerPane(existing);
     return true;
   }
   // 新开一个标签（"new"）或就地替换前台标签（"current"）：会话在快照读成之后才落点——
-  // 读失败的请求不许留下一个多余的空标签。
-  return loadSessionContent(() => tabs.targetSessionFor(intent), path, kind, quiet);
+  // 读失败的请求不许留下一个多余的空标签。落点 = 活跃 pane 的标签条（已裁形态）。
+  return loadSessionContent(() => activeTabs().targetSessionFor(intent), path, kind, quiet);
 }
 
 /** 内容装载的共同体（M283 起被两条路径共用）：壳态标签的「填充」与新文件的「打开」是同一件事
@@ -992,7 +1472,7 @@ async function loadSessionContent(
     // 却没有它（无数据丢失，但状态机出格）。按失败收口：调用方（会话恢复）据此退化到下一个候选，
     // 用户看到的是一次正常的恢复。新标签路径（`tabs.targetSessionFor`）晚绑定，结构上不可能命中。
     if (!editor.sessions().includes(session)) return false;
-    tabs.activateTab(session); // 已在同一会话上时是 no-op
+    activateSessionInOwnerPane(session); // 已在同一会话上时是 no-op
     // 解析缓存整批失效必须在装载**之前**（save-controller.ts 外部重载路径的同序写法）：
     // 装饰层在 reloadSession 的装载事务里首次构建并发起 link_graph_resolve（在途），
     // 装完再清会把在途标记一并抹掉——随后 mtime 到达触发的 previewRefresh 重建时，
@@ -1034,7 +1514,7 @@ function ensureActiveSessionLoaded(): void {
   const session = editor.activeSession();
   const path = session.path;
   if (path === undefined || session.loaded) return;
-  if (shellLoadsInFlight.has(session.id)) return;
+  if (shellLoadsInFlight.has(session)) return;
   void withSessionLoad(session, () =>
     loadSessionContent(() => session, path, openKind(path), false),
   );
@@ -1043,13 +1523,14 @@ function ensureActiveSessionLoaded(): void {
 /** 登记「某个会话的内容装载在途」，跑完自动摘掉。所有发起装载的路径都必须经它——包括
  *  会话恢复（`openPinned` → `openFile` 的壳态分支），否则同步点上的按需触发会重复发起一次。 */
 function withSessionLoad(session: EditorSession, run: () => Promise<boolean>): Promise<boolean> {
-  shellLoadsInFlight.add(session.id);
-  return run().finally(() => shellLoadsInFlight.delete(session.id));
+  shellLoadsInFlight.add(session);
+  return run().finally(() => shellLoadsInFlight.delete(session));
 }
 
-/** 在途的壳态装载（会话 id）。放在这里而不是会话对象上：它是一次装载过程的局部状态，不属于
- *  会话本身（`loaded` 才是装载的终态）。 */
-const shellLoadsInFlight = new Set<number>();
+/** 在途的壳态装载（按会话对象键控）。放在这里而不是会话对象上：它是一次装载过程的局部状态，
+ *  不属于会话本身（`loaded` 才是装载的终态）。M316 起键从会话 id 换成对象本身——id 是
+ *  逐编辑器实例自增的，双 pane 下两个实例的会话会撞号。 */
+const shellLoadsInFlight = new Set<EditorSession>();
 
 window.addEventListener("beforeunload", (event) => {
   // 退出前把标签会话 flush 掉（M163，MUST NOT 只依赖防抖定时器——正常退出与「放弃修改并
@@ -1267,20 +1748,43 @@ const commands: CommandRuntime = {
   // 命令实现本身在 editor.ts 的 commands 记录里（`block.copy` 的作用域是 editor，内核组；
   // 内容口径与复制钮逐字相同——都经 `copyBlockContent`）。
   "tab.close": () => {
-    void tabs.closeTab(editor.activeSession());
+    void activeTabs().closeTab(editor.activeSession());
   },
-  "tab.next": () => tabs.cycleTab(1),
-  "tab.prev": () => tabs.cycleTab(-1),
-  ...tabs.gotoCommands(),
+  "tab.next": () => activeTabs().cycleTab(1),
+  "tab.prev": () => activeTabs().cycleTab(-1),
+  ...gotoTabCommands(),
+  // 双栏（M316，change pane-system-split-view 分组 3）：三条容器命令——分栏 / 切到另一
+  // pane / 收拢活跃 pane。默认都不绑键（登记在 keys.ts 的 KEYLESS_COMMAND_IDS，键位
+  // 指配归收尾 mission），用户要键位就经 [keys] 绑；作用域 global（焦点在左栏 / 浮层
+  // 里时同样要能切），故 id 前缀取 `pane.` 而不是 `editor.`。
+  "pane.split": () => splitActivePane(),
+  "pane.other": () => activateOtherPane(),
+  "pane.close": () => closeActivePane(),
 };
 
-// editor 作用域判定：事件目标落在 contentDOM 内（含其中 widget 与表格滚动容器）。
-// 用目标而非焦点，是因为轨道 D 的 widget 就在 contentDOM 里——焦点落在表格滚动
-// 容器上时命令照常生效；容器自己的滚动键由表内绑定用 `when` 收窄（M132），
-// 分发器入口另对已消费事件（defaultPrevented）让路。
+/** ⌘1–9 的九条命令：序号与命令 id 的映射唯一真源在 tabs.gotoCommands（TAB_GOTO_IDS
+ *  同一次遍历），这里只做「分发时按活跃 pane 解析」的一层转发，不另写一份映射。 */
+function gotoTabCommands(): Record<(typeof TAB_GOTO_IDS)[number], CommandRunner> {
+  const table = {} as Record<(typeof TAB_GOTO_IDS)[number], CommandRunner>;
+  for (const id of TAB_GOTO_IDS) {
+    table[id] = () => activeTabs().gotoCommands()[id]();
+  }
+  return table;
+}
+
+// editor 作用域判定（M316 泛化）：事件目标落在**任一 pane** 的 contentDOM 内（含其中
+// widget 与表格滚动容器）——边界不放宽到 chrome 焦点，只是从「那一个 view」换成
+//「各 pane 的 view 任一」。用目标而非焦点，是因为轨道 D 的 widget 就在 contentDOM
+// 里——焦点落在表格滚动容器上时命令照常生效；容器自己的滚动键由表内绑定用 `when`
+// 收窄（M132），分发器入口另对已消费事件（defaultPrevented）让路。
 const keymapContext = {
-  isEditorEvent: (event: KeyboardEvent) =>
-    event.target instanceof Node && editor.view.contentDOM.contains(event.target),
+  isEditorEvent: (event: KeyboardEvent) => {
+    const target = event.target;
+    return (
+      target instanceof Node &&
+      paneLayout.panes().some((pane) => pane.handle.view.contentDOM.contains(target))
+    );
+  },
   // 命令级命中条件（M240，理由见 keys.ts 的 KeymapContext.commandGate）：`table.toggle-fullscreen`
   // 的命中条件需要编辑器状态（caret 在不在渲染为 grid 的表内 / 容器是否持焦），而
   // `[keys]` 覆盖产出的绑定没有 `when` 字段——条件因此落在命令实现方。不满足时返回 false，
@@ -1450,9 +1954,10 @@ function syncBackendDirty(): void {
 
 editor.onDirty((dirty) => {
   // 内核在前台会话内容变化、或任何会话被标记为与磁盘同步时回调（见 editor.ts 的
-  // updateDirty / setSessionDirty）。两种情形都要重画标签栏：dirty 点是逐标签的。
+  // updateDirty / setSessionDirty）。两种情形都要重画全部 pane 的标签栏：dirty 点是
+  // 逐标签的（M316：后台 pane 的标签条同样要跟）。
   syncDirtyIndicator();
-  tabs.renderTabs();
+  renderAllTabStrips();
   // 保存成功（dirty→false）后所有 dirty 表现层必须一致清除：modeline 的标记、
   // 后端退出守卫镜像，以及 dirty 期间弹出的守卫提示。sticky 提示按设计不自动
   // 消隐，不主动撤下会让「未保存」在保存成功后残留在右下角（桌面验收缺陷）。
@@ -1668,8 +2173,9 @@ async function applyVault(
   // 回调全部作废，解析缓存与单链接降级集合整批失效（两件事在 link-follow 里成对）。
   linkFollow.resetForVault();
   // 全部标签作废：内核只留一个未命名空文档（内部 currentFilePath 一并置空）。
+  // M316：reset / resolver 都经复合句柄广播——双 pane 时两个实例一起复位。
   editor.reset();
-  editor.setWikilinkResolver(linkFollow.resolver);
+  applyWikilinkResolver(linkFollow.resolver);
   // vault 名的展示位只有一处：侧栏头的切换器入口（tree.setVault 内部按同一个 baseName
   // 渲染），本文件不再往另一个元素上写一份副本。
   // 这一步是同步的整树重建，也是装载路径上**唯一**的主线程重活（大 vault 上可能数百 ms）：
@@ -1809,6 +2315,7 @@ Promise.all([getName(), getVersion()])
 // 一律按扩展名裁决（M130 方向 A：非 md 只读 code），该配置对文件打开不再有影响。
 // keys：单键重绑 / 解绑（M132），覆盖到位后重挂分发器（见 applyKeyConfig）。
 configGet().then((snapshot) => {
+  currentDefaultMode = snapshot.config.editor.mode;
   editor.setMode(snapshot.config.editor.mode);
   // 折行口径（M180，change line-wrap-options；M247 起三项）：配置给的是**启动时的起点**——
   // 应用运行期的翻转由两条 `view.toggle-*` 命令承担，运行期 MUST NOT 回写这里（config.json 的
@@ -1827,15 +2334,18 @@ configGet().then((snapshot) => {
   //（code 模式 / md 围栏与缩进代码块内），md 的列表 / 引用续行是上游行为、不受本键影响
   //（裁决 D5a 的显式不对称，spec 的「关闭自动缩进」scenario 有对应断言）。
   editor.setAutoIndent(snapshot.config.editor.auto_indent);
+  currentAutoIndent = snapshot.config.editor.auto_indent;
   // 排版口径（M195，change typography-and-zoom）：配置给的是**启动时的基准**——字号在运行期
   // 由三条 `view.text-scale-*` 命令步进，运行期 MUST NOT 回写这里（config.json 的内容与 mtime
   // 在步进前后逐字节不变）。字体族只在启动读一次（本 change 不做热重载，改字体需重启）。
   // warning 走与 [keys] 覆盖同一条出口（console + 诊断日志）——本模块不新造一个出口。
-  for (const warning of editor.applyTypography({
+  // currentTypography 是 M316 新 pane 能力同步的真源（baseFontSize 的锚，见 createPaneHandle）。
+  currentTypography = {
     fontFamily: snapshot.config.editor.font_family,
     monoFontFamily: snapshot.config.editor.mono_font_family,
     fontSize: snapshot.config.editor.font_size,
-  })) {
+  };
+  for (const warning of editor.applyTypography(currentTypography)) {
     console.warn(`lumir: ${warning}`);
     logEvent("config_warning", { source: "typography", message: warning });
   }
@@ -1857,6 +2367,7 @@ configGet().then((snapshot) => {
   // 不提供切换它的命令 / 键位 / UI。**前端不判非法值**：取值是闭集合，合法性已由 Rust 侧
   // validate 保证（三档之外 warning + 回落 on-demand，REVIEW.md 第 8 条）。
   editor.setMarkdownLineNumbers(snapshot.config.ui.markdown_line_numbers);
+  currentMarkdownLineNumbers = snapshot.config.ui.markdown_line_numbers;
   // 主题（restyle-ui-tokens-v1 的启动真源 + M237 的运行期切换）：`[ui] theme` 是**启动真源**，
   // 装载时经 applyTheme 施加到 `<html data-theme>`——token 层的三组块按这个属性取色，全部着色面
   // 即时跟随。运行期由 `view.theme-cycle`（⌘⇧T）/ modeline 主题钮推进并回写配置文件，因此不存在

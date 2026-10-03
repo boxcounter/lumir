@@ -3,6 +3,8 @@
 // 为什么归在这个模块：D2 裁决（2026-09-25，改选备选）让版本号有两个展示位——宽窗在标题栏
 // 右端标识块（产品名 · 版本号），窄窗（<640px）退到 modeline 右段尾部。两个展示位是同一份
 // 元信息的两种排版，显隐切换必须只有一个裁判，否则跨越阈值时两处会同时显示或同时消失。
+// M316（pane-system-split-view）起双栏（split）是第二条退让触发：标识块**整体**退 modeline
+// 右段（同一落点、同一机制），标题栏腾给左右两个标签槽按比例分宽。
 //
 // 分层（tests/unit 纪律：本层不许造 DOM 替身）：
 //   - 纯逻辑层 identityView()：「元信息 × 宽窄」→ 视图模型（哪段显示、各段文本是什么），
@@ -32,32 +34,53 @@ export interface AppMeta {
 export interface IdentityView {
   /** 标识块整体显隐（元信息缺失 = 整体隐藏，MUST NOT 渲染占位串）。 */
   visible: boolean;
-  /** 窄窗退让中：true 时标题栏只留产品名，版本号（含分隔符）落 modeline 右段尾部。 */
+  /** 标识块是否留在标题栏（M316 双栏退让：split 时整块退 modeline——标题栏两槽要按
+   *  比例分宽，标识块夹在中间会让两槽的可比宽度失真）。 */
+  blockInTitlebar: boolean;
+  /** 版本号退让中：true 时标题栏不留版本号（含分隔符），它落 modeline 右段尾部。
+   *  窄窗（<640px，M236）与双栏（M316）共用这一个落点——同一机制、同一展示位。 */
   versionInModeline: boolean;
   /** 产品名段文本（visible 时有效）。 */
   name: string;
   /** 标题栏版本号段文本（visible 且未退让时有效）。 */
   version: string;
-  /** modeline 右段版本号段文本（含前导分隔，形如「 · 1.2.3」；仅退让时有效）。
+  /** modeline 右段版本号段文本（含前导分隔；仅退让时有效）：窄窗退版本号
+   *（形如「 · 1.2.3」），双栏整块退（形如「 Lumir · 1.2.3」）。
    *  示例写成通用版本号而不是本仓当前值：字面抄一份版本号会在每次 bump 后腐掉
    *  （M238 r2 收口时把原来那处的 `0.0.0` 去字面化）。 */
   modelineText: string;
 }
 
-/** 「元信息 × 窗口宽窄」→ 视图模型。唯一的排版决策点。 */
-export function identityView(meta: AppMeta | null, narrow: boolean): IdentityView {
+/** 「元信息 × 窗口宽窄 × 单双栏」→ 视图模型。唯一的排版决策点。 */
+export function identityView(
+  meta: AppMeta | null,
+  flags: { narrow: boolean; split: boolean },
+): IdentityView {
   if (meta === null) {
-    return { visible: false, versionInModeline: false, name: "", version: "", modelineText: "" };
+    return {
+      visible: false,
+      blockInTitlebar: false,
+      versionInModeline: false,
+      name: "",
+      version: "",
+      modelineText: "",
+    };
   }
+  const { narrow, split } = flags;
   return {
     visible: true,
-    versionInModeline: narrow,
+    blockInTitlebar: !split,
+    versionInModeline: narrow || split,
     name: meta.name,
     version: meta.version,
     // 前导空格要真实生效靠 .modeline-version 的 white-space: pre（flex 项的起始空白会被
     // 折叠）；与 meta 段内部「 · 」的节奏逐字同形。展示位互斥：只在退让态携带文本，
-    // 宽窗下为空串（消费侧据此清空 textContent，不留残字）。
-    modelineText: narrow ? ` ${IDENTITY_SEP} ${meta.version}` : "",
+    // 宽窗单栏下为空串（消费侧据此清空 textContent，不留残字）。
+    modelineText: split
+      ? ` ${meta.name} ${IDENTITY_SEP} ${meta.version}`
+      : narrow
+        ? ` ${IDENTITY_SEP} ${meta.version}`
+        : "",
   };
 }
 
@@ -75,6 +98,8 @@ export interface TitlebarIdentity {
   show(meta: AppMeta): void;
   /** 元信息读取失败：标识块整体隐藏（宁可不显示，不显示假版本号）。 */
   fail(): void;
+  /** 双栏退让（M316）：双 pane 时标识块整体退 modeline（与窄窗同一机制、同一落点）。 */
+  setSplitRetreat(on: boolean): void;
 }
 
 /** 把视图模型应用到 DOM，并监听窗口宽窄变化（matchMedia，零轮询）。
@@ -82,9 +107,10 @@ export interface TitlebarIdentity {
 export function createTitlebarIdentity(dom: IdentityDom): TitlebarIdentity {
   const mq = window.matchMedia(`(max-width: ${IDENTITY_NARROW_PX - 1}px)`);
   let meta: AppMeta | null = null;
+  let split = false;
   const apply = (): void => {
-    const view = identityView(meta, mq.matches);
-    dom.block.hidden = !view.visible;
+    const view = identityView(meta, { narrow: mq.matches, split });
+    dom.block.hidden = !view.visible || !view.blockInTitlebar;
     dom.name.textContent = view.name;
     dom.sep.textContent = IDENTITY_SEP;
     dom.sep.hidden = view.versionInModeline;
@@ -102,6 +128,10 @@ export function createTitlebarIdentity(dom: IdentityDom): TitlebarIdentity {
     },
     fail() {
       meta = null;
+      apply();
+    },
+    setSplitRetreat(on) {
+      split = on;
       apply();
     },
   };

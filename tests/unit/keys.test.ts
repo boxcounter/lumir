@@ -849,3 +849,29 @@ test("块级复制命令：editor 作用域、默认不绑键，且命中条件�
   assert.equal(ok.defaultPrevented, true);
   assert.deepEqual(runs, ["block.copy"]);
 });
+
+// ---------------------------------------------------------------------------
+// M316：pane.split / pane.other / pane.close 三条命令的登记
+//（change pane-system-split-view；命令先登记，默认键位指配归收尾 mission）
+// ---------------------------------------------------------------------------
+
+const PANE_COMMAND_IDS = ["pane.split", "pane.other", "pane.close"] as const;
+
+test("pane.* 命令：在全局命令清单里、默认不绑键、可经 [keys] 绑上并生效", () => {
+  for (const command of PANE_COMMAND_IDS) {
+    assert.ok((COMMAND_IDS as readonly string[]).includes(command));
+    assert.ok((NON_TAB_GLOBAL_COMMAND_IDS as readonly string[]).includes(command));
+    assert.ok(!(EDITOR_COMMAND_IDS as readonly string[]).includes(command), `${command} 作用域必须派生为 global`);
+    assert.ok(KEYLESS_COMMAND_IDS.includes(command), `${command} 默认不占物理组合（键位指配归收尾 mission）`);
+    assert.equal(
+      KEY_BINDINGS.find((binding) => binding.command === command),
+      undefined,
+      `${command} 登记进默认不绑键清单即不得再带默认绑定`,
+    );
+  }
+  const rebound = applyKeyOverrides({ "Cmd-j": "pane.split" });
+  assert.deepEqual(rebound.warnings, []);
+  const bound = rebound.bindings.find((binding) => binding.command === "pane.split");
+  assert.equal(normalizeKey(bound?.key ?? ""), "Cmd-J");
+  assert.equal(bound?.scope, "global");
+});

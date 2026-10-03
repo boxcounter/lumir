@@ -31,8 +31,16 @@ export interface AppShell {
   /** 文件树 pane（createFileTree 挂载点）。 */
   fileTree: HTMLElement;
   treeMount: HTMLElement;
-  /** 编辑器 pane（CM6 单内核挂载点）。 */
+  /** 编辑器 pane 容器（M316 起它是**分栏容器**：单栏时内层就是 `editorPane` 一个挂载元素，
+   *  几何与 M316 之前逐像素一致；双栏时容器内是 [paneA, 分隔条, paneB]，后两者由装配层
+   *  动态创建 / 移除，本模块不建）。notice / toast 等覆盖层仍挂它（定位基准不变）。 */
   editor: HTMLElement;
+  /** pane A 的挂载元素（`.editor-pane`）：pane A 的 CM 内核与栏宽手柄覆盖层都挂它；
+   *  双栏时它与 pane B 的同类元素按比例（inline flexGrow）分容器宽。 */
+  editorPane: HTMLElement;
+  /** 标签条工厂（M316）：pane B 的标签槽在 split 时由装配层现建——读屏名的「唯一写入点 +
+   *  运行期可重跑」口径（M285）必须同源，因此工厂在本模块（复制一份写法就是两处真源）。 */
+  createTabStrip(): HTMLElement;
   /** 栏宽拖拽手柄（M228，change content-width-drag）：覆盖层容器 + 左右缘手柄条。
    *  定位 / 拖拽 / 空态显隐由 src/content-width.ts 的控制器承担，这里只建 DOM。 */
   widthHandles: { overlay: HTMLElement; left: HTMLElement; right: HTMLElement };
@@ -82,23 +90,28 @@ export function createShell(mount: HTMLElement): AppShell {
   const traffic = document.createElement("div");
   traffic.className = "titlebar-traffic";
   // 标签段（M149）：与标题栏同一行；role=tablist + 逐标签 role=tab 由装配层写入，
-  // 这里只给容器与读屏名。
-  const tabStrip = document.createElement("nav");
-  tabStrip.className = "tabstrip";
-  tabStrip.setAttribute("role", "tablist");
-  // 读屏名的写入路径（M285）：**唯一写入点**，且能在运行期重跑。此前它只在构造期取一次
-  // `t("D88")`——而本模块在配置到达之前构造（`index.html` 无 `lang`，取值落默认档 en），
-  // 配置为 zh 时读屏名就永久停在 `Open documents`（M284 finding：真机场景 35 在
-  // `ui.language = zh` 下红在 `AXTabGroup (Open documents)`，而同一屏其余 chrome 都是 zh）。
-  // 违反的不变量是 M282 design §5.2 的「任何承载语言相关文案的长驻元素 MUST 有一条能在运行期
-  // 重跑它的写入路径」；修法就是这条路径（与 `src/toc.ts` 的指示段 / `src/tree.ts` 的树头
-  // 入口同形）。`renderTabs` 只重建标签条目、不碰容器，因此容器这条不能寄望于它。
-  const applyTabStripLabel = (): void => {
-    tabStrip.setAttribute("aria-label", t("D88"));
+  // 这里只给容器与读屏名。M316 起抽成工厂：pane B 的标签槽在 split 时现建，同一条
+  // 创建路径（读屏名口径见下）。
+  const makeTabStrip = (): HTMLElement => {
+    const strip = document.createElement("nav");
+    strip.className = "tabstrip";
+    strip.setAttribute("role", "tablist");
+    // 读屏名的写入路径（M285）：**唯一写入点**，且能在运行期重跑。此前它只在构造期取一次
+    // `t("D88")`——而本模块在配置到达之前构造（`index.html` 无 `lang`，取值落默认档 en），
+    // 配置为 zh 时读屏名就永久停在 `Open documents`（M284 finding：真机场景 35 在
+    // `ui.language = zh` 下红在 `AXTabGroup (Open documents)`，而同一屏其余 chrome 都是 zh）。
+    // 违反的不变量是 M282 design §5.2 的「任何承载语言相关文案的长驻元素 MUST 有一条能在运行期
+    // 重跑它的写入路径」；修法就是这条路径（与 `src/toc.ts` 的指示段 / `src/tree.ts` 的树头
+    // 入口同形）。`renderTabs` 只重建标签条目、不碰容器，因此容器这条不能寄望于它。
+    const applyStripLabel = (): void => {
+      strip.setAttribute("aria-label", t("D88"));
+    };
+    applyStripLabel();
+    onRelabel(applyStripLabel);
+    strip.hidden = true;
+    return strip;
   };
-  applyTabStripLabel();
-  onRelabel(applyTabStripLabel);
-  tabStrip.hidden = true;
+  const tabStrip = makeTabStrip();
   // 右端产品标识块（M236，D1 裁决：右端）：纯展示文本（span 不是 clickable 元素，
   // drag.js 不为它阻断拖拽——标识块上按下拖拽窗口仍成立，场景 39 覆盖）。三段分离是
   // 为了窄窗退让能只藏「分隔符 + 版本号」（src/modeline.ts）。读屏口径：可见文本本身
@@ -122,6 +135,13 @@ export function createShell(mount: HTMLElement): AppShell {
   const fileTree = pane("pane-filetree", "");
   const editor = pane("pane-editor", "");
 
+  // pane A 挂载元素（M316 分栏容器化）：CM 内核与栏宽手柄的挂点从 `.pane-editor` 容器
+  // 下沉一层——双栏时容器内要并列第二个 pane 与分隔条，单栏时这一个元素 flex:1 填满容器，
+  // 几何与此前逐像素一致（容器转 flex 行盒、唯一子项拉伸占满）。
+  const editorPane = document.createElement("div");
+  editorPane.className = "editor-pane";
+  editor.append(editorPane);
+
   // 栏宽拖拽手柄（M228，change content-width-drag，D5：md 与 code 模式都有）：shell 层覆盖
   // 元素，与 CM 挂载点并列、MUST NOT 进 `.cm-scroller` / `.cm-content`（CM 按 border-box 量
   // 行高，文档流内的异物会污染测量——M110 同族纪律）。常态不可见（视觉线 opacity 0 + 容器
@@ -142,7 +162,8 @@ export function createShell(mount: HTMLElement): AppShell {
   const widthLeft = makeHandle("left");
   const widthRight = makeHandle("right");
   widthOverlay.append(widthLeft, widthRight);
-  editor.append(widthOverlay);
+  // 覆盖层挂 pane A 挂载元素（inset:0 几何与挂容器逐像素一致；双栏时它随 pane A 分宽）。
+  editorPane.append(widthOverlay);
   const treeMount = document.createElement("section");
   treeMount.className = "tree-pane";
   fileTree.append(treeMount);
@@ -198,6 +219,8 @@ export function createShell(mount: HTMLElement): AppShell {
     fileTree,
     treeMount,
     editor,
+    editorPane,
+    createTabStrip: makeTabStrip,
     widthHandles: { overlay: widthOverlay, left: widthLeft, right: widthRight },
     modeline,
     modelinePath,
