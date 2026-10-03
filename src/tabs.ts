@@ -158,6 +158,10 @@ export interface TabsDeps {
    *  而标签模块没有、也不该有树的句柄——与 `syncActiveDocument` 同一条接线模式（闭包在动作
    *  发生时读，不在装配时读）。 */
   revealInTree: (path: string) => void;
+  /** 空槽占位（M316 双 pane）：双栏时**没有可见标签的 pane 的标签槽也必须占位**——两槽
+   *  宽度比例与 pane 分隔条同源，空槽一 hidden，另一槽的比例就跟着漂。返回 true 时空态
+   *  不 hidden；单 pane 不传本字段，行为与 M149 起逐字相同（空态整条隐藏）。 */
+  keepMountWhenEmpty?: () => boolean;
 }
 
 export interface TabsHandle {
@@ -206,9 +210,12 @@ export function createTabs(deps: TabsDeps): TabsHandle {
    *  标签可见文本是路径末段：basename 派生全前端只有一份（`src/tree.ts` 的 baseName，
    *  REVIEW.md 第 8 条），标签栏、文件树、侧栏头的 vault 名与切换器列表共用它。 */
   function renderTabs(): void {
+    // 双 pane 收拢后本实例的标签槽已从 DOM 摘除（onRelabel 的注册表不可退订，copy.ts
+    // 不在本 mission 改动面）——对不在场的槽重绘既无意义也可能碰到已销毁的 view。
+    if (!mount.isConnected) return;
     const sessions = editor.sessions().filter((session) => session.path !== undefined);
     const active = editor.activeSession();
-    mount.hidden = sessions.length === 0;
+    mount.hidden = sessions.length === 0 && deps.keepMountWhenEmpty?.() !== true;
     mount.replaceChildren(
       ...sessions.map((session) => {
         const path = session.path as string;
