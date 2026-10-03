@@ -1281,24 +1281,26 @@ function wrapExtensions(mode: EditorMode, settings: WrapSettings): Extension[] {
 }
 
 /**
- * 三个 Compartment 的**模块级单例**（M317 tasks 4.1，tower 裁决采 (a)，2026-10-03）。
+ * 四个 Compartment 的**模块级单例**（M317 tasks 4.1，tower 裁决采 (a)，2026-10-03；r1 评审
+ * P1-1 补入 baseCompartment）。
  *
  * 为什么必须模块级：跨 pane 移动标签要把**同一份 `EditorState` 对象**迁到目标 pane 的视图上
- *（design §6：MUST NOT 重建 state，撤销史 / 语法树 / 选区 / 搜索查询随 state 走）。若三处
+ *（design §6：MUST NOT 重建 state，撤销史 / 语法树 / 选区 / 搜索查询随 state 走）。若这些
  * Compartment 仍逐实例创建，迁移来的 state 里带的是源实例的 compartment，目标实例随后的
  * `reconfigure` 会被 `@codemirror/state` **静默丢弃**（`Configuration.resolve` 只认 config 树里
- * 的那一个实例）——表现是「移动过去的标签换不了模式 / 切不动折行」。
+ * 的那一个实例）——表现是「移动过去的标签换不了模式 / 切不动折行 / 基础层闭包仍绑源实例」。
  *
  * 共享安全性：`Compartment` 只是一个身份 token，`of` 产出 `CompartmentInstance`、`reconfigure`
  * 产出按该 token 定位的 effect，`Configuration.resolve` 在**每个 state 各自的** config 树里记一份
  * （`config.compartments` 是不可变 Map）。因此**同一个 Compartment 出现在多个 state 的 config 树
  * 里是标准用法**，各 view 的 reconfigure 只作用于自己的 state。唯一禁忌仍是「同一棵树里出现两次」
- *（`flatten` 抛 `Duplicate use of compartment in extensions`）——下面三处各自只在一个分支里引用
+ *（`flatten` 抛 `Duplicate use of compartment in extensions`）——下面各处各自只在一个分支里引用
  * 一次，不受影响。
  *
- * 内容（mode extensions / 折行 extensions / gutter extensions）仍**逐实例**传入：这些闭包捕获
- * 了各实例的 provider / resolver / 相机等，只能在各自的重配点现取（见 `modeAndWrapEffects` /
- * `reconfigureMdGutter`）。共享的只是定位 token，不是内容。
+ * 内容（mode extensions / 折行 extensions / gutter extensions / 基础层闭包）仍**逐实例**传入：
+ * 这些闭包捕获了各实例的 provider / resolver / `active` / `currentEditable` 等，只能在各自的重配点
+ * 现取（见 `modeAndWrapEffects` / `reconfigureMdGutter` / `baseExtensions`）。共享的只是定位 token，
+ * 不是内容。
  */
 const modeCompartment = new Compartment();
 /** 折行口径的 Compartment（M180）：正文行的 `lineWrapping` 与代码块行的内容级 class 都装在
@@ -1316,6 +1318,19 @@ const wrapCompartment = new Compartment();
  * 的返回值只会被 md 分支引用一次。
  */
 const mdGutterCompartment = new Compartment();
+/**
+ * **基础层**的 Compartment（M317 r1 评审 P1-1）：`sessionState` 里两条**绑实例闭包**的基础扩展
+ * ——`changeFilter`（读实例级 `currentEditable` 投影）与 `updateListener`（`active.state` 回写 /
+ * `updateDirty` / `docChangedListeners` 全读实例绑定）——收进这里。
+ *
+ * 为什么它们必须进共享 compartment：`adoptSession` 整体迁入的 state 若带着源实例的这两条闭包，
+ * 迁移后的会话在目标 pane 被编辑时，回写会落进**源实例的前台会话**（污染它、保存写错文件），
+ * 而迁移会话自身 state 永不回写（切标签丢编辑、⌘S 写陈旧内容）、dirty 永不置位（退出守卫漏判）
+ * ——静默数据丢失级缺陷。收进共享 compartment 后，`adoptSession` 用**目标实例**的
+ * `baseExtensions()` reconfigure 一次即完成换绑（不制造撤销事件、不重新解析；history 是
+ * `@codemirror/commands` 的模块级 StateField，reconfigure 不丢撤销栈——探针实测）。
+ */
+const baseCompartment = new Compartment();
 
 /**
  * `editor.auto_indent` 的 TypeScript 侧出厂默认与 `Enter` 的命令体都在
@@ -1762,6 +1777,46 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
   }
 
   /**
+   * 会话**基础层**里两条绑实例闭包的扩展（收进 `baseCompartment`，见其声明处的 P1-1 说明）：
+   *   - `changeFilter`：读实例级 `currentEditable` 投影，挡住绕过 DOM 输入路径的程序化 dispatch；
+   *   - `updateListener`：前台会话 state 回写 + dirty 判定 + `docChangedListeners` 广播
+   *     （再加运行时 appendConfig 扩展的收集）。
+   * 两者都绑**创建它的实例**的闭包，因此每次 adopt 都要用目标实例的 `baseExtensions()` 重配一次
+   * ——否则迁移来的会话在目标 pane 被编辑时，回写会落进源实例前台会话（污染）、自身 state 永不
+   * 回写（切标签丢编辑 / ⌘S 写陈旧内容）、dirty 永不置位（退出守卫漏判）。修法只在「谁绑闭包」，
+   * 逻辑本身与 M149 起逐字相同。
+   */
+  function baseExtensions(): Extension[] {
+    return [
+      // 兜底防线：editability 已按会话 editable 在视图层拒收输入，changeFilter 再挡住任何
+      // 绕过 DOM 输入路径的程序化 dispatch（trustedLoad 标记的装载事务除外）——两处同判据。
+      // 闭包读的是实例级 currentEditable——切标签时必须同步（syncProjection），否则
+      // 前台是可编辑会话而投影还停在只读，输入会被错判吞掉（REVIEW.md 第 1 条：只翻
+      // 视图层会得到「contenteditable 在场但按键被吞」的假可编辑编辑器）。
+      EditorState.changeFilter.of((tr) => (tr.docChanged && !currentEditable && !tr.annotation(trustedLoad) ? false : true)),
+      EditorView.updateListener.of((update) => {
+        collectAppendedExtensions(update);
+        // 前台会话的 state 回写（M149）：装配层与保存链路都按会话读文档全文与选区，
+        // 会话对象因此必须始终持有最新那一份（setState 不触发本监听，激活时另写）。
+        active.state = update.state;
+        if (update.docChanged) {
+          updateDirty(update.state.doc.toString() !== active.cleanDoc);
+          docChangedListeners.forEach((listener) => listener());
+        }
+      }),
+    ];
+  }
+
+  /** adopt 时的完整换绑效果（M317 P1-1）：模式 / 折行 / **基础层**三处一起重配到本实例的闭包。
+   *  mode 扩展闭包里的全屏端口（`paneIdOfHandle` 捕获源 handle）与基础层闭包（`active` /
+   *  `currentEditable`）都**逐实例**——只共享 compartment 的定位 token 不够，内容要换成目标实例
+   *  现取的。`state.update({ effects })` 不带 changes ⇒ 不制造撤销事件、不重新解析；history 是
+   *  模块级 StateField，reconfigure 不丢撤销栈。 */
+  function rebindEffects(mode: EditorMode, path: string | undefined, editable: boolean): StateEffect<unknown>[] {
+    return [...modeAndWrapEffects(mode, path, editable), baseCompartment.reconfigure(baseExtensions())];
+  }
+
+  /**
    * 一个会话的 EditorState。**每次新建会话都重建一份**（而不是复用同一个 state
    * 对象）：撤销史 / 语法树 / 搜索查询都是 StateField，必须逐会话独立，否则标签之间
    * 会共享一个撤销栈。创建期扩展逐条有据，见下面各段注释。
@@ -1816,22 +1871,9 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
         // reconfigure）不会把它连带重建——面板与查询跨文件保留，与编辑器行为一致。
         lumirSearch(),
         modeCompartment.of(modeExtensions(mode, path, editable)),
-        // 兜底防线：editability 已按会话 editable 在视图层拒收输入，changeFilter 再挡住任何
-        // 绕过 DOM 输入路径的程序化 dispatch（trustedLoad 标记的装载事务除外）——两处同判据。
-        // 闭包读的是实例级 currentEditable——切标签时必须同步（syncProjection），否则
-        // 前台是可编辑会话而投影还停在只读，输入会被错判吞掉（REVIEW.md 第 1 条：只翻
-        // 视图层会得到「contenteditable 在场但按键被吞」的假可编辑编辑器）。
-        EditorState.changeFilter.of((tr) => tr.docChanged && !currentEditable && !tr.annotation(trustedLoad) ? false : true),
-        EditorView.updateListener.of((update) => {
-          collectAppendedExtensions(update);
-          // 前台会话的 state 回写（M149）：装配层与保存链路都按会话读文档全文与选区，
-          // 会话对象因此必须始终持有最新那一份（setState 不触发本监听，激活时另写）。
-          active.state = update.state;
-          if (update.docChanged) {
-            updateDirty(update.state.doc.toString() !== active.cleanDoc);
-            docChangedListeners.forEach((listener) => listener());
-          }
-        }),
+        // 基础层（changeFilter + updateListener）：绑实例闭包，收进模块级共享的 baseCompartment，
+        // 由 adoptSession 用目标实例的闭包重配（见 baseExtensions / rebindEffects 的 P1-1 说明）。
+        baseCompartment.of(baseExtensions()),
         // 折行口径（M180）：正文行（`lineWrapping`）与代码块行（内容级 class）两层的装配点。
         // 值取应用运行期的折行状态——新会话因此从**当前应用态**起步，而不是配置默认
         //（配置只是启动时喂进来的初值）：这正是 D1「应用级」与初稿「标签页级」的关键差异。
@@ -2348,10 +2390,16 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
       activate(blank);
     },
     adoptSession(session: EditorSession) {
-      // 跨实例接管（M317 4.1）：三个 Compartment 已提为模块级共享，因此**原 state 对象整体
-      // 迁入**即可——撤销史 / 语法树 / 选区 / 搜索查询等全部 StateField 随 state 走，MUST NOT
-      // 重建（重建会清空撤销栈，与 design §6「移动不制造撤销事件、不丢撤销史」冲突）。本实例
-      // 后续的 mode / 折行 / gutter reconfigure 仍作用于它：定位 token 是同一批共享单例。
+      // 跨实例接管（M317 4.1 + r1 评审 P1-1）：四个 Compartment 已提为模块级共享，因此**原
+      // state 对象整体迁入**（撤销史 / 语法树 / 选区 / 搜索查询等全部 StateField 随 state 走，
+      // MUST NOT 重建——重建会清空撤销栈，与 design §6 冲突），随后用本实例的闭包**换绑**
+      // 模式 / 折行 / 基础层三处扩展：迁入的 state 带的仍是源实例的闭包，不回写就会让迁移会话
+      // 在目标 pane 的编辑落到源实例前台会话（污染 + 丢编辑 + dirty 漏判，P1-1 的后果链）。
+      // `state.update({ effects })` 不带 changes ⇒ 不制造撤销事件、不重新解析；history 是模块级
+      // StateField，reconfigure 不丢撤销栈。
+      session.state = session.state.update({
+        effects: rebindEffects(session.mode, session.path, session.editable),
+      }).state;
       sessions.push(session);
     },
     markCleanOf(path: string, content: string) {
