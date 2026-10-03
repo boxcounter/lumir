@@ -96,7 +96,10 @@ export interface TocContext {
 }
 
 export interface TocOptions {
-  view: EditorView;
+  /** **活跃 pane** 的视图（活读，M317 tasks 2.1）：大纲的内容源随活跃 pane 走——浮层打开
+   *  期间跨 pane 切换时，取到的就是新活跃 pane 的 state 与视口。构造期「取一次视图对象」的
+   *  写法在双 pane 下会永久钉住 root pane（M316 的已知过渡形态），这里改成 getter。 */
+  view: () => EditorView;
   /** modeline 左段的当前位置指示段（点击展开浮层）。 */
   indicator: HTMLButtonElement;
   /** 浮层挂点（.modeline：浮层的定位块；浮层贴在它上沿、向上展开）。 */
@@ -115,6 +118,20 @@ export interface TocOptions {
 export interface TocHandle {
   /** ⌘⇧O 与点击指示段共用的入口：关→开，开→关；无条目时只给提示。 */
   toggle(): void;
+  /**
+   * 把「视图更新 → 指示段节流刷新」的挂钩挂到一个 pane 的视图上（M317 tasks 2.1）。
+   * 双 pane 下**每个 pane 各挂一次**：本模块只读**活跃 pane** 的 state，挂到非活跃 pane 上
+   * 是为了它成为活跃 pane 后，它自己的光标 / 滚动事件立刻被捕获（只挂 root 会让 pane B 的
+   * 编辑不触发刷新）。装配层为现存与新建 pane 各调一次（挂在 pane 的装配记录里，随 pane 销毁）。
+   */
+  track(view: EditorView): void;
+  /**
+   * 活跃 pane 切换（或它换了前台文档）后由装配层调用：浮层**打开期间**内容源即时换到新活跃
+   * pane 的视图（design §2 行 1「浮层打开期间跨 pane 切换要即时换源」）。未打开时无操作——
+   * 下次 `toggle()` 自然取新源。新源无条目（换成无标题文档 / 不支持的 code 语言）时静默收起
+   * 浮层，不弹提示（这不是用户发起的打开动作）。查询串与游标随关闭丢弃的既有口径不变。
+   */
+  sourceChanged(): void;
   /**
    * 立即同步一次指示段（不等节流窗口）。装配层在**文档装载边界**调用：打开文件 / 切换 vault
    * 之后，指示段必须与文档同一帧到位——否则「打开文件」到「指示段出现」之间有一段空窗，
@@ -176,6 +193,12 @@ interface OutlineItem {
   /** 1 基行号（`data-line`）。 */
   line: number;
 }
+
+/** 全量条目来源的判定结果（M317 2.1）：打开路径据此给对应提示；跨 pane 换源路径对任何
+ *  「没有」都静默收起。`reason` 与三条提示文案一一对应。 */
+type OutlineSource =
+  | { ok: true; entries: OutlineItem[] }
+  | { ok: false; reason: "no-headings" | "no-symbols" | "no-structure" };
 
 /** 标题行原文 → 条目文本：去掉行首 `#` 标记串与结尾标记。 */
 function headingText(rawLine: string): string {
@@ -252,7 +275,7 @@ export function anchorPos(state: EditorState, view: EditorView, preferCursor = f
 }
 
 class Toc implements TocHandle {
-  private readonly view: EditorView;
+  private readonly view: () => EditorView;
   private readonly indicator: HTMLButtonElement;
   private readonly popover: HTMLDivElement;
   private readonly input: HTMLInputElement;
@@ -383,7 +406,16 @@ class Toc implements TocHandle {
       this.close();
     });
 
-    this.attach();
+    // 视图挂钩不再在构造期自带：装配层为现存与新建 pane 各调一次 `track(view)`（M317 2.1）。
+    this.refresh();
+  }
+
+  /** 把视图更新挂钩挂到一个 pane 的视图上（见 TocHandle.track）。同一视图挂两次会重复排期，
+   *  调用方（装配层）保证每个 pane 只挂一次。 */
+  track(view: EditorView): void {
+    view.dispatch({
+      effects: StateEffect.appendConfig.of(EditorView.updateListener.of(() => this.schedule())),
+    });
   }
 
   /** 浮层的静态文案（指示段提示 / 列表读屏名 / 筛选框的读屏名与占位 / 底部提示行）在**构造期**
@@ -397,48 +429,53 @@ class Toc implements TocHandle {
     this.empty.textContent = NO_MATCH_TEXT();
   }
 
+  /** 当前活跃 pane 视图的全量条目来源判定（打开与跨 pane 换源共用这一份实现）。 */
+  private collectSource(): OutlineSource {
+    const context = this.context();
+    if (context.mode === "md") {
+      const entries = headingItems(this.view().state, true);
+      return entries.length === 0 ? { ok: false, reason: "no-headings" } : { ok: true, entries };
+    }
+    // code 模式：语言不受支持（无语言包 / T3）时给「暂不支持」提示，MUST NOT 展开浮层，
+    // MUST NOT 用文本匹配猜条目；受支持但文件里没有条目时给另一条提示，MUST NOT 复用 D84
+    // （「这份文档还没有标题」在代码文件上是一句错话）。
+    const language = context.language;
+    if (!supportsStructure(language)) return { ok: false, reason: "no-structure" };
+    // 首次解析在 1MB 级文件上是一次可感成本（design §1.6 的已知边界），用既有的 slow_callback
+    // 采样把它变成**产品端点上可复现的读数**：超过 16ms 的解析会在诊断日志里留一条
+    // `{"event":"slow_callback","name":"code_structure_parse","ms":…}`（命中缓存时无日志）。
+    // 走既有事件名与字段白名单（name/ms），不新增事件、不动 Rust 侧——调试与后续 perf 复测
+    // 都靠它，而不是靠临时探针。
+    const entries = entryItems(
+      sampleCallback("code_structure_parse", () => structureEntries(language as CodeLanguage, this.fullText())),
+    );
+    return entries.length === 0 ? { ok: false, reason: "no-symbols" } : { ok: true, entries };
+  }
+
   toggle(): void {
     this.relabel(); // 打开是浮层唯一可见的时刻，顺便把构造期写死的文案刷新一遍
     if (this.open) {
       this.close();
       return;
     }
-    const context = this.context();
-    let entries: OutlineItem[];
-    if (context.mode === "md") {
-      entries = headingItems(this.view.state, true);
-      if (entries.length === 0) {
-        this.toast(NO_HEADINGS_TEXT());
-        return;
-      }
-    } else {
-      // code 模式：语言不受支持（无语言包 / T3）时给「暂不支持」提示，MUST NOT 展开浮层，
-      // MUST NOT 用文本匹配猜条目；受支持但文件里没有条目时给另一条提示，MUST NOT 复用 D84
-      // （「这份文档还没有标题」在代码文件上是一句错话）。
-      const language = context.language;
-      if (!supportsStructure(language)) {
-        this.toast(NO_STRUCTURE_TEXT());
-        return;
-      }
-      // 首次解析在 1MB 级文件上是一次可感成本（design §1.6 的已知边界），用既有的 slow_callback
-      // 采样把它变成**产品端点上可复现的读数**：超过 16ms 的解析会在诊断日志里留一条
-      // `{"event":"slow_callback","name":"code_structure_parse","ms":…}`（命中缓存时无日志）。
-      // 走既有事件名与字段白名单（name/ms），不新增事件、不动 Rust 侧——调试与后续 perf 复测
-      // 都靠它，而不是靠临时探针。
-      entries = entryItems(
-        sampleCallback("code_structure_parse", () => structureEntries(language as CodeLanguage, this.fullText())),
+    const source = this.collectSource();
+    if (!source.ok) {
+      this.toast(
+        source.reason === "no-headings"
+          ? NO_HEADINGS_TEXT()
+          : source.reason === "no-structure"
+            ? NO_STRUCTURE_TEXT()
+            : NO_SYMBOLS_TEXT(),
       );
-      if (entries.length === 0) {
-        this.toast(NO_SYMBOLS_TEXT());
-        return;
-      }
+      return;
     }
-    this.entries = entries;
+    this.entries = source.entries;
     // 打开 = 空查询 + 全量态起点：查询与游标随关闭丢弃（spec「关闭浮层 SHALL 丢弃查询与游标」），
     // 因此这里显式清一遍输入框与匹配状态，不依赖上一条关闭路径是否走过。
     this.input.value = "";
     this.filter.reset();
-    this.currentSource = itemIndexAt(entries, anchorPos(this.view.state, this.view));
+    const view = this.view();
+    this.currentSource = itemIndexAt(this.entries, anchorPos(view.state, view));
     this.render();
     this.open = true;
     this.popover.hidden = false;
@@ -453,11 +490,19 @@ class Toc implements TocHandle {
     this.refresh();
   }
 
-  /** 订阅视图更新（节流）：光标移动、滚动（视口变化）、换文件都经这一条路径。 */
-  private attach(): void {
-    this.view.dispatch({
-      effects: StateEffect.appendConfig.of(EditorView.updateListener.of(() => this.schedule())),
-    });
+  /** 活跃 pane 切换：浮层打开期间内容源即时换到新 pane（见 TocHandle.sourceChanged）。
+   *  查询串保留（它筛的是标题文本，与文档无关），当前段按新源重算。 */
+  sourceChanged(): void {
+    if (!this.open) return;
+    const source = this.collectSource();
+    if (!source.ok) {
+      this.close(false);
+      return;
+    }
+    this.entries = source.entries;
+    const view = this.view();
+    this.currentSource = itemIndexAt(this.entries, anchorPos(view.state, view));
+    this.render();
     this.refresh();
   }
 
@@ -473,7 +518,7 @@ class Toc implements TocHandle {
 
   /** code 侧的文档原文（按 Text 对象身份记忆，见 textCache 的说明）。 */
   private fullText(): string {
-    const doc = this.view.state.doc;
+    const doc = this.view().state.doc;
     if (this.textCache === null || this.textCache.doc !== doc) this.textCache = { doc, text: doc.toString() };
     return this.textCache.text;
   }
@@ -484,7 +529,7 @@ class Toc implements TocHandle {
    */
   private indicatorItems(): OutlineItem[] {
     const context = this.context();
-    if (context.mode === "md") return headingItems(this.view.state);
+    if (context.mode === "md") return headingItems(this.view().state);
     const entries = peekStructureEntries(context.language, this.fullText());
     return entries === null ? [] : entryItems(entries);
   }
@@ -492,7 +537,8 @@ class Toc implements TocHandle {
   /** 指示段与状态对齐：条目链 + 是否有当前文件；没有条目或没有当前文件时不显示。 */
   private sync(preferCursor = false): void {
     const items = this.indicatorItems();
-    const pos = anchorPos(this.view.state, this.view, preferCursor);
+    const view = this.view();
+    const pos = anchorPos(view.state, view, preferCursor);
     const path = itemPath(items, itemIndexAt(items, pos));
     const text = path.map((item) => item.text).join(PATH_SEPARATOR);
     if (this.indicator.textContent !== text) this.indicator.textContent = text;
@@ -603,7 +649,7 @@ class Toc implements TocHandle {
     // 查询与游标随关闭丢弃（spec）：下次打开从空查询与全量态起点开始。
     this.input.value = "";
     this.filter.reset();
-    if (restoreFocus) focusPreservingReadingPosition(this.view);
+    if (restoreFocus) focusPreservingReadingPosition(this.view());
   }
 
   /**
@@ -619,9 +665,12 @@ class Toc implements TocHandle {
     const source = this.visible[index];
     const item = source === undefined ? undefined : this.entries[source];
     if (!item) return;
+    // 落点取**当前活跃 pane** 的视图（浮层此刻展示的就是它的 outline）。先取视图再收起：
+    // close() 会让焦点回到同一个视图，不改变活跃 pane，因此两者等价，取在前面更直观。
+    const view = this.view();
     this.close();
-    const pos = Math.min(item.jumpTo, this.view.state.doc.length);
-    this.view.dispatch({
+    const pos = Math.min(item.jumpTo, view.state.doc.length);
+    view.dispatch({
       selection: { anchor: pos },
       effects: EditorView.scrollIntoView(pos, { y: "center" }),
     });

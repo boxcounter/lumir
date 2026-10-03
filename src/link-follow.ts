@@ -9,6 +9,7 @@
 //   - 装配侧只注入三样它才知道的事实：编辑器句柄（活读前台会话 + 重建装饰）、打开文档的落点
 //     （main 的 openFile：含模式裁决、保存链路登记与标签意图）、人话提示出口。
 
+import type { EditorView } from "@codemirror/view";
 import { logEvent } from "./diagnostics";
 import { errorText, t } from "./copy";
 import type { EditorHandle } from "./editor";
@@ -40,6 +41,14 @@ export interface LinkFollowDeps {
     sticky?: boolean,
     tone?: "neutral" | "success",
   ) => void;
+  /** 把 ⌘-Click 监听挂到**每个 pane** 的视图上（M317 tasks 2.3）：双 pane 下左右两栏各自可
+   *  跟随链接——构造期只挂单例视图的写法会让非 root pane 的 ⌘-Click 完全失效。装配层保证
+   *  现存与将来新建的 pane 都挂上（缺省时退回挂当期视图，等价单 pane 旧行为）。 */
+  eachView?(attach: (view: EditorView) => void): void;
+  /** 点击落在某 pane 时先把它置为**活跃 pane**（M317 tasks 2.3）：鼠标事件早于 focusin，
+   *  不先翻活跃指针，`resolveBase()` 解析到的会是别的 pane 的前台文档（Emacs 里点选窗口
+   *  即选中该窗口）。缺省时无操作。 */
+  activateView?(view: EditorView): void;
 }
 
 export interface LinkFollowHandle {
@@ -190,9 +199,11 @@ export function createLinkFollow(deps: LinkFollowDeps): LinkFollowHandle {
     }
   }
 
-  /** 光标/点击处的非 embed wikilink span（span 定位是前端唯一持有的词法逻辑）。 */
-  function wikilinkAt(pos: number): string | null {
-    const text = editor.view.state.doc.toString();
+  /** 光标/点击处的非 embed wikilink span（span 定位是前端唯一持有的词法逻辑）。
+   *  `view` 由调用方给：鼠标路径给**被点那个 pane** 的视图（事件早于活跃指针翻转），
+   *  键盘路径给活跃 pane 的视图。 */
+  function wikilinkAt(pos: number, view: EditorView): string | null {
+    const text = view.state.doc.toString();
     for (const span of findWikilinkSpans(text)) {
       if (!span.embed && pos >= span.from && pos < span.to) {
         return text.slice(span.from, span.to);
@@ -225,18 +236,18 @@ export function createLinkFollow(deps: LinkFollowDeps): LinkFollowHandle {
     | { kind: "asset"; target: string }
     | { kind: "anchor" };
 
-  function linkTargetAt(pos: number): LinkTarget | null {
-    const raw = wikilinkAt(pos);
+  function linkTargetAt(pos: number, view: EditorView = editor.view): LinkTarget | null {
+    const raw = wikilinkAt(pos, view);
     if (raw !== null) {
       return resolveBase() === undefined ? null : { kind: "wikilink", raw };
     }
-    const link = standardLinkAt(editor.view.state, pos);
+    const link = standardLinkAt(view.state, pos);
     if (link === null) {
       // 第三段查询（M272）：字面 URL（裸 URL / 链接定义行的 URL / 角括号自动链接）。
       // 这一类只产出外链——白名单外的 scheme 与无 scheme 的字面（`www.` / 裸邮箱）在
       // links.ts 的查询阶段就返回 null，与渲染层的「保持原文」自洽。键盘路径（⌘⏎）与
       // 鼠标路径（⌘-Click）共用本次判定，两条路径因此同时覆盖新形态。
-      const literal = literalLinkAt(editor.view.state, pos);
+      const literal = literalLinkAt(view.state, pos);
       return literal === null ? null : { kind: "external", url: literal.form.url };
     }
     switch (link.form.kind) {
@@ -339,17 +350,26 @@ export function createLinkFollow(deps: LinkFollowDeps): LinkFollowHandle {
   // 路径就地判定（收窄前是 e.metaKey || e.ctrlKey，与拆分前的键盘口径同源）。
   // M144：鼠标路径同样覆盖外链——外链不需要 vault 上下文，故不再以 currentPath 提前返回。
   // M145：同一条路径覆盖全部可激活形态（应用内跳转类仍要求 vault 上下文，判定在 linkTargetAt）。
-  // M272：字面 URL（裸 URL / 定义行 / 角括号自动链接）由同一判定自动获得 ⌘-Click——本监听零改动。
-  editor.view.dom.addEventListener("mousedown", (e) => {
-    if (e.button !== 0) return;
-    if (!e.metaKey) return;
-    const pos = editor.view.posAtCoords({ x: e.clientX, y: e.clientY });
-    if (pos === null) return;
-    const target = linkTargetAt(pos);
-    if (target === null) return; // 不在链接上：不拦截，选区正常落点
-    e.preventDefault();
-    followLink(target);
-  });
+  // M272：字面 URL（裸 URL / 定义行 / 角括号自动链接）由同一判定自动获得 ⌘-Click。
+  // M317 2.3：监听挂到**每个 pane** 的视图上（eachView 由装配层注入，现存与未来 pane 都挂）。
+  // 判定与打开都取**被点 pane** 自己的视图：鼠标事件早于 focusin，若不按视图取值，非活跃 pane
+  // 的点击会用活跃 pane 的 state 去算坐标 → 命中判定错位。同时先把该 pane 置为活跃 pane，
+  // 让 `resolveBase()`（活读活跃 pane 前台文档）解析到被点的这一份。
+  function bindClick(view: EditorView): void {
+    view.dom.addEventListener("mousedown", (e) => {
+      if (e.button !== 0) return;
+      if (!e.metaKey) return;
+      deps.activateView?.(view);
+      const pos = view.posAtCoords({ x: e.clientX, y: e.clientY });
+      if (pos === null) return;
+      const target = linkTargetAt(pos, view);
+      if (target === null) return; // 不在链接上：不拦截，选区正常落点
+      e.preventDefault();
+      followLink(target);
+    });
+  }
+  if (deps.eachView) deps.eachView(bindClick);
+  else bindClick(editor.view);
 
   return { resolver: wikilinkResolver, invalidate, resetForVault, followAt };
 }

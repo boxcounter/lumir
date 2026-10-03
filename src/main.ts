@@ -1,6 +1,7 @@
 import { createShell } from "./shell";
 import { createEditor } from "./editor";
 import type { EditorHandle, EditorSession } from "./editor";
+import type { EditorView } from "@codemirror/view";
 import { applyKeyOverrides, BLOCK_SCROLL_CLASS, EDITOR_COMMAND_IDS, KEY_BINDINGS, Keymap, TAB_GOTO_IDS } from "./keys";
 import type { CommandId, CommandRunner, CommandRuntime, EditorCommandId, KeyBinding, KeyOverrides } from "./keys";
 import { createPaneLayout } from "./pane-layout";
@@ -148,13 +149,16 @@ function fsPathsExist(paths: string[]): Promise<string[]> {
 const shell = createShell(app);
 
 // ---------------------------------------------------------------------------
-// 双 pane 装配（M316，change pane-system-split-view 的 tasks 分组 1/3）：
-// pane-layout 账本管 pane 生命周期与活跃指针；每个 pane 一个 createEditor 实例
-//（design §4「createEditor 双实例化」）。本 mission 的边界：
-//   - 账本只做 **pane 级**接线（split / close / activate）；标签级登记
-//    （openTab / closeTab / moveTab）归 tasks 4.x——在那之前，「哪个会话在哪个 pane」的
-//     唯一真源就是各 pane 编辑器实例自己的会话表，属主路由一律按
-//    `handle.sessions().includes(session)` 现查（不另存第二份归属清单，REVIEW.md 第 8 条）；
+// 双 pane 装配（M316 建骨架，M317 完成标签级接线）：
+// pane-layout 账本管 pane 生命周期、活跃指针与**标签归属**；每个 pane 一个 createEditor 实例
+//（design §4「createEditor 双实例化」）。
+//   - 账本既做 **pane 级**操作（split / close / activate），也做**标签级**归属登记
+//    （openTab / closeTab / moveTab）。标签归属的对齐口径是 `reconcilePaneLedger`（M317 接线）：
+//     账本按**对象引用**持有各实例的 EditorSession，与实例会话表对账（同一对象、path 活读），
+//     装配层不另存第二份归属清单（REVIEW.md 第 8 条）。跨 pane 移动标签走 `moveSessionToPane`
+//    （账本 moveTab + 源实例 closeSession + 目标实例 adoptSession，state 整体迁移不重建）；
+//   - 「哪个会话在哪个 pane」的**现查**入口仍是 `paneEntryOfSession`（按实例会话表查，与账本
+//     对账同源、互为兜底）；
 //   - 既有消费者（保存链路 / toc / link-follow / 栏宽拖拽 / 浮层群 / 命令表）拿到的仍是
 //     一个 EditorHandle——下面这份**复合句柄**：写类口径广播到全部 pane（能力一份值管
 //     全部实例，与单实例时代语义一致），读类与动作类解析到**活跃 pane**，会话级操作按
@@ -201,6 +205,16 @@ function forEachEditor(run: (handle: EditorHandle) => void): void {
 function injectEach(register: (handle: EditorHandle) => void): void {
   editorInjections.push(register);
   forEachEditor(register);
+}
+
+/** 「每个 pane 的 EditorView 本体」的挂钩注册表（M317 tasks 2.1）：与 `editorInjections`
+ *  同构——注册即对现存 pane 的视图各挂一次，新 pane 在 `createPaneHandle` 里重放。用于需要
+ *  视图对象本身、而不只是 EditorHandle 的消费者（当前唯一是 toc 的 updateListener：
+ *  它要挂在**每个** pane 的视图上，才能在该 pane 成为活跃 pane 后捕获它自己的光标 / 滚动）。 */
+const viewTrackers: Array<(view: EditorView) => void> = [];
+function trackEachView(run: (view: EditorView) => void): void {
+  viewTrackers.push(run);
+  for (const pane of paneLayout.panes()) run(pane.handle.view);
 }
 
 /** wikilink 解析器的施加（applyVault 唯一调用点）：更新当前值并广播到全部 pane——
@@ -276,8 +290,9 @@ function createPaneHandle(paneId: PaneId): EditorHandle {
     handle.setMarkdownLineNumbers(currentMarkdownLineNumbers);
     handle.setWikilinkResolver(currentResolver);
   }
-  // 能力注入与事件订阅全量重放（注册表口径，见上面两处注册表的注释）。
+  // 能力注入与事件订阅全量重放（注册表口径，见上面几处注册表的注释）。
   for (const inject of editorInjections) inject(handle);
+  for (const track of viewTrackers) track(handle.view);
   for (const subscribe of paneSubscribers) assembly.unsubs.push(subscribe(handle));
   // 焦点进入该 pane 的内容区 → 它成为活跃 pane；焦点移去 chrome 不翻指针
   //（pane-layout 的 activate 语义：「移出内容区不调用」）。
@@ -313,6 +328,34 @@ function activatePane(paneId: PaneId): void {
   syncActiveDocument();
 }
 
+/** 按一个 EditorView 找到它所属 pane 并翻成活跃 pane（M317 2.3 的鼠标路径：事件只带视图，
+ *  不带 pane id）。找不到即视图不属于任何在场 pane（防御性），无操作。 */
+function activatePaneForView(view: EditorView): void {
+  for (const [paneId, assembly] of paneAssemblies) {
+    if (assembly.handle.view === view) {
+      activatePane(paneId);
+      return;
+    }
+  }
+}
+
+/** 一个编辑器句柄所属的 pane（M317 2.9：遮罩的来源 pane）。 */
+function paneIdOfHandle(handle: EditorHandle): PaneId | undefined {
+  for (const [paneId, assembly] of paneAssemblies) {
+    if (assembly.handle === handle) return paneId;
+  }
+  return undefined;
+}
+
+/** 把焦点交还给**指定 pane**（M317 2.9 的遮罩焦点归还例外）：遮罩打开后活跃 pane 可能已经
+ *  切换，焦点要还到打开遮罩的那个 pane，而不是机械回当前活跃 pane。指定的 pane 已收起时
+ *  （防御性）退化为活跃 pane。聚焦会触发该 pane 的 focusin，活跃指针随之翻回来——与「点选
+ *  窗口即选中该窗口」一致。 */
+function focusSourcePane(paneId: PaneId | undefined): void {
+  const pane = paneId === undefined ? undefined : paneLayout.panes().find((p) => p.id === paneId);
+  (pane?.handle ?? paneLayout.activeHandle()).focusPreservingReadingPosition();
+}
+
 /** 活跃 pane 的标签条实例。未就位的唯一窗口是 splitActivePane 里 split() 与标签条
  *  创建之间的同步段——外部调用不可能插进去；缺位即接线错误，就地炸掉（同 pane-layout
  *  的 paneById 口径），不静默当成无操作。 */
@@ -330,13 +373,67 @@ function paneEntryOfSession(session: EditorSession): [PaneId, PaneAssembly] | un
   return undefined;
 }
 
-/** 在属主 pane 激活一个会话并把活跃 pane 翻过去（本 mission 的过渡语义：文件开在
- *  另一 pane 时**切过去**，不移动标签——打开落点移动归 tasks 4.2）。 */
+/** 在属主 pane 激活一个会话并把活跃 pane 翻过去（不移动标签的场景：会话恢复激活等）。 */
 function activateSessionInOwnerPane(session: EditorSession): void {
   const entry = paneEntryOfSession(session);
   if (entry === undefined) return;
   activatePane(entry[0]);
   entry[1].tabs?.activateTab(session);
+}
+
+/** 把一个会话**整体迁到**目标 pane（M317 tasks 4.1 / 4.2）：源实例摘除、目标实例接管。
+ *  `adoptSession` 迁入的是**原 state 对象**（撤销史 / 语法树 / 选区 / 搜索查询随迁，M317 4.1
+ *  已把三处 Compartment 提为模块级共享使之成立），MUST NOT 重建 state、MUST NOT 重新解析。
+ *  账本一侧用 `moveTab` 同步归属；目标 pane 成为活跃 pane 且该标签成为其前台。
+ *  移动**不制造撤销事件**（没有 dispatch 装载事务，只是 view.setState）。 */
+function moveSessionToPane(session: EditorSession, targetPaneId: PaneId): void {
+  const owner = paneEntryOfSession(session);
+  const target = paneAssemblies.get(targetPaneId);
+  if (target === undefined) return;
+  if (owner !== undefined && owner[0] === targetPaneId) {
+    // 已在该 pane：只激活（幂等分支）。
+    activatePane(targetPaneId);
+    target.tabs?.activateTab(session);
+    return;
+  }
+  // 账本先动（此时标签已登记在册，reconcile 保证）：moveTab 把归属挪到目标 pane。
+  paneLayout.moveTab(session, targetPaneId);
+  owner?.[1].handle.closeSession(session); // 源实例摘除（不销毁 state；前台让位给邻居）
+  target.handle.adoptSession(session); // 目标实例接管原 state（不重建）
+  renderAllTabStrips();
+  activatePane(targetPaneId);
+  target.handle.activateSession(session); // view.setState(原 state)：撤销史 / 选区 / 滚动随行
+  target.tabs?.renderTabs();
+  syncActiveDocument();
+}
+
+/** 账本对账（M317 标签级接线）：把 pane-layout 的标签账本与各 pane 编辑器实例的会话表对齐。
+ *
+ *  为什么用「对账」而不是「openTab 作唯一创建通道」：编辑器实例内部也会建会话——`createEditor`
+ *  的初始文档、`reset()` 的空文档都是实例内部行为，装配层看不到那些创建点，无法把它们都改道
+ *  经 `openTab`。因此账本按**对象引用**与实例会话表对齐（同一 `EditorSession`，`path` 活读），
+ *  两边天然不会各存一份归属真源。
+ *
+ *  对账用 `openTab` 登记（它按 path 判重、登记后不改已有归属——被登记的会话本就只属于当前
+ *  pane）、`closeTab` 摘除、`activateTab` 对齐前台；对账过程会翻活跃指针，末尾还原。
+ *  每次调用只对**差异**动手，稳态下是 O(panes × tabs) 的纯比较。 */
+function reconcilePaneLedger(): void {
+  const activeId = paneLayout.active().id;
+  for (const pane of paneLayout.panes()) {
+    const sessions = pane.handle.sessions();
+    for (const tab of [...pane.tabs]) {
+      if (!sessions.includes(tab)) paneLayout.closeTab(tab);
+    }
+    for (const session of sessions) {
+      if (paneLayout.paneOf(session) === undefined) {
+        // create 只交回既有会话对象本身（对账不新建）；path 此刻已落定，判重键因此正确。
+        paneLayout.openTab(session.path, () => session, pane.id);
+      }
+    }
+    const foreground = pane.handle.activeSession();
+    if (sessions.includes(foreground)) paneLayout.activateTab(pane.id, foreground);
+  }
+  paneLayout.activate(activeId); // openTab / activateTab 会翻活跃指针，对账后还原
 }
 
 /** 全部 pane 的标签槽各重画一遍（dirty 跃迁 / 同步点）：dirty 点是逐标签的，
@@ -473,6 +570,8 @@ function activateOtherPane(): void {
  *（root 的在前、并进来的在后）。 */
 function closeActivePane(): void {
   if (!paneLayout.isSplit()) return;
+  // 先把账本对齐再收（close() 依据 closing.tabs 把归属并入幸存 pane）：M317 标签级接线。
+  reconcilePaneLedger();
   const closing = paneLayout.active();
   const root = paneLayout.panes()[0];
   const dynamic = paneLayout.panes()[1];
@@ -536,10 +635,22 @@ const editor: EditorHandle = {
   syncRuntimeTypography: (settings) =>
     forEachEditor((handle) => handle.syncRuntimeTypography(settings)),
   textScale: (direction) => forEachEditor((handle) => handle.textScale(direction)),
-  setContentWidth: (width) => forEachEditor((handle) => handle.setContentWidth(width)),
+  // 栏宽是**全局单键**（`ui.content_width`，ADR 0008 Decision 2）：一份值管全部 pane，
+  // 单 key 不动（M317 2.5）。广播施加到每个实例（各写一次 documentElement 上的 token，幂等），
+  // 并**逐 pane 各自 requestMeasure()**——CSS 变量变化不触发 CM 的 ResizeObserver（editor.ts
+  // 的 setContentWidth 注释），只给 root 请求重测量会让另一个 pane 停在旧列宽上。CM 会把同帧
+  // 多次 requestMeasure 合并成一次，重复请求无额外成本。
+  setContentWidth: (width) => {
+    forEachEditor((handle) => {
+      handle.setContentWidth(width);
+      handle.view.requestMeasure();
+    });
+  },
   contentWidth: () => paneLayout.activeHandle().contentWidth(),
+  // 新会话落在**活跃 pane**（tasks 2.10 / 4.2 的打开落点）。
   createSession: () => paneLayout.activeHandle().createSession(),
-  // 恢复壳恒落 root pane（tasks 4.x 之前恢复语义不变：壳列表只进一个 pane）。
+  // 恢复壳恒落 root pane：vault 会话恢复（v1）把标签列表只装进一个 pane，分栏布局的按 pane
+  // 恢复归持久化 mission（tasks 5.3）；新 pane 的空白档由 split 自己的 reset 提供。
   createShellSession: (path) => paneLayout.panes()[0].handle.createShellSession(path),
   reloadSession: (session, doc, path, requestId) => {
     (paneEntryOfSession(session)?.[1].handle ?? paneLayout.activeHandle()).reloadSession(
@@ -666,20 +777,36 @@ injectEach((handle) => handle.setLightbox(lightbox));
 // 与关闭后把焦点交还编辑器。遮罩 DOM 惰性建立：文档打开路径与键入路径上零新增工作。
 // **M280 补齐**：这里此前是裸 `editor.view.focus()`——同一形态的第 5 个落点，M240 当时漏改
 // （M279 §6 必修第 1 条）。现在与代码块/图片遮罩/键位面板走同一份原语。
+// M317 2.9：遮罩打开时的**来源 pane**——关闭时焦点归还到这里，而不是机械回活跃 pane
+//（遮罩打开后活跃 pane 可能已切换；design §2 行 10 的显式例外）。两条打开入口（命令 /
+// 触发钮端口）都在打开前记下发起 pane；源元素本身也已按 pane 取（命令路径取活跃 pane 的
+// target，触发钮路径的 widget 本就在发起 pane 的 DOM 里）。
+let tableFullscreenSource: PaneId | undefined;
 const tableFullscreen = createTableFullscreen({
   mount: shell.root,
-  restoreFocus: () => editor.focusPreservingReadingPosition(),
+  restoreFocus: () => focusSourcePane(tableFullscreenSource),
 });
-injectEach((handle) => handle.setTableFullscreen(tableFullscreen));
+injectEach((handle) =>
+  handle.setTableFullscreen({
+    open: (source, label) => {
+      tableFullscreenSource = paneIdOfHandle(handle);
+      tableFullscreen.open(source, label);
+    },
+    close: (reason) => tableFullscreen.close(reason),
+    isOpen: () => tableFullscreen.isOpen(),
+  }),
+);
 
 // 代码块放大全屏查看（M277，change code-block-fullscreen；双入口：命令 +
 // 代码块 hover 触发钮）。`restoreFocus` 与表格侧**形态一致**（M280 起两侧逐字同一份）：
 // MUST NOT 照抄裸 `editor.view.focus()`——M274 实测证明 WebKit 下那次聚焦会把阅读位置拽回
 // （scrollTop 2750 → 0，chromium 结构性看不见）。这里注入 editor 的原语（取阅读位置 → focus →
 // 经编辑器滚动通道写回），见 src/scroll-position-view.ts 的 focusPreservingReadingPosition。
+// M317 2.9：与表格侧同款——来源 pane 在打开时记下，关闭时焦点归还到它（不机械回活跃 pane）。
+let codeBlockFullscreenSource: PaneId | undefined;
 const codeBlockFullscreen = createCodeBlockFullscreen({
   mount: shell.root,
-  restoreFocus: () => editor.focusPreservingReadingPosition(),
+  restoreFocus: () => focusSourcePane(codeBlockFullscreenSource),
   themeScopeSource: () => editor.view.dom,
 });
 // 装饰层拿到的是「按块起点打开」的**端口**（不是遮罩本体）：呈现计划在点击那一刻按当前
@@ -691,6 +818,8 @@ injectEach((handle) =>
     open(from) {
       const target = codeBlockFullscreenTarget(handle.view, from);
       if (target === null) return;
+      // 来源 pane 记录（M317 2.9）：触发钮在哪个 pane 的 DOM 里，焦点就还给哪个 pane。
+      codeBlockFullscreenSource = paneIdOfHandle(handle);
       codeBlockFullscreen.open(target.render, target.label);
     },
   }),
@@ -732,6 +861,10 @@ function closeDocumentOverlays(): void {
 // 落点算式只有一处）、以及取消 / 收起时的交还焦点（`focusPreservingReadingPosition`——
 // **MUST NOT 裸 `editor.view.focus()`**：浮层关闭不得改变阅读位置，见 src/scroll-position-view.ts）。
 // 浮层 DOM 随装配建立（一次性），打开 / 收起只是 hidden 翻转：文档打开路径与键入路径零新增工作。
+// M317 2.8：`onJump` 解析到**活跃 pane** 的 `jumpToLine`（复合句柄）；输入条打开期间前台会话
+// 变化（含**跨 pane 切换**）的失效路径复用既有「不跨会话跳转」口径——`syncActiveDocument` 是
+// 唯一同步点，切 pane / 切标签都会 `gotoLine.close()`（收起且不跳转），cross-pane 因此天然走同
+// 一条失效路径，不需要第二条判据。
 const gotoLine = createGotoLinePrompt({
   mount: shell.modeline,
   onJump: (line) => editor.jumpToLine(line),
@@ -799,6 +932,12 @@ const widthDrag = createContentWidthDrag({
 });
 
 // 编辑器区域的"暂不支持预览 / 错误提示"覆盖层：显示提示时藏起编辑器本体。
+//
+// M317 2.6：提示**点名跟随活跃 pane**——`showNotice` 的文案由打开动作给的 path 派生（打开 /
+// 重载的落点就是活跃 pane），隐藏的是 `editor.view.dom`（活跃 pane 的前台视图）。覆盖层是
+// `shell.editor` 上的 `inset: 0` 整块遮罩，双 pane 下会临时盖住两栏（转瞬即逝的装载提示），
+// 单 pane 常态逐像素不变；跨 pane 的批量提示（切 vault 守卫）维持既有「数量 + 当前 vault」
+// 口径，取的是全部 pane 的 dirty 并集（save.vaultSwitchBlock），逐路径键控不变。
 const notice = document.createElement("div");
 notice.className = "editor-notice";
 notice.hidden = true;
@@ -927,10 +1066,10 @@ function emitReadiness(name: string, detail: object = {}): void {
 // 提示出口（toast：D84 与 M197 的两条新文案）。指示段与浮层都挂 modeline（M211 从旧标题区迁来），
 // 浮层向上展开、不动布局。
 const toc = createToc({
-  // M316 已知过渡形态：构造期定死 root pane 的 view——大纲的 updateListener 只跟
-  // root pane 的文档流，「大纲跟随活跃 pane」归 tasks 2.1（context 回调已是活跃 pane
-  // 活读，标题切换本身不错，只是非 root pane 的键入不触发刷新）。
-  view: editor.view,
+  // M317 2.1：内容源活读**活跃 pane** 的 view（构造期不再钉死 root）。刷新挂钩经
+  // trackEachView 挂到每个 pane 的视图上（含未来 pane），跨 pane 切换由 syncActiveDocument
+  // 调 toc.sourceChanged() 即时换源。
+  view: () => editor.view,
   indicator: shell.modelineSection,
   mount: shell.modeline,
   hasFile: () => save.displayedPath() !== undefined,
@@ -945,6 +1084,9 @@ const toc = createToc({
   },
   toast,
 });
+// 大纲的视图更新挂钩挂到每个 pane 的视图上（现存 root + 未来 pane 由 viewTrackers 重放）：
+// 非活跃 pane 的事件也挂着，等它成为活跃 pane 后立刻可捕获。
+trackEachView((view) => toc.track(view));
 
 editor.onReady((event) => {
   emitReadiness(event.phase, event);
@@ -1345,10 +1487,15 @@ function syncActiveDocument(): void {
   syncBackendDirty();
   // 指示段与文档同一帧到位（不落在 120ms 节流窗口之后）：见 TocHandle.refresh 的说明。
   toc.refresh();
+  // 大纲浮层打开期间活跃 pane / 前台文档变化 ⇒ 内容源即时换源（M317 2.1；未打开时 no-op）。
+  toc.sourceChanged();
   tree.setCurrentPath(session.path);
   // 会话切换后栏宽手柄重新贴合列缘（模式 / gutter 进出只改列位置不改列宽，控制器自己的
   // ResizeObserver 看不见位置变化）。
   widthDrag.reposition();
+  // 标签账本与各 pane 会话表对齐（M317 标签级接线）：这是「标签集合 / 归属变化」的唯一同步点，
+  // 开 / 关 / 移动标签与实例内部建会话都汇到这里。
+  reconcilePaneLedger();
   renderAllTabStrips();
   // 标签集合 / 顺序 / 激活项变化后防抖落盘会话（M163）。挂在这个唯一同步点上：切标签、
   // 开文件、关标签都会经过它，别处不必各埋一个「记得写会话」的钩子。
@@ -1408,6 +1555,14 @@ async function openFile(
   // 的文件」是同一件事的两态，守卫口径必须一致；会话恢复那条批量路径进入时前台是装载刚复位出的
   // 空文档（clean），守卫照常放行。
   if (editor.activeSession().path === undefined && !save.guard(t("D209"))) return false;
+  // M317 4.2：在活跃 pane 里的「打开」意图命中**他 pane 已开的同文件**时执行**移动**（源 pane
+  // 失去它、目标 pane 前台变为它），而不是只把活跃指针切过去；链接跟随命中已开文件同样移动并
+  // 激活，当前标签保留。移动不重建 state（见 moveSessionToPane）。
+  if (existing !== undefined) {
+    const ownerId = paneEntryOfSession(existing)?.[0];
+    const activePaneId = paneLayout.active().id;
+    if (ownerId !== undefined && ownerId !== activePaneId) moveSessionToPane(existing, activePaneId);
+  }
   if (existing !== undefined && !existing.loaded) {
     // 经 `withSessionLoad` 登记在途：装载里的 `tabs.activateTab` 会经同步点回调到
     // `ensureActiveSessionLoaded`，不登记就会为同一个文件并发发起第二次装载。
@@ -1425,8 +1580,8 @@ async function openFile(
   //  此后所有点击都被它 intercept——视觉场景 wikilink.spec.ts 就是这样红的）。
   if (existing !== undefined) {
     showEditor(); // 撤下一次更早的、已被这次同步切换取代的「正在打开」覆盖层
-    // M316 过渡语义：文件开在另一 pane 时**切过去**（在属主 pane 激活并翻活跃指针），
-    // 不移动标签——打开落点移动归 tasks 4.2。
+    // 上面的移动分支已把「开在他 pane」的同文件移到活跃 pane 并激活；这一句覆盖剩余情形
+    //（本就在活跃 pane）与移动分支之外的兜底，已是前台时是 no-op。
     activateSessionInOwnerPane(existing);
     return true;
   }
@@ -1558,6 +1713,10 @@ const linkFollow = createLinkFollow({
     await openFile(path, kind);
   },
   toast,
+  // M317 2.3：⌘-Click 挂到每个 pane 的视图上（与 toc 共用 viewTrackers 注册表，含未来 pane）；
+  // 点击先按被点的视图把该 pane 翻成活跃 pane（鼠标事件早于 focusin，不先翻会让解析基准错位）。
+  eachView: (attach) => trackEachView(attach),
+  activateView: (view) => activatePaneForView(view),
 });
 
 // ---------------------------------------------------------------------------
@@ -1664,6 +1823,10 @@ shell.modelineLanguage.addEventListener("click", cycleLanguage);
 // 这里只做一件事——把 shell 与编辑器句柄交给它。toggle 命令（harness.toggle）在下面的
 // 统一键位层登记，与标题栏 toggle 钮共用面板的同一条 toggle 路径。
 // ---------------------------------------------------------------------------
+// M317 2.4：面板拿到的 `editor` 是复合句柄，`assembleHarnessContext(editor)` 读的
+// `activeSession()` + `view.state/viewport` 因此都解析到**活跃 pane**——「当前 TAB」的定义
+// 随活跃 pane 走。`HarnessContextSource`（harness-context.ts:31）的接口形状不变，改造面全在
+// 这一处注入（design §2 行 5）。
 const harnessPanel = createHarnessPanel({ shell, editor });
 
 // ---------------------------------------------------------------------------
@@ -1685,6 +1848,9 @@ const commands: CommandRuntime = {
   "app.describe-bindings": () => bindingsPanel.toggle(),
   // 文件内搜索（M139）：能力与 panel 在 src/search.ts，此处只把编辑器视图交过去。
   // 作用域 global——焦点在文件树 / 搜索框里时同样要能开（⌘F 的 mac 惯例，理由见 keys.ts）。
+  // M317 2.7：交出的是**活跃 pane** 的视图；panel 在构造期绑死这一个 view、此后只用它
+  //（src/search.ts 的 LumirSearchPanel 持 `this.view`），面板持焦期间活跃 pane 不漂移
+  //（focusin 只发生在 pane 的 contentDOM 上），搜索 / 替换目标因此不随焦点漂。
   "app.search-open": () => openSearch(editor.view),
   // 轻量大纲（M148）：开→关 / 关→开，无标题文档只给提示（不弹空浮层）。
   "toc.toggle": () => toc.toggle(),
@@ -1730,6 +1896,7 @@ const commands: CommandRuntime = {
     }
     const target = tableFullscreenTarget(editor.view);
     if (target === null) return;
+    tableFullscreenSource = paneLayout.active().id; // 焦点归还的来源 pane（M317 2.9）
     tableFullscreen.open(target.table, target.label);
   },
   // 代码块放大全屏查看（M277）：与表格侧同形——遮罩已开 = 关闭（toggle），否则按命中判据找块
@@ -1742,6 +1909,7 @@ const commands: CommandRuntime = {
     }
     const target = codeBlockFullscreenTarget(editor.view, editor.view.state.selection.main.head);
     if (target === null) return;
+    codeBlockFullscreenSource = paneLayout.active().id; // 焦点归还的来源 pane（M317 2.9）
     codeBlockFullscreen.open(target.render, target.label);
   },
   // 块级复制（M277）：命中判据不满足时什么都不做（事件不被消费由下面的命令级门承担）。

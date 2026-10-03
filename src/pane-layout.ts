@@ -7,13 +7,16 @@
 //     持有、在收起时归还，**不解释它**（不知道句柄是不是 EditorHandle）；
 //   - 标签是调用方给的**不透明对象**，容器只读它的 `path`——会话所有权按路径判定。
 //
-// 账本与「每个 pane 一个编辑器实例」的分工（接线时唯一要对齐的一处）：
+// 账本与「每个 pane 一个编辑器实例」的分工（M317 已接线，接线点在 src/main.ts）：
 //   - **账本管归属**：哪个标签在哪个 pane、各 pane 谁是前台、谁是活跃 pane；
 //   - **编辑器管机械**：EditorView / EditorState / 装载与保存。
-//   装配层必须让两者同源：本模块的 `openTab` / `closeTab` / `moveTab` 是标签集合的唯一变动通道，
-//   编辑器侧的对应动作（`createSession` / `closeSession` / 目标 view 的 `setState`）在同一处跟随
-//   ——REVIEW.md 第 8 条：同一语义不许两处真源。**接线从 tasks.md 分组 1.2 起，不在本 mission**；
-//   本模块暂未被 `src/` 其他文件引用是预期形态。
+//   装配层经 `reconcilePaneLedger` 把两者对齐：账本按**对象引用**持有各实例的 EditorSession
+//   （同一对象、`path` 活读），`openTab` 负责登记并按 path 判重、`closeTab` 摘除、`moveTab`
+//   跨 pane 迁移——REVIEW.md 第 8 条：同一语义不许两处真源。
+//
+//   为什么登记走「对账」而不是「openTab 作唯一创建通道」：`createEditor` 的初始文档与 `reset()`
+//   的空文档由编辑器实例内部建出，装配层看不到那些创建点，无法把它们全改道经 `openTab`；
+//   对账把两者按对象引用补齐（见 `reconcilePaneLedger` 的说明），循环只对差异动手。
 //
 // 三条不变量（`pane-layout.test.ts` 逐条钉住）：
 //   1. pane 数 ≤ `MAX_PANES`（v1 = 2；第三次 split 无操作、无报错、无提示）；
