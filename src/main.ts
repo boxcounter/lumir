@@ -336,6 +336,23 @@ function activatePaneForView(view: EditorView): void {
   }
 }
 
+/** 一个编辑器句柄所属的 pane（M317 2.9：遮罩的来源 pane）。 */
+function paneIdOfHandle(handle: EditorHandle): PaneId | undefined {
+  for (const [paneId, assembly] of paneAssemblies) {
+    if (assembly.handle === handle) return paneId;
+  }
+  return undefined;
+}
+
+/** 把焦点交还给**指定 pane**（M317 2.9 的遮罩焦点归还例外）：遮罩打开后活跃 pane 可能已经
+ *  切换，焦点要还到打开遮罩的那个 pane，而不是机械回当前活跃 pane。指定的 pane 已收起时
+ *  （防御性）退化为活跃 pane。聚焦会触发该 pane 的 focusin，活跃指针随之翻回来——与「点选
+ *  窗口即选中该窗口」一致。 */
+function focusSourcePane(paneId: PaneId | undefined): void {
+  const pane = paneId === undefined ? undefined : paneLayout.panes().find((p) => p.id === paneId);
+  (pane?.handle ?? paneLayout.activeHandle()).focusPreservingReadingPosition();
+}
+
 /** 活跃 pane 的标签条实例。未就位的唯一窗口是 splitActivePane 里 split() 与标签条
  *  创建之间的同步段——外部调用不可能插进去；缺位即接线错误，就地炸掉（同 pane-layout
  *  的 paneById 口径），不静默当成无操作。 */
@@ -699,20 +716,36 @@ injectEach((handle) => handle.setLightbox(lightbox));
 // 与关闭后把焦点交还编辑器。遮罩 DOM 惰性建立：文档打开路径与键入路径上零新增工作。
 // **M280 补齐**：这里此前是裸 `editor.view.focus()`——同一形态的第 5 个落点，M240 当时漏改
 // （M279 §6 必修第 1 条）。现在与代码块/图片遮罩/键位面板走同一份原语。
+// M317 2.9：遮罩打开时的**来源 pane**——关闭时焦点归还到这里，而不是机械回活跃 pane
+//（遮罩打开后活跃 pane 可能已切换；design §2 行 10 的显式例外）。两条打开入口（命令 /
+// 触发钮端口）都在打开前记下发起 pane；源元素本身也已按 pane 取（命令路径取活跃 pane 的
+// target，触发钮路径的 widget 本就在发起 pane 的 DOM 里）。
+let tableFullscreenSource: PaneId | undefined;
 const tableFullscreen = createTableFullscreen({
   mount: shell.root,
-  restoreFocus: () => editor.focusPreservingReadingPosition(),
+  restoreFocus: () => focusSourcePane(tableFullscreenSource),
 });
-injectEach((handle) => handle.setTableFullscreen(tableFullscreen));
+injectEach((handle) =>
+  handle.setTableFullscreen({
+    open: (source, label) => {
+      tableFullscreenSource = paneIdOfHandle(handle);
+      tableFullscreen.open(source, label);
+    },
+    close: (reason) => tableFullscreen.close(reason),
+    isOpen: () => tableFullscreen.isOpen(),
+  }),
+);
 
 // 代码块放大全屏查看（M277，change code-block-fullscreen；双入口：命令 +
 // 代码块 hover 触发钮）。`restoreFocus` 与表格侧**形态一致**（M280 起两侧逐字同一份）：
 // MUST NOT 照抄裸 `editor.view.focus()`——M274 实测证明 WebKit 下那次聚焦会把阅读位置拽回
 // （scrollTop 2750 → 0，chromium 结构性看不见）。这里注入 editor 的原语（取阅读位置 → focus →
 // 经编辑器滚动通道写回），见 src/scroll-position-view.ts 的 focusPreservingReadingPosition。
+// M317 2.9：与表格侧同款——来源 pane 在打开时记下，关闭时焦点归还到它（不机械回活跃 pane）。
+let codeBlockFullscreenSource: PaneId | undefined;
 const codeBlockFullscreen = createCodeBlockFullscreen({
   mount: shell.root,
-  restoreFocus: () => editor.focusPreservingReadingPosition(),
+  restoreFocus: () => focusSourcePane(codeBlockFullscreenSource),
   themeScopeSource: () => editor.view.dom,
 });
 // 装饰层拿到的是「按块起点打开」的**端口**（不是遮罩本体）：呈现计划在点击那一刻按当前
@@ -724,6 +757,8 @@ injectEach((handle) =>
     open(from) {
       const target = codeBlockFullscreenTarget(handle.view, from);
       if (target === null) return;
+      // 来源 pane 记录（M317 2.9）：触发钮在哪个 pane 的 DOM 里，焦点就还给哪个 pane。
+      codeBlockFullscreenSource = paneIdOfHandle(handle);
       codeBlockFullscreen.open(target.render, target.label);
     },
   }),
@@ -1772,6 +1807,7 @@ const commands: CommandRuntime = {
     }
     const target = tableFullscreenTarget(editor.view);
     if (target === null) return;
+    tableFullscreenSource = paneLayout.active().id; // 焦点归还的来源 pane（M317 2.9）
     tableFullscreen.open(target.table, target.label);
   },
   // 代码块放大全屏查看（M277）：与表格侧同形——遮罩已开 = 关闭（toggle），否则按命中判据找块
@@ -1784,6 +1820,7 @@ const commands: CommandRuntime = {
     }
     const target = codeBlockFullscreenTarget(editor.view, editor.view.state.selection.main.head);
     if (target === null) return;
+    codeBlockFullscreenSource = paneLayout.active().id; // 焦点归还的来源 pane（M317 2.9）
     codeBlockFullscreen.open(target.render, target.label);
   },
   // 块级复制（M277）：命中判据不满足时什么都不做（事件不被消费由下面的命令级门承担）。
