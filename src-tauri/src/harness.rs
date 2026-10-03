@@ -231,14 +231,23 @@ pub fn harness_send(
     let scope = vault_scope(&vault)?;
     let config = config::load()?.config.harness;
     let context = turn::parse_context(&context_json)?;
-    let message = turn::assemble_user_message(&message, &context);
+    let assembled = turn::assemble_user_message(&message, &context);
     runtime.acquire_turn(&scope)?;
     let runtime_thread = runtime.inner().clone();
     let runtime_release = runtime.inner().clone();
     let scope_release = scope.clone();
     if let Err(e) = std::thread::Builder::new()
         .name("lumir-harness-llm".into())
-        .spawn(move || turn::run_turn(app, runtime_thread, scope, config, message))
+        .spawn(move || {
+            turn::run_turn(
+                app,
+                runtime_thread,
+                scope,
+                config,
+                assembled.text,
+                assembled.context_section,
+            )
+        })
     {
         // 起线程失败：释放 busy，别把会话永远留在占用态。
         runtime_release.release_turn(&scope_release);

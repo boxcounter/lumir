@@ -85,18 +85,29 @@ impl JsonlWriter {
     }
 }
 
-/// vault 根路径 → 文件名安全串：路径分隔符与非常规字符统一 `_`（避免目录穿越）。
+/// vault 根路径 → 文件名安全串（**可逆编码**，防碰撞；M309）：字母数字与 `-` `.` 原样
+/// 保留，`_` 转义为 `__`，其余任何字符按 UTF-8 字节编成 `_xHH`。旧映射把非常规字符
+/// 统一压成 `_`，`/tmp/a b` 与 `/tmp/a_b` 因此同名；新编码下前者是
+/// `_x2ftmp_x2fa_x20b`、后者是 `_x2ftmp_x2fa__b`，不再碰撞。
+///
+/// **存量兼容（探针期，M309）**：本编码替换了旧映射，旧文件名不再被续写——本机已存在的
+/// 旧 JSONL 文件成为孤儿，不做迁移（探针期可接受；留存是审计侧记录，丢弃续写不阻断对话）。
 fn sanitize(root: &Path) -> String {
     let raw = root.display().to_string();
-    raw.chars()
-        .map(|c| {
-            if c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.') {
-                c
-            } else {
-                '_'
+    let mut out = String::with_capacity(raw.len());
+    for c in raw.chars() {
+        if c.is_ascii_alphanumeric() || matches!(c, '-' | '.') {
+            out.push(c);
+        } else if c == '_' {
+            out.push_str("__");
+        } else {
+            let mut buf = [0u8; 4];
+            for byte in c.encode_utf8(&mut buf).as_bytes() {
+                out.push_str(&format!("_x{byte:02x}"));
             }
-        })
-        .collect()
+        }
+    }
+    out
 }
 
 #[cfg(test)]
@@ -104,11 +115,28 @@ mod tests {
     use super::*;
 
     #[test]
-    fn sanitize_replaces_separators() {
-        assert_eq!(
-            sanitize(Path::new("/tmp/a b/vault.md")),
-            "_tmp_a_b_vault.md"
+    fn sanitize_is_collision_free_and_reversible_shape() {
+        // 回归：旧映射把两者都压成 `_tmp_a_b`；新编码必须区分（M309 碰撞对单测）。
+        assert_ne!(
+            sanitize(Path::new("/tmp/a b")),
+            sanitize(Path::new("/tmp/a_b")),
         );
+        assert_eq!(sanitize(Path::new("/tmp/a b")), "_x2ftmp_x2fa_x20b");
+        assert_eq!(sanitize(Path::new("/tmp/a_b")), "_x2ftmp_x2fa__b");
+        // 常规字符原样、`_` 双写、`-` `.` 不转义。
         assert_eq!(sanitize(Path::new("plain")), "plain");
+        assert_eq!(sanitize(Path::new("a-b.c_d")), "a-b.c__d");
+        // 非 ASCII 按 UTF-8 字节编码（可逆）。
+        assert_eq!(sanitize(Path::new("笔记")), "_xe7_xac_x94_xe8_xae_xb0");
+    }
+
+    #[test]
+    fn sanitize_never_emits_path_separator() {
+        // 防目录穿越：产物里不得出现 `/` 或 `\`。
+        for raw in ["/tmp/a/b", "\\windows\\path", "..\\.."] {
+            let name = sanitize(Path::new(raw));
+            assert!(!name.contains('/'), "{raw} -> {name}");
+            assert!(!name.contains('\\'), "{raw} -> {name}");
+        }
     }
 }

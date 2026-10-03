@@ -132,6 +132,7 @@ fn real_deepseek_two_turns_tool_call_and_reasoning_replay() {
             &config,
             "请用 vault_read 读取 smoke.md（path 填 \"smoke.md\"），然后用一句话说出文件第一行。"
                 .to_string(),
+            None,
             client.as_mut(),
         );
         runtime.release_turn(&scope);
@@ -156,6 +157,7 @@ fn real_deepseek_two_turns_tool_call_and_reasoning_replay() {
             &scope,
             &config,
             "这个文件一共有几行？只回答数字。".to_string(),
+            None,
             client.as_mut(),
         );
         runtime.release_turn(&scope);
