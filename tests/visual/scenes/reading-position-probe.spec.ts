@@ -13,6 +13,7 @@
 import { expect, test, type Page } from "@playwright/test";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { stubTauri, readingPositionGets, readingPositionPuts, type VaultFixture } from "./tauri-stub";
+import { SCROLL_SETTLE_TIMEOUT } from "./poll-budgets";
 
 /** 读数落盘：**每条记录立刻写一次**（按测试名分文件）。这样任何一个测试红了都不会丢掉
  *  已经测到的数（证据纪律：跑过就要留得下），也不依赖 worker 的模块状态。 */
@@ -238,7 +239,7 @@ test("§7-1/2/5 往返精度与 documentTop 坐标系（缩放 = 1）", async ({
   const beforeReopen = await geometry(page);
   const beforeTop = await topVisibleLine(page);
   await reopen(page, "long.md");
-  await expect.poll(async () => (await geometry(page)).scrollTop).toBeGreaterThan(0);
+  await expect.poll(async () => (await geometry(page)).scrollTop, { timeout: SCROLL_SETTLE_TIMEOUT }).toBeGreaterThan(0);
   await page.waitForTimeout(300);
 
   const restored = await geometry(page);
@@ -346,7 +347,7 @@ test("§7-4 栏宽变化（视口宽度不同）后再打开：同一条行仍�
   // 换栏宽（阅读栏宽是百分比，随窗口变化）：窄一档再打开
   await page.setViewportSize({ width: 900, height: 800 });
   await reopen(page, "long.md");
-  await expect.poll(async () => (await geometry(page)).scrollTop).toBeGreaterThan(0);
+  await expect.poll(async () => (await geometry(page)).scrollTop, { timeout: SCROLL_SETTLE_TIMEOUT }).toBeGreaterThan(0);
   await page.waitForTimeout(300);
   const after = await probePosition(page, ANCHOR_POS);
   record("columnWidthAfter", {
@@ -464,7 +465,7 @@ test("§7-6 code 模式 + 折行关闭：纵向与横向偏移一起还原", asy
   });
 
   await reopen(page, "long.txt", "// 第 001 行");
-  await expect.poll(async () => (await geometry(page)).scrollTop).toBeGreaterThan(0);
+  await expect.poll(async () => (await geometry(page)).scrollTop, { timeout: SCROLL_SETTLE_TIMEOUT }).toBeGreaterThan(0);
   await page.waitForTimeout(300);
   const after = await geometry(page);
   const afterPayload = (await readingPositionPuts(page)).at(-1)?.entries?.["long.txt"];

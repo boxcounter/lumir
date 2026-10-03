@@ -2,6 +2,7 @@ import { expect, test, type Page } from '@playwright/test';
 import { readFileSync } from 'node:fs';
 import { stubTauri } from './tauri-stub';
 import { copyFresh, readDocument } from './parity-checks';
+import { SCROLL_SETTLE_TIMEOUT } from './poll-budgets';
 import { summarize } from '../../../scripts/perf/lib/stats.mjs';
 
 const source = readFileSync(new URL('../fixtures/lists/mixed.md', import.meta.url), 'utf8');
@@ -122,7 +123,10 @@ test('嵌套列表：祖先组宽度变化后子组跟随重对齐', async ({ pa
   await page.evaluate(() => navigator.clipboard.writeText('\n3. N\n4. N\n5. N\n6. N\n7. N\n8. N\n9. N\n10. New'));
   await page.keyboard.press('Meta+v');
   expect(await readDocument(page)).toContain('10. New');
-  await expect.poll(async () => (await geometry(page, 'Child one')).rects[0].x, { timeout: 3000 })
+  // 等的是粘贴后列表装饰重建的几何收敛——与 m132 翻屏同族的负载敏感 poll（M311）：
+  // 原显式 3000ms 比默认还短，提到全量负载档。
+  await expect
+    .poll(async () => (await geometry(page, 'Child one')).rects[0].x, { timeout: SCROLL_SETTLE_TIMEOUT })
     .toBeGreaterThan(before.rects[0].x + 4);
   // 重对齐稳定，不回落。
   await page.waitForTimeout(200);

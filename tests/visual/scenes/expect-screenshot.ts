@@ -22,7 +22,25 @@ export async function expectScreenshot(
     console.log(`[pixel-skip] ${name}`);
     return;
   }
+  // chrome 就绪门（M311）：只对整页截图生效——整页把标签栏 / modeline 一起拍进去，而
+  // applyLanguage（写 <html lang> + 跑 runRelabels + modeline 语言 chip 去 hidden）在启动
+  // 装配里异步落地；抢在它之前拍下的就是「首帧 chrome 态」，此后每次运行都靠容差吞这段
+  // 漂移（M297 实测 840–990px，贴着 0.001 容差线 960px，docs/backlog.md 有登记）。
+  // `.modeline-language` 初始 hidden（src/shell.ts），由 applyLanguage 唯一去 hidden
+  //（src/main.ts）——它可见即 applyLanguage 与 runRelabels 已落地，是「chrome 就绪」的
+  // 可观测信号。MUST NOT 换成固定 sleep：判据必须是界面信号，不是时长。
+  // 元素级截图（Locator）不含 chrome，不过这道门。
+  if (!("page" in target)) {
+    await waitForChromeReady(target);
+  }
   await expect(target).toHaveScreenshot(name, options);
+}
+
+/** 等 applyLanguage 落地（语言 chip 可见）——整页截图的前置门，见 expectScreenshot 注释。 */
+async function waitForChromeReady(page: Page): Promise<void> {
+  await expect(page.locator(".modeline-language"), "chrome 就绪（applyLanguage 已落地）").toBeVisible({
+    timeout: 15_000,
+  });
 }
 
 /** toHaveScreenshot 的容差等覆盖项。直接取 Playwright 导出的 options 类型，避免手抄一份漂移。 */

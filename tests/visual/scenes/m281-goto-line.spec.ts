@@ -2,6 +2,7 @@ import { expect, test, type Page } from "@playwright/test";
 import { configGets, stubTauri } from "./tauri-stub";
 import type { VaultFixture } from "./tauri-stub";
 import { expectScreenshot } from "./expect-screenshot";
+import { SCROLL_SETTLE_TIMEOUT } from "./poll-budgets";
 import { GOTO_LINE_LABEL, GOTO_LINE_PLACEHOLDER, gotoLineTotalText } from "../../../src/goto-line";
 
 // M281（change goto-line-command）的键位链路 / 浮层形态 / md 行号 gutter 三层回归。
@@ -286,7 +287,10 @@ test("⌥G 打开输入条：预填当前行号 + 共 M 行 + 只收数字；Ent
   await expect(gotoBox(page)).toBeHidden();
   expect(await caretLine(page)).toBe(37);
   // 目标行滚到视口居中（revealLine 的 y:"center"；容差 30px 覆盖行高与滚动舍入）。
-  await expect.poll(async () => Math.abs(await lineCenterOffset(page, 37))).toBeLessThan(30);
+  // 滚动收敛类 poll，预算按全量负载档（M311）。
+  await expect
+    .poll(async () => Math.abs(await lineCenterOffset(page, 37)), { timeout: SCROLL_SETTLE_TIMEOUT })
+    .toBeLessThan(30);
   // 焦点交还编辑器（后续按键落回文本上下文），文档零改动。
   await expect.poll(() => activeClass(page)).toContain("cm-content");
   expect(await docText(page)).toBe(before);
