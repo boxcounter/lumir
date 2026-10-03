@@ -608,6 +608,22 @@
 
 ## 待修 findings（不阻塞）
 
+### `scripts/visual/run.sh --update <filter>` 无法按 spec 过滤：参数被吞两级（M304 登记，2026-10-03，medium）
+
+**症状**：① `run.sh --update m149-tabs` 展开为 `playwright test --update-snapshots m149-tabs`，
+新版 Playwright（153）的 `--update-snapshots [mode]` 可选值把过滤器吞成 mode 参数，报
+`argument 'm149-tabs' is invalid. Allowed choices are all, changed, missing, none.`，退出码 1；
+② 加 `--` 分隔则被 pnpm 吃掉，过滤器失效，**全量 595 个测试跑一遍 update**。
+
+**影响**：想「只更新指定基线」必然踩到；全量 update 会把当时在场的任何未批准差异一并刷成基线
+（M304 本轮侥幸：默认 changed 模式只重写有差异的，未酿成漂移）——正是基线人肉裁决纪律要防的形态。
+
+**建议处置**：update 分支绕过 package.json 的 update-baselines 脚本，显式钉 mode：
+`pnpm --dir tests/visual exec playwright test --update-snapshots=changed "$@"`，头部注释补用法样例。
+
+证据：M304 基线更新轮（2026-10-03）两次实跑；finding
+`.tower/comms/findings/20261003-worker-harness-closeout-m304-bug-run-sh-update-spec.md`。
+
 ### harness 上下文节用 "\n\n[" 重解析，用户正文含该序列时压缩重注入串味（M302 转派，2026-10-03，low）
 
 **症状**：`run_turn_for` 把「提问 + 上下文节」拼成一条 user 消息（`{message}\n\n[当前编辑器上下文：…]`），

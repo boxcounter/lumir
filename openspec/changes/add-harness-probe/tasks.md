@@ -38,7 +38,7 @@
 ## 5. 验证
 
 - [x] 5.1 验收场景（mock provider）：选区唤起 + 上下文 chip / 工具循环读文件 / patch 批准落盘且未触及部分 sha256 不变 / 拒绝不落盘 / 新建 O_EXCL / 权限规则（deny 拒绝、allow 免闸）/ 用量显示 / Skill 索引与加载；`SCENARIO_CONFIG_KEYS` 扩 `[harness]` 键
-- [ ] 5.2 视觉门禁本地全跑，新表面整页基线 Alex 过目后 `--update`
+- [x] 5.2 视觉门禁本地全跑，新表面整页基线 Alex 过目后 `--update`
 - [x] 5.3 `scripts/gate.sh quick` 全绿（含 bindings-drift）
 - [x] 5.4 性能合同复测：keypress-to-paint 无回归、常驻内存 <200MB（面板展开态实测）
 - [x] 5.5 `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` 通过
