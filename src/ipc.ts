@@ -16,6 +16,7 @@ import type { ReadingPositions } from "./bindings/ReadingPositions";
 import type { VaultInfo } from "./bindings/VaultInfo";
 import type { VaultListEntry } from "./bindings/VaultListEntry";
 import type { VaultSession } from "./bindings/VaultSession";
+import type { PaneSession } from "./bindings/PaneSession";
 import type { VaultStatus } from "./bindings/VaultStatus";
 import type { LinkResolveResult } from "./bindings/LinkResolveResult";
 import type { CreateNoteResult } from "./bindings/CreateNoteResult";
@@ -222,11 +223,20 @@ export function vaultSessionGet(vaultId: string): Promise<VaultSession | null> {
   return invoke<VaultSession | null>("vault_session_get", { vault_id: vaultId });
 }
 
-/** 写某 vault 的标签会话（标签集合 / 顺序 / 激活项变化后防抖写，切换前与退出前 flush）。
- *  写失败在后端降级为 warning 并照常 resolve：会话只影响「下次打开这个 vault 恢复什么」，
- *  不值得拦停用户的一次切换或退出。只有 vault_id 非法才 reject（路径逃逸防护）。 */
-export function vaultSessionPut(vaultId: string, tabs: string[], active: string | null): Promise<void> {
-  return invoke<void>("vault_session_put", { vault_id: vaultId, tabs, active });
+/** 写某 vault 的 pane 布局会话（M318：各 pane 的标签集合 / 顺序 / 激活项 + 分隔条比例，任一
+ *  变化后防抖写，切换前与退出前 flush）。写失败在后端降级为 warning 并照常 resolve：会话只
+ *  影响「下次打开这个 vault 恢复什么」，不值得拦停用户的一次切换或退出。只有 vault_id 非法才
+ *  reject（路径逃逸防护）。 */
+export function vaultSessionPut(
+  vaultId: string,
+  panes: PaneSession[],
+  paneSplitRatio: number,
+): Promise<void> {
+  return invoke<void>("vault_session_put", {
+    vault_id: vaultId,
+    panes,
+    pane_split_ratio: paneSplitRatio,
+  });
 }
 
 // ---------------------------------------------------------------------------

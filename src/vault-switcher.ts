@@ -41,6 +41,8 @@ import { keyToken } from "./keys";
 import { FILTER_LABEL, FILTER_PLACEHOLDER, NO_MATCH_TEXT, createListFilter } from "./list-filter";
 import { errorText, formatRelative, t, tPlural } from "./copy";
 import type { ListFilter } from "./list-filter";
+// pane 数上限与比例缺省取自 pane 模块的单一来源（REVIEW.md 第 8 条）：本模块不另抄一份。
+import { DEFAULT_SPLIT_RATIO, MAX_PANES } from "./pane-layout";
 import type { ToastAction, VaultSwitchBlock } from "./save-controller";
 
 /** 会话落盘的防抖窗口（ms）：标签集合 / 顺序 / 激活项变化后合并到这一档。
@@ -96,33 +98,58 @@ const LIST_ID = "lumir-vault-list";
 // 纯函数：会话快照 / 恢复计划 / 摘要里的时间与路径
 // ---------------------------------------------------------------------------
 
-/** 入盘内容的形状：有序 vault 相对路径 + 激活项。 */
-export interface SessionSnapshot {
+/** 一个 pane 的入盘内容：有序 vault 相对路径 + 激活项（= 后端 `PaneSession` 的形状）。 */
+export interface StoredPane {
   tabs: string[];
   active: string | null;
 }
 
-/** 构造入盘内容（**唯一**构造点）。两条口径都在这里：
+/** 入盘内容的形状：各 pane 的会话（按横向顺序）+ 分隔条比例。
+ *  pane 数即存储的布局：1 = 单 pane 常态，2 = 分栏（schema 上限见 pane 模块的 `MAX_PANES`）。 */
+export interface SessionSnapshot {
+  panes: StoredPane[];
+  ratio: number;
+}
+
+/** 一个 pane 的快照输入：装配层活读该 pane 的会话表与前台路径。 */
+export interface PaneSnapshotInput {
+  sessions: readonly EditorSession[];
+  activePath: string | undefined;
+}
+
+/** 构造单个 pane 的入盘内容（**唯一**构造点的一部分）。两条口径都在这里：
  *   - 全部**有路径**的标签都入盘，按打开顺序（M254 之前这里还过滤掉「预览（临时）标签」——
  *     预览机制随 change preview-tab-removal 退场后，标签只有一种形态，没有「随时会被顶掉的
  *     槽位」这回事）；
  *   - 激活项不在入盘集合里时落为 null（例如前台是没有路径的空文档）——恢复侧据此退化到
  *     第一个可打开的标签，不在盘上留一个指向不存在条目的值。 */
-export function sessionSnapshot(
-  sessions: readonly EditorSession[],
-  activePath: string | undefined,
-): SessionSnapshot {
-  const tabs = sessions
+export function paneSnapshot(input: PaneSnapshotInput): StoredPane {
+  const tabs = input.sessions
     .filter((session) => session.path !== undefined)
     .map((session) => session.path as string);
-  const active = activePath !== undefined && tabs.includes(activePath) ? activePath : null;
+  const active =
+    input.activePath !== undefined && tabs.includes(input.activePath) ? input.activePath : null;
   return { tabs, active };
 }
 
-/** 两份入盘内容是否逐项一致（决定要不要写盘：内容没变就不排期）。 */
+/** 构造整份入盘内容（各 pane + 分隔比例）。 */
+export function sessionSnapshot(
+  panes: readonly PaneSnapshotInput[],
+  ratio: number,
+): SessionSnapshot {
+  return { panes: panes.map(paneSnapshot), ratio };
+}
+
+/** 两份入盘内容是否逐项一致（决定要不要写盘：内容没变就不排期）。pane 逐项、顺序也参与比较，
+ *  比例是其中一项（分隔条松手改的就是它，改了就要写）。 */
 export function sameSnapshot(a: SessionSnapshot, b: SessionSnapshot): boolean {
-  if (a.active !== b.active || a.tabs.length !== b.tabs.length) return false;
-  return a.tabs.every((path, index) => path === b.tabs[index]);
+  if (a.ratio !== b.ratio || a.panes.length !== b.panes.length) return false;
+  return a.panes.every((pane, index) => {
+    const other = b.panes[index];
+    if (other === undefined) return false;
+    if (pane.active !== other.active || pane.tabs.length !== other.tabs.length) return false;
+    return pane.tabs.every((path, i) => path === other.tabs[i]);
+  });
 }
 
 /** 恢复计划：按存储顺序给出「可以打开的条目」、被跳过的条目数、要激活的条目。 */
@@ -149,15 +176,15 @@ export interface RestorePlan {
  *  语义（REVIEW.md 第 8 条），集合归属已经完整覆盖它。
  *
  *  激活项不可用（不在恢复出来的集合里）时退化为第一个可打开的条目；一个都打不开时为 null
- *  （调用方呈现空 vault 首入态）。 */
+ *  （调用方呈现空 vault 首入态）。**按 pane 算**：调用方对存储的每个 pane 各算一份。 */
 export function restorePlan(
-  session: VaultSession | null,
+  pane: StoredPane | null,
   available: ReadonlySet<string>,
   present: ReadonlySet<string> = new Set(),
 ): RestorePlan {
-  const stored = session?.tabs ?? [];
+  const stored = pane?.tabs ?? [];
   const open = stored.filter((path) => available.has(path) || present.has(path));
-  const storedActive = session?.active ?? null;
+  const storedActive = pane?.active ?? null;
   const usable = storedActive !== null && open.includes(storedActive);
   return {
     open,
@@ -407,12 +434,12 @@ export function createVaultRemapPrompt(deps: VaultRemapPromptDeps): VaultRemapPr
 // ---------------------------------------------------------------------------
 
 export interface VaultSessionStoreDeps {
-  /** 会话列表与前台路径（入盘快照的两个输入，都活读装配层的真实状态）。 */
-  sessions(): readonly EditorSession[];
-  activePath(): string | undefined;
-  /** 读 / 写某 vault 的标签会话（装配层给 ipc 封装）。 */
+  /** 当前各 pane 的会话与前台路径 + 分隔条比例（入盘快照的输入，都活读装配层的真实状态）。
+   *  pane 数即布局：1 = 单 pane 常态，2 = 分栏。 */
+  layout(): { panes: readonly PaneSnapshotInput[]; ratio: number };
+  /** 读 / 写某 vault 的 pane 布局会话（装配层给 ipc 封装）。 */
   getSession(vaultId: string): Promise<VaultSession | null>;
-  putSession(vaultId: string, tabs: string[], active: string | null): Promise<void>;
+  putSession(vaultId: string, panes: StoredPane[], ratio: number): Promise<void>;
   /** 一组 vault 相对路径的**批量**存在探测（后端 `fs_paths_exist`），返回其中确实存在的那些。
    *
    *  存在探测而不是「在枚举集合里」的原因见 [`restorePlan`]；**批量**而不是逐条是因为候选数
@@ -420,13 +447,17 @@ export interface VaultSessionStoreDeps {
    *  探测失败（后端不可用等）按「都不存在」处置——与只看枚举集合的旧行为一致。 */
   pathsExist(paths: string[]): Promise<string[]>;
   /** 为会话里的一个条目**建壳**（M283，change vault-switch-restore-perf 的 3.1/3.2）：同步、
-   *  当帧，产出「有路径、内容未装载」的标签。返回是否建成——不可打开的文件类（image/binary）
-   *  返回 false，由调用方计入跳过数（与它此前走 `openPinned` 必然失败同口径，行为不变）。
+   *  当帧，产出「有路径、内容未装载」的标签，落在第 `pane` 个 pane（M318：按 pane 恢复）。
+   *  返回是否建成——不可打开的文件类（image/binary）返回 false，由调用方计入跳过数
+   *  （与它此前走 `openPinned` 必然失败同口径，行为不变）。
    *
    *  这是「标签的存在」与「文档内容的装载」拆成两步的落点：建壳是同步的，所以标签栏、
    *  顺序、激活项与会话快照在装载完成的那一帧就是完整列表所应有的样子，**等待不再随标签数
    *  增长**（恢复段的成本从 N 次内容装载降为 1 次）。 */
-  createShell(path: string): boolean;
+  createShell(path: string, pane: number): boolean;
+  /** 恢复前把 pane 布局设成存储的形状（当帧、同步）：`count` 为 1 或 2，`ratio` 进布局。
+   *  单 pane 存储（或全部条目不可用）时确保不 split——「单 pane 存储恢复不出第二 pane」。 */
+  applyPaneCount(count: number, ratio: number): void;
   /** 装载某个条目的**文档内容**并激活它（走既有打开链路 `openFile`）；返回是否成功。
    *  M283 起只对「存储的激活项」与它失败时的退化候选调用，其余标签留到首次成为前台。 */
   openPinned(path: string): Promise<boolean>;
@@ -470,7 +501,8 @@ export function createVaultSessionStore(deps: VaultSessionStoreDeps): VaultSessi
   let restoreGen = 0;
 
   function snapshot(): SessionSnapshot {
-    return sessionSnapshot(deps.sessions(), deps.activePath());
+    const { panes, ratio } = deps.layout();
+    return sessionSnapshot(panes, ratio);
   }
 
   function cancelTimer(): void {
@@ -481,7 +513,7 @@ export function createVaultSessionStore(deps: VaultSessionStoreDeps): VaultSessi
 
   async function write(vaultId: string, payload: SessionSnapshot): Promise<void> {
     try {
-      await deps.putSession(vaultId, payload.tabs, payload.active);
+      await deps.putSession(vaultId, payload.panes, payload.ratio);
     } catch (e) {
       // 写失败只降级（与 last_vault 写失败同口径）：会话只影响「下次打开恢复什么」，
       // 不值得拦停用户的一次切换或退出。
@@ -500,11 +532,18 @@ export function createVaultSessionStore(deps: VaultSessionStoreDeps): VaultSessi
     const available = new Set(
       entries.filter((entry) => entry.kind === "file").map((entry) => entry.path),
     );
+    const stored = session?.panes ?? [];
+    const ratio = session?.pane_split_ratio ?? DEFAULT_SPLIT_RATIO;
+    // 存储的 pane 数（1 或 2）：单 pane 存储恢复不出第二 pane；没有历史时也退到 1。
+    const paneCount = Math.min(MAX_PANES, Math.max(1, stored.length));
     // 不在枚举集里的条目先过一次**批量**存在探测：惰性条目（被 vault 自己的忽略声明挡住、
     // 因而未进枚举）同样是 vault 内文件，在文件树里可见可打开（spec「装载后恢复标签列表」）。
-    // 探测是一次新的 await，之后必须**再查一次世代**——用户可能在探测途中切走，那次恢复的
-    // 结果整体作废（同 `getSession` 之后那一次检查）。
-    const missing = (session?.tabs ?? []).filter((path) => !available.has(path));
+    // 探测是**一次**、跨全部 pane 合并发起（MUST NOT 逐 pane / 逐条）。探测是新的 await，之后
+    // 必须**再查一次世代**——用户可能在探测途中切走，那次恢复的结果整体作废。
+    const missing = stored
+      .slice(0, paneCount)
+      .flatMap((pane) => pane.tabs)
+      .filter((path) => !available.has(path));
     let present = new Set<string>();
     if (missing.length > 0) {
       try {
@@ -514,58 +553,89 @@ export function createVaultSessionStore(deps: VaultSessionStoreDeps): VaultSessi
       }
       if (gen !== restoreGen) return;
     }
-    const plan = restorePlan(session, available, present);
-
-    // 第一步（同步、当帧）：按存储顺序建壳。标签的存在 / 顺序 / 路径 / 激活项与会话快照在
-    // 这一刻就位——「所有标签一次回来」这条外部契约因此与内容装载的耗时脱钩（M283 的 3.2；
-    // 纯惰性案会在这里丢掉标签列表，进而把会话文件写成 1 条，见 design §3.1，已否决）。
-    // 建不成壳的（不可打开的文件类）计入跳过数：与它此前必然装载失败同口径。
-    const shells: string[] = [];
-    for (const path of plan.open) {
-      if (deps.createShell(path)) shells.push(path);
+    const plans: RestorePlan[] = [];
+    for (let i = 0; i < paneCount; i++) {
+      plans.push(restorePlan(stored[i] ?? null, available, present));
     }
-    if (plan.open.length === 0) {
-      // 全部条目都不在 vault 内（或本来就没有历史）：空 vault 首入态——不建任何壳，
-      // 标签栏因此隐藏（MUST NOT 伪造内容）。
-      if (plan.skipped > 0) deps.toast(skippedText(plan.skipped));
+    const openCount = plans.reduce((n, plan) => n + plan.open.length, 0);
+    const storedSkipped = plans.reduce((n, plan) => n + plan.skipped, 0);
+    if (openCount === 0) {
+      // 全部条目都不在 vault 内（或本来就没有历史）：**单 pane** 空 vault 首入态——不建任何壳，
+      // 标签栏因此隐藏（MUST NOT 伪造内容）；上一 vault 留下的分栏拓扑也在这里收拢回 root。
+      deps.applyPaneCount(1, ratio);
+      if (storedSkipped > 0) deps.toast(skippedText(storedSkipped));
+      deps.onEmptyVault();
+      return;
+    }
+    // 第一步（同步、当帧）：布局先就位（建 pane 与标签条），再**逐 pane**按存储顺序建壳。
+    // 标签的存在 / 顺序 / 路径 / 激活项与会话快照在这一刻就位——「所有标签一次回来」这条外部
+    // 契约因此与内容装载的耗时脱钩（M283 的 3.2）。建不成壳的（不可打开的文件类）计入跳过数。
+    deps.applyPaneCount(paneCount, ratio);
+    const shells: string[][] = [];
+    for (let i = 0; i < paneCount; i++) {
+      const per: string[] = [];
+      for (const path of plans[i].open) {
+        if (deps.createShell(path, i)) per.push(path);
+      }
+      shells.push(per);
+    }
+    const shellCount = shells.reduce((n, per) => n + per.length, 0);
+    if (shellCount === 0) {
+      // 条目都在 vault 里、却一个壳都建不成（不可打开的文件类）：同样回落**单 pane** 空态。
+      deps.applyPaneCount(1, ratio);
+      const skipped = storedSkipped + (openCount - shellCount);
+      if (skipped > 0) deps.toast(skippedText(skipped));
       deps.onEmptyVault();
       return;
     }
     // 建壳完成的一拍：装配层把标签栏刷成完整列表（这一刻的 HTML 就是终态所应有的样子）。
     deps.shellsBuilt();
 
-    // 第二步：装载**文档内容**。存储的激活项当场装载；它不可读时按存储顺序退化为下一个能读的
-    // （「激活项不可用 → 退化为第一个可打开的标签」，spec 的原句）。其余标签的内容留到它们
-    // 首次成为前台（M283 的 3.5：`openFile` 里那条既有链路会各自恢复阅读位置）。
-    const order =
-      plan.active === null
-        ? shells
-        : [plan.active, ...shells.filter((path) => path !== plan.active)];
-    let loaded: string | null = null;
+    // 第二步：**逐 pane** 装载**文档内容**——每个 pane 的存储激活项当场装载；它不可读时在该
+    // pane 内按存储顺序退化为下一个能读的（「激活项不可用 → 退化为第一个可打开的标签」）。
+    // 其余标签的内容留到它们首次成为前台（M283 的 3.5：`openFile` 里那条既有链路各自恢复阅读
+    // 位置——分栏后这条路径对每个 pane 都成立，无需另写一份）。
     let failed = 0;
-    for (const path of order) {
+    let loadedCount = 0;
+    let rootLoaded: string | null = null;
+    for (let i = 0; i < paneCount; i++) {
       if (gen !== restoreGen) return;
-      if (await deps.openPinned(path)) {
-        loaded = path;
-        break;
+      const per = shells[i];
+      if (per.length === 0) continue;
+      const plan = plans[i];
+      const order =
+        plan.active === null ? per : [plan.active, ...per.filter((path) => path !== plan.active)];
+      let loaded: string | null = null;
+      for (const path of order) {
+        if (gen !== restoreGen) return;
+        if (await deps.openPinned(path)) {
+          loaded = path;
+          break;
+        }
+        failed += 1;
       }
-      failed += 1;
+      if (loaded !== null) {
+        loadedCount += 1;
+        if (i === 0) rootLoaded = loaded;
+      }
     }
     if (gen !== restoreGen) return;
     // 一次计数提示：不在 vault 的条目 + 建不成壳的 + 内容装载失败过的那几个（MUST NOT 逐个报错，
-    // 也 MUST NOT 因为内容推迟装载而推迟或消失）。退化循环里**失败过的每一次**都计入，
-    // 一个都没装载成功时就是全部候选（不是「全部减一」）。
-    const skipped = plan.skipped + (plan.open.length - shells.length) + failed;
+    // 也 MUST NOT 因为内容推迟装载而推迟或消失）。退化循环里**失败过的每一次**都计入。
+    const skipped = storedSkipped + (openCount - shellCount) + failed;
     if (skipped > 0) deps.toast(skippedText(skipped));
-    if (loaded === null) {
+    if (loadedCount === 0) {
       // 一个都没装载成功：标签栏里留着的壳是**合法**的会话条目（路径确实来自会话，只是内容
-      // 读不出来——例如超过读取上限的大文件）。交给装配层分两种呈现：没有有路径的会话时才是
-      // 空 vault 首入态；有标签时不说「还没有打开的文件」这句假话（其实现见 main.ts 的
-      // onEmptyVault）。用户点开某个标签时按需装载会**非静默**地再试一次并把失败上屏。
+      // 读不出来）。交给装配层分两种呈现（见 main.ts 的 onEmptyVault）。
       deps.onEmptyVault();
       return;
     }
-    deps.activate(loaded);
+    // 活跃 pane 定格在 **root**：装载是逐 pane 顺序做的，最后一次 `openPinned` 会把活跃指针留到
+    // 最后一个 pane；schema 里没有「哪个 pane 活跃」这一位（design §7 的 panes 只有 tabs/active），
+    // 取 root（左）为活跃——把 root 装载成功的那一条再激活一次把指针带回去（已是前台时是 no-op）。
+    // 单 pane 下这一调与 M283 之前的收口逐字一致（`activate` 是「让前台标签就位」的既有出口）；
+    // 分栏下它额外承担「把活跃指针带回 root」的职责。
+    if (rootLoaded !== null) deps.activate(rootLoaded);
   }
 
   function sessionChanged(): void {
