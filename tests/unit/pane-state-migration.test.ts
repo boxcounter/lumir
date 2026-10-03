@@ -72,13 +72,12 @@ test("实现守卫：三处 Compartment 是模块级声明，adoptSession 不重
     );
   }
   // 2. createEditor 体内 MUST NOT 出现缩进的 `new Compartment()`（逐实例形态）。
-  assert.doesNotMatch(
-    source,
-    /^ {2}const \w+Compartment = new Compartment\(\);/m,
+  assert.ok(
+    !/^ {2}const \w+Compartment = new Compartment\(\);/m.test(source),
     "createEditor 体内不得再逐实例创建 Compartment（M317 4.1 已提为模块级共享）",
   );
   // 3. adoptSession 的方法体里 MUST NOT 调 sessionState（重建 state 的旧实现）。
   const adopt = /adoptSession\(session: EditorSession\) \{\n([\s\S]*?)\n    \},/.exec(source);
   assert.ok(adopt !== null, "找不到 adoptSession 的实现体");
-  assert.doesNotMatch(adopt[1], /sessionState\(/, "adoptSession 不得重建 state（会清空撤销史）");
+  assert.ok(!/sessionState\(/.test(adopt[1]), "adoptSession 不得重建 state（会清空撤销史）");
 });
