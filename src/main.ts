@@ -325,6 +325,17 @@ function activatePane(paneId: PaneId): void {
   syncActiveDocument();
 }
 
+/** 按一个 EditorView 找到它所属 pane 并翻成活跃 pane（M317 2.3 的鼠标路径：事件只带视图，
+ *  不带 pane id）。找不到即视图不属于任何在场 pane（防御性），无操作。 */
+function activatePaneForView(view: EditorView): void {
+  for (const [paneId, assembly] of paneAssemblies) {
+    if (assembly.handle.view === view) {
+      activatePane(paneId);
+      return;
+    }
+  }
+}
+
 /** 活跃 pane 的标签条实例。未就位的唯一窗口是 splitActivePane 里 split() 与标签条
  *  创建之间的同步段——外部调用不可能插进去；缺位即接线错误，就地炸掉（同 pane-layout
  *  的 paneById 口径），不静默当成无操作。 */
@@ -1575,6 +1586,10 @@ const linkFollow = createLinkFollow({
     await openFile(path, kind);
   },
   toast,
+  // M317 2.3：⌘-Click 挂到每个 pane 的视图上（与 toc 共用 viewTrackers 注册表，含未来 pane）；
+  // 点击先按被点的视图把该 pane 翻成活跃 pane（鼠标事件早于 focusin，不先翻会让解析基准错位）。
+  eachView: (attach) => trackEachView(attach),
+  activateView: (view) => activatePaneForView(view),
 });
 
 // ---------------------------------------------------------------------------
