@@ -27,7 +27,8 @@
 //!         {"id": "call_1", "name": "vault_read", "arguments": "{\"path\":\"a.md\"}"}
 //!       ],
 //!       "reasoning": {"type":"reasoning","id":"rs_1","encrypted_content":"…"},  // 可选：回放项
-//!       "usage": {"input_tokens": 1200, "cached_tokens": 300, "output_tokens": 40}  // 可选
+//!       "usage": {"input_tokens": 1200, "cached_tokens": 300, "output_tokens": 40},  // 可选
+//!       "delay_ms": 45000                        // 可选：返回前先睡这么久（见下「脚本化延迟」）
 //!     },
 //!     {"text": "读完了。", "usage": {"input_tokens": 1500, "cached_tokens": 900, "output_tokens": 10}},
 //!     {"error": {"code": "context_length_exceeded", "message": "…"}}            // 可选：脚本化错误
@@ -37,6 +38,12 @@
 //!
 //! 弹尽后再调用 ⇒ `fixture_exhausted` 错误（测试脚本漏写的即露馅）。`text` 未给 `chunks`
 //! 时整体作为一个 chunk。`usage` 缺失则不更新用量（面板保持上一轮读数）。
+//!
+//! **脚本化延迟**（`delay_ms`，M312 新增）：这条响应先睡这么久（毫秒）再返回，**默认 0**。
+//! 验收里需要「回合正在途」这个窗口时用它撑住——M312 的跨 vault 事件过滤要验的正是
+//! 「切换发生在回合进行中」：延迟把窗口从毫秒级撑到几十秒，切换动作（AX 读 + 点击，秒级）
+//! 才落得进窗口内。睡眠发生在 `lumir-harness-llm` 专线程里（ADR 0002 §6），不碰热路径、
+//! 不持有任何会话锁（`MockClient::complete` 期间 `Runtime` 的 sessions 锁是放开的）。
 //!
 //! # reasoning 回传纪律（design §3，M306 对真 API 核实）
 //!
@@ -586,6 +593,9 @@ struct FixtureResponse {
     usage: Option<FixtureUsage>,
     #[serde(default)]
     error: Option<FixtureError>,
+    /// 返回前先睡的毫秒数（见模块文档的「脚本化延迟」；默认 0 = 立刻返回）。
+    #[serde(default)]
+    delay_ms: u64,
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -671,6 +681,11 @@ impl LlmClient for MockClient {
                 ..Default::default()
             };
         };
+        // 脚本化延迟（默认 0）：撑住「回合在途」的窗口供验收断言用。放在错误分支之前——
+        // 「迟到的是错误」同样是跨 vault 拒收的对象（理由见模块文档）。
+        if entry.delay_ms > 0 {
+            std::thread::sleep(std::time::Duration::from_millis(entry.delay_ms));
+        }
         if let Some(error) = entry.error {
             return TurnOutput {
                 error: Some(TurnError {

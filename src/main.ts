@@ -1682,6 +1682,11 @@ async function applyVault(
   // 之后再由它把树高亮刷成「无当前文件」。
   syncActiveDocument();
   showEditor(); // 旧 vault 的「暂不支持预览」覆盖层一并撤下
+  // harness 面板换会话作用域（M312）：面板的会话状态在后端按 vault 分桶，而面板自己只在挂载时
+  // 拉过一次快照——切 vault 后必须让它重拉（并丢掉旧 vault 的渲染面），否则面板上留着上一个
+  // vault 的对话。放在这里而不是 applyVault 开头：编辑器与表现层都已对齐到新 vault，面板重拉
+  // 时取的上下文 chip 因此是新 vault 的文档（不是旧 vault 残留的那个）。
+  harnessPanel.vaultChanged(root);
   // 残留崩溃备份的恢复入口（M127）：装载完成后才有 vault 上下文可定位备份。
   void save.checkRecovery();
   // 装载后恢复该 vault 的标签列表（M163；M283 起先按存储顺序建壳、内容只装激活项）：异步，

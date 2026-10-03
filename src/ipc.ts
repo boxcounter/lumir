@@ -302,15 +302,24 @@ export function onMenuCommand(handler: (command: string) => void): Promise<() =>
 // 形状是「我消费的键」而不是「对方发的全部键」，超集演进零改动。
 // ---------------------------------------------------------------------------
 
-/** harness:event 的事件载荷（七类，type 字段判别）。 */
-export type HarnessEvent =
-  | { type: "text_chunk"; text: string }
-  | { type: "tool_call"; name: string; status: "started" | "done"; summary: string }
-  | { type: "approval_request"; id: string; tool: string; diff?: string; argv?: string }
-  | { type: "usage"; ctx_pct: number; cache_pct: number }
-  | { type: "compact"; summary: string }
-  | { type: "done" }
-  | { type: "error"; code: string; message: string };
+/** 事件信封的公共字段（M312）：`vault` = 发送该事件的会话所属 vault 的根路径
+ *（Rust 侧 `VaultScope::key()`，也是后端 sessions 映射的键——vault 与会话是同一个键）。
+ * **宽容解析**：缺字段的事件按「归属未知」放行（纯浏览器桩 / 本 change 之前的载荷形态）。 */
+interface HarnessEventEnvelope {
+  vault?: string;
+}
+
+/** harness:event 的事件载荷（七类，type 字段判别；每类都带信封字段 `vault`）。 */
+export type HarnessEvent = HarnessEventEnvelope &
+  (
+    | { type: "text_chunk"; text: string }
+    | { type: "tool_call"; name: string; status: "started" | "done"; summary: string }
+    | { type: "approval_request"; id: string; tool: string; diff?: string; argv?: string }
+    | { type: "usage"; ctx_pct: number; cache_pct: number }
+    | { type: "compact"; summary: string }
+    | { type: "done" }
+    | { type: "error"; code: string; message: string }
+  );
 
 /** 发送一条消息。context_json 是序列化后的上下文块（src/harness-context.ts 的
  *  `serializeHarnessContext` 是唯一构造点）：`{"path", "selection":{from_line,to_line,text}}`
@@ -332,8 +341,9 @@ export function harnessNewSession(): Promise<void> {
 
 /**
  * 会话快照（JSON String）：webview 重载后面板据此恢复渲染。面板消费的键（宽容解析，
- * 缺省 = 空态）：`messages[]`（role: "user" | "assistant" | "tool" | "compact"；text /
- * summary / name / status 字段按 role 取用）、`usage{ctx_pct,cache_pct}`、
+ * 缺省 = 空态）：`vault`（会话标识 = vault 根路径，M312——与事件信封同源，据此丢弃
+ * 「切走之后才回来的」旧快照）、`messages[]`（role: "user" | "assistant" | "tool" |
+ * "compact"；text / summary / name / status 字段按 role 取用）、`usage{ctx_pct,cache_pct}`、
  * `pending_approval{id,tool,diff?,argv?}`、`warn_ctx_pct`（缺省 85）。
  * 后端不可用（纯浏览器预览 / 命令未注册）时 reject，调用方按「空会话」降级。
  */

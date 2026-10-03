@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "responses": [
+    {
+      "text": "VSWITCH-A 回合完成：这条回答只属于 A。",
+      "chunks": ["VSWITCH-A 回合完成", "：这条回答只属于 A。"],
+      "usage": { "input_tokens": 1200, "cached_tokens": 300, "output_tokens": 20 },
+      "delay_ms": 45000
+    }
+  ]
+}

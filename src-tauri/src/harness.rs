@@ -184,7 +184,7 @@ impl Runtime {
             .unwrap_or_else(|e| e.into_inner());
         match sessions.get(&scope.key()) {
             Some(s) => s.snapshot(config.warn_ctx_pct),
-            None => session::StateSnapshot::empty(config.warn_ctx_pct),
+            None => session::StateSnapshot::empty(&scope.key(), config.warn_ctx_pct),
         }
     }
 
@@ -293,7 +293,8 @@ pub fn harness_new_session(
 }
 
 /// 当前 vault 会话快照 JSON（供 webview 重载后面板恢复渲染）。
-/// 键集合是 m303 消费形状的超集：`messages[]` / `usage` / `pending_approval` / `warn_ctx_pct`。
+/// 键集合是 m303 消费形状的超集：`vault`（会话标识 = vault 根路径，M312）/ `messages[]` /
+/// `usage` / `pending_approval` / `warn_ctx_pct`。
 #[tauri::command(rename_all = "snake_case")]
 pub fn harness_state(
     vault: tauri::State<'_, crate::commands::VaultState>,
