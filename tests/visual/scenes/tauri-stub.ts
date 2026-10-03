@@ -34,13 +34,25 @@ export interface VaultListRow {
   tab_count: number;
 }
 
-/** 一个 vault 的标签会话（契约见 src/bindings/VaultSession.ts）。`version` / `updated_at`
- *  可省：桩按当前 schema 版本补齐，场景只关心 tabs / active 这两条会被断言的字段。 */
-export interface VaultSessionRow {
+/** 场景的会话初值（**单 pane 简写**，M318 起契约见 src/bindings/VaultSession.ts 的 v2 形状）。
+ *  场景直接写 `tabs` / `active`，桩把它补成一份单 pane 的 `VaultSession`（补 version /
+ *  harness_pane / ratio）——桩在**线上**返回的始终是 v2 形状（与真后端同构），简写只是
+ *  预置数据的便利。`ratio` 为分隔比例（缺省 0.5）。 */
+export interface VaultSessionSeed {
   tabs: string[];
   active: string | null;
+  ratio?: number;
   version?: number;
   updated_at?: number;
+}
+
+/** 桩内部存的会话（= 真后端 `vault_session_get` 的返回形状）。 */
+interface StoredSession {
+  version: number;
+  panes: Array<{ tabs: string[]; active: string | null }>;
+  harness_pane: boolean;
+  pane_split_ratio: number;
+  updated_at: number;
 }
 
 export interface VaultFixture {
@@ -55,7 +67,7 @@ export interface VaultFixture {
   vaults?: VaultListRow[];
   /** `vault_session_get` 的初值，键是 vault 稳定 id。缺省一律无历史（空会话）。
    *  与真后端同构：会话按 id 存在桩层，跨 vault 切换存活（切走再切回要能读回同一份）。 */
-  sessions?: Record<string, VaultSessionRow>;
+  sessions?: Record<string, VaultSessionSeed>;
   /**
    * `reading_position_get` 的初值（M194）：键是 vault 稳定 id，值是该 vault 的
    * `entries`（键 = vault 相对路径 → `{pos, y, x, at}`）。缺省一律无历史——这就是
@@ -149,16 +161,22 @@ export async function stubTauri(page: Page, vault: VaultFixture | null): Promise
     //（与真后端 open_vault 的替换语义对齐）。
     let current = v;
 
-    type Args = { path?: string; from?: string; rel?: string; new_name?: string; parent_rel?: string; name?: string; link?: string; target?: string; id?: string; title?: string; vault_id?: string; expected_revision?: string; content?: string; dirty?: boolean; force_new?: boolean; event?: string; fields?: Record<string, string>; url?: string; tabs?: string[]; active?: string | null; entries?: Record<string, { pos: number; y: number; x: number; at: number }>; key?: string; value?: unknown };
+    type Args = { path?: string; from?: string; rel?: string; new_name?: string; parent_rel?: string; name?: string; link?: string; target?: string; id?: string; title?: string; vault_id?: string; expected_revision?: string; content?: string; dirty?: boolean; force_new?: boolean; event?: string; fields?: Record<string, string>; url?: string; tabs?: string[]; active?: string | null; panes?: Array<{ tabs: string[]; active: string | null }>; pane_split_ratio?: number; entries?: Record<string, { pos: number; y: number; x: number; at: number }>; key?: string; value?: unknown };
     const checkVault = (args: Args) => {
       if (args.vault_id !== (current?.vault_id ?? "fixture-vault")) throw { code: "fixture_contract", message: "vault_id mismatch" };
     };
     // 会话真源（M163）：按 vault 稳定 id 存放，跨 vault 切换存活——「切走再切回读回同一份
     // 标签列表」这条链路要能被视觉场景端到端看见。初值来自 fixture 的 sessions。
-    const sessions = new Map<string, VaultSessionRow>(
+    const sessions = new Map<string, StoredSession>(
       Object.entries(v?.sessions ?? {}).map(([id, row]) => [
         id,
-        { ...row, version: row.version ?? 1, updated_at: row.updated_at ?? 0 },
+        {
+          version: row.version ?? 2,
+          panes: [{ tabs: row.tabs, active: row.active }],
+          harness_pane: false,
+          pane_split_ratio: row.ratio ?? 0.5,
+          updated_at: row.updated_at ?? 0,
+        },
       ]),
     );
     /** 路径的目录名（vault_list 的 name 口径与 /_vaults 的缺省行共用）。 */
@@ -186,7 +204,11 @@ export async function stubTauri(page: Page, vault: VaultFixture | null): Promise
     w.__noteResolves = [] as Array<{ from: string; target: string }>;
     // vault_session_put 的调用记录（M163）：落盘内容按调用顺序，场景据此断言「会话按 vault
     // 记在稳定 id 上、内容是有序的固定标签 + 激活项」。
-    w.__sessionPuts = [] as Array<{ vault_id?: string; tabs?: string[]; active?: string | null }>;
+    w.__sessionPuts = [] as Array<{
+      vault_id?: string;
+      panes?: Array<{ tabs: string[]; active: string | null }>;
+      pane_split_ratio?: number;
+    }>;
     // 阅读位置真源（M194）：按 vault 稳定 id 存放，初值来自 fixture 的 positions——这就是
     // 「盘上已经有一条位置」的模拟入口（桩不真实重启，初值即「上次会话留下的」）。
     const positions = new Map<string, Record<string, { pos: number; y: number; x: number; at: number }>>(
@@ -279,16 +301,23 @@ export async function stubTauri(page: Page, vault: VaultFixture | null): Promise
       // 会话写（M163）：写失败在真后端只降级（warning 语义），桩按成功应答并把内容存进
       // 会话真源——「切走 → 切回 → 标签恢复」这条链路要能真的读回写入的内容。
       vault_session_put: (args) => {
-        (w.__sessionPuts as Array<{ vault_id?: string; tabs?: string[]; active?: string | null }>).push({
+        (
+          w.__sessionPuts as Array<{
+            vault_id?: string;
+            panes?: Array<{ tabs: string[]; active: string | null }>;
+            pane_split_ratio?: number;
+          }>
+        ).push({
           vault_id: args.vault_id,
-          tabs: args.tabs,
-          active: args.active,
+          panes: args.panes ?? [],
+          pane_split_ratio: args.pane_split_ratio ?? 0.5,
         });
         sessions.set(args.vault_id ?? "", {
-          version: 1,
+          version: 2,
+          panes: args.panes ?? [],
+          harness_pane: false,
+          pane_split_ratio: args.pane_split_ratio ?? 0.5,
           updated_at: Date.now(),
-          tabs: args.tabs ?? [],
-          active: args.active ?? null,
         });
         return null;
       },
@@ -744,11 +773,21 @@ export async function openVaultSwitcher(page: Page): Promise<void> {
 /** vault_session_put 的调用记录（会话落盘内容，按调用顺序）。 */
 export async function sessionPuts(
   page: Page,
-): Promise<Array<{ vault_id?: string; tabs?: string[]; active?: string | null }>> {
+): Promise<
+  Array<{
+    vault_id?: string;
+    panes?: Array<{ tabs: string[]; active: string | null }>;
+    pane_split_ratio?: number;
+  }>
+> {
   return page.evaluate(
     () =>
       (window as unknown as {
-        __sessionPuts: Array<{ vault_id?: string; tabs?: string[]; active?: string | null }>;
+        __sessionPuts: Array<{
+          vault_id?: string;
+          panes?: Array<{ tabs: string[]; active: string | null }>;
+          pane_split_ratio?: number;
+        }>;
       }).__sessionPuts,
   );
 }

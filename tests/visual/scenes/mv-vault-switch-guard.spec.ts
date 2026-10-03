@@ -104,8 +104,8 @@ test("出口「保存并切换」：保存成功才切换，会话按稳定 id �
   // 切换前 flush：当前 vault 的会话落盘（M254 起全部有路径的标签都入盘；这里键入是为了让内容真改动）
   await expect.poll(async () => (await sessionPuts(page)).at(-1)).toEqual({
     vault_id: VAULT_A,
-    tabs: ["README.md"],
-    active: "README.md",
+    panes: [{ tabs: ["README.md"], active: "README.md" }],
+    pane_split_ratio: 0.5,
   });
 });
 
