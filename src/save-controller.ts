@@ -293,6 +293,14 @@ export function createSaveController(deps: SaveControllerDeps): SaveController {
   // 文档切换与展示状态
   // ---------------------------------------------------------------------------
 
+  /** 前台标签的 vault 相对路径（未打开文件为 undefined）。
+   *
+   *  M317 2.2：这里的「前台」= **活跃 pane 的前台标签**——`editor` 是装配层的**复合句柄**，
+   *  `activeSession()` 解析到活跃 pane。因此保存落点、dirty 判定、revision CAS 与崩溃备份
+   *  debounce 的**逐路径键控全部不变**，只是「前台」的定义从「全局唯一会话」变成「活跃 pane
+   *  局部」。配套口径（同一复合句柄保证）：⌘S 只存活跃 pane 的前台标签；切 vault / 退出守卫
+   *  与外部变更处置取**全部 pane** 会话的并集（`editor.sessions()` 是跨 pane 并集，见
+   *  `vaultSwitchBlock` / `saveAllDirty` / `dispatchExternalChange`）。 */
   function displayedPath(): string | undefined {
     return editor.activeSession().path;
   }
