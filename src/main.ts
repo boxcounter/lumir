@@ -1295,8 +1295,9 @@ const switcher: VaultSwitcherHandle = createVaultSwitcher({
   // `quiet` 为真时不上屏失败覆盖层——批量路径的失败由一次计数提示承担。
   // 键名 `openPinned` 由 vault-switcher 的 deps 定；落点意图按 M254 的新口径取 "new"——
   // 每个文件新开一个标签（壳态命中时不新开：`openFile` 按 path 命中已在会话里的壳，装进它
-  // 自己所属的 pane）。
-  openPinned: (path) => openFile(path, openKind(path), "new", true),
+  // 自己所属的 pane）。`pane` 是条目所属 pane 的下标，作为**显式落点**交给 openFile：
+  // 恢复装载因此不走「打开意图落在活跃 pane」，标签归位原 pane（M321）。
+  openPinned: (path, pane) => openFile(path, openKind(path), "new", true, pane),
   activate: (path) => {
     const session = editor.sessionForPath(path);
     if (session !== undefined) activateSessionInOwnerPane(session);
@@ -1575,6 +1576,11 @@ function afterLoad(): void {
 //     行为」这个保守兜底；
 //   - "new"：新开一个标签（单击 / 双击 / ⌘-点击文件树、新建文件后的自动打开、会话恢复）。
 //
+// `targetPane`（pane 下标，缺省 undefined）是**显式落点**，只有会话恢复批量路径传它（M321）：
+// 命中他 pane 已开的同文件时，落点取这个指定 pane 而不是活跃 pane——恢复期活跃 pane 是后建的
+// 右 pane，用活跃 pane 判定会把左 pane 的激活项「打开即移动」抢走。缺省 = M317 4.2 的「一切
+// 用户打开意图落在活跃 pane」。
+//
 // 返回「这次打开是否成功」——只有 M163 的会话恢复读它（M283 起：**只有激活项那一次**，失败时
 // 按存储顺序退化到下一个候选；其余标签的内容留到首次成为前台）。
 // `quiet` 为真时**不上屏失败覆盖层**：批量路径里单个文件的失败由一次计数提示承担
@@ -1584,6 +1590,7 @@ async function openFile(
   kind: "md" | "code" | "text" | "binary",
   intent: "new" | "current" = "current",
   quiet = false,
+  targetPane?: number,
 ): Promise<boolean> {
   // 壳态标签（vault 会话恢复建出来、内容还没装载，M283 的 3.1）：把内容填进**它自己**的
   // 标签，不新建标签（标签栏点击那条路径另有触发点，见 ensureActiveSessionLoaded）。
@@ -1600,10 +1607,15 @@ async function openFile(
   // M317 4.2：在活跃 pane 里的「打开」意图命中**他 pane 已开的同文件**时执行**移动**（源 pane
   // 失去它、目标 pane 前台变为它），而不是只把活跃指针切过去；链接跟随命中已开文件同样移动并
   // 激活，当前标签保留。移动不重建 state（见 moveSessionToPane）。
+  // M321：落点改用「显式 targetPane（会话恢复）或活跃 pane（用户打开）」——恢复装载条目都在
+  // 自己所属的 pane 里建好了壳（owner === target），此判定因此不移动，标签归位原 pane。
   if (existing !== undefined) {
     const ownerId = paneEntryOfSession(existing)?.[0];
-    const activePaneId = paneLayout.active().id;
-    if (ownerId !== undefined && ownerId !== activePaneId) moveSessionToPane(existing, activePaneId);
+    const targetPaneId =
+      targetPane === undefined ? paneLayout.active().id : paneLayout.panes()[targetPane]?.id;
+    if (targetPaneId !== undefined && ownerId !== undefined && ownerId !== targetPaneId) {
+      moveSessionToPane(existing, targetPaneId);
+    }
   }
   if (existing !== undefined && !existing.loaded) {
     // 经 `withSessionLoad` 登记在途：装载里的 `tabs.activateTab` 会经同步点回调到
