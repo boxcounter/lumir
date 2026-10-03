@@ -787,6 +787,32 @@ const COPY_TABLE = {
     zh: "错误：{message}",
     en: "Error: {message}",
   },
+
+  // -------------------------------------------------------------------------
+  // pane 命令族的三条键位来由（D365–D367，M319，change pane-system-split-view 分组 6.1）
+  // 全部是 `src/keys.ts` 键位表的逐条 doc（消费者 = 键位面板 `src/bindings-panel.ts` 的
+  // doc 列）。命令本体 M316 已进表；本批把三条从默认不绑键清单移到默认绑定表。
+  // 键位占用的三条来源核对逐条写在正文里（表即文档，keys.ts 不再另抄一份）。
+  // -------------------------------------------------------------------------
+  D365: {
+    zh: "在活跃 pane 旁侧新开一个空 pane 并把焦点交给它（已达上限二时为无操作）。键位取 ⌥S：⌥ 系单段沿用 Emacs 的 Alt 前缀惯例（表内 Alt-KeyV / Alt-KeyD / Alt-KeyB / Alt-KeyF / Alt-KeyG 同族），语义 S = Split。取 global——pane 是窗口级对象，焦点在左栏 / 搜索框 / 浮层里时同样要能分栏（同 tab.* / view.* 一族理由）。冲突已核（零冲突，三条独立来源）：① 表内——keys.ts 即真源，⌥ 系现占用 Alt-KeyV / Alt-KeyD / Alt-KeyB / Alt-KeyF / Alt-KeyG / Alt-Backspace，⌥S 零占用；② 原生菜单 accelerator——tauri 的 Menu::default() 逐项来自 muda 的 items/predefined.rs，其中唯一的 ⌥ 系预置是 HideOthers=⌥⌘H，自建项里唯一带 accelerator 的是 CmdOrCtrl+Q（src-tauri/src/lib.rs），均不含 ⌥S；③ macOS 系统级不预置裸 ⌥ 字母（Option 系预置都是 ⌥⌘ 组合）。（M319，Alex 节点 1 落槌 split=⌥S）",
+    en: "Opens a new empty pane beside the active pane and gives it focus (no-op once the two-pane limit is reached). The key is ⌥S: single-segment ⌥ follows the Alt-prefix convention of Emacs (the Alt-KeyV / Alt-KeyD / Alt-KeyB / Alt-KeyF / Alt-KeyG family in this table) and the letter means S = Split. Scope is global — a pane is a window-level object, so splitting must also work with focus in the left column, the search box or a popover (same reason as the tab.* / view.* family). Conflicts checked (none, three independent sources): (1) the table (keys.ts is the source of truth) already uses Alt-KeyV / Alt-KeyD / Alt-KeyB / Alt-KeyF / Alt-KeyG / Alt-Backspace in the ⌥ family, so ⌥S is free; (2) the native menu accelerator set (tauri's Menu::default() takes each item from muda's items/predefined.rs; its only ⌥-family preset is HideOthers = ⌥⌘H and the only self-built item with an accelerator is CmdOrCtrl+Q in src-tauri/src/lib.rs) has no ⌥S; (3) macOS presets no bare ⌥ letter (Option-family presets are all ⌥⌘ combos). (M319; node-1 ruling split = ⌥S)",
+  },
+  D366: {
+    zh: "把活跃 pane 切到另一个 pane（单 pane 时为无操作）。键位取 ⌥O：⌥ 系单段同 ⌥S 一族，语义 O = Other。取 global——同 ⌥S（pane 是窗口级对象）。冲突已核（零冲突，三条独立来源）：① 表内——keys.ts 即真源，⌥O 零占用；② 原生菜单 accelerator——muda predefined 清单里唯一的 ⌥ 系预置是 ⌥⌘H，自建项只有 CmdOrCtrl+Q，均不含 ⌥O；③ macOS 系统级不预置裸 ⌥ 字母。（M319，Alex 节点 1 落槌 other=⌥O）",
+    en: "Switches the active pane to the other pane (no-op with a single pane). The key is ⌥O: single-segment ⌥ as with ⌥S, and the letter means O = Other. Scope is global, same as ⌥S (a pane is a window-level object). Conflicts checked (none, three independent sources): (1) the table (keys.ts is the source of truth) does not use ⌥O; (2) the muda predefined list's only ⌥-family preset is ⌥⌘H and the only self-built accelerator is CmdOrCtrl+Q, so the native menu set has no ⌥O; (3) macOS presets no bare ⌥ letter. (M319; node-1 ruling other = ⌥O)",
+  },
+  D367: {
+    zh: "收起活跃 pane，把它的全部标签按序并入另一 pane（各带撤销史 / 选区 / 滚动状态；单 pane 时为无操作）。键位取 ⌥W：⌥ 系单段同 ⌥S 一族，语义 W = Window（收掉当前窗格）。取 global——同 ⌥S（pane 是窗口级对象）。冲突已核（零冲突，三条独立来源）：① 表内——keys.ts 即真源，⌥W 零占用（注意：⌘W 已归 tab.close，⌥W 是不同 token，互不干扰）；② 原生菜单 accelerator——muda predefined 的 CloseWindow 用 ⌘W（M149 已把它换成不带 accelerator 的自定义项），唯一 ⌥ 系预置是 ⌥⌘H，均不含 ⌥W；③ macOS 系统级不预置裸 ⌥ 字母。（M319，Alex 节点 1 落槌 close=⌥W）",
+    en: "Collapses the active pane and merges all of its tabs, in order, into the other pane (each keeping its undo history / selection / scroll state; no-op with a single pane). The key is ⌥W: single-segment ⌥ as with ⌥S, and the letter means W = Window (collapse this window's pane). Scope is global, same as ⌥S (a pane is a window-level object). Conflicts checked (none, three independent sources): (1) the table (keys.ts is the source of truth) does not use ⌥W (note ⌘W is already tab.close — a different token, no interference); (2) in muda's predefined list CloseWindow uses ⌘W (M149 replaced it with a custom item without an accelerator) and the only ⌥-family preset is ⌥⌘H, so the native menu set has no ⌥W; (3) macOS presets no bare ⌥ letter. (M319; node-1 ruling close = ⌥W)",
+  },
+  // 分隔条的读屏名（M319，change pane-system-split-view 分组 6.2 的零视觉影响部分）。
+  // 消费者是装配层 `src/main.ts` 的 `SPLITTER_LABEL`（`createPaneHandle` 建元素时写、
+  // `onRelabel` 重写）。与栏宽手柄的读屏名（D120，同为 role=separator）是两条不同的东西。
+  D368: {
+    zh: "分隔条——拖拽调整左右两个 pane 的宽度",
+    en: "Divider — drag to resize the two panes",
+  },
 } satisfies Record<string, CopyEntry>;
 
 /** 文案表的键（D 编号，多串格带 `.N` 后缀）——由表数据推导，加一条即多一个键。 */

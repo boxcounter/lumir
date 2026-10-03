@@ -25,6 +25,24 @@
 `null`（解绑）。**命令 id 是否已知由前端键位层判定**——未知 id 形状合法即透传，前端装配期给 warning 并忽略
 该条（单一来源是 `src/keys.ts` 的 `COMMAND_IDS`，Rust 侧不复制一份必然漂移的清单）。
 
+#### 1.1.1 pane 命令族的默认键位与冲突核对（M319）
+
+change `pane-system-split-view` 分组 6.1（`src/keys.ts`）给三条 pane 命令配了出厂键位：
+`⌥S` → `pane.split`、`⌥O` → `pane.other`、`⌥W` → `pane.close`（**Alex 节点 1 落槌**；命令本体
+M316 已进表）。三条与其余表内绑定一样可经 `[keys]` 重绑 / 解绑（单段、无空白，形状合法）。
+键位占用的**零冲突核对**按三条独立来源逐条结论如下（逐条来由另见键位表 doc D365–D367 与
+`src/keys.ts` 文件头 M319 段，本节只做投影）：
+
+| 来源 | 核对结论 |
+|---|---|
+| 表内（`src/keys.ts` 即真源） | ⌥ 系现占用 `Alt-KeyV` / `Alt-KeyD` / `Alt-KeyB` / `Alt-KeyF` / `Alt-KeyG` / `Alt-Backspace`；`⌥S` / `⌥O` / `⌥W` 零占用。注意 `⌘W` 归 `tab.close`，与 `⌥W` 是不同 token，互不干扰 |
+| 原生菜单 accelerator | tauri `Menu::default()` 逐项来自 muda `items/predefined.rs`，其中**唯一的 ⌥ 系预置是 `HideOthers` = `⌥⌘H`**；本应用自建项里唯一带 accelerator 的是 `CmdOrCtrl+Q`（`src-tauri/src/lib.rs`）。菜单键等价只截获带 accelerator 的项（M149 对 `⌘W` 的实证）⇒ 三条裸 ⌥ 键会到达 webview 的 keydown |
+| macOS 系统级 | 不给系统菜单预置裸 ⌥ 字母（Option 系预置都是 `⌥⌘` 组合，如 `⌥⌘Esc` / `⌥⌘D` / `⌥⌘H`）。真正会「抢」裸 ⌥ 字母的是文本输入系统的特殊字符层（US 布局 `⌥S` → ß / `⌥O` → ø / `⌥W` → ∑），它在本键位分发器的**下游**：命中绑定时 `preventDefault` 即挡住（同族先例 `Alt-KeyV` 的 `√` 已在真机跑过） |
+
+token 形态注意：含 Alt 的组合按物理键 `KeyboardEvent.code` 判定（macOS 的 Alt 层替换字符，`e.key`
+判不出用户按的键），表内写法因此是 `Alt-KeyS` 一族；用户经 `[keys]` 写 `Alt-s` 一类字符形态不会命中
+（静默失配，机制见 `src/keys.ts` 的 `keyToken` 与文件头 M195 / M277 段）。
+
 ### 1.2 `[editor]` 表
 
 | 键 | 类型 | 默认 | 取值范围 | 生效时机 | 真源 |

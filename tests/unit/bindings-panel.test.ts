@@ -16,7 +16,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { BINDING_GROUPS } from "../../src/bindings-panel.ts";
-import { COMMAND_IDS } from "../../src/keys.ts";
+import { COMMAND_IDS, KEY_BINDINGS } from "../../src/keys.ts";
 
 test("键位面板分组：COMMAND_IDS 每条都有组（零兜底「其他」）", () => {
   const assigned = new Set<string>();
@@ -51,4 +51,19 @@ test("键位面板分组：分组互斥（同一命令不得出现在两个组�
   assert.deepEqual(duplicated, [], `同一命令被两个组各渲染一行 ⇒ 面板行数翻倍：${duplicated.join(", ")}`);
   assert.equal(seen.size, total);
   assert.equal(total, COMMAND_IDS.length, "分组条目总数 = 命令总数（与第一条互为反向核验）");
+});
+
+// M319（change pane-system-split-view 分组 6.3）：三条 pane 命令**不新增分组**，按既有分组落位——
+// 它们是 NON_TAB_GLOBAL_COMMAND_IDS 成员（keys.ts 的清单即「全局（非标签）」组 D64.11 的来源），
+// 因此面板自动列出它们。render() 对每条命令取生效表里的绑定：M319 给三条都配了默认绑定 ⇒
+// 面板渲染的是 ⌥S / ⌥O / ⌥W 三行键位行，而不是「未绑定」行（如实列出，task 6.3 的判据）。
+test("键位面板分组：pane.* 三条落在既有「全局（非标签）」组（不新增分组）且都有默认绑定", () => {
+  const paneCommands = ["pane.split", "pane.other", "pane.close"] as const;
+  for (const command of paneCommands) {
+    const groups = BINDING_GROUPS.filter((group) => group.commands.includes(command));
+    assert.equal(groups.length, 1, `${command} 应恰好落在一个分组（实际 ${groups.length} 个）`);
+    assert.equal(groups[0].titleKey, "D64.11", `${command} 应落在「全局（非标签）」组 D64.11（不新增分组）`);
+    const bindings = KEY_BINDINGS.filter((binding) => binding.command === command);
+    assert.equal(bindings.length, 1, `${command} 有默认绑定 ⇒ 面板按键位行渲染（不是「未绑定」行）`);
+  }
 });
