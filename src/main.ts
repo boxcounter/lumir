@@ -4,8 +4,8 @@ import type { EditorHandle, EditorSession } from "./editor";
 import type { EditorView } from "@codemirror/view";
 import { applyKeyOverrides, BLOCK_SCROLL_CLASS, EDITOR_COMMAND_IDS, KEY_BINDINGS, Keymap, TAB_GOTO_IDS } from "./keys";
 import type { CommandId, CommandRunner, CommandRuntime, EditorCommandId, KeyBinding, KeyOverrides } from "./keys";
-import { createPaneLayout } from "./pane-layout";
-import type { PaneId } from "./pane-layout";
+import { DEFAULT_SPLIT_RATIO, clampSplitRatio, createDividerDrag, createPaneLayout } from "./pane-layout";
+import type { DividerDrag, PaneId } from "./pane-layout";
 import { DEFAULT_AUTO_INDENT } from "./enter-indent";
 import { DEFAULT_FONT_SIZE } from "./typography";
 import type { TypographySettings } from "./typography";
@@ -238,13 +238,14 @@ function onEachEditor(subscribe: (handle: EditorHandle) => () => void): () => vo
   };
 }
 
-// 分隔条比例：内存态、初值对半（松手写盘归持久化 mission——本 mission 只做拖拽实时重排）。
-let splitRatio = 0.5;
-/** 拖拽钳制区间：任一 pane 至少留两成宽，再窄标签条与正文都不可用。 */
-const SPLIT_RATIO_MIN = 0.2;
-const SPLIT_RATIO_MAX = 0.8;
+// 分隔条比例：内存态真源（初值与钳制区间取自 pane 模块的单一来源）。松手位置写会话文件
+// （per-vault 布局即数据，M318 tasks 5.4）；**不复用 `ui.content_width` 全局键**——栏宽是
+// 全局偏好、分栏比例是 vault 布局，两个真源各管一层（ADR 0008 Decision 2）。
+let splitRatio = DEFAULT_SPLIT_RATIO;
 /** 分隔条元素（split 时现建、close 时移除；单 pane DOM 里没有它）。 */
 let dividerEl: HTMLElement | null = null;
+/** 分隔条拖拽控制器（与 dividerEl 同生命周期；元素移除前先摘监听）。 */
+let dividerDrag: DividerDrag | null = null;
 
 const paneLayout = createPaneLayout<EditorSession, EditorHandle>({
   createHandle: (paneId) => createPaneHandle(paneId),
@@ -312,6 +313,8 @@ function disposePaneHandle(handle: EditorHandle): void {
   for (const unsub of assembly.unsubs) unsub();
   handle.view.destroy();
   if (paneId !== 1) {
+    dividerDrag?.destroy(); // 元素移除前先摘指针监听（元素随后才 remove）
+    dividerDrag = null;
     assembly.mountEl.remove();
     assembly.stripEl.remove();
     dividerEl?.remove();
@@ -482,34 +485,29 @@ function createPaneTabs(paneId: PaneId, handle: EditorHandle, stripEl: HTMLEleme
   };
 }
 
-/** 分隔条拖拽：指针每移一次实时重排（比例内存态，钳 [0.2, 0.8]），松手**不写盘**
- *（持久化归后续 mission）。指针捕获锁定在分隔条上，拖出命中区不中断——形态仿
- *  src/content-width.ts 的手柄。 */
+/** 分隔条拖拽的接线（控制器本体在 src/pane-layout.ts，可脱浏览器单测）：指针每移一次实时
+ *  重排（比例内存态，钳 `[SPLIT_RATIO_MIN, SPLIT_RATIO_MAX]`），**松手写盘一次**——写本 vault
+ *  的会话文件（per-vault 布局即数据，M318 tasks 5.4），MUST NOT 复用 `ui.content_width`。
+ *  拖拽全程只改比例与布局样式，不碰文档 / 撤销栈 / dirty（控制器依赖面里没有编辑器，
+ *  见 `createDividerDrag` 的说明）。 */
 function wireDividerDrag(divider: HTMLElement): void {
-  let dragging = false;
-  divider.addEventListener("pointerdown", (event) => {
-    if (event.button !== 0) return;
-    divider.setPointerCapture(event.pointerId);
-    dragging = true;
-    divider.classList.add("dragging");
-    event.preventDefault(); // 命中区内不触发文本选择
+  dividerDrag = createDividerDrag({
+    divider,
+    measure: () => {
+      const rect = shell.editor.getBoundingClientRect();
+      return { left: rect.left, width: rect.width };
+    },
+    apply: () => applySplitRatio(),
+    getRatio: () => splitRatio,
+    setRatio: (ratio) => {
+      splitRatio = ratio;
+    },
+    onCommit: () => {
+      // 松手才排期落盘：拖拽过程零写盘请求（防抖窗口在 store 里）。switcher 在下面才建，
+      // 但本回调只在拖拽发生时跑，那时它已就位（与 createPaneTabs 里 `tree` 的同一模式）。
+      void switcher.sessionChanged();
+    },
   });
-  divider.addEventListener("pointermove", (event) => {
-    if (!dragging) return;
-    const rect = shell.editor.getBoundingClientRect();
-    if (rect.width === 0) return;
-    splitRatio = Math.min(
-      SPLIT_RATIO_MAX,
-      Math.max(SPLIT_RATIO_MIN, (event.clientX - rect.left) / rect.width),
-    );
-    applySplitRatio();
-  });
-  const endDrag = (): void => {
-    dragging = false;
-    divider.classList.remove("dragging");
-  };
-  divider.addEventListener("pointerup", endDrag);
-  divider.addEventListener("pointercancel", endDrag);
 }
 
 /** 分隔条比例的施加：pane 挂载元素与标题栏标签槽的 inline flexGrow **同源同一份
@@ -541,17 +539,41 @@ function applySplitChrome(): void {
   renderAllTabStrips();
 }
 
-/** `pane.split`：新 pane 恒在活跃 pane 右侧（账本落点规则）并即活跃；能力同步与注入
- *  重放在 createPaneHandle 里完成，这里只补标签条实例与 chrome 切换。 */
-function splitActivePane(): void {
+/** 把 pane 布局设成存储的形状（恢复路径的当帧一步，M318 tasks 5.3）：`count` 为 1 或 2。
+ *  - 存储是分栏（2）而当前是单 pane → 补一次 split；
+ *  - 存储是单 pane（1）而当前在分栏 → 收拢回 root（切换 vault 时上一次的分栏拓扑不会残留
+ *    到新 vault，「单 pane 存储恢复不出第二 pane」）；
+ *  - 比例钳进合法区间后施加。
+ *  已是目标形态时不动（不重复 split / 不无辜收起）。 */
+function applyPaneCount(count: number, ratio: number): void {
+  splitRatio = clampSplitRatio(ratio);
+  if (count > 1) {
+    if (!paneLayout.isSplit()) addPane(); // 恢复路径**不抢焦点**（焦点归用户，不进右 pane）
+  } else if (paneLayout.isSplit()) {
+    closeActivePane();
+  }
+  applySplitChrome();
+  syncActiveDocument();
+}
+
+/** 建一个新 pane（账本落点规则：恒在活跃 pane 右侧并即活跃）并补标签条实例与 chrome。
+ *  能力同步与注入重放在 createPaneHandle 里完成。**不抢焦点**——`pane.split` 命令与恢复
+ *  路径共用它，焦点由调用方决定（恢复路径不该在装载期把焦点丢进右 pane）。 */
+function addPane(): boolean {
   const pane = paneLayout.split(); // 上限二：null = 无操作、无提示（不变量 1）
-  if (pane === null) return;
+  if (pane === null) return false;
   const assembly = paneAssemblies.get(pane.id);
   if (assembly !== undefined) {
     assembly.tabs = createPaneTabs(pane.id, pane.handle, assembly.stripEl);
   }
   applySplitChrome();
-  pane.handle.focusPreservingReadingPosition();
+  return true;
+}
+
+/** `pane.split`：建右 pane、把焦点交给它（用户动作的落点），再对齐一次表现层。 */
+function splitActivePane(): void {
+  if (!addPane()) return;
+  paneLayout.activeHandle().focusPreservingReadingPosition();
   syncActiveDocument();
 }
 
@@ -649,8 +671,9 @@ const editor: EditorHandle = {
   contentWidth: () => paneLayout.activeHandle().contentWidth(),
   // 新会话落在**活跃 pane**（tasks 2.10 / 4.2 的打开落点）。
   createSession: () => paneLayout.activeHandle().createSession(),
-  // 恢复壳恒落 root pane：vault 会话恢复（v1）把标签列表只装进一个 pane，分栏布局的按 pane
-  // 恢复归持久化 mission（tasks 5.3）；新 pane 的空白档由 split 自己的 reset 提供。
+  // 复合句柄的这个方法恒落 root pane（EditorHandle 接口要求实现它）。**会话恢复不再走它**：
+  // M318 起按 pane 恢复，恢复路径直接用目标 pane 的句柄（见 switcher deps 的 createShell）。
+  // 新 pane 的空白档由 split 自己的 reset 提供。
   createShellSession: (path) => paneLayout.panes()[0].handle.createShellSession(path),
   reloadSession: (session, doc, path, requestId) => {
     (paneEntryOfSession(session)?.[1].handle ?? paneLayout.activeHandle()).reloadSession(
@@ -1217,9 +1240,16 @@ const switcher: VaultSwitcherHandle = createVaultSwitcher({
   mount: shell.root, // 浮层挂点取 app-shell 根：左栏两个容器都 overflow:auto，挂进去会被裁掉
   entry: () => tree.vaultEntry(),
   toast,
-  sessions: () => editor.sessions(),
-  // 前台路径取自保存链路（它才是「前台标签是哪一个」的持有者），不在这里再存一份副本。
-  activePath: () => save.displayedPath(),
+  // 入盘快照的输入（M318）：逐 pane 的会话与前台路径 + 分隔比例，全部活读装配层的真实状态。
+  // 前台路径取该 pane 的前台标签（与 `save.displayedPath()` 同源——它也是活跃 pane 的前台，
+  // 只是这里**逐 pane** 取，不另存一份副本）。
+  layout: () => ({
+    panes: paneLayout.panes().map((pane) => ({
+      sessions: pane.handle.sessions(),
+      activePath: pane.handle.activeSession().path,
+    })),
+    ratio: splitRatio,
+  }),
   list: () => vaultList(),
   requestSwitch: (row) => guardVaultSwitch(() => switchToVault(row.path)),
   requestAdd: () => requestAddVault(),
@@ -1235,16 +1265,21 @@ const switcher: VaultSwitcherHandle = createVaultSwitcher({
   restoreReadingPosition: (snapshot) => editor.view.dispatch({ effects: snapshot }),
   focusEditor: () => editor.view.focus(),
   getSession: (vaultId) => vaultSessionGet(vaultId),
-  putSession: (vaultId, paths, active) => vaultSessionPut(vaultId, paths, active),
+  putSession: (vaultId, panes, ratio) => vaultSessionPut(vaultId, panes, ratio),
   // 会话恢复的「在不在 vault 内」同样补一次批量存在探测（spec「装载后恢复标签列表」）：
   // 惰性条目不在枚举结果里，但它们是真文件——用户从 `.local` 打开的教程下次启动照常回来。
   pathsExist: (paths) => fsPathsExist(paths),
+  // 恢复前把 pane 布局摆成存储的形状（M318 tasks 5.3 的第一步；单 pane 存储不出第二 pane）。
+  applyPaneCount,
   // 会话恢复的第一步（M283 的 3.2）：**当帧建壳**——为每个条目建一个「有路径、内容未装载」的
-  // 标签。不可打开的文件类（image/binary）不成壳，交回 store 计入跳过数（与它此前必然装载
-  // 失败同口径，行为不变）。
-  createShell: (path) => {
+  // 标签，落进**它自己所属的那个 pane**（M318：按 pane 恢复；此前恒落 root，见下游注释）。
+  // 不可打开的文件类（image/binary）不成壳，交回 store 计入跳过数（与它此前必然装载失败同
+  // 口径，行为不变）。
+  createShell: (path, pane) => {
     if (openKind(path) === "binary") return false;
-    editor.createShellSession(path);
+    const target = paneLayout.panes()[pane];
+    if (target === undefined) return false;
+    target.handle.createShellSession(path);
     return true;
   },
   // 壳建齐的一拍把标签栏刷成完整列表（`syncActiveDocument` 是渲染标签栏的唯一落点）。
@@ -1252,8 +1287,9 @@ const switcher: VaultSwitcherHandle = createVaultSwitcher({
   // 装载**文档内容**（恢复时只对激活项与它的退化候选调用；其余标签留到首次成为前台）：
   // 走既有打开链路，壳态标签落进它自己的会话（`openFile` 的壳态分支），不新建标签；
   // `quiet` 为真时不上屏失败覆盖层——批量路径的失败由一次计数提示承担。
-  // 键名 `openPinned` 由 vault-switcher 的 deps 定（它那边不在本 mission 的改动面内），
-  // 落点意图按 M254 的新口径取 "new"——每个文件新开一个标签（壳态命中时不新开）。
+  // 键名 `openPinned` 由 vault-switcher 的 deps 定；落点意图按 M254 的新口径取 "new"——
+  // 每个文件新开一个标签（壳态命中时不新开：`openFile` 按 path 命中已在会话里的壳，装进它
+  // 自己所属的 pane）。
   openPinned: (path) => openFile(path, openKind(path), "new", true),
   activate: (path) => {
     const session = editor.sessionForPath(path);

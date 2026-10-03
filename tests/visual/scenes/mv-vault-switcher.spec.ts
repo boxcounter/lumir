@@ -213,8 +213,8 @@ test("Enter 切到目标 vault：目标装载 + 切换前把当前 vault 的会�
   // 切换前 flush：会话按**稳定 id** 落盘，内容是有序的固定标签 + 激活项
   await expect.poll(async () => (await sessionPuts(page)).at(-1)).toEqual({
     vault_id: VAULT_A,
-    tabs: ["README.md", "docs/guide.md"],
-    active: "docs/guide.md",
+    panes: [{ tabs: ["README.md", "docs/guide.md"], active: "docs/guide.md" }],
+    pane_split_ratio: 0.5,
   });
 });
 

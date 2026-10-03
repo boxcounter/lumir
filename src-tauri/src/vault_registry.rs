@@ -449,8 +449,11 @@ pub fn list_vaults(registry: &Path, sessions: &Path) -> Result<Vec<VaultListEntr
             //（`exists()` 会把同名普通文件也算成可用，点开必失败）。
             let available = Path::new(&v.path).is_dir();
             let name = basename(&v.path);
-            let tab_count = crate::vault_session::load_from(sessions, &v.id)
-                .map_or(0, |session| session.tabs.len());
+            // 标签数 = **全部 pane** 的标签之和（M318：会话 schema 扩成 panes 数组后，
+            // 列表摘要的「N 个标签」是整个 vault 的标签总数，不是单 pane 的）。
+            let tab_count = crate::vault_session::load_from(sessions, &v.id).map_or(0, |session| {
+                session.panes.iter().map(|pane| pane.tabs.len()).sum()
+            });
             out.push(VaultListEntry {
                 id: v.id,
                 path: v.path,

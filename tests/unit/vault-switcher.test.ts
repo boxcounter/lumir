@@ -9,6 +9,7 @@ import { mock, test } from "node:test";
 import assert from "node:assert/strict";
 import type { FsEntry } from "../../src/bindings/FsEntry.ts";
 import type { VaultListEntry } from "../../src/bindings/VaultListEntry.ts";
+import type { PaneSession } from "../../src/bindings/PaneSession.ts";
 import type { VaultSession } from "../../src/bindings/VaultSession.ts";
 import type { EditorSession, ScrollSnapshot } from "../../src/editor.ts";
 import type { ToastAction, VaultSwitchBlock } from "../../src/save-controller.ts";
@@ -30,6 +31,7 @@ import {
   summaryText,
   vaultGuardText,
 } from "../../src/vault-switcher.ts";
+import type { StoredPane } from "../../src/vault-switcher.ts";
 
 /** 让 await 链跑完（mock timers 只接管 setTimeout，setImmediate 仍是真家伙）。 */
 const flush = async () => {
@@ -61,18 +63,46 @@ function listRow(over: Partial<VaultListEntry> & { id: string }): VaultListEntry
 // 会话过滤：全部有路径的标签入盘 / 顺序保留 / 激活项落空
 // ---------------------------------------------------------------------------
 
-test("sessionSnapshot：全部标签入盘、顺序按打开顺序、激活项不在集合里时落 null", () => {
+test("sessionSnapshot：全部标签入盘、顺序按打开顺序、激活项不在集合里时落 null（逐 pane）", () => {
   const sessions = [tab("a.md"), tab("b.md"), tab("c.md")];
-  assert.deepEqual(sessionSnapshot(sessions, "c.md"), { tabs: ["a.md", "b.md", "c.md"], active: "c.md" });
+  assert.deepEqual(sessionSnapshot([{ sessions, activePath: "c.md" }], 0.5), {
+    panes: [{ tabs: ["a.md", "b.md", "c.md"], active: "c.md" }],
+    ratio: 0.5,
+  });
   // M254 之前这里还有一层「预览标签不入盘」的过滤：预览机制退场后标签只有一种形态，
   // 每个有路径的标签都是正式标签、都该被记住（下面这条断言就是那层过滤的回归点）。
-  assert.deepEqual(sessionSnapshot(sessions, "b.md"), { tabs: ["a.md", "b.md", "c.md"], active: "b.md" });
-  // 没有前台（未命名文档）：激活项落 null（恢复侧退化到第一个可打开的）
-  assert.deepEqual(sessionSnapshot(sessions, undefined), {
-    tabs: ["a.md", "b.md", "c.md"],
-    active: null,
+  assert.deepEqual(sessionSnapshot([{ sessions, activePath: "b.md" }], 0.5), {
+    panes: [{ tabs: ["a.md", "b.md", "c.md"], active: "b.md" }],
+    ratio: 0.5,
   });
-  assert.deepEqual(sessionSnapshot([], undefined), { tabs: [], active: null });
+  // 没有前台（未命名文档）：激活项落 null（恢复侧退化到第一个可打开的）
+  assert.deepEqual(sessionSnapshot([{ sessions, activePath: undefined }], 0.5), {
+    panes: [{ tabs: ["a.md", "b.md", "c.md"], active: null }],
+    ratio: 0.5,
+  });
+  assert.deepEqual(sessionSnapshot([{ sessions: [], activePath: undefined }], 0.5), {
+    panes: [{ tabs: [], active: null }],
+    ratio: 0.5,
+  });
+});
+
+test("sessionSnapshot：双 pane 逐 pane 入盘，比例是快照的一项（分隔条松手改的就是它）", () => {
+  assert.deepEqual(
+    sessionSnapshot(
+      [
+        { sessions: [tab("a.md"), tab("b.md")], activePath: "b.md" },
+        { sessions: [tab("c.md")], activePath: "c.md" },
+      ],
+      0.35,
+    ),
+    {
+      panes: [
+        { tabs: ["a.md", "b.md"], active: "b.md" },
+        { tabs: ["c.md"], active: "c.md" },
+      ],
+      ratio: 0.35,
+    },
+  );
 });
 
 test("sessionSnapshot：**壳态标签一样入盘**（M283 的 3.1：纯惰性案会把会话写成 1 条）", () => {
@@ -80,35 +110,89 @@ test("sessionSnapshot：**壳态标签一样入盘**（M283 的 3.1：纯惰性�
   // 这正是「先建壳」能让会话快照保持完整的原因（design §3.1：纯惰性案在恢复后 1 秒内把
   // 40 条会话写成 1 条，用户的标签列表被这一次切换永久删掉）。
   const shell = { path: "a.md", loaded: false } as unknown as EditorSession;
-  assert.deepEqual(sessionSnapshot([shell], "a.md"), { tabs: ["a.md"], active: "a.md" });
+  assert.deepEqual(sessionSnapshot([{ sessions: [shell], activePath: "a.md" }], 0.5), {
+    panes: [{ tabs: ["a.md"], active: "a.md" }],
+    ratio: 0.5,
+  });
   // 未命名文档（无路径）仍不入盘
   const blank = { path: undefined, loaded: true } as unknown as EditorSession;
-  assert.deepEqual(sessionSnapshot([blank, shell], undefined), { tabs: ["a.md"], active: null });
+  assert.deepEqual(sessionSnapshot([{ sessions: [blank, shell], activePath: undefined }], 0.5), {
+    panes: [{ tabs: ["a.md"], active: null }],
+    ratio: 0.5,
+  });
 });
 
-test("sameSnapshot：逐项比较（顺序也算），用于决定要不要排期写盘", () => {
-  const a = { tabs: ["a.md", "b.md"], active: "b.md" };
-  assert.equal(sameSnapshot(a, { tabs: ["a.md", "b.md"], active: "b.md" }), true);
-  assert.equal(sameSnapshot(a, { tabs: ["b.md", "a.md"], active: "b.md" }), false);
-  assert.equal(sameSnapshot(a, { tabs: ["a.md"], active: "b.md" }), false);
-  assert.equal(sameSnapshot(a, { tabs: ["a.md", "b.md"], active: null }), false);
+test("sameSnapshot：逐项比较（顺序 / pane 数 / 比例也算），用于决定要不要排期写盘", () => {
+  const a = { panes: [{ tabs: ["a.md", "b.md"], active: "b.md" }], ratio: 0.5 };
+  assert.equal(
+    sameSnapshot(a, { panes: [{ tabs: ["a.md", "b.md"], active: "b.md" }], ratio: 0.5 }),
+    true,
+  );
+  assert.equal(
+    sameSnapshot(a, { panes: [{ tabs: ["b.md", "a.md"], active: "b.md" }], ratio: 0.5 }),
+    false,
+  );
+  assert.equal(sameSnapshot(a, { panes: [{ tabs: ["a.md"], active: "b.md" }], ratio: 0.5 }), false);
+  assert.equal(
+    sameSnapshot(a, { panes: [{ tabs: ["a.md", "b.md"], active: null }], ratio: 0.5 }),
+    false,
+  );
+  // 比例变了也是变了（分隔条松手写盘的那条路径）
+  assert.equal(
+    sameSnapshot(a, { panes: [{ tabs: ["a.md", "b.md"], active: "b.md" }], ratio: 0.7 }),
+    false,
+  );
+  // pane 数变了
+  assert.equal(
+    sameSnapshot(a, {
+      panes: [
+        { tabs: ["a.md", "b.md"], active: "b.md" },
+        { tabs: [], active: null },
+      ],
+      ratio: 0.5,
+    }),
+    false,
+  );
+  // 第二个 pane 的标签也要逐项一致
+  const two = {
+    panes: [
+      { tabs: ["a.md"], active: "a.md" },
+      { tabs: ["b.md"], active: "b.md" },
+    ],
+    ratio: 0.5,
+  };
+  assert.equal(
+    sameSnapshot(two, {
+      panes: [
+        { tabs: ["a.md"], active: "a.md" },
+        { tabs: ["c.md"], active: "b.md" },
+      ],
+      ratio: 0.5,
+    }),
+    false,
+  );
 });
 
 // ---------------------------------------------------------------------------
 // 恢复计划：越界/缺失丢弃、跳过计数、激活项退化
 // ---------------------------------------------------------------------------
 
-const sessionOf = (tabs: string[], active: string | null): VaultSession => ({
-  version: 1,
-  tabs,
-  active,
+/** 存储里的一个 pane（`restorePlan` 的输入形状 = `PaneSession`）。 */
+const paneOf = (tabs: string[], active: string | null): PaneSession => ({ tabs, active });
+
+/** 一份单 pane 的存储会话（多数用例只关心单 pane）。 */
+const sessionOf = (tabs: string[], active: string | null, ratio = 0.5): VaultSession => ({
+  version: 2,
+  panes: [paneOf(tabs, active)],
+  harness_pane: false,
+  pane_split_ratio: ratio,
   updated_at: 0,
 });
 
 test("restorePlan：不在 vault 集合里的条目（删除 / 越界 / 绝对路径）被丢弃并计入跳过", () => {
   const available = new Set(["a.md", "docs/c.md"]);
   const plan = restorePlan(
-    sessionOf(["a.md", "/etc/passwd", "../../outside.md", "docs/c.md"], "docs/c.md"),
+    paneOf(["a.md", "/etc/passwd", "../../outside.md", "docs/c.md"], "docs/c.md"),
     available,
   );
   assert.deepEqual(plan.open, ["a.md", "docs/c.md"]);
@@ -119,17 +203,17 @@ test("restorePlan：不在 vault 集合里的条目（删除 / 越界 / 绝对�
 test("restorePlan：激活项不可用退化为第一个可打开的；没有历史或全丢时为空", () => {
   const available = new Set(["a.md", "c.md"]);
   // 激活项不在恢复出来的集合里（文件缺失）
-  assert.deepEqual(restorePlan(sessionOf(["a.md", "c.md"], "gone.md"), available), {
+  assert.deepEqual(restorePlan(paneOf(["a.md", "c.md"], "gone.md"), available), {
     open: ["a.md", "c.md"],
     skipped: 0,
     active: "a.md",
   });
   // 激活项是 null（上次前台是没有路径的空文档——会话里存不下这种前台）
-  assert.equal(restorePlan(sessionOf(["a.md"], null), available).active, "a.md");
+  assert.equal(restorePlan(paneOf(["a.md"], null), available).active, "a.md");
   // 没有历史（会话缺失 / 损坏都走这条路）
   assert.deepEqual(restorePlan(null, available), { open: [], skipped: 0, active: null });
   // 全部条目都不在 vault 里
-  assert.deepEqual(restorePlan(sessionOf(["x.md", "y.md"], "x.md"), available), {
+  assert.deepEqual(restorePlan(paneOf(["x.md", "y.md"], "x.md"), available), {
     open: [],
     skipped: 2,
     active: null,
@@ -177,27 +261,46 @@ test("shortPath：路径尾部三段；不足三段原样；samePath 只归一�
 // 会话存储：防抖写 / flush / 装载后恢复
 // ---------------------------------------------------------------------------
 
+/** 一条建壳记录：路径 + 落进第几个 pane（0 = root / 左，1 = 动态 / 右）。 */
+interface StoredShell {
+  path: string;
+  pane: number;
+}
+
+/** 一个 pane 的布局输入（store deps 的 `layout()` 元素）。 */
+interface LayoutPane {
+  sessions: EditorSession[];
+  activePath: string | undefined;
+}
+
 interface StoreRig {
   store: ReturnType<typeof createVaultSessionStore>;
-  sessions: EditorSession[];
+  /** 单 pane 便利口：设 root pane 的会话（多数用例只关心单 pane）。 */
   setSessions(...sessions: EditorSession[]): void;
+  /** 设 root pane 的前台路径。 */
   setActivePath(path: string | undefined): void;
-  writes: Array<{ vaultId: string; tabs: string[]; active: string | null }>;
+  /** 整份布局（多 pane 用例 + 分隔比例）。 */
+  setLayout(panes: LayoutPane[], ratio?: number): void;
+  writes: Array<{ vaultId: string; panes: StoredPane[]; ratio: number }>;
   warns: string[];
   toasts: string[];
   /** 内容被装载出来的条目（`openPinned` 成功的那几次）。 */
   opened: string[];
-  /** 建了壳的条目（M283：恢复的第一步，当帧、按存储顺序）。 */
-  shells: string[];
-  /** 建壳与装载内容落在**同一条**调用时间线上（`shell:a.md` / `open:a.md`）——本 change 的
-   *  判据是「壳先齐、内容只装激活项」，只看两个集合分不出先后。 */
+  /** 建了壳的条目（M283：恢复的第一步，当帧、按存储顺序、按 pane 落位）。 */
+  shells: StoredShell[];
+  /** 建壳与装载内容落在**同一条**调用时间线上（`shell:a.md@0` / `open:a.md`）——判据是
+   *  「壳先齐、内容只装激活项」，只看两个集合分不出先后。`panes:N` 是布局施加那一拍。 */
   calls: string[];
   activated: string[];
   emptyVaults: number;
+  /** `applyPaneCount` 的调用记录（恢复时把布局摆成什么形状，含比例）。 */
+  paneCounts: Array<{ count: number; ratio: number }>;
   /** 会话读取口：默认 null（没有历史）。 */
   setGetSession(fn: (vaultId: string) => Promise<VaultSession | null>): void;
   /** 打不开的条目（在 vault 里但读失败）。 */
   failOpen: Set<string>;
+  /** 建不成壳的条目（不可打开的文件类：`createShell` 交回 false）。 */
+  failShell: Set<string>;
   /** 批量存在探测的假实现（默认「都不在 vault 内」= 只看枚举集合的旧口径）。 */
   pathsExistImpl: (paths: string[]) => Promise<string[]>;
   /** 探测调用记录：断言「一次批量、MUST NOT 逐条发起」用。 */
@@ -208,19 +311,23 @@ interface StoreRig {
 }
 
 function createStoreRig(): StoreRig {
-  let sessions: EditorSession[] = [];
-  let activePath: string | undefined;
+  let panes: LayoutPane[] = [{ sessions: [], activePath: undefined }];
+  let ratio = 0.5;
   let getSession: (vaultId: string) => Promise<VaultSession | null> = async () => null;
   let writesFail = false;
   let openSlow = false;
   const rig: StoreRig = {
     store: undefined as unknown as ReturnType<typeof createVaultSessionStore>,
-    sessions: [],
     setSessions: (...next) => {
-      sessions = next;
-      rig.sessions = sessions;
+      panes = [{ sessions: next, activePath: panes[0]?.activePath }];
     },
-    setActivePath: (path) => void (activePath = path),
+    setActivePath: (path) => {
+      panes[0] = { sessions: panes[0]?.sessions ?? [], activePath: path };
+    },
+    setLayout: (next, nextRatio) => {
+      panes = next;
+      if (nextRatio !== undefined) ratio = nextRatio;
+    },
     writes: [],
     warns: [],
     toasts: [],
@@ -229,30 +336,39 @@ function createStoreRig(): StoreRig {
     calls: [],
     activated: [],
     emptyVaults: 0,
+    paneCounts: [],
     setGetSession: (fn) => void (getSession = fn),
     failOpen: new Set<string>(),
+    failShell: new Set<string>(),
     pathsExistImpl: async () => [],
     probes: [],
     setWritesFail: (fail) => void (writesFail = fail),
     setOpenSlow: (next) => void (openSlow = next),
   };
   rig.store = createVaultSessionStore({
-    sessions: () => sessions,
-    activePath: () => activePath,
+    layout: () => ({
+      panes: panes.map((pane) => ({ sessions: pane.sessions, activePath: pane.activePath })),
+      ratio,
+    }),
     getSession: (vaultId) => getSession(vaultId),
-    putSession: async (vaultId, tabs, active) => {
+    putSession: async (vaultId, nextPanes, nextRatio) => {
       if (writesFail) throw new Error("磁盘只读");
-      rig.writes.push({ vaultId, tabs, active });
+      rig.writes.push({ vaultId, panes: nextPanes, ratio: nextRatio });
     },
     pathsExist: (paths) => {
       rig.probes.push([...paths]);
       return rig.pathsExistImpl(paths);
     },
-    // 建壳是同步的（恢复的第一步），内容装载是异步的（第二步）——两者与「刷标签栏」那一拍
-    // 落在同一条时间线上（`shellsBuilt` 是标签栏渲染的触发点，见 store deps 的说明）。
-    createShell: (path) => {
-      rig.shells.push(path);
-      rig.calls.push(`shell:${path}`);
+    // 布局（建 pane 与标签条）与建壳都是同步的（恢复的前两步），内容装载是异步的——它们与
+    // 「刷标签栏」那一拍落在同一条时间线上（`shellsBuilt` 是标签栏渲染的触发点）。
+    applyPaneCount: (count, nextRatio) => {
+      rig.paneCounts.push({ count, ratio: nextRatio });
+      rig.calls.push(`panes:${count}`);
+    },
+    createShell: (path, pane) => {
+      rig.calls.push(`shell:${path}@${pane}`);
+      if (rig.failShell.has(path)) return false;
+      rig.shells.push({ path, pane });
       return true;
     },
     shellsBuilt: () => void rig.calls.push("shellsBuilt"),
@@ -284,7 +400,61 @@ test("会话存储：变化后防抖写盘，同内容不重复排期", async ()
     rig.store.sessionChanged(); // 同内容再回调一次：不重置窗口、不重复排期
     mock.timers.tick(SESSION_WRITE_DEBOUNCE_MS);
     await flush();
-    assert.deepEqual(rig.writes, [{ vaultId: "vault-a", tabs: ["a.md", "b.md"], active: "a.md" }]);
+    assert.deepEqual(rig.writes, [
+      { vaultId: "vault-a", panes: [{ tabs: ["a.md", "b.md"], active: "a.md" }], ratio: 0.5 },
+    ]);
+  } finally {
+    mock.timers.reset();
+  }
+});
+
+test("会话存储：分隔条比例变化也触发写盘（比例是快照的一项，键仍是 per-vault）", async () => {
+  mock.timers.enable({ apis: ["setTimeout"] });
+  try {
+    const rig = createStoreRig();
+    rig.setLayout([{ sessions: [tab("a.md")], activePath: "a.md" }], 0.5);
+    await rig.store.onVaultLoaded("vault-a", []);
+    // 标签完全没变，只有分隔条松手改了比例——这也要落盘（per-vault 布局即数据，tasks 5.4）。
+    rig.setLayout([{ sessions: [tab("a.md")], activePath: "a.md" }], 0.75);
+    rig.store.sessionChanged();
+    assert.equal(rig.writes.length, 0, "防抖窗口内不写盘");
+    mock.timers.tick(SESSION_WRITE_DEBOUNCE_MS);
+    await flush();
+    assert.deepEqual(rig.writes, [
+      {
+        vaultId: "vault-a",
+        panes: [{ tabs: ["a.md"], active: "a.md" }],
+        ratio: 0.75,
+      },
+    ]);
+  } finally {
+    mock.timers.reset();
+  }
+});
+
+test("会话存储：双 pane 时逐 pane 入盘（含每个 pane 的前台与比例）", async () => {
+  mock.timers.enable({ apis: ["setTimeout"] });
+  try {
+    const rig = createStoreRig();
+    rig.setLayout(
+      [
+        { sessions: [tab("a.md"), tab("b.md")], activePath: "b.md" },
+        { sessions: [tab("c.md")], activePath: "c.md" },
+      ],
+      0.35,
+    );
+    await rig.store.onVaultLoaded("vault-a", []);
+    rig.store.sessionChanged();
+    mock.timers.tick(SESSION_WRITE_DEBOUNCE_MS);
+    await flush();
+    assert.deepEqual(rig.writes.at(-1), {
+      vaultId: "vault-a",
+      panes: [
+        { tabs: ["a.md", "b.md"], active: "b.md" },
+        { tabs: ["c.md"], active: "c.md" },
+      ],
+      ratio: 0.35,
+    });
   } finally {
     mock.timers.reset();
   }
@@ -303,7 +473,11 @@ test("会话存储：flush 写最新快照并取消防抖（切换前 / 退出�
     rig.setActivePath("c.md");
     rig.store.sessionChanged(); // 窗口内的第二次变化
     await rig.store.flush();
-    assert.deepEqual(rig.writes.at(-1), { vaultId: "vault-a", tabs: ["a.md", "c.md"], active: "c.md" });
+    assert.deepEqual(rig.writes.at(-1), {
+      vaultId: "vault-a",
+      panes: [{ tabs: ["a.md", "c.md"], active: "c.md" }],
+      ratio: 0.5,
+    });
     mock.timers.tick(SESSION_WRITE_DEBOUNCE_MS * 2);
     await flush();
     assert.equal(rig.writes.length, 1, "flush 已取消防抖定时器，不会再写第二次");
@@ -337,15 +511,30 @@ test("装载后恢复：当帧按存储顺序建壳，内容只装载存储的�
     fileEntry("docs/c.md"),
     { path: "docs", kind: "dir", size: 0, mtime_ms: null, lazy: false },
   ]);
-  // 壳：按存储顺序、越界条目（/etc/passwd）与不在 vault 的条目都不在其中
-  assert.deepEqual(rig.shells, ["a.md", "docs/c.md"], "壳按存储顺序建齐（标签的存在与顺序在此刻就位）");
+  // 壳：按存储顺序、越界条目（/etc/passwd）与不在 vault 的条目都不在其中，落进 root pane
+  assert.deepEqual(
+    rig.shells,
+    [
+      { path: "a.md", pane: 0 },
+      { path: "docs/c.md", pane: 0 },
+    ],
+    "壳按存储顺序建齐（标签的存在与顺序在此刻就位）",
+  );
+  // 单 pane 存储恢复不出第二 pane：布局只施加一次、count 为 1
+  assert.deepEqual(rig.paneCounts, [{ count: 1, ratio: 0.5 }]);
   // 内容：只装激活项，其余的文档内容留到它们首次成为前台
   assert.deepEqual(rig.opened, ["docs/c.md"], "非激活标签在装载期 MUST NOT 装载内容");
-  assert.deepEqual(rig.activated, ["docs/c.md"]);
+  assert.deepEqual(rig.activated, ["docs/c.md"], "单 pane 下不再补一次激活（无第二个 pane 可回）");
   assert.deepEqual(rig.toasts, [skippedText(1)]);
   assert.equal(rig.emptyVaults, 0);
-  // 时序：两个壳都先于任何内容装载（这是「等待与标签数脱钩」这条契约的机械形态）
-  assert.deepEqual(rig.calls, ["shell:a.md", "shell:docs/c.md", "shellsBuilt", "open:docs/c.md"]);
+  // 时序：布局先就位 → 两个壳都先于任何内容装载（「等待与标签数脱钩」这条契约的机械形态）
+  assert.deepEqual(rig.calls, [
+    "panes:1",
+    "shell:a.md@0",
+    "shell:docs/c.md@0",
+    "shellsBuilt",
+    "open:docs/c.md",
+  ]);
 });
 
 test("装载后恢复：存储的激活项不在 vault 里 → 装载落点是恢复计划给出的第一个条目", async () => {
@@ -355,7 +544,14 @@ test("装载后恢复：存储的激活项不在 vault 里 → 装载落点是�
     fileEntry("a.md"),
     fileEntry("c.md"),
   ]);
-  assert.deepEqual(rig.shells, ["a.md", "c.md"], "不在 vault 的条目不成壳");
+  assert.deepEqual(
+    rig.shells,
+    [
+      { path: "a.md", pane: 0 },
+      { path: "c.md", pane: 0 },
+    ],
+    "不在 vault 的条目不成壳",
+  );
   assert.deepEqual(rig.opened, ["a.md"], "退化到第一个条目：只有它的内容在装载期装载");
   assert.deepEqual(rig.activated, ["a.md"]);
   assert.deepEqual(rig.toasts, [skippedText(1)]); // 缺失 1（不逐个报错）
@@ -368,8 +564,120 @@ test("装载后恢复：激活项的内容读失败 → 退化为下一个能读
   await rig.store.onVaultLoaded("vault-a", [fileEntry("a.md"), fileEntry("c.md")]);
   assert.deepEqual(rig.opened, ["a.md"], "读失败的激活项没有把内容装进来");
   assert.deepEqual(rig.activated, ["a.md"], "退化到下一个能读的标签（两个标签都建了壳）");
-  assert.deepEqual(rig.calls, ["shell:a.md", "shell:c.md", "shellsBuilt", "open:c.md", "open:a.md"]);
+  assert.deepEqual(rig.calls, [
+    "panes:1",
+    "shell:a.md@0",
+    "shell:c.md@0",
+    "shellsBuilt",
+    "open:c.md",
+    "open:a.md",
+  ]);
   assert.deepEqual(rig.toasts, [skippedText(1)], "一次计数：读失败的那个");
+});
+
+// ---------------------------------------------------------------------------
+// 按 pane 恢复（M318 tasks 5.3）：双 pane / 单 pane / 全部不可用三分支
+// ---------------------------------------------------------------------------
+
+test("装载后恢复：双 pane 存储按 pane 建壳与装载，活跃 pane 定格 root", async () => {
+  const rig = createStoreRig();
+  rig.setGetSession(async () => ({
+    version: 2,
+    panes: [paneOf(["a.md"], "a.md"), paneOf(["b.md"], "b.md")],
+    harness_pane: false,
+    pane_split_ratio: 0.7,
+    updated_at: 0,
+  }));
+  await rig.store.onVaultLoaded("vault-a", [fileEntry("a.md"), fileEntry("b.md")]);
+  assert.deepEqual(rig.paneCounts, [{ count: 2, ratio: 0.7 }], "布局摆成两 pane，比例带过去");
+  assert.deepEqual(
+    rig.shells,
+    [
+      { path: "a.md", pane: 0 },
+      { path: "b.md", pane: 1 },
+    ],
+    "壳落进各自所属的 pane",
+  );
+  assert.deepEqual(rig.opened, ["a.md", "b.md"], "逐 pane 装载激活项的内容");
+  // 逐 pane 装载会把活跃指针留到最后装载的那个 pane；schema 无「哪个 pane 活跃」位，
+  // 收口时把 root 加载成功的那条激活一次（见 store 的 restore 注释）。
+  assert.deepEqual(rig.activated, ["a.md"]);
+  assert.deepEqual(rig.calls, [
+    "panes:2",
+    "shell:a.md@0",
+    "shell:b.md@1",
+    "shellsBuilt",
+    "open:a.md",
+    "open:b.md",
+  ]);
+  assert.deepEqual(rig.toasts, []);
+});
+
+test("装载后恢复：双 pane 存储、第二个 pane 的条目全没了 → 仍按存储建 2 pane（design §7）", async () => {
+  const rig = createStoreRig();
+  rig.setGetSession(async () => ({
+    version: 2,
+    panes: [paneOf(["a.md"], "a.md"), paneOf(["gone.md"], "gone.md")],
+    harness_pane: false,
+    pane_split_ratio: 0.5,
+    updated_at: 0,
+  }));
+  await rig.store.onVaultLoaded("vault-a", [fileEntry("a.md")]);
+  assert.deepEqual(
+    rig.paneCounts,
+    [{ count: 2, ratio: 0.5 }],
+    "「先建全部 pane 与其标签条」按 tasks/design 原文执行",
+  );
+  assert.deepEqual(
+    rig.shells,
+    [{ path: "a.md", pane: 0 }],
+    "pane 2 无可用条目不建壳（空 pane 是合法在场状态）",
+  );
+  // 只有 pane 0 有内容可装：活跃 pane 落在 pane 0，收口不再补激活（rootLoaded 命中 i===0）
+  assert.deepEqual(rig.activated, ["a.md"]);
+  assert.deepEqual(rig.toasts, [skippedText(1)], "pane 2 缺失的那 1 条计入跳过");
+});
+
+test("装载后恢复：双 pane 存储但全部条目都不可用 → 回落单 pane 空态", async () => {
+  const rig = createStoreRig();
+  rig.setGetSession(async () => ({
+    version: 2,
+    panes: [paneOf(["x.md"], "x.md"), paneOf(["y.md"], "y.md")],
+    harness_pane: false,
+    pane_split_ratio: 0.5,
+    updated_at: 0,
+  }));
+  await rig.store.onVaultLoaded("vault-a", [fileEntry("a.md")]);
+  assert.equal(rig.emptyVaults, 1);
+  assert.deepEqual(rig.paneCounts, [{ count: 1, ratio: 0.5 }], "一个条目都恢复不出来时不 split");
+  assert.deepEqual(rig.shells, []);
+  assert.deepEqual(rig.toasts, [skippedText(2)]);
+});
+
+test("装载后恢复：条目都在 vault 里但一个壳都建不成 → 回落单 pane 空态（不可打开的文件类）", async () => {
+  const rig = createStoreRig();
+  rig.failShell.add("bin.pdf");
+  rig.failShell.add("a.md");
+  rig.setGetSession(async () => ({
+    version: 2,
+    panes: [paneOf(["bin.pdf"], "bin.pdf"), paneOf(["a.md"], "a.md")],
+    harness_pane: false,
+    pane_split_ratio: 0.5,
+    updated_at: 0,
+  }));
+  await rig.store.onVaultLoaded("vault-a", [fileEntry("bin.pdf"), fileEntry("a.md")]);
+  // 布局先按存储摆成两 pane，壳全建不成后再收拢回单 pane
+  assert.deepEqual(
+    rig.paneCounts,
+    [
+      { count: 2, ratio: 0.5 },
+      { count: 1, ratio: 0.5 },
+    ],
+    "先按存储建 pane，全部建不成壳时回落单 pane",
+  );
+  assert.equal(rig.emptyVaults, 1);
+  assert.deepEqual(rig.opened, []);
+  assert.deepEqual(rig.toasts, [skippedText(2)], "两条都建不成壳，计入跳过");
 });
 
 test("装载后恢复：不在枚举集里但探测存在的条目照常恢复（惰性文件不被判成已删除）", async () => {
@@ -385,7 +693,11 @@ test("装载后恢复：不在枚举集里但探测存在的条目照常恢复�
     [[".local/tutorial.md", "gone.md"]],
     "一次批量探测：入参是那批「不在枚举条目集里」的路径，MUST NOT 逐条发起",
   );
-  assert.deepEqual(rig.shells, [".local/tutorial.md"], "探测存在的条目照常建壳（标签回来）");
+  assert.deepEqual(
+    rig.shells,
+    [{ path: ".local/tutorial.md", pane: 0 }],
+    "探测存在的条目照常建壳（标签回来）",
+  );
   assert.deepEqual(rig.opened, [".local/tutorial.md"], "存储的激活项就是它：内容照常装载");
   assert.deepEqual(rig.toasts, [skippedText(1)], "只有探测失败的条目计入跳过");
 });
@@ -395,7 +707,7 @@ test("装载后恢复：条目全在枚举集里时一次探测都不发（零�
   rig.setGetSession(async () => sessionOf(["a.md"], "a.md"));
   await rig.store.onVaultLoaded("vault-a", [fileEntry("a.md")]);
   assert.deepEqual(rig.probes, []);
-  assert.deepEqual(rig.shells, ["a.md"]);
+  assert.deepEqual(rig.shells, [{ path: "a.md", pane: 0 }]);
 });
 
 test("装载后恢复：探测失败等价于「不在 vault 内」（与只看枚举集合的旧行为一致）", async () => {
@@ -405,7 +717,7 @@ test("装载后恢复：探测失败等价于「不在 vault 内」（与只看�
   };
   rig.setGetSession(async () => sessionOf(["a.md", "gone.md"], "a.md"));
   await rig.store.onVaultLoaded("vault-a", [fileEntry("a.md")]);
-  assert.deepEqual(rig.shells, ["a.md"]);
+  assert.deepEqual(rig.shells, [{ path: "a.md", pane: 0 }]);
   assert.deepEqual(rig.toasts, [skippedText(1)]);
 });
 
@@ -451,7 +763,11 @@ test("装载后恢复：内容装载途中又装载一次 vault，前一批不�
   rig.setOpenSlow(false);
   const second = rig.store.onVaultLoaded("vault-b", [fileEntry("b.md")]);
   await Promise.all([first, second]);
-  assert.deepEqual(rig.shells, ["a.md"], "壳只在第一次装载的当帧建过一次（第二次没有会话历史）");
+  assert.deepEqual(
+    rig.shells,
+    [{ path: "a.md", pane: 0 }],
+    "壳只在第一次装载的当帧建过一次（第二次没有会话历史）",
+  );
   assert.deepEqual(rig.activated, [], "被让位的那一批不许激活任何标签");
   assert.equal(rig.emptyVaults, 1, "最后落的是 vault-b 的空态");
 });
@@ -1042,8 +1358,7 @@ function createSwitcherRig(rows: VaultListEntry[]): SwitcherRig {
     mount: mounts as unknown as HTMLElement,
     entry: () => entry as unknown as HTMLElement,
     toast: () => {},
-    sessions: () => [],
-    activePath: () => undefined,
+    layout: () => ({ panes: [{ sessions: [], activePath: undefined }], ratio: 0.5 }),
     list: () => {
       rig.listCalls += 1;
       notify?.(rows);
@@ -1074,7 +1389,9 @@ function createSwitcherRig(rows: VaultListEntry[]): SwitcherRig {
     // 本组用例不碰存在探测：默认「都不在 vault 内」（= 只看枚举集合的旧口径）。
     pathsExist: async () => [],
     openPinned: async () => true,
-    // M283 的两个新口子：本组用例（浮层 DOM 与阅读位置）不碰会话恢复，给最小替身。
+    // M283 的两个新口子 + M318 的 applyPaneCount：本组用例（浮层 DOM 与阅读位置）不碰会话恢复，
+    // 给最小替身。
+    applyPaneCount: () => {},
     createShell: () => true,
     shellsBuilt: () => {},
     activate: () => {},
@@ -1138,8 +1455,7 @@ test("浮层：未装载 vault（入口不存在）时打开是无操作", () =>
     mount: mounts as unknown as HTMLElement,
     entry: () => undefined, // 空态：树头部没有入口
     toast: () => {},
-    sessions: () => [],
-    activePath: () => undefined,
+    layout: () => ({ panes: [{ sessions: [], activePath: undefined }], ratio: 0.5 }),
     list: () => Promise.resolve([]),
     requestSwitch: () => {},
     requestAdd: () => {},
@@ -1152,6 +1468,7 @@ test("浮层：未装载 vault（入口不存在）时打开是无操作", () =>
     putSession: async () => {},
     pathsExist: async () => [],
     openPinned: async () => true,
+    applyPaneCount: () => {},
     createShell: () => true,
     shellsBuilt: () => {},
     activate: () => {},

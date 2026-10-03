@@ -1,8 +1,11 @@
 // pane 容器（change pane-system-split-view 的 tasks.md 1.1；设计来源 design.md §4「装配形状：
 // createEditor 双实例化」、§6「会话所有权与『移动标签』交互」，语义边界见 ADR 0008 Decision 1 / 3 / 4）。
 //
-// 本模块是**会话所有权的账本 + 活跃 pane 状态机**，只有纯逻辑：
-//   - 不 import 任何装配层模块（editor / tabs / main），不碰 DOM、不碰 EditorView；
+// 本模块是**会话所有权的账本 + 活跃 pane 状态机**，加上分隔条比例的两样东西：纯换算与一个
+// 元素注入式的拖拽控制器（见文件末尾）。全部与装配层解耦：
+//   - 不 import 任何装配层模块（editor / tabs / main）；不碰 EditorView；不创建 / 不查询
+//     全局 DOM——拖拽控制器需要的分隔条元素与测量、施加、提交回调全部由调用方注入，
+//     因此可脱浏览器单测；
 //   - 每个 pane 的编辑器句柄由装配层经 `PaneLayoutDeps` 注入（类型参数隔离），容器只按 pane
 //     持有、在收起时归还，**不解释它**（不知道句柄是不是 EditorHandle）；
 //   - 标签是调用方给的**不透明对象**，容器只读它的 `path`——会话所有权按路径判定。
@@ -32,8 +35,119 @@
  *  逐 pane 记账做 key。 */
 export type PaneId = number;
 
-/** v1 上限（ADR 0008 Decision 1）。上限二是有意约束，不是待填能力——第三次 `split` 无操作。 */
+/** v1 上限（ADR 0008 Decision 1）。上限二是有意约束，不是待填能力——第三次 `split` 无操作。
+ *  与 Rust 侧 `vault_session::MAX_PANES` 同值（会话 schema 的 pane 数上限）——
+ *  `tests/unit/session-schema-drift.test.ts` 对账两处，改一处必须同步另一处。 */
 export const MAX_PANES = 2;
+
+/** 分隔条比例的钳制区间：任一 pane 至少留两成宽（再窄标签条与正文都不可用）。
+ *  与 Rust 侧 `vault_session::SPLIT_RATIO_MIN` / `SPLIT_RATIO_MAX` 同值（对账同上）——
+ *  落盘值与施加值同区间，避免「盘上存 0.05、显示却是 0.2」的双真源。 */
+export const SPLIT_RATIO_MIN = 0.2;
+export const SPLIT_RATIO_MAX = 0.8;
+
+/** 分隔条比例的初值 / 缺省（对半分）：与 Rust 侧 `vault_session::DEFAULT_SPLIT_RATIO` 同值。 */
+export const DEFAULT_SPLIT_RATIO = 0.5;
+
+/** 把任意比例归一进合法区间（越界取端点）。NaN 落对半；±Infinity 与越界值一样收端点
+ *（与 Rust 侧 `vault_session::clamp_ratio` 同口径——NaN 才落默认，见该函数注释）。 */
+export function clampSplitRatio(value: number): number {
+  if (Number.isNaN(value)) return DEFAULT_SPLIT_RATIO;
+  return Math.min(SPLIT_RATIO_MAX, Math.max(SPLIT_RATIO_MIN, value));
+}
+
+/** 指针横坐标 → 钳制后的比例（**纯函数**，拖拽的唯一计算）：`rect` 是 pane 容器的矩形。
+ *  容器零宽（尚未布局）时落中点，不产出 NaN / Infinity。 */
+export function ratioFromPointer(clientX: number, rect: { left: number; width: number }): number {
+  if (rect.width <= 0) return DEFAULT_SPLIT_RATIO;
+  return clampSplitRatio((clientX - rect.left) / rect.width);
+}
+
+/** 分隔条拖拽所需的最小元素面：真 DOM 元素（`HTMLElement`）与单测替身都满足这一结构。
+ *  本模块**不创建、不查询** DOM——元素与测量 / 施加 / 提交都由调用方注入，控制器因此可脱
+ *  浏览器单测。 */
+export interface DividerSurface {
+  addEventListener(type: string, listener: (event: DividerPointerEvent) => void): void;
+  removeEventListener(type: string, listener: (event: DividerPointerEvent) => void): void;
+  setPointerCapture(pointerId: number): void;
+  classList: { add(token: string): void; remove(token: string): void };
+}
+
+/** 分隔条拖拽用到的最小指针事件面。 */
+export interface DividerPointerEvent {
+  button: number;
+  pointerId: number;
+  clientX: number;
+  preventDefault(): void;
+}
+
+export interface DividerDragDeps {
+  /** 分隔条元素（指针捕获与拖拽态 class 的落点）。 */
+  divider: DividerSurface;
+  /** pane 容器矩形（比例的参照系）：每帧现测，容器尺寸变化不至于沿用旧值。 */
+  measure(): { left: number; width: number };
+  /** 实时施加新比例（拖拽中每次移动；**只改布局样式**）。 */
+  apply(ratio: number): void;
+  /** 当前生效比例（内存态真源在装配层，这里只读）。 */
+  getRatio(): number;
+  /** 比例写回（内存态真源在装配层）。 */
+  setRatio(ratio: number): void;
+  /** 松手且比例**有变化**时回调一次——**持久化入口**（写本 vault 的会话文件）。过程零回调。 */
+  onCommit(ratio: number): void;
+}
+
+export interface DividerDrag {
+  /** 拆监听（pane 收起时调用；元素移除前先摘干净）。 */
+  destroy(): void;
+}
+
+/**
+ * 分隔条拖拽控制器（pane-system-split-view tasks 5.4）：实时重排（每次移动 `apply`）、松手写盘
+ * （`onCommit` 一次）、比例钳 `[SPLIT_RATIO_MIN, SPLIT_RATIO_MAX]`。
+ *
+ * 整条路径只读指针坐标与容器矩形、只写比例与布局样式——**依赖面里没有任何编辑器 / 会话 /
+ * 撤销栈通道**，这是「拖拽全程不改文档 / 不进撤销栈 / 不改 dirty」的结构保证（断言见
+ * `tests/unit/pane-layout.test.ts`：拖动只调 `apply` / `setRatio`，松手只调一次 `onCommit`）。
+ */
+export function createDividerDrag(deps: DividerDragDeps): DividerDrag {
+  const { divider, measure, apply, getRatio, setRatio, onCommit } = deps;
+  let drag: { pointerId: number; startRatio: number } | null = null;
+
+  const onPointerDown = (event: DividerPointerEvent): void => {
+    if (event.button !== 0) return;
+    divider.setPointerCapture(event.pointerId);
+    drag = { pointerId: event.pointerId, startRatio: getRatio() };
+    divider.classList.add("dragging");
+    event.preventDefault(); // 命中区内不触发文本选择
+  };
+  const onPointerMove = (event: DividerPointerEvent): void => {
+    if (drag === null || event.pointerId !== drag.pointerId) return;
+    const ratio = ratioFromPointer(event.clientX, measure());
+    setRatio(ratio);
+    apply(ratio);
+  };
+  const endDrag = (event: DividerPointerEvent): void => {
+    if (drag === null || event.pointerId !== drag.pointerId) return;
+    const { startRatio } = drag;
+    drag = null;
+    divider.classList.remove("dragging");
+    const ratio = getRatio();
+    if (ratio !== startRatio) onCommit(ratio);
+  };
+
+  divider.addEventListener("pointerdown", onPointerDown);
+  divider.addEventListener("pointermove", onPointerMove);
+  divider.addEventListener("pointerup", endDrag);
+  divider.addEventListener("pointercancel", endDrag);
+  return {
+    destroy() {
+      divider.removeEventListener("pointerdown", onPointerDown);
+      divider.removeEventListener("pointermove", onPointerMove);
+      divider.removeEventListener("pointerup", endDrag);
+      divider.removeEventListener("pointercancel", endDrag);
+    },
+  };
+}
 
 /** 标签在账本里的最小形状：**会话所有权按 `path` 判定**（ADR 0008 Decision 4）。
  *  `undefined` 是未命名文档，允许同时存在多份（它们不参与判重）。 */

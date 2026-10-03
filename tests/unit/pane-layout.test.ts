@@ -9,8 +9,17 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { EditorState } from "@codemirror/state";
-import { MAX_PANES, createPaneLayout } from "../../src/pane-layout.ts";
-import type { Pane, PaneLayout } from "../../src/pane-layout.ts";
+import {
+  DEFAULT_SPLIT_RATIO,
+  MAX_PANES,
+  SPLIT_RATIO_MAX,
+  SPLIT_RATIO_MIN,
+  clampSplitRatio,
+  createDividerDrag,
+  createPaneLayout,
+  ratioFromPointer,
+} from "../../src/pane-layout.ts";
+import type { DividerPointerEvent, Pane, PaneLayout } from "../../src/pane-layout.ts";
 
 /** 标签：`path` 是账本的判重键，`state` 承载「会话随移动原样迁移」的证据。 */
 interface Tab {
@@ -539,4 +548,159 @@ test("closeTab：摘掉前台时落右邻，无右邻落左邻", () => {
   assert.equal(layout.closeTab(c), true);
   assert.equal(layout.activeTab(), a, "无右邻落左邻");
   assert.deepEqual(pathsOf(layout.panes()[0]), ["a.md"]);
+});
+
+// ---------------------------------------------------------------------------
+// 分隔条比例与拖拽控制器（M318 tasks 5.4）：纯换算 + 元素注入式的控制器替身测试
+//
+// 为什么控制器这一层能测：它不创建 / 不查询 DOM，分隔条元素与测量、施加、提交回调都由调用方
+// 注入（`DividerSurface` 是最小结构类型）——替身元素因此能直接驱动它。**依赖面里没有任何
+// 编辑器 / 会话 / 撤销栈通道**，这是「拖拽全程不改文档 / 不进撤销栈 / 不改 dirty」的结构保证。
+// ---------------------------------------------------------------------------
+
+/** 分隔条替身：只实现控制器用到的那一小撮（监听 / 指针捕获 / class）。 */
+function fakeDivider(): {
+  element: {
+    addEventListener(type: string, listener: (event: DividerPointerEvent) => void): void;
+    removeEventListener(type: string, listener: (event: DividerPointerEvent) => void): void;
+    setPointerCapture(pointerId: number): void;
+    classList: { add(token: string): void; remove(token: string): void };
+  };
+  fire(type: string, event: Partial<DividerPointerEvent>): void;
+  classes: Set<string>;
+  captured: number[];
+  listenerCount(): number;
+} {
+  const listeners = new Map<string, Array<(event: DividerPointerEvent) => void>>();
+  const classes = new Set<string>();
+  const captured: number[] = [];
+  return {
+    element: {
+      addEventListener: (type, listener) => {
+        const list = listeners.get(type) ?? [];
+        list.push(listener);
+        listeners.set(type, list);
+      },
+      removeEventListener: (type, listener) => {
+        const list = listeners.get(type) ?? [];
+        listeners.set(
+          type,
+          list.filter((entry) => entry !== listener),
+        );
+      },
+      setPointerCapture: (pointerId) => void captured.push(pointerId),
+      classList: {
+        add: (token) => void classes.add(token),
+        remove: (token) => void classes.delete(token),
+      },
+    },
+    fire: (type, event) => {
+      const full: DividerPointerEvent = {
+        button: 0,
+        pointerId: 1,
+        clientX: 0,
+        preventDefault: () => {},
+        ...event,
+      };
+      for (const listener of listeners.get(type) ?? []) listener(full);
+    },
+    classes,
+    captured,
+    listenerCount: () => [...listeners.values()].reduce((n, list) => n + list.length, 0),
+  };
+}
+
+test("分隔条比例：钳制端点、越界收端点、非有限值落默认", () => {
+  assert.equal(SPLIT_RATIO_MIN, 0.2);
+  assert.equal(SPLIT_RATIO_MAX, 0.8);
+  assert.equal(clampSplitRatio(0.5), 0.5);
+  assert.equal(clampSplitRatio(SPLIT_RATIO_MIN), SPLIT_RATIO_MIN);
+  assert.equal(clampSplitRatio(SPLIT_RATIO_MAX), SPLIT_RATIO_MAX);
+  assert.equal(clampSplitRatio(0.05), SPLIT_RATIO_MIN, "低于下限收 0.2");
+  assert.equal(clampSplitRatio(0.95), SPLIT_RATIO_MAX, "高于上限收 0.8");
+  assert.equal(clampSplitRatio(Number.NaN), DEFAULT_SPLIT_RATIO, "NaN 不落进布局");
+  assert.equal(clampSplitRatio(Number.POSITIVE_INFINITY), SPLIT_RATIO_MAX);
+});
+
+test("分隔条比例：指针横坐标 → 比例（含零宽容器不产 NaN）", () => {
+  assert.equal(ratioFromPointer(500, { left: 0, width: 1000 }), 0.5);
+  assert.equal(ratioFromPointer(0, { left: 0, width: 1000 }), SPLIT_RATIO_MIN, "贴左缘收下限");
+  assert.equal(ratioFromPointer(1000, { left: 0, width: 1000 }), SPLIT_RATIO_MAX, "贴右缘收上限");
+  assert.equal(ratioFromPointer(120, { left: 20, width: 200 }), 0.5, "参照系带左偏移");
+  assert.equal(
+    ratioFromPointer(999, { left: 0, width: 0 }),
+    DEFAULT_SPLIT_RATIO,
+    "容器零宽（未布局）时落默认，不产 NaN / Infinity",
+  );
+});
+
+test("分隔条拖拽：移动只施加比例，松手写盘一次；过程零提交", () => {
+  const fake = fakeDivider();
+  const applied: number[] = [];
+  const committed: number[] = [];
+  let ratio = 0.5;
+  createDividerDrag({
+    divider: fake.element,
+    measure: () => ({ left: 0, width: 1000 }),
+    apply: (next) => void applied.push(next),
+    getRatio: () => ratio,
+    setRatio: (next) => void (ratio = next),
+    onCommit: (next) => void committed.push(next),
+  });
+
+  fake.fire("pointerdown", { clientX: 500 });
+  assert.deepEqual(fake.captured, [1], "指针捕获锁定在分隔条上（拖出命中区不中断）");
+  assert.ok(fake.classes.has("dragging"));
+  fake.fire("pointermove", { clientX: 700 });
+  fake.fire("pointermove", { clientX: 950 });
+  assert.deepEqual(applied, [0.7, SPLIT_RATIO_MAX], "每次移动实时施加，越界收上限");
+  assert.equal(ratio, SPLIT_RATIO_MAX, "内存态比例同步更新");
+  assert.deepEqual(committed, [], "拖拽过程零提交（不中途写盘）");
+
+  fake.fire("pointerup", { clientX: 950 });
+  assert.equal(fake.classes.has("dragging"), false);
+  assert.deepEqual(committed, [SPLIT_RATIO_MAX], "松手写盘一次（落点是最后施加的那个值）");
+});
+
+test("分隔条拖拽：比值没变不写盘；pointercancel 同样收束", () => {
+  const fake = fakeDivider();
+  const committed: number[] = [];
+  let ratio = 0.5;
+  createDividerDrag({
+    divider: fake.element,
+    measure: () => ({ left: 0, width: 1000 }),
+    apply: () => {},
+    getRatio: () => ratio,
+    setRatio: (next) => void (ratio = next),
+    onCommit: (next) => void committed.push(next),
+  });
+
+  fake.fire("pointerdown", { clientX: 500 });
+  fake.fire("pointerup", { clientX: 500 });
+  assert.deepEqual(committed, [], "比值没变不写盘（点一下分隔条不该写会话文件）");
+
+  fake.fire("pointerdown", { clientX: 500 });
+  fake.fire("pointermove", { clientX: 700 });
+  fake.fire("pointercancel", { clientX: 700 });
+  assert.deepEqual(committed, [0.7], "pointercancel 也收束并写一次");
+  assert.equal(fake.classes.has("dragging"), false);
+});
+
+test("分隔条拖拽：非左键不开始；destroy 摘干净全部监听", () => {
+  const fake = fakeDivider();
+  const drag = createDividerDrag({
+    divider: fake.element,
+    measure: () => ({ left: 0, width: 1000 }),
+    apply: () => {},
+    getRatio: () => 0.5,
+    setRatio: () => {},
+    onCommit: () => {},
+  });
+  fake.fire("pointerdown", { button: 2 });
+  assert.deepEqual(fake.captured, [], "非左键不捕获指针");
+  assert.equal(fake.classes.has("dragging"), false);
+  assert.equal(fake.listenerCount(), 4, "四类监听各一条");
+
+  drag.destroy();
+  assert.equal(fake.listenerCount(), 0, "destroy 后监听全摘（元素移除前调用）");
 });
