@@ -21,6 +21,7 @@ node tests/unit/run.mjs     # = pnpm test
 | `src/bindings-panel.ts` | 键位面板分组的不变量（M240 顺手收 M239 的漏登记）：`COMMAND_IDS` 每条都有组（零兜底「其他」）/ 组里无幻影 id / 分组互斥且条目总数 = 命令总数——兜底组是「新命令忘归组」的静默出口，这三条把它变成 unit 层红灯 |
 | `src/table-fullscreen.ts` + `src/preview/table.ts` | 表格放大全屏查看（M240，change table-fullscreen-view）：遮罩状态机（打开的动作顺序、`Esc` 就地消费、三条用户关闭路径都交还焦点 / 焦点兜底不抢焦点、已关闭后的迟到关闭是空操作、toggle 的开-关-开）、`fullscreenTableAt` 的命中判据（caret 在渲染为 grid 的表内 / 表外 / 降级表内 / 非矩形表内 / 空表集）、触发钮读屏名与 deck D124 的对账 |
 | `src/cell-geometry.ts` | grid 表格 cell 归属与 ⌃E 落点口径（M185）：形态矩阵下的 `cellContentEdge`（cell 右边界位按前向归属 / 内容紧贴管道符 / 下一 cell 空 cell 或短行补空列 / 末 cell / 多空格对齐空白）、边界位上的两套归属（编辑命令按本 cell 的 `inside`+`next`，⌃E 按前向）、落点幂等、非 grid 表返回 null。⌃F 的落点（= 隐藏管道符左缘）由 chromium 实测提供，view 侧的「可停靠」回退不在本层 |
+| `src/pane-layout.ts` | pane 容器账本与活跃 pane 状态机（M315，change pane-system-split-view；纯逻辑，句柄由替身注入、标签用真 `EditorState`）：pane 上限二与第三次 `split` 无操作、`close` 标签按序并入 + 被收起 pane 的前台成为目标前台、`moveTab` 归属唯一且**同一标签对象（含 `EditorState`）原样随行**、空 pane 合法在场不自动收起、活跃指针全部迁移路径、`openTab` 判重（命中他 pane 已开文件走移动、`create` 不被调用）与前台邻居口径、`disposeHandle` 恰好一次 |
 
 不在这一层：DOM 交互、CodeMirror view、渲染与布局（归 `tests/visual`）、真实 WKWebView
 下的行为（归 `scripts/acceptance`）。真 `EditorView` 需要 DOM，硬造只会得到一层假实现，
