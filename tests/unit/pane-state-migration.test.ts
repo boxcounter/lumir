@@ -46,6 +46,17 @@ test("共享 compartment：迁移来的 state 仍可被目标实例重配，撤�
   assert.equal(current.doc.toString(), "a", "撤销回到迁移前的编辑内容");
 });
 
+test("共享 compartment 的重配只作用于被施加的 state（pane 间互不串）", () => {
+  // 「只作用于该 pane」的判据：两个 state 引用同一个 compartment 实例、各带各的内容，
+  // 对其中一个施加 reconfigure 不改另一个。
+  const tabSize = new Compartment();
+  const paneA = EditorState.create({ extensions: [tabSize.of(EditorState.tabSize.of(2))] });
+  const paneB = EditorState.create({ extensions: [tabSize.of(EditorState.tabSize.of(4))] });
+  const paneAAfter = paneA.update({ effects: tabSize.reconfigure(EditorState.tabSize.of(8)) }).state;
+  assert.equal(paneAAfter.facet(EditorState.tabSize), 8, "被施加的 state 生效");
+  assert.equal(paneB.facet(EditorState.tabSize), 4, "另一个 state 的配置不被波及");
+});
+
 test("反向断言：换一个 compartment 实例时，重配对迁移来的 state 被静默丢弃", () => {
   // 这正是「逐实例 compartment」的病：目标实例拿自己的 compartment 去重配迁移来的 state，
   // CodeMirror 在 config 树里找不到该实例，效果被静默丢弃（不抛错），表现为「移动过去的
