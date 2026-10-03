@@ -7,9 +7,9 @@
 ## 1. pane 容器与装配（先行）
 
 - [ ] 1.1 pane 容器模块：pane 列表（v1 上限二）、活跃 pane 指针、split / close / moveTab 操作、对外提供「活跃 pane 的 EditorHandle」「遍历全部 pane」；空 pane 合法在场
-- [ ] 1.2 内容区泛化为 pane 容器：单 pane 时几何与现状逐像素一致（视觉场景照绿、零基线更新）；双 pane 时 per-pane 标签条挂载点 + 分隔条（hairline token、容器级）
+- [ ] 1.2 内容区泛化为 pane 容器：单 pane 时几何与现状逐像素一致（视觉场景照绿、零基线更新）；双 pane 时标题栏标签区左右分区槽挂载点（槽宽比例随分隔条、与 `pane_split_ratio` 同源）+ 分隔条（hairline token、容器级）
 - [ ] 1.3 `createEditor` 第二实例化：`createEditor`（editor.ts:1277）自包含工厂不动，装配层为每 pane 各建一个 `EditorView`；能力注入（折行 / 字号 / 主题 / 栏宽等）收敛为单一「遍历全部 pane」入口（setMode / applyTypography / setContentWidth / reconfigure）
-- [ ] 1.4 tabs 改 per-pane：每 pane 自己的会话子列表与标签条；标签并集 = 该 vault 打开的全部标签
+- [ ] 1.4 tabs 改 per-pane：每 pane 自己的会话子列表与标签条（单 pane 挂标题栏标签区、位置与几何逐像素不变；双 pane 挂标题栏左右分区槽，槽宽比例随分隔条、与 `pane_split_ratio` 同源，顶部恒一条横带）；双 pane 时标题栏右簇退让（产品标识块退 modeline、harness 开关钮隐藏，单栏不变）；标签并集 = 该 vault 打开的全部标签
 
 ## 2. 单例捕获改造（先行；每模块一条 commit， reviewer 逐模块映射 diff）
 
@@ -48,7 +48,7 @@
 ## 6. 键位与文案
 
 - [ ] 6.1 pane 命令族进 `KEY_BINDINGS` / `GLOBAL_COMMAND_IDS`：`pane.split` / `pane.close` / `pane.other`，默认键位按节点 1 落槌（起草倾向 ⌥S / ⌥W / ⌥O）；三线来源（表内 / 原生菜单 accelerator / 系统级）零冲突核对写入绑定 `doc`
-- [ ] 6.2 新增文案进 copy-data（D 编号、zh/en 双档）+ `onRelabel` 注册（空 pane 引导、分隔条读屏名等）；样式只消费既有 token
+- [ ] 6.2 新增文案进 copy-data（D 编号、zh/en 双档）+ `onRelabel` 注册（空 pane 引导、分隔条读屏名、双 pane 右簇退让（harness 开关钮隐藏 / 产品标识块退 modeline）相关读屏名等）；样式只消费既有 token
 - [ ] 6.3 `app.describe-bindings` 面板自动列出三条新命令（不新增分组或按既有分组落位）
 
 ## 7. 验证

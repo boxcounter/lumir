@@ -9,8 +9,9 @@
 ### Requirement: 应用骨架布局
 
 应用骨架 SHALL 为：标题栏 42px（全宽，左缘 traffic 灯区宽 236 与侧栏对齐，标签位于标题栏内——
-单 pane 常态；双 pane 时标签条随各 pane 位于 pane 顶部，见 `multi-tabs` 的「标签栏的显示与
-形态」，**右端为产品标识块**——见「产品名与版本号常显」）/ 主行（侧栏 236px + **内容区
+单 pane 常态；双 pane 时标签区左右分区为两槽，左槽 = 左 pane 标签、右槽 = 右 pane 标签，槽宽
+比例随分隔条，见 `multi-tabs` 的「标签栏的显示与形态」，**右端为产品标识块**——见「产品名与
+版本号常显」）/ 主行（侧栏 236px + **内容区
 （pane 容器）** + **右栏 dock**）/ modeline 25px（全宽）。内容区 SHALL 是 pane 容器
 （v1 上限两个横向 pane，见 `pane-layout` 的「pane 容器模型」）：未分栏时它承载单个文档 pane，
 **几何与 pane 化之前的正文栏逐像素一致**；分栏时两个 pane 以分隔条相隔，分隔条是容器级
@@ -19,7 +20,10 @@ hairline 元素（`--border` 档，平铺表面不吃 elevation），其位置�
 布局」）。右栏 dock SHALL 承载 harness 对话面板（Phase 1 不变：收起时零像素，展开时宽
 `--layout-dock-w`，与内容区之间以 hairline 分隔）；Phase 2 harness 归位 pane 后 dock 列移除，
 届时本条随 Phase 2 change 修订。标题栏右侧动作钮区填入面板 toggle 钮（**排在产品标识块左侧**，
-尺寸吃既有 `--layout-tb-btn-w/h` token）。
+尺寸吃既有 `--layout-tb-btn-w/h` token）。双 pane 时标题栏右簇 SHALL 退让——产品标识块退
+modeline（沿用窄窗 <640px 版本号退 modeline 的既有先例，`src/modeline.ts`）、harness 开关钮
+隐藏（`⌘⇧A` 照走；Phase 2 该钮语义重做）；单 pane 时右簇全量在场、逐像素不变（chrome 只在
+空间紧张时退让）。
 
 旧 masthead SHALL 移除，其信息迁移：vault 名 → 侧栏头（切换器入口形态不变）；当前文件路径 →
 modeline 左侧；当前位置指示 → modeline（toc 语义不变，只迁承载面）；行数 / 语法 / 编码 →
@@ -38,8 +42,9 @@ modeline 右侧（只读派生自**活跃 pane 的前台**编辑器状态，MUST
 
 - **WHEN** 执行 `pane.split`（双 pane）
 - **THEN** 内容区内出现两个横向 pane，各占容器约一半（默认 0.5），以一条 hairline 分隔条相隔；
-  侧栏 236px、标题栏 42px、modeline 25px、dock 列均不受影响；拖拽分隔条至 0.7 后两 pane 宽度
-  按新比例重排（实时），松手后位置被持久化
+  侧栏 236px、标题栏 42px、modeline 25px、dock 列均不受影响；标题栏标签区同步左右分区为两槽
+  （槽宽比例与分隔条一致），右簇退让（产品标识块退 modeline、harness 开关钮隐藏），顶部恒为
+  一条横带；拖拽分隔条至 0.7 后两 pane 宽度与两槽宽度按新比例重排（实时），松手后位置被持久化
 
 #### Scenario: dock 展开与收起
 
@@ -51,4 +56,4 @@ modeline 右侧（只读派生自**活跃 pane 的前台**编辑器状态，MUST
 
 - **WHEN** 没有任何文件打开（单 pane、空标签列表）
 - **THEN** 标题栏为 traffic 灯区 + 动作钮区（harness toggle）+ 右端产品标识块（标签区隐藏），
-  modeline 与侧栏骨架不变；pane 容器呈空态（无分隔条、无 pane 内标签条）
+  modeline 与侧栏骨架不变；pane 容器呈空态（无分隔条、无第二 pane）
