@@ -1,5 +1,5 @@
-// pane 容器（change pane-system-split-view 的 tasks.md 1.1；设计来源 design.md §3「装配形状」、
-// §4「会话所有权与移动标签」，语义边界见 ADR 0008 Decision 1 / 3 / 4）。
+// pane 容器（change pane-system-split-view 的 tasks.md 1.1；设计来源 design.md §4「装配形状：
+// createEditor 双实例化」、§6「会话所有权与『移动标签』交互」，语义边界见 ADR 0008 Decision 1 / 3 / 4）。
 //
 // 本模块是**会话所有权的账本 + 活跃 pane 状态机**，只有纯逻辑：
 //   - 不 import 任何装配层模块（editor / tabs / main），不碰 DOM、不碰 EditorView；
@@ -100,7 +100,9 @@ export interface PaneLayout<Tab extends PaneTab, Handle> {
   /** 「打开」意图的唯一入口（design §6）：目标缺省活跃 pane。
    *  - 同一 `path` 已在容器内任何 pane 打开 → 执行**移动**（源 pane 失去它），
    *    **不调用 `create`**——因此不可能为同一文件创建第二个 EditorState；
-   *  - 否则调用 `create(target)` 造一个新标签追加到目标 pane。
+   *  - 否则调用 `create(target)` 造一个新标签追加到目标 pane。**`create` 交回的标签其 `path`
+   *    必须与本次 `path` 相等**（含「都未命名」），不等即抛错——两个方向都不放行，否则账本的
+   *    判重键与标签实际归属会错位，同 path 第二份标签得以静默落下。
    *  两种情形都把目标 pane 置为活跃、把该标签置为其前台，返回目标 pane 的前台标签。 */
   openTab(
     path: string | undefined,
@@ -264,10 +266,13 @@ export function createPaneLayout<Tab extends PaneTab, Handle>(
         }
       }
       const tab = create(targetPane);
-      if (path !== undefined && tab.path !== path) {
-        // 账本是按 path 判重的（不变量 2），create 交回的标签路径与打开目标不符会让判重失效；
-        // 宁可在这里炸掉，也不留一个「同名标签可以有两份」的静默后门。
-        throw new Error(`pane-layout: create 交回的标签 path=${String(tab.path)} 与目标 path=${path} 不一致`); // i18n-exempt: log
+      // 账本是按 path 判重的（不变量 2），create 交回的标签路径与打开目标不符会让判重失效。
+      // **无条件比对**（不只在 path 有值时）：反向的 `openTab(undefined, …)` 交回一个带 path 的
+      // 标签同样能绕过判重、静默落下第二份同 path 标签——两个方向都要在这里炸掉。
+      // 文档化的合法路径（空会话经 `openTab(undefined, …)` 登记）交回的标签 path 也是 undefined，
+      // 不受这条校验影响。
+      if (tab.path !== path) {
+        throw new Error(`pane-layout: create 交回的标签 path=${String(tab.path)} 与目标 path=${String(path)} 不一致`); // i18n-exempt: log
       }
       targetPane.tabs.push(tab);
       targetPane.foreground = targetPane.tabs.length - 1;

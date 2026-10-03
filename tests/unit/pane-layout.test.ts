@@ -1,5 +1,5 @@
 // pane 容器纯逻辑单测（M315，change pane-system-split-view 的 tasks.md 1.1 / 设计来源 design.md
-// §3 装配形状、§4 会话所有权）。
+// §4 装配形状、§6 会话所有权）。
 //
 // 为什么这一层能测：容器不碰 DOM、不碰 EditorView，标签与句柄都是调用方注入的不透明对象
 //（这里用**真 `EditorState`** 承载标签内容，句柄用替身——真 `EditorHandle` 需要 DOM，
@@ -391,6 +391,33 @@ test("openTab：create 交回的标签路径与打开目标不符时抛错（判
     /create 交回的标签 path=b\.md 与目标 path=a\.md 不一致/,
   );
   assert.deepEqual(pathsOf(rig.layout.active()), [], "抛错时不落账");
+});
+
+test("openTab：反向后门也封死——openTab(undefined, …) 交回带 path 的标签同样抛错", () => {
+  const rig = createRig();
+  const b = rig.open("b.md");
+  const before = rig.layout.panes().map((pane) => pathsOf(pane));
+
+  // 指名「打开未命名文档」却交回一个带 path 的标签：若不校验，这个 path 已开时就会静默落第二份。
+  assert.throws(
+    () => rig.layout.openTab(undefined, () => rig.makeTab("b.md")),
+    /create 交回的标签 path=b\.md 与目标 path=undefined 不一致/,
+  );
+  assert.deepEqual(duplicatePaths(rig.layout), [], "抛错后容器里没有第二份 b.md");
+  assert.deepEqual(
+    rig.layout.panes().map((pane) => pathsOf(pane)),
+    before,
+    "抛错时不落账、布局一字不动",
+  );
+  assert.equal(rig.layout.paneOf(b)?.id, 1);
+
+  // 无条件比对：目标未命名而交回带 path 的标签一律拒绝——即便该 path 尚未打开，也不放行
+  //（放行会造出「账本以为它在别处」的错位；真正的登记路径是 create 交回 path=undefined 的空会话）。
+  assert.throws(
+    () => rig.layout.openTab(undefined, () => rig.makeTab("never-opened.md")),
+    /path=never-opened\.md 与目标 path=undefined 不一致/,
+  );
+  assert.equal(rig.layout.tabForPath("never-opened.md"), undefined);
 });
 
 // ---------------------------------------------------------------------------
