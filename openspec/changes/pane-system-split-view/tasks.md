@@ -40,7 +40,7 @@
 
 ## 5. 持久化（随后）
 
-- [ ] 5.1 vault-sessions schema 扩展：`panes: [{tabs, active}]`、`harness_pane`（恒 false）、`pane_split_ratio`；版本号递增；无 `panes` 字段旧文件读取侧按「单 pane = 顶层 tabs/active」解释
+- [ ] 5.1 vault-sessions schema 扩展：`panes: [{tabs, active}]`、`harness_pane`（恒 false）、`pane_split_ratio`；版本号递增；无 `panes` 字段旧文件读取侧按「单 pane = 顶层 tabs/active」解释。`harness_pane` 是 ADR 0008 Decision 6 登记的 Phase 2 契约位（Phase 2 harness 归位 pane 后消费），Phase 1 只随 schema 落盘、无消费者——在此标注消费点，防「声明了却没有消费者」误判（design §10）
 - [ ] 5.2 写入纪律复用：tmp + rename、版本不符=无历史、写失败降级 warning、`valid_entry` 路径校验；写入触发点（pane / 标签 / 激活项 / 分隔条变化，防抖 + 切 vault 前与退出前 flush）
 - [ ] 5.3 恢复路径：装载后按 pane 布局恢复（第一步当帧建 pane 与标签条、第二步激活项装载 + 首前台装载）；单 pane 存储恢复不出第二 pane；全部条目不可用回落单 pane 空态
 - [ ] 5.4 分隔条拖拽：实时重排，松手位置写入会话文件（per-vault，MUST NOT 复用 `ui.content_width` 全局键）；拖拽 MUST NOT 改文档 / 进撤销栈 / 改 dirty
