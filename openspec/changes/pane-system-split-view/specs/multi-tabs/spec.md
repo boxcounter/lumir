@@ -50,8 +50,12 @@
 
 系统 SHALL 按 **pane** 各自承载标签条：每个文档 pane 拥有自己的标签条（显示该 pane 的标签
 子列表），标签子列表的并集等于该 vault 打开的全部标签。**单 pane 常态下标签条 SHALL 维持
-pane 化之前的呈现位置与几何逐像素不变**（位于标题栏内）；双 pane 时每 pane 顶部各有一条
-标签条。标签 MUST NOT 出现在其所属 pane 之外的标签条上。
+pane 化之前的呈现位置与几何逐像素不变**（位于标题栏内）；双 pane 时标题栏的标签区 SHALL
+左右分区为两槽——左槽承载左 pane 的标签条、右槽承载右 pane 的标签条，两槽宽度比例 SHALL
+跟随分隔条位置（与 `pane_split_ratio` 同源），顶部恒为一条横带（MUST NOT 出现第二条横带）。
+双 pane 时标题栏右簇 SHALL 同步退让（产品标识块退 modeline、harness 开关钮隐藏；定义见
+`ui-design-system` 的「应用骨架布局」），单 pane 全量在场。标签 MUST NOT 出现在其所属 pane
+之外的标签条上。
 
 显示判据 SHALL 为「该 pane 至少有一个文件已打开」：单 pane 且一个标签时也 SHALL 显示
 （它承载 dirty 点与位置上下文）；某 pane 没有任何带路径的会话时该 pane 的标签条区域
@@ -88,11 +92,12 @@ design tokens：高 29px、max-width 230px、圆角 7px；激活标签 SHALL 是
   第二种标题字形（「预览态」形态已随预览机制退场，本 scenario 名保留自 M149，断言收敛成上面
   这条否定式）
 
-#### Scenario: 双 pane 时每 pane 一条标签条
+#### Scenario: 双 pane 时标题栏标签区左右分区
 
 - **WHEN** 双 pane，A 开着 `a.md`、`b.md`（前台 a），B 开着 `c.md`
-- **THEN** A 的标签条显示 a、b 两条（a 激活），B 的标签条显示 c 一条（c 激活）；`c.md` MUST NOT
-  出现在 A 的标签条上；收起 pane 后标签条回到单 pane 形态（位置与几何与常态一致）
+- **THEN** 标题栏标签区呈左右两槽：左槽显示 a、b 两条（a 激活），右槽显示 c 一条（c 激活）；
+  两槽宽度比例与分隔条一致，顶部恒为一条横带；`c.md` MUST NOT 出现在左槽；收起 pane 后
+  标签区回到单 pane 形态（位置与几何与常态逐像素一致）
 
 ### Requirement: 保存粒度按标签隔离
 

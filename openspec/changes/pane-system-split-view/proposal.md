@@ -41,8 +41,8 @@ Phase 1 能力清单（每条对应 specs/ 增量中的一个 requirement）：
 3. **会话所有权：移动标签，非复制**（`pane-layout`）：一份文件同一时刻至多在**一个** pane 打开；跨 pane 是「移动标签」而非「复制标签」——标签带着自己的 `EditorState`（撤销史 / 选区 / 滚动位置）整体迁走，避免两个独立 `EditorState` 对同一文件的 dirty / 保存冲突。`killSlot` 保持全局单例（kill ring 在 Emacs 本就是全局的）。这是相对 Emacs（同一 buffer 可显示在多个 window）的自觉 v1 简化，Revisit 条件由 ADR 0008 兜底。
 4. **命令按活跃 pane 路由**（`keymap-commands` 增量）：命令分发从「摊平单例 commands 进全局命令表」改为「分发时按活跃 pane 解析该 pane 的 `editor.commands`」；`isEditorEvent`（editor 作用域判定）泛化为「事件目标落在**任一**编辑器 pane 的 contentDOM 内」。统一键位表的不变量（一个 token 一条绑定、孤儿命令对账）不变。
 5. **pane 命令族**（`keymap-commands` 增量）：新增 `pane.split` / `pane.close` / `pane.other` 三条全局命令，默认键位取单段 ⌥ 系（v1 不引入 `C-x` 前缀；具体键值为裁决点 1，起草倾向见下表）。`pane.close` 收起 pane 时其标签并入另一 pane（不丢会话；起草倾向，裁决点 2）。
-6. **标签行为按 pane 归属**（`multi-tabs` 增量）：标签条按 pane 各自承载；单 pane 时标签条的呈现位置与几何**逐像素不变**（仍在标题栏内），双 pane 时每 pane 顶部各一条标签条。⌘S / 保存粒度、树高亮、打开落点、dirty 守卫（切 vault / 退出）全部以「活跃 pane 的前台标签」与「全部 pane 的全部标签」为口径更新。
-7. **骨架布局**（`ui-design-system` 增量）：「正文栏」泛化为 pane 容器——常态单 pane 与现状逐像素一致；分栏时容器内两个 pane 以分隔条相隔，分隔条位置可拖拽（松手位置写入 vault-sessions 会话文件，per-vault，与能力 8 同一持久化通道；「dock 宽度拖拽」由此吸收取消，Alex 已裁决）；dock 列 Phase 1 不动。
+6. **标签行为按 pane 归属**（`multi-tabs` 增量）：标签条按 pane 各自承载；单 pane 时标签条的呈现位置与几何**逐像素不变**（仍在标题栏内），双 pane 时标题栏的标签区左右分区为两槽（左槽 = 左 pane 标签、右槽 = 右 pane 标签，两槽宽度比例跟随分隔条、与 `pane_split_ratio` 同源），顶部恒为一条横带。⌘S / 保存粒度、树高亮、打开落点、dirty 守卫（切 vault / 退出）全部以「活跃 pane 的前台标签」与「全部 pane 的全部标签」为口径更新。
+7. **骨架布局**（`ui-design-system` 增量）：「正文栏」泛化为 pane 容器——常态单 pane 与现状逐像素一致；分栏时容器内两个 pane 以分隔条相隔，分隔条位置可拖拽（松手位置写入 vault-sessions 会话文件，per-vault，与能力 8 同一持久化通道；「dock 宽度拖拽」由此吸收取消，Alex 已裁决）；dock 列 Phase 1 不动。**双栏时标题栏右簇退让**：产品标识块退 modeline（沿用窄窗 <640px 版本号退 modeline 的 `src/modeline.ts` 既有先例）、harness 开关钮隐藏（⌘⇧A 照走；Phase 2 该钮语义本就要重做）；单栏全量在场、逐像素不变。
 8. **pane 布局持久化**（`vault-workspace` 增量）：扩展 vault-sessions schema（`panes: [{tabs, active}]`、`harness_pane: bool`、分隔条位置；`harness_pane` Phase 1 恒为 false，字段随 schema 一并落盘、Phase 2 消费）。沿用既有纪律：tmp + rename 原子替换、版本不符 = 无历史、写失败降级 warning、路径校验复用 `valid_entry`。装载 vault 后按 pane 布局恢复标签（复用「标签建立与内容装载分两步」的既有口径，落到每 pane）。
 
 ## Alex 裁决点

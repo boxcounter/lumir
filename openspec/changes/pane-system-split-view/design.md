@@ -28,7 +28,7 @@ ADR 0008 survey 结论：全应用一个 `EditorView`（`src/editor.ts:1820` 唯
 | # | 模块 | 捕获形态（现状） | 改造注记（Phase 1） |
 |---|---|---|---|
 | 1 | toc（大纲浮层） | 持有裸 view，滚动跟随 / 条目定位直读 view 状态 | 跟随**活跃 pane** 的 view；活跃 pane 切换时重建浮层内容源，浮层打开期间跨 pane 切换要即时换源 |
-| 2 | tabs（标签栏） | 单例标签条 + 全局会话列表 | per-pane 实例：每 pane 自己的会话子列表与标签条挂载点；标签条的窗口级命令（⌘W / ⌃⇥ / ⌘1–9 / 右键菜单）作用于**活跃 pane** 的标签条，装配期从「全局 tabs」改为「活跃 pane 的 tabs」 |
+| 2 | tabs（标签栏） | 单例标签条 + 全局会话列表 | per-pane 实例：每 pane 自己的会话子列表与标签条挂载点（单 pane 时挂标题栏标签区、逐像素不变；双 pane 时挂标题栏标签区的左右分区槽，槽宽比例随分隔条、与 `pane_split_ratio` 同源，顶部恒为一条横带）；标签条的窗口级命令（⌘W / ⌃⇥ / ⌘1–9 / 右键菜单）作用于**活跃 pane** 的标签条，装配期从「全局 tabs」改为「活跃 pane 的 tabs」；**双 pane 时标题栏右簇退让**——产品标识块退 modeline（沿用 `src/modeline.ts` 窄窗 <640px 版本号退 modeline 的既有先例）、harness 开关钮隐藏（⌘⇧A 照走），单 pane 全量在场 |
 | 3 | save-controller | 保存链路以「全局唯一前台会话」为落点 | 保存落点改为「活跃 pane 的前台标签」；dirty 判定 / revision CAS / 崩溃备份 debounce 的逐路径键控不变，只是「前台」的定义从全局唯一变成活跃 pane 局部 |
 | 4 | link-follow | ⌘⏎ / ⌘-Click 跟随作用于单例会话 | 链接解析基准改为活跃 pane 的前台文档（「当前文件」的定义随活跃 pane）；打开落点走活跃 pane 的会话（打开语义见 §6） |
 | 5 | harness-panel（上下文组装 `assembleHarnessContext`） | `HarnessContextSource` 窄接口（`activeSession()` + `view.state/viewport`，`src/harness-context.ts:31`）钉住单例 | Phase 1 harness 仍在 dock，但其上下文源改为**活跃 pane**——「当前 TAB」的定义随活跃 pane；接口形状不变（ADR 0008 survey：改造面在装配层「注入哪个 editor」，不在接口形状） |
@@ -77,9 +77,12 @@ Phase 1 改造（ADR Decision 3 原文口径）：
 
 ```
 AppShell
+├─ 标题栏（单 pane：一处标签区；双 pane：标签区左右分区为两槽——左槽挂左 pane 标签条、
+│   右槽挂右 pane 标签条，槽宽比例随分隔条 = pane_split_ratio，顶部恒为一条横带）
+│   └─ 右簇（产品标识块 + harness 开关钮）：单 pane 全量在场；双 pane 退让
+│      （标识块退 modeline、harness 钮隐藏）
 └─ 内容区（泛化为 pane 容器，v1 ≤2 横向 pane，分隔条相隔）
    ├─ pane A（文档 pane）
-   │   ├─ 标签条（per-pane 挂载点；单 pane 时呈现位置与几何同现状）
    │   ├─ EditorView A ← createEditor(depsA)   // 自包含工厂第二实例
    │   └─ content-width 拖柄（pane 级覆盖元素）
    └─ pane B（同构；未分栏时不在场）
@@ -197,8 +200,7 @@ Phase 1 实施任务因此含两条硬性验证项（tasks.md §7）：
   纪律核对受影响基线的时间戳）；新增双 pane 表面整页基线按「基线更新是人肉裁决点」走 Alex 过目。
 - **验收套件**：部分场景假设单编辑器（AX 查询锚定唯一 contentDOM / 唯一标签条）；新增双 pane
   场景（分栏 / 活跃 pane 路由 / 移动标签 / 布局恢复）并核对既有场景的 AX 锚点不受影响。
-- **视觉场景**：标题栏子节点序列（toggle 钮位置等）在单 pane 下不变；双 pane 标签条入 pane
-  顶部是新增表面，新增场景承担。
+- **视觉场景**：标题栏子节点序列（toggle 钮位置等）在单 pane 下不变；双 pane 的标题栏标签区左右分区槽（槽宽随分隔条）与右簇退让（标识块退 modeline、harness 钮隐藏）是新增表面，新增场景承担。
 
 ## 10. 风险与开放问题
 
