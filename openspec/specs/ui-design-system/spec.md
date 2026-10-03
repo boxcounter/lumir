@@ -139,11 +139,10 @@ eink 主题 SHALL 按 tokens 文档 §eink 规则 的 9 条系统性降级（不
 
 应用骨架 SHALL 为：标题栏 42px（全宽，左缘 traffic 灯区宽 236 与侧栏对齐，标签位于标题栏内，
 **右端为产品标识块**——见「产品名与版本号常显」）/
-主行（侧栏 236px + 正文栏 + **右栏 dock 预留位**）/ modeline 25px（全宽）。标题栏**右侧动作钮区**
-本版为**预留槽位**：零可见内容（不渲染按钮），与 dock 预留列同一处置——动作钮特性的像素不在本版，
-接入时只填这一槽（**排在产品标识块左侧**；已知偏差：tasks §4.3 的验收口径原文含「动作钮」，实现期
-由 tower 裁决按本版不加，收官对账记这条）。dock 预留位 SHALL 只是结构上的列位（本版零像素、无内容、
-无边框、不可交互）——agent 栏及其任何像素不在本版。正文阅读宽 SHALL 为 664px 居中。
+主行（侧栏 236px + 正文栏 + **右栏 dock**）/ modeline 25px（全宽）。右栏 dock SHALL 承载 harness
+对话面板：收起时零像素（行为与原预留位一致），展开时宽 `--layout-dock-w`（新 token），
+与正文栏之间以 hairline 分隔（平铺面板，不吃 elevation）。标题栏右侧动作钮区填入面板 toggle 钮
+（**排在产品标识块左侧**，尺寸吃既有 `--layout-tb-btn-w/h` token）。
 
 旧 masthead SHALL 移除，其信息迁移：vault 名 → 侧栏头（切换器入口形态不变）；当前文件路径 →
 modeline 左侧；当前位置指示 → modeline（toc 语义不变，只迁承载面）；行数 / 语法 / 编码 →
@@ -153,14 +152,19 @@ macOS 标题栏 SHALL 为 overlay 形态（traffic 灯保持原生绘制，标�
 #### Scenario: 骨架几何与信息落位
 
 - **WHEN** 打开任意 md 文件
-- **THEN** 侧栏宽 236、标题栏高 42、modeline 高 25、正文列 664 居中、dock 列零像素；
+- **THEN** 侧栏宽 236、标题栏高 42、modeline 高 25、正文列按既有阅读宽口径居中、dock 列在面板收起时零像素；
   modeline 左侧显示当前文件的 vault 相对路径，右侧显示语法 / 行数 / 编码；masthead 不存在
+
+#### Scenario: dock 展开与收起
+
+- **WHEN** 经标题栏 toggle 钮或命令唤起 / 收起 harness 面板
+- **THEN** dock 列在 `0px` 与 `--layout-dock-w` 之间切换，正文列随之伸缩，切换不改变正文阅读宽居中的既有口径
 
 #### Scenario: 空态的标题栏
 
 - **WHEN** 没有打开任何文件
-- **THEN** 标题栏为 traffic 灯区 + 右端产品标识块（标签区隐藏，本版无右侧动作钮——见
-  「应用骨架布局」的预留槽位条款），modeline 与侧栏骨架不变
+- **THEN** 标题栏为 traffic 灯区 + 动作钮区（harness toggle）+ 右端产品标识块（标签区隐藏），
+  modeline 与侧栏骨架不变
 
 ### Requirement: chrome 表面与动效纪律
 

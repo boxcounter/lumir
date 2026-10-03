@@ -1,7 +1,7 @@
 # keymap-commands 增量规格
 
 > 起草注记（非规格正文）：一条 ADDED，格式仿 living spec
-> [openspec/specs/keymap-commands/spec.md](../../../../specs/keymap-commands/spec.md) 的
+> [openspec/specs/keymap-commands/spec.md](../../../../../specs/keymap-commands/spec.md) 的
 > 「界面语言切换命令（view.language-cycle）」条目。改动面：harness 对话面板的唤起 / 收起
 > 命令与默认键位 ⌘⇧A。来由文本本身在文案表 D345（表即文档），本条只写规格口径。
 

@@ -1,6 +1,6 @@
 # fs-io 增量规格
 
-> 起草注记（非规格正文）：两条 ADDED，基线是 living spec [openspec/specs/fs-io/spec.md](../../../../specs/fs-io/spec.md)
+> 起草注记（非规格正文）：两条 ADDED，基线是 living spec [openspec/specs/fs-io/spec.md](../../../../../specs/fs-io/spec.md)
 > 的「文档保存与冲突恢复」（整文件 `document_save` + CAS）与「文件级操作」（新建空文件）。
 > 本增量为 harness 提供局部写与带内容新建两个写能力；
 > 「局部 patch 是唯一写既有文档的能力」的边界由 harness spec 的「写入批准闸」与工具集条款封顶，

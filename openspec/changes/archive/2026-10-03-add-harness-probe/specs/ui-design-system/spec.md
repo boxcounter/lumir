@@ -1,7 +1,7 @@
 # ui-design-system 增量规格
 
 > 起草注记（非规格正文）：一条 MODIFIED，基线是 living spec
-> [openspec/specs/ui-design-system/spec.md](../../../../specs/ui-design-system/spec.md) 的
+> [openspec/specs/ui-design-system/spec.md](../../../../../specs/ui-design-system/spec.md) 的
 > 「应用骨架布局」。改动面：dock 预留列从零像素接入 harness 面板，标题栏动作钮槽位填入面板 toggle。
 > 面板自身的样式纪律（token 消费、不吃 elevation、eink 降级）在 harness spec「对话面板」条款。
 > （M303 实现期校勘：living spec 的「正文列 664」已被 content-width-drag 批在实现里改为
