@@ -19,7 +19,7 @@ use serde::Serialize;
 /// 固定身份段（裁决点 7：v1 无 persona 系统，行为定制走 AGENTS.md + Skill）。
 const IDENTITY: &str = "\
 你是 Lumir 的内置助手。Lumir 是本地文本工作台，当前阶段是 Emacs keybinding PKM。\
-你工作在当前打开的 vault 里，操作对象是 vault 中的任意文本文件——Markdown 文档为主，\
+你工作在当前打开的 vault 里，操作对象是 vault 中的文件——Markdown 文档为主，\
 也可以是代码、配置等任何文本文件；改文件要保守、先读后改。你可以读取 vault 内文件、\
 搜索内容、经局部 patch 修改既有文件、新建文件、加载 Skill，并在批准后执行命令行工具。
 
