@@ -246,6 +246,11 @@ let splitRatio = DEFAULT_SPLIT_RATIO;
 let dividerEl: HTMLElement | null = null;
 /** 分隔条拖拽控制器（与 dividerEl 同生命周期；元素移除前先摘监听）。 */
 let dividerDrag: DividerDrag | null = null;
+/** 分隔条的读屏名（M319，文案 D368）：`role=separator` 需要一句可读的身份——它与栏宽拖拽手柄
+ *  （同为 `role=separator`、读屏名 D120）是两回事，读屏不该听到两个无名的分隔符。元素在分栏时
+ *  现建、close 时移除，因此没有「挂载时写死」的问题；语言切换由下方 onRelabel 重写
+ *（design §5.2 的不变量：挂载后无法重写的语言相关文本 MUST NOT 存在）。 */
+const SPLITTER_LABEL = (): string => t("D368");
 
 const paneLayout = createPaneLayout<EditorSession, EditorHandle>({
   createHandle: (paneId) => createPaneHandle(paneId),
@@ -266,6 +271,7 @@ function createPaneHandle(paneId: PaneId): EditorHandle {
     divider.className = "pane-divider";
     divider.setAttribute("role", "separator");
     divider.setAttribute("aria-orientation", "vertical");
+    divider.setAttribute("aria-label", SPLITTER_LABEL()); // 读屏名（M319，D368）
     wireDividerDrag(divider);
     shell.editor.append(divider, mountEl);
     shell.tabStrip.after(stripEl);
@@ -2136,6 +2142,8 @@ onRelabel(() => {
   const handleLabel = WIDTH_HANDLE_LABEL();
   shell.widthHandles.left.setAttribute("aria-label", handleLabel);
   shell.widthHandles.right.setAttribute("aria-label", handleLabel);
+  // 分隔条的读屏名（M319，D368）：只在分栏态在场（dividerEl 非 null），切换语言时同样要重写。
+  if (dividerEl !== null) dividerEl.setAttribute("aria-label", SPLITTER_LABEL());
 });
 
 /** 已推给后端的 dirty 镜像值（M149）：只在**变化**时上报。
