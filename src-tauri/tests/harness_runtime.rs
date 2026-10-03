@@ -154,6 +154,66 @@ fn panel_roles(fixture: &Fixture, runtime: &Runtime) -> Vec<String> {
     snapshot.messages.iter().map(|m| m.role.clone()).collect()
 }
 
+/// M306 回放契约：LLM 轮产出 reasoning 项时，回放 input 里它必须原样在列、
+/// 且紧随其 assistant message 之前（deepseek thinking 模式强制回传，不回传
+/// 下一轮即被 provider 以 400 拒绝）。mock 路径驱动，钉的是 turn 层的落点契约。
+#[test]
+fn reasoning_replay_item_precedes_assistant_message() {
+    let f = Fixture::new("reasoning-replay");
+    f.write("a.md", "content\n");
+    let runtime = f.runtime();
+    runtime.acquire_turn(&f.scope()).unwrap();
+    let sink = CollectSink::default();
+    let script = r#"{"responses": [
+        {"text": "先读文件。",
+         "reasoning": {"type":"reasoning","id":"rs_1","status":"completed","content":[{"type":"reasoning_text","text":"需要先读 a.md。"}],"encrypted_content":"resp-0"},
+         "tool_calls": [{"id": "c1", "name": "vault_read", "arguments": "{\"path\":\"a.md\"}"}]},
+        {"text": "读完了。"}
+    ]}"#;
+    let mut client = MockClient::from_str(script, "reasoning").unwrap();
+    turn::run_turn_for(
+        &sink,
+        &runtime,
+        &f.scope(),
+        &mock_config(),
+        "这段讲了什么".into(),
+        &mut client,
+    );
+    runtime.release_turn(&f.scope());
+
+    let input = runtime
+        .with_session(&f.scope(), |s| s.input().to_vec())
+        .unwrap();
+    // 期望序列：user / reasoning / assistant / function_call / function_call_output / assistant。
+    let kinds: Vec<String> = input
+        .iter()
+        .map(|it| {
+            it.get("type")
+                .and_then(|t| t.as_str())
+                .map(str::to_string)
+                .unwrap_or_else(|| it["role"].as_str().unwrap_or("?").to_string())
+        })
+        .collect();
+    assert_eq!(
+        kinds,
+        vec![
+            "user",
+            "reasoning",
+            "assistant",
+            "function_call",
+            "function_call_output",
+            "assistant"
+        ],
+        "{kinds:?}"
+    );
+    // 原样在列：reasoning 项的 content / encrypted_content 不得被重建或丢弃。
+    let reasoning = &input[1];
+    assert_eq!(reasoning["content"][0]["type"], "reasoning_text");
+    assert_eq!(reasoning["content"][0]["text"], "需要先读 a.md。");
+    assert_eq!(reasoning["encrypted_content"], "resp-0");
+    assert_eq!(sink.types().last().unwrap(), "done");
+}
+
 #[test]
 fn tool_loop_roundtrip_with_fixture_file() {
     let f = Fixture::new("roundtrip");

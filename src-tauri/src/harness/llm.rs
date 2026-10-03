@@ -38,10 +38,20 @@
 //! 弹尽后再调用 ⇒ `fixture_exhausted` 错误（测试脚本漏写的即露馅）。`text` 未给 `chunks`
 //! 时整体作为一个 chunk。`usage` 缺失则不更新用量（面板保持上一轮读数）。
 //!
-//! # reasoning 回传纪律（design §3）
+//! # reasoning 回传纪律（design §3，M306 对真 API 核实）
 //!
-//! 流式里的 `reasoning` 项原样留作回放项（kimi 的 `encrypted_content` 因此保真）；
-//! deepseek 产出时 reasoning 文本已合并进 assistant 消息（其兼容表口径），天然无项可带。
+//! 流式里的 `reasoning` 项原样留作回放项（kimi 的 `encrypted_content` 因此保真）。
+//! deepseek thinking 模式**不是**「reasoning 已合并进 assistant 消息」——2026-10-03
+//! 对真 API（deepseek-flash）实测：产出独立 reasoning 项，content 为
+//! `{"type":"reasoning_text","text":…}` parts（SSE `response.output_item.done` 携带，
+//! 另带 `encrypted_content` / `status`）。官方
+//! [thinking mode 文档](https://api-docs.deepseek.com/guides/thinking_mode) 明确：
+//! 带 `tools` 的请求，后续每一轮都必须把 reasoning **原样回传**，否则 400
+//! ``The `reasoning_text` in the thinking mode must be passed back to the API``
+//! （Alex 真机二轮实测命中）。回放形状（真 API 实测通过）：reasoning 项紧随其
+//! assistant message 之前入 input；[Responses 兼容表](https://api-docs.deepseek.com/guides/responses_api)
+//! 称 plain-text content 会并入相邻 assistant 消息、`encrypted_content`/`summary`
+//! 不被支持——但原样回传实测不报错，故保留原样（少一次形状重写，多一处方言风险消失）。
 
 use std::io::BufRead;
 
@@ -75,7 +85,8 @@ pub struct TurnOutput {
     pub text: String,
     /// 流式 chunk（emit text_chunk 用；mock 按 fixture 分块）。
     pub text_deltas: Vec<String>,
-    /// 回放项：reasoning 项原文（有则）——assistant message 项由 text 重建，不重复存。
+    /// 回放项：reasoning 项原文（有则；item 级原样或 message part 级合成）——
+    /// assistant message 项由 text 重建，不重复存。
     pub reasoning: Option<serde_json::Value>,
     /// 本轮函数调用（按序执行）。
     pub calls: Vec<ToolCall>,
@@ -130,10 +141,16 @@ const KIMI_PRESET: ProviderPreset = ProviderPreset {
 
 /// deepseek 预设（[官方 Responses 文档](https://api-docs.deepseek.com/guides/responses_api/)）：
 /// 无状态（恒 `store:false`）；超窗请求返回 400；不支持参数静默忽略。
+/// 窗口表 2026-10-03 经 `GET /models` 一手核实（[Models & Pricing](https://api-docs.deepseek.com/quick_start/pricing)）：
+/// 现役仅 `deepseek-flash` / `deepseek-v4-pro`，上下文均 1M（1048576）；`deepseek-chat`
+/// 已不在模型清单（回落 fallback_window，仅兜底历史配置）。
 const DEEPSEEK_PRESET: ProviderPreset = ProviderPreset {
     base_url: "https://api.deepseek.com",
     default_model: crate::config::DEFAULT_DEEPSEEK_MODEL,
-    windows: &[("deepseek-chat", 131_072), ("deepseek-flash", 131_072)],
+    windows: &[
+        ("deepseek-flash", 1_048_576),
+        ("deepseek-v4-pro", 1_048_576),
+    ],
     fallback_window: 131_072,
     overflow_indicators: &[
         "maximum context length",
@@ -441,8 +458,9 @@ fn dispatch_event(event: &str, data: &str, output: &mut TurnOutput, preset: &Pro
     }
 }
 
-/// 输出项归集：reasoning 项留作回放；function_call 项记入调用表；message 项的
-/// output_text 与流式 delta 应一致（以流式为准，这里只补 delta 漏网的文本）。
+/// 输出项归集：reasoning 项留作回放（item 级原样；message 里的 `reasoning_text`
+/// part 在 item 级缺位时合成 reasoning 回放项）；function_call 项记入调用表；
+/// message 项的 output_text 与流式 delta 应一致（以流式为准，这里只补 delta 漏网的文本）。
 fn collect_output_item(item: &serde_json::Value, output: &mut TurnOutput) {
     match item.get("type").and_then(|t| t.as_str()) {
         Some("reasoning") => {
@@ -480,14 +498,27 @@ fn collect_output_item(item: &serde_json::Value, output: &mut TurnOutput) {
         }
         Some("message") => {
             if let Some(parts) = item.get("content").and_then(|c| c.as_array()) {
+                // message part 级 reasoning（`reasoning_text` content part）：deepseek 报错
+                // 文案暗示的形状，item 级 reasoning 缺位时按 parts 合成回放项（parts 原样）。
+                let mut reasoning_parts: Vec<serde_json::Value> = Vec::new();
                 for part in parts {
-                    if part.get("type").and_then(|t| t.as_str()) == Some("output_text") {
-                        if let Some(text) = part.get("text").and_then(|t| t.as_str()) {
-                            if output.text.is_empty() {
-                                output.text.push_str(text);
+                    match part.get("type").and_then(|t| t.as_str()) {
+                        Some("output_text") => {
+                            if let Some(text) = part.get("text").and_then(|t| t.as_str()) {
+                                if output.text.is_empty() {
+                                    output.text.push_str(text);
+                                }
                             }
                         }
+                        Some("reasoning_text") => reasoning_parts.push(part.clone()),
+                        _ => {}
                     }
+                }
+                if !reasoning_parts.is_empty() && output.reasoning.is_none() {
+                    output.reasoning = Some(serde_json::json!({
+                        "type": "reasoning",
+                        "content": reasoning_parts,
+                    }));
                 }
             }
         }
@@ -699,6 +730,7 @@ mod tests {
       "responses": [
         {"text": "先读", "chunks": ["先", "读"],
          "tool_calls": [{"id": "c1", "name": "vault_read", "arguments": "{\"path\":\"a.md\"}"}],
+         "reasoning": {"type":"reasoning","id":"rs_1","encrypted_content":"enc"},
          "usage": {"input_tokens": 100, "cached_tokens": 40, "output_tokens": 5}},
         {"error": {"code": "context_length_exceeded", "message": "too long"}}
       ]
@@ -728,6 +760,8 @@ mod tests {
                 output_tokens: 5
             })
         );
+        // reasoning 回放项原样透传（M306：mock 路径零行为变化即指此）。
+        assert_eq!(first.reasoning.as_ref().unwrap()["id"], "rs_1");
         let second = client.complete(&request());
         let error = second.error.expect("scripted error");
         assert!(error.context_overflow);
@@ -908,5 +942,115 @@ data: {"response":{"output":[{"type":"message","content":[{"type":"output_text",
 "#;
         let output = sse_parse(sse);
         assert_eq!(output.text, "流式");
+    }
+
+    // ---- M306：deepseek thinking reasoning 捕获与回放 ----
+    //
+    // 背景（真机二轮 400）：deepseek thinking 模式（默认开）产出独立 reasoning 项，
+    // content 为 reasoning_text parts；带 tools 的请求后续每轮必须原样回传，否则
+    // `The `reasoning_text` in the thinking mode must be passed back to the API`。
+    // 以下流的 reasoning 项形状抄自 2026-10-03 对真 API（deepseek-flash）的 SSE 实测。
+
+    /// deepseek-flash 实测的 reasoning 项（item 级形状：content reasoning_text parts
+    /// + encrypted_content + status + summary）。
+    const DEEPSEEK_REASONING_ITEM: &str = r#"{"type":"reasoning","id":"3088ae32-3f16-41a0-ad8d-3cbd8b7e4176","status":"completed","content":[{"type":"reasoning_text","text":"用户问的是 2+2。不需要工具。"}],"summary":[],"encrypted_content":"891a103a-5fff-47b2-899d-573104b0d161-0"}"#;
+
+    /// 完整 thinking 工具流（done + completed 双事件，与 M305 去重测试同骨架）：
+    /// reasoning 项 + function_call 项各经 `response.output_item.done` 与
+    /// `response.completed` 双投递。断言：reasoning content 形状（reasoning_text
+    /// parts，与官方 thinking 文档一致）原样在列、调用去重、回放构造里 reasoning
+    /// 项紧随 assistant message 之前。
+    #[test]
+    fn sse_deepseek_thinking_reasoning_replayed_verbatim() {
+        let sse = format!(
+            r#"event: response.output_text.delta
+data: {{"delta":"我先"}}
+
+event: response.output_text.delta
+data: {{"delta":"读一下。"}}
+
+event: response.output_item.done
+data: {{"item":{DEEPSEEK_REASONING_ITEM}}}
+
+event: response.output_item.done
+data: {{"item":{{"type":"function_call","call_id":"call_00_abc","name":"vault_read","arguments":"{{\"path\":\"a.md\"}}"}}}}
+
+event: response.completed
+data: {{"response":{{"output":[{DEEPSEEK_REASONING_ITEM},{{"type":"function_call","call_id":"call_00_abc","name":"vault_read","arguments":"{{\"path\":\"a.md\"}}"}}],"usage":{{"input_tokens":10,"output_tokens":2}}}}}}
+
+"#
+        );
+        let output = sse_parse(&sse);
+
+        // 捕获：reasoning 项原样（含 encrypted_content 等全字段）。
+        let reasoning = output.reasoning.clone().expect("reasoning 项应被捕获");
+        assert_eq!(reasoning["type"], "reasoning");
+        assert_eq!(
+            reasoning["encrypted_content"],
+            "891a103a-5fff-47b2-899d-573104b0d161-0"
+        );
+        // 形状与官方文档一致：content 是 reasoning_text parts。
+        let parts = reasoning["content"].as_array().expect("content 数组");
+        assert_eq!(parts.len(), 1);
+        assert_eq!(parts[0]["type"], "reasoning_text");
+        assert_eq!(parts[0]["text"], "用户问的是 2+2。不需要工具。");
+
+        // 其余收集不受影响：文本来自流式 delta，调用跨双事件去重。
+        assert_eq!(output.text, "我先读一下。");
+        assert_eq!(output.calls.len(), 1, "{:?}", output.calls);
+
+        // 回放构造：reasoning 项原样在前，assistant message 在后（session 契约）。
+        let items =
+            crate::harness::session::assistant_item(&output.text, output.reasoning.as_ref());
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0], reasoning, "reasoning 项应原样入回放 input");
+        assert_eq!(items[1]["role"], "assistant");
+        assert_eq!(items[1]["content"][0]["type"], "output_text");
+    }
+
+    /// message part 级形状（deepseek 报错文案 `reasoning_text` 暗示的另一种产出形态）：
+    /// reasoning 不进独立 item，而是 assistant message content 里的 reasoning_text
+    /// part。当前实现须把它合成 reasoning 回放项（parts 原样），且不得混入正文文本。
+    #[test]
+    fn sse_message_part_reasoning_text_synthesizes_replay_item() {
+        let sse = r#"event: response.output_item.done
+data: {"item":{"type":"message","content":[{"type":"reasoning_text","text":"先想清楚再答。"},{"type":"output_text","text":"答案是 4。"}]}}
+
+event: response.completed
+data: {"response":{"output":[{"type":"message","content":[{"type":"reasoning_text","text":"先想清楚再答。"},{"type":"output_text","text":"答案是 4。"}]}],"usage":{"input_tokens":10,"output_tokens":2}}}
+
+"#;
+        let output = sse_parse(sse);
+        assert_eq!(output.text, "答案是 4。", "reasoning_text 不得混入正文");
+        let reasoning = output.reasoning.expect("part 级 reasoning 应合成回放项");
+        assert_eq!(reasoning["type"], "reasoning");
+        assert_eq!(
+            reasoning["content"],
+            serde_json::json!([{"type":"reasoning_text","text":"先想清楚再答。"}]),
+            "parts 原样保留"
+        );
+    }
+
+    /// item 级与 part 级同现一轮时，item 级优先（is_none 守卫），part 级不覆盖。
+    #[test]
+    fn sse_item_level_reasoning_wins_over_message_part() {
+        let sse = format!(
+            r#"event: response.output_item.done
+data: {{"item":{DEEPSEEK_REASONING_ITEM}}}
+
+event: response.output_item.done
+data: {{"item":{{"type":"message","content":[{{"type":"reasoning_text","text":"part 级思考"}}]}}}}
+
+event: response.completed
+data: {{"response":{{"output":[{DEEPSEEK_REASONING_ITEM}],"usage":{{"input_tokens":10,"output_tokens":2}}}}}}
+
+"#
+        );
+        let output = sse_parse(&sse);
+        let reasoning = output.reasoning.expect("reasoning 项应被捕获");
+        assert_eq!(
+            reasoning["content"][0]["text"],
+            "用户问的是 2+2。不需要工具。"
+        );
     }
 }
