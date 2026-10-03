@@ -286,6 +286,9 @@ interface StoreRig {
   toasts: string[];
   /** 内容被装载出来的条目（`openPinned` 成功的那几次）。 */
   opened: string[];
+  /** 每个条目**最终落进**的 pane（M321）：`openPinned` 的落点参数 + 装配层 open 落点语义
+   *  （显式落点用给定 pane，缺省用活跃 pane）共同决定的产物——恢复后「归位原 pane」的判据。 */
+  placed: Map<string, number>;
   /** 建了壳的条目（M283：恢复的第一步，当帧、按存储顺序、按 pane 落位）。 */
   shells: StoredShell[];
   /** 建壳与装载内容落在**同一条**调用时间线上（`shell:a.md@0` / `open:a.md`）——判据是
@@ -316,6 +319,9 @@ function createStoreRig(): StoreRig {
   let getSession: (vaultId: string) => Promise<VaultSession | null> = async () => null;
   let writesFail = false;
   let openSlow = false;
+  // 装配层的活跃 pane 模型（M321）：`applyPaneCount` 建 pane 时新 pane 成为活跃——分栏后
+  // 活跃恒是**后建的右 pane**（真实装配层同口径，也正是本缺陷的触发条件）。
+  let activePane = 0;
   const rig: StoreRig = {
     store: undefined as unknown as ReturnType<typeof createVaultSessionStore>,
     setSessions: (...next) => {
@@ -332,6 +338,7 @@ function createStoreRig(): StoreRig {
     warns: [],
     toasts: [],
     opened: [],
+    placed: new Map<string, number>(),
     shells: [],
     calls: [],
     activated: [],
@@ -364,6 +371,8 @@ function createStoreRig(): StoreRig {
     applyPaneCount: (count, nextRatio) => {
       rig.paneCounts.push({ count, ratio: nextRatio });
       rig.calls.push(`panes:${count}`);
+      // 与真实 applyPaneCount 同口径：分栏后活跃 pane 是后建的那个（右 pane），单 pane 恒 root。
+      activePane = count > 1 ? count - 1 : 0;
     },
     createShell: (path, pane) => {
       rig.calls.push(`shell:${path}@${pane}`);
@@ -372,11 +381,14 @@ function createStoreRig(): StoreRig {
       return true;
     },
     shellsBuilt: () => void rig.calls.push("shellsBuilt"),
-    openPinned: async (path) => {
+    openPinned: async (path, pane) => {
       rig.calls.push(`open:${path}`);
       if (openSlow) await new Promise((resolve) => setImmediate(resolve));
       if (rig.failOpen.has(path)) return false;
       rig.opened.push(path);
+      // 装配层打开落点语义的模型（M321）：给了专用落点就装进它；旧口径（无落点）按**活跃
+      // pane**——恢复期活跃是后建的右 pane，于是左 pane 的激活项被「打开即移动」抢走。
+      rig.placed.set(path, pane ?? activePane);
       return true;
     },
     activate: (path) => void rig.activated.push(path),
@@ -611,6 +623,33 @@ test("装载后恢复：双 pane 存储按 pane 建壳与装载，活跃 pane �
     "open:b.md",
   ]);
   assert.deepEqual(rig.toasts, []);
+});
+
+test("装载后恢复：双 pane 各一标签恢复后两标签归位原 pane（M321 回归）", async () => {
+  const rig = createStoreRig();
+  rig.setGetSession(async () => ({
+    version: 2,
+    panes: [paneOf(["alpha.md"], "alpha.md"), paneOf(["beta.md"], "beta.md")],
+    harness_pane: false,
+    pane_split_ratio: 0.5,
+    updated_at: 0,
+  }));
+  await rig.store.onVaultLoaded("vault-a", [fileEntry("alpha.md"), fileEntry("beta.md")]);
+  assert.deepEqual(
+    rig.shells,
+    [
+      { path: "alpha.md", pane: 0 },
+      { path: "beta.md", pane: 1 },
+    ],
+    "壳先按存储落进各自 pane",
+  );
+  // 缺陷现场（M320 finding）：恢复期活跃 pane 是后建的右 pane（pane1），装载若仍按活跃 pane
+  // 判定「打开即移动」（M317 4.2），pane0 的激活项 alpha 会被抢到 pane1——真机会话回写因此
+  // 变成 panes:[[],[beta.md,alpha.md]]。恢复装载必须用条目**自己所属的 pane** 当落点。
+  assert.equal(rig.placed.get("alpha.md"), 0, "pane0 的激活项装回 pane0（不被活跃 pane 抢走）");
+  assert.equal(rig.placed.get("beta.md"), 1, "pane1 的激活项装回 pane1");
+  assert.deepEqual(rig.opened, ["alpha.md", "beta.md"]);
+  assert.deepEqual(rig.activated, ["alpha.md"], "收口把活跃 pane 带回 root");
 });
 
 test("装载后恢复：双 pane 存储、第二个 pane 的条目全没了 → 仍按存储建 2 pane（design §7）", async () => {

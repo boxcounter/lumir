@@ -422,12 +422,19 @@ export async function writeLegacyRegistryEntry(entry) {
 }
 
 /** 预置一个 vault 的标签会话（`<env>/lumir/vault-sessions/<id>.json`）。
- *  tabs 是**vault 相对路径**的有序列表，active 是其中的激活项（缺省/非法值按「退化到第一个
- *  可打开的标签」处理，与 `vault_session::sanitize` 同口径）。 */
-export async function writeSession({ id, tabs, active = null }) {
+ *  两种形状（与 Rust 侧 `vault_session` 的 SESSION_VERSION / LEGACY_SESSION_VERSION 同源，
+ *  读取侧按 `version` 分流）：
+ *   - **v2**（`panes` 给了）：`panes` 是 `[{ tabs, active }]` 的横向有序列表、`ratio` 是分隔条
+ *     比例——用于预置**分栏**会场的现场（M321）；
+ *   - **v1**（缺省）：`tabs` 是 vault 相对路径的有序列表、`active` 是激活项（单 pane 形态，
+ *     与 M318 之前一致）。
+ *  非法 `active` 一律按「退化到第一个可打开标签」处理（`vault_session::sanitize` 同口径）。 */
+export async function writeSession({ id, tabs, active = null, panes = null, ratio = null }) {
   if (!ID_RE.test(id ?? "")) throw new CuError(`会话 id 非法：${JSON.stringify(id)}（只允许字母数字与 -_）`);
   const dir = await mkdirp(path.join(envHome(), "lumir", "vault-sessions"));
-  const payload = { version: 1, tabs, active, updated_at: Date.now() };
+  const payload = panes
+    ? { version: 2, panes, harness_pane: false, pane_split_ratio: ratio ?? 0.5, updated_at: Date.now() }
+    : { version: 1, tabs, active, updated_at: Date.now() };
   await writeFile(path.join(dir, `${id}.json`), `${JSON.stringify(payload, null, 2)}\n`);
   return payload;
 }
@@ -479,7 +486,15 @@ export async function prepareSeed(seed) {
     );
   }
   for (const [id, s] of Object.entries(seed.sessions ?? {})) {
-    written.sessions.push(await writeSession({ id, tabs: s?.tabs ?? [], active: s?.active ?? null }));
+    written.sessions.push(
+      await writeSession({
+        id,
+        tabs: s?.tabs ?? [],
+        active: s?.active ?? null,
+        panes: s?.panes ?? null,
+        ratio: s?.ratio ?? null,
+      }),
+    );
   }
   return written;
 }

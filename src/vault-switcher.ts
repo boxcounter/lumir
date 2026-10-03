@@ -459,8 +459,12 @@ export interface VaultSessionStoreDeps {
    *  单 pane 存储（或全部条目不可用）时确保不 split——「单 pane 存储恢复不出第二 pane」。 */
   applyPaneCount(count: number, ratio: number): void;
   /** 装载某个条目的**文档内容**并激活它（走既有打开链路 `openFile`）；返回是否成功。
-   *  M283 起只对「存储的激活项」与它失败时的退化候选调用，其余标签留到首次成为前台。 */
-  openPinned(path: string): Promise<boolean>;
+   *  M283 起只对「存储的激活项」与它失败时的退化候选调用，其余标签留到首次成为前台。
+   *
+   *  `pane` 是条目所属 pane 的下标（与 `createShell` 同一个落点，M321）——装载**只填进
+   *  它自己那个 pane**，不走「打开意图落在活跃 pane」（M317 4.2）。缺了它，恢复期活跃 pane
+   *  是后建的右 pane，条目会被「打开即移动」抢到右 pane（真机会话回写变成 panes:[[],[…]]）。 */
+  openPinned(path: string, pane: number): Promise<boolean>;
   /** 激活某个已打开的标签（恢复存储的激活项，或内容装载时已激活）。 */
   activate(path: string): void;
   /** 恢复结束、一个标签都没恢复出来：空 vault 首入态。 */
@@ -608,7 +612,8 @@ export function createVaultSessionStore(deps: VaultSessionStoreDeps): VaultSessi
       let loaded: string | null = null;
       for (const path of order) {
         if (gen !== restoreGen) return;
-        if (await deps.openPinned(path)) {
+        // 落点 = 条目所属 pane（i），不是活跃 pane——见 deps.openPinned 的 M321 说明。
+        if (await deps.openPinned(path, i)) {
           loaded = path;
           break;
         }

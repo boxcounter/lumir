@@ -50,6 +50,18 @@ export function checkScenario(scenario) {
   for (const [i, e] of (scenario.seed?.legacyRegistry ?? []).entries()) {
     if (!e?.id || !e?.path) push(`seed.legacyRegistry[${i}] 需要 id 与 path`);
   }
+  // 会话种子（M321）：`panes` 是**分栏现场**的形状，写错会静默退化成 v1 空会话——预置的标签
+  // 根本没进盘，断言恒红且归因指向别处（写错的键 = 不生效，与其余种子同一条假绿/假红口径）。
+  for (const [id, s] of Object.entries(scenario.seed?.sessions ?? {})) {
+    if (s?.panes === undefined) continue;
+    if (!Array.isArray(s.panes) || s.panes.length === 0) push(`seed.sessions.${id}.panes 需要非空数组`);
+    else
+      for (const [i, p] of s.panes.entries()) {
+        if (!Array.isArray(p?.tabs)) push(`seed.sessions.${id}.panes[${i}].tabs 需要数组`);
+        if (p?.active !== null && p?.active !== undefined && typeof p.active !== "string")
+          push(`seed.sessions.${id}.panes[${i}].active 需要字符串或 null`);
+      }
+  }
   // 批量真实形状 vault（M283）：形状参数写错会静默退化成缺省值（生成出来不是那个规模），
   // 与「断言字段名写错 = 恒真」同类，因此在静态检查里挡住。
   const bulk = scenario.seed?.bulkVault;
