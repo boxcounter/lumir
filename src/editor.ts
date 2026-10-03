@@ -680,7 +680,11 @@ function deleteWordBackward(view: EditorView): void {
   killRange(view, backwardWordStart(state, end, limits.from), end, false);
 }
 
-/** 单槽 kill buffer（kill ring 后续）：连续同向 kill 相接时合并，其余 kill 覆盖。 */
+/** 单槽 kill buffer（kill ring 后续）：连续同向 kill 相接时合并，其余 kill 覆盖。
+ *
+ *  **模块级单例、跨 pane 共享**（M317 tasks 4.4）：kill ring 在 Emacs 本就是全局的——在
+ *  一个 pane 里 `⌃K` 杀了内容，切到另一个 pane `⌃Y` 应当能插进去。因此它 MUST NOT 下沉成
+ *  逐实例状态（此处无改动，补记口径；`⌃K` / `⌃Y` 的 view 参数是**发起 pane** 自己的）。 */
 let killSlot: { text: string; caret: number; forward: boolean } | null = null;
 
 /** kill 一段：并入 kill 槽后删除。相接判定用「上次 kill 结束后的光标位置 = 本次 kill
