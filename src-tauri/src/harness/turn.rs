@@ -138,7 +138,11 @@ pub fn run_turn(
     message: String,
     context_section: Option<String>,
 ) {
-    let sink = TauriEventSink(app);
+    // 事件信封（M312）：每个 harness:event 都带 vault 根路径（= 会话标识），前端据此只渲染
+    // 当前 vault 的会话。包装放在本函数——生产路径上唯一的装配点，下面十几处发射点与
+    // `run_turn_for` 都不必各带一个 vault 参数。
+    let app_sink = TauriEventSink(app);
+    let sink = events::ScopedSink::new(&app_sink, scope.key());
     let mut client = match llm::client(&config) {
         Ok(client) => client,
         Err(e) => {
@@ -170,6 +174,9 @@ pub fn run_turn(
 }
 
 /// 循环本体（client 与 sink 注入，单测直接驱动）。
+///
+/// 事件信封（vault 标识）由**调用侧包装好的 sink** 承担（`run_turn` 用 [`super::events::ScopedSink`]
+/// 包了一层）；本函数不自己盖，单测可以直接注入自己的收集器。
 ///
 /// 会话存在性由 busy 协议保证（`acquire_turn` 建会话、busy 期间 `new_session` /
 /// 切 vault 都被挡），循环中途的 `with_session` 只会 Ok，忽略其 Err 不是吞错。

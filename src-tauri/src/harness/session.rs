@@ -47,8 +47,11 @@ pub struct UsageSnapshot {
 
 impl StateSnapshot {
     /// 空态快照（无会话 / 未打开 vault）：面板宽容解析下全空即合法。
-    pub fn empty(warn_ctx_pct: f64) -> Self {
+    /// `vault` 仍是当前 scope 的键——「这个空态属于哪个 vault」是快照准入判据的一半
+    ///（M312：切 vault 之后回来的旧快照要按标识丢弃）。
+    pub fn empty(vault: &str, warn_ctx_pct: f64) -> Self {
         Self {
+            vault: vault.to_string(),
             messages: Vec::new(),
             usage: UsageSnapshot::default(),
             pending_approval: None,
@@ -60,6 +63,9 @@ impl StateSnapshot {
 /// `harness_state` 返回的快照（键集合是 m303 消费形状的超集）。
 #[derive(Debug, Clone, Serialize)]
 pub struct StateSnapshot {
+    /// 会话标识 = vault 根路径（M312）：面板据此丢弃「切走之后才回来的」旧快照
+    /// （与 `harness:event` 的信封字段同源：都是 `VaultScope::key()`）。
+    pub vault: String,
     pub messages: Vec<PanelMessage>,
     pub usage: UsageSnapshot,
     /// 当前挂起的批准请求（无则 null）。
@@ -179,6 +185,7 @@ impl Session {
 
     pub fn snapshot(&self, warn_ctx_pct: f64) -> StateSnapshot {
         StateSnapshot {
+            vault: self.root.display().to_string(),
             messages: self.panel.clone(),
             usage: self.usage,
             pending_approval: self

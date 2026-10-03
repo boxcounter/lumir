@@ -63,11 +63,32 @@ export interface HarnessPanelHandle {
   /** 唤起 / 收起（harness.toggle 命令与标题栏 toggle 钮共用这一条路径）。 */
   toggle(): void;
   isOpen(): boolean;
+  /** 装载新 vault 之后由装配层调用（M312）：把面板的会话作用域切到新 vault——丢掉旧 vault 的
+   *  渲染面与本地态，并按当前 vault 重拉一次 `harness_state`。同一个 vault 重复调用是空操作。 */
+  vaultChanged(root: string): void;
 }
 
 /** 上下文警示阈值的后备值（design §11：默认 85%）。权威值在 [harness].warn_ctx_pct
  *（Rust 侧），快照里带 warn_ctx_pct 时以它为准；快照缺它（或后端未到）用本值。 */
 const FALLBACK_WARN_CTX_PCT = 85;
+
+/**
+ * 会话作用域判据（M312）：载荷（`harness:event` 的事件信封 / `harness_state` 快照）自带的
+ * vault 标识，必须与**当前 vault** 一致才归本面板渲染。
+ *
+ * 两种「不一致」的处置口径：
+ * - 载荷没带标识（`undefined`）→ **放行**：桩环境与早期载荷形态不带它，按「归属未知」处理
+ *   （宽容解析，与 `harness_state` 缺键即空态同一条纪律）；
+ * - 当前 vault 未知（`null`，尚未装载）而载荷带了标识 → **丢弃**：装载路径紧跟着就会拉一次
+ *   快照，宁可不显示也不显示错的那个 vault（误显示的代价是「用户以为在 B 提问，回答来自 A」）。
+ *
+ * 比较是**逐字节**的：两侧都是后端那个 `PathBuf::display()` 串（`VaultInfo.root` 与
+ * `VaultScope::key()` 同一个表达式），不存在归一化差异。判据本身因此是 fail-closed 的
+ * ——两侧真漂了，症状是面板不再显示事件（可见、可复现），而不是跨 vault 串台（静默）。
+ */
+export function inCurrentVault(payloadVault: unknown, currentVault: string | null): boolean {
+  return typeof payloadVault !== "string" || payloadVault === currentVault;
+}
 
 // ---------------------------------------------------------------------------
 // Markdown → DOM（零 XSS：纯 DOM API + textContent；解析器 = @lezer/markdown 的 GFM 配置）
@@ -440,6 +461,13 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   let flushScheduled = false;
   const pendingApprovals = new Map<string, PendingApproval>();
   let lastToolEl: HTMLElement | null = null;
+  /** 当前 vault 根路径（会话作用域基准：事件过滤与快照准入都用它；null = 尚未装载 vault）。
+   *  由装配层在每次装载 vault 后经 `vaultChanged` 传入（src/main.ts 的 applyVault）。 */
+  let currentVault: string | null = null;
+  /** 快照请求的世代号：只应用**最新一次**请求的结果。挂载那一次拉取与切 vault 的那一次可能
+   *  同时在飞——迟到的旧响应会把已经清空的 transcript 又灌回旧 vault 的消息，或把同一份
+   *  消息追加两遍（两条都是可见的错乱）。 */
+  let snapshotSeq = 0;
 
   // ── 长驻文案施加（onRelabel 的重跑路径：全部从已存状态重取，不重放旧字符串）──
   function applyLabels(): void {
@@ -714,6 +742,9 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
 
   // ── 事件流 ───────────────────────────────────────────────────────────────
   function handleEvent(event: HarnessEvent): void {
+    // 会话作用域过滤（M312）：只渲染当前 vault 的会话。切换 vault 之后仍在途的旧 vault 事件
+    // （工具循环跑在 `lumir-harness-llm` 专线程上，切 vault 不打断它）在这里被丢弃，不串台。
+    if (!inCurrentVault(event.vault, currentVault)) return;
     switch (event.type) {
       case "text_chunk":
         chunkBuffer += typeof event.text === "string" ? event.text : "";
@@ -755,7 +786,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
 
   void onHarnessEvent(handleEvent).catch(() => {});
 
-  // ── 快照恢复（webview 重载 / 首次挂载）：宽容解析，缺键 = 空态 ────────────
+  // ── 快照恢复（webview 重载 / 首次挂载 / 切 vault）：宽容解析，缺键 = 空态 ──
   function restoreSnapshot(json: string): void {
     let snapshot: unknown;
     try {
@@ -765,6 +796,9 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     }
     if (typeof snapshot !== "object" || snapshot === null) return;
     const state = snapshot as Record<string, unknown>;
+    // 快照准入（M312）：标识与当前 vault 不符的一律丢弃（例如切走之后才回来的那份——
+    // 它的消息属于旧 vault）。判据与事件过滤同一条（inCurrentVault）。
+    if (!inCurrentVault(state.vault, currentVault)) return;
     if (typeof state.warn_ctx_pct === "number") warnCtxPct = state.warn_ctx_pct;
     const usage = state.usage as { ctx_pct?: unknown; cache_pct?: unknown } | null | undefined;
     if (usage !== null && typeof usage === "object" && typeof usage.ctx_pct === "number") {
@@ -802,9 +836,60 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     scrollToBottom();
   }
 
+  /** 快照请求（挂载 / 切 vault 共用）：世代号保证只有最新一次请求的结果被应用。 */
+  function fetchSnapshot(): void {
+    const seq = (snapshotSeq += 1);
+    void harnessState()
+      .then((json) => {
+        if (seq === snapshotSeq) restoreSnapshot(json);
+      })
+      .catch(() => {});
+  }
+
+  /** 清空渲染面与本地流式态（「新会话」与「切 vault」共用：两者都是「换了一个会话」）。
+   *  会话真源在 Rust，这里清的是**渲染面**与只属于上一段会话的本地态。 */
+  function resetView(): void {
+    transcript.replaceChildren();
+    pendingApprovals.clear();
+    streamingEl = null;
+    streamingText = "";
+    renderedFinalized = 0;
+    chunkBuffer = "";
+    lastToolEl = null;
+    // 用量读数属于上一段会话：清掉后由紧随其后的快照（或新会话的空态）重新给值。
+    lastUsage = null;
+    // busy 一并复位：旧会话那一轮的 done 事件可能永远到不了这里（切 vault 后被过滤，
+    // 见 handleEvent）——不复位的话新会话的发送钮会被一个等不到的「处理中」锁死。
+    setBusy(false);
+    applyUsage();
+    applyWarn();
+    syncEmptyHint();
+  }
+
+  /**
+   * 装载新 vault 之后由装配层调用（src/main.ts 的 applyVault，M312）：面板的会话状态在后端
+   * 按 vault 分桶，这里把作用域基准切过去、丢掉旧 vault 的渲染面，并按当前 vault 重拉快照。
+   *
+   * 本地态的处置口径（写在这里，免得下次再推一遍）：
+   * - **composer 草稿清空**：草稿是在旧 vault 的上下文里写的（当时的 chip 指着旧 vault 的
+   *   文档），留着就会被当成本 vault 的提问发出去；
+   * - **上下文 chip 重取**：同上，改指新 vault 的当前文档（此刻多数是「无」）；
+   * - **busy 复位**：见 resetView；
+   * - 语言 / 主题 / 面板开合状态都不动（它们不属于会话）。
+   */
+  function vaultChanged(root: string): void {
+    if (root === currentVault) return; // 同一个 vault 的重复装载（重定位 / 重开）不重置视图
+    currentVault = root;
+    resetView();
+    composer.value = "";
+    refreshChip();
+    fetchSnapshot();
+  }
+
   // 后端不可用（纯浏览器预览 / 命令未注册）时按空会话降级——面板本身照常可用，
-  // 发送时才会报「发送失败」。
-  void harnessState().then(restoreSnapshot).catch(() => {});
+  // 发送时才会报「发送失败」。挂载这一次拉取在「后端已经开着某个 vault」时会被快照准入
+  // 判据挡下（此时 currentVault 还是 null），随后那次 vaultChanged 的拉取承担首帧渲染。
+  fetchSnapshot();
 
   // ── 发送与新会话 ─────────────────────────────────────────────────────────
   function send(): void {
@@ -837,20 +922,9 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   newSession.addEventListener("click", () => {
     harnessNewSession()
       .then(() => {
-        // 清空的是**渲染面**：会话真源在 Rust，重置成功后本地视图随之清空；
-        // 待决批准项随会话失效，一并撤下（它们的 id 已不属于任何会话）。
-        transcript.replaceChildren();
-        pendingApprovals.clear();
-        streamingEl = null;
-        streamingText = "";
-        renderedFinalized = 0;
-        chunkBuffer = "";
-        lastToolEl = null;
-        lastUsage = null;
-        setBusy(false);
-        applyUsage();
-        applyWarn();
-        syncEmptyHint();
+        // 清空的是**渲染面**：会话真源在 Rust，重置成功后本地视图随之清空；待决批准项随
+        // 会话失效，一并撤下（它们的 id 已不属于任何会话）——口径见 resetView 的注释。
+        resetView();
       })
       .catch((e: unknown) => appendError(t("D348", { message: errorMessage(e) })));
   });
@@ -892,5 +966,6 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   return {
     toggle: () => setOpen(!open),
     isOpen: () => open,
+    vaultChanged,
   };
 }
