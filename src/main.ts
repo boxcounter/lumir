@@ -1,6 +1,7 @@
 import { createShell } from "./shell";
 import { createEditor } from "./editor";
 import type { EditorHandle, EditorSession } from "./editor";
+import type { EditorView } from "@codemirror/view";
 import { applyKeyOverrides, BLOCK_SCROLL_CLASS, EDITOR_COMMAND_IDS, KEY_BINDINGS, Keymap, TAB_GOTO_IDS } from "./keys";
 import type { CommandId, CommandRunner, CommandRuntime, EditorCommandId, KeyBinding, KeyOverrides } from "./keys";
 import { createPaneLayout } from "./pane-layout";
@@ -203,6 +204,16 @@ function injectEach(register: (handle: EditorHandle) => void): void {
   forEachEditor(register);
 }
 
+/** 「每个 pane 的 EditorView 本体」的挂钩注册表（M317 tasks 2.1）：与 `editorInjections`
+ *  同构——注册即对现存 pane 的视图各挂一次，新 pane 在 `createPaneHandle` 里重放。用于需要
+ *  视图对象本身、而不只是 EditorHandle 的消费者（当前唯一是 toc 的 updateListener：
+ *  它要挂在**每个** pane 的视图上，才能在该 pane 成为活跃 pane 后捕获它自己的光标 / 滚动）。 */
+const viewTrackers: Array<(view: EditorView) => void> = [];
+function trackEachView(run: (view: EditorView) => void): void {
+  viewTrackers.push(run);
+  for (const pane of paneLayout.panes()) run(pane.handle.view);
+}
+
 /** wikilink 解析器的施加（applyVault 唯一调用点）：更新当前值并广播到全部 pane——
  *  新 pane 在 createPaneHandle 里读同一份 currentResolver，两处因此不漂
  *（REVIEW.md 第 8 条）。 */
@@ -276,8 +287,9 @@ function createPaneHandle(paneId: PaneId): EditorHandle {
     handle.setMarkdownLineNumbers(currentMarkdownLineNumbers);
     handle.setWikilinkResolver(currentResolver);
   }
-  // 能力注入与事件订阅全量重放（注册表口径，见上面两处注册表的注释）。
+  // 能力注入与事件订阅全量重放（注册表口径，见上面几处注册表的注释）。
   for (const inject of editorInjections) inject(handle);
+  for (const track of viewTrackers) track(handle.view);
   for (const subscribe of paneSubscribers) assembly.unsubs.push(subscribe(handle));
   // 焦点进入该 pane 的内容区 → 它成为活跃 pane；焦点移去 chrome 不翻指针
   //（pane-layout 的 activate 语义：「移出内容区不调用」）。
@@ -927,10 +939,10 @@ function emitReadiness(name: string, detail: object = {}): void {
 // 提示出口（toast：D84 与 M197 的两条新文案）。指示段与浮层都挂 modeline（M211 从旧标题区迁来），
 // 浮层向上展开、不动布局。
 const toc = createToc({
-  // M316 已知过渡形态：构造期定死 root pane 的 view——大纲的 updateListener 只跟
-  // root pane 的文档流，「大纲跟随活跃 pane」归 tasks 2.1（context 回调已是活跃 pane
-  // 活读，标题切换本身不错，只是非 root pane 的键入不触发刷新）。
-  view: editor.view,
+  // M317 2.1：内容源活读**活跃 pane** 的 view（构造期不再钉死 root）。刷新挂钩经
+  // trackEachView 挂到每个 pane 的视图上（含未来 pane），跨 pane 切换由 syncActiveDocument
+  // 调 toc.sourceChanged() 即时换源。
+  view: () => editor.view,
   indicator: shell.modelineSection,
   mount: shell.modeline,
   hasFile: () => save.displayedPath() !== undefined,
@@ -945,6 +957,9 @@ const toc = createToc({
   },
   toast,
 });
+// 大纲的视图更新挂钩挂到每个 pane 的视图上（现存 root + 未来 pane 由 viewTrackers 重放）：
+// 非活跃 pane 的事件也挂着，等它成为活跃 pane 后立刻可捕获。
+trackEachView((view) => toc.track(view));
 
 editor.onReady((event) => {
   emitReadiness(event.phase, event);
@@ -1345,6 +1360,8 @@ function syncActiveDocument(): void {
   syncBackendDirty();
   // 指示段与文档同一帧到位（不落在 120ms 节流窗口之后）：见 TocHandle.refresh 的说明。
   toc.refresh();
+  // 大纲浮层打开期间活跃 pane / 前台文档变化 ⇒ 内容源即时换源（M317 2.1；未打开时 no-op）。
+  toc.sourceChanged();
   tree.setCurrentPath(session.path);
   // 会话切换后栏宽手柄重新贴合列缘（模式 / gutter 进出只改列位置不改列宽，控制器自己的
   // ResizeObserver 看不见位置变化）。
