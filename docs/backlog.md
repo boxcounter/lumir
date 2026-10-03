@@ -612,6 +612,27 @@
 
 ## 待修 findings（不阻塞）
 
+### harness 会话以 vault 根路径字符串为键，打开 vault 不做规范化：同目录两种拼写各建一个会话（M312 现场，2026-10-03，medium）
+
+**症状**：harness 会话映射与 `harness:event` 标识都以 vault 根路径**字符串**为键，而 vault 打开
+路径不做规范化——macOS 上 `/tmp/lumir-m102-acceptance` 与 `/private/tmp/lumir-m102-acceptance`
+（`/tmp` 是指向 `/private/tmp` 的符号链接）会被当成两个 vault，各建一个会话。**切回同一个
+vault 的另一种拼写时，那段对话在面板里消失**（内容仍在 `<config_dir>/harness/*.jsonl` 留存里，
+JSONL 文件名即后端会话键可对照）。
+
+**影响**：不丢数据；同一目录经两种拼写打开时对话历史在面板上「丢失」，且 M312 起事件流按
+vault 标识过滤后，旧拼写 vault 的在途事件会被新面板整条丢掉。真实使用一直经同一路径拼写打开
+不触发；验收套件现场因 `/tmp` 符号链接必然踩到（场景 78 的「切回 A 看得到自己的会话」判据
+因此撤下并在覆盖边界节登记）。
+
+**建议处置**：在**打开路径**（`src-tauri/src/commands.rs` 的 vault 打开/注册处）做路径规范化
+（canonicalize / 解符号链接），让会话键、注册表键、事件标识共用同一份规范化路径。**不要只在
+harness 侧规范化**——前端比较基准与事件标识会变成两种拼写，整轮事件反被过滤丢掉（worker
+现场论证见 finding）。修完后把场景 78 撤下的「切回 A」判据补回。
+
+证据：`test-results/m312/finding-session-key-现场/`（steps.md 判红、AX dump、JSONL 文件名）；
+finding `.tower/comms/findings/20261003-worker-harness-vault-m312-bug-harness-vault-vault.md`。
+
 ### `scripts/visual/run.sh --update <filter>` 无法按 spec 过滤：参数被吞两级（M304 登记，2026-10-03，medium；**已核销**：M310，merge `25f7f37`，2026-10-03）
 
 **症状**：① `run.sh --update m149-tabs` 展开为 `playwright test --update-snapshots m149-tabs`，
