@@ -647,8 +647,10 @@ const editor: EditorHandle = {
     });
   },
   contentWidth: () => paneLayout.activeHandle().contentWidth(),
+  // 新会话落在**活跃 pane**（tasks 2.10 / 4.2 的打开落点）。
   createSession: () => paneLayout.activeHandle().createSession(),
-  // 恢复壳恒落 root pane（tasks 4.x 之前恢复语义不变：壳列表只进一个 pane）。
+  // 恢复壳恒落 root pane：vault 会话恢复（v1）把标签列表只装进一个 pane，分栏布局的按 pane
+  // 恢复归持久化 mission（tasks 5.3）；新 pane 的空白档由 split 自己的 reset 提供。
   createShellSession: (path) => paneLayout.panes()[0].handle.createShellSession(path),
   reloadSession: (session, doc, path, requestId) => {
     (paneEntryOfSession(session)?.[1].handle ?? paneLayout.activeHandle()).reloadSession(
@@ -1578,8 +1580,8 @@ async function openFile(
   //  此后所有点击都被它 intercept——视觉场景 wikilink.spec.ts 就是这样红的）。
   if (existing !== undefined) {
     showEditor(); // 撤下一次更早的、已被这次同步切换取代的「正在打开」覆盖层
-    // M316 过渡语义：文件开在另一 pane 时**切过去**（在属主 pane 激活并翻活跃指针），
-    // 不移动标签——打开落点移动归 tasks 4.2。
+    // 上面的移动分支已把「开在他 pane」的同文件移到活跃 pane 并激活；这一句覆盖剩余情形
+    //（本就在活跃 pane）与移动分支之外的兜底，已是前台时是 no-op。
     activateSessionInOwnerPane(existing);
     return true;
   }
