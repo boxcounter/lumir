@@ -434,11 +434,10 @@ function applySplitRatio(): void {
   }
 }
 
-/** 分栏态的 chrome 切换：根类（样式钩）+ 右簇退让（产品标识块整块退 modeline、harness
- *  toggle 钮隐藏，均为已裁形态）+ 两槽比例 + 标签槽重画。 */
+/** 分栏态的 chrome 切换：右簇退让（产品标识块整块退 modeline、harness toggle 钮隐藏，
+ *  均为已裁形态）+ 两槽比例 + 标签槽重画。 */
 function applySplitChrome(): void {
   const split = paneLayout.isSplit();
-  shell.root.classList.toggle("is-split", split);
   titlebarIdentity.setSplitRetreat(split);
   harnessPanel.setChromeRetreat(split);
   applySplitRatio();
