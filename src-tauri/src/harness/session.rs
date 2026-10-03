@@ -250,8 +250,9 @@ pub fn user_item(text: &str) -> serde_json::Value {
 /// assistant 消息项（文本 + 可选 reasoning 项原文，reasoning 按各厂规则原样回传）。
 ///
 /// Responses API 的回放口径：assistant 输出以 message 项承载（content 用 `output_text`），
-/// reasoning 项（kimi 的 `encrypted_content`）作为独立项紧随其后。deepseek 把 reasoning
-/// 合并进 assistant 消息——它**产出**时就不分项，这里自然无项可带（design §3 回传纪律）。
+/// reasoning 项作为独立项**紧随其前**——kimi 的 `encrypted_content` 项、deepseek
+/// thinking 的 `reasoning_text` content parts 项同此位置（deepseek 带 tools 时
+/// 不回传即 400，M306 真机实测；协议依据见 [`super::llm`] 模块文档）。
 pub fn assistant_item(text: &str, reasoning: Option<&serde_json::Value>) -> Vec<serde_json::Value> {
     let mut items = Vec::new();
     if let Some(r) = reasoning {
