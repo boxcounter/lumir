@@ -2,7 +2,7 @@
 //!
 //! - 默认分层：**读类**（vault_read / vault_search / skill_load）= allow；**写类**
 //!   （vault_patch / vault_create）与 **cli_run** = ask（批准闸）。
-//! - 规则语法：tool 级（`vault_patch`）或 tool(模式) 级（`cli(tavily *)`）。模式匹配对
+//! - 规则语法：tool 级（`vault_patch`）或 tool(模式) 级（`cli(demo *)`）。模式匹配对
 //!   **主体串**做前缀 + `*` 通配：模式以 `*` 结尾 ⇒ `subject.starts_with(模式去 *)`；
 //!   否则整串相等。主体串的取法：cli_run = `command arg1 arg2 …`（空格拼接）；
 //!   vault_* / skill_load = 第一个路径参数原文。
@@ -68,7 +68,7 @@ fn rule_matches(rule: &str, tool: &str, subject: &str) -> bool {
     }
 }
 
-/// 规则语法里的工具名 → 实际工具名。design §6 的规则示例用 `cli(tavily *)` 这种
+/// 规则语法里的工具名 → 实际工具名。design §6 的规则示例用 `cli(demo *)` 这种
 /// 写法——规则层的工具名是 `cli`，实际工具是 `cli_run`。只收这一个文档化别名，
 /// 不发明一般性的前缀匹配（那会让 `vault` 意外命中 `vault_patch` 与 `vault_read`）。
 fn canonical_tool(name: &str) -> &str {
@@ -123,7 +123,7 @@ mod tests {
         let p = HarnessPermissions::default();
         assert_eq!(decide(&p, "vault_read", "a.md"), Decision::Allow);
         assert_eq!(decide(&p, "vault_search", "q"), Decision::Allow);
-        assert_eq!(decide(&p, "skill_load", "tavily"), Decision::Allow);
+        assert_eq!(decide(&p, "skill_load", "demo-skill"), Decision::Allow);
         assert_eq!(decide(&p, "vault_patch", "a.md"), Decision::Ask);
         assert_eq!(decide(&p, "vault_create", "b.md"), Decision::Ask);
         assert_eq!(decide(&p, "cli_run", "ls -la"), Decision::Ask);
@@ -131,8 +131,8 @@ mod tests {
 
     #[test]
     fn deny_beats_allow_and_default() {
-        let p = perms(&["cli(tavily *)"], &["cli(tavily *)"]);
-        assert_eq!(decide(&p, "cli_run", "tavily search x"), Decision::Deny);
+        let p = perms(&["cli(demo *)"], &["cli(demo *)"]);
+        assert_eq!(decide(&p, "cli_run", "demo search x"), Decision::Deny);
         // deny 命中即拒绝，即使默认分层是 allow 的工具
         let p = perms(&[], &["vault_read"]);
         assert_eq!(decide(&p, "vault_read", "a.md"), Decision::Deny);
@@ -140,8 +140,8 @@ mod tests {
 
     #[test]
     fn allow_rule_skips_gate() {
-        let p = perms(&["cli(tavily *)"], &[]);
-        assert_eq!(decide(&p, "cli_run", "tavily search x"), Decision::Allow);
+        let p = perms(&["cli(demo *)"], &[]);
+        assert_eq!(decide(&p, "cli_run", "demo search x"), Decision::Allow);
         assert_eq!(decide(&p, "cli_run", "rm -rf /"), Decision::Ask);
         let p = perms(&["vault_patch"], &[]);
         assert_eq!(decide(&p, "vault_patch", "a.md"), Decision::Allow);

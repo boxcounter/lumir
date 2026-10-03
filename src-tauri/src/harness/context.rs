@@ -18,13 +18,15 @@ use serde::Serialize;
 
 /// 固定身份段（裁决点 7：v1 无 persona 系统，行为定制走 AGENTS.md + Skill）。
 const IDENTITY: &str = "\
-你是 Lumir 的内置助手，工作在当前打开的 vault 里。你可以读取 vault 内文件、搜索内容、\
-经局部 patch 修改既有文档、新建文档、加载 Skill、并在批准后执行命令行工具。
+你是 Lumir 的内置助手。Lumir 是本地文本工作台，当前阶段是 Emacs keybinding PKM。\
+你工作在当前打开的 vault 里，操作对象是 vault 中的文件——Markdown 文档为主，\
+也可以是代码、配置等任何文本文件；改文件要保守、先读后改。你可以读取 vault 内文件、\
+搜索内容、经局部 patch 修改既有文件、新建文件、加载 Skill，并在批准后执行命令行工具。
 
 工具使用纪律：
-- 修改既有文档只有 vault_patch 一种方式：old_string 必须在目标文件里恰好命中一次，\
+- 修改既有文件只有 vault_patch 一种方式：old_string 必须在目标文件里恰好命中一次，\
 失败会拿到错误，按错误信息调整后重试。
-- 新建文档用 vault_create：父目录必须已存在，不会覆盖同名文件。
+- 新建文件用 vault_create：父目录必须已存在，不会覆盖同名文件。
 - vault_read / vault_search 是只读工具，可直接使用；vault_search 的 query 是普通子串（非正则）。
 - skill_load 按技能名加载 Skill 全文；外部能力（如联网搜索）= 对应 Skill + cli_run。
 - 写入类工具与 cli_run 默认需要用户批准，被拒绝时按拒绝原因调整方案。
@@ -207,16 +209,16 @@ mod tests {
         let home = tmpdir("home");
         let vault = tmpdir("vault");
         let _guard = EnvGuard::new(&home);
-        fs::create_dir_all(home.join(".agents/skills/tavily")).unwrap();
+        fs::create_dir_all(home.join(".agents/skills/demo-skill")).unwrap();
         fs::write(
-            home.join(".agents/skills/tavily/SKILL.md"),
-            "---\ndescription: user tavily\n---\nbody",
+            home.join(".agents/skills/demo-skill/SKILL.md"),
+            "---\ndescription: user demo-skill\n---\nbody",
         )
         .unwrap();
-        fs::create_dir_all(vault.join(".agents/skills/tavily")).unwrap();
+        fs::create_dir_all(vault.join(".agents/skills/demo-skill")).unwrap();
         fs::write(
-            vault.join(".agents/skills/tavily/SKILL.md"),
-            "---\ndescription: vault tavily\n---\nbody",
+            vault.join(".agents/skills/demo-skill/SKILL.md"),
+            "---\ndescription: vault demo-skill\n---\nbody",
         )
         .unwrap();
         fs::create_dir_all(vault.join(".agents/skills/notes")).unwrap();
@@ -228,9 +230,9 @@ mod tests {
 
         let skills = discover_skills(&vault);
         assert_eq!(skills.len(), 2);
-        let tavily = skills.iter().find(|s| s.name == "tavily").unwrap();
-        assert_eq!(tavily.description, "vault tavily");
-        assert!(tavily.dir.starts_with(&vault));
+        let demo = skills.iter().find(|s| s.name == "demo-skill").unwrap();
+        assert_eq!(demo.description, "vault demo-skill");
+        assert!(demo.dir.starts_with(&vault));
         let notes = skills.iter().find(|s| s.name == "notes").unwrap();
         assert_eq!(notes.description, "no frontmatter");
     }

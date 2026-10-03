@@ -2292,12 +2292,12 @@ mod tests {
     #[test]
     fn harness_permission_rules_drop_invalid_items_one_by_one() {
         let raw = r#"{"last_vault":"/tmp/vault","harness":{"permissions":{
-            "allow":["cli(ls *)","",42,"   ","vault_patch","  cli(tavily *)  "],
+            "allow":["cli(ls *)","",42,"   ","vault_patch","  cli(demo *)  "],
             "deny":[null,"cli(rm *)"]}}}"#;
         let snap = load_from(&TempFile::new(raw).0);
         assert_eq!(
             snap.config.harness.permissions.allow,
-            vec!["cli(ls *)", "vault_patch", "cli(tavily *)"]
+            vec!["cli(ls *)", "vault_patch", "cli(demo *)"]
         );
         assert_eq!(snap.config.harness.permissions.deny, vec!["cli(rm *)"]);
         // 4 条 warning：allow 的第 2 / 3 / 4 项 + deny 的第 1 项

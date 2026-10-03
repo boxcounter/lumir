@@ -48,8 +48,8 @@
 
 #### Scenario: 索引注入与按需加载
 
-- **WHEN** Skill 根下存在 tavily 技能且 Alex 提问需要联网搜索
-- **THEN** 模型可见技能索引中的 tavily 条目，经 `skill_load` 取得用法后经 `cli_run` 调用对应 CLI
+- **WHEN** Skill 根下存在某外部搜索技能且 Alex 提问需要联网搜索
+- **THEN** 模型可见技能索引中的该技能条目，经 `skill_load` 取得用法后经 `cli_run` 调用对应 CLI
 
 #### Scenario: 路径逃逸拒绝
 
