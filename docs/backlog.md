@@ -497,7 +497,9 @@
     （两侧同名 requirement 正文 sha256 相同 ⇒ 归档是幂等替换）。`validate --all --strict` 28/28 绿；
     归档节点 2 待 Alex（见「待 Alex 裁决」第 38 条）。至此本条 ①②③④ 与文档面全部落地。
 
-32. **change `product-version-display` 待归档跟踪**（2026-09-26，M236 登记，**待 Alex 节点 2**）：流程口径要求
+32. **change `product-version-display` 待归档跟踪**（2026-09-26，M236 登记；**已核销**：经核该 change 早已由
+    M253 归档批归档（2026-09-27，archive/2026-09-27-product-version-display 在场、validate 绿），本跟踪条
+    当时未同步核销；2026-10-03 M308 批次收尾由 tower 核销）：流程口径要求
     每个 change 在实现 PR 合并时即落一条待归档记录（`docs/process/openspec-workflow.md` 的批次收尾
     checklist 第一条）。本 change（提案评审节点 1 已于 2026-09-25 通过，D1/D2/D3 裁决见 `proposal.md`
     头部）**实现已完成、未归档**，卡在两件事上：
@@ -509,7 +511,9 @@
     的 tasks.md §1–§5 已逐条勾选并附证据指针；真机判据为场景 39（`scripts/acceptance/scenarios/
     39-titlebar-identity.md`，1/1 PASS）。
 
-33. **change `live-theme-switch` 待归档跟踪**（2026-09-26，M237 登记，**待 Alex 节点 2**）：流程口径要求
+33. **change `live-theme-switch` 待归档跟踪**（2026-09-26，M237 登记；**已核销**：经核该 change 早已由
+    M253 归档批归档（2026-09-27，archive/2026-09-27-live-theme-switch 在场、validate 绿），本跟踪条
+    当时未同步核销；2026-10-03 M308 批次收尾由 tower 核销）：流程口径要求
     每个 change 在实现 PR 合并时即落一条待归档记录（`docs/process/openspec-workflow.md` 的批次收尾
     checklist 第一条）。本 change（提案节点 1 已于 2026-09-25 通过，D1/D2/D3 裁决见 `proposal.md`
     头部）**实现已完成、未归档**，卡在两件事上：
@@ -608,7 +612,7 @@
 
 ## 待修 findings（不阻塞）
 
-### `scripts/visual/run.sh --update <filter>` 无法按 spec 过滤：参数被吞两级（M304 登记，2026-10-03，medium）
+### `scripts/visual/run.sh --update <filter>` 无法按 spec 过滤：参数被吞两级（M304 登记，2026-10-03，medium；**已核销**：M310，merge `25f7f37`，2026-10-03）
 
 **症状**：① `run.sh --update m149-tabs` 展开为 `playwright test --update-snapshots m149-tabs`，
 新版 Playwright（153）的 `--update-snapshots [mode]` 可选值把过滤器吞成 mode 参数，报
@@ -624,7 +628,7 @@
 证据：M304 基线更新轮（2026-10-03）两次实跑；finding
 `.tower/comms/findings/20261003-worker-harness-closeout-m304-bug-run-sh-update-spec.md`。
 
-### harness 上下文节用 "\n\n[" 重解析，用户正文含该序列时压缩重注入串味（M302 转派，2026-10-03，low）
+### harness 上下文节用 "\n\n[" 重解析，用户正文含该序列时压缩重注入串味（M302 转派，2026-10-03，low；**已核销**：M309，merge `80cb3ee`，2026-10-03）
 
 **症状**：`run_turn_for` 把「提问 + 上下文节」拼成一条 user 消息（`{message}\n\n[当前编辑器上下文：…]`），
 随后 `extract_section`（`src-tauri/src/harness/turn.rs:289-292`）用 `message.split("\n\n[").nth(1)`
@@ -643,7 +647,7 @@
 证据：M302 mission notes（2026-10-02 转派登记）；`src-tauri/src/harness/turn.rs:101-107`
 （拼接）与 `:289-292`（重解析）。
 
-### harness JSONL 文件名 sanitize 有碰撞面：/tmp/a b 与 /tmp/a_b 落同一留存文件（M302 转派，2026-10-03，low）
+### harness JSONL 文件名 sanitize 有碰撞面：/tmp/a b 与 /tmp/a_b 落同一留存文件（M302 转派，2026-10-03，low；**已核销**：M309，merge `80cb3ee`，2026-10-03）
 
 **症状**：会话 JSONL 留存路径 = `<config_dir>/harness/<sanitize(vault 根)>.jsonl`，
 `sanitize`（`src-tauri/src/harness/jsonl.rs:88-100`）把路径分隔符与空格等非常规字符**统一**
@@ -662,7 +666,7 @@ append 进同一份 JSONL。
 证据：M302 mission notes（2026-10-02 转派登记）；`src-tauri/src/harness/jsonl.rs:88-100`
 与 `:107-113`（单测展示的映射实例）。
 
-### 整页基线捕获的是「首帧 chrome 态」，0.001 容差长期吞掉真实漂移（M297 现场发现，2026-10-01，medium）
+### 整页基线捕获的是「首帧 chrome 态」，0.001 容差长期吞掉真实漂移（M297 现场发现，2026-10-01，medium；**已核销**：M311，merge `9cf6eb5`，2026-10-03）
 
 **症状**：M297 动标题显露后 4 张整页基线报红；逐像素拆段发现 diff 有三段——标题行（本次改动，
 约 500-600px）、顶部标签栏（tab 名称斜体变正体）、底部 modeline（语言 chip「zh」从无到有）。
@@ -683,7 +687,7 @@ append 进同一份 JSONL。
 
 证据：`.tower/comms/findings/20261001-worker-heading-reveal-m297-bug-chrome-0-001-960px.md`。
 
-### m132-emacs-keys 的 ⌃V/⌥V 翻屏在全量负载下 flake（scrollTop 读到 8 而非 0，poll 5s 超时；M288/M298/M299 三次实证，2026-10-01，medium）
+### m132-emacs-keys 的 ⌃V/⌥V 翻屏在全量负载下 flake（scrollTop 读到 8 而非 0，poll 5s 超时；M288/M298/M299 三次实证，2026-10-01，medium；**已核销**：M311，merge `9cf6eb5`，2026-10-03）
 
 **症状**：`tests/visual/scenes/m132-emacs-keys.spec.ts:241` 的
 `expect.poll(scroller.scrollTop).toBe(0)`（⌥V 翻回顶部）在 `gate.sh visual` 全量跑时偶发判红，
@@ -2725,6 +2729,13 @@ finding）、2 条套件注入通道缺陷（既有 finding）、1 条 M283 已�
 
 ## 记录在案（无需动作）
 
+- **UX 动荡期整页基线纪律：批次末尾一次性重刷，中间不逐批维护**（2026-10-03，Alex 裁决，M311 基线轮对话）：
+  背景是 M311 重刷的 26 张整页基线生命周期预计很短（接下来 UX 讨论可能带来不小改动）。**裁决**：UX
+  改动期内，整页像素基线不在每个 UX 批次中途逐批重刷，攒到 UX 批次末尾一次性 `--update-snapshots=all`
+  重刷 + Alex 过目一次；元素级断言与 CI 结构层（`LUMIR_VISUAL_STRUCTURAL=1`）照常逐批守，不放宽。
+  同批另一项简化（同次裁决）：纯基线增量 commit（零代码）的复审轮由 tower 亲自做机械核验（sha256 与
+  Alex 过目图逐字节一致 + 只含基线 png + 门禁复跑绿）后落 verdict，不再派 k3 reviewer——M311 r2 即按
+  此执行。UX 定型后恢复逐批维护与 reviewer 复审的完整纪律。
 - **S15/S16 · 键位面板维持 680px 三列（有意偏离定稿 440px 两列）**（2026-09-25，Alex 裁决，M220
   登记）：M215 gap 报告 §3.9 / §4 #15–#16 实测实现宽 680、三列（key + 命令 id + 说明；命令列
   11px `--text-3`），定稿 `.kbpanel` 是 440px、两列（key + 说明，index.html:729）。**裁决：维持实现
