@@ -559,7 +559,17 @@ const editor: EditorHandle = {
   syncRuntimeTypography: (settings) =>
     forEachEditor((handle) => handle.syncRuntimeTypography(settings)),
   textScale: (direction) => forEachEditor((handle) => handle.textScale(direction)),
-  setContentWidth: (width) => forEachEditor((handle) => handle.setContentWidth(width)),
+  // 栏宽是**全局单键**（`ui.content_width`，ADR 0008 Decision 2）：一份值管全部 pane，
+  // 单 key 不动（M317 2.5）。广播施加到每个实例（各写一次 documentElement 上的 token，幂等），
+  // 并**逐 pane 各自 requestMeasure()**——CSS 变量变化不触发 CM 的 ResizeObserver（editor.ts
+  // 的 setContentWidth 注释），只给 root 请求重测量会让另一个 pane 停在旧列宽上。CM 会把同帧
+  // 多次 requestMeasure 合并成一次，重复请求无额外成本。
+  setContentWidth: (width) => {
+    forEachEditor((handle) => {
+      handle.setContentWidth(width);
+      handle.view.requestMeasure();
+    });
+  },
   contentWidth: () => paneLayout.activeHandle().contentWidth(),
   createSession: () => paneLayout.activeHandle().createSession(),
   // 恢复壳恒落 root pane（tasks 4.x 之前恢复语义不变：壳列表只进一个 pane）。
