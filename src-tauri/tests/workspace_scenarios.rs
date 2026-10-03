@@ -379,11 +379,21 @@ fn scenario_vault_list_reports_name_availability_and_tab_count() {
     let gone = f.vault("notes-gone");
     vault_register("gone".into(), gone.clone()).unwrap();
     fs::remove_dir_all(&gone).unwrap();
-    // 会话里的合法固定标签数就是列表行的标签数（越界条目在写入侧就被丢弃）
+    // 会话里的合法固定标签数就是列表行的标签数（越界条目在写入侧就被丢弃）。**分两个 pane**
+    // 落盘：列表摘要的标签数是**跨 pane 求和**（M318 起会话 schema 是 panes 数组）。
     vault_session::vault_session_put(
         "live".into(),
-        vec!["a.md".into(), "b.md".into(), "../escape.md".into()],
-        Some("a.md".into()),
+        vec![
+            vault_session::PaneSession {
+                tabs: vec!["a.md".into(), "b.md".into(), "../escape.md".into()],
+                active: Some("a.md".into()),
+            },
+            vault_session::PaneSession {
+                tabs: vec!["c.md".into()],
+                active: None,
+            },
+        ],
+        0.5,
     )
     .unwrap();
 
@@ -395,7 +405,10 @@ fn scenario_vault_list_reports_name_availability_and_tab_count() {
         .expect("live 在列表里");
     assert_eq!(live_entry.name, "notes-2026", "显示名 = 路径的目录名");
     assert!(live_entry.available);
-    assert_eq!(live_entry.tab_count, 2, "摘要数字与将被恢复的标签数同源");
+    assert_eq!(
+        live_entry.tab_count, 3,
+        "摘要数字与将被恢复的标签数同源，且跨 pane 求和（a/b + c；越界条目已丢）"
+    );
     let gone_entry = entries
         .iter()
         .find(|e| e.id == "gone")
@@ -531,25 +544,104 @@ fn scenario_session_commands_round_trip_and_reject_out_of_bounds_entries() {
     // 合法条目与顺序原样保留；激活项同理落为 null
     vault_session::vault_session_put(
         "v1".into(),
-        vec![
-            "a.md".into(),
-            "/etc/passwd".into(),
-            "../escape.md".into(),
-            "sub/b.md".into(),
-        ],
-        Some("../escape.md".into()),
+        vec![vault_session::PaneSession {
+            tabs: vec![
+                "a.md".into(),
+                "/etc/passwd".into(),
+                "../escape.md".into(),
+                "sub/b.md".into(),
+            ],
+            active: Some("../escape.md".into()),
+        }],
+        0.5,
     )
     .unwrap();
     let loaded = vault_session::vault_session_get("v1".into())
         .unwrap()
         .expect("有历史");
-    assert_eq!(loaded.version, 1);
-    assert_eq!(loaded.tabs, ["a.md", "sub/b.md"], "存的就是恢复顺序");
-    assert_eq!(loaded.active, None, "非法激活项不落盘");
+    assert_eq!(loaded.version, vault_session::SESSION_VERSION);
+    assert_eq!(loaded.panes.len(), 1, "单 pane 存储读回来就是一个 pane");
+    assert_eq!(
+        loaded.panes[0].tabs,
+        ["a.md", "sub/b.md"],
+        "存的就是恢复顺序"
+    );
+    assert_eq!(loaded.panes[0].active, None, "非法激活项不落盘");
+    // 比例越界在写入侧被钳进合法区间（M318：pane_split_ratio 与 pane 数同受 sanitize 管）
+    assert_eq!(loaded.pane_split_ratio, vault_session::DEFAULT_SPLIT_RATIO);
 
     // id 是文件名：越界 id 一律拒绝（路径逃逸防护），读写同口径
     assert!(vault_session::vault_session_get("../config".into()).is_err());
-    assert!(vault_session::vault_session_put("../config".into(), vec![], None).is_err());
+    assert!(vault_session::vault_session_put("../config".into(), vec![], 0.5).is_err());
+}
+
+#[test]
+fn scenario_legacy_v1_session_is_read_as_a_single_pane() {
+    // 上一版 schema（无 panes 字段）的会话文件照常读出：按「单 pane = 顶层 tabs/active」解释
+    //（pane-system-split-view tasks 5.1 的向后兼容；验收套件预置的会话也写这一版）。
+    let _f = Fixture::new();
+    let dir = session_dir();
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(
+        dir.join("v1.json"),
+        r#"{"version":1,"tabs":["a.md","sub/b.md"],"active":"sub/b.md","updated_at":9}"#,
+    )
+    .unwrap();
+    let loaded = vault_session::vault_session_get("v1".into())
+        .unwrap()
+        .expect("v1 旧文件应照常读出来");
+    assert_eq!(
+        loaded.version,
+        vault_session::SESSION_VERSION,
+        "读侧升到当前 schema"
+    );
+    assert_eq!(loaded.panes.len(), 1);
+    assert_eq!(loaded.panes[0].tabs, ["a.md", "sub/b.md"]);
+    assert_eq!(loaded.panes[0].active.as_deref(), Some("sub/b.md"));
+    assert_eq!(loaded.pane_split_ratio, vault_session::DEFAULT_SPLIT_RATIO);
+}
+
+#[test]
+fn scenario_vault_list_tab_count_sums_panes_and_reads_legacy_v1() {
+    // 列表摘要的标签数：① 分栏存储时**跨 pane 求和**（不是只数第一个 pane）；
+    // ② v1 旧文件（无 panes，顶层 tabs）照常读出标签数。两条一起来防「改回只数一个 pane」。
+    let f = Fixture::new();
+    vault_register("two".into(), f.vault("two")).unwrap();
+    vault_register("legacy".into(), f.vault("legacy")).unwrap();
+    vault_session::vault_session_put(
+        "two".into(),
+        vec![
+            vault_session::PaneSession {
+                tabs: vec!["a.md".into(), "b.md".into()],
+                active: Some("a.md".into()),
+            },
+            vault_session::PaneSession {
+                tabs: vec!["c.md".into()],
+                active: None,
+            },
+        ],
+        0.5,
+    )
+    .unwrap();
+    let dir = session_dir();
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(
+        dir.join("legacy.json"),
+        r#"{"version":1,"tabs":["x.md","y.md"],"active":"y.md","updated_at":3}"#,
+    )
+    .unwrap();
+
+    let entries = list_vaults(&registry_dir(), &session_dir()).unwrap();
+    let two = entries
+        .iter()
+        .find(|e| e.id == "two")
+        .expect("two 在列表里");
+    assert_eq!(two.tab_count, 3, "跨 pane 求和：2 + 1");
+    let legacy = entries
+        .iter()
+        .find(|e| e.id == "legacy")
+        .expect("legacy 在列表里");
+    assert_eq!(legacy.tab_count, 2, "v1 旧文件按单 pane 读出标签数");
 }
 
 #[test]
@@ -561,7 +653,15 @@ fn scenario_session_put_degrades_write_failure_to_warning() {
     // 会话目录被一个普通文件占位 → create_dir_all 必失败
     fs::write(dir.join("vault-sessions"), "x").unwrap();
     assert!(
-        vault_session::vault_session_put("v1".into(), vec!["a.md".into()], None).is_ok(),
+        vault_session::vault_session_put(
+            "v1".into(),
+            vec![vault_session::PaneSession {
+                tabs: vec!["a.md".into()],
+                active: None,
+            }],
+            0.5,
+        )
+        .is_ok(),
         "写失败降级为 warning（Ok）：切换与打开不被拦停"
     );
     assert_eq!(vault_session::vault_session_get("v1".into()).unwrap(), None);
