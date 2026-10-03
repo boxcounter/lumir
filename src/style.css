@@ -691,6 +691,43 @@ body {
   padding: 0;
   position: relative;
   background: var(--content-bg);
+  /* M316 分栏容器化：容器转 flex 行盒，pane 挂载元素（.editor-pane）在里头按比例分宽。
+     单栏时唯一子项 flex:1 占满——几何与此前逐像素一致（零基线更新判据）。 */
+  display: flex;
+}
+/* pane 挂载元素（M316）：pane 的 CM 内核与栏宽手柄覆盖层的挂点；position:relative 是
+   两者的定位基准（content-width-handles 的 inset:0 与 CM 内部度量）。双栏时它与 pane B
+   的同类元素按 inline flexGrow 分容器宽（比例真源在装配层的分隔条拖拽）。 */
+.editor-pane {
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 0;
+  position: relative;
+}
+/* 分栏分隔条（M316）：hairline 1px 取既有 --border（零新配色），命中区加宽到 7px
+  （与栏宽手柄「视觉线细、命中区宽」同族形态）。只在双栏时在场（装配层动态创建 / 移除），
+   单栏 DOM 里没有它——默认样式对单栏零影响。读屏名归后续 mission（6.2），本版不做
+   键盘聚焦（它不是 tab 序成员）。 */
+.pane-divider {
+  flex: none;
+  width: 7px;
+  margin: 0 -3px;
+  cursor: col-resize;
+  position: relative;
+  z-index: 3;
+}
+.pane-divider::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 3px;
+  width: 1px;
+  background: var(--border);
+}
+.pane-divider:hover::before,
+.pane-divider.dragging::before {
+  background: var(--accent);
 }
 /* 栏宽拖拽手柄（M228，change content-width-drag）：shell 层覆盖元素，常态不可见、不占布局。
    容器不吃指针事件，只有 10px 命中区的两条手柄吃——命中区外的文本选择 / 点击 / 滚动零影响。
