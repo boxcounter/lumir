@@ -171,7 +171,7 @@ fn reasoning_replay_item_precedes_assistant_message() {
         {"text": "读完了。"}
     ]}"#;
     let mut client = MockClient::from_str(script, "reasoning").unwrap();
-    turn::run_turn_for(
+    drive_turn(
         &sink,
         &runtime,
         &f.scope(),
@@ -226,7 +226,7 @@ fn tool_loop_roundtrip_with_fixture_file() {
     )
     .unwrap();
     let mut client = MockClient::from_str(&script, "mock_basic.json").unwrap();
-    turn::run_turn_for(
+    drive_turn(
         &sink,
         &runtime,
         &f.scope(),
@@ -255,11 +255,7 @@ fn tool_loop_roundtrip_with_fixture_file() {
     assert!((snapshot.usage.cache_pct - 1000.0 * 100.0 / 1400.0).abs() < 0.2);
 
     // JSONL 留存：配置目录（不是 vault）有记录，且含工具调用与结果。
-    let jsonl = std::fs::read_to_string(f.root.join("xdg/lumir/harness").join(format!(
-        "{}.jsonl",
-        sanitize_name(&f.vault().display().to_string())
-    )))
-    .expect("jsonl 存在");
+    let jsonl = std::fs::read_to_string(harness_jsonl_path(&f)).expect("jsonl 存在");
     assert!(jsonl.contains("\"kind\":\"user_message\""), "{jsonl}");
     assert!(jsonl.contains("\"kind\":\"tool_call\""), "{jsonl}");
     assert!(jsonl.contains("\"kind\":\"tool_result\""), "{jsonl}");
@@ -267,17 +263,108 @@ fn tool_loop_roundtrip_with_fixture_file() {
     assert!(jsonl.contains("demo content"), "{jsonl}"); // 工具读到的原文
 }
 
-/// 与 jsonl.rs 内 sanitize 同形（测试侧再实现一份，避免 pub 仅为测试开口）。
-fn sanitize_name(raw: &str) -> String {
-    raw.chars()
-        .map(|c| {
-            if c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.') {
-                c
-            } else {
-                '_'
-            }
-        })
-        .collect()
+/// 定位夹具的唯一一份 JSONL 留存。文件名是 `jsonl::sanitize` 的产物，测试侧不再复刻
+/// 该算法（REVIEW.md 第 8 条：两份真源会漂）——一个 Fixture 只有一个 vault，目录里
+/// 恰有一份 `.jsonl`，直接取它。
+fn harness_jsonl_path(fixture: &Fixture) -> PathBuf {
+    let dir = fixture.root.join("xdg/lumir/harness");
+    let mut files: Vec<PathBuf> = std::fs::read_dir(&dir)
+        .unwrap_or_else(|e| panic!("读留存目录 {} 失败：{e}", dir.display()))
+        .map(|entry| entry.unwrap().path())
+        .filter(|p| p.extension().map(|x| x == "jsonl").unwrap_or(false))
+        .collect();
+    files.sort();
+    assert_eq!(files.len(), 1, "应恰有一份 JSONL 留存：{files:?}");
+    files.pop().unwrap()
+}
+
+/// 单测驱动的轮次入口：这些场景不带编辑器上下文，节恒为 `None`。上下文节的串味回归
+/// 另见 `context_section_not_confused_by_bracket_in_message`（直接调 `turn::run_turn_for`
+/// 并把节作为结构化值传入）。
+fn drive_turn(
+    sink: &CollectSink,
+    runtime: &Runtime,
+    scope: &VaultScope,
+    config: &HarnessConfig,
+    message: String,
+    client: &mut dyn LlmClient,
+) {
+    turn::run_turn_for(sink, runtime, scope, config, message, None, client);
+}
+
+/// 回归（M309）：用户正文含 `\n\n[` 时，压缩重注入的上下文节不得串味。旧实现从拼好的
+/// user 消息里 `split("\n\n[")` 重解析，切分点被正文里的方括号段落前移 → 存的「节」是
+/// 正文。新实现由调用侧把 `assemble_user_message` 同一次生成的节结构化传入，压缩后
+/// 重注入的仍是干净节。
+#[test]
+fn context_section_not_confused_by_bracket_in_message() {
+    let f = Fixture::new("ctx-section");
+    let mut config = mock_config();
+    config.warn_ctx_pct = 50.0; // 一轮 usage 越阈值即触发自动压缩续聊
+    let runtime = f.runtime();
+    runtime.acquire_turn(&f.scope()).unwrap();
+    let sink = CollectSink::default();
+
+    let block = turn::ContextBlock {
+        path: Some("a/b.md".to_string()),
+        selection: Some(turn::RangeBlock {
+            from_line: Some(3),
+            to_line: Some(7),
+            text: Some("选中文本".to_string()),
+        }),
+        viewport_range: None,
+    };
+    let expected_section = turn::context_section(&block).unwrap();
+    let bracketed = format!("[{expected_section}]");
+    // 正文含 `\n\n[`——旧实现的分隔符会在这里切错。
+    let body = "看这段\n\n[正文里的方括号段落，不是上下文]";
+    let assembled = turn::assemble_user_message(body, &block);
+    assert_eq!(
+        assembled.context_section.as_deref(),
+        Some(bracketed.as_str())
+    );
+
+    let script = r#"{"responses": [
+        {"text": "长回答。", "usage": {"input_tokens": 120000, "cached_tokens": 60000, "output_tokens": 500}},
+        {"text": "会话摘要：前面在聊上下文节。"}
+    ]}"#;
+    let mut client = MockClient::from_str(script, "ctx-section").unwrap();
+    turn::run_turn_for(
+        &sink,
+        &runtime,
+        &f.scope(),
+        &config,
+        assembled.text,
+        assembled.context_section,
+        &mut client,
+    );
+    runtime.release_turn(&f.scope());
+
+    assert!(
+        sink.types().contains(&"compact".to_string()),
+        "应触发压缩：{:?}",
+        sink.types()
+    );
+    // 压缩后历史：必须有一条 user 项正好是干净上下文节（带方括号）。
+    let input = runtime
+        .with_session(&f.scope(), |s| s.input().to_vec())
+        .unwrap();
+    assert!(
+        input.iter().any(|it| {
+            it["role"] == "user" && it["content"][0]["text"].as_str() == Some(bracketed.as_str())
+        }),
+        "压缩后应重注入干净上下文节：{input:#?}"
+    );
+    // 反例：串味文本（正文混入的方括号段落）不得作为「节」出现。
+    assert!(
+        !input.iter().any(|it| {
+            it["content"][0]["text"]
+                .as_str()
+                .map(|t| t.starts_with("[看这段"))
+                .unwrap_or(false)
+        }),
+        "上下文节不得串味：{input:#?}"
+    );
 }
 
 #[test]
@@ -295,7 +382,7 @@ fn loop_max_terminates_with_notice() {
         {"tool_calls": [{"id": "c2", "name": "vault_read", "arguments": "{\"path\":\"a.md\"}"}]}
     ]}"#;
     let mut client = MockClient::from_str(script, "loop").unwrap();
-    turn::run_turn_for(
+    drive_turn(
         &sink,
         &runtime,
         &f.scope(),
@@ -341,7 +428,7 @@ fn deny_beats_allow_and_default_layering() {
         {"text": "好的，那我不改了。"}
     ]}"#;
     let mut client = MockClient::from_str(script, "deny").unwrap();
-    turn::run_turn_for(
+    drive_turn(
         &sink,
         &runtime,
         &f.scope(),
@@ -392,7 +479,7 @@ fn ask_gate_approve_executes_and_reject_leaves_disk() {
             let scope = f.scope();
             let config = config.clone();
             std::thread::spawn(move || {
-                turn::run_turn_for(
+                drive_turn(
                     &sink,
                     &runtime,
                     &scope,
@@ -475,7 +562,7 @@ fn patch_not_unique_error_feeds_back_without_gate() {
         {"text": "我换一处试试。"}
     ]}"#;
     let mut client = MockClient::from_str(script, "notunique").unwrap();
-    turn::run_turn_for(
+    drive_turn(
         &sink,
         &runtime,
         &f.scope(),
@@ -522,7 +609,7 @@ fn create_o_excl_refuses_overwrite() {
         {"text": "那我换个名字。"}
     ]}"#;
     let mut client = MockClient::from_str(script, "oexcl").unwrap();
-    turn::run_turn_for(
+    drive_turn(
         &sink,
         &runtime,
         &f.scope(),
@@ -558,7 +645,7 @@ fn skill_load_rejects_escape_and_unknown() {
         {"text": "两个都失败了，符合预期。"}
     ]}"#;
     let mut client = MockClient::from_str(script, "skill").unwrap();
-    turn::run_turn_for(
+    drive_turn(
         &sink,
         &runtime,
         &f.scope(),
@@ -604,7 +691,7 @@ fn auto_compact_triggers_over_threshold() {
     // 注意：阈值压缩发生在轮完成时（calls 为空），压缩后直接 break——
     // 第三条脚本是「压缩后的下一轮提问」才会用到；本轮只弹两条。
     let mut client = MockClient::from_str(script, "compact").unwrap();
-    turn::run_turn_for(
+    drive_turn(
         &sink,
         &runtime,
         &f.scope(),
@@ -642,7 +729,7 @@ fn auto_compact_triggers_over_threshold() {
         input: vec![],
         tools: vec![],
     });
-    turn::run_turn_for(
+    drive_turn(
         &sink2,
         &runtime,
         &f.scope(),
@@ -676,7 +763,7 @@ fn context_overflow_retries_once_after_compact() {
         {"text": "重试成功。", "usage": {"input_tokens": 100, "cached_tokens": 50, "output_tokens": 5}}
     ]}"#;
     let mut client = MockClient::from_str(script, "overflow").unwrap();
-    turn::run_turn_for(
+    drive_turn(
         &sink,
         &runtime,
         &f.scope(),
@@ -708,7 +795,7 @@ fn vault_scoping_switch_restore_and_reset() {
     runtime.acquire_turn(&f.scope()).unwrap();
     let sink_a = CollectSink::default();
     let mut client = MockClient::from_str(r#"{"responses": [{"text": "A 的回答"}]}"#, "a").unwrap();
-    turn::run_turn_for(
+    drive_turn(
         &sink_a,
         &runtime,
         &f.scope(),
@@ -733,10 +820,7 @@ fn vault_scoping_switch_restore_and_reset() {
     assert_eq!(snap_a.messages.len(), 2, "A 的会话还在");
 
     // 新会话重置：消息清空、JSONL 文件不受影响（继续追加而不是截断）。
-    let jsonl_path = f.root.join("xdg/lumir/harness").join(format!(
-        "{}.jsonl",
-        sanitize_name(&f.vault().display().to_string())
-    ));
+    let jsonl_path = harness_jsonl_path(&f);
     let before = std::fs::read_to_string(&jsonl_path)
         .unwrap()
         .lines()
@@ -754,7 +838,7 @@ fn vault_scoping_switch_restore_and_reset() {
     runtime.acquire_turn(&f.scope()).unwrap();
     let sink2 = CollectSink::default();
     let mut client2 = MockClient::from_str(r#"{"responses": [{"text": "新话题"}]}"#, "b").unwrap();
-    turn::run_turn_for(
+    drive_turn(
         &sink2,
         &runtime,
         &f.scope(),
@@ -795,7 +879,7 @@ fn unknown_tool_error_feeds_back() {
         {"text": "没有这个工具，算了。"}
     ]}"#;
     let mut client = MockClient::from_str(script, "unknown").unwrap();
-    turn::run_turn_for(
+    drive_turn(
         &sink,
         &runtime,
         &f.scope(),
@@ -831,7 +915,7 @@ fn patch_conflict_when_file_changes_during_approval() {
         let scope = f.scope();
         let config = config.clone();
         std::thread::spawn(move || {
-            turn::run_turn_for(
+            drive_turn(
                 &sink,
                 &runtime,
                 &scope,
@@ -899,7 +983,7 @@ fn cli_run_gated_and_allow_rule_executes() {
         {"text": "执行完了。"}
     ]}"#;
     let mut client = MockClient::from_str(script, "cli").unwrap();
-    turn::run_turn_for(
+    drive_turn(
         &sink,
         &runtime,
         &f.scope(),
@@ -937,7 +1021,7 @@ fn each_call_enters_input_exactly_once() {
         {"text": "读完了。"}
     ]}"#;
     let mut client = MockClient::from_str(script, "dedupe").unwrap();
-    turn::run_turn_for(
+    drive_turn(
         &sink,
         &runtime,
         &f.scope(),

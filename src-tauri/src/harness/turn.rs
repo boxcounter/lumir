@@ -98,11 +98,29 @@ pub fn context_section(block: &ContextBlock) -> Option<String> {
     Some(out)
 }
 
-/// user 消息全文 = 提问 + 上下文节。
-pub fn assemble_user_message(message: &str, block: &ContextBlock) -> String {
+/// 装配结果：`text` 是发给模型的 user 消息全文，`context_section` 是**同一次生成**的
+/// 上下文节（带方括号）——会话存下它、压缩续聊时原样重注入。两者同源：调用侧直接把
+/// 这个节交给会话，不再从拼好的串里重解析（`extract_section` 已删，见 M309——正文含
+/// `\n\n[` 时按分隔符切分会前移切分点、把正文误当上下文节）。
+pub struct AssembledMessage {
+    pub text: String,
+    pub context_section: Option<String>,
+}
+
+/// user 消息装配 = 提问 + 上下文节；节同时作为结构化值返回供会话留存（同一次生成）。
+pub fn assemble_user_message(message: &str, block: &ContextBlock) -> AssembledMessage {
     match context_section(block) {
-        Some(section) => format!("{message}\n\n[{section}]"),
-        None => message.to_string(),
+        Some(section) => {
+            let bracketed = format!("[{section}]");
+            AssembledMessage {
+                text: format!("{message}\n\n{bracketed}"),
+                context_section: Some(bracketed),
+            }
+        }
+        None => AssembledMessage {
+            text: message.to_string(),
+            context_section: None,
+        },
     }
 }
 
@@ -118,6 +136,7 @@ pub fn run_turn(
     scope: VaultScope,
     config: HarnessConfig,
     message: String,
+    context_section: Option<String>,
 ) {
     let sink = TauriEventSink(app);
     let mut client = match llm::client(&config) {
@@ -130,7 +149,15 @@ pub fn run_turn(
         }
     };
     let panicked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        run_turn_for(&sink, &runtime, &scope, &config, message, client.as_mut());
+        run_turn_for(
+            &sink,
+            &runtime,
+            &scope,
+            &config,
+            message,
+            context_section,
+            client.as_mut(),
+        );
     }))
     .is_err();
     if panicked {
@@ -152,10 +179,12 @@ pub fn run_turn_for(
     scope: &VaultScope,
     config: &HarnessConfig,
     message: String,
+    context_section: Option<String>,
     client: &mut dyn LlmClient,
 ) {
     // user 消息入队（LLM 侧 + 面板侧 + JSONL + 上下文节记录，压缩重注入用）。
-    let section = extract_section(&message);
+    // 上下文节由调用侧从 ContextBlock **同一次生成**并传入（装配与存储同源，M309）——
+    // 不再从拼好的 message 里重解析（正文含 `\n\n[` 时会串味）。
     let enqueue = runtime.with_session(scope, |s| {
         s.push_input(session::user_item(&message));
         s.push_panel(PanelMessage {
@@ -165,7 +194,7 @@ pub fn run_turn_for(
             name: None,
             status: None,
         });
-        s.set_current_context(section);
+        s.set_current_context(context_section);
         s.jsonl().record(&serde_json::json!({
             "kind": "user_message",
             "text": message,
@@ -284,11 +313,6 @@ pub fn run_turn_for(
         }
     }
     sink.emit(events::done());
-}
-
-/// 从已装配的 user 消息里拆出上下文节（存入会话，压缩重注入用）。
-fn extract_section(message: &str) -> Option<String> {
-    message.split("\n\n[").nth(1).map(|rest| format!("[{rest}"))
 }
 
 /// 当前生效模型名（ctx% 的窗口查表用）。
@@ -655,5 +679,57 @@ impl EventSink for TauriEventSink {
     fn emit(&self, payload: serde_json::Value) {
         use tauri::Emitter;
         let _ = self.0.emit(events::EVENT_NAME, payload);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn block_with_selection(text: &str) -> ContextBlock {
+        ContextBlock {
+            path: Some("a/b.md".to_string()),
+            selection: Some(RangeBlock {
+                from_line: Some(3),
+                to_line: Some(7),
+                text: Some(text.to_string()),
+            }),
+            viewport_range: None,
+        }
+    }
+
+    /// 回归（M309）：用户正文含 `\n\n[` 时，装配返回的上下文节必须是块生成的节本身，
+    /// 不得被正文的方括号段落污染——旧实现从拼好的串里 `split("\n\n[")` 重解析，切分点
+    /// 前移后存下的「节」其实是正文。
+    #[test]
+    fn assembled_section_ignores_bracket_in_message_body() {
+        let block = block_with_selection("选中文本");
+        let body = "看这段\n\n[正文里的方括号段落，不是上下文]";
+        let assembled = assemble_user_message(body, &block);
+
+        let expected_bracketed = format!("[{}]", context_section(&block).unwrap());
+        assert_eq!(
+            assembled.context_section.as_deref(),
+            Some(expected_bracketed.as_str())
+        );
+        // 区分度自证（REVIEW.md 第 1 条）：旧实现按 `split("\n\n[")` 从拼好的串重解析，
+        // 切出的是正文里的方括号段落——与新实现返回的节不同，证明这个输入确能判出旧 bug。
+        let naive_old = body.split("\n\n[").nth(1).map(|rest| format!("[{rest}"));
+        assert_ne!(naive_old.as_deref(), Some(expected_bracketed.as_str()));
+        // 全文仍是 提问 + 节，一字不差。
+        assert_eq!(assembled.text, format!("{body}\n\n{expected_bracketed}"));
+        // 反例：节里不得出现正文的方括号段落。
+        assert!(!assembled
+            .context_section
+            .unwrap()
+            .contains("正文里的方括号段落"));
+    }
+
+    /// 无编辑器上下文（path 缺）时：全文即提问原文，不发节。
+    #[test]
+    fn assembled_section_is_none_without_context() {
+        let assembled = assemble_user_message("纯提问", &ContextBlock::default());
+        assert_eq!(assembled.text, "纯提问");
+        assert!(assembled.context_section.is_none());
     }
 }

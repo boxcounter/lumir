@@ -418,12 +418,15 @@ pub const DEFAULT_WARN_CTX_PCT: f64 = 85.0;
 pub const WARN_CTX_PCT_MIN: f64 = 1.0;
 pub const WARN_CTX_PCT_MAX: f64 = 100.0;
 
-/// 两家 provider 的出厂 model 值（design §11 的示例值，M302 的 provider 预设表以它们为出厂
-/// 默认——**同一语义两处写值**，改一处必须同步另一处，REVIEW.md 第 8 条）。本模块只把它们
-/// 当作「model 为空时回落的对象」；模型清单 / base_url 官方地址 / 上下文窗口表的真源在
-/// harness 运行时的预设表里（M302），配置层不复制一份。
+/// 两家 provider 的出厂 model 值（M302 的 provider 预设表以它们为出厂默认——**同一语义两处
+/// 写值**，改一处必须同步另一处，REVIEW.md 第 8 条）。本模块只把它们当作「model 为空时回落
+/// 的对象」；模型清单 / base_url 官方地址 / 上下文窗口表的真源在 harness 运行时的预设表里
+/// （M302），配置层不复制一份。
+///
+/// deepseek 出厂值由 M309 从 design §11 的示例值 `deepseek-chat` 改为现役 `deepseek-flash`
+/// （M306 一手核实 deepseek 现役仅 `deepseek-flash` / `deepseek-v4-pro`）；kimi 侧不动。
 pub const DEFAULT_KIMI_MODEL: &str = "kimi-k2";
-pub const DEFAULT_DEEPSEEK_MODEL: &str = "deepseek-chat";
+pub const DEFAULT_DEEPSEEK_MODEL: &str = "deepseek-flash";
 
 /// 对话 provider 三档（change add-harness-probe §11）：`kimi` / `deepseek` 均 OpenAI 兼容契约，
 /// `mock` 是验收专用的 fixture 驱动档（真机验收不依赖真实外部 API）。**闭集合**：取值校验在
