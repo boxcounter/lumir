@@ -66,6 +66,9 @@ export interface HarnessPanelHandle {
   /** 装载新 vault 之后由装配层调用（M312）：把面板的会话作用域切到新 vault——丢掉旧 vault 的
    *  渲染面与本地态，并按当前 vault 重拉一次 `harness_state`。同一个 vault 重复调用是空操作。 */
   vaultChanged(root: string): void;
+  /** 双栏退让（M316）：split 时隐藏标题栏 toggle 钮（标题栏腾给左右标签槽）；
+   *  ⌘⇧A 的命令路径不受影响（它走 `toggle()`，不经过这颗钮）。 */
+  setChromeRetreat(on: boolean): void;
 }
 
 /** 上下文警示阈值的后备值（design §11：默认 85%）。权威值在 [harness].warn_ctx_pct
@@ -967,5 +970,8 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     toggle: () => setOpen(!open),
     isOpen: () => open,
     vaultChanged,
+    setChromeRetreat(on) {
+      toggleButton.hidden = on;
+    },
   };
 }
