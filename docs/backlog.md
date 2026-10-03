@@ -612,6 +612,19 @@
 
 ## 待修 findings（不阻塞）
 
+### 真机验收 4 项持续失败（31/47/49/52）：2026-10-02 sweep 起同现，非 pane 化引入（M319 现场，2026-10-04，medium）
+
+**症状**：全量真机验收 77/81 PASS，4 项 FAIL 且单跑复跑仍红（非 flake）：
+31-code-variable-highlight（「md 模式文档逐字节未变」判红——标题 caret 显露态随光标行变化，断言与光标位置耦合）、
+47-file-tree-context-menu 与 52-dir-rename-expand（右键菜单→「重命名」后行内输入框不出现，两场景同根）、
+49-vault-switch-feedback（装载指示未退场 + vault 未回 A，等待用固定时序而非终态）。
+
+**证据与定性**：与主仓 `test-results/acceptance/2026-10-03/summary.md`（2026-10-02T19:52Z 全量 sweep，PASS 75/FAIL 4）**同一集合**，早于 pane 化合并（fc6f489）——预存失败。M319 现场记录：finding `.tower/comms/findings/20261004-worker-pane-keybindings-m319-bug-4-31-47-49-52-sweep-m319.md`、wt-319 复跑 steps.md。
+
+**影响**：不挡 pane 化；但「全量套件跑绿」的验收标准无法满足——**修好前 dogfood 全量验收的通过线显式扣除这 4 项并保留对照**（tower 已采纳为 interim 口径）。
+
+**建议处置**：立项分别修——31 断言前把光标移回中性行；47/52 查行内重命名输入框不出现（菜单命中/焦点/时序，同根修一处）；49 改用 waitFor 终态。修好后恢复「全量绿」口径。
+
 ### harness 会话以 vault 根路径字符串为键，打开 vault 不做规范化：同目录两种拼写各建一个会话（M312 现场，2026-10-03，medium）
 
 **症状**：harness 会话映射与 `harness:event` 标识都以 vault 根路径**字符串**为键，而 vault 打开
