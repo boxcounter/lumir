@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { expectScreenshot } from "./expect-screenshot";
 import { stubTauri } from "./tauri-stub";
 import { copyFresh, readDocument } from "./parity-checks";
+import { SCROLL_SETTLE_TIMEOUT } from "./poll-budgets";
 
 // 正文末尾的「END」标记（change document-end-marker）：
 //   判据 = 不含标记的内容高度 > 可用视口高度（静态、重算型、MUST NOT 读滚动位置）；
@@ -90,7 +91,10 @@ async function setClientHeight(page: Page, target: number): Promise<void> {
     () => window.innerHeight - (document.querySelector(".cm-scroller") as HTMLElement).clientHeight,
   );
   await page.setViewportSize({ width: 1200, height: Math.round(target + offset) });
-  await expect.poll(() => scroller(page).evaluate((el) => el.clientHeight)).toBe(Math.round(target));
+  // 视口尺寸变更后的布局收敛——与滚动收敛同族的负载敏感 poll，预算按全量负载档（M311）。
+  await expect
+    .poll(() => scroller(page).evaluate((el) => el.clientHeight), { timeout: SCROLL_SETTLE_TIMEOUT })
+    .toBe(Math.round(target));
 }
 
 /** 滚到某个位置并让判据落定：CM 的滚动处理与判据重算都排在滚动后的测量周期里。 */

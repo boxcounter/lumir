@@ -15,6 +15,7 @@
 
 import { expect, test, type Page } from "@playwright/test";
 import { stubTauri, readingPositionPuts, type VaultFixture } from "./tauri-stub";
+import { SCROLL_SETTLE_TIMEOUT } from "./poll-budgets";
 
 const VAULT_ID = "reading-position-vault";
 
@@ -134,7 +135,7 @@ test("打开一份盘上已有位置的文档：视口回到该位置（锚的�
   await stubTauri(page, fixture(stored("long.md", ANCHOR_POS)));
   await page.goto("/");
   await open(page, "long.md");
-  await expect.poll(() => scrollTop(page)).toBeGreaterThan(0);
+  await expect.poll(() => scrollTop(page), { timeout: SCROLL_SETTLE_TIMEOUT }).toBeGreaterThan(0);
 
   // 恢复成立的充要形态：锚的字符盒相对视口的偏移 = 载荷里的 y（公开通道的不变量）
   const offsets = await anchorOffsets(page, ANCHOR_POS);
@@ -180,7 +181,7 @@ test("已经打开的标签不被盘上的位置拽走：只切标签，视口�
   await stubTauri(page, fixture(stored("long.md", ANCHOR_POS)));
   await page.goto("/");
   await open(page, "long.md"); // 装载 → 恢复到盘上那条（第 150 行附近）
-  await expect.poll(() => scrollTop(page)).toBeGreaterThan(0);
+  await expect.poll(() => scrollTop(page), { timeout: SCROLL_SETTLE_TIMEOUT }).toBeGreaterThan(0);
 
   // 运行期滚到别处（这就是「离开该标签时的位置」），并等它落进内存镜像
   await scrollToLine(page, FILLER(40));
@@ -200,7 +201,7 @@ test("已经打开的标签不被盘上的位置拽走：只切标签，视口�
   await page.locator('.ft-row[title="other.md"]').click({ modifiers: ["Meta"] });
   await expect(page.locator(".cm-content")).toContainText("另一份文档");
   await page.locator('.ft-row[title="long.md"]').click();
-  await expect.poll(() => scrollTop(page)).toBeGreaterThan(0);
+  await expect.poll(() => scrollTop(page), { timeout: SCROLL_SETTLE_TIMEOUT }).toBeGreaterThan(0);
 
   const back = await scrollTop(page);
   // 运行期位置原样保留（切标签的既有内存快照通道，一行以内的落点差是 CM 对行块坐标的取整）
@@ -306,7 +307,7 @@ test("code 模式（非 md 文本）同样恢复：纵向 + 折行关闭时的�
   await page.locator('.ft-row[title="plain.txt"]').click();
   await expect(page.locator(".cm-content")).toHaveAttribute("contenteditable", "true");
 
-  await expect.poll(() => scrollTop(page)).toBeGreaterThan(0);
+  await expect.poll(() => scrollTop(page), { timeout: SCROLL_SETTLE_TIMEOUT }).toBeGreaterThan(0);
   await page.waitForTimeout(300);
   expect(await topVisibleLine(page)).toBe(beforeLine);
   expect(Math.abs((await scrollTop(page)) - beforeTop)).toBeLessThanOrEqual(4);

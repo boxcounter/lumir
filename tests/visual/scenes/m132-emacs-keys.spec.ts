@@ -2,6 +2,7 @@ import { expect, test, type Page } from "@playwright/test";
 import { stubTauri } from "./tauri-stub";
 import type { VaultFixture } from "./tauri-stub";
 import { readDocument } from "./parity-checks";
+import { SCROLL_SETTLE_TIMEOUT } from "./poll-budgets";
 
 // M132 Emacs 键位包（档 1/2 编辑键 + kill/yank + 翻屏/重定位 + shift-extend + 轨道 D
 // 的 widget 滚动键收编）的行为回归。
@@ -234,11 +235,15 @@ test("⌃V / ⌥V 翻屏：视口移动一屏，光标不动", async ({ page }) 
   expect(before.scrollTop).toBe(0);
 
   await page.keyboard.press("Control+v");
-  await expect.poll(async () => (await scroller(page)).scrollTop).toBeGreaterThan(before.clientHeight * 0.5);
+  await expect
+    .poll(async () => (await scroller(page)).scrollTop, { timeout: SCROLL_SETTLE_TIMEOUT })
+    .toBeGreaterThan(before.clientHeight * 0.5);
   expect((await caret(page)).head, "翻屏不移动光标").toBe(0);
 
   await page.keyboard.press("Alt+v");
-  await expect.poll(async () => (await scroller(page)).scrollTop).toBe(0);
+  // 预算提全量负载档（M311）：默认 5s 在整批负载下被 CM 滚动 / 测量循环吃完，三次实证
+  // 假红（scrollTop 读到 8，单跑必绿）。期望值不放宽（toBe(0) 照留），真机语义不动。
+  await expect.poll(async () => (await scroller(page)).scrollTop, { timeout: SCROLL_SETTLE_TIMEOUT }).toBe(0);
   expect((await caret(page)).head).toBe(0);
 });
 
@@ -374,10 +379,10 @@ test("widget 滚动键走统一键位表；文本里的 ← 仍走原生 caret",
   await container.focus();
   expect(await scrollLeft()).toBe(0);
   await page.keyboard.press("ArrowRight");
-  await expect.poll(scrollLeft).toBeGreaterThan(0);
+  await expect.poll(scrollLeft, { timeout: SCROLL_SETTLE_TIMEOUT }).toBeGreaterThan(0);
   expect(await scrollLeft(), "步进与原 livePreview 手柄一致（120px）").toBeLessThanOrEqual(121);
   await page.keyboard.press("Home");
-  await expect.poll(scrollLeft).toBe(0);
+  await expect.poll(scrollLeft, { timeout: SCROLL_SETTLE_TIMEOUT }).toBe(0);
   await page.keyboard.press("End");
   // 「滚到最右」不按 scrollLeft + clientWidth === scrollWidth 判定（M177）：滚动条占布局宽度时
   // （CI runner 用 classic 滚动条、本地用 overlay 滚动条），`scrollbar-gutter: stable`

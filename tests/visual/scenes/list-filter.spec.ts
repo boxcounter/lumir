@@ -1,5 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import { invokes, stubTauri, type VaultFixture, type VaultListRow } from "./tauri-stub";
+import { SCROLL_SETTLE_TIMEOUT } from "./poll-budgets";
 
 // 两处列表浮层的输入筛选（change list-filter，M199）的行为回归。
 //
@@ -302,8 +303,9 @@ test("大纲筛选：输入行在位且浮层总高仍为窗口内容区高的 8
   await expect(hint).toBeVisible();
 
   // 窗口内容区高变小：上限跟着变、浮层保持打开、输入行与提示都还在
+  //（视口尺寸变更后的布局收敛 poll，预算按全量负载档——M311）
   await page.setViewportSize({ width: 1200, height: 400 });
-  await expect.poll(() => geometry().then((now) => now.viewport)).toBe(400);
+  await expect.poll(() => geometry().then((now) => now.viewport), { timeout: SCROLL_SETTLE_TIMEOUT }).toBe(400);
   geo = await geometry();
   expect(geo.inputHeight).toBeGreaterThan(0);
   expect(geo.height).toBeLessThanOrEqual(geo.viewport * 0.8 + 0.5);

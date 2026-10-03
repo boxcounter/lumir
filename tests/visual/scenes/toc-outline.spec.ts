@@ -1,5 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import { expectScreenshot } from "./expect-screenshot";
+import { SCROLL_SETTLE_TIMEOUT } from "./poll-budgets";
 import { stubTauri, type VaultFixture } from "./tauri-stub";
 
 // 轻量大纲（M148，toc-outline capability）的视觉与交互回归。
@@ -288,7 +289,9 @@ test("浮层总高上限：窗口高 80%（含底部提示），列表在浮层�
 
   // 改窗口内容区高：上限跟着变，浮层保持打开（不必重开）
   await page.setViewportSize({ width: 1200, height: 400 });
-  await expect.poll(() => geometry().then((now) => now.viewport), { message: "视口高应变为 400" }).toBe(400);
+  await expect
+    .poll(() => geometry().then((now) => now.viewport), { message: "视口高应变为 400", timeout: SCROLL_SETTLE_TIMEOUT })
+    .toBe(400);
   geo = await geometry();
   expect(geo.height).toBeLessThanOrEqual(geo.viewport * 0.8 + 0.5);
   expect(geo.height).toBeGreaterThan(geo.viewport * 0.8 - 1.5);
