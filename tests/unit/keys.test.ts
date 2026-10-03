@@ -851,27 +851,86 @@ test("块级复制命令：editor 作用域、默认不绑键，且命中条件�
 });
 
 // ---------------------------------------------------------------------------
-// M316：pane.split / pane.other / pane.close 三条命令的登记
-//（change pane-system-split-view；命令先登记，默认键位指配归收尾 mission）
+// M319：pane.split / pane.other / pane.close 三条命令的默认键位
+//（change pane-system-split-view 分组 6.1；**Alex 节点 1 落槌 split=⌥S / other=⌥O / close=⌥W**，
+//  tasks.md 起草倾向的 ⌥S/⌥W/⌥O 顺序与落槌不同，以落槌为准；命令本体 M316 已进表）
 // ---------------------------------------------------------------------------
 
 const PANE_COMMAND_IDS = ["pane.split", "pane.other", "pane.close"] as const;
+/** 落槌键位：表内 token（物理键名形态——含 Alt 的组合按 `KeyboardEvent.code` 判定）。 */
+const PANE_BINDINGS: ReadonlyArray<[string, string]> = [
+  ["Alt-KeyS", "pane.split"],
+  ["Alt-KeyO", "pane.other"],
+  ["Alt-KeyW", "pane.close"],
+];
 
-test("pane.* 命令：在全局命令清单里、默认不绑键、可经 [keys] 绑上并生效", () => {
+test("pane.* 命令：默认绑 ⌥S/⌥O/⌥W、作用域 global、不再登记为默认不绑键", () => {
   for (const command of PANE_COMMAND_IDS) {
-    assert.ok((COMMAND_IDS as readonly string[]).includes(command));
+    assert.ok((COMMAND_IDS as readonly string[]).includes(command), `${command} 不在 COMMAND_IDS`);
     assert.ok((NON_TAB_GLOBAL_COMMAND_IDS as readonly string[]).includes(command));
     assert.ok(!(EDITOR_COMMAND_IDS as readonly string[]).includes(command), `${command} 作用域必须派生为 global`);
-    assert.ok(KEYLESS_COMMAND_IDS.includes(command), `${command} 默认不占物理组合（键位指配归收尾 mission）`);
-    assert.equal(
-      KEY_BINDINGS.find((binding) => binding.command === command),
-      undefined,
-      `${command} 登记进默认不绑键清单即不得再带默认绑定`,
+    assert.ok(
+      !KEYLESS_COMMAND_IDS.includes(command),
+      `${command} M319 起有默认绑定，MUST NOT 登记为默认不绑键（清单与绑定表无交集）`,
     );
   }
-  const rebound = applyKeyOverrides({ "Cmd-j": "pane.split" });
+  for (const [key, command] of PANE_BINDINGS) {
+    const token = normalizeKey(key);
+    const binding = KEY_BINDINGS.find((item) => normalizeKey(item.key) === token);
+    assert.equal(binding?.command, command, `${key} 应绑定 ${command}（实际：${binding?.command}）`);
+    assert.equal(binding?.scope, "global", `${key} 的作用域应为 global（pane 是窗口级对象）`);
+    assert.ok(docTextOf(binding).length > 0, `${key} 的绑定必须带来由说明（表即文档）`);
+    // 三条独立来源的零冲突核对结论写进 doc（表即文档的口径，不写在别处）
+    assert.ok(docTextOf(binding).includes("表内"), `${key} 的 doc 应写明表内核对`);
+    assert.ok(docTextOf(binding).includes("原生菜单"), `${key} 的 doc 应写明原生菜单 accelerator 核对`);
+    assert.ok(docTextOf(binding).includes("macOS"), `${key} 的 doc 应写明 macOS 系统级核对`);
+    // 默认键位单段无空白 ⇒ 可经 [keys] 重绑 / 解绑（chord 本版不支持）
+    assert.ok(!/\s/.test(key), `${key} 含空白会让用户无法重绑`);
+  }
+});
+
+test("⌥S / ⌥O / ⌥W 的 token 形态：含 Alt 按物理键 code 判定，写 Alt-s 字符形态永不命中", () => {
+  // 真机 ⌥S / ⌥O / ⌥W：macOS 的 Alt 层把字符换成 ß / ø / ∑（e.key 认不出用户按的键），
+  // 只有 code（KeyS / KeyO / KeyW）能判别——表内因此 MUST 写 `Alt-KeyS` 一族。
+  const realEvents = [
+    { key: "ß", code: "KeyS", token: "Alt-KeyS", wrong: "Alt-S" },
+    { key: "ø", code: "KeyO", token: "Alt-KeyO", wrong: "Alt-O" },
+    { key: "∑", code: "KeyW", token: "Alt-KeyW", wrong: "Alt-W" },
+  ];
+  for (const { key, code, token, wrong } of realEvents) {
+    assert.equal(keyToken({ ...base, key, code, altKey: true }), token, `真机事件的 token 应为 ${token}`);
+    assert.equal(normalizeKey(token), token, `表内写法经归一仍是 ${token}`);
+    // 反向断言（REVIEW.md 第 1 条）：字符形态与真机 token **必须不等**，否则这条判据没有区分度。
+    assert.notEqual(normalizeKey(wrong), token, `写 ${wrong} 的绑定永远不命中（静默失配）`);
+    // 该字符形态也不在表内——不是「漏实现」，是防回潮。
+    assert.equal(KEY_BINDINGS.find((item) => normalizeKey(item.key) === normalizeKey(wrong)), undefined);
+  }
+  // 无 code 的合成事件回落 e.key（字符形态）：与表内物理键形态是不同 token，不命中。
+  assert.equal(keyToken({ ...base, key: "s", altKey: true }), "Alt-S");
+  assert.notEqual(keyToken({ ...base, key: "s", altKey: true }), "Alt-KeyS");
+  // 与同族 ⌥ 键是不同的 token（防「表内已存在该键」的误判）
+  for (const neighbor of ["Alt-KeyV", "Alt-KeyD", "Alt-KeyB", "Alt-KeyF", "Alt-KeyG", "Alt-Backspace"]) {
+    for (const [key] of PANE_BINDINGS) {
+      assert.notEqual(normalizeKey(neighbor), normalizeKey(key), `${neighbor} 与 ${key} 应归一成不同 token`);
+    }
+  }
+});
+
+test("pane.* 命令可由 [keys] 重绑 / 解绑（默认键位单段无空白）", () => {
+  // 重绑：⌥S → pane.other（作用域仍由命令清单派生为 global，不随配置漂移）
+  const rebound = applyKeyOverrides({ "Alt-KeyS": "pane.other" });
   assert.deepEqual(rebound.warnings, []);
-  const bound = rebound.bindings.find((binding) => binding.command === "pane.split");
-  assert.equal(normalizeKey(bound?.key ?? ""), "Cmd-J");
-  assert.equal(bound?.scope, "global");
+  const moved = rebound.bindings.find((binding) => normalizeKey(binding.key) === "Alt-KeyS");
+  assert.equal(moved?.command, "pane.other");
+  assert.equal(moved?.scope, "global");
+  // 未覆盖的默认绑定逐条保留
+  for (const [key, command] of PANE_BINDINGS) {
+    if (normalizeKey(key) === "Alt-KeyS") continue;
+    assert.equal(rebound.bindings.find((binding) => normalizeKey(binding.key) === normalizeKey(key))?.command, command);
+  }
+  // 解绑：⌥W 不再指向任何命令，pane.close 在生效表里随之没有绑定（键位面板据此显示未绑定）
+  const unbound = applyKeyOverrides({ "Alt-KeyW": null });
+  assert.deepEqual(unbound.warnings, []);
+  assert.equal(unbound.bindings.find((binding) => normalizeKey(binding.key) === "Alt-KeyW"), undefined);
+  assert.equal(unbound.bindings.find((binding) => binding.command === "pane.close"), undefined);
 });

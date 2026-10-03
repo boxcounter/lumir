@@ -130,6 +130,29 @@
 //     「Show next/previous tab」预置是 ⌃⇥ 系）。Safari / Firefox 自身把这对键用作标签循环
 //     （WebKit 官方快捷键文档），本 change 正是把这个惯例接进应用内，不构成对系统键的抢占。
 //
+// M319（change pane-system-split-view 分组 6.1）：表新增三条**有默认绑定**的全局容器命令
+//（`⌥S` → `pane.split`、`⌥O` → `pane.other`、`⌥W` → `pane.close`，**Alex 节点 1 落槌**的键位；
+// tasks.md 起草倾向的 ⌥S/⌥W/⌥O 顺序与落槌不同，以落槌为准）。三条命令本身 M316 已进
+// `NON_TAB_GLOBAL_COMMAND_IDS`（作用域由此派生为 global），本 mission 只把命令实现从
+// `KEYLESS_COMMAND_IDS` 移到默认绑定表。⌥ 系单段取 Emacs 的 Alt 前缀惯例（表内既有
+// Alt-KeyV / Alt-KeyD / Alt-KeyB / Alt-KeyF / Alt-KeyG 一族）。逐条来由住在绑定的 doc
+//（D365–D367，表即文档），本段只记与文件头其余段落同级的共性。
+//
+// M319 追加核对（同三条来源，逐键留痕，`⌥S` / `⌥O` / `⌥W`）：
+//   - **表内**：本文件即真源，现表 ⌥ 系占用是 Alt-KeyV（翻屏上）/ Alt-KeyD / Alt-KeyF /
+//     Alt-KeyB（删词 / 扩选族）/ Alt-KeyG（跳行）/ Alt-Backspace（后删词）——⌥S / ⌥O / ⌥W
+//     均零占用（三者各归一到新 token，与上列互不相同）。
+//   - **原生菜单 accelerator**：tauri 2.11.5 的 `Menu::default()` 逐项来自 muda 0.19.3
+//     `items/predefined.rs` 的 `accelerator()`（清单见上面 M149 段），其中**唯一的 ⌥ 系预置是
+//     HideOthers = ⌥⌘H**；本应用自建项里唯一带 accelerator 的是 `CmdOrCtrl+Q`
+//     （`src-tauri/src/lib.rs`）。菜单键等价只截获带 accelerator 的项（M149 对 ⌘W 的实证），
+//     三条裸 ⌥ 键因此会到达 webview 的 keydown。
+//   - **系统级**：macOS 不给系统菜单预置裸 ⌥ 字母（Option 系预置都是 ⌥⌘ 组合，如 ⌥⌘Esc /
+//     ⌥⌘D / ⌥⌘H）。真正会「抢」裸 ⌥ 字母的是文本输入系统的特殊字符层（US 布局上
+//     ⌥S → ß / ⌥O → ø / ⌥W → ∑），它在本分发器的**下游**：命中绑定时 preventDefault 即挡住
+//     （同族先例 Alt-KeyV 的 `√` 已在真机跑过；含 Alt 的组合按物理键 `code` 判定，见 M277 /
+//     M195 段的 token 形态说明）。三条均为单段、无空白 ⇒ 可经 `[keys]` 重绑 / 解绑。
+//
 // 平台口径（M131 评审 r1 F1 如实记录）：迁移后**表内绑定一律全平台无条件生效**，不再有
 // 平台门。两处与迁移前不同，均只在非 macOS 平台可观测：
 //   - ⌃N/P/F/B/E 迁移前是 CM keymap 的 `{ mac: "Ctrl-n" }`（只绑 mac），现在非 mac 平台
@@ -297,9 +320,9 @@ export const NON_TAB_GLOBAL_COMMAND_IDS = [
   // M316：双栏（pane-system-split-view 分组 3）。前缀取 `pane.`：三条命令作用的对象是
   // **分栏容器**（pane-layout 账本），不属于 `editor.*` / `view.*` 任何一族——前缀与作用域
   // 因此不互相打脸（M240 同款判词）。作用域为 global 是理由决定的：焦点在左栏 / 浮层里时
-  // 同样要能切 pane（同 `view.text-scale-*`）。三条**默认都不绑键**（键位指配归收尾
-  // mission——本 mission 只做命令进表与路由，避免与键位治理双线并行），登记进
-  // KEYLESS_COMMAND_IDS；用户要键位就经 [keys] 绑。
+  // 同样要能切 pane（同 `view.text-scale-*`）。M316 先登记进 KEYLESS_COMMAND_IDS（本 mission
+  // 只做命令进表与路由，避与键位治理双线并行）；**M319 的键位指配已落**（⌥S / ⌥O / ⌥W，
+  // Alex 节点 1 落槌，见 KEY_BINDINGS 与文件头 M319 段），三条因此从默认不绑键清单移出。
   "pane.split",
   "pane.other",
   "pane.close",
@@ -343,11 +366,9 @@ export const KEYLESS_COMMAND_IDS: readonly string[] = [
   // M277：块级复制（change block-copy-affordance，裁决点 5）——鼠标入口是块上的 hover 复制钮，
   // 键盘入口默认不占物理组合（同 M180 / M240 先例）。
   "block.copy",
-  // M316：双栏三条容器命令——本 mission 只做命令进表与路由，键位指配归收尾 mission
-  //（理由见 NON_TAB_GLOBAL_COMMAND_IDS 的 M316 条目）；用户要键位就经 [keys] 绑。
-  "pane.split",
-  "pane.other",
-  "pane.close",
+  // M316：双栏三条容器命令（pane.split / pane.other / pane.close）M319 起**有默认绑定**
+  //（⌥S / ⌥O / ⌥W，Alex 节点 1 落槌），故 MUST NOT 登记在本「默认不绑键」清单里——清单与
+  // 绑定表无交集由本文件末尾的 typecheck 与 tests/unit/keys.test.ts 的三项对账各守一遍。
 ];
 
 export type EditorCommandId = (typeof EDITOR_COMMAND_IDS)[number];
@@ -573,6 +594,20 @@ export const KEY_BINDINGS: readonly KeyBinding[] = [
   // M303：⌘⇧A 唤起 / 收起 harness 对话面板（change add-harness-probe）。三条冲突来源的复核写在
   // 表条目 D345 的正文里（表即文档，MUST NOT 在本文件另抄一份）。
   { key: "Cmd-Shift-A", command: "harness.toggle", scope: "global", docKey: "D345" },
+
+  // ── 全局：pane 容器（M319，change pane-system-split-view 分组 6.1 的键位指配）
+  // 三条命令的默认键位由 **Alex 节点 1 落槌**：split=⌥S / other=⌥O / close=⌥W
+  //（tasks.md 起草倾向的「⌥S / ⌥W / ⌥O」顺序与落槌不同，以落槌为准）。⌥ 系单段取 Emacs 的
+  // Alt 前缀惯例（本表既有 Alt-KeyV / Alt-KeyD / Alt-KeyB / Alt-KeyF / Alt-KeyG 同族）；语义
+  // 取 S = Split / O = Other / W = Window(other window)。取 global 而非 editor——pane 是窗口级
+  // 对象，焦点在左栏 / 搜索框 / 浮层里时同样要能操作（与 tab.* / view.* 一族同理由）。
+  // token MUST 写物理键名（`Alt-KeyS` / `Alt-KeyO` / `Alt-KeyW`）：macOS 的 Alt 层把 S / O / W
+  // 换成 ß / ø / ∑，`e.key` 判不出用户按的键，含 Alt 的组合一律按 `KeyboardEvent.code` 判定
+  //（见 keyToken）；写 `Alt-s` 一类字符形态不报错、只是永远不命中。三条冲突核对（零冲突，三条
+  // 独立来源）写在各自的 doc（D365 / D366 / D367）；与本文件头 M319 段的共性口径互为指针。
+  { key: "Alt-KeyS", command: "pane.split", scope: "global", docKey: "D365" },
+  { key: "Alt-KeyO", command: "pane.other", scope: "global", docKey: "D366" },
+  { key: "Alt-KeyW", command: "pane.close", scope: "global", docKey: "D367" },
 
   // ── 全局：标签（M149；M242 追加 ⌘} / ⌘{ 两条绑定，来由与冲突核对见文件头 M242 段）
   { key: "Cmd-w", command: "tab.close", scope: "global", docKey: "D312" },
