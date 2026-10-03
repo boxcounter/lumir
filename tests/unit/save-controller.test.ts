@@ -94,6 +94,34 @@ test("vaultSwitchBlock：任一标签有未保存修改就给判据，无脏标�
   stopTimers(rig);
 });
 
+test("4.5 跨 pane 口径（会话替身即跨 pane 并集）：⌘S 只落前台会话；退出守卫并集含后台脏会话", async () => {
+  const rig = createRig();
+  // 两个会话 = 两个 pane 各自的前台标签；装配层的 `editor.sessions()` 是跨 pane 并集，
+  // 本替身的 sessions() 同形。
+  rig.editor.open("left.md", "# L");
+  rig.controller.noteOpened("left.md", "rev-L");
+  rig.editor.open("right.md", "# R"); // 前台 = right
+  rig.controller.noteOpened("right.md", "rev-R");
+  rig.backend.handle("document_save", (args) => `rev-new-${args.path}`);
+
+  // 后台会话（left）变脏：切 vault / 退出守卫取**并集**，必须计入。
+  rig.editor.edit("left.md", "# L 改");
+  assert.deepEqual(rig.controller.vaultSwitchBlock(), { dirtyCount: 1, hasUnsaveable: false });
+
+  // ⌘S 只存前台（right，此刻 clean）——后台的 left 不因 ⌘S 被落盘。
+  await rig.controller.save();
+  assert.equal(rig.backend.countOf("document_save"), 0, "⌘S 不写后台脏会话");
+  assert.equal(rig.editor.handle.sessionForPath("left.md")!.dirty, true, "后台脏会话保持 dirty");
+
+  // 前台切到 left 后再 ⌘S：只写 left。
+  rig.editor.activate("left.md");
+  await rig.controller.save();
+  const saves = rig.backend.argsOf("document_save");
+  assert.equal(saves.length, 1);
+  assert.equal(saves[0].path, "left.md", "⌘S 只落活跃（前台）会话");
+  stopTimers(rig);
+});
+
 test("未装载标签（壳态）不拦切换 / 退出，也不进「保存全部脏标签」（M283 的 3.4）", async () => {
   const rig = createRig();
   rig.backend.handle("document_save", (args) => `rev-2-${args.path}`);

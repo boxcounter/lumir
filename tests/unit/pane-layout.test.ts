@@ -345,6 +345,26 @@ test("openTab 判重：打开他 pane 已开的文件是移动，不是复制，
   assert.deepEqual(duplicatePaths(layout), [], "全容器同一路径至多一份");
 });
 
+test("4.2 触发路径（账本侧）：移动他 pane 已开文件时，目标 pane 前台变它、源 pane 的当前标签保留", () => {
+  const rig = createRig();
+  const { layout } = rig;
+  const a = rig.open("a.md", "A"); // pane 1: a.md
+  const x = rig.open("x.md", "X"); // pane 1: x.md（前台）
+  assert.equal(layout.foregroundTab(layout.panes()[0]), x);
+  layout.split(); // pane 2 活跃（空）
+
+  const moved = layout.openTab("x.md", () => rig.makeTab("x.md"));
+  assert.equal(moved, x, "移动的是既有标签，不新建");
+  assert.equal(layout.paneOf(x)?.id, 2, "x 落到活跃 pane");
+  assert.equal(layout.foregroundTab(layout.panes()[1]), x, "目标 pane 前台变为 x");
+  assert.deepEqual(pathsOf(layout.panes()[1]), ["x.md"]);
+  // 源 pane 的**当前标签保留**（spec「链接跟随目标已开时移动并激活、当前标签保留」）：
+  // 移走 x 后前台落到剩下的 a，a 仍在源 pane。
+  assert.equal(layout.paneOf(a)?.id, 1);
+  assert.deepEqual(pathsOf(layout.panes()[0]), ["a.md"]);
+  assert.equal(layout.foregroundTab(layout.panes()[0]), a, "源 pane 当前标签保留（a）");
+});
+
 test("openTab 落点：缺省活跃 pane，显式 target 落到指定 pane，均把目标置为活跃", () => {
   const rig = createRig();
   const { layout } = rig;
