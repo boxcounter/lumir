@@ -1,6 +1,17 @@
 #!/usr/bin/env bash
 # 本地一键跑视觉回归：构建 → 装依赖 → 截图对比。
-# 用法：scripts/visual/run.sh [--update] [Playwright 参数]（更新基线规则见 tests/visual/README.md）
+# 用法：scripts/visual/run.sh [--update] [Playwright 过滤器/参数]（更新基线规则见 tests/visual/README.md）
+#
+# 例：
+#   scripts/visual/run.sh                                # 全量跑（含整页像素）
+#   scripts/visual/run.sh scenes/lists.spec.ts           # 只跑一个 spec
+#   scripts/visual/run.sh --update                       # 全量更新基线（changed 语义）
+#   scripts/visual/run.sh --update scenes/lists.spec.ts  # 只更新该 spec 的基线
+#
+# `--update` 后直接跟 Playwright 参数，**不要**插 `--` 分隔：`--update -- <filter>` 会让过滤器
+# 失效、整库 595 条一起跑 update（M310 实测）。也不要靠 `pnpm run update-baselines` 递位置过滤器：
+# Playwright ≥1.62 的 `--update-snapshots` 带可选 mode，紧跟的位置参数会被当成 mode 解析而报
+# invalid（M310 实测）。故本脚本绕过 package.json 脚本、把 mode 显式钉成 `--update-snapshots=changed`。
 #
 # 整页像素对比归**本地**：CI（visual.yml）置 LUMIR_VISUAL_STRUCTURAL=1，只跑结构 / 计算属性断言。
 # 所以动了视觉相关代码后必须跑一次本脚本，「CI 绿」不再代表像素层没回归（依据见 tests/visual/README.md）。
@@ -42,7 +53,9 @@ if [[ "${1:-}" == "--update" ]]; then
     exit 1
   fi
   shift
-  pnpm --dir tests/visual run update-baselines "$@"
+  # 绕过 package.json 的 update-baselines 脚本：其 `--update-snapshots` 无 `=` 钉值，
+  # 会把紧随的位置过滤器吞成 mode。显式钉 `=changed`，位置过滤器才能正常生效。
+  pnpm --dir tests/visual exec playwright test --update-snapshots=changed "$@"
 else
   pnpm --dir tests/visual test "$@"
 fi
