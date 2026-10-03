@@ -2729,6 +2729,19 @@ finding）、2 条套件注入通道缺陷（既有 finding）、1 条 M283 已�
 
 ## 记录在案（无需动作）
 
+- **Harness UX 一揽子裁决（2026-10-03，Alex 在 harness UX 讨论会话中裁定）**：
+  ① harness 事件流带 vault/会话标识、面板按当前 vault 过滤——**采纳**，随「切 vault 后面板不刷新」的
+  小修包一并实施（后端会话本就以 vault 根路径为键，见 `src-tauri/src/harness.rs` 的 sessions 映射与
+  按 scope 取快照；缺口在前端只在挂载时拉一次 `harness_state`，切 vault 无监听）；② chat UX 大改
+  **先在 `design/prototypes/` 出原型再实施**；③ 宽度拖拽、模型选择（运行期切换——配置面已有
+  per-provider model 字段且运行时每轮请求时读一次，无需重建会话）、pin 式上下文块（章节锚定、可叠加、
+  可移除）——**一律推迟到 pane 化 survey 裁决之后再推进**，避免先做了再大改或重做；④ split view 与
+  「四栏困境」走 pane 化（Emacs window 模型：pane 可承载文档或 harness，界面上限三栏）可行性 survey，
+  产出 ADR 草案后 Alex 裁决走不走。
+  **同会话追加裁决（2026-10-03）**：⑤ 内存风险处置——pane 化过程中按实测提高门禁，内存使用的
+  专项治理后置，门禁不阻塞 pane 化工作（已写入 ADR 0008 草案「代价与风险」节）；⑥ 「宽度被 pane
+  分隔条吸收」的澄清——阅读栏宽（`ui.content_width` 及编辑器内拖柄）是 pane 内部属性、不受影响，
+  被取消的仅是「dock 宽度拖拽」这个拟新做的功能（已写入 ADR 0008 草案 Decision 2）。
 - **UX 动荡期整页基线纪律：批次末尾一次性重刷，中间不逐批维护**（2026-10-03，Alex 裁决，M311 基线轮对话）：
   背景是 M311 重刷的 26 张整页基线生命周期预计很短（接下来 UX 讨论可能带来不小改动）。**裁决**：UX
   改动期内，整页像素基线不在每个 UX 批次中途逐批重刷，攒到 UX 批次末尾一次性 `--update-snapshots=all`

@@ -40,3 +40,4 @@
 | [0005](0005-product-ontology-object-model.md) | 产品本体对象模型 | deferred（见 0006） |
 | [0006](0006-agent-positioning-deferred.md) | AI 定位延后与当前阶段重排 | accepted（AI 定位 deferred 经 0007 revisit 转为探索中） |
 | [0007](0007-ai-positioning-probe.md) | AI 定位重启——以使用探针替代定位预判 | accepted |
+| [0008](0008-pane-system-split-view-and-harness.md) | 内容区 pane 化——split view 与 harness 归位的统一模型 | accepted |
