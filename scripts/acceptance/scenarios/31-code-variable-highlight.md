@@ -121,13 +121,13 @@ steps:
       - label: 编辑器已装载
         ax: { has: "变量高亮（md 对照）" }
 
-  - name: 记下 md 的编辑器基线
-    do: recordEditor
-    as: md基线
-
-  - name: 建立编辑器焦点
+  - name: 建立编辑器焦点并把光标停在标题行（heading 的「# 」显露态随光标行变，基线与复验必须同一光标行）
     do: clickEditor
     dy: 6
+
+  - name: 记下 md 的编辑器基线（光标已与复验时同一行，渲染文本才逐字节可比）
+    do: recordEditor
+    as: md基线
 
   - name: ⌘F 打开面板（md 也是新标签 ⇒ 查询同样是空的，重敲一遍）
     do: key
@@ -152,9 +152,21 @@ steps:
         ax: { has: "1/1" }
       - shot: md 模式选中后（静默）
 
-  - name: Esc 关面板并复核 md 未被本能力改动
+  - name: Esc 关面板（焦点交还编辑器）
     do: key
     key: "escape"
+    expect:
+      - label: 面板已关闭
+        ax: { not: "上一个" }
+
+  - name: 把光标移回记录基线时的标题行（回车已把光标送到第 2 行的匹配上，「# 」显露态因此翻转）
+    do: clickEditor
+    dy: 6
+
+  - name: 等渲染落定（标题行的「# 」随光标归位重绘）
+    do: settle
+
+  - name: 复核 md 未被本能力改动（光标行已与基线对齐）
     expect:
       - label: md 模式下文档逐字节未变（本能力不装进 md 分支）
         editor: { unchangedSince: md基线 }
@@ -210,6 +222,14 @@ M254 之前「单击树文件 = 预览意图、就地替换同一个标签（同
 - **可判的三条**：① 文档逐字节不变（`editor.unchangedSince` + 磁盘 sha256 两条，铁律核对）；
   ② AX 侧 liveness（编辑器可读、查询词与计数如实）；③ 截图留证（底纹是否可辨识是 Alex 的手感项，
   套件不替它下结论）。
+- **md 段的基线必须与复验落在同一光标行**（2026-10-04 修，此前该场景稳定假红）：`var-highlight.md`
+  首行是 heading，而 `src/preview/reveal-gate.ts` 的源码显露随**光标所在行**变——光标停在标题行时
+  `# ` 显露，移走后隐去。旧写法在 `open` 之后（光标在标题行）记基线，而「回车走 findNext」把光标
+  送到第 2 行的匹配上再复验，两次读到的 `AXTextArea` 因此差一个行首 `# `。那是**渲染态**差异
+  （`src/code-identifiers.ts:677` 明写扩展只装进 code 分支，md 分支零改动），不是文档被改写——
+  逐字节比较据此判红是**假红**。现修法：基线在 `clickEditor`（光标停标题行）之后记，复验前再
+  `clickEditor` 把光标移回同一行，两次读取才在同一光标行上比较。js / lua 段无此问题（源码模式
+  不随光标改渲染文本），故只改 md 段。
 - **装饰的在场 / 缺席在本通道不可判**（如实写明，MUST NOT 把「读不到」当「通过」）：
   - `design.md:89` 与提案都写明 **AX 不暴露装饰与颜色**；M197 的实机 AX dump 可复核
     （`test-results/acceptance/2026-09-24/30-code-outline/ax/01-*.txt`：编辑器只有
