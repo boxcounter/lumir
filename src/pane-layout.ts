@@ -56,6 +56,28 @@ export function clampSplitRatio(value: number): number {
   return Math.min(SPLIT_RATIO_MAX, Math.max(SPLIT_RATIO_MIN, value));
 }
 
+/** 空 pane 引导的显示谓词（M322，spec「分栏后出现两个文档 pane」的空态引导）：**纯函数**，
+ *  四个条件缺一不可。
+ *  - `split`：只在分栏态显示——单 pane 零标签维持 M149 起的既有形态（未命名空文档编辑器 +
+ *    标签条整条隐藏），引导不覆盖它（「单 pane 常态逐像素不变」是本 change 的第一判据，
+ *    既有单 pane 基线因此构造上零影响）；
+ *  - `hasTabs` 为假：「空」按**带路径的会话**判定（与 `src/tabs.ts` 的 visibleTabsOf 同一定义
+ *    ——未命名文档不是标签）；装配层从实例会话表现查，不读账本（账本会登记 path=undefined 的
+ *    空会话，见 `openTab` 的文档化合法路径）；
+ *  - `foregroundDirty` 为假：空 pane 的前台未命名文档是 dirty 草稿时引导让位——用户在空 pane
+ *    里敲 scratch，第一个键引导即隐去、键入内容立即可见（onDirty → renderAllTabStrips 同帧
+ *    同步），不把输入埋在水印底下；
+ *  - `vaultLoaded`：未装载 vault 时不显示（Alex 2026-10-04 裁决）——此时左栏没有文件可点，
+ *    「在左栏选一个文件」的指引不成立。 */
+export function emptyPaneGuideVisible(
+  split: boolean,
+  hasTabs: boolean,
+  foregroundDirty: boolean,
+  vaultLoaded: boolean,
+): boolean {
+  return split && !hasTabs && !foregroundDirty && vaultLoaded;
+}
+
 /** 指针横坐标 → 钳制后的比例（**纯函数**，拖拽的唯一计算）：`rect` 是 pane 容器的矩形。
  *  容器零宽（尚未布局）时落中点，不产出 NaN / Infinity。 */
 export function ratioFromPointer(clientX: number, rect: { left: number; width: number }): number {

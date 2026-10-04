@@ -813,6 +813,15 @@ const COPY_TABLE = {
     zh: "分隔条——拖拽调整左右两个 pane 的宽度",
     en: "Divider — drag to resize the two panes",
   },
+  // 空 pane 引导（M322，change pane-system-split-view 分组 6.2 的拆分 mission）：分栏态空 pane
+  // 正文区的水印文案。消费者是装配层 `src/main.ts` 的 `PANE_GUIDE_LABEL`（建元素时写、
+  // `onRelabel` 重写）；显示谓词在 `src/pane-layout.ts` 的 `emptyPaneGuideVisible`（仅分栏态 +
+  // 零带路径标签 + 前台非 dirty 草稿 + 已装载 vault——未装 vault 不显示，Alex 2026-10-04 裁决）。⌥W 是 pane.close 的默认绑定（M319 落槌）——用户经
+  // [keys] 重绑后这句提示不再准确，是本条已知的明账。
+  D369: {
+    zh: "这个 pane 还没有打开的文件——在左栏选一个文件，它就会在这里打开。不需要它时按 ⌥W 收起。",
+    en: "Nothing open in this pane yet — pick a file in the left column and it will open here. Press ⌥W to collapse it.",
+  },
 } satisfies Record<string, CopyEntry>;
 
 /** 文案表的键（D 编号，多串格带 `.N` 后缀）——由表数据推导，加一条即多一个键。 */
