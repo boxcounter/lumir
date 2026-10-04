@@ -17,6 +17,7 @@ import {
   clampSplitRatio,
   createDividerDrag,
   createPaneLayout,
+  emptyPaneGuideVisible,
   ratioFromPointer,
 } from "../../src/pane-layout.ts";
 import type { DividerPointerEvent, Pane, PaneLayout } from "../../src/pane-layout.ts";
@@ -703,4 +704,24 @@ test("分隔条拖拽：非左键不开始；destroy 摘干净全部监听", () 
 
   drag.destroy();
   assert.equal(fake.listenerCount(), 0, "destroy 后监听全摘（元素移除前调用）");
+});
+
+test("空 pane 引导谓词：仅分栏态 + 零带路径标签 + 前台非 dirty 草稿 + 已装 vault（M322）", () => {
+  assert.equal(emptyPaneGuideVisible(true, false, false, true), true, "分栏态空 pane 显示引导");
+  assert.equal(
+    emptyPaneGuideVisible(false, false, false, true),
+    false,
+    "单 pane 零标签不显示（M149 起的既有形态不动，单 pane 基线构造上零影响）",
+  );
+  assert.equal(emptyPaneGuideVisible(true, true, false, true), false, "有带路径标签不显示");
+  assert.equal(
+    emptyPaneGuideVisible(true, false, true, true),
+    false,
+    "前台是 dirty 草稿时引导让位（scratch 键入立即可见，不埋在水印底下）",
+  );
+  assert.equal(
+    emptyPaneGuideVisible(true, false, false, false),
+    false,
+    "未装载 vault 不显示（Alex 2026-10-04 裁决：左栏无文件可点时指引不成立）",
+  );
 });

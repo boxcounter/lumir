@@ -4,7 +4,7 @@ import type { EditorHandle, EditorSession } from "./editor";
 import type { EditorView } from "@codemirror/view";
 import { applyKeyOverrides, BLOCK_SCROLL_CLASS, EDITOR_COMMAND_IDS, KEY_BINDINGS, Keymap, TAB_GOTO_IDS } from "./keys";
 import type { CommandId, CommandRunner, CommandRuntime, EditorCommandId, KeyBinding, KeyOverrides } from "./keys";
-import { DEFAULT_SPLIT_RATIO, clampSplitRatio, createDividerDrag, createPaneLayout } from "./pane-layout";
+import { DEFAULT_SPLIT_RATIO, clampSplitRatio, createDividerDrag, createPaneLayout, emptyPaneGuideVisible } from "./pane-layout";
 import type { DividerDrag, PaneId } from "./pane-layout";
 import { DEFAULT_AUTO_INDENT } from "./enter-indent";
 import { DEFAULT_FONT_SIZE } from "./typography";
@@ -171,6 +171,9 @@ interface PaneAssembly {
   mountEl: HTMLElement;
   stripEl: HTMLElement;
   handle: EditorHandle;
+  /** 空 pane 引导元素（M322）：mountEl 内常驻的水印层，`hidden` 切换在场 / 离场——
+   *  唯一写点在 `renderAllTabStrips`（标签集合 / 分栏态 / dirty 全汇到那里）。 */
+  guideEl: HTMLElement;
   /** 该 pane 的标签条实例；root pane 在下方 tabs 装配块就位，pane B 在 split 时就位。 */
   tabs: TabsHandle | undefined;
   /** 该 pane 的订阅与监听的退订函数（disposePaneHandle 时整批跑掉）。 */
@@ -252,14 +255,20 @@ let dividerDrag: DividerDrag | null = null;
  *（design §5.2 的不变量：挂载后无法重写的语言相关文本 MUST NOT 存在）。 */
 const SPLITTER_LABEL = (): string => t("D368");
 
+/** 空 pane 引导的上屏文案（M322，D369）：元素常驻 mountEl（`hidden` 切换在场 / 离场），
+ *  语言切换由下方 onRelabel 重写（同 SPLITTER_LABEL 的 design §5.2 不变量：挂载后无法重写的
+ *  语言相关文本 MUST NOT 存在）。 */
+const PANE_GUIDE_LABEL = (): string => t("D369");
+
 const paneLayout = createPaneLayout<EditorSession, EditorHandle>({
   createHandle: (paneId) => createPaneHandle(paneId),
   disposeHandle: (handle) => disposePaneHandle(handle),
 });
 
 /** 为一个 pane 建编辑器实例与其 DOM 槽（pane-layout 的 createHandle 注入点）。
- *  root pane（恒为 id 1）复用 shell 建好的挂载元素与标签槽——单 pane DOM 与 M316 之前
- *  逐字节一致（零基线更新判据）；pane B 的挂载元素 / 标签槽 / 分隔条全部现建，
+ *  root pane（恒为 id 1）复用 shell 建好的挂载元素与标签槽——单 pane 像素与 M316 之前
+ *  一致（零基线更新判据；M322 起 mountEl 内多一个常驻 hidden 的空 pane 引导元素，
+ *  绝对定位 + hidden，零像素影响）；pane B 的挂载元素 / 标签槽 / 分隔条全部现建，
  *  close 时整批移除（见 disposePaneHandle）。 */
 function createPaneHandle(paneId: PaneId): EditorHandle {
   const rootSlot = paneId === 1;
@@ -278,7 +287,18 @@ function createPaneHandle(paneId: PaneId): EditorHandle {
     dividerEl = divider;
   }
   const handle = createEditor(mountEl);
-  const assembly: PaneAssembly = { mountEl, stripEl, handle, tabs: undefined, unsubs: [] };
+  // 空 pane 引导（M322）：常驻 mountEl 的水印层（初态必隐——显示与否由 renderAllTabStrips
+  // 的同步唯一决定，root pane 与动态 pane 同一形态）。透明底盖在编辑器之上，点击它 = 点击
+  // 空 pane 的正文：焦点进该 pane 的编辑器（focusin 随之翻活跃指针），用户可以直接开敲
+  //（scratch）——第一个键引导即隐（emptyPaneGuideVisible 的 dirty 条件）。不加 mousedown
+  //  preventDefault（REVIEW.md 第 16 条：preventDefault 不挂容器级元素）。
+  const guideEl = document.createElement("div");
+  guideEl.className = "pane-empty-guide";
+  guideEl.textContent = PANE_GUIDE_LABEL();
+  guideEl.hidden = true;
+  guideEl.addEventListener("click", () => handle.view.focus());
+  mountEl.append(guideEl);
+  const assembly: PaneAssembly = { mountEl, stripEl, handle, guideEl, tabs: undefined, unsubs: [] };
   paneAssemblies.set(paneId, assembly);
   if (!rootSlot) {
     // createEditor 的初始会话是 SAMPLE 演示文档（无文件上下文的起步态）——新 pane 从
@@ -448,7 +468,19 @@ function reconcilePaneLedger(): void {
 /** 全部 pane 的标签槽各重画一遍（dirty 跃迁 / 同步点）：dirty 点是逐标签的，
  *  后台 pane 的标签条也要跟着变。 */
 function renderAllTabStrips(): void {
-  for (const assembly of paneAssemblies.values()) assembly.tabs?.renderTabs();
+  for (const assembly of paneAssemblies.values()) {
+    assembly.tabs?.renderTabs();
+    // 空 pane 引导（M322）的在场 / 离场同步挂在同一个唯一写点上：标签集合（开 / 关 / 移动
+    // 经 syncActiveDocument）、分栏态（split / close 经 applySplitChrome）与 dirty（onDirty
+    // 重绘）全部汇到这里，别处不另埋钩子。「有无标签」按带路径的会话现查实例会话表——与
+    // 标签条的 visibleTabsOf 同一定义，不读账本（账本会登记 path=undefined 的空会话）。
+    assembly.guideEl.hidden = !emptyPaneGuideVisible(
+      paneLayout.isSplit(),
+      assembly.handle.sessions().some((session) => session.path !== undefined),
+      assembly.handle.activeSession().dirty,
+      vaultLoaded, // 未装 vault 不显示（Alex 2026-10-04 裁决：左栏无文件可点时指引不成立）
+    );
+  }
 }
 
 /** 每 pane 一个标签条实例（tabs per-pane，tasks 分组 3）：createTabs 的 editor / mount
@@ -2156,6 +2188,11 @@ onRelabel(() => {
   shell.widthHandles.right.setAttribute("aria-label", handleLabel);
   // 分隔条的读屏名（M319，D368）：只在分栏态在场（dividerEl 非 null），切换语言时同样要重写。
   if (dividerEl !== null) dividerEl.setAttribute("aria-label", SPLITTER_LABEL());
+  // 空 pane 引导的文案（M322，D369）：元素常驻 mountEl（hidden 切换在场 / 离场），在场与
+  //  不在场的引导一并重写（同 design §5.2 的不变量）。
+  for (const assembly of paneAssemblies.values()) {
+    assembly.guideEl.textContent = PANE_GUIDE_LABEL();
+  }
 });
 
 /** 已推给后端的 dirty 镜像值（M149）：只在**变化**时上报。

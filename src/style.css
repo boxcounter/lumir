@@ -704,6 +704,27 @@ body {
   min-height: 0;
   position: relative;
 }
+/* 空 pane 引导（M322，文案 D369）：pane 在场但零标签时正文区的水印层——绝对定位盖在该
+   pane 的编辑器之上（**透明底**：光标与键入内容透得出；前台未命名文档是 dirty 草稿时引导
+   让位，谓词在 pane-layout 的 emptyPaneGuideVisible）。常驻 mountEl 内、`hidden` 切换在场 /
+   离场，单 pane 恒隐——单 pane 常态逐像素不变（构造上零影响）。只消费既有 token。 */
+.pane-empty-guide {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--sp-6);
+  text-align: center;
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui);
+  color: var(--text-3);
+  cursor: text;
+}
+/* display:flex 会盖掉 UA 的 [hidden] 规则，显式补回（同 .titlebar-identity / .editor-notice） */
+.pane-empty-guide[hidden] {
+  display: none;
+}
 /* 分栏分隔条（M316）：hairline 1px 取既有 --border（零新配色），命中区加宽到 7px
   （与栏宽手柄「视觉线细、命中区宽」同族形态）。只在双栏时在场（装配层动态创建 / 移除），
    单栏 DOM 里没有它——默认样式对单栏零影响。读屏名归后续 mission（6.2），本版不做

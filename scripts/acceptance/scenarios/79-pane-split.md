@@ -28,6 +28,8 @@ steps:
         ax: { has: "分隔条" }
       - label: 新 pane 成为活跃 pane——空 pane 无前台文件 ⇒ modeline 回「无当前文件」（原文案 D207）
         ax: { has: "无当前文件" }
+      - label: 空 pane 引导水印上屏（M322，D369：分栏态空 pane 的正文区引导）
+        ax: { has: "它就会在这里打开" }
       - label: 标签没有被复制到新 pane（原标签仍在，只此一个）
         ax: { count: { pattern: "关闭 ", exact: 1 } }
 
@@ -88,6 +90,8 @@ steps:
       - shot: 收起
       - label: 分隔条消失（回到单 pane 常态）
         ax: { not: "分隔条" }
+      - label: 空 pane 引导随之离场（M322：引导仅分栏态空 pane 在场）
+        ax: { not: "它就会在这里打开" }
       - label: 标签仍在（收起是并入，不丢标签）
         ax: { count: { pattern: "关闭 ", exact: 1 } }
       - label: 单 pane 有当前文件
@@ -104,7 +108,8 @@ WKWebView + 真实键盘下才成立的事：
 1. **默认键位**：`⌥S` 分栏、`⌥O` 切活跃、`⌥W` 收起——三条经真机键盘注入落地（它们是 M319 的
    键位指配，见 `src/keys.ts` 的 `Alt-KeyS` / `Alt-KeyO` / `Alt-KeyW`）。
 2. **分栏的可见结果**：分隔条出现（`role=separator` + 读屏名 D368）、新 pane 为活跃且空
-   （modeline 读「无当前文件」）。
+   （modeline 读「无当前文件」）、空 pane 引导水印上屏（M322，D369——「它就会在这里打开」
+   是水印文案的独有子串，分栏态空 pane 才在场，收起后随之离场）。
 3. **`pane.other` 往返**：活跃 pane 在两侧之间切换，modeline 跟随活跃 pane 的**前台**换源。
 4. **上限二无操作**：已是双 pane 时 `⌥S` 不产生第三个 pane。
 5. **跨 pane 打开已开文件是移动**：活跃 pane 为右（空）时从树里打开已在左 pane 的文件，
