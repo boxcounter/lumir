@@ -31,7 +31,8 @@ worker 动工前、reviewer 给出 verdict 前逐条过一遍。每条按「症�
 - 根因：容差按「机器间抖动上限」设，没核「最小真实变化」的下限。
 - 证据：`tests/visual/playwright.config.ts:9-14`（现行 0.001 及其来历）；提交 `c9a3c20` / `736b3f7` / `d439184`；`docs/backlog.md:257`。
   0.001 时代的两处新现场（2026-09-17）：M148 的 masthead 指示段约 100px 真实变化被吞（0.001×1200×800≈960px，15 张整页基线 sha256 逐字节零变化、普通模式照绿，最终靠新增元素级基线补偿，`openspec/changes/add-toc-outline/tasks.md` 基线对比说明节）；mermaid 两张整页基线停留在 `736b3f7`，M138（`ca81b7c`）起正文 js 着色产生 952px 差异（<960）被吞、期间门禁一直绿，M149 因标签栏位移重生成基线才把它带出来（reviewer-tabs 逐像素定位，`openspec/changes/add-multi-tabs/tasks.md` §8.4；finding `.tower/comms/findings/20260917-reviewer-tabs-improve-review-md-3-mermaid-952px-960px-m149.md`）。
-- 防线：下次动容差、或加会删/移 UI 的场景时，本地先把该元素删掉跑一次，确认门禁确实 FAIL；删 UI 后逐一核对该元素出现过的所有整页基线时间戳是否随本次更新。
+  第三处现场（2026-10-04，M322，新形态）：分栏态空 pane 引导水印是**新增** UI 元素、整体 835px 落在 960 预算内（reviewer 自实现 pixelmatch threshold=0.2 独立复算坐实）——前两例是既有元素的变化被吞，这例是新增元素整体被吞，拿旧基线对比照绿；守卫完全在结构断言（toBeVisible / toHaveText / toBeHidden），基线仍落账锚定 intended 画面（review `.tower/comms/reviews/review-feat-empty-pane-guide-element-m322-reviewer-empty-pane-guide-m322-r1.md`）。
+- 防线：下次动容差、或加会删/移 UI 的场景时，本地先把该元素删掉跑一次，确认门禁确实 FAIL；删 UI 后逐一核对该元素出现过的所有整页基线时间戳是否随本次更新；新增低于容差预算的 UI 元素时，「在场」守卫必须落在结构断言（存在性 / 文案 / 可见性），不能指望整页像素。
 
 **4. 断言写死了会滚动或跨天复用的产物路径**
 - 症状：诊断日志按 UTC 日期命名而验收 `env/` 目录跨天复用，写死日期的断言此后每天读到上次 run 的旧文件——永久空过；换机又直接 FAIL。

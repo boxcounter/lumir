@@ -612,7 +612,7 @@
 
 ## 待修 findings（不阻塞）
 
-### 真机验收 4 项持续失败（31/47/49/52）：2026-10-02 sweep 起同现，非 pane 化引入（M319 现场，2026-10-04，medium）
+### ~~真机验收 4 项持续失败（31/47/49/52）：2026-10-02 sweep 起同现，非 pane 化引入（M319 现场，2026-10-04，medium）~~ **已核销（2026-10-04，M323/M324/M325 全部合并，核销记录见文末「已核销」）**
 
 **症状**：全量真机验收 77/81 PASS，4 项 FAIL 且单跑复跑仍红（非 flake）：
 31-code-variable-highlight（「md 模式文档逐字节未变」判红——标题 caret 显露态随光标行变化，断言与光标位置耦合）、
@@ -624,6 +624,22 @@
 **影响**：不挡 pane 化；但「全量套件跑绿」的验收标准无法满足——**修好前 dogfood 全量验收的通过线显式扣除这 4 项并保留对照**（tower 已采纳为 interim 口径）。
 
 **建议处置**：立项分别修——31 断言前把光标移回中性行；47/52 查行内重命名输入框不出现（菜单命中/焦点/时序，同根修一处）；49 改用 waitFor 终态。修好后恢复「全量绿」口径。
+
+### 场景 49「指示此刻在场」断言存在假红时间窗（M325 现场，2026-10-04，low）
+
+**症状**：`49-vault-switch-feedback` 的「点 A 行后立即快照」步断言 `has: AXProgressIndicator`（点击瞬间指示在场）。该断言依赖 AX 快照恰好落在装载窗口内——快照来晚（装载已完成、指示已退场）时正向断言落空报红。2026-09-28 因此假红过一次；M325 四跑均 PASS 未动它。
+
+**定性**：失败模式经 M325 reviewer 核实是**假红方向**——它不会掩盖真 bug（指示若从不在场，装载窗口内的快照照样红）。
+
+**建议处置**：另开 mission 收口——改法需要更大的观察窗或探针通道（例如轮询「指示曾在场」而非单次快照），属套件判据形态调整，不是产品缺陷。证据：review `.tower/comms/reviews/review-feat-fix-acceptance-49-vault-switch-feedback-reviewer-fix-acceptance49-m325-r1.md` findings 节。
+
+### 验收套件 `press_key` 键名 DSL 没有 `-` 的拼法（M324 现场，2026-10-04，low）
+
+**症状**：`press_key(keys="-")` 报 `error: empty key DSL`；键名表里有 `minus`，但 `keys` 动作的「整串可打印字符」门会把含 `minus` 的整串降级为盲发无重试（REVIEW.md 第 11 条要求逐字符注入走「回读 + 字节未变才重试」通道）。任何需要键入连字符的测试数据（如带 `-` 的文件名）无法走可回读通道。
+
+**影响**：M324 的两场景（47/52）已改用无连字符测试数据绕开，改名机制等断言语义不受影响。
+
+**建议处置**：finding `.tower/comms/findings/20261004-worker-fix-acceptance47-52-m32-bug-press-key-dsl-acceptance.md` 含修法建议——按 `PRINTABLE_KEY_RE` 分段注入，或给 DSL 补字面拼法 + README 补第三类不可达。立项时一并核「是否还有其他可打印字符无拼法」。
 
 ### harness 会话以 vault 根路径字符串为键，打开 vault 不做规范化：同目录两种拼写各建一个会话（M312 现场，2026-10-03，medium）
 
@@ -3739,3 +3755,9 @@ M292 把打开段移出主线程之后，`do: settle`（判「界面此刻静止
 - **change tasks 8.4**：Alex 在本机切一次真实 vault 后 grep 四条读数——**agent 不能打开他的真实
   vault**（会写 registry / `last_vault` 到 `~/.config/lumir`），由 tower 另行向他收取。
 - change 的归档（§10 / §11 的门禁项）不在本 mission 面内。
+
+- 2026-10-04：**真机验收 4 项预存失败（31/47/49/52）全部修复**（M323 merge `f04276d`、M324 merge `801312e`、M325 merge `f872a66`；review 均一轮 clean，M322 另经一轮 comment rework）：四项根因**全在测试套件/场景侧，产品代码零改动**——
+  - **31-code-variable-highlight**（M323）：断言与光标行耦合——`var-highlight.md` 首行是 heading，`livePreview.ts` 的 ATXHeading 源码显露随光标所在行翻转，旧场景在光标第 1 行（`# ` 显露）记基线、findNext 送光标到第 2 行后（`# ` 隐去）复验。修法=基线改在 clickEditor 后记 + Esc 后移回同一光标行再复验；逐字节 unchangedSince 断言原样保留，反证（注入单字符）实测能红。
+  - **47/52**（M324）：四条根因全套件侧——① 非空值 `<input>` 的读屏名在真机 AX 通道不渲染（WKWebView 行为，场景 56 先例，chromium 层 `tree-menu.spec.ts:138/:512` 措辞断言原样守着），判据换为「在场 + 获焦 + 预填值 == 原名」（focused 严格强于原子串断言，非放宽）；② `press_key` 键名 DSL 无 `-` 拼法（绕开，缺口另立条目，见「待修 findings」）；③ `execute.mjs` 的 `fileInfo` 对目录恒 null（sha256 走 readFile 遇目录 EISDIR 被吞）——修为 lstat 旁路：目录只回 mtime/size、目录上 sha256 类与 has/not 判据一律显式 FAIL，文件路径语义逐字不变（reviewer 复核全 82 场景使用点：目录 exists 仅 47/48/旧52 三处，record 类零目录使用，48 真机复跑绿）；④ 场景 47 两处自身缺陷（跨 run 剪贴板残留改 in-run 对照；tab 联动段自相矛盾改写对齐实际意图）。47 自 M244 起首次转绿（119 断言）、52 自 M258 起首次转绿（38 断言）；反证（beginRename 打桩）双红在新判据上。
+  - **49-vault-switch-feedback**（M325）：`do: settle` 在装载途中误判「界面静止」——vault 打开段移出 IPC 主线程（M296）后装载期间前端状态静止，settle 提前返回；M296 当时修好 60/67，49 漏改。修法=两处加 `do: waitFor` 终态门（入口按钮换目标 vault + `not: AXProgressIndicator`），原 settle 与全部断言一条未删。反证（has 换成非终态串）30s/38 次读取超时 FAIL。
+  「全量绿通过线显式扣除 4 项」的 interim 口径自本次合并起**撤销**，恢复不扣除口径。遗留两条另立条目（见「待修 findings」）：49「指示此刻在场」假红时间窗、`press_key` 键名 DSL 无 `-` 拼法。
