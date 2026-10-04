@@ -384,14 +384,28 @@ function findByAny(nodes, { role, any, nth = 0 }) {
   return hits[nth] ?? null;
 }
 
+/**
+ * 路径读数：**文件路径的语义逐字不变**（`stat` + sha256），目录单独走一条旁路（M324）。
+ *
+ * 为什么必须有这条旁路：目录上 `readFile` 抛 EISDIR、被下面的 catch 吞成 `null`，于是
+ * `file: { path: <目录>, exists: true }` **恒红**、`exists: false` **恒绿**——正是 REVIEW.md
+ * 第 2 条那类「读不到被当成不存在」。目录只回 `{ mtimeMs, size, isDir: true }`（不读 sha256，
+ * 目录没有内容这一说），`exists` 因此拿到真值；要判「没变过」用 `mtimeUnchangedSince`，
+ * sha256 类判据（`changedSince` / `unchangedSince`）在目录上**一律判 FAIL**（见文件断言分支）。
+ */
 async function fileInfo(file) {
   try {
     const st = await stat(file);
+    if (st.isDirectory()) return { mtimeMs: st.mtimeMs, size: st.size, isDir: true };
     return { sha256: await sha256(file), mtimeMs: st.mtimeMs, size: st.size };
   } catch {
     return null;
   }
 }
+
+/** 目录上的 sha256 类判据没有可观测量（两边都缺 sha256 会让 `undefined === undefined` 恒真）。 */
+const DIR_SHA256_HINT =
+  "是目录：sha256 类判据对目录没有可观测量，请改用 mtimeUnchangedSince / exists";
 
 /**
  * 跑一个场景。ctx: { cu, app, evidence, resultsRoot, restartApp() }
@@ -606,7 +620,7 @@ export async function runScenario(ctx, scenario) {
       const label2 = spec.label ?? label;
       if (spec.exists !== undefined) {
         return spec.exists === Boolean(info)
-          ? pass(label2, info ? `${spec.path} 存在` : `${spec.path} 不存在`)
+          ? pass(label2, info ? `${spec.path} ${info.isDir ? "（目录）" : ""}存在` : `${spec.path} 不存在`)
           : fail(`${label2}（期望 exists=${spec.exists}，实际 ${Boolean(info)}）`);
       }
       if (!info && (spec.has !== undefined || spec.not !== undefined || spec.changedSince !== undefined || spec.unchangedSince !== undefined)) {
@@ -615,11 +629,13 @@ export async function runScenario(ctx, scenario) {
       if (spec.changedSince !== undefined) {
         const before = vars[spec.changedSince];
         if (!before) return fail(`${label2}（未记录基线 ${spec.changedSince}）`);
+        if (info?.isDir || before.isDir) return fail(`${label2}（${spec.path} ${DIR_SHA256_HINT}）`);
         const ok = !info ? false : before.sha256 !== info.sha256;
         return ok ? pass(label2, `${before.sha256} -> ${info.sha256}`) : fail(`${label2}（sha256 未变：${before.sha256}）`, `mtime=${info?.mtimeMs}`);
       }
       if (spec.unchangedSince !== undefined) {
         const before = vars[spec.unchangedSince];
+        if (info?.isDir || before?.isDir) return fail(`${label2}（${spec.path} ${DIR_SHA256_HINT}）`);
         const ok = Boolean(info) && before && before.sha256 === info.sha256;
         return ok ? pass(label2, `仍为 ${info.sha256}`) : fail(`${label2}（内容已变：${before?.sha256} -> ${info?.sha256}）`);
       }
@@ -643,12 +659,15 @@ export async function runScenario(ctx, scenario) {
       if (spec.has !== undefined) {
         const m = matcher(spec.has);
         if (!info) return fail(`${label2}（文件不存在：${spec.path}）`);
+        // 目录没有内容这一说：读了会抛 EISDIR（M324 起路径读数认得目录，这里必须自己挡）。
+        if (info.isDir) return fail(`${label2}（${spec.path} 是目录：内容类判据 has/not 只对文件成立）`);
         const text = await readText(file);
         return m.test(text) ? pass(label2) : fail(`${label2}（期望含 ${m.show}）`, JSON.stringify(text.slice(0, 300)));
       }
       if (spec.not !== undefined) {
         const m = matcher(spec.not);
         if (!info) return fail(`${label2}（文件不存在：${spec.path}）`);
+        if (info.isDir) return fail(`${label2}（${spec.path} 是目录：内容类判据 has/not 只对文件成立）`);
         const text = await readText(file);
         return !m.test(text) ? pass(label2) : fail(`${label2}（期望不含 ${m.show}）`);
       }

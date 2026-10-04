@@ -38,10 +38,18 @@ steps:
       - label: 树里有 aab-tab.md
         ax: { has: "aab-tab.md" }
 
-  - name: 反向铺底：此刻剪贴板**不含**待复制的绝对路径
+  - name: 反向铺底：先把剪贴板置成**另一个**文件的绝对路径（下面 aaa-menu.md 的正向断言因此有区分度）
+    do: click
+    target: { role: AXButton, name: "^aab-tab.md$", button: right }
     expect:
-      - label: 剪贴板不含 $vault/aaa-menu.md（下面的正向断言因此有区分度）
-        clipboard: { not: "$vault/aaa-menu.md" }
+      - label: 文件行菜单在场（铺底那一次也走真实右键路径）
+        ax: { has: "复制完整路径" }
+  - name: 点「复制完整路径」（铺底那一次）
+    do: click
+    target: { any: "复制完整路径" }
+    expect:
+      - label: 剪贴板变成 aab-tab.md 的绝对路径（**in-run 对照**：不依赖跨 run 的剪贴板残留——上一轮 run 结束时剪贴板里是 aaa-menu.md 的路径，对不上就红）
+        clipboard: { exact: "$vault/aab-tab.md" }
 
   - name: 右键文件行 → 菜单出现且含文件项集（四项、不含新建项）
     do: click
@@ -178,28 +186,34 @@ steps:
     do: click
     target: { any: "重命名…" }
     expect:
-      - label: 行内出现输入框（读屏名带原名）
-        ax: { has: "重命名 aaa-menu.md" }
+      - label: 行内出现输入框，预填的是原名（读屏名 `重命名 {名称}` 的措辞在真机 AX 通道上读不到，见「已知边界」；这里是同一份信息里可读的那一半）
+        ax: { has: '/AXTextField = "aaa-menu.md" /' }
+      - label: 输入框持焦点（下一步的逐字符注入落在它身上）
+        ax: { focused: "AXTextField" }
       - shot: 内联重命名输入框
   - name: 全选原名（chord 盲发不重试）
     do: key
     key: "cmd+a"
   - name: 输入新名（逐字符，回读校验 + 只在字节未变时重试）
     do: keys
-    keys: ["a", "a", "a", "-", "r", "e", "n", ".", "m", "d"]
+    keys: ["a", "a", "a", "r", "e", "n", ".", "m", "d"]
     expect:
-      - label: 输入框里是 aaa-ren.md（注入真的落地了）
-        ax: { has: "aaa-ren.md" }
+      - label: 输入框里是 aaaren.md（注入真的落地了）
+        ax: { has: '/AXTextField = "aaaren.md" /' }
   - name: Enter 提交
     do: key
     key: "return"
     expect:
-      - label: 磁盘上出现 aaa-ren.md
-        file: { path: aaa-ren.md, exists: true }
+      - label: 磁盘上出现 aaaren.md
+        file: { path: aaaren.md, exists: true }
       - label: 磁盘上不再有 aaa-menu.md
         file: { path: aaa-menu.md, exists: false }
-      - label: 树里出现 aaa-ren.md（watcher 回响收敛）
-        ax: { has: "aaa-ren.md" }
+  - name: 等 watcher 回响把新名收敛进树（改名 = deleted:old + created:new，不能拿 Enter 后的立即读当判据）
+    do: waitFor
+    waitFor: { has: ["aaaren.md"] }
+    expect:
+      - label: 树里出现 aaaren.md（watcher 回响收敛）
+        ax: { has: "aaaren.md" }
       - label: 全程无「已被外部删除」误报（app 内改名不是外部删除）
         ax: { not: "当前文件已被外部删除" }
       - label: 全程无「检测到外部修改」误报
@@ -208,7 +222,7 @@ steps:
 
   - name: 内联重命名撞名：改名到既有 note.md → 行内给原因、磁盘不变
     do: click
-    target: { role: AXButton, name: "^aaa-ren.md$", button: right }
+    target: { role: AXButton, name: "^aaaren.md$", button: right }
     expect:
       - label: 菜单在场
         ax: { has: "重命名…" }
@@ -216,8 +230,10 @@ steps:
     do: click
     target: { any: "重命名…" }
     expect:
-      - label: 输入框在场（读屏名带当前名）
-        ax: { has: "重命名 aaa-ren.md" }
+      - label: 输入框在场且预填的是当前名
+        ax: { has: '/AXTextField = "aaaren.md" /' }
+      - label: 输入框持焦点
+        ax: { focused: "AXTextField" }
   - name: 全选并输入撞名
     do: key
     key: "cmd+a"
@@ -233,8 +249,8 @@ steps:
     expect:
       - label: 既有 note.md 逐字节不变（MUST NOT 覆盖）
         file: { path: note.md, has: "相对目标" }
-      - label: aaa-ren.md 仍在（改名被拒）
-        file: { path: aaa-ren.md, exists: true }
+      - label: aaaren.md 仍在（改名被拒）
+        file: { path: aaaren.md, exists: true }
       - shot: 撞名拒绝
 
   - name: 忽略集名也拒绝（.git）
@@ -250,20 +266,20 @@ steps:
     do: key
     key: "return"
     expect:
-      - label: aaa-ren.md 仍在磁盘上（忽略集名不得改名成功）
-        file: { path: aaa-ren.md, exists: true }
+      - label: aaaren.md 仍在磁盘上（忽略集名不得改名成功）
+        file: { path: aaaren.md, exists: true }
   - name: Esc 取消编辑态
     do: key
     key: "escape"
     expect:
-      - label: 编辑态已退出（输入框的读屏名不在 AX 里）
-        ax: { not: "重命名 aaa-ren.md" }
-      - label: 树里仍显示 aaa-ren.md
-        ax: { has: "aaa-ren.md" }
+      - label: 编辑态已退出（浮层输入框是全应用唯一的 AXTextField——常态不该有它；旧写法断言读屏名不在，而那条名字在真机通道上从来没渲染过，等于恒真）
+        ax: { not: "AXTextField" }
+      - label: 树里仍显示 aaaren.md
+        ax: { has: "aaaren.md" }
 
   - name: 删除进废纸篓：确认框 → 确认 → vault 内消失
     do: click
-    target: { role: AXButton, name: "^aaa-ren.md$", button: right }
+    target: { role: AXButton, name: "^aaaren.md$", button: right }
     expect:
       - label: 菜单在场
         ax: { has: "移到废纸篓…" }
@@ -274,14 +290,14 @@ steps:
       - label: 确认框出现（两步动作的第二步）
         ax: { has: "移到废纸篓？" }
       - label: 文件档正文点名条目
-        ax: { has: "aaa-ren.md 会移到系统废纸篓。" }
+        ax: { has: "aaaren.md 会移到系统废纸篓。" }
       - shot: 删除确认框（文件）
   - name: 点确认
     do: click
-    target: { any: "^移到废纸篓$" }
+    target: { any: "/^移到废纸篓$/" }
     expect:
       - label: vault 内已无该文件（移到废纸篓）
-        file: { path: aaa-ren.md, exists: false }
+        file: { path: aaaren.md, exists: false }
       - shot: 删除之后
 
   - name: 目录删除的确认文案必须明示「连同其中全部内容」（取消，不真删）
@@ -350,13 +366,48 @@ steps:
   - name: 输入 freshdir
     do: keys
     keys: ["f", "r", "e", "s", "h", "d", "i", "r"]
+    expect:
+      - label: 输入落地（空输入框的基线是空串，出现次数判据因此有区分度）
+        ax: { has: '/AXTextField = "freshdir" /' }
   - name: Enter 提交
     do: key
     key: "return"
     expect:
-      - label: 磁盘上出现 menu-sub/freshdir 目录
+      - label: 磁盘上出现新目录（`exists` 对目录成立——M324 起的目录旁路；改前这条恒红）
         file: { path: menu-sub/freshdir, exists: true }
+  - name: 等新目录的行收敛进树（新建的节点由 watcher 回响带进来，不能拿 Enter 后的立即读当判据）
+    do: waitFor
+    waitFor: { has: ["menu-sub/freshdir"] }
+    expect:
+      - label: 树里出现新目录的条目（后端从磁盘枚举出来的行）
+        ax: { has: "menu-sub/freshdir" }
       - shot: 新建子目录之后
+
+  # 加固：目录的磁盘真值**另有一条不依赖目录旁路的判据**——在它里面再建一个文件，那个文件在磁盘上
+  # 存在 ⇒ 它的父目录必然是真目录。目录旁路（`exists` 认得目录）与本条互为独立见证。
+  - name: 在新目录下再新建一个文件（把「目录真的落在磁盘上」变成可达的磁盘断言）
+    do: click
+    target: { role: AXButton, name: "^menu-sub/freshdir$", button: right }
+    expect:
+      - label: 新目录的菜单在场（目录专属项证明右键落在目录行上）
+        ax: { has: "新建文件…" }
+  - name: 点「新建文件…」
+    do: click
+    target: { any: "新建文件…" }
+    expect:
+      - label: 行内输入框出现
+        ax: { has: "新建文件的名称" }
+  - name: 输入 probe.md
+    do: keys
+    keys: ["p", "r", "o", "b", "e", ".", "m", "d"]
+  - name: Enter 提交
+    do: key
+    key: "return"
+    expect:
+      - label: 磁盘上出现 menu-sub/freshdir/probe.md（父目录是真的 ⇒ 新建子目录真的落了盘）
+        file: { path: menu-sub/freshdir/probe.md, exists: true }
+      - label: 新建的是空文件
+        file: { path: menu-sub/freshdir/probe.md, has: "" }
 
   - name: tab 联动：打开中的 dirty 文件被改名——tab 就地换名、内容不丢、不误报
     do: open
@@ -376,9 +427,13 @@ steps:
       - label: 反向：探针此刻不在磁盘上
         file: { path: aab-tab.md, not: "M244DIRTY" }
       - shot: 打开中的 dirty 文件
+  # 右键对象就是上一步打开并改脏的那一个文件（M324 修正）：旧稿在这里右键 `note.md`（一个没打开、
+  # 也没改动的文件），末步却去删 `aab-ren.md`（这个路径从没被创建过）——三步互相矛盾，且 `note.md`
+  # 的树行排在字母表靠后、AX 报的内容坐标 y≈1605 落在 768 高的窗口之外，而套件没有滚动动作
+  #（README「已知边界」），右键走真实指针坐标根本点不到它。打开中 + 靠近树顶的 `aab-tab.md` 两条都满足。
   - name: 右键打开中的文件 → 重命名
     do: click
-    target: { role: AXButton, name: "^note.md$", button: right }
+    target: { role: AXButton, name: "^aab-tab.md$", button: right }
     expect:
       - label: 菜单在场
         ax: { has: "重命名…" }
@@ -386,22 +441,35 @@ steps:
     do: click
     target: { any: "重命名…" }
     expect:
-      - label: 输入框在场
-        ax: { has: "重命名 note.md" }
+      - label: 输入框在场且预填的是当前名
+        ax: { has: '/AXTextField = "aab-tab.md" /' }
+      - label: 输入框持焦点
+        ax: { focused: "AXTextField" }
   - name: 全选并输入新名
     do: key
     key: "cmd+a"
-  - name: 输入 note-renamed.md
+  - name: 输入 aabren.md
     do: keys
-    keys: ["n", "o", "t", "e", "-", "r", "e", "n", "a", "m", "e", "d", ".", "m", "d"]
+    keys: ["a", "a", "b", "r", "e", "n", ".", "m", "d"]
+    expect:
+      - label: 输入框里是 aabren.md（注入真的落地了）
+        ax: { has: '/AXTextField = "aabren.md" /' }
   - name: Enter 提交
     do: key
     key: "return"
     expect:
-      - label: 磁盘上出现 note-renamed.md
-        file: { path: note-renamed.md, exists: true }
-      - label: 标签就地换名（不再有名为 note.md 的标签）
-        ax: { not: "/AXRadioButton \\(note\\.md\\)/" }
+      - label: 磁盘上出现 aabren.md
+        file: { path: aabren.md, exists: true }
+      - label: 磁盘上不再有 aab-tab.md（改名不是复制）
+        file: { path: aab-tab.md, exists: false }
+  - name: 等改名收敛（树行来自 watcher 回响；下一步要右键的那一行必须先到）
+    do: waitFor
+    waitFor: { has: ["aabren.md"] }
+    expect:
+      - label: 标签就地换名成新名（dirty 标签的读屏名带「（未保存）」后缀，故只锚前缀）
+        ax: { has: "/AXRadioButton \\(aabren\\.md/" }
+      - label: 旧名的标签不再存在（与上一条配对：负向断言旁边必有正观测）
+        ax: { not: "/AXRadioButton \\(aab-tab\\.md/" }
       - label: 未保存内容仍在编辑器里（改名不改字节）
         editor: { has: "M244DIRTY" }
       - label: 无「检测到外部修改」误报（remap 后 created:new 命中 dirty 会话的那条分支）
@@ -412,7 +480,7 @@ steps:
 
   - name: 删除打开中的文件：沿用现状处置（sticky 提示 + 内容不丢）
     do: click
-    target: { role: AXButton, name: "^aab-ren.md$", button: right }
+    target: { role: AXButton, name: "^aabren.md$", button: right }
     expect:
       - label: 菜单在场
         ax: { has: "移到废纸篓…" }
@@ -424,10 +492,10 @@ steps:
         ax: { has: "移到废纸篓？" }
   - name: 点确认
     do: click
-    target: { any: "^移到废纸篓$" }
+    target: { any: "/^移到废纸篓$/" }
     expect:
       - label: vault 内已无该文件
-        file: { path: aab-ren.md, exists: false }
+        file: { path: aabren.md, exists: false }
       - label: sticky 提示出现（与外部删除同一处置）
         ax: { has: "当前文件已被外部删除；编辑器中的内容未丢失" }
       - label: 编辑器内容未丢（未保存的改动还在）
@@ -461,12 +529,15 @@ Alex 请求的六个条目级操作（删除、重命名、复制完整路径、
    取值判据在 chromium 层 `tests/visual/scenes/tree-menu.spec.ts` 的两条 M251 用例。
 2. **删除 = 移到废纸篓 + 确认框**：确认正文按条目类型分两档（目录档明示「连同其中全部内容」），
    确认后 vault 内条目消失。
-3. **树内联重命名**：行名换成输入框（读屏名带原名）、提交后磁盘改名、**撞名与忽略集名被拒**
-   且磁盘逐字节不变。
-4. **复制完整路径**：剪贴板读到的是**绝对路径**（`$vault/相对路径`）；判据带反向铺底。
+3. **树内联重命名**：行名换成输入框（预填原名、持焦点）、提交后磁盘改名、**撞名与忽略集名被拒**
+   且磁盘逐字节不变。输入框的**读屏名**（`重命名 {名称}`）在真机 AX 通道上读不到（见「已知边界」，
+   与场景 56 的同款输入框同因），措辞那条判据落在 chromium 层。
+4. **复制完整路径**：剪贴板读到的是**绝对路径**（`$vault/相对路径`）；判据带**in-run 对照**——
+   先复制另一个文件并断言，再复制目标文件并断言（不依赖跨 run 的剪贴板残留）。
 5. **在 Finder 中显示**：只读动作——磁盘 sha256 未变、无错误提示（不验 Finder 窗口本身，
    见「已知边界」）。
-6. **目录下新建**：新建文件落盘为空文件且**自动打开**；新建子目录落盘。
+6. **目录下新建**：新建文件落盘为空文件且**自动打开**；新建子目录落盘（目录本身的磁盘真值
+   由「在它里面再建一个文件」锚定，见「已知边界」）。
 7. **tab 联动**（裁决点 5）：打开中的 dirty 文件被改名时，标签就地换名、未保存内容保留、
    **两种误报（「已被外部删除」/「检测到外部修改」）都不出现**（这是 remap + 回响抑制的
    真机判据）；删除打开中的文件时沿用既有外部删除处置（sticky 提示 + 内容不丢）。
@@ -480,6 +551,7 @@ Alex 请求的六个条目级操作（删除、重命名、复制完整路径、
 | 改名 / 新建 / 删除的结果 | **磁盘事实**（`file.exists` / `has` / `unchangedSince`）+ **AX 树** | 命令返回值读不到（套件没有 IPC 读数通道）；磁盘是名实相符的最终判据 |
 | 剪贴板内容 | **`clipboard` 断言形态**（固定 `osascript -e 'the clipboard'`） | 剪贴板既不在 AX 也不在磁盘；套件刻意不引入通用 shell 通道，只开这一个窄命令 |
 | tab 是否误报 | **AX 文本的负向断言 + 正向配对** | 提示是 sticky toast，AX 里可见；负向断言必须配「同一动作的正向锚点」（本节每条负向断言前面都有正向断言），否则会退化成恒真（REVIEW.md 第 1 条） |
+| 内联编辑的输入框起来了 | **`/AXTextField = "<原名>" /` + `focused: AXTextField`** | 读屏名那条在真机通道上不可达（见「已知边界」）；预填值就是读屏名里 `{名称}` 那一段，获焦则钉住「下一步的按键落进它」——两条一起给的是同一个信息，且「哪一行起来的」由值钉死 |
 
 ## 本场景用到的套件能力（两处窄扩展，M244，tower 裁决扩 scope）
 
@@ -509,12 +581,38 @@ Alex 请求的六个条目级操作（删除、重命名、复制完整路径、
   真机只能给截图（`行空白区右键菜单` 那张里可以肉眼看到那一行被高亮）；「底色 = `--sel`、
   字重不动、关菜单即撤、eink 选中态前景（M291 起为明度带 + 黑字）」四条判据在 chromium 层
   （`tests/visual/scenes/tree-menu.spec.ts` 的两条 M251 用例，含同指针位置的前后对照）。
+- **真机 AX 读不到非空值输入框的读屏名（M324 实测，判据因此换了形态）**：WKWebView 暴露给 AX 文本
+  通道的 `<input type="text">`，**值为空**时带上读屏名（`AXTextField (新建文件的名称)`），**值非空**
+  时只剩 `= "值"`——同一个「新建文件」输入框，用户一敲键就变成 `AXTextField = "sh."`（现场
+  `test-results/acceptance/2026-09-26/47-file-tree-context-menu/ax/23-_动作_输入_fresh.md.txt`）。
+  行内重命名框是**预填**的（值 = 原名），所以 `ax: { has: "重命名 {名称}" }` 永远读不到——这不是
+  产品缺陷，与场景 56（goto-line 的同款预填输入框）是同一条边界。读屏名措辞仍在
+  `tests/visual/scenes/tree-menu.spec.ts:138` / `:512` 逐字断言（`.ft-edit` 的 `aria-label`），
+  本场景改判**预填值 + 获焦**（同一份信息里可读的那一半）。旧稿那条「编辑态已退出」的负向断言
+  同样是空转的（`ax: { not: "重命名 …" }` 在任何时刻都成立），已换成 `ax: { not: "AXTextField" }`。
+- **`file.exists` 对目录的语义（M324 起已修）**：改动前 `lib/execute.mjs` 的 `fileInfo()` 用
+  `readFile` 算 sha256，目录抛 EISDIR 被吞成 null ⇒ 目录一律被判「不存在」：`exists: true` 假红
+  （本场景的「新建子目录落盘」原本就卡在这里，与级联无关的独立缺陷）、`exists: false` 假绿。
+  M324 给 `fileInfo` 加了目录旁路（目录只回 mtime/size、不读 sha256；`has/not` 与 sha256 类
+  判据在目录上**一律判 FAIL**而不是抛异常/恒真）。本场景另留一条**不依赖该旁路**的独立见证：
+  在新目录里再建一个文件并断言那个文件在磁盘上（文件存在 ⇒ 它的父目录必然是真目录）。
+- **`any` 目标要写正则形态（M324 修正）**：`click` 的 `target.name` 走**裸正则源**
+  （`findNode` 直接 `new RegExp(name)`），而 `target.any` 走 `matcher()`——只有 `/…/` 包起来的才
+  解成正则，否则按**子串**比。旧稿的 `any: "^移到废纸篓$"` 因此永远匹配不到（拿带 `^$` 的字面量
+  去 `includes`）：确认框的按钮读屏名正是 `AXButton (移到废纸篓)`，现在写成
+  `any: "/^移到废纸篓$/"` 锚定它，不与菜单项「移到废纸篓…」混淆。
+- **键入的新名不带连字符（M324，通道约束）**：`press_key` 的键名 DSL 没有 `-` 的拼法
+  （`keys: ["-"]` 报 `empty key DSL`），而含 `minus` 的整串会被套件的「整串可打印字符」门降级成
+  **盲发无重试**（丢掉 README「已知边界」要求的「回读 + 只在字节未变时重试」）。因此本场景两次
+  键入式改名都用无连字符的名字（`aaa-menu.md` → `aaaren.md`、`aab-tab.md` → `aabren.md`）；
+  改名机制与字符集无关，断言语义不变。
 - **不覆盖**：跨目录移动（非目标）、多选批量操作（非目标）、vault 根本身的右键（非目标）。
 
 ## 环境与副作用
 
 - 合成 vault `/tmp/lumir-m102-acceptance` + 隔离 `XDG_CONFIG_HOME`；端口 1430。
-- **本场景会真的改动合成 vault**：改名（plain.md → renamed.md）、删除（进系统废纸篓）、新建
-  （menu-sub/ 下的文件与目录）。这些都在合成 vault 里，用户真实 vault 全程只读。
+- **本场景会真的改动合成 vault**：改名（`aaa-menu.md` → `aaaren.md`、打开中的 `aab-tab.md` →
+  `aabren.md`）、删除（进系统废纸篓）、新建（`menu-sub/` 下的文件与子目录）。这些都在合成 vault
+  里，用户真实 vault 全程只读。
 - **废纸篓**：被删的条目真的进系统废纸篓（`trash::delete` 的平台语义，无法在测试里绕过）。
   场景因此不探测 `$HOME/.Trash` 的内容，只断言「vault 内消失」——套件不隔离 HOME。
