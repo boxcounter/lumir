@@ -266,8 +266,9 @@ const paneLayout = createPaneLayout<EditorSession, EditorHandle>({
 });
 
 /** 为一个 pane 建编辑器实例与其 DOM 槽（pane-layout 的 createHandle 注入点）。
- *  root pane（恒为 id 1）复用 shell 建好的挂载元素与标签槽——单 pane DOM 与 M316 之前
- *  逐字节一致（零基线更新判据）；pane B 的挂载元素 / 标签槽 / 分隔条全部现建，
+ *  root pane（恒为 id 1）复用 shell 建好的挂载元素与标签槽——单 pane 像素与 M316 之前
+ *  一致（零基线更新判据；M322 起 mountEl 内多一个常驻 hidden 的空 pane 引导元素，
+ *  绝对定位 + hidden，零像素影响）；pane B 的挂载元素 / 标签槽 / 分隔条全部现建，
  *  close 时整批移除（见 disposePaneHandle）。 */
 function createPaneHandle(paneId: PaneId): EditorHandle {
   const rootSlot = paneId === 1;
