@@ -1,7 +1,11 @@
 <!DOCTYPE html>
 <!--
-  Lumir 原型 · Phase 2「harness 入 pane + chat UX 重做」（ADR 0008 Decision 8）第三轮
-  本轮: pin 机制全量移除（Alex 2026-10-05 裁决），由摘录胶囊取代；harness 顶栏并入窗口标题栏；
+  Lumir 原型 · Phase 2「harness 入 pane + chat UX 重做」（ADR 0008 Decision 8）第四轮
+  本轮: composer 改混排编辑区（Alex 2026-10-06 需求）——摘录胶囊为原子 chip 嵌在文字流中，
+        光标可在任意胶囊前后继续输入；每颗胶囊带小号编号 #N，transcript 与 agent 作答同步引用；
+        新增开发者预览块，实时把草稿序列化为发给模型的消息（摘录→问题 交错，编号对 AI 可见）；
+        「摘录到对话」为真交互，新胶囊插入当前光标处而非追加到末尾。
+  三轮: pin 机制全量移除（Alex 2026-10-05 裁决），由摘录胶囊取代；harness 顶栏并入窗口标题栏；
         产品名+版本移至标题栏最左（traffic 空位内）；ctx% 移入 composer 控制行。
   用法: index.html?screen=1..10&theme=light|dark|eink（页面右下角有内置控制面板，点击切屏/切主题；
         截图脚本用 &panel=0 关面板）
@@ -762,61 +766,90 @@ svg { display: block; }
   padding: 1px 5px;
   border-radius: var(--r4);
 }
-/* 摘录胶囊（pin 机制的替代，Alex 2026-10-05 裁决）：用户在正文选中的片段进入对话的载体。
-   一颗胶囊 = 文档名 + 标题锚点 + 短摘录；点击跳回原文位置并高亮；一条消息可挂多颗。 */
-.cap {
-  display: flex;
-  align-items: flex-start;
-  gap: var(--sp-3);
-  width: 100%;
-  padding: var(--sp-2) var(--sp-3);
+/* 摘录胶囊 chip（第四轮：混排形态，Alex 2026-10-06 需求）——胶囊作为原子内联节点嵌在文字流中：
+   composer 混排编辑区内为 contenteditable=false 的不可拆分节点；transcript 用户消息里同样以
+   chip 与问题文字交错呈现。一颗 chip = 引号 glyph + 小号编号 #N + 文档名；标题锚点与摘录原文
+   由 title 与开发者预览（序列化）承载；点击跳回原文位置并高亮；composer 内的 chip 带 × 移除。 */
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 100%;
+  height: 21px;
+  padding: 0 7px;
+  margin: 0 1px;
+  vertical-align: -5px;
   background: var(--agent-bg);
   border: 1px solid var(--border-soft);
-  border-radius: var(--r6);
-  text-align: left;
+  border-radius: 11px;
+  font-size: var(--fs-label-s);
+  line-height: 1;
+  color: var(--text-2);
+  white-space: nowrap;
+  user-select: none;
+  cursor: pointer;
   transition: border-color var(--dur-ui) var(--ease-standard), background var(--dur-ui) var(--ease-standard);
 }
-.cap:hover { border-color: var(--border); background: var(--hover); }
-:root[data-theme="eink"] .cap:hover { border-width: 1.4px; }
-.cap .cap-glyph { flex: none; margin-top: 2px; color: var(--text-3); }
-.cap .cap-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
-.cap .cap-src {
+.chip:hover { border-color: var(--border); background: var(--hover); }
+:root[data-theme="eink"] .chip:hover { border-width: 1.4px; }
+.chip .chip-glyph { flex: none; display: flex; color: var(--text-3); }
+.chip .chip-n { flex: none; font-family: var(--font-mono); font-weight: var(--fw-semibold); color: var(--accent); }
+.chip .chip-src {
   font-family: var(--font-mono);
-  font-size: var(--fs-label-s);
   color: var(--text);
-  display: flex;
-  align-items: center;
-  gap: var(--sp-2);
-  white-space: nowrap;
-  overflow: hidden;
-}
-.cap .cap-src .cap-anchor {
-  font-family: var(--font-sans);
-  color: var(--text-3);
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.cap .cap-ex {
-  margin-top: 1px;
-  font-size: var(--fs-meta);
-  color: var(--text-2);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.cap .cap-x {
+.chip .chip-x {
   flex: none;
-  width: 18px;
-  height: 18px;
+  width: 14px;
+  height: 14px;
   border-radius: var(--r4);
   display: flex;
   align-items: center;
   justify-content: center;
   color: var(--text-3);
 }
-.cap .cap-x:hover { background: var(--hover); color: var(--text); }
-/* 发送后沉淀：用户消息里附着的摘录胶囊（可点击跳回原文） */
-.msg .att-cap { margin-bottom: var(--sp-1); }
+.chip .chip-x:hover { background: var(--hover); color: var(--text); }
+
+/* 混排编辑区（屏 5 composer）：contenteditable，chip 为原子节点，光标可在任意胶囊前后输入；
+   其余屏沿用下方 textarea（屏 5 隐藏） */
+.h-editor {
+  display: none;
+  min-height: 46px;
+  max-height: 150px;
+  overflow-y: auto;
+  padding: var(--sp-3) var(--sp-4) var(--sp-1);
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui);
+  color: var(--text);
+  outline: none;
+  word-break: break-word;
+}
+.h-editor:empty::before { content: attr(data-placeholder); color: var(--text-3); pointer-events: none; }
+
+/* 开发者预览（屏 5，composer 上方）：把草稿实时序列化为发给模型的消息——
+   证明编号与「摘录→问题」交错顺序对 AI 明确可见 */
+.dev-preview { display: none; margin-bottom: var(--sp-2); }
+.dp-label {
+  margin-bottom: var(--sp-1);
+  font-size: var(--fs-micro);
+  font-weight: var(--fw-semibold);
+  letter-spacing: 0.05em;
+  color: var(--text-3);
+}
+.dp-body {
+  font-family: var(--font-mono);
+  font-size: var(--fs-label-s);
+  line-height: var(--lh-code);
+  color: var(--text-2);
+  background: var(--code-bg);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--r6);
+  padding: var(--sp-2) var(--sp-3);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
 
 /* 复制消息 affordance：hover 时浮现在 who 行右侧；点击后短暂变为「已复制」 */
 .msg .copy-btn {
@@ -946,19 +979,6 @@ body[data-screen="8"] .msg .copy-btn.copied { opacity: 1; }
 .think .th-body p { margin: var(--sp-2) 0; }
 .think .th-body p:first-child { margin-top: 0; }
 .think .th-body p:last-child { margin-bottom: 0; }
-
-/* ---- 摘录胶囊区（composer 内、输入框上方；多胶囊累积，随一条消息一次发出） ---- */
-.h-caps {
-  display: none;
-  flex-direction: column;
-  gap: var(--sp-2);
-  padding: var(--sp-2) var(--sp-2) 0;
-}
-.h-caps .caps-hint {
-  font-size: var(--fs-micro);
-  color: var(--text-3);
-  padding: 0 var(--sp-1);
-}
 
 /* ---- 编辑器侧：摘录的两种瞬态（均非常驻装饰；pin 的左边线/tint/行尾图标已随机制移除） ---- */
 /* 选中文本 → 浮动「摘录到对话」钮：胶囊的创建手势（本原型建议形态，未经裁决）。
@@ -1164,7 +1184,9 @@ body[data-screen="4"] .h-usage-normal, body[data-screen="5"] .h-usage-normal,
 body[data-screen="7"] .h-usage-normal, body[data-screen="8"] .h-usage-normal,
 body[data-screen="9"] .h-usage-normal, body[data-screen="10"] .h-usage-normal { display: flex; }
 body[data-screen="7"] .sess-pop { display: block; }
-body[data-screen="5"] .h-caps { display: flex; }
+body[data-screen="5"] .h-editor { display: block; }
+body[data-screen="5"] .h-box textarea { display: none; }
+body[data-screen="5"] .dev-preview { display: block; }
 body[data-screen="9"] .think { display: block; }
 body[data-screen="10"] .ctl-pop { display: block; }
 body[data-screen="10"] #eff-chip { background: var(--hover); color: var(--text); }
@@ -1176,8 +1198,6 @@ body[data-screen="5"] .doc li.quoted { background: var(--sel); border-radius: va
 body[data-screen="5"] .doc li.flash { background: var(--pending-tint); border-radius: var(--r4); }
 :root[data-theme="eink"] body[data-screen="5"] .doc li.flash { background: rgba(0, 0, 0, 0.1); }
 body[data-screen="5"] .quote-fab { display: flex; }
-/* 屏 5 composer 预填问题文本（多胶囊随一条消息发出） */
-body[data-screen="5"] .h-box textarea { height: 52px; }
 
 /* ============ 原型控制面板（右下角；?panel=0 关闭，截图脚本用之） ============ */
 .proto-panel {
@@ -1450,31 +1470,15 @@ body[data-screen="5"] .h-box textarea { height: 52px; }
           </div>
         </div>
 
-        <!-- 屏 5：多摘录胶囊一次发出（一条用户消息挂两颗胶囊，agent 分条作答；胶囊可点击跳回原文） -->
+        <!-- 屏 5：摘录混排——一条用户消息里 chip 与问题文字交错（每问对准一颗胶囊）；agent 按 #N 分条作答 -->
         <div class="tx-b">
           <div class="msg user">
             <div class="who">你<span class="when">· 1 分钟前</span></div>
-            <div class="body">
-              <button class="cap att-cap" data-jump="q1" title="跳转到原文位置">
-                <span class="cap-glyph"><svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor"><path d="M3 3h4.5v4.5c0 2.8-1.6 4.6-4 5.5l-.6-1.3c1.4-.7 2.1-1.7 2.2-2.9H3V3zm7 0h4.5v4.5c0 2.8-1.6 4.6-4 5.5l-.6-1.3c1.4-.7 2.1-1.7 2.2-2.9H10V3z" transform="translate(-1.2 0)"/></svg></span>
-                <span class="cap-main">
-                  <span class="cap-src">reading-workflow.md<span class="cap-anchor">· 收集与筛选</span></span>
-                  <span class="cap-ex">先读结论再读论证——倒序阅读把大部分筛选成本压到开头两段…</span>
-                </span>
-              </button>
-              <button class="cap att-cap" data-jump="q2" title="跳转到原文位置">
-                <span class="cap-glyph"><svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor"><path d="M3 3h4.5v4.5c0 2.8-1.6 4.6-4 5.5l-.6-1.3c1.4-.7 2.1-1.7 2.2-2.9H3V3zm7 0h4.5v4.5c0 2.8-1.6 4.6-4 5.5l-.6-1.3c1.4-.7 2.1-1.7 2.2-2.9H10V3z" transform="translate(-1.2 0)"/></svg></span>
-                <span class="cap-main">
-                  <span class="cap-src">reading-workflow.md<span class="cap-anchor">· 精读与笔记</span></span>
-                  <span class="cap-ex">每篇笔记只留一个可执行动作，其余都是参考资料…</span>
-                </span>
-              </button>
-              <p>这两段分别解释一下：「倒序阅读」为什么省成本？「可执行动作」具体指什么？</p>
-            </div>
+            <div class="body"><p><span class="chip" data-jump="q1" data-cap="1" tabindex="0" title="收集与筛选 · 先读结论再读论证——倒序阅读…（点击跳回原文）"><span class="chip-glyph"><svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor"><path d="M3 3h4.5v4.5c0 2.8-1.6 4.6-4 5.5l-.6-1.3c1.4-.7 2.1-1.7 2.2-2.9H3V3zm7 0h4.5v4.5c0 2.8-1.6 4.6-4 5.5l-.6-1.3c1.4-.7 2.1-1.7 2.2-2.9H10V3z" transform="translate(-1.2 0)"/></svg></span><b class="chip-n">#1</b><span class="chip-src">reading-workflow.md</span></span>这段内容是什么意思？<span class="chip" data-jump="q2" data-cap="2" tabindex="0" title="精读与笔记 · 每篇笔记只留一个可执行动作…（点击跳回原文）"><span class="chip-glyph"><svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor"><path d="M3 3h4.5v4.5c0 2.8-1.6 4.6-4 5.5l-.6-1.3c1.4-.7 2.1-1.7 2.2-2.9H3V3zm7 0h4.5v4.5c0 2.8-1.6 4.6-4 5.5l-.6-1.3c1.4-.7 2.1-1.7 2.2-2.9H10V3z" transform="translate(-1.2 0)"/></svg></span><b class="chip-n">#2</b><span class="chip-src">reading-workflow.md</span></span>这里的「可执行动作」指什么？</p></div>
           </div>
           <div class="msg">
             <div class="who">Agent<span class="when">· 刚刚</span></div>
-            <div class="body"><p>两个问题分开答。「倒序阅读」是把评估顺序倒过来：先看结论是否成立、是否相关，再决定要不要读支撑它的论证——大多数文章在结论段就能出局，论证的阅读成本只对少数文章发生。</p><p>「可执行动作」指一条下周就能做的事，比如「把订阅源减半」，而不是「重视筛选」这种方向性句子。判断标准：写不进日历或待办的，都不算动作。</p></div>
+            <div class="body"><p>摘录#1 的「倒序阅读」是把评估顺序倒过来：先看结论是否成立、是否相关，再决定要不要读支撑它的论证——大多数文章在结论段就能出局，论证的阅读成本只对少数文章发生。</p><p>摘录#2 里的「可执行动作」指下周就能做的一件事，比如「把订阅源减半」，而不是「重视筛选」这种方向性句子——写不进日历或待办的，都不算动作。</p></div>
           </div>
         </div>
 
@@ -1563,31 +1567,16 @@ body[data-screen="5"] .h-box textarea { height: 52px; }
           </button>
         </div>
 
+        <!-- 屏 5：开发者预览——把 composer 草稿实时序列化为发给模型的消息（摘录→问题 交错，#N 对 AI 可见） -->
+        <div class="dev-preview">
+          <div class="dp-label">开发者预览 · 发给模型的序列化消息（随编辑实时更新）</div>
+          <div class="dp-body" id="dev-preview"></div>
+        </div>
+
         <div class="h-box">
-          <!-- 屏 5：摘录胶囊区（编辑框内、输入框上方；多胶囊累积，随一条消息一次发出；点击跳回原文并高亮） -->
-          <div class="h-caps">
-            <div class="caps-hint">摘录自活跃编辑器 pane · 随下一条消息一次发出 · 点击胶囊跳回原文</div>
-            <div class="cap" data-jump="q1" role="button" tabindex="0" title="跳转到原文位置">
-              <span class="cap-glyph"><svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor"><path d="M3 3h4.5v4.5c0 2.8-1.6 4.6-4 5.5l-.6-1.3c1.4-.7 2.1-1.7 2.2-2.9H3V3zm7 0h4.5v4.5c0 2.8-1.6 4.6-4 5.5l-.6-1.3c1.4-.7 2.1-1.7 2.2-2.9H10V3z" transform="translate(-1.2 0)"/></svg></span>
-              <span class="cap-main">
-                <span class="cap-src">reading-workflow.md<span class="cap-anchor">· 收集与筛选</span></span>
-                <span class="cap-ex">先读结论再读论证——倒序阅读把大部分筛选成本压到开头两段…</span>
-              </span>
-              <button class="cap-x" title="移除" aria-label="移除">
-                <svg width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><path d="M1.5 1.5l7 7M8.5 1.5l-7 7"/></svg>
-              </button>
-            </div>
-            <div class="cap" data-jump="q2" role="button" tabindex="0" title="跳转到原文位置">
-              <span class="cap-glyph"><svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor"><path d="M3 3h4.5v4.5c0 2.8-1.6 4.6-4 5.5l-.6-1.3c1.4-.7 2.1-1.7 2.2-2.9H3V3zm7 0h4.5v4.5c0 2.8-1.6 4.6-4 5.5l-.6-1.3c1.4-.7 2.1-1.7 2.2-2.9H10V3z" transform="translate(-1.2 0)"/></svg></span>
-              <span class="cap-main">
-                <span class="cap-src">reading-workflow.md<span class="cap-anchor">· 精读与笔记</span></span>
-                <span class="cap-ex">每篇笔记只留一个可执行动作，其余都是参考资料…</span>
-              </span>
-              <button class="cap-x" title="移除" aria-label="移除">
-                <svg width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><path d="M1.5 1.5l7 7M8.5 1.5l-7 7"/></svg>
-              </button>
-            </div>
-          </div>
+          <!-- 屏 5：混排编辑区——chip 为原子节点嵌在文字流中，光标可在任意胶囊前后输入；
+               「摘录到对话」把新胶囊插入当前光标处。其余屏沿用下方 textarea（屏 5 隐藏） -->
+          <div class="h-editor" id="h-editor" contenteditable="true" role="textbox" aria-multiline="true" aria-label="消息编辑区" spellcheck="false" data-placeholder="追问或补充指令…（⌘⏎ 发送）"><span class="chip" contenteditable="false" data-jump="q1" data-cap="1" data-src="reading-workflow.md" data-anchor="收集与筛选" data-ex="先读结论再读论证——倒序阅读把大部分筛选成本压到开头两段，不值得的文章在前两段就出局" title="收集与筛选 · 先读结论再读论证——倒序阅读…（点击跳回原文）"><span class="chip-glyph"><svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor"><path d="M3 3h4.5v4.5c0 2.8-1.6 4.6-4 5.5l-.6-1.3c1.4-.7 2.1-1.7 2.2-2.9H3V3zm7 0h4.5v4.5c0 2.8-1.6 4.6-4 5.5l-.6-1.3c1.4-.7 2.1-1.7 2.2-2.9H10V3z" transform="translate(-1.2 0)"/></svg></span><b class="chip-n">#1</b><span class="chip-src">reading-workflow.md</span><button class="chip-x" tabindex="-1" aria-label="移除摘录"><svg width="8" height="8" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><path d="M1.5 1.5l7 7M8.5 1.5l-7 7"/></svg></button></span>这段内容是什么意思？<span class="chip" contenteditable="false" data-jump="q2" data-cap="2" data-src="reading-workflow.md" data-anchor="精读与笔记" data-ex="每篇笔记只留一个可执行动作，其余都是参考资料——动作写不进一句话，说明还没读懂" title="精读与笔记 · 每篇笔记只留一个可执行动作…（点击跳回原文）"><span class="chip-glyph"><svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor"><path d="M3 3h4.5v4.5c0 2.8-1.6 4.6-4 5.5l-.6-1.3c1.4-.7 2.1-1.7 2.2-2.9H3V3zm7 0h4.5v4.5c0 2.8-1.6 4.6-4 5.5l-.6-1.3c1.4-.7 2.1-1.7 2.2-2.9H10V3z" transform="translate(-1.2 0)"/></svg></span><b class="chip-n">#2</b><span class="chip-src">reading-workflow.md</span><button class="chip-x" tabindex="-1" aria-label="移除摘录"><svg width="8" height="8" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><path d="M1.5 1.5l7 7M8.5 1.5l-7 7"/></svg></button></span>这里的「可执行动作」指什么？</div>
           <textarea rows="2" placeholder="追问或补充指令…（⌘⏎ 发送）" spellcheck="false"></textarea>
           <div class="h-ctl">
             <button class="ctl-chip" title="选择模型">
@@ -1633,7 +1622,7 @@ body[data-screen="5"] .h-box textarea { height: 52px; }
 
   var screens = [
     ['1','单 pane 骨架'], ['2','双 pane 等宽'], ['3','分隔条拖拽'], ['4','harness 对话'],
-    ['5','摘录胶囊'], ['6','上下文用量'], ['7','新建会话'], ['8','复制消息'],
+    ['5','摘录混排'], ['6','上下文用量'], ['7','新建会话'], ['8','复制消息'],
     ['9','思考过程'], ['10','思考程度']
   ];
   var themes = [['light','浅色'], ['dark','深色'], ['eink','eink']];
@@ -1652,33 +1641,104 @@ body[data-screen="5"] .h-box textarea { height: 52px; }
     sendBtn.setAttribute('aria-label', '停止当前回合');
   }
 
-  // 屏 5：composer 预填问题文本（多胶囊随一条消息一次发出）
-  var ta = document.querySelector('.h-box textarea');
-  if (screen === '5' && ta) {
-    ta.value = '这两段分别解释一下：「倒序阅读」为什么省成本？「可执行动作」具体指什么？';
+  // 摘录胶囊 chip：点击跳回原文位置并瞬态高亮（事件委托，覆盖动态插入的 chip；× 钮移除该 chip，不触发跳转）
+  document.addEventListener('click', function(ev){
+    var x = ev.target.closest && ev.target.closest('.chip-x');
+    if (x) {
+      ev.stopPropagation();
+      var c = x.closest('.chip');
+      if (c) { c.remove(); syncCaps(); }
+      return;
+    }
+    var el = ev.target.closest && ev.target.closest('[data-jump]');
+    if (!el) return;
+    var t = document.getElementById(el.getAttribute('data-jump'));
+    if (!t) return;
+    t.scrollIntoView({ block: 'center' });
+    t.classList.add('flash-live');
+    setTimeout(function(){ t.classList.remove('flash-live'); }, 1400);
+  });
+  document.addEventListener('keydown', function(ev){
+    if (ev.key !== 'Enter' && ev.key !== ' ') return;
+    var el = ev.target.closest && ev.target.closest('[data-jump][tabindex="0"]');
+    if (el) { ev.preventDefault(); el.click(); }
+  });
+
+  // 屏 5 混排编辑区：#N 按文档顺序重编号（线性流程中与插入顺序一致）+ 草稿实时序列化到开发者预览
+  var ed = document.getElementById('h-editor');
+  var preview = document.getElementById('dev-preview');
+  function renumber(){
+    ed.querySelectorAll('.chip').forEach(function(c, i){
+      var cap = String(i + 1), label = '#' + (i + 1);
+      if (c.getAttribute('data-cap') !== cap) c.setAttribute('data-cap', cap);
+      var n = c.querySelector('.chip-n');
+      if (n.textContent !== label) n.textContent = label;
+    });
+  }
+  function serialize(){
+    var lines = [], cur = '';
+    function flush(){ var t = cur.trim(); if (t) lines.push(t); cur = ''; }
+    (function walk(el){
+      Array.prototype.forEach.call(el.childNodes, function(n){
+        if (n.nodeType === 3) { cur += n.textContent; }
+        else if (n.nodeType === 1) {
+          if (n.classList.contains('chip')) {
+            flush();
+            lines.push('[摘录 ' + n.querySelector('.chip-n').textContent + '] ' +
+              n.getAttribute('data-src') + ' · ' + n.getAttribute('data-anchor'));
+            lines.push('「' + n.getAttribute('data-ex') + '」');
+          } else if (n.tagName === 'BR') { flush(); }
+          else { if (/^(DIV|P)$/.test(n.tagName)) flush(); walk(n); }
+        }
+      });
+    })(ed);
+    flush();
+    preview.textContent = lines.join('\n');
+  }
+  function syncCaps(){
+    if (!ed.textContent.trim() && !ed.querySelector('.chip')) ed.innerHTML = '';
+    renumber();
+    serialize();
   }
 
-  // 摘录胶囊：点击跳回原文位置并瞬态高亮（× 钮移除该胶囊，不触发跳转）
-  document.querySelectorAll('[data-jump]').forEach(function(el){
-    el.addEventListener('click', function(ev){
-      if (ev.target.closest && ev.target.closest('.cap-x')) return;
-      var t = document.getElementById(el.getAttribute('data-jump'));
-      if (!t) return;
-      t.scrollIntoView({ block: 'center' });
-      t.classList.add('flash-live');
-      setTimeout(function(){ t.classList.remove('flash-live'); }, 1400);
+  // 摘录手势（与三轮一致：正文选中 → 浮动「摘录到对话」钮）：新胶囊插入当前光标处而非追加到末尾。
+  // 点击按钮会夺走焦点，故平时用 selectionchange 记下编辑器内最后的选区，插入时恢复。
+  var fab = document.querySelector('.quote-fab');
+  if (screen === '5') {
+    var savedRange = null;
+    syncCaps();
+    new MutationObserver(syncCaps).observe(ed, { childList: true, subtree: true, characterData: true });
+    document.addEventListener('selectionchange', function(){
+      var sel = window.getSelection();
+      if (sel.rangeCount && ed.contains(sel.anchorNode)) savedRange = sel.getRangeAt(0).cloneRange();
     });
-    el.addEventListener('keydown', function(ev){
-      if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); el.click(); }
+    fab.addEventListener('mousedown', function(ev){ ev.preventDefault(); });
+    fab.addEventListener('click', function(){
+      var chip = document.createElement('span');
+      chip.className = 'chip';
+      chip.setAttribute('contenteditable', 'false');
+      chip.setAttribute('data-jump', 'q2');
+      chip.setAttribute('data-src', 'reading-workflow.md');
+      chip.setAttribute('data-anchor', '精读与笔记');
+      chip.setAttribute('data-ex', '每篇笔记只留一个可执行动作，其余都是参考资料——动作写不进一句话，说明还没读懂');
+      chip.title = '精读与笔记 · 每篇笔记只留一个可执行动作…（点击跳回原文）';
+      chip.innerHTML = '<span class="chip-glyph"><svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor"><path d="M3 3h4.5v4.5c0 2.8-1.6 4.6-4 5.5l-.6-1.3c1.4-.7 2.1-1.7 2.2-2.9H3V3zm7 0h4.5v4.5c0 2.8-1.6 4.6-4 5.5l-.6-1.3c1.4-.7 2.1-1.7 2.2-2.9H10V3z" transform="translate(-1.2 0)"/></svg></span><b class="chip-n">#</b><span class="chip-src">reading-workflow.md</span><button class="chip-x" tabindex="-1" aria-label="移除摘录"><svg width="8" height="8" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><path d="M1.5 1.5l7 7M8.5 1.5l-7 7"/></svg></button>';
+      var range = (savedRange && ed.contains(savedRange.commonAncestorContainer)) ? savedRange : null;
+      ed.focus();
+      if (range) {
+        range.deleteContents();
+        range.insertNode(chip);
+        range.setStartAfter(chip);
+        range.collapse(true);
+        var sel = window.getSelection();
+        sel.removeAllRanges();
+        sel.addRange(range);
+      } else {
+        ed.appendChild(chip);
+      }
+      syncCaps();
     });
-  });
-  document.querySelectorAll('.cap-x').forEach(function(x){
-    x.addEventListener('click', function(ev){
-      ev.stopPropagation();
-      var cap = x.closest('.cap');
-      if (cap) cap.remove();
-    });
-  });
+  }
 
   function go(s, t){
     var url = new URL(location.href);
