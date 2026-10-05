@@ -1,7 +1,7 @@
 // 表格全屏触发钮裁决稿截图：index.html × 12 变体 × 3 主题 + overlay × 3 + board 总览 × 3
 // 用法：node design/prototypes/table-fs-trigger/shoot.mjs
 //   输出：test-results/m235/shots/（证据不入 git，.gitignore「test-results/」豁免）
-//   playwright 模块默认取本仓 tests/visual（同 design/prototypes/shoot.mjs 先例）；
+//   playwright 模块默认取本仓 tests/visual；
 //   worktree 未装依赖时用 LUMIR_VISUAL_PKG=/path/to/tests/visual/package.json 指定主仓。
 import { createRequire } from 'node:module';
 import { pathToFileURL } from 'node:url';
