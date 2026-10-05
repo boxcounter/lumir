@@ -20,15 +20,15 @@
 
 ### 1.2 决定性证据：Alex 真实 vault 里的实际块
 
-源：`/Users/boxcounter/Downloads/Everything-copy/4_Archives/Engineering/Logbook/README.md` 的第一个围栏块（```yaml，30 行，`dimensions:` 表），**原样**渲染（只读 vault，不改动）。
+源：`~/Vaults/Fieldnotes/2_Areas/Reference/Weekly/README.md` 的第一个围栏块（```yaml，30 行，`dimensions:` 表），**原样**渲染（只读 vault，不改动）。
 
 首个块（14 个着色 span）：
 
 | 源码 | legacy token | 类名 / 计算色 |
 |---|---|---|
 | `dimensions` / `name` / `key` / `source` / `values`（**键**，共 13 处） | `atom` | `cm-lp-tok-literal` / `rgb(160, 94, 28)` |
-| `# 特殊维度：values 来自当月 _monthly.md` | `comment` | `cm-lp-tok-comment` / `rgb(141, 132, 113)` |
-| `Goal` / `monthly` / `Slax Reader` / `ZSXQ` …（值） | `null` | 无 span，正文色 `rgb(38, 34, 25)` |
+| `# 特殊维度：values 来自当月 _current.md` | `comment` | `cm-lp-tok-comment` / `rgb(141, 132, 113)` |
+| `North` / `weekly` / `Example Reader` / `DataHub` …（值） | `null` | 无 span，正文色 `rgb(38, 34, 25)` |
 | `-` / `:` | `meta` | 无 span，正文色 |
 
 该笔记的另一块（含 `commitments`、45 行）合计：**39 个 `cm-lp-tok-literal` + 1 个 `cm-lp-tok-comment`**，`property` / `string` / `keyword` **零命中**（`/tmp/lumir-probe-m167/real.log`）。即**整块只出一种颜色**——键的赭色与值的正文色之外没有任何区分，这就是「看起来没有高亮」的可复现来源（截图 `evidence/01-yaml-block-as-is.png`）。
@@ -47,7 +47,7 @@ $ rg -o '^[[:space:]]*(```|~~~)[A-Za-z0-9._-]*' --glob '*.md' . \
 $ rg -n '^\s*(```|~~~)(toml|yml)' --glob '*.md' .                # 0 命中
 ```
 
-`vault` 里的 `.yml` 文件只有隐藏目录下的 `.ok/config.yml` 一份（其余命中全在某个 `node_modules/` 里）。仓内与合成验收 vault `/tmp/lumir-m102-acceptance` 同样没有 toml / yml 围栏。
+`vault` 里的 `.yml` 文件只有隐藏目录下的 `.tool/config.yml` 一份（其余命中全在某个 `node_modules/` 里）。仓内与合成验收 vault `/tmp/lumir-m102-acceptance` 同样没有 toml / yml 围栏。
 
 **结论**：Alex 的「toml 和 yml 代码块」在可触及的语料里找不到对应现场，`yaml` 围栏有 8 处（其中一处即 §1.2 复现的那个块）。因此本 change 以 **yaml** 的可复现缺陷为修复面，toml 只做现状核实与门禁覆盖。
 
@@ -193,7 +193,7 @@ toml 数组的 `[` `]` 是 `bracket`、yaml 的结构标点是 `meta`——`@lez
 
 | 现象 | 根因 | 处置 |
 |---|---|---|
-| yaml 普通标量值无 token（`Goal`、`Slax Reader` 取正文色） | `yaml.js` 兜底 `stream.next(); return null;` | 不修：vendored parser 的 token 产出，两侧一致 |
+| yaml 普通标量值无 token（`North`、`Example Reader` 取正文色） | `yaml.js` 兜底 `stream.next(); return null;` | 不修：vendored parser 的 token 产出，两侧一致 |
 | yaml `---` / `...` 无颜色 | `yaml.js` 返回 `def`；`LEGACY_TAGS`（`src/preview/code.ts:194`）把 `def` 映射为 `definition(variableName)`，不属任何分组 | 不修：`def` 在 yaml 是文档分隔符、在别的语言是定义，语义撞名；补色要新增角色 |
 | yaml 锚点与别名 `&a` / `*a` 无颜色 | 返回 `variable` → `tags.variableName` 不在任何分组 | 不修：同上 |
 | yaml `:` / `- ` / 内联括号无颜色 | 返回 `meta` | 不修：与全仓「标点不取色」一致（rust 的 `{}` `;` 同） |

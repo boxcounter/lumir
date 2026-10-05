@@ -8,7 +8,7 @@ md 模式 SHALL 按 [GFM spec §4.10](https://github.github.com/gfm/#tables-exte
 
 #### Scenario: 短行尾部补空列
 
-- **WHEN** 用户打开一份表头声明 6 列、其中若干数据行只有 5 格的 Markdown 文件（M137 实测的 `outline.md` 形态）
+- **WHEN** 用户打开一份表头声明 6 列、其中若干数据行只有 5 格的 Markdown 文件（M137 实测的 `reading-notes.md` 形态）
 - **THEN** 该表按 6 列矩形呈现，缺列行的末格是空白 cell，各列边界与表头列对齐；屏幕上不出现表格降级提示，文档与磁盘文件逐字节不变
 
 #### Scenario: 多列表整块降级

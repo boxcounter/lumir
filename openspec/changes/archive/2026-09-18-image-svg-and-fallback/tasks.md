@@ -20,7 +20,7 @@ requirement 内部）；实现与 delta 逐条一致（`<img>` 是图片链路�
 > + 按已验证的取点实现」——不再需要先做真机定位。
 
 - [x] 1.1 fixture 用**中招形状**：一份 `width="100%"` + 仅 `viewBox` 的 svg（不带 `height`，即
-      design §8.1 实测矩阵的输入）；实现期若能拿到 Alex 报告的那份 `images/hooks-overview.en.svg`
+      design §8.1 实测矩阵的输入）；实现期若能拿到 Alex 报告的那份 `images/sample-diagram.en.svg`
       就直接用它（M165 修订轮在本机 `mdfind` 与用户 vault 里都没找到，取不到不算阻塞）。
       **MUST NOT** 用带 `width`/`height` 的 `sample.svg` 当本条的输入——那个形状不中招（实测 240×80 正常）。
       **验收口径**：fixture 里 `width="100%"` 命中且无 `height=`；形状与 design §8.1 的实测输入逐字一致。

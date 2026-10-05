@@ -8,7 +8,7 @@
 
 Lumir 的表格合同（[docs/specs/table-reading.md](../../../../docs/specs/table-reading.md) §2）原口径是「数据行少列或多列一律整块回退源码，系统不得补列」。这与 GFM 规范不一致：GFM 明确允许数据行的 cell 数与表头不同——少则尾部补空 cell，多则忽略多余 cell（[GFM spec §4.10](https://github.github.com/gfm/#tables-extension-)：「The remainder of the table's rows may vary in the number of cells. If there are a number of cells fewer than the number of cells in the header row, empty cells are inserted. If there are greater, the excess is ignored.」）。GitHub 与 Obsidian 打开同一份文件都能正常显示。
 
-M137 诊断给出了真实代价：`~/Downloads/Everything-copy/outline.md:106-109` 的六列表有四行各缺最后一列（agent 产出的 markdown，ragged row 属高频形态），Lumir 把整张表（含正常的表头与分隔行）回退成源码，用户看到的是「Lumir 打不开我的表」，而不是「我的文件少了一个 `|`」。证据：finding `.tower/comms/findings/20260916-worker-table-survey-idea-gfm.md`（M137 报告，含复现与控制变量：补齐末列后同一份解析器配置下不再降级），另有 [M72 table probe](../2026-09-17-withdrawn-complete-markdown-reading/table-probe72.md) 的同族观察。
+M137 诊断给出了真实代价：`~/Vaults/Fieldnotes/reading-notes.md:106-109` 的六列表有四行各缺最后一列（agent 产出的 markdown，ragged row 属高频形态），Lumir 把整张表（含正常的表头与分隔行）回退成源码，用户看到的是「Lumir 打不开我的表」，而不是「我的文件少了一个 `|`」。证据：finding `.tower/comms/findings/20260916-worker-table-survey-idea-gfm.md`（M137 报告，含复现与控制变量：补齐末列后同一份解析器配置下不再降级），另有 [M72 table probe](../2026-09-17-withdrawn-complete-markdown-reading/table-probe72.md) 的同族观察。
 
 Alex 2026-09-16 裁决采纳（原话「好，采纳。」），执行口径由 tower 明确并经 Alex 过目：**仅收窄短行**（少列 → 尾部补空 cell），**多列仍整块降级**——GFM 对多列是 excess ignored，静默丢列与合同「不猜测修复」的精神冲突。本合同收窄**不动**只读铁律：装饰不改写文档，源文件与磁盘逐字节不变。
 
@@ -18,7 +18,7 @@ Alex 2026-09-16 裁决采纳（原话「好，采纳。」），执行口径由 
 2. **多列维持整块降级**：数据行 cell 数多于表头列数、表头与分隔行列数不一致、槽位不能安全映射、范围不完整，仍然整块显示完整源码，且降级文案继续指认首个与表头列数不符的数据行的**文档行号**（文案措辞不变）。
 3. **合同文本收窄**：`docs/specs/table-reading.md` §2 的「不得补列」改写为收窄后的准确口径，并引 GFM §4.10 原文；§9 的 fixture 矩阵同步区分「少列（补空列）」与「多列（整块降级）」。
 4. **未归档制品的口径对账**：`complete-markdown-reading`（editor-live-preview delta）与 `foundation-table-reading`（Pipe 语法与矩形性）两份未归档 change 里含同一主题的旧口径，同步收窄，避免归档时把旧规则重新写进 living spec。
-5. **回归证据**：视觉场景翻转 `table-foundation-v2` 的短行 fixture 为「正常渲染」断言，新增 outline.md 同款形态（6 列表头 + 5 cell 行）的专门断言，多列降级改由多列表 fixture 覆盖；真机场景 `render-table-degrade` 的降级表改多列形态并保留降级文案断言，另加短行表渲染断言。
+5. **回归证据**：视觉场景翻转 `table-foundation-v2` 的短行 fixture 为「正常渲染」断言，新增 reading-notes.md 同款形态（6 列表头 + 5 cell 行）的专门断言，多列降级改由多列表 fixture 覆盖；真机场景 `render-table-degrade` 的降级表改多列形态并保留降级文案断言，另加短行表渲染断言。
 
 ## Non-goals
 

@@ -9,7 +9,7 @@
 Lumir 每次启动都会自动恢复上次的 vault。这件事目前发生在 Tauri setup 的主线程上，**在用户看到可用界面之前**：
 
 - `src-tauri/src/lib.rs:97` 的 `restore_last_vault(app.handle())` 在 setup 内同步执行（`fn restore_last_vault` 见 `src-tauri/src/lib.rs:377`），内部串行做注册表 IO → 起 watch → 全量枚举 → 逐 md 读文件建 wikilink 索引（`src-tauri/src/commands.rs:198` 的 `open_vault`，索引构建见 `:154` 的 `build_graph`）。
-- 实测（M154 survey，release 构建，harness 以 path 依赖直调本仓真实函数；真实 vault `/Users/boxcounter/Downloads/Everything-copy` 只读）：真实 vault **约 125ms**（scan 14.0ms + build_graph 111.2ms），合成 4× 规模（8884 项 / 6100 md / 45MB md）**约 770ms**（32.9 + 736.7ms）；索引耗时随 md 字节数近似线性（约 12–16ms/MB）。信源：`.tower/comms/findings/20260917-worker-rustasync-bug-restore-last-vault-setup-scan-build-graph-perf.md`。
+- 实测（M154 survey，release 构建，harness 以 path 依赖直调本仓真实函数；真实 vault `~/Vaults/Fieldnotes` 只读）：真实 vault **约 125ms**（scan 14.0ms + build_graph 111.2ms），合成 4× 规模（8884 项 / 6100 md / 45MB md）**约 770ms**（32.9 + 736.7ms）；索引耗时随 md 字节数近似线性（约 12–16ms/MB）。信源：`.tower/comms/findings/20260917-worker-rustasync-bug-restore-last-vault-setup-scan-build-graph-perf.md`。
 - 机制（**对 finding 机制表述的更正**，见 design.md §1）：tauri 2.11.5 里用户 setup hook 由事件循环的**首个 `Ready` 回调**驱动（`tauri-2.11.5/src/app.rs:1423-1427`），hook 先按 config 建窗口（`app.rs:2524-2525`）再执行用户代码（`app.rs:2530-2531`）。所以准确的描述不是「run loop 未启动」，而是「恢复在主线程的事件循环回调内同步跑，回调返回前主线程无法进入下一次绘制」——结论不变：这段耗时**直接加在用户看到可用界面之前**。
 - 它是 M154 调查里唯一既「用户可感」、量级又最大的主线程阻塞项，而且**不是 command**，`#[tauri::command(async)]` 覆盖不到它。
 
