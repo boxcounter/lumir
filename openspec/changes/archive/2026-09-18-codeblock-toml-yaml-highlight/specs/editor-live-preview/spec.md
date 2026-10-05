@@ -48,7 +48,7 @@ yaml 文档里的**映射键**（`key:` 与 `- key:` 两种形态的键）SHALL 
 
 #### Scenario: 围栏 yaml 代码块的键取属性名色
 
-- **WHEN** md 文档里有 ```yaml 围栏代码块，内容为两层嵌套映射加一个序列（`dimensions:` → `- name: Goal` → `key: goal`）
+- **WHEN** md 文档里有 ```yaml 围栏代码块，内容为两层嵌套映射加一个序列（`dimensions:` → `- name: North` → `key: north`）
 - **THEN** 全部键名（`dimensions`、`name`、`key`）以属性名色呈现、MUST NOT 与数字或布尔同色；字符串值取字符串色；块内不再出现「整块只有一种颜色」的形态
 
 #### Scenario: 别名 yml 与 yaml 同口径
