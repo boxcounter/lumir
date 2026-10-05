@@ -49,15 +49,16 @@ test("双栏（M316）：标识块整体退 modeline，标题栏腾给左右标�
   assert.equal(view.visible, true);
   assert.equal(view.blockInTitlebar, false); // 块整体退（不是只退版本号）
   assert.equal(view.versionInModeline, true); // 与窄窗同一落点、同一机制
-  // modeline 段 = 前导空格 + 产品名 + 分隔符 + 版本号（整块退，信息不丢）
-  assert.equal(view.modelineText, ` Lumir ${IDENTITY_SEP} 0.0.0`);
+  // modeline 段 = 前导「 · 」+ 产品名 + 分隔符 + 版本号（整块退，信息不丢）：前导分隔符
+  // 隔开在前的 charset（meta 段尾「UTF-8」）与产品名（Alex dogfood 2026-10-05，M330）
+  assert.equal(view.modelineText, ` ${IDENTITY_SEP} Lumir ${IDENTITY_SEP} 0.0.0`);
 });
 
 test("双栏 + 窄窗同至：仍是整块退 modeline（split 主导），文本不退化", () => {
   const view = identityView(META, SPLIT_NARROW);
   assert.equal(view.blockInTitlebar, false);
   assert.equal(view.versionInModeline, true);
-  assert.equal(view.modelineText, ` Lumir ${IDENTITY_SEP} 0.0.0`);
+  assert.equal(view.modelineText, ` ${IDENTITY_SEP} Lumir ${IDENTITY_SEP} 0.0.0`);
 });
 
 test("版本号展示位互斥：两种宽度下都恰有一个落点", () => {
@@ -86,7 +87,7 @@ test("文案组装的入参原样透传：组装层不裁不补（真源值是�
   const view = identityView({ name: "Lumir", version: "1.2.3-rc.1" }, WIDE);
   assert.equal(view.version, "1.2.3-rc.1");
   assert.equal(identityView({ name: "Lumir", version: "1.2.3-rc.1" }, NARROW).modelineText, ` ${IDENTITY_SEP} 1.2.3-rc.1`);
-  assert.equal(identityView({ name: "Lumir", version: "1.2.3-rc.1" }, SPLIT).modelineText, ` Lumir ${IDENTITY_SEP} 1.2.3-rc.1`);
+  assert.equal(identityView({ name: "Lumir", version: "1.2.3-rc.1" }, SPLIT).modelineText, ` ${IDENTITY_SEP} Lumir ${IDENTITY_SEP} 1.2.3-rc.1`);
 });
 
 test("退让阈值钉在 640px（D2 裁决采纳的备选量级，design §3.2）", () => {

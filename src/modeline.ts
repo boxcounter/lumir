@@ -45,7 +45,7 @@ export interface IdentityView {
   /** 标题栏版本号段文本（visible 且未退让时有效）。 */
   version: string;
   /** modeline 右段版本号段文本（含前导分隔；仅退让时有效）：窄窗退版本号
-   *（形如「 · 1.2.3」），双栏整块退（形如「 Lumir · 1.2.3」）。
+   *（形如「 · 1.2.3」），双栏整块退（形如「 · Lumir · 1.2.3」）。
    *  示例写成通用版本号而不是本仓当前值：字面抄一份版本号会在每次 bump 后腐掉
    *  （M238 r2 收口时把原来那处的 `0.0.0` 去字面化）。 */
   modelineText: string;
@@ -74,10 +74,12 @@ export function identityView(
     name: meta.name,
     version: meta.version,
     // 前导空格要真实生效靠 .modeline-version 的 white-space: pre（flex 项的起始空白会被
-    // 折叠）；与 meta 段内部「 · 」的节奏逐字同形。展示位互斥：只在退让态携带文本，
+    // 折叠）；两种退让都自带前导「 · 」与 meta 段（「语法 · 行数 · 编码」尾部）的分隔节奏
+    // 逐字同形——缺它双栏态会读成「UTF-8 Lumir · 1.2.3」，产品名与 charset 之间没有分隔
+    //（Alex dogfood 2026-10-05，M330）。展示位互斥：只在退让态携带文本，
     // 宽窗单栏下为空串（消费侧据此清空 textContent，不留残字）。
     modelineText: split
-      ? ` ${meta.name} ${IDENTITY_SEP} ${meta.version}`
+      ? ` ${IDENTITY_SEP} ${meta.name} ${IDENTITY_SEP} ${meta.version}`
       : narrow
         ? ` ${IDENTITY_SEP} ${meta.version}`
         : "",
