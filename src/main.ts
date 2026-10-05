@@ -505,22 +505,16 @@ function createPaneTabs(paneId: PaneId, handle: EditorHandle, stripEl: HTMLEleme
     invalidateResolve: () => linkFollow.invalidate(),
     showEditor: () => showEditor(),
     syncActiveDocument: () => syncActiveDocument(),
+    // 标签条交互（点标签 / 点关闭钮）先把这个 pane 翻成活跃 pane（M329，bug 1）。调用点在
+    // tabs.ts 的交互漏斗里（它的 DOM 监听自己绑），**不是**在这里覆写对外方法——覆写挡不住
+    // DOM 点击路径，那正是「点非活跃 pane 的标签不装载内容」的成因。
+    activatePane: () => activatePane(paneId),
     // 树是下面 `let tree` 绑定的单例，赋值在 createPaneTabs 首次调用之后——闭包在动作
     // 发生时读，装配期不读，因此没有时序问题（与 M149 起就有的那条注释同款模式）。
     revealInTree: (path) => tree.revealPath(path),
     keepMountWhenEmpty: () => paneLayout.isSplit(),
   });
-  return {
-    ...raw,
-    activateTab: (session) => {
-      activatePane(paneId);
-      raw.activateTab(session);
-    },
-    closeTab: (session) => {
-      activatePane(paneId);
-      return raw.closeTab(session);
-    },
-  };
+  return raw;
 }
 
 /** 分隔条拖拽的接线（控制器本体在 src/pane-layout.ts，可脱浏览器单测）：指针每移一次实时
