@@ -1,6 +1,6 @@
 // tests/unit/tree-rename.test.ts — 目录改名后的展开态不变量（M258）。
 //
-// 现场（Alex 2026-09-27，slax-reader vault）：把 `.local` 下的 `openspec-tutorial` 改名为
+// 现场（Alex 2026-09-27，fieldnotes vault）：把 `.local` 下的 `openspec-tutorial` 改名为
 // `openspec-tutorials` 之后，该目录在树里再也展不开；改回原名也展不开。根因分两层：
 //
 //   ① **后端**（`src-tauri/src/fs_io.rs` 的 `expand_new_dir_subtrees`）：FSEvents 对目录改名
