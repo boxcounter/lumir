@@ -38,7 +38,7 @@
    - ADR 0001 §3 非目标（IDE 能力、团队实时协同、移动端、插件市场）不变；§1/§2 维持 deferred 状态。
    - ADR 0003 铁律不变，并由 Decision 2 的写入约束延伸到 agent 写入侧。
    - ADR 0004 M2（agent 集成）维持 deferred：本探针不等于恢复 M2，只是 AI 方向上的一个使用探针。
-   - ADR 0005 与 PRODUCT-CONCEPT.md 仍是未来定位决策的输入而非必须恢复的前提。
+   - ADR 0005 与 PRODUCT-CONCEPT.md 仍是未来定位决策的输入而非必须恢复的前提（前者留在仓库；后者已按 Alex 裁决于 2026-10-06 从仓库删除，master a99a913，内容可用 `git show 545dd65:PRODUCT-CONCEPT.md` 从 git 历史取回，本 ADR 引用均指该历史版本）。
    - ADR 0006 的 Revisit 条款由本 ADR 消费；0006 其余内容（当前阶段定位 = Emacs keybinding PKM、视觉基线等）继续有效。
 
 ## Consequences
@@ -62,6 +62,6 @@
 
 ## Revisit 条件
 
-- Alex 基于探针使用体验主动裁决 AI 定位 → 以新 ADR 做出定位判断（输入：ADR 0005、PRODUCT-CONCEPT.md、探针会话记录与手记）。
+- Alex 基于探针使用体验主动裁决 AI 定位 → 以新 ADR 做出定位判断（输入：ADR 0005、已删除的 PRODUCT-CONCEPT.md 的 git 历史版本、探针会话记录与手记）。
 - 探针在实践中被弃用（不再为其打开对话面板）→ 撤回探针，AI 定位回到 deferred。
 - 探针能力清单需要扩张（如后台任务、subagent 从架构约束转为实际需求）→ Alex 显式裁决后修订本 ADR，不允许在 OpenSpec change 中静默扩张。

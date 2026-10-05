@@ -10,7 +10,7 @@
 - Alex 裁决（2026-09-12）：
   1. 延后「AI 在产品里的定位」决策。已实现的 Thread 形态被明确否定为「不是未来的样子」。
   2. 推倒当前视觉方向。对 `design/` 下 editorial / instrument / void 三个探索方向均不满意，重做且不受其影响。
-- ADR 0001 §1/§2 与 ADR 0005 定义了 Agent-first 的定位与对象模型。它们是未经 dogfood 验证的架构预判：PRODUCT-CONCEPT.md §18 的 11 条假设无一经过真实使用检验。按已验证形态继续堆 Agent 功能，成本高于先用起来再决定。
+- ADR 0001 §1/§2 与 ADR 0005 定义了 Agent-first 的定位与对象模型。它们是未经 dogfood 验证的架构预判：已删除的 PRODUCT-CONCEPT.md §18 的 11 条假设无一经过真实使用检验。按已验证形态继续堆 Agent 功能，成本高于先用起来再决定。
 
 ## Decision
 
@@ -36,7 +36,7 @@
 
 - 代码库回到与定位一致的最小面：未验证的 Agent 架构不再以半成品形态滞留，后续 review 与 keybinding 工作在自洽基底上进行。
 - dogfood 不再被「先定义 AI 协作契约」阻塞，显著提前。
-- 决策可逆且可追溯：PRODUCT-CONCEPT.md 与 ADR 0005 原样保留为重启输入；git 历史保留全部删除内容；friction log 让重启决策有实证依据。
+- 决策可逆且可追溯：ADR 0005 原样保留为重启输入；已删除的 PRODUCT-CONCEPT.md（2026-10-06 按 Alex 裁决删除，master a99a913）可用 `git show 545dd65:PRODUCT-CONCEPT.md` 从 git 历史取回，重启时仍是同一份输入；git 历史保留全部删除内容；friction log 让重启决策有实证依据。
 
 ### 代价与风险
 
@@ -46,5 +46,5 @@
 
 ## Revisit 条件
 
-- friction log 中「需要把上下文搬运到外部 Agent」类摩擦累积到主观不可忍受，或 Alex 主动裁决 → 重启 AI 定位决策，以 ADR 0005、PRODUCT-CONCEPT.md 与 friction log 为输入。
+- friction log 中「需要把上下文搬运到外部 Agent」类摩擦累积到主观不可忍受，或 Alex 主动裁决 → 重启 AI 定位决策，以 ADR 0005、已删除的 PRODUCT-CONCEPT.md 的 git 历史版本（见 Consequences）与 friction log 为输入。
 - dogfood 出口（连续两周替代 Obsidian）未达成 → 触发 ADR 0001 的 revisit，重估整体定位。
