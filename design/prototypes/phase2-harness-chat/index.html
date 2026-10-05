@@ -1,9 +1,12 @@
 <!DOCTYPE html>
 <!--
-  Lumir 原型 · Phase 2「harness 入 pane + chat UX 重做」（ADR 0008 Decision 8）
-  用法: index.html?screen=1..10&theme=light|dark|eink
+  Lumir 原型 · Phase 2「harness 入 pane + chat UX 重做」（ADR 0008 Decision 8）第二轮
+  用法: index.html?screen=1..10&theme=light|dark|eink（页面右下角有内置控制面板，点击切屏/切主题；
+        截图脚本用 &panel=0 关面板）
   自包含: 无外部资源, 系统字体栈, 内联 SVG 图标
-  token 直接镜像 src/style.css 的 token 层（同名同值），便于实现期一一映射。
+  token 镜像 src/style.css 的 token 层——accent 族除外：Alex 2026-10-05 裁决去蓝色强调色，
+  本原型的 --accent*/--run 为中性灰阶建议值，实现期需相应改 src/style.css token。
+  全部文档/会话/人名均为合成 fixture（纪律：仓库不提交真实 vault 内容，见 AGENTS.md 硬规则）。
 -->
 <html lang="zh-CN" data-theme="light">
 <head>
@@ -11,7 +14,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Lumir — Phase 2 harness pane 原型</title>
 <style>
-/* ============ tokens（镜像 src/style.css token 层，同名同值） ============ */
+/* ============ tokens（镜像 src/style.css token 层；accent 族 = 去蓝后的中性建议值） ============ */
 :root,
 :root[data-theme="light"] {
   --frame: #f4f4f1;
@@ -25,11 +28,11 @@
   --text-3: #a9a79b;
   --sel: #e8e7e1;
   --hover: rgba(0, 0, 0, 0.038);
-  --accent: #3a5fcd;
-  --accent-fill: #3a5fcd;
+  --accent: #57554c;
+  --accent-fill: #38372f;
   --accent-fill-text: #ffffff;
-  --accent-tint: #eef1fb;
-  --run: #3a5fcd;
+  --accent-tint: rgba(0, 0, 0, 0.05);
+  --run: #57554c;
   --pending: #a06e0f;
   --pending-tint: #faf3e1;
   --ok: #2c7a4d;
@@ -56,11 +59,11 @@
   --text-3: #62615b;
   --sel: rgba(255, 255, 255, 0.075);
   --hover: rgba(255, 255, 255, 0.05);
-  --accent: #8ba3ef;
-  --accent-fill: #647ecf;
-  --accent-fill-text: #ffffff;
-  --accent-tint: rgba(128, 152, 232, 0.15);
-  --run: #8ba3ef;
+  --accent: #c7c6bd;
+  --accent-fill: #c7c6bd;
+  --accent-fill-text: #222326;
+  --accent-tint: rgba(255, 255, 255, 0.09);
+  --run: #c7c6bd;
   --pending: #d9a75c;
   --pending-tint: rgba(217, 167, 92, 0.14);
   --ok: #7cc093;
@@ -146,6 +149,7 @@
 
   --layout-sidebar-w: 236px;
   --layout-titlebar-h: 42px;
+  --layout-tab-h: 29px;
   --layout-modeline-h: 25px;
   --layout-doc-measure: 760px;
   --layout-tree-row-h: 25px;
@@ -183,7 +187,7 @@ svg { display: block; }
   height: 100vh;
 }
 
-/* ---- 标题栏：dock 移除后只剩 traffic 空位 / 拖拽区 / harness toggle / 产品标识 ---- */
+/* ---- 标题栏：traffic 空位 / 标签段（与真实产品同构，标签在标题栏里面）/ harness toggle / 产品标识 ---- */
 .titlebar {
   grid-column: 1 / -1;
   display: flex;
@@ -204,7 +208,60 @@ svg { display: block; }
 .traffic i:nth-child(2) { background: var(--tl-min); }
 .traffic i:nth-child(3) { background: var(--tl-max); }
 :root[data-theme="eink"] .traffic i { border: 1.5px solid #000; width: 9px; height: 9px; }
-.titlebar-drag { flex: 1 1 auto; min-width: 0; height: 100%; }
+
+/* 标签段：镜像 src/style.css 的 .tabstrip——标题栏行内、横向滚动、溢出无可见滚动条。
+   双 pane 时第二个标签段紧随其后（真实产品 shell.tabStrip.after(stripEl) 同构）。 */
+.tabstrip {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  flex: 1 1 auto;
+  min-width: 0;
+  padding-left: var(--sp-3);
+  margin-right: var(--sp-3);
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+}
+.tabstrip::-webkit-scrollbar { display: none; }
+.tab {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex: 0 0 auto;
+  max-width: 230px;
+  height: var(--layout-tab-h);
+  padding: 0 var(--sp-6);
+  border: 1px solid transparent;
+  border-radius: var(--r7);
+  font-size: var(--fs-ui-s);
+  color: var(--text-2);
+  cursor: pointer;
+  text-align: left;
+  transition: background var(--dur-ui) var(--ease-standard), color var(--dur-ui) var(--ease-standard);
+}
+.tab:hover { background: var(--hover); }
+.tab.is-active {
+  background: var(--content-bg);
+  color: var(--text);
+  font-weight: var(--fw-medium);
+  border-color: var(--border);
+  box-shadow: var(--shadow-pop);
+}
+:root[data-theme="eink"] .tab.is-active { border-width: 1.4px; }
+.tab .tab-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tab .tab-close {
+  width: 16px;
+  height: 16px;
+  border-radius: var(--r4);
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-3);
+}
+.tab .tab-close:hover { background: var(--hover); color: var(--text-2); }
+
 .tb-btn {
   flex: none;
   width: 30px;
@@ -222,6 +279,7 @@ svg { display: block; }
 :root[data-theme="eink"] .tb-btn[aria-pressed="true"] { background: var(--accent-fill); color: var(--accent-fill-text); }
 .tb-identity {
   flex: none;
+  margin-left: auto;
   display: flex;
   align-items: center;
   gap: var(--sp-3);
@@ -325,7 +383,6 @@ svg { display: block; }
 .t-lv1 { padding-left: 10px; }
 .t-lv2 { padding-left: 26px; }
 .t-lv3 { padding-left: 42px; }
-.t-lv4 { padding-left: 58px; }
 
 /* ---- pane 容器 ---- */
 .panes {
@@ -343,7 +400,7 @@ svg { display: block; }
   min-height: 0;
 }
 
-/* 分隔条：1px 可见线 + 5px 命中区；hover/拖拽态线加粗着色 */
+/* 分隔条：1px 可见线 + 5px 命中区；hover/拖拽态线加粗 */
 .splitter {
   flex: none;
   width: 5px;
@@ -375,53 +432,6 @@ svg { display: block; }
   transition: opacity var(--dur-ui) var(--ease-standard);
 }
 .splitter.dragging .grip { opacity: 0.35; }
-
-/* ---- pane 内标签条（ADR 0008：标签随 pane） ---- */
-.ptabs {
-  flex: none;
-  height: 38px;
-  display: flex;
-  align-items: flex-end;
-  gap: var(--sp-2);
-  padding: 0 var(--sp-5);
-  background: var(--frame);
-  border-bottom: 1px solid var(--border-soft);
-}
-.ptab {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  height: 29px;
-  padding: 0 var(--sp-6);
-  border-radius: var(--r7);
-  font-size: var(--fs-ui-s);
-  color: var(--text-2);
-  max-width: 220px;
-  border: 1px solid transparent;
-}
-.ptab .tname { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.ptab.active {
-  background: var(--content-bg);
-  color: var(--text);
-  font-weight: var(--fw-medium);
-  border-color: var(--border);
-  box-shadow: var(--shadow-pop);
-}
-.ptab .close {
-  width: 15px;
-  height: 15px;
-  border-radius: var(--r4);
-  flex: none;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--text-3);
-  opacity: 0;
-}
-.ptab:hover .close { opacity: 1; }
-/* 活跃 pane 指示：活跃编辑器 pane 的标签条上缘 2px accent（Emacs selected window 的可见对应物） */
-.pane.active-pane .ptabs { box-shadow: inset 0 2px 0 0 var(--accent); }
-:root[data-theme="eink"] .pane.active-pane .ptabs { box-shadow: inset 0 2px 0 0 #000; }
 
 /* ---- 编辑器内容面 ---- */
 .doc-scroll {
@@ -484,8 +494,6 @@ svg { display: block; }
   border-radius: 50%;
   background: var(--text-3);
 }
-.doc li li { font-size: var(--fs-body-s); color: var(--text-2); margin: var(--sp-1) 0; }
-.doc li ul { margin: var(--sp-1) 0 var(--sp-2); }
 .doc code {
   font-family: var(--font-mono);
   font-size: 0.86em;
@@ -493,8 +501,8 @@ svg { display: block; }
   padding: 1.5px 5px;
   border-radius: var(--r5);
 }
-.wikilink { color: var(--accent); text-decoration: none; }
-:root[data-theme="eink"] .wikilink { text-decoration: underline; text-underline-offset: 3px; }
+/* wikilink：去蓝后颜色不再足以区分，补下划线作第二信道 */
+.wikilink { color: var(--accent); text-decoration: underline; text-underline-offset: 3px; text-decoration-color: var(--text-3); }
 
 /* 代码文件 pane（屏 2/3 右栏） */
 .code-scroll {
@@ -537,9 +545,9 @@ svg { display: block; }
 .modeline .crumb .sep { opacity: 0.6; }
 </style>
 <style>
-/* ============ harness pane（Phase 2：pane 内容件，不再是 dock 列） ============ */
+/* ============ harness pane（Phase 2：pane 内容件；默认宽 harness:pane#1 = 1:2） ============ */
 .pane-harness {
-  flex: 0 0 400px;
+  flex: 1 1 0;
   background: var(--agent-bg);
   display: flex;
   flex-direction: column;
@@ -568,7 +576,7 @@ svg { display: block; }
   font-size: var(--fs-meta);
   font-weight: var(--fw-medium);
   color: var(--text);
-  max-width: 190px;
+  max-width: 170px;
   transition: background var(--dur-ui) var(--ease-standard);
 }
 .h-session:hover { background: var(--hover); }
@@ -577,14 +585,61 @@ svg { display: block; }
 .h-usage {
   flex: 1 1 auto;
   min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--sp-2);
   font-family: var(--font-mono);
   font-size: var(--fs-label);
   color: var(--text-3);
-  text-align: right;
   white-space: nowrap;
+  position: relative;
 }
 .h-usage .pct { color: var(--text-2); }
 .h-usage.high .pct { color: var(--pending); font-weight: var(--fw-semibold); }
+/* 高用量时百分比后的 info 钮：点击/悬停才展开说明（原常驻警示句已移除） */
+.ctx-info {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--pending);
+  transition: background var(--dur-ui) var(--ease-standard);
+}
+.ctx-info:hover { background: var(--hover); }
+.ctx-tip {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  width: 224px;
+  background: var(--preview-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--r7);
+  box-shadow: var(--shadow-raise);
+  padding: var(--sp-3) var(--sp-4);
+  font-family: var(--font-sans);
+  font-size: var(--fs-meta);
+  line-height: var(--lh-ui);
+  color: var(--text-2);
+  text-align: left;
+  display: none;
+  z-index: 30;
+}
+.h-usage .ctx-info:hover + .ctx-tip,
+.h-usage .ctx-info:focus-visible + .ctx-tip,
+.ctx-tip:hover { display: block; }
+.ctx-tip .w-act {
+  margin-top: var(--sp-2);
+  padding: 2px var(--sp-3);
+  border: 1px solid var(--pending);
+  border-radius: var(--r4);
+  font-size: var(--fs-label-s);
+  font-weight: var(--fw-medium);
+  color: var(--pending);
+}
 .h-new {
   flex: none;
   height: 24px;
@@ -645,31 +700,6 @@ svg { display: block; }
   color: var(--text-3);
 }
 
-/* 上下文用量警示条（≥80%，屏 6） */
-.h-warn {
-  flex: none;
-  display: flex;
-  align-items: center;
-  gap: var(--sp-3);
-  padding: var(--sp-3) var(--sp-4);
-  background: var(--pending-tint);
-  color: var(--pending);
-  font-size: var(--fs-meta);
-  line-height: var(--lh-ui);
-  border-bottom: 1px solid var(--border-soft);
-}
-:root[data-theme="eink"] .h-warn { font-weight: var(--fw-semibold); border-bottom-color: var(--border); }
-.h-warn .w-text { flex: 1; min-width: 0; }
-.h-warn .w-act {
-  flex: none;
-  padding: 2px var(--sp-3);
-  border: 1px solid currentColor;
-  border-radius: var(--r4);
-  font-size: var(--fs-label-s);
-  font-weight: var(--fw-medium);
-  color: inherit;
-}
-
 /* ---- transcript：document 式消息流（无气泡、无头像） ---- */
 .h-transcript {
   flex: 1 1 auto;
@@ -719,12 +749,12 @@ svg { display: block; }
   padding: 1px 5px;
   border-radius: var(--r4);
 }
-/* 用户消息里附着的 pinned 上下文（发送后沉淀为消息的一部分） */
+/* 用户消息里附着的 pinned 上下文（发送后沉淀为消息的一部分；多 pin = 多块，各自带问题） */
 .msg .att-pin {
   display: flex;
   align-items: center;
   gap: var(--sp-3);
-  margin-bottom: var(--sp-2);
+  margin-bottom: var(--sp-1);
   padding: var(--sp-2) var(--sp-3);
   background: var(--agent-bg);
   border: 1px solid var(--border-soft);
@@ -740,6 +770,12 @@ svg { display: block; }
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--text-3);
+}
+.msg .att-q {
+  margin: 0 0 var(--sp-2);
+  padding-left: var(--sp-3);
+  font-size: var(--fs-meta);
+  color: var(--text);
 }
 
 /* 复制消息 affordance：hover 时浮现在 who 行右侧；点击后短暂变为「已复制」 */
@@ -811,6 +847,7 @@ body[data-screen="8"] .msg .copy-btn.copied { opacity: 1; }
   color: var(--text-3);
 }
 .tools .tool-summary:hover { color: var(--text); }
+/* 进度：总量运行前不可知（token 数与工具轮数运行时才定）——不定态条 + 阶段指示，无百分比 */
 .tools .tool-meta {
   margin-top: var(--sp-1);
   font-size: var(--fs-label-s);
@@ -819,14 +856,25 @@ body[data-screen="8"] .msg .copy-btn.copied { opacity: 1; }
   align-items: center;
   gap: var(--sp-3);
 }
+.tools .tool-meta .stage { color: var(--text-2); font-weight: var(--fw-medium); }
 .tools .tool-meta .bar {
   flex: 1;
   height: 2px;
   border-radius: 1px;
   background: var(--hover);
   overflow: hidden;
+  position: relative;
 }
-.tools .tool-meta .bar i { display: block; height: 100%; width: 58%; background: var(--run); opacity: 0.55; border-radius: 1px; }
+.tools .tool-meta .bar i {
+  position: absolute;
+  top: 0; bottom: 0;
+  width: 38%;
+  border-radius: 1px;
+  background: var(--run);
+  opacity: 0.55;
+  animation: h-indet 1.4s ease-in-out infinite;
+}
+@keyframes h-indet { 0% { left: -38%; } 100% { left: 100%; } }
 @keyframes h-pulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.35; transform: scale(0.8); } }
 
 /* 思考过程：折叠 = 一行 meta；展开 = 左边线 + 次级灰正文 */
@@ -859,7 +907,7 @@ body[data-screen="8"] .msg .copy-btn.copied { opacity: 1; }
 .think .th-body p:first-child { margin-top: 0; }
 .think .th-body p:last-child { margin-bottom: 0; }
 
-/* ---- pin 区（composer 上方的待发上下文） ---- */
+/* ---- pin 区（composer 上方的待发上下文；多 pin 排队，各配各的问题，一次发出） ---- */
 .h-pins {
   flex: none;
   padding: var(--sp-2) var(--sp-4) 0;
@@ -876,9 +924,8 @@ body[data-screen="8"] .msg .copy-btn.copied { opacity: 1; }
   border: 1px solid var(--border);
   border-radius: var(--r6);
 }
-:root[data-theme="eink"] .pin-card { border-color: var(--border); }
 .pin-card .pc-icon { flex: none; margin-top: 1px; color: var(--accent); }
-.pin-card .pc-main { flex: 1; min-width: 0; }
+.pin-card .pc-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .pin-card .pc-src {
   font-family: var(--font-mono);
   font-size: var(--fs-label-s);
@@ -895,6 +942,14 @@ body[data-screen="8"] .msg .copy-btn.copied { opacity: 1; }
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+/* 该 pin 自带的问题（多 pin 流程：每条引用配各自的问题，一次发出） */
+.pin-card .pc-q {
+  margin-top: var(--sp-2);
+  padding-left: var(--sp-3);
+  border-left: 2px solid var(--border-soft);
+  font-size: var(--fs-meta);
+  color: var(--text);
 }
 .pin-card .pc-x {
   flex: none;
@@ -997,7 +1052,6 @@ body[data-screen="5"] .doc li.demo-pin-hover .pin-hover { display: flex; }
 .ctl-chip:hover { background: var(--hover); color: var(--text); }
 .ctl-chip svg { color: var(--text-3); }
 .ctl-chip .chev { color: var(--text-3); }
-.ctl-chip.open { background: var(--hover); color: var(--text); }
 .ctl-spacer { flex: 1; }
 .h-send {
   width: 26px;
@@ -1010,12 +1064,21 @@ body[data-screen="5"] .doc li.demo-pin-hover .pin-hover { display: flex; }
   align-items: center;
   justify-content: center;
 }
-/* 模型选择浮层（屏 4 展示放置位，屏 10 展示思考程度浮层） */
+/* 处理中（屏 4）：发送钮变进行中态 = 停止 glyph + 脉冲环；点击停止当前回合 */
+.h-send .ic-stop { display: none; }
+body[data-screen="4"] .h-send .ic-go { display: none; }
+body[data-screen="4"] .h-send .ic-stop { display: block; }
+body[data-screen="4"] .h-send { animation: h-sendpulse var(--pulse-cycle); }
+@keyframes h-sendpulse {
+  0%, 100% { box-shadow: 0 0 0 0 var(--accent-tint); }
+  50% { box-shadow: 0 0 0 3px var(--accent-tint); }
+}
+/* 思考程度浮层（屏 10）：三个裸档位，无每档释义 */
 .ctl-pop {
   position: absolute;
   bottom: 62px;
   left: var(--sp-4);
-  width: 268px;
+  width: 180px;
   background: var(--preview-bg);
   border: 1px solid var(--border);
   border-radius: var(--r8);
@@ -1032,58 +1095,34 @@ body[data-screen="5"] .doc li.demo-pin-hover .pin-hover { display: flex; }
 }
 .eff-item {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   gap: var(--sp-3);
   width: 100%;
   padding: var(--sp-3) var(--sp-4);
   border-radius: var(--r5);
   text-align: left;
-  transition: background var(--dur-hover) var(--ease-standard);
-}
-.eff-item:hover { background: var(--hover); }
-.eff-item .ei-check { flex: none; width: 14px; margin-top: 2px; color: var(--accent); }
-.eff-item .ei-main { flex: 1; min-width: 0; }
-.eff-item .ei-name {
   font-size: var(--fs-meta);
   font-weight: var(--fw-medium);
   color: var(--text);
-  display: flex;
-  align-items: center;
-  gap: var(--sp-3);
+  transition: background var(--dur-hover) var(--ease-standard);
 }
-.eff-item .ei-name .ei-tag {
-  font-size: var(--fs-micro);
-  font-weight: var(--fw-regular);
-  color: var(--text-3);
-}
-.eff-item .ei-desc {
-  margin-top: 1px;
-  font-size: var(--fs-label-s);
-  line-height: var(--lh-ui);
-  color: var(--text-2);
-}
+.eff-item:hover { background: var(--hover); }
+.eff-item .ei-check { flex: none; width: 14px; color: var(--accent); }
 .eff-item.current { background: var(--accent-tint); }
 :root[data-theme="eink"] .eff-item.current { background: var(--sel); }
-.ctl-pop .cp-foot {
-  margin-top: var(--sp-1);
-  padding: var(--sp-2) var(--sp-4);
-  border-top: 1px solid var(--border-soft);
-  font-size: var(--fs-micro);
-  line-height: var(--lh-ui);
-  color: var(--text-3);
-}
 
 /* ============ 屏幕切换（?screen=1..10） ============ */
-.pane-doc2, .splitter, .pane-harness { display: none; }
-body[data-screen="2"] .splitter.sp-a, body[data-screen="2"] .pane-doc2 { display: block; }
+.tabstrip.ts-b, .pane-doc2, .splitter, .pane-harness { display: none; }
+body[data-screen="2"] .tabstrip.ts-b, body[data-screen="3"] .tabstrip.ts-b { display: flex; }
+body[data-screen="2"] .splitter.sp-a { display: block; }
 body[data-screen="2"] .pane-doc2 { display: flex; }
-body[data-screen="3"] .splitter.sp-a, body[data-screen="3"] .pane-doc2 { display: flex; }
-body[data-screen="3"] .splitter.sp-a { display: block; }
+body[data-screen="3"] .splitter.sp-a { display: block; cursor: col-resize; }
+body[data-screen="3"] .pane-doc2 { display: flex; }
 body[data-screen="3"] .pane-editor { flex: 0 0 62%; }
-body[data-screen="3"] .splitter.sp-a { cursor: col-resize; }
 body[data-screen="3"] .splitter.sp-a::after { left: 1px; width: 3px; background: var(--accent); }
 body[data-screen="3"] .splitter.sp-a .grip { opacity: 0.35; }
 
+/* harness 在场（屏 4-10）：harness:pane#1 = 1:2 */
 body[data-screen="4"] .pane-harness, body[data-screen="5"] .pane-harness,
 body[data-screen="6"] .pane-harness, body[data-screen="7"] .pane-harness,
 body[data-screen="8"] .pane-harness, body[data-screen="9"] .pane-harness,
@@ -1092,6 +1131,10 @@ body[data-screen="4"] .splitter.sp-b, body[data-screen="5"] .splitter.sp-b,
 body[data-screen="6"] .splitter.sp-b, body[data-screen="7"] .splitter.sp-b,
 body[data-screen="8"] .splitter.sp-b, body[data-screen="9"] .splitter.sp-b,
 body[data-screen="10"] .splitter.sp-b { display: block; }
+body[data-screen="4"] .pane-editor, body[data-screen="5"] .pane-editor,
+body[data-screen="6"] .pane-editor, body[data-screen="7"] .pane-editor,
+body[data-screen="8"] .pane-editor, body[data-screen="9"] .pane-editor,
+body[data-screen="10"] .pane-editor { flex: 2 1 0; }
 
 /* harness toggle 按钮的 pressed 态跟随屏幕 */
 body[data-screen="4"] #harness-toggle, body[data-screen="5"] #harness-toggle,
@@ -1106,7 +1149,7 @@ body[data-screen="10"] #harness-toggle { background: var(--accent-tint); color: 
 :root[data-theme="eink"] body[data-screen="9"] #harness-toggle,
 :root[data-theme="eink"] body[data-screen="10"] #harness-toggle { background: var(--accent-fill); color: var(--accent-fill-text); }
 
-/* transcript 段落按屏分发：A=工作中(4) B=pin(5) C=完成态(6/7/8/10) D=思考(9) */
+/* transcript 段落按屏分发：A=工作中(4) B=多pin(5) C=完成态(6/7/8/10) D=思考(9) */
 .tx-a, .tx-b, .tx-c, .tx-d { display: none; }
 body[data-screen="4"] .tx-a { display: flex; flex-direction: column; gap: var(--sp-4); }
 body[data-screen="5"] .tx-b { display: flex; flex-direction: column; gap: var(--sp-4); }
@@ -1114,13 +1157,13 @@ body[data-screen="6"] .tx-c, body[data-screen="7"] .tx-c,
 body[data-screen="8"] .tx-c, body[data-screen="10"] .tx-c { display: flex; flex-direction: column; gap: var(--sp-4); }
 body[data-screen="9"] .tx-d { display: flex; flex-direction: column; gap: var(--sp-4); }
 
-/* 屏 6：高用量读数 + 警示条；其余屏常态读数 */
-.h-usage-normal, .h-usage-high, .h-warn, .sess-pop, .h-pins, .think, .ctl-pop { display: none; }
-body[data-screen="6"] .h-usage-high { display: block; }
-body[data-screen="6"] .h-warn { display: flex; }
+/* 屏 6：高用量读数 + info 钮的说明气泡（静态摆拍为展开态）；其余屏常态读数 */
+.h-usage-normal, .h-usage-high, .sess-pop, .h-pins, .think, .ctl-pop { display: none; }
+body[data-screen="6"] .h-usage-high { display: flex; }
+body[data-screen="6"] .ctx-tip { display: block; }
 body[data-screen="4"] .h-usage-normal, body[data-screen="5"] .h-usage-normal,
 body[data-screen="7"] .h-usage-normal, body[data-screen="8"] .h-usage-normal,
-body[data-screen="9"] .h-usage-normal, body[data-screen="10"] .h-usage-normal { display: block; }
+body[data-screen="9"] .h-usage-normal, body[data-screen="10"] .h-usage-normal { display: flex; }
 body[data-screen="7"] .sess-pop { display: block; }
 body[data-screen="5"] .h-pins { display: flex; }
 body[data-screen="9"] .think { display: block; }
@@ -1137,15 +1180,109 @@ body[data-screen="5"] .doc li.pinned {
 :root[data-theme="eink"] body[data-screen="5"] .doc li.pinned { background: transparent; box-shadow: -2px 0 0 0 #000; }
 .doc li.pinned .pin-flag { display: none; }
 body[data-screen="5"] .doc li.pinned .pin-flag { display: inline-flex; }
+
+/* ============ 原型控制面板（右下角；?panel=0 关闭，截图脚本用之） ============ */
+.proto-panel {
+  position: fixed;
+  right: 12px;
+  bottom: 12px;
+  z-index: 100;
+  font-size: var(--fs-meta);
+}
+.pp-pill {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  height: 26px;
+  padding: 0 var(--sp-4);
+  border-radius: 13px;
+  background: var(--preview-bg);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-raise);
+  color: var(--text-2);
+  margin-left: auto;
+}
+.pp-pill:hover { color: var(--text); }
+.pp-body {
+  position: absolute;
+  right: 0;
+  bottom: 32px;
+  width: 296px;
+  background: var(--preview-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--r8);
+  box-shadow: var(--shadow-raise);
+  padding: var(--sp-4);
+}
+.pp-body[hidden] { display: none; }
+.pp-label {
+  padding: 0 var(--sp-1) var(--sp-2);
+  font-size: var(--fs-micro);
+  font-weight: var(--fw-semibold);
+  letter-spacing: 0.06em;
+  color: var(--text-3);
+}
+.pp-grid { display: grid; grid-template-columns: 1fr 1fr; gap: var(--sp-1); }
+.pp-item {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  height: 26px;
+  padding: 0 var(--sp-3);
+  border-radius: var(--r5);
+  font-size: var(--fs-meta);
+  color: var(--text-2);
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.pp-item:hover { background: var(--hover); color: var(--text); }
+.pp-item .pp-num {
+  flex: none;
+  width: 16px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-label-s);
+  color: var(--text-3);
+}
+.pp-item.current { background: var(--accent-tint); color: var(--text); font-weight: var(--fw-medium); }
+:root[data-theme="eink"] .pp-item.current { background: var(--sel); }
+.pp-themes {
+  display: flex;
+  gap: var(--sp-1);
+  margin-top: var(--sp-3);
+  padding-top: var(--sp-3);
+  border-top: 1px solid var(--border-soft);
+}
+.pp-themes .pp-item { flex: 1; justify-content: center; }
 </style>
 </head>
 <body data-screen="1">
 <div class="shell">
 
-  <!-- ======== 标题栏 ======== -->
+  <!-- ======== 标题栏：标签在标题栏里面（与真实产品同构） ======== -->
   <header class="titlebar">
     <div class="traffic"><i></i><i></i><i></i></div>
-    <div class="titlebar-drag"></div>
+    <nav class="tabstrip" role="tablist" aria-label="打开的文档">
+      <button class="tab is-active" role="tab" aria-selected="true">
+        <span class="tab-name">reading-workflow.md</span>
+        <span class="tab-close"><svg width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><path d="M1.5 1.5l7 7M8.5 1.5l-7 7"/></svg></span>
+      </button>
+      <button class="tab" role="tab" aria-selected="false">
+        <span class="tab-name">typography-notes.md</span>
+        <span class="tab-close"><svg width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><path d="M1.5 1.5l7 7M8.5 1.5l-7 7"/></svg></span>
+      </button>
+    </nav>
+    <!-- pane B 的标签段（屏 2/3）：真实产品在 split 时现建并插在 pane A 标签段之后 -->
+    <nav class="tabstrip ts-b" role="tablist" aria-label="打开的文档（pane 2）">
+      <button class="tab is-active" role="tab" aria-selected="true">
+        <span class="tab-name">harness-panel.ts</span>
+        <span class="tab-close"><svg width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><path d="M1.5 1.5l7 7M8.5 1.5l-7 7"/></svg></span>
+      </button>
+      <button class="tab" role="tab" aria-selected="false">
+        <span class="tab-name">keys.ts</span>
+        <span class="tab-close"><svg width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><path d="M1.5 1.5l7 7M8.5 1.5l-7 7"/></svg></span>
+      </button>
+    </nav>
     <button class="tb-btn" id="harness-toggle" title="在旁侧 pane 打开/收起 harness（⌘⇧A）" aria-pressed="false">
       <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M8 1.5 9.6 6.4 14.5 8 9.6 9.6 8 14.5 6.4 9.6 1.5 8l4.9-1.6z"/></svg>
     </button>
@@ -1157,7 +1294,7 @@ body[data-screen="5"] .doc li.pinned .pin-flag { display: inline-flex; }
     <div class="vault-head">
       <div class="vault-name">
         <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 4.5h4l1.2 1.6h5.8v6.4h-11z"/><path d="M2.5 4.5v-1h4l1.2 1.6"/></svg>
-        Everything
+        Fieldnotes
       </div>
       <button class="icon-btn" title="新建笔记" aria-label="新建笔记">
         <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M8 3.5v9M3.5 8h9"/></svg>
@@ -1172,15 +1309,15 @@ body[data-screen="5"] .doc li.pinned .pin-flag { display: inline-flex; }
     <nav class="tree">
       <div class="tree-section">文件夹</div>
       <div class="trow t-lv1"><span class="chev"><svg width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 3.5 5 6l2.5-2.5"/></svg></span><span class="fname">1_Projects</span></div>
-      <div class="trow t-lv2"><span class="chev"><svg width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 3.5 5 6l2.5-2.5"/></svg></span><span class="fname">Slax-Reader-AI-Reading-Reimagined</span></div>
+      <div class="trow t-lv2"><span class="chev"><svg width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 3.5 5 6l2.5-2.5"/></svg></span><span class="fname">web-revamp</span></div>
       <div class="trow file t-lv3"><span class="fname">README.md</span></div>
-      <div class="trow t-lv2 closed"><span class="chev"><svg width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 3.5 5 6l2.5-2.5"/></svg></span><span class="fname">Slax-Reader-Auto-Tagging</span></div>
-      <div class="trow t-lv2 closed"><span class="chev"><svg width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 3.5 5 6l2.5-2.5"/></svg></span><span class="fname">Slax-Reader-Onboarding</span></div>
+      <div class="trow t-lv2 closed"><span class="chev"><svg width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 3.5 5 6l2.5-2.5"/></svg></span><span class="fname">hiring-plan</span></div>
+      <div class="trow t-lv2 closed"><span class="chev"><svg width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 3.5 5 6l2.5-2.5"/></svg></span><span class="fname">launch-checklist</span></div>
       <div class="trow t-lv1 closed"><span class="chev"><svg width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 3.5 5 6l2.5-2.5"/></svg></span><span class="fname">2_Areas</span></div>
       <div class="trow t-lv1"><span class="chev"><svg width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 3.5 5 6l2.5-2.5"/></svg></span><span class="fname">3_Resources</span></div>
-      <div class="trow file t-lv2 sel"><span class="fname">2026-R&amp;D-Strategy.md</span></div>
-      <div class="trow file t-lv2"><span class="fname">常用 English.md</span></div>
-      <div class="trow file t-lv2"><span class="fname">Personal Mission Statement.md</span></div>
+      <div class="trow file t-lv2 sel"><span class="fname">reading-workflow.md</span></div>
+      <div class="trow file t-lv2"><span class="fname">typography-notes.md</span></div>
+      <div class="trow file t-lv2"><span class="fname">meeting-template.md</span></div>
       <div class="trow t-lv2 closed"><span class="chev"><svg width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 3.5 5 6l2.5-2.5"/></svg></span><span class="fname">Templates</span></div>
       <div class="trow t-lv1 closed"><span class="chev"><svg width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 3.5 5 6l2.5-2.5"/></svg></span><span class="fname">4_Archives</span></div>
     </nav>
@@ -1189,46 +1326,38 @@ body[data-screen="5"] .doc li.pinned .pin-flag { display: inline-flex; }
   <!-- ======== pane 容器 ======== -->
   <div class="panes">
 
-    <!-- pane 1：编辑器（恒定存在；屏 1 独占，屏 4-10 为活跃编辑器 pane） -->
-    <section class="pane pane-editor active-pane">
-      <div class="ptabs">
-        <div class="ptab active">
-          <span class="tname">2026-R&amp;D-Strategy.md</span>
-          <span class="close"><svg width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><path d="M1.5 1.5l7 7M8.5 1.5l-7 7"/></svg></span>
-        </div>
-        <div class="ptab">
-          <span class="tname">dimension-design.md</span>
-          <span class="close"><svg width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><path d="M1.5 1.5l7 7M8.5 1.5l-7 7"/></svg></span>
-        </div>
-      </div>
+    <!-- pane 1：编辑器（恒定存在；屏 1 独占，屏 4-10 占 2/3 宽） -->
+    <section class="pane pane-editor">
       <div class="doc-scroll">
         <article class="doc">
-          <h1>2026 R&amp;D Strategy</h1>
-          <div class="doc-meta"><span>3_Resources</span><span class="dot"></span><span>63 行</span><span class="dot"></span><span>约 1,200 字</span></div>
-          <p>思路：不是学工具，而是改进工作方式。</p>
+          <h1>阅读工作流</h1>
+          <div class="doc-meta"><span>3_Resources</span><span class="dot"></span><span>58 行</span><span class="dot"></span><span>约 1,100 字</span></div>
+          <p>思路：阅读量不是瓶颈，筛选和消化才是。</p>
 
-          <h2>AI Coding 的基建、工作流规范</h2>
+          <h2>收集与筛选</h2>
           <ol>
-            <li>基建、流程、规范
+            <li>收集只做减法
               <ul>
-                <li><code>.claude</code>：Context engineering</li>
-                <li>PR：模板自动生成描述、AI 初审、Code Review Skills</li>
+                <li>订阅源每半年清一次，取关不需要理由</li>
+                <li>入队即写一句「为什么值得读」，写不出就不入队</li>
               </ul>
             </li>
-            <li class="pinned">Review (Plan + Code) &gt; Coding——从自动补全、我来设计结构，转向以 Review 为中心；除了 Agent 产出的质量，还要探究它为什么没达到预期<span class="pin-flag"><svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor"><path d="M9.5 1.5 14.5 6.5l-1.2.4-2.5 1-2.6 2.6.3 2.5-1 1-3.8-3.8L1.5 12.4l-.7-.7 2.2-2.2L-.5 5.7l1-1 2.5.3L5.6 2.4l1-2.5.4-1.2z" transform="translate(3 3)"/></svg></span>
+            <li class="pinned">先读结论再读论证——倒序阅读把大部分筛选成本压到开头两段，不值得的文章在前两段就出局<span class="pin-flag"><svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor"><path d="M9.5 1.5 14.5 6.5l-1.5.5-2.5 1-2.3 2.3.4 2.7-1.2 1.2-3.6-3.6-2.5 2.5-.9-.9 2.5-2.5-3.6-3.6L1.5 5.5l2.7.4 2.3-2.3 1-2.5z"/></svg></span>
               <button class="pin-hover" title="钉为对话上下文" aria-label="钉为对话上下文"><svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"><path d="M9.5 1.5 14.5 6.5l-1.5.5-2.5 1-2.3 2.3.4 2.7-1.2 1.2-3.6-3.6-2.5 2.5-.9-.9 2.5-2.5-3.6-3.6L1.5 5.5l2.7.4 2.3-2.3 1-2.5z"/></svg></button>
             </li>
-            <li class="demo-pin-hover">技能：Code Review、Agent 与 Hook、任务分解、TDD
+            <li class="demo-pin-hover">每周固定一个清空时段，队列不过周末
               <button class="pin-hover" title="钉为对话上下文" aria-label="钉为对话上下文"><svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"><path d="M9.5 1.5 14.5 6.5l-1.5.5-2.5 1-2.3 2.3.4 2.7-1.2 1.2-3.6-3.6-2.5 2.5-.9-.9 2.5-2.5-3.6-3.6L1.5 5.5l2.7.4 2.3-2.3 1-2.5z"/></svg></button>
             </li>
-            <li>Pilot：忠旺重写 API；华南做 Slax Reader</li>
+            <li>长文先扫小标题，再决定深读哪几段</li>
           </ol>
 
-          <h2>从研发部的视角出发的 Tech Vision</h2>
+          <h2>精读与笔记</h2>
           <ul>
-            <li>对各职能端的期望——从各端的年终总结中收集信息</li>
-            <li>PR：AI 编写描述，让 reviewer 快速了解概要；AI 做初审，降低 reviewer 的心智负担</li>
-            <li>对忠旺——<a class="wikilink" href="#">2026-01 和忠旺</a>：全局统筹和主动同步；提高决策质量，通过写方案说清楚目标价值和取舍来实现</li>
+            <li>笔记只记「我会怎么用」，不抄原文</li>
+            <li class="pinned">每篇笔记只留一个可执行动作，其余都是参考资料——动作写不进一句话，说明还没读懂<span class="pin-flag"><svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor"><path d="M9.5 1.5 14.5 6.5l-1.5.5-2.5 1-2.3 2.3.4 2.7-1.2 1.2-3.6-3.6-2.5 2.5-.9-.9 2.5-2.5-3.6-3.6L1.5 5.5l2.7.4 2.3-2.3 1-2.5z"/></svg></span>
+              <button class="pin-hover" title="钉为对话上下文" aria-label="钉为对话上下文"><svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"><path d="M9.5 1.5 14.5 6.5l-1.5.5-2.5 1-2.3 2.3.4 2.7-1.2 1.2-3.6-3.6-2.5 2.5-.9-.9 2.5-2.5-3.6-3.6L1.5 5.5l2.7.4 2.3-2.3 1-2.5z"/></svg></button>
+            </li>
+            <li>每月把动作清单过一遍，三次没执行就删掉，参考 <a class="wikilink" href="#">weekly-review</a> 的节奏</li>
           </ul>
         </article>
       </div>
@@ -1238,16 +1367,6 @@ body[data-screen="5"] .doc li.pinned .pin-flag { display: inline-flex; }
 
     <!-- pane 2：第二个编辑器（屏 2 等宽 / 屏 3 拖动态） -->
     <section class="pane pane-doc2">
-      <div class="ptabs">
-        <div class="ptab active">
-          <span class="tname">harness-panel.ts</span>
-          <span class="close"><svg width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><path d="M1.5 1.5l7 7M8.5 1.5l-7 7"/></svg></span>
-        </div>
-        <div class="ptab">
-          <span class="tname">keys.ts</span>
-          <span class="close"><svg width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><path d="M1.5 1.5l7 7M8.5 1.5l-7 7"/></svg></span>
-        </div>
-      </div>
       <div class="code-scroll">
         <div class="cline"><span class="ln">31</span><span><span class="tk-k">export interface</span> HarnessContextSource {</span></div>
         <div class="cline"><span class="ln">32</span><span>  <span class="tk-c">/** 最近活跃的编辑器 pane（ADR 0008 D3） */</span></span></div>
@@ -1271,15 +1390,15 @@ body[data-screen="5"] .doc li.pinned .pin-flag { display: inline-flex; }
 
     <div class="splitter sp-b" title="拖拽调整 pane 宽度"><span class="grip"></span></div>
 
-    <!-- pane 3：harness（屏 4-10） -->
+    <!-- pane 3：harness（屏 4-10，默认 1/3 宽） -->
     <section class="pane pane-harness">
       <div class="h-head">
         <button class="h-session" title="切换会话">
-          <span class="sname">整理 R&amp;D 策略</span>
+          <span class="sname">梳理阅读工作流</span>
           <svg class="chev" width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 3.5 5 6l2.5-2.5"/></svg>
         </button>
         <span class="h-usage h-usage-normal">ctx <span class="pct">62%</span></span>
-        <span class="h-usage h-usage-high high">ctx <span class="pct">86%</span></span>
+        <span class="h-usage h-usage-high high">ctx <span class="pct">86%</span><button class="ctx-info" title="上下文用量说明" aria-label="上下文用量说明"><svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"><circle cx="6" cy="6" r="5"/><path d="M6 5.5v3"/><circle cx="6" cy="3.4" r="0.4" fill="currentColor" stroke="none"/></svg></button><span class="ctx-tip" role="tooltip">继续对话将触发压缩，细节可能丢失。<br><button class="w-act">新建会话</button></span></span>
         <button class="h-new" title="新建会话（⌘⇧N）">
           <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M8 3.5v9M3.5 8h9"/></svg>
           新会话
@@ -1290,17 +1409,17 @@ body[data-screen="5"] .doc li.pinned .pin-flag { display: inline-flex; }
           <div class="sp-label">最近会话</div>
           <button class="sess-item current">
             <span class="si-check"><svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 6.5 4.8 9.3 10 3.5"/></svg></span>
-            <span class="si-name">整理 R&amp;D 策略</span>
+            <span class="si-name">梳理阅读工作流</span>
             <span class="si-when">刚刚</span>
           </button>
           <button class="sess-item">
             <span class="si-check"></span>
-            <span class="si-name">审 M312 提案队列</span>
+            <span class="si-name">周复盘提纲</span>
             <span class="si-when">昨天</span>
           </button>
           <button class="sess-item">
             <span class="si-check"></span>
-            <span class="si-name">翻译 dimension-design</span>
+            <span class="si-name">翻译 typography-notes</span>
             <span class="si-when">周一</span>
           </button>
           <div class="sess-divider"></div>
@@ -1312,48 +1431,48 @@ body[data-screen="5"] .doc li.pinned .pin-flag { display: inline-flex; }
         </div>
       </div>
 
-      <!-- 屏 6：上下文用量警示条 -->
-      <div class="h-warn">
-        <span class="w-text">上下文已用 86%。继续对话将触发压缩，细节可能丢失。</span>
-        <button class="w-act">新建会话</button>
-      </div>
-
       <div class="h-transcript">
 
-        <!-- 屏 4：工作中 -->
+        <!-- 屏 4：工作中（不定态进度 + 阶段指示；发送钮为进行中/停止态） -->
         <div class="tx-a">
           <div class="msg user">
             <div class="who">你<span class="when">· 12 秒前</span></div>
-            <div class="body">把 <span class="file-ref">2026-R&amp;D-Strategy.md</span> 整理成结构化备忘录，并链接相关的 1:1 笔记</div>
+            <div class="body">把 <span class="file-ref">reading-workflow.md</span> 整理成结构化备忘录，并链接相关的笔记</div>
           </div>
           <div class="msg">
             <div class="who">Agent<span class="when">· 刚刚</span></div>
-            <div class="body"><p>收到。我先通读全文，检索相关的 1:1 笔记，再把整理方案作为提案提交——不会直接改动原文。</p></div>
+            <div class="body"><p>收到。我先通读全文，检索相关笔记，再把整理方案作为提案提交——不会直接改动原文。</p></div>
             <div class="tools">
-              <div class="tool-row done"><span class="ic"><svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M2 6.5 4.8 9.3 10 3.5"/></svg></span><span>读取 <span class="file-ref">2026-R&amp;D-Strategy.md</span></span></div>
-              <div class="tool-row done"><span class="ic"><svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M2 6.5 4.8 9.3 10 3.5"/></svg></span><span>搜索「1:1」「忠旺」「国杰」 · 命中 6 篇</span></div>
-              <div class="tool-row running"><span class="ic"><span class="pulse"></span></span><span>正在读取 3 篇 1:1 笔记…</span></div>
-              <div class="tool-meta"><span>已进行 12 秒</span><span class="bar"><i></i></span></div>
+              <div class="tool-row done"><span class="ic"><svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M2 6.5 4.8 9.3 10 3.5"/></svg></span><span>读取 <span class="file-ref">reading-workflow.md</span></span></div>
+              <div class="tool-row done"><span class="ic"><svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M2 6.5 4.8 9.3 10 3.5"/></svg></span><span>搜索「筛选」「笔记」「复盘」 · 命中 5 篇</span></div>
+              <div class="tool-row running"><span class="ic"><span class="pulse"></span></span><span>正在读取 2 篇相关笔记…</span></div>
+              <div class="tool-meta"><span class="stage">调用工具中</span><span>已进行 12 秒</span><span class="bar"><i></i></span></div>
             </div>
           </div>
         </div>
 
-        <!-- 屏 5：pin 式上下文块 -->
+        <!-- 屏 5：多 pin 一次发出（两条引用各配各的问题） -->
         <div class="tx-b">
           <div class="msg user">
             <div class="who">你<span class="when">· 1 分钟前</span></div>
             <div class="body">
               <div class="att-pin">
                 <svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor"><path d="M9.5 1.5 14.5 6.5l-1.5.5-2.5 1-2.3 2.3.4 2.7-1.2 1.2-3.6-3.6-2.5 2.5-.9-.9 2.5-2.5-3.6-3.6L1.5 5.5l2.7.4 2.3-2.3 1-2.5z"/></svg>
-                <span class="ap-src">2026-R&amp;D-Strategy.md</span>
-                <span class="ap-ex">「Review (Plan + Code) &gt; Coding——从自动补全…」</span>
+                <span class="ap-src">reading-workflow.md</span>
+                <span class="ap-ex">「先读结论再读论证——倒序阅读…」</span>
               </div>
-              就这一段展开聊聊：为什么说 Review 比 Coding 重要？落到我们组具体要改什么？
+              <p class="att-q">这一句我没懂，请你讲解</p>
+              <div class="att-pin">
+                <svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor"><path d="M9.5 1.5 14.5 6.5l-1.5.5-2.5 1-2.3 2.3.4 2.7-1.2 1.2-3.6-3.6-2.5 2.5-.9-.9 2.5-2.5-3.6-3.6L1.5 5.5l2.7.4 2.3-2.3 1-2.5z"/></svg>
+                <span class="ap-src">reading-workflow.md</span>
+                <span class="ap-ex">「每篇笔记只留一个可执行动作…」</span>
+              </div>
+              <p class="att-q">这段里的「可执行动作」具体指什么？</p>
             </div>
           </div>
           <div class="msg">
             <div class="who">Agent<span class="when">· 刚刚</span></div>
-            <div class="body"><p>这段话的关键转变是「设计权仍在人」：AI 写码越快，人的瓶颈越移到判断「写得对不对」。落到你们组，三件事最直接——PR 描述自动生成让 reviewer 低负担进场、AI 初审挡掉机械问题、把「为什么没达到预期」归类成可复用的上下文缺失清单。</p></div>
+            <div class="body"><p>两个问题分开答。「倒序阅读」是把评估顺序倒过来：先看结论是否成立、是否相关，再决定要不要读支撑它的论证——大多数文章在结论段就能出局，论证的阅读成本只对少数文章发生。</p><p>「可执行动作」指一条下周就能做的事，比如「把订阅源减半」，而不是「重视筛选」这种方向性句子。判断标准：写不进日历或待办的，都不算动作。</p></div>
           </div>
         </div>
 
@@ -1361,11 +1480,11 @@ body[data-screen="5"] .doc li.pinned .pin-flag { display: inline-flex; }
         <div class="tx-c">
           <div class="msg user">
             <div class="who">你<span class="when">· 3 分钟前</span></div>
-            <div class="body">把 <span class="file-ref">2026-R&amp;D-Strategy.md</span> 整理成结构化备忘录，并链接相关的 1:1 笔记</div>
+            <div class="body">把 <span class="file-ref">reading-workflow.md</span> 整理成结构化备忘录，并链接相关的笔记</div>
           </div>
           <div class="msg demo-hover">
             <div class="who">Agent<span class="when">· 2 分钟前</span></div>
-            <div class="body"><p>已通读全文并检索相关笔记。命中 3 篇：<span class="file-ref">2026-01 和忠旺.md</span>、<span class="file-ref">2026-02 和国杰.md</span>、<span class="file-ref">2026-04 和忠旺.md</span>，整理时会一并给出链接建议。</p></div>
+            <div class="body"><p>已通读全文并检索相关笔记。命中 3 篇：<span class="file-ref">para-method.md</span>、<span class="file-ref">zettelkasten-notes.md</span>、<span class="file-ref">weekly-review.md</span>，整理时会一并给出链接建议。</p></div>
             <div class="tools">
               <button class="tool-summary">
                 <svg width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 2.5 6 5l-2.5 2.5"/></svg>
@@ -1413,24 +1532,36 @@ body[data-screen="5"] .doc li.pinned .pin-flag { display: inline-flex; }
                 思考过程<span class="th-dur">· 23 秒</span>
               </button>
               <div class="th-body">
-                <p>先确认 vault 里 1:1 笔记的命名规律：按「YYYY-MM 和人名」。搜索词用「1:1」「忠旺」「国杰」覆盖面足够，不必全文扫 Archives。</p>
-                <p>「技能」与「Pilot」两条同属行动层，归入「行动」段；lede 句单独保留为「思路」段首句，不进列表。</p>
+                <p>先确认 vault 里方法类笔记的命名规律：按主题小写连字符。搜索词用「筛选」「笔记」「复盘」覆盖面足够，不必全文扫 Archives。</p>
+                <p>「清空时段」与「动作清单」两条同属行动层，归入「行动」段；lede 句单独保留为「思路」段首句，不进列表。</p>
               </div>
             </div>
-            <div class="body"><p>三段式结构：思路（lede 原文）→ 原则（AI Coding 规范 4 条）→ 行动（Tech Vision 与各端期望）。条目对照原文 63 行逐条核对，无删减。</p></div>
+            <div class="body"><p>三段式结构：思路（lede 原文）→ 原则（收集与筛选 4 条）→ 行动（精读与笔记 3 条）。条目对照原文 58 行逐条核对，无删减。</p></div>
           </div>
         </div>
 
       </div>
 
-      <!-- 屏 5：pin 区（待发上下文） -->
+      <!-- 屏 5：pin 区（多条待发上下文，各配各的问题，一次发出） -->
       <div class="h-pins">
-        <div class="pins-hint">钉自活跃编辑器 pane · 随下一条消息发送</div>
+        <div class="pins-hint">钉自活跃编辑器 pane · 2 条引用随下一条消息一次发出</div>
         <div class="pin-card">
           <span class="pc-icon"><svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M9.5 1.5 14.5 6.5l-1.5.5-2.5 1-2.3 2.3.4 2.7-1.2 1.2-3.6-3.6-2.5 2.5-.9-.9 2.5-2.5-3.6-3.6L1.5 5.5l2.7.4 2.3-2.3 1-2.5z"/></svg></span>
           <span class="pc-main">
-            <span class="pc-src">2026-R&amp;D-Strategy.md<span class="pc-anchor">· AI Coding 的基建、工作流规范</span></span>
-            <span class="pc-ex">Review (Plan + Code) &gt; Coding——从自动补全、我来设计结构，转向以 Review 为中心…</span>
+            <span class="pc-src">reading-workflow.md<span class="pc-anchor">· 收集与筛选</span></span>
+            <span class="pc-ex">先读结论再读论证——倒序阅读把大部分筛选成本压到开头两段…</span>
+            <span class="pc-q">这一句我没懂，请你讲解</span>
+          </span>
+          <button class="pc-x" title="移除" aria-label="移除">
+            <svg width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><path d="M1.5 1.5l7 7M8.5 1.5l-7 7"/></svg>
+          </button>
+        </div>
+        <div class="pin-card">
+          <span class="pc-icon"><svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M9.5 1.5 14.5 6.5l-1.5.5-2.5 1-2.3 2.3.4 2.7-1.2 1.2-3.6-3.6-2.5 2.5-.9-.9 2.5-2.5-3.6-3.6L1.5 5.5l2.7.4 2.3-2.3 1-2.5z"/></svg></span>
+          <span class="pc-main">
+            <span class="pc-src">reading-workflow.md<span class="pc-anchor">· 精读与笔记</span></span>
+            <span class="pc-ex">每篇笔记只留一个可执行动作，其余都是参考资料…</span>
+            <span class="pc-q">这段里的「可执行动作」具体指什么？</span>
           </span>
           <button class="pc-x" title="移除" aria-label="移除">
             <svg width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><path d="M1.5 1.5l7 7M8.5 1.5l-7 7"/></svg>
@@ -1440,31 +1571,21 @@ body[data-screen="5"] .doc li.pinned .pin-flag { display: inline-flex; }
 
       <!-- composer -->
       <div class="h-composer">
-        <!-- 屏 10：思考程度浮层 -->
+        <!-- 屏 10：思考程度浮层（三个裸档位） -->
         <div class="ctl-pop">
           <div class="cp-label">思考程度</div>
           <button class="eff-item">
             <span class="ei-check"></span>
-            <span class="ei-main">
-              <span class="ei-name">低<span class="ei-tag">最快</span></span>
-              <span class="ei-desc">直答，跳过深思。适合检索、改写、翻译。</span>
-            </span>
+            低
           </button>
           <button class="eff-item current">
             <span class="ei-check"><svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 6.5 4.8 9.3 10 3.5"/></svg></span>
-            <span class="ei-main">
-              <span class="ei-name">中<span class="ei-tag">默认</span></span>
-              <span class="ei-desc">先想一步再动手，多数任务的平衡点。</span>
-            </span>
+            中
           </button>
           <button class="eff-item">
             <span class="ei-check"></span>
-            <span class="ei-main">
-              <span class="ei-name">高<span class="ei-tag">慢 · 用量高</span></span>
-              <span class="ei-desc">深度推理。留给结构设计、疑难 bug、长链路任务。</span>
-            </span>
+            高
           </button>
-          <div class="cp-foot">思考程度作用于下一条消息；高档显著增加上下文用量。</div>
         </div>
 
         <div class="h-box">
@@ -1481,8 +1602,9 @@ body[data-screen="5"] .doc li.pinned .pin-flag { display: inline-flex; }
               <svg class="chev" width="8" height="8" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 3.5 5 6l2.5-2.5"/></svg>
             </button>
             <span class="ctl-spacer"></span>
-            <button class="h-send" title="发送（⌘⏎）" aria-label="发送">
-              <svg width="13" height="13" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M7 11.5v-9M3.5 6 7 2.5 10.5 6"/></svg>
+            <button class="h-send" id="h-send" title="发送（⌘⏎）" aria-label="发送">
+              <svg class="ic-go" width="13" height="13" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M7 11.5v-9M3.5 6 7 2.5 10.5 6"/></svg>
+              <svg class="ic-stop" width="10" height="10" viewBox="0 0 12 12" fill="currentColor"><rect x="2" y="2" width="8" height="8" rx="1.5"/></svg>
             </button>
           </div>
         </div>
@@ -1492,7 +1614,7 @@ body[data-screen="5"] .doc li.pinned .pin-flag { display: inline-flex; }
 
   <!-- ======== modeline ======== -->
   <footer class="modeline">
-    <div class="crumb"><span>3_Resources</span><span class="sep">/</span><span>2026-R&amp;D-Strategy.md</span></div>
+    <div class="crumb"><span>3_Resources</span><span class="sep">/</span><span>reading-workflow.md</span></div>
     <div>阅读模式 · 第 1 行，第 1 列</div>
   </footer>
 </div>
@@ -1507,16 +1629,86 @@ body[data-screen="5"] .doc li.pinned .pin-flag { display: inline-flex; }
   document.body.dataset.screen = screen;
   document.documentElement.dataset.theme = theme;
 
+  var screens = [
+    ['1','单 pane 骨架'], ['2','双 pane 等宽'], ['3','分隔条拖拽'], ['4','harness 对话'],
+    ['5','多 pin 上下文'], ['6','上下文用量'], ['7','新建会话'], ['8','复制消息'],
+    ['9','思考过程'], ['10','思考程度']
+  ];
+  var themes = [['light','浅色'], ['dark','深色'], ['eink','eink']];
+
   var toggle = document.getElementById('harness-toggle');
   var harnessScreens = ['4','5','6','7','8','9','10'];
   var isHarness = harnessScreens.indexOf(screen) !== -1;
   toggle.setAttribute('aria-pressed', isHarness ? 'true' : 'false');
-
   toggle.addEventListener('click', function(){
-    var url = new URL(location.href);
-    url.searchParams.set('screen', isHarness ? '1' : '4');
-    location.href = url;
+    go(isHarness ? '1' : '4', theme);
   });
+
+  var sendBtn = document.getElementById('h-send');
+  if (screen === '4') {
+    sendBtn.title = '停止当前回合';
+    sendBtn.setAttribute('aria-label', '停止当前回合');
+  }
+
+  function go(s, t){
+    var url = new URL(location.href);
+    url.searchParams.set('screen', s);
+    url.searchParams.set('theme', t);
+    location.href = url;
+  }
+
+  // 原型控制面板（?panel=0 关闭，截图脚本用之；?screen/?theme 深链不受影响）
+  if (q.get('panel') !== '0') {
+    var themeName = themes.filter(function(t){ return t[0] === theme; })[0][1];
+    var screenName = screens.filter(function(s){ return s[0] === screen; })[0][1];
+    var panel = document.createElement('div');
+    panel.className = 'proto-panel';
+    var pill = document.createElement('button');
+    pill.className = 'pp-pill';
+    pill.textContent = '屏 ' + screen + ' · ' + themeName + ' ▴';
+    var body = document.createElement('div');
+    body.className = 'pp-body';
+    body.hidden = true;
+
+    var label1 = document.createElement('div');
+    label1.className = 'pp-label';
+    label1.textContent = '画面';
+    var grid = document.createElement('div');
+    grid.className = 'pp-grid';
+    screens.forEach(function(s){
+      var b = document.createElement('button');
+      b.className = 'pp-item' + (s[0] === screen ? ' current' : '');
+      var num = document.createElement('span');
+      num.className = 'pp-num';
+      num.textContent = s[0];
+      b.appendChild(num);
+      b.appendChild(document.createTextNode(s[1]));
+      b.addEventListener('click', function(){ go(s[0], theme); });
+      grid.appendChild(b);
+    });
+    var label2 = document.createElement('div');
+    label2.className = 'pp-label';
+    label2.style.paddingTop = '8px';
+    label2.textContent = '主题';
+    var trow = document.createElement('div');
+    trow.className = 'pp-themes';
+    themes.forEach(function(t){
+      var b = document.createElement('button');
+      b.className = 'pp-item' + (t[0] === theme ? ' current' : '');
+      b.textContent = t[1];
+      b.addEventListener('click', function(){ go(screen, t[0]); });
+      trow.appendChild(b);
+    });
+
+    body.appendChild(label1);
+    body.appendChild(grid);
+    body.appendChild(label2);
+    body.appendChild(trow);
+    pill.addEventListener('click', function(){ body.hidden = !body.hidden; });
+    panel.appendChild(body);
+    panel.appendChild(pill);
+    document.body.appendChild(panel);
+  }
 })();
 </script>
 </body>

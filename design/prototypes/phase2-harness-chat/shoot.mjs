@@ -39,7 +39,7 @@ const page = await browser.newPage({
 
 for (const [screen, sName] of screens) {
   for (const [theme, tName] of themes) {
-    const url = pathToFileURL(join(root, 'index.html')).href + `?screen=${screen}&theme=${theme}`;
+    const url = pathToFileURL(join(root, 'index.html')).href + `?screen=${screen}&theme=${theme}&panel=0`;
     await page.goto(url, { waitUntil: 'networkidle' });
     await page.waitForTimeout(300);
     const name = `${String(screen).padStart(2, '0')}-${sName}-${tName}.png`;

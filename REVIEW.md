@@ -123,6 +123,20 @@ worker 动工前、reviewer 给出 verdict 前逐条过一遍。每条按「症�
 - 证据：`.tower/comms/log/activity.log`（`23:34:38` vs `23:36:12` 两组同 agent id 的 spawn）；findings `.tower/comms/findings/20260918-worker-interaction-fixes-2-improve-towerspawn-mission-agent-id-live-loop-worktree.md` 与 `20260918-worker-codeblock-lang-proposal-bug-agent-wt-167.md`；被拦评审 `.tower/comms/inbox/20260918-reviewer-interaction-fixes-b-tower-review-result-blocked-m165-tip-b9ce80c-clean-merge-roster-re.md`。
 - 防线：spawn/resume 后约 2 分钟核 activity.log 尾部有无非本 tower 发起的 spawn/merge 行；发现 `-2` 同名注册立即收束到单一写者；resume 前确认旧实例已终态（`tower died` 行）。worker 侧：尽早 commit 让 tip 可评审；探针/临时目录带 mission 后缀（`/tmp/lumir-probe-<mission>`）；动工前 `ls -lT` 核对目标文件 mtime 是否晚于自己上次写入，发现被并发写入即停手上报，不靠覆盖取胜。
 
+## 七、仓库信息卫生
+
+**17. 真实 vault 内容混进入库制品（人名 / 项目名 / 文件名 / 正文）**
+- 症状：Phase 2 原型第一版的 HTML 与 30 张截图直接搬了真实 vault——真实同事姓名（多处，含对话 fixture 与文档正文）、真实项目目录名、真实文档文件名与正文，Alex 过目时当场认出（2026-10-05）。前科：M117 已清过一轮「视觉场景注释与 preview 注释里的真实 vault 文件名」（提交 `6018215` / `b237e45`）——清了注释，没拦住原型与截图这两个更大的面。
+- 根因：fixture 图省事直接抄真实 vault；截图类二进制把内容烧进像素，text 级清扫看不见，只能靠重截清除；纪律文本若引用真实字符串当反面例子，本身就再次违规。
+- 证据：M333（2026-10-05，phase2 原型全量合成化 + 30 张重截 + 仓内其余命中清单报 tower）；M117 两次清理提交；Alex 裁决原文见 M333 mission context（检索针不落 git）。
+- 防线：写 fixture 一律合成（人名 / 项目名 / 文件名 / 正文，宁可平淡不可求真）；提交原型 / 截图 / fixture 前对改动面跑一次 text 级 grep（针从当次需求取，不入库）；动过原型 HTML 后必须重截对应截图——HTML 清了而截图没重截等于没清；反面示例用「真实同事姓名」这类描述指代，MUST NOT 抄录原字符串。
+
+**18. 原型要求人手改 URL 切换状态，评审成本转嫁给出裁决的人**
+- 症状：Phase 2 原型第一版只能手改 `?screen=` / `?theme=` query 切屏切主题，Alex 过目时提出「不方便，应该提供控制面板」（2026-10-05）——裁决者要在地址栏敲十次以上的状态切换，评审节奏被打断。单次、代价不高，但 Alex 直接定为纪律，前置收录防下一轮原型重犯。
+- 根因：原型作者把「自己知道 query 格式」当成了「读者可操作的界面」。
+- 证据：M333（控制面板落地：页面右下角 pill 展开画面网格 + 主题行，query 保留作深链，截图脚本 `&panel=0` 关面板）；Alex 裁决原文见 M333 mission context。
+- 防线：交互原型动工时把「页面内置可点击控制面板（全部状态选项点击可达）」列为验收项，与画面本身同 PR 交付；query 参数只作深链与脚本入口，不作为读者的主要切换方式。
+
 ## 维护
 
 - 重复踩到表内某条：把新现场（commit / 证据路径）补进该条的「证据」，不要另起重复条目。
