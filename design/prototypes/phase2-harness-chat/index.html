@@ -1,0 +1,1523 @@
+<!DOCTYPE html>
+<!--
+  Lumir 原型 · Phase 2「harness 入 pane + chat UX 重做」（ADR 0008 Decision 8）
+  用法: index.html?screen=1..10&theme=light|dark|eink
+  自包含: 无外部资源, 系统字体栈, 内联 SVG 图标
+  token 直接镜像 src/style.css 的 token 层（同名同值），便于实现期一一映射。
+-->
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Lumir — Phase 2 harness pane 原型</title>
+<style>
+/* ============ tokens（镜像 src/style.css token 层，同名同值） ============ */
+:root,
+:root[data-theme="light"] {
+  --frame: #f4f4f1;
+  --agent-bg: #f7f7f4;
+  --content-bg: #fdfdfc;
+  --preview-bg: #ffffff;
+  --border: #e3e2dd;
+  --border-soft: #edece7;
+  --text: #21201a;
+  --text-2: #6e6c61;
+  --text-3: #a9a79b;
+  --sel: #e8e7e1;
+  --hover: rgba(0, 0, 0, 0.038);
+  --accent: #3a5fcd;
+  --accent-fill: #3a5fcd;
+  --accent-fill-text: #ffffff;
+  --accent-tint: #eef1fb;
+  --run: #3a5fcd;
+  --pending: #a06e0f;
+  --pending-tint: #faf3e1;
+  --ok: #2c7a4d;
+  --ok-tint: #e9f4ec;
+  --danger: #bf4438;
+  --danger-tint: #f9ecea;
+  --code-bg: #f2f1ec;
+  --shadow-pop: 0 1px 2px rgba(0, 0, 0, 0.05);
+  --shadow-raise: 0 4px 16px rgba(0, 0, 0, 0.1);
+  --scrim: rgba(0, 0, 0, 0.22);
+  --tl-close: #ff5f57;
+  --tl-min: #febc2e;
+  --tl-max: #28c840;
+}
+:root[data-theme="dark"] {
+  --frame: #1a1b1d;
+  --agent-bg: #1e1f21;
+  --content-bg: #222326;
+  --preview-bg: #26272b;
+  --border: rgba(255, 255, 255, 0.095);
+  --border-soft: rgba(255, 255, 255, 0.055);
+  --text: #e3e2db;
+  --text-2: #9b9a91;
+  --text-3: #62615b;
+  --sel: rgba(255, 255, 255, 0.075);
+  --hover: rgba(255, 255, 255, 0.05);
+  --accent: #8ba3ef;
+  --accent-fill: #647ecf;
+  --accent-fill-text: #ffffff;
+  --accent-tint: rgba(128, 152, 232, 0.15);
+  --run: #8ba3ef;
+  --pending: #d9a75c;
+  --pending-tint: rgba(217, 167, 92, 0.14);
+  --ok: #7cc093;
+  --ok-tint: rgba(124, 192, 147, 0.13);
+  --danger: #e08a80;
+  --danger-tint: rgba(224, 138, 128, 0.13);
+  --code-bg: rgba(255, 255, 255, 0.05);
+  --shadow-pop: none;
+  --shadow-raise: 0 4px 16px rgba(0, 0, 0, 0.5);
+  --scrim: rgba(0, 0, 0, 0.5);
+  --tl-close: #ff5f57;
+  --tl-min: #febc2e;
+  --tl-max: #28c840;
+}
+:root[data-theme="eink"] {
+  --frame: #ffffff;
+  --agent-bg: #ffffff;
+  --content-bg: #ffffff;
+  --preview-bg: #ffffff;
+  --border: #000000;
+  --border-soft: #b9b9b9;
+  --text: #000000;
+  --text-2: #3d3d3d;
+  --text-3: #6e6e6e;
+  --sel: #b9b9b9;
+  --sel-text: #000000;
+  --hover: rgba(0, 0, 0, 0.06);
+  --accent: #000000;
+  --accent-fill: #000000;
+  --accent-fill-text: #ffffff;
+  --accent-tint: transparent;
+  --run: #000000;
+  --pending: #000000;
+  --pending-tint: transparent;
+  --ok: #000000;
+  --ok-tint: transparent;
+  --danger: #000000;
+  --danger-tint: transparent;
+  --code-bg: #f0f0f0;
+  --shadow-pop: none;
+  --shadow-raise: none;
+  --scrim: rgba(0, 0, 0, 0.35);
+  --tl-close: #fff;
+  --tl-min: #fff;
+  --tl-max: #fff;
+}
+:root {
+  --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue",
+    "PingFang SC", "Hiragino Sans GB", sans-serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, monospace;
+
+  --fs-title: 24px;
+  --fs-h1: 21px;
+  --fs-h2: 18px;
+  --fs-h3: 16px;
+  --fs-h4: 15px;
+  --fs-body: 15px;
+  --fs-body-s: 13.5px;
+  --fs-ui: 13px;
+  --fs-ui-s: 12.5px;
+  --fs-meta: 12px;
+  --fs-label-s: 11.5px;
+  --fs-label: 11px;
+  --fs-micro: 10.5px;
+
+  --fw-regular: 400;
+  --fw-medium: 500;
+  --fw-emphasis: 550;
+  --fw-semibold: 600;
+  --fw-bold: 650;
+  --fw-label: 700;
+
+  --lh-title: 1.28;
+  --lh-reading: 1.7;
+  --lh-code: 1.55;
+  --lh-ui: 1.5;
+
+  --sp-1: 2px;  --sp-2: 4px;  --sp-3: 6px;  --sp-4: 8px;  --sp-5: 10px;
+  --sp-6: 12px; --sp-7: 14px; --sp-8: 16px; --sp-9: 20px; --sp-10: 24px;
+  --sp-12: 40px; --sp-14: 48px;
+
+  --r4: 4px; --r5: 5px; --r6: 6px; --r7: 7px; --r8: 8px; --r9: 9px; --r-pill: 20px;
+
+  --layout-sidebar-w: 236px;
+  --layout-titlebar-h: 42px;
+  --layout-modeline-h: 25px;
+  --layout-doc-measure: 760px;
+  --layout-tree-row-h: 25px;
+
+  --dur-hover: 0.1s;
+  --dur-ui: 0.12s;
+  --ease-standard: ease;
+  --pulse-cycle: 1.6s ease-in-out infinite;
+
+  --editor-font-family: var(--font-sans);
+  --editor-mono-family: var(--font-mono);
+  --editor-font-size: 15px;
+}
+
+/* ============ base ============ */
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html, body { height: 100%; overflow: hidden; }
+body {
+  font-family: var(--font-sans);
+  font-size: var(--fs-ui);
+  color: var(--text);
+  background: var(--frame);
+  font-feature-settings: "cv11", "ss01";
+  font-variant-numeric: tabular-nums;
+  -webkit-font-smoothing: antialiased;
+}
+button { font-family: inherit; font-size: inherit; color: inherit; background: none; border: none; cursor: pointer; }
+svg { display: block; }
+
+/* ============ 骨架：标题栏行 / 主行（侧栏 + pane 容器）/ modeline 行 ============ */
+.shell {
+  display: grid;
+  grid-template-columns: var(--layout-sidebar-w) minmax(0, 1fr);
+  grid-template-rows: var(--layout-titlebar-h) minmax(0, 1fr) var(--layout-modeline-h);
+  height: 100vh;
+}
+
+/* ---- 标题栏：dock 移除后只剩 traffic 空位 / 拖拽区 / harness toggle / 产品标识 ---- */
+.titlebar {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  padding-right: var(--sp-6);
+  background: var(--frame);
+  border-bottom: 1px solid var(--border);
+}
+.traffic {
+  flex: none;
+  width: var(--layout-sidebar-w);
+  display: flex;
+  gap: 8px;
+  padding-left: 14px;
+}
+.traffic i { width: 11px; height: 11px; border-radius: 50%; }
+.traffic i:nth-child(1) { background: var(--tl-close); }
+.traffic i:nth-child(2) { background: var(--tl-min); }
+.traffic i:nth-child(3) { background: var(--tl-max); }
+:root[data-theme="eink"] .traffic i { border: 1.5px solid #000; width: 9px; height: 9px; }
+.titlebar-drag { flex: 1 1 auto; min-width: 0; height: 100%; }
+.tb-btn {
+  flex: none;
+  width: 30px;
+  height: 28px;
+  margin-right: var(--sp-3);
+  border-radius: var(--r4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-3);
+  transition: background var(--dur-ui) var(--ease-standard), color var(--dur-ui) var(--ease-standard);
+}
+.tb-btn:hover { background: var(--hover); color: var(--text); }
+.tb-btn[aria-pressed="true"] { background: var(--accent-tint); color: var(--accent); }
+:root[data-theme="eink"] .tb-btn[aria-pressed="true"] { background: var(--accent-fill); color: var(--accent-fill-text); }
+.tb-identity {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  font-size: var(--fs-meta);
+  color: var(--text-2);
+  user-select: none;
+}
+.tb-identity .ver { color: var(--text-3); }
+
+/* ---- 侧栏（文件树） ---- */
+.sidebar {
+  grid-row: 2;
+  background: var(--frame);
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.vault-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--sp-5) var(--sp-8) var(--sp-4);
+}
+.vault-name {
+  font-size: var(--fs-ui);
+  font-weight: var(--fw-semibold);
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.vault-name svg { color: var(--text-3); }
+.icon-btn {
+  width: 26px;
+  height: 26px;
+  border-radius: var(--r6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-3);
+  transition: background var(--dur-ui) var(--ease-standard), color var(--dur-ui) var(--ease-standard);
+}
+.icon-btn:hover { background: var(--hover); color: var(--text); }
+.search-wrap { padding: 0 var(--sp-6) var(--sp-5); }
+.search {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 9px;
+  background: var(--hover);
+  border: 1px solid transparent;
+  border-radius: var(--r7);
+  color: var(--text-3);
+}
+.search input {
+  flex: 1;
+  border: none;
+  outline: none;
+  background: none;
+  font-family: inherit;
+  font-size: var(--fs-ui-s);
+  color: var(--text);
+}
+.search input::placeholder { color: var(--text-3); }
+.tree { flex: 1; min-height: 0; overflow: hidden; padding: 0 var(--sp-4) var(--sp-8); }
+.tree-section {
+  padding: var(--sp-4) var(--sp-5) var(--sp-2);
+  font-size: var(--fs-label);
+  font-weight: var(--fw-semibold);
+  letter-spacing: 0.06em;
+  color: var(--text-3);
+}
+.trow {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  height: var(--layout-tree-row-h);
+  padding-right: var(--sp-4);
+  border-radius: var(--r6);
+  font-size: var(--fs-ui-s);
+  color: var(--text-2);
+  white-space: nowrap;
+  overflow: hidden;
+  user-select: none;
+}
+.trow .chev {
+  width: 16px;
+  height: 16px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-3);
+}
+.trow.closed .chev svg { transform: rotate(-90deg); }
+.trow .fname { overflow: hidden; text-overflow: ellipsis; }
+.trow.file .fname { padding-left: 18px; }
+.trow.sel { background: var(--sel); color: var(--text); font-weight: var(--fw-emphasis); }
+:root[data-theme="eink"] .trow.sel { color: var(--sel-text); }
+.t-lv1 { padding-left: 10px; }
+.t-lv2 { padding-left: 26px; }
+.t-lv3 { padding-left: 42px; }
+.t-lv4 { padding-left: 58px; }
+
+/* ---- pane 容器 ---- */
+.panes {
+  grid-row: 2;
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  background: var(--content-bg);
+}
+.pane {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+/* 分隔条：1px 可见线 + 5px 命中区；hover/拖拽态线加粗着色 */
+.splitter {
+  flex: none;
+  width: 5px;
+  cursor: col-resize;
+  position: relative;
+}
+.splitter::after {
+  content: "";
+  position: absolute;
+  top: 0; bottom: 0; left: 2px;
+  width: 1px;
+  background: var(--border);
+}
+.splitter:hover::after,
+.splitter.dragging::after {
+  left: 1px;
+  width: 3px;
+  background: var(--accent);
+}
+.splitter .grip {
+  position: absolute;
+  top: 50%; left: 50%;
+  transform: translate(-50%, -50%);
+  width: 5px;
+  height: 28px;
+  border-radius: 3px;
+  background: var(--accent);
+  opacity: 0;
+  transition: opacity var(--dur-ui) var(--ease-standard);
+}
+.splitter.dragging .grip { opacity: 0.35; }
+
+/* ---- pane 内标签条（ADR 0008：标签随 pane） ---- */
+.ptabs {
+  flex: none;
+  height: 38px;
+  display: flex;
+  align-items: flex-end;
+  gap: var(--sp-2);
+  padding: 0 var(--sp-5);
+  background: var(--frame);
+  border-bottom: 1px solid var(--border-soft);
+}
+.ptab {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  height: 29px;
+  padding: 0 var(--sp-6);
+  border-radius: var(--r7);
+  font-size: var(--fs-ui-s);
+  color: var(--text-2);
+  max-width: 220px;
+  border: 1px solid transparent;
+}
+.ptab .tname { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ptab.active {
+  background: var(--content-bg);
+  color: var(--text);
+  font-weight: var(--fw-medium);
+  border-color: var(--border);
+  box-shadow: var(--shadow-pop);
+}
+.ptab .close {
+  width: 15px;
+  height: 15px;
+  border-radius: var(--r4);
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-3);
+  opacity: 0;
+}
+.ptab:hover .close { opacity: 1; }
+/* 活跃 pane 指示：活跃编辑器 pane 的标签条上缘 2px accent（Emacs selected window 的可见对应物） */
+.pane.active-pane .ptabs { box-shadow: inset 0 2px 0 0 var(--accent); }
+:root[data-theme="eink"] .pane.active-pane .ptabs { box-shadow: inset 0 2px 0 0 #000; }
+
+/* ---- 编辑器内容面 ---- */
+.doc-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  justify-content: center;
+  background: var(--content-bg);
+}
+.doc {
+  width: var(--layout-doc-measure);
+  max-width: 100%;
+  padding: var(--sp-12) var(--sp-14) var(--sp-10);
+  font-family: var(--editor-font-family);
+  font-size: var(--editor-font-size);
+  line-height: var(--lh-reading);
+}
+.doc h1 {
+  font-size: var(--fs-h1);
+  font-weight: var(--fw-bold);
+  letter-spacing: -0.005em;
+  line-height: var(--lh-title);
+}
+.doc .doc-meta {
+  margin-top: var(--sp-4);
+  font-size: var(--fs-meta);
+  color: var(--text-3);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.doc .doc-meta .dot { width: 2px; height: 2px; border-radius: 50%; background: var(--text-3); }
+.doc h2 {
+  font-size: var(--fs-h2);
+  font-weight: var(--fw-bold);
+  margin: var(--sp-10) 0 var(--sp-4);
+  line-height: var(--lh-title);
+}
+.doc p { margin: var(--sp-4) 0; }
+.doc ol, .doc ul { margin: var(--sp-3) 0 var(--sp-5); padding-left: 0; list-style: none; }
+.doc li {
+  position: relative;
+  padding-left: 24px;
+  margin: var(--sp-2) 0;
+}
+.doc ol { counter-reset: oli; }
+.doc ol > li { counter-increment: oli; }
+.doc ol > li::before {
+  content: counter(oli) ".";
+  position: absolute;
+  left: 0; top: 0;
+  color: var(--text-3);
+}
+.doc ul > li::before {
+  content: "";
+  position: absolute;
+  left: 8px; top: 0.72em;
+  width: 4px; height: 4px;
+  border-radius: 50%;
+  background: var(--text-3);
+}
+.doc li li { font-size: var(--fs-body-s); color: var(--text-2); margin: var(--sp-1) 0; }
+.doc li ul { margin: var(--sp-1) 0 var(--sp-2); }
+.doc code {
+  font-family: var(--font-mono);
+  font-size: 0.86em;
+  background: var(--code-bg);
+  padding: 1.5px 5px;
+  border-radius: var(--r5);
+}
+.wikilink { color: var(--accent); text-decoration: none; }
+:root[data-theme="eink"] .wikilink { text-decoration: underline; text-underline-offset: 3px; }
+
+/* 代码文件 pane（屏 2/3 右栏） */
+.code-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--preview-bg);
+  padding: var(--sp-8) var(--sp-9);
+  font-family: var(--editor-mono-family);
+  font-size: 13px;
+  line-height: var(--lh-code);
+}
+.code-scroll .cline { display: flex; white-space: pre; }
+.code-scroll .ln {
+  flex: none;
+  width: 34px;
+  padding-right: var(--sp-6);
+  text-align: right;
+  color: var(--text-3);
+  user-select: none;
+}
+.code-scroll .tk-k { color: var(--accent); }
+.code-scroll .tk-s { color: var(--ok); }
+.code-scroll .tk-c { color: var(--text-3); }
+
+/* ---- modeline ---- */
+.modeline {
+  grid-column: 1 / -1;
+  grid-row: 3;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 var(--sp-7);
+  border-top: 1px solid var(--border);
+  font-size: var(--fs-label-s);
+  color: var(--text-3);
+  background: var(--frame);
+}
+.modeline .crumb { display: flex; align-items: center; gap: 5px; }
+.modeline .crumb .sep { opacity: 0.6; }
+</style>
+<style>
+/* ============ harness pane（Phase 2：pane 内容件，不再是 dock 列） ============ */
+.pane-harness {
+  flex: 0 0 400px;
+  background: var(--agent-bg);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+}
+
+/* 头部：会话身份（可点出会话列表）/ 上下文用量读数 / 新会话 */
+.h-head {
+  flex: none;
+  height: 38px;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  padding: 0 var(--sp-4);
+  border-bottom: 1px solid var(--border-soft);
+  position: relative;
+}
+.h-session {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  height: 26px;
+  padding: 0 var(--sp-3);
+  border-radius: var(--r5);
+  font-size: var(--fs-meta);
+  font-weight: var(--fw-medium);
+  color: var(--text);
+  max-width: 190px;
+  transition: background var(--dur-ui) var(--ease-standard);
+}
+.h-session:hover { background: var(--hover); }
+.h-session .sname { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.h-session .chev { flex: none; color: var(--text-3); }
+.h-usage {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: var(--fs-label);
+  color: var(--text-3);
+  text-align: right;
+  white-space: nowrap;
+}
+.h-usage .pct { color: var(--text-2); }
+.h-usage.high .pct { color: var(--pending); font-weight: var(--fw-semibold); }
+.h-new {
+  flex: none;
+  height: 24px;
+  padding: 0 var(--sp-3);
+  border-radius: var(--r4);
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  color: var(--text-3);
+  font-size: var(--fs-meta);
+  transition: background var(--dur-ui) var(--ease-standard), color var(--dur-ui) var(--ease-standard);
+}
+.h-new:hover { background: var(--hover); color: var(--text); }
+
+/* 会话列表浮层（屏 7） */
+.sess-pop {
+  position: absolute;
+  top: 34px;
+  left: var(--sp-4);
+  width: 264px;
+  background: var(--preview-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--r8);
+  box-shadow: var(--shadow-raise);
+  padding: var(--sp-2);
+  z-index: 30;
+}
+.sess-pop .sp-label {
+  padding: var(--sp-2) var(--sp-4);
+  font-size: var(--fs-micro);
+  font-weight: var(--fw-semibold);
+  letter-spacing: 0.06em;
+  color: var(--text-3);
+}
+.sess-item {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  width: 100%;
+  padding: var(--sp-3) var(--sp-4);
+  border-radius: var(--r5);
+  text-align: left;
+  font-size: var(--fs-meta);
+  color: var(--text);
+  transition: background var(--dur-hover) var(--ease-standard);
+}
+.sess-item:hover { background: var(--hover); }
+.sess-item .si-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sess-item .si-when { flex: none; font-size: var(--fs-label-s); color: var(--text-3); }
+.sess-item .si-check { flex: none; width: 14px; color: var(--accent); }
+.sess-item.current { background: var(--accent-tint); }
+:root[data-theme="eink"] .sess-item.current { background: var(--sel); }
+.sess-divider { height: 1px; margin: var(--sp-2) var(--sp-3); background: var(--border-soft); }
+.sess-item .si-kbd {
+  flex: none;
+  font-family: var(--font-mono);
+  font-size: var(--fs-label-s);
+  color: var(--text-3);
+}
+
+/* 上下文用量警示条（≥80%，屏 6） */
+.h-warn {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  padding: var(--sp-3) var(--sp-4);
+  background: var(--pending-tint);
+  color: var(--pending);
+  font-size: var(--fs-meta);
+  line-height: var(--lh-ui);
+  border-bottom: 1px solid var(--border-soft);
+}
+:root[data-theme="eink"] .h-warn { font-weight: var(--fw-semibold); border-bottom-color: var(--border); }
+.h-warn .w-text { flex: 1; min-width: 0; }
+.h-warn .w-act {
+  flex: none;
+  padding: 2px var(--sp-3);
+  border: 1px solid currentColor;
+  border-radius: var(--r4);
+  font-size: var(--fs-label-s);
+  font-weight: var(--fw-medium);
+  color: inherit;
+}
+
+/* ---- transcript：document 式消息流（无气泡、无头像） ---- */
+.h-transcript {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+  padding: var(--sp-4) var(--sp-4) var(--sp-2);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4);
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui);
+}
+.msg { position: relative; }
+.msg .who {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  margin-bottom: var(--sp-1);
+  font-size: var(--fs-micro);
+  font-weight: var(--fw-semibold);
+  letter-spacing: 0.05em;
+  color: var(--text-3);
+}
+.msg .who .when { font-weight: var(--fw-regular); letter-spacing: 0; }
+.msg .body { color: var(--text); }
+.msg .body p { margin: var(--sp-2) 0; }
+.msg .body p:first-child { margin-top: 0; }
+.msg .body p:last-child { margin-bottom: 0; }
+.msg.user .body {
+  padding: var(--sp-3) var(--sp-4);
+  background: var(--content-bg);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--r6);
+  color: var(--text-2);
+}
+.msg .file-ref {
+  font-family: var(--font-mono);
+  font-size: var(--fs-label-s);
+  background: var(--code-bg);
+  padding: 1px 5px;
+  border-radius: var(--r4);
+}
+.msg .body code {
+  font-family: var(--font-mono);
+  font-size: 0.88em;
+  background: var(--code-bg);
+  padding: 1px 5px;
+  border-radius: var(--r4);
+}
+/* 用户消息里附着的 pinned 上下文（发送后沉淀为消息的一部分） */
+.msg .att-pin {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  margin-bottom: var(--sp-2);
+  padding: var(--sp-2) var(--sp-3);
+  background: var(--agent-bg);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--r5);
+  font-size: var(--fs-label-s);
+  color: var(--text-2);
+}
+.msg .att-pin svg { flex: none; color: var(--accent); }
+.msg .att-pin .ap-src { flex: none; font-family: var(--font-mono); white-space: nowrap; }
+.msg .att-pin .ap-ex {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-3);
+}
+
+/* 复制消息 affordance：hover 时浮现在 who 行右侧；点击后短暂变为「已复制」 */
+.msg .copy-btn {
+  position: absolute;
+  top: 0;
+  right: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  height: 20px;
+  padding: 0 var(--sp-2);
+  border-radius: var(--r4);
+  color: var(--text-3);
+  font-size: var(--fs-micro);
+  opacity: 0;
+  transition: opacity var(--dur-ui) var(--ease-standard), background var(--dur-ui) var(--ease-standard);
+}
+.msg:hover .copy-btn { opacity: 1; }
+.msg .copy-btn:hover { background: var(--hover); color: var(--text); }
+.msg .copy-btn.copied { opacity: 0; color: var(--ok); }
+:root[data-theme="eink"] .msg .copy-btn.copied { font-weight: var(--fw-semibold); }
+/* 静态原型：屏 8 指定消息强制展示 hover/copied 态 */
+body[data-screen="8"] .msg.demo-hover .copy-btn { opacity: 1; }
+body[data-screen="8"] .msg .copy-btn.copied { opacity: 1; }
+
+/* 工具调用块：agent 回合内的紧凑步骤行；多条目可折叠 */
+.tools {
+  margin: var(--sp-2) 0 0;
+  padding: var(--sp-2) 0;
+  border-top: 1px solid var(--border-soft);
+  border-bottom: 1px solid var(--border-soft);
+}
+.tools .tool-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  height: 24px;
+  font-size: var(--fs-meta);
+  color: var(--text-2);
+}
+.tools .tool-row .ic {
+  width: 14px;
+  flex: none;
+  display: flex;
+  justify-content: center;
+  color: var(--text-3);
+}
+.tools .tool-row.done .ic { color: var(--ok); }
+.tools .tool-row .file-ref { font-family: var(--font-mono); font-size: var(--fs-label-s); }
+.tools .tool-row.running { color: var(--text); }
+.tools .tool-row.running .pulse {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: var(--run);
+  animation: h-pulse var(--pulse-cycle);
+}
+.tools .tool-row.pending { color: var(--text-3); }
+.tools .tool-row.pending .ic i {
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  border: 1.3px solid var(--text-3);
+}
+.tools .tool-summary {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  height: 24px;
+  font-size: var(--fs-meta);
+  color: var(--text-3);
+}
+.tools .tool-summary:hover { color: var(--text); }
+.tools .tool-meta {
+  margin-top: var(--sp-1);
+  font-size: var(--fs-label-s);
+  color: var(--text-3);
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+}
+.tools .tool-meta .bar {
+  flex: 1;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--hover);
+  overflow: hidden;
+}
+.tools .tool-meta .bar i { display: block; height: 100%; width: 58%; background: var(--run); opacity: 0.55; border-radius: 1px; }
+@keyframes h-pulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.35; transform: scale(0.8); } }
+
+/* 思考过程：折叠 = 一行 meta；展开 = 左边线 + 次级灰正文 */
+.think { margin: var(--sp-2) 0 0; }
+.think .th-head {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  height: 22px;
+  font-size: var(--fs-meta);
+  color: var(--text-3);
+  border-radius: var(--r4);
+  transition: color var(--dur-ui) var(--ease-standard);
+}
+.think .th-head:hover { color: var(--text); }
+.think .th-head .chev { transition: transform var(--dur-ui) var(--ease-standard); }
+.think.open .th-head .chev { transform: rotate(90deg); }
+.think .th-head .th-dur { font-variant-numeric: tabular-nums; }
+.think .th-body {
+  display: none;
+  margin: var(--sp-1) 0 var(--sp-2) 7px;
+  padding: var(--sp-2) 0 var(--sp-2) var(--sp-4);
+  border-left: 2px solid var(--border-soft);
+  font-size: var(--fs-meta);
+  line-height: var(--lh-ui);
+  color: var(--text-2);
+}
+.think.open .th-body { display: block; }
+.think .th-body p { margin: var(--sp-2) 0; }
+.think .th-body p:first-child { margin-top: 0; }
+.think .th-body p:last-child { margin-bottom: 0; }
+
+/* ---- pin 区（composer 上方的待发上下文） ---- */
+.h-pins {
+  flex: none;
+  padding: var(--sp-2) var(--sp-4) 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+.pin-card {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sp-3);
+  padding: var(--sp-3) var(--sp-3);
+  background: var(--content-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--r6);
+}
+:root[data-theme="eink"] .pin-card { border-color: var(--border); }
+.pin-card .pc-icon { flex: none; margin-top: 1px; color: var(--accent); }
+.pin-card .pc-main { flex: 1; min-width: 0; }
+.pin-card .pc-src {
+  font-family: var(--font-mono);
+  font-size: var(--fs-label-s);
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+}
+.pin-card .pc-src .pc-anchor { font-family: var(--font-sans); color: var(--text-3); }
+.pin-card .pc-ex {
+  margin-top: 1px;
+  font-size: var(--fs-meta);
+  color: var(--text-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pin-card .pc-x {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  border-radius: var(--r4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-3);
+}
+.pin-card .pc-x:hover { background: var(--hover); color: var(--text); }
+.h-pins .pins-hint {
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+  padding: 0 var(--sp-1);
+}
+
+/* ---- 编辑器内 pin 态（屏 5） ---- */
+.doc li.pinned {
+  background: var(--accent-tint);
+  border-radius: var(--r4);
+  box-shadow: -2px 0 0 0 var(--accent);
+  padding-right: var(--sp-2);
+}
+:root[data-theme="eink"] .doc li.pinned { background: transparent; box-shadow: -2px 0 0 0 #000; }
+.doc li.pinned .pin-flag {
+  display: inline-flex;
+  vertical-align: -2px;
+  margin-left: var(--sp-2);
+  color: var(--accent);
+}
+:root[data-theme="eink"] .doc li.pinned .pin-flag { color: #000; }
+.doc li .pin-hover {
+  position: absolute;
+  top: 2px;
+  right: 0;
+  width: 20px;
+  height: 20px;
+  border-radius: var(--r4);
+  display: none;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-3);
+  background: var(--content-bg);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-pop);
+}
+body[data-screen="5"] .doc li.demo-pin-hover .pin-hover { display: flex; }
+
+/* ---- composer ---- */
+.h-composer {
+  flex: none;
+  margin-top: var(--sp-2);
+  padding: var(--sp-3) var(--sp-4) var(--sp-4);
+  border-top: 1px solid var(--border);
+  position: relative;
+}
+.h-box {
+  background: var(--content-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--r8);
+  transition: border-color var(--dur-ui) var(--ease-standard);
+}
+.h-box:focus-within { border-color: var(--accent); }
+:root[data-theme="eink"] .h-box:focus-within { border-color: var(--border); border-width: 1.6px; }
+.h-box textarea {
+  display: block;
+  width: 100%;
+  border: none;
+  outline: none;
+  resize: none;
+  background: none;
+  padding: var(--sp-3) var(--sp-4) var(--sp-1);
+  font-family: inherit;
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui);
+  color: var(--text);
+  height: 44px;
+}
+.h-box textarea::placeholder { color: var(--text-3); }
+/* 控制行：本回合怎么跑——模型 / 思考程度 / 发送 */
+.h-ctl {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: var(--sp-1) var(--sp-2) var(--sp-2);
+}
+.ctl-chip {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  height: 24px;
+  padding: 0 var(--sp-3);
+  border-radius: var(--r5);
+  font-size: var(--fs-label-s);
+  color: var(--text-2);
+  transition: background var(--dur-ui) var(--ease-standard), color var(--dur-ui) var(--ease-standard);
+}
+.ctl-chip:hover { background: var(--hover); color: var(--text); }
+.ctl-chip svg { color: var(--text-3); }
+.ctl-chip .chev { color: var(--text-3); }
+.ctl-chip.open { background: var(--hover); color: var(--text); }
+.ctl-spacer { flex: 1; }
+.h-send {
+  width: 26px;
+  height: 26px;
+  flex: none;
+  border-radius: var(--r6);
+  background: var(--accent-fill);
+  color: var(--accent-fill-text);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+/* 模型选择浮层（屏 4 展示放置位，屏 10 展示思考程度浮层） */
+.ctl-pop {
+  position: absolute;
+  bottom: 62px;
+  left: var(--sp-4);
+  width: 268px;
+  background: var(--preview-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--r8);
+  box-shadow: var(--shadow-raise);
+  padding: var(--sp-2);
+  z-index: 30;
+}
+.ctl-pop .cp-label {
+  padding: var(--sp-2) var(--sp-4);
+  font-size: var(--fs-micro);
+  font-weight: var(--fw-semibold);
+  letter-spacing: 0.06em;
+  color: var(--text-3);
+}
+.eff-item {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sp-3);
+  width: 100%;
+  padding: var(--sp-3) var(--sp-4);
+  border-radius: var(--r5);
+  text-align: left;
+  transition: background var(--dur-hover) var(--ease-standard);
+}
+.eff-item:hover { background: var(--hover); }
+.eff-item .ei-check { flex: none; width: 14px; margin-top: 2px; color: var(--accent); }
+.eff-item .ei-main { flex: 1; min-width: 0; }
+.eff-item .ei-name {
+  font-size: var(--fs-meta);
+  font-weight: var(--fw-medium);
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+}
+.eff-item .ei-name .ei-tag {
+  font-size: var(--fs-micro);
+  font-weight: var(--fw-regular);
+  color: var(--text-3);
+}
+.eff-item .ei-desc {
+  margin-top: 1px;
+  font-size: var(--fs-label-s);
+  line-height: var(--lh-ui);
+  color: var(--text-2);
+}
+.eff-item.current { background: var(--accent-tint); }
+:root[data-theme="eink"] .eff-item.current { background: var(--sel); }
+.ctl-pop .cp-foot {
+  margin-top: var(--sp-1);
+  padding: var(--sp-2) var(--sp-4);
+  border-top: 1px solid var(--border-soft);
+  font-size: var(--fs-micro);
+  line-height: var(--lh-ui);
+  color: var(--text-3);
+}
+
+/* ============ 屏幕切换（?screen=1..10） ============ */
+.pane-doc2, .splitter, .pane-harness { display: none; }
+body[data-screen="2"] .splitter.sp-a, body[data-screen="2"] .pane-doc2 { display: block; }
+body[data-screen="2"] .pane-doc2 { display: flex; }
+body[data-screen="3"] .splitter.sp-a, body[data-screen="3"] .pane-doc2 { display: flex; }
+body[data-screen="3"] .splitter.sp-a { display: block; }
+body[data-screen="3"] .pane-editor { flex: 0 0 62%; }
+body[data-screen="3"] .splitter.sp-a { cursor: col-resize; }
+body[data-screen="3"] .splitter.sp-a::after { left: 1px; width: 3px; background: var(--accent); }
+body[data-screen="3"] .splitter.sp-a .grip { opacity: 0.35; }
+
+body[data-screen="4"] .pane-harness, body[data-screen="5"] .pane-harness,
+body[data-screen="6"] .pane-harness, body[data-screen="7"] .pane-harness,
+body[data-screen="8"] .pane-harness, body[data-screen="9"] .pane-harness,
+body[data-screen="10"] .pane-harness { display: flex; }
+body[data-screen="4"] .splitter.sp-b, body[data-screen="5"] .splitter.sp-b,
+body[data-screen="6"] .splitter.sp-b, body[data-screen="7"] .splitter.sp-b,
+body[data-screen="8"] .splitter.sp-b, body[data-screen="9"] .splitter.sp-b,
+body[data-screen="10"] .splitter.sp-b { display: block; }
+
+/* harness toggle 按钮的 pressed 态跟随屏幕 */
+body[data-screen="4"] #harness-toggle, body[data-screen="5"] #harness-toggle,
+body[data-screen="6"] #harness-toggle, body[data-screen="7"] #harness-toggle,
+body[data-screen="8"] #harness-toggle, body[data-screen="9"] #harness-toggle,
+body[data-screen="10"] #harness-toggle { background: var(--accent-tint); color: var(--accent); }
+:root[data-theme="eink"] body[data-screen="4"] #harness-toggle,
+:root[data-theme="eink"] body[data-screen="5"] #harness-toggle,
+:root[data-theme="eink"] body[data-screen="6"] #harness-toggle,
+:root[data-theme="eink"] body[data-screen="7"] #harness-toggle,
+:root[data-theme="eink"] body[data-screen="8"] #harness-toggle,
+:root[data-theme="eink"] body[data-screen="9"] #harness-toggle,
+:root[data-theme="eink"] body[data-screen="10"] #harness-toggle { background: var(--accent-fill); color: var(--accent-fill-text); }
+
+/* transcript 段落按屏分发：A=工作中(4) B=pin(5) C=完成态(6/7/8/10) D=思考(9) */
+.tx-a, .tx-b, .tx-c, .tx-d { display: none; }
+body[data-screen="4"] .tx-a { display: flex; flex-direction: column; gap: var(--sp-4); }
+body[data-screen="5"] .tx-b { display: flex; flex-direction: column; gap: var(--sp-4); }
+body[data-screen="6"] .tx-c, body[data-screen="7"] .tx-c,
+body[data-screen="8"] .tx-c, body[data-screen="10"] .tx-c { display: flex; flex-direction: column; gap: var(--sp-4); }
+body[data-screen="9"] .tx-d { display: flex; flex-direction: column; gap: var(--sp-4); }
+
+/* 屏 6：高用量读数 + 警示条；其余屏常态读数 */
+.h-usage-normal, .h-usage-high, .h-warn, .sess-pop, .h-pins, .think, .ctl-pop { display: none; }
+body[data-screen="6"] .h-usage-high { display: block; }
+body[data-screen="6"] .h-warn { display: flex; }
+body[data-screen="4"] .h-usage-normal, body[data-screen="5"] .h-usage-normal,
+body[data-screen="7"] .h-usage-normal, body[data-screen="8"] .h-usage-normal,
+body[data-screen="9"] .h-usage-normal, body[data-screen="10"] .h-usage-normal { display: block; }
+body[data-screen="7"] .sess-pop { display: block; }
+body[data-screen="5"] .h-pins { display: flex; }
+body[data-screen="9"] .think { display: block; }
+body[data-screen="10"] .ctl-pop { display: block; }
+body[data-screen="10"] #eff-chip { background: var(--hover); color: var(--text); }
+
+/* 编辑器 pin 视觉只在屏 5 演示 */
+.doc li.pinned, .doc li .pin-hover { background: none; box-shadow: none; }
+:root[data-theme="eink"] .doc li.pinned { background: none; box-shadow: none; }
+body[data-screen="5"] .doc li.pinned {
+  background: var(--accent-tint);
+  box-shadow: -2px 0 0 0 var(--accent);
+}
+:root[data-theme="eink"] body[data-screen="5"] .doc li.pinned { background: transparent; box-shadow: -2px 0 0 0 #000; }
+.doc li.pinned .pin-flag { display: none; }
+body[data-screen="5"] .doc li.pinned .pin-flag { display: inline-flex; }
+</style>
+</head>
+<body data-screen="1">
+<div class="shell">
+
+  <!-- ======== 标题栏 ======== -->
+  <header class="titlebar">
+    <div class="traffic"><i></i><i></i><i></i></div>
+    <div class="titlebar-drag"></div>
+    <button class="tb-btn" id="harness-toggle" title="在旁侧 pane 打开/收起 harness（⌘⇧A）" aria-pressed="false">
+      <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M8 1.5 9.6 6.4 14.5 8 9.6 9.6 8 14.5 6.4 9.6 1.5 8l4.9-1.6z"/></svg>
+    </button>
+    <div class="tb-identity"><span>Lumir</span><span class="ver">0.2.0</span></div>
+  </header>
+
+  <!-- ======== 侧栏 ======== -->
+  <aside class="sidebar">
+    <div class="vault-head">
+      <div class="vault-name">
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 4.5h4l1.2 1.6h5.8v6.4h-11z"/><path d="M2.5 4.5v-1h4l1.2 1.6"/></svg>
+        Everything
+      </div>
+      <button class="icon-btn" title="新建笔记" aria-label="新建笔记">
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M8 3.5v9M3.5 8h9"/></svg>
+      </button>
+    </div>
+    <div class="search-wrap">
+      <div class="search">
+        <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5 14 14"/></svg>
+        <input type="text" placeholder="搜索" spellcheck="false">
+      </div>
+    </div>
+    <nav class="tree">
+      <div class="tree-section">文件夹</div>
+      <div class="trow t-lv1"><span class="chev"><svg width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 3.5 5 6l2.5-2.5"/></svg></span><span class="fname">1_Projects</span></div>
+      <div class="trow t-lv2"><span class="chev"><svg width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 3.5 5 6l2.5-2.5"/></svg></span><span class="fname">Slax-Reader-AI-Reading-Reimagined</span></div>
+      <div class="trow file t-lv3"><span class="fname">README.md</span></div>
+      <div class="trow t-lv2 closed"><span class="chev"><svg width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 3.5 5 6l2.5-2.5"/></svg></span><span class="fname">Slax-Reader-Auto-Tagging</span></div>
+      <div class="trow t-lv2 closed"><span class="chev"><svg width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 3.5 5 6l2.5-2.5"/></svg></span><span class="fname">Slax-Reader-Onboarding</span></div>
+      <div class="trow t-lv1 closed"><span class="chev"><svg width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 3.5 5 6l2.5-2.5"/></svg></span><span class="fname">2_Areas</span></div>
+      <div class="trow t-lv1"><span class="chev"><svg width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 3.5 5 6l2.5-2.5"/></svg></span><span class="fname">3_Resources</span></div>
+      <div class="trow file t-lv2 sel"><span class="fname">2026-R&amp;D-Strategy.md</span></div>
+      <div class="trow file t-lv2"><span class="fname">常用 English.md</span></div>
+      <div class="trow file t-lv2"><span class="fname">Personal Mission Statement.md</span></div>
+      <div class="trow t-lv2 closed"><span class="chev"><svg width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 3.5 5 6l2.5-2.5"/></svg></span><span class="fname">Templates</span></div>
+      <div class="trow t-lv1 closed"><span class="chev"><svg width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 3.5 5 6l2.5-2.5"/></svg></span><span class="fname">4_Archives</span></div>
+    </nav>
+  </aside>
+
+  <!-- ======== pane 容器 ======== -->
+  <div class="panes">
+
+    <!-- pane 1：编辑器（恒定存在；屏 1 独占，屏 4-10 为活跃编辑器 pane） -->
+    <section class="pane pane-editor active-pane">
+      <div class="ptabs">
+        <div class="ptab active">
+          <span class="tname">2026-R&amp;D-Strategy.md</span>
+          <span class="close"><svg width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><path d="M1.5 1.5l7 7M8.5 1.5l-7 7"/></svg></span>
+        </div>
+        <div class="ptab">
+          <span class="tname">dimension-design.md</span>
+          <span class="close"><svg width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><path d="M1.5 1.5l7 7M8.5 1.5l-7 7"/></svg></span>
+        </div>
+      </div>
+      <div class="doc-scroll">
+        <article class="doc">
+          <h1>2026 R&amp;D Strategy</h1>
+          <div class="doc-meta"><span>3_Resources</span><span class="dot"></span><span>63 行</span><span class="dot"></span><span>约 1,200 字</span></div>
+          <p>思路：不是学工具，而是改进工作方式。</p>
+
+          <h2>AI Coding 的基建、工作流规范</h2>
+          <ol>
+            <li>基建、流程、规范
+              <ul>
+                <li><code>.claude</code>：Context engineering</li>
+                <li>PR：模板自动生成描述、AI 初审、Code Review Skills</li>
+              </ul>
+            </li>
+            <li class="pinned">Review (Plan + Code) &gt; Coding——从自动补全、我来设计结构，转向以 Review 为中心；除了 Agent 产出的质量，还要探究它为什么没达到预期<span class="pin-flag"><svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor"><path d="M9.5 1.5 14.5 6.5l-1.2.4-2.5 1-2.6 2.6.3 2.5-1 1-3.8-3.8L1.5 12.4l-.7-.7 2.2-2.2L-.5 5.7l1-1 2.5.3L5.6 2.4l1-2.5.4-1.2z" transform="translate(3 3)"/></svg></span>
+              <button class="pin-hover" title="钉为对话上下文" aria-label="钉为对话上下文"><svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"><path d="M9.5 1.5 14.5 6.5l-1.5.5-2.5 1-2.3 2.3.4 2.7-1.2 1.2-3.6-3.6-2.5 2.5-.9-.9 2.5-2.5-3.6-3.6L1.5 5.5l2.7.4 2.3-2.3 1-2.5z"/></svg></button>
+            </li>
+            <li class="demo-pin-hover">技能：Code Review、Agent 与 Hook、任务分解、TDD
+              <button class="pin-hover" title="钉为对话上下文" aria-label="钉为对话上下文"><svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"><path d="M9.5 1.5 14.5 6.5l-1.5.5-2.5 1-2.3 2.3.4 2.7-1.2 1.2-3.6-3.6-2.5 2.5-.9-.9 2.5-2.5-3.6-3.6L1.5 5.5l2.7.4 2.3-2.3 1-2.5z"/></svg></button>
+            </li>
+            <li>Pilot：忠旺重写 API；华南做 Slax Reader</li>
+          </ol>
+
+          <h2>从研发部的视角出发的 Tech Vision</h2>
+          <ul>
+            <li>对各职能端的期望——从各端的年终总结中收集信息</li>
+            <li>PR：AI 编写描述，让 reviewer 快速了解概要；AI 做初审，降低 reviewer 的心智负担</li>
+            <li>对忠旺——<a class="wikilink" href="#">2026-01 和忠旺</a>：全局统筹和主动同步；提高决策质量，通过写方案说清楚目标价值和取舍来实现</li>
+          </ul>
+        </article>
+      </div>
+    </section>
+
+    <div class="splitter sp-a" title="拖拽调整 pane 宽度"><span class="grip"></span></div>
+
+    <!-- pane 2：第二个编辑器（屏 2 等宽 / 屏 3 拖动态） -->
+    <section class="pane pane-doc2">
+      <div class="ptabs">
+        <div class="ptab active">
+          <span class="tname">harness-panel.ts</span>
+          <span class="close"><svg width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><path d="M1.5 1.5l7 7M8.5 1.5l-7 7"/></svg></span>
+        </div>
+        <div class="ptab">
+          <span class="tname">keys.ts</span>
+          <span class="close"><svg width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><path d="M1.5 1.5l7 7M8.5 1.5l-7 7"/></svg></span>
+        </div>
+      </div>
+      <div class="code-scroll">
+        <div class="cline"><span class="ln">31</span><span><span class="tk-k">export interface</span> HarnessContextSource {</span></div>
+        <div class="cline"><span class="ln">32</span><span>  <span class="tk-c">/** 最近活跃的编辑器 pane（ADR 0008 D3） */</span></span></div>
+        <div class="cline"><span class="ln">33</span><span>  activeSession(): EditorSession | <span class="tk-k">null</span>;</span></div>
+        <div class="cline"><span class="ln">34</span><span>  viewport(): { from: <span class="tk-k">number</span>; to: <span class="tk-k">number</span> };</span></div>
+        <div class="cline"><span class="ln">35</span><span>}</span></div>
+        <div class="cline"><span class="ln">36</span><span></span></div>
+        <div class="cline"><span class="ln">37</span><span><span class="tk-k">export function</span> <span class="tk-s">assembleHarnessContext</span>(</span></div>
+        <div class="cline"><span class="ln">38</span><span>  src: HarnessContextSource,</span></div>
+        <div class="cline"><span class="ln">39</span><span>): HarnessContext {</span></div>
+        <div class="cline"><span class="ln">40</span><span>  <span class="tk-k">const</span> session = src.activeSession();</span></div>
+        <div class="cline"><span class="ln">41</span><span>  <span class="tk-k">if</span> (!session) <span class="tk-k">return</span> { kind: <span class="tk-s">"none"</span> };</span></div>
+        <div class="cline"><span class="ln">42</span><span>  <span class="tk-k">return</span> {</span></div>
+        <div class="cline"><span class="ln">43</span><span>    kind: <span class="tk-s">"document"</span>,</span></div>
+        <div class="cline"><span class="ln">44</span><span>    path: session.path,</span></div>
+        <div class="cline"><span class="ln">45</span><span>    viewport: src.viewport(),</span></div>
+        <div class="cline"><span class="ln">46</span><span>  };</span></div>
+        <div class="cline"><span class="ln">47</span><span>}</span></div>
+      </div>
+    </section>
+
+    <div class="splitter sp-b" title="拖拽调整 pane 宽度"><span class="grip"></span></div>
+
+    <!-- pane 3：harness（屏 4-10） -->
+    <section class="pane pane-harness">
+      <div class="h-head">
+        <button class="h-session" title="切换会话">
+          <span class="sname">整理 R&amp;D 策略</span>
+          <svg class="chev" width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 3.5 5 6l2.5-2.5"/></svg>
+        </button>
+        <span class="h-usage h-usage-normal">ctx <span class="pct">62%</span></span>
+        <span class="h-usage h-usage-high high">ctx <span class="pct">86%</span></span>
+        <button class="h-new" title="新建会话（⌘⇧N）">
+          <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M8 3.5v9M3.5 8h9"/></svg>
+          新会话
+        </button>
+
+        <!-- 屏 7：会话列表浮层 -->
+        <div class="sess-pop">
+          <div class="sp-label">最近会话</div>
+          <button class="sess-item current">
+            <span class="si-check"><svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 6.5 4.8 9.3 10 3.5"/></svg></span>
+            <span class="si-name">整理 R&amp;D 策略</span>
+            <span class="si-when">刚刚</span>
+          </button>
+          <button class="sess-item">
+            <span class="si-check"></span>
+            <span class="si-name">审 M312 提案队列</span>
+            <span class="si-when">昨天</span>
+          </button>
+          <button class="sess-item">
+            <span class="si-check"></span>
+            <span class="si-name">翻译 dimension-design</span>
+            <span class="si-when">周一</span>
+          </button>
+          <div class="sess-divider"></div>
+          <button class="sess-item">
+            <span class="si-check"></span>
+            <span class="si-name">＋ 新建会话</span>
+            <span class="si-kbd">⌘⇧N</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- 屏 6：上下文用量警示条 -->
+      <div class="h-warn">
+        <span class="w-text">上下文已用 86%。继续对话将触发压缩，细节可能丢失。</span>
+        <button class="w-act">新建会话</button>
+      </div>
+
+      <div class="h-transcript">
+
+        <!-- 屏 4：工作中 -->
+        <div class="tx-a">
+          <div class="msg user">
+            <div class="who">你<span class="when">· 12 秒前</span></div>
+            <div class="body">把 <span class="file-ref">2026-R&amp;D-Strategy.md</span> 整理成结构化备忘录，并链接相关的 1:1 笔记</div>
+          </div>
+          <div class="msg">
+            <div class="who">Agent<span class="when">· 刚刚</span></div>
+            <div class="body"><p>收到。我先通读全文，检索相关的 1:1 笔记，再把整理方案作为提案提交——不会直接改动原文。</p></div>
+            <div class="tools">
+              <div class="tool-row done"><span class="ic"><svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M2 6.5 4.8 9.3 10 3.5"/></svg></span><span>读取 <span class="file-ref">2026-R&amp;D-Strategy.md</span></span></div>
+              <div class="tool-row done"><span class="ic"><svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M2 6.5 4.8 9.3 10 3.5"/></svg></span><span>搜索「1:1」「忠旺」「国杰」 · 命中 6 篇</span></div>
+              <div class="tool-row running"><span class="ic"><span class="pulse"></span></span><span>正在读取 3 篇 1:1 笔记…</span></div>
+              <div class="tool-meta"><span>已进行 12 秒</span><span class="bar"><i></i></span></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 屏 5：pin 式上下文块 -->
+        <div class="tx-b">
+          <div class="msg user">
+            <div class="who">你<span class="when">· 1 分钟前</span></div>
+            <div class="body">
+              <div class="att-pin">
+                <svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor"><path d="M9.5 1.5 14.5 6.5l-1.5.5-2.5 1-2.3 2.3.4 2.7-1.2 1.2-3.6-3.6-2.5 2.5-.9-.9 2.5-2.5-3.6-3.6L1.5 5.5l2.7.4 2.3-2.3 1-2.5z"/></svg>
+                <span class="ap-src">2026-R&amp;D-Strategy.md</span>
+                <span class="ap-ex">「Review (Plan + Code) &gt; Coding——从自动补全…」</span>
+              </div>
+              就这一段展开聊聊：为什么说 Review 比 Coding 重要？落到我们组具体要改什么？
+            </div>
+          </div>
+          <div class="msg">
+            <div class="who">Agent<span class="when">· 刚刚</span></div>
+            <div class="body"><p>这段话的关键转变是「设计权仍在人」：AI 写码越快，人的瓶颈越移到判断「写得对不对」。落到你们组，三件事最直接——PR 描述自动生成让 reviewer 低负担进场、AI 初审挡掉机械问题、把「为什么没达到预期」归类成可复用的上下文缺失清单。</p></div>
+          </div>
+        </div>
+
+        <!-- 屏 6/7/8/10：完成态 -->
+        <div class="tx-c">
+          <div class="msg user">
+            <div class="who">你<span class="when">· 3 分钟前</span></div>
+            <div class="body">把 <span class="file-ref">2026-R&amp;D-Strategy.md</span> 整理成结构化备忘录，并链接相关的 1:1 笔记</div>
+          </div>
+          <div class="msg demo-hover">
+            <div class="who">Agent<span class="when">· 2 分钟前</span></div>
+            <div class="body"><p>已通读全文并检索相关笔记。命中 3 篇：<span class="file-ref">2026-01 和忠旺.md</span>、<span class="file-ref">2026-02 和国杰.md</span>、<span class="file-ref">2026-04 和忠旺.md</span>，整理时会一并给出链接建议。</p></div>
+            <div class="tools">
+              <button class="tool-summary">
+                <svg width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 2.5 6 5l-2.5 2.5"/></svg>
+                4 个工具调用 · 全部完成
+              </button>
+            </div>
+            <button class="copy-btn" title="复制消息">
+              <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"><rect x="5.5" y="5.5" width="8" height="9" rx="1.5"/><path d="M10.5 3.5v-1a1.5 1.5 0 0 0-1.5-1.5H4A1.5 1.5 0 0 0 2.5 2.5V10A1.5 1.5 0 0 0 4 11.5h1"/></svg>
+            </button>
+          </div>
+          <div class="msg">
+            <div class="who">Agent<span class="when">· 刚刚</span></div>
+            <div class="body"><p>整理完成。备忘录重排为三段式（思路 / 原则 / 行动），条目无删减；原文补了 2 处内链。共 3 项提案，请在提案队列裁决。</p></div>
+            <button class="copy-btn copied" title="已复制">
+              <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M2 6.5 4.8 9.3 10 3.5"/></svg>
+              已复制
+            </button>
+          </div>
+        </div>
+
+        <!-- 屏 9：思考过程 -->
+        <div class="tx-d">
+          <div class="msg user">
+            <div class="who">你<span class="when">· 1 分钟前</span></div>
+            <div class="body">备忘录重排成三段式，但条目一条都不能少。先想清楚再动手。</div>
+          </div>
+          <div class="msg">
+            <div class="who">Agent<span class="when">· 40 秒前</span></div>
+            <div class="think">
+              <button class="th-head">
+                <svg class="chev" width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 2.5 6 5l-2.5 2.5"/></svg>
+                思考过程<span class="th-dur">· 12 秒</span>
+              </button>
+              <div class="th-body">
+                <p>「整理」不是「改写」——条目不能删减，只能重排结构。三段式按原文的「思路 / 原则 / 行动」自然分段，不新造分类。</p>
+              </div>
+            </div>
+            <div class="body"><p>想清楚了。整理方案如下，确认后我提交提案。</p></div>
+          </div>
+          <div class="msg">
+            <div class="who">Agent<span class="when">· 刚刚</span></div>
+            <div class="think open">
+              <button class="th-head">
+                <svg class="chev" width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 2.5 6 5l-2.5 2.5"/></svg>
+                思考过程<span class="th-dur">· 23 秒</span>
+              </button>
+              <div class="th-body">
+                <p>先确认 vault 里 1:1 笔记的命名规律：按「YYYY-MM 和人名」。搜索词用「1:1」「忠旺」「国杰」覆盖面足够，不必全文扫 Archives。</p>
+                <p>「技能」与「Pilot」两条同属行动层，归入「行动」段；lede 句单独保留为「思路」段首句，不进列表。</p>
+              </div>
+            </div>
+            <div class="body"><p>三段式结构：思路（lede 原文）→ 原则（AI Coding 规范 4 条）→ 行动（Tech Vision 与各端期望）。条目对照原文 63 行逐条核对，无删减。</p></div>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- 屏 5：pin 区（待发上下文） -->
+      <div class="h-pins">
+        <div class="pins-hint">钉自活跃编辑器 pane · 随下一条消息发送</div>
+        <div class="pin-card">
+          <span class="pc-icon"><svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M9.5 1.5 14.5 6.5l-1.5.5-2.5 1-2.3 2.3.4 2.7-1.2 1.2-3.6-3.6-2.5 2.5-.9-.9 2.5-2.5-3.6-3.6L1.5 5.5l2.7.4 2.3-2.3 1-2.5z"/></svg></span>
+          <span class="pc-main">
+            <span class="pc-src">2026-R&amp;D-Strategy.md<span class="pc-anchor">· AI Coding 的基建、工作流规范</span></span>
+            <span class="pc-ex">Review (Plan + Code) &gt; Coding——从自动补全、我来设计结构，转向以 Review 为中心…</span>
+          </span>
+          <button class="pc-x" title="移除" aria-label="移除">
+            <svg width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><path d="M1.5 1.5l7 7M8.5 1.5l-7 7"/></svg>
+          </button>
+        </div>
+      </div>
+
+      <!-- composer -->
+      <div class="h-composer">
+        <!-- 屏 10：思考程度浮层 -->
+        <div class="ctl-pop">
+          <div class="cp-label">思考程度</div>
+          <button class="eff-item">
+            <span class="ei-check"></span>
+            <span class="ei-main">
+              <span class="ei-name">低<span class="ei-tag">最快</span></span>
+              <span class="ei-desc">直答，跳过深思。适合检索、改写、翻译。</span>
+            </span>
+          </button>
+          <button class="eff-item current">
+            <span class="ei-check"><svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 6.5 4.8 9.3 10 3.5"/></svg></span>
+            <span class="ei-main">
+              <span class="ei-name">中<span class="ei-tag">默认</span></span>
+              <span class="ei-desc">先想一步再动手，多数任务的平衡点。</span>
+            </span>
+          </button>
+          <button class="eff-item">
+            <span class="ei-check"></span>
+            <span class="ei-main">
+              <span class="ei-name">高<span class="ei-tag">慢 · 用量高</span></span>
+              <span class="ei-desc">深度推理。留给结构设计、疑难 bug、长链路任务。</span>
+            </span>
+          </button>
+          <div class="cp-foot">思考程度作用于下一条消息；高档显著增加上下文用量。</div>
+        </div>
+
+        <div class="h-box">
+          <textarea rows="2" placeholder="追问或补充指令…（⌘⏎ 发送）" spellcheck="false"></textarea>
+          <div class="h-ctl">
+            <button class="ctl-chip" title="选择模型">
+              <svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor"><path d="M8 1.5 9.6 6.4 14.5 8 9.6 9.6 8 14.5 6.4 9.6 1.5 8l4.9-1.6z"/></svg>
+              Sonnet 4.5
+              <svg class="chev" width="8" height="8" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 3.5 5 6l2.5-2.5"/></svg>
+            </button>
+            <button class="ctl-chip" id="eff-chip" title="思考程度">
+              <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="5.5"/><path d="M8 5v3l2 1.5"/></svg>
+              思考：中
+              <svg class="chev" width="8" height="8" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 3.5 5 6l2.5-2.5"/></svg>
+            </button>
+            <span class="ctl-spacer"></span>
+            <button class="h-send" title="发送（⌘⏎）" aria-label="发送">
+              <svg width="13" height="13" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M7 11.5v-9M3.5 6 7 2.5 10.5 6"/></svg>
+            </button>
+          </div>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <!-- ======== modeline ======== -->
+  <footer class="modeline">
+    <div class="crumb"><span>3_Resources</span><span class="sep">/</span><span>2026-R&amp;D-Strategy.md</span></div>
+    <div>阅读模式 · 第 1 行，第 1 列</div>
+  </footer>
+</div>
+
+<script>
+(function(){
+  var q = new URLSearchParams(location.search);
+  var screen = q.get('screen') || '1';
+  var theme = q.get('theme') || 'light';
+  if(!/^([1-9]|10)$/.test(screen)) screen = '1';
+  if(!/^(light|dark|eink)$/.test(theme)) theme = 'light';
+  document.body.dataset.screen = screen;
+  document.documentElement.dataset.theme = theme;
+
+  var toggle = document.getElementById('harness-toggle');
+  var harnessScreens = ['4','5','6','7','8','9','10'];
+  var isHarness = harnessScreens.indexOf(screen) !== -1;
+  toggle.setAttribute('aria-pressed', isHarness ? 'true' : 'false');
+
+  toggle.addEventListener('click', function(){
+    var url = new URL(location.href);
+    url.searchParams.set('screen', isHarness ? '1' : '4');
+    location.href = url;
+  });
+})();
+</script>
+</body>
+</html>
