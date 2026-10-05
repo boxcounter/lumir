@@ -56,47 +56,46 @@ export function clampSplitRatio(value: number): number {
   return Math.min(SPLIT_RATIO_MAX, Math.max(SPLIT_RATIO_MIN, value));
 }
 
-/** 空 pane 引导的显示谓词（M322，spec「分栏后出现两个文档 pane」的空态引导）：**纯函数**，
- *  四个条件缺一不可。
- *  - `split`：只在分栏态显示——单 pane 零标签维持 M149 起的既有形态（未命名空文档编辑器 +
- *    标签条整条隐藏），引导不覆盖它（「单 pane 常态逐像素不变」是本 change 的第一判据，
- *    既有单 pane 基线因此构造上零影响）；
+/** 分栏态「空 pane」的判据 = **输入闸门**（M329，Alex 2026-10-05 dogfood bug 2）：**纯函数**，
+ *  三个条件缺一不可。它同时是**引导在场与输入闸门共用的同一条「空」口径**（REVIEW.md 第 8 条：
+ *  同一语义一处真源）——`emptyPaneGuideVisible` 在它之上只多一个「已装 vault」。
+ *
+ *  - `split`：只谈分栏态——单 pane 零标签维持 M149 起的既有形态（未命名空文档编辑器 + 标签条
+ *    整条隐藏），两个消费者都不覆盖它（「单 pane 常态逐像素不变」是 pane 化的第一判据，
+ *    单 pane 的空态 scratch 因此照常可编辑）；
  *  - `hasTabs` 为假：「空」按**带路径的会话**判定（与 `src/tabs.ts` 的 visibleTabsOf 同一定义
  *    ——未命名文档不是标签）；装配层从实例会话表现查，不读账本（账本会登记 path=undefined 的
  *    空会话，见 `openTab` 的文档化合法路径）；
- *  - `foregroundDirty` 为假：空 pane 的前台未命名文档是 dirty 草稿时引导让位——用户在空 pane
- *    里敲 scratch，第一个键引导即隐去、键入内容立即可见（onDirty → renderAllTabStrips 同帧
- *    同步），不把输入埋在水印底下；
+ *  - `foregroundDirty` 为假：前台是**有未保存内容的**未命名草稿时不算空。分栏前在单 pane
+ *    scratch 里写下的草稿，分栏后 MUST NOT 被静默冻结（reviewer r1 P2-1 的现场：闸门漏了这
+ *    一维时，用户文字被冻住、连 ⌘Z 都被 changeFilter 吞掉，且引导被 dirty 挡着、没有任何只读
+ *    提示）；pane 里有用户内容，既不是「无内容可编辑」，也不该被引导水印盖住。
+ *
+ *  为什么这一维不会重开 bug 2：空 pane 一旦被封锁，其空会话**恒为 clean**（输入落不进文档），
+ *  所以「分栏态 + 无带路径标签 + 前台 dirty」只可能来自**分栏前就在编辑的草稿**——即本维要
+ *  放行的那一格，闸门对它本就该让路。
+ *
+ *  条款居所（living spec）：`openspec/specs/pane-layout/spec.md` 的「分栏态空 pane 不接受
+ *  文本输入」（本模块只给判据，施加点与只读机制在装配层 / `src/editor.ts`）。 */
+export function paneBlocksInput(split: boolean, hasTabs: boolean, foregroundDirty: boolean): boolean {
+  return split && !hasTabs && !foregroundDirty;
+}
+
+/** 空 pane 引导的显示谓词（M322，spec「分栏后出现两个文档 pane」的空态引导）：**纯函数**。
+ *  「空」的判据即 `paneBlocksInput`（复用而不是另写一份表达式：两条谓词曾在「前台是带内容的
+ *  草稿」这一格上分叉，正是 reviewer r1 P2-1 的现场），本条只多一个条件：
  *  - `vaultLoaded`：未装载 vault 时不显示（Alex 2026-10-04 裁决）——此时左栏没有文件可点，
- *    「在左栏选一个文件」的指引不成立。 */
+ *    「在左栏选一个文件」的指引不成立。
+ *
+ *  由此得到一条可检验的关系：**引导在场 ⟺ 该 pane 的输入被封锁 ∧ 已装 vault**（引导是「无内容
+ *  可编辑」时的替代表面，两者在同一格上要么同时成立、要么同时不成立）。 */
 export function emptyPaneGuideVisible(
   split: boolean,
   hasTabs: boolean,
   foregroundDirty: boolean,
   vaultLoaded: boolean,
 ): boolean {
-  return split && !hasTabs && !foregroundDirty && vaultLoaded;
-}
-
-/** 分栏态空 pane 的**输入闸门**（M329，Alex 2026-10-05 dogfood bug 2）：**纯函数**。
- *
- *  分栏态下「无带路径标签」的 pane MUST NOT 接受文本输入——它还没有承载任何文档，引导层是它
- *  唯一的交互面；打开 / 新建文件之后该 pane 才可编辑。缺了这条，空 pane 里敲的字会落进一份
- *  没有路径的空文档：它没有落盘基准，⌘S 只能报「No file is open…」（Alex 的现场原话
- *  「这个行为很古怪」）。
- *
- *  与 `emptyPaneGuideVisible` 的**分工**（同一分栏空态的两件事，判据各自独立）：
- *   - 那条判「引导水印**是否在场**」，条件里还有「已装 vault」与「前台非 dirty 草稿」；
- *   - 本条判「编辑器**是否可编辑**」，只看「分栏 + 该 pane 有没有文档」。
- *  两者 MUST NOT 合并成一个谓词：未装 vault 时引导不显示，但空 pane 照样不接受输入。
- *
- *  `hasTabs` 的口径与 `emptyPaneGuideVisible` / `src/tabs.ts` 的 visibleTabsOf 一致——**带路径
- *  的会话**才算文档（未命名文档不是标签）。
- *
- *  条款居所（living spec）：`openspec/specs/pane-layout/spec.md` 的「分栏态空 pane 不接受
- *  文本输入」（本模块只给判据，施加点与只读机制在装配层 / `src/editor.ts`）。 */
-export function paneBlocksInput(split: boolean, hasTabs: boolean): boolean {
-  return split && !hasTabs;
+  return paneBlocksInput(split, hasTabs, foregroundDirty) && vaultLoaded;
 }
 
 /** 指针横坐标 → 钳制后的比例（**纯函数**，拖拽的唯一计算）：`rect` 是 pane 容器的矩形。

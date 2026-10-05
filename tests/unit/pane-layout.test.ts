@@ -727,18 +727,26 @@ test("空 pane 引导谓词：仅分栏态 + 零带路径标签 + 前台非 dirt
   );
 });
 
-test("空 pane 输入闸门：仅分栏态 + 零带路径标签时封锁输入（M329，bug 2）", () => {
-  // 不变量：分栏态无文档的 pane MUST NOT 接受文本输入（打开 / 新建文件前不出现可编辑面）。
-  assert.equal(paneBlocksInput(true, false), true, "分栏态空 pane 不接受输入（Alex 现场：⌥O 后敲字 → ⌘S 报错）");
-  assert.equal(paneBlocksInput(true, true), false, "分栏态有文档的 pane 可编辑");
+test("空 pane 输入闸门：仅分栏态 + 零带路径标签 + 前台无未保存草稿时封锁输入（M329）", () => {
+  // 不变量：分栏态**空** pane MUST NOT 接受文本输入（打开 / 新建文件前不出现可编辑面）。
+  assert.equal(paneBlocksInput(true, false, false), true, "分栏态空 pane 不接受输入（Alex 现场：⌥O 后敲字 → ⌘S 报错）");
+  assert.equal(paneBlocksInput(true, true, false), false, "分栏态有文档的 pane 可编辑");
   assert.equal(
-    paneBlocksInput(false, false),
+    paneBlocksInput(false, false, false),
     false,
     "单 pane 空态不封锁——M149 起的空文档 scratch 是既有形态，逐像素与行为都不动",
   );
-  assert.equal(paneBlocksInput(false, true), false, "单 pane 有文档可编辑");
+  assert.equal(paneBlocksInput(false, true, false), false, "单 pane 有文档可编辑");
+  // reviewer r1 P2-1：分栏 MUST NOT 冻结**带未保存内容的**未命名草稿——分栏前在 scratch 里写下的
+  // 内容分栏后仍可编辑（连撤销一起保留），否则用户文字被静默冻住且无任何只读提示。
+  assert.equal(
+    paneBlocksInput(true, false, true),
+    false,
+    "分栏不封锁带内容的 scratch：分栏前写下的未保存草稿分栏后仍可编辑（P2-1 的回归格）",
+  );
+  assert.equal(paneBlocksInput(false, false, true), false, "单 pane 的 dirty scratch 照常可编辑");
 
-  // 与本判据的独立性：引导水印的在场条件（vaultLoaded / foregroundDirty）**不影响**输入闸门——
-  // 未装 vault 时引导不显示，但空 pane 照样不接受输入（两者是同一空态的两件事，MUST NOT 合并）。
-  assert.equal(paneBlocksInput(true, false), true);
+  // 本判据的独立性：引导水印的在场还看 vault 装载态——未装 vault 时引导不显示，但空 pane
+  // 照样不接受输入（两者是同一「空」口径的两件事，MUST NOT 合并成一个谓词）。
+  assert.equal(paneBlocksInput(true, false, false), true);
 });

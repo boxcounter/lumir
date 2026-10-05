@@ -478,15 +478,20 @@ function renderAllTabStrips(): void {
     const hasTabs = assembly.handle.sessions().some((session) => session.path !== undefined);
     const foreground = assembly.handle.activeSession();
     // 分栏态空 pane 的空会话置只读（M329）：view 层拒收输入 + changeFilter 兜底，结构性不可
-    // 编辑。打开 / 新建文件后 hasTabs 转真，这里按 isEditablePath 复原——幂等早退，稳态零成本。
-    // 早退也是 dispatch 安全性的依据：本函数被 `editor.onDirty`（在 CM update 内回调）走到的
-    // 那一趟里，判据与上一轮必然相同（文档内容变化不改分栏态、也不改有无带路径标签），
-    // 因此不会在 update 进行中 dispatch（CM 禁止）。值真会变的三条路径——split / close pane、
-    // 开 / 关 / 移动标签——都经 applySplitChrome / syncActiveDocument，不在 update 内。
+    // 编辑；打开 / 新建文件后 hasTabs 转真，这里按 isEditablePath 复原——幂等早退，稳态零成本。
+    // 「空」的三维与引导水印**同一条口径**（`paneBlocksInput`）：`foreground.dirty` 这一维是
+    // reviewer r1 P2-1 的修法——分栏前在单 pane scratch 里写下的草稿分栏后仍可编辑，MUST NOT
+    // 被静默冻结（该 pane 的引导此时也不在场，两者同格成立）。
     // 单 pane（含 M149 起的空态 scratch）不受影响：paneBlocksInput 只在分栏态为真。
+    //
+    // dispatch 时机（CM 源码核对 + 本地实测，不是假设）：判据真会变的一格——dirty 由 true 翻
+    // false（撤销回基线 / 清空草稿）——落在一次 CM update 之内，而本函数会经 `editor.onDirty`
+    // 在那次 update 的 updateListener 里被调到。CM6 的 `EditorView.update` 把 `updateState`
+    // 复位为 Idle（`finally`）**之后**才逐个调用 updateListener（各自 try/catch），因此从这条
+    // 路径 `view.dispatch` 合法；实测「分栏后在草稿里 ⌘Z 回基线」：闸门如期施加、零报错。
     assembly.handle.setSessionEditable(
       foreground,
-      !paneBlocksInput(split, hasTabs) && isEditablePath(foreground.path),
+      !paneBlocksInput(split, hasTabs, foreground.dirty) && isEditablePath(foreground.path),
     );
     assembly.guideEl.hidden = !emptyPaneGuideVisible(
       split,
