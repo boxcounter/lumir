@@ -1,7 +1,7 @@
 # Phase 2「harness 入 pane + chat UX 重做」原型 — 设计说明（第五轮：block 引用卡片 + 去编号 + XML 序列化）
 
 文件：`index.html`（自包含，无外部资源）。切换方式：页面右下角内置控制面板（点击切屏/切主题）；`?screen=1..10`、`?theme=light|dark|eink` 保留作深链；截图脚本加 `&panel=0` 关面板。
-目标视口 1280×900，十屏 × 三主题共 30 张截图（`shots/`，1280×900 @2x），`verify.mjs` 全屏全主题零 JS 错误、零横向溢出、零 pin/旧胶囊条/旧 chip 残留、全部屏零 #N 编号残留；屏 5 另有卡片结构断言（竖条/截断/出处行/交替）、XML 序列化断言（四属性/lines 非空/严格递增/交错顺序）与两条行为断言（光标处拆段插入、× 移除回落），外加 5 条反向验证（判据区分度自证）。
+目标视口 1280×900，十屏 × 三主题共 30 张截图（`shots/`，1280×900 @2x），`verify.mjs` 全屏全主题零 JS 错误、零横向溢出、零 pin/旧胶囊条/旧 chip 残留、全部 60 组合零 #N 编号残留（M340 r1 修：caps 判定移出屏 5 分支，非 5 屏注入 #N 必判红并有常驻探针防回潮）；屏 5 另有卡片结构断言（竖条/截断/出处行/交替）、XML 序列化断言（四属性/lines 非空/严格递增/交错顺序）与两条行为断言（光标处拆段插入、× 移除回落），外加 6 条反向验证（判据区分度自证）。
 依据：ADR 0008 Decision 8（Phase 2 范围）+ Alex 2026-10-05 追加裁决 + Alex 2026-10-05 第三轮裁决（pin 推翻 + 三条 UX 点子，原文见下）+ Alex 2026-10-06 第四轮需求（胶囊间可输入，原文见下）+ Alex 2026-10-06 第五轮裁决（1~4 采纳 + lines 必选，原文见下）。设计准绳 docs/specs/design-brief-v1.md。
 token 镜像 `src/style.css` 的 token 层（同名同值）——**accent 族除外**：Alex 裁决去蓝色强调色，`--accent / --accent-fill / --accent-fill-text / --accent-tint / --run` 在本原型为中性灰阶建议值（light `#57554c/#38372f`、dark `#c7c6bd`、eink 仍纯黑），实现期需相应改 `src/style.css` token；其余 token 不变。
 fixture 全部为合成内容（vault 名 Fieldnotes、文档 reading-workflow.md 等）——纪律：仓库不提交真实 vault 内容（人名 / 真实项目名 / 真实文件名），含原型与截图，见 AGENTS.md 硬规则与 REVIEW.md 第 17 条。
