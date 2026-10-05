@@ -6,7 +6,7 @@
 
 ## Why
 
-[ADR 0006](../../../docs/adr/0006-agent-positioning-deferred.md)（2026-09-12）裁决：AI/Agent 定位延后，已实现的 Thread 形态被明确否定；视觉方向推倒重做（对 `design/` 下三个探索方向均不满意）。本 change 是该裁决在功能面的落地。
+[ADR 0006](../../../../docs/adr/0006-agent-positioning-deferred.md)（2026-09-12）裁决：AI/Agent 定位延后，已实现的 Thread 形态被明确否定；视觉方向推倒重做（对 `design/` 下三个探索方向均不满意）。本 change 是该裁决在功能面的落地。
 
 同时作废并删除 change `add-editorial-design-language`：其 tasks 全未勾选、spec delta（`editorial-design`）从未归档进 living spec、核心裁决（三主题 token、Thread 最小模型）已被 ADR 0006 推翻。该 change 目录随本 change 一并删除；其「Vault 引用稳定持久化」条目中已实现且仍有效的部分（vault 注册表 + 显式重映射）由本 change 的 vault-workspace 增量追认进 living spec。
 

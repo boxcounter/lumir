@@ -50,7 +50,7 @@ node openspec/changes/bare-url-cmd-click/evidence/lezer-node-forms.mjs
 
 由此得到两个动作：
 
-1. **MODIFIED 那一条 requirement**（不是 ADDED 一条新 requirement）。把它拆成两条会让「五类口径 + 分类唯一实现 + 显露 + 上下文排除」同时出现在两处——同语义两处真源是 [REVIEW.md](../../../REVIEW.md) 第 8 条点名的形态。
+1. **MODIFIED 那一条 requirement**（不是 ADDED 一条新 requirement）。把它拆成两条会让「五类口径 + 分类唯一实现 + 显露 + 上下文排除」同时出现在两处——同语义两处真源是 [REVIEW.md](../../../../REVIEW.md) 第 8 条点名的形态。
 2. **`keymap-commands` 零增量**。新形态不改变任何一句条款的真值（「外链」这个类别名涵盖了它）。反方记录在 [proposal.md](proposal.md) 的归属节，节点 1 可要求补一条纯文本 MODIFIED。
 
 标题保持 M144 的原文不变：`openspec archive` 按标题匹配 MODIFIED 要求，改标题会让它落成「新 requirement + 悬挂的旧 requirement」。标题里的「标准 Markdown 链接」是 M144 引入时的措辞，requirement 正文第一句已把判定面写清（这是**刻意的取舍**：稳定性优先于标题措辞的精确性；本仓 archive 无 `## RENAMED Requirements` 的使用先例）。
@@ -157,4 +157,4 @@ node openspec/changes/bare-url-cmd-click/evidence/lezer-node-forms.mjs
 - **视觉层（chromium，CI 结构层 + 本地像素层）**：装饰形态（类名、`title`、尾标文字与顺序）、`LINKS` / `MARKS` 计数更新、⌘-Click 与 ⌘⏎ 各开一次（stub 记账 `__openedUrls`）、无 scheme 字面保持原文（负向断言必须配正观测，REVIEW.md 第 2 条）、引用点保持原文、代码块 / HTML / frontmatter 保持原文、光标显露、`EditorState.doc` 与磁盘逐字节不变。
 - **真机层（WKWebView）**：场景 **54**（编号声明见 tasks.md §6）——`⌘⏎` 触发（套件无法表达 ⌘-Click），断言装饰态上屏（尾标在场）+ 诊断日志 `link_open`（`category=external` / `outcome=opened`，与 `12-links` 同款通道）+ `unchangedSince` 不改写源文件。
 - **反向验证**：装饰分支未实现前先跑一次，必须 FAIL（REVIEW.md 第 1 条防线）。
-- **基线**：`render-link` 场景基线必然变化（新增装饰与尾标）⇒ 按 [tests/visual/README.md](../../../tests/visual/README.md) 先出对比图请 Alex 过目，再 `--update-snapshots=all`（裸 `--update-snapshots` 在容差内等于什么都不做，本仓已两次实证）。
+- **基线**：`render-link` 场景基线必然变化（新增装饰与尾标）⇒ 按 [tests/visual/README.md](../../../../tests/visual/README.md) 先出对比图请 Alex 过目，再 `--update-snapshots=all`（裸 `--update-snapshots` 在容差内等于什么都不做，本仓已两次实证）。

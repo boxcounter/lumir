@@ -1,6 +1,6 @@
 # perf-measurement 增量规格
 
-各 requirement 的完整方法学定义（端点、工具链、采样口径、fixture 规格的逐条细节）以 [docs/specs/perf-measurement.md](../../../../../docs/specs/perf-measurement.md) 为权威文本；本增量在 requirement 级别引用对应小节，不复制全文。
+各 requirement 的完整方法学定义（端点、工具链、采样口径、fixture 规格的逐条细节）以 [docs/specs/perf-measurement.md](../../../../../../docs/specs/perf-measurement.md) 为权威文本；本增量在 requirement 级别引用对应小节，不复制全文。
 
 ## ADDED Requirements
 

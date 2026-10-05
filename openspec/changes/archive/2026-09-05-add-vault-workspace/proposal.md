@@ -6,9 +6,9 @@
 
 ## Why
 
-M1 范围（[ADR 0004 §1](../../../docs/adr/0004-development-and-openness-strategy.md) 里程碑表）的前两项是 vault 打开与全类型文件树；M1 出口标准是"能用 Lumir 只读浏览作者的整个真实 vault"——本 change 是该出口的承载面。
+M1 范围（[ADR 0004 §1](../../../../docs/adr/0004-development-and-openness-strategy.md) 里程碑表）的前两项是 vault 打开与全类型文件树；M1 出口标准是"能用 Lumir 只读浏览作者的整个真实 vault"——本 change 是该出口的承载面。
 
-"全文件类型一等公民"是定位空位的四个角之一（[ADR 0001](../../../docs/adr/0001-product-positioning-and-boundaries.md) Context：Obsidian 只原生支持 md 与少数媒体附件，任意文本与代码文件无一等公民支持）。因此文件树必须递归展示 vault 内全部文件类型，而不是只列 Markdown。
+"全文件类型一等公民"是定位空位的四个角之一（[ADR 0001](../../../../docs/adr/0001-product-positioning-and-boundaries.md) Context：Obsidian 只原生支持 md 与少数媒体附件，任意文本与代码文件无一等公民支持）。因此文件树必须递归展示 vault 内全部文件类型，而不是只列 Markdown。
 
 架构复查（reviewer-arch-m0，2026-09-04）P2-5 判定：`fs_io` 现有 stub（快照式 `scan_workspace`、模块 doc 写"Markdown 文件"）边界必被本 change 撑破——缺 watch 增量事件流、缺二进制附件读取、措辞与全类型文件树矛盾；并明确"所有 stub 签名应当视为可丢弃，不得在其上累代码"。本 change 据此整体重写 fs_io，旧签名废弃。
 
