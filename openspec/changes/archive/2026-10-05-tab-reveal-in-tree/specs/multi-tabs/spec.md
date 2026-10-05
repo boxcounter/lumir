@@ -1,7 +1,7 @@
 # multi-tabs 增量规格
 
 > 起草注记（非规格正文）：本 delta 两条 MODIFIED，基线是 living spec
-> [openspec/specs/multi-tabs/spec.md](../../../../specs/multi-tabs/spec.md)。
+> [openspec/specs/multi-tabs/spec.md](../../../../../specs/multi-tabs/spec.md)。
 >
 > 1. 「标签的关闭操作」：菜单项集由三项变四项（首项为定位项），三条关闭路径的语义与确认流逐条不变。
 > 2. 「文件树联动与空态」：定位项会改当前行标记，而该 requirement 今天把高亮写成「跟随当前标签」

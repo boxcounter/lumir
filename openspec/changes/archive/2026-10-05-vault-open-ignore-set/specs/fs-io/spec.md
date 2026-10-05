@@ -1,7 +1,7 @@
 # fs-io 增量规格
 
 > 起草注记（非规格正文）：本 delta 两条 MODIFIED + 一条 ADDED，基线是 living spec
-> [openspec/specs/fs-io/spec.md](../../../../specs/fs-io/spec.md) 的「全类型递归枚举」与
+> [openspec/specs/fs-io/spec.md](../../../../../specs/fs-io/spec.md) 的「全类型递归枚举」与
 > 「watch 增量事件流」（本 change 起草时的 master 上无活跃 change，无需等待别的归档）。
 > 本次修订按 Alex 节点 1 裁决（2026-09-28）：内置规则名单去掉 `build` / `out` / `vendor`；
 > 新增「用户规则」档——被 vault 自己的 VCS 忽略声明挡住的条目**行可见、子树按需枚举、不进索引**；

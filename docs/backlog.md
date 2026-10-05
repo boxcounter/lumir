@@ -610,7 +610,63 @@
     `openspec/specs/keymap-commands/spec.md`；归档当时的基线读数 **18 passed / 0 failed**（不背口头值）。
     **Alex 节点 2 的过目包见 M287 的 review-request**，本条随该评审一并核销。
 
+41. **M327 归档批：change `tab-reveal-in-tree` 与 `vault-open-ignore-set` 已归档（2026-10-05）**：
+    两件均已由 Alex 归档评审（节点 2）批准后落档（2026-10-05 原话「都批准。」），归档的既有惯例
+    （整块替换 MODIFIED、相对链接补一层、自指路径改指归档目录名）逐条照办。
+    - **`tab-reveal-in-tree`** → `openspec/changes/archive/2026-10-05-tab-reveal-in-tree/`（实现 M300，
+      merge `f9db4b8` + D322 上屏列锁 en `a41c3f0`）。tasks **20/20 全勾**（任务 5.5 的真机执行
+      由 tower 排期后独立跑过：场景 69 PASS，`test-results/acceptance/2026-10-01/69-tab-reveal-in-tree/`，
+      30 条断言全绿）。living spec 落 `file-tree` 的 ADDED「在树中定位路径」（1 条）+ `multi-tabs` 的
+      2 条 MODIFIED（「标签的关闭操作」菜单由三项变四项、首项为定位项；「文件树联动与空态」补定位例外
+      ——该 MODIFIED 块已由 pane 归档重基，逐 scenario 核对无丢失）。
+    - **`vault-open-ignore-set`** → `openspec/changes/archive/2026-10-05-vault-open-ignore-set/`
+      （实现 M292，merge `8b05a09` + r1 P1-1 修 `e80f530`，合并 `75aeece`；验收 M296，merge `9f7e012`，
+      真机批 7/7 PASS `test-results/acceptance/2026-09-29-final/`）。living spec 落 `fs-io`
+      （2 条 MODIFIED「全类型递归枚举」/「watch 增量事件流」+ 2 条 ADDED「按需枚举目录」/「vault 内路径
+      存在探测」）、`file-tree`（2 条 MODIFIED）、`vault-workspace`（4 条 MODIFIED）。tasks **43 项勾 38、
+      5 项如实保留未勾**（见「待修 findings」的同名条）。
+    - **归档动作实测**：归档件内 **32 条**相对链接逐条补一层 `../`，用路径解析脚本核对**全部可达
+      （0 broken）**；`tab-reveal-in-tree/tasks.md` 的自指路径 `openspec/changes/tab-reveal-in-tree/`
+      改指归档目录名。`npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` → **20 passed /
+      0 failed**（归档前 22 = 20 specs + 2 changes）。
+    - **待 Alex 的一格**：`vault-open-ignore-set` 的任务 **8.4** 只能由 Alex 本机做——在本机切一次真实
+      vault 后 grep `~/.config/lumir/logs/*.jsonl` 的 `vault_open_scan` / `vault_open_graph` /
+      `vault_load_open` / `vault_open_watch` 四条读数，把残差写回归档件内的 `design.md` §6.3
+      （agent MUST NOT 打开他的真实 vault：会写 registry / `last_vault` 到 `~/.config/lumir`）。
+    归档记录与逐任务对账结果见该 mission（分支 `feat/archive-node2-tab-reveal-and-vault-ignor`）的
+    review-request。
+
 ## 待修 findings（不阻塞）
+
+### `vault-open-ignore-set` 归档件的 5 处未完成项（M327 归档对账，2026-10-05，medium）
+
+**是什么**：change `vault-open-ignore-set` 已归档（`openspec/changes/archive/2026-10-05-vault-open-ignore-set/`），
+其 `tasks.md` 勾 38/43，**5 项如实保留未勾**。归档评审（节点 2）时 Alex 已批准整体，这 5 项是记录在案的
+缺口，**MUST NOT 读成已覆盖**；它们的就地注记在归档件 `tasks.md` 顶部「归档对账」块与各未勾项下。
+
+**4 类**（对应归档件 5 个未勾项：7.2 / 8.3 / 8.4 / 9.3 / 10.4；按严重度）：
+
+1. **7.2 / 9.3 的 ①②③⑤：真机反向验证（先红后绿）未跑（medium）**——`#[command(async)]` 的反向验证
+   （临时摘掉它重跑场景 67，「打开段内界面可响应」应 FAIL）未做；9.3 的 ① ② ⑤ 同样未跑（只做了第 ④
+   条读数通道）。「绿」的一侧在档（M296 场景 67），缺「红」的一侧。**这是本 change「验证独立于实现」
+   的最后一环**——M292 的 11 组先红后绿都落在单元/集成层，替代不了真机判据。
+2. **10.4：视觉门禁未跑（medium）**——本 change 触到 `src/tree.ts` 的树行 / 展开行为面，但
+   `bash scripts/gate.sh visual` 未在实现/验收批执行（M292 的 worktree 缺 `tests/visual` 依赖、
+   `tsc-visual` 在 quick 里 SKIP；M296 只跑真机）。**本条是 M327 归档对账时新暴露的**：M296 的报告与
+   本文件 M296 节 §5 只登记了 8.3 / 8.4 / 9.3，未提 10.4。
+3. **8.3：真形状读数复采部分完成（low）**——release harness 已在本实现上跑通两次（Rust 侧合计
+   **82.3 / 81.4ms**，`test-results/m296/rust-harness-release.txt`，与 M283 时代同形状 92–107ms 同量级
+   ⇒ 无回退），但 **166,626 文件量级的「收窄后残余」档未重建** ⇒ change 的 `design.md` §1 的 **65.8ms
+   仍是 M289 的手工收口数，不是本实现的实测**。
+4. **8.4：Alex 本机 grep 四条读数（medium，需 Alex）**——见「待 Alex 裁决」第 41 条末格。
+
+**证据**：归档件 `tasks.md`（7.2 / 8.3 / 8.4 / 9.3 / 10.4 五条的就地注记）；本文件 M296 节 §5；
+`.tower/comms/reviews/review-feat-vault-open-ignore-acceptance-m296-reviewer-acceptance-m296-r2.md`
+（r2 复核明确列 8.3 收窄后残余档 / 8.4 Alex 本机 / 9.3 ①②③⑤ 为未完成项）。
+
+**建议处置**：7.2 + 9.3①②⑤ + 10.4 可并成一个小验收 mission（真机反向验证 + `bash scripts/gate.sh visual`
+在触到 `src/tree.ts` 的当前 master 上跑一次）；8.3 需要重建 166,626 文件量级的 fixture（成本高，可只做
+「残余档」合成复采）；8.4 只能由 Alex 做，不再派 agent。
 
 ### ~~真机验收 4 项持续失败（31/47/49/52）：2026-10-02 sweep 起同现，非 pane 化引入（M319 现场，2026-10-04，medium）~~ **已核销（2026-10-04，M323/M324/M325 全部合并，核销记录见文末「已核销」）**
 

@@ -2,7 +2,7 @@
 
 ## 1. 规格与文案
 
-- [x] 1.1 `openspec/changes/tab-reveal-in-tree/` 三件套齐备（proposal / tasks / 两份 spec delta），
+- [x] 1.1 `openspec/changes/archive/2026-10-05-tab-reveal-in-tree/`（归档前的 `openspec/changes/tab-reveal-in-tree/`）三件套齐备（proposal / tasks / 两份 spec delta），
       且 proposal 记明 Alex 2026-10-01 的显式需求即提案批准记录
 - [x] 1.2 `src/copy-data.ts` 追加 D322（zh + en），`文案-Copy.md` 追加同一条行（编号只追加）
 - [x] 1.3 `tests/unit/copy.test.ts` 的漂移门禁在两边同改后仍绿
@@ -45,9 +45,10 @@
 - [x] 5.3 `scripts/gate.sh visual` 全绿（`GATE RESULT: 12/12 PASS`，其中 visual-regression 480s：
       588 passed / 1 skipped / 0 failed，含两张已更新的 tab-menu 元素基线）
 - [x] 5.4 `node scripts/acceptance/run.mjs --check` 通过（71 个场景静态校验，含新的 69）
-- [ ] 5.5 场景 69 的真机执行（`node scripts/acceptance/run.mjs 69`）：由 tower 排期——同一时刻机上有
+- [x] 5.5 场景 69 的真机执行（`node scripts/acceptance/run.mjs 69`）：由 tower 排期——同一时刻机上有
       别的 worktree 在跑视觉套件，真机套件会起第二个 Lumir 实例并抢前台，按 REVIEW.md 第 11 条
       （第二实例显著加剧键盘丢键）与 README 的前台纪律，本 mission 不并发跑它
+      **（归档时勾齐，2026-10-05，M327）**：tower 排期后已独立执行——`test-results/acceptance/2026-10-01/69-tab-reveal-in-tree/`（`status.txt` = **PASS**，30 条断言全绿，同日 summary.md 记 2/2 PASS），跑在 D322 上屏列锁定 en（`a41c3f0`，2026-10-01）**之后**：steps.md 的菜单项断言即「菜单里有『Reveal in File Tree』（zh 界面下也上屏英文）」。
 
 ## 6. 基线更新清单（人肉裁决点，供 Alex 过目）
 

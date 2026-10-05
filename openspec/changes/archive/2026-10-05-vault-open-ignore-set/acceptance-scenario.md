@@ -1,7 +1,7 @@
 # 真机验收场景草案（编号 67）
 
 > **落地记录（M296，2026-09-29）**：本草案已落成
-> [`scripts/acceptance/scenarios/67-vault-open-ignore-set.md`](../../../scripts/acceptance/scenarios/67-vault-open-ignore-set.md)
+> [`scripts/acceptance/scenarios/67-vault-open-ignore-set.md`](../../../../scripts/acceptance/scenarios/67-vault-open-ignore-set.md)
 > （编号 67 动工前复核过：当时目录最大是 68，67 空闲），`node scripts/acceptance/run.mjs --check`
 > **PASS**（70 个场景全绿）。落地时按首轮实现现实改了五处——**改的是断言形式 / 场景结构，不是判据**：
 >

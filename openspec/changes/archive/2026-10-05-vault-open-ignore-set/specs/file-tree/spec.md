@@ -1,7 +1,7 @@
 # file-tree 增量规格
 
 > 起草注记（非规格正文）：本 delta 两条 MODIFIED，基线是 living spec
-> [openspec/specs/file-tree/spec.md](../../../../specs/file-tree/spec.md) 的「全类型文件树展示」与
+> [openspec/specs/file-tree/spec.md](../../../../../specs/file-tree/spec.md) 的「全类型文件树展示」与
 > 「watch 驱动的增量刷新」。变更来源是 Alex 节点 1 裁决（2026-09-28）的硬性约束：
 > **被 vault 的 VCS 忽略规则挡住的目录与文件 MUST 仍然可见**——树因此从「枚举快照」变成
 > 「枚举快照 + 按需层」，两条 requirement 相应改写（机制见 change 的 design §4）。
