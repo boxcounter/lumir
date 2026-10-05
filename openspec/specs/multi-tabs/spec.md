@@ -190,21 +190,32 @@ MUST NOT 把待写的定时器带到新文档上（否则会把 A 的备份挂�
 `syncActiveDocument` 是「活跃 pane 的前台标签 ⇄ chrome」的唯一同步点，MUST NOT 存在第二个
 同步通道。
 
+**定位请求是这条规则的一个显式例外**（Alex 2026-10-01 裁决维持）：收到「在树中定位路径」
+（`file-tree` 的同名 requirement；入口是标签菜单的 Reveal in File Tree）时，高亮 SHALL 改为跟随
+**被定位的那一行**——用户此刻点名要看的是那个文件，留着他刚才的标签高亮会让「滚到哪儿去了」失去
+落点。这条例外 SHALL 在下一次前台文档变化时结束：`syncActiveDocument` 那一拍把
+当前行按活跃 pane 的前台标签重写（其实现见 `src/main.ts`，本 capability 只要求那条重写存在且生效）。
+
 #### Scenario: 切换标签时树高亮跟随
 
 - **WHEN** 活跃 pane 里有标签 A 与 B 分别指向不同文件，从 A 切到 B
 - **THEN** 文件树的高亮移到 B 对应的那一行，A 的行不再高亮
+
+#### Scenario: 活跃 pane 切换时高亮同帧换源
+
+- **WHEN** 双 pane（A 前台 `a.md`、B 前台 `b.md`），焦点从 A 的 contentDOM 移到 B 的 contentDOM
+- **THEN** 文件树高亮同帧从 `a.md` 的行移到 `b.md` 的行，modeline 同帧切到 `b.md`
+
+#### Scenario: 定位到非前台标签的文件时高亮跟随被定位的那一行
+
+- **WHEN** 前台是标签 A，对指向另一个文件的标签 B 执行定位
+- **THEN** 树的高亮落在 B 的那一行（A 的行不再高亮）；此后切换前台标签时高亮按活跃 pane 的前台标签重写
 
 #### Scenario: 关掉最后一个标签回空态
 
 - **WHEN** 依次关闭活跃 pane 的所有标签
 - **THEN** 标签区隐藏（单 pane）、modeline 显示「无当前文件」、文件树无高亮；此后单击树里的
   文件开一个标签（开在活跃 pane）
-
-#### Scenario: 活跃 pane 切换时高亮同帧换源
-
-- **WHEN** 双 pane（A 前台 `a.md`、B 前台 `b.md`），焦点从 A 的 contentDOM 移到 B 的 contentDOM
-- **THEN** 文件树高亮同帧从 `a.md` 的行移到 `b.md` 的行，modeline 同帧切到 `b.md`
 
 ### Requirement: 打开文档时恢复上次阅读位置
 
@@ -311,9 +322,25 @@ MUST NOT 在会话列表里留下第二个不可见的空会话；它不干净�
 
 ### Requirement: 标签的关闭操作
 
-标签栏 SHALL 为每个标签提供右键菜单（`role=menu` 浮层，读屏名 D148），三项按固定顺序：**Close / Close Other Tabs / Close Tabs to the Right**（D149–D151）。三项的**上屏文案取英文原文**（M257 裁决「上屏」；原中文措辞留在 `文案-Copy.md` 备查。读屏名 D148「标签操作」不随本裁决改语言）。菜单 SHALL 支持 ↑↓ 与 ⌃N⌃P 等价的游标移动、Enter 触发、Esc 与外部点击关闭；打开时 SHALL 持焦点（游标落在首项），关闭时 SHALL 把焦点归还触发它的那一个标签；菜单非模态，其余按键照走原生路径。
+标签栏 SHALL 为每个标签提供右键菜单（`role=menu` 浮层，读屏名 D148），四项按固定顺序：
+**Reveal in File Tree / Close / Close Other Tabs / Close Tabs to the Right**。四项的
+**上屏文案 SHALL 一律取英文原文、不随界面语言变**：三条关闭项是 M257 裁决（原中文措辞留在
+`文案-Copy.md` 备查），定位项是 Alex 2026-10-01 的裁决「菜单内语言统一」（其需求原话
+「在左栏中定位到此文件」留在中文列作沿革备查）——`zh` 界面下整条菜单因此都是英文
+（MUST NOT 回落中文列）。读屏名 D148「标签操作」不随这两条裁决改语言。
 
-三项的落点 SHALL 是**右键落在的那一个标签**：
+**定位项 SHALL 排在首位**：标签菜单没有分隔线（本 change 不引入分隔线），顺序因此是唯一的分组表达
+方式——非破坏性项在前、三条关闭路径仍是尾部连续的一块，与文件树条目菜单「非破坏性项在破坏性项之前」
+（`tree-menu.ts` 的项集里 `reveal` 排在 `trash` 之前）同一方向。默认游标（首项）因此落在定位项上。
+
+定位项 SHALL 作用于**指针落在的那一条标签**的文件路径：调文件树的「在树中定位路径」（见 `file-tree`
+的同名 requirement），MUST NOT 改变前台标签、MUST NOT 打开或关闭任何标签。路径不在当前树模型里时
+（文件已被外部删除 / vault 变过）SHALL 是空动作，MUST NOT 报错、也 MUST NOT 给提示。
+
+菜单 SHALL 支持 ↑↓ 与 ⌃N⌃P 等价的游标移动、Enter 触发、Esc 与外部点击关闭；打开时 SHALL 持焦点
+（游标落在首项），关闭时 SHALL 把焦点归还触发它的那一个标签；菜单非模态，其余按键照走原生路径。
+
+三条关闭项的落点 SHALL 是**右键落在的那一个标签**：
 
 - Close：该标签；
 - Close Other Tabs：除该标签以外的全部标签（本版 MUST NOT 保留任何标签——不存在「固定标签」这一分类）；
@@ -321,12 +348,23 @@ MUST NOT 在会话列表里留下第二个不可见的空会话；它不干净�
 
 右键 MUST NOT 改变前台标签，也 MUST NOT 触发打开——右键只决定菜单作用于哪一条。
 
-关闭路径命中**有未保存修改**的标签时 SHALL 复用既有的关标签确认（保存并关闭 / 放弃修改并关闭 / 取消，与 ⌘W、× 按钮同一条确认流），MUST NOT 新造确认界面。批量路径（Close Other Tabs / Close Tabs to the Right）SHALL 逐个提交关闭：同一时刻 MUST NOT 出现两条确认浮条；用户取消、放弃出口之外的关闭失败、或直接点掉确认浮条时 SHALL 停手，尚未处理的标签 MUST NOT 被关闭（MUST NOT 因为「用户已经在批量动作里点过一次」就静默丢弃它们的修改）。没有可关的标签时三项 SHALL 是空动作（不报错、不提示）。
+关闭路径命中**有未保存修改**的标签时 SHALL 复用既有的关标签确认（保存并关闭 / 放弃修改并关闭 / 取消，
+与 ⌘W、× 按钮同一条确认流），MUST NOT 新造确认界面。批量路径（Close Other Tabs / Close Tabs to the
+Right）SHALL 逐个提交关闭：同一时刻 MUST NOT 出现两条确认浮条；用户取消、放弃出口之外的关闭失败、或
+直接点掉确认浮条时 SHALL 停手，尚未处理的标签 MUST NOT 被关闭（MUST NOT 因为「用户已经在批量动作里
+点过一次」就静默丢弃它们的修改）。没有可关的标签时三项 SHALL 是空动作（不报错、不提示）。
 
 #### Scenario: 右键标签弹出菜单且不改上下文
 
 - **WHEN** 标签栏里有三个标签、前台是第二个，右键第一个标签
-- **THEN** 菜单出现，含「Close / Close Other Tabs / Close Tabs to the Right」三项且顺序如上；前台仍是第二个标签（右键不改上下文），标签总数不变
+- **THEN** 菜单出现，含「Reveal in File Tree / Close / Close Other Tabs / Close Tabs to the Right」
+  四项且顺序如上；前台仍是第二个标签（右键不改上下文），标签总数不变
+
+#### Scenario: 定位项把标签的文件在左栏里显现出来
+
+- **WHEN** 前台是标签 A，标签 B 指向 `a/b/c.md`（树里 `a`、`b` 折叠），右键 B 并选 Reveal in File Tree
+  定位项
+- **THEN** 树展开 `a`、`b` 并列出 `a/b/c.md`，该行滚进可视区且成为当前行；前台仍是 A，标签总数不变
 
 #### Scenario: 关闭右键那一个标签
 
@@ -356,4 +394,4 @@ MUST NOT 在会话列表里留下第二个不可见的空会话；它不干净�
 #### Scenario: 键盘打开与关闭
 
 - **WHEN** 菜单打开后按 ↓ 或 ⌃N，再按 Enter
-- **THEN** 游标移到第二项并执行 Close Other Tabs；按 Esc 时菜单收起、不执行任何动作，焦点回到产生菜单的那个标签
+- **THEN** 游标移到第二项（Close）并执行它；按 Esc 时菜单收起、不执行任何动作，焦点回到产生菜单的那个标签

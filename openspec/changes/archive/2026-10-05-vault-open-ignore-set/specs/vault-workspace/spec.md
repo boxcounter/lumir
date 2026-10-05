@@ -1,7 +1,7 @@
 # vault-workspace 增量规格
 
 > 起草注记（非规格正文）：本 delta 四条 MODIFIED，基线都在 living spec
-> [openspec/specs/vault-workspace/spec.md](../../../../specs/vault-workspace/spec.md)
+> [openspec/specs/vault-workspace/spec.md](../../../../../specs/vault-workspace/spec.md)
 > 里（「vault 打开」「装载的即时反馈」「装载后恢复标签列表」——后两条分别由已归档的 change
 > `vault-switch-feedback` / `vault-switch-restore-perf` 并入）。
 > 本次修订按 Alex 节点 1 裁决（2026-09-28）：B 案（读 VCS 忽略规则、忽略项仍可见）纳入本 change，

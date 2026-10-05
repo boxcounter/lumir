@@ -31,9 +31,9 @@ M268/M283 把**会话恢复段**做快了（真实 vault 恢复段 422–471ms �
 
 ### 一、打开段 = Rust 侧 scan + build_graph，全跑在 IPC 主线程上
 
-`vault_open_path`（[src-tauri/src/commands.rs:614](../../../src-tauri/src/commands.rs#L614)）是**不带 `async`** 的同步 command；Tauri 语义下同步 command 的 body 在 IPC 主线程内联执行（同仓对照：[commands.rs:590](../../../src-tauri/src/commands.rs#L590) 的 `vault_open` 是 `async fn`）。该段包含 `reconcile_vault` → `fs_io::watch()` → `scan_workspace` → `build_graph`。
+`vault_open_path`（[src-tauri/src/commands.rs:614](../../../../src-tauri/src/commands.rs#L614)）是**不带 `async`** 的同步 command；Tauri 语义下同步 command 的 body 在 IPC 主线程内联执行（同仓对照：[commands.rs:590](../../../../src-tauri/src/commands.rs#L590) 的 `vault_open` 是 `async fn`）。该段包含 `reconcile_vault` → `fs_io::watch()` → `scan_workspace` → `build_graph`。
 
-**实测**（release 直调生产函数，5 次取中位；harness [src-tauri/tests/vault_open_readings.rs](../../../src-tauri/tests/vault_open_readings.rs)，复刻 Alex 真 vault 的可见形状 166,626 文件 / 200,274 条目 / 14,573 md）：
+**实测**（release 直调生产函数，5 次取中位；harness [src-tauri/tests/vault_open_readings.rs](../../../../src-tauri/tests/vault_open_readings.rs)，复刻 Alex 真 vault 的可见形状 166,626 文件 / 200,274 条目 / 14,573 md）：
 
 | 段 | 读数 | 说明 |
 |---|---|---|
@@ -46,7 +46,7 @@ M268/M283 把**会话恢复段**做快了（真实 vault 恢复段 422–471ms �
 
 ### 二、可见集的 170,317 个文件里，真内容只有 1,658
 
-忽略集目前**只有 3 个硬编码名字**（`IGNORED_NAMES`，[src-tauri/src/fs_io.rs:28](../../../src-tauri/src/fs_io.rs#L28)）：`.git` / `.DS_Store` / `node_modules`。按名剪枝（任意深度、不靠 `.gitignore`）已剪掉 147,440 个文件（含 12 个 tower worktree 里嵌套的 133,440 个 `node_modules`），**`.git` 不是嫌疑**。
+忽略集目前**只有 3 个硬编码名字**（`IGNORED_NAMES`，[src-tauri/src/fs_io.rs:28](../../../../src-tauri/src/fs_io.rs#L28)）：`.git` / `.DS_Store` / `node_modules`。按名剪枝（任意深度、不靠 `.gitignore`）已剪掉 147,440 个文件（含 12 个 tower worktree 里嵌套的 133,440 个 `node_modules`），**`.git` 不是嫌疑**。
 
 Alex 的 vault 是 lumir 仓库本身，其可见集构成（M289 只读盘点）：
 
@@ -70,7 +70,7 @@ Alex 的 vault 是 lumir 仓库本身，其可见集构成（M289 只读盘点�
 
 ### 五、为什么必须走 change proposal
 
-忽略集「本 change 内不可配置」与「被忽略的条目 SHALL NOT 进入枚举结果」是一条 SHALL 条款（[openspec/specs/fs-io/spec.md:11](../../../openspec/specs/fs-io/spec.md#L11)），任何放宽（含新增「可见但惰性」这一档）都得先过提案。本 change 就是这份提案。
+忽略集「本 change 内不可配置」与「被忽略的条目 SHALL NOT 进入枚举结果」是一条 SHALL 条款（[openspec/specs/fs-io/spec.md:11](../../../../openspec/specs/fs-io/spec.md#L11)），任何放宽（含新增「可见但惰性」这一档）都得先过提案。本 change 就是这份提案。
 
 ### 六、另一条不互斥的杠杆（本 change 范围外，列给裁决参考）
 

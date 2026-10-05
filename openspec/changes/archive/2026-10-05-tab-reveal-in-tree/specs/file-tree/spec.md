@@ -1,7 +1,7 @@
 # file-tree 增量规格
 
 > 起草注记（非规格正文）：本 delta 一条 ADDED，基线是 living spec
-> [openspec/specs/file-tree/spec.md](../../../../specs/file-tree/spec.md)。变更来源是 Alex
+> [openspec/specs/file-tree/spec.md](../../../../../specs/file-tree/spec.md)。变更来源是 Alex
 > 2026-10-01 的显式需求（见 change 的 proposal「提案批准记录」）：标签右键菜单要能把这个标签的
 > 文件在左栏树里定位出来。菜单这一侧（多一项、排在首位）是 `multi-tabs` 的 delta，树这一侧
 > （展开祖先 / 滚进视口 / 标成当前行）是本文件的新 requirement。

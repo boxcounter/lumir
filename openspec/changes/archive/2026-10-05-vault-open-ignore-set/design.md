@@ -19,10 +19,10 @@
 
 | 面 | 现状机制（落点） | 量级 / 证据 | 状态 |
 |---|---|---|---|
-| 打开段 | `vault_open_path`（[commands.rs:614](../../../src-tauri/src/commands.rs#L614)）**同步 command** ⇒ body 在 IPC 主线程内联执行：`reconcile_vault` → `fs_io::watch()` → `scan_workspace` → `build_graph` | **M289 release 直测**（复刻真 vault 可见形状：166,626 文件 / 200,274 条目 / 14,573 md / 172.6MB）：`scan 1,231.1ms` + `build_graph 1,879.1ms`（生产复刻口径；canonicalize 外提版 1,710.6ms）**= 3,110.2ms**（5 次中位） | **有读数** |
+| 打开段 | `vault_open_path`（[commands.rs:614](../../../../src-tauri/src/commands.rs#L614)）**同步 command** ⇒ body 在 IPC 主线程内联执行：`reconcile_vault` → `fs_io::watch()` → `scan_workspace` → `build_graph` | **M289 release 直测**（复刻真 vault 可见形状：166,626 文件 / 200,274 条目 / 14,573 md / 172.6MB）：`scan 1,231.1ms` + `build_graph 1,879.1ms`（生产复刻口径；canonicalize 外提版 1,710.6ms）**= 3,110.2ms**（5 次中位） | **有读数** |
 | 同段：收窄后残余 | 同上 | 1,658 文件 / 2,395 条目 / 1,211 md / 3.3MB ⇒ `scan 14.0ms + graph 51.7ms = 65.8ms`（同 harness、5 次中位） | **有读数** |
 | 同段：对照规模 | 同上 | 2,142 文件 / 1,341 md 形状（M283）⇒ 92–107ms；与残余形状同量级 ✓（两把尺子互相印证） | 有读数 |
-| 可见集 | `IGNORED_NAMES`（[fs_io.rs:28](../../../src-tauri/src/fs_io.rs#L28)）3 个名字；`is_ignored`（[fs_io.rs:104](../../../src-tauri/src/fs_io.rs#L104)）= 名字等值 + `.lumir-` 临时文件模式 | Alex 真 vault：**scan 可见 170,317 文件 / 24,072 目录 = 194,389 条目**；按名已剪 147,440（133,440 嵌套 node_modules + 11,158 根 node_modules + 961 `.git` + 探针）⇒ `.git` 不是嫌疑 | **有读数** |
+| 可见集 | `IGNORED_NAMES`（[fs_io.rs:28](../../../../src-tauri/src/fs_io.rs#L28)）3 个名字；`is_ignored`（[fs_io.rs:104](../../../../src-tauri/src/fs_io.rs#L104)）= 名字等值 + `.lumir-` 临时文件模式 | Alex 真 vault：**scan 可见 170,317 文件 / 24,072 目录 = 194,389 条目**；按名已剪 147,440（133,440 嵌套 node_modules + 11,158 根 node_modules + 961 `.git` + 探针）⇒ `.git` 不是嫌疑 | **有读数** |
 | 可见集构成 | 同上 | worktree `src-tauri/target` 110,501 + 根 `src-tauri/target` 19,154 + `test-results` 9,660 + `.tower`（comms 2,832 + worktree 仓库内容 ~14,000）+ 真内容 1,658 | **有读数** |
 | payload | entries 全量 serialize → webview `JSON.parse` | 真可见形状 ≈27MB（字典序 JSON；46MB 档实测 `JSON.parse` 71–73ms，堆 +124MB） ⇒ **不是瓶颈** | 有读数 |
 | 前端装配 | `applyVault`（附件路径过滤）+ `tree.setVault`（给全部条目建 `Node`/`Map`；DOM 只挂根级） | 194k 条目的建表是 O(n)、个位数~十位数 ms 级；`vault_load_tree` 在 09-26/27/28 三天真机日志里**一次都没出现**（>250ms 才记）⇒ 不是主因 | 结构性有据；整段耗时**未单独测** |
@@ -152,11 +152,11 @@ Alex 定案：**内置默认规则保留（16 名，行为同现状），同时�
 
 ### 3.2 代价二：这些名字从此不能新建 / 改名
 
-`validate_new_name`（[fs_io.rs:328](../../../src-tauri/src/fs_io.rs#L328)）复用同一份规则表——它是**有意耦合**的：如果允许建出 `target/` 而枚举又忽略它，用户在界面上既看不到也删不掉（[fs_io.rs:306](../../../src-tauri/src/fs_io.rs#L306) 起的注释写的就是这条）。代价因此是显式的：**新建/改名成这 16 个名字会被 `fs_name_invalid` 拒绝**（人话文案「`{name}` 在忽略集内，建成后不会出现在文件树里」）。注意：**用户规则命中的名字不受这条约束**——用户可以照常创建/改名成被 `.gitignore` 匹配的名字（它本来就可见可打开），只是它不进索引（§4.6）。
+`validate_new_name`（[fs_io.rs:328](../../../../src-tauri/src/fs_io.rs#L328)）复用同一份规则表——它是**有意耦合**的：如果允许建出 `target/` 而枚举又忽略它，用户在界面上既看不到也删不掉（[fs_io.rs:306](../../../../src-tauri/src/fs_io.rs#L306) 起的注释写的就是这条）。代价因此是显式的：**新建/改名成这 16 个名字会被 `fs_name_invalid` 拒绝**（人话文案「`{name}` 在忽略集内，建成后不会出现在文件树里」）。注意：**用户规则命中的名字不受这条约束**——用户可以照常创建/改名成被 `.gitignore` 匹配的名字（它本来就可见可打开），只是它不进索引（§4.6）。
 
 ### 3.3 缓解（本 change 能做到的）
 
-1. **诊断日志给一条忽略计数**（实现项，不是 UI）：枚举收口处记一行「被内置规则剪掉的条目数」。落点是 diagnostics 的事件白名单——新增 `LogEventName::VaultScanIgnored`、字段只有 `count`（十进制字符串，[logging.rs:133](../../../src-tauri/src/logging.rs#L133) 的 `allowed_fields` 与事件名是机制化护栏，新事件名要一并登记）；MUST NOT 记被忽略条目的路径或名字原文（隐私边界不变，只给计数就够用）。用途：用户报「文件不见了」时，一条日志即可判断是不是内置规则干的。
+1. **诊断日志给一条忽略计数**（实现项，不是 UI）：枚举收口处记一行「被内置规则剪掉的条目数」。落点是 diagnostics 的事件白名单——新增 `LogEventName::VaultScanIgnored`、字段只有 `count`（十进制字符串，[logging.rs:133](../../../../src-tauri/src/logging.rs#L133) 的 `allowed_fields` 与事件名是机制化护栏，新事件名要一并登记）；MUST NOT 记被忽略条目的路径或名字原文（隐私边界不变，只给计数就够用）。用途：用户报「文件不见了」时，一条日志即可判断是不是内置规则干的。
 2. **可回退**：内置规则是表里的一行，回退是删一行；判定是纯函数（表不可变），回退后无残留状态。
 
 ### 3.4 与 ADR 0001 的张力（如实记）
@@ -215,8 +215,8 @@ ADR 0001 的原文是「全文件类型一等公民」——**一等公民的是
 
 三条要点：
 
-1. **内置规则对全部组件照判（含最后一段）**：内置规则是**名字的纯函数**——它不含目录限定模式，判一个组件既不需要 stat 也不需要类型，所以「被删路径拿不到类型」的难处在这里根本不存在。而它的语义本来就是**类型无关**（叫 `target` 的文件与目录一样无行），因此这一行的增删事件 MUST NOT 投递。**今日的 `rel_string`（[fs_io.rs:128](../../../src-tauri/src/fs_io.rs#L128)）正是全段判定的行为，本 change 保持不变**。
-   > **r2 评审 P1-2 的修法**：早期草案把最后一段从**一切**规则判定中豁免，理由是「行级事件必须实时」。那条理由只对**用户规则**成立——用户规则命中的条目**本来就有行**（惰性可见）。对内置规则豁免会让外部 `cargo build` / `npm install` 产出的 `created:target` / `created:node_modules` 透到前端，而树的 `applyChanges`（[src/tree.ts:772](../../../src/tree.ts#L772)）不做隐藏名过滤 ⇒ 树里插出一行**枚举永远不会产生的幻影行**（子孙事件仍被祖先判定挡下，留下孤零零的死行，重开才消失），违反「增量收敛后的模型与同一时刻的全量枚举一致」与 file-tree 的「内置规则名字不出现在树里」。
+1. **内置规则对全部组件照判（含最后一段）**：内置规则是**名字的纯函数**——它不含目录限定模式，判一个组件既不需要 stat 也不需要类型，所以「被删路径拿不到类型」的难处在这里根本不存在。而它的语义本来就是**类型无关**（叫 `target` 的文件与目录一样无行），因此这一行的增删事件 MUST NOT 投递。**今日的 `rel_string`（[fs_io.rs:128](../../../../src-tauri/src/fs_io.rs#L128)）正是全段判定的行为，本 change 保持不变**。
+   > **r2 评审 P1-2 的修法**：早期草案把最后一段从**一切**规则判定中豁免，理由是「行级事件必须实时」。那条理由只对**用户规则**成立——用户规则命中的条目**本来就有行**（惰性可见）。对内置规则豁免会让外部 `cargo build` / `npm install` 产出的 `created:target` / `created:node_modules` 透到前端，而树的 `applyChanges`（[src/tree.ts:772](../../../../src/tree.ts#L772)）不做隐藏名过滤 ⇒ 树里插出一行**枚举永远不会产生的幻影行**（子孙事件仍被祖先判定挡下，留下孤零零的死行，重开才消失），违反「增量收敛后的模型与同一时刻的全量枚举一致」与 file-tree 的「内置规则名字不出现在树里」。
 2. **用户规则只看祖先，最后一段一律投递**：与内置规则相反，末段是否命中用户规则**不改变「有没有行」这个事实**（命中 ⇒ 惰性行；不命中 ⇒ 普通行），所以两种情况下投递都对；而这一行的出现/消失必须实时（否则用户删掉 `.local` 后树里留一个死行）。加上「祖先必定是目录」这一事实（前缀组件不可能是文件），**用户规则侧一次 stat 都不需要**——目录限定模式（`foo/`）在祖先上可无歧义判定，末段不判也就无从歧义。
 3. **用户规则的祖先：未物化 ⇒ 不投递**（`.tower/worktrees/**` 的 agent churn 不进 webview）；**已物化 ⇒ 投递**（用户展开过的地方保持实时，打开中的文档因此照常得到「外部修改」处置）。内置规则的祖先一律丢弃（连行都没有，谈不上展开）。
 
@@ -242,8 +242,8 @@ ADR 0001 的原文是「全文件类型一等公民」——**一等公民的是
 
 **watch 增量路径同样适用（r2/r3 评审 P1-3）**：§4.4 的判定让「用户规则命中的条目自身」的事件**必然投递**（行的增删要实时——这是设计意图），而两处索引的增量更新原本是**无分类的全量 upsert**：
 
-- Rust 侧 `VaultState::apply_fs_changes`（[commands.rs:265](../../../src-tauri/src/commands.rs#L265)）：对每条非目录的 created / modified 事件无条件 `graph.upsert`；
-- 前端 `main.ts` 的 `fs:entry_changed` 处理（[:1651](../../../src/main.ts#L1651)）：对每条 created / modified 文件事件无条件 `attachmentPaths.push`（既有分支是 `if deleted … else push`，两者同路）。
+- Rust 侧 `VaultState::apply_fs_changes`（[commands.rs:265](../../../../src-tauri/src/commands.rs#L265)）：对每条非目录的 created / modified 事件无条件 `graph.upsert`；
+- 前端 `main.ts` 的 `fs:entry_changed` 处理（[:1651](../../../../src/main.ts#L1651)）：对每条 created / modified 文件事件无条件 `attachmentPaths.push`（既有分支是 `if deleted … else push`，两者同路）。
 
 今天这没问题，因为 `rel_string` 把被忽略的路径全滤掉了；**按来源分开之后**，惰性条目的事件会到达这两处 ⇒ 惰性条目在会话中途进索引。必然触发的例子就在 Alex 的真实 vault 里：他的 `.gitignore` 含 `HANDOFF.md`（§1 自己盘点过）⇒ 任何外部改写它都会让它进 `LinkGraph` ⇒ `[[HANDOFF]]` **本会话内可解析、重开后不可解析**——索引从「磁盘 + 规则的纯函数」退化成「事件历史的函数」，正是本条与 spec 的确定性条款禁止的。
 
@@ -265,8 +265,8 @@ ADR 0001 的原文是「全文件类型一等公民」——**一等公民的是
 | 文件树模型（`src/tree.ts`） | 显示**全部**条目（含惰性行）；惰性目录的子孙按需拉取 | 改：展开惰性目录 → `fs_scan_dir` 合并；`lazy` 标记区分空目录 |
 | 链接索引（`VaultState::build_graph` + `apply_fs_changes`） | 只由主动枚举的条目建出；**增量路径**同样跳过惰性条目（created / modified 且 `lazy` ⇒ 不 upsert；deleted ⇒ 无条件移除） | 改代码（两行）：`apply_fs_changes` 消费 `FsChange.lazy` |
 | 附件索引（`src/main.ts` 的 `attachmentPaths`） | 同上（增量路径跳过 `lazy` 的 created **与 modified**——既有分支是 `if deleted … else push`，两者同路；deleted 照旧移除） | 改代码（一行）：`fs:entry_changed` 处理里判 `change.lazy` |
-| 会话恢复的「在不在 vault 内」（`src/vault-switcher.ts` 的 `restorePlan`，[:145](../../../src/vault-switcher.ts#L145)） | **不再只看枚举集合**：条目集里没有的路径，补一次 vault 内存在探测（只探测会话里的那几条路径，不改写任何文件）；存在即照常恢复 | 改：新增**批量**存在探测（§4.11），跳过计数仍**由枚举 + 探测的结果在装载完成时给出**（口径不变，来源多一个） |
-| 阅读位置（`src/reading-position.ts` 的 `onVaultLoaded`，[:241-266](../../../src/reading-position.ts#L241)） | **同样不能再只看枚举集合**（r2 评审 P1-1 更正了本文早先「与集合无关 → 不改」的错误论断）：它从 `entries` 建 `available` 并对**存量键**跑 `pruneEntries`，而惰性文件（如 `.local/教程.md`）永不在枚举里 ⇒ 它们的阅读位置**每次装载都被剪掉**、随后 flush 持久化 | 改：prune 判据与会话恢复同口径——条目集里没有的键先过一次**批量存在探测**（§4.11），存在即保留；探测失败才剪 |
+| 会话恢复的「在不在 vault 内」（`src/vault-switcher.ts` 的 `restorePlan`，[:145](../../../../src/vault-switcher.ts#L145)） | **不再只看枚举集合**：条目集里没有的路径，补一次 vault 内存在探测（只探测会话里的那几条路径，不改写任何文件）；存在即照常恢复 | 改：新增**批量**存在探测（§4.11），跳过计数仍**由枚举 + 探测的结果在装载完成时给出**（口径不变，来源多一个） |
+| 阅读位置（`src/reading-position.ts` 的 `onVaultLoaded`，[:241-266](../../../../src/reading-position.ts#L241)） | **同样不能再只看枚举集合**（r2 评审 P1-1 更正了本文早先「与集合无关 → 不改」的错误论断）：它从 `entries` 建 `available` 并对**存量键**跑 `pruneEntries`，而惰性文件（如 `.local/教程.md`）永不在枚举里 ⇒ 它们的阅读位置**每次装载都被剪掉**、随后 flush 持久化 | 改：prune 判据与会话恢复同口径——条目集里没有的键先过一次**批量存在探测**（§4.11），存在即保留；探测失败才剪 |
 | watch 事件过滤（`fs_io::rel_string`） | 见 §4.4 | 改 |
 
 > 这两条不是洁癖：**没有它们，用户从 `.local` 打开的教程会被系统丢掉两次**——下次启动时被 `restorePlan` 判成「已删除」并跳过（会话里没有这个标签了），而且它的阅读位置在**每次装载**时都被 `pruneEntries` 剪掉（读了也白读）。两条都正中 Alex 裁决里的原话场景，口径必须一起改。
@@ -312,7 +312,7 @@ ADR 0001 的原文是「全文件类型一等公民」——**一等公民的是
 
 - **新增一条批量命令 `fs_paths_exist(paths)`**：收一组 vault 相对路径，返回其中**确实存在**的那些（每条都过与读取路径同源的 vault 内校验；只 stat、不改写任何文件，ADR 0003 的「不改写源文件」不因它放宽）。
 - **为什么批量而不是逐条**：两个消费点的候选数都不小（会话条目数；阅读位置镜像的键上限见 `READING_POSITION_MAX_ENTRIES = 200`），逐条走 IPC 会把 N 次往返叠在装载路径上。一次命令、一次往返、N 次 stat（每条 ~µs 级）——上界因此是**可算的**，且不随 vault 规模增长（只随「用户读过/开过多少条目」增长）。
-- **为什么不复用现成的 `fs_file_mtime`**（[commands.rs:664](../../../src-tauri/src/commands.rs#L664)）：它是**单路径**命令、且语义是「取 mtime」（doc-meta 用），逐条调用即回到 N 次 IPC 往返；本 change **不新增**第二种「按路径读元数据」的语义，只加一个专用的存在探测。
+- **为什么不复用现成的 `fs_file_mtime`**（[commands.rs:664](../../../../src-tauri/src/commands.rs#L664)）：它是**单路径**命令、且语义是「取 mtime」（doc-meta 用），逐条调用即回到 N 次 IPC 往返；本 change **不新增**第二种「按路径读元数据」的语义，只加一个专用的存在探测。
 - **口径**：探测结果是「存在 / 不存在」二值；返回集合里没有的路径即「不在 vault 内」（会话恢复计入跳过、阅读位置被剪）。探测本身**MUST NOT** 被用来放宽任何边界（越界路径一律视为不存在并拒读）。
 
 ## 5. 打开段与按需枚举移出 IPC 主线程
@@ -325,7 +325,7 @@ ADR 0001 的原文是「全文件类型一等公民」——**一等公民的是
 
 ### 5.2 先例与风险
 
-`vault_open`（目录选择器那条 path，[commands.rs:590](../../../src-tauri/src/commands.rs#L590)）本来就是 `async fn`，跑的是同一段 `open_vault` 工作，已经在生产里验过（多 vault 切换、注册表 remap、启动恢复都触发它）。本 change 做的是**把 outlier 拉平**：`vault_open_path` 与新的 `fs_scan_dir` 都标 `#[command(async)]`。
+`vault_open`（目录选择器那条 path，[commands.rs:590](../../../../src-tauri/src/commands.rs#L590)）本来就是 `async fn`，跑的是同一段 `open_vault` 工作，已经在生产里验过（多 vault 切换、注册表 remap、启动恢复都触发它）。本 change 做的是**把 outlier 拉平**：`vault_open_path` 与新的 `fs_scan_dir` 都标 `#[command(async)]`。
 
 - 并发/顺序语义：前端 `inFlight` 串行化 + `commit_vault_open` 单次持锁提交不变；`prepare_vault_open` 里的注册表写（`reconcile_vault`）本来就与 `vault_open` 路径同源。
 - 已知不完美：body 里是**阻塞式文件 IO**（读目录、读 md），跑在 async 运行时的 worker 上会占住一个 worker（不是 `spawn_blocking`）。同仓 `vault_open` 已是这个形态；本 change 与它保持一致，**不**引入 `spawn_blocking`（那是形态分叉，且没有读数表明需要）。
@@ -351,7 +351,7 @@ ADR 0001 的原文是「全文件类型一等公民」——**一等公民的是
 
 **按需枚举另有一条（有条件，阈值 250ms）**：`vault_scan_dir`——一次展开若超过 250ms，用户会看到明确的等待，值得留一条读数（阈值口径与前端 `phaseMs` 一致；低频、不稀释日志）。它**不是**本 change 的性能目标，只是「用户点了大目录」这件事的可观测面。
 
-**为什么不另加「serialize / IPC」两条**：它们与前端既有的 `vault_load_open`（`phaseMs`，250ms 阈值；见 [src/main.ts](../../../src/main.ts)）是同一段，做减法即可：`序列化+传输+解析 ≈ vault_load_open − scan − graph`。要单独测序列化得让 command 返回**预序列化的 raw response**（Tauri 有 `tauri::ipc::Response` 这条通道，`tauri-2.11.5/src/ipc/mod.rs:190`），那会把 `VaultInfo` 的响应形态改掉 + 前端手工 `JSON.parse`——**本 change 不做**（收益是「多一条读数」，成本是改契约；且 async 化之后序列化已不在主线程上，它不再是我们关心的时间线）。
+**为什么不另加「serialize / IPC」两条**：它们与前端既有的 `vault_load_open`（`phaseMs`，250ms 阈值；见 [src/main.ts](../../../../src/main.ts)）是同一段，做减法即可：`序列化+传输+解析 ≈ vault_load_open − scan − graph`。要单独测序列化得让 command 返回**预序列化的 raw response**（Tauri 有 `tauri::ipc::Response` 这条通道，`tauri-2.11.5/src/ipc/mod.rs:190`），那会把 `VaultInfo` 的响应形态改掉 + 前端手工 `JSON.parse`——**本 change 不做**（收益是「多一条读数」，成本是改契约；且 async 化之后序列化已不在主线程上，它不再是我们关心的时间线）。
 
 ### 6.3 2.4s 的归因指望什么
 
