@@ -367,5 +367,5 @@ steps:
   + 隔离 `XDG_CONFIG_HOME`；端口 1430。
 - 本场景在合成 vault 里真写入：两份规则文件（`.gitignore` / `.git/info/exclude`）、两个惰性目录
   及其 `tutorial.md`、三份构建产物探针目录及其 md、20 份 8MB 稀疏 md、`external-probe.md`、
-  `target/probe.md` 与 `.venv/probe.md`。用户真实 vault（`/Users/boxcounter/Downloads/Everything-copy`）全程只读，
+  `target/probe.md` 与 `.venv/probe.md`。用户真实 vault（真实路径按信息卫生纪律不落库）全程只读，
   `~/.config/lumir` 全程不读不写。

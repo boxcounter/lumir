@@ -46,10 +46,10 @@ steps:
 
       ```yaml
       dimensions:
-        - name: Goal
-          key: goal
+        - name: North
+          key: north
           values:
-            - Slax Reader
+            - Example Reader
       ```
     expect:
       - label: 场景文件已落到验收 vault
@@ -62,7 +62,7 @@ steps:
       - label: toml 围栏源码逐字保留（着色不改写文档）
         editor: { has: "event = 'PreToolUse'" }
       - label: yaml 围栏的键与值都在渲染态可读
-        editor: { has: "key: goal" }
+        editor: { has: "key: north" }
       - shot: toml / yaml 围栏着色
 ---
 

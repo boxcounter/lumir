@@ -237,4 +237,4 @@ Alex 2026-09-27 的现场（slax-reader vault，非只读）：把 `.local` 下�
 
 - 合成 vault `/tmp/lumir-m102-acceptance` + 隔离 `XDG_CONFIG_HOME`；端口 1430。
 - 本场景会在合成 vault 里真改名两次（`rensub` → `rendir` → `rensub`，收尾回到原名）；
-  用户真实 vault（`/Users/boxcounter/Downloads/Everything-copy`）全程只读。
+  用户真实 vault（真实路径按信息卫生纪律不落库）全程只读。

@@ -27,7 +27,7 @@ After broken table.
 | --- | --- |
 | one | two | three |
 
-## 短行补空列（outline.md 同款：6 列表头 + 5 cell 行）
+## 短行补空列（reading-notes.md 同款：6 列表头 + 5 cell 行）
 
 | 项 | 强度 | 现状 | 目标 | 证据 | 备注 |
 | --- | --- | --- | --- | --- | --- |

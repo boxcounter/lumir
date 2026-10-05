@@ -14,9 +14,9 @@
   - `/tmp/lumir-probe/`：`toml-yaml.spec.ts`（合成块）、`extended.spec.ts`（边角）、`codemode2.spec.ts`（code 模式）、`evidence.spec.ts`（本 change 的截图与整体 token 普查）
   - 运行：`cd tests/visual && ./node_modules/.bin/playwright test --config /tmp/lumir-probe/playwright.config.ts <spec>`
 - **入 git 的证据**（`evidence/`，随本 change 一起评审）：
-  - [`01-yaml-block-as-is.png`](evidence/01-yaml-block-as-is.png)：Alex 真实 vault 那个 `yaml` 块的**实现前**现状截图
   - [`02-toml-block-as-is.png`](evidence/02-toml-block-as-is.png)：toml 块的实现前现状截图（对照）
   - [`03-复核记录.md`](evidence/03-复核记录.md)：前提复核底稿（注册点、迁移历史、语料普查、命令原样抄录）
+  - （yaml 块的实现前现状截图原存 `evidence/01-yaml-block-as-is.png`，因含真实 vault 内容，按 2026-10-05 裁决删除）
 
 ### 1.2 决定性证据：Alex 真实 vault 里的实际块
 
@@ -31,7 +31,7 @@
 | `North` / `weekly` / `Example Reader` / `DataHub` …（值） | `null` | 无 span，正文色 `rgb(38, 34, 25)` |
 | `-` / `:` | `meta` | 无 span，正文色 |
 
-该笔记的另一块（含 `commitments`、45 行）合计：**39 个 `cm-lp-tok-literal` + 1 个 `cm-lp-tok-comment`**，`property` / `string` / `keyword` **零命中**（`/tmp/lumir-probe-m167/real.log`）。即**整块只出一种颜色**——键的赭色与值的正文色之外没有任何区分，这就是「看起来没有高亮」的可复现来源（截图 `evidence/01-yaml-block-as-is.png`）。
+该笔记的另一块（含 `commitments`、45 行）合计：**39 个 `cm-lp-tok-literal` + 1 个 `cm-lp-tok-comment`**，`property` / `string` / `keyword` **零命中**（`/tmp/lumir-probe-m167/real.log`）。即**整块只出一种颜色**——键的赭色与值的正文色之外没有任何区分，这就是「看起来没有高亮」的可复现来源（实现前现状截图原存 `evidence/01-yaml-block-as-is.png`，因含真实 vault 内容，按 2026-10-05 裁决删除）。
 
 ### 1.3 语料普查：报告里的「toml / yml」在可触及语料里没有现场
 
@@ -154,7 +154,7 @@ export const LANGUAGES: Record<CodeLanguage, StreamLanguage<unknown>> = {
 
 - 挂点在**单一来源**处（`src/preview/code.ts` 的 `LANGUAGES`），两处消费侧同时生效，`src/editor.ts` 与 `src/preview/theme.ts` 不动。
 - 两侧解析次序一致：`tagsForStyle`（围栏，`src/preview/code.ts:221-240`）与 CM6 的 `createTokenType`（code 模式）都按「parser 的 `tokenTable` 优先于 `@lezer/highlight` 的 tags」解析——M147 已用对照实验验证过这条次序，本 change 沿用。
-- 预期结果：yaml 的键从 `cm-lp-tok-literal`（`rgb(160, 94, 28)`）变为 `cm-lp-tok-property`（`rgb(79, 111, 143)`），与 json / toml 的键同色。**不新增颜色**，色值仍出自既有 editorial token（[`01-yaml-block-as-is.png`](evidence/01-yaml-block-as-is.png) 与 [`02-toml-block-as-is.png`](evidence/02-toml-block-as-is.png) 是改动前后对照的「前」）。
+- 预期结果：yaml 的键从 `cm-lp-tok-literal`（`rgb(160, 94, 28)`）变为 `cm-lp-tok-property`（`rgb(79, 111, 143)`），与 json / toml 的键同色。**不新增颜色**，色值仍出自既有 editorial token（[`02-toml-block-as-is.png`](evidence/02-toml-block-as-is.png) 是改动前后对照的「前」；yaml 侧对照原图 `evidence/01-yaml-block-as-is.png` 因含真实 vault 内容，按 2026-10-05 裁决删除）。
 - 缓存纪律（复核项，不新增逻辑）：`classOf` 的缓存键含语言名（`src/preview/code.ts:269-280`）——同一个 `atom` 在 yaml 落属性名、在 toml 落字面量，必须分语言缓存；既有实现已满足，实现期用回归断言钉住。
 
 ### 3.3 回归面

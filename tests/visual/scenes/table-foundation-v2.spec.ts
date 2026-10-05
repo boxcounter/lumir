@@ -136,8 +136,8 @@ test("表格可见行、短行补空列、多列降级、AX、滚动和源码复
   expect(await readDocument(page)).toBe(fixture);
 });
 
-test("短行尾部补空列：outline.md 同款 6 列表头 + 5 cell 行按矩形渲染", async ({ page }) => {
-  // M137 现场（~/Downloads/Everything-copy/outline.md:106-109）四行各缺最后一列，
+test("短行尾部补空列：reading-notes.md 同款 6 列表头 + 5 cell 行按矩形渲染", async ({ page }) => {
+  // M137 现场（~/Vaults/Fieldnotes/reading-notes.md:106-109）四行各缺最后一列，
   // 旧合同整块回退源码；M142 收窄为尾部补空列（GFM §4.10）。这里钉住渲染口径：
   // 空 cell 就是空 cell，列几何与表头对齐。
   await stubTauri(page, { entries: [{ path: "table.md", kind: "file", size: fixture.length, mtime_ms: 0 }], files: { "table.md": fixture } });

@@ -43,18 +43,18 @@ since = 1979-05-27
 
 ```yaml
 dimensions:
-  - name: Goal                         # 特殊维度：values 来自当月 _monthly.md
-    key: goal
-    source: monthly
+  - name: North                        # 特殊维度：values 来自当月 _current.md
+    key: north
+    source: weekly
 
-  - name: Business line
-    key: business-line
+  - name: Product line
+    key: product-line
     values:
-      - Slax Reader
-      - ZSXQ
+      - Example Reader
+      - DataHub
 
-  - name: Importance/Urgency
-    key: importance-urgency
+  - name: Priority/Impact
+    key: priority-impact
 ```
 
 ```yml

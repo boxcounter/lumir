@@ -5,7 +5,7 @@
 超长正文行（刻意超过阅读栏宽）：折行口径的默认值来自配置的 editor.line_wrap，运行期翻转由 view.toggle-line-wrap 承担；这一行刻意写得很长，长到远超阅读栏宽，因此默认折行时它应折成多个视觉行，关掉文件级折行时它应保持单行、由编辑区横向平移到达，两种口径都必须让行尾这段标记可达：PROSE-END-MARK。
 
 ```text
-{"vault":"Everything-copy","file":"Logbook/2026-09/2026-09-18.md","note":"the quick brown fox jumps over the lazy dog 0123456789","flag":true,"count":42,"tail":"CODE-END-MARK"}
+{"vault":"Fieldnotes-copy","file":"Weekly/2026-09/2026-09-18.md","note":"the quick brown fox jumps over the lazy dog 0123456789","flag":true,"count":42,"tail":"CODE-END-MARK"}
 ```
 
 ```text
