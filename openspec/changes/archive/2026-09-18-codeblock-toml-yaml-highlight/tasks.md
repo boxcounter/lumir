@@ -28,7 +28,7 @@
 - [x] 1.2 真实渲染复核（chromium + 真实前端 + Tauri 桩，加载 master 的 `src`）：toml 围栏 / `.toml` 文件 /
       yaml 与 yml 围栏 / 围栏位置边界（首行、引用块、列表项、callout、四反引号、`~~~`、大写、带 attrs）
       **证据**：`evidence/03-复核记录.md` §3；截图 `evidence/01-yaml-block-as-is.png`（Alex 真实 vault
-      `4_Archives/Engineering/Logbook/README.md` 第一个围栏块的逐字节复刻）与 `evidence/02-toml-block-as-is.png`；
+      `2_Areas/Reference/Weekly/README.md` 第一个围栏块的逐字节复刻）与 `evidence/02-toml-block-as-is.png`；
       逐 span dump 在 `/tmp/lumir-probe-m167/real.log`（git 外）。
 - [x] 1.3 语料普查：vault 1525 份 `.md` 的围栏信息串统计（`yaml` 8 / `toml` 0 / `yml` 0），
       确认报告里的 toml / yml 现场在可触及语料里不存在
@@ -69,8 +69,8 @@
       数字取 `cm-lp-tok-literal`、注释取 `cm-lp-tok-comment`；并断言键 **MUST NOT** 落 `cm-lp-tok-literal`
       **证据**（M179）：用例「yaml 的 token 分工：…」——键 5 种形态逐个 `toEqual(["cm-lp-tok-property"])`、
       四类值各归其色；用例「yaml 键着色不变量：…」里另有 `not.toContain("cm-lp-tok-literal")` 的显式反向断言。
-- [x] 3.2 键形态全覆盖：顶层键、嵌套键、序列项内的键、多词键（`Business line`）、含 `-` / `.` / `/` / `+`
-      的键（真实 vault 里有 `importance-urgency`、`PreToolUse`）、非 ASCII 值——逐个断言取属性名色。
+- [x] 3.2 键形态全覆盖：顶层键、嵌套键、序列项内的键、多词键（`Product line`）、含 `-` / `.` / `/` / `+`
+      的键（真实语料里有 `priority-impact`、`PreToolUse`）、非 ASCII 值——逐个断言取属性名色。
       单一 fixture 只能证明那个案例被修好（`REVIEW.md` 第 1 条）
       **证据**（M179）：用例「yaml 键着色不变量：…」的六个独立文档（顶层+嵌套 / 三层嵌套 / 序列项内 /
       多词键 / `-` `.` `/` `+` / 非 ASCII 键），逐个键断言属性色且不落字面量色。
@@ -102,8 +102,8 @@
       （yaml 用嵌套映射 + 序列 + 行尾注释 + 非 ASCII 值，形态取自 Alex 真实块，不用单行样本）；
       `render-codeblock.spec.ts` 增整页 + 元素级基线（`.cm-line` 级，钉住键色）。**新增基线须 Alex 过目**
       （`tests/visual/README.md` 的基线更新纪律）；核对既有整页基线 sha256 与时间戳（实现前 yaml 基线为 0 张）
-      **证据**（M179）：fixture 增三个围栏（yaml 形态逐字节取自 Alex 真实块 `Logbook/README.md` 的
-      `dimensions:` 表，含 `Business line` / `Importance/Urgency` / `importance-urgency` / 行尾注释）；
+      **证据**（M179）：fixture 增三个围栏（yaml 形态逐字节取自 Alex 真实块 `Weekly/README.md` 的
+      `dimensions:` 表，含 `Product line` / `Priority/Impact` / `priority-impact` / 行尾注释）；
       新增 **3 张基线**：整页 `render-codeblock-toml-yaml.png` + 元素级 `render-codeblock-toml-line.png` /
       `render-codeblock-yaml-line.png`。**基线入库待 Alex 过目**（AGENTS.md 硬规则；过目前的提交不带这三张文件，
       前/后截图与 sha256 清单在 `/tmp/m179-baseline-review/`，走 review-request 呈请）。

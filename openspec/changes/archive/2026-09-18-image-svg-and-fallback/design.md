@@ -308,8 +308,8 @@ XML 解析失败，前端拿到的是同一个事件。今天把这几类一律�
 ### 8.1 缺陷机制：已复现（M165 修订轮，2026-09-18）
 
 **中招形状**：SVG 只声明百分比宽度、没有固有像素尺寸。最小形状是 `width="100%"` + `viewBox`——这也是
-mermaid CLI、D2、Excalidraw 等导出器的默认形态（本机样本 `/Users/boxcounter/Downloads/mermaid-diagram-1787642287522.svg`
-即 `<svg width="100%" style="max-width: 1489.5px" viewBox="-50 -10 1489.5 909">`）。
+mermaid CLI、D2、Excalidraw 等导出器的默认形态（本机样本 `~/Downloads/diagram-sample.svg`
+即 `<svg width="100%" style="max-width: 1280px" viewBox="-40 -12 1280 720">`）。
 
 **上游记录（形态不是本仓臆测）**：mermaid 自己记录过这个形状——
 [issue #1490「SVG width and height attributes inconsistencies between diagrams」](https://github.com/mermaid-js/mermaid/issues/1490)
@@ -375,8 +375,8 @@ for (const [n, e] of [["chromium", chromium], ["webkit", webkit]]) {
 
 **仍未验证的部分（不许当成已验）**：
 
-- Alex 报告里那份 `images/hooks-overview.en.svg` **本机不存在**（`mdfind` 无命中；
-  `/Users/boxcounter/Downloads/Everything-copy` 下也没有 `images/` 目录），所以「它就是这一族」是
+- Alex 报告里那份 `images/sample-diagram.en.svg` **本机不存在**（`mdfind` 无命中；
+  `~/Vaults/Fieldnotes` 下也没有 `images/` 目录），所以「它就是这一族」是
   **由现象反推**，不是逐字节核对。实现期按 tasks 1.1 用中招形状做 fixture；拿得到原文件则直接用它。
 - 「WKWebView 与 chromium 在渲染盒上的差异」**未找到权威来源**（能查到的只有 `naturalWidth` 这一层
   的引擎差异）。本 change 的结论不依赖它——本轮 webkit（最接近 WKWebView 的引擎）实测与 chromium

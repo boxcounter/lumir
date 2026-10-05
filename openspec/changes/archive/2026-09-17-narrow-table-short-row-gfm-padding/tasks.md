@@ -14,7 +14,7 @@
 
 ## 3. 测试与验收
 
-- [x] 3.1 `tests/visual`：`table-foundation-v2` 的短行 fixture（`| one |` 类）翻转为「正常渲染」断言（空 cell 数量、每行 cell 数、列几何对齐）；多列降级改用多列形态 fixture 保持；新增 outline.md 同款形态（6 列表头 + 5 cell 行）的专门断言。
+- [x] 3.1 `tests/visual`：`table-foundation-v2` 的短行 fixture（`| one |` 类）翻转为「正常渲染」断言（空 cell 数量、每行 cell 数、列几何对齐）；多列降级改用多列形态 fixture 保持；新增 reading-notes.md 同款形态（6 列表头 + 5 cell 行）的专门断言。
 - [x] 3.2 `scripts/acceptance`：`render-table-degrade` 的降级表改多列形态（保留降级文案与出错行号断言），fixture 增补短行表并断言其渲染成表格；`node scripts/acceptance/run.mjs --check` 全绿。
 - [x] 3.3 视觉基线：核对含表的场景均无 `toHaveScreenshot` 断言 → 预期基线零变化；若实际出现差异，逐场景留前后对比说明后再更新。
 

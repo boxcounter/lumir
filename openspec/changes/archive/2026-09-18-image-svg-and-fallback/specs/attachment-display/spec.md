@@ -24,7 +24,7 @@ md 文档中的图片引用 SHALL 在文档内对应位置内联渲染图片，�
 
 #### Scenario: SVG 与位图经同一路径渲染
 
-- **WHEN** 文档含 `![Hooks Overview](images/hooks-overview.en.svg)`，且该 svg 是带 `width`/`height`
+- **WHEN** 文档含 `![Sample Diagram](images/sample-diagram.en.svg)`，且该 svg 是带 `width`/`height`
   的正常矢量图
 - **THEN** 该位置内联显示该 svg，且它走的是与同场景 `png` 引用完全相同的渲染路径（同一 `<img>` +
   `data:image/svg+xml;base64,…` 形态）；`EditorState.doc` 与磁盘文件逐字节不变

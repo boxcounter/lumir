@@ -40,4 +40,4 @@
 
 - [x] 5.1 `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` 通过
 - [x] 5.2 fixture 双解析器纪律验收：Rust 单测全绿（含 resolveCases），前端 span 定位测试全绿（parseCases），两侧消费同一 cases.json
-- [ ] ~~5.3 用作者真实 vault 验收：`[[note]]` 跳转、`[[note#heading]]` 标题定位、未创建链接显示与一键创建（backlinks 面板已按挤压预案推迟，不在验收项内）；perf.yml 与视觉门禁不回归~~（**放弃原因（2026-09-17 M150）**：作者真实 vault `/Users/boxcounter/Downloads/Everything-copy` 为只读纪律，不在其中执行写入类动作（一键创建会落新文件）；等价验证由 `tests/wikilink-fixtures/cases.json` 的 Rust 全量断言（含 createCases）与真机场景 `scripts/acceptance/12-links` 的 wikilink 跳转 / 未创建不建文件断言承担，perf 与视觉门禁随各次合并门禁回归）
+- [ ] ~~5.3 用作者真实 vault 验收：`[[note]]` 跳转、`[[note#heading]]` 标题定位、未创建链接显示与一键创建（backlinks 面板已按挤压预案推迟，不在验收项内）；perf.yml 与视觉门禁不回归~~（**放弃原因（2026-09-17 M150）**：作者真实 vault `~/Vaults/Fieldnotes` 为只读纪律，不在其中执行写入类动作（一键创建会落新文件）；等价验证由 `tests/wikilink-fixtures/cases.json` 的 Rust 全量断言（含 createCases）与真机场景 `scripts/acceptance/12-links` 的 wikilink 跳转 / 未创建不建文件断言承担，perf 与视觉门禁随各次合并门禁回归）

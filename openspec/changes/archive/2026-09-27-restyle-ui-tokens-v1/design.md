@@ -54,8 +54,8 @@
 
 | masthead 现状 | 去向 | 依据 |
 |---|---|---|
-| vault 名（宋体大字 + 双线） | 侧栏头（13px / 650，带 caret 的切换器入口形态不变） | 定稿图 01–03：侧栏头「Everything ⌄」 |
-| 当前文件路径 | modeline 左侧 | 定稿图：modeline 左 `1_Projects / … / dimension-design.md` |
+| vault 名（宋体大字 + 双线） | 侧栏头（13px / 650，带 caret 的切换器入口形态不变） | 定稿图 01–03：侧栏头「Fieldnotes ⌄」 |
+| 当前文件路径 | modeline 左侧 | 定稿图：modeline 左 `Projects / … / design-notes.md` |
 | toc 当前位置指示（⌘⇧O 的锚点） | modeline 左侧路径段之后（同一行，路径 › 标题链）；**指示段今天不显示时的 modeline 形态 = 仅路径** | toc-outline spec 的「当前位置指示」语义不变，只是承载面从 masthead 迁到 modeline |
 | 行数 / 语法 / 编码 | modeline 右侧（新增展示位，信息来自既有编辑器状态，无新数据源） | 定稿图：modeline 右 `Markdown · 338 行 · UTF-8` |
 

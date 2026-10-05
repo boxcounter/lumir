@@ -7,7 +7,7 @@
 ## Why
 
 Alex 实测原话（2026-09-18）：**「支持 svg 图片显示——目前不显示，而且连源码都看不到了、误以为没有图片，
-当时源码是：`![Hooks Overview](images/hooks-overview.en.svg)`」**。
+当时源码是：`![Sample Diagram](images/sample-diagram.en.svg)`」**。
 
 ### 一、先纠正一个会被当成结论的假设：svg 并没有「不被支持」
 
