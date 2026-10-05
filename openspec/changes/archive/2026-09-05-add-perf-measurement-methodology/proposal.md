@@ -6,11 +6,11 @@
 
 ## Why
 
-ADR 0002 第 6 条锁死了性能合同的四个数字（冷启动 <300ms、keypress-to-paint <16ms、打开 1MB Markdown <100ms、常驻内存 <200MB），但只锁定数字与阈值，明确把测量方法学——端点、工具链、采样口径、fixture 规格——委托给 M0 产出的本 spec 定义（[ADR 0002 §6](../../../docs/adr/0002-technical-route.md)）。
+ADR 0002 第 6 条锁死了性能合同的四个数字（冷启动 <300ms、keypress-to-paint <16ms、打开 1MB Markdown <100ms、常驻内存 <200MB），但只锁定数字与阈值，明确把测量方法学——端点、工具链、采样口径、fixture 规格——委托给 M0 产出的本 spec 定义（[ADR 0002 §6](../../../../docs/adr/0002-technical-route.md)）。
 
 不定义方法学的后果已由评审 finding 证实：四个数字没有任何一项有测量端点定义，CI 门禁实现时会各自发明口径，"回归即拒合"的判定不可复现（finding `20260904-reviewer-executability-bug-ci`，high 级，列了逐项缺口清单：冷启动缺起止端点与 ready 信号、keypress-to-paint 在 headless 无真实 vsync、1MB fixture 构成未定、内存未定义进程口径与 settle 条件）。
 
-同时，ADR 0004 第 4 条指定本 spec 为 OpenSpec 首个全循环验证对象：它是 M0 自身产物、验收口径明确、第 2 周必然存在。本 change 因此有双重身份——既是性能门禁的方法学底座，也是"Alex 不看代码能否凭制品裁决"这一流程假设（ADR 0004 第 4 条评估条款）的第一个测试样本。方法学的完整权威文本在 [docs/specs/perf-measurement.md](../../../docs/specs/perf-measurement.md)（M8 已合并的 accepted 版本），本 proposal 只陈述裁决所需的方法学要点与风险点。
+同时，ADR 0004 第 4 条指定本 spec 为 OpenSpec 首个全循环验证对象：它是 M0 自身产物、验收口径明确、第 2 周必然存在。本 change 因此有双重身份——既是性能门禁的方法学底座，也是"Alex 不看代码能否凭制品裁决"这一流程假设（ADR 0004 第 4 条评估条款）的第一个测试样本。方法学的完整权威文本在 [docs/specs/perf-measurement.md](../../../../docs/specs/perf-measurement.md)（M8 已合并的 accepted 版本），本 proposal 只陈述裁决所需的方法学要点与风险点。
 
 ## What Changes
 

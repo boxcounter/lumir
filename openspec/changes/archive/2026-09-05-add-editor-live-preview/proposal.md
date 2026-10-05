@@ -6,9 +6,9 @@
 
 ## Why
 
-M1 出口标准是"能用 Lumir 只读浏览作者的整个真实 vault"（[ADR 0004 §1](../../../docs/adr/0004-development-and-openness-strategy.md)）。打开 vault、列出文件（add-vault-workspace）之后，浏览体验由本 change 承载：Markdown 以 live preview 形态呈现而非裸源码，frontmatter 渲染为 properties 区块，附件图片内联显示。
+M1 出口标准是"能用 Lumir 只读浏览作者的整个真实 vault"（[ADR 0004 §1](../../../../docs/adr/0004-development-and-openness-strategy.md)）。打开 vault、列出文件（add-vault-workspace）之后，浏览体验由本 change 承载：Markdown 以 live preview 形态呈现而非裸源码，frontmatter 渲染为 properties 区块，附件图片内联显示。
 
-技术路线早已裁决：编辑器单内核 CodeMirror 6，md 模式 = 高亮 + live preview 装饰层，code 模式 = 仅高亮（[ADR 0002 §2](../../../docs/adr/0002-technical-route.md)），不做两个编辑器。frontmatter 解析为 YAML、渲染为 properties 区块与附件引用显示（`![[image.png]]` 与标准 `![alt](path)`）在 Obsidian 兼容范围内（[ADR 0003 §1](../../../docs/adr/0003-obsidian-compatibility-scope.md)）。
+技术路线早已裁决：编辑器单内核 CodeMirror 6，md 模式 = 高亮 + live preview 装饰层，code 模式 = 仅高亮（[ADR 0002 §2](../../../../docs/adr/0002-technical-route.md)），不做两个编辑器。frontmatter 解析为 YAML、渲染为 properties 区块与附件引用显示（`![[image.png]]` 与标准 `![alt](path)`）在 Obsidian 兼容范围内（[ADR 0003 §1](../../../../docs/adr/0003-obsidian-compatibility-scope.md)）。
 
 Foundation（M16 已合并）已备好接缝：`src/editor.ts` 用 Compartment 收敛模式差异、`mdLivePreviewDecorations` 占位即装饰层挂载位、`EditorMode`（md/code）经配置驱动并在启动时应用（src/main.ts）。本 change 在真实缝上落地，不发明新结构。
 
