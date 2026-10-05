@@ -35,7 +35,7 @@ Lumir 不是「开发者工具的开发者工具」，是「重度文本工作�
 
 - **2026-09-24 · 骨架**：选定方向 C「驾驶舱」（常驻 agent 栏：上 chat 下 Inbox 提案队列；选中提案中间栏切换为完整审阅视图）。理由：agent harness 是产品核心演进方向，队列 + 专门审阅视图对多任务、大提案的承载力最强。
 - **表皮**：迭代中。第一轴：正文衬线 vs 无衬线 → **2026-09-24 裁决：无衬线**（serif 变体保留在 `?body=serif` 备查）。
-- **2026-09-24 · 最终样式**：Alex 检查定稿图（主界面 + 内容类型 + 浮层 + callout × 三主题，见 `design/prototypes/final-review/`），结论「挺喜欢」，无必须改项。本次实现范围 = 方向 C 骨架（无 agent 的三栏布局，右栏预留 dock 位）+ 无衬线表皮，三主题。屏 2/3（agent 假设）、composer 变体推迟到 agent 特性立项时再设计。
+- **2026-09-24 · 最终样式**：Alex 检查定稿图（主界面 + 内容类型 + 浮层 + callout × 三主题），结论「挺喜欢」，无必须改项。本次实现范围 = 方向 C 骨架（无 agent 的三栏布局，右栏预留 dock 位）+ 无衬线表皮，三主题。屏 2/3（agent 假设）、composer 变体推迟到 agent 特性立项时再设计。
 - **2026-09-24 · 节点 1 提案评审通过**（change `restyle-ui-tokens-v1`）：D1 = 15px；D2 = 本 change 内收敛 callout 13 类 → 五族语义色（tokens v1.2 映射表，abstract/todo 两个存疑类型 Alex 裁决**按现方案**）；D3 = `[ui] theme` 配置（默认 light、重启生效）。浮层 elevation（v1.1 `--shadow-raise`/`--scrim`）渲染检查通过。
 
 ## 留给原型阶段的分叉

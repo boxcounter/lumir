@@ -1,6 +1,6 @@
 # 表格全屏触发钮 — 视觉裁决稿（M235）
 
-高保真静态原型，单文件自包含（CSS/JS 全内联，token 逐值取自 direction-c 定稿原型，
+高保真静态原型，单文件自包含（CSS/JS 全内联，token 逐值取自方向 C 定稿，
 即 [design-tokens-v1.md](../../../docs/specs/design-tokens-v1.md) 的登记源）。
 对应 [openspec/changes/table-fullscreen-view](../../../openspec/changes/table-fullscreen-view/)
 裁决点 3 备选②（表格工具钮）与 tasks §3.5 要求的「视觉形态先补一轮 Alex 裁决再实现」。

@@ -826,7 +826,7 @@ MUST NOT 直接拿含标记贡献的滚动高度判定（那是同一 requiremen
 ### Requirement: 标题层级阶梯（H1–H6）
 
 md 模式渲染态的标题 SHALL 按六级阶梯呈现，层级辨识度 SHALL 由字号单变量承担
-（2026-09-25 Alex 裁决，三稿对比原型留档 `design/prototypes/heading-hierarchy/`）。
+（2026-09-25 Alex 裁决；三稿对比原型已随历史方向原型退役删除，设计已落地）。
 相对编辑器内容字号（`--editor-font-size`，出厂 15px）的字号比值 SHALL 逐档为
 H1 `21/15`、H2 `18/15`、H3 `16/15`、H4 `1`、H5 `14/15`、H6 `13/15`（出厂基准读数
 21/18/16/15/14/13px）；字重 SHALL 全档统一 `650`——字重 MUST NOT 承担层级区分；

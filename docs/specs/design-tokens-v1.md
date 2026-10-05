@@ -1,8 +1,8 @@
 # Lumir Design Tokens v1
 
-> 状态：提取自 direction-c 定稿原型（2026-09-24 Alex 裁决「挺喜欢，无必须改项」，裁决记录见
+> 状态：提取自方向 C 定稿样式（2026-09-24 Alex 裁决「挺喜欢，无必须改项」，裁决记录见
 > [design-brief-v1.md](design-brief-v1.md) §裁决记录）。本文档是**已做决策的登记**，
-> 不是新设计：每个值都能在 `design/prototypes/direction-c/index.html` 里指出来源行。
+> 不是新设计：本文档是已落地定稿值的登记（原方向 C 原型已随历史方向原型退役删除）。
 > 用途：后续 UI 重设计 OpenSpec change 与实现的直接输入。
 >
 > 提取范围：屏 1（主界面）+ 屏 4（内容类型）× 三主题 × 无衬线表皮。
