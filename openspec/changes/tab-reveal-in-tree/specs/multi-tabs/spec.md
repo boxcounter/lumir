@@ -87,26 +87,35 @@ Right）SHALL 逐个提交关闭：同一时刻 MUST NOT 出现两条确认浮�
 
 ### Requirement: 文件树联动与空态
 
-文件树的高亮 SHALL 跟随**当前标签**的文件；没有打开任何文件（包括关掉最后一个标签）时 SHALL 清空
-高亮，masthead 的文件名 SHALL 显示「无当前文件」。
+文件树的高亮 SHALL 跟随**活跃 pane 的前台**标签的文件；没有打开任何文件（包括关掉最后一个
+标签）时 SHALL 清空高亮，modeline 的文件名 SHALL 显示「无当前文件」。活跃 pane 切换或
+活跃 pane 内切换标签时，高亮 SHALL 在同一帧内移到新目标的行上，原行不再高亮。
+`syncActiveDocument` 是「活跃 pane 的前台标签 ⇄ chrome」的唯一同步点，MUST NOT 存在第二个
+同步通道。
 
 **定位请求是这条规则的一个显式例外**（Alex 2026-10-01 裁决维持）：收到「在树中定位路径」
 （`file-tree` 的同名 requirement；入口是标签菜单的 Reveal in File Tree）时，高亮 SHALL 改为跟随
 **被定位的那一行**——用户此刻点名要看的是那个文件，留着他刚才的标签高亮会让「滚到哪儿去了」失去
 落点。这条例外 SHALL 在下一次前台文档变化时结束：`syncActiveDocument` 那一拍把
-当前行按当前标签重写（其实现见 `src/main.ts`，本 capability 只要求那条重写存在且生效）。
+当前行按活跃 pane 的前台标签重写（其实现见 `src/main.ts`，本 capability 只要求那条重写存在且生效）。
 
 #### Scenario: 切换标签时树高亮跟随
 
-- **WHEN** 标签 A 与 B 分别指向不同文件，从 A 切到 B
+- **WHEN** 活跃 pane 里有标签 A 与 B 分别指向不同文件，从 A 切到 B
 - **THEN** 文件树的高亮移到 B 对应的那一行，A 的行不再高亮
+
+#### Scenario: 活跃 pane 切换时高亮同帧换源
+
+- **WHEN** 双 pane（A 前台 `a.md`、B 前台 `b.md`），焦点从 A 的 contentDOM 移到 B 的 contentDOM
+- **THEN** 文件树高亮同帧从 `a.md` 的行移到 `b.md` 的行，modeline 同帧切到 `b.md`
 
 #### Scenario: 定位到非前台标签的文件时高亮跟随被定位的那一行
 
 - **WHEN** 前台是标签 A，对指向另一个文件的标签 B 执行定位
-- **THEN** 树的高亮落在 B 的那一行（A 的行不再高亮）；此后切换前台标签时高亮按当前标签重写
+- **THEN** 树的高亮落在 B 的那一行（A 的行不再高亮）；此后切换前台标签时高亮按活跃 pane 的前台标签重写
 
 #### Scenario: 关掉最后一个标签回空态
 
-- **WHEN** 依次关闭所有标签
-- **THEN** 标签栏隐藏、masthead 显示「无当前文件」、文件树无高亮；此后单击树里的文件开一个标签（「预览标签语义」已随预览机制退场，见「打开语义」）
+- **WHEN** 依次关闭活跃 pane 的所有标签
+- **THEN** 标签区隐藏（单 pane）、modeline 显示「无当前文件」、文件树无高亮；此后单击树里的
+  文件开一个标签（开在活跃 pane）
