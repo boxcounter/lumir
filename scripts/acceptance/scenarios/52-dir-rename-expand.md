@@ -167,7 +167,7 @@ teardown:
 
 ## 这个场景验什么
 
-Alex 2026-09-27 的现场（slax-reader vault，非只读）：把 `.local` 下的 `openspec-tutorial`
+Alex 2026-09-27 的现场（fieldnotes vault，非只读）：把 `.local` 下的 `openspec-tutorial`
 改名为 `openspec-tutorials`（加了一个 s），此后该目录在树里**再也展不开**；改回原名也展不开。
 严重程度：功能死态。
 
