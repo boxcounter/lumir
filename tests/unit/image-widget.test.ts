@@ -55,7 +55,7 @@ test("尺寸兜底取点：布局尺寸为零且自然尺寸非零时按自然�
 });
 
 test("三条图片态文案与 deck D111–D113 逐字一致（deck 是模板的唯一真源）", () => {
-  const ref = "![Hooks Overview](images/hooks-overview.en.svg)";
+  const ref = "![Sample Diagram](images/sample-diagram.en.svg)";
   assert.equal(imageLoadingText(ref), deckRow("D111").zh.replace("{引用}", ref));
   assert.equal(imageReadErrorText(ref, "文件不存在"), deckRow("D112").zh.replace("{引用}", ref).replace("{原因}", "文件不存在"));
   assert.equal(imageFallbackText(ref), deckRow("D113").zh.replace("{引用}", ref));
@@ -72,11 +72,11 @@ test("三条图片态文案与 deck D111–D113 逐字一致（deck 是模板的
 });
 
 test("占位文案保留原始引用文本（alt 与路径都在其中）", () => {
-  const ref = "![Hooks Overview](images/hooks-overview.en.svg)";
+  const ref = "![Sample Diagram](images/sample-diagram.en.svg)";
   for (const text of [imageLoadingText(ref), imageReadErrorText(ref, "原因"), imageFallbackText(ref)]) {
     assert.ok(text.includes(ref), `占位文本丢了原始引用：${text}`);
-    assert.ok(text.includes("Hooks Overview"), `占位文本丢了 alt：${text}`);
-    assert.ok(text.includes("images/hooks-overview.en.svg"), `占位文本丢了路径：${text}`);
+    assert.ok(text.includes("Sample Diagram"), `占位文本丢了 alt：${text}`);
+    assert.ok(text.includes("images/sample-diagram.en.svg"), `占位文本丢了路径：${text}`);
   }
 });
 

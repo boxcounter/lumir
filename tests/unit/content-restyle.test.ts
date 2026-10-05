@@ -91,12 +91,12 @@ test("未知类型降级：只出前段、内容是原文类型名", () => {
 
 test("doc-title：basename 去扩展名", () => {
   assert.equal(docTitleFromPath("3_Resources/2026 R&D Strategy.md"), "2026 R&D Strategy");
-  assert.equal(docTitleFromPath("dimension-design.md"), "dimension-design");
+  assert.equal(docTitleFromPath("design-notes.md"), "design-notes");
   assert.equal(docTitleFromPath("a/b/note"), "note");
 });
 
 test("doc-meta 路径段：父目录「 / 」分隔，根目录为空", () => {
-  assert.equal(docDirFromPath("Work-Tracking-Method/decisions/dimension-design.md"), "Work-Tracking-Method / decisions");
+  assert.equal(docDirFromPath("Method-Notes/decisions/design-notes.md"), "Method-Notes / decisions");
   assert.equal(docDirFromPath("3_Resources/x.md"), "3_Resources");
   assert.equal(docDirFromPath("x.md"), "");
 });

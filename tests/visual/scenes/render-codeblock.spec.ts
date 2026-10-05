@@ -126,14 +126,14 @@ function classesOf(tokens: Array<{ text: string; cls: string }>, text: string): 
 
 test("yaml 键着色不变量：任意形态的键取属性色、MUST NOT 落字面量色", () => {
   // 输入维度扫一遍而不是只钉一个 fixture（REVIEW.md 第 1 条：单案例只能证明那个案例被修好）。
-  // 形态取自可触及语料与真实 vault 的 `Logbook/README.md`（`dimensions:` 那张表）：顶层键、
+  // 形态取自可触及语料与 vault 语料的 `Weekly/README.md`（`dimensions:` 那张表）：顶层键、
   // 嵌套键、序列项内的键、多词键、含 `-` / `.` / `/` / `+` 的键、非 ASCII 键。
   const cases: Array<{ doc: string; keys: string[] }> = [
-    { doc: `dimensions:\n  - name: Goal\n    key: goal\n    source: monthly\n`, keys: ["dimensions", "name", "key", "source"] },
+    { doc: `dimensions:\n  - name: North\n    key: north\n    source: weekly\n`, keys: ["dimensions", "name", "key", "source"] },
     { doc: `outer:\n  inner:\n    deepest: 1\n`, keys: ["outer", "inner", "deepest"] },
-    { doc: `- name: Goal\n  key: goal\n`, keys: ["name", "key"] },
-    { doc: `Business line: Slax Reader\n`, keys: ["Business line"] },
-    { doc: `importance-urgency: x\na.b: y\nc/d: z\ne+f: g\n`, keys: ["importance-urgency", "a.b", "c/d", "e+f"] },
+    { doc: `- name: North\n  key: north\n`, keys: ["name", "key"] },
+    { doc: `Product line: Example Reader\n`, keys: ["Product line"] },
+    { doc: `priority-impact: x\na.b: y\nc/d: z\ne+f: g\n`, keys: ["priority-impact", "a.b", "c/d", "e+f"] },
     { doc: `类别: 1\n名字: 备忘录\n`, keys: ["类别", "名字"] },
   ];
   for (const { doc, keys } of cases) {
@@ -171,7 +171,7 @@ test("yaml 的 token 分工：键取属性色，字符串 / 布尔 / 数字 / �
 });
 
 test("yml 与 yaml 逐 token 相同；yaml 的 atom 不外溢到 toml / json / javascript", () => {
-  const doc = `dimensions:\n  - name: Goal\n    key: goal\n`;
+  const doc = `dimensions:\n  - name: North\n    key: north\n`;
   // 别名归一：同一段代码两个 info string 得到逐 token 相同的 from / to / cls
   expect(highlightCode(doc, "yml")).toEqual(highlightCode(doc, "yaml"));
 
@@ -326,7 +326,7 @@ test("DOM：同段 yaml 在围栏（yaml）与只读 .yml / .yaml 文件（code 
   // code 模式侧的内容直接从 fixture 的 ```yaml 围栏里取——「同一段 yaml」由构造保证，
   // 两处各写一份会在下一次改 fixture 时静默漂移（REVIEW.md 第 8 条）。
   const yamlBlock = /```yaml\n([\s\S]*?)```/.exec(source)?.[1] ?? "";
-  expect(yamlBlock, "fixture 里应有 ```yaml 围栏").toContain("key: goal");
+  expect(yamlBlock, "fixture 里应有 ```yaml 围栏").toContain("key: north");
   await stubTauri(page, {
     entries: [
       { path: "languages.md", kind: "file", size: source.length, mtime_ms: 0 },
@@ -344,10 +344,10 @@ test("DOM：同段 yaml 在围栏（yaml）与只读 .yml / .yaml 文件（code 
   const fenceLine = await coloredTokens(page, "特殊维度", "name");
   expect(fenceLine).toEqual([
     { text: "name", color: COLOR.property },
-    { text: "# 特殊维度：values 来自当月 _monthly.md", color: COLOR.comment },
+    { text: "# 特殊维度：values 来自当月 _current.md", color: COLOR.comment },
   ]);
-  await scrollToLine(page, "key: goal");
-  const fenceKeyLine = await coloredTokens(page, "key: goal", "key");
+  await scrollToLine(page, "key: north");
+  const fenceKeyLine = await coloredTokens(page, "key: north", "key");
   expect(fenceKeyLine).toEqual([{ text: "key", color: COLOR.property }]);
 
   // code 模式侧：同一段 yaml（逐字节相同）。非 md 的 code 会话自 editable-non-md-files
@@ -357,7 +357,7 @@ test("DOM：同段 yaml 在围栏（yaml）与只读 .yml / .yaml 文件（code 
     await expect(page.locator(".cm-content"), file).toHaveAttribute("contenteditable", "true");
     await expect(page.locator(".cm-content"), file).toHaveAttribute("aria-readonly", "false");
     expect(await coloredTokens(page, "特殊维度", "name"), file).toEqual(fenceLine);
-    expect(await coloredTokens(page, "key: goal", "key"), file).toEqual(fenceKeyLine);
+    expect(await coloredTokens(page, "key: north", "key"), file).toEqual(fenceKeyLine);
   }
 
   // 围栏侧 ```yml：别名走同一条 parser 路径，键同样取属性名色
@@ -387,7 +387,7 @@ test("DOM：围栏 toml / yaml 的取色（键属性色、toml 的 atom 不跟�
   await scrollToLine(page, "特殊维度");
   expect(await coloredTokens(page, "特殊维度", "name")).toEqual([
     { text: "name", color: COLOR.property },
-    { text: "# 特殊维度：values 来自当月 _monthly.md", color: COLOR.comment },
+    { text: "# 特殊维度：values 来自当月 _current.md", color: COLOR.comment },
   ]);
 
   // toml：表头 `[[hooks]]` 与布尔 `true` 取字面量色——`atom` 在 toml mode 有三处语义

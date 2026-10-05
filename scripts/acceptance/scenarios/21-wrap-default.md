@@ -15,7 +15,7 @@ steps:
       超长正文行（刻意超过阅读栏宽）：折行口径的默认值来自 config.json 的 editor.line_wrap，运行期翻转由 view.toggle-line-wrap 承担；这一行刻意写得很长，远超阅读栏宽，默认折行时应折成多个视觉行：PROSE-END-MARK。
 
       ```text
-      vault: Everything-copy | file: Logbook/2026-09/2026-09-18.md | note: the quick brown fox jumps over the lazy dog 0123456789 | flag: true | count: 42 | tail: CODE-END-MARK
+      vault: Fieldnotes-copy | file: Weekly/2026-09/2026-09-18.md | note: the quick brown fox jumps over the lazy dog 0123456789 | flag: true | count: 42 | tail: CODE-END-MARK
       ```
 
       ```text

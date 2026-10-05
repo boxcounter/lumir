@@ -16,7 +16,7 @@ steps:
       超长正文行（刻意超过阅读栏宽）：折行口径的运行期翻转由 view.toggle-line-wrap 与 view.toggle-code-block-wrap 两条命令承担，两条都默认不占键位、由 [keys] 绑定后可用；这一行刻意写得很长，远超阅读栏宽：PROSE-END-MARK。
 
       ```text
-      vault: Everything-copy | file: Logbook/2026-09/2026-09-18.md | note: the quick brown fox jumps over the lazy dog 0123456789 | flag: true | count: 42 | tail: CODE-END-MARK
+      vault: Fieldnotes-copy | file: Weekly/2026-09/2026-09-18.md | note: the quick brown fox jumps over the lazy dog 0123456789 | flag: true | count: 42 | tail: CODE-END-MARK
       ```
 
       ```text

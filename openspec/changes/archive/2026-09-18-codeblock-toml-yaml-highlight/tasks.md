@@ -27,8 +27,9 @@
       **结论：不缺，无需替代来源。**
 - [x] 1.2 真实渲染复核（chromium + 真实前端 + Tauri 桩，加载 master 的 `src`）：toml 围栏 / `.toml` 文件 /
       yaml 与 yml 围栏 / 围栏位置边界（首行、引用块、列表项、callout、四反引号、`~~~`、大写、带 attrs）
-      **证据**：`evidence/03-复核记录.md` §3；截图 `evidence/01-yaml-block-as-is.png`（Alex 真实 vault
-      `2_Areas/Reference/Weekly/README.md` 第一个围栏块的逐字节复刻）与 `evidence/02-toml-block-as-is.png`；
+      **证据**：`evidence/03-复核记录.md` §3；截图 `evidence/02-toml-block-as-is.png`（yaml 侧原图
+      `evidence/01-yaml-block-as-is.png` 是 Alex 真实 vault `2_Areas/Reference/Weekly/README.md`
+      第一个围栏块的逐字节复刻，因含真实 vault 内容按 2026-10-05 裁决删除）；
       逐 span dump 在 `/tmp/lumir-probe-m167/real.log`（git 外）。
 - [x] 1.3 语料普查：vault 1525 份 `.md` 的围栏信息串统计（`yaml` 8 / `toml` 0 / `yml` 0），
       确认报告里的 toml / yml 现场在可触及语料里不存在

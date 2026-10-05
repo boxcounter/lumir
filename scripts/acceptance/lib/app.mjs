@@ -5,7 +5,7 @@
 //      Rust 侧 config_dir() 优先读 XDG_CONFIG_HOME（src-tauri/src/config.rs），
 //      因此用户的 ~/.config/lumir 全程不被读写——[keys] 重绑场景可以随便改。
 //   2. vault 重置：验收 vault 是合成 vault，每次运行重置为 fixtures 的精确副本。
-//      用户真实 vault（/Users/boxcounter/Downloads/Everything-copy）永不写入。
+//      用户真实 vault（真实路径按信息卫生纪律不落库）永不写入。
 //   3. 端口隔离：dev server 走独立端口，绝不与 Alex 手头的 `pnpm tauri dev` 抢 1420。
 import { execFileSync, spawn } from "node:child_process";
 import { appendFileSync, mkdirSync, realpathSync } from "node:fs";

@@ -107,12 +107,12 @@ test("经浮层新增入口切换到另一个 vault", async ({ page }) => {
 // open_vault 按契约返回空 entries + candidates——旧实现直接装载空树
 //（vault 名已换、无任何条目，用户无出口）。修复后必须保持旧 vault，
 // 并给出「作为新 vault 打开 / 确认映射」两个显式出口。
-const COPY_VAULT_ROOT = "/Users/alex/Everything-copy";
+const COPY_VAULT_ROOT = "/Users/alex/Fieldnotes-copy";
 const COPY_VAULT = {
   root: COPY_VAULT_ROOT,
   entries: [{ path: "note.md", kind: "file", size: 8, mtime_ms: 1757000000000 }],
   files: { "note.md": "# Note\n\n拷贝 vault 的内容。\n" },
-  remapCandidates: [{ id: "vault-old", path: "/Users/alex/Everything" }],
+  remapCandidates: [{ id: "vault-old", path: "/Users/alex/Fieldnotes" }],
 };
 
 test("切换命中重映射候选：不装载空树，作为新 vault 打开后正常显示", async ({ page }) => {
@@ -125,11 +125,11 @@ test("切换命中重映射候选：不装载空树，作为新 vault 打开后�
   // 不得装载空树：保持旧 vault，sticky 提示给出出口。
   const chooser = page.locator(".lumir-toast", { hasText: "尚未注册为 vault" });
   await expect(chooser).toBeVisible();
-  await expect(chooser).toContainText("/Users/alex/Everything");
+  await expect(chooser).toContainText("/Users/alex/Fieldnotes");
   await expect(page.locator(".ft-vault-name")).toHaveText("demo-vault");
 
   await chooser.getByRole("button", { name: "作为新 vault 打开" }).click();
-  await expect(page.locator(".ft-vault-name")).toHaveText("Everything-copy");
+  await expect(page.locator(".ft-vault-name")).toHaveText("Fieldnotes-copy");
   await expect(page.locator('.ft-row[title="note.md"]')).toBeVisible();
   // 未走映射路径。
   expect(await remapCalls(page)).toEqual([]);
@@ -146,6 +146,6 @@ test("切换命中重映射候选：确认映射后按映射结果装载", async
 
   // 映射意图传给后端（id + 新路径），随后按映射结果全量装载。
   await expect.poll(() => remapCalls(page)).toEqual([{ id: "vault-old", path: COPY_VAULT_ROOT }]);
-  await expect(page.locator(".ft-vault-name")).toHaveText("Everything-copy");
+  await expect(page.locator(".ft-vault-name")).toHaveText("Fieldnotes-copy");
   await expect(page.locator('.ft-row[title="note.md"]')).toBeVisible();
 });
