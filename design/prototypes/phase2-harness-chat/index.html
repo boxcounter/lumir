@@ -1,6 +1,8 @@
 <!DOCTYPE html>
 <!--
-  Lumir 原型 · Phase 2「harness 入 pane + chat UX 重做」（ADR 0008 Decision 8）第二轮
+  Lumir 原型 · Phase 2「harness 入 pane + chat UX 重做」（ADR 0008 Decision 8）第三轮
+  本轮: pin 机制全量移除（Alex 2026-10-05 裁决），由摘录胶囊取代；harness 顶栏并入窗口标题栏；
+        产品名+版本移至标题栏最左（traffic 空位内）；ctx% 移入 composer 控制行。
   用法: index.html?screen=1..10&theme=light|dark|eink（页面右下角有内置控制面板，点击切屏/切主题；
         截图脚本用 &panel=0 关面板）
   自包含: 无外部资源, 系统字体栈, 内联 SVG 图标
@@ -187,7 +189,7 @@ svg { display: block; }
   height: 100vh;
 }
 
-/* ---- 标题栏：traffic 空位 / 标签段（与真实产品同构，标签在标题栏里面）/ harness toggle / 产品标识 ---- */
+/* ---- 标题栏：traffic 空位（内含产品标识）/ 标签段（与真实产品同构，标签在标题栏里面）/ harness 段 / harness toggle ---- */
 .titlebar {
   grid-column: 1 / -1;
   display: flex;
@@ -200,6 +202,7 @@ svg { display: block; }
   flex: none;
   width: var(--layout-sidebar-w);
   display: flex;
+  align-items: center;
   gap: 8px;
   padding-left: 14px;
 }
@@ -208,6 +211,19 @@ svg { display: block; }
 .traffic i:nth-child(2) { background: var(--tl-min); }
 .traffic i:nth-child(3) { background: var(--tl-max); }
 :root[data-theme="eink"] .traffic i { border: 1.5px solid #000; width: 9px; height: 9px; }
+/* 产品标识：标题栏最左，紧跟 traffic 空位（Alex 2026-10-05 点子 2） */
+.tb-identity {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  margin-left: var(--sp-3);
+  font-size: var(--fs-meta);
+  color: var(--text-2);
+  user-select: none;
+  white-space: nowrap;
+}
+.tb-identity .ver { color: var(--text-3); }
 
 /* 标签段：镜像 src/style.css 的 .tabstrip——标题栏行内、横向滚动、溢出无可见滚动条。
    双 pane 时第二个标签段紧随其后（真实产品 shell.tabStrip.after(stripEl) 同构）。 */
@@ -277,17 +293,49 @@ svg { display: block; }
 .tb-btn:hover { background: var(--hover); color: var(--text); }
 .tb-btn[aria-pressed="true"] { background: var(--accent-tint); color: var(--accent); }
 :root[data-theme="eink"] .tb-btn[aria-pressed="true"] { background: var(--accent-fill); color: var(--accent-fill-text); }
-.tb-identity {
-  flex: none;
-  margin-left: auto;
+
+/* harness 段：harness pane 的标题栏段（Alex 2026-10-05 点子 1）——会话身份（可点出会话列表）+ 新会话。
+   与编辑器 pane 的标签段同构：harness 在场时占标题栏右段，flex 比与 pane 宽度比一致（ts-a:h-seg = 2:1），
+   段边界与 pane 分隔条对齐。 */
+.h-seg {
+  display: none;
+  align-items: center;
+  gap: var(--sp-2);
+  flex: 1 1 0;
+  min-width: 0;
+  padding-left: var(--sp-3);
+  position: relative;
+}
+.h-session {
   display: flex;
   align-items: center;
-  gap: var(--sp-3);
+  gap: var(--sp-2);
+  height: 26px;
+  padding: 0 var(--sp-3);
+  border-radius: var(--r5);
   font-size: var(--fs-meta);
-  color: var(--text-2);
-  user-select: none;
+  font-weight: var(--fw-medium);
+  color: var(--text);
+  max-width: 190px;
+  transition: background var(--dur-ui) var(--ease-standard);
 }
-.tb-identity .ver { color: var(--text-3); }
+.h-session:hover { background: var(--hover); }
+.h-session .sname { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.h-session .chev { flex: none; color: var(--text-3); }
+.h-new {
+  flex: none;
+  height: 24px;
+  padding: 0 var(--sp-3);
+  border-radius: var(--r4);
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  color: var(--text-3);
+  font-size: var(--fs-meta);
+  white-space: nowrap;
+  transition: background var(--dur-ui) var(--ease-standard), color var(--dur-ui) var(--ease-standard);
+}
+.h-new:hover { background: var(--hover); color: var(--text); }
 
 /* ---- 侧栏（文件树） ---- */
 .sidebar {
@@ -555,40 +603,17 @@ svg { display: block; }
   min-width: 0;
 }
 
-/* 头部：会话身份（可点出会话列表）/ 上下文用量读数 / 新会话 */
-.h-head {
-  flex: none;
-  height: 38px;
-  display: flex;
-  align-items: center;
-  gap: var(--sp-3);
-  padding: 0 var(--sp-4);
-  border-bottom: 1px solid var(--border-soft);
-  position: relative;
-}
-.h-session {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-2);
-  height: 26px;
-  padding: 0 var(--sp-3);
-  border-radius: var(--r5);
-  font-size: var(--fs-meta);
-  font-weight: var(--fw-medium);
-  color: var(--text);
-  max-width: 170px;
-  transition: background var(--dur-ui) var(--ease-standard);
-}
-.h-session:hover { background: var(--hover); }
-.h-session .sname { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.h-session .chev { flex: none; color: var(--text-3); }
+/* harness pane 本体不再有头部栏——会话身份/新会话已上移进窗口标题栏的 harness 段（.h-seg）；
+   上下文用量读数下移进 composer 控制行（.h-ctl）。 */
+
+/* 上下文用量：composer 控制行内的小型读数（Alex 2026-10-05 点子 3）；高用量黄色高亮 + info 钮 */
 .h-usage {
-  flex: 1 1 auto;
-  min-width: 0;
+  flex: none;
   display: flex;
   align-items: center;
-  justify-content: flex-end;
-  gap: var(--sp-2);
+  gap: var(--sp-1);
+  height: 24px;
+  padding: 0 var(--sp-2);
   font-family: var(--font-mono);
   font-size: var(--fs-label);
   color: var(--text-3);
@@ -610,9 +635,10 @@ svg { display: block; }
   transition: background var(--dur-ui) var(--ease-standard);
 }
 .ctx-info:hover { background: var(--hover); }
+/* 说明气泡：在 composer 控制行内向上展开（瞬态覆盖层，hover/点击才出现）；右缘对齐读数右缘，防窄 pane 横向溢出 */
 .ctx-tip {
   position: absolute;
-  top: calc(100% + 8px);
+  bottom: calc(100% + 6px);
   right: 0;
   width: 224px;
   background: var(--preview-bg);
@@ -640,25 +666,12 @@ svg { display: block; }
   font-weight: var(--fw-medium);
   color: var(--pending);
 }
-.h-new {
-  flex: none;
-  height: 24px;
-  padding: 0 var(--sp-3);
-  border-radius: var(--r4);
-  display: flex;
-  align-items: center;
-  gap: var(--sp-2);
-  color: var(--text-3);
-  font-size: var(--fs-meta);
-  transition: background var(--dur-ui) var(--ease-standard), color var(--dur-ui) var(--ease-standard);
-}
-.h-new:hover { background: var(--hover); color: var(--text); }
 
-/* 会话列表浮层（屏 7） */
+/* 会话列表浮层（屏 7）：挂在标题栏 harness 段的会话名下拉上 */
 .sess-pop {
   position: absolute;
-  top: 34px;
-  left: var(--sp-4);
+  top: 30px;
+  left: var(--sp-3);
   width: 264px;
   background: var(--preview-bg);
   border: 1px solid var(--border);
@@ -749,34 +762,61 @@ svg { display: block; }
   padding: 1px 5px;
   border-radius: var(--r4);
 }
-/* 用户消息里附着的 pinned 上下文（发送后沉淀为消息的一部分；多 pin = 多块，各自带问题） */
-.msg .att-pin {
+/* 摘录胶囊（pin 机制的替代，Alex 2026-10-05 裁决）：用户在正文选中的片段进入对话的载体。
+   一颗胶囊 = 文档名 + 标题锚点 + 短摘录；点击跳回原文位置并高亮；一条消息可挂多颗。 */
+.cap {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: var(--sp-3);
-  margin-bottom: var(--sp-1);
+  width: 100%;
   padding: var(--sp-2) var(--sp-3);
   background: var(--agent-bg);
   border: 1px solid var(--border-soft);
-  border-radius: var(--r5);
-  font-size: var(--fs-label-s);
-  color: var(--text-2);
+  border-radius: var(--r6);
+  text-align: left;
+  transition: border-color var(--dur-ui) var(--ease-standard), background var(--dur-ui) var(--ease-standard);
 }
-.msg .att-pin svg { flex: none; color: var(--accent); }
-.msg .att-pin .ap-src { flex: none; font-family: var(--font-mono); white-space: nowrap; }
-.msg .att-pin .ap-ex {
-  min-width: 0;
+.cap:hover { border-color: var(--border); background: var(--hover); }
+:root[data-theme="eink"] .cap:hover { border-width: 1.4px; }
+.cap .cap-glyph { flex: none; margin-top: 2px; color: var(--text-3); }
+.cap .cap-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.cap .cap-src {
+  font-family: var(--font-mono);
+  font-size: var(--fs-label-s);
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  white-space: nowrap;
+  overflow: hidden;
+}
+.cap .cap-src .cap-anchor {
+  font-family: var(--font-sans);
+  color: var(--text-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.cap .cap-ex {
+  margin-top: 1px;
+  font-size: var(--fs-meta);
+  color: var(--text-2);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.cap .cap-x {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  border-radius: var(--r4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
   color: var(--text-3);
 }
-.msg .att-q {
-  margin: 0 0 var(--sp-2);
-  padding-left: var(--sp-3);
-  font-size: var(--fs-meta);
-  color: var(--text);
-}
+.cap .cap-x:hover { background: var(--hover); color: var(--text); }
+/* 发送后沉淀：用户消息里附着的摘录胶囊（可点击跳回原文） */
+.msg .att-cap { margin-bottom: var(--sp-1); }
 
 /* 复制消息 affordance：hover 时浮现在 who 行右侧；点击后短暂变为「已复制」 */
 .msg .copy-btn {
@@ -907,98 +947,48 @@ body[data-screen="8"] .msg .copy-btn.copied { opacity: 1; }
 .think .th-body p:first-child { margin-top: 0; }
 .think .th-body p:last-child { margin-bottom: 0; }
 
-/* ---- pin 区（composer 上方的待发上下文；多 pin 排队，各配各的问题，一次发出） ---- */
-.h-pins {
-  flex: none;
-  padding: var(--sp-2) var(--sp-4) 0;
-  display: flex;
+/* ---- 摘录胶囊区（composer 内、输入框上方；多胶囊累积，随一条消息一次发出） ---- */
+.h-caps {
+  display: none;
   flex-direction: column;
   gap: var(--sp-2);
+  padding: var(--sp-2) var(--sp-2) 0;
 }
-.pin-card {
-  display: flex;
-  align-items: flex-start;
-  gap: var(--sp-3);
-  padding: var(--sp-3) var(--sp-3);
-  background: var(--content-bg);
-  border: 1px solid var(--border);
-  border-radius: var(--r6);
-}
-.pin-card .pc-icon { flex: none; margin-top: 1px; color: var(--accent); }
-.pin-card .pc-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
-.pin-card .pc-src {
-  font-family: var(--font-mono);
-  font-size: var(--fs-label-s);
-  color: var(--text);
-  display: flex;
-  align-items: center;
-  gap: var(--sp-2);
-}
-.pin-card .pc-src .pc-anchor { font-family: var(--font-sans); color: var(--text-3); }
-.pin-card .pc-ex {
-  margin-top: 1px;
-  font-size: var(--fs-meta);
-  color: var(--text-2);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-/* 该 pin 自带的问题（多 pin 流程：每条引用配各自的问题，一次发出） */
-.pin-card .pc-q {
-  margin-top: var(--sp-2);
-  padding-left: var(--sp-3);
-  border-left: 2px solid var(--border-soft);
-  font-size: var(--fs-meta);
-  color: var(--text);
-}
-.pin-card .pc-x {
-  flex: none;
-  width: 18px;
-  height: 18px;
-  border-radius: var(--r4);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--text-3);
-}
-.pin-card .pc-x:hover { background: var(--hover); color: var(--text); }
-.h-pins .pins-hint {
+.h-caps .caps-hint {
   font-size: var(--fs-micro);
   color: var(--text-3);
   padding: 0 var(--sp-1);
 }
 
-/* ---- 编辑器内 pin 态（屏 5） ---- */
-.doc li.pinned {
-  background: var(--accent-tint);
-  border-radius: var(--r4);
-  box-shadow: -2px 0 0 0 var(--accent);
-  padding-right: var(--sp-2);
-}
-:root[data-theme="eink"] .doc li.pinned { background: transparent; box-shadow: -2px 0 0 0 #000; }
-.doc li.pinned .pin-flag {
-  display: inline-flex;
-  vertical-align: -2px;
-  margin-left: var(--sp-2);
-  color: var(--accent);
-}
-:root[data-theme="eink"] .doc li.pinned .pin-flag { color: #000; }
-.doc li .pin-hover {
+/* ---- 编辑器侧：摘录的两种瞬态（均非常驻装饰；pin 的左边线/tint/行尾图标已随机制移除） ---- */
+/* 选中文本 → 浮动「摘录到对话」钮：胶囊的创建手势（本原型建议形态，未经裁决）。
+   .quoted 选区与 .flash 跳回高亮的摆拍只在屏 5 显现（见屏幕切换段）。 */
+.quote-fab {
   position: absolute;
-  top: 2px;
+  bottom: -13px;
   right: 0;
-  width: 20px;
-  height: 20px;
-  border-radius: var(--r4);
   display: none;
   align-items: center;
-  justify-content: center;
-  color: var(--text-3);
-  background: var(--content-bg);
+  gap: var(--sp-2);
+  height: 24px;
+  padding: 0 var(--sp-3);
+  border-radius: 12px;
+  background: var(--preview-bg);
   border: 1px solid var(--border);
-  box-shadow: var(--shadow-pop);
+  box-shadow: var(--shadow-raise);
+  font-size: var(--fs-meta);
+  color: var(--text);
+  white-space: nowrap;
+  z-index: 5;
 }
-body[data-screen="5"] .doc li.demo-pin-hover .pin-hover { display: flex; }
+.quote-fab:hover { background: var(--hover); }
+/* 页面内真点击胶囊时 JS 加 .flash-live（1.4s 后消退）；截图摆拍用 .flash（屏 5 门控） */
+.doc li.flash-live {
+  background: var(--pending-tint);
+  border-radius: var(--r4);
+  transition: background 0.35s ease;
+}
+:root[data-theme="eink"] .doc li.flash-live { background: rgba(0, 0, 0, 0.1); }
 
 /* ---- composer ---- */
 .h-composer {
@@ -1122,7 +1112,8 @@ body[data-screen="3"] .pane-editor { flex: 0 0 62%; }
 body[data-screen="3"] .splitter.sp-a::after { left: 1px; width: 3px; background: var(--accent); }
 body[data-screen="3"] .splitter.sp-a .grip { opacity: 0.35; }
 
-/* harness 在场（屏 4-10）：harness:pane#1 = 1:2 */
+/* harness 在场（屏 4-10）：harness:pane#1 = 1:2；标题栏同步出现 harness 段（.h-seg），
+   与编辑器标签段 2:1 分宽，段边界与 pane 分隔条对齐 */
 body[data-screen="4"] .pane-harness, body[data-screen="5"] .pane-harness,
 body[data-screen="6"] .pane-harness, body[data-screen="7"] .pane-harness,
 body[data-screen="8"] .pane-harness, body[data-screen="9"] .pane-harness,
@@ -1135,6 +1126,14 @@ body[data-screen="4"] .pane-editor, body[data-screen="5"] .pane-editor,
 body[data-screen="6"] .pane-editor, body[data-screen="7"] .pane-editor,
 body[data-screen="8"] .pane-editor, body[data-screen="9"] .pane-editor,
 body[data-screen="10"] .pane-editor { flex: 2 1 0; }
+body[data-screen="4"] .h-seg, body[data-screen="5"] .h-seg,
+body[data-screen="6"] .h-seg, body[data-screen="7"] .h-seg,
+body[data-screen="8"] .h-seg, body[data-screen="9"] .h-seg,
+body[data-screen="10"] .h-seg { display: flex; }
+body[data-screen="4"] .tabstrip.ts-a, body[data-screen="5"] .tabstrip.ts-a,
+body[data-screen="6"] .tabstrip.ts-a, body[data-screen="7"] .tabstrip.ts-a,
+body[data-screen="8"] .tabstrip.ts-a, body[data-screen="9"] .tabstrip.ts-a,
+body[data-screen="10"] .tabstrip.ts-a { flex: 2 1 0; }
 
 /* harness toggle 按钮的 pressed 态跟随屏幕 */
 body[data-screen="4"] #harness-toggle, body[data-screen="5"] #harness-toggle,
@@ -1149,7 +1148,7 @@ body[data-screen="10"] #harness-toggle { background: var(--accent-tint); color: 
 :root[data-theme="eink"] body[data-screen="9"] #harness-toggle,
 :root[data-theme="eink"] body[data-screen="10"] #harness-toggle { background: var(--accent-fill); color: var(--accent-fill-text); }
 
-/* transcript 段落按屏分发：A=工作中(4) B=多pin(5) C=完成态(6/7/8/10) D=思考(9) */
+/* transcript 段落按屏分发：A=工作中(4) B=多摘录胶囊(5) C=完成态(6/7/8/10) D=思考(9) */
 .tx-a, .tx-b, .tx-c, .tx-d { display: none; }
 body[data-screen="4"] .tx-a { display: flex; flex-direction: column; gap: var(--sp-4); }
 body[data-screen="5"] .tx-b { display: flex; flex-direction: column; gap: var(--sp-4); }
@@ -1158,28 +1157,27 @@ body[data-screen="8"] .tx-c, body[data-screen="10"] .tx-c { display: flex; flex-
 body[data-screen="9"] .tx-d { display: flex; flex-direction: column; gap: var(--sp-4); }
 
 /* 屏 6：高用量读数 + info 钮的说明气泡（静态摆拍为展开态）；其余屏常态读数 */
-.h-usage-normal, .h-usage-high, .sess-pop, .h-pins, .think, .ctl-pop { display: none; }
+.h-usage-normal, .h-usage-high, .sess-pop, .think, .ctl-pop { display: none; }
 body[data-screen="6"] .h-usage-high { display: flex; }
 body[data-screen="6"] .ctx-tip { display: block; }
 body[data-screen="4"] .h-usage-normal, body[data-screen="5"] .h-usage-normal,
 body[data-screen="7"] .h-usage-normal, body[data-screen="8"] .h-usage-normal,
 body[data-screen="9"] .h-usage-normal, body[data-screen="10"] .h-usage-normal { display: flex; }
 body[data-screen="7"] .sess-pop { display: block; }
-body[data-screen="5"] .h-pins { display: flex; }
+body[data-screen="5"] .h-caps { display: flex; }
 body[data-screen="9"] .think { display: block; }
 body[data-screen="10"] .ctl-pop { display: block; }
 body[data-screen="10"] #eff-chip { background: var(--hover); color: var(--text); }
 
-/* 编辑器 pin 视觉只在屏 5 演示 */
-.doc li.pinned, .doc li .pin-hover { background: none; box-shadow: none; }
-:root[data-theme="eink"] .doc li.pinned { background: none; box-shadow: none; }
-body[data-screen="5"] .doc li.pinned {
-  background: var(--accent-tint);
-  box-shadow: -2px 0 0 0 var(--accent);
-}
-:root[data-theme="eink"] body[data-screen="5"] .doc li.pinned { background: transparent; box-shadow: -2px 0 0 0 #000; }
-.doc li.pinned .pin-flag { display: none; }
-body[data-screen="5"] .doc li.pinned .pin-flag { display: inline-flex; }
+/* 屏 5：摘录来源的两种瞬态摆拍——选区 + 浮动「摘录到对话」钮（q2）、点击胶囊跳回高亮（q1）；
+   其余屏编辑器侧零痕迹（.quoted/.flash 类常驻 HTML 但不显形） */
+.doc li.quoted, .doc li.flash { background: none; }
+body[data-screen="5"] .doc li.quoted { background: var(--sel); border-radius: var(--r4); }
+body[data-screen="5"] .doc li.flash { background: var(--pending-tint); border-radius: var(--r4); }
+:root[data-theme="eink"] body[data-screen="5"] .doc li.flash { background: rgba(0, 0, 0, 0.1); }
+body[data-screen="5"] .quote-fab { display: flex; }
+/* 屏 5 composer 预填问题文本（多胶囊随一条消息发出） */
+body[data-screen="5"] .h-box textarea { height: 52px; }
 
 /* ============ 原型控制面板（右下角；?panel=0 关闭，截图脚本用之） ============ */
 .proto-panel {
@@ -1259,10 +1257,12 @@ body[data-screen="5"] .doc li.pinned .pin-flag { display: inline-flex; }
 <body data-screen="1">
 <div class="shell">
 
-  <!-- ======== 标题栏：标签在标题栏里面（与真实产品同构） ======== -->
+  <!-- ======== 标题栏：产品标识在最左（traffic 空位内）；标签在标题栏里面；harness 段在右（与 pane 同构） ======== -->
   <header class="titlebar">
-    <div class="traffic"><i></i><i></i><i></i></div>
-    <nav class="tabstrip" role="tablist" aria-label="打开的文档">
+    <div class="traffic"><i></i><i></i><i></i>
+      <span class="tb-identity"><span>Lumir</span><span class="ver">0.2.0</span></span>
+    </div>
+    <nav class="tabstrip ts-a" role="tablist" aria-label="打开的文档">
       <button class="tab is-active" role="tab" aria-selected="true">
         <span class="tab-name">reading-workflow.md</span>
         <span class="tab-close"><svg width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><path d="M1.5 1.5l7 7M8.5 1.5l-7 7"/></svg></span>
@@ -1283,10 +1283,47 @@ body[data-screen="5"] .doc li.pinned .pin-flag { display: inline-flex; }
         <span class="tab-close"><svg width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><path d="M1.5 1.5l7 7M8.5 1.5l-7 7"/></svg></span>
       </button>
     </nav>
+    <!-- harness 段（屏 4-10）：harness pane 的标题栏段——会话身份（可点出会话列表）+ 新会话；
+         harness pane 本体不再有头部栏 -->
+    <div class="h-seg">
+      <button class="h-session" title="切换会话">
+        <span class="sname">梳理阅读工作流</span>
+        <svg class="chev" width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 3.5 5 6l2.5-2.5"/></svg>
+      </button>
+      <button class="h-new" title="新建会话（⌘⇧N）">
+        <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M8 3.5v9M3.5 8h9"/></svg>
+        新会话
+      </button>
+
+      <!-- 屏 7：会话列表浮层（挂在会话名下拉上） -->
+      <div class="sess-pop">
+        <div class="sp-label">最近会话</div>
+        <button class="sess-item current">
+          <span class="si-check"><svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 6.5 4.8 9.3 10 3.5"/></svg></span>
+          <span class="si-name">梳理阅读工作流</span>
+          <span class="si-when">刚刚</span>
+        </button>
+        <button class="sess-item">
+          <span class="si-check"></span>
+          <span class="si-name">周复盘提纲</span>
+          <span class="si-when">昨天</span>
+        </button>
+        <button class="sess-item">
+          <span class="si-check"></span>
+          <span class="si-name">翻译 typography-notes</span>
+          <span class="si-when">周一</span>
+        </button>
+        <div class="sess-divider"></div>
+        <button class="sess-item">
+          <span class="si-check"></span>
+          <span class="si-name">＋ 新建会话</span>
+          <span class="si-kbd">⌘⇧N</span>
+        </button>
+      </div>
+    </div>
     <button class="tb-btn" id="harness-toggle" title="在旁侧 pane 打开/收起 harness（⌘⇧A）" aria-pressed="false">
       <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M8 1.5 9.6 6.4 14.5 8 9.6 9.6 8 14.5 6.4 9.6 1.5 8l4.9-1.6z"/></svg>
     </button>
-    <div class="tb-identity"><span>Lumir</span><span class="ver">0.2.0</span></div>
   </header>
 
   <!-- ======== 侧栏 ======== -->
@@ -1342,11 +1379,9 @@ body[data-screen="5"] .doc li.pinned .pin-flag { display: inline-flex; }
                 <li>入队即写一句「为什么值得读」，写不出就不入队</li>
               </ul>
             </li>
-            <li class="pinned">先读结论再读论证——倒序阅读把大部分筛选成本压到开头两段，不值得的文章在前两段就出局<span class="pin-flag"><svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor"><path d="M9.5 1.5 14.5 6.5l-1.5.5-2.5 1-2.3 2.3.4 2.7-1.2 1.2-3.6-3.6-2.5 2.5-.9-.9 2.5-2.5-3.6-3.6L1.5 5.5l2.7.4 2.3-2.3 1-2.5z"/></svg></span>
-              <button class="pin-hover" title="钉为对话上下文" aria-label="钉为对话上下文"><svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"><path d="M9.5 1.5 14.5 6.5l-1.5.5-2.5 1-2.3 2.3.4 2.7-1.2 1.2-3.6-3.6-2.5 2.5-.9-.9 2.5-2.5-3.6-3.6L1.5 5.5l2.7.4 2.3-2.3 1-2.5z"/></svg></button>
+            <li class="flash" id="q1">先读结论再读论证——倒序阅读把大部分筛选成本压到开头两段，不值得的文章在前两段就出局
             </li>
-            <li class="demo-pin-hover">每周固定一个清空时段，队列不过周末
-              <button class="pin-hover" title="钉为对话上下文" aria-label="钉为对话上下文"><svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"><path d="M9.5 1.5 14.5 6.5l-1.5.5-2.5 1-2.3 2.3.4 2.7-1.2 1.2-3.6-3.6-2.5 2.5-.9-.9 2.5-2.5-3.6-3.6L1.5 5.5l2.7.4 2.3-2.3 1-2.5z"/></svg></button>
+            <li>每周固定一个清空时段，队列不过周末
             </li>
             <li>长文先扫小标题，再决定深读哪几段</li>
           </ol>
@@ -1354,8 +1389,11 @@ body[data-screen="5"] .doc li.pinned .pin-flag { display: inline-flex; }
           <h2>精读与笔记</h2>
           <ul>
             <li>笔记只记「我会怎么用」，不抄原文</li>
-            <li class="pinned">每篇笔记只留一个可执行动作，其余都是参考资料——动作写不进一句话，说明还没读懂<span class="pin-flag"><svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor"><path d="M9.5 1.5 14.5 6.5l-1.5.5-2.5 1-2.3 2.3.4 2.7-1.2 1.2-3.6-3.6-2.5 2.5-.9-.9 2.5-2.5-3.6-3.6L1.5 5.5l2.7.4 2.3-2.3 1-2.5z"/></svg></span>
-              <button class="pin-hover" title="钉为对话上下文" aria-label="钉为对话上下文"><svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"><path d="M9.5 1.5 14.5 6.5l-1.5.5-2.5 1-2.3 2.3.4 2.7-1.2 1.2-3.6-3.6-2.5 2.5-.9-.9 2.5-2.5-3.6-3.6L1.5 5.5l2.7.4 2.3-2.3 1-2.5z"/></svg></button>
+            <li class="quoted" id="q2">每篇笔记只留一个可执行动作，其余都是参考资料——动作写不进一句话，说明还没读懂
+              <button class="quote-fab" title="把选中的片段放进对话编辑框">
+                <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M8 3.5v9M3.5 8h9"/></svg>
+                摘录到对话
+              </button>
             </li>
             <li>每月把动作清单过一遍，三次没执行就删掉，参考 <a class="wikilink" href="#">weekly-review</a> 的节奏</li>
           </ul>
@@ -1390,47 +1428,8 @@ body[data-screen="5"] .doc li.pinned .pin-flag { display: inline-flex; }
 
     <div class="splitter sp-b" title="拖拽调整 pane 宽度"><span class="grip"></span></div>
 
-    <!-- pane 3：harness（屏 4-10，默认 1/3 宽） -->
+    <!-- pane 3：harness（屏 4-10，默认 1/3 宽；本体无头部栏——会话身份/新会话在窗口标题栏的 harness 段，ctx 读数在 composer 控制行） -->
     <section class="pane pane-harness">
-      <div class="h-head">
-        <button class="h-session" title="切换会话">
-          <span class="sname">梳理阅读工作流</span>
-          <svg class="chev" width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 3.5 5 6l2.5-2.5"/></svg>
-        </button>
-        <span class="h-usage h-usage-normal">ctx <span class="pct">62%</span></span>
-        <span class="h-usage h-usage-high high">ctx <span class="pct">86%</span><button class="ctx-info" title="上下文用量说明" aria-label="上下文用量说明"><svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"><circle cx="6" cy="6" r="5"/><path d="M6 5.5v3"/><circle cx="6" cy="3.4" r="0.4" fill="currentColor" stroke="none"/></svg></button><span class="ctx-tip" role="tooltip">继续对话将触发压缩，细节可能丢失。<br><button class="w-act">新建会话</button></span></span>
-        <button class="h-new" title="新建会话（⌘⇧N）">
-          <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M8 3.5v9M3.5 8h9"/></svg>
-          新会话
-        </button>
-
-        <!-- 屏 7：会话列表浮层 -->
-        <div class="sess-pop">
-          <div class="sp-label">最近会话</div>
-          <button class="sess-item current">
-            <span class="si-check"><svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 6.5 4.8 9.3 10 3.5"/></svg></span>
-            <span class="si-name">梳理阅读工作流</span>
-            <span class="si-when">刚刚</span>
-          </button>
-          <button class="sess-item">
-            <span class="si-check"></span>
-            <span class="si-name">周复盘提纲</span>
-            <span class="si-when">昨天</span>
-          </button>
-          <button class="sess-item">
-            <span class="si-check"></span>
-            <span class="si-name">翻译 typography-notes</span>
-            <span class="si-when">周一</span>
-          </button>
-          <div class="sess-divider"></div>
-          <button class="sess-item">
-            <span class="si-check"></span>
-            <span class="si-name">＋ 新建会话</span>
-            <span class="si-kbd">⌘⇧N</span>
-          </button>
-        </div>
-      </div>
-
       <div class="h-transcript">
 
         <!-- 屏 4：工作中（不定态进度 + 阶段指示；发送钮为进行中/停止态） -->
@@ -1451,23 +1450,26 @@ body[data-screen="5"] .doc li.pinned .pin-flag { display: inline-flex; }
           </div>
         </div>
 
-        <!-- 屏 5：多 pin 一次发出（两条引用各配各的问题） -->
+        <!-- 屏 5：多摘录胶囊一次发出（一条用户消息挂两颗胶囊，agent 分条作答；胶囊可点击跳回原文） -->
         <div class="tx-b">
           <div class="msg user">
             <div class="who">你<span class="when">· 1 分钟前</span></div>
             <div class="body">
-              <div class="att-pin">
-                <svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor"><path d="M9.5 1.5 14.5 6.5l-1.5.5-2.5 1-2.3 2.3.4 2.7-1.2 1.2-3.6-3.6-2.5 2.5-.9-.9 2.5-2.5-3.6-3.6L1.5 5.5l2.7.4 2.3-2.3 1-2.5z"/></svg>
-                <span class="ap-src">reading-workflow.md</span>
-                <span class="ap-ex">「先读结论再读论证——倒序阅读…」</span>
-              </div>
-              <p class="att-q">这一句我没懂，请你讲解</p>
-              <div class="att-pin">
-                <svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor"><path d="M9.5 1.5 14.5 6.5l-1.5.5-2.5 1-2.3 2.3.4 2.7-1.2 1.2-3.6-3.6-2.5 2.5-.9-.9 2.5-2.5-3.6-3.6L1.5 5.5l2.7.4 2.3-2.3 1-2.5z"/></svg>
-                <span class="ap-src">reading-workflow.md</span>
-                <span class="ap-ex">「每篇笔记只留一个可执行动作…」</span>
-              </div>
-              <p class="att-q">这段里的「可执行动作」具体指什么？</p>
+              <button class="cap att-cap" data-jump="q1" title="跳转到原文位置">
+                <span class="cap-glyph"><svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor"><path d="M3 3h4.5v4.5c0 2.8-1.6 4.6-4 5.5l-.6-1.3c1.4-.7 2.1-1.7 2.2-2.9H3V3zm7 0h4.5v4.5c0 2.8-1.6 4.6-4 5.5l-.6-1.3c1.4-.7 2.1-1.7 2.2-2.9H10V3z" transform="translate(-1.2 0)"/></svg></span>
+                <span class="cap-main">
+                  <span class="cap-src">reading-workflow.md<span class="cap-anchor">· 收集与筛选</span></span>
+                  <span class="cap-ex">先读结论再读论证——倒序阅读把大部分筛选成本压到开头两段…</span>
+                </span>
+              </button>
+              <button class="cap att-cap" data-jump="q2" title="跳转到原文位置">
+                <span class="cap-glyph"><svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor"><path d="M3 3h4.5v4.5c0 2.8-1.6 4.6-4 5.5l-.6-1.3c1.4-.7 2.1-1.7 2.2-2.9H3V3zm7 0h4.5v4.5c0 2.8-1.6 4.6-4 5.5l-.6-1.3c1.4-.7 2.1-1.7 2.2-2.9H10V3z" transform="translate(-1.2 0)"/></svg></span>
+                <span class="cap-main">
+                  <span class="cap-src">reading-workflow.md<span class="cap-anchor">· 精读与笔记</span></span>
+                  <span class="cap-ex">每篇笔记只留一个可执行动作，其余都是参考资料…</span>
+                </span>
+              </button>
+              <p>这两段分别解释一下：「倒序阅读」为什么省成本？「可执行动作」具体指什么？</p>
             </div>
           </div>
           <div class="msg">
@@ -1542,33 +1544,6 @@ body[data-screen="5"] .doc li.pinned .pin-flag { display: inline-flex; }
 
       </div>
 
-      <!-- 屏 5：pin 区（多条待发上下文，各配各的问题，一次发出） -->
-      <div class="h-pins">
-        <div class="pins-hint">钉自活跃编辑器 pane · 2 条引用随下一条消息一次发出</div>
-        <div class="pin-card">
-          <span class="pc-icon"><svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M9.5 1.5 14.5 6.5l-1.5.5-2.5 1-2.3 2.3.4 2.7-1.2 1.2-3.6-3.6-2.5 2.5-.9-.9 2.5-2.5-3.6-3.6L1.5 5.5l2.7.4 2.3-2.3 1-2.5z"/></svg></span>
-          <span class="pc-main">
-            <span class="pc-src">reading-workflow.md<span class="pc-anchor">· 收集与筛选</span></span>
-            <span class="pc-ex">先读结论再读论证——倒序阅读把大部分筛选成本压到开头两段…</span>
-            <span class="pc-q">这一句我没懂，请你讲解</span>
-          </span>
-          <button class="pc-x" title="移除" aria-label="移除">
-            <svg width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><path d="M1.5 1.5l7 7M8.5 1.5l-7 7"/></svg>
-          </button>
-        </div>
-        <div class="pin-card">
-          <span class="pc-icon"><svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M9.5 1.5 14.5 6.5l-1.5.5-2.5 1-2.3 2.3.4 2.7-1.2 1.2-3.6-3.6-2.5 2.5-.9-.9 2.5-2.5-3.6-3.6L1.5 5.5l2.7.4 2.3-2.3 1-2.5z"/></svg></span>
-          <span class="pc-main">
-            <span class="pc-src">reading-workflow.md<span class="pc-anchor">· 精读与笔记</span></span>
-            <span class="pc-ex">每篇笔记只留一个可执行动作，其余都是参考资料…</span>
-            <span class="pc-q">这段里的「可执行动作」具体指什么？</span>
-          </span>
-          <button class="pc-x" title="移除" aria-label="移除">
-            <svg width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><path d="M1.5 1.5l7 7M8.5 1.5l-7 7"/></svg>
-          </button>
-        </div>
-      </div>
-
       <!-- composer -->
       <div class="h-composer">
         <!-- 屏 10：思考程度浮层（三个裸档位） -->
@@ -1589,6 +1564,30 @@ body[data-screen="5"] .doc li.pinned .pin-flag { display: inline-flex; }
         </div>
 
         <div class="h-box">
+          <!-- 屏 5：摘录胶囊区（编辑框内、输入框上方；多胶囊累积，随一条消息一次发出；点击跳回原文并高亮） -->
+          <div class="h-caps">
+            <div class="caps-hint">摘录自活跃编辑器 pane · 随下一条消息一次发出 · 点击胶囊跳回原文</div>
+            <div class="cap" data-jump="q1" role="button" tabindex="0" title="跳转到原文位置">
+              <span class="cap-glyph"><svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor"><path d="M3 3h4.5v4.5c0 2.8-1.6 4.6-4 5.5l-.6-1.3c1.4-.7 2.1-1.7 2.2-2.9H3V3zm7 0h4.5v4.5c0 2.8-1.6 4.6-4 5.5l-.6-1.3c1.4-.7 2.1-1.7 2.2-2.9H10V3z" transform="translate(-1.2 0)"/></svg></span>
+              <span class="cap-main">
+                <span class="cap-src">reading-workflow.md<span class="cap-anchor">· 收集与筛选</span></span>
+                <span class="cap-ex">先读结论再读论证——倒序阅读把大部分筛选成本压到开头两段…</span>
+              </span>
+              <button class="cap-x" title="移除" aria-label="移除">
+                <svg width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><path d="M1.5 1.5l7 7M8.5 1.5l-7 7"/></svg>
+              </button>
+            </div>
+            <div class="cap" data-jump="q2" role="button" tabindex="0" title="跳转到原文位置">
+              <span class="cap-glyph"><svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor"><path d="M3 3h4.5v4.5c0 2.8-1.6 4.6-4 5.5l-.6-1.3c1.4-.7 2.1-1.7 2.2-2.9H3V3zm7 0h4.5v4.5c0 2.8-1.6 4.6-4 5.5l-.6-1.3c1.4-.7 2.1-1.7 2.2-2.9H10V3z" transform="translate(-1.2 0)"/></svg></span>
+              <span class="cap-main">
+                <span class="cap-src">reading-workflow.md<span class="cap-anchor">· 精读与笔记</span></span>
+                <span class="cap-ex">每篇笔记只留一个可执行动作，其余都是参考资料…</span>
+              </span>
+              <button class="cap-x" title="移除" aria-label="移除">
+                <svg width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><path d="M1.5 1.5l7 7M8.5 1.5l-7 7"/></svg>
+              </button>
+            </div>
+          </div>
           <textarea rows="2" placeholder="追问或补充指令…（⌘⏎ 发送）" spellcheck="false"></textarea>
           <div class="h-ctl">
             <button class="ctl-chip" title="选择模型">
@@ -1601,6 +1600,9 @@ body[data-screen="5"] .doc li.pinned .pin-flag { display: inline-flex; }
               思考：中
               <svg class="chev" width="8" height="8" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 3.5 5 6l2.5-2.5"/></svg>
             </button>
+            <!-- 上下文用量（Alex 点子 3：放进模型选择这一行）；高用量黄色高亮 + info 钮气泡 -->
+            <span class="h-usage h-usage-normal">ctx <span class="pct">62%</span></span>
+            <span class="h-usage h-usage-high high">ctx <span class="pct">86%</span><button class="ctx-info" title="上下文用量说明" aria-label="上下文用量说明"><svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"><circle cx="6" cy="6" r="5"/><path d="M6 5.5v3"/><circle cx="6" cy="3.4" r="0.4" fill="currentColor" stroke="none"/></svg></button><span class="ctx-tip" role="tooltip">继续对话将触发压缩，细节可能丢失。<br><button class="w-act">新建会话</button></span></span>
             <span class="ctl-spacer"></span>
             <button class="h-send" id="h-send" title="发送（⌘⏎）" aria-label="发送">
               <svg class="ic-go" width="13" height="13" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M7 11.5v-9M3.5 6 7 2.5 10.5 6"/></svg>
@@ -1631,7 +1633,7 @@ body[data-screen="5"] .doc li.pinned .pin-flag { display: inline-flex; }
 
   var screens = [
     ['1','单 pane 骨架'], ['2','双 pane 等宽'], ['3','分隔条拖拽'], ['4','harness 对话'],
-    ['5','多 pin 上下文'], ['6','上下文用量'], ['7','新建会话'], ['8','复制消息'],
+    ['5','摘录胶囊'], ['6','上下文用量'], ['7','新建会话'], ['8','复制消息'],
     ['9','思考过程'], ['10','思考程度']
   ];
   var themes = [['light','浅色'], ['dark','深色'], ['eink','eink']];
@@ -1649,6 +1651,34 @@ body[data-screen="5"] .doc li.pinned .pin-flag { display: inline-flex; }
     sendBtn.title = '停止当前回合';
     sendBtn.setAttribute('aria-label', '停止当前回合');
   }
+
+  // 屏 5：composer 预填问题文本（多胶囊随一条消息一次发出）
+  var ta = document.querySelector('.h-box textarea');
+  if (screen === '5' && ta) {
+    ta.value = '这两段分别解释一下：「倒序阅读」为什么省成本？「可执行动作」具体指什么？';
+  }
+
+  // 摘录胶囊：点击跳回原文位置并瞬态高亮（× 钮移除该胶囊，不触发跳转）
+  document.querySelectorAll('[data-jump]').forEach(function(el){
+    el.addEventListener('click', function(ev){
+      if (ev.target.closest && ev.target.closest('.cap-x')) return;
+      var t = document.getElementById(el.getAttribute('data-jump'));
+      if (!t) return;
+      t.scrollIntoView({ block: 'center' });
+      t.classList.add('flash-live');
+      setTimeout(function(){ t.classList.remove('flash-live'); }, 1400);
+    });
+    el.addEventListener('keydown', function(ev){
+      if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); el.click(); }
+    });
+  });
+  document.querySelectorAll('.cap-x').forEach(function(x){
+    x.addEventListener('click', function(ev){
+      ev.stopPropagation();
+      var cap = x.closest('.cap');
+      if (cap) cap.remove();
+    });
+  });
 
   function go(s, t){
     var url = new URL(location.href);
