@@ -153,6 +153,22 @@ export interface TabsDeps {
   showEditor: () => void;
   /** 前台文档变化后的表现层一次对齐（装配层的 syncActiveDocument）。 */
   syncActiveDocument: () => void;
+  /** 让**这条标签条所属的 pane** 成为活跃 pane（装配层的 activatePane）。
+   *
+   *  为什么是这里的一等依赖（M329，Alex 2026-10-05 dogfood bug 1）：本模块的每个实例属于
+   *  一个 pane，而「活跃 pane 是哪个」的真源在装配层。用户与本条标签条的交互（点标签 / 点
+   *  关闭钮）必须先把这个 pane 翻成活跃 pane——`syncActiveDocument` 按**活跃 pane** 的前台
+   *  文档解析（会话装载 `ensureActiveSessionLoaded` 挂在它上面），pane 没先翻过去，同步点
+   *  解到的是另一个 pane 的会话，被点的标签永远等不到装载（真机现象：点非活跃 pane 的标签
+   *  不加载内容，要先点一下正文把它激活）。
+   *
+   *  **调用点在 DOM 交互的漏斗里**（`activateTab` / `closeTab`），不只在对外方法上：DOM 监听
+   *  绑在本模块内部（标签条是它渲染的），如果只在装配层包一层覆写，点击路径会绕过那一层——
+   *  这正是本缺陷的成因。
+   *
+   *  条款居所（living spec）：`openspec/specs/pane-layout/spec.md` 的「标签条交互的活跃 pane
+   *  落点」。 */
+  activatePane: () => void;
   /** 「在左栏中定位到此文件」（M300）：把这一个路径交给文件树的 `revealPath`。
    *  **注入而不是让本模块自己够到树**：树在装配层是 `let` 绑定的单例（赋值晚于 createTabs），
    *  而标签模块没有、也不该有树的句柄——与 `syncActiveDocument` 同一条接线模式（闭包在动作
@@ -191,6 +207,7 @@ export function createTabs(deps: TabsDeps): TabsHandle {
     invalidateResolve,
     showEditor,
     syncActiveDocument,
+    activatePane,
     revealInTree,
   } = deps;
 
@@ -329,6 +346,10 @@ export function createTabs(deps: TabsDeps): TabsHandle {
   }
 
   function activateTab(session: EditorSession): void {
+    // 先让所属 pane 成为活跃 pane（M329，bug 1）：同步点按活跃 pane 解析前台，少了这一步
+    // 时「点非活跃 pane 的标签」不装载内容——本句是那条不变量的唯一落点，DOM 监听与对外
+    // 方法（cycleTab / gotoCommands / saveThenClose）都走这里。
+    activatePane();
     if (session !== editor.activeSession()) {
       editor.activateSession(session);
       invalidateResolve(); // from 变了（多半是另一篇文档），按 from 键控的缓存整批失效
@@ -350,6 +371,9 @@ export function createTabs(deps: TabsDeps): TabsHandle {
    * M254：返回值在用户选定出口（或点掉浮条）之后才 resolve——批量关闭（closeEach）靠这个
    * 顺序逐个问、逐个关。⌘W 与 × 那条单标签路径照样 `void` 调用，用户可见行为不变。 */
   async function closeTab(session: EditorSession): Promise<void> {
+    // 与 activateTab 同一条不变量（点 / 关都是该 pane 标签条的交互 ⇒ 该 pane 变活跃）：
+    // 关闭钮的 DOM 监听也绑在本模块内部，覆写对外方法挡不住它。
+    activatePane();
     await resolveClose(session);
   }
 

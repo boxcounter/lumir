@@ -47,6 +47,54 @@ pane 化之前逐像素一致：骨架几何、标签条位置、正文呈现均
 - **WHEN** 双 pane 中 pane B 只有一个标签，把它移到 pane A
 - **THEN** pane B 变空但保持在场（空态引导），MUST NOT 自动收起；执行 `pane.close` 才收起
 
+### Requirement: 分栏态空 pane 不接受文本输入
+
+分栏态下的**空 pane** MUST NOT 接受文本输入。该 pane 的编辑器 SHALL 处于**结构性只读**：键入、
+粘贴、输入法合成与拖放文本一律不落进文档。只读 MUST NOT 用「可编辑面在场、按键在 DOM 层被吞」
+冒充——它须由编辑器可编辑性本身拒收（MUST NOT 出现「看起来能输入、实际输入被静默丢弃」的假
+只读形态）。
+
+只读 MUST NOT 影响可聚焦性：点击该 pane 的正文区 SHALL 仍使它成为活跃 pane（活跃 pane 与
+可编辑性是两个正交概念），modeline 等跟随面照常显示「无当前文件」。
+
+「空 pane」SHALL 按**同一条口径**判定（与空 pane 引导的在场判据同源，两处 MUST NOT 各写一份
+表达式）：分栏态，且该 pane **既没有带路径的标签、其前台也没有带未保存内容的未命名草稿**——
+三条同时成立。带路径的会话才算文档（未命名文档不是标签，与标签栏的可见标签口径同源）。
+
+**带未保存内容的未命名草稿 MUST NOT 受本条款约束**：分栏前在单 pane 空态 scratch 里写下的内容，
+分栏后 SHALL 保持可编辑（继续键入与撤销照常可用），MUST NOT 被静默冻结；该 pane 也 MUST NOT
+显示空 pane 引导（引导是「无内容可编辑」时的替代表面，不得盖住用户内容）。这一豁免不会重新
+打开本条款要堵的口子：空 pane 一旦被封锁，其空会话恒为 clean（输入落不进文档），所以「分栏态 +
+无带路径标签 + 前台是未保存草稿」只可能来自分栏前就在编辑的那份草稿。
+
+该 pane 出现带路径标签之后——在该 pane 打开 / 新建文件——SHALL 恢复可编辑。
+
+单 pane 常态（未分栏）的空态 scratch MUST NOT 受本条款约束：M149 起的「单 pane 空态即未命名
+草稿、可直接键入」形态保持不变。
+
+#### Scenario: 分栏得到的空 pane 不接受输入
+
+- **WHEN** 单 pane 开着 `a.md`，执行 `pane.split` 得到双 pane、焦点落在空 pane，在该 pane 内键入字符
+- **THEN** 文档内容不变、该 pane 不出现未保存修改；按 ⌘S MUST NOT 产生任何提示（尤其 MUST NOT
+  出现为一份不存在的文档报的「No file is open…」）；该 pane 仍可聚焦，点击其正文区仍使它成为
+  活跃 pane
+
+#### Scenario: 分栏不冻结带内容的 scratch
+
+- **WHEN** 单 pane（未分栏）空态 scratch 里键入若干字符（未保存），随后执行 `pane.split`
+- **THEN** scratch 所在 pane 保持可编辑（继续键入与 ⌘Z 撤销照常可用），MUST NOT 被静默冻结；
+  该 pane MUST NOT 显示空 pane 引导
+
+#### Scenario: 空 pane 打开文件后恢复可编辑
+
+- **WHEN** 双 pane（A | B），B 为空且不接受输入；从文件树在 B 打开 `b.md`
+- **THEN** B 出现 `b.md` 标签且恢复可编辑（键入落地、保存链路可用）；MUST NOT 停在只读
+
+#### Scenario: 单 pane 空态 scratch 不受此限
+
+- **WHEN** 单 pane（未分栏）、零标签时在正文区键入
+- **THEN** 按键照常落进未命名文档（M149 既有形态），可编辑性与保存提示口径与 pane 化之前一致
+
 ### Requirement: 活跃编辑器 pane 与焦点解耦
 
 系统 SHALL 维护**活跃编辑器 pane** 概念，与「焦点所在」解耦（Emacs selected-window 语义）：
@@ -74,6 +122,32 @@ SHALL 一律是活跃 pane 的前台标签；活跃 pane 切换后这些跟随�
 - **WHEN** 双 pane，焦点在 A，随后点击 B 的 contentDOM
 - **THEN** B 成为活跃 pane；modeline、文件树高亮、toc 内容源在同一帧内切到 B 的前台标签，
   A 的文档状态（选区 / 滚动 / 撤销史）原样保留
+
+### Requirement: 标签条交互的活跃 pane 落点
+
+用户与某 pane 标签条的交互——点击标签（切换前台）与点击关闭钮（关标签）——SHALL 先使**该标签
+条所属 pane** 成为活跃 pane，再跑表现层同步点（`syncActiveDocument`）。落点对象是被交互标签条
+所属的 pane，与交互时哪个 pane 活跃无关。
+
+该次序 MUST NOT 颠倒：会话内容的按需装载挂在同步点上、按活跃 pane 的前台文档解析；pane 未先
+翻过去时，同步点解到的是另一个 pane 的会话，被操作标签的文档因此不会被装载（表现为「点了标签
+但正文不加载、要先点一下正文区把它激活才加载」）。
+
+窗口级命令（⌘W / ⌃⇥ / ⌘1–9）作用于活跃 pane 的标签条，其落点由「活跃 pane」唯一确定，本条款
+对它们不产生额外约束。
+
+#### Scenario: 点非活跃 pane 的标签立即装载其文档
+
+- **WHEN** 双 pane（A | B），活跃 pane 是 A；B 的标签条上有一条内容尚未装载的标签，点击它
+- **THEN** B 成为活跃 pane 且该标签成为 B 的前台，其文档随即装载并呈现在 B 的正文区；
+  MUST NOT 出现「标签已选中但正文为空、需再点一次正文区才装载」的形态
+
+#### Scenario: 点非活跃 pane 的关闭钮，该 pane 成为活跃 pane
+
+- **WHEN** 双 pane（A | B），活跃 pane 是 A；点击 B 标签条上某条标签的关闭钮
+- **THEN** B 先成为活跃 pane，再按既有关闭口径关闭该标签（脏标签先经关标签确认，MUST NOT
+  跳过确认）；关闭后跟随面（modeline / 文件树高亮 / toc 内容源）显示 B 的前台标签，B 变空时
+  显示「无当前文件」
 
 ### Requirement: 会话所有权——移动标签，非复制
 

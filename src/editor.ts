@@ -1050,6 +1050,28 @@ export interface EditorHandle {
    */
   reloadSession(session: EditorSession, doc: string, path: string | undefined, requestId?: number): void;
   /**
+   * 运行期置某会话的可编辑性（M329，分栏态空 pane 的输入闸门）。
+   *
+   * **为什么需要它**：会话的可编辑性此前只在创建点（`makeSession`）与路径变更点
+   * （`reloadSession` / `remapSessionPaths`）按 `isEditablePath(path)` 算一次，没有运行期入口。
+   * 分栏态下「无带路径标签」的 pane 必须**不接受文本输入**（Alex 2026-10-05 dogfood：⌥O 后
+   * 在空 pane 里敲字 → dirty → ⌘S 报「No file is open…」），而它的空会话没有路径、按路径裁决
+   * 恒为可编辑——装配层因此需要能把这个会话显式置为只读，打开 / 新建文件后按路径裁决复原。
+   *
+   * **这是结构性只读，不是「按键被吞」**：`editable(false)` 走的是与 image/binary 只读会话
+   * 同一条路（`modeExtensions` 的 view 层拒收 + `changeFilter` 兜底），MUST NOT 用 DOM 层
+   * 拦截按键来冒充（那种「contenteditable 在场但按键被吞」的假可编辑编辑器见 `modeExtensions`
+   * 与 `baseExtensions` 的两处反例注释）。
+   *
+   * 值没变时是空操作（装配层在每个同步点重算一次，幂等）；会话不在本实例时忽略（防御性——
+   * 调用方按会话对象传，只有本实例的会话有意义）。前台会话立刻经 dispatch 生效（投影与
+   * `aria-readonly` 同步），后台会话只换代它的 state（与 `reconfigureWrap` 等既有分流同形）。
+   *
+   * 条款居所（living spec）：`openspec/specs/pane-layout/spec.md` 的「分栏态空 pane 不接受
+   * 文本输入」——本条是实现只读的那个运行期入口。
+   */
+  setSessionEditable(session: EditorSession, editable: boolean): void;
+  /**
    * 改名后就地 remap 打开中的会话路径（M244 裁决点 5，菜单发起的重命名专用）：
    * `from` 单个会话替换、`from/` 子树全部前缀替换。**只改路径**——内容、选区、滚动
    * 位置、dirty 与磁盘 revision 基准全部原样保留（改名不改字节，CAS 依旧有效）。
@@ -2364,6 +2386,24 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
         }
       }
       return remapped;
+    },
+    setSessionEditable(session, editable) {
+      // 幂等：装配层在唯一的同步点上每次重算（稳态下绝大多数调用在这里早退）。
+      if (session.editable === editable) return;
+      if (!sessions.includes(session)) return; // 防御性：不属于本实例的会话忽略
+      session.editable = editable;
+      // 视图层与 dispatch 层**同判据一起翻**（changeFilter 读的 currentEditable 是前台会话的
+      // 投影）：只翻视图层会得到「contenteditable 在场但按键在 dispatch 层被吞」的假可编辑
+      // 编辑器（反例注释在 modeExtensions 与 baseExtensions）。可编辑性装在 mode 那个
+      // Compartment 里，所以复用 modeAndWrapEffects（折行随同重配，幂等）。
+      const effects = modeAndWrapEffects(session.mode, session.path, editable);
+      if (session === active) {
+        syncProjection();
+        view.dispatch({ effects });
+      } else {
+        // 后台会话只换代它的 state，不碰 view——与 reloadSession / remapSessionPaths 的分岔同形。
+        session.state = session.state.update({ effects }).state;
+      }
     },
     activateSession(session: EditorSession) {
       activate(session);

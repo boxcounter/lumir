@@ -4,7 +4,7 @@ import type { EditorHandle, EditorSession } from "./editor";
 import type { EditorView } from "@codemirror/view";
 import { applyKeyOverrides, BLOCK_SCROLL_CLASS, EDITOR_COMMAND_IDS, KEY_BINDINGS, Keymap, TAB_GOTO_IDS } from "./keys";
 import type { CommandId, CommandRunner, CommandRuntime, EditorCommandId, KeyBinding, KeyOverrides } from "./keys";
-import { DEFAULT_SPLIT_RATIO, clampSplitRatio, createDividerDrag, createPaneLayout, emptyPaneGuideVisible } from "./pane-layout";
+import { DEFAULT_SPLIT_RATIO, clampSplitRatio, createDividerDrag, createPaneLayout, emptyPaneGuideVisible, paneBlocksInput } from "./pane-layout";
 import type { DividerDrag, PaneId } from "./pane-layout";
 import { DEFAULT_AUTO_INDENT } from "./enter-indent";
 import { DEFAULT_FONT_SIZE } from "./typography";
@@ -468,16 +468,35 @@ function reconcilePaneLedger(): void {
 /** 全部 pane 的标签槽各重画一遍（dirty 跃迁 / 同步点）：dirty 点是逐标签的，
  *  后台 pane 的标签条也要跟着变。 */
 function renderAllTabStrips(): void {
+  const split = paneLayout.isSplit();
   for (const assembly of paneAssemblies.values()) {
     assembly.tabs?.renderTabs();
-    // 空 pane 引导（M322）的在场 / 离场同步挂在同一个唯一写点上：标签集合（开 / 关 / 移动
-    // 经 syncActiveDocument）、分栏态（split / close 经 applySplitChrome）与 dirty（onDirty
-    // 重绘）全部汇到这里，别处不另埋钩子。「有无标签」按带路径的会话现查实例会话表——与
-    // 标签条的 visibleTabsOf 同一定义，不读账本（账本会登记 path=undefined 的空会话）。
+    // 空 pane 引导（M322）的在场 / 离场与**输入闸门**（M329，bug 2）同步挂在同一个唯一写点上：
+    // 标签集合（开 / 关 / 移动经 syncActiveDocument）、分栏态（split / close 经 applySplitChrome）
+    // 与 dirty（onDirty 重绘）全部汇到这里，别处不另埋钩子。「有无标签」按带路径的会话现查实例
+    // 会话表——与标签条的 visibleTabsOf 同一定义，不读账本（账本会登记 path=undefined 的空会话）。
+    const hasTabs = assembly.handle.sessions().some((session) => session.path !== undefined);
+    const foreground = assembly.handle.activeSession();
+    // 分栏态空 pane 的空会话置只读（M329）：view 层拒收输入 + changeFilter 兜底，结构性不可
+    // 编辑；打开 / 新建文件后 hasTabs 转真，这里按 isEditablePath 复原——幂等早退，稳态零成本。
+    // 「空」的三维与引导水印**同一条口径**（`paneBlocksInput`）：`foreground.dirty` 这一维是
+    // reviewer r1 P2-1 的修法——分栏前在单 pane scratch 里写下的草稿分栏后仍可编辑，MUST NOT
+    // 被静默冻结（该 pane 的引导此时也不在场，两者同格成立）。
+    // 单 pane（含 M149 起的空态 scratch）不受影响：paneBlocksInput 只在分栏态为真。
+    //
+    // dispatch 时机（CM 源码核对 + 本地实测，不是假设）：判据真会变的一格——dirty 由 true 翻
+    // false（撤销回基线 / 清空草稿）——落在一次 CM update 之内，而本函数会经 `editor.onDirty`
+    // 在那次 update 的 updateListener 里被调到。CM6 的 `EditorView.update` 把 `updateState`
+    // 复位为 Idle（`finally`）**之后**才逐个调用 updateListener（各自 try/catch），因此从这条
+    // 路径 `view.dispatch` 合法；实测「分栏后在草稿里 ⌘Z 回基线」：闸门如期施加、零报错。
+    assembly.handle.setSessionEditable(
+      foreground,
+      !paneBlocksInput(split, hasTabs, foreground.dirty) && isEditablePath(foreground.path),
+    );
     assembly.guideEl.hidden = !emptyPaneGuideVisible(
-      paneLayout.isSplit(),
-      assembly.handle.sessions().some((session) => session.path !== undefined),
-      assembly.handle.activeSession().dirty,
+      split,
+      hasTabs,
+      foreground.dirty,
       vaultLoaded, // 未装 vault 不显示（Alex 2026-10-04 裁决：左栏无文件可点时指引不成立）
     );
   }
@@ -505,22 +524,16 @@ function createPaneTabs(paneId: PaneId, handle: EditorHandle, stripEl: HTMLEleme
     invalidateResolve: () => linkFollow.invalidate(),
     showEditor: () => showEditor(),
     syncActiveDocument: () => syncActiveDocument(),
+    // 标签条交互（点标签 / 点关闭钮）先把这个 pane 翻成活跃 pane（M329，bug 1）。调用点在
+    // tabs.ts 的交互漏斗里（它的 DOM 监听自己绑），**不是**在这里覆写对外方法——覆写挡不住
+    // DOM 点击路径，那正是「点非活跃 pane 的标签不装载内容」的成因。
+    activatePane: () => activatePane(paneId),
     // 树是下面 `let tree` 绑定的单例，赋值在 createPaneTabs 首次调用之后——闭包在动作
     // 发生时读，装配期不读，因此没有时序问题（与 M149 起就有的那条注释同款模式）。
     revealInTree: (path) => tree.revealPath(path),
     keepMountWhenEmpty: () => paneLayout.isSplit(),
   });
-  return {
-    ...raw,
-    activateTab: (session) => {
-      activatePane(paneId);
-      raw.activateTab(session);
-    },
-    closeTab: (session) => {
-      activatePane(paneId);
-      return raw.closeTab(session);
-    },
-  };
+  return raw;
 }
 
 /** 分隔条拖拽的接线（控制器本体在 src/pane-layout.ts，可脱浏览器单测）：指针每移一次实时
@@ -723,6 +736,15 @@ const editor: EditorHandle = {
   },
   remapSessionPaths: (from, to) =>
     paneLayout.panes().flatMap((pane) => pane.handle.remapSessionPaths(from, to)),
+  // 可编辑性是**逐实例**的（藏在各 pane 自己的 modeCompartment 里），因此按属主 pane 路由——
+  // 与 reloadSession / closeSession 同一条会话级路由口径。装配层点对点的调用走
+  // `assembly.handle.setSessionEditable`（不用本复合句柄）；这一条只是接口完整性的实现。
+  setSessionEditable: (session, editable) => {
+    (paneEntryOfSession(session)?.[1].handle ?? paneLayout.activeHandle()).setSessionEditable(
+      session,
+      editable,
+    );
+  },
   activateSession: (session) => {
     const entry = paneEntryOfSession(session);
     if (entry === undefined) return;
