@@ -51,11 +51,13 @@ async function boot(page: Page): Promise<void> {
 async function expectChromeRetreat(page: Page): Promise<void> {
   await expect(page.locator(".titlebar-identity")).toBeHidden();
   await expect(page.locator(".lumir-hp-toggle")).toBeHidden();
-  // 退让落点：modeline 右段版本号段携带「 Lumir · 9.9.9」（stub 的固定 appMeta fixture，
+  // 退让落点：modeline 右段版本号段携带「 · Lumir · 9.9.9」（stub 的固定 appMeta fixture，
   // 刻意不跟真版本——tauri-stub 的 appMeta 注释）；前导空格靠 white-space: pre 生效，
-  // toHaveText 会折叠空白，这里只钉内容身份。
+  // toHaveText 会折叠/修剪空白，因此归一化后的文本以「·」开头。正则锚住产品名前的前导
+  // 分隔符（M330：隔开 meta 段尾的 charset 与产品名，Alex dogfood 2026-10-05）——去掉
+  // 前导「·」的形态（「Lumir · 9.9.9」）不匹配这条断言。
   await expect(page.locator(".modeline-version")).toBeVisible();
-  await expect(page.locator(".modeline-version")).toHaveText(/Lumir · 9\.9\.9/);
+  await expect(page.locator(".modeline-version")).toHaveText(/· Lumir · 9\.9\.9/);
 }
 
 /** 双栏几何不变量：两个 pane 等宽、两个标签槽等宽（比例 0.5 缺省；读不到一律 FAIL，
