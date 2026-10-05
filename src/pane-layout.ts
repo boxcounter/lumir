@@ -91,7 +91,10 @@ export function emptyPaneGuideVisible(
  *  两者 MUST NOT 合并成一个谓词：未装 vault 时引导不显示，但空 pane 照样不接受输入。
  *
  *  `hasTabs` 的口径与 `emptyPaneGuideVisible` / `src/tabs.ts` 的 visibleTabsOf 一致——**带路径
- *  的会话**才算文档（未命名文档不是标签）。 */
+ *  的会话**才算文档（未命名文档不是标签）。
+ *
+ *  条款居所（living spec）：`openspec/specs/pane-layout/spec.md` 的「分栏态空 pane 不接受
+ *  文本输入」（本模块只给判据，施加点与只读机制在装配层 / `src/editor.ts`）。 */
 export function paneBlocksInput(split: boolean, hasTabs: boolean): boolean {
   return split && !hasTabs;
 }

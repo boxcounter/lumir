@@ -164,7 +164,10 @@ export interface TabsDeps {
    *
    *  **调用点在 DOM 交互的漏斗里**（`activateTab` / `closeTab`），不只在对外方法上：DOM 监听
    *  绑在本模块内部（标签条是它渲染的），如果只在装配层包一层覆写，点击路径会绕过那一层——
-   *  这正是本缺陷的成因。 */
+   *  这正是本缺陷的成因。
+   *
+   *  条款居所（living spec）：`openspec/specs/pane-layout/spec.md` 的「标签条交互的活跃 pane
+   *  落点」。 */
   activatePane: () => void;
   /** 「在左栏中定位到此文件」（M300）：把这一个路径交给文件树的 `revealPath`。
    *  **注入而不是让本模块自己够到树**：树在装配层是 `let` 绑定的单例（赋值晚于 createTabs），

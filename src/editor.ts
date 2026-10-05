@@ -1066,6 +1066,9 @@ export interface EditorHandle {
    * 值没变时是空操作（装配层在每个同步点重算一次，幂等）；会话不在本实例时忽略（防御性——
    * 调用方按会话对象传，只有本实例的会话有意义）。前台会话立刻经 dispatch 生效（投影与
    * `aria-readonly` 同步），后台会话只换代它的 state（与 `reconfigureWrap` 等既有分流同形）。
+   *
+   * 条款居所（living spec）：`openspec/specs/pane-layout/spec.md` 的「分栏态空 pane 不接受
+   * 文本输入」——本条是实现只读的那个运行期入口。
    */
   setSessionEditable(session: EditorSession, editable: boolean): void;
   /**
