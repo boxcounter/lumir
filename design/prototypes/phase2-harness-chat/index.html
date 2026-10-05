@@ -1,10 +1,13 @@
 <!DOCTYPE html>
 <!--
-  Lumir 原型 · Phase 2「harness 入 pane + chat UX 重做」（ADR 0008 Decision 8）第四轮
-  本轮: composer 改混排编辑区（Alex 2026-10-06 需求）——摘录胶囊为原子 chip 嵌在文字流中，
-        光标可在任意胶囊前后继续输入；每颗胶囊带小号编号 #N，transcript 与 agent 作答同步引用；
-        新增开发者预览块，实时把草稿序列化为发给模型的消息（摘录→问题 交错，编号对 AI 可见）；
-        「摘录到对话」为真交互，新胶囊插入当前光标处而非追加到末尾。
+  Lumir 原型 · Phase 2「harness 入 pane + chat UX 重做」（ADR 0008 Decision 8）第五轮
+  本轮: 胶囊从 inline chip 改 block 级引用卡片 + UI 全面去编号 + 序列化改 XML（Alex 2026-10-06 裁决）——
+        卡片 = 引号竖条 + 摘录截断（≤2 行）+ 小字出处行（文档名 · 标题）+ × 移除，独占 block、
+        与问题段落上下交替；UI 任何位置不再出现 #N，agent 回复改按内容/出处回指；
+        开发者预览把草稿实时序列化为 XML：<quote index file heading lines>（lines 必选，index 仅 AI 侧回指），
+        并标注「仅原型调试用途，不进产品」；「摘录到对话」真交互保留，插入的是整张卡片（拆分光标所在段落）。
+  四轮: composer 改混排编辑区（Alex 2026-10-06 需求）——摘录胶囊为原子 chip 嵌在文字流中，带 #N 编号
+        （编号与 inline chip 形态本轮已被取代：卡片化 + 去编号）。
   三轮: pin 机制全量移除（Alex 2026-10-05 裁决），由摘录胶囊取代；harness 顶栏并入窗口标题栏；
         产品名+版本移至标题栏最左（traffic 空位内）；ctx% 移入 composer 控制行。
   用法: index.html?screen=1..10&theme=light|dark|eink（页面右下角有内置控制面板，点击切屏/切主题；
@@ -766,54 +769,71 @@ svg { display: block; }
   padding: 1px 5px;
   border-radius: var(--r4);
 }
-/* 摘录胶囊 chip（第四轮：混排形态，Alex 2026-10-06 需求）——胶囊作为原子内联节点嵌在文字流中：
-   composer 混排编辑区内为 contenteditable=false 的不可拆分节点；transcript 用户消息里同样以
-   chip 与问题文字交错呈现。一颗 chip = 引号 glyph + 小号编号 #N + 文档名；标题锚点与摘录原文
-   由 title 与开发者预览（序列化）承载；点击跳回原文位置并高亮；composer 内的 chip 带 × 移除。 */
-.chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  max-width: 100%;
-  height: 21px;
-  padding: 0 7px;
-  margin: 0 1px;
-  vertical-align: -5px;
+/* 摘录引用卡片（第五轮：block 级形态，Alex 2026-10-06 裁决）——飞书/Slack 引用回复形态：
+   引号竖条 + 摘录原文截断（≤2 行）+ 小字出处行（文档名 · 标题）+（composer 内）× 移除。
+   卡片为原子 block 节点：composer 混排编辑区内 contenteditable=false、独占一块，与问题段落上下交替；
+   transcript 用户消息里同样卡片与问题段落交错。UI 无编号（去 #N，内容即回指）；hover title 显示完整摘录；
+   点击跳回原文位置并高亮。 */
+.qcard {
+  display: flex;
+  align-items: stretch;
+  gap: var(--sp-3);
+  padding: var(--sp-2) var(--sp-4) var(--sp-2) var(--sp-3);
   background: var(--agent-bg);
   border: 1px solid var(--border-soft);
-  border-radius: 11px;
-  font-size: var(--fs-label-s);
-  line-height: 1;
-  color: var(--text-2);
-  white-space: nowrap;
+  border-radius: var(--r6);
   user-select: none;
   cursor: pointer;
+  position: relative;
   transition: border-color var(--dur-ui) var(--ease-standard), background var(--dur-ui) var(--ease-standard);
 }
-.chip:hover { border-color: var(--border); background: var(--hover); }
-:root[data-theme="eink"] .chip:hover { border-width: 1.4px; }
-.chip .chip-glyph { flex: none; display: flex; color: var(--text-3); }
-.chip .chip-n { flex: none; font-family: var(--font-mono); font-weight: var(--fw-semibold); color: var(--accent); }
-.chip .chip-src {
+.qcard:hover { border-color: var(--border); background: var(--hover); }
+:root[data-theme="eink"] .qcard:hover { border-width: 1.4px; }
+.qcard .qc-bar {
+  flex: none;
+  width: 3px;
+  border-radius: 2px;
+  background: var(--text-3);
+}
+.qcard .qc-main { flex: 1; min-width: 0; }
+.qcard .qc-ex {
+  font-size: var(--fs-meta);
+  line-height: var(--lh-ui);
+  color: var(--text-2);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  word-break: break-word;
+}
+.qcard .qc-src {
+  margin-top: 2px;
   font-family: var(--font-mono);
-  color: var(--text);
+  font-size: var(--fs-micro);
+  color: var(--text-3);
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
 }
-.chip .chip-x {
-  flex: none;
-  width: 14px;
-  height: 14px;
+.qcard .qc-x {
+  position: absolute;
+  top: var(--sp-1);
+  right: var(--sp-1);
+  width: 16px;
+  height: 16px;
   border-radius: var(--r4);
   display: flex;
   align-items: center;
   justify-content: center;
   color: var(--text-3);
 }
-.chip .chip-x:hover { background: var(--hover); color: var(--text); }
+.qcard .qc-x:hover { background: var(--hover); color: var(--text); }
+.msg .body .qcard { margin: var(--sp-2) 0; }
+.msg .body .qcard:first-child { margin-top: 0; }
+.msg .body .qcard:last-child { margin-bottom: 0; }
 
-/* 混排编辑区（屏 5 composer）：contenteditable，chip 为原子节点，光标可在任意胶囊前后输入；
-   其余屏沿用下方 textarea（屏 5 隐藏） */
+/* 混排编辑区（屏 5 composer）：contenteditable；卡片为 contenteditable=false 的原子 block 节点，
+   问题文字在卡片之间的段落（.qpara）里，上下交替；其余屏沿用下方 textarea（屏 5 隐藏） */
 .h-editor {
   display: none;
   min-height: 46px;
@@ -827,9 +847,11 @@ svg { display: block; }
   word-break: break-word;
 }
 .h-editor:empty::before { content: attr(data-placeholder); color: var(--text-3); pointer-events: none; }
+.h-editor .qcard { margin: var(--sp-2) 0; }
+.h-editor .qpara { margin: var(--sp-1) 0; min-height: 1em; }
 
-/* 开发者预览（屏 5，composer 上方）：把草稿实时序列化为发给模型的消息——
-   证明编号与「摘录→问题」交错顺序对 AI 明确可见 */
+/* 开发者预览（屏 5，composer 上方）：把草稿实时序列化为发给模型的 XML 消息——
+   证明 <quote> 结构与「摘录→问题」交错顺序对 AI 明确可见。仅原型调试用途，不进产品。 */
 .dev-preview { display: none; margin-bottom: var(--sp-2); }
 .dp-label {
   margin-bottom: var(--sp-1);
@@ -1168,7 +1190,7 @@ body[data-screen="10"] #harness-toggle { background: var(--accent-tint); color: 
 :root[data-theme="eink"] body[data-screen="9"] #harness-toggle,
 :root[data-theme="eink"] body[data-screen="10"] #harness-toggle { background: var(--accent-fill); color: var(--accent-fill-text); }
 
-/* transcript 段落按屏分发：A=工作中(4) B=多摘录胶囊(5) C=完成态(6/7/8/10) D=思考(9) */
+/* transcript 段落按屏分发：A=工作中(4) B=摘录卡片交错(5) C=完成态(6/7/8/10) D=思考(9) */
 .tx-a, .tx-b, .tx-c, .tx-d { display: none; }
 body[data-screen="4"] .tx-a { display: flex; flex-direction: column; gap: var(--sp-4); }
 body[data-screen="5"] .tx-b { display: flex; flex-direction: column; gap: var(--sp-4); }
@@ -1470,15 +1492,16 @@ body[data-screen="5"] .quote-fab { display: flex; }
           </div>
         </div>
 
-        <!-- 屏 5：摘录混排——一条用户消息里 chip 与问题文字交错（每问对准一颗胶囊）；agent 按 #N 分条作答 -->
+        <!-- 屏 5：摘录卡片交错——一条用户消息里引用卡片与问题段落上下交替（每问对准一张卡片）；
+             agent 按内容/出处回指作答（UI 无编号） -->
         <div class="tx-b">
           <div class="msg user">
             <div class="who">你<span class="when">· 1 分钟前</span></div>
-            <div class="body"><p><span class="chip" data-jump="q1" data-cap="1" tabindex="0" title="收集与筛选 · 先读结论再读论证——倒序阅读…（点击跳回原文）"><span class="chip-glyph"><svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor"><path d="M3 3h4.5v4.5c0 2.8-1.6 4.6-4 5.5l-.6-1.3c1.4-.7 2.1-1.7 2.2-2.9H3V3zm7 0h4.5v4.5c0 2.8-1.6 4.6-4 5.5l-.6-1.3c1.4-.7 2.1-1.7 2.2-2.9H10V3z" transform="translate(-1.2 0)"/></svg></span><b class="chip-n">#1</b><span class="chip-src">reading-workflow.md</span></span>这段内容是什么意思？<span class="chip" data-jump="q2" data-cap="2" tabindex="0" title="精读与笔记 · 每篇笔记只留一个可执行动作…（点击跳回原文）"><span class="chip-glyph"><svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor"><path d="M3 3h4.5v4.5c0 2.8-1.6 4.6-4 5.5l-.6-1.3c1.4-.7 2.1-1.7 2.2-2.9H3V3zm7 0h4.5v4.5c0 2.8-1.6 4.6-4 5.5l-.6-1.3c1.4-.7 2.1-1.7 2.2-2.9H10V3z" transform="translate(-1.2 0)"/></svg></span><b class="chip-n">#2</b><span class="chip-src">reading-workflow.md</span></span>这里的「可执行动作」指什么？</p></div>
+            <div class="body"><div class="qcard" data-jump="q1" tabindex="0" title="先读结论再读论证——倒序阅读把大部分筛选成本压到开头两段，不值得的文章在前两段就出局 —— reading-workflow.md · 收集与筛选（点击跳回原文）"><span class="qc-bar"></span><div class="qc-main"><div class="qc-ex">先读结论再读论证——倒序阅读把大部分筛选成本压到开头两段，不值得的文章在前两段就出局</div><div class="qc-src">reading-workflow.md · 收集与筛选</div></div></div><p>这段内容是什么意思？</p><div class="qcard" data-jump="q2" tabindex="0" title="每篇笔记只留一个可执行动作，其余都是参考资料——动作写不进一句话，说明还没读懂 —— reading-workflow.md · 精读与笔记（点击跳回原文）"><span class="qc-bar"></span><div class="qc-main"><div class="qc-ex">每篇笔记只留一个可执行动作，其余都是参考资料——动作写不进一句话，说明还没读懂</div><div class="qc-src">reading-workflow.md · 精读与笔记</div></div></div><p>这里的「可执行动作」指什么？</p></div>
           </div>
           <div class="msg">
             <div class="who">Agent<span class="when">· 刚刚</span></div>
-            <div class="body"><p>摘录#1 的「倒序阅读」是把评估顺序倒过来：先看结论是否成立、是否相关，再决定要不要读支撑它的论证——大多数文章在结论段就能出局，论证的阅读成本只对少数文章发生。</p><p>摘录#2 里的「可执行动作」指下周就能做的一件事，比如「把订阅源减半」，而不是「重视筛选」这种方向性句子——写不进日历或待办的，都不算动作。</p></div>
+            <div class="body"><p>「倒序阅读」那段，是把评估顺序倒过来：先看结论是否成立、是否相关，再决定要不要读支撑它的论证——大多数文章在结论段就能出局，论证的阅读成本只对少数文章发生。</p><p>「可执行动作」那段里，它指下周就能做的一件事，比如「把订阅源减半」，而不是「重视筛选」这种方向性句子——写不进日历或待办的，都不算动作。</p></div>
           </div>
         </div>
 
@@ -1567,16 +1590,17 @@ body[data-screen="5"] .quote-fab { display: flex; }
           </button>
         </div>
 
-        <!-- 屏 5：开发者预览——把 composer 草稿实时序列化为发给模型的消息（摘录→问题 交错，#N 对 AI 可见） -->
+        <!-- 屏 5：开发者预览——把 composer 草稿实时序列化为发给模型的 XML 消息
+             （<quote> 摘录块与问题文字交错；仅原型调试用途，不进产品） -->
         <div class="dev-preview">
-          <div class="dp-label">开发者预览 · 发给模型的序列化消息（随编辑实时更新）</div>
+          <div class="dp-label">开发者预览 · 发给模型的序列化消息（随编辑实时更新）· 仅原型调试用途，不进产品</div>
           <div class="dp-body" id="dev-preview"></div>
         </div>
 
         <div class="h-box">
-          <!-- 屏 5：混排编辑区——chip 为原子节点嵌在文字流中，光标可在任意胶囊前后输入；
-               「摘录到对话」把新胶囊插入当前光标处。其余屏沿用下方 textarea（屏 5 隐藏） -->
-          <div class="h-editor" id="h-editor" contenteditable="true" role="textbox" aria-multiline="true" aria-label="消息编辑区" spellcheck="false" data-placeholder="追问或补充指令…（⌘⏎ 发送）"><span class="chip" contenteditable="false" data-jump="q1" data-cap="1" data-src="reading-workflow.md" data-anchor="收集与筛选" data-ex="先读结论再读论证——倒序阅读把大部分筛选成本压到开头两段，不值得的文章在前两段就出局" title="收集与筛选 · 先读结论再读论证——倒序阅读…（点击跳回原文）"><span class="chip-glyph"><svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor"><path d="M3 3h4.5v4.5c0 2.8-1.6 4.6-4 5.5l-.6-1.3c1.4-.7 2.1-1.7 2.2-2.9H3V3zm7 0h4.5v4.5c0 2.8-1.6 4.6-4 5.5l-.6-1.3c1.4-.7 2.1-1.7 2.2-2.9H10V3z" transform="translate(-1.2 0)"/></svg></span><b class="chip-n">#1</b><span class="chip-src">reading-workflow.md</span><button class="chip-x" tabindex="-1" aria-label="移除摘录"><svg width="8" height="8" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><path d="M1.5 1.5l7 7M8.5 1.5l-7 7"/></svg></button></span>这段内容是什么意思？<span class="chip" contenteditable="false" data-jump="q2" data-cap="2" data-src="reading-workflow.md" data-anchor="精读与笔记" data-ex="每篇笔记只留一个可执行动作，其余都是参考资料——动作写不进一句话，说明还没读懂" title="精读与笔记 · 每篇笔记只留一个可执行动作…（点击跳回原文）"><span class="chip-glyph"><svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor"><path d="M3 3h4.5v4.5c0 2.8-1.6 4.6-4 5.5l-.6-1.3c1.4-.7 2.1-1.7 2.2-2.9H3V3zm7 0h4.5v4.5c0 2.8-1.6 4.6-4 5.5l-.6-1.3c1.4-.7 2.1-1.7 2.2-2.9H10V3z" transform="translate(-1.2 0)"/></svg></span><b class="chip-n">#2</b><span class="chip-src">reading-workflow.md</span><button class="chip-x" tabindex="-1" aria-label="移除摘录"><svg width="8" height="8" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><path d="M1.5 1.5l7 7M8.5 1.5l-7 7"/></svg></button></span>这里的「可执行动作」指什么？</div>
+          <!-- 屏 5：混排编辑区——引用卡片为 contenteditable=false 的原子 block 节点，与问题段落上下交替；
+               「摘录到对话」把整张卡片插入当前光标处（拆分光标所在段落）。其余屏沿用下方 textarea（屏 5 隐藏） -->
+          <div class="h-editor" id="h-editor" contenteditable="true" role="textbox" aria-multiline="true" aria-label="消息编辑区" spellcheck="false" data-placeholder="追问或补充指令…（⌘⏎ 发送）"><div class="qcard" contenteditable="false" data-jump="q1" data-cap="1" data-src="reading-workflow.md" data-anchor="收集与筛选" data-lines="9-10" data-ex="先读结论再读论证——倒序阅读把大部分筛选成本压到开头两段，不值得的文章在前两段就出局" title="先读结论再读论证——倒序阅读把大部分筛选成本压到开头两段，不值得的文章在前两段就出局 —— reading-workflow.md · 收集与筛选（点击跳回原文）"><span class="qc-bar"></span><div class="qc-main"><div class="qc-ex">先读结论再读论证——倒序阅读把大部分筛选成本压到开头两段，不值得的文章在前两段就出局</div><div class="qc-src">reading-workflow.md · 收集与筛选</div></div><button class="qc-x" tabindex="-1" aria-label="移除摘录"><svg width="8" height="8" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><path d="M1.5 1.5l7 7M8.5 1.5l-7 7"/></svg></button></div><div class="qpara">这段内容是什么意思？</div><div class="qcard" contenteditable="false" data-jump="q2" data-cap="2" data-src="reading-workflow.md" data-anchor="精读与笔记" data-lines="16-17" data-ex="每篇笔记只留一个可执行动作，其余都是参考资料——动作写不进一句话，说明还没读懂" title="每篇笔记只留一个可执行动作，其余都是参考资料——动作写不进一句话，说明还没读懂 —— reading-workflow.md · 精读与笔记（点击跳回原文）"><span class="qc-bar"></span><div class="qc-main"><div class="qc-ex">每篇笔记只留一个可执行动作，其余都是参考资料——动作写不进一句话，说明还没读懂</div><div class="qc-src">reading-workflow.md · 精读与笔记</div></div><button class="qc-x" tabindex="-1" aria-label="移除摘录"><svg width="8" height="8" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><path d="M1.5 1.5l7 7M8.5 1.5l-7 7"/></svg></button></div><div class="qpara">这里的「可执行动作」指什么？</div></div>
           <textarea rows="2" placeholder="追问或补充指令…（⌘⏎ 发送）" spellcheck="false"></textarea>
           <div class="h-ctl">
             <button class="ctl-chip" title="选择模型">
@@ -1622,7 +1646,7 @@ body[data-screen="5"] .quote-fab { display: flex; }
 
   var screens = [
     ['1','单 pane 骨架'], ['2','双 pane 等宽'], ['3','分隔条拖拽'], ['4','harness 对话'],
-    ['5','摘录混排'], ['6','上下文用量'], ['7','新建会话'], ['8','复制消息'],
+    ['5','摘录卡片'], ['6','上下文用量'], ['7','新建会话'], ['8','复制消息'],
     ['9','思考过程'], ['10','思考程度']
   ];
   var themes = [['light','浅色'], ['dark','深色'], ['eink','eink']];
@@ -1641,13 +1665,13 @@ body[data-screen="5"] .quote-fab { display: flex; }
     sendBtn.setAttribute('aria-label', '停止当前回合');
   }
 
-  // 摘录胶囊 chip：点击跳回原文位置并瞬态高亮（事件委托，覆盖动态插入的 chip；× 钮移除该 chip，不触发跳转）
+  // 摘录引用卡片：点击跳回原文位置并瞬态高亮（事件委托，覆盖动态插入的卡片；× 钮移除该卡片，不触发跳转）
   document.addEventListener('click', function(ev){
-    var x = ev.target.closest && ev.target.closest('.chip-x');
+    var x = ev.target.closest && ev.target.closest('.qc-x');
     if (x) {
       ev.stopPropagation();
-      var c = x.closest('.chip');
-      if (c) { c.remove(); syncCaps(); }
+      var c = x.closest('.qcard');
+      if (c) { c.remove(); syncCards(); }
       return;
     }
     var el = ev.target.closest && ev.target.closest('[data-jump]');
@@ -1664,15 +1688,17 @@ body[data-screen="5"] .quote-fab { display: flex; }
     if (el) { ev.preventDefault(); el.click(); }
   });
 
-  // 屏 5 混排编辑区：#N 按文档顺序重编号（线性流程中与插入顺序一致）+ 草稿实时序列化到开发者预览
+  // 屏 5 混排编辑区：卡片按文档顺序刷新序号（仅序列化 index 用，UI 不显示）+ 草稿实时序列化为 XML 预览
   var ed = document.getElementById('h-editor');
   var preview = document.getElementById('dev-preview');
+  function escXml(s, attr){
+    var r = String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    return attr ? r.replace(/"/g, '&quot;') : r;
+  }
   function renumber(){
-    ed.querySelectorAll('.chip').forEach(function(c, i){
-      var cap = String(i + 1), label = '#' + (i + 1);
+    ed.querySelectorAll('.qcard').forEach(function(c, i){
+      var cap = String(i + 1);
       if (c.getAttribute('data-cap') !== cap) c.setAttribute('data-cap', cap);
-      var n = c.querySelector('.chip-n');
-      if (n.textContent !== label) n.textContent = label;
     });
   }
   function serialize(){
@@ -1682,11 +1708,13 @@ body[data-screen="5"] .quote-fab { display: flex; }
       Array.prototype.forEach.call(el.childNodes, function(n){
         if (n.nodeType === 3) { cur += n.textContent; }
         else if (n.nodeType === 1) {
-          if (n.classList.contains('chip')) {
+          if (n.classList.contains('qcard')) {
             flush();
-            lines.push('[摘录 ' + n.querySelector('.chip-n').textContent + '] ' +
-              n.getAttribute('data-src') + ' · ' + n.getAttribute('data-anchor'));
-            lines.push('「' + n.getAttribute('data-ex') + '」');
+            lines.push('<quote index="' + n.getAttribute('data-cap') +
+              '" file="' + escXml(n.getAttribute('data-src'), true) +
+              '" heading="' + escXml(n.getAttribute('data-anchor'), true) +
+              '" lines="' + escXml(n.getAttribute('data-lines'), true) + '">' +
+              escXml(n.getAttribute('data-ex')) + '</quote>');
           } else if (n.tagName === 'BR') { flush(); }
           else { if (/^(DIV|P)$/.test(n.tagName)) flush(); walk(n); }
         }
@@ -1695,48 +1723,69 @@ body[data-screen="5"] .quote-fab { display: flex; }
     flush();
     preview.textContent = lines.join('\n');
   }
-  function syncCaps(){
-    if (!ed.textContent.trim() && !ed.querySelector('.chip')) ed.innerHTML = '';
+  function syncCards(){
+    if (!ed.textContent.trim() && !ed.querySelector('.qcard')) ed.innerHTML = '';
     renumber();
     serialize();
   }
 
-  // 摘录手势（与三轮一致：正文选中 → 浮动「摘录到对话」钮）：新胶囊插入当前光标处而非追加到末尾。
+  // 摘录手势（与四轮一致：正文选中 → 浮动「摘录到对话」钮）：整张卡片插入当前光标处。
+  // 卡片是 block 节点——光标落在问题段落中时，把该段落从光标处拆成两段、卡片插在中间。
   // 点击按钮会夺走焦点，故平时用 selectionchange 记下编辑器内最后的选区，插入时恢复。
   var fab = document.querySelector('.quote-fab');
   if (screen === '5') {
     var savedRange = null;
-    syncCaps();
-    new MutationObserver(syncCaps).observe(ed, { childList: true, subtree: true, characterData: true });
+    syncCards();
+    new MutationObserver(syncCards).observe(ed, { childList: true, subtree: true, characterData: true });
     document.addEventListener('selectionchange', function(){
       var sel = window.getSelection();
       if (sel.rangeCount && ed.contains(sel.anchorNode)) savedRange = sel.getRangeAt(0).cloneRange();
     });
     fab.addEventListener('mousedown', function(ev){ ev.preventDefault(); });
     fab.addEventListener('click', function(){
-      var chip = document.createElement('span');
-      chip.className = 'chip';
-      chip.setAttribute('contenteditable', 'false');
-      chip.setAttribute('data-jump', 'q2');
-      chip.setAttribute('data-src', 'reading-workflow.md');
-      chip.setAttribute('data-anchor', '精读与笔记');
-      chip.setAttribute('data-ex', '每篇笔记只留一个可执行动作，其余都是参考资料——动作写不进一句话，说明还没读懂');
-      chip.title = '精读与笔记 · 每篇笔记只留一个可执行动作…（点击跳回原文）';
-      chip.innerHTML = '<span class="chip-glyph"><svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor"><path d="M3 3h4.5v4.5c0 2.8-1.6 4.6-4 5.5l-.6-1.3c1.4-.7 2.1-1.7 2.2-2.9H3V3zm7 0h4.5v4.5c0 2.8-1.6 4.6-4 5.5l-.6-1.3c1.4-.7 2.1-1.7 2.2-2.9H10V3z" transform="translate(-1.2 0)"/></svg></span><b class="chip-n">#</b><span class="chip-src">reading-workflow.md</span><button class="chip-x" tabindex="-1" aria-label="移除摘录"><svg width="8" height="8" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><path d="M1.5 1.5l7 7M8.5 1.5l-7 7"/></svg></button>';
-      var range = (savedRange && ed.contains(savedRange.commonAncestorContainer)) ? savedRange : null;
+      var card = document.createElement('div');
+      card.className = 'qcard';
+      card.setAttribute('contenteditable', 'false');
+      card.setAttribute('data-jump', 'q2');
+      card.setAttribute('data-src', 'reading-workflow.md');
+      card.setAttribute('data-anchor', '精读与笔记');
+      card.setAttribute('data-lines', '16-17');
+      card.setAttribute('data-ex', '每篇笔记只留一个可执行动作，其余都是参考资料——动作写不进一句话，说明还没读懂');
+      card.title = '每篇笔记只留一个可执行动作，其余都是参考资料——动作写不进一句话，说明还没读懂 —— reading-workflow.md · 精读与笔记（点击跳回原文）';
+      card.innerHTML = '<span class="qc-bar"></span><div class="qc-main"><div class="qc-ex">每篇笔记只留一个可执行动作，其余都是参考资料——动作写不进一句话，说明还没读懂</div><div class="qc-src">reading-workflow.md · 精读与笔记</div></div><button class="qc-x" tabindex="-1" aria-label="移除摘录"><svg width="8" height="8" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><path d="M1.5 1.5l7 7M8.5 1.5l-7 7"/></svg></button>';
+      var range = (savedRange && ed.contains(savedRange.startContainer)) ? savedRange : null;
       ed.focus();
-      if (range) {
+      if (range && range.startContainer.nodeType === 3) {
+        // 光标在文本里：从其所在的顶层块拆出后半段，卡片插在两块之间
+        var sc = range.startContainer;
+        var top = sc;
+        while (top.parentNode && top.parentNode !== ed) top = top.parentNode;
+        var afterText = sc.splitText(range.startOffset);
+        if (top === sc) {
+          ed.insertBefore(card, afterText); // 裸文本直接挂在编辑区下
+        } else {
+          var p2 = document.createElement('div');
+          p2.className = 'qpara';
+          p2.appendChild(afterText);
+          ed.insertBefore(p2, top.nextSibling);
+          ed.insertBefore(card, p2);
+          if (!top.textContent.trim()) top.remove();
+          if (!p2.textContent.trim()) p2.remove();
+        }
+      } else if (range) {
         range.deleteContents();
-        range.insertNode(chip);
-        range.setStartAfter(chip);
-        range.collapse(true);
-        var sel = window.getSelection();
-        sel.removeAllRanges();
-        sel.addRange(range);
+        range.insertNode(card);
       } else {
-        ed.appendChild(chip);
+        ed.appendChild(card);
       }
-      syncCaps();
+      // 光标落到卡片之后，继续输入即成为卡片与下一段之间的问题文字
+      var r = document.createRange();
+      r.setStartAfter(card);
+      r.collapse(true);
+      var sel = window.getSelection();
+      sel.removeAllRanges();
+      sel.addRange(r);
+      syncCards();
     });
   }
 
