@@ -21,7 +21,7 @@
 
 ## Why
 
-ADR 0008（accepted 2026-10-03，[docs/adr/0008-pane-system-split-view-and-harness.md](../../../docs/adr/0008-pane-system-split-view-and-harness.md)）的 Context 记录了两个独立想法的相撞：
+ADR 0008（accepted 2026-10-03，[docs/adr/0008-pane-system-split-view-and-harness.md](../../../../docs/adr/0008-pane-system-split-view-and-harness.md)）的 Context 记录了两个独立想法的相撞：
 
 - Harness v1（change `add-harness-probe`，归档 2026-10-03）以右栏 dock 落地：应用骨架 grid 第三列（`src/style.css:334`），宽度钉死 348px（`--layout-dock-w`）。
 - Split view 是既有独立想法：两栏正文，典型场景一栏文档一栏代码（代码文件已可编辑形态打开，`src/preview/attachments.ts:187` 的 editable-non-md-files 口径）。
