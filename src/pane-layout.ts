@@ -78,6 +78,24 @@ export function emptyPaneGuideVisible(
   return split && !hasTabs && !foregroundDirty && vaultLoaded;
 }
 
+/** 分栏态空 pane 的**输入闸门**（M329，Alex 2026-10-05 dogfood bug 2）：**纯函数**。
+ *
+ *  分栏态下「无带路径标签」的 pane MUST NOT 接受文本输入——它还没有承载任何文档，引导层是它
+ *  唯一的交互面；打开 / 新建文件之后该 pane 才可编辑。缺了这条，空 pane 里敲的字会落进一份
+ *  没有路径的空文档：它没有落盘基准，⌘S 只能报「No file is open…」（Alex 的现场原话
+ *  「这个行为很古怪」）。
+ *
+ *  与 `emptyPaneGuideVisible` 的**分工**（同一分栏空态的两件事，判据各自独立）：
+ *   - 那条判「引导水印**是否在场**」，条件里还有「已装 vault」与「前台非 dirty 草稿」；
+ *   - 本条判「编辑器**是否可编辑**」，只看「分栏 + 该 pane 有没有文档」。
+ *  两者 MUST NOT 合并成一个谓词：未装 vault 时引导不显示，但空 pane 照样不接受输入。
+ *
+ *  `hasTabs` 的口径与 `emptyPaneGuideVisible` / `src/tabs.ts` 的 visibleTabsOf 一致——**带路径
+ *  的会话**才算文档（未命名文档不是标签）。 */
+export function paneBlocksInput(split: boolean, hasTabs: boolean): boolean {
+  return split && !hasTabs;
+}
+
 /** 指针横坐标 → 钳制后的比例（**纯函数**，拖拽的唯一计算）：`rect` 是 pane 容器的矩形。
  *  容器零宽（尚未布局）时落中点，不产出 NaN / Infinity。 */
 export function ratioFromPointer(clientX: number, rect: { left: number; width: number }): number {
