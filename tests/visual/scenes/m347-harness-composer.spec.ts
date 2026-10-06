@@ -148,6 +148,7 @@ test("composer 控制行：模型 chip 写回 / ctx 读数高亮 + ⓘ 气泡 / 
   await expect(ctxRead).toHaveClass(/is-warn/);
   const ctxInfo = page.locator(".lumir-hp-ctx-info");
   await expect(ctxInfo).toBeVisible();
+  await expect(ctxInfo).toHaveAttribute("aria-label", "上下文用量说明"); // D377 消费落账
   await ctxInfo.click();
   const ctxPop = page.locator(".lumir-hp-ctxpop");
   await expect(ctxPop).toBeVisible();

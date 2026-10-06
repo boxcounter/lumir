@@ -1578,6 +1578,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
 
   /** ctx% 读数重渲（usage 事件 / 快照 / relabel 的共用出口）。 */
   function applyUsage(): void {
+    ctxInfo.setAttribute("aria-label", t("D377")); // 纯图标钮的读屏名（relabel 随本出口重取）
     if (lastUsage === null) {
       ctxWrap.hidden = true;
       return;
