@@ -13,6 +13,16 @@ use std::path::{Path, PathBuf};
 
 use crate::commands::CommandError;
 
+/// 当前 UNIX 秒时间戳。JSONL 留存记录的 `ts` 与面板消息的 `ts`（[`super::session::PanelMessage`]）
+/// **共用这一个取时点**——两处各自写 `SystemTime::now()` 会漂，而两者同口径正是「面板上的时间
+/// 与留存里的时间对得上」的前提（M353）。系统时钟早于 epoch 时记 0（旧写法同口径）。
+pub(crate) fn unix_secs_now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
 /// 一个 vault 会话的留存句柄。
 pub struct JsonlWriter {
     path: PathBuf,
@@ -40,10 +50,7 @@ impl JsonlWriter {
     /// 追加一条记录。IO 失败只打 stderr（留存不可反过来弄坏对话）。
     pub fn record(&mut self, payload: &serde_json::Value) {
         let line = match serde_json::to_string(&serde_json::json!({
-            "ts": std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_secs())
-                .unwrap_or(0),
+            "ts": unix_secs_now(),
             "payload": payload,
         })) {
             Ok(line) => line,
