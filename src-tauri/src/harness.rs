@@ -207,8 +207,46 @@ impl Runtime {
         }
     }
 
+    /// 当前 vault 是否有在途轮次。**无会话 = 不 busy**（M350 的宽容探测）。
+    ///
+    /// 与 [`with_session`] 的 `harness_no_session` 语义分工明确：「还没有会话」是正常状态，
+    /// 不是错误——只有确实存在于会话表里的会话才可能忙。
+    fn session_busy(&self, scope: &VaultScope) -> bool {
+        let sessions = self
+            .inner
+            .sessions
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        sessions
+            .get(&scope.key())
+            .map(|s| s.is_busy())
+            .unwrap_or(false)
+    }
+
+    /// 「新会话」（`harness_new_session` 的实现体，命令层只解析 scope）。
+    ///
+    /// 不变量：**任意会话状态下调用 new_session 均成功，结果恒为新空会话**。
+    /// 无会话（从未提问 / 刚重置）时目标状态已成立，平凡成功；busy（在途轮次或在批准闸上
+    /// 等待）是唯一失败态，返回 `harness_busy`。
+    ///
+    /// 历史（M350）：旧实现用 `with_session` 探测 busy，无会话时被 `harness_no_session`
+    /// 短路成错误——面板「New session → 报错 → 再点仍报错」的根因就是新建会话前恰好
+    /// 还没有会话。故 busy 探测必须走 [`Self::session_busy`] 这条宽容路径，
+    /// `with_session` 的语义保持不变（approve 等路径仍需 `harness_no_session`）。
+    pub fn new_session(&self, scope: &VaultScope) -> Result<(), CommandError> {
+        if self.session_busy(scope) {
+            return Err(CommandError::new(
+                "harness_busy",
+                "对话正在处理中，请等本轮结束或完成批准后再开新会话",
+            ));
+        }
+        self.reset_session(scope);
+        Ok(())
+    }
+
     /// 「新会话」重置：丢弃旧会话对象（消息历史随之清空），下次访问按新会话装配
     /// （系统上下文重读 AGENTS.md / Skill 索引；JSONL 句柄随旧对象丢弃，留存文件不动）。
+    /// 无会话时是空操作（幂等）。
     pub fn reset_session(&self, scope: &VaultScope) {
         let mut sessions = self
             .inner
@@ -307,21 +345,15 @@ pub fn harness_abort(
 }
 
 /// 「新会话」：清空当前 vault 会话的消息历史并重新装配系统上下文（JSONL 留存不受影响）。
+/// 不变量（M350）：任意会话状态下调用均成功，结果恒为新空会话——无会话是平凡成功态，
+/// 只有 busy 返回 `harness_busy`。实现体在 [`Runtime::new_session`]（命令层只解析 scope）。
 #[tauri::command(rename_all = "snake_case")]
 pub fn harness_new_session(
     vault: tauri::State<'_, crate::commands::VaultState>,
     runtime: tauri::State<'_, Runtime>,
 ) -> Result<(), CommandError> {
     let scope = vault_scope(&vault)?;
-    let busy = runtime.with_session(&scope, |s| s.is_busy())?;
-    if busy {
-        return Err(CommandError::new(
-            "harness_busy",
-            "对话正在处理中，请等本轮结束或完成批准后再开新会话",
-        ));
-    }
-    runtime.reset_session(&scope);
-    Ok(())
+    runtime.new_session(&scope)
 }
 
 /// 当前 vault 会话快照 JSON（供 webview 重载后面板恢复渲染）。
