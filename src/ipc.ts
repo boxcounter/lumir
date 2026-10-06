@@ -319,7 +319,7 @@ export function onMenuCommand(handler: (command: string) => void): Promise<() =>
 // Harness 对话面板（M303，change add-harness-probe）
 //
 // 命令与事件名是 tower 2026-10-02 钉死的契约（M302 运行时与 M303 面板共用，MUST NOT 改名）。
-// context_json / state 的 JSON 形状见各函数注释；事件 payload 的七类 type 见 HarnessEvent。
+// context_json / state 的 JSON 形状见各函数注释；事件 payload 的八类 type 见 HarnessEvent。
 // 运行时（M302）与面板并行开发：解析一律宽容——缺字段按空态处理、不认识的字段忽略，
 // 形状是「我消费的键」而不是「对方发的全部键」，超集演进零改动。
 // ---------------------------------------------------------------------------
@@ -331,7 +331,8 @@ interface HarnessEventEnvelope {
   vault?: string;
 }
 
-/** harness:event 的事件载荷（七类，type 字段判别；每类都带信封字段 `vault`）。 */
+/** harness:event 的事件载荷（八类，type 字段判别；每类都带信封字段 `vault`）。
+ * aborted 为 M348 新增的第八类（本轮被用户停止）；既有七类的形状一律未动。 */
 export type HarnessEvent = HarnessEventEnvelope &
   (
     | { type: "text_chunk"; text: string }
@@ -341,6 +342,7 @@ export type HarnessEvent = HarnessEventEnvelope &
     | { type: "compact"; summary: string }
     | { type: "done" }
     | { type: "error"; code: string; message: string }
+    | { type: "aborted" }
   );
 
 /** 发送一条消息。context_json 是序列化后的上下文块（src/harness-context.ts 的
@@ -354,6 +356,14 @@ export function harnessSend(message: string, context_json: string | null): Promi
 /** 对一条待批准项给出采纳 / 拒绝（reason 可选，拒绝原因回送模型）。未决项不自动超时。 */
 export function harnessApprove(request_id: string, approved: boolean, reason?: string): Promise<void> {
   return invoke<void>("harness_approve", { request_id, approved, reason: reason ?? null });
+}
+
+/** 停止当前在途轮次（M348，发送钮停止态点击；design §5：中断 = 「不再继续」，非回滚）。
+ *  中断收口（已产出内容标注「已停止」、待决批准收回、`aborted` 终态事件）由后端在
+ *  停止检查点完成，本调用立即返回；无在途轮次 reject `harness_not_running`
+ *  （竞态：轮次刚好结束——终态事件随后就到，调用方按「等事件」降级）。 */
+export function harnessAbort(): Promise<void> {
+  return invoke<void>("harness_abort");
 }
 
 /** 「新会话」：清空当前 vault 会话的消息历史并重新装配系统上下文。 */
@@ -394,6 +404,7 @@ export function parseHarnessEvent(payload: unknown): HarnessEvent | null {
     case "compact":
     case "done":
     case "error":
+    case "aborted":
       return value as HarnessEvent;
     default:
       return null;

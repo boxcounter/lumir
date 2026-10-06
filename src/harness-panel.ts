@@ -35,8 +35,8 @@
 //     done 到达后对完整源做一次全量重渲（增量渲染在「跨空行的松散列表」这类形态上是
 //     近似，全量重渲是收敛点——近似只存在于流式期间）。
 //
-// 文案：全部取值经 src/copy.ts 的 t()（D326–D330 / D332–D348 / D375–D382，D334 / D335 于
-// M347 改形、D98 复用为 provider 浮层当前项标记）；长驻元素（toggle 钮 / harness 段 / 输入框
+// 文案：全部取值经 src/copy.ts 的 t()（D326–D330 / D332–D348 / D375–D383，D334 / D335 于
+// M347 改形、D98 复用为 provider 浮层当前项标记、D383 为 M348 中断标注）；长驻元素（toggle 钮 / harness 段 / 输入框
 // placeholder / 按钮 / 上下文 chip / ctx 读数 / 模型 chip / 待决批准项）注册 onRelabel，
 // 语言切换时从已存状态重渲（design §5.2 的不变量）；transcript 的历史条目是已发生事实的记
 // 录，不随语言切换改写（与 toast 历史同口径）——复制钮的 ✓ 反馈与 provider 浮层是交互件
@@ -48,6 +48,7 @@ import {
   configGet,
   configSetValue,
   errorMessage,
+  harnessAbort,
   harnessApprove,
   harnessNewSession,
   harnessSend,
@@ -113,8 +114,8 @@ export interface HarnessPanelHandle {
   setQuoteJumpHandler(handler: ((card: QuoteCard) => void) | null): void;
   /**
    * 注册「停止」处理器（M347 定义的 M348 对接面）：处理中点击发送钮（= 停止态）时调用。
-   *  M347 为明确标注的桩——两态状态机（running → stopping → finished 回 idle）在前端完整
-   *  落地，本钩子未注册时点击停止只走状态机；Rust abort（harness 侧取消）由 M348 接通。
+   *  M348 已接通——面板创建即默认接上真实 handler（调 harness_abort）；本接口保留给
+   *  装配层 / 测试覆盖，传 null 回到「点击只走状态机」的桩行为。
    *  签名即对接面：无参、同步调用、幂等（stopping 子态挡连点由状态机保证，处理器不会因
    *  双击收到第二次）。
    */
@@ -1052,8 +1053,17 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
    *  running = 处理中（钮面停止态），stopping = 停止已请求、等终态。 */
   let sendPhase: SendPhase = "idle";
   let stageWaiting = true; // 阶段指示：首个 text_chunk 到达前 = 「等待响应」，之后 = 「生成中」。
-  /** 停止钩子（M348 对接面，M347 桩期 null——点击停止只走状态机）。 */
-  let stopHandler: (() => void) | null = null;
+  /** 停止钩子（M348 对接面）：处理中点击发送钮（= 停止态）时调用。面板创建即接上真实
+   *  handler（调 harness_abort，中断语义 = 「不再继续」，收口等后端 aborted 终态事件）；
+   *  setStopHandler 保留给装配层/测试覆盖，未注册时点击只走状态机。 */
+  let stopHandler: (() => void) | null = () => {
+    harnessAbort().catch((e: unknown) => {
+      // harness_not_running = 轮次刚好结束的竞态（终态事件随后就到）；其余错误如实上错误行。
+      // 两种情形都经 finished 收口回 idle——后端既说「没有在途轮次」，idle 就是真值相位。
+      appendError(t("D348", { message: errorMessage(e) }));
+      applySendPhase(reduceSendPhase(sendPhase, { type: "finished" }));
+    });
+  };
   /** ctx% 读数（usage 事件 / 快照同源消费；null = 尚无读数，读数件整体隐藏）。 */
   let lastUsage: number | null = null;
   /** 上下文用量警示阈值（快照 warn_ctx_pct，缺省 85——与 Rust 侧 DEFAULT_WARN_CTX_PCT 同值）。 */
@@ -1863,18 +1873,31 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   }
 
   /** 一轮结束：对完整源做一次全量重渲（增量渲染的近似在松散列表等形态上收敛于此）。
-   *  完成后挂复制钮：源 = 模型原始输出（本轮回收集的完整 Markdown 源文本）。 */
-  function finalizeStreamingMessage(): void {
+   *  完成后挂复制钮：源 = 模型原始输出（本轮回收集的完整 Markdown 源文本）。
+   *  返回沉淀的消息元素（中断标注等终态修饰用；无流式内容时返回 null）。 */
+  function finalizeStreamingMessage(): HTMLElement | null {
     flushChunks();
-    if (streamingEl === null) return;
-    streamingEl.replaceChildren();
-    renderMarkdownInto(streamingEl, streamingText);
-    attachCopyButton(streamingEl, streamingText);
+    if (streamingEl === null) return null;
+    const el = streamingEl;
+    el.replaceChildren();
+    renderMarkdownInto(el, streamingText);
+    attachCopyButton(el, streamingText);
     streamingEl = null;
     streamingText = "";
     renderedFinalized = 0;
     tailEl = null;
     scrollToBottom();
+    return el;
+  }
+
+  /** 中断标注（M348，D383）：挂在被打断的 assistant 消息上的「已停止」徽标——
+   *  事件路径（aborted 终态事件）与快照恢复路径（status="stopped" 的留存消息）共用。
+   *  徽标是已发生事实的记录，不进 onRelabel（与 transcript 历史同口径）。 */
+  function attachStoppedMark(el: HTMLElement): void {
+    const mark = document.createElement("span");
+    mark.className = "lumir-hp-stopped";
+    mark.textContent = t("D383");
+    el.append(mark);
   }
 
   // ── 事件流 ───────────────────────────────────────────────────────────────
@@ -1921,6 +1944,19 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
         finalizeStreamingMessage();
         applySendPhase(reduceSendPhase(sendPhase, { type: "finished" }));
         return;
+      case "aborted": {
+        // 本轮被用户停止（M348）：中断语义是「不再继续」——已流式产出保留（上面的
+        // text_chunk 已落进流式泡），标注「已停止」，经 finished 收口回 idle，
+        // composer 立即可开新一轮。无产出（停止在首个 chunk 前）时没有消息可标。
+        const el = finalizeStreamingMessage();
+        if (el !== null) attachStoppedMark(el);
+        // 待决批准项随中断收回（design §5）：未决策的批准卡片从 transcript 撤下——
+        // 它们的唯一出口（点击）已失效，后端那条通道已被 Withdrawn 关闭。
+        for (const pending of pendingApprovals.values()) pending.element.remove();
+        pendingApprovals.clear();
+        applySendPhase(reduceSendPhase(sendPhase, { type: "finished" }));
+        return;
+      }
       case "error":
         finalizeStreamingMessage();
         applySendPhase(reduceSendPhase(sendPhase, { type: "finished" }));
@@ -1961,6 +1997,8 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
         el.className = "lumir-hp-msg lumir-hp-msg-assistant";
         renderMarkdownInto(el, record.text);
         attachCopyButton(el, record.text); // 复制源 = 模型原始输出（留存原文）
+        // 中断轮留存的产出：标注「已停止」（M348，D383；status 缺省 = 正常完成不标）。
+        if (record.status === "stopped") attachStoppedMark(el);
         transcript.append(el);
       } else if (role === "tool" && typeof record.name === "string") {
         appendToolCall(record.name, "done", typeof record.summary === "string" ? record.summary : "");

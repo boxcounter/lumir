@@ -367,6 +367,14 @@
   font-size: var(--fs-meta);
 }
 
+/* ── 中断标注（M348，D383）：被打断的 assistant 消息上的「已停止」徽标 ────────── */
+.lumir-hp-stopped {
+  display: inline-block;
+  margin-top: var(--sp-1);
+  font-size: var(--fs-meta);
+  color: var(--text-3);
+}
+
 /* ── 批准闸：结构档边框的卡片（未决项不自动超时，唯一的出口是点击） ────────── */
 .lumir-hp-approval {
   padding: var(--sp-3) var(--sp-4);

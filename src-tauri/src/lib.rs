@@ -116,9 +116,11 @@ pub fn run() {
             reading_position::reading_position_get,
             reading_position::reading_position_put,
             // Harness 对话运行时（M302，change add-harness-probe）：面板（m303）经
-            // 四命令 + `harness:event` 事件消费；LLM 调用在 `lumir-harness-llm` 专线程。
+            // 五命令 + `harness:event` 事件消费；LLM 调用在 `lumir-harness-llm` 专线程。
+            // abort 为 M348 新增（发送钮停止态点击，design §5「不再继续」）。
             harness::harness_send,
             harness::harness_approve,
+            harness::harness_abort,
             harness::harness_new_session,
             harness::harness_state,
         ])
