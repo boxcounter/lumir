@@ -46,6 +46,7 @@ import { DEFAULT_FONT_SIZE, applyTypography as writeTypography, nextFontSize } f
 import { CONTENT_WIDTH_TOKEN, DEFAULT_CONTENT_WIDTH, clampContentWidth } from "./content-width";
 import type { TextScaleDirection, TypographySettings } from "./typography";
 import { lumirSearch } from "./search";
+import { quoteFlashExtension } from "./quote-gesture";
 import type { ScrollPosition } from "./scroll-position";
 // 阅读位置 view 侧原语（捕获 / 两个口径的恢复 / 交还焦点 / 视口让位窗口）在
 // src/scroll-position-view.ts：facade 只转发，其余「以 view.focus() 交还焦点」的模块直接用
@@ -1892,6 +1893,10 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
         // 这类会改文档的控件）。panel 的 Compartment 之外落点也意味着模式热切换（装载时的
         // reconfigure）不会把它连带重建——面板与查询跨文件保留，与编辑器行为一致。
         lumirSearch(),
+        // 摘录跳回高亮（M344，change add-harness-quote-cards design §5 瞬态纪律）：借用
+        // pending-tint 语义的 ~1.4s 瞬态装饰，范围经 setQuoteFlash 效果设置 / 清除——零常驻
+        // 装饰。装在模式无关的基础层，md / code 同一条路径。
+        quoteFlashExtension,
         modeCompartment.of(modeExtensions(mode, path, editable)),
         // 基础层（changeFilter + updateListener）：绑实例闭包，收进模块级共享的 baseCompartment，
         // 由 adoptSession 用目标实例的闭包重配（见 baseExtensions / rebindEffects 的 P1-1 说明）。

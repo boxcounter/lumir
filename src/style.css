@@ -321,6 +321,15 @@ body {
   hanging-punctuation: first last;
 }
 /* Chromium currently ignores hanging-punctuation; WKWebView supports it. CM6 retains defaults to preserve cursor alignment. */
+/* 摘录跳回高亮（M344，change add-harness-quote-cards design §5）：借用 pending-tint（find-in-page
+   黄语义），~1.4s 消退由 src/quote-gesture.ts 的计时器收口，这里只管色值。eink 档 --pending-tint
+   恒 transparent（语义色退场档），按裁决转 10% 黑。 */
+.cm-quote-jump-flash {
+  background: var(--pending-tint);
+}
+:root[data-theme="eink"] .cm-quote-jump-flash {
+  background: rgba(0, 0, 0, 0.1);
+}
 
 /* ==========================================================================
    骨架（src/shell.ts）：四区网格。
@@ -724,6 +733,22 @@ body {
 /* display:flex 会盖掉 UA 的 [hidden] 规则，显式补回（同 .titlebar-identity / .editor-notice） */
 .pane-empty-guide[hidden] {
   display: none;
+}
+/* 摘录浮动钮（M344，change add-harness-quote-cards design §5，文案 D370）：编辑器选区在场时的
+   「摘录到对话」瞬态钮——挂在 .editor-pane（position:relative）里绝对定位、选区右下，选区
+   坍缩即离场，零常驻装饰。表面口径与 .lumir-goto 浮层同源（preview-bg + border + raise）。 */
+.quote-gesture-btn {
+  position: absolute;
+  z-index: 15;
+  padding: var(--sp-2) var(--sp-4);
+  background: var(--preview-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--r10);
+  box-shadow: var(--shadow-raise);
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui);
+  color: var(--text);
+  cursor: pointer;
 }
 /* 分栏分隔条（M316）：hairline 1px 取既有 --border（零新配色），命中区加宽到 7px
   （与栏宽手柄「视觉线细、命中区宽」同族形态）。只在双栏时在场（装配层动态创建 / 移除），
