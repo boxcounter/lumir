@@ -2,7 +2,7 @@
 //!
 //! 一个会话同时维护两份视角：
 //! - `input`：OpenAI Responses API 形状的消息项（`session::input_item` 构造），直接喂 LLM；
-//! - `panel`：面板渲染模型（role: user/assistant/tool/compact + text/summary/name/status），
+//! - `panel`：面板渲染模型（role: user/assistant/tool/compact + text/summary/name/status/ts），
 //!   是 `harness_state` 快照的消息来源（m303 消费形状）。
 //!
 //! 两边随同一个动作一起更新，MUST NOT 各自漂移——面板上看到的与模型看到的永远是同一会话。
@@ -11,6 +11,7 @@ use std::path::PathBuf;
 use std::sync::mpsc::Sender;
 
 use serde::Serialize;
+use ts_rs::TS;
 
 use crate::commands::CommandError;
 
@@ -18,23 +19,35 @@ use super::approval::{ApprovalDecision, ApprovalRequest, ApprovalSignal};
 use super::jsonl::JsonlWriter;
 
 /// 面板消息（`harness_state` 快照 `messages[]` 的元素；m303 宽容解析，缺字段=空态）。
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export, export_to = "../../src/bindings/")]
 pub struct PanelMessage {
     /// user / assistant / tool / compact。
     pub role: String,
     /// 完整文本（user/assistant 的主内容）。
+    /// **空时不序列化**（`skip_serializing_if`）——TS 侧按「可能缺席」读。
+    #[ts(optional)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub text: Option<String>,
     /// 摘要（compact 消息的压缩摘要，面板可展开）。
+    #[ts(optional)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub summary: Option<String>,
     /// 工具名（tool 消息）。
+    #[ts(optional)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
     /// 执行状态：tool 消息的工具终态（done / denied / rejected / error）；
     /// assistant 消息的中断标注（"stopped" = 本轮被用户停止，面板 D383 徽标的数据源，M348）。
+    #[ts(optional)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub status: Option<String>,
+    /// 消息入会话的时刻（UNIX 秒）；面板据它显示相对时间（缺该字段的旧快照退化为不显示）。
+    // 打戳点是 `Session::push_panel` 的每个构造处，取时用 `super::jsonl::unix_secs_now`——
+    // 与留存记录的 `ts` 同一取时点（两处各自取时会漂）。
+    // ts-rs 默认把 u64 映成 bigint，而 JSON.parse 出来的是 number：与 FsEntry::size 同处理。
+    #[ts(type = "number")]
+    pub ts: u64,
 }
 
 /// 最近一次请求的用量（面板常驻 ctx% / cache% 的数据源）。
@@ -164,6 +177,7 @@ impl Session {
         self.input = items;
     }
 
+    /// 面板消息入队（`ts` 由构造点用 [`super::jsonl::unix_secs_now`] 打戳——入会话时刻即构造时刻）。
     pub fn push_panel(&mut self, message: PanelMessage) {
         self.panel.push(message);
     }

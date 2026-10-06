@@ -15,6 +15,7 @@ use crate::config::HarnessConfig;
 
 use super::approval::{ApprovalRequest, ApprovalSignal};
 use super::events::{self, EventSink};
+use super::jsonl;
 use super::llm::{self, LlmClient};
 use super::permissions::{self, Decision};
 use super::session::{self, PanelMessage};
@@ -200,6 +201,7 @@ pub fn run_turn_for(
             summary: None,
             name: None,
             status: None,
+            ts: jsonl::unix_secs_now(),
         });
         s.set_current_context(context_section);
         s.jsonl().record(&serde_json::json!({
@@ -285,6 +287,7 @@ pub fn run_turn_for(
                 summary: None,
                 name: None,
                 status: None,
+                ts: jsonl::unix_secs_now(),
             });
             s.jsonl().record(&serde_json::json!({
                 "kind": "assistant_text",
@@ -394,6 +397,7 @@ fn abort_turn(
                 summary: None,
                 name: None,
                 status: Some("stopped".into()),
+                ts: jsonl::unix_secs_now(),
             });
             s.jsonl().record(&serde_json::json!({
                 "kind": "assistant_text",
@@ -449,6 +453,7 @@ fn loop_max_notice(
             summary: None,
             name: None,
             status: None,
+            ts: jsonl::unix_secs_now(),
         });
         s.jsonl().record(&serde_json::json!({
             "kind": "loop_max_reached",
@@ -540,6 +545,7 @@ fn handle_call(
             summary: None,
             name: Some(call.name.clone()),
             status: Some(status.to_string()),
+            ts: jsonl::unix_secs_now(),
         });
         s.jsonl().record(&serde_json::json!({
             "kind": "tool_call",
@@ -682,6 +688,7 @@ fn compact_now(
             summary: Some(summary.clone()),
             name: None,
             status: None,
+            ts: jsonl::unix_secs_now(),
         });
         s.jsonl().record(&serde_json::json!({
             "kind": "compact",
@@ -786,6 +793,9 @@ impl EventSink for TauriEventSink {
 mod tests {
     use super::*;
 
+    use crate::config::HarnessProvider;
+    use crate::fs_io::IgnorePolicy;
+
     fn block_with_selection(text: &str) -> ContextBlock {
         ContextBlock {
             path: Some("a/b.md".to_string()),
@@ -796,6 +806,114 @@ mod tests {
             }),
             viewport_range: None,
         }
+    }
+
+    /// 丢弃事件的 sink（本模块只关心入队后的会话状态）。
+    struct NullSink;
+
+    impl EventSink for NullSink {
+        fn emit(&self, _payload: serde_json::Value) {}
+    }
+
+    /// 恢复 `XDG_CONFIG_HOME`（断言失败 panic 也要复原，别把临时目录留给同进程的别的用例）。
+    struct XdgGuard(Option<std::ffi::OsString>);
+
+    impl Drop for XdgGuard {
+        fn drop(&mut self) {
+            match &self.0 {
+                Some(v) => std::env::set_var("XDG_CONFIG_HOME", v),
+                None => std::env::remove_var("XDG_CONFIG_HOME"),
+            }
+        }
+    }
+
+    /// M353：一轮对话（含工具调用）之后，`harness_state` 快照的每条消息都带 `ts`
+    /// （UNIX 秒，与 JSONL 留存同口径），随消息顺序单调不减，取值落在本轮的真实时窗内。
+    ///
+    /// 判据的区分度（REVIEW.md 第 1 条）：`0` 占位、缺字段、写死常量、毫秒口径、跨天
+    /// 复用的旧戳一律落在 `[before, after]` 之外。时窗两端由本测试用 std **独立**取时，
+    /// 不复用被测的 `jsonl::unix_secs_now`——复用的话取时本身坏掉两边会一起错。
+    #[test]
+    fn snapshot_messages_carry_monotonic_unix_timestamps() {
+        fn unix_secs() -> u64 {
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs()
+        }
+
+        let root = std::env::temp_dir().join(format!("lumir-harness-ts-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        // JSONL 落点走 XDG_CONFIG_HOME（REVIEW.md 第 13 条：测试绝不写真实的 ~/.config/lumir）。
+        let _env = XdgGuard(std::env::var_os("XDG_CONFIG_HOME"));
+        std::env::set_var("XDG_CONFIG_HOME", root.join("xdg"));
+
+        let vault = root.join("vault");
+        std::fs::create_dir_all(&vault).unwrap();
+        std::fs::write(vault.join("a.md"), "正文\n").unwrap();
+        let scope = VaultScope {
+            root: vault.clone(),
+            policy: IgnorePolicy::load(&vault, &[".gitignore".to_string()]),
+        };
+        let config = HarnessConfig {
+            provider: HarnessProvider::Mock,
+            ..Default::default()
+        };
+
+        let runtime = Runtime::default();
+        runtime.acquire_turn(&scope).unwrap();
+        // 一轮里含一次工具调用 ⇒ 面板覆盖 user / assistant / tool / assistant 四类消息。
+        let script = r#"{"responses": [
+            {"text": "先读文件。",
+             "tool_calls": [{"id": "c1", "name": "vault_read", "arguments": "{\"path\":\"a.md\"}"}]},
+            {"text": "读完了。"}
+        ]}"#;
+        let mut client = llm::MockClient::from_str(script, "timestamps").unwrap();
+        let before = unix_secs();
+        run_turn_for(
+            &NullSink,
+            &runtime,
+            &scope,
+            &config,
+            "这段讲了什么".to_string(),
+            None,
+            &mut client,
+        );
+        let after = unix_secs();
+        runtime.release_turn(&scope);
+
+        let snapshot = runtime.snapshot(&scope, &config);
+        let roles: Vec<&str> = snapshot
+            .messages
+            .iter()
+            .map(|message| message.role.as_str())
+            .collect();
+        // 先证明这一轮真的跑到了工具调用——否则下面的打戳断言在「只有 1 条 user 消息」上
+        // 照样能过，等于没覆盖 tool 消息。
+        assert_eq!(roles, vec!["user", "assistant", "tool", "assistant"]);
+
+        // 判据落在线上形状（面板恢复渲染读的就是 StateSnapshot 的 JSON）。
+        let json = serde_json::to_value(&snapshot).unwrap();
+        let messages = json["messages"].as_array().unwrap();
+        assert_eq!(messages.len(), 4);
+        let mut previous = 0u64;
+        for message in messages {
+            let ts = message["ts"]
+                .as_u64()
+                .unwrap_or_else(|| panic!("快照消息缺 ts 字段：{message}"));
+            assert!(
+                ts >= before && ts <= after,
+                "ts={ts} 不在本轮时窗 [{before}, {after}] 内：{message}"
+            );
+            assert!(
+                ts >= previous,
+                "ts 必须单调不减：{ts} < {previous}：{message}"
+            );
+            previous = ts;
+        }
+
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     /// 回归（M309）：用户正文含 `\n\n[` 时，装配返回的上下文节必须是块生成的节本身，
