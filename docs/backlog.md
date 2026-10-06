@@ -2306,6 +2306,13 @@ P2-2，2026-10-06）：无文本产出的轮次（assistant 只发工具调用�
 徽标，或恢复路径对空文本不渲染徽标，二选一拉齐。来源：reviewer-hp3 r1，
 `.tower/comms/reviews/review-feat-rust-turn-abort-capability-hp3-reviewer-hp3-r1.md`。
 
+**harness 入 pane 的两处覆盖缺口（无自动判据）**（low；M349 评审 finding，reviewer-hp4，
+2026-10-06）：change `move-harness-to-pane-chat-frame` tasks 2.1/2.2 的两条行为没有自动化判据，
+归档后会随之沉底——① 正文列与 harness 列对分隔条的**像素对齐**（design §3 的结果不变量，现只有
+结构断言，像素级对齐靠人眼）；② 会话名「首条用户消息截断 20 码点」的派生逻辑（无单测/场景断言）。
+补测方向：① 视觉场景加分隔条横坐标 vs 两列缘的计算属性断言；② 面板单测补截断派生用例。
+finding `.tower/comms/findings/20261006-reviewer-hp4-improve-harness-20-backlog.md`。
+
 ## 工具链与环境（待 Alex 裁决）
 
 1. **1420 端口串行**：vite dev server 固定 `127.0.0.1:1420` 且 strictPort，全机同一时刻只能有一个
