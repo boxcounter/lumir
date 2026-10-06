@@ -2,8 +2,9 @@
 
 > **勾选状态（M349 收口，2026-10-06）**：1.x–5.1 由三批实现并合并（容器/标题栏 → 控制行/复制/进度 →
 > 发送-停止中断），6.1/6.2 由 M349 复核（本地门禁 + 真机批次）。每条括注证据（文件:行 / 单测名 / 场景名 /
-> 门禁输出）；拿不出证据的不勾。**6.3 与 6.4 保持未勾**，理由见各自条目——前者等 Alex 过目视觉候选后由
-> tower 执行重刷，后者卡在一条 scope 外、与本 change 无关的视觉断言失效上（详见文末「已知未闭环」）。
+> 门禁输出）；拿不出证据的不勾。**6.3 已勾（2026-10-06）**：Alex 过目候选「认可」→ tower 按建议执行
+> `--update-snapshots=all` 全量重刷（606 passed / 1 skipped / 0 failed），8 组过目候选与入库基线 sha256 逐字节
+> 核验一致，commit `882a3e3`。6.4 待 gate 复跑确认。
 
 ## 1. 容器改造：harness 归位 pane，dock 移除
 
@@ -37,12 +38,12 @@
 
 - [x] 6.1 `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` 通过　**证据**：`Totals: 22 passed, 0 failed (22 items)`（M349，本 worktree）
 - [x] 6.2 真机验收：`⌘⇧A` 分栏/收起不丢标签、`harness_pane` 往返恢复、ctx% 位置与 ⓘ 气泡、停止中断（mock 长流）、复制（clipboard 断言）、模型写回；既有 dock 场景改写 pane 口径　**证据**：真机批次 `node scripts/acceptance/run.mjs 70 … 91` → **22/22 PASS**，证据 `test-results/acceptance/2026-10-06/`（`summary.md` + 各场景 `steps.md`/`shots/`）；新增场景 `86`（分栏/收起/默认 1:2/pane.close）、`87`（ctx 越线 ⓘ 气泡）、`88`（发送-停止 + 中断）、`89`（复制剪贴板）、`90`（chip 读数 + 浮层）、`91`（harness_pane 往返）；既有 harness 场景 70–78、81–85 的措辞与结构断言改写为 pane 口径。**两处 carve-out（都有登记，不是漏判）**：① **模型写回**判据落视觉层（浮层项不进 AX 树，见 3.1 与 `scripts/acceptance/README.md` 的「已知边界」）；② 场景 `70` 另按已变更的合同改写——`add-harness-quote-cards` tasks 4.1 移除了「选区自动注入」，chip 由「选区 N–M 行」改为「视口 N–M 行」，而 70 当时没跟改（M349 首跑实测两轮判红，根因非 pane 化）
-- [ ] 6.3 视觉：dock 移除 / 标题栏 / 控制行 / 进度态基线批次末一次性重建（Alex 过目后 `--update`）；dock 元素相关整页基线时间戳逐张核对　**状态：候选已产出，待过目与重刷（不勾）**。证据与清单落在 `test-results/alex-review-2026-10-06/`（git 外）：`说明.md` 索引 + 两组子目录各 8 张「旧 / 新 / 差异」三联图（来源 = 本地全量跑 `LUMIR_VISUAL_PORT=4273 bash scripts/visual/run.sh` 的失败实拍）。**核对结论（防静默假绿）**：dock 元素出现过的三张整页基线（`harness-panel-open`、`m345-harness-quote-card`、`m345-quote-jump-flash`）时间戳都停在摘录卡片那轮、均超容差 FAIL，在候选里；**另有二十余张整页基线只差 440–561 像素（< 960 容差）而静默通过**（实测 `app-main` 440、`math-rendering` 561，差异全落在标题栏那一条），故建议重刷用 `--update-snapshots=all` 而非默认的 `=changed`
+- [x] 6.3 视觉：dock 移除 / 标题栏 / 控制行 / 进度态基线批次末一次性重建（Alex 过目后 `--update`）；dock 元素相关整页基线时间戳逐张核对　**证据**：Alex 2026-10-06 裁决「认可」候选并采纳 `--update-snapshots=all` 口径（理由：二十余张整页基线只差 440–561 像素、静默通过，`=changed` 会漏）；tower 执行全量重刷 **606 passed / 1 skipped / 0 failed**；过目 8 组候选与入库基线 **sha256 逐字节一致**（核验脚本输出 8/8 MATCH）；43 张基线 commit `882a3e3`。候选三联图与索引留 `test-results/alex-review-2026-10-06/`（git 外）
 - [ ] 6.4 `scripts/gate.sh quick` + `visual` 全绿　**状态：quick 全绿 ✓；`visual` 只剩 6.3 的 8 张像素基线陈旧（全量像素模式必红，结构层已全绿）——等 6.3 重刷后即可勾**。逐档读数：`gate quick` **10/10 PASS（SKIP 0）**；`LUMIR_VISUAL_STRUCTURAL=1 LUMIR_VISUAL_PORT=4273 bash scripts/visual/run.sh`（CI 口径）**606 passed / 1 skipped / 0 failed**；全量像素模式（本地口径）**598 passed / 8 failed / 1 skipped**，8 红全部是 6.3 的基线陈旧，无行为断言红。**M349 已修掉的那条**：`tests/visual/scenes/m347-harness-composer.spec.ts` 的桩补一条 `harness_abort` 拦截（成功返回、不发终态事件，相位停在 stopping）——本 change 的 4.1 把默认停止钩子接成真实 `harnessAbort()` 之后，旧桩会走 `origInvoke` 抛错、catch 立刻 `finished` 收口，该断言必红；这条修复经 tower 批准并入 M349 scope（原 finding `20261006-worker-hp4-bug-m348-m347-stopping-harness-abort.md` 可据此关闭）
 
 ## 已知未闭环（交给后续动作）
 
-1. **6.3 / 6.4**：等 Alex 过目 `test-results/alex-review-2026-10-06/` 的两组三联图 → tower 执行重刷（**建议 `--update-snapshots=all`**，理由见 6.3 与候选索引 `说明.md`）→ 勾 6.3；`gate.sh visual` 随即全绿 → 勾 6.4。
+1. ~~**6.3 / 6.4**~~（已闭环 2026-10-06）：Alex 过目「认可」→ 全量重刷（606 passed）→ sha256 核验 8/8 → commit `882a3e3` → 勾 6.3；6.4 随 gate 复跑勾选。
 2. **2.1 / 2.2 的覆盖缺口**：harness 段与分隔条的像素对齐、会话名「约 20 字截断」的派生，都没有自动判据（本批次如实登记未补）。
 3. **a11y finding**：模型 chip 的 provider 浮层与会话名浮层嵌在 `<button>` 内，WKWebView 的 AX 树不暴露浮层项 ⇒ 读屏不可达（会话名浮层同构）。finding `20261006-worker-hp4-bug-chip-button-wkwebview-ax.md` 上报中；修法是把浮层挪出按钮或补 `aria-owns` / `role=menu` 语义。**连带影响**：3.1 的「选择 + 写回」真机判据在这条修掉之前只能落视觉层。
 4. **真机覆盖缺口（非本 change 引入，如实登记）**：场景 `78` 里「切回 A 看得到自己的会话」不判——同一 vault 的两种路径拼写各自建会话（见那条场景的覆盖边界）；harness 会话内容不跨启动保留是设计口径。
