@@ -63,7 +63,7 @@
 | 模型 chip `.ctl-chip` | **无边框**、24px 高、r5、fs-label-s(11.5px)、text-2、hover 给 hover 底；图标 + 名 + chevron | 现状是 26px 带 border-soft 边框——改原型形态（chevron 用 aria-hidden glyph，同会话名钮 `.schev` 先例） |
 | ctx 读数 `.h-usage` | 24px 高、mono、fs-label(11px)、text-3，数值档 text-2；高用量：数值 pending 色 + fw-semibold + ⓘ 16px 圆钮 | 对齐（现状 fs-label-s / 无数值分档色） |
 | ⓘ 气泡 `.ctx-tip` | 向上展开、右缘对齐、224px、shadow-raise | 现状已同构（240px——改 224px 对齐原型） |
-| 发送钮 `.h-send` | **26×26、r6、accent-fill 实心、白 glyph**：空闲 = ↑（arrow-up），处理中 = ■（stop）+ 脉冲环（accent-tint box-shadow 呼吸） | 现状是文字钮「发送/停止」——改图标形态（裁决点 3）；D329/D378 退为 title/aria-label。脉冲环继承（eink 下 tint 为 transparent，环不可见——glyph 本身承担状态，可接受，不另造表达） |
+| 发送钮 `.h-send` | **26×26、r6、accent-fill 实心、白 glyph**：空闲 = ↑（arrow-up），处理中 = ■（stop）+ 脉冲环（accent-tint box-shadow 呼吸） | 现状是文字钮「发送/停止」——改图标形态（裁决点 3）；D329/D378 退为 title/aria-label。**busy 态的 accent 实心 + 脉冲环不继承**（有意偏差，tower 2026-10-07 裁决，review r1 P2-1 选 b）：保留 M347 已评审的 danger 实心——危险色 = 可点击停止（停止丢弃在途一轮，代价语义与「破坏性动作」同族），该语义已经 Alex 真机验收（场景 88），而脉冲环从未单独裁决；与 §2.4 tool-meta 不继承同型先例 |
 | 思考程度 chip / 浮层（屏 10） | — | **不继承**：归提案 3（在途） |
 | 开发者预览（屏 5 XML 预览） | — | **不继承**：原型标注「仅原型调试用途，不进产品」 |
 

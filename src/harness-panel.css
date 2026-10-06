@@ -1051,8 +1051,9 @@
 /* 发送钮（M351 图标化，原型 .h-send）：26×26、r6、accent-fill 实心，↑ / ■ 两态 glyph
    按相位显隐（SVG 无 hidden 属性映射——[hidden] 选择器兜 display:none）；可读名/悬停
    走 D329/D378（aria-label/title）。busy（处理中）= ■ 停止态：danger 实心（M347 已评审
-   口径——停止丢弃在途的一轮，代价语义与「破坏性动作」同族；不继承原型的 accent+脉冲环，
-   change design §2.5）；stopping 子态禁用（:disabled）。 */
+   口径——停止丢弃在途的一轮，代价语义与「破坏性动作」同族）；原型的 accent 实心 +
+   脉冲环不继承（有意偏差，design §2.5 记档，tower 2026-10-07 裁决）；stopping 子态
+   禁用（:disabled）。 */
 .lumir-hp-send {
   flex: none;
   display: flex;

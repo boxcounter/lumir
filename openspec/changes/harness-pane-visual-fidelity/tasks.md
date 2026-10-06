@@ -12,7 +12,7 @@
 
 - [x] 2.1 圆角卡片容器 `.lumir-hp-composer-box`（content-bg + border + r8 + focus-within accent，eink 加粗线宽）；composer 去自身边框；控制行 `.lumir-hp-ctl` 收进容器底　**证据**：src/harness-panel.ts:1014-1019（composerArea/composerBox/ctl 装配）；src/harness-panel.css:628/634/637（含 eink 1.6px 分叉）/641；m351 用例 3 容器 + focus-within 断言
 - [x] 2.2 模型 chip 改无边框小标签形态（24px / r5 / fs-label-s + chevron）；ctx 读数对齐原型（fs-label + 数值 text-2 分档）；ⓘ 气泡宽 224px　**证据**：src/harness-panel.css:660/682/689（chip）、799（ctxpop 224px）；m347 spec 读数断言（tests/visual/scenes/m347-harness-composer.spec.ts:156/166/186）。**偏差登记**：ctx 数值未拆独立 span 分档上色——fs-label 整行同色，分档色（warn/over）既有口径保留在行级类上，见「已知未闭环」
-- [x] 2.3 发送钮图标化：26×26 accent 实心，↑ / ■ 两态 SVG glyph 按相位显隐 + 处理中脉冲环；D329/D378 退 title/aria-label（AX 名断言不变）　**证据**：src/harness-panel.ts（send-go/send-stop 两枚 SVG，`toggleAttribute("hidden")` 切换）+ src/harness-panel.css（`.lumir-hp-send` 26×26 r6、`svg[hidden]{display:none}`、脉冲环）；m347 spec glyph 显隐 + aria-label 两态断言（:191-225）；真机场景 88 两态断言照旧 PASS
+- [x] 2.3 发送钮图标化：26×26 实心，↑ / ■ 两态 SVG glyph 按相位显隐；D329/D378 退 title/aria-label（AX 名断言不变）；busy 态保留 M347 danger 实心——**原型 accent+脉冲环不继承**（有意偏差，design §2.5 记档，tower 2026-10-07 裁决：danger 语义经 Alex 真机验收、脉冲环从未单独裁决）　**证据**：src/harness-panel.ts（send-go/send-stop 两枚 SVG，`toggleAttribute("hidden")` 切换）+ src/harness-panel.css（`.lumir-hp-send` 26×26 r6、`svg[hidden]{display:none}`、`.is-busy` danger 实心，CSS 无脉冲环——与记档一致）；m347 spec glyph 显隐 + aria-label 两态断言（:191-225）；真机场景 88 两态断言照旧 PASS
 
 ## 3. 错误呈现去重
 
@@ -43,3 +43,6 @@
 3. **ctx 数值分档色未拆 span**：warn/over 分档色在既有行级类上（M347 口径），原型的数值/标签双色未逐像素继承——观感差异极小，Alex 过目候选基线时一并裁决。
 4. **pending 空心行不实现**：原型有「待执行」空心步骤行，但后端协议无 pending 事件源（started/done 二态），硬造会失真。
 5. **思考程度浮层（原型屏 10）不在本 change**：产品无思考档位功能，原型屏 10 是占位演示。
+6. **发送钮 busy 态脉冲环不继承**（tower 2026-10-07 裁决，review r1 P2-1 选 b）：busy 保留
+   M347 danger 实心（危险色=可停止，经 Alex 真机验收），原型 accent 实心 + accent-tint
+   脉冲环不实现；Alex 使用后若想要原型呼吸环再立 change。
