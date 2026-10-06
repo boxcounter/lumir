@@ -34,14 +34,29 @@ openspec archive（并入 living spec） ◄── Alex 确认 ◄────�
 |---|---|---|---|
 | `proposal.md` | 是 | 提案阶段 | [templates/proposal.md](templates/proposal.md) |
 | `tasks.md` | 是 | 提案阶段（可随实现细化） | [templates/tasks.md](templates/tasks.md) |
-| `design.md` | 技术复杂时 | 提案阶段 | — |
+| `design.md` | 技术复杂时；**有原型时必填**，且须含「视觉保真」一节（见下） | 提案阶段 | — |
 | `specs/<capability>/spec.md` | 是 | 提案阶段起草，实现期可修订 | 见下方 spec 增量约定 |
 
 spec 增量（delta）约定：change 目录下的 `specs/<capability>/spec.md` 只写增量操作——`## ADDED Requirements` / `## MODIFIED Requirements` / `## REMOVED Requirements` / `## RENAMED Requirements`。每个 requirement 用 `### Requirement: <名称>` 起头，正文含 `SHALL`/`MUST`，且至少一个 `#### Scenario:`。archive 时这些增量并入 `openspec/specs/<capability>/spec.md` 成为 living spec。
 
+## 有原型时的设计合同：视觉保真必填（2026-10-06）
+
+凡有原型的 change——`design/prototypes/` 下的原型、Alex 过目定稿的原型截图、或提案期以屏幕形态定下的方向——`design.md` 的合同**必须含「视觉保真」一节**，逐屏（或逐表面）列出可直接对账的视觉口径：
+
+- **布局节奏**：各区域的比例、间距、对齐锚点（如 pane 1:2、段落间距、标签段与分隔条的像素对齐关系）。
+- **卡片 / 气泡样式**：边框、圆角、底色、阴影、强调条的宽窄与颜色族。
+- **字层级**：标题 / 正文 / meta 行各取哪一档字号、字重、行高、字族。
+- **各状态样式**：hover / focus / 处理中 / 空态 / 高用量等状态的差异（颜色、动效、退让）。
+
+**禁止只写「沿用既有设计系统」打发视觉层**：这句话对实现者不构成可执行口径、对 reviewer 不构成可判据——合同只写了行为，视觉层就落进无人负责的真空，实现照合同把行为做对、形态走样，评审按合同核验也抓不到（现场：harness pane，2026-10-06，Alex「粗糙、美观度为零」）。失效点在起草期：worker / reviewer 进场前合同已定稿，补记在别处都晚一步。
+
+验收口径按**观感一致**而非逐像素：原型若是独立 HTML，其字体度量、数据内容都与产品不同，逐像素在技术上不可达、追求它只会逼出假对齐。核对用**并排截图对照**（原型截图 vs 实现截图），不追求像素相等。
+
+原型已退役（`design/prototypes/` 目录随实现落地删除）而屏位原文仍有用的，从 git 历史提取——`git show <退役提交>^:<原型路径>`——把屏位要点落进本节（先例：`openspec/changes/move-harness-to-pane-chat-frame/design.md` §9「屏位设计合同附节」，从 `4e011d6^:design/prototypes/phase2-harness-chat/` 提取）。手感 / 审美类（拖拽节奏、动效曲线）显式标注「归 Alex 手感裁决，不进机器判据」，不留含糊。
+
 ## AI agent 的操作指令
 
-1. **起草**：在 `openspec/changes/<change-id>/` 下创建制品。change-id 用 kebab-case 动词短语（如 `add-perf-measurement-methodology`）。复制 `docs/process/templates/` 下的模板。
+1. **起草**：在 `openspec/changes/<change-id>/` 下创建制品。change-id 用 kebab-case 动词短语（如 `add-perf-measurement-methodology`）。复制 `docs/process/templates/` 下的模板。有原型的 change，`design.md` 还须含「视觉保真」一节（见上）。
 2. **自验**：`npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` 必须通过；CI 会重复此校验。
 3. **提案 PR**：提交并在 PR 描述中 @ Alex 请求节点 1 评审。未通过则按批注修订，保持 change 不进入实现。
 4. **实现**：按 `tasks.md` 逐项实现并勾选（`- [x]`）。发现 proposal 意图需要变更时，停下：更新 proposal 并重新走节点 1，不静默扩 scope。
