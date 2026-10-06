@@ -31,7 +31,8 @@ pub struct PanelMessage {
     /// 工具名（tool 消息）。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
-    /// 工具执行状态（如 done / denied / rejected / error）。
+    /// 执行状态：tool 消息的工具终态（done / denied / rejected / error）；
+    /// assistant 消息的中断标注（"stopped" = 本轮被用户停止，面板 D383 徽标的数据源，M348）。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub status: Option<String>,
 }
