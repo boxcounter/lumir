@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "responses": [
+    {
+      "text": "COPY-PROBE 这段正文应当原样进入剪贴板。",
+      "usage": { "input_tokens": 1200, "cached_tokens": 300, "output_tokens": 20 }
+    }
+  ]
+}

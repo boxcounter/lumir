@@ -28,11 +28,13 @@ steps:
     do: sleep
     ms: 1200
 
-  - name: ⌘⇧A 唤起面板（首次发送才建会话——Skill 发现发生在会话建立与本轮工具解析时）
+  - name: ⌘⇧A 打开 harness pane（旁侧分栏；首次发送才建会话——Skill 发现发生在会话建立与本轮工具解析时）
     do: keys
     keys: ["cmd+shift+a"]
     expect:
-      - label: 面板出现
+      - label: harness 以旁侧 pane 出现（D368 分隔条在位）
+        ax: { has: "分隔条" }
+      - label: pane 里的面板在位
         ax: { has: "/AXButton \\(发送\\)/" }
 
   - name: 输入提问并 Enter 发送

@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "responses": [
+    {
+      "text": "用量越线回答。",
+      "usage": { "input_tokens": 118000, "cached_tokens": 59000, "output_tokens": 10 }
+    }
+  ]
+}

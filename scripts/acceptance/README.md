@@ -118,6 +118,10 @@ steps:
 （camelCase 键名映射到配置文件的 snake_case）。`fixture` 写 `$fixtures/...` 只读引用套件 fixtures
 目录（见下文「占位符」），mock provider 场景（70–77）是样例。
 
+> 模型 chip 的选项表**无法**用场景配置收窄：`config_get` 回的是 Rust 侧 `HarnessProviders`
+> 结构体（`kimi` / `deepseek` / `mock` 三个字段恒序列化），因此 chip 浮层在真机上恒列三档——
+> 想只配一档造场景是造不出来的（见「已知边界」里 chip 浮层不进 AX 树那条）。
+
 ### 语言面（M284）
 
 界面语言（`[ui] language`）**由套件钉住**，不跟随产品的出厂默认：
@@ -152,7 +156,7 @@ steps:
 |---|---|---|
 | `seed.registry[]` | `{ id, path, lastOpenedAt?, missingSince?, archivedAt? }` | `<隔离配置>/lumir/vault-registry/<id>.json`（一条一个文件，与 Rust 侧注册表同形） |
 | `seed.legacyRegistry[]` | 同上 | `<隔离配置>/lumir/workspaces/<id>.json`（**旧名**目录，M248）：只服务迁移场景 48，用来构造「更名落地之前」的现场；app 启动时把它整个搬进 `vault-registry/` |
-| `seed.sessions{}` | `{ <id>: { tabs: [...], active } }` | `<隔离配置>/lumir/vault-sessions/<id>.json` |
+| `seed.sessions{}` | v1：`{ <id>: { tabs: [...], active } }`；v2（`panes` 给了）：`{ <id>: { panes: [{ tabs, active }], ratio?, harnessPane? } }` | `<隔离配置>/lumir/vault-sessions/<id>.json`。`harnessPane: true`（M349）预置「harness 面板在场」的 v2 会话（ADR 0008 Decision 6 的 `harness_pane` 位，恢复时重新装配面板、内容不持久化）——场景 91 是样例 |
 | `seed.bulkVault` | `true` 或 `{ markdown?, files?, dirs?, mdBytes?, maxMdBytes?, ignoredMd?, ignoredDirs?, lazyDirs? }` | **生成**到验收 vault（`$vault`）里（M283）：复刻真实 vault 的 scan-visible 形状——默认 `2142` 文件 / `426` 目录 / `1341` 个 md / ≈`7MB`、行长正常（约 78 字符/行，含标题与 wikilink）、根下带一个 `node_modules`（验证内置规则忽略生效）。前六个参数与 Rust 侧读数 harness（`src-tauri/tests/vault_open_readings.rs`）同形状，**改形状时两边一起改** |
 | ↑ 的两类忽略探针（M296，change `vault-open-ignore-set`） | `ignoredDirs: { <根下目录名>: <md 条数> }`（内置规则的构建产物族）；`lazyDirs: { gitignore: [...], gitignoreNegations: [...], exclude: [...] }`（用户规则：写根 `.gitignore` / 根 `.git/info/exclude`，各目录带一个 `tutorial.md`，正文含 marker「本地教程正文」） | 只服务**可见性判据**（场景 67），不参与任何读数口径，因此**只在 JS 侧**——Rust 读数 harness 不生成它们。探针一律落在 vault **根**下：树的默认态才断得到「这一行在不在」（`ignoredDirs` 命中内置规则 ⇒ 不可见；`lazyDirs` 命中用户规则 ⇒ **行在树里**、展开才枚举）。默认不生成，既有调用方（如场景 60 的 `bulkVault: {}`）逐字节不变 |
 
@@ -375,9 +379,9 @@ Alex 抽审路径：先看 `summary.md`，再进 FAIL 场景看 `steps.md` + `sh
   第 11 条）。
 - **原生剪贴板命令（⌘C / ⌘V）在真机通道不落地（M345 实测，2026-10-06）**：`⌘C` 与 `⌘V` 是
   WKWebView 的原生命令（`src/keys.ts` 里没有它们，因此不经 DOM 的 keydown 链路），KimiCU 的
-  `press_key` 注入在这台机器上**产不出它们的副作用**——M345 场景 86 实测两轮：先经 app 自己的
-  `block.copy` 命令把含字面 `<quote>` 的文本写进系统剪贴板（`clipboard` 断言逐字读到了它，见
-  `test-results/acceptance/2026-10-06/86-quote-card-paste-sanitize/steps.md`），随后在**已聚焦**
+  `press_key` 注入在这台机器上**产不出它们的副作用**——M345 的一次真机探针（**未入库**，现场
+  `test-results/acceptance/2026-10-06/86-quote-card-paste-sanitize/steps.md`）实测两轮：先经 app 自己的
+  `block.copy` 命令把含字面 `<quote>` 的文本写进系统剪贴板（`clipboard` 断言逐字读到了它），随后在**已聚焦**
   （AX 标 `(focused)`）的 composer 上发 `⌘V`：composer 仍停在占位文案、编辑器正文逐字未变，
   即**粘贴事件从未到达 DOM**。同批对照：`⌘Z`（编辑器撤销）与 `⌘J`（app 命令）都照常落地——
   不落地的是**原生剪贴板那一类**。**因此「粘贴」这条行为当前无法在真机上写场景**（合成不出
@@ -385,6 +389,18 @@ Alex 抽审路径：先看 `summary.md`，再进 FAIL 场景看 `steps.md` + `sh
   `tests/visual/scenes/m345-quote-card.spec.ts` 直接派发带 `text/html` + `text/plain` 的
   `paste` 事件，断言只取纯文本面。同理，任何依赖 `⌘C` 读回选区文本的真机判据都不可靠
   （场景 64 只把它当**记录**、不写断言，原委见那条场景的「已知边界」）。
+- **嵌在 `<button>` 里的浮层不进 AX 树（M349 实测，2026-10-06）**：模型 chip 的 provider 浮层
+  （`.lumir-hp-modelpop`）是 chip `<button>` 的**子节点**（`position: absolute` 的包含块需要它
+  锚在 chip 内），而 WKWebView 的 AX 树把嵌在 button 内的 button 当**叶子**——浮层项在 AX 里
+  一个都不出现。现场：场景 90 首跑（`test-results/acceptance/2026-10-06/90-harness-model-chip/`）
+  截图里浮层清楚可见（`kimi` / `deepseek` / `mock` + 当前标记），同一时刻的 AX dump 里 chip 节点
+  `AXButton (模型：mock（点击切换）)` **零子节点**、`deepseek` 全树零命中。对照：ctx ⓘ 气泡
+  （`.lumir-hp-ctxpop`）嵌在 span 里，AX 树照常暴露（场景 87 读得到气泡全文）⇒ 归因是
+  「嵌在 button 内」，不是浮层本身。**处置**：「点浮层项 → 写回」这类判据不落真机（写不出可点
+  节点），归视觉层 `tests/visual/scenes/m347-harness-composer.spec.ts`（DOM 通道 + 写回参数逐字）；
+  真机侧只判 chip 读数与浮层渲染（截图）。会话名下拉浮层（`.lumir-hp-sesspop`）是同一结构，
+  同样不可按 AX 点——**不写依赖它点选项的真机场景**。注意 `has "当前"` 会**假过**（空态提示
+  「与当前文档对话」也含该串），别拿它判浮层在场。
 - **清理实例只认「自己起的那个进程组」，禁止用模式匹配 `pkill`**（2026-09-18 M164 的教训，实测代价：
   误伤了用户手头那份 dogfood 实例）：`pkill -f "target/debug/lumir"` 这类按**二进制路径**匹配的模式会连带
   命中用户的实例——同一个二进制路径，只有进程组不同（M164 实测：Alex 的 1420 会话连同它的 vite dev server

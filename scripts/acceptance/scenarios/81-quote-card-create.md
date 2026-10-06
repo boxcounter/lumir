@@ -1,7 +1,7 @@
 ---
 id: "81-quote-card-create"
 item: 81
-title: 摘录卡片 ① 选区 → 浮动钮 → 卡片入 composer（面板未开先开）
+title: 摘录卡片 ① 选区 → 浮动钮 → 卡片入 composer（harness pane 未开先开）
 open: harness-quote.md
 marker: "QALPHA"
 config:
@@ -24,16 +24,18 @@ steps:
     do: keys
     keys: ["ctrl+shift+n"]
     expect:
-      - label: 浮动「摘录到对话」钮在场（此刻 harness 面板还没打开）
+      - label: 浮动「摘录到对话」钮在场（此刻 harness pane 还没打开）
         ax: { has: "摘录到对话" }
-      - label: 面板此刻是收起的（正观测：本步确实是「未开先开」的前置）
+      - label: harness pane 此刻是收起的（正观测：本步确实是「未开先开」的前置）
         ax: { not: "/AXButton \\(发送\\)/" }
       - shot: 01-浮动钮
 
-  - name: 点浮动钮 → 面板自动打开、卡片入 composer
+  - name: 点浮动钮 → harness pane 自动分栏、卡片入 composer
     do: click
     target: { role: AXButton, name: "摘录到对话" }
     expect:
+      - label: harness pane 自动分栏打开（D368 分隔条在位）
+        ax: { has: "分隔条" }
       - label: 面板已自动打开（发送钮是在场正观测）
         ax: { has: "/AXButton \\(发送\\)/" }
       - label: composer 内的卡片带出处行（文档名 · 最近一级标题）
@@ -60,8 +62,9 @@ steps:
 # 摘录卡片 ① 选区 → 浮动钮 → 卡片入 composer
 
 spec 判据（change add-harness-quote-cards 的「摘录引用卡片」与「混排对话输入区」）：
-在编辑器 pane 选中片段 → 选区右下浮现「摘录到对话」浮动钮（文案 D370）→ 点击后 harness 面板
-**未开先开**、选段以 block 级引用卡片进入 composer。卡片出处行 = 文档名 · 最近一级标题
+在编辑器 pane 选中片段 → 选区右下浮现「摘录到对话」浮动钮（文案 D370）→ 点击后 harness pane
+**未开先开**（自动分栏，旁侧 pane；M346 起取代原 dock 列）、选段以 block 级引用卡片进入 composer。
+卡片出处行 = 文档名 · 最近一级标题
 （裁决点 7 的最近一级标题语义）；卡片按原子块整体作用，可被移除。
 
 ## × 移除钮的来历（M343 的模块装缺陷，本场景首次抓到）

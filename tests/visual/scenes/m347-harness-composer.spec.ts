@@ -44,6 +44,12 @@ async function stubHarnessComposer(page: Page): Promise<void> {
         w.__sentMessages.push({ message: args.message });
         return null;
       }
+      // 停止路径（面板自 M348 起把默认停止钩子接成真实的 harnessAbort）：桩里**成功返回、
+      // 不发终态事件**——相位因此停在 stopping（这正是本用例要判的子态；不拦这条会走
+      // origInvoke 抛 unknown_command，钩子的 catch 立刻 finished 收口回 idle，断言必红）。
+      if (cmd === "harness_abort") {
+        return null;
+      }
       // harness_state：通用 stub 不认识这条命令（走 origInvoke 会抛 unknown_command），
       // 在链条最前拦截——零态桩与 Rust StateSnapshot::empty 同形（同 m303）。
       if (cmd === "harness_state") {

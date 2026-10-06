@@ -429,11 +429,14 @@ export async function writeLegacyRegistryEntry(entry) {
  *   - **v1**（缺省）：`tabs` 是 vault 相对路径的有序列表、`active` 是激活项（单 pane 形态，
  *     与 M318 之前一致）。
  *  非法 `active` 一律按「退化到第一个可打开标签」处理（`vault_session::sanitize` 同口径）。 */
-export async function writeSession({ id, tabs, active = null, panes = null, ratio = null }) {
+export async function writeSession({ id, tabs, active = null, panes = null, ratio = null, harnessPane = false }) {
   if (!ID_RE.test(id ?? "")) throw new CuError(`会话 id 非法：${JSON.stringify(id)}（只允许字母数字与 -_）`);
   const dir = await mkdirp(path.join(envHome(), "lumir", "vault-sessions"));
+  // `harness_pane`（M349）：v2 会话里记「harness 面板在场」的持久位（ADR 0008 Decision 6 的
+  // Phase 2 消费位）。恢复时它决定旁侧 pane 是否重新装配成 harness（会话内容不持久化，恢复出
+  // 空会话）。旧版 v2 文件无此字段时 Rust 读取侧按 false——这里缺省同为 false。
   const payload = panes
-    ? { version: 2, panes, harness_pane: false, pane_split_ratio: ratio ?? 0.5, updated_at: Date.now() }
+    ? { version: 2, panes, harness_pane: Boolean(harnessPane), pane_split_ratio: ratio ?? 0.5, updated_at: Date.now() }
     : { version: 1, tabs, active, updated_at: Date.now() };
   await writeFile(path.join(dir, `${id}.json`), `${JSON.stringify(payload, null, 2)}\n`);
   return payload;
@@ -493,6 +496,7 @@ export async function prepareSeed(seed) {
         active: s?.active ?? null,
         panes: s?.panes ?? null,
         ratio: s?.ratio ?? null,
+        harnessPane: s?.harnessPane ?? false,
       }),
     );
   }
