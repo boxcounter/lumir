@@ -42,11 +42,13 @@ steps:
         ax: { has: "/AXTextArea = \"Q[A-Z]+ (甲|乙|丙)段/" }
       - label: chip 走「仅路径」形态（消息携带卡片时跳过视口注入）
         ax: { has: "上下文：harness-quote.md" }
+      - label: 卡片带 × 移除钮（composer 形态；读屏名 D371）
+        ax: { has: "/AXButton \\(移除摘录\\)/" }
       - shot: 02-卡片入composer
 
-  - name: 段首退格移除卡片（插入后光标正落在卡片下一行的段首，退格按「卡片整体作用」移除它）
-    do: keys
-    keys: ["backspace"]
+  - name: 点 × 移除钮（卡片按整体作用移除）
+    do: click
+    target: { role: AXButton, name: "移除摘录" }
     expect:
       - label: 卡片被整体移除（出处行从 composer 消失）
         ax: { not: "harness-quote.md · 摘录卡片验收" }
@@ -62,15 +64,14 @@ spec 判据（change add-harness-quote-cards 的「摘录引用卡片」与「�
 **未开先开**、选段以 block 级引用卡片进入 composer。卡片出处行 = 文档名 · 最近一级标题
 （裁决点 7 的最近一级标题语义）；卡片按原子块整体作用，可被移除。
 
-## 已知缺口：× 移除钮当前不在 DOM（产品 bug，已登记）
+## × 移除钮的来历（M343 的模块装缺陷，本场景首次抓到）
 
-spec / design 要求 composer 内的卡片带 × 移除钮（读屏名 D371），但 M344 之后真机实测：卡片
-DOM 里**没有**这个按钮——`src/harness-panel.ts:966` 的 `createCardEl` 创建了 `.lumir-hp-qc-x`
-（文案 / 样式 / 点击处理器齐全）却漏了把它挂到卡片元素上，因此 AX 树与截图上都找不到它。
-本场景因此**不**断言 × 路径（断言会红且不是场景问题），改用可达的**段首退格**移除卡片——
-插入后光标正落在卡片下一行的段首，退格按「卡片整体作用」移除它（模型层 `removeBlockAt` 正常）。
-× 路径待 `src/harness-panel.ts` 补上挂载后在本场景加回断言。bug 现场见 finding
-`20261006-worker-qc4-bug-composer-dom-createcardel-append.md`。
+本场景第一版就断言了 × 移除钮，当场判红：`src/harness-panel.ts` 的 `createCardEl` 创建了
+`.lumir-hp-qc-x`（文案 / 样式 / 点击处理器齐全）却漏了把它挂到卡片元素上，因此 AX 树与截图
+上都找不到它——而 M343 的模型层单测（`removeBlockAt`）全绿，模块装的缺陷无人拦。
+修法是一行 `el.append(remove)`（finding `20261006-worker-qc4-bug-composer-dom-createcardel-append.md`）；
+DOM 侧另加一道防线在 `tests/visual/scenes/m345-quote-card.spec.ts`（结构在场 + 点击移除卡片），
+本场景则验真机行为：× 在场（读屏名 D371）→ 点击 → 卡片消失、chip 回到视口形态。
 
 ## 判据为什么这样写
 

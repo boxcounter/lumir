@@ -16,10 +16,10 @@ import { stubTauri, type VaultFixture } from "./tauri-stub";
 // 行为层（发送、序列化、失锚降级）不在这里——归验收套件场景 81–86（真机 WKWebView + mock
 // provider）；这里只钉结构、像素候选与瞬态纪律。
 //
-// **已知缺口**：composer 卡片的 × 移除钮当前不在 DOM（`src/harness-panel.ts` 的 createCardEl
-// 漏了 append，见 finding `20261006-worker-qc4-bug-composer-dom-createcardel-append.md`）。
-// 修好后这里应补一条 `.lumir-hp-qcard .lumir-hp-qc-x` 的结构断言；本文件暂不写，免得把
-// 视觉门禁钉在一条已知缺陷上。
+// **DOM 装配必须被断言**（M343 的教训）：composer 卡片的 × 移除钮曾在 `createCardEl` 里被创建
+// 却漏了 append，而模型层（removeBlockAt）单测全绿——模块装的缺陷只能由 DOM 侧判据挡住。
+// 本文件的两条 × 判据（结构在场 + 点击移除卡片）就是那道防线，见 finding
+// `20261006-worker-qc4-bug-composer-dom-createcardel-append.md`。
 
 const DOC = [
   "# 摘录卡片基线",
@@ -128,6 +128,26 @@ test("点浮动钮：面板未开先开、卡片入 composer、光标落卡片�
 
   // 整页基线候选：面板展开 + 卡片在 composer 里的全表面（dock 列宽、被挤压的编辑区）。
   await expectScreenshot(page, "m345-harness-quote-card.png");
+});
+
+test("× 移除钮：DOM 装配完整、点击移除整张卡片", async ({ page }) => {
+  await openDoc(page);
+  await selectQuotedLine(page);
+  await page.locator(".quote-gesture-btn").click();
+
+  const card = page.locator(".lumir-hp-composer > .lumir-hp-qcard");
+  await expect(card).toHaveCount(1);
+
+  // 结构判据（M343 的模块装缺陷就出在这里：按钮创建了却没 append）。
+  const remove = card.locator(".lumir-hp-qc-x");
+  await expect(remove, "composer 卡片必须挂出 × 移除钮（读屏名 D371）").toHaveCount(1);
+  await expect(remove).toHaveAttribute("aria-label", "移除摘录");
+  await expect(remove).toHaveText("×");
+
+  // 行为判据：点击按「卡片整体作用」移除，composer 回落到一个空段落。
+  await remove.click();
+  await expect(card).toHaveCount(0);
+  await expect(page.locator(".lumir-hp-composer > .lumir-hp-qpara")).toHaveCount(1);
 });
 
 test("粘贴净化：带 text/html 的粘贴只落纯文本", async ({ page }) => {
