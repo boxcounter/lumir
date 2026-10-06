@@ -26,7 +26,7 @@ steps:
   - name: ⌃⇧N 扩选（卡片 A 的摘录范围）
     do: keys
     keys: ["ctrl+shift+n"]
-  - name: 点浮动钮把摘录 A 做成卡片（面板此时关闭，自动打开）
+  - name: 点浮动钮把摘录 A 做成卡片（harness pane 此时关闭，自动分栏打开）
     do: click
     target: { role: AXButton, name: "摘录到对话" }
     expect:

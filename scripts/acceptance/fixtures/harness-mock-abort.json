@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "responses": [
+    {
+      "text": "ABORT-KEEP 这段产出应当保留。",
+      "chunks": ["ABORT-KEEP 这段", "产出应当保留。"],
+      "usage": { "input_tokens": 1200, "cached_tokens": 300, "output_tokens": 20 },
+      "delay_ms": 12000
+    }
+  ]
+}
