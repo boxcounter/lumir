@@ -2298,6 +2298,14 @@ R1，而会话基准已到 R2。
 的保存被误判成外部修改 ⇒ 弹 sticky 提示（带破坏性动作「重载（放弃我的修改）」）」这条**会误导用户**的
 路径；判据与回归见 `tests/unit/save-controller.test.ts` 的「读在途期间完成的那次保存也算进来」。
 
+**tool-only 轮次中断后「空气泡 + 已停止徽标」的实时/恢复路径不一致**（low，纯观感；M348 r1 评审
+P2-2，2026-10-06）：无文本产出的轮次（assistant 只发工具调用）在工具执行段被中断时，实时路径不挂
+「已停止」徽标（合理——没有气泡可挂），但既有的空文本 assistant 空气泡会被
+`mark_last_assistant_stopped` 标上 status=stopped，重载（快照恢复路径）后出现「空气泡 + 已停止
+徽标」。两路径对同一条记录呈现不一致，纯观感噪声，无数据问题。修法方向：实时路径对空文本产出也补
+徽标，或恢复路径对空文本不渲染徽标，二选一拉齐。来源：reviewer-hp3 r1，
+`.tower/comms/reviews/review-feat-rust-turn-abort-capability-hp3-reviewer-hp3-r1.md`。
+
 ## 工具链与环境（待 Alex 裁决）
 
 1. **1420 端口串行**：vite dev server 固定 `127.0.0.1:1420` 且 strictPort，全机同一时刻只能有一个
