@@ -373,6 +373,18 @@ Alex 抽审路径：先看 `summary.md`，再进 FAIL 场景看 `steps.md` + `sh
   **两类共通的纪律**：键盘类场景的**负向断言**必须配一条同通道可达的**正观测**（同一场景里先有一次
   成功的注入证明通道通着，再判「没变」）；红了先按丢键复跑一次再判产品缺陷（丢键是间歇的，REVIEW.md
   第 11 条）。
+- **原生剪贴板命令（⌘C / ⌘V）在真机通道不落地（M345 实测，2026-10-06）**：`⌘C` 与 `⌘V` 是
+  WKWebView 的原生命令（`src/keys.ts` 里没有它们，因此不经 DOM 的 keydown 链路），KimiCU 的
+  `press_key` 注入在这台机器上**产不出它们的副作用**——M345 场景 86 实测两轮：先经 app 自己的
+  `block.copy` 命令把含字面 `<quote>` 的文本写进系统剪贴板（`clipboard` 断言逐字读到了它，见
+  `test-results/acceptance/2026-10-06/86-quote-card-paste-sanitize/steps.md`），随后在**已聚焦**
+  （AX 标 `(focused)`）的 composer 上发 `⌘V`：composer 仍停在占位文案、编辑器正文逐字未变，
+  即**粘贴事件从未到达 DOM**。同批对照：`⌘Z`（编辑器撤销）与 `⌘J`（app 命令）都照常落地——
+  不落地的是**原生剪贴板那一类**。**因此「粘贴」这条行为当前无法在真机上写场景**（合成不出
+  富剪贴板、也唤不起原生 paste）；粘贴净化（quirk ①）的判据落在 chromium 侧：视觉场景
+  `tests/visual/scenes/m345-quote-card.spec.ts` 直接派发带 `text/html` + `text/plain` 的
+  `paste` 事件，断言只取纯文本面。同理，任何依赖 `⌘C` 读回选区文本的真机判据都不可靠
+  （场景 64 只把它当**记录**、不写断言，原委见那条场景的「已知边界」）。
 - **清理实例只认「自己起的那个进程组」，禁止用模式匹配 `pkill`**（2026-09-18 M164 的教训，实测代价：
   误伤了用户手头那份 dogfood 实例）：`pkill -f "target/debug/lumir"` 这类按**二进制路径**匹配的模式会连带
   命中用户的实例——同一个二进制路径，只有进程组不同（M164 实测：Alex 的 1420 会话连同它的 vite dev server
