@@ -722,11 +722,16 @@ const COPY_TABLE = {
     zh: "上下文：无（未打开文件）",
     en: "Context: none (no file open)",
   },
-  // 用量条是读数不是措辞（与 D317 的语言档同口径）：两列同形。
+  // ctx 读数（composer 控制行，M347）：读数不是措辞（与 D317 的语言档同口径），两列同形。
+  // M347 改形（编号沿用）：读数随用量条迁入 composer 控制行（模型 chip 之后、发送钮之前），
+  // 收缩为 ctx% 单读数；cache% 在头部栏（M346/HP1）退场后已无消费点，模板同列移除。
   D334: {
-    zh: "ctx {ctx}% · cache {cache}%",
-    en: "ctx {ctx}% · cache {cache}%",
+    zh: "ctx {ctx}%",
+    en: "ctx {ctx}%",
   },
+  // ctx ⓘ 气泡（M347 改形，编号沿用）：常驻警示条改为 ⓘ 钮按需气泡（Alex 2026-10-06 裁决
+  // 「（常驻句）一直显示在那里很抢注意力」）；越过警示阈值（[harness].warn_ctx_pct，缺省 85）
+  // 时 ⓘ 钮才出现，气泡内容如实说后果（自动压缩），不提供「清理」动作（design §11）。
   D335: {
     zh: "上下文已用 {ctx}%，越过 {warn}% 警示线——继续对话将自动压缩续聊",
     en: "Context usage {ctx}% is past the {warn}% warning line — further turns will be auto-compacted",
@@ -854,6 +859,50 @@ const COPY_TABLE = {
   D375: {
     zh: "对话会话",
     en: "Chat session",
+  },
+
+  // -------------------------------------------------------------------------
+  // composer 控制行 + 复制 + 进度（D376–D382，M347）：模型 chip / ctx 读数（D334 改形）/
+  // ⓘ 气泡（D335 改形）/ 发送钮两态 / 消息复制 / 不定态进度条阶段指示的全部新可见文案。
+  // 消费点全部在 src/harness-panel.ts；D98（当前）复用为 provider 浮层的当前项标记。
+  // -------------------------------------------------------------------------
+  // 模型 chip 悬停提示 / 读屏名：可见文本是 provider 名本身（配置值即读数、不译文，
+  // 同 D122 / D317 / D334 口径）；控制行空间紧（原型实测约 346px），chip 一律 ellipsis。
+  D376: {
+    zh: "模型：{model}（点击切换）",
+    en: "Model: {model} (click to switch)",
+  },
+  // ctx ⓘ 钮读屏名：纯图标钮，只在读数越过警示阈值时出现（未越线时界面上没有它）。
+  D377: {
+    zh: "上下文用量说明",
+    en: "Context usage info",
+  },
+  // 发送钮处理中态（两态的另一档；空闲档 = D329）。停止点击走停止钩子（M347 定义前端
+  // 钩子与状态机，Rust abort 由后续 mission 接通）；连点幂等（stopping 子态挡第二次）。
+  D378: {
+    zh: "停止",
+    en: "Stop",
+  },
+  // 消息复制钮读屏名：复制源 = Markdown 源文本（agent = 模型原始输出、用户 = 发送前
+  // 原始输入），非渲染后 HTML。
+  D379: {
+    zh: "复制消息",
+    en: "Copy message",
+  },
+  // 复制成功就地反馈：钮面短暂替换、约 1.5s 消退（不经 toast 系统——✓ 前缀因此写在串内，
+  // ok 族 tone 与 D137 / D154 同口径）。
+  D380: {
+    zh: "✓ 已复制",
+    en: "✓ Copied",
+  },
+  // 不定态进度条的阶段指示行两档（处理中态才与进度条同现同隐）。
+  D381: {
+    zh: "等待响应…",
+    en: "Waiting for a response…",
+  },
+  D382: {
+    zh: "正在生成回复…",
+    en: "Generating a reply…",
   },
 } satisfies Record<string, CopyEntry>;
 

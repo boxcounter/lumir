@@ -6,8 +6,10 @@
 // （网格第三列 / .dock-open）随本 change 移除。面板不再有头部栏：会话身份（名下拉）与
 // 新建会话钮上移进标题栏的 harness 段（.lumir-hp-seg，仅 harness 在场时出现，宽度由装配层
 // 按 pane 比分宽、与分隔条像素对齐）；ctx% 读数与常驻警示句随头部栏移除（读数迁入 composer
-// 控制行是后续 mission 的面）。标题栏 toggle 钮仍由本模块自建，钉标题栏右端（产品标识块
-// 已移位 traffic 灯区）；双 pane 时隐藏（退让条款），⌘⇧A 照走。
+// 控制行是后续 mission 的面——M347 已迁入：控制行 = [模型 chip][composer][ctx 读数 + ⓘ][发送钮]，
+// 超阈值读数高亮 + ⓘ 按需气泡，常驻警示句按 Alex 2026-10-06 裁决移除；发送钮两态
+// idle=发送 / 处理中=停止，停止钩子为 M348 对接面的明确桩）。标题栏 toggle 钮仍由本模块自建，
+// 钉标题栏右端（产品标识块已移位 traffic 灯区）；双 pane 时隐藏（退让条款），⌘⇧A 照走。
 //
 // 开合语义：面板的开/关 = harness pane 的分/收，是**装配层**动作（账本 + DOM 槽 + 焦点
 // 移交）——本模块经 deps.togglePane 把 toggle 钮 / Escape / ⌘⇧A 的路由交回装配层，
@@ -33,14 +35,18 @@
 //     done 到达后对完整源做一次全量重渲（增量渲染在「跨空行的松散列表」这类形态上是
 //     近似，全量重渲是收敛点——近似只存在于流式期间）。
 //
-// 文案：全部取值经 src/copy.ts 的 t()（D326–D330 / D332–D348 / D375）；长驻元素（toggle
-// 钮 / harness 段 / 输入框 placeholder / 按钮 / 上下文 chip / 待决批准项）注册 onRelabel，
+// 文案：全部取值经 src/copy.ts 的 t()（D326–D330 / D332–D348 / D375–D382，D334 / D335 于
+// M347 改形、D98 复用为 provider 浮层当前项标记）；长驻元素（toggle 钮 / harness 段 / 输入框
+// placeholder / 按钮 / 上下文 chip / ctx 读数 / 模型 chip / 待决批准项）注册 onRelabel，
 // 语言切换时从已存状态重渲（design §5.2 的不变量）；transcript 的历史条目是已发生事实的记
-// 录，不随语言切换改写（与 toast 历史同口径）。
+// 录，不随语言切换改写（与 toast 历史同口径）——复制钮的 ✓ 反馈与 provider 浮层是交互件
+//（前者每次点击现取、后者每次打开现建），天然跟当前语言走。
 
 import { GFM, parser as commonmarkParser } from "@lezer/markdown";
 import { onRelabel, t } from "./copy";
 import {
+  configGet,
+  configSetValue,
   errorMessage,
   harnessApprove,
   harnessNewSession,
@@ -105,6 +111,14 @@ export interface HarnessPanelHandle {
    *  内的卡片点击（× 钮除外）都经它；未注册时点击无操作。失锚三层降级链与跳回高亮由 QC3 实现。
    */
   setQuoteJumpHandler(handler: ((card: QuoteCard) => void) | null): void;
+  /**
+   * 注册「停止」处理器（M347 定义的 M348 对接面）：处理中点击发送钮（= 停止态）时调用。
+   *  M347 为明确标注的桩——两态状态机（running → stopping → finished 回 idle）在前端完整
+   *  落地，本钩子未注册时点击停止只走状态机；Rust abort（harness 侧取消）由 M348 接通。
+   *  签名即对接面：无参、同步调用、幂等（stopping 子态挡连点由状态机保证，处理器不会因
+   *  双击收到第二次）。
+   */
+  setStopHandler(handler: (() => void) | null): void;
 }
 
 /**
@@ -538,6 +552,59 @@ export function parseQuoteMessage(text: string): ComposerBlock[] {
 }
 
 // ---------------------------------------------------------------------------
+// composer 控制行的纯模型层（M347）：模型 chip / ctx 读数 / 发送钮两态。
+// 与混排 composer 同一条分层纪律：判据与状态机是纯函数（零 DOM 环境直接驱动，
+// tests/unit/harness-panel-control.test.ts），DOM 只是渲染面。
+// ---------------------------------------------------------------------------
+
+/** 模型 provider 闭集合（与 src/bindings/HarnessProvider.ts 的同值域——ts-rs 生成的联合
+ *  类型只是编译期别名，运行期判定要一份可遍历的表；后端取值校验在 Rust 侧完成）。 */
+export const PROVIDER_IDS = ["kimi", "deepseek", "mock"] as const;
+export type ProviderId = (typeof PROVIDER_IDS)[number];
+
+/**
+ * 模型 chip 的读数与选项（`config.harness` 的宽容提取，配置即数据、缺键不伪造）：
+ * - harness 段缺失 / providers 不是对象 → null（桩环境、旧配置、config_get 失败）——
+ *   调用方隐藏 chip，不显示一个读不到的读数；
+ * - options 只取闭集合内的键（配置里混入的其它键不上屏）；
+ * - current 原样返回（配置值即读数；不在闭集合时 chip 照实显示，浮层仍只列闭集合档）。
+ */
+export function providerSelection(harness: unknown): { current: string; options: ProviderId[] } | null {
+  if (typeof harness !== "object" || harness === null) return null;
+  const providers = (harness as { providers?: unknown }).providers;
+  if (typeof providers !== "object" || providers === null) return null;
+  const options = PROVIDER_IDS.filter((id) => id in (providers as object));
+  const current = (harness as { provider?: unknown }).provider;
+  return { current: typeof current === "string" ? current : "", options };
+}
+
+/** ctx% 读数的高亮判据：越过（≥）警示阈值即高亮。阈值是配置值（`warn_ctx_pct`，缺省 85）；
+ *  边界取高亮侧——读数是压缩行为的前瞻信号，85/85 时下一轮就会触发压缩，按「已越线」呈现。 */
+export function usageOverWarn(ctxPct: number, warnPct: number): boolean {
+  return ctxPct >= warnPct;
+}
+
+/**
+ * 发送钮两态状态机（M347）：idle = 可发送；running = 处理中（钮面 = 停止态，点击走
+ * 停止钩子）；stopping = 停止已请求、等后端终态（连点幂等——第二次 stop-clicked 被吞，
+ * 停止钩子不会重复发出）。终态统一经 finished 收口回 idle（done 与 error 都是
+ * 「这一轮结束了」——事件层已把两者导向同一出口，机器因此不需要区分）。
+ */
+export type SendPhase = "idle" | "running" | "stopping";
+export type SendEvent = { type: "sent" } | { type: "stop-clicked" } | { type: "finished" };
+export function reduceSendPhase(phase: SendPhase, event: SendEvent): SendPhase {
+  switch (event.type) {
+    case "sent":
+      // 忙时重复发送被 busy 协议挡在门外（机器不前移，调用方的相位检查是第一道闸）。
+      return phase === "idle" ? "running" : phase;
+    case "stop-clicked":
+      return phase === "running" ? "stopping" : phase;
+    case "finished":
+      return "idle";
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Markdown → DOM（零 XSS：纯 DOM API + textContent；解析器 = @lezer/markdown 的 GFM 配置）
 // ---------------------------------------------------------------------------
 
@@ -911,8 +978,55 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   const chip = document.createElement("div");
   chip.className = "lumir-hp-chip";
 
+  // ── composer 控制行（M347）：[模型 chip][混排 composer][ctx 读数 + ⓘ][发送钮] ──
+  // 空间紧（原型实测约 346px）：chip 与读数都是小体量只读件，composer 吃剩余弹性宽。
   const composerRow = document.createElement("div");
   composerRow.className = "lumir-hp-composer-row";
+
+  // 模型 chip：可见文本 = provider 名（配置值即读数，不译文）；点击浮层列
+  // [harness].providers 已配置档，选择经 config_set_value 写回、下一轮生效。
+  const modelChip = document.createElement("button");
+  modelChip.type = "button";
+  modelChip.className = "lumir-hp-model";
+  modelChip.hidden = true;
+  const modelName = document.createElement("span");
+  modelName.className = "lumir-hp-model-name";
+  const modelPop = document.createElement("div");
+  modelPop.className = "lumir-hp-modelpop";
+  modelPop.hidden = true;
+  // 浮层锚在 chip 内（absolute 定位的包含块）；读数是独立 span——chip 的文本重写
+  //（applyModelChip）因此不会碰浮层（textContent 赋值会清空子节点，浮层不能当文本的兄弟）。
+  modelChip.append(modelName, modelPop);
+
+  // 不定态进度条 + 阶段指示一行（M347）：只在处理中态可见；无百分比——本轮剩余工作量
+  // 前端不知道。eink 下转明度表达（见 css 的 keyframes 分叉）。
+  const progress = document.createElement("div");
+  progress.className = "lumir-hp-progress";
+  progress.hidden = true;
+  const stageLine = document.createElement("div");
+  stageLine.className = "lumir-hp-stage";
+  const barTrack = document.createElement("div");
+  barTrack.className = "lumir-hp-bar";
+  const barFill = document.createElement("div");
+  barFill.className = "lumir-hp-bar-fill";
+  barTrack.append(barFill);
+  progress.append(stageLine, barTrack);
+
+  // ctx% 读数（M347，自 HP1 退场的头部栏读数迁入）：usage 事件 / 快照同源消费。
+  // 越过警示阈值 → 读数高亮 + ⓘ 钮（点击向上弹气泡，内容 = D335 按需版——常驻警示句已移除）。
+  const ctxWrap = document.createElement("span");
+  ctxWrap.className = "lumir-hp-ctxwrap";
+  const ctxRead = document.createElement("span");
+  ctxRead.className = "lumir-hp-ctx";
+  const ctxInfo = document.createElement("button");
+  ctxInfo.type = "button";
+  ctxInfo.className = "lumir-hp-ctx-info";
+  ctxInfo.hidden = true;
+  ctxInfo.textContent = "ⓘ"; // i18n-exempt: glyph（信息图标图形，非文案）
+  const ctxPop = document.createElement("div");
+  ctxPop.className = "lumir-hp-ctxpop";
+  ctxPop.hidden = true;
+  ctxWrap.append(ctxRead, ctxInfo, ctxPop);
 
   // 混排编辑区（M343，change add-harness-quote-cards design §2/§5）：contenteditable div 取代
   // textarea，全 composer 唯一形态——顶层仅 .lumir-hp-qcard（原子卡片）/ .lumir-hp-qpara
@@ -927,14 +1041,28 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   const sendButton = document.createElement("button");
   sendButton.type = "button";
   sendButton.className = "lumir-hp-send";
-  composerRow.append(composer, sendButton);
+  composerRow.append(modelChip, composer, ctxWrap, sendButton);
 
-  panel.append(transcript, chip, composerRow);
+  panel.append(transcript, chip, progress, composerRow);
 
   // ── 状态 ─────────────────────────────────────────────────────────────────
   /** 面板挂载的 pane 槽（null = 收起/未开）。pane 在场与否由装配层管，面板只记录挂在哪。 */
   let mountEl: HTMLElement | null = null;
-  let busy = false;
+  /** 发送钮两态状态机的当前相位（M347）：idle = 可发送（busy=false 的既有读法），
+   *  running = 处理中（钮面停止态），stopping = 停止已请求、等终态。 */
+  let sendPhase: SendPhase = "idle";
+  let stageWaiting = true; // 阶段指示：首个 text_chunk 到达前 = 「等待响应」，之后 = 「生成中」。
+  /** 停止钩子（M348 对接面，M347 桩期 null——点击停止只走状态机）。 */
+  let stopHandler: (() => void) | null = null;
+  /** ctx% 读数（usage 事件 / 快照同源消费；null = 尚无读数，读数件整体隐藏）。 */
+  let lastUsage: number | null = null;
+  /** 上下文用量警示阈值（快照 warn_ctx_pct，缺省 85——与 Rust 侧 DEFAULT_WARN_CTX_PCT 同值）。 */
+  let warnCtxPct = 85;
+  /** 模型 chip 状态（config_get 宽容提取；modelConfigured = false 时 chip 隐藏——
+   *  桩环境 / 旧配置 / 读取失败不伪造读数）。 */
+  let modelConfigured = false;
+  let modelCurrent = "";
+  let modelOptions: ProviderId[] = [];
   let lastChip: HarnessContextBlock | null | "none" = null;
   /** 当前逻辑会话的首条用户消息原文（会话名口径：截断约 20 字上屏；null = 未发消息，
    *  显示「新会话」）。自动压缩开新逻辑会话后归 null，按同口径重算（design §3）。 */
@@ -1313,9 +1441,12 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     applySessionName();
     composer.dataset.placeholder = t("D328");
     composer.setAttribute("aria-label", t("D328"));
-    sendButton.textContent = t("D329");
     emptyHint.textContent = t("D346");
     applyChip();
+    if (modelConfigured) applyModelChip();
+    applyUsage();
+    // 发送钮 / 阶段指示按当前相位重取文案（running 时钮面是「停止」、进度条阶段行重渲）。
+    applySendPhase(sendPhase);
     // 待决批准项是交互中的 UI（不是历史记录）：随语言重渲按钮与标题，输入框内容保留。
     for (const pending of pendingApprovals.values()) relabelApproval(pending);
   }
@@ -1377,6 +1508,149 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     applyChip();
   }
 
+  // ── composer 控制行（M347）：模型 chip / ctx 读数 / 两态发送钮 ──────────────
+
+  /** 模型 chip 重渲（长驻元素：文本与悬停/读屏名都从已存状态取，relabel 可重跑）。 */
+  function applyModelChip(): void {
+    modelName.textContent = modelCurrent;
+    const label = t("D376", { model: modelCurrent });
+    modelChip.title = label;
+    modelChip.setAttribute("aria-label", label);
+  }
+
+  /** provider 浮层：每次打开现建（数据驱动的档名 + 「当前」标记随当前语言，懒建不囤旧串）。 */
+  function buildModelPop(): void {
+    modelPop.replaceChildren();
+    for (const id of modelOptions) {
+      const item = document.createElement("button");
+      item.type = "button";
+      item.className = "lumir-hp-modelpop-item";
+      const name = document.createElement("span");
+      name.className = "lumir-hp-modelpop-name";
+      name.textContent = id; // provider 名 = 配置值读数，不译文（同 D334 口径）。
+      item.append(name);
+      if (id === modelCurrent) {
+        item.classList.add("is-current");
+        item.setAttribute("aria-checked", "true");
+        const mark = document.createElement("span");
+        mark.className = "lumir-hp-modelpop-cur";
+        mark.textContent = t("D98"); // 「当前」——vault 浮层当前项同词，第三处浮层复用。
+        item.append(mark);
+      }
+      item.addEventListener("click", () => selectProvider(id));
+      modelPop.append(item);
+    }
+  }
+
+  /** 选择 provider：chip 先更新读数（chip = 人侧可见面，模型与用量对人同源同值），
+   *  写回失败则回滚读数——运行期态不与文件态分叉（D123 同口径），并报错误行。 */
+  function selectProvider(id: ProviderId): void {
+    modelPop.hidden = true;
+    if (id === modelCurrent) return;
+    const previous = modelCurrent;
+    modelCurrent = id;
+    applyModelChip();
+    configSetValue("harness", "provider", id).catch((e: unknown) => {
+      modelCurrent = previous;
+      applyModelChip();
+      appendError(t("D348", { message: errorMessage(e) }));
+    });
+  }
+
+  modelChip.addEventListener("click", (event) => {
+    event.stopPropagation();
+    if (modelPop.hidden) buildModelPop();
+    modelPop.hidden = !modelPop.hidden;
+  });
+
+  // 模型 chip 数据装载：config_get 宽容提取（harness 段缺失 → chip 隐藏，不伪造读数）。
+  configGet()
+    .then((snapshot) => {
+      const selection = providerSelection(snapshot.config.harness);
+      if (selection === null) return;
+      modelConfigured = true;
+      modelCurrent = selection.current;
+      modelOptions = selection.options;
+      modelChip.hidden = false;
+      applyModelChip();
+    })
+    .catch(() => {});
+
+  /** ctx% 读数重渲（usage 事件 / 快照 / relabel 的共用出口）。 */
+  function applyUsage(): void {
+    if (lastUsage === null) {
+      ctxWrap.hidden = true;
+      return;
+    }
+    ctxWrap.hidden = false;
+    const ctx = Math.round(lastUsage);
+    const over = usageOverWarn(lastUsage, warnCtxPct);
+    ctxRead.textContent = t("D334", { ctx });
+    ctxRead.classList.toggle("is-warn", over);
+    ctxInfo.hidden = !over;
+    if (!over) ctxPop.hidden = true;
+    else ctxPop.textContent = t("D335", { ctx, warn: Math.round(warnCtxPct) });
+  }
+
+  ctxInfo.addEventListener("click", (event) => {
+    event.stopPropagation();
+    ctxPop.hidden = !ctxPop.hidden;
+  });
+
+  /** 发送钮相位施加：机器算出的每个新相位经这一处落 DOM（文本 / 可点性 / 进度条显隐），
+   *  不第二处写按钮。running = 可点（点击 = 停止）；stopping = 禁用（连点幂等）。 */
+  function applySendPhase(next: SendPhase): void {
+    sendPhase = next;
+    const running = next !== "idle";
+    sendButton.classList.toggle("is-busy", running);
+    sendButton.textContent = running ? t("D378") : t("D329");
+    sendButton.disabled = next === "stopping";
+    progress.hidden = !running;
+    if (running) applyStage();
+  }
+
+  function applyStage(): void {
+    stageLine.textContent = stageWaiting ? t("D381") : t("D382");
+  }
+
+  sendButton.addEventListener("click", () => {
+    if (sendPhase !== "running") return;
+    // 停止路径：状态机先行（running → stopping，挡连点），再调停止钩子——M348 接通 Rust
+    // abort 前，钩子是 null，点击只走状态机直到本轮 finished 回 idle。
+    applySendPhase(reduceSendPhase(sendPhase, { type: "stop-clicked" }));
+    stopHandler?.();
+  });
+
+  /** 消息复制源（单一真源纪律）：渲染时就地把源文本挂到消息元素——agent = 模型原始输出
+   *  （Markdown 源），用户 = 发送前原始输入（序列化文本）；复制只从这里取，复制出的因此
+   *  绝不是渲染后 HTML。 */
+  const copySources = new WeakMap<HTMLElement, string>();
+
+  /** hover 浮现的复制钮：点击写剪贴板，成功把钮面就地换成 ✓ 反馈（约 1.5s 消退，D380）。 */
+  function attachCopyButton(el: HTMLElement, source: string): void {
+    copySources.set(el, source);
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "lumir-hp-copy";
+    btn.setAttribute("aria-label", t("D379"));
+    btn.textContent = "⧉"; // i18n-exempt: glyph（双页复制图标图形，非文案）
+    let revertTimer: number | undefined;
+    btn.addEventListener("click", () => {
+      const text = copySources.get(el);
+      if (text === undefined) return;
+      navigator.clipboard.writeText(text).then(() => {
+        window.clearTimeout(revertTimer);
+        btn.textContent = t("D380");
+        btn.classList.add("is-copied");
+        revertTimer = window.setTimeout(() => {
+          btn.textContent = "⧉"; // i18n-exempt: glyph
+          btn.classList.remove("is-copied");
+        }, 1500);
+      }).catch(() => {}); // 剪贴板不可用：钮面不动，不伪造成功反馈。
+    });
+    el.append(btn);
+  }
+
   // ── transcript 追加 ──────────────────────────────────────────────────────
   function scrollToBottom(): void {
     transcript.scrollTop = transcript.scrollHeight;
@@ -1393,9 +1667,10 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   /**
    * 用户消息同构沉淀（add-harness-quote-cards spec「发送后同构沉淀」）：卡片与问题段落
    * 按交错顺序上下排布，卡片无 ×、可点击跳回（QC3 注册处理器后生效）。空段落不渲染
-   * （序列化也不产出，视觉与数据同形）。
+   * （序列化也不产出，视觉与数据同形）。source = 发送前原始输入（序列化文本）——
+   * 复制钮的源，非渲染后 HTML。
    */
-  function appendUserMessage(blocks: readonly ComposerBlock[]): void {
+  function appendUserMessage(blocks: readonly ComposerBlock[], source: string): void {
     const el = document.createElement("div");
     el.className = "lumir-hp-msg lumir-hp-msg-user";
     for (const block of blocks) {
@@ -1412,6 +1687,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       // 全空消息（理论路径：快照里全是空段落）——沉淀一条空泡，与 Rust 侧留存记录一致。
       el.textContent = "";
     }
+    if (source !== "") attachCopyButton(el, source);
     transcript.append(el);
     syncEmptyHint();
     scrollToBottom();
@@ -1585,22 +1861,19 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     scrollToBottom();
   }
 
-  /** 一轮结束：对完整源做一次全量重渲（增量渲染的近似在松散列表等形态上收敛于此）。 */
+  /** 一轮结束：对完整源做一次全量重渲（增量渲染的近似在松散列表等形态上收敛于此）。
+   *  完成后挂复制钮：源 = 模型原始输出（本轮回收集的完整 Markdown 源文本）。 */
   function finalizeStreamingMessage(): void {
     flushChunks();
     if (streamingEl === null) return;
     streamingEl.replaceChildren();
     renderMarkdownInto(streamingEl, streamingText);
+    attachCopyButton(streamingEl, streamingText);
     streamingEl = null;
     streamingText = "";
     renderedFinalized = 0;
     tailEl = null;
     scrollToBottom();
-  }
-
-  function setBusy(next: boolean): void {
-    busy = next;
-    sendButton.disabled = next;
   }
 
   // ── 事件流 ───────────────────────────────────────────────────────────────
@@ -1611,6 +1884,11 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     switch (event.type) {
       case "text_chunk":
         chunkBuffer += typeof event.text === "string" ? event.text : "";
+        // 阶段指示推进：首个 chunk 到达 = 模型开始生成（「等待响应」→「生成中」）。
+        if (stageWaiting) {
+          stageWaiting = false;
+          if (sendPhase !== "idle") applyStage();
+        }
         scheduleFlush();
         return;
       case "tool_call":
@@ -1626,8 +1904,10 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
         }
         return;
       case "usage":
-        // HP1：用量读数随头部栏退场（常驻警示句一并移除）——事件仍由后端发出，
-        // 读数迁入 composer 控制行是后续 mission 的面；此处不再有消费动作。
+        // M347：读数迁入 composer 控制行（模型 chip 之后、发送钮之前）——事件源自 HP1 起
+        // 一直在发（头部栏已移除、事件未断），这里直接消费，不新造通道。
+        lastUsage = typeof event.ctx_pct === "number" ? event.ctx_pct : null;
+        applyUsage();
         return;
       case "compact":
         // 自动压缩 = 开新逻辑会话：会话名按同口径重算（下一条用户消息成为新名，
@@ -1638,11 +1918,11 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
         return;
       case "done":
         finalizeStreamingMessage();
-        setBusy(false);
+        applySendPhase(reduceSendPhase(sendPhase, { type: "finished" }));
         return;
       case "error":
         finalizeStreamingMessage();
-        setBusy(false);
+        applySendPhase(reduceSendPhase(sendPhase, { type: "finished" }));
         appendError(t("D348", { message: typeof event.message === "string" ? event.message : event.code }));
         return;
     }
@@ -1674,11 +1954,12 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
         const blocks = parseQuoteMessage(record.text);
         // 会话名按同口径从恢复的消息重算（首条用户消息的原始问题文本）。
         if (firstUserText === null) firstUserText = firstUserTextOf(blocks);
-        appendUserMessage(blocks);
+        appendUserMessage(blocks, record.text); // 复制源 = 留存原文（= 发送前原始输入）
       } else if (role === "assistant" && typeof record.text === "string") {
         const el = document.createElement("div");
         el.className = "lumir-hp-msg lumir-hp-msg-assistant";
         renderMarkdownInto(el, record.text);
+        attachCopyButton(el, record.text); // 复制源 = 模型原始输出（留存原文）
         transcript.append(el);
       } else if (role === "tool" && typeof record.name === "string") {
         appendToolCall(record.name, "done", typeof record.summary === "string" ? record.summary : "");
@@ -1688,6 +1969,15 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
         appendCompactMarker(record.summary);
       }
     }
+    // ctx% 读数与警示阈值随快照恢复（webview 重载后读数不断源；缺键 = 缺省 85 / 无读数）。
+    const usage = state.usage as { ctx_pct?: unknown } | null | undefined;
+    if (usage !== null && usage !== undefined && typeof usage === "object" &&
+        typeof usage.ctx_pct === "number") {
+      lastUsage = usage.ctx_pct;
+    }
+    const warn = state.warn_ctx_pct;
+    if (typeof warn === "number" && Number.isFinite(warn)) warnCtxPct = warn;
+    applyUsage();
     const pending = state.pending_approval as { id?: unknown; tool?: unknown; diff?: unknown; argv?: unknown } | null | undefined;
     if (pending !== null && typeof pending === "object" && typeof pending.id === "string") {
       appendApproval({
@@ -1725,9 +2015,13 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     // 会话名随会话作废：未发消息前显示「新会话」，首条消息后再按口径重算。
     firstUserText = null;
     applySessionName();
-    // busy 一并复位：旧会话那一轮的 done 事件可能永远到不了这里（切 vault 后被过滤，
-    // 见 handleEvent）——不复位的话新会话的发送钮会被一个等不到的「处理中」锁死。
-    setBusy(false);
+    // 相位一并经 finished 收口回 idle：旧会话那一轮的 done 事件可能永远到不了这里（切 vault
+    //  后被过滤，见 handleEvent）——不复位的话新会话的发送钮会被一个等不到的「处理中」锁死。
+    applySendPhase(reduceSendPhase(sendPhase, { type: "finished" }));
+    stageWaiting = true;
+    // ctx% 读数归无（新 vault 会话的快照会随后带到它自己的读数）。
+    lastUsage = null;
+    applyUsage();
     syncEmptyHint();
   }
 
@@ -1739,7 +2033,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
    * - **composer 草稿清空**：草稿是在旧 vault 的上下文里写的（当时的 chip 指着旧 vault 的
    *   文档），留着就会被当成本 vault 的提问发出去；
    * - **上下文 chip 重取**：同上，改指新 vault 的当前文档（此刻多数是「无」）；
-   * - **busy 复位**：见 resetView；
+   * - 发送相位经 finished 收口回 idle：见 resetView；
    * - 语言 / 主题 / 面板开合状态都不动（它们不属于会话）。
    */
   function vaultChanged(root: string): void {
@@ -1760,7 +2054,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
 
   // ── 发送与新会话 ─────────────────────────────────────────────────────────
   function send(): void {
-    if (busy) return;
+    if (sendPhase !== "idle") return;
     normalize();
     const blocks = readBlocksFromDom();
     // 投递文本 = M342 序列化 walker 的产物（两 provider 统一处：harness_send → Rust
@@ -1772,7 +2066,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     const block = assembleHarnessContext(editor, { skipViewport: hasCards });
     lastChip = block ?? "none";
     applyChip();
-    appendUserMessage(blocks);
+    appendUserMessage(blocks, text);
     // 会话名：本逻辑会话的首条用户消息定名（未发过时）；卡片与序列化文本不作名。
     if (firstUserText === null) {
       firstUserText = firstUserTextOf(blocks);
@@ -1782,14 +2076,20 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     undoHistory.clear();
     renderComposer([{ kind: "paragraph", text: "" }], null);
     updateEmptyClass();
-    setBusy(true);
+    // 相位入 running（两态发送钮切停止态）+ 阶段指示回「等待响应」——进度条与阶段行随相位显形。
+    stageWaiting = true;
+    applySendPhase(reduceSendPhase(sendPhase, { type: "sent" }));
     harnessSend(text, block !== null ? serializeHarnessContext(block) : null).catch((e: unknown) => {
-      setBusy(false);
+      applySendPhase(reduceSendPhase(sendPhase, { type: "finished" }));
       appendError(t("D347", { reason: errorMessage(e) }));
     });
   }
 
-  sendButton.addEventListener("click", send);
+  // 发送钮的点击路由：空闲相位（= 钮面「发送」）走 send()；running 相位（= 钮面「停止」）
+  // 的停止路径在控制行段落（applySendPhase 附近），同一颗钮两态两个处理器按相位分派。
+  sendButton.addEventListener("click", () => {
+    if (sendPhase === "idle") send();
+  });
   // Enter 发送 / ⇧Enter 换行（D328 占位同款口径）；IME 组合期不接管（Enter 在组合期是
   // 「确认候选」）。退格 / 前删走模型（卡片按整体作用 + 自管撤销栈的确定性）。
   composer.addEventListener("keydown", (event: KeyboardEvent) => {
@@ -1948,11 +2248,16 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     event.stopPropagation();
     sessPop.hidden = !sessPop.hidden;
   });
+  // 浮层外交互（点击其他处）收起：会话浮层、provider 浮层、ctx ⓘ 气泡共用一条出口。
   document.addEventListener("click", (event) => {
-    if (sessPop.hidden) return;
     if (event.target instanceof Node && sessPop.contains(event.target)) return;
     if (event.target instanceof Node && sessionButton.contains(event.target)) return;
     sessPop.hidden = true;
+    if (event.target instanceof Node && modelPop.contains(event.target)) return;
+    if (event.target instanceof Node && modelChip.contains(event.target)) return;
+    modelPop.hidden = true;
+    if (event.target instanceof Node && ctxWrap.contains(event.target)) return;
+    ctxPop.hidden = true;
   });
 
   // 面板内 Escape = 收起（就地消费，不进键位表：Escape token 已被 editor.widget-escape
@@ -2015,6 +2320,9 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     },
     setQuoteJumpHandler(handler) {
       quoteJumpHandler = handler;
+    },
+    setStopHandler(handler) {
+      stopHandler = handler;
     },
   };
 }
