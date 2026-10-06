@@ -38,7 +38,7 @@ const VAULT: VaultFixture = {
 const QUOTED = "第一段用于摘录：先读结论再读论证。";
 
 /** `harness_state` 的零态桩：与 Rust `StateSnapshot::empty` 同形（m303 同款）。
- *  不补这条桩，用量条会停在「未初始化」的空串——那不是用户看到的形态。 */
+ *  不补这条桩，transcript 停在「未初始化」的空壳——那不是用户看到的空会话形态。 */
 async function stubHarnessState(page: Page): Promise<void> {
   await page.addInitScript(() => {
     const w = window as unknown as Record<string, any>;
@@ -92,14 +92,17 @@ test("浮动摘录钮：选区在场时浮现、文案正确", async ({ page }) 
   await expectScreenshot(btn, "m345-quote-gesture-button.png");
 });
 
-test("点浮动钮：面板未开先开、卡片入 composer、光标落卡片下一行", async ({ page }) => {
+test("点浮动钮：面板未开先开（pane 口径）、卡片入 composer、光标落卡片下一行", async ({ page }) => {
   await openDoc(page);
   await selectQuotedLine(page);
 
   const panel = page.locator(".lumir-harness");
   await expect(panel).toBeHidden();
   await page.locator(".quote-gesture-btn").click();
+  // HP1（change move-harness-to-pane-chat-frame）：「未开先开」= 装配层自动分栏（harness:
+  // 文档 = 1:2），面板挂进旁侧 pane——dock 列已移除。
   await expect(panel).toBeVisible();
+  await expect(page.locator(".pane-divider")).toBeVisible();
 
   // 卡片结构三件（design §2·§3）：3px 竖条 + 摘录 + 等宽出处行。
   const card = page.locator(".lumir-hp-composer > .lumir-hp-qcard");
@@ -126,7 +129,7 @@ test("点浮动钮：面板未开先开、卡片入 composer、光标落卡片�
   expect(landing.nextClass).toContain("lumir-hp-qpara");
   expect(landing.caretInNext, "插入后焦点/光标应落在卡片下一行的问题段落").toBe(true);
 
-  // 整页基线候选：面板展开 + 卡片在 composer 里的全表面（dock 列宽、被挤压的编辑区）。
+  // 整页基线候选：面板在场 + 卡片在 composer 里的全表面（pane 分栏形态、被挤压的编辑区）。
   await expectScreenshot(page, "m345-harness-quote-card.png");
 });
 

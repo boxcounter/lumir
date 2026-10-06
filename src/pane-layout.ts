@@ -40,6 +40,13 @@ export type PaneId = number;
  *  `tests/unit/session-schema-drift.test.ts` 对账两处，改一处必须同步另一处。 */
 export const MAX_PANES = 2;
 
+/** pane 承载什么（ADR 0008 Decision 1）：一组文档标签，或 harness 面板。账本只把它
+ *  透传给 `createHandle` 与 Pane 记录，不解释语义——归属/移动等机制对两种 pane 同构
+ *  （harness pane 恒零标签）。「分栏态空 pane 不接受文本输入」的闸门只由装配层对
+ *  doc pane 施加（harness pane 的 composer 是文本输入的合法落点），见
+ *  `paneBlocksInput` 的条款注释与装配层 `renderAllTabStrips`。 */
+export type PaneKind = "doc" | "harness";
+
 /** 分隔条比例的钳制区间：任一 pane 至少留两成宽（再窄标签条与正文都不可用）。
  *  与 Rust 侧 `vault_session::SPLIT_RATIO_MIN` / `SPLIT_RATIO_MAX` 同值（对账同上）——
  *  落盘值与施加值同区间，避免「盘上存 0.05、显示却是 0.2」的双真源。 */
@@ -59,6 +66,10 @@ export function clampSplitRatio(value: number): number {
 /** 分栏态「空 pane」的判据 = **输入闸门**（M329，Alex 2026-10-05 dogfood bug 2）：**纯函数**，
  *  三个条件缺一不可。它同时是**引导在场与输入闸门共用的同一条「空」口径**（REVIEW.md 第 8 条：
  *  同一语义一处真源）——`emptyPaneGuideVisible` 在它之上只多一个「已装 vault」。
+ *
+ *  **只适用文档 pane**（change move-harness-to-pane-chat-frame）：harness pane 的 composer
+ *  是文本输入的合法落点，装配层对 harness pane 不调用本判据（施加点的显式排除见装配层
+ *  `renderAllTabStrips`）。
  *
  *  - `split`：只谈分栏态——单 pane 零标签维持 M149 起的既有形态（未命名空文档编辑器 + 标签条
  *    整条隐藏），两个消费者都不覆盖它（「单 pane 常态逐像素不变」是 pane 化的第一判据，
@@ -197,10 +208,13 @@ export interface PaneTab {
   readonly path: string | undefined;
 }
 
-/** 一个 pane：一个编辑器句柄 + 一份有序标签 + 前台标签下标。 */
+/** 一个 pane：一个句柄 + 一份有序标签 + 前台标签下标。harness pane 恒零标签
+ *  （`foreground` 恒 -1）——标签机制只对 doc pane 有意义，账本照管但不解释。 */
 export interface Pane<Tab extends PaneTab, Handle> {
   readonly id: PaneId;
-  /** 该 pane 的编辑器句柄（装配层注入；容器只持有，不解释）。 */
+  /** 该 pane 承载什么（`split` 时给定，透传自 `createHandle` 的同一参数）。 */
+  readonly kind: PaneKind;
+  /** 该 pane 的句柄（装配层注入；容器只持有，不解释）。 */
   readonly handle: Handle;
   /** 有序标签（打开序 = 标签栏从左到右）。**容器是唯一写入者**，外部只当只读数组用。 */
   readonly tabs: Tab[];
@@ -209,10 +223,11 @@ export interface Pane<Tab extends PaneTab, Handle> {
 }
 
 export interface PaneLayoutDeps<Handle> {
-  /** 为一个 pane 造编辑器句柄。root pane 与每次 `split()` 的 pane 都经它产出；装配层在这里
-   *  `createEditor` 并把句柄绑到该 pane 的 DOM 列（容器不知道 DOM 的存在）。 */
-  createHandle(paneId: PaneId): Handle;
-  /** 归还一个 pane 的编辑器句柄（`close()` 时调用；装配层在这里拆 EditorView / 卸载 DOM 列）。
+  /** 为一个 pane 造句柄。root pane（恒 doc）与每次 `split()` 的 pane 都经它产出；
+   *  `kind` 与 `split` 的入参同一份——装配层在 doc 分支 `createEditor`、在 harness 分支
+   *  装配 harness 面板，并把句柄绑到该 pane 的 DOM 列（容器不知道 DOM 的存在）。 */
+  createHandle(paneId: PaneId, kind: PaneKind): Handle;
+  /** 归还一个 pane 的句柄（`close()` 时调用；装配层在这里拆 EditorView / 卸载 DOM 列）。
    *  调用时机：标签已全部并入目标 pane **之后**、`close()` 返回之前——句柄释放与标签归属无关，
    *  被移走的标签对象不受影响。 */
   disposeHandle(handle: Handle): void;
@@ -239,8 +254,10 @@ export interface PaneLayout<Tab extends PaneTab, Handle> {
   paneOf(tab: Tab): Pane<Tab, Handle> | undefined;
 
   /** 在活跃 pane 右侧新开一个**空 pane** 并置为活跃（spec「分栏后出现两个文档 pane」）。
+   *  `kind` 缺省 "doc"；`"harness"` 用于 harness 归位 pane（change move-harness-to-pane-chat-frame）
+   *  ——两种 pane 同受上限二约束（harness 在场时第三次 split 一样无操作）。
    *  返回新 pane；已达上限二返回 `null`（无操作，不报错、不提示）。 */
-  split(): Pane<Tab, Handle> | null;
+  split(kind?: PaneKind): Pane<Tab, Handle> | null;
   /** 收起**活跃 pane**：其全部标签按序并入另一 pane（各带状态），其前台标签成为目标 pane 的
    *  前台，目标 pane 成为活跃 pane（裁决点 2 = 方案 A，不丢标签、不弹关标签确认）。
    *  返回被收起的 pane（已脱离容器：`tabs` 清空、`foreground` 归 -1，句柄已归还）；单 pane
@@ -277,7 +294,8 @@ export interface PaneLayout<Tab extends PaneTab, Handle> {
 }
 
 /**
- * 建 pane 容器。构造即建 root pane（单 pane 常态），其句柄由 `deps.createHandle(1)` 产出。
+ * 建 pane 容器。构造即建 root pane（单 pane 常态，恒为 doc pane），其句柄由
+ * `deps.createHandle(1, "doc")` 产出。
  *
  * 泛型无法从 deps 推断（deps 只用到 `Handle`），调用点显式写：
  * `createPaneLayout<EditorSession, EditorHandle>({ … })`。
@@ -287,10 +305,10 @@ export function createPaneLayout<Tab extends PaneTab, Handle>(
 ): PaneLayout<Tab, Handle> {
   let nextId = 2;
   let activeId: PaneId = 1;
-  const panes: Pane<Tab, Handle>[] = [makePane(1)];
+  const panes: Pane<Tab, Handle>[] = [makePane(1, "doc")];
 
-  function makePane(id: PaneId): Pane<Tab, Handle> {
-    return { id, handle: deps.createHandle(id), tabs: [], foreground: -1 };
+  function makePane(id: PaneId, kind: PaneKind): Pane<Tab, Handle> {
+    return { id, kind, handle: deps.createHandle(id, kind), tabs: [], foreground: -1 };
   }
 
   function paneById(id: PaneId): Pane<Tab, Handle> {
@@ -371,9 +389,9 @@ export function createPaneLayout<Tab extends PaneTab, Handle>(
 
     // 落点规则（裁决/规格逐条对应）：新 pane 成为活跃 pane，且恒在活跃 pane 右侧
     //（分栏只在单 pane 时发生，因此等价于追加到列表末位）。
-    split() {
+    split(kind: PaneKind = "doc") {
       if (panes.length >= MAX_PANES) return null;
-      const pane = makePane(nextId++);
+      const pane = makePane(nextId++, kind);
       panes.push(pane);
       activeId = pane.id;
       return pane;

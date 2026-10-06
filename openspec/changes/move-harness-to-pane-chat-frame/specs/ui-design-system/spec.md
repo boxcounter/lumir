@@ -6,7 +6,7 @@
 
 应用骨架 SHALL 为：标题栏 42px（全宽，左缘 traffic 灯区宽 236 与侧栏对齐，**产品标识块位于 traffic 灯区内、系统按钮旁**——见「产品名与版本号常显」；标签位于标题栏内——单 pane 常态；双 pane 时标签区左右分区为两槽，左槽 = 左 pane 标签、右槽 = 右 pane 标签，槽宽比例随分隔条，见 `multi-tabs` 的「标签栏的显示与形态」）/ 主行（侧栏 236px + **内容区（pane 容器）**）/ modeline 25px（全宽）。**右栏 dock 列随本 change 移除**（harness 归位 pane，`--layout-dock-w` 与 `.dock-open` 机制一并清扫）。内容区 SHALL 是 pane 容器（v1 上限两个横向 pane，见 `pane-layout` 的「pane 容器模型」与「harness pane」）：未分栏时它承载单个文档 pane，**几何与 pane 化之前的正文栏逐像素一致**；分栏时两个 pane 以分隔条相隔，分隔条是容器级 hairline 元素（`--border` 档，平铺表面不吃 elevation），其位置可拖拽调整（拖拽重排实时生效，松手后位置经会话持久化通道落盘，per-vault，见 `vault-workspace` 的「按 vault 持久化 pane 布局」）。
 
-**标题栏 harness 段**：harness 在场时，标题栏的标签区之后 SHALL 出现 harness 段（会话名下拉 + 新建会话钮，行为见 `harness` 的「会话边界」），与标签段同构；段宽 SHALL 由装配层按 pane 实际宽度现算（读分隔条位置与窗口宽），与 pane 分隔条像素对齐，MUST NOT 用固定 flex 比例近似。标题栏右端动作钮区保留 harness toggle 钮（尺寸吃既有 `--layout-tb-btn-w/h` token，与 `harness.toggle` 命令同一路径）。双 pane（含 harness pane 在场）时标题栏右簇 SHALL 退让——harness 开关钮隐藏（`⌘⇧A` 照走）；产品标识块已在最左，不再是退让对象；单 pane 且无 harness 时右簇全量在场、逐像素不变（chrome 只在空间紧张时退让）。
+**标题栏 harness 段**：harness 在场时，标题栏的标签区之后 SHALL 出现 harness 段（会话名下拉 + 新建会话钮，行为见 `harness` 的「会话边界」），与标签段同构；段宽 SHALL 与 pane 实际宽度像素对齐（实现机制：分栏态标题栏弹性区与内容区容器同宽——padding 归零 / toggle 隐藏 / spinner 绝对定位——标签槽与 harness 段挂同一份 splitRatio 分宽；这是几何构造的对齐，MUST NOT 用与 pane 宽度脱节的固定比例近似）。标题栏右端动作钮区保留 harness toggle 钮（尺寸吃既有 `--layout-tb-btn-w/h` token，与 `harness.toggle` 命令同一路径）。双 pane（含 harness pane 在场）时标题栏右簇 SHALL 退让——harness 开关钮隐藏（`⌘⇧A` 照走）；产品标识块已在最左，不再是退让对象；单 pane 且无 harness 时右簇全量在场、逐像素不变（chrome 只在空间紧张时退让）。
 
 旧 masthead SHALL 移除，其信息迁移：vault 名 → 侧栏头（切换器入口形态不变）；当前文件路径 → modeline 左侧；当前位置指示 → modeline（toc 语义不变，只迁承载面）；行数 / 语法 / 编码 → modeline 右侧（只读派生自**活跃 pane 的前台**编辑器状态，MUST NOT 为此引入全文档遍历或新状态源，ADR 0002 §6）。macOS 标题栏 SHALL 为 overlay 形态（traffic 灯保持原生绘制，标题文字隐藏，栏区可拖拽）。
 

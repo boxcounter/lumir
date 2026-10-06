@@ -5,7 +5,7 @@ import type { EditorView } from "@codemirror/view";
 import { applyKeyOverrides, BLOCK_SCROLL_CLASS, EDITOR_COMMAND_IDS, KEY_BINDINGS, Keymap, TAB_GOTO_IDS } from "./keys";
 import type { CommandId, CommandRunner, CommandRuntime, EditorCommandId, KeyBinding, KeyOverrides } from "./keys";
 import { DEFAULT_SPLIT_RATIO, clampSplitRatio, createDividerDrag, createPaneLayout, emptyPaneGuideVisible, paneBlocksInput } from "./pane-layout";
-import type { DividerDrag, PaneId } from "./pane-layout";
+import type { DividerDrag, PaneId, PaneKind } from "./pane-layout";
 import { DEFAULT_AUTO_INDENT } from "./enter-indent";
 import { DEFAULT_FONT_SIZE } from "./typography";
 import type { TypographySettings } from "./typography";
@@ -167,18 +167,48 @@ const shell = createShell(app);
 //     免费成立）。
 // ---------------------------------------------------------------------------
 
-/** 一个 pane 的装配记录：DOM 槽（编辑器挂载元素 + 标题栏标签槽）与实例句柄。 */
+/** 一个 pane 的装配记录：DOM 槽（编辑器挂载元素 + 标题栏标签槽）与实例句柄。
+ *  harness pane 无编辑器实例：handle 是 harness 分支（focus 落 composer），guideEl 为 null、
+ *  tabs 恒 undefined，标题栏槽 = 面板的 harness 段（seg）。 */
 interface PaneAssembly {
   mountEl: HTMLElement;
   stripEl: HTMLElement;
-  handle: EditorHandle;
+  handle: PaneHandle;
   /** 空 pane 引导元素（M322）：mountEl 内常驻的水印层，`hidden` 切换在场 / 离场——
-   *  唯一写点在 `renderAllTabStrips`（标签集合 / 分栏态 / dirty 全汇到那里）。 */
-  guideEl: HTMLElement;
+   *  唯一写点在 `renderAllTabStrips`（标签集合 / 分栏态 / dirty 全汇到那里）。
+   *  harness pane 无此元素（null）——空 pane 条款只适用文档 pane。 */
+  guideEl: HTMLElement | null;
   /** 该 pane 的标签条实例；root pane 在下方 tabs 装配块就位，pane B 在 split 时就位。 */
   tabs: TabsHandle | undefined;
   /** 该 pane 的订阅与监听的退订函数（disposePaneHandle 时整批跑掉）。 */
   unsubs: Array<() => void>;
+}
+
+/** pane 句柄的判别联合（ADR 0008 Decision 1：pane 承载文档标签组 或 harness 面板）。
+ *  账本只持有不解释；装配层按 kind 分支消费。 */
+type PaneHandle =
+  | { kind: "doc"; editor: EditorHandle }
+  | { kind: "harness"; focus(): void };
+
+/** 全部 doc pane（账本 panes() 里 kind === "doc" 的那些）。harness pane 不参与
+ *  编辑器广播 / 会话并集 / 快照入盘。 */
+function docPanes() {
+  return paneLayout.panes().filter((pane) => pane.handle.kind === "doc");
+}
+
+/** 「当前文档表面」的解析入口：活跃 pane 是 doc 就用它，否则（活跃是 harness pane）
+ *  退回唯一的 doc pane。modeline / toc / 保存链路 / 上下文组装的「当前 TAB」因此恒指
+ *  文档 pane——harness pane 持焦时这些读数不漂移（HP1 口径，与 M317「面板持焦不改
+ *  pane 归属」同族）。 */
+function activeDocPane() {
+  const active = paneLayout.active();
+  return active.handle.kind === "doc" ? active : docPanes()[0];
+}
+
+/** 活跃 doc pane 的编辑器句柄（editor 复合句柄的全部读类 / 动作类解析入口）。 */
+function activeEditor(): EditorHandle {
+  const pane = activeDocPane();
+  return (pane.handle as { kind: "doc"; editor: EditorHandle }).editor;
 }
 
 const paneAssemblies = new Map<PaneId, PaneAssembly>();
@@ -204,7 +234,7 @@ let currentResolver: Parameters<EditorHandle["setWikilinkResolver"]>[0] = null;
  *  调用方记得补注。 */
 const editorInjections: Array<(handle: EditorHandle) => void> = [];
 function forEachEditor(run: (handle: EditorHandle) => void): void {
-  for (const pane of paneLayout.panes()) run(pane.handle);
+  for (const pane of docPanes()) run((pane.handle as { kind: "doc"; editor: EditorHandle }).editor);
 }
 function injectEach(register: (handle: EditorHandle) => void): void {
   editorInjections.push(register);
@@ -218,7 +248,7 @@ function injectEach(register: (handle: EditorHandle) => void): void {
 const viewTrackers: Array<(view: EditorView) => void> = [];
 function trackEachView(run: (view: EditorView) => void): void {
   viewTrackers.push(run);
-  for (const pane of paneLayout.panes()) run(pane.handle.view);
+  for (const pane of docPanes()) run((pane.handle as { kind: "doc"; editor: EditorHandle }).editor.view);
 }
 
 /** wikilink 解析器的施加（applyVault 唯一调用点）：更新当前值并广播到全部 pane——
@@ -236,7 +266,9 @@ function applyWikilinkResolver(
 const paneSubscribers: Array<(handle: EditorHandle) => () => void> = [];
 function onEachEditor(subscribe: (handle: EditorHandle) => () => void): () => void {
   paneSubscribers.push(subscribe);
-  const unsubs = paneLayout.panes().map((pane) => subscribe(pane.handle));
+  const unsubs = docPanes().map((pane) =>
+    subscribe((pane.handle as { kind: "doc"; editor: EditorHandle }).editor),
+  );
   return () => {
     for (const unsub of unsubs) unsub();
   };
@@ -261,19 +293,44 @@ const SPLITTER_LABEL = (): string => t("D368");
  *  语言相关文本 MUST NOT 存在）。 */
 const PANE_GUIDE_LABEL = (): string => t("D369");
 
-const paneLayout = createPaneLayout<EditorSession, EditorHandle>({
-  createHandle: (paneId) => createPaneHandle(paneId),
+const paneLayout = createPaneLayout<EditorSession, PaneHandle>({
+  createHandle: (paneId, kind) => createPaneHandle(paneId, kind),
   disposeHandle: (handle) => disposePaneHandle(handle),
 });
 
-/** 为一个 pane 建编辑器实例与其 DOM 槽（pane-layout 的 createHandle 注入点）。
- *  root pane（恒为 id 1）复用 shell 建好的挂载元素与标签槽——单 pane 像素与 M316 之前
+/** 为一个 pane 建 DOM 槽与句柄（pane-layout 的 createHandle 注入点）。
+ *  root pane（恒为 id 1、恒 doc）复用 shell 建好的挂载元素与标签槽——单 pane 像素与 M316 之前
  *  一致（零基线更新判据；M322 起 mountEl 内多一个常驻 hidden 的空 pane 引导元素，
- *  绝对定位 + hidden，零像素影响）；pane B 的挂载元素 / 标签槽 / 分隔条全部现建，
- *  close 时整批移除（见 disposePaneHandle）。 */
-function createPaneHandle(paneId: PaneId): EditorHandle {
+ *  绝对定位 + hidden，零像素影响）；doc pane B 的挂载元素 / 标签槽 / 分隔条全部现建，
+ *  close 时整批移除（见 disposePaneHandle）；harness pane 没有编辑器实例 / 引导 / 标签条——
+ *  标题栏槽是面板的 harness 段（seg，面板侧长驻 hidden），面板本体经 attachTo 挂进 mountEl。 */
+function createPaneHandle(paneId: PaneId, kind: PaneKind): PaneHandle {
   const rootSlot = paneId === 1;
   const mountEl = rootSlot ? shell.editorPane : document.createElement("div");
+  if (kind === "harness") {
+    // harness pane（HP1，change move-harness-to-pane-chat-frame）：无 createEditor、无
+    // 能力注入 / 事件订阅重放（editor 注册表只覆盖 doc pane）、无空 pane 引导。
+    mountEl.className = "editor-pane";
+    const divider = document.createElement("div");
+    divider.className = "pane-divider";
+    divider.setAttribute("role", "separator");
+    divider.setAttribute("aria-orientation", "vertical");
+    divider.setAttribute("aria-label", SPLITTER_LABEL()); // 读屏名（M319，D368）
+    wireDividerDrag(divider);
+    shell.editor.append(divider, mountEl);
+    dividerEl = divider;
+    const assembly: PaneAssembly = {
+      mountEl,
+      stripEl: harnessPanel.titlebarSegment(), // 面板已把它插进标题栏（hidden 长驻）
+      handle: { kind: "harness", focus: () => harnessPanel.focusComposer() },
+      guideEl: null,
+      tabs: undefined,
+      unsubs: [],
+    };
+    paneAssemblies.set(paneId, assembly);
+    harnessPanel.attachTo(mountEl);
+    return assembly.handle;
+  }
   const stripEl = rootSlot ? shell.tabStrip : shell.createTabStrip();
   if (!rootSlot) {
     mountEl.className = "editor-pane";
@@ -287,7 +344,8 @@ function createPaneHandle(paneId: PaneId): EditorHandle {
     shell.tabStrip.after(stripEl);
     dividerEl = divider;
   }
-  const handle = createEditor(mountEl);
+  const editor = createEditor(mountEl);
+  const handle: PaneHandle = { kind: "doc", editor };
   // 空 pane 引导（M322）：常驻 mountEl 的水印层（初态必隐——显示与否由 renderAllTabStrips
   // 的同步唯一决定，root pane 与动态 pane 同一形态）。透明底盖在编辑器之上，点击它 = 点击
   // 空 pane 的正文：焦点进该 pane 的编辑器（focusin 随之翻活跃指针），用户可以直接开敲
@@ -297,31 +355,31 @@ function createPaneHandle(paneId: PaneId): EditorHandle {
   guideEl.className = "pane-empty-guide";
   guideEl.textContent = PANE_GUIDE_LABEL();
   guideEl.hidden = true;
-  guideEl.addEventListener("click", () => handle.view.focus());
+  guideEl.addEventListener("click", () => editor.view.focus());
   mountEl.append(guideEl);
   const assembly: PaneAssembly = { mountEl, stripEl, handle, guideEl, tabs: undefined, unsubs: [] };
   paneAssemblies.set(paneId, assembly);
   if (!rootSlot) {
     // createEditor 的初始会话是 SAMPLE 演示文档（无文件上下文的起步态）——新 pane 从
     // 未命名空文档起步，不给它复制一份演示文档。
-    handle.reset();
+    editor.reset();
     // 能力同步：配置期值读装配层跟踪，运行期口径（折行 / 排版 / 栏宽）读既有 pane
     //（donor）的只读快照。排版的两个成员各管一半：applyTypography 把 baseFontSize 锚回
     // 配置档（⌘0 回落语义），syncRuntimeTypography 把运行期步进值对齐进实例记账。
-    const donor = paneLayout.panes()[0].handle;
-    handle.setMode(currentDefaultMode);
-    handle.setWrap(donor.wrapSettings());
-    handle.setAutoIndent(currentAutoIndent);
-    handle.applyTypography(currentTypography);
-    handle.syncRuntimeTypography(donor.typographySettings());
-    handle.setContentWidth(donor.contentWidth());
-    handle.setMarkdownLineNumbers(currentMarkdownLineNumbers);
-    handle.setWikilinkResolver(currentResolver);
+    const donor = (paneLayout.panes()[0].handle as { kind: "doc"; editor: EditorHandle }).editor;
+    editor.setMode(currentDefaultMode);
+    editor.setWrap(donor.wrapSettings());
+    editor.setAutoIndent(currentAutoIndent);
+    editor.applyTypography(currentTypography);
+    editor.syncRuntimeTypography(donor.typographySettings());
+    editor.setContentWidth(donor.contentWidth());
+    editor.setMarkdownLineNumbers(currentMarkdownLineNumbers);
+    editor.setWikilinkResolver(currentResolver);
   }
   // 能力注入与事件订阅全量重放（注册表口径，见上面几处注册表的注释）。
-  for (const inject of editorInjections) inject(handle);
-  for (const track of viewTrackers) track(handle.view);
-  for (const subscribe of paneSubscribers) assembly.unsubs.push(subscribe(handle));
+  for (const inject of editorInjections) inject(editor);
+  for (const track of viewTrackers) track(editor.view);
+  for (const subscribe of paneSubscribers) assembly.unsubs.push(subscribe(editor));
   // 焦点进入该 pane 的内容区 → 它成为活跃 pane；焦点移去 chrome 不翻指针
   //（pane-layout 的 activate 语义：「移出内容区不调用」）。
   const onFocusIn = (): void => activatePane(paneId);
@@ -330,15 +388,20 @@ function createPaneHandle(paneId: PaneId): EditorHandle {
   return handle;
 }
 
-/** 归还一个 pane 的编辑器句柄（pane-layout 的 disposeHandle 注入点）：摘订阅、销毁
- *  EditorView、拆 DOM 槽。root pane 的 DOM 槽是 shell 的常驻元素，只销毁实例不拆元素
- *（本 mission 的 close 流程恒收动态 pane，root 槽永不归还——该分支是防御性的）。 */
-function disposePaneHandle(handle: EditorHandle): void {
+/** 归还一个 pane 的句柄（pane-layout 的 disposeHandle 注入点）：摘订阅、销毁实例、拆 DOM 槽。
+ *  root pane 的 DOM 槽是 shell 的常驻元素，只销毁实例不拆元素（close 流程恒收动态 pane，
+ *  root 槽永不归还——该分支是防御性的）。harness pane 无实例可销毁：面板摘出 DOM
+ * （attachTo(null)），段的 hidden 由面板侧随 attach 状态翻。 */
+function disposePaneHandle(handle: PaneHandle): void {
   const entry = [...paneAssemblies.entries()].find(([, assembly]) => assembly.handle === handle);
   if (entry === undefined) return;
   const [paneId, assembly] = entry;
   for (const unsub of assembly.unsubs) unsub();
-  handle.view.destroy();
+  if (handle.kind === "doc") {
+    handle.editor.view.destroy();
+  } else {
+    harnessPanel.attachTo(null);
+  }
   if (paneId !== 1) {
     dividerDrag?.destroy(); // 元素移除前先摘指针监听（元素随后才 remove）
     dividerDrag = null;
@@ -362,7 +425,7 @@ function activatePane(paneId: PaneId): void {
  *  不带 pane id）。找不到即视图不属于任何在场 pane（防御性），无操作。 */
 function activatePaneForView(view: EditorView): void {
   for (const [paneId, assembly] of paneAssemblies) {
-    if (assembly.handle.view === view) {
+    if (assembly.handle.kind === "doc" && assembly.handle.editor.view === view) {
       activatePane(paneId);
       return;
     }
@@ -372,33 +435,41 @@ function activatePaneForView(view: EditorView): void {
 /** 一个编辑器句柄所属的 pane（M317 2.9：遮罩的来源 pane）。 */
 function paneIdOfHandle(handle: EditorHandle): PaneId | undefined {
   for (const [paneId, assembly] of paneAssemblies) {
-    if (assembly.handle === handle) return paneId;
+    if (assembly.handle.kind === "doc" && assembly.handle.editor === handle) return paneId;
   }
   return undefined;
 }
 
 /** 把焦点交还给**指定 pane**（M317 2.9 的遮罩焦点归还例外）：遮罩打开后活跃 pane 可能已经
  *  切换，焦点要还到打开遮罩的那个 pane，而不是机械回当前活跃 pane。指定的 pane 已收起时
- *  （防御性）退化为活跃 pane。聚焦会触发该 pane 的 focusin，活跃指针随之翻回来——与「点选
+ *  （防御性）退化为活跃 doc pane。聚焦会触发该 pane 的 focusin，活跃指针随之翻回来——与「点选
  *  窗口即选中该窗口」一致。 */
 function focusSourcePane(paneId: PaneId | undefined): void {
   const pane = paneId === undefined ? undefined : paneLayout.panes().find((p) => p.id === paneId);
-  (pane?.handle ?? paneLayout.activeHandle()).focusPreservingReadingPosition();
+  if (pane !== undefined && pane.handle.kind === "harness") {
+    pane.handle.focus();
+    return;
+  }
+  ((pane?.handle.kind === "doc" ? pane.handle.editor : undefined) ?? activeEditor())
+    .focusPreservingReadingPosition();
 }
 
-/** 活跃 pane 的标签条实例。未就位的唯一窗口是 splitActivePane 里 split() 与标签条
- *  创建之间的同步段——外部调用不可能插进去；缺位即接线错误，就地炸掉（同 pane-layout
- *  的 paneById 口径），不静默当成无操作。 */
+/** 活跃 **doc** pane 的标签条实例（harness pane 无标签条；harness 持焦时标签命令族
+ *  仍作用于文档 pane）。未就位的唯一窗口是 splitActivePane 里 split() 与标签条创建之间的
+ *  同步段——外部调用不可能插进去；缺位即接线错误，就地炸掉（同 pane-layout 的 paneById
+ *  口径），不静默当成无操作。 */
 function activeTabs(): TabsHandle {
-  const tabs = paneAssemblies.get(paneLayout.active().id)?.tabs;
-  if (tabs === undefined) throw new Error("main: 活跃 pane 的标签条实例未就位"); // i18n-exempt: log
+  const assembly = paneAssemblies.get(activeDocPane().id);
+  const tabs = assembly?.tabs;
+  if (tabs === undefined) throw new Error("main: 活跃 doc pane 的标签条实例未就位"); // i18n-exempt: log
   return tabs;
 }
 
-/** 会话属主 pane 的装配记录（真源 = 各实例会话表，见块头注释）。 */
+/** 会话属主 pane 的装配记录（真源 = 各实例会话表，见块头注释）。harness pane 无会话表。 */
 function paneEntryOfSession(session: EditorSession): [PaneId, PaneAssembly] | undefined {
   for (const entry of paneAssemblies.entries()) {
-    if (entry[1].handle.sessions().includes(session)) return entry;
+    const handle = entry[1].handle;
+    if (handle.kind === "doc" && handle.editor.sessions().includes(session)) return entry;
   }
   return undefined;
 }
@@ -419,7 +490,8 @@ function activateSessionInOwnerPane(session: EditorSession): void {
 function moveSessionToPane(session: EditorSession, targetPaneId: PaneId): void {
   const owner = paneEntryOfSession(session);
   const target = paneAssemblies.get(targetPaneId);
-  if (target === undefined) return;
+  if (target === undefined || target.handle.kind !== "doc") return;
+  const targetEditor = target.handle.editor;
   if (owner !== undefined && owner[0] === targetPaneId) {
     // 已在该 pane：只激活（幂等分支）。
     activatePane(targetPaneId);
@@ -428,11 +500,11 @@ function moveSessionToPane(session: EditorSession, targetPaneId: PaneId): void {
   }
   // 账本先动（此时标签已登记在册，reconcile 保证）：moveTab 把归属挪到目标 pane。
   paneLayout.moveTab(session, targetPaneId);
-  owner?.[1].handle.closeSession(session); // 源实例摘除（不销毁 state；前台让位给邻居）
-  target.handle.adoptSession(session); // 目标实例接管原 state（不重建）
+  (owner?.[1].handle as { kind: "doc"; editor: EditorHandle } | undefined)?.editor.closeSession(session); // 源实例摘除（不销毁 state；前台让位给邻居）
+  targetEditor.adoptSession(session); // 目标实例接管原 state（不重建）
   renderAllTabStrips();
   activatePane(targetPaneId);
-  target.handle.activateSession(session); // view.setState(原 state)：撤销史 / 选区 / 滚动随行
+  targetEditor.activateSession(session); // view.setState(原 state)：撤销史 / 选区 / 滚动随行
   target.tabs?.renderTabs();
   syncActiveDocument();
 }
@@ -450,7 +522,9 @@ function moveSessionToPane(session: EditorSession, targetPaneId: PaneId): void {
 function reconcilePaneLedger(): void {
   const activeId = paneLayout.active().id;
   for (const pane of paneLayout.panes()) {
-    const sessions = pane.handle.sessions();
+    if (pane.handle.kind !== "doc") continue; // harness pane 无实例会话表
+    const editor = pane.handle.editor;
+    const sessions = editor.sessions();
     for (const tab of [...pane.tabs]) {
       if (!sessions.includes(tab)) paneLayout.closeTab(tab);
     }
@@ -460,24 +534,28 @@ function reconcilePaneLedger(): void {
         paneLayout.openTab(session.path, () => session, pane.id);
       }
     }
-    const foreground = pane.handle.activeSession();
+    const foreground = editor.activeSession();
     if (sessions.includes(foreground)) paneLayout.activateTab(pane.id, foreground);
   }
   paneLayout.activate(activeId); // openTab / activateTab 会翻活跃指针，对账后还原
 }
 
 /** 全部 pane 的标签槽各重画一遍（dirty 跃迁 / 同步点）：dirty 点是逐标签的，
- *  后台 pane 的标签条也要跟着变。 */
+ *  后台 pane 的标签条也要跟着变。harness pane 显式跳过——它没有标签条 / 引导 / 编辑器
+ *  可编辑性，「空 pane 只读」条款只适用文档 pane（它的 composer 是合法输入落点，
+ *  change move-harness-to-pane-chat-frame tasks 1.3）。 */
 function renderAllTabStrips(): void {
   const split = paneLayout.isSplit();
   for (const assembly of paneAssemblies.values()) {
+    if (assembly.handle.kind !== "doc") continue;
+    const editor = assembly.handle.editor;
     assembly.tabs?.renderTabs();
     // 空 pane 引导（M322）的在场 / 离场与**输入闸门**（M329，bug 2）同步挂在同一个唯一写点上：
     // 标签集合（开 / 关 / 移动经 syncActiveDocument）、分栏态（split / close 经 applySplitChrome）
     // 与 dirty（onDirty 重绘）全部汇到这里，别处不另埋钩子。「有无标签」按带路径的会话现查实例
     // 会话表——与标签条的 visibleTabsOf 同一定义，不读账本（账本会登记 path=undefined 的空会话）。
-    const hasTabs = assembly.handle.sessions().some((session) => session.path !== undefined);
-    const foreground = assembly.handle.activeSession();
+    const hasTabs = editor.sessions().some((session) => session.path !== undefined);
+    const foreground = editor.activeSession();
     // 分栏态空 pane 的空会话置只读（M329）：view 层拒收输入 + changeFilter 兜底，结构性不可
     // 编辑；打开 / 新建文件后 hasTabs 转真，这里按 isEditablePath 复原——幂等早退，稳态零成本。
     // 「空」的三维与引导水印**同一条口径**（`paneBlocksInput`）：`foreground.dirty` 这一维是
@@ -490,11 +568,11 @@ function renderAllTabStrips(): void {
     // 在那次 update 的 updateListener 里被调到。CM6 的 `EditorView.update` 把 `updateState`
     // 复位为 Idle（`finally`）**之后**才逐个调用 updateListener（各自 try/catch），因此从这条
     // 路径 `view.dispatch` 合法；实测「分栏后在草稿里 ⌘Z 回基线」：闸门如期施加、零报错。
-    assembly.handle.setSessionEditable(
+    editor.setSessionEditable(
       foreground,
       !paneBlocksInput(split, hasTabs, foreground.dirty) && isEditablePath(foreground.path),
     );
-    assembly.guideEl.hidden = !emptyPaneGuideVisible(
+    assembly.guideEl!.hidden = !emptyPaneGuideVisible(
       split,
       hasTabs,
       foreground.dirty,
@@ -564,7 +642,12 @@ function wireDividerDrag(divider: HTMLElement): void {
 
 /** 分隔条比例的施加：pane 挂载元素与标题栏标签槽的 inline flexGrow **同源同一份
  *  splitRatio**（「两槽宽度比例跟随分隔条」是已裁形态）；单 pane 时清空 inline 样式，
- *  回落 CSS 默认——几何与 M316 之前逐像素一致。 */
+ *  回落 CSS 默认——几何与 M316 之前逐像素一致。
+ *  HP1 的像素对齐不变量：分栏态标题栏弹性区（traffic 236 之后到窗口右缘）与内容区容器
+ *  同宽（标题栏 padding-right 归零、toggle 隐藏、spinner 绝对定位），因此两槽按同一份
+ *  splitRatio 分宽即与 pane **像素对齐**——原型「2:1 flex 近似、差 ~30px」的妥协点 5 不继承。
+ *  细节：doc 标签槽的 margin-right（M257 的单 pane 间距）在分栏态归零——视觉间距由 harness
+ *  段自身的 padding-left 承担，margin 会吃掉弹性区的宽度、破坏对齐。 */
 function applySplitRatio(): void {
   const split = paneLayout.isSplit();
   for (const [index, assembly] of [...paneAssemblies.values()].entries()) {
@@ -572,97 +655,190 @@ function applySplitRatio(): void {
       assembly.mountEl.style.flexGrow = "";
       assembly.stripEl.style.flexGrow = "";
       assembly.stripEl.style.flexBasis = "";
+      assembly.stripEl.style.marginRight = "";
       continue;
     }
     const grow = index === 0 ? splitRatio : 1 - splitRatio;
     assembly.mountEl.style.flexGrow = String(grow);
     assembly.stripEl.style.flexGrow = String(grow);
     assembly.stripEl.style.flexBasis = "0";
+    if (assembly.handle.kind === "doc") assembly.stripEl.style.marginRight = "0";
   }
 }
 
-/** 分栏态的 chrome 切换：右簇退让（产品标识块整块退 modeline、harness toggle 钮隐藏，
- *  均为已裁形态）+ 两槽比例 + 标签槽重画。 */
+/** 分栏态的 chrome 切换：右簇退让（harness toggle 钮隐藏——HP1 后双 pane 恒含 harness，
+ *  退让对象只剩这颗钮；产品标识块已移位 traffic 灯区、不再随 split 退让，modeline.ts 的
+ *  setSplitRetreat 随本 change 移除）+ 两槽比例 + 标签槽重画。 */
 function applySplitChrome(): void {
   const split = paneLayout.isSplit();
-  titlebarIdentity.setSplitRetreat(split);
   harnessPanel.setChromeRetreat(split);
   applySplitRatio();
   renderAllTabStrips();
 }
 
-/** 把 pane 布局设成存储的形状（恢复路径的当帧一步，M318 tasks 5.3）：`count` 为 1 或 2。
- *  - 存储是分栏（2）而当前是单 pane → 补一次 split；
- *  - 存储是单 pane（1）而当前在分栏 → 收拢回 root（切换 vault 时上一次的分栏拓扑不会残留
- *    到新 vault，「单 pane 存储恢复不出第二 pane」）；
- *  - 比例钳进合法区间后施加。
+/** 自动分栏的默认宽度比（harness:文档 = 1:2，Alex 裁决）——splitRatio 记文档侧占比。
+ *  只在「本 vault 无存储比例」时生效（design §7）；恢复路径置 storedRatioApplied。 */
+const HARNESS_DEFAULT_DOC_RATIO = 2 / 3;
+/** 本 vault 是否已有存储的比例值（恢复路径置真；切 vault 复位）。 */
+let storedRatioApplied = false;
+
+/** 把 pane 布局设成存储的形状（恢复路径的当帧一步，M318 tasks 5.3；HP1 扩展 harness 位）：
+ *  - `count` 为 **doc** pane 数（1 或 2）；`harnessPane` 为 true 时旁侧 pane 恢复成 harness
+ *    （面板在场；会话内容不持久化，恢复出空会话——ADR 0008 Decision 6 的 Phase 2 消费）；
+ *  - 存储是分栏而当前是单 pane → 补一次 split；存储是单 pane 而当前在分栏 → 收拢
+ *    （切换 vault 时上一次的分栏拓扑不会残留到新 vault）；
+ *  - 比例钳进合法区间后施加；`hasStoredLayout` 记本次是否真有存储值（默认宽度比的生效门）。
  *  已是目标形态时不动（不重复 split / 不无辜收起）。 */
-function applyPaneCount(count: number, ratio: number): void {
+function applyStoredLayout(
+  count: number,
+  ratio: number,
+  harnessPane: boolean,
+  hasStoredLayout: boolean,
+): void {
   splitRatio = clampSplitRatio(ratio);
-  if (count > 1) {
-    if (!paneLayout.isSplit()) addPane(); // 恢复路径**不抢焦点**（焦点归用户，不进右 pane）
-  } else if (paneLayout.isSplit()) {
-    closeActivePane();
+  if (hasStoredLayout) storedRatioApplied = true;
+  if (harnessPane) {
+    // harness 在场时 doc pane 至多一个：分栏且 pane B 是 doc → 先合并收拢（不丢标签），
+    // 再开 harness pane。
+    if (
+      paneLayout.isSplit() &&
+      paneLayout.panes()[1].handle.kind === "doc"
+    ) {
+      closeActivePane();
+    }
+    if (!paneLayout.isSplit()) addPane("harness"); // 恢复路径**不抢焦点**
+  } else {
+    // 目标无 harness：harness 在场先收——不收的话 isSplit() 恒真、doc pane 拓扑永远补不齐。
+    if (paneLayout.panes().some((pane) => pane.handle.kind === "harness")) {
+      closeHarnessPane(false);
+    }
+    if (count > 1) {
+      if (!paneLayout.isSplit()) addPane(); // 恢复路径**不抢焦点**（焦点归用户，不进右 pane）
+    } else if (paneLayout.isSplit()) {
+      closeActivePane();
+    }
   }
   applySplitChrome();
   syncActiveDocument();
 }
 
 /** 建一个新 pane（账本落点规则：恒在活跃 pane 右侧并即活跃）并补标签条实例与 chrome。
+ *  `kind` 缺省 "doc"；`"harness"` 开 harness pane（面板挂载在 createPaneHandle 里完成）。
  *  能力同步与注入重放在 createPaneHandle 里完成。**不抢焦点**——`pane.split` 命令与恢复
  *  路径共用它，焦点由调用方决定（恢复路径不该在装载期把焦点丢进右 pane）。 */
-function addPane(): boolean {
-  const pane = paneLayout.split(); // 上限二：null = 无操作、无提示（不变量 1）
+function addPane(kind: PaneKind = "doc"): boolean {
+  const pane = paneLayout.split(kind); // 上限二：null = 无操作、无提示（不变量 1）
   if (pane === null) return false;
   const assembly = paneAssemblies.get(pane.id);
-  if (assembly !== undefined) {
-    assembly.tabs = createPaneTabs(pane.id, pane.handle, assembly.stripEl);
+  if (assembly !== undefined && pane.handle.kind === "doc") {
+    assembly.tabs = createPaneTabs(
+      pane.id,
+      (pane.handle as { kind: "doc"; editor: EditorHandle }).editor,
+      assembly.stripEl,
+    );
   }
   applySplitChrome();
   return true;
 }
 
-/** `pane.split`：建右 pane、把焦点交给它（用户动作的落点），再对齐一次表现层。 */
+/** `pane.split`：建右 pane、把焦点交给它（用户动作的落点），再对齐一次表现层。
+ *  harness 在场时无操作（上限二：文档 + harness 已满，change move-harness-to-pane-chat-frame
+ *  tasks 1.3）——split() 的 null 回落天然成立。 */
 function splitActivePane(): void {
   if (!addPane()) return;
-  paneLayout.activeHandle().focusPreservingReadingPosition();
+  activeEditor().focusPreservingReadingPosition();
   syncActiveDocument();
 }
 
-/** `pane.other`（Emacs other-window 语义）：焦点落目标 pane——交还焦点走
- *  focusPreservingReadingPosition（M280 口径：聚焦不得把阅读位置拽回光标处）。 */
+/** `pane.other`（Emacs other-window 语义）：焦点落目标 pane——doc pane 走
+ *  focusPreservingReadingPosition（M280 口径：聚焦不得把阅读位置拽回光标处），harness pane
+ *  聚焦 composer。 */
 function activateOtherPane(): void {
   if (!paneLayout.activateOther()) return;
-  paneLayout.activeHandle().focusPreservingReadingPosition();
+  const active = paneLayout.active();
+  if (active.handle.kind === "harness") active.handle.focus();
+  else active.handle.editor.focusPreservingReadingPosition();
   syncActiveDocument();
+}
+
+/** ⌘⇧A / 标题栏 toggle 钮的路由（harness.toggle 命令同路径）：在场 → 收起，不在场 → 打开。 */
+function toggleHarnessPane(): void {
+  const harnessPane = paneLayout.panes().find((pane) => pane.handle.kind === "harness");
+  if (harnessPane === undefined) openHarnessPane();
+  else closeHarnessPane();
+}
+
+/** 打开 harness pane（旁侧 pane；harness:文档默认 1:2）：已有第二 doc pane 时先并标签收拢，
+ *  再开 harness pane；焦点落 composer。 */
+function openHarnessPane(): void {
+  // 已有第二 doc pane：其标签并入 root（closeActivePane 的方案 A 口径，不丢标签）。
+  if (paneLayout.isSplit() && paneLayout.panes()[1].handle.kind === "doc") {
+    closeActivePane();
+  }
+  if (paneLayout.isSplit()) return; // 上限二兜底（harness 已在场等防御性情形）
+  // 首开默认宽度比只在无存储值时生效（design §7）；拖拽/存储值沿用。
+  if (!storedRatioApplied) splitRatio = HARNESS_DEFAULT_DOC_RATIO;
+  addPane("harness");
+  harnessPanel.focusComposer();
+  syncActiveDocument();
+  // 布局变化落盘（harness_pane 位 + 比例； Debounce 在 store 里）。
+  switcher.sessionChanged();
+}
+
+/** 收起 harness pane（⌘⇧A 再按 / pane.close 于 harness pane / 面板内 Escape）：账本收 pane
+ *  （disposeHandle 摘面板 + 段），焦点回 doc pane，布局落盘。`focusDoc` 为 false 是恢复路径
+ *  （不抢焦点）。 */
+function closeHarnessPane(focusDoc = true): void {
+  const harnessPane = paneLayout.panes().find((pane) => pane.handle.kind === "harness");
+  if (harnessPane === undefined) return;
+  reconcilePaneLedger(); // harness pane 恒零标签：幂等对账，保 close() 的账本前提
+  if (paneLayout.active().id !== harnessPane.id) paneLayout.activate(harnessPane.id);
+  paneLayout.close();
+  applySplitChrome();
+  if (focusDoc) {
+    const root = paneLayout.panes()[0];
+    if (root.handle.kind === "doc") root.handle.editor.focusPreservingReadingPosition();
+  }
+  syncActiveDocument();
+  switcher.sessionChanged();
 }
 
 /** `pane.close`（裁决点 2 = 方案 A：不丢标签、不弹关标签确认）：会话先过户、账本后收。
+ *  HP1 语义修订（change move-harness-to-pane-chat-frame tasks 1.3）：活跃 pane 是 harness →
+ *  收起 harness pane；活跃 doc pane 而旁侧是 harness → **无操作**（标签没有可去的 pane，
+ *  丢标签不允许；关 harness 走 ⌘⇧A / toggle / pane.other 切过去再 ⌥W）。
  *  收尾占据 shell 槽的**恒为 root pane**——它复用 shell 的常驻 DOM 元素（单 pane 判据），
  *  因此被收的是 root 时先把活跃指针翻给动态 pane、再让账本收它：「被收 pane 的前台成为
  *  幸存 pane 前台」的语义不变，对齐的只是 DOM 槽位；标签顺序保持视觉上的从左到右
  *（root 的在前、并进来的在后）。 */
 function closeActivePane(): void {
   if (!paneLayout.isSplit()) return;
+  const active = paneLayout.active();
+  if (active.handle.kind === "harness") {
+    closeHarnessPane();
+    return;
+  }
+  if (paneLayout.panes()[1].handle.kind === "harness") return; // 见函数头：无操作口径
   // 先把账本对齐再收（close() 依据 closing.tabs 把归属并入幸存 pane）：M317 标签级接线。
   reconcilePaneLedger();
-  const closing = paneLayout.active();
   const root = paneLayout.panes()[0];
   const dynamic = paneLayout.panes()[1];
-  const closingForeground = closing.handle.activeSession();
+  const rootEditor = (root.handle as { kind: "doc"; editor: EditorHandle }).editor;
+  const dynamicEditor = (dynamic.handle as { kind: "doc"; editor: EditorHandle }).editor;
+  const closingForeground = dynamicEditor.activeSession();
   // 动态 pane 的会话全量过户进 root：干净且无路径的未命名文档丢弃无损失；dirty 未命名
   // 必须随迁——它的内容只活在内存里，不迁就是数据丢失。
-  for (const session of [...dynamic.handle.sessions()]) {
+  for (const session of [...dynamicEditor.sessions()]) {
     if (session.path === undefined && !session.dirty) continue;
-    dynamic.handle.closeSession(session); // 源实例摘除（邻居激活等副作用随 view 销毁无害）
-    root.handle.adoptSession(session);
+    dynamicEditor.closeSession(session); // 源实例摘除（邻居激活等副作用随 view 销毁无害）
+    rootEditor.adoptSession(session);
   }
-  if (closing === dynamic) {
+  if (active.id === dynamic.id) {
     paneLayout.close();
     // 被收 pane 的前台成为幸存 pane 前台（干净空文档已被丢弃的除外——那时幸存 pane
     // 保持自己的前台）。
-    if (root.handle.sessions().includes(closingForeground)) {
-      root.handle.activateSession(closingForeground);
+    if (rootEditor.sessions().includes(closingForeground)) {
+      rootEditor.activateSession(closingForeground);
     }
   } else {
     // 被收的是 root：会话（含刚过户的）已全在 root、前台不动；把活跃指针翻给动态 pane
@@ -671,7 +847,7 @@ function closeActivePane(): void {
     paneLayout.close();
   }
   applySplitChrome();
-  root.handle.focusPreservingReadingPosition();
+  rootEditor.focusPreservingReadingPosition();
   syncActiveDocument();
 }
 
@@ -679,20 +855,20 @@ function closeActivePane(): void {
 // root pane 那一个实例的直转——逐语义不变的第一判据因此成立在结构上。
 const editor: EditorHandle = {
   get view() {
-    return paneLayout.activeHandle().view;
+    return activeEditor().view;
   },
   // 命令表在装配期预生成、**分发时**按活跃 pane 解析（tasks 分组 3）——下方命令表里的
   // `...editor.commands` 展开因此逐字不动。
   commands: Object.fromEntries(
     EDITOR_COMMAND_IDS.map((id) => [
       id,
-      (event?: KeyboardEvent) => paneLayout.activeHandle().commands[id](event),
+      (event?: KeyboardEvent) => activeEditor().commands[id](event),
     ]),
   ) as Record<EditorCommandId, CommandRunner>,
   setMode: (mode) => forEachEditor((handle) => handle.setMode(mode)),
-  mode: () => paneLayout.activeHandle().mode(),
+  mode: () => activeEditor().mode(),
   setWrap: (next) => forEachEditor((handle) => handle.setWrap(next)),
-  wrapSettings: () => paneLayout.activeHandle().wrapSettings(),
+  wrapSettings: () => activeEditor().wrapSettings(),
   setAutoIndent: (next) => forEachEditor((handle) => handle.setAutoIndent(next)),
   toggleLineWrap: () => forEachEditor((handle) => handle.toggleLineWrap()),
   toggleCodeBlockWrap: () => forEachEditor((handle) => handle.toggleCodeBlockWrap()),
@@ -705,7 +881,7 @@ const editor: EditorHandle = {
     });
     return warnings;
   },
-  typographySettings: () => paneLayout.activeHandle().typographySettings(),
+  typographySettings: () => activeEditor().typographySettings(),
   syncRuntimeTypography: (settings) =>
     forEachEditor((handle) => handle.syncRuntimeTypography(settings)),
   textScale: (direction) => forEachEditor((handle) => handle.textScale(direction)),
@@ -720,15 +896,17 @@ const editor: EditorHandle = {
       handle.view.requestMeasure();
     });
   },
-  contentWidth: () => paneLayout.activeHandle().contentWidth(),
+  contentWidth: () => activeEditor().contentWidth(),
   // 新会话落在**活跃 pane**（tasks 2.10 / 4.2 的打开落点）。
-  createSession: () => paneLayout.activeHandle().createSession(),
+  createSession: () => activeEditor().createSession(),
   // 复合句柄的这个方法恒落 root pane（EditorHandle 接口要求实现它）。**会话恢复不再走它**：
   // M318 起按 pane 恢复，恢复路径直接用目标 pane 的句柄（见 switcher deps 的 createShell）。
   // 新 pane 的空白档由 split 自己的 reset 提供。
-  createShellSession: (path) => paneLayout.panes()[0].handle.createShellSession(path),
+  createShellSession: (path) =>
+    (paneLayout.panes()[0].handle as { kind: "doc"; editor: EditorHandle }).editor.createShellSession(path),
   reloadSession: (session, doc, path, requestId) => {
-    (paneEntryOfSession(session)?.[1].handle ?? paneLayout.activeHandle()).reloadSession(
+    const owner = paneEntryOfSession(session)?.[1].handle;
+    ((owner?.kind === "doc" ? owner.editor : undefined) ?? activeEditor()).reloadSession(
       session,
       doc,
       path,
@@ -736,35 +914,40 @@ const editor: EditorHandle = {
     );
   },
   remapSessionPaths: (from, to) =>
-    paneLayout.panes().flatMap((pane) => pane.handle.remapSessionPaths(from, to)),
+    docPanes().flatMap((pane) =>
+      (pane.handle as { kind: "doc"; editor: EditorHandle }).editor.remapSessionPaths(from, to),
+    ),
   // 可编辑性是**逐实例**的（藏在各 pane 自己的 modeCompartment 里），因此按属主 pane 路由——
   // 与 reloadSession / closeSession 同一条会话级路由口径。装配层点对点的调用走
   // `assembly.handle.setSessionEditable`（不用本复合句柄）；这一条只是接口完整性的实现。
   setSessionEditable: (session, editable) => {
-    (paneEntryOfSession(session)?.[1].handle ?? paneLayout.activeHandle()).setSessionEditable(
+    const owner = paneEntryOfSession(session)?.[1].handle;
+    ((owner?.kind === "doc" ? owner.editor : undefined) ?? activeEditor()).setSessionEditable(
       session,
       editable,
     );
   },
   activateSession: (session) => {
     const entry = paneEntryOfSession(session);
-    if (entry === undefined) return;
-    entry[1].handle.activateSession(session);
+    if (entry === undefined || entry[1].handle.kind !== "doc") return;
+    entry[1].handle.editor.activateSession(session);
     activatePane(entry[0]);
   },
-  activeSession: () => paneLayout.activeHandle().activeSession(),
-  sessions: () => paneLayout.panes().flatMap((pane) => pane.handle.sessions()),
+  activeSession: () => activeEditor().activeSession(),
+  sessions: () =>
+    docPanes().flatMap((pane) => (pane.handle as { kind: "doc"; editor: EditorHandle }).editor.sessions()),
   sessionForPath: (path) => {
-    for (const pane of paneLayout.panes()) {
-      const found = pane.handle.sessionForPath(path);
+    for (const pane of docPanes()) {
+      const found = (pane.handle as { kind: "doc"; editor: EditorHandle }).editor.sessionForPath(path);
       if (found !== undefined) return found;
     }
     return undefined;
   },
   closeSession: (session) => {
-    (paneEntryOfSession(session)?.[1].handle ?? paneLayout.activeHandle()).closeSession(session);
+    const owner = paneEntryOfSession(session)?.[1].handle;
+    ((owner?.kind === "doc" ? owner.editor : undefined) ?? activeEditor()).closeSession(session);
   },
-  adoptSession: (session) => paneLayout.activeHandle().adoptSession(session),
+  adoptSession: (session) => activeEditor().adoptSession(session),
   markCleanOf: (path, content) => forEachEditor((handle) => handle.markCleanOf(path, content)),
   reset: () => forEachEditor((handle) => handle.reset()),
   setAttachmentProvider: (provider) =>
@@ -783,15 +966,15 @@ const editor: EditorHandle = {
   setGotoLineGutterVisible: (visible) =>
     forEachEditor((handle) => handle.setGotoLineGutterVisible(visible)),
   refreshPreview: () => forEachEditor((handle) => handle.refreshPreview()),
-  revealLine: (line) => paneLayout.activeHandle().revealLine(line),
-  jumpToLine: (line) => paneLayout.activeHandle().jumpToLine(line),
-  readScrollPosition: () => paneLayout.activeHandle().readScrollPosition(),
+  revealLine: (line) => activeEditor().revealLine(line),
+  jumpToLine: (line) => activeEditor().jumpToLine(line),
+  readScrollPosition: () => activeEditor().readScrollPosition(),
   applyLoadedScrollPosition: (position) =>
-    paneLayout.activeHandle().applyLoadedScrollPosition(position),
-  applyScrollPosition: (position) => paneLayout.activeHandle().applyScrollPosition(position),
+    activeEditor().applyLoadedScrollPosition(position),
+  applyScrollPosition: (position) => activeEditor().applyScrollPosition(position),
   focusPreservingReadingPosition: () =>
-    paneLayout.activeHandle().focusPreservingReadingPosition(),
-  isDirty: () => paneLayout.activeHandle().isDirty(),
+    activeEditor().focusPreservingReadingPosition(),
+  isDirty: () => activeEditor().isDirty(),
   // 订阅全部经注册表（现存 + 未来 pane 都挂上；退订全局摘除）。onScroll / onDocChanged
   // 门控「仅活跃 pane」：滚动捕获与崩溃备份排期都按活跃 pane 的前台文档记账，非活跃
   // pane 的事件（程序化重载）进来会记错对象。onDirty / onSessionDirty 不门控——后台
@@ -800,7 +983,7 @@ const editor: EditorHandle = {
   onScroll: (listener) =>
     onEachEditor((handle) =>
       handle.onScroll(() => {
-        if (paneLayout.activeHandle() === handle) listener();
+        if (activeEditor() === handle) listener();
       }),
     ),
   onDirty: (listener) => onEachEditor((handle) => handle.onDirty(listener)),
@@ -808,7 +991,7 @@ const editor: EditorHandle = {
   onDocChanged: (listener) =>
     onEachEditor((handle) =>
       handle.onDocChanged(() => {
-        if (paneLayout.activeHandle() === handle) listener();
+        if (activeEditor() === handle) listener();
       }),
     ),
 };
@@ -1185,8 +1368,10 @@ editor.onReady((event) => {
 // ---------------------------------------------------------------------------
 
 const rootPaneAssembly = paneAssemblies.get(1);
-if (rootPaneAssembly === undefined) throw new Error("main: root pane 装配记录缺失"); // i18n-exempt: log
-rootPaneAssembly.tabs = createPaneTabs(1, rootPaneAssembly.handle, rootPaneAssembly.stripEl);
+if (rootPaneAssembly === undefined || rootPaneAssembly.handle.kind !== "doc") {
+  throw new Error("main: root pane 装配记录缺失"); // i18n-exempt: log
+}
+rootPaneAssembly.tabs = createPaneTabs(1, rootPaneAssembly.handle.editor, rootPaneAssembly.stripEl);
 
 // ---------------------------------------------------------------------------
 // 多 vault 切换器（M163，change multi-vault-workspaces 的 3.x / 4.x）：列表浮层、切换流程的
@@ -1301,15 +1486,18 @@ const switcher: VaultSwitcherHandle = createVaultSwitcher({
   mount: shell.root, // 浮层挂点取 app-shell 根：左栏两个容器都 overflow:auto，挂进去会被裁掉
   entry: () => tree.vaultEntry(),
   toast,
-  // 入盘快照的输入（M318）：逐 pane 的会话与前台路径 + 分隔比例，全部活读装配层的真实状态。
-  // 前台路径取该 pane 的前台标签（与 `save.displayedPath()` 同源——它也是活跃 pane 的前台，
-  // 只是这里**逐 pane** 取，不另存一份副本）。
+  // 入盘快照的输入（M318）：逐 **doc** pane 的会话与前台路径 + 分隔比例 + harness 在场位，
+  // 全部活读装配层的真实状态。前台路径取该 pane 的前台标签（与 `save.displayedPath()` 同源
+  // ——它也是活跃 doc pane 的前台，只是这里**逐 pane** 取，不另存一份副本）。harness pane
+  // 恒零标签，不进 panes 数组（ADR 0008 Decision 1/6）。
   layout: () => ({
-    panes: paneLayout.panes().map((pane) => ({
-      sessions: pane.handle.sessions(),
-      activePath: pane.handle.activeSession().path,
+    panes: docPanes().map((pane) => ({
+      sessions: (pane.handle as { kind: "doc"; editor: EditorHandle }).editor.sessions(),
+      activePath: (pane.handle as { kind: "doc"; editor: EditorHandle }).editor.activeSession()
+        .path,
     })),
     ratio: splitRatio,
+    harnessPane: paneLayout.panes().some((pane) => pane.handle.kind === "harness"),
   }),
   list: () => vaultList(),
   requestSwitch: (row) => guardVaultSwitch(() => switchToVault(row.path)),
@@ -1326,21 +1514,23 @@ const switcher: VaultSwitcherHandle = createVaultSwitcher({
   restoreReadingPosition: (snapshot) => editor.view.dispatch({ effects: snapshot }),
   focusEditor: () => editor.view.focus(),
   getSession: (vaultId) => vaultSessionGet(vaultId),
-  putSession: (vaultId, panes, ratio) => vaultSessionPut(vaultId, panes, ratio),
+  putSession: (vaultId, panes, ratio, harnessPane) =>
+    vaultSessionPut(vaultId, panes, ratio, harnessPane),
   // 会话恢复的「在不在 vault 内」同样补一次批量存在探测（spec「装载后恢复标签列表」）：
   // 惰性条目不在枚举结果里，但它们是真文件——用户从 `.local` 打开的教程下次启动照常回来。
   pathsExist: (paths) => fsPathsExist(paths),
-  // 恢复前把 pane 布局摆成存储的形状（M318 tasks 5.3 的第一步；单 pane 存储不出第二 pane）。
-  applyPaneCount,
+  // 恢复前把 pane 布局摆成存储的形状（M318 tasks 5.3 的第一步 + HP1 的 harness 位；
+  // 单 pane 存储不出第二 pane，harness 在场与否照存储恢复）。
+  applyPaneCount: applyStoredLayout,
   // 会话恢复的第一步（M283 的 3.2）：**当帧建壳**——为每个条目建一个「有路径、内容未装载」的
-  // 标签，落进**它自己所属的那个 pane**（M318：按 pane 恢复；此前恒落 root，见下游注释）。
-  // 不可打开的文件类（image/binary）不成壳，交回 store 计入跳过数（与它此前必然装载失败同
-  // 口径，行为不变）。
+  // 标签，落进**它自己所属的那个 doc pane**（M318：按 pane 恢复；`pane` 是 doc pane 序数——
+  // harness 在场时它不占序数位）。不可打开的文件类（image/binary）不成壳，交回 store 计入
+  // 跳过数（与它此前必然装载失败同口径，行为不变）。
   createShell: (path, pane) => {
     if (openKind(path) === "binary") return false;
-    const target = paneLayout.panes()[pane];
-    if (target === undefined) return false;
-    target.handle.createShellSession(path);
+    const target = docPanes()[pane];
+    if (target === undefined || target.handle.kind !== "doc") return false;
+    target.handle.editor.createShellSession(path);
     return true;
   },
   // 壳建齐的一拍把标签栏刷成完整列表（`syncActiveDocument` 是渲染标签栏的唯一落点）。
@@ -1350,8 +1540,8 @@ const switcher: VaultSwitcherHandle = createVaultSwitcher({
   // `quiet` 为真时不上屏失败覆盖层——批量路径的失败由一次计数提示承担。
   // 键名 `openPinned` 由 vault-switcher 的 deps 定；落点意图按 M254 的新口径取 "new"——
   // 每个文件新开一个标签（壳态命中时不新开：`openFile` 按 path 命中已在会话里的壳，装进它
-  // 自己所属的 pane）。`pane` 是条目所属 pane 的下标，作为**显式落点**交给 openFile：
-  // 恢复装载因此不走「打开意图落在活跃 pane」，标签归位原 pane（M321）。
+  // 自己所属的 pane）。`pane` 是条目所属 doc pane 的序数（同 createShell），作为**显式落点**
+  // 交给 openFile：恢复装载因此不走「打开意图落在活跃 pane」，标签归位原 pane（M321）。
   openPinned: (path, pane) => openFile(path, openKind(path), "new", true, pane),
   activate: (path) => {
     const session = editor.sessionForPath(path);
@@ -1666,8 +1856,9 @@ async function openFile(
   // 自己所属的 pane 里建好了壳（owner === target），此判定因此不移动，标签归位原 pane。
   if (existing !== undefined) {
     const ownerId = paneEntryOfSession(existing)?.[0];
+    // targetPane 是 **doc pane 序数**（恢复路径传的显式落点；harness pane 不占序数位）。
     const targetPaneId =
-      targetPane === undefined ? paneLayout.active().id : paneLayout.panes()[targetPane]?.id;
+      targetPane === undefined ? activeDocPane().id : docPanes()[targetPane]?.id;
     if (targetPaneId !== undefined && ownerId !== undefined && ownerId !== targetPaneId) {
       moveSessionToPane(existing, targetPaneId);
     }
@@ -1927,28 +2118,34 @@ function cycleLanguage(): void {
 shell.modelineLanguage.addEventListener("click", cycleLanguage);
 
 // ---------------------------------------------------------------------------
-// Harness 对话面板（M303，change add-harness-probe）：面板本体、流式渲染、上下文组装与
-// 批准闸都在 src/harness-panel.ts（+ src/harness-context.ts / src/harness-panel.css），
-// 这里只做一件事——把 shell 与编辑器句柄交给它。toggle 命令（harness.toggle）在下面的
-// 统一键位层登记，与标题栏 toggle 钮共用面板的同一条 toggle 路径。
+// Harness 对话面板（M303，change add-harness-probe；HP1 归位 pane，change
+// move-harness-to-pane-chat-frame）：面板本体、流式渲染、上下文组装与批准闸都在
+// src/harness-panel.ts（+ src/harness-context.ts / src/harness-panel.css），这里做装配——
+// 把 shell、编辑器句柄与「开/合 harness pane」的装配层入口交给它。toggle 命令
+//（harness.toggle）在下面的统一键位层登记，与标题栏 toggle 钮共用面板的同一条 toggle
+// 路径（面板内经 deps.togglePane 路由回本文件的 openHarnessPane / closeHarnessPane）。
 // ---------------------------------------------------------------------------
 // M317 2.4：面板拿到的 `editor` 是复合句柄，`assembleHarnessContext(editor)` 读的
-// `activeSession()` + `view.state/viewport` 因此都解析到**活跃 pane**——「当前 TAB」的定义
-// 随活跃 pane 走。`HarnessContextSource`（harness-context.ts:31）的接口形状不变，改造面全在
-// 这一处注入（design §2 行 5）。
-const harnessPanel = createHarnessPanel({ shell, editor });
+// `activeSession()` + `view.state/viewport` 因此都解析到**活跃 doc pane**——「当前 TAB」的
+// 定义随活跃 doc pane 走（harness pane 持焦时解析到文档 pane，见 activeDocPane）。
+// `HarnessContextSource`（harness-context.ts:31）的接口形状不变，改造面全在这一处注入
+//（design §2 行 5）。
+const harnessPanel = createHarnessPanel({ shell, editor, togglePane: toggleHarnessPane });
 
 // 摘录手势与跳回（M344，change add-harness-quote-cards design §4/§5）：浮动钮的选区捕获与
 // 失锚三层降级链 + 跳回高亮在 src/quote-gesture.ts，这里只做装配——把「最近活跃编辑器 pane」
 // 的解析（复合句柄 / paneEntryOfSession，与本文件其余消费者同源）、打开链路与提示出口注进去。
 // 摘录来源恒为最近活跃编辑器 pane（ADR 0008 Decision 3）：activeView/activePath 都活读活跃
-// pane，harness 面板持焦不改变 pane 归属（活跃指针只在焦点进入 pane contentDOM 时翻转）。
+// doc pane，harness 面板持焦不改变文档表面的解析（见 activeDocPane）。
 const quoteGesture = createQuoteGesture({
   activeView: () => editor.view,
-  activeMount: () => paneAssemblies.get(paneLayout.active().id)?.mountEl,
+  activeMount: () => paneAssemblies.get(activeDocPane().id)?.mountEl,
   activePath: () => editor.activeSession().path,
   sessionForPath: (path) => editor.sessionForPath(path),
-  viewOfSession: (session) => paneEntryOfSession(session)?.[1].handle.view,
+  viewOfSession: (session) => {
+    const handle = paneEntryOfSession(session)?.[1].handle;
+    return handle?.kind === "doc" ? handle.editor.view : undefined;
+  },
   activateSession: (session) => editor.activateSession(session),
   // 降级链「目标文档未打开先在最近活跃编辑器 pane 打开」的入口；quiet=true：打开失败由本
   // 链路的第三层 toast（D372「该摘录已失锚」）收口，不再叠加通用的打开失败 notice。
@@ -2010,8 +2207,10 @@ const commands: CommandRuntime = {
   // 就是上面的 cycleLanguage（与 modeline 语言钮共用同一条路径，见那段注释）。默认键位 ⌘⇧L 在
   // keys.ts 的 KEY_BINDINGS 里（三条冲突来源的复核与 token 形态见那一条的 docKey 指向的表条目）。
   "view.language-cycle": () => cycleLanguage(),
-  // harness 对话面板唤起 / 收起（M303，change add-harness-probe）：与标题栏 toggle 钮共用面板
-  // 的同一条 toggle 路径。默认键位 ⌘⇧A 在 keys.ts 的 KEY_BINDINGS 里（冲突核实见表条目 D345）。
+  // harness 对话面板唤起 / 收起（M303，change add-harness-probe；HP1 改「旁侧 pane 打开/
+  // 收起」，change move-harness-to-pane-chat-frame）：与标题栏 toggle 钮共用面板的同一条
+  // toggle 路径（面板内经 deps.togglePane 路由到装配层的 openHarnessPane/closeHarnessPane）。
+  // 默认键位 ⌘⇧A 在 keys.ts 的 KEY_BINDINGS 里（冲突核实见表条目 D345）。
   "harness.toggle": () => harnessPanel.toggle(),
   // 标签（M149）：能力与切换在 editor 的会话 API，装配层只做两件它才知道的事——
   // 切换后的表现层对齐（tabs.activateTab → syncActiveDocument）与关标签的确认（都在 src/tabs.ts）。
@@ -2081,7 +2280,10 @@ const keymapContext = {
     const target = event.target;
     return (
       target instanceof Node &&
-      paneLayout.panes().some((pane) => pane.handle.view.contentDOM.contains(target))
+      paneLayout.panes().some(
+        (pane) =>
+          pane.handle.kind === "doc" && pane.handle.editor.view.contentDOM.contains(target),
+      )
     );
   },
   // 命令级命中条件（M240，理由见 keys.ts 的 KeymapContext.commandGate）：`table.toggle-fullscreen`
@@ -2236,7 +2438,7 @@ onRelabel(() => {
   // 空 pane 引导的文案（M322，D369）：元素常驻 mountEl（hidden 切换在场 / 离场），在场与
   //  不在场的引导一并重写（同 design §5.2 的不变量）。
   for (const assembly of paneAssemblies.values()) {
-    assembly.guideEl.textContent = PANE_GUIDE_LABEL();
+    if (assembly.guideEl !== null) assembly.guideEl.textContent = PANE_GUIDE_LABEL();
   }
 });
 
@@ -2471,6 +2673,9 @@ async function applyVault(
   // 分工不同——两个名字太像，这里是唯一的区分点，改名/改语义前先读 design §6.2。
   emitReadiness("vault-ready", { root, vaultId, restored });
   save.noteVaultReset();
+  // HP1：「本 vault 是否已有存储比例」的判定随 vault 切换复位——默认宽度比（harness:
+  // 文档 = 1:2）只在无存储值时生效，恢复路径（applyStoredLayout）按存储值置回。
+  storedRatioApplied = false;
   // 附件索引只由**主动枚举**的条目建出（design §4.6）：惰性条目在树里可见、可打开，但
   // 不进索引——索引的输入必须是磁盘 + 规则的纯函数，不能取决于用户点开过哪些目录
   //（`![[img.png]]` 指向惰性目录里的图片解析为找不到是已知边界）。

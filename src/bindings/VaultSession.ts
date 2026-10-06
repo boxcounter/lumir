@@ -4,11 +4,10 @@ import type { PaneSession } from "./PaneSession";
 /**
  * 一个 vault 的 pane 布局会话（唯一类型定义点，TS 类型由 ts-rs 导出）。
  *
- * **`harness_pane` 是 ADR 0008 Decision 6 登记的 Phase 2 契约位**：Phase 1 恒 `false`，
- * 只随 schema 落盘、**无消费者**（读取侧也不解释它，见 `SessionFile`）。Phase 2 harness
- * 归位 pane 后，消费点在装配层的布局恢复一带（`src/main.ts` 的 `applyPaneCount`）——
- * 届时它决定 harness pane 的落位。此处与 design §10 的标注同源，防「声明了却没有消费者」
- * 误判；不给它造一个假的 Phase 1 消费者。
+ * **`harness_pane` 是 ADR 0008 Decision 6 登记的契约位**：Phase 1 恒 `false`、只随 schema
+ * 落盘；Phase 2（change move-harness-to-pane-chat-frame）起由前端写读——`true` 时装配层
+ * 恢复出 harness pane（面板在场与否；会话内容仍是内存态，不持久化）。读侧兼容：v2 旧文件
+ * 无该字段按 `false` 解释（`SessionFile` 的 serde default），v1 文件恒 `false`。
  */
 export type VaultSession = { version: number, 
 /**

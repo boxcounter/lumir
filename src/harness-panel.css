@@ -17,7 +17,9 @@
   flex: none;
   width: var(--layout-tb-btn-w);
   height: var(--layout-tb-btn-h);
-  margin-right: var(--sp-3);
+  /* 右缘余量吃本钮的 margin（标题栏自身的 padding-right 已归零，见 style.css 的
+     .titlebar——分栏态标题栏弹性区因此与内容区容器同宽，harness 段/pane 像素对齐）。 */
+  margin-right: var(--sp-6);
   padding: 0;
   border: none;
   border-radius: var(--r4);
@@ -45,10 +47,13 @@
   color: var(--accent-fill-text);
 }
 
-/* ── 面板本体：dock 列的网格落点（第三列、主行）；列宽由 .app-shell(.dock-open) 管 ──── */
+/* ── 面板本体：pane 内容件（HP1，change move-harness-to-pane-chat-frame）——装配层在
+   harness pane 分栏时把面板挂进该 pane 的挂载元素，宽高分层由挂载槽（.editor-pane）管，
+   这里只吃满；与文档 pane 的分隔由 pane 分隔条承担（左缘 hairline 保留）。dock 列的
+   网格落点（grid-column / .dock-open）随本 change 移除。 ─────────────────────────── */
 .lumir-harness {
-  grid-column: 3;
-  grid-row: 2;
+  width: 100%;
+  height: 100%;
   display: flex;
   flex-direction: column;
   min-width: 0;
@@ -64,60 +69,125 @@
   display: none;
 }
 
-/* ── 头部：标题（小标签形态，与搜索 panel 的「查找」同族）+ 用量读数 + 新会话 ──────── */
-.lumir-hp-head {
+/* ── 标题栏 harness 段（HP1，Alex 点子 1；形态合同见 change design §9 屏 4/7）：会话身份
+   （名下拉，浮层只含「新建会话」动作项——节点 1 裁决不列历史）+ 新建会话钮。与编辑器 pane
+   的标签段同构：它是 harness pane 的标题栏槽，宽度由装配层按 pane 比分宽（applySplitRatio
+   把 harness pane 槽与文档标签槽设同一份 splitRatio），段边界与 pane 分隔条像素对齐。
+   段随 harness pane 生命周期插入/摘出标题栏（hidden 切换）。 ────────────────────── */
+.lumir-hp-seg {
   display: flex;
   align-items: center;
-  gap: var(--sp-3);
-  padding: var(--sp-3) var(--sp-4);
-  border-bottom: 1px solid var(--border-soft);
-}
-.lumir-hp-title {
-  flex: none;
-  font-size: var(--fs-label);
-  font-weight: var(--fw-bold);
-  letter-spacing: 0.08em;
-  color: var(--text-2);
-}
-/* 用量读数：等宽 + 右对齐，随数字变化不抖动（搜索 panel 计数的同族形态） */
-.lumir-hp-usage {
-  flex: 1 1 auto;
+  gap: var(--sp-2);
   min-width: 0;
-  font-family: var(--font-mono);
-  font-size: var(--fs-label);
-  color: var(--text-3);
-  text-align: right;
+  padding-left: var(--sp-3);
+  /* 与 .tabstrip 同族的溢出纪律：段内容（会话名 ellipsis）不撑破标题栏。 */
+  overflow: hidden;
+}
+.lumir-hp-seg[hidden] {
+  display: none;
+}
+/* 会话名下拉钮：26px 高的小标签形态（与标签条同构），名超长 ellipsis。
+   position:relative = 会话浮层（absolute）的定位包含块。 */
+.lumir-hp-session {
+  position: relative;
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  max-width: 190px;
+  height: 26px;
+  padding: 0 var(--sp-3);
+  border: none;
+  border-radius: var(--r5);
+  background: none;
+  color: var(--text);
+  font: inherit;
+  font-size: var(--fs-meta);
+  font-weight: var(--fw-medium);
+  cursor: pointer;
+  transition: background var(--dur-ui) var(--ease-standard);
+}
+.lumir-hp-session:hover {
+  background: var(--hover);
+}
+.lumir-hp-session .lumir-hp-sname {
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
-.lumir-hp-newsession {
+.lumir-hp-session .lumir-hp-schev {
   flex: none;
-  padding: 2px var(--sp-3);
+  color: var(--text-3);
+  font-size: var(--fs-label-s);
+}
+/* 新建会话钮：24px 高的弱化钮（＋ glyph + 文案），与段内会话名同排。 */
+.lumir-hp-seg-new {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-1);
+  height: 24px;
+  padding: 0 var(--sp-3);
   border: none;
   border-radius: var(--r4);
   background: none;
   color: var(--text-3);
   font: inherit;
   font-size: var(--fs-meta);
+  white-space: nowrap;
   cursor: pointer;
-  transition: background var(--dur-ui) var(--ease-standard);
+  transition:
+    background var(--dur-ui) var(--ease-standard),
+    color var(--dur-ui) var(--ease-standard);
 }
-.lumir-hp-newsession:hover {
+.lumir-hp-seg-new:hover {
   background: var(--hover);
   color: var(--text);
 }
-
-/* ── 警示条（ctx 越阈值）：pending 族一档，tint 底 + 语义色字；eink 下 tint 退场、
-   字色 #000，可辨性由 hairline 边框与字重承担（规则①②） ───────────────────────── */
-.lumir-hp-warn {
-  padding: var(--sp-3) var(--sp-4);
-  background: var(--pending-tint);
-  color: var(--pending);
-  font-size: var(--fs-meta);
-  line-height: var(--lh-ui);
-  border-bottom: 1px solid var(--border-soft);
+.lumir-hp-seg-new .lumir-hp-plus {
+  font-weight: var(--fw-bold);
+  line-height: 1;
 }
-:root[data-theme="eink"] .lumir-hp-warn {
-  font-weight: var(--fw-semibold);
+/* 会话浮层（节点 1 裁决后口径）：挂在会话名下拉上，只含「新建会话」一个动作项，不列历史。 */
+.lumir-hp-sesspop {
+  position: absolute;
+  top: 30px;
+  left: var(--sp-3);
+  width: 200px;
+  padding: var(--sp-2);
+  background: var(--preview-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--r8);
+  box-shadow: var(--shadow-raise);
+  z-index: 30;
+}
+.lumir-hp-sesspop[hidden] {
+  display: none;
+}
+.lumir-hp-sesspop-item {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  width: 100%;
+  padding: var(--sp-2) var(--sp-3);
+  border: none;
+  border-radius: var(--r4);
+  background: none;
+  color: var(--text-2);
+  font: inherit;
+  font-size: var(--fs-meta);
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--dur-ui) var(--ease-standard);
+}
+.lumir-hp-sesspop-item:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+.lumir-hp-sesspop-item .lumir-hp-plus {
+  color: var(--text-3);
+  font-weight: var(--fw-bold);
+  line-height: 1;
 }
 
 /* ── transcript：消息流 ───────────────────────────────────────────────────── */

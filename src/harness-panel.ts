@@ -1,9 +1,17 @@
-// Harness 对话面板（M303，change add-harness-probe，design §10 面板 UI）。
+// Harness 对话面板（M303，change add-harness-probe，design §10 面板 UI；HP1 归位 pane，
+// change move-harness-to-pane-chat-frame）。
 //
-// 形态：应用骨架右栏 dock（网格第三列，0px ↔ --layout-dock-w，切换类在 style.css 的
-// .app-shell.dock-open）+ 标题栏动作钮槽位的 toggle 钮（产品标识块左侧）。面板 DOM 与
-// toggle 钮 DOM 全部由本模块自建（不碰 src/shell.ts——M303 的 scope 不含它，且「容器归
-// shell、内容归能力模块」与本文件的分工一致：shell 只提供挂点）。
+// 形态（HP1 起）：**pane 内容件**——装配层在 harness pane 分栏时把面板挂进该 pane 的挂载
+// 元素（attachTo），收起时摘除（面板元素长驻内存，订阅与流式态不随摘出丢失）；dock 列
+// （网格第三列 / .dock-open）随本 change 移除。面板不再有头部栏：会话身份（名下拉）与
+// 新建会话钮上移进标题栏的 harness 段（.lumir-hp-seg，仅 harness 在场时出现，宽度由装配层
+// 按 pane 比分宽、与分隔条像素对齐）；ctx% 读数与常驻警示句随头部栏移除（读数迁入 composer
+// 控制行是后续 mission 的面）。标题栏 toggle 钮仍由本模块自建，钉标题栏右端（产品标识块
+// 已移位 traffic 灯区）；双 pane 时隐藏（退让条款），⌘⇧A 照走。
+//
+// 开合语义：面板的开/关 = harness pane 的分/收，是**装配层**动作（账本 + DOM 槽 + 焦点
+// 移交）——本模块经 deps.togglePane 把 toggle 钮 / Escape / ⌘⇧A 的路由交回装配层，
+// isOpen() = 是否已挂载（pane 在场）。
 //
 // 分层纪律（ADR 0007 Decision 3）：
 //   - 上下文组装在 src/harness-context.ts（只依赖 EditorHandle，本模块是它的唯一消费者）；
@@ -25,10 +33,10 @@
 //     done 到达后对完整源做一次全量重渲（增量渲染在「跨空行的松散列表」这类形态上是
 //     近似，全量重渲是收敛点——近似只存在于流式期间）。
 //
-// 文案：全部取值经 src/copy.ts 的 t()（D326–D348）；长驻元素（标题 / toggle 钮 / 输入框
-// placeholder / 按钮 / 用量条 / 上下文 chip / 警示条 / 待决批准项）注册 onRelabel，语言切换
-// 时从已存状态重渲（design §5.2 的不变量）；transcript 的历史条目是已发生事实的记录，不随
-// 语言切换改写（与 toast 历史同口径）。
+// 文案：全部取值经 src/copy.ts 的 t()（D326–D330 / D332–D348 / D375）；长驻元素（toggle
+// 钮 / harness 段 / 输入框 placeholder / 按钮 / 上下文 chip / 待决批准项）注册 onRelabel，
+// 语言切换时从已存状态重渲（design §5.2 的不变量）；transcript 的历史条目是已发生事实的记
+// 录，不随语言切换改写（与 toast 历史同口径）。
 
 import { GFM, parser as commonmarkParser } from "@lezer/markdown";
 import { onRelabel, t } from "./copy";
@@ -59,22 +67,37 @@ export interface HarnessPanelEditor extends HarnessContextSource {
 export interface HarnessPanelDeps {
   shell: AppShell;
   editor: HarnessPanelEditor;
+  /** 开/合 harness pane 的装配层入口（账本 split/close + DOM 槽 + 焦点移交）：toggle 钮、
+   *  面板内 Escape、摘录插入的「未开先开」都经这一条路径——面板自己不碰 pane 账本
+   *  （HP1，change move-harness-to-pane-chat-frame；⌘⇧A 命令表也在装配层）。 */
+  togglePane(): void;
 }
 
 export interface HarnessPanelHandle {
-  /** 唤起 / 收起（harness.toggle 命令与标题栏 toggle 钮共用这一条路径）。 */
+  /** 唤起 / 收起（harness.toggle 命令、标题栏 toggle 钮、面板内 Escape 共用这一条路径——
+   *  实际开合经 `deps.togglePane` 交装配层执行）。 */
   toggle(): void;
+  /** 面板是否已挂进 harness pane（= pane 在场）。 */
   isOpen(): boolean;
+  /** 挂载 / 摘除：装配层在 harness pane 分栏时把该 pane 的挂载元素传入（面板挂进去并显形），
+   *  收起时传 null（面板摘出 DOM、长驻内存——订阅与流式态不丢，下次 attach 续用）。 */
+  attachTo(mount: HTMLElement | null): void;
+  /** 把焦点交给 composer（pane.other 切到 harness pane 时的落点；面板句柄经它聚焦）。 */
+  focusComposer(): void;
+  /** 标题栏 harness 段（.lumir-hp-seg）：长驻元素，装配层在 harness pane 分栏时插进
+   *  标题栏、按其比分宽设 flexGrow（与 pane 分隔条像素对齐）；hidden 由 attach 状态驱动。 */
+  titlebarSegment(): HTMLElement;
   /** 装载新 vault 之后由装配层调用（M312）：把面板的会话作用域切到新 vault——丢掉旧 vault 的
    *  渲染面与本地态，并按当前 vault 重拉一次 `harness_state`。同一个 vault 重复调用是空操作。 */
   vaultChanged(root: string): void;
-  /** 双栏退让（M316）：split 时隐藏标题栏 toggle 钮（标题栏腾给左右标签槽）；
-   *  ⌘⇧A 的命令路径不受影响（它走 `toggle()`，不经过这颗钮）。 */
+  /** 双栏退让（M316 机制，HP1 修订语义）：split（harness 在场）时隐藏标题栏 toggle 钮
+   *  （标题栏腾给文档标签槽与 harness 段按比分宽）；⌘⇧A 的命令路径不受影响
+   *  （它走 `toggle()`，不经过这颗钮）。 */
   setChromeRetreat(on: boolean): void;
   /**
    * 摘录卡片入 composer（M343 为 M344/QC3 留的挂载点）：卡片插在光标处（段落中间拆段、
-   * 光标落卡片下一行的问题段落——design §5 装配合同）；面板未开时先打开再插入并聚焦。
-   * 卡片数据（含 lines 非空校验）由调用方经 `createQuoteCard` 产出。
+   * 光标落卡片下一行的问题段落——design §5 装配合同）；面板未开时先经 `deps.togglePane`
+   * 打开再插入并聚焦。卡片数据（含 lines 非空校验）由调用方经 `createQuoteCard` 产出。
    */
   insertQuoteCard(card: QuoteCard): void;
   /**
@@ -83,10 +106,6 @@ export interface HarnessPanelHandle {
    */
   setQuoteJumpHandler(handler: ((card: QuoteCard) => void) | null): void;
 }
-
-/** 上下文警示阈值的后备值（design §11：默认 85%）。权威值在 [harness].warn_ctx_pct
- *（Rust 侧），快照里带 warn_ctx_pct 时以它为准；快照缺它（或后端未到）用本值。 */
-const FALLBACK_WARN_CTX_PCT = 85;
 
 /**
  * 会话作用域判据（M312）：载荷（`harness:event` 的事件信封 / `harness_state` 快照）自带的
@@ -802,11 +821,6 @@ function finalizedUpTo(source: string): number {
 // 面板本体
 // ---------------------------------------------------------------------------
 
-interface UsageReading {
-  ctx: number;
-  cache: number;
-}
-
 /** 待决批准项的已存数据（relabel 时据此重渲，不丢按钮状态）。 */
 interface PendingApproval {
   id: string;
@@ -819,35 +833,71 @@ interface PendingApproval {
 export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   const { shell, editor } = deps;
 
-  // ── DOM：toggle 钮（标题栏动作钮槽位，产品标识块左侧）────────────────────
+  // ── DOM：toggle 钮（标题栏动作钮槽位，钉右端；HP1 起产品标识块在 traffic 灯区，
+  // 右端只有这颗钮）─────────────────────────────────────────────────────────
   const toggleButton = document.createElement("button");
   toggleButton.type = "button";
   toggleButton.className = "titlebar-action lumir-hp-toggle";
   toggleButton.setAttribute("aria-pressed", "false");
-  // 本钮不需要 mousedown preventDefault：click 后 setOpen 显式移交焦点（开 → composer，
-  // 收 → editor.view），按钮瞬时持焦无所谓；「别抢焦点」的 preventDefault 若真需要，
+  // 本钮不需要 mousedown preventDefault：click 后经 deps.togglePane 交装配层开合（焦点移交
+  // 在那一边），按钮瞬时持焦无所谓；「别抢焦点」的 preventDefault 若真需要，
   // MUST NOT 挂容器级元素（REVIEW.md 第 16 条）。
-  shell.titlebar.insertBefore(toggleButton, shell.titlebarIdentity.block);
+  shell.titlebar.append(toggleButton);
 
-  // ── DOM：面板本体（dock 列，网格第三列）──────────────────────────────────
+  // ── DOM：标题栏 harness 段（.lumir-hp-seg，HP1，Alex 点子 1）────────────────
+  // 面板不再有头部栏：会话身份（名下拉）与新建会话钮上移进标题栏，与编辑器 pane 的标签段
+  // 同构。段是长驻元素（hidden 随 attach 状态翻），装配层在 harness pane 分栏时插进标题栏
+  // 并管宽度（flexGrow 与 pane 同一份 splitRatio——段边界与分隔条像素对齐）。
+  const seg = document.createElement("div");
+  seg.className = "lumir-hp-seg";
+  seg.setAttribute("role", "group");
+  seg.hidden = true;
+  const sessionButton = document.createElement("button");
+  sessionButton.type = "button";
+  sessionButton.className = "lumir-hp-session";
+  const sname = document.createElement("span");
+  sname.className = "lumir-hp-sname";
+  const schev = document.createElement("span");
+  schev.className = "lumir-hp-schev";
+  schev.setAttribute("aria-hidden", "true");
+  schev.textContent = "▾"; // i18n-exempt: glyph（下指 chevron 图形，非文案）
+  sessionButton.append(sname, schev);
+  const segNew = document.createElement("button");
+  segNew.type = "button";
+  segNew.className = "lumir-hp-seg-new";
+  const segNewPlus = document.createElement("span");
+  segNewPlus.className = "lumir-hp-plus";
+  segNewPlus.setAttribute("aria-hidden", "true");
+  segNewPlus.textContent = "＋"; // i18n-exempt: glyph（全角加号图形，非文案）
+  const segNewLabel = document.createElement("span");
+  segNew.append(segNewPlus, segNewLabel);
+  seg.append(sessionButton, segNew);
+  // 会话浮层（节点 1 裁决后口径）：只含「新建会话」一个动作项，不列历史会话。
+  const sessPop = document.createElement("div");
+  sessPop.className = "lumir-hp-sesspop";
+  sessPop.hidden = true;
+  const sessPopItem = document.createElement("button");
+  sessPopItem.type = "button";
+  sessPopItem.className = "lumir-hp-sesspop-item";
+  const popPlus = document.createElement("span");
+  popPlus.className = "lumir-hp-plus";
+  popPlus.setAttribute("aria-hidden", "true");
+  popPlus.textContent = "＋"; // i18n-exempt: glyph（全角加号图形，非文案）
+  const popLabel = document.createElement("span");
+  sessPopItem.append(popPlus, popLabel);
+  sessPop.append(sessPopItem);
+  sessionButton.append(sessPop); // 浮层锚在会话名钮内（absolute 定位的包含块）
+  // 段进标题栏（toggle 钮之前；hidden 长驻，在场与否随 attach 状态翻）——装配层只管宽度
+  //（applySplitRatio 把它当 harness pane 的标题栏槽设 flexGrow）。
+  shell.titlebar.insertBefore(seg, toggleButton);
+
+  // ── DOM：面板本体（pane 内容件；挂载目标由装配层经 attachTo 给，dock 列已移除）──
   const panel = document.createElement("aside");
   panel.className = "lumir-harness";
   panel.hidden = true;
 
-  const head = document.createElement("header");
-  head.className = "lumir-hp-head";
-  const title = document.createElement("span");
-  title.className = "lumir-hp-title";
-  const usage = document.createElement("span");
-  usage.className = "lumir-hp-usage";
-  const newSession = document.createElement("button");
-  newSession.type = "button";
-  newSession.className = "lumir-hp-newsession";
-  head.append(title, usage, newSession);
-
-  const warn = document.createElement("div");
-  warn.className = "lumir-hp-warn";
-  warn.hidden = true;
+  // HP1：头部栏整条上移进标题栏 harness 段（见上方 .lumir-hp-seg），面板本体从 transcript
+  // 开始；ctx% 读数与常驻警示句随头部栏退场（读数迁入 composer 控制行是后续 mission 的面）。
 
   const transcript = document.createElement("div");
   transcript.className = "lumir-hp-transcript";
@@ -879,15 +929,16 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   sendButton.className = "lumir-hp-send";
   composerRow.append(composer, sendButton);
 
-  panel.append(head, warn, transcript, chip, composerRow);
-  shell.root.append(panel);
+  panel.append(transcript, chip, composerRow);
 
   // ── 状态 ─────────────────────────────────────────────────────────────────
-  let open = false;
+  /** 面板挂载的 pane 槽（null = 收起/未开）。pane 在场与否由装配层管，面板只记录挂在哪。 */
+  let mountEl: HTMLElement | null = null;
   let busy = false;
-  let warnCtxPct = FALLBACK_WARN_CTX_PCT;
-  let lastUsage: UsageReading | null = null;
   let lastChip: HarnessContextBlock | null | "none" = null;
+  /** 当前逻辑会话的首条用户消息原文（会话名口径：截断约 20 字上屏；null = 未发消息，
+   *  显示「新会话」）。自动压缩开新逻辑会话后归 null，按同口径重算（design §3）。 */
+  let firstUserText: string | null = null;
   let streamingEl: HTMLElement | null = null;
   let streamingText = "";
   /** 流式消息里已完成块已渲染到的源偏移（增量渲染的游标）。 */
@@ -1252,35 +1303,45 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
 
   // ── 长驻文案施加（onRelabel 的重跑路径：全部从已存状态重取，不重放旧字符串）──
   function applyLabels(): void {
-    title.textContent = t("D326");
     toggleButton.textContent = t("D326");
     toggleButton.title = t("D327");
     toggleButton.setAttribute("aria-label", t("D327"));
     panel.setAttribute("aria-label", t("D327"));
-    newSession.textContent = t("D330");
+    seg.setAttribute("aria-label", t("D375"));
+    segNewLabel.textContent = t("D330");
+    popLabel.textContent = t("D330");
+    applySessionName();
     composer.dataset.placeholder = t("D328");
     composer.setAttribute("aria-label", t("D328"));
     sendButton.textContent = t("D329");
     emptyHint.textContent = t("D346");
-    applyUsage();
     applyChip();
-    applyWarn();
     // 待决批准项是交互中的 UI（不是历史记录）：随语言重渲按钮与标题，输入框内容保留。
     for (const pending of pendingApprovals.values()) relabelApproval(pending);
   }
 
-  function applyUsage(): void {
-    usage.textContent =
-      lastUsage === null ? "" : t("D334", { ctx: lastUsage.ctx, cache: lastUsage.cache });
+  // ── 会话名（标题栏 harness 段的会话身份；design §3 口径）───────────────────
+  /** 会话名截断长度（约 20 字，按码点截断——emoji / CJK 都按 1 字计）。 */
+  const SESSION_NAME_MAX = 20;
+
+  /** 从消息块序列取「首条用户消息的原始问题文本」：第一个段落块的文字（XML 序列化前的
+   *  原始输入——卡片与序列化标签不作名），空白折叠成单空格。 */
+  function firstUserTextOf(blocks: readonly ComposerBlock[]): string | null {
+    const para = blocks.find((block) => block.kind === "paragraph" && block.text.trim() !== "");
+    if (para === undefined || para.kind !== "paragraph") return null;
+    return para.text.replace(/\s+/g, " ").trim();
   }
 
-  function applyWarn(): void {
-    if (lastUsage !== null && lastUsage.ctx > warnCtxPct) {
-      warn.textContent = t("D335", { ctx: lastUsage.ctx, warn: warnCtxPct });
-      warn.hidden = false;
-    } else {
-      warn.hidden = true;
+  function applySessionName(): void {
+    if (firstUserText === null) {
+      sname.textContent = t("D330"); // 未发消息：「新会话」
+      sessionButton.removeAttribute("title");
+      return;
     }
+    const chars = Array.from(firstUserText);
+    sname.textContent =
+      chars.length > SESSION_NAME_MAX ? `${chars.slice(0, SESSION_NAME_MAX).join("")}…` : firstUserText;
+    sessionButton.title = firstUserText;
   }
 
   function applyChip(): void {
@@ -1565,13 +1626,14 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
         }
         return;
       case "usage":
-        if (typeof event.ctx_pct === "number") {
-          lastUsage = { ctx: event.ctx_pct, cache: typeof event.cache_pct === "number" ? event.cache_pct : 0 };
-          applyUsage();
-          applyWarn();
-        }
+        // HP1：用量读数随头部栏退场（常驻警示句一并移除）——事件仍由后端发出，
+        // 读数迁入 composer 控制行是后续 mission 的面；此处不再有消费动作。
         return;
       case "compact":
+        // 自动压缩 = 开新逻辑会话：会话名按同口径重算（下一条用户消息成为新名，
+        // 未发前显示「新会话」——design §3）。
+        firstUserText = null;
+        applySessionName();
         appendCompactMarker(typeof event.summary === "string" ? event.summary : "");
         return;
       case "done":
@@ -1601,11 +1663,6 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     // 快照准入（M312）：标识与当前 vault 不符的一律丢弃（例如切走之后才回来的那份——
     // 它的消息属于旧 vault）。判据与事件过滤同一条（inCurrentVault）。
     if (!inCurrentVault(state.vault, currentVault)) return;
-    if (typeof state.warn_ctx_pct === "number") warnCtxPct = state.warn_ctx_pct;
-    const usage = state.usage as { ctx_pct?: unknown; cache_pct?: unknown } | null | undefined;
-    if (usage !== null && typeof usage === "object" && typeof usage.ctx_pct === "number") {
-      lastUsage = { ctx: usage.ctx_pct, cache: typeof usage.cache_pct === "number" ? usage.cache_pct : 0 };
-    }
     const messages = Array.isArray(state.messages) ? state.messages : [];
     for (const message of messages) {
       if (typeof message !== "object" || message === null) continue;
@@ -1614,7 +1671,10 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       if (role === "user" && typeof record.text === "string") {
         // 已发送消息的存留是序列化文本（含 <quote> 块与上下文节）：解析回块序列同构呈现。
         // headingPath 不在协议里（人侧专用字段），恢复的卡片 hover 退化为 heading 链。
-        appendUserMessage(parseQuoteMessage(record.text));
+        const blocks = parseQuoteMessage(record.text);
+        // 会话名按同口径从恢复的消息重算（首条用户消息的原始问题文本）。
+        if (firstUserText === null) firstUserText = firstUserTextOf(blocks);
+        appendUserMessage(blocks);
       } else if (role === "assistant" && typeof record.text === "string") {
         const el = document.createElement("div");
         el.className = "lumir-hp-msg lumir-hp-msg-assistant";
@@ -1623,6 +1683,8 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       } else if (role === "tool" && typeof record.name === "string") {
         appendToolCall(record.name, "done", typeof record.summary === "string" ? record.summary : "");
       } else if (role === "compact" && typeof record.summary === "string") {
+        // 压缩记录 = 逻辑会话边界：其后的用户消息属于新逻辑会话——会话名归 null 重算。
+        firstUserText = null;
         appendCompactMarker(record.summary);
       }
     }
@@ -1635,8 +1697,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
         argv: typeof pending.argv === "string" ? pending.argv : undefined,
       });
     }
-    applyUsage();
-    applyWarn();
+    applySessionName();
     syncEmptyHint();
     scrollToBottom();
   }
@@ -1661,13 +1722,12 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     renderedFinalized = 0;
     chunkBuffer = "";
     lastToolEl = null;
-    // 用量读数属于上一段会话：清掉后由紧随其后的快照（或新会话的空态）重新给值。
-    lastUsage = null;
+    // 会话名随会话作废：未发消息前显示「新会话」，首条消息后再按口径重算。
+    firstUserText = null;
+    applySessionName();
     // busy 一并复位：旧会话那一轮的 done 事件可能永远到不了这里（切 vault 后被过滤，
     // 见 handleEvent）——不复位的话新会话的发送钮会被一个等不到的「处理中」锁死。
     setBusy(false);
-    applyUsage();
-    applyWarn();
     syncEmptyHint();
   }
 
@@ -1713,6 +1773,11 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     lastChip = block ?? "none";
     applyChip();
     appendUserMessage(blocks);
+    // 会话名：本逻辑会话的首条用户消息定名（未发过时）；卡片与序列化文本不作名。
+    if (firstUserText === null) {
+      firstUserText = firstUserTextOf(blocks);
+      applySessionName();
+    }
     // 投递成功入队后草稿与撤销史一并归零（新消息是新的编辑史）。
     undoHistory.clear();
     renderComposer([{ kind: "paragraph", text: "" }], null);
@@ -1861,7 +1926,8 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   composer.addEventListener("input", () => updateEmptyClass());
   composer.addEventListener("focus", refreshChip);
 
-  newSession.addEventListener("click", () => {
+  // ── 新建会话（harness 段 ＋钮与会话浮层动作项共用一条路径；两个入口一个语义）──
+  function startNewSession(): void {
     harnessNewSession()
       .then(() => {
         // 清空的是**渲染面**：会话真源在 Rust，重置成功后本地视图随之清空；待决批准项随
@@ -1869,37 +1935,55 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
         resetView();
       })
       .catch((e: unknown) => appendError(t("D348", { message: errorMessage(e) })));
+  }
+  segNew.addEventListener("click", startNewSession);
+  sessPopItem.addEventListener("click", () => {
+    sessPop.hidden = true;
+    startNewSession();
+  });
+  // 会话名下拉：展开/收起浮层（浮层只含「新建会话」动作项，节点 1 裁决不列历史）；
+  // 浮层外交互（点击其他处）收起。按钮在标题栏（drag 区）里——clickable 元素由 tauri
+  // drag.js 自动阻断拖拽，不需要 mousedown preventDefault（REVIEW.md 第 16 条）。
+  sessionButton.addEventListener("click", (event) => {
+    event.stopPropagation();
+    sessPop.hidden = !sessPop.hidden;
+  });
+  document.addEventListener("click", (event) => {
+    if (sessPop.hidden) return;
+    if (event.target instanceof Node && sessPop.contains(event.target)) return;
+    if (event.target instanceof Node && sessionButton.contains(event.target)) return;
+    sessPop.hidden = true;
   });
 
   // 面板内 Escape = 收起（就地消费，不进键位表：Escape token 已被 editor.widget-escape
   // 占用，面板在 contentDOM 之外，那条绑定不命中——与 M139 搜索 panel 同先例同判词）。
+  // 收起是装配层动作（账本收 pane + 焦点归还），经 deps.togglePane 路由。
   panel.addEventListener("keydown", (event: KeyboardEvent) => {
     if (event.key === "Escape") {
       event.preventDefault();
-      close();
+      deps.togglePane();
     }
   });
 
-  // ── 唤起 / 收起 ──────────────────────────────────────────────────────────
-  function setOpen(next: boolean): void {
-    open = next;
-    shell.root.classList.toggle("dock-open", next);
-    panel.hidden = !next;
-    toggleButton.setAttribute("aria-pressed", String(next));
-    if (next) {
+  // ── 唤起 / 收起（装配层执行；面板只维护挂载态与派生表现）───────────────────
+  function attachTo(mount: HTMLElement | null): void {
+    if (mount === mountEl) return;
+    mountEl = mount;
+    if (mount !== null) {
+      mount.append(panel);
+      panel.hidden = false;
       refreshChip();
-      composer.focus();
     } else {
-      // 焦点归还编辑器——否则焦点落在 hidden 元素上，下一次键入无处落地。
-      editor.view.focus();
+      // 摘出 DOM（元素长驻内存：订阅 / 撤销栈 / 流式态不丢），浮层随之收起。
+      panel.remove();
+      sessPop.hidden = true;
     }
+    // 段随 pane 在场出现（装配层已把它插进标题栏，这里只管 hidden）。
+    seg.hidden = mount === null;
+    toggleButton.setAttribute("aria-pressed", String(mount !== null));
   }
 
-  function close(): void {
-    if (open) setOpen(false);
-  }
-
-  toggleButton.addEventListener("click", () => setOpen(!open));
+  toggleButton.addEventListener("click", () => deps.togglePane());
 
   applyLabels();
   onRelabel(applyLabels);
@@ -1908,15 +1992,20 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   renderComposer([{ kind: "paragraph", text: "" }], null);
 
   return {
-    toggle: () => setOpen(!open),
-    isOpen: () => open,
+    toggle: () => deps.togglePane(),
+    isOpen: () => mountEl !== null,
+    attachTo,
+    focusComposer() {
+      composer.focus();
+    },
+    titlebarSegment: () => seg,
     vaultChanged,
     setChromeRetreat(on) {
       toggleButton.hidden = on;
     },
     insertQuoteCard(card: QuoteCard): void {
       const valid = createQuoteCard(card); // lines 非空校验（取不到行范围不得生成卡片）
-      if (!open) setOpen(true);
+      if (mountEl === null) deps.togglePane(); // 装配层开 pane 后焦点已落 composer
       withModel((blocks) => {
         const sel = caretFromDom();
         const caret = sel === null ? { block: blocks.length - 1, offset: 0 } : sel.focus;

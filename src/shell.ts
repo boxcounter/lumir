@@ -14,19 +14,23 @@ import { onRelabel, t } from "./copy";
 //   · 行数 / 语法 / 编码 → modeline 右段（新增展示位，只读派生）
 // modeline 的右段内容由装配层写（它是唯一知道「前台文档是谁」的地方）。
 //
-// M236（change product-version-display）：标题栏第三段 = 右端产品标识块
-//（span.titlebar-identity：ti-name / ti-sep / ti-version 三段）。内容填充、读屏名与
-// 窄窗退让（<640px 时版本号退 modeline 右段的 modelineVersion 段）全在 src/modeline.ts，
-// 这里只建 DOM——容器初始 hidden，元信息读不到就永远不显示（不渲染假版本号）。
+// M236（change product-version-display）：产品标识块。
+// HP1（change move-harness-to-pane-chat-frame，Alex 点子 2）：标识块从标题栏右端移到最左
+// traffic 灯区内（系统按钮旁）——标题栏右端只留 harness toggle 钮。窄窗 <640px 版本号退
+// modeline 的条款保留（modeline.ts）；M316 的双栏退让随移位移除（标识块不再占右簇）。
+// 内容填充、读屏名与窄窗退让全在 src/modeline.ts，这里只建 DOM——容器初始 hidden，元信息
+// 读不到就永远不显示（不渲染假版本号）。
 
 export interface AppShell {
   root: HTMLElement;
-  /** 标题栏容器：traffic 灯区（原生绘制，只占位）+ 标签段 + 右端产品标识块；整条带拖拽区。 */
+  /** 标题栏容器：traffic 灯区（原生绘制，只占位——产品标识块在其中，系统按钮旁）+ 标签段
+   *  + 动作钮；整条带拖拽区。harness 段（.lumir-hp-seg）由 harness 面板模块自建，装配层在
+   *  harness pane 分栏时插入（同 pane B 标签槽的生命周期）。 */
   titlebar: HTMLElement;
   /** 标签栏容器（M149）：条目由 src/main.ts 渲染；无打开文件时 hidden。 */
   tabStrip: HTMLElement;
-  /** 标题栏右端产品标识块（M236）：三段（名 / 分隔符 / 版本号）的容器与各段。
-   *  初始 hidden——元信息读不到就永远不显示；填充与退让逻辑在 src/modeline.ts。 */
+  /** 产品标识块（M236；HP1 起在 traffic 灯区内）：三段（名 / 分隔符 / 版本号）的容器与各段。
+   *  初始 hidden——元信息读不到就永远不显示；填充与窄窗退让逻辑在 src/modeline.ts。 */
   titlebarIdentity: { block: HTMLElement; name: HTMLElement; sep: HTMLElement; version: HTMLElement };
   /** 文件树 pane（createFileTree 挂载点）。 */
   fileTree: HTMLElement;
@@ -112,11 +116,11 @@ export function createShell(mount: HTMLElement): AppShell {
     return strip;
   };
   const tabStrip = makeTabStrip();
-  // 右端产品标识块（M236，D1 裁决：右端）：纯展示文本（span 不是 clickable 元素，
-  // drag.js 不为它阻断拖拽——标识块上按下拖拽窗口仍成立，场景 39 覆盖）。三段分离是
-  // 为了窄窗退让能只藏「分隔符 + 版本号」（src/modeline.ts）。读屏口径：可见文本本身
-  // 就是可访问内容（静态文本 SR 直接读），不给容器贴 aria-label——generic span 的
-  // aria-label 在 WebKit/Chromium 都不会被报读，贴了是假读屏名；分隔符「·」是纯排版
+  // 产品标识块（M236；HP1 移位进 traffic 灯区、系统按钮旁，Alex 点子 2）：纯展示文本
+  //（span 不是 clickable 元素，drag.js 不为它阻断拖拽——标识块上按下拖拽窗口仍成立，场景 39
+  // 覆盖）。三段分离是为了窄窗退让能只藏「分隔符 + 版本号」（src/modeline.ts）。读屏口径：
+  // 可见文本本身就是可访问内容（静态文本 SR 直接读），不给容器贴 aria-label——generic span
+  // 的 aria-label 在 WebKit/Chromium 都不会被报读，贴了是假读屏名；分隔符「·」是纯排版
   // （与标题链「›」同先例，不进文案 deck 编号），标 aria-hidden 防它被读成 "dot"。
   // 初始 hidden：元信息没读到就永远不显示。
   const identityBlock = document.createElement("span");
@@ -130,7 +134,9 @@ export function createShell(mount: HTMLElement): AppShell {
   const identityVersion = document.createElement("span");
   identityVersion.className = "ti-version";
   identityBlock.append(identityName, identitySep, identityVersion);
-  titlebar.append(traffic, tabStrip, identityBlock);
+  // 标识块进 traffic 空位（系统按钮之后）：标题栏右端原位置留给 harness toggle 钮。
+  traffic.append(identityBlock);
+  titlebar.append(traffic, tabStrip);
 
   const fileTree = pane("pane-filetree", "");
   const editor = pane("pane-editor", "");
