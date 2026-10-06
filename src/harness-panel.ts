@@ -369,6 +369,90 @@ export function deleteForwardAtCaret(
   return { blocks: next, caret };
 }
 
+// ── 撤销栈历史（quirk ③ 的自管核心；导出供单测用假时钟驱动复现链） ──────────
+
+export interface UndoHistory<T> {
+  /** 修改前调用：任何新编辑都先作废旧 redo（先于聚簇早退），再按聚簇/去重决定是否压栈。 */
+  push(snapshot: T, force: boolean): void;
+  /** 撤销：传入当前态、返回要应用的前态（null = 无物可弹）。 */
+  undo(current: T): T | null;
+  /** 重做：传入当前态、返回要应用的后态（null = 无物可重做）。 */
+  redo(current: T): T | null;
+  /** 强制下一拍重新成簇（IME 组合结束：整段组合是一个撤销步）。 */
+  breakCluster(): void;
+  /** 整栈清空（发送 / 切 vault：草稿是新的编辑史）。 */
+  clear(): void;
+  readonly size: number;
+  readonly redoSize: number;
+}
+
+/**
+ * 自管撤销栈（浏览器原生 undo 对 DOM 干预不可靠——design §2 quirk ③）。聚簇：clusterMs
+ * 内的连续编辑共用一个前态（force 跳过聚簇）；去重：栈顶同态不压（no-op 不产生幽灵步）。
+ * 两条正确性纪律（P2-1，快撤销快重打复现链）：
+ *   1. redo 的作废**先于**聚簇早退——聚簇跳过的编辑同样是新编辑，旧 redo 不得残留；
+ *   2. undo/redo 重置簇计时——撤销后的下一次编辑强制成新簇，永不成「撤销不掉的编辑」。
+ */
+export function createUndoHistory<T>(options: {
+  now: () => number;
+  clusterMs?: number;
+  limit?: number;
+  equals?: (a: T, b: T) => boolean;
+}): UndoHistory<T> {
+  const clusterMs = options.clusterMs ?? 1000;
+  const limit = options.limit ?? 100;
+  const equals = options.equals ?? ((a: T, b: T) => JSON.stringify(a) === JSON.stringify(b));
+  let stack: T[] = [];
+  let redoStack: T[] = [];
+  let lastEditAt = 0;
+  return {
+    push(snapshot, force) {
+      redoStack = []; // 纪律 1：任何新编辑先作废旧 redo。
+      const at = options.now();
+      if (!force && at - lastEditAt < clusterMs) {
+        lastEditAt = at;
+        return;
+      }
+      const top = stack[stack.length - 1];
+      if (top !== undefined && equals(top, snapshot)) {
+        lastEditAt = at;
+        return;
+      }
+      stack.push(snapshot);
+      if (stack.length > limit) stack.shift();
+      lastEditAt = at;
+    },
+    undo(current) {
+      const snap = stack.pop();
+      if (snap === undefined) return null;
+      redoStack.push(current);
+      lastEditAt = 0; // 纪律 2：撤销后的下一次编辑强制成新簇。
+      return snap;
+    },
+    redo(current) {
+      const snap = redoStack.pop();
+      if (snap === undefined) return null;
+      stack.push(current);
+      lastEditAt = 0;
+      return snap;
+    },
+    breakCluster() {
+      lastEditAt = 0;
+    },
+    clear() {
+      stack = [];
+      redoStack = [];
+      lastEditAt = 0;
+    },
+    get size() {
+      return stack.length;
+    },
+    get redoSize() {
+      return redoStack.length;
+    },
+  };
+}
+
 // ── 序列化消息的解析（transcript 快照恢复用） ──────────────────────────────
 
 /** XML 实体单次左到右消解（&amp; 先不解，避免把 &amp;lt; 解成 <——那是用户原文 "&lt;"）。
@@ -825,16 +909,16 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   /** 卡片数据寄存：DOM 只负责渲染，卡片数据（单一真源，design §3）经 WeakMap 挂回元素——
    *  序列化只从模型读，不从 DOM 反推。 */
   const cardData = new WeakMap<Element, QuoteCard>();
-  /** 撤销栈（quirk ③：浏览器原生 undo 对 DOM 干预不可靠，自管 blocks 快照；原生
-   *  historyUndo/Redo 在 beforeinput 显式禁用）。时间聚簇：1s 内的连续字符编辑合并成
-   *  一条（IME 组合期不压栈，compositionend 强制下一拍重新压栈）。 */
+  /** 撤销栈（quirk ③：自管 blocks 快照；原生 historyUndo/Redo 在 beforeinput 显式禁用）。
+   *  去重只比 blocks（光标位置不构成新编辑步）。 */
   interface ComposerSnapshot {
     blocks: ComposerBlock[];
     caret: ComposerCaret | null;
   }
-  let undoStack: ComposerSnapshot[] = [];
-  let redoStack: ComposerSnapshot[] = [];
-  let lastEditAt = 0;
+  const undoHistory = createUndoHistory<ComposerSnapshot>({
+    now: () => Date.now(),
+    equals: (a, b) => JSON.stringify(a.blocks) === JSON.stringify(b.blocks),
+  });
   /** 归一化的重入闸（normalize 自己改 DOM，触发观察器时不再递归）。 */
   let normalizing = false;
   /** QC3（M344）注册的卡片跳回处理器；未注册时卡片点击无操作。 */
@@ -1123,50 +1207,33 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     };
   }
 
-  /** 压入当前（修改前）状态。聚簇：1s 内的连续字符编辑共用一个前态（不强制时不压）；
-   *  去重：栈顶已是同态则不压（no-op 不产生幽灵步）。 */
-  function pushUndo(force: boolean): void {
-    const now = Date.now();
-    if (!force && now - lastEditAt < 1000) return;
-    const snap = snapshot();
-    const top = undoStack[undoStack.length - 1];
-    if (top !== undefined && JSON.stringify(top.blocks) === JSON.stringify(snap.blocks)) return;
-    undoStack.push(snap);
-    if (undoStack.length > 100) undoStack.shift();
-    redoStack = [];
-  }
-
   /**
-   * 模型修改的统一出口：压撤销栈（修改前态）→ 算新模型 → 整面重渲。force=true 用于
-   * 结构性操作（卡片插入/移除、粘贴、拆段、退格），强制独立成步。
+   * 模型修改的统一出口：压撤销栈（修改前态；聚簇/去重/redo 作废纪律见 createUndoHistory）
+   * → 算新模型 → 整面重渲。force=true 用于结构性操作（卡片插入/移除、粘贴、拆段、退格），
+   * 强制独立成步。
    */
   function withModel(
     op: (blocks: readonly ComposerBlock[]) => { blocks: ComposerBlock[]; caret: ComposerCaret },
     force: boolean,
   ): void {
     normalize();
-    pushUndo(force);
+    undoHistory.push(snapshot(), force);
     const result = op(readBlocksFromDom());
-    lastEditAt = Date.now();
     renderComposer(result.blocks, result.caret);
     refreshChip();
   }
 
   function undo(): void {
     normalize();
-    const current = snapshot();
-    const snap = undoStack.pop();
-    if (snap === undefined) return;
-    redoStack.push(current);
+    const snap = undoHistory.undo(snapshot());
+    if (snap === null) return;
     renderComposer(snap.blocks, snap.caret);
     refreshChip();
   }
 
   function redo(): void {
-    const current = snapshot();
-    const snap = redoStack.pop();
-    if (snap === undefined) return;
-    undoStack.push(current);
+    const snap = undoHistory.redo(snapshot());
+    if (snap === null) return;
     renderComposer(snap.blocks, snap.caret);
     refreshChip();
   }
@@ -1280,7 +1347,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       }
     }
     if (el.childElementCount === 0) {
-      // 全空消息（理论路径：快照里全是空段落）——保持一条可见记录，不渲染成空泡。
+      // 全空消息（理论路径：快照里全是空段落）——沉淀一条空泡，与 Rust 侧留存记录一致。
       el.textContent = "";
     }
     transcript.append(el);
@@ -1618,10 +1685,8 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     if (root === currentVault) return; // 同一个 vault 的重复装载（重定位 / 重开）不重置视图
     currentVault = root;
     resetView();
-    // 草稿清空 = 模型层清空（连带撤销栈——草稿是旧 vault 上下文里的产物）。
-    undoStack = [];
-    redoStack = [];
-    lastEditAt = 0;
+    // 草稿清空 = 模型层清空（连带撤销史——草稿是旧 vault 上下文里的产物）。
+    undoHistory.clear();
     renderComposer([{ kind: "paragraph", text: "" }], null);
     refreshChip();
     fetchSnapshot();
@@ -1647,9 +1712,8 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     lastChip = block ?? "none";
     applyChip();
     appendUserMessage(blocks);
-    undoStack = [];
-    redoStack = [];
-    lastEditAt = 0;
+    // 投递成功入队后草稿与撤销史一并归零（新消息是新的编辑史）。
+    undoHistory.clear();
     renderComposer([{ kind: "paragraph", text: "" }], null);
     updateEmptyClass();
     setBusy(true);
@@ -1742,18 +1806,17 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
         type === "deleteContentBackward" || type === "deleteContentForward" ||
         type === "deleteByCut" || type === "deleteWordBackward" || type === "deleteWordForward" ||
         type === "deleteSoftLineBackward" || type === "deleteSoftLineForward") {
-      // 原生文本编辑：允许落进 .qpara，但压一次撤销前态（1s 聚簇）。
-      pushUndo(false);
-      lastEditAt = Date.now();
+      // 原生文本编辑：允许落进 .qpara，但压一次撤销前态（聚簇/去重/redo 作废在 history 里）。
+      undoHistory.push(snapshot(), false);
       return;
     }
     event.preventDefault();
   });
   composer.addEventListener("compositionstart", () => {
-    pushUndo(true);
+    undoHistory.push(snapshot(), true);
   });
   composer.addEventListener("compositionend", () => {
-    lastEditAt = 0; // 组合整段是一个撤销步：下一拍编辑强制重新压栈。
+    undoHistory.breakCluster(); // 组合整段是一个撤销步：下一拍编辑强制重新压栈。
     updateEmptyClass();
   });
   // 粘贴净化（quirk ①）：只收 text/plain；多行经模型拆成多个段落块；跨块选区先整块删除。
@@ -1769,11 +1832,30 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       return insertPlainTextAtCaret(base.blocks, base.caret, text);
     }, true);
   });
+  // 拖入净化（同 quirk ①，只收 text/plain）：落点跟随指针——caretRangeFromPoint 取
+  // 落点光标（WebKit 系；取不到退化 composer 末尾，与 paste 的无选区退化同值）。
   composer.addEventListener("drop", (event: DragEvent) => {
     event.preventDefault();
     const text = event.dataTransfer?.getData("text/plain") ?? "";
     if (text === "") return;
-    withModel((blocks) => insertPlainTextAtCaret(blocks, { block: blocks.length - 1, offset: 0 }, text), true);
+    let caret: ComposerCaret | null = null;
+    const caretAtPoint = (document as Document & {
+      caretRangeFromPoint?: (x: number, y: number) => Range | null;
+    }).caretRangeFromPoint;
+    if (typeof caretAtPoint === "function") {
+      const range = caretAtPoint.call(document, event.clientX, event.clientY);
+      if (range !== null) {
+        // 拖放天然把光标落在指针处：让选区跟上，复用 caretFromDom 的模型读法。
+        const selection = window.getSelection();
+        selection?.removeAllRanges();
+        selection?.addRange(range);
+        caret = caretFromDom()?.focus ?? null;
+      }
+    }
+    withModel(
+      (blocks) => insertPlainTextAtCaret(blocks, caret ?? { block: blocks.length - 1, offset: 0 }, text),
+      true,
+    );
   });
   composer.addEventListener("input", () => updateEmptyClass());
   composer.addEventListener("focus", refreshChip);

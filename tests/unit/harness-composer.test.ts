@@ -9,6 +9,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   backspaceAtCaret,
+  createUndoHistory,
   deleteForwardAtCaret,
   deleteSelectionRange,
   insertCardAtCaret,
@@ -270,4 +271,69 @@ test("parseQuoteMessage：不成形的引用行按段落宽容落地（不抛错
     parsed.map((b) => (b.kind === "paragraph" ? b.text : "")).join("\n"),
     original,
   );
+});
+
+// ── 撤销栈历史（quirk ③ 的正确性纪律；P2-1 复现链，假时钟驱动） ─────────────
+
+test("撤销栈：聚簇合并连续编辑成一个撤销步", () => {
+  let t = 1000;
+  const history = createUndoHistory<string>({ now: () => t });
+  history.push("", false); //  burst 起点：前态 ""
+  t = 1300;
+  history.push("", false); // 聚簇：跳过
+  t = 1600;
+  history.push("", false); // 聚簇：跳过
+  assert.equal(history.size, 1);
+  assert.equal(history.undo("abc"), "");
+  assert.equal(history.size, 0);
+});
+
+test("撤销栈：快撤销快重打——undo 后 1s 内键入可撤销、旧 redo 立即作废（P2-1 复现链）", () => {
+  let t = 1000;
+  const history = createUndoHistory<string>({ now: () => t });
+  // t=1.0 键入 "a"、t=1.3 键入 "b"（聚簇共用一个前态 ""）
+  history.push("", false);
+  t = 1300;
+  history.push("", false);
+  assert.equal(history.size, 1);
+  // t=1.5 ⌘Z：弹回 ""，redo=["ab"]
+  t = 1500;
+  assert.equal(history.undo("ab"), "");
+  assert.equal(history.redoSize, 1);
+  // t=1.8 键入 "x"：撤销已重置簇计时 → 强制压前态 "ab"；且旧 redo 当场作废
+  t = 1800;
+  history.push("ab", false);
+  assert.equal(history.redoSize, 0, "任何新编辑都必须作废旧 redo");
+  assert.equal(history.size, 1);
+  // 再 ⌘Z：弹回 "ab"——"x" 可撤销（旧行为：无物可弹，x 永久残留）
+  assert.equal(history.undo("abx"), "ab");
+  // ⌘⇧Z：redo 回 "abx"（redo 栈里是同步的新链，不是过期态）
+  assert.equal(history.redo("ab"), "abx");
+});
+
+test("撤销栈：force 跳过聚簇、栈顶同态去重不产生幽灵步", () => {
+  let t = 1000;
+  const history = createUndoHistory<string>({ now: () => t });
+  history.push("a", true);
+  t = 1100;
+  history.push("a", true); // 同态强制压入前仍去重（no-op 操作）
+  assert.equal(history.size, 1);
+  t = 1100;
+  history.push("b", true); // 不同态：即使同刻也独立成步
+  assert.equal(history.size, 2);
+});
+
+test("撤销栈：breakCluster 让下一拍聚簇失效（IME 组合整段一步）；clear 全清", () => {
+  let t = 1000;
+  const history = createUndoHistory<string>({ now: () => t });
+  history.push("", false);
+  history.breakCluster();
+  t = 1100;
+  history.push("a", false); // 无 breakCluster 时 100ms 会聚簇跳过
+  assert.equal(history.size, 2);
+  history.clear();
+  assert.equal(history.size, 0);
+  assert.equal(history.redoSize, 0);
+  assert.equal(history.undo("x"), null);
+  assert.equal(history.redo("x"), null);
 });
