@@ -13,7 +13,7 @@ use serde::Deserialize;
 use crate::commands::CommandError;
 use crate::config::HarnessConfig;
 
-use super::approval::ApprovalRequest;
+use super::approval::{ApprovalRequest, ApprovalSignal};
 use super::events::{self, EventSink};
 use super::llm::{self, LlmClient};
 use super::permissions::{self, Decision};
@@ -211,6 +211,9 @@ pub fn run_turn_for(
         sink.emit(events::error(&e.code, &e.message));
         return;
     }
+    // 中断标注的 base：本轮起点（user 消息已入队）——`abort_turn` 只在此后的消息里
+    // 找 assistant 标注「已停止」，此前轮次的历史消息绝不误标（M348）。
+    let panel_base = runtime.with_session(scope, |s| s.panel_len()).unwrap_or(0);
 
     let skills = super::context::discover_skills(&scope.root);
     let tctx = ToolContext {
@@ -230,6 +233,13 @@ pub fn run_turn_for(
 
         let request = build_request(runtime, scope);
         let output = client.complete(&request);
+
+        // —— 停止检查点 ①（M348）：complete 在途期间被请求停止——产出保留、不再继续。
+        // 中断优先于错误/空响应判定：用户已表态「不再继续」，别再追错误行。
+        if turn_aborted(runtime, scope) {
+            abort_turn(sink, runtime, scope, panel_base, &output);
+            return;
+        }
 
         // —— 错误路径：上下文超限可压缩重试一次，其余错误即终态 ——
         if let Some(error) = output.error {
@@ -315,11 +325,86 @@ pub fn run_turn_for(
         }
 
         // —— 逐个执行工具调用（allow 直执行 / deny 回送 / ask 走批准闸）——
+        // 停止检查点 ②（M348）：本轮文本已入队后、逐调用执行前查标志——
+        // 中断时不再执行余下调用（含批准闸等待中的待决项，已由 request_abort 收回）。
         for call in &output.calls {
+            if turn_aborted(runtime, scope) {
+                abort_turn(
+                    sink,
+                    runtime,
+                    scope,
+                    panel_base,
+                    &llm::TurnOutput::default(),
+                );
+                return;
+            }
             handle_call(sink, runtime, scope, config, &tctx, call);
+        }
+        // 停止检查点 ③：中断落在最后一个调用的执行期间——不在此收口的话循环会
+        // 白多跑一轮 LLM 往返才在检查点 ① 被截住（「不再继续」以最早检查点为准）。
+        if turn_aborted(runtime, scope) {
+            abort_turn(
+                sink,
+                runtime,
+                scope,
+                panel_base,
+                &llm::TurnOutput::default(),
+            );
+            return;
         }
     }
     sink.emit(events::done());
+}
+
+/// 本轮是否已被请求停止（会话在 busy 协议下必然存在；Err 按未停止处理——
+/// 该路径只在会话被并发重置时出现，重置后循环的后续 with_session 同样会 Err，
+/// 收口由错误事件路径承担）。
+fn turn_aborted(runtime: &Runtime, scope: &VaultScope) -> bool {
+    runtime
+        .with_session(scope, |s| s.abort_requested())
+        .unwrap_or(false)
+}
+
+/// 中断收口（M348，design §5「不再继续」语义）：
+/// - 已产出内容保留：`output` 里本轮拿到的文本照常入队（LLM 侧 + 面板侧 + JSONL +
+///   text_chunk 事件），面板消息标 `status = "stopped"`（标注「已停止」）；`output`
+///   为空（中断落在工具执行段）时标注落在既有的本轮 assistant 消息上；
+/// - 不再继续：调用 / 用量 / 自动压缩一律不处理；
+/// - 如实留痕：JSONL 记 `turn_aborted`，事件发 `aborted`（面板经与 done 同一出口回
+///   idle，composer 立即可开新一轮）。
+fn abort_turn(
+    sink: &dyn EventSink,
+    runtime: &Runtime,
+    scope: &VaultScope,
+    panel_base: usize,
+    output: &llm::TurnOutput,
+) {
+    let assistant_text = output.text.clone();
+    let _ = runtime.with_session(scope, |s| {
+        if !assistant_text.is_empty() {
+            for delta in &output.text_deltas {
+                sink.emit(events::text_chunk(delta));
+            }
+            for item in session::assistant_item(&assistant_text, output.reasoning.as_ref()) {
+                s.push_input(item);
+            }
+            s.push_panel(PanelMessage {
+                role: "assistant".into(),
+                text: Some(assistant_text.clone()),
+                summary: None,
+                name: None,
+                status: Some("stopped".into()),
+            });
+            s.jsonl().record(&serde_json::json!({
+                "kind": "assistant_text",
+                "text": assistant_text,
+            }));
+        }
+        s.mark_last_assistant_stopped(panel_base);
+        s.jsonl()
+            .record(&serde_json::json!({"kind": "turn_aborted"}));
+    });
+    sink.emit(events::aborted());
 }
 
 /// 当前生效模型名（ctx% 的窗口查表用）。
@@ -509,13 +594,21 @@ fn gated_execute(
     ));
     // 未决批准项不自动超时通过：无超时地等决定（会话被重置 / vault 切换使发送端
     // 失效时 recv 报错 → 判过期，不执行）。
-    let decision = match rx.recv() {
-        Ok(decision) => decision,
+    let signal = match rx.recv() {
+        Ok(signal) => signal,
         Err(_) => {
             return ToolOutput::err(
                 "approval_stale",
                 "批准通道已关闭（会话被重置或 vault 已切换），本次调用未执行",
             )
+        }
+    };
+    // Withdrawn：本轮被用户停止（M348），待决项已收回——如实记 turn_aborted，
+    // 循环里的停止检查点随即收口，不继续执行也不回送模型。
+    let decision = match signal {
+        ApprovalSignal::Decided(decision) => decision,
+        ApprovalSignal::Withdrawn => {
+            return ToolOutput::err("turn_aborted", "本轮已停止，待批准的调用未执行");
         }
     };
     if decision.approved {

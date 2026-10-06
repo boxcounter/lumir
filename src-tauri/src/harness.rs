@@ -20,7 +20,7 @@
 //! - [`diff`]：edits → unified diff 预览
 //! - [`jsonl`]：会话留存（配置目录，append-only，MUST NOT 写入 vault）
 //! - [`turn`]：工具循环编排（上下文注入、多轮往返、loop_max、自动压缩、超限重试）
-//! - [`events`]：`harness:event` 七类事件载荷（与 m303 面板共用的钉死契约）
+//! - [`events`]：`harness:event` 八类事件载荷（与 m303 面板共用的钉死契约）
 
 pub mod approval;
 pub mod context;
@@ -119,11 +119,30 @@ impl Runtime {
             let writer = jsonl::JsonlWriter::open(&scope.root)?;
             vacant.insert(session::Session::new(scope.root.clone(), system, writer));
         }
-        sessions
-            .get_mut(&scope.key())
-            .expect("just ensured")
-            .set_busy(true);
+        let session = sessions.get_mut(&scope.key()).expect("just ensured");
+        session.set_busy(true);
+        // 新一轮复位上一轮的停止请求（中断标志不带进新轮；M348）。
+        session.clear_abort();
         Ok(())
+    }
+
+    /// 请求停止当前 vault 的在途轮次（M348，发送钮停止态点击；design §5「不再继续」）。
+    /// 置中断标志 + 收回待决批准项（通道发 Withdrawn，批准闸等待线程随即醒来）；
+    /// 实际的收口（已产出内容标注「已停止」、JSONL 记 turn_aborted、发 aborted 事件、
+    /// 释放 busy）由工具循环线程在检查点完成，本命令不等待。
+    /// 无在途轮次（已完成/从未开始）返回 `harness_not_running`——调用方（前端停止钩子）
+    /// 据此知道「等终态事件即可」，不是异常。
+    pub fn request_abort(&self, scope: &VaultScope) -> Result<(), CommandError> {
+        self.with_session(scope, |s| {
+            if !s.is_busy() {
+                return Err(CommandError::new(
+                    "harness_not_running",
+                    "当前没有正在进行的对话轮次",
+                ));
+            }
+            s.request_abort();
+            Ok(())
+        })?
     }
 
     /// 一轮结束（含错误路径）：释放 busy。会话对象保留（消息历史是状态）。
@@ -272,6 +291,19 @@ pub fn harness_approve(
     runtime.with_session(&scope, |s| {
         s.resolve_approval(&request_id, approved, reason)
     })?
+}
+
+/// 停止当前在途轮次（M348，发送钮停止态点击；design §5：中断 = 「不再继续」，非回滚）。
+/// 立即返回：中断收口由工具循环线程在停止检查点完成（已产出内容标注「已停止」、
+/// 待决批准项收回、JSONL 记 turn_aborted、发 `aborted` 事件回 idle）。
+/// 无在途轮次返回 `harness_not_running`（竞态：轮次刚好结束——终态事件随后就到）。
+#[tauri::command(rename_all = "snake_case")]
+pub fn harness_abort(
+    vault: tauri::State<'_, crate::commands::VaultState>,
+    runtime: tauri::State<'_, Runtime>,
+) -> Result<(), CommandError> {
+    let scope = vault_scope(&vault)?;
+    runtime.request_abort(&scope)
 }
 
 /// 「新会话」：清空当前 vault 会话的消息历史并重新装配系统上下文（JSONL 留存不受影响）。

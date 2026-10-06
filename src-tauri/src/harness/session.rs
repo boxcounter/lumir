@@ -14,7 +14,7 @@ use serde::Serialize;
 
 use crate::commands::CommandError;
 
-use super::approval::{ApprovalDecision, ApprovalRequest};
+use super::approval::{ApprovalDecision, ApprovalRequest, ApprovalSignal};
 use super::jsonl::JsonlWriter;
 
 /// 面板消息（`harness_state` 快照 `messages[]` 的元素；m303 宽容解析，缺字段=空态）。
@@ -111,6 +111,9 @@ pub struct Session {
     busy: bool,
     /// 挂起的批准请求（一次一个：一轮里 ask 档逐个过闸）。
     pending: Option<ApprovalRequest>,
+    /// 本轮被请求停止（M348）：`harness_abort` 置位、工具循环在检查点收口；
+    /// `acquire_turn` 开新一轮时清零。中断语义是「不再继续」，不回滚已产出内容。
+    abort_requested: bool,
     /// 最近一次提问注入的「当前编辑器上下文」节（压缩续聊时原样重注入）。
     current_context: Option<String>,
     jsonl: JsonlWriter,
@@ -126,6 +129,7 @@ impl Session {
             usage: UsageSnapshot::default(),
             busy: false,
             pending: None,
+            abort_requested: false,
             current_context: None,
             jsonl,
         }
@@ -224,7 +228,7 @@ impl Session {
                 format!("批准请求 {request_id} 不存在或已被处理"),
             ));
         }
-        let tx: Sender<ApprovalDecision> = pending.tx;
+        let tx: Sender<ApprovalSignal> = pending.tx;
         self.jsonl.record(&serde_json::json!({
             "kind": "approval",
             "id": pending.id,
@@ -233,12 +237,69 @@ impl Session {
             "reason": reason,
         }));
         // 发送失败 = 等待线程已不在（会话被重置等），人话报错即可，不 panic。
-        tx.send(ApprovalDecision { approved, reason }).map_err(|_| {
+        tx.send(ApprovalSignal::Decided(ApprovalDecision {
+            approved,
+            reason,
+        }))
+        .map_err(|_| {
             CommandError::new(
                 "approval_stale",
                 "批准请求已失效（对话线程已结束），请重试本轮提问",
             )
         })
+    }
+
+    /// 本轮被请求停止（M348）：置位标志、收回待决批准项（通道发 Withdrawn）、JSONL 留痕。
+    /// 返回是否确实有在途的待决批准项被收回（测试与如实记录用）。
+    pub fn request_abort(&mut self) -> bool {
+        self.abort_requested = true;
+        let withdrawn = self.pending.take();
+        if let Some(request) = &withdrawn {
+            self.jsonl.record(&serde_json::json!({
+                "kind": "approval_withdrawn",
+                "id": request.id,
+                "tool": request.tool,
+            }));
+            // 发失败 = 等待线程已不在，与 resolve_approval 同口径，不 panic。
+            let _ = request.tx.send(ApprovalSignal::Withdrawn);
+        }
+        self.jsonl
+            .record(&serde_json::json!({"kind": "turn_abort_requested"}));
+        withdrawn.is_some()
+    }
+
+    pub fn abort_requested(&self) -> bool {
+        self.abort_requested
+    }
+
+    /// 开新一轮时复位中断标志（`acquire_turn` 调用）：上一轮的停止请求不带进新轮。
+    pub fn clear_abort(&mut self) {
+        self.abort_requested = false;
+    }
+
+    /// 中断收口（M348）：把**本轮**最后一条 assistant 面板消息标注为「已停止」
+    /// （status = "stopped"，面板 D383 徽标的数据源）。`base` 是一轮开始时面板消息的
+    /// 条数（`run_turn_for` 在 user 消息入队后记录）——只在 base 之后的消息里找，
+    /// 此前轮次的历史消息绝不误标。返回是否标到了消息——中断发生在任何文本产出之前时
+    /// 没有 assistant 消息可标，如实返回 false。
+    pub fn mark_last_assistant_stopped(&mut self, base: usize) -> bool {
+        let Some(message) = self
+            .panel
+            .iter_mut()
+            .enumerate()
+            .rev()
+            .find(|(index, m)| *index >= base && m.role == "assistant")
+            .map(|(_, m)| m)
+        else {
+            return false;
+        };
+        message.status = Some("stopped".to_string());
+        true
+    }
+
+    /// 面板消息条数（中断标注的 base 计数用）。
+    pub fn panel_len(&self) -> usize {
+        self.panel.len()
     }
 }
 

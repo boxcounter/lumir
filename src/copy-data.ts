@@ -878,7 +878,7 @@ const COPY_TABLE = {
     en: "Context usage info",
   },
   // 发送钮处理中态（两态的另一档；空闲档 = D329）。停止点击走停止钩子（M347 定义前端
-  // 钩子与状态机，Rust abort 由后续 mission 接通）；连点幂等（stopping 子态挡第二次）。
+  // 钩子与状态机；M348 已接通 Rust abort）；连点幂等（stopping 子态挡第二次）。
   D378: {
     zh: "停止",
     en: "Stop",
@@ -903,6 +903,26 @@ const COPY_TABLE = {
   D382: {
     zh: "正在生成回复…",
     en: "Generating a reply…",
+  },
+
+  // -------------------------------------------------------------------------
+  // 轮次中断标注（D383，M348，change move-harness-to-pane-chat-frame design §5）：
+  // 用户点击发送钮停止态 = 停止本轮（harness_abort）；中断语义是「不再继续」，
+  // 已流式产出保留在 transcript 并挂本徽标。消费点 src/harness-panel.ts 的两条渲染路径
+  // （aborted 事件实时收口 / 快照恢复 status="stopped" 的留存消息）共用。
+  // -------------------------------------------------------------------------
+  D383: {
+    zh: "已停止",
+    en: "Stopped",
+  },
+
+  // -------------------------------------------------------------------------
+  // 轮次中断错误码（D384，M348）：harness_abort 在无非在途轮次时返回（竞态——轮次刚好
+  // 结束的瞬间点击停止；终态事件随后就到，前端按「等事件」降级收口）。
+  // -------------------------------------------------------------------------
+  D384: {
+    zh: "当前没有正在进行的对话轮次",
+    en: "No conversation turn is in progress",
   },
 } satisfies Record<string, CopyEntry>;
 
@@ -994,6 +1014,7 @@ export const ERROR_COPY: Record<string, CopyKey> = {
   harness_no_session: "D362",
   harness_thread_failed: "D363",
   harness_state_failed: "D364",
+  harness_not_running: "D384",
   open_url_rejected: "D78",
   open_url_failed: "D79",
 };
