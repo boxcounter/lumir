@@ -6,7 +6,7 @@
 
 ## 1. 设计合同与输入
 
-- 设计合同：原型 `design/prototypes/phase2-harness-chat/` 屏 4（工作中：进度 + 发送钮停止态）、屏 6（ctx% 读数在控制行 + ⓘ 气泡）、屏 7（标题栏 harness 段 + 会话浮层）、屏 8（复制消息）；标题栏 harness 段与产品标识移位见屏 1-3 骨架。
+- 设计合同：原型屏 4（工作中：进度 + 发送钮停止态）、屏 6（ctx% 读数在控制行 + ⓘ 气泡）、屏 7（标题栏 harness 段 + 会话浮层）、屏 8（复制消息）；标题栏 harness 段与产品标识移位见屏 1-3 骨架。**原型目录 `design/prototypes/phase2-harness-chat/` 已随 `add-harness-quote-cards` 的实现落地退役（提交 `4e011d6`）——本 change 开工前须先把上述屏位的设计合同重新落定（屏位原文见 git 历史）。**
 - 行为合同：NOTES.md 第三轮决策 3/4/5 与「沿用的前两轮决策」节；ADR 0008 Decision 1/2/6。
 - **实现排序硬约束**：本 change 的实现须在 `add-harness-quote-cards` 批次合并后开工（共用 `src/harness-panel.ts` / `src/harness-panel.css` / `src/copy-data.ts` / `文案-Copy.md`）。
 

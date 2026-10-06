@@ -5,9 +5,11 @@
 
 ## 1. 设计合同与输入
 
-- 原型 `design/prototypes/phase2-harness-chat/`：屏 9（思考块折叠/展开两态同屏）、屏 10（程度浮层三裸档）、
-  composer 控制行（模型 chip → **思考 chip** → ctx 读数 → 发送钮）。原型已获 Alex 批准，本 design 不再
-  重开形态问题，只登记实现落点。
+- 原型屏 9（思考块折叠/展开两态同屏）、屏 10（程度浮层三裸档）、composer 控制行（模型
+  chip → **思考 chip** → ctx 读数 → 发送钮）。原型已获 Alex 批准，本 design 不再重开形态问题，
+  只登记实现落点。**原型目录 `design/prototypes/phase2-harness-chat/` 已随 `add-harness-quote-cards`
+  的实现落地退役（提交 `4e011d6`）——本 change 开工前须先把屏 9/10 的设计合同重新落定（屏位原文见
+  git 历史）。**
 - 既有事实（代码核实）：Rust core 自 M306 起捕获 reasoning 项（`llm.rs` §reasoning 回传纪律：kimi 的
   `encrypted_content` 保真、deepseek thinking 模式产出独立 reasoning 项且带 tools 时必须原样回传），
   但 `events.rs` 事件族无 reasoning 事件，前端从未收到思考内容。程度参数当前走厂商默认

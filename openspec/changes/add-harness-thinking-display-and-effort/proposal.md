@@ -1,7 +1,8 @@
 # Proposal: 思考过程呈现与思考程度选择
 
-> ADR 0008 Phase 2 三提案之三。输入：原型 `design/prototypes/phase2-harness-chat/` 屏 9（思考过程折叠/展开两态）
-> 与屏 10（思考程度浮层），Alex 已批准原型全稿；Alex 原型意见 7「思考程度的菜单里无需解释每档的具体含义」。
+> ADR 0008 Phase 2 三提案之三。输入：原型屏 9（思考过程折叠/展开两态）与屏 10（思考程度浮层），
+> Alex 已批准原型全稿；Alex 原型意见 7「思考程度的菜单里无需解释每档的具体含义」。原型目录已随提案 1
+> （`add-harness-quote-cards`）的实现落地退役（提交 `4e011d6`），屏位原文见 git 历史。
 > 排序：实现排在本批次提案 1（`add-harness-quote-cards`）与提案 2（`move-harness-to-pane-chat-frame`）合并之后
 > （共用 `src/harness-panel.ts` 与 Rust core 事件面），提案间零规格耦合、可独立评审。
 

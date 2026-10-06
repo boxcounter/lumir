@@ -10,7 +10,7 @@
 
 ## Why
 
-ADR 0008 Decision 8 把 Phase 2 定为「harness 入 pane + chat UX 重做 + pin 式上下文块」。其中 **pin 式上下文块已被 Alex 2026-10-05 裁决推翻**（「我认为 pin 是一个糟糕的设计，我不需要」），替代机制是 Alex 自己提出的第三个方案：摘录正文选中的片段进入对话，点击可跳回原文并高亮。该机制经原型五轮迭代演进为 **block 级引用卡片**，原型已收官（`design/prototypes/phase2-harness-chat/`，Alex 2026-10-06「我对原型没有异议了」），屏 5「摘录卡片」为设计合同，五轮裁决原文全部 verbatim 记录在该目录 NOTES.md。
+ADR 0008 Decision 8 把 Phase 2 定为「harness 入 pane + chat UX 重做 + pin 式上下文块」。其中 **pin 式上下文块已被 Alex 2026-10-05 裁决推翻**（「我认为 pin 是一个糟糕的设计，我不需要」），替代机制是 Alex 自己提出的第三个方案：摘录正文选中的片段进入对话，点击可跳回原文并高亮。该机制经原型五轮迭代演进为 **block 级引用卡片**，原型已收官（Alex 2026-10-06「我对原型没有异议了」），屏 5「摘录卡片」为设计合同；设计合同现居本 change 的 `specs/harness/spec.md` 增量。五轮裁决原文原样记录在原型目录 `design/prototypes/phase2-harness-chat/` 的 NOTES.md——该目录已随实现落地退役（提交 `4e011d6`），原文见 git 历史。
 
 本 change 是 Phase 2 实现三份提案的**第一份**（三份拆法 Alex 2026-10-06 已批准），只覆盖摘录引用卡片与消息序列化；对话基础框架（会话/ctx%/发送停止/复制/进度）与思考呈现归后续两份，见 Non-goals。
 
@@ -63,5 +63,5 @@ ADR 0008 Decision 8 把 Phase 2 定为「harness 入 pane + chat UX 重做 + pin
 ## Impact
 
 - 影响的 specs：`harness`（ADDED ×4：摘录引用卡片 / 混排对话输入区 / 引用消息序列化协议 / 摘录失锚降级；MODIFIED ×1：上下文注入与可见性）
-- 影响的代码/系统：src（harness 面板 composer 改造为混排编辑区、编辑器选区手势与浮动钮、跳回定位与瞬态高亮、序列化与 prompt 装配、notice 复用）、src-tauri（投递消息结构携带 `<quote>` 块）、scripts/acceptance（新增验收场景）、tests/visual（harness 面板相关基线核对与新增）、docs/adr/0008（措辞修订）、design/prototypes/phase2-harness-chat（实现落地后退役）
+- 影响的代码/系统：src（harness 面板 composer 改造为混排编辑区、编辑器选区手势与浮动钮、跳回定位与瞬态高亮、序列化与 prompt 装配、notice 复用）、src-tauri（投递消息结构携带 `<quote>` 块）、scripts/acceptance（新增验收场景）、tests/visual（harness 面板相关基线核对与新增）、docs/adr/0008（措辞修订）、design/prototypes/phase2-harness-chat（**已退役**：目录随实现落地删除、索引死链一并清理，提交 `4e011d6`）
 - 关联约束：ADR 0008 Decision 8 Phase 2 边界（本 change 不混入提案 2/3 能力）；ADR 0002 §6 性能合同（混排编辑区选型须守常驻内存门禁，见 design §2）；ADR 0004（两个 Alex 评审节点是硬门禁）；仓库信息卫生纪律（验收 fixture 全部合成，不落真实 vault 内容）

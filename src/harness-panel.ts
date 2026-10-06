@@ -988,6 +988,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       remove.tabIndex = -1;
       remove.setAttribute("aria-label", t("D371"));
       remove.textContent = "×";
+      el.append(remove);
       // 卡片点击（× 除外）= 跳回原文（QC3 注册处理器后才生效）；mousedown 拦下是为不让
       // contenteditable=false 的卡片抢走选区/焦点（面板内元素，无标题栏拖拽问题——
       // REVIEW.md 第 16 条只约束标题栏容器）。

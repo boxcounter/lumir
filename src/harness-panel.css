@@ -475,7 +475,8 @@
   margin-bottom: 0;
 }
 
-/* ── 摘录引用卡片（M343，设计合同 = 原型 phase2-harness-chat 屏 5）：3px 引号竖条（中性
+/* ── 摘录引用卡片（M343，设计合同 = change add-harness-quote-cards 的 specs/harness 增量；
+   来源原型屏 5，原型已退役）：3px 引号竖条（中性
    灰阶，不消费 accent 蓝——change Non-goals 的 accent 中性化约束）+ 摘录截断（≤2 行）+
    等宽小字出处行（文档名 · 最近一级标题）+（composer 内）× 移除钮。原子 block 节点：
    composer 内 contenteditable=false，删除/选择按整体作用 ─────────────────────── */

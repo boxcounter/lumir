@@ -3,6 +3,7 @@
 - 状态: accepted（2026-10-03 当日经 Alex 裁决接受，无 Decision 翻转）
 - 日期: 2026-10-03
 - 角色: Alex Lee（评审/裁决），AI agent（起草）
+- 措辞修订（2026-10-06）: Decision 8 与 Consequences 里的「pin 式上下文块 / pin 上下文」改为**摘录引用卡片**表述——pin 机制 2026-10-05 经 Alex 裁决推翻，替代机制随 change `add-harness-quote-cards` 落地。本次只改措辞与指向，决策内容零改写（finding `20261005-tower-improve-adr-0008-pin-wording-superseded-by-capsule-ruling`）。
 
 ## Context
 
@@ -26,7 +27,7 @@
 5. **显式修订 ADR 0002 §2 的「不做两个编辑器」。** 修订口径：该条约束的是「源码/预览不拆成两个编辑器组件」，继续有效；pane 化引入的是同一「单组件双模式」编辑器的**第二个窗口实例**（上限二），不构成第二个编辑器组件。ADR 0002 文本随本 ADR accepted 同步加注。
 6. **持久化：pane 布局按 vault 持久化。** 扩展 vault-sessions schema（`panes: [{tabs, active}], harness_pane: bool` + 分隔条位置），沿用既有纪律（tmp+rename、版本不符=无历史、写失败降级 warning、路径校验复用 `valid_entry`）。
 7. **键位：v1 不引入 `C-x` 前缀。** pane 系命令（`pane.split` / `pane.close` / `pane.other`）用单段键，取⌥系近亲（⌥G 代 `M-g M-g` 的既有先例）。`C-x` 前缀机制（分发器已支持、表与配置层未放开）归 backlog「Emacs 档 3」独立立项，不与本 ADR 捆绑。
-8. **实施分期。** Phase 1 = pane 容器 + 双文档 split view（含命令路由、活跃 pane、会话所有权、持久化）；Phase 2 = harness 入 pane + chat UX 重做（先出 `design/prototypes/` 原型，Alex 已裁决）+ pin 式上下文块。「切 vault 后面板不刷新 + 事件流带 vault/会话标识」的小修包独立于本 ADR 先行（它是现行设计的缺陷修复，pane 化与否都要修；事件标识在 pane 时代继续受用）。Alex 已裁决推迟的宽度拖拽/模型选择/pin 上下文：宽度拖拽被 Decision 2 吸收（取消），模型选择与 pin 上下文在 Phase 2 内推进。
+8. **实施分期。** Phase 1 = pane 容器 + 双文档 split view（含命令路由、活跃 pane、会话所有权、持久化）；Phase 2 = harness 入 pane + chat UX 重做（先出 `design/prototypes/` 原型，Alex 已裁决）+ **摘录引用卡片**。「切 vault 后面板不刷新 + 事件流带 vault/会话标识」的小修包独立于本 ADR 先行（它是现行设计的缺陷修复，pane 化与否都要修；事件标识在 pane 时代继续受用）。Alex 已裁决推迟的宽度拖拽/模型选择/上下文策展机制：宽度拖拽被 Decision 2 吸收（取消），模型选择在 Phase 2 内推进；**上下文策展机制由「pin 式上下文块」改为摘录引用卡片**——Alex 2026-10-05 裁决 pin 是糟糕的设计、不需要（「我认为 pin 是一个糟糕的设计，我不需要」），替代机制为把正文选段摘录成引用卡片进 composer；经原型五轮迭代定型为 block 级引用卡片，决策内容随 change `add-harness-quote-cards` 落地（详见该 change 的 proposal / design）。放弃的只有 pin 独有的一项能力——「文档哪些段落已被讨论」的编辑器侧留痕（Alex 明确不要，未来若需要单独立项）。
 9. **备择方案（已考虑并排除）。** ① 四栏并存+宽度预算规则：窄窗下全线崩溃，收缩规则补丁复杂度只增不减；② harness 浮层化：与「对照文档长期讨论」的 harness 主场景冲突；③ 不做 pane 化、split view 与 dock 各自独立演进：两层模型并存，耦合债后置且利息增长（每个新面板类功能都要重新回答「放哪层」）。
 
 ## Consequences
@@ -35,7 +36,7 @@
 
 - 四栏困境在模型层消解：布局上限恒为三栏，任何未来的面板类能力（toc 侧栏化、反链面板等）都有统一的归位答案。
 - 与「Emacs keybinding PKM」定位（ADR 0006）同源：pane = Emacs window 的对应物，harness = 一个 buffer；心智模型单一。
-- chat UX 重做的容器问题一次解决：宽度、位置、与正文的对照关系不再是特殊 cases；pin 上下文的「钉的是哪个文档」语义由活跃 pane 自然回答。
+- chat UX 重做的容器问题一次解决：宽度、位置、与正文的对照关系不再是特殊 cases；摘录引用卡片的「摘的是哪个文档」语义由活跃 pane 自然回答（ADR 0008 Decision 3 的「最近活跃编辑器 pane」——change `add-harness-quote-cards` 落地的摘录来源归属）。
 - harness 上下文注入、命令路由、toc/modeline 跟随获得统一语义（最近活跃编辑器 pane），消除现状里「全局唯一前台」的隐含假设（`syncActiveDocument` 单同步点随之显式化）。
 - 改造面经 survey 清点可控：`createEditor` 自包含、harness 窄接口已解耦、持久化与配置回写先例齐全；无 fork 依赖、无新 npm 依赖。
 

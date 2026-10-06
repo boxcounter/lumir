@@ -12,7 +12,7 @@
 
 ADR 0008 Decision 8 的 Phase 2 = harness 入 pane + chat UX 重做。第一份提案 `add-harness-quote-cards`（摘录引用卡片 + 消息序列化）已通过节点 1、实现批次在途；本提案是 Phase 2 三份提案的**第二份**（拆法 Alex 2026-10-06 已批准），覆盖「对话基础框架」：harness 从 dock 归位 pane、标题栏与会话入口、composer 控制行、发送/停止、复制消息、进度呈现。
 
-依据（均为已落地的裁决，原文在原型 `design/prototypes/phase2-harness-chat/NOTES.md` 与 ADR 0008）：
+依据（均为已落地的裁决，原文在原型 NOTES.md 与 ADR 0008；原型目录已随 `add-harness-quote-cards` 的实现落地退役，提交 `4e011d6`，NOTES.md 原文见 git 历史）：
 
 - **ADR 0008 已裁待落实**：Decision 1（每个 pane 承载「一组文档标签」或「harness 面板」之一）、Decision 2（⌘⇧A 语义改为「在旁侧 pane 打开/收起 harness」，dock 列与 `.dock-open` 机制移除）、Decision 6（vault-sessions 的 `harness_pane` 字段 Phase 2 消费）。
 - **Alex 2026-10-05 三条 UX 点子**（verbatim 在 NOTES 第三轮）：① harness 顶栏并入窗口标题栏；② 产品名 + 版本移到系统按钮旁；③ ctx% 放在编辑框的模型选择那一行。
