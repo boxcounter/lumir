@@ -83,6 +83,13 @@ impl JsonlWriter {
     pub fn path(&self) -> &Path {
         &self.path
     }
+
+    /// 测试专用：直接指定留存路径（绕开 config_dir，零环境变量扰动——env 是进程全局，
+    /// cargo test 并行跑，改 XDG_CONFIG_HOME 会踩到别的用例）。
+    #[cfg(test)]
+    fn at_path(path: PathBuf) -> Self {
+        Self { path, file: None }
+    }
 }
 
 /// vault 根路径 → 文件名安全串（**可逆编码**，防碰撞；M309）：字母数字与 `-` `.` 原样
@@ -138,5 +145,41 @@ mod tests {
             assert!(!name.contains('/'), "{raw} -> {name}");
             assert!(!name.contains('\\'), "{raw} -> {name}");
         }
+    }
+
+    /// 会话留存记录序列化后的完整用户消息（change add-harness-quote-cards spec「会话
+    /// JSONL 留存 SHALL 记录序列化后的完整消息（含 <quote> 块）」）：投递文本在留存文件里
+    /// 逐字节在场——含 <quote> 标签、三属性、转义字符与交错的问题文字，一行一条、append-only。
+    #[test]
+    fn record_preserves_serialized_quote_message_verbatim() {
+        let dir =
+            std::env::temp_dir().join(format!("lumir-harness-jsonl-quote-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut writer = JsonlWriter::at_path(dir.join("vault.jsonl"));
+
+        // 与 M342 单测同形的合成 fixture（serializeQuoteMessage 的产物）：两张卡片 +
+        // 两段问题，属性值与文本含 XML 保留字符（& < "）。
+        let message = "<quote file=\"reading-workflow.md\" heading=\"筛选 &amp; 排序\" lines=\"9-10\">先读结论 &lt;再读论证&gt;</quote>\n这段是什么意思？\n<quote file=\"reading-workflow.md\" heading=\"复盘\" lines=\"16-17\">每周捞出「可执行动作\"</quote>\n这里指什么？";
+        for _ in 0..2 {
+            writer.record(&serde_json::json!({
+                "kind": "user_message",
+                "text": message,
+            }));
+        }
+        // record 的 IO 失败路径只打 stderr：文件必须真实存在、两行、消息逐字节在场。
+        let content = std::fs::read_to_string(writer.path()).unwrap();
+        let lines: Vec<&str> = content.lines().collect();
+        assert_eq!(lines.len(), 2, "{content}");
+        for line in &lines {
+            let value: serde_json::Value = serde_json::from_str(line).unwrap();
+            assert_eq!(
+                value["payload"]["text"].as_str().unwrap(),
+                message,
+                "留存必须逐字节保序列化消息"
+            );
+            assert!(value["ts"].is_u64(), "{line}");
+        }
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
