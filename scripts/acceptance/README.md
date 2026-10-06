@@ -120,7 +120,7 @@ steps:
 
 > 模型 chip 的选项表**无法**用场景配置收窄：`config_get` 回的是 Rust 侧 `HarnessProviders`
 > 结构体（`kimi` / `deepseek` / `mock` 三个字段恒序列化），因此 chip 浮层在真机上恒列三档——
-> 想只配一档造场景是造不出来的（见「已知边界」里 chip 浮层不进 AX 树那条）。
+> 想只配一档造场景是造不出来的。
 
 ### 语言面（M284）
 
@@ -342,6 +342,12 @@ Alex 抽审路径：先看 `summary.md`，再进 FAIL 场景看 `steps.md` + `sh
 
 - **不做手感/审美判定**：表头双击选中手感、表格宽度观感、WKWebView 下的翻屏节奏等归 Alex；
   套件只留截图证据（与 `tests/visual/README.md` 同一原则）。
+- **`aria-haspopup` 的钮在 AX 里不是 `AXButton`（M351 批次实证，2026-10-07）**：WKWebView 把带
+  `aria-haspopup="menu"` 的 `<button>` 映射成 `AXPopUpButton`（vault 切换钮、harness 会话名钮、
+  模型 chip 都在此列），`role="menuitemradio"` 的项也不一定映射 `AXButton`。`click` 的 target
+  对这类控件**不要锁 `role: AXButton`**——只给裸正则源 `name`（`findNode` 对 title/label/value
+  逐一匹配）；同名钮消歧优先用 role 分流（如场景 92：会话名钮是 AXPopUpButton、新建钮是
+  AXButton），其次才用 `nth`（DOM 序与 dump 序同源但脆）。
 - **没有滚动动作，也滚不动（M252 三轮探针）**：套件不提供 `do: scroll`——M252 按 tower 批准试做过
   （MCP `scroll` + 节点 bbox 中心 / 原始坐标），结论是**这条通道在本 app 上产不出滚动**：
   ① 点路径先报 `no cached geometry — call get_app_state first`（必须先有一次带截图的 `mode=full`
@@ -389,18 +395,15 @@ Alex 抽审路径：先看 `summary.md`，再进 FAIL 场景看 `steps.md` + `sh
   `tests/visual/scenes/m345-quote-card.spec.ts` 直接派发带 `text/html` + `text/plain` 的
   `paste` 事件，断言只取纯文本面。同理，任何依赖 `⌘C` 读回选区文本的真机判据都不可靠
   （场景 64 只把它当**记录**、不写断言，原委见那条场景的「已知边界」）。
-- **嵌在 `<button>` 里的浮层不进 AX 树（M349 实测，2026-10-06）**：模型 chip 的 provider 浮层
-  （`.lumir-hp-modelpop`）是 chip `<button>` 的**子节点**（`position: absolute` 的包含块需要它
-  锚在 chip 内），而 WKWebView 的 AX 树把嵌在 button 内的 button 当**叶子**——浮层项在 AX 里
-  一个都不出现。现场：场景 90 首跑（`test-results/acceptance/2026-10-06/90-harness-model-chip/`）
-  截图里浮层清楚可见（`kimi` / `deepseek` / `mock` + 当前标记），同一时刻的 AX dump 里 chip 节点
-  `AXButton (模型：mock（点击切换）)` **零子节点**、`deepseek` 全树零命中。对照：ctx ⓘ 气泡
-  （`.lumir-hp-ctxpop`）嵌在 span 里，AX 树照常暴露（场景 87 读得到气泡全文）⇒ 归因是
-  「嵌在 button 内」，不是浮层本身。**处置**：「点浮层项 → 写回」这类判据不落真机（写不出可点
-  节点），归视觉层 `tests/visual/scenes/m347-harness-composer.spec.ts`（DOM 通道 + 写回参数逐字）；
-  真机侧只判 chip 读数与浮层渲染（截图）。会话名下拉浮层（`.lumir-hp-sesspop`）是同一结构，
-  同样不可按 AX 点——**不写依赖它点选项的真机场景**。注意 `has "当前"` 会**假过**（空态提示
-  「与当前文档对话」也含该串），别拿它判浮层在场。
+- **嵌在 `<button>` 里的浮层不进 AX 树（M349 实测；M351 已修复，2026-10-07）**：WKWebView 的
+  AX 树把嵌在 button 内的 button 当**叶子**——浮层项一个都不暴露。M349 首跑现场：场景 90
+  截图里 provider 浮层清楚可见，同一时刻 AX dump 里 chip 节点零子节点、`deepseek` 全树零命中
+  （对照：ctx ⓘ 气泡嵌在 span 里就照常暴露 ⇒ 归因是「嵌在 button 内」）。**M351 修复**
+  （finding `20261006-worker-hp4`）：chip/会话名钮与浮层改挂 wrapper 兄弟结构
+  （`.lumir-hp-modelwrap` / `.lumir-hp-sessionwrap`），浮层项带 `role="menu"` /
+  `menuitemradio` / `menuitem` 语义——AX 树正常暴露，场景 90 的「点浮层项 → 写回」判据已
+  从视觉层升回真机行为层（同批次 PASS 实证）。教训留档：新浮层一律**不要**嵌进 `<button>`。
+  注意 `has "当前"` 会**假过**（空态提示「与当前文档对话」也含该串），别拿它判浮层在场。
 - **清理实例只认「自己起的那个进程组」，禁止用模式匹配 `pkill`**（2026-09-18 M164 的教训，实测代价：
   误伤了用户手头那份 dogfood 实例）：`pkill -f "target/debug/lumir"` 这类按**二进制路径**匹配的模式会连带
   命中用户的实例——同一个二进制路径，只有进程组不同（M164 实测：Alex 的 1420 会话连同它的 vite dev server

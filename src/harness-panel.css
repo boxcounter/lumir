@@ -9,7 +9,12 @@
      容器）、chip 描边化（规则⑥）、输入框 focus 加粗线宽（规则⑧）；
    - 代码着色色值**不在本文件**：transcript 容器镜像了 preview 主题的 scope 类
      （src/overlay-scope.ts），.cm-lp-tok-* 与 .cm-lp-inline-code 的规则值仍只有
-     src/preview/theme.ts 一处。 */
+     src/preview/theme.ts 一处。
+
+   M351（change harness-pane-visual-fidelity）按退役原型 phase2-harness-chat 做了视觉
+   还原：消息 = who meta 行 + body 体（用户气泡挂 body），工具调用 = 清单块（原型屏 4），
+   composer = 圆角卡片容器（原型 .h-box）+ 容器底控制行 + 图标发送钮。提取细节与有意
+   偏差的合同见该 change 的 design §2（视觉保真节）。 */
 
 /* ── 标题栏动作钮（toggle）：吃预留的 30×28 token，弱化默认态（灰字无框、hover 给反馈，
    与搜索 panel 按钮同族）；aria-pressed=true（面板展开）给常驻可辨态 ─────────────── */
@@ -86,10 +91,17 @@
 .lumir-hp-seg[hidden] {
   display: none;
 }
-/* 会话名下拉钮：26px 高的小标签形态（与标签条同构），名超长 ellipsis。
-   position:relative = 会话浮层（absolute）的定位包含块。 */
-.lumir-hp-session {
+/* 会话名钮 + 浮层的 wrapper（M351，finding 20261006-worker-hp4）：浮层挪出 <button>
+   （WKWebView 把嵌套按钮当叶子、AX 不暴露浮层项）——wrapper 是 absolute 定位的包含块，
+   紧贴按钮，坐标语义与「锚在钮内」等价。 */
+.lumir-hp-sessionwrap {
   position: relative;
+  flex: none;
+  display: flex;
+  min-width: 0;
+}
+/* 会话名下拉钮：26px 高的小标签形态（与标签条同构），名超长 ellipsis。 */
+.lumir-hp-session {
   flex: none;
   display: flex;
   align-items: center;
@@ -148,11 +160,12 @@
   font-weight: var(--fw-bold);
   line-height: 1;
 }
-/* 会话浮层（节点 1 裁决后口径）：挂在会话名下拉上，只含「新建会话」一个动作项，不列历史。 */
+/* 会话浮层（节点 1 裁决后口径）：挂在 wrapper 上（与会话名钮兄弟），只含「新建会话」
+   一个动作项，不列历史。 */
 .lumir-hp-sesspop {
   position: absolute;
   top: 30px;
-  left: var(--sp-3);
+  left: 0;
   width: 200px;
   padding: var(--sp-2);
   background: var(--preview-bg);
@@ -190,12 +203,13 @@
   line-height: 1;
 }
 
-/* ── transcript：消息流 ───────────────────────────────────────────────────── */
+/* ── transcript：消息流（底 padding sp-2 对齐原型 .h-transcript——末条消息与 composer
+   区之间的余量由 composer-area 的 padding 接续） ─────────────────────────────── */
 .lumir-hp-transcript {
   flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
-  padding: var(--sp-4);
+  padding: var(--sp-4) var(--sp-4) var(--sp-2);
   display: flex;
   flex-direction: column;
   gap: var(--sp-4);
@@ -210,12 +224,34 @@
   line-height: var(--lh-ui);
   text-align: center;
 }
+/* who meta 行（M351，原型 .who/.when）：角色 + 相对时间同行，micro 字号 + semibold +
+   宽字距 + 三级色——视觉上降档于正文（meta chrome）；when 回常规字重字距。 */
+.lumir-hp-who {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  margin-bottom: var(--sp-1);
+  font-size: var(--fs-micro);
+  font-weight: var(--fw-semibold);
+  letter-spacing: 0.05em;
+  color: var(--text-3);
+}
+.lumir-hp-when {
+  font-weight: var(--fw-regular);
+  letter-spacing: 0;
+}
 .lumir-hp-msg-user {
   align-self: stretch;
+  min-width: 0;
+}
+/* 用户消息气泡（原型 .msg.user .body）：挂 body 体——who 行在气泡外上方。正文色 text-2
+   （比 agent 正文降一档：原型有意区分，合同见 change design §2.2）。 */
+.lumir-hp-msg-user > .lumir-hp-body {
   padding: var(--sp-3) var(--sp-4);
   background: var(--content-bg);
   border: 1px solid var(--border-soft);
   border-radius: var(--r6);
+  color: var(--text-2);
   white-space: pre-wrap;
   word-break: break-word;
 }
@@ -224,78 +260,79 @@
   min-width: 0;
   word-break: break-word;
 }
-/* Markdown 块的纵向节奏（面板是 chrome 表面，字号走 shell 阶梯，不碰 --editor-* token） */
-.lumir-hp-msg-assistant h1,
-.lumir-hp-msg-assistant h2,
-.lumir-hp-msg-assistant h3,
-.lumir-hp-msg-assistant h4,
-.lumir-hp-msg-assistant h5,
-.lumir-hp-msg-assistant h6 {
+/* Markdown 块的纵向节奏（挂 body 体，M351——who 行不吃块节奏；面板是 chrome 表面，
+   字号走 shell 阶梯，不碰 --editor-* token） */
+.lumir-hp-msg-assistant .lumir-hp-body h1,
+.lumir-hp-msg-assistant .lumir-hp-body h2,
+.lumir-hp-msg-assistant .lumir-hp-body h3,
+.lumir-hp-msg-assistant .lumir-hp-body h4,
+.lumir-hp-msg-assistant .lumir-hp-body h5,
+.lumir-hp-msg-assistant .lumir-hp-body h6 {
   margin: var(--sp-4) 0 var(--sp-2);
   font-weight: var(--fw-bold);
   line-height: var(--lh-title);
 }
-.lumir-hp-msg-assistant h1 { font-size: var(--fs-h1); }
-.lumir-hp-msg-assistant h2 { font-size: var(--fs-h2); }
-.lumir-hp-msg-assistant h3 { font-size: var(--fs-h3); }
-.lumir-hp-msg-assistant h4 { font-size: var(--fs-h4); }
-.lumir-hp-msg-assistant h5 { font-size: var(--fs-h5); }
-.lumir-hp-msg-assistant h6 { font-size: var(--fs-h6); }
-.lumir-hp-msg-assistant h1:first-child,
-.lumir-hp-msg-assistant h2:first-child,
-.lumir-hp-msg-assistant h3:first-child,
-.lumir-hp-msg-assistant h4:first-child,
-.lumir-hp-msg-assistant h5:first-child,
-.lumir-hp-msg-assistant h6:first-child,
-.lumir-hp-msg-assistant p:first-child,
-.lumir-hp-msg-assistant ul:first-child,
-.lumir-hp-msg-assistant ol:first-child,
-.lumir-hp-msg-assistant pre:first-child,
-.lumir-hp-msg-assistant blockquote:first-child,
-.lumir-hp-msg-assistant table:first-child {
+.lumir-hp-msg-assistant .lumir-hp-body h1 { font-size: var(--fs-h1); }
+.lumir-hp-msg-assistant .lumir-hp-body h2 { font-size: var(--fs-h2); }
+.lumir-hp-msg-assistant .lumir-hp-body h3 { font-size: var(--fs-h3); }
+.lumir-hp-msg-assistant .lumir-hp-body h4 { font-size: var(--fs-h4); }
+.lumir-hp-msg-assistant .lumir-hp-body h5 { font-size: var(--fs-h5); }
+.lumir-hp-msg-assistant .lumir-hp-body h6 { font-size: var(--fs-h6); }
+.lumir-hp-msg-assistant .lumir-hp-body h1:first-child,
+.lumir-hp-msg-assistant .lumir-hp-body h2:first-child,
+.lumir-hp-msg-assistant .lumir-hp-body h3:first-child,
+.lumir-hp-msg-assistant .lumir-hp-body h4:first-child,
+.lumir-hp-msg-assistant .lumir-hp-body h5:first-child,
+.lumir-hp-msg-assistant .lumir-hp-body h6:first-child,
+.lumir-hp-msg-assistant .lumir-hp-body p:first-child,
+.lumir-hp-msg-assistant .lumir-hp-body ul:first-child,
+.lumir-hp-msg-assistant .lumir-hp-body ol:first-child,
+.lumir-hp-msg-assistant .lumir-hp-body pre:first-child,
+.lumir-hp-msg-assistant .lumir-hp-body blockquote:first-child,
+.lumir-hp-msg-assistant .lumir-hp-body table:first-child {
   margin-top: 0;
 }
-.lumir-hp-msg-assistant p,
-.lumir-hp-msg-assistant ul,
-.lumir-hp-msg-assistant ol,
-.lumir-hp-msg-assistant pre,
-.lumir-hp-msg-assistant blockquote,
-.lumir-hp-msg-assistant table {
+.lumir-hp-msg-assistant .lumir-hp-body p,
+.lumir-hp-msg-assistant .lumir-hp-body ul,
+.lumir-hp-msg-assistant .lumir-hp-body ol,
+.lumir-hp-msg-assistant .lumir-hp-body pre,
+.lumir-hp-msg-assistant .lumir-hp-body blockquote,
+.lumir-hp-msg-assistant .lumir-hp-body table {
   margin: var(--sp-2) 0;
 }
-.lumir-hp-msg-assistant p:last-child,
-.lumir-hp-msg-assistant ul:last-child,
-.lumir-hp-msg-assistant ol:last-child,
-.lumir-hp-msg-assistant pre:last-child,
-.lumir-hp-msg-assistant blockquote:last-child,
-.lumir-hp-msg-assistant table:last-child {
+.lumir-hp-msg-assistant .lumir-hp-body p:last-child,
+.lumir-hp-msg-assistant .lumir-hp-body ul:last-child,
+.lumir-hp-msg-assistant .lumir-hp-body ol:last-child,
+.lumir-hp-msg-assistant .lumir-hp-body pre:last-child,
+.lumir-hp-msg-assistant .lumir-hp-body blockquote:last-child,
+.lumir-hp-msg-assistant .lumir-hp-body table:last-child {
   margin-bottom: 0;
 }
-.lumir-hp-msg-assistant ul,
-.lumir-hp-msg-assistant ol {
+.lumir-hp-msg-assistant .lumir-hp-body ul,
+.lumir-hp-msg-assistant .lumir-hp-body ol {
   padding-left: var(--sp-9);
 }
-.lumir-hp-msg-assistant blockquote {
+.lumir-hp-msg-assistant .lumir-hp-body blockquote {
   padding-left: var(--sp-4);
   border-left: 2px solid var(--border);
   color: var(--text-2);
 }
-.lumir-hp-msg-assistant hr {
+.lumir-hp-msg-assistant .lumir-hp-body hr {
   border: none;
   border-top: 1px solid var(--border-soft);
   margin: var(--sp-4) 0;
 }
-.lumir-hp-msg-assistant table {
+.lumir-hp-msg-assistant .lumir-hp-body table {
   border-collapse: collapse;
   font-size: var(--fs-meta);
 }
-.lumir-hp-msg-assistant th,
-.lumir-hp-msg-assistant td {
+.lumir-hp-msg-assistant .lumir-hp-body th,
+.lumir-hp-msg-assistant .lumir-hp-body td {
   padding: var(--sp-1) var(--sp-3);
   border: 1px solid var(--border-soft);
   text-align: left;
 }
-.lumir-hp-msg-assistant th {
+.lumir-hp-msg-assistant .lumir-hp-body th {
   font-weight: var(--fw-semibold);
 }
 .lumir-hp-link {
@@ -331,13 +368,95 @@
   color: var(--text-3);
 }
 
-/* ── 工具调用行 ───────────────────────────────────────────────────────────── */
-.lumir-hp-tool {
+/* ── 工具调用清单（M351，原型屏 4 .tools；Alex 2026-10-06 裁决还原清单形态）：上下
+   hairline 夹出的区块，挂在 agent 消息内（body 之后）。步骤行 24px 高：done = ✓（ok 色）、
+   running = 脉冲圆点（--run）。轮次结束 ≥2 行折叠为一行摘要钮（可展开回看）。 ────── */
+.lumir-hp-tools {
+  margin: var(--sp-2) 0 0;
+  padding: var(--sp-2) 0;
+  border-top: 1px solid var(--border-soft);
+  border-bottom: 1px solid var(--border-soft);
+}
+.lumir-hp-tool-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  height: 24px;
   font-size: var(--fs-meta);
+  color: var(--text-2);
+}
+.lumir-hp-tool-row[hidden] {
+  display: none;
+}
+.lumir-hp-tool-ic {
+  width: 14px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   color: var(--text-3);
 }
-.lumir-hp-tool.is-done {
-  color: var(--text-2);
+.lumir-hp-tool-row.is-done .lumir-hp-tool-ic {
+  color: var(--ok);
+}
+.lumir-hp-tool-row.is-running {
+  color: var(--text);
+}
+.lumir-hp-tool-pulse {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--run);
+  animation: lumir-hp-tool-pulse var(--pulse-cycle);
+}
+@keyframes lumir-hp-tool-pulse {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.35;
+    transform: scale(0.8);
+  }
+}
+/* eink：脉冲的连续透明度动画对墨水屏无意义——转 steps(2) 双档跳变（与进度条同口径）。 */
+:root[data-theme="eink"] .lumir-hp-tool-pulse {
+  animation: lumir-hp-tool-pulse-eink 1.4s steps(2, jump-none) infinite;
+}
+@keyframes lumir-hp-tool-pulse-eink {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.3;
+  }
+}
+/* 折叠摘要钮（原型 .tool-summary）：chevron + 「N 个工具调用 · 全部完成」，展开时
+   chevron 转 90°。 */
+.lumir-hp-tool-summary {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  height: 24px;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--text-3);
+  font: inherit;
+  font-size: var(--fs-meta);
+  cursor: pointer;
+  transition: color var(--dur-ui) var(--ease-standard);
+}
+.lumir-hp-tool-summary:hover {
+  color: var(--text);
+}
+.lumir-hp-tool-summary svg {
+  transition: transform var(--dur-ui) var(--ease-standard);
+}
+.lumir-hp-tool-summary.is-open svg {
+  transform: rotate(90deg);
 }
 
 /* ── 压缩标记：上下 hairline 夹出的一段，摘要可展开 ────────────────────────── */
@@ -358,7 +477,7 @@
   word-break: break-word;
 }
 
-/* ── 错误行 ───────────────────────────────────────────────────────────────── */
+/* ── 错误行（M351 起同文案就地替换不堆叠，行为见 harness-panel.ts appendError） ──── */
 .lumir-hp-error {
   padding: var(--sp-2) var(--sp-3);
   background: var(--danger-tint);
@@ -495,38 +614,82 @@
   color: var(--text-3);
 }
 
-/* ── composer 控制行（M347）：模型 chip + ctx 读数 + 两态发送钮。
-   空间紧（原型实测约 346px）：chip 与读数都是小体量只读件（ellipsis、不吃弹性宽），
-   composer flex:1 吃剩余。 ─────────────────────────────────────────────────── */
-/* 模型 chip：与 .lumir-hp-session 同族的小标签形态（26px 高、ellipsis、hover 给全名——
-   provider 名是配置值读数，悬停提示经 title 看完整串）。 */
-.lumir-hp-model {
+/* ── composer 区（M351 视觉还原，原型 .h-composer / .h-box / .h-ctl）：外区 =
+   顶部 hairline + padding；卡片容器 = content-bg + 边框 + r8，focus-within 出 accent 框
+   （eink 改加粗线宽，规则⑧）；输入区自身无边框（容器承担）；控制行在容器底 =
+   [模型 chip][ctx 读数 + ⓘ][spacer][图标发送钮]。空间紧（原型实测约 346px）：chip 与
+   读数都是小体量只读件（ellipsis、不吃弹性宽），composer 吃剩余。 ───────────────── */
+.lumir-hp-composer-area {
+  flex: none;
+  margin-top: var(--sp-2);
+  padding: var(--sp-3) var(--sp-4) var(--sp-4);
+  border-top: 1px solid var(--border);
+}
+.lumir-hp-composer-box {
+  background: var(--content-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--r8);
+  transition: border-color var(--dur-ui) var(--ease-standard);
+}
+.lumir-hp-composer-box:focus-within {
+  border-color: var(--accent);
+}
+:root[data-theme="eink"] .lumir-hp-composer-box:focus-within {
+  border-color: var(--border);
+  border-width: 1.6px;
+}
+.lumir-hp-ctl {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: var(--sp-1) var(--sp-2) var(--sp-2);
+}
+.lumir-hp-ctl-spacer {
+  flex: 1;
+}
+/* 模型 chip 与 provider 浮层的 wrapper（M351，finding 20261006-worker-hp4，与会话名钮
+   同一条修复）：浮层挪出 <button>，wrapper 是 absolute 定位的包含块。 */
+.lumir-hp-modelwrap {
   position: relative;
   flex: none;
   display: flex;
+  min-width: 0;
+}
+/* 模型 chip（原型 .ctl-chip）：无边框小标签形态（24px 高、r5、fs-label-s、text-2，
+   hover 给底）；provider 名是配置值读数（悬停 title 看完整串）。 */
+.lumir-hp-model {
+  flex: none;
+  display: flex;
   align-items: center;
+  gap: var(--sp-2);
   max-width: 96px;
-  height: 26px;
+  height: 24px;
   padding: 0 var(--sp-3);
-  border: 1px solid var(--border-soft);
+  border: none;
   border-radius: var(--r5);
   background: none;
   color: var(--text-2);
   font: inherit;
-  font-size: var(--fs-meta);
-  font-weight: var(--fw-medium);
+  font-size: var(--fs-label-s);
   white-space: nowrap;
   cursor: pointer;
-  transition: background var(--dur-ui) var(--ease-standard);
+  transition:
+    background var(--dur-ui) var(--ease-standard),
+    color var(--dur-ui) var(--ease-standard);
 }
-/* 读数 span 承担 ellipsis——button 本体不裁切（浮层是绝对定位子节点，overflow:hidden
-   会把它一并剪掉，与会话名钮的 .sname 同构同因）。 */
+/* 读数 span 承担 ellipsis——button 本体不裁切（浮层在 wrapper 上后 overflow 已不再会
+   剪浮层，但 ellipsis 仍归读数 span，与会话名钮的 .sname 同构）。 */
 .lumir-hp-model-name {
   flex: 1;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.lumir-hp-model-chev {
+  flex: none;
+  color: var(--text-3);
+  font-size: var(--fs-micro);
 }
 .lumir-hp-model[hidden] {
   display: none;
@@ -535,11 +698,8 @@
   background: var(--hover);
   color: var(--text);
 }
-:root[data-theme="eink"] .lumir-hp-model {
-  border-color: var(--border);
-}
-/* provider 浮层：与会话浮层（.lumir-hp-sesspop）同形态，锚在 chip 内向上展开空间不足时
-   由绝对定位自然溢出（控制行在面板底部，浮层向上长）。 */
+/* provider 浮层：与会话浮层（.lumir-hp-sesspop）同形态，锚在 wrapper 上向上展开
+   （控制行在面板底部，浮层向上长）。 */
 .lumir-hp-modelpop {
   position: absolute;
   bottom: calc(100% + 4px);
@@ -588,23 +748,24 @@
   font-size: var(--fs-label-s);
 }
 
-/* ctx% 读数 + ⓘ 钮（M347）：读数是等宽小字（数据读数，同 modeline 右段口径）；
-   越过警示阈值 → 高亮（--pending 黄族——常驻警示条的原用色，M346 退场后读数继承该语义；
-   非 --accent：蓝是主动作色，警示归 pending 族）+ ⓘ 钮现身（未越线时界面上没有它）。 */
+/* ctx% 读数 + ⓘ 钮（M347；M351 对齐原型 .h-usage：fs-label 等宽小字）：读数是数据读数
+   （同 modeline 右段口径）；越过警示阈值 → 高亮（--pending 黄族——常驻警示条的原用色，
+   M346 退场后读数继承该语义；非 --accent：蓝是主动作色，警示归 pending 族）+ ⓘ 钮现身
+   （未越线时界面上没有它）。数值档 text-2 分档色不拆 span 实现（D334 整串消费的有意
+   偏差，change design §2.5）。 */
 .lumir-hp-ctxwrap {
   position: relative;
   flex: none;
   display: inline-flex;
   align-items: center;
   gap: 2px;
-  padding-bottom: var(--sp-2); /* 与发送钮基线对齐（composer 底对齐的补偿） */
 }
 .lumir-hp-ctxwrap[hidden] {
   display: none;
 }
 .lumir-hp-ctx {
   font-family: var(--font-mono);
-  font-size: var(--fs-label-s);
+  font-size: var(--fs-label);
   color: var(--text-3);
   white-space: nowrap;
 }
@@ -634,13 +795,12 @@
 .lumir-hp-ctx-info:hover {
   background: var(--hover);
 }
-/* ⓘ 气泡：向上展开，右缘对齐读数右缘（浮层右缘 = wrap 右缘 − ⓘ 钮宽 − 缝；
-   读数右缘即 wrap 内容右缘——见 .lumir-hp-ctxwrap 的 gap/宽度构成）。 */
+/* ⓘ 气泡：向上展开，右缘对齐读数右缘（原型 224px——M347 的 240px 按视觉还原收紧）。 */
 .lumir-hp-ctxpop {
   position: absolute;
   bottom: calc(100% + 6px);
   right: -18px;
-  width: 240px;
+  width: 224px;
   padding: var(--sp-2) var(--sp-3);
   background: var(--preview-bg);
   border: 1px solid var(--border);
@@ -707,19 +867,7 @@
   }
 }
 
-/* 发送钮两态（M347）：空闲 = accent 实心「发送」（基础规则在文件尾部，选择器特异性
-   0-1-0 低于本条 0-2-0——停止态的配色不依赖书写顺序）；处理中 = 停止态——danger 实心
-  （停止丢弃在途的一轮，代价语义与「破坏性动作」同族）；stopping 子态禁用（既有 :disabled）。 */
-.lumir-hp-send.is-busy {
-  background: var(--danger);
-  color: #ffffff;
-}
-:root[data-theme="eink"] .lumir-hp-send.is-busy {
-  background: #000000;
-  color: #ffffff;
-}
-
-/* ── 消息复制钮（M347）：hover 浮现在消息右上角（键盘可达：focus 也显形）。
+/* ── 消息复制钮（M347）：hover 浮现在消息右上角与 who 行同高（键盘可达：focus 也显形）。
    复制源 = Markdown 源文本 / 发送前原始输入，非渲染后 HTML（源经 copySources 单挂）。 ── */
 .lumir-hp-msg {
   position: relative;
@@ -733,16 +881,13 @@
   padding: 0 var(--sp-1);
   border: none;
   border-radius: var(--r4);
-  background: var(--content-bg);
+  background: var(--agent-bg);
   color: var(--text-3);
   font-size: var(--fs-label-s);
   line-height: 1;
   cursor: pointer;
   opacity: 0;
   transition: opacity var(--dur-ui) var(--ease-standard);
-}
-.lumir-hp-msg-assistant > .lumir-hp-copy {
-  background: var(--agent-bg);
 }
 .lumir-hp-msg:hover .lumir-hp-copy,
 .lumir-hp-copy:focus-visible {
@@ -757,27 +902,19 @@
   opacity: 1;
 }
 
-/* ── 输入区：顶部 hairline 与 transcript 分隔。混排编辑区（M343，change
-   add-harness-quote-cards design §2/§5）：contenteditable div 取代 textarea，全 composer
-   唯一形态——顶层仅 .lumir-hp-qcard（原子卡片）/ .lumir-hp-qpara（问题段落）两类块，
-   无卡片时退化为纯文本输入。focus 出 accent 框（eink 改加粗线宽，规则⑧） ────────── */
-.lumir-hp-composer-row {
-  display: flex;
-  align-items: flex-end;
-  gap: var(--sp-3);
-  margin-top: var(--sp-2);
-  padding: var(--sp-3) var(--sp-4);
-  border-top: 1px solid var(--border);
-}
+/* ── 输入区（M343 混排编辑区，change add-harness-quote-cards design §2/§5）：
+   contenteditable div，顶层仅 .lumir-hp-qcard（原子卡片）/ .lumir-hp-qpara（问题段落）
+   两类块，无卡片时退化为纯文本输入。M351 起自身不带边框/底色/圆角——由外层
+   composer-box 承担（原型 .h-box：focus-within 出强调框），padding 对齐原型
+   （sp-3 sp-4 sp-1：底部余量让给控制行）。 ─────────────────────────────────── */
 .lumir-hp-composer {
   flex: 1 1 auto;
   min-width: 0;
   max-height: 150px;
   overflow-y: auto;
-  padding: var(--sp-2) var(--sp-3);
-  border: 1px solid var(--border);
-  border-radius: var(--r4);
-  background: var(--content-bg);
+  padding: var(--sp-3) var(--sp-4) var(--sp-1);
+  border: none;
+  background: none;
   color: var(--text);
   font: inherit;
   font-size: var(--fs-ui);
@@ -787,11 +924,6 @@
 }
 .lumir-hp-composer:focus {
   outline: none;
-  border-color: var(--accent);
-}
-:root[data-theme="eink"] .lumir-hp-composer:focus {
-  border-color: var(--border);
-  border-width: 1.6px;
 }
 /* 占位：JS 在「无卡片且唯一空段落」时挂 .is-empty（contenteditable 的 :empty 不可靠——
    浏览器会塞 <br> 或空段落占位）。 */
@@ -893,38 +1025,58 @@
   background: var(--hover);
   color: var(--text);
 }
-/* transcript 内用户消息的卡片：同构交错呈现（无 × 钮），首末块的纵向边距收口 */
-.lumir-hp-msg-user > .lumir-hp-qcard {
+/* transcript 内用户消息的卡片（body 体里，M351 起选择器走后代）：同构交错呈现
+   （无 × 钮），首末块的纵向边距收口 */
+.lumir-hp-msg-user .lumir-hp-qcard {
   margin: var(--sp-2) 0;
 }
-.lumir-hp-msg-user > .lumir-hp-qcard:first-child {
+.lumir-hp-msg-user .lumir-hp-qcard:first-child {
   margin-top: 0;
 }
-.lumir-hp-msg-user > .lumir-hp-qcard:last-child {
+.lumir-hp-msg-user .lumir-hp-qcard:last-child {
   margin-bottom: 0;
 }
 /* transcript 内的问题段落：保留软换行，段距与卡片节奏一致 */
-.lumir-hp-msg-user > .lumir-hp-qtext {
+.lumir-hp-msg-user .lumir-hp-qtext {
   margin: var(--sp-1) 0;
   white-space: pre-wrap;
   word-break: break-word;
 }
-.lumir-hp-msg-user > .lumir-hp-qtext:first-child {
+.lumir-hp-msg-user .lumir-hp-qtext:first-child {
   margin-top: 0;
 }
-.lumir-hp-msg-user > .lumir-hp-qtext:last-child {
+.lumir-hp-msg-user .lumir-hp-qtext:last-child {
   margin-bottom: 0;
 }
+/* 发送钮（M351 图标化，原型 .h-send）：26×26、r6、accent-fill 实心，↑ / ■ 两态 glyph
+   按相位显隐（SVG 无 hidden 属性映射——[hidden] 选择器兜 display:none）；可读名/悬停
+   走 D329/D378（aria-label/title）。busy（处理中）= ■ 停止态：danger 实心（M347 已评审
+   口径——停止丢弃在途的一轮，代价语义与「破坏性动作」同族；不继承原型的 accent+脉冲环，
+   change design §2.5）；stopping 子态禁用（:disabled）。 */
 .lumir-hp-send {
   flex: none;
-  padding: var(--sp-2) var(--sp-5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
   border: none;
-  border-radius: var(--r4);
+  border-radius: var(--r6);
   background: var(--accent-fill);
   color: var(--accent-fill-text);
-  font: inherit;
-  font-size: var(--fs-meta);
   cursor: pointer;
+}
+.lumir-hp-send svg[hidden] {
+  display: none;
+}
+.lumir-hp-send.is-busy {
+  background: var(--danger);
+  color: #ffffff;
+}
+:root[data-theme="eink"] .lumir-hp-send.is-busy {
+  background: #000000;
+  color: #ffffff;
 }
 .lumir-hp-send:disabled {
   opacity: 0.45;

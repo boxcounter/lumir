@@ -237,13 +237,16 @@ export function formatDate(
   return new Intl.DateTimeFormat(intlLocale(lang), options).format(date);
 }
 
-/** 相对时间（「5 分钟前」/「5 minutes ago」、「昨天」/「yesterday」）。 */
+/** 相对时间（「5 分钟前」/「5 minutes ago」、「昨天」/「yesterday」）。style 缺省 long；
+ *  narrow 给紧凑位（M351 消息 when 行：zh「10秒前」——long 的「10秒钟前」与原型不符，
+ *  en「10s ago」），既有消费者（D100 族）不传保持 long。 */
 export function formatRelative(
   amount: number,
   unit: Intl.RelativeTimeFormatUnit,
   lang: Language = currentLanguage(),
+  style: Intl.RelativeTimeFormatStyle = "long",
 ): string {
-  return new Intl.RelativeTimeFormat(intlLocale(lang), { numeric: "auto" }).format(amount, unit);
+  return new Intl.RelativeTimeFormat(intlLocale(lang), { numeric: "auto", style }).format(amount, unit);
 }
 
 export { COPY };

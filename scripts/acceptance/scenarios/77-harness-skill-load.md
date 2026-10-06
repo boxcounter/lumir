@@ -49,14 +49,19 @@ steps:
     waitFor:
       has: ["验收回答完毕。"]
     expect:
-      - label: 根外技能名被拒（路径逃逸拒绝）
-        ax: { has: "/error · skill_name_invalid/" }
-      - label: 正常技能加载成功
-        ax: { has: "工具完成：skill_load — 成功" }
       - label: 回答用上了技能内容（密令来自 SKILL.md 全文）
         ax: { has: "HSK-SECRET-7429" }
       - label: JSONL 的 tool_result 带回了 SKILL.md 全文（密令只在文件里）
         file: { path: "env:harness/*.jsonl", has: "HSK-SECRET-7429" }
+
+  - name: 展开工具清单（M351 起 ≥2 行的轮次终态折叠为一行摘要钮，步骤行 hidden 不进 AX）
+    do: click
+    target: { role: AXButton, name: "个工具调用 · 全部完成" }
+    expect:
+      - label: 根外技能名被拒（路径逃逸拒绝）
+        ax: { has: "/error · skill_name_invalid/" }
+      - label: 正常技能加载成功
+        ax: { has: "工具完成：skill_load — 成功" }
       - shot: 01-skill 加载
 ---
 
@@ -67,3 +72,8 @@ system）——索引装配由 Rust 单测覆盖（context.rs 的
 assemble_system_skips_missing_agents_and_includes_index），本场景断言它的下游可观测
 事实：skill_load 按名命中 vault-wide 根（发现链路成立）且全文回送模型；② skill 必须
 在首次发送前落盘——会话在首次发送时建立、 Skill 发现随会话装配与每轮工具解析发生。
+
+M351（change harness-pane-visual-fidelity）起 ≥2 行的工具清单在轮次终态折叠为一行摘要钮
+（D387「{count} 个工具调用 · 全部完成」），折叠态步骤行 `hidden` 不进 AX 树——本场景一轮
+两个 skill_load（越界名 + 正常名），工具行断言必须先点摘要钮展开（2026-10-07 批次实证：
+未展开时两条工具行断言全红）。

@@ -38,10 +38,6 @@ steps:
     waitFor:
       has: ["权限验收回答：一拒一放。"]
     expect:
-      - label: rm 被 deny 规则拒掉（同时命中 allow 的 cli(*)——deny 优先）
-        ax: { has: "/denied · permission_denied/" }
-      - label: echo 命中 allow 直接执行成功
-        ax: { has: "工具完成：cli_run — 成功" }
       - label: 两个调用都没进批准闸（cli 默认 ask，规则命中后不再问）
         ax: { not: "请求执行命令，采纳后才运行" }
       - label: rm 没有真跑——文件内容逐字节不变
@@ -52,6 +48,15 @@ steps:
         file: { path: "env:harness/*.jsonl", has: '"kind":"tool_denied","name":"cli_run","subject":"rm harness-note.md"' }
       - label: JSONL 记下 echo 的 decision=allow
         file: { path: "env:harness/*.jsonl", has: '"decision":"allow","id":"call_a1","kind":"tool_call","name":"cli_run"' }
+
+  - name: 展开工具清单（M351 起 ≥2 行的轮次终态折叠为一行摘要钮，步骤行 hidden 不进 AX）
+    do: click
+    target: { role: AXButton, name: "个工具调用 · 全部完成" }
+    expect:
+      - label: rm 被 deny 规则拒掉（同时命中 allow 的 cli(*)——deny 优先）
+        ax: { has: "/denied · permission_denied/" }
+      - label: echo 命中 allow 直接执行成功
+        ax: { has: "工具完成：cli_run — 成功" }
       - shot: 01-一拒一放
 ---
 
@@ -59,3 +64,7 @@ spec 判据（harness「权限机制 · deny 优先」）：一条 cli_run 同�
 被拒绝并把原因回送模型、不进入批准闸；allow 命中免批准执行。fixture 在同一轮里发两个
 cli_run：rm（同时命中 cli(*) 与 cli(rm *)）与 echo（只命中 cli(*)）。「没进闸」这条
 负向断言的正观测 = 两条工具完成行都在场。
+
+M351（change harness-pane-visual-fidelity）起 ≥2 行的工具清单在轮次终态折叠为一行摘要钮
+（D387「{count} 个工具调用 · 全部完成」），折叠态步骤行 `hidden` 不进 AX 树——因此工具行
+断言必须先点摘要钮展开（单工具轮次不折叠，场景 71/72/77 的断言不受此影响）。
