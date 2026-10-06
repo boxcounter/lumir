@@ -714,10 +714,6 @@ const COPY_TABLE = {
     zh: "新会话",
     en: "New session",
   },
-  D331: {
-    zh: "上下文：{path} · 选区 {from}–{to} 行",
-    en: "Context: {path} · selection lines {from}–{to}",
-  },
   D332: {
     zh: "上下文：{path} · 视口 {from}–{to} 行",
     en: "Context: {path} · viewport lines {from}–{to}",
@@ -821,6 +817,34 @@ const COPY_TABLE = {
   D369: {
     zh: "这个 pane 还没有打开的文件——在左栏选一个文件，它就会在这里打开。不需要它时按 ⌥W 收起。",
     en: "Nothing open in this pane yet — pick a file in the left column and it will open here. Press ⌥W to collapse it.",
+  },
+
+  // -------------------------------------------------------------------------
+  // Harness 摘录引用卡片（D370–D374，M343，change add-harness-quote-cards）：
+  // 混排 composer、卡片、浮动钮与失锚告知的全部可见文案。卡片出处行（文档名 · 标题）是
+  // 数据驱动的读数（同 D334 口径），不进编号。消费者：src/harness-panel.ts（composer 卡片 ×
+  // 钮 D371、transcript 卡片跳回读屏名 D374、chip 仅路径形态 D373）与 M344（QC3：浮动钮
+  // D370、失锚 toast D372——失锚降级链与跳回高亮是 QC3 的实现面）。
+  // -------------------------------------------------------------------------
+  D370: {
+    zh: "摘录到对话",
+    en: "Quote to chat",
+  },
+  D371: {
+    zh: "移除摘录",
+    en: "Remove quote",
+  },
+  D372: {
+    zh: "该摘录已失锚：原文已不在文档中",
+    en: "This quote is no longer anchored: the text is gone from the document",
+  },
+  D373: {
+    zh: "上下文：{path}",
+    en: "Context: {path}",
+  },
+  D374: {
+    zh: "跳回原文位置",
+    en: "Jump back to the source",
   },
 } satisfies Record<string, CopyEntry>;
 

@@ -417,8 +417,10 @@
   color: var(--text-3);
 }
 
-/* ── 输入区：顶部 hairline 与 transcript 分隔；textarea 无框态、focus 出 accent 框
-   （eink 改加粗线宽，规则⑧） ─────────────────────────────────────────────── */
+/* ── 输入区：顶部 hairline 与 transcript 分隔。混排编辑区（M343，change
+   add-harness-quote-cards design §2/§5）：contenteditable div 取代 textarea，全 composer
+   唯一形态——顶层仅 .lumir-hp-qcard（原子卡片）/ .lumir-hp-qpara（问题段落）两类块，
+   无卡片时退化为纯文本输入。focus 出 accent 框（eink 改加粗线宽，规则⑧） ────────── */
 .lumir-hp-composer-row {
   display: flex;
   align-items: flex-end;
@@ -430,7 +432,8 @@
 .lumir-hp-composer {
   flex: 1 1 auto;
   min-width: 0;
-  resize: none;
+  max-height: 150px;
+  overflow-y: auto;
   padding: var(--sp-2) var(--sp-3);
   border: 1px solid var(--border);
   border-radius: var(--r4);
@@ -439,6 +442,8 @@
   font: inherit;
   font-size: var(--fs-ui);
   line-height: var(--lh-ui);
+  word-break: break-word;
+  cursor: text;
 }
 .lumir-hp-composer:focus {
   outline: none;
@@ -447,6 +452,127 @@
 :root[data-theme="eink"] .lumir-hp-composer:focus {
   border-color: var(--border);
   border-width: 1.6px;
+}
+/* 占位：JS 在「无卡片且唯一空段落」时挂 .is-empty（contenteditable 的 :empty 不可靠——
+   浏览器会塞 <br> 或空段落占位）。 */
+.lumir-hp-composer.is-empty::before {
+  content: attr(data-placeholder);
+  color: var(--text-3);
+  pointer-events: none;
+}
+/* 问题段落：软换行（⇧Enter 的 \n）按原样渲染（pre-wrap），序列化取 textContent 因此守恒。 */
+.lumir-hp-qpara {
+  margin: var(--sp-1) 0;
+  min-height: 1em;
+  white-space: pre-wrap;
+}
+.lumir-hp-composer > .lumir-hp-qpara:first-child,
+.lumir-hp-composer > .lumir-hp-qcard:first-child {
+  margin-top: 0;
+}
+.lumir-hp-composer > .lumir-hp-qpara:last-child,
+.lumir-hp-composer > .lumir-hp-qcard:last-child {
+  margin-bottom: 0;
+}
+
+/* ── 摘录引用卡片（M343，设计合同 = 原型 phase2-harness-chat 屏 5）：3px 引号竖条（中性
+   灰阶，不消费 accent 蓝——change Non-goals 的 accent 中性化约束）+ 摘录截断（≤2 行）+
+   等宽小字出处行（文档名 · 最近一级标题）+（composer 内）× 移除钮。原子 block 节点：
+   composer 内 contenteditable=false，删除/选择按整体作用 ─────────────────────── */
+.lumir-hp-qcard {
+  display: flex;
+  align-items: stretch;
+  gap: var(--sp-3);
+  margin: var(--sp-2) 0;
+  padding: var(--sp-2) var(--sp-4) var(--sp-2) var(--sp-3);
+  background: var(--agent-bg);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--r6);
+  cursor: pointer;
+  position: relative;
+  transition:
+    border-color var(--dur-ui) var(--ease-standard),
+    background var(--dur-ui) var(--ease-standard);
+}
+.lumir-hp-qcard:hover {
+  border-color: var(--border);
+  background: var(--hover);
+}
+:root[data-theme="eink"] .lumir-hp-qcard:hover {
+  border-width: 1.4px;
+}
+.lumir-hp-qc-bar {
+  flex: none;
+  width: 3px;
+  border-radius: 2px;
+  background: var(--text-3);
+}
+.lumir-hp-qc-main {
+  flex: 1;
+  min-width: 0;
+}
+.lumir-hp-qc-ex {
+  font-size: var(--fs-meta);
+  line-height: var(--lh-ui);
+  color: var(--text-2);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  word-break: break-word;
+}
+.lumir-hp-qc-src {
+  margin-top: 2px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.lumir-hp-qc-x {
+  position: absolute;
+  top: var(--sp-1);
+  right: var(--sp-1);
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: none;
+  border-radius: var(--r4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  color: var(--text-3);
+  font-size: var(--fs-label-s);
+  line-height: 1;
+  cursor: pointer;
+}
+.lumir-hp-qc-x:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+/* transcript 内用户消息的卡片：同构交错呈现（无 × 钮），首末块的纵向边距收口 */
+.lumir-hp-msg-user > .lumir-hp-qcard {
+  margin: var(--sp-2) 0;
+}
+.lumir-hp-msg-user > .lumir-hp-qcard:first-child {
+  margin-top: 0;
+}
+.lumir-hp-msg-user > .lumir-hp-qcard:last-child {
+  margin-bottom: 0;
+}
+/* transcript 内的问题段落：保留软换行，段距与卡片节奏一致 */
+.lumir-hp-msg-user > .lumir-hp-qtext {
+  margin: var(--sp-1) 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.lumir-hp-msg-user > .lumir-hp-qtext:first-child {
+  margin-top: 0;
+}
+.lumir-hp-msg-user > .lumir-hp-qtext:last-child {
+  margin-bottom: 0;
 }
 .lumir-hp-send {
   flex: none;

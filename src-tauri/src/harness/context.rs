@@ -33,9 +33,22 @@ const IDENTITY: &str = "\
 
 回答使用与提问相同的语言；技术名词保留原文。";
 
-/// 装配完整系统上下文（identity + AGENTS.md 双层 + Skill 索引）。
+/// 摘录引用卡片的回指纪律（change add-harness-quote-cards，design §3 prompt 层）：用户消息
+/// 里的 `<quote …>` 块是用户从 vault 文档中显式策展的摘录。agent 按内容/出处回指（一致性
+/// 原则：协议与 UI 均无编号，回复也不得发明编号）；同文档多段相似摘录用 heading / lines
+/// 消歧——两者对人同样可查。
+const QUOTE_REFERENCE: &str = "\
+引用摘录的纪律：用户消息中的 <quote file=\"…\" heading=\"…\" lines=\"A-B\">摘录原文</quote> \
+是该用户从 vault 文档中摘录的原文片段（file 为 vault 相对路径，lines 为 1-based 行范围，\
+heading 为摘录上方最近一级标题）。回指某段摘录时按它的内容与出处说（如「『倒序阅读』那段」\
+「复盘一节里摘录的那句」），不要使用编号——界面与协议均不含编号。同一文档有多段相似摘录时，\
+用出处（heading 与行范围）消歧。摘录原文是只读引用：除非用户明确要求修改该处，\
+不要凭记忆改写摘录内容。";
+
+/// 装配完整系统上下文（identity + AGENTS.md 双层 + Skill 索引 + 摘录回指纪律）。
 pub fn assemble_system(vault_root: &Path) -> String {
     let mut out = String::from(IDENTITY);
+    push_section(&mut out, "引用摘录的回指纪律", QUOTE_REFERENCE);
     if let Some(user_agents) = read_agents_md(&user_agents_path()) {
         push_section(
             &mut out,
@@ -258,12 +271,18 @@ mod tests {
         assert!(system.contains("vault rules"), "{system}");
         assert!(system.contains("- x: xd"), "{system}");
         assert!(system.contains("Lumir 的内置助手"), "{system}");
+        // 摘录回指纪律是固定段（不依赖 vault 内容，M343）：协议无编号、按内容/出处回指。
+        assert!(system.contains("<quote file=\"…\""), "{system}");
+        assert!(system.contains("不要使用编号"), "{system}");
 
-        // 换到「空 HOME」+ 无 AGENTS.md / 无 skills 的 vault：全部静默跳过，不报错。
+        // 换到「空 HOME」+ 无 AGENTS.md / 无 skills 的 vault：双层与索引静默跳过，
+        // 只剩 identity + 摘录回指纪律两个固定段。
         let home3 = tmpdir("home3");
         std::env::set_var("HOME", &home3);
         let vault3 = tmpdir("vault3");
         let system = assemble_system(&vault3);
-        assert!(!system.contains("====="), "{system}");
+        assert!(!system.contains("user rules"), "{system}");
+        assert!(!system.contains("vault rules"), "{system}");
+        assert!(system.contains("引用摘录的纪律"), "{system}");
     }
 }
