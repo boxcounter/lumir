@@ -27,12 +27,12 @@
 
 ## 5. 文档与文案
 
-- [ ] 5.1 ADR 0008 措辞修订：Decision 8 与 Consequences 中「pin 式上下文块」改摘录引用卡片表述（pin 机制 2026-10-05 已被推翻）
+- [x] 5.1 ADR 0008 措辞修订：Decision 8 与 Consequences 中「pin 式上下文块」改摘录引用卡片表述（pin 机制 2026-10-05 已被推翻）
 - [ ] 5.2 文案表 zh/en 双档（浮动钮、失锚 toast、卡片相关全部可见文案）
 
 ## 6. 验证
 
-- [ ] 6.1 `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` 通过
-- [ ] 6.2 新增真机验收场景并全绿：卡片创建（含面板未开先开）/ 混排交错编辑（含光标落卡片下一行）/ 序列化结构断言 / 失锚三层 / transcript 沉淀 / 粘贴净化（mock provider）
-- [ ] 6.3 视觉：harness 面板新 UI 场景基线新增（Alex 过目后 --update）；既有相关基线时间戳核对；`scripts/gate.sh quick` 全绿（视觉面有改动则补 visual 档）
-- [ ] 6.4 原型与 verify 守卫退役（实现落地、验收绿后移除或归档标记 `design/prototypes/phase2-harness-chat/`）
+- [x] 6.1 `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` 通过（23 passed / 0 failed）
+- [x] 6.2 新增真机验收场景并全绿：卡片创建（含面板未开先开）/ 混排交错编辑（含光标落卡片下一行）/ 序列化结构断言 / 失锚三层 / transcript 沉淀（mock provider；场景 81–85，真机 5/5 PASS）。**粘贴净化一项例外**：真机注入通道产不出原生 paste（⌘V 不落地），判据改落 chromium 视觉场景，边界见 `scripts/acceptance/README.md` 的「已知边界」
+- [ ] 6.3 视觉：harness 面板新 UI 场景基线新增（Alex 过目后 --update）；既有相关基线时间戳核对；`scripts/gate.sh quick` 全绿（视觉面有改动则补 visual 档）——**进行中**：场景 `tests/visual/scenes/m345-quote-card.spec.ts` 已入库、结构层 5/5 绿；整页/元素像素基线候选在 `test-results/m345-visual/`，待 Alex 过目后由 tower `--update`；m303 整页基线红是 M343 的合意视觉变化，随批次末统一刷新
+- [x] 6.4 原型与 verify 守卫退役（实现落地、验收绿后已移除：`design/prototypes/phase2-harness-chat/` 整目录删除、原型索引死链一并清理，见提交 `4e011d6`；设计合同转入本 change 的 `specs/harness/spec.md` 增量）

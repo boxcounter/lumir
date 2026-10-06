@@ -6,7 +6,7 @@
 
 ## 1. 设计合同与输入
 
-- 设计合同：原型 `design/prototypes/phase2-harness-chat/` 屏 5「摘录卡片」（1280×900，三主题）。卡片视觉：3px 引号竖条（中性灰阶）+ 摘录原文 `-webkit-line-clamp: 2` 截断 + 等宽小字出处行（`文档名 · 最近一级标题`）+ composer 内 × 移除钮。
+- 设计合同：本 change 的 `specs/harness/spec.md` 增量（四条 ADDED requirement 的验收场景）。来源是原型屏 5「摘录卡片」（1280×900，三主题）——该原型目录 `design/prototypes/phase2-harness-chat/` 已随实现落地退役（提交 `4e011d6`），屏位原文见 git 历史。卡片视觉：3px 引号竖条（中性灰阶）+ 摘录原文 `-webkit-line-clamp: 2` 截断 + 等宽小字出处行（`文档名 · 最近一级标题`）+ composer 内 × 移除钮。
 - 行为合同：NOTES.md 五轮决策节 + Alex 2026-10-06 提案评审讨论修订（index 移除 / 光标落卡片下一行 / heading = 最近一级标题 / 一致性原则），见 proposal.md 头部评审记录。
 - NOT 清单：序列化预览块不进产品；编号不进 UI 也不进协议；编辑器侧零常驻装饰。
 - **一致性原则**（Alex 2026-10-06 立，全文适用）：投递给模型的上下文要素，对人必须也可查——卡片出处行、hover 完整摘录与标题链、注入 chip 构成人的可见面；任何只给模型、人无从核对的标识（如序号）不允许存在。

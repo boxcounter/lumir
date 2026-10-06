@@ -13,7 +13,7 @@ import { stubTauri, type VaultFixture } from "./tauri-stub";
 //   4. **粘贴净化**（quirk ①）：带 `text/html` 与 `text/plain` 的 paste 事件只取纯文本面。
 //      真机侧合成不出富剪贴板（套件无剪贴板写通道），这条判据在 chromium 侧补全。
 //
-// 行为层（发送、序列化、失锚降级）不在这里——归验收套件场景 81–86（真机 WKWebView + mock
+// 行为层（发送、序列化、失锚降级）不在这里——归验收套件场景 81–85（真机 WKWebView + mock
 // provider）；这里只钉结构、像素候选与瞬态纪律。
 //
 // **DOM 装配必须被断言**（M343 的教训）：composer 卡片的 × 移除钮曾在 `createCardEl` 里被创建
