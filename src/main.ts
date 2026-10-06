@@ -42,7 +42,7 @@ import {
 import { createSaveController, SAVE_GUARD_TOAST_CLASS } from "./save-controller";
 import { invoke } from "@tauri-apps/api/core";
 import { getName, getVersion } from "@tauri-apps/api/app";
-import { createToc } from "./toc";
+import { createToc, extractHeadings } from "./toc";
 import { createImageLightbox } from "./lightbox";
 import { createTableFullscreen } from "./table-fullscreen";
 import { createGotoLinePrompt } from "./goto-line";
@@ -108,6 +108,7 @@ import type { VaultListEntry } from "./bindings/VaultListEntry";
 import { extensionOf, codeLanguageOfPath, isEditablePath, mimeTypeOf, resolveByNameUnique } from "./preview/attachments";
 import { openSearch } from "./search";
 import { createHarnessPanel } from "./harness-panel";
+import { createQuoteGesture } from "./quote-gesture";
 import "./style.css";
 // 搜索 panel 的样式单列一个文件（M139）：与并行 mission 的 src/style.css 隔离，
 // 本 mission 的搜索样式一律放这里。
@@ -1936,6 +1937,28 @@ shell.modelineLanguage.addEventListener("click", cycleLanguage);
 // 随活跃 pane 走。`HarnessContextSource`（harness-context.ts:31）的接口形状不变，改造面全在
 // 这一处注入（design §2 行 5）。
 const harnessPanel = createHarnessPanel({ shell, editor });
+
+// 摘录手势与跳回（M344，change add-harness-quote-cards design §4/§5）：浮动钮的选区捕获与
+// 失锚三层降级链 + 跳回高亮在 src/quote-gesture.ts，这里只做装配——把「最近活跃编辑器 pane」
+// 的解析（复合句柄 / paneEntryOfSession，与本文件其余消费者同源）、打开链路与提示出口注进去。
+// 摘录来源恒为最近活跃编辑器 pane（ADR 0008 Decision 3）：activeView/activePath 都活读活跃
+// pane，harness 面板持焦不改变 pane 归属（活跃指针只在焦点进入 pane contentDOM 时翻转）。
+const quoteGesture = createQuoteGesture({
+  activeView: () => editor.view,
+  activeMount: () => paneAssemblies.get(paneLayout.active().id)?.mountEl,
+  activePath: () => editor.activeSession().path,
+  sessionForPath: (path) => editor.sessionForPath(path),
+  viewOfSession: (session) => paneEntryOfSession(session)?.[1].handle.view,
+  activateSession: (session) => editor.activateSession(session),
+  // 降级链「目标文档未打开先在最近活跃编辑器 pane 打开」的入口；quiet=true：打开失败由本
+  // 链路的第三层 toast（D372「该摘录已失锚」）收口，不再叠加通用的打开失败 notice。
+  openFile: async (path) => openFile(path, openKind(path), "current", true),
+  extractHeadings: (state) => extractHeadings(state, true),
+  insertQuoteCard: (card) => harnessPanel.insertQuoteCard(card),
+  toast: (text) => void toast(text),
+});
+// composer 与 transcript 内的卡片点击（× 钮除外）都经这一个处理器：跳回 + 高亮，失锚 toast。
+harnessPanel.setQuoteJumpHandler((card) => void quoteGesture.jump(card));
 
 // ---------------------------------------------------------------------------
 // 统一键位层（M131）：唯一分发表在 keys.ts，装配在这里——编辑器侧命令由 editor 提供，

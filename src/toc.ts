@@ -171,8 +171,9 @@ const NO_STRUCTURE_TEXT = (): string => t("D116");
 const POPOVER_LABEL = (): string => t("D85");
 const POPOVER_HINT = (): string => t("D86");
 const INDICATOR_TITLE = (): string => t("D87");
-/** 条目链的分隔符（纯排版分隔，不承载语义）。 */
-const PATH_SEPARATOR = " › ";
+/** 条目链的分隔符（纯排版分隔，不承载语义）。导出：M344 的摘录卡片 headingPath 复用同一
+ *  分隔符（单一来源，REVIEW.md 第 8 条）。 */
+export const PATH_SEPARATOR = " › ";
 
 /**
  * 统一条目模型：md 的标题与 code 的符号在这两条通道上需要的量完全相同——文本、层级（缩进量）、
