@@ -1,4 +1,6 @@
-// 标题栏产品标识块场景（M236，change product-version-display）。
+// 标题栏产品标识块场景（M236，change product-version-display；M346/HP1 移位：标识块进
+// traffic 灯区、系统按钮旁，Alex 点子 2——标题栏右端只留 harness toggle 钮；双栏退让随
+// 移位移除，唯一退让触发是窄窗 <640px 版本号退 modeline）。
 //
 // 判据一律是**读数**（DOM 文本、hidden 状态、getComputedStyle、boundingBox 几何），
 // 不是「某个函数被调用过」。唯一例外是 M246 补的标识块元素级像素基线：三段文字的字形墨
@@ -7,7 +9,7 @@
 // 下该断言按 pixel-skip 留痕跳过，其余全量照跑。
 //
 // 覆盖（对应 specs delta「产品名与版本号常显」四条 scenario）：
-//   1. 常显与真源一致：空态（tabstrip hidden）下标识块在场、三段文案形态、钉右端；
+//   1. 常显与真源一致：空态（tabstrip hidden）下标识块在场、三段文案形态、在 traffic 灯区内；
 //   2. 三主题计算样式：名 550/--text-2、版本与分隔符 400/--text-3、12.5px（--fs-ui-s）；
 //   3. 窄窗退让（D2 裁决备选）：<640px 版本号退 modeline 右段尾部，≥640px 恢复，阈值边界；
 //   4. 读取失败降级：桩不路由 plugin:app|name/version 时标识块整体 hidden + 一条
@@ -47,51 +49,39 @@ async function tokenValue(page: Page, property: "color" | "font-weight" | "font-
   );
 }
 
-test("空态主界面：标识块在场、三段文案、钉右端（tabstrip hidden 也在右端）", async ({ page }) => {
+test("空态主界面：标识块在场、三段文案、在 traffic 灯区内（系统按钮旁）", async ({ page }) => {
   await open(page, null); // 未打开 vault 的空态
   const block = page.locator(".titlebar-identity");
   await expect(page.locator(".ti-name")).toHaveText(NAME);
   await expect(page.locator(".ti-sep")).toHaveText("·");
   await expect(page.locator(".ti-version")).toHaveText(VERSION);
-  // tabstrip 空态 hidden——标识块凭 margin-left:auto 仍钉右端
+  // HP1：块在 traffic 灯区内（.titlebar-traffic 的子元素），不再钉右端
+  await expect(page.locator(".titlebar-traffic .titlebar-identity")).toBeVisible();
   await expect(page.locator(".tabstrip")).toBeHidden();
   const box = (await block.boundingBox())!;
-  const viewport = page.viewportSize()!;
-  // 右缘 = 视口宽 - 标题栏右 padding（--sp-6 = 12px），±1px 吸收亚像素
-  expect(Math.abs(box.x + box.width - (viewport.width - 12))).toBeLessThanOrEqual(1);
+  // 落位判据：左缘起于 traffic 灯占位区之后（padding-left 78px 让出三颗系统按钮），±1px
+  expect(Math.abs(box.x - 78)).toBeLessThanOrEqual(1);
   // 元素级基线（M246）：三段文字的字形墨被整页 0.001 容差吞掉，形态只能由元素 crop 钉住
   await expectScreenshot(block, "titlebar-identity-block.png");
 });
 
-test("有标签时仍钉右端、不参与收缩（flex:none）", async ({ page }) => {
+test("有标签时标识块仍在 traffic 灯区；harness toggle 钉标题栏右端", async ({ page }) => {
   await open(page);
   await page.locator('.ft-row[title="README.md"]').click();
   await expect(page.locator(".tabstrip")).toBeVisible();
   const block = page.locator(".titlebar-identity");
   const box = (await block.boundingBox())!;
-  const viewport = page.viewportSize()!;
-  expect(Math.abs(box.x + box.width - (viewport.width - 12))).toBeLessThanOrEqual(1);
-  // 标识块在标签区之后（与最后一个 tab 不重叠、位于其右）
-  const tabBox = (await page.locator(".tab").last().boundingBox())!;
-  expect(box.x).toBeGreaterThanOrEqual(tabBox.x + tabBox.width - 1);
-  // M257（Alex dogfood 蓝箭头）：标签区右缘与标识块之间的间距——M303（change
-  // add-harness-probe）起这段间距里站着动作钮槽位（harness 面板 toggle，30px 宽、
-  // 左右各 --sp-3），口径从「恒为 --sp-3」改为「--sp-3 + 动作钮宽 + --sp-3」。
-  // 溢出态的几何判据在 m149-tabs.spec.ts 的溢出用例里，这里钉常态面 + 槽位顺序。
-  const stripBox = (await page.locator(".tabstrip").boundingBox())!;
+  // 仍在 traffic 灯区内（不随标签出现挪位）
+  expect(Math.abs(box.x - 78)).toBeLessThanOrEqual(1);
+  // harness toggle 在标题栏**右端**（HP1 后右簇只剩这颗钮；标识块与 toggle 不再相邻）。
+  // 右缘 = 视口宽 - 钮自身 margin-right（--sp-6 = 12px；标题栏 padding-right 已归零），±2px
   const toggleBox = (await page.locator(".lumir-hp-toggle").boundingBox())!;
-  const sp3 = await page.evaluate(() => {
-    const probe = document.createElement("div");
-    probe.style.width = "var(--sp-3)";
-    document.body.append(probe);
-    const value = parseFloat(getComputedStyle(probe).width);
-    probe.remove();
-    return value;
-  });
-  // 动作钮在标签区与标识块之间（槽位顺序的正观测，各容 1px 取整）
+  const viewport = page.viewportSize()!;
+  expect(Math.abs(toggleBox.x + toggleBox.width - (viewport.width - 12))).toBeLessThanOrEqual(2);
+  // 槽位顺序的正观测：标识块（左）在标签区之前，toggle（右）在标签区之后
+  expect(box.x + box.width).toBeLessThanOrEqual(236);
+  const stripBox = (await page.locator(".tabstrip").boundingBox())!;
   expect(toggleBox.x).toBeGreaterThanOrEqual(stripBox.x + stripBox.width - 1);
-  expect(box.x).toBeGreaterThanOrEqual(toggleBox.x + toggleBox.width - 1);
-  expect(Math.abs(box.x - stripBox.x - stripBox.width - (2 * sp3 + toggleBox.width))).toBeLessThanOrEqual(1);
 });
 
 for (const theme of ["light", "dark", "eink"] as const) {
@@ -143,9 +133,9 @@ test("窄窗退让（D2 备选）：<640px 版本号退 modeline 右段尾部，
   await expect(page.locator(".modeline-right")).toHaveText(
     new RegExp(`Markdown · \\d+ 行 · UTF-8 · ${VERSION.replaceAll(".", "\\.")}`),
   );
-  // 标题栏标识块仍钉右端（只有产品名一段）
+  // 标题栏标识块仍在 traffic 灯区内（只有产品名一段；窄窗下 traffic 占位宽不变）
   const box = (await page.locator(".titlebar-identity").boundingBox())!;
-  expect(Math.abs(box.x + box.width - (520 - 12))).toBeLessThanOrEqual(1);
+  expect(Math.abs(box.x - 78)).toBeLessThanOrEqual(1);
 
   // 阈值边界：639 仍退让，640 恢复（matchMedia "(max-width: 639px)"）
   await page.setViewportSize({ width: 639, height: 800 });

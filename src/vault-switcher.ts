@@ -104,11 +104,14 @@ export interface StoredPane {
   active: string | null;
 }
 
-/** 入盘内容的形状：各 pane 的会话（按横向顺序）+ 分隔条比例。
- *  pane 数即存储的布局：1 = 单 pane 常态，2 = 分栏（schema 上限见 pane 模块的 `MAX_PANES`）。 */
+/** 入盘内容的形状：各 **doc** pane 的会话（按横向顺序）+ 分隔条比例 + harness pane 在场位。
+ *  pane 数即存储的文档布局：1 = 单 pane 常态，2 = 文档分栏（schema 上限见 pane 模块的
+ *  `MAX_PANES`）。harness pane 不入 panes 数组（它恒零标签）——在场与否由 harnessPane 表达
+ *  （change move-harness-to-pane-chat-frame，ADR 0008 Decision 6）。 */
 export interface SessionSnapshot {
   panes: StoredPane[];
   ratio: number;
+  harnessPane: boolean;
 }
 
 /** 一个 pane 的快照输入：装配层活读该 pane 的会话表与前台路径。 */
@@ -132,18 +135,21 @@ export function paneSnapshot(input: PaneSnapshotInput): StoredPane {
   return { tabs, active };
 }
 
-/** 构造整份入盘内容（各 pane + 分隔比例）。 */
+/** 构造整份入盘内容（各 doc pane + 分隔比例 + harness 在场位）。 */
 export function sessionSnapshot(
   panes: readonly PaneSnapshotInput[],
   ratio: number,
+  harnessPane: boolean,
 ): SessionSnapshot {
-  return { panes: panes.map(paneSnapshot), ratio };
+  return { panes: panes.map(paneSnapshot), ratio, harnessPane };
 }
 
 /** 两份入盘内容是否逐项一致（决定要不要写盘：内容没变就不排期）。pane 逐项、顺序也参与比较，
- *  比例是其中一项（分隔条松手改的就是它，改了就要写）。 */
+ *  比例与 harnessPane 是其中的项（分隔条松手改的就是比例，开合 harness 改的就是 harnessPane）。 */
 export function sameSnapshot(a: SessionSnapshot, b: SessionSnapshot): boolean {
-  if (a.ratio !== b.ratio || a.panes.length !== b.panes.length) return false;
+  if (a.ratio !== b.ratio || a.harnessPane !== b.harnessPane || a.panes.length !== b.panes.length) {
+    return false;
+  }
   return a.panes.every((pane, index) => {
     const other = b.panes[index];
     if (other === undefined) return false;
@@ -434,12 +440,18 @@ export function createVaultRemapPrompt(deps: VaultRemapPromptDeps): VaultRemapPr
 // ---------------------------------------------------------------------------
 
 export interface VaultSessionStoreDeps {
-  /** 当前各 pane 的会话与前台路径 + 分隔条比例（入盘快照的输入，都活读装配层的真实状态）。
-   *  pane 数即布局：1 = 单 pane 常态，2 = 分栏。 */
-  layout(): { panes: readonly PaneSnapshotInput[]; ratio: number };
+  /** 当前各 **doc** pane 的会话与前台路径 + 分隔条比例 + harness pane 在场位（入盘快照的
+   *  输入，都活读装配层的真实状态）。pane 数即文档布局：1 = 单 pane 常态，2 = 文档分栏。
+   *  harness pane 恒零标签，不进 panes 数组（ADR 0008 Decision 1/6）。 */
+  layout(): { panes: readonly PaneSnapshotInput[]; ratio: number; harnessPane: boolean };
   /** 读 / 写某 vault 的 pane 布局会话（装配层给 ipc 封装）。 */
   getSession(vaultId: string): Promise<VaultSession | null>;
-  putSession(vaultId: string, panes: StoredPane[], ratio: number): Promise<void>;
+  putSession(
+    vaultId: string,
+    panes: StoredPane[],
+    ratio: number,
+    harnessPane: boolean,
+  ): Promise<void>;
   /** 一组 vault 相对路径的**批量**存在探测（后端 `fs_paths_exist`），返回其中确实存在的那些。
    *
    *  存在探测而不是「在枚举集合里」的原因见 [`restorePlan`]；**批量**而不是逐条是因为候选数
@@ -455,9 +467,13 @@ export interface VaultSessionStoreDeps {
    *  顺序、激活项与会话快照在装载完成的那一帧就是完整列表所应有的样子，**等待不再随标签数
    *  增长**（恢复段的成本从 N 次内容装载降为 1 次）。 */
   createShell(path: string, pane: number): boolean;
-  /** 恢复前把 pane 布局设成存储的形状（当帧、同步）：`count` 为 1 或 2，`ratio` 进布局。
-   *  单 pane 存储（或全部条目不可用）时确保不 split——「单 pane 存储恢复不出第二 pane」。 */
-  applyPaneCount(count: number, ratio: number): void;
+  /** 恢复前把 pane 布局设成存储的形状（当帧、同步）：`count` 为 **doc** pane 数（1 或 2），
+   *  `ratio` 进布局；`harnessPane` 为 true 时旁侧 pane 恢复成 harness（面板在场与否，会话
+   *  内容不恢复）；`hasStoredLayout` 记本次恢复是否真有存储值（自动分栏的默认宽度比只在
+   *  无存储值时生效，change move-harness-to-pane-chat-frame design §7）。
+   *  单 pane 存储（或全部条目不可用）时确保不 split——「单 pane 存储恢复不出第二 pane」；
+   *  harness 在场时 doc pane 至多一个（上限二：文档 + harness）。 */
+  applyPaneCount(count: number, ratio: number, harnessPane: boolean, hasStoredLayout: boolean): void;
   /** 装载某个条目的**文档内容**并激活它（走既有打开链路 `openFile`）；返回是否成功。
    *  M283 起只对「存储的激活项」与它失败时的退化候选调用，其余标签留到首次成为前台。
    *
@@ -505,8 +521,8 @@ export function createVaultSessionStore(deps: VaultSessionStoreDeps): VaultSessi
   let restoreGen = 0;
 
   function snapshot(): SessionSnapshot {
-    const { panes, ratio } = deps.layout();
-    return sessionSnapshot(panes, ratio);
+    const { panes, ratio, harnessPane } = deps.layout();
+    return sessionSnapshot(panes, ratio, harnessPane);
   }
 
   function cancelTimer(): void {
@@ -517,7 +533,7 @@ export function createVaultSessionStore(deps: VaultSessionStoreDeps): VaultSessi
 
   async function write(vaultId: string, payload: SessionSnapshot): Promise<void> {
     try {
-      await deps.putSession(vaultId, payload.panes, payload.ratio);
+      await deps.putSession(vaultId, payload.panes, payload.ratio, payload.harnessPane);
     } catch (e) {
       // 写失败只降级（与 last_vault 写失败同口径）：会话只影响「下次打开恢复什么」，
       // 不值得拦停用户的一次切换或退出。
@@ -536,10 +552,33 @@ export function createVaultSessionStore(deps: VaultSessionStoreDeps): VaultSessi
     const available = new Set(
       entries.filter((entry) => entry.kind === "file").map((entry) => entry.path),
     );
-    const stored = session?.panes ?? [];
+    const storedAll = session?.panes ?? [];
+    // harness pane 在场（ADR 0008 Decision 6 的 Phase 2 消费位）：doc pane 至多一个——
+    // 超出上限的存储 pane（foreign/旧写的形状）其标签并入第一个 pane（去重、保序），
+    // 不静默丢弃。旧版会话文件无 harness_pane 字段：Rust 读取侧已按 false 落好，
+    // 这里的 ?? false 再兜一层（桩/宽容解析同 inCurrentVault 一族口径）。
+    const harnessPane = session?.harness_pane ?? false;
+    let stored: StoredPane[];
+    if (harnessPane) {
+      const first: StoredPane = storedAll[0] ?? { tabs: [], active: null };
+      const seen = new Set(first.tabs);
+      const extra: string[] = [];
+      for (const pane of storedAll.slice(1)) {
+        for (const path of pane.tabs) {
+          if (!seen.has(path)) {
+            seen.add(path);
+            extra.push(path);
+          }
+        }
+      }
+      stored = extra.length === 0 ? [first] : [{ tabs: [...first.tabs, ...extra], active: first.active }];
+    } else {
+      stored = storedAll;
+    }
     const ratio = session?.pane_split_ratio ?? DEFAULT_SPLIT_RATIO;
-    // 存储的 pane 数（1 或 2）：单 pane 存储恢复不出第二 pane；没有历史时也退到 1。
+    // 存储的 doc pane 数（1 或 2）：单 pane 存储恢复不出第二 pane；没有历史时也退到 1。
     const paneCount = Math.min(MAX_PANES, Math.max(1, stored.length));
+    const hasStoredLayout = session !== null;
     // 不在枚举集里的条目先过一次**批量**存在探测：惰性条目（被 vault 自己的忽略声明挡住、
     // 因而未进枚举）同样是 vault 内文件，在文件树里可见可打开（spec「装载后恢复标签列表」）。
     // 探测是**一次**、跨全部 pane 合并发起（MUST NOT 逐 pane / 逐条）。探测是新的 await，之后
@@ -564,17 +603,19 @@ export function createVaultSessionStore(deps: VaultSessionStoreDeps): VaultSessi
     const openCount = plans.reduce((n, plan) => n + plan.open.length, 0);
     const storedSkipped = plans.reduce((n, plan) => n + plan.skipped, 0);
     if (openCount === 0) {
-      // 全部条目都不在 vault 内（或本来就没有历史）：**单 pane** 空 vault 首入态——不建任何壳，
+      // 全部条目都不在 vault 内（或本来就没有历史）：**单 doc pane** 空 vault 首入态——不建任何壳，
       // 标签栏因此隐藏（MUST NOT 伪造内容）；上一 vault 留下的分栏拓扑也在这里收拢回 root。
-      deps.applyPaneCount(1, ratio);
+      // harness pane 不受「零可开条目」影响（它本就是空会话面板）——在场与否照存储恢复。
+      deps.applyPaneCount(1, ratio, harnessPane, hasStoredLayout);
       if (storedSkipped > 0) deps.toast(skippedText(storedSkipped));
       deps.onEmptyVault();
       return;
     }
-    // 第一步（同步、当帧）：布局先就位（建 pane 与标签条），再**逐 pane**按存储顺序建壳。
-    // 标签的存在 / 顺序 / 路径 / 激活项与会话快照在这一刻就位——「所有标签一次回来」这条外部
-    // 契约因此与内容装载的耗时脱钩（M283 的 3.2）。建不成壳的（不可打开的文件类）计入跳过数。
-    deps.applyPaneCount(paneCount, ratio);
+    // 第一步（同步、当帧）：布局先就位（建 pane 与标签条 / harness 段），再**逐 doc pane**按
+    // 存储顺序建壳。标签的存在 / 顺序 / 路径 / 激活项与会话快照在这一刻就位——「所有标签一次
+    // 回来」这条外部契约因此与内容装载的耗时脱钩（M283 的 3.2）。建不成壳的（不可打开的文件类）
+    // 计入跳过数。
+    deps.applyPaneCount(paneCount, ratio, harnessPane, hasStoredLayout);
     const shells: string[][] = [];
     for (let i = 0; i < paneCount; i++) {
       const per: string[] = [];
@@ -585,8 +626,8 @@ export function createVaultSessionStore(deps: VaultSessionStoreDeps): VaultSessi
     }
     const shellCount = shells.reduce((n, per) => n + per.length, 0);
     if (shellCount === 0) {
-      // 条目都在 vault 里、却一个壳都建不成（不可打开的文件类）：同样回落**单 pane** 空态。
-      deps.applyPaneCount(1, ratio);
+      // 条目都在 vault 里、却一个壳都建不成（不可打开的文件类）：同样回落**单 doc pane** 空态。
+      deps.applyPaneCount(1, ratio, harnessPane, hasStoredLayout);
       const skipped = storedSkipped + (openCount - shellCount);
       if (skipped > 0) deps.toast(skippedText(skipped));
       deps.onEmptyVault();

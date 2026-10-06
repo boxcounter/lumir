@@ -65,24 +65,28 @@ function listRow(over: Partial<VaultListEntry> & { id: string }): VaultListEntry
 
 test("sessionSnapshot：全部标签入盘、顺序按打开顺序、激活项不在集合里时落 null（逐 pane）", () => {
   const sessions = [tab("a.md"), tab("b.md"), tab("c.md")];
-  assert.deepEqual(sessionSnapshot([{ sessions, activePath: "c.md" }], 0.5), {
+  assert.deepEqual(sessionSnapshot([{ sessions, activePath: "c.md" }], 0.5, false), {
     panes: [{ tabs: ["a.md", "b.md", "c.md"], active: "c.md" }],
     ratio: 0.5,
+    harnessPane: false,
   });
   // M254 之前这里还有一层「预览标签不入盘」的过滤：预览机制退场后标签只有一种形态，
   // 每个有路径的标签都是正式标签、都该被记住（下面这条断言就是那层过滤的回归点）。
-  assert.deepEqual(sessionSnapshot([{ sessions, activePath: "b.md" }], 0.5), {
+  assert.deepEqual(sessionSnapshot([{ sessions, activePath: "b.md" }], 0.5, false), {
     panes: [{ tabs: ["a.md", "b.md", "c.md"], active: "b.md" }],
     ratio: 0.5,
+    harnessPane: false,
   });
   // 没有前台（未命名文档）：激活项落 null（恢复侧退化到第一个可打开的）
-  assert.deepEqual(sessionSnapshot([{ sessions, activePath: undefined }], 0.5), {
+  assert.deepEqual(sessionSnapshot([{ sessions, activePath: undefined }], 0.5, false), {
     panes: [{ tabs: ["a.md", "b.md", "c.md"], active: null }],
     ratio: 0.5,
+    harnessPane: false,
   });
-  assert.deepEqual(sessionSnapshot([{ sessions: [], activePath: undefined }], 0.5), {
+  assert.deepEqual(sessionSnapshot([{ sessions: [], activePath: undefined }], 0.5, false), {
     panes: [{ tabs: [], active: null }],
     ratio: 0.5,
+    harnessPane: false,
   });
 });
 
@@ -94,6 +98,7 @@ test("sessionSnapshot：双 pane 逐 pane 入盘，比例是快照的一项（�
         { sessions: [tab("c.md")], activePath: "c.md" },
       ],
       0.35,
+      false,
     ),
     {
       panes: [
@@ -101,6 +106,7 @@ test("sessionSnapshot：双 pane 逐 pane 入盘，比例是快照的一项（�
         { tabs: ["c.md"], active: "c.md" },
       ],
       ratio: 0.35,
+      harnessPane: false,
     },
   );
 });
@@ -110,36 +116,38 @@ test("sessionSnapshot：**壳态标签一样入盘**（M283 的 3.1：纯惰性�
   // 这正是「先建壳」能让会话快照保持完整的原因（design §3.1：纯惰性案在恢复后 1 秒内把
   // 40 条会话写成 1 条，用户的标签列表被这一次切换永久删掉）。
   const shell = { path: "a.md", loaded: false } as unknown as EditorSession;
-  assert.deepEqual(sessionSnapshot([{ sessions: [shell], activePath: "a.md" }], 0.5), {
+  assert.deepEqual(sessionSnapshot([{ sessions: [shell], activePath: "a.md" }], 0.5, false), {
     panes: [{ tabs: ["a.md"], active: "a.md" }],
     ratio: 0.5,
+    harnessPane: false,
   });
   // 未命名文档（无路径）仍不入盘
   const blank = { path: undefined, loaded: true } as unknown as EditorSession;
-  assert.deepEqual(sessionSnapshot([{ sessions: [blank, shell], activePath: undefined }], 0.5), {
+  assert.deepEqual(sessionSnapshot([{ sessions: [blank, shell], activePath: undefined }], 0.5, false), {
     panes: [{ tabs: ["a.md"], active: null }],
     ratio: 0.5,
+    harnessPane: false,
   });
 });
 
 test("sameSnapshot：逐项比较（顺序 / pane 数 / 比例也算），用于决定要不要排期写盘", () => {
-  const a = { panes: [{ tabs: ["a.md", "b.md"], active: "b.md" }], ratio: 0.5 };
+  const a = { panes: [{ tabs: ["a.md", "b.md"], active: "b.md" }], ratio: 0.5, harnessPane: false };
   assert.equal(
-    sameSnapshot(a, { panes: [{ tabs: ["a.md", "b.md"], active: "b.md" }], ratio: 0.5 }),
+    sameSnapshot(a, { panes: [{ tabs: ["a.md", "b.md"], active: "b.md" }], ratio: 0.5, harnessPane: false }),
     true,
   );
   assert.equal(
-    sameSnapshot(a, { panes: [{ tabs: ["b.md", "a.md"], active: "b.md" }], ratio: 0.5 }),
+    sameSnapshot(a, { panes: [{ tabs: ["b.md", "a.md"], active: "b.md" }], ratio: 0.5, harnessPane: false }),
     false,
   );
-  assert.equal(sameSnapshot(a, { panes: [{ tabs: ["a.md"], active: "b.md" }], ratio: 0.5 }), false);
+  assert.equal(sameSnapshot(a, { panes: [{ tabs: ["a.md"], active: "b.md" }], ratio: 0.5, harnessPane: false }), false);
   assert.equal(
-    sameSnapshot(a, { panes: [{ tabs: ["a.md", "b.md"], active: null }], ratio: 0.5 }),
+    sameSnapshot(a, { panes: [{ tabs: ["a.md", "b.md"], active: null }], ratio: 0.5, harnessPane: false }),
     false,
   );
   // 比例变了也是变了（分隔条松手写盘的那条路径）
   assert.equal(
-    sameSnapshot(a, { panes: [{ tabs: ["a.md", "b.md"], active: "b.md" }], ratio: 0.7 }),
+    sameSnapshot(a, { panes: [{ tabs: ["a.md", "b.md"], active: "b.md" }], ratio: 0.7, harnessPane: false }),
     false,
   );
   // pane 数变了
@@ -150,7 +158,13 @@ test("sameSnapshot：逐项比较（顺序 / pane 数 / 比例也算），用于
         { tabs: [], active: null },
       ],
       ratio: 0.5,
+      harnessPane: false,
     }),
+    false,
+  );
+  // harness 在场位也是快照的一项（HP1：开合 harness pane 触发写盘）
+  assert.equal(
+    sameSnapshot(a, { panes: [{ tabs: ["a.md", "b.md"], active: "b.md" }], ratio: 0.5, harnessPane: true }),
     false,
   );
   // 第二个 pane 的标签也要逐项一致
@@ -160,6 +174,7 @@ test("sameSnapshot：逐项比较（顺序 / pane 数 / 比例也算），用于
       { tabs: ["b.md"], active: "b.md" },
     ],
     ratio: 0.5,
+    harnessPane: false,
   };
   assert.equal(
     sameSnapshot(two, {
@@ -168,9 +183,21 @@ test("sameSnapshot：逐项比较（顺序 / pane 数 / 比例也算），用于
         { tabs: ["c.md"], active: "b.md" },
       ],
       ratio: 0.5,
+      harnessPane: false,
     }),
     false,
   );
+});
+
+test("sessionSnapshot：harnessPane 是快照的一项（harness pane 不入 panes 数组）", () => {
+  // HP1（change move-harness-to-pane-chat-frame）：harness pane 恒零标签，入盘的 panes 数组
+  // 只装 doc pane；在场与否由 harnessPane 表达（ADR 0008 Decision 1/6）。
+  const snap = sessionSnapshot([{ sessions: [tab("a.md")], activePath: "a.md" }], 2 / 3, true);
+  assert.deepEqual(snap, {
+    panes: [{ tabs: ["a.md"], active: "a.md" }],
+    ratio: 2 / 3,
+    harnessPane: true,
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -356,9 +383,10 @@ function createStoreRig(): StoreRig {
     layout: () => ({
       panes: panes.map((pane) => ({ sessions: pane.sessions, activePath: pane.activePath })),
       ratio,
+      harnessPane: false,
     }),
     getSession: (vaultId) => getSession(vaultId),
-    putSession: async (vaultId, nextPanes, nextRatio) => {
+    putSession: async (vaultId, nextPanes, nextRatio, nextHarness) => {
       if (writesFail) throw new Error("磁盘只读");
       rig.writes.push({ vaultId, panes: nextPanes, ratio: nextRatio });
     },
@@ -1397,7 +1425,7 @@ function createSwitcherRig(rows: VaultListEntry[]): SwitcherRig {
     mount: mounts as unknown as HTMLElement,
     entry: () => entry as unknown as HTMLElement,
     toast: () => {},
-    layout: () => ({ panes: [{ sessions: [], activePath: undefined }], ratio: 0.5 }),
+    layout: () => ({ panes: [{ sessions: [], activePath: undefined }], ratio: 0.5, harnessPane: false }),
     list: () => {
       rig.listCalls += 1;
       notify?.(rows);
@@ -1494,7 +1522,7 @@ test("浮层：未装载 vault（入口不存在）时打开是无操作", () =>
     mount: mounts as unknown as HTMLElement,
     entry: () => undefined, // 空态：树头部没有入口
     toast: () => {},
-    layout: () => ({ panes: [{ sessions: [], activePath: undefined }], ratio: 0.5 }),
+    layout: () => ({ panes: [{ sessions: [], activePath: undefined }], ratio: 0.5, harnessPane: false }),
     list: () => Promise.resolve([]),
     requestSwitch: () => {},
     requestAdd: () => {},

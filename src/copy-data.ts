@@ -768,8 +768,8 @@ const COPY_TABLE = {
     en: "Tool done: {name} — {summary}",
   },
   D345: {
-    zh: "唤起 / 收起 harness 对话面板（M303，change add-harness-probe）：右栏 dock 在 0px 与 --layout-dock-w 之间切换，语义取「A = Agent」，⌘ 系归 mac 惯例。取 global——焦点在左栏 / 搜索框 / 浮层里时同样要能唤起；面板打开时焦点在面板的输入框里（不在 contentDOM 内），再按要能收起。冲突已核（零冲突，三条独立来源）：① 表内——keys.ts 即真源，⌘⇧ 系现有 Cmd-Shift-z（重做）/ Cmd-Shift-o（toc.toggle）/ Cmd-Shift-T（view.theme-cycle）/ Cmd-Shift-L（view.language-cycle）四条，⌘⇧A 不在其中；② 原生菜单 accelerator 集合（tauri 的 Menu::default() 逐项来自 muda 的 items/predefined.rs，清单见 keys.ts 文件头 M149 段）不含 ⌘⇧A；③ macOS 系统级不预置 ⌘⇧A（Finder 的「应用程序」快捷键只在 Finder 窗口作用域）。可经 [keys] 重绑 / 解绑",
-    en: "Show / hide the harness chat panel (M303, change add-harness-probe): the right-hand dock switches between 0px and --layout-dock-w; the letter means A = Agent, and the ⌘ family follows mac conventions. Scope is global — it must also work with focus in the left column, the search box or a popover; with the panel open focus is in its input (not inside contentDOM) and pressing again must close it. Conflicts checked (none, three independent sources): (1) the table's ⌘⇧ bindings are ⇧⌘Z (redo) / ⇧⌘O (toc.toggle) / ⇧⌘T (view.theme-cycle) / ⇧⌘L (view.language-cycle) and ⌘⇧A is not among them (keys.ts is the source of truth); (2) the native menu accelerator set (tauri's Menu::default() takes each item from muda's items/predefined.rs, list in the M149 section of the keys.ts header) has no ⌘⇧A; (3) macOS presets no ⌘⇧A (Finder's Applications-folder shortcut is scoped to Finder windows). Can be rebound / unbound via [keys]",
+    zh: "在旁侧 pane 打开 / 收起 harness（M303 唤起/收起面板；M346/HP1 语义改 pane 化，change move-harness-to-pane-chat-frame）：无第二 pane 时自动分栏（默认宽度比 harness:文档 = 1:2），已有第二 doc pane 时其标签并入另一 pane 后换位；再按收起、标签不丢。语义取「A = Agent」，⌘ 系归 mac 惯例。取 global——焦点在左栏 / 搜索框 / 浮层里时同样要能打开；面板打开时焦点在面板的输入框里（不在 contentDOM 内），再按要能收起。冲突已核（零冲突，三条独立来源）：① 表内——keys.ts 即真源，⌘⇧ 系现有 Cmd-Shift-z（重做）/ Cmd-Shift-o（toc.toggle）/ Cmd-Shift-T（view.theme-cycle）/ Cmd-Shift-L（view.language-cycle）四条，⌘⇧A 不在其中；② 原生菜单 accelerator 集合（tauri 的 Menu::default() 逐项来自 muda 的 items/predefined.rs，清单见 keys.ts 文件头 M149 段）不含 ⌘⇧A；③ macOS 系统级不预置 ⌘⇧A（Finder 的「应用程序」快捷键只在 Finder 窗口作用域）。可经 [keys] 重绑 / 解绑",
+    en: "Open / collapse the harness chat pane (M303 opened/collapsed the panel; M346/HP1 changed the semantics to the pane model, change move-harness-to-pane-chat-frame): with no second pane it splits automatically (default width ratio harness:document = 1:2); with a second document pane that pane's tabs merge into the other pane before the swap; pressing again collapses it without losing tabs. The letter means A = Agent, and the ⌘ family follows mac conventions. Scope is global — it must also work with focus in the left column, the search box or a popover; with the pane open focus is in its input (not inside contentDOM) and pressing again must close it. Conflicts checked (none, three independent sources): (1) the table's ⌘⇧ bindings are ⇧⌘Z (redo) / ⇧⌘O (toc.toggle) / ⇧⌘T (view.theme-cycle) / ⇧⌘L (view.language-cycle) and ⌘⇧A is not among them (keys.ts is the source of truth); (2) the native menu accelerator set (tauri's Menu::default() takes each item from muda's items/predefined.rs, list in the M149 section of the keys.ts header) has no ⌘⇧A; (3) macOS presets no ⌘⇧A (Finder's Applications-folder shortcut is scoped to Finder windows). Can be rebound / unbound via [keys]",
   },
   D346: {
     zh: "与当前文档对话——发送时会携带上方显示的上下文，发送前可核对。",
@@ -845,6 +845,15 @@ const COPY_TABLE = {
   D374: {
     zh: "跳回原文位置",
     en: "Jump back to the source",
+  },
+  // 标题栏 harness 段读屏名（D375，M346/HP1，change move-harness-to-pane-chat-frame）：
+  // 段 = 标题栏里 harness pane 的段（会话名下拉 + 新建会话钮），与编辑器 pane 的标签段
+  // 同构；role=group 需要一句可读身份。消费者 src/harness-panel.ts 的 .lumir-hp-seg
+  //（建元素时写、onRelabel 重写）。「新会话」钮与未命名会话的缺省名复用 D330（同一语义
+  // 一条串，不另起编号）。
+  D375: {
+    zh: "对话会话",
+    en: "Chat session",
   },
 } satisfies Record<string, CopyEntry>;
 

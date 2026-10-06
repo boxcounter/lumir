@@ -278,18 +278,19 @@ test("⌘W 关当前标签：干净标签直接关，dirty 标签先给三个出
   await expect(page.locator(".tab")).toHaveCount(0);
   await expect(page.locator(".tabstrip")).toBeHidden();
   await expect(page.locator(".modeline-path")).toHaveText("无当前文件");
-  // 空态的标题栏：标签区隐藏后是 traffic 灯区 + 动作钮槽位 + 右端产品标识块（M236，
-  // product-version-display 的 MODIFIED「空态的标题栏」；M303（change add-harness-probe）
-  // 起动作钮槽位填入第一颗钮：harness 面板 toggle——见 src/style.css 标题栏注释与
-  // ui-design-system 的标题栏解剖口径）。
+  // 空态的标题栏：标签区隐藏后是 traffic 灯区（含产品标识块——HP1 移位进 traffic，见
+  // titlebar-identity.spec.ts）+ harness 段槽位（hidden 长驻）+ 动作钮槽位（M303 起填入
+  // 第一颗钮：harness 面板 toggle）。可见子元素因此是 traffic 与 toggle 两个（seg hidden）。
   const emptyTitlebar = await page.locator(".titlebar").evaluate((bar) => {
     const traffic = bar.querySelector<HTMLElement>(".titlebar-traffic")!;
     const visible = [...bar.children].filter((child) => (child as HTMLElement).offsetParent !== null);
     return { children: visible.map((child) => child.className), trafficWidth: traffic.getBoundingClientRect().width };
   });
-  expect(emptyTitlebar.children).toEqual(["titlebar-traffic", "titlebar-action lumir-hp-toggle", "titlebar-identity"]);
+  expect(emptyTitlebar.children).toEqual(["titlebar-traffic", "titlebar-action lumir-hp-toggle"]);
   // traffic 区宽度与侧栏对齐（骨架条款：左缘 traffic 灯区宽 236）
   expect(emptyTitlebar.trafficWidth).toBe(236);
+  // 标识块在 traffic 灯区内（系统按钮旁），与 tabstrip 的 hidden 与否无关。
+  await expect(page.locator(".titlebar-traffic .titlebar-identity")).toBeVisible();
 });
 
 test("放弃修改并关闭：该路径的崩溃备份同步清除（备份的生命周期与 dirty 对齐）", async ({ page }) => {
@@ -567,36 +568,37 @@ test("标签溢出：活跃标签恒完整可见（键盘直达 / 循环 / 关�
   //   ① 横向滚动条不占布局高度：chromium 的经典滚动条会把 clientHeight 吃掉一条
   //     （scrollbar-width: thin 时代差 ~7px），none 之后与 offsetHeight 相等；WKWebView
   //      的悬浮条遮挡由同一声明消除（那条只有真机看得见，chromium 这条守布局面）。
-  //   ② 标签区右缘与产品标识块之间恒有 --sp-3 的间距（.tabstrip 的 margin-right）。
+  //   ② 标签区右缘与其后的动作钮之间恒有 --sp-3 的间距（.tabstrip 的 margin-right）。
   // 此刻仍在溢出态（关了一个还剩 11 个），两条判据才不是空转（上面的 scrollWidth >
   // clientWidth 已坐实溢出）。
   const geometry = await page.evaluate(() => {
     const strip = document.querySelector(".tabstrip") as HTMLElement;
-    const identity = document.querySelector(".titlebar-identity") as HTMLElement;
     const toggle = document.querySelector(".lumir-hp-toggle") as HTMLElement;
-    const probe = document.createElement("div");
-    probe.style.width = "var(--sp-3)";
-    document.body.append(probe);
-    const sp3 = parseFloat(getComputedStyle(probe).width);
-    probe.remove();
     return {
       offsetHeight: strip.offsetHeight,
       clientHeight: strip.clientHeight,
-      gap: identity.getBoundingClientRect().left - strip.getBoundingClientRect().right,
+      gap: toggle.getBoundingClientRect().left - strip.getBoundingClientRect().right,
       toggleWidth: toggle.getBoundingClientRect().width,
       toggleLeft: toggle.getBoundingClientRect().left,
       stripRight: strip.getBoundingClientRect().right,
-      sp3,
     };
   });
   expect(geometry.clientHeight, "横向滚动条占用了布局高度").toBe(geometry.offsetHeight);
-  // 右缘间距（M303 起）= --sp-3（tabstrip margin-right）+ 动作钮宽（--layout-tb-btn-w）
-  // + --sp-3（动作钮 margin-right）——动作钮槽位在标识块左侧（见 titlebar-identity.spec.ts）。
+  // 右缘间距（HP1 后）= --sp-3（tabstrip margin-right）——动作钮槽位钉标题栏右端，
+  // 标签区右缘与其之间只剩这一条 margin（标识块已移位 traffic 灯区，不再参与右簇）。
+  const sp3 = await page.evaluate(() => {
+    const probe = document.createElement("div");
+    probe.style.width = "var(--sp-3)";
+    document.body.append(probe);
+    const value = parseFloat(getComputedStyle(probe).width);
+    probe.remove();
+    return value;
+  });
   expect(
-    Math.abs(geometry.gap - (2 * geometry.sp3 + geometry.toggleWidth)),
-    `右缘间距应为 2×--sp-3 + 动作钮宽（${2 * geometry.sp3 + geometry.toggleWidth}px），实测 ${geometry.gap}px`,
+    Math.abs(geometry.gap - sp3),
+    `右缘间距应为 --sp-3（${sp3}px），实测 ${geometry.gap}px`,
   ).toBeLessThanOrEqual(1);
-  // 动作钮落在标签区与标识块之间（槽位顺序的正观测）
+  // 动作钮落在标签区右侧（槽位顺序的正观测）
   expect(geometry.toggleLeft).toBeGreaterThanOrEqual(geometry.stripRight - 1);
 
   // 元素级基线：溢出态的整条标题栏（无滚动条 + 右缘间距 + 最右标签裁在滚动口内）。

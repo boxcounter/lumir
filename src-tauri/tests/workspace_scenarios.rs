@@ -394,6 +394,7 @@ fn scenario_vault_list_reports_name_availability_and_tab_count() {
             },
         ],
         0.5,
+        false,
     )
     .unwrap();
 
@@ -554,6 +555,7 @@ fn scenario_session_commands_round_trip_and_reject_out_of_bounds_entries() {
             active: Some("../escape.md".into()),
         }],
         0.5,
+        false,
     )
     .unwrap();
     let loaded = vault_session::vault_session_get("v1".into())
@@ -572,7 +574,7 @@ fn scenario_session_commands_round_trip_and_reject_out_of_bounds_entries() {
 
     // id 是文件名：越界 id 一律拒绝（路径逃逸防护），读写同口径
     assert!(vault_session::vault_session_get("../config".into()).is_err());
-    assert!(vault_session::vault_session_put("../config".into(), vec![], 0.5).is_err());
+    assert!(vault_session::vault_session_put("../config".into(), vec![], 0.5, false).is_err());
 }
 
 #[test]
@@ -621,6 +623,7 @@ fn scenario_vault_list_tab_count_sums_panes_and_reads_legacy_v1() {
             },
         ],
         0.5,
+        false,
     )
     .unwrap();
     let dir = session_dir();
@@ -660,6 +663,7 @@ fn scenario_session_put_degrades_write_failure_to_warning() {
                 active: None,
             }],
             0.5,
+            false,
         )
         .is_ok(),
         "写失败降级为 warning（Ok）：切换与打开不被拦停"

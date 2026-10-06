@@ -231,13 +231,6 @@
   --layout-tab-h: 29px;
   --layout-tb-btn-w: 30px;
   --layout-tb-btn-h: 28px;
-  /* dock 列宽（M303，change add-harness-probe）：骨架右栏 dock 接入 harness 对话面板后的
-     展开宽度。取值沿用原型期为 agent 栏预留的 --layout-agent-w（348px，tokens 文档
-     §layout）——同一语义位（右栏 agent 面板的宽度），不另起第二个值；token 名按
-     openspec change 的 ui-design-system delta 钉为 --layout-dock-w（delta 是本 token 的
-     规格出处）。收起态没有取值：网格列直接写 0px（见 .app-shell），宽度 token 只在
-     .dock-open 态被消费。 */
-  --layout-dock-w: 348px;
   --layout-tree-row-h: 25px;
   --layout-agent-head-h: 38px;
   --layout-queue-head-h: 34px;
@@ -333,14 +326,13 @@ body {
 
 /* ==========================================================================
    骨架（src/shell.ts）：四区网格。
-   标题栏行（42px，全宽）/ 主行（侧栏 236 + 正文 + dock 列）/ modeline 行（25px，全宽）。
-   dock 列默认 0px（结构上的列位）；M303（change add-harness-probe）起它承载 harness 对话
-   面板——面板展开时 `.dock-open` 类把列宽切到 --layout-dock-w，收起即回到 0px（行为与原
-   预留位一致，规格见该 change 的 ui-design-system delta）。
+   标题栏行（42px，全宽）/ 主行（侧栏 236 + 正文）/ modeline 行（25px，全宽）。
+   HP1（change move-harness-to-pane-chat-frame）：dock 列移除——harness 面板归位 pane，
+   骨架回到两列；原第三列（--layout-dock-w / .dock-open 机制）随本 change 清扫。
    ========================================================================== */
 .app-shell {
   display: grid;
-  grid-template-columns: var(--layout-sidebar-w) minmax(0, 1fr) 0px;
+  grid-template-columns: var(--layout-sidebar-w) minmax(0, 1fr);
   grid-template-rows: var(--layout-titlebar-h) minmax(0, 1fr) var(--layout-modeline-h);
   height: 100%;
   min-width: 0;
@@ -350,13 +342,6 @@ body {
      overflow:auto，会被裁掉），而口径 12 明确允许它溢出左栏（320px 宽 vs 236px 栏宽），
      所以挂在网格容器上、由它提供定位基准。绝对定位的子元素不参与网格排布，不影响布局。 */
   position: relative;
-}
-/* dock 展开态：第三列从 0px 切到 dock 宽，正文列（minmax(0,1fr)）随之伸缩——切换不改变
-   正文阅读宽居中的既有口径（正文列内的 --layout-doc-measure 居中是列内行为，与列宽无关）。
-   无过渡：面板显隐是瞬时骨架切换，0.1/0.12s 两档动效纪律只覆盖 hover 过渡（spec
-   「chrome 表面与动效纪律」），网格列宽动画不在其中。 */
-.app-shell.dock-open {
-  grid-template-columns: var(--layout-sidebar-w) minmax(0, 1fr) var(--layout-dock-w);
 }
 
 /* 标题栏（取代旧标题区 + 旧标签栏行，两者本 change 已删除）：traffic 灯区 / 标签 / 动作钮三段。
@@ -371,13 +356,25 @@ body {
   display: flex;
   align-items: center;
   height: var(--layout-titlebar-h);
-  padding-right: var(--sp-6);
+  /* 右 padding 归零是有意的（HP1）：分栏态标题栏的弹性区（traffic 之后到窗口右缘）因此与
+     内容区容器同宽，harness 段与文档标签槽按同一份 splitRatio 分宽即与 pane 像素对齐
+     （右缘的余量移到动作钮自身的 margin-right 上，单 pane 逐值不变）。 */
+  padding-right: 0;
   background: var(--frame);
   border-bottom: 1px solid var(--border);
+  position: relative; /* .vault-loading 的绝对定位包含块（spinner 不参与 flex 分宽） */
 }
 .titlebar-traffic {
   flex: none;
   width: var(--layout-sidebar-w);
+  /* HP1（change move-harness-to-pane-chat-frame，Alex 点子 2）：产品标识块移进 traffic
+     空位、系统按钮旁——traffic 从纯占位变为 flex 容器。padding-left 让出原生三灯的
+     落点区（首灯 x≈12、12px 钮 + 8px 间距，右缘 ≈64，留到 78 任何主题下都不压灯）。 */
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  padding-left: 78px;
+  min-width: 0;
 }
 .tabstrip {
   display: flex;
@@ -386,10 +383,10 @@ body {
   flex: 1 1 auto;
   min-width: 0;
   padding-left: var(--sp-3);
-  /* 右缘与产品标识块之间恒留 --sp-3（M257，Alex dogfood 报告的蓝箭头缺陷：溢出时最右
-     标签与「Lumir · 0.2.0」挤在一起）。用 margin 而不是 padding-right：WebKit 的横向
-     滚动容器可能不把 inline-end padding 算进可滚动区，margin 在两个引擎里都同样生效。
-     标识块自身的 margin-left:auto 管「钉右端」，这条管「不贴上」——两者不冲突。 */
+  /* 右缘与其后的 chrome（harness 段 / 动作钮；M257 时点是产品标识块）之间恒留 --sp-3
+     （M257，Alex dogfood 报告的蓝箭头缺陷：溢出时最右标签与右缘 chrome 挤在一起）。
+     用 margin 而不是 padding-right：WebKit 的横向滚动容器可能不把 inline-end padding 算进
+     可滚动区，margin 在两个引擎里都同样生效。 */
   margin-right: var(--sp-3);
   /* 溢出：v1 只做横向滚动（不做拖拽排序 / 不折叠成下拉）。溢出时标签自身宽度不变，
      正文列宽也不受影响。
@@ -409,20 +406,19 @@ body {
 .tabstrip[hidden] {
   display: none;
 }
-/* 定稿的标题栏第三段是「动作钮」（30×28，--layout-tb-btn-w/h）。M303（change
-   add-harness-probe）起本槽位填入第一颗动作钮：harness 面板 toggle（.titlebar-action，
-   样式与 DOM 都在 harness 一侧——src/harness-panel.css / src/harness-panel.ts，与
-   search-panel.css 的 mission 隔离先例同款）。它排在产品标识块**左侧**（动作钮靠近内容区、
-   产品标识钉窗口角，macOS 惯例），间距走 --sp-3；不要把标识块挪位（整页视觉基线会漂移）。 */
+/* 定稿的标题栏动作钮槽位（30×28，--layout-tb-btn-w/h）。M303（change add-harness-probe）
+   起本槽位填入第一颗动作钮：harness 面板 toggle（.titlebar-action，样式与 DOM 都在
+   harness 一侧——src/harness-panel.css / src/harness-panel.ts，与 search-panel.css 的
+   mission 隔离先例同款）。HP1（change move-harness-to-pane-chat-frame）：标识块移位
+   traffic 灯区后，toggle 钮钉标题栏右端；双 pane（harness 在场）时它隐藏（退让条款，
+   显隐归 harness 面板 setChromeRetreat），⌘⇧A 命令路径不受影响。 */
 
-/* 产品标识块（M236，change product-version-display，D1 右端 / D3 双档字重）：
-   全部现行 token，零新值、零组件级 eink 覆盖（--text-2/--text-3 三主题都有定义）。
-   flex:none + margin-left:auto 钉右端——tabstrip hidden 的空态也在右端；不收缩、不截断
-   （截断出「Lumir · 0…」是假信息）。窄窗退让（<640px 版本号退 modeline）的显隐由
-   src/modeline.ts 写 hidden 属性，样式层不感知阈值。 */
+/* 产品标识块（M236，change product-version-display，D3 双档字重；HP1 移位：进 traffic
+   灯区、系统按钮旁，不再钉右端）：全部现行 token，零新值、零组件级 eink 覆盖
+  （--text-2/--text-3 三主题都有定义）。窄窗退让（<640px 版本号退 modeline）的显隐由
+   src/modeline.ts 写 hidden 属性，样式层不感知阈值；M316 的双栏退让随移位移除。 */
 .titlebar-identity {
   flex: none;
-  margin-left: auto;
   display: flex;
   align-items: center;
   gap: var(--sp-3);
@@ -453,10 +449,14 @@ body {
      （Alex 的原话是「我会愣住，以为刚才点击没点中」）。`prefers-reduced-motion` 下不旋转，
      环本身仍在（指示不因省动效而消失）。 */
 .vault-loading {
-  flex: none;
+  /* 绝对定位、不参与 flex 分宽：装载指示是瞬态覆盖层，若在流内会撑开标题栏右缘、让
+     harness 段与 pane 的像素对齐在装载窗口内漂移（HP1 的对齐不变量）。 */
+  position: absolute;
+  right: var(--sp-6);
+  top: 50%;
+  margin-top: -6px;
   width: 12px;
   height: 12px;
-  margin-left: var(--sp-3);
   border: 2px solid var(--border);
   border-top-color: var(--accent);
   border-radius: 50%;

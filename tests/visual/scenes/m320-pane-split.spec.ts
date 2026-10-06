@@ -7,7 +7,8 @@ import { configGets, stubTauri, type VaultFixture } from "./tauri-stub";
 //
 // 覆盖的表面（两条整页 + 两条标题栏元素级）：
 //   1. 分栏双 pane：标题栏左右两个标签槽按比例分宽 + 分隔条 + 右簇退让
-//     （标识块整体退 modeline + harness 钮隐藏——M316 的 chrome 裁决，两条都断）；
+//     （harness 钮隐藏；HP1 后标识块移位 traffic 灯区、不再随 split 退让——右簇只剩
+//      toggle 一颗钮，change move-harness-to-pane-chat-frame）；
 //   2. 空右 pane 形态：split 后不开文件的右 pane——空槽仍占位（keepMountWhenEmpty，
 //      空槽一 hidden 另一槽的比例就漂），右 pane 正文区是**空 pane 引导水印**
 //     （M322，D369；水印是透明底覆盖层，底下的未命名空文档编辑器仍在场、可聚焦）。
@@ -47,17 +48,14 @@ async function boot(page: Page): Promise<void> {
   await page.waitForTimeout(80);
 }
 
-/** 标题栏右簇在双栏退让态的三条结构断言（标识块退 modeline + harness 钮隐藏）。 */
+/** 标题栏右簇在双栏退让态的结构断言（HP1 修订：退让对象只剩 harness toggle 钮——
+ *  标识块移位 traffic 灯区后常驻标题栏，双栏不再是退让触发，modeline-version 常态 hidden）。 */
 async function expectChromeRetreat(page: Page): Promise<void> {
-  await expect(page.locator(".titlebar-identity")).toBeHidden();
+  // 标识块仍在标题栏（traffic 灯区内），不退 modeline。
+  await expect(page.locator(".titlebar-traffic .titlebar-identity")).toBeVisible();
+  await expect(page.locator(".modeline-version")).toBeHidden();
+  // 退让对象只剩这颗钮：harness toggle 在 split（harness 在场或文档分栏）时隐藏。
   await expect(page.locator(".lumir-hp-toggle")).toBeHidden();
-  // 退让落点：modeline 右段版本号段携带「 · Lumir · 9.9.9」（stub 的固定 appMeta fixture，
-  // 刻意不跟真版本——tauri-stub 的 appMeta 注释）；前导空格靠 white-space: pre 生效，
-  // toHaveText 会折叠/修剪空白，因此归一化后的文本以「·」开头。正则锚住产品名前的前导
-  // 分隔符（M330：隔开 meta 段尾的 charset 与产品名，Alex dogfood 2026-10-05）——去掉
-  // 前导「·」的形态（「Lumir · 9.9.9」）不匹配这条断言。
-  await expect(page.locator(".modeline-version")).toBeVisible();
-  await expect(page.locator(".modeline-version")).toHaveText(/· Lumir · 9\.9\.9/);
 }
 
 /** 双栏几何不变量：两个 pane 等宽、两个标签槽等宽（比例 0.5 缺省；读不到一律 FAIL，
@@ -87,10 +85,10 @@ async function expectSplitGeometry(page: Page): Promise<void> {
 test("分栏双 pane：双标签槽 + 分隔条 + 右簇退让（整页 + 标题栏元素级基线）", async ({ page }) => {
   await boot(page);
 
-  // 分栏前：单 pane 常态——无分隔条、单标签槽、标识块在标题栏（基线对照面）。
+  // 分栏前：单 pane 常态——无分隔条、单标签槽、标识块在标题栏 traffic 灯区内（基线对照面）。
   await expect(page.locator(".pane-divider")).toHaveCount(0);
   await expect(page.locator(".tabstrip")).toHaveCount(1);
-  await expect(page.locator(".titlebar-identity")).toBeVisible();
+  await expect(page.locator(".titlebar-traffic .titlebar-identity")).toBeVisible();
 
   await page.keyboard.press("F2");
 
@@ -169,7 +167,7 @@ test("空右 pane 形态 + 收拢复原单 pane（整页 + 标题栏元素级基
   await expect(page.locator(".pane-empty-guide")).toBeHidden();
   await expect(page.locator(".tab-name")).toHaveText(["alpha.md"]);
   await expect(page.locator(".tab.is-active .tab-name")).toHaveText("alpha.md");
-  await expect(page.locator(".titlebar-identity")).toBeVisible();
+  await expect(page.locator(".titlebar-traffic .titlebar-identity")).toBeVisible();
   await expect(page.locator(".lumir-hp-toggle")).toBeVisible();
   await expect(page.locator(".modeline-version")).toBeHidden();
   await expect(page.locator(".modeline-path")).toHaveText("alpha.md");

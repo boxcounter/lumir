@@ -58,11 +58,10 @@ pub struct PaneSession {
 
 /// 一个 vault 的 pane 布局会话（唯一类型定义点，TS 类型由 ts-rs 导出）。
 ///
-/// **`harness_pane` 是 ADR 0008 Decision 6 登记的 Phase 2 契约位**：Phase 1 恒 `false`，
-/// 只随 schema 落盘、**无消费者**（读取侧也不解释它，见 `SessionFile`）。Phase 2 harness
-/// 归位 pane 后，消费点在装配层的布局恢复一带（`src/main.ts` 的 `applyPaneCount`）——
-/// 届时它决定 harness pane 的落位。此处与 design §10 的标注同源，防「声明了却没有消费者」
-/// 误判；不给它造一个假的 Phase 1 消费者。
+/// **`harness_pane` 是 ADR 0008 Decision 6 登记的契约位**：Phase 1 恒 `false`、只随 schema
+/// 落盘；Phase 2（change move-harness-to-pane-chat-frame）起由前端写读——`true` 时装配层
+/// 恢复出 harness pane（面板在场与否；会话内容仍是内存态，不持久化）。读侧兼容：v2 旧文件
+/// 无该字段按 `false` 解释（`SessionFile` 的 serde default），v1 文件恒 `false`。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[ts(export, export_to = "../../src/bindings/")]
 pub struct VaultSession {
@@ -84,8 +83,8 @@ pub fn sessions_dir() -> Result<PathBuf, CommandError> {
 }
 
 /// 盘上文件的形状：读取侧**唯一**的反序列化目标，同时容纳 v1 与 v2（按 `version` 分流，
-/// 见 [`SessionFile::into_session`]）。`harness_pane` 不在此列——Phase 1 无消费者，读也白读
-/// （serde 默认忽略未知字段，v2 文件里的它不会让解析失败）。
+/// 见 [`SessionFile::into_session`]）。v2 的 `harness_pane` 缺字段（HP1 之前的旧文件）由
+/// serde default 按 `false` 解释——与 panes 字段的读取侧兼容同口径。
 #[derive(Deserialize)]
 struct SessionFile {
     version: u32,
@@ -98,6 +97,9 @@ struct SessionFile {
     /// v2 的各 pane 会话（v1 文件没有它）。
     #[serde(default)]
     panes: Option<Vec<PaneSession>>,
+    /// v2 的 harness pane 在场位（HP1 之前的旧 v2 文件没有它 ⇒ false）。
+    #[serde(default)]
+    harness_pane: bool,
     #[serde(default)]
     pane_split_ratio: Option<f64>,
     #[serde(default)]
@@ -120,7 +122,7 @@ impl SessionFile {
                 Some(VaultSession {
                     version: SESSION_VERSION,
                     panes,
-                    harness_pane: false,
+                    harness_pane: self.harness_pane,
                     pane_split_ratio: self.pane_split_ratio.unwrap_or(DEFAULT_SPLIT_RATIO),
                     updated_at: self.updated_at,
                 })
@@ -246,8 +248,9 @@ pub fn vault_session_get(vault_id: String) -> Result<Option<VaultSession>, Comma
     Ok(load_from(&sessions_dir()?, &vault_id))
 }
 
-/// 写某 vault 的 pane 布局会话（前端在 pane / 标签 / 激活项 / 分隔条变化后防抖写，切换前与
-/// 退出前 flush）。
+/// 写某 vault 的 pane 布局会话（前端在 pane / 标签 / 激活项 / 分隔条 / harness 在场变化后
+/// 防抖写，切换前与退出前 flush）。`harness_pane` 记 harness pane 是否在场（ADR 0008
+/// Decision 6 的 Phase 2 消费位；会话内容不持久化，恢复出的是空会话）。
 ///
 /// 写失败返回 `Ok(())` 并记 warning——与 `last_vault` 写失败同口径（M127），MUST NOT 拦停
 /// 切换与打开：会话只影响「下次打开这个 vault 时恢复什么」，不值得让用户的一次切换失败。
@@ -258,6 +261,7 @@ pub fn vault_session_put(
     vault_id: String,
     panes: Vec<PaneSession>,
     pane_split_ratio: f64,
+    harness_pane: bool,
 ) -> Result<(), CommandError> {
     vault_registry::valid_id(&vault_id)?;
     let dir = sessions_dir()?;
@@ -265,7 +269,7 @@ pub fn vault_session_put(
     let session = sanitize(VaultSession {
         version: SESSION_VERSION,
         panes,
-        harness_pane: false, // Phase 1 恒 false（见 VaultSession 的注释）
+        harness_pane,
         pane_split_ratio,
         updated_at: vault_registry::now_ms(),
     });
@@ -493,6 +497,26 @@ mod tests {
         .unwrap();
         let loaded = load_from(dir.path(), "noratio").expect("会话可读");
         assert_eq!(loaded.pane_split_ratio, DEFAULT_SPLIT_RATIO);
+    }
+
+    #[test]
+    fn harness_pane_round_trips_and_missing_field_reads_as_false() {
+        let dir = TempDir::new();
+        // 写读往返：true 原样落盘、原样读回（Phase 2 消费位，change move-harness-to-pane-chat-frame）
+        let mut with_harness = single(&["a.md"], Some("a.md"));
+        with_harness.harness_pane = true;
+        save_to(dir.path(), "h", &with_harness).expect("write");
+        assert_eq!(load_from(dir.path(), "h"), Some(with_harness));
+
+        // HP1 之前的旧 v2 文件没有 harness_pane 字段：按 false 兼容（读取侧，与 panes 缺字段同口径）
+        fs::write(
+            dir.path().join("legacy.json"),
+            r#"{"version":2,"panes":[{"tabs":["a.md"],"active":"a.md"}],"pane_split_ratio":0.5,"updated_at":0}"#,
+        )
+        .unwrap();
+        let loaded = load_from(dir.path(), "legacy").expect("旧 v2 文件照常读出");
+        assert!(!loaded.harness_pane, "缺字段按 false 解释");
+        assert_eq!(loaded.panes, vec![pane(&["a.md"], Some("a.md"))]);
     }
 
     #[test]

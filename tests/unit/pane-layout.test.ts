@@ -750,3 +750,33 @@ test("空 pane 输入闸门：仅分栏态 + 零带路径标签 + 前台无未�
   // 照样不接受输入（两者是同一「空」口径的两件事，MUST NOT 合并成一个谓词）。
   assert.equal(paneBlocksInput(true, false, false), true);
 });
+
+test("pane kind：split(kind) 贯通 createHandle 与 Pane 记录；harness pane 同样受上限二约束（HP1）", () => {
+  // change move-harness-to-pane-chat-frame（ADR 0008 Decision 1：pane 承载文档组或 harness）：
+  // kind 由 split 入参透传给 createHandle 与 Pane.kind；缺省 "doc"。账本不解释 kind——
+  // 归属/移动机制对两种 pane 同构（harness pane 恒零标签）。
+  const handles: Array<{ paneId: number; kind: string }> = [];
+  const layout = createPaneLayout<Tab, { paneId: number; kind: string }>({
+    createHandle: (paneId, kind) => {
+      const handle = { paneId, kind };
+      handles.push(handle);
+      return handle;
+    },
+    disposeHandle: () => {},
+  });
+  assert.equal(layout.panes()[0].kind, "doc", "root pane 恒 doc");
+  assert.equal(handles[0].kind, "doc");
+  const harness = layout.split("harness");
+  assert.notEqual(harness, null);
+  assert.equal(harness!.kind, "harness");
+  assert.equal(handles[1].kind, "harness", "kind 贯通 createHandle");
+  // 上限二对两种 pane 同一份：harness 在场时第三次 split 无操作（pane.split 于 harness 在场 = 无操作）
+  assert.equal(layout.split(), null, "harness + doc 已满，再 split 无操作");
+  // close 语义同构：harness pane 无标签可并，收拢后幸存 pane 是 root
+  layout.activate(harness!.id);
+  const closed = layout.close();
+  assert.notEqual(closed, null);
+  assert.equal(closed!.kind, "harness");
+  assert.equal(layout.panes().length, 1);
+  assert.equal(layout.panes()[0].kind, "doc");
+});

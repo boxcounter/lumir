@@ -1,10 +1,11 @@
 import { expect, test } from "@playwright/test";
 import { stubTauri } from "./tauri-stub";
 
-// 应用骨架与信息落位（change restyle-ui-tokens-v1，tasks §4.1–§4.3）：
-// 四区网格（标题栏 42 / 侧栏 236 + 正文 + dock 预留列 0 / modeline 25）、
+// 应用骨架与信息落位（change restyle-ui-tokens-v1，tasks §4.1–§4.3；HP1 起 dock 预留列
+// 移除——harness 面板归位 pane，骨架回到两列，change move-harness-to-pane-chat-frame）：
+// 四区网格（标题栏 42 / 侧栏 236 + 正文 / modeline 25）、
 // masthead 移除后的三处落位（vault 名 → 侧栏头、路径 → modeline 左、行数语法编码 → modeline 右）、
-// 标签迁入标题栏。
+// 标签迁入标题栏、产品标识块在 traffic 灯区内（系统按钮旁）。
 //
 // 判据全部是**几何读数与文本**（渲染盒宽高、网格轨道像素值、元素文本），不用「class 存在」。
 // 本场景不新增像素基线（实现期禁止零碎基线动作，见 restyle-theme.spec.ts 的文件头说明）。
@@ -31,7 +32,7 @@ async function open(page: import("@playwright/test").Page, file: string, marker:
   await expect(page.locator(".cm-content")).toContainText(marker);
 }
 
-test("骨架几何：侧栏 236 / 标题栏 42 / modeline 25 / dock 列 0 / 正文列 760 居中", async ({ page }) => {
+test("骨架几何：侧栏 236 / 标题栏 42 / modeline 25 / 两列网格 / 正文列 760 居中", async ({ page }) => {
   await stubTauri(page, VAULT);
   await open(page, "doc.md", "正文段落");
 
@@ -65,10 +66,11 @@ test("骨架几何：侧栏 236 / 标题栏 42 / modeline 25 / dock 列 0 / 正�
   expect(geo.sidebarWidth).toBe(236);
   expect(geo.titlebarHeight).toBe(42);
   expect(geo.modelineHeight).toBe(25);
-  // 网格轨道：行 = 标题栏 / 主行 / modeline；列 = 侧栏 / 正文 / dock 预留列（第三列零像素）
+  // 网格轨道：行 = 标题栏 / 主行 / modeline；列 = 侧栏 / 正文——**两列**（HP1 起 dock
+  // 预留列（原第三列零像素）随 dock 移除消失，token --layout-dock-w 已删）
   expect(geo.shellRows).toEqual([42, 800 - 42 - 25, 25]);
+  expect(geo.shellCols.length).toBe(2);
   expect(geo.shellCols[0]).toBe(236);
-  expect(geo.shellCols[2]).toBe(0);
   // 正文列 = 定值 760（框宽），两侧等分剩余空间 ⇒ 居中
   expect(geo.scrollerCols[1]).toBe(760);
   expect(geo.contentWidth).toBe(760);
@@ -126,16 +128,19 @@ test("位置指示段迁到 modeline：有标题显示链接、无标题隐藏�
   await expect(page.locator(".modeline-section")).toBeHidden();
 });
 
-test("标签迁入标题栏：打开文件后标签是标题栏的子节点，空态是 traffic 区 + 标识块", async ({ page }) => {
+test("标签迁入标题栏：打开文件后标签是标题栏的子节点，空态是 traffic 区（含标识块）+ 动作钮", async ({ page }) => {
   await stubTauri(page, VAULT);
   await page.goto("/");
 
-  // 空态：标签区隐藏，标题栏的可见子节点 = traffic 灯区 + 动作钮槽位（M303 起填入
-  // harness 面板 toggle）+ 右端产品标识块（M236）
+  // 空态：标签区隐藏，标题栏的可见子节点 = traffic 灯区（含产品标识块——HP1 移位进
+  // traffic，系统按钮旁）+ 动作钮槽位（M303 起填入 harness 面板 toggle；harness 段槽位
+  // hidden 长驻、不可见）。
   const emptyChildren = await page.locator(".titlebar").evaluate((bar) =>
     [...bar.children].filter((child) => (child as HTMLElement).offsetParent !== null).map((c) => c.className),
   );
-  expect(emptyChildren).toEqual(["titlebar-traffic", "titlebar-action lumir-hp-toggle", "titlebar-identity"]);
+  expect(emptyChildren).toEqual(["titlebar-traffic", "titlebar-action lumir-hp-toggle"]);
+  // 标识块在 traffic 灯区内（与标签区 hidden 与否无关）
+  await expect(page.locator(".titlebar-traffic .titlebar-identity")).toBeVisible();
 
   await open(page, "doc.md", "正文段落");
   // 打开文件后标签在场，且**在标题栏内**（不是自成一个网格行）

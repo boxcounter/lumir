@@ -224,18 +224,21 @@ export function vaultSessionGet(vaultId: string): Promise<VaultSession | null> {
 }
 
 /** 写某 vault 的 pane 布局会话（M318：各 pane 的标签集合 / 顺序 / 激活项 + 分隔条比例，任一
- *  变化后防抖写，切换前与退出前 flush）。写失败在后端降级为 warning 并照常 resolve：会话只
- *  影响「下次打开这个 vault 恢复什么」，不值得拦停用户的一次切换或退出。只有 vault_id 非法才
- *  reject（路径逃逸防护）。 */
+ *  变化后防抖写，切换前与退出前 flush）。`harnessPane` 记 harness pane 是否在场（ADR 0008
+ *  Decision 6 的 Phase 2 消费位，change move-harness-to-pane-chat-frame；会话内容不持久化）。
+ *  写失败在后端降级为 warning 并照常 resolve：会话只影响「下次打开这个 vault 恢复什么」，不值得
+ *  拦停用户的一次切换或退出。只有 vault_id 非法才 reject（路径逃逸防护）。 */
 export function vaultSessionPut(
   vaultId: string,
   panes: PaneSession[],
   paneSplitRatio: number,
+  harnessPane: boolean,
 ): Promise<void> {
   return invoke<void>("vault_session_put", {
     vault_id: vaultId,
     panes,
     pane_split_ratio: paneSplitRatio,
+    harness_pane: harnessPane,
   });
 }
 
