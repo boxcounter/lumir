@@ -142,7 +142,7 @@ worker 动工前、reviewer 给出 verdict 前逐条过一遍。每条按「症�
 **19. 原型→合同只提取了行为，实现与合同对得上但比原型糙**
 - 症状：功能与 proposal / design 合同逐条对得上（行为、状态、元素落在哪都在），成品观感却明显比原型粗糙 / 难看。两条防线都抓不到：评审按合同文字核验「对得上」，像素门禁只防相对上一版的回归，「相对原型的偏差」在两者里都不是判据，糙版于是照绿。现场两次：harness pane（2026-10-06 Alex「粗糙、美观度为零」，并自比 pane 化前那版「像个 demo，很不好看，要重做 UX」）与 pane 化前的 demo 版本身。
 - 根因：起草期把原型提取成合同时只提了行为（做什么、什么状态、元素放哪），视觉层（布局节奏、卡片 / 气泡样式、字层级、各状态样式）没落成可对账的条文。合同里没有的真源，实现者不会补、reviewer 也无从核——偏差于是无人负责。
-- 证据：`openspec/changes/archive/2026-10-06-add-harness-quote-cards` 与 `openspec/changes/move-harness-to-pane-chat-frame/design.md` §9「屏位设计合同附节」（原型目录 `design/prototypes/phase2-harness-chat/` 已随 `4e011d6` 退役，§9 从 `git show 4e011d6^:…` 补提取屏位原文，是这条规则的先行执行者）；finding `.tower/comms/findings/20261006-tower-bug-harness-pane.md`（同一次现场的功能层半边）；Alex 现场原文见 M351 / M352 mission context（2026-10-06）。
+- 证据：`openspec/changes/archive/2026-10-06-add-harness-quote-cards` 与 `openspec/changes/archive/2026-10-06-move-harness-to-pane-chat-frame/design.md` §9「屏位设计合同附节」（原型目录 `design/prototypes/phase2-harness-chat/` 已随 `4e011d6` 退役，§9 从 `git show 4e011d6^:…` 补提取屏位原文，是这条规则的先行执行者）；finding `.tower/comms/findings/20261006-tower-bug-harness-pane.md`（同一次现场的功能层半边）；Alex 现场原文见 M351 / M352 mission context（2026-10-06）。
 - 防线：有原型时 reviewer 出 verdict 前对照原型截图核验观感，不只对照合同文字（口径是「观感一致 + 并排截图核对」，不追求逐像素——独立 HTML 与真机的字体度量、数据都不同，逐像素不可达、追求它只会逼出假对齐）；起草期把原型提取进 design 合同时按 `docs/process/openspec-workflow.md` 的《有原型时的设计合同：视觉保真必填》逐屏落「视觉保真」一节，不写「沿用既有设计系统」打发。
 
 ## 维护
