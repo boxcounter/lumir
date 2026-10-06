@@ -190,20 +190,6 @@
   line-height: 1;
 }
 
-/* ── 警示条（ctx 越阈值）：pending 族一档，tint 底 + 语义色字；eink 下 tint 退场、
-   字色 #000，可辨性由 hairline 边框与字重承担（规则①②） ───────────────────────── */
-.lumir-hp-warn {
-  padding: var(--sp-3) var(--sp-4);
-  background: var(--pending-tint);
-  color: var(--pending);
-  font-size: var(--fs-meta);
-  line-height: var(--lh-ui);
-  border-bottom: 1px solid var(--border-soft);
-}
-:root[data-theme="eink"] .lumir-hp-warn {
-  font-weight: var(--fw-semibold);
-}
-
 /* ── transcript：消息流 ───────────────────────────────────────────────────── */
 .lumir-hp-transcript {
   flex: 1 1 auto;

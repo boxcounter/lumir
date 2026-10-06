@@ -860,7 +860,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   const schev = document.createElement("span");
   schev.className = "lumir-hp-schev";
   schev.setAttribute("aria-hidden", "true");
-  schev.textContent = "▾";
+  schev.textContent = "▾"; // i18n-exempt: glyph（下指 chevron 图形，非文案）
   sessionButton.append(sname, schev);
   const segNew = document.createElement("button");
   segNew.type = "button";
