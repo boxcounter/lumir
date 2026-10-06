@@ -487,6 +487,268 @@
   color: var(--text-3);
 }
 
+/* ── composer 控制行（M347）：模型 chip + ctx 读数 + 两态发送钮。
+   空间紧（原型实测约 346px）：chip 与读数都是小体量只读件（ellipsis、不吃弹性宽），
+   composer flex:1 吃剩余。 ─────────────────────────────────────────────────── */
+/* 模型 chip：与 .lumir-hp-session 同族的小标签形态（26px 高、ellipsis、hover 给全名——
+   provider 名是配置值读数，悬停提示经 title 看完整串）。 */
+.lumir-hp-model {
+  position: relative;
+  flex: none;
+  display: flex;
+  align-items: center;
+  max-width: 96px;
+  height: 26px;
+  padding: 0 var(--sp-3);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--r5);
+  background: none;
+  color: var(--text-2);
+  font: inherit;
+  font-size: var(--fs-meta);
+  font-weight: var(--fw-medium);
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background var(--dur-ui) var(--ease-standard);
+}
+/* 读数 span 承担 ellipsis——button 本体不裁切（浮层是绝对定位子节点，overflow:hidden
+   会把它一并剪掉，与会话名钮的 .sname 同构同因）。 */
+.lumir-hp-model-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.lumir-hp-model[hidden] {
+  display: none;
+}
+.lumir-hp-model:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+:root[data-theme="eink"] .lumir-hp-model {
+  border-color: var(--border);
+}
+/* provider 浮层：与会话浮层（.lumir-hp-sesspop）同形态，锚在 chip 内向上展开空间不足时
+   由绝对定位自然溢出（控制行在面板底部，浮层向上长）。 */
+.lumir-hp-modelpop {
+  position: absolute;
+  bottom: calc(100% + 4px);
+  left: 0;
+  min-width: 140px;
+  padding: var(--sp-2);
+  background: var(--preview-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--r8);
+  box-shadow: var(--shadow-raise);
+  z-index: 30;
+}
+.lumir-hp-modelpop[hidden] {
+  display: none;
+}
+.lumir-hp-modelpop-item {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  width: 100%;
+  padding: var(--sp-2) var(--sp-3);
+  border: none;
+  border-radius: var(--r4);
+  background: none;
+  color: var(--text-2);
+  font: inherit;
+  font-size: var(--fs-meta);
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--dur-ui) var(--ease-standard);
+}
+.lumir-hp-modelpop-item:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+.lumir-hp-modelpop-item .lumir-hp-modelpop-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.lumir-hp-modelpop-item .lumir-hp-modelpop-cur {
+  flex: none;
+  color: var(--text-3);
+  font-size: var(--fs-label-s);
+}
+
+/* ctx% 读数 + ⓘ 钮（M347）：读数是等宽小字（数据读数，同 modeline 右段口径）；
+   越过警示阈值 → 高亮（--pending 黄族——常驻警示条的原用色，M346 退场后读数继承该语义；
+   非 --accent：蓝是主动作色，警示归 pending 族）+ ⓘ 钮现身（未越线时界面上没有它）。 */
+.lumir-hp-ctxwrap {
+  position: relative;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding-bottom: var(--sp-2); /* 与发送钮基线对齐（composer 底对齐的补偿） */
+}
+.lumir-hp-ctxwrap[hidden] {
+  display: none;
+}
+.lumir-hp-ctx {
+  font-family: var(--font-mono);
+  font-size: var(--fs-label-s);
+  color: var(--text-3);
+  white-space: nowrap;
+}
+.lumir-hp-ctx.is-warn {
+  color: var(--pending);
+  font-weight: var(--fw-semibold);
+}
+:root[data-theme="eink"] .lumir-hp-ctx.is-warn {
+  text-decoration: underline;
+}
+.lumir-hp-ctx-info {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: none;
+  color: var(--pending);
+  font-size: var(--fs-label-s);
+  line-height: 1;
+  cursor: pointer;
+}
+.lumir-hp-ctx-info[hidden] {
+  display: none;
+}
+.lumir-hp-ctx-info:hover {
+  background: var(--hover);
+}
+/* ⓘ 气泡：向上展开，右缘对齐读数右缘（浮层右缘 = wrap 右缘 − ⓘ 钮宽 − 缝；
+   读数右缘即 wrap 内容右缘——见 .lumir-hp-ctxwrap 的 gap/宽度构成）。 */
+.lumir-hp-ctxpop {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  right: -18px;
+  width: 240px;
+  padding: var(--sp-2) var(--sp-3);
+  background: var(--preview-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--r6);
+  box-shadow: var(--shadow-raise);
+  color: var(--text-2);
+  font-size: var(--fs-meta);
+  line-height: var(--lh-ui);
+  white-space: normal;
+  z-index: 30;
+}
+.lumir-hp-ctxpop[hidden] {
+  display: none;
+}
+
+/* 不定态进度条 + 阶段指示（M347）：只在处理中态可见（hidden 随相位翻）。
+   无百分比——本轮剩余工作量前端不知道。 */
+.lumir-hp-progress {
+  padding: 0 var(--sp-4);
+}
+.lumir-hp-progress[hidden] {
+  display: none;
+}
+.lumir-hp-stage {
+  margin-bottom: 4px;
+  font-size: var(--fs-meta);
+  color: var(--text-3);
+}
+.lumir-hp-bar {
+  height: 3px;
+  margin-bottom: var(--sp-2);
+  border-radius: 2px;
+  background: var(--border-soft);
+  overflow: hidden;
+}
+.lumir-hp-bar-fill {
+  height: 100%;
+  width: 40%;
+  border-radius: 2px;
+  background: var(--accent);
+  animation: lumir-hp-bar-slide 1.1s var(--ease-standard) infinite;
+}
+@keyframes lumir-hp-bar-slide {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(350%);
+  }
+}
+/* eink：无色彩语义 + 横向位移动画对墨水屏无意义——进度条转明度表达（满宽实心、
+   opacity 双档跳变，steps(2) 避免连续灰阶），线宽与轨道保持结构档。 */
+:root[data-theme="eink"] .lumir-hp-bar-fill {
+  width: 100%;
+  animation: lumir-hp-bar-pulse 1.4s steps(2, jump-none) infinite;
+}
+@keyframes lumir-hp-bar-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.3;
+  }
+}
+
+/* 发送钮两态（M347）：空闲 = accent 实心「发送」（基础规则在文件尾部，选择器特异性
+   0-1-0 低于本条 0-2-0——停止态的配色不依赖书写顺序）；处理中 = 停止态——danger 实心
+  （停止丢弃在途的一轮，代价语义与「破坏性动作」同族）；stopping 子态禁用（既有 :disabled）。 */
+.lumir-hp-send.is-busy {
+  background: var(--danger);
+  color: #ffffff;
+}
+:root[data-theme="eink"] .lumir-hp-send.is-busy {
+  background: #000000;
+  color: #ffffff;
+}
+
+/* ── 消息复制钮（M347）：hover 浮现在消息右上角（键盘可达：focus 也显形）。
+   复制源 = Markdown 源文本 / 发送前原始输入，非渲染后 HTML（源经 copySources 单挂）。 ── */
+.lumir-hp-msg {
+  position: relative;
+}
+.lumir-hp-copy {
+  position: absolute;
+  top: 0;
+  right: 0;
+  min-width: 24px;
+  height: 20px;
+  padding: 0 var(--sp-1);
+  border: none;
+  border-radius: var(--r4);
+  background: var(--content-bg);
+  color: var(--text-3);
+  font-size: var(--fs-label-s);
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity var(--dur-ui) var(--ease-standard);
+}
+.lumir-hp-msg-assistant > .lumir-hp-copy {
+  background: var(--agent-bg);
+}
+.lumir-hp-msg:hover .lumir-hp-copy,
+.lumir-hp-copy:focus-visible {
+  opacity: 1;
+}
+.lumir-hp-copy:hover {
+  color: var(--text);
+  background: var(--hover);
+}
+.lumir-hp-copy.is-copied {
+  color: var(--ok);
+  opacity: 1;
+}
+
 /* ── 输入区：顶部 hairline 与 transcript 分隔。混排编辑区（M343，change
    add-harness-quote-cards design §2/§5）：contenteditable div 取代 textarea，全 composer
    唯一形态——顶层仅 .lumir-hp-qcard（原子卡片）/ .lumir-hp-qpara（问题段落）两类块，
