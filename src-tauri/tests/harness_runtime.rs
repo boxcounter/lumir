@@ -857,6 +857,69 @@ fn vault_scoping_switch_restore_and_reset() {
     assert_eq!(snap.messages.len(), 2);
 }
 
+/// M350 不变量：**任意会话状态下调用 new_session 均成功，结果恒为新空会话**。
+/// 回归现场：面板「New session → 报错 → 再点仍报错」——旧实现用 with_session 探测 busy，
+/// 无会话时被 harness_no_session 短路，而「还没有会话」恰恰是成功态。
+#[test]
+fn new_session_idempotent_across_session_states() {
+    let f = Fixture::new("newsession");
+    let runtime = f.runtime();
+    let config = mock_config();
+
+    // 1) 无会话态：平凡成功；连续两次仍成功（幂等）。
+    runtime.new_session(&f.scope()).unwrap();
+    runtime.new_session(&f.scope()).unwrap();
+    assert!(
+        runtime.snapshot(&f.scope(), &config).messages.is_empty(),
+        "无会话新会话后仍是空会话"
+    );
+    // 同一状态（无会话）下 with_session 的语义未动：approve 等路径仍需 harness_no_session。
+    // 这一条把两条路径钉开——若 new_session 退回 with_session 探 busy，上面的 unwrap 即红。
+    let no_session = runtime
+        .with_session(&f.scope(), |s| s.is_busy())
+        .unwrap_err();
+    assert_eq!(no_session.code, "harness_no_session");
+
+    // 2) 有会话空闲态：消息历史清空。
+    runtime.acquire_turn(&f.scope()).unwrap();
+    let sink = CollectSink::default();
+    let mut client =
+        MockClient::from_str(r#"{"responses": [{"text": "早先的回答"}]}"#, "n").unwrap();
+    drive_turn(
+        &sink,
+        &runtime,
+        &f.scope(),
+        &config,
+        "早先的问题".into(),
+        &mut client,
+    );
+    runtime.release_turn(&f.scope());
+    assert!(
+        !panel_roles(&f, &runtime).is_empty(),
+        "提问后会话应有消息历史"
+    );
+    runtime.new_session(&f.scope()).unwrap();
+    assert!(
+        runtime.snapshot(&f.scope(), &config).messages.is_empty(),
+        "新会话后消息历史清空"
+    );
+    // 再调一次：仍成功、仍为空。
+    runtime.new_session(&f.scope()).unwrap();
+    assert!(
+        runtime.snapshot(&f.scope(), &config).messages.is_empty(),
+        "连续新会话仍为空"
+    );
+
+    // 3) busy 态：仍是 harness_busy 错误信封（不丢在途会话）。
+    runtime.acquire_turn(&f.scope()).unwrap();
+    let err: CommandError = runtime.new_session(&f.scope()).unwrap_err();
+    assert_eq!(err.code, "harness_busy");
+    // 失败无副作用：会话对象还在、仍 busy——再 acquire 照旧被拒。
+    let again: CommandError = runtime.acquire_turn(&f.scope()).unwrap_err();
+    assert_eq!(again.code, "harness_busy", "失败的新会话不该丢掉在途会话");
+    runtime.release_turn(&f.scope());
+}
+
 #[test]
 fn busy_turn_rejects_second_send() {
     let f = Fixture::new("busy");
