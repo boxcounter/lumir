@@ -37,10 +37,9 @@ import { createInvokeAttachmentProvider, codeLanguageOfPath, fileClassOfPath, is
 import type { AttachmentProvider } from "./preview/attachments";
 import { bindingHighlight } from "./code-identifiers";
 import { remapPathAfterRename } from "./tree";
-import { LANGUAGES, TOKEN_GROUPS } from "./preview/code";
-import type { TokenRole } from "./preview/code";
+import { LANGUAGES, TOKEN_GROUPS, tokenClassOf } from "./preview/code";
 import type { CommandRunner, EditorCommandId } from "./keys";
-import { DEFAULT_CODE_BLOCK_WRAP, DEFAULT_CODE_MODE_LINE_WRAP, DEFAULT_LINE_WRAP, codeBindingTheme, wrapSpec } from "./preview/theme";
+import { DEFAULT_CODE_BLOCK_WRAP, DEFAULT_CODE_MODE_LINE_WRAP, DEFAULT_LINE_WRAP, codeBindingTheme, codeTokenTheme, wrapSpec } from "./preview/theme";
 import type { WrapSettings } from "./preview/theme";
 import { DEFAULT_FONT_SIZE, applyTypography as writeTypography, nextFontSize } from "./typography";
 import { CONTENT_WIDTH_TOKEN, DEFAULT_CONTENT_WIDTH, clampContentWidth } from "./content-width";
@@ -1233,29 +1232,14 @@ function codeLanguageFor(path: string | undefined): Language | null {
   return name === null ? null : LANGUAGES[name];
 }
 
-// code 模式 token 配色（change restyle-ui-tokens-v1，R2b）：色值**只**取自 tokens 文档的四个
-// 语法高亮 token（--tk-k/s/n/c），与围栏侧（src/preview/theme.ts 的 .cm-lp-tok-*）逐 role 同值。
-// tag 分组与「条目序即优先级」由 preview/code.ts 的 TOKEN_GROUPS 单一持有，这里只把每个 role
-// 映射成色值与字重——两侧不再各写一份 tag 列表（Record<TokenRole, …> 让分组增删在此处编译报错）。
-// 六个 role 落四个 token：property（json/yaml 的键）与 type 归 keyword 同色；键与字符串值恒不
-// 同色（JSON/YAML 的既有 requirement 仍成立）。**已知缺口（在案）**：eink 规则②要求 keyword 在
-// eink 下升到 700，本路径的色值/字重是 HighlightStyle 的运行期规则，选择器由 CM 生成、无法按
-// `data-theme` 加限定（围栏侧那份在 theme.ts 里已实现）——两侧在 eink 的字重档因此有差异，
-// 修法（把本路径改成 code.ts 的 class 表 + 共用一份 theme）见 docs/backlog.md。
-const CODE_COLORS: Record<TokenRole, { color: string; fontWeight?: string }> = {
-  comment: { color: "var(--tk-c)" },
-  keyword: { color: "var(--tk-k)", fontWeight: "600" },
-  string: { color: "var(--tk-s)" },
-  literal: { color: "var(--tk-n)" },
-  property: { color: "var(--tk-k)" },
-  type: { color: "var(--tk-k)" },
-};
-
+// code 模式 token 着色（M376，backlog M220 建条的 (a) 修法落地）：逐 role 取 `.cm-lp-tok-*`
+// 类名，色值与字重的**唯一真源是 src/preview/theme.ts 的 CODE_TOKEN_RULES**——与围栏侧共用同
+// 一份 CSS，`:root[data-theme="eink"]` 限定（keyword 700）因此在两条渲染路径上同档生效。
+// tag 分组与「条目序即优先级」由 preview/code.ts 的 TOKEN_GROUPS 单一持有；TagStyle 给了
+// `class` 即不再接受内联样式（@codemirror/language 的机制），配色真源因此整份迁到 CSS。
+// code 模式编辑器 MUST 装 codeTokenTheme（modeExtensions 的 code 分支）这份 CSS 才到达本侧。
 const codeHighlight = syntaxHighlighting(
-  HighlightStyle.define(TOKEN_GROUPS.map((group) => {
-    const { color, fontWeight } = CODE_COLORS[group.role];
-    return fontWeight === undefined ? { tag: group.tags, color } : { tag: group.tags, color, fontWeight };
-  })),
+  HighlightStyle.define(TOKEN_GROUPS.map((group) => ({ tag: group.tags, class: tokenClassOf(group.role) }))),
   { fallback: true },
 );
 
@@ -1762,7 +1746,7 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
           mdGutterCompartment.of(mdGutterExtensions()),
           autoIndentKeymap,
         ]
-      : [...editability, ...highlight, baseTheme, codeBindingTheme, ...lineNumberGutter, highlightActiveLine(), autoIndentKeymap];
+      : [...editability, ...highlight, baseTheme, codeTokenTheme, codeBindingTheme, ...lineNumberGutter, highlightActiveLine(), autoIndentKeymap];
   }
 
   /** md 的 gutter 扩展：**在场判据的唯一来源**（REVIEW.md 第 8 条——别处 MUST NOT 自行判断）。
