@@ -58,10 +58,11 @@
 //! **逐片延迟**（`chunk_delay_ms`，M369 新增）：**相邻两片之间**的间隔（毫秒，默认 0 = 无间隔）。
 //! 它撑的是「响应**正在逐字到达**」这个窗口——M369 的真流式与在途停止要验的正是它：分片按
 //! 间隔一片片产出并即时转发（[`StreamSink`]），观者能在整条回答完成之前看到部分正文。
-//! **它是可中断的**：每段间隔睡完先问一次 [`StreamSink::aborted`]，翻真即停产出——已产出的
-//! 分片保留（中断语义 = 「不再继续」）。与 `delay_ms` 的分工：后者是「响应尚未开始」的窗口，
-//! **不可中断**（一次睡到底；验收场景 88 依赖「停止请求在返回后才被检查点判到、产出照常保留」
-//! 这条语义），前者是「流式进行中」的窗口。
+//! **它是可中断的**：片间隔改为小步睡眠（每 25ms 一问 [`StreamSink::aborted`]，M374）——
+//! 间隔内点停止亚秒级停产出（旧实现睡满整个间隔才问一次，最长等一个完整的
+//! `chunk_delay_ms`）。已产出的分片保留（中断语义 = 「不再继续」）。与 `delay_ms` 的分工：
+//! 后者是「响应尚未开始」的窗口，**不可中断**（一次睡到底；验收场景 88 依赖「停止请求
+//! 在返回后才被检查点判到、产出照常保留」这条语义），前者是「流式进行中」的窗口。
 //!
 //! # 真流式与在途停止（M369）
 //!
@@ -69,11 +70,12 @@
 //! （真 provider 走 SSE 读循环，mock 走分片产出循环），前端因此逐字上屏。
 //! [`TurnOutput::text`] 仍是全文（快照与 JSONL 用它）；分片本身不留档（转发即消费）。
 //!
-//! `StreamSink::aborted()` 把「用户点了停止」接进读循环：流式期间点停止即收流（真 provider 在
-//! 下一个 SSE 事件后收口，mock 在下一片间隔后收口），**已产出的内容保留在 `TurnOutput` 里**，
-//! 由 [`super::turn`] 收口（标注「已停止」）。两处边界如实登记：① `delay_ms` 与阻塞式
-//! `reader.lines()` 期间的停止仍要等到睡眠 / 下一条数据到达才生效（后者是阻塞 IO 的固有边界，
-//! 与改动前一致——真 provider 在流停滞时本就不推数据）；② 流中中断时 reasoning 回放项通常
+//! `StreamSink::aborted()` 把「用户点了停止」接进读循环：流式期间点停止即收流，**已产出的
+//! 内容保留在 `TurnOutput` 里**，由 [`super::turn`] 收口（标注「已停止」）。停止的即时性
+//!（M374）：SSE 读循环把读端搬到独立线程、消费端按小步超时轮询——流停滞的静默窗口
+//!（思考期数秒到十秒零事件）里点停止，亚秒级被问到标志即收流，不再等下一条事件到达；
+//! mock 的片间隔同改为可中断小步睡眠。两处边界如实登记：① `delay_ms` 与 HTTP 首字节等待
+//!（`.send()`）期间的停止仍要等到睡眠 / 响应头到达才生效（与改动前一致）；② 流中中断时 reasoning 回放项通常
 //! 尚未到达（它随 `response.output_item.done` / `response.completed` 来），该轮 assistant 消息
 //! 因此不带 reasoning 项——是否被 provider 拒收**未实测**（M360 的逐项变异显示那条 400 的触发
 //! 条件是项序而非缺失 reasoning，且中断轮的 assistant 消息不含 function_call 项），
@@ -470,20 +472,49 @@ fn parse_sse(
 /// SSE 分词与事件分流的读循环，与 transport 解耦（真 client 传响应体，单测传合成字节流），
 /// 协议层行为因此可用字节流直接钉死。
 ///
-/// 每个事件处理完问一次 `sink.aborted()`：翻真即收流，已收内容照常返回（在途停止）。
-/// 阻塞在 `reader.lines()` 期间无法被中断——这是阻塞 IO 的固有边界（流停滞时本就没有数据
-/// 可读；改动前停止也要等整条响应读完才生效，故非回归）。
-fn parse_sse_reader<R: BufRead>(
+/// 在途停止的即时性（M374）：读端搬到独立线程、行经有界 channel，消费端按
+/// [`ABORT_POLL_INTERVAL`] 小步超时轮询——每次超时都问一次 `sink.aborted()`，因此
+/// 流停滞的静默窗口（provider 思考期数秒到十秒零事件）里点停止，亚秒级被读到即收流。
+/// 旧实现阻塞在 `reader.lines()` 上，标志只在整条事件派发后才有机会问，停止因此拖到
+/// 下一条数据到达（Alex 2026-10-07 现场「等几秒到十秒才停下来」）。收流后消费端丢弃
+/// channel，读线程下一次 `send` 失败即退出（连带 drop 掉 reqwest Response、关闭连接）；
+/// 不 join 读线程——它可能仍阻塞在下一条数据上，join 会把刚挣到的即时性又还回去
+/// （它由请求的总超时兜底回收）。
+fn parse_sse_reader<R: BufRead + Send + 'static>(
     reader: R,
     preset: &ProviderPreset,
     sink: &dyn StreamSink,
 ) -> TurnOutput {
+    /// 停止轮询步长：消费端等不到数据时每隔多久问一次 `aborted()`。100ms ≪ 用户可感，
+    /// 同时不给正常流量增加可测的开销（有数据时走快路径，从不轮询）。
+    const ABORT_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(100);
+
     let mut output = TurnOutput::default();
     let mut event = String::new();
     let mut data = String::new();
-    for line in reader.lines() {
-        let Ok(line) = line else {
-            break; // 流中断：用已收内容收尾（不当作致命错误）
+    let (tx, rx) = std::sync::mpsc::sync_channel::<std::io::Result<String>>(64);
+    let reader_thread = std::thread::spawn(move || {
+        for line in reader.lines() {
+            // 消费端已收流（终止 / 在途停止）：send 失败即退出，Response 随之 drop。
+            if tx.send(line).is_err() {
+                break;
+            }
+        }
+    });
+    loop {
+        let line = match rx.recv_timeout(ABORT_POLL_INTERVAL) {
+            Ok(line) => match line {
+                Ok(line) => line,
+                Err(_) => break, // 流中断：用已收内容收尾（不当作致命错误）
+            },
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                // 静默窗口：没有数据可读，正是停下来问「用户是否点了停止」的时候。
+                if sink.aborted() {
+                    break;
+                }
+                continue;
+            }
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
         };
         if line.is_empty() {
             dispatch_event(&event, &data, &mut output, preset, sink);
@@ -504,6 +535,8 @@ fn parse_sse_reader<R: BufRead>(
         }
         // 其余行（注释 / 未知字段）忽略
     }
+    drop(rx);
+    let _ = reader_thread;
     // 流结束而无终态事件：不报错，用已收内容（部分厂商截断时无 failed 事件）。
     output
 }
@@ -721,7 +754,8 @@ struct FixtureResponse {
     #[serde(default)]
     delay_ms: u64,
     /// **相邻两片之间**的间隔毫秒数（见模块文档的「逐片延迟」；默认 0 = 无间隔）。
-    /// 可中断：每段间隔睡完问一次 [`StreamSink::aborted`]，翻真即停产出（已产出分片保留）。
+    /// 可中断：片间隔内小步睡眠、每步问一次 [`StreamSink::aborted`]（M374），翻真即停产出
+    /// （已产出分片保留）——停止时延 ≪ 间隔本身，不再等整个间隔睡满。
     #[serde(default)]
     chunk_delay_ms: u64,
 }
@@ -901,14 +935,26 @@ impl LlmClient for MockClient {
     }
 }
 
-/// 分片之间的可中断节拍（`chunk_delay_ms`，见模块头「逐片延迟」）：睡满间隔后问一次
-/// [`StreamSink::aborted`]，翻真返回 `false`（产出到此为止，已产出的分片保留）。
-/// `chunk_delay_ms == 0` 时零延迟且不做中断探测（没有窗口可停）。
+/// 分片之间的可中断节拍（`chunk_delay_ms`，见模块头「逐片延迟」）：小步睡眠（每
+/// [`CHUNK_GAP_POLL`] 一问 [`StreamSink::aborted`]，M374）——间隔内点停止亚秒级生效，
+/// 翻真返回 `false`（产出到此为止，已产出的分片保留）。旧实现一次睡满整个间隔才问一次，
+/// 停止最坏要等一个完整的 `chunk_delay_ms`。`chunk_delay_ms == 0` 时零延迟且不做中断
+/// 探测（没有窗口可停）。
 fn chunk_gap(chunk_delay_ms: u64, sink: &dyn StreamSink) -> bool {
+    /// 片间隔的停止轮询步长：25ms 一档的睡眠-问询循环。
+    const CHUNK_GAP_POLL: std::time::Duration = std::time::Duration::from_millis(25);
     if chunk_delay_ms == 0 {
         return true;
     }
-    std::thread::sleep(std::time::Duration::from_millis(chunk_delay_ms));
+    let total = std::time::Duration::from_millis(chunk_delay_ms);
+    let start = std::time::Instant::now();
+    while start.elapsed() < total {
+        if sink.aborted() {
+            return false;
+        }
+        let remaining = total.saturating_sub(start.elapsed());
+        std::thread::sleep(remaining.min(CHUNK_GAP_POLL));
+    }
     !sink.aborted()
 }
 
@@ -1070,7 +1116,7 @@ mod tests {
     /// 同上，但注入指定的流式 sink——断「收到即转发」与在途停止用（M369）。
     fn sse_parse_with(bytes: &str, sink: &dyn StreamSink) -> TurnOutput {
         parse_sse_reader(
-            std::io::Cursor::new(bytes.as_bytes()),
+            std::io::Cursor::new(bytes.as_bytes().to_vec()),
             preset(&HarnessProvider::Deepseek),
             sink,
         )
@@ -1479,6 +1525,83 @@ data: {"response":{"output":[],"usage":{"input_tokens":10,"output_tokens":3}}}
         // 收流后不再处理后续事件：终态的 usage 不落地（incomplete 响应语义——不是错误）。
         assert!(output.usage.is_none());
         assert!(output.error.is_none());
+    }
+
+    /// 在途停止的**即时性**（M374）：流停滞的静默窗口（provider 思考期零事件）里点停止，
+    /// 读循环要在轮询步长内收流，而不是等下一条数据到达。判据的区分度：旧实现阻塞在
+    /// `reader.lines()` 上，第一条事件后要等整个 3 秒停滞睡满才能继续，本用例的
+    /// `elapsed < 1s` 必红；新实现读端在独立线程、消费端 100ms 一问，亚秒级收口。
+    #[test]
+    fn sse_abort_during_silence_returns_promptly() {
+        /// 吐出第一条完整 SSE 事件后、剩余的流之前， stall 这么久——模拟思考期的静默窗口。
+        struct StallAfterFirstEvent {
+            first: std::io::Cursor<Vec<u8>>,
+            rest: std::io::Cursor<Vec<u8>>,
+            stall: std::time::Duration,
+            stalled_once: bool,
+        }
+        impl std::io::Read for StallAfterFirstEvent {
+            fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+                let n = self.first.read(buf)?;
+                if n > 0 {
+                    return Ok(n);
+                }
+                if !self.stalled_once {
+                    self.stalled_once = true;
+                    std::thread::sleep(self.stall);
+                }
+                self.rest.read(buf)
+            }
+        }
+
+        let first_event = "event: response.output_text.delta\ndata: {\"delta\":\"第一片。\"}\n\n";
+        let rest = "event: response.output_text.delta\ndata: {\"delta\":\"第二片。\"}\n\n";
+        let reader = StallAfterFirstEvent {
+            first: std::io::Cursor::new(first_event.as_bytes().to_vec()),
+            rest: std::io::Cursor::new(rest.as_bytes().to_vec()),
+            stall: std::time::Duration::from_millis(3000),
+            stalled_once: false,
+        };
+        // 收到 1 个正文分片之后报「已停止」：第一片落地、静默窗口内收流。
+        let stream = TestStream::abort_after_text(1);
+        let started = std::time::Instant::now();
+        let output = parse_sse_reader(
+            std::io::BufReader::new(reader),
+            preset(&HarnessProvider::Kimi),
+            &stream,
+        );
+        let elapsed = started.elapsed();
+        assert_eq!(output.text, "第一片。", "已产出的分片保留");
+        assert!(
+            elapsed < std::time::Duration::from_secs(1),
+            "静默窗口内的停止要在轮询步长内收流，实际耗时 {elapsed:?}"
+        );
+    }
+
+    /// `chunk_gap` 的即时性（M374）：片间隔改为小步睡眠后，间隔内翻真的停止标志在
+    /// 下一个轮询步长被问到即返回——不再睡满整个间隔。判据的区分度：旧实现先睡满
+    /// 5000ms 才问，`elapsed < 500ms` 必红。
+    #[test]
+    fn chunk_gap_aborts_promptly_within_interval() {
+        /// 第二次被问起时翻真（第一次问代表「间隔刚开始」，此时还不许停）。
+        struct FlipOnSecondPoll(std::sync::Mutex<u32>);
+        impl StreamSink for FlipOnSecondPoll {
+            fn text_delta(&self, _delta: &str) {}
+            fn reasoning_delta(&self, _delta: &str) {}
+            fn aborted(&self) -> bool {
+                let mut n = self.0.lock().unwrap();
+                *n += 1;
+                *n > 1
+            }
+        }
+        let started = std::time::Instant::now();
+        let proceed = chunk_gap(5000, &FlipOnSecondPoll(std::sync::Mutex::new(0)));
+        assert!(!proceed, "停止翻真后节拍不得继续");
+        assert!(
+            started.elapsed() < std::time::Duration::from_millis(500),
+            "片间隔内的停止要亚秒级生效，实际耗时 {:?}",
+            started.elapsed()
+        );
     }
 
     /// mock 的逐片延迟与在途停止：`chunk_delay_ms` 给分片之间加上可中断的节拍，停止请求在

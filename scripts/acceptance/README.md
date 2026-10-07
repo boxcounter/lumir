@@ -687,6 +687,13 @@ Alex 抽审路径：先看 `summary.md`，再进 FAIL 场景看 `steps.md` + `sh
   翻出）在真机层只判负向（文案默认不在 AX 树里），显隐正观测归 chromium 视觉层
   （`tests/visual/scenes/m347-harness-composer.spec.ts` 的 playwright hover 断言）。若在
   runner 加了 hover 动词，可把正观测镜像回场景 87。
+- **停止即时性的真机断言是「时长上界」，不是绝对时延（M374 登记）**：场景 104 用
+  `chunk_delay_ms: 8000` 把停止动作钉在片间隔里，`waitFor has 已停止 + not 正在生成回复…,
+  timeoutMs: 3000` 作上界——新实现（chunk_gap 25ms 小步轮询 + SSE 读循环 100ms 超时轮询）
+  亚秒级成立，旧实现必超上界（区分度自证）。上界给真机调度抖动留裕量，实测时延以 waitFor
+  日志的「用时 Nms」为准。真 provider 侧静默窗口（思考期零事件）的同族修复不在真机层的
+  可造窗口内（mock 的 `delay_ms` 是「响应尚未开始」窗口、不可中断是合同本身），由单测
+  `sse_abort_during_silence_returns_promptly` 钉住。
 - **场景维护权归实现者**：新功能 mission 的 tasks 必须带「新增/更新验收场景」一项（裁决点 3）。
 
 ## 加一个场景
