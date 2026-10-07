@@ -575,6 +575,14 @@ pub(crate) fn write_config_value_to(
             format!("{section} 配置键不能为空"),
         ));
     }
+    // 点分嵌套路径（M373）的段校验：`providers.kimi.model` 形态要求每段非空
+    // （`a..b` / 首尾点是笔误，静默写出空字符串键会让配置难以人读修复）。
+    if key.split('.').any(|part| part.trim().is_empty()) {
+        return Err(CommandError::new(
+            "config_write_failed",
+            format!("{section} 配置键 \"{key}\" 非法（点分路径的每一级都必须非空）"),
+        ));
+    }
     let mut value = read_config_json(path);
     merge_config_value(&mut value, section, key, section_value);
     config::write_json_atomic(path, &value)
@@ -585,6 +593,10 @@ pub(crate) fn write_config_value_to(
 ///
 /// M301 泛化：原 `merge_ui_value` 里写死的 `"ui"` 变成 `section` 参数，
 /// `merge_ui_value(v, k, x)` ≡ `merge_config_value(v, "ui", k, x)`，行为逐条不变。
+///
+/// M373：`key` 支持**点分嵌套路径**（如 `providers.kimi.model`）——`[harness]` 的 model 维度
+/// 写回需要第三级键；路径逐段下钻、缺失或非对象的中间段就地重置为空对象（与「该表不是对象
+/// 时重置」同一条宽容口径），空段（`a..b` / 首尾点）拒绝。无点的键行为与泛化前逐字节一致。
 fn merge_config_value(
     value: &mut serde_json::Value,
     section: &str,
@@ -595,7 +607,21 @@ fn merge_config_value(
     if !value.get(section).is_some_and(|entry| entry.is_object()) {
         value[section] = serde_json::json!({});
     }
-    value[section][key] = section_value.clone();
+    let path: Vec<&str> = key.split('.').collect();
+    if path.len() == 1 {
+        value[section][key] = section_value.clone();
+        return;
+    }
+    // 点分路径：逐段下钻，最后一段落值。空段已由写通道命令层拒掉（write_config_value_to
+    // 的段校验），写通道不校验取值是既有边界。
+    let mut slot = &mut value[section];
+    for part in &path[..path.len() - 1] {
+        if !slot.get(*part).is_some_and(|entry| entry.is_object()) {
+            slot[*part] = serde_json::json!({});
+        }
+        slot = &mut slot[*part];
+    }
+    slot[path[path.len() - 1]] = section_value.clone();
 }
 
 /// 打开成功后的记忆写回：失败降级为 warning，MUST NOT 让整条打开失败（M127
@@ -1466,6 +1492,86 @@ mod tests {
         merge_config_value(&mut value, "ui", "content_width", &serde_json::json!(760));
         assert_eq!(value["ui"], serde_json::json!({"content_width": 760}));
         assert_eq!(value["last_vault"], serde_json::json!("/tmp/vault"));
+    }
+
+    /// M373：点分嵌套路径（`providers.kimi.model`）逐段下钻写第三级键——`[harness]` 的
+    /// model 维度写回通道；中间段缺失 / 错形状就地重置为空对象（与表级同口径），
+    /// 兄弟键（api_key / base_url / 其它 provider / 未知字段）逐键保留。
+    #[test]
+    fn merge_config_value_writes_dotted_path() {
+        let mut value = serde_json::json!({
+            "version": 1,
+            "last_vault": "/tmp/vault",
+            "harness": {
+                "provider": "kimi",
+                "providers": {
+                    "kimi": {"api_key": "sk-x", "model": "kimi-k3", "base_url": "https://k.example/v1"},
+                    "deepseek": {"api_key": "sk-d"}
+                }
+            },
+            "future_field": 7,
+        });
+        merge_config_value(
+            &mut value,
+            "harness",
+            "providers.kimi.model",
+            &serde_json::json!("k3-256k"),
+        );
+        assert_eq!(
+            value["harness"]["providers"]["kimi"]["model"],
+            serde_json::json!("k3-256k")
+        );
+        assert_eq!(
+            value["harness"]["providers"]["kimi"]["api_key"],
+            serde_json::json!("sk-x"),
+            "兄弟键保留"
+        );
+        assert_eq!(
+            value["harness"]["providers"]["kimi"]["base_url"],
+            serde_json::json!("https://k.example/v1")
+        );
+        assert_eq!(
+            value["harness"]["providers"]["deepseek"],
+            serde_json::json!({"api_key": "sk-d"}),
+            "其它 provider 整段保留"
+        );
+        assert_eq!(value["harness"]["provider"], serde_json::json!("kimi"));
+        assert_eq!(value["last_vault"], serde_json::json!("/tmp/vault"));
+        assert_eq!(value["future_field"], serde_json::json!(7));
+        // 中间段缺失 ⇒ 建成对象再写；中间段错形状（providers 是字符串）⇒ 就地重置。
+        let mut sparse = serde_json::json!({"harness": {"provider": "kimi"}});
+        merge_config_value(
+            &mut sparse,
+            "harness",
+            "providers.deepseek.model",
+            &serde_json::json!("deepseek-v4-pro"),
+        );
+        assert_eq!(
+            sparse["harness"]["providers"]["deepseek"]["model"],
+            serde_json::json!("deepseek-v4-pro")
+        );
+        let mut misshapen = serde_json::json!({"harness": {"providers": "kimi"}});
+        merge_config_value(
+            &mut misshapen,
+            "harness",
+            "providers.kimi.model",
+            &serde_json::json!("kimi-k3"),
+        );
+        assert_eq!(
+            misshapen["harness"]["providers"],
+            serde_json::json!({"kimi": {"model": "kimi-k3"}})
+        );
+        // 写通道层：点分路径的空段（a..b / 首尾点）拒绝且不落盘。
+        let dir = std::env::temp_dir().join(format!("lumir-dot-write-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("create temp dir");
+        let target = dir.join("config.json");
+        for key in ["providers..model", ".model", "providers."] {
+            let err = write_config_value_to(&target, "harness", key, &serde_json::json!("x"))
+                .expect_err("空段必须报错");
+            assert_eq!(err.code, "config_write_failed");
+        }
+        assert!(!target.exists(), "非法参数不得落盘");
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     /// version 纪律与 merge_last_vault 共用（bump_config_version）：高版本不降回。

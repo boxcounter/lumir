@@ -7,8 +7,9 @@
 //!   路径——M306 的捕获 / 合成 / 回传纪律一行不改（见 [`super::llm`] 模块头），这里是新增的
 //!   纯函数，回放侧三组测试（capture / synthesize / replay）不受它影响。
 //! - **输入侧（给人选 → 给模型）**：[`ThinkingEffort`] 三档与 [`apply_effort`] 映射表，把档位翻成
-//!   各 provider 的请求参数；[`supported`] 给出「该 provider + model 是否支持程度调节」，供
-//!   `harness_state` 快照把置灰判据交给前端（Alex 2026-10-06 裁决点 2：不支持即置灰）。
+//!   各 provider 的请求参数。「该 provider + model 是否支持程度调节」的判据自 M373 起归
+//!   配置 schema（`HarnessConfig::effort_supported`，能力表 = `[harness].providers.<id>.models`
+//!   的逐模型声明，缺省内置 preset）——本模块的 k3 词元判定已退役，只保留请求映射这一半。
 //!
 //! # 官方文档核实（2026-10-07，一手文档）
 //!
@@ -24,19 +25,14 @@
 //!   （[Responses API](https://platform.kimi.ai/docs/api/responses) 的 `reasoning.effort` schema；
 //!   [Reasoning Effort](https://platform.kimi.ai/docs/guide/use-reasoning-effort) 指南）。
 //!
-//! **参数名与取值同形，但能力边界不同**：Kimi 的 `reasoning_effort` / `reasoning.effort` 只
-//! 由 **k3 系**模型支持——[Thinking Models](https://platform.kimi.ai/docs/guide/use-thinking-models)
-//! 的请求字段对照表写明 `kimi-k2.7-code` / `kimi-k2.6` 的 `reasoning_effort` 为「Not supported」，
-//! 且 Responses 端点「currently supports kimi-k3」。故 [`supported`] 对 kimi 按模型判定：仅 k3 系
-//! 为真，其余置灰（MUST NOT 把无效参数发给不支持它的模型）。DeepSeek 侧现役模型都支持。
+//! 能力边界（哪些模型支持）的核实记录与逐模型声明在 config.rs 的模型 preset 文档
+//! （`KIMI_MODEL_PRESET` / `DEEPSEEK_MODEL_PRESET`）——schema 是唯一真源，这里不复制。
 //!
 //! 档位命名 Low / High / Max 与默认 High 是 Alex 2026-10-06 节点 1 裁决（沿用两家命名）；
 //! 档位名作为专有名词，zh/en 两档界面均保持英文原文。
 
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
-
-use crate::config::HarnessProvider;
 
 /// 思考程度三档（Alex 2026-10-06 裁决：Low / High / Max，默认 High）。
 ///
@@ -69,46 +65,15 @@ impl ThinkingEffort {
     }
 }
 
-/// 该 provider + model 是否支持思考程度调节（前端 chip 置灰判据）。
-///
-/// - **mock**：fixture 驱动，收到什么记什么（验收要断言档位确实到达请求）⇒ 恒定支持。
-/// - **deepseek**：现役 `deepseek-flash` / `deepseek-v4-pro` 都支持 `reasoning.effort`（文档见模块头）。
-/// - **kimi**：仅 k3 系模型支持 `reasoning.effort`；k2.x（含 `kimi-k2.6` / `kimi-k2.7-code`）不支持
-///   （文档见模块头）。kimi 的 Responses 端点「currently supports kimi-k3」，故非 k3 系在此置灰。
-pub fn supported(provider: &HarnessProvider, model: &str) -> bool {
-    match provider {
-        HarnessProvider::Mock | HarnessProvider::Deepseek => true,
-        HarnessProvider::Kimi => is_kimi_k3(model),
-    }
-}
-
-/// k3 系模型判定：按**非字母数字字符切词元**后存在恰为 `k3` 的词元。
-///
-/// 命中：`kimi-k3`（出厂默认）/ `kimi-k3-turbo`（将来的开放平台变体）/ `k3-256k` /
-/// `kimi-code/k3-256k`（Kimi Code 订阅端 id——M372 实测 Alex 配置的就是它，K3-256k 支持
-/// effort，chip 此前被误判置灰）。
-///
-/// **不做前缀宽容**（`kimi-k30` / `k3x` 不算）：模型 id 是外部契约，只认官方命名形态，
-/// 宁可置灰也不错发。词元判定对两类官方命名（`kimi-k3` 系与订阅端 `k3-…` 系）同一条规则
-/// 覆盖，避免按前缀枚举漏掉订阅端新变体（如将来的 `k3-1m`）。
-fn is_kimi_k3(model: &str) -> bool {
-    model
-        .split(|c: char| !c.is_ascii_alphanumeric())
-        .any(|token| token == "k3")
-}
-
 /// 把档位写进请求体（provider 调用点的映射表，[`super::llm`] 的请求构造调用）。
 ///
-/// 两家 Responses API 参数同形（模块头文档）：顶层 `reasoning.effort`。provider 不支持时**不发**
-/// 该字段（把无效参数发给不支持它的模型只会换来 400 或被静默忽略，两条都不是我们想要的），
-/// 由前端置灰兜住「用户看不到可选」这一层（Alex 裁决点 2）。
-pub fn apply_effort(
-    body: &mut serde_json::Value,
-    provider: &HarnessProvider,
-    model: &str,
-    effort: ThinkingEffort,
-) {
-    if !supported(provider, model) {
+/// 两家 Responses API 参数同形（模块头文档）：顶层 `reasoning.effort`。`supported` 为 false 时
+/// **不发**该字段（把无效参数发给不支持它的模型只会换来 400 或被静默忽略，两条都不是我们
+/// 想要的）——判据由调用侧从配置 schema 现算（`HarnessConfig::effort_supported`，M373：
+/// 能力表的唯一真源在 `[harness].providers.<id>.models`，前端置灰读 `harness_state` 快照的
+/// `thinking.supported`，同一 schema 读数）。
+pub fn apply_effort(body: &mut serde_json::Value, supported: bool, effort: ThinkingEffort) {
+    if !supported {
         return;
     }
     body["reasoning"] = serde_json::json!({ "effort": effort.as_str() });
@@ -146,76 +111,32 @@ pub fn reasoning_text(item: &serde_json::Value) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::HarnessConfig;
 
-    fn kimi() -> HarnessProvider {
-        HarnessProvider::Kimi
-    }
-    fn deepseek() -> HarnessProvider {
-        HarnessProvider::Deepseek
-    }
-    fn mock() -> HarnessProvider {
-        HarnessProvider::Mock
-    }
-
-    // ---- 能力判定（前端置灰判据）----
+    // ---- 映射表：三档 × supported 布尔 ----
 
     #[test]
-    fn support_is_provider_and_model_dependent() {
-        // kimi：仅 k3 系（文档：k2.6 / k2.7-code 的 reasoning_effort 是「Not supported」）。
-        assert!(supported(&kimi(), "kimi-k3"));
-        assert!(supported(&kimi(), "kimi-k3-turbo"));
-        // Kimi Code 订阅端 id（M372：Alex 实测配置；K3-256k 是 k3 系、支持 effort）。
-        assert!(supported(&kimi(), "k3-256k"));
-        assert!(supported(&kimi(), "kimi-code/k3-256k"));
-        // 将来的订阅端变体同规则命中（如 k3-1m）。
-        assert!(supported(&kimi(), "k3-1m"));
-        assert!(!supported(&kimi(), "kimi-k2.6"));
-        assert!(!supported(&kimi(), "kimi-k2.7-code"));
-        // 历史出厂默认值（M365 前的 `DEFAULT_KIMI_MODEL`）：kimi-k2 已于 2026-05-25 退役（404），
-        // 它不是 k3 系 ⇒ 置灰（旧配置若尚未被 M365 的迁移改写，判定不变）。
-        assert!(!supported(&kimi(), "kimi-k2"));
-        // 现役出厂默认值必须可用——它是 harness 的首次会话形态，灰了就没人能动档位。
-        assert!(supported(&kimi(), crate::config::DEFAULT_KIMI_MODEL));
-        // 前缀不宽容：kimi-k30 不是 k3 系命名。
-        assert!(!supported(&kimi(), "kimi-k30"));
-        // deepseek：现役模型都支持；未知模型也按支持（provider 级能力，模型加白名单只会漏）。
-        assert!(supported(&deepseek(), "deepseek-flash"));
-        assert!(supported(&deepseek(), "deepseek-v4-pro"));
-        // mock：fixture 驱动，恒定支持（验收要断言档位到达请求）。
-        assert!(supported(&mock(), "whatever"));
-    }
-
-    // ---- 映射表：三档 × 各 provider ----
-
-    #[test]
-    fn apply_effort_writes_reasoning_effort_for_both_real_providers() {
-        for (provider, model) in [(deepseek(), "deepseek-flash"), (kimi(), "kimi-k3")] {
-            for (effort, want) in [
-                (ThinkingEffort::Low, "low"),
-                (ThinkingEffort::High, "high"),
-                (ThinkingEffort::Max, "max"),
-            ] {
-                let mut body = serde_json::json!({"model": model});
-                apply_effort(&mut body, &provider, model, effort);
-                assert_eq!(
-                    body["reasoning"]["effort"], want,
-                    "{provider:?}/{model} 的 {effort:?} 应映射为 {want}"
-                );
-            }
+    fn apply_effort_writes_reasoning_effort_when_supported() {
+        for (effort, want) in [
+            (ThinkingEffort::Low, "low"),
+            (ThinkingEffort::High, "high"),
+            (ThinkingEffort::Max, "max"),
+        ] {
+            let mut body = serde_json::json!({"model": "kimi-k3"});
+            apply_effort(&mut body, true, effort);
+            assert_eq!(body["reasoning"]["effort"], want);
         }
     }
 
     #[test]
-    fn apply_effort_is_noop_for_unsupported_provider() {
+    fn apply_effort_is_noop_when_unsupported() {
         // 不支持就不发字段：既不是发空对象，也不是发错值。
-        for model in ["kimi-k2.6", "kimi-k2.7-code", "kimi-k2"] {
-            let mut body = serde_json::json!({"model": model});
-            apply_effort(&mut body, &kimi(), model, ThinkingEffort::Max);
-            assert!(
-                body.get("reasoning").is_none(),
-                "{model} 不支持 effort，不得写入 reasoning 字段：{body}"
-            );
-        }
+        let mut body = serde_json::json!({"model": "kimi-k2.6"});
+        apply_effort(&mut body, false, ThinkingEffort::Max);
+        assert!(
+            body.get("reasoning").is_none(),
+            "不支持 effort 不得写入 reasoning 字段：{body}"
+        );
     }
 
     #[test]
@@ -231,6 +152,49 @@ mod tests {
             serde_json::to_value(ThinkingEffort::Max).unwrap(),
             serde_json::json!("max")
         );
+    }
+
+    // ---- 能力判据的调用口径（真源在 config schema；这里钉「映射表消费的是 schema 读数」） ----
+
+    #[test]
+    fn effort_supported_reads_schema_presets() {
+        // 出厂配置（内置 preset）：与 M372 修复后的线上口径逐条对齐。
+        let config = HarnessConfig::default();
+        for (provider, model, want) in [
+            (crate::config::HarnessProvider::Kimi, "kimi-k3", true),
+            (crate::config::HarnessProvider::Kimi, "k3-256k", true),
+            (
+                crate::config::HarnessProvider::Kimi,
+                "kimi-code/k3-256k",
+                false,
+            ),
+            (crate::config::HarnessProvider::Kimi, "kimi-k2.6", false),
+            (
+                crate::config::HarnessProvider::Kimi,
+                "kimi-k2.7-code",
+                false,
+            ),
+            (crate::config::HarnessProvider::Kimi, "kimi-k30", false),
+            (
+                crate::config::HarnessProvider::Deepseek,
+                "deepseek-flash",
+                true,
+            ),
+            (
+                crate::config::HarnessProvider::Deepseek,
+                "deepseek-v4-pro",
+                true,
+            ),
+            (crate::config::HarnessProvider::Mock, "whatever", true),
+        ] {
+            assert_eq!(
+                config.effort_supported(&provider, model),
+                want,
+                "{provider:?}/{model}"
+            );
+        }
+        // 订阅端复合 id（kimi-code/k3-256k）在 preset 里没有逐字条目 ⇒ 置灰；
+        // 用户要在配置里显式声明它（models 覆盖），不再靠词元猜测。
     }
 
     // ---- 输出侧：reasoning 文本提取 ----

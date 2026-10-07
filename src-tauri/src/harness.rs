@@ -210,10 +210,11 @@ impl Runtime {
 
     /// 当前 vault 的会话快照（`harness_state` 用）：无会话时空态（面板宽容解析）。
     ///
-    /// 思考能力标记按当前 provider + model 现算（[`thinking::supported`]，M362）——能力是
-    /// 环境属性、与有没有会话无关，空态也要给对（见 `StateSnapshot::empty` 的注释）。
+    /// 思考能力标记按当前 provider + model 从配置 schema 现算（`HarnessConfig::effort_supported`，
+    /// M373：能力表 = `providers.<id>.models` 的逐模型声明）——能力是环境属性、与有没有会话
+    /// 无关，空态也要给对（见 `StateSnapshot::empty` 的注释）。
     pub fn snapshot(&self, scope: &VaultScope, config: &HarnessConfig) -> session::StateSnapshot {
-        let supported = thinking::supported(&config.provider, llm::active_model(config));
+        let supported = config.effort_supported(&config.provider, llm::active_model(config));
         let sessions = self
             .inner
             .sessions

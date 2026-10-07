@@ -695,8 +695,9 @@
 /* ── composer 区（M351 视觉还原，原型 .h-composer / .h-box / .h-ctl）：外区 =
    顶部 hairline + padding；卡片容器 = content-bg + 边框 + r8，focus-within 出 accent 框
    （eink 改加粗线宽，规则⑧）；输入区自身无边框（容器承担）；控制行在容器底 =
-   [模型 chip][ctx 读数 + ⓘ][spacer][图标发送钮]。空间紧（原型实测约 346px）：chip 与
-   读数都是小体量只读件（ellipsis、不吃弹性宽），composer 吃剩余。 ───────────────── */
+   [合并选择器 chip][ctx 读数][spacer][图标发送钮]（M373 起双 chip 合一——空间账见
+   原型 NOTES：一格 224px 比双格各 96px + gap 反而略省）。空间紧（原型实测约 346px）：
+   chip 与读数都是小体量只读件（ellipsis、不吃弹性宽），composer 吃剩余。 ─────────── */
 .lumir-hp-composer-area {
   flex: none;
   margin-top: var(--sp-2);
@@ -733,14 +734,18 @@
   display: flex;
   min-width: 0;
 }
-/* 模型 chip（原型 .ctl-chip）：无边框小标签形态（24px 高、r5、fs-label-s、text-2，
-   hover 给底）；provider 名是配置值读数（悬停 title 看完整串）。 */
+/* 合并选择器 chip（M373，harness-selector-merge；原型 .hp-sel）：双 chip（模型 + 思考）
+   合一格「model · effort」。形态纪律零改动沿用现行单 chip 配方（无边框小标签、24px 高、
+   r5、fs-label-s、text-2、hover 给底、chevron ▾）——唯一放宽：max-width 96px → 224px
+   （读数从一格 provider 名变 model · effort 两格，空间从 think chip 一格 + gap 收回来）。
+   截断纪律（Alex 裁决「只截 model 名，保住 effort」）：.lumir-hp-model-name 单独
+   min-width:0 + ellipsis 承担全部截断，分隔符 / effort / chevron 三格 flex:none 永不裁。 */
 .lumir-hp-model {
   flex: none;
   display: flex;
   align-items: center;
   gap: var(--sp-2);
-  max-width: 96px;
+  max-width: 224px;
   height: 24px;
   padding: 0 var(--sp-3);
   border: none;
@@ -755,14 +760,29 @@
     background var(--dur-ui) var(--ease-standard),
     color var(--dur-ui) var(--ease-standard);
 }
-/* 读数 span 承担 ellipsis——button 本体不裁切（浮层在 wrapper 上后 overflow 已不再会
-   剪浮层，但 ellipsis 仍归读数 span，与会话名钮的 .sname 同构）。 */
+/* model 名读数 span 承担全部 ellipsis——button 本体不裁切（浮层在 wrapper 上后 overflow
+   已不再会剪浮层，但 ellipsis 仍归读数 span，与会话名钮的 .sname 同构）。flex:1 +
+   min-width:0 让它在 chip 触到 max-width 时收缩，sep / effort / chevron 因此保住。 */
 .lumir-hp-model-name {
   flex: 1;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+/* U+00B7 分隔符（modeline 同款小圆点，复裁决）——独立成格：两侧 chip gap 承担空格，
+   它自己 flex:none 永不被截。 */
+.lumir-hp-model-sep {
+  flex: none;
+  color: var(--text-3);
+}
+/* effort 读数格：flex:none 保住（截断只落 model 名）；不支持置灰 = text-3（D394 hover hint
+   告知原因——合并 chip 永不禁用，置灰只落这一格，Alex 裁决）。 */
+.lumir-hp-eff-reading {
+  flex: none;
+}
+.lumir-hp-eff-reading.is-disabled {
+  color: var(--text-3);
 }
 .lumir-hp-model-chev {
   flex: none;
@@ -776,117 +796,38 @@
   background: var(--hover);
   color: var(--text);
 }
-/* provider 浮层：与会话浮层（.lumir-hp-sesspop）同形态，锚在 wrapper 上向上展开
-   （控制行在面板底部，浮层向上长）。 */
-.lumir-hp-modelpop {
+/* effort 不支持的 hover hint 泡（D394）：ctxPop 同款配方（上展、右缘对齐、224px、
+   r6、fs-meta），锚在 chip wrapper 上——读数那一格悬停才翻出。 */
+.lumir-hp-effhint {
   position: absolute;
-  bottom: calc(100% + 4px);
+  bottom: calc(100% + 6px);
   left: 0;
-  min-width: 140px;
-  padding: var(--sp-2);
+  width: 224px;
+  padding: var(--sp-2) var(--sp-3);
   background: var(--preview-bg);
   border: 1px solid var(--border);
-  border-radius: var(--r8);
+  border-radius: var(--r6);
   box-shadow: var(--shadow-raise);
+  color: var(--text-2);
+  font-size: var(--fs-meta);
+  line-height: var(--lh-ui);
+  white-space: normal;
   z-index: 30;
 }
-.lumir-hp-modelpop[hidden] {
+.lumir-hp-effhint[hidden] {
   display: none;
-}
-.lumir-hp-modelpop-item {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-2);
-  width: 100%;
-  padding: var(--sp-2) var(--sp-3);
-  border: none;
-  border-radius: var(--r4);
-  background: none;
-  color: var(--text-2);
-  font: inherit;
-  font-size: var(--fs-meta);
-  text-align: left;
-  cursor: pointer;
-  transition: background var(--dur-ui) var(--ease-standard);
-}
-.lumir-hp-modelpop-item:hover {
-  background: var(--hover);
-  color: var(--text);
-}
-.lumir-hp-modelpop-item .lumir-hp-modelpop-name {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.lumir-hp-modelpop-item .lumir-hp-modelpop-cur {
-  flex: none;
-  color: var(--text-3);
-  font-size: var(--fs-label-s);
 }
 
-/* 思考 chip（M363，原型屏 10）：与模型 chip 同形态（无边框小标签，24px 高、r5、
-   fs-label-s、text-2，hover 给底）——控制行一族两件读数件同构。unsupported 置灰：
-   text-3 + 无 hover 底，cursor 还原。 */
-.lumir-hp-effwrap {
-  position: relative;
-  flex: none;
-  display: flex;
-  min-width: 0;
-}
-.lumir-hp-effwrap[hidden] {
-  display: none;
-}
-.lumir-hp-eff {
-  flex: none;
-  display: flex;
-  align-items: center;
-  gap: var(--sp-2);
-  height: 24px;
-  padding: 0 var(--sp-3);
-  border: none;
-  border-radius: var(--r5);
-  background: none;
-  color: var(--text-2);
-  font: inherit;
-  font-size: var(--fs-label-s);
-  white-space: nowrap;
-  cursor: pointer;
-  transition:
-    background var(--dur-ui) var(--ease-standard),
-    color var(--dur-ui) var(--ease-standard);
-}
-.lumir-hp-eff-label {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.lumir-hp-eff-chev {
-  flex: none;
-  color: var(--text-3);
-  font-size: var(--fs-micro);
-}
-.lumir-hp-eff:hover:not(:disabled) {
-  background: var(--hover);
-  color: var(--text);
-}
-/* 不支持程度调节（thinking.supported=false）：置灰禁用——hover 说明走 title/aria-label
-   （D390），样式面只剩降档。 */
-.lumir-hp-eff.is-disabled,
-.lumir-hp-eff:disabled {
-  color: var(--text-3);
-  cursor: default;
-}
-/* 思考浮层：与 provider 浮层同形态（锚在 wrapper 上向上展开）；三裸档 + 当前勾选
-   （check 格固定 14px 宽，未勾选项的空格保证档名纵对齐）。 */
-.lumir-hp-effpop {
+/* 合并选择器浮层（M373，原型 .hp-pop）：单浮层三维分段（Provider / 模型 / 思考程度），
+   壳配方沿用现行浮层（--preview-bg + 1px --border + r8 + --shadow-raise，锚在 wrapper 上
+   向上展开）；内部 = 三段 menuitemradio 列表，hairline 分隔，段标签 fs-micro text-3。
+   项配方沿用 think pop：check 格 14px 固定宽 + 档名 + 当前项 accent-tint 底
+   （三维统一一种「当前」表达）。选定不自动关浮层（Alex 裁决）——内容在选择后重建。 */
+.lumir-hp-selpop {
   position: absolute;
   bottom: calc(100% + 4px);
   left: 0;
-  min-width: 140px;
+  min-width: 188px;
   padding: var(--sp-2);
   background: var(--preview-bg);
   border: 1px solid var(--border);
@@ -894,10 +835,28 @@
   box-shadow: var(--shadow-raise);
   z-index: 30;
 }
-.lumir-hp-effpop[hidden] {
+:root[data-theme="eink"] .lumir-hp-selpop {
+  border-width: 1.4px;
+}
+.lumir-hp-selpop[hidden] {
   display: none;
 }
-.lumir-hp-effpop-item {
+/* 段间 hairline 分隔（eink 结构档）。 */
+.lumir-hp-selpop-sec + .lumir-hp-selpop-sec {
+  border-top: 1px solid var(--border-soft);
+  margin-top: var(--sp-2);
+  padding-top: var(--sp-2);
+}
+:root[data-theme="eink"] .lumir-hp-selpop-sec + .lumir-hp-selpop-sec {
+  border-top-color: var(--border);
+}
+.lumir-hp-selpop-label {
+  padding: var(--sp-2) var(--sp-3) var(--sp-1);
+  font-size: var(--fs-micro);
+  letter-spacing: 0.04em;
+  color: var(--text-3);
+}
+.lumir-hp-selpop-item {
   display: flex;
   align-items: center;
   gap: var(--sp-2);
@@ -913,11 +872,11 @@
   cursor: pointer;
   transition: background var(--dur-ui) var(--ease-standard);
 }
-.lumir-hp-effpop-item:hover {
+.lumir-hp-selpop-item:hover {
   background: var(--hover);
   color: var(--text);
 }
-.lumir-hp-effpop-item .lumir-hp-effpop-check {
+.lumir-hp-selpop-item .lumir-hp-selpop-check {
   flex: none;
   width: 14px;
   color: var(--accent);
@@ -925,18 +884,37 @@
   align-items: center;
   justify-content: center;
 }
-.lumir-hp-effpop-item .lumir-hp-effpop-name {
+:root[data-theme="eink"] .lumir-hp-selpop-item .lumir-hp-selpop-check {
+  color: var(--sel-text);
+}
+.lumir-hp-selpop-item .lumir-hp-selpop-name {
   flex: 1;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.lumir-hp-effpop-item.is-current {
+.lumir-hp-selpop-item.is-current {
   background: var(--accent-tint);
 }
-:root[data-theme="eink"] .lumir-hp-effpop-item.is-current {
+:root[data-theme="eink"] .lumir-hp-selpop-item.is-current {
   background: var(--sel);
+  color: var(--sel-text);
+}
+/* effort 段禁用（当前 provider + model 组合不支持，D390 态）：整段降档——项 text-3、
+   hover 无反应、不可点；说明句挂段尾。 */
+.lumir-hp-selpop-sec.is-disabled .lumir-hp-selpop-item {
+  color: var(--text-3);
+  cursor: default;
+}
+.lumir-hp-selpop-sec.is-disabled .lumir-hp-selpop-item:hover {
+  background: none;
+  color: var(--text-3);
+}
+.lumir-hp-selpop-hint {
+  padding: var(--sp-1) var(--sp-3) var(--sp-2);
+  font-size: var(--fs-label-s);
+  color: var(--text-3);
 }
 
 /* ctx% 读数 + 警示浮层（M347；M351 对齐原型 .h-usage：fs-label 等宽小字；M370 读数改
@@ -970,9 +948,9 @@
 :root[data-theme="eink"] .lumir-hp-ctx.is-warn {
   text-decoration: underline;
 }
-/* 警示浮层（M370 = D335 的 hover 形态）：向上展开，右缘对齐读数右缘（原型 224px——
-   M347 的 240px 按视觉还原收紧）。显隐由 hover 翻转（harness-panel.ts 的
-   mouseenter/leave），hidden 仍是结构兜底。 */
+/* 读数 hover 泡（M370 = D335 的 hover 形态；M373 起常驻含义句 D395、越线时追加警示句
+   D335——两行同泡）：向上展开，右缘对齐读数右缘（原型 224px——M347 的 240px 按视觉还原
+   收紧）。显隐由 hover 翻转（harness-panel.ts 的 mouseenter/leave），hidden 仍是结构兜底。 */
 .lumir-hp-ctxpop {
   position: absolute;
   bottom: calc(100% + 6px);
@@ -991,6 +969,11 @@
 }
 .lumir-hp-ctxpop[hidden] {
   display: none;
+}
+/* 越线警示句（D335）与含义句（D395）的同泡分行：警示句恒在含义句之下。 */
+.lumir-hp-ctxpop-warn {
+  margin-top: var(--sp-1);
+  color: var(--pending);
 }
 
 /* 不定态进度条 + 阶段指示（M347）：只在处理中态可见（hidden 随相位翻）。

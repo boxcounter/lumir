@@ -986,9 +986,62 @@ const COPY_TABLE = {
   },
   // 思考浮层读屏名（role=menu 的 aria-label）：浮层本体三个裸档位无释义（Alex 裁决），
   // 无可见标题行——与模型 provider 浮层同构（裸列表、当前项带勾选），可读名走本句。
+  // M373 起复用为合并浮层 effort 段的段标签（同一语义一条串）。
   D392: {
     zh: "思考程度",
     en: "Thinking effort",
+  },
+
+  // -------------------------------------------------------------------------
+  // 合并模型选择器（D393–D398，M373，harness-selector-merge；裁决 = Alex 2026-10-07
+  // 八条原话）：双 chip（模型 + 思考）合并为一个选择器 chip = 「model · effort」双读数
+  // （U+00B7 分隔），单浮层三维分段（Provider / 模型 / 思考程度），mock 界面隐藏，
+  // effort 不支持 = 读数置灰 + 浮层段禁用 + hover hint，ctx% · cache% 加含义 hover hint。
+  // D376 / D389 / D391 随双 chip 退役（编号停用、不复用）；D390 沿用（浮层 effort 段禁用
+  // 说明）；D392 复用（effort 段标签）。档位名 Low / High / Max 与 provider / model 名
+  // 同为数据读数，不进编号。消费点全部在 src/harness-panel.ts。
+  // -------------------------------------------------------------------------
+  // 合并 chip 的悬停提示 / 读屏名：可见文本 = 「model · effort」裸读数串（配置值即读数、
+  // 不译文）；不支持态的读屏名改用 D390（与 M363 口径一致：禁用语义要有可读出口）。
+  D393: {
+    zh: "模型：{model} · 思考程度：{level}（点击切换）",
+    en: "Model: {model} · Thinking effort: {level} (click to switch)",
+  },
+  // effort 不支持时的 hover hint（读数置灰的那一格悬停浮出，浮层形态沿用 ctxPop 配方）：
+  // 点名当前模型——chip 里 model 名可能被截断，这句把话说全。
+  D394: {
+    zh: "模型 {model} 不支持思考程度调节",
+    en: "{model} does not support thinking effort adjustment",
+  },
+  // ctx% · cache% 读数的含义 hover hint（两个裸读数无任何前缀，hover 读数才浮出说明；
+  // 越过警示阈值时本句与 D335 警示句同泡上下排列——警示句恒在含义句之下）。
+  D395: {
+    zh: "ctx%：上下文窗口占用比例；cache%：本轮输入的缓存命中比例",
+    en: "ctx%: share of the context window used; cache%: share of this turn's input served from cache",
+  },
+  // 合并浮层的段标签（Provider / 模型；effort 段复用 D392）。浮层本体每段是裸列表
+  // （项 = 配置值读数），段标签是它的可读身份。
+  D396: {
+    zh: "提供商",
+    en: "Provider",
+  },
+  D397: {
+    zh: "模型",
+    en: "Model",
+  },
+  // 合并浮层（role=menu）的 aria-label：三维分段单浮层，可读身份走本句。
+  D398: {
+    zh: "模型与思考程度",
+    en: "Model and thinking effort",
+  },
+  // 合并 chip 读屏名的降级态（D399，M373 r2）：effort 会话态尚未读到（harness_state
+  // 未到达 / 读取失败——桩环境、IPC 失败的降级窗口，真实 app 的空态快照恒带 thinking
+  // 字段、不可达）时，读屏名取本句（中性「未知」）——MUST NOT 取 D390：「不支持」是
+  // 断言当前组合的能力，与「还没读到」语义相反（r1 P2-3）。可见面同降级口径：
+  // effort 读数留空、分隔符收起、不置灰（置灰 = 能力断言，同理由不采用）。
+  D399: {
+    zh: "模型：{model} · 思考程度未知（点击切换）",
+    en: "Model: {model} · Thinking effort unknown (click to switch)",
   },
 } satisfies Record<string, CopyEntry>;
 

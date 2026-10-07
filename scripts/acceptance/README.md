@@ -175,16 +175,19 @@ steps:
 的同名参数一一对应，`--check` 用同一份挡拼错），缺省不写 = 走应用出厂口径。
 
 `harness`（M304，change add-harness-probe §11）是唯一的**嵌套**键：
-`{ provider, fixture, permissions: { allow, deny }, loopMax, warnCtxPct, autoCompact, kimiModel }` → `[harness]` 节
+`{ provider, fixture, permissions: { allow, deny }, loopMax, warnCtxPct, autoCompact, kimiModel, kimiModels }` → `[harness]` 节
 （camelCase 键名映射到配置文件的 snake_case）。`fixture` 写 `$fixtures/...` 只读引用套件 fixtures
 目录（见下文「占位符」），mock provider 场景（70–77、87–98）是样例。`kimiModel`（M372，场景 99）
 写了就构造 `providers.kimi` 节（model + 占位 api_key）——自定义模型 id（如 Kimi Code 订阅端的
-`k3-256k`）的能力判定（思考 chip 置灰判据）按 config 现算，不发消息就验得到；发消息的场景不会配
-这个键。
+`k3-256k`）的能力判定（effort 置灰判据）按 config 现算，不发消息就验得到；发消息的场景不会配
+这个键。`kimiModels`（M373，场景 102）把逐项 `{ id, effort, window }` 清单写进
+`providers.kimi.models`——schema 的 model 维度：浮层模型段按声明清单列项（**用户声明 = 整体
+覆盖**内置 preset），effort 能力 / 上下文窗口按声明现算。
 
-> 模型 chip 的选项表**无法**用场景配置收窄：`config_get` 回的是 Rust 侧 `HarnessProviders`
-> 结构体（`kimi` / `deepseek` / `mock` 三个字段恒序列化），因此 chip 浮层在真机上恒列三档——
-> 想只配一档造场景是造不出来的。
+> **provider 选项表与 model 选项表的收窄口径（M373 起分化）**：provider 段仍收不窄——
+> `config_get` 回的是 Rust 侧 `HarnessProviders` 结构体（`kimi` / `deepseek` / `mock`
+> 三个字段恒序列化），浮层恒列三档（mock 按 Alex 裁决「界面上隐藏」在 UI 层过滤）。
+> model 段**可以收窄**：`kimiModels` 声明即整体覆盖 preset（场景 102 的负向断言钉这条）。
 
 ### 语言面（M284）
 

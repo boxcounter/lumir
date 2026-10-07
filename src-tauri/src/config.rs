@@ -76,6 +76,14 @@
 //! 空 `api_key` = 未配置（出厂状态），不是笔误，因此**不告警**；`model` / `base_url` /
 //! `mock.fixture` 的空串是显式的空值输入，回落默认 + warning。
 //!
+//! M373 起 `[harness].providers.<id>` 暴露 **model 维度**：`models` 清单逐项 =
+//! `{ "id": "kimi-k3", "effort": true, "window": 1048576 }`（effort = 是否支持思考程度调节、
+//! window = 上下文窗口 tokens）。缺省 = 内置 preset（[`KIMI_MODEL_PRESET`] /
+//! [`DEEPSEEK_MODEL_PRESET`]），用户显式声明则整体覆盖（含空列表）；逐项校验与 permissions
+//! 同形（一项写坏只丢该项 + warning）。当前 model 仍是同级的 `model` 键（单 model 配置形态
+//! 不变——Alex 现有的 `"model": "k3-256k"` 配置零迁移生效）。能力的唯一真源从此在
+//! schema：llm.rs 的窗口表与 thinking.rs 的 k3 词元判定退役为这里的读取。
+//!
 //! ## 数值字段的打字代价（typography-and-zoom）
 //!
 //! `editor.font_size` 是本仓**第一个数值配置字段**，错打成字符串的代价比布尔高（多一对
@@ -427,8 +435,10 @@ pub const WARN_CTX_PCT_MAX: f64 = 100.0;
 
 /// 两家 provider 的出厂 model 值（M302 的 provider 预设表以它们为出厂默认——**同一语义两处
 /// 写值**，改一处必须同步另一处，REVIEW.md 第 8 条）。本模块只把它们当作「model 为空时回落
-/// 的对象」；模型清单 / base_url 官方地址 / 上下文窗口表的真源在 harness 运行时的预设表里
-/// （M302），配置层不复制一份。
+/// 的对象」；base_url 官方地址 / 超限特征串的真源在 harness 运行时的预设表里（M302），
+/// 配置层不复制一份。模型清单 / 每模型能力声明（effort / 上下文窗口）自 M373 起也归本模块
+/// （[`KIMI_MODEL_PRESET`] / [`DEEPSEEK_MODEL_PRESET`] + `HarnessProviderConfig.models`），
+/// llm.rs 的窗口表与 thinking.rs 的能力判定已退役为 schema 读取。
 ///
 /// deepseek 出厂值由 M309 从 design §11 的示例值 `deepseek-chat` 改为现役 `deepseek-flash`
 /// （M306 一手核实 deepseek 现役仅 `deepseek-flash` / `deepseek-v4-pro`）。
@@ -506,6 +516,60 @@ pub struct HarnessProviders {
     pub mock: HarnessMockConfig,
 }
 
+/// 单个模型声明（M373，schema 暴露的 model 维度）：思考程度能力 + 上下文窗口。
+///
+/// 这是**能力/窗口表的唯一真源**——thinking.rs 的 k3 词元判定与 llm.rs 的 KIMI_PRESET
+/// 窗口表已退役为本结构的读取（内置 preset 见 [`KIMI_MODEL_PRESET`] /
+/// [`DEEPSEEK_MODEL_PRESET`]，用户配置 `[harness].providers.<id>.models` 可整体覆盖）。
+#[derive(Debug, Clone, PartialEq, Serialize, TS)]
+#[ts(export, export_to = "../../src/bindings/")]
+pub struct HarnessModelSpec {
+    /// 模型 id（配置值即读数，如 `kimi-k3` / `k3-256k`）。
+    pub id: String,
+    /// 该模型是否支持思考程度调节（`reasoning.effort`）。未声明 / 未列出 = 不支持
+    /// （保守默认：不把无效参数发给不支持的模型）。
+    pub effort: bool,
+    /// 上下文窗口（tokens）：ctx% 读数的分母。
+    pub window: u64,
+}
+
+/// kimi 内置模型清单（出厂默认；用户配置 `harness.providers.kimi.models` 覆盖）。
+///
+/// 2026-10-07 一手核实（[中国开放平台 Chat Completions 参数表](https://platform.moonshot.cn/docs/api/chat)
+/// 的 `model` 取值表、[全球平台 Model List](https://platform.kimi.ai/docs/models.md)）：
+/// 开放平台现役 `kimi-k3`（出厂默认，1M ctx）/ `kimi-k2.7-code` / `kimi-k2.7-code-highspeed` /
+/// `kimi-k2.6`（后三者 256K）；`k3-256k`（Kimi Code 订阅端 id，M372 实测 Alex 配置的就是它，
+/// 支持 effort、窗口 256K）不在开放平台的取值表里，但用户可配，一并列入出厂清单。
+/// `kimi-k2` 系 2026-05-25 退役（调用 404），不在清单内：它回落 [`FALLBACK_CONTEXT_WINDOW`]
+/// （与它的历史窗口同值，历史配置的 ctx% 读数逐值不变）。
+///
+/// effort 能力边界（[Thinking Models](https://platform.kimi.ai/docs/guide/use-thinking-models)
+/// 请求字段对照表）：仅 k3 系（`kimi-k3` / `k3-256k`）支持 `reasoning.effort`，
+/// k2.x 各档「Not supported」。
+pub const KIMI_MODEL_PRESET: &[(&str, bool, u64)] = &[
+    ("kimi-k3", true, 1_048_576),
+    ("kimi-k2.7-code", false, 262_144),
+    ("kimi-k2.7-code-highspeed", false, 262_144),
+    ("kimi-k2.6", false, 262_144),
+    ("k3-256k", true, 262_144),
+];
+
+/// deepseek 内置模型清单（出厂默认；用户配置 `harness.providers.deepseek.models` 覆盖）。
+///
+/// 2026-10-03 经 `GET /models` 一手核实（[Models & Pricing](https://api-docs.deepseek.com/quick_start/pricing)）：
+/// 现役仅 `deepseek-flash` / `deepseek-v4-pro`，上下文均 1M（1048576），都支持
+/// `reasoning.effort`（[Thinking Mode](https://api-docs.deepseek.com/guides/thinking_mode)）。
+/// `deepseek-chat` 已不在模型清单（回落 [`FALLBACK_CONTEXT_WINDOW`]，仅兜底历史配置）。
+pub const DEEPSEEK_MODEL_PRESET: &[(&str, bool, u64)] = &[
+    ("deepseek-flash", true, 1_048_576),
+    ("deepseek-v4-pro", true, 1_048_576),
+];
+
+/// 上下文窗口的保守回落值（tokens）：模型不在生效清单内时使用（历史值 131_072 = 128K，
+/// 与 kimi-k2 / deepseek-chat 的历史窗口同值——读数不飘）。**唯一写值处**，
+/// 运行时的窗口查表未命中都回落这里。
+pub const FALLBACK_CONTEXT_WINDOW: u64 = 131_072;
+
 /// 单个网络 provider 的参数。
 ///
 /// **`Default` 的 `model` 是空串，不是出厂模型名**：出厂模型名按 provider 分档
@@ -521,6 +585,10 @@ pub struct HarnessProviderConfig {
     pub model: String,
     /// API base URL；`None` = 用该 provider 的官方地址（官方值在运行时的预设表里，M302）。
     pub base_url: Option<String>,
+    /// 可选模型清单 + 每模型能力声明（M373）。**缺省 = 内置 preset**（kimi /
+    /// deepseek 各一份，见上）；用户显式声明（含空列表）则整体覆盖。这是浮层模型段
+    /// 与 ctx% 窗口 / effort 能力判定的共同数据源。
+    pub models: Vec<HarnessModelSpec>,
 }
 
 impl Default for HarnessProviders {
@@ -528,13 +596,64 @@ impl Default for HarnessProviders {
         Self {
             kimi: HarnessProviderConfig {
                 model: DEFAULT_KIMI_MODEL.to_string(),
+                models: model_preset(KIMI_MODEL_PRESET),
                 ..HarnessProviderConfig::default()
             },
             deepseek: HarnessProviderConfig {
                 model: DEFAULT_DEEPSEEK_MODEL.to_string(),
+                models: model_preset(DEEPSEEK_MODEL_PRESET),
                 ..HarnessProviderConfig::default()
             },
             mock: HarnessMockConfig::default(),
+        }
+    }
+}
+
+/// 内置模型清单常量 → 生效结构（`Default` 与校验回落共用这一条路径，不留两份转换）。
+fn model_preset(preset: &[(&str, bool, u64)]) -> Vec<HarnessModelSpec> {
+    preset
+        .iter()
+        .map(|(id, effort, window)| HarnessModelSpec {
+            id: id.to_string(),
+            effort: *effort,
+            window: *window,
+        })
+        .collect()
+}
+
+impl HarnessConfig {
+    /// 指定 provider 的生效模型清单（schema 读取点，M373）：kimi / deepseek 各读各的
+    /// `models`（缺省时 validate 已填内置 preset）；mock 是 fixture 驱动档，没有模型维度
+    /// （UI 层隐藏、ctx% 借壳 kimi 读数），返回空表。
+    pub fn model_specs(&self, provider: &HarnessProvider) -> &[HarnessModelSpec] {
+        match provider {
+            HarnessProvider::Kimi => &self.providers.kimi.models,
+            HarnessProvider::Deepseek => &self.providers.deepseek.models,
+            HarnessProvider::Mock => &[],
+        }
+    }
+
+    /// 模型上下文窗口（tokens）：生效清单精确匹配，未列出回落 [`FALLBACK_CONTEXT_WINDOW`]
+    /// （保守默认——ctx% 的分母宁可偏小读数偏保守，不猜窗口）。
+    pub fn context_window(&self, provider: &HarnessProvider, model: &str) -> u64 {
+        self.model_specs(provider)
+            .iter()
+            .find(|spec| spec.id == model)
+            .map(|spec| spec.window)
+            .unwrap_or(FALLBACK_CONTEXT_WINDOW)
+    }
+
+    /// 该 provider + model 是否支持思考程度调节（前端置灰判据，schema 读取点）：
+    /// 生效清单精确匹配取声明值；未列出 = 不支持（保守默认，与 M372 前「kimi 非 k3 系
+    /// 置灰」同一安全侧）；mock 恒定支持（fixture 驱动，验收要断言档位到达请求）。
+    pub fn effort_supported(&self, provider: &HarnessProvider, model: &str) -> bool {
+        match provider {
+            HarnessProvider::Mock => true,
+            HarnessProvider::Kimi | HarnessProvider::Deepseek => self
+                .model_specs(provider)
+                .iter()
+                .find(|spec| spec.id == model)
+                .is_some_and(|spec| spec.effort),
         }
     }
 }
@@ -688,6 +807,10 @@ struct RawHarnessProviderConfig {
     api_key: Option<String>,
     model: Option<String>,
     base_url: Option<String>,
+    /// 可选模型清单（M373）：逐项校验（与 permissions 清单同形的逐项容忍——一项写坏
+    /// 只丢该项 + warning，不拖垮整份配置）。字段收成 Value 逐项判定：直接结构化会让
+    /// 一项类型不符在 serde 解析期失败，走整文件回落。
+    models: Option<Vec<serde_json::Value>>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -1137,12 +1260,14 @@ fn validate_harness(raw: RawHarnessConfig) -> (HarnessConfig, Vec<String>) {
         raw.providers.kimi,
         "kimi",
         DEFAULT_KIMI_MODEL,
+        KIMI_MODEL_PRESET,
         &mut warnings,
     );
     let deepseek = validate_harness_provider(
         raw.providers.deepseek,
         "deepseek",
         DEFAULT_DEEPSEEK_MODEL,
+        DEEPSEEK_MODEL_PRESET,
         &mut warnings,
     );
     let mock = validate_harness_mock(raw.providers.mock, &mut warnings);
@@ -1198,11 +1323,13 @@ fn validate_harness(raw: RawHarnessConfig) -> (HarnessConfig, Vec<String>) {
 
 /// 单个 provider 参数的校验：`api_key` 去空白后原样保留（空 = 未配置，不告警）；
 /// `model` 空 → 该 provider 的出厂模型名 + warning；`base_url` 空 → `None`（官方地址）+ warning。
+/// `models` 缺省 → 内置 preset（不告警）；显式声明（含空列表）→ 逐项校验生效。
 /// URL 是否可用不在这里判定——那是网络层的事（reqwest 的报错更准），与「形状在此、语义在外」同路。
 fn validate_harness_provider(
     raw: RawHarnessProviderConfig,
     provider: &str,
     default_model: &str,
+    preset: &[(&str, bool, u64)],
     warnings: &mut Vec<String>,
 ) -> HarnessProviderConfig {
     let api_key = raw
@@ -1231,11 +1358,94 @@ fn validate_harness_provider(
         }
         Some(value) => Some(value.to_string()),
     };
+    let models = match raw.models {
+        None => model_preset(preset),
+        Some(items) => validate_harness_model_specs(&items, provider, warnings),
+    };
     HarnessProviderConfig {
         api_key,
         model,
         base_url,
+        models,
     }
+}
+
+/// 模型清单的**逐项**校验（M373，与 permissions 清单同形）：每项必须是对象，含非空
+/// `id` 字符串；`effort` 缺省 → false（保守默认）+ warning，类型不符 → 丢该项 + warning；
+/// `window` 缺省 → [`FALLBACK_CONTEXT_WINDOW`] + warning，非正整数 / 超上限 → 丢该项 +
+/// warning；重复 `id` → 保留先出现的，丢重项 + warning。合法项按原顺序生效，
+/// 一项写坏不拖垮清单的其余项。
+fn validate_harness_model_specs(
+    items: &[serde_json::Value],
+    provider: &str,
+    warnings: &mut Vec<String>,
+) -> Vec<HarnessModelSpec> {
+    /// 窗口合法上限（tokens）：现役最大 1M，放宽一个数量级容纳未来大窗模型；
+    /// 超出视为笔误（多写一个 0 就是 10 倍）。
+    const WINDOW_MAX: u64 = 10_000_000;
+    let mut specs = Vec::with_capacity(items.len());
+    for (index, item) in items.iter().enumerate() {
+        let at = format!("harness.providers.{provider}.models 的第 {} 项", index + 1);
+        let Some(map) = item.as_object() else {
+            warnings.push(format!("配置项 {at} 不是对象，已忽略"));
+            continue;
+        };
+        let Some(id) = map.get("id").and_then(|v| v.as_str()).map(str::trim) else {
+            warnings.push(format!("配置项 {at} 缺少 id（或 id 不是字符串），已忽略"));
+            continue;
+        };
+        if id.is_empty() {
+            warnings.push(format!("配置项 {at} 的 id 为空，已忽略"));
+            continue;
+        }
+        if specs.iter().any(|spec: &HarnessModelSpec| spec.id == id) {
+            warnings.push(format!("配置项 {at} 的 id \"{id}\" 重复，已忽略"));
+            continue;
+        }
+        let effort = match map.get("effort") {
+            None => {
+                warnings.push(format!(
+                    "配置项 {at}（id \"{id}\"）未声明 effort 能力，已按不支持处理"
+                ));
+                false
+            }
+            Some(serde_json::Value::Bool(value)) => *value,
+            Some(_) => {
+                warnings.push(format!(
+                    "配置项 {at}（id \"{id}\"）的 effort 应为布尔值，已忽略该项"
+                ));
+                continue;
+            }
+        };
+        let window = match map.get("window") {
+            None => {
+                warnings.push(format!(
+                    "配置项 {at}（id \"{id}\"）未声明 window，已回退为 {FALLBACK_CONTEXT_WINDOW}"
+                ));
+                FALLBACK_CONTEXT_WINDOW
+            }
+            Some(value) => {
+                let parsed = value
+                    .as_u64()
+                    .filter(|window| *window > 0 && *window <= WINDOW_MAX);
+                match parsed {
+                    Some(window) => window,
+                    None => {
+                        warnings.push(format!(
+                            "配置项 {at}（id \"{id}\"）的 window 应为 1..={WINDOW_MAX} 的整数，已忽略该项"
+                        ));
+                        continue;
+                    }
+                }
+            }
+        };
+        specs.push(HarnessModelSpec {
+            id: id.to_string(),
+            effort,
+            window,
+        });
+    }
+    specs
 }
 
 /// mock 档参数：`fixture` 空 → `None`（未配置）+ warning，与 `base_url` 同口径。
@@ -2560,5 +2770,214 @@ mod tests {
         let snap = load_from(&TempFile::new(r#"{"harness":{"auto_compact":false}}"#).0);
         assert!(!snap.config.harness.auto_compact);
         assert!(snap.warnings.is_empty(), "{:?}", snap.warnings);
+    }
+
+    // -----------------------------------------------------------------------
+    // `[harness].providers.<id>.models` 模型维度（M373）：preset 缺省、用户覆盖、
+    // 逐项校验、窗口 / 能力读取（替代 llm.rs 窗口表与 thinking.rs 词元判定）。
+    // -----------------------------------------------------------------------
+
+    /// 缺省 = 内置 preset，不告警；单 model 配置形态（无 models 键）逐字生效——
+    /// Alex 现有的 `"model": "k3-256k"` 配置零迁移。
+    #[test]
+    fn harness_models_default_to_builtin_presets() {
+        // 完全缺省。
+        let snap = load_from(&TempFile::new(r#"{"harness":{}}"#).0);
+        let harness = &snap.config.harness;
+        assert_eq!(
+            harness.providers.kimi.models,
+            vec![
+                HarnessModelSpec {
+                    id: "kimi-k3".into(),
+                    effort: true,
+                    window: 1_048_576
+                },
+                HarnessModelSpec {
+                    id: "kimi-k2.7-code".into(),
+                    effort: false,
+                    window: 262_144
+                },
+                HarnessModelSpec {
+                    id: "kimi-k2.7-code-highspeed".into(),
+                    effort: false,
+                    window: 262_144
+                },
+                HarnessModelSpec {
+                    id: "kimi-k2.6".into(),
+                    effort: false,
+                    window: 262_144
+                },
+                HarnessModelSpec {
+                    id: "k3-256k".into(),
+                    effort: true,
+                    window: 262_144
+                },
+            ]
+        );
+        assert_eq!(
+            harness.providers.deepseek.models,
+            vec![
+                HarnessModelSpec {
+                    id: "deepseek-flash".into(),
+                    effort: true,
+                    window: 1_048_576
+                },
+                HarnessModelSpec {
+                    id: "deepseek-v4-pro".into(),
+                    effort: true,
+                    window: 1_048_576
+                },
+            ]
+        );
+        assert!(harness.model_specs(&HarnessProvider::Mock).is_empty());
+        // 单 model 配置形态：model 键照旧，models 缺省 → preset 兜底。
+        let snap = load_from(
+            &TempFile::new(
+                r#"{"harness":{"providers":{"kimi":{"model":"k3-256k","api_key":"sk-x"}}}}"#,
+            )
+            .0,
+        );
+        assert_eq!(snap.config.harness.providers.kimi.model, "k3-256k");
+        assert_eq!(snap.config.harness.providers.kimi.models.len(), 5);
+        assert!(snap.warnings.is_empty(), "{:?}", snap.warnings);
+    }
+
+    /// 用户显式声明 models → 整体覆盖 preset（含空列表——显式清空是用户的合法选择）；
+    /// 窗口与 effort 从声明值读取。
+    #[test]
+    fn harness_models_user_override_replaces_preset() {
+        let snap = load_from(
+            &TempFile::new(
+                r#"{"harness":{"providers":{"kimi":{"models":[{"id":"my-model","effort":false,"window":32768}]}}}}"#,
+            )
+            .0,
+        );
+        let kimi = &snap.config.harness.providers.kimi;
+        assert_eq!(
+            kimi.models,
+            vec![HarnessModelSpec {
+                id: "my-model".into(),
+                effort: false,
+                window: 32_768
+            }]
+        );
+        assert!(snap.warnings.is_empty(), "{:?}", snap.warnings);
+        // 显式空列表 = 没有可选模型（与缺键的 preset 兜底是两种配置）。
+        let snap =
+            load_from(&TempFile::new(r#"{"harness":{"providers":{"kimi":{"models":[]}}}}"#).0);
+        assert!(snap.config.harness.providers.kimi.models.is_empty());
+        assert!(snap.warnings.is_empty(), "{:?}", snap.warnings);
+    }
+
+    /// 逐项校验（与 permissions 同形）：坏项只丢自己 + warning，合法项照常生效；
+    /// 缺 effort / window 的子键回落保守默认 + warning。
+    #[test]
+    fn harness_models_invalid_items_dropped_one_by_one() {
+        let raw = r#"{"harness":{"providers":{"kimi":{"models":[
+            {"id":"ok","effort":true,"window":262144},
+            "not-an-object",
+            {"effort":true,"window":100},
+            {"id":"","effort":true,"window":100},
+            {"id":"bad-effort","effort":"yes","window":100},
+            {"id":"bad-window","effort":true,"window":"262144"},
+            {"id":"zero-window","effort":true,"window":0},
+            {"id":"huge-window","effort":true,"window":99999999},
+            {"id":"ok","effort":false,"window":1000},
+            {"id":"defaults-missing"}
+        ]}}}}"#;
+        let snap = load_from(&TempFile::new(raw).0);
+        let models = &snap.config.harness.providers.kimi.models;
+        assert_eq!(
+            models.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(),
+            vec!["ok", "defaults-missing"],
+            "合法项（首个 ok + defaults-missing）保留，重复 id 的重项丢弃"
+        );
+        assert!(models[0].effort && models[0].window == 262_144);
+        // defaults-missing：effort 回落 false、window 回落保守默认。
+        assert!(!models[1].effort);
+        assert_eq!(models[1].window, FALLBACK_CONTEXT_WINDOW);
+        // warning 逐条点名（不是对象 / 缺 id / 空 id / effort 类型 / window 类型 / 0 窗 / 超大窗 / 重复）。
+        for needle in [
+            "不是对象",
+            "缺少 id",
+            "id 为空",
+            "effort 应为布尔值",
+            "window 应为",
+            "重复",
+        ] {
+            assert!(
+                snap.warnings.iter().any(|w| w.contains(needle)),
+                "缺少点名 {needle} 的 warning：{:?}",
+                snap.warnings
+            );
+        }
+        // 清单整体错形状（不是数组）仍走 serde 解析期失败 → 整文件回落（逐项容忍的边界，
+        // 与 vault.rule_files  precedent 同）。
+        let snap = load_from(
+            &TempFile::new(r#"{"harness":{"providers":{"kimi":{"models":"kimi-k3"}}}}"#).0,
+        );
+        assert_eq!(snap.config, AppConfig::default());
+        assert_eq!(snap.warnings.len(), 1);
+    }
+
+    /// schema 读取点：窗口查表（未列出回落保守默认）与 effort 能力判定
+    /// （未列出 = 不支持；mock 恒定支持）。
+    #[test]
+    fn harness_context_window_and_effort_read_from_schema() {
+        let snap = load_from(&TempFile::new(r#"{"harness":{}}"#).0);
+        let harness = &snap.config.harness;
+        // 窗口：表内精确匹配。
+        assert_eq!(
+            harness.context_window(&HarnessProvider::Kimi, "kimi-k3"),
+            1_048_576
+        );
+        assert_eq!(
+            harness.context_window(&HarnessProvider::Kimi, "k3-256k"),
+            262_144
+        );
+        assert_eq!(
+            harness.context_window(&HarnessProvider::Deepseek, "deepseek-flash"),
+            1_048_576
+        );
+        // 未列出（退役 id / 用户自填未知模型）→ 保守默认 131_072。
+        assert_eq!(
+            harness.context_window(&HarnessProvider::Kimi, "kimi-k2"),
+            FALLBACK_CONTEXT_WINDOW
+        );
+        assert_eq!(
+            harness.context_window(&HarnessProvider::Kimi, "whatever"),
+            FALLBACK_CONTEXT_WINDOW
+        );
+        // effort：声明值。
+        assert!(harness.effort_supported(&HarnessProvider::Kimi, "kimi-k3"));
+        assert!(harness.effort_supported(&HarnessProvider::Kimi, "k3-256k"));
+        assert!(!harness.effort_supported(&HarnessProvider::Kimi, "kimi-k2.6"));
+        assert!(!harness.effort_supported(&HarnessProvider::Kimi, "kimi-k2"));
+        // 前缀不宽容：kimi-k30 不在清单内 ⇒ 不支持（与 M372 词元判定退役后的口径一致）。
+        assert!(!harness.effort_supported(&HarnessProvider::Kimi, "kimi-k30"));
+        assert!(harness.effort_supported(&HarnessProvider::Deepseek, "deepseek-v4-pro"));
+        // 出厂默认模型必须可用——它是 harness 的首次会话形态，灰了就没人能动档位。
+        assert!(harness.effort_supported(&HarnessProvider::Kimi, DEFAULT_KIMI_MODEL));
+        assert!(harness.effort_supported(&HarnessProvider::Deepseek, DEFAULT_DEEPSEEK_MODEL));
+        // mock：恒定支持（fixture 驱动，验收断言档位到达请求）；模型维度空表。
+        assert!(harness.effort_supported(&HarnessProvider::Mock, "whatever"));
+        assert_eq!(
+            harness.context_window(&HarnessProvider::Mock, "whatever"),
+            FALLBACK_CONTEXT_WINDOW
+        );
+        // 用户覆盖后读取点跟着覆盖走。
+        let snap = load_from(
+            &TempFile::new(
+                r#"{"harness":{"providers":{"deepseek":{"models":[{"id":"deepseek-x","effort":false,"window":131072}]}}}}"#,
+            )
+            .0,
+        );
+        let harness = &snap.config.harness;
+        assert_eq!(
+            harness.context_window(&HarnessProvider::Deepseek, "deepseek-x"),
+            131_072
+        );
+        assert!(!harness.effort_supported(&HarnessProvider::Deepseek, "deepseek-x"));
+        assert!(!harness.effort_supported(&HarnessProvider::Deepseek, "deepseek-flash"));
     }
 }

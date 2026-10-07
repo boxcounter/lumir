@@ -1,8 +1,8 @@
 // composer 控制行纯模型层的单测（M347，composer 控制行 + 复制 + 进度）：
 //   - 发送钮两态状态机（reduceSendPhase：sent / stop-clicked / finished 的全转移表，
 //     连点幂等、忙时重复发送挡在门外）；
-//   - 模型 chip 的 provider 提取（providerSelection：闭集合过滤、缺 harness 段、
-//     current 不在闭集合时的照实显示）；
+//   - 合并选择器的提取（harnessSelection：闭集合过滤、mock 在可选列表层隐藏、
+//     model 维度逐项宽容提取、缺 harness 段；chipModelReading：model 读数回落链）；
 //   - ctx% 读数高亮判据（usageOverWarn：≥ 阈值即高亮，边界取高亮侧；M370 起警示说明走
 //     hover 浮层，呈现面在 DOM 层，判词不变）；
 //   - 消息 when 的相对时间分档（relativeWhen，M351：<10s 刚刚 / N 秒前 / N 分钟前 /
@@ -14,7 +14,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   PROVIDER_IDS,
-  providerSelection,
+  chipModelReading,
+  harnessSelection,
   reduceSendPhase,
   relativeWhen,
   usageOverWarn,
@@ -55,34 +56,101 @@ test("reduceSendPhase：finished 恒回 idle（终态之后再来终态不残留
   assert.equal(reduceSendPhase("idle", { type: "finished" }), "idle");
 });
 
-// ── 模型 chip 的 provider 提取（M347 任务 1：闭集合 kimi/deepseek/mock） ──
+// ── 合并选择器的提取（M373 任务 1/5：闭集合 provider + model 维度 + mock 隐藏） ──
 
-test("providerSelection：三档全配置 → options 按闭集合序、current 照实返回", () => {
-  const harness = { provider: "deepseek", providers: { mock: {}, deepseek: {}, kimi: {} } };
-  assert.deepEqual(providerSelection(harness), { current: "deepseek", options: ["kimi", "deepseek", "mock"] });
+test("harnessSelection：三档全配置 → providerOptions 按闭集合序、mock 被过滤（UI 隐藏）", () => {
+  const harness = {
+    provider: "deepseek",
+    providers: { mock: {}, deepseek: {}, kimi: {} },
+  };
+  const sel = harnessSelection(harness);
+  assert.deepEqual(sel?.providerOptions, ["kimi", "deepseek"]);
+  assert.equal(sel?.provider, "deepseek");
 });
 
-test("providerSelection：配置只配了 mock → options 只列已配置档（chip 列出的是已配置集合）", () => {
-  const harness = { provider: "mock", providers: { mock: { fixture: "f.json" } } };
-  assert.deepEqual(providerSelection(harness), { current: "mock", options: ["mock"] });
+test("harnessSelection：model 维度逐项提取（id/effort/window），坏项丢弃", () => {
+  const harness = {
+    provider: "kimi",
+    providers: {
+      kimi: {
+        model: "k3-256k",
+        models: [
+          { id: "kimi-k3", effort: true, window: 1048576 },
+          { id: "kimi-k2.6", effort: false, window: 262144 },
+          "not-an-object",
+          { id: "", effort: true, window: 1 },
+          { effort: true, window: 1 },
+          { id: "no-window", effort: true },
+        ],
+      },
+      deepseek: { model: "deepseek-flash" }, // 无 models 键 → 空清单（旧配置形态）
+    },
+  };
+  const sel = harnessSelection(harness);
+  assert.deepEqual(sel?.models.kimi, {
+    current: "k3-256k",
+    options: [
+      { id: "kimi-k3", effort: true, window: 1048576 },
+      { id: "kimi-k2.6", effort: false, window: 262144 },
+      { id: "no-window", effort: true, window: 0 },
+    ],
+  });
+  assert.deepEqual(sel?.models.deepseek, { current: "deepseek-flash", options: [] });
+  // mock 无模型维度，不出现。
+  assert.equal(sel?.models.mock, undefined);
 });
 
-test("providerSelection：混入闭集合外的键被过滤（不上屏）", () => {
-  const harness = { provider: "kimi", providers: { kimi: {}, other: {}, deepseek: {} } };
-  assert.deepEqual(providerSelection(harness), { current: "kimi", options: ["kimi", "deepseek"] });
+test("harnessSelection：current 不在闭集合 → 照实显示读数，providerOptions 仍只列已配置档", () => {
+  const harness = { provider: "legacy", providers: { kimi: {}, deepseek: {} } };
+  const sel = harnessSelection(harness);
+  assert.equal(sel?.provider, "legacy");
+  assert.deepEqual(sel?.providerOptions, ["kimi", "deepseek"]);
 });
 
-test("providerSelection：current 不在闭集合 → 照实显示读数，options 仍只列闭集合档", () => {
-  const harness = { provider: "legacy", providers: { kimi: {}, deepseek: {}, mock: {} } };
-  assert.deepEqual(providerSelection(harness), { current: "legacy", options: ["kimi", "deepseek", "mock"] });
+test("harnessSelection：harness 段缺失（桩环境 / 旧配置）→ null（chip 隐藏，不伪造读数）", () => {
+  assert.equal(harnessSelection(undefined), null);
+  assert.equal(harnessSelection(null), null);
+  assert.equal(harnessSelection({}), null);
+  assert.equal(harnessSelection({ provider: "mock" }), null);
+  assert.equal(harnessSelection({ providers: "nope" }), null);
 });
 
-test("providerSelection：harness 段缺失（桩环境 / 旧配置）→ null（chip 隐藏，不伪造读数）", () => {
-  assert.equal(providerSelection(undefined), null);
-  assert.equal(providerSelection(null), null);
-  assert.equal(providerSelection({}), null);
-  assert.equal(providerSelection({ provider: "mock" }), null);
-  assert.equal(providerSelection({ providers: "nope" }), null);
+test("chipModelReading：有 model 维度 → 当前 model 配置值（不在 options 里也照实显示）", () => {
+  const base = {
+    provider: "kimi",
+    providerOptions: ["kimi"] as const,
+    models: {
+      kimi: {
+        current: "k3-256k",
+        options: [{ id: "kimi-k3", effort: true, window: 1 }],
+      },
+    },
+  };
+  assert.equal(chipModelReading(base as never), "k3-256k");
+  // current 不在 options（用户自填未知模型）→ 照实显示，不回落首项。
+  assert.equal(
+    chipModelReading({
+      ...base,
+      models: { kimi: { current: "my-model", options: base.models.kimi.options } },
+    } as never),
+    "my-model",
+  );
+});
+
+test("chipModelReading：回落链——model 为空回落首选项 id，无维度（mock）回落 provider id", () => {
+  assert.equal(
+    chipModelReading({
+      provider: "kimi",
+      providerOptions: ["kimi"],
+      models: { kimi: { current: "", options: [{ id: "kimi-k3", effort: true, window: 1 }] } },
+    } as never),
+    "kimi-k3",
+  );
+  // mock：无模型维度 → provider id 本身上 chip（验收专用档，形态不变形）。
+  assert.equal(
+    chipModelReading({ provider: "mock", providerOptions: [], models: {} } as never),
+    "mock",
+  );
 });
 
 test("PROVIDER_IDS：闭集合即 src/bindings/HarnessProvider.ts 的同值域", () => {

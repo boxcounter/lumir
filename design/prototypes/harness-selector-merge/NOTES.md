@@ -1,6 +1,10 @@
-# harness-selector-merge — 设计笔记（M371）
+# harness-selector-merge — 设计笔记（M371 原型 → M373 裁决定稿）
 
 原型入口：`design/prototypes/harness-selector-merge/index.html`（无参数 = 场景总览 board；`?scene=chip|pop|long|unsupported|mock` 单帧；`theme=light|dark|eink`；截图用 `&panel=0` 关控制面板）。
+
+**本目录是 M373 的实现设计基准**：Alex 已对 M371 原型的全部裁决点逐项裁决（2026-10-07，
+逐字见下），原型与本文档已按裁决修订为最终形态——M371 的「原型先给最简方案」等过渡态
+（chip 三读数 / 整串截断 / 无 hover hint）已被取代，实现 MUST 以本节为准。
 
 ## 需求源（Alex 原话）
 
@@ -8,36 +12,33 @@
 
 mock 处理裁决（逐字）：**「界面上隐藏，代码保留」**。
 
-## 布局 / 交互决策
+## Alex 裁决（2026-10-07 逐字）与落点
 
-1. **合并 chip = 一格三读数**：`provider · model · effort`，分隔符 U+00B7 小圆点（modeline 同款，与 M370 ctx 双读数分隔符同裁决）。三个值都是数据读数（同 provider 名 / Low·High·Max 档位名的「读数不译文」口径），不带「模型：」「思考：」前缀——双 chip 时代的「思考：」前缀随合并退场。
-2. **chip 形态纪律零改动**：沿用现行单 chip 配方（无边框小标签、24px 高、r5、11.5px、text-2、hover 给底、chevron ▾，见 `src/harness-panel.css` 的 `.lumir-hp-model` / `.lumir-hp-eff`）。唯一放宽：`max-width` 96px → 224px。空间账：双 chip 时两格各 96px + 4px gap ≈ 196px，合并后一格 224px 更宽但只此一格，ctl 行总占用反而略降。
-3. **浮层 = 三维度分段单浮层**：Provider / 模型 / 思考程度 三段，hairline 分隔，段标签 fs-micro。项 = menuitemradio + 14px check 格 + 当前项 accent-tint 底（think pop 配方，替代 model pop 的「当前」文字标——三维度统一一种「当前」表达）。
-4. **三维各自独立**：切 provider 不抹 effort；每个 provider 记住自己上次选的 model（数据上对应「选择写回配置」，切回时恢复）。当前 model 不在新 provider 列表时回落该 provider 首项。
-5. **选完不自动关浮层**：与现行两个单维度浮层（选定即关）不同——合并浮层承载多维调整，用户可能一次要改两项；点 chip / 空白处 / Esc 关。
-6. **mock 隐藏口径**：数据里保留 mock provider/模型条目，构建可选列表时按 `mock: true` 过滤；原型控制面板有「mock 显形」调试钮（产品无此开关），供核对隐藏前后的列表差异。
-7. **effort 不支持（D390 态）的处置改了**：双 chip 时代是 thinkChip 整 chip 置灰禁用；合并后选择器 chip 本身仍要可点开（否则没法换到支持的组合），置灰只落在 effort 读数这一格（text-3），浮层内 effort 段整段禁用 + 保留原说明句「当前模型不支持思考程度调节」。**这是交互语义差异，列为裁决点 3。**
-
-## 与现状的差异点（对照 `src/harness-panel.ts`）
-
-| 现状（双 chip） | 原型（合并选择器） |
+| 裁决（逐字） | 落点 |
 |---|---|
-| `modelChip`（1259-1276 行）只显示 provider 名，浮层只列 provider | chip 显示 provider · model · effort 三读数，浮层三维分段 |
-| `thinkChip`（1285-1303 行）显示「思考：{level}」，独立第二 chip | 不再有第二 chip；effort 并入选择器 |
-| 两个 wrapper（`.lumir-hp-modelwrap` / `.lumir-hp-effwrap`） | 一个 wrapper（`.hp-selwrap`） |
-| 两个浮层各自 `hidden` 管理、互斥逻辑散在两处 | 单浮层单开合状态 |
-| model 维度不存在——现行 `providerSelection()`（581-588 行）只取 provider ID，model 是 provider 配置内部的隐式值 | model 成为显式可选维度（**需要配置 schema 暴露 provider 下的 model 列表**，见遗留问题） |
-| mock 条目会出现在 provider 浮层 | UI 层过滤隐藏（数据保留） |
-| effort 不支持 = 整 chip disabled | 仅 effort 读数/分段置灰，选择器可开 |
+| 「不需要显示 provider，只需要 model · effort。」 | chip 读数 = `model · effort` 双读数（U+00B7），provider 不进 chip、只在浮层第一段选 |
+| 「只截 model 名，保住 effort。」 | model 名单独 `min-width:0 + ellipsis` 承担全部截断；分隔符 / effort / chevron 三格 `flex:none`（scene=long 可见：effort 不被长名挤掉） |
+| 「采纳原型的做法（选定后不自动关浮层）。」 | 浮层内选定任一维都不关；点 chip / 空白 / Esc 关 |
+| 「采纳（effort 读数置灰 + 浮层段禁用），同时应该有一个 hover hint 告知不支持 effort。」 | 不支持时：chip 读数 text-3 置灰 + 浮层 effort 段 `is-disabled`（项不可点 + D390 段尾说明）+ **置灰格 hover 浮出 hint（D394，点名模型）**——本目录原型含此 hint 的演示 |
+| 「同意（配置 schema 动刀）。」 | `[harness].providers.<id>` 暴露 `models` 清单（逐项 `{id, effort, window}`）+ 同级 `model` 当前值；内置 preset 给默认值，用户声明整体覆盖；单 model 旧配置形态零迁移 |
+| 「无异议（能力/窗口表去硬编码、进配置 schema，并入本 mission；M372 词元判定为过渡先落地）。」 | `thinking.rs` 的 `is_kimi_k3` 词元判定与 `llm.rs` 的 `KIMI_PRESET` 窗口表退役为 schema 读取（`HarnessConfig::effort_supported` / `context_window`），配置未声明的模型回落保守默认（effort=false / window=131_072） |
+| 「ctx%•cache% 增加 hover hint 说明含义。」 | ctx 读数 hover 泡常驻含义句（D395），越线时警示句（D335）追加其下——原型 ctxWrap 悬停可见 |
+| 「这次的基线刷新不用我过目，你自动处理。」 | M373 worker 自动刷新漂移基线并逐张列清单 |
 
-## 留给 Alex 的裁决点
+## 定稿形态（M373 = 本目录现状）
 
-1. **长读数截断策略**：chip max-width 224px 整串 ellipsis 时，超长 model 名会把 provider / effort 一并截掉（scene=long 可见）。备选：model 名单独 min-width:0 截断，保住头尾两格。原型先给最简方案。
-2. **浮层选定后是否自动关**：原型选「不关」（多维一次调齐）；若你更习惯现行「选定即关」，实现时改一行。
-3. **effort 不支持时的 chip 呈现**：原型 = 读数置灰（High 变灰但可见）+ 浮层段禁用；备选：effort 格显示「—」占位。双 chip 时代的「整 chip 禁用」在合并形态下不可行（点不开的换组合入口没了），此项只需在两种新呈现里挑。
-4. **provider / model 的展示名**：原型用纯读数串（`Nova · Atlas 2 · High`）；若想让 provider 更弱一档（text-3）形成层次，可以，但未做——modeline 风格是同色。
-5. **model 维度下配置 schema**：现配置只暴露 provider 选择（`providerSelection`），合并选择器需要 `[harness].providers.<id>` 下暴露可选 model 列表与当前 model 值。这是实现侧的前置工作，不是视觉裁决，但你可能想先知道它意味着配置结构动一刀。
+1. **合并 chip = 一格双读数**：`model · effort`，U+00B7 小圆点（modeline 同款）。形态纪律零改动沿用现行单 chip 配方（无边框小标签、24px 高、r5、11.5px、text-2、hover 给底、chevron ▾）；唯一放宽：`max-width` 96px → 224px。chip 永不禁用。
+2. **浮层 = 三维度分段单浮层**：Provider / 模型 / 思考程度 三段，hairline 分隔，段标签 fs-micro（D396 / D397 / D392）。项 = menuitemradio + 14px check 格 + 当前项 accent-tint 底。三维各自独立：切 provider 不抹 effort；每 provider 记住自己的 model（选择写回 `providers.<id>.model`）。
+3. **mock 隐藏口径**：数据里保留 mock provider/模型条目，构建可选列表时过滤（provider id = mock）；控制面板有「mock 显形」调试钮（产品无此开关）。
+4. **effort 不支持（D390 态）**：读数置灰（text-3）+ 浮层 effort 段禁用 + 置灰格 hover hint（D394，「模型 {model} 不支持思考程度调节」）。**这是 M371 原型没有的第三条出口**（原型只有前两条）。
+5. **两个 hover hint**（M373 裁决新增）：① effort 置灰格 hover → D394；② ctx% · cache% 读数 hover → D395 含义句（越线追加 D335 警示句）。
 
-## 合成数据说明
+## M371 过渡态 → M373 定稿的差异（实现勿回到过渡态）
 
-全部 provider / model 名为虚构（Nova / Pulse / Orbit / Atlas 2 / Pulse S1 / Orbit Mini…），effort 档位 Low/High/Max 沿用产品档位名（专有名词口径）。无任何真实 vault 内容、真实配置值或真实 provider 名。
+| M371 原型（过渡） | M373 定稿（本目录现状 = 实现基准） |
+|---|---|
+| chip 三读数 `provider · model · effort` | chip 双读数 `model · effort`（无 provider） |
+| 整串一个 `.hp-sel-read` 截断（长名把 effort 一并截掉） | 只截 model 名：`.hp-sel-model` 单独 min-width:0，sep/effort flex:none |
+| 无 hover hint（effort 不支持只有置灰 + 段禁用） | 置灰格 hover hint（D394）+ ctx 读数 hover hint（D395） |
+
+其余与 M371 一致：单浮层三维分段、选定不自动关、think pop 配方的「当前」表达（check + tint，「当前」文字标 D98 的 harness 消费点退役）、mock 界面隐藏、合成数据（虚构 provider / model 名，无真实 vault 内容）。

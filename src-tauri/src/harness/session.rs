@@ -65,7 +65,8 @@ impl StateSnapshot {
     /// `vault` 仍是当前 scope 的键——「这个空态属于哪个 vault」是快照准入判据的一半
     ///（M312：切 vault 之后回来的旧快照要按标识丢弃）。
     ///
-    /// `thinking_supported` 由调用侧按当前 provider + model 算出（[`super::thinking::supported`]）：
+    /// `thinking_supported` 由调用侧从配置 schema 现算（`HarnessConfig::effort_supported`，
+    /// M373：能力表 = `providers.<id>.models` 的逐模型声明）：
     /// 无会话时档位是默认 High，但「这个 provider 能不能调」与有没有会话无关，空态也要给出
     /// 正确的能力标记，否则面板一打开 chip 会先亮后灰（M362）。
     pub fn empty(vault: &str, warn_ctx_pct: f64, thinking_supported: bool) -> Self {
@@ -239,8 +240,9 @@ impl Session {
         self.current_context.as_deref()
     }
 
-    /// 面板快照。`thinking_supported` 由调用侧按当前 provider + model 算出
-    ///（[`super::thinking::supported`]）——会话不知道 provider，能力标记不在这里判定。
+    /// 面板快照。`thinking_supported` 由调用侧从配置 schema 现算
+    ///（`HarnessConfig::effort_supported`，M373——会话不知道 provider，能力标记不在这里
+    /// 判定）。
     pub fn snapshot(&self, warn_ctx_pct: f64, thinking_supported: bool) -> StateSnapshot {
         StateSnapshot {
             vault: self.root.display().to_string(),

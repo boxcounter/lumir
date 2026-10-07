@@ -1,7 +1,7 @@
 ---
 id: "99-harness-k3-thinking-chip"
 item: 99
-title: k3-256k 思考 chip 可用：Kimi Code 订阅模型配置下 chip 可点、浮层三档、选择写会话
+title: k3-256k 思考程度可用（M373 合并 chip）：订阅模型配置下 chip 可点、浮层三档、选择写会话
 open: harness-note.md
 marker: "HNL-ALPHA"
 config:
@@ -21,7 +21,7 @@ steps:
   - name: 等启动恢复落定——k3-256k 配置生效、思考 chip 可用态
     do: waitFor
     waitFor:
-      has: ["分隔条", "/AXButton \\(发送\\)/", "思考程度：High（点击切换）"]
+      has: ["分隔条", "/AXButton \\(发送\\)/", "模型：k3-256k · 思考程度：High（点击切换）"]
       not: ["当前模型不支持思考程度调节"]
     timeoutMs: 40000
     expect:
@@ -29,21 +29,21 @@ steps:
         ax: { has: "分隔条" }
       - label: k3-256k 已写进隔离 config（配置落盘的正观测——模型 chip 面只显示 provider 名，模型 id 的 AX 出口只有能力判定与 config 本身）
         file: { path: "env:config.json", has: "\"model\": \"k3-256k\"" }
-      - label: 思考 chip 读屏名 = D389 支持态「点击切换」（M372 修复判据：k3-256k 是 k3 系、支持 effort）
-        ax: { has: "思考程度：High（点击切换）" }
+      - label: 合并 chip 读屏名 = D393 支持态（M372 修复判据：k3-256k 是 k3 系、支持 effort——M373 起真源是 schema preset 声明）
+        ax: { has: "模型：k3-256k · 思考程度：High（点击切换）" }
       - label: 区分度负向断言——禁用说明 D390 不在场（修前 chip 被误判置灰，读屏名是本句）
         ax: { not: "当前模型不支持思考程度调节" }
       - shot: 01-k3-256k-chip-可用
 
-  - name: 点思考 chip 展开三档浮层（禁用态不展开——浮层在场即「可点」的正观测）
+  - name: 点合并 chip 展开三维浮层（不支持态读屏名会是 D390——点得开即「可点」的正观测）
     do: click
-    target: { name: "^思考程度" }
+    target: { name: "^模型：" }
     expect:
-      - label: 浮层 Low 档在
+      - label: 浮层 effort 段 Low 档在
         ax: { has: "/\\(Low\\)/" }
-      - label: 浮层 High 档在
+      - label: effort 段 High 档在
         ax: { has: "/\\(High\\)/" }
-      - label: 浮层 Max 档在
+      - label: effort 段 Max 档在
         ax: { has: "/\\(Max\\)/" }
       - shot: 02-三档浮层
 
@@ -54,11 +54,11 @@ steps:
   - name: 等 chip 读数翻成 Max（选择先行，命令写会话随后）
     do: waitFor
     waitFor:
-      has: ["思考程度：Max（点击切换）"]
+      has: ["模型：k3-256k · 思考程度：Max（点击切换）"]
     timeoutMs: 15000
     expect:
       - label: chip 读数 = Max（可点、可切换的完整回路成立）
-        ax: { has: "思考程度：Max（点击切换）" }
+        ax: { has: "模型：k3-256k · 思考程度：Max（点击切换）" }
       - shot: 03-选后-Max
 ---
 
@@ -75,7 +75,7 @@ k3 系判定只认 `kimi-k3` 前缀，订阅端 id `k3-256k` 不命中 ⇒ `supp
 
 1. **配置生效**：`k3-256k` 已写进隔离 config（`file` 断言 `env:config.json`——模型 chip 面只
    显示 provider 名，模型 id 没有 AX 出口；config 落盘 + 下列能力判定联合即「配置被消费」）。
-2. **chip 可用**：读屏名 = D389「思考程度：High（点击切换）」且 D390 禁用说明**不在场**
+2. **chip 可用**：读屏名 = D393「模型：k3-256k · 思考程度：High（点击切换）」且 D390 禁用说明**不在场**
    （修前是 D390 + `disabled`，本条与下一条对修复前形态必 FAIL——区分度自证）。
 3. **可点可切换**：点 chip 浮层三档全在（禁用钮点不出浮层）⇒ 选 Max ⇒ 读数翻 Max。
 4. **负向对偶在场景 101**：同一条 `kimiModel` 配置链配 `kimi-k2.6`（k2 系、官方文档明确不支持
@@ -89,9 +89,9 @@ k3 系判定只认 `kimi-k3` 前缀，订阅端 id `k3-256k` 不命中 ⇒ `supp
   断言的是**能力判定的线上形状**（读屏名 = 快照 `thinking.supported` 的可读出口）。
 - **不发消息**：kimi provider 的 api_key 是占位串（`acceptance-dummy`），本场景零发送，
   不存在外呼；发送链路的验证在场景 100（mock provider）与 Rust 单测层。
-- **模型 id 的 AX 出口**：模型 chip 面只显示 **provider 名**（D376 的 `{model}` = provider id，
-  如「模型：kimi（点击切换）」）——模型 id 本身不进 AX；「配置已生效」由 `file` 断言
-  （隔离 config.json 含 `"model": "k3-256k"`）与能力判定联合证明，负向对偶在场景 101。
+- **模型 id 的 AX 出口**：M373 起模型 id 上 chip（model 读数），本场景的 D393 读屏名里
+  直接含 `k3-256k`——「配置已生效」由读屏名 + `file` 断言（隔离 config.json 含
+  `"model": "k3-256k"`）+ 能力判定三方联合证明，负向对偶在场景 101。
 
 ## 已知边界（如实登记）
 

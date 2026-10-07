@@ -55,9 +55,10 @@ export function configSetUiValue(key: string, value: unknown): Promise<void> {
 
 /** 任意配置表的单键合并写（M301 泛化写通道 `config_set_value` 的前端入口——
  *  `configSetUiValue` ≡ section = "ui"，本函数是其任意表形态；写通道不校验取值，
- *  非法值由下次启动的 validate() 兜，与 Rust 侧注释同口径）。M347 消费点：模型 chip
- *  切 provider 写回 `harness.provider`（下一轮生效，进行中轮次不打断）。写失败抛
- *  CommandError（`config_write_failed`），调用方负责降级（面板回滚读数 + 错误行）。 */
+ *  非法值由下次启动的 validate() 兜，与 Rust 侧注释同口径）。M347 消费点起：模型 chip
+ *  切 provider 写回 `harness.provider`；M373 起 key 支持**点分嵌套路径**（如
+ *  `providers.kimi.model`——合并选择器的 model 维度写回，写通道层逐段下钻、空段拒绝）。
+ * 写失败抛 CommandError（`config_write_failed`），调用方负责降级（面板回滚读数 + 错误行）。 */
 export function configSetValue(section: string, key: string, value: unknown): Promise<void> {
   return invoke<void>("config_set_value", { section, key, value });
 }
