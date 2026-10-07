@@ -3037,6 +3037,11 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
         // 清空的是**渲染面**：会话真源在 Rust，重置成功后本地视图随之清空；待决批准项随
         // 会话失效，一并撤下（它们的 id 已不属于任何会话）——口径见 resetView 的注释。
         resetView();
+        // resetView 只清渲染面、不碰 chip 读数：档位随会话对象一起被丢弃（M362 裁决点 1），
+        // 不重取快照的话 chip 会停在上一段会话的档位，与后端「无会话 = 默认 High」分叉
+        // （M366 finding）。重取走 refreshThinkingState 的既有通道——快照是档位的唯一真源，
+        // 芯片读数据此回落默认，浮层每次现建拿到同步后的档位。
+        refreshThinkingState();
       })
       .catch((e: unknown) => appendError(t("D348", { message: errorMessage(e) })));
   }
