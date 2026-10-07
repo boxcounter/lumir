@@ -295,6 +295,20 @@ steps:
   - name: 点确认
     do: click
     target: { any: "/^移到废纸篓$/" }
+  # 确认之后 MUST NOT 立刻读磁盘（M355）：点确认只把 invoke 发出去，删盘是**异步链路**
+  #（webview → Rust command → trash::delete → FSEvents → watcher 回响），而这一步的磁盘读在
+  # 同一个 tick 里就跑完了。进程内**第一次** trash 调用要走 macOS 废纸篓子系统的一次性初始化
+  #（M355 实测：同机 Swift 探针里首调 16–44ms、之后 0.3–0.5ms），这段冷路径正好落在「断言已发、
+  # 删除未回」的窗口里 ⇒ `exists: false` 判红，而 600ms 后同一处读到的树行已经消失（10-07 的
+  # 现场：steps.md 的 FAIL 点与 shots/11 的 AX dump）。同一个场景里第二次删除（打开中的文件）
+  # 走的是热路径，因此从不撞上——两处一并改成「等可观测终态」，不靠「这次跑得快不快」。
+  - name: 等删除经 watcher 回响收敛（删盘的可观测终态）
+    do: waitFor
+    # 判据为什么是「树行消失」：树**只**由 watcher 的 deleted 回响收敛（装配层约定：成功后
+    # 不自绘补丁，唯一收敛通道是回响），行消失即 FS 条目确实已不在。
+    # `has` 是**完整性见证**：aab-tab.md 就在目标行的下一行、同屏可见，它在场才说明这次 AX 读取
+    # 真的拿到了树行列表——否则「aaaren.md 不在」会被一次退化的快照白白满足（REVIEW.md 第 2 条）。
+    waitFor: { has: ["aab-tab.md"], not: ["aaaren.md"] }
     expect:
       - label: vault 内已无该文件（移到废纸篓）
         file: { path: aaaren.md, exists: false }
@@ -493,6 +507,12 @@ steps:
   - name: 点确认
     do: click
     target: { any: "/^移到废纸篓$/" }
+  # 与上面那次同样的口径（M355）：确认后等**可观测终态**再读磁盘，不在同一个 tick 里赌删盘已经回来。
+  # 这里的终态是 sticky 提示——它本身就是 watcher 的 deleted 回响走完的那一刻才出现的
+  #（打开中文件的删除处置），比树行更直接。
+  - name: 等外部删除处置落到界面（sticky 提示 = 回响已走完）
+    do: waitFor
+    waitFor: { has: ["当前文件已被外部删除；编辑器中的内容未丢失"] }
     expect:
       - label: vault 内已无该文件
         file: { path: aabren.md, exists: false }
@@ -606,6 +626,16 @@ Alex 请求的六个条目级操作（删除、重命名、复制完整路径、
   **盲发无重试**（丢掉 README「已知边界」要求的「回读 + 只在字节未变时重试」）。因此本场景两次
   键入式改名都用无连字符的名字（`aaa-menu.md` → `aaaren.md`、`aab-tab.md` → `aabren.md`）；
   改名机制与字符集无关，断言语义不变。
+- **删除后的磁盘断言必须等可观测终态（M355，两处删除都按这条写）**：删盘是异步链路
+  （webview invoke → Rust command → `trash::delete` → FSEvents → watcher 回响），点确认只是把
+  invoke 发出去；而进程内**第一次** trash 调用要走 macOS 废纸篓子系统的一次性初始化。同机 Swift
+  探针实测（新建文件 → `NSFileManager.trashItem`，同一进程内连做四次）：首调 **16–44ms**、第二到
+  四次 **0.3–0.5ms**。首次那条冷路径足够长，长到「点完立刻读磁盘」会抢在删除回包之前（2026-10-07
+  的现场：`steps.md` 判 `exists=true` FAIL，600ms 后的 `shots/11-删除之后` 里树行已经消失；而
+  tree 只由 watcher 回响收敛、没有自绘补丁，树行消失反证 FS 条目确实已不在）。因此两处删除都改成
+  `do: waitFor` 等**可观测终态**（文件档 = 树行消失；打开中文件 = sticky 提示），磁盘断言排在它后面。
+  反向的口径：**不要**把这两条改回「点完立刻读」——它能不能过取决于当次跑得快不快；也**不要**
+  用 `sleep` 猜时长。
 - **不覆盖**：跨目录移动（非目标）、多选批量操作（非目标）、vault 根本身的右键（非目标）。
 
 ## 环境与副作用
