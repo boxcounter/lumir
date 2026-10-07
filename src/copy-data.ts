@@ -724,12 +724,14 @@ const COPY_TABLE = {
   // M347 改形（编号沿用）：读数随用量条迁入 composer 控制行（模型 chip 之后、发送钮之前），
   // 收缩为 ctx% 单读数；cache% 在头部栏（M346/HP1）退场后已无消费点，模板同列移除。
   // M370 改形（编号沿用，Alex 2026-10-07 原话「ctx: XX% 改为 XX% • YY%」）：双裸读数
-  // 「{ctx}% • {cache}%」——ctx = 上下文窗口使用率、cache = cache hit rate（cache_pct 已在
+  // 「{ctx}% · {cache}%」（分隔符小圆点 U+00B7 与 modeline 同款——Alex 过目基线候选后的复裁决
+  // 「基线截图里的圆点很大，我希望是小圆点，类似 modeline 的那种」，原话写作 • 以复裁决为准）
+  // ——ctx = 上下文窗口使用率、cache = cache hit rate（cache_pct 已在
   // usage 事件与会话快照里，纯前端消费）；「ctx 」前缀随原话一并去掉。cache 缺失（旧事件 /
   // 桩）时回落单读数「{ctx}%」（数据驱动形态，不另起模板）。
   D334: {
-    zh: "{ctx}% • {cache}%",
-    en: "{ctx}% • {cache}%",
+    zh: "{ctx}% · {cache}%",
+    en: "{ctx}% · {cache}%",
   },
   // ctx 警示浮层（M347 改形、M370 再改形，编号沿用）：常驻警示条 → ⓘ 钮按需气泡（Alex
   // 2026-10-06 裁决「（常驻句）一直显示在那里很抢注意力」）→ ⓘ 钮移除、改越线时 hover

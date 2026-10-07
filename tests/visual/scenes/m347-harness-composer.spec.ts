@@ -5,7 +5,8 @@ import { stubTauri, type VaultFixture } from "./tauri-stub";
 // 写回）、ctx% 读数（usage 事件消费 / 超阈值高亮 + 警示浮层）、发送钮两态（处理中 = 停止，
 // 停止钩子 M348 对接面桩期未注册——点击只走状态机）、不定态进度条 + 阶段指示两档、
 // 消息复制钮（hover 浮现，复制源 = 源文本非渲染 HTML）。
-// M370 起 ctx 读数改「{ctx}% • {cache}%」双裸读数（cache_pct 纯前端消费）、ⓘ 钮移除、
+// M370 起 ctx 读数改「{ctx}% · {cache}%」双裸读数（分隔符小圆点 U+00B7 与 modeline 同款；
+// cache_pct 纯前端消费）、ⓘ 钮移除、
 // 警示说明改越线时 hover 读数翻出（D377 随 ⓘ 退场；hover 形态在本场景用 playwright
 // hover 断言——真机套件无 hover 动词，负向「气泡默认收起」归场景 87）。
 // M351 起按新 DOM：composer 收进 .lumir-hp-composer-box（控制行 .lumir-hp-ctl 在容器底）、
@@ -159,10 +160,10 @@ test("composer 控制行：模型 chip 写回 / ctx 读数高亮 + ⓘ 气泡 / 
   await page.locator(".lumir-hp-transcript").click();
   await expect(modelPop).toBeHidden();
 
-  // ── ctx% 读数（M370 = 「{ctx}% • {cache}%」双裸读数 + hover 警示浮层）：
+  // ── ctx% 读数（M370 = 「{ctx}% · {cache}%」双裸读数 + hover 警示浮层）：
   //    快照零读数在场；usage 事件越阈值 → 高亮 + hover 读数翻出 D335 浮层 ──
   const ctxRead = page.locator(".lumir-hp-ctx");
-  await expect(ctxRead).toHaveText("0% • 0%");
+  await expect(ctxRead).toHaveText("0% · 0%");
   await expect(ctxRead).not.toHaveClass(/is-warn/);
   await page.evaluate(() =>
     (window as unknown as { __fireHarnessEvent: (p: unknown) => void }).__fireHarnessEvent({
@@ -171,7 +172,7 @@ test("composer 控制行：模型 chip 写回 / ctx 读数高亮 + ⓘ 气泡 / 
       cache_pct: 50,
     }),
   );
-  await expect(ctxRead).toHaveText("86% • 50%");
+  await expect(ctxRead).toHaveText("86% · 50%");
   await expect(ctxRead).toHaveClass(/is-warn/);
   // ⓘ 钮已随 M370 移除：hover 读数是警示说明的唯一入口（mouseenter 翻出、mouseleave 收回）。
   const ctxWrap = page.locator(".lumir-hp-ctxwrap");
@@ -191,7 +192,7 @@ test("composer 控制行：模型 chip 写回 / ctx 读数高亮 + ⓘ 气泡 / 
       cache_pct: 50,
     }),
   );
-  await expect(ctxRead).toHaveText("60% • 50%");
+  await expect(ctxRead).toHaveText("60% · 50%");
   await expect(ctxRead).not.toHaveClass(/is-warn/);
   await ctxWrap.hover();
   await expect(ctxPop).toBeHidden();

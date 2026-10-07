@@ -7,7 +7,8 @@
 // 新建会话钮上移进标题栏的 harness 段（.lumir-hp-seg，仅 harness 在场时出现，宽度由装配层
 // 按 pane 比分宽、与分隔条像素对齐）；ctx% 读数与常驻警示句随头部栏移除（读数迁入 composer
 // 控制行是后续 mission 的面——M347 已迁入：控制行 = [模型 chip][composer][ctx 读数][发送钮]，
-// 超阈值读数高亮 + 警示说明浮层；M370 起读数 = 「XX% • YY%」（+cache hit rate）、ⓘ 钮移除
+// 超阈值读数高亮 + 警示说明浮层；M370 起读数 = 「XX% · YY%」（+cache hit rate，分隔符小圆点
+// 按 Alex 复裁决改 U+00B7、与 modeline 同款——原话写作 •，以复裁决为准）、ⓘ 钮移除
 // 改 hover 浮层（Alex 2026-10-07），常驻警示句按 Alex 2026-10-06 裁决移除；发送钮两态
 // idle=发送 / 处理中=停止，停止钩子为 M348 对接面的明确桩）。标题栏 toggle 钮仍由本模块自建，
 // 钉标题栏右端（产品标识块已移位 traffic 灯区）；双 pane 时隐藏（退让条款），⌘⇧A 照走。
@@ -1316,7 +1317,8 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   progress.append(stageLine, barTrack);
 
   // ctx% 读数（M347，自 HP1 退场的头部栏读数迁入）：usage 事件 / 快照同源消费。
-  // M370 改形（Alex 2026-10-07）：读数 = 「XX% • YY%」（XX = ctx%、YY = cache hit rate，
+  // M370 改形（Alex 2026-10-07）：读数 = 「XX% · YY%」（XX = ctx%、YY = cache hit rate，分隔符
+  // 小圆点 U+00B7 与 modeline 同款（复裁决）；
   // cache_pct 纯前端消费）；越过警示阈值 → 读数高亮 + hover 读数浮出 D335 气泡——ⓘ 钮
   // （.lumir-hp-ctx-info）随原话「去掉感叹号」移除，浮层改 hover 形态（mouseenter/leave
   // 翻转，替代旧 click 翻转）。
@@ -2106,7 +2108,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   }
 
   /** ctx% 读数重渲（usage 事件 / 快照 / relabel 的共用出口）。M370：读数 = D334 双读数
-   *  「{ctx}% • {cache}%」（cache 缺失回落单读数）；越线高亮不动，警示说明从「ⓘ 钮点击
+   *  「{ctx}% · {cache}%」（分隔符 U+00B7，cache 缺失回落单读数）；越线高亮不动，警示说明从「ⓘ 钮点击
    *  气泡」改为「hover 读数浮层」（mouseenter/leave 翻转，仅越线时有浮层内容）。 */
   function applyUsage(): void {
     if (lastUsage === null) {
@@ -2767,7 +2769,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       case "usage":
         // M347：读数迁入 composer 控制行（模型 chip 之后、发送钮之前）——事件源自 HP1 起
         // 一直在发（头部栏已移除、事件未断），这里直接消费，不新造通道。
-        // M370：cache_pct 一并消费（同一事件里已带，纯前端读取）——「{ctx}% • {cache}%」。
+        // M370：cache_pct 一并消费（同一事件里已带，纯前端读取）——「{ctx}% · {cache}%」。
         lastUsage = typeof event.ctx_pct === "number" ? event.ctx_pct : null;
         lastCache = typeof event.cache_pct === "number" ? event.cache_pct : null;
         applyUsage();
