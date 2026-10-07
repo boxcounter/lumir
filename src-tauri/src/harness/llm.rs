@@ -45,7 +45,7 @@
 //! 才落得进窗口内。睡眠发生在 `lumir-harness-llm` 专线程里（ADR 0002 §6），不碰热路径、
 //! 不持有任何会话锁（`MockClient::complete` 期间 `Runtime` 的 sessions 锁是放开的）。
 //!
-//! # reasoning 回传纪律（design §3，M306 对真 API 核实）
+//! # reasoning 回传纪律（design §3，M306 对真 API 核实；M360 补项序条件）
 //!
 //! 流式里的 `reasoning` 项原样留作回放项（kimi 的 `encrypted_content` 因此保真）。
 //! deepseek thinking 模式**不是**「reasoning 已合并进 assistant 消息」——2026-10-03
@@ -59,6 +59,15 @@
 //! assistant message 之前入 input；[Responses 兼容表](https://api-docs.deepseek.com/guides/responses_api)
 //! 称 plain-text content 会并入相邻 assistant 消息、`encrypted_content`/`summary`
 //! 不被支持——但原样回传实测不报错，故保留原样（少一次形状重写，多一处方言风险消失）。
+//!
+//! **同一轮多条工具的项序也是硬条件（M360，2026-10-07 逐项变异实测）**：那条 400 的
+//! 报错文案指向 reasoning，实际触发条件是**项序**——兼容层把 `function_call` 并进相邻的
+//! assistant 消息，调用与输出交错（`fc1, fco1, fc2, fco2`）时第二条调用落进一条新的、
+//! 没有 reasoning 的 assistant 消息 ⇒ 400。实测对照（同一请求体逐项变异）：交错 400；
+//! 成组（`fc1, fc2, fco1, fco2`）200；**把 reasoning 整项删掉、两条调用仍交错，照旧 400**
+//! （即报错文案与缺失字段无关，别按文案去补 reasoning）。入 input 的成组压栈落在
+//! [`super::turn`]（`flush_call_items`），单测
+//! `harness_runtime::multi_call_round_groups_call_items_before_outputs` 钉住项序。
 
 use std::io::BufRead;
 

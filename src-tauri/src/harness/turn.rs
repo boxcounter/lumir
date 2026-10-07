@@ -2,6 +2,10 @@
 //! tool_calls 逐个执行、结果回送）→ 无调用或达 `loop_max` 终止。加上下文注入、
 //! 批准闸挂起、自动压缩与超限重试。
 //!
+//! 入 input 的项序是 provider 合同的一部分：同一轮的调用项必须**成组**在输出项之前
+//! （[`flush_call_items`]，M360 真 API 实测；交错即 400），reasoning 项紧随其 assistant
+//! 消息之前（[`session::assistant_item`]，M306）。
+//!
 //! 线程模型：本模块的函数都跑在 `lumir-harness-llm` 专线程（command 层 spawn）。
 //! 会话锁的持有纪律：**只在读写会话的那一刻持锁**，LLM 调用与批准等待都在锁外
 //! （一轮可能流式几分钟，持锁会把 `harness_state` / 批准通道全堵住）。
@@ -328,10 +332,17 @@ pub fn run_turn_for(
         }
 
         // —— 逐个执行工具调用（allow 直执行 / deny 回送 / ask 走批准闸）——
-        // 停止检查点 ②（M348）：本轮文本已入队后、逐调用执行前查标志——
-        // 中断时不再执行余下调用（含批准闸等待中的待决项，已由 request_abort 收回）。
+        // 执行照旧逐个串行；**入 input 的顺序另算**：先攒下每条的「调用项 + 输出项」，本轮
+        // 结束（或中断收口）时一次按「全部调用项在前、全部输出项在后」压栈。理由见
+        // [`flush_call_items`]——调用与输出交错会让 provider 把第二条调用并进一条没有
+        // reasoning 的 assistant 消息，thinking 模式即 400（M360 真 API 实测）。
+        let mut pending: Vec<(serde_json::Value, serde_json::Value)> = Vec::new();
         for call in &output.calls {
             if turn_aborted(runtime, scope) {
+                // 中断收口前先把**已执行**调用的项入 input（与本改动前逐条压栈的效果一致，
+                // 只是顺序改成成组）；未执行的调用不留任何项，会话里不会出现悬空的
+                // function_call（provider 会以 "No tool output found for tool call" 拒下一轮）。
+                flush_call_items(runtime, scope, &pending);
                 abort_turn(
                     sink,
                     runtime,
@@ -341,8 +352,9 @@ pub fn run_turn_for(
                 );
                 return;
             }
-            handle_call(sink, runtime, scope, config, &tctx, call);
+            pending.push(handle_call(sink, runtime, scope, config, &tctx, call));
         }
+        flush_call_items(runtime, scope, &pending);
         // 停止检查点 ③：中断落在最后一个调用的执行期间——不在此收口的话循环会
         // 白多跑一轮 LLM 往返才在检查点 ① 被截住（「不再继续」以最早检查点为准）。
         if turn_aborted(runtime, scope) {
@@ -463,7 +475,11 @@ fn loop_max_notice(
     sink.emit(events::text_chunk(&text));
 }
 
-/// 单个工具调用：权限判定 → （ask 档）批准闸 → 执行 → 结果回送（入队 + 事件 + JSONL）。
+/// 单个工具调用：权限判定 → （ask 档）批准闸 → 执行 → 结果回送（事件 + 面板 + JSONL）。
+///
+/// **不直接把消息项压进 input**：返回「调用项 + 输出项」由调用侧成组压栈（见
+/// [`flush_call_items`]）；面板与 JSONL 的记录仍在本函数内、逐条按时序落，故用户看到的
+/// 工具行顺序与执行顺序一致，不受入 input 顺序影响。
 fn handle_call(
     sink: &dyn EventSink,
     runtime: &Runtime,
@@ -471,7 +487,7 @@ fn handle_call(
     config: &HarnessConfig,
     tctx: &ToolContext,
     call: &llm::ToolCall,
-) {
+) -> (serde_json::Value, serde_json::Value) {
     sink.emit(events::tool_call(
         &call.name,
         "started",
@@ -530,15 +546,6 @@ fn handle_call(
     ));
     let output_text = serde_json::to_string(&output.value).unwrap_or_default();
     let _ = runtime.with_session(scope, |s| {
-        s.push_input(session::function_call_item(
-            &call.call_id,
-            &call.name,
-            &call.arguments,
-        ));
-        s.push_input(session::function_call_output_item(
-            &call.call_id,
-            &output_text,
-        ));
         s.push_panel(PanelMessage {
             role: "tool".into(),
             text: Some(output_text.clone()),
@@ -564,6 +571,38 @@ fn handle_call(
             "ok": output.succeeded(),
             "output": output.value,
         }));
+    });
+    (
+        session::function_call_item(&call.call_id, &call.name, &call.arguments),
+        session::function_call_output_item(&call.call_id, &output_text),
+    )
+}
+
+/// 本轮调用项 / 输出项成组入 input：**全部调用项在前、全部输出项在后**，同序配对。
+///
+/// 这是 provider 合同，不是排版偏好（M360，2026-10-07 对真 API 逐项变异实测）：
+/// 兼容层把 `function_call` 并进**相邻的** assistant 消息，调用与输出交错
+/// （`fc1, fco1, fc2, fco2`）时第二条调用会落进一条新的、没有 reasoning 的 assistant
+/// 消息，deepseek thinking 模式即 400
+/// ``The `reasoning_text` in the thinking mode must be passed back to the API``——
+/// 报错文案指向 reasoning，真触发条件是项序（同两条调用、reasoning 整项删掉也照旧 400；
+/// 只把两组调用对改成 `fc1, fc2, fco1, fco2` 就 200）。故入 input 的顺序由本函数独占，
+/// 调用点 MUST NOT 再逐条压栈。
+fn flush_call_items(
+    runtime: &Runtime,
+    scope: &VaultScope,
+    pending: &[(serde_json::Value, serde_json::Value)],
+) {
+    if pending.is_empty() {
+        return;
+    }
+    let _ = runtime.with_session(scope, |s| {
+        for (call_item, _) in pending {
+            s.push_input(call_item.clone());
+        }
+        for (_, output_item) in pending {
+            s.push_input(output_item.clone());
+        }
     });
 }
 

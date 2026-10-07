@@ -349,6 +349,9 @@ pub fn assistant_item(text: &str, reasoning: Option<&serde_json::Value>) -> Vec<
 }
 
 /// 工具调用与结果对：function_call 项（回放模型自己的调用）+ function_call_output 项。
+///
+/// 入 input 的**顺序**是 provider 合同：同一轮的调用项须成组在输出项之前（交错即 400，
+/// M360 真 API 实测；成组压栈的唯一落点是 [`super::turn`] 的 `flush_call_items`）。
 pub fn function_call_item(call_id: &str, name: &str, arguments: &str) -> serde_json::Value {
     serde_json::json!({
         "type": "function_call",
