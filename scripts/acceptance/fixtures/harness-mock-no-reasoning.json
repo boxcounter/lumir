@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "responses": [
+    {
+      "text": "NOTHINK-ANSWER-01 无思考回答正文。",
+      "usage": { "input_tokens": 1200, "cached_tokens": 300, "output_tokens": 20 }
+    }
+  ]
+}

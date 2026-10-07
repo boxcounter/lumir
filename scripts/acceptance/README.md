@@ -418,6 +418,13 @@ Alex 抽审路径：先看 `summary.md`，再进 FAIL 场景看 `steps.md` + `sh
   对这类控件**不要锁 `role: AXButton`**——只给裸正则源 `name`（`findNode` 对 title/label/value
   逐一匹配）；同名钮消歧优先用 role 分流（如场景 92：会话名钮是 AXPopUpButton、新建钮是
   AXButton），其次才用 `nth`（DOM 序与 dump 序同源但脆）。
+- **`aria-expanded` / `aria-checked` 不进 AX 文本（M364 实证，2026-10-07）**：KimiCU 的 AX
+  dump 只给 role + 可访问名（+ `Value:`/`help`/`actions`），**不暴露展开态与选中态**——带
+  `aria-expanded` 的钮（模型 chip、思考 chip、浮层项）与 `aria-checked` 的 `menuitemradio`
+  在全仓现有 dump 里零命中（对照：这两类控件节点本身都在树里）。因此**不要拿它们做真机断言**：
+  直接断言「AX 含 `aria-expanded=false`」会把「读不到」当「false」，正是 REVIEW.md 第 2 条禁的
+  假绿形态。判据改落在**可观测后果**上——折叠态判「内容不显」、展开态判「内容上屏」（场景 93 的
+  思考块三态即此），当前档勾选归前端单测 / 视觉层。
 - **没有滚动动作，也滚不动（M252 三轮探针）**：套件不提供 `do: scroll`——M252 按 tower 批准试做过
   （MCP `scroll` + 节点 bbox 中心 / 原始坐标），结论是**这条通道在本 app 上产不出滚动**：
   ① 点路径先报 `no cached geometry — call get_app_state first`（必须先有一次带截图的 `mode=full`

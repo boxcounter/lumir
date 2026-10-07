@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "responses": [
+    {
+      "text": "THINK-ANSWER-01 思考块验收回答正文。",
+      "chunks": ["THINK-ANSWER-01 ", "思考块验收回答正文。"],
+      "reasoning_chunks": ["THINK-BODY-ALPHA 第一片。", "THINK-BODY-BETA 第二片。"],
+      "usage": { "input_tokens": 1200, "cached_tokens": 300, "output_tokens": 40 }
+    }
+  ]
+}
