@@ -4,6 +4,8 @@ import type { HarnessProviderConfig } from "./HarnessProviderConfig";
 
 /**
  * `[harness].providers` 表：三家 provider 各一段参数，**都保留**（切 provider 不丢配置）。
+ * M381 config-only：`Default` 直接派生（三家都是各自结构的 Default = 空串/空清单/
+ * None——不内置任何出厂模型，与单独 `impl` 手写同值，交给派生不留两份）。
  */
 export type HarnessProviders = { kimi: HarnessProviderConfig, deepseek: HarnessProviderConfig, 
 /**

@@ -185,30 +185,23 @@ pub struct TurnError {
     pub context_overflow: bool,
 }
 
-/// provider 预设表（design §11 双预设）：base_url 默认、出厂 model（与 config.rs 的
-/// `DEFAULT_KIMI_MODEL` / `DEFAULT_DEEPSEEK_MODEL` **同源引用**，MUST NOT 另写字面量——
-/// REVIEW.md 第 8 条）、超限特征串。
+/// provider 预设表（design §11 双预设）：base_url 默认、超限特征串。
 ///
 /// M373 起窗口表 / 能力表退役：模型清单与每模型 effort / window 声明归配置 schema
-/// （`HarnessProviderConfig.models`，唯一真源在 config.rs 的 preset 常量），预设表只剩
-/// 网络层参数（base_url）与协议层参数（store / 超限特征串）。
+/// （`HarnessProviderConfig.models`）。M381 起（Alex 终裁「彻底不使用内置表」）预设表
+/// 连出厂 model 字段也移除——模型 id 严格只来自配置，本表只剩网络层参数（base_url）
+/// 与协议层参数（store / 超限特征串）。
 pub struct ProviderPreset {
     /// base_url 默认值（未核实，验收批对真 API 验证；配置可覆盖）。
     pub base_url: &'static str,
-    /// 出厂模型 id（引用 config 常量）。
-    pub default_model: &'static str,
     /// 上下文超限错误特征串（小写子串匹配 code+message）。
     pub overflow_indicators: &'static [&'static str],
 }
 
 /// kimi 预设（[官方 Responses schema](https://platform.kimi.ai/docs/api/responses)）：
 /// store 支持 ⇒ 显式 `store:false`；usage 含 `cache_write_tokens`（暂不展示）。
-///
-/// 模型清单 / 上下文窗口 / effort 能力的真源在 config.rs 的
-/// [`crate::config::KIMI_MODEL_PRESET`]（一手核实记录与逐模型声明都在那里）。
 const KIMI_PRESET: ProviderPreset = ProviderPreset {
     base_url: "https://api.moonshot.cn/v1", // 未核实（验收批对真 API 验证；config 可覆盖）
-    default_model: crate::config::DEFAULT_KIMI_MODEL,
     overflow_indicators: &[
         "context_length_exceeded",
         "maximum context length",
@@ -218,12 +211,8 @@ const KIMI_PRESET: ProviderPreset = ProviderPreset {
 
 /// deepseek 预设（[官方 Responses 文档](https://api-docs.deepseek.com/guides/responses_api/)）：
 /// 无状态（恒 `store:false`）；超窗请求返回 400；不支持参数静默忽略。
-///
-/// 模型清单 / 上下文窗口 / effort 能力的真源在 config.rs 的
-/// [`crate::config::DEEPSEEK_MODEL_PRESET`]（现役模型经 `GET /models` 一手核实）。
 const DEEPSEEK_PRESET: ProviderPreset = ProviderPreset {
     base_url: "https://api.deepseek.com",
-    default_model: crate::config::DEFAULT_DEEPSEEK_MODEL,
     overflow_indicators: &[
         "maximum context length",
         "context length",
@@ -320,11 +309,26 @@ pub fn client(config: &HarnessConfig) -> Result<Box<dyn LlmClient>, CommandError
                     "当前 provider 的 api_key 未配置（config.json 的 harness.providers 节）",
                 ));
             }
+            // M381 config-only：模型 id 严格只来自配置——清单为空 / model 解析为空时
+            // 在这里挡人话错误，不把空 model 发给 API（配置加载时已有 warning + 前端提示态）。
+            if model.trim().is_empty() {
+                let name = match config.provider {
+                    HarnessProvider::Kimi => "kimi",
+                    _ => "deepseek",
+                };
+                return Err(CommandError::new(
+                    "harness_model_missing",
+                    format!(
+                        "当前 provider（{name}）未配置任何模型：请在 config.json 的 harness.providers.{name}.models 下逐项声明（{{\"id\", \"effort\", \"window\"}}）"
+                    ),
+                ));
+            }
             let preset = preset(&config.provider);
             let base = base_url.unwrap_or(preset.base_url).trim_end_matches('/');
             // 思考程度能力按当前 provider + model 从配置 schema 现算（M373：
-            // `HarnessProviderConfig.models` 的逐模型声明，缺省内置 preset）——client 随
-            // 每轮 send 的 config 快照构建，能力标记在这一刻冻结进 client。
+            // `HarnessProviderConfig.models` 的逐模型声明，config-only——M381 起缺省
+            // 不再回落内置表）——client 随每轮 send 的 config 快照构建，能力标记在这
+            // 一刻冻结进 client。
             let effort_supported = config.effort_supported(&config.provider, model);
             Ok(Box::new(ResponsesClient {
                 http: reqwest::blocking::Client::builder()
@@ -995,6 +999,43 @@ mod tests {
         }
     }
 
+    /// M381 config-only：client 装配的负向闸门——api_key 缺失与 model 解析为空各自挡
+    /// 人话错误（后者不把空 model 发给 API）。两个用例在修复前形态（model 回落内置
+    /// 出厂值）必 FAIL：旧代码 model 永远非空，第一条断言就红——区分度自证。
+    #[test]
+    fn client_rejects_missing_api_key_and_empty_model() {
+        let mut config = crate::config::HarnessConfig {
+            provider: HarnessProvider::Kimi,
+            ..crate::config::HarnessConfig::default()
+        };
+        // 空 api_key（出厂态）→ api_key 错误先挡。
+        let error = match client(&config) {
+            Err(error) => error,
+            Ok(_) => panic!("空 api_key 必须被拒"),
+        };
+        assert_eq!(error.code, "harness_api_key_missing");
+        // 有 key 无模型（config-only 空清单、model 空串）→ model 错误。
+        config.providers.kimi.api_key = "sk-x".into();
+        let error = match client(&config) {
+            Err(error) => error,
+            Ok(_) => panic!("空 model 必须被拒"),
+        };
+        assert_eq!(error.code, "harness_model_missing");
+        assert!(
+            error.message.contains("models"),
+            "错误信息要指出声明路径：{}",
+            error.message
+        );
+        // 声明清单 + model 解析成功 → 装配通过（reqwest client 构建无副作用）。
+        config.providers.kimi.model = "k3-256k".into();
+        config.providers.kimi.models = vec![crate::config::HarnessModelSpec {
+            id: "k3-256k".into(),
+            effort: true,
+            window: 262_144,
+        }];
+        assert!(client(&config).is_ok());
+    }
+
     /// 单测用的流式 sink（M369）：记录收到的分片，并可按「已收到多少正文分片」翻真
     /// `aborted()`——在途停止的**确定性**驱动口，不靠 sleep 抢时序。
     #[derive(Default)]
@@ -1073,18 +1114,6 @@ mod tests {
         let snap = usage_snapshot(&usage, 131_072);
         assert!((snap.ctx_pct - 50.0).abs() < f64::EPSILON);
         assert!((snap.cache_pct - 50.0).abs() < f64::EPSILON);
-    }
-
-    #[test]
-    fn preset_default_models_stay_in_sync_with_config() {
-        // 出厂 model 与 config.rs 常量同源（REVIEW.md 第 8 条）。窗口查表本身已随 M373 退役
-        // （真源 = config.rs 的模型 preset + `HarnessConfig::context_window`，钉在 config.rs 测试里）。
-        let kimi = preset(&HarnessProvider::Kimi);
-        assert_eq!(kimi.default_model, crate::config::DEFAULT_KIMI_MODEL);
-        assert_eq!(
-            preset(&HarnessProvider::Deepseek).default_model,
-            crate::config::DEFAULT_DEEPSEEK_MODEL
-        );
     }
 
     #[test]

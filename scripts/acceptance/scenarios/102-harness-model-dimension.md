@@ -1,7 +1,7 @@
 ---
 id: "102-harness-model-dimension"
 item: 102
-title: 合并选择器 model 维度（M373）：schema models 清单进浮层、选择写回 providers.kimi.model、effort 能力随声明翻转
+title: 合并选择器 model 维度（M373/M381 config-only）：schema models 清单进浮层、选择写回 providers.kimi.model、effort 能力随声明翻转
 open: harness-note.md
 marker: "HNL-ALPHA"
 config:
@@ -46,7 +46,7 @@ steps:
         ax: { has: "/[(\"]kimi-k3[)]/" }
       - label: 模型段 kimi-k2.6 项在
         ax: { has: "/[(\"]kimi-k2[.]6[)]/" }
-      - label: 内置 preset 的其余模型不在（用户声明 = 整体覆盖：k2.7-code / k3-256k 被清单替换）
+      - label: 未声明的模型不在（M381 config-only：浮层只列声明项，绝不伪造条目——k2.7-code / k3-256k 未在本场景 config 声明）
         ax: { not: "/[(\"]kimi-k2[.]7-code[)]/" }
       - label: Provider 段 mock 隐藏（同场景 90 口径）
         ax: { not: "/[(\"]mock[)]/" }
@@ -109,9 +109,11 @@ steps:
 
 M373 起 `[harness].providers.<id>` 暴露 **model 维度**（schema 是唯一真源）：
 
-1. **models 清单进浮层**：用户声明的 `models`（逐项 `{id, effort, window}`）整体覆盖内置
-   preset——浮层模型段只列声明的两项（`kimi-k3` / `kimi-k2.6`），preset 的其余模型
-   （`kimi-k2.7-code` / `k3-256k` …）不出现（负向断言钉「整体覆盖」语义）。
+1. **models 清单进浮层**：M373 起浮层模型段只列用户声明的 `models`（逐项
+   `{id, effort, window}`）；M381 起 config-only（内置 preset 表已彻底删除）——声明两项
+   （`kimi-k3` / `kimi-k2.6`）就列两项，未声明的（`kimi-k2.7-code` / `k3-256k` …）绝不
+   出现（负向断言钉「不伪造条目」语义；models 缺省 = 空清单提示态，由 D402 承担，见
+   config.rs 单测与 D402 提示态的 UI 面）。
 2. **选择写回嵌套键**：点 `kimi-k2.6` → `config_set_value("harness","providers.kimi.model",…)`
    落盘（写通道 M373 支持点分路径）；合并写只动 `model` 键，models 清单逐键保留。
 3. **能力随声明翻转**：`kimi-k2.6` 声明 `effort=false` ⇒ chip 读屏名翻 D390（置灰语义），

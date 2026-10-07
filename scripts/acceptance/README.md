@@ -185,9 +185,11 @@ steps:
 目录（见下文「占位符」），mock provider 场景（70–77、87–98）是样例。`kimiModel`（M372，场景 99）
 写了就构造 `providers.kimi` 节（model + 占位 api_key）——自定义模型 id（如 Kimi Code 订阅端的
 `k3-256k`）的能力判定（effort 置灰判据）按 config 现算，不发消息就验得到；发消息的场景不会配
-这个键。`kimiModels`（M373，场景 102）把逐项 `{ id, effort, window }` 清单写进
-`providers.kimi.models`——schema 的 model 维度：浮层模型段按声明清单列项（**用户声明 = 整体
-覆盖**内置 preset），effort 能力 / 上下文窗口按声明现算。
+这个键。`kimiModels`（M373，场景 102；M381 起 config-only）把逐项 `{ id, effort, window }`
+清单写进 `providers.kimi.models`——schema 的 model 维度：浮层模型段按声明清单列项，
+effort 能力 / 上下文窗口按声明现算。**M381 起内置 preset 表彻底删除**：不写 `kimiModels`
+= 空清单（+ 加载 warning + 浮层 D402 提示态）——场景 99 / 101 的配置链必须连带声明
+`kimiModels`，能力判定才有输入。
 
 `editor`（M379，backlog:1905）是**整表透传**的 `[editor]` 表：`config: { editor: { line_wrap: false,
 future_key: 42 } }` 原样写进 `editor` 表（snake_case 键，非表即由 `--check` 挡住）。给「新增的
@@ -198,7 +200,8 @@ editor 配置项」构造**启动口径**用——不必每加一个键就回来
 > **provider 选项表与 model 选项表的收窄口径（M373 起分化）**：provider 段仍收不窄——
 > `config_get` 回的是 Rust 侧 `HarnessProviders` 结构体（`kimi` / `deepseek` / `mock`
 > 三个字段恒序列化），浮层恒列三档（mock 按 Alex 裁决「界面上隐藏」在 UI 层过滤）。
-> model 段**可以收窄**：`kimiModels` 声明即整体覆盖 preset（场景 102 的负向断言钉这条）。
+> model 段**就是声明清单**（M381 config-only）：`kimiModels` 写什么列什么，不写 = 空清单
+> 提示态（D402）——内置 preset 已彻底删除，场景 102 的负向断言钉「不伪造条目」语义。
 
 ### 语言面（M284）
 

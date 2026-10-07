@@ -9,7 +9,8 @@
 //! - **输入侧（给人选 → 给模型）**：[`ThinkingEffort`] 三档与 [`apply_effort`] 映射表，把档位翻成
 //!   各 provider 的请求参数。「该 provider + model 是否支持程度调节」的判据自 M373 起归
 //!   配置 schema（`HarnessConfig::effort_supported`，能力表 = `[harness].providers.<id>.models`
-//!   的逐模型声明，缺省内置 preset）——本模块的 k3 词元判定已退役，只保留请求映射这一半。
+//!   的逐模型声明，M381 起 config-only——清单严格只来自配置，缺省不回落任何内置表）——
+//!   本模块的 k3 词元判定已退役，只保留请求映射这一半。
 //!
 //! # 官方文档核实（2026-10-07，一手文档）
 //!
@@ -25,8 +26,8 @@
 //!   （[Responses API](https://platform.kimi.ai/docs/api/responses) 的 `reasoning.effort` schema；
 //!   [Reasoning Effort](https://platform.kimi.ai/docs/guide/use-reasoning-effort) 指南）。
 //!
-//! 能力边界（哪些模型支持）的核实记录与逐模型声明在 config.rs 的模型 preset 文档
-//! （`KIMI_MODEL_PRESET` / `DEEPSEEK_MODEL_PRESET`）——schema 是唯一真源，这里不复制。
+//! 能力边界（哪些模型支持）的逐模型声明在配置 schema（`[harness].providers.<id>.models`）——
+//! M381 起它是唯一真源（内置模型 preset 表已彻底删除），这里不复制。
 //!
 //! 档位命名 Low / High / Max 与默认 High 是 Alex 2026-10-06 节点 1 裁决（沿用两家命名）；
 //! 档位名作为专有名词，zh/en 两档界面均保持英文原文。
@@ -111,7 +112,6 @@ pub fn reasoning_text(item: &serde_json::Value) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::HarnessConfig;
 
     // ---- 映射表：三档 × supported 布尔 ----
 
@@ -157,44 +157,56 @@ mod tests {
     // ---- 能力判据的调用口径（真源在 config schema；这里钉「映射表消费的是 schema 读数」） ----
 
     #[test]
-    fn effort_supported_reads_schema_presets() {
-        // 出厂配置（内置 preset）：与 M372 修复后的线上口径逐条对齐。
-        let config = HarnessConfig::default();
-        for (provider, model, want) in [
-            (crate::config::HarnessProvider::Kimi, "kimi-k3", true),
-            (crate::config::HarnessProvider::Kimi, "k3-256k", true),
-            (
-                crate::config::HarnessProvider::Kimi,
-                "kimi-code/k3-256k",
-                false,
-            ),
-            (crate::config::HarnessProvider::Kimi, "kimi-k2.6", false),
-            (
-                crate::config::HarnessProvider::Kimi,
-                "kimi-k2.7-code",
-                false,
-            ),
-            (crate::config::HarnessProvider::Kimi, "kimi-k30", false),
-            (
-                crate::config::HarnessProvider::Deepseek,
-                "deepseek-flash",
-                true,
-            ),
-            (
-                crate::config::HarnessProvider::Deepseek,
-                "deepseek-v4-pro",
-                true,
-            ),
-            (crate::config::HarnessProvider::Mock, "whatever", true),
+    fn effort_supported_reads_schema_declarations() {
+        use crate::config::{
+            HarnessConfig, HarnessModelSpec, HarnessProvider, HarnessProviderConfig,
+            HarnessProviders,
+        };
+        // M381 config-only：能力表严格来自配置声明（内置 preset 已彻底删除）——同一批
+        // 模型 id，声明与否、声明成什么，读数跟着走；未列出 = 不支持（保守默认）。
+        let declared = |specs: Vec<HarnessModelSpec>| HarnessConfig {
+            providers: HarnessProviders {
+                kimi: HarnessProviderConfig {
+                    models: specs,
+                    ..HarnessProviderConfig::default()
+                },
+                ..HarnessProviders::default()
+            },
+            ..HarnessConfig::default()
+        };
+        let spec = |id: &str, effort: bool| HarnessModelSpec {
+            id: id.into(),
+            effort,
+            window: 262_144,
+        };
+        let harness = declared(vec![
+            spec("kimi-k3", true),
+            spec("k3-256k", true),
+            spec("kimi-k2.6", false),
+        ]);
+        for (model, want) in [
+            ("kimi-k3", true),
+            ("k3-256k", true),
+            ("kimi-code/k3-256k", false), // 复合 id 不逐字命中 = 不支持（前缀不宽容）
+            ("kimi-k2.6", false),
+            ("kimi-k2.7-code", false),
+            ("kimi-k30", false),
+            ("kimi-k2", false),
         ] {
             assert_eq!(
-                config.effort_supported(&provider, model),
+                harness.effort_supported(&HarnessProvider::Kimi, model),
                 want,
-                "{provider:?}/{model}"
+                "kimi/{model}"
             );
         }
-        // 订阅端复合 id（kimi-code/k3-256k）在 preset 里没有逐字条目 ⇒ 置灰；
-        // 用户要在配置里显式声明它（models 覆盖），不再靠词元猜测。
+        // 声明翻转：同一个 id 换个声明，读数跟着翻（真源是配置，不是模型名的内在属性）。
+        let harness = declared(vec![spec("kimi-k2.6", true)]);
+        assert!(harness.effort_supported(&HarnessProvider::Kimi, "kimi-k2.6"));
+        // 空清单：一切模型都不支持。
+        let harness = declared(Vec::new());
+        assert!(!harness.effort_supported(&HarnessProvider::Kimi, "kimi-k3"));
+        // mock 恒定支持（fixture 驱动，验收断言档位到达请求）——与声明无关。
+        assert!(harness.effort_supported(&HarnessProvider::Mock, "whatever"));
     }
 
     // ---- 输出侧：reasoning 文本提取 ----

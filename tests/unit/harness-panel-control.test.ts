@@ -137,7 +137,7 @@ test("chipModelReading：有 model 维度 → 当前 model 配置值（不在 op
   );
 });
 
-test("chipModelReading：回落链——model 为空回落首选项 id，无维度（mock）回落 provider id", () => {
+test("chipModelReading：回落链——model 为空回落首选项 id（配置声明），无维度（mock）回落 provider id", () => {
   assert.equal(
     chipModelReading({
       provider: "kimi",
@@ -150,6 +150,27 @@ test("chipModelReading：回落链——model 为空回落首选项 id，无维�
   assert.equal(
     chipModelReading({ provider: "mock", providerOptions: [], models: {} } as never),
     "mock",
+  );
+});
+
+test("chipModelReading：M381 config-only 空清单态 → 空串（不伪造读数，调用方收起 model 名走 D403）", () => {
+  // 有维度但声明清单为空：model 读数为空串——MUST NOT 回落 provider id（那是伪造）。
+  assert.equal(
+    chipModelReading({
+      provider: "kimi",
+      providerOptions: ["kimi"],
+      models: { kimi: { current: "", options: [] } },
+    } as never),
+    "",
+  );
+  // current 有值但 options 空（model 键显式声明、models 清单缺失）→ 照实显示配置值。
+  assert.equal(
+    chipModelReading({
+      provider: "kimi",
+      providerOptions: ["kimi"],
+      models: { kimi: { current: "stray-model", options: [] } },
+    } as never),
+    "stray-model",
   );
 });
 
