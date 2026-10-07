@@ -20,7 +20,8 @@
 //! - [`diff`]：edits → unified diff 预览
 //! - [`jsonl`]：会话留存（配置目录，append-only，MUST NOT 写入 vault）
 //! - [`turn`]：工具循环编排（上下文注入、多轮往返、loop_max、自动压缩、超限重试）
-//! - [`events`]：`harness:event` 八类事件载荷（与 m303 面板共用的钉死契约）
+//! - [`events`]：`harness:event` 九类事件载荷（与 m303 面板共用的钉死契约）
+//! - [`thinking`]：思考程度档位／provider 能力与请求映射、reasoning 展示文本提取（M362）
 
 pub mod approval;
 pub mod context;
@@ -30,6 +31,7 @@ pub mod jsonl;
 pub mod llm;
 pub mod permissions;
 pub mod session;
+pub mod thinking;
 pub mod tools;
 pub mod turn;
 
@@ -112,17 +114,29 @@ impl Runtime {
                 ));
             }
         }
-        // get_or_insert 语义：先备好新会话，再统一置 busy（避免建立途中 panic 留下半态）。
-        // 构造含 `?` 失败路径，entry API 会算 eagerly——故先 Vacant 判定再插。
-        if let std::collections::hash_map::Entry::Vacant(vacant) = sessions.entry(scope.key()) {
-            let system = context::assemble_system(&scope.root);
-            let writer = jsonl::JsonlWriter::open(&scope.root)?;
-            vacant.insert(session::Session::new(scope.root.clone(), system, writer));
-        }
-        let session = sessions.get_mut(&scope.key()).expect("just ensured");
+        let session = ensure_session(&mut sessions, scope)?;
         session.set_busy(true);
         // 新一轮复位上一轮的停止请求（中断标志不带进新轮；M348）。
         session.clear_abort();
+        Ok(())
+    }
+
+    /// 设置当前 vault 会话的思考程度档位（`harness_set_thinking_effort` 的实现体，M362）。
+    ///
+    /// 会话不存在时**即时建立**（与 [`Self::acquire_turn`] 同一条建立路径）：面板一打开就可能
+    /// 点思考 chip，而档位是**会话状态**——「写档位」不能依赖「用户已发过消息」。档位不写回
+    /// 配置（Alex 2026-10-06 裁决点 1）；新建会话丢弃会话对象，档位随之回到默认 High。
+    pub fn set_thinking_effort(
+        &self,
+        scope: &VaultScope,
+        effort: thinking::ThinkingEffort,
+    ) -> Result<(), CommandError> {
+        let mut sessions = self
+            .inner
+            .sessions
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        ensure_session(&mut sessions, scope)?.set_thinking_effort(effort);
         Ok(())
     }
 
@@ -195,15 +209,19 @@ impl Runtime {
     }
 
     /// 当前 vault 的会话快照（`harness_state` 用）：无会话时空态（面板宽容解析）。
+    ///
+    /// 思考能力标记按当前 provider + model 现算（[`thinking::supported`]，M362）——能力是
+    /// 环境属性、与有没有会话无关，空态也要给对（见 `StateSnapshot::empty` 的注释）。
     pub fn snapshot(&self, scope: &VaultScope, config: &HarnessConfig) -> session::StateSnapshot {
+        let supported = thinking::supported(&config.provider, llm::active_model(config));
         let sessions = self
             .inner
             .sessions
             .lock()
             .unwrap_or_else(|e| e.into_inner());
         match sessions.get(&scope.key()) {
-            Some(s) => s.snapshot(config.warn_ctx_pct),
-            None => session::StateSnapshot::empty(&scope.key(), config.warn_ctx_pct),
+            Some(s) => s.snapshot(config.warn_ctx_pct, supported),
+            None => session::StateSnapshot::empty(&scope.key(), config.warn_ctx_pct, supported),
         }
     }
 
@@ -247,6 +265,9 @@ impl Runtime {
     /// 「新会话」重置：丢弃旧会话对象（消息历史随之清空），下次访问按新会话装配
     /// （系统上下文重读 AGENTS.md / Skill 索引；JSONL 句柄随旧对象丢弃，留存文件不动）。
     /// 无会话时是空操作（幂等）。
+    ///
+    /// **思考程度档位随会话对象一起丢弃**（M362，Alex 裁决点 1「新会话回到默认」）——
+    /// 档位是会话状态，不存在这里的第二个副本，故这一处 remove 就是重置的完整实现。
     pub fn reset_session(&self, scope: &VaultScope) {
         let mut sessions = self
             .inner
@@ -261,6 +282,27 @@ impl Runtime {
         }
         sessions.remove(&scope.key());
     }
+}
+
+/// 取得（必要时建立）该 vault 的会话：会话不存在时装配系统上下文并打开 JSONL 句柄。
+///
+/// **唯一建立路径**（M362 收拢）：`acquire_turn` 与 `set_thinking_effort` 都经这里——两处各写
+/// 一份建立逻辑必然漂移（REVIEW.md 第 8 条）。建立失败（`JsonlWriter::open`）在插入之前返回，
+/// 不留下半态会话（与收拢前 `acquire_turn` 的 entry 先判后插同口径）。
+fn ensure_session<'a>(
+    sessions: &'a mut HashMap<String, session::Session>,
+    scope: &VaultScope,
+) -> Result<&'a mut session::Session, CommandError> {
+    let key = scope.key();
+    if !sessions.contains_key(&key) {
+        let system = context::assemble_system(&scope.root);
+        let writer = jsonl::JsonlWriter::open(&scope.root)?;
+        sessions.insert(
+            key.clone(),
+            session::Session::new(scope.root.clone(), system, writer),
+        );
+    }
+    Ok(sessions.get_mut(&key).expect("just ensured"))
 }
 
 // ---------------------------------------------------------------------------
@@ -358,7 +400,7 @@ pub fn harness_new_session(
 
 /// 当前 vault 会话快照 JSON（供 webview 重载后面板恢复渲染）。
 /// 键集合是 m303 消费形状的超集：`vault`（会话标识 = vault 根路径，M312）/ `messages[]` /
-/// `usage` / `pending_approval` / `warn_ctx_pct`。
+/// `usage` / `pending_approval` / `warn_ctx_pct` / `thinking`（M362：`{level, supported}`）。
 #[tauri::command(rename_all = "snake_case")]
 pub fn harness_state(
     vault: tauri::State<'_, crate::commands::VaultState>,
@@ -371,4 +413,18 @@ pub fn harness_state(
         CommandError::new("harness_state_failed", format!("无法序列化会话快照：{e}"))
             .param("reason", e.to_string())
     })
+}
+
+/// 设置当前会话的思考程度档位（M362，change add-harness-thinking-display-and-effort）。
+/// 取值为闭集合 `low` / `high` / `max`（[`thinking::ThinkingEffort`]）；**会话内生效、不写回
+/// 配置**：影响其后发出的消息，新建会话（`harness_new_session`）回到默认 High。
+/// 无会话时即时建立会话再落档位（面板一打开就可能点思考 chip，见 [`Runtime::set_thinking_effort`]）。
+#[tauri::command(rename_all = "snake_case")]
+pub fn harness_set_thinking_effort(
+    vault: tauri::State<'_, crate::commands::VaultState>,
+    runtime: tauri::State<'_, Runtime>,
+    effort: thinking::ThinkingEffort,
+) -> Result<(), CommandError> {
+    let scope = vault_scope(&vault)?;
+    runtime.set_thinking_effort(&scope, effort)
 }

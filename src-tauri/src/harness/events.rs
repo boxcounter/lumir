@@ -1,11 +1,13 @@
-//! `harness:event` 事件载荷（tower 钉死、与 m303 面板共用的八类契约）。
+//! `harness:event` 事件载荷（tower 钉死、与 m303 面板共用的九类契约）。
 //!
 //! 事件名固定 `harness:event`；payload 是 JSON **对象**（m303 宽容解析：若是 string 会
-//! JSON.parse 一次——直接发对象即零改动接入）。八类 type：
-//! text_chunk / tool_call / approval_request / usage / compact / done / error / aborted
-//!（aborted 为 M348 新增的第八类——本轮被用户停止；既有七类的形状与语义一律未动）。
+//! JSON.parse 一次——直接发对象即零改动接入）。九类 type：
+//! text_chunk / tool_call / approval_request / usage / compact / done / error / aborted /
+//! reasoning_chunk
+//!（aborted 为 M348 新增的第八类——本轮被用户停止；reasoning_chunk 为 M362 新增的第九类——
+//! 思考文本分片，见 [`reasoning_chunk`]；既有七类的形状与语义一律未动）。
 //!
-//! 八类载荷之上有**一个公共信封字段**：`vault` = 发送该事件的会话所属 vault 的根路径
+//! 九类载荷之上有**一个公共信封字段**：`vault` = 发送该事件的会话所属 vault 的根路径
 //!（M312，[`stamp_vault`] / [`ScopedSink`]）。前端据此只渲染**当前 vault** 的会话——
 //! 切换 vault 之后仍在途的旧 vault 事件（工具循环跑在专线程上，切换不打断它）因此被丢弃，
 //! 不会串进新 vault 的面板。它是「会话标识」本身：`Runtime` 的 sessions 映射以 vault 根路径
@@ -20,7 +22,7 @@ pub const VAULT_FIELD: &str = "vault";
 
 /// 把 vault 标识盖进事件载荷的顶层（信封字段的唯一施加点，M312）。
 ///
-/// 非对象载荷原样放过（八类构造函数都产对象，这条只防未来有人发非对象）。
+/// 非对象载荷原样放过（九类构造函数都产对象，这条只防未来有人发非对象）。
 pub fn stamp_vault(payload: &mut serde_json::Value, vault: &str) {
     if let Some(object) = payload.as_object_mut() {
         object.insert(
@@ -65,6 +67,19 @@ impl EventSink for ScopedSink<'_> {
 /// `{"type":"text_chunk","text":"..."}`
 pub fn text_chunk(text: &str) -> serde_json::Value {
     serde_json::json!({"type": "text_chunk", "text": text})
+}
+
+/// `{"type":"reasoning_chunk","text":"...","index":N}`——思考文本分片（M362 新增的第九类）。
+///
+/// `text` 是 provider 的**明文**思考文本（[`super::thinking::reasoning_text`] 的产物，
+/// `encrypted_content` 永不出现在这里）；`index` 是**块序号** = 本轮（一次提问的整个工具循环）
+/// 里第几个思考块，同一块的多个分片共用同一个 `index`。
+///
+/// 前端按 `index` 聚合、按序号排列在 agent 正文之前，时长取同块首末分片的墙钟差（计时在前端，
+/// core 不引入新计时状态）。本事件是纯**输出侧增量**——它不改 reasoning 的捕获 / 合成 / 回传
+/// 路径（M306 纪律，[`super::llm`] 模块头），只把「已捕获的思考文本」转发给人。
+pub fn reasoning_chunk(text: &str, index: u32) -> serde_json::Value {
+    serde_json::json!({"type": "reasoning_chunk", "text": text, "index": index})
 }
 
 /// `{"type":"tool_call","name":"...","status":"started"|"done","summary":"..."}`
@@ -139,7 +154,7 @@ mod tests {
         }
     }
 
-    /// 八类载荷**每一类**都盖上 vault 标识——漏一类就是一条跨 vault 泄漏路径（M312）。
+    /// 九类载荷**每一类**都盖上 vault 标识——漏一类就是一条跨 vault 泄漏路径（M312）。
     /// `ScopedSink` 是生产中唯一的装配点（`turn::run_turn`），这里驱动的是同一个装饰器。
     #[test]
     fn scoped_sink_stamps_vault_on_every_event_kind() {
@@ -154,9 +169,10 @@ mod tests {
         sink.emit(done());
         sink.emit(error("harness_busy", "忙"));
         sink.emit(aborted());
+        sink.emit(reasoning_chunk("先读 a.md。", 0));
 
         let events = seen.lock().unwrap();
-        assert_eq!(events.len(), 8);
+        assert_eq!(events.len(), 9);
         for event in events.iter() {
             assert_eq!(
                 event[VAULT_FIELD],
@@ -167,12 +183,17 @@ mod tests {
         // 区分度自证（REVIEW.md 第 1 条）：未经包装的载荷**没有**这个字段——上面的断言因此
         // 真的在判「包装生效」，而不是「字段本来就存在」。
         assert!(text_chunk("你好").get(VAULT_FIELD).is_none());
-        // 信封字段是**加**上去的，原有字段一个不少（形状仍是八类契约本身）。
+        // 信封字段是**加**上去的，原有字段一个不少（形状仍是九类契约本身）。
         assert_eq!(events[0]["text"], serde_json::json!("你好"));
         assert_eq!(events[2]["tool"], serde_json::json!("vault_patch"));
         assert_eq!(
             events[5],
             serde_json::json!({"type": "done", "vault": "/tmp/vault-a"})
+        );
+        // 第九类：信封加上了，业务字段（文本 + 块序号）原样在列。
+        assert_eq!(
+            events[8],
+            serde_json::json!({"type": "reasoning_chunk", "text": "先读 a.md。", "index": 0, "vault": "/tmp/vault-a"})
         );
     }
 

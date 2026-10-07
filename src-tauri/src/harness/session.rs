@@ -17,6 +17,7 @@ use crate::commands::CommandError;
 
 use super::approval::{ApprovalDecision, ApprovalRequest, ApprovalSignal};
 use super::jsonl::JsonlWriter;
+use super::thinking::ThinkingEffort;
 
 /// 面板消息（`harness_state` 快照 `messages[]` 的元素；m303 宽容解析，缺字段=空态）。
 #[derive(Debug, Clone, Serialize, TS)]
@@ -63,15 +64,35 @@ impl StateSnapshot {
     /// 空态快照（无会话 / 未打开 vault）：面板宽容解析下全空即合法。
     /// `vault` 仍是当前 scope 的键——「这个空态属于哪个 vault」是快照准入判据的一半
     ///（M312：切 vault 之后回来的旧快照要按标识丢弃）。
-    pub fn empty(vault: &str, warn_ctx_pct: f64) -> Self {
+    ///
+    /// `thinking_supported` 由调用侧按当前 provider + model 算出（[`super::thinking::supported`]）：
+    /// 无会话时档位是默认 High，但「这个 provider 能不能调」与有没有会话无关，空态也要给出
+    /// 正确的能力标记，否则面板一打开 chip 会先亮后灰（M362）。
+    pub fn empty(vault: &str, warn_ctx_pct: f64, thinking_supported: bool) -> Self {
         Self {
             vault: vault.to_string(),
             messages: Vec::new(),
             usage: UsageSnapshot::default(),
             pending_approval: None,
             warn_ctx_pct,
+            thinking: ThinkingState {
+                level: ThinkingEffort::default(),
+                supported: thinking_supported,
+            },
         }
     }
+}
+
+/// 思考程度在快照里的读出面（面板思考 chip 的数据源，M362）。
+///
+/// 键集合与序列化同在 `harness_state` 的 `thinking` 字段里：`level` = 当前档位（会话内生效，
+/// 新会话回到默认 High），`supported` = 当前 provider + model 是否支持程度调节
+///（false ⇒ 前端置灰禁用 + hover 说明，Alex 2026-10-06 裁决点 2）。
+#[derive(Debug, Clone, Copy, Serialize, TS)]
+#[ts(export, export_to = "../../src/bindings/")]
+pub struct ThinkingState {
+    pub level: ThinkingEffort,
+    pub supported: bool,
 }
 
 /// `harness_state` 返回的快照（键集合是 m303 消费形状的超集）。
@@ -86,6 +107,8 @@ pub struct StateSnapshot {
     pub pending_approval: Option<PendingApprovalSnapshot>,
     /// 上下文用量警示阈值（面板警示条用，缺省 85）。
     pub warn_ctx_pct: f64,
+    /// 思考程度档位与 provider 能力（面板思考 chip 的数据源，M362）。
+    pub thinking: ThinkingState,
 }
 
 /// 面板可见的批准请求摘要（不含通道 sender）。
@@ -130,6 +153,9 @@ pub struct Session {
     abort_requested: bool,
     /// 最近一次提问注入的「当前编辑器上下文」节（压缩续聊时原样重注入）。
     current_context: Option<String>,
+    /// 思考程度档位（M362，Alex 2026-10-06 裁决：Low / High / Max，默认 High）。
+    /// **会话内生效、不写回配置**：影响其后发出的消息，新会话（对象被丢弃重造）随之回到默认。
+    thinking_effort: ThinkingEffort,
     jsonl: JsonlWriter,
 }
 
@@ -145,6 +171,7 @@ impl Session {
             pending: None,
             abort_requested: false,
             current_context: None,
+            thinking_effort: ThinkingEffort::default(),
             jsonl,
         }
     }
@@ -155,6 +182,16 @@ impl Session {
 
     pub fn system(&self) -> &str {
         &self.system
+    }
+
+    /// 当前思考程度档位（请求构造读它，见 [`super::turn`] 的 `build_request`）。
+    pub fn thinking_effort(&self) -> ThinkingEffort {
+        self.thinking_effort
+    }
+
+    /// 设置档位（`harness_set_thinking_effort` 的落点）。
+    pub fn set_thinking_effort(&mut self, effort: ThinkingEffort) {
+        self.thinking_effort = effort;
     }
 
     pub fn is_busy(&self) -> bool {
@@ -202,7 +239,9 @@ impl Session {
         self.current_context.as_deref()
     }
 
-    pub fn snapshot(&self, warn_ctx_pct: f64) -> StateSnapshot {
+    /// 面板快照。`thinking_supported` 由调用侧按当前 provider + model 算出
+    ///（[`super::thinking::supported`]）——会话不知道 provider，能力标记不在这里判定。
+    pub fn snapshot(&self, warn_ctx_pct: f64, thinking_supported: bool) -> StateSnapshot {
         StateSnapshot {
             vault: self.root.display().to_string(),
             messages: self.panel.clone(),
@@ -212,6 +251,10 @@ impl Session {
                 .as_ref()
                 .map(PendingApprovalSnapshot::from_request),
             warn_ctx_pct,
+            thinking: ThinkingState {
+                level: self.thinking_effort,
+                supported: thinking_supported,
+            },
         }
     }
 

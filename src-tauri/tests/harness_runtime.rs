@@ -12,6 +12,7 @@ use lumir_lib::config::{HarnessConfig, HarnessPermissions, HarnessProvider};
 use lumir_lib::fs_io::IgnorePolicy;
 use lumir_lib::harness::events::EventSink;
 use lumir_lib::harness::llm::{LlmClient, MockClient};
+use lumir_lib::harness::thinking::ThinkingEffort;
 use lumir_lib::harness::turn;
 use lumir_lib::harness::{Runtime, VaultScope};
 use std::path::{Path, PathBuf};
@@ -813,11 +814,13 @@ fn auto_compact_triggers_over_threshold() {
         system: "x".into(),
         input: vec![],
         tools: vec![],
+        effort: Default::default(),
     });
     client2.complete(&lumir_lib::harness::llm::Request {
         system: "x".into(),
         input: vec![],
         tools: vec![],
+        effort: Default::default(),
     });
     drive_turn(
         &sink2,
@@ -1212,4 +1215,274 @@ fn each_call_enters_input_exactly_once() {
         .filter(|m| m.role == "tool")
         .count();
     assert_eq!(tool_msgs, 2);
+}
+
+// ---------------------------------------------------------------------------
+// M362：思考过程呈现与思考程度（change add-harness-thinking-display-and-effort）
+// ---------------------------------------------------------------------------
+
+/// 事件类型序列（不含 done 之外的分片内容），便于逐位断言转发顺序。
+fn event_types(sink: &CollectSink) -> Vec<String> {
+    sink.types()
+}
+
+/// 一轮里两次 LLM 往返各产出一个思考块：分片按块序号（0、1）转发，且**思考块在正文之前**。
+/// 同时核回放侧照旧（两个 reasoning 项原样入 input、各紧随其 assistant 之前）——新事件是
+/// 纯输出侧增量，M306 回放路径零改动。
+#[test]
+fn reasoning_chunks_forwarded_in_order_with_block_index() {
+    let f = Fixture::new("reasoning-blocks");
+    f.write("a.md", "正文\n");
+    let runtime = f.runtime();
+    runtime.acquire_turn(&f.scope()).unwrap();
+    let sink = CollectSink::default();
+    let script = r#"{"responses": [
+        {"text": "先读。",
+         "reasoning_chunks": ["第一块甲", "第一块乙"],
+         "reasoning": {"type":"reasoning","id":"rs_1","content":[{"type":"reasoning_text","text":"回放思考一"}]},
+         "tool_calls": [{"id": "c1", "name": "vault_read", "arguments": "{\"path\":\"a.md\"}"}]},
+        {"text": "读完了。",
+         "reasoning_chunks": ["第二块"],
+         "reasoning": {"type":"reasoning","id":"rs_2","content":[{"type":"reasoning_text","text":"回放思考二"}]}}
+    ]}"#;
+    let mut client = MockClient::from_str(script, "reasoning-blocks").unwrap();
+    drive_turn(
+        &sink,
+        &runtime,
+        &f.scope(),
+        &mock_config(),
+        "问题".into(),
+        &mut client,
+    );
+    runtime.release_turn(&f.scope());
+
+    // 转发顺序逐位钉死：每轮的思考分片都在该轮正文之前；两轮各自的块序号 0 / 1。
+    assert_eq!(
+        event_types(&sink),
+        vec![
+            "reasoning_chunk",
+            "reasoning_chunk",
+            "text_chunk",
+            "tool_call",
+            "tool_call",
+            "reasoning_chunk",
+            "text_chunk",
+            "done"
+        ],
+        "{:?}",
+        sink.events()
+    );
+    let chunks: Vec<(String, u64)> = sink
+        .events()
+        .iter()
+        .filter(|e| e["type"] == "reasoning_chunk")
+        .map(|e| {
+            (
+                e["text"].as_str().unwrap().to_string(),
+                e["index"].as_u64().unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        chunks,
+        vec![
+            ("第一块甲".to_string(), 0),
+            ("第一块乙".to_string(), 0),
+            ("第二块".to_string(), 1),
+        ],
+        "同一块的多个分片共用 index，跨轮递增"
+    );
+
+    // 回放侧零改动：两个 reasoning 项都在 input 里，且各紧随其 assistant 之前。
+    let kinds: Vec<String> = runtime
+        .with_session(&f.scope(), |s| {
+            s.input()
+                .iter()
+                .map(|it| {
+                    it.get("type")
+                        .and_then(|t| t.as_str())
+                        .map(str::to_string)
+                        .unwrap_or_else(|| it["role"].as_str().unwrap_or("?").to_string())
+                })
+                .collect()
+        })
+        .unwrap();
+    assert_eq!(
+        kinds,
+        vec![
+            "user",
+            "reasoning",
+            "assistant",
+            "function_call",
+            "function_call_output",
+            "reasoning",
+            "assistant"
+        ],
+        "{kinds:?}"
+    );
+}
+
+/// 只给回放项、不给展示分片（老 fixture / 只发 `output_item.done` 的 provider）时，
+/// 展示侧退回「从回放项提取明文、整段作一个分片」——思考不丢，且密文永不进事件。
+#[test]
+fn reasoning_falls_back_to_captured_item_text_when_no_chunks() {
+    let f = Fixture::new("reasoning-fallback");
+    let runtime = f.runtime();
+    runtime.acquire_turn(&f.scope()).unwrap();
+    let sink = CollectSink::default();
+    let script = r#"{"responses": [
+        {"text": "答。",
+         "reasoning": {"type":"reasoning","id":"rs_1","encrypted_content":"secret-enc",
+                       "content":[{"type":"reasoning_text","text":"从回放项提取的思考"}]}}
+    ]}"#;
+    let mut client = MockClient::from_str(script, "reasoning-fallback").unwrap();
+    drive_turn(
+        &sink,
+        &runtime,
+        &f.scope(),
+        &mock_config(),
+        "问题".into(),
+        &mut client,
+    );
+    runtime.release_turn(&f.scope());
+
+    let chunks: Vec<serde_json::Value> = sink
+        .events()
+        .into_iter()
+        .filter(|e| e["type"] == "reasoning_chunk")
+        .collect();
+    assert_eq!(chunks.len(), 1, "{chunks:?}");
+    assert_eq!(chunks[0]["text"], "从回放项提取的思考");
+    assert_eq!(chunks[0]["index"], 0);
+    // 密文不出现在事件里（一致性原则的反向半边）。
+    assert!(!serde_json::to_string(&chunks)
+        .unwrap()
+        .contains("secret-enc"));
+}
+
+/// 反向验证（design §6 第 4 条）：fixture 不含 reasoning 时整轮零思考事件——
+/// 防「恒真空转」（正观测由上面两条提供）。
+#[test]
+fn no_reasoning_yields_zero_reasoning_events() {
+    let f = Fixture::new("reasoning-absent");
+    let runtime = f.runtime();
+    runtime.acquire_turn(&f.scope()).unwrap();
+    let sink = CollectSink::default();
+    let script = r#"{"responses": [{"text": "没有思考的一轮。"}]}"#;
+    let mut client = MockClient::from_str(script, "reasoning-absent").unwrap();
+    drive_turn(
+        &sink,
+        &runtime,
+        &f.scope(),
+        &mock_config(),
+        "问题".into(),
+        &mut client,
+    );
+    runtime.release_turn(&f.scope());
+    assert_eq!(
+        sink.types()
+            .iter()
+            .filter(|t| t.as_str() == "reasoning_chunk")
+            .count(),
+        0,
+        "{:?}",
+        sink.types()
+    );
+}
+
+/// 档位链路的端到端：`Runtime::set_thinking_effort` 写会话 → `build_request` 读会话 →
+/// 请求对象带着它到达 client（mock 记录入库）。这是「切档位后下一轮请求携带映射后参数」
+/// 在 core 侧的机读口（真机验收断言经 `MockClient::received_efforts` 同源）。
+#[test]
+fn session_thinking_effort_reaches_request() {
+    let f = Fixture::new("thinking-effort");
+    let runtime = f.runtime();
+    // 无会话时也能落档位（面板一打开就可能点 chip）——这里顺带核「即时建会话」。
+    runtime
+        .set_thinking_effort(&f.scope(), ThinkingEffort::Max)
+        .unwrap();
+    assert_eq!(
+        runtime.snapshot(&f.scope(), &mock_config()).thinking.level,
+        ThinkingEffort::Max
+    );
+    runtime.acquire_turn(&f.scope()).unwrap();
+    let sink = CollectSink::default();
+    let mut client = MockClient::from_str(r#"{"responses":[{"text":"答。"}]}"#, "effort").unwrap();
+    drive_turn(
+        &sink,
+        &runtime,
+        &f.scope(),
+        &mock_config(),
+        "问题".into(),
+        &mut client,
+    );
+    runtime.release_turn(&f.scope());
+    assert_eq!(client.received_efforts(), &[ThinkingEffort::Max]);
+}
+
+/// 新会话重置默认（Alex 裁决点 1：会话内生效、不写回配置、新会话回到 High）：
+/// 切到 Max → 开新会话 → 快照读回 High，且下一轮请求按 High 构造。
+#[test]
+fn new_session_resets_thinking_effort_to_default_high() {
+    let f = Fixture::new("thinking-reset");
+    let runtime = f.runtime();
+    runtime
+        .set_thinking_effort(&f.scope(), ThinkingEffort::Low)
+        .unwrap();
+    runtime.new_session(&f.scope()).unwrap();
+    assert_eq!(
+        runtime.snapshot(&f.scope(), &mock_config()).thinking.level,
+        ThinkingEffort::High,
+        "新会话回到默认 High"
+    );
+
+    runtime.acquire_turn(&f.scope()).unwrap();
+    let sink = CollectSink::default();
+    let mut client = MockClient::from_str(r#"{"responses":[{"text":"答。"}]}"#, "reset").unwrap();
+    drive_turn(
+        &sink,
+        &runtime,
+        &f.scope(),
+        &mock_config(),
+        "问题".into(),
+        &mut client,
+    );
+    runtime.release_turn(&f.scope());
+    assert_eq!(client.received_efforts(), &[ThinkingEffort::High]);
+}
+
+/// 快照的思考能力标记按 provider + model 现算（前端 chip 置灰判据）：mock / kimi-k3 支持，
+/// kimi 的 k2.x（含退役的 kimi-k2）不支持。无会话的空态也要给对（面板一打开即读）。
+#[test]
+fn snapshot_thinking_capability_follows_provider_and_model() {
+    let f = Fixture::new("thinking-capability");
+    let runtime = f.runtime();
+
+    assert!(
+        runtime
+            .snapshot(&f.scope(), &mock_config())
+            .thinking
+            .supported
+    );
+
+    let kimi = |model: &str| {
+        let mut config = mock_config();
+        config.provider = HarnessProvider::Kimi;
+        config.providers.kimi.model = model.to_string();
+        config
+    };
+    // k3 系支持（官方文档：reasoning.effort 仅 k3 系）。
+    assert!(
+        runtime
+            .snapshot(&f.scope(), &kimi("kimi-k3"))
+            .thinking
+            .supported
+    );
+    // k2.x 不支持 ⇒ 前端置灰。
+    for model in ["kimi-k2.6", "kimi-k2.7-code", "kimi-k2"] {
+        let snapshot = runtime.snapshot(&f.scope(), &kimi(model));
+        assert!(!snapshot.thinking.supported, "{model} 应标记不支持");
+        // 能力与档位分开：不支持时档位读数仍是默认 High（前端 chip 显示读数 + 置灰）。
+        assert_eq!(snapshot.thinking.level, ThinkingEffort::High, "{model}");
+    }
 }
