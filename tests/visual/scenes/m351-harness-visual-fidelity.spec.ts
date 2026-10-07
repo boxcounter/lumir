@@ -118,7 +118,10 @@ test("消息区：who/when meta 行 + 用户气泡计算样式 + agent 平铺", 
   await expect(userWhen).toHaveCount(1);
   await expect(userWhen).toHaveText(/· (刚刚|\d+秒前)/);
   await expect(userWhen).toHaveAttribute("data-ts", /^\d+$/);
-  // 气泡挂 body（不挂消息元素）：content-bg 底 / border-soft 边 / r6 / 正文 text-2（探针对照）。
+  // 气泡挂 body（不挂消息元素）：M351 = content-bg 底 / border-soft 边 / r6 / 正文 text-2
+  // （探针对照）；M370 底色改挂 --sel（选中底色一族）——content-bg 与面板 --agent-bg 的
+  // 两档明度差在一屏内不可辨（Alex「看不清我的消息和 Agent 的回复之间的边界」），--sel 是
+  // 既有 token 里最强的中性底色（eink = #b9b9b9 灰实底，无色彩语义）。
   const userBody = userMsg.locator(".lumir-hp-body");
   await expect(userBody).toHaveCount(1);
   const bubble = await userBody.evaluate((el) => {
@@ -131,7 +134,7 @@ test("消息区：who/when meta 行 + 用户气泡计算样式 + agent 平铺", 
       padding: s.padding,
     };
   });
-  expect(bubble.backgroundColor).toBe(await probeColor(page, "background-color", "--content-bg"));
+  expect(bubble.backgroundColor).toBe(await probeColor(page, "background-color", "--sel"));
   expect(bubble.color).toBe(await probeColor(page, "color", "--text-2"));
   expect(bubble.borderRadius).toBe("6px");
   expect(bubble.borderTopWidth).toBe("1px");
@@ -252,6 +255,30 @@ test("composer：圆角卡片容器 + focus-within 强调框 + 图标发送钮",
   expect(sendStyle.fillToken).toBe("#38372f"); // 原型浅主题 accent-fill（中性深灰近黑）
   expect(sendStyle.backgroundColor).toBe("rgb(56, 55, 47)"); // = #38372f，background 消费组件变量落账
   expect(sendStyle.color).toBe("rgb(255, 255, 255)"); // 白 glyph（原型 accent-fill-text）
+
+  // hover 反馈（M370，Alex「发送按钮没有 hover 效果」）：hover 背景翻到组件变量的
+  // hover 档（--lumir-hp-send-fill-hover，原型中性灰族逐主题上调一档），移出还原。
+  // 背景有 var(--dur-ui) 过渡——计算样式读的是过渡动画的当前帧，用 poll 等它走完。
+  await page.locator(".lumir-hp-send").hover();
+  const sendHover = await page.locator(".lumir-hp-send").evaluate((el) => {
+    const s = getComputedStyle(el);
+    return {
+      backgroundColor: s.backgroundColor,
+      hoverVar: s.getPropertyValue("--lumir-hp-send-fill-hover").trim(),
+    };
+  });
+  expect(sendHover.hoverVar).toBe("#55534a");
+  await expect
+    .poll(async () =>
+      page.locator(".lumir-hp-send").evaluate((el) => getComputedStyle(el).backgroundColor),
+    )
+    .toBe("rgb(85, 83, 74)"); // = #55534a
+  await page.mouse.move(10, 10);
+  await expect
+    .poll(async () =>
+      page.locator(".lumir-hp-send").evaluate((el) => getComputedStyle(el).backgroundColor),
+    )
+    .toBe(sendStyle.backgroundColor);
 
   // 元素级基线：composer 区（卡片容器 + 控制行的观感面）。
   await expectScreenshot(page.locator(".lumir-hp-composer-area"), "m351-harness-composer.png");

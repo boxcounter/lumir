@@ -177,7 +177,7 @@ steps:
 `harness`（M304，change add-harness-probe §11）是唯一的**嵌套**键：
 `{ provider, fixture, permissions: { allow, deny }, loopMax, warnCtxPct, autoCompact }` → `[harness]` 节
 （camelCase 键名映射到配置文件的 snake_case）。`fixture` 写 `$fixtures/...` 只读引用套件 fixtures
-目录（见下文「占位符」），mock provider 场景（70–77、93–96）是样例。
+目录（见下文「占位符」），mock provider 场景（70–77、87–98）是样例。
 
 > 模型 chip 的选项表**无法**用场景配置收窄：`config_get` 回的是 Rust 侧 `HarnessProviders`
 > 结构体（`kimi` / `deepseek` / `mock` 三个字段恒序列化），因此 chip 浮层在真机上恒列三档——
@@ -673,6 +673,14 @@ Alex 抽审路径：先看 `summary.md`，再进 FAIL 场景看 `steps.md` + `sh
   `app.mjs` 的 `writeRegistryEntry` 与 Rust 的 `reconcile_vault` 都会 canonicalize）。因此
   「切走再切回后看到自己的对话」这一类判据（场景 96）必须让两次打开**同源**：都走 ⌘O 的注册表行；
   混用启动恢复与注册表路径会得到一个**新的空会话**（如实，不是渲染缺陷）。
+- **harness 上下文 chip 的「即时刷新」在真机有看守节拍（M370 登记）**：chip 随文档打开/标签
+  切换的刷新走面板内的**会话身份看守**（attach 期间每 400ms 比一次活跃会话引用，变了才重取）——
+  断言这类判据前先 `settle`（连续两次 AX 快照一致），刷新拍会落进 settle 的等待窗；直接连读
+  容易抢到刷新前半截状态。场景 98 是首个消费者（正反双判 + 反向一步）。
+- **真机套件没有 hover 动词**：hover 类交互（M370 起 ctx 越线读数的警示浮层是 hover 读数才
+  翻出）在真机层只判负向（文案默认不在 AX 树里），显隐正观测归 chromium 视觉层
+  （`tests/visual/scenes/m347-harness-composer.spec.ts` 的 playwright hover 断言）。若在
+  runner 加了 hover 动词，可把正观测镜像回场景 87。
 - **场景维护权归实现者**：新功能 mission 的 tasks 必须带「新增/更新验收场景」一项（裁决点 3）。
 
 ## 加一个场景

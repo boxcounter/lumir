@@ -2,9 +2,12 @@ import { expect, test, type Page } from "@playwright/test";
 import { stubTauri, type VaultFixture } from "./tauri-stub";
 
 // M347 composer 控制行 + 复制 + 进度：模型 chip（闭集合 provider 浮层 + config_set_value
-// 写回）、ctx% 读数（usage 事件消费 / 超阈值高亮 + ⓘ 按需气泡）、发送钮两态（处理中 = 停止，
+// 写回）、ctx% 读数（usage 事件消费 / 超阈值高亮 + 警示浮层）、发送钮两态（处理中 = 停止，
 // 停止钩子 M348 对接面桩期未注册——点击只走状态机）、不定态进度条 + 阶段指示两档、
 // 消息复制钮（hover 浮现，复制源 = 源文本非渲染 HTML）。
+// M370 起 ctx 读数改「{ctx}% • {cache}%」双裸读数（cache_pct 纯前端消费）、ⓘ 钮移除、
+// 警示说明改越线时 hover 读数翻出（D377 随 ⓘ 退场；hover 形态在本场景用 playwright
+// hover 断言——真机套件无 hover 动词，负向「气泡默认收起」归场景 87）。
 // M351 起按新 DOM：composer 收进 .lumir-hp-composer-box（控制行 .lumir-hp-ctl 在容器底）、
 // chip/浮层挪进 wrapper（a11y 修复）、发送钮图标化（两态 SVG glyph + aria-label 文案）。
 // M363 起控制行插入思考 chip wrapper（.lumir-hp-effwrap，模型 chip 与 ctx 读数之间——
@@ -156,41 +159,43 @@ test("composer 控制行：模型 chip 写回 / ctx 读数高亮 + ⓘ 气泡 / 
   await page.locator(".lumir-hp-transcript").click();
   await expect(modelPop).toBeHidden();
 
-  // ── ctx% 读数：快照零读数在场；usage 事件越阈值 → 高亮 + ⓘ 气泡 ──
+  // ── ctx% 读数（M370 = 「{ctx}% • {cache}%」双裸读数 + hover 警示浮层）：
+  //    快照零读数在场；usage 事件越阈值 → 高亮 + hover 读数翻出 D335 浮层 ──
   const ctxRead = page.locator(".lumir-hp-ctx");
-  await expect(ctxRead).toHaveText("ctx 0%");
+  await expect(ctxRead).toHaveText("0% • 0%");
   await expect(ctxRead).not.toHaveClass(/is-warn/);
-  await expect(page.locator(".lumir-hp-ctx-info")).toBeHidden();
   await page.evaluate(() =>
     (window as unknown as { __fireHarnessEvent: (p: unknown) => void }).__fireHarnessEvent({
       type: "usage",
       ctx_pct: 86,
-      cache_pct: 0,
+      cache_pct: 50,
     }),
   );
-  await expect(ctxRead).toHaveText("ctx 86%");
+  await expect(ctxRead).toHaveText("86% • 50%");
   await expect(ctxRead).toHaveClass(/is-warn/);
-  const ctxInfo = page.locator(".lumir-hp-ctx-info");
-  await expect(ctxInfo).toBeVisible();
-  await expect(ctxInfo).toHaveAttribute("aria-label", "上下文用量说明"); // D377 消费落账
-  await ctxInfo.click();
+  // ⓘ 钮已随 M370 移除：hover 读数是警示说明的唯一入口（mouseenter 翻出、mouseleave 收回）。
+  const ctxWrap = page.locator(".lumir-hp-ctxwrap");
   const ctxPop = page.locator(".lumir-hp-ctxpop");
+  await expect(ctxPop).toBeHidden();
+  await ctxWrap.hover();
   await expect(ctxPop).toBeVisible();
   await expect(ctxPop).toContainText("86%");
   await expect(ctxPop).toContainText("85%");
-  // 低于阈值 → 高亮与 ⓘ 退场（气泡随之收起）。
-  await page.locator(".lumir-hp-transcript").click();
+  await page.mouse.move(10, 10); // 移出读数 → 浮层收回
   await expect(ctxPop).toBeHidden();
+  // 低于阈值 → 高亮退场、hover 不再翻出浮层。
   await page.evaluate(() =>
     (window as unknown as { __fireHarnessEvent: (p: unknown) => void }).__fireHarnessEvent({
       type: "usage",
       ctx_pct: 60,
-      cache_pct: 0,
+      cache_pct: 50,
     }),
   );
-  await expect(ctxRead).toHaveText("ctx 60%");
+  await expect(ctxRead).toHaveText("60% • 50%");
   await expect(ctxRead).not.toHaveClass(/is-warn/);
-  await expect(ctxInfo).toBeHidden();
+  await ctxWrap.hover();
+  await expect(ctxPop).toBeHidden();
+  await page.mouse.move(10, 10);
 
   // ── 发送钮两态 + 进度条/阶段指示：发送 → 停止态；停止点击 → 状态机；done → 回 idle ──
   // M351 图标化：钮面是 ↑ / ■ 两态 SVG glyph（[hidden] 切换），两态文案落 aria-label。

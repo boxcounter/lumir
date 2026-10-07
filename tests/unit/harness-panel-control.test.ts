@@ -3,7 +3,8 @@
 //     连点幂等、忙时重复发送挡在门外）；
 //   - 模型 chip 的 provider 提取（providerSelection：闭集合过滤、缺 harness 段、
 //     current 不在闭集合时的照实显示）；
-//   - ctx% 读数高亮判据（usageOverWarn：≥ 阈值即高亮，边界取高亮侧）；
+//   - ctx% 读数高亮判据（usageOverWarn：≥ 阈值即高亮，边界取高亮侧；M370 起警示说明走
+//     hover 浮层，呈现面在 DOM 层，判词不变）；
 //   - 消息 when 的相对时间分档（relativeWhen，M351：<10s 刚刚 / N 秒前 / N 分钟前 /
 //     N 小时前 / 昨天，未来戳 clamp，zh/en 双档）。
 // 合同：mission M347 任务 1 / 3 / 7 与 src/harness-panel.ts 控制行段的注释判词。
@@ -88,7 +89,8 @@ test("PROVIDER_IDS：闭集合即 src/bindings/HarnessProvider.ts 的同值域",
   assert.deepEqual([...PROVIDER_IDS], ["kimi", "deepseek", "mock"]);
 });
 
-// ── ctx% 读数高亮判据（M347 任务 2：超阈值（默认 85%）读数高亮 + ⓘ 钮） ──
+// ── ctx% 读数高亮判据（M347 任务 2：超阈值（默认 85%）读数高亮；M370 起警示说明为
+//   hover 读数浮层——呈现面在 DOM 层，本层判词不变） ──
 
 test("usageOverWarn：越阈值即高亮（86/85 高亮，84/85 不高亮）", () => {
   assert.equal(usageOverWarn(86, 85), true);
