@@ -603,6 +603,7 @@ fn new_turn_after_abort_runs_clean() {
         system: "x".into(),
         input: vec![],
         tools: vec![],
+        effort: Default::default(),
     });
     drive_turn(
         &sink2,

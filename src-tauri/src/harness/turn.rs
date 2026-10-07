@@ -23,6 +23,7 @@ use super::jsonl;
 use super::llm::{self, LlmClient};
 use super::permissions::{self, Decision};
 use super::session::{self, PanelMessage};
+use super::thinking;
 use super::tools::{self, ToolContext, ToolOutput};
 use super::{Runtime, VaultScope};
 
@@ -230,6 +231,9 @@ pub fn run_turn_for(
 
     let mut rounds: usize = 0;
     let mut overflow_retried = false;
+    // 思考块序号（M362）：本轮工具循环里第几次产出思考。每次 LLM 往返最多产出一个思考块
+    // （一次响应一条 reasoning 通道），多个工具轮因此自然形成多个块，序号从前到后递增。
+    let mut reasoning_block: u32 = 0;
     loop {
         if rounds >= config.loop_max as usize {
             loop_max_notice(sink, runtime, scope, config);
@@ -243,7 +247,7 @@ pub fn run_turn_for(
         // —— 停止检查点 ①（M348）：complete 在途期间被请求停止——产出保留、不再继续。
         // 中断优先于错误/空响应判定：用户已表态「不再继续」，别再追错误行。
         if turn_aborted(runtime, scope) {
-            abort_turn(sink, runtime, scope, panel_base, &output);
+            abort_turn(sink, runtime, scope, panel_base, reasoning_block, &output);
             return;
         }
 
@@ -271,6 +275,16 @@ pub fn run_turn_for(
             return;
         }
 
+        // —— 思考文本转发（M362，输出侧增量）——
+        // 思考块在正文之前（design §3）：本轮的思考分片先发，再发正文分片。回放路径不经过这里
+        // （reasoning 项的捕获/合成/回传在 llm.rs，M306 纪律零触碰）；分片来源见 [`reasoning_display`]。
+        let reasoning_chunks = reasoning_display(&output);
+        if !reasoning_chunks.is_empty() {
+            for delta in &reasoning_chunks {
+                sink.emit(events::reasoning_chunk(delta, reasoning_block));
+            }
+            reasoning_block += 1;
+        }
         // —— 流式文本与输出项入队 ——
         for delta in &output.text_deltas {
             sink.emit(events::text_chunk(delta));
@@ -278,7 +292,7 @@ pub fn run_turn_for(
         let assistant_text = output.text.clone();
         let usage = output.usage.map(|usage| {
             let preset = llm::preset(&config.provider);
-            let window = llm::context_window(preset, active_model(config));
+            let window = llm::context_window(preset, llm::active_model(config));
             (usage, llm::usage_snapshot(&usage, window))
         });
         let _ = runtime.with_session(scope, |s| {
@@ -348,6 +362,7 @@ pub fn run_turn_for(
                     runtime,
                     scope,
                     panel_base,
+                    reasoning_block,
                     &llm::TurnOutput::default(),
                 );
                 return;
@@ -363,6 +378,7 @@ pub fn run_turn_for(
                 runtime,
                 scope,
                 panel_base,
+                reasoning_block,
                 &llm::TurnOutput::default(),
             );
             return;
@@ -382,18 +398,28 @@ fn turn_aborted(runtime: &Runtime, scope: &VaultScope) -> bool {
 
 /// 中断收口（M348，design §5「不再继续」语义）：
 /// - 已产出内容保留：`output` 里本轮拿到的文本照常入队（LLM 侧 + 面板侧 + JSONL +
-///   text_chunk 事件），面板消息标 `status = "stopped"`（标注「已停止」）；`output`
-///   为空（中断落在工具执行段）时标注落在既有的本轮 assistant 消息上；
+///   text_chunk 事件），**思考分片同样转发**（M362，[`reasoning_chunk`](events::reasoning_chunk)）；
+///   面板消息标 `status = "stopped"`（标注「已停止」）；`output` 为空（中断落在工具执行段）时
+///   标注落在既有的本轮 assistant 消息上；
 /// - 不再继续：调用 / 用量 / 自动压缩一律不处理；
 /// - 如实留痕：JSONL 记 `turn_aborted`，事件发 `aborted`（面板经与 done 同一出口回
 ///   idle，composer 立即可开新一轮）。
+///
+/// `reasoning_block` 是本轮当前思考块序号（与正常路径同一个计数器）：中断落在 `complete`
+/// 在途之后时，本轮那一块的序号不变，前端仍能把它接在同一块上。
 fn abort_turn(
     sink: &dyn EventSink,
     runtime: &Runtime,
     scope: &VaultScope,
     panel_base: usize,
+    reasoning_block: u32,
     output: &llm::TurnOutput,
 ) {
+    // 思考分片先于正文（与正常路径同序）。放在 `assistant_text.is_empty()` 之外：只有思考、
+    // 还没产出正文时被停止，思考块同样要在场（「已产出内容保留」对思考成立）。
+    for delta in &reasoning_display(output) {
+        sink.emit(events::reasoning_chunk(delta, reasoning_block));
+    }
     let assistant_text = output.text.clone();
     let _ = runtime.with_session(scope, |s| {
         if !assistant_text.is_empty() {
@@ -423,24 +449,40 @@ fn abort_turn(
     sink.emit(events::aborted());
 }
 
-/// 当前生效模型名（ctx% 的窗口查表用）。
-fn active_model(config: &HarnessConfig) -> &str {
-    match config.provider {
-        crate::config::HarnessProvider::Kimi => &config.providers.kimi.model,
-        crate::config::HarnessProvider::Deepseek => &config.providers.deepseek.model,
-        crate::config::HarnessProvider::Mock => &config.providers.kimi.model,
-    }
-}
-
-/// 构造 LLM 请求（系统上下文 + 全部历史 + 工具定义；会话历史每轮整体序列化，克隆即可）。
+/// 构造 LLM 请求（系统上下文 + 全部历史 + 工具定义 + 本轮思考档位；会话历史每轮整体序列化，
+/// 克隆即可）。档位在**会话侧**（M362），这里读一次——本轮内不再变（切档位影响其后发出的消息）。
 fn build_request(runtime: &Runtime, scope: &VaultScope) -> llm::Request {
-    let (system, input) = runtime
-        .with_session(scope, |s| (s.system().to_string(), s.input().to_vec()))
+    let (system, input, effort) = runtime
+        .with_session(scope, |s| {
+            (
+                s.system().to_string(),
+                s.input().to_vec(),
+                s.thinking_effort(),
+            )
+        })
         .unwrap_or_default();
     llm::Request {
         system,
         input,
         tools: tools::definitions(),
+        effort,
+    }
+}
+
+/// 本轮要转发给人的思考分片（M362，输出侧只读）。
+///
+/// 优先用 client 收下的流式分片（真 provider 的 `reasoning_text.delta` /
+/// `reasoning_summary_text.delta`，mock 的 `reasoning_chunks`）；分片为空但捕获到 reasoning
+/// 项时退回「从回放项提取明文、整段作一个分片」，保证不丢思考内容（老 fixture / 只发
+/// `output_item.done` 的 provider 都落这条兜底）。**只读**：不触碰 reasoning 项的
+/// 捕获 / 合成 / 回传（M306 纪律），密文也永不进入返回值（[`thinking::reasoning_text`]）。
+fn reasoning_display(output: &llm::TurnOutput) -> Vec<String> {
+    if !output.reasoning_deltas.is_empty() {
+        return output.reasoning_deltas.clone();
+    }
+    match output.reasoning.as_ref().and_then(thinking::reasoning_text) {
+        Some(text) => vec![text],
+        None => Vec::new(),
     }
 }
 
@@ -687,12 +729,18 @@ fn compact_now(
 
     let input = runtime.with_session(scope, |s| s.input().to_vec())?;
     let history = render_history(&input);
+    // 压缩是一次汇总调用，不产思考块给人看；档位照会话现值传（不另造一个默认值，
+    // 否则「同一个会话里两种档位」会多一处隐式状态——M362）。
+    let effort = runtime
+        .with_session(scope, |s| s.thinking_effort())
+        .unwrap_or_default();
     let output = client.complete(&llm::Request {
         system: COMPACT_INSTRUCTION.to_string(),
         input: vec![session::user_item(&format!(
             "{COMPACT_INSTRUCTION}\n\n===== 对话历史 =====\n{history}"
         ))],
         tools: Vec::new(),
+        effort,
     });
     let summary = match output {
         llm::TurnOutput { error: Some(e), .. } => {

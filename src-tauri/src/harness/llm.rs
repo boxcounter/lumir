@@ -2,13 +2,15 @@
 //! mock 三 provider，会话状态全部客户端化（显式 `store: false`，不用
 //! `previous_response_id` / `conversation`——deepseek 无状态实现，kimi 侧主动不留副本）。
 //!
-//! # 请求形状（对着两家官方兼容表核对，2026-10-02）
+//! # 请求形状（对着两家官方兼容表核对，2026-10-02；思考程度 2026-10-07 补）
 //!
 //! 发送体只有：`model` / `instructions` / `input` / `tools` / `tool_choice:"auto"` /
-//! `stream:true`，外加 **kimi 专属**的 `store:false`。刻意不发的参数及理由：
+//! `stream:true`，外加 **kimi 专属**的 `store:false`，以及 **M362 起按档位发的
+//! `reasoning.effort`**（映射表与文档出处见 [`super::thinking`]；provider 不支持档位调节时
+//! 不发该字段）。刻意不发的参数及理由：
 //! - `store`：deepseek 不支持（其恒为 false；[兼容表](https://api-docs.deepseek.com/guides/responses_api/)）
 //!   ——kimi 侧显式发是「vault 内容不在 provider 侧留副本」的主动声明。
-//! - `temperature` / `max_output_tokens` / `reasoning` / `text` 等：探针期用厂商默认，
+//! - `temperature` / `max_output_tokens` / `text` 等：探针期用厂商默认，
 //!   少一个旋钮少一处方言（deepseek 对不支持参数**静默忽略**，发了也测不出错）。
 //! - `previous_response_id` / `conversation`：两家都不支持（deepseek 明说）或我们不依赖（kimi）。
 //!
@@ -27,6 +29,7 @@
 //!         {"id": "call_1", "name": "vault_read", "arguments": "{\"path\":\"a.md\"}"}
 //!       ],
 //!       "reasoning": {"type":"reasoning","id":"rs_1","encrypted_content":"…"},  // 可选：回放项
+//!       "reasoning_chunks": ["先想清楚", "再答。"],  // 可选：思考文本分片（M362，给人看，见下）
 //!       "usage": {"input_tokens": 1200, "cached_tokens": 300, "output_tokens": 40},  // 可选
 //!       "delay_ms": 45000                        // 可选：返回前先睡这么久（见下「脚本化延迟」）
 //!     },
@@ -38,6 +41,12 @@
 //!
 //! 弹尽后再调用 ⇒ `fixture_exhausted` 错误（测试脚本漏写的即露馅）。`text` 未给 `chunks`
 //! 时整体作为一个 chunk。`usage` 缺失则不更新用量（面板保持上一轮读数）。
+//!
+//! **思考文本的两个字段各管一头（M362）**：`reasoning` 是**回放项**（原样回传给模型，M306
+//! 纪律，见下节）；`reasoning_chunks` 是**给人看的思考分片**（`turn` 逐片发
+//! `reasoning_chunk` 事件），两者互不影响。只给 `reasoning` 而不给 `reasoning_chunks` 时，
+//! 展示侧退回「从回放项里提取明文文本、整段作一个分片」（[`super::thinking::reasoning_text`]），
+//! 故老 fixture 无需改动也会有思考块。`encrypted_content` 永不进入展示侧。
 //!
 //! **脚本化延迟**（`delay_ms`，M312 新增）：这条响应先睡这么久（毫秒）再返回，**默认 0**。
 //! 验收里需要「回合正在途」这个窗口时用它撑住——M312 的跨 vault 事件过滤要验的正是
@@ -68,6 +77,20 @@
 //! （即报错文案与缺失字段无关，别按文案去补 reasoning）。入 input 的成组压栈落在
 //! [`super::turn`]（`flush_call_items`），单测
 //! `harness_runtime::multi_call_round_groups_call_items_before_outputs` 钉住项序。
+//!
+//! # 展示侧思考文本与档位记录（M362，change add-harness-thinking-display-and-effort）
+//!
+//! 上面那节是**回放**（回传给模型），本节是**展示**（给人看），两者物理隔离、互不借道：
+//!
+//! - **分片捕获**：[`dispatch_event`] 另收两种流事件——deepseek 的
+//!   `response.reasoning_text.delta`、kimi 的 `response.reasoning_summary_text.delta`
+//!   （[Responses 事件表](https://api-docs.deepseek.com/guides/responses_api/) /
+//!   [Kimi Responses 事件表](https://platform.kimi.ai/docs/api/responses)），只追加到
+//!   [`TurnOutput::reasoning_deltas`]（**展示专用**）。`collect_output_item` 的 reasoning
+//!   分支一行未动：回放项仍然只有那一条路径产出（M306 红线的判据就是这条）。
+//! - **档位记录**：mock 每次 `complete` 记下收到的 [`Request::effort`]（[`MockClient::received_efforts`]），
+//!   供验收断言「切档位后下一轮请求携带了映射后的参数」。真 provider 侧由
+//!   [`super::thinking::apply_effort`] 把档位写进请求体，两边共用同一张映射表。
 
 use std::io::BufRead;
 
@@ -75,6 +98,7 @@ use crate::commands::CommandError;
 use crate::config::{HarnessConfig, HarnessProvider};
 
 use super::session::UsageSnapshot;
+use super::thinking::{self, ThinkingEffort};
 
 /// 一次工具调用的解析结果（Responses API function_call 项）。
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -104,6 +128,11 @@ pub struct TurnOutput {
     /// 回放项：reasoning 项原文（有则；item 级原样或 message part 级合成）——
     /// assistant message 项由 text 重建，不重复存。
     pub reasoning: Option<serde_json::Value>,
+    /// **展示专用**的思考文本分片（M362）：SSE 的 reasoning 文本 delta（真 provider）或
+    /// fixture 的 `reasoning_chunks`（mock）。与 [`Self::reasoning`] 物理隔离——这份永不
+    /// 参与回放（M306 纪律），`reasoning` 也永不喂给展示侧的分片通道（展示从这里拿不到文本时
+    /// 才退回从 `reasoning` 提取，见 [`super::thinking::reasoning_text`]）。
+    pub reasoning_deltas: Vec<String>,
     /// 本轮函数调用（按序执行）。
     pub calls: Vec<ToolCall>,
     pub usage: Option<Usage>,
@@ -224,6 +253,10 @@ pub struct Request {
     pub input: Vec<serde_json::Value>,
     /// function tools 定义。
     pub tools: Vec<serde_json::Value>,
+    /// 本轮的思考程度档位（会话侧读入，M362）：真 provider 由 [`super::thinking::apply_effort`]
+    /// 映射成请求参数，mock 记下来供断言。放在请求里而不是 client 字段上——档位随会话可变，
+    /// 且这样「会话 → 请求 → provider」这条链在 [`super::turn::run_turn_for`] 层可单测。
+    pub effort: ThinkingEffort,
 }
 
 /// client 抽象（ADR 0007 Decision 3 留口的底层侧：将来 Chat Completions 适配器
@@ -277,10 +310,22 @@ pub fn client(config: &HarnessConfig) -> Result<Box<dyn LlmClient>, CommandError
                 endpoint: format!("{base}/responses"),
                 api_key: api_key.clone(),
                 model: model.clone(),
+                provider: config.provider,
                 store_false: matches!(config.provider, HarnessProvider::Kimi),
                 preset,
             }))
         }
+    }
+}
+
+/// 当前生效的模型名：ctx% 的窗口查表与思考档位能力判定都用它（**单一来源**——两处各写一份
+/// match 必然漂移，REVIEW.md 第 8 条）。mock 档没有自己的模型，沿用 kimi 侧读数
+///（与 [`preset`] 对 mock 回落 deepseek 预设是同一「mock 只借壳」的口径）。
+pub fn active_model(config: &HarnessConfig) -> &str {
+    match config.provider {
+        HarnessProvider::Kimi => &config.providers.kimi.model,
+        HarnessProvider::Deepseek => &config.providers.deepseek.model,
+        HarnessProvider::Mock => &config.providers.kimi.model,
     }
 }
 
@@ -293,6 +338,9 @@ struct ResponsesClient {
     endpoint: String,
     api_key: String,
     model: String,
+    /// 本 client 服务的 provider（M362）：思考程度映射要按 provider 分支
+    ///（[`super::thinking::apply_effort`]），与 `model` 一起构成能力判据。
+    provider: HarnessProvider,
     /// kimi 支持 `store` ⇒ 显式 false 声明不留副本；deepseek 不支持（恒 false），不发。
     store_false: bool,
     preset: &'static ProviderPreset,
@@ -327,6 +375,9 @@ impl ResponsesClient {
         if self.store_false {
             body["store"] = serde_json::json!(false);
         }
+        // 思考程度按档位映射（M362）：provider 支持时写顶层 `reasoning.effort`，
+        // 不支持（如非 k3 系的 kimi 模型）时不写该字段——映射表与文档出处见 `super::thinking`。
+        thinking::apply_effort(&mut body, &self.provider, &self.model, request.effort);
         let response = self
             .http
             .post(&self.endpoint)
@@ -432,6 +483,14 @@ fn dispatch_event(event: &str, data: &str, output: &mut TurnOutput, preset: &Pro
             if let Some(delta) = value.get("delta").and_then(|d| d.as_str()) {
                 output.text.push_str(delta);
                 output.text_deltas.push(delta.to_string());
+            }
+        }
+        // 展示侧思考分片（M362）：deepseek 的 chain-of-thought 增量、kimi 的思考摘要增量
+        //（两家事件名不同，见模块头「展示侧思考文本与档位记录」）。**只追加到展示专用的
+        // `reasoning_deltas`**——回放项仍只由 `collect_output_item` 产出，这条支路碰不到它。
+        "response.reasoning_text.delta" | "response.reasoning_summary_text.delta" => {
+            if let Some(delta) = value.get("delta").and_then(|d| d.as_str()) {
+                output.reasoning_deltas.push(delta.to_string());
             }
         }
         "response.output_item.done" => {
@@ -598,6 +657,10 @@ struct FixtureResponse {
     tool_calls: Vec<FixtureToolCall>,
     #[serde(default)]
     reasoning: Option<serde_json::Value>,
+    /// 展示侧的思考文本分片（M362，见模块文档）：`turn` 逐片发 `reasoning_chunk` 事件。
+    /// 与 `reasoning`（回放项）互不影响；只给 `reasoning` 时展示退回「从回放项提取、整段一片」。
+    #[serde(default)]
+    reasoning_chunks: Vec<String>,
     #[serde(default)]
     usage: Option<FixtureUsage>,
     #[serde(default)]
@@ -637,6 +700,10 @@ pub struct MockClient {
     script: std::collections::VecDeque<FixtureResponse>,
     /// 可读名字（JSONL 记录用）：fixture 路径。
     source: String,
+    /// 每次 `complete` 收到的思考程度档位（按调用序，M362）——验收据此断言「切档位后下一轮
+    /// 请求携带了映射后的参数」。mock 不消费它，只**记录**（真 provider 由
+    /// [`super::thinking::apply_effort`] 把它写进请求体）。
+    received_efforts: Vec<ThinkingEffort>,
 }
 
 impl MockClient {
@@ -671,12 +738,21 @@ impl MockClient {
         Ok(Self {
             script: file.responses.into(),
             source: source.to_string(),
+            received_efforts: Vec::new(),
         })
+    }
+
+    /// 收到的档位序列（按调用序），供验收 / 单测断言。
+    pub fn received_efforts(&self) -> &[ThinkingEffort] {
+        &self.received_efforts
     }
 }
 
 impl LlmClient for MockClient {
-    fn complete(&mut self, _request: &Request) -> TurnOutput {
+    fn complete(&mut self, request: &Request) -> TurnOutput {
+        // 记录收到的档位（M362）：与脚本是否弹尽无关——验收要断言的是「发出去的是什么」，
+        // 故放在最前面，耗尽路径也留痕。
+        self.received_efforts.push(request.effort);
         let Some(entry) = self.script.pop_front() else {
             return TurnOutput {
                 error: Some(TurnError {
@@ -726,6 +802,8 @@ impl LlmClient for MockClient {
             text,
             text_deltas,
             reasoning: entry.reasoning,
+            // 展示侧分片原样透传（空则由 `turn` 从回放项提取整段，见模块文档）。
+            reasoning_deltas: entry.reasoning_chunks,
             calls: entry
                 .tool_calls
                 .into_iter()
@@ -765,6 +843,7 @@ mod tests {
             system: "sys".into(),
             input: Vec::new(),
             tools: Vec::new(),
+            effort: ThinkingEffort::default(),
         }
     }
 
@@ -1076,5 +1155,95 @@ data: {{"response":{{"output":[{DEEPSEEK_REASONING_ITEM}],"usage":{{"input_token
             reasoning["content"][0]["text"],
             "用户问的是 2+2。不需要工具。"
         );
+    }
+
+    // ---- M362：展示侧思考分片（不改回放路径）----
+
+    /// 展示侧分片来自两种流事件（deepseek `reasoning_text.delta` / kimi
+    /// `reasoning_summary_text.delta`），**只进 `reasoning_deltas`**；同一轮里回放项仍只由
+    /// `collect_output_item` 产出、原文不动。判据落在两条通道各归各位：分片拼出的文本在
+    /// `reasoning_deltas`，回放项在 `reasoning` 且带 `encrypted_content`。
+    #[test]
+    fn sse_collects_reasoning_deltas_without_touching_replay_item() {
+        let sse = format!(
+            r#"event: response.reasoning_text.delta
+data: {{"delta":"先看"}}
+
+event: response.reasoning_text.delta
+data: {{"delta":"再答。"}}
+
+event: response.output_item.done
+data: {{"item":{DEEPSEEK_REASONING_ITEM}}}
+
+event: response.completed
+data: {{"response":{{"output":[{DEEPSEEK_REASONING_ITEM}],"usage":{{"input_tokens":10,"output_tokens":2}}}}}}
+
+"#
+        );
+        let output = sse_parse(&sse);
+        assert_eq!(output.reasoning_deltas, vec!["先看", "再答。"]);
+        // 回放项照旧：分片通道与 item 通道互不借道。
+        let reasoning = output.reasoning.expect("回放项仍应被捕获");
+        assert_eq!(
+            reasoning["encrypted_content"],
+            "891a103a-5fff-47b2-899d-573104b0d161-0"
+        );
+        assert_eq!(
+            reasoning["content"][0]["text"],
+            "用户问的是 2+2。不需要工具。"
+        );
+        // 分片不进正文、不进回放项内容。
+        assert_eq!(output.text, "");
+    }
+
+    /// kimi 侧事件名（`response.reasoning_summary_text.delta`）同样收进展示分片通道。
+    #[test]
+    fn sse_collects_kimi_reasoning_summary_deltas() {
+        let sse = r#"event: response.reasoning_summary_text.delta
+data: {"delta":"第一步。"}
+
+event: response.reasoning_summary_text.delta
+data: {"delta":"第二步。"}
+
+"#;
+        let output = sse_parse(sse);
+        assert_eq!(output.reasoning_deltas, vec!["第一步。", "第二步。"]);
+        assert!(output.reasoning.is_none(), "摘要分片不是回放项");
+    }
+
+    /// mock：fixture 的 `reasoning_chunks` 进展示分片通道，`reasoning` 进回放通道；
+    /// 收到的档位逐次记录（M362 档位断言的机读口）。
+    #[test]
+    fn mock_records_effort_and_passes_reasoning_chunks() {
+        let script = r#"{"responses": [
+            {"text": "答。",
+             "reasoning": {"type":"reasoning","id":"rs_1","content":[{"type":"reasoning_text","text":"回放用思考"}]},
+             "reasoning_chunks": ["先想", "再答"],
+             "usage": {"input_tokens": 10, "output_tokens": 2}},
+            {"text": "又答。"}
+        ]}"#;
+        let mut client = MockClient::from_str(script, "reasoning-chunks").unwrap();
+        let mut req = request();
+        req.effort = ThinkingEffort::Max;
+        let first = client.complete(&req);
+        assert_eq!(first.reasoning_deltas, vec!["先想", "再答"]);
+        assert_eq!(first.reasoning.as_ref().unwrap()["id"], "rs_1");
+        req.effort = ThinkingEffort::Low;
+        let _ = client.complete(&req);
+        // 逐次记录（含耗尽那一次也无妨——这里两次都在脚本内）。
+        assert_eq!(
+            client.received_efforts(),
+            &[ThinkingEffort::Max, ThinkingEffort::Low]
+        );
+    }
+
+    /// 只给 `reasoning`（老 fixture 形态）时 `reasoning_deltas` 为空——展示侧整段提取由
+    /// `turn` 负责（[`super::thinking::reasoning_text`]），mock 不越权改写成单分片。
+    #[test]
+    fn mock_without_reasoning_chunks_leaves_deltas_empty() {
+        let mut client = MockClient::from_str(FIXTURE, "no-chunks").unwrap();
+        let first = client.complete(&request());
+        assert!(first.reasoning_deltas.is_empty());
+        assert!(first.reasoning.is_some());
     }
 }
