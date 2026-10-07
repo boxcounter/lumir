@@ -214,6 +214,96 @@ fn reasoning_replay_item_precedes_assistant_message() {
     assert_eq!(sink.types().last().unwrap(), "done");
 }
 
+/// M360 回归（Alex 2026-10-07 真机 dogfood 第一条对话即 400 的根因）：
+/// **一轮里两条以上工具调用时，调用项必须成组入 input**——全部 `function_call` 在前、
+/// 全部 `function_call_output` 在后。
+///
+/// 根因（2026-10-07 对真 API 逐项变异实测，M360）：provider 兼容层把 `function_call`
+/// 并进**相邻的** assistant 消息；调用与输出交错（`fc1, fco1, fc2, fco2`）时，第二条调用
+/// 落进一条新的、没有 reasoning 的 assistant 消息，deepseek thinking 模式即 400
+/// ``The `reasoning_text` in the thinking mode must be passed back to the API``。报错文案
+/// 指向 reasoning，实际触发条件是**项序**：同两条调用、连 reasoning 整项删掉也照旧 400，
+/// 而只把两组调用对改成 `fc1, fc2, fco1, fco2` 就 200（现场见 §fix note）。
+///
+/// 判据的区分度：旧实现（每条调用各自「调用项 + 输出项」交错压栈）产出的序列是
+/// `… fc1, fco1, fc2, fco2`，与本断言逐位不同 ⇒ 旧代码必红（已实测）。
+#[test]
+fn multi_call_round_groups_call_items_before_outputs() {
+    let f = Fixture::new("multi-call-grouping");
+    f.write("a.md", "content\n");
+    f.write("b.md", "content\n");
+    let runtime = f.runtime();
+    runtime.acquire_turn(&f.scope()).unwrap();
+    let sink = CollectSink::default();
+    let script = r#"{"responses": [
+        {"reasoning": {"type":"reasoning","id":"rs_1","status":"completed","content":[{"type":"reasoning_text","text":"两个文件都要读。"}],"encrypted_content":"resp-0"},
+         "tool_calls": [
+            {"id": "call_1", "name": "vault_read", "arguments": "{\"path\":\"a.md\"}"},
+            {"id": "call_2", "name": "vault_read", "arguments": "{\"path\":\"b.md\"}"}
+        ]},
+        {"text": "读完了。"}
+    ]}"#;
+    let mut client = MockClient::from_str(script, "multi-call").unwrap();
+    drive_turn(
+        &sink,
+        &runtime,
+        &f.scope(),
+        &mock_config(),
+        "两个文件都读一下".into(),
+        &mut client,
+    );
+    runtime.release_turn(&f.scope());
+
+    let input = runtime
+        .with_session(&f.scope(), |s| s.input().to_vec())
+        .unwrap();
+    let kinds: Vec<String> = input
+        .iter()
+        .map(|it| {
+            it.get("type")
+                .and_then(|t| t.as_str())
+                .map(str::to_string)
+                .unwrap_or_else(|| it["role"].as_str().unwrap_or("?").to_string())
+        })
+        .collect();
+    assert_eq!(
+        kinds,
+        vec![
+            "user",
+            "reasoning",
+            "assistant",
+            "function_call",
+            "function_call",
+            "function_call_output",
+            "function_call_output",
+            "assistant"
+        ],
+        "调用项须成组（全部 function_call 在前、全部输出在后）：{kinds:?}"
+    );
+    // 成组之外还要配对：输出项按调用顺序与调用项一一对应（call_id 同序）。
+    let call_ids: Vec<&str> = input
+        .iter()
+        .filter(|it| it["type"] == "function_call")
+        .filter_map(|it| it["call_id"].as_str())
+        .collect();
+    let output_ids: Vec<&str> = input
+        .iter()
+        .filter(|it| it["type"] == "function_call_output")
+        .filter_map(|it| it["call_id"].as_str())
+        .collect();
+    assert_eq!(call_ids, vec!["call_1", "call_2"], "{input:#?}");
+    assert_eq!(output_ids, call_ids, "输出须与调用同序配对：{input:#?}");
+    // 两条调用都真的执行了（不是靠丢调用来凑顺序）。
+    let tool_msgs = runtime
+        .snapshot(&f.scope(), &mock_config())
+        .messages
+        .iter()
+        .filter(|m| m.role == "tool")
+        .count();
+    assert_eq!(tool_msgs, 2);
+    assert_eq!(sink.types().last().unwrap(), "done");
+}
+
 #[test]
 fn tool_loop_roundtrip_with_fixture_file() {
     let f = Fixture::new("roundtrip");

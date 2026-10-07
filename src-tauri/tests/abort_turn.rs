@@ -417,6 +417,30 @@ fn abort_between_tool_calls_stops_remaining() {
         })
         .unwrap();
     assert_eq!(call_names, vec!["vault_patch"], "vault_read 不得执行");
+    // 成组压栈的另一半保证（M360）：已入 input 的调用项必须与输出项成对——悬空的
+    // function_call 会让**下一轮**请求被 provider 以 "No tool output found for tool call"
+    // 拒掉（未执行的调用则必须两项都不入，上面 call_names 已钉）。
+    let (call_ids, output_ids) = runtime
+        .with_session(&f.scope(), |s| {
+            let ids = |kind: &str| -> Vec<String> {
+                s.input()
+                    .iter()
+                    .filter(|it| it.get("type").and_then(|t| t.as_str()) == Some(kind))
+                    .map(|it| {
+                        it.get("call_id")
+                            .and_then(|c| c.as_str())
+                            .unwrap_or_default()
+                            .to_string()
+                    })
+                    .collect()
+            };
+            (ids("function_call"), ids("function_call_output"))
+        })
+        .unwrap();
+    assert_eq!(
+        call_ids, output_ids,
+        "每条入 input 的调用项都要有同 call_id 的输出项"
+    );
     // 磁盘未变（patch 未执行）。
     assert_eq!(
         std::fs::read_to_string(f.vault().join("a.md")).unwrap(),
