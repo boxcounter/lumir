@@ -8,7 +8,7 @@
 //      直接注入会落到陈旧选区，所以输入一律带 index。
 import { execFileSync } from "node:child_process";
 import { findNode, parseNodes } from "./ax.mjs";
-import { sleep } from "./util.mjs";
+import { InfraError, sleep } from "./util.mjs";
 
 export class StepError extends Error {}
 
@@ -113,7 +113,7 @@ export async function waitAppReady(cu, pid, { timeoutMs = 30_000, requireVault =
     }
     await sleep(700);
   }
-  throw new StepError(
+  throw new InfraError(
     `前端在 ${timeoutMs}ms 内未就绪（左栏文件树/编辑器节点未出现${requireVault ? "" : "；本步已放宽为允许未打开空态"}）`,
   );
 }
@@ -140,13 +140,13 @@ export async function waitAppReady(cu, pid, { timeoutMs = 30_000, requireVault =
 function assertOverlayChrome(ax) {
   const win = ax.nodes.find((n) => n.role === "AXWindow" && n.bbox);
   const areas = ax.nodes.filter((n) => n.role === "AXScrollArea" && n.bbox);
-  if (!win) throw new StepError("窗口形态自检：AX 里读不到带 bbox 的 AXWindow（AX 快照退化）");
-  if (areas.length === 0) throw new StepError("窗口形态自检：AX 里读不到带 bbox 的 AXScrollArea（webview 容器缺失）");
+  if (!win) throw new InfraError("窗口形态自检：AX 里读不到带 bbox 的 AXWindow（AX 快照退化）");
+  if (areas.length === 0) throw new InfraError("窗口形态自检：AX 里读不到带 bbox 的 AXScrollArea（webview 容器缺失）");
   const area = areas.reduce((a, b) => (a.bbox.w * a.bbox.h >= b.bbox.w * b.bbox.h ? a : b));
   const topGap = area.bbox.y - win.bbox.y;
   const heightGap = win.bbox.h - area.bbox.h;
   if (topGap > 4 || heightGap > 4) {
-    throw new StepError(
+    throw new InfraError(
       `窗口形态自检（backlog:366）：webview 没有铺满窗口——AXWindow ${win.bbox.w}×${win.bbox.h} @${win.bbox.y}` +
         `，最大 AXScrollArea ${area.bbox.w}×${area.bbox.h} @${area.bbox.y}（顶边差 ${topGap}、高度差 ${heightGap}）。` +
         `这是「原生标题栏回来了」的信号：套件的 --config 覆写把 app.windows[0] 整根替换、` +
@@ -288,6 +288,33 @@ export async function injectClickWithClickState(pid, point, { mode = 2 } = {}) {
     throw new StepError(
       `swift + CGEvent 注入失败（${e.message}）。这条通道要 /usr/bin/swift（Xcode Command Line Tools）` +
         `且进程要有辅助功能权限；README「已知边界」的 dblclick 条有说明。`,
+    );
+  }
+}
+
+/** 修饰键点击（M379）：与 injectClickWithClickState 同一条 swift 通道（mode 6），差别只在
+ *  鼠标事件带修饰键 flags——DOM 侧拿到 `metaKey/ctrlKey/…` 为真的点击。
+ *
+ *  为什么必须有它：KimiCU 的 `click` 没有修饰键参数（工具 schema 实测只有
+ *  button/mouse_button/count/hold_ms），⌘-Click 这类路径（跟随链接）在真机上因此无法触发
+ * （backlog:1913 的 M144 现场：该路径只能退到 chromium 层）。
+ *
+ *  `point` 是 **Quartz 全局屏幕坐标**（与 injectClickWithClickState 同口径，换算由调用方做）；
+ *  会移动真实光标、要求目标窗口在前台。`modifiers` 是别名集合（meta/cmd/control/ctrl/shift/
+ *  alt/option），swift 侧统一翻译成 CGEventFlags。 */
+export async function injectClickWithModifiers(pid, point, { modifiers = [], count = 1 } = {}) {
+  const script = new URL("./cgevent-click.swift", import.meta.url).pathname;
+  const args = [
+    "/usr/bin/swift", script,
+    String(Math.round(point.x)), String(Math.round(point.y)), "6",
+    modifiers.join(","), String(count),
+  ];
+  try {
+    return execFileSync(args[0], args.slice(1), { encoding: "utf8" }).trim();
+  } catch (e) {
+    throw new StepError(
+      `swift + CGEvent 修饰键点击注入失败（${e.message}）。这条通道要 /usr/bin/swift（Xcode Command Line Tools）` +
+        `且进程要有辅助功能权限；README「已知边界」的 dblclick / 修饰键点击条有说明。`,
     );
   }
 }

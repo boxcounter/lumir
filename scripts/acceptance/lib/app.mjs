@@ -12,7 +12,7 @@ import { appendFileSync, mkdirSync, realpathSync } from "node:fs";
 import { cp, readdir, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { CuError } from "./cu.mjs";
-import { envHome, exists, log, mkdirp, readText, repoRoot, secondVaultDir, sleep, stripAnsi, vaultDir } from "./util.mjs";
+import { envHome, exists, InfraError, log, mkdirp, readText, repoRoot, secondVaultDir, sleep, stripAnsi, vaultDir } from "./util.mjs";
 
 export const BUNDLE_ID = "com.lumir.app";
 
@@ -39,6 +39,10 @@ export const SCENARIO_CONFIG_KEYS = [
   "language",
   "keys",
   "harness",
+  // `[editor]` 表整表透传（M379，backlog:1905）：snake_case 键写进 `editor` 表（`writeConfig`
+  // 的同名参数），给「新增的 editor 配置项」构造**启动口径**用——不必每加一个键就回来改套件。
+  // 形状校验见 execute.mjs 的 checkScenario（非表即报，避免静默丢半张表）。
+  "editor",
 ];
 
 /** 写隔离 config.json。`keys` 不传时整体不写该字段（默认无覆盖）。
@@ -64,6 +68,11 @@ export async function writeConfig({
   // 界面语言（M282，change ui-language-i18n）：与 theme / contentWidth 同形，缺省沿用当前值。
   language = undefined,
   keys = undefined,
+  // `[editor]` 表**整表透传**（M379，backlog:1905）：snake_case 键原样并入 `editor` 表，写在具名
+  // 参数**之前**——具名参数（mode / line_wrap / …）仍然优先，显式值不会被这张表吃掉。
+  // 用途：场景 front-matter 的 `config: { editor: {…} }` 与 `configWrite` 动作的 `editor:` 都走它，
+  // 于是「M180 这类新增的 editor 配置项」不必回来改套件就能构造启动口径。
+  editor = undefined,
   // [harness] 节（M304，change add-harness-probe §11）：传了才写。形状：
   // { provider, fixture, permissions: { allow, deny }, loopMax, warnCtxPct, autoCompact,
   //   kimiModel, kimiModels }——
@@ -74,15 +83,15 @@ export async function writeConfig({
 } = {}) {
   const dir = path.join(envHome(), "lumir");
   await mkdirp(dir);
-  const editor = { mode };
-  if (lineWrap !== undefined) editor.line_wrap = lineWrap;
-  if (codeBlockWrap !== undefined) editor.code_block_wrap = codeBlockWrap;
+  const editorTable = { ...(editor ?? {}), mode };
+  if (lineWrap !== undefined) editorTable.line_wrap = lineWrap;
+  if (codeBlockWrap !== undefined) editorTable.code_block_wrap = codeBlockWrap;
   // Enter 自动缩进（M272，change enter-auto-indent）：与折行三键同一条装配链的配置面。
-  if (autoIndent !== undefined) editor.auto_indent = autoIndent;
-  if (fontFamily !== undefined) editor.font_family = fontFamily;
-  if (monoFontFamily !== undefined) editor.mono_font_family = monoFontFamily;
-  if (fontSize !== undefined) editor.font_size = fontSize;
-  const cfg = { version: 1, last_vault: lastVault, editor };
+  if (autoIndent !== undefined) editorTable.auto_indent = autoIndent;
+  if (fontFamily !== undefined) editorTable.font_family = fontFamily;
+  if (monoFontFamily !== undefined) editorTable.mono_font_family = monoFontFamily;
+  if (fontSize !== undefined) editorTable.font_size = fontSize;
+  const cfg = { version: 1, last_vault: lastVault, editor: editorTable };
   const ui = {};
   if (theme !== undefined) ui.theme = theme;
   if (contentWidth !== undefined) ui.content_width = contentWidth;
@@ -619,10 +628,11 @@ export async function launchApp({ port = acceptPort(), timeoutMs = 300_000, logF
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
       if (/^LUMIR_READY /m.test(out)) return true;
-      if (child.exitCode !== null) throw new CuError(`pnpm tauri dev 提前退出（code=${child.exitCode}）：\n${out.slice(-2000)}`);
+      if (child.exitCode !== null)
+        throw new InfraError(`pnpm tauri dev 提前退出（code=${child.exitCode}）：\n${out.slice(-2000)}`);
       await sleep(500);
     }
-    throw new CuError(`等待 LUMIR_READY 超时（${timeoutMs}ms）：\n${out.slice(-2000)}`);
+    throw new InfraError(`等待 LUMIR_READY 超时（${timeoutMs}ms）：\n${out.slice(-2000)}`);
   })();
 
   await ready;
@@ -637,7 +647,7 @@ async function waitForPid(pgid, timeoutMs) {
     if (pid) return pid;
     await sleep(300);
   }
-  throw new CuError("app 进程未找到（本进程组内的 target/debug/lumir）");
+  throw new InfraError("app 进程未找到（本进程组内的 target/debug/lumir）");
 }
 
 /** 停 app：先整组 SIGTERM，再兜底 SIGKILL 残留（只在本次运行的进程组内）。 */
