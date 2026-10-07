@@ -87,6 +87,19 @@ if (selected.length === 0) {
   process.exit(2);
 }
 
+/**
+ * 验收模式标记（M359）：把 dev 端口的**缺省值显式落进 env**——这是 `vite.config.ts` 判定
+ * 「本次 dev server 属于验收实例」的唯一凭据（它据此装上 `server.watch.ignored`，不再因同机别的
+ * agent 改写 `.tower/worktrees/**` 里的 `.html` / `tsconfig.json` 而整页重载、把正在跑的场景打断
+ * ——现场与判据见该配置文件的注释）。
+ *
+ * 为什么落点在这里：`launchApp` 起的 `pnpm tauri dev` 原样继承本进程 env，验收实例因此拿到标记；
+ * Alex 手头的 `pnpm tauri dev`（1420）不经过 runner、不带该变量，watch 行为因此不受影响。
+ * 缺省值仍由 `lib/app.mjs` 的 `acceptPort()` 单点定义（REVIEW.md 第 8 条），这里只把它回写进
+ * env，不抄一份字面量；放在 `--check` / `--list` 两个早退出口之后，只有真跑批才会落这一笔。
+ */
+process.env.LUMIR_ACCEPTANCE_PORT ??= String(acceptPort());
+
 const root = resultsRoot();
 const evidence = new Evidence(root);
 let handle = null;

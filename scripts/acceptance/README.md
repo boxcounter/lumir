@@ -97,7 +97,7 @@ dev 端口是**全机共享**的，`reclaimPort()` 只在两个 app 实例同时
 `reclaimPort` 处理（本 worktree 的会被回收，别的 worktree 的按错因报错，不静默）。`--keep-app` 同理：
 锁守的是 **runner 的执行窗口**，不是 app 的生命周期，进程退出即释放锁，留下的 app 交下一个跑批处理。
 
-### 运行环境是隔离的（三件事一起保证可复现）
+### 运行环境是隔离的（这些事一起保证可复现）
 
 | 隔离项 | 做法 | 为什么 |
 |---|---|---|
@@ -105,6 +105,29 @@ dev 端口是**全机共享**的，`reclaimPort()` 只在两个 app 实例同时
 | 验收 vault（两个） | `/tmp/lumir-m102-acceptance` 与 `/tmp/lumir-m102-acceptance-b`，每次运行把 vault **根下**重置为 `fixtures/` 与 `fixtures/second-vault/` 的 `.md` 副本 | 合成 vault；用户真实 vault（真实路径按信息卫生纪律不落库）永不写入（`assertSafeTargets()` 对两个 vault 与配置目录都兜底拒绝）。第二个 vault 是多 vault 场景的切换目标，文件名与第一个刻意不重叠。**根下的非 `.md` 产物不被这次重置覆盖**（场景 `fixtures:` 带进来的 `.gitignore` / `x.jsonc` / `huge.log` 等会跨场景留着）——已登记在 `docs/backlog.md`，新场景**不要**依赖或假设这类残留（`resetVault` 的注释是这条口径的 canonical 居所） |
 | 端口 | dev server 走 `LUMIR_ACCEPTANCE_PORT`（默认 1430），经 `--config` 覆写 | 绝不与 Alex 手头的 `pnpm tauri dev` 抢 1420 |
 | 跑批串行 | 真跑批持 `/tmp/lumir-acceptance-rmachine.lock`（缺省 vault 下强制；显式覆写 `LUMIR_ACCEPTANCE_VAULT` 则跳过，见「跑批独占锁」） | 上面三项都到位也只保证「一条跑批内部」不串扰——两条跑批之间共享 vault 与端口，靠人工约定会漏，故由 runner 强制 |
+| dev server watch | 验收实例的 vite 忽略 `**/.tower/**`、`**/test-results/**`、`**/dist/**`、`**/playwright-report/**`（`vite.config.ts` 按 `LUMIR_ACCEPTANCE_PORT` 在场判定，只有验收实例装得上；`app.log` 里有一行 `[vite] 验收模式 watch-ignore 生效` 作正向见证） | 同机别的 agent 在自己的 worktree 里 checkout / 构建时写下 `.html` / `tsconfig.json`，会让验收实例的前端整页重载、把正在跑的场景打断，产出与产品缺陷无法区分的级联假 FAIL（2026-10-07 实证：一次跑批的 18 条 reload 全部来自 `.tower/worktrees/` 下） |
+
+**dev server watch 的隔离（M359，finding 已闭环）**：runner 以仓库根起 vite，`.tower/worktrees/**`
+原本就在 watch 面内——同机别的 agent 连跑批都不用跑，只要在自己 worktree 里 checkout / 构建，写下的
+`.html` / `tsconfig.json` 就会让验收实例整页重载。重载 = 前端在**同一个 Rust 进程**里重新启动，
+菜单、行内输入框、焦点这些瞬时界面状态全灭，而 vault 与会话是持久的、画面看起来与重载前一模一样，
+于是失败的形态是「一步开菜单、下一步点不到」这类与产品缺陷无法区分的级联（finding
+`.tower/comms/findings/20261007-worker-rfn1-bug-dev-server-watch-tower-worktrees-agent-html-tsconfig-reload.md`，
+2026-10-07 现场场景 47 的 17 条 FAIL 即此）。
+
+防线落在 `vite.config.ts` 的 `server.watch.ignored`，只在 `LUMIR_ACCEPTANCE_PORT` 在场时生效
+（该变量由 `run.mjs` 在真跑批开机时落进 env，随 `pnpm tauri dev` 传给 vite；Alex 手头的
+`pnpm tauri dev` 不经过 runner、不带这个变量，`server` 段因此逐字节不变）。
+
+判据形态（**这次加固的验收口径**）：跑批期间向 `.tower/worktrees/` 下自建的探针目录**同法**写
+`.html` / `tsconfig.json`——加固后 `app.log` 一次 `page reload` / `forcing full-reload` 都没有，
+未加固的对照跑里同一次注入必然出现（对照证据 `test-results/acceptance/m359-run-control/`、
+加固证据 `test-results/acceptance/m359-run-fixed/`，均在本地、git 外）。「一次都没有」这条负向判据
+因此有区分度，而不是「探针根本没生效」（REVIEW.md 第 1/2 条）。
+
+边界：忽略面只覆盖同机写者的**产物目录**。跑批期间改写**被测 checkout 的非忽略路径**（`src/`、
+`index.html` 这类真正被服务的源码）仍会重载——那是合法 HMR，不该被忽略。第二道防线（场景中段探测到
+重载就显式判一条「环境重载、非产品缺陷」的 FAIL）**未实现**：本 mission 修的是成因，见下文「已知边界」。
 
 app 进程的定位用**进程组**（`pnpm tauri dev` 以 detached 起，自成一组）：Tauri CLI 以相对路径
 `target/debug/lumir` 起子进程，命令行里没有 worktree 路径，按路径区分会误抓 Alex 手头那份实例。
@@ -378,6 +401,15 @@ Alex 抽审路径：先看 `summary.md`，再进 FAIL 场景看 `steps.md` + `sh
 
 ## 已知边界（写清楚，别当成 bug 去追）
 
+- **跑批环境会在场景中段整页重载（M359 已闭环）**：同机别的 agent 在自己的 worktree 里 checkout /
+  构建时写 `.html` / `tsconfig.json`，验收实例的前端会在**同一个 Rust 进程**里整页重启，把正在跑的
+  场景打断（菜单消失、行内输入框 DOM 被换掉、按键批次跨重载），产出与产品缺陷无法区分的级联假
+  FAIL——2026-10-07 现场场景 47 的 17 条 FAIL 即此，形态是「偶发、换个时间跑就好了」。**成因防线已落**：
+  验收实例的 vite 按 `LUMIR_ACCEPTANCE_PORT` 装上 watch-ignore（机制、判定路径、对照证据见上文
+  「运行环境是隔离的」表的 dev server watch 行）。**未落**：场景中段探测到重载就自动判一条
+  「环境重载、非产品缺陷」FAIL 的第二道防线（finding 的可选项）没有实现——它标症状，本 mission
+  修成因；残留的触发面只剩「跑批期间改写**被测 checkout 的非忽略路径**（`src/` 等真正被服务的
+  源码）」（合法 HMR，见上节末段的边界）。
 - **不做手感/审美判定**：表头双击选中手感、表格宽度观感、WKWebView 下的翻屏节奏等归 Alex；
   套件只留截图证据（与 `tests/visual/README.md` 同一原则）。
 - **`aria-haspopup` 的钮在 AX 里不是 `AXButton`（M351 批次实证，2026-10-07）**：WKWebView 把带
