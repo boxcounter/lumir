@@ -1193,10 +1193,7 @@ mod tests {
         }
         // 非空正文项不受影响：两轮的正文与两对调用项全在。
         assert_eq!(
-            input
-                .iter()
-                .filter(|i| i["role"] == "assistant")
-                .count(),
+            input.iter().filter(|i| i["role"] == "assistant").count(),
             1,
             "只有「读完了。」一条 assistant 消息项：{input:?}"
         );
