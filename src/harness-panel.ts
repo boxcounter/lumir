@@ -44,10 +44,11 @@
 // 改用勾选格 + tint 底；vault 切换器的 D98 消费点保留）、
 // D383 为 M348 中断标注、D385–D387 为 M351 消息 meta 行与工具折叠摘要、D388–D392 为 M363
 // 思考块折叠行与思考 chip 三句 + 浮层读屏名（D389 / D391 随双 chip 于 M373 退役、D390 沿用、
-// D392 复用为合并浮层 effort 段标签）、D393–D398 为 M373 合并选择器（chip 读屏名 / effort
-// 不支持 hover hint / ctx 读数含义 hint / 浮层段标签 ×2 / 浮层读屏名））；
+// D392 复用为合并浮层 effort 段标签）、D393–D399 为 M373 合并选择器（chip 读屏名支持态 /
+// effort 不支持 hover hint / ctx 读数含义 hint / 浮层段标签 ×2 / 浮层读屏名 / chip 读屏名
+// 未知态降级 D399））；
 // 长驻元素（toggle 钮 / harness 段 / 输入框 placeholder / 按钮 / 上下文 chip / ctx 读数 /
-// 模型 chip / 思考 chip / 待决批准项）注册 onRelabel，
+// 合并选择器 chip / 待决批准项）注册 onRelabel，
 // 语言切换时从已存状态重渲（design §5.2 的不变量）；transcript 的历史条目是已发生事实的记
 // 录，不随语言切换改写（与 toast 历史同口径）——复制钮的 ✓ 反馈与 provider 浮层是交互件
 //（前者每次点击现取、后者每次打开现建），天然跟当前语言走。
@@ -1977,9 +1978,12 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   // ── composer 控制行（M373）：合并选择器 chip（model · effort）+ 三维浮层 ──────
 
   /** 合并 chip 重渲（长驻元素：读数 / 悬停 / 读屏名都从已存状态取，relabel 可重跑）。
-   *  可见文本 = model 读数 + U+00B7 + effort 读数；effort 不支持 → 读数置灰（.is-disabled，
-   *  text-3）+ 读屏名换 D390（禁用语义的可读出口，与 M363 口径一致）+ hover hint（D394）。
-   *  思考状态未配置（桩 / 旧后端）时 effort 读数留空、chip 其余部分照常。 */
+   *  可见文本 = model 读数 + U+00B7 + effort 读数。读屏名三档（D399 / D393 / D390）：
+   *  effort 会话态未读到（thinkConfigured=false——harness_state 未到达 / 读取失败的降级
+   *  窗口，真实 app 不可达）= D399 中性「未知」——MUST NOT 取 D390：「不支持」是能力断言，
+   *  与「还没读到」语义相反（r1 P2-3）；支持态 = D393；不支持 = D390 + 读数置灰
+   *  （.is-disabled，text-3）+ hover hint（D394）。思考状态未配置时 effort 读数留空、
+   *  分隔符收起、不置灰（置灰同是能力断言）。 */
   function applySelChip(): void {
     if (selSelection === null) {
       modelChip.hidden = true;
@@ -1989,12 +1993,15 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     const model = chipModelReading(selSelection);
     modelName.textContent = model;
     effReading.textContent = thinkConfigured ? effortLabel(thinkLevel) : "";
-    // 思考状态未配置（桩 / 旧后端）时分隔符一并收起——「model · 」的悬空小圆点不出现。
+    // 思考状态未配置（桩 / 旧后端 / 读取失败的降级窗口）时分隔符一并收起——「model · 」
+    // 的悬空小圆点不出现；不置灰：置灰是能力断言，未知态不作能力断言。
     modelSep.hidden = !thinkConfigured;
-    effReading.classList.toggle("is-disabled", !thinkSupported);
-    const label = thinkSupported
-      ? t("D393", { model, level: effortLabel(thinkLevel) })
-      : t("D390");
+    effReading.classList.toggle("is-disabled", thinkConfigured && !thinkSupported);
+    const label = !thinkConfigured
+      ? t("D399", { model })
+      : thinkSupported
+        ? t("D393", { model, level: effortLabel(thinkLevel) })
+        : t("D390");
     modelChip.title = label;
     modelChip.setAttribute("aria-label", label);
     effHint.textContent = t("D394", { model });

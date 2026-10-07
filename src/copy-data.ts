@@ -1034,6 +1034,15 @@ const COPY_TABLE = {
     zh: "模型与思考程度",
     en: "Model and thinking effort",
   },
+  // 合并 chip 读屏名的降级态（D399，M373 r2）：effort 会话态尚未读到（harness_state
+  // 未到达 / 读取失败——桩环境、IPC 失败的降级窗口，真实 app 的空态快照恒带 thinking
+  // 字段、不可达）时，读屏名取本句（中性「未知」）——MUST NOT 取 D390：「不支持」是
+  // 断言当前组合的能力，与「还没读到」语义相反（r1 P2-3）。可见面同降级口径：
+  // effort 读数留空、分隔符收起、不置灰（置灰 = 能力断言，同理由不采用）。
+  D399: {
+    zh: "模型：{model} · 思考程度未知（点击切换）",
+    en: "Model: {model} · Thinking effort unknown (click to switch)",
+  },
 } satisfies Record<string, CopyEntry>;
 
 /** 文案表的键（D 编号，多串格带 `.N` 后缀）——由表数据推导，加一条即多一个键。 */
