@@ -810,18 +810,24 @@ fn auto_compact_triggers_over_threshold() {
     let sink2 = CollectSink::default();
     let mut client2 = MockClient::from_str(script, "compact2").unwrap();
     // 弹掉前两条（它们是为上一轮写的）——直接快进：本轮脚本只用第三条。
-    client2.complete(&lumir_lib::harness::llm::Request {
-        system: "x".into(),
-        input: vec![],
-        tools: vec![],
-        effort: Default::default(),
-    });
-    client2.complete(&lumir_lib::harness::llm::Request {
-        system: "x".into(),
-        input: vec![],
-        tools: vec![],
-        effort: Default::default(),
-    });
+    client2.complete(
+        &lumir_lib::harness::llm::Request {
+            system: "x".into(),
+            input: vec![],
+            tools: vec![],
+            effort: Default::default(),
+        },
+        &lumir_lib::harness::llm::DiscardStreamSink,
+    );
+    client2.complete(
+        &lumir_lib::harness::llm::Request {
+            system: "x".into(),
+            input: vec![],
+            tools: vec![],
+            effort: Default::default(),
+        },
+        &lumir_lib::harness::llm::DiscardStreamSink,
+    );
     drive_turn(
         &sink2,
         &runtime,

@@ -6,7 +6,9 @@ open: harness-note.md
 marker: "HNL-ALPHA"
 # mock 的这条响应带 `delay_ms: 12000`（脚本化延迟）：complete() 在 lumir-harness-llm 专线程上
 # 阻塞 12 秒不返回，这段时间就是「处理中」窗口。本场景要在窗口内点停止——12s 对键盘注入 +
-# 一次 MCP 往返（秒级）留足裕量。中断只在 complete() 返回后的检查点被判到（见下注）。
+# 一次 MCP 往返（秒级）留足裕量。**`delay_ms` 是不可中断的**（一次睡到底），因此停止请求仍由
+# complete() 返回后的检查点判到、产出照常完整保留——「流式期间就能断」那半边（M369 的在途停止）
+# 走场景 97 的 `chunk_delay_ms` 形态（见正文「为什么「长流」用 delay_ms」）。
 config:
   harness:
     provider: mock
@@ -48,7 +50,7 @@ steps:
     do: click
     target: { role: AXButton, name: "^停止$" }
 
-  - name: 等中断收口（mock 睡满 12s 后 complete 返回，检查点判中断）
+  - name: 等中断收口（mock 睡满 12s 后 complete 返回，检查点判中断——delay_ms 不可中断，见正文）
     do: waitFor
     waitFor:
       has: ["已停止"]
@@ -93,14 +95,22 @@ M347 把发送钮做成两态（空闲「发送」/ 处理中「停止」），M
    徽标（D383），JSONL 记 `turn_aborted` + 保留的 `assistant_text`。
 4. **composer 立即可用**：`aborted` 经 finished 回 idle，钮面回到 `发送`。
 
-## 为什么「长流」用 `delay_ms` 而不是 `chunks`
+## 为什么「长流」用 `delay_ms`
 
-mock 的 `chunks` 是一次性全发的（块间无延迟），唯一能撑住「处理中」窗口的时序杠杆是
-`delay_ms`——它让 `complete()` 阻塞式睡满这段时间，期间一个 `text_chunk` 都不发。Rust 侧的
-中断检查点 ① 在 `complete()` **返回后**（`src-tauri/src/harness/turn.rs:237`）：因此
-「睡满 12s → 返回已算好的响应 → 检查点看到中断标志 → 走 `abort_turn`」是这条链路的确定性
-路径，不是竞态猜测。`abort_turn` 把已算出的 chunks 照常发成 `text_chunk`，再补
-`status="stopped"` 的面板消息与 `turn_aborted` 留存——这就是「产出保留 + 已停止标注」。
+`delay_ms` 让 `complete()` 阻塞式睡满 12 秒，期间一个 `text_chunk` 都不发——这正是「问题已发出、
+模型还没开始吐字」这个窗口，也是本场景要验的**前端两态**（发送 ⇄ 停止）所处的相位：阶段行读
+`等待响应…`（D381），而不是 `正在生成回复…`（D382）。
+
+**它不可中断**（M369 起仍然如此，`delay_ms` 一次睡到底）：停止请求在这 12s 里落下，但要等
+`complete()` 返回后才被中断检查点 ① 判到（`src-tauri/src/harness/turn.rs`）。因此
+「睡满 12s → 返回已算好的响应 → 检查点看到中断标志 → 走 `abort_turn`」是这条链路的确定性路径，
+不是竞态猜测；`abort_turn` 保留整条产出（`status="stopped"` 的面板消息 + `turn_aborted` 留存）
+——这就是「产出保留 + 已停止标注」。
+
+`delay_ms` 与「流式期间就能断」是两回事：M369 把停止标志接进了读流/分片产出循环（在途停止），
+**可中断的时序杠杆是 `chunk_delay_ms`（分片之间的间隔）**，它的场景是 97。本场景刻意留在
+`delay_ms` 形态上：它同时是被保护的回归面——若哪天有人把「无间隔也做中断探测」改回来，
+「产出照常完整保留」这条就会红。
 
 ## 断言口径
 
@@ -108,8 +118,8 @@ mock 的 `chunks` 是一次性全发的（块间无延迟），唯一能撑住�
   （无 aria-label），`^停止$` 锚定避免误命中其它含「停止」的节点。
 - **「已停止」在场**：`ax.has "已停止"`——D383 只在被打断的本轮消息上挂一次；它是中断**已发生**
   的正观测（配合下面的 JSONL 盘上事实，不靠时长猜）。
-- **产出保留**：`ax.has` 断言中断文本（`ABORT-KEEP …`）——文本只可能来自 `abort_turn` 的
-  text_chunk / 面板消息路径。
+- **产出保留**：`ax.has` 断言中断文本（`ABORT-KEEP …`）——文本只可能来自流式转发（M369 起由
+  解析层即时发 `text_chunk`）/ `abort_turn` 的面板消息路径。
 - **JSONL**：`turn_aborted` 与保留的 `assistant_text` 都是盘上事实，钉死「这一轮真的被中断收口」
   而不是「什么都没发生、停止钮恰好消失了」。
 
@@ -120,8 +130,11 @@ mock 的 `chunks` 是一次性全发的（块间无延迟），唯一能撑住�
 - **「停止后可继续提问」只判到 idle**：本场景判钮面回到 `发送`（composer 已收口、可再发），
   **没有**真的再发一轮（mock 每轮从脚本头重弹，再发一轮会再睡 12s，成本高且对判据无增量）。
 - **中断落在工具执行段 / 批准闸等待**：那两条检查点（②③）需要有在途工具调用的现场，本场景
-  只覆盖检查点 ①（complete 返回后）。工具循环中断的判据在 Rust 侧单测
+  只覆盖检查点 ①。工具循环中断的判据在 Rust 侧单测
   （`src-tauri/src/harness/turn.rs` 的 `turn_aborted` 路径）与批准闸收回的 `approval_withdrawn`。
+- **「流式期间就能断」不在本场景**：这里停在 `delay_ms`（不可中断）形态上，只验「产出保留 +
+  已停止标注 + 两态收口」；**流中收流**（部分到达 + 在途停止）归场景 97——两者刻意分工，
+  谁也不是谁的超集。
 
 ## 环境与副作用
 
