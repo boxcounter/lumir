@@ -63,7 +63,7 @@
 | 模型 chip `.ctl-chip` | **无边框**、24px 高、r5、fs-label-s(11.5px)、text-2、hover 给 hover 底；图标 + 名 + chevron | 现状是 26px 带 border-soft 边框——改原型形态（chevron 用 aria-hidden glyph，同会话名钮 `.schev` 先例） |
 | ctx 读数 `.h-usage` | 24px 高、mono、fs-label(11px)、text-3，数值档 text-2；高用量：数值 pending 色 + fw-semibold + ⓘ 16px 圆钮 | 对齐（现状 fs-label-s / 无数值分档色） |
 | ⓘ 气泡 `.ctx-tip` | 向上展开、右缘对齐、224px、shadow-raise | 现状已同构（240px——改 224px 对齐原型） |
-| 发送钮 `.h-send` | **26×26、r6、accent-fill 实心、白 glyph**：空闲 = ↑（arrow-up），处理中 = ■（stop）+ 脉冲环（accent-tint box-shadow 呼吸） | 现状是文字钮「发送/停止」——改图标形态（裁决点 3）；D329/D378 退为 title/aria-label。**busy 态的 accent 实心 + 脉冲环不继承**（有意偏差，tower 2026-10-07 裁决，review r1 P2-1 选 b）：保留 M347 已评审的 danger 实心——危险色 = 可点击停止（停止丢弃在途一轮，代价语义与「破坏性动作」同族），该语义已经 Alex 真机验收（场景 88），而脉冲环从未单独裁决；与 §2.4 tool-meta 不继承同型先例 |
+| 发送钮 `.h-send` | **26×26、r6、accent-fill 实心、白 glyph**：空闲 = ↑（arrow-up），处理中 = ■（stop）+ 脉冲环（accent-tint box-shadow 呼吸） | 现状是文字钮「发送/停止」——改图标形态（裁决点 3）；D329/D378 退为 title/aria-label。**配色与脉冲环按原型继承**（Alex 2026-10-07 裁决「按照原型做，包括按钮颜色」，推翻此前 tower 的「选 b」偏差记档——原记档保留 M347 danger 实心、不继承脉冲环，danger 实心随之退役）：配色按原型 accent-fill 三主题值逐值落组件级变量（浅 #38372f + 白 glyph / 深 #c7c6bd + 深 glyph #222326 / eink 纯黑），不改全局 --accent 一族（全局去蓝是 Alex 已裁决未排期的独立 change，链接/焦点/选中仍蓝）；busy 态脉冲环 = box-shadow 0→3px 呼吸（--pulse-cycle 1.6s），环色用与按钮同族的中性 tint（原型 accent-tint：浅 rgba(0,0,0,0.05) / 深 rgba(255,255,255,0.09) / eink transparent），不用产品蓝 --accent-tint；eink 环不可见、glyph 承担状态（原型同口径）；prefers-reduced-motion 下不脉冲（产品既有 vault-loading 口径：省动效不省状态表达） |
 | 思考程度 chip / 浮层（屏 10） | — | **不继承**：归提案 3（在途） |
 | 开发者预览（屏 5 XML 预览） | — | **不继承**：原型标注「仅原型调试用途，不进产品」 |
 

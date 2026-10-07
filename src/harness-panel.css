@@ -1048,13 +1048,24 @@
 .lumir-hp-msg-user .lumir-hp-qtext:last-child {
   margin-bottom: 0;
 }
-/* 发送钮（M351 图标化，原型 .h-send）：26×26、r6、accent-fill 实心，↑ / ■ 两态 glyph
-   按相位显隐（SVG 无 hidden 属性映射——[hidden] 选择器兜 display:none）；可读名/悬停
-   走 D329/D378（aria-label/title）。busy（处理中）= ■ 停止态：danger 实心（M347 已评审
-   口径——停止丢弃在途的一轮，代价语义与「破坏性动作」同族）；原型的 accent 实心 +
-   脉冲环不继承（有意偏差，design §2.5 记档，tower 2026-10-07 裁决）；stopping 子态
-   禁用（:disabled）。 */
+/* 发送钮（M351 图标化，原型 .h-send；M356 配色与脉冲环回继承原型——Alex 2026-10-07
+   裁决「按照原型做，包括按钮颜色」，推翻此前 tower 的「选 b」偏差记档，M347 danger
+   实心退役）：26×26、r6、实心，↑ / ■ 两态 glyph 按相位显隐（SVG 无 hidden 属性
+   映射——[hidden] 选择器兜 display:none）；可读名/悬停走 D329/D378（aria-label/title）。
+   配色走组件级变量而非全局 token：原型 accent-fill 是中性灰族（浅 #38372f /
+   深 #c7c6bd / eink #000），产品现行 --accent-fill 是蓝——全局去蓝是 Alex 已裁决
+   未排期的独立 change，这里只让发送钮按原型取值，不动全局 --accent 一族（链接 /
+   焦点 / 选中仍蓝）。
+   busy（处理中）= ■ 停止态 + 脉冲环（原型 h-sendpulse：box-shadow 0→3px 呼吸，
+   --pulse-cycle = 1.6s ease-in-out infinite）；环色 --lumir-hp-send-tint 取原型
+   accent-tint 的中性值（不用产品蓝 --accent-tint），与按钮同族。eink 下 tint 为
+   transparent——环不可见，状态由 glyph 显隐承担（原型同口径）。
+   prefers-reduced-motion 下不脉冲（style.css vault-loading 同口径：省动效不省
+   状态表达——glyph 仍在）；stopping 子态禁用（:disabled）。 */
 .lumir-hp-send {
+  --lumir-hp-send-fill: #38372f;
+  --lumir-hp-send-fill-text: #ffffff;
+  --lumir-hp-send-tint: rgba(0, 0, 0, 0.05);
   flex: none;
   display: flex;
   align-items: center;
@@ -1064,20 +1075,39 @@
   padding: 0;
   border: none;
   border-radius: var(--r6);
-  background: var(--accent-fill);
-  color: var(--accent-fill-text);
+  background: var(--lumir-hp-send-fill);
+  color: var(--lumir-hp-send-fill-text);
   cursor: pointer;
+}
+:root[data-theme="dark"] .lumir-hp-send {
+  --lumir-hp-send-fill: #c7c6bd;
+  --lumir-hp-send-fill-text: #222326;
+  --lumir-hp-send-tint: rgba(255, 255, 255, 0.09);
+}
+:root[data-theme="eink"] .lumir-hp-send {
+  --lumir-hp-send-fill: #000000;
+  --lumir-hp-send-fill-text: #ffffff;
+  --lumir-hp-send-tint: transparent;
 }
 .lumir-hp-send svg[hidden] {
   display: none;
 }
 .lumir-hp-send.is-busy {
-  background: var(--danger);
-  color: #ffffff;
+  animation: lumir-hp-send-pulse var(--pulse-cycle);
 }
-:root[data-theme="eink"] .lumir-hp-send.is-busy {
-  background: #000000;
-  color: #ffffff;
+@keyframes lumir-hp-send-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 var(--lumir-hp-send-tint);
+  }
+  50% {
+    box-shadow: 0 0 0 3px var(--lumir-hp-send-tint);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .lumir-hp-send.is-busy {
+    animation: none;
+  }
 }
 .lumir-hp-send:disabled {
   opacity: 0.45;

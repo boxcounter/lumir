@@ -10,7 +10,8 @@ import { stubTauri, type VaultFixture } from "./tauri-stub";
 //      （content-bg 底 + border-soft 边 + r6 + 正文 text-2——计算样式探针对照）；快照
 //      恢复消费后端 ts（M353）显示真实相对时间，无 ts 的旧快照只有角色（不伪造读数）。
 //   2. **composer**：圆角卡片容器（content-bg + border + r8，focus-within 出 accent 框）；
-//      发送钮 26×26 图标形态。
+//      发送钮 26×26 图标形态——M356 起配色按原型走组件级变量（中性值，非产品蓝
+//      --accent-fill），busy 态脉冲环（动画名 + 中性 tint）在此断言。
 //   3. **工具调用清单**（Alex 2026-10-06 裁决还原原型屏 4）：started = running 脉冲行、
 //      done 翻 ✓ 行；单行轮次保持展开，≥2 行轮次结束折叠为摘要钮、点击展开回看。
 //   4. **元素级基线**：消息区与 composer 区两张 crop——整页容差吞不掉的观感面
@@ -228,18 +229,44 @@ test("composer：圆角卡片容器 + focus-within 强调框 + 图标发送钮",
     .poll(async () => box.evaluate((el) => getComputedStyle(el).borderTopColor))
     .not.toBe(await probeColor(page, "color", "--accent"));
 
-  // 发送钮：26×26 图标形态（glyph 两态与 aria-label 的行为断言在 m347）。
+  // 发送钮：26×26 图标形态（glyph 两态与 aria-label 的行为断言在 m347）。M356 起配色
+  // 走组件级变量（原型中性值，不是产品蓝 --accent-fill——全局去蓝另案）：断言变量取值
+  // = 原型浅主题 accent-fill，且 backgroundColor / glyph color 确实消费它。
   const sendStyle = await page.locator(".lumir-hp-send").evaluate((el) => {
     const s = getComputedStyle(el);
-    return { width: s.width, height: s.height, borderRadius: s.borderRadius, backgroundColor: s.backgroundColor };
+    return {
+      width: s.width,
+      height: s.height,
+      borderRadius: s.borderRadius,
+      backgroundColor: s.backgroundColor,
+      color: s.color,
+      fillToken: s.getPropertyValue("--lumir-hp-send-fill").trim(),
+    };
   });
   expect(sendStyle.width).toBe("26px");
   expect(sendStyle.height).toBe("26px");
   expect(sendStyle.borderRadius).toBe("6px");
-  expect(sendStyle.backgroundColor).toBe(await probeColor(page, "background-color", "--accent-fill"));
+  expect(sendStyle.fillToken).toBe("#38372f"); // 原型浅主题 accent-fill（中性深灰近黑）
+  expect(sendStyle.backgroundColor).toBe("rgb(56, 55, 47)"); // = #38372f，background 消费组件变量落账
+  expect(sendStyle.color).toBe("rgb(255, 255, 255)"); // 白 glyph（原型 accent-fill-text）
 
   // 元素级基线：composer 区（卡片容器 + 控制行的观感面）。
   await expectScreenshot(page.locator(".lumir-hp-composer-area"), "m351-harness-composer.png");
+
+  // busy 态脉冲环（M356 回继承原型 h-sendpulse）：is-busy 挂 box-shadow 呼吸动画；
+  // 环色读计算态 box-shadow（动画全周期颜色恒定为 tint，只有 spread 在动）——
+  // 必须是中性灰族（原型浅主题 accent-tint），不是产品蓝 --accent-tint（#eef1fb）。
+  await page.locator(".lumir-hp-composer").fill("触发 busy 态");
+  await page.locator(".lumir-hp-send").click();
+  await expect(page.locator(".lumir-hp-send")).toHaveClass(/is-busy/);
+  const busyStyle = await page.locator(".lumir-hp-send").evaluate((el) => {
+    const s = getComputedStyle(el);
+    return { animationName: s.animationName, boxShadow: s.boxShadow };
+  });
+  expect(busyStyle.animationName).toBe("lumir-hp-send-pulse");
+  expect(busyStyle.boxShadow).toContain("rgba(0, 0, 0, 0.05)");
+  await fire(page, { type: "done" });
+  await expect(page.locator(".lumir-hp-send")).not.toHaveClass(/is-busy/);
 });
 
 test("工具清单：running/done 行 + ≥2 行折叠摘要可回看", async ({ page }) => {
