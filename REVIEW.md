@@ -63,16 +63,22 @@ worker 动工前、reviewer 给出 verdict 前逐条过一遍。每条按「症�
 - 防线：下次声称「跑过了」之前，用绝对路径 `ls` 一遍自己写下的证据路径再写进报告；证据落在 `test-results/`（本地留存、git 外）而不是 worktree 内；写不出可 `ls` 的指针就等于没跑。
 
 **8. 同一语义两处真源，改动只落到一处**
-- 症状：frontmatter 行数上限 `src/preview/wikilinks.ts:19` 是 200、`src/preview/frontmatter.ts:19` 是 512；`src/editor.ts:878` 与 `src/preview/code.ts:46` 各有一份着色语言表（后者注释自认「与 editor.ts 同批」）；扩展名集合也漂过（`e33e10b` 收敛过一次）。
-- 根因：没有单一来源，跨文件一致性没有门禁。
-- 证据：上列 file:line（本仓现值）；`docs/backlog.md:42-43`；提交 `e33e10b`。
-- 防线：下次改「语言 / 扩展名 / 上限」这类表时先 `rg` 全仓确认是否已有同类表，只改一处就不算完成；发现存量两份时写进 `docs/backlog.md` 收口，不要就地再抄一份。
+- 症状：frontmatter 行数上限 `src/preview/wikilinks.ts:19` 是 200、`src/preview/frontmatter.ts:19` 是 512；`src/editor.ts:878` 与 `src/preview/code.ts:46` 各有一份着色语言表（后者注释自认「与 editor.ts 同批」）；扩展名集合也漂过（`e33e10b` 收敛过一次）。跨层同理（M368，2026-10-07）：harness live 的 `done` 事件成功时 summary 是固定哨兵串「成功」，前端据此判成功 / 失败，而 M367 已把 `panel_summary` 的形状落进持久化路径（成功 = 参数摘要 / 失败 = 状态·错误码）——同一条成功语义被两端各判一次，改动只落到一处即静默改判。
+- 根因：没有单一来源，跨文件（或跨进程）一致性没有门禁。
+- 证据：上列 file:line（本仓现值）；`docs/backlog.md:42-43`；提交 `e33e10b`；M368 的跨层现场，finding `.tower/comms/findings/20261007-tower-improve-live-tool-done-panel-summary.md`（落点 `src-tauri/src/harness/turn.rs` 与 `src/harness-panel.ts` 的 tool 行渲染）。
+- 防线：下次改「语言 / 扩展名 / 上限」这类表时先 `rg` 全仓确认是否已有同类表，只改一处就不算完成；发现存量两份时写进 `docs/backlog.md` 收口，不要就地再抄一份。跨层 / 跨进程传递的语义同理（成功与否、摘要文本这类）：只应有一处产出——事件直接携带终态字段，不要让两端各判一次，也不要把「判成功」这件事建立在另一个模块的字符串字面上。
 
 **9. 值或开关声明了却没有消费者**
 - 症状：`src/preview/table.ts:37` 的 `"incomplete"` 在类型联合里、生产从不产出、`src/` 零消费者；`editor.measure` 能在 config.json 里配、还给校验 warning，但完全不生效（假开关）。
 - 根因：数据结构先于消费者落地，没有「声明即被消费」的检查。
 - 证据：`docs/backlog.md:42-43`；`src/preview/table.ts:37`；现场 `.tower/comms/findings/20260912-worker-hygiene-improve-src-tauri-editorconfig-measure-css-measure.md`。
 - 防线：下次新增配置项、枚举值或字段时，同一 mission 内给出消费者或断言其功效；拿不出消费者的收进 `docs/backlog.md`，不要留在代码里冒充能力。
+
+**20. 引用门禁结论时改口径复述，SKIP 被并进分母成假绿上报**
+- 症状：worker 报「`gate.sh quick` 8/9 PASS + SKIP 1」为全绿，实际 **1 FAIL**（`cargo fmt`）——`GATE RESULT` 的分母是 pass + fail，`SKIP` 不计入，8/9 = 8 PASS + 1 FAIL（M372 r1，reviewer 独立复跑才抓住）。
+- 根因：结论的引用口径不统一——拿「X/Y PASS」的自由复述替代照抄 `GATE RESULT` 原文行，而分母含不含 SKIP 只在脚本里定义、报告里看不出来。同一个 mission 里已经出现两起门禁读数不可靠（另一起见第 12 条症状②）。
+- 证据：`scripts/gate.sh` 的 `GATE RESULT: ${pass}/$((pass + fail)) PASS（SKIP ${skip}）` 行（分母口径的单一来源）；M372 r1 现场 finding `.tower/comms/findings/20261007-tower-improve-worker-skip.md`。
+- 防线：报告门禁结果时 MUST 照抄 `GATE RESULT` 原文行并附退出码，不得用「X/Y PASS」这类脱离分母口径的复述；`SKIP` 必须单列，不得并进 PASS 数。
 
 ## 四、真机与并行环境
 
@@ -88,11 +94,11 @@ worker 动工前、reviewer 给出 verdict 前逐条过一遍。每条按「症�
 - 证据：`docs/backlog.md:136-140`；`scripts/acceptance/README.md:177-199`。
 - 防线：跑真机场景前确认 1420 与 1430 都没有 Lumir 实例；断言走「回读 + 只在字节未变才重试」，不用重试次数当判据；失败先按丢键复跑一次再判产品缺陷（同一场景曾 M138 FAIL、M142 PASS）。
 
-**12. 磁盘水位与并行 worktree 的 target 预算**
-- 症状：磁盘 <1G 时 ENOSPC 硬阻塞真机批次（219MiB 时 `pnpm tauri dev` 因 vite 写临时文件失败而中止）；建到一半 ENOSPC 会留下半截 target 且不回血，比不构建更糟。
-- 根因：每个 worktree 各带 1.5–3G 的 debug target，磁盘是单例资源，预检是事后长出来的。
-- 证据：`docs/backlog.md:111-120`；`scripts/acceptance/README.md:35`。
-- 防线：起真机实例前 `df -h` 看水位，worktree 首次构建按 ≥3G 估；空间不够就只跑 chromium 视觉门禁，并在报告里如实声明覆盖范围，不写「全量验收」。
+**12. 并行 worktree 的 target 纪律：磁盘水位与二进制新鲜度**
+- 症状：① 磁盘 <1G 时 ENOSPC 硬阻塞真机批次（219MiB 时 `pnpm tauri dev` 因 vite 写临时文件失败而中止）；建到一半 ENOSPC 会留下半截 target 且不回血，比不构建更糟。② 跨 worktree 共享 / 复用同一个 `CARGO_TARGET_DIR` 时，cargo 照旧拿 target 里既有产物的 fingerprint 判定本轮已是最新 ⇒ 改过源码的测试跑的是**旧二进制**、首跑**假绿**（M372：`gate.sh quick` 的 `cargo test` 绿，reviewer 独立复跑才红，两轮同一 binary hash）。
+- 根因：每个 worktree 各带 1.5–3G 的 debug target，磁盘是单例资源，预检是事后长出来的；而 target 里的产物同时是 cargo 的 fingerprint 依据，跨 worktree 复用时另一份构建的结果会让本轮跳过重编译。
+- 证据：`docs/backlog.md:111-120`；`scripts/acceptance/README.md:35`；M372（2026-10-07）共享 `CARGO_TARGET_DIR=<主仓>/src-tauri/target` 的假绿现场，finding `.tower/comms/findings/20261007-tower-bug-cargo-target-dir-worktree.md`（`docs/backlog.md` 的「工具链与环境（待 Alex 裁决）」节「tower 并行批次的磁盘预算」条记的长期候选即「worktree 共享 `CARGO_TARGET_DIR`」，本条是它落地后的第一个现场）。与第 10 条同源于「同一个二进制路径被不同上下文共用」，方向相反——那条是二进制太新（flavour 被换掉），本条是太旧。
+- 防线：起真机实例前 `df -h` 看水位，worktree 首次构建按 ≥3G 估；空间不够就只跑 chromium 视觉门禁，并在报告里如实声明覆盖范围，不写「全量验收」。用共享 / 复用 target 跑 `cargo test` 时，跑完核对该轮确实重编译了 lumir 测试二进制（二进制 mtime 晚于本轮最早源码改动，或 `cargo test` 前 `touch` 目标源码触发重编）——拿不出这个证据就不算跑过。
 
 **13. 测试或套件污染真实环境、场景间串场**
 - 症状：一个中间版本让单元测试把 13 行事件写进真实 `~/.config/lumir/logs/`（M134）；验收套件不清 `recovery/` 时 08c 恢复出了上一场景的 vault 内容；视觉门禁默认 4173 被别的 worktree 的 `vite preview` 占着，`reuseExistingServer` 复用别人的 dist，对比对象不是本次构建。

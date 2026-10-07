@@ -638,6 +638,96 @@
 
 ## 待修 findings（不阻塞）
 
+### 共享 `CARGO_TARGET_DIR` 跨 worktree 复用旧测试二进制致假绿（M372 现场，2026-10-07，high）
+
+**症状**：worker 在 wt-372 用 `CARGO_TARGET_DIR=<主仓>/src-tauri/target` 跑 `scripts/gate.sh quick` 时，
+`src-tauri/tests/harness_runtime.rs` 的 `multi_call_round_groups_call_items_before_outputs` **首跑假绿**
+——跨 worktree 共享 target 复用了旧测试二进制（两轮同一 binary hash，改过源码的测试没有被重编译）。
+
+**根因**：target 目录里的既有产物同时是 cargo 的 fingerprint 依据。同一个 target 被两个 worktree
+共用时，另一份构建的结果会让本轮判定「已是最新」而跳过重编译，于是 `cargo test` 跑的是旧二进制。
+
+**影响**：`gate.sh quick` 的 `cargo test` 结论与本轮源码脱钩——改过源码的测试照绿，只有 reviewer
+独立复跑才会红。这是「覆盖声明超出真验证」（REVIEW.md 第 6 条族）从工具侧被伪造出一个绿。
+与 REVIEW.md 第 10 条（白屏陷阱）同源于「同一个二进制路径被不同上下文共用」，方向相反：那条是
+二进制太新（flavour 被换掉），本条是太旧。
+
+**建议处置**：按 REVIEW.md 维护规则并入既有条目，不另起——**已补进 REVIEW.md 第 12 条**（并行 worktree
+的 target 纪律）的症状 / 根因 / 证据 / 防线：共享或复用 target 时，`gate.sh quick` 跑完核对该轮确实
+重编译了 lumir 测试二进制（二进制 mtime 晚于本轮最早源码改动，或 `cargo test` 前 `touch` 目标源码触发
+重编）。同一节点里 M155 建议的「批次内 target 纪律（跑完即删 target 并广播）入 REVIEW.md 第 12 条」
+仍待 Alex 裁决，本次未动。
+
+**证据**：`.tower/comms/findings/20261007-tower-bug-cargo-target-dir-worktree.md`（M372 实证）；
+对照 REVIEW.md 第 10 条（提交 `791ff0c`）与第 12 条；`docs/backlog.md` 的「工具链与环境（待 Alex 裁决）」
+节「tower 并行批次的磁盘预算」条记着「worktree 共享 `CARGO_TARGET_DIR`」这条长期候选——本例正是该
+候选落地后的第一个现场，反过来给候选补了代价。
+
+### worker 引门禁读数把 SKIP 并进分母，「8/9 PASS + SKIP 1」误读成全绿（M372 r1 现场，2026-10-07，medium）
+
+**症状**：worker 报「`gate.sh quick` 8/9 PASS + SKIP 1」为全绿，实际 **1 FAIL**（`cargo fmt`）——
+`GATE RESULT` 的分母是 pass + fail（`SKIP` 不计入），8/9 = 8 PASS + 1 FAIL；reviewer 独立复跑才抓住。
+
+**根因**：结论的引用口径不统一——用「X/Y PASS」的自由复述替代照抄 `GATE RESULT` 原文行，而分母含不
+含 SKIP 只在脚本里定义、报告里看不出来。
+
+**影响**：假绿上报。若 reviewer 不独立复跑，一条真实 FAIL 会带着「本地全绿」的声明进入合并。
+
+**建议处置**：**已落成 REVIEW.md 新条目**（口径与制品脱节族）——报告门禁结果时 MUST 照抄
+`GATE RESULT` 原文行并附退出码，「X/Y PASS」不得脱离分母口径引用。
+
+**证据**：`.tower/comms/findings/20261007-tower-improve-worker-skip.md`（M372 r1）；分母口径见
+`scripts/gate.sh` 的 `GATE RESULT: ${pass}/$((pass + fail)) PASS（SKIP ${skip}）` 行。同一 mission 的
+第二起门禁读数不可靠事件见本节「共享 `CARGO_TARGET_DIR` 跨 worktree 复用旧测试二进制致假绿」条。
+
+### live `done` 事件用固定哨兵串表成功，前端据它判成功 / 失败（M368 备案，2026-10-07，low）
+
+**症状**：harness live 路径上，成功行的参数摘要来自 `started` 事件的 summary，而 `done` 事件成功时
+summary 是固定串「成功」——前端必须靠这个哨兵串判成功 / 失败，再换成参数摘要（M368 按前端哨兵实现，
+并在注释里标明）。
+
+**根因**：同一条成功语义有两条产出路径各判一次。M367 已把 `panel_summary` 的形状落进持久化路径
+（成功 = 参数摘要 / 失败 = 状态·错误码），但 live 的 `done` 事件没有复用同一份，前端只能按字符串猜
+——REVIEW.md 第 8 条「同一语义两处真源」的**跨层形态**。
+
+**影响**：Rust 侧若改动成功摘要的字面，前端会**静默**改判成功 / 失败，没有门禁会红。当前实现正确、
+无用户可见缺陷，属维护隐患。
+
+**建议处置**：**不另起 REVIEW.md 条目**（单次、low、无已观测的假绿 / 不可逆；且 finding 自述为
+第 8 条口味）——已把本例作为第 8 条的第 4 个现场补进该条证据，并把防线从「仓内的表」扩到「跨层传递
+的语义」。修法另立小 mission：Rust 的 `done` 事件 summary 直接发 `panel_summary`（与落盘同一份），
+前端删掉哨兵判断；需与动 `src-tauri/src/harness/turn.rs` 的 mission 错开。
+
+**证据**：`.tower/comms/findings/20261007-tower-improve-live-tool-done-panel-summary.md`（M368
+worker-trr1 备案）；落点 `src-tauri/src/harness/turn.rs` 与 `src/harness-panel.ts` 的 tool 行渲染。
+
+### 在途停止丢掉该轮的 reasoning 回放项：是否触发 400 未实测（M369 登记，2026-10-07，medium，需真 API 才能定性）
+
+**症状**：M369 把停止接进 SSE 读循环后，「流式期间点停止」会提前收流，而 reasoning 回放项随
+`response.output_item.done` / `response.completed` 才到达——该轮 assistant 消息因此不带 reasoning 项入
+input。
+
+**根因**：改动前停止只在 `complete()` 返回后判到（那时整条响应已读完、reasoning 已在 `TurnOutput` 里），
+`abort_turn` 收口仍把 reasoning 原样入 input（M306 纪律完整）；改动后流式期间 break 读循环，返回的
+`TurnOutput` 通常没有 reasoning 项（mock 路径例外：fixture 的 reasoning 字段在分片产出之前就落进
+output），`abort_turn` 把部分正文入 input 时不带 reasoning。
+
+**影响面与不确定性**：影响真实 deepseek thinking + tools 场景。若下一轮请求因缺 reasoning 被拒
+（400 `The reasoning_text in the thinking mode must be passed back to the API`），表现是「停止后继续
+提问报错」。**但 M360 的逐项变异实测显示那条 400 的触发条件是项序（`function_call` 与输出交错），
+而非缺失 reasoning；且中断轮的 assistant 消息不含 `function_call` 项（未执行的调用不压栈）⇒ 是否
+真会触发 400 未实测**——mock 复现不出，需真 API 才能判定。
+
+**建议处置**（供裁决，均超出 M369 scope）：① 真 API 实测一次「思考中停止 → 再提问」路径，据此决定
+是否算缺陷；② 若算：在 `abort_turn` 里对「无 reasoning 项的部分轮」不发 reasoning 就从 input 撤掉该轮
+assistant 消息（但 M348 的语义与既有集成测试钉住「已产出文本入 LLM 侧历史」，改动面会外溢）；③ 或按
+已知边界记录在案。**未实测前 MUST NOT 当缺陷修**。
+
+**证据**：`.tower/comms/findings/20261007-worker-sts1-improve-reasoning-provider-backlog.md`（M369，
+worktree wt-369）；`src-tauri/src/harness/llm.rs` 模块头的「真流式与在途停止」节已就地登记这条边界
+（含「未实测」字样），指向本条；落点 `src-tauri/src/harness/llm.rs` 的 `parse_sse_reader` 与
+`src-tauri/src/harness/turn.rs` 的 `abort_turn`。
+
 ### `vault-open-ignore-set` 归档件的 5 处未完成项（M327 归档对账，2026-10-05，medium）
 
 **是什么**：change `vault-open-ignore-set` 已归档（`openspec/changes/archive/2026-10-05-vault-open-ignore-set/`），
