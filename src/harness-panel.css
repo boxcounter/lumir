@@ -494,6 +494,59 @@
   color: var(--text-3);
 }
 
+/* ── 思考块（M363，原型屏 9 形态合同）：折叠 = 单行 chevron +「思考过程 · N 秒」
+   （meta 字号降档、text-3，hover 回到 text）；展开 = 左边线 + 次级灰正文（fs-meta /
+   text-2，全部 token 层现行值，零新增色值/字号）。chevron 随 .is-open 右转 90°。 ── */
+.lumir-hp-think {
+  margin: var(--sp-2) 0 0;
+}
+.lumir-hp-think-head {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  max-width: 100%;
+  height: 22px;
+  padding: 0;
+  border: none;
+  border-radius: var(--r4);
+  background: none;
+  color: var(--text-3);
+  font: inherit;
+  font-size: var(--fs-meta);
+  white-space: nowrap;
+  cursor: pointer;
+  transition: color var(--dur-ui) var(--ease-standard);
+}
+.lumir-hp-think-head:hover {
+  color: var(--text);
+}
+.lumir-hp-think-head > svg {
+  flex: none;
+  transition: transform var(--dur-ui) var(--ease-standard);
+}
+.lumir-hp-think.is-open .lumir-hp-think-head > svg {
+  transform: rotate(90deg);
+}
+.lumir-hp-think-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-variant-numeric: tabular-nums;
+}
+.lumir-hp-think-body {
+  margin: var(--sp-1) 0 var(--sp-2) 7px;
+  padding: var(--sp-2) 0 var(--sp-2) var(--sp-4);
+  border-left: 2px solid var(--border-soft);
+  font-size: var(--fs-meta);
+  line-height: var(--lh-ui);
+  color: var(--text-2);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.lumir-hp-think-body[hidden] {
+  display: none;
+}
+
 /* ── 批准闸：结构档边框的卡片（未决项不自动超时，唯一的出口是点击） ────────── */
 .lumir-hp-approval {
   padding: var(--sp-3) var(--sp-4);
@@ -746,6 +799,119 @@
   flex: none;
   color: var(--text-3);
   font-size: var(--fs-label-s);
+}
+
+/* 思考 chip（M363，原型屏 10）：与模型 chip 同形态（无边框小标签，24px 高、r5、
+   fs-label-s、text-2，hover 给底）——控制行一族两件读数件同构。unsupported 置灰：
+   text-3 + 无 hover 底，cursor 还原。 */
+.lumir-hp-effwrap {
+  position: relative;
+  flex: none;
+  display: flex;
+  min-width: 0;
+}
+.lumir-hp-effwrap[hidden] {
+  display: none;
+}
+.lumir-hp-eff {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  height: 24px;
+  padding: 0 var(--sp-3);
+  border: none;
+  border-radius: var(--r5);
+  background: none;
+  color: var(--text-2);
+  font: inherit;
+  font-size: var(--fs-label-s);
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background var(--dur-ui) var(--ease-standard),
+    color var(--dur-ui) var(--ease-standard);
+}
+.lumir-hp-eff-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.lumir-hp-eff-chev {
+  flex: none;
+  color: var(--text-3);
+  font-size: var(--fs-micro);
+}
+.lumir-hp-eff:hover:not(:disabled) {
+  background: var(--hover);
+  color: var(--text);
+}
+/* 不支持程度调节（thinking.supported=false）：置灰禁用——hover 说明走 title/aria-label
+   （D390），样式面只剩降档。 */
+.lumir-hp-eff.is-disabled,
+.lumir-hp-eff:disabled {
+  color: var(--text-3);
+  cursor: default;
+}
+/* 思考浮层：与 provider 浮层同形态（锚在 wrapper 上向上展开）；三裸档 + 当前勾选
+   （check 格固定 14px 宽，未勾选项的空格保证档名纵对齐）。 */
+.lumir-hp-effpop {
+  position: absolute;
+  bottom: calc(100% + 4px);
+  left: 0;
+  min-width: 140px;
+  padding: var(--sp-2);
+  background: var(--preview-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--r8);
+  box-shadow: var(--shadow-raise);
+  z-index: 30;
+}
+.lumir-hp-effpop[hidden] {
+  display: none;
+}
+.lumir-hp-effpop-item {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  width: 100%;
+  padding: var(--sp-2) var(--sp-3);
+  border: none;
+  border-radius: var(--r4);
+  background: none;
+  color: var(--text-2);
+  font: inherit;
+  font-size: var(--fs-meta);
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--dur-ui) var(--ease-standard);
+}
+.lumir-hp-effpop-item:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+.lumir-hp-effpop-item .lumir-hp-effpop-check {
+  flex: none;
+  width: 14px;
+  color: var(--accent);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.lumir-hp-effpop-item .lumir-hp-effpop-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.lumir-hp-effpop-item.is-current {
+  background: var(--accent-tint);
+}
+:root[data-theme="eink"] .lumir-hp-effpop-item.is-current {
+  background: var(--sel);
 }
 
 /* ctx% 读数 + ⓘ 钮（M347；M351 对齐原型 .h-usage：fs-label 等宽小字）：读数是数据读数

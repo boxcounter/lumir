@@ -948,6 +948,48 @@ const COPY_TABLE = {
     zh: "{count} 个工具调用 · 全部完成",
     en: "{count} tool calls · all done",
   },
+
+  // -------------------------------------------------------------------------
+  // 思考块 + 思考程度 chip（D388–D392，M363，change add-harness-thinking-display-and-effort
+  // 的面板半边；档位与事件契约 = M362 的 core 半边）：transcript 思考块折叠行（含时长
+  // {sec} 占位）、composer 控制行思考 chip 的三句（面文本 / 支持态悬停读屏名 / 不支持态
+  // 悬停说明——Alex 2026-10-06 裁决点 2 原句）与思考浮层读屏名。档位名 Low / High / Max
+  // 是专有名词（Alex 裁决：zh/en 均英文原文），作为数据读数上屏，不进编号（同 provider 名 /
+  // D386 口径）。消费点全部在 src/harness-panel.ts；reasoning_chunk 事件与
+  // harness_set_thinking_effort 封装在 src/ipc.ts。
+  // -------------------------------------------------------------------------
+  // 思考块折叠行：chevron + 单行「思考过程 · N 秒」（原型屏 9 形态合同）。{sec} = 块首
+  //  chunk 到末 chunk 的墙钟差（秒，前端计时、轮次结束定格）——时长是数据读数，模板整串
+  // 走表（zh / en 两串不同模板，不走上屏列锁定）。展开态无新文案：正文是模型思考原文。
+  D388: {
+    zh: "思考过程 · {sec} 秒",
+    en: "Thinking · {sec}s",
+  },
+  // 思考 chip 支持态的悬停提示 / 读屏名（可见文本 = D391 面文本，读数同 D376 口径——
+  //  chip = 人侧可见面，悬停看完整串）。
+  D389: {
+    zh: "思考程度：{level}（点击切换）",
+    en: "Thinking effort: {level} (click to switch)",
+  },
+  // 当前 provider + model 不支持思考程度调节时的悬停说明（supported=false，快照
+  //  thinking 字段下发）：chip 置灰禁用，本句是它的可读出口（Alex 2026-10-06 裁决点 2
+  //  原句：「当前 provider 不支持程度调节时 chip 置灰禁用，hover 给一句」）。
+  D390: {
+    zh: "当前模型不支持思考程度调节",
+    en: "The current model does not support thinking effort adjustment",
+  },
+  // 思考 chip 面文本（控制行位置 = 模型 chip 后、ctx 读数前）：{level} = 档位读数
+  // （low/high/max → 上屏 Low/High/Max）。zh 面文本用全角冒号，与 D376「模型：」同口径。
+  D391: {
+    zh: "思考：{level}",
+    en: "Thinking: {level}",
+  },
+  // 思考浮层读屏名（role=menu 的 aria-label）：浮层本体三个裸档位无释义（Alex 裁决），
+  // 无可见标题行——与模型 provider 浮层同构（裸列表、当前项带勾选），可读名走本句。
+  D392: {
+    zh: "思考程度",
+    en: "Thinking effort",
+  },
 } satisfies Record<string, CopyEntry>;
 
 /** 文案表的键（D 编号，多串格带 `.N` 后缀）——由表数据推导，加一条即多一个键。 */

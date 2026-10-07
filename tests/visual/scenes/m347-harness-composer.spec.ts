@@ -7,6 +7,9 @@ import { stubTauri, type VaultFixture } from "./tauri-stub";
 // 消息复制钮（hover 浮现，复制源 = 源文本非渲染 HTML）。
 // M351 起按新 DOM：composer 收进 .lumir-hp-composer-box（控制行 .lumir-hp-ctl 在容器底）、
 // chip/浮层挪进 wrapper（a11y 修复）、发送钮图标化（两态 SVG glyph + aria-label 文案）。
+// M363 起控制行插入思考 chip wrapper（.lumir-hp-effwrap，模型 chip 与 ctx 读数之间——
+// 本场景桩的 harness_state 不带 thinking 字段，wrapper 按「不伪造读数」口径整件隐藏、
+// 不占 ctl 行 flex 位；思考 chip / 思考块的用例在 m363 场景）。
 // 消息区 / composer / 工具清单的**视觉还原**断言在 m351 场景，本场景只守行为不变量。
 //
 // 全部断言是**结构断言**（在场性 / 文案 / 状态 / 调用记录）——本场景不碰任何像素基线
@@ -108,7 +111,8 @@ test("composer 控制行：模型 chip 写回 / ctx 读数高亮 + ⓘ 气泡 / 
   await expect(panel).toBeVisible();
 
   // ── composer 区结构（M351，原型 .h-box/.h-ctl）：box = [composer][ctl]；
-  //    ctl = [模型 chip（wrapper）][ctx 读数（wrapper）][spacer][图标发送钮] ──
+  //    ctl = [模型 chip（wrapper）][思考 chip（wrapper，M363——快照无 thinking 字段时
+  //    chip 隐藏、wrapper 在场）][ctx 读数（wrapper）][spacer][图标发送钮] ──
   const boxOrder = await page.locator(".lumir-hp-composer-box > *").evaluateAll((els) =>
     els.map((el) => el.classList[0]),
   );
@@ -118,6 +122,7 @@ test("composer 控制行：模型 chip 写回 / ctx 读数高亮 + ⓘ 气泡 / 
   );
   expect(ctlOrder).toEqual([
     "lumir-hp-modelwrap",
+    "lumir-hp-effwrap",
     "lumir-hp-ctxwrap",
     "lumir-hp-ctl-spacer",
     "lumir-hp-send",

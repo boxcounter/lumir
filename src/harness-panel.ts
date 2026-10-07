@@ -37,8 +37,9 @@
 //
 // 文案：全部取值经 src/copy.ts 的 t()（D326–D330 / D332–D348 / D375–D387，D334 / D335 于
 // M347 改形、D98 复用为 provider 浮层当前项标记、D383 为 M348 中断标注、D385–D387 为 M351
-// 消息 meta 行与工具折叠摘要）；长驻元素（toggle 钮 / harness 段 / 输入框
-// placeholder / 按钮 / 上下文 chip / ctx 读数 / 模型 chip / 待决批准项）注册 onRelabel，
+// 消息 meta 行与工具折叠摘要、D388–D392 为 M363 思考块折叠行与思考 chip 三句 + 浮层读屏名）；
+// 长驻元素（toggle 钮 / harness 段 / 输入框 placeholder / 按钮 / 上下文 chip / ctx 读数 /
+// 模型 chip / 思考 chip / 待决批准项）注册 onRelabel，
 // 语言切换时从已存状态重渲（design §5.2 的不变量）；transcript 的历史条目是已发生事实的记
 // 录，不随语言切换改写（与 toast 历史同口径）——复制钮的 ✓ 反馈与 provider 浮层是交互件
 //（前者每次点击现取、后者每次打开现建），天然跟当前语言走。
@@ -54,11 +55,13 @@ import {
   harnessApprove,
   harnessNewSession,
   harnessSend,
+  harnessSetThinkingEffort,
   harnessState,
   onHarnessEvent,
   openExternalUrl,
 } from "./ipc";
 import type { HarnessEvent } from "./ipc";
+import type { ThinkingEffort } from "./bindings/ThinkingEffort";
 import { assembleHarnessContext, serializeHarnessContext } from "./harness-context";
 import type { HarnessContextBlock, HarnessContextSource } from "./harness-context";
 import { createQuoteCard, serializeQuoteMessage } from "./quote-card";
@@ -687,6 +690,89 @@ export function imeGateKeydown(
 }
 
 // ---------------------------------------------------------------------------
+// 思考块 + 思考程度的纯模型层（M363，change add-harness-thinking-display-and-effort
+// 的面板半边；档位 / reasoning_chunk 事件 / thinking 快照字段的契约 = M362 的 core 半边）。
+// 与上面几层同一条分层纪律：累加 / 时长 / 档位读数判定是纯函数（零 DOM 环境直接驱动，
+// tests/unit/harness-thinking.test.ts），DOM 只是渲染面。
+// ---------------------------------------------------------------------------
+
+/** 思考程度三档（与 src/bindings/ThinkingEffort.ts 同值域的运行期可遍历表——ts-rs 联合
+ *  类型只是编译期别名，浮层渲染与快照解析要一份闭集合；取值校验在 Rust 侧完成）。 */
+export const THINKING_EFFORTS = ["low", "high", "max"] as const;
+
+/** 一块思考的累计数据（reasoning_chunk 事件的累加面）。 */
+export interface ThinkingBlock {
+  /** 块序号（后端 reasoning_block 计数，0 起；工具循环多轮 = 多块，序号从前到后递增）。 */
+  index: number;
+  /** 块文本：同 index 的多个分片按到达序拼接。 */
+  text: string;
+  /** 块首分片的墙钟（epoch ms）——时长起点。 */
+  startedAt: number;
+  /** 末分片的墙钟——时长终点；轮次结束不再有新分片，读数因此定格。 */
+  lastAt: number;
+}
+
+/**
+ * reasoning_chunk → 思考块序列的累加器：同 index 的分片并进同一块（text 追加、lastAt
+ * 前进到新分片的到达时刻）；新 index 开新块、按块序号序插入（防御乱序到达——后端
+ * 按序发出，前端排序是渲染序的兜底，不是第二真源）。返回落入的那块（新建或更新）。
+ */
+export function accumulateThinkingBlock(
+  blocks: readonly ThinkingBlock[],
+  index: number,
+  text: string,
+  at: number,
+): { blocks: ThinkingBlock[]; block: ThinkingBlock } {
+  const existing = blocks.find((b) => b.index === index);
+  if (existing !== undefined) {
+    const next: ThinkingBlock = { ...existing, text: existing.text + text, lastAt: at };
+    return { blocks: blocks.map((b) => (b.index === index ? next : b)), block: next };
+  }
+  const block: ThinkingBlock = { index, text, startedAt: at, lastAt: at };
+  return { blocks: [...blocks, block].sort((a, b) => a.index - b.index), block };
+}
+
+/** 思考块时长（秒）：块首分片到末分片的墙钟差，四舍五入、不为负。前端计时（core 不引入
+ *  计时状态，M362）——流式期间随时长分片到达前进，轮次结束自然定格。 */
+export function thinkingDurationSec(block: ThinkingBlock): number {
+  return Math.max(0, Math.round((block.lastAt - block.startedAt) / 1000));
+}
+
+/** 思考块折叠行文案（D388）：chevron + 「思考过程 · N 秒」。时长是数据读数，模板整串走表。 */
+export function thinkingHeadText(block: ThinkingBlock, lang: Language = currentLanguage()): string {
+  return t("D388", { sec: thinkingDurationSec(block) }, lang);
+}
+
+/** 思考程度档位名的上屏形态：后端给的是小写原词（"low"/"high"/"max"，绑定序列化即原词），
+ *  档位名是专有名词（Alex 2026-10-06 裁决：zh/en 均英文原文），上屏首字母大写。 */
+export function effortLabel(level: string): string {
+  return level === "" ? level : level.charAt(0).toUpperCase() + level.slice(1);
+}
+
+/**
+ * `harness_state` 快照 `thinking` 字段的宽容提取（M362 契约：`{level, supported}`）：
+ * - 缺字段 / 形状不对 → null——桩环境、旧后端不伪造读数，思考 chip 按模型 chip 同纪律隐藏；
+ * - level 不是三档之一 → 同样 null（闭集合纪律：前端不猜档位）；
+ * - supported 严格取 true（缺键 = 不支持——置灰是安全侧：宁可禁用一个能调的模型，
+ *   也不对一个不支持的模型放行）。
+ *
+ * 空态（无会话）快照也带本字段（Rust 侧 `StateSnapshot::empty` 同形，supported 按当前
+ * provider + model 现算），chip 空态照显。
+ */
+export function thinkingStateOf(snapshot: unknown): { level: string; supported: boolean } | null {
+  if (typeof snapshot !== "object" || snapshot === null) return null;
+  const thinking = (snapshot as { thinking?: unknown }).thinking;
+  if (typeof thinking !== "object" || thinking === null) return null;
+  const level = (thinking as { level?: unknown }).level;
+  if (typeof level !== "string" || !(THINKING_EFFORTS as readonly string[]).includes(level)) {
+    return null;
+  }
+  return { level, supported: (thinking as { supported?: unknown }).supported === true };
+}
+
+
+
+// ---------------------------------------------------------------------------
 // Markdown → DOM（零 XSS：纯 DOM API + textContent；解析器 = @lezer/markdown 的 GFM 配置）
 // ---------------------------------------------------------------------------
 
@@ -1105,6 +1191,33 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   modelChip.append(modelName, modelChev);
   modelWrap.append(modelChip, modelPop);
 
+  // 思考 chip（M363）：控制行位置 = 模型 chip 后、ctx 读数前（形态合同，原型屏 10）。
+  // 档位 = 会话内生效的设置（不写回配置，新会话回默认 High），读数随 harness_state
+  // 快照的 thinking 字段；当前 provider + model 不支持程度调节（supported=false，如 kimi
+  // 非 k3 系）→ chip 置灰禁用 + hover 说明（D390，Alex 2026-10-06 裁决点 2）。chip + 浮层
+  // 同挂 wrapper（与模型 chip 同一条 a11y 修复：浮层 MUST NOT 嵌在 <button> 里）。
+  const thinkWrap = document.createElement("span");
+  thinkWrap.className = "lumir-hp-effwrap";
+  const thinkChip = document.createElement("button");
+  thinkChip.type = "button";
+  thinkChip.className = "lumir-hp-eff";
+  thinkChip.setAttribute("aria-haspopup", "menu");
+  thinkChip.setAttribute("aria-expanded", "false");
+  const thinkLabel = document.createElement("span");
+  thinkLabel.className = "lumir-hp-eff-label";
+  const thinkChev = document.createElement("span");
+  thinkChev.className = "lumir-hp-eff-chev";
+  thinkChev.setAttribute("aria-hidden", "true");
+  thinkChev.textContent = "▾"; // i18n-exempt: glyph（下指 chevron 图形，非文案）
+  // 思考浮层：三个裸档位（Low/High/Max，无每档释义——Alex 裁决），当前档位带勾选；
+  // 每次打开现建（勾选随读数与语言），与 provider 浮层同构。
+  const thinkPop = document.createElement("div");
+  thinkPop.className = "lumir-hp-effpop";
+  thinkPop.setAttribute("role", "menu");
+  thinkPop.hidden = true;
+  thinkChip.append(thinkLabel, thinkChev);
+  thinkWrap.append(thinkChip, thinkPop);
+
   // 不定态进度条 + 阶段指示一行（M347）：只在处理中态可见；无百分比——本轮剩余工作量
   // 前端不知道。eink 下转明度表达（见 css 的 keyframes 分叉）。
   const progress = document.createElement("div");
@@ -1185,7 +1298,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   sendStopRect.setAttribute("rx", "1.5");
   sendStop.append(sendStopRect);
   sendButton.append(sendGo, sendStop);
-  ctl.append(modelWrap, ctxWrap, ctlSpacer, sendButton);
+  ctl.append(modelWrap, thinkWrap, ctxWrap, ctlSpacer, sendButton);
   composerBox.append(composer, ctl);
   composerArea.append(composerBox);
 
@@ -1218,12 +1331,22 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   let modelConfigured = false;
   let modelCurrent = "";
   let modelOptions: ProviderId[] = [];
+  /** 思考 chip 状态（M363，harness_state 快照 `thinking` 字段的宽容提取；thinkConfigured =
+   *  false 时 chip 隐藏——桩环境 / 旧后端不伪造读数，与模型 chip 同纪律）。档位会话内
+   *  生效、不写回配置。 */
+  let thinkConfigured = false;
+  let thinkLevel = "";
+  let thinkSupported = false;
   let lastChip: HarnessContextBlock | null | "none" = null;
   /** 当前逻辑会话的首条用户消息原文（会话名口径：截断约 20 字上屏；null = 未发消息，
    *  显示「新会话」）。自动压缩开新逻辑会话后归 null，按同口径重算（design §3）。 */
   let firstUserText: string | null = null;
   let streamingEl: HTMLElement | null = null;
   let streamingText = "";
+  /** 本轮的思考块（M363）：reasoning_chunk 事件的累加数据与「有待 rAF 重渲」脏标记。
+   *  轮次终态经 finalizeStreamingMessage 定格（数据引用释放，DOM 元素留在消息内）。 */
+  let thinkingBlocks: ThinkingBlock[] = [];
+  let thinkingDirty = false;
   /** 流式消息的 body 体（M351：who 行 + body 分置——finalize 的 replaceChildren 只作用
    *  body，who 行不被定稿重渲抹掉；工具清单块挂 body 之后、消息之内）。 */
   let streamingBody: HTMLElement | null = null;
@@ -1614,6 +1737,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     emptyHint.textContent = t("D346");
     applyChip();
     if (modelConfigured) applyModelChip();
+    applyThinkingChip();
     applyUsage();
     // 发送钮 / 阶段指示按当前相位重取文案（running 时钮面是「停止」、进度条阶段行重渲）。
     applySendPhase(sendPhase);
@@ -1623,6 +1747,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     // 不改写（已上屏内容不随语言翻，与徽标同口径）。
     refreshWhoLines();
     relabelToolSummaries();
+    relabelThinkingViews();
   }
 
   // ── 会话名（标题栏 harness 段的会话身份；design §3 口径）───────────────────
@@ -1726,14 +1851,18 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   }
 
   /** 选择 provider：chip 先更新读数（chip = 人侧可见面，模型与用量对人同源同值），
-   *  写回失败则回滚读数——运行期态不与文件态分叉（D123 同口径），并报错误行。 */
+   *  写回失败则回滚读数——运行期态不与文件态分叉（D123 同口径），并报错误行。
+   *  写回成功后重取思考能力标记（`thinking.supported` 按当前 provider + model 现算——
+   *  只读快照的 thinking 字段，不回放消息，不重渲 transcript）。 */
   function selectProvider(id: ProviderId): void {
     setModelPop(false);
     if (id === modelCurrent) return;
     const previous = modelCurrent;
     modelCurrent = id;
     applyModelChip();
-    configSetValue("harness", "provider", id).catch((e: unknown) => {
+    configSetValue("harness", "provider", id).then(() => {
+      refreshThinkingState();
+    }).catch((e: unknown) => {
       modelCurrent = previous;
       applyModelChip();
       appendError(t("D348", { message: errorMessage(e) }));
@@ -1757,6 +1886,121 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       applyModelChip();
     })
     .catch(() => {});
+
+  // ── composer 控制行（M363）：思考程度 chip + 三档浮层 ────────────────────────
+
+  /** 思考 chip 重渲（长驻元素：面文本 / 悬停 / 读屏名都从已存状态取，relabel 可重跑）。
+   *  supported=false ⇒ 置灰禁用（disabled 属性，点击不展开浮层）+ 悬停说明（D390）。
+   *  未配置时隐藏的是 wrapper 本体——空 wrapper 也是 ctl 行的一个 flex 项，会多吃一格
+   *  gap、平移 ctx 读数与发送钮（既有整页/元素基线的像素面因此不动）。 */
+  function applyThinkingChip(): void {
+    if (!thinkConfigured) {
+      thinkWrap.hidden = true;
+      thinkPop.hidden = true;
+      return;
+    }
+    thinkWrap.hidden = false;
+    const level = effortLabel(thinkLevel);
+    thinkLabel.textContent = t("D391", { level });
+    const hint = thinkSupported ? t("D389", { level }) : t("D390");
+    thinkChip.title = hint;
+    thinkChip.setAttribute("aria-label", hint);
+    thinkChip.disabled = !thinkSupported;
+    thinkChip.classList.toggle("is-disabled", !thinkSupported);
+  }
+
+  /** 思考浮层：每次打开现建（裸三档 + 当前勾选，同 provider 浮层的懒建纪律）。
+   *  档位名是专有名词（zh/en 均英文原文），menuitemradio 语义与 aria-checked 同 provider 浮层。 */
+  function buildThinkPop(): void {
+    thinkPop.replaceChildren();
+    thinkPop.setAttribute("aria-label", t("D392"));
+    for (const id of THINKING_EFFORTS) {
+      const item = document.createElement("button");
+      item.type = "button";
+      item.className = "lumir-hp-effpop-item";
+      item.setAttribute("role", "menuitemradio");
+      item.setAttribute("aria-checked", String(id === thinkLevel));
+      const check = document.createElement("span");
+      check.className = "lumir-hp-effpop-check";
+      check.setAttribute("aria-hidden", "true");
+      if (id === thinkLevel) {
+        item.classList.add("is-current");
+        const svg = document.createElementNS(SVG_NS, "svg");
+        svg.setAttribute("width", "11");
+        svg.setAttribute("height", "11");
+        svg.setAttribute("viewBox", "0 0 12 12");
+        svg.setAttribute("fill", "none");
+        svg.setAttribute("stroke", "currentColor");
+        svg.setAttribute("stroke-width", "1.6");
+        svg.setAttribute("stroke-linecap", "round");
+        svg.setAttribute("stroke-linejoin", "round");
+        const path = document.createElementNS(SVG_NS, "path");
+        path.setAttribute("d", "M2 6.5 4.8 9.3 10 3.5");
+        svg.append(path);
+        check.append(svg);
+      }
+      const name = document.createElement("span");
+      name.className = "lumir-hp-effpop-name";
+      name.textContent = effortLabel(id);
+      item.append(check, name);
+      item.addEventListener("click", () => selectEffort(id));
+      thinkPop.append(item);
+    }
+  }
+
+  /** 思考浮层开合（aria-expanded 随开合翻转；打开时现建项；不支持态不展开——
+   *  禁用钮本就不会走到这里，双闸是防御）。 */
+  function setThinkPop(open: boolean): void {
+    if (open && !thinkSupported) return;
+    if (open) buildThinkPop();
+    thinkPop.hidden = !open;
+    thinkChip.setAttribute("aria-expanded", String(open));
+  }
+
+  /** 选择档位：chip 先更新读数（chip = 人侧可见面），失败回滚 + 错误行——与
+   *  selectProvider 同口径。档位会话内生效（harness_set_thinking_effort 写入当前会话；
+   *  无会话时后端即时建会话，前端无需先发消息）。 */
+  function selectEffort(id: ThinkingEffort): void {
+    setThinkPop(false);
+    if (id === thinkLevel) return;
+    const previous = thinkLevel;
+    thinkLevel = id;
+    applyThinkingChip();
+    harnessSetThinkingEffort(id).catch((e: unknown) => {
+      thinkLevel = previous;
+      applyThinkingChip();
+      appendError(t("D348", { message: errorMessage(e) }));
+    });
+  }
+
+  thinkChip.addEventListener("click", (event) => {
+    event.stopPropagation();
+    setThinkPop(thinkPop.hidden);
+  });
+
+  /** 轻量重取思考状态（provider 切换后）：只读快照的 thinking 字段应用进 chip，
+   *  不回放消息、不动 transcript（快照准入判据与全量恢复同一条——迟到的旧 vault
+   *  响应在此同样被丢）。 */
+  function refreshThinkingState(): void {
+    void harnessState()
+      .then((json) => {
+        let snapshot: unknown;
+        try {
+          snapshot = JSON.parse(json);
+        } catch {
+          return;
+        }
+        if (typeof snapshot !== "object" || snapshot === null) return;
+        if (!inCurrentVault((snapshot as { vault?: unknown }).vault, currentVault)) return;
+        const thinking = thinkingStateOf(snapshot);
+        if (thinking === null) return;
+        thinkConfigured = true;
+        thinkLevel = thinking.level;
+        thinkSupported = thinking.supported;
+        applyThinkingChip();
+      })
+      .catch(() => {});
+  }
 
   /** ctx% 读数重渲（usage 事件 / 快照 / relabel 的共用出口）。 */
   function applyUsage(): void {
@@ -2161,6 +2405,101 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     scrollToBottom();
   }
 
+  // ── 思考块（M363，原型屏 9 形态合同）────────────────────────────────────────
+  // 折叠 = 默认（含流式期间）：单行 chevron +「思考过程 · N 秒」（D388）；展开 = 左边线 +
+  // 次级灰正文（模型思考原文，textContent 注入——本模块渲染纪律不变）。块在前正文在后、
+  // 多块按块序号序、无思考不渲染块（零噪声——没有 reasoning_chunk 就不建元素）。
+  // 快照恢复的历史消息不带 reasoning（PanelMessage 无此字段），不伪造块。
+
+  /** 思考块的 DOM 面：元素长驻已沉淀的消息内（终态后数据引用释放，重渲只走 relabel）。 */
+  interface ThinkingView {
+    el: HTMLElement;
+    head: HTMLButtonElement;
+    text: HTMLElement;
+    body: HTMLElement;
+  }
+
+  /** 折叠行的 chevron（i18n-exempt 图形，右转 90° 表展开态——CSS 随 .is-open 旋转）。 */
+  function createThinkChev(): SVGSVGElement {
+    const svg = document.createElementNS(SVG_NS, "svg");
+    svg.setAttribute("width", "9");
+    svg.setAttribute("height", "9");
+    svg.setAttribute("viewBox", "0 0 10 10");
+    svg.setAttribute("fill", "none");
+    svg.setAttribute("stroke", "currentColor");
+    svg.setAttribute("stroke-width", "1.5");
+    svg.setAttribute("stroke-linecap", "round");
+    svg.setAttribute("stroke-linejoin", "round");
+    svg.setAttribute("aria-hidden", "true");
+    const path = document.createElementNS(SVG_NS, "path");
+    path.setAttribute("d", "M3.5 2.5 6 5l-2.5 2.5");
+    svg.append(path);
+    return svg;
+  }
+
+  /** 建思考块视图（默认折叠）。head 钮的可见文本 = D388 整串（chevron + 时长行）。 */
+  function createThinkingView(): ThinkingView {
+    const el = document.createElement("div");
+    el.className = "lumir-hp-think";
+    const head = document.createElement("button");
+    head.type = "button";
+    head.className = "lumir-hp-think-head";
+    head.setAttribute("aria-expanded", "false");
+    const text = document.createElement("span");
+    text.className = "lumir-hp-think-text";
+    head.append(createThinkChev(), text);
+    const body = document.createElement("div");
+    body.className = "lumir-hp-think-body";
+    body.hidden = true;
+    head.addEventListener("click", () => {
+      const open = head.getAttribute("aria-expanded") !== "true";
+      head.setAttribute("aria-expanded", String(open));
+      el.classList.toggle("is-open", open);
+      body.hidden = !open;
+    });
+    el.append(head, body);
+    return { el, head, text, body };
+  }
+
+  /** 块在前正文在后：插到 who 行之后、body 之前。views 按块序号序查找（块序 = DOM 序，
+   *  后端按序发出、插入点恒在 body 前，乱序到达由 accumulate 的排序兜底）。 */
+  const thinkingViews = new Map<number, ThinkingView>();
+
+  function ensureThinkingView(index: number): ThinkingView {
+    const existing = thinkingViews.get(index);
+    if (existing !== undefined) return existing;
+    const view = createThinkingView();
+    const host = streamingEl;
+    if (host !== null && streamingBody !== null) {
+      host.insertBefore(view.el, streamingBody);
+    }
+    thinkingViews.set(index, view);
+    return view;
+  }
+
+  /** rAF 合帧落思考块（reasoning_chunk 只进数据 + 脏标记，真正的 DOM 写入每帧至多一次，
+   *  与正文 chunk 同一条渲染纪律）。时长读数与正文都从这里上屏；data-sec 留给 relabel。 */
+  function flushThinkingViews(): void {
+    if (!thinkingDirty) return;
+    thinkingDirty = false;
+    for (const block of thinkingBlocks) {
+      const view = ensureThinkingView(block.index);
+      const sec = thinkingDurationSec(block);
+      view.el.dataset.sec = String(sec);
+      view.text.textContent = t("D388", { sec });
+      view.body.textContent = block.text;
+    }
+  }
+
+  /** 思考块头随语言重渲（meta chrome，与 who/when、工具摘要同口径——已定格的 data-sec
+   *  是事实读数，重取 D388 模板即可；正文是模型原文，不随语言改写）。 */
+  function relabelThinkingViews(): void {
+    for (const el of transcript.querySelectorAll<HTMLElement>(".lumir-hp-think")) {
+      const text = el.querySelector(".lumir-hp-think-text");
+      if (text !== null) text.textContent = t("D388", { sec: Number(el.dataset.sec ?? "0") });
+    }
+  }
+
   // ── 流式 assistant 消息 ──────────────────────────────────────────────────
   function ensureStreamingMessage(): void {
     if (streamingEl !== null) return;
@@ -2190,6 +2529,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   }
 
   function flushChunks(): void {
+    flushThinkingViews();
     if (chunkBuffer === "") return;
     ensureStreamingMessage();
     streamingText += chunkBuffer;
@@ -2213,6 +2553,8 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
 
   /** 一轮结束：对完整源做一次全量重渲（增量渲染的近似在松散列表等形态上收敛于此）。
    *  完成后挂复制钮：源 = 模型原始输出（本轮回收集的完整 Markdown 源文本）。
+   *  思考块随轮次定格：flush 已把末态时长/正文上屏，这里只释放数据引用——元素留在
+   *  消息内（块在前正文在后），复制源不含思考内容（复制源 = 正文源文本，单一真源）。
    *  返回沉淀的消息元素（中断标注等终态修饰用；无流式内容时返回 null）。 */
   function finalizeStreamingMessage(): HTMLElement | null {
     flushChunks();
@@ -2221,7 +2563,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     if (streamingEl === null) return null;
     const el = streamingEl;
     if (streamingBody !== null) {
-      // 定稿重渲只作用 body（M351）：who 行与工具清单块是消息的兄弟节点，不被抹掉。
+      // 定稿重渲只作用 body（M351）：who 行、思考块与工具清单块是消息的兄弟节点，不被抹掉。
       streamingBody.replaceChildren();
       renderMarkdownInto(streamingBody, streamingText);
     }
@@ -2232,6 +2574,9 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     streamingText = "";
     renderedFinalized = 0;
     tailEl = null;
+    thinkingBlocks = [];
+    thinkingViews.clear();
+    thinkingDirty = false;
     scrollToBottom();
     return el;
   }
@@ -2261,6 +2606,23 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
         }
         scheduleFlush();
         return;
+      case "reasoning_chunk": {
+        // 思考分片（M363）：先立流式消息（纯思考轮 / 思考先于首个正文分片到达是常态——
+        // 后端保证思考分片在该轮 text_chunk 之前发出），再按块序号累加进数据层；
+        // 上屏走 rAF 合帧（flushThinkingViews），折叠态不影响流入（想看的人点开即直播）。
+        ensureStreamingMessage();
+        const index = typeof event.index === "number" && Number.isFinite(event.index) ? event.index : 0;
+        const acc = accumulateThinkingBlock(
+          thinkingBlocks,
+          index,
+          typeof event.text === "string" ? event.text : "",
+          Date.now(),
+        );
+        thinkingBlocks = acc.blocks;
+        thinkingDirty = true;
+        scheduleFlush();
+        return;
+      }
       case "tool_call":
         // 清单块挂当前 agent 消息（design §3.3）：工具先于首个 text_chunk 到达是常态
         // （模型先调工具后说话）——先立一条空 agent 消息，正文 chunk 随后填进同一泡。
@@ -2380,6 +2742,16 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     const warn = state.warn_ctx_pct;
     if (typeof warn === "number" && Number.isFinite(warn)) warnCtxPct = warn;
     applyUsage();
+    // 思考 chip（M363）：快照 thinking 字段宽容提取——缺键 / 非法档 = 旧后端 / 桩，
+    // chip 隐藏（不伪造读数，与模型 chip 同纪律）；空态快照也带本字段（supported 按当前
+    // provider + model 现算），chip 空态照显。
+    const thinking = thinkingStateOf(state);
+    if (thinking !== null) {
+      thinkConfigured = true;
+      thinkLevel = thinking.level;
+      thinkSupported = thinking.supported;
+    }
+    applyThinkingChip();
     const pending = state.pending_approval as { id?: unknown; tool?: unknown; diff?: unknown; argv?: unknown } | null | undefined;
     if (pending !== null && typeof pending === "object" && typeof pending.id === "string") {
       appendApproval({
@@ -2419,6 +2791,9 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     lastAssistantEl = null;
     lastErrorEl = null;
     lastErrorText = "";
+    thinkingBlocks = [];
+    thinkingViews.clear();
+    thinkingDirty = false;
     // 会话名随会话作废：未发消息前显示「新会话」，首条消息后再按口径重算。
     firstUserText = null;
     applySessionName();
@@ -2691,7 +3066,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       sessionButton.focus();
     }
   });
-  // 浮层外交互（点击其他处）收起：会话浮层、provider 浮层、ctx ⓘ 气泡共用一条出口。
+  // 浮层外交互（点击其他处）收起：会话浮层、provider 浮层、思考浮层、ctx ⓘ 气泡共用一条出口。
   document.addEventListener("click", (event) => {
     if (event.target instanceof Node && sessPop.contains(event.target)) return;
     if (event.target instanceof Node && sessionButton.contains(event.target)) return;
@@ -2699,6 +3074,9 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     if (event.target instanceof Node && modelPop.contains(event.target)) return;
     if (event.target instanceof Node && modelChip.contains(event.target)) return;
     setModelPop(false);
+    if (event.target instanceof Node && thinkPop.contains(event.target)) return;
+    if (event.target instanceof Node && thinkChip.contains(event.target)) return;
+    setThinkPop(false);
     if (event.target instanceof Node && ctxWrap.contains(event.target)) return;
     ctxPop.hidden = true;
   });
@@ -2713,6 +3091,11 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     if (!modelPop.hidden) {
       setModelPop(false);
       modelChip.focus();
+      return;
+    }
+    if (!thinkPop.hidden) {
+      setThinkPop(false);
+      thinkChip.focus();
       return;
     }
     if (!ctxPop.hidden) {
@@ -2739,6 +3122,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       panel.remove();
       setSessPop(false);
       setModelPop(false);
+      setThinkPop(false);
       ctxPop.hidden = true;
       if (whenTimer !== null) {
         window.clearInterval(whenTimer);

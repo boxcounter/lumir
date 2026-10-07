@@ -20,6 +20,7 @@ import type { PaneSession } from "./bindings/PaneSession";
 import type { VaultStatus } from "./bindings/VaultStatus";
 import type { LinkResolveResult } from "./bindings/LinkResolveResult";
 import type { CreateNoteResult } from "./bindings/CreateNoteResult";
+import type { ThinkingEffort } from "./bindings/ThinkingEffort";
 import type { VaultWorkspace } from "./bindings/VaultWorkspace";
 
 /** 判断 invoke 的 reject 值是否为 CommandError 信封。 */
@@ -319,7 +320,8 @@ export function onMenuCommand(handler: (command: string) => void): Promise<() =>
 // Harness 对话面板（M303，change add-harness-probe）
 //
 // 命令与事件名是 tower 2026-10-02 钉死的契约（M302 运行时与 M303 面板共用，MUST NOT 改名）。
-// context_json / state 的 JSON 形状见各函数注释；事件 payload 的八类 type 见 HarnessEvent。
+// context_json / state 的 JSON 形状见各函数注释；事件 payload 的九类 type 见 HarnessEvent
+// （reasoning_chunk 为 M362 新增的第九类——思考文本分片）。
 // 运行时（M302）与面板并行开发：解析一律宽容——缺字段按空态处理、不认识的字段忽略，
 // 形状是「我消费的键」而不是「对方发的全部键」，超集演进零改动。
 // ---------------------------------------------------------------------------
@@ -331,11 +333,14 @@ interface HarnessEventEnvelope {
   vault?: string;
 }
 
-/** harness:event 的事件载荷（八类，type 字段判别；每类都带信封字段 `vault`）。
- * aborted 为 M348 新增的第八类（本轮被用户停止）；既有七类的形状一律未动。 */
+/** harness:event 的事件载荷（九类，type 字段判别；每类都带信封字段 `vault`）。
+ *  aborted 为 M348 新增的第八类（本轮被用户停止）；reasoning_chunk 为 M362 新增的
+ *  第九类（思考文本分片，index 0 起、同块多个分片共用同一 index，在该轮 text_chunk
+ *  之前发出）；既有七类的形状一律未动。 */
 export type HarnessEvent = HarnessEventEnvelope &
   (
     | { type: "text_chunk"; text: string }
+    | { type: "reasoning_chunk"; text: string; index: number }
     | { type: "tool_call"; name: string; status: "started" | "done"; summary: string }
     | { type: "approval_request"; id: string; tool: string; diff?: string; argv?: string }
     | { type: "usage"; ctx_pct: number; cache_pct: number }
@@ -372,11 +377,25 @@ export function harnessNewSession(): Promise<void> {
 }
 
 /**
+ * 设置当前会话的思考程度档位（M362 对接面，change add-harness-thinking-display-and-effort）：
+ * 三档闭集合 `low` / `high` / `max`（`src/bindings/ThinkingEffort.ts`，默认 high），**会话内
+ * 生效、不写回配置**——新会话随会话对象丢弃回到默认。会话内即时生效（下一轮请求带上）；
+ * 无会话时后端即时建立会话再落档（面板一打开就可能点思考 chip，前端无需先发消息）。
+ * 当前 provider + model 是否支持程度调节不在本命令的回路里——前端置灰判据读
+ * `harness_state` 快照的 `thinking.supported` 字段。
+ */
+export function harnessSetThinkingEffort(effort: ThinkingEffort): Promise<void> {
+  return invoke<void>("harness_set_thinking_effort", { effort });
+}
+
+/**
  * 会话快照（JSON String）：webview 重载后面板据此恢复渲染。面板消费的键（宽容解析，
  * 缺省 = 空态）：`vault`（会话标识 = vault 根路径，M312——与事件信封同源，据此丢弃
  * 「切走之后才回来的」旧快照）、`messages[]`（role: "user" | "assistant" | "tool" |
  * "compact"；text / summary / name / status 字段按 role 取用）、`usage{ctx_pct,cache_pct}`、
- * `pending_approval{id,tool,diff?,argv?}`、`warn_ctx_pct`（缺省 85）。
+ * `pending_approval{id,tool,diff?,argv?}`、`warn_ctx_pct`（缺省 85）、`thinking{level,supported}`
+ * （M362：思考程度档位读数 + 当前 provider/model 是否支持程度调节；缺键 = 旧后端 / 桩，
+ * 思考 chip 按「不伪造读数」口径隐藏）。
  * 后端不可用（纯浏览器预览 / 命令未注册）时 reject，调用方按「空会话」降级。
  */
 export function harnessState(): Promise<string> {
@@ -398,6 +417,7 @@ export function parseHarnessEvent(payload: unknown): HarnessEvent | null {
   const type = (value as { type?: unknown }).type;
   switch (type) {
     case "text_chunk":
+    case "reasoning_chunk":
     case "tool_call":
     case "approval_request":
     case "usage":
