@@ -624,6 +624,68 @@ export function reduceSendPhase(phase: SendPhase, event: SendEvent): SendPhase {
   }
 }
 
+/**
+ * IME 组合期 Enter 拦截门（M361 2.3）：WKWebView 下「确认候选」那拍 Enter 的
+ * keydown.isComposing 不可靠——WebKit 先派 compositionend 再派确认 keydown（isComposing
+ * 已是 false），现行早退挡不住，发送被误触发。改用 compositionstart/end 自跟踪 + 双序防线：
+ *
+ * - Chromium 序（确认 Enter 在组合期内到达）：keydown 分支吞掉，并 endDisarmed——随后的
+ *   compositionend 不再开窗，避免用户紧接着再按一次 Enter 想发送时被误吞；
+ * - WebKit 序（compositionend 先到）：compositionend 开一扇短确认窗，窗口内紧邻的 Enter
+ *   按确认拍吞掉（consume 后关窗）；
+ * - 窗口外 Enter / 非 Enter 键一律放行（不得破坏正常 Enter 发送与 ⇧Enter 换行）。
+ *
+ * 纯函数、now 一律外注，假时钟可测（tests/unit/harness-ime-enter.test.ts）。
+ */
+export interface ImeKeyGate {
+  /** compositionstart 之后、compositionend 之前。 */
+  composing: boolean;
+  /** 确认窗截止（epoch ms）：compositionend 时刻 + IME_CONFIRM_WINDOW_MS；0 = 未开窗。 */
+  confirmUntil: number;
+  /** 组合期内那拍 Enter 已被吞：随后的 compositionend 不开确认窗。 */
+  endDisarmed: boolean;
+}
+
+export const IME_CONFIRM_WINDOW_MS = 250;
+
+export function imeKeyGate(): ImeKeyGate {
+  return { composing: false, confirmUntil: 0, endDisarmed: false };
+}
+
+export function imeGateCompositionStart(gate: ImeKeyGate): ImeKeyGate {
+  return { composing: true, confirmUntil: 0, endDisarmed: false };
+}
+
+export function imeGateCompositionEnd(gate: ImeKeyGate, now: number): ImeKeyGate {
+  return {
+    composing: false,
+    confirmUntil: gate.endDisarmed ? 0 : now + IME_CONFIRM_WINDOW_MS,
+    endDisarmed: false,
+  };
+}
+
+/** 驱动一拍 keydown：swallow = true 表示「IME 候选确认拍」——调用方须 preventDefault 且不发送、不换行。 */
+export function imeGateKeydown(
+  gate: ImeKeyGate,
+  key: string,
+  now: number,
+): { gate: ImeKeyGate; swallow: boolean } {
+  if (key === "Enter") {
+    if (gate.composing) {
+      // Chromium 序的确认拍：吞；compositionend 随后就到，但不再开窗。
+      return { gate: { ...gate, endDisarmed: true }, swallow: true };
+    }
+    if (gate.confirmUntil > now) {
+      // WebKit 序的确认拍：吞并关窗；再下一拍 Enter 就是真发送。
+      return { gate: { ...gate, confirmUntil: 0 }, swallow: true };
+    }
+    // 窗口外的真 Enter：放行（正常发送 / ⇧Enter 换行），顺手清掉过期窗。
+    return { gate: { ...gate, confirmUntil: 0 }, swallow: false };
+  }
+  // 非 Enter 键是真实输入：关掉确认窗（组合期状态不动——编辑键仍走 IME 原生路径）。
+  return { gate: { ...gate, confirmUntil: 0 }, swallow: false };
+}
+
 // ---------------------------------------------------------------------------
 // Markdown → DOM（零 XSS：纯 DOM API + textContent；解析器 = @lezer/markdown 的 GFM 配置）
 // ---------------------------------------------------------------------------
@@ -2436,9 +2498,29 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     if (sendPhase === "idle") send();
   });
   // Enter 发送 / ⇧Enter 换行（D328 占位同款口径）；IME 组合期不接管（Enter 在组合期是
-  // 「确认候选」）。退格 / 前删走模型（卡片按整体作用 + 自管撤销栈的确定性）。
+  // 「确认候选」）。双防线：浏览器自报的 event.isComposing（Chromium 可靠）+ 自跟踪状态机
+  // （WKWebView 不可靠——WebKit 先派 compositionend 再派确认 Enter 的 keydown，isComposing
+  // 已是 false，单靠早退会把「选候选」误当发送；状态机口径见 imeGateKeydown）。
+  // 退格 / 前删走模型（卡片按整体作用 + 自管撤销栈的确定性）。
+  let imeGateState = imeKeyGate();
   composer.addEventListener("keydown", (event: KeyboardEvent) => {
-    if (event.isComposing) return;
+    if (event.isComposing) {
+      // 浏览器自报组合期（Chromium 序的确认拍落在这里）：同样登记进门——若不登记，
+      // 紧随的 compositionend 会开确认窗，用户想发送的下一拍 Enter 会被误吞。不
+      // preventDefault：确认动作归 IME 原生默认（同既有口径）。
+      if (event.key === "Enter") {
+        imeGateState = imeGateKeydown(imeGateState, "Enter", Date.now()).gate;
+      }
+      return;
+    }
+    if (imeGateState.composing) return; // 组合期一律不接管（isComposing 漏报时的自跟踪命中）
+    const decision = imeGateKeydown(imeGateState, event.key, Date.now());
+    imeGateState = decision.gate;
+    if (decision.swallow) {
+      // 候选确认拍：候选已落字，这拍 Enter 只是「选中」——拦下（不发送、不换行、不留段落）。
+      event.preventDefault();
+      return;
+    }
     const mod = event.metaKey || event.ctrlKey;
     if (mod && event.key.toLowerCase() === "z") {
       event.preventDefault();
@@ -2524,9 +2606,11 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     event.preventDefault();
   });
   composer.addEventListener("compositionstart", () => {
+    imeGateState = imeGateCompositionStart(imeGateState);
     undoHistory.push(snapshot(), true);
   });
   composer.addEventListener("compositionend", () => {
+    imeGateState = imeGateCompositionEnd(imeGateState, Date.now());
     undoHistory.breakCluster(); // 组合整段是一个撤销步：下一拍编辑强制重新压栈。
     updateEmptyClass();
   });

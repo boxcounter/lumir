@@ -80,11 +80,14 @@ export default defineConfig({
     // 真机同款 UA 的 WebKit 分支（M280）：只跑阅读位置那条回归——它判的是「浮层关闭交还焦点
     // 不得改变滚动位置」，而这条判据**只有这一支**有区分度（chromium 结构性看不见、默认 UA 的
     // WebKit 被 CM 的回写兜底抹平）。其余场景不必在 WebKit 里重跑一遍。
+    // M361 2.3 起 IME 组合期 Enter 场景（m361-harness-ime-enter）同列：WKWebView 的
+    // 组合/确认事件序在真 WebKit 引擎里跑一遍（chromium 事件序与 WebKit 不同，单跑 chromium
+    // 证不了 WebKit 序分支）。
     ...(webkitRealuaPresent
       ? [
           {
             name: "webkit-realua",
-            testMatch: /m280-overlay-esc-scroll\.spec\.ts/,
+            testMatch: /m280-overlay-esc-scroll\.spec\.ts|m361-harness-ime-enter\.spec\.ts/,
             use: { browserName: "webkit" as const, userAgent: REAL_WEBKIT_UA },
           },
         ]
