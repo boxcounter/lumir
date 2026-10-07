@@ -782,8 +782,11 @@ pub fn load_from(path: &Path) -> ConfigSnapshot {
                 warnings.push(format!(
                     "配置项 harness.providers.kimi.model 的 {RETIRED_KIMI_MODEL} 已退役，已自动改写为 {DEFAULT_KIMI_MODEL}"
                 ));
-                if let Err(e) = persist_config(path, &value) {
-                    warnings.push(format!("改写后的配置未能落盘（{e}），下次启动会再试一次"));
+                if let Err(e) = write_json_atomic(path, &value) {
+                    warnings.push(format!(
+                        "改写后的配置未能落盘（{}），下次启动会再试一次",
+                        e.message
+                    ));
                 }
             }
             ConfigSnapshot {
@@ -826,21 +829,37 @@ fn migrate_retired_kimi_model(value: &mut serde_json::Value) -> bool {
     }
 }
 
-/// 迁移改写后的落盘：tmp + rename 原子替换，缩进写（配置要人可读可改，ADR 0002 §5）。
+/// config.json 的原子落盘：tmp 文件 + rename 原子替换，缩进写（配置要人可读可改，ADR 0002 §5）。
 ///
-/// 应用侧的常规写通道在 `commands.rs`（`config_set_value` / `write_last_vault` 那条）；
-/// 本函数是 config 模块自己发起的一次性修补写，形状与它逐条一致。**M365 收口建议**：两处原子
-/// 写合并为一处（把这条通道提到 config 模块、commands 侧改为委托），免得将来只改一处
-/// （REVIEW.md 第 8 条）。
-fn persist_config(path: &Path, value: &serde_json::Value) -> Result<(), String> {
+/// **写 config.json 的唯一落盘实现**：应用侧的写命令（`commands.rs` 的 `config_set_value` /
+/// `write_last_vault` 等）与 config 模块自己的退役值迁移都调用这里——同一语义不留两处真源
+/// （REVIEW.md 第 8 条）。调用方之一是 [`load_from`] 的迁移修补写。
+pub(crate) fn write_json_atomic(
+    path: &Path,
+    value: &serde_json::Value,
+) -> Result<(), CommandError> {
     if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir)
-            .map_err(|e| format!("无法创建配置目录 {}：{e}", dir.display()))?;
+        std::fs::create_dir_all(dir).map_err(|e| {
+            CommandError::new(
+                "config_write_failed",
+                format!("无法创建配置目录 {}：{e}", dir.display()),
+            )
+        })?;
     }
     let tmp = path.with_extension("json.tmp");
-    let body = serde_json::to_string_pretty(value).expect("serde_json::Value 一定可序列化");
-    std::fs::write(&tmp, body).map_err(|e| format!("无法写入配置 {}：{e}", tmp.display()))?;
-    std::fs::rename(&tmp, path).map_err(|e| format!("无法落盘配置 {}：{e}", path.display()))
+    let body = serde_json::to_string_pretty(value).expect("配置 Value 一定可序列化");
+    std::fs::write(&tmp, body).map_err(|e| {
+        CommandError::new(
+            "config_write_failed",
+            format!("无法写入配置 {}：{e}", tmp.display()),
+        )
+    })?;
+    std::fs::rename(&tmp, path).map_err(|e| {
+        CommandError::new(
+            "config_write_failed",
+            format!("无法落盘配置 {}：{e}", path.display()),
+        )
+    })
 }
 
 /// 逐字段校验：非法值落回该字段默认值并附人话 warning。

@@ -491,7 +491,7 @@ pub fn write_last_vault(root: &Path) -> Result<(), CommandError> {
 pub(crate) fn write_last_vault_to(path: &Path, root: &Path) -> Result<(), CommandError> {
     let mut value = read_config_json(path);
     merge_last_vault(&mut value, root);
-    write_config_json(path, &value)
+    config::write_json_atomic(path, &value)
 }
 
 /// 应用侧写 config.json 的共用读入（ADR 0002 §5 配置即数据）：读整份 JSON 为 `Value`，
@@ -505,35 +505,6 @@ fn read_config_json(path: &Path) -> serde_json::Value {
         value = serde_json::json!({});
     }
     value
-}
-
-/// 应用侧写 config.json 的共用落盘：tmp 文件 + rename 原子替换。
-fn write_config_json(path: &Path, value: &serde_json::Value) -> Result<(), CommandError> {
-    if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir).map_err(|e| {
-            CommandError::new(
-                "config_write_failed",
-                format!("无法创建配置目录 {}：{e}", dir.display()),
-            )
-        })?;
-    }
-    let tmp = path.with_extension("json.tmp");
-    std::fs::write(
-        &tmp,
-        serde_json::to_string_pretty(value).expect("config serializes"),
-    )
-    .map_err(|e| {
-        CommandError::new(
-            "config_write_failed",
-            format!("无法写入配置 {}：{e}", tmp.display()),
-        )
-    })?;
-    std::fs::rename(&tmp, path).map_err(|e| {
-        CommandError::new(
-            "config_write_failed",
-            format!("无法落盘配置 {}：{e}", path.display()),
-        )
-    })
 }
 
 /// version 的写入纪律（merge_last_vault 与 merge_ui_value 共用）：仅在缺失或不高于
@@ -606,7 +577,7 @@ pub(crate) fn write_config_value_to(
     }
     let mut value = read_config_json(path);
     merge_config_value(&mut value, section, key, section_value);
-    write_config_json(path, &value)
+    config::write_json_atomic(path, &value)
 }
 
 /// 合并写 `<section>.<key>` 的纯函数部分（可测）：只改这一个键，其余字段（含未知字段与其它表）
