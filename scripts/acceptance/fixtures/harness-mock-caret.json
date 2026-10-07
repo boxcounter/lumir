@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "responses": [
+    {
+      "text": "CARET-ANSWER-01 光标复位验收回答正文。",
+      "usage": { "input_tokens": 800, "cached_tokens": 80, "output_tokens": 12 }
+    }
+  ]
+}

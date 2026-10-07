@@ -3009,6 +3009,12 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     // 投递成功入队后草稿与撤销史一并归零（新消息是新的编辑史）。
     undoHistory.clear();
     renderComposer([{ kind: "paragraph", text: "" }], null);
+    // 焦点与光标回 composer（M372）：replaceChildren 会把 WebKit 里既有的 DOM 选区塌到
+    // composer 元素边界——视觉上光标跑到输入区最左上角，且后续键入落点不可预期。显式
+    // focus + 把选区放进新的空段落，光标才回到输入区的正常位置。focus 须在重渲之后、
+    // setDomCaret 之前（focus 自身会归位选区，最后再精调一次）。
+    composer.focus();
+    setDomCaret({ block: 0, offset: 0 });
     updateEmptyClass();
     // 相位入 running（两态发送钮切停止态）+ 阶段指示回「等待响应」——进度条与阶段行随相位显形。
     stageWaiting = true;

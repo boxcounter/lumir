@@ -316,8 +316,10 @@ pub fn run_turn_for(
             }
             // 工具轮（模型只发工具调用、无正文文本）不落空正文面板消息：落一条 `text: Some("")`
             // 的话，快照恢复路径会渲染出一排只有「Agent · Xm ago」头、body 为空的记录（M367
-            // 根因）。assistant 项仍入 input（reasoning 必须原样回传，M306），JSONL 照旧留痕——
-            // 只有面板消息这一面跳过。
+            // 根因）。空正文 assistant 项同样不进 input（M372：空 output_text 进下一次请求会被
+            // Kimi Code 订阅端以 `text content is empty` 400 拒掉）——reasoning 项由
+            // [`session::assistant_item`] 原样回传，M306 纪律不变；JSONL 照旧留痕——只有
+            // 面板消息这一面跳过。
             if !assistant_text.is_empty() {
                 s.push_panel(PanelMessage {
                     role: "assistant".into(),
@@ -1083,9 +1085,12 @@ mod tests {
     /// ① 不落空正文 assistant 面板消息（修前落 `text: Some("")`，快照恢复渲染出只有角色
     ///    meta 行、body 为空的「空气泡」）；
     /// ② tool 面板消息持久化摘要（成功 = 参数摘要，失败 = 细分状态 + 错误码），
-    ///    面板重载后工具行仍有信息（修前 summary 恒 None）。
+    ///    面板重载后工具行仍有信息（修前 summary 恒 None）；
+    /// ③ M372：空正文 assistant 项同样不进 input（修前进下一次请求，被 k3-256k 端点以
+    ///    `text content is empty` 400 拒掉）。
     ///
-    /// 判据落在线上形状（面板恢复读的就是 `StateSnapshot` 的 JSON），不是内部字段。
+    /// 判据落在线上形状（面板恢复读的就是 `StateSnapshot` 的 JSON；input 断言读会话的
+    /// `input()`），不是内部字段。
     #[test]
     fn tool_only_round_skips_empty_assistant_and_persists_tool_summary() {
         let root =
@@ -1168,6 +1173,36 @@ mod tests {
         assert!(
             failed.contains("error") && failed.contains("tool_unknown"),
             "失败工具行摘要须含状态与错误码，实际：{failed}"
+        );
+
+        // ③ M372（k3-256k `text content is empty` 的根因面）：工具轮的空正文 assistant 项
+        // 不得留在 input 里——它原样进下一次请求，Kimi Code 订阅端即整条 400。修复前
+        // input 的形状是 [user, assistant(""), fc1, fc2, fco1, fco2, assistant("读完了。")]，
+        // 本条对那条空正文项必 FAIL（区分度自证，REVIEW.md 第 1 条）。
+        let input = runtime
+            .with_session(&scope, |s| s.input().to_vec())
+            .expect("会话在释放后仍在");
+        for item in &input {
+            if item["role"] == "assistant" {
+                let text = item["content"][0]["text"].as_str().unwrap_or("");
+                assert!(
+                    !text.is_empty(),
+                    "input 里的 assistant 项不得为空正文：{item}"
+                );
+            }
+        }
+        // 非空正文项不受影响：两轮的正文与两对调用项全在。
+        assert_eq!(
+            input.iter().filter(|i| i["role"] == "assistant").count(),
+            1,
+            "只有「读完了。」一条 assistant 消息项：{input:?}"
+        );
+        assert_eq!(
+            input
+                .iter()
+                .filter(|i| i["type"] == "function_call")
+                .count(),
+            2
         );
 
         let _ = std::fs::remove_dir_all(&root);

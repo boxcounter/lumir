@@ -82,11 +82,19 @@ pub fn supported(provider: &HarnessProvider, model: &str) -> bool {
     }
 }
 
-/// k3 系模型判定：模型 id 为 `kimi-k3` 或以 `kimi-k3-` 开头（如将来的 `kimi-k3-…` 变体）。
+/// k3 系模型判定：按**非字母数字字符切词元**后存在恰为 `k3` 的词元。
 ///
-/// **不做前缀宽容**（`kimi-k3x` 不算）：模型 id 是外部契约，只认官方命名形态，宁可置灰也不错发。
+/// 命中：`kimi-k3`（出厂默认）/ `kimi-k3-turbo`（将来的开放平台变体）/ `k3-256k` /
+/// `kimi-code/k3-256k`（Kimi Code 订阅端 id——M372 实测 Alex 配置的就是它，K3-256k 支持
+/// effort，chip 此前被误判置灰）。
+///
+/// **不做前缀宽容**（`kimi-k30` / `k3x` 不算）：模型 id 是外部契约，只认官方命名形态，
+/// 宁可置灰也不错发。词元判定对两类官方命名（`kimi-k3` 系与订阅端 `k3-…` 系）同一条规则
+/// 覆盖，避免按前缀枚举漏掉订阅端新变体（如将来的 `k3-1m`）。
 fn is_kimi_k3(model: &str) -> bool {
-    model == "kimi-k3" || model.starts_with("kimi-k3-")
+    model
+        .split(|c: char| !c.is_ascii_alphanumeric())
+        .any(|token| token == "k3")
 }
 
 /// 把档位写进请求体（provider 调用点的映射表，[`super::llm`] 的请求构造调用）。
@@ -156,6 +164,11 @@ mod tests {
         // kimi：仅 k3 系（文档：k2.6 / k2.7-code 的 reasoning_effort 是「Not supported」）。
         assert!(supported(&kimi(), "kimi-k3"));
         assert!(supported(&kimi(), "kimi-k3-turbo"));
+        // Kimi Code 订阅端 id（M372：Alex 实测配置；K3-256k 是 k3 系、支持 effort）。
+        assert!(supported(&kimi(), "k3-256k"));
+        assert!(supported(&kimi(), "kimi-code/k3-256k"));
+        // 将来的订阅端变体同规则命中（如 k3-1m）。
+        assert!(supported(&kimi(), "k3-1m"));
         assert!(!supported(&kimi(), "kimi-k2.6"));
         assert!(!supported(&kimi(), "kimi-k2.7-code"));
         // 历史出厂默认值（M365 前的 `DEFAULT_KIMI_MODEL`）：kimi-k2 已于 2026-05-25 退役（404），

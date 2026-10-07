@@ -379,15 +379,23 @@ pub fn user_item(text: &str) -> serde_json::Value {
 /// reasoning 项作为独立项**紧随其前**——kimi 的 `encrypted_content` 项、deepseek
 /// thinking 的 `reasoning_text` content parts 项同此位置（deepseek 带 tools 时
 /// 不回传即 400，M306 真机实测；协议依据见 [`super::llm`] 模块文档）。
+///
+/// **空正文不发消息项**（M372，真 API 实测）：`text` 为空时（工具轮只发调用、无正文）
+/// 返回里只有 reasoning 项、没有 assistant 消息项——空 `output_text` 会原样进下一次
+/// 请求的 input，Kimi Code 订阅端（`k3-256k` 等，兼容层）即以
+/// `Invalid request: text content is empty` 400 拒掉整条请求。reasoning 项仍原样回传
+/// （M306 纪律一行不改）。
 pub fn assistant_item(text: &str, reasoning: Option<&serde_json::Value>) -> Vec<serde_json::Value> {
     let mut items = Vec::new();
     if let Some(r) = reasoning {
         items.push(r.clone());
     }
-    items.push(serde_json::json!({
-        "role": "assistant",
-        "content": [{"type": "output_text", "text": text}],
-    }));
+    if !text.is_empty() {
+        items.push(serde_json::json!({
+            "role": "assistant",
+            "content": [{"type": "output_text", "text": text}],
+        }));
+    }
     items
 }
 
@@ -410,4 +418,34 @@ pub fn function_call_output_item(call_id: &str, output: &str) -> serde_json::Val
         "call_id": call_id,
         "output": output,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// M372：空正文的 assistant 消息项不进回放 input（Kimi Code 订阅端对空 `output_text`
+    /// 整条 400：`Invalid request: text content is empty`）。reasoning 项不受文本空否影响，
+    /// 按 M306 纪律原样回传。
+    #[test]
+    fn assistant_item_omits_empty_text_message() {
+        // 空正文且无 reasoning：什么都不产出（工具轮的常态——调用项另走
+        // function_call_item，不经本函数）。
+        assert!(assistant_item("", None).is_empty());
+        // 空正文但有 reasoning：只有 reasoning 项。
+        let reasoning = serde_json::json!({"type": "reasoning", "id": "rs_1"});
+        let items = assistant_item("", Some(&reasoning));
+        assert_eq!(items, vec![reasoning.clone()]);
+        // 非空正文：reasoning 在前、消息项在后（M306 形状不变）。
+        let items = assistant_item("答案", Some(&reasoning));
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0], reasoning);
+        assert_eq!(items[1]["role"], "assistant");
+        assert_eq!(items[1]["content"][0]["type"], "output_text");
+        assert_eq!(items[1]["content"][0]["text"], "答案");
+        // 无 reasoning 的非空正文：单消息项。
+        let items = assistant_item("只有正文", None);
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0]["role"], "assistant");
+    }
 }

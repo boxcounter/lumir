@@ -206,8 +206,10 @@ pub struct ProviderPreset {
 /// 现役四个 id——`kimi-k3`（本仓出厂默认，1M ctx）/ `kimi-k2.7-code` /
 /// `kimi-k2.7-code-highspeed` / `kimi-k2.6`（后三者 256K）。`kimi-k2` 系 2026-05-25 退役，
 /// 已不在表内：它回落 `fallback_window`（131_072，与它的历史窗口同值，历史配置的 ctx% 读数
-/// 逐值不变）。**Kimi Code 订阅端的 `k3-256k` 不在本表**——那是另一套端点与协议
-/// （Anthropic-compatible）的 id，本 provider 发的是 Responses 请求。
+/// 逐值不变）。
+///
+/// `k3-256k`（Kimi Code 订阅端 id）经自定义 base_url 走本 provider 时窗口 256K（M372）——
+/// 它不在开放平台的取值表里，但用户可配，ctx% 读数按真实窗口算。
 const KIMI_PRESET: ProviderPreset = ProviderPreset {
     base_url: "https://api.moonshot.cn/v1", // 未核实（验收批对真 API 验证；config 可覆盖）
     default_model: crate::config::DEFAULT_KIMI_MODEL,
@@ -216,6 +218,7 @@ const KIMI_PRESET: ProviderPreset = ProviderPreset {
         ("kimi-k2.7-code", 262_144),
         ("kimi-k2.7-code-highspeed", 262_144),
         ("kimi-k2.6", 262_144),
+        ("k3-256k", 262_144),
     ],
     fallback_window: 131_072,
     overflow_indicators: &[

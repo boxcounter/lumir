@@ -65,7 +65,8 @@ export async function writeConfig({
   language = undefined,
   keys = undefined,
   // [harness] 节（M304，change add-harness-probe §11）：传了才写。形状：
-  // { provider, fixture, permissions: { allow, deny }, loopMax, warnCtxPct, autoCompact }——
+  // { provider, fixture, permissions: { allow, deny }, loopMax, warnCtxPct, autoCompact,
+  //   kimiModel }——
   // fixture 路径在场景加载期已被 token 替换为绝对路径（mock 脚本用 $fixtures 只读引用套件
   // fixtures 目录，不拷进 vault——拷进 vault 会留下非 .md 残留，串红场景 28/65 的
   // 「vault 里无 json/tmp 产物」断言）；$vault / $vault2 精确记号仍可经 resolveSeedPath 解析。
@@ -92,6 +93,10 @@ export async function writeConfig({
     const h = {};
     if (harness.provider !== undefined) h.provider = harness.provider;
     if (harness.fixture !== undefined) h.providers = { mock: { fixture: resolveSeedPath(harness.fixture) } };
+    // M372（场景 99）：kimiModel 写了就构造 kimi provider 节（model + 占位 api_key）——
+    // k3-256k 等自定义模型的能力判定（思考 chip 置灰判据）按 config 现算，不发消息就验得到；
+    // 发消息的场景不会配这个键（真 api_key 不进验收环境）。
+    if (harness.kimiModel !== undefined) h.providers = { kimi: { model: harness.kimiModel, api_key: "acceptance-dummy" } };
     if (harness.permissions !== undefined) h.permissions = harness.permissions;
     if (harness.loopMax !== undefined) h.loop_max = harness.loopMax;
     if (harness.warnCtxPct !== undefined) h.warn_ctx_pct = harness.warnCtxPct;
