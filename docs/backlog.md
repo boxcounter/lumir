@@ -2825,6 +2825,30 @@ finding）、2 条套件注入通道缺陷（既有 finding）、1 条 M283 已�
     坐标上点击`），其后依赖菜单节点的步骤级联失败（原始日志 `test-results/m251/acceptance-47.log`；
     与 M244 / M249 的同一现场同因，是通道限制不是产品缺陷）。所以 ①② 的**真机判据本批未取得**，
     判定全部由 chromium 层承担（两条 M251 用例，含「删掉容器级命中即红」的反向验证）。
+93. **思考块三态（折叠默认 / 展开见原文 / 时长读数在场）**（2026-10-07，M364，change
+    `add-harness-thinking-display-and-effort`）—— `93-harness-thinking-blocks`（真机 PASS / 22.5s）：
+    mock fixture 产出 `reasoning_chunks` ⇒ agent 消息内渲染可折叠思考块。**折叠默认**：折叠行
+    「思考过程 · N 秒」（D388）在场、思考原文不进 AX（`body[hidden]`）；**展开见原文**：点折叠行
+    ⇒ 同一块的两片原文都上屏、折叠行仍在；**再折叠**：原文重新不可见。折叠判「原文不显」而非
+    `aria-expanded`（WKWebView 的 AX 文本不暴露展开态，套件 README「已知边界」已登记）；时长读数
+    在 mock 下恒为 0 秒（分片连发无间隔），本场景只断言读数在场、不断言非零（计时取整由前端单测
+    `thinkingDurationSec` 守）。
+94. **无 reasoning ⇒ 零思考块（反向验证）**（2026-10-07，M364，change
+    `add-harness-thinking-display-and-effort`）—— `94-harness-thinking-absent`（真机 PASS / 23.4s）：
+    mock 响应不含 `reasoning` / `reasoning_chunks` ⇒ `思考过程 ·` 折叠行**计数为 0**（design §3
+    「零噪声」），配一条「回答正文在场」的正观测——没有它，「零块」会在「消息根本没渲染」的空输入
+    上恒真（设计 §6.4 明写的反恒真空转）。
+95. **思考程度 chip 会话态（默认 High / 浮层三档 / 选 Max / 新会话回 High）**（2026-10-07，M364，change
+    `add-harness-thinking-display-and-effort`）—— `95-harness-thinking-effort`（真机 PASS / 18.7s）：
+    默认 High → 点 chip 浮层列 Low/High/Max 三裸档 → 选 Max 读数翻 Max → 点「＋新会话」chip 回落默认
+    High。**首跑时末步红**：新建会话后 chip 停在旧档、而 core 会话已丢弃（下一轮按默认 High 构造请求），
+    违反该 change spec 的 `Scenario: 新会话重置默认`；缺陷在 `src/harness-panel.ts`（`startNewSession` →
+    `resetView` 不重取 `harness_state`、不 `applyThinkingChip`），finding
+    `20261007-worker-tha1-bug-chip-core-high-spec`。**M366（`9aa25e1`）修复后本场景真机转绿**——上面
+    读数即修复后现场（AX 四帧：High → High（浮层开）→ Max → High（新会话后））。
+    **覆盖边界**：「档位 → 请求参数」那一段不在真机断言（套件无可读 `MockClient::received_efforts`
+    的通道，tower 裁决不开 JSONL 新通道），由 core 集成测试 `session_thinking_effort_reaches_request`
+    覆盖（场景「已知边界」已登记）。
 
 **已机验到渲染/结构层，行为细节仍缺可观测面**
 
