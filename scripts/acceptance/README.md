@@ -177,7 +177,7 @@ steps:
 `harness`（M304，change add-harness-probe §11）是唯一的**嵌套**键：
 `{ provider, fixture, permissions: { allow, deny }, loopMax, warnCtxPct, autoCompact }` → `[harness]` 节
 （camelCase 键名映射到配置文件的 snake_case）。`fixture` 写 `$fixtures/...` 只读引用套件 fixtures
-目录（见下文「占位符」），mock provider 场景（70–77）是样例。
+目录（见下文「占位符」），mock provider 场景（70–77、93–96）是样例。
 
 > 模型 chip 的选项表**无法**用场景配置收窄：`config_get` 回的是 Rust 侧 `HarnessProviders`
 > 结构体（`kimi` / `deepseek` / `mock` 三个字段恒序列化），因此 chip 浮层在真机上恒列三档——
@@ -217,7 +217,7 @@ steps:
 |---|---|---|
 | `seed.registry[]` | `{ id, path, lastOpenedAt?, missingSince?, archivedAt? }` | `<隔离配置>/lumir/vault-registry/<id>.json`（一条一个文件，与 Rust 侧注册表同形） |
 | `seed.legacyRegistry[]` | 同上 | `<隔离配置>/lumir/workspaces/<id>.json`（**旧名**目录，M248）：只服务迁移场景 48，用来构造「更名落地之前」的现场；app 启动时把它整个搬进 `vault-registry/` |
-| `seed.sessions{}` | v1：`{ <id>: { tabs: [...], active } }`；v2（`panes` 给了）：`{ <id>: { panes: [{ tabs, active }], ratio?, harnessPane? } }` | `<隔离配置>/lumir/vault-sessions/<id>.json`。`harnessPane: true`（M349）预置「harness 面板在场」的 v2 会话（ADR 0008 Decision 6 的 `harness_pane` 位，恢复时重新装配面板、内容不持久化）——场景 91 是样例 |
+| `seed.sessions{}` | v1：`{ <id>: { tabs: [...], active } }`；v2（`panes` 给了）：`{ <id>: { panes: [{ tabs, active }], ratio?, harnessPane? } }` | `<隔离配置>/lumir/vault-sessions/<id>.json`。`harnessPane: true`（M349）预置「harness 面板在场」的 v2 会话（ADR 0008 Decision 6 的 `harness_pane` 位，恢复时重新装配面板、内容不持久化）——场景 91 与 96 是样例（91 判布局位、96 判面板内容的恢复渲染） |
 | `seed.bulkVault` | `true` 或 `{ markdown?, files?, dirs?, mdBytes?, maxMdBytes?, ignoredMd?, ignoredDirs?, lazyDirs? }` | **生成**到验收 vault（`$vault`）里（M283）：复刻真实 vault 的 scan-visible 形状——默认 `2142` 文件 / `426` 目录 / `1341` 个 md / ≈`7MB`、行长正常（约 78 字符/行，含标题与 wikilink）、根下带一个 `node_modules`（验证内置规则忽略生效）。前六个参数与 Rust 侧读数 harness（`src-tauri/tests/vault_open_readings.rs`）同形状，**改形状时两边一起改** |
 | ↑ 的两类忽略探针（M296，change `vault-open-ignore-set`） | `ignoredDirs: { <根下目录名>: <md 条数> }`（内置规则的构建产物族）；`lazyDirs: { gitignore: [...], gitignoreNegations: [...], exclude: [...] }`（用户规则：写根 `.gitignore` / 根 `.git/info/exclude`，各目录带一个 `tutorial.md`，正文含 marker「本地教程正文」） | 只服务**可见性判据**（场景 67），不参与任何读数口径，因此**只在 JS 侧**——Rust 读数 harness 不生成它们。探针一律落在 vault **根**下：树的默认态才断得到「这一行在不在」（`ignoredDirs` 命中内置规则 ⇒ 不可见；`lazyDirs` 命中用户规则 ⇒ **行在树里**、展开才枚举）。默认不生成，既有调用方（如场景 60 的 `bulkVault: {}`）逐字节不变 |
 
@@ -660,6 +660,19 @@ Alex 抽审路径：先看 `summary.md`，再进 FAIL 场景看 `steps.md` + `sh
   WKWebView 暴露成**无 bbox 的 AXSplitter**（节点在树、名字对、frame 为空），按节点定位不到——
   栏宽手柄用 `textareaEdge` 形态（从 AXTextArea bbox 的列缘内侧 2px 起拖）绕开。场景 38 是首个
   消费者（现场 `test-results/acceptance/<日期>/38-content-width-drag/`）。
+- **harness transcript 的恢复渲染有一条判据盲区（M368 登记）**：`harness-panel.ts` 恢复路径对
+  「正文为空的 assistant 记录」的跳过（旧快照防御）在真机上**造不出被验的形状**——core 侧 M367
+  起不再落这类面板消息，套件 fixtures 里也没有「纯工具轮」（每条带工具调用的响应都带正文）。
+  场景 96 判的是它的后果面（消息数 = assistant 记录数 + 用户消息、正文与工具行都在场；产不出
+  形状时那几条断言只能守回归）；「该不该渲染这条记录」的判据本体在
+  `tests/unit/harness-restore.test.ts` 的 `restoredAssistantText`。**MUST NOT** 把 96 的 PASS
+  读成「旧快照防御已在真机验过」。
+- **同一 vault 的两种路径拼写 = 两个 harness 会话（M312/M164 现场，M368 复核）**：harness 会话
+  以 vault 根路径**字符串**为键，而启动恢复用配置里的 `last_vault`（套件的 `writeConfig` 原样写
+  `$vault`，即 `/tmp/...`）、注册表里存的是 `realpath` 后的路径（`/private/tmp/...`，
+  `app.mjs` 的 `writeRegistryEntry` 与 Rust 的 `reconcile_vault` 都会 canonicalize）。因此
+  「切走再切回后看到自己的对话」这一类判据（场景 96）必须让两次打开**同源**：都走 ⌘O 的注册表行；
+  混用启动恢复与注册表路径会得到一个**新的空会话**（如实，不是渲染缺陷）。
 - **场景维护权归实现者**：新功能 mission 的 tasks 必须带「新增/更新验收场景」一项（裁决点 3）。
 
 ## 加一个场景

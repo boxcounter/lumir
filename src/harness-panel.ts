@@ -770,6 +770,65 @@ export function thinkingStateOf(snapshot: unknown): { level: string; supported: 
   return { level, supported: (thinking as { supported?: unknown }).supported === true };
 }
 
+// ---------------------------------------------------------------------------
+// 工具行终态摘要 + 快照恢复记录的纯判定（M368）。真源与合同：
+//   - 终态摘要的形状（成功 = 调用参数摘要、失败 = `状态 · 错误码: 消息`）由 core 决定
+//     （src-tauri/src/harness/turn.rs 的 handle_call 与 summarize_args / summarize_result），
+//     面板持久化的那份与 live `started` 事件的那份同源（M367）；
+//   - 空正文 assistant 记录的形状与「不再落」的合同见 openspec/specs/harness/spec.md
+//     「消息呈现」的「工具轮快照保真」场景（M367 落在 core 侧，这里的判定是**旧快照防御**）。
+// 与上面几层同一条分层纪律：判定是纯函数（零 DOM 环境直接驱动，
+// tests/unit/harness-restore.test.ts），DOM 只是渲染面。
+// ---------------------------------------------------------------------------
+
+/**
+ * `done` 事件里**失败摘要**的形状：core 的 `summarize_result` 失败分支固定为
+ * `{细分状态} · {错误码}: {消息}`（turn.rs：状态是 denied / rejected / error，
+ * 错误码是 ASCII 码字，分隔符是中点 U+00B7）。
+ *
+ * 前端判成功/失败时**只认失败这一侧的形状**，不认识成功侧的文案：成功时 core 发的是它自己的
+ * 固定串，而真正有信息量的**参数摘要**在 live 路径只由 `started` 事件携带（与面板持久化的
+ * 那份同源，M367）——「`done` 的摘要不是失败形状」即「这次调用成功」。
+ *
+ * 形状（而非固定状态词清单）是有意的：core 将来加细分状态时前端不用同批改；认不出的摘要
+ * （桩环境 / 视觉场景直接 fire 的自定义摘要）走「不是失败」那一支，仍然原样上屏 done 的原文
+ * （见 toolDoneSummary 的回落）——不伪造、不吞信息。
+ *
+ * 这是跨层字符串耦合（REVIEW.md 第 8 条的口味，同族：前端认 core 的摘要格式）。根治办法是
+ * core 把 live `done` 事件的 summary 也换成持久化的那份（成功 = 参数摘要），前端零判定；
+ * 已作为后续项上报，未落之前先在这里判定一次，不各算一份摘要。
+ */
+const TOOL_FAILED_SUMMARY = /^[a-z]+ · [a-z0-9_]+: /;
+
+/**
+ * 工具行终态上屏的摘要（D344 的 `{summary}`）：
+ * - **失败** → `done` 事件的原文（`状态 · 错误码: 消息`），状态与错误原样保留；
+ * - **成功** → 参数摘要（`startedSummary`：live 取 `started` 事件、恢复路径取面板持久化的
+ *   `summary`，同一份）；`startedSummary` 为空时（恢复路径没有 started 行、乱序 `done`、
+ *   桩环境）回落 `done` 的摘要——没有更早的那份可用就不伪造。
+ */
+export function toolDoneSummary(doneSummary: string, startedSummary: string): string {
+  if (TOOL_FAILED_SUMMARY.test(doneSummary)) return doneSummary;
+  return startedSummary !== "" ? startedSummary : doneSummary;
+}
+
+/**
+ * 快照恢复路径上一条 assistant 记录的正文：缺 `text` / 非字符串 / 空白串 → `null`
+ * （MUST NOT 渲染）。模型只发工具调用、无正文的轮次在 M367 之前会落一条 `text: Some("")`
+ * 的面板记录，渲染出来就是「只有角色 meta 行、body 为空」的空气泡（Alex 2026-10-07 现场
+ * 「连续出现 Agent · 19m ago 的字样」）。core 侧 M367 起不再落这类记录（新快照由它根治），
+ * 这里是**旧快照的防御**：面板消息活在 core 内存里，升级前起的会话在重载 / 切 vault 回来时
+ * 仍可能带它回来——渲染面要能吃掉这个形状。
+ *
+ * `trim()` 而非 `=== ""`：空白正文经 Markdown 渲染后同样是空 body，光秃 who 行照旧。
+ */
+export function restoredAssistantText(record: unknown): string | null {
+  if (typeof record !== "object" || record === null) return null;
+  const text = (record as { text?: unknown }).text;
+  if (typeof text !== "string") return null;
+  return text.trim() === "" ? null : text;
+}
+
 
 
 // ---------------------------------------------------------------------------
@@ -2264,15 +2323,24 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     }
   }
 
+  /** live「started」行的参数摘要（M368）：done 行取用——工具**成功**时 `done` 事件只发
+   *  它自己的固定串（认不出成功侧文案，见 TOOL_FAILED_SUMMARY），参数摘要在 live 路径只有
+   *  `started` 这一份。按行元素存（行与事件按 block.running 配对）：随行生灭，WeakMap 不
+   *  阻挡行被回收；恢复路径没有 started 行，故没有条目。 */
+  const startedArgs = new WeakMap<HTMLElement, string>();
+
   /** 步骤行追加 / 翻转：started 追加 running 行；done 翻最后一行 running 行（事件配对与
    *  既有 lastToolEl 口径同源），无 running 行（恢复路径 / 乱序防御）直接追加 done 行。
-   *  行文案沿用 D343/D344——真机场景 71/72/77 的 AX 断言锚这两份文案。 */
+   *  行文案沿用 D343/D344——真机场景 71/72/75/77 的 AX 断言锚这两份文案。
+   *  M368：done 行的 `{summary}` 取 toolDoneSummary 的判定（成功 = 参数摘要、失败 =
+   *  状态+错误），故 started 行的摘要要留到 done 用。 */
   function appendToolCall(name: string, status: "started" | "done", summary: string): void {
     const block = ensureToolsBlock();
     if (status === "started") {
       const row = document.createElement("div");
       row.className = "lumir-hp-tool-row is-running";
       row.append(createToolIcon(false), createToolLabel(t("D343", { name })));
+      startedArgs.set(row, summary);
       block.el.append(row);
       block.rows.push(row);
       block.running = row;
@@ -2280,8 +2348,14 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       const row = block.running;
       block.running = null;
       row.classList.replace("is-running", "is-done");
-      row.replaceChildren(createToolIcon(true), createToolLabel(t("D344", { name, summary })));
+      const args = startedArgs.get(row) ?? "";
+      startedArgs.delete(row);
+      row.replaceChildren(
+        createToolIcon(true),
+        createToolLabel(t("D344", { name, summary: toolDoneSummary(summary, args) })),
+      );
     } else {
+      // 无 running 行（恢复路径 / 乱序 done）：没有更早的那份摘要可回落，done 的原文即全部。
       const row = document.createElement("div");
       row.className = "lumir-hp-tool-row is-done";
       row.append(createToolIcon(true), createToolLabel(t("D344", { name, summary })));
@@ -2710,23 +2784,39 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
         // 会话名按同口径从恢复的消息重算（首条用户消息的原始问题文本）。
         if (firstUserText === null) firstUserText = firstUserTextOf(blocks);
         appendUserMessage(blocks, record.text, messageTs(record)); // 复制源 = 留存原文；戳 = 后端 ts（无则不显示）
-      } else if (role === "assistant" && typeof record.text === "string") {
-        const el = document.createElement("div");
-        el.className = "lumir-hp-msg lumir-hp-msg-assistant";
-        el.append(createWhoLine("assistant", messageTs(record))); // 无 ts 的旧快照：只显示角色（不伪造）
-        const body = document.createElement("div");
-        body.className = "lumir-hp-body";
-        renderMarkdownInto(body, record.text);
-        el.append(body);
-        attachCopyButton(el, record.text); // 复制源 = 模型原始输出（留存原文）
-        // 中断轮留存的产出：标注「已停止」（M348，D383；status 缺省 = 正常完成不标）。
-        if (record.status === "stopped") attachStoppedMark(el);
-        transcript.append(el);
-        lastAssistantEl = el; // 其后的 tool 记录挂进这条消息的清单块
+      } else if (role === "assistant") {
+        // 消息边界（M368）：上一条 assistant 消息的工具清单块在此收尾。不收尾的话
+        // ensureToolsBlock 会把其后的工具记录塞回**上一条**消息的块里——一段长会话的全部
+        // 历史工具于是堆进第一条消息的折叠块（Alex 2026-10-07 现场：红框里 21 行）。
+        collapseTools();
+        const text = restoredAssistantText(record);
+        if (text === null) {
+          // 旧快照的空正文轮（模型只发工具调用，无正文；core 侧 M367 起不再落这类记录）：
+          // 不渲染光秃 who 行、不挂复制钮。它原本是其后工具记录的挂点，这里把挂点交回
+          // transcript 兜底——工具行各自成块、按原时序留痕（顺序不因跳过而改变）。
+          lastAssistantEl = null;
+        } else {
+          const el = document.createElement("div");
+          el.className = "lumir-hp-msg lumir-hp-msg-assistant";
+          el.append(createWhoLine("assistant", messageTs(record))); // 无 ts 的旧快照：只显示角色（不伪造）
+          const body = document.createElement("div");
+          body.className = "lumir-hp-body";
+          renderMarkdownInto(body, text);
+          el.append(body);
+          attachCopyButton(el, text); // 复制源 = 模型原始输出（留存原文）
+          // 中断轮留存的产出：标注「已停止」（M348，D383；status 缺省 = 正常完成不标）。
+          if (record.status === "stopped") attachStoppedMark(el);
+          transcript.append(el);
+          lastAssistantEl = el; // 其后的 tool 记录挂进这条消息的清单块
+        }
       } else if (role === "tool" && typeof record.name === "string") {
+        // 恢复路径的终态摘要就是持久化的那一份（M367：成功 = 参数摘要、失败 = 状态+错误），
+        // 故不判定、不重算——`appendToolCall` 的 done 分支原样上屏。
         appendToolCall(record.name, "done", typeof record.summary === "string" ? record.summary : "");
       } else if (role === "compact" && typeof record.summary === "string") {
-        // 压缩记录 = 逻辑会话边界：其后的用户消息属于新逻辑会话——会话名归 null 重算。
+        // 压缩记录 = 逻辑会话边界：其后的用户消息属于新逻辑会话——会话名归 null 重算；
+        // 工具清单块同样在此收尾（边界两侧的记录不属于同一块）。
+        collapseTools();
         firstUserText = null;
         lastAssistantEl = null; // 压缩边界同样是工具记录的挂点边界
         appendCompactMarker(record.summary);
