@@ -140,7 +140,7 @@ steps:
 - **停止生效是亚秒级的（M374 起）**：`chunk_gap` 改为小步轮询睡眠（25ms 一问停止标志），
   点停止到收流 ≈ 一个轮询步长，不再等整个片间隔睡满（旧实现最长等一个 6s 间隔）。
   真 provider 侧的同族修复（SSE 读循环独立读线程 + 100ms 超时轮询）由单测
-  `sse_abort_during_silence_returns_promptly` 钉住。时长上界的真机断言见场景 99。
+  `sse_abort_during_silence_returns_promptly` 钉住。时长上界的真机断言见场景 104。
 - **进度条的不定态动画不在本层**：`.lumir-hp-progress` 是无 role 的 div，动画归视觉层。
 - **流停滞期间的停止（M374 起）**：SSE 读循环把读端搬到独立线程、消费端按 100ms 小步
   超时轮询，静默窗口（provider 思考期零事件）里点停止亚秒级收流——旧实现阻塞在
