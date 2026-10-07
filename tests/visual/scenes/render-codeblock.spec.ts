@@ -3,7 +3,10 @@ import { expectScreenshot } from "./expect-screenshot";
 import { readFileSync } from "node:fs";
 import { configGets, stubTauri } from "./tauri-stub";
 import { readDocument } from "./parity-checks";
-import { highlightCode } from "../../../src/preview/code";
+import { HighlightStyle } from "@codemirror/language";
+import { highlightTree } from "@lezer/highlight";
+import { highlightCode, LANGUAGES, TOKEN_GROUPS, tokenClassOf } from "../../../src/preview/code";
+import type { CodeLanguage } from "../../../src/preview/attachments";
 
 // 代码块着色（M138）：markdown 文档内的围栏代码块按 info string 走 legacy-modes
 // 流式 parser。配色只用四个语法高亮 token（--tk-k/s/n/c，与 editor.ts 的 code 模式
@@ -229,6 +232,58 @@ test("yaml / toml 的着色边界：超上限、无键的纯列表、未收录�
   }
 });
 
+// ---------------------------------------------------------------------------
+// M375：rust 字符 / 字节字符字面量在围栏里不着色（与 code 模式的 parity 缺口）修复。
+// 不变量条款：openspec/specs/editor-live-preview/spec.md「Markdown 渲染保真」第 2 款——
+// 同一段代码经围栏渲染与整文件（code 模式）打开时 SHALL 得到同一套 tag 与配色，
+// MUST NOT 出现两侧漂移。根因：tagsForStyle 遇「modifier 开头的复合 token 名」（rust
+// simpleMode 的 `string.special` 经 legacy-modes 的 asToken 点号→空格后成 "string special"）
+// 整条丢 tag；CM6 的 createTokenType 只 console 警告并保留其余名字段。修复 = 与 CM6
+// 同语义逐名字段独立结算、跳 part 不丢整条（finding
+// .tower/comms/findings/20260917-worker-jsonhl-bug-tag-token-rust-code.md 的建议 diff）。
+// ---------------------------------------------------------------------------
+
+/** code 模式参照读数：同一语言实例交给 CM6 自己的 parser + highlightTree（code 模式
+ *  走的就是这条路径），类名映射与围栏侧同一份（TOKEN_GROUPS + tokenClassOf 单一来源）。
+ *  相邻同类合并后再比——围栏侧 tokenize 与 CM6 stream parser 各自有 merge 口径。 */
+function codeModeTokens(doc: string, name: CodeLanguage): Array<{ from: number; to: number; cls: string }> {
+  const tree = LANGUAGES[name].parser.parse(doc);
+  const style = HighlightStyle.define(TOKEN_GROUPS.map((group) => ({ tag: group.tags, class: tokenClassOf(group.role) })));
+  const tokens: Array<{ from: number; to: number; cls: string }> = [];
+  highlightTree(tree, style, (from, to, cls) => {
+    const last = tokens[tokens.length - 1];
+    if (last && last.to === from && last.cls === cls) last.to = to;
+    else tokens.push({ from, to, cls });
+  });
+  return tokens;
+}
+
+test("rust 着色 parity 不变量：围栏与 code 模式对任意构造产出逐 token 相同（含 string.special 复合 token）", () => {
+  // 输入维度扫 rust 的着色构造面（合同先行：只钉 `'a'` 一个案例只能证明那个案例被修好）：
+  // 字符字面量（含转义）、字节字符字面量、普通与 raw 字符串、生命周期、属性标注、宏调用、
+  // 数字、注释——外加一段多行综合块。
+  const cases = [
+    `let c = 'a';`,
+    `let esc = '\\n';`,
+    `let b = b'x';`,
+    `let s = "str";`,
+    `let raw = r#"raw "inner" tail"#;`,
+    `fn first<'a>(x: &'a str) -> &'a str { x }`,
+    `#[derive(Debug)]\nstruct S { field: i32 }`,
+    `fn main() {\n    let total = 42;\n    println!("hello", total); // 注释\n}`,
+  ];
+  for (const doc of cases) {
+    expect([...highlightCode(doc, "rust")], JSON.stringify(doc)).toEqual(codeModeTokens(doc, "rust"));
+  }
+  // 正观测（REVIEW.md 第 2 条：负向断言不得在空集上空转）：两侧都把字符 / 字节字符字面量
+  // 染成字符串色，上面的逐 token 相等不是在「两边都不着色」上通过
+  for (const [doc, literal] of [[`let c = 'a';`, "'a'"], [`let b = b'x';`, "b'x'"]] as const) {
+    expect(classesOf(tokenList(doc, "rust"), literal), `${doc} 的字符字面量在围栏里未被着色`).toEqual(["cm-lp-tok-string"]);
+    const reference = codeModeTokens(doc, "rust").filter((token) => doc.slice(token.from, token.to) === literal);
+    expect(reference.map((token) => token.cls), `${doc} 的字符字面量在 code 模式未被着色`).toEqual(["cm-lp-tok-string"]);
+  }
+});
+
 test("≥5 种语言着色，未知/无标识保持纯文本，配色不越出 editorial token", async ({ page }) => {
   await open(page);
 
@@ -365,6 +420,49 @@ test("DOM：同段 yaml 在围栏（yaml）与只读 .yml / .yaml 文件（code 
   await expect(page.locator(".cm-lp-tok-keyword").first()).toBeVisible();
   await scrollToLine(page, "key: category");
   expect(await coloredTokens(page, "key: category", "key")).toEqual([{ text: "key", color: COLOR.property }]);
+});
+
+test("DOM：同段 rust（含字符 / 字节字符字面量）在围栏与 code 模式里配色逐条相同", async ({ page }) => {
+  // 与 yaml 那条同口径（同段文本两侧逐 token 同色），但 fence 文档与 .rs 文件内容都在
+  // 本用例内构造——fixture（tests/visual/fixtures/render-codeblock/）不在本 mission 范围内，
+  // 不为它扩 scope。
+  const rustCode = ["// 注释", "fn main() {", "    let c = 'a';", "    let b = b'x';", '    let s = "str";', "}"].join("\n");
+  const fenceDoc = `# rust parity\n\n\`\`\`rust\n${rustCode}\n\`\`\`\n`;
+  await stubTauri(page, {
+    entries: [
+      { path: "parity-rust.md", kind: "file", size: fenceDoc.length, mtime_ms: 0 },
+      { path: "main.rs", kind: "file", size: rustCode.length, mtime_ms: 0 },
+    ],
+    files: { "parity-rust.md": fenceDoc, "main.rs": rustCode },
+  });
+  await page.goto("/");
+  await page.locator('.ft-row[title="parity-rust.md"]').click();
+  await expect(page.locator(".cm-lp-tok-keyword").first()).toBeVisible();
+
+  // 围栏侧：字符 / 字节字符字面量取字符串色——修前它们是正文色（tagsForStyle 把
+  // "string special" 整条丢了），本断言即那条旧口径的反转
+  await scrollToLine(page, "let c = 'a'");
+  const fenceChar = await coloredTokens(page, "let c = 'a'", "'a'");
+  expect(fenceChar).toEqual([
+    { text: "let", color: COLOR.keyword },
+    { text: "'a'", color: COLOR.string },
+  ]);
+  const fenceByte = await coloredTokens(page, "let b = b'x'", "b'x'");
+  expect(fenceByte).toEqual([
+    { text: "let", color: COLOR.keyword },
+    { text: "b'x'", color: COLOR.string },
+  ]);
+  const fenceStr = await coloredTokens(page, 'let s = "str"', '"str"');
+  expect(fenceStr).toEqual([
+    { text: "let", color: COLOR.keyword },
+    { text: '"str"', color: COLOR.string },
+  ]);
+
+  // code 模式侧：同一段 rust（逐字节相同）在 .rs 文件里取到逐条相同的配色
+  await page.locator('.ft-row[title="main.rs"]').click();
+  expect(await coloredTokens(page, "let c = 'a'", "'a'")).toEqual(fenceChar);
+  expect(await coloredTokens(page, "let b = b'x'", "b'x'")).toEqual(fenceByte);
+  expect(await coloredTokens(page, 'let s = "str"', '"str"')).toEqual(fenceStr);
 });
 
 test("DOM：围栏 toml / yaml 的取色（键属性色、toml 的 atom 不跟着变）", async ({ page }) => {

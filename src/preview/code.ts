@@ -318,7 +318,13 @@ const TAG_TABLE = tags as unknown as Record<string, Tag | ((tag: Tag) => Tag)>;
  * 2. 未命中则按空格拆成多个 tag（json 键的 `string property`）、按点号拆 modifier
  *    （`string.special`），每个 part 先查 tokenTable 再查 @lezer/highlight 的 tags
  *    （CM6 的 `extra[part] || tags[part]` 同序）；
- * 3. 认不出的 part 丢弃。json 键的 `string property` 因此解析为 [string, propertyName]
+ * 3. 名字段逐条独立结算、认不出的 part 只丢该 part（M375，与 CM6 createTokenType 的
+ *    warnForPart 后继续同语义）：modifier 出现在名字段首位时跳过它、不动已有结果；
+ *    tag 出现在 modifier 位置时同样保留已解析的 tag。MUST NOT 整条 return []——rust
+ *    simpleMode 的 `string.special` 经 legacy-modes 的 asToken 点号→空格后成复合名
+ *    "string special"，整条丢弃会让字符字面量在围栏里完全不着色（code 模式却是
+ *    字符串色），破坏「围栏与 code 模式同 tag 同配色」的 parity 条款。
+ *    json 键的 `string property` 因此解析为 [string, propertyName]
  *    ——property 由 JSON_TOKEN_TABLE 供给（没有这张表时 CM6 会丢掉它并 console 警告，
  *    键只剩 string，与值同色）。
  * 全部认不出即不着色：未知 token 保持纯文本，不猜颜色。
@@ -332,10 +338,10 @@ function tagsForStyle(style: string, extra: TokenTable): Tag[] {
     for (const part of name.split(".")) {
       const value = extra[part] ?? TAG_TABLE[part];
       if (typeof value === "function") {
-        if (!found.length) return [];
+        if (!found.length) continue; // CM6: 警告后继续，不动 found
         found = found.map(value);
       } else if (value) {
-        if (found.length) return [];
+        if (found.length) continue; // CM6: 警告 tag 被当 modifier 用，保留已有 tag
         found = [value];
       }
     }
