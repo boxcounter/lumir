@@ -39,8 +39,13 @@
 //     近似，全量重渲是收敛点——近似只存在于流式期间）。
 //
 // 文案：全部取值经 src/copy.ts 的 t()（D327–D330 / D332–D348 / D375–D387，D334 / D335 于
-// M347 改形、M370 再起改形（双读数 + hover 浮层）、D98 复用为 provider 浮层当前项标记、D383 为 M348 中断标注、D385–D387 为 M351
-// 消息 meta 行与工具折叠摘要、D388–D392 为 M363 思考块折叠行与思考 chip 三句 + 浮层读屏名）；
+// M347 改形、M370 再起改形（双读数 + hover 浮层）、M373 起 hover 浮层常驻含义句（D395）、
+// 越线时追加警示句 D335；D98 复用为 provider 浮层当前项标记（harness 消费点随合并浮层于 M373 退役——合并浮层
+// 改用勾选格 + tint 底；vault 切换器的 D98 消费点保留）、
+// D383 为 M348 中断标注、D385–D387 为 M351 消息 meta 行与工具折叠摘要、D388–D392 为 M363
+// 思考块折叠行与思考 chip 三句 + 浮层读屏名（D389 / D391 随双 chip 于 M373 退役、D390 沿用、
+// D392 复用为合并浮层 effort 段标签）、D393–D398 为 M373 合并选择器（chip 读屏名 / effort
+// 不支持 hover hint / ctx 读数含义 hint / 浮层段标签 ×2 / 浮层读屏名））；
 // 长驻元素（toggle 钮 / harness 段 / 输入框 placeholder / 按钮 / 上下文 chip / ctx 读数 /
 // 模型 chip / 思考 chip / 待决批准项）注册 onRelabel，
 // 语言切换时从已存状态重渲（design §5.2 的不变量）；transcript 的历史条目是已发生事实的记
@@ -571,20 +576,87 @@ export function parseQuoteMessage(text: string): ComposerBlock[] {
 export const PROVIDER_IDS = ["kimi", "deepseek", "mock"] as const;
 export type ProviderId = (typeof PROVIDER_IDS)[number];
 
+/** 模型维度的一条可选项（与 Rust 侧 `HarnessModelSpec` 同形的宽容提取：id 必须是非空
+ *  字符串；effort 严格取 true；window 取有限正数——缺键 / 坏形状的那一项不上屏）。 */
+export interface ModelOption {
+  id: string;
+  /** 该模型是否支持思考程度调节（浮层 effort 段置灰判据 + hover hint 判据）。 */
+  effort: boolean;
+  /** 上下文窗口（tokens，ctx% 分母；前端目前只透传不展示）。 */
+  window: number;
+}
+
+/** 单个 provider 的 model 维度提取结果。 */
+export interface ModelSelection {
+  /** 当前 model（配置值即读数；不在 options 里时照实显示）。 */
+  current: string;
+  /** 可选 model 档（schema 声明顺序）。 */
+  options: ModelOption[];
+}
+
+/** 合并选择器的提取结果（`harnessSelection` 的返回形）。 */
+export interface HarnessSelection {
+  /** 当前 provider（配置值即读数；不在闭集合时照实显示）。 */
+  provider: string;
+  /** 可选 provider 档 = 闭集合 ∩ 已配置键，**UI 层过滤 mock**（Alex 裁决「界面上隐藏，
+   *  代码保留」——mock 数据留在配置里，只是不进可选列表）。 */
+  providerOptions: ProviderId[];
+  /** 各 provider 的 model 维度（kimi / deepseek 存在即收录；mock 无模型维度不出现）。 */
+  models: Partial<Record<ProviderId, ModelSelection>>;
+}
+
 /**
- * 模型 chip 的读数与选项（`config.harness` 的宽容提取，配置即数据、缺键不伪造）：
+ * 合并选择器的读数与选项（`config.harness` 的宽容提取，配置即数据、缺键不伪造）：
  * - harness 段缺失 / providers 不是对象 → null（桩环境、旧配置、config_get 失败）——
  *   调用方隐藏 chip，不显示一个读不到的读数；
- * - options 只取闭集合内的键（配置里混入的其它键不上屏）；
- * - current 原样返回（配置值即读数；不在闭集合时 chip 照实显示，浮层仍只列闭集合档）。
+ * - providerOptions 只取闭集合内的键（配置里混入的其它键不上屏），mock 恒被过滤；
+ * - models 逐项宽容提取：坏的项丢弃，整段缺失 → 该 provider 无模型维度（options 空）。
  */
-export function providerSelection(harness: unknown): { current: string; options: ProviderId[] } | null {
+export function harnessSelection(harness: unknown): HarnessSelection | null {
   if (typeof harness !== "object" || harness === null) return null;
   const providers = (harness as { providers?: unknown }).providers;
   if (typeof providers !== "object" || providers === null) return null;
-  const options = PROVIDER_IDS.filter((id) => id in (providers as object));
-  const current = (harness as { provider?: unknown }).provider;
-  return { current: typeof current === "string" ? current : "", options };
+  const configured = providers as Record<string, unknown>;
+  const providerOptions = PROVIDER_IDS.filter((id) => id !== "mock" && id in configured);
+  const models: Partial<Record<ProviderId, ModelSelection>> = {};
+  for (const id of PROVIDER_IDS) {
+    if (id === "mock" || !(id in configured)) continue;
+    const entry = configured[id];
+    if (typeof entry !== "object" || entry === null) continue;
+    const current = (entry as { model?: unknown }).model;
+    const rawModels = (entry as { models?: unknown }).models;
+    const options: ModelOption[] = [];
+    if (Array.isArray(rawModels)) {
+      for (const item of rawModels) {
+        if (typeof item !== "object" || item === null) continue;
+        const spec = item as { id?: unknown; effort?: unknown; window?: unknown };
+        if (typeof spec.id !== "string" || spec.id.trim() === "") continue;
+        const window = typeof spec.window === "number" && Number.isFinite(spec.window) && spec.window > 0
+          ? spec.window
+          : 0;
+        options.push({ id: spec.id, effort: spec.effort === true, window });
+      }
+    }
+    models[id] = { current: typeof current === "string" ? current : "", options };
+  }
+  const provider = (harness as { provider?: unknown }).provider;
+  return {
+    provider: typeof provider === "string" ? provider : "",
+    providerOptions,
+    models,
+  };
+}
+
+/**
+ * chip 的 model 读数（合并 chip = 「model · effort」，model 名的上屏值）：
+ * - provider 有 model 维度 → 当前 model 配置值；为空（宽容提取的缺值）回落首选项 id；
+ * - provider 无模型维度（mock——验收专用档）→ 回落 provider id 本身（配置值即读数，
+ *   chip 形态因此保持「model · effort」双读数不变形）。
+ */
+export function chipModelReading(selection: HarnessSelection): string {
+  const dim = selection.models[selection.provider as ProviderId];
+  if (dim === undefined) return selection.provider;
+  return dim.current !== "" ? dim.current : (dim.options[0]?.id ?? selection.provider);
 }
 
 /** ctx% 读数的高亮判据：越过（≥）警示阈值即高亮。阈值是配置值（`warn_ctx_pct`，缺省 85）；
@@ -1250,10 +1322,15 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   const ctl = document.createElement("div");
   ctl.className = "lumir-hp-ctl";
 
-  // 模型 chip：可见文本 = provider 名（配置值即读数，不译文）；点击浮层列
-  // [harness].providers 已配置档，选择经 config_set_value 写回、下一轮生效。
-  // chip + 浮层同挂 wrapper（M351，finding 20261006-worker-hp4，与会话名钮同一条修复）：
-  // 浮层挪出 <button>，WKWebView 的 AX 树才暴露浮层项；wrapper 是 absolute 定位的包含块。
+  // 合并选择器 chip（M373，harness-selector-merge；原型 design/prototypes/harness-selector-merge）：
+  // 可见文本 = 「model · effort」双读数（U+00B7 分隔，Alex 裁决「不需要显示 provider，只需要
+  // model · effort」）；provider 不进 chip 读数，只在浮层里选。形态逐值沿用现行 chip 配方
+  // （无边框小标签、24px 高、r5、fs-label-s、text-2、hover 给底、chevron ▾；max-width 96px →
+  // 224px，双 chip 合一格的空间账见原型 NOTES）。截断纪律（Alex 裁决「只截 model 名，保住
+  // effort」）：model 名单独 min-width:0 + ellipsis，分隔符 / effort / chevron 三格 flex:none。
+  // chip 本体永不禁用——effort 不支持时仅 effort 读数置灰（text-3）+ hover hint（D394）。
+  // chip + 浮层 + hint 泡同挂 wrapper（M351，finding 20261006-worker-hp4，与会话名钮同一条
+  // 修复）：浮层挪出 <button>，WKWebView 的 AX 树才暴露浮层项；wrapper 是 absolute 定位的包含块。
   const modelWrap = document.createElement("span");
   modelWrap.className = "lumir-hp-modelwrap";
   const modelChip = document.createElement("button");
@@ -1264,43 +1341,31 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   modelChip.hidden = true;
   const modelName = document.createElement("span");
   modelName.className = "lumir-hp-model-name";
+  const modelSep = document.createElement("span");
+  modelSep.className = "lumir-hp-model-sep";
+  modelSep.textContent = "·"; // i18n-exempt: 分隔符图形（U+00B7，modeline 同款小圆点，复裁决）
+  modelSep.setAttribute("aria-hidden", "true");
+  const effReading = document.createElement("span");
+  effReading.className = "lumir-hp-eff-reading";
   const modelChev = document.createElement("span");
   modelChev.className = "lumir-hp-model-chev";
   modelChev.setAttribute("aria-hidden", "true");
   modelChev.textContent = "▾"; // i18n-exempt: glyph（下指 chevron 图形，非文案）
-  const modelPop = document.createElement("div");
-  modelPop.className = "lumir-hp-modelpop";
-  modelPop.setAttribute("role", "menu");
-  modelPop.hidden = true;
-  modelChip.append(modelName, modelChev);
-  modelWrap.append(modelChip, modelPop);
-
-  // 思考 chip（M363）：控制行位置 = 模型 chip 后、ctx 读数前（形态合同，原型屏 10）。
-  // 档位 = 会话内生效的设置（不写回配置，新会话回默认 High），读数随 harness_state
-  // 快照的 thinking 字段；当前 provider + model 不支持程度调节（supported=false，如 kimi
-  // 非 k3 系）→ chip 置灰禁用 + hover 说明（D390，Alex 2026-10-06 裁决点 2）。chip + 浮层
-  // 同挂 wrapper（与模型 chip 同一条 a11y 修复：浮层 MUST NOT 嵌在 <button> 里）。
-  const thinkWrap = document.createElement("span");
-  thinkWrap.className = "lumir-hp-effwrap";
-  const thinkChip = document.createElement("button");
-  thinkChip.type = "button";
-  thinkChip.className = "lumir-hp-eff";
-  thinkChip.setAttribute("aria-haspopup", "menu");
-  thinkChip.setAttribute("aria-expanded", "false");
-  const thinkLabel = document.createElement("span");
-  thinkLabel.className = "lumir-hp-eff-label";
-  const thinkChev = document.createElement("span");
-  thinkChev.className = "lumir-hp-eff-chev";
-  thinkChev.setAttribute("aria-hidden", "true");
-  thinkChev.textContent = "▾"; // i18n-exempt: glyph（下指 chevron 图形，非文案）
-  // 思考浮层：三个裸档位（Low/High/Max，无每档释义——Alex 裁决），当前档位带勾选；
-  // 每次打开现建（勾选随读数与语言），与 provider 浮层同构。
-  const thinkPop = document.createElement("div");
-  thinkPop.className = "lumir-hp-effpop";
-  thinkPop.setAttribute("role", "menu");
-  thinkPop.hidden = true;
-  thinkChip.append(thinkLabel, thinkChev);
-  thinkWrap.append(thinkChip, thinkPop);
+  // 合并浮层：单浮层三维分段（Provider / 模型 / 思考程度，原型 .hp-pop），hairline 分隔、
+  // 段标签 fs-micro；项 = menuitemradio + 14px check 格 + 当前项 accent-tint 底（think pop
+  // 配方，三维统一一种「当前」表达）。三维独立可选、选定不自动关（Alex 裁决）——点 chip /
+  // 空白 / Esc 关。effort 不支持时 effort 段整段禁用 + D390 说明句。
+  const selPop = document.createElement("div");
+  selPop.className = "lumir-hp-selpop";
+  selPop.setAttribute("role", "menu");
+  selPop.hidden = true;
+  // effort 不支持的 hover hint（D394，ctxPop 同款 hover 泡）：只挂读数那一格，mouseenter
+  // 翻出、mouseleave 收回。
+  const effHint = document.createElement("div");
+  effHint.className = "lumir-hp-effhint";
+  effHint.hidden = true;
+  modelChip.append(modelName, modelSep, effReading, modelChev);
+  modelWrap.append(modelChip, selPop, effHint);
 
   // 不定态进度条 + 阶段指示一行（M347）：只在处理中态可见；无百分比——本轮剩余工作量
   // 前端不知道。eink 下转明度表达（见 css 的 keyframes 分叉）。
@@ -1380,7 +1445,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   sendStopRect.setAttribute("rx", "1.5");
   sendStop.append(sendStopRect);
   sendButton.append(sendGo, sendStop);
-  ctl.append(modelWrap, thinkWrap, ctxWrap, ctlSpacer, sendButton);
+  ctl.append(modelWrap, ctxWrap, ctlSpacer, sendButton);
   composerBox.append(composer, ctl);
   composerArea.append(chip, composerBox);
 
@@ -1411,14 +1476,11 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   let lastCache: number | null = null;
   /** 上下文用量警示阈值（快照 warn_ctx_pct，缺省 85——与 Rust 侧 DEFAULT_WARN_CTX_PCT 同值）。 */
   let warnCtxPct = 85;
-  /** 模型 chip 状态（config_get 宽容提取；modelConfigured = false 时 chip 隐藏——
-   *  桩环境 / 旧配置 / 读取失败不伪造读数）。 */
-  let modelConfigured = false;
-  let modelCurrent = "";
-  let modelOptions: ProviderId[] = [];
-  /** 思考 chip 状态（M363，harness_state 快照 `thinking` 字段的宽容提取；thinkConfigured =
-   *  false 时 chip 隐藏——桩环境 / 旧后端不伪造读数，与模型 chip 同纪律）。档位会话内
-   *  生效、不写回配置。 */
+  /** 合并选择器状态（config_get 宽容提取的 HarnessSelection；null = 未配置/读不到——
+   *  桩环境 / 旧配置 / 读取失败不伪造读数，chip 隐藏）。 */
+  let selSelection: HarnessSelection | null = null;
+  /** 思考程度状态（M363，harness_state 快照 `thinking` 字段的宽容提取；档位会话内
+   *  生效、不写回配置；随合并 chip 呈现，thinkConfigured = false 时 effort 读数留空）。 */
   let thinkConfigured = false;
   let thinkLevel = "";
   let thinkSupported = false;
@@ -1830,8 +1892,8 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     composer.setAttribute("aria-label", t("D328"));
     emptyHint.textContent = t("D346");
     applyChip();
-    if (modelConfigured) applyModelChip();
-    applyThinkingChip();
+    applySelChip();
+    rebuildSelPopIfOpen();
     applyUsage();
     // 发送钮 / 阶段指示按当前相位重取文案（running 时钮面是「停止」、进度条阶段行重渲）。
     applySendPhase(sendPhase);
@@ -1912,178 +1974,263 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     refreshChip();
   }
 
-  // ── composer 控制行（M347）：模型 chip / ctx 读数 / 两态发送钮 ──────────────
+  // ── composer 控制行（M373）：合并选择器 chip（model · effort）+ 三维浮层 ──────
 
-  /** 模型 chip 重渲（长驻元素：文本与悬停/读屏名都从已存状态取，relabel 可重跑）。 */
-  function applyModelChip(): void {
-    modelName.textContent = modelCurrent;
-    const label = t("D376", { model: modelCurrent });
+  /** 合并 chip 重渲（长驻元素：读数 / 悬停 / 读屏名都从已存状态取，relabel 可重跑）。
+   *  可见文本 = model 读数 + U+00B7 + effort 读数；effort 不支持 → 读数置灰（.is-disabled，
+   *  text-3）+ 读屏名换 D390（禁用语义的可读出口，与 M363 口径一致）+ hover hint（D394）。
+   *  思考状态未配置（桩 / 旧后端）时 effort 读数留空、chip 其余部分照常。 */
+  function applySelChip(): void {
+    if (selSelection === null) {
+      modelChip.hidden = true;
+      return;
+    }
+    modelChip.hidden = false;
+    const model = chipModelReading(selSelection);
+    modelName.textContent = model;
+    effReading.textContent = thinkConfigured ? effortLabel(thinkLevel) : "";
+    // 思考状态未配置（桩 / 旧后端）时分隔符一并收起——「model · 」的悬空小圆点不出现。
+    modelSep.hidden = !thinkConfigured;
+    effReading.classList.toggle("is-disabled", !thinkSupported);
+    const label = thinkSupported
+      ? t("D393", { model, level: effortLabel(thinkLevel) })
+      : t("D390");
     modelChip.title = label;
     modelChip.setAttribute("aria-label", label);
+    effHint.textContent = t("D394", { model });
   }
 
-  /** provider 浮层：每次打开现建（数据驱动的档名 + 「当前」标记随当前语言，懒建不囤旧串）。
-   *  M351 起浮层项带 menuitemradio 语义（finding 20261006-worker-hp4：WKWebView AX 暴露）。 */
-  function buildModelPop(): void {
-    modelPop.replaceChildren();
-    for (const id of modelOptions) {
+  /** 勾选项的 check 格（think pop 配方：14px 固定宽，未勾选留空保证纵对齐）。 */
+  function appendCheck(parent: HTMLElement, checked: boolean): void {
+    const check = document.createElement("span");
+    check.className = "lumir-hp-selpop-check";
+    check.setAttribute("aria-hidden", "true");
+    if (checked) {
+      const svg = document.createElementNS(SVG_NS, "svg");
+      svg.setAttribute("width", "11");
+      svg.setAttribute("height", "11");
+      svg.setAttribute("viewBox", "0 0 12 12");
+      svg.setAttribute("fill", "none");
+      svg.setAttribute("stroke", "currentColor");
+      svg.setAttribute("stroke-width", "1.6");
+      svg.setAttribute("stroke-linecap", "round");
+      svg.setAttribute("stroke-linejoin", "round");
+      const path = document.createElementNS(SVG_NS, "path");
+      path.setAttribute("d", "M2 6.5 4.8 9.3 10 3.5");
+      svg.append(path);
+      check.append(svg);
+    }
+    parent.append(check);
+  }
+
+  /** 合并浮层：每次打开现建（三维读数随当前语言与状态，懒建不囤旧串）；选定后重开也现建
+   *  （选定不自动关——多维一次调齐，读数刷新靠重建）。段 = 段标签（fs-micro）+ 裸项列表；
+   *  项 = menuitemradio + check 格 + 读数名（provider / model id / 档位名均为配置值读数，
+   *  不译文）+ 当前项 accent-tint 底。 */
+  function buildSelPop(): void {
+    selPop.replaceChildren();
+    if (selSelection === null) return;
+    selPop.setAttribute("aria-label", t("D398"));
+    const cur = selSelection.provider;
+    // 段一：Provider（mock 已在提取层过滤——这里列出的就是可选集合）。
+    const provSec = document.createElement("div");
+    provSec.className = "lumir-hp-selpop-sec";
+    const provLabel = document.createElement("div");
+    provLabel.className = "lumir-hp-selpop-label";
+    provLabel.textContent = t("D396");
+    provSec.append(provLabel);
+    for (const id of selSelection.providerOptions) {
       const item = document.createElement("button");
       item.type = "button";
-      item.className = "lumir-hp-modelpop-item";
+      item.className = "lumir-hp-selpop-item";
       item.setAttribute("role", "menuitemradio");
-      item.setAttribute("aria-checked", String(id === modelCurrent));
+      item.setAttribute("aria-checked", String(id === cur));
+      appendCheck(item, id === cur);
       const name = document.createElement("span");
-      name.className = "lumir-hp-modelpop-name";
-      name.textContent = id; // provider 名 = 配置值读数，不译文（同 D334 口径）。
+      name.className = "lumir-hp-selpop-name";
+      name.textContent = id;
       item.append(name);
-      if (id === modelCurrent) {
-        item.classList.add("is-current");
-        const mark = document.createElement("span");
-        mark.className = "lumir-hp-modelpop-cur";
-        mark.textContent = t("D98"); // 「当前」——vault 浮层当前项同词，第三处浮层复用。
-        item.append(mark);
-      }
-      item.addEventListener("click", () => selectProvider(id));
-      modelPop.append(item);
+      if (id === cur) item.classList.add("is-current");
+      // stopPropagation：选择后同步重建会把本项摘出 DOM，不拦住这拍冒泡会被
+      // document 的「浮层外点击收起」误判成外部点击（contains 守卫对游离节点为 false）。
+      item.addEventListener("click", (event) => {
+        event.stopPropagation();
+        selectProvider(id);
+      });
+      provSec.append(item);
     }
+    selPop.append(provSec);
+    // 段二：模型（当前 provider 的 model 维度；无维度（mock）或空清单 → 整段不渲染）。
+    const dim = selSelection.models[cur as ProviderId];
+    if (dim !== undefined && dim.options.length > 0) {
+      const modelSec = document.createElement("div");
+      modelSec.className = "lumir-hp-selpop-sec";
+      const modelLabel = document.createElement("div");
+      modelLabel.className = "lumir-hp-selpop-label";
+      modelLabel.textContent = t("D397");
+      modelSec.append(modelLabel);
+      for (const option of dim.options) {
+        const checked = option.id === dim.current;
+        const item = document.createElement("button");
+        item.type = "button";
+        item.className = "lumir-hp-selpop-item";
+        item.setAttribute("role", "menuitemradio");
+        item.setAttribute("aria-checked", String(checked));
+        appendCheck(item, checked);
+        const name = document.createElement("span");
+        name.className = "lumir-hp-selpop-name";
+        name.textContent = option.id;
+        item.append(name);
+        if (checked) item.classList.add("is-current");
+        item.addEventListener("click", (event) => {
+          event.stopPropagation();
+          selectModel(option.id);
+        });
+        modelSec.append(item);
+      }
+      selPop.append(modelSec);
+    }
+    // 段三：思考程度（不支持时整段禁用 + D390 说明句——项不可点，读数仍列出）。
+    const effSec = document.createElement("div");
+    effSec.className = "lumir-hp-selpop-sec";
+    if (!thinkSupported) effSec.classList.add("is-disabled");
+    const effLabelEl = document.createElement("div");
+    effLabelEl.className = "lumir-hp-selpop-label";
+    effLabelEl.textContent = t("D392");
+    effSec.append(effLabelEl);
+    for (const id of THINKING_EFFORTS) {
+      const checked = id === thinkLevel;
+      const item = document.createElement("button");
+      item.type = "button";
+      item.className = "lumir-hp-selpop-item";
+      item.setAttribute("role", "menuitemradio");
+      item.setAttribute("aria-checked", String(checked));
+      appendCheck(item, checked);
+      const name = document.createElement("span");
+      name.className = "lumir-hp-selpop-name";
+      name.textContent = effortLabel(id);
+      item.append(name);
+      if (checked) item.classList.add("is-current");
+      if (thinkSupported) {
+        item.addEventListener("click", (event) => {
+          event.stopPropagation();
+          selectEffort(id);
+        });
+      } else {
+        item.setAttribute("aria-disabled", "true");
+      }
+      effSec.append(item);
+    }
+    if (!thinkSupported) {
+      const hint = document.createElement("div");
+      hint.className = "lumir-hp-selpop-hint";
+      hint.textContent = t("D390");
+      effSec.append(hint);
+    }
+    selPop.append(effSec);
   }
 
-  /** provider 浮层开合（aria-expanded 随开合翻转；打开时现建项）。 */
-  function setModelPop(open: boolean): void {
-    if (open) buildModelPop();
-    modelPop.hidden = !open;
+  /** 合并浮层开合（aria-expanded 随开合翻转；打开时现建三维分段；选定不自动关——
+   *  关闭只走 chip 再点 / 浮层外点击 / Esc 三条路，Alex 裁决）。 */
+  function setSelPop(open: boolean): void {
+    if (open) buildSelPop();
+    selPop.hidden = !open;
     modelChip.setAttribute("aria-expanded", String(open));
+  }
+
+  /** 浮层开着时重建设（三维读数随选择刷新；选定不关浮层，重建就是它刷新的方式）。 */
+  function rebuildSelPopIfOpen(): void {
+    if (!selPop.hidden) buildSelPop();
   }
 
   /** 选择 provider：chip 先更新读数（chip = 人侧可见面，模型与用量对人同源同值），
    *  写回失败则回滚读数——运行期态不与文件态分叉（D123 同口径），并报错误行。
-   *  写回成功后重取思考能力标记（`thinking.supported` 按当前 provider + model 现算——
-   *  只读快照的 thinking 字段，不回放消息，不重渲 transcript）。 */
+   *  **切 provider 不抹 effort**（档位会话内生效，与 provider 无关）与 model（每个
+   *  provider 的 model 是各自配置键，切回即恢复）。写回成功后重取思考能力标记
+   *  （`thinking.supported` 按当前 provider + model 现算——只读快照的 thinking 字段，
+   *  不回放消息，不重渲 transcript）。 */
   function selectProvider(id: ProviderId): void {
-    setModelPop(false);
-    if (id === modelCurrent) return;
-    const previous = modelCurrent;
-    modelCurrent = id;
-    applyModelChip();
+    if (selSelection === null || id === selSelection.provider) return;
+    const previous = selSelection.provider;
+    selSelection.provider = id;
+    applySelChip();
+    rebuildSelPopIfOpen();
     configSetValue("harness", "provider", id).then(() => {
       refreshThinkingState();
     }).catch((e: unknown) => {
-      modelCurrent = previous;
-      applyModelChip();
+      selSelection!.provider = previous;
+      applySelChip();
+      rebuildSelPopIfOpen();
+      appendError(t("D348", { message: errorMessage(e) }));
+    });
+  }
+
+  /** 选择 model：写回 `[harness].providers.<当前 provider>.model`（点分嵌套键，写通道
+   *  M373 泛化）——「每个 provider 记住自己的 model」的数据面；选择先行、失败回滚同
+   *  selectProvider。写回成功后重取思考能力标记（换模型可能换 effort 能力）。 */
+  function selectModel(id: string): void {
+    if (selSelection === null) return;
+    const dim = selSelection.models[selSelection.provider as ProviderId];
+    if (dim === undefined || id === dim.current) return;
+    const provider = selSelection.provider;
+    const previous = dim.current;
+    dim.current = id;
+    applySelChip();
+    rebuildSelPopIfOpen();
+    configSetValue("harness", `providers.${provider}.model`, id).then(() => {
+      refreshThinkingState();
+    }).catch((e: unknown) => {
+      const dimBack = selSelection!.models[provider as ProviderId];
+      if (dimBack !== undefined) dimBack.current = previous;
+      applySelChip();
+      rebuildSelPopIfOpen();
+      appendError(t("D348", { message: errorMessage(e) }));
+    });
+  }
+
+  /** 选择档位：chip 先更新读数（chip = 人侧可见面），失败回滚 + 错误行——与
+   *  selectProvider 同口径。档位会话内生效（harness_set_thinking_effort 写入当前会话；
+   *  无会话时后端即时建会话，前端无需先发消息）；选定不关浮层（浮层内可连续调档）。 */
+  function selectEffort(id: ThinkingEffort): void {
+    if (id === thinkLevel) return;
+    const previous = thinkLevel;
+    thinkLevel = id;
+    applySelChip();
+    rebuildSelPopIfOpen();
+    harnessSetThinkingEffort(id).catch((e: unknown) => {
+      thinkLevel = previous;
+      applySelChip();
+      rebuildSelPopIfOpen();
       appendError(t("D348", { message: errorMessage(e) }));
     });
   }
 
   modelChip.addEventListener("click", (event) => {
     event.stopPropagation();
-    setModelPop(modelPop.hidden);
+    setSelPop(selPop.hidden);
   });
 
-  // 模型 chip 数据装载：config_get 宽容提取（harness 段缺失 → chip 隐藏，不伪造读数）。
+  // effort 不支持的 hover hint：mouseenter 读数翻出（仅置灰态），mouseleave 收回——
+  // 与 ctx 读数 hover 泡同一形态（M370）。键盘用户无 hover：不支持语义已由读屏名（D390）承担。
+  effReading.addEventListener("mouseenter", () => {
+    if (effReading.classList.contains("is-disabled")) effHint.hidden = false;
+  });
+  effReading.addEventListener("mouseleave", () => {
+    effHint.hidden = true;
+  });
+
+  // 合并 chip 数据装载：config_get 宽容提取（harness 段缺失 → chip 隐藏，不伪造读数）。
   configGet()
     .then((snapshot) => {
-      const selection = providerSelection(snapshot.config.harness);
+      const selection = harnessSelection(snapshot.config.harness);
       if (selection === null) return;
-      modelConfigured = true;
-      modelCurrent = selection.current;
-      modelOptions = selection.options;
+      selSelection = selection;
       modelChip.hidden = false;
-      applyModelChip();
+      applySelChip();
     })
     .catch(() => {});
 
-  // ── composer 控制行（M363）：思考程度 chip + 三档浮层 ────────────────────────
-
-  /** 思考 chip 重渲（长驻元素：面文本 / 悬停 / 读屏名都从已存状态取，relabel 可重跑）。
-   *  supported=false ⇒ 置灰禁用（disabled 属性，点击不展开浮层）+ 悬停说明（D390）。
-   *  未配置时隐藏的是 wrapper 本体——空 wrapper 也是 ctl 行的一个 flex 项，会多吃一格
-   *  gap、平移 ctx 读数与发送钮（既有整页/元素基线的像素面因此不动）。 */
-  function applyThinkingChip(): void {
-    if (!thinkConfigured) {
-      thinkWrap.hidden = true;
-      thinkPop.hidden = true;
-      return;
-    }
-    thinkWrap.hidden = false;
-    const level = effortLabel(thinkLevel);
-    thinkLabel.textContent = t("D391", { level });
-    const hint = thinkSupported ? t("D389", { level }) : t("D390");
-    thinkChip.title = hint;
-    thinkChip.setAttribute("aria-label", hint);
-    thinkChip.disabled = !thinkSupported;
-    thinkChip.classList.toggle("is-disabled", !thinkSupported);
-  }
-
-  /** 思考浮层：每次打开现建（裸三档 + 当前勾选，同 provider 浮层的懒建纪律）。
-   *  档位名是专有名词（zh/en 均英文原文），menuitemradio 语义与 aria-checked 同 provider 浮层。 */
-  function buildThinkPop(): void {
-    thinkPop.replaceChildren();
-    thinkPop.setAttribute("aria-label", t("D392"));
-    for (const id of THINKING_EFFORTS) {
-      const item = document.createElement("button");
-      item.type = "button";
-      item.className = "lumir-hp-effpop-item";
-      item.setAttribute("role", "menuitemradio");
-      item.setAttribute("aria-checked", String(id === thinkLevel));
-      const check = document.createElement("span");
-      check.className = "lumir-hp-effpop-check";
-      check.setAttribute("aria-hidden", "true");
-      if (id === thinkLevel) {
-        item.classList.add("is-current");
-        const svg = document.createElementNS(SVG_NS, "svg");
-        svg.setAttribute("width", "11");
-        svg.setAttribute("height", "11");
-        svg.setAttribute("viewBox", "0 0 12 12");
-        svg.setAttribute("fill", "none");
-        svg.setAttribute("stroke", "currentColor");
-        svg.setAttribute("stroke-width", "1.6");
-        svg.setAttribute("stroke-linecap", "round");
-        svg.setAttribute("stroke-linejoin", "round");
-        const path = document.createElementNS(SVG_NS, "path");
-        path.setAttribute("d", "M2 6.5 4.8 9.3 10 3.5");
-        svg.append(path);
-        check.append(svg);
-      }
-      const name = document.createElement("span");
-      name.className = "lumir-hp-effpop-name";
-      name.textContent = effortLabel(id);
-      item.append(check, name);
-      item.addEventListener("click", () => selectEffort(id));
-      thinkPop.append(item);
-    }
-  }
-
-  /** 思考浮层开合（aria-expanded 随开合翻转；打开时现建项；不支持态不展开——
-   *  禁用钮本就不会走到这里，双闸是防御）。 */
-  function setThinkPop(open: boolean): void {
-    if (open && !thinkSupported) return;
-    if (open) buildThinkPop();
-    thinkPop.hidden = !open;
-    thinkChip.setAttribute("aria-expanded", String(open));
-  }
-
-  /** 选择档位：chip 先更新读数（chip = 人侧可见面），失败回滚 + 错误行——与
-   *  selectProvider 同口径。档位会话内生效（harness_set_thinking_effort 写入当前会话；
-   *  无会话时后端即时建会话，前端无需先发消息）。 */
-  function selectEffort(id: ThinkingEffort): void {
-    setThinkPop(false);
-    if (id === thinkLevel) return;
-    const previous = thinkLevel;
-    thinkLevel = id;
-    applyThinkingChip();
-    harnessSetThinkingEffort(id).catch((e: unknown) => {
-      thinkLevel = previous;
-      applyThinkingChip();
-      appendError(t("D348", { message: errorMessage(e) }));
-    });
-  }
-
-  thinkChip.addEventListener("click", (event) => {
-    event.stopPropagation();
-    setThinkPop(thinkPop.hidden);
-  });
-
-  /** 轻量重取思考状态（provider 切换后）：只读快照的 thinking 字段应用进 chip，
+  /** 轻量重取思考状态（provider / model 切换后）：只读快照的 thinking 字段应用进 chip，
    *  不回放消息、不动 transcript（快照准入判据与全量恢复同一条——迟到的旧 vault
    *  响应在此同样被丢）。 */
   function refreshThinkingState(): void {
@@ -2102,14 +2249,18 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
         thinkConfigured = true;
         thinkLevel = thinking.level;
         thinkSupported = thinking.supported;
-        applyThinkingChip();
+        applySelChip();
+        // 能力标记可能随 provider/model 切换翻转——浮层开着时 effort 段随之重建
+        // （置灰 / 禁用是浮层内容，不重建会停在旧档）。
+        rebuildSelPopIfOpen();
       })
       .catch(() => {});
   }
 
   /** ctx% 读数重渲（usage 事件 / 快照 / relabel 的共用出口）。M370：读数 = D334 双读数
-   *  「{ctx}% · {cache}%」（分隔符 U+00B7，cache 缺失回落单读数）；越线高亮不动，警示说明从「ⓘ 钮点击
-   *  气泡」改为「hover 读数浮层」（mouseenter/leave 翻转，仅越线时有浮层内容）。 */
+   *  「{ctx}% · {cache}%」（分隔符 U+00B7，cache 缺失回落单读数）；越线高亮不动。
+   *  M373：hover 浮层常驻含义句（D395）——两个裸读数无前缀，hover 读数浮出说明；
+   *  越线时警示句（D335）追加在含义句之下（同泡两行）。浮层内容在 hover 时现建。 */
   function applyUsage(): void {
     if (lastUsage === null) {
       ctxWrap.hidden = true;
@@ -2123,15 +2274,34 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
         ? `${ctx}%`
         : t("D334", { ctx, cache: Math.round(lastCache) });
     ctxRead.classList.toggle("is-warn", over);
-    if (!over) ctxPop.hidden = true;
-    else ctxPop.textContent = t("D335", { ctx, warn: Math.round(warnCtxPct) });
+    if (ctxPop.hidden === false) buildCtxPop();
   }
 
-  // hover 浮层（M370，替代 ⓘ 钮的点击开合）：只有越线时才有浮层内容——mouseenter 翻出、
-  // mouseleave 收回；未越线时 mouseenter 无操作（浮层保持 hidden）。键盘用户无 hover：
-  // 警示语义已由读数高亮承担（与 D335 气泡同口径的补充说明，不挂 focusable 入口）。
+  /** ctx hover 浮层内容现建：含义句（D395）恒在，越线时警示句（D335）追加其下
+   *  （mouseenter 翻出、mouseleave 收回；M373 起未越线也有含义内容）。 */
+  function buildCtxPop(): void {
+    ctxPop.replaceChildren();
+    const meaning = document.createElement("div");
+    meaning.className = "lumir-hp-ctxpop-meaning";
+    meaning.textContent = t("D395");
+    ctxPop.append(meaning);
+    if (ctxRead.classList.contains("is-warn")) {
+      const warn = document.createElement("div");
+      warn.className = "lumir-hp-ctxpop-warn";
+      warn.textContent = t("D335", {
+        ctx: Math.round(lastUsage ?? 0),
+        warn: Math.round(warnCtxPct),
+      });
+      ctxPop.append(warn);
+    }
+  }
+
+  // hover 浮层（M370 形态，M373 扩内容）：mouseenter 读数翻出含义句（越线时追加警示句）、
+  // mouseleave 收回。键盘用户无 hover：警示语义已由读数高亮承担，含义句是补充说明，
+  // 不挂 focusable 入口。
   ctxWrap.addEventListener("mouseenter", () => {
-    if (ctxRead.classList.contains("is-warn")) ctxPop.hidden = false;
+    buildCtxPop();
+    ctxPop.hidden = false;
   });
   ctxWrap.addEventListener("mouseleave", () => {
     ctxPop.hidden = true;
@@ -2893,16 +3063,17 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     const warn = state.warn_ctx_pct;
     if (typeof warn === "number" && Number.isFinite(warn)) warnCtxPct = warn;
     applyUsage();
-    // 思考 chip（M363）：快照 thinking 字段宽容提取——缺键 / 非法档 = 旧后端 / 桩，
-    // chip 隐藏（不伪造读数，与模型 chip 同纪律）；空态快照也带本字段（supported 按当前
-    // provider + model 现算），chip 空态照显。
+    // 思考程度（M363）：快照 thinking 字段宽容提取——缺键 / 非法档 = 旧后端 / 桩，
+    // effort 读数留空（不伪造读数，与合并 chip 同纪律）；空态快照也带本字段（supported
+    // 按当前 provider + model 现算），chip 空态照显。M373 起读数随合并 chip 呈现。
     const thinking = thinkingStateOf(state);
     if (thinking !== null) {
       thinkConfigured = true;
       thinkLevel = thinking.level;
       thinkSupported = thinking.supported;
     }
-    applyThinkingChip();
+    applySelChip();
+    rebuildSelPopIfOpen();
     const pending = state.pending_approval as { id?: unknown; tool?: unknown; diff?: unknown; argv?: unknown } | null | undefined;
     if (pending !== null && typeof pending === "object" && typeof pending.id === "string") {
       appendApproval({
@@ -3229,17 +3400,14 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       sessionButton.focus();
     }
   });
-  // 浮层外交互（点击其他处）收起：会话浮层、provider 浮层、思考浮层、ctx ⓘ 气泡共用一条出口。
+  // 浮层外交互（点击其他处）收起：会话浮层、合并选择器浮层、ctx hover 泡共用一条出口。
   document.addEventListener("click", (event) => {
     if (event.target instanceof Node && sessPop.contains(event.target)) return;
     if (event.target instanceof Node && sessionButton.contains(event.target)) return;
     setSessPop(false);
-    if (event.target instanceof Node && modelPop.contains(event.target)) return;
+    if (event.target instanceof Node && selPop.contains(event.target)) return;
     if (event.target instanceof Node && modelChip.contains(event.target)) return;
-    setModelPop(false);
-    if (event.target instanceof Node && thinkPop.contains(event.target)) return;
-    if (event.target instanceof Node && thinkChip.contains(event.target)) return;
-    setThinkPop(false);
+    setSelPop(false);
     if (event.target instanceof Node && ctxWrap.contains(event.target)) return;
     ctxPop.hidden = true;
   });
@@ -3251,14 +3419,9 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   panel.addEventListener("keydown", (event: KeyboardEvent) => {
     if (event.key !== "Escape") return;
     event.preventDefault();
-    if (!modelPop.hidden) {
-      setModelPop(false);
+    if (!selPop.hidden) {
+      setSelPop(false);
       modelChip.focus();
-      return;
-    }
-    if (!thinkPop.hidden) {
-      setThinkPop(false);
-      thinkChip.focus();
       return;
     }
     if (!ctxPop.hidden) {
@@ -3287,8 +3450,8 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       // 摘出 DOM（元素长驻内存：订阅 / 撤销栈 / 流式态不丢），浮层与刷新表随之收起。
       panel.remove();
       setSessPop(false);
-      setModelPop(false);
-      setThinkPop(false);
+      setSelPop(false);
+      effHint.hidden = true;
       ctxPop.hidden = true;
       if (whenTimer !== null) {
         window.clearInterval(whenTimer);

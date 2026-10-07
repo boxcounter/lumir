@@ -185,15 +185,16 @@ pub struct TurnError {
 
 /// provider 预设表（design §11 双预设）：base_url 默认、出厂 model（与 config.rs 的
 /// `DEFAULT_KIMI_MODEL` / `DEFAULT_DEEPSEEK_MODEL` **同源引用**，MUST NOT 另写字面量——
-/// REVIEW.md 第 8 条）、模型上下文窗口表、超限特征串。
+/// REVIEW.md 第 8 条）、超限特征串。
+///
+/// M373 起窗口表 / 能力表退役：模型清单与每模型 effort / window 声明归配置 schema
+/// （`HarnessProviderConfig.models`，唯一真源在 config.rs 的 preset 常量），预设表只剩
+/// 网络层参数（base_url）与协议层参数（store / 超限特征串）。
 pub struct ProviderPreset {
     /// base_url 默认值（未核实，验收批对真 API 验证；配置可覆盖）。
     pub base_url: &'static str,
     /// 出厂模型 id（引用 config 常量）。
     pub default_model: &'static str,
-    /// 已知模型的上下文窗口（tokens）。未列出的模型回落 [`Self::fallback_window`]。
-    pub windows: &'static [(&'static str, u64)],
-    pub fallback_window: u64,
     /// 上下文超限错误特征串（小写子串匹配 code+message）。
     pub overflow_indicators: &'static [&'static str],
 }
@@ -201,26 +202,11 @@ pub struct ProviderPreset {
 /// kimi 预设（[官方 Responses schema](https://platform.kimi.ai/docs/api/responses)）：
 /// store 支持 ⇒ 显式 `store:false`；usage 含 `cache_write_tokens`（暂不展示）。
 ///
-/// 窗口表 2026-10-07 一手核实（[中国开放平台 Chat Completions 参数表](https://platform.moonshot.cn/docs/api/chat)
-/// 的 `model` 取值表、[全球平台 Model List](https://platform.kimi.ai/docs/models.md)）：开放平台
-/// 现役四个 id——`kimi-k3`（本仓出厂默认，1M ctx）/ `kimi-k2.7-code` /
-/// `kimi-k2.7-code-highspeed` / `kimi-k2.6`（后三者 256K）。`kimi-k2` 系 2026-05-25 退役，
-/// 已不在表内：它回落 `fallback_window`（131_072，与它的历史窗口同值，历史配置的 ctx% 读数
-/// 逐值不变）。
-///
-/// `k3-256k`（Kimi Code 订阅端 id）经自定义 base_url 走本 provider 时窗口 256K（M372）——
-/// 它不在开放平台的取值表里，但用户可配，ctx% 读数按真实窗口算。
+/// 模型清单 / 上下文窗口 / effort 能力的真源在 config.rs 的
+/// [`crate::config::KIMI_MODEL_PRESET`]（一手核实记录与逐模型声明都在那里）。
 const KIMI_PRESET: ProviderPreset = ProviderPreset {
     base_url: "https://api.moonshot.cn/v1", // 未核实（验收批对真 API 验证；config 可覆盖）
     default_model: crate::config::DEFAULT_KIMI_MODEL,
-    windows: &[
-        ("kimi-k3", 1_048_576),
-        ("kimi-k2.7-code", 262_144),
-        ("kimi-k2.7-code-highspeed", 262_144),
-        ("kimi-k2.6", 262_144),
-        ("k3-256k", 262_144),
-    ],
-    fallback_window: 131_072,
     overflow_indicators: &[
         "context_length_exceeded",
         "maximum context length",
@@ -230,17 +216,12 @@ const KIMI_PRESET: ProviderPreset = ProviderPreset {
 
 /// deepseek 预设（[官方 Responses 文档](https://api-docs.deepseek.com/guides/responses_api/)）：
 /// 无状态（恒 `store:false`）；超窗请求返回 400；不支持参数静默忽略。
-/// 窗口表 2026-10-03 经 `GET /models` 一手核实（[Models & Pricing](https://api-docs.deepseek.com/quick_start/pricing)）：
-/// 现役仅 `deepseek-flash` / `deepseek-v4-pro`，上下文均 1M（1048576）；`deepseek-chat`
-/// 已不在模型清单（回落 fallback_window，仅兜底历史配置）。
+///
+/// 模型清单 / 上下文窗口 / effort 能力的真源在 config.rs 的
+/// [`crate::config::DEEPSEEK_MODEL_PRESET`]（现役模型经 `GET /models` 一手核实）。
 const DEEPSEEK_PRESET: ProviderPreset = ProviderPreset {
     base_url: "https://api.deepseek.com",
     default_model: crate::config::DEFAULT_DEEPSEEK_MODEL,
-    windows: &[
-        ("deepseek-flash", 1_048_576),
-        ("deepseek-v4-pro", 1_048_576),
-    ],
-    fallback_window: 131_072,
     overflow_indicators: &[
         "maximum context length",
         "context length",
@@ -254,16 +235,6 @@ pub fn preset(provider: &HarnessProvider) -> &'static ProviderPreset {
         HarnessProvider::Deepseek => &DEEPSEEK_PRESET,
         HarnessProvider::Mock => &DEEPSEEK_PRESET, // mock 只消费 usage，预设仅作 fallback
     }
-}
-
-/// 模型上下文窗口：精确匹配预设表，未列出回落 provider 默认值（未核实数，验收批校准）。
-pub fn context_window(preset: &ProviderPreset, model: &str) -> u64 {
-    preset
-        .windows
-        .iter()
-        .find(|(name, _)| *name == model)
-        .map(|(_, window)| *window)
-        .unwrap_or(preset.fallback_window)
 }
 
 /// 用量 → 面板快照：ctx% = input ÷ 窗口；cache% = cached ÷ input。
@@ -349,6 +320,10 @@ pub fn client(config: &HarnessConfig) -> Result<Box<dyn LlmClient>, CommandError
             }
             let preset = preset(&config.provider);
             let base = base_url.unwrap_or(preset.base_url).trim_end_matches('/');
+            // 思考程度能力按当前 provider + model 从配置 schema 现算（M373：
+            // `HarnessProviderConfig.models` 的逐模型声明，缺省内置 preset）——client 随
+            // 每轮 send 的 config 快照构建，能力标记在这一刻冻结进 client。
+            let effort_supported = config.effort_supported(&config.provider, model);
             Ok(Box::new(ResponsesClient {
                 http: reqwest::blocking::Client::builder()
                     .timeout(std::time::Duration::from_secs(300))
@@ -360,8 +335,8 @@ pub fn client(config: &HarnessConfig) -> Result<Box<dyn LlmClient>, CommandError
                 endpoint: format!("{base}/responses"),
                 api_key: api_key.clone(),
                 model: model.clone(),
-                provider: config.provider,
                 store_false: matches!(config.provider, HarnessProvider::Kimi),
+                effort_supported,
                 preset,
             }))
         }
@@ -388,9 +363,9 @@ struct ResponsesClient {
     endpoint: String,
     api_key: String,
     model: String,
-    /// 本 client 服务的 provider（M362）：思考程度映射要按 provider 分支
-    ///（[`super::thinking::apply_effort`]），与 `model` 一起构成能力判据。
-    provider: HarnessProvider,
+    /// 当前 provider + model 是否支持思考程度调节（M373）：client 构建时按配置 schema
+    /// 现算冻结（`HarnessConfig::effort_supported`），请求构造直接消费这一布尔。
+    effort_supported: bool,
     /// kimi 支持 `store` ⇒ 显式 false 声明不留副本；deepseek 不支持（恒 false），不发。
     store_false: bool,
     preset: &'static ProviderPreset,
@@ -429,9 +404,9 @@ impl ResponsesClient {
         if self.store_false {
             body["store"] = serde_json::json!(false);
         }
-        // 思考程度按档位映射（M362）：provider 支持时写顶层 `reasoning.effort`，
-        // 不支持（如非 k3 系的 kimi 模型）时不写该字段——映射表与文档出处见 `super::thinking`。
-        thinking::apply_effort(&mut body, &self.provider, &self.model, request.effort);
+        // 思考程度按档位映射（M362）：schema 声明支持时写顶层 `reasoning.effort`，
+        // 不支持时不写该字段——能力判据 client 构建时已从 schema 现算（M373）。
+        thinking::apply_effort(&mut body, self.effort_supported, request.effort);
         let response = self
             .http
             .post(&self.endpoint)
@@ -1055,21 +1030,10 @@ mod tests {
     }
 
     #[test]
-    fn context_window_table_and_fallback() {
+    fn preset_default_models_stay_in_sync_with_config() {
+        // 出厂 model 与 config.rs 常量同源（REVIEW.md 第 8 条）。窗口查表本身已随 M373 退役
+        // （真源 = config.rs 的模型 preset + `HarnessConfig::context_window`，钉在 config.rs 测试里）。
         let kimi = preset(&HarnessProvider::Kimi);
-        // 出厂 model 必须在窗口表里，且读数是 1M（M365：默认与窗口表同源，REVIEW.md 第 8 条）
-        assert_eq!(
-            context_window(kimi, crate::config::DEFAULT_KIMI_MODEL),
-            1_048_576
-        );
-        // 表内其余现役 id（256K 档）
-        for model in ["kimi-k2.7-code", "kimi-k2.7-code-highspeed", "kimi-k2.6"] {
-            assert_eq!(context_window(kimi, model), 262_144, "{model}");
-        }
-        // 退役的 kimi-k2 不在表里 ⇒ 回落 fallback（131_072，与它的历史窗口同值）
-        assert_eq!(context_window(kimi, "kimi-k2"), kimi.fallback_window);
-        assert_eq!(context_window(kimi, "unknown-model"), kimi.fallback_window);
-        // 出厂 model 与 config.rs 常量同源（REVIEW.md 第 8 条）
         assert_eq!(kimi.default_model, crate::config::DEFAULT_KIMI_MODEL);
         assert_eq!(
             preset(&HarnessProvider::Deepseek).default_model,

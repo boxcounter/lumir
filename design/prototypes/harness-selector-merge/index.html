@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Lumir — harness 模型选择器合并原型（M371）</title>
+<title>Lumir — harness 模型选择器合并原型（M371 → M373 裁决定稿）</title>
 <style>
 /* ============ tokens（逐值取自 src/style.css / src/harness-panel.css 现行登记值） ============ */
 :root {
@@ -134,11 +134,13 @@ a { color: var(--accent); text-decoration: none; }
   padding: var(--sp-1) var(--sp-2) var(--sp-2);
 }
 
-/* ── 合并选择器 chip（替代现行 modelChip + thinkChip 双 chip）────────────
+/* ── 合并选择器 chip（替代现行 modelChip + thinkChip 双 chip；M373 裁决定稿）────────
    形态纪律完全沿用单个 chip 的现行配方：无边框小标签、24px 高、r5、fs-label-s、
-   text-2、hover 给底（harness-panel.css .lumir-hp-model / .lumir-hp-eff）。
-   唯一新增：max-width 从 96px 放到 224px——读数从一格变三格（provider · model · effort），
-   空间从 think chip 一格 + gap 一格里收回来（双 chip 并排长名截断更狠）。 */
+   text-2、hover 给底（harness-panel.css .lumir-hp-model）。
+   chip 读数 = 「model · effort」双读数（Alex 裁决「不需要显示 provider，只需要
+   model · effort」——provider 只在浮层里选）；max-width 224px。
+   截断（Alex 裁决「只截 model 名，保住 effort」）：model 名单独 min-width:0 + ellipsis
+   承担全部截断，分隔符 / effort / chevron 三格 flex:none 永不裁。 */
 .hp-selwrap {
   position: relative;
   flex: none;
@@ -168,18 +170,23 @@ a { color: var(--accent); text-decoration: none; }
   background: var(--hover);
   color: var(--text);
 }
-/* 读数串承担 ellipsis（同 .lumir-hp-model-name 口径：button 本体不裁切）。 */
-.hp-sel-read {
+/* model 名读数：flex:1 + min-width:0——chip 触顶时只有这一格吃 ellipsis。 */
+.hp-sel-model {
   flex: 1;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-/* effort 不支持（当前 provider + model 组合 supported=false）：读数保留、置灰——
-   合并 chip 不再有「整 chip 禁用」形态（那是双 chip 时代 thinkChip 的处置），
-   置灰只落在 effort 这一格，选择器本身仍可点开换组合。 */
-.hp-sel-read .eff-off { color: var(--text-3); }
+/* U+00B7 分隔符独立成格（两侧 chip gap 承担空格），flex:none 永不被截。 */
+.hp-sel-sep {
+  flex: none;
+  color: var(--text-3);
+}
+/* effort 读数格：flex:none 保住；不支持（当前组合 supported=false）置灰 text-3——
+   合并 chip 永不禁用，置灰只落这一格（Alex 裁决），hover hint（.hp-hint）告知原因。 */
+.hp-sel-eff { flex: none; }
+.hp-sel-eff.eff-off { color: var(--text-3); }
 .hp-sel-chev {
   flex: none;
   color: var(--text-3);
@@ -260,6 +267,29 @@ a { color: var(--accent); text-decoration: none; }
   font-size: var(--fs-label-s);
   color: var(--text-3);
 }
+
+/* ── hover hint 泡（M373 裁决新增 ×2：effort 不支持 / ctx·cache 含义）────────
+   产品配方 = .lumir-hp-effhint / .lumir-hp-ctxpop（r6、224px、fs-meta、上展）。 */
+.hp-hint {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 0;
+  width: 224px;
+  padding: var(--sp-2) var(--sp-3);
+  background: var(--preview-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--r6);
+  box-shadow: var(--shadow-raise);
+  color: var(--text-2);
+  font-size: var(--fs-meta);
+  line-height: 1.5;
+  white-space: normal;
+  z-index: 30;
+}
+.hp-hint[hidden] { display: none; }
+.hp-hint .hint-warn { margin-top: var(--sp-1); color: var(--pending); }
+.hp-ctxwrap { position: relative; flex: none; }
+.hp-ctxwrap .hp-hint { left: auto; right: -18px; }
 
 /* ── ctx 读数 + 发送钮（现行配方原样搬入，保持控制行长相对照）────────────── */
 .hp-ctx {
@@ -425,11 +455,12 @@ const curEffortSupported = () => curProvider().effort;
 const CHECK_SVG = '<svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M2 6.5 4.8 9.3 10 3.5"/></svg>';
 const SEND_SVG = '<svg width="13" height="13" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M7 11.5v-9M3.5 6 7 2.5 10.5 6"/></svg>';
 
-/* ---- chip 读数串：provider · model · effort（U+00B7，modeline 同款小圆点） ---- */
+/* ---- chip 读数串：model · effort（U+00B7，modeline 同款小圆点）。
+       M373 裁决：provider 不进 chip 读数（只在浮层里选）；截断只落 model 名
+       （.hp-sel-model 单独 min-width:0 + ellipsis，effort 格 flex:none 永保）。 ---- */
 function chipReading() {
-  const parts = [curProvider().name, curModel().name];
-  const eff = `<span class="${curEffortSupported() ? "" : "eff-off"}">${state.effort}</span>`;
-  return `${parts.join(" · ")} · ${eff}`;
+  const eff = `<span class="hp-sel-eff${curEffortSupported() ? "" : " eff-off"}">${state.effort}</span>`;
+  return `<span class="hp-sel-model">${curModel().name}</span><span class="hp-sel-sep" aria-hidden="true">·</span>${eff}`;
 }
 
 /* ---- 浮层三段构建 ---- */
@@ -460,6 +491,18 @@ function popHTML() {
        + secHTML("思考程度", effItems, !sup, sup ? "" : "当前模型不支持思考程度调节");
 }
 
+/* ---- hover hint 内容（M373 裁决新增的两个 hint）── */
+function effHintHTML() {
+  return `模型 ${curModel().name} 不支持思考程度调节`;
+}
+function ctxHintHTML() {
+  const meaning = "ctx%：上下文窗口占用比例；cache%：本轮输入的缓存命中比例";
+  const warn = state.ctxWarn
+    ? `<div class="hint-warn">上下文已用 42%，越过 85% 警示线——继续对话将自动压缩续聊</div>`
+    : "";
+  return meaning + warn;
+}
+
 /* ---- composer 复刻 ---- */
 function composerHTML() {
   return `<div class="hp">
@@ -470,12 +513,16 @@ function composerHTML() {
         <div class="hp-ctl">
           <span class="hp-selwrap">
             <button type="button" class="hp-sel" id="selChip" aria-haspopup="menu" aria-expanded="${state.popOpen}" title="模型与思考程度（点击切换）">
-              <span class="hp-sel-read">${chipReading()}</span>
+              ${chipReading()}
               <span class="hp-sel-chev" aria-hidden="true">▾</span>
             </button>
             <div class="hp-pop" id="selPop" role="menu" ${state.popOpen ? "" : "hidden"}>${popHTML()}</div>
+            <div class="hp-hint" id="effHint" hidden>${effHintHTML()}</div>
           </span>
-          <span class="hp-ctx${state.ctxWarn ? " is-warn" : ""}">42% · 38%</span>
+          <span class="hp-ctxwrap" id="ctxWrap">
+            <span class="hp-ctx${state.ctxWarn ? " is-warn" : ""}">42% · 38%</span>
+            <div class="hp-hint" id="ctxHint" hidden>${ctxHintHTML()}</div>
+          </span>
           <span class="hp-ctl-spacer"></span>
           <button type="button" class="hp-send" title="发送" aria-label="发送">${SEND_SVG}</button>
         </div>
@@ -499,16 +546,16 @@ function cpanelHTML() {
       <button type="button" class="cp-btn${state.ctxWarn ? " is-on" : ""}" data-act="tgl:ctxWarn">ctx 越线</button>
       <button type="button" class="cp-btn${state.popOpen ? " is-on" : ""}" data-act="tgl:pop">浮层</button>
     </div>
-    <div class="cp-note">当前选择：<b>${curProvider().name} · ${curModel().name} · ${state.effort}</b>${curEffortSupported() ? "" : "（不支持 effort）"}<br>场景与主题改动写回 URL（可刷新复现）；截图用 ?panel=0 关本面板。</div>
+    <div class="cp-note">当前选择：<b>${curModel().name} · ${state.effort}</b>${curEffortSupported() ? "" : "（不支持 effort）"}<br>chip 读数 = model · effort（无 provider）；两个 hover hint：置灰 effort 格 / ctx 读数。场景与主题改动写回 URL（可刷新复现）；截图用 ?panel=0 关本面板。</div>
   </div>`;
 }
 
 /* ---- 场景帧 ---- */
 const SCENES = {
-  chip: { name: "收起态", desc: "合并 chip 常态：一格读数 provider · model · effort（U+00B7），替代现行双 chip。chip 形态纪律与现行单 chip 完全一致（无边框小标签 24px、r5、fs-label-s、text-2、hover 给底）。" },
-  pop: { name: "浮层展开", desc: "点开 = 三维度分段浮层：Provider / 模型 / 思考程度 各自独立可选（menuitemradio + 勾选 + 当前项 tint 底），hairline 分段。选完不自动关（多维度一次调齐），点 chip / 空白 / Esc 关。" },
-  long: { name: "长名省略", desc: "model 名超长时整串 ellipsis（chip max-width 224px）——provider 与 effort 一并被截，截断优先发生在 model 名一侧的裁决留给 Alex。" },
-  unsupported: { name: "不支持 effort", desc: "当前 provider + model 组合不支持程度调节（现行 D390 语义）：chip 里 effort 读数置灰（不再是整 chip 禁用——合并后选择器本身仍可点开换组合）；浮层内 effort 段整段禁用 + 原说明句。" },
+  chip: { name: "收起态", desc: "合并 chip 常态：一格读数 model · effort（U+00B7，无 provider——Alex 裁决），替代现行双 chip。chip 形态纪律与现行单 chip 完全一致（无边框小标签 24px、r5、fs-label-s、text-2、hover 给底）。" },
+  pop: { name: "浮层展开", desc: "点开 = 三维度分段浮层：Provider / 模型 / 思考程度 各自独立可选（menuitemradio + 勾选 + 当前项 tint 底），hairline 分段。选完不自动关（多维度一次调齐，Alex 裁决），点 chip / 空白 / Esc 关。" },
+  long: { name: "长名省略", desc: "model 名超长时只截 model 名（chip max-width 224px，.hp-sel-model 单独 ellipsis）——分隔符与 effort 读数两格 flex:none 永保（Alex 裁决「只截 model 名，保住 effort」）。" },
+  unsupported: { name: "不支持 effort", desc: "当前 provider + model 组合不支持程度调节（D390 态）：chip 里 effort 读数置灰（不再是整 chip 禁用——合并后选择器本身仍可点开换组合）；浮层内 effort 段整段禁用 + 原说明句；置灰格 hover 浮出 hint 点名模型（M373 裁决新增）。" },
   mock: { name: "mock 显形（调试）", desc: "数据里的 mock 条目默认不出现在可选列表（Alex 裁决「界面上隐藏，代码保留」）；本场景 = 调试开关翻开后看到的显形态——产品里无此开关，仅供核对隐藏口径。" },
 };
 function applyScene() {
@@ -525,6 +572,16 @@ function render() {
 function bind() {
   const chip = document.getElementById("selChip");
   chip.addEventListener("click", (e) => { e.stopPropagation(); state.popOpen = !state.popOpen; syncPop(); });
+  /* 两个 hover hint（M373 裁决）：置灰 effort 格 / ctx 读数，mouseenter 翻出、mouseleave 收回。
+     用赋值而非 addEventListener：render() 每次重建 body 内容，叠加监听会自我重复触发。 */
+  const effSpan = chip.querySelector(".hp-sel-eff");
+  if (effSpan && effSpan.classList.contains("eff-off")) {
+    effSpan.onmouseenter = () => { document.getElementById("effHint").hidden = false; };
+    effSpan.onmouseleave = () => { document.getElementById("effHint").hidden = true; };
+  }
+  const ctxWrap = document.getElementById("ctxWrap");
+  ctxWrap.onmouseenter = () => { document.getElementById("ctxHint").hidden = false; };
+  ctxWrap.onmouseleave = () => { document.getElementById("ctxHint").hidden = true; };
   /* 用赋值而非 addEventListener：render() 每次重建 body 内容，叠加监听会自我重复触发 */
   document.body.onclick = (e) => {
     const actEl = e.target.closest("[data-act]");
@@ -569,9 +626,9 @@ function renderBoard() {
     </section>`).join("");
   document.body.innerHTML = `
     <header class="board-head">
-      <h1>harness 模型选择器合并 · 原型（M371）</h1>
+      <h1>harness 模型选择器合并 · 原型（M371 → M373 裁决定稿）</h1>
       <nav class="themes">${themeLinks}</nav>
-      <span class="hint">双 chip（model + Thinking）合并为一个选择器 chip · 三维度浮层 · mock 界面隐藏；决策与差异见 NOTES.md</span>
+      <span class="hint">双 chip（model + Thinking）合并为一个选择器 chip · 读数 = model · effort（无 provider）· 只截 model 名 · 两个 hover hint · mock 界面隐藏；裁决与差异见 NOTES.md</span>
     </header>
     ${rows}
     <p style="padding:16px 32px;font-size:11.5px;color:var(--text-3)">board 页各帧为静态示意（深链单帧可交互）；控制面板在单帧页。</p>`;
@@ -592,7 +649,7 @@ function sceneState(id) {
   if (id === "pop" || id === "unsupported" || id === "mock") state.popOpen = true;
 }
 
-if (scene) { applyScene(); render(); document.title = `${SCENES[scene]?.name ?? scene} · ${theme} — M371`; }
+if (scene) { applyScene(); render(); document.title = `${SCENES[scene]?.name ?? scene} · ${theme} — M371/M373`; }
 else renderBoard();
 </script>
 </body>

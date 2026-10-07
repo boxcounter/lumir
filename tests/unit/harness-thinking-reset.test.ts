@@ -10,9 +10,11 @@
 // （术语与做法同 tests/unit 其他 DOM 件的 FakeEl：只替 DOM，跑的是仓里那份真 harness-panel），
 // 覆盖「面板构造 → 新会话点击」这条路径。
 //
-// 断言口径（REVIEW.md 第 1 条）：用精确相等（D391 面文本整串 / D389 读屏名整串）判档位，
+// 断言口径（REVIEW.md 第 1 条）：用精确相等（chip 读屏名整串 D393 / effort 读数整串）判档位，
 // 不用「包含 High」式的子串包含——子串断言在「chip 停在 Max」与「chip 回落 High」之间
 // 只有子串重叠、没有区分度。反向用例见文件末尾：本测试必须能对「chip 停在旧档」判红。
+// M373 起思考 chip 并入合并选择器（.lumir-hp-model · effort 读数 + 三维浮层），
+// 本用例同步改断言合并 chip 形态。
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -372,8 +374,23 @@ const VAULT = "/tmp/lumir-m366-thinking-reset";
 test("新会话：chip 从会话档位（Max）回落默认 High，读屏名与浮层勾选同步（M366）", async () => {
   installFakeDom();
   const backend = installBackend();
-  // 模型 chip 的数据源：harness 段缺失 ⇒ 不伪造读数（本用例只看思考 chip）。
-  backend.handle("config_get", () => ({ config: {} }));
+  // 合并 chip 的数据源：harness 段带 kimi/deepseek（mock 在可选列表层隐藏，M373）——
+  // model 维度照 schema 形态给（id/effort/window）。
+  backend.handle("config_get", () => ({
+    config: {
+      harness: {
+        provider: "kimi",
+        providers: {
+          kimi: {
+            model: "kimi-k3",
+            models: [{ id: "kimi-k3", effort: true, window: 1048576 }],
+          },
+          deepseek: { model: "deepseek-flash", models: [] },
+          mock: { fixture: "f.json" },
+        },
+      },
+    },
+  }));
   // 后端会话态：一轮里用户选过 Max；「新会话」丢弃会话 ⇒ 下一份快照回默认（无会话空态）。
   let sessionLevel = "max";
   backend.handle("harness_state", () =>
@@ -402,16 +419,21 @@ test("新会话：chip 从会话档位（Max）回落默认 High，读屏名与�
     handle.vaultChanged(VAULT);
     await flush();
 
-    const label = (): string => mount.querySelector(".lumir-hp-eff-label")?.textContent ?? "";
+    const effort = (): string =>
+      mount.querySelector(".lumir-hp-eff-reading")?.textContent ?? "";
     const chip = (): FakeEl => {
-      const el = mount.querySelector(".lumir-hp-eff");
-      assert.ok(el !== null, "思考 chip 必须在场（快照 thinking.supported=true）");
+      const el = mount.querySelector(".lumir-hp-model");
+      assert.ok(el !== null, "合并选择器 chip 必须在场（config harness 段 + 快照 thinking）");
       return el;
     };
 
-    // 前态：chip 显示当前会话档位 Max（面文本整串相等，不是子串包含）。
-    assert.equal(label(), "思考：Max");
-    assert.equal(chip().title, "思考程度：Max（点击切换）");
+    // 前态：chip 显示当前会话档位 Max（effort 读数整串相等，不是子串包含）；
+    // 读屏名 = D393 支持态「模型：{model} · 思考程度：{level}（点击切换）」。
+    assert.equal(effort(), "Max");
+    assert.equal(
+      chip().title,
+      "模型：kimi-k3 · 思考程度：Max（点击切换）",
+    );
 
     // 点「＋新会话」——会话被后端丢弃，chip 必须回落默认 High。
     const newBtn = titlebar.querySelector(".lumir-hp-seg-new");
@@ -419,16 +441,22 @@ test("新会话：chip 从会话档位（Max）回落默认 High，读屏名与�
     newBtn.fire("click");
     await flush();
 
-    assert.equal(label(), "思考：High", "新会话后 chip 面文本回落默认 High，不停在旧档 Max");
-    assert.equal(chip().title, "思考程度：High（点击切换）", "读屏名随读数同步回落");
+    assert.equal(effort(), "High", "新会话后 chip 读数回落默认 High，不停在旧档 Max");
+    assert.equal(
+      chip().title,
+      "模型：kimi-k3 · 思考程度：High（点击切换）",
+      "读屏名随读数同步回落",
+    );
 
-    // 浮层勾选同步：打开浮层，当前项（.is-current）必须是 High。
+    // 浮层勾选同步：点开合并浮层，effort 段（第三段）的当前项必须是 High。
     chip().fire("click");
-    const items = mount.querySelectorAll(".lumir-hp-effpop-item");
-    assert.equal(items.length, 3, "浮层三裸档 Low/High/Max");
-    const current = items.filter((item) => item.classes.has("is-current"));
-    assert.equal(current.length, 1, "浮层恰有一项标为当前档");
-    assert.equal(current[0].querySelector(".lumir-hp-effpop-name")?.textContent, "High");
+    const secs = mount.querySelectorAll(".lumir-hp-selpop-sec");
+    assert.equal(secs.length, 3, "三维分段：Provider / 模型 / 思考程度");
+    const effItems = secs[2].querySelectorAll(".lumir-hp-selpop-item");
+    assert.equal(effItems.length, 3, "effort 段三裸档 Low/High/Max");
+    const current = effItems.filter((item) => item.classes.has("is-current"));
+    assert.equal(current.length, 1, "effort 段恰有一项标为当前档");
+    assert.equal(current[0].querySelector(".lumir-hp-selpop-name")?.textContent, "High");
   } finally {
     handle.attachTo(null); // 清挂载期的 30s when 刷新定时器，不留悬挂句柄
   }

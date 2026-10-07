@@ -3,8 +3,10 @@
 //   - agent 消息内渲染思考块：块在前正文在后、多块按块序号序、无思考不渲染块（零噪声）；
 //   - 折叠为默认（含流式期间）：折叠态 chevron +「思考过程 · N 秒」（D388），展开态
 //     左边线 + 次级灰正文（token 层现行值——像素面归视觉还原，本场景只守结构）；
-//   - 思考 chip：控制行位置 = 模型 chip 后、ctx 读数前；浮层三裸档（Low/High/Max，zh/en
-//     均英文原文）无释义、当前档位勾选；supported=false → 置灰禁用 + hover 说明（D390）；
+//   - 思考程度档位的呈现面（M373 起）：并入合并选择器 chip（.lumir-hp-model · effort
+//     读数 + 三维单浮层）——三裸档（Low/High/Max，zh/en 均英文原文）无释义、当前档位
+//     勾选；supported=false → 读数置灰 + 读屏名换 D390 + 置灰格 hover hint（D394）+
+//     浮层 effort 段禁用（D390 段尾说明）；选定不关浮层（Alex 裁决）；
 //   - 复制消息不含思考内容（复制源 = 正文源文本）。
 //
 // 全部断言是**结构断言**（在场性 / 文案 / 状态 / 调用记录）——本场景不碰任何像素基线
@@ -98,83 +100,111 @@ const fire = (page: Page, payload: unknown) =>
     payload,
   );
 
-test("思考 chip：控制行位置 / 三裸档浮层 + 当前勾选 / 档位写回 / 不支持置灰", async ({ page }) => {
+test("思考程度：合并 chip 读数 / 三裸档浮层 + 当前勾选 / 档位写会话 / 选定不关浮层", async ({ page }) => {
   await stubTauri(page, VAULT);
   await stubHarnessThinking(page);
   await openPanel(page);
 
-  // ── chip 在场与位置：模型 chip 后、ctx 读数前（快照带 thinking → 空态照显）──
+  // ── chip 在场：effort 读数并入合并选择器（M373，.lumir-hp-effwrap 退役）──
   const ctlOrder = await page.locator(".lumir-hp-ctl > *").evaluateAll((els) =>
     els.map((el) => el.classList[0]),
   );
   expect(ctlOrder).toEqual([
     "lumir-hp-modelwrap",
-    "lumir-hp-effwrap",
     "lumir-hp-ctxwrap",
     "lumir-hp-ctl-spacer",
     "lumir-hp-send",
   ]);
-  const chip = page.locator(".lumir-hp-eff");
+  const chip = page.locator(".lumir-hp-model");
   await expect(chip).toBeVisible();
-  // 面文本 = 「思考：High」（档位名 zh/en 均英文原文；上屏首字母大写）。
-  await expect(chip.locator(".lumir-hp-eff-label")).toHaveText("思考：High");
   await expect(chip).toHaveAttribute("aria-haspopup", "menu");
-  // 支持态悬停 / 读屏名（D389）。
-  await expect(chip).toHaveAttribute("title", "思考程度：High（点击切换）");
-  await expect(chip).toHaveAttribute("aria-label", "思考程度：High（点击切换）");
+  // effort 读数 = 裸档位名（zh/en 均英文原文、首字母大写）；支持态读屏名 = D393。
+  await expect(chip.locator(".lumir-hp-eff-reading")).toHaveText("High");
+  await expect(chip).toHaveAttribute(
+    "title",
+    "模型：mock · 思考程度：High（点击切换）",
+  );
+  await expect(chip).toHaveAttribute(
+    "aria-label",
+    "模型：mock · 思考程度：High（点击切换）",
+  );
 
-  // ── 浮层：三个裸档位、无释义、当前档位勾选（aria-checked + is-current + check 图形）──
+  // ── 浮层 effort 段：三个裸档位、无释义、当前档位勾选（check 图形 + is-current）──
   await chip.click();
-  const pop = page.locator(".lumir-hp-effpop");
+  const pop = page.locator(".lumir-hp-selpop");
   await expect(pop).toBeVisible();
   await expect(pop).toHaveAttribute("role", "menu");
-  await expect(pop).toHaveAttribute("aria-label", "思考程度"); // D392 读屏名
-  const items = pop.locator(".lumir-hp-effpop-item");
-  await expect(items).toHaveCount(3);
-  await expect(items).toHaveText(["Low", "High", "Max"]); // 裸档：无「当前」之类附加词
+  await expect(pop).toHaveAttribute("aria-label", "模型与思考程度"); // D398 读屏名
+  const secs = pop.locator(".lumir-hp-selpop-sec");
+  await expect(secs).toHaveCount(2); // mock 无模型维度 → Provider + 思考程度
+  const effItems = secs.nth(1).locator(".lumir-hp-selpop-item");
+  await expect(effItems).toHaveCount(3);
+  await expect(effItems).toHaveText(["Low", "High", "Max"]); // 裸档：无「当前」之类附加词
   // menuitemradio 语义逐项（严格模式：多元素 locator 的 toHaveAttribute 会撞歧义）。
-  const roles = await items.evaluateAll((els) => els.map((el) => el.getAttribute("role")));
+  const roles = await effItems.evaluateAll((els) => els.map((el) => el.getAttribute("role")));
   expect(roles).toEqual(["menuitemradio", "menuitemradio", "menuitemradio"]);
   // 当前项唯一、勾选在场（High = 快照档位）。
-  const current = pop.locator(".lumir-hp-effpop-item.is-current");
+  const current = secs.nth(1).locator(".lumir-hp-selpop-item.is-current");
   await expect(current).toHaveCount(1);
   await expect(current).toContainText("High");
   await expect(current).toHaveAttribute("aria-checked", "true");
-  await expect(pop.locator('.lumir-hp-effpop-item[aria-checked="false"]')).toHaveCount(2);
-  await expect(current.locator(".lumir-hp-effpop-check svg")).toBeVisible();
+  await expect(secs.nth(1).locator('.lumir-hp-selpop-item[aria-checked="false"]')).toHaveCount(2);
+  await expect(current.locator(".lumir-hp-selpop-check svg")).toBeVisible();
 
-  // ── 选择 Max：chip 读数先更新、写回 harness_set_thinking_effort（参数逐字判据）──
-  await items.nth(2).click();
-  await expect(pop).toBeHidden();
-  await expect(chip.locator(".lumir-hp-eff-label")).toHaveText("思考：Max");
-  await expect(chip).toHaveAttribute("title", "思考程度：Max（点击切换）");
+  // ── 选择 Max：chip 读数先更新、写回 harness_set_thinking_effort（参数逐字判据）；
+  //    选定不自动关浮层（Alex 裁决）→ 勾选跟随新档位当场可见 ──
+  await effItems.nth(2).click();
+  await expect(pop).toBeVisible(); // 不关（与 M363 前「选定即关」相反，M373 裁决）
+  await expect(chip.locator(".lumir-hp-eff-reading")).toHaveText("Max");
+  await expect(chip).toHaveAttribute(
+    "title",
+    "模型：mock · 思考程度：Max（点击切换）",
+  );
   const writes = await page.evaluate(
     () => (window as unknown as { __effortWrites: unknown[] }).__effortWrites,
   );
   expect(writes).toEqual([{ effort: "max" }]);
-  // 重开浮层：勾选跟随新档位。
-  await chip.click();
-  await expect(pop.locator(".lumir-hp-effpop-item.is-current")).toContainText("Max");
+  await expect(secs.nth(1).locator(".lumir-hp-selpop-item.is-current")).toContainText("Max");
   // 浮层外交互收起。
   await page.locator(".lumir-hp-transcript").click();
   await expect(pop).toBeHidden();
 });
 
-test("思考 chip 不支持态：置灰禁用 + hover 说明，点击不展开浮层", async ({ page }) => {
+test("思考程度不支持态：读数置灰 + D390 读屏名 + hover hint + 浮层段禁用", async ({ page }) => {
   await stubTauri(page, VAULT);
   await stubHarnessThinking(page, { level: "high", supported: false });
   await openPanel(page);
 
-  const chip = page.locator(".lumir-hp-eff");
+  const chip = page.locator(".lumir-hp-model");
   await expect(chip).toBeVisible();
-  await expect(chip).toBeDisabled();
-  await expect(chip).toHaveClass(/is-disabled/);
-  // hover 说明 = Alex 裁决点 2 原句（D390），同时是读屏名。
+  // 合并 chip 永不禁用（置灰只落 effort 读数这一格）——支持换组合的入口不丢。
+  await expect(chip).toBeEnabled();
+  const effReading = chip.locator(".lumir-hp-eff-reading");
+  await expect(effReading).toHaveClass(/is-disabled/);
+  // 读屏名 = Alex 裁决点 2 原句（D390）。
   await expect(chip).toHaveAttribute("title", "当前模型不支持思考程度调节");
   await expect(chip).toHaveAttribute("aria-label", "当前模型不支持思考程度调节");
-  // 禁用件不响应点击（force 也不发 click）——浮层不展开。
-  await chip.click({ force: true });
-  await expect(page.locator(".lumir-hp-effpop")).toBeHidden();
+  // hover hint（D394）：置灰格悬停翻出、移出收回。
+  const effHint = page.locator(".lumir-hp-effhint");
+  await expect(effHint).toBeHidden();
+  await effReading.hover();
+  await expect(effHint).toBeVisible();
+  await expect(effHint).toContainText("不支持思考程度调节");
+  await page.mouse.move(10, 10);
+  await expect(effHint).toBeHidden();
+  // 浮层照开（选择器可点开换组合），effort 段整段禁用 + D390 段尾说明。
+  await chip.click();
+  const pop = page.locator(".lumir-hp-selpop");
+  await expect(pop).toBeVisible();
+  const effSec = pop.locator(".lumir-hp-selpop-sec").nth(1);
+  await expect(effSec).toHaveClass(/is-disabled/);
+  await expect(effSec.locator(".lumir-hp-selpop-hint")).toHaveText("当前模型不支持思考程度调节");
+  // 禁用项带 aria-disabled、点击不落写。
+  await effSec.locator(".lumir-hp-selpop-item").nth(2).click({ force: true });
+  const writes = await page.evaluate(
+    () => (window as unknown as { __effortWrites: unknown[] }).__effortWrites,
+  );
+  expect(writes).toEqual([]);
 });
 
 test("思考块：折叠默认（含流式）/ 块在前正文在后 / 多块按序号 / 复制不含思考内容", async ({

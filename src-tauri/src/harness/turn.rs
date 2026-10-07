@@ -306,8 +306,9 @@ pub fn run_turn_for(
         // —— 输出项入队（分片不在这里发：M369 起正文 / 思考分片都在流式路径即时转发）——
         let assistant_text = output.text.clone();
         let usage = output.usage.map(|usage| {
-            let preset = llm::preset(&config.provider);
-            let window = llm::context_window(preset, llm::active_model(config));
+            // 窗口按配置 schema 读取（M373：`providers.<id>.models` 的逐模型声明，未列出回落
+            // 保守默认）——llm.rs 的预设窗口表已退役。
+            let window = config.context_window(&config.provider, llm::active_model(config));
             (usage, llm::usage_snapshot(&usage, window))
         });
         let _ = runtime.with_session(scope, |s| {
