@@ -103,8 +103,9 @@ let cu = null;
  *
  * 形态沿用既有的**人工 claim 约定**（`/tmp/lumir-acceptance-rmachine.lock`）：`mkdir` 原子建锁
  * （`EEXIST` 即已被占），随后写入 `pid` / `startedAt` / `cwd` 三个文件；读取方容忍 `pid` 缺失的
- * 那一瞬（建锁与写内容之间的窗口，轮询等一拍再判）。锁里 pid 仍存活 → 拒绝启动并在 stderr 打印
- * 持有人；pid 已死或读不到 → 视为崩溃残留回收重建（与 `reclaimPort` 同一条 fail-loud 取向）。
+ * 那一瞬（建锁与写内容之间的窗口，轮询等一拍再判）。处置分三种：锁里 pid 仍存活 → 拒绝启动并在
+ * stderr 打印持有人；pid 已死 → 视为崩溃残留回收重建；轮询后仍读不到 pid → 拒绝启动并提示手工确认
+ * （宁可挡住，也不冒双跑风险）。（与 `reclaimPort` 同一条 fail-loud 取向。）
  */
 const RMACHINE_LOCK = "/tmp/lumir-acceptance-rmachine.lock";
 let rmachineLock = null; // 本进程持有时为 `{ dir, pid }`
