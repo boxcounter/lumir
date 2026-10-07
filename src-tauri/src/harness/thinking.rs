@@ -158,8 +158,11 @@ mod tests {
         assert!(supported(&kimi(), "kimi-k3-turbo"));
         assert!(!supported(&kimi(), "kimi-k2.6"));
         assert!(!supported(&kimi(), "kimi-k2.7-code"));
-        // 仓里现役默认值：kimi-k2 已于 2026-05-25 退役（404），它不是 k3 系 ⇒ 置灰。
+        // 历史出厂默认值（M365 前的 `DEFAULT_KIMI_MODEL`）：kimi-k2 已于 2026-05-25 退役（404），
+        // 它不是 k3 系 ⇒ 置灰（旧配置若尚未被 M365 的迁移改写，判定不变）。
         assert!(!supported(&kimi(), "kimi-k2"));
+        // 现役出厂默认值必须可用——它是 harness 的首次会话形态，灰了就没人能动档位。
+        assert!(supported(&kimi(), crate::config::DEFAULT_KIMI_MODEL));
         // 前缀不宽容：kimi-k30 不是 k3 系命名。
         assert!(!supported(&kimi(), "kimi-k30"));
         // deepseek：现役模型都支持；未知模型也按支持（provider 级能力，模型加白名单只会漏）。
