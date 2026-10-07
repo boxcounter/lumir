@@ -84,6 +84,85 @@ test("有标签时标识块仍在 traffic 灯区；harness toggle 钉标题栏�
   expect(toggleBox.x).toBeGreaterThanOrEqual(stripBox.x + stripBox.width - 1);
 });
 
+test("标识块盒内任意采样点都是标题栏拖拽区（specs/ui-design-system「拖拽区共存」）", async ({ page }) => {
+  await open(page);
+  await page.locator('.ft-row[title="README.md"]').click();
+  const block = page.locator(".titlebar-identity");
+  await expect(block).toBeVisible();
+  const box = (await block.boundingBox())!;
+
+  // 真机验收场景 39 的拖拽落点（窗口局部坐标；两边同一坐标空间：本视口 1200 与验收窗口
+  // 1200pt 逐值对应）。它 MUST 落在标识块盒内——落在盒外就是「在标题栏上的别的东西上起拖」，
+  // 验不到本条 scenario。HP1（change move-harness-to-pane-chat-frame）把标识块从标题栏右端移进
+  // traffic 灯区之后，场景 39 的旧落点 1160 正好落到右端 harness toggle 钮上：button 是 Tauri
+  // drag.js 的拖拽阻断元素，窗口拖不动、断言假红，而标识块的拖拽面其实完好（M354 的根因）。
+  // 改这里或改场景 39 的 {x,y} 时，两边一起改。
+  const DRAG_POINT = { x: 120, y: 21 };
+  expect(DRAG_POINT.x).toBeGreaterThanOrEqual(box.x);
+  expect(DRAG_POINT.x).toBeLessThanOrEqual(box.x + box.width);
+  expect(DRAG_POINT.y).toBeGreaterThanOrEqual(box.y);
+  expect(DRAG_POINT.y).toBeLessThanOrEqual(box.y + box.height);
+
+  // Tauri v2 注入脚本 drag.js 的拖拽阻断名单（tauri 2.11.5 的
+  // src/window/scripts/drag.js：CLICKABLE_TAGS / INTERACTIVE_ROLES——`isClickableElement`）。
+  // 脚本只注入 WKWebView（chromium 侧跑不到它），但「盒内有没有 drag 阻断元素」是纯几何事实、
+  // 两个引擎同判，故不变量钉在这一层；真机的「窗口真的动了」由验收场景 39 守。
+  // Tauri 改动这两张表时，本常量要跟着改——这是本测试唯一的外部依赖。
+  const CLICKABLE_TAGS = ["A", "BUTTON", "INPUT", "SELECT", "TEXTAREA", "LABEL", "SUMMARY"];
+  const INTERACTIVE_ROLES = ["button", "link", "menuitem", "tab", "checkbox", "radio", "switch", "option"];
+
+  // 不变量：盒内**任意**点都是拖拽区，不是「我这个点是好的」——5×3 内点采样（避开边界半格，
+  // 覆盖三段文字与两处 gap），每点的命中链按 drag.js 的 isDragRegion 复刻判一遍。
+  const blockers = await page.evaluate(
+    ([bx, by, bw, bh, tags, roles]: [number, number, number, number, string[], string[]]) => {
+      const clickableTags = new Set(tags);
+      const interactiveRoles = new Set(roles);
+      const isClickable = (el: Element): boolean =>
+        clickableTags.has(el.tagName) ||
+        (el.hasAttribute("contenteditable") && el.getAttribute("contenteditable") !== "false") ||
+        (el.hasAttribute("tabindex") && el.getAttribute("tabindex") !== "-1") ||
+        interactiveRoles.has(el.getAttribute("role") ?? "");
+      const describe = (el: Element): string => `${el.tagName.toLowerCase()}.${el.className}`;
+      const blocked: string[] = [];
+      for (let i = 1; i <= 5; i++) {
+        for (let j = 1; j <= 3; j++) {
+          const x = bx + (bw * i) / 6;
+          const y = by + (bh * j) / 4;
+          const hit = document.elementFromPoint(x, y);
+          let verdict = hit ? "不在任何拖拽区内" : "点不到任何元素";
+          for (let el: Element | null = hit; el !== null; el = el.parentElement) {
+            const region = el.getAttribute("data-tauri-drag-region");
+            if (isClickable(el) && region === null) {
+              verdict = `被 ${describe(el)} 阻断（clickable 且自身无 drag-region）`;
+              break;
+            }
+            if (region === null) continue;
+            if (region === "false") {
+              verdict = `被 ${describe(el)} 显式禁用（data-tauri-drag-region="false"）`;
+              break;
+            }
+            if (region === "deep") verdict = "";
+            else if (el !== hit) verdict = `被 ${describe(el)} 拦下（bare drag-region 只对直击生效）`;
+            else verdict = "";
+            break;
+          }
+          if (verdict !== "") blocked.push(`(${Math.round(x)},${Math.round(y)}) ${verdict}`);
+        }
+      }
+      return blocked;
+    },
+    [box.x, box.y, box.width, box.height, CLICKABLE_TAGS, INTERACTIVE_ROLES] as [
+      number,
+      number,
+      number,
+      number,
+      string[],
+      string[],
+    ],
+  );
+  expect(blockers).toEqual([]);
+});
+
 for (const theme of ["light", "dark", "eink"] as const) {
   test(`三主题计算样式（${theme}）：名 550/--text-2，版本与分隔符 400/--text-3，12.5px`, async ({ page }) => {
     await open(page, { ...DEMO_VAULT, config: { theme } });

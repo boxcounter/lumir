@@ -45,7 +45,7 @@ steps:
 
   - name: 标识块上按下拖拽窗口成立（drag region 不被标识块阻断）
     do: drag
-    target: { x: 1160, y: 21 }
+    target: { x: 120, y: 21 }
     dx: 120
     dy: 40
     allowOutOfBounds: true
@@ -83,9 +83,15 @@ steps:
 - **逐字节一致靠占位符**：`$appName` / `$appVersion` 在场景加载时从本 checkout 的
   `src-tauri/tauri.conf.json` 读真值代入（lib/execute.mjs 的 `appMetaTokens`），断言里的期望值
   因此**就是**真源内容——不是场景里抄一份副本。版本号 bump 后本场景跟着真源走，无需改。
-- **拖拽落点 {x:1160, y:21}**：1200pt 窗口里标题栏右端标识块的命中区（右 padding 12pt 内缘）。
-  标识块是 span 纯展示元素，WKWebView 不一定给它 AX bbox，故用窗口局部坐标直给（drag 的 {x,y}
-  形态）。判据是窗口位置真的移动（window.moved），不是「拖拽事件发出过」。
+- **拖拽落点 {x:120, y:21}**：**标识块自身**的命中区（1200pt 窗口里 traffic 灯区内、系统按钮之后，
+  盒内水平居中处）。标识块是 span 纯展示元素，WKWebView 不给它 AX bbox，故用窗口局部坐标直给
+  （drag 的 {x,y} 形态）。判据是窗口位置真的移动（window.moved），不是「拖拽事件发出过」。
+- **落点取值纪律（M354，HP1 移位踩的坑）**：这个点 MUST 落在标识块**渲染盒内**，不是「标题栏上
+  任意一处」。HP1（change `move-harness-to-pane-chat-frame`）把标识块从标题栏右端移进 traffic
+  灯区之后，本场景的旧值 1160 落到了右端 harness toggle 钮上——button 是 Tauri drag.js 的拖拽
+  阻断元素，于是窗口拖不动、断言假红（实测 Δ=(0,0)），而标识块的拖拽面其实完好。盒子口径由视觉层
+  `tests/visual/scenes/titlebar-identity.spec.ts` 的属性测试钉住：它断言本点落在标识块盒内、且盒内
+  均匀采样点全部是拖拽区（无 drag 阻断元素）。**改本场景的落点或改标识块的位置时，两边一起改。**
 - **主题截图三张**是 Alex 的过目证据（三主题同构的结构断言在 chromium 侧
   `tests/visual/scenes/titlebar-identity.spec.ts`，真机这里留观感证据）。
 
