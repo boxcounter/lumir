@@ -225,21 +225,42 @@ impl VaultState {
 
     /// 当前状态快照（`vault_current` command 与测试共用）：vault 非空时按 root 重新对账
     /// 稳定身份并全量枚举（用**当前** vault 的规则表——枚举结果必须与装载时的口径一致）。
+    ///
+    /// **锁收窄**（finding 20260917-worker-rustasync）：reconcile_vault（注册表扫描 + 写盘）
+    /// 与 scan_workspace（全树遍历）移出锁——锁内只取快照（root/policy/notice/pending），
+    /// 与 `fs_scan_workspace` 的 `root_and_policy` 形态对齐。IO 仍在调用线程上（vault_current
+    /// 是同步 command），收窄的只是持锁时长，不是主线程占用——两者正交。语义变化：notice /
+    /// restore_pending 在取锁瞬间采样，而非在枚举完成后读取——两次采样之间恢复可能已完成，
+    /// 返回值短暂滞后一拍，下一轮轮询即收敛（前端本来就是轮询拉取）。
     pub fn status(&self) -> Result<VaultStatus, CommandError> {
-        let inner = self.inner.lock().expect("vault state poisoned");
-        let vault = match &inner.vault {
-            Some(vault) => Some(VaultInfo {
-                vault_id: crate::vault_registry::reconcile_vault(&vault.root)?.id,
-                root: vault.root.display().to_string(),
-                entries: fs_io::scan_workspace(&vault.root, &vault.policy)?,
-                remap_candidates: vec![],
-            }),
-            None => None,
+        let (root, policy, notice, restore_pending) = {
+            let inner = self.inner.lock().expect("vault state poisoned");
+            match &inner.vault {
+                Some(vault) => (
+                    vault.root.clone(),
+                    vault.policy.clone(),
+                    inner.notice.clone(),
+                    inner.restore_pending,
+                ),
+                None => {
+                    return Ok(VaultStatus {
+                        vault: None,
+                        notice: inner.notice.clone(),
+                        restore_pending: inner.restore_pending,
+                    })
+                }
+            }
         };
+        let vault = Some(VaultInfo {
+            vault_id: crate::vault_registry::reconcile_vault(&root)?.id,
+            root: root.display().to_string(),
+            entries: fs_io::scan_workspace(&root, &policy)?,
+            remap_candidates: vec![],
+        });
         Ok(VaultStatus {
             vault,
-            notice: inner.notice.clone(),
-            restore_pending: inner.restore_pending,
+            notice,
+            restore_pending,
         })
     }
 
@@ -301,11 +322,41 @@ impl VaultState {
     ///
     /// **deleted 方向无条件移除**（幂等：本来不在索引里就是空操作）：因此该方向不消费 `lazy`
     /// ——这也绕开了「被删路径 stat 不到、目录限定模式判不准类型」的歧义。
+    /// **锁收窄**（finding 20260917-worker-rustasync）：磁盘读（`read_text_file`：读文件 +
+    /// 双 canonicalize）移出锁——先在锁外读本批涉及的 md 内容，再取锁只做内存 upsert。
+    /// 批量变更（git checkout、同步客户端批量回写）不再把整段 IO 压进锁窗口挡主线程的
+    /// link_graph_resolve / document_save（同一把锁）。读本批内容到重新取锁之间 vault 可能
+    /// 已被替换（打开 / 恢复提交）：这批事件属于旧 vault 的 watcher，比对 root + generation
+    /// 不符即整批丢弃——不许把旧 vault 的路径 upsert 进新 vault 的索引（旧实现持锁全程，
+    /// 天然免疫这一点；这是收窄后唯一新增的竞态守护）。
     pub fn apply_fs_changes(&self, changes: &[FsChange]) {
-        let mut inner = self.inner.lock().expect("vault state poisoned");
-        let Some(root) = inner.vault.as_ref().map(|vault| vault.root.clone()) else {
-            return;
+        let (root, generation) = {
+            let inner = self.inner.lock().expect("vault state poisoned");
+            match &inner.vault {
+                Some(vault) => (vault.root.clone(), inner.generation),
+                None => return,
+            }
         };
+        // 读失败保持现有「宁缺毋滥」语义：content=None ⇒ upsert 时只登记路径、不解析派生信息。
+        let mut contents: std::collections::HashMap<String, Option<String>> =
+            std::collections::HashMap::new();
+        for c in changes {
+            if c.kind != fs_io::FsChangeKind::Deleted
+                && !c.lazy
+                && c.entry_kind != Some(fs_io::FsEntryKind::Dir)
+                && link_graph::is_markdown(&c.path)
+            {
+                contents.insert(c.path.clone(), fs_io::read_text_file(&root, &c.path).ok());
+            }
+        }
+        let mut inner = self.inner.lock().expect("vault state poisoned");
+        let same_vault = inner
+            .vault
+            .as_ref()
+            .is_some_and(|vault| vault.root == root && inner.generation == generation);
+        if !same_vault {
+            return; // vault 已被替换：整批属于旧 watcher，丢弃（见上方 doc）
+        }
         for c in changes {
             match c.kind {
                 fs_io::FsChangeKind::Deleted => inner.graph.remove(&c.path),
@@ -317,7 +368,7 @@ impl VaultState {
                         continue; // 目录本身不进候选全集
                     }
                     if link_graph::is_markdown(&c.path) {
-                        let content = fs_io::read_text_file(&root, &c.path).ok();
+                        let content = contents.get(&c.path).cloned().flatten();
                         inner.graph.upsert(&c.path, content.as_deref());
                     } else {
                         inner.graph.upsert(&c.path, None);
@@ -1903,6 +1954,30 @@ mod tests {
         assert!(!state.finish_restore(generation, RestoreOutcome::Opened(Box::new(prepared(&a)))));
         assert_eq!(root_of(&state), Some(b.path()));
         assert_eq!(generation_of(&state), 1);
+        assert_eq!(notice_of(&state), None);
+        assert!(!pending_of(&state));
+    }
+
+    /// finding 20260918-worker-rm-dead-param：`finish_restore` 拒绝条件的第二个操作数
+    /// （`vault.is_some()`）此前零覆盖，而它是「恢复结果不覆盖用户已打开 vault」的最后一道门
+    /// （恢复线程在 begin_restore 记世代之前用户就可能抢先打开——此时世代比对**通过**）。
+    /// 本测试让世代一致、仅 vault 已打开，证明拒绝只能来自 `vault.is_some()` 这一半：
+    /// 若将来有人删掉它，本测试必红（已实测：删掉该操作数本测试 FAILED）。
+    #[test]
+    fn finish_restore_rejects_open_vault_on_matching_generation() {
+        let state = VaultState::default();
+        let a = TempVault::new("root-some-a");
+        let b = TempVault::new("root-some-b");
+        assert!(commit_vault_open(&state, prepared(&b))); // 用户抢先成功打开 B：世代 → 1
+        let generation = state.begin_restore();
+        assert_eq!(
+            generation,
+            generation_of(&state),
+            "前置：begin_restore 记下的世代与当前世代相同（vault 已打开不产生新跃迁）"
+        );
+        assert!(!state.finish_restore(generation, RestoreOutcome::Opened(Box::new(prepared(&a)))));
+        assert_eq!(root_of(&state), Some(b.path())); // 不是恢复给的 A
+        assert_eq!(generation_of(&state), 1); // 世代一致 ⇒ 拒绝来自 vault.is_some()，显式证据
         assert_eq!(notice_of(&state), None);
         assert!(!pending_of(&state));
     }
