@@ -6,6 +6,9 @@
 //! - 校验：逐字段校验，非法值落回该字段默认值并附人话 warning；
 //!   整文件不是合法 JSON 时才整体落回默认配置。
 //! - 未知字段忽略（向前兼容：新版写入的字段旧版读取不报错）。
+//! - 退役值迁移（M365）：`harness.providers.kimi.model` 命中 [`RETIRED_KIMI_MODEL`] 时改写为
+//!   [`DEFAULT_KIMI_MODEL`] 并落盘——这是本模块唯一的**写**副作用，只改那一个字符串，
+//!   其余键（含未知字段）逐键保留。
 //!
 //! ## keys 表（M132）：形状校验在此，命令 id 校验在前端
 //!
@@ -424,9 +427,24 @@ pub const WARN_CTX_PCT_MAX: f64 = 100.0;
 /// （M302），配置层不复制一份。
 ///
 /// deepseek 出厂值由 M309 从 design §11 的示例值 `deepseek-chat` 改为现役 `deepseek-flash`
-/// （M306 一手核实 deepseek 现役仅 `deepseek-flash` / `deepseek-v4-pro`）；kimi 侧不动。
-pub const DEFAULT_KIMI_MODEL: &str = "kimi-k2";
+/// （M306 一手核实 deepseek 现役仅 `deepseek-flash` / `deepseek-v4-pro`）。
+///
+/// kimi 出厂值由 M365 从 `kimi-k2` 改为现役 `kimi-k3`：k2 系 2026-05-25 官方退役（调用 404）。
+/// 本仓预设端点（`https://api.moonshot.cn/v1`，中国开放平台）的 `model` 取值表为
+/// `kimi-k3`（默认值，1M ctx）/ `kimi-k2.7-code` / `kimi-k2.6`（后两者 256K），2026-10-07
+/// 一手核实（[Chat Completions 参数表](https://platform.moonshot.cn/docs/api/chat)、
+/// [全球平台 Model List](https://platform.kimi.ai/docs/models.md)）。
+///
+/// **Kimi Code 订阅端的 `k3-256k` 不是开放平台的模型 id**：那是另一套端点与协议（它的 base URL
+/// 官方口径是 Anthropic-compatible），Lumir harness 发 OpenAI Responses，写进去只会 404。
+/// 详见 [`RETIRED_KIMI_MODEL`] 的说明。
+pub const DEFAULT_KIMI_MODEL: &str = "kimi-k3";
 pub const DEFAULT_DEEPSEEK_MODEL: &str = "deepseek-flash";
+
+/// 已退役、需要迁移的 kimi model 值（M365）：加载时命中它即改写为 [`DEFAULT_KIMI_MODEL`]
+/// 并落盘。只列**本仓曾经写出过**的那一个退役值——用户手填的其他型号（含将来仍有效的、
+/// 我们不认识的 id）一律不动，改动面因此收敛到「我们自己的旧默认值」。
+pub const RETIRED_KIMI_MODEL: &str = "kimi-k2";
 
 /// 对话 provider 三档（change add-harness-probe §11）：`kimi` / `deepseek` 均 OpenAI 兼容契约，
 /// `mock` 是验收专用的 fixture 驱动档（真机验收不依赖真实外部 API）。**闭集合**：取值校验在
@@ -708,6 +726,11 @@ pub fn load() -> Result<ConfigSnapshot, CommandError> {
 }
 
 /// 从指定路径加载。文件不存在不算错误（首次启动常态），返回默认配置。
+///
+/// **一次写副作用（M365）**：JSON 里 `harness.providers.kimi.model` 命中
+/// [`RETIRED_KIMI_MODEL`] 时改写为 [`DEFAULT_KIMI_MODEL`] 并落盘（只改这一个键，其余键与未知
+/// 字段逐键保留，见 [`migrate_retired_kimi_model`]）；本次生效值就是改写后的值。写失败只多一条
+/// warning，不阻断加载（下次加载会再试一次，改写本身的判据是幂等的）。
 pub fn load_from(path: &Path) -> ConfigSnapshot {
     let path_str = path.display().to_string();
     let text = match std::fs::read_to_string(path) {
@@ -728,9 +751,41 @@ pub fn load_from(path: &Path) -> ConfigSnapshot {
         }
     };
 
-    match serde_json::from_str::<RawConfig>(&text) {
+    let mut value: serde_json::Value = match serde_json::from_str(&text) {
+        Ok(v) => v,
+        Err(e) => {
+            return ConfigSnapshot {
+                config: AppConfig::default(),
+                warnings: vec![format!(
+                    "配置文件 {path_str} 不是合法 JSON（第 {} 行）：{}，已整体使用默认配置",
+                    e.line(),
+                    e
+                )],
+                path: path_str,
+            };
+        }
+    };
+
+    // 迁移先于结构解析：下面解析的就是「改写后」的那份，本次生效值与落盘内容同值。
+    let migrated = migrate_retired_kimi_model(&mut value);
+    let parse_text = if migrated {
+        serde_json::to_string(&value).expect("serde_json::Value 一定可序列化")
+    } else {
+        // 未命中走原文解析：类型不符时的报错行号仍是原文件里的行
+        text
+    };
+
+    match serde_json::from_str::<RawConfig>(&parse_text) {
         Ok(raw) => {
-            let (config, warnings) = validate(raw);
+            let (config, mut warnings) = validate(raw);
+            if migrated {
+                warnings.push(format!(
+                    "配置项 harness.providers.kimi.model 的 {RETIRED_KIMI_MODEL} 已退役，已自动改写为 {DEFAULT_KIMI_MODEL}"
+                ));
+                if let Err(e) = persist_config(path, &value) {
+                    warnings.push(format!("改写后的配置未能落盘（{e}），下次启动会再试一次"));
+                }
+            }
             ConfigSnapshot {
                 config,
                 warnings,
@@ -747,6 +802,45 @@ pub fn load_from(path: &Path) -> ConfigSnapshot {
             path: path_str,
         },
     }
+}
+
+/// 退役值迁移（纯函数，可测）：`harness.providers.kimi.model` 去空白后等于
+/// [`RETIRED_KIMI_MODEL`] 时改写为 [`DEFAULT_KIMI_MODEL`]，返回是否命中。
+///
+/// **只改这一个字符串**：链路上任一层不是对象、或该键不存在 / 不是字符串，一律不命中；
+/// 命中也只换掉 model 的值——`kimi` 表里的 `api_key` / `base_url`、其他 provider、其他表
+/// 与未知字段都逐键保留。用户手填的其他型号（含我们不认识的、以及同样已退役但我们从未写出过
+/// 的 id）一律不动，改动面因此收敛到「本仓自己的旧出厂值」。
+fn migrate_retired_kimi_model(value: &mut serde_json::Value) -> bool {
+    let slot = value
+        .get_mut("harness")
+        .and_then(|h| h.get_mut("providers"))
+        .and_then(|p| p.get_mut("kimi"))
+        .and_then(|k| k.get_mut("model"));
+    match slot {
+        Some(serde_json::Value::String(model)) if model.trim() == RETIRED_KIMI_MODEL => {
+            *model = DEFAULT_KIMI_MODEL.to_string();
+            true
+        }
+        _ => false,
+    }
+}
+
+/// 迁移改写后的落盘：tmp + rename 原子替换，缩进写（配置要人可读可改，ADR 0002 §5）。
+///
+/// 应用侧的常规写通道在 `commands.rs`（`config_set_value` / `write_last_vault` 那条）；
+/// 本函数是 config 模块自己发起的一次性修补写，形状与它逐条一致。**M365 收口建议**：两处原子
+/// 写合并为一处（把这条通道提到 config 模块、commands 侧改为委托），免得将来只改一处
+/// （REVIEW.md 第 8 条）。
+fn persist_config(path: &Path, value: &serde_json::Value) -> Result<(), String> {
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)
+            .map_err(|e| format!("无法创建配置目录 {}：{e}", dir.display()))?;
+    }
+    let tmp = path.with_extension("json.tmp");
+    let body = serde_json::to_string_pretty(value).expect("serde_json::Value 一定可序列化");
+    std::fs::write(&tmp, body).map_err(|e| format!("无法写入配置 {}：{e}", tmp.display()))?;
+    std::fs::rename(&tmp, path).map_err(|e| format!("无法落盘配置 {}：{e}", path.display()))
 }
 
 /// 逐字段校验：非法值落回该字段默认值并附人话 warning。
@@ -2147,6 +2241,100 @@ mod tests {
                 "{raw}"
             );
             assert!(snap.warnings.is_empty(), "{raw}: {:?}", snap.warnings);
+        }
+    }
+
+    /// 退役值迁移（M365）：存 `kimi-k2` ⇒ 改写为现役默认 + 落盘，其余键（含未知字段、同一表
+    /// 内别的键、其他 provider）逐键保留；再启动不重复触发（幂等）。
+    #[test]
+    fn harness_retired_kimi_model_is_migrated_and_persisted() {
+        let f = TempFile::new(
+            r#"{"version":1,"last_vault":"/tmp/vault","harness":{"providers":{"kimi":{"api_key":"sk-x","model":" kimi-k2 ","base_url":"https://k.example/v1"},"deepseek":{"model":"deepseek-v4-pro"}},"loop_max":4},"future_table":{"keep":true}}"#,
+        );
+        let snap = load_from(&f.0);
+        // 本次生效值就是改写后的值
+        assert_eq!(snap.config.harness.providers.kimi.model, DEFAULT_KIMI_MODEL);
+        assert_eq!(snap.config.harness.loop_max, 4);
+        assert!(
+            snap.warnings
+                .iter()
+                .any(|w| w.contains(RETIRED_KIMI_MODEL) && w.contains(DEFAULT_KIMI_MODEL)),
+            "{:?}",
+            snap.warnings
+        );
+
+        // 落盘：只有 model 变了，其余键逐键保留（含未知字段）
+        let persisted: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&f.0).expect("读回配置"))
+                .expect("配置仍是合法 JSON");
+        assert_eq!(
+            persisted["harness"]["providers"]["kimi"]["model"],
+            DEFAULT_KIMI_MODEL
+        );
+        assert_eq!(persisted["harness"]["providers"]["kimi"]["api_key"], "sk-x");
+        assert_eq!(
+            persisted["harness"]["providers"]["kimi"]["base_url"],
+            "https://k.example/v1"
+        );
+        assert_eq!(
+            persisted["harness"]["providers"]["deepseek"]["model"],
+            "deepseek-v4-pro"
+        );
+        assert_eq!(persisted["harness"]["loop_max"], 4);
+        assert_eq!(persisted["future_table"]["keep"], true);
+        assert_eq!(persisted["last_vault"], "/tmp/vault");
+
+        // 幂等：把文件改成「改写后 + 一点格式差异」，再加载应逐字节未动（判据是「没有第二次写」，
+        // 不是「内容碰巧一样」）
+        let rewritten = format!("{}\n", std::fs::read_to_string(&f.0).expect("读回配置"));
+        std::fs::write(&f.0, &rewritten).expect("写入探针配置");
+        let again = load_from(&f.0);
+        assert_eq!(
+            again.config.harness.providers.kimi.model,
+            DEFAULT_KIMI_MODEL
+        );
+        assert_eq!(
+            std::fs::read_to_string(&f.0).expect("读回配置"),
+            rewritten,
+            "第二次加载不应再写文件"
+        );
+        assert!(
+            !again
+                .warnings
+                .iter()
+                .any(|w| w.contains(RETIRED_KIMI_MODEL)),
+            "{:?}",
+            again.warnings
+        );
+    }
+
+    /// 迁移的边界（M365）：只认 `kimi-k2` 这一个本仓写出过的退役值——现役 id、同样已退役但
+    /// 我们从没写出过的 id（如 `kimi-k2.5`）、用户手填的任意 id 都原样保留、不写文件、不告警。
+    #[test]
+    fn harness_other_kimi_model_values_are_left_alone() {
+        assert_ne!(DEFAULT_KIMI_MODEL, RETIRED_KIMI_MODEL);
+        for stored in [
+            "kimi-k2.6",
+            "kimi-k2.7-code",
+            "kimi-k2.5",
+            "my-router/model-x",
+        ] {
+            let raw = format!(r#"{{"harness":{{"providers":{{"kimi":{{"model":"{stored}"}}}}}}}}"#);
+            let f = TempFile::new(&raw);
+            let snap = load_from(&f.0);
+            assert_eq!(snap.config.harness.providers.kimi.model, stored);
+            assert_eq!(
+                std::fs::read_to_string(&f.0).expect("读回配置"),
+                raw,
+                "{stored} 不应被改写"
+            );
+            assert!(
+                snap.warnings
+                    .iter()
+                    .all(|w| !w.contains(RETIRED_KIMI_MODEL)),
+                "{stored}: {:?}",
+                snap.warnings
+            );
         }
     }
 

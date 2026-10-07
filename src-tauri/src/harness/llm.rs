@@ -172,10 +172,23 @@ pub struct ProviderPreset {
 
 /// kimi 预设（[官方 Responses schema](https://platform.kimi.ai/docs/api/responses)）：
 /// store 支持 ⇒ 显式 `store:false`；usage 含 `cache_write_tokens`（暂不展示）。
+///
+/// 窗口表 2026-10-07 一手核实（[中国开放平台 Chat Completions 参数表](https://platform.moonshot.cn/docs/api/chat)
+/// 的 `model` 取值表、[全球平台 Model List](https://platform.kimi.ai/docs/models.md)）：开放平台
+/// 现役四个 id——`kimi-k3`（本仓出厂默认，1M ctx）/ `kimi-k2.7-code` /
+/// `kimi-k2.7-code-highspeed` / `kimi-k2.6`（后三者 256K）。`kimi-k2` 系 2026-05-25 退役，
+/// 已不在表内：它回落 `fallback_window`（131_072，与它的历史窗口同值，历史配置的 ctx% 读数
+/// 逐值不变）。**Kimi Code 订阅端的 `k3-256k` 不在本表**——那是另一套端点与协议
+/// （Anthropic-compatible）的 id，本 provider 发的是 Responses 请求。
 const KIMI_PRESET: ProviderPreset = ProviderPreset {
     base_url: "https://api.moonshot.cn/v1", // 未核实（验收批对真 API 验证；config 可覆盖）
     default_model: crate::config::DEFAULT_KIMI_MODEL,
-    windows: &[("kimi-k2", 131_072)],
+    windows: &[
+        ("kimi-k3", 1_048_576),
+        ("kimi-k2.7-code", 262_144),
+        ("kimi-k2.7-code-highspeed", 262_144),
+        ("kimi-k2.6", 262_144),
+    ],
     fallback_window: 131_072,
     overflow_indicators: &[
         "context_length_exceeded",
@@ -887,10 +900,17 @@ mod tests {
     #[test]
     fn context_window_table_and_fallback() {
         let kimi = preset(&HarnessProvider::Kimi);
+        // 出厂 model 必须在窗口表里，且读数是 1M（M365：默认与窗口表同源，REVIEW.md 第 8 条）
         assert_eq!(
             context_window(kimi, crate::config::DEFAULT_KIMI_MODEL),
-            131_072
+            1_048_576
         );
+        // 表内其余现役 id（256K 档）
+        for model in ["kimi-k2.7-code", "kimi-k2.7-code-highspeed", "kimi-k2.6"] {
+            assert_eq!(context_window(kimi, model), 262_144, "{model}");
+        }
+        // 退役的 kimi-k2 不在表里 ⇒ 回落 fallback（131_072，与它的历史窗口同值）
+        assert_eq!(context_window(kimi, "kimi-k2"), kimi.fallback_window);
         assert_eq!(context_window(kimi, "unknown-model"), kimi.fallback_window);
         // 出厂 model 与 config.rs 常量同源（REVIEW.md 第 8 条）
         assert_eq!(kimi.default_model, crate::config::DEFAULT_KIMI_MODEL);
