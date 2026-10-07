@@ -638,6 +638,47 @@
 
 ## 待修 findings（不阻塞）
 
+### acceptance `run.mjs --help` 静默触发全量真机跑批（M374 现场，2026-10-07，low）
+
+**症状**：`node scripts/acceptance/run.mjs --help` 不打印用法，而是把不识别的 `--help` 当场景 id 前缀
+筛选；筛选无匹配即回退「全部场景」，于是命令无输出挂起、后台已经在起真机（app + 跑批锁）。worker-stf1
+实测：`--help` 挂起后被 TaskStop，node 主进程虽被杀，tauri dev 子进程树（pnpm → tauri.js → vite:1430 →
+lumir）成孤儿残留，需手动按端口 + PID 清理才恢复 1430 空闲。
+
+**根因**：flag 解析把任何 `--xxx` 当筛选参数，非法标志静默退化成「全量」；README 只记载 `--list` /
+`--check`，`--help` 本就不是合法 flag。
+
+**影响**：把「查用法」变成「起真机 + 抢跑批锁 + 写证据目录」——静默回退，与 REVIEW.md 第 13 条
+（测试 / 套件污染真实环境、场景串场）同族。
+
+**建议处置**：`run.mjs` 参数解析时，任何 `--` 前缀且不在 `{--list, --check, --keep-app}` 白名单内的标志
+直接报错退出（退出码 2 并打印用法）；`scripts/acceptance/README.md` 补一句「无合法筛选参数时提示而非
+全量」。属套件基建，本批只落账、未立项。
+
+**证据**：`.tower/comms/findings/20261007-worker-stf1-improve-acceptance-run-mjs-help.md`（M374 现场）；
+落点 `scripts/acceptance/run.mjs` 的 flag 解析与 README「一条命令跑完」节。
+
+### 验收套件缺一个验证 ⌘-点击 DOM `metaKey=true` 路径的端到端夹具（M379 reviewer 建议，2026-10-07，low）
+
+**是什么**：M379 给验收套件加了 `click` 的 `modifiers` 通道（真机侧按住修饰键再点），但套件里没有一个
+可点击的**编辑器内链接**夹具来验证「⌘-点击跟随链接」走的确实是 DOM `metaKey=true` 那条路径——M144 当年
+只能用视觉场景覆盖该路径（`tests/visual/scenes/render-link.spec.ts` 桩记录 `open_external_url` 的调用
+目标）。M379 reviewer 在 r2 verdict 的 Decision 里留作**遗留跟进（不阻塞）**：另立 mission 补一个端到端
+`metaKey` 语义夹具，不计入本次 verdict。
+
+**为什么值得**：`modifiers` 通道的字面意义（按下 meta 再点）与产品路径真正依赖的 DOM 事件字段
+（`metaKey`）之间没有端到端判据——通道存在不等于「⌘-点击」那条分支被真实触发；这是 REVIEW.md 第 6 条
+（覆盖声明超出真实验证）的同族空白。
+
+**建议处置**：本批**只落账、不立项**（任务书明确）。将来立项时的落点：在验收套件里加一个**可点击的
+编辑器内相对路径链接** fixture，用 `modifiers: ["meta"]` + `click` 触发并断言走的是「跟随链接」分支
+（而非普通点击的落点 / 选中），即把 DOM `metaKey=true` 这条语义钉成可 FAIL 的判据。
+
+**证据**：`.tower/comms/reviews/review-feat-acceptance-suite-infrastructure-fixes-ac-reviewer-accinf1-r2.md`
+Decision 末句「遗留跟进（不阻塞）：modifiers 的 DOM metaKey 端到端夹具另立 mission」；同批 r1 的
+Decision 第 ④ 点（worker 披露「探针场景未入库」，建议另立跟进 mission）。对照既有条目「`click` 动作不支持
+修饰键（M144）」（本文件「验收套件」节）。
+
 ### 共享 `CARGO_TARGET_DIR` 跨 worktree 复用旧测试二进制致假绿（M372 现场，2026-10-07，high）
 
 **症状**：worker 在 wt-372 用 `CARGO_TARGET_DIR=<主仓>/src-tauri/target` 跑 `scripts/gate.sh quick` 时，
@@ -1763,7 +1804,7 @@ M279 报告 §5 的两条副产物在列，判定为**都不随本修复收口**
   但「当前文件已被外部删除」浮条（`src/save-controller.ts:426`）没有任何动作，只能切文件再切回。
   需求 3 据此撤销（主诉场景已被既有动作覆盖），此缺口留作顺手修。
 - **文案-Copy.md D40 后空行断表 + 编号未升序**（M141 评审旁证）：既有缺陷，清扫类。
-- **rust 字符字面量在围栏代码块里不着色（与 code 模式的 parity 缺口）**（M147 finding，medium）：
+- ~~**rust 字符字面量在围栏代码块里不着色（与 code 模式的 parity 缺口）**（M147 finding，medium）~~
   `src/preview/code.ts` 的 `tagsForStyle` 遇「modifier 开头的复合 token 名」整条丢 tag（CM6 的
   `createTokenType` 只警告并保留其余 part）；rust simpleMode 的 `string.special` 触发——`'a'` 在
   code 模式取字符串色、在 ` ```rust ` 围栏里取正文色，M138 的「围栏与整文件打开 tag/颜色完全一致」
@@ -1771,6 +1812,9 @@ M279 报告 §5 的两条副产物在列，判定为**都不随本修复收口**
   修法（finding 附建议 diff）：与 CM6 同语义逐名字段独立结算、跳 part 不丢整条；须配不变量测试
   （「simpleMode 复合 token 在围栏与 code 模式 tag 集合一致」）并走渲染缺陷合同先行流程核对
   rust 场景基线。finding `20260917-worker-jsonhl-bug-tag-token-rust-code.md`。
+  **已核销（2026-10-07，M375，merge `b79e13a`）**：M375 按 finding 建议 diff 修 `tagsForStyle`
+  （跳 part 不丢整条）、补不变量测试并先红后绿；`openspec/specs/editor-live-preview/spec.md` 的「已知例外 (a)」
+  段同批删除。核销记录见文末「已核销」。
 - **隐藏管道符用 `display:none` 承载，是「caret 落到无位置处」缺陷族的共同结构根因**（M168 finding，
   worker-interaction-fixes-2，2026-09-18，medium）：`src/preview/livePreview.ts:482-519` 的
   `Decoration.replace({})` 隐藏管道符在 DOM 里无盒子，`coordsAtPos(pos, 1)` 退化为全零 rect、DOM 选区
@@ -3291,6 +3335,37 @@ finding）、2 条套件注入通道缺陷（既有 finding）、1 条 M283 已�
   定点断言与 token 形态专测 / spec 对账无偏差 / 场景 45 与真机 2/2 PASS），第 11 项（§5.1 归档评审核对）
   如实不勾——它是节点 2 的动作。证据：`openspec/changes/sync-vault-registry-dir-spec/**`、`REVIEW.md`
   第 16 条、`src/editor.ts` 注释、`gate quick` 9/9 PASS（SKIP 1 = `tsc-visual` 依赖未装）、单测 375/375。
+
+- 2026-10-07：**M375 修复 rust 字符字面量在围栏代码块里着色（M147 parity 缺口）核销**
+  （merge `b79e13a`，Alex「零散小修批」之一）——原「待修 findings／编辑器·键位」条闭环。修法：
+  `src/preview/code.ts` 的 `tagsForStyle` 改为与 CM6 `createTokenType` 同语义逐名字段结算（跳过的 part
+  不再丢整条），rust simpleMode 的 `string.special` 复合 token（字符 / 字节字符字面量）因此在围栏里取到
+  与 code 模式同一套 tag / 配色；chromium 场景 `tests/visual/scenes/render-codeblock.spec.ts` 加「同一
+  rust 片段在围栏与 code 模式产出的高亮 tag / 类名集合一致」的不变量断言，先红后绿留证
+  （`test-results/m375/red-phase.log` / `green-phase-rust.log`，主仓、git 外）。**同批文档面收口**：
+  `openspec/specs/editor-live-preview/spec.md`「Markdown 渲染保真」第 2 款的「已知例外」段删去 (a) rust
+  一条与「本条在（a）修复前不成立」句（(b) toml atom 例外仍有效，不受本修复影响）。**核销读数**：
+  render-codeblock 场景 20/20 绿、全部像素基线零差异（fixture 的 rust 块不含字符字面量，基线无需重建）。
+- 2026-10-07：**`startup-restore-off-main-thread` 归档件的旧签名文字核销**（finding
+  `20260918-worker-rm-dead-param-improve-m171-openspec-change-design-tasks-expect-generation.md`，M380
+  移交）——该 finding 报 `openspec/changes/startup-restore-off-main-thread/{design.md:67,tasks.md:6}` 仍把
+  `commit_vault_open(..., expect_generation: Option<u64>)` 记作现行 API，而 M171（`efd27f1`）已删该参数。
+  **核销理由**：该 change 已于 2026-09-18 归档（`openspec/changes/archive/2026-09-18-startup-restore-off-main-thread/`，
+  M170 `c367adc` 先归档、M171 `efd27f1` 后删参），归档件因此是「提案当时的冻结快照」；归档件的设计正文按
+  M150/M250 的既有口径不改写（历史结论原文不动），现行签名由 living spec
+  `openspec/specs/vault-workspace/spec.md` 与代码 `src-tauri/src/commands.rs` 承载（`commit_vault_open(&state,
+  prepared) -> bool`，无 `expect_generation`），漂移只在归档件这一处、不进入任何 living 判据。finding 属
+  worker-rm-dead-param 家族；该家族落在实现侧的两条（`finish_restore` 的 `root.is_some()` 分支补测试、
+  `-> bool` 死返回值，M380 已补测试）见「启动恢复让位判定与提交返回值」节。
+- 2026-10-07：**M374 轮次闸门未适配 m347 场景致 master 主用例红——已由 M378 修复**（finding
+  `20261007-worker-uxpol1-bug-m374-m347-master-m347.md`，merge `2bd79d4`）——M374（`43111de`）给
+  `src/harness-panel.ts` 的 `handleEvent` 加了轮次闸门（`turnOpen=false` 时丢弃 `usage` / `text_chunk`
+  等事件），而 `tests/visual/scenes/m347-harness-composer.spec.ts` 主用例在 `send()` **之前**注入 usage
+  断言 ctx 读数——事件被闸门丢弃、读数停在快照的 0% · 0%，该用例在 master 上稳定 FAIL（本地 `run.sh`
+  复跑实证，与 M378 改动无关）。M378 把 m347 的 usage 注入移进开轮窗口（`send()` 之后、`done` 之前），
+  随场景适配同批修复，merge `2bd79d4`。**遗留（如实登记）**：finding 的 (a)「其它场景若有同类 pre-send
+  注入需逐一核对」未逐一核，最便宜的防线是全量 visual 回归（master 全绿即证）；(b)「改事件闸门语义时
+  grep 全部 `__fireHarnessEvent` 注入点做回归」作为防线记在 finding 里，本轮不另立条目。
 
 ## M282（change `ui-language-i18n` 实现批，2026-09-28）遗留
 
