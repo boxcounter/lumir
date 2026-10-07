@@ -166,6 +166,11 @@ export function checkScenario(scenario) {
         for (const m of mods)
           if (!MODIFIER_ALIASES.has(String(m).toLowerCase()))
             push(`${at} do=click 的 target.modifiers 含未知修饰键 ${JSON.stringify(m)}（允许：${[...MODIFIER_ALIASES].join(" / ")}）`);
+      // 修饰键通道**恒为左键**（swift 侧 mode 6 的 clickWithFlags 硬编码 `.left`）：与 `button`
+      // 同写会静默退化成「修饰键 + 左键」，场景作者从字面上看不出来（M379 r1 P2-2）。直接挡掉——
+      // 真要右键就写 `button: right`（那条走 KimiCU 自己的通道）。
+      if (step.target.button !== undefined)
+        push(`${at} do=click 的 target.modifiers 与 target.button 不能同写（修饰键通道恒为左键，button 不生效）`);
     }
     if (step.do === "scroll") {
       const nums = ["page", "dx", "dy", "index"].filter((k) => step[k] !== undefined);
