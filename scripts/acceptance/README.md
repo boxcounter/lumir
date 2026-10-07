@@ -13,7 +13,10 @@ node scripts/acceptance/run.mjs --check      # 静态校验场景（不真机，
 node scripts/acceptance/run.mjs --keep-app   # 跑完保留 app，人工接手看现场
 ```
 
-退出码：全 PASS = 0，有 FAIL = 1，运行失败 = 2。
+退出码：全 PASS = 0，有 FAIL = 1，运行失败 = 2（被跑批锁挡住也并入 2，持有人信息走 stderr）。
+
+**真跑批串行**：`--check` / `--list` 不碰机器、也不建锁；起实例的真跑批先在
+`/tmp/lumir-acceptance-rmachine.lock` 抢锁，同机已有跑批时**拒绝启动**（见下文「跑批独占锁」）。
 
 前提：本机已装 KimiCU.app（`/Applications/KimiCU.app`）并授予辅助功能 + 屏幕录制。套件自身零新增
 依赖——只用 Node 内置模块 + 仓库已有的 `js-yaml`，GUI 通道复用 KimiCU 官方 MCP server。
@@ -34,6 +37,7 @@ runner 在启动前做预检，不满足直接退出且不产生半截证据：
 | KimiCU 可用 | 二进制不存在即报错并给安装命令 | 驱动通道缺失时跑也是白跑 |
 | 磁盘水位 | `< 2G` 拒绝启动（可选显式绕过，见下） | 真机实例触发 cargo/vite 时 ENOSPC 硬失败（批次四实证） |
 | 1420 端口 | 只报告占用情况 | 全机同一时刻只能有一个 `pnpm tauri dev`（vite strictPort 1420）；本套件走独立端口，但仍先看一眼同机负载 |
+| 跑批独占锁 | 需持锁的真跑批先 `mkdir` 抢 `/tmp/lumir-acceptance-rmachine.lock`；已被别人持有时拒绝启动（退出码 2） | 合成 vault 与 dev 端口都是**全机共享**的，光靠人工约定会漏——两条跑批错开启动就能互相 `resetVault`（见下节） |
 
 **键盘场景的前台纪律**（tower 定，M134 实证）：KimiCU 对 WKWebView 内 CodeMirror 的键盘注入在窗口
 **被遮挡时不落地**（返回 `occluded:true`），activate 后也未必恢复。因此 runner 在每个场景就绪后、
@@ -60,6 +64,39 @@ runner 在启动前做预检，不满足直接退出且不产生半截证据：
 **磁盘水位绕过**：`LUMIR_ACCEPTANCE_ALLOW_LOW_DISK=1` 可越过 2G 阈值，**只在 target 已热、本次不会
 触发 Rust 重编**（实际磁盘需求仅几 MB）时使用；绕过会写进 run.log 留痕，不静默。
 
+### 跑批独占锁（`/tmp/lumir-acceptance-rmachine.lock`，M357）
+
+**真跑批（非 `--check` / `--list`）启动时套件自己持锁**，全机同一时刻只允许一个 runner：
+
+| 情形 | 行为 |
+|---|---|
+| 建锁 | `mkdir /tmp/lumir-acceptance-rmachine.lock`（原子；`EEXIST` = 已被占），随后写入 `pid` / `startedAt` / `cwd` 三个文件 |
+| 锁在、pid 存活 | **拒绝启动**：持有人信息（pid / 启动时间 / cwd）走 stderr，退出码 2（并入「运行失败」） |
+| 锁在、pid 已死 | 视为崩溃残留：打印被回收的持有人后删掉重建，本次照常跑 |
+| 锁在、读不到 pid | 拒绝启动并提示「确认无人在跑后 `rm -rf`」——不贸然接管（宁可挡住，也不冒双跑风险） |
+| 释放 | 正常结束 / 断言失败 / 异常 / `SIGINT` / `SIGTERM` / `process.exit` 兜底，全覆盖；删锁幂等，且只在锁里记的还是自己 pid 时删 |
+
+**为什么这是门禁而不是又一条纪律**：套件的隔离只到「配置目录 + vault + 端口」这一层，而合成 vault 与
+dev 端口是**全机共享**的，`reclaimPort()` 只在两个 app 实例同时活着时拦得住——两条跑批只要先后错开启动
+就都能过预检，随后互相 `resetVault()`，产出一串与真实产品缺陷无法区分的假 FAIL（2026-10-07 实证：约 25
+条假 FAIL 作废，finding `.tower/comms/findings/20261007-worker-ftr1-bug-worktree-vault-1430-fail.md`）。
+
+**claim / 释放纪律（本次更新）**：跑批串行**已由 runner 强制**。跨 agent 的「我要跑真机」广播与
+`/tmp/lumir-acceptance-rmachine.lock` 的**手工 claim 只剩一种用途**——长时间独占机器但不经 runner 的活儿
+（典型是 `cargo build` / `cargo test` 打满 CPU），那类仍按老纪律手工 claim、跑完释放并广播
+`resource-release`。**跑批本身不要再手工 claim**：runner 会拿锁，而你先占着锁会让它认出一个「活着的
+持有人」并拒绝启动。要手工 claim 就用与 runner 同形的写法（`mkdir` + `echo $$ > …/pid`），这样两边读懂
+同一份锁。
+
+**并行怎么放行**：`LUMIR_ACCEPTANCE_VAULT` 显式覆写成**别的** vault（不等于 `lib/util.mjs` 的缺省值）时
+跳过锁——跑批声明了自己那套 vault。把 `LUMIR_ACCEPTANCE_VAULT` 设成缺省值本身不算覆写（仍旧持锁）。
+端口是第二份共享资源：要真并行还必须**同时**覆写 `LUMIR_ACCEPTANCE_PORT`，否则 `reclaimPort()` 会按
+「端口被非本 worktree 的进程占用」报错（报错不静默，但那次跑批起不来）。
+
+**已知边界**：`SIGINT` / `SIGTERM` 只释放锁，**不回收**已起的 app 实例——残留实例由下一次跑批的
+`reclaimPort` 处理（本 worktree 的会被回收，别的 worktree 的按错因报错，不静默）。`--keep-app` 同理：
+锁守的是 **runner 的执行窗口**，不是 app 的生命周期，进程退出即释放锁，留下的 app 交下一个跑批处理。
+
 ### 运行环境是隔离的（三件事一起保证可复现）
 
 | 隔离项 | 做法 | 为什么 |
@@ -67,6 +104,7 @@ runner 在启动前做预检，不满足直接退出且不产生半截证据：
 | 配置目录 | app 进程带 `XDG_CONFIG_HOME=<结果目录>/../env` 启动，套件自带 `config.json`；**每场景清空其中的 `recovery/`、`vault-registry/`（含更名前的旧目录 `workspaces/`）、`vault-sessions/`** | `src-tauri/src/config.rs` 优先读 `XDG_CONFIG_HOME`；用户的 `~/.config/lumir` 全程不读不写。三个子目录都必须清：崩溃备份在配置目录下而非 vault 里（不清会让上一场景的备份串场——实证：08c 恢复出了 keys.md 的内容）；`vault-registry/` 决定列表浮层有几行、按路径命中哪个 id；`vault-sessions/` 决定装载后恢复哪些标签。后两者是 M164 补的（多 vault 场景会预置它们，残留会让下一场景看到上一场景的 vault 列表与标签）。旧名目录一并清是 M248 补的：迁移场景 48 把注册项预置在 `workspaces/` 里等 app 搬走，只清新名会让它残留到下一场景 |
 | 验收 vault（两个） | `/tmp/lumir-m102-acceptance` 与 `/tmp/lumir-m102-acceptance-b`，每次运行把 vault **根下**重置为 `fixtures/` 与 `fixtures/second-vault/` 的 `.md` 副本 | 合成 vault；用户真实 vault（真实路径按信息卫生纪律不落库）永不写入（`assertSafeTargets()` 对两个 vault 与配置目录都兜底拒绝）。第二个 vault 是多 vault 场景的切换目标，文件名与第一个刻意不重叠。**根下的非 `.md` 产物不被这次重置覆盖**（场景 `fixtures:` 带进来的 `.gitignore` / `x.jsonc` / `huge.log` 等会跨场景留着）——已登记在 `docs/backlog.md`，新场景**不要**依赖或假设这类残留（`resetVault` 的注释是这条口径的 canonical 居所） |
 | 端口 | dev server 走 `LUMIR_ACCEPTANCE_PORT`（默认 1430），经 `--config` 覆写 | 绝不与 Alex 手头的 `pnpm tauri dev` 抢 1420 |
+| 跑批串行 | 真跑批持 `/tmp/lumir-acceptance-rmachine.lock`（缺省 vault 下强制；显式覆写 `LUMIR_ACCEPTANCE_VAULT` 则跳过，见「跑批独占锁」） | 上面三项都到位也只保证「一条跑批内部」不串扰——两条跑批之间共享 vault 与端口，靠人工约定会漏，故由 runner 强制 |
 
 app 进程的定位用**进程组**（`pnpm tauri dev` 以 detached 起，自成一组）：Tauri CLI 以相对路径
 `target/debug/lumir` 起子进程，命令行里没有 worktree 路径，按路径区分会误抓 Alex 手头那份实例。

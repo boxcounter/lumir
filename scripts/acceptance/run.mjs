@@ -6,10 +6,15 @@
 //   node scripts/acceptance/run.mjs 01 08           # 只跑 id 前缀匹配的场景
 //   node scripts/acceptance/run.mjs --list          # 列出场景
 //   node scripts/acceptance/run.mjs --keep-app      # 跑完保留 app（人工接手看现场）
+//   node scripts/acceptance/run.mjs --check         # 静态校验场景（不真机、不建锁）
+//
+// 真跑批先抢 `/tmp/lumir-acceptance-rmachine.lock`：同机已有跑批时拒绝启动，不再靠人工约定串行
+// （显式覆写 `LUMIR_ACCEPTANCE_VAULT` 到别的 vault 则跳过锁，按「各自隔离」并行——见下方 acquireRmachineLock）。
 //
 // 设计（docs/process/real-machine-acceptance.md）：起真实 app（`pnpm tauri dev`，WKWebView 非
 // chromium 近似）→ KimiCU 驱动 → AX/内容断言 + 截图证据 → test-results/acceptance/<日期>/（git 外）。
 // 每个场景前重置验收 vault、重置隔离配置、重启 app——场景之间零串扰，代价是每次重启几秒。
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { readdir } from "node:fs/promises";
 import path from "node:path";
 import { CuClient } from "./lib/cu.mjs";
@@ -88,6 +93,156 @@ let handle = null;
 let cu = null;
 
 /**
+ * 跑批独占锁（M357）：把「同机同一时刻只跑一个 runner」从人工约定升级成套件自 enforce。
+ *
+ * 为什么必须有：套件的隔离只做到「配置目录 + vault + 端口」这一层，而合成 vault（`$vault` /
+ * `$vault2`）与 dev 端口是**全机共享**的。`reclaimPort()` 只在「两个 app 实例同时活着」时拦得住，
+ * 于是两个 worktree 的跑批只要先后错开启动就都能过预检，随后互相 `resetVault()`，产出一串与真实
+ * 产品缺陷无法区分的假 FAIL（2026-10-07 实证：两条跑批撞同一 vault，约 25 条假 FAIL 作废；
+ * finding `.tower/comms/findings/20261007-worker-ftr1-bug-worktree-vault-1430-fail.md`）。
+ *
+ * 形态沿用既有的**人工 claim 约定**（`/tmp/lumir-acceptance-rmachine.lock`）：`mkdir` 原子建锁
+ * （`EEXIST` 即已被占），随后写入 `pid` / `startedAt` / `cwd` 三个文件；读取方容忍 `pid` 缺失的
+ * 那一瞬（建锁与写内容之间的窗口，轮询等一拍再判）。锁里 pid 仍存活 → 拒绝启动并在 stderr 打印
+ * 持有人；pid 已死或读不到 → 视为崩溃残留回收重建（与 `reclaimPort` 同一条 fail-loud 取向）。
+ */
+const RMACHINE_LOCK = "/tmp/lumir-acceptance-rmachine.lock";
+let rmachineLock = null; // 本进程持有时为 `{ dir, pid }`
+
+class LockBusyError extends Error {}
+
+/** 锁里记录的持有人；`pid` 读不到时回 null（容忍建锁与写内容之间的窗口）。 */
+function readLockHolder(dir) {
+  const field = (name) => {
+    try {
+      return readFileSync(path.join(dir, name), "utf8").trim();
+    } catch {
+      return "";
+    }
+  };
+  const pid = Number(field("pid"));
+  return {
+    pid: Number.isInteger(pid) && pid > 0 ? pid : null,
+    startedAt: field("startedAt"),
+    cwd: field("cwd"),
+  };
+}
+
+/** 存活判定：`kill(pid, 0)` 不抛即存在；`EPERM` 说明进程在、只是不归本用户（照样算存活）。 */
+function pidAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    return e.code === "EPERM";
+  }
+}
+
+function holderLine(holder) {
+  return [
+    holder.pid ? `pid ${holder.pid}` : "pid 未知",
+    holder.startedAt ? `起于 ${holder.startedAt}` : "启动时间未知",
+    holder.cwd ? `cwd ${holder.cwd}` : "cwd 未知",
+  ].join("，");
+}
+
+function busyMessage(holder) {
+  return [
+    `✗ 已有真机跑批在跑，拒绝启动（跑批独占锁 ${RMACHINE_LOCK}）`,
+    `  持有人：${holderLine(holder)}`,
+    "  同一时刻只允许一个 runner 真跑：两个 runner 共享合成 vault 与 dev 端口，会互相 resetVault，",
+    "  产出与产品缺陷无法区分的假 FAIL（2026-10-07 实证）。",
+    "  等它跑完再重试；确需并行就让两条跑批各自隔离——显式覆写 LUMIR_ACCEPTANCE_VAULT（vault）",
+    "  与 LUMIR_ACCEPTANCE_PORT（端口），锁即按「各自隔离」放行。",
+  ].join("\n");
+}
+
+function orphanMessage() {
+  return [
+    `✗ 跑批锁存在但读不到 pid（${RMACHINE_LOCK}）：不排除是崩溃残留，也可能有人正在建锁`,
+    `  确认没有 runner 在跑之后手工删除它：rm -rf ${RMACHINE_LOCK}`,
+  ].join("\n");
+}
+
+/** 申请跑批锁；拿不到抛 `LockBusyError`（调用方按「运行失败」退出，持有人信息走 stderr）。 */
+async function acquireRmachineLock() {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      mkdirSync(RMACHINE_LOCK);
+    } catch (e) {
+      if (e.code !== "EEXIST") throw new Error(`建锁失败（${RMACHINE_LOCK}）：${e.message}`);
+      let holder = readLockHolder(RMACHINE_LOCK);
+      for (let i = 0; i < 20 && holder.pid === null; i++) {
+        await sleep(50); // 对方可能刚 mkdir、pid 还没落盘
+        holder = readLockHolder(RMACHINE_LOCK);
+      }
+      if (holder.pid !== null && pidAlive(holder.pid)) throw new LockBusyError(busyMessage(holder));
+      if (holder.pid === null) throw new LockBusyError(orphanMessage());
+      log(`回收上次跑批残留的锁（${holderLine(holder)}，进程已退出）`);
+      rmSync(RMACHINE_LOCK, { recursive: true, force: true });
+      continue;
+    }
+    try {
+      // pid 先写：读取方靠它判存活。后两个文件读不到时按「未知」呈现，不阻塞任何人。
+      writeFileSync(path.join(RMACHINE_LOCK, "pid"), `${process.pid}\n`);
+      writeFileSync(path.join(RMACHINE_LOCK, "startedAt"), `${new Date().toISOString()}\n`);
+      writeFileSync(path.join(RMACHINE_LOCK, "cwd"), `${process.cwd()}\n`);
+    } catch (e) {
+      try {
+        rmSync(RMACHINE_LOCK, { recursive: true, force: true });
+      } catch {
+        /* 尽力而为 */
+      }
+      throw new Error(`写锁内容失败（${RMACHINE_LOCK}）：${e.message}`);
+    }
+    rmachineLock = { dir: RMACHINE_LOCK, pid: process.pid };
+    return;
+  }
+  throw new Error(`建锁反复失败（${RMACHINE_LOCK}）：锁被反复抢占或回收不干净，请手工检查`);
+}
+
+/**
+ * 删锁；返回是否真的删了。只在锁里记的还是本进程 pid 时删——锁被别人接管（不该发生）时宁可留残留
+ * 也不删别人的：残留锁会被下一次跑批按「pid 已死」回收，而误删活锁会直接造出两条并发跑批。
+ */
+function releaseRmachineLock() {
+  const held = rmachineLock;
+  rmachineLock = null;
+  if (!held) return false;
+  try {
+    if (readLockHolder(held.dir).pid !== held.pid) return false;
+    rmSync(held.dir, { recursive: true, force: true });
+    return true;
+  } catch {
+    return false; // 退出路径尽力而为：删锁失败不改退出码（残留锁由下次跑批判死回收）
+  }
+}
+
+/**
+ * 本次跑批是否需要持锁：只有**共享同一套机器资源**的跑批才需要串行。`LUMIR_ACCEPTANCE_VAULT` 被
+ * 显式覆写成别的 vault 时，跑批声明了自己那套 vault，按并行放行（端口是另一份共享资源，要真并行
+ * 还得同时覆写 `LUMIR_ACCEPTANCE_PORT`——README 已写明）。
+ */
+function needsRmachineLock() {
+  return path.resolve(vaultDir()) === defaultVaultDir();
+}
+
+/**
+ * 套件缺省的合成 vault（= `lib/util.mjs` 的 `vaultDir()` 在无覆写时的取值）。这里靠临时清空 env
+ * 取值，不抄一份路径字面量——默认 vault 的真源只有一个（REVIEW.md 第 8 条）。
+ */
+function defaultVaultDir() {
+  const saved = process.env.LUMIR_ACCEPTANCE_VAULT;
+  if (saved === undefined) return path.resolve(vaultDir());
+  delete process.env.LUMIR_ACCEPTANCE_VAULT;
+  try {
+    return path.resolve(vaultDir());
+  } finally {
+    process.env.LUMIR_ACCEPTANCE_VAULT = saved;
+  }
+}
+
+/**
  * 起实例前的环境预检（tower 纪律，2026-09-16）：
  * - KimiCU 不存在 → 直接说清安装命令，不要跑到一半才发现；
  * - 磁盘水位 < 2G 不起真机实例（cargo/vite 会 ENOSPC 硬失败，批次四实证）；
@@ -95,7 +250,6 @@ let cu = null;
  *   `pnpm tauri dev` 在跑，机器负载与 AX 稳定性都会受影响）。
  */
 async function preflight() {
-  const { existsSync } = await import("node:fs");
   const bin = process.env.KIMICU_BIN ?? "/Applications/KimiCU.app/Contents/MacOS/kimi-cu";
   if (!existsSync(bin)) {
     throw new Error(
@@ -135,6 +289,14 @@ async function preflight() {
 
 async function main() {
   const targets = assertSafeTargets();
+  // 锁要在任何动共享资源的动作之前拿（reclaimPort 会杀进程、resetVault 会删文件）。
+  if (needsRmachineLock()) {
+    await acquireRmachineLock();
+    log(`跑批锁：${RMACHINE_LOCK}（持有者 pid ${process.pid}，同一时刻只允许一个真跑）`);
+  } else {
+    log(`跳过跑批锁：LUMIR_ACCEPTANCE_VAULT 显式指向独立 vault（${targets.vault}），按隔离并行放行`);
+    log("  注意：端口仍可能与别的跑批相撞，真并行请同时覆写 LUMIR_ACCEPTANCE_PORT\n");
+  }
   await preflight();
   log(`验收 vault：${targets.vault}`);
   log(`隔离配置：${targets.envHome}（用户的 ~/.config/lumir 全程不读写）`);
@@ -233,16 +395,39 @@ async function main() {
   return summary;
 }
 
+/**
+ * 退出路径全覆盖：正常结束 / 断言失败 / 异常走 `finally`，SIGINT / SIGTERM 走 signal 钩子，
+ * 另有 `exit` 兜底（`process.exit` 那条路径也不漏）。删锁本身幂等，重复调用无副作用。
+ * 信号路径只释放锁、不回收已起的 app 实例——残留实例由下次跑批的 `reclaimPort` 处理（本 worktree 的
+ * 被回收，别的 worktree 的按「非本 worktree 进程」报错，不静默）。
+ */
+for (const [sig, code] of [
+  ["SIGINT", 130],
+  ["SIGTERM", 143],
+]) {
+  process.on(sig, () => {
+    log(`\n收到 ${sig}：释放跑批锁后退出（已起的 app 实例按残留处理）`);
+    releaseRmachineLock();
+    process.exit(code);
+  });
+}
+process.on("exit", () => {
+  releaseRmachineLock();
+});
+
 let exitCode = 0;
 try {
   const summary = await main();
   exitCode = summary.pass === summary.total ? 0 : 1;
 } catch (e) {
-  log(`运行失败：${e.message}`);
+  // 锁被占：持有人信息是给人看的，原样走 stderr；退出码并入「运行失败」（2）。
+  if (e instanceof LockBusyError) process.stderr.write(`${e.message}\n`);
+  else log(`运行失败：${e.message}`);
   exitCode = 2;
 } finally {
   if (!keepApp && handle) await stopApp(handle);
   if (keepApp && handle) log(`app 保留运行中：pid ${handle.pid}（vault ${vaultDir()}，配置 ${envHome()}）`);
   await cu?.stop();
+  if (releaseRmachineLock()) log(`跑批锁已释放：${RMACHINE_LOCK}`);
 }
 process.exit(exitCode);
