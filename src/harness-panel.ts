@@ -35,8 +35,10 @@
 //     类镜像到 transcript 容器上——规则值仍只有 src/preview/theme.ts 一处（单一来源），
 //     与表格 / 代码块全屏浮层同一条机制。
 //   - 流式期间按块增量重渲：已完成块渲染一次不再动，只有进行中的末块随 chunk 重渲；
-//     done 到达后对完整源做一次全量重渲（增量渲染在「跨空行的松散列表」这类形态上是
-//     近似，全量重渲是收敛点——近似只存在于流式期间）。
+//     done 到达后对**每个文本段**的完整源做一次全量重渲（增量渲染在「跨空行的松散列表」
+//     这类形态上是近似，全量重渲是收敛点——近似只存在于流式期间）。轮内工具清单与
+//     文本段按到达序交错排布（M374）：工具行留在它发生的那处文本段之前，定稿重渲只
+//     作用于文本段容器，不挪动工具块。
 //
 // 文案：全部取值经 src/copy.ts 的 t()（D327–D330 / D332–D348 / D375–D387，D334 / D335 于
 // M347 改形、M370 再起改形（双读数 + hover 浮层）、M373 起 hover 浮层常驻含义句（D395）、
@@ -46,7 +48,7 @@
 // 思考块折叠行与思考 chip 三句 + 浮层读屏名（D389 / D391 随双 chip 于 M373 退役、D390 沿用、
 // D392 复用为合并浮层 effort 段标签）、D393–D399 为 M373 合并选择器（chip 读屏名支持态 /
 // effort 不支持 hover hint / ctx 读数含义 hint / 浮层段标签 ×2 / 浮层读屏名 / chip 读屏名
-// 未知态降级 D399））；
+// 未知态降级 D399）、D400 为 M374 停止中阶段行（stopping 相位即时反馈））；
 // 长驻元素（toggle 钮 / harness 段 / 输入框 placeholder / 按钮 / 上下文 chip / ctx 读数 /
 // 合并选择器 chip / 待决批准项）注册 onRelabel，
 // 语言切换时从已存状态重渲（design §5.2 的不变量）；transcript 的历史条目是已发生事实的记
@@ -1490,24 +1492,45 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
    *  显示「新会话」）。自动压缩开新逻辑会话后归 null，按同口径重算（design §3）。 */
   let firstUserText: string | null = null;
   let streamingEl: HTMLElement | null = null;
+  /** 本轮完整正文源（全部文本段的拼接）——复制源用；分段渲染不改变它。 */
   let streamingText = "";
+  /** 轮次闸门（M374）：sent 开、done / aborted / error 关。关闭期间到达的内容事件
+   *  （text_chunk / reasoning_chunk / tool_call / usage / compact）一律丢弃——已取消
+   *  （或已结束）的轮次迟到产出不得再进消息流。已知边界：webview 重载后在途轮次没有
+   *  快照标记可重建本闸门，该轮的流式产出会被丢弃（如实登记，不伪造「正在运行」）。 */
+  let turnOpen = false;
   /** 本轮的思考块（M363）：reasoning_chunk 事件的累加数据与「有待 rAF 重渲」脏标记。
    *  轮次终态经 finalizeStreamingMessage 定格（数据引用释放，DOM 元素留在消息内）。 */
   let thinkingBlocks: ThinkingBlock[] = [];
   let thinkingDirty = false;
-  /** 流式消息的 body 体（M351：who 行 + body 分置——finalize 的 replaceChildren 只作用
-   *  body，who 行不被定稿重渲抹掉；工具清单块挂 body 之后、消息之内）。 */
-  let streamingBody: HTMLElement | null = null;
-  /** 流式消息里已完成块已渲染到的源偏移（增量渲染的游标）。 */
-  let renderedFinalized = 0;
-  let tailEl: HTMLElement | null = null;
+  /** 文本段（M374）：消息本体是「文本段 + 工具块」按到达序交错的序列——工具行留在
+   *  它发生的那处文本段之前，不再被整体挪到消息末尾（M368 挂消息级的挂点是末尾，
+   *  与「工具先于正文发生」的真实时序倒挂）。段容器 = .lumir-hp-body（样式同源），
+   *  内部维持「已完成块冻结 + 末块随 chunk 重渲」的增量渲染。 */
+  interface TextSegment {
+    el: HTMLElement;
+    tailEl: HTMLElement;
+    source: string;
+    renderedFinalized: number;
+  }
+  let textSegments: TextSegment[] = [];
+  /** 当前文本段（正文 chunk 的落点）。工具块在场后首个 chunk 开出新段（落在工具块
+   *  之后）；null = 本轮尚无正文（工具先行 / 纯思考 / 零产出是常态）。 */
+  let currentSeg: TextSegment | null = null;
   let chunkBuffer = "";
   let flushScheduled = false;
   const pendingApprovals = new Map<string, PendingApproval>();
   /** 当前轮次的工具清单块（M351 还原原型屏 4 清单形态，change harness-pane-visual-fidelity
-   *  design §3.3）：挂进当前 agent 消息（body 之后），一轮一块；轮次终态经 collapseTools
-   *  收尾（≥2 行折叠为一行摘要，单行保持展开）。 */
-  let activeTools: { el: HTMLElement; rows: HTMLElement[]; running: HTMLElement | null } | null = null;
+   *  design §3.3）：挂进当前 agent 消息（它发生的位置——段之间或消息尾）；一轮一块；
+   *  轮次终态经 collapseTools 收尾（≥2 行折叠为一行摘要，单行保持展开）。 */
+  interface ToolsBlock {
+    el: HTMLElement;
+    rows: HTMLElement[];
+    running: HTMLElement | null;
+  }
+  let activeTools: ToolsBlock | null = null;
+  /** 已封板的工具块（开出新文本段时旧块封板）——定稿时与在途块一起折叠。 */
+  let sealedToolBlocks: ToolsBlock[] = [];
   /** 最近一条 assistant 消息（快照恢复路径的工具记录挂点；live 路径恒为 streamingEl）。 */
   let lastAssistantEl: HTMLElement | null = null;
   /** when 的低频刷新定时器（30s；attach 起、detach 清——meta chrome，不在
@@ -2333,8 +2356,13 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     if (running) applyStage();
   }
 
+  /** 阶段行施加（applySendPhase 的 running 分支调用）。stopping 相位第一时间换 D400
+   *  「正在停止…」——停止反馈的即时性由前端这半承担（后端收口前，状态不再停在
+   *  「等待响应 / 正在生成回复」的误读上，M374）；running 态维持两档：首个 chunk 前
+   *  「等待响应」，之后「正在生成回复」。 */
   function applyStage(): void {
-    stageLine.textContent = stageWaiting ? t("D381") : t("D382");
+    stageLine.textContent =
+      sendPhase === "stopping" ? t("D400") : stageWaiting ? t("D381") : t("D382");
   }
 
   sendButton.addEventListener("click", () => {
@@ -2496,16 +2524,24 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     return label;
   }
 
-  /** 当前轮次的清单块（无则建）：live 路径挂当前流式 agent 消息（事件入口已先立消息）；
-   *  恢复路径挂 lastAssistantEl；都无 = 孤儿工具记录（协议外）兜底挂 transcript 末尾。 */
-  function ensureToolsBlock(): { el: HTMLElement; rows: HTMLElement[]; running: HTMLElement | null } {
+  /** 当前轮次的清单块（无则建）：live 路径挂在当前流式 agent 消息的**当时末尾**——
+   *  即它发生的位置（段之间或消息尾）；恢复路径挂 lastAssistantEl；都无 = 孤儿工具
+   *  记录（协议外）兜底挂 transcript 末尾。新文本段开出时旧块封板（sealedToolBlocks）。 */
+  function ensureToolsBlock(): ToolsBlock {
     if (activeTools !== null) return activeTools;
+    // 先把缓冲里的正文落进当前段（若有）：正文 chunk 的 rAF 合帧可能还没跑，而工具事件
+    // 是同步处理的——不先落的话，缓冲中的正文会开新段跑到工具块之后（时序再倒置）。
+    flushChunks();
     const el = document.createElement("div");
     el.className = "lumir-hp-tools";
     const host = streamingEl ?? lastAssistantEl;
     if (host !== null) host.append(el);
     else transcript.append(el);
     activeTools = { el, rows: [], running: null };
+    // 工具块落位后，其后的正文必须开新段（留在工具块之后）——currentSeg 封在这里：
+    // 不清的话下一轮正文会继续追加进工具块之前的旧段，工具行被埋回消息末尾（M374 的
+    // 时序倒置在「段后还有正文」的轮次里复现）。
+    currentSeg = null;
     return activeTools;
   }
 
@@ -2516,7 +2552,12 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   function collapseTools(): void {
     const block = activeTools;
     activeTools = null;
-    if (block === null || block.rows.length < 2) return;
+    if (block !== null) collapseBlock(block);
+  }
+
+  /** 单个工具块的折叠收尾（在途块与封板块共用）。 */
+  function collapseBlock(block: ToolsBlock): void {
+    if (block.rows.length < 2) return;
     const summary = document.createElement("button");
     summary.type = "button";
     summary.className = "lumir-hp-tool-summary";
@@ -2766,8 +2807,8 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     return { el, head, text, body };
   }
 
-  /** 块在前正文在后：插到 who 行之后、body 之前。views 按块序号序查找（块序 = DOM 序，
-   *  后端按序发出、插入点恒在 body 前，乱序到达由 accumulate 的排序兜底）。 */
+  /** 块在前正文在后：插到首个正文段容器之前（正文段懒建，见 ensureThinkingView 内注释）。
+   *  views 按块序号序查找（块序 = DOM 序，后端按序发出，乱序到达由 accumulate 的排序兜底）。 */
   const thinkingViews = new Map<number, ThinkingView>();
 
   function ensureThinkingView(index: number): ThinkingView {
@@ -2775,8 +2816,11 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     if (existing !== undefined) return existing;
     const view = createThinkingView();
     const host = streamingEl;
-    if (host !== null && streamingBody !== null) {
-      host.insertBefore(view.el, streamingBody);
+    if (host !== null) {
+      // 块在前正文在后：插到首个文本段容器之前（工具块不入正文序——思考相对工具
+      // 的位置由到达序决定：段未建时 append 在消息尾，即当时已到场块的后面）。
+      const anchor = host.querySelector(":scope > .lumir-hp-body");
+      host.insertBefore(view.el, anchor);
     }
     thinkingViews.set(index, view);
     return view;
@@ -2811,16 +2855,33 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     streamingEl = document.createElement("div");
     streamingEl.className = "lumir-hp-msg lumir-hp-msg-assistant";
     streamingEl.append(createWhoLine("assistant", Date.now()));
-    streamingBody = document.createElement("div");
-    streamingBody.className = "lumir-hp-body";
-    tailEl = document.createElement("div");
-    tailEl.className = "lumir-hp-md-tail";
-    streamingBody.append(tailEl);
-    streamingEl.append(streamingBody);
+    // 正文段与工具块按到达序懒建追加（who 行之后），见 textSegments 的注释。
     transcript.append(streamingEl);
     streamingText = "";
-    renderedFinalized = 0;
     syncEmptyHint();
+  }
+
+  /** 当前文本段（无则建）——正文 chunk 的落点；开出新段时把在途工具块封板（其后的
+   *  工具行属于新的一块，工具行与时序一一对应的粒度因此不被跨段合并抹平）。 */
+  function ensureCurrentSegment(): TextSegment {
+    if (currentSeg !== null) return currentSeg;
+    if (streamingEl === null) {
+      // 调用方（flushChunks）已先 ensureStreamingMessage——防御性兜底，不静默造孤儿段。
+      ensureStreamingMessage();
+    }
+    if (activeTools !== null) {
+      sealedToolBlocks.push(activeTools);
+      activeTools = null;
+    }
+    const el = document.createElement("div");
+    el.className = "lumir-hp-body";
+    const tailEl = document.createElement("div");
+    tailEl.className = "lumir-hp-md-tail";
+    el.append(tailEl);
+    streamingEl!.append(el);
+    currentSeg = { el, tailEl, source: "", renderedFinalized: 0 };
+    textSegments.push(currentSeg);
+    return currentSeg;
   }
 
   /** rAF 合帧：chunk 只进缓冲，真正的 DOM 写入每帧至多一次。 */
@@ -2837,48 +2898,51 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     flushThinkingViews();
     if (chunkBuffer === "") return;
     ensureStreamingMessage();
+    const seg = ensureCurrentSegment();
+    seg.source += chunkBuffer;
     streamingText += chunkBuffer;
     chunkBuffer = "";
-    // 已完成块：渲染过一次就冻结（游标只前进）；进行中的末块整段重渲。
-    const boundary = finalizedUpTo(streamingText);
-    if (boundary > renderedFinalized && streamingBody !== null && tailEl !== null) {
-      const grown = streamingText.slice(renderedFinalized, boundary);
+    // 已完成块：渲染过一次就冻结（游标只前进）；进行中的末块整段重渲。逐段进行——
+    // 块边界判定只看本段自己的源（段边界 = 工具发生处，跨段的松散结构本来就是两段）。
+    const boundary = finalizedUpTo(seg.source);
+    if (boundary > seg.renderedFinalized) {
+      const grown = seg.source.slice(seg.renderedFinalized, boundary);
       const finalizedEl = document.createElement("div");
       finalizedEl.className = "lumir-hp-md-final";
       renderMarkdownInto(finalizedEl, grown);
-      streamingBody.insertBefore(finalizedEl, tailEl);
-      renderedFinalized = boundary;
+      seg.el.insertBefore(finalizedEl, seg.tailEl);
+      seg.renderedFinalized = boundary;
     }
-    if (tailEl !== null) {
-      tailEl.replaceChildren();
-      renderMarkdownInto(tailEl, streamingText.slice(renderedFinalized));
-    }
+    seg.tailEl.replaceChildren();
+    renderMarkdownInto(seg.tailEl, seg.source.slice(seg.renderedFinalized));
     scrollToBottom();
   }
 
-  /** 一轮结束：对完整源做一次全量重渲（增量渲染的近似在松散列表等形态上收敛于此）。
-   *  完成后挂复制钮：源 = 模型原始输出（本轮回收集的完整 Markdown 源文本）。
-   *  思考块随轮次定格：flush 已把末态时长/正文上屏，这里只释放数据引用——元素留在
-   *  消息内（块在前正文在后），复制源不含思考内容（复制源 = 正文源文本，单一真源）。
+  /** 一轮结束：对每个文本段的完整源做一次全量重渲（增量渲染的近似在松散列表等形态上
+   *  收敛于此——按段收敛：段边界是工具发生处，渲染语义本就独立）。工具块（在途 + 已封板）
+   *  随轮次终态折叠收尾，交错位置不动。完成后挂复制钮：源 = 模型原始输出（全部文本段
+   *  的拼接）。思考块随轮次定格：flush 已把末态时长/正文上屏，这里只释放数据引用——
+   *  元素留在消息内（块在前正文在后），复制源不含思考内容（复制源 = 正文源文本，单一真源）。
    *  返回沉淀的消息元素（中断标注等终态修饰用；无流式内容时返回 null）。 */
   function finalizeStreamingMessage(): HTMLElement | null {
     flushChunks();
-    // 工具清单随轮次终态收尾（幂等；done / aborted / error 三个事件出口共用本函数）。
+    // 工具清单随轮次终态收尾（幂等；done / aborted / error 三个事件出口共用本出口）：
+    // 在途块经 collapseTools、封板块逐一折叠——交错在段之间的每块各自收尾。
     collapseTools();
+    for (const block of sealedToolBlocks) collapseBlock(block);
+    sealedToolBlocks = [];
     if (streamingEl === null) return null;
     const el = streamingEl;
-    if (streamingBody !== null) {
-      // 定稿重渲只作用 body（M351）：who 行、思考块与工具清单块是消息的兄弟节点，不被抹掉。
-      streamingBody.replaceChildren();
-      renderMarkdownInto(streamingBody, streamingText);
+    for (const seg of textSegments) {
+      seg.el.replaceChildren();
+      renderMarkdownInto(seg.el, seg.source);
     }
     // 纯工具轮（模型零正文产出）不挂复制钮——空源复制无意义（与 appendUserMessage 同口径）。
     if (streamingText !== "") attachCopyButton(el, streamingText);
     streamingEl = null;
-    streamingBody = null;
+    currentSeg = null;
+    textSegments = [];
     streamingText = "";
-    renderedFinalized = 0;
-    tailEl = null;
     thinkingBlocks = [];
     thinkingViews.clear();
     thinkingDirty = false;
@@ -2897,10 +2961,17 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   }
 
   // ── 事件流 ───────────────────────────────────────────────────────────────
+  /** 内容类事件（轮次闸门 M374 的管控面）：终态之后到达的一律丢弃。 */
+  const GATED_EVENT_TYPES = new Set(["text_chunk", "reasoning_chunk", "tool_call", "usage", "compact"]);
+
   function handleEvent(event: HarnessEvent): void {
     // 会话作用域过滤（M312）：只渲染当前 vault 的会话。切换 vault 之后仍在途的旧 vault 事件
     // （工具循环跑在 `lumir-harness-llm` 专线程上，切 vault 不打断它）在这里被丢弃，不串台。
     if (!inCurrentVault(event.vault, currentVault)) return;
+    // 轮次封闭（M374）：done / aborted / error 之后、下一次 sent 之前到达的内容事件一律
+    // 丢弃——已取消（或已结束）的轮次迟到产出不得再进消息流（「复活」）。终态事件本身
+    // 不受闸门管控（收口幂等，且 sent 之前的 stray 终态无害）。
+    if (turnOpen === false && GATED_EVENT_TYPES.has(event.type)) return;
     switch (event.type) {
       case "text_chunk":
         chunkBuffer += typeof event.text === "string" ? event.text : "";
@@ -2930,7 +3001,8 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       }
       case "tool_call":
         // 清单块挂当前 agent 消息（design §3.3）：工具先于首个 text_chunk 到达是常态
-        // （模型先调工具后说话）——先立一条空 agent 消息，正文 chunk 随后填进同一泡。
+        // （模型先调工具后说话）——先立一条空 agent 消息，正文 chunk 随后开新段落在
+        // 工具块之后（M374：工具行保持在它发生的文本段之前的原位）。
         ensureStreamingMessage();
         appendToolCall(
           typeof event.name === "string" ? event.name : "?",
@@ -2959,15 +3031,29 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
         appendCompactMarker(typeof event.summary === "string" ? event.summary : "");
         return;
       case "done":
+        turnOpen = false;
         finalizeStreamingMessage();
         applySendPhase(reduceSendPhase(sendPhase, { type: "finished" }));
         return;
       case "aborted": {
+        turnOpen = false;
         // 本轮被用户停止（M348）：中断语义是「不再继续」——已流式产出保留（上面的
         // text_chunk 已落进流式泡），标注「已停止」，经 finished 收口回 idle，
-        // composer 立即可开新一轮。无产出（停止在首个 chunk 前）时没有消息可标。
+        // composer 立即可开新一轮。无产出（停止在首个 chunk 前）时补一条「Agent ·
+        // 已停止」标记消息——被取消的轮次在消息流里显式封闭，不再读作「一个没有得到
+        // 处理的问题」（M374；标记是 live 面：快照侧无对应留存记录，重载后不重建）。
         const el = finalizeStreamingMessage();
-        if (el !== null) attachStoppedMark(el);
+        if (el !== null) {
+          attachStoppedMark(el);
+        } else {
+          const marker = document.createElement("div");
+          marker.className = "lumir-hp-msg lumir-hp-msg-assistant";
+          marker.append(createWhoLine("assistant", Date.now()));
+          attachStoppedMark(marker);
+          transcript.append(marker);
+          syncEmptyHint();
+          scrollToBottom();
+        }
         // 待决批准项随中断收回（design §5）：未决策的批准卡片从 transcript 撤下——
         // 它们的唯一出口（点击）已失效，后端那条通道已被 Withdrawn 关闭。
         for (const pending of pendingApprovals.values()) pending.element.remove();
@@ -2976,6 +3062,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
         return;
       }
       case "error":
+        turnOpen = false;
         finalizeStreamingMessage();
         applySendPhase(reduceSendPhase(sendPhase, { type: "finished" }));
         appendError(t("D348", { message: typeof event.message === "string" ? event.message : event.code }));
@@ -3111,11 +3198,12 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     transcript.replaceChildren();
     pendingApprovals.clear();
     streamingEl = null;
-    streamingBody = null;
-    tailEl = null;
+    currentSeg = null;
+    textSegments = [];
+    sealedToolBlocks = [];
     streamingText = "";
-    renderedFinalized = 0;
     chunkBuffer = "";
+    turnOpen = false;
     activeTools = null;
     lastAssistantEl = null;
     lastErrorEl = null;
@@ -3194,10 +3282,13 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     composer.focus();
     setDomCaret({ block: 0, offset: 0 });
     updateEmptyClass();
-    // 相位入 running（两态发送钮切停止态）+ 阶段指示回「等待响应」——进度条与阶段行随相位显形。
+    // 相位入 running（两态发送钮切停止态）+ 阶段指示回「等待响应」——进度条与阶段行随相位显形；
+    // 轮次闸门随 sent 打开（M374：终态后迟到的内容事件在此之前一律丢弃）。
     stageWaiting = true;
+    turnOpen = true;
     applySendPhase(reduceSendPhase(sendPhase, { type: "sent" }));
     harnessSend(text, block !== null ? serializeHarnessContext(block) : null).catch((e: unknown) => {
+      turnOpen = false;
       applySendPhase(reduceSendPhase(sendPhase, { type: "finished" }));
       appendError(t("D347", { reason: errorMessage(e) }));
     });

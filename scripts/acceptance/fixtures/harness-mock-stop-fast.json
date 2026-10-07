@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "responses": [
+    {
+      "text": "FAST-A 第一片。FAST-B 第二片。FAST-C 第三片。",
+      "chunks": ["FAST-A 第一片。", "FAST-B 第二片。", "FAST-C 第三片。"],
+      "tool_calls": [
+        {
+          "id": "call_1",
+          "name": "vault_read",
+          "arguments": "{\"path\":\"harness-note.md\"}"
+        }
+      ],
+      "chunk_delay_ms": 8000,
+      "usage": { "input_tokens": 1200, "cached_tokens": 300, "output_tokens": 30 }
+    },
+    {
+      "text": "NEXT-第二轮回答。",
+      "chunks": ["NEXT-第二轮回答。"],
+      "usage": { "input_tokens": 1500, "cached_tokens": 900, "output_tokens": 12 }
+    }
+  ]
+}

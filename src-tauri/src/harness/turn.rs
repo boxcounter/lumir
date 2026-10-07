@@ -285,7 +285,21 @@ pub fn run_turn_for(
                 overflow_retried = true;
                 rounds -= 1; // 重试同一轮，不占循环额度
                 match compact_now(sink, runtime, scope, client, "overflow") {
-                    Ok(()) => continue,
+                    Ok(()) => {
+                        // 停止检查点（M374）：压缩期间点的停止在此收口——否则 `continue`
+                        // 会再开一轮 LLM 往返，被取消的请求重新跑起来（迟到完成复活）。
+                        if turn_aborted(runtime, scope) {
+                            abort_turn(
+                                sink,
+                                runtime,
+                                scope,
+                                panel_base,
+                                &llm::TurnOutput::default(),
+                            );
+                            return;
+                        }
+                        continue;
+                    }
                     Err(e) => {
                         sink.emit(events::error(&e.code, &e.message));
                         return;
@@ -363,6 +377,19 @@ pub fn run_turn_for(
                 if let Some((_, snapshot)) = usage {
                     if snapshot.ctx_pct >= config.warn_ctx_pct {
                         let _ = compact_now(sink, runtime, scope, client, "threshold");
+                        // 停止检查点（M374）：压缩调用用 DiscardStreamSink（流里不问停止），
+                        // 压缩期间点的停止只能在这里收口——不在此检查的话，下面的 `done`
+                        // 会把已流式回复当作正常完成带进消息流，已取消的轮次「复活」。
+                        if turn_aborted(runtime, scope) {
+                            abort_turn(
+                                sink,
+                                runtime,
+                                scope,
+                                panel_base,
+                                &llm::TurnOutput::default(),
+                            );
+                            return;
+                        }
                     }
                 }
             }
