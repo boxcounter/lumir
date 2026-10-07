@@ -228,6 +228,8 @@ fn reasoning_replay_item_precedes_assistant_message() {
 ///
 /// 判据的区分度：旧实现（每条调用各自「调用项 + 输出项」交错压栈）产出的序列是
 /// `… fc1, fco1, fc2, fco2`，与本断言逐位不同 ⇒ 旧代码必红（已实测）。
+/// 期望序列的第 2 轮形态（M372）：无正文的工具轮只留 reasoning 项、不落空 assistant
+/// 消息项——空 `output_text` 进下一次请求会被订阅端 400（`text content is empty`）。
 #[test]
 fn multi_call_round_groups_call_items_before_outputs() {
     let f = Fixture::new("multi-call-grouping");
@@ -267,12 +269,14 @@ fn multi_call_round_groups_call_items_before_outputs() {
                 .unwrap_or_else(|| it["role"].as_str().unwrap_or("?").to_string())
         })
         .collect();
+    // M372 起第 1 轮（reasoning + 调用、无正文）不落空正文 assistant 消息项——空
+    // output_text 进下一次请求会被 Kimi Code 订阅端整条 400（`text content is empty`）；
+    // reasoning 项按 M306 原样回传。故序列是 reasoning 直接接成组调用项。
     assert_eq!(
         kinds,
         vec![
             "user",
             "reasoning",
-            "assistant",
             "function_call",
             "function_call",
             "function_call_output",
@@ -281,6 +285,13 @@ fn multi_call_round_groups_call_items_before_outputs() {
         ],
         "调用项须成组（全部 function_call 在前、全部输出在后）：{kinds:?}"
     );
+    // M372 守卫：input 里任何 assistant 消息项都不得是空正文。
+    for it in &input {
+        if it["role"] == "assistant" {
+            let text = it["content"][0]["text"].as_str().unwrap_or("");
+            assert!(!text.is_empty(), "assistant 项不得为空正文：{it}");
+        }
+    }
     // 成组之外还要配对：输出项按调用顺序与调用项一一对应（call_id 同序）。
     let call_ids: Vec<&str> = input
         .iter()
