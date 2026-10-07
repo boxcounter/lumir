@@ -14,7 +14,7 @@
 // 设计（docs/process/real-machine-acceptance.md）：起真实 app（`pnpm tauri dev`，WKWebView 非
 // chromium 近似）→ KimiCU 驱动 → AX/内容断言 + 截图证据 → test-results/acceptance/<日期>/（git 外）。
 // 每个场景前重置验收 vault、重置隔离配置、重启 app——场景之间零串扰，代价是每次重启几秒。
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync, appendFileSync } from "node:fs";
 import { readdir } from "node:fs/promises";
 import path from "node:path";
 import { CuClient } from "./lib/cu.mjs";
@@ -38,7 +38,7 @@ import {
 import { tryForeground, waitAppReady } from "./lib/drive.mjs";
 import { Evidence, appendRunLog, writeSummary } from "./lib/evidence.mjs";
 import { checkScenario, loadScenario, runScenario } from "./lib/execute.mjs";
-import { envHome, log, mkdirp, repoRoot, resultsRoot, sleep, vaultDir } from "./lib/util.mjs";
+import { envHome, InfraError, log, mkdirp, repoRoot, resultsRoot, sleep, vaultDir } from "./lib/util.mjs";
 
 const args = process.argv.slice(2);
 const keepApp = args.includes("--keep-app");
@@ -318,16 +318,29 @@ async function main() {
   const reclaimed = await reclaimPort(acceptPort());
   if (reclaimed.length) log(`回收上次残留进程：${reclaimed.join(", ")}`);
   await mkdirp(root);
+  // 索引与日志都是**跨 run 增量**的（M379：同一天多次跑、多 mission 共用同一日期目录是常态）：
+  // `run.log` / `app.log` 都是追加写，补一条 run 头把两次 run 的段落分开（summary.md /
+  // results.json 的合并口径见 evidence.mjs 的 writeSummary）。
+  const appLogFile = path.join(root, "app.log");
+  const runHeader =
+    `===== run ${new Date().toISOString()} pid=${process.pid} 场景 ${selected.length} 个：` +
+    `${selected.map((s) => s.id).join(" ")} =====`;
+  await appendRunLog(root, runHeader);
+  appendFileSync(appLogFile, `${runHeader}\n`);
 
   cu = await CuClient.start();
   log("KimiCU MCP 已连接\n");
 
   const results = [];
+  let invalidCount = 0;
   for (const scenario of selected) {
     const t0 = Date.now();
     log(`▶ ${scenario.id}（backlog 项 ${scenario.item}）${scenario.title}`);
     let fgNote = "";
     let out;
+    // 基建阶段标记：这一段里任何异常都说明「实例没起来 / 环境不可用」——整场判 INVALID（退出码
+    // 2），不按产品判红记（退出码 1）。越过 `runScenario` 之后，异常才是场景自己的事。
+    let setupPhase = true;
     try {
       await resetVault();
       await resetSecondVault(); // 第二个合成 vault：多 vault 场景的切换目标
@@ -355,7 +368,7 @@ async function main() {
         ...scenarioConfig,
       });
       if (handle) await stopApp(handle);
-      handle = await launchApp({ logFile: path.join(root, "app.log") });
+      handle = await launchApp({ logFile: appLogFile });
       await sleep(1200);
       await waitAppReady(cu, handle.pid); // 前端就绪门：左栏文件树 + 编辑器节点就位再开跑
       // tower 纪律：键盘场景先尽力拿前台并如实记录（拿不到不中止——行为断言才是注入是否落地的证据）。
@@ -372,7 +385,7 @@ async function main() {
         repoRoot: repoRoot(),
         restartApp: async ({ requireVault = true } = {}) => {
           await stopApp(handle);
-          handle = await launchApp({ logFile: path.join(root, "app.log") });
+          handle = await launchApp({ logFile: appLogFile });
           await sleep(1200);
           // requireVault: false = 本步期待「未打开空态」（如 last_vault 失效），就绪门放宽为
           // 「树 pane 任一形态 + 编辑器在位」。默认仍是严格门（树里有 .md 行）。
@@ -382,13 +395,24 @@ async function main() {
           ctx.pid = handle.pid;
         },
       };
+      setupPhase = false; // 越过这一行，异常才是场景自己的事（产品面）
       out = await runScenario(ctx, scenario);
     } catch (e) {
-      // app 起不来 / 前端未就绪（如 KimiCU AX 服务退化）：如实记一条 FAIL，继续跑下一个场景，
-      // 不要因为环境问题丢掉整轮结果。
-      log(`  ✗ 环境异常：${e.message}`);
-      out = { status: "FAIL", records: [{ kind: "assert", ok: false, label: "[环境异常]", detail: e.message }] };
+      // 基建错误（app 起不来 / 前端未就绪 / KimiCU AX 服务退化 / 动作内部的重启起不来）与产品
+      // 判红分开表达：前者整场标 INVALID、整轮退出码升到 2（本次读数不可用于判产品缺陷，请复跑），
+      // 后者照旧 FAIL（退出码 1）。混在一起时复盘只能靠人读步骤形态区分——M281 实证（finding
+      // `.tower/comms/findings/20260928-worker-impl-goto-line-c-improve-0-1-pass-1.md`，本批
+      // 的退出码分档见 backlog「M282 遗留」节）。
+      if (setupPhase || e instanceof InfraError) {
+        invalidCount += 1;
+        log(`  ⚠ 运行环境无效（非产品判红，请复跑）：${e.message}`);
+        out = await recordInvalid(scenario, e);
+      } else {
+        log(`  ✗ 场景异常：${e.message}`);
+        out = { status: "FAIL", records: [{ kind: "assert", ok: false, label: "[场景异常]", detail: e.message }] };
+      }
     }
+    setupPhase = false;
     const seconds = (Date.now() - t0) / 1000;
     results.push({
       id: scenario.id,
@@ -398,6 +422,7 @@ async function main() {
       asserts: out.records.filter((r) => r.kind === "assert").length,
       failed: out.records.filter((r) => r.kind === "assert" && !r.ok).length,
       seconds,
+      at: new Date().toISOString(),
     });
     log(`  ${out.status}  ${seconds.toFixed(1)}s  ${path.join(root, scenario.id)}`);
     for (const f of out.records.filter((r) => r.kind === "assert" && !r.ok)) log(`    ✗ ${f.label}${f.detail ? ` — ${f.detail}` : ""}`);
@@ -406,7 +431,37 @@ async function main() {
 
   const summary = await writeSummary(root, results);
   log(`\n结论：${summary.pass}/${summary.total} PASS。报告：${summary.summaryPath}`);
-  return summary;
+  if (invalidCount) {
+    log(
+      `⚠ 本次运行有 ${invalidCount} 个场景属「运行环境无效」（status.txt = INVALID）：这些读数**不能**\n` +
+        "  用于判产品缺陷，也不计入产品失败；请复跑这几个场景后再下结论。",
+    );
+  }
+  return { ...summary, invalidCount };
+}
+
+/**
+ * 场景级基建错误的收尾（M379）：保证该场景仍有证据目录，且 `status.txt` 写成 `INVALID`
+ * ——与产品判红的 `FAIL` 在目录里就能分开 grep（backlog M281 条要求两者可区分）。
+ *
+ * 两种到达路径：① 基建阶段就抛（这时场景目录还没建，由这里补建）；② 场景跑了一半抛
+ * InfraError（runScenario 已建目录、已记过一条 `[运行环境无效]`，这里只补终态，**不重开目录**
+ * ——重开会把已经落盘的现场清掉）。
+ */
+async function recordInvalid(scenario, e) {
+  if (evidence.scenarioId !== scenario.id) {
+    await evidence.startScenario(scenario.id, {
+      id: scenario.id,
+      item: scenario.item,
+      title: scenario.title,
+      file: path.relative(repoRoot(), scenario.file),
+      startedAt: new Date().toISOString(),
+    });
+    evidence.record({ kind: "assert", ok: false, label: "[运行环境无效]", detail: e.message });
+  }
+  evidence.statusOverride = "INVALID";
+  const { status } = await evidence.finish();
+  return { status, records: evidence.records };
 }
 
 /**
@@ -432,7 +487,11 @@ process.on("exit", () => {
 let exitCode = 0;
 try {
   const summary = await main();
-  exitCode = summary.pass === summary.total ? 0 : 1;
+  // 退出码分档（M379）：0 = 全 PASS、1 = 有场景判红（产品面）、2 = 基建错误（app 起不来 /
+  // 前端未就绪 / 被跑批锁挡住 / 环境无效运行）。分档的用途是让调用方一眼分开「产品有问题」
+  // 与「这次运行本身不算数」——M281 的三次无效运行与真判红都报 0/1 PASS + 退出码 1，
+  // 只能靠人读步骤形态区分。
+  exitCode = summary.invalidCount ? 2 : summary.pass === summary.total ? 0 : 1;
 } catch (e) {
   // 锁被占：持有人信息是给人看的，原样走 stderr；退出码并入「运行失败」（2）。
   if (e instanceof LockBusyError) process.stderr.write(`${e.message}\n`);

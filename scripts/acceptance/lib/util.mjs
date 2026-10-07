@@ -11,6 +11,18 @@ export function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
 }
 
+/**
+ * 「本次运行无效」类错误的标记（M379）：专指**基建**问题——app 起不来 / 前端未就绪 /
+ * 窗口形态自检不过 / KimiCU 掉线这一类。它与产品判红在读数上必须分开：
+ * runner 见到它就把该场景标成 `INVALID`、整轮退出码升到 2（见 run.mjs 的退出码分档与
+ * README「退出码」），否则「环境无效运行」会被当成产品缺陷（finding
+ * `.tower/comms/findings/20260928-worker-impl-goto-line-c-improve-0-1-pass-1.md`：
+ * M281 三次无效运行与真判红都报 0/1 PASS，只能靠人读步骤形态区分）。
+ *
+ * 只在「起实例 / 就绪门」这条链上用；场景里的断言与动作失败一律是普通 Error（= 产品面）。
+ */
+export class InfraError extends Error {}
+
 export async function mkdirp(dir) {
   await mkdir(dir, { recursive: true });
   return dir;

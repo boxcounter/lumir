@@ -9,6 +9,29 @@ import { spawn } from "node:child_process";
 
 const DEFAULT_BIN = "/Applications/KimiCU.app/Contents/MacOS/kimi-cu";
 
+/**
+ * KimiCU `press_key` 的键名 DSL 归一（M379，backlog:782 / M324 现场）。
+ *
+ * `-` 在 DSL 里是**修饰键分隔符**（与 `+` 同义，实测 `a-b` 报 `unknown modifier \`a\``），
+ * 因此字面量连字符没有拼法：`press_key("-")` 报 `error: empty key DSL`（本机实测，0.5.11），
+ * 而键名表里有 `minus`。这里只做两处确定性改写：
+ *   - 整串恰为 `-` → `minus`（`keys: ["-"]` / `key: "-"` 这条最常用的写法）；
+ *   - `+` 分隔后某一段恰为 `-` → `minus`（`cmd+-` 这类 chord 里的主键）。
+ * 其余含 `-` 的形态（`Cmd--` 之类）歧义不可消除，原样透传让 KimiCU 如实报错——不猜。
+ *
+ * 位置放在这一层（而不是场景层）：`do: key` 与 `do: keys` 都经 `drive.pressKey` 落到这里，
+ * 单一入口；同时**不改场景侧的键名字面量**，`keys` 动作的可打印字符判定与回读期望值仍按
+ * 场景写的 `-` 走（注入 `minus` 键产出的就是 `-`）。
+ */
+function keyDsl(keys) {
+  if (keys === "-") return "minus";
+  if (typeof keys !== "string" || !keys.includes("+")) return keys;
+  return keys
+    .split("+")
+    .map((token) => (token === "-" ? "minus" : token))
+    .join("+");
+}
+
 export class CuError extends Error {}
 
 export class CuClient {
@@ -141,7 +164,7 @@ export class CuClient {
   }
 
   async pressKey(pid, keys) {
-    return this.call("press_key", { pid, keys });
+    return this.call("press_key", { pid, keys: keyDsl(keys) });
   }
 
   async click(pid, { index, x, y, button = "left", count }) {
@@ -161,10 +184,6 @@ export class CuClient {
     return this.call("click", args);
   }
 
-  async doubleClick(pid, target) {
-    return this.call("click", { pid, ...target, button: "left", count: 2 });
-  }
-
   async typeText(pid, text, { index, clear, submit, x, y } = {}) {
     const args = { pid, text };
     if (index !== undefined) args.index = index;
@@ -181,10 +200,17 @@ export class CuClient {
     return this.call("set_value", { pid, index, value });
   }
 
-  async scroll(pid, { index, page }) {
+  /** 滚动（M379 接入场景 DSL）：KimiCU 的 scroll 四种定位方式都透传——`index`（快照节点，
+   *  = 该滚动区）、`page`（整页数，正上负下）、`dx`/`dy`（行式增量，旧口径）、`x`/`y`（截图像素
+   *  落点）。只传进来的字段，不补缺省值：KimiCU 侧「没给就是没给」，补 0 会变成另一种语义。
+   *
+   *  自报 `ok:false`（没检测到位移 / 已到末尾）由 `call()` 一律抛 CuError——那一刻**不许当成功**
+   *  静默放过：后面的「某行在视口内」类断言会对着没滚动的现场判红/假绿（REVIEW.md 第 2 条同族）。 */
+  async scroll(pid, { index, page, dx, dy, x, y } = {}) {
     const args = { pid };
-    if (index !== undefined) args.index = index;
-    if (page !== undefined) args.page = page;
+    for (const [k, v] of Object.entries({ index, page, dx, dy, x, y })) {
+      if (v !== undefined) args[k] = v;
+    }
     return this.call("scroll", args);
   }
 

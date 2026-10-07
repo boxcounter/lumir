@@ -15,6 +15,7 @@ import {
   clickNode,
   frontmostPid,
   injectClickWithClickState,
+  injectClickWithModifiers,
   injectDrag,
   openFile,
   pressKey,
@@ -26,15 +27,24 @@ import {
   typeInEditor,
   waitUntil,
 } from "./drive.mjs";
-import { envHome, mkdirp, readText, repoRoot, secondVaultDir, sleep, vaultDir } from "./util.mjs";
+import { envHome, InfraError, mkdirp, readText, repoRoot, secondVaultDir, sleep, vaultDir } from "./util.mjs";
 
 /** 动作与断言的白名单：`--check` 用它做静态校验，避免写错 key 要等一整轮真机才发现。 */
 export const ACTIONS = new Set([
   "settle", "waitFor", "sleep", "key", "keys", "type", "click", "clickNodeText", "clickInNode", "clickEditor",
-  "doubleClick", "drag", "focusWindow", "open", "configWrite", "restart", "record", "recordEditor", "vaultWrite",
-  "vaultAppend", "vaultRm", "vaultSparse", "resizeWindow", "clipboardRead",
+  "doubleClick", "drag", "scroll", "focusWindow", "open", "configWrite", "restart", "record", "recordEditor",
+  "vaultWrite", "vaultAppend", "vaultRm", "vaultSparse", "resizeWindow", "clipboardRead",
 ]);
 export const EXPECT_KINDS = new Set(["ax", "editor", "file", "glob", "shot", "window", "clipboard", "pixel"]);
+
+/** `do: click` 的 `target.modifiers` 允许的修饰键（M379，backlog:1913）：KimiCU 与 swift 两侧的
+ *  别名都收（`meta`/`cmd` 是同一个键的两种说法），小写比较。 */
+const MODIFIER_ALIASES = new Set(["meta", "cmd", "command", "super", "control", "ctrl", "shift", "alt", "option"]);
+
+/** YAML 表（非数组、非 null 的对象）：`config.editor` / `configWrite.editor` 的形状判据。 */
+function isPlainTable(v) {
+  return typeof v === "object" && v !== null && !Array.isArray(v);
+}
 
 /** 静态校验一个场景，返回问题列表（空 = 通过）。 */
 export function checkScenario(scenario) {
@@ -110,12 +120,22 @@ export function checkScenario(scenario) {
   for (const k of Object.keys(scenario.config ?? {})) {
     if (!SCENARIO_CONFIG_KEYS.includes(k)) push(`config 未知键 ${k}（拼错即静默不生效，允许：${SCENARIO_CONFIG_KEYS.join(" / ")}）`);
   }
+  // `config.editor`（M379，backlog:1905）：**整表透传**的 `[editor]` 表（snake_case 键），给
+  // 「M180 之后新增的 editor 配置项」构造启动口径用——不写这条，每个新键都要回来改一次套件。
+  // 写成非表（如列表 / 字符串）时 writeConfig 会把它当普通值铺开，静默丢掉半张表，故在此挡住。
+  if (scenario.config?.editor !== undefined && !isPlainTable(scenario.config.editor))
+    push(`config.editor 需要对象（[editor] 表，snake_case 键），实际 ${JSON.stringify(scenario.config.editor)}`);
   for (const [i, step] of (scenario.steps ?? []).entries()) {
     const at = `steps[${i}]${step.name ? `(${step.name})` : ""}`;
     if (!step.name) push(`${at} 缺少 name`);
     if (step.do !== undefined && !ACTIONS.has(step.do)) push(`${at} 未知动作 do=${step.do}`);
     if (step.do === "keys" && !Array.isArray(step.keys)) push(`${at} do=keys 需要 keys 数组`);
     if (step.do === "key" && !step.key) push(`${at} do=key 需要 key`);
+    // `do: type` 的 text 漏写会在真机注入 `undefined`（`String(undefined)`），连报 3 次「未落地」
+    // 才暴露成因——静态校验期就该挡住（M379，backlog:1922 / finding
+    // `20260916-worker-typefix-improve-checkscenario-do-type-text-undefined`）。
+    if (step.do === "type" && (typeof step.text !== "string" || step.text.length === 0))
+      push(`${at} do=type 需要非空 text（漏写会注入 undefined，真机上表现为连报 3 次未落地）`);
     if (step.do === "waitFor") {
       // 轮询判据（M296）：`has` / `not` 两份字符串清单，至少一项非空；写错键名会静默变成
       // 「立刻成立」的空条件（本套件最该挡的假绿形态），因此在这里死板校验。
@@ -136,6 +156,30 @@ export function checkScenario(scenario) {
     if (step.do === "doubleClick" && !step.target) push(`${at} do=doubleClick 需要 target（节点或 {x,y} 窗口局部坐标）`);
     if (step.do === "click" && step.target?.button !== undefined && !["left", "right", "middle"].includes(step.target.button))
       push(`${at} do=click 的 target.button 只能是 left/right/middle，实际 ${JSON.stringify(step.target.button)}`);
+    if (step.do === "click" && step.target?.modifiers !== undefined) {
+      // 修饰键（M379，backlog:1913）：写错键名会静默变成「无修饰键的普通点击」，而场景的断言
+      //（如「⌘-点击跟随链接」）会因此假红——在这里按白名单挡掉（KimiCU 之外的通道由套件自己译）。
+      const mods = step.target.modifiers;
+      if (!Array.isArray(mods) || mods.length === 0 || mods.some((m) => typeof m !== "string" || !m))
+        push(`${at} do=click 的 target.modifiers 需要非空字符串数组，实际 ${JSON.stringify(mods)}`);
+      else
+        for (const m of mods)
+          if (!MODIFIER_ALIASES.has(String(m).toLowerCase()))
+            push(`${at} do=click 的 target.modifiers 含未知修饰键 ${JSON.stringify(m)}（允许：${[...MODIFIER_ALIASES].join(" / ")}）`);
+    }
+    if (step.do === "scroll") {
+      const nums = ["page", "dx", "dy", "index"].filter((k) => step[k] !== undefined);
+      if (!nums.length && !step.target) push(`${at} do=scroll 需要 target（滚动区节点或 {x,y}）或 page/dx/dy/index 之一`);
+      for (const k of nums)
+        if (!Number.isInteger(step[k])) push(`${at} do=scroll 的 ${k} 需要整数，实际 ${JSON.stringify(step[k])}`);
+      if (step.page === 0) push(`${at} do=scroll 的 page 不能为 0（KimiCU 侧等价于「没滚」）`);
+      if (step.target && step.target.x !== undefined && typeof step.target.y !== "number")
+        push(`${at} do=scroll 的 target 给了 x 就必须给数值 y（截图像素落点）`);
+    }
+    if (step.do === "configWrite" && step.editor !== undefined && !isPlainTable(step.editor))
+      push(`${at} do=configWrite 的 editor 需要对象（[editor] 表，snake_case 键），实际 ${JSON.stringify(step.editor)}`);
+    if (step.do === "configWrite" && step.mode !== undefined && typeof step.mode !== "string")
+      push(`${at} do=configWrite 的 mode 需要字符串（editor.mode），实际 ${JSON.stringify(step.mode)}`);
     if (step.do === "drag" && (!step.target || (step.dx === undefined && step.dy === undefined)))
       push(`${at} do=drag 需要 target（带 bbox 的节点、{x,y} 窗口局部坐标或 textareaEdge）与 dx/dy 位移（窗口局部点）`);
     if (step.do === "resizeWindow" && typeof step.width !== "number")
@@ -744,6 +788,10 @@ export async function runScenario(ctx, scenario) {
         }
         await doAction(step, { ctx, scenario, vars, pid: () => ctx.pid, evidence, cu });
       } catch (e) {
+        // 基建错误（app 起不来 / 重启后前端未就绪）不在这里吞成一条动作 FAIL：它说明**本次
+        // 运行的读数整体不可用**，交回 runner 把整场判 INVALID（退出码 2，见 run.mjs 的退出码
+        // 分档与 README）——否则无效运行与产品判红在读数上无法区分（backlog M281 条）。
+        if (e instanceof InfraError) throw e;
         await fail(`[动作] ${step.name}`, e.message, await readAx(cu, ctx.pid).catch(() => null));
         continue;
       }
@@ -755,6 +803,13 @@ export async function runScenario(ctx, scenario) {
       for (const expect of scenario.teardown) await check(expect, {});
     }
   } catch (e) {
+    // 基建错误：记一条并把终态钉成 INVALID（statusOverride 压过按失败项推出来的 FAIL），
+    // 再原样抛给 runner——退出码分档与「请复跑」的措辞归它（M379）。
+    if (e instanceof InfraError) {
+      evidence.record({ kind: "assert", ok: false, label: "[运行环境无效]", detail: e.message });
+      evidence.statusOverride = "INVALID";
+      throw e;
+    }
     // 场景级异常（打不开文件、app 未就绪等）不能吞：记成一条 FAIL 断言，保留已收集的证据。
     const ax = await readAx(cu, ctx.pid).catch(() => null);
     await fail(`[场景异常] ${e.message}`, String(e.stack ?? "").split("\n").slice(1, 3).join(" | "), ax);
@@ -896,6 +951,52 @@ async function doAction(step, { ctx, cu, scenario, vars, pid, evidence }) {
     }
     case "sleep":
       return sleep(step.ms ?? 1000);
+    case "scroll": {
+      // 滚动（M379 接入，backlog:1853 / 1186）：此前只有 `lib/cu.mjs:184` 的 MCP 封装，场景 DSL
+      // 里没有这个动作——「先滚动容器再断言」类场景因此写不出来（受影响的是「左栏滚到中部后
+      // ⌘O 浮层被裁」这类定位缺陷，判据只能退回代码级复算）。
+      //
+      // 定位方式与 KimiCU 同形，**只透传写了的字段**：`target` 给节点（取 index，滚那个滚动区）
+      // 或 `{x,y}`（截图像素落点）；也可在 step 上直接写 `page`（整页，正上负下）/ `dx`/`dy`
+      //（行式增量）/ `index`。自报 `ok:false`（没检测到位移 / 已到末尾）由 cu.scroll 一律抛错
+      // ——不静默放过：后面的「某行在视口内」类断言会对着没滚动的现场判红/假绿（README 同条）。
+      //
+      // **先取一次 mode=full 快照**（M252 三轮探针的 ①：点路径不带图时报 `no cached geometry —
+      // call get_app_state first`，KimiCU 的 scroll 依赖最近一次快照的几何）。它同时定义了
+      // `target: {x,y}` 的坐标空间 = 该快照的截图像素（与 click / clickInNode 同一空间）。
+      const snapshot = await readAx(cu, p, { mode: "full" });
+      const t = step.target;
+      let index = step.index;
+      // 失败时把**通道边界**写进错误里：KimiCU 自报 `no scroll movement / already at end` 时，
+      // 场景作者很容易读成「文档到头了」，而实测是这条通道在本 app 上产不出位移（见下）。
+      const scrollOrExplain = async (args) => {
+        try {
+          return (await cu.scroll(p, args)).json;
+        } catch (e) {
+          throw new Error(
+            `scroll 失败：${e.message}——KimiCU 的 scroll 在**本 app** 上产不出位移：M252 的三轮探针` +
+              "（树行 bbox 中心 × page 正/负、左栏 padding 点、legacy dy）与 M379 在 299 行长文档上的复验" +
+              "（编辑器中心点 + dy）都是 no movement / already at end；CM 的 .cm-scroller 与树滚动区都没有" +
+              "作为可滚对象暴露给 KimiCU。这是通道边界不是产品缺陷，见 README「已知边界」的滚动条：" +
+              "要真正滚起来得给 lib/cgevent-click.swift 加 wheel mode（finding " +
+              "20260927-worker-vault-switch-fb-improve-scroll-m252）。",
+          );
+        }
+      };
+      if (t && t.x !== undefined) {
+        // 点形态也要带位移量：只给 x/y 时 KimiCU 报 `dy and dx both zero`（M379 探针实测）。
+        return await scrollOrExplain({ x: t.x, y: t.y, page: step.page, dx: step.dx, dy: step.dy });
+      }
+      if (t) {
+        const node =
+          t.any !== undefined
+            ? findByAny(snapshot.nodes, { role: t.role, any: t.any, nth: t.nth ?? 0 })
+            : findNode(snapshot.nodes, { role: t.role, name: t.name, nth: t.nth ?? 0 });
+        if (!node) throw new Error(`scroll：找不到目标节点 ${JSON.stringify(t)}`);
+        index = node.index;
+      }
+      return await scrollOrExplain({ index, page: step.page, dx: step.dx, dy: step.dy });
+    }
     case "key":
       await noteIfFocusLost(ctx, p);
       return pressKey(cu, p, step.key);
@@ -1090,6 +1191,28 @@ async function doAction(step, { ctx, cu, scenario, vars, pid, evidence }) {
     }
     case "click": {
       const t = step.target ?? {};
+      // 修饰键点击（M379，backlog:1913）：KimiCU 的 click **没有修饰键参数**（工具 schema 实测
+      // 只有 button / mouse_button / count / hold_ms），因此 ⌘-Click 这类路径（跟随链接）在真机上
+      // 原本无法触发。这里走 doubleClick 同一条 swift + CGEvent 通道，把修饰键作为**鼠标事件的
+      // flags** 投递——DOM 侧收到的就是 `metaKey: true` 的点击（与 Playwright 的
+      // `click({ modifiers })` 同形）。
+      //
+      // 代价与 doubleClick 相同（README「已知边界」）：会移动真实光标、要求目标窗口在前台，坐标用
+      // **窗口局部点**（mode=ax + window_bounds，与 doubleClick / drag 同一空间）——不是 KimiCU
+      // click 那套截图像素。
+      const modifiers = t.modifiers ?? [];
+      if (modifiers.length) {
+        const { point } = await windowLocalTarget(cu, p, t, {
+          retries: step.retries ?? 4,
+          label: `click（modifiers=${modifiers.join("+")}）`,
+          dx: step.dx,
+          dy: step.dy,
+        });
+        const out = await injectClickWithModifiers(p, point, { modifiers, count: t.count ?? 1 });
+        evidence.record({ kind: "note", text: `修饰键点击（${modifiers.join("+")}）自报：${out}` });
+        await sleep(step.settleMs ?? 600); // 点击到前端处理完（跟随链接 / 开标签）之间有一拍
+        return `修饰键点击 ${modifiers.join("+")} → 屏幕 ${Math.round(point.x)},${Math.round(point.y)}｜${out}`;
+      }
       // `count` 两条路径都如实透传（M184 实测：坐标路径与 AX 索引路径在 WKWebView 里**都不
       // 产生** DOM 的 `dblclick`，见 README「已知边界」——要验双击类交互时别指望它）。
       // `button` 两条路径都透传（M244）：右键是上下文菜单唯一的真实入口，而 KimiCU 的
@@ -1188,6 +1311,14 @@ async function doAction(step, { ctx, cu, scenario, vars, pid, evidence }) {
         // 界面语言（M282）同形沿用：一次 configWrite MUST NOT 抹掉 `ui.language`
         //（本场景的第一步就要把语言设成 zh，后续步骤若抹掉它，语言切换的起点就没了）。
         language: step.language !== undefined ? step.language : cur.ui?.language,
+        // `[editor]` 表**整表透传**（M379，backlog:1905）：当前表整份带过来、`step.editor` 覆盖，
+        // 具名参数（autoIndent / 排版三项…）在 writeConfig 里排在这张表之后，显式值仍然优先。
+        //
+        // 为什么要有这条：早先这里逐键列举，M180 新增的 `editor.line_wrap` / `code_block_wrap`
+        // 之后每加一个 `[editor]` 键都得回来改套件，否则只能构造「运行期改配置」的场景，构造不出
+        // 「启动口径来自 config.json」那一类。整表透传之后新增键不必再动套件（并且顺带保证
+        // 「一次 configWrite 不抹掉当前表里任何键」——这正是本文件反复踩过的假红形态）。
+        editor: { ...(cur.editor ?? {}), ...(step.editor ?? {}) },
       };
       await writeConfig(next);
       // requireVault: false 只对本步的重启生效（该步期待「未打开空态」，就绪门里「树里有
@@ -1224,31 +1355,17 @@ async function doAction(step, { ctx, cu, scenario, vars, pid, evidence }) {
       // 还必须先拿前台：真鼠标点击落在**该点最上层的那扇窗**上，目标窗口被别的应用盖住时点击
       // 会打到别人身上（表现为「遮罩不出现」这类与产品无关的假红）。KimiCU 的键盘注入可以后台
       // 走，这条通道不行。
-      const fg = await tryForeground(cu, p, { retries: step.retries ?? 4 });
-      if (!fg.frontmost) {
-        throw new Error(
-          `doubleClick 需要目标窗口在前台（当前前台 pid=${fg.frontPid ?? "未知"}）：真鼠标点击会落到最上层那扇窗上，` +
-            `此时点击不会到达 Lumir。跑双击类场景时目标窗口需可见且未被别的应用盖住。`,
-        );
-      }
-      const ax = await readAxForScreenPoint(cu, p);
-      const bounds = windowBounds(ax.text);
-      let local;
-      if (step.target?.x !== undefined) {
-        local = { x: step.target.x, y: step.target.y };
-      } else {
-        const node =
-          step.target?.any !== undefined
-            ? findByAny(ax.nodes, { role: step.target.role, any: step.target.any, nth: step.target.nth ?? 0 })
-            : findNode(ax.nodes, { role: step.target?.role, name: step.target?.name ?? step.target?.text, nth: step.target?.nth ?? 0 });
-        if (!node?.bbox) throw new Error(`doubleClick：找不到带 bbox 的节点 ${JSON.stringify(step.target)}`);
-        local = { x: node.bbox.x + node.bbox.w * (step.dx ?? 0.5), y: node.bbox.y + node.bbox.h * (step.dy ?? 0.5) };
-      }
-      const point = { x: bounds.x + local.x, y: bounds.y + local.y };
-      if (point.x < bounds.x || point.x > bounds.x + bounds.w || point.y < bounds.y || point.y > bounds.y + bounds.h) {
-        throw new Error(`doubleClick：算出的屏幕点 ${JSON.stringify(point)} 落在窗口 (${bounds.x},${bounds.y} ${bounds.w}×${bounds.h}) 之外`);
-      }
+      // 还必须先拿前台：真鼠标点击落在**该点最上层的那扇窗**上，目标窗口被别的应用盖住时点击
+      // 会打到别人身上（表现为「遮罩不出现」这类与产品无关的假红）。KimiCU 的键盘注入可以后台
+      // 走，这条通道不行。换算与前台前置收在 windowLocalTarget（与修饰键点击共用一份，M379）。
+      const { local, point } = await windowLocalTarget(cu, p, step.target, {
+        retries: step.retries ?? 4,
+        label: "doubleClick",
+        dx: step.dx,
+        dy: step.dy,
+      });
       const out = await injectClickWithClickState(p, point, { mode: step.mode ?? 2 });
+      evidence.record({ kind: "note", text: `doubleClick 自报：${out}` });
       await sleep(step.settleMs ?? 900); // 双击到前端处理完（遮罩建 DOM、标签栏重绘）之间有一拍
       return `窗口局部 ${Math.round(local.x)},${Math.round(local.y)} → 屏幕 ${Math.round(point.x)},${Math.round(point.y)}｜${out}`;
     }
@@ -1305,6 +1422,9 @@ async function doAction(step, { ctx, cu, scenario, vars, pid, evidence }) {
         }
       }
       const out = await injectDrag(from, to);
+      // 通道自报落盘（REVIEW.md 第 7 条：证据要落成可 ls 的文件，别只在终端跑过）——
+      // 这三个 swift 通道的动作只回一行文本，落进 steps.md 才能复盘「frontmost 是谁 / 点在哪」。
+      evidence.record({ kind: "note", text: `drag 自报：${out}` });
       await sleep(step.settleMs ?? 500); // 松手后的提交（rAF 末帧 + 写盘）之间有一拍
       return `窗口局部 ${Math.round(local.x)},${Math.round(local.y)} → +${step.dx ?? 0},${step.dy ?? 0}｜${out}`;
     }
@@ -1461,6 +1581,50 @@ async function readAxForScreenPoint(cu, pid, { retries = 3 } = {}) {
     );
   }
   throw new Error("doubleClick 需要 mode=ax 的窗口局部坐标口径（AX dump 的 header 里应有 window-local 说明），本次口径不是它");
+}
+
+/**
+ * 「真鼠标事件类」动作的公共前置（M379 抽出，doubleClick 与 click 的 modifiers 分支共用——
+ * 同一套坐标换算只应有一份，REVIEW.md 第 8 条）：先拿前台，再把**窗口局部点**换算成
+ * **Quartz 全局屏幕坐标**（swift + CGEvent 那条通道要的空间）。
+ *
+ * `target` 两种形态（与 doubleClick 同形）：`{role,name|any,nth}` 取节点 bbox 中心（`dx`/`dy`
+ * 按其宽高比例偏移，默认 0.5；step 级的 dx/dy 也可作缺省）、或 `{x,y}` 直接给窗口局部点
+ *（全屏遮罩这类没有 AX 节点的目标用）。越出窗口边界一律报错——坐标空间混用的症状是「点到了
+ * 别处」，比报错更难查。
+ *
+ * 前台是硬前提：真鼠标事件落在**该点最上层的那扇窗**上，目标被别的应用盖住时事件打到别人身上
+ *（表现为「遮罩不出现」这类与产品无关的假红）。KimiCU 的键盘注入可以后台走，这条通道不行。
+ */
+async function windowLocalTarget(cu, pid, target, { retries = 4, label = "动作", dx, dy } = {}) {
+  const fg = await tryForeground(cu, pid, { retries });
+  if (!fg.frontmost) {
+    throw new Error(
+      `${label} 需要目标窗口在前台（当前前台 pid=${fg.frontPid ?? "未知"}）：真鼠标事件会落到最上层那扇窗上，` +
+        `此时不会到达 Lumir。跑这类场景时目标窗口需可见且未被别的应用盖住。`,
+    );
+  }
+  const ax = await readAxForScreenPoint(cu, pid);
+  const bounds = windowBounds(ax.text);
+  let local;
+  if (target?.x !== undefined) {
+    local = { x: target.x, y: target.y };
+  } else {
+    const node =
+      target?.any !== undefined
+        ? findByAny(ax.nodes, { role: target.role, any: target.any, nth: target.nth ?? 0 })
+        : findNode(ax.nodes, { role: target?.role, name: target?.name ?? target?.text, nth: target?.nth ?? 0 });
+    if (!node?.bbox) throw new Error(`${label}：找不到带 bbox 的节点 ${JSON.stringify(target)}`);
+    local = {
+      x: node.bbox.x + node.bbox.w * (target.dx ?? dx ?? 0.5),
+      y: node.bbox.y + node.bbox.h * (target.dy ?? dy ?? 0.5),
+    };
+  }
+  const point = { x: bounds.x + local.x, y: bounds.y + local.y };
+  if (point.x < bounds.x || point.x > bounds.x + bounds.w || point.y < bounds.y || point.y > bounds.y + bounds.h) {
+    throw new Error(`${label}：算出的屏幕点 ${JSON.stringify(point)} 落在窗口 (${bounds.x},${bounds.y} ${bounds.w}×${bounds.h}) 之外`);
+  }
+  return { ax, bounds, local, point };
 }
 
 function describeExpect(expect) {
