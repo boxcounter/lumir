@@ -35,15 +35,17 @@
 //     done 到达后对完整源做一次全量重渲（增量渲染在「跨空行的松散列表」这类形态上是
 //     近似，全量重渲是收敛点——近似只存在于流式期间）。
 //
-// 文案：全部取值经 src/copy.ts 的 t()（D326–D330 / D332–D348 / D375–D383，D334 / D335 于
-// M347 改形、D98 复用为 provider 浮层当前项标记、D383 为 M348 中断标注）；长驻元素（toggle 钮 / harness 段 / 输入框
+// 文案：全部取值经 src/copy.ts 的 t()（D326–D330 / D332–D348 / D375–D387，D334 / D335 于
+// M347 改形、D98 复用为 provider 浮层当前项标记、D383 为 M348 中断标注、D385–D387 为 M351
+// 消息 meta 行与工具折叠摘要）；长驻元素（toggle 钮 / harness 段 / 输入框
 // placeholder / 按钮 / 上下文 chip / ctx 读数 / 模型 chip / 待决批准项）注册 onRelabel，
 // 语言切换时从已存状态重渲（design §5.2 的不变量）；transcript 的历史条目是已发生事实的记
 // 录，不随语言切换改写（与 toast 历史同口径）——复制钮的 ✓ 反馈与 provider 浮层是交互件
 //（前者每次点击现取、后者每次打开现建），天然跟当前语言走。
 
 import { GFM, parser as commonmarkParser } from "@lezer/markdown";
-import { onRelabel, t } from "./copy";
+import { currentLanguage, formatRelative, onRelabel, t } from "./copy";
+import type { Language } from "./copy";
 import {
   configGet,
   configSetValue,
@@ -585,6 +587,23 @@ export function usageOverWarn(ctxPct: number, warnPct: number): boolean {
   return ctxPct >= warnPct;
 }
 
+/** 消息 when 的相对时间（M351，change harness-pane-visual-fidelity design §4）：上屏打戳 →
+ *  分档标签。「刚刚」复用 D100.1（同一语义单一真源），其余档经 Intl（formatRelative
+ *  narrow 式，与 vault 切换器的 D100 族同一机制——narrow：zh「10秒前」贴合原型
+ *  「12 秒前」（long 式会产出「10秒钟前」）、en「10s ago」，micro 字号紧凑位）。分档：「<10s 刚刚 / <60s N 秒前 / <60min N 分钟前 /
+ *  <24h N 小时前 / 否则昨天」——会话是内存态、重启清空，更老的值实际上不出现，「昨天」
+ *  已是兜底；时钟回拨（打戳在将来）clamp 进「刚刚」，不产出负数。 */
+export function relativeWhen(at: number, now: number, lang: Language = currentLanguage()): string {
+  const seconds = Math.max(0, Math.floor((now - at) / 1000));
+  if (seconds < 10) return t("D100.1", undefined, lang);
+  if (seconds < 60) return formatRelative(-seconds, "second", lang, "narrow");
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return formatRelative(-minutes, "minute", lang, "narrow");
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return formatRelative(-hours, "hour", lang, "narrow");
+  return formatRelative(-1, "day", lang, "narrow");
+}
+
 /**
  * 发送钮两态状态机（M347）：idle = 可发送；running = 处理中（钮面 = 停止态，点击走
  * 停止钩子）；stopping = 停止已请求、等后端终态（连点幂等——第二次 stop-clicked 被吞，
@@ -920,9 +939,16 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   seg.className = "lumir-hp-seg";
   seg.setAttribute("role", "group");
   seg.hidden = true;
+  // 会话名钮 + 浮层同挂一层 wrapper（M351，finding 20261006-worker-hp4）：浮层 MUST NOT 嵌在
+  // <button> 内——WKWebView 把「嵌在 button 里的 button」当叶子，AX 树不暴露浮层项。
+  // wrapper 是 absolute 定位的包含块（紧贴按钮，坐标语义与「锚在钮内」等价）。
+  const sessionWrap = document.createElement("span");
+  sessionWrap.className = "lumir-hp-sessionwrap";
   const sessionButton = document.createElement("button");
   sessionButton.type = "button";
   sessionButton.className = "lumir-hp-session";
+  sessionButton.setAttribute("aria-haspopup", "menu");
+  sessionButton.setAttribute("aria-expanded", "false");
   const sname = document.createElement("span");
   sname.className = "lumir-hp-sname";
   const schev = document.createElement("span");
@@ -939,14 +965,15 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   segNewPlus.textContent = "＋"; // i18n-exempt: glyph（全角加号图形，非文案）
   const segNewLabel = document.createElement("span");
   segNew.append(segNewPlus, segNewLabel);
-  seg.append(sessionButton, segNew);
   // 会话浮层（节点 1 裁决后口径）：只含「新建会话」一个动作项，不列历史会话。
   const sessPop = document.createElement("div");
   sessPop.className = "lumir-hp-sesspop";
+  sessPop.setAttribute("role", "menu");
   sessPop.hidden = true;
   const sessPopItem = document.createElement("button");
   sessPopItem.type = "button";
   sessPopItem.className = "lumir-hp-sesspop-item";
+  sessPopItem.setAttribute("role", "menuitem");
   const popPlus = document.createElement("span");
   popPlus.className = "lumir-hp-plus";
   popPlus.setAttribute("aria-hidden", "true");
@@ -954,7 +981,8 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   const popLabel = document.createElement("span");
   sessPopItem.append(popPlus, popLabel);
   sessPop.append(sessPopItem);
-  sessionButton.append(sessPop); // 浮层锚在会话名钮内（absolute 定位的包含块）
+  sessionWrap.append(sessionButton, sessPop);
+  seg.append(sessionWrap, segNew);
   // 段进标题栏（toggle 钮之前；hidden 长驻，在场与否随 attach 状态翻）——装配层只管宽度
   //（applySplitRatio 把它当 harness pane 的标题栏槽设 flexGrow）。
   shell.titlebar.insertBefore(seg, toggleButton);
@@ -979,25 +1007,41 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   const chip = document.createElement("div");
   chip.className = "lumir-hp-chip";
 
-  // ── composer 控制行（M347）：[模型 chip][混排 composer][ctx 读数 + ⓘ][发送钮] ──
-  // 空间紧（原型实测约 346px）：chip 与读数都是小体量只读件，composer 吃剩余弹性宽。
-  const composerRow = document.createElement("div");
-  composerRow.className = "lumir-hp-composer-row";
+  // ── composer 区（M351 视觉还原，change harness-pane-visual-fidelity design §2.5/§3.2）──
+  // 原型形态：输入区与控制行收进同一个圆角卡片容器（.lumir-hp-composer-box，原型 .h-box），
+  // 控制行在容器底 = [模型 chip][ctx 读数 + ⓘ][spacer][图标发送钮]。空间紧（原型实测约
+  // 346px）：chip 与读数都是小体量只读件，输入区吃剩余弹性宽。
+  const composerArea = document.createElement("div");
+  composerArea.className = "lumir-hp-composer-area";
+  const composerBox = document.createElement("div");
+  composerBox.className = "lumir-hp-composer-box";
+  const ctl = document.createElement("div");
+  ctl.className = "lumir-hp-ctl";
 
   // 模型 chip：可见文本 = provider 名（配置值即读数，不译文）；点击浮层列
   // [harness].providers 已配置档，选择经 config_set_value 写回、下一轮生效。
+  // chip + 浮层同挂 wrapper（M351，finding 20261006-worker-hp4，与会话名钮同一条修复）：
+  // 浮层挪出 <button>，WKWebView 的 AX 树才暴露浮层项；wrapper 是 absolute 定位的包含块。
+  const modelWrap = document.createElement("span");
+  modelWrap.className = "lumir-hp-modelwrap";
   const modelChip = document.createElement("button");
   modelChip.type = "button";
   modelChip.className = "lumir-hp-model";
+  modelChip.setAttribute("aria-haspopup", "menu");
+  modelChip.setAttribute("aria-expanded", "false");
   modelChip.hidden = true;
   const modelName = document.createElement("span");
   modelName.className = "lumir-hp-model-name";
+  const modelChev = document.createElement("span");
+  modelChev.className = "lumir-hp-model-chev";
+  modelChev.setAttribute("aria-hidden", "true");
+  modelChev.textContent = "▾"; // i18n-exempt: glyph（下指 chevron 图形，非文案）
   const modelPop = document.createElement("div");
   modelPop.className = "lumir-hp-modelpop";
+  modelPop.setAttribute("role", "menu");
   modelPop.hidden = true;
-  // 浮层锚在 chip 内（absolute 定位的包含块）；读数是独立 span——chip 的文本重写
-  //（applyModelChip）因此不会碰浮层（textContent 赋值会清空子节点，浮层不能当文本的兄弟）。
-  modelChip.append(modelName, modelPop);
+  modelChip.append(modelName, modelChev);
+  modelWrap.append(modelChip, modelPop);
 
   // 不定态进度条 + 阶段指示一行（M347）：只在处理中态可见；无百分比——本轮剩余工作量
   // 前端不知道。eink 下转明度表达（见 css 的 keyframes 分叉）。
@@ -1032,19 +1076,58 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   // 混排编辑区（M343，change add-harness-quote-cards design §2/§5）：contenteditable div 取代
   // textarea，全 composer 唯一形态——顶层仅 .lumir-hp-qcard（原子卡片）/ .lumir-hp-qpara
   // （问题段落）两类块；无卡片时退化为纯文本输入。数据层 = 本文件头部纯模型层的块序列，
-  // 序列化投递走 M342 的 serializeQuoteMessage。
+  // 序列化投递走 M342 的 serializeQuoteMessage。M351 起自身不带边框——边框/底色/圆角由
+  // 外层 composer-box 承担（原型 .h-box：focus-within 出强调框）。
   const composer = document.createElement("div");
   composer.className = "lumir-hp-composer";
   composer.contentEditable = "true";
   composer.setAttribute("role", "textbox");
   composer.setAttribute("aria-multiline", "true");
   composer.spellcheck = false;
+  const ctlSpacer = document.createElement("span");
+  ctlSpacer.className = "lumir-hp-ctl-spacer";
+  // 发送钮（M351 图标化，原型 .h-send）：26×26 accent 实心，↑ / ■ 两态 glyph 按相位显隐；
+  // 可读名与悬停沿用 D329/D378（真机 AX 名断言不受影响）。glyph 取自原型 SVG，
+  // 经 DOM API 构建（本模块无 innerHTML 的渲染纪律不变）。
   const sendButton = document.createElement("button");
   sendButton.type = "button";
   sendButton.className = "lumir-hp-send";
-  composerRow.append(modelChip, composer, ctxWrap, sendButton);
+  const SVG_NS = "http://www.w3.org/2000/svg";
+  const sendGo = document.createElementNS(SVG_NS, "svg");
+  sendGo.setAttribute("width", "13");
+  sendGo.setAttribute("height", "13");
+  sendGo.setAttribute("viewBox", "0 0 14 14");
+  sendGo.setAttribute("fill", "none");
+  sendGo.setAttribute("stroke", "currentColor");
+  sendGo.setAttribute("stroke-width", "1.6");
+  sendGo.setAttribute("stroke-linecap", "round");
+  sendGo.setAttribute("stroke-linejoin", "round");
+  sendGo.classList.add("lumir-hp-send-go");
+  sendGo.setAttribute("aria-hidden", "true");
+  const sendGoPath = document.createElementNS(SVG_NS, "path");
+  sendGoPath.setAttribute("d", "M7 11.5v-9M3.5 6 7 2.5 10.5 6");
+  sendGo.append(sendGoPath);
+  const sendStop = document.createElementNS(SVG_NS, "svg");
+  sendStop.setAttribute("width", "10");
+  sendStop.setAttribute("height", "10");
+  sendStop.setAttribute("viewBox", "0 0 12 12");
+  sendStop.setAttribute("fill", "currentColor");
+  sendStop.classList.add("lumir-hp-send-stop");
+  sendStop.setAttribute("aria-hidden", "true");
+  sendStop.setAttribute("hidden", ""); // 初始 = 发送态（SVG 无 hidden 属性映射，CSS [hidden] 兜显隐）
+  const sendStopRect = document.createElementNS(SVG_NS, "rect");
+  sendStopRect.setAttribute("x", "2");
+  sendStopRect.setAttribute("y", "2");
+  sendStopRect.setAttribute("width", "8");
+  sendStopRect.setAttribute("height", "8");
+  sendStopRect.setAttribute("rx", "1.5");
+  sendStop.append(sendStopRect);
+  sendButton.append(sendGo, sendStop);
+  ctl.append(modelWrap, ctxWrap, ctlSpacer, sendButton);
+  composerBox.append(composer, ctl);
+  composerArea.append(composerBox);
 
-  panel.append(transcript, chip, progress, composerRow);
+  panel.append(transcript, chip, progress, composerArea);
 
   // ── 状态 ─────────────────────────────────────────────────────────────────
   /** 面板挂载的 pane 槽（null = 收起/未开）。pane 在场与否由装配层管，面板只记录挂在哪。 */
@@ -1079,13 +1162,28 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   let firstUserText: string | null = null;
   let streamingEl: HTMLElement | null = null;
   let streamingText = "";
+  /** 流式消息的 body 体（M351：who 行 + body 分置——finalize 的 replaceChildren 只作用
+   *  body，who 行不被定稿重渲抹掉；工具清单块挂 body 之后、消息之内）。 */
+  let streamingBody: HTMLElement | null = null;
   /** 流式消息里已完成块已渲染到的源偏移（增量渲染的游标）。 */
   let renderedFinalized = 0;
   let tailEl: HTMLElement | null = null;
   let chunkBuffer = "";
   let flushScheduled = false;
   const pendingApprovals = new Map<string, PendingApproval>();
-  let lastToolEl: HTMLElement | null = null;
+  /** 当前轮次的工具清单块（M351 还原原型屏 4 清单形态，change harness-pane-visual-fidelity
+   *  design §3.3）：挂进当前 agent 消息（body 之后），一轮一块；轮次终态经 collapseTools
+   *  收尾（≥2 行折叠为一行摘要，单行保持展开）。 */
+  let activeTools: { el: HTMLElement; rows: HTMLElement[]; running: HTMLElement | null } | null = null;
+  /** 最近一条 assistant 消息（快照恢复路径的工具记录挂点；live 路径恒为 streamingEl）。 */
+  let lastAssistantEl: HTMLElement | null = null;
+  /** when 的低频刷新定时器（30s；attach 起、detach 清——meta chrome，不在
+   *  keypress-to-paint 路径，ADR 0002 §6）。 */
+  let whenTimer: number | null = null;
+  /** 错误去重（design §6，finding 20261006-tower-bug-harness-pane）：最后一条错误行与
+   *  其文案——同文案就地滚回视野，不追加堆叠。 */
+  let lastErrorEl: HTMLElement | null = null;
+  let lastErrorText = "";
   /** 当前 vault 根路径（会话作用域基准：事件过滤与快照准入都用它；null = 尚未装载 vault）。
    *  由装配层在每次装载 vault 后经 `vaultChanged` 传入（src/main.ts 的 applyVault）。 */
   let currentVault: string | null = null;
@@ -1459,6 +1557,10 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     applySendPhase(sendPhase);
     // 待决批准项是交互中的 UI（不是历史记录）：随语言重渲按钮与标题，输入框内容保留。
     for (const pending of pendingApprovals.values()) relabelApproval(pending);
+    // who/when meta 行与工具折叠摘要是 meta chrome（非消息正文）：随语言重绘——消息正文
+    // 不改写（已上屏内容不随语言翻，与徽标同口径）。
+    refreshWhoLines();
+    relabelToolSummaries();
   }
 
   // ── 会话名（标题栏 harness 段的会话身份；design §3 口径）───────────────────
@@ -1528,20 +1630,22 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     modelChip.setAttribute("aria-label", label);
   }
 
-  /** provider 浮层：每次打开现建（数据驱动的档名 + 「当前」标记随当前语言，懒建不囤旧串）。 */
+  /** provider 浮层：每次打开现建（数据驱动的档名 + 「当前」标记随当前语言，懒建不囤旧串）。
+   *  M351 起浮层项带 menuitemradio 语义（finding 20261006-worker-hp4：WKWebView AX 暴露）。 */
   function buildModelPop(): void {
     modelPop.replaceChildren();
     for (const id of modelOptions) {
       const item = document.createElement("button");
       item.type = "button";
       item.className = "lumir-hp-modelpop-item";
+      item.setAttribute("role", "menuitemradio");
+      item.setAttribute("aria-checked", String(id === modelCurrent));
       const name = document.createElement("span");
       name.className = "lumir-hp-modelpop-name";
       name.textContent = id; // provider 名 = 配置值读数，不译文（同 D334 口径）。
       item.append(name);
       if (id === modelCurrent) {
         item.classList.add("is-current");
-        item.setAttribute("aria-checked", "true");
         const mark = document.createElement("span");
         mark.className = "lumir-hp-modelpop-cur";
         mark.textContent = t("D98"); // 「当前」——vault 浮层当前项同词，第三处浮层复用。
@@ -1552,10 +1656,17 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     }
   }
 
+  /** provider 浮层开合（aria-expanded 随开合翻转；打开时现建项）。 */
+  function setModelPop(open: boolean): void {
+    if (open) buildModelPop();
+    modelPop.hidden = !open;
+    modelChip.setAttribute("aria-expanded", String(open));
+  }
+
   /** 选择 provider：chip 先更新读数（chip = 人侧可见面，模型与用量对人同源同值），
    *  写回失败则回滚读数——运行期态不与文件态分叉（D123 同口径），并报错误行。 */
   function selectProvider(id: ProviderId): void {
-    modelPop.hidden = true;
+    setModelPop(false);
     if (id === modelCurrent) return;
     const previous = modelCurrent;
     modelCurrent = id;
@@ -1569,8 +1680,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
 
   modelChip.addEventListener("click", (event) => {
     event.stopPropagation();
-    if (modelPop.hidden) buildModelPop();
-    modelPop.hidden = !modelPop.hidden;
+    setModelPop(modelPop.hidden);
   });
 
   // 模型 chip 数据装载：config_get 宽容提取（harness 段缺失 → chip 隐藏，不伪造读数）。
@@ -1608,13 +1718,20 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     ctxPop.hidden = !ctxPop.hidden;
   });
 
-  /** 发送钮相位施加：机器算出的每个新相位经这一处落 DOM（文本 / 可点性 / 进度条显隐），
-   *  不第二处写按钮。running = 可点（点击 = 停止）；stopping = 禁用（连点幂等）。 */
+  /** 发送钮相位施加：机器算出的每个新相位经这一处落 DOM（glyph 显隐 / 可读名 / 可点性 /
+   *  进度条显隐），不第二处写按钮。running = 可点（点击 = 停止）；stopping = 禁用（连点幂等）。
+   *  M351 图标化：钮面是两枚 SVG glyph（↑ 发送 / ■ 停止），D329/D378 落 title 与 aria-label
+   *  ——textContent 赋值会抹掉 glyph 子节点，可读名不能再走钮面文本。 */
   function applySendPhase(next: SendPhase): void {
     sendPhase = next;
     const running = next !== "idle";
     sendButton.classList.toggle("is-busy", running);
-    sendButton.textContent = running ? t("D378") : t("D329");
+    const label = running ? t("D378") : t("D329");
+    sendButton.title = label;
+    sendButton.setAttribute("aria-label", label);
+    // SVG 元素无 hidden IDL 属性（TS2339）——显隐走 attribute（CSS 的 [hidden] 规则兜 display）。
+    sendGo.toggleAttribute("hidden", running);
+    sendStop.toggleAttribute("hidden", !running);
     sendButton.disabled = next === "stopping";
     progress.hidden = !running;
     if (running) applyStage();
@@ -1675,47 +1792,195 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     }
   }
 
+  // ── 消息 meta 行（M351，design §3.1/§4）：who（角色）+ when（相对时间）─────────────
+  /** 建 who 行：角色 span + 可选 when span（at = 上屏时间戳 ms；null = 无戳不建——快照
+   *  恢复的历史消息无戳，只显示角色，不伪造读数）。when 文本 = 「· 」间隔号（i18n-exempt
+   *  标点）+ relativeWhen；初始值立即算一次（不等 30s 刷新拍）。 */
+  function createWhoLine(role: "user" | "assistant", at: number | null): HTMLElement {
+    const who = document.createElement("div");
+    who.className = "lumir-hp-who";
+    who.dataset.role = role;
+    const roleEl = document.createElement("span");
+    roleEl.className = "lumir-hp-role";
+    roleEl.textContent = t(role === "user" ? "D385" : "D386");
+    who.append(roleEl);
+    if (at !== null) {
+      const when = document.createElement("span");
+      when.className = "lumir-hp-when";
+      when.dataset.ts = String(at);
+      when.textContent = `· ${relativeWhen(at, Date.now())}`;
+      who.append(when);
+    }
+    return who;
+  }
+
+  /** who/when 重绘共用出口：30s 定时器与 applyLabels（语言切换）都走这里——角色名随语言、
+   *  when 随时间与语言重算；消息正文不改写。 */
+  function refreshWhoLines(): void {
+    const now = Date.now();
+    for (const who of transcript.querySelectorAll<HTMLElement>(".lumir-hp-who")) {
+      const roleEl = who.querySelector(".lumir-hp-role");
+      if (roleEl !== null) roleEl.textContent = t(who.dataset.role === "user" ? "D385" : "D386");
+      const when = who.querySelector<HTMLElement>(".lumir-hp-when");
+      if (when?.dataset.ts !== undefined) {
+        when.textContent = `· ${relativeWhen(Number(when.dataset.ts), now)}`;
+      }
+    }
+  }
+
   /**
    * 用户消息同构沉淀（add-harness-quote-cards spec「发送后同构沉淀」）：卡片与问题段落
    * 按交错顺序上下排布，卡片无 ×、可点击跳回（QC3 注册处理器后生效）。空段落不渲染
    * （序列化也不产出，视觉与数据同形）。source = 发送前原始输入（序列化文本）——
-   * 复制钮的源，非渲染后 HTML。
+   * 复制钮的源，非渲染后 HTML。at = 上屏时间戳（快照恢复传 null：无戳不显示 when）。
+   * M351：结构 = who 行 + body 体（气泡样式挂 body，design §3.1）。
    */
-  function appendUserMessage(blocks: readonly ComposerBlock[], source: string): void {
+  function appendUserMessage(blocks: readonly ComposerBlock[], source: string, at: number | null): void {
+    collapseTools(); // 新用户消息 = 上一轮终态（幂等，无在途块时无操作）
     const el = document.createElement("div");
     el.className = "lumir-hp-msg lumir-hp-msg-user";
+    el.append(createWhoLine("user", at));
+    const body = document.createElement("div");
+    body.className = "lumir-hp-body";
     for (const block of blocks) {
       if (block.kind === "quote") {
-        el.append(createCardEl(block.card, "transcript"));
+        body.append(createCardEl(block.card, "transcript"));
       } else if (block.text !== "") {
         const p = document.createElement("div");
         p.className = "lumir-hp-qtext";
         p.textContent = block.text;
-        el.append(p);
+        body.append(p);
       }
     }
-    if (el.childElementCount === 0) {
+    if (body.childElementCount === 0) {
       // 全空消息（理论路径：快照里全是空段落）——沉淀一条空泡，与 Rust 侧留存记录一致。
-      el.textContent = "";
+      body.textContent = "";
     }
+    el.append(body);
     if (source !== "") attachCopyButton(el, source);
     transcript.append(el);
+    lastAssistantEl = null; // 用户消息开新轮：恢复路径的工具记录挂点作废
     syncEmptyHint();
     scrollToBottom();
   }
 
-  function appendToolCall(name: string, status: "started" | "done", summary: string): void {
-    if (status === "started" || lastToolEl === null) {
-      const el = document.createElement("div");
-      el.className = "lumir-hp-tool";
-      el.textContent = status === "done" ? t("D344", { name, summary }) : t("D343", { name });
-      if (status === "done") el.classList.add("is-done");
-      transcript.append(el);
-      lastToolEl = status === "started" ? el : null;
+  // ── 工具调用清单（M351 还原原型屏 4 形态，design §2.4/§3.3；Alex 2026-10-06 裁决）──
+  /** 步骤行图标（i18n-exempt 图形）：done = ✓（原型 SVG，颜色经 .is-done 的 --ok 上色）；
+   *  running = 脉冲点（CSS 呼吸动画，--run 色）。 */
+  function createToolIcon(done: boolean): HTMLElement {
+    const ic = document.createElement("span");
+    ic.className = "lumir-hp-tool-ic";
+    ic.setAttribute("aria-hidden", "true");
+    if (done) {
+      const svg = document.createElementNS(SVG_NS, "svg");
+      svg.setAttribute("width", "11");
+      svg.setAttribute("height", "11");
+      svg.setAttribute("viewBox", "0 0 12 12");
+      svg.setAttribute("fill", "none");
+      svg.setAttribute("stroke", "currentColor");
+      svg.setAttribute("stroke-width", "1.6");
+      svg.setAttribute("stroke-linecap", "round");
+      svg.setAttribute("stroke-linejoin", "round");
+      const path = document.createElementNS(SVG_NS, "path");
+      path.setAttribute("d", "M2 6.5 4.8 9.3 10 3.5");
+      svg.append(path);
+      ic.append(svg);
     } else {
-      lastToolEl.textContent = t("D344", { name, summary });
-      lastToolEl.classList.add("is-done");
-      lastToolEl = null;
+      const pulse = document.createElement("span");
+      pulse.className = "lumir-hp-tool-pulse";
+      ic.append(pulse);
+    }
+    return ic;
+  }
+
+  function createToolLabel(text: string): HTMLElement {
+    const label = document.createElement("span");
+    label.className = "lumir-hp-tool-text";
+    label.textContent = text;
+    return label;
+  }
+
+  /** 当前轮次的清单块（无则建）：live 路径挂当前流式 agent 消息（事件入口已先立消息）；
+   *  恢复路径挂 lastAssistantEl；都无 = 孤儿工具记录（协议外）兜底挂 transcript 末尾。 */
+  function ensureToolsBlock(): { el: HTMLElement; rows: HTMLElement[]; running: HTMLElement | null } {
+    if (activeTools !== null) return activeTools;
+    const el = document.createElement("div");
+    el.className = "lumir-hp-tools";
+    const host = streamingEl ?? lastAssistantEl;
+    if (host !== null) host.append(el);
+    else transcript.append(el);
+    activeTools = { el, rows: [], running: null };
+    return activeTools;
+  }
+
+  /** 轮次终态收尾（幂等；done / aborted / error 经 finalizeStreamingMessage 共用本出口，
+   *  新用户消息与恢复路径在 appendUserMessage / restoreSnapshot 各调一次）：≥2 行的块
+   *  折叠为一行摘要钮（data-count 存行数，applyLabels 经 relabelToolSummaries 重渲），
+   *  点击展开回看；单行块保持展开（唯一一行本身就是信息，折叠反而藏信息）。 */
+  function collapseTools(): void {
+    const block = activeTools;
+    activeTools = null;
+    if (block === null || block.rows.length < 2) return;
+    const summary = document.createElement("button");
+    summary.type = "button";
+    summary.className = "lumir-hp-tool-summary";
+    summary.dataset.count = String(block.rows.length);
+    summary.setAttribute("aria-expanded", "false");
+    const chev = document.createElementNS(SVG_NS, "svg");
+    chev.setAttribute("width", "9");
+    chev.setAttribute("height", "9");
+    chev.setAttribute("viewBox", "0 0 10 10");
+    chev.setAttribute("fill", "none");
+    chev.setAttribute("stroke", "currentColor");
+    chev.setAttribute("stroke-width", "1.5");
+    chev.setAttribute("stroke-linecap", "round");
+    chev.setAttribute("stroke-linejoin", "round");
+    chev.setAttribute("aria-hidden", "true");
+    const chevPath = document.createElementNS(SVG_NS, "path");
+    chevPath.setAttribute("d", "M3.5 2.5 6 5l-2.5 2.5");
+    chev.append(chevPath);
+    summary.append(chev, createToolLabel(t("D387", { count: block.rows.length })));
+    summary.addEventListener("click", () => {
+      const open = summary.getAttribute("aria-expanded") !== "true";
+      summary.setAttribute("aria-expanded", String(open));
+      summary.classList.toggle("is-open", open);
+      for (const row of block.rows) row.hidden = !open;
+    });
+    for (const row of block.rows) row.hidden = true;
+    block.el.prepend(summary);
+  }
+
+  /** 折叠摘要钮随语言重渲（meta chrome，与 who/when 同口径）。 */
+  function relabelToolSummaries(): void {
+    for (const btn of transcript.querySelectorAll<HTMLElement>(".lumir-hp-tool-summary")) {
+      const label = btn.querySelector(".lumir-hp-tool-text");
+      if (label !== null) label.textContent = t("D387", { count: Number(btn.dataset.count ?? "0") });
+    }
+  }
+
+  /** 步骤行追加 / 翻转：started 追加 running 行；done 翻最后一行 running 行（事件配对与
+   *  既有 lastToolEl 口径同源），无 running 行（恢复路径 / 乱序防御）直接追加 done 行。
+   *  行文案沿用 D343/D344——真机场景 71/72/77 的 AX 断言锚这两份文案。 */
+  function appendToolCall(name: string, status: "started" | "done", summary: string): void {
+    const block = ensureToolsBlock();
+    if (status === "started") {
+      const row = document.createElement("div");
+      row.className = "lumir-hp-tool-row is-running";
+      row.append(createToolIcon(false), createToolLabel(t("D343", { name })));
+      block.el.append(row);
+      block.rows.push(row);
+      block.running = row;
+    } else if (block.running !== null) {
+      const row = block.running;
+      block.running = null;
+      row.classList.replace("is-running", "is-done");
+      row.replaceChildren(createToolIcon(true), createToolLabel(t("D344", { name, summary })));
+    } else {
+      const row = document.createElement("div");
+      row.className = "lumir-hp-tool-row is-done";
+      row.append(createToolIcon(true), createToolLabel(t("D344", { name, summary })));
+      block.el.append(row);
+      block.rows.push(row);
     }
     syncEmptyHint();
     scrollToBottom();
@@ -1741,10 +2006,18 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   }
 
   function appendError(text: string): void {
+    // 同文案去重（design §6）：同一原因的反复报错就地滚回视野，不追加堆叠（Alex 真机
+    // 同一错误曾堆 6 条）。元素被 resetView 清掉后引用同步失效（transcript.contains 复核）。
+    if (lastErrorEl !== null && lastErrorText === text && transcript.contains(lastErrorEl)) {
+      scrollToBottom();
+      return;
+    }
     const el = document.createElement("div");
     el.className = "lumir-hp-error";
     el.textContent = text;
     transcript.append(el);
+    lastErrorEl = el;
+    lastErrorText = text;
     syncEmptyHint();
     scrollToBottom();
   }
@@ -1831,9 +2104,13 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     if (streamingEl !== null) return;
     streamingEl = document.createElement("div");
     streamingEl.className = "lumir-hp-msg lumir-hp-msg-assistant";
+    streamingEl.append(createWhoLine("assistant", Date.now()));
+    streamingBody = document.createElement("div");
+    streamingBody.className = "lumir-hp-body";
     tailEl = document.createElement("div");
     tailEl.className = "lumir-hp-md-tail";
-    streamingEl.append(tailEl);
+    streamingBody.append(tailEl);
+    streamingEl.append(streamingBody);
     transcript.append(streamingEl);
     streamingText = "";
     renderedFinalized = 0;
@@ -1857,12 +2134,12 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     chunkBuffer = "";
     // 已完成块：渲染过一次就冻结（游标只前进）；进行中的末块整段重渲。
     const boundary = finalizedUpTo(streamingText);
-    if (boundary > renderedFinalized && streamingEl !== null && tailEl !== null) {
+    if (boundary > renderedFinalized && streamingBody !== null && tailEl !== null) {
       const grown = streamingText.slice(renderedFinalized, boundary);
       const finalizedEl = document.createElement("div");
       finalizedEl.className = "lumir-hp-md-final";
       renderMarkdownInto(finalizedEl, grown);
-      streamingEl.insertBefore(finalizedEl, tailEl);
+      streamingBody.insertBefore(finalizedEl, tailEl);
       renderedFinalized = boundary;
     }
     if (tailEl !== null) {
@@ -1877,12 +2154,19 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
    *  返回沉淀的消息元素（中断标注等终态修饰用；无流式内容时返回 null）。 */
   function finalizeStreamingMessage(): HTMLElement | null {
     flushChunks();
+    // 工具清单随轮次终态收尾（幂等；done / aborted / error 三个事件出口共用本函数）。
+    collapseTools();
     if (streamingEl === null) return null;
     const el = streamingEl;
-    el.replaceChildren();
-    renderMarkdownInto(el, streamingText);
-    attachCopyButton(el, streamingText);
+    if (streamingBody !== null) {
+      // 定稿重渲只作用 body（M351）：who 行与工具清单块是消息的兄弟节点，不被抹掉。
+      streamingBody.replaceChildren();
+      renderMarkdownInto(streamingBody, streamingText);
+    }
+    // 纯工具轮（模型零正文产出）不挂复制钮——空源复制无意义（与 appendUserMessage 同口径）。
+    if (streamingText !== "") attachCopyButton(el, streamingText);
     streamingEl = null;
+    streamingBody = null;
     streamingText = "";
     renderedFinalized = 0;
     tailEl = null;
@@ -1916,6 +2200,9 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
         scheduleFlush();
         return;
       case "tool_call":
+        // 清单块挂当前 agent 消息（design §3.3）：工具先于首个 text_chunk 到达是常态
+        // （模型先调工具后说话）——先立一条空 agent 消息，正文 chunk 随后填进同一泡。
+        ensureStreamingMessage();
         appendToolCall(
           typeof event.name === "string" ? event.name : "?",
           event.status === "done" ? "done" : "started",
@@ -1967,6 +2254,13 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
 
   void onHarnessEvent(handleEvent).catch(() => {});
 
+  /** 快照消息的上屏时刻（M353 起后端 PanelMessage 带 ts，UNIX 秒 → ms；缺字段 / 0 的
+   *  旧快照 = 无戳，when 不显示——不伪造读数，design §4）。 */
+  function messageTs(record: Record<string, unknown>): number | null {
+    const ts = record.ts;
+    return typeof ts === "number" && Number.isFinite(ts) && ts > 0 ? ts * 1000 : null;
+  }
+
   // ── 快照恢复（webview 重载 / 首次挂载 / 切 vault）：宽容解析，缺键 = 空态 ──
   function restoreSnapshot(json: string): void {
     let snapshot: unknown;
@@ -1991,23 +2285,30 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
         const blocks = parseQuoteMessage(record.text);
         // 会话名按同口径从恢复的消息重算（首条用户消息的原始问题文本）。
         if (firstUserText === null) firstUserText = firstUserTextOf(blocks);
-        appendUserMessage(blocks, record.text); // 复制源 = 留存原文（= 发送前原始输入）
+        appendUserMessage(blocks, record.text, messageTs(record)); // 复制源 = 留存原文；戳 = 后端 ts（无则不显示）
       } else if (role === "assistant" && typeof record.text === "string") {
         const el = document.createElement("div");
         el.className = "lumir-hp-msg lumir-hp-msg-assistant";
-        renderMarkdownInto(el, record.text);
+        el.append(createWhoLine("assistant", messageTs(record))); // 无 ts 的旧快照：只显示角色（不伪造）
+        const body = document.createElement("div");
+        body.className = "lumir-hp-body";
+        renderMarkdownInto(body, record.text);
+        el.append(body);
         attachCopyButton(el, record.text); // 复制源 = 模型原始输出（留存原文）
         // 中断轮留存的产出：标注「已停止」（M348，D383；status 缺省 = 正常完成不标）。
         if (record.status === "stopped") attachStoppedMark(el);
         transcript.append(el);
+        lastAssistantEl = el; // 其后的 tool 记录挂进这条消息的清单块
       } else if (role === "tool" && typeof record.name === "string") {
         appendToolCall(record.name, "done", typeof record.summary === "string" ? record.summary : "");
       } else if (role === "compact" && typeof record.summary === "string") {
         // 压缩记录 = 逻辑会话边界：其后的用户消息属于新逻辑会话——会话名归 null 重算。
         firstUserText = null;
+        lastAssistantEl = null; // 压缩边界同样是工具记录的挂点边界
         appendCompactMarker(record.summary);
       }
     }
+    collapseTools(); // 恢复尾部可能吊着未收尾的清单块（最后一条记录是 tool 时）
     // ctx% 读数与警示阈值随快照恢复（webview 重载后读数不断源；缺键 = 缺省 85 / 无读数）。
     const usage = state.usage as { ctx_pct?: unknown } | null | undefined;
     if (usage !== null && usage !== undefined && typeof usage === "object" &&
@@ -2047,10 +2348,15 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     transcript.replaceChildren();
     pendingApprovals.clear();
     streamingEl = null;
+    streamingBody = null;
+    tailEl = null;
     streamingText = "";
     renderedFinalized = 0;
     chunkBuffer = "";
-    lastToolEl = null;
+    activeTools = null;
+    lastAssistantEl = null;
+    lastErrorEl = null;
+    lastErrorText = "";
     // 会话名随会话作废：未发消息前显示「新会话」，首条消息后再按口径重算。
     firstUserText = null;
     applySessionName();
@@ -2105,7 +2411,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     const block = assembleHarnessContext(editor, { skipViewport: hasCards });
     lastChip = block ?? "none";
     applyChip();
-    appendUserMessage(blocks, text);
+    appendUserMessage(blocks, text, Date.now()); // 上屏打戳（when 的 data-ts）
     // 会话名：本逻辑会话的首条用户消息定名（未发过时）；卡片与序列化文本不作名。
     if (firstUserText === null) {
       firstUserText = firstUserTextOf(blocks);
@@ -2276,8 +2582,13 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       .catch((e: unknown) => appendError(t("D348", { message: errorMessage(e) })));
   }
   segNew.addEventListener("click", startNewSession);
+  /** 会话浮层开合（aria-expanded 随开合翻转；M351 a11y，design §5）。 */
+  function setSessPop(open: boolean): void {
+    sessPop.hidden = !open;
+    sessionButton.setAttribute("aria-expanded", String(open));
+  }
   sessPopItem.addEventListener("click", () => {
-    sessPop.hidden = true;
+    setSessPop(false);
     startNewSession();
   });
   // 会话名下拉：展开/收起浮层（浮层只含「新建会话」动作项，节点 1 裁决不列历史）；
@@ -2285,28 +2596,47 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   // drag.js 自动阻断拖拽，不需要 mousedown preventDefault（REVIEW.md 第 16 条）。
   sessionButton.addEventListener("click", (event) => {
     event.stopPropagation();
-    sessPop.hidden = !sessPop.hidden;
+    setSessPop(sessPop.hidden);
+  });
+  // 段上 Escape 收会话浮层（stopPropagation：浮层开着时这拍 Escape 不落到面板/窗口层）。
+  seg.addEventListener("keydown", (event: KeyboardEvent) => {
+    if (event.key === "Escape" && !sessPop.hidden) {
+      event.preventDefault();
+      event.stopPropagation();
+      setSessPop(false);
+      sessionButton.focus();
+    }
   });
   // 浮层外交互（点击其他处）收起：会话浮层、provider 浮层、ctx ⓘ 气泡共用一条出口。
   document.addEventListener("click", (event) => {
     if (event.target instanceof Node && sessPop.contains(event.target)) return;
     if (event.target instanceof Node && sessionButton.contains(event.target)) return;
-    sessPop.hidden = true;
+    setSessPop(false);
     if (event.target instanceof Node && modelPop.contains(event.target)) return;
     if (event.target instanceof Node && modelChip.contains(event.target)) return;
-    modelPop.hidden = true;
+    setModelPop(false);
     if (event.target instanceof Node && ctxWrap.contains(event.target)) return;
     ctxPop.hidden = true;
   });
 
-  // 面板内 Escape = 收起（就地消费，不进键位表：Escape token 已被 editor.widget-escape
+  // 面板内 Escape（就地消费，不进键位表：Escape token 已被 editor.widget-escape
   // 占用，面板在 contentDOM 之外，那条绑定不命中——与 M139 搜索 panel 同先例同判词）。
-  // 收起是装配层动作（账本收 pane + 焦点归还），经 deps.togglePane 路由。
+  // 两段式（M351 a11y，design §5）：任一浮层开着时只收浮层，无浮层时才经 deps.togglePane
+  // 收面板（收起是装配层动作：账本收 pane + 焦点归还）。
   panel.addEventListener("keydown", (event: KeyboardEvent) => {
-    if (event.key === "Escape") {
-      event.preventDefault();
-      deps.togglePane();
+    if (event.key !== "Escape") return;
+    event.preventDefault();
+    if (!modelPop.hidden) {
+      setModelPop(false);
+      modelChip.focus();
+      return;
     }
+    if (!ctxPop.hidden) {
+      ctxPop.hidden = true;
+      ctxInfo.focus();
+      return;
+    }
+    deps.togglePane();
   });
 
   // ── 唤起 / 收起（装配层执行；面板只维护挂载态与派生表现）───────────────────
@@ -2317,10 +2647,19 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       mount.append(panel);
       panel.hidden = false;
       refreshChip();
+      // when 的 30s 低频刷新：只在挂载期间走表（摘下即清，重挂重建）。
+      if (whenTimer !== null) window.clearInterval(whenTimer);
+      whenTimer = window.setInterval(refreshWhoLines, 30_000);
     } else {
-      // 摘出 DOM（元素长驻内存：订阅 / 撤销栈 / 流式态不丢），浮层随之收起。
+      // 摘出 DOM（元素长驻内存：订阅 / 撤销栈 / 流式态不丢），浮层与刷新表随之收起。
       panel.remove();
-      sessPop.hidden = true;
+      setSessPop(false);
+      setModelPop(false);
+      ctxPop.hidden = true;
+      if (whenTimer !== null) {
+        window.clearInterval(whenTimer);
+        whenTimer = null;
+      }
     }
     // 段随 pane 在场出现（装配层已把它插进标题栏，这里只管 hidden）。
     seg.hidden = mount === null;

@@ -924,6 +924,30 @@ const COPY_TABLE = {
     zh: "当前没有正在进行的对话轮次",
     en: "No conversation turn is in progress",
   },
+
+  // -------------------------------------------------------------------------
+  // 消息 meta 行（D385–D386，M351，change harness-pane-visual-fidelity）：transcript
+  // 每条用户 / agent 消息顶部的「角色 · 相对时间」行（原型 .who/.when 还原）的角色名。
+  // 相对时间档不新增编号：「刚刚」复用 D100.1（同一语义单一真源），其余档经
+  // `formatRelative`（Intl.RelativeTimeFormat narrow 式，src/copy.ts）产出——与 vault 切换器的
+  // D100 族同一机制。live 消息前端在上屏时打戳、30s 低频刷新与 relabel 同出口重算；快照恢复
+  // 消费后端 PanelMessage.ts（M353，UNIX 秒）——缺 ts / ts=0 的旧快照 → when 不显示（不伪造读数）。
+  // -------------------------------------------------------------------------
+  D385: {
+    zh: "你",
+    en: "You",
+  },
+  D386: {
+    zh: "Agent",
+    en: "Agent",
+  },
+  // 工具清单折叠摘要（D387，M351，change harness-pane-visual-fidelity design §2.4/§3.3）：
+  // 轮次结束后 ≥2 行的工具清单折叠为一行摘要钮（点击展开回看全部步骤行）。{count} =
+  // 本伦工具调用次数。原型屏 6 形态（「4 个工具调用 · 全部完成」）。
+  D387: {
+    zh: "{count} 个工具调用 · 全部完成",
+    en: "{count} tool calls · all done",
+  },
 } satisfies Record<string, CopyEntry>;
 
 /** 文案表的键（D 编号，多串格带 `.N` 后缀）——由表数据推导，加一条即多一个键。 */

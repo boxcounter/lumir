@@ -5,6 +5,9 @@ import { stubTauri, type VaultFixture } from "./tauri-stub";
 // 写回）、ctx% 读数（usage 事件消费 / 超阈值高亮 + ⓘ 按需气泡）、发送钮两态（处理中 = 停止，
 // 停止钩子 M348 对接面桩期未注册——点击只走状态机）、不定态进度条 + 阶段指示两档、
 // 消息复制钮（hover 浮现，复制源 = 源文本非渲染 HTML）。
+// M351 起按新 DOM：composer 收进 .lumir-hp-composer-box（控制行 .lumir-hp-ctl 在容器底）、
+// chip/浮层挪进 wrapper（a11y 修复）、发送钮图标化（两态 SVG glyph + aria-label 文案）。
+// 消息区 / composer / 工具清单的**视觉还原**断言在 m351 场景，本场景只守行为不变量。
 //
 // 全部断言是**结构断言**（在场性 / 文案 / 状态 / 调用记录）——本场景不碰任何像素基线
 //（批次末统一重建是 HP4 的面，tower 指令禁止 --update）。面板打开是纯前端路径，事件经
@@ -104,16 +107,26 @@ test("composer 控制行：模型 chip 写回 / ctx 读数高亮 + ⓘ 气泡 / 
   const panel = page.locator(".lumir-harness");
   await expect(panel).toBeVisible();
 
-  // ── 控制行结构（M347）：[模型 chip][composer][ctx 读数][发送钮] ──
-  const order = await page.locator(".lumir-hp-composer-row > *").evaluateAll((els) =>
+  // ── composer 区结构（M351，原型 .h-box/.h-ctl）：box = [composer][ctl]；
+  //    ctl = [模型 chip（wrapper）][ctx 读数（wrapper）][spacer][图标发送钮] ──
+  const boxOrder = await page.locator(".lumir-hp-composer-box > *").evaluateAll((els) =>
     els.map((el) => el.classList[0]),
   );
-  expect(order).toEqual(["lumir-hp-model", "lumir-hp-composer", "lumir-hp-ctxwrap", "lumir-hp-send"]);
+  expect(boxOrder).toEqual(["lumir-hp-composer", "lumir-hp-ctl"]);
+  const ctlOrder = await page.locator(".lumir-hp-ctl > *").evaluateAll((els) =>
+    els.map((el) => el.classList[0]),
+  );
+  expect(ctlOrder).toEqual([
+    "lumir-hp-modelwrap",
+    "lumir-hp-ctxwrap",
+    "lumir-hp-ctl-spacer",
+    "lumir-hp-send",
+  ]);
 
   // ── 模型 chip：读数 / ellipsis / 悬停全名 / provider 浮层 / config_set_value 写回 ──
   const modelChip = page.locator(".lumir-hp-model");
   await expect(modelChip).toBeVisible();
-  await expect(modelChip).toHaveText("mock");
+  await expect(modelChip.locator(".lumir-hp-model-name")).toHaveText("mock");
   await expect(modelChip).toHaveAttribute("title", "模型：mock（点击切换）");
   const chipStyle = await modelChip.locator(".lumir-hp-model-name").evaluate((el) => {
     const s = getComputedStyle(el);
@@ -175,11 +188,20 @@ test("composer 控制行：模型 chip 写回 / ctx 读数高亮 + ⓘ 气泡 / 
   await expect(ctxInfo).toBeHidden();
 
   // ── 发送钮两态 + 进度条/阶段指示：发送 → 停止态；停止点击 → 状态机；done → 回 idle ──
+  // M351 图标化：钮面是 ↑ / ■ 两态 SVG glyph（[hidden] 切换），两态文案落 aria-label。
+  const sendBtn = page.locator(".lumir-hp-send");
+  const sendGo = page.locator(".lumir-hp-send-go");
+  const sendStop = page.locator(".lumir-hp-send-stop");
+  await expect(sendBtn).toHaveAttribute("aria-label", "发送");
+  await expect(sendGo).toBeVisible();
+  await expect(sendStop).toBeHidden();
   await page.locator(".lumir-hp-composer").fill("这段会触发压缩吗");
-  await page.locator(".lumir-hp-send").click(); // 空闲相位 = 发送
-  await expect(page.locator(".lumir-hp-send")).toHaveText("停止");
-  await expect(page.locator(".lumir-hp-send")).toHaveClass(/is-busy/);
-  await expect(page.locator(".lumir-hp-send")).toBeEnabled(); // 停止态可点
+  await sendBtn.click(); // 空闲相位 = 发送
+  await expect(sendBtn).toHaveAttribute("aria-label", "停止");
+  await expect(sendGo).toBeHidden();
+  await expect(sendStop).toBeVisible();
+  await expect(sendBtn).toHaveClass(/is-busy/);
+  await expect(sendBtn).toBeEnabled(); // 停止态可点
   await expect(page.locator(".lumir-hp-progress")).toBeVisible();
   await expect(page.locator(".lumir-hp-stage")).toHaveText("等待响应…");
   // 阶段指示第二档：首个 text_chunk 到达 → 「生成中」。
@@ -192,16 +214,18 @@ test("composer 控制行：模型 chip 写回 / ctx 读数高亮 + ⓘ 气泡 / 
   await expect(page.locator(".lumir-hp-stage")).toHaveText("正在生成回复…");
   // 停止点击（M348 桩期：只走状态机——running → stopping，连点被幂等挡下；
   // stopping 子态钮已禁用，playwright 的 actionability 会拒点——force 模拟真实双击的第二次落下）。
-  await page.locator(".lumir-hp-send").click();
-  await expect(page.locator(".lumir-hp-send")).toBeDisabled();
-  await page.locator(".lumir-hp-send").click({ force: true });
-  await expect(page.locator(".lumir-hp-send")).toBeDisabled();
-  // done 收口：钮回「发送」、进度条退场、消息定稿。
+  await sendBtn.click();
+  await expect(sendBtn).toBeDisabled();
+  await sendBtn.click({ force: true });
+  await expect(sendBtn).toBeDisabled();
+  // done 收口：钮回发送态、进度条退场、消息定稿。
   await page.evaluate(() =>
     (window as unknown as { __fireHarnessEvent: (p: unknown) => void }).__fireHarnessEvent({ type: "done" }),
   );
-  await expect(page.locator(".lumir-hp-send")).toHaveText("发送");
-  await expect(page.locator(".lumir-hp-send")).not.toHaveClass(/is-busy/);
+  await expect(sendBtn).toHaveAttribute("aria-label", "发送");
+  await expect(sendGo).toBeVisible();
+  await expect(sendStop).toBeHidden();
+  await expect(sendBtn).not.toHaveClass(/is-busy/);
   await expect(page.locator(".lumir-hp-progress")).toBeHidden();
   await expect(page.locator(".lumir-hp-msg-assistant")).toContainText("初步回答");
   const sent = await page.evaluate(() => (window as unknown as { __sentMessages: unknown[] }).__sentMessages);

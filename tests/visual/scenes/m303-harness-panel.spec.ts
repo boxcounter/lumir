@@ -8,8 +8,8 @@ import { stubTauri, type VaultFixture } from "./tauri-stub";
 //   1. **面板是 pane 内容件**——⌘⇧A/toggle 自动分栏（harness:文档 = 1:2），面板挂进旁侧
 //      pane 的挂载元素；dock 列（--layout-dock-w / .dock-open）已移除，骨架回到两列。
 //   2. **面板无头部栏**——会话身份（名下拉 + 新建会话钮）在标题栏 harness 段（.lumir-hp-seg），
-//      段宽与 pane 比分宽、与分隔条对齐；ctx% 读数随头部栏退场（迁入 composer 控制行是后续
-//      mission 的面）。
+//      段宽与 pane 比分宽、与分隔条对齐；ctx% 读数随头部栏退场（M347 已迁入 composer 控制行，
+//      M351 图标化发送钮：钮面 SVG glyph，文案在 title/aria-label）。
 //   3. **标题栏右簇**——产品标识块在 traffic 灯区内（系统按钮旁）；双 pane 时 harness
 //      toggle 钮隐藏（退让条款），⌘⇧A 照走。
 //   4. 行为层（发送、工具循环、批准闸）不在这里——归验收套件场景 70–77（真机 WKWebView
@@ -94,7 +94,11 @@ test("对话面板：pane 口径展开态结构 + 标题栏元素级基线", asy
   await expect(page.locator(".lumir-hp-empty")).toContainText("与当前文档对话");
   await expect(page.locator(".lumir-hp-chip")).toContainText("上下文：harness-note.md · 视口");
   await expect(page.locator(".lumir-hp-composer")).toBeFocused();
-  await expect(page.locator(".lumir-hp-send")).toHaveText("发送");
+  // M351 图标化：钮面是 SVG glyph（↑/■ 两态 [hidden] 切换），文案落 title/aria-label（D329）。
+  const send = page.locator(".lumir-hp-send");
+  await expect(send).toHaveAttribute("aria-label", "发送");
+  await expect(send.locator(".lumir-hp-send-go")).toBeVisible();
+  await expect(send.locator(".lumir-hp-send-stop")).toBeHidden();
   // 产品标识块在 traffic 灯区内（系统按钮旁），双 pane 也不退 modeline（右簇退让只剩 toggle）。
   await expect(
     page.locator(".titlebar-traffic .titlebar-identity"),
