@@ -112,6 +112,33 @@ export const codeBindingTheme = EditorView.theme({
   [`.${BINDING_MATCH_CLASS}`]: { backgroundColor: "var(--code-bg)", borderRadius: "var(--r4)" },
 });
 
+// 代码 token 着色规则——code 模式与围栏侧的**唯一真源**（M376，backlog M220 建条的 (a) 修法）：
+// 同一份规则对象由 codeTokenTheme（装进 code 模式编辑器，src/editor.ts 的 modeExtensions）与
+// livePreviewTheme（围栏侧，下方原位 spread）各自消费——两份 theme 各自生成自己的作用域类，
+// 规则文本逐字节同源（REVIEW.md 第 8 条：两侧 MUST NOT 各抄一份）。
+// 色值**只**取自 tokens 文档的四个语法高亮 token（--tk-k/s/n/c）。六个 role 落四个 token：
+// property（json/yaml 的键）与 type 归 keyword 同一色——键的语义是属性名，与「命名 / 关键字」
+// 同族，新体系没有第 5 个色相可用。键与字符串值必须分色（JSON/YAML 的既有 requirement）：
+// property 取 --tk-k、string 取 --tk-s，二者恒不同色；property 不带 keyword 的 600 字重，
+// 键与关键字因此仍可辨。条目序即级联序（TOKEN_GROUPS 同序）：json 键同时带 string 与
+// property 两类名，property 规则写在 string 之后，等特异性下靠后命中。
+// eink（规则②）：keyword 字重升到 700，string / number / keyword 同为纯黑——对比由字重与
+// 明度承担；comment 是 --tk-c 的灰（eink 值 #6e6e6e），与代码的明度差照旧成立。
+const CODE_TOKEN_RULES = {
+  ".cm-lp-tok-comment": { color: "var(--tk-c)" },
+  ".cm-lp-tok-keyword": { color: "var(--tk-k)", fontWeight: "600" },
+  ".cm-lp-tok-string": { color: "var(--tk-s)" },
+  ".cm-lp-tok-literal": { color: "var(--tk-n)" },
+  ".cm-lp-tok-property": { color: "var(--tk-k)" },
+  ".cm-lp-tok-type": { color: "var(--tk-k)" },
+  [`:root[data-theme="eink"] & .cm-lp-tok-keyword`]: { fontWeight: "700" },
+};
+
+/** code 模式编辑器的 token 着色 theme（M376）：code 模式不装 livePreviewTheme，这份 CSS
+ *  须随 code 分支扩展进入编辑器，`.cm-lp-tok-*` 类名（codeHighlight 经 TagStyle.class 给出）
+ *  才有颜色与字重。规则本体见上方 CODE_TOKEN_RULES（与围栏侧共用）。 */
+export const codeTokenTheme = EditorView.theme(CODE_TOKEN_RULES);
+
 export const livePreviewTheme = EditorView.theme({
   ".cm-editor": { color: "var(--text)", backgroundColor: "var(--content-bg)", fontFamily: "var(--editor-font-family)" },
   ".cm-line.cm-lp-block-separator": { fontSize: "0", lineHeight: "0", height: "0", minHeight: "0" },
@@ -301,23 +328,9 @@ export const livePreviewTheme = EditorView.theme({
     wordBreak: "break-word",
     overflowWrap: "anywhere",
   },
-  // 代码块 token 着色（M138，类名由 preview/code.ts 出）：色值**只**取自 tokens 文档的四个
-  // 语法高亮 token（--tk-k/s/n/c），与 editor.ts 的 code 模式 CODE_COLORS 逐 role 同值——
-  // 同一段代码在围栏里和整文件打开时读起来是同一门语言（REVIEW.md 第 8 条：两边是同一张
-  // role 表（preview/code.ts 的 TOKEN_GROUPS）的两个渲染出口，改一处必须改另一处）。
-  // 六个 role 落四个 token：property（json/yaml 的键）与 type 归 keyword 同一色——键的语义是
-  // 属性名，与「命名 / 关键字」同族，新体系没有第 5 个色相可用。
-  // 键与字符串值必须分色（JSON/YAML 的既有 requirement）：property 取 --tk-k、string 取
-  // --tk-s，二者恒不同色；property 不带 keyword 的 600 字重，键与关键字因此仍可辨。
-  // eink（规则②）：keyword 字重升到 700，string / number / keyword 同为纯黑——对比由字重与
-  // 明度承担；comment 是 --tk-c 的灰（eink 值 #6e6e6e），与代码的明度差照旧成立。
-  ".cm-lp-tok-comment": { color: "var(--tk-c)" },
-  ".cm-lp-tok-keyword": { color: "var(--tk-k)", fontWeight: "600" },
-  ".cm-lp-tok-string": { color: "var(--tk-s)" },
-  ".cm-lp-tok-literal": { color: "var(--tk-n)" },
-  ".cm-lp-tok-property": { color: "var(--tk-k)" },
-  ".cm-lp-tok-type": { color: "var(--tk-k)" },
-  [`:root[data-theme="eink"] & .cm-lp-tok-keyword`]: { fontWeight: "700" },
+  // 代码块 token 着色（M138 起类名由 preview/code.ts 出；M376 起规则本体上移到
+  //  CODE_TOKEN_RULES 与 code 模式共用一份真源，此处原位 spread，逐字节不变）。
+  ...CODE_TOKEN_RULES,
   // 分隔线（M138）：源码被 replace widget 顶掉，横线本体是 0 高 inline-block，
   // 垂直位置靠 vertical-align 定，纵向留白走行 padding（CM 测量的行高不含 margin）。
   // 发丝线取**层次档** --border-soft（tokens 文档 §border 两档：hr / td 底线 / 区块内部分隔

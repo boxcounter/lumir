@@ -37,6 +37,10 @@ const DOC = [
   "",
 ].join("\n");
 
+/** code 模式侧的 fixture（M376）：整文件代码走与围栏不同的渲染路径（editor.ts 的
+ *  syntaxHighlighting），规则② 的断言必须在这一侧另落一份（backlog M220 建条的闭环判据）。 */
+const CODE_DOC = ["// 小工具示例", 'import { createHash } from "node:crypto";', "", "const LIMIT = 42;", ""].join("\n");
+
 const VAULT = {
   entries: [
     { path: "doc.md", kind: "file", size: DOC.length, mtime_ms: 0 },
@@ -60,6 +64,19 @@ async function openEink(page: Page): Promise<void> {
   await expect.poll(() => page.evaluate(() => document.documentElement.dataset.theme)).toBe("eink");
   await page.locator('.ft-row[title="doc.md"]').click();
   await expect(page.locator(".cm-content")).toContainText("正文含");
+}
+
+/** 同一份文档、eink、code 模式（M376）：打开 .ts 整文件，语法高亮走 code 模式路径。 */
+async function openEinkCode(page: Page): Promise<void> {
+  await stubTauri(page, {
+    entries: [{ path: "util.ts", kind: "file", size: CODE_DOC.length, mtime_ms: 0 }],
+    files: { "util.ts": CODE_DOC },
+    config: { theme: "eink" },
+  });
+  await page.goto("/");
+  await expect.poll(() => page.evaluate(() => document.documentElement.dataset.theme)).toBe("eink");
+  await page.locator('.ft-row[title="util.ts"]').click();
+  await expect(page.locator(".cm-content")).toContainText("createHash");
 }
 
 /** 同一份文档、eink、代码块**折行档**（`editor.code_block_wrap: true`）：此时横滚容器不装，
@@ -143,6 +160,36 @@ test("规则②：字重 / 明度承担对比——keyword 700、comment 灰", a
   expect(now.comment).toBe("rgb(110, 110, 110)");
   // 明度差成立：注释（灰）与代码（黑）不同明度
   expect(now.comment).not.toBe(now.color);
+});
+
+test("规则②（code 模式侧，M376）：eink 下 code 模式 keyword 计算字重 700、颜色归属 --tk-k", async ({ page }) => {
+  // backlog M220 建条的闭环判据：围栏侧断言（上一条用例）不能替代——code 模式走另一条
+  // 渲染路径（editor.ts 的 syntaxHighlighting），着色真源迁到 theme.ts 的 CSS 后两侧
+  // 共用一份 `.cm-lp-tok-*` 规则，`:root[data-theme="eink"]` 限定随之在两侧同档生效。
+  await openEinkCode(page);
+  // 在场判据先行（REVIEW.md 第 2 条：读不到 ≠ 为空）：code 模式的 keyword span 必须带
+  // `.cm-lp-tok-keyword` 类名——这正是「迁移到 class 表形态」的直接证据；迁移前 code 模式
+  // 的 span 只带 CM 生成的匿名类，本条 locator 为零命中、用例必红（先红后绿的红半）。
+  const keywords = page.locator(".cm-content .cm-lp-tok-keyword");
+  await expect
+    .poll(() => keywords.count(), { message: "code 模式应出现 .cm-lp-tok-keyword span（语法高亮完成后）" })
+    .toBeGreaterThan(0);
+  const keyword = keywords.first();
+  await expect(keyword).toHaveText("import");
+  await expect
+    .poll(() => keyword.evaluate((el) => getComputedStyle(el).fontWeight), { message: "eink code 模式 keyword 字重" })
+    .toBe("700");
+  // 归属判据第一层（M293 同款）：元素计算色 == 归属 token --tk-k 的计算值（eink 下为纯黑）。
+  const tokens = await tokenColors(page, ["--tk-k"]);
+  const readColor = () => keyword.evaluate((el) => getComputedStyle(el).color);
+  expect(await readColor(), "code 模式 keyword 颜色 == --tk-k").toBe(tokens["--tk-k"]);
+  // 归属判据第二层：把 --tk-k 临时改成探测色，元素颜色 MUST 跟着变（写死字面值不会变）；
+  // 撤掉覆盖后 MUST 复原。token 色无 CSS transition，计算值同步可读，无需等过渡落定。
+  const PROBE = "rgb(7, 8, 9)";
+  await page.evaluate((value) => document.documentElement.style.setProperty("--tk-k", value), PROBE);
+  await expect.poll(readColor, { message: "探测 --tk-k 后 code 模式 keyword 颜色 MUST 跟着变" }).toBe(PROBE);
+  await page.evaluate(() => document.documentElement.style.removeProperty("--tk-k"));
+  await expect.poll(readColor, { message: "探测撤除后 MUST 复原为 --tk-k 原值" }).toBe(tokens["--tk-k"]);
 });
 
 test("规则③：hairline——结构档实心黑、层次档保留灰", async ({ page }) => {
