@@ -24,6 +24,7 @@ node tests/unit/run.mjs     # = pnpm test
 | `src/pane-layout.ts` | pane 容器账本与活跃 pane 状态机（M315，change pane-system-split-view；纯逻辑，句柄由替身注入、标签用真 `EditorState`）：pane 上限二与第三次 `split` 无操作、`close` 标签按序并入 + 被收起 pane 的前台成为目标前台、`moveTab` 归属唯一且**同一标签对象（含 `EditorState`）原样随行**、空 pane 合法在场不自动收起、活跃指针全部迁移路径、`openTab` 判重（命中他 pane 已开文件走移动、`create` 不被调用）与前台邻居口径、`disposeHandle` 恰好一次 |
 | `src/quote-gesture.ts` | 摘录卡片的纯逻辑层（M344，change add-harness-quote-cards）：`quoteLinesOf` 行范围捕获（A-B / A-A / 越界 null）、`parseQuoteLines` 解析、失锚降级链 1–2 层 `resolveQuoteAnchor`（行号 + 前缀校验命中 / 漂移全文搜索命中 / 越界与失配 null，含空串反命中挡板）与 `quotePrefixMatched` 的双向共同长度语义（行尾追加 / 行截短命中、开头改才失配）、`quoteContextOf` 标题链（同级弹出、首个标题前为空串）——反向用例逐判据配一条 |
 | `src/harness-panel.ts`（思考纯模型层） | 思考块四态与时长（M363，change add-harness-thinking-display-and-effort）：`accumulateThinkingBlock` 首分片开块 / 同块合并 / 乱序到达按块序号归位、`thinkingDurationSec` 四舍五入与负差 clamp（轮次结束定格 = 不再进分片即冻结）、`thinkingHeadText` 的 zh/en 两串模板（D388）、`thinkingStateOf` 的快照宽容提取（缺键 / 非法档 → null，supported 严格 true）、`effortLabel` 小写原词 → 首字母大写（zh/en 均英文原文的档位名） |
+| `src/harness-panel.ts`（工具行摘要 + 快照恢复判定） | M368：`toolDoneSummary` 的两态判定（`done` 摘要是 core 的失败形状 ⇒ 原样上屏「状态 · 错误码: 消息」；否则 = 这次成功 ⇒ 上屏 `started` 那份参数摘要，没有时可回落 done 原文）与 `restoredAssistantText` 的空正文跳过（空串 / 纯空白 / 缺 text / 非字符串 → 不渲染）。后者的**形状在当前流水线上造不出来**（core 侧 M367 起不落空正文面板消息、套件 fixtures 里也没有纯工具轮），故它是「空正文记录被渲染成光秃 who 行」这条缺陷唯一的判据落点——验收场景 96 的覆盖边界里如实登记了这个盲区 |
 
 不在这一层：DOM 交互、CodeMirror view、渲染与布局（归 `tests/visual`）、真实 WKWebView
 下的行为（归 `scripts/acceptance`）。真 `EditorView` 需要 DOM，硬造只会得到一层假实现，

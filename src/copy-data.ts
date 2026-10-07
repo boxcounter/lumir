@@ -769,8 +769,8 @@ const COPY_TABLE = {
     en: "Calling tool: {name}",
   },
   D344: {
-    zh: "工具完成：{name} — {summary}",
-    en: "Tool done: {name} — {summary}",
+    zh: "工具 {name}：{summary}",
+    en: "Tool {name}: {summary}",
   },
   D345: {
     zh: "在旁侧 pane 打开 / 收起 harness（M303 唤起/收起面板；M346/HP1 语义改 pane 化，change move-harness-to-pane-chat-frame）：无第二 pane 时自动分栏（默认宽度比 harness:文档 = 1:2），已有第二 doc pane 时其标签并入另一 pane 后换位；再按收起、标签不丢。语义取「A = Agent」，⌘ 系归 mac 惯例。取 global——焦点在左栏 / 搜索框 / 浮层里时同样要能打开；面板打开时焦点在面板的输入框里（不在 contentDOM 内），再按要能收起。冲突已核（零冲突，三条独立来源）：① 表内——keys.ts 即真源，⌘⇧ 系现有 Cmd-Shift-z（重做）/ Cmd-Shift-o（toc.toggle）/ Cmd-Shift-T（view.theme-cycle）/ Cmd-Shift-L（view.language-cycle）四条，⌘⇧A 不在其中；② 原生菜单 accelerator 集合（tauri 的 Menu::default() 逐项来自 muda 的 items/predefined.rs，清单见 keys.ts 文件头 M149 段）不含 ⌘⇧A；③ macOS 系统级不预置 ⌘⇧A（Finder 的「应用程序」快捷键只在 Finder 窗口作用域）。可经 [keys] 重绑 / 解绑",

@@ -54,8 +54,8 @@ steps:
     waitFor:
       has: ["第二行处理完了。"]
     expect:
-      - label: 工具完成行可见
-        ax: { has: "工具完成：vault_patch — 成功" }
+      - label: 工具行带参数摘要（成功行 = patch 的调用参数；M368 起模板「工具 {name}：{summary}」）
+        ax: { has: '工具 vault_patch：{"path":"harness-note.md"' }
 
   - name: 等打开中会话经 watch → 外部变更分流同步（留一拍再读）
     do: sleep

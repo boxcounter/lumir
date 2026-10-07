@@ -388,6 +388,15 @@
 .lumir-hp-tool-row[hidden] {
   display: none;
 }
+/* 步骤行文本：M368 起成功行带调用参数摘要（后端 summarize_args，可长到 80 字符）——
+   单行走省略号，别把固定 24px 的行高撑破。flex 子项要能收缩（min-width: 0）才吃得到
+   text-overflow；原「成功」这类短摘要逐像素不变。完整摘要仍在 DOM / AX 里（读屏可读）。 */
+.lumir-hp-tool-text {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
 .lumir-hp-tool-ic {
   width: 14px;
   flex: none;

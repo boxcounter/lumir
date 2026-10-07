@@ -178,7 +178,7 @@ test("快照恢复：按后端 ts 显示相对时间；无 ts 的旧快照只有
     messages: [
       { role: "user", text: "恢复的问题", ts: NOW_S - 95 }, // 带后端 ts（M353）→ 显示相对时间
       { role: "assistant", text: "恢复的回答" }, // 缺 ts 的旧快照 → 只显示角色
-      { role: "tool", name: "vault_read", summary: "成功", ts: NOW_S - 90 },
+      { role: "tool", name: "vault_read", summary: '{"path":"harness-note.md"}', ts: NOW_S - 90 },
     ],
     usage: { ctx_pct: 42, cache_pct: 0 },
     pending_approval: null,
@@ -193,12 +193,13 @@ test("快照恢复：按后端 ts 显示相对时间；无 ts 的旧快照只有
   await expect(agentWho.locator(".lumir-hp-role")).toHaveText("Agent");
   await expect(agentWho.locator(".lumir-hp-when")).toHaveCount(0); // 无 ts 不伪造
   // 恢复的工具记录：挂进最近一条 assistant 消息的清单块，done 行（单行保持展开）。
+  // summary 取 M367 之后的真实形状（成功 = 调用参数摘要；M367 之前恒 None、恢复后是空摘要）。
   const tools = agentMsg.locator(".lumir-hp-tools");
   await expect(tools).toHaveCount(1);
   const rows = tools.locator(".lumir-hp-tool-row");
   await expect(rows).toHaveCount(1);
   await expect(rows.first()).toHaveClass(/is-done/);
-  await expect(rows.first()).toContainText("工具完成：vault_read — 成功");
+  await expect(rows.first()).toContainText('工具 vault_read：{"path":"harness-note.md"}');
   await expect(tools.locator(".lumir-hp-tool-summary")).toHaveCount(0);
 });
 
@@ -325,7 +326,10 @@ test("工具清单：running/done 行 + ≥2 行折叠摘要可回看", async ({
   await expect(row.locator(".lumir-hp-tool-pulse")).toHaveCount(1);
   await fire(page, { type: "tool_call", name: "vault_read", status: "done", summary: "成功" });
   await expect(row).toHaveClass(/is-done/);
-  await expect(row).toContainText("工具完成：vault_read — 成功");
+  // 模板 = 「工具 {name}：{summary}」（M368 起，原「工具完成：{name} — {summary}」退场）；
+  // 这三处 fire 的 started 都不带 summary，故 done 行的摘要回落 done 事件原文（判定见
+  // src/harness-panel.ts 的 toolDoneSummary）。
+  await expect(row).toContainText("工具 vault_read：成功");
   await expect(row.locator(".lumir-hp-tool-ic svg")).toHaveCount(1); // ✓
   await fire(page, { type: "done" });
   await expect(tools.locator(".lumir-hp-tool-summary")).toHaveCount(0); // 单行不折叠
@@ -354,7 +358,7 @@ test("工具清单：running/done 行 + ≥2 行折叠摘要可回看", async ({
   await summary.click();
   await expect(summary).toHaveAttribute("aria-expanded", "true");
   await expect(rows2.nth(0)).toBeVisible();
-  await expect(rows2.nth(0)).toContainText("工具完成：vault_search — 命中 5 篇");
+  await expect(rows2.nth(0)).toContainText("工具 vault_search：命中 5 篇");
   await expect(rows2.nth(1)).toBeVisible();
   await summary.click();
   await expect(rows2.nth(0)).toBeHidden();
