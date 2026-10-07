@@ -9,7 +9,9 @@
 // 控制行是后续 mission 的面——M347 已迁入：控制行 = [模型 chip][composer][ctx 读数][发送钮]，
 // 超阈值读数高亮 + 警示说明浮层；M370 起读数 = 「XX% · YY%」（+cache hit rate，分隔符小圆点
 // 按 Alex 复裁决改 U+00B7、与 modeline 同款——原话写作 •，以复裁决为准）、ⓘ 钮移除
-// 改 hover 浮层（Alex 2026-10-07），常驻警示句按 Alex 2026-10-06 裁决移除；发送钮两态
+// 改 hover 浮层（Alex 2026-10-07），常驻警示句按 Alex 2026-10-06 裁决移除；M378 起浮层改
+// 两行带当时实际值（第一行 context window usage 走 D395、第二行 cache hit rate 走 D401）
+// 并按面板边界收编（窄 pane 左缘被 overflow:hidden 裁掉是「显示不全」的根因）；发送钮两态
 // idle=发送 / 处理中=停止，停止钩子为 M348 对接面的明确桩）。标题栏 toggle 钮仍由本模块自建，
 // 钉标题栏右端（产品标识块已移位 traffic 灯区）；双 pane 时隐藏（退让条款），⌘⇧A 照走。
 // M370 起钮面 = 原型同款火花 SVG 图标（可见文字 D326 退场，悬停/读屏名 D327 不变）。
@@ -48,7 +50,10 @@
 // 思考块折叠行与思考 chip 三句 + 浮层读屏名（D389 / D391 随双 chip 于 M373 退役、D390 沿用、
 // D392 复用为合并浮层 effort 段标签）、D393–D399 为 M373 合并选择器（chip 读屏名支持态 /
 // effort 不支持 hover hint / ctx 读数含义 hint / 浮层段标签 ×2 / 浮层读屏名 / chip 读屏名
-// 未知态降级 D399）、D400 为 M374 停止中阶段行（stopping 相位即时反馈））；
+// 未知态降级 D399）、D400 为 M374 停止中阶段行（stopping 相位即时反馈）、D401 为 M378
+// hover hint 第二行（cache hit rate 带值））；M378 起面板内容字号支持 ⌘+/- 步进
+//（--lumir-hp-scale，与内容 pane 的 textScale 同语义：×1.1 钳 [12,32]、reset 回基线、
+// 不落盘；焦点路由在装配层 src/main.ts）；
 // 长驻元素（toggle 钮 / harness 段 / 输入框 placeholder / 按钮 / 上下文 chip / ctx 读数 /
 // 合并选择器 chip / 待决批准项）注册 onRelabel，
 // 语言切换时从已存状态重渲（design §5.2 的不变量）；transcript 的历史条目是已发生事实的记
@@ -79,6 +84,8 @@ import { createQuoteCard, serializeQuoteMessage } from "./quote-card";
 import type { ComposerBlock, QuoteCard } from "./quote-card";
 import { highlightCode } from "./preview/code";
 import { mirrorThemeScope } from "./overlay-scope";
+import { nextFontSize } from "./typography";
+import type { TextScaleDirection } from "./typography";
 import type { AppShell } from "./shell";
 
 /** 面板对编辑器句柄的结构需求：上下文组装（HarnessContextSource）+ 关面板时的焦点归还 +
@@ -136,6 +143,13 @@ export interface HarnessPanelHandle {
    *  双击收到第二次）。
    */
   setStopHandler(handler: (() => void) | null): void;
+  /** harness pane 内容字号步进一档 / 回基线（M378，与内容 pane 的 textScale 同语义：
+   *  ×1.1 取整、钳 [12,32]、运行期不落盘；reset 回基线 = 面板根字号 --fs-ui 的现值）。
+   *  缩放经 --lumir-hp-scale 施加到面板全部内容字号；装配层按焦点路由 view.text-scale-*。 */
+  textScale(direction: TextScaleDirection): void;
+  /** 焦点是否在面板内（pane 内容件持焦判据）：缩放命令经它决定作用于 harness 面板
+   *  还是编辑器——与内容 pane「焦点在哪个 pane，⌘+/- 就缩放哪个 pane 的内容」同口径。 */
+  hasFocus(): boolean;
 }
 
 /**
@@ -666,6 +680,25 @@ export function chipModelReading(selection: HarnessSelection): string {
  *  边界取高亮侧——读数是压缩行为的前瞻信号，85/85 时下一轮就会触发压缩，按「已越线」呈现。 */
 export function usageOverWarn(ctxPct: number, warnPct: number): boolean {
   return ctxPct >= warnPct;
+}
+
+// ── harness pane 内容字号步进的纯模型层（M378）────────────────────────────────
+// 与内容 pane 的 textScale（src/editor.ts，change typography-and-zoom）同一条语义：
+// up / down 复用 nextFontSize（×1.1 取整、钳 [12,32]）、reset 回基线、到界无变化、运行期
+// 不落盘。基线是面板根字号 --fs-ui 的现值（创建时读到）——对应编辑器的「⌘0 回配置字号」。
+// 纯函数零 DOM（tests/unit 直接驱动）。
+
+/**
+ * harness pane 字号步进一档 / 回基线（纯函数）：`reset` 回 `base`；`up` / `down` 走
+ * nextFontSize 的同款档位（倍率 1.1、取整、钳 [12,32]，到界返回原值——调用方据此
+ * 「无变化、无提示、不报错」，与 editor.textScale 同口径）。
+ */
+export function nextHarnessFontSize(
+  current: number,
+  direction: TextScaleDirection,
+  base: number,
+): number {
+  return direction === "reset" ? base : nextFontSize(current, direction);
 }
 
 /** 消息 when 的相对时间（M351，change harness-pane-visual-fidelity design §4）：上屏打戳 →
@@ -1479,6 +1512,12 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   let lastCache: number | null = null;
   /** 上下文用量警示阈值（快照 warn_ctx_pct，缺省 85——与 Rust 侧 DEFAULT_WARN_CTX_PCT 同值）。 */
   let warnCtxPct = 85;
+  /** harness pane 内容字号（M378，运行期态、不落盘、不回写 config）：hpBaseFontSize = 基线
+   *  （面板根字号 --fs-ui 创建时的计算值——「⌘0 回到基线」的锚，与编辑器的「回配置字号」
+   *  同口径），hpFontSize = 当前生效值。缩放经 --lumir-hp-scale（= hpFontSize / 基线）
+   *  施加：css 的全部 font-size 声明 calc 乘该变量（缺省 1 = 零缩放，逐字节不改基线观感）。 */
+  let hpBaseFontSize = 0;
+  let hpFontSize = 0;
   /** 合并选择器状态（config_get 宽容提取的 HarnessSelection；null = 未配置/读不到——
    *  桩环境 / 旧配置 / 读取失败不伪造读数，chip 隐藏）。 */
   let selSelection: HarnessSelection | null = null;
@@ -1930,6 +1969,29 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     relabelThinkingViews();
   }
 
+  // ── harness pane 内容字号步进（M378，与内容 pane 的 textScale 同语义）──────────
+  // 基线惰性捕获：第一次步进时读面板根字号 --fs-ui 的计算值（调用点必在面板已挂载、可
+  // 持焦之后——捕获时样式链完整；创建时面板尚未进 DOM，不在这里读）。运行期只写面板根上的
+  // --lumir-hp-scale（单一写入路径）——面板摘出 / 重挂不丢（元素长驻），不落盘、不回写
+  // config.json（与内容 pane 的持久化口径逐条对齐，不新造口径）。
+  // getComputedStyle 的守卫：tests/unit 的假 DOM 没有它——回退 13（--fs-ui 现值，与
+  // src/style.css 的声明同值同口径；浏览器里永远走真读数分支）。
+  function harnessBaseFontSize(): number {
+    if (hpBaseFontSize === 0) {
+      hpBaseFontSize =
+        typeof getComputedStyle === "function"
+          ? Number.parseFloat(getComputedStyle(panel).fontSize) || 13
+          : 13;
+      hpFontSize = hpBaseFontSize;
+    }
+    return hpBaseFontSize;
+  }
+
+  function applyHarnessTextScale(): void {
+    const base = harnessBaseFontSize();
+    panel.style.setProperty("--lumir-hp-scale", String(hpFontSize / base));
+  }
+
   // ── 会话名（标题栏 harness 段的会话身份；design §3 口径）───────────────────
   /** 会话名截断长度（约 20 字，按码点截断——emoji / CJK 都按 1 字计）。 */
   const SESSION_NAME_MAX = 20;
@@ -2289,8 +2351,8 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
 
   /** ctx% 读数重渲（usage 事件 / 快照 / relabel 的共用出口）。M370：读数 = D334 双读数
    *  「{ctx}% · {cache}%」（分隔符 U+00B7，cache 缺失回落单读数）；越线高亮不动。
-   *  M373：hover 浮层常驻含义句（D395）——两个裸读数无前缀，hover 读数浮出说明；
-   *  越线时警示句（D335）追加在含义句之下（同泡两行）。浮层内容在 hover 时现建。 */
+   *  M373：hover 浮层常驻含义句；M378 改两行带值形态（D395 第一行 + D401 第二行，
+   *  越线时 D335 警示句追加其下）并按面板边界收编（clampCtxPop）。浮层内容在 hover 时现建。 */
   function applyUsage(): void {
     if (lastUsage === null) {
       ctxWrap.hidden = true;
@@ -2304,17 +2366,27 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
         ? `${ctx}%`
         : t("D334", { ctx, cache: Math.round(lastCache) });
     ctxRead.classList.toggle("is-warn", over);
-    if (ctxPop.hidden === false) buildCtxPop();
+    if (ctxPop.hidden === false) {
+      buildCtxPop();
+      clampCtxPop();
+    }
   }
 
-  /** ctx hover 浮层内容现建：含义句（D395）恒在，越线时警示句（D335）追加其下
-   *  （mouseenter 翻出、mouseleave 收回；M373 起未越线也有含义内容）。 */
+  /** ctx hover 浮层内容现建（M378 两行带值形态）：第一行上下文窗口占用（D395，{ctx} =
+   *  当时的实际读数）、第二行 cache hit rate（D401，cache 读数缺失时整行不渲染）；
+   *  越线时警示句（D335）追加在两行之下（同泡第三行，追加行为保留）。 */
   function buildCtxPop(): void {
     ctxPop.replaceChildren();
     const meaning = document.createElement("div");
     meaning.className = "lumir-hp-ctxpop-meaning";
-    meaning.textContent = t("D395");
+    meaning.textContent = t("D395", { ctx: Math.round(lastUsage ?? 0) });
     ctxPop.append(meaning);
+    if (lastCache !== null) {
+      const cache = document.createElement("div");
+      cache.className = "lumir-hp-ctxpop-cache";
+      cache.textContent = t("D401", { cache: Math.round(lastCache) });
+      ctxPop.append(cache);
+    }
     if (ctxRead.classList.contains("is-warn")) {
       const warn = document.createElement("div");
       warn.className = "lumir-hp-ctxpop-warn";
@@ -2326,12 +2398,34 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     }
   }
 
-  // hover 浮层（M370 形态，M373 扩内容）：mouseenter 读数翻出含义句（越线时追加警示句）、
-  // mouseleave 收回。键盘用户无 hover：警示语义已由读数高亮承担，含义句是补充说明，
-  // 不挂 focusable 入口。
+  /** hover 泡水平收编（M378，hint 显示不全的根因修复）：浮层默认锚 right:-18px、宽 224px，
+   *  向左探出 ~206px，祖先 .lumir-harness 有 overflow:hidden——面板窄时左缘被裁。翻出时
+   *  按面板可视边界收编：超宽先收窄（width），再两侧各留 8px 移位（CSS translate）。
+   *  先复位后量测，重复调用幂等；未越界时零干预（translate / width 均不动，默认形态不变）。 */
+  function clampCtxPop(): void {
+    ctxPop.style.translate = "";
+    ctxPop.style.width = "";
+    const panelRect = panel.getBoundingClientRect();
+    const maxWidth = Math.max(120, panelRect.width - 16);
+    if (ctxPop.offsetWidth > maxWidth) ctxPop.style.width = `${maxWidth}px`;
+    const popRect = ctxPop.getBoundingClientRect();
+    const inset = 8;
+    let shift = 0;
+    if (popRect.left < panelRect.left + inset) {
+      shift = panelRect.left + inset - popRect.left;
+    } else if (popRect.right > panelRect.right - inset) {
+      shift = panelRect.right - inset - popRect.right;
+    }
+    if (shift !== 0) ctxPop.style.translate = `${shift}px 0`;
+  }
+
+  // hover 浮层（M370 形态，M373 扩内容，M378 两行带值 + 边界收编）：mouseenter 读数翻出
+  // （第一行 ctx 占用、第二行 cache 命中，越线时追加警示句）、mouseleave 收回。键盘用户
+  // 无 hover：警示语义已由读数高亮承担，含义句是补充说明，不挂 focusable 入口。
   ctxWrap.addEventListener("mouseenter", () => {
     buildCtxPop();
     ctxPop.hidden = false;
+    clampCtxPop();
   });
   ctxWrap.addEventListener("mouseleave", () => {
     ctxPop.hidden = true;
@@ -3600,6 +3694,18 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     },
     setStopHandler(handler) {
       stopHandler = handler;
+    },
+    textScale(direction: TextScaleDirection): void {
+      // 基线先捕获（首次调用时读 --fs-ui 计算值）——捕获动作会同步 hpFontSize，必须在
+      // 算步进之前完成，否则惰性初始化把刚步进的值冲掉。
+      const base = harnessBaseFontSize();
+      const next = nextHarnessFontSize(hpFontSize, direction, base);
+      if (next === hpFontSize) return; // 到界：无变化、无提示、不报错（与 editor.textScale 同口径）
+      hpFontSize = next;
+      applyHarnessTextScale();
+    },
+    hasFocus(): boolean {
+      return document.activeElement instanceof Node && panel.contains(document.activeElement);
     },
   };
 }

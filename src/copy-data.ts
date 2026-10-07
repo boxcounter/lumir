@@ -737,6 +737,7 @@ const COPY_TABLE = {
   // 2026-10-06 裁决「（常驻句）一直显示在那里很抢注意力」）→ ⓘ 钮移除、改越线时 hover
   // 读数才浮出（Alex 2026-10-07 裁决）；内容不变——越过警示阈值（[harness].warn_ctx_pct，
   // 缺省 85）时如实说后果（自动压缩），不提供「清理」动作（design §11）。
+  // M378 起它是 hover 泡的第三行：前两行改带值含义句（D395 / D401），越线时本句追加其下。
   D335: {
     zh: "上下文已用 {ctx}%，越过 {warn}% 警示线——继续对话将自动压缩续聊",
     en: "Context usage {ctx}% is past the {warn}% warning line — further turns will be auto-compacted",
@@ -1022,11 +1023,21 @@ const COPY_TABLE = {
     zh: "模型 {model} 不支持思考程度调节",
     en: "{model} does not support thinking effort adjustment",
   },
-  // ctx% · cache% 读数的含义 hover hint（两个裸读数无任何前缀，hover 读数才浮出说明；
-  // 越过警示阈值时本句与 D335 警示句同泡上下排列——警示句恒在含义句之下）。
+  // ctx% · cache% 读数的含义 hover hint（两个裸读数无任何前缀，hover 读数才浮出说明）。
+  // **M378 改形（编号沿用，Alex 2026-10-07 裁决「比如 context window usage: 12%.
+  // cache hit rate: 54%……按照这个『清晰简洁』的思路来设计」）**：不再是一句并列说明，
+  // 改两行带当时实际值——本句 = 第一行（上下文窗口占用，{ctx} 取当时读数），第二行
+  // cache hit rate 为 D401；cache 缺失（旧事件 / 桩）时第二行整行不渲染。越过警示阈值时
+  // 警示句（D335）追加在两行之下（同泡第三行，追加行为保留）。
   D395: {
-    zh: "ctx%：上下文窗口占用比例；cache%：本轮输入的缓存命中比例",
-    en: "ctx%: share of the context window used; cache%: share of this turn's input served from cache",
+    zh: "上下文窗口占用：{ctx}%",
+    en: "Context window usage: {ctx}%",
+  },
+  // hover hint 第二行：cache hit rate 带当时实际值（M378，与 D395 同泡上下排列）。
+  // cache 读数缺失（旧事件 / 桩）时本行不渲染——读数回落单读数「{ctx}%」（D334）同口径。
+  D401: {
+    zh: "缓存命中率：{cache}%",
+    en: "Cache hit rate: {cache}%",
   },
   // 合并浮层的段标签（Provider / 模型；effort 段复用 D392）。浮层本体每段是裸列表
   // （项 = 配置值读数），段标签是它的可读身份。
