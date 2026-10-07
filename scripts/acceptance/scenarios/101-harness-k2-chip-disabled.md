@@ -8,6 +8,10 @@ config:
   harness:
     provider: kimi
     kimiModel: "kimi-k2.6"
+    # M381 config-only：能力真源是 models 声明（内置 preset 已彻底删除）——场景合成
+    # config 显式声明 k2.6 不支持 effort（与场景 99 的 k3-256k 声明互为对偶）。
+    kimiModels:
+      - { id: "kimi-k2.6", effort: false, window: 262144 }
 seed:
   # 与场景 99 同构（seed 装配面板、全程零键盘）——唯一变量是 kimiModel 的取值。
   registry:
@@ -29,7 +33,7 @@ steps:
         ax: { has: "分隔条" }
       - label: kimi-k2.6 已写进隔离 config（与场景 99 同一条配置链的正观测）
         file: { path: "env:config.json", has: "\"model\": \"kimi-k2.6\"" }
-      - label: chip 读屏名 = D390 禁用说明（k2 系官方文档明确不支持 reasoning.effort）
+      - label: chip 读屏名 = D390 禁用说明（models 声明 effort=false ⇒ 能力按声明现算，M381 config-only）
         ax: { has: "当前模型不支持思考程度调节" }
       - label: 区分度负向断言——D393 支持态读屏名不在场（与场景 99 的断言互为对偶）
         ax: { not: "模型：kimi-k2.6 · 思考程度：High（点击切换）" }
@@ -40,13 +44,14 @@ steps:
 
 ## 本场景在验什么
 
-场景 99 证明 `k3-256k` 下 chip 可用；本场景用**同一条配置链**（`config.harness.kimiModel`
-→ `providers.kimi.model`）配官方文档明确不支持 effort 的 `kimi-k2.6`，证明 `supported` 判据
-确实按**配置的模型**现算——而不是恒真、也不是认死出厂默认 `kimi-k3`（两者都会让场景 99
-假绿：默认模型本来就支持 effort，配置没生效也看不出来）。
+场景 99 证明 `k3-256k`（声明 `effort=true`）下 chip 可用；本场景用**同一条配置链**
+（`config.harness.kimiModel` + `kimiModels` 声明 → `providers.kimi.model` / `.models`）
+配**同一个模型 id 但声明 `effort=false`** 的 `kimi-k2.6`，证明 `supported` 判据确实按**配置
+的声明**现算——而不是恒真、也不是认死某个内置默认（M381 config-only 后内置默认已彻底
+删除：不写 models 声明 = 空清单 = 一切模型不支持）。
 
 判据对偶：场景 99 断言 D393 在场 / D390 不在场；本场景断言 D390 在场 / D393 不在场。两个
-场景联合才钉死「k3-256k ⇒ 可用」这条修复语义。M373 合并后语义有变：chip 不再整颗禁用——
+场景联合才钉死「声明翻转、读数跟着翻」这条语义。M373 合并后语义有变：chip 不再整颗禁用——
 置灰只落 effort 读数，chip 照点得开（浮层 effort 段禁用 + D390 段尾说明 + 置灰格 hover hint）；
 「点不出浮层」的旧断言口径随之退役，由 m347/m363 视觉场景的「段禁用 + hint」结构断言接防。
 

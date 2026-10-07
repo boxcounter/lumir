@@ -1063,6 +1063,31 @@ const COPY_TABLE = {
     zh: "模型：{model} · 思考程度未知（点击切换）",
     en: "Model: {model} · Thinking effort unknown (click to switch)",
   },
+  // 空模型清单提示态（D402，M381 config-only，Alex 终裁 2026-10-07「只显示配置里写的
+  // 模型。彻底不使用内置表」）：provider 节已配置但 `[harness].providers.<id>.models`
+  // 未声明任何模型时的提示——合并浮层模型段的占位句（不得伪造模型条目）+ chip effort
+  // 读数的 hover hint。{provider} = 当前 provider id（配置值读数，不译文）。配置加载时
+  // Rust 侧已给同名 warning，本句是界面上的可见出口。
+  D402: {
+    zh: "配置未声明任何模型：请在 config.json 的 harness.providers.{provider}.models 下逐项声明（id / effort / window）",
+    en: "No models declared in config: add entries under harness.providers.{provider}.models in config.json (id / effort / window)",
+  },
+  // 合并 chip 读屏名的空清单态（D403，M381）：当前 provider 无可用模型（models 清单
+  // 为空——见 D402）时 chip 的读屏名。可见面同口径：model 名与分隔符收起，只留
+  // effort 读数——MUST NOT 伪造 model 读数（回落 provider id 是 M381 删除的伪造形态）。
+  D403: {
+    zh: "模型未配置 · 思考程度：{level}（点击切换）",
+    en: "No model configured · Thinking effort: {level} (click to switch)",
+  },
+  // 后端错误信封（D404，M381 config-only）：发送前检查发现当前 provider 未配置任何
+  // 模型（harness_model_missing）——models 清单为空 / model 解析为空串时的人话报错，
+  // 不把空 model 发给 API。无占位名（provider 名在 Rust 侧 message 里，前端按 code
+  // 渲染本句）。配置加载时的 warning（models 未声明）与界面提示态（D402）是它的
+  // 同伴出口，三处同一语义。
+  D404: {
+    zh: "当前 provider 未配置任何模型：请在 config.json 的 harness.providers 下为该 provider 的 models 逐项声明（id / effort / window）",
+    en: "The active provider has no models configured: declare entries under its models list in config.json (id / effort / window)",
+  },
 } satisfies Record<string, CopyEntry>;
 
 /** 文案表的键（D 编号，多串格带 `.N` 后缀）——由表数据推导，加一条即多一个键。 */
@@ -1142,6 +1167,7 @@ export const ERROR_COPY: Record<string, CopyKey> = {
   harness_fixture_unreadable: "D351",
   harness_fixture_invalid: "D352",
   harness_api_key_missing: "D353",
+  harness_model_missing: "D404",
   harness_http_failed: "D354",
   harness_network_failed: "D355",
   approval_not_found: "D356",

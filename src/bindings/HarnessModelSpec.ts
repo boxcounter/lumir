@@ -4,8 +4,9 @@
  * 单个模型声明（M373，schema 暴露的 model 维度）：思考程度能力 + 上下文窗口。
  *
  * 这是**能力/窗口表的唯一真源**——thinking.rs 的 k3 词元判定与 llm.rs 的 KIMI_PRESET
- * 窗口表已退役为本结构的读取（内置 preset 见 [`KIMI_MODEL_PRESET`] /
- * [`DEEPSEEK_MODEL_PRESET`]，用户配置 `[harness].providers.<id>.models` 可整体覆盖）。
+ * 窗口表已退役为本结构的读取。M381 起（Alex 终裁「只显示配置里写的模型。彻底不使用
+ * 内置表」）清单严格 config-only：逐项只来自用户配置的
+ * `[harness].providers.<id>.models`，本模块不内置任何模型 id / 能力 / 窗口数值。
  */
 export type HarnessModelSpec = { 
 /**

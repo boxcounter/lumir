@@ -106,8 +106,9 @@ export async function writeConfig({
     // k3-256k 等自定义模型的能力判定（思考 chip 置灰判据）按 config 现算，不发消息就验得到；
     // 发消息的场景不会配这个键（真 api_key 不进验收环境）。
     if (harness.kimiModel !== undefined) h.providers = { kimi: { model: harness.kimiModel, api_key: "acceptance-dummy" } };
-    // M373（场景 102）：schema 的 model 维度——逐项 { id, effort, window } 清单写进
-    // providers.kimi.models（应用侧缺省 = 内置 preset；写了即整体覆盖，能力/窗口按声明现算）。
+    // M373（场景 102；M381 起 config-only）：schema 的 model 维度——逐项 { id, effort, window }
+    // 清单写进 providers.kimi.models（不写 = 空清单 + 应用侧 warning + 浮层 D402 提示态——
+    // 内置 preset 已彻底删除；写了即声明清单，能力/窗口按声明现算）。
     if (harness.kimiModels !== undefined) {
       h.providers = h.providers ?? {};
       h.providers.kimi = { ...(h.providers.kimi ?? {}), models: harness.kimiModels };

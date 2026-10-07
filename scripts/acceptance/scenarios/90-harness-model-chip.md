@@ -8,6 +8,10 @@ config:
   harness:
     provider: mock
     fixture: "$fixtures/harness-mock-basic.json"
+    # M381 config-only：切到 kimi 后 chip 的 model 读数来自 kimi 节显式声明（内置
+    # 出厂默认已彻底删除）——声明单模型，读数即它（缺 model 键时清单首项即默认）。
+    kimiModels:
+      - { id: "kimi-k3", effort: true, window: 1048576 }
 steps:
   - name: ⌘⇧A 打开 harness pane（旁侧分栏）
     do: keys
@@ -40,12 +44,12 @@ steps:
     do: click
     target: { name: "^kimi$" }
 
-  - name: 等 chip 读数翻成 kimi-k3（选择先行，写回随后；kimi 缺省 model = 出厂 kimi-k3）
+  - name: 等 chip 读数翻成 kimi-k3（选择先行，写回随后；kimi 节声明清单首项 = kimi-k3，model 缺省取首项）
     do: waitFor
     waitFor:
       has: ["模型：kimi-k3 · 思考程度：High（点击切换）"]
     expect:
-      - label: chip 读数 = 新 provider 的 model（kimi 出厂默认 kimi-k3）· effort 不抹（仍是 High——切 provider 不抹 effort，M373 裁决）
+      - label: chip 读数 = 新 provider 的 model（kimi 节声明清单首项 kimi-k3——M381 config-only，无内置出厂默认）· effort 不抹（仍是 High——切 provider 不抹 effort，M373 裁决）
         ax: { has: "模型：kimi-k3 · 思考程度：High（点击切换）" }
       - label: 写回落盘：config.json 的 harness.provider 已是 kimi（pretty JSON 两空格缩进）
         file: { path: "env:config.json", has: '"provider": "kimi"' }
@@ -68,8 +72,10 @@ M373 起双 chip（模型 + 思考）合并为**一个选择器 chip**（`src/ha
   `kimi` / `deepseek`——**mock 按 Alex 裁决「界面上隐藏，代码保留」在可选列表层过滤**
   （数据保留在 config 里）。当前 provider 无模型维度时模型段不渲染，故本场景浮层两段。
 - **选择写回**：点 `kimi` 档 → `config_set_value("harness","provider","kimi")` 落盘，
-  `env:config.json` 含 `"provider": "kimi"`；chip 读数翻成 kimi 的 model（出厂默认
-  `kimi-k3`）· effort 不抹（会话档位与 provider 无关）。
+  `env:config.json` 含 `"provider": "kimi"`；chip 读数翻成 kimi 节的 model（M381 config-only：
+  本场景合成 config 显式声明 `kimiModels` 单模型 `kimi-k3`，model 键缺省 → 清单首项——
+  内置出厂默认已彻底删除，不声明清单时读数会是空清单提示态 D402/D403）· effort 不抹
+  （会话档位与 provider 无关）。
 - **选定不自动关浮层**（Alex 裁决）：选择后浮层仍开（正观测 = 随后点空白处浮层收起）。
 
 ## M351 修复的 AX 暴露问题（沿革，M349 首跑实测归因保留）
@@ -97,7 +103,7 @@ M373 起双 chip（模型 + 思考）合并为**一个选择器 chip**（`src/ha
   负向断言「kimi 项离场」会被假杀。收起语义归 m347 视觉场景（DOM 层）钉。
 - **model 读数回落**：mock 无模型维度时 chip 显示 provider id——这是刻意的形态保全（验收
   专用档），有模型维度的 provider（kimi/deepseek）显示各自 `model` 配置值（本场景选 kimi
-  后读数 = `kimi-k3` 即出厂默认回填的实证）。
+  后读数 = `kimi-k3`，即合成 config 声明清单首项的实证——M381 config-only，无内置出厂默认）。
 - **chip ellipsis / hover 全名**：CSS 层行为，视觉层判（`max-width` 截断 + `title` 全名）。
 
 ## 环境与副作用

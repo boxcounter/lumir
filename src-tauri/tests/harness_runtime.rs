@@ -8,7 +8,7 @@
 //! 因为 env 是进程全局。
 
 use lumir_lib::commands::CommandError;
-use lumir_lib::config::{HarnessConfig, HarnessPermissions, HarnessProvider};
+use lumir_lib::config::{HarnessConfig, HarnessModelSpec, HarnessPermissions, HarnessProvider};
 use lumir_lib::fs_io::IgnorePolicy;
 use lumir_lib::harness::events::EventSink;
 use lumir_lib::harness::llm::{LlmClient, MockClient};
@@ -1468,8 +1468,10 @@ fn new_session_resets_thinking_effort_to_default_high() {
     assert_eq!(client.received_efforts(), &[ThinkingEffort::High]);
 }
 
-/// 快照的思考能力标记按 provider + model 现算（前端 chip 置灰判据）：mock / kimi-k3 支持，
-/// kimi 的 k2.x（含退役的 kimi-k2）不支持。无会话的空态也要给对（面板一打开即读）。
+/// 快照的思考能力标记按 provider + model 从配置声明现算（前端 chip 置灰判据）：
+/// M381 config-only——能力真源是 `[harness].providers.<id>.models` 声明（内置 preset 已
+/// 彻底删除），声明什么读什么；未列出 = 不支持。mock 恒定支持。无会话的空态也要给对
+/// （面板一打开即读）。
 #[test]
 fn snapshot_thinking_capability_follows_provider_and_model() {
     let f = Fixture::new("thinking-capability");
@@ -1482,24 +1484,57 @@ fn snapshot_thinking_capability_follows_provider_and_model() {
             .supported
     );
 
+    // kimi 侧声明清单：k3 系 effort=true、k2 系 effort=false（声明驱动，与模型名的任何
+    // 内在属性无关——同一个 id 换个声明读数跟着翻，见 config.rs 单测）。
     let kimi = |model: &str| {
         let mut config = mock_config();
         config.provider = HarnessProvider::Kimi;
         config.providers.kimi.model = model.to_string();
+        config.providers.kimi.models = vec![
+            HarnessModelSpec {
+                id: "kimi-k3".into(),
+                effort: true,
+                window: 1_048_576,
+            },
+            HarnessModelSpec {
+                id: "kimi-k2.6".into(),
+                effort: false,
+                window: 262_144,
+            },
+            HarnessModelSpec {
+                id: "kimi-k2.7-code".into(),
+                effort: false,
+                window: 262_144,
+            },
+            HarnessModelSpec {
+                id: "kimi-k2".into(),
+                effort: false,
+                window: 131_072,
+            },
+        ];
         config
     };
-    // k3 系支持（官方文档：reasoning.effort 仅 k3 系）。
+    // 声明支持 ⇒ 快照支持。
     assert!(
         runtime
             .snapshot(&f.scope(), &kimi("kimi-k3"))
             .thinking
             .supported
     );
-    // k2.x 不支持 ⇒ 前端置灰。
-    for model in ["kimi-k2.6", "kimi-k2.7-code", "kimi-k2"] {
+    // 声明不支持 ⇒ 前端置灰；未列出的 id（kimi-k30、复合 id）同判不支持。
+    for model in ["kimi-k2.6", "kimi-k2.7-code", "kimi-k2", "kimi-k30", "kimi-code/k3-256k"] {
         let snapshot = runtime.snapshot(&f.scope(), &kimi(model));
         assert!(!snapshot.thinking.supported, "{model} 应标记不支持");
         // 能力与档位分开：不支持时档位读数仍是默认 High（前端 chip 显示读数 + 置灰）。
         assert_eq!(snapshot.thinking.level, ThinkingEffort::High, "{model}");
     }
+    // 空清单（config-only 缺省形态）：任何模型都不支持。
+    let mut empty = mock_config();
+    empty.provider = HarnessProvider::Kimi;
+    assert!(
+        !runtime
+            .snapshot(&f.scope(), &empty)
+            .thinking
+            .supported
+    );
 }

@@ -4,10 +4,11 @@ import type { HarnessModelSpec } from "./HarnessModelSpec";
 /**
  * 单个网络 provider 的参数。
  *
- * **`Default` 的 `model` 是空串，不是出厂模型名**：出厂模型名按 provider 分档
- * （[`DEFAULT_KIMI_MODEL`] / [`DEFAULT_DEEPSEEK_MODEL`]），由 [`HarnessProviders::default`]
- * 分派——这样「kimi 的默认 model」只有一处写值，两个 provider 不会互相串默认。
- * `api_key` 出厂为空串（未配置）、`base_url` 出厂为 `None`（官方地址）。
+ * M381 起（config-only）`Default` 的 `model` 是空串、`models` 是空清单：**不内置任何
+ * 出厂模型**——模型清单、当前 model、逐模型能力/窗口一律只来自 config.json 的
+ * `[harness].providers.<id>` 声明（`model` 缺省/空时由 validate 解析为声明清单首项 id，
+ * 清单为空则保持空串，发送时由运行时给出人话错误）。`api_key` 出厂为空串（未配置）、
+ * `base_url` 出厂为 `None`（官方地址）。
  */
 export type HarnessProviderConfig = { 
 /**
@@ -15,7 +16,7 @@ export type HarnessProviderConfig = {
  */
 api_key: string, 
 /**
- * 模型 id。空串 / 缺失时按 provider 回落出厂模型名（见 `Default` 的说明）。
+ * 模型 id（配置值即读数）。缺省 / 空串 → 声明清单首项 id；清单为空 → 空串（不伪造）。
  */
 model: string, 
 /**
@@ -23,8 +24,9 @@ model: string,
  */
 base_url: string | null, 
 /**
- * 可选模型清单 + 每模型能力声明（M373）。**缺省 = 内置 preset**（kimi /
- * deepseek 各一份，见上）；用户显式声明（含空列表）则整体覆盖。这是浮层模型段
- * 与 ctx% 窗口 / effort 能力判定的共同数据源。
+ * 可选模型清单 + 每模型能力声明（M373；M381 起 config-only）：**唯一真源是配置
+ * 声明**——不写 `models` 键 = 空清单（provider 节已配置时给一条人话 warning +
+ * 前端提示态），绝不回落内置表。这是浮层模型段与 ctx% 窗口 / effort 能力判定的
+ * 共同数据源。
  */
 models: Array<HarnessModelSpec>, };

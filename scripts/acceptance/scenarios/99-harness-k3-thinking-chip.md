@@ -8,6 +8,10 @@ config:
   harness:
     provider: kimi
     kimiModel: "k3-256k"
+    # M381 config-only：能力真源是 models 声明（内置 preset 已彻底删除）——场景合成
+    # config 必须逐项声明，k3-256k 按 Alex 真实配置声明（effort=true、window=256K）。
+    kimiModels:
+      - { id: "k3-256k", effort: true, window: 262144 }
 seed:
   # 预置「上次会话里 harness 面板在场」⇒ 启动即装配出面板（场景 95 口径：全程零键盘）。
   registry:
@@ -29,7 +33,7 @@ steps:
         ax: { has: "分隔条" }
       - label: k3-256k 已写进隔离 config（配置落盘的正观测——模型 chip 面只显示 provider 名，模型 id 的 AX 出口只有能力判定与 config 本身）
         file: { path: "env:config.json", has: "\"model\": \"k3-256k\"" }
-      - label: 合并 chip 读屏名 = D393 支持态（M372 修复判据：k3-256k 是 k3 系、支持 effort——M373 起真源是 schema preset 声明）
+      - label: 合并 chip 读屏名 = D393 支持态（M372 修复判据：k3-256k 是 k3 系、支持 effort——M373 起真源是 schema 逐模型声明，M381 起声明严格 config-only：本场景合成 config 显式声明 effort=true）
         ax: { has: "模型：k3-256k · 思考程度：High（点击切换）" }
       - label: 区分度负向断言——禁用说明 D390 不在场（修前 chip 被误判置灰，读屏名是本句）
         ax: { not: "当前模型不支持思考程度调节" }
@@ -78,9 +82,10 @@ k3 系判定只认 `kimi-k3` 前缀，订阅端 id `k3-256k` 不命中 ⇒ `supp
 2. **chip 可用**：读屏名 = D393「模型：k3-256k · 思考程度：High（点击切换）」且 D390 禁用说明**不在场**
    （修前是 D390 + `disabled`，本条与下一条对修复前形态必 FAIL——区分度自证）。
 3. **可点可切换**：点 chip 浮层三档全在（禁用钮点不出浮层）⇒ 选 Max ⇒ 读数翻 Max。
-4. **负向对偶在场景 101**：同一条 `kimiModel` 配置链配 `kimi-k2.6`（k2 系、官方文档明确不支持
-   effort）⇒ chip 必须置灰——证明 supported 确按配置的模型现算（默认模型 kimi-k3 恒真，
-   单看正向半是假绿温床）。
+4. **负向对偶在场景 101**：同一条配置链（`kimiModel` + `kimiModels` 声明）配
+   `kimi-k2.6`（声明 effort=false）⇒ chip 必须置灰——证明 supported 确按配置的声明现算
+   （声明翻转读数跟着翻，单看正向半是假绿温床；M381 config-only 后连「默认模型恒真」
+   的温床也不存在：不写 models 声明 = 空清单 = 一切模型不支持，见场景 102 的提示态面）。
 
 ## 断言口径
 
@@ -99,8 +104,10 @@ k3 系判定只认 `kimi-k3` 前缀，订阅端 id `k3-256k` 不命中 ⇒ `supp
   判定的真源是快照 `thinking.supported`，本场景断言它的可读出口。
 - **「k3-256k 请求确实带 reasoning.effort」不在真机断言**：真机套件没有读请求体的通道
   （场景 95 同款边界）——「会话档位 → 请求参数」链由 core 集成测试钉死；`supported` 判定
-  本身（含 `k3-256k` / `kimi-code/k3-256k` 命中、`kimi-k30` 不命中）由
-  `src-tauri/src/harness/thinking.rs` 的 `support_is_provider_and_model_dependent` 单测钉死。
+  本身（声明驱动、未列出 = 不支持、mock 恒定支持）由
+  `src-tauri/src/harness/thinking.rs` 的 `effort_supported_reads_schema_declarations`
+  单测与 `src-tauri/tests/harness_runtime.rs` 的
+  `snapshot_thinking_capability_follows_provider_and_model` 钉死。
 
 ## 环境与副作用
 

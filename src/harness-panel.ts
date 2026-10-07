@@ -51,7 +51,8 @@
 // D392 复用为合并浮层 effort 段标签）、D393–D399 为 M373 合并选择器（chip 读屏名支持态 /
 // effort 不支持 hover hint / ctx 读数含义 hint / 浮层段标签 ×2 / 浮层读屏名 / chip 读屏名
 // 未知态降级 D399）、D400 为 M374 停止中阶段行（stopping 相位即时反馈）、D401 为 M378
-// hover hint 第二行（cache hit rate 带值））；M378 起面板内容字号支持 ⌘+/- 步进
+// hover hint 第二行（cache hit rate 带值）、D402 / D403 为 M381 config-only 空清单提示态
+//（浮层模型段占位句 + chip 读屏名空态——不伪造模型条目））；M378 起面板内容字号支持 ⌘+/- 步进
 //（--lumir-hp-scale，与内容 pane 的 textScale 同语义：×1.1 钳 [12,32]、reset 回基线、
 // 不落盘；焦点路由在装配层 src/main.ts）；
 // 长驻元素（toggle 钮 / harness 段 / 输入框 placeholder / 按钮 / 上下文 chip / ctx 读数 /
@@ -666,14 +667,18 @@ export function harnessSelection(harness: unknown): HarnessSelection | null {
 
 /**
  * chip 的 model 读数（合并 chip = 「model · effort」，model 名的上屏值）：
- * - provider 有 model 维度 → 当前 model 配置值；为空（宽容提取的缺值）回落首选项 id；
+ * - provider 有 model 维度 → 当前 model 配置值；为空（宽容提取的缺值）回落首选项 id
+ *   （该回落值也来自配置声明）；
+ * - provider 有维度但声明清单为空（M381 config-only 的空态）→ 空串：不伪造读数——
+ *   调用方收起 model 名与分隔符，读屏名改走 D403，浮层模型段给 D402 提示态；
  * - provider 无模型维度（mock——验收专用档）→ 回落 provider id 本身（配置值即读数，
  *   chip 形态因此保持「model · effort」双读数不变形）。
  */
 export function chipModelReading(selection: HarnessSelection): string {
   const dim = selection.models[selection.provider as ProviderId];
   if (dim === undefined) return selection.provider;
-  return dim.current !== "" ? dim.current : (dim.options[0]?.id ?? selection.provider);
+  if (dim.current !== "") return dim.current;
+  return dim.options[0]?.id ?? "";
 }
 
 /** ctx% 读数的高亮判据：越过（≥）警示阈值即高亮。阈值是配置值（`warn_ctx_pct`，缺省 85）；
@@ -2063,12 +2068,14 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   // ── composer 控制行（M373）：合并选择器 chip（model · effort）+ 三维浮层 ──────
 
   /** 合并 chip 重渲（长驻元素：读数 / 悬停 / 读屏名都从已存状态取，relabel 可重跑）。
-   *  可见文本 = model 读数 + U+00B7 + effort 读数。读屏名三档（D399 / D393 / D390）：
-   *  effort 会话态未读到（thinkConfigured=false——harness_state 未到达 / 读取失败的降级
-   *  窗口，真实 app 不可达）= D399 中性「未知」——MUST NOT 取 D390：「不支持」是能力断言，
-   *  与「还没读到」语义相反（r1 P2-3）；支持态 = D393；不支持 = D390 + 读数置灰
-   *  （.is-disabled，text-3）+ hover hint（D394）。思考状态未配置时 effort 读数留空、
-   *  分隔符收起、不置灰（置灰同是能力断言）。 */
+   *  可见文本 = model 读数 + U+00B7 + effort 读数。读屏名四档（D399 / D393 / D390 /
+   *  D403）：effort 会话态未读到（thinkConfigured=false——harness_state 未到达 / 读取
+   *  失败的降级窗口，真实 app 不可达）= D399 中性「未知」——MUST NOT 取 D390：「不支持」
+   *  是能力断言，与「还没读到」语义相反（r1 P2-3）；支持态 = D393；不支持 = D390 + 读数
+   *  置灰（.is-disabled，text-3）+ hover hint（D394）；model 读数为空（M381 config-only
+   *  的空清单态——models 未声明任何模型）= D403：model 名与分隔符收起（不伪造读数），
+   *  hover hint 改 D402 提示态。思考状态未配置时 effort 读数留空、分隔符收起、不置灰
+   *  （置灰同是能力断言）。 */
   function applySelChip(): void {
     if (selSelection === null) {
       modelChip.hidden = true;
@@ -2077,19 +2084,26 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     modelChip.hidden = false;
     const model = chipModelReading(selSelection);
     modelName.textContent = model;
+    // M381 空清单态：model 名收起（不伪造读数），分隔符随之收起——裸 effort 读数不留
+    // 悬空小圆点。
+    modelName.hidden = model === "";
+    modelSep.hidden = model === "" || !thinkConfigured;
     effReading.textContent = thinkConfigured ? effortLabel(thinkLevel) : "";
-    // 思考状态未配置（桩 / 旧后端 / 读取失败的降级窗口）时分隔符一并收起——「model · 」
-    // 的悬空小圆点不出现；不置灰：置灰是能力断言，未知态不作能力断言。
-    modelSep.hidden = !thinkConfigured;
     effReading.classList.toggle("is-disabled", thinkConfigured && !thinkSupported);
-    const label = !thinkConfigured
-      ? t("D399", { model })
-      : thinkSupported
-        ? t("D393", { model, level: effortLabel(thinkLevel) })
-        : t("D390");
+    const label =
+      model === ""
+        ? t("D403", { level: effortLabel(thinkLevel) })
+        : !thinkConfigured
+          ? t("D399", { model })
+          : thinkSupported
+            ? t("D393", { model, level: effortLabel(thinkLevel) })
+            : t("D390");
     modelChip.title = label;
     modelChip.setAttribute("aria-label", label);
-    effHint.textContent = t("D394", { model });
+    effHint.textContent =
+      model === ""
+        ? t("D402", { provider: selSelection.provider })
+        : t("D394", { model });
   }
 
   /** 勾选项的 check 格（think pop 配方：14px 固定宽，未勾选留空保证纵对齐）。 */
@@ -2152,33 +2166,41 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       provSec.append(item);
     }
     selPop.append(provSec);
-    // 段二：模型（当前 provider 的 model 维度；无维度（mock）或空清单 → 整段不渲染）。
+    // 段二：模型（当前 provider 的 model 维度；无维度（mock）→ 整段不渲染；M381 config-only：
+    // 声明清单为空 → 段照渲染但只含 D402 提示态——不得伪造模型条目）。
     const dim = selSelection.models[cur as ProviderId];
-    if (dim !== undefined && dim.options.length > 0) {
+    if (dim !== undefined) {
       const modelSec = document.createElement("div");
       modelSec.className = "lumir-hp-selpop-sec";
       const modelLabel = document.createElement("div");
       modelLabel.className = "lumir-hp-selpop-label";
       modelLabel.textContent = t("D397");
       modelSec.append(modelLabel);
-      for (const option of dim.options) {
-        const checked = option.id === dim.current;
-        const item = document.createElement("button");
-        item.type = "button";
-        item.className = "lumir-hp-selpop-item";
-        item.setAttribute("role", "menuitemradio");
-        item.setAttribute("aria-checked", String(checked));
-        appendCheck(item, checked);
-        const name = document.createElement("span");
-        name.className = "lumir-hp-selpop-name";
-        name.textContent = option.id;
-        item.append(name);
-        if (checked) item.classList.add("is-current");
-        item.addEventListener("click", (event) => {
-          event.stopPropagation();
-          selectModel(option.id);
-        });
-        modelSec.append(item);
+      if (dim.options.length === 0) {
+        const hint = document.createElement("div");
+        hint.className = "lumir-hp-selpop-hint";
+        hint.textContent = t("D402", { provider: cur });
+        modelSec.append(hint);
+      } else {
+        for (const option of dim.options) {
+          const checked = option.id === dim.current;
+          const item = document.createElement("button");
+          item.type = "button";
+          item.className = "lumir-hp-selpop-item";
+          item.setAttribute("role", "menuitemradio");
+          item.setAttribute("aria-checked", String(checked));
+          appendCheck(item, checked);
+          const name = document.createElement("span");
+          name.className = "lumir-hp-selpop-name";
+          name.textContent = option.id;
+          item.append(name);
+          if (checked) item.classList.add("is-current");
+          item.addEventListener("click", (event) => {
+            event.stopPropagation();
+            selectModel(option.id);
+          });
+          modelSec.append(item);
+        }
       }
       selPop.append(modelSec);
     }
