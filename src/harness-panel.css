@@ -908,8 +908,12 @@
    composer-box 承担（原型 .h-box：focus-within 出强调框），padding 对齐原型
    （sp-3 sp-4 sp-1：底部余量让给控制行）。 ─────────────────────────────────── */
 .lumir-hp-composer {
+  position: relative;
   flex: 1 1 auto;
   min-width: 0;
+  /* 单行最小高度 = 原型 .h-box textarea 的 44px（M361 2.1/2.2）：空态与首行输入态同高，
+     输入不再「变矮」；行在 44px 内容区内靠上留白，空态光标与占位有原型同款的呼吸感。 */
+  min-height: 44px;
   max-height: 150px;
   overflow-y: auto;
   padding: var(--sp-3) var(--sp-4) var(--sp-1);
@@ -926,9 +930,13 @@
   outline: none;
 }
 /* 占位：JS 在「无卡片且唯一空段落」时挂 .is-empty（contenteditable 的 :empty 不可靠——
-   浏览器会塞 <br> 或空段落占位）。 */
+   浏览器会塞 <br> 或空段落占位）。绝对定位压在首行行位（= 光标位，padding sp-3 sp-4）：
+   占位不占独立行——旧实现占位自占一行，空态比输入态高出一行、光标掉到第二行（M361 2.1/2.2）。 */
 .lumir-hp-composer.is-empty::before {
   content: attr(data-placeholder);
+  position: absolute;
+  top: var(--sp-3);
+  left: var(--sp-4);
   color: var(--text-3);
   pointer-events: none;
 }

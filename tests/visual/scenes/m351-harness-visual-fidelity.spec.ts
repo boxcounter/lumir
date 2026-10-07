@@ -16,6 +16,8 @@ import { stubTauri, type VaultFixture } from "./tauri-stub";
 //      done 翻 ✓ 行；单行轮次保持展开，≥2 行轮次结束折叠为摘要钮、点击展开回看。
 //   4. **元素级基线**：消息区与 composer 区两张 crop——整页容差吞不掉的观感面
 //     （m303/m345 的整页基线失效面随批重建，归 tower 的三联图纪律）。
+//   5. **composer 空态形态（M361 2.1/2.2）**：空态与首行输入同高（输入不「变矮」）；占位
+//      伪元素绝对定位压首行行位（与光标同位、垂直居中观感对齐原型 44px 输入区）。
 //
 // 行为不变量（chip 写回 / ctx 读数 / 两态相位 / 复制源）在 m347 场景，这里不重复。
 
@@ -267,6 +269,44 @@ test("composer：圆角卡片容器 + focus-within 强调框 + 图标发送钮",
   expect(busyStyle.boxShadow).toContain("rgba(0, 0, 0, 0.05)");
   await fire(page, { type: "done" });
   await expect(page.locator(".lumir-hp-send")).not.toHaveClass(/is-busy/);
+});
+
+test("composer 空态：与首行输入同高（2.1）+ 占位压首行行位（2.2）", async ({ page }) => {
+  await openPanel(page);
+
+  // 占位伪元素：绝对定位、压在首行行位（padding sp-3 sp-4 = 光标位）——旧实现占位自占
+  // 一行，空态比输入态高出一行、光标掉到占位下方的第二行（Alex 2026-10-07 2.1/2.2）。
+  const before = await page.locator(".lumir-hp-composer").evaluate((el) => {
+    const s = getComputedStyle(el, "::before");
+    const para = el.querySelector(".lumir-hp-qpara") as HTMLElement | null;
+    return {
+      position: s.position,
+      top: s.top,
+      left: s.left,
+      content: s.content,
+      minHeight: getComputedStyle(el).minHeight,
+      paraOffsetTop: para?.offsetTop ?? null, // 首段顶 = 首行行位（含 padding-top）
+    };
+  });
+  expect(before.position).toBe("absolute");
+  expect(parseFloat(before.top)).toBeCloseTo(before.paraOffsetTop ?? -1, 0); // 占位顶 == 首行行位
+  expect(before.left).toBe("8px");
+  expect(before.content).not.toBe("none"); // 空态占位在场
+  expect(before.minHeight).toBe("44px"); // 原型 .h-box textarea 的 44px 输入区
+
+  // 2.1：首行输入后 box 高度不跳变（±0.5px；旧实现空态高出约一行 19.5px）。
+  const heightOf = async () => (await page.locator(".lumir-hp-composer-box").boundingBox())?.height ?? 0;
+  const emptyH = await heightOf();
+  await page.locator(".lumir-hp-composer").fill("这段怎么用？");
+  const filledH = await heightOf();
+  expect(Math.abs(filledH - emptyH)).toBeLessThanOrEqual(0.5);
+  // 输入态占位退场（is-empty 摘除）。
+  const afterFill = await page.locator(".lumir-hp-composer").evaluate((el) => {
+    const s = getComputedStyle(el, "::before");
+    return { content: s.content, isEmpty: el.classList.contains("is-empty") };
+  });
+  expect(afterFill.isEmpty).toBe(false);
+  expect(afterFill.content).toBe("none");
 });
 
 test("工具清单：running/done 行 + ≥2 行折叠摘要可回看", async ({ page }) => {
