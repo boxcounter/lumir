@@ -497,7 +497,9 @@ impl Default for HarnessConfig {
 }
 
 /// `[harness].providers` 表：三家 provider 各一段参数，**都保留**（切 provider 不丢配置）。
-#[derive(Debug, Clone, PartialEq, Serialize, TS)]
+/// M381 config-only：`Default` 直接派生（三家都是各自结构的 Default = 空串/空清单/
+/// None——不内置任何出厂模型，与单独 `impl` 手写同值，交给派生不留两份）。
+#[derive(Debug, Clone, PartialEq, Default, Serialize, TS)]
 #[ts(export, export_to = "../../src/bindings/")]
 pub struct HarnessProviders {
     pub kimi: HarnessProviderConfig,
@@ -551,16 +553,6 @@ pub struct HarnessProviderConfig {
     /// 前端提示态），绝不回落内置表。这是浮层模型段与 ctx% 窗口 / effort 能力判定的
     /// 共同数据源。
     pub models: Vec<HarnessModelSpec>,
-}
-
-impl Default for HarnessProviders {
-    fn default() -> Self {
-        Self {
-            kimi: HarnessProviderConfig::default(),
-            deepseek: HarnessProviderConfig::default(),
-            mock: HarnessMockConfig::default(),
-        }
-    }
 }
 
 impl HarnessConfig {
@@ -944,9 +936,8 @@ fn migrate_retired_kimi_model(value: &mut serde_json::Value) -> RetiredKimiMigra
         });
     match replacement {
         Some(replacement) => {
-            *kimi
-                .get_mut("model")
-                .expect("上面已确认 model 是字符串") = serde_json::Value::String(replacement.clone());
+            *kimi.get_mut("model").expect("上面已确认 model 是字符串") =
+                serde_json::Value::String(replacement.clone());
             RetiredKimiMigration::Rewritten { replacement }
         }
         None => RetiredKimiMigration::NoReplacement,
@@ -1366,7 +1357,10 @@ fn validate_harness_provider(
         },
         // 缺键：清单首项即默认（不告警）；清单也空 = 整节未配置的出厂态，由上面的
         // models  warning（节已配置时）或静默出厂默认承担。
-        None => models.first().map(|spec| spec.id.clone()).unwrap_or_default(),
+        None => models
+            .first()
+            .map(|spec| spec.id.clone())
+            .unwrap_or_default(),
     };
     let base_url = match raw.base_url.as_deref().map(str::trim) {
         None => None,
@@ -2477,7 +2471,10 @@ mod tests {
             assert!(snap.config.harness.auto_compact, "{raw}");
             // config-only 出厂态：没有内置模型。
             assert!(snap.config.harness.providers.kimi.model.is_empty(), "{raw}");
-            assert!(snap.config.harness.providers.kimi.models.is_empty(), "{raw}");
+            assert!(
+                snap.config.harness.providers.kimi.models.is_empty(),
+                "{raw}"
+            );
             assert!(
                 snap.config.harness.providers.deepseek.model.is_empty(),
                 "{raw}"
@@ -2576,9 +2573,9 @@ mod tests {
         let snap = load_from(&f.0);
         assert_eq!(snap.config.harness.providers.kimi.model, RETIRED_KIMI_MODEL);
         assert!(
-            snap.warnings.iter().any(|w| {
-                w.contains(RETIRED_KIMI_MODEL) && w.contains("无法自动改写")
-            }),
+            snap.warnings
+                .iter()
+                .any(|w| { w.contains(RETIRED_KIMI_MODEL) && w.contains("无法自动改写") }),
             "{:?}",
             snap.warnings
         );
@@ -3070,7 +3067,10 @@ mod tests {
             "{:?}",
             snap.warnings
         );
-        assert!(!snap.config.harness.effort_supported(&HarnessProvider::Kimi, "stray-model"));
+        assert!(!snap
+            .config
+            .harness
+            .effort_supported(&HarnessProvider::Kimi, "stray-model"));
         // 空串 → 清单首项 + warning。
         let snap = load_from(
             &TempFile::new(

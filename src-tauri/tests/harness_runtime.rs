@@ -1522,7 +1522,13 @@ fn snapshot_thinking_capability_follows_provider_and_model() {
             .supported
     );
     // 声明不支持 ⇒ 前端置灰；未列出的 id（kimi-k30、复合 id）同判不支持。
-    for model in ["kimi-k2.6", "kimi-k2.7-code", "kimi-k2", "kimi-k30", "kimi-code/k3-256k"] {
+    for model in [
+        "kimi-k2.6",
+        "kimi-k2.7-code",
+        "kimi-k2",
+        "kimi-k30",
+        "kimi-code/k3-256k",
+    ] {
         let snapshot = runtime.snapshot(&f.scope(), &kimi(model));
         assert!(!snapshot.thinking.supported, "{model} 应标记不支持");
         // 能力与档位分开：不支持时档位读数仍是默认 High（前端 chip 显示读数 + 置灰）。
@@ -1531,10 +1537,5 @@ fn snapshot_thinking_capability_follows_provider_and_model() {
     // 空清单（config-only 缺省形态）：任何模型都不支持。
     let mut empty = mock_config();
     empty.provider = HarnessProvider::Kimi;
-    assert!(
-        !runtime
-            .snapshot(&f.scope(), &empty)
-            .thinking
-            .supported
-    );
+    assert!(!runtime.snapshot(&f.scope(), &empty).thinking.supported);
 }
