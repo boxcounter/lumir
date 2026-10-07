@@ -8,6 +8,10 @@ import { stubTauri, type VaultFixture } from "./tauri-stub";
 // 进度条 + 阶段指示两档、消息复制钮（hover 浮现，复制源 = 源文本非渲染 HTML）。
 // M370 起 ctx 读数改「{ctx}% · {cache}%」双裸读数（分隔符小圆点 U+00B7 与 modeline 同款；
 // cache_pct 纯前端消费）、ⓘ 钮移除、警示说明改越线时 hover 读数翻出（D377 随 ⓘ 退场）。
+// M378 起 hover hint 改两行带当时实际值（第一行 context window usage = D395、第二行
+// cache hit rate = D401，越线时 D335 警示句追加为第三行）并按面板边界收编（窄 pane 左缘
+// 不被 overflow:hidden 裁）；harness pane 内容字号支持 ⌘+/- 步进（与内容 pane 同语义，
+// 焦点路由——焦点在 composer 时 ⌘= 放大面板内容、焦点在编辑器时照旧放大编辑器内容）。
 // M351 起按新 DOM：composer 收进 .lumir-hp-composer-box（控制行 .lumir-hp-ctl 在容器底）、
 // chip/浮层挪进 wrapper（a11y 修复）、发送钮图标化（两态 SVG glyph + aria-label 文案）。
 // M363 起控制行插入思考 chip wrapper；M373 起双 chip 合一（.lumir-hp-effwrap 退役，
@@ -298,51 +302,21 @@ test("composer 控制行：合并选择器三维写回 / 形态合同 / ctx 读�
   await page.locator(".lumir-hp-transcript").click();
   await expect(selPop).toBeHidden();
 
-  // ── ctx% 读数（M370 双裸读数 + M373 hover 含义句常驻 / 越线追加警示句）──
+  // ── ctx% 读数（M370 双裸读数 + M373 hover 常驻 + M378 两行带当时实际值）──
   const ctxRead = page.locator(".lumir-hp-ctx");
   await expect(ctxRead).toHaveText("0% · 0%");
   await expect(ctxRead).not.toHaveClass(/is-warn/);
   const ctxWrap = page.locator(".lumir-hp-ctxwrap");
   const ctxPop = page.locator(".lumir-hp-ctxpop");
-  // 未越线 hover → 含义句（D395）浮出。
+  // 未越线 hover → 两行带值含义句：第一行 ctx（D395）、第二行 cache（D401），无警示句。
   await expect(ctxPop).toBeHidden();
   await ctxWrap.hover();
   await expect(ctxPop).toBeVisible();
-  await expect(ctxPop).toContainText("上下文窗口占用比例");
-  await expect(ctxPop).toContainText("缓存命中比例");
+  await expect(ctxPop.locator(".lumir-hp-ctxpop-meaning")).toHaveText("上下文窗口占用：0%");
+  await expect(ctxPop.locator(".lumir-hp-ctxpop-cache")).toHaveText("缓存命中率：0%");
+  await expect(ctxPop.locator(".lumir-hp-ctxpop-warn")).toHaveCount(0);
   await page.mouse.move(10, 10);
   await expect(ctxPop).toBeHidden();
-  // usage 事件越阈值 → 高亮 + hover 泡含义句 + 警示句（D335）两行。
-  await page.evaluate(() =>
-    (window as unknown as { __fireHarnessEvent: (p: unknown) => void }).__fireHarnessEvent({
-      type: "usage",
-      ctx_pct: 86,
-      cache_pct: 50,
-    }),
-  );
-  await expect(ctxRead).toHaveText("86% · 50%");
-  await expect(ctxRead).toHaveClass(/is-warn/);
-  await ctxWrap.hover();
-  await expect(ctxPop).toBeVisible();
-  await expect(ctxPop).toContainText("上下文窗口占用比例"); // 含义句恒在第一行
-  await expect(ctxPop).toContainText("86%");
-  await expect(ctxPop).toContainText("85%");
-  await page.mouse.move(10, 10);
-  await expect(ctxPop).toBeHidden();
-  // 低于阈值 → 高亮退场、hover 回到只有含义句。
-  await page.evaluate(() =>
-    (window as unknown as { __fireHarnessEvent: (p: unknown) => void }).__fireHarnessEvent({
-      type: "usage",
-      ctx_pct: 60,
-      cache_pct: 50,
-    }),
-  );
-  await expect(ctxRead).toHaveText("60% · 50%");
-  await expect(ctxRead).not.toHaveClass(/is-warn/);
-  await ctxWrap.hover();
-  await expect(ctxPop).toBeVisible();
-  await expect(ctxPop).not.toContainText("60%"); // 警示句（带数值）退场
-  await page.mouse.move(10, 10);
 
   // ── 发送钮两态 + 进度条/阶段指示：发送 → 停止态；停止点击 → 状态机；done → 回 idle ──
   // M351 图标化：钮面是 ↑ / ■ 两态 SVG glyph（[hidden] 切换），两态文案落 aria-label。
@@ -369,6 +343,43 @@ test("composer 控制行：合并选择器三维写回 / 形态合同 / ctx 读�
     }),
   );
   await expect(page.locator(".lumir-hp-stage")).toHaveText("正在生成回复…");
+  // usage 事件注入须落在**开轮窗口**（M374 轮次闸门：sent 之后、done 之前，关闭期的 usage
+  // 一律丢弃）——M374 起本场景的 usage 断言都在发送后、终态前完成。
+  // usage 事件越阈值 → 高亮 + hover 泡两行带值 + 警示句（D335）追加为第三行。
+  await page.evaluate(() =>
+    (window as unknown as { __fireHarnessEvent: (p: unknown) => void }).__fireHarnessEvent({
+      type: "usage",
+      ctx_pct: 86,
+      cache_pct: 50,
+    }),
+  );
+  await expect(ctxRead).toHaveText("86% · 50%");
+  await expect(ctxRead).toHaveClass(/is-warn/);
+  await ctxWrap.hover();
+  await expect(ctxPop).toBeVisible();
+  // 第一行带 hover 当时的 ctx 实际值（M378：不再是固定含义句）。
+  await expect(ctxPop.locator(".lumir-hp-ctxpop-meaning")).toHaveText("上下文窗口占用：86%");
+  await expect(ctxPop.locator(".lumir-hp-ctxpop-cache")).toHaveText("缓存命中率：50%");
+  await expect(ctxPop.locator(".lumir-hp-ctxpop-warn")).toContainText("86%");
+  await expect(ctxPop.locator(".lumir-hp-ctxpop-warn")).toContainText("85%");
+  await page.mouse.move(10, 10);
+  await expect(ctxPop).toBeHidden();
+  // 低于阈值 → 高亮退场、警示句退场，hover 回到只有两行带值含义句（第一行仍带当时值）。
+  await page.evaluate(() =>
+    (window as unknown as { __fireHarnessEvent: (p: unknown) => void }).__fireHarnessEvent({
+      type: "usage",
+      ctx_pct: 60,
+      cache_pct: 50,
+    }),
+  );
+  await expect(ctxRead).toHaveText("60% · 50%");
+  await expect(ctxRead).not.toHaveClass(/is-warn/);
+  await ctxWrap.hover();
+  await expect(ctxPop).toBeVisible();
+  await expect(ctxPop.locator(".lumir-hp-ctxpop-meaning")).toHaveText("上下文窗口占用：60%");
+  await expect(ctxPop.locator(".lumir-hp-ctxpop-warn")).toHaveCount(0); // 警示句（第三行）退场
+  await page.mouse.move(10, 10);
+  await expect(ctxPop).toBeHidden();
   // 停止点击（M348 桩期：只走状态机——running → stopping，连点被幂等挡下；
   // stopping 子态钮已禁用，playwright 的 actionability 会拒点——force 模拟真实双击的第二次落下）。
   await sendBtn.click();
@@ -403,4 +414,105 @@ test("composer 控制行：合并选择器三维写回 / 形态合同 / ctx 读�
   await userCopy.click();
   copied = await page.evaluate(() => (window as unknown as { __copied: string[] }).__copied);
   expect(copied).toEqual(["初步回答", "这段会触发压缩吗"]);
+});
+
+test("ctx hover 泡边界收编：窄面板下完整可见（三主题），不越出面板可视区", async ({ page }) => {
+  // M378 根因的复现条件：浮层默认锚 right:-18px、宽 224px（向左延 ~206px），祖先
+  // .lumir-harness 有 overflow:hidden——面板窄时浮层左缘被裁（Alex「hint 显示不全」）。
+  // 760px 宽视口把 harness pane 压到默认锚必溢出左缘的宽度；每条主题下量浮层边界 ⊆
+  // 面板边界，并量「未收编左缘」作证这条断言非空转（它 < 面板左缘 = 不收编必红）。
+  await page.setViewportSize({ width: 760, height: 600 });
+  await stubTauri(page, VAULT);
+  await stubHarnessComposer(page);
+  await page.goto("/");
+  await page.locator('.ft-row[title="harness-note.md"]').click();
+  await page.locator(".lumir-hp-toggle").click();
+  const panel = page.locator(".lumir-harness");
+  await expect(panel).toBeVisible();
+  const ctxWrap = page.locator(".lumir-hp-ctxwrap");
+  const ctxPop = page.locator(".lumir-hp-ctxpop");
+
+  const measure = () =>
+    page.evaluate(() => {
+      const panelEl = document.querySelector(".lumir-harness");
+      const popEl = document.querySelector(".lumir-hp-ctxpop");
+      const wrapEl = document.querySelector(".lumir-hp-ctxwrap");
+      if (panelEl === null || popEl === null || wrapEl === null) return null;
+      const p = panelEl.getBoundingClientRect();
+      const c = popEl.getBoundingClientRect();
+      const w = wrapEl.getBoundingClientRect();
+      return {
+        theme: document.documentElement.dataset.theme ?? "",
+        panelLeft: p.left,
+        panelRight: p.right,
+        popLeft: c.left,
+        popRight: c.right,
+        popWidth: c.width,
+        // 未收编的默认左缘 = 读数右缘 + 18px 探出 − 224px 宽（right:-18px 锚的算式）。
+        unclampedPopLeft: w.right + 18 - 224,
+      };
+    });
+
+  // 逐主题量一遍（几何与主题无关，三主题各验是 M378 的显式验收项）；主题钮 = cycleTheme
+  // 同一条命令路径（light → dark → eink）。
+  for (let i = 0; i < 3; i += 1) {
+    await ctxWrap.hover();
+    await expect(ctxPop).toBeVisible();
+    const m = await measure();
+    expect(m, "读不到面板 / 浮层 / 读数（判 FAIL，不当成空）").not.toBeNull();
+    expect(m!.theme, "主题应逐次循环（light → dark → eink）").toBe(["light", "dark", "eink"][i]);
+    // 复现条件成立：默认锚下浮层左缘越出面板——不收编这条断言必红（REVIEW.md 第 1 条
+    // 的反向验证：判据对「没有修复」必须有区分度）。
+    expect(
+      m!.unclampedPopLeft,
+      `第 ${i + 1} 主题（${m!.theme}）下面板宽度不足以复现溢出（unclamped ${m!.unclampedPopLeft} ≥ panel ${m!.panelLeft}），断言空转`,
+    ).toBeLessThan(m!.panelLeft);
+    // 收编后的真值：浮层完整落在面板可视边界内（±0.5 吸收亚像素取整）。
+    expect(m!.popLeft).toBeGreaterThanOrEqual(m!.panelLeft - 0.5);
+    expect(m!.popRight).toBeLessThanOrEqual(m!.panelRight + 0.5);
+    expect(m!.popWidth).toBeGreaterThan(0);
+    await page.mouse.move(10, 10);
+    await expect(ctxPop).toBeHidden();
+    if (i < 2) await page.locator(".modeline-theme").click();
+  }
+});
+
+test("harness pane ⌘+/- 内容字号步进：焦点路由、重置与编辑器隔离（M378）", async ({ page }) => {
+  await stubTauri(page, VAULT);
+  await stubHarnessComposer(page);
+  await page.goto("/");
+  await page.locator('.ft-row[title="harness-note.md"]').click();
+  await page.locator(".lumir-hp-toggle").click();
+  const panel = page.locator(".lumir-harness");
+  await expect(panel).toBeVisible();
+  const composer = page.locator(".lumir-hp-composer");
+  const composerFontSize = () => composer.evaluate((el) => getComputedStyle(el).fontSize);
+  const editorFontToken = () =>
+    page.evaluate(() =>
+      getComputedStyle(document.documentElement).getPropertyValue("--editor-font-size").trim(),
+    );
+
+  // 焦点在 composer（harness pane）：⌘= 步进**面板**内容字号（基线 --fs-ui 13 → 14 → 15）。
+  await composer.click();
+  await expect.poll(composerFontSize).toBe("13px");
+  const editorBefore = await editorFontToken();
+  await page.keyboard.press("Meta+=");
+  await expect.poll(composerFontSize).toBe("14px");
+  await page.keyboard.press("Meta+=");
+  await expect.poll(composerFontSize).toBe("15px");
+  // 面板持焦期间编辑器内容字号不被触碰（路由隔离）。
+  await expect.poll(editorFontToken).toBe(editorBefore);
+  // ⌘0 回面板基线（= --fs-ui 现值，与内容 pane「回配置字号」同口径，不是出厂默认）。
+  await page.keyboard.press("Meta+0");
+  await expect.poll(composerFontSize).toBe("13px");
+
+  // 焦点在编辑器：⌘= 照旧步进**编辑器**内容字号（M378 之前的行为逐字节保留），面板不动。
+  await page.locator(".cm-content").click();
+  await page.keyboard.press("Meta+=");
+  await expect.poll(editorFontToken).not.toBe(editorBefore);
+  await expect.poll(composerFontSize).toBe("13px");
+  // ⌘- 回退编辑器字号到步进前，面板依旧不动。
+  await page.keyboard.press("Meta+-");
+  await expect.poll(editorFontToken).toBe(editorBefore);
+  await expect.poll(composerFontSize).toBe("13px");
 });

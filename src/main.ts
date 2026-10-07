@@ -8,7 +8,7 @@ import { DEFAULT_SPLIT_RATIO, clampSplitRatio, createDividerDrag, createPaneLayo
 import type { DividerDrag, PaneId, PaneKind } from "./pane-layout";
 import { DEFAULT_AUTO_INDENT } from "./enter-indent";
 import { DEFAULT_FONT_SIZE } from "./typography";
-import type { TypographySettings } from "./typography";
+import type { TextScaleDirection, TypographySettings } from "./typography";
 import type { EditorMode } from "./bindings/EditorMode";
 import type { MarkdownLineNumbers } from "./bindings/MarkdownLineNumbers";
 import { baseName, createFileTree, openKind, patchAttachmentPaths, vaultAbsolutePath } from "./tree";
@@ -2132,6 +2132,15 @@ shell.modelineLanguage.addEventListener("click", cycleLanguage);
 //（design §2 行 5）。
 const harnessPanel = createHarnessPanel({ shell, editor, togglePane: toggleHarnessPane });
 
+/** 字号步进的焦点路由（M378）：焦点在 harness 面板内 → 步进面板内容字号；否则 → 步进
+ *  编辑器内容字号（M195 的 editor.textScale 路径，行为与 M378 之前逐字节一致——焦点在
+ *  编辑器 / 文件树 / 其余 chrome 时 ⌘+/- 的作用面不变）。焦点判据由面板自查（hasFocus），
+ *  装配层不探面板 DOM。 */
+function scaleFocusedPane(direction: TextScaleDirection): void {
+  if (harnessPanel.hasFocus()) harnessPanel.textScale(direction);
+  else editor.textScale(direction);
+}
+
 // 摘录手势与跳回（M344，change add-harness-quote-cards design §4/§5）：浮动钮的选区捕获与
 // 失锚三层降级链 + 跳回高亮在 src/quote-gesture.ts，这里只做装配——把「最近活跃编辑器 pane」
 // 的解析（复合句柄 / paneEntryOfSession，与本文件其余消费者同源）、打开链路与提示出口注进去。
@@ -2196,9 +2205,13 @@ const commands: CommandRuntime = {
   // 热键（它会在统一键位表之外再注册一条 keydown 通路、接管同一批键，见 keymap-commands 的
   // delta）。能力（运行期真源 + 施加）在 editor 侧：一份值管全部会话、不落盘、不回写
   // config.json、不进撤销栈、不碰 dirty；⌘0 回到**配置字号**而不是出厂默认值（15px，D1 裁决）。
-  "view.text-scale-up": () => editor.textScale("up"),
-  "view.text-scale-down": () => editor.textScale("down"),
-  "view.text-scale-reset": () => editor.textScale("reset"),
+  // M378：焦点在 harness 面板内时同三条命令改为步进**面板内容字号**（--lumir-hp-scale，
+  // 与编辑器同语义：×1.1 钳 [12,32]、reset 回面板基线 --fs-ui、不落盘）——「harness pane
+  // 也支持 CMD +/- 放大缩小（即和内容 pane 一样）」（Alex 2026-10-07）：焦点在哪个 pane，
+  // 缩放就作用于哪个 pane 的内容。
+  "view.text-scale-up": () => scaleFocusedPane("up"),
+  "view.text-scale-down": () => scaleFocusedPane("down"),
+  "view.text-scale-reset": () => scaleFocusedPane("reset"),
   // 主题循环切换（M237，change live-theme-switch 的 D1/D2 裁决）：light → dark → eink 循环，
   // 命令实现就是上面的 cycleTheme（与 modeline 主题钮共用同一条路径，见那段注释）。
   // 默认键位 ⌘⇧T 在 keys.ts 的 KEY_BINDINGS 里（冲突核实与 token 形态见那一条的 doc）。

@@ -65,7 +65,10 @@
 /* ── 面板本体：pane 内容件（HP1，change move-harness-to-pane-chat-frame）——装配层在
    harness pane 分栏时把面板挂进该 pane 的挂载元素，宽高分层由挂载槽（.editor-pane）管，
    这里只吃满；与文档 pane 的分隔由 pane 分隔条承担（左缘 hairline 保留）。dock 列的
-   网格落点（grid-column / .dock-open）随本 change 移除。 ─────────────────────────── */
+   网格落点（grid-column / .dock-open）随本 change 移除。
+   M378：面板全部 font-size 声明（含本行根字号）calc 乘 --lumir-hp-scale——harness pane
+   的 ⌘+/- 内容字号步进（与内容 pane 的 textScale 同语义，焦点路由见 src/main.ts）；
+   变量缺省 1（未步进时逐字节等于基线 token 值，零观感漂移）。 ────────────────────── */
 .lumir-harness {
   width: 100%;
   height: 100%;
@@ -78,7 +81,7 @@
   border-left: 1px solid var(--border);
   color: var(--text);
   font-family: var(--font-sans);
-  font-size: var(--fs-ui);
+  font-size: calc(var(--fs-ui) * var(--lumir-hp-scale, 1));
 }
 .lumir-harness[hidden] {
   display: none;
@@ -124,7 +127,7 @@
   background: none;
   color: var(--text);
   font: inherit;
-  font-size: var(--fs-meta);
+  font-size: calc(var(--fs-meta) * var(--lumir-hp-scale, 1));
   font-weight: var(--fw-medium);
   cursor: pointer;
   transition: background var(--dur-ui) var(--ease-standard);
@@ -140,7 +143,7 @@
 .lumir-hp-session .lumir-hp-schev {
   flex: none;
   color: var(--text-3);
-  font-size: var(--fs-label-s);
+  font-size: calc(var(--fs-label-s) * var(--lumir-hp-scale, 1));
 }
 /* 新建会话钮：24px 高的弱化钮（＋ glyph + 文案），与段内会话名同排。 */
 .lumir-hp-seg-new {
@@ -155,7 +158,7 @@
   background: none;
   color: var(--text-3);
   font: inherit;
-  font-size: var(--fs-meta);
+  font-size: calc(var(--fs-meta) * var(--lumir-hp-scale, 1));
   white-space: nowrap;
   cursor: pointer;
   transition:
@@ -198,7 +201,7 @@
   background: none;
   color: var(--text-2);
   font: inherit;
-  font-size: var(--fs-meta);
+  font-size: calc(var(--fs-meta) * var(--lumir-hp-scale, 1));
   text-align: left;
   cursor: pointer;
   transition: background var(--dur-ui) var(--ease-standard);
@@ -223,14 +226,14 @@
   display: flex;
   flex-direction: column;
   gap: var(--sp-4);
-  font-size: var(--fs-ui);
+  font-size: calc(var(--fs-ui) * var(--lumir-hp-scale, 1));
   line-height: var(--lh-ui);
 }
 .lumir-hp-empty {
   margin: auto;
   padding: var(--sp-6);
   color: var(--text-3);
-  font-size: var(--fs-meta);
+  font-size: calc(var(--fs-meta) * var(--lumir-hp-scale, 1));
   line-height: var(--lh-ui);
   text-align: center;
 }
@@ -241,7 +244,7 @@
   align-items: center;
   gap: var(--sp-3);
   margin-bottom: var(--sp-1);
-  font-size: var(--fs-micro);
+  font-size: calc(var(--fs-micro) * var(--lumir-hp-scale, 1));
   font-weight: var(--fw-semibold);
   letter-spacing: 0.05em;
   color: var(--text-3);
@@ -286,12 +289,12 @@
   font-weight: var(--fw-bold);
   line-height: var(--lh-title);
 }
-.lumir-hp-msg-assistant .lumir-hp-body h1 { font-size: var(--fs-h1); }
-.lumir-hp-msg-assistant .lumir-hp-body h2 { font-size: var(--fs-h2); }
-.lumir-hp-msg-assistant .lumir-hp-body h3 { font-size: var(--fs-h3); }
-.lumir-hp-msg-assistant .lumir-hp-body h4 { font-size: var(--fs-h4); }
-.lumir-hp-msg-assistant .lumir-hp-body h5 { font-size: var(--fs-h5); }
-.lumir-hp-msg-assistant .lumir-hp-body h6 { font-size: var(--fs-h6); }
+.lumir-hp-msg-assistant .lumir-hp-body h1 { font-size: calc(var(--fs-h1) * var(--lumir-hp-scale, 1)); }
+.lumir-hp-msg-assistant .lumir-hp-body h2 { font-size: calc(var(--fs-h2) * var(--lumir-hp-scale, 1)); }
+.lumir-hp-msg-assistant .lumir-hp-body h3 { font-size: calc(var(--fs-h3) * var(--lumir-hp-scale, 1)); }
+.lumir-hp-msg-assistant .lumir-hp-body h4 { font-size: calc(var(--fs-h4) * var(--lumir-hp-scale, 1)); }
+.lumir-hp-msg-assistant .lumir-hp-body h5 { font-size: calc(var(--fs-h5) * var(--lumir-hp-scale, 1)); }
+.lumir-hp-msg-assistant .lumir-hp-body h6 { font-size: calc(var(--fs-h6) * var(--lumir-hp-scale, 1)); }
 .lumir-hp-msg-assistant .lumir-hp-body h1:first-child,
 .lumir-hp-msg-assistant .lumir-hp-body h2:first-child,
 .lumir-hp-msg-assistant .lumir-hp-body h3:first-child,
@@ -338,7 +341,7 @@
 }
 .lumir-hp-msg-assistant .lumir-hp-body table {
   border-collapse: collapse;
-  font-size: var(--fs-meta);
+  font-size: calc(var(--fs-meta) * var(--lumir-hp-scale, 1));
 }
 .lumir-hp-msg-assistant .lumir-hp-body th,
 .lumir-hp-msg-assistant .lumir-hp-body td {
@@ -368,7 +371,7 @@
   border-radius: var(--r6);
   overflow-x: auto;
   font-family: var(--font-mono);
-  font-size: var(--fs-ui-s);
+  font-size: calc(var(--fs-ui-s) * var(--lumir-hp-scale, 1));
   line-height: var(--lh-code);
 }
 .lumir-hp-codeblock code {
@@ -396,7 +399,7 @@
   align-items: center;
   gap: var(--sp-3);
   height: 24px;
-  font-size: var(--fs-meta);
+  font-size: calc(var(--fs-meta) * var(--lumir-hp-scale, 1));
   color: var(--text-2);
 }
 .lumir-hp-tool-row[hidden] {
@@ -468,7 +471,7 @@
   background: none;
   color: var(--text-3);
   font: inherit;
-  font-size: var(--fs-meta);
+  font-size: calc(var(--fs-meta) * var(--lumir-hp-scale, 1));
   cursor: pointer;
   transition: color var(--dur-ui) var(--ease-standard);
 }
@@ -487,7 +490,7 @@
   padding: var(--sp-2) 0;
   border-top: 1px solid var(--border-soft);
   border-bottom: 1px solid var(--border-soft);
-  font-size: var(--fs-meta);
+  font-size: calc(var(--fs-meta) * var(--lumir-hp-scale, 1));
   color: var(--text-2);
 }
 .lumir-hp-compact summary {
@@ -506,14 +509,14 @@
   background: var(--danger-tint);
   color: var(--danger);
   border-radius: var(--r4);
-  font-size: var(--fs-meta);
+  font-size: calc(var(--fs-meta) * var(--lumir-hp-scale, 1));
 }
 
 /* ── 中断标注（M348，D383）：被打断的 assistant 消息上的「已停止」徽标 ────────── */
 .lumir-hp-stopped {
   display: inline-block;
   margin-top: var(--sp-1);
-  font-size: var(--fs-meta);
+  font-size: calc(var(--fs-meta) * var(--lumir-hp-scale, 1));
   color: var(--text-3);
 }
 
@@ -535,7 +538,7 @@
   background: none;
   color: var(--text-3);
   font: inherit;
-  font-size: var(--fs-meta);
+  font-size: calc(var(--fs-meta) * var(--lumir-hp-scale, 1));
   white-space: nowrap;
   cursor: pointer;
   transition: color var(--dur-ui) var(--ease-standard);
@@ -560,7 +563,7 @@
   margin: var(--sp-1) 0 var(--sp-2) 7px;
   padding: var(--sp-2) 0 var(--sp-2) var(--sp-4);
   border-left: 2px solid var(--border-soft);
-  font-size: var(--fs-meta);
+  font-size: calc(var(--fs-meta) * var(--lumir-hp-scale, 1));
   line-height: var(--lh-ui);
   color: var(--text-2);
   white-space: pre-wrap;
@@ -579,7 +582,7 @@
 }
 .lumir-hp-approval-title {
   margin-bottom: var(--sp-2);
-  font-size: var(--fs-ui);
+  font-size: calc(var(--fs-ui) * var(--lumir-hp-scale, 1));
   font-weight: var(--fw-semibold);
 }
 .lumir-hp-diff,
@@ -591,7 +594,7 @@
   background: var(--code-bg);
   border-radius: var(--r4);
   font-family: var(--font-mono);
-  font-size: var(--fs-label-s);
+  font-size: calc(var(--fs-label-s) * var(--lumir-hp-scale, 1));
   line-height: var(--lh-code);
   white-space: pre;
 }
@@ -624,7 +627,7 @@
   background: var(--content-bg);
   color: var(--text);
   font: inherit;
-  font-size: var(--fs-meta);
+  font-size: calc(var(--fs-meta) * var(--lumir-hp-scale, 1));
 }
 .lumir-hp-reason:focus {
   outline: none;
@@ -642,7 +645,7 @@
   padding: var(--sp-2) var(--sp-5);
   border-radius: var(--r4);
   font: inherit;
-  font-size: var(--fs-meta);
+  font-size: calc(var(--fs-meta) * var(--lumir-hp-scale, 1));
   cursor: pointer;
   transition: background var(--dur-ui) var(--ease-standard);
 }
@@ -680,7 +683,7 @@
   border: 1px solid var(--border-soft);
   border-radius: var(--r4);
   color: var(--text-2);
-  font-size: var(--fs-label-s);
+  font-size: calc(var(--fs-label-s) * var(--lumir-hp-scale, 1));
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -753,7 +756,7 @@
   background: none;
   color: var(--text-2);
   font: inherit;
-  font-size: var(--fs-label-s);
+  font-size: calc(var(--fs-label-s) * var(--lumir-hp-scale, 1));
   white-space: nowrap;
   cursor: pointer;
   transition:
@@ -787,7 +790,7 @@
 .lumir-hp-model-chev {
   flex: none;
   color: var(--text-3);
-  font-size: var(--fs-micro);
+  font-size: calc(var(--fs-micro) * var(--lumir-hp-scale, 1));
 }
 .lumir-hp-model[hidden] {
   display: none;
@@ -809,7 +812,7 @@
   border-radius: var(--r6);
   box-shadow: var(--shadow-raise);
   color: var(--text-2);
-  font-size: var(--fs-meta);
+  font-size: calc(var(--fs-meta) * var(--lumir-hp-scale, 1));
   line-height: var(--lh-ui);
   white-space: normal;
   z-index: 30;
@@ -852,7 +855,7 @@
 }
 .lumir-hp-selpop-label {
   padding: var(--sp-2) var(--sp-3) var(--sp-1);
-  font-size: var(--fs-micro);
+  font-size: calc(var(--fs-micro) * var(--lumir-hp-scale, 1));
   letter-spacing: 0.04em;
   color: var(--text-3);
 }
@@ -867,7 +870,7 @@
   background: none;
   color: var(--text-2);
   font: inherit;
-  font-size: var(--fs-meta);
+  font-size: calc(var(--fs-meta) * var(--lumir-hp-scale, 1));
   text-align: left;
   cursor: pointer;
   transition: background var(--dur-ui) var(--ease-standard);
@@ -913,7 +916,7 @@
 }
 .lumir-hp-selpop-hint {
   padding: var(--sp-1) var(--sp-3) var(--sp-2);
-  font-size: var(--fs-label-s);
+  font-size: calc(var(--fs-label-s) * var(--lumir-hp-scale, 1));
   color: var(--text-3);
 }
 
@@ -937,7 +940,7 @@
 }
 .lumir-hp-ctx {
   font-family: var(--font-mono);
-  font-size: var(--fs-label);
+  font-size: calc(var(--fs-label) * var(--lumir-hp-scale, 1));
   color: var(--text-3);
   white-space: nowrap;
 }
@@ -948,9 +951,13 @@
 :root[data-theme="eink"] .lumir-hp-ctx.is-warn {
   text-decoration: underline;
 }
-/* 读数 hover 泡（M370 = D335 的 hover 形态；M373 起常驻含义句 D395、越线时追加警示句
-   D335——两行同泡）：向上展开，右缘对齐读数右缘（原型 224px——M347 的 240px 按视觉还原
-   收紧）。显隐由 hover 翻转（harness-panel.ts 的 mouseenter/leave），hidden 仍是结构兜底。 */
+/* 读数 hover 泡（M370 = D335 的 hover 形态；M373 起常驻含义句；M378 改两行带当时实际值
+   ——第一行 context window usage（D395）、第二行 cache hit rate（D401，cache 缺失不渲染）、
+   越线时警示句 D335 追加为第三行）：向上展开，右缘对齐读数右缘（原型 224px——M347 的
+   240px 按视觉还原收紧）。显隐由 hover 翻转（harness-panel.ts 的 mouseenter/leave），
+   hidden 仍是结构兜底。M378 起翻出时经 clampCtxPop 按面板边界收编（默认锚向右探出、
+   向左延 ~206px，面板 overflow:hidden 会把溢出左缘裁掉）——translate / width 只在越界时
+   由 JS 写，未越界保持本表默认形态。 */
 .lumir-hp-ctxpop {
   position: absolute;
   bottom: calc(100% + 6px);
@@ -962,7 +969,7 @@
   border-radius: var(--r6);
   box-shadow: var(--shadow-raise);
   color: var(--text-2);
-  font-size: var(--fs-meta);
+  font-size: calc(var(--fs-meta) * var(--lumir-hp-scale, 1));
   line-height: var(--lh-ui);
   white-space: normal;
   z-index: 30;
@@ -970,7 +977,9 @@
 .lumir-hp-ctxpop[hidden] {
   display: none;
 }
-/* 越线警示句（D335）与含义句（D395）的同泡分行：警示句恒在含义句之下。 */
+/* 同泡分行：第二行（D401 cache hit rate）与越线警示句（D335，第三行）恒在第一行（D395）
+   之下——三行都是裸 div，行间不另设样式；警示句只在越线时存在（margin 让间隔只出现在
+   有警示句的场景，与 M373 两行同泡的间距口径一致）。 */
 .lumir-hp-ctxpop-warn {
   margin-top: var(--sp-1);
   color: var(--pending);
@@ -986,7 +995,7 @@
 }
 .lumir-hp-stage {
   margin-bottom: 4px;
-  font-size: var(--fs-meta);
+  font-size: calc(var(--fs-meta) * var(--lumir-hp-scale, 1));
   color: var(--text-3);
 }
 .lumir-hp-bar {
@@ -1043,7 +1052,7 @@
   border-radius: var(--r4);
   background: var(--agent-bg);
   color: var(--text-3);
-  font-size: var(--fs-label-s);
+  font-size: calc(var(--fs-label-s) * var(--lumir-hp-scale, 1));
   line-height: 1;
   cursor: pointer;
   opacity: 0;
@@ -1081,7 +1090,7 @@
   background: none;
   color: var(--text);
   font: inherit;
-  font-size: var(--fs-ui);
+  font-size: calc(var(--fs-ui) * var(--lumir-hp-scale, 1));
   line-height: var(--lh-ui);
   word-break: break-word;
   cursor: text;
@@ -1153,7 +1162,7 @@
   min-width: 0;
 }
 .lumir-hp-qc-ex {
-  font-size: var(--fs-meta);
+  font-size: calc(var(--fs-meta) * var(--lumir-hp-scale, 1));
   line-height: var(--lh-ui);
   color: var(--text-2);
   display: -webkit-box;
@@ -1165,7 +1174,7 @@
 .lumir-hp-qc-src {
   margin-top: 2px;
   font-family: var(--font-mono);
-  font-size: var(--fs-micro);
+  font-size: calc(var(--fs-micro) * var(--lumir-hp-scale, 1));
   color: var(--text-3);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1185,7 +1194,7 @@
   justify-content: center;
   background: none;
   color: var(--text-3);
-  font-size: var(--fs-label-s);
+  font-size: calc(var(--fs-label-s) * var(--lumir-hp-scale, 1));
   line-height: 1;
   cursor: pointer;
 }
