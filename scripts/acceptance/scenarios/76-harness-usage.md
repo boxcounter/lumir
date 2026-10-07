@@ -54,9 +54,10 @@ modeline 同款，Alex 过目基线候选后的复裁决；原话写作 • 以�
 前缀与 cache 列名都随原话去掉，M347 时代的单读数形态退场。越警示阈值（`[harness].warn_ctx_pct`，
 缺省 85）时读数高亮 + hover 读数浮出警示说明（场景 87 判越线面，本场景判读数面）。
 
-数值口径：ctx% = input_tokens ÷ 模型上下文窗口（mock 走 kimi 预设表，kimi-k2 = 131072，
-`src-tauri/src/harness/llm.rs`）；cache% = cached_tokens ÷ input_tokens（同文件的 cache_pct
-计算）。fixture 取 65536/32768 让两个读数恰好都 50%，避开浮点修约的歧义。50% 低于警示阈值
+数值口径：ctx% = input_tokens ÷ 模型上下文窗口（M381 config-only 后 mock 无模型维度，
+`model_specs` 空 → 分母回落保守默认 `FALLBACK_CONTEXT_WINDOW` = 131072，
+`src-tauri/src/config.rs`）；cache% = cached_tokens ÷ input_tokens（`src-tauri/src/harness/llm.rs`
+的 cache_pct 计算）。fixture 取 65536/32768 让两个读数恰好都 50%，避开浮点修约的歧义。50% 低于警示阈值
 85%，不触发自动压缩（auto_compact 默认开），也不会出现警示文案。
 
 **发送前的读数为什么是 `0% · 0%`（不是「没有读数」）**：`harness_state` 快照里 `usage` 是
