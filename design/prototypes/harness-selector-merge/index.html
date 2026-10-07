@@ -1,0 +1,599 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Lumir — harness 模型选择器合并原型（M371）</title>
+<style>
+/* ============ tokens（逐值取自 src/style.css / src/harness-panel.css 现行登记值） ============ */
+:root {
+  --sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", "PingFang SC", "Hiragino Sans GB", sans-serif;
+  --mono: ui-monospace, "SF Mono", Menlo, monospace;
+  /* 非色 token（三主题共享，与 style.css :root 同值） */
+  --fs-label-s: 11.5px;
+  --fs-meta: 12px;
+  --fs-micro: 10.5px;
+  --fs-label: 11px;
+  --sp-1: 2px; --sp-2: 4px; --sp-3: 6px; --sp-4: 8px;
+  --r4: 4px; --r5: 5px; --r6: 6px; --r8: 8px;
+  --dur-ui: 0.12s; --ease-standard: ease;
+}
+:root, :root[data-theme="light"] {
+  --frame: #f4f4f1;
+  --agent-bg: #f7f7f4;
+  --content-bg: #fdfdfc;
+  --preview-bg: #ffffff;
+  --border: #e3e2dd;
+  --border-soft: #edece7;
+  --text: #21201a;
+  --text-2: #6e6c61;
+  --text-3: #a9a79b;
+  --sel: #e8e7e1;
+  --hover: rgba(0,0,0,0.038);
+  --accent: #3a5fcd;
+  --accent-tint: #eef1fb;
+  --pending: #a06e0f;
+  --shadow-raise: 0 4px 16px rgba(0,0,0,0.10);
+  --send-fill: #38372f;
+  --send-fill-hover: #55534a;
+  --send-text: #ffffff;
+}
+:root[data-theme="dark"] {
+  --frame: #1a1b1d;
+  --agent-bg: #1e1f21;
+  --content-bg: #222326;
+  --preview-bg: #26272b;
+  --border: rgba(255,255,255,0.095);
+  --border-soft: rgba(255,255,255,0.055);
+  --text: #e3e2db;
+  --text-2: #9b9a91;
+  --text-3: #62615b;
+  --sel: rgba(255,255,255,0.075);
+  --hover: rgba(255,255,255,0.05);
+  --accent: #8ba3ef;
+  --accent-tint: rgba(128,152,232,0.15);
+  --pending: #d9a75c;
+  --shadow-raise: 0 4px 16px rgba(0,0,0,0.50);
+  --send-fill: #c7c6bd;
+  --send-fill-hover: #dcd9cd;
+  --send-text: #222326;
+}
+:root[data-theme="eink"] {
+  --frame: #ffffff;
+  --agent-bg: #ffffff;
+  --content-bg: #ffffff;
+  --preview-bg: #ffffff;
+  --border: #000000;
+  --border-soft: #b9b9b9;
+  --text: #000000;
+  --text-2: #3d3d3d;
+  --text-3: #6e6e6e;
+  --sel: #000000;
+  --sel-text: #ffffff;
+  --hover: rgba(0,0,0,0.06);
+  --accent: #000000;
+  --accent-tint: transparent;
+  --pending: #000000;
+  --shadow-raise: none;
+  --send-fill: #000000;
+  --send-fill-hover: #3a3a3a;
+  --send-text: #ffffff;
+}
+
+/* ============ base ============ */
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: var(--sans);
+  font-size: 13px;
+  color: var(--text);
+  background: var(--frame);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+button { font: inherit; color: inherit; background: none; border: none; cursor: default; }
+a { color: var(--accent); text-decoration: none; }
+
+/* ============ harness 面板复刻（宽 348 = --layout-agent-w；只复刻 composer 区） ============ */
+.hp {
+  width: 348px;
+  background: var(--agent-bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  /* 不裁 overflow：浮层向上展开会越出 composer 伸进 transcript 区（与产品 .lumir-harness
+     同口径——面板满高，浮层在面板范围内不被裁；原型面板矮，裁了浮层就没了上半段）。 */
+}
+.hp-transcript {
+  padding: 14px 16px;
+  min-height: 96px;
+  font-size: 12.5px;
+  line-height: 1.58;
+  color: var(--text-3);
+  border-bottom: 1px solid var(--border);
+  display: flex; align-items: center; justify-content: center;
+}
+.hp-composer-area {
+  padding: var(--sp-3) var(--sp-4) var(--sp-4);
+}
+.hp-composer-box {
+  background: var(--content-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--r8);
+}
+.hp-composer {
+  padding: var(--sp-3) var(--sp-4);
+  min-height: 44px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-3);
+  outline: none;
+}
+.hp-ctl {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: var(--sp-1) var(--sp-2) var(--sp-2);
+}
+
+/* ── 合并选择器 chip（替代现行 modelChip + thinkChip 双 chip）────────────
+   形态纪律完全沿用单个 chip 的现行配方：无边框小标签、24px 高、r5、fs-label-s、
+   text-2、hover 给底（harness-panel.css .lumir-hp-model / .lumir-hp-eff）。
+   唯一新增：max-width 从 96px 放到 224px——读数从一格变三格（provider · model · effort），
+   空间从 think chip 一格 + gap 一格里收回来（双 chip 并排长名截断更狠）。 */
+.hp-selwrap {
+  position: relative;
+  flex: none;
+  display: flex;
+  min-width: 0;
+}
+.hp-sel {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  max-width: 224px;
+  height: 24px;
+  padding: 0 var(--sp-3);
+  border: none;
+  border-radius: var(--r5);
+  background: none;
+  color: var(--text-2);
+  font-size: var(--fs-label-s);
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background var(--dur-ui) var(--ease-standard),
+    color var(--dur-ui) var(--ease-standard);
+}
+.hp-sel:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+/* 读数串承担 ellipsis（同 .lumir-hp-model-name 口径：button 本体不裁切）。 */
+.hp-sel-read {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* effort 不支持（当前 provider + model 组合 supported=false）：读数保留、置灰——
+   合并 chip 不再有「整 chip 禁用」形态（那是双 chip 时代 thinkChip 的处置），
+   置灰只落在 effort 这一格，选择器本身仍可点开换组合。 */
+.hp-sel-read .eff-off { color: var(--text-3); }
+.hp-sel-chev {
+  flex: none;
+  color: var(--text-3);
+  font-size: var(--fs-micro);
+}
+
+/* ── 合并浮层：三维度分段（provider / model / thinking effort）───────────
+   壳配方沿用现行两个浮层（harness-panel.css .lumir-hp-modelpop / .lumir-hp-effpop）：
+   --preview-bg + 1px --border + r8 + --shadow-raise，锚在 wrapper 上向上展开。
+   内部 = 三段 menuitemradio 列表，hairline 分隔；段标签 fs-micro text-3。
+   项配方沿用 think pop：check 格 14px 固定宽 + 档名 + is-current 出 accent-tint 底。 */
+.hp-pop {
+  position: absolute;
+  bottom: calc(100% + 4px);
+  left: 0;
+  min-width: 188px;
+  padding: var(--sp-2);
+  background: var(--preview-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--r8);
+  box-shadow: var(--shadow-raise);
+  z-index: 30;
+}
+:root[data-theme="eink"] .hp-pop { border-width: 1.4px; }
+.hp-pop[hidden] { display: none; }
+.hp-sec + .hp-sec { border-top: 1px solid var(--border-soft); margin-top: var(--sp-2); padding-top: var(--sp-2); }
+:root[data-theme="eink"] .hp-sec + .hp-sec { border-top-color: var(--border); }
+.hp-sec-label {
+  padding: var(--sp-2) var(--sp-3) var(--sp-1);
+  font-size: var(--fs-micro);
+  letter-spacing: 0.04em;
+  color: var(--text-3);
+}
+.hp-item {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  width: 100%;
+  padding: var(--sp-2) var(--sp-3);
+  border: none;
+  border-radius: var(--r4);
+  background: none;
+  color: var(--text-2);
+  font-size: var(--fs-meta);
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--dur-ui) var(--ease-standard);
+}
+.hp-item:hover { background: var(--hover); color: var(--text); }
+.hp-item.is-current { background: var(--accent-tint); }
+:root[data-theme="eink"] .hp-item.is-current { background: var(--sel); color: var(--sel-text); }
+.hp-item-check {
+  flex: none;
+  width: 14px;
+  color: var(--accent);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+:root[data-theme="eink"] .hp-item-check { color: var(--sel-text); }
+.hp-item-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.hp-item-tag {
+  flex: none;
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+}
+/* effort 段禁用（当前组合不支持）：整段降档 + 一句说明（D390 同句）。 */
+.hp-sec.is-disabled .hp-item { color: var(--text-3); cursor: default; }
+.hp-sec.is-disabled .hp-item:hover { background: none; color: var(--text-3); }
+.hp-sec-hint {
+  padding: var(--sp-1) var(--sp-3) var(--sp-2);
+  font-size: var(--fs-label-s);
+  color: var(--text-3);
+}
+
+/* ── ctx 读数 + 发送钮（现行配方原样搬入，保持控制行长相对照）────────────── */
+.hp-ctx {
+  font-family: var(--mono);
+  font-size: var(--fs-label);
+  color: var(--text-3);
+  white-space: nowrap;
+}
+.hp-ctx.is-warn { color: var(--pending); font-weight: 600; }
+:root[data-theme="eink"] .hp-ctx.is-warn { text-decoration: underline; }
+.hp-ctl-spacer { flex: 1; }
+.hp-send {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: none;
+  border-radius: var(--r6);
+  background: var(--send-fill);
+  color: var(--send-text);
+  cursor: pointer;
+  transition: background var(--dur-ui) var(--ease-standard);
+}
+.hp-send:hover { background: var(--send-fill-hover); }
+
+/* ============ 控制面板（硬规则：全部选项点击可达；panel=0 供截图隐藏） ============ */
+.cpanel {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 100;
+  width: 260px;
+  background: var(--preview-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--r8);
+  box-shadow: var(--shadow-raise);
+  padding: 10px 12px;
+  font-size: 12px;
+}
+.cpanel[hidden] { display: none; }
+.cpanel h2 { font-size: 12px; font-weight: 650; margin-bottom: 8px; }
+.cpanel .cp-row { display: flex; align-items: center; gap: 6px; margin-top: 6px; }
+.cpanel .cp-label { flex: none; width: 40px; color: var(--text-3); font-size: var(--fs-label-s); }
+.cpanel .cp-btn {
+  padding: 3px 9px;
+  border: 1px solid var(--border);
+  border-radius: var(--r5);
+  font-size: var(--fs-label-s);
+  color: var(--text-2);
+  cursor: pointer;
+  transition: background var(--dur-ui) var(--ease-standard), color var(--dur-ui) var(--ease-standard);
+}
+.cpanel .cp-btn:hover { background: var(--hover); color: var(--text); }
+.cpanel .cp-btn.is-on {
+  background: var(--accent-tint);
+  color: var(--accent);
+  border-color: var(--accent);
+}
+:root[data-theme="eink"] .cpanel .cp-btn.is-on { background: #000; color: #fff; border-color: #000; }
+.cpanel .cp-note { margin-top: 8px; font-size: var(--fs-micro); color: var(--text-3); line-height: 1.5; }
+
+/* ============ board 总览（无参数直开：场景行 + 深链） ============ */
+.board-head {
+  position: sticky; top: 0; z-index: 5;
+  background: var(--frame);
+  border-bottom: 1px solid var(--border);
+  padding: 14px 32px 12px;
+  display: flex; align-items: baseline; gap: 18px; flex-wrap: wrap;
+}
+.board-head h1 { font-size: 15px; font-weight: 650; letter-spacing: -0.004em; }
+.board-head .themes { display: flex; gap: 10px; font-size: 12.5px; }
+.board-head .themes b { font-weight: 600; color: var(--text); }
+.board-head .hint { font-size: 11.5px; color: var(--text-3); }
+.board-row {
+  display: grid; grid-template-columns: 300px 1fr; gap: 28px;
+  padding: 26px 32px; border-bottom: 1px solid var(--border-soft);
+  align-items: start;
+}
+.board-row .meta .v-id { font-family: var(--mono); font-size: 11px; color: var(--text-3); }
+.board-row .meta .v-name { font-size: 13.5px; font-weight: 650; margin: 4px 0 6px; }
+.board-row .meta .v-desc { font-size: 12px; color: var(--text-2); line-height: 1.55; }
+.board-row .meta .v-link { display: inline-block; margin-top: 8px; font-size: 11.5px; }
+.board-row .stage {
+  background: var(--agent-bg);
+  border: 1px dashed var(--border);
+  border-radius: 10px;
+  padding: 24px;
+  display: flex; justify-content: center;
+}
+/* board 帧静态浮层向上展开：stage-inner 顶部留余量，浮层不越进上一行（同单帧口径） */
+.board-row .stage-inner { position: relative; padding-top: 240px; }
+
+/* 场景舞台（单帧模式） */
+.stage-only {
+  min-height: 100vh;
+  display: flex; align-items: center; justify-content: center;
+  padding: 48px;
+  background: var(--frame);
+}
+/* 浮层向上展开约 300px：舞台顶部留出余量，单帧截图不被裁 */
+.stage-only .stage-inner { position: relative; padding-top: 240px; }
+</style>
+</head>
+<body>
+<script>
+"use strict";
+/* ---- 参数 ---- */
+const q = new URLSearchParams(location.search);
+const theme = ["light", "dark", "eink"].includes(q.get("theme")) ? q.get("theme") : "light";
+document.documentElement.dataset.theme = theme;
+const scene = q.get("scene");            // chip | pop | long | unsupported | mock
+const panelOff = q.get("panel") === "0"; // 截图关控制面板
+
+/* ---- 合成数据（虚构 provider / model；mock 条目在数据中保留、UI 默认隐藏——
+       Alex 裁决「界面上隐藏，代码保留」） ---- */
+const DATA = {
+  providers: [
+    { id: "nova",  name: "Nova",  effort: true,  models: [
+      { id: "atlas2",     name: "Atlas 2" },
+      { id: "atlas2pro",  name: "Atlas 2 Pro" },
+      { id: "atlas2vlm",  name: "Atlas 2 Pro Vision Ultra Multimodal Preview" }, // 仅供 long 场景压省略号
+    ]},
+    { id: "pulse", name: "Pulse", effort: true,  models: [
+      { id: "s1",     name: "Pulse S1" },
+      { id: "s1t",    name: "Pulse S1 Turbo" },
+    ]},
+    { id: "orbit", name: "Orbit", effort: false, models: [ // effort:false = 组合不支持程度调节（D390 态）
+      { id: "mini", name: "Orbit Mini" },
+      { id: "max",  name: "Orbit Max" },
+    ]},
+    { id: "mock",  name: "mock",  effort: true,  mock: true, models: [
+      { id: "mock-reasoner", name: "mock-reasoner" },
+    ]},
+  ],
+  efforts: ["Low", "High", "Max"],
+};
+
+/* ---- 状态（原型内交互态；档位会话内生效的口径与现产品一致） ---- */
+const state = {
+  provider: "nova",
+  /* 每个 provider 记住自己选的 model——provider / model / effort 三维各自独立，
+     切 provider 不抹掉它记住的 model（真实现里对应「选择写回配置」）。 */
+  models: { nova: "atlas2", pulse: "s1", orbit: "mini", mock: "mock-reasoner" },
+  effort: "High",
+  popOpen: false,
+  mockVis: false,   // 调试开关：显形被 UI 隐藏的 mock 条目
+  ctxWarn: false,   // 调试开关：ctx 越线高亮
+};
+
+const providerById = (id) => DATA.providers.find((p) => p.id === id);
+const visibleProviders = () => DATA.providers.filter((p) => state.mockVis || !p.mock);
+const curProvider = () => providerById(state.provider);
+const curModel = () => {
+  const p = curProvider();
+  return p.models.find((m) => m.id === state.models[p.id]) ?? p.models[0];
+};
+const curEffortSupported = () => curProvider().effort;
+
+/* ---- 图标（1.4/1.6px 描边，与产品自绘控件同手法） ---- */
+const CHECK_SVG = '<svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M2 6.5 4.8 9.3 10 3.5"/></svg>';
+const SEND_SVG = '<svg width="13" height="13" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M7 11.5v-9M3.5 6 7 2.5 10.5 6"/></svg>';
+
+/* ---- chip 读数串：provider · model · effort（U+00B7，modeline 同款小圆点） ---- */
+function chipReading() {
+  const parts = [curProvider().name, curModel().name];
+  const eff = `<span class="${curEffortSupported() ? "" : "eff-off"}">${state.effort}</span>`;
+  return `${parts.join(" · ")} · ${eff}`;
+}
+
+/* ---- 浮层三段构建 ---- */
+function secHTML(label, itemsHTML, disabled, hint) {
+  return `<div class="hp-sec${disabled ? " is-disabled" : ""}">
+    <div class="hp-sec-label">${label}</div>
+    ${itemsHTML}
+    ${hint ? `<div class="hp-sec-hint">${hint}</div>` : ""}
+  </div>`;
+}
+function itemHTML(name, checked, action, tag) {
+  return `<button type="button" class="hp-item${checked ? " is-current" : ""}" role="menuitemradio" aria-checked="${checked}" data-act="${action}">
+    <span class="hp-item-check" aria-hidden="true">${checked ? CHECK_SVG : ""}</span>
+    <span class="hp-item-name">${name}</span>
+    ${tag ? `<span class="hp-item-tag">${tag}</span>` : ""}
+  </button>`;
+}
+function popHTML() {
+  const provItems = visibleProviders().map((p) =>
+    itemHTML(p.name, p.id === state.provider, `prov:${p.id}`, p.mock ? "mock" : "")).join("");
+  const modelItems = curProvider().models.map((m) =>
+    itemHTML(m.name, m.id === curModel().id, `model:${m.id}`)).join("");
+  const sup = curEffortSupported();
+  const effItems = DATA.efforts.map((e) =>
+    itemHTML(e, e === state.effort, sup ? `eff:${e}` : "")).join("");
+  return secHTML("Provider", provItems)
+       + secHTML("模型", modelItems)
+       + secHTML("思考程度", effItems, !sup, sup ? "" : "当前模型不支持思考程度调节");
+}
+
+/* ---- composer 复刻 ---- */
+function composerHTML() {
+  return `<div class="hp">
+    <div class="hp-transcript">（transcript 区占位——本原型只复刻 composer 控制行）</div>
+    <div class="hp-composer-area">
+      <div class="hp-composer-box">
+        <div class="hp-composer">输入消息，试试 / 命令…</div>
+        <div class="hp-ctl">
+          <span class="hp-selwrap">
+            <button type="button" class="hp-sel" id="selChip" aria-haspopup="menu" aria-expanded="${state.popOpen}" title="模型与思考程度（点击切换）">
+              <span class="hp-sel-read">${chipReading()}</span>
+              <span class="hp-sel-chev" aria-hidden="true">▾</span>
+            </button>
+            <div class="hp-pop" id="selPop" role="menu" ${state.popOpen ? "" : "hidden"}>${popHTML()}</div>
+          </span>
+          <span class="hp-ctx${state.ctxWarn ? " is-warn" : ""}">42% · 38%</span>
+          <span class="hp-ctl-spacer"></span>
+          <button type="button" class="hp-send" title="发送" aria-label="发送">${SEND_SVG}</button>
+        </div>
+      </div>
+    </div>
+  </div>`;
+}
+
+/* ---- 控制面板 ---- */
+function cpanelHTML() {
+  const themeBtns = ["light", "dark", "eink"].map((t) =>
+    `<button type="button" class="cp-btn${t === theme ? " is-on" : ""}" data-act="theme:${t}">${t}</button>`).join("");
+  const sceneBtns = [["chip", "收起态"], ["pop", "浮层展开"], ["long", "长名省略"], ["unsupported", "不支持 effort"], ["mock", "mock 显形"]]
+    .map(([id, name]) => `<button type="button" class="cp-btn${id === scene ? " is-on" : ""}" data-act="scene:${id}">${name}</button>`).join("");
+  return `<div class="cpanel" id="cpanel" ${panelOff ? "hidden" : ""}>
+    <h2>控制面板</h2>
+    <div class="cp-row"><span class="cp-label">主题</span>${themeBtns}</div>
+    <div class="cp-row"><span class="cp-label">场景</span>${sceneBtns}</div>
+    <div class="cp-row"><span class="cp-label">调试</span>
+      <button type="button" class="cp-btn${state.mockVis ? " is-on" : ""}" data-act="tgl:mockVis">mock 显形</button>
+      <button type="button" class="cp-btn${state.ctxWarn ? " is-on" : ""}" data-act="tgl:ctxWarn">ctx 越线</button>
+      <button type="button" class="cp-btn${state.popOpen ? " is-on" : ""}" data-act="tgl:pop">浮层</button>
+    </div>
+    <div class="cp-note">当前选择：<b>${curProvider().name} · ${curModel().name} · ${state.effort}</b>${curEffortSupported() ? "" : "（不支持 effort）"}<br>场景与主题改动写回 URL（可刷新复现）；截图用 ?panel=0 关本面板。</div>
+  </div>`;
+}
+
+/* ---- 场景帧 ---- */
+const SCENES = {
+  chip: { name: "收起态", desc: "合并 chip 常态：一格读数 provider · model · effort（U+00B7），替代现行双 chip。chip 形态纪律与现行单 chip 完全一致（无边框小标签 24px、r5、fs-label-s、text-2、hover 给底）。" },
+  pop: { name: "浮层展开", desc: "点开 = 三维度分段浮层：Provider / 模型 / 思考程度 各自独立可选（menuitemradio + 勾选 + 当前项 tint 底），hairline 分段。选完不自动关（多维度一次调齐），点 chip / 空白 / Esc 关。" },
+  long: { name: "长名省略", desc: "model 名超长时整串 ellipsis（chip max-width 224px）——provider 与 effort 一并被截，截断优先发生在 model 名一侧的裁决留给 Alex。" },
+  unsupported: { name: "不支持 effort", desc: "当前 provider + model 组合不支持程度调节（现行 D390 语义）：chip 里 effort 读数置灰（不再是整 chip 禁用——合并后选择器本身仍可点开换组合）；浮层内 effort 段整段禁用 + 原说明句。" },
+  mock: { name: "mock 显形（调试）", desc: "数据里的 mock 条目默认不出现在可选列表（Alex 裁决「界面上隐藏，代码保留」）；本场景 = 调试开关翻开后看到的显形态——产品里无此开关，仅供核对隐藏口径。" },
+};
+function applyScene() {
+  if (scene === "long") { state.provider = "nova"; state.models.nova = "atlas2vlm"; }
+  if (scene === "unsupported") { state.provider = "orbit"; }
+  if (scene === "mock") { state.mockVis = true; }
+  if (scene === "pop" || scene === "unsupported" || scene === "mock") { state.popOpen = true; }
+}
+
+function render() {
+  document.body.innerHTML = `<div class="stage-only"><div class="stage-inner">${composerHTML()}</div></div>${cpanelHTML()}`;
+  bind();
+}
+function bind() {
+  const chip = document.getElementById("selChip");
+  chip.addEventListener("click", (e) => { e.stopPropagation(); state.popOpen = !state.popOpen; syncPop(); });
+  /* 用赋值而非 addEventListener：render() 每次重建 body 内容，叠加监听会自我重复触发 */
+  document.body.onclick = (e) => {
+    const actEl = e.target.closest("[data-act]");
+    if (!actEl) { if (state.popOpen && !e.target.closest(".hp-selwrap")) { state.popOpen = false; syncPop(); } return; }
+    const [kind, val] = actEl.dataset.act.split(":");
+    if (kind === "theme") { location.search = `?theme=${val}&scene=${scene ?? "chip"}`; return; }
+    if (kind === "scene") { location.search = `?theme=${theme}&scene=${val}`; return; }
+    if (kind === "tgl") { state[val === "pop" ? "popOpen" : val] = !state[val === "pop" ? "popOpen" : val]; render(); return; }
+    /* 浮层内选择：三维独立写状态，浮层不关（多维度一次调齐） */
+    if (kind === "prov") {
+      state.provider = val;
+      if (!curProvider().models.some((m) => m.id === state.models[val])) state.models[val] = curProvider().models[0].id;
+    }
+    if (kind === "model") state.models[state.provider] = val;
+    if (kind === "eff") state.effort = val;
+    render();
+  };
+  document.body.onkeydown = (e) => { if (e.key === "Escape" && state.popOpen) { state.popOpen = false; syncPop(); } };
+}
+function syncPop() {
+  const pop = document.getElementById("selPop");
+  const chip = document.getElementById("selChip");
+  if (!pop) return render();
+  if (state.popOpen) pop.innerHTML = popHTML();
+  pop.hidden = !state.popOpen;
+  chip.setAttribute("aria-expanded", String(state.popOpen));
+}
+
+/* ---- board 总览 ---- */
+function renderBoard() {
+  const themeLinks = ["light", "dark", "eink"].map((t) =>
+    t === theme ? `<b>${t}</b>` : `<a href="?theme=${t}">${t}</a>`).join(" ");
+  const rows = Object.entries(SCENES).map(([id, s]) => `
+    <section class="board-row" id="${id}">
+      <div class="meta">
+        <div class="v-id">scene=${id}</div>
+        <div class="v-name">${s.name}</div>
+        <div class="v-desc">${s.desc}</div>
+        <a class="v-link" href="?scene=${id}&theme=${theme}">单帧 →</a>
+      </div>
+      <div class="stage"><div class="stage-inner">${frameHTML(id)}</div></div>
+    </section>`).join("");
+  document.body.innerHTML = `
+    <header class="board-head">
+      <h1>harness 模型选择器合并 · 原型（M371）</h1>
+      <nav class="themes">${themeLinks}</nav>
+      <span class="hint">双 chip（model + Thinking）合并为一个选择器 chip · 三维度浮层 · mock 界面隐藏；决策与差异见 NOTES.md</span>
+    </header>
+    ${rows}
+    <p style="padding:16px 32px;font-size:11.5px;color:var(--text-3)">board 页各帧为静态示意（深链单帧可交互）；控制面板在单帧页。</p>`;
+}
+/* board 帧 = 各场景静态 HTML（不挂交互） */
+function frameHTML(id) {
+  const saved = JSON.parse(JSON.stringify({ p: state.provider, m: state.models, e: state.effort, mv: state.mockVis, po: state.popOpen }));
+  sceneState(id);
+  const html = composerHTML();
+  Object.assign(state, { provider: saved.p, models: saved.m, effort: saved.e, mockVis: saved.mv, popOpen: saved.po });
+  return html;
+}
+function sceneState(id) {
+  state.mockVis = false; state.popOpen = false; state.provider = "nova"; state.models = { nova: "atlas2", pulse: "s1", orbit: "mini", mock: "mock-reasoner" };
+  if (id === "long") state.models.nova = "atlas2vlm";
+  if (id === "unsupported") state.provider = "orbit";
+  if (id === "mock") state.mockVis = true;
+  if (id === "pop" || id === "unsupported" || id === "mock") state.popOpen = true;
+}
+
+if (scene) { applyScene(); render(); document.title = `${SCENES[scene]?.name ?? scene} · ${theme} — M371`; }
+else renderBoard();
+</script>
+</body>
+</html>
