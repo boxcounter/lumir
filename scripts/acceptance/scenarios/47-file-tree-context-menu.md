@@ -153,29 +153,9 @@ steps:
         ax: { has: "已复制完整路径" }
       - shot: 复制完整路径之后
 
-  - name: 在 Finder 中显示（弱断言：只读动作，磁盘逐字节不变）
-    do: record
-    as: finder 前
-    file: aaa-menu.md
-    expect:
-      - label: 基线记到了（读不到一律 FAIL）
-        file: { path: aaa-menu.md, exists: true }
-  - name: 右键 → 在 Finder 中显示
-    do: click
-    target: { role: AXButton, name: "^aaa-menu.md$", button: right }
-    expect:
-      - label: 菜单在场
-        ax: { has: "在 Finder 中显示" }
-  - name: 点「在 Finder 中显示」
-    do: click
-    target: { any: "在 Finder 中显示" }
-    expect:
-      - label: 命令没有报错（没有错误 toast）
-        ax: { not: "无法在 Finder 中显示" }
-      - label: aaa-menu.md 逐字节未变（relaunch 只调系统文件管理器，不改 vault）
-        file: { path: aaa-menu.md, unchangedSince: finder 前 }
-      - shot: 在 Finder 中显示之后
-
+  # 「在 Finder 中显示」这一步不在这里，它排在**全场景最后一步**（M358 挪的，理由见那一步的注释
+  # 与「已知边界」第 2、3 条）：它是本场景唯一的抢前台动作，而抢前台会让 Lumir 失活、失活会取消
+  # 内联重命名框（失焦即取消）。原先它紧挨着下面的改名块，等于把整条改名链放在一次失活的下游。
   - name: 树内联重命名：行名换成输入框（清空原名后输入新名）
     do: click
     target: { role: AXButton, name: "^aaa-menu.md$", button: right }
@@ -522,6 +502,43 @@ steps:
         editor: { has: "M244DIRTY" }
       - shot: 删除打开中的文件之后
 
+  # ── 收尾之后的最后一步：唯一的抢前台动作（M358 排位）────────────────────────────────
+  # 为什么排在全场景最后：这一步真实调起系统 Finder，Finder 被激活 ⇒ Lumir 失活；而树内联重命名
+  # 框的语义是**失焦即取消**（`src/tree.ts`：`input.blur → cancelEdit`，注释写明「与 Finder 一致」）。
+  # 失活只要落进「点『重命名…』→ 断言行内有输入框」之间，改名就被无声取消，判据上表现为
+  #「行内出现输入框」与「输入框持焦点」双双 FAIL，而 aaa-menu.md 从未改名 ⇒ 撞名 / 忽略集 / 删除 /
+  # 收尾整条链级联 FAIL（2026-10-07 的现场：`steps.md` 与 `shots/07`）。它原来是紧挨着改名块的前
+  # 一步，等于把整条改名链放在一次失活的下游。挪到最后：它下游只剩 teardown 的磁盘断言（不碰界面），
+  # 失活不再有可波及的交互面。**反面的口径**：不要把它挪回任何菜单 / 内联编辑之前，也不要用 sleep
+  # 猜「Finder 起完了没有」——排位是结构性的，等时长是猜。
+  #
+  # 作用对象从 `aaa-menu.md` 换成 `block-copy.md`：前者在本步之前已被改名成 aaaren.md 并删除，
+  # 而这一步要求该行**在树里**（右键走真实指针坐标，行还必须在首屏可视区内）。`block-copy.md`
+  # 是 fixture（vault 内一个普通 .md 文件行，树顶第 7 行附近，实测 y≈334 窗口点），项集与断言形态
+  # 逐条不变：文件行菜单在场、命令无错误 toast、`unchangedSince` 逐字节不变、截图。
+  - name: 在 Finder 中显示（弱断言：只读动作，磁盘逐字节不变）
+    do: record
+    as: finder 前
+    file: block-copy.md
+    expect:
+      - label: 基线记到了（读不到一律 FAIL）
+        file: { path: block-copy.md, exists: true }
+  - name: 右键 → 在 Finder 中显示
+    do: click
+    target: { role: AXButton, name: "^block-copy.md$", button: right }
+    expect:
+      - label: 菜单在场
+        ax: { has: "在 Finder 中显示" }
+  - name: 点「在 Finder 中显示」
+    do: click
+    target: { any: "在 Finder 中显示" }
+    expect:
+      - label: 命令没有报错（没有错误 toast）
+        ax: { not: "无法在 Finder 中显示" }
+      - label: block-copy.md 逐字节未变（relaunch 只调系统文件管理器，不改 vault）
+        file: { path: block-copy.md, unchangedSince: finder 前 }
+      - shot: 在 Finder 中显示之后
+
 teardown:
   - label: 收尾：aaa-menu.md 已改名并被删除，不在 vault 里
     file: { path: aaa-menu.md, exists: false }
@@ -555,7 +572,9 @@ Alex 请求的六个条目级操作（删除、重命名、复制完整路径、
 4. **复制完整路径**：剪贴板读到的是**绝对路径**（`$vault/相对路径`）；判据带**in-run 对照**——
    先复制另一个文件并断言，再复制目标文件并断言（不依赖跨 run 的剪贴板残留）。
 5. **在 Finder 中显示**：只读动作——磁盘 sha256 未变、无错误提示（不验 Finder 窗口本身，
-   见「已知边界」）。
+   见「已知边界」）。M358 起这一步排在**全场景最后**：它是本场景唯一的抢前台动作（真实调起
+   Finder），而 Lumir 失活会取消内联重命名框（失焦即取消），原先「紧挨改名块」的排法把整条
+   改名链放在一次失活的下游（机制与现场见「已知边界」第 2、3 条）。
 6. **目录下新建**：新建文件落盘为空文件且**自动打开**；新建子目录落盘（目录本身的磁盘真值
    由「在它里面再建一个文件」锚定，见「已知边界」）。
 7. **tab 联动**（裁决点 5）：打开中的 dirty 文件被改名时，标签就地换名、未保存内容保留、
@@ -587,6 +606,34 @@ Alex 请求的六个条目级操作（删除、重命名、复制完整路径、
   UI，且打开与否取决于系统状态）。这里断言的是「命令没报错 + vault 逐字节未变」；「Finder 里
   真的选中了那一项」由 Alex 手感验收（`fs_reveal_in_finder` 的实现是 opener 插件的
   `reveal_item_in_dir`，语义与 `link_open_path` 同一条最小权限路径）。
+- **抢前台的动作 MUST 排在所有菜单 / 内联编辑之后（M358 定策，机制已在代码里核过）**：本场景
+  只有「在 Finder 中显示」会真实调起系统 Finder，Finder 被激活 ⇒ Lumir 失活；而树内联重命名框
+  的语义是**失焦即取消**（`src/tree.ts:758`，`input.blur → cancelEdit`，注释写明「与 Finder 一致」）。
+  失活只要落进「点『重命名…』→ 断言行内有输入框」之间，改名就被无声取消：菜单项点击已经生效、
+  输入框也起来过，紧随其后的失焦把它撤掉——判据上只见「行内出现输入框」与「输入框持焦点」两条
+  FAIL，而磁盘上 `aaa-menu.md` 原样未动，于是撞名 / 忽略集 / 删除 / 收尾整条链级联 FAIL
+  （2026-10-07 的现场：`steps.md` 与 `shots/07`）。**这就是该步被挪到全场景最后一步的理由**：
+  它下游只剩 teardown 的磁盘断言（不碰界面），失活不再有可波及的交互面。反面的口径：不要把它
+  挪回任何菜单 / 内联编辑之前，也不要靠 `sleep` 猜「Finder 起完了没有」——排位是结构性的。
+- **树右键菜单不随失活关闭（M358 核实，与「blur 关菜单」的推测相反）**：菜单（`src/tree-menu.ts`）
+  只有两条关闭路径——document 的 `mousedown`（点在菜单外）与 Esc / 动作本身，**没有** blur 路径。
+  因此「失活 ⇒ 菜单消失 ⇒ 点击落空」这条推断不成立：失活后菜单仍在 AX 里（可读到），点击也确实
+  送得到菜单项上；真正随失活失效的是内联输入框（上一条）。
+- **跑批环境会在场景中段整页重载（M358 实测；属套件侧缺陷，不是产品缺陷，场景内无从防）**：验收
+  实例的 dev server 是 `vite`，watch 根是**整个仓库**，`.tower/worktrees/**` 也在其中——同机其他
+  agent 的 worktree 只要改写 `.html` 或 `tsconfig.json`，vite 就向本实例的前端推一次 **full
+  reload**（`app.log`：`[vite] (client) page reload .tower/worktrees/wt-357/…` /
+  `changed tsconfig file detected … forcing full-reload`）。重载 = 前端在**同一个 Rust 进程**里
+  重新启动 ⇒ 菜单、内联输入框、焦点这些**瞬时界面状态全灭**，vault 与会话是持久的（所以画面看起来
+  一切正常，只有正在进行的交互断在半路）。判据：应用诊断日志（`env:logs/<日期>.jsonl`）里出现
+  **只有 `vault_scan_ignored` + `vault_load_restore`、没有 `vault_open_watch`** 的成对事件——冷启动
+  一定带 `vault_open_watch`，而前端重载走的是 `vault_current` 那条路径（`VaultState::status()` 会
+  重扫 ⇒ 那条 `vault_scan_ignored`）。2026-10-07 11:12–11:15 那次 47 的现场即此：11:13:00 同一秒
+  里既有被 wt-356 / wt-357 的 `.html` + `tsconfig.json` 触发的那批强制 full reload，又有这份
+  jsonl 里的成对事件（`.678` / `.694`），而失败的那一步（点「重命名…」后断言输入框）正落在这一秒。
+  场景内防不住：瞬时状态被整页换掉的那一刻，「一步开菜单、下一步点菜单项」的写法必然落空。防线在
+  套件侧——让验收实例的 dev server 不 watch `.tower/**`（以及 `dist/**`、`test-results/**`、
+  `playwright-report/**`），已按 M358 上报（finding）。
 - **注入通道的两条老账**：① `cmd+a` 是 chord，套件**盲发不重试**（丢键就 red，按 README 先复跑
   一次再判产品缺陷）；② `keys` 的逐字符注入对 WKWebView 间歇丢键，本场景的判据都是「回读 +
   只在字节未变时重试」，仍可能整批丢键——红了先复跑。
@@ -646,3 +693,6 @@ Alex 请求的六个条目级操作（删除、重命名、复制完整路径、
   里，用户真实 vault 全程只读。
 - **废纸篓**：被删的条目真的进系统废纸篓（`trash::delete` 的平台语义，无法在测试里绕过）。
   场景因此不探测 `$HOME/.Trash` 的内容，只断言「vault 内消失」——套件不隔离 HOME。
+- **收尾时 Finder 是前台**（M358）：末步「在 Finder 中显示」会真实激活系统 Finder 并把它留在前台。
+  这是本场景的预期副作用（同机留着上一轮的 Finder 窗口是最差的起点条件，本场景就在这个条件下验）；
+  下一个场景起实例时套件的 `waitAppReady` / `tryForeground` 会把 Lumir 重新带回前台。
