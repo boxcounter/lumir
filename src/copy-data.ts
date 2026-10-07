@@ -693,11 +693,9 @@ const COPY_TABLE = {
   // Harness 对话面板（D326–D348，M303，change add-harness-probe）
   // 文案随能力走：全部消费点在 src/harness-panel.ts（面板 DOM 与 chip / 批准闸 / 压缩标记）
   // 与 src/keys.ts（toggle 命令的来由 D345 只留 docKey 引用）。
+  // D326（toggle 钮可见文本「对话 / Chat」）于 M370 退场：钮面改原型同款火花 SVG 图标
+  // （编号停用、不复用，deck 沿革记于 文案-Copy.md）——悬停提示与读屏名仍走 D327。
   // -------------------------------------------------------------------------
-  D326: {
-    zh: "对话",
-    en: "Chat",
-  },
   D327: {
     zh: "对话面板",
     en: "Chat panel",
@@ -725,13 +723,20 @@ const COPY_TABLE = {
   // ctx 读数（composer 控制行，M347）：读数不是措辞（与 D317 的语言档同口径），两列同形。
   // M347 改形（编号沿用）：读数随用量条迁入 composer 控制行（模型 chip 之后、发送钮之前），
   // 收缩为 ctx% 单读数；cache% 在头部栏（M346/HP1）退场后已无消费点，模板同列移除。
+  // M370 改形（编号沿用，Alex 2026-10-07 原话「ctx: XX% 改为 XX% • YY%」）：双裸读数
+  // 「{ctx}% · {cache}%」（分隔符小圆点 U+00B7 与 modeline 同款——Alex 过目基线候选后的复裁决
+  // 「基线截图里的圆点很大，我希望是小圆点，类似 modeline 的那种」，原话写作 • 以复裁决为准）
+  // ——ctx = 上下文窗口使用率、cache = cache hit rate（cache_pct 已在
+  // usage 事件与会话快照里，纯前端消费）；「ctx 」前缀随原话一并去掉。cache 缺失（旧事件 /
+  // 桩）时回落单读数「{ctx}%」（数据驱动形态，不另起模板）。
   D334: {
-    zh: "ctx {ctx}%",
-    en: "ctx {ctx}%",
+    zh: "{ctx}% · {cache}%",
+    en: "{ctx}% · {cache}%",
   },
-  // ctx ⓘ 气泡（M347 改形，编号沿用）：常驻警示条改为 ⓘ 钮按需气泡（Alex 2026-10-06 裁决
-  // 「（常驻句）一直显示在那里很抢注意力」）；越过警示阈值（[harness].warn_ctx_pct，缺省 85）
-  // 时 ⓘ 钮才出现，气泡内容如实说后果（自动压缩），不提供「清理」动作（design §11）。
+  // ctx 警示浮层（M347 改形、M370 再改形，编号沿用）：常驻警示条 → ⓘ 钮按需气泡（Alex
+  // 2026-10-06 裁决「（常驻句）一直显示在那里很抢注意力」）→ ⓘ 钮移除、改越线时 hover
+  // 读数才浮出（Alex 2026-10-07 裁决）；内容不变——越过警示阈值（[harness].warn_ctx_pct，
+  // 缺省 85）时如实说后果（自动压缩），不提供「清理」动作（design §11）。
   D335: {
     zh: "上下文已用 {ctx}%，越过 {warn}% 警示线——继续对话将自动压缩续聊",
     en: "Context usage {ctx}% is past the {warn}% warning line — further turns will be auto-compacted",
@@ -871,11 +876,6 @@ const COPY_TABLE = {
   D376: {
     zh: "模型：{model}（点击切换）",
     en: "Model: {model} (click to switch)",
-  },
-  // ctx ⓘ 钮读屏名：纯图标钮，只在读数越过警示阈值时出现（未越线时界面上没有它）。
-  D377: {
-    zh: "上下文用量说明",
-    en: "Context usage info",
   },
   // 发送钮处理中态（两态的另一档；空闲档 = D329）。停止点击走停止钩子（M347 定义前端
   // 钩子与状态机；M348 已接通 Rust abort）；连点幂等（stopping 子态挡第二次）。

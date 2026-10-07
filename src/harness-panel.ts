@@ -6,10 +6,13 @@
 // （网格第三列 / .dock-open）随本 change 移除。面板不再有头部栏：会话身份（名下拉）与
 // 新建会话钮上移进标题栏的 harness 段（.lumir-hp-seg，仅 harness 在场时出现，宽度由装配层
 // 按 pane 比分宽、与分隔条像素对齐）；ctx% 读数与常驻警示句随头部栏移除（读数迁入 composer
-// 控制行是后续 mission 的面——M347 已迁入：控制行 = [模型 chip][composer][ctx 读数 + ⓘ][发送钮]，
-// 超阈值读数高亮 + ⓘ 按需气泡，常驻警示句按 Alex 2026-10-06 裁决移除；发送钮两态
+// 控制行是后续 mission 的面——M347 已迁入：控制行 = [模型 chip][composer][ctx 读数][发送钮]，
+// 超阈值读数高亮 + 警示说明浮层；M370 起读数 = 「XX% · YY%」（+cache hit rate，分隔符小圆点
+// 按 Alex 复裁决改 U+00B7、与 modeline 同款——原话写作 •，以复裁决为准）、ⓘ 钮移除
+// 改 hover 浮层（Alex 2026-10-07），常驻警示句按 Alex 2026-10-06 裁决移除；发送钮两态
 // idle=发送 / 处理中=停止，停止钩子为 M348 对接面的明确桩）。标题栏 toggle 钮仍由本模块自建，
 // 钉标题栏右端（产品标识块已移位 traffic 灯区）；双 pane 时隐藏（退让条款），⌘⇧A 照走。
+// M370 起钮面 = 原型同款火花 SVG 图标（可见文字 D326 退场，悬停/读屏名 D327 不变）。
 //
 // 开合语义：面板的开/关 = harness pane 的分/收，是**装配层**动作（账本 + DOM 槽 + 焦点
 // 移交）——本模块经 deps.togglePane 把 toggle 钮 / Escape / ⌘⇧A 的路由交回装配层，
@@ -35,8 +38,8 @@
 //     done 到达后对完整源做一次全量重渲（增量渲染在「跨空行的松散列表」这类形态上是
 //     近似，全量重渲是收敛点——近似只存在于流式期间）。
 //
-// 文案：全部取值经 src/copy.ts 的 t()（D326–D330 / D332–D348 / D375–D387，D334 / D335 于
-// M347 改形、D98 复用为 provider 浮层当前项标记、D383 为 M348 中断标注、D385–D387 为 M351
+// 文案：全部取值经 src/copy.ts 的 t()（D327–D330 / D332–D348 / D375–D387，D334 / D335 于
+// M347 改形、M370 再起改形（双读数 + hover 浮层）、D98 复用为 provider 浮层当前项标记、D383 为 M348 中断标注、D385–D387 为 M351
 // 消息 meta 行与工具折叠摘要、D388–D392 为 M363 思考块折叠行与思考 chip 三句 + 浮层读屏名）；
 // 长驻元素（toggle 钮 / harness 段 / 输入框 placeholder / 按钮 / 上下文 chip / ctx 读数 /
 // 模型 chip / 思考 chip / 待决批准项）注册 onRelabel，
@@ -1127,15 +1130,34 @@ interface PendingApproval {
 export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   const { shell, editor } = deps;
 
+  // SVG 命名空间常量（模块无 innerHTML 的渲染纪律：全部图标经 DOM API 内联构建，
+  // toggle 火花 / 发送钮两态 glyph / 工具 ✓ / 思考 chevron 共用）。
+  const SVG_NS = "http://www.w3.org/2000/svg";
+
   // ── DOM：toggle 钮（标题栏动作钮槽位，钉右端；HP1 起产品标识块在 traffic 灯区，
   // 右端只有这颗钮）─────────────────────────────────────────────────────────
   const toggleButton = document.createElement("button");
   toggleButton.type = "button";
   toggleButton.className = "titlebar-action lumir-hp-toggle";
   toggleButton.setAttribute("aria-pressed", "false");
+  // 钮面 = 原型同款火花 SVG（四角星，viewBox 16，原型 phase2-harness-chat index.html 的
+  // #harness-toggle；4e011d6 原型目录已退役，SVG 经 DOM API 内联构建——本模块无 innerHTML
+  // 的渲染纪律不变）。可见文本 D326 随图标化退场（编号停用）；悬停提示 / 读屏名仍走
+  // D327（M370，Alex「Chat 字样用图标吧，像原型那样」）。开态 accent 高亮沿用
+  // .titlebar-action[aria-pressed="true"] 的既有条款（与原型 :1184 同方案）。
   // 本钮不需要 mousedown preventDefault：click 后经 deps.togglePane 交装配层开合（焦点移交
   // 在那一边），按钮瞬时持焦无所谓；「别抢焦点」的 preventDefault 若真需要，
   // MUST NOT 挂容器级元素（REVIEW.md 第 16 条）。
+  const toggleSpark = document.createElementNS(SVG_NS, "svg");
+  toggleSpark.setAttribute("width", "14");
+  toggleSpark.setAttribute("height", "14");
+  toggleSpark.setAttribute("viewBox", "0 0 16 16");
+  toggleSpark.setAttribute("fill", "currentColor");
+  toggleSpark.setAttribute("aria-hidden", "true");
+  const toggleSparkPath = document.createElementNS(SVG_NS, "path");
+  toggleSparkPath.setAttribute("d", "M8 1.5 9.6 6.4 14.5 8 9.6 9.6 8 14.5 6.4 9.6 1.5 8l4.9-1.6z");
+  toggleSpark.append(toggleSparkPath);
+  toggleButton.append(toggleSpark);
   shell.titlebar.append(toggleButton);
 
   // ── DOM：标题栏 harness 段（.lumir-hp-seg，HP1，Alex 点子 1）────────────────
@@ -1211,13 +1233,16 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   const emptyHint = document.createElement("div");
   emptyHint.className = "lumir-hp-empty";
 
+  // 上下文 chip（M370 移位：横线之下、composer 之上——进 composerArea 内、composerBox
+  // 上方；横线是 composerArea 的 border-top。发送前可核对的读数与它的消费场景同区）。
   const chip = document.createElement("div");
   chip.className = "lumir-hp-chip";
 
   // ── composer 区（M351 视觉还原，change harness-pane-visual-fidelity design §2.5/§3.2）──
   // 原型形态：输入区与控制行收进同一个圆角卡片容器（.lumir-hp-composer-box，原型 .h-box），
-  // 控制行在容器底 = [模型 chip][ctx 读数 + ⓘ][spacer][图标发送钮]。空间紧（原型实测约
-  // 346px）：chip 与读数都是小体量只读件，输入区吃剩余弹性宽。
+  // 控制行在容器底 = [模型 chip][ctx 读数][spacer][图标发送钮]。空间紧（原型实测约
+  // 346px）：chip 与读数都是小体量只读件，输入区吃剩余弹性宽。M370：上下文 chip 移进
+  // 本区顶部（横线之下、composerBox 之上，Alex「放在横线之下、composer 之上更符合逻辑」）。
   const composerArea = document.createElement("div");
   composerArea.className = "lumir-hp-composer-area";
   const composerBox = document.createElement("div");
@@ -1292,20 +1317,19 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   progress.append(stageLine, barTrack);
 
   // ctx% 读数（M347，自 HP1 退场的头部栏读数迁入）：usage 事件 / 快照同源消费。
-  // 越过警示阈值 → 读数高亮 + ⓘ 钮（点击向上弹气泡，内容 = D335 按需版——常驻警示句已移除）。
+  // M370 改形（Alex 2026-10-07）：读数 = 「XX% · YY%」（XX = ctx%、YY = cache hit rate，分隔符
+  // 小圆点 U+00B7 与 modeline 同款（复裁决）；
+  // cache_pct 纯前端消费）；越过警示阈值 → 读数高亮 + hover 读数浮出 D335 气泡——ⓘ 钮
+  // （.lumir-hp-ctx-info）随原话「去掉感叹号」移除，浮层改 hover 形态（mouseenter/leave
+  // 翻转，替代旧 click 翻转）。
   const ctxWrap = document.createElement("span");
   ctxWrap.className = "lumir-hp-ctxwrap";
   const ctxRead = document.createElement("span");
   ctxRead.className = "lumir-hp-ctx";
-  const ctxInfo = document.createElement("button");
-  ctxInfo.type = "button";
-  ctxInfo.className = "lumir-hp-ctx-info";
-  ctxInfo.hidden = true;
-  ctxInfo.textContent = "ⓘ"; // i18n-exempt: glyph（信息图标图形，非文案）
   const ctxPop = document.createElement("div");
   ctxPop.className = "lumir-hp-ctxpop";
   ctxPop.hidden = true;
-  ctxWrap.append(ctxRead, ctxInfo, ctxPop);
+  ctxWrap.append(ctxRead, ctxPop);
 
   // 混排编辑区（M343，change add-harness-quote-cards design §2/§5）：contenteditable div 取代
   // textarea，全 composer 唯一形态——顶层仅 .lumir-hp-qcard（原子卡片）/ .lumir-hp-qpara
@@ -1326,7 +1350,6 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   const sendButton = document.createElement("button");
   sendButton.type = "button";
   sendButton.className = "lumir-hp-send";
-  const SVG_NS = "http://www.w3.org/2000/svg";
   const sendGo = document.createElementNS(SVG_NS, "svg");
   sendGo.setAttribute("width", "13");
   sendGo.setAttribute("height", "13");
@@ -1359,9 +1382,9 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   sendButton.append(sendGo, sendStop);
   ctl.append(modelWrap, thinkWrap, ctxWrap, ctlSpacer, sendButton);
   composerBox.append(composer, ctl);
-  composerArea.append(composerBox);
+  composerArea.append(chip, composerBox);
 
-  panel.append(transcript, chip, progress, composerArea);
+  panel.append(transcript, progress, composerArea);
 
   // ── 状态 ─────────────────────────────────────────────────────────────────
   /** 面板挂载的 pane 槽（null = 收起/未开）。pane 在场与否由装配层管，面板只记录挂在哪。 */
@@ -1383,6 +1406,9 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   };
   /** ctx% 读数（usage 事件 / 快照同源消费；null = 尚无读数，读数件整体隐藏）。 */
   let lastUsage: number | null = null;
+  /** cache hit rate 读数（M370，usage 事件 / 快照的 cache_pct 字段纯前端消费；
+   *  null = 读数缺失（旧事件 / 桩）——回落单读数「{ctx}%」，不伪造 cache 值）。 */
+  let lastCache: number | null = null;
   /** 上下文用量警示阈值（快照 warn_ctx_pct，缺省 85——与 Rust 侧 DEFAULT_WARN_CTX_PCT 同值）。 */
   let warnCtxPct = 85;
   /** 模型 chip 状态（config_get 宽容提取；modelConfigured = false 时 chip 隐藏——
@@ -1424,6 +1450,14 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   /** when 的低频刷新定时器（30s；attach 起、detach 清——meta chrome，不在
    *  keypress-to-paint 路径，ADR 0002 §6）。 */
   let whenTimer: number | null = null;
+  /** 上下文 chip 的会话身份看守（M370）：refreshChip 的旧触发集（composer 获焦 / 发送 /
+   *  切 vault / 挂载）不含**文档打开与标签切换**——装配层没有现成的事件通道向面板广播
+   *  活跃会话变化，而面板能稳定读到的只有 editor.activeSession()（复合句柄，活跃 pane
+   *  解析）。最小钩子因此是**身份比对看守**：attach 期间每 400ms 比一次会话引用，
+   *  变了才 refreshChip（读取 + 比对是冷路径上的微量工作；chromium 事件通道 / CM 热路径
+   *  零新增消费者）。 */
+  let chipWatchTimer: number | null = null;
+  let watchedSession: unknown = null;
   /** 错误去重（design §6，finding 20261006-tower-bug-harness-pane）：最后一条错误行与
    *  其文案——同文案就地滚回视野，不追加堆叠。 */
   let lastErrorEl: HTMLElement | null = null;
@@ -1783,7 +1817,8 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
 
   // ── 长驻文案施加（onRelabel 的重跑路径：全部从已存状态重取，不重放旧字符串）──
   function applyLabels(): void {
-    toggleButton.textContent = t("D326");
+    // toggle 钮面是图标（D326 已退场）——可读身份只剩悬停提示 / 读屏名（D327）与
+    // 面板容器读屏名，二者共用一句。
     toggleButton.title = t("D327");
     toggleButton.setAttribute("aria-label", t("D327"));
     panel.setAttribute("aria-label", t("D327"));
@@ -1857,13 +1892,24 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     return composer.querySelector(".lumir-hp-qcard") !== null;
   }
 
-  /** 上下文 chip 刷新（发送前可核对）：打开面板 / 输入框获焦 / 卡片增减 / 发送后重取。
-   *  不挂编辑器选区监听——「发送前」的核对窗口由这几处覆盖，常挂监听是给编辑器热路径
-   *  加常驻消费者的反面教材（ADR 0002 §6）。 */
+  /** 上下文 chip 刷新（发送前可核对）：打开面板 / 输入框获焦 / 卡片增减 / 发送后重取，
+   *  以及会话身份看守发现的**文档打开 / 标签切换**（M370——消除「开着文件却显示
+   *  Context: none」，旧触发集要等 composer 获焦才刷新）。不挂编辑器选区监听——
+   *  「发送前」的核对窗口由这几处覆盖，常挂监听是给编辑器热路径加常驻消费者的反面教材
+   *  （ADR 0002 §6）；看守只比会话**身份**（引用），不比视口内容，滚动不触发。 */
   function refreshChip(): void {
+    watchedSession = editor.activeSession();
     const block = assembleHarnessContext(editor, { skipViewport: composerHasCards() });
     lastChip = block ?? "none";
     applyChip();
+  }
+
+  /** 会话身份看守的拍函数（400ms 定时器驱动）：引用变了才重取 chip——重取内 assembly
+   *  读活跃 pane 的 state + 视口切片，只在身份变化那一拍付出，稳态零成本。 */
+  function watchActiveSession(): void {
+    const session = editor.activeSession();
+    if (session === watchedSession) return;
+    refreshChip();
   }
 
   // ── composer 控制行（M347）：模型 chip / ctx 读数 / 两态发送钮 ──────────────
@@ -2061,9 +2107,10 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       .catch(() => {});
   }
 
-  /** ctx% 读数重渲（usage 事件 / 快照 / relabel 的共用出口）。 */
+  /** ctx% 读数重渲（usage 事件 / 快照 / relabel 的共用出口）。M370：读数 = D334 双读数
+   *  「{ctx}% · {cache}%」（分隔符 U+00B7，cache 缺失回落单读数）；越线高亮不动，警示说明从「ⓘ 钮点击
+   *  气泡」改为「hover 读数浮层」（mouseenter/leave 翻转，仅越线时有浮层内容）。 */
   function applyUsage(): void {
-    ctxInfo.setAttribute("aria-label", t("D377")); // 纯图标钮的读屏名（relabel 随本出口重取）
     if (lastUsage === null) {
       ctxWrap.hidden = true;
       return;
@@ -2071,16 +2118,23 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     ctxWrap.hidden = false;
     const ctx = Math.round(lastUsage);
     const over = usageOverWarn(lastUsage, warnCtxPct);
-    ctxRead.textContent = t("D334", { ctx });
+    ctxRead.textContent =
+      lastCache === null
+        ? `${ctx}%`
+        : t("D334", { ctx, cache: Math.round(lastCache) });
     ctxRead.classList.toggle("is-warn", over);
-    ctxInfo.hidden = !over;
     if (!over) ctxPop.hidden = true;
     else ctxPop.textContent = t("D335", { ctx, warn: Math.round(warnCtxPct) });
   }
 
-  ctxInfo.addEventListener("click", (event) => {
-    event.stopPropagation();
-    ctxPop.hidden = !ctxPop.hidden;
+  // hover 浮层（M370，替代 ⓘ 钮的点击开合）：只有越线时才有浮层内容——mouseenter 翻出、
+  // mouseleave 收回；未越线时 mouseenter 无操作（浮层保持 hidden）。键盘用户无 hover：
+  // 警示语义已由读数高亮承担（与 D335 气泡同口径的补充说明，不挂 focusable 入口）。
+  ctxWrap.addEventListener("mouseenter", () => {
+    if (ctxRead.classList.contains("is-warn")) ctxPop.hidden = false;
+  });
+  ctxWrap.addEventListener("mouseleave", () => {
+    ctxPop.hidden = true;
   });
 
   /** 发送钮相位施加：机器算出的每个新相位经这一处落 DOM（glyph 显隐 / 可读名 / 可点性 /
@@ -2715,7 +2769,9 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       case "usage":
         // M347：读数迁入 composer 控制行（模型 chip 之后、发送钮之前）——事件源自 HP1 起
         // 一直在发（头部栏已移除、事件未断），这里直接消费，不新造通道。
+        // M370：cache_pct 一并消费（同一事件里已带，纯前端读取）——「{ctx}% · {cache}%」。
         lastUsage = typeof event.ctx_pct === "number" ? event.ctx_pct : null;
+        lastCache = typeof event.cache_pct === "number" ? event.cache_pct : null;
         applyUsage();
         return;
       case "compact":
@@ -2824,10 +2880,15 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     }
     collapseTools(); // 恢复尾部可能吊着未收尾的清单块（最后一条记录是 tool 时）
     // ctx% 读数与警示阈值随快照恢复（webview 重载后读数不断源；缺键 = 缺省 85 / 无读数）。
-    const usage = state.usage as { ctx_pct?: unknown } | null | undefined;
+    // M370：cache_pct 同读数一并恢复（缺键保持 null，回落单读数）。
+    const usage = state.usage as { ctx_pct?: unknown; cache_pct?: unknown } | null | undefined;
     if (usage !== null && usage !== undefined && typeof usage === "object" &&
         typeof usage.ctx_pct === "number") {
       lastUsage = usage.ctx_pct;
+    }
+    if (usage !== null && usage !== undefined && typeof usage === "object" &&
+        typeof usage.cache_pct === "number") {
+      lastCache = usage.cache_pct;
     }
     const warn = state.warn_ctx_pct;
     if (typeof warn === "number" && Number.isFinite(warn)) warnCtxPct = warn;
@@ -2893,6 +2954,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     stageWaiting = true;
     // ctx% 读数归无（新 vault 会话的快照会随后带到它自己的读数）。
     lastUsage = null;
+    lastCache = null;
     applyUsage();
     syncEmptyHint();
   }
@@ -3195,7 +3257,6 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     }
     if (!ctxPop.hidden) {
       ctxPop.hidden = true;
-      ctxInfo.focus();
       return;
     }
     deps.togglePane();
@@ -3212,6 +3273,10 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       // when 的 30s 低频刷新：只在挂载期间走表（摘下即清，重挂重建）。
       if (whenTimer !== null) window.clearInterval(whenTimer);
       whenTimer = window.setInterval(refreshWhoLines, 30_000);
+      // 会话身份看守（M370）：同一份生命周期——挂载起表、摘下即清。
+      watchedSession = editor.activeSession();
+      if (chipWatchTimer !== null) window.clearInterval(chipWatchTimer);
+      chipWatchTimer = window.setInterval(watchActiveSession, 400);
     } else {
       // 摘出 DOM（元素长驻内存：订阅 / 撤销栈 / 流式态不丢），浮层与刷新表随之收起。
       panel.remove();
@@ -3222,6 +3287,10 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       if (whenTimer !== null) {
         window.clearInterval(whenTimer);
         whenTimer = null;
+      }
+      if (chipWatchTimer !== null) {
+        window.clearInterval(chipWatchTimer);
+        chipWatchTimer = null;
       }
     }
     // 段随 pane 在场出现（装配层已把它插进标题栏，这里只管 hidden）。

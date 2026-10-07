@@ -60,6 +60,10 @@ test("对话面板：pane 口径展开态结构 + 标题栏元素级基线", asy
   // 收起态：面板未挂进 DOM（pane 不在场）、toggle 未按下——展开基线的对照起点。
   await expect(panel).toBeHidden();
   await expect(toggle).toHaveAttribute("aria-pressed", "false");
+  // M370 图标化：钮面是原型同款火花 SVG（可见文字 D326 退场），可读身份 = D327 悬停/读屏名。
+  await expect(toggle.locator("svg")).toHaveCount(1);
+  await expect(toggle).toHaveAttribute("aria-label", "对话面板");
+  await expect(toggle).toHaveAttribute("title", "对话面板");
 
   await toggle.click();
   // pane 口径的在场性正观测（像素基线的语义锚——基线里到底有什么，断言行说了算）：
@@ -93,6 +97,8 @@ test("对话面板：pane 口径展开态结构 + 标题栏元素级基线", asy
   // 面板区块：空态提示、chip（视口口径）、composer、发送钮。
   await expect(page.locator(".lumir-hp-empty")).toContainText("与当前文档对话");
   await expect(page.locator(".lumir-hp-chip")).toContainText("上下文：harness-note.md · 视口");
+  // M370 移位：chip 在 composer 区内部、composerBox 上方（横线之下、composer 之上）。
+  await expect(page.locator(".lumir-hp-composer-area > .lumir-hp-chip")).toHaveCount(1);
   await expect(page.locator(".lumir-hp-composer")).toBeFocused();
   // M351 图标化：钮面是 SVG glyph（↑/■ 两态 [hidden] 切换），文案落 title/aria-label（D329）。
   const send = page.locator(".lumir-hp-send");

@@ -30,12 +30,22 @@
   border-radius: var(--r4);
   background: none;
   color: var(--text-3);
-  font-family: var(--font-sans);
-  font-size: var(--fs-label);
-  font-weight: var(--fw-bold);
-  letter-spacing: 0.04em;
+  /* M370：钮面是火花 SVG 图标（D326 文字退场）——图标居中；原文字档规则（font-* /
+     letter-spacing）随退场失去消费者，一并移除。 */
+  display: flex;
+  align-items: center;
+  justify-content: center;
   cursor: pointer;
   transition: background var(--dur-ui) var(--ease-standard);
+}
+.titlebar-action svg {
+  flex: none;
+  display: block;
+}
+/* display:flex 会盖掉 UA 的 [hidden] 规则，显式补回（style.css 同条先例；双 pane 退让
+   （setChromeRetreat → hidden）靠它生效）。 */
+.titlebar-action[hidden] {
+  display: none;
 }
 .titlebar-action:hover {
   background: var(--hover);
@@ -244,11 +254,15 @@
   align-self: stretch;
   min-width: 0;
 }
-/* 用户消息气泡（原型 .msg.user .body）：挂 body 体——who 行在气泡外上方。正文色 text-2
-   （比 agent 正文降一档：原型有意区分，合同见 change design §2.2）。 */
+/* 用户消息气泡（原型 .msg.user .body）：挂 body 体——who 行在气泡外上方。M351 底色 =
+   content-bg（与面板 --agent-bg 只差一档明度）；M370 改挂 --sel（选中底色一族）——
+   Alex「看不清我的消息和 Agent 的回复之间的边界」：content-bg/agent-bg 的两档明度差
+   在一屏内不可辨，--sel 是既有 token 里最强的中性底色（eink = #b9b9b9 灰实底，
+   无色彩语义、规则①不冲突），用户消息因此「扫一眼可分」。正文色 text-2 不动
+   （原型有意区分，合同见 change design §2.2）。 */
 .lumir-hp-msg-user > .lumir-hp-body {
   padding: var(--sp-3) var(--sp-4);
-  background: var(--content-bg);
+  background: var(--sel);
   border: 1px solid var(--border-soft);
   border-radius: var(--r6);
   color: var(--text-2);
@@ -656,10 +670,12 @@
   opacity: 0.72;
 }
 
-/* ── 上下文 chip（输入区上方，发送前核对）：描边 chip（eink 规则⑥同形——本就描边、
-   无底色，eink 只把描边提到结构档）；单行省略，全文在 title ─────────────────── */
+/* ── 上下文 chip（M370 起在 composer 区顶部：横线之下、composerBox 之上——发送前可核对
+   的读数与输入同区，Alex 2026-10-07）：描边 chip（eink 规则⑥同形——本就描边、无底色，
+   eink 只把描边提到结构档）；单行省略，全文在 title。水平余量归零（composerArea 自带
+   sp-4 侧 padding），底部留 sp-2 与 composerBox 的间距。 ─────────────────────────── */
 .lumir-hp-chip {
-  margin: 0 var(--sp-4);
+  margin: 0 0 var(--sp-2);
   padding: var(--sp-2) var(--sp-3);
   border: 1px solid var(--border-soft);
   border-radius: var(--r4);
@@ -923,11 +939,14 @@
   background: var(--sel);
 }
 
-/* ctx% 读数 + ⓘ 钮（M347；M351 对齐原型 .h-usage：fs-label 等宽小字）：读数是数据读数
-   （同 modeline 右段口径）；越过警示阈值 → 高亮（--pending 黄族——常驻警示条的原用色，
-   M346 退场后读数继承该语义；非 --accent：蓝是主动作色，警示归 pending 族）+ ⓘ 钮现身
-   （未越线时界面上没有它）。数值档 text-2 分档色不拆 span 实现（D334 整串消费的有意
-   偏差，change design §2.5）。 */
+/* ctx% 读数 + 警示浮层（M347；M351 对齐原型 .h-usage：fs-label 等宽小字；M370 读数改
+   「{ctx}% · {cache}%」双裸读数、分隔符小圆点 U+00B7 与 modeline 同款（复裁决）、「ctx 」前缀随
+   Alex 原话去掉）：读数是数据读数（同
+   modeline 右段口径）；越过警示阈值 → 高亮（--pending 黄族——常驻警示条的原用色，
+   M346 退场后读数继承该语义；非 --accent：蓝是主动作色，警示归 pending 族）。
+   警示说明的入口三代沿革：常驻条（M346 前）→ ⓘ 钮点击气泡（M347）→ **hover 读数浮层**
+   （M370，Alex「去掉感叹号」：mouseenter 读数才翻出，未越线时无浮层）。数值档 text-2
+   分档色不拆 span 实现（D334 整串消费的有意偏差，change design §2.5）。 */
 .lumir-hp-ctxwrap {
   position: relative;
   flex: none;
@@ -951,26 +970,9 @@
 :root[data-theme="eink"] .lumir-hp-ctx.is-warn {
   text-decoration: underline;
 }
-.lumir-hp-ctx-info {
-  flex: none;
-  width: 16px;
-  height: 16px;
-  padding: 0;
-  border: none;
-  border-radius: 50%;
-  background: none;
-  color: var(--pending);
-  font-size: var(--fs-label-s);
-  line-height: 1;
-  cursor: pointer;
-}
-.lumir-hp-ctx-info[hidden] {
-  display: none;
-}
-.lumir-hp-ctx-info:hover {
-  background: var(--hover);
-}
-/* ⓘ 气泡：向上展开，右缘对齐读数右缘（原型 224px——M347 的 240px 按视觉还原收紧）。 */
+/* 警示浮层（M370 = D335 的 hover 形态）：向上展开，右缘对齐读数右缘（原型 224px——
+   M347 的 240px 按视觉还原收紧）。显隐由 hover 翻转（harness-panel.ts 的
+   mouseenter/leave），hidden 仍是结构兜底。 */
 .lumir-hp-ctxpop {
   position: absolute;
   bottom: calc(100% + 6px);
@@ -1247,6 +1249,7 @@
    状态表达——glyph 仍在）；stopping 子态禁用（:disabled）。 */
 .lumir-hp-send {
   --lumir-hp-send-fill: #38372f;
+  --lumir-hp-send-fill-hover: #55534a;
   --lumir-hp-send-fill-text: #ffffff;
   --lumir-hp-send-tint: rgba(0, 0, 0, 0.05);
   flex: none;
@@ -1261,14 +1264,23 @@
   background: var(--lumir-hp-send-fill);
   color: var(--lumir-hp-send-fill-text);
   cursor: pointer;
+  /* hover 反馈（M370，Alex「发送按钮没有 hover 效果」）：与 chip hover（--hover 底）同族的
+     明度上扬——实心钮的「底」就是它自己的 fill，hover 档按原型中性灰族逐主题上调一档；
+     三主题（light/dark/eink）一致给反馈，eink 为纯明度变化（规则①无色彩语义）。 */
+  transition: background var(--dur-ui) var(--ease-standard);
+}
+.lumir-hp-send:hover:not(:disabled) {
+  background: var(--lumir-hp-send-fill-hover);
 }
 :root[data-theme="dark"] .lumir-hp-send {
   --lumir-hp-send-fill: #c7c6bd;
+  --lumir-hp-send-fill-hover: #dcd9cd;
   --lumir-hp-send-fill-text: #222326;
   --lumir-hp-send-tint: rgba(255, 255, 255, 0.09);
 }
 :root[data-theme="eink"] .lumir-hp-send {
   --lumir-hp-send-fill: #000000;
+  --lumir-hp-send-fill-hover: #3a3a3a;
   --lumir-hp-send-fill-text: #ffffff;
   --lumir-hp-send-tint: transparent;
 }
