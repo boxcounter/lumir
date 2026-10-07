@@ -23,7 +23,7 @@ providers: HarnessProviders,
  */
 permissions: HarnessPermissions, 
 /**
- * 工具循环上限（默认 8，合法区间见 [`LOOP_MAX_MIN`] / [`LOOP_MAX_MAX`]）。
+ * 工具循环上限（默认 50，合法区间见 [`LOOP_MAX_MIN`] / [`LOOP_MAX_MAX`]）。
  */
 loop_max: number, 
 /**
