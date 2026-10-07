@@ -79,7 +79,7 @@ composer（输入区）与控制行 SHALL 收进同一个圆角卡片容器（�
 
 ### Requirement: 工具循环
 
-对话运行时 SHALL 支持工具循环：模型返回工具调用时，系统执行对应工具并将结果回送，直至模型不再调用工具或达到循环上限（默认 8，`[harness].loop_max` 可调）。达到上限 SHALL 终止循环并在面板给出明确提示。运行时 SHALL 维护会话状态于 Rust core，webview 重载 MUST NOT 丢失会话。工具集 SHALL 恰好为：`vault_read`、`vault_search`、`vault_patch`、`vault_create`、`skill_load`、`cli_run`——清单外能力扩张须经 Alex 裁决（ADR 0007）。
+对话运行时 SHALL 支持工具循环：模型返回工具调用时，系统执行对应工具并将结果回送，直至模型不再调用工具或达到循环上限（默认 50，`[harness].loop_max` 可调；出厂值 M367 由 8 上调至 50，上界仍为 64）。达到上限 SHALL 终止循环并在面板给出明确提示。运行时 SHALL 维护会话状态于 Rust core，webview 重载 MUST NOT 丢失会话。工具集 SHALL 恰好为：`vault_read`、`vault_search`、`vault_patch`、`vault_create`、`skill_load`、`cli_run`——清单外能力扩张须经 Alex 裁决（ADR 0007）。
 
 #### Scenario: 多轮工具往返
 
@@ -309,7 +309,7 @@ transcript 中的消息（用户 / agent）SHALL 在 hover 时浮现复制钮，
 
 ### Requirement: 消息呈现
 
-transcript 中的用户与 agent 消息 SHALL 带角色 + 相对时间 meta 行（如「你 · 12 秒前 / Agent · 刚刚」）：角色名与相对时间同行，视觉上降档于消息正文（micro 字号、三级文字色）。用户消息 SHALL 以描边气泡呈现（内容底色 + 柔和边框 + 圆角），正文色降一档以区分于 agent 消息；agent 消息 SHALL 平铺排版（无气泡）。相对时间 SHALL 按「刚刚 / N 秒前 / N 分钟前 / N 小时前 / 昨天」分档并随时间低频刷新与随语言切换重绘。快照恢复的历史消息 SHALL 以后端时间戳（`PanelMessage.ts`）显示真实相对时间；无时间戳的旧快照 SHALL 只显示角色、SHALL NOT 伪造相对时间。
+transcript 中的用户与 agent 消息 SHALL 带角色 + 相对时间 meta 行（如「你 · 12 秒前 / Agent · 刚刚」）：角色名与相对时间同行，视觉上降档于消息正文（micro 字号、三级文字色）。用户消息 SHALL 以描边气泡呈现（内容底色 + 柔和边框 + 圆角），正文色降一档以区分于 agent 消息；agent 消息 SHALL 平铺排版（无气泡）。相对时间 SHALL 按「刚刚 / N 秒前 / N 分钟前 / N 小时前 / 昨天」分档并随时间低频刷新与随语言切换重绘。快照恢复的历史消息 SHALL 以后端时间戳（`PanelMessage.ts`）显示真实相对时间；无时间戳的旧快照 SHALL 只显示角色、SHALL NOT 伪造相对时间。快照消息面 SHALL 保真：正文为空的 assistant 轮（模型只发工具调用、无正文）MUST NOT 落成面板记录——快照恢复 MUST NOT 出现只有角色 meta 行、正文为空的「空气泡」；工具记录（`role: tool`）SHALL 持久化摘要（`PanelMessage.summary`），成功为调用参数摘要、失败含细分状态与错误码，使 webview 重载后工具行仍有信息。
 
 #### Scenario: 新消息带 meta 行
 
@@ -320,6 +320,11 @@ transcript 中的用户与 agent 消息 SHALL 带角色 + 相对时间 meta 行�
 
 - **WHEN** webview 重载或 pane 恢复后从快照重建 transcript
 - **THEN** 携带后端 `ts` 的恢复消息按该戳显示相对时间；缺 `ts` 的旧快照消息只显示角色、不显示相对时间（不伪造）
+
+#### Scenario: 工具轮快照保真
+
+- **WHEN** 模型某轮只返回工具调用、无正文文本，随后 webview 重载从快照恢复
+- **THEN** transcript 不出现只有角色 meta 行、正文为空的 agent 消息；工具行仍显示调用参数摘要（调用失败时显示细分状态与错误码）
 
 #### Scenario: 语言切换重绘
 

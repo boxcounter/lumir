@@ -299,14 +299,20 @@ pub fn run_turn_for(
             for item in session::assistant_item(&assistant_text, output.reasoning.as_ref()) {
                 s.push_input(item);
             }
-            s.push_panel(PanelMessage {
-                role: "assistant".into(),
-                text: Some(assistant_text.clone()),
-                summary: None,
-                name: None,
-                status: None,
-                ts: jsonl::unix_secs_now(),
-            });
+            // 工具轮（模型只发工具调用、无正文文本）不落空正文面板消息：落一条 `text: Some("")`
+            // 的话，快照恢复路径会渲染出一排只有「Agent · Xm ago」头、body 为空的记录（M367
+            // 根因）。assistant 项仍入 input（reasoning 必须原样回传，M306），JSONL 照旧留痕——
+            // 只有面板消息这一面跳过。
+            if !assistant_text.is_empty() {
+                s.push_panel(PanelMessage {
+                    role: "assistant".into(),
+                    text: Some(assistant_text.clone()),
+                    summary: None,
+                    name: None,
+                    status: None,
+                    ts: jsonl::unix_secs_now(),
+                });
+            }
             s.jsonl().record(&serde_json::json!({
                 "kind": "assistant_text",
                 "text": assistant_text,
@@ -530,11 +536,10 @@ fn handle_call(
     tctx: &ToolContext,
     call: &llm::ToolCall,
 ) -> (serde_json::Value, serde_json::Value) {
-    sink.emit(events::tool_call(
-        &call.name,
-        "started",
-        &summarize_args(&call.arguments),
-    ));
+    // 参数摘要：live「started」事件与面板快照（M367 持久化）共用同一份，MUST NOT 各算各的
+    // （REVIEW.md 第 8 条：同一语义两处真源）。
+    let args_summary = summarize_args(&call.arguments);
+    sink.emit(events::tool_call(&call.name, "started", &args_summary));
     let parsed: Result<serde_json::Value, _> = serde_json::from_str(&call.arguments);
     let args_ok = parsed.is_ok();
     let args = parsed.unwrap_or_default();
@@ -581,17 +586,22 @@ fn handle_call(
     };
     // 事件 status 只发契约内的 started|done（m303 面板按非 done 即 started 归并——
     // 发细分值会产生永不完结的「正在执行」幻影行）；细分状态放 summary（D344 展示）。
-    sink.emit(events::tool_call(
-        &call.name,
-        "done",
-        &summarize_result(status, &output),
-    ));
+    let result_summary = summarize_result(status, &output);
+    sink.emit(events::tool_call(&call.name, "done", &result_summary));
+    // 面板快照持久化 summary（M367）：成功 = 参数摘要（恢复后工具行显示「调用了什么工具、
+    // 带了什么参数」）；失败 = 结果摘要（含细分状态与错误码）。修前 summary 恒 None，面板
+    // 重载（快照恢复路径）后工具行摘要全丢。
+    let panel_summary = if output.succeeded() {
+        args_summary
+    } else {
+        result_summary
+    };
     let output_text = serde_json::to_string(&output.value).unwrap_or_default();
     let _ = runtime.with_session(scope, |s| {
         s.push_panel(PanelMessage {
             role: "tool".into(),
             text: Some(output_text.clone()),
-            summary: None,
+            summary: Some(panel_summary),
             name: Some(call.name.clone()),
             status: Some(status.to_string()),
             ts: jsonl::unix_secs_now(),
@@ -1036,5 +1046,99 @@ mod tests {
         let assembled = assemble_user_message("纯提问", &ContextBlock::default());
         assert_eq!(assembled.text, "纯提问");
         assert!(assembled.context_section.is_none());
+    }
+
+    /// M367：模型某轮只发工具调用、无正文文本时——
+    /// ① 不落空正文 assistant 面板消息（修前落 `text: Some("")`，快照恢复渲染出只有角色
+    ///    meta 行、body 为空的「空气泡」）；
+    /// ② tool 面板消息持久化摘要（成功 = 参数摘要，失败 = 细分状态 + 错误码），
+    ///    面板重载后工具行仍有信息（修前 summary 恒 None）。
+    ///
+    /// 判据落在线上形状（面板恢复读的就是 `StateSnapshot` 的 JSON），不是内部字段。
+    #[test]
+    fn tool_only_round_skips_empty_assistant_and_persists_tool_summary() {
+        let root =
+            std::env::temp_dir().join(format!("lumir-harness-toolsum-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        // JSONL 落点走 XDG_CONFIG_HOME（REVIEW.md 第 13 条：不写真实 ~/.config/lumir）。
+        let _env = XdgGuard(std::env::var_os("XDG_CONFIG_HOME"));
+        std::env::set_var("XDG_CONFIG_HOME", root.join("xdg"));
+
+        let vault = root.join("vault");
+        std::fs::create_dir_all(&vault).unwrap();
+        std::fs::write(vault.join("a.md"), "正文\n").unwrap();
+        let scope = VaultScope {
+            root: vault.clone(),
+            policy: IgnorePolicy::load(&vault, &[".gitignore".to_string()]),
+        };
+        let config = HarnessConfig {
+            provider: HarnessProvider::Mock,
+            ..Default::default()
+        };
+
+        let runtime = Runtime::default();
+        runtime.acquire_turn(&scope).unwrap();
+        // 第 1 轮：只有工具调用、无正文（`text` 缺省即空串）——复现真实 LLM 的工具轮形状。
+        // 两条调用各钉一面：`vault_read` 成功（摘要取参数）；未知工具失败（摘要含状态与错误码）。
+        let script = r#"{"responses": [
+            {"tool_calls": [
+                {"id": "c1", "name": "vault_read", "arguments": "{\"path\":\"a.md\"}"},
+                {"id": "c2", "name": "vault_bogus", "arguments": "{}"}
+            ]},
+            {"text": "读完了。"}
+        ]}"#;
+        let mut client = llm::MockClient::from_str(script, "tool-summary").unwrap();
+        run_turn_for(
+            &NullSink,
+            &runtime,
+            &scope,
+            &config,
+            "这段讲了什么".to_string(),
+            None,
+            &mut client,
+        );
+        runtime.release_turn(&scope);
+
+        let snapshot = runtime.snapshot(&scope, &config);
+        let json = serde_json::to_value(&snapshot).unwrap();
+        let messages = json["messages"].as_array().unwrap();
+
+        // ① 工具轮不落面板消息：修前 roles 是 ["user", "assistant", "tool", "tool", "assistant"]。
+        let roles: Vec<&str> = messages
+            .iter()
+            .map(|m| m["role"].as_str().unwrap_or(""))
+            .collect();
+        assert_eq!(roles, vec!["user", "tool", "tool", "assistant"]);
+        // 且任一 assistant 面板消息都不得为空正文（空正文记录一律缺席）。
+        for message in messages {
+            if message["role"] == "assistant" {
+                let text = message["text"].as_str().unwrap_or("");
+                assert!(
+                    !text.is_empty(),
+                    "assistant 面板消息不得为空正文：{message}"
+                );
+            }
+        }
+
+        // ② 工具行摘要持久化：成功 = 参数摘要；失败 = 细分状态 + 错误码。
+        let tools: Vec<&serde_json::Value> =
+            messages.iter().filter(|m| m["role"] == "tool").collect();
+        assert_eq!(tools.len(), 2, "{json}");
+        assert_eq!(tools[0]["name"], serde_json::json!("vault_read"));
+        assert_eq!(tools[0]["status"], serde_json::json!("done"));
+        assert_eq!(
+            tools[0]["summary"],
+            serde_json::json!("{\"path\":\"a.md\"}")
+        );
+        assert_eq!(tools[1]["name"], serde_json::json!("vault_bogus"));
+        assert_eq!(tools[1]["status"], serde_json::json!("error"));
+        let failed = tools[1]["summary"].as_str().unwrap_or("");
+        assert!(
+            failed.contains("error") && failed.contains("tool_unknown"),
+            "失败工具行摘要须含状态与错误码，实际：{failed}"
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

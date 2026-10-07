@@ -58,10 +58,10 @@
 //! ## harness 表（change add-harness-probe §11，M301）
 //!
 //! `{"harness": {"provider": "kimi" | "deepseek" | "mock", "providers": {…},` +
-//! `"permissions": {"allow": [], "deny": []}, "loop_max": 8, "warn_ctx_pct": 85,` +
+//! `"permissions": {"allow": [], "deny": []}, "loop_max": 50, "warn_ctx_pct": 85,` +
 //! `"auto_compact": true}}`——对话运行时（harness）的配置面，取值模板与 `editor` / `ui` 同路：
 //! 表内字段缺失 → 默认（不告警）；闭集合取值非法 → 回落默认 + 人话 warning（ADR 0002 §5：
-//! 非法配置不导致启动失败）；表内字段**类型不符**（`"loop_max": "8"`）与整表错形状
+//! 非法配置不导致启动失败）；表内字段**类型不符**（`"loop_max": "50"`）与整表错形状
 //! （`"harness": "kimi"`）都在 serde 解析期失败 → **整文件回落**（与 `editor.font_size`
 //! / `ui.content_width` 同路，不发明逐字段类型容忍）。
 //!
@@ -407,7 +407,11 @@ pub enum LogLevel {
 // ---------------------------------------------------------------------------
 
 /// 工具循环上限的出厂默认（design §4）：一次提问里模型最多连续执行几轮工具调用，防失控循环。
-pub const DEFAULT_LOOP_MAX: u32 = 8;
+///
+/// 出厂值由 M367 从 8 改为 50（Alex 2026-10-07 裁决「默认工具循环上限调整为 50 次」）：8 轮在
+/// 多步任务（连读多个文件、边读边改）上过早触顶，用户看到的是「还没做完就停了」。上界仍是
+/// [`LOOP_MAX_MAX`]（64）——防失控循环是这个键存在的理由，50 仍落在护栏内。
+pub const DEFAULT_LOOP_MAX: u32 = 50;
 
 /// 循环上限的合法区间（含端点）：下限 1（0 轮等于没有工具循环）；上限是本探针期的防失控
 /// 护栏——放得过大等于没有上限，而「防失控循环」正是这个键存在的理由。区间外回落默认 + warning。
@@ -471,7 +475,7 @@ pub struct HarnessConfig {
     pub providers: HarnessProviders,
     /// 权限规则表（design §6）：deny > allow > 默认分层（读 allow / 写与 CLI ask）。
     pub permissions: HarnessPermissions,
-    /// 工具循环上限（默认 8，合法区间见 [`LOOP_MAX_MIN`] / [`LOOP_MAX_MAX`]）。
+    /// 工具循环上限（默认 50，合法区间见 [`LOOP_MAX_MIN`] / [`LOOP_MAX_MAX`]）。
     pub loop_max: u32,
     /// 上下文用量警示阈值（百分比，默认 85，合法区间见 [`WARN_CTX_PCT_MIN`] / [`WARN_CTX_PCT_MAX`]）。
     pub warn_ctx_pct: f64,
@@ -587,7 +591,7 @@ struct RawConfig {
     /// ".gitignore"`）仍走解析期失败 → 整文件回落，这条由单测钉住。
     vault: RawVaultConfig,
     /// `[harness]` 表（change add-harness-probe §11）：结构化镜像，与 `editor` / `ui` 同路——
-    /// 表内字段**类型不符**（`"loop_max": "8"`、`"auto_compact": "yes"`）或整表错形状
+    /// 表内字段**类型不符**（`"loop_max": "50"`、`"auto_compact": "yes"`）或整表错形状
     /// （`"harness": "kimi"`）都在解析期失败 → 整文件回落。`permissions.allow` / `deny`
     /// 是逐项校验的例外（收成 `Vec<Value>` 逐项判定，见 [`RawHarnessPermissions`]）。
     harness: RawHarnessConfig,
@@ -2228,7 +2232,7 @@ mod tests {
     // `[harness]` 表（change add-harness-probe §11，M301）
     // -----------------------------------------------------------------------
 
-    /// 语义①：缺节 / 缺键 ⇒ 出厂默认（provider = kimi、loop_max = 8、warn_ctx_pct = 85、
+    /// 语义①：缺节 / 缺键 ⇒ 出厂默认（provider = kimi、loop_max = 50、warn_ctx_pct = 85、
     /// auto_compact = true、空规则表），且不产生任何 warning（与 `editor` / `ui` 同口径）。
     #[test]
     fn harness_missing_section_takes_factory_defaults() {
@@ -2240,7 +2244,7 @@ mod tests {
             let snap = load_from(&TempFile::new(raw).0);
             assert_eq!(snap.config.harness, HarnessConfig::default(), "{raw}");
             assert_eq!(snap.config.harness.provider, HarnessProvider::Kimi, "{raw}");
-            assert_eq!(snap.config.harness.loop_max, 8, "{raw}");
+            assert_eq!(snap.config.harness.loop_max, 50, "{raw}");
             assert_eq!(snap.config.harness.warn_ctx_pct, 85.0, "{raw}");
             assert!(snap.config.harness.auto_compact, "{raw}");
             assert_eq!(
@@ -2437,14 +2441,14 @@ mod tests {
     #[test]
     fn harness_numeric_ranges_fall_back_and_endpoints_hold() {
         for (raw, loop_max) in [
-            (r#"{"harness":{"loop_max":0}}"#, 8),
-            (r#"{"harness":{"loop_max":999}}"#, 8),
+            (r#"{"harness":{"loop_max":0}}"#, 50),
+            (r#"{"harness":{"loop_max":999}}"#, 50),
             (r#"{"harness":{"loop_max":1}}"#, 1),
             (r#"{"harness":{"loop_max":64}}"#, 64),
         ] {
             let snap = load_from(&TempFile::new(raw).0);
             assert_eq!(snap.config.harness.loop_max, loop_max, "{raw}");
-            let expect_warning = loop_max == 8 && raw.contains("loop_max");
+            let expect_warning = loop_max == 50 && raw.contains("loop_max");
             assert_eq!(
                 snap.warnings.len(),
                 usize::from(expect_warning),
@@ -2525,7 +2529,7 @@ mod tests {
     }
 
     /// 边界如实记录（与 `wrong_type_vault_rule_files_*` / `wrong_type_font_size_*` 同路）：
-    /// `[harness]` 表**整体**给错类型、或表内标量给错类型（`"loop_max": "8"`），都在 serde
+    /// `[harness]` 表**整体**给错类型、或表内标量给错类型（`"loop_max": "50"`），都在 serde
     /// 解析期失败 → 整文件回落（连 `last_vault` 一起丢）。逐项校验解决的是「一个元素非法」，
     /// 不是「字段本身形状错」——后者是既有解析模型的性质，不发明逐字段类型容忍。
     #[test]
@@ -2534,7 +2538,7 @@ mod tests {
             r#"{"last_vault":"/tmp/vault","harness":"kimi"}"#,
             r#"{"last_vault":"/tmp/vault","harness":42}"#,
             r#"{"last_vault":"/tmp/vault","harness":{"provider":2}}"#,
-            r#"{"last_vault":"/tmp/vault","harness":{"loop_max":"8"}}"#,
+            r#"{"last_vault":"/tmp/vault","harness":{"loop_max":"50"}}"#,
             r#"{"last_vault":"/tmp/vault","harness":{"warn_ctx_pct":"85"}}"#,
             r#"{"last_vault":"/tmp/vault","harness":{"auto_compact":"yes"}}"#,
             r#"{"last_vault":"/tmp/vault","harness":{"providers":"kimi"}}"#,
