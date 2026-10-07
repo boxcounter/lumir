@@ -81,5 +81,5 @@ AI-only 模式下（ADR 0004）「待真机验收」清单只增不减，全部�
 | 9 Emacs 键位 / ⌘Z 真机路径 / ⌘/ 面板 / `[keys]` | `09-emacs-keys`、`09b-keys-config`（行为全验） |
 | 93 思考块三态（折叠默认 / 展开见原文 / 时长读数在场） | `93-harness-thinking-blocks`（行为全验，2026-10-07） |
 | 94 无 reasoning ⇒ 零思考块（反向验证） | `94-harness-thinking-absent`（行为全验，2026-10-07） |
-| 95 思考程度 chip 会话态（默认 High / 浮层三档 / 选 Max / 新会话回 High） | `95-harness-thinking-effort`（前三步行为全验；**「新会话回 High」当前红**——新建会话后 chip 不刷新，缺陷 M366 在修，未转绿。另：「档位 → 请求参数」段不在真机断言，由 core 集成测试 `session_thinking_effort_reaches_request` 覆盖） |
+| 95 思考程度 chip 会话态（默认 High / 浮层三档 / 选 Max / 新会话回 High） | `95-harness-thinking-effort`（行为全验，2026-10-07；「新会话回 High」首跑红——M366 修复后转绿。另：「档位 → 请求参数」段不在真机断言，由 core 集成测试 `session_thinking_effort_reaches_request` 覆盖） |
 | 4 表头双击选中手感 | 不下沉（Alex） |
