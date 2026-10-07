@@ -9,6 +9,11 @@
 //! 线程模型：本模块的函数都跑在 `lumir-harness-llm` 专线程（command 层 spawn）。
 //! 会话锁的持有纪律：**只在读写会话的那一刻持锁**，LLM 调用与批准等待都在锁外
 //! （一轮可能流式几分钟，持锁会把 `harness_state` / 批准通道全堵住）。
+//!
+//! 真流式（M369）：分片经 [`TurnStreamSink`] 在解析层收到即转发（前端逐字上屏，不再等整条
+//! 响应读完再补发）；在途停止的探测（`aborted()`）挂在同一条通路上——流式期间点停止即收流，
+//! 已产出内容保留在 `TurnOutput` 里由 [`abort_turn`] 收口。**事件发射一律在会话锁外**，
+//! 转发器只短暂查会话（中断标志）。
 
 use std::sync::mpsc;
 
@@ -18,7 +23,7 @@ use crate::commands::CommandError;
 use crate::config::HarnessConfig;
 
 use super::approval::{ApprovalRequest, ApprovalSignal};
-use super::events::{self, EventSink};
+use super::events::{self, EventSink, StreamSink};
 use super::jsonl;
 use super::llm::{self, LlmClient};
 use super::permissions::{self, Decision};
@@ -242,12 +247,35 @@ pub fn run_turn_for(
         rounds += 1;
 
         let request = build_request(runtime, scope);
-        let output = client.complete(&request);
+        // 真流式（M369）：分片在 `complete` 期间收到即转发（正文逐字上屏），中断探测也在流里
+        // （`aborted()`）——流式期间点停止即收流，已产出内容留在 `output` 里。思考块序号在
+        // 本轮开始时定下：一次 LLM 往返最多一个思考块，该块的所有分片共用同一序号。
+        let stream = TurnStreamSink {
+            sink,
+            runtime,
+            scope,
+            reasoning_block,
+        };
+        let output = client.complete(&request, &stream);
 
-        // —— 停止检查点 ①（M348）：complete 在途期间被请求停止——产出保留、不再继续。
-        // 中断优先于错误/空响应判定：用户已表态「不再继续」，别再追错误行。
+        // —— 思考兜底（M369）——
+        // 流式路径已在解析层即时转发；这里只补「没有流式分片、但回放项可提取明文」的老形态
+        // （老 fixture / 只发 `output_item.done` 的 provider），整段作一个分片。放在停止检查点
+        // **之前**：只有思考、还没正文时被停止，思考块同样要在场（「已产出内容保留」对思考成立）。
+        let fallback_reasoning = reasoning_fallback(&output);
+        if let Some(text) = fallback_reasoning.as_deref() {
+            sink.emit(events::reasoning_chunk(text, reasoning_block));
+        }
+        // 进了块序号就进位（与改动前的口径一致：有思考内容才占一块）。
+        if fallback_reasoning.is_some() || !output.reasoning_deltas.is_empty() {
+            reasoning_block += 1;
+        }
+
+        // —— 停止检查点 ①（M348；M369 起在途停止已在流里收口，这里是「收流后」的那一道）：
+        // `complete` 期间被请求停止——产出保留、不再继续。中断优先于错误/空响应判定：
+        // 用户已表态「不再继续」，别再追错误行。
         if turn_aborted(runtime, scope) {
-            abort_turn(sink, runtime, scope, panel_base, reasoning_block, &output);
+            abort_turn(sink, runtime, scope, panel_base, &output);
             return;
         }
 
@@ -275,20 +303,7 @@ pub fn run_turn_for(
             return;
         }
 
-        // —— 思考文本转发（M362，输出侧增量）——
-        // 思考块在正文之前（design §3）：本轮的思考分片先发，再发正文分片。回放路径不经过这里
-        // （reasoning 项的捕获/合成/回传在 llm.rs，M306 纪律零触碰）；分片来源见 [`reasoning_display`]。
-        let reasoning_chunks = reasoning_display(&output);
-        if !reasoning_chunks.is_empty() {
-            for delta in &reasoning_chunks {
-                sink.emit(events::reasoning_chunk(delta, reasoning_block));
-            }
-            reasoning_block += 1;
-        }
-        // —— 流式文本与输出项入队 ——
-        for delta in &output.text_deltas {
-            sink.emit(events::text_chunk(delta));
-        }
+        // —— 输出项入队（分片不在这里发：M369 起正文 / 思考分片都在流式路径即时转发）——
         let assistant_text = output.text.clone();
         let usage = output.usage.map(|usage| {
             let preset = llm::preset(&config.provider);
@@ -368,7 +383,6 @@ pub fn run_turn_for(
                     runtime,
                     scope,
                     panel_base,
-                    reasoning_block,
                     &llm::TurnOutput::default(),
                 );
                 return;
@@ -384,7 +398,6 @@ pub fn run_turn_for(
                 runtime,
                 scope,
                 panel_base,
-                reasoning_block,
                 &llm::TurnOutput::default(),
             );
             return;
@@ -403,35 +416,24 @@ fn turn_aborted(runtime: &Runtime, scope: &VaultScope) -> bool {
 }
 
 /// 中断收口（M348，design §5「不再继续」语义）：
-/// - 已产出内容保留：`output` 里本轮拿到的文本照常入队（LLM 侧 + 面板侧 + JSONL +
-///   text_chunk 事件），**思考分片同样转发**（M362，[`reasoning_chunk`](events::reasoning_chunk)）；
+/// - 已产出内容保留：`output` 里本轮拿到的文本照常入队（LLM 侧 + 面板侧 + JSONL），
 ///   面板消息标 `status = "stopped"`（标注「已停止」）；`output` 为空（中断落在工具执行段）时
 ///   标注落在既有的本轮 assistant 消息上；
+/// - **分片不在这里补发**（M369）：正文与思考分片都在流式期间由 [`TurnStreamSink`] 即时转发过，
+///   这里再发一遍就是双发；思考兜底（未流式产出时的整段分片）也已在本轮返回后、检查点之前发完；
 /// - 不再继续：调用 / 用量 / 自动压缩一律不处理；
 /// - 如实留痕：JSONL 记 `turn_aborted`，事件发 `aborted`（面板经与 done 同一出口回
 ///   idle，composer 立即可开新一轮）。
-///
-/// `reasoning_block` 是本轮当前思考块序号（与正常路径同一个计数器）：中断落在 `complete`
-/// 在途之后时，本轮那一块的序号不变，前端仍能把它接在同一块上。
 fn abort_turn(
     sink: &dyn EventSink,
     runtime: &Runtime,
     scope: &VaultScope,
     panel_base: usize,
-    reasoning_block: u32,
     output: &llm::TurnOutput,
 ) {
-    // 思考分片先于正文（与正常路径同序）。放在 `assistant_text.is_empty()` 之外：只有思考、
-    // 还没产出正文时被停止，思考块同样要在场（「已产出内容保留」对思考成立）。
-    for delta in &reasoning_display(output) {
-        sink.emit(events::reasoning_chunk(delta, reasoning_block));
-    }
     let assistant_text = output.text.clone();
     let _ = runtime.with_session(scope, |s| {
         if !assistant_text.is_empty() {
-            for delta in &output.text_deltas {
-                sink.emit(events::text_chunk(delta));
-            }
             for item in session::assistant_item(&assistant_text, output.reasoning.as_ref()) {
                 s.push_input(item);
             }
@@ -455,6 +457,36 @@ fn abort_turn(
     sink.emit(events::aborted());
 }
 
+/// 流式增量 → 面板事件的转发器（M369 真流式）：`llm` 的解析层在流中调用它。
+///
+/// 事件形状收在这里（解析层不该知道 `text_chunk` / `reasoning_chunk` 的字段，也不该知道
+/// 「思考块序号」这个展示侧概念）；`aborted()` 直接查会话的停止标志——解析层因此不必反向
+/// 依赖 `Runtime`（`llm` 不感知会话层）。调用发生在解析线程上且**不持有任何会话锁**
+///（`complete` 全程在锁外，见模块头），`aborted()` 只短暂取一次锁。
+struct TurnStreamSink<'a> {
+    /// 已盖 vault 信封的出口（`run_turn` 的 [`super::events::ScopedSink`]）。
+    sink: &'a dyn EventSink,
+    runtime: &'a Runtime,
+    scope: &'a VaultScope,
+    /// 本轮思考块序号：一次 LLM 往返最多一块，该块的全部思考分片共用它。
+    reasoning_block: u32,
+}
+
+impl StreamSink for TurnStreamSink<'_> {
+    fn text_delta(&self, delta: &str) {
+        self.sink.emit(events::text_chunk(delta));
+    }
+
+    fn reasoning_delta(&self, delta: &str) {
+        self.sink
+            .emit(events::reasoning_chunk(delta, self.reasoning_block));
+    }
+
+    fn aborted(&self) -> bool {
+        turn_aborted(self.runtime, self.scope)
+    }
+}
+
 /// 构造 LLM 请求（系统上下文 + 全部历史 + 工具定义 + 本轮思考档位；会话历史每轮整体序列化，
 /// 克隆即可）。档位在**会话侧**（M362），这里读一次——本轮内不再变（切档位影响其后发出的消息）。
 fn build_request(runtime: &Runtime, scope: &VaultScope) -> llm::Request {
@@ -475,21 +507,15 @@ fn build_request(runtime: &Runtime, scope: &VaultScope) -> llm::Request {
     }
 }
 
-/// 本轮要转发给人的思考分片（M362，输出侧只读）。
-///
-/// 优先用 client 收下的流式分片（真 provider 的 `reasoning_text.delta` /
-/// `reasoning_summary_text.delta`，mock 的 `reasoning_chunks`）；分片为空但捕获到 reasoning
-/// 项时退回「从回放项提取明文、整段作一个分片」，保证不丢思考内容（老 fixture / 只发
-/// `output_item.done` 的 provider 都落这条兜底）。**只读**：不触碰 reasoning 项的
+/// 未流式产出时的思考兜底分片（M369，输出侧只读）：`reasoning_deltas` 非空 = 解析层已即时
+/// 转发过，返回 `None`；否则从回放项提取明文、整段作一个分片（老 fixture / 只发
+/// `output_item.done` 的 provider 落这条），保证不丢思考内容。**只读**：不触碰 reasoning 项的
 /// 捕获 / 合成 / 回传（M306 纪律），密文也永不进入返回值（[`thinking::reasoning_text`]）。
-fn reasoning_display(output: &llm::TurnOutput) -> Vec<String> {
+fn reasoning_fallback(output: &llm::TurnOutput) -> Option<String> {
     if !output.reasoning_deltas.is_empty() {
-        return output.reasoning_deltas.clone();
+        return None;
     }
-    match output.reasoning.as_ref().and_then(thinking::reasoning_text) {
-        Some(text) => vec![text],
-        None => Vec::new(),
-    }
+    output.reasoning.as_ref().and_then(thinking::reasoning_text)
 }
 
 /// loop_max 终止提示（面板可见：assistant 消息 + 事件 + JSONL 记录）。
@@ -744,14 +770,19 @@ fn compact_now(
     let effort = runtime
         .with_session(scope, |s| s.thinking_effort())
         .unwrap_or_default();
-    let output = client.complete(&llm::Request {
-        system: COMPACT_INSTRUCTION.to_string(),
-        input: vec![session::user_item(&format!(
-            "{COMPACT_INSTRUCTION}\n\n===== 对话历史 =====\n{history}"
-        ))],
-        tools: Vec::new(),
-        effort,
-    });
+    // 流式 sink 用丢弃口（M369）：摘要不逐片进面板——它只在整个压缩完成后作为 `compact`
+    // 事件与面板消息整段落盘；也不参与在途停止（压缩是一次汇总调用）。
+    let output = client.complete(
+        &llm::Request {
+            system: COMPACT_INSTRUCTION.to_string(),
+            input: vec![session::user_item(&format!(
+                "{COMPACT_INSTRUCTION}\n\n===== 对话历史 =====\n{history}"
+            ))],
+            tools: Vec::new(),
+            effort,
+        },
+        &llm::DiscardStreamSink,
+    );
     let summary = match output {
         llm::TurnOutput { error: Some(e), .. } => {
             return Err(CommandError::new(

@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "responses": [
+    {
+      "text": "STREAM-A 第一片。STREAM-B 第二片。STREAM-C 第三片。",
+      "chunks": ["STREAM-A 第一片。", "STREAM-B 第二片。", "STREAM-C 第三片。"],
+      "chunk_delay_ms": 6000,
+      "usage": { "input_tokens": 1200, "cached_tokens": 300, "output_tokens": 30 }
+    }
+  ]
+}

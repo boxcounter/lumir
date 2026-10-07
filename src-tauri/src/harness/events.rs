@@ -13,6 +13,9 @@
 //! 不会串进新 vault 的面板。它是「会话标识」本身：`Runtime` 的 sessions 映射以 vault 根路径
 //! 为键，一个 vault 一个会话，两者恒等，故不另发一个同值的 `session` 字段（那会是
 //! 「声明了却没有独立消费者」的死字段，REVIEW.md 第 9 条）。
+//!
+//! 载荷之上，本模块持有输出侧的两个 trait：[`EventSink`]（事件发射通道）与 [`StreamSink`]
+//!（M369 的流式增量转发口——解析层收到增量即转成上面的事件，而不是攒够整条响应再补发）。
 
 /// 后端 → 面板的事件名（MUST NOT 改名，面板钉死）。
 pub const EVENT_NAME: &str = "harness:event";
@@ -36,6 +39,25 @@ pub fn stamp_vault(payload: &mut serde_json::Value, vault: &str) {
 /// 真 AppHandle 与单测收集器各自实现）。
 pub trait EventSink {
     fn emit(&self, payload: serde_json::Value);
+}
+
+/// 流式增量转发口（M369 真流式）：LLM 解析层（[`super::llm`]）每收到一个增量即回调，
+/// **不再攒够整条响应再事后补发**——这是「回答逐字出现」而不是「一次性出现」的唯一落点。
+///
+/// 为什么不是 [`EventSink`]：分片的**事件形状**（`text_chunk` / `reasoning_chunk`）与
+/// **思考块序号**是展示侧装配概念（序号计数器在 [`super::turn`]，随会话轮次推进），
+/// 解析层不该知道；这样做也避免把展示用的序号塞进 [`super::llm::Request`]。
+///
+/// `aborted()` 是**在途停止**的判据：读循环（真 provider 的 SSE 解析、mock 的分片产出）
+/// 隔一片问一次，翻真即收流——已产出的分片照常保留（中断语义 = 「不再继续」，非回滚）。
+/// 解析层因此不必反向依赖 `Runtime`（`llm` 不感知会话层）。
+pub trait StreamSink {
+    /// 正文增量到达（真 provider 的 `response.output_text.delta` / mock 的 `chunks`）。
+    fn text_delta(&self, delta: &str);
+    /// 思考文本增量到达（真 provider 的 reasoning delta 事件 / mock 的 `reasoning_chunks`）。
+    fn reasoning_delta(&self, delta: &str);
+    /// 本轮是否已被请求停止（在途停止）。
+    fn aborted(&self) -> bool;
 }
 
 /// 给任意 [`EventSink`] 盖上 vault 标识的装饰器（生产路径的装配点：`turn::run_turn`）。

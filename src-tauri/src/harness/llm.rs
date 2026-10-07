@@ -31,7 +31,8 @@
 //!       "reasoning": {"type":"reasoning","id":"rs_1","encrypted_content":"…"},  // 可选：回放项
 //!       "reasoning_chunks": ["先想清楚", "再答。"],  // 可选：思考文本分片（M362，给人看，见下）
 //!       "usage": {"input_tokens": 1200, "cached_tokens": 300, "output_tokens": 40},  // 可选
-//!       "delay_ms": 45000                        // 可选：返回前先睡这么久（见下「脚本化延迟」）
+//!       "delay_ms": 45000,                        // 可选：返回前先睡这么久（见下「脚本化延迟」）
+//!       "chunk_delay_ms": 5000                   // 可选：分片之间的间隔（见下「逐片延迟」）
 //!     },
 //!     {"text": "读完了。", "usage": {"input_tokens": 1500, "cached_tokens": 900, "output_tokens": 10}},
 //!     {"error": {"code": "context_length_exceeded", "message": "…"}}            // 可选：脚本化错误
@@ -53,6 +54,30 @@
 //! 「切换发生在回合进行中」：延迟把窗口从毫秒级撑到几十秒，切换动作（AX 读 + 点击，秒级）
 //! 才落得进窗口内。睡眠发生在 `lumir-harness-llm` 专线程里（ADR 0002 §6），不碰热路径、
 //! 不持有任何会话锁（`MockClient::complete` 期间 `Runtime` 的 sessions 锁是放开的）。
+//!
+//! **逐片延迟**（`chunk_delay_ms`，M369 新增）：**相邻两片之间**的间隔（毫秒，默认 0 = 无间隔）。
+//! 它撑的是「响应**正在逐字到达**」这个窗口——M369 的真流式与在途停止要验的正是它：分片按
+//! 间隔一片片产出并即时转发（[`StreamSink`]），观者能在整条回答完成之前看到部分正文。
+//! **它是可中断的**：每段间隔睡完先问一次 [`StreamSink::aborted`]，翻真即停产出——已产出的
+//! 分片保留（中断语义 = 「不再继续」）。与 `delay_ms` 的分工：后者是「响应尚未开始」的窗口，
+//! **不可中断**（一次睡到底；验收场景 88 依赖「停止请求在返回后才被检查点判到、产出照常保留」
+//! 这条语义），前者是「流式进行中」的窗口。
+//!
+//! # 真流式与在途停止（M369）
+//!
+//! 解析层不再把增量攒起来等整条响应读完再事后补发——收到即经 [`StreamSink`] 转发
+//! （真 provider 走 SSE 读循环，mock 走分片产出循环），前端因此逐字上屏。
+//! [`TurnOutput::text`] 仍是全文（快照与 JSONL 用它）；分片本身不留档（转发即消费）。
+//!
+//! `StreamSink::aborted()` 把「用户点了停止」接进读循环：流式期间点停止即收流（真 provider 在
+//! 下一个 SSE 事件后收口，mock 在下一片间隔后收口），**已产出的内容保留在 `TurnOutput` 里**，
+//! 由 [`super::turn`] 收口（标注「已停止」）。两处边界如实登记：① `delay_ms` 与阻塞式
+//! `reader.lines()` 期间的停止仍要等到睡眠 / 下一条数据到达才生效（后者是阻塞 IO 的固有边界，
+//! 与改动前一致——真 provider 在流停滞时本就不推数据）；② 流中中断时 reasoning 回放项通常
+//! 尚未到达（它随 `response.output_item.done` / `response.completed` 来），该轮 assistant 消息
+//! 因此不带 reasoning 项——是否被 provider 拒收**未实测**（M360 的逐项变异显示那条 400 的触发
+//! 条件是项序而非缺失 reasoning，且中断轮的 assistant 消息不含 function_call 项），
+//! 已作为 finding 报 tower 待裁决。
 //!
 //! # reasoning 回传纪律（design §3，M306 对真 API 核实；M360 补项序条件）
 //!
@@ -97,6 +122,7 @@ use std::io::BufRead;
 use crate::commands::CommandError;
 use crate::config::{HarnessConfig, HarnessProvider};
 
+use super::events::StreamSink;
 use super::session::UsageSnapshot;
 use super::thinking::{self, ThinkingEffort};
 
@@ -121,10 +147,9 @@ pub struct Usage {
 /// 一次 LLM 调用的结果：流式文本 + 输出项（回放）+ 调用 + 用量，或错误。
 #[derive(Debug, Clone, Default)]
 pub struct TurnOutput {
-    /// 完整助手文本（= 全部 text chunk 拼接）。
+    /// 完整助手文本（= 本轮全部流式分片拼接）。分片本身**不在这里留档**——它们在
+    /// 解析层收到的那一刻就经 [`StreamSink`] 转发出去（M369）；快照与 JSONL 用这里的全文。
     pub text: String,
-    /// 流式 chunk（emit text_chunk 用；mock 按 fixture 分块）。
-    pub text_deltas: Vec<String>,
     /// 回放项：reasoning 项原文（有则；item 级原样或 message part 级合成）——
     /// assistant message 项由 text 重建，不重复存。
     pub reasoning: Option<serde_json::Value>,
@@ -132,6 +157,9 @@ pub struct TurnOutput {
     /// fixture 的 `reasoning_chunks`（mock）。与 [`Self::reasoning`] 物理隔离——这份永不
     /// 参与回放（M306 纪律），`reasoning` 也永不喂给展示侧的分片通道（展示从这里拿不到文本时
     /// 才退回从 `reasoning` 提取，见 [`super::thinking::reasoning_text`]）。
+    ///
+    /// 与 `text` 不同，这份**留着**：它同时是「本轮思考是否已由解析层即时转发过」的判据
+    ///（非空 ⇒ 已转发；`turn` 据此决定要不要补发整段兜底分片，M369）。
     pub reasoning_deltas: Vec<String>,
     /// 本轮函数调用（按序执行）。
     pub calls: Vec<ToolCall>,
@@ -275,7 +303,13 @@ pub struct Request {
 /// client 抽象（ADR 0007 Decision 3 留口的底层侧：将来 Chat Completions 适配器
 /// 与 Responses 适配器并存于同一循环之下，design §3 fallback）。
 pub trait LlmClient: Send {
-    fn complete(&mut self, request: &Request) -> TurnOutput;
+    /// 发起一次 LLM 往返。`sink` 是**流式增量转发口**（M369）：正文 / 思考增量到达即转发
+    /// （前端逐字上屏，不再等价整条响应读完后补发）；`sink.aborted()` 翻真时读循环提前收流，
+    /// **已产出的内容保留在返回值里**（在途停止，见模块头的「真流式与在途停止」）。
+    ///
+    /// 调用方 MUST NOT 持有会话锁调用本方法（一轮可能流式几分钟，持锁会把
+    /// `harness_state` / 批准通道全堵住）——`sink` 的回调里可能反过来短暂查会话（中断探测）。
+    fn complete(&mut self, request: &Request, sink: &dyn StreamSink) -> TurnOutput;
 }
 
 /// 按配置装配 client：mock ⇒ fixture 驱动；kimi / deepseek ⇒ reqwest blocking。
@@ -360,8 +394,8 @@ struct ResponsesClient {
 }
 
 impl LlmClient for ResponsesClient {
-    fn complete(&mut self, request: &Request) -> TurnOutput {
-        match self.complete_inner(request) {
+    fn complete(&mut self, request: &Request, sink: &dyn StreamSink) -> TurnOutput {
+        match self.complete_inner(request, sink) {
             Ok(output) => output,
             Err(e) => TurnOutput {
                 error: Some(TurnError {
@@ -376,7 +410,11 @@ impl LlmClient for ResponsesClient {
 }
 
 impl ResponsesClient {
-    fn complete_inner(&mut self, request: &Request) -> Result<TurnOutput, CommandError> {
+    fn complete_inner(
+        &mut self,
+        request: &Request,
+        sink: &dyn StreamSink,
+    ) -> Result<TurnOutput, CommandError> {
         let mut body = serde_json::json!({
             "model": self.model,
             "instructions": request.system,
@@ -412,7 +450,7 @@ impl ResponsesClient {
             });
             return Err(CommandError::new(code, message));
         }
-        parse_sse(response, self.preset)
+        parse_sse(response, self.preset, sink)
     }
 }
 
@@ -433,22 +471,35 @@ fn parse_error_body(text: &str) -> Option<(String, String)> {
     Some((code, message))
 }
 
-/// 语义化 SSE 解析（design §3）：按事件名分流，文本增量即时产出，输出项 / 用量
-/// 从 `response.completed` 的完整 response 对象取（优于逐 delta 拼装 function_call）。
+/// 语义化 SSE 解析（design §3）：按事件名分流，文本增量**收到即转发**（`sink`，M369 真流式），
+/// 输出项 / 用量从 `response.completed` 的完整 response 对象取（优于逐 delta 拼装 function_call）。
 ///
 /// 流终止：`response.completed` / `response.incomplete` / `response.failed`（deepseek 明说
-/// 无 `[DONE]`；kimi/OpenAI 形态会发 `[DONE]`，作为兜底终止）。非 JSON 的数据行忽略
-///（厂商 keep-alive 注释行）。
+/// 无 `[DONE]`；kimi/OpenAI 形态会发 `[DONE]`，作为兜底终止）、以及 `sink.aborted()`
+///（在途停止：用户点了停止，不再等后续事件）。非 JSON 的数据行忽略（厂商 keep-alive 注释行）。
 fn parse_sse(
     response: reqwest::blocking::Response,
     preset: &ProviderPreset,
+    sink: &dyn StreamSink,
 ) -> Result<TurnOutput, CommandError> {
-    Ok(parse_sse_reader(std::io::BufReader::new(response), preset))
+    Ok(parse_sse_reader(
+        std::io::BufReader::new(response),
+        preset,
+        sink,
+    ))
 }
 
 /// SSE 分词与事件分流的读循环，与 transport 解耦（真 client 传响应体，单测传合成字节流），
 /// 协议层行为因此可用字节流直接钉死。
-fn parse_sse_reader<R: BufRead>(reader: R, preset: &ProviderPreset) -> TurnOutput {
+///
+/// 每个事件处理完问一次 `sink.aborted()`：翻真即收流，已收内容照常返回（在途停止）。
+/// 阻塞在 `reader.lines()` 期间无法被中断——这是阻塞 IO 的固有边界（流停滞时本就没有数据
+/// 可读；改动前停止也要等整条响应读完才生效，故非回归）。
+fn parse_sse_reader<R: BufRead>(
+    reader: R,
+    preset: &ProviderPreset,
+    sink: &dyn StreamSink,
+) -> TurnOutput {
     let mut output = TurnOutput::default();
     let mut event = String::new();
     let mut data = String::new();
@@ -457,10 +508,10 @@ fn parse_sse_reader<R: BufRead>(reader: R, preset: &ProviderPreset) -> TurnOutpu
             break; // 流中断：用已收内容收尾（不当作致命错误）
         };
         if line.is_empty() {
-            dispatch_event(&event, &data, &mut output, preset);
+            dispatch_event(&event, &data, &mut output, preset, sink);
             event.clear();
             data.clear();
-            if output.error.is_some() || terminal_state(&output) {
+            if output.error.is_some() || terminal_state(&output) || sink.aborted() {
                 break;
             }
             continue;
@@ -484,7 +535,13 @@ fn terminal_state(output: &TurnOutput) -> bool {
     output.usage.is_some() || output.error.is_some()
 }
 
-fn dispatch_event(event: &str, data: &str, output: &mut TurnOutput, preset: &ProviderPreset) {
+fn dispatch_event(
+    event: &str,
+    data: &str,
+    output: &mut TurnOutput,
+    preset: &ProviderPreset,
+    sink: &dyn StreamSink,
+) {
     if data == "[DONE]" {
         return;
     }
@@ -495,15 +552,18 @@ fn dispatch_event(event: &str, data: &str, output: &mut TurnOutput, preset: &Pro
         "response.output_text.delta" => {
             if let Some(delta) = value.get("delta").and_then(|d| d.as_str()) {
                 output.text.push_str(delta);
-                output.text_deltas.push(delta.to_string());
+                // 即时转发（M369）：不再攒起来等整条响应读完再补发。
+                sink.text_delta(delta);
             }
         }
         // 展示侧思考分片（M362）：deepseek 的 chain-of-thought 增量、kimi 的思考摘要增量
         //（两家事件名不同，见模块头「展示侧思考文本与档位记录」）。**只追加到展示专用的
         // `reasoning_deltas`**——回放项仍只由 `collect_output_item` 产出，这条支路碰不到它。
+        // 同样即时转发（M369；分片的事件形状与思考块序号由 `turn` 的转发器决定）。
         "response.reasoning_text.delta" | "response.reasoning_summary_text.delta" => {
             if let Some(delta) = value.get("delta").and_then(|d| d.as_str()) {
                 output.reasoning_deltas.push(delta.to_string());
+                sink.reasoning_delta(delta);
             }
         }
         "response.output_item.done" => {
@@ -678,9 +738,14 @@ struct FixtureResponse {
     usage: Option<FixtureUsage>,
     #[serde(default)]
     error: Option<FixtureError>,
-    /// 返回前先睡的毫秒数（见模块文档的「脚本化延迟」；默认 0 = 立刻返回）。
+    /// 返回前先睡的毫秒数（见模块文档的「脚本化延迟」；默认 0 = 立刻返回）。**不可中断**：
+    /// 这是「响应尚未开始」的窗口，停止请求要等它睡满后由 `turn` 的检查点判到。
     #[serde(default)]
     delay_ms: u64,
+    /// **相邻两片之间**的间隔毫秒数（见模块文档的「逐片延迟」；默认 0 = 无间隔）。
+    /// 可中断：每段间隔睡完问一次 [`StreamSink::aborted`]，翻真即停产出（已产出分片保留）。
+    #[serde(default)]
+    chunk_delay_ms: u64,
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -762,7 +827,7 @@ impl MockClient {
 }
 
 impl LlmClient for MockClient {
-    fn complete(&mut self, request: &Request) -> TurnOutput {
+    fn complete(&mut self, request: &Request, sink: &dyn StreamSink) -> TurnOutput {
         // 记录收到的档位（M362）：与脚本是否弹尽无关——验收要断言的是「发出去的是什么」，
         // 故放在最前面，耗尽路径也留痕。
         self.received_efforts.push(request.effort);
@@ -780,7 +845,8 @@ impl LlmClient for MockClient {
             };
         };
         // 脚本化延迟（默认 0）：撑住「回合在途」的窗口供验收断言用。放在错误分支之前——
-        // 「迟到的是错误」同样是跨 vault 拒收的对象（理由见模块文档）。
+        // 「迟到的是错误」同样是跨 vault 拒收的对象（理由见模块文档）。**不可中断**：
+        // 一次睡到底（见模块头「逐片延迟」里与 `chunk_delay_ms` 的分工）。
         if entry.delay_ms > 0 {
             std::thread::sleep(std::time::Duration::from_millis(entry.delay_ms));
         }
@@ -801,22 +867,23 @@ impl LlmClient for MockClient {
                 ..Default::default()
             };
         }
-        let text = entry.text.clone();
-        let text_deltas = if entry.chunks.is_empty() {
-            if text.is_empty() {
+        // 本轮的正文分片序列：给了 `chunks` 按它分片，否则整段文本作一片（空文本则零片）。
+        let chunks = if entry.chunks.is_empty() {
+            if entry.text.is_empty() {
                 Vec::new()
             } else {
-                vec![text.clone()]
+                vec![entry.text.clone()]
             }
         } else {
             entry.chunks.clone()
         };
-        TurnOutput {
-            text,
-            text_deltas,
+        // 非分片字段先落到 output：分片产出可能被在途停止提前中断，回放项 / 调用 / 用量
+        // 仍应尽力带回（尤其 reasoning 回放项——中断轮之后入 input 的 assistant 消息带上它，
+        // 下一轮 provider 才不会因为缺项而报错，M306）。
+        let mut output = TurnOutput {
+            text: String::new(),
             reasoning: entry.reasoning,
-            // 展示侧分片原样透传（空则由 `turn` 从回放项提取整段，见模块文档）。
-            reasoning_deltas: entry.reasoning_chunks,
+            reasoning_deltas: Vec::new(),
             calls: entry
                 .tool_calls
                 .into_iter()
@@ -832,7 +899,51 @@ impl LlmClient for MockClient {
                 output_tokens: u.output_tokens,
             }),
             error: None,
+        };
+        // 分片产出：思考分片先于正文（与真 provider 的事件序一致，design §3），逐片即时转发
+        // （M369 真流式）。`chunk_delay_ms` 给每段间隔加上可中断的节拍——停止请求在间隔里被
+        // 问到即收流，**已产出的分片保留**（在途停止）。默认 0 时无间隔、也无中断探测
+        // （没有窗口可停），整脚本一次产出——场景 88 的 `delay_ms` 形态即靠这条保持原状。
+        let reasoning_chunks = entry.reasoning_chunks.clone();
+        for (index, chunk) in reasoning_chunks.iter().enumerate() {
+            output.reasoning_deltas.push(chunk.clone());
+            sink.reasoning_delta(chunk);
+            if index + 1 < reasoning_chunks.len() && !chunk_gap(entry.chunk_delay_ms, sink) {
+                return output;
+            }
         }
+        for (index, chunk) in chunks.iter().enumerate() {
+            output.text.push_str(chunk);
+            sink.text_delta(chunk);
+            if index + 1 < chunks.len() && !chunk_gap(entry.chunk_delay_ms, sink) {
+                return output;
+            }
+        }
+        output
+    }
+}
+
+/// 分片之间的可中断节拍（`chunk_delay_ms`，见模块头「逐片延迟」）：睡满间隔后问一次
+/// [`StreamSink::aborted`]，翻真返回 `false`（产出到此为止，已产出的分片保留）。
+/// `chunk_delay_ms == 0` 时零延迟且不做中断探测（没有窗口可停）。
+fn chunk_gap(chunk_delay_ms: u64, sink: &dyn StreamSink) -> bool {
+    if chunk_delay_ms == 0 {
+        return true;
+    }
+    std::thread::sleep(std::time::Duration::from_millis(chunk_delay_ms));
+    !sink.aborted()
+}
+
+/// 丢弃流式增量的 sink：**压缩调用**用（[`super::turn::compact_now`]）——摘要不逐片进面板
+/// （它只在整个压缩完成后作为 `compact` 事件与面板消息整段落盘），也不需要参与在途停止
+/// （压缩是一次汇总调用，中断语义不覆盖它）。
+pub struct DiscardStreamSink;
+
+impl StreamSink for DiscardStreamSink {
+    fn text_delta(&self, _delta: &str) {}
+    fn reasoning_delta(&self, _delta: &str) {}
+    fn aborted(&self) -> bool {
+        false
     }
 }
 
@@ -860,12 +971,55 @@ mod tests {
         }
     }
 
+    /// 单测用的流式 sink（M369）：记录收到的分片，并可按「已收到多少正文分片」翻真
+    /// `aborted()`——在途停止的**确定性**驱动口，不靠 sleep 抢时序。
+    #[derive(Default)]
+    struct TestStream {
+        text: std::sync::Mutex<Vec<String>>,
+        reasoning: std::sync::Mutex<Vec<String>>,
+        /// 收到这么多正文分片之后 `aborted()` 翻真（0 = 永不）。
+        abort_after_text: usize,
+    }
+
+    impl TestStream {
+        fn abort_after_text(n: usize) -> Self {
+            Self {
+                abort_after_text: n,
+                ..Default::default()
+            }
+        }
+
+        fn text(&self) -> Vec<String> {
+            self.text.lock().unwrap().clone()
+        }
+
+        fn reasoning(&self) -> Vec<String> {
+            self.reasoning.lock().unwrap().clone()
+        }
+    }
+
+    impl StreamSink for TestStream {
+        fn text_delta(&self, delta: &str) {
+            self.text.lock().unwrap().push(delta.to_string());
+        }
+
+        fn reasoning_delta(&self, delta: &str) {
+            self.reasoning.lock().unwrap().push(delta.to_string());
+        }
+
+        fn aborted(&self) -> bool {
+            self.abort_after_text > 0 && self.text.lock().unwrap().len() >= self.abort_after_text
+        }
+    }
+
     #[test]
     fn mock_pops_script_in_order() {
         let mut client = MockClient::from_str(FIXTURE, "test").unwrap();
-        let first = client.complete(&request());
+        let stream = TestStream::default();
+        let first = client.complete(&request(), &stream);
         assert_eq!(first.text, "先读");
-        assert_eq!(first.text_deltas, vec!["先", "读"]);
+        // 真流式（M369）：分片在 `complete` 期间就转发了，不是返回后补发。
+        assert_eq!(stream.text(), vec!["先".to_string(), "读".to_string()]);
         assert_eq!(first.calls.len(), 1);
         assert_eq!(first.calls[0].name, "vault_read");
         assert_eq!(
@@ -878,10 +1032,10 @@ mod tests {
         );
         // reasoning 回放项原样透传（M306：mock 路径零行为变化即指此）。
         assert_eq!(first.reasoning.as_ref().unwrap()["id"], "rs_1");
-        let second = client.complete(&request());
+        let second = client.complete(&request(), &TestStream::default());
         let error = second.error.expect("scripted error");
         assert!(error.context_overflow);
-        let third = client.complete(&request());
+        let third = client.complete(&request(), &TestStream::default());
         assert_eq!(third.error.unwrap().code, "fixture_exhausted");
     }
 
@@ -941,11 +1095,17 @@ mod tests {
     // 同一 call_id 的 function_call 重复入 input ⇒ provider 以 "Duplicate 'call_id'" 拒绝。
     // 以下用合成字节流钉死协议层行为（与 transport 解耦的 parse_sse_reader）。
 
-    /// 合成 SSE 字节流喂协议层读循环。
+    /// 合成 SSE 字节流喂协议层读循环（要断言流式转发的，见 [`sse_parse_with`]）。
     fn sse_parse(bytes: &str) -> TurnOutput {
+        sse_parse_with(bytes, &TestStream::default())
+    }
+
+    /// 同上，但注入指定的流式 sink——断「收到即转发」与在途停止用（M369）。
+    fn sse_parse_with(bytes: &str, sink: &dyn StreamSink) -> TurnOutput {
         parse_sse_reader(
             std::io::Cursor::new(bytes.as_bytes()),
             preset(&HarnessProvider::Deepseek),
+            sink,
         )
     }
 
@@ -1245,11 +1405,17 @@ data: {"delta":"第二步。"}
         let mut client = MockClient::from_str(script, "reasoning-chunks").unwrap();
         let mut req = request();
         req.effort = ThinkingEffort::Max;
-        let first = client.complete(&req);
+        let stream = TestStream::default();
+        let first = client.complete(&req, &stream);
         assert_eq!(first.reasoning_deltas, vec!["先想", "再答"]);
+        // 思考分片也即时转发（M369），且转发与记录一致。
+        assert_eq!(
+            stream.reasoning(),
+            vec!["先想".to_string(), "再答".to_string()]
+        );
         assert_eq!(first.reasoning.as_ref().unwrap()["id"], "rs_1");
         req.effort = ThinkingEffort::Low;
-        let _ = client.complete(&req);
+        let _ = client.complete(&req, &TestStream::default());
         // 逐次记录（含耗尽那一次也无妨——这里两次都在脚本内）。
         assert_eq!(
             client.received_efforts(),
@@ -1262,8 +1428,132 @@ data: {"delta":"第二步。"}
     #[test]
     fn mock_without_reasoning_chunks_leaves_deltas_empty() {
         let mut client = MockClient::from_str(FIXTURE, "no-chunks").unwrap();
-        let first = client.complete(&request());
+        let first = client.complete(&request(), &TestStream::default());
         assert!(first.reasoning_deltas.is_empty());
         assert!(first.reasoning.is_some());
+    }
+
+    // ---- M369：真流式（收到即转发）与在途停止 ----
+    //
+    // 判据的区分度（REVIEW.md 第 1 条）：改动前 `complete` 返回时流式 sink 一个分片都收不到
+    //（增量被攒进 `TurnOutput` 的 Vec，返回后由 `turn` 一次性补发）——下面「sink 收到的分片」
+    // 类断言在旧实现上必然是空表，因此它们真的在判「即时转发」而不是「分片最终都在」。
+
+    /// SSE 读循环收到正文 delta 即经 sink 转发（不是攒到读完再发）；`TurnOutput` 仍是全文。
+    #[test]
+    fn sse_forwards_text_deltas_as_they_arrive() {
+        let sse = r#"event: response.output_text.delta
+data: {"delta":"第一片。"}
+
+event: response.output_text.delta
+data: {"delta":"第二片。"}
+
+event: response.output_text.delta
+data: {"delta":"第三片。"}
+
+event: response.completed
+data: {"response":{"output":[{"type":"message","content":[{"type":"output_text","text":"第一片。第二片。第三片。"}]}],"usage":{"input_tokens":10,"output_tokens":3}}}
+
+"#;
+        let stream = TestStream::default();
+        let output = sse_parse_with(sse, &stream);
+        let expected = vec![
+            "第一片。".to_string(),
+            "第二片。".to_string(),
+            "第三片。".to_string(),
+        ];
+        // 逐片转发（不是一次性）+ 全文仍是拼接结果（快照 / JSONL 用全文）。
+        assert_eq!(stream.text(), expected);
+        assert_eq!(output.text, "第一片。第二片。第三片。");
+    }
+
+    /// 思考分片（两家事件名）同样即时转发，且不进正文通道。
+    #[test]
+    fn sse_forwards_reasoning_deltas_as_they_arrive() {
+        let sse = r#"event: response.reasoning_text.delta
+data: {"delta":"先看"}
+
+event: response.reasoning_summary_text.delta
+data: {"delta":"再答。"}
+
+"#;
+        let stream = TestStream::default();
+        let output = sse_parse_with(sse, &stream);
+        assert_eq!(
+            stream.reasoning(),
+            vec!["先看".to_string(), "再答。".to_string()]
+        );
+        assert!(stream.text().is_empty(), "思考分片不得进正文通道");
+        assert_eq!(output.text, "");
+    }
+
+    /// 在途停止（M369）：sink 翻真后读循环收流——**已产出的分片保留**、未到达的不再等。
+    /// 判据的区分度：旧实现会读完整个流（三片全在、usage 也在），本用例断言它们不在。
+    #[test]
+    fn sse_stops_midstream_on_abort_and_keeps_produced_text() {
+        let sse = r#"event: response.output_text.delta
+data: {"delta":"第一片。"}
+
+event: response.output_text.delta
+data: {"delta":"第二片。"}
+
+event: response.output_text.delta
+data: {"delta":"第三片。"}
+
+event: response.completed
+data: {"response":{"output":[],"usage":{"input_tokens":10,"output_tokens":3}}}
+
+"#;
+        // 收到 1 个正文分片之后报「已停止」：读循环在第一片后收口。
+        let stream = TestStream::abort_after_text(1);
+        let output = sse_parse_with(sse, &stream);
+        assert_eq!(output.text, "第一片。", "已产出的分片保留");
+        assert_eq!(stream.text(), vec!["第一片。".to_string()]);
+        // 收流后不再处理后续事件：终态的 usage 不落地（incomplete 响应语义——不是错误）。
+        assert!(output.usage.is_none());
+        assert!(output.error.is_none());
+    }
+
+    /// mock 的逐片延迟与在途停止：`chunk_delay_ms` 给分片之间加上可中断的节拍，停止请求在
+    /// 间隔里被问到即收流，已产出分片保留；回放项 / 调用 / 用量仍随返回值带回（M306：中断轮
+    /// 之后入 input 的 assistant 消息仍带 reasoning 项）。
+    #[test]
+    fn mock_chunk_delay_streams_partially_and_abort_keeps_produced() {
+        let script = r#"{"responses": [
+            {"text": "第一片。第二片。第三片。",
+             "chunks": ["第一片。", "第二片。", "第三片。"],
+             "reasoning": {"type":"reasoning","id":"rs_1","encrypted_content":"enc"},
+             "tool_calls": [{"id": "c1", "name": "vault_read", "arguments": "{\"path\":\"a.md\"}"}],
+             "usage": {"input_tokens": 10, "output_tokens": 3},
+             "chunk_delay_ms": 1}
+        ]}"#;
+        let mut client = MockClient::from_str(script, "stream-abort").unwrap();
+        let stream = TestStream::abort_after_text(1);
+        let output = client.complete(&request(), &stream);
+        assert_eq!(output.text, "第一片。", "已产出的分片保留");
+        assert_eq!(stream.text(), vec!["第一片。".to_string()]);
+        // 分片之外的非流式字段不受影响（尽力带回）。
+        assert_eq!(output.reasoning.as_ref().unwrap()["id"], "rs_1");
+        assert_eq!(output.calls.len(), 1);
+        assert!(output.usage.is_some());
+        assert!(output.error.is_none());
+    }
+
+    /// 回归（场景 88 的形态）：没有 `chunk_delay_ms` 时**不做**在途中断探测——整脚本一次产出，
+    /// 停止请求留给 `turn` 在 `complete` 返回后的检查点判（`delay_ms` 窗口就是这么用的）。
+    /// 若哪天把「无间隔也探测」改回来，这条会红。
+    #[test]
+    fn mock_without_chunk_delay_produces_all_chunks_despite_abort_flag() {
+        let script = r#"{"responses": [
+            {"text": "第一片。第二片。第三片。",
+             "chunks": ["第一片。", "第二片。", "第三片。"],
+             "usage": {"input_tokens": 10, "output_tokens": 3}}
+        ]}"#;
+        let mut client = MockClient::from_str(script, "no-gap").unwrap();
+        // sink 一直报「已停止」——但没有间隔就无从探测，产出照常走完。
+        let stream = TestStream::abort_after_text(1);
+        let output = client.complete(&request(), &stream);
+        assert_eq!(output.text, "第一片。第二片。第三片。");
+        assert_eq!(stream.text().len(), 3);
     }
 }

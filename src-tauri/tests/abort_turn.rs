@@ -599,12 +599,15 @@ fn new_turn_after_abort_runs_clean() {
     let sink2 = CollectSink::default();
     let mut client2 = MockClient::from_str(script, "re2").unwrap();
     // 快进到第二条脚本（第一条是上一轮的）。
-    client2.complete(&lumir_lib::harness::llm::Request {
-        system: "x".into(),
-        input: vec![],
-        tools: vec![],
-        effort: Default::default(),
-    });
+    client2.complete(
+        &lumir_lib::harness::llm::Request {
+            system: "x".into(),
+            input: vec![],
+            tools: vec![],
+            effort: Default::default(),
+        },
+        &lumir_lib::harness::llm::DiscardStreamSink,
+    );
     drive_turn(
         &sink2,
         &runtime,
@@ -632,4 +635,78 @@ fn new_turn_after_abort_runs_clean() {
         .filter(|m| m.status.as_deref() == Some("stopped"))
         .count();
     assert_eq!(stopped_count, 1, "{snapshot:?}");
+}
+
+/// 在途停止（M369）：分片按 `chunk_delay_ms` **逐片到达**——第一片上屏后、后续分片还隔着片间隔，
+/// 此刻点停止 ⇒ 产出循环在流中问到停止标志即收流（不再等整条响应跑完），**已产出的分片保留**
+/// 并标注「已停止」；末片从未上屏。
+///
+/// 判据的区分度：改动前 `complete` 一次返回整条（三片全在），不可能出现「有第一片、无末片」
+/// 的中间态，末片断言必红；本测试因此真的在判「流中收口」。
+#[test]
+fn abort_midstream_keeps_produced_chunks() {
+    let f = Fixture::new("abort-midstream");
+    let config = mock_config();
+    let runtime = f.runtime();
+    runtime.acquire_turn(&f.scope()).unwrap();
+    let sink = CollectSink::default();
+    // 三片、片间隔 500ms：第一片立刻转发，末片要等两个间隔（1s 之后）。停止落在第一段的间隔里。
+    let script = r#"{"responses": [
+        {"text": "STREAM-A 第一片。STREAM-B 第二片。STREAM-C 第三片。",
+         "chunks": ["STREAM-A 第一片。", "STREAM-B 第二片。", "STREAM-C 第三片。"],
+         "chunk_delay_ms": 500}
+    ]}"#;
+    let mut client = MockClient::from_str(script, "abort-midstream").unwrap();
+    let worker = {
+        let sink = sink.clone();
+        let runtime = runtime.clone();
+        let scope = f.scope();
+        let config = config.clone();
+        std::thread::spawn(move || {
+            drive_turn(&sink, &runtime, &scope, &config, "问题".into(), &mut client);
+        })
+    };
+    // 第一片到达 = 流式已经开始（`complete` 尚未返回），就在这个窗口里点停止。
+    sink.wait_for(
+        |events| {
+            events
+                .iter()
+                .any(|e| e["type"] == "text_chunk" && e["text"] == "STREAM-A 第一片。")
+        },
+        "第一片 text_chunk 事件",
+    );
+    runtime.request_abort(&f.scope()).expect("abort ok");
+    worker.join().unwrap();
+    runtime.release_turn(&f.scope());
+
+    // 已产出内容保留并标注；末片从未产出（流中收口，不是等它跑完再在检查点截住）。
+    let snapshot = runtime.snapshot(&f.scope(), &config);
+    let assistant = snapshot
+        .messages
+        .iter()
+        .find(|m| m.role == "assistant")
+        .expect("已产出内容保留在 transcript");
+    let text = assistant.text.as_deref().unwrap_or("");
+    assert!(text.starts_with("STREAM-A 第一片。"), "{text}");
+    assert!(!text.contains("STREAM-C"), "末片不该产出：{text}");
+    assert_eq!(assistant.status.as_deref(), Some("stopped"));
+    // 事件序：文本分片在流中转发了（面板实时渲染保留内容），终态是 aborted；末片无 text_chunk。
+    let texts: Vec<String> = sink
+        .events()
+        .iter()
+        .filter(|e| e["type"] == "text_chunk")
+        .filter_map(|e| e["text"].as_str().map(str::to_string))
+        .collect();
+    assert!(
+        texts.contains(&"STREAM-A 第一片。".to_string()),
+        "{texts:?}"
+    );
+    assert!(
+        !texts.iter().any(|t| t.contains("STREAM-C")),
+        "末片不得有 text_chunk 事件：{texts:?}"
+    );
+    assert_eq!(sink.types().last().unwrap(), "aborted");
+    let jsonl = std::fs::read_to_string(harness_jsonl_path(&f)).unwrap();
+    assert!(jsonl.contains("\"kind\":\"turn_aborted\""), "{jsonl}");
+    assert!(jsonl.contains("STREAM-A 第一片。"), "{jsonl}");
 }
