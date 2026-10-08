@@ -1,6 +1,6 @@
 # Design: wire 形态会话留存
 
-proposal 的技术面：文件布局、记录 schema、不变量、验证方法。无原型（无 UI 面），不需要「视觉保真」节。
+proposal 的技术面：文件布局、记录 schema、不变量、恢复设计与验证方法。UI 面只加一个极简选择器（复用会话浮层既有组件），无新视觉设计、无原型，不需要「视觉保真」节。
 
 ## 1. 文件布局与会话身份
 
@@ -11,8 +11,8 @@ proposal 的技术面：文件布局、记录 schema、不变量、验证方法�
 
 - `session_id`：时间序 id `s<unix_millis>-<6 位随机 base36>`（如 `s1759912345678-k3x9ab`）——可排序、够唯一、人可读；不取 UUID 纯随机形，因为「按时间列出会话」是未来的第一消费姿势。
 - 一个逻辑会话一个文件，append-only，首行恒为 `session_open`。
-- 会话建立 / 「新会话」重置 / 自动压缩开新逻辑会话 → 各建新文件；旧文件封闭（不再追加，也不改写）。
-- 不做会话索引文件、不做清理策略（探针期；无运行时读者）。
+- 会话建立 / 「新会话」重置 / 自动压缩 / 从历史会话恢复 → 各建新文件；旧文件封闭（不再追加，也不改写）。
+- 不做会话索引文件、不做清理策略（探针期；选择器直接扫 `sessions/` 目录，无需索引）。
 
 ## 2. 记录 envelope 与 schema
 
@@ -25,7 +25,7 @@ proposal 的技术面：文件布局、记录 schema、不变量、验证方法�
   "kind": "session_open",
   "session_id": "s1759912345678-k3x9ab",
   "vault_root": "/tmp/lumir-demo-vault",
-  "opened_from": "new | reset | compact",
+  "opened_from": "new | reset | compact | restore",
   "provider": "kimi",
   "model": "kimi-for-coding",
   "thinking": "high",
@@ -37,13 +37,14 @@ proposal 的技术面：文件布局、记录 schema、不变量、验证方法�
     {"source": "agents_vault_root", "path": "/tmp/lumir-demo-vault/AGENTS.md", "exists": false, "bytes": 0},
     {"source": "skill_index", "path": null, "exists": true, "skills": 3}
   ],
-  "compact_summary": "<仅 opened_from=compact 时在场：压缩摘要全文>"
+  "compact_summary": "<仅 opened_from=compact 时在场：压缩摘要全文>",
+  "restored_from": "<仅 opened_from=restore 时在场：被恢复会话的 session_id>"
 }
 ```
 
-装配清单（`assembly`）是新增的结构化出口：`assemble_system` 从「返回 String」改为「返回 {text, manifest}」（`context.rs`），调用侧三处装配点（建立 / 重置 / 压缩）都落 `session_open`。`exists: false` 的来源也在场——「当时不存在」本身是装配事实的一部分（现状：静默跳过导致事后无法区分「没配」与「忘了注入」）。
+装配清单（`assembly`）是新增的结构化出口：`assemble_system` 从「返回 String」改为「返回 {text, manifest}」（`context.rs`），调用侧三处装配点（建立 / 重置 / 压缩）都落 `session_open`。`exists: false` 的来源也在场——「当时不存在」本身是装配事实的一部分（现状：静默跳过导致事后无法区分「没配」与「忘了注入」）。**恢复是第四种建文件路径，但不重新装配**：`opened_from=restore` 的新文件沿用被恢复会话的 `system` 与 `assembly`（逐字节灌回，见 §6），不跑 `assemble_system`。
 
-`opened_from` 三值：会话建立 = `new`；「新会话」= `reset`；自动压缩 = `compact`（摘要进 `compact_summary`，对应旧 `compact` 事件的摘要语义）。
+`opened_from` 四值：会话建立 = `new`；「新会话」= `reset`；自动压缩 = `compact`（摘要进 `compact_summary`，对应旧 `compact` 事件的摘要语义）；从历史会话恢复 = `restore`（源会话 id 进 `restored_from`）。
 
 ### `llm_request`（每次 LLM 调用恰一条，含工具循环每次迭代与压缩调用）
 
@@ -67,8 +68,9 @@ proposal 的技术面：文件布局、记录 schema、不变量、验证方法�
 ```json
 {
   "kind": "llm_response",
-  "text": "<正文增量外的完整轮次文本>",
-  "thinking": "<reasoning 原文；无则缺省>",
+  "text": "<完整轮次正文>",
+  "reasoning": "<reasoning 回放项原文（provider 方言，逐字节原样）；无则缺省>",
+  "thinking": "<思考展示文本（reasoning_deltas 汇总 / 从回放项提取）；无则缺省>",
   "tool_calls": [ ... ],
   "usage": { "input_tokens": 1234, "cached_tokens": 800, "output_tokens": 56 },
   "error": "<仅失败时在场>",
@@ -76,7 +78,8 @@ proposal 的技术面：文件布局、记录 schema、不变量、验证方法�
 }
 ```
 
-- `thinking` = 裁决点 1（默认落；Alex 否决则整体移除该字段）。
+- `reasoning` 与 `thinking` 分存（裁决点 1 落盘的「思考」两者都在场）：`reasoning` 是**回放项**——provider 方言的不透明项（kimi 的 `encrypted_content`、deepseek 的 `reasoning_text` content parts），逐字节保真、原样，供恢复回填最后一条响应（见 §6）；`thinking` 是**展示文本**（给人看的思考），两者物理隔离、互不借道（M362 纪律）。只在历史（`llm_request.messages`）里的推理项走回放，展示文本永不回传模型。
+- `reasoning` 是 provider 方言，不可跨 provider 复用（kimi 的 `encrypted_content` 对 deepseek 无意义，反之亦然；跨 provider 恢复的重写见 Non-goals）。
 - mock provider 记 `mock_fixture`：确定性验收的因果链（哪份 fixture 驱动了这一轮）对分析有价值。
 
 ### sidecar 记录（决策类，wire 不可推导）
@@ -99,11 +102,47 @@ proposal 的技术面：文件布局、记录 schema、不变量、验证方法�
 ## 5. 验证方法
 
 - **恢复充分性属性测试（Rust，核心判据）**：mock provider 脚本跑一轮含工具循环的对话（含 `<quote>` 消息与 thinking fixture）；测试从落盘 JSONL **独立**重建每个请求（取 `session_open.system` + 依不变量 3 重放），与对应 `llm_request.request` 断言深度相等。反向验证：手改一条重建结果，断言必红（REVIEW.md 第 1 条纪律）。
-- **记录形状集成断言**：mock provider 一轮后断言文件首行 `session_open`（system 全文在场、assembly 含 exists:false 项）、请求-响应配对数、思考字段在场（裁决点 1 落地时）。
+- **记录形状集成断言**：mock provider 一轮后断言文件首行 `session_open`（system 全文在场、assembly 含 exists:false 项）、请求-响应配对数、思考的 `reasoning` 与 `thinking` 双字段在场。
+- **恢复路径测试（本期新增，最小恢复的落地判据）**：mock provider 造一段含工具循环的多轮会话 → 走恢复入口重建，断言新文件 `opened_from=restore` + `restored_from`=源 id、重建的 system / input 与源会话逐字节一致；恢复后再续一轮，断言新请求的 input = 源 input + 恢复后新增消息。含两个边界用例：末尾响应折叠、末尾响应带悬空工具调用。
 - **既有留存测试换代**：`jsonl.rs` 的 quote 逐字节用例迁移为新口径（`<quote>` 块在 `llm_request.messages` 中断言）。
-- **验收场景（迁移既有 + 新增）**：`scripts/acceptance/scenarios/` 下 15 个引用 `env:harness/*.jsonl` 的既有场景逐一对账迁移——锚定废弃 kind 的断言改写为 wire 口径（`llm_request` / `llm_response` 内容），保留类（`turn_aborted`）按 sidecar 口径核对；另新增 wire 留存场景（mock provider 跑一轮，读 `sessions/*.jsonl` 断言首行与请求记录在场）；fixture 全部合成。
+- **验收场景（迁移既有 + 新增）**：`scripts/acceptance/scenarios/` 下 15 个引用 `env:harness/*.jsonl` 的既有场景逐一对账迁移——锚定废弃 kind 的断言改写为 wire 口径（`llm_request` / `llm_response` 内容），保留类（`turn_aborted`）按 sidecar 口径核对；另新增 wire 留存场景（mock provider 跑一轮，读 `sessions/*.jsonl` 断言首行与请求记录在场）与恢复场景（选择器列出历史会话、恢复续聊）；fixture 全部合成。
 - **旧文件孤儿断言**：升级后旧 vault 聚合文件不被续写（mtime / 行数不变）。
 
-## 6. 明确不实现的（防 scope 蔓延）
+## 6. 最小恢复（本期纳入）
 
-读取者（恢复命令、会话枚举 UI）、索引文件、旧文件迁移、压缩文件整理、远端上报。详见 proposal Non-goals。
+恢复是留存的真实消费者与验证器（proposal 裁决点 5）：把「逐字节重建请求」这条验收口径从测试搬进产品，漏记 / 错记会在真实续聊里暴露。
+
+### 6.1 极简选择器
+
+- 入口在标题栏 harness 段的**会话浮层**：现有「新建会话」动作项之外，同一浮层 SHALL 列出本 vault 的历史会话。
+- 范围 = `sessions/*.jsonl` 中 `session_open.vault_root` 等于当前 vault 的文件（留存文件是平铺的，选择器按 vault 过滤）。
+- 排序：按 session_id 时间序前缀**倒序**（最近的在上）。
+- 每项会话名 = 该会话**首条用户消息**截断约 20 字（与标题栏会话名同口径；对恢复出的会话也成立——首条用户消息在灌回的 input 里）。
+- 只读、只列：重命名 / 删除 / 搜索 / 分组等完整形态不做（Non-goals）。无历史会话时列表为空。
+
+### 6.2 恢复算法（重建 Session）
+
+选中一项 → 读其 `sessions/<id>.jsonl`：
+
+1. **锚点** = 文件里**最后一条** `llm_request`。
+2. `system` = 锚点请求的 `system`（逐字节，== 该文件 `session_open.system`，按不变量 4）——**不重新装配**：恢复旧会话就沿用旧会话当时的系统上下文（今天的 AGENTS.md / Skill 索引变了也不改历史），否则「恢复充分性」当场破。
+3. `input` = 锚点请求的 `messages` 原样灌回。
+4. **折叠末尾未入请求的响应**：若锚点之后还有 `llm_response`（会话结束在最后一轮答复之后、用户尚未再提问），把该响应的 assistant 轮追加进 `input`——按不变量 3 的逆向：`reasoning` 回放项在前、`text` 非空时的 assistant 消息项、`tool_calls` 的 function_call 项成组（M360 项序）。如此重建的 `input` 与会话当时持有的 `input` 逐字节一致。
+   - 边界：末尾响应若含未配对的工具调用（工具循环中途被停 / 进程被杀），输出项缺失，恢复的 input 会有悬空 `function_call`——最小恢复按原样灌回（不伪造输出）；是否被 provider 拒收属已知边界，不阻断选择器。
+5. 续写：恢复开**新会话文件**（新 session_id，`opened_from=restore`，`restored_from`=源 id），旧文件封闭不动；之后按常规在内存态上继续（新提问追加到灌回的 input 之后）。
+
+面板（transcript）从灌回的 `input` + `llm_response` 重建渲染消息（user / assistant / tool 按 wire 项顺序），使恢复后用户看得到历史；这是面板视角，不参与回放（回放只走 `input`）。
+
+### 6.3 思考文本回放的 provider 差异
+
+回放项是 provider 方言，恢复必须**原样**重建，不能自行拼接：
+
+- **kimi**：reasoning 项携带不透明 `encrypted_content`（SSE 经 `response.output_item.done` / `response.completed` 到达）；展示文本走 `response.reasoning_summary_text.delta`。回放时整项逐字节回传。
+- **deepseek**：thinking 模式产出**独立** reasoning 项，content 为 `{"type":"reasoning_text","text":…}` parts（另带 `encrypted_content` / `status`）；带 `tools` 时后续每一轮 MUST 原样回传，否则 400（`The reasoning_text in the thinking mode must be passed back to the API`，M306 真机实测）；展示文本走 `response.reasoning_text.delta`。项序也是硬条件：同一轮多条工具调用须成组在输出项之前（M360 实测），单条 reasoning 项紧随其 assistant 消息之前入 input。
+- **恢复怎么满足**：锚点之前的历史，回放项本就在 `llm_request.messages` 里逐字节在场，原样灌回即满足两家形状与项序，**无需重写**；只有末尾响应（§6.2 第 4 步）需要从 `llm_response.reasoning` 取回放项、按同一位置（assistant 消息之前）重插。恢复不读 `thinking`——那是展示文本，不是回放项。
+
+详见 `src-tauri/src/harness/llm.rs` 模块文档「reasoning 回传纪律」（M306 / M360 / M362）与 `session.rs` 的 `assistant_item` / `function_call_item`（项序落点）。
+
+## 7. 明确不实现的（防 scope 蔓延）
+
+完整多会话管理 UI（重命名 / 删除 / 搜索 / 分组）、会话索引文件、旧文件迁移、压缩文件整理、跨 provider 恢复的方言重写、远端上报。详见 proposal Non-goals。
