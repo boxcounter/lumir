@@ -1088,6 +1088,26 @@ const COPY_TABLE = {
     zh: "当前 provider 未配置任何模型：请在 config.json 的 harness.providers 下为该 provider 的 models 逐项声明（id / effort / window）",
     en: "The active provider has no models configured: declare entries under its models list in config.json (id / effort / window)",
   },
+  // 批准闸终态记录（D405–D408，M384）：决策后卡片收敛为一行记录（工具名 + 结果词 +
+  // 相对时间戳，实现 src/harness-panel.ts settleApprovalRecord）——待决标题（D339/D340）与
+  // 决策按钮（D336/D337）随决策退场，不再以置灰形态残留。详情摘要 D407 是折叠 diff/argv
+  // 的展开入口；拒绝附原因时 D408 让原因在记录里直接可见。
+  D405: {
+    zh: "已采纳",
+    en: "Approved",
+  },
+  D406: {
+    zh: "已拒绝",
+    en: "Rejected",
+  },
+  D407: {
+    zh: "查看详情",
+    en: "View details",
+  },
+  D408: {
+    zh: "原因：{reason}",
+    en: "Reason: {reason}",
+  },
 } satisfies Record<string, CopyEntry>;
 
 /** 文案表的键（D 编号，多串格带 `.N` 后缀）——由表数据推导，加一条即多一个键。 */

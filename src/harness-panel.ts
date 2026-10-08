@@ -1574,6 +1574,22 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   let chunkBuffer = "";
   let flushScheduled = false;
   const pendingApprovals = new Map<string, PendingApproval>();
+  /** 已决策批准项的记录视图（M384）：决策后卡片收敛为终态记录，但记录里的结果词 / 相对
+   *  时间 / 详情摘要随语言与 30s 时钟重绘——保留重渲所需的字段引用（与 PendingApproval
+   *  的 relabel 口径同：交互中的 UI 跟语言走，已上屏正文不改写）。 */
+  interface DecidedApproval {
+    id: string;
+    tool: string;
+    approved: boolean;
+    reason: string | undefined;
+    ts: number;
+    element: HTMLElement;
+    outcomeEl: HTMLElement;
+    whenEl: HTMLElement;
+    reasonEl: HTMLElement | null;
+    summaryEl: HTMLElement | null;
+  }
+  const decidedApprovals = new Map<string, DecidedApproval>();
   /** 当前轮次的工具清单块（M351 还原原型屏 4 清单形态，change harness-pane-visual-fidelity
    *  design §3.3）：挂进当前 agent 消息（它发生的位置——段之间或消息尾）；一轮一块；
    *  轮次终态经 collapseTools 收尾（≥2 行折叠为一行摘要，单行保持展开）。 */
@@ -1977,6 +1993,9 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     applySendPhase(sendPhase);
     // 待决批准项是交互中的 UI（不是历史记录）：随语言重渲按钮与标题，输入框内容保留。
     for (const pending of pendingApprovals.values()) relabelApproval(pending);
+    // 已决策的终态记录同口径：结果词 / 原因句 / 详情摘要重取文案（正文性质的时间戳由
+    // refreshWhoLines 按当前语言与时刻重算）。
+    for (const rec of decidedApprovals.values()) relabelDecided(rec);
     // who/when meta 行与工具折叠摘要是 meta chrome（非消息正文）：随语言重绘——消息正文
     // 不改写（已上屏内容不随语言翻，与徽标同口径）。
     refreshWhoLines();
@@ -2576,6 +2595,10 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
         when.textContent = `· ${relativeWhen(Number(when.dataset.ts), now)}`;
       }
     }
+    // 批准决策记录的相对时间戳同口径（M384）：30s 定时器驱动，与 who 行的 when 一致重算。
+    for (const rec of decidedApprovals.values()) {
+      rec.whenEl.textContent = `· ${relativeWhen(rec.ts, now)}`;
+    }
   }
 
   /**
@@ -2818,6 +2841,103 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     if (reject !== null) reject.textContent = t("D337");
   }
 
+  /** 终态记录随语言重渲（M384）：结果词 / 原因句 / 详情摘要重取文案；工具名与原因正文
+   *  （配置值/用户输入）不译文；时间戳由 refreshWhoLines 的 30s 时钟按当前语言重算。 */
+  function relabelDecided(rec: DecidedApproval): void {
+    rec.outcomeEl.textContent = t(rec.approved ? "D405" : "D406");
+    if (rec.reasonEl !== null && rec.reason !== undefined) {
+      rec.reasonEl.textContent = t("D408", { reason: rec.reason });
+    }
+    if (rec.summaryEl !== null) rec.summaryEl.textContent = t("D407");
+  }
+
+  /** 终态记录的状态图标（i18n-exempt 图形）：采纳 = ✓、拒绝 = ✕（SVG 内联，本模块无
+   *  innerHTML 渲染纪律）；颜色经 .lumir-hp-approval-ic 的 --ok / --danger 上色。 */
+  function createDecisionIcon(approved: boolean): SVGSVGElement {
+    const svg = document.createElementNS(SVG_NS, "svg");
+    svg.setAttribute("width", "11");
+    svg.setAttribute("height", "11");
+    svg.setAttribute("viewBox", "0 0 12 12");
+    svg.setAttribute("fill", "none");
+    svg.setAttribute("stroke", "currentColor");
+    svg.setAttribute("stroke-width", "1.6");
+    svg.setAttribute("stroke-linecap", "round");
+    svg.setAttribute("stroke-linejoin", "round");
+    svg.setAttribute("aria-hidden", "true");
+    const path = document.createElementNS(SVG_NS, "path");
+    path.setAttribute("d", approved ? "M2.5 6.5 5 9l4.5-5.5" : "M3.5 3.5l5 5M8.5 3.5l-5 5");
+    svg.append(path);
+    return svg;
+  }
+
+  /** 决策后收敛（M384，spec「批准闸呈现与决策后收敛」）：待决标题（D339/D340 的「采纳后
+   *  才落盘 / 运行」语义）与决策按钮、原因输入框整体退场——置灰按钮会被误读为「还没处理完 /
+   *  在等什么」（Alex 2026-10-08 实证）；卡片收敛为一行终态记录 = 工具名 + 已采纳/已拒绝 +
+   *  相对时间戳；diff/argv 移进默认折叠的详情，可展开回看。拒绝附原因时原因直接可见（D408）。 */
+  function settleApprovalRecord(
+    pending: PendingApproval,
+    approved: boolean,
+    reasonText: string | undefined,
+    decidedAt: number,
+  ): void {
+    const el = pending.element;
+    el.querySelector(".lumir-hp-approval-title")?.remove();
+    el.querySelector(".lumir-hp-reason")?.remove();
+    el.querySelector(".lumir-hp-approval-actions")?.remove();
+    el.classList.add(approved ? "is-approved" : "is-rejected");
+
+    const record = document.createElement("div");
+    record.className = "lumir-hp-approval-record";
+    const ic = document.createElement("span");
+    ic.className = "lumir-hp-approval-ic";
+    ic.setAttribute("aria-hidden", "true");
+    ic.append(createDecisionIcon(approved));
+    const text = document.createElement("span");
+    text.className = "lumir-hp-approval-record-text";
+    const toolEl = document.createElement("span");
+    toolEl.textContent = pending.tool;
+    const outcomeEl = document.createElement("span");
+    outcomeEl.textContent = t(approved ? "D405" : "D406");
+    const whenEl = document.createElement("span");
+    whenEl.className = "lumir-hp-when";
+    whenEl.dataset.ts = String(decidedAt);
+    whenEl.textContent = `· ${relativeWhen(decidedAt, Date.now())}`;
+    text.append(toolEl, document.createTextNode(" · "), outcomeEl, document.createTextNode(" "), whenEl);
+    let reasonEl: HTMLElement | null = null;
+    if (!approved && reasonText !== undefined) {
+      reasonEl = document.createElement("span");
+      reasonEl.textContent = t("D408", { reason: reasonText });
+      text.append(document.createTextNode(" · "), reasonEl);
+    }
+    record.append(ic, text);
+    el.append(record);
+
+    // diff / argv 收进默认折叠的详情（summary 即展开入口与读屏名）。
+    const pre = el.querySelector(".lumir-hp-diff, .lumir-hp-argv");
+    let summaryEl: HTMLElement | null = null;
+    if (pre !== null) {
+      const details = document.createElement("details");
+      details.className = "lumir-hp-approval-details";
+      summaryEl = document.createElement("summary");
+      summaryEl.textContent = t("D407");
+      el.append(details);
+      details.append(summaryEl, pre);
+    }
+
+    decidedApprovals.set(pending.id, {
+      id: pending.id,
+      tool: pending.tool,
+      approved,
+      reason: reasonText,
+      ts: decidedAt,
+      element: el,
+      outcomeEl,
+      whenEl,
+      reasonEl,
+      summaryEl,
+    });
+  }
+
   function appendApproval(request: { id: string; tool: string; diff?: string; argv?: string }): void {
     const el = document.createElement("div");
     el.className = "lumir-hp-approval";
@@ -2860,15 +2980,14 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     pendingApprovals.set(request.id, pending);
     relabelApproval(pending);
 
-    // 未决项不自动超时：唯一的出口是 Alex 点击。决策后按钮整排禁用（幂等——
-    // 重复点击不会向后端发第二次），元素留在 transcript 里作决策记录。
+    // 未决项不自动超时：唯一的出口是 Alex 点击。决策幂等——重复点击不会向后端发第二次
+    // （pendingApprovals.delete 只兑现一次）；决策后卡片就地收敛为终态记录
+    // （settleApprovalRecord），元素留在 transcript 里作决策记录。
     const decide = (approved: boolean): void => {
       if (!pendingApprovals.delete(request.id)) return;
-      approve.disabled = true;
-      reject.disabled = true;
-      reason.disabled = true;
-      el.classList.add(approved ? "is-approved" : "is-rejected");
-      harnessApprove(request.id, approved, reason.value.trim() === "" ? undefined : reason.value.trim()).catch(
+      const reasonText = reason.value.trim();
+      settleApprovalRecord(pending, approved, reasonText === "" ? undefined : reasonText, Date.now());
+      harnessApprove(request.id, approved, reasonText === "" ? undefined : reasonText).catch(
         (e: unknown) => appendError(t("D348", { message: errorMessage(e) })),
       );
     };
@@ -3391,6 +3510,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   function resetView(): void {
     transcript.replaceChildren();
     pendingApprovals.clear();
+    decidedApprovals.clear();
     streamingEl = null;
     currentSeg = null;
     textSegments = [];

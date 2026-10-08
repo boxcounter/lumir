@@ -614,6 +614,13 @@
 .lumir-hp-diff-hunk {
   color: var(--text-3);
 }
+/* M384（spec「批准闸呈现与决策后收敛」）：行底色 MUST 覆盖整行文本宽度——块级行宽默认被容器
+   可视宽度钳住，超长行文本溢进横向滚动区但底色只铺到可视宽度；max-content 让行宽跟随文本、
+   min-width 保证短行/空行仍铺满可视宽度。结构断言：tests/visual/scenes/m384。 */
+.lumir-hp-diff > div {
+  width: max-content;
+  min-width: 100%;
+}
 /* eink：tint 退场后增删行同为黑字——+/− 行首字符本就是 unified diff 的语义载体，
    可辨性不靠色（规则①的正当后果，不另造表达）。 */
 .lumir-hp-reason {
@@ -667,10 +674,56 @@
   opacity: 0.45;
   cursor: default;
 }
-/* 已决策的批准项留在 transcript 里作记录：降一档明度，按钮已禁用 */
+/* 已决策的批准项收敛为终态记录（M384，spec「批准闸呈现与决策后收敛」）：一行 = 工具名 +
+   已采纳/已拒绝 + 相对时间戳，diff/argv 收进默认折叠的详情可展开回看。待决标题与决策按钮
+   随决策退场（置灰按钮会被误读为「还没处理完/在等什么」——Alex 2026-10-08 实证），也
+   不再用整体降透明度表达终态：紧凑记录本身即降视觉权重（agent 产品决策后收敛为结果
+   记录的通行形态）。 */
 .lumir-hp-approval.is-approved,
 .lumir-hp-approval.is-rejected {
-  opacity: 0.72;
+  padding: var(--sp-2) var(--sp-3);
+}
+.lumir-hp-approval-record {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  min-width: 0;
+  font-size: calc(var(--fs-meta) * var(--lumir-hp-scale, 1));
+  color: var(--text-2);
+}
+.lumir-hp-approval-ic {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--ok);
+}
+.lumir-hp-approval.is-rejected .lumir-hp-approval-ic {
+  color: var(--danger);
+}
+/* 记录文本单行走省略（完整文本仍在 DOM / AX，与工具行同口径）。eink 下 --ok/--danger 同为
+   黑，结果词本身（已采纳/已拒绝）承载语义——与上方 diff +/- 行的可辨性口径一致。 */
+.lumir-hp-approval-record-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.lumir-hp-approval-details {
+  margin-top: var(--sp-2);
+}
+.lumir-hp-approval-details summary {
+  cursor: pointer;
+  font-size: calc(var(--fs-meta) * var(--lumir-hp-scale, 1));
+  color: var(--text-3);
+}
+.lumir-hp-approval-details[open] summary {
+  margin-bottom: var(--sp-2);
+  color: var(--text-2);
+}
+.lumir-hp-approval-details .lumir-hp-diff,
+.lumir-hp-approval-details .lumir-hp-argv {
+  margin-bottom: 0;
 }
 
 /* ── 上下文 chip（M370 起在 composer 区顶部：横线之下、composerBox 之上——发送前可核对
