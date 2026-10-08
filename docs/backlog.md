@@ -638,6 +638,40 @@
 
 ## 待修 findings（不阻塞）
 
+### `context.rs` 模块注释称「自动压缩走同一 `assemble_system`」，实际压缩不重装配（M385 survey 顺报，2026-10-08，low）
+
+**症状**：`src-tauri/src/harness/context.rs:10-12` 的模块文档写「装配时机：会话建立 / 「新会话」重置 /
+自动压缩开新逻辑会话——三者走同一个 `[assemble_system]`」，与实现不符：全仓 `assemble_system` 只有定义
+（`context.rs:49`）与**唯一**调用点（`harness.rs:299`，在 `ensure_session` 内；会话建立与「新会话」重置
+走的是这同一条路径）；`compact_now`（`turn.rs:784-859`）通读无 `assemble_system` 调用，只在
+`turn.rs:842` `replace_input`（摘要项 + 当前编辑器上下文）后记面板消息与 JSONL `compact`。
+压缩后的系统上下文靠 `Session.system` 原样保留——每个请求仍带它（`build_request` 读 `s.system()`，
+`turn.rs:526`）。
+
+**行为面**：**不是行为缺陷**。`openspec/specs/harness/spec.md:115` 那条 requirement 要求的「开新逻辑
+会话并注入摘要 + 当前编辑器上下文 + 系统上下文」在请求层仍成立（系统上下文是 requests 的 instructions
+段、不进历史，因此压缩不碰它也不丢）。失真只在注释：它暗示压缩会重新读一遍 AGENTS.md / Skill 索引，
+实际不会——运行期新增的 Skill 要等下一个「新会话」才生效。后果是读者（含 agent）可能据此误判「压缩后
+系统上下文是新鲜的」。
+
+**影响**：无假绿、无不可逆、无用户可见错误。与 observability 话题直接相关：观测 / 留存若按注释去记
+「压缩时刻的装配清单」，会把没发生的事记成发生了。
+
+**建议处置**：**随 WSR 提案一并裁决**——改 `context.rs:10-12` 的注释与 `compact_now` 实现对齐（压缩
+不重装配、系统上下文随 `Session.system` 保留、运行期新增 Skill 下个新会话才生效）是零行为改动的一侧；
+反向改法（让压缩**真**重装配并记留存）属行为变更、需另立 change。这条反向改法正是进行中的
+**wire-level session recording（WSR）提案**的设计点之一——该提案核心口径①即「会话建立 / 重置 /
+**压缩**时落完整装配记录」，即「压缩是否重装配」由 WSR 提案一并定。因此本条不在这里给与提案冲突的
+独立处置：裁决方向定为「注释对齐现状」后，注释改动的落点即本条。
+
+**证据**：`.tower/comms/findings/20261008-worker-soi1-improve-harness-context-rs-assemble-system.md`
+（M385 survey 顺报，worker-soi1；**finding 头部标 medium、正文自陈 low，本条按正文的行为判定记 low**）。
+关联提案：mission M387（分支 `feat/proposal-wire-level-session-recording-ws`，scope
+`openspec/changes/**`）。本条指针已按本 worktree 基线（`fb768eb`）逐条磁盘核验：
+`context.rs:10-12` / `:49`、`harness.rs:294` 的 `ensure_session`（调用点 `:299`）、
+`turn.rs:784-859`（`replace_input` 在 `:842`）、`turn.rs:526`、`openspec/specs/harness/spec.md:115`
+全部在位（finding 原文写 `turn.rs:786-859`，本基线为 `784-859`，两行漂移已按实测改准）。
+
 ### acceptance README 的正则反斜杠示例与 YAML 引号风格耦合，照抄会在单引号场景写出恒红判据（M383 顺报，2026-10-08，low）
 
 **症状**：`scripts/acceptance/README.md`（约 :390 的「匹配值」节）用**双反斜杠**形态给正则示例——
