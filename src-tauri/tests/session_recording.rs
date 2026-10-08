@@ -290,11 +290,12 @@ fn check_recovery_sufficient(path: &Path) -> Result<(), String> {
                 }
             }
             let delta = &next[messages.len()..];
-            // 期望的响应回放头：reasoning 项（M306：原样、紧随其 assistant 之前）
-            // + assistant 消息（M372：空正文跳过）——与线上构造器逐字节同源。
+            // 期望的响应回放头：reasoning 回放项（M306：原样、紧随其 assistant 之前，
+            // 取 llm_response.reasoning——design §2 的回放项键）+ assistant 消息
+            // （M372：空正文跳过）——与线上构造器逐字节同源。
             let mut expected_head: Vec<serde_json::Value> = session::assistant_item(
                 response["text"].as_str().unwrap_or(""),
-                response.get("thinking"),
+                response.get("reasoning"),
             );
             // 工具轮：reasoning 直接接成组调用项（M372：无空正文 assistant 项）。
             let calls = response["tool_calls"]
@@ -392,17 +393,24 @@ fn wire_shape_records_full_session() {
         first_user["content"][0]["text"].as_str().unwrap(),
         QUOTE_MESSAGE
     );
-    // 思考落盘（裁决点 1）：两种 provider 形状的回放项原文在场。
-    assert_eq!(response0["thinking"]["encrypted_content"], "resp-0");
+    // 思考落盘（裁决点 1，design §2 双字段物理分离）：reasoning = 回放项原文
+    // （provider 方言在场），thinking = 展示文本（字符串，密文永不入内）。
+    assert_eq!(response0["reasoning"]["encrypted_content"], "resp-0");
     assert_eq!(
-        response0["thinking"]["content"][0]["text"],
+        response0["reasoning"]["content"][0]["text"],
         "需要先读 a.md。"
+    );
+    assert_eq!(response0["thinking"], "需要先读 a.md。");
+    assert!(
+        response0["thinking"].is_string(),
+        "thinking 必须是展示文本字符串，不是回放项对象：{response0:?}"
     );
     let (_, response1) = pairs[1];
     assert_eq!(
-        response1["thinking"]["content"][0]["text"],
+        response1["reasoning"]["content"][0]["text"],
         "读完确认无误。"
     );
+    assert_eq!(response1["thinking"], "读完确认无误。");
     // usage 并入响应；工具调用带原文参数；mock 因果链在场。
     assert_eq!(response0["usage"]["input_tokens"], 100);
     assert_eq!(
@@ -413,11 +421,11 @@ fn wire_shape_records_full_session() {
         .as_str()
         .unwrap()
         .contains("quote-thinking"));
-    // 思考回放语义（M306 / M360）：reasoning 项原样、紧随其 assistant 之前入下一条请求。
+    // 思考回放语义（M306 / M360）：reasoning 回放项原样、紧随其 assistant 之前入下一条请求。
     let messages1 = pairs[1].0["request"]["messages"].as_array().unwrap();
     assert_eq!(
-        messages1[1], response0["thinking"],
-        "reasoning 项逐字节回放"
+        messages1[1], response0["reasoning"],
+        "reasoning 回放项逐字节回放"
     );
     assert_eq!(messages1[1]["type"], "reasoning");
     assert_eq!(messages1[2]["role"], "assistant");
@@ -505,7 +513,9 @@ fn recovery_sufficiency_fails_on_tampering() {
 }
 
 /// 恢复命令 roundtrip：从留存文件重建 Session——最后一条会话轮次 llm_request 的
-/// 完整请求体（system + messages）原样灌回，作为新会话续写新 JSONL；新发出的请求
+/// 完整请求体（system + messages）原样灌回，锚点之后配对的末尾 llm_response 按
+/// design §6.2 第 4 步折叠进灌回的 input（reasoning 回放项 + assistant 消息）；
+/// 新会话续写新 JSONL（opened_from=restore、restored_from=源 id），新发出的请求
 /// 以恢复的历史为前缀（恢复事实真正回流到发送路径）。
 #[test]
 fn resume_rebuilds_session_and_continues_in_new_file() {
@@ -530,10 +540,17 @@ fn resume_rebuilds_session_and_continues_in_new_file() {
     let source_path = files[0].clone();
     let source_id = jsonl::JsonlWriter::session_id_from_path(&source_path).unwrap();
     let source_file = f.read(&source_path);
-    let last_messages = conversation_pairs(&source_file).last().unwrap().0["request"]["messages"]
-        .as_array()
-        .unwrap()
-        .clone();
+    let pairs = conversation_pairs(&source_file);
+    let (anchor, trailing) = pairs.last().unwrap();
+    let last_messages = anchor["request"]["messages"].as_array().unwrap().clone();
+    // 合同期望的灌回结果 = 锚点 messages + 末尾响应折叠（reasoning 回放项 + assistant 消息）。
+    let mut expected = last_messages.clone();
+    for item in session::assistant_item(
+        trailing["text"].as_str().unwrap_or(""),
+        trailing.get("reasoning"),
+    ) {
+        expected.push(item);
+    }
 
     // 恢复：新会话 id 立即给出；新文件惰性——首条记录时才创建。
     let info = runtime
@@ -541,12 +558,18 @@ fn resume_rebuilds_session_and_continues_in_new_file() {
         .expect("恢复成功");
     assert!(jsonl::is_valid_session_id(&info.session_id));
     assert_ne!(info.session_id, source_id);
-    assert_eq!(info.restored_items, last_messages.len());
-    // 灌回的 input 与源文件最后一条请求逐字节一致。
+    assert_eq!(info.restored_items, expected.len());
+    // 灌回的 input = 锚点请求逐字节 + 末尾响应折叠（design §6.2 第 4 步——
+    // 末轮答复不丢，模型续聊时看得见自己的最后一答）。
     let restored_input = runtime
         .with_session(&f.scope(), |s| s.input().to_vec())
         .unwrap();
-    assert_eq!(restored_input, last_messages, "恢复的历史逐字节灌回");
+    assert_eq!(restored_input, expected, "灌回 = 锚点请求 + 末尾响应折叠");
+    // 折叠内容逐项在位：reasoning 回放项原样、assistant 消息是末轮正文。
+    let tail = &restored_input[last_messages.len()..];
+    assert_eq!(tail[0], trailing["reasoning"], "reasoning 回放项原样折叠");
+    assert_eq!(tail[1]["role"], "assistant");
+    assert_eq!(tail[1]["content"][0]["text"], "读完了。");
 
     // 续聊：新发的请求以恢复的历史为逐字节前缀；新文件随首条记录创建。
     runtime.acquire_turn(&f.scope(), &config).unwrap();
@@ -565,7 +588,8 @@ fn resume_rebuilds_session_and_continues_in_new_file() {
         &mut client2,
     );
     runtime.release_turn(&f.scope());
-    // 新文件首行：opened_from=resume，system / assembly 沿用源文件的装配事实。
+    // 新文件首行：opened_from=restore + restored_from=源会话 id（谱系链）；
+    // system / assembly 沿用源文件的装配事实。
     let files_now = f.session_files();
     assert_eq!(files_now.len(), 2, "恢复续写新文件：{files_now:?}");
     let new_path = files_now
@@ -573,9 +597,10 @@ fn resume_rebuilds_session_and_continues_in_new_file() {
         .find(|p| {
             jsonl::JsonlWriter::session_id_from_path(p).as_deref() == Some(info.session_id.as_str())
         })
-        .expect("新文件即 resume 返回的 session id");
+        .expect("新文件即恢复返回的 session id");
     let new_file = f.read(new_path);
-    assert_eq!(new_file.session_open["opened_from"], "resume");
+    assert_eq!(new_file.session_open["opened_from"], "restore");
+    assert_eq!(new_file.session_open["restored_from"], source_id);
     assert_eq!(
         new_file.session_open["system"],
         source_file.session_open["system"]
@@ -588,10 +613,10 @@ fn resume_rebuilds_session_and_continues_in_new_file() {
     assert_eq!(pairs.len(), 1);
     let continued_messages = pairs[0].0["request"]["messages"].as_array().unwrap();
     assert!(
-        continued_messages.len() > last_messages.len(),
+        continued_messages.len() > expected.len(),
         "新请求在恢复历史之后延伸"
     );
-    for (index, item) in last_messages.iter().enumerate() {
+    for (index, item) in expected.iter().enumerate() {
         assert_eq!(
             continued_messages[index], *item,
             "恢复的历史是新请求的逐字节前缀"
@@ -627,6 +652,83 @@ fn resume_rebuilds_session_and_continues_in_new_file() {
         .resume_session(&scope_b, &config, &source_id)
         .unwrap_err();
     assert_eq!(err.code, "harness_session_vault_mismatch");
+}
+
+/// 恢复折叠的边界用例（design §6.2 第 4 步的「带悬空调用」形态）：会话结束在
+/// loop_max 收口——最后一条 llm_response 带 tool_calls、调用已执行且输出已入历史，
+/// 但那些输出从未进任何 llm_request（模型输入数据，wire 里无处可取）。折叠按 design
+/// 边界口径原样灌回 function_call 项（无输出项）——灌回结果如实可答，不静默截断。
+#[test]
+fn resume_folds_trailing_response_with_dangling_tool_calls() {
+    let f = Fixture::new("resume-dangling");
+    f.write("a.md", "x\n");
+    let mut config = mock_config();
+    config.loop_max = 2;
+    let runtime = Runtime::default();
+    runtime.acquire_turn(&f.scope(), &config).unwrap();
+    let sink = CollectSink::default();
+    // 两轮都继续调工具：第二轮的调用执行完（fc2/fco2 入历史）即触 loop_max 收口——
+    // 末条响应带悬空调用（其输出不在任何请求体里）。
+    let script = r#"{"responses": [
+        {"tool_calls": [{"id": "c1", "name": "vault_read", "arguments": "{\"path\":\"a.md\"}"}]},
+        {"tool_calls": [{"id": "c2", "name": "vault_read", "arguments": "{\"path\":\"a.md\"}"}]}
+    ]}"#;
+    let mut client = MockClient::from_str(script, "dangling").unwrap();
+    drive_turn(
+        &sink,
+        &runtime,
+        &f.scope(),
+        &config,
+        "问".into(),
+        &mut client,
+    );
+    runtime.release_turn(&f.scope());
+
+    let files = f.session_files();
+    let source = f.read(&files[0]);
+    let pairs = conversation_pairs(&source);
+    assert_eq!(pairs.len(), 2);
+    let (anchor, trailing) = pairs[1];
+    assert_eq!(trailing["tool_calls"][0]["id"], "c2");
+    let anchor_messages = anchor["request"]["messages"].as_array().unwrap().clone();
+    // 线上会话此刻持有的 input（含 fc2/fco2）——wire 只能重建到锚点 + 折叠。
+    let live_input = runtime
+        .with_session(&f.scope(), |s| s.input().to_vec())
+        .unwrap();
+    assert!(
+        live_input
+            .iter()
+            .any(|i| i["type"] == "function_call_output" && i["call_id"] == "c2"),
+        "现场实证：c2 的输出已入历史但不在任何请求体里"
+    );
+
+    let source_id = jsonl::JsonlWriter::session_id_from_path(&files[0]).unwrap();
+    let info = runtime
+        .resume_session(&f.scope(), &config, &source_id)
+        .expect("恢复成功");
+    let restored = runtime
+        .with_session(&f.scope(), |s| s.input().to_vec())
+        .unwrap();
+    // 折叠结果 = 锚点 messages + 悬空的 function_call 项（design 边界口径：原样灌回，
+    // 无输出项可灌——响应未携带、wire 里也没有）。
+    assert_eq!(
+        info.restored_items,
+        anchor_messages.len() + 1,
+        "折叠恰好新增一条 function_call 项"
+    );
+    assert_eq!(restored[..anchor_messages.len()], anchor_messages[..]);
+    let tail = &restored[anchor_messages.len()..];
+    assert_eq!(tail.len(), 1, "{tail:?}");
+    assert_eq!(tail[0]["type"], "function_call");
+    assert_eq!(tail[0]["call_id"], "c2");
+    assert_eq!(tail[0]["name"], "vault_read");
+    // 区分度反向自证：悬空项不得凭空长出输出项（那需要 wire 里没有的第二事实源）。
+    assert!(
+        !restored
+            .iter()
+            .any(|i| i["type"] == "function_call_output" && i["call_id"] == "c2"),
+        "悬空调用按原样灌回，不得伪造输出项"
+    );
 }
 
 /// 压缩的文件边界：旧文件封闭（压缩调用自身的 llm_request / llm_response 落在旧文件

@@ -552,9 +552,17 @@ fn record_llm_request(
     let _ = runtime.with_session(scope, |s| s.jsonl().record(&payload));
 }
 
-/// 响应点落 `llm_response`：正文 / 思考回放项原文 / 工具调用 / usage / error
-/// （无则缺省）+ mock provider 的 fixture 因果链。与上一条 `llm_request` 严格成对——
-/// 失败、空响应、在途停止的半截响应都如实记录（`error` 字段在场）。
+/// 响应点落 `llm_response`：正文 / reasoning 回放项原文 / thinking 展示文本 / 工具调用 /
+/// usage / error（无则缺省）+ mock provider 的 fixture 因果链。与上一条 `llm_request`
+/// 严格成对——失败、空响应、在途停止的半截响应都如实记录（`error` 字段在场）。
+///
+/// reasoning 与 thinking **物理分离**（design §2，M362 纪律）：`reasoning` = 回放项
+/// 原文（provider 方言——kimi 的 encrypted_content 项 / deepseek 的 reasoning_text
+/// parts 项各按真实形状），恢复时原样回传（M306 / M360 回放语义逐字节保真，无需按
+/// provider 分支重建，design §6.2 的恢复算法从本键取回放项）；`thinking` = **展示
+/// 文本**（展示通道分片汇总）——分片缺席（老 fixture / 只发 `output_item.done` 的
+/// provider）时退回从回放项提取明文，与面板所见同源；密文永不进 thinking
+/// （`thinking::reasoning_text` 只返明文）。
 fn record_llm_response(
     runtime: &Runtime,
     scope: &VaultScope,
@@ -566,10 +574,17 @@ fn record_llm_response(
         "text": output.text,
     });
     if let Some(reasoning) = &output.reasoning {
-        // 思考文本落盘（裁决点 1）：回放项原文——kimi 的 encrypted_content 项 /
-        // deepseek 的 reasoning_text parts 项各按其真实形状在场，恢复时原样回传
-        // （M306 / M360 的回放语义因此逐字节保真，无需按 provider 分支重建）。
-        payload["thinking"] = reasoning.clone();
+        payload["reasoning"] = reasoning.clone();
+    }
+    // thinking = 展示文本（裁决点 1 的展示半边落盘）：分片非空即拼接；缺席时退回
+    // 从回放项提取明文（与 turn 的 reasoning_fallback 展示兜底同源）。
+    let thinking_text = if output.reasoning_deltas.is_empty() {
+        output.reasoning.as_ref().and_then(thinking::reasoning_text)
+    } else {
+        Some(output.reasoning_deltas.join(""))
+    };
+    if let Some(text) = thinking_text.filter(|text| !text.is_empty()) {
+        payload["thinking"] = text.into();
     }
     if !output.calls.is_empty() {
         payload["tool_calls"] = serde_json::Value::Array(

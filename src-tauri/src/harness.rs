@@ -303,7 +303,7 @@ impl Runtime {
 
     /// 从留存文件恢复会话（`harness_resume_session` 的实现体）：读源文件最后一条
     /// 会话轮次 `llm_request` 的完整请求体，system + messages 原样灌进一个新会话，
-    /// 续写**新** JSONL 文件（opened_from=resume）。面板消息不重建——恢复的是 LLM 侧
+    /// 续写**新** JSONL 文件（opened_from=restore，restored_from=源会话 id）。面板消息不重建——恢复的是 LLM 侧
     /// 单一事实源，面板渲染是前端恢复 mission 的消费面。busy 态拒绝（与 new_session
     /// 同口径）；非 busy 时替换当前会话。
     pub fn resume_session(
@@ -340,15 +340,16 @@ impl Runtime {
             .to_string();
         // 恢复入口：源文件里**最后一条会话轮次** llm_request——压缩调用是内部汇总
         // 调用（system 是压缩指令，与会话 system 不同），天然被这个判据排除。
-        let last_turn = file
+        let conversation_requests: Vec<(usize, &serde_json::Value)> = file
             .records
             .iter()
-            .filter(|r| r["kind"] == "llm_request")
-            .filter(|r| r["request"]["system"].as_str() == Some(system.as_str()))
-            .map(|r| &r["request"])
-            .next_back();
-        let (messages, effort) = match last_turn {
-            Some(request) => {
+            .enumerate()
+            .filter(|(_, r)| r["kind"] == "llm_request")
+            .filter(|(_, r)| r["request"]["system"].as_str() == Some(system.as_str()))
+            .map(|(index, r)| (index, &r["request"]))
+            .collect();
+        let (messages, effort) = match conversation_requests.last() {
+            Some((_, request)) => {
                 let messages = request["messages"].as_array().cloned().ok_or_else(|| {
                     CommandError::new("harness_session_invalid", "llm_request 缺 messages")
                 })?;
@@ -364,8 +365,38 @@ impl Runtime {
             }
             None => (Vec::new(), thinking::ThinkingEffort::default()),
         };
+        // 折叠末尾未入请求的响应（design §6.2 第 4 步）：锚点请求之后若还配对着一条
+        // llm_response（会话最常见的结束形态——末轮答复后用户尚未再提问），把它折进
+        // 灌回的 input——reasoning 回放项在前、assistant 消息项（M372 空正文跳过）、
+        // tool_calls 的 function_call 项成组压尾（M360 项序）。带悬空调用的形态按原样
+        // 灌回（响应未带、wire 里也无处可取输出项）——design 登记的边界口径。
+        let mut restored = messages;
+        if let Some((index, _)) = conversation_requests.last() {
+            if let Some(response) = file
+                .records
+                .get(index + 1)
+                .filter(|r| r["kind"] == "llm_response")
+            {
+                for item in session::assistant_item(
+                    response["text"].as_str().unwrap_or(""),
+                    response.get("reasoning"),
+                ) {
+                    restored.push(item);
+                }
+                if let Some(calls) = response["tool_calls"].as_array() {
+                    for call in calls {
+                        restored.push(session::function_call_item(
+                            call["id"].as_str().unwrap_or(""),
+                            call["name"].as_str().unwrap_or(""),
+                            call["arguments"].as_str().unwrap_or(""),
+                        ));
+                    }
+                }
+            }
+        }
         // 续写新文件：session_open 沿用源文件的装配事实（system 全文 + assembly 清单），
-        // provider / model / thinking 记**当前**配置（后续请求实际使用的身份）。
+        // provider / model / thinking 记**当前**配置（后续请求实际使用的身份）；
+        // opened_from=restore + restored_from=源会话 id（谱系链：这份会话恢复自哪份）。
         let assembly = open
             .get("assembly")
             .cloned()
@@ -375,7 +406,8 @@ impl Runtime {
             "kind": "session_open",
             "session_id": new_id,
             "vault_root": scope.key(),
-            "opened_from": "resume",
+            "opened_from": "restore",
+            "restored_from": session_id,
             "provider": config.provider,
             "model": llm::active_model(config),
             "thinking": effort,
@@ -383,9 +415,9 @@ impl Runtime {
             "assembly": assembly,
         });
         let writer = jsonl::JsonlWriter::create(&new_id, &open_payload)?;
-        let restored_items = messages.len();
+        let restored_items = restored.len();
         let new_session =
-            session::Session::new(scope.root.clone(), system, messages, effort, writer);
+            session::Session::new(scope.root.clone(), system, restored, effort, writer);
         self.inner
             .sessions
             .lock()
@@ -613,7 +645,7 @@ pub fn harness_set_thinking_effort(
 /// 从留存文件恢复会话（change reshape-harness-session-recording 的恢复入口）：
 /// `session_id` 是 `sessions/<id>.jsonl` 的文件名（形态校验防目录穿越）。读源文件
 /// 最后一条会话轮次 `llm_request` 的完整请求体，system + messages 原样灌进新会话并
-/// 续写**新**留存文件（opened_from=resume——恢复的地基：文件边界 + 会话身份）。
+/// 续写**新**留存文件（opened_from=restore、restored_from=源会话 id——恢复的地基：文件边界 + 会话身份 + 谱系链）。
 /// 返回新会话标识（`SessionResumeInfo`，ts-rs 导出）；面板重渲染由前端恢复 mission
 /// 经 `harness_state` 消费。busy 态返回 `harness_busy`；源文件不属于当前 vault 返回
 /// `harness_session_vault_mismatch`。
