@@ -376,7 +376,11 @@ harness 的浮层（模型 chip 的 provider 浮层、标题栏 harness 段的�
 ### Requirement: 思考过程呈现
 
 agent 消息的思考内容（provider 返回的 reasoning 文本）SHALL 在 transcript 中渲染为可折叠块。
-一轮里可有多个思考块，SHALL 按块顺序排列在 agent 正文之前；消息无思考内容时 MUST NOT 渲染思考块
+思考块 / 工具块 / 正文段在**同一条 agent 消息内 MUST 严格按事件到达序排列**：不论事件如何交错
+（think→tool→think、think→think→tool、tool→think→tool、text↔think↔tool 等任意组合），
+后到达的块 MUST NOT 呈现在先到达的块之前；思考块插在两段正文之间时正文 SHALL 切分为两个
+文本段，插在两个工具行之间时在途工具块 SHALL 封板（前后工具行各成一块）。一轮里多个思考块
+的到达序 SHALL 与块序号序一致（后端按序发出）；消息无思考内容时 MUST NOT 渲染思考块
 （不渲染空块）。思考块 SHALL 默认折叠（含流式进行期间），折叠态为单行：chevron + 「思考过程 · N 秒」，
 展开态为左边线 + 次级灰正文；样式 SHALL 只取 token 层现行值，MUST NOT 引入新色值或字号。
 时长 SHALL 为该思考块从首个文本片段到末个文本片段的实际耗时，轮次结束时定格。
@@ -400,11 +404,19 @@ Rust core SHALL 经事件流把 reasoning 文本实时转发前端；reasoning �
 - **WHEN** mock fixture 的响应不含 reasoning 项，一轮对话完成
 - **THEN** agent 消息的思考块数量为零（防恒真空转：正观测由前两个 scenario 提供）
 
-#### Scenario: 多块排序与复制边界
+#### Scenario: 到达序排列与复制边界
 
-- **WHEN** fixture 在一轮里产出两个 reasoning 项（工具调用前后各一）
-- **THEN** 两个思考块按块顺序排列在 agent 正文之前；对该消息执行复制消息，剪贴板只含回答正文、
-  不含任何思考内容
+- **WHEN** fixture 在一轮里产出两个 reasoning 项（工具调用前后各一，中间夹正文）
+- **THEN** 思考块 / 工具块 / 正文段按事件到达序交错排列（先到的思考在工具与前段正文之前，
+  后到的思考在工具与后段正文之间，MUST NOT 全部挤在正文之前）；对该消息执行复制消息，
+  剪贴板只含回答正文、不含任何思考内容
+
+#### Scenario: 到达序排列的交错矩阵（属性级）
+
+- **WHEN** 事件序列以 think→tool→think、think→think→tool、tool→think→tool、
+  text↔think 交错等组合到达（含相邻工具行不被拆开、思考落在工具行之间时封板等边界）
+- **THEN** 任意组合下消息 DOM 子节点序恒等于事件到达序（不变量级断言，
+  由 tests/visual/scenes/m383-harness-thinking-order.spec.ts 的序列矩阵钉死）
 
 ### Requirement: 思考程度选择
 
