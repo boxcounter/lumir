@@ -151,6 +151,14 @@ worker 动工前、reviewer 给出 verdict 前逐条过一遍。每条按「症�
 - 证据：`openspec/changes/archive/2026-10-06-add-harness-quote-cards` 与 `openspec/changes/archive/2026-10-06-move-harness-to-pane-chat-frame/design.md` §9「屏位设计合同附节」（原型目录 `design/prototypes/phase2-harness-chat/` 已随 `4e011d6` 退役，§9 从 `git show 4e011d6^:…` 补提取屏位原文，是这条规则的先行执行者）；finding `.tower/comms/findings/20261006-tower-bug-harness-pane.md`（同一次现场的功能层半边）；Alex 现场原文见 M351 / M352 mission context（2026-10-06）。
 - 防线：有原型时 reviewer 出 verdict 前对照原型截图核验观感，不只对照合同文字（口径是「观感一致 + 并排截图核对」，不追求逐像素——独立 HTML 与真机的字体度量、数据都不同，逐像素不可达、追求它只会逼出假对齐）；起草期把原型提取进 design 合同时按 `docs/process/openspec-workflow.md` 的《有原型时的设计合同：视觉保真必填》逐屏落「视觉保真」一节，不写「沿用既有设计系统」打发。
 
+## 九、变更范围与兼容纪律
+
+**21. 低必要性的兼容 / 过渡层被当成零成本默认，没先问「消费者是谁」**
+- 症状：方案期两次自发引入兼容 / 过渡层，都不是需求逼出来的——① 2026-10-08 会话留存提案（M387）里 tower 主动提出「双写一段过渡期」（新旧两套记录形态并存）；② 更早的模型注册表方案采「内置硬编码模型信息（模型名字、上下文窗口长度、是否支持 thinking）+ 配置文件覆盖」，理由正是「避免迁移配置文件」。两者提出时都无人要求，且都先于「谁在用旧形态」这个问题出现，是「怕弄坏现有东西」的保守默认。
+- 根因：把「加兼容」默认为零成本、把「切断旧形态」默认为高代价，却没先问**消费者是谁**——本仓当前消费者只有 Alex 一人（pre-PMF 早期、无外部用户、探针期契约），旧形态的制品（JSONL 记录、config schema）没有下游读者或使用者，兼容层保护的是一个不存在的对象；同时把一次性迁移的代价估得高于兼容层长期背负的代价。
+- 证据：① M387（2026-10-08）：tower 在提案里提出「可能要双写一段过渡期」，Alex 追问「确认这个方向，但为什么你说可能要双写一段过渡期？」，tower 随即收回并写进提案要件「不双写、不留过渡期、旧文件按 M309 孤儿先例处理」；全仓 survey grep 实证现有 harness 会话 JSONL **零读者**——写入口是 `src-tauri/src/harness/jsonl.rs:51` 的 `record`，唯一的读回在 `jsonl.rs:178`（该文件自身测试断言写入内容），生产侧无任何读取路径（`src/` 与 `src-tauri/src/commands.rs` 里 `jsonl` 的命中只有日志文件名与文案键 `harness_jsonl_failed` → D349），即没有消费者要保护。② M381（2026-10-07）：内置 preset 方案（`KIMI_MODEL_PRESET` / `DEEPSEEK_MODEL_PRESET` / `DEFAULT_KIMI_MODEL` 出厂回落）被 Alex 终裁推翻——「我再次强调，不要内置/硬编码任何对模型的配置。只从配置文件里读取。需要迁移配置就迁移，完全不用为了追求配置零迁移而做任何妥协，我不知道为什么你追求这种妥协。」落地 commit `d03cb18`（config-only 模型注册表：内置表与出厂常量全删，模型清单 / effort 能力 / 上下文窗口严格只来自 config.json 显式声明，缺省只给 warning 不回落；退役说明留在 `src-tauri/src/config.rs:82-85`），配置迁移同类任务一并执行。原话全文见 `.tower/comms/missions/M387-proposal-wire-level-session-recording-ws.md` 与 `M381-modelcfg-config-only-model-registry.md`（`.tower/**` 不入 git，仅供本机复查）。
+- 防线：**本原则由 Alex 2026-10-08 裁决沉淀——变更默认「直接切断」**。worker 在提案 / 方案期、reviewer 在评审期，见到「兼容」「迁移」「过渡」「双写」「保留旧路径」这类字样时，MUST 先回答一个问题「消费者是谁」：零读者 / 单用户场景一律直接切断（不双写、不留过渡期、存量制品按 M309 孤儿先例「旧文件不再续写、不做迁移」处理，并在代码注释就地写明），需要迁移就一次迁干净；只有能指名具体消费者（外部用户、已发布契约、不可逆数据）时才允许兼容层，且必须在提案里写出该消费者作为举证——写不出来就等于没有，不是默认。
+
 ## 维护
 
 - 重复踩到表内某条：把新现场（commit / 证据路径）补进该条的「证据」，不要另起重复条目。
