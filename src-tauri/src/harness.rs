@@ -494,13 +494,18 @@ pub fn list_sessions(scope: &VaultScope) -> Result<Vec<session::SessionSummary>,
     Ok(summaries)
 }
 
-/// 会话名素材：文件内**第一条** `llm_request` 的首条 user 消息正文原文
-/// （None = 该会话还没有用户消息）。截断规则归前端——这里给全文。
+/// 会话名素材：文件内**第一条** `llm_request` 的首条 user 消息正文，剥掉自动注入的
+/// 上下文节（[`turn::strip_context_section`]）后返回（None = 该会话还没有用户消息）。
+/// 截断规则归前端——这里给未截断的提问段全文。
+///
+/// 剥离走后端（design §6.1「与标题栏会话名同口径」）：注入节的形态是
+/// [`turn::assemble_user_message`] 的产物，形态的单一真源在那里——前端不复制 marker 字面量。
 fn first_user_text(file: &jsonl::SessionFile) -> Option<String> {
     let request = file.records.iter().find(|r| r["kind"] == "llm_request")?;
     let messages = request["request"]["messages"].as_array()?;
     let message = messages.iter().find(|m| m["role"] == "user")?;
-    user_message_text(message)
+    let text = user_message_text(message)?;
+    Some(turn::strip_context_section(&text).to_string())
 }
 
 /// 从一条 wire user 消息项取正文（[`session::user_item`] 的逆：content 数组里的各 text part

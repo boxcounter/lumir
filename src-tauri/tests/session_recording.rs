@@ -1201,3 +1201,69 @@ fn resumed_session_is_listable_with_first_user_text() {
     // 源会话仍在列（列举不隐藏源）。
     assert!(list.iter().any(|s| s.session_id == source_id));
 }
+
+/// 会话名剥离（M396，design §6.1「与标题栏会话名同口径」）：留存的 user 消息是装配后的
+/// 全文（提问 + 自动注入的「当前编辑器上下文」节），列举返回的 `first_user_text` 只含
+/// 用户原始提问段——修前带回节头与换行，选择器名字与标题栏不同口径。
+#[test]
+fn first_user_text_strips_injected_context_section() {
+    let f = Fixture::new("strip-context");
+    f.write("a.md", "demo body\n");
+    let config = mock_config();
+    let runtime = Runtime::default();
+    // 生产路径同形（harness_send）：装配成全文后交给工具循环，留存记的就是这个全文。
+    let block = turn::parse_context(r#"{"path":"a.md"}"#).unwrap();
+    let question = "这段代码在做什么？";
+    let assembled = turn::assemble_user_message(question, &block);
+    runtime.acquire_turn(&f.scope(), &config).unwrap();
+    let sink = CollectSink::default();
+    let mut client = MockClient::from_str(
+        r#"{"responses": [{"text": "先读文件。"}]}"#,
+        "strip-context",
+    )
+    .unwrap();
+    turn::run_turn_for(
+        &sink,
+        &runtime,
+        &f.scope(),
+        &config,
+        assembled.text.clone(),
+        assembled.context_section.clone(),
+        &mut client,
+    );
+    runtime.release_turn(&f.scope());
+
+    // 现场自证：留存里确实是「提问 + 注入节」的全文（否则下面的剥离断言在没有节时恒真，
+    // REVIEW.md 第 1 条）。
+    let files = f.session_files();
+    let recorded = f.read(&files[0]);
+    let recorded_text = recorded
+        .records
+        .iter()
+        .find(|r| r["kind"] == "llm_request")
+        .expect("留存里有 llm_request")["request"]["messages"][0]["content"][0]["text"]
+        .as_str()
+        .expect("首条 user 消息是文本")
+        .to_string();
+    assert!(
+        recorded_text.starts_with(question) && recorded_text.contains(turn::CONTEXT_SECTION_HEADER),
+        "留存全文 = 提问 + 注入节：{recorded_text}"
+    );
+
+    let list = list_sessions(&f.scope()).unwrap();
+    assert_eq!(list.len(), 1, "{list:?}");
+    assert_eq!(
+        list[0].first_user_text.as_deref(),
+        Some(question),
+        "会话名素材 = 原始提问段"
+    );
+    assert!(
+        !list[0]
+            .first_user_text
+            .as_deref()
+            .unwrap()
+            .contains(turn::CONTEXT_SECTION_HEADER),
+        "会话名素材不含注入节：{:?}",
+        list[0].first_user_text
+    );
+}
