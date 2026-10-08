@@ -163,7 +163,7 @@ fn reasoning_replay_item_precedes_assistant_message() {
     let f = Fixture::new("reasoning-replay");
     f.write("a.md", "content\n");
     let runtime = f.runtime();
-    runtime.acquire_turn(&f.scope()).unwrap();
+    runtime.acquire_turn(&f.scope(), &mock_config()).unwrap();
     let sink = CollectSink::default();
     let script = r#"{"responses": [
         {"text": "先读文件。",
@@ -236,7 +236,7 @@ fn multi_call_round_groups_call_items_before_outputs() {
     f.write("a.md", "content\n");
     f.write("b.md", "content\n");
     let runtime = f.runtime();
-    runtime.acquire_turn(&f.scope()).unwrap();
+    runtime.acquire_turn(&f.scope(), &mock_config()).unwrap();
     let sink = CollectSink::default();
     let script = r#"{"responses": [
         {"reasoning": {"type":"reasoning","id":"rs_1","status":"completed","content":[{"type":"reasoning_text","text":"两个文件都要读。"}],"encrypted_content":"resp-0"},
@@ -321,7 +321,7 @@ fn tool_loop_roundtrip_with_fixture_file() {
     let f = Fixture::new("roundtrip");
     f.write("notes/demo.md", "demo content\n");
     let runtime = f.runtime();
-    runtime.acquire_turn(&f.scope()).unwrap();
+    runtime.acquire_turn(&f.scope(), &mock_config()).unwrap();
     let sink = CollectSink::default();
     let script = std::fs::read_to_string(
         Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/harness-fixtures/mock_basic.json"),
@@ -356,28 +356,93 @@ fn tool_loop_roundtrip_with_fixture_file() {
     assert!((snapshot.usage.ctx_pct - 1400.0 * 100.0 / 131072.0).abs() < 0.2);
     assert!((snapshot.usage.cache_pct - 1000.0 * 100.0 / 1400.0).abs() < 0.2);
 
-    // JSONL 留存：配置目录（不是 vault）有记录，且含工具调用与结果。
-    let jsonl = std::fs::read_to_string(harness_jsonl_path(&f)).expect("jsonl 存在");
-    assert!(jsonl.contains("\"kind\":\"user_message\""), "{jsonl}");
-    assert!(jsonl.contains("\"kind\":\"tool_call\""), "{jsonl}");
-    assert!(jsonl.contains("\"kind\":\"tool_result\""), "{jsonl}");
-    assert!(jsonl.contains("\"kind\":\"usage\""), "{jsonl}");
-    assert!(jsonl.contains("demo content"), "{jsonl}"); // 工具读到的原文
+    // wire 留存：配置目录（不是 vault）有记录——首行 session_open，其后 llm_request /
+    // llm_response 成对，工具调用与结果逐字节在 llm_request.messages 里。
+    let path = harness_jsonl_path(&f);
+    let file = read_session_file(&path);
+    assert_eq!(file.session_open["kind"], "session_open");
+    assert_eq!(file.session_open["provider"], "mock");
+    assert!(
+        file.session_open["system"]
+            .as_str()
+            .unwrap()
+            .contains("Lumir 的内置助手"),
+        "{:?}",
+        file.session_open
+    );
+    // 装配清单在场，且「vault 根 AGENTS.md 不存在」如实记 exists:false。
+    let assembly = file.session_open["assembly"].as_array().unwrap();
+    assert_eq!(assembly.len(), 5, "{assembly:?}");
+    let vault_root = assembly
+        .iter()
+        .find(|s| s["source"] == "agents_vault_root")
+        .unwrap();
+    assert_eq!(vault_root["exists"], false, "{vault_root:?}");
+    let kinds: Vec<&str> = file
+        .records
+        .iter()
+        .skip(1)
+        .map(|r| r["kind"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        kinds,
+        vec!["llm_request", "llm_response", "llm_request", "llm_response"],
+        "{kinds:?}"
+    );
+    // 第一轮响应（records[2]）带工具调用；工具读到的原文逐字节在第二轮请求的 messages 里。
+    assert_eq!(file.records[2]["tool_calls"][0]["name"], "vault_read");
+    let second_request = &file.records[3]["request"];
+    assert_eq!(second_request["system"], file.session_open["system"]);
+    let wire = serde_json::to_string(&second_request["messages"]).unwrap();
+    assert!(wire.contains("demo content"), "{wire}");
+    // usage 并入 llm_response（独立的 usage 事件类已废弃）。
+    assert_eq!(file.records[2]["usage"]["output_tokens"], 20);
+    // mock provider 的因果链字段。
+    assert!(file.records[2]["mock_fixture"]
+        .as_str()
+        .unwrap()
+        .ends_with("mock_basic.json"));
+    // 被 wire 覆盖的旧事件类一律不得出现。
+    let raw = std::fs::read_to_string(&path).unwrap();
+    for legacy in [
+        "user_message",
+        "assistant_text",
+        "tool_call",
+        "tool_result",
+        "tool_denied",
+    ] {
+        assert!(
+            !raw.contains(&format!("\"kind\":\"{legacy}\"")),
+            "{legacy}: {raw}"
+        );
+    }
 }
 
-/// 定位夹具的唯一一份 JSONL 留存。文件名是 `jsonl::sanitize` 的产物，测试侧不再复刻
-/// 该算法（REVIEW.md 第 8 条：两份真源会漂）——一个 Fixture 只有一个 vault，目录里
-/// 恰有一份 `.jsonl`，直接取它。
+/// 读取并解析夹具的唯一一份会话留存（`sessions/<session_id>.jsonl` 布局——文件名是
+/// `jsonl::new_session_id` 的产物，测试侧不复刻生成算法，REVIEW.md 第 8 条：两份真源
+/// 会漂）。一个 Fixture 只有一个 vault 且大多数场景只跑一个会话，目录里恰有一份 `.jsonl`，
+/// 直接取它；多会话场景（压缩 / 重置 / 恢复）用 `harness_jsonl_files` 自取。
 fn harness_jsonl_path(fixture: &Fixture) -> PathBuf {
-    let dir = fixture.root.join("xdg/lumir/harness");
+    let mut files = harness_jsonl_files(fixture);
+    assert_eq!(files.len(), 1, "应恰有一份 JSONL 留存：{files:?}");
+    files.pop().unwrap()
+}
+
+/// 列出夹具留存的全部会话文件（按文件名排序——session id 时间序，即建立顺序）。
+fn harness_jsonl_files(fixture: &Fixture) -> Vec<PathBuf> {
+    let dir = fixture.root.join("xdg/lumir/harness/sessions");
     let mut files: Vec<PathBuf> = std::fs::read_dir(&dir)
         .unwrap_or_else(|e| panic!("读留存目录 {} 失败：{e}", dir.display()))
         .map(|entry| entry.unwrap().path())
         .filter(|p| p.extension().map(|x| x == "jsonl").unwrap_or(false))
         .collect();
     files.sort();
-    assert_eq!(files.len(), 1, "应恰有一份 JSONL 留存：{files:?}");
-    files.pop().unwrap()
+    files
+}
+
+/// 解析一份会话留存（首行 session_open 的不变量由读取侧钉死）。
+fn read_session_file(path: &Path) -> lumir_lib::harness::jsonl::SessionFile {
+    lumir_lib::harness::jsonl::read_session_file(path).expect("留存可解析")
 }
 
 /// 单测驱动的轮次入口：这些场景不带编辑器上下文，节恒为 `None`。上下文节的串味回归
@@ -404,7 +469,7 @@ fn context_section_not_confused_by_bracket_in_message() {
     let mut config = mock_config();
     config.warn_ctx_pct = 50.0; // 一轮 usage 越阈值即触发自动压缩续聊
     let runtime = f.runtime();
-    runtime.acquire_turn(&f.scope()).unwrap();
+    runtime.acquire_turn(&f.scope(), &mock_config()).unwrap();
     let sink = CollectSink::default();
 
     let block = turn::ContextBlock {
@@ -476,7 +541,7 @@ fn loop_max_terminates_with_notice() {
     let mut config = mock_config();
     config.loop_max = 2;
     let runtime = f.runtime();
-    runtime.acquire_turn(&f.scope()).unwrap();
+    runtime.acquire_turn(&f.scope(), &mock_config()).unwrap();
     let sink = CollectSink::default();
     // 两轮都继续调工具（读类 allow，直执行）→ 第二轮后应触发 loop_max 提示。
     let script = r#"{"responses": [
@@ -522,7 +587,7 @@ fn deny_beats_allow_and_default_layering() {
         deny: vec!["vault_patch".into()],
     };
     let runtime = f.runtime();
-    runtime.acquire_turn(&f.scope()).unwrap();
+    runtime.acquire_turn(&f.scope(), &mock_config()).unwrap();
     let sink = CollectSink::default();
     let script = r#"{"responses": [
         {"tool_calls": [{"id": "c1", "name": "vault_patch",
@@ -567,7 +632,7 @@ fn ask_gate_approve_executes_and_reject_leaves_disk() {
         f.write("a.md", "old\n");
         let config = mock_config();
         let runtime = f.runtime();
-        runtime.acquire_turn(&f.scope()).unwrap();
+        runtime.acquire_turn(&f.scope(), &mock_config()).unwrap();
         let sink = CollectSink::default();
         let script = r#"{"responses": [
             {"tool_calls": [{"id": "c1", "name": "vault_patch",
@@ -655,7 +720,7 @@ fn patch_not_unique_error_feeds_back_without_gate() {
     f.write("a.md", "dup\nfoo\ndup\n");
     let config = mock_config();
     let runtime = f.runtime();
-    runtime.acquire_turn(&f.scope()).unwrap();
+    runtime.acquire_turn(&f.scope(), &mock_config()).unwrap();
     let sink = CollectSink::default();
     // old_string "dup" 命中 2 次：预览阶段失败 → 错误直接回送模型，不进批准闸。
     let script = r#"{"responses": [
@@ -703,7 +768,7 @@ fn create_o_excl_refuses_overwrite() {
         deny: vec![],
     };
     let runtime = f.runtime();
-    runtime.acquire_turn(&f.scope()).unwrap();
+    runtime.acquire_turn(&f.scope(), &mock_config()).unwrap();
     let sink = CollectSink::default();
     let script = r#"{"responses": [
         {"tool_calls": [{"id": "c1", "name": "vault_create",
@@ -737,7 +802,7 @@ fn skill_load_rejects_escape_and_unknown() {
     f.write(".agents/skills/demo/SKILL.md", "demo body");
     let config = mock_config();
     let runtime = f.runtime();
-    runtime.acquire_turn(&f.scope()).unwrap();
+    runtime.acquire_turn(&f.scope(), &mock_config()).unwrap();
     let sink = CollectSink::default();
     let script = r#"{"responses": [
         {"tool_calls": [
@@ -782,7 +847,7 @@ fn auto_compact_triggers_over_threshold() {
     let mut config = mock_config();
     config.warn_ctx_pct = 50.0;
     let runtime = f.runtime();
-    runtime.acquire_turn(&f.scope()).unwrap();
+    runtime.acquire_turn(&f.scope(), &mock_config()).unwrap();
     let sink = CollectSink::default();
     // 第一轮：usage 越阈值（120000/131072 ≈ 91.6%）→ 自动压缩（摘要消耗一条脚本）。
     let script = r#"{"responses": [
@@ -817,7 +882,7 @@ fn auto_compact_triggers_over_threshold() {
     assert!(snapshot.messages.iter().any(|m| m.role == "compact"));
     // 压缩后 usage 仍是压缩前读数（下轮请求才更新）——但历史已被替换。
     // 用第二轮验证新历史生效：
-    runtime.acquire_turn(&f.scope()).unwrap();
+    runtime.acquire_turn(&f.scope(), &mock_config()).unwrap();
     let sink2 = CollectSink::default();
     let mut client2 = MockClient::from_str(script, "compact2").unwrap();
     // 弹掉前两条（它们是为上一轮写的）——直接快进：本轮脚本只用第三条。
@@ -864,7 +929,7 @@ fn context_overflow_retries_once_after_compact() {
     let f = Fixture::new("overflow");
     let config = mock_config();
     let runtime = f.runtime();
-    runtime.acquire_turn(&f.scope()).unwrap();
+    runtime.acquire_turn(&f.scope(), &mock_config()).unwrap();
     let sink = CollectSink::default();
     // 第一条：上下文超限错误 → 自动压缩（弹第二条作摘要）→ 重试（弹第三条）成功。
     let script = r#"{"responses": [
@@ -902,7 +967,7 @@ fn vault_scoping_switch_restore_and_reset() {
     let config = mock_config();
 
     // vault A 提问一轮。
-    runtime.acquire_turn(&f.scope()).unwrap();
+    runtime.acquire_turn(&f.scope(), &mock_config()).unwrap();
     let sink_a = CollectSink::default();
     let mut client = MockClient::from_str(r#"{"responses": [{"text": "A 的回答"}]}"#, "a").unwrap();
     drive_turn(
@@ -929,23 +994,18 @@ fn vault_scoping_switch_restore_and_reset() {
     let snap_a = runtime.snapshot(&f.scope(), &config);
     assert_eq!(snap_a.messages.len(), 2, "A 的会话还在");
 
-    // 新会话重置：消息清空、JSONL 文件不受影响（继续追加而不是截断）。
-    let jsonl_path = harness_jsonl_path(&f);
-    let before = std::fs::read_to_string(&jsonl_path)
+    // 新会话重置：消息清空；留存是文件边界口径——旧文件封闭不再追加，
+    // 下一次建立会话开新文件（首行 opened_from=reset）。
+    let first_file = harness_jsonl_path(&f);
+    let first_lines = std::fs::read_to_string(&first_file)
         .unwrap()
         .lines()
         .count();
     runtime.reset_session(&f.scope());
     let snap = runtime.snapshot(&f.scope(), &config);
     assert!(snap.messages.is_empty(), "重置后空态");
-    // r1 P2-1：重置动作本身留一条 session_reset（JSONL 可辨识「新会话」）。
-    let jsonl_now = std::fs::read_to_string(&jsonl_path).unwrap();
-    assert!(
-        jsonl_now.contains("\"kind\":\"session_reset\""),
-        "{jsonl_now}"
-    );
-    // 重置后再问一轮：jsonl 追加（行数增长），文件没被动过。
-    runtime.acquire_turn(&f.scope()).unwrap();
+    // 重置后再问一轮：新文件建立（opened_from=reset），旧文件逐字节不变（封闭）。
+    runtime.acquire_turn(&f.scope(), &mock_config()).unwrap();
     let sink2 = CollectSink::default();
     let mut client2 = MockClient::from_str(r#"{"responses": [{"text": "新话题"}]}"#, "b").unwrap();
     drive_turn(
@@ -957,11 +1017,27 @@ fn vault_scoping_switch_restore_and_reset() {
         &mut client2,
     );
     runtime.release_turn(&f.scope());
-    let after = std::fs::read_to_string(&jsonl_path)
-        .unwrap()
-        .lines()
-        .count();
-    assert!(after > before, "jsonl append-only：{before} -> {after}");
+    let files = harness_jsonl_files(&f);
+    assert_eq!(files.len(), 2, "重置后应有两份会话留存：{files:?}");
+    assert_eq!(
+        std::fs::read_to_string(&first_file)
+            .unwrap()
+            .lines()
+            .count(),
+        first_lines,
+        "旧文件封闭不再追加"
+    );
+    // 同毫秒建立的 id 按随机段排序——按身份（≠ 旧文件）取新文件，不依赖目录序。
+    let second_path = files.iter().find(|p| **p != first_file).unwrap();
+    let second = read_session_file(second_path);
+    assert_eq!(second.session_open["opened_from"], "reset");
+    let kinds: Vec<&str> = second
+        .records
+        .iter()
+        .skip(1)
+        .map(|r| r["kind"].as_str().unwrap())
+        .collect();
+    assert_eq!(kinds, vec!["llm_request", "llm_response"], "{kinds:?}");
     // 系统上下文重新装配（新会话对象）。
     let snap = runtime.snapshot(&f.scope(), &config);
     assert_eq!(snap.messages.len(), 2);
@@ -991,7 +1067,7 @@ fn new_session_idempotent_across_session_states() {
     assert_eq!(no_session.code, "harness_no_session");
 
     // 2) 有会话空闲态：消息历史清空。
-    runtime.acquire_turn(&f.scope()).unwrap();
+    runtime.acquire_turn(&f.scope(), &mock_config()).unwrap();
     let sink = CollectSink::default();
     let mut client =
         MockClient::from_str(r#"{"responses": [{"text": "早先的回答"}]}"#, "n").unwrap();
@@ -1021,11 +1097,13 @@ fn new_session_idempotent_across_session_states() {
     );
 
     // 3) busy 态：仍是 harness_busy 错误信封（不丢在途会话）。
-    runtime.acquire_turn(&f.scope()).unwrap();
+    runtime.acquire_turn(&f.scope(), &mock_config()).unwrap();
     let err: CommandError = runtime.new_session(&f.scope()).unwrap_err();
     assert_eq!(err.code, "harness_busy");
     // 失败无副作用：会话对象还在、仍 busy——再 acquire 照旧被拒。
-    let again: CommandError = runtime.acquire_turn(&f.scope()).unwrap_err();
+    let again: CommandError = runtime
+        .acquire_turn(&f.scope(), &mock_config())
+        .unwrap_err();
     assert_eq!(again.code, "harness_busy", "失败的新会话不该丢掉在途会话");
     runtime.release_turn(&f.scope());
 }
@@ -1034,8 +1112,10 @@ fn new_session_idempotent_across_session_states() {
 fn busy_turn_rejects_second_send() {
     let f = Fixture::new("busy");
     let runtime = f.runtime();
-    runtime.acquire_turn(&f.scope()).unwrap();
-    let err: CommandError = runtime.acquire_turn(&f.scope()).unwrap_err();
+    runtime.acquire_turn(&f.scope(), &mock_config()).unwrap();
+    let err: CommandError = runtime
+        .acquire_turn(&f.scope(), &mock_config())
+        .unwrap_err();
     assert_eq!(err.code, "harness_busy");
     runtime.release_turn(&f.scope());
 }
@@ -1045,7 +1125,7 @@ fn unknown_tool_error_feeds_back() {
     let f = Fixture::new("unknowntool");
     let config = mock_config();
     let runtime = f.runtime();
-    runtime.acquire_turn(&f.scope()).unwrap();
+    runtime.acquire_turn(&f.scope(), &mock_config()).unwrap();
     let sink = CollectSink::default();
     let script = r#"{"responses": [
         {"tool_calls": [{"id": "c1", "name": "fs_delete", "arguments": "{}"}]},
@@ -1074,7 +1154,7 @@ fn patch_conflict_when_file_changes_during_approval() {
     f.write("a.md", "old\n");
     let config = mock_config();
     let runtime = f.runtime();
-    runtime.acquire_turn(&f.scope()).unwrap();
+    runtime.acquire_turn(&f.scope(), &mock_config()).unwrap();
     let sink = CollectSink::default();
     let script = r#"{"responses": [
         {"tool_calls": [{"id": "c1", "name": "vault_patch",
@@ -1148,7 +1228,7 @@ fn cli_run_gated_and_allow_rule_executes() {
         deny: vec![],
     };
     let runtime = f.runtime();
-    runtime.acquire_turn(&f.scope()).unwrap();
+    runtime.acquire_turn(&f.scope(), &mock_config()).unwrap();
     let sink = CollectSink::default();
     let script = r#"{"responses": [
         {"tool_calls": [{"id": "c1", "name": "cli_run",
@@ -1184,7 +1264,7 @@ fn each_call_enters_input_exactly_once() {
     let f = Fixture::new("dedupe-input");
     f.write("a.md", "content\n");
     let runtime = f.runtime();
-    runtime.acquire_turn(&f.scope()).unwrap();
+    runtime.acquire_turn(&f.scope(), &mock_config()).unwrap();
     let sink = CollectSink::default();
     let script = r#"{"responses": [
         {"tool_calls": [
@@ -1251,7 +1331,7 @@ fn reasoning_chunks_forwarded_in_order_with_block_index() {
     let f = Fixture::new("reasoning-blocks");
     f.write("a.md", "正文\n");
     let runtime = f.runtime();
-    runtime.acquire_turn(&f.scope()).unwrap();
+    runtime.acquire_turn(&f.scope(), &mock_config()).unwrap();
     let sink = CollectSink::default();
     let script = r#"{"responses": [
         {"text": "先读。",
@@ -1345,7 +1425,7 @@ fn reasoning_chunks_forwarded_in_order_with_block_index() {
 fn reasoning_falls_back_to_captured_item_text_when_no_chunks() {
     let f = Fixture::new("reasoning-fallback");
     let runtime = f.runtime();
-    runtime.acquire_turn(&f.scope()).unwrap();
+    runtime.acquire_turn(&f.scope(), &mock_config()).unwrap();
     let sink = CollectSink::default();
     let script = r#"{"responses": [
         {"text": "答。",
@@ -1383,7 +1463,7 @@ fn reasoning_falls_back_to_captured_item_text_when_no_chunks() {
 fn no_reasoning_yields_zero_reasoning_events() {
     let f = Fixture::new("reasoning-absent");
     let runtime = f.runtime();
-    runtime.acquire_turn(&f.scope()).unwrap();
+    runtime.acquire_turn(&f.scope(), &mock_config()).unwrap();
     let sink = CollectSink::default();
     let script = r#"{"responses": [{"text": "没有思考的一轮。"}]}"#;
     let mut client = MockClient::from_str(script, "reasoning-absent").unwrap();
@@ -1416,13 +1496,13 @@ fn session_thinking_effort_reaches_request() {
     let runtime = f.runtime();
     // 无会话时也能落档位（面板一打开就可能点 chip）——这里顺带核「即时建会话」。
     runtime
-        .set_thinking_effort(&f.scope(), ThinkingEffort::Max)
+        .set_thinking_effort(&f.scope(), &mock_config(), ThinkingEffort::Max)
         .unwrap();
     assert_eq!(
         runtime.snapshot(&f.scope(), &mock_config()).thinking.level,
         ThinkingEffort::Max
     );
-    runtime.acquire_turn(&f.scope()).unwrap();
+    runtime.acquire_turn(&f.scope(), &mock_config()).unwrap();
     let sink = CollectSink::default();
     let mut client = MockClient::from_str(r#"{"responses":[{"text":"答。"}]}"#, "effort").unwrap();
     drive_turn(
@@ -1444,7 +1524,7 @@ fn new_session_resets_thinking_effort_to_default_high() {
     let f = Fixture::new("thinking-reset");
     let runtime = f.runtime();
     runtime
-        .set_thinking_effort(&f.scope(), ThinkingEffort::Low)
+        .set_thinking_effort(&f.scope(), &mock_config(), ThinkingEffort::Low)
         .unwrap();
     runtime.new_session(&f.scope()).unwrap();
     assert_eq!(
@@ -1453,7 +1533,7 @@ fn new_session_resets_thinking_effort_to_default_high() {
         "新会话回到默认 High"
     );
 
-    runtime.acquire_turn(&f.scope()).unwrap();
+    runtime.acquire_turn(&f.scope(), &mock_config()).unwrap();
     let sink = CollectSink::default();
     let mut client = MockClient::from_str(r#"{"responses":[{"text":"答。"}]}"#, "reset").unwrap();
     drive_turn(

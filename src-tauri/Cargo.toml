@@ -18,6 +18,8 @@ tauri-build = { version = "2", features = [] }
 tauri = { version = "2", features = [] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# session id 的随机段（rand 已在依赖树内 transitive 存在，直接引用零新增编译重量）。
+rand = "0.10"
 # payload 类型单一来源选型：ts-rs（而非 specta / tauri-specta）。
 # 理由：单 crate、无运行时开销、bindings 由 cargo test 顺带导出（契合 rust.yml 门禁）；
 # specta 方案需同时引入 specta + tauri-specta 且强绑定其 builder，本阶段契约只是薄约定，

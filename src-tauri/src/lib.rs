@@ -125,6 +125,7 @@ pub fn run() {
             harness::harness_new_session,
             harness::harness_state,
             harness::harness_set_thinking_effort,
+            harness::harness_resume_session,
         ])
         .setup(move |app| {
             // 诊断日志先初始化：`[log] level` 在第一条事件之前生效（level = off 时

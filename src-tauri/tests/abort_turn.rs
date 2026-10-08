@@ -138,7 +138,7 @@ impl RuntimeExt for Fixture {
 
 /// 夹具的唯一一份 JSONL 留存（文件名是 `jsonl::sanitize` 的产物，测试侧不复刻该算法）。
 fn harness_jsonl_path(fixture: &Fixture) -> PathBuf {
-    let dir = fixture.root.join("xdg/lumir/harness");
+    let dir = fixture.root.join("xdg/lumir/harness/sessions");
     let mut files: Vec<PathBuf> = std::fs::read_dir(&dir)
         .unwrap_or_else(|e| panic!("读留存目录 {} 失败：{e}", dir.display()))
         .map(|entry| entry.unwrap().path())
@@ -183,7 +183,7 @@ fn abort_during_llm_call_preserves_text_marks_stopped() {
     f.write("a.md", "内容\n");
     let config = mock_config();
     let runtime = f.runtime();
-    runtime.acquire_turn(&f.scope()).unwrap();
+    runtime.acquire_turn(&f.scope(), &mock_config()).unwrap();
     let sink = CollectSink::default();
     // 第一条：delay 300ms 撑窗口，文本 + 工具调用（中断后不得执行）；第二条不该被弹到。
     let script = r#"{"responses": [
@@ -256,14 +256,19 @@ fn abort_during_llm_call_preserves_text_marks_stopped() {
     assert!(!types.contains(&"done".to_string()), "{types:?}");
     assert_eq!(types.last().unwrap(), "aborted", "{types:?}");
 
-    // JSONL 如实记录中断事件（请求 + 收口两条都有）。
+    // JSONL 如实记录（wire 口径）：中断轮照样有一对 llm_request/llm_response，
+    // 半截正文随 llm_response.text 在场；决策类 sidecar turn_aborted 收口在列。
+    // turn_abort_requested / assistant_text / user_message 是被 wire 覆盖的旧事件类，
+    // 一律不得出现。
     let jsonl = std::fs::read_to_string(harness_jsonl_path(&f)).unwrap();
+    assert!(jsonl.contains("\"kind\":\"turn_aborted\""), "{jsonl}");
+    assert!(jsonl.contains("\"kind\":\"llm_response\""), "{jsonl}");
     assert!(
-        jsonl.contains("\"kind\":\"turn_abort_requested\""),
+        !jsonl.contains("\"kind\":\"turn_abort_requested\""),
         "{jsonl}"
     );
-    assert!(jsonl.contains("\"kind\":\"turn_aborted\""), "{jsonl}");
-    assert!(jsonl.contains("\"kind\":\"assistant_text\""), "{jsonl}");
+    assert!(!jsonl.contains("\"kind\":\"assistant_text\""), "{jsonl}");
+    assert!(!jsonl.contains("\"kind\":\"user_message\""), "{jsonl}");
     // 中断优先于一切：本轮的错误/空响应判定不再追加错误行（jsonl 无 llm_error）。
     assert!(!jsonl.contains("\"kind\":\"llm_error\""), "{jsonl}");
 }
@@ -276,7 +281,7 @@ fn abort_withdraws_pending_approval() {
     f.write("a.md", "old\n");
     let config = mock_config();
     let runtime = f.runtime();
-    runtime.acquire_turn(&f.scope()).unwrap();
+    runtime.acquire_turn(&f.scope(), &mock_config()).unwrap();
     let sink = CollectSink::default();
     // patch 默认 ask 档：挂起等批准；中断收回待决项。
     let script = r#"{"responses": [
@@ -332,11 +337,16 @@ fn abort_withdraws_pending_approval() {
         std::fs::read_to_string(f.vault().join("a.md")).unwrap(),
         "old\n"
     );
-    // 终态事件是 aborted；JSONL 有 approval_withdrawn + turn_aborted。
+    // 终态事件是 aborted；JSONL 有 turn_aborted sidecar。
     assert_eq!(sink.types().last().unwrap(), "aborted");
     let jsonl = std::fs::read_to_string(harness_jsonl_path(&f)).unwrap();
-    assert!(jsonl.contains("\"kind\":\"approval_withdrawn\""), "{jsonl}");
     assert!(jsonl.contains("\"kind\":\"turn_aborted\""), "{jsonl}");
+    // approval_withdrawn 是 wire 可推导的旧事件类（收回 = 该调用未执行，结果随历史进
+    // 下一条 llm_request.messages），一律不得出现。
+    assert!(
+        !jsonl.contains("\"kind\":\"approval_withdrawn\""),
+        "{jsonl}"
+    );
     // 决定记录（kind=approval）不存在——该项是被收回的，不是被决定的。
     assert!(!jsonl.contains("\"kind\":\"approval\""), "{jsonl}");
 }
@@ -348,7 +358,7 @@ fn abort_between_tool_calls_stops_remaining() {
     f.write("a.md", "内容\n");
     let config = mock_config();
     let runtime = f.runtime();
-    runtime.acquire_turn(&f.scope()).unwrap();
+    runtime.acquire_turn(&f.scope(), &mock_config()).unwrap();
     let sink = CollectSink::default();
     // 第一条响应：文本 + [patch(ask，挂起等批准), vault_read(allow)]。
     // 中断收回 patch 的待决项 → handle_call 返回 → 循环顶部停止检查点截住第二个调用。
@@ -456,7 +466,7 @@ fn abort_after_turn_finished_is_rejected() {
     let f = Fixture::new("abort-idle");
     let config = mock_config();
     let runtime = f.runtime();
-    runtime.acquire_turn(&f.scope()).unwrap();
+    runtime.acquire_turn(&f.scope(), &mock_config()).unwrap();
     let sink = CollectSink::default();
     let mut client = MockClient::from_str(r#"{"responses": [{"text": "答"}]}"#, "idle").unwrap();
     drive_turn(
@@ -493,7 +503,7 @@ fn abort_never_marks_previous_turn_messages() {
     let runtime = f.runtime();
 
     // 上一轮：正常完成，assistant 消息不带 stopped。
-    runtime.acquire_turn(&f.scope()).unwrap();
+    runtime.acquire_turn(&f.scope(), &mock_config()).unwrap();
     let sink1 = CollectSink::default();
     let mut client1 =
         MockClient::from_str(r#"{"responses": [{"text": "上一轮的完整回答。"}]}"#, "prev").unwrap();
@@ -510,7 +520,7 @@ fn abort_never_marks_previous_turn_messages() {
 
     // 本轮：中断在首个 complete 在途（delay 撑窗口），该轮无文本产出——
     // 旧实现（无 base 的全局倒找）会把上一轮的 assistant 误标 stopped。
-    runtime.acquire_turn(&f.scope()).unwrap();
+    runtime.acquire_turn(&f.scope(), &mock_config()).unwrap();
     let sink2 = CollectSink::default();
     let script = r#"{"responses": [
         {"delay_ms": 300, "tool_calls": [{"id": "c1", "name": "vault_read", "arguments": "{\"path\":\"a.md\"}"}]},
@@ -565,7 +575,7 @@ fn new_turn_after_abort_runs_clean() {
     let config = mock_config();
     let runtime = f.runtime();
     // 第一轮：中断在 LLM 在途（delay 撑窗口）。
-    runtime.acquire_turn(&f.scope()).unwrap();
+    runtime.acquire_turn(&f.scope(), &mock_config()).unwrap();
     let sink = CollectSink::default();
     let script = r#"{"responses": [
         {"text": "被打断的话。", "delay_ms": 300},
@@ -595,7 +605,7 @@ fn new_turn_after_abort_runs_clean() {
     assert_eq!(sink.types().last().unwrap(), "aborted");
 
     // 停止后可立即再发问（新消息开新一轮）：标志不复位的话这里会立刻被 abort 截断。
-    runtime.acquire_turn(&f.scope()).unwrap();
+    runtime.acquire_turn(&f.scope(), &mock_config()).unwrap();
     let sink2 = CollectSink::default();
     let mut client2 = MockClient::from_str(script, "re2").unwrap();
     // 快进到第二条脚本（第一条是上一轮的）。
@@ -648,7 +658,7 @@ fn abort_midstream_keeps_produced_chunks() {
     let f = Fixture::new("abort-midstream");
     let config = mock_config();
     let runtime = f.runtime();
-    runtime.acquire_turn(&f.scope()).unwrap();
+    runtime.acquire_turn(&f.scope(), &mock_config()).unwrap();
     let sink = CollectSink::default();
     // 三片、片间隔 500ms：第一片立刻转发，末片要等两个间隔（1s 之后）。停止落在第一段的间隔里。
     let script = r#"{"responses": [
@@ -706,7 +716,11 @@ fn abort_midstream_keeps_produced_chunks() {
         "末片不得有 text_chunk 事件：{texts:?}"
     );
     assert_eq!(sink.types().last().unwrap(), "aborted");
+    // wire 口径：半截正文随 llm_response.text 落盘（无 assistant_text 事件类）。
     let jsonl = std::fs::read_to_string(harness_jsonl_path(&f)).unwrap();
     assert!(jsonl.contains("\"kind\":\"turn_aborted\""), "{jsonl}");
+    assert!(jsonl.contains("\"kind\":\"llm_response\""), "{jsonl}");
+    assert!(!jsonl.contains("\"kind\":\"assistant_text\""), "{jsonl}");
     assert!(jsonl.contains("STREAM-A 第一片。"), "{jsonl}");
+    assert!(!jsonl.contains("STREAM-C"), "{jsonl}");
 }
