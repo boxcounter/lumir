@@ -235,6 +235,9 @@ impl JsonlWriter {
 /// 一份解析后的会话留存：首行 `session_open` + 全部 payload（按文件序）。
 #[derive(Debug)]
 pub struct SessionFile {
+    /// 首行信封的 `ts`（UNIX 秒，会话建立时刻）——会话列举的展示 / 排序素材。
+    /// 历史文件缺该字段时为 `None`（宽容读，不因此判整份文件非法）。
+    pub first_ts: Option<u64>,
     /// 首行 `session_open` payload（含 system 全文 / assembly / provider / model / thinking）。
     pub session_open: serde_json::Value,
     /// 全部记录的 payload（含 `session_open` 自身，按文件序）。
@@ -253,6 +256,7 @@ pub fn read_session_file(path: &Path) -> Result<SessionFile, CommandError> {
         .param("reason", e.to_string())
     })?;
     let mut records = Vec::new();
+    let mut first_ts = None;
     for (index, line) in content.lines().enumerate() {
         if line.trim().is_empty() {
             continue;
@@ -264,6 +268,9 @@ pub fn read_session_file(path: &Path) -> Result<SessionFile, CommandError> {
             )
             .param("path", path.display().to_string())
         })?;
+        if records.is_empty() {
+            first_ts = envelope["ts"].as_u64();
+        }
         records.push(envelope["payload"].clone());
     }
     let Some(session_open) = records.first().filter(|r| r["kind"] == "session_open") else {
@@ -273,6 +280,7 @@ pub fn read_session_file(path: &Path) -> Result<SessionFile, CommandError> {
         ));
     };
     Ok(SessionFile {
+        first_ts,
         session_open: session_open.clone(),
         records,
     })

@@ -327,7 +327,7 @@ impl Runtime {
         let path = jsonl::sessions_dir()?.join(format!("{session_id}.jsonl"));
         let file = jsonl::read_session_file(&path)?;
         let open = &file.session_open;
-        if open["vault_root"].as_str() != Some(scope.key().as_str()) {
+        if !session_belongs_to_scope(open, scope) {
             return Err(CommandError::new(
                 "harness_session_vault_mismatch",
                 "该会话留存属于另一个 vault，不能恢复到当前 vault",
@@ -432,6 +432,96 @@ impl Runtime {
             session_id: new_id,
             restored_items,
         })
+    }
+}
+
+/// 会话留存归属当前 vault 的判据（恢复与列举共用一处——同一语义两处真源会漂，
+/// REVIEW.md 第 8 条）：首行 `session_open.vault_root` 必须逐字等于当前 scope 的键
+/// （vault 根路径）。
+fn session_belongs_to_scope(open: &serde_json::Value, scope: &VaultScope) -> bool {
+    open["vault_root"].as_str() == Some(scope.key().as_str())
+}
+
+/// 列举当前 vault 的留存会话（`harness_list_sessions` 的实现体，change
+/// reshape-harness-session-recording 任务 2.1）：扫 `<config_dir>/harness/sessions/*.jsonl`，
+/// 按 [`session_belongs_to_scope`]（与恢复命令同一 vault 归属口径）过滤，按 session id
+/// 时间序前缀倒序返回。
+///
+/// 读不出 / 首行不是 `session_open` 的文件跳过并打一条 stderr——列举是面板历史选择器的
+/// 数据源，一份损坏的留存不该让整份历史列表消失（恢复命令对**选中的**文件仍严格报错）。
+/// 会话名素材是首条用户消息的**原文**：截断（约 20 字）的规则在前端。
+pub fn list_sessions(scope: &VaultScope) -> Result<Vec<session::SessionSummary>, CommandError> {
+    let dir = jsonl::sessions_dir()?;
+    let entries = std::fs::read_dir(&dir).map_err(|e| {
+        CommandError::new(
+            "harness_session_unreadable",
+            format!("无法读取会话留存目录 {}：{e}", dir.display()),
+        )
+        .param("path", dir.display().to_string())
+        .param("reason", e.to_string())
+    })?;
+    let mut summaries = Vec::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) != Some("jsonl") {
+            continue;
+        }
+        let Some(session_id) = jsonl::JsonlWriter::session_id_from_path(&path) else {
+            continue;
+        };
+        let file = match jsonl::read_session_file(&path) {
+            Ok(file) => file,
+            Err(e) => {
+                eprintln!(
+                    "lumir: 会话列举跳过不可读的留存（{}）：{}",
+                    path.display(),
+                    e.message
+                );
+                continue;
+            }
+        };
+        if !session_belongs_to_scope(&file.session_open, scope) {
+            continue;
+        }
+        summaries.push(session::SessionSummary {
+            session_id,
+            first_user_text: first_user_text(&file),
+            ts: file.first_ts,
+        });
+    }
+    // session id 是时间序（`s<unix_millis>-<随机后缀>`）：字符串倒序即时间倒序。
+    summaries.sort_by(|a, b| b.session_id.cmp(&a.session_id));
+    Ok(summaries)
+}
+
+/// 会话名素材：文件内**第一条** `llm_request` 的首条 user 消息正文原文
+/// （None = 该会话还没有用户消息）。截断规则归前端——这里给全文。
+fn first_user_text(file: &jsonl::SessionFile) -> Option<String> {
+    let request = file.records.iter().find(|r| r["kind"] == "llm_request")?;
+    let messages = request["request"]["messages"].as_array()?;
+    let message = messages.iter().find(|m| m["role"] == "user")?;
+    user_message_text(message)
+}
+
+/// 从一条 wire user 消息项取正文（[`session::user_item`] 的逆：content 数组里的各 text part
+/// 拼接；兼容 content 直接是字符串的形态）。
+fn user_message_text(message: &serde_json::Value) -> Option<String> {
+    match &message["content"] {
+        serde_json::Value::String(text) => Some(text.clone()),
+        serde_json::Value::Array(parts) => {
+            let mut out = String::new();
+            for part in parts {
+                if let Some(text) = part["text"].as_str() {
+                    out.push_str(text);
+                }
+            }
+            if out.is_empty() {
+                None
+            } else {
+                Some(out)
+            }
+        }
+        _ => None,
     }
 }
 
@@ -658,4 +748,15 @@ pub fn harness_resume_session(
     let scope = vault_scope(&vault)?;
     let config = config::load()?.config.harness;
     runtime.resume_session(&scope, &config, &session_id)
+}
+
+/// 列举当前 vault 的历史会话（change reshape-harness-session-recording 任务 2.1；面板
+/// 会话选择器的数据源）：返回 `SessionSummary` 数组，按 session id 时间序倒序。过滤与
+/// 恢复命令同一 vault 归属口径；会话名素材是首条用户消息原文（截断约 20 字归前端）。
+#[tauri::command(rename_all = "snake_case")]
+pub fn harness_list_sessions(
+    vault: tauri::State<'_, crate::commands::VaultState>,
+) -> Result<Vec<session::SessionSummary>, CommandError> {
+    let scope = vault_scope(&vault)?;
+    list_sessions(&scope)
 }

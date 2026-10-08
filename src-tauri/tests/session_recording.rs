@@ -14,7 +14,7 @@ use lumir_lib::harness::jsonl;
 use lumir_lib::harness::llm::{self, LlmClient, MockClient};
 use lumir_lib::harness::session;
 use lumir_lib::harness::turn;
-use lumir_lib::harness::{Runtime, VaultScope};
+use lumir_lib::harness::{list_sessions, Runtime, VaultScope};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
@@ -1032,4 +1032,172 @@ fn sidecar_deny_result_lives_in_next_request() {
         "deny 结果随历史进下一条 llm_request.messages：{wire}"
     );
     check_recovery_sufficient(&files2[0]).expect("deny 轮恢复充分性成立");
+}
+
+/// 直接写一份合成的会话留存（首行 session_open；`user_text` 非空时接一条 llm_request）。
+/// 用于列举的定向用例：文件名 / vault_root / 信封 ts / 首条用户消息都在掌控内。
+fn write_raw_session(dir: &Path, id: &str, ts: u64, vault_root: &str, user_text: Option<&str>) {
+    let mut lines = vec![serde_json::json!({
+        "ts": ts,
+        "payload": {
+            "kind": "session_open",
+            "session_id": id,
+            "vault_root": vault_root,
+            "opened_from": "new",
+            "provider": "mock",
+            "model": "mock-model",
+            "thinking": "high",
+            "system": "S",
+            "assembly": [],
+        }
+    })
+    .to_string()];
+    if let Some(text) = user_text {
+        lines.push(
+            serde_json::json!({
+                "ts": ts + 1,
+                "payload": {
+                    "kind": "llm_request",
+                    "request": {
+                        "system": "S",
+                        "messages": [
+                            {"role": "user", "content": [{"type": "input_text", "text": text}]}
+                        ],
+                    },
+                }
+            })
+            .to_string(),
+        );
+    }
+    std::fs::write(
+        dir.join(format!("{id}.jsonl")),
+        format!("{}\n", lines.join("\n")),
+    )
+    .unwrap();
+}
+
+/// 会话列举（change reshape-harness-session-recording 任务 2.1）：按 vault 归属过滤
+/// （与恢复命令同一口径）、按 session id 时间序前缀倒序、会话名取文件内第一条
+/// llm_request 的首条 user 消息原文（截断归前端）；归属他人 / 损坏的文件不进列表。
+#[test]
+fn list_sessions_filters_by_vault_and_orders_descending() {
+    let f = Fixture::new("list-sessions");
+    let dir = f.root.join("xdg/lumir/harness/sessions");
+    std::fs::create_dir_all(&dir).unwrap();
+    let vault_root = f.vault().display().to_string();
+    let other_root = f.root.join("vault-b").display().to_string();
+    // 三份本 vault（id 时间序可辨；其中一份还没有用户消息）+ 一份他 vault + 一份损坏。
+    write_raw_session(
+        &dir,
+        "s1759912000-aaaaaa",
+        1759912000,
+        &vault_root,
+        Some("最早的问题"),
+    );
+    write_raw_session(&dir, "s1759912010-cccccc", 1759912010, &vault_root, None);
+    write_raw_session(
+        &dir,
+        "s1759912005-bbbbbb",
+        1759912005,
+        &vault_root,
+        Some("中间的问题"),
+    );
+    write_raw_session(
+        &dir,
+        "s1759912002-dddddd",
+        1759912002,
+        &other_root,
+        Some("别的 vault"),
+    );
+    std::fs::write(dir.join("broken.jsonl"), "{ 不是 JSON\n").unwrap();
+
+    let list = list_sessions(&f.scope()).unwrap();
+    let ids: Vec<&str> = list.iter().map(|s| s.session_id.as_str()).collect();
+    assert_eq!(
+        ids,
+        [
+            "s1759912010-cccccc",
+            "s1759912005-bbbbbb",
+            "s1759912000-aaaaaa"
+        ],
+        "仅本 vault、按时间倒序：{list:?}"
+    );
+    // ts = 首行 session_open 信封的 UNIX 秒。
+    assert_eq!(list[0].ts, Some(1759912010));
+    // 会话名 = 首条 user 消息原文（未截断）；无用户消息的会话为 None。
+    let by_id = |id: &str| list.iter().find(|s| s.session_id == id).unwrap();
+    assert_eq!(by_id("s1759912010-cccccc").first_user_text, None);
+    assert_eq!(
+        by_id("s1759912005-bbbbbb").first_user_text.as_deref(),
+        Some("中间的问题")
+    );
+    assert_eq!(
+        by_id("s1759912000-aaaaaa").first_user_text.as_deref(),
+        Some("最早的问题")
+    );
+}
+
+/// 恢复出的会话同样可列举（任务 2.1 与恢复的联动）：恢复 + 续聊一轮后新留存文件落盘，
+/// 其首条用户消息就在灌回的 input 里（源会话首条用户消息）——会话名列得出原文。
+#[test]
+fn resumed_session_is_listable_with_first_user_text() {
+    let f = Fixture::new("list-resume");
+    f.write("a.md", "demo body\n");
+    let config = mock_config();
+    let runtime = Runtime::default();
+    runtime.acquire_turn(&f.scope(), &config).unwrap();
+    let sink = CollectSink::default();
+    let mut client = MockClient::from_str(quote_and_thinking_script(), "list-resume-src").unwrap();
+    drive_turn(
+        &sink,
+        &runtime,
+        &f.scope(),
+        &config,
+        QUOTE_MESSAGE.to_string(),
+        &mut client,
+    );
+    runtime.release_turn(&f.scope());
+
+    let files = f.session_files();
+    let source_id = jsonl::JsonlWriter::session_id_from_path(&files[0]).unwrap();
+    let list = list_sessions(&f.scope()).unwrap();
+    assert_eq!(list.len(), 1, "{list:?}");
+    assert_eq!(list[0].session_id, source_id);
+    assert_eq!(list[0].first_user_text.as_deref(), Some(QUOTE_MESSAGE));
+    assert!(list[0].ts.is_some());
+
+    // 恢复 + 续聊一轮：新文件随首条记录创建，恢复出的会话随即出现在列举里。
+    let info = runtime
+        .resume_session(&f.scope(), &config, &source_id)
+        .unwrap();
+    runtime.acquire_turn(&f.scope(), &config).unwrap();
+    let sink2 = CollectSink::default();
+    let mut client2 = MockClient::from_str(
+        r#"{"responses": [{"text": "接着上面继续。"}]}"#,
+        "list-resume-cont",
+    )
+    .unwrap();
+    drive_turn(
+        &sink2,
+        &runtime,
+        &f.scope(),
+        &config,
+        "继续".to_string(),
+        &mut client2,
+    );
+    runtime.release_turn(&f.scope());
+
+    let list = list_sessions(&f.scope()).unwrap();
+    assert_eq!(list.len(), 2, "{list:?}");
+    let restored = list
+        .iter()
+        .find(|s| s.session_id == info.session_id)
+        .expect("恢复出的会话可列举");
+    assert_eq!(
+        restored.first_user_text.as_deref(),
+        Some(QUOTE_MESSAGE),
+        "恢复会话的首条用户消息 = 灌回 input 的第一条（源会话首条用户消息）"
+    );
+    // 源会话仍在列（列举不隐藏源）。
+    assert!(list.iter().any(|s| s.session_id == source_id));
 }
