@@ -76,8 +76,10 @@ steps:
         file: { path: harness-note.md, has: "HNL-ALPHA 第一行。\nHNL-BETA 第二行，patch 已落盘。\nHNL-GAMMA 第三行，不动。" }
       - label: 磁盘确实变了（与基线对比）
         file: { path: harness-note.md, changedSince: before }
-      - label: JSONL 记下批准后的工具调用（decision=ask）
-        file: { path: "env:harness/*.jsonl", has: '"decision":"ask","id":"call_p1","kind":"tool_call","name":"vault_patch"' }
+      - label: JSONL 记下这次工具调用（wire 口径：llm_response 的 tool_calls）
+        file: { path: "env:harness/sessions/*.jsonl", has: '/^.*"kind":"llm_response".*"id":"call_p1","name":"vault_patch".*$/' }
+      - label: JSONL 记下采纳决定（approval sidecar）
+        file: { path: "env:harness/sessions/*.jsonl", has: '/^.*"decision":"approved".*"tool":"vault_patch".*$/' }
       - label: 决策后卡片收敛为终态记录（工具名 + 已采纳 + 相对时间戳，M384）
         ax: { has: "vault_patch · 已采纳" }
       - label: 待决语义文案退场（「采纳后才落盘」不再出现，M384）

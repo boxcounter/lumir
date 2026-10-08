@@ -67,9 +67,10 @@ M350 的不变量（`src-tauri/src/harness.rs` `Runtime::new_session` 文档注�
 
 ## 已知边界
 
-- **无会话态没有盘上正观测**：`reset_session` 的 `session_reset` JSONL 记录只在会话对象
-  存在时写（`if let Some(session)`），全新 vault 首次点击时 JSONL 文件可能根本不存在——
-  所以本场景的判据全在 AX 面（错误零出现 + 视图守恒），不盘 file 断言。
+- **无会话态没有盘上正观测**：wire 口径下「新会话」重置只影响内存态与留存文件的**边界**（旧文件
+  封闭、下一次建立会话才开新文件），重置本身不写任何决策类 sidecar（`session_reset` 是 reshape
+  废弃的 kind）；全新会话在收到第一条记录前留存文件惰性不建——无会话态因此没有任何盘上记录可
+  断言，本场景的判据全在 AX 面（错误零出现 + 视图守恒），不盘 file 断言。
 - **busy 失败态不在本场景**：「对话正在处理中，请等本轮结束…」（harness_busy）需要在途
   轮次现场，由 Rust 侧单测覆盖；本场景只锁「无会话 ≠ 错误」这条回归。
 - **role 分流口径脆弱性已知**：消歧依赖 WKWebView「aria-haspopup → AXPopUpButton」这条

@@ -9,8 +9,10 @@ title: harness transcript 快照恢复保真：切 vault 回来后工具行带�
 open: harness-note.md
 marker: "HNL-ALPHA"
 # mock 两轮都发工具调用（撞名失败 + 新建成功）、第三轮收尾——落三条 assistant 面板记录 +
-# 两条 tool 记录。这正是「恢复路径按消息边界切块」要的现场：live 路径一轮一个泡、两条工具行
-# 落同一块（终态折叠），恢复路径一条记录一个泡、工具行各挂各自的消息（每块一行、不折叠）。
+# 两条 tool 记录，且两次 vault_create 被中段正文（「撞名被拒了，换个新名字。」）隔开。M383
+# （到达序渲染）起 live 路径也把两行拆进**单行块、不折叠**，与恢复路径一致——本场景判的是
+# **恢复路径按消息边界切块**（工具行各挂各自的 assistant 消息、带参数摘要、消息数 = 面板记录数），
+# 不是 live/recovery 的折叠对比（该对比随 M383 退场，见正文「断言口径」）。
 # `allow: [vault_create]` 免批准闸（写类工具默认 ask，本场景判的不是闸）。
 config:
   harness:
@@ -115,13 +117,21 @@ steps:
       has: ["新建完成。"]
     timeoutMs: 60000
     expect:
-      - label: live 路径两条工具行落同一块 → 终态折叠为一行摘要钮（折叠态步骤行 hidden 不进 AX）
-        ax: { has: "2 个工具调用 · 全部完成" }
+      # M383（到达序渲染）起 live 路径也把「正文段 / 工具块」按事件到达序交错成多段：本轮两次
+      # vault_create 被中段正文（「撞名被拒了，换个新名字。」）隔开 ⇒ 各落一个**单行**工具块，
+      # D387 的折叠阈值（≥2 行）不触发。旧断言「两条工具行落同一块 → 折叠为一行摘要钮」的前提
+      # 是 M368 时代的「一轮一个泡」，随 M383 失效（现场与截图见 M393 findings）。
+      - label: live 路径两条工具行都可见、未被折叠隐藏（失败行带错误码、成功行带参数摘要）
+        ax: { has: "fs_already_exists" }
+      - label: live 路径成功工具行带参数摘要（D344 模板，未被折叠隐藏）
+        ax: { has: '工具 vault_create：{"path":"harness-created.md"' }
+      - label: live 路径不出现折叠摘要（每块单行 < 2，D387 不触发）
+        ax: { not: "个工具调用 · 全部完成" }
       - label: 最终回答渲染
         ax: { has: "新建完成。" }
       - label: 提问回声在 transcript 里
         ax: { has: "newfile" }
-      - shot: 03-A-live-折叠态
+      - shot: 03-A-live-交错态
 
   # ── 切走再切回：transcript 由快照恢复重渲（M368 判的就是这一面）───────────────────
   - name: ⌘O 打开列表（切走到 B）
@@ -222,6 +232,13 @@ core 侧的两处修复（M367）已把「空轮次不落面板消息」与「to
   阈值 ≥2 行），恢复路径把每条 tool 记录挂到它所属的 assistant 消息上（`activeTools` 按消息
   边界重置），因此每块恰好一行、不产生摘要钮；修复前 `activeTools` 从不重置，两条记录会堆进
   第一条消息的块里、终态折叠成一行摘要钮——这条负向断言因此有区分度。
+- **live 路径的折叠断言已随 M383 更新（2026-10-09，M393）**：M383 把 live 渲染从「一轮一个泡」
+  改成「正文段 / 工具块按事件到达序交错」（`src/harness-panel.ts` 的 textSegments / sealedToolBlocks），
+  本轮两次 `vault_create` 被中段正文（「撞名被拒了，换个新名字。」）隔开 ⇒ 两个**单行**块、都不折叠。
+  旧断言（live 折叠为 `2 个工具调用 · 全部完成`）的前提是 M368 的「一轮一个泡」，随 M383 失效；
+  改为断言「两条工具行都可见 + 不出现折叠摘要」，与恢复路径的 `not` 判据一致。**live 与恢复路径
+  在「是否折叠」上因此不再有对比**（M368「live 同块 / recovery 分块」的对照退场）。折叠阈值
+  （≥2 行）本身仍由 `collapseBlock` 守住，只是本场景这一轮造不出「连续 ≥2 行」的形状。
 - **成功行/失败行的上屏形态**：成功 = `工具 vault_create：{"path":…`（D344 模板 × 后端
   持久化的参数摘要），失败 = `工具 vault_create：error · fs_already_exists: …`（后端
   `summarize_result` 的失败形状）。两串都由本场景的 mock 脚本唯一产出，不与别的场景串。

@@ -47,8 +47,8 @@ steps:
         ax: { has: '工具 vault_read：{"path":"harness-note.md"}' }
       - label: 首轮正文保留（ORD1 与 ORD2 同轮共存）
         ax: { has: "ORD1-先读文件再回答。" }
-      - label: JSONL 记下这次工具调用（decision=allow）
-        file: { path: "env:harness/*.jsonl", has: '"decision":"allow","id":"call_1","kind":"tool_call","name":"vault_read"' }
+      - label: JSONL 记下这次工具调用（wire 口径：llm_response 的 tool_calls）
+        file: { path: "env:harness/sessions/*.jsonl", has: '/^.*"kind":"llm_response".*"id":"call_1","name":"vault_read".*$/' }
 ---
 
 # 103-harness-tool-order —— 工具行时序（M374 缺陷①）

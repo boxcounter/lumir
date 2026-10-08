@@ -61,10 +61,10 @@ steps:
         ax: { has: "已停止" }
       - label: 已产出内容保留在 transcript（中断是「不再继续」，不是回滚）
         ax: { has: "ABORT-KEEP 这段产出应当保留。" }
-      - label: JSONL 记下中断事件
-        file: { path: "env:harness/*.jsonl", has: '"kind":"turn_aborted"' }
-      - label: 已产出文本也已留存（中断前的 assistant_text）
-        file: { path: "env:harness/*.jsonl", has: "ABORT-KEEP 这段产出应当保留。" }
+      - label: JSONL 记下中断事件（turn_aborted sidecar）
+        file: { path: "env:harness/sessions/*.jsonl", has: '"kind":"turn_aborted"' }
+      - label: 已产出文本也已留存（中断前半截响应随 llm_response 落盘）
+        file: { path: "env:harness/sessions/*.jsonl", has: '/^.*"kind":"llm_response".*ABORT-KEEP 这段产出应当保留。.*$/' }
 
   - name: composer 收口回空闲（aborted 经 finished 回 idle，可继续发问）
     do: waitFor
@@ -92,7 +92,7 @@ M347 把发送钮做成两态（空闲「发送」/ 处理中「停止」），M
 2. **阶段指示与不定态进度**：处理中阶段行读 `等待响应…`（D381，首个 chunk 前）。进度条本身
    是普通 `div`（无 `role`、无 aria-label），AX 读不到——它的判据在视觉层与截图里。
 3. **中断语义 = 「不再继续」**：在途点停止 → 本轮收口，**已产出的文本保留**并挂「已停止」
-   徽标（D383），JSONL 记 `turn_aborted` + 保留的 `assistant_text`。
+   徽标（D383），JSONL 记 `turn_aborted` sidecar + 保留的 `llm_response` 正文。
 4. **composer 立即可用**：`aborted` 经 finished 回 idle，钮面回到 `发送`。
 
 ## 为什么「长流」用 `delay_ms`
@@ -120,7 +120,7 @@ M347 把发送钮做成两态（空闲「发送」/ 处理中「停止」），M
   的正观测（配合下面的 JSONL 盘上事实，不靠时长猜）。
 - **产出保留**：`ax.has` 断言中断文本（`ABORT-KEEP …`）——文本只可能来自流式转发（M369 起由
   解析层即时发 `text_chunk`）/ `abort_turn` 的面板消息路径。
-- **JSONL**：`turn_aborted` 与保留的 `assistant_text` 都是盘上事实，钉死「这一轮真的被中断收口」
+- **JSONL**：`turn_aborted` sidecar 与保留的 `llm_response` 正文都是盘上事实，钉死「这一轮真的被中断收口」
   而不是「什么都没发生、停止钮恰好消失了」。
 
 ## 已知边界（如实登记）
@@ -130,8 +130,11 @@ M347 把发送钮做成两态（空闲「发送」/ 处理中「停止」），M
 - **「停止后可继续提问」只判到 idle**：本场景判钮面回到 `发送`（composer 已收口、可再发），
   **没有**真的再发一轮（mock 每轮从脚本头重弹，再发一轮会再睡 12s，成本高且对判据无增量）。
 - **中断落在工具执行段 / 批准闸等待**：那两条检查点（②③）需要有在途工具调用的现场，本场景
-  只覆盖检查点 ①。工具循环中断的判据在 Rust 侧单测
-  （`src-tauri/src/harness/turn.rs` 的 `turn_aborted` 路径）与批准闸收回的 `approval_withdrawn`。
+  只覆盖检查点 ①。工具循环中断的判据在 Rust 侧单测（`src-tauri/src/harness/turn.rs` 的
+  `turn_aborted` 路径）：待批准项被停止时走 `gated_execute` 的 `ApprovalSignal::Withdrawn` 分支，
+  回送 `ToolOutput::err("turn_aborted", …)`、该调用不执行（`turn.rs:817-822`）——wire 留存里表现为
+  「该调用未执行」随历史进下一条 `llm_request.messages`，不再有独立的批准收回记录
+  （`approval_withdrawn` 是 reshape 废弃的 kind，`session.rs:370`）。
 - **「流式期间就能断」不在本场景**：这里停在 `delay_ms`（不可中断）形态上，只验「产出保留 +
   已停止标注 + 两态收口」；**流中收流**（部分到达 + 在途停止）归场景 97——两者刻意分工，
   谁也不是谁的超集。
@@ -139,5 +142,5 @@ M347 把发送钮做成两态（空闲「发送」/ 处理中「停止」），M
 ## 环境与副作用
 
 - 合成 vault `/tmp/lumir-m102-acceptance` + 隔离 `XDG_CONFIG_HOME`；不写 vault 文件（只发问、
-  停止），JSONL 留存落在隔离配置目录下（`env:harness/*.jsonl`）。真实 vault 只读。
+  停止），JSONL 留存落在隔离配置目录的 `sessions/` 下（`env:harness/sessions/*.jsonl`）。真实 vault 只读。
 - 本场景耗时主要是一次 12s 的 mock 延迟；`caffeinate` 包住整批以免休眠漂窗。
