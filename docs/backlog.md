@@ -638,6 +638,15 @@
 
 ## 待修 findings（不阻塞）
 
+### 会话浮层快速「关→再开」可重复追加历史会话行（M392 评审观察，2026-10-08，low，攒批处理）
+
+**症状**：`src/harness-panel.ts` 的 `buildSessList` 在 `harness_list_sessions` 的 invoke 往返内被再次
+触发时（快速关闭浮层再打开），会把历史会话行重复追加进清单——cosmetic，下次正常打开自愈，
+与既有浮层同口径（M392 review r1/r2 均确认为非阻塞观察项）。
+
+**建议处置**：一行代次戳（每次打开递增 generation，回调只接受当代结果）即可收口；攒批处理，
+不单独立项。finding `.tower/comms/findings/20261008-tower-bug-buildsesslist-cosmetic.md`。
+
 ### 会话留存：未来评估 wire 原生增量记录（Claude Code / Kimi Code 形态）（M394 登记，2026-10-08，待办）
 
 **是什么**：本期 wire 形态会话留存（change `reshape-harness-session-recording`，即 proposal 里的
@@ -910,8 +919,9 @@ worktree wt-369）；`src-tauri/src/harness/llm.rs` 模块头的「真流式与�
 **症状**：harness 会话映射与 `harness:event` 标识都以 vault 根路径**字符串**为键，而 vault 打开
 路径不做规范化——macOS 上 `/tmp/lumir-m102-acceptance` 与 `/private/tmp/lumir-m102-acceptance`
 （`/tmp` 是指向 `/private/tmp` 的符号链接）会被当成两个 vault，各建一个会话。**切回同一个
-vault 的另一种拼写时，那段对话在面板里消失**（内容仍在 `<config_dir>/harness/*.jsonl` 留存里，
-JSONL 文件名即后端会话键可对照）。
+vault 的另一种拼写时，那段对话在面板里消失**（内容仍在留存里——现行布局为
+`<config_dir>/harness/sessions/<session_id>.jsonl`（每会话一文件，reshape-harness-session-recording
+起；此前是按 vault 聚合的 `<config_dir>/harness/<sanitize(vault根)>.jsonl`），可经会话列举对照）。
 
 **影响**：不丢数据；同一目录经两种拼写打开时对话历史在面板上「丢失」，且 M312 起事件流按
 vault 标识过滤后，旧拼写 vault 的在途事件会被新面板整条丢掉。真实使用一直经同一路径拼写打开
@@ -962,6 +972,10 @@ finding `.tower/comms/findings/20261003-worker-harness-vault-m312-bug-harness-va
 （拼接）与 `:289-292`（重解析）。
 
 ### harness JSONL 文件名 sanitize 有碰撞面：/tmp/a b 与 /tmp/a_b 落同一留存文件（M302 转派，2026-10-03，low；**已核销**：M309，merge `80cb3ee`，2026-10-03）
+
+**后续（2026-10-09 登记）**：本条描述的「按 vault 聚合 + sanitize 文件名」布局已随
+reshape-harness-session-recording（M391 合并）整体退役——现行留存为每会话一文件
+`sessions/<session_id>.jsonl`，sanitize 函数已移除。本条留作历史记录。
 
 **症状**：会话 JSONL 留存路径 = `<config_dir>/harness/<sanitize(vault 根)>.jsonl`，
 `sanitize`（`src-tauri/src/harness/jsonl.rs:88-100`）把路径分隔符与空格等非常规字符**统一**
