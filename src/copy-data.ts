@@ -1108,6 +1108,22 @@ const COPY_TABLE = {
     zh: "原因：{reason}",
     en: "Reason: {reason}",
   },
+  // 会话恢复错误（D409–D411，M391，change reshape-harness-session-recording）：harness_
+  // resume_session 的三道防线——留存文件读失败（{path}={file} 路径、{reason}=IO 原因）、
+  // 留存格式非法（首行非 session_open / 缺 system 或 messages / session id 形态非法，
+  // 无占位——各构造点都不带参数）、vault 归属不符（{vault_root}=源留存声明的 vault）。
+  D409: {
+    zh: "会话留存不可读（{path}）：{reason}",
+    en: "Session recording is unreadable ({path}): {reason}",
+  },
+  D410: {
+    zh: "会话留存格式非法或 session id 不合法",
+    en: "The session recording is malformed or the session id is invalid",
+  },
+  D411: {
+    zh: "该会话留存属于另一个 vault（{vault_root}），不能恢复到当前 vault",
+    en: "This session recording belongs to a different vault ({vault_root}) and cannot be resumed here",
+  },
 } satisfies Record<string, CopyEntry>;
 
 /** 文案表的键（D 编号，多串格带 `.N` 后缀）——由表数据推导，加一条即多一个键。 */
@@ -1200,6 +1216,10 @@ export const ERROR_COPY: Record<string, CopyKey> = {
   harness_thread_failed: "D363",
   harness_state_failed: "D364",
   harness_not_running: "D384",
+  // 会话恢复（M391，change reshape-harness-session-recording）：harness_resume_session。
+  harness_session_unreadable: "D409",
+  harness_session_invalid: "D410",
+  harness_session_vault_mismatch: "D411",
   open_url_rejected: "D78",
   open_url_failed: "D79",
 };

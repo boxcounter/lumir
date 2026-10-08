@@ -111,6 +111,8 @@ impl JsonlWriter {
                 "harness_jsonl_failed",
                 format!("session_open 序列化失败：{e}"),
             )
+            .param("dir", dir.display().to_string())
+            .param("reason", e.to_string())
         })?;
         Ok(Self {
             path,
