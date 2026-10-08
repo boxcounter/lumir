@@ -50,13 +50,16 @@ steps:
     expect:
       - label: 撞名新建被 O_EXCL 拒掉（错误回送模型）
         ax: { has: "/error · fs_already_exists/" }
+      - label: 第一闸决策后收敛为终态记录（按钮退场，计数锚点消失的前提——M384）
+        ax: { has: "vault_create · 已采纳" }
       - label: 第二个闸的 diff 预览在场
         ax: { has: "+HNC-NEW 新建落盘内容。" }
       - shot: 02-撞名被拒
 
-  - name: 采纳第二个闸（nth 1：第一张卡的按钮已禁用但仍在 transcript 里）
+  - name: 采纳第二个闸（nth 0：M384 起决策后卡片收敛——第一枚采纳钮随第一张卡退场，
+      第二枚采纳钮即第 0 个，不再有「置灰按钮占 nth」的计数锚点）
     do: click
-    target: { role: AXButton, name: "^采纳$", nth: 1 }
+    target: { role: AXButton, name: "^采纳$", nth: 0 }
 
   - name: 等循环收尾
     do: waitFor

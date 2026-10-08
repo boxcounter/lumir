@@ -23,6 +23,11 @@ steps:
       - label: pane 里的面板在位
         ax: { has: "/AXButton \\(发送\\)/" }
 
+  - name: 抢前台（后台注入整批丢键/错键会显著加剧——REVIEW.md 第 11 条；72/73 的提问串
+      与拒绝原因都走逐键注入）
+    do: focusWindow
+    retries: 4
+
   - name: 输入提问并 Enter 发送
     do: keys
     keys: ["p", "a", "t", "c", "h", "i", "t"]
@@ -73,7 +78,34 @@ steps:
         file: { path: harness-note.md, changedSince: before }
       - label: JSONL 记下批准后的工具调用（decision=ask）
         file: { path: "env:harness/*.jsonl", has: '"decision":"ask","id":"call_p1","kind":"tool_call","name":"vault_patch"' }
+      - label: 决策后卡片收敛为终态记录（工具名 + 已采纳 + 相对时间戳，M384）
+        ax: { has: "vault_patch · 已采纳" }
+      - label: 待决语义文案退场（「采纳后才落盘」不再出现，M384）
+        ax: { not: "采纳后才落盘" }
+      - label: 决策按钮退场——采纳钮不留置灰（置灰会被误读为还在等待，M384）
+        ax: { not: "/AXButton \\(采纳\\)/" }
+      - label: 决策按钮退场——拒绝钮不留置灰
+        ax: { not: "/AXButton \\(拒绝\\)/" }
+      - label: diff 默认折叠（决策后不再常驻显示；「-HNL-」前缀行只在 diff 里出现）
+        ax: { not: "-HNL-BETA 第二行，等待 patch。" }
       - shot: 02-采纳后
+
+  - name: 抢前台（disclosure 三角的 AXPress 在窗口后台时可能不生效——同 REVIEW.md 第 11 条现场）
+    do: focusWindow
+    retries: 4
+
+  - name: 展开决策详情回看 diff（点折叠详情的原生 disclosure 三角；文字节点本身不收起/展开）
+    do: click
+    target: { role: AXDisclosureTriangle, name: "查看详情" }
+
+  - name: 展开后 diff 重新可见
+    do: waitFor
+    waitFor:
+      has: ["-HNL-BETA 第二行，等待 patch。"]
+    expect:
+      - label: 展开后 diff 内容可见（正观测兜底：折叠时读不到、展开才读得到，证明折叠语义真实）
+        ax: { has: "-HNL-BETA 第二行，等待 patch。" }
+      - shot: 03-详情展开
 ---
 
 spec 判据（harness「权限机制 · 采纳与拒绝」的采纳侧 + fs-io「局部 patch 写入」）：
@@ -81,3 +113,8 @@ spec 判据（harness「权限机制 · 采纳与拒绝」的采纳侧 + fs-io�
 不变（用三行连续块断言：若未触及部分被动过，连续块必然断开）；被 patch 文件有打开中的
 编辑器会话，经既有 watch → 会话刷新通路同步（本场景的编辑器从开头就开着
 harness-note.md，且全程未手动编辑 = clean 会话，外部变更自动重载）。
+
+M384 终态呈现（spec「批准闸呈现与决策后收敛」的采纳侧）：决策后卡片收敛为一行终态
+记录（工具名 + 已采纳 + 相对时间戳），待决标题与决策按钮退场（不留置灰钮），diff 默认
+折叠、经「查看详情」展开后可回看。chromium 结构断言同面：tests/visual/scenes/
+m384-harness-approval-decided.spec.ts。
