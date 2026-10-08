@@ -3894,8 +3894,8 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     sessList.replaceChildren();
     sessList.hidden = true;
     harnessListSessions()
-      .then((json) => {
-        const entries = sessionEntriesOf(json);
+      .then((list) => {
+        const entries = sessionEntriesOf(list);
         for (const entry of entries) {
           const item = document.createElement("button");
           item.type = "button";

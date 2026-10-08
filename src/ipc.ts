@@ -23,6 +23,7 @@ import type { CreateNoteResult } from "./bindings/CreateNoteResult";
 import type { ThinkingEffort } from "./bindings/ThinkingEffort";
 import type { VaultWorkspace } from "./bindings/VaultWorkspace";
 import type { SessionResumeInfo } from "./bindings/SessionResumeInfo";
+import type { SessionSummary } from "./bindings/SessionSummary";
 
 /** 判断 invoke 的 reject 值是否为 CommandError 信封。 */
 export function isCommandError(e: unknown): e is CommandError {
@@ -405,15 +406,17 @@ export function harnessState(): Promise<string> {
 }
 
 /**
- * 本 vault 的历史会话清单（M392，JSON String）：`SessionSummary[]`——`session_id`
- * （`sessions/<id>.jsonl` 的文件名，恢复命令的入参）、`first_user_text`（该会话首条
- * 用户消息原文，无则 null；截断约 20 字是前端展示规则）、`ts`（首行 `session_open`
- * 信封的 unix 秒）。服务端已按 vault 过滤、按时间倒序（M395 合同形状，宽容解析见
- * src/harness-panel.ts 的 sessionEntriesOf）。命令未注册（M395 合并前）/ 后端不可用时
- * reject，调用方按「空清单」降级——选择器不因此报错。
+ * 本 vault 的历史会话清单（M392 + M395）：`Vec<SessionSummary>`（ts-rs 导出，真实载荷是
+ * JS 数组——与 harness_state 的 JSON String 惯例不同，M395 起平齐类型声明）。
+ * 每项含 `session_id`（`sessions/<id>.jsonl` 的文件名，恢复命令的入参）、
+ * `first_user_text`（该会话首条用户消息原文，无则缺省；截断约 20 字是前端展示规则）、
+ * `ts`（首行 `session_open` 信封的 unix 秒，缺则缺省）。服务端已按 vault 过滤、按时间
+ * 倒序；宽容解析见 src/harness-panel.ts 的 sessionEntriesOf（同收字符串与数组，防御
+ * 桩 / 旧后端）。命令未注册 / 后端不可用时 reject，调用方按「空清单」降级——选择器不
+ * 因此报错。
  */
-export function harnessListSessions(): Promise<string> {
-  return invoke<string>("harness_list_sessions");
+export function harnessListSessions(): Promise<SessionSummary[]> {
+  return invoke<SessionSummary[]>("harness_list_sessions");
 }
 
 /**
