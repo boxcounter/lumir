@@ -11,7 +11,8 @@ export type SessionResumeInfo = {
  */
 session_id: string, 
 /**
- * 灌回的 LLM 侧历史条数（`input` 项数，= 源文件最后一条会话轮次 llm_request 的
- * messages 长度；空会话恢复为 0）。
+ * 灌回的 LLM 侧历史条数（`input` 项数）：源文件最后一条会话轮次 llm_request 的
+ * messages，加末尾未入请求的 llm_response 折叠项（design §6.2 第 4 步——reasoning
+ * 回放项 + assistant 消息 + 悬空的 function_call 项）；空会话恢复为 0。
  */
 restored_items: number, };
