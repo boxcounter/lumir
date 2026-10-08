@@ -638,6 +638,28 @@
 
 ## 待修 findings（不阻塞）
 
+### acceptance README 的正则反斜杠示例与 YAML 引号风格耦合，照抄会在单引号场景写出恒红判据（M383 顺报，2026-10-08，low）
+
+**症状**：`scripts/acceptance/README.md`（约 :390 的「匹配值」节）用**双反斜杠**形态给正则示例——
+`要断言「文档末尾」得写 (?![\\s\\S])`，同节下方 `M140 r1 评审实证` 的 `/PAUSE-PROBE[\\s\\S]*$/` 同形。
+但场景 YAML 里反斜杠的正确形态取决于标量**引号风格**：单引号标量原样透传反斜杠（须写 `\s` / `\{`），
+双引号标量才需 `\\s`（`\\s` 经转义后值为 `\s`，而 `\s` 本身不是合法转义）。照抄 README 代码 span 的人若在
+**单引号**场景里写 `\\s\\S`，matcher 拿到的是字面 `\\s` = 正则「反斜杠 + s」，与任何文本都不匹配
+⇒ 判据**恒红**。
+
+**现场**：M383 的场景 104（harness thinking / tool 顺序）首跑即踩到——单引号正则里写 `\\s\\S` / `\\{`
+让有序判据恒红，改成单反斜杠后转绿；两次现场都在
+`test-results/acceptance/2026-10-08-m383-thinktool/104-harness-thinking-tool-order/`。
+
+**影响**：假红方向（不是假绿）——作者照抄文档会写出一个永不通过的判据，排查成本落在「以为产品坏了」上；
+触发面窄（只在单引号场景 + 含反斜杠正则时），定 low。
+
+**建议处置**：在「匹配值」节补一句引号风格与反斜杠的对照（单引号写单反斜杠、双引号写双反斜杠，两者最终
+都给 matcher 一个单反斜杠值的正则源），或把示例统一改为单引号场景的推荐形态。纯文档，本批只落账、未立项。
+
+**证据**：`.tower/comms/findings/20261008-worker-thinktool1-improve-acceptance-readme-yaml.md`（M383 顺报）；
+落点 `scripts/acceptance/README.md` 的「匹配值」节（约 :390）。
+
 ### acceptance `run.mjs --help` 静默触发全量真机跑批（M374 现场，2026-10-07，low）
 
 **症状**：`node scripts/acceptance/run.mjs --help` 不打印用法，而是把不识别的 `--help` 当场景 id 前缀
