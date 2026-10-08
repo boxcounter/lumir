@@ -150,6 +150,27 @@ pub struct SessionResumeInfo {
     pub restored_items: usize,
 }
 
+/// `harness_list_sessions` 的元素（ts-rs 导出；前端会话选择器的消费形状）：
+/// 一份本 vault 留存会话的摘要。
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export, export_to = "../../src/bindings/")]
+pub struct SessionSummary {
+    /// 留存文件名去 `.jsonl`（`sessions/<session_id>.jsonl`）；也是恢复命令的入参。
+    pub session_id: String,
+    /// 文件内第一条 `llm_request` 的首条 user 消息正文**原文**（未截断——会话名「约 20 字」
+    /// 的截断规则在前端）；该会话还没有用户消息时为 None。
+    #[ts(optional)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub first_user_text: Option<String>,
+    /// 首行 `session_open` 信封的 UNIX 秒（会话建立时刻）；缺 ts 的历史文件为 None。
+    // ts-rs 默认把 u64 映成 bigint，而 JSON.parse 出来的是 number：与 `PanelMessage::ts`
+    // 同处理。
+    #[ts(optional)]
+    #[ts(type = "number")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ts: Option<u64>,
+}
+
 /// 一个 vault 的会话。
 pub struct Session {
     root: PathBuf,

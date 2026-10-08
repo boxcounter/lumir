@@ -126,6 +126,9 @@ pub fn run() {
             harness::harness_state,
             harness::harness_set_thinking_effort,
             harness::harness_resume_session,
+            // 历史会话列举（M395，change reshape-harness-session-recording 任务 2.1）：
+            // 面板会话选择器的数据源，过滤与恢复命令同一 vault 归属口径。
+            harness::harness_list_sessions,
         ])
         .setup(move |app| {
             // 诊断日志先初始化：`[log] level` 在第一条事件之前生效（level = off 时
