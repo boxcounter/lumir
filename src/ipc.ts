@@ -22,6 +22,7 @@ import type { LinkResolveResult } from "./bindings/LinkResolveResult";
 import type { CreateNoteResult } from "./bindings/CreateNoteResult";
 import type { ThinkingEffort } from "./bindings/ThinkingEffort";
 import type { VaultWorkspace } from "./bindings/VaultWorkspace";
+import type { SessionResumeInfo } from "./bindings/SessionResumeInfo";
 
 /** 判断 invoke 的 reject 值是否为 CommandError 信封。 */
 export function isCommandError(e: unknown): e is CommandError {
@@ -401,6 +402,31 @@ export function harnessSetThinkingEffort(effort: ThinkingEffort): Promise<void> 
  */
 export function harnessState(): Promise<string> {
   return invoke<string>("harness_state");
+}
+
+/**
+ * 本 vault 的历史会话清单（M392，JSON String）：`SessionSummary[]`——`session_id`
+ * （`sessions/<id>.jsonl` 的文件名，恢复命令的入参）、`first_user_text`（该会话首条
+ * 用户消息原文，无则 null；截断约 20 字是前端展示规则）、`ts`（首行 `session_open`
+ * 信封的 unix 秒）。服务端已按 vault 过滤、按时间倒序（M395 合同形状，宽容解析见
+ * src/harness-panel.ts 的 sessionEntriesOf）。命令未注册（M395 合并前）/ 后端不可用时
+ * reject，调用方按「空清单」降级——选择器不因此报错。
+ */
+export function harnessListSessions(): Promise<string> {
+  return invoke<string>("harness_list_sessions");
+}
+
+/**
+ * 从留存文件恢复历史会话并续聊（M392，change reshape-harness-session-recording design §6.2）：
+ * `session_id` 是 `sessions/<id>.jsonl` 的文件名。后端读源文件最后一条会话轮次
+ * `llm_request` 的完整请求体（折叠其后未入请求的末尾响应），system + input 原样灌进
+ * **新**会话并续写新留存文件（`opened_from=restore`）——面板重渲染由调用方经
+ * `harness_state` 快照消费。busy 态 reject `harness_busy`；源文件不属于当前 vault reject
+ * `harness_session_vault_mismatch`；留存不可读 / 格式非法 reject `harness_session_unreadable` /
+ * `harness_session_invalid`（D409–D411 经 src/copy.ts 的 errorText 按 code 渲染）。
+ */
+export function harnessResumeSession(session_id: string): Promise<SessionResumeInfo> {
+  return invoke<SessionResumeInfo>("harness_resume_session", { session_id });
 }
 
 /** 解析 harness:event 的载荷：宽容入口——载荷是 string 时先 JSON.parse；形状不认识的
