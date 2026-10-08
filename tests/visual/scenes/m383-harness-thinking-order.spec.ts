@@ -90,6 +90,14 @@ const fire = (page: Page, payload: unknown) =>
     payload,
   );
 
+/** 同帧连发：单次 evaluate 内同步处理全部事件（同一 JS task，rAF 合帧插不进来）——
+ *  M383 r2 的同帧交错判定输入（帧粒度合同的两处漏洞由这两例钉死）。 */
+const fireBatch = (page: Page, events: unknown[]) =>
+  page.evaluate((evs) => {
+    const f = (window as unknown as { __fireHarnessEvent: (x: unknown) => void }).__fireHarnessEvent;
+    for (const e of evs) f(e);
+  }, events);
+
 // ── 事件词汇（全部合成标记，两两互不为子串） ──
 const THINK_A = { type: "reasoning_chunk", text: "思考甲片。", index: 0 };
 const THINK_B = { type: "reasoning_chunk", text: "思考乙片。", index: 1 };
@@ -242,3 +250,42 @@ for (const c of CASES) {
     }
   });
 }
+
+// ── 同帧交错（M383 r2）：事件粒度合同的补钉 ──
+// 单次 evaluate 内同步连发（同一 JS task，rAF 合帧插不进来）——帧粒度实现下这两例必红：
+//   text→think→text：思考后的正文并入思考前的段（单体缓冲无法在思考处切分）；
+//   tool→think→tool：TOOL2 在思考落位前并入 TOOL1 的块（ensureToolsBlock 判空不先 flush）。
+// r1 评审 finding（P2）的必 FAIL 输入实测记录见 mission notes 与 test-results/m383/。
+
+test("到达序·同帧：text→think→text 一帧内连发，思考把段切开（后到正文进新段）", async ({
+  page,
+}) => {
+  await stubTauri(page, VAULT);
+  await stubHarness(page);
+  await openPanel(page);
+  await sendAndFire(page, []);
+  await fireBatch(page, [TEXT_1, THINK_A, TEXT_2]);
+  await expect
+    .poll(() => msgChildClasses(page), { message: "同帧 text→think→text 收敛到期望序" })
+    .toEqual(["lumir-hp-who", "lumir-hp-body", "lumir-hp-think", "lumir-hp-body"]);
+  await expectAllFolded(page);
+  // 段切分的实义：思考后的正文不进思考前的段（圈在 agent 消息内——用户消息体同 class）。
+  const bodies = page.locator(".lumir-hp-msg-assistant .lumir-hp-body");
+  await expect(bodies.nth(0)).toContainText("正文一。");
+  await expect(bodies.nth(0)).not.toContainText("正文二。");
+  await expect(bodies.nth(1)).toContainText("正文二。");
+});
+
+test("到达序·同帧：tool→think→tool 一帧内连发，思考封板在途工具块、前后各成一块", async ({
+  page,
+}) => {
+  await stubTauri(page, VAULT);
+  await stubHarness(page);
+  await openPanel(page);
+  await sendAndFire(page, []);
+  await fireBatch(page, [tool("started"), tool("done"), THINK_A, tool("started"), tool("done")]);
+  await expect
+    .poll(() => msgChildClasses(page), { message: "同帧 tool→think→tool 收敛到期望序" })
+    .toEqual(["lumir-hp-who", "lumir-hp-tools", "lumir-hp-think", "lumir-hp-tools"]);
+  await expectAllFolded(page);
+});

@@ -2654,10 +2654,13 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
    *  即它发生的位置（段之间或消息尾）；恢复路径挂 lastAssistantEl；都无 = 孤儿工具
    *  记录（协议外）兜底挂 transcript 末尾。新文本段开出时旧块封板（sealedToolBlocks）。 */
   function ensureToolsBlock(): ToolsBlock {
-    if (activeTools !== null) return activeTools;
-    // 先把缓冲里的正文落进当前段（若有）：正文 chunk 的 rAF 合帧可能还没跑，而工具事件
-    // 是同步处理的——不先落的话，缓冲中的正文会开新段跑到工具块之后（时序再倒置）。
+    // 先把缓冲里的正文与待落位结构落进当前帧（M383：正文 chunk 的 rAF 合帧可能还没跑，
+    // 而工具事件是同步处理的——不先落的话，缓冲中的正文会开新段跑到工具块之后，时序再
+    // 倒置）。flush 必须在「在途块判空」**之前**：同帧 tool→think→tool 时，思考的落位会把
+    // 在途块封板（placeThinkingView），TOOL2 因此开新块；判空在前的话 TOOL2 先进旧块、
+    // 封板失效（r1 评审 P2）。flush 对在途块无害：无缓冲正文 / 无待落位结构时立即返回。
     flushChunks();
+    if (activeTools !== null) return activeTools;
     const el = document.createElement("div");
     el.className = "lumir-hp-tools";
     const host = streamingEl ?? lastAssistantEl;
@@ -3165,6 +3168,10 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
         return;
       }
       case "reasoning_chunk": {
+        // M383：同帧 text→think 交错时，先把已缓冲的正文落位（开段建出、序在思考之前）
+        // 再登记本思考——否则思考后到达的正文会并进思考前的段，帧内事件序倒置（r1 评审 P2）。
+        // 缓冲为空时不 flush（纯思考流的热路径不受影响）。
+        if (chunkBuffer !== "") flushChunks();
         // 思考分片（M363）：先立流式消息（纯思考轮 / 思考先于首个正文分片到达是常态——
         // 后端保证思考分片在该轮 text_chunk 之前发出），再按块序号累加进数据层；
         // 上屏走 rAF 合帧（flushThinkingViews），折叠态不影响流入（想看的人点开即直播）。
