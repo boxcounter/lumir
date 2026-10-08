@@ -52,7 +52,10 @@
 // effort 不支持 hover hint / ctx 读数含义 hint / 浮层段标签 ×2 / 浮层读屏名 / chip 读屏名
 // 未知态降级 D399）、D400 为 M374 停止中阶段行（stopping 相位即时反馈）、D401 为 M378
 // hover hint 第二行（cache hit rate 带值）、D402 / D403 为 M381 config-only 空清单提示态
-//（浮层模型段占位句 + chip 读屏名空态——不伪造模型条目））；M378 起面板内容字号支持 ⌘+/- 步进
+//（浮层模型段占位句 + chip 读屏名空态——不伪造模型条目）；D409–D411 为 M391 登记的会话恢复
+// 三错误码（harness_session_unreadable / _invalid / _vault_mismatch）——M392 恢复选择器的
+// 消费点：恢复失败经 src/copy.ts 的 errorText 按 code 渲染上错误行（D348 的 {message}）；
+// 选择器行本身不新造文案（无历史会话 = 不渲染清单容器，会话名缺原文回落 D330「新会话」））；M378 起面板内容字号支持 ⌘+/- 步进
 //（--lumir-hp-scale，与内容 pane 的 textScale 同语义：×1.1 钳 [12,32]、reset 回基线、
 // 不落盘；焦点路由在装配层 src/main.ts）；
 // 长驻元素（toggle 钮 / harness 段 / 输入框 placeholder / 按钮 / 上下文 chip / ctx 读数 /
@@ -62,7 +65,7 @@
 //（前者每次点击现取、后者每次打开现建），天然跟当前语言走。
 
 import { GFM, parser as commonmarkParser } from "@lezer/markdown";
-import { currentLanguage, formatRelative, onRelabel, t } from "./copy";
+import { currentLanguage, errorText, formatDate, formatRelative, onRelabel, t } from "./copy";
 import type { Language } from "./copy";
 import {
   configGet,
@@ -70,7 +73,9 @@ import {
   errorMessage,
   harnessAbort,
   harnessApprove,
+  harnessListSessions,
   harnessNewSession,
+  harnessResumeSession,
   harnessSend,
   harnessSetThinkingEffort,
   harnessState,
@@ -723,6 +728,87 @@ export function relativeWhen(at: number, now: number, lang: Language = currentLa
   return formatRelative(-1, "day", lang, "narrow");
 }
 
+// ---------------------------------------------------------------------------
+// 会话恢复选择器的纯模型层（M392，change reshape-harness-session-recording design §6.1）：
+// 极简选择器——列表 + 点击恢复，无重命名 / 删除 / 搜索 / 分组（探针期完整形态不做）。
+// 与上面几层同一条分层纪律：截断 / 清单解析 / 时间读数是纯函数（零 DOM 环境直接驱动，
+// tests/unit/harness-session-picker.test.ts），DOM 只是渲染面。
+// ---------------------------------------------------------------------------
+
+/** 会话名截断长度（约 20 字）。截断口径的单一真源：标题栏会话名与恢复选择器的会话行
+ *  共用（design §6.1：同一口径），按码点截断——emoji / CJK 都按 1 字计。 */
+export const SESSION_NAME_MAX = 20;
+
+/** 会话名上屏形态：超长按码点截断 + 「…」；不超原样返回（含首尾空白——名是用户原文，
+ *  不改写）。 */
+export function truncateSessionName(text: string, max: number = SESSION_NAME_MAX): string {
+  const chars = Array.from(text);
+  return chars.length > max ? `${chars.slice(0, max).join("")}…` : text;
+}
+
+/** 历史会话清单的一条（`harness_list_sessions` 的宽容提取结果；M395 合同形状
+ *  `SessionSummary` = { session_id, first_user_text, ts }，解析只认这三个键）。 */
+export interface SessionEntry {
+  /** `sessions/<id>.jsonl` 的文件名（恢复命令的入参）。 */
+  sessionId: string;
+  /** 首条用户消息原文（会话名口径的数据源）；null = 无用户消息（回落 D330「新会话」）。 */
+  firstUserText: string | null;
+  /** 首行 `session_open` 信封的 unix 秒；null = 缺读数不伪造（时间不显示）。 */
+  ts: number | null;
+}
+
+/**
+ * `harness_list_sessions` 载荷的宽容解析（M392 + M395 合同）：string 先 JSON.parse，
+ * 非数组 / 坏 JSON → 空清单（桩环境、M395 合并前的旧后端、读取失败不报错打断浮层）；
+ * 逐项提取只认三个键——`session_id` 必须是非空字符串（缺 / 空串 / 非字符串的项丢弃，
+ * 没有 id 就无法恢复，留着也是死项）；`first_user_text` 缺 / null / 空白串 → null；
+ * `ts` 缺 / 非数 / 非正 → null。
+ *
+ * 排序：合同说服务端已按时间倒序，这里仍按 session_id 字典序降序再排一次——时间序
+ * 前缀（s<unix_millis>-…）可排序，字典序与时间序同向，乱序 / 桩环境的渲染序因此不
+ * 让给网络序（与 accumulateThinkingBlock 的排序兜底同一条纪律）。
+ */
+export function sessionEntriesOf(payload: unknown): SessionEntry[] {
+  let value: unknown = payload;
+  if (typeof value === "string") {
+    try {
+      value = JSON.parse(value);
+    } catch {
+      return [];
+    }
+  }
+  if (!Array.isArray(value)) return [];
+  const out: SessionEntry[] = [];
+  for (const item of value) {
+    if (typeof item !== "object" || item === null) continue;
+    const rec = item as Record<string, unknown>;
+    if (typeof rec.session_id !== "string" || rec.session_id === "") continue;
+    const text = rec.first_user_text;
+    const ts = rec.ts;
+    out.push({
+      sessionId: rec.session_id,
+      firstUserText: typeof text === "string" && text.trim() !== "" ? text : null,
+      ts: typeof ts === "number" && Number.isFinite(ts) && ts > 0 ? ts : null,
+    });
+  }
+  return out.sort((a, b) => (a.sessionId < b.sessionId ? 1 : a.sessionId > b.sessionId ? -1 : 0));
+}
+
+/** 选择器行的时间读数（unix 秒）：同日给相对时间（「5 分钟前」，narrow 与消息 when 行
+ *  同 formatter）；跨天 / 更老给短日期（与文档日期同 formatter，Intl 承载语言规则）。
+ *  ts 为 null 时调用方不渲染时间格（sessionEntriesOf 已不伪造读数）。 */
+export function sessionWhen(ts: number, now: number, lang: Language = currentLanguage()): string {
+  const at = ts * 1000;
+  const sameDay = new Date(at).toDateString() === new Date(now).toDateString();
+  const seconds = Math.max(0, Math.floor((now - at) / 1000));
+  if (seconds < 60) return formatRelative(-seconds, "second", lang, "narrow");
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return formatRelative(-minutes, "minute", lang, "narrow");
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24 && sameDay) return formatRelative(-hours, "hour", lang, "narrow");
+  return formatDate(new Date(at), "short", lang);
+}
+
 /**
  * 发送钮两态状态机（M347）：idle = 可发送；running = 处理中（钮面 = 停止态，点击走
  * 停止钩子）；stopping = 停止已请求、等后端终态（连点幂等——第二次 stop-clicked 被吞，
@@ -1307,7 +1393,9 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   segNewPlus.textContent = "＋"; // i18n-exempt: glyph（全角加号图形，非文案）
   const segNewLabel = document.createElement("span");
   segNew.append(segNewPlus, segNewLabel);
-  // 会话浮层（节点 1 裁决后口径）：只含「新建会话」一个动作项，不列历史会话。
+  // 会话浮层：「新建会话」动作项 + 本 vault 历史会话极简选择器（M392，design §6.1——
+  // 只列不管理：无重命名 / 删除 / 搜索 / 分组；点一项即恢复续聊）。清单每次打开现拉现建
+  // （会话在对话进行中持续增长，不囤旧清单）；空历史时清单容器整段隐藏。
   const sessPop = document.createElement("div");
   sessPop.className = "lumir-hp-sesspop";
   sessPop.setAttribute("role", "menu");
@@ -1322,7 +1410,10 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   popPlus.textContent = "＋"; // i18n-exempt: glyph（全角加号图形，非文案）
   const popLabel = document.createElement("span");
   sessPopItem.append(popPlus, popLabel);
-  sessPop.append(sessPopItem);
+  const sessList = document.createElement("div");
+  sessList.className = "lumir-hp-sesspop-list";
+  sessList.hidden = true;
+  sessPop.append(sessPopItem, sessList);
   sessionWrap.append(sessionButton, sessPop);
   seg.append(sessionWrap, segNew);
   // 段进标题栏（toggle 钮之前；hidden 长驻，在场与否随 attach 状态翻）——装配层只管宽度
@@ -2027,8 +2118,8 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   }
 
   // ── 会话名（标题栏 harness 段的会话身份；design §3 口径）───────────────────
-  /** 会话名截断长度（约 20 字，按码点截断——emoji / CJK 都按 1 字计）。 */
-  const SESSION_NAME_MAX = 20;
+  // 截断口径的单一真源在模块级（truncateSessionName / SESSION_NAME_MAX）——恢复选择器的
+  // 会话行与这里共用同一份（design §6.1）。
 
   /** 从消息块序列取「首条用户消息的原始问题文本」：第一个段落块的文字（XML 序列化前的
    *  原始输入——卡片与序列化标签不作名），空白折叠成单空格。 */
@@ -2044,9 +2135,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       sessionButton.removeAttribute("title");
       return;
     }
-    const chars = Array.from(firstUserText);
-    sname.textContent =
-      chars.length > SESSION_NAME_MAX ? `${chars.slice(0, SESSION_NAME_MAX).join("")}…` : firstUserText;
+    sname.textContent = truncateSessionName(firstUserText);
     sessionButton.title = firstUserText;
   }
 
@@ -3789,16 +3878,77 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       .catch((e: unknown) => appendError(t("D348", { message: errorMessage(e) })));
   }
   segNew.addEventListener("click", startNewSession);
-  /** 会话浮层开合（aria-expanded 随开合翻转；M351 a11y，design §5）。 */
+  /** 会话浮层开合（aria-expanded 随开合翻转；M351 a11y，design §5）。打开时现拉现建
+   *  历史会话清单（M392）；拉取失败（M395 合并前的旧后端 / 桩 / 后端不可用）按空清单
+   *  降级——选择器静默不列，不报错打断浮层。 */
   function setSessPop(open: boolean): void {
+    if (open) buildSessList();
     sessPop.hidden = !open;
     sessionButton.setAttribute("aria-expanded", String(open));
+  }
+
+  /** 历史会话清单现建（每次打开现拉——会话文件随对话增长，不囤旧清单）：每行 = 会话名
+   *  （首条用户消息，截断口径与标题栏会话名同一份）+ 时间读数；点击即恢复续聊。
+   *  行是临时 DOM（浮层关即弃），不注册 onRelabel——与合并选择器浮层同口径。 */
+  function buildSessList(): void {
+    sessList.replaceChildren();
+    sessList.hidden = true;
+    harnessListSessions()
+      .then((list) => {
+        const entries = sessionEntriesOf(list);
+        for (const entry of entries) {
+          const item = document.createElement("button");
+          item.type = "button";
+          item.className = "lumir-hp-sesspop-item lumir-hp-sesspop-history";
+          item.setAttribute("role", "menuitem");
+          const name = document.createElement("span");
+          name.className = "lumir-hp-sesspop-name";
+          const text = entry.firstUserText ?? t("D330"); // 无用户消息：回落「新会话」（同会话名口径）
+          name.textContent = truncateSessionName(text);
+          name.title = text;
+          item.append(name);
+          if (entry.ts !== null) {
+            const when = document.createElement("span");
+            when.className = "lumir-hp-sesspop-when";
+            when.textContent = sessionWhen(entry.ts, Date.now());
+            item.append(when);
+          }
+          item.addEventListener("click", (event) => {
+            event.stopPropagation();
+            setSessPop(false);
+            resumeSession(entry);
+          });
+          sessList.append(item);
+        }
+        sessList.hidden = sessList.childElementCount === 0;
+      })
+      .catch(() => {});
+  }
+
+  /** 恢复选中历史会话（选择器点击路径，M392）：恢复 = 后端读源文件最后一条会话轮次
+   *  llm_request 的完整请求体、system + input 原样灌进**新**会话并续写新留存文件
+   * （M2 的 harness_resume_session；busy / 跨 vault / 留存损坏由后端拒绝，D409–D411
+   *  经 errorText 按 code 渲染上错误行）。面板消息**不重建**——LLM 侧 input 是单一
+   *  事实源，渲染面不虚报历史（worker-rsr-core 遗留说明；design §6.2 的面板重建本期
+   *  无 wire 数据通道，最小恢复如实呈现空 transcript）：resetView 清渲染面，会话名按
+   *  同口径落在选中项的首条用户消息上。档位经 refreshThinkingState 重取（恢复真实带
+   *  回源会话档位）；用量读数**不**拉快照——新会话尚无已发请求，后端 usage 是零值缺省，
+   *  拉来上屏就是虚报，保持「无读数」等下一轮真值。 */
+  function resumeSession(entry: SessionEntry): void {
+    harnessResumeSession(entry.sessionId)
+      .then(() => {
+        resetView();
+        firstUserText = entry.firstUserText;
+        applySessionName();
+        refreshThinkingState();
+      })
+      .catch((e: unknown) => appendError(t("D348", { message: errorText(e) })));
   }
   sessPopItem.addEventListener("click", () => {
     setSessPop(false);
     startNewSession();
   });
-  // 会话名下拉：展开/收起浮层（浮层只含「新建会话」动作项，节点 1 裁决不列历史）；
+  // 会话名下拉：展开/收起浮层（浮层 = 「新建会话」动作项 + 历史会话选择器，M392）；
   // 浮层外交互（点击其他处）收起。按钮在标题栏（drag 区）里——clickable 元素由 tauri
   // drag.js 自动阻断拖拽，不需要 mousedown preventDefault（REVIEW.md 第 16 条）。
   sessionButton.addEventListener("click", (event) => {
