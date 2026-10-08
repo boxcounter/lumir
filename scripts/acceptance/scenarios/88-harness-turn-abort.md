@@ -130,8 +130,11 @@ M347 把发送钮做成两态（空闲「发送」/ 处理中「停止」），M
 - **「停止后可继续提问」只判到 idle**：本场景判钮面回到 `发送`（composer 已收口、可再发），
   **没有**真的再发一轮（mock 每轮从脚本头重弹，再发一轮会再睡 12s，成本高且对判据无增量）。
 - **中断落在工具执行段 / 批准闸等待**：那两条检查点（②③）需要有在途工具调用的现场，本场景
-  只覆盖检查点 ①。工具循环中断的判据在 Rust 侧单测
-  （`src-tauri/src/harness/turn.rs` 的 `turn_aborted` 路径）与批准闸收回的 `approval_withdrawn`。
+  只覆盖检查点 ①。工具循环中断的判据在 Rust 侧单测（`src-tauri/src/harness/turn.rs` 的
+  `turn_aborted` 路径）：待批准项被停止时走 `gated_execute` 的 `ApprovalSignal::Withdrawn` 分支，
+  回送 `ToolOutput::err("turn_aborted", …)`、该调用不执行（`turn.rs:817-822`）——wire 留存里表现为
+  「该调用未执行」随历史进下一条 `llm_request.messages`，不再有独立的批准收回记录
+  （`approval_withdrawn` 是 reshape 废弃的 kind，`session.rs:370`）。
 - **「流式期间就能断」不在本场景**：这里停在 `delay_ms`（不可中断）形态上，只验「产出保留 +
   已停止标注 + 两态收口」；**流中收流**（部分到达 + 在途停止）归场景 97——两者刻意分工，
   谁也不是谁的超集。

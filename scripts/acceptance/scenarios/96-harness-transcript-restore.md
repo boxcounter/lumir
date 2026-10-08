@@ -9,8 +9,10 @@ title: harness transcript 快照恢复保真：切 vault 回来后工具行带�
 open: harness-note.md
 marker: "HNL-ALPHA"
 # mock 两轮都发工具调用（撞名失败 + 新建成功）、第三轮收尾——落三条 assistant 面板记录 +
-# 两条 tool 记录。这正是「恢复路径按消息边界切块」要的现场：live 路径一轮一个泡、两条工具行
-# 落同一块（终态折叠），恢复路径一条记录一个泡、工具行各挂各自的消息（每块一行、不折叠）。
+# 两条 tool 记录，且两次 vault_create 被中段正文（「撞名被拒了，换个新名字。」）隔开。M383
+# （到达序渲染）起 live 路径也把两行拆进**单行块、不折叠**，与恢复路径一致——本场景判的是
+# **恢复路径按消息边界切块**（工具行各挂各自的 assistant 消息、带参数摘要、消息数 = 面板记录数），
+# 不是 live/recovery 的折叠对比（该对比随 M383 退场，见正文「断言口径」）。
 # `allow: [vault_create]` 免批准闸（写类工具默认 ask，本场景判的不是闸）。
 config:
   harness:
