@@ -1,6 +1,8 @@
 // M363 思考块 + 思考程度 chip（change add-harness-thinking-display-and-effort 的面板半边；
 // 档位 / reasoning_chunk 事件 / thinking 快照字段的契约 = M362 的 core 半边）：
-//   - agent 消息内渲染思考块：块在前正文在后、多块按块序号序、无思考不渲染块（零噪声）；
+//   - agent 消息内渲染思考块：思考块 / 正文段 / 工具块按**事件到达序**排列（M383 起；
+//     旧的「块在前正文在后」合同在 think↔text 交错时失效，到达序矩阵见
+//     m383-harness-thinking-order.spec.ts）、多块按块序号序、无思考不渲染块（零噪声）；
 //   - 折叠为默认（含流式期间）：折叠态 chevron +「思考过程 · N 秒」（D388），展开态
 //     左边线 + 次级灰正文（token 层现行值——像素面归视觉还原，本场景只守结构）；
 //   - 思考程度档位的呈现面（M373 起）：并入合并选择器 chip（.lumir-hp-model · effort
@@ -207,7 +209,7 @@ test("思考程度不支持态：读数置灰 + D390 读屏名 + hover hint + �
   expect(writes).toEqual([]);
 });
 
-test("思考块：折叠默认（含流式）/ 块在前正文在后 / 多块按序号 / 复制不含思考内容", async ({
+test("思考块：折叠默认（含流式）/ 到达序排列 / 多块按序号 / 复制不含思考内容", async ({
   page,
 }) => {
   await stubTauri(page, VAULT);
@@ -238,18 +240,21 @@ test("思考块：折叠默认（含流式）/ 块在前正文在后 / 多块按
   await fire(page, { type: "text_chunk", text: "正文回答" });
   await expect(think.locator(".lumir-hp-think-body")).toContainText("先看文档结构。再分三段。");
 
-  // 多块按序号序：第二轮思考（index 1）排第二轮正文之前、块 0 之后。
+  // 多块按到达（= 块序号）序：第二轮思考（index 1）到达在第一轮正文之后、第二轮正文之前
+  //  （M383 到达序合同：思考块 / 正文段严格按事件到达序排列，旧的「思考一律在正文前」
+  //  合同在交错时失效，已由 m383 场景矩阵钉死）。
   await fire(page, { type: "reasoning_chunk", text: "第二轮的思考。", index: 1 });
   await fire(page, { type: "text_chunk", text: "第二轮正文" });
   await expect(page.locator(".lumir-hp-think")).toHaveCount(2);
   const msgKids = await page
     .locator(".lumir-hp-msg-assistant")
     .evaluate((el) => [...el.children].map((k) => k.className));
-  // 结构序：who 行 → 思考块 ×2（块 0 前块 1 后）→ body → 工具清单（无）。
+  // 结构序（到达序）：who 行 → 块 0 → 第一轮正文段 → 块 1 → 第二轮正文段。
   expect(msgKids[0]).toContain("lumir-hp-who");
   expect(msgKids[1]).toContain("lumir-hp-think");
-  expect(msgKids[2]).toContain("lumir-hp-think");
-  expect(msgKids[3]).toContain("lumir-hp-body");
+  expect(msgKids[2]).toContain("lumir-hp-body");
+  expect(msgKids[3]).toContain("lumir-hp-think");
+  expect(msgKids[4]).toContain("lumir-hp-body");
   expect(
     await think.nth(0).locator(".lumir-hp-think-body").textContent(),
   ).toContain("先看文档结构。");

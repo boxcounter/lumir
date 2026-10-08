@@ -1547,6 +1547,16 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
    *  轮次终态经 finalizeStreamingMessage 定格（数据引用释放，DOM 元素留在消息内）。 */
   let thinkingBlocks: ThinkingBlock[] = [];
   let thinkingDirty = false;
+  /** 内容事件的到达序号（M383）：text_chunk / reasoning_chunk 各领一个单调递增号——思考块
+   *  视图与正文段的**结构性创建**按到达序合并落位（「DOM 序 = 事件序」合同，见
+   *  flushPendingStructures；旧实现把思考块一律锚到首个正文段之前，交错时倒置）。 */
+  let arrivalSeq = 0;
+  /** 有待落位的思考块视图创建（块序号 + 首分片到达序）；元素创建仍守 rAF 合帧纪律，
+   *  在 flush 时按 seq 与正文段创建合并排序。 */
+  let pendingThinkCreates: Array<{ index: number; seq: number }> = [];
+  /** 缓冲正文首 chunk 的到达序：正文段创建的排序位次（null = 缓冲为空）。同帧内
+   *  text↔think 交错到达时，段位次与思考块位次按 seq 排序决定谁先落位。 */
+  let pendingSegSeq: number | null = null;
   /** 文本段（M374）：消息本体是「文本段 + 工具块」按到达序交错的序列——工具行留在
    *  它发生的那处文本段之前，不再被整体挪到消息末尾（M368 挂消息级的挂点是末尾，
    *  与「工具先于正文发生」的真实时序倒挂）。段容器 = .lumir-hp-body（样式同源），
@@ -2644,10 +2654,13 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
    *  即它发生的位置（段之间或消息尾）；恢复路径挂 lastAssistantEl；都无 = 孤儿工具
    *  记录（协议外）兜底挂 transcript 末尾。新文本段开出时旧块封板（sealedToolBlocks）。 */
   function ensureToolsBlock(): ToolsBlock {
-    if (activeTools !== null) return activeTools;
-    // 先把缓冲里的正文落进当前段（若有）：正文 chunk 的 rAF 合帧可能还没跑，而工具事件
-    // 是同步处理的——不先落的话，缓冲中的正文会开新段跑到工具块之后（时序再倒置）。
+    // 先把缓冲里的正文与待落位结构落进当前帧（M383：正文 chunk 的 rAF 合帧可能还没跑，
+    // 而工具事件是同步处理的——不先落的话，缓冲中的正文会开新段跑到工具块之后，时序再
+    // 倒置）。flush 必须在「在途块判空」**之前**：同帧 tool→think→tool 时，思考的落位会把
+    // 在途块封板（placeThinkingView），TOOL2 因此开新块；判空在前的话 TOOL2 先进旧块、
+    // 封板失效（r1 评审 P2）。flush 对在途块无害：无缓冲正文 / 无待落位结构时立即返回。
     flushChunks();
+    if (activeTools !== null) return activeTools;
     const el = document.createElement("div");
     el.className = "lumir-hp-tools";
     const host = streamingEl ?? lastAssistantEl;
@@ -2869,8 +2882,11 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
 
   // ── 思考块（M363，原型屏 9 形态合同）────────────────────────────────────────
   // 折叠 = 默认（含流式期间）：单行 chevron +「思考过程 · N 秒」（D388）；展开 = 左边线 +
-  // 次级灰正文（模型思考原文，textContent 注入——本模块渲染纪律不变）。块在前正文在后、
-  // 多块按块序号序、无思考不渲染块（零噪声——没有 reasoning_chunk 就不建元素）。
+  // 次级灰正文（模型思考原文，textContent 注入——本模块渲染纪律不变）。多块按块序号序、
+  // 无思考不渲染块（零噪声——没有 reasoning_chunk 就不建元素）。思考块 / 工具块 / 正文段
+  // 在消息内严格按事件到达序排列（M383 合同，交错矩阵由 m383 视觉场景的结构断言守；
+  // 旧「块在前正文在后」的锚定插入在 think↔text 交错时把思考块倒置到在途工具块之前，
+  // Alex 2026-10-08 截图实证，已退役）。
   // 快照恢复的历史消息不带 reasoning（PanelMessage 无此字段），不伪造块。
 
   /** 思考块的 DOM 面：元素长驻已沉淀的消息内（终态后数据引用释放，重渲只走 relabel）。 */
@@ -2923,32 +2939,73 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     return { el, head, text, body };
   }
 
-  /** 块在前正文在后：插到首个正文段容器之前（正文段懒建，见 ensureThinkingView 内注释）。
-   *  views 按块序号序查找（块序 = DOM 序，后端按序发出，乱序到达由 accumulate 的排序兜底）。 */
+  /** 思考块的 DOM 落位（M383 到达序合同）：思考块 / 工具块 / 正文段在消息内严格按事件
+   *  到达序排列——结构性创建一律追加到流式消息尾（= 当时的到达序尾），由
+   *  flushPendingStructures 按到达序排好计划后调用；不再锚定首个正文段（旧锚点在
+   *  「首个正文段已建、思考后到」时把思考块跳到在途工具块与首轮正文之前，时序倒置）。
+   *  思考落在工具行之间时把在途工具块封板（与开新正文段同口径：块序 = 时序，工具行
+   *  不被跨块合并抹平）。views 按块序号查找（块序 = DOM 序，后端按序发出，乱序到达由
+   *  accumulate 的排序兜底）。 */
   const thinkingViews = new Map<number, ThinkingView>();
 
-  function ensureThinkingView(index: number): ThinkingView {
-    const existing = thinkingViews.get(index);
-    if (existing !== undefined) return existing;
-    const view = createThinkingView();
+  /** 思考块视图的结构落位（调用方保证按到达序调用）：追加到流式消息尾 + 封板在途工具块。
+   *  正文段不在此封板——段的去留由 flushPendingStructures 的段位次按「开段是否在到达序尾」
+   *  判定（正文缓冲属于更早到达时，开段本来就排在正确的位置）。 */
+  function placeThinkingView(index: number): void {
     const host = streamingEl;
-    if (host !== null) {
-      // 块在前正文在后：插到首个文本段容器之前（工具块不入正文序——思考相对工具
-      // 的位置由到达序决定：段未建时 append 在消息尾，即当时已到场块的后面）。
-      const anchor = host.querySelector(":scope > .lumir-hp-body");
-      host.insertBefore(view.el, anchor);
+    if (host === null) return; // 轮次闸门已挡内容事件；防御性兜底，不静默造孤儿块。
+    if (activeTools !== null) {
+      sealedToolBlocks.push(activeTools);
+      activeTools = null;
     }
+    const view = createThinkingView();
+    host.append(view.el);
     thinkingViews.set(index, view);
-    return view;
   }
 
-  /** rAF 合帧落思考块（reasoning_chunk 只进数据 + 脏标记，真正的 DOM 写入每帧至多一次，
-   *  与正文 chunk 同一条渲染纪律）。时长读数与正文都从这里上屏；data-sec 留给 relabel。 */
+  /** 按到达序合并执行待建的思考块视图与正文段（M383）：同帧内交错到达的
+   *  text_chunk / reasoning_chunk 在此按各自的首达序号排序落位——think→text 与
+   *  text→think 同帧混达时 DOM 序仍 = 事件序。正文段的位次规则：缓冲正文落「当前开段」
+   *  仅当开段装着更早到达的正文且仍在到达序尾；否则（开段已被本计划早前位次的思考占走
+   *  位次，或开段尚空）封段开新——段在思考 / 工具处切分，后到的正文不进早前的段。 */
+  function flushPendingStructures(): void {
+    if (pendingThinkCreates.length === 0 && pendingSegSeq === null) return;
+    const thinks = pendingThinkCreates;
+    pendingThinkCreates = [];
+    const segSeq = pendingSegSeq;
+    pendingSegSeq = null;
+    type Step = { kind: "think"; index: number; seq: number } | { kind: "seg"; seq: number };
+    const plan: Step[] = [
+      ...thinks.map((p): Step => ({ kind: "think", index: p.index, seq: p.seq })),
+      ...(segSeq !== null ? [{ kind: "seg", seq: segSeq } as Step] : []),
+    ];
+    plan.sort((a, b) => a.seq - b.seq);
+    for (const step of plan) {
+      if (step.kind === "think") {
+        placeThinkingView(step.index);
+      } else if (chunkBuffer !== "") {
+        const seg = currentSeg;
+        if (seg === null) {
+          ensureCurrentSegment();
+        } else if (seg.source !== "" && streamingEl?.lastElementChild !== seg.el) {
+          // 开段已被本计划早前位次的思考占了它后面的位置：缓冲正文属于更晚到达，封段开新。
+          currentSeg = null;
+          ensureCurrentSegment();
+        }
+        // else：开段仍在到达序尾且装着更早正文（或尚空待装）——缓冲正文继续落它，位置本就正确。
+      }
+    }
+  }
+
+  /** rAF 合帧更新思考块的时长读数与正文（结构落位见 flushPendingStructures——视图
+   *  创建与内容写入分离：前者按到达序，后者只认数据）。折叠态不影响流入（想看的人点开
+   *  即直播）。 */
   function flushThinkingViews(): void {
     if (!thinkingDirty) return;
     thinkingDirty = false;
     for (const block of thinkingBlocks) {
-      const view = ensureThinkingView(block.index);
+      const view = thinkingViews.get(block.index);
+      if (view === undefined) continue; // 结构创建被轮次闸门丢弃的防御路径（正常不触发）。
       const sec = thinkingDurationSec(block);
       view.el.dataset.sec = String(sec);
       view.text.textContent = t("D388", { sec });
@@ -3011,9 +3068,13 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   }
 
   function flushChunks(): void {
+    // 结构先行：按到达序合并落位待建的思考块视图与正文段（M383），再上思考内容、正文。
+    flushPendingStructures();
     flushThinkingViews();
     if (chunkBuffer === "") return;
     ensureStreamingMessage();
+    // 段位次已保证开段在场（缓冲非空 ⇒ pendingSegSeq 非空 ⇒ flushPendingStructures 落位）；
+    // ensureCurrentSegment 此处是防御性兜底（幂等：开段在场即原样返回）。
     const seg = ensureCurrentSegment();
     seg.source += chunkBuffer;
     streamingText += chunkBuffer;
@@ -3038,7 +3099,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
    *  收敛于此——按段收敛：段边界是工具发生处，渲染语义本就独立）。工具块（在途 + 已封板）
    *  随轮次终态折叠收尾，交错位置不动。完成后挂复制钮：源 = 模型原始输出（全部文本段
    *  的拼接）。思考块随轮次定格：flush 已把末态时长/正文上屏，这里只释放数据引用——
-   *  元素留在消息内（块在前正文在后），复制源不含思考内容（复制源 = 正文源文本，单一真源）。
+   *  元素留在消息内（到达序位置，M383），复制源不含思考内容（复制源 = 正文源文本，单一真源）。
    *  返回沉淀的消息元素（中断标注等终态修饰用；无流式内容时返回 null）。 */
   function finalizeStreamingMessage(): HTMLElement | null {
     flushChunks();
@@ -3059,9 +3120,12 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     currentSeg = null;
     textSegments = [];
     streamingText = "";
+    chunkBuffer = "";
     thinkingBlocks = [];
     thinkingViews.clear();
     thinkingDirty = false;
+    pendingThinkCreates = [];
+    pendingSegSeq = null;
     scrollToBottom();
     return el;
   }
@@ -3089,8 +3153,12 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     // 不受闸门管控（收口幂等，且 sent 之前的 stray 终态无害）。
     if (turnOpen === false && GATED_EVENT_TYPES.has(event.type)) return;
     switch (event.type) {
-      case "text_chunk":
-        chunkBuffer += typeof event.text === "string" ? event.text : "";
+      case "text_chunk": {
+        const seq = ++arrivalSeq;
+        const text = typeof event.text === "string" ? event.text : "";
+        // 缓冲首个正文的到达序 = 段创建的排序位次（M383：与思考块创建按 seq 合并落位）。
+        if (text !== "" && chunkBuffer === "") pendingSegSeq = seq;
+        chunkBuffer += text;
         // 阶段指示推进：首个 chunk 到达 = 模型开始生成（「等待响应」→「生成中」）。
         if (stageWaiting) {
           stageWaiting = false;
@@ -3098,12 +3166,22 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
         }
         scheduleFlush();
         return;
+      }
       case "reasoning_chunk": {
+        // M383：同帧 text→think 交错时，先把已缓冲的正文落位（开段建出、序在思考之前）
+        // 再登记本思考——否则思考后到达的正文会并进思考前的段，帧内事件序倒置（r1 评审 P2）。
+        // 缓冲为空时不 flush（纯思考流的热路径不受影响）。
+        if (chunkBuffer !== "") flushChunks();
         // 思考分片（M363）：先立流式消息（纯思考轮 / 思考先于首个正文分片到达是常态——
         // 后端保证思考分片在该轮 text_chunk 之前发出），再按块序号累加进数据层；
         // 上屏走 rAF 合帧（flushThinkingViews），折叠态不影响流入（想看的人点开即直播）。
+        // M383：首分片登记到达序——视图结构创建与正文段创建按到达序合并落位。
+        const seq = ++arrivalSeq;
         ensureStreamingMessage();
         const index = typeof event.index === "number" && Number.isFinite(event.index) ? event.index : 0;
+        if (!thinkingViews.has(index) && !pendingThinkCreates.some((p) => p.index === index)) {
+          pendingThinkCreates.push({ index, seq });
+        }
         const acc = accumulateThinkingBlock(
           thinkingBlocks,
           index,
@@ -3327,6 +3405,8 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     thinkingBlocks = [];
     thinkingViews.clear();
     thinkingDirty = false;
+    pendingThinkCreates = [];
+    pendingSegSeq = null;
     // 会话名随会话作废：未发消息前显示「新会话」，首条消息后再按口径重算。
     firstUserText = null;
     applySessionName();

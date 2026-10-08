@@ -1,0 +1,24 @@
+{
+  "version": 1,
+  "responses": [
+    {
+      "text": "TTO-ORD1-先读文件再回答。",
+      "chunks": ["TTO-ORD1-先读文件再回答。"],
+      "reasoning_chunks": ["TTO-THINK-ALPHA 先读文件。"],
+      "tool_calls": [
+        {
+          "id": "call_1",
+          "name": "vault_read",
+          "arguments": "{\"path\":\"harness-note.md\"}"
+        }
+      ],
+      "usage": { "input_tokens": 900, "cached_tokens": 300, "output_tokens": 20 }
+    },
+    {
+      "text": "TTO-ORD2-答案在第二段思考之前。",
+      "chunks": ["TTO-ORD2-答案在第二段思考之前。"],
+      "reasoning_chunks": ["TTO-THINK-BETA 读完再答。"],
+      "usage": { "input_tokens": 1400, "cached_tokens": 1000, "output_tokens": 25 }
+    }
+  ]
+}
