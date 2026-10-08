@@ -68,8 +68,8 @@ steps:
       - label: 被取消轮的工具调用没有执行（中断收在工具循环之前；本响应带 vault_read——
           若停止被忽略，本地工具秒级落行，本断言必红）
         ax: { not: "工具 vault_read" }
-      - label: JSONL 记下中断事件
-        file: { path: "env:harness/*.jsonl", has: '"kind":"turn_aborted"' }
+      - label: JSONL 记下中断事件（turn_aborted sidecar）
+        file: { path: "env:harness/sessions/*.jsonl", has: '"kind":"turn_aborted"' }
 
   - name: composer 收口回空闲（可继续发问）
     do: waitFor
@@ -101,7 +101,7 @@ steps:
           vault_read，第 2 轮才弹出 NEXT——见正文「mock 重放语义」）
         ax: { has: "NEXT-第二轮回答。" }
       - label: 新一轮的工具循环真实执行（vault_read 行在场）——被取消轮没执行的那个调用，
-          由这一轮补上：JSONL 全程恰好一次 tool_call
+          由这一轮补上：JSONL 只在新一轮落一条 function_call_output（被取消轮未执行工具）
         ax: { has: '工具 vault_read：{"path":"harness-note.md"}' }
       - label: 有序性：被取消轮的「已停止」在新一轮工具行之前（被取消轮封闭在前、
           新一轮内容在后，不插队不复活）
@@ -109,11 +109,11 @@ steps:
           has: '/已停止[\s\S]*工具 vault_read：\{"path":"harness-note.md"\}[\s\S]*NEXT-第二轮回答。/'
       - label: 「已停止」标记恰好一个（被取消轮的那一个；新一轮正常完成不标）
         ax: { count: { pattern: "已停止", exact: 1 } }
-      - label: JSONL 记下新一轮的工具调用（decision=allow）——配合停止步的「无工具行」
-          断言：全程只可能是新一轮这一次（被取消轮若「处理完了」，那里会先落行）
-        file: { path: "env:harness/*.jsonl", has: '"decision":"allow","id":"call_1","kind":"tool_call","name":"vault_read"' }
+      - label: JSONL 记下新一轮的工具调用结果（function_call_output）——配合停止步的
+          「无工具行」断言：被取消轮没有执行工具，故全程只有新一轮落这一条
+        file: { path: "env:harness/sessions/*.jsonl", has: '/^.*"call_id":"call_1".*HNL-ALPHA.*"type":"function_call_output".*$/' }
       - label: JSONL 记下第二轮的正文（会话真实继续了）
-        file: { path: "env:harness/*.jsonl", has: "NEXT-第二轮回答。" }
+        file: { path: "env:harness/sessions/*.jsonl", has: '/^.*"kind":"llm_response".*NEXT-第二轮回答。.*$/' }
 ---
 
 # 104-harness-stop-immediacy —— 停止即时性与轮次封闭（M374 缺陷②④）

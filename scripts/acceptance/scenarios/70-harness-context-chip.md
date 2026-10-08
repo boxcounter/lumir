@@ -47,14 +47,14 @@ steps:
     expect:
       - label: 回答渲染在面板里
         ax: { has: "验收回答：上下文已收到。" }
-      - label: 提问进了 JSONL 留存
-        file: { path: "env:harness/*.jsonl", has: '"kind":"user_message"' }
-      - label: 注入的上下文节在 JSONL 里（文件路径 + 视口节头）
-        file: { path: "env:harness/*.jsonl", has: "/当前编辑器上下文：\\\\n文件：harness-note\\.md\\\\n视口（第/" }
+      - label: 提问以 llm_request 落盘（wire 口径：user 消息在 request.messages）
+        file: { path: "env:harness/sessions/*.jsonl", has: '/^.*"kind":"llm_request".*ctxprobe.*$/' }
+      - label: 注入的上下文节在 llm_request 里（文件路径 + 视口节头）
+        file: { path: "env:harness/sessions/*.jsonl", has: "/当前编辑器上下文：\\\\n文件：harness-note\\.md\\\\n视口（第/" }
       - label: 选区**没有**被自动注入（remove 后的合同：选中片段只经摘录卡片显式策展）
-        file: { path: "env:harness/*.jsonl", not: "选区（第" }
+        file: { path: "env:harness/sessions/*.jsonl", not: "选区（第" }
       - label: 视口原文随消息注入（标题行在视口覆盖内）
-        file: { path: "env:harness/*.jsonl", has: "# Harness 验收笔记" }
+        file: { path: "env:harness/sessions/*.jsonl", has: "# Harness 验收笔记" }
       - shot: 02-回答到达
 ---
 
@@ -93,11 +93,12 @@ D331（chip 的选区形态）随之退场。本场景（item 70）当时没跟�
 - **chip 位置（M370）**：chip 移进 composer 区（横线之下、composerBox 之上）——本场景的
   AX 断言全部按文本匹配，位置变化不影响判据；两张截图（01/02）的构图因此与旧基线不同，
   像素面归视觉基线纪律（本场景截图只作证据，不断言像素）。
-- **注入侧**用 JSONL 留存的 user_message 全文断言：文件路径节 + 视口节头 + 视口原文（标题行）。
+- **注入侧**用 JSONL 留存的 `llm_request.request.messages` 全文断言：文件路径节 + 视口节头 +
+  视口原文（标题行）。wire 口径下用户消息不是独立的事件 kind，而是该次请求 messages 的 user 项。
 - **负向断言 `not: "选区（第"`** 是「选区不再自动注入」的判据：该串只在旧的选区注入形态里出现，
   移除后任何路径都不该产出它。
 
 ## 环境与副作用
 
 - 合成 vault `/tmp/lumir-m102-acceptance` + 隔离 `XDG_CONFIG_HOME`；真实 vault 只读。
-- 只读文档、发一条 mock 提问；JSONL 落在隔离配置目录（`env:harness/*.jsonl`）。1420 全程不碰。
+- 只读文档、发一条 mock 提问；JSONL 落在隔离配置目录的 `sessions/` 下（`env:harness/sessions/*.jsonl`）。1420 全程不碰。

@@ -68,8 +68,8 @@ steps:
         file: { path: harness-note.md, mtimeUnchangedSince: before }
       - label: 编辑器里仍是旧文本
         editor: { has: "HNL-BETA 第二行，等待 patch。" }
-      - label: JSONL 记下拒绝结果
-        file: { path: "env:harness/*.jsonl", has: "approval_rejected" }
+      - label: JSONL 记下拒绝结果（approval sidecar：decision=rejected + 原因）
+        file: { path: "env:harness/sessions/*.jsonl", has: '/^.*"decision":"rejected".*"reason":"holdoff".*"tool":"vault_patch".*$/' }
       - label: 拒绝后卡片收敛为终态记录（工具名 + 已拒绝 + 相对时间戳，M384）
         ax: { has: "vault_patch · 已拒绝" }
       - label: 拒绝原因在终态记录里直接可见（无需展开详情，M384）

@@ -36,10 +36,10 @@ steps:
         ax: { has: "HNL 读完了：阿尔法行在，贝塔行在，伽马行在。" }
       - label: 读类工具默认 allow——全程没有批准闸（负向断言的正观测 = 上面两条）
         ax: { not: "采纳后才落盘" }
-      - label: JSONL 记下这次工具调用且 decision=allow
-        file: { path: "env:harness/*.jsonl", has: '"decision":"allow","id":"call_1","kind":"tool_call","name":"vault_read"' }
-      - label: 工具结果（文件内容）回送了模型
-        file: { path: "env:harness/*.jsonl", has: '"id":"call_1","kind":"tool_result","ok":true' }
+      - label: JSONL 记下这次工具调用（wire 口径：llm_response 的 tool_calls）
+        file: { path: "env:harness/sessions/*.jsonl", has: '/^.*"kind":"llm_response".*"id":"call_1","name":"vault_read".*$/' }
+      - label: 工具结果（文件内容）回送了模型（function_call_output 项）
+        file: { path: "env:harness/sessions/*.jsonl", has: '/^.*"call_id":"call_1".*HNL-ALPHA.*"type":"function_call_output".*$/' }
       - shot: 01-工具循环完成
 ---
 

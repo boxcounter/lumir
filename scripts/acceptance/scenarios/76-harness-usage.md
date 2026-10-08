@@ -40,8 +40,8 @@ steps:
         ax: { not: "cache" }
       - label: 未越警示线（50 < 85）——hover 浮层无内容，警示文案不在界面上
         ax: { not: "越过 85% 警示线" }
-      - label: JSONL 记下 usage 原值
-        file: { path: "env:harness/*.jsonl", has: '"cached_tokens":32768,"input_tokens":65536,"kind":"usage"' }
+      - label: JSONL 记下 usage 原值（wire 口径：llm_response.usage）
+        file: { path: "env:harness/sessions/*.jsonl", has: '/^.*"kind":"llm_response".*"cached_tokens":32768.*"input_tokens":65536.*$/' }
       - shot: 01-控制行-ctx读数
 ---
 

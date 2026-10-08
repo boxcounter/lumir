@@ -189,7 +189,10 @@ steps:
 清单写进 `providers.kimi.models`——schema 的 model 维度：浮层模型段按声明清单列项，
 effort 能力 / 上下文窗口按声明现算。**M381 起内置 preset 表彻底删除**：不写 `kimiModels`
 = 空清单（+ 加载 warning + 浮层 D402 提示态）——场景 99 / 101 的配置链必须连带声明
-`kimiModels`，能力判定才有输入。
+`kimiModels`，能力判定才有输入。mock provider 跑一轮会把**会话 wire 留存**写入隔离配置目录的
+`harness/sessions/<session_id>.jsonl`（首行 `session_open` 装配记录，其后逐对 `llm_request` /
+`llm_response`，决策类落 sidecar）——留存断言写 `env:harness/sessions/*.jsonl`（schema 见 change
+`reshape-harness-session-recording` 的 design §2；`resetHarness` 每场景清整个 `harness/`）。
 
 `editor`（M379，backlog:1905）是**整表透传**的 `[editor]` 表：`config: { editor: { line_wrap: false,
 future_key: 42 } }` 原样写进 `editor` 表（snake_case 键，非表即由 `--check` 挡住）。给「新增的

@@ -61,10 +61,10 @@ steps:
         ax: { has: "已停止" }
       - label: 已产出内容保留在 transcript（中断是「不再继续」，不是回滚）
         ax: { has: "ABORT-KEEP 这段产出应当保留。" }
-      - label: JSONL 记下中断事件
-        file: { path: "env:harness/*.jsonl", has: '"kind":"turn_aborted"' }
-      - label: 已产出文本也已留存（中断前的 assistant_text）
-        file: { path: "env:harness/*.jsonl", has: "ABORT-KEEP 这段产出应当保留。" }
+      - label: JSONL 记下中断事件（turn_aborted sidecar）
+        file: { path: "env:harness/sessions/*.jsonl", has: '"kind":"turn_aborted"' }
+      - label: 已产出文本也已留存（中断前半截响应随 llm_response 落盘）
+        file: { path: "env:harness/sessions/*.jsonl", has: '/^.*"kind":"llm_response".*ABORT-KEEP 这段产出应当保留。.*$/' }
 
   - name: composer 收口回空闲（aborted 经 finished 回 idle，可继续发问）
     do: waitFor
@@ -92,7 +92,7 @@ M347 把发送钮做成两态（空闲「发送」/ 处理中「停止」），M
 2. **阶段指示与不定态进度**：处理中阶段行读 `等待响应…`（D381，首个 chunk 前）。进度条本身
    是普通 `div`（无 `role`、无 aria-label），AX 读不到——它的判据在视觉层与截图里。
 3. **中断语义 = 「不再继续」**：在途点停止 → 本轮收口，**已产出的文本保留**并挂「已停止」
-   徽标（D383），JSONL 记 `turn_aborted` + 保留的 `assistant_text`。
+   徽标（D383），JSONL 记 `turn_aborted` sidecar + 保留的 `llm_response` 正文。
 4. **composer 立即可用**：`aborted` 经 finished 回 idle，钮面回到 `发送`。
 
 ## 为什么「长流」用 `delay_ms`
@@ -120,7 +120,7 @@ M347 把发送钮做成两态（空闲「发送」/ 处理中「停止」），M
   的正观测（配合下面的 JSONL 盘上事实，不靠时长猜）。
 - **产出保留**：`ax.has` 断言中断文本（`ABORT-KEEP …`）——文本只可能来自流式转发（M369 起由
   解析层即时发 `text_chunk`）/ `abort_turn` 的面板消息路径。
-- **JSONL**：`turn_aborted` 与保留的 `assistant_text` 都是盘上事实，钉死「这一轮真的被中断收口」
+- **JSONL**：`turn_aborted` sidecar 与保留的 `llm_response` 正文都是盘上事实，钉死「这一轮真的被中断收口」
   而不是「什么都没发生、停止钮恰好消失了」。
 
 ## 已知边界（如实登记）
@@ -139,5 +139,5 @@ M347 把发送钮做成两态（空闲「发送」/ 处理中「停止」），M
 ## 环境与副作用
 
 - 合成 vault `/tmp/lumir-m102-acceptance` + 隔离 `XDG_CONFIG_HOME`；不写 vault 文件（只发问、
-  停止），JSONL 留存落在隔离配置目录下（`env:harness/*.jsonl`）。真实 vault 只读。
+  停止），JSONL 留存落在隔离配置目录的 `sessions/` 下（`env:harness/sessions/*.jsonl`）。真实 vault 只读。
 - 本场景耗时主要是一次 12s 的 mock 延迟；`caffeinate` 包住整批以免休眠漂窗。

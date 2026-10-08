@@ -48,10 +48,10 @@ steps:
     expect:
       - label: 序列化按块交错顺序：卡片 A → alpha（问题落在卡片之后 = 光标落在卡片下一行）
         file:
-          path: "env:harness/*.jsonl"
+          path: "env:harness/sessions/*.jsonl"
           has: '<quote file=\"harness-quote.md\" heading=\"摘录卡片验收\" lines=\"4-5\">QBETA 乙段：把可执行动作捞出来过一遍。\n</quote>\nalpha'
       - label: 协议无编号
-        file: { path: "env:harness/*.jsonl", not: "index=" }
+        file: { path: "env:harness/sessions/*.jsonl", not: "index=" }
       - shot: 02-第一条消息
 
   - name: 第二条消息——回到编辑器：光标移到 QALPHA 那一行
@@ -100,13 +100,13 @@ steps:
   - name: 发送第二条消息（两张卡片、无问题文字）
     do: key
     key: enter
-  - name: 留一拍等发送链路把 user_message 落进 JSONL（AX 看不到 JSONL 落盘，mock 每轮都回同一文案，无法用它做同步）
+  - name: 留一拍等发送链路把 llm_request 落进 JSONL（AX 看不到 JSONL 落盘，mock 每轮都回同一文案，无法用它做同步）
     do: sleep
     ms: 2500
     expect:
       - label: 一条消息里两张卡片按插入顺序序列化（先 QALPHA 后 QBETA）
         file:
-          path: "env:harness/*.jsonl"
+          path: "env:harness/sessions/*.jsonl"
           has: '<quote file=\"harness-quote.md\" heading=\"摘录卡片验收\" lines=\"3-4\">QALPHA 甲段：先读结论再读论证。\n</quote>\n<quote file=\"harness-quote.md\" heading=\"摘录卡片验收\" lines=\"4-5\">QBETA 乙段：把可执行动作捞出来过一遍。\n</quote>'
       - shot: 04-第二条消息
 ---
@@ -127,7 +127,7 @@ spec 判据（change add-harness-quote-cards 的「混排对话输入区」）�
   会话纪律落在序列化层上。
 - **第二条消息的同步用「留一拍」而非 waitFor**：mock provider 每轮都回同一条文案（fixture 每次
   调用按序弹响应，但 client 是**每轮新建**的，响应表因此每轮从第 0 条重来），所以「等回答文案」
-  对第二条消息没有区分度。JSONL 的 user_message 在轮次开始（LLM 调用之前）就写入，2500ms 是
+  对第二条消息没有区分度。JSONL 的 `llm_request`（含这条 user 消息）在轮次开始（LLM 调用之前）就写入，2500ms 是
   留裕量的一拍（同 README「外部写入后先留一拍」的口径）。
 
 ## 已知边界（如实登记）

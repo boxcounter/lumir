@@ -105,15 +105,15 @@ steps:
   # ── 判据三：切走之后才到达的在途事件被丢弃（事件带 vault 标识）─────────────
   # 走到这里时 A 的回合仍在途（mock 延迟 45s，前端从上面那一步起一直停在 B）。再等过延迟点，
   # 让 A 的回答**在 B 显示期间**发射出去：
-  #   - JSONL 断言证明这一轮真的跑完了（`assistant_text` 是回合终点的盘上事实，不是猜时长）；
+  #   - JSONL 断言证明这一轮真的跑完了（`llm_response` 正文是回合终点的盘上事实，不是猜时长）；
   #   - B 的面板里既没有回答也没有提问 —— 修复前这两个 text_chunk 会直接渲染进 B 的 transcript。
   # 45s 的 sleep 是「等一个已知时长的在途回合落地」，不是猜装载时长（那类等待一律用 waitFor）。
   - name: 等到 A 的回合结束（前端这段时间一直停在 B）
     do: sleep
     ms: 45000
     expect:
-      - label: A 的回合真的完成了（盘上留存的 assistant_text）
-        file: { path: "env:harness/*.jsonl", has: "VSWITCH-A" }
+      - label: A 的回合真的完成了（盘上留存的 llm_response 正文）
+        file: { path: "env:harness/sessions/*.jsonl", has: '/^.*"kind":"llm_response".*VSWITCH-A.*$/' }
       - label: 回答在途落到 B 时被丢弃
         ax: { not: "VSWITCH-A" }
       - label: A 的提问也没有串台
@@ -141,9 +141,9 @@ steps:
 - **空态提示是「transcript 为空」的构造性判据**：`syncEmptyHint()` 只在 transcript 没有子节点时
   把提示挂进去、有内容就摘掉。因此「提示在场」等价于「transcript 是空的」——它同时是负向断言
   （A 的内容不在）的**正观测**：读不到 transcript 与 transcript 为空不是一回事（REVIEW.md 第 2 条）。
-- **JSONL 是「回合终点」的盘上事实**：`assistant_text` 记录只在这一轮结束时落盘，用它把「等 45s
+- **JSONL 是「回合终点」的盘上事实**：`llm_response` 记录只在这一轮响应返回时落盘，用它把「等 45s
   之后回答确实已经发射过」钉死，避免「负向断言在事件根本没来时空过」这一类假绿（REVIEW.md 第 1 条）。
-  判据三的 `env:harness/*.jsonl` 是 glob（取 mtime 最新一份）：B 的会话没发过消息，JSONL 文件
+  判据三的 `env:harness/sessions/*.jsonl` 是 glob（取 mtime 最新一份）：B 的会话没发过消息，JSONL 文件
   惰性创建（首次记录才建文件），因此这里命中的仍是 A 的那份留存。
 - **两串标记都是本场景独有**：`alphaonly` 只由本场景注入；`VSWITCH-A` 只由本场景的 mock fixture
   产出（fixture 里没有第二个 vault 的响应，本场景也不在 B 里发送提问——mock 每次发送都从脚本头
