@@ -12,7 +12,7 @@ proposal 的技术面：文件布局、记录 schema、不变量、验证方法�
 - `session_id`：时间序 id `s<unix_millis>-<6 位随机 base36>`（如 `s1759912345678-k3x9ab`）——可排序、够唯一、人可读；不取 UUID 纯随机形，因为「按时间列出会话」是未来的第一消费姿势。
 - 一个逻辑会话一个文件，append-only，首行恒为 `session_open`。
 - 会话建立 / 「新会话」重置 / 自动压缩开新逻辑会话 → 各建新文件；旧文件封闭（不再追加，也不改写）。
-- 不做会话索引文件、不做清理策略（探针期；无读者）。
+- 不做会话索引文件、不做清理策略（探针期；无运行时读者）。
 
 ## 2. 记录 envelope 与 schema
 
@@ -32,6 +32,7 @@ proposal 的技术面：文件布局、记录 schema、不变量、验证方法�
   "system": "<完整装配后 system prompt 全文，逐字节>",
   "assembly": [
     {"source": "identity", "path": null, "exists": true, "bytes": 412},
+    {"source": "quote_reference", "path": null, "exists": true, "bytes": 231},
     {"source": "agents_user_wide", "path": "/Users/demo/.agents/AGENTS.md", "exists": true, "bytes": 2081},
     {"source": "agents_vault_root", "path": "/tmp/lumir-demo-vault/AGENTS.md", "exists": false, "bytes": 0},
     {"source": "skill_index", "path": null, "exists": true, "skills": 3}
@@ -80,7 +81,7 @@ proposal 的技术面：文件布局、记录 schema、不变量、验证方法�
 
 ### sidecar 记录（决策类，wire 不可推导）
 
-保留 4 类：`approval`（采纳 / 拒绝 + 原因）、`turn_aborted`（停止）、`llm_error`（LLM 调用失败）、`loop_max_reached`。废弃 10 类被 wire 覆盖或失去意义的事件 kind：`user_message` / `assistant_text` / `tool_call` / `tool_result` / `usage` / `compact` / `session_reset` / `approval_overwritten` / `approval_withdrawn` / `turn_abort_requested`——其中 `usage` 并入 `llm_response`，`compact` / `session_reset` 并入文件边界 + `session_open`。
+保留 4 类：`approval`（采纳 / 拒绝 + 原因）、`turn_aborted`（停止）、`llm_error`（LLM 调用失败）、`loop_max_reached`。废弃 11 类被 wire 覆盖或失去意义的事件 kind：`user_message` / `assistant_text` / `tool_call` / `tool_result` / `usage` / `tool_denied` / `compact` / `session_reset` / `approval_overwritten` / `approval_withdrawn` / `turn_abort_requested`——其中 `usage` 并入 `llm_response`，`compact` / `session_reset` 并入文件边界 + `session_open`，`tool_denied` 是 wire 可推导的（deny 时回送模型的 tool result 带 `permission_denied` 错误码与工具名 / subject，随历史进下一条 `llm_request.messages`）。
 
 ## 3. 不变量（实现 MUST 守住）
 
@@ -100,7 +101,7 @@ proposal 的技术面：文件布局、记录 schema、不变量、验证方法�
 - **恢复充分性属性测试（Rust，核心判据）**：mock provider 脚本跑一轮含工具循环的对话（含 `<quote>` 消息与 thinking fixture）；测试从落盘 JSONL **独立**重建每个请求（取 `session_open.system` + 依不变量 3 重放），与对应 `llm_request.request` 断言深度相等。反向验证：手改一条重建结果，断言必红（REVIEW.md 第 1 条纪律）。
 - **记录形状集成断言**：mock provider 一轮后断言文件首行 `session_open`（system 全文在场、assembly 含 exists:false 项）、请求-响应配对数、思考字段在场（裁决点 1 落地时）。
 - **既有留存测试换代**：`jsonl.rs` 的 quote 逐字节用例迁移为新口径（`<quote>` 块在 `llm_request.messages` 中断言）。
-- **验收场景**：scripts/acceptance 新增 wire 留存场景（mock provider 跑一轮，读 `sessions/*.jsonl` 断言首行与请求记录在场）；fixture 全部合成。
+- **验收场景（迁移既有 + 新增）**：`scripts/acceptance/scenarios/` 下 15 个引用 `env:harness/*.jsonl` 的既有场景逐一对账迁移——锚定废弃 kind 的断言改写为 wire 口径（`llm_request` / `llm_response` 内容），保留类（`turn_aborted`）按 sidecar 口径核对；另新增 wire 留存场景（mock provider 跑一轮，读 `sessions/*.jsonl` 断言首行与请求记录在场）；fixture 全部合成。
 - **旧文件孤儿断言**：升级后旧 vault 聚合文件不被续写（mtime / 行数不变）。
 
 ## 6. 明确不实现的（防 scope 蔓延）
