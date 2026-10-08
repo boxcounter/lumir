@@ -123,7 +123,7 @@ fn real_deepseek_two_turns_tool_call_and_reasoning_replay() {
         let runtime = Runtime::default();
 
         // —— 一轮：提问 → 必触发 vault_read（默认读类 allow，免批准闸）→ 回送 → 收尾 ——
-        runtime.acquire_turn(&scope).unwrap();
+        runtime.acquire_turn(&scope, &config).unwrap();
         let sink = CollectSink::default();
         turn::run_turn_for(
             &sink,
@@ -149,7 +149,7 @@ fn real_deepseek_two_turns_tool_call_and_reasoning_replay() {
         assert_eq!(types.last().map(String::as_str), Some("done"), "一轮须完成");
 
         // —— 二轮：追问（regression 点：一轮的 reasoning + 完整工具轮必须在回放 input 里）——
-        runtime.acquire_turn(&scope).unwrap();
+        runtime.acquire_turn(&scope, &config).unwrap();
         let sink2 = CollectSink::default();
         turn::run_turn_for(
             &sink2,
@@ -259,7 +259,7 @@ fn real_deepseek_multi_call_round_replays_grouped() {
             policy: IgnorePolicy::load(&root.join("vault"), &[".gitignore".to_string()]),
         };
         let runtime = Runtime::default();
-        runtime.acquire_turn(&scope).unwrap();
+        runtime.acquire_turn(&scope, &config).unwrap();
         let sink = CollectSink::default();
         turn::run_turn_for(
             &sink,

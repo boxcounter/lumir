@@ -214,10 +214,7 @@ pub fn run_turn_for(
             ts: jsonl::unix_secs_now(),
         });
         s.set_current_context(context_section);
-        s.jsonl().record(&serde_json::json!({
-            "kind": "user_message",
-            "text": message,
-        }));
+        // 留存口径：user 消息不进 sidecar——它逐字节在下一条 llm_request.messages 里。
     });
     if let Err(e) = enqueue {
         sink.emit(events::error(&e.code, &e.message));
@@ -247,6 +244,9 @@ pub fn run_turn_for(
         rounds += 1;
 
         let request = build_request(runtime, scope);
+        // wire 留存（发送点记录，design §2）：发给 LLM 的同一个结构化请求体原样落
+        // llm_request——记录点与发送点同点，无二次序列化，不存在翻译层。
+        record_llm_request(runtime, scope, config, &request);
         // 真流式（M369）：分片在 `complete` 期间收到即转发（正文逐字上屏），中断探测也在流里
         // （`aborted()`）——流式期间点停止即收流，已产出内容留在 `output` 里。思考块序号在
         // 本轮开始时定下：一次 LLM 往返最多一个思考块，该块的所有分片共用同一序号。
@@ -257,6 +257,10 @@ pub fn run_turn_for(
             reasoning_block,
         };
         let output = client.complete(&request, &stream);
+        // 响应同样即刻落盘（与上面的 llm_request 严格成对，含失败与在途停止的半截响应——
+        // 「模型当时回的是什么」是留存事实的一部分）。放在停止检查点之前：
+        // 中断轮产出的半截文本同样如实记录。
+        record_llm_response(runtime, scope, &output, client.fixture_source());
 
         // —— 思考兜底（M369）——
         // 流式路径已在解析层即时转发；这里只补「没有流式分片、但回放项可提取明文」的老形态
@@ -284,7 +288,7 @@ pub fn run_turn_for(
             if error.context_overflow && config.auto_compact && !overflow_retried {
                 overflow_retried = true;
                 rounds -= 1; // 重试同一轮，不占循环额度
-                match compact_now(sink, runtime, scope, client, "overflow") {
+                match compact_now(sink, runtime, scope, config, client) {
                     Ok(()) => {
                         // 停止检查点（M374）：压缩期间点的停止在此收口——否则 `continue`
                         // 会再开一轮 LLM 往返，被取消的请求重新跑起来（迟到完成复活）。
@@ -333,8 +337,7 @@ pub fn run_turn_for(
             // 的话，快照恢复路径会渲染出一排只有「Agent · Xm ago」头、body 为空的记录（M367
             // 根因）。空正文 assistant 项同样不进 input（M372：空 output_text 进下一次请求会被
             // Kimi Code 订阅端以 `text content is empty` 400 拒掉）——reasoning 项由
-            // [`session::assistant_item`] 原样回传，M306 纪律不变；JSONL 照旧留痕——只有
-            // 面板消息这一面跳过。
+            // [`session::assistant_item`] 原样回传，M306 纪律不变。
             if !assistant_text.is_empty() {
                 s.push_panel(PanelMessage {
                     role: "assistant".into(),
@@ -345,18 +348,10 @@ pub fn run_turn_for(
                     ts: jsonl::unix_secs_now(),
                 });
             }
-            s.jsonl().record(&serde_json::json!({
-                "kind": "assistant_text",
-                "text": assistant_text,
-            }));
-            if let Some((usage, snapshot)) = usage {
+            // 正文 / 思考 / 调用 / 用量已随上面的 llm_response 落盘（wire 口径）——
+            // 这里不再各记一份 sidecar（被 wire 覆盖的 kind 全部废弃，防双写）。
+            if let Some((_, snapshot)) = usage {
                 s.set_usage(snapshot);
-                s.jsonl().record(&serde_json::json!({
-                    "kind": "usage",
-                    "input_tokens": usage.input_tokens,
-                    "cached_tokens": usage.cached_tokens,
-                    "output_tokens": usage.output_tokens,
-                }));
             }
         });
         if let Some((_, snapshot)) = usage {
@@ -376,7 +371,7 @@ pub fn run_turn_for(
             if config.auto_compact {
                 if let Some((_, snapshot)) = usage {
                     if snapshot.ctx_pct >= config.warn_ctx_pct {
-                        let _ = compact_now(sink, runtime, scope, client, "threshold");
+                        let _ = compact_now(sink, runtime, scope, config, client);
                         // 停止检查点（M374）：压缩调用用 DiscardStreamSink（流里不问停止），
                         // 压缩期间点的停止只能在这里收口——不在此检查的话，下面的 `done`
                         // 会把已流式回复当作正常完成带进消息流，已取消的轮次「复活」。
@@ -475,12 +470,10 @@ fn abort_turn(
                 status: Some("stopped".into()),
                 ts: jsonl::unix_secs_now(),
             });
-            s.jsonl().record(&serde_json::json!({
-                "kind": "assistant_text",
-                "text": assistant_text,
-            }));
+            // 半截正文已在响应点随 llm_response 落盘（wire 口径），这里不再记 sidecar。
         }
         s.mark_last_assistant_stopped(panel_base);
+        // 决策类 sidecar：中断是 wire 不可推导的用户决策。
         s.jsonl()
             .record(&serde_json::json!({"kind": "turn_aborted"}));
     });
@@ -535,6 +528,93 @@ fn build_request(runtime: &Runtime, scope: &VaultScope) -> llm::Request {
         tools: tools::definitions(),
         effort,
     }
+}
+
+/// 发送点落 `llm_request`：记录体就是传给 client 的同一个结构化 `Request`
+/// （provider / model / system / messages / params），发送前落盘。工具循环每次迭代
+/// 与压缩调用各自走本函数——每次 LLM 调用恰一条。
+fn record_llm_request(
+    runtime: &Runtime,
+    scope: &VaultScope,
+    config: &HarnessConfig,
+    request: &llm::Request,
+) {
+    let payload = serde_json::json!({
+        "kind": "llm_request",
+        "request": {
+            "provider": config.provider,
+            "model": llm::active_model(config),
+            "system": request.system,
+            "messages": request.input,
+            "params": { "thinking": request.effort.as_str() },
+        },
+    });
+    let _ = runtime.with_session(scope, |s| s.jsonl().record(&payload));
+}
+
+/// 响应点落 `llm_response`：正文 / reasoning 回放项原文 / thinking 展示文本 / 工具调用 /
+/// usage / error（无则缺省）+ mock provider 的 fixture 因果链。与上一条 `llm_request`
+/// 严格成对——失败、空响应、在途停止的半截响应都如实记录（`error` 字段在场）。
+///
+/// reasoning 与 thinking **物理分离**（design §2，M362 纪律）：`reasoning` = 回放项
+/// 原文（provider 方言——kimi 的 encrypted_content 项 / deepseek 的 reasoning_text
+/// parts 项各按真实形状），恢复时原样回传（M306 / M360 回放语义逐字节保真，无需按
+/// provider 分支重建，design §6.2 的恢复算法从本键取回放项）；`thinking` = **展示
+/// 文本**（展示通道分片汇总）——分片缺席（老 fixture / 只发 `output_item.done` 的
+/// provider）时退回从回放项提取明文，与面板所见同源；密文永不进 thinking
+/// （`thinking::reasoning_text` 只返明文）。
+fn record_llm_response(
+    runtime: &Runtime,
+    scope: &VaultScope,
+    output: &llm::TurnOutput,
+    fixture_source: Option<&str>,
+) {
+    let mut payload = serde_json::json!({
+        "kind": "llm_response",
+        "text": output.text,
+    });
+    if let Some(reasoning) = &output.reasoning {
+        payload["reasoning"] = reasoning.clone();
+    }
+    // thinking = 展示文本（裁决点 1 的展示半边落盘）：分片非空即拼接；缺席时退回
+    // 从回放项提取明文（与 turn 的 reasoning_fallback 展示兜底同源）。
+    let thinking_text = if output.reasoning_deltas.is_empty() {
+        output.reasoning.as_ref().and_then(thinking::reasoning_text)
+    } else {
+        Some(output.reasoning_deltas.join(""))
+    };
+    if let Some(text) = thinking_text.filter(|text| !text.is_empty()) {
+        payload["thinking"] = text.into();
+    }
+    if !output.calls.is_empty() {
+        payload["tool_calls"] = serde_json::Value::Array(
+            output
+                .calls
+                .iter()
+                .map(|call| {
+                    serde_json::json!({
+                        "id": call.call_id,
+                        "name": call.name,
+                        "arguments": call.arguments,
+                    })
+                })
+                .collect(),
+        );
+    }
+    if let Some(usage) = output.usage {
+        payload["usage"] = serde_json::json!({
+            "input_tokens": usage.input_tokens,
+            "cached_tokens": usage.cached_tokens,
+            "output_tokens": usage.output_tokens,
+        });
+    }
+    if let Some(error) = &output.error {
+        payload["error"] = serde_json::json!(format!("{}: {}", error.code, error.message));
+    }
+    if let Some(source) = fixture_source {
+        payload["mock_fixture"] = serde_json::json!(source);
+    }
+    let _ = runtime.with_session(scope, |s| s.jsonl().record(&payload));
 }
 
 /// 未流式产出时的思考兜底分片（M369，输出侧只读）：`reasoning_deltas` 非空 = 解析层已即时
@@ -611,20 +691,13 @@ fn handle_call(
         ToolOutput::err("tool_args_invalid", "工具调用的 arguments 不是合法 JSON")
     } else {
         match decision {
-            Decision::Deny => {
-                let out = ToolOutput::err(
-                    "permission_denied",
-                    format!("权限规则拒绝了 {}（{subject}）", call.name),
-                );
-                let _ = runtime.with_session(scope, |s| {
-                    s.jsonl().record(&serde_json::json!({
-                        "kind": "tool_denied",
-                        "name": call.name,
-                        "subject": subject,
-                    }));
-                });
-                out
-            }
+            Decision::Deny => ToolOutput::err(
+                "permission_denied",
+                format!("权限规则拒绝了 {}（{subject}）", call.name),
+            ),
+            // deny 的留痕是 wire 口径：带 `permission_denied` 错误码的结果随历史进
+            // 下一条 llm_request.messages（tool_denied 事件类已废弃），面板 tool 行
+            // 的细分状态照常由 status 承担。
             Decision::Allow => tools::execute(&call.name, &args, tctx),
             Decision::Ask => gated_execute(sink, runtime, scope, tctx, call, &args),
         }
@@ -662,23 +735,8 @@ fn handle_call(
             status: Some(status.to_string()),
             ts: jsonl::unix_secs_now(),
         });
-        s.jsonl().record(&serde_json::json!({
-            "kind": "tool_call",
-            "id": call.call_id,
-            "name": call.name,
-            "arguments": call.arguments,
-            "decision": match decision {
-                Decision::Allow => "allow",
-                Decision::Ask => "ask",
-                Decision::Deny => "deny",
-            },
-        }));
-        s.jsonl().record(&serde_json::json!({
-            "kind": "tool_result",
-            "id": call.call_id,
-            "ok": output.succeeded(),
-            "output": output.value,
-        }));
+        // 调用与结果的留存是 wire 口径：function_call / function_call_output 项
+        // 逐字节在下一条 llm_request.messages 里（tool_call / tool_result 事件类已废弃）。
     });
     (
         session::function_call_item(&call.call_id, &call.name, &call.arguments),
@@ -777,16 +835,17 @@ fn gated_execute(
     }
 }
 
-/// 压缩续聊（design §9，裁决点 6）：会话历史压成摘要 → 开新逻辑会话注入
-/// 摘要 + 当前编辑器上下文（系统上下文是请求的 instructions 段，不在历史里，
-/// 天然原样保留——AGENTS.md / Skill 索引不随压缩丢）。压缩前历史 JSONL 已逐条
-/// 留存（append-only）。失败不阻断对话，由调用点决定是否终态。
+/// 压缩续聊（design §9，裁决点 6）：会话历史压成摘要 → **开新逻辑会话**（新留存文件 +
+/// 重新装配系统上下文——三处装配点之一），注入摘要 + 当前编辑器上下文。压缩调用自身
+/// 也走 wire 留存（llm_request / llm_response 各一条，落在**旧**文件里：摘要的产出
+/// 过程是「模型当时看到了什么」的一部分）；旧文件封闭不再追加，摘要随新文件首行
+/// `session_open.compact_summary` 留存。失败不阻断对话，由调用点决定是否终态。
 fn compact_now(
     sink: &dyn EventSink,
     runtime: &Runtime,
     scope: &VaultScope,
+    config: &HarnessConfig,
     client: &mut dyn LlmClient,
-    reason: &str,
 ) -> Result<(), CommandError> {
     const COMPACT_INSTRUCTION: &str = "\
 把以下对话历史压缩成一份续聊摘要，供新会话接着工作：保留用户的目标与关键诉求、\
@@ -802,17 +861,18 @@ fn compact_now(
         .unwrap_or_default();
     // 流式 sink 用丢弃口（M369）：摘要不逐片进面板——它只在整个压缩完成后作为 `compact`
     // 事件与面板消息整段落盘；也不参与在途停止（压缩是一次汇总调用）。
-    let output = client.complete(
-        &llm::Request {
-            system: COMPACT_INSTRUCTION.to_string(),
-            input: vec![session::user_item(&format!(
-                "{COMPACT_INSTRUCTION}\n\n===== 对话历史 =====\n{history}"
-            ))],
-            tools: Vec::new(),
-            effort,
-        },
-        &llm::DiscardStreamSink,
-    );
+    let compact_request = llm::Request {
+        system: COMPACT_INSTRUCTION.to_string(),
+        input: vec![session::user_item(&format!(
+            "{COMPACT_INSTRUCTION}\n\n===== 对话历史 =====\n{history}"
+        ))],
+        tools: Vec::new(),
+        effort,
+    };
+    // 压缩调用的逐请求留存（wire 口径；落在旧文件，先于下面的文件轮换）。
+    record_llm_request(runtime, scope, config, &compact_request);
+    let output = client.complete(&compact_request, &llm::DiscardStreamSink);
+    record_llm_response(runtime, scope, &output, client.fixture_source());
     let summary = match output {
         llm::TurnOutput { error: Some(e), .. } => {
             return Err(CommandError::new(
@@ -832,6 +892,23 @@ fn compact_now(
     };
     let context_section =
         runtime.with_session(scope, |s| s.current_context().map(str::to_string))?;
+    // 新逻辑会话：重新装配系统上下文（三处装配点之一）+ 新留存文件（首行挂起
+    // session_open，opened_from=compact、compact_summary 在场）。旧文件封闭不再追加。
+    let session_effort = runtime
+        .with_session(scope, |s| s.thinking_effort())
+        .unwrap_or_default();
+    let assembled = super::context::assemble_system(&scope.root);
+    let session_id = jsonl::new_session_id();
+    let open = super::session_open_payload(
+        scope,
+        config,
+        &assembled,
+        &session_id,
+        "compact",
+        session_effort,
+        Some(&summary),
+    );
+    let writer = jsonl::JsonlWriter::create(&session_id, &open)?;
     let _ = runtime.with_session(scope, |s| {
         let mut items = vec![session::user_item(&format!(
             "（此前会话已压缩为摘要，接着摘要继续）\n{summary}"
@@ -848,11 +925,8 @@ fn compact_now(
             status: None,
             ts: jsonl::unix_secs_now(),
         });
-        s.jsonl().record(&serde_json::json!({
-            "kind": "compact",
-            "reason": reason,
-            "summary": summary,
-        }));
+        // 文件边界即压缩留痕：压缩事件类（旧 compact kind）已废弃。
+        s.rotate(assembled.text, writer);
     });
     sink.emit(events::compact(&summary));
     Ok(())
@@ -1020,7 +1094,7 @@ mod tests {
         };
 
         let runtime = Runtime::default();
-        runtime.acquire_turn(&scope).unwrap();
+        runtime.acquire_turn(&scope, &config).unwrap();
         // 一轮里含一次工具调用 ⇒ 面板覆盖 user / assistant / tool / assistant 四类消息。
         let script = r#"{"responses": [
             {"text": "先读文件。",
@@ -1142,7 +1216,7 @@ mod tests {
         };
 
         let runtime = Runtime::default();
-        runtime.acquire_turn(&scope).unwrap();
+        runtime.acquire_turn(&scope, &config).unwrap();
         // 第 1 轮：只有工具调用、无正文（`text` 缺省即空串）——复现真实 LLM 的工具轮形状。
         // 两条调用各钉一面：`vault_read` 成功（摘要取参数）；未知工具失败（摘要含状态与错误码）。
         let script = r#"{"responses": [

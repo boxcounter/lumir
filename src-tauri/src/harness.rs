@@ -6,12 +6,15 @@
 //!   app 重启清空；webview 重载经 `harness_state` 恢复渲染。
 //! - LLM 调用与 SSE 解析在专线程（`lumir-harness-llm`，ADR 0002 §6 热路径隔离），
 //!   keypress-to-paint 零新增。
-//! - IPC 边界全部走 JSON String；**不新增 ts-rs 导出类型**（M302 纪律，bindings 归 M1）。
+//! - IPC 边界走 JSON String（M302 纪律：命令返回值不为此新增 ts-rs 类型）；
+//!   唯一例外是恢复命令的返回 [`session::SessionResumeInfo`]（reshape-harness-session-
+//!   recording：前端恢复 mission 的依赖契约，随实现同 PR 导出）。
 //! - 工具执行层抽象为「工具名 + JSON 参数 → JSON 结果」注册表（ADR 0007 Decision 3 留口，
 //!   未来 headless CLI 后端翻译成同一中间表示即可接入，面板零改动）。
 //!
 //! 子模块：
-//! - [`session`]：会话（messages、usage、pending approval、JSONL 句柄）与 vault → 会话映射
+//! - [`session`]：会话（messages、usage、pending approval、JSONL 句柄）、恢复返回类型
+//!   与 vault → 会话映射
 //! - [`context`]：系统上下文装配（固定身份段 + AGENTS.md 双层 + Skill 索引）与 Skill 双根发现
 //! - [`llm`]：provider 预设表、OpenAI Responses API client（reqwest blocking + SSE）、mock provider
 //! - [`tools`]：恰好 6 个工具的定义与执行
@@ -72,6 +75,10 @@ pub struct Runtime {
 
 struct RuntimeInner {
     sessions: Mutex<HashMap<String, session::Session>>,
+    /// 「新会话」重置后，下一次建立该 vault 会话时的 `opened_from`（reset）——
+    /// 文件边界口径：重置 = 旧文件封闭 + 新文件首行 opened_from=reset。懒建立语义不变
+    /// （重置本身不建会话），故用这个挂起映射衔接（键随会话建立移除）。
+    pending_open: Mutex<HashMap<String, &'static str>>,
     /// 批准请求 id 的单调序号（`ap-<n>`，进程内唯一即可）。
     approval_seq: AtomicU64,
 }
@@ -81,6 +88,7 @@ impl Default for Runtime {
         Self {
             inner: Arc::new(RuntimeInner {
                 sessions: Mutex::new(HashMap::new()),
+                pending_open: Mutex::new(HashMap::new()),
                 approval_seq: AtomicU64::new(0),
             }),
         }
@@ -100,7 +108,11 @@ impl Runtime {
     /// 占用当前 vault 的会话并开始一轮对话（`harness_send` 专用）：会话不存在则建立
     /// （首次装配系统上下文 + 打开 JSONL 句柄），已 busy 则拒绝——一轮一次，批准闸期间
     /// 会话被工具循环线程持有，第二个 send 必须得到明确错误而不是排队静默。
-    pub fn acquire_turn(&self, scope: &VaultScope) -> Result<(), CommandError> {
+    pub fn acquire_turn(
+        &self,
+        scope: &VaultScope,
+        config: &HarnessConfig,
+    ) -> Result<(), CommandError> {
         let mut sessions = self
             .inner
             .sessions
@@ -114,7 +126,7 @@ impl Runtime {
                 ));
             }
         }
-        let session = ensure_session(&mut sessions, scope)?;
+        let session = ensure_session(&mut sessions, self, scope, config)?;
         session.set_busy(true);
         // 新一轮复位上一轮的停止请求（中断标志不带进新轮；M348）。
         session.clear_abort();
@@ -129,6 +141,7 @@ impl Runtime {
     pub fn set_thinking_effort(
         &self,
         scope: &VaultScope,
+        config: &HarnessConfig,
         effort: thinking::ThinkingEffort,
     ) -> Result<(), CommandError> {
         let mut sessions = self
@@ -136,7 +149,7 @@ impl Runtime {
             .sessions
             .lock()
             .unwrap_or_else(|e| e.into_inner());
-        ensure_session(&mut sessions, scope)?.set_thinking_effort(effort);
+        ensure_session(&mut sessions, self, scope, config)?.set_thinking_effort(effort);
         Ok(())
     }
 
@@ -264,8 +277,10 @@ impl Runtime {
     }
 
     /// 「新会话」重置：丢弃旧会话对象（消息历史随之清空），下次访问按新会话装配
-    /// （系统上下文重读 AGENTS.md / Skill 索引；JSONL 句柄随旧对象丢弃，留存文件不动）。
-    /// 无会话时是空操作（幂等）。
+    /// （系统上下文重读 AGENTS.md / Skill 索引）。**留存是文件边界口径**：旧 JSONL 文件
+    /// 封闭不再追加，下一次建立会话时开新文件、首行 `session_open.opened_from=reset`
+    /// （挂起在 `pending_open`，保持懒建立语义：重置本身不建文件）。无会话时是空操作
+    /// （幂等）。
     ///
     /// **思考程度档位随会话对象一起丢弃**（M362，Alex 裁决点 1「新会话回到默认」）——
     /// 档位是会话状态，不存在这里的第二个副本，故这一处 remove 就是重置的完整实现。
@@ -275,35 +290,231 @@ impl Runtime {
             .sessions
             .lock()
             .unwrap_or_else(|e| e.into_inner());
-        // 留存可辨识「新会话」动作（r1 P2-1）：先记后丢，JSONL 不受影响地追加。
-        if let Some(session) = sessions.get_mut(&scope.key()) {
-            session
-                .jsonl()
-                .record(&serde_json::json!({"kind": "session_reset"}));
+        let existed = sessions.remove(&scope.key()).is_some();
+        drop(sessions);
+        if existed {
+            self.inner
+                .pending_open
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .insert(scope.key(), "reset");
         }
-        sessions.remove(&scope.key());
+    }
+
+    /// 从留存文件恢复会话（`harness_resume_session` 的实现体）：读源文件最后一条
+    /// 会话轮次 `llm_request` 的完整请求体，system + messages 原样灌进一个新会话，
+    /// 续写**新** JSONL 文件（opened_from=restore，restored_from=源会话 id）。面板消息不重建——恢复的是 LLM 侧
+    /// 单一事实源，面板渲染是前端恢复 mission 的消费面。busy 态拒绝（与 new_session
+    /// 同口径）；非 busy 时替换当前会话。
+    pub fn resume_session(
+        &self,
+        scope: &VaultScope,
+        config: &HarnessConfig,
+        session_id: &str,
+    ) -> Result<session::SessionResumeInfo, CommandError> {
+        if self.session_busy(scope) {
+            return Err(CommandError::new(
+                "harness_busy",
+                "对话正在处理中，请等本轮结束后再恢复会话",
+            ));
+        }
+        if !jsonl::is_valid_session_id(session_id) {
+            return Err(CommandError::new(
+                "harness_session_invalid",
+                format!("非法的 session id：{session_id}"),
+            ));
+        }
+        let path = jsonl::sessions_dir()?.join(format!("{session_id}.jsonl"));
+        let file = jsonl::read_session_file(&path)?;
+        let open = &file.session_open;
+        if open["vault_root"].as_str() != Some(scope.key().as_str()) {
+            return Err(CommandError::new(
+                "harness_session_vault_mismatch",
+                "该会话留存属于另一个 vault，不能恢复到当前 vault",
+            )
+            .param("vault_root", open["vault_root"].to_string()));
+        }
+        let system = open["system"]
+            .as_str()
+            .ok_or_else(|| CommandError::new("harness_session_invalid", "session_open 缺 system"))?
+            .to_string();
+        // 恢复入口：源文件里**最后一条会话轮次** llm_request——压缩调用是内部汇总
+        // 调用（system 是压缩指令，与会话 system 不同），天然被这个判据排除。
+        let conversation_requests: Vec<(usize, &serde_json::Value)> = file
+            .records
+            .iter()
+            .enumerate()
+            .filter(|(_, r)| r["kind"] == "llm_request")
+            .filter(|(_, r)| r["request"]["system"].as_str() == Some(system.as_str()))
+            .map(|(index, r)| (index, &r["request"]))
+            .collect();
+        let (messages, effort) = match conversation_requests.last() {
+            Some((_, request)) => {
+                let messages = request["messages"].as_array().cloned().ok_or_else(|| {
+                    CommandError::new("harness_session_invalid", "llm_request 缺 messages")
+                })?;
+                // 思考档位取最后一条请求实际发出的值（params.thinking），回落首行声明。
+                let effort = request["params"]["thinking"]
+                    .as_str()
+                    .and_then(|s| {
+                        serde_json::from_value(serde_json::Value::String(s.to_string())).ok()
+                    })
+                    .or_else(|| serde_json::from_value(open["thinking"].clone()).ok())
+                    .unwrap_or_default();
+                (messages, effort)
+            }
+            None => (Vec::new(), thinking::ThinkingEffort::default()),
+        };
+        // 折叠末尾未入请求的响应（design §6.2 第 4 步）：锚点请求之后若还配对着一条
+        // llm_response（会话最常见的结束形态——末轮答复后用户尚未再提问），把它折进
+        // 灌回的 input——reasoning 回放项在前、assistant 消息项（M372 空正文跳过）、
+        // tool_calls 的 function_call 项成组压尾（M360 项序）。带悬空调用的形态按原样
+        // 灌回（响应未带、wire 里也无处可取输出项）——design 登记的边界口径。
+        let mut restored = messages;
+        if let Some((index, _)) = conversation_requests.last() {
+            if let Some(response) = file
+                .records
+                .get(index + 1)
+                .filter(|r| r["kind"] == "llm_response")
+            {
+                for item in session::assistant_item(
+                    response["text"].as_str().unwrap_or(""),
+                    response.get("reasoning"),
+                ) {
+                    restored.push(item);
+                }
+                if let Some(calls) = response["tool_calls"].as_array() {
+                    for call in calls {
+                        restored.push(session::function_call_item(
+                            call["id"].as_str().unwrap_or(""),
+                            call["name"].as_str().unwrap_or(""),
+                            call["arguments"].as_str().unwrap_or(""),
+                        ));
+                    }
+                }
+            }
+        }
+        // 续写新文件：session_open 沿用源文件的装配事实（system 全文 + assembly 清单），
+        // provider / model / thinking 记**当前**配置（后续请求实际使用的身份）；
+        // opened_from=restore + restored_from=源会话 id（谱系链：这份会话恢复自哪份）。
+        let assembly = open
+            .get("assembly")
+            .cloned()
+            .unwrap_or_else(|| serde_json::json!([]));
+        let new_id = jsonl::new_session_id();
+        let open_payload = serde_json::json!({
+            "kind": "session_open",
+            "session_id": new_id,
+            "vault_root": scope.key(),
+            "opened_from": "restore",
+            "restored_from": session_id,
+            "provider": config.provider,
+            "model": llm::active_model(config),
+            "thinking": effort,
+            "system": system,
+            "assembly": assembly,
+        });
+        let writer = jsonl::JsonlWriter::create(&new_id, &open_payload)?;
+        let restored_items = restored.len();
+        let new_session =
+            session::Session::new(scope.root.clone(), system, restored, effort, writer);
+        self.inner
+            .sessions
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(scope.key(), new_session);
+        self.inner
+            .pending_open
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&scope.key());
+        Ok(session::SessionResumeInfo {
+            session_id: new_id,
+            restored_items,
+        })
     }
 }
 
-/// 取得（必要时建立）该 vault 的会话：会话不存在时装配系统上下文并打开 JSONL 句柄。
+/// 取得（必要时建立）该 vault 的会话：会话不存在时装配系统上下文、开新留存文件
+/// （首行挂起 `session_open`，`opened_from` 取 pending_open 里的 reset 或 new），
+/// system 全文与 assembly 清单原样灌进首行。
 ///
 /// **唯一建立路径**（M362 收拢）：`acquire_turn` 与 `set_thinking_effort` 都经这里——两处各写
-/// 一份建立逻辑必然漂移（REVIEW.md 第 8 条）。建立失败（`JsonlWriter::open`）在插入之前返回，
+/// 一份建立逻辑必然漂移（REVIEW.md 第 8 条）。建立失败（留存文件打开失败）在插入之前返回，
 /// 不留下半态会话（与收拢前 `acquire_turn` 的 entry 先判后插同口径）。
 fn ensure_session<'a>(
     sessions: &'a mut HashMap<String, session::Session>,
+    runtime: &Runtime,
     scope: &VaultScope,
+    config: &HarnessConfig,
 ) -> Result<&'a mut session::Session, CommandError> {
     let key = scope.key();
     if !sessions.contains_key(&key) {
-        let system = context::assemble_system(&scope.root);
-        let writer = jsonl::JsonlWriter::open(&scope.root)?;
+        let assembled = context::assemble_system(&scope.root);
+        let session_id = jsonl::new_session_id();
+        let opened_from = runtime
+            .inner
+            .pending_open
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&key)
+            .unwrap_or("new");
+        let open = session_open_payload(
+            scope,
+            config,
+            &assembled,
+            &session_id,
+            opened_from,
+            thinking::ThinkingEffort::default(),
+            None,
+        );
+        let writer = jsonl::JsonlWriter::create(&session_id, &open)?;
         sessions.insert(
             key.clone(),
-            session::Session::new(scope.root.clone(), system, writer),
+            session::Session::new(
+                scope.root.clone(),
+                assembled.text,
+                Vec::new(),
+                thinking::ThinkingEffort::default(),
+                writer,
+            ),
         );
     }
     Ok(sessions.get_mut(&key).expect("just ensured"))
+}
+
+/// 构造 `session_open` 首行（三处装配点共用：会话建立 / 「新会话」重置 / 自动压缩，
+/// 外加恢复的 resume）。完整装配记录 = system 全文逐字节、每来源的路径与存在与否、
+/// provider / 模型 / 思考档位、opened_from（new / reset / compact / resume；compact
+/// 时 compact_summary 在场）。
+///
+/// `assembled` 是当次装配的结构化结果——调用侧 MUST 与灌给会话的 system 全文同源
+/// （同一次 `assemble_system`）；`thinking` 是该会话此刻的实际档位（首条记录前用户
+/// 可能已切档，挂起行可由 `update_pending_open` 修正）。
+pub(crate) fn session_open_payload(
+    scope: &VaultScope,
+    config: &HarnessConfig,
+    assembled: &context::AssembledSystem,
+    session_id: &str,
+    opened_from: &str,
+    thinking: thinking::ThinkingEffort,
+    compact_summary: Option<&str>,
+) -> serde_json::Value {
+    let mut payload = serde_json::json!({
+        "kind": "session_open",
+        "session_id": session_id,
+        "vault_root": scope.key(),
+        "opened_from": opened_from,
+        "provider": config.provider,
+        "model": llm::active_model(config),
+        "thinking": thinking.as_str(),
+        "system": assembled.text,
+        "assembly": assembled.manifest,
+    });
+    if let Some(summary) = compact_summary {
+        payload["compact_summary"] = serde_json::json!(summary);
+    }
+    payload
 }
 
 // ---------------------------------------------------------------------------
@@ -332,7 +543,7 @@ pub fn harness_send(
     let config = config::load()?.config.harness;
     let context = turn::parse_context(&context_json)?;
     let assembled = turn::assemble_user_message(&message, &context);
-    runtime.acquire_turn(&scope)?;
+    runtime.acquire_turn(&scope, &config)?;
     let runtime_thread = runtime.inner().clone();
     let runtime_release = runtime.inner().clone();
     let scope_release = scope.clone();
@@ -427,5 +638,24 @@ pub fn harness_set_thinking_effort(
     effort: thinking::ThinkingEffort,
 ) -> Result<(), CommandError> {
     let scope = vault_scope(&vault)?;
-    runtime.set_thinking_effort(&scope, effort)
+    let config = config::load()?.config.harness;
+    runtime.set_thinking_effort(&scope, &config, effort)
+}
+
+/// 从留存文件恢复会话（change reshape-harness-session-recording 的恢复入口）：
+/// `session_id` 是 `sessions/<id>.jsonl` 的文件名（形态校验防目录穿越）。读源文件
+/// 最后一条会话轮次 `llm_request` 的完整请求体，system + messages 原样灌进新会话并
+/// 续写**新**留存文件（opened_from=restore、restored_from=源会话 id——恢复的地基：文件边界 + 会话身份 + 谱系链）。
+/// 返回新会话标识（`SessionResumeInfo`，ts-rs 导出）；面板重渲染由前端恢复 mission
+/// 经 `harness_state` 消费。busy 态返回 `harness_busy`；源文件不属于当前 vault 返回
+/// `harness_session_vault_mismatch`。
+#[tauri::command(rename_all = "snake_case")]
+pub fn harness_resume_session(
+    vault: tauri::State<'_, crate::commands::VaultState>,
+    runtime: tauri::State<'_, Runtime>,
+    session_id: String,
+) -> Result<session::SessionResumeInfo, CommandError> {
+    let scope = vault_scope(&vault)?;
+    let config = config::load()?.config.harness;
+    runtime.resume_session(&scope, &config, &session_id)
 }

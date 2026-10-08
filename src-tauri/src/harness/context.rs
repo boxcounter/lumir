@@ -45,33 +45,106 @@ heading 为摘录上方最近一级标题）。回指某段摘录时按它的内
 用出处（heading 与行范围）消歧。摘录原文是只读引用：除非用户明确要求修改该处，\
 不要凭记忆改写摘录内容。";
 
-/// 装配完整系统上下文（identity + AGENTS.md 双层 + Skill 索引 + 摘录回指纪律）。
-pub fn assemble_system(vault_root: &Path) -> String {
+/// 装配清单的一个来源项（`session_open.assembly` 的元素，design §2）：每个来源的
+/// 路径与**当时是否存在**。「不存在」本身是装配事实的一部分——旧实现静默跳过，
+/// 事后无法区分「没配」与「忘了注入」。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct AssemblySource {
+    /// 来源标识：identity / quote_reference / agents_user_wide / agents_vault_root / skill_index。
+    pub source: &'static str,
+    /// 来源路径（固定段与 Skill 索引无单一文件来源，为 null）。
+    pub path: Option<String>,
+    /// 装配时该来源是否在场。
+    pub exists: bool,
+    /// 注入文本的字节数（不存在 = 0）。
+    pub bytes: u64,
+    /// 仅 skill_index：合并去重后的 Skill 数。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub skills: Option<usize>,
+}
+
+impl AssemblySource {
+    fn fixed(source: &'static str, text: &str) -> Self {
+        Self {
+            source,
+            path: None,
+            exists: true,
+            bytes: text.len() as u64,
+            skills: None,
+        }
+    }
+
+    fn file(source: &'static str, path: PathBuf, content: Option<&str>) -> Self {
+        Self {
+            source,
+            path: Some(path.display().to_string()),
+            exists: content.is_some(),
+            bytes: content.map(|c| c.len() as u64).unwrap_or(0),
+            skills: None,
+        }
+    }
+}
+
+/// 装配结果：`text` 是发给模型的 system prompt 全文（逐字节），`manifest` 是
+/// 结构化装配清单（每来源路径 + 存在与否 + 字节数）——随 `session_open` 落盘。
+pub struct AssembledSystem {
+    pub text: String,
+    pub manifest: Vec<AssemblySource>,
+}
+
+/// 装配完整系统上下文（固定身份段 + AGENTS.md 双层 + Skill 索引 + 摘录回指纪律）。
+pub fn assemble_system(vault_root: &Path) -> AssembledSystem {
     let mut out = String::from(IDENTITY);
+    let mut manifest = vec![AssemblySource::fixed("identity", IDENTITY)];
     push_section(&mut out, "引用摘录的回指纪律", QUOTE_REFERENCE);
-    if let Some(user_agents) = read_agents_md(&user_agents_path()) {
+    manifest.push(AssemblySource::fixed("quote_reference", QUOTE_REFERENCE));
+    let user_agents_path = user_agents_path();
+    let user_agents = read_agents_md(&user_agents_path);
+    manifest.push(AssemblySource::file(
+        "agents_user_wide",
+        user_agents_path,
+        user_agents.as_deref(),
+    ));
+    if let Some(user_agents) = &user_agents {
         push_section(
             &mut out,
             "user-wide AGENTS.md（~/.agents/AGENTS.md）",
-            &user_agents,
+            user_agents,
         );
     }
-    if let Some(vault_agents) = read_agents_md(&vault_root.join("AGENTS.md")) {
-        push_section(&mut out, "vault 根 AGENTS.md", &vault_agents);
+    let vault_agents_path = vault_root.join("AGENTS.md");
+    let vault_agents = read_agents_md(&vault_agents_path);
+    manifest.push(AssemblySource::file(
+        "agents_vault_root",
+        vault_agents_path,
+        vault_agents.as_deref(),
+    ));
+    if let Some(vault_agents) = &vault_agents {
+        push_section(&mut out, "vault 根 AGENTS.md", vault_agents);
     }
     let skills = discover_skills(vault_root);
+    let mut index = String::new();
+    for skill in &skills {
+        index.push_str(&format!("- {}: {}\n", skill.name, skill.description));
+    }
+    manifest.push(AssemblySource {
+        source: "skill_index",
+        path: None,
+        exists: !skills.is_empty(),
+        bytes: index.trim_end().len() as u64,
+        skills: Some(skills.len()),
+    });
     if !skills.is_empty() {
-        let mut index = String::new();
-        for skill in &skills {
-            index.push_str(&format!("- {}: {}\n", skill.name, skill.description));
-        }
         push_section(
             &mut out,
             "可用 Skill 索引（skill_load 按名加载全文）",
             index.trim_end(),
         );
     }
-    out
+    AssembledSystem {
+        text: out,
+        manifest,
+    }
 }
 
 fn push_section(out: &mut String, title: &str, body: &str) {
@@ -266,7 +339,8 @@ mod tests {
         )
         .unwrap();
 
-        let system = assemble_system(&vault);
+        let assembled = assemble_system(&vault);
+        let system = assembled.text;
         assert!(system.contains("user rules"), "{system}");
         assert!(system.contains("vault rules"), "{system}");
         assert!(system.contains("- x: xd"), "{system}");
@@ -274,15 +348,42 @@ mod tests {
         // 摘录回指纪律是固定段（不依赖 vault 内容，M343）：协议无编号、按内容/出处回指。
         assert!(system.contains("<quote file=\"…\""), "{system}");
         assert!(system.contains("不要使用编号"), "{system}");
+        // 装配清单：五个来源全在场，双层 AGENTS.md 各记路径与存在与否，skill_index 记数量。
+        let manifest = &assembled.manifest;
+        assert_eq!(manifest.len(), 5, "{manifest:?}");
+        let by_source = |s: &str| manifest.iter().find(|m| m.source == s).unwrap();
+        assert!(by_source("identity").exists);
+        assert!(by_source("quote_reference").exists);
+        let user = by_source("agents_user_wide");
+        assert!(user.path.as_deref().unwrap().ends_with(".agents/AGENTS.md"));
+        assert!(user.exists && user.bytes == 10, "{user:?}"); // "user rules"
+        let vault_src = by_source("agents_vault_root");
+        assert!(vault_src.path.as_deref().unwrap().ends_with("AGENTS.md"));
+        assert!(vault_src.exists && vault_src.bytes == 11, "{vault_src:?}"); // "vault rules"
+        let skills = by_source("skill_index");
+        assert_eq!(skills.skills, Some(1));
+        assert!(skills.exists && skills.bytes > 0, "{skills:?}");
 
         // 换到「空 HOME」+ 无 AGENTS.md / 无 skills 的 vault：双层与索引静默跳过，
-        // 只剩 identity + 摘录回指纪律两个固定段。
+        // 只剩 identity + 摘录回指纪律两个固定段；清单如实记 exists:false。
         let home3 = tmpdir("home3");
         std::env::set_var("HOME", &home3);
         let vault3 = tmpdir("vault3");
-        let system = assemble_system(&vault3);
+        let assembled = assemble_system(&vault3);
+        let system = assembled.text;
         assert!(!system.contains("user rules"), "{system}");
         assert!(!system.contains("vault rules"), "{system}");
         assert!(system.contains("引用摘录的纪律"), "{system}");
+        assert_eq!(assembled.manifest.len(), 5);
+        assert!(
+            !assembled.manifest[2].exists,
+            "user-wide 缺失须记 exists:false"
+        );
+        assert!(
+            !assembled.manifest[3].exists,
+            "vault 根缺失须记 exists:false"
+        );
+        assert_eq!(assembled.manifest[4].skills, Some(0));
+        assert!(!assembled.manifest[4].exists);
     }
 }

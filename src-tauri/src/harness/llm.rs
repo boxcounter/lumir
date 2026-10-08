@@ -275,6 +275,12 @@ pub trait LlmClient: Send {
     /// 调用方 MUST NOT 持有会话锁调用本方法（一轮可能流式几分钟，持锁会把
     /// `harness_state` / 批准通道全堵住）——`sink` 的回调里可能反过来短暂查会话（中断探测）。
     fn complete(&mut self, request: &Request, sink: &dyn StreamSink) -> TurnOutput;
+
+    /// mock provider 的 fixture 路径（留存 `llm_response.mock_fixture` 的因果链字段：
+    /// 哪份 fixture 驱动了这一轮）。真 provider 无此概念，缺省 None。
+    fn fixture_source(&self) -> Option<&str> {
+        None
+    }
 }
 
 /// 按配置装配 client：mock ⇒ fixture 驱动；kimi / deepseek ⇒ reqwest blocking。
@@ -843,6 +849,11 @@ impl MockClient {
 }
 
 impl LlmClient for MockClient {
+    /// fixture 路径（`llm_response.mock_fixture` 的因果链字段）。
+    fn fixture_source(&self) -> Option<&str> {
+        Some(&self.source)
+    }
+
     fn complete(&mut self, request: &Request, sink: &dyn StreamSink) -> TurnOutput {
         // 记录收到的档位（M362）：与脚本是否弹尽无关——验收要断言的是「发出去的是什么」，
         // 故放在最前面，耗尽路径也留痕。

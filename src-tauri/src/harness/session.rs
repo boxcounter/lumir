@@ -136,12 +136,28 @@ impl PendingApprovalSnapshot {
     }
 }
 
+/// `harness_resume_session` 的返回（ts-rs 导出；前端恢复 UI mission 的消费形状）：
+/// 从留存文件恢复出来的会话**续写的新会话**——新 session id 是新 JSONL 留存的文件名，
+/// 前端据此知道「当前会话接在了哪份留存上」，面板重渲染走 `harness_state`。
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export, export_to = "../../src/bindings/")]
+pub struct SessionResumeInfo {
+    /// 续写的新会话 id（`sessions/<id>.jsonl` 的文件名）。
+    pub session_id: String,
+    /// 灌回的 LLM 侧历史条数（`input` 项数）：源文件最后一条会话轮次 llm_request 的
+    /// messages，加末尾未入请求的 llm_response 折叠项（design §6.2 第 4 步——reasoning
+    /// 回放项 + assistant 消息 + 悬空的 function_call 项）；空会话恢复为 0。
+    pub restored_items: usize,
+}
+
 /// 一个 vault 的会话。
 pub struct Session {
     root: PathBuf,
-    /// 系统上下文（固定身份段 + AGENTS.md 双层 + Skill 索引），会话建立时装配一次。
+    /// 系统上下文（固定身份段 + AGENTS.md 双层 + Skill 索引 的装配全文），
+    /// 会话建立时装配一次；自动压缩开新逻辑会话时重新装配并整体换入。
     system: String,
-    /// LLM 侧消息项（Responses API `input` 形状）。
+    /// LLM 侧消息项（Responses API `input` 形状）。**单一事实源**：面板消息由它派生、
+    /// 留存里的 `llm_request.messages` 逐字节等于它每次发送时的快照。
     input: Vec<serde_json::Value>,
     /// 面板渲染消息。
     panel: Vec<PanelMessage>,
@@ -161,18 +177,24 @@ pub struct Session {
 }
 
 impl Session {
-    pub fn new(root: PathBuf, system: String, jsonl: JsonlWriter) -> Self {
+    pub fn new(
+        root: PathBuf,
+        system: String,
+        input: Vec<serde_json::Value>,
+        thinking_effort: ThinkingEffort,
+        jsonl: JsonlWriter,
+    ) -> Self {
         Self {
             root,
             system,
-            input: Vec::new(),
+            input,
             panel: Vec::new(),
             usage: UsageSnapshot::default(),
             busy: false,
             pending: None,
             abort_requested: false,
             current_context: None,
-            thinking_effort: ThinkingEffort::default(),
+            thinking_effort,
             jsonl,
         }
     }
@@ -190,9 +212,13 @@ impl Session {
         self.thinking_effort
     }
 
-    /// 设置档位（`harness_set_thinking_effort` 的落点）。
+    /// 设置档位（`harness_set_thinking_effort` 的落点）。档位同时修正留存首行挂起的
+    /// `session_open.thinking`（首条记录落盘前仍可改，落盘后历史不改写）。
     pub fn set_thinking_effort(&mut self, effort: ThinkingEffort) {
         self.thinking_effort = effort;
+        let value = effort.as_str();
+        self.jsonl
+            .update_pending_open(|open| open["thinking"] = value.into());
     }
 
     pub fn is_busy(&self) -> bool {
@@ -232,6 +258,13 @@ impl Session {
         &mut self.jsonl
     }
 
+    /// 换系统上下文 + 换留存句柄（自动压缩开新逻辑会话的落点）：旧文件封闭不再追加，
+    /// 新句柄带自己的 `session_open`（opened_from=compact）。输入历史由调用侧替换。
+    pub fn rotate(&mut self, system: String, jsonl: JsonlWriter) {
+        self.system = system;
+        self.jsonl = jsonl;
+    }
+
     pub fn set_current_context(&mut self, section: Option<String>) {
         self.current_context = section;
     }
@@ -260,11 +293,12 @@ impl Session {
         }
     }
 
-    /// 挂起批准请求（工具循环线程 park 前调用；旧请求理应已消费，重复挂起即覆盖并记日志）。
+    /// 挂起批准请求（工具循环线程 park 前调用）。重复挂起即覆盖：旧请求的发送端
+    /// 随对象 drop 失效，等待线程走 `approval_stale` 过期路径（不再单独留
+    /// `approval_overwritten` 事件——决策类 sidecar 只留 wire 不可推导者）。
     pub fn park_approval(&mut self, request: ApprovalRequest) {
         if self.pending.is_some() {
-            self.jsonl
-                .record(&serde_json::json!({"kind": "approval_overwritten"}));
+            eprintln!("lumir: harness 批准请求被覆盖（旧请求按 approval_stale 失效）");
         }
         self.pending = Some(request);
     }
@@ -309,22 +343,18 @@ impl Session {
         })
     }
 
-    /// 本轮被请求停止（M348）：置位标志、收回待决批准项（通道发 Withdrawn）、JSONL 留痕。
-    /// 返回是否确实有在途的待决批准项被收回（测试与如实记录用）。
+    /// 本轮被请求停止（M348）：置位标志、收回待决批准项（通道发 Withdrawn）。
+    /// 返回是否确实有在途的待决批准项被收回（测试与如实记录用）。中断的留存痕迹
+    /// 由工具循环收口时的 `turn_aborted` sidecar 承担（`turn_abort_requested` /
+    /// `approval_withdrawn` 是 wire 可推导的，已废弃——批准项的收回结果就是
+    /// 「该调用未执行」，随历史进下一条 `llm_request.messages`）。
     pub fn request_abort(&mut self) -> bool {
         self.abort_requested = true;
         let withdrawn = self.pending.take();
         if let Some(request) = &withdrawn {
-            self.jsonl.record(&serde_json::json!({
-                "kind": "approval_withdrawn",
-                "id": request.id,
-                "tool": request.tool,
-            }));
             // 发失败 = 等待线程已不在，与 resolve_approval 同口径，不 panic。
             let _ = request.tx.send(ApprovalSignal::Withdrawn);
         }
-        self.jsonl
-            .record(&serde_json::json!({"kind": "turn_abort_requested"}));
         withdrawn.is_some()
     }
 
