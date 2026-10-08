@@ -90,7 +90,7 @@ proposal 的技术面：文件布局、记录 schema、不变量、恢复设计�
 
 1. **首行不变量**：每个 `sessions/*.jsonl` 首行是 `session_open`，且全文件 `session_id` 一致。
 2. **请求-响应配对**：`llm_request` 与 `llm_response` 严格交替成对（失败响应也是响应，`error` 字段在场）；压缩调用的丢弃 sink 不影响留存（留存与 sink 是两条出口）。
-3. **历史接续一致性**：第 i 条 `llm_response` 的正文 / 思考 / 工具调用，必须与第 i+1 条 `llm_request.messages` 中对应的 assistant / tool 项逐字节一致。这是「单份事实」的机器可检形态：响应一旦入历史，就只从历史读。
+3. **历史接续一致性**：第 i 条 `llm_response` 的正文 / 思考（`reasoning` 回放项）/ 工具调用，必须与第 i+1 条 `llm_request.messages` 中对应的 assistant / tool 项逐字节一致。这是「单份事实」的机器可检形态：响应一旦入历史，就只从历史读。
 4. **system 一致性**：同一文件内所有 `llm_request.system` 与首行 `session_open.system` 逐字节一致（压缩开新文件后按新文件首行为准）。
 5. **恢复充分性**：仅凭文件内容可重建每一轮请求——本不变量的验收形态，见 §5。
 6. **记录不阻断对话**：IO / 序列化失败只打 stderr 的既有纪律不变（`jsonl.rs` 现行口径）。
