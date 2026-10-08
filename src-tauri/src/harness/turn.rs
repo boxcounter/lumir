@@ -84,10 +84,20 @@ pub fn parse_context(context_json: &str) -> Result<ContextBlock, CommandError> {
     Ok(block)
 }
 
+/// 注入节的形态定义——装配（[`assemble_user_message`]）与剥离（[`strip_context_section`]）
+/// 都只从这里取，形态不在两处各写一份（REVIEW.md 第 8 条：同一语义两处真源会漂）。
+/// 节头同时是节本身的开头（[`context_section`] 产出）。
+pub const CONTEXT_SECTION_HEADER: &str = "当前编辑器上下文：";
+/// 提问与注入节之间的空行分隔。
+const CONTEXT_SECTION_SEPARATOR: &str = "\n\n";
+/// 注入节的方括号（`[当前编辑器上下文：…]`）。
+const CONTEXT_SECTION_OPEN: &str = "[";
+const CONTEXT_SECTION_CLOSE: &str = "]";
+
 /// 把上下文块格式化成注入 user 消息的「当前编辑器上下文」节（压缩续聊时原样重注入）。
 pub fn context_section(block: &ContextBlock) -> Option<String> {
     let path = block.path.as_ref()?;
-    let mut out = format!("当前编辑器上下文：\n文件：{path}");
+    let mut out = format!("{CONTEXT_SECTION_HEADER}\n文件：{path}");
     let (kind, range) = if let Some(selection) = &block.selection {
         ("选区", Some(selection))
     } else if let Some(viewport) = &block.viewport_range {
@@ -122,9 +132,9 @@ pub struct AssembledMessage {
 pub fn assemble_user_message(message: &str, block: &ContextBlock) -> AssembledMessage {
     match context_section(block) {
         Some(section) => {
-            let bracketed = format!("[{section}]");
+            let bracketed = format!("{CONTEXT_SECTION_OPEN}{section}{CONTEXT_SECTION_CLOSE}");
             AssembledMessage {
-                text: format!("{message}\n\n{bracketed}"),
+                text: format!("{message}{CONTEXT_SECTION_SEPARATOR}{bracketed}"),
                 context_section: Some(bracketed),
             }
         }
@@ -132,6 +142,24 @@ pub fn assemble_user_message(message: &str, block: &ContextBlock) -> AssembledMe
             text: message.to_string(),
             context_section: None,
         },
+    }
+}
+
+/// [`assemble_user_message`] 的逆：剥掉文末自动注入的上下文节，只留用户原始提问段
+/// （会话名与标题栏同口径，design §6.1）。
+///
+/// 判据 = 文末的注入形态（空行 + `[` + 节头 … 收尾 `]`），取**最后一次**出现：正文里
+/// 引用了同名字样时，剥掉的仍是最后那个真注入节。形态常量与装配侧共用（见上方三个
+/// `CONTEXT_SECTION_*`），不在这里另写一份字面量。
+///
+/// 留在正文里的近似：正文以该字面量原样收尾（用户把注入节原文粘进提问）时会被一并剥掉，
+/// 代价只是名字变短——与 M309 的「按 `\n\n[` 切分」不是同一类（那里任意方括号段落都会
+/// 命中切分点前移）。线里没有第二处可判别「这是注入」的信息，故形态判据到此为止。
+pub fn strip_context_section(text: &str) -> &str {
+    let open = format!("{CONTEXT_SECTION_SEPARATOR}{CONTEXT_SECTION_OPEN}{CONTEXT_SECTION_HEADER}");
+    match text.rfind(&open) {
+        Some(idx) if text.ends_with(CONTEXT_SECTION_CLOSE) => &text[..idx],
+        _ => text,
     }
 }
 
@@ -1181,6 +1209,35 @@ mod tests {
         let assembled = assemble_user_message("纯提问", &ContextBlock::default());
         assert_eq!(assembled.text, "纯提问");
         assert!(assembled.context_section.is_none());
+    }
+
+    /// 会话名剥离（M396，design §6.1「与标题栏同口径」）：注入形态 = 提问 + 空行 +
+    /// `[节头…]`，剥掉节只留提问段。断言里的节头取共享常量，不另抄一份字面量。
+    #[test]
+    fn strip_context_section_keeps_question_only() {
+        let assembled =
+            assemble_user_message("这句话是什么意思？", &block_with_selection("选中文本"));
+        // 现场先自证是真注入（装配确实加了节），再断言剥离结果——否则「剥完 = 原样」的
+        // 断言在没有节时恒真（REVIEW.md 第 1 条）。
+        assert!(assembled.text.contains(CONTEXT_SECTION_HEADER));
+        assert_eq!(strip_context_section(&assembled.text), "这句话是什么意思？");
+        // 无注入：原样返回，不吞任何字符。
+        assert_eq!(strip_context_section("纯提问"), "纯提问");
+        assert_eq!(
+            strip_context_section("含方括号的问题 [1]"),
+            "含方括号的问题 [1]"
+        );
+    }
+
+    /// 剥离只认**文末**的注入节：正文里的同名字样（不以 `]` 收尾）不动；正文引用了同名字样
+    /// 而末尾另有真注入节时，剥掉的是最后那个（`rfind`——取首个会把真注入节留在名字里）。
+    #[test]
+    fn strip_context_section_only_takes_the_trailing_section() {
+        let inline = format!("我在讨论\n\n{CONTEXT_SECTION_HEADER}样例，不是注入节");
+        assert_eq!(strip_context_section(&inline), inline);
+        let pasted = format!("看这段\n\n[{CONTEXT_SECTION_HEADER}示例]");
+        let assembled = assemble_user_message(&pasted, &block_with_selection("选中文本"));
+        assert_eq!(strip_context_section(&assembled.text), pasted);
     }
 
     /// M367：模型某轮只发工具调用、无正文文本时——

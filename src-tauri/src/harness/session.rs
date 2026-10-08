@@ -157,8 +157,9 @@ pub struct SessionResumeInfo {
 pub struct SessionSummary {
     /// 留存文件名去 `.jsonl`（`sessions/<session_id>.jsonl`）；也是恢复命令的入参。
     pub session_id: String,
-    /// 文件内第一条 `llm_request` 的首条 user 消息正文**原文**（未截断——会话名「约 20 字」
-    /// 的截断规则在前端）；该会话还没有用户消息时为 None。
+    /// 文件内第一条 `llm_request` 的首条 user 消息的**原始提问段**——自动注入的
+    /// 「当前编辑器上下文」节已由后端剥除（`turn.rs` 的 `strip_context_section`；注入形态的
+    /// 单一真源在那里）；未截断——会话名「约 20 字」的截断规则在前端。该会话还没有用户消息时为 None。
     #[ts(optional)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub first_user_text: Option<String>,
