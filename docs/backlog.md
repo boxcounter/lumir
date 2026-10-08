@@ -638,6 +638,27 @@
 
 ## 待修 findings（不阻塞）
 
+### 会话留存：未来评估 wire 原生增量记录（Claude Code / Kimi Code 形态）（M394 登记，2026-10-08，待办）
+
+**是什么**：本期 wire 形态会话留存（change `reshape-harness-session-recording`，即 proposal 里的
+「wire-level session recording」）取的是「每次 LLM 调用落完整请求体」，恢复**零拼装**。留一个扣子：
+**当会话变长、完整请求体重复落盘的体积成为实际问题时**，改为两家 coding agent 的「wire 原生增量记录
++ 确定性重建」形态——每发生一条消息 / 工具调用追加一行原文（wire 原生消息对象），恢复时按序拼装重建。
+与本期已否决的「业务事件流水」不同：增量记的是**发给模型的原文**，不是业务语义事件，拼装因此不变形。
+
+**一手依据（2026-10-08 本机实测两家实现）**：
+- **Kimi Code**：`wire.jsonl` 的 `llm.request` **只存哈希、不存请求体**；恢复靠消费 append 事件流重建。
+- **Claude Code**：会话文件是 `parentUuid` 链的**完整消息对象逐条 append**。
+
+**与本期的关系（为什么现在不改）**：完整请求体方案的恢复**零拼装、且恢复后 prompt cache 前缀逐字节稳定**
+（恢复时逐字节保真决定 provider 侧前缀缓存命中）；增量的代价是恢复代码路径与发送路径各说各话。
+**这不是待修缺陷，是一格有触发条件的前瞻记录**——本期已经把权衡写进 design。
+
+**落点 / 触发条件**：写法与完整权衡见 `openspec/changes/reshape-harness-session-recording/design.md`
+§8「未来方向（本期不做，留扣子）」。触发条件 = 会话变长、体积成为实际问题（与 design §4 的
+「若 dogfood 出现体积实证」同口径；那时第一步仍是 §4 的「压缩旧文件 / 截断附件」类事后整理，
+本节记的是更深一层的结构候选）。
+
 ### `context.rs` 模块注释称「自动压缩走同一 `assemble_system`」，实际压缩不重装配（M385 survey 顺报，2026-10-08，low）
 
 **症状**：`src-tauri/src/harness/context.rs:10-12` 的模块文档写「装配时机：会话建立 / 「新会话」重置 /
