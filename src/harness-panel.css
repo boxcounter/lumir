@@ -105,8 +105,10 @@
   display: none;
 }
 /* 会话名钮 + 浮层的 wrapper（M351，finding 20261006-worker-hp4）：浮层挪出 <button>
-   （WKWebView 把嵌套按钮当叶子、AX 不暴露浮层项）——wrapper 是 absolute 定位的包含块，
-   紧贴按钮，坐标语义与「锚在钮内」等价。 */
+   （WKWebView 把嵌套按钮当叶子、AX 不暴露浮层项）。M397 浮层改 `position: fixed` 后，wrapper
+   **不再是浮层的定位包含块**——这里的 `position: relative` 只为与同族 wrapper（.lumir-hp-modelwrap）
+   形态一致而保留，不承担定位职责；wrapper 存在的理由收敛为「把钮与浮层收进同一节点」：
+   seg.hidden 连带隐藏浮层，且浮层 MUST NOT 放回 <button> 内。 */
 .lumir-hp-sessionwrap {
   position: relative;
   flex: none;
@@ -174,10 +176,18 @@
   line-height: 1;
 }
 /* 会话浮层（节点 1 裁决后口径）：挂在 wrapper 上（与会话名钮兄弟），含「新建会话」
-   动作项；M392 起动作项下追加本 vault 历史会话清单（极简选择器，只列不管理）。 */
+   动作项；M392 起动作项下追加本 vault 历史会话清单（极简选择器，只列不管理）。
+   M397 定位由 absolute 改 fixed：段 `.lumir-hp-seg` 有 `overflow: hidden`（同族溢出纪律），
+   而 absolute 浮层的包含块是段内的 `.lumir-hp-sessionwrap`——浮层超出段高被整段裁掉，
+   M351 起从未真正渲染（Alex dogfood「点了没有浮层」）。浮层的包含块 MUST NOT 落在会被裁的
+   祖先里：fixed 的包含块是视口，只要祖先不给它另建包含块（transform / filter /
+   backdrop-filter / will-change / contain），任何祖先的 overflow 都裁不到它；而「完整落在
+   视口内」由 placeSessPop() 现算坐标并夹住（不变量见 docs/specs/overlay-visibility.md）。
+   下面 top/left 只是 JS 未定位前的占位（浮层 hidden 时不可见），真值由 placeSessPop() 写
+   inline style。 */
 .lumir-hp-sesspop {
-  position: absolute;
-  top: 30px;
+  position: fixed;
+  top: 0;
   left: 0;
   width: 200px;
   padding: var(--sp-2);

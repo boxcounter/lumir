@@ -35,7 +35,7 @@ export const ACTIONS = new Set([
   "doubleClick", "drag", "scroll", "focusWindow", "open", "configWrite", "restart", "record", "recordEditor",
   "vaultWrite", "vaultAppend", "vaultRm", "vaultSparse", "resizeWindow", "clipboardRead",
 ]);
-export const EXPECT_KINDS = new Set(["ax", "editor", "file", "glob", "shot", "window", "clipboard", "pixel"]);
+export const EXPECT_KINDS = new Set(["ax", "editor", "file", "glob", "shot", "window", "clipboard", "pixel", "geom"]);
 
 /** `do: click` 的 `target.modifiers` 允许的修饰键（M379，backlog:1913）：KimiCU 与 swift 两侧的
  *  别名都收（`meta`/`cmd` 是同一个键的两种说法），小写比较。 */
@@ -230,6 +230,29 @@ export function checkScenario(scenario) {
             push(`${at} expect[${j}] pixel.contrast[${p}] 缺数值 x/y`);
           // 阈值必须显式给：contrast 是**绝对阈值**断言，缺省值会让「写错的键」静默变成另一条断言。
           if (typeof pt?.min !== "number") push(`${at} expect[${j}] pixel.contrast[${p}] 缺 min（亮度跨度的下限）`);
+        }
+      } else if (kinds[0] === "geom") {
+        // 几何可见性断言（M397）：必须有 target（节点定位），否则恒判不出。minWidth / minHeight
+        // 可选（正数）。painted 若给，其 min 必须显式——它是**绝对阈值**（亮度跨度下限），缺省
+        // 会让写错的键静默变成另一条断言（与 pixel.contrast 同一条口径）。未知键一律挡掉：
+        // 字段名写错 = 断言静默少判一段（本套件最该挡的假绿形态）。
+        const spec = exp.geom;
+        if (!spec.target || (spec.target.name === undefined && spec.target.any === undefined))
+          push(`${at} expect[${j}] geom 断言缺 target.name/any（节点定位）`);
+        for (const k of ["minWidth", "minHeight"])
+          if (spec[k] !== undefined && (typeof spec[k] !== "number" || spec[k] <= 0))
+            push(`${at} expect[${j}] geom.${k} 需要正数，实际 ${JSON.stringify(spec[k])}`);
+        if (spec.painted !== undefined) {
+          if (!isPlainTable(spec.painted)) push(`${at} expect[${j}] geom.painted 需要对象`);
+          else {
+            if (typeof spec.painted.min !== "number") push(`${at} expect[${j}] geom.painted 缺 min（亮度跨度的下限）`);
+            if (spec.painted.patch !== undefined && (!Number.isInteger(spec.painted.patch) || spec.painted.patch <= 0))
+              push(`${at} expect[${j}] geom.painted.patch 需要正整数`);
+          }
+        }
+        for (const k of Object.keys(spec)) {
+          if (!["target", "minWidth", "minHeight", "painted"].includes(k))
+            push(`${at} expect[${j}] geom 未知键 ${k}（拼错即静默不判）`);
         }
       }
     }
@@ -623,6 +646,64 @@ export async function runScenario(ctx, scenario) {
       } finally {
         img.close();
       }
+    }
+    if (expect.geom !== undefined) {
+      // 几何可见性断言（M397；合同 docs/specs/overlay-visibility.md 的 O1/O2）：对一个**浮层类**
+      // 节点取几何包围盒，断言它完整落在视口内、非退化，并在包围盒区域内确有已绘制的字形。
+      //
+      // 为什么必须有「绘制」那一段：WKWebView 的 AX 对**被祖先 overflow 裁掉**的内容照样暴露
+      // 节点与**未裁的** bbox（场景 106 的实证：整段被裁的浮层项仍报完整包围盒），因此纯几何
+      // 断言在这一类缺陷上无区分度——它会对着「几何上存在、实际没画出来」的现场判绿。绘制段在
+      // 包围盒内扫描亮度跨度，等价于「这块区域里真有字形」，是唯一能证伪「被裁」的读数。
+      //
+      // 坐标空间：mode=full 的 bbox 与截图尺寸同为**截图像素**（README「断言」表的 M244 口径），
+      // 两侧读数取自同一份快照的 header，不与 window_bounds（屏幕点）混空间。
+      const spec = expect.geom;
+      // **恒自取 mode=full 快照，MUST NOT 复用 state.ax**：同一 expect 列表里前面的 `ax` 断言会把
+      // state.ax 钉成 mode=ax 的口径——那份快照既没有图（`painted` 段无从取色），bbox 也是**窗口
+      // 局部点**而不是截图像素（与下面的截图尺寸混空间，正是 M244 那条「两种空间不能混用」的纪律）。
+      // 首跑踩过这一条：geom 复用 state.ax 报了「取不到窗口截图」，同一帧的 `shot` 却拍得到图。
+      const ax = await readAxWithScreenshot(cu, ctx.pid);
+      state.ax = ax;
+      if (!ax.image) return fail(`${label}（取不到窗口截图，几何可见性断言无法判定）`, "按 README「已知边界」的 KimiCU 截图通道条处理", ax);
+      const shot = screenshotSize(ax.text);
+      if (!shot) return fail(`${label}（AX 快照缺截图尺寸，算不出视口边界）`, "按 README「已知边界」的 AX 退化条处理", ax);
+      const t = spec.target ?? {};
+      const node =
+        t.any !== undefined
+          ? findByAny(ax.nodes, { role: t.role, any: t.any, nth: t.nth ?? 0 })
+          : findNode(ax.nodes, { role: t.role, name: t.name, nth: t.nth ?? 0 });
+      if (!node) return fail(`${label}（找不到节点 ${JSON.stringify(t)}）`, "", ax);
+      if (!node.bbox) return fail(`${label}（节点 ${JSON.stringify(t)} 没有 bbox——AX 量不到几何）`, "", ax);
+      const { x, y, w, h } = node.bbox;
+      const minW = spec.minWidth ?? 1;
+      const minH = spec.minHeight ?? 1;
+      const problems = [];
+      if (!(w >= minW)) problems.push(`宽 ${w} < 下限 ${minW}`);
+      if (!(h >= minH)) problems.push(`高 ${h} < 下限 ${minH}`);
+      if (x < 0 || y < 0 || x + w > shot.w || y + h > shot.h)
+        problems.push(`包围盒 @${x},${y} ${w}×${h} 越出视口 ${shot.w}×${shot.h}`);
+      let painted = null;
+      if (problems.length === 0 && spec.painted !== undefined) {
+        const patch = spec.painted.patch ?? DEFAULT_PATCH;
+        const img = decodeScreenshot(ax.image);
+        try {
+          painted = maxLumaSpread(img, { x, y, w, h }, patch);
+          if (painted === null) problems.push("包围盒内取不到采样像素（落在图外）");
+          else if (painted.spread < spec.painted.min)
+            problems.push(
+              `区域内没有已绘制的字形：最大亮度跨度 ${painted.spread} < ${spec.painted.min}（采样 @${painted.x},${painted.y}）——` +
+                "几何上存在但实际未被绘制（被祖先容器裁切）",
+            );
+        } finally {
+          img.close();
+        }
+      }
+      const detail =
+        `包围盒 @${x},${y} ${w}×${h}（视口 ${shot.w}×${shot.h}，宽高下限 ${minW}×${minH}）` +
+        (painted ? `；区域最大亮度跨度 ${painted.spread} @${painted.x},${painted.y}` : "");
+      if (problems.length > 0) return fail(`${label}（${problems.join("；")}）`, detail, ax);
+      return pass(label, detail);
     }
     if (expect.editor) {
       const spec = expect.editor;
@@ -1562,6 +1643,35 @@ function screenshotSize(axText) {
   return m ? { w: +m[1], h: +m[2] } : null;
 }
 
+/** 在一个包围盒内扫描亮度跨度的**最大值**（M397，`geom` 断言的绘制段）：证明「这块区域里真的
+ *  画着东西」。采样方块按步长在盒内滑动，返回跨度最大的一处（含其位置）——浮层的文字/描边总是
+ *  落进某个滑动窗，因此「最大值 ≥ 阈值」等价于「区域里存在已绘制的字形」；被祖先裁掉的区域是
+ *  纯底色，最大值塌到个位数即可判红。盒小到放不下一个方块时退化为取盒中心一处（仍给出读数）。
+ *  采样点与 patch 都是**截图像素**（与 mode=full 的 bbox 同一空间）。 */
+function maxLumaSpread(img, { x, y, w, h }, patch) {
+  const half = Math.floor(patch / 2);
+  const cx0 = x + half;
+  const cy0 = y + half;
+  const cx1 = x + w - 1 - half;
+  const cy1 = y + h - 1 - half;
+  if (cx1 < cx0 || cy1 < cy0) {
+    const px = x + Math.floor(w / 2);
+    const py = y + Math.floor(h / 2);
+    const s = lumaSpread(img, px, py, patch);
+    return s ? { ...s, x: px, y: py } : null;
+  }
+  const step = Math.max(2, Math.round(patch / 2));
+  let best = null;
+  for (let py = cy0; py <= cy1; py += step) {
+    for (let px = cx0; px <= cx1; px += step) {
+      const s = lumaSpread(img, px, py, patch);
+      if (!s) continue;
+      if (!best || s.spread > best.spread) best = { ...s, x: px, y: py };
+    }
+  }
+  return best;
+}
+
 /** `doubleClick` 用的 AX 读数：必须是**窗口局部坐标口径**（mode=ax，带 window_bounds）。
  *
  *  两种拒绝情形分开报，别混成一句「找不到口径」：
@@ -1652,6 +1762,7 @@ function describeExpect(expect) {
     const n = (expect.pixel.same?.length ?? 0) + (expect.pixel.differ?.length ?? 0) + (expect.pixel.contrast?.length ?? 0);
     return `像素底色（${n} 组采样点）`;
   }
+  if (expect.geom) return `几何可见性（${JSON.stringify(expect.geom.target ?? {})}${expect.geom.painted ? " + 已绘制字形" : ""}）`;
   if (expect.shot) return `截图证据 ${expect.shot}`;
   return JSON.stringify(expect).slice(0, 80);
 }
