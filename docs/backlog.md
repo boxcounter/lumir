@@ -2615,6 +2615,14 @@ P2-2，2026-10-06）：无文本产出的轮次（assistant 只发工具调用�
 补测方向：① 视觉场景加分隔条横坐标 vs 两列缘的计算属性断言；② 面板单测补截断派生用例。
 finding `.tower/comms/findings/20261006-reviewer-hp4-improve-harness-20-backlog.md`。
 
+**harness vault_create 工具承诺 mkdir -p 但实现直调 vault_create_file（父目录缺失仍拒绝）**（**待修**，
+medium；M410 r3 评审另案发现，reviewer-m410，2026-10-10）：M407 合并的提案口径是 vault_create 自动建
+父目录（Alex 已裁决「好」批准该修订），但实现直调 `vault_create_file`，父目录不存在时仍返回
+fs_not_found——spec 承诺与实现分叉。修法方向：harness 工具层在调 vault_create_file 前先做父目录
+mkdir -p（或复用 fs_io 的 ensure_parent_dirs），并补一条「深层路径直接 vault_create 成功」的用例。
+排期：随权限前端批（harness 工具层本就要动）一并做。finding
+`.tower/comms/findings/20261010-reviewer-m410-bug-harness-vault-create-mkdir-p-m407.md`。
+
 ## 工具链与环境（待 Alex 裁决）
 
 1. **1420 端口串行**：vite dev server 固定 `127.0.0.1:1420` 且 strictPort，全机同一时刻只能有一个
