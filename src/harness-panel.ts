@@ -3738,7 +3738,10 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     stageWaiting = true;
     turnOpen = true;
     applySendPhase(reduceSendPhase(sendPhase, { type: "sent" }));
-    harnessSend(text, block !== null ? serializeHarnessContext(block) : null).catch((e: unknown) => {
+    // 无文档上下文时传空串（不是 null）：后端 harness_send 的 context_json 恒为 string，
+    // parse_context 对空串返回默认块——传 null 会被参数反序列化拒掉（M398，bug「不打开任何
+    // 文件时发送报 invalid type: null」）。
+    harnessSend(text, block !== null ? serializeHarnessContext(block) : "").catch((e: unknown) => {
       turnOpen = false;
       applySendPhase(reduceSendPhase(sendPhase, { type: "finished" }));
       appendError(t("D347", { reason: errorMessage(e) }));

@@ -355,9 +355,10 @@ export type HarnessEvent = HarnessEventEnvelope &
 
 /** 发送一条消息。context_json 是序列化后的上下文块（src/harness-context.ts 的
  *  `serializeHarnessContext` 是唯一构造点）：`{"path", "selection":{from_line,to_line,text}}`
- *  或 `{"path", "viewport_range":{from_line,to_line,text}}`；调用方决定有无上下文（无上下文
- *  传 null，面板在无路径文档上就这么发）。 */
-export function harnessSend(message: string, context_json: string | null): Promise<void> {
+ *  或 `{"path", "viewport_range":{from_line,to_line,text}}`；无上下文时传**空串**
+ *  （面板在无路径文档上就这么发——后端 `turn::parse_context` 对空串返回默认块，
+ *  参数类型恒为 string；传 null 会触发 `invalid type: null, expected a string`，M398）。 */
+export function harnessSend(message: string, context_json: string): Promise<void> {
   return invoke<void>("harness_send", { message, context_json });
 }
 
