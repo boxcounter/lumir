@@ -86,6 +86,19 @@ steps:
       - label: 恢复后标题栏会话名以源会话首条用户消息开头
         ax: { has: "/AXPopUpButton \\(zqxalpha/" }
 
+  - name: 恢复后面板 transcript 重建（M398：从灌回的 wire 记录重放历史，不再是空面板）
+    do: settle
+    expect:
+      - label: transcript 重建出源会话的**用户消息**——注入节「当前编辑器上下文：」只在 user 气泡里，会话名按后端剥离过 ⇒ 该串是「面板有这条用户消息」的可区分正观测
+        ax: { has: "当前编辑器上下文：" }
+      - label: 源会话的提问原文也在 transcript 里
+        ax: { has: "zqxalpha" }
+      - label: transcript 重建出源会话的**助手回复**（该文案只可能来自恢复出来的历史）
+        ax: { has: "验收回答：上下文已收到。" }
+      - label: 空态提示已摘掉（transcript 非空的构造性正观测，与场景 96 同口径）
+        ax: { not: "与当前文档对话" }
+      - shot: 02-恢复-transcript
+
   - name: 点 composer 建立输入焦点（选择器/恢复的点击把 DOM 焦点移走，续打字前须重新聚焦——场景 100 同法）
     do: clickInNode
     target: { role: AXTextArea, name: "问点什么" }
@@ -113,7 +126,7 @@ steps:
         file: { path: "env:harness/sessions/*.jsonl", has: '/^.*"kind":"llm_request".*zqxalpha.*vwbmore.*$/' }
       - label: 恢复沿用源 system（不重新装配）——请求体带 system 全文
         file: { path: "env:harness/sessions/*.jsonl", has: '/^.*"kind":"llm_request".*"provider":"mock".*"system":".+".*$/' }
-      - shot: 02-恢复续聊
+      - shot: 03-恢复续聊
 ---
 
 # 106-harness-session-restore —— 最小恢复（change reshape-harness-session-recording 3.7）
@@ -128,7 +141,10 @@ steps:
 3. 打开标题栏 harness 段的**会话浮层**，历史会话选择器列出源会话（会话名 = 首条用户消息）；
 4. 点该行**恢复**——后端读源文件最后一条会话轮次 `llm_request` 的完整请求体，system + messages
    原样灌回内存态并**开新留存文件**（`opened_from=restore`、`restored_from`=源会话 id）；
-5. 发新提问，断言**新会话 JSONL 的 input 与原会话衔接**：新一轮 `llm_request` 的历史里同时带
+5. **恢复后 transcript 重建**（M398，design §6.2「面板（transcript）从灌回的 input 重建」）：
+   后端把灌回的 wire 记录映射成面板消息随恢复返回，面板重放历史——源会话的**用户消息**与
+   **助手回复**都上屏，`resetView` 之后不再是空面板；
+6. 发新提问，断言**新会话 JSONL 的 input 与原会话衔接**：新一轮 `llm_request` 的历史里同时带
    源会话的 user 消息（`zqxalpha`）与恢复后的新消息（`vwbmore`）。
 
 断言基准是 change 的 specs delta「会话边界」的 scenario「历史会话列举」「从历史会话恢复续聊」与
@@ -149,8 +165,13 @@ design §6。
 - **为什么按前缀而非整名匹配**：会话名取「首条用户消息截断约 20 字」，而 wire 里的首条用户消息是
   **序列化后的完整消息**（提问 + `[当前编辑器上下文：…]` 注入节）——截断后的名因此含换行与注入节
   开头。因此判据只锚**提问串 `zqxalpha`**（本场景独有、位于名首）：整名匹配会踩上换行/截断形态。
-- **恢复完成的正观测**：点行后 `resetView` 清 transcript、会话名落选中项首条用户消息——等
-  `AXPopUpButton` 名出现 `zqxalpha` 即恢复回路闭环（不是凭空时长等）。
+- **恢复完成的正观测**：点行后 `resetView` 清 transcript、再按返回的 `messages` 重放历史、最后
+  会话名落选中项首条用户消息——等 `AXPopUpButton` 名出现 `zqxalpha` 即恢复回路闭环（不是凭空时长等）。
+- **面板重建的可区分判据（M398）**：断言 `当前编辑器上下文：`——它是序列化用户消息里自动注入的
+  「当前编辑器上下文」节的**节头**，只可能出现在 transcript 的 user 气泡里（会话名走
+  `strip_context_section` 剥离过该节 ⇒ 会话名钮不含它）。若恢复仍旧不重建面板，这条必红；
+  助手回复断言另证 assistant 气泡也重建了（文案只可能来自恢复出来的历史）。空态提示「与当前文档
+  对话」的缺席是「transcript 非空」的构造性正观测（与场景 96 同口径）。
 - **衔接判据落盘**：`/^.*"kind":"llm_request".*zqxalpha.*vwbmore.*$/`——`zqxalpha`（源会话 user
   消息原文）与 `vwbmore`（恢复后新消息）同处一条 `llm_request` 的 messages 里，只可能由「灌回源
   input + 追加新消息」产生（新会话若是空会话，历史里不会有 `zqxalpha`）。两个标记都是**合成、只
@@ -168,9 +189,11 @@ design §6。
 - **选择器会话名带注入节**：wire 的「首条用户消息」含自动注入的编辑器上下文节，而标题栏会话名
   取的是用户原始提问段——两者截断后**不同源**（design §6.1 说「同口径」，实现里选择器走 wire 全文）。
   本场景按提问前缀匹配规避该形态，并把这条不一致留作 finding，不在本 mission 面内修。
-- **恢复后面板 transcript 不重建**（M392 既定口径）：核心 worker 的恢复只灌回 LLM 侧 input（单一
-  事实源），面板消息不重建、如实呈现空 transcript；本场景不断言面板回看历史，只断言 wire 侧衔接
-  （这正是 spec「恢复充分性」的落点）。
+- **恢复重建的消息无相对时间读数**：wire 项不带时间戳，重建的面板消息 `ts` 为 0 ⇒ who 行只显示
+  角色、不显示 when（不伪造读数，与快照路径「无戳不显示」同口径）。本场景不判恢复消息的时间显示。
+- **恢复的思考块只在能取到明文时出现**：reasoning 回放项里 kimi 是不透明 `encrypted_content`
+  （取不到明文 → 不建块），deepseek 的 `reasoning_text` parts 才带明文；且恢复消息的思考块无「思考
+  时长」读数（wire 不带），按展开态呈现、不渲染含时长的折叠头。mock 不产思考，故本场景不判这两面。
 - **恢复期间其余面板行为不在本场景**：跨 provider 方言重写不做（Non-goals）；末尾响应带悬空工具
   调用的边界由 Rust 单测覆盖（3.3）。
 - **绘制段的边界**：它证明「包围盒区域内确实有字形」，前提是该区域在**浮层被裁时是纯底色**（本

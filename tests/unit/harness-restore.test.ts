@@ -9,7 +9,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { restoredAssistantText, toolDoneSummary } from "../../src/harness-panel.ts";
+import { restoredAssistantText, restoredReasoningText, toolDoneSummary } from "../../src/harness-panel.ts";
 import { t } from "../../src/copy.ts";
 
 // ── 空正文 assistant 记录（任务 1：旧快照防御） ──
@@ -31,6 +31,25 @@ test("空正文 assistant 记录不渲染：空串 / 纯空白 / 缺 text / 非�
 test("有正文的 assistant 记录原样返回（含首尾空白——正文是模型原文，不改写）", () => {
   assert.equal(restoredAssistantText({ role: "assistant", text: "我先读一下目标文件。" }), "我先读一下目标文件。");
   assert.equal(restoredAssistantText({ role: "assistant", text: " 留白正文 " }), " 留白正文 ");
+});
+
+// ── 恢复消息的思考展示文本（M398：有 reasoning 明文才建思考块） ──
+
+test("无 reasoning 明文的记录不建思考块：缺字段 / null / 空串 / 纯空白 / 非字符串 → null", () => {
+  // 活会话快照的面板记录本就不带 reasoning，恢复记录里 kimi 的不透明项也取不到明文。
+  assert.equal(restoredReasoningText({ role: "assistant", text: "正文" }), null);
+  assert.equal(restoredReasoningText({ role: "assistant", reasoning: null }), null);
+  assert.equal(restoredReasoningText({ role: "assistant", reasoning: "" }), null);
+  assert.equal(restoredReasoningText({ role: "assistant", reasoning: "  \n\t " }), null);
+  // 形状不对（非字符串 / 非对象）：宽容解析不抛错、不建块。
+  assert.equal(restoredReasoningText({ role: "assistant", reasoning: 42 }), null);
+  assert.equal(restoredReasoningText(null), null);
+  assert.equal(restoredReasoningText("assistant"), null);
+});
+
+test("有 reasoning 明文的记录原样返回（含首尾空白——思考文本是模型原文，不改写）", () => {
+  assert.equal(restoredReasoningText({ role: "assistant", reasoning: "先读文件再回答" }), "先读文件再回答");
+  assert.equal(restoredReasoningText({ role: "assistant", reasoning: " 留白 " }), " 留白 ");
 });
 
 // ── 工具行终态摘要（任务 3：成功 = 参数摘要、失败 = 状态+错误） ──

@@ -1031,6 +1031,19 @@ export function restoredAssistantText(record: unknown): string | null {
   return text.trim() === "" ? null : text;
 }
 
+/**
+ * 恢复路径上一条 assistant 记录的思考展示文本（M398，`PanelMessage.reasoning`）：缺字段 /
+ * 非字符串 / 空白串 → `null`（无 reasoning 明文就不建思考块，不伪造）。core 侧只在 wire 的
+ * reasoning 回放项取得到**明文**时才带值（kimi 的不透明 `encrypted_content` 项取不到 → 缺席），
+ * 故这里与 [`restoredAssistantText`] 同口径宽容判空。空白串经思考块渲染后是空 body，一并跳过。
+ */
+export function restoredReasoningText(record: unknown): string | null {
+  if (typeof record !== "object" || record === null) return null;
+  const reasoning = (record as { reasoning?: unknown }).reasoning;
+  if (typeof reasoning !== "string") return null;
+  return reasoning.trim() === "" ? null : reasoning;
+}
+
 
 
 // ---------------------------------------------------------------------------
@@ -3095,7 +3108,9 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   // 在消息内严格按事件到达序排列（M383 合同，交错矩阵由 m383 视觉场景的结构断言守；
   // 旧「块在前正文在后」的锚定插入在 think↔text 交错时把思考块倒置到在途工具块之前，
   // Alex 2026-10-08 截图实证，已退役）。
-  // 快照恢复的历史消息不带 reasoning（PanelMessage 无此字段），不伪造块。
+  // 活会话快照的面板记录不带 reasoning（思考只在 live 事件流里）——只有恢复重建的消息
+  // （M398，`PanelMessage.reasoning`）才带 reasoning 明文；两条路径的思考块都走本段渲染件，
+  // 取不到明文就不建块（不伪造）。
 
   /** 思考块的 DOM 面：元素长驻已沉淀的消息内（终态后数据引用释放，重渲只走 relabel）。 */
   interface ThinkingView {
@@ -3482,6 +3497,86 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   }
 
   // ── 快照恢复（webview 重载 / 首次挂载 / 切 vault）：宽容解析，缺键 = 空态 ──
+
+  /** 恢复消息逐条上屏（M368 快照恢复 × M398 会话恢复**共用同一套项映射与渲染件**）：
+   *  一串面板记录（`{role, text, reasoning, name, summary, status, ts}`）按序重放——user →
+   *  气泡、assistant → who 行 + 可选思考块 + 正文、tool → 工具行、compact → 压缩标记；
+   *  尾部可能吊着未收尾的清单块，统一 collapseTools 收尾。 */
+  function renderSnapshotMessages(messages: readonly unknown[]): void {
+    for (const message of messages) {
+      if (typeof message !== "object" || message === null) continue;
+      appendSnapshotMessage(message as Record<string, unknown>);
+    }
+    collapseTools(); // 恢复尾部可能吊着未收尾的清单块（最后一条记录是 tool 时）
+  }
+
+  /** 单条恢复记录的上屏（项映射的唯一出口，快照恢复与会话恢复共用）。 */
+  function appendSnapshotMessage(record: Record<string, unknown>): void {
+    const role = record.role;
+    if (role === "user" && typeof record.text === "string") {
+      // 已发送消息的存留是序列化文本（含 <quote> 块与上下文节）：解析回块序列同构呈现。
+      // headingPath 不在协议里（人侧专用字段），恢复的卡片 hover 退化为 heading 链。
+      const blocks = parseQuoteMessage(record.text);
+      // 会话名按同口径从恢复的消息重算（首条用户消息的原始问题文本）。
+      if (firstUserText === null) firstUserText = firstUserTextOf(blocks);
+      appendUserMessage(blocks, record.text, messageTs(record)); // 复制源 = 留存原文；戳 = 后端 ts（无则不显示）
+    } else if (role === "assistant") {
+      // 消息边界（M368）：上一条 assistant 消息的工具清单块在此收尾。不收尾的话
+      // ensureToolsBlock 会把其后的工具记录塞回**上一条**消息的块里——一段长会话的全部
+      // 历史工具于是堆进第一条消息的折叠块（Alex 2026-10-07 现场：红框里 21 行）。
+      collapseTools();
+      const text = restoredAssistantText(record);
+      // 恢复的思考块（M398）：仅当 record 带 reasoning 明文时渲染（kimi 的不透明回放项
+      // 取不到明文则缺席——core 侧不伪造块）。
+      const reasoning = restoredReasoningText(record);
+      if (text === null && reasoning === null) {
+        // 旧快照的空正文轮（模型只发工具调用，无正文；core 侧 M367 起不再落这类记录）：
+        // 不渲染光秃 who 行、不挂复制钮。它原本是其后工具记录的挂点，这里把挂点交回
+        // transcript 兜底——工具行各自成块、按原时序留痕（顺序不因跳过而改变）。
+        lastAssistantEl = null;
+      } else {
+        const el = document.createElement("div");
+        el.className = "lumir-hp-msg lumir-hp-msg-assistant";
+        el.append(createWhoLine("assistant", messageTs(record))); // 无 ts 的旧快照：只显示角色（不伪造）
+        if (reasoning !== null) el.append(createRestoredThinking(reasoning));
+        if (text !== null) {
+          const body = document.createElement("div");
+          body.className = "lumir-hp-body";
+          renderMarkdownInto(body, text);
+          el.append(body);
+          attachCopyButton(el, text); // 复制源 = 模型原始输出（留存原文）
+        }
+        // 中断轮留存的产出：标注「已停止」（M348，D383；status 缺省 = 正常完成不标）。
+        if (record.status === "stopped") attachStoppedMark(el);
+        transcript.append(el);
+        lastAssistantEl = el; // 其后的 tool 记录挂进这条消息的清单块
+      }
+    } else if (role === "tool" && typeof record.name === "string") {
+      // 恢复路径的终态摘要就是持久化的那一份（M367：成功 = 参数摘要、失败 = 状态+错误），
+      // 故不判定、不重算——`appendToolCall` 的 done 分支原样上屏。
+      appendToolCall(record.name, "done", typeof record.summary === "string" ? record.summary : "");
+    } else if (role === "compact" && typeof record.summary === "string") {
+      // 压缩记录 = 逻辑会话边界：其后的用户消息属于新逻辑会话——会话名归 null 重算；
+      // 工具清单块同样在此收尾（边界两侧的记录不属于同一块）。
+      collapseTools();
+      firstUserText = null;
+      lastAssistantEl = null; // 压缩边界同样是工具记录的挂点边界
+      appendCompactMarker(record.summary);
+    }
+  }
+
+  /** 恢复消息的思考块（M398）：复用活会话的思考块结构（`createThinkingView`），但**不渲染
+   *  含时长的折叠头**——wire 只带 reasoning 明文、不带「思考了多久」的读数，写一个数字就是
+   *  伪造读数（与「无戳不显示 when」同口径）。因此正文直接展开呈现（无折叠开关）。 */
+  function createRestoredThinking(text: string): HTMLElement {
+    const view = createThinkingView();
+    view.head.hidden = true;
+    view.el.classList.add("is-open");
+    view.body.hidden = false;
+    view.body.textContent = text;
+    return view.el;
+  }
+
   function restoreSnapshot(json: string): void {
     let snapshot: unknown;
     try {
@@ -3495,56 +3590,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     // 它的消息属于旧 vault）。判据与事件过滤同一条（inCurrentVault）。
     if (!inCurrentVault(state.vault, currentVault)) return;
     const messages = Array.isArray(state.messages) ? state.messages : [];
-    for (const message of messages) {
-      if (typeof message !== "object" || message === null) continue;
-      const record = message as Record<string, unknown>;
-      const role = record.role;
-      if (role === "user" && typeof record.text === "string") {
-        // 已发送消息的存留是序列化文本（含 <quote> 块与上下文节）：解析回块序列同构呈现。
-        // headingPath 不在协议里（人侧专用字段），恢复的卡片 hover 退化为 heading 链。
-        const blocks = parseQuoteMessage(record.text);
-        // 会话名按同口径从恢复的消息重算（首条用户消息的原始问题文本）。
-        if (firstUserText === null) firstUserText = firstUserTextOf(blocks);
-        appendUserMessage(blocks, record.text, messageTs(record)); // 复制源 = 留存原文；戳 = 后端 ts（无则不显示）
-      } else if (role === "assistant") {
-        // 消息边界（M368）：上一条 assistant 消息的工具清单块在此收尾。不收尾的话
-        // ensureToolsBlock 会把其后的工具记录塞回**上一条**消息的块里——一段长会话的全部
-        // 历史工具于是堆进第一条消息的折叠块（Alex 2026-10-07 现场：红框里 21 行）。
-        collapseTools();
-        const text = restoredAssistantText(record);
-        if (text === null) {
-          // 旧快照的空正文轮（模型只发工具调用，无正文；core 侧 M367 起不再落这类记录）：
-          // 不渲染光秃 who 行、不挂复制钮。它原本是其后工具记录的挂点，这里把挂点交回
-          // transcript 兜底——工具行各自成块、按原时序留痕（顺序不因跳过而改变）。
-          lastAssistantEl = null;
-        } else {
-          const el = document.createElement("div");
-          el.className = "lumir-hp-msg lumir-hp-msg-assistant";
-          el.append(createWhoLine("assistant", messageTs(record))); // 无 ts 的旧快照：只显示角色（不伪造）
-          const body = document.createElement("div");
-          body.className = "lumir-hp-body";
-          renderMarkdownInto(body, text);
-          el.append(body);
-          attachCopyButton(el, text); // 复制源 = 模型原始输出（留存原文）
-          // 中断轮留存的产出：标注「已停止」（M348，D383；status 缺省 = 正常完成不标）。
-          if (record.status === "stopped") attachStoppedMark(el);
-          transcript.append(el);
-          lastAssistantEl = el; // 其后的 tool 记录挂进这条消息的清单块
-        }
-      } else if (role === "tool" && typeof record.name === "string") {
-        // 恢复路径的终态摘要就是持久化的那一份（M367：成功 = 参数摘要、失败 = 状态+错误），
-        // 故不判定、不重算——`appendToolCall` 的 done 分支原样上屏。
-        appendToolCall(record.name, "done", typeof record.summary === "string" ? record.summary : "");
-      } else if (role === "compact" && typeof record.summary === "string") {
-        // 压缩记录 = 逻辑会话边界：其后的用户消息属于新逻辑会话——会话名归 null 重算；
-        // 工具清单块同样在此收尾（边界两侧的记录不属于同一块）。
-        collapseTools();
-        firstUserText = null;
-        lastAssistantEl = null; // 压缩边界同样是工具记录的挂点边界
-        appendCompactMarker(record.summary);
-      }
-    }
-    collapseTools(); // 恢复尾部可能吊着未收尾的清单块（最后一条记录是 tool 时）
+    renderSnapshotMessages(messages);
     // ctx% 读数与警示阈值随快照恢复（webview 重载后读数不断源；缺键 = 缺省 85 / 无读数）。
     // M370：cache_pct 同读数一并恢复（缺键保持 null，回落单读数）。
     const usage = state.usage as { ctx_pct?: unknown; cache_pct?: unknown } | null | undefined;
@@ -3958,19 +4004,22 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       .catch(() => {});
   }
 
-  /** 恢复选中历史会话（选择器点击路径，M392）：恢复 = 后端读源文件最后一条会话轮次
+  /** 恢复选中历史会话（选择器点击路径，M392/M398）：恢复 = 后端读源文件最后一条会话轮次
    *  llm_request 的完整请求体、system + input 原样灌进**新**会话并续写新留存文件
-   * （M2 的 harness_resume_session；busy / 跨 vault / 留存损坏由后端拒绝，D409–D411
-   *  经 errorText 按 code 渲染上错误行）。面板消息**不重建**——LLM 侧 input 是单一
-   *  事实源，渲染面不虚报历史（worker-rsr-core 遗留说明；design §6.2 的面板重建本期
-   *  无 wire 数据通道，最小恢复如实呈现空 transcript）：resetView 清渲染面，会话名按
-   *  同口径落在选中项的首条用户消息上。档位经 refreshThinkingState 重取（恢复真实带
-   *  回源会话档位）；用量读数**不**拉快照——新会话尚无已发请求，后端 usage 是零值缺省，
-   *  拉来上屏就是虚报，保持「无读数」等下一轮真值。 */
+   *  （harness_resume_session；busy / 跨 vault / 留存损坏由后端拒绝，D409–D411 经
+   *  errorText 按 code 渲染上错误行）。
+   *
+   *  **面板 transcript 从灌回的 wire 记录重建**（M398，design §6.2）：后端把 input 项映射成
+   *  面板消息随返回带出（`info.messages`），这里经 [`renderSnapshotMessages`] 重放——与快照
+   *  恢复**同一套项映射与渲染件**（user 气泡 / assistant 正文 / tool 行 / 思考块），resetView
+   *  之后不再是空面板。会话名按同口径落在选中项的首条用户消息上；档位经 refreshThinkingState
+   *  重取（恢复真实带回源会话档位）；用量读数**不**拉快照——新会话尚无已发请求，后端 usage 是
+   *  零值缺省，拉来上屏就是虚报，保持「无读数」等下一轮真值。 */
   function resumeSession(entry: SessionEntry): void {
     harnessResumeSession(entry.sessionId)
-      .then(() => {
+      .then((info) => {
         resetView();
+        renderSnapshotMessages(Array.isArray(info.messages) ? info.messages : []);
         firstUserText = entry.firstUserText;
         applySessionName();
         refreshThinkingState();
