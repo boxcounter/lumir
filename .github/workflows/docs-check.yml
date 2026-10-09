@@ -28,7 +28,11 @@ jobs:
       # 校验实现只有一份：scripts/docs-check.sh —— 本地 scripts/gate.sh quick 调的是同一
       # 脚本（AI-only 模式下「本地全绿才允许提交」要求两边同一条命令；此前两处各写一遍，
       # 本地根本没有 ADR 结构校验，M153 收敛到这里）。
-      - name: ADR 结构与 README 索引校验（与本地 gate.sh 共用 scripts/docs-check.sh）
+      # 该脚本内含两条判据：docs/adr/ 结构与 README 索引（M153），以及 openspec/**/*.md 相对链接
+      # 可达性（M409，实现 scripts/openspec-links.sh —— `openspec archive` 移深一层目录却不重写
+      # 制品内相对链接，`openspec validate` 又不查链接，故单列一条判据）。两条都随本步继承。
+      # job 名 `ADR 校验` 保持原样：它可能被 GitHub 的分支保护登记为必需检查，改名会让保护规则失配。
+      - name: 制品校验（ADR 结构 / README 索引 / OpenSpec 相对链接，与本地 gate.sh 共用 scripts/docs-check.sh）
         run: bash scripts/docs-check.sh
 
   openspec:
