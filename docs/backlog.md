@@ -643,7 +643,17 @@
 
 ## 待修 findings（不阻塞）
 
-### 不打开任何文件时 harness 发送直接失败：`context_json` 传了 null（tower 复现期实测，2026-10-09，medium）
+### 面板滚动行为无机器防线：AX 不反映滚动位置（M398 r1 reviewer 登记，2026-10-09，low）
+
+**症状**：恢复重建后「滚动落底」这类行为没有任何机器断言能守——AX 快照不携带滚动位置，
+场景 106 的 transcript 太短（一屏内全显）天然暴露不了「停在最末 user 消息、回复折在视口外」。
+M398 r1 的 P1 正是靠 reviewer 读代码抓的，不是机器抓的。与 m303 `toBeVisible()` 盲区同族
+（断言通道读不到关键状态）。
+
+**建议处置**：几何探针防线（transcript 容器 scrollTop 近底断言，或「最末渲染件包围盒落在视口内」
+的 geom 断言——M397 的 geom 形态现成）；攒批处理，不单独立项。
+
+### ~~不打开任何文件时 harness 发送直接失败：`context_json` 传了 null（tower 复现期实测，2026-10-09，medium）~~ **已核销（2026-10-09，M398，merge `9a9a422`，核销记录见文末「已核销」）**
 
 **症状**：vault 里不打开任何文件（面板上下文行显示「上下文：无（未打开文件）」——UI 明示这是
 合法状态）时发消息，立刻报红：`发送失败：invalid args 'context_json' for command 'harness_send':
@@ -4170,3 +4180,5 @@ M292 把打开段移出主线程之后，`do: settle`（判「界面此刻静止
   「全量绿通过线显式扣除 4 项」的 interim 口径自本次合并起**撤销**，恢复不扣除口径。遗留两条另立条目（见「待修 findings」）：49「指示此刻在场」假红时间窗、`press_key` 键名 DSL 无 `-` 拼法。
 
 - 2026-10-05：**2026-09 月份归档件的存量断链修齐**（原 finding `20261005-reviewer-archive-m327-improve-27-broken`，reviewer-archive-m327 报告；M331 修复，分支 `feat/fix-stale-archive-broken-links-2026-09`）：`openspec/changes/archive/2026-09-*` 下按「归档件指向仓根的相对链接比 change 原位多一层 `../`」的惯例，逐条用路径解析脚本（`exists()`）核对，**27 条 `](../` 形态断链全部修齐**。拆开是——**20 条**按惯例补一层 `../`（指向仓根的 `docs/adr/*` ×7、`docs/specs/perf-measurement.md` ×2、`REVIEW.md` ×6、`tests/visual/README.md` ×4、`文案-Copy.md` ×1）；**2 条**方向相反：`2026-09-28-bare-url-cmd-click/specs/editor-live-preview/spec.md` 的两处 `../../../proposal.md` 是**多**了一层，改回 `../../proposal.md`（该目标在归档前就写错，与「缺一层」无关，故与 finding 的「补一层」描述不同，如实报差）；**5 条**为 spec 正文里有意虚构的示例路径（`../top.md` ×2、`../docs/a.md`、`../docs/guide.md`、`../outside.pdf`，出现在外链分类的 Scenario 与说明段），**故意不修**。链接文本与语义一律未动，只改相对层数；未触碰 2026-10 归档件。修后复跑同款脚本：2026-09 归档件内 `../` 形态断链 **0**（示例除外，与 finding 口径一致）。核销判据 = 路径解析脚本 0 broken + `scripts/gate.sh quick` 全绿。
+
+- 2026-10-09：**点历史会话行面板不重建 + 无文档发送 context_json null**（M398，分支 `feat/harness-restore-transcript-rebuild-m398`，merge `9a9a422`；两轮 review，r2 clean）：根因是 RSR 批刻意留的最小形态——`resumeSession` 成功路径只做 `resetView` + 改名，面板不重建历史消息（当时无 wire 数据通道）。修复：`SessionResumeInfo` 携带 `messages: Vec<PanelMessage>`（复用 `turn::summarize_args`，`restored_items` 保留兼容 `src-tauri/tests/session_recording.rs`），恢复消息同时入 session.panel 和返回值（重载不丢）；前端抽 `renderSnapshotMessages`/`appendSnapshotMessage` 供 `restoreSnapshot` 与 `resumeSession` 共用，恢复点击后面板完整重建 transcript（用户气泡 / Thinking 段 / assistant 正文 / tool calls 组）；r1 P1 补 `scrollToBottom()`（assistant 分支裸 append 不滚，以 assistant 收尾时折在视口外——滚动位置 AX 读不到，机器防线缺口另立 low 条目见「待修 findings」）。同批核销 context_json null：前端无文档时改传空串（后端 `parse_context` 空串→默认块的分支本已存在），`ipc.ts` 签名收窄 `string|null`→`string`；新增验收场景 `scripts/acceptance/scenarios/107-harness-send-no-doc.md`。证据：gate quick 9/9 PASS（SKIP 1 = tsc-visual 依赖未装，未动视觉面）；真机场景 106（19 断言，含恢复后面板可见源会话用户消息与助手回复的 AX 断言）/ 107 多次 PASS；107 反向验证红（断言有区分度）。
