@@ -321,16 +321,29 @@ function verticalTarget(view: EditorView, start: SelectionRange, forward: boolea
  *  实证：补发一轮 caretBottom 962→770 且不回卷）。CM 的环路在一次 rAF 内跑完（含放弃
  *  分支），故 rAF 后即 settle 点；CM 自己收敛时这是 no-op；选区已变（用户又敲了键）
  *  则放弃，不跟用户抢滚动。0 高行虽退场，其它高度估算漂移（widget 异步测高、折行翻转）
- *  仍可能触发同一形态，本自愈保留为通用兜底。 */
-function healCollapsedReveal(view: EditorView, pos: number, attempts = 3): void {
+ *  仍可能触发同一形态，本自愈保留为通用兜底。M399 重写节奏（空行正常行高化后文档翻倍暴露）：
+ *  ① 逐帧补发会让 CM 的测量-学习环路永远有新滚动待应用、永远学不完（探针实证：每帧补发
+ *  卡死在 caretBottom 866 vs 775；静默后单次补发即收敛 9928/770）——故每次补发后静默
+ *  4 帧再复查；② heightmap 学习中坐标会经过「恰好在内」的瞬态（t=35ms 在内、t=63ms 又被
+ *  CM 迟到的校正顶出并卡死）——「在内」不能作为收手依据，改为 500ms 预算窗内持续守望：
+ *  在窗内任何时刻光标在视口外就补发，撞窗止；选区一变即放弃。 */
+function healCollapsedReveal(view: EditorView, pos: number, giveUpAt = performance.now() + 500, cooldown = 0): void {
   requestAnimationFrame(() => {
     if (view.state.selection.main.head !== pos) return;
+    if (performance.now() >= giveUpAt) return;
+    if (cooldown > 0) {
+      healCollapsedReveal(view, pos, giveUpAt, cooldown - 1);
+      return;
+    }
     const coords = view.coordsAtPos(pos);
     if (!coords) return;
     const rect = view.scrollDOM.getBoundingClientRect();
-    if (coords.bottom <= rect.bottom + 1 && coords.top >= rect.top - 1) return;
+    if (coords.bottom <= rect.bottom + 1 && coords.top >= rect.top - 1) {
+      healCollapsedReveal(view, pos, giveUpAt);
+      return;
+    }
     view.dispatch({ scrollIntoView: true });
-    if (attempts > 1) healCollapsedReveal(view, pos, attempts - 1);
+    healCollapsedReveal(view, pos, giveUpAt, 4);
   });
 }
 

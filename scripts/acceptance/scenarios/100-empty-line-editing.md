@@ -25,8 +25,8 @@ steps:
     do: sleep
     ms: 1200
     expect:
-      - label: 文档出现了空行（行首 Enter 真的插入了换行）
-        file: { path: empty-line-start.md, has: '/^$/' }
+      - label: 文档以空行开头（行首 Enter 真的在行前插入了空行；用 /^\n/ 而非 /^$/ —— 后者会被落盘尾随换行假绿）
+        file: { path: empty-line-start.md, has: '/^\n/' }
       - label: 原内容行逐字节还在
         file: { path: empty-line-start.md, has: "行首换行探针行。" }
       - shot: 行首Enter后-新空行应可见且光标在场
@@ -106,9 +106,9 @@ steps:
     expect:
       - label: 焦点落在编辑器正文里
         ax: { focused: "AXTextArea" }
-  - name: 删空 item 的 marker（三次 backspace：上游先把 marker 换成两个空格，再逐个删空格）
+  - name: 删空 item 的 marker（裸 "-" 行尾一次 backspace：上游 deleteMarkupBackward 把标记换成两个空格——真机实证终态 '- alpha\n  '，行保留即修复形态）
     do: keys
-    keys: ["ctrl+n", "ctrl+e", "backspace", "backspace", "backspace"]
+    keys: ["ctrl+n", "ctrl+e", "backspace"]
   - name: 落盘
     do: keys
     keys: ["cmd+s", "cmd+s"]
@@ -116,10 +116,12 @@ steps:
     do: sleep
     ms: 1200
     expect:
-      - label: 行保留：文档为 '- alpha' + 一个空行结尾（行被真删掉会变成 '- alpha' 无尾换行，必红）
-        file: { path: empty-line-delete-marker.md, has: '/- alpha\n$/' }
-      - label: 没有任何 marker 残留
-        file: { path: empty-line-delete-marker.md, not: '/-/' }
+      - label: 行保留：换行符在场（行被合并掉会变成 '- alpha' 无尾换行，必红；行内是空格还是空串不苛求——那是上游缩进保留语义）
+        file: { path: empty-line-delete-marker.md, has: '/- alpha\n/' }
+      - label: 没有额外空行（'- alpha\n\n' 形态必红）
+        file: { path: empty-line-delete-marker.md, not: '/\n\n/' }
+      - label: 第二行没有 marker 残留（锚定行首：'- alpha' 自身的 '-' 不算残留）
+        file: { path: empty-line-delete-marker.md, not: '/\n-/' }
       - shot: 删marker后-该行应保留为可见空行且光标在场
 ---
 

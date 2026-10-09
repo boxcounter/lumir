@@ -134,6 +134,30 @@ test("双击底部边缘表头：选中「触发时机」本身，视口不上�
       await page.waitForTimeout(50);
     }
   }
+  // 瞄准滚动与取点分两步、中间等滚动锚定落定：M399 空行正常行高化后文档约翻倍，heightmap
+  // 估算误差随之放大，大跨度瞄准滚动后 CM 会补一次锚定校正（探针实证：一次性 −69px，把
+  // 表头从瞄准点上移两行，点击落到数据行「收藏关系记录创建事务提交成功」）。瞄准后立即
+  // 取点取到的是校正前的瞬态几何——先等 scrollTop 稳定，再在定稿几何上取点。
+  await page.evaluate(() => {
+    const view = (document.querySelector(".cm-content") as unknown as { cmTile: { root: { view: any } } }).cmTile.root.view;
+    const tables = [...document.querySelectorAll(".cm-lp-table")] as HTMLElement[];
+    const table = tables.find((t) => t.textContent?.includes("bookmark_saved"))!;
+    const header = [...table.querySelectorAll(".cm-lp-table-cell")].find((c) => c.textContent?.trim() === "触发时机") as HTMLElement;
+    // 表头放到底部边缘（复现配方：clientH-76 .. clientH-63）
+    const r = header.getBoundingClientRect();
+    const sr = view.scrollDOM.getBoundingClientRect();
+    view.scrollDOM.scrollTop += r.top + r.height / 2 - (sr.top + view.scrollDOM.clientHeight - 70);
+  });
+  {
+    let prev = -1;
+    const start = Date.now();
+    while (Date.now() - start < 3000) {
+      await page.waitForTimeout(60);
+      const cur = await page.evaluate(() => (document.querySelector(".cm-scroller") as HTMLElement).scrollTop);
+      if (cur === prev) break;
+      prev = cur;
+    }
+  }
   const point = await page.evaluate(() => {
     const view = (document.querySelector(".cm-content") as unknown as { cmTile: { root: { view: any } } }).cmTile.root.view;
     const tables = [...document.querySelectorAll(".cm-lp-table")] as HTMLElement[];
@@ -150,9 +174,6 @@ test("双击底部边缘表头：选中「触发时机」本身，视口不上�
       return box.width > 0 ? box : header.getBoundingClientRect();
     };
     const sr = view.scrollDOM.getBoundingClientRect();
-    // 表头放到底部边缘（复现配方：clientH-76 .. clientH-63）
-    const r = header.getBoundingClientRect();
-    view.scrollDOM.scrollTop += r.top + r.height / 2 - (sr.top + view.scrollDOM.clientHeight - 70);
     const r2 = header.getBoundingClientRect();
     const t2 = textBox();
     return {

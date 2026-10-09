@@ -424,7 +424,8 @@ test("md 行号 gutter（默认 on-demand）：打开时不在场、输入条在
   await page.keyboard.press("Alt+g");
   await expect(gotoBox(page)).toBeVisible();
   await expect(page.locator(".cm-lineNumbers")).toBeVisible();
-  expect((await readGutter(page)).numbers.map((n) => Number(n.text))).toEqual([1, 3, 5, 7, 9, 11]);
+  // 空行随 M399 恢复正常行高后同样编号（6 是表格分隔行——widget 内无对应渲染行，恒缺）
+  expect((await readGutter(page)).numbers.map((n) => Number(n.text))).toEqual([1, 2, 3, 4, 5, 7, 8, 9, 10, 11, 12]);
 
   // ③ Enter 确认（完成后隐藏）
   await page.keyboard.press("Enter");
@@ -530,8 +531,9 @@ test("md 行号 gutter 的几何（always 档常驻）：行号 = 源行号、�
     expect(n.textRight).toBeLessThanOrEqual(wide.content.left + 0.5);
     expect(n.textLeft).toBeGreaterThanOrEqual(wide.scroller.left - 0.5);
   }
-  // ③ 行的编号 = 源文档逻辑行号（顺序即源行号序，空分隔行与 0 高元素已滤掉）。
-  expect(wide.numbers.map((n) => Number(n.text))).toEqual([1, 3, 5, 7, 9, 11]);
+  // ③ 行的编号 = 源文档逻辑行号（顺序即源行号序；M399 起空行也是正常行、同样编号，
+  //    6 是表格分隔行——widget 内无对应渲染行，恒缺）。
+  expect(wide.numbers.map((n) => Number(n.text))).toEqual([1, 2, 3, 4, 5, 7, 8, 9, 10, 11, 12]);
 
   // ④ 纵向对准（md 的新压力面）：行号元素顶 = 该行行块顶——覆盖标题行 / 表格 widget 的两类行
   //    （首行与数据行，它们是 widget 内的真行）/ 表格 widget 之后那一段 / 图片行。
@@ -553,7 +555,7 @@ test("md 行号 gutter 的几何（always 档常驻）：行号 = 源行号、�
   // ⑥ 窄窗（640px）：行号文字仍完整可见（左缘不出窗、右缘不压正文、宽度非零），正文列仍居中。
   await page.setViewportSize({ width: 640, height: 800 });
   const narrow = await readGutter(page);
-  expect(narrow.numbers.map((n) => Number(n.text))).toEqual([1, 3, 5, 7, 9, 11]);
+  expect(narrow.numbers.map((n) => Number(n.text))).toEqual([1, 2, 3, 4, 5, 7, 8, 9, 10, 11, 12]);
   for (const n of narrow.numbers) {
     expect(n.textLeft).toBeGreaterThanOrEqual(narrow.scroller.left - 0.5);
     expect(n.textRight).toBeLessThanOrEqual(narrow.content.left + 0.5);
@@ -569,9 +571,9 @@ test("md gutter 的已知边界：frontmatter 覆盖的源行没有行号（alwa
   });
   await expect(page.locator(".cm-lineNumbers")).toBeVisible();
   const reading = await readGutter(page);
-  // frontmatter 恒是块级 replace widget ⇒ 它覆盖的源行（1..4）没有行号（`doc.lines` = 8：
-  // 标题在第 6 行、正文在第 8 行；5 / 7 是空行 ⇒ 0 高的行号元素已被滤掉）。
-  expect(reading.numbers.map((n) => Number(n.text))).toEqual([6, 8]);
+  // frontmatter 恒是块级 replace widget ⇒ 它覆盖的源行（1..4）没有行号（`doc.lines` = 9：
+  // 标题在第 6 行、正文在第 8 行；5 / 7 / 9 是空行——M399 起空行也是正常行、同样编号）。
+  expect(reading.numbers.map((n) => Number(n.text))).toEqual([5, 6, 7, 8, 9]);
   // fm 覆盖的 1..4 逐条缺席（不是「数字恰好对」而是「那几行根本没有行号」）。
   for (const covered of [1, 2, 3, 4]) {
     expect(reading.numbers.map((n) => Number(n.text)), `第 ${covered} 行不该有行号`).not.toContain(covered);
