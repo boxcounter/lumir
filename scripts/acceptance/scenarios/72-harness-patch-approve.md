@@ -38,10 +38,14 @@ steps:
   - name: 等批准闸出现（写类工具默认 ask，循环挂起）
     do: waitFor
     waitFor:
-      has: ["vault_patch 请求修改文件，采纳后才落盘："]
+      has: ["要修改这个文件吗？"]
     expect:
-      - label: 批准闸标题在场
-        ax: { has: "vault_patch 请求修改文件，采纳后才落盘：" }
+      - label: 批准闸在场——问句（D339，M406 起不带工具名：卡挂在工具行下方，行徽章已承担身份）
+        ax: { has: "要修改这个文件吗？" }
+      - label: 闸语义副句在场（D413，采纳前不落盘）
+        ax: { has: "批准后才会落盘" }
+      - label: 待决工具行尾注「等待批准」（D416，M406 单行生命周期的待决态）
+        ax: { has: "等待批准" }
       - label: diff 预览有删除行
         ax: { has: "-HNL-BETA 第二行，等待 patch。" }
       - label: diff 预览有新增行
@@ -59,8 +63,9 @@ steps:
     waitFor:
       has: ["第二行处理完了。"]
     expect:
-      - label: 工具行带参数摘要（成功行 = patch 的调用参数；M368 起模板「工具 {name}：{summary}」）
-        ax: { has: '工具 vault_patch：{"path":"harness-note.md"' }
+      - label: 决策后同一行就地收敛为终态（M406：名徽章 + diff 头文件名 + 结果词已采纳——
+          不再另存工具行；done 被抑制槽吞掉，不产第二份留痕）
+        ax: { has: '/vault_patch\s*harness-note\.md[\s\S]*已采纳/' }
 
   - name: 等打开中会话经 watch → 外部变更分流同步（留一拍再读）
     do: sleep
@@ -80,10 +85,12 @@ steps:
         file: { path: "env:harness/sessions/*.jsonl", has: '/^.*"kind":"llm_response".*"id":"call_p1","name":"vault_patch".*$/' }
       - label: JSONL 记下采纳决定（approval sidecar）
         file: { path: "env:harness/sessions/*.jsonl", has: '/^.*"decision":"approved".*"tool":"vault_patch".*$/' }
-      - label: 决策后卡片收敛为终态记录（工具名 + 已采纳 + 相对时间戳，M384）
-        ax: { has: "vault_patch · 已采纳" }
-      - label: 待决语义文案退场（「采纳后才落盘」不再出现，M384）
-        ax: { not: "采纳后才落盘" }
+      - label: 终态结果词在场（已采纳，D405）
+        ax: { has: "已采纳" }
+      - label: 待决语义整体退场（卡片被移除：问句与副句都不再出现，M406）
+        ax: { not: "要修改这个文件吗？" }
+      - label: 闸语义副句同退（「批准后才会落盘」不再出现）
+        ax: { not: "批准后才会落盘" }
       - label: 决策按钮退场——采纳钮不留置灰（置灰会被误读为还在等待，M384）
         ax: { not: "/AXButton \\(采纳\\)/" }
       - label: 决策按钮退场——拒绝钮不留置灰
@@ -92,13 +99,14 @@ steps:
         ax: { not: "-HNL-BETA 第二行，等待 patch。" }
       - shot: 02-采纳后
 
-  - name: 抢前台（disclosure 三角的 AXPress 在窗口后台时可能不生效——同 REVIEW.md 第 11 条现场）
+  - name: 抢前台（终态行的 AXPress 在窗口后台时可能不生效——同 REVIEW.md 第 11 条现场）
     do: focusWindow
     retries: 4
 
-  - name: 展开决策详情回看 diff（点折叠详情的原生 disclosure 三角；文字节点本身不收起/展开）
+  - name: 展开决策详情回看 diff（M406：终态行整行即展开钮 role=button，无 disclosure 三角；
+      行名含全部行文本，按「查看详情」子串命中）
     do: click
-    target: { role: AXDisclosureTriangle, name: "查看详情" }
+    target: { role: AXButton, name: "查看详情" }
 
   - name: 展开后 diff 重新可见
     do: waitFor
@@ -116,7 +124,8 @@ spec 判据（harness「权限机制 · 采纳与拒绝」的采纳侧 + fs-io�
 编辑器会话，经既有 watch → 会话刷新通路同步（本场景的编辑器从开头就开着
 harness-note.md，且全程未手动编辑 = clean 会话，外部变更自动重载）。
 
-M384 终态呈现（spec「批准闸呈现与决策后收敛」的采纳侧）：决策后卡片收敛为一行终态
-记录（工具名 + 已采纳 + 相对时间戳），待决标题与决策按钮退场（不留置灰钮），diff 默认
-折叠、经「查看详情」展开后可回看。chromium 结构断言同面：tests/visual/scenes/
-m384-harness-approval-decided.spec.ts。
+M406 终态呈现（收敛单行生命周期，原型 variant B；spec「批准闸呈现与决策后收敛」）：
+批准卡挂在该调用工具行下方的待决壳里（行尾注「等待批准」）；采纳后卡片整体退场、**同一行**
+就地翻终态（✓ + 工具名徽章 + diff 头文件名 + 已采纳 · 相对时间戳），同一调用的 done 事件
+被抑制槽吞掉不再另建行；diff 收进默认折叠的详情体、点终态行（「查看详情」入口随行）展开
+可回看。chromium 结构断言同面：tests/visual/scenes/m384-harness-approval-decided.spec.ts。

@@ -2,7 +2,8 @@
 //! 记录形状（首行 session_open / 请求-响应成对 / 思考落盘 / 装配清单）、
 //! **恢复充分性属性测试**（仅凭 JSONL 逐字节重建任意一轮发给模型的请求，含反向验证）、
 //! 恢复命令 roundtrip（灌回 system + input、续写新文件）、文件边界（重置 / 压缩）、
-//! sidecar 决策类收口（approval / llm_error / loop_max_reached 在列，11 类旧 kind 绝迹）。
+//! sidecar 决策类收口（approval / llm_error / loop_max_reached 在列，11 类旧 kind 绝迹）、
+//! 会话删除（M406：删除 + 幂等 / 活跃拒删 / 非法 id / 跨 vault 拒删）。
 //!
 //! 环境隔离与 harness_runtime.rs 同口径：XDG_CONFIG_HOME + HOME 指向临时目录，
 //! 多测串行（静态锁，env 是进程全局；REVIEW.md 第 13 条）。
@@ -1265,5 +1266,101 @@ fn first_user_text_strips_injected_context_section() {
             .contains(turn::CONTEXT_SECTION_HEADER),
         "会话名素材不含注入节：{:?}",
         list[0].first_user_text
+    );
+}
+
+// ---------------------------------------------------------------------------
+// 会话删除（M406，`harness_delete_session` 的实现体 `Runtime::delete_session`）
+// ---------------------------------------------------------------------------
+
+/// 删除 = 文件消失 + 列表不再列出；目标已不存在按幂等成功（重复删除不报错）。
+#[test]
+fn delete_session_removes_file_and_is_idempotent() {
+    let f = Fixture::new("delete-basic");
+    let dir = f.root.join("xdg/lumir/harness/sessions");
+    std::fs::create_dir_all(&dir).unwrap();
+    let vault_root = f.vault().display().to_string();
+    write_raw_session(
+        &dir,
+        "s1759912000-aaaaaa",
+        1759912000,
+        &vault_root,
+        Some("甲"),
+    );
+    write_raw_session(
+        &dir,
+        "s1759912005-bbbbbb",
+        1759912005,
+        &vault_root,
+        Some("乙"),
+    );
+    let runtime = Runtime::default();
+
+    runtime
+        .delete_session(&f.scope(), "s1759912000-aaaaaa")
+        .unwrap();
+    assert!(
+        !dir.join("s1759912000-aaaaaa.jsonl").exists(),
+        "删除后文件消失"
+    );
+    let list = list_sessions(&f.scope()).unwrap();
+    let ids: Vec<&str> = list.iter().map(|s| s.session_id.as_str()).collect();
+    assert_eq!(ids, ["s1759912005-bbbbbb"], "列表不再列出已删会话");
+
+    // 幂等：再删一次（文件已不在）仍是 Ok。
+    runtime
+        .delete_session(&f.scope(), "s1759912000-aaaaaa")
+        .unwrap();
+}
+
+/// 防线：活跃会话拒删（writer 还指着这份文件；release_turn 后会话仍在 sessions 表里，
+/// 仍算活跃）；非法 id（含路径穿越形态）拒绝；他 vault 留存拒删且文件不动。
+#[test]
+fn delete_session_guards_active_invalid_and_foreign() {
+    let f = Fixture::new("delete-guards");
+    f.write("a.md", "demo body\n");
+    let config = mock_config();
+    let runtime = Runtime::default();
+    runtime.acquire_turn(&f.scope(), &config).unwrap();
+    let sink = CollectSink::default();
+    let mut client =
+        MockClient::from_str(r#"{"responses": [{"text": "好。"}]}"#, "delete-guards").unwrap();
+    drive_turn(
+        &sink,
+        &runtime,
+        &f.scope(),
+        &config,
+        "留个文件".to_string(),
+        &mut client,
+    );
+    runtime.release_turn(&f.scope());
+
+    let files = f.session_files();
+    assert_eq!(files.len(), 1);
+    let active_id = jsonl::JsonlWriter::session_id_from_path(&files[0]).unwrap();
+    let err = runtime.delete_session(&f.scope(), &active_id).unwrap_err();
+    assert_eq!(err.code, "harness_session_active", "活跃会话拒删");
+    assert!(files[0].exists(), "拒删后文件仍在");
+
+    // 非法 id（路径穿越形态）拒绝——is_valid_session_id 的目录穿越防线。
+    let err = runtime.delete_session(&f.scope(), "../escape").unwrap_err();
+    assert_eq!(err.code, "harness_session_invalid");
+
+    // 他 vault 的留存拒删（与列举 / 恢复同一归属口径），文件不动。
+    let dir = f.root.join("xdg/lumir/harness/sessions");
+    write_raw_session(
+        &dir,
+        "s1759912002-dddddd",
+        1759912002,
+        "/tmp/other-vault",
+        Some("别的 vault"),
+    );
+    let err = runtime
+        .delete_session(&f.scope(), "s1759912002-dddddd")
+        .unwrap_err();
+    assert_eq!(err.code, "harness_session_vault_mismatch");
+    assert!(
+        dir.join("s1759912002-dddddd.jsonl").exists(),
+        "拒删后文件仍在"
     );
 }

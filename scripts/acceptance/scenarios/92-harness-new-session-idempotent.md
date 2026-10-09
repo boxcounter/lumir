@@ -38,7 +38,7 @@ steps:
         ax: { not: "当前没有正在进行的对话轮次" }
       - label: 空态提示仍在（resetView 后视图回空态，不是报错现场）
         ax: { has: "与当前文档对话" }
-      - label: 「新会话」仍恰两颗（护卫：误点会话名钮会开出浮层多一行——没点错对象）
+      - label: 「新会话」仍恰两颗（护卫：点错对象会失配——M406 起浮层无「新建会话」项，见正文）
         ax: { count: { pattern: "/\\(新会话\\)/", exact: 2 } }
       - shot: 01-连点三次后
 ---
@@ -62,8 +62,10 @@ M350 的不变量（`src-tauri/src/harness.rs` `Runtime::new_session` 文档注�
    未命名会话下 AX 名都是「新会话」（场景 86 注释实测），消歧靠 role 分流：会话名钮带
    `aria-haspopup="menu"` → WKWebView 映射 `AXPopUpButton`，＋新建钮无 haspopup 保持
    `AXButton`（2026-10-07 批次实证：`nth` 按 DOM 序取钮的初版全红——role 锁定 AXButton
-   后只剩新建钮一个命中）；若点错开到会话浮层，浮层动作项同文案会多出第三个「新会话」
-   节点，计数立即破 2。
+   后只剩新建钮一个命中）。**M406 起这条护卫的判别力已变化**：浮层移除了「新建会话」动作项、
+   且空历史时浮层根本不展开（`buildSessList` 空 entries → 不开层）——误点会话名钮不再
+   「多出第三个同名节点」，而是点击失配（AXPopUpButton 不匹配 role 锁 AXButton 的 target）。
+   计数仍恒为 2 作为段装配守恒判据保留，但「误点多一行」的判别形态如实登记为已退场。
 
 ## 已知边界
 

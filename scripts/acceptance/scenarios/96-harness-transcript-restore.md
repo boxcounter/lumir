@@ -2,17 +2,19 @@
 # M368：Alex 2026-10-07 现场两条缺陷的**恢复路径**判据——「连续出现 Agent · 19m ago 的字样」
 # （空正文 assistant 记录被渲染成光秃 who 行）与「tool use 没有信息价值」（工具行恒为「成功」）。
 # core 侧 M367 已落两件事（空轮次不再落面板消息、tool 记录持久化 summary），本场景判前端把快照
-# 恢复渲染对上了没有（工具行带参数摘要、工具清单按消息分块、消息数 = 面板记录数）。
+# 恢复渲染对上了没有（工具行带人话化参数、工具清单按消息分块、消息数 = 面板记录数；M406 起参数
+# JSON 原文不上屏）。
 id: "96-harness-transcript-restore"
 item: 96
-title: harness transcript 快照恢复保真：切 vault 回来后工具行带参数摘要、工具清单按消息分块、无光秃 Agent 头
+title: harness transcript 快照恢复保真：切 vault 回来后工具行带人话化参数、工具清单按消息分块、无光秃 Agent 头
 open: harness-note.md
 marker: "HNL-ALPHA"
 # mock 两轮都发工具调用（撞名失败 + 新建成功）、第三轮收尾——落三条 assistant 面板记录 +
 # 两条 tool 记录，且两次 vault_create 被中段正文（「撞名被拒了，换个新名字。」）隔开。M383
 # （到达序渲染）起 live 路径也把两行拆进**单行块、不折叠**，与恢复路径一致——本场景判的是
 # **恢复路径按消息边界切块**（工具行各挂各自的 assistant 消息、带参数摘要、消息数 = 面板记录数），
-# 不是 live/recovery 的折叠对比（该对比随 M383 退场，见正文「断言口径」）。
+# 不是 live/recovery 的折叠对比（该对比随 M383 退场，见正文「断言口径」；M406 起「参数摘要」
+# 改为人话化参数，JSON 原文不上屏）。
 # `allow: [vault_create]` 免批准闸（写类工具默认 ask，本场景判的不是闸）。
 config:
   harness:
@@ -121,10 +123,12 @@ steps:
       # vault_create 被中段正文（「撞名被拒了，换个新名字。」）隔开 ⇒ 各落一个**单行**工具块，
       # D387 的折叠阈值（≥2 行）不触发。旧断言「两条工具行落同一块 → 折叠为一行摘要钮」的前提
       # 是 M368 时代的「一轮一个泡」，随 M383 失效（现场与截图见 M393 findings）。
-      - label: live 路径两条工具行都可见、未被折叠隐藏（失败行带错误码、成功行带参数摘要）
+      - label: live 路径两条工具行都可见、未被折叠隐藏（失败行带错误码尾注、成功行为徽章+人话化参数）
         ax: { has: "fs_already_exists" }
-      - label: live 路径成功工具行带参数摘要（D344 模板，未被折叠隐藏）
-        ax: { has: '工具 vault_create：{"path":"harness-created.md"' }
+      - label: live 路径成功工具行 = 工具徽章 + 人话化参数（M406 起 JSON 摘要不上屏，未被折叠隐藏）
+        ax: { has: '/vault_create\s*harness-created\.md/' }
+      - label: live 路径参数 JSON 原文不上屏（M406：人话化分层，JSON 只留在 JSONL 里）
+        ax: { not: '{"path":"harness-created.md"' }
       - label: live 路径不出现折叠摘要（每块单行 < 2，D387 不触发）
         ax: { not: "个工具调用 · 全部完成" }
       - label: 最终回答渲染
@@ -189,10 +193,12 @@ steps:
   - name: 恢复后的内容面：工具行摘要、失败状态、正文与相对时间都在
     do: settle
     expect:
-      - label: 成功行带调用参数摘要（M367 落盘的 summary × M368 的 D344 模板）
-        ax: { has: '工具 vault_create：{"path":"harness-created.md"' }
-      - label: 失败行保留细分状态与错误码（fs_already_exists：harness-note.md 已存在）
-        ax: { has: "/error · fs_already_exists/" }
+      - label: 恢复的成功行 = 工具徽章 + 人话化参数（M406：restoredAssistantToolRow 走 humanizeToolArgs）
+        ax: { has: '/vault_create\s*harness-created\.md/' }
+      - label: 恢复的参数 JSON 原文不上屏（M406 人话化分层在恢复路径同样生效）
+        ax: { not: '{"path":"harness-created.md"' }
+      - label: "失败行保留细分错误码（恢复尾注 = failureTextOf 的 `{code}: {message}`，M406 起无 `error · ` 前缀）"
+        ax: { has: "/fs_already_exists: /" }
       - label: 首条 assistant 记录的正文恢复（工具轮也有正文，是本场景 mock 的形态）
         ax: { has: "先试试撞名新建。" }
       - label: 中段 assistant 记录的正文恢复（多条记录各自成泡，不合并、不丢）
@@ -239,14 +245,16 @@ core 侧的两处修复（M367）已把「空轮次不落面板消息」与「to
   改为断言「两条工具行都可见 + 不出现折叠摘要」，与恢复路径的 `not` 判据一致。**live 与恢复路径
   在「是否折叠」上因此不再有对比**（M368「live 同块 / recovery 分块」的对照退场）。折叠阈值
   （≥2 行）本身仍由 `collapseBlock` 守住，只是本场景这一轮造不出「连续 ≥2 行」的形状。
-- **成功行/失败行的上屏形态**：成功 = `工具 vault_create：{"path":…`（D344 模板 × 后端
-  持久化的参数摘要），失败 = `工具 vault_create：error · fs_already_exists: …`（后端
-  `summarize_result` 的失败形状）。两串都由本场景的 mock 脚本唯一产出，不与别的场景串。
+- **成功行/失败行的上屏形态（M406 更新）**：成功 = `vault_create harness-created.md`（工具徽章 +
+  `humanizeToolArgs` 的人话化参数；参数 JSON 原文不再上屏，只留在 JSONL），失败（live）= ✕ 行 +
+  尾注 `error · fs_already_exists: …`（后端 `summarize_result` 的失败形状原文作尾注），失败
+  （恢复）= ✕ 行 + 尾注 `fs_already_exists: …`（`failureTextOf` 从记录 text 的输出 JSON 取
+  `{code}: {message}` 全文，不带 `error · ` 前缀）。两串都由本场景的 mock 脚本唯一产出，不与别的场景串。
 - **消息数** = AX 里 `AXButton (复制消息)` 的**行数**（= 元素数；每条消息一个复制钮：用户 1 +
   assistant 记录 3 = 4）。空正文记录若被渲染出来就会多一个消息元素（多一个复制钮 ⇒ 5 即红），
   这条判据同时是「空消息 MUST NOT 挂复制钮」的直接落点。**为什么不用「数 who 行文本」**：AX 会把
-  who 行与其后的工具块 / 相邻正文合并进同一个 `AXStaticText`（本场景首跑实测的 dump 就是
-  `"工具 vault_create：… Agent · 刚刚 撞名被拒了，换个新名字。"` 这种合并形态），行数不随光秃头
+  who 行与其后的工具块 / 相邻正文合并进同一个 `AXStaticText`（合并形态形如
+  `"vault_create harness-created.md Agent · 刚刚 撞名被拒了，换个新名字。"`），行数不随光秃头
   增加——那种形态在 AX 上无区分度，判据改落在复制钮数（元素级，不参与文本合并）。
 - **中段正文也在**：三条 assistant 记录各自的正文都要能读到（首条「先试试撞名新建。」、中段
   「撞名被拒了，换个新名字。」、收尾「新建完成。」）——恢复若只重渲最后一条或把多条并成一条，

@@ -67,7 +67,7 @@ steps:
         ax: { not: "FAST-C 第三片。" }
       - label: 被取消轮的工具调用没有执行（中断收在工具循环之前；本响应带 vault_read——
           若停止被忽略，本地工具秒级落行，本断言必红）
-        ax: { not: "工具 vault_read" }
+        ax: { not: "vault_read" }
       - label: JSONL 记下中断事件（turn_aborted sidecar）
         file: { path: "env:harness/sessions/*.jsonl", has: '"kind":"turn_aborted"' }
 
@@ -102,11 +102,11 @@ steps:
         ax: { has: "NEXT-第二轮回答。" }
       - label: 新一轮的工具循环真实执行（vault_read 行在场）——被取消轮没执行的那个调用，
           由这一轮补上：JSONL 只在新一轮落一条 function_call_output（被取消轮未执行工具）
-        ax: { has: '工具 vault_read：{"path":"harness-note.md"}' }
+        ax: { has: '/vault_read\s*harness-note\.md/' }
       - label: 有序性：被取消轮的「已停止」在新一轮工具行之前（被取消轮封闭在前、
           新一轮内容在后，不插队不复活）
         ax:
-          has: '/已停止[\s\S]*工具 vault_read：\{"path":"harness-note.md"\}[\s\S]*NEXT-第二轮回答。/'
+          has: '/已停止[\s\S]*vault_read\s*harness-note\.md[\s\S]*NEXT-第二轮回答。/'
       - label: 「已停止」标记恰好一个（被取消轮的那一个；新一轮正常完成不标）
         ax: { count: { pattern: "已停止", exact: 1 } }
       - label: JSONL 记下新一轮的工具调用结果（function_call_output）——配合停止步的

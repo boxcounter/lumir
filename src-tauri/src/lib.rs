@@ -129,6 +129,8 @@ pub fn run() {
             // 历史会话列举（M395，change reshape-harness-session-recording 任务 2.1）：
             // 面板会话选择器的数据源，过滤与恢复命令同一 vault 归属口径。
             harness::harness_list_sessions,
+            // 历史会话删除（M406）：选择器行内删除入口的后端，活跃会话拒删。
+            harness::harness_delete_session,
         ])
         .setup(move |app| {
             // 诊断日志先初始化：`[log] level` 在第一条事件之前生效（level = off 时

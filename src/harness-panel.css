@@ -147,14 +147,15 @@
   color: var(--text-3);
   font-size: calc(var(--fs-label-s) * var(--lumir-hp-scale, 1));
 }
-/* 新建会话钮：24px 高的弱化钮（＋ glyph + 文案），与段内会话名同排。 */
+/* 新建会话钮（M406 起纯加号图标钮——可见文字退场，悬停提示 / 读屏名 D330）：24px 高
+   的弱化钮，与段内会话名同排。 */
 .lumir-hp-seg-new {
   flex: none;
   display: flex;
   align-items: center;
-  gap: var(--sp-1);
+  justify-content: center;
   height: 24px;
-  padding: 0 var(--sp-3);
+  padding: 0 var(--sp-2);
   border: none;
   border-radius: var(--r4);
   background: none;
@@ -175,8 +176,9 @@
   font-weight: var(--fw-bold);
   line-height: 1;
 }
-/* 会话浮层（节点 1 裁决后口径）：挂在 wrapper 上（与会话名钮兄弟），含「新建会话」
-   动作项；M392 起动作项下追加本 vault 历史会话清单（极简选择器，只列不管理）。
+/* 会话浮层（节点 1 裁决后口径）：挂在 wrapper 上（与会话名钮兄弟）；M392 起是本 vault
+   历史会话清单（极简选择器），M406 起加行内删除（两步确认）、「新建会话」动作项退场
+   （新建归首行加号钮）。
    M397 定位由 absolute 改 fixed：段 `.lumir-hp-seg` 有 `overflow: hidden`（同族溢出纪律），
    而 absolute 浮层的包含块是段内的 `.lumir-hp-sessionwrap`——浮层超出段高被整段裁掉，
    M351 起从未真正渲染（Alex dogfood「点了没有浮层」）。浮层的包含块 MUST NOT 落在会被裁的
@@ -220,26 +222,80 @@
   background: var(--hover);
   color: var(--text);
 }
-.lumir-hp-sesspop-item .lumir-hp-plus {
-  color: var(--text-3);
-  font-weight: var(--fw-bold);
-  line-height: 1;
-}
-/* 历史会话清单（M392，design §6.1 极简选择器）：「新建会话」之下、hairline 分隔；行复用
-   sesspop-item 配方（hover 底 / r4 圆角），行内 = 会话名（ellipsis）+ 时间读数（micro 灰）。
-   只列不管理——无重命名 / 删除 / 搜索；空历史整段隐藏。 */
+/* 历史会话清单（M392，design §6.1 极简选择器；M406 起浮层只有它——「新建会话」动作项
+   退场，新建归首行加号钮）：每行 = 恢复钮（会话名 ellipsis + 时间读数 micro 灰）+ 删除钮
+   （×，行内两步确认）。 */
 .lumir-hp-sesspop-list {
   display: flex;
   flex-direction: column;
   gap: var(--sp-1);
   max-height: 320px;
-  margin-top: var(--sp-2);
-  padding-top: var(--sp-2);
-  border-top: 1px solid var(--border);
   overflow-y: auto;
 }
 .lumir-hp-sesspop-list[hidden] {
   display: none;
+}
+/* 会话行壳（M406）：恢复钮与删除钮是并列兄弟（MUST NOT 钮套钮——WKWebView 把嵌套
+   button 当叶子，AX 树不暴露内层，M351 finding）。 */
+.lumir-hp-sesspop-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-1);
+}
+.lumir-hp-sesspop-row .lumir-hp-sesspop-history {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+/* 删除钮：常驻淡出的 ×（悬停才上色——列表的默认视觉重心在恢复钮上）；确认态的行内
+   按钮沿用 micro 字号。 */
+.lumir-hp-sesspop-del {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  border: none;
+  border-radius: var(--r4);
+  background: none;
+  color: var(--text-3);
+  font: inherit;
+  line-height: 1;
+  cursor: pointer;
+  transition:
+    background var(--dur-ui) var(--ease-standard),
+    color var(--dur-ui) var(--ease-standard);
+}
+.lumir-hp-sesspop-del:hover {
+  background: var(--danger-tint);
+  color: var(--danger);
+}
+.lumir-hp-sesspop-confirm-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: calc(var(--fs-micro) * var(--lumir-hp-scale, 1));
+  color: var(--text-2);
+}
+.lumir-hp-sesspop-confirm-yes,
+.lumir-hp-sesspop-confirm-no {
+  flex: none;
+  padding: 2px var(--sp-2);
+  border-radius: var(--r4);
+  font: inherit;
+  font-size: calc(var(--fs-micro) * var(--lumir-hp-scale, 1));
+  cursor: pointer;
+  transition: background var(--dur-ui) var(--ease-standard);
+}
+.lumir-hp-sesspop-confirm-yes {
+  border: none;
+  background: var(--danger-tint);
+  color: var(--danger);
+}
+.lumir-hp-sesspop-confirm-no {
+  border: 1px solid var(--border);
+  background: none;
+  color: var(--text-2);
+}
+.lumir-hp-sesspop-confirm-no:hover {
+  background: var(--hover);
+  color: var(--text);
 }
 .lumir-hp-sesspop-history {
   justify-content: space-between;
@@ -466,8 +522,54 @@
 .lumir-hp-tool-row.is-done .lumir-hp-tool-ic {
   color: var(--ok);
 }
-.lumir-hp-tool-row.is-running {
+/* 失败 / 已拒绝终态行的 ✕（M406：denied / error / rejected 三分状态共用 danger 色——
+   eink 下 --ok/--danger 同为黑，图标形状（✓/✕）承载语义，与 diff +/- 行同口径）。 */
+.lumir-hp-tool-row.is-fail .lumir-hp-tool-ic,
+.lumir-hp-tool-row.is-rej .lumir-hp-tool-ic {
+  color: var(--danger);
+}
+.lumir-hp-tool-row.is-running,
+.lumir-hp-tool-row.is-waiting {
   color: var(--text);
+}
+/* 步骤行的三段式文本（M406 摘要人话化 + Alex 区分度精化，原型 .ttext）：工具名徽章
+   感靠 mono 字体档（.lumir-hp-tool-name），关键参数 mono + 正文色提亮
+   （.lumir-hp-tool-args——命令 / 文件名完整显示，截断只落这一格），尾注次级灰
+   （.lumir-hp-tool-out：等待批准 / 失败摘要）。 */
+.lumir-hp-tool-name {
+  font-family: var(--font-mono);
+}
+.lumir-hp-tool-args {
+  font-family: var(--font-mono);
+  color: var(--text);
+}
+.lumir-hp-tool-out {
+  color: var(--text-3);
+}
+/* 终态格（已采纳/已拒绝 · 相对时间）与详情入口：flex:none 永不裁（截断只落参数摘要——
+   「保住终态词」与 M373「只截 model 名，保住 effort」同一纪律）。 */
+.lumir-hp-tool-res {
+  flex: none;
+  color: var(--text-3);
+  white-space: nowrap;
+}
+.lumir-hp-tool-res .lumir-hp-tw {
+  color: var(--text-2);
+  font-weight: var(--fw-medium);
+}
+.lumir-hp-tool-more {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  color: var(--text-3);
+  font-size: calc(var(--fs-micro) * var(--lumir-hp-scale, 1));
+}
+.lumir-hp-tool-more svg {
+  transition: transform var(--dur-ui) var(--ease-standard);
+}
+.lumir-hp-tool-row.is-open .lumir-hp-tool-more svg {
+  transform: rotate(90deg);
 }
 .lumir-hp-tool-pulse {
   width: 6px;
@@ -626,6 +728,21 @@
   font-size: calc(var(--fs-ui) * var(--lumir-hp-scale, 1));
   font-weight: var(--fw-semibold);
 }
+/* 问句副句（M406，原型 .ap-sub：「批准后才会落盘 / 运行」的轻量说明，问句正下方次级灰）。 */
+.lumir-hp-approval-sub {
+  display: block;
+  margin-top: 1px;
+  font-size: calc(var(--fs-meta) * var(--lumir-hp-scale, 1));
+  font-weight: var(--fw-regular);
+  color: var(--text-3);
+}
+/* 模型自述的用途句（M406/M407 契约 purpose 字段）：命令 / diff 上方的阅读辅助行——
+   次级灰小号字，不抢命令原文的视觉重心（信任边界：原文永远完整可见）。 */
+.lumir-hp-approval-purpose {
+  margin: 0 0 var(--sp-2);
+  font-size: calc(var(--fs-meta) * var(--lumir-hp-scale, 1));
+  color: var(--text-2);
+}
 .lumir-hp-diff,
 .lumir-hp-argv {
   max-height: 240px;
@@ -638,6 +755,27 @@
   font-size: calc(var(--fs-label-s) * var(--lumir-hp-scale, 1));
   line-height: var(--lh-code);
   white-space: pre;
+}
+/* 细滚动条（M406，Alex：cli_run 详情横向滚动条太粗、遮挡内容）：4px 细条 + 透明轨道，
+   两条声明都要（scrollbar-width 管标准通道，::-webkit-scrollbar 管 WKWebView/chromium）——
+   与 tabstrip 的既有细条条款（src/style.css）同手法。 */
+.lumir-hp-diff,
+.lumir-hp-argv {
+  scrollbar-width: thin;
+}
+.lumir-hp-diff::-webkit-scrollbar,
+.lumir-hp-argv::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+.lumir-hp-diff::-webkit-scrollbar-thumb,
+.lumir-hp-argv::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 2px;
+}
+.lumir-hp-diff::-webkit-scrollbar-track,
+.lumir-hp-argv::-webkit-scrollbar-track {
+  background: transparent;
 }
 :root[data-theme="eink"] .lumir-hp-diff,
 :root[data-theme="eink"] .lumir-hp-argv {
@@ -664,6 +802,8 @@
 }
 /* eink：tint 退场后增删行同为黑字——+/− 行首字符本就是 unified diff 的语义载体，
    可辨性不靠色（规则①的正当后果，不另造表达）。 */
+/* 拒绝原因输入框（M406 起多行 textarea：Enter 换行、⌘/Ctrl+Enter 提交拒绝——可纵向
+   拖拽扩高，最小高度由 rows=2 承担）。 */
 .lumir-hp-reason {
   display: block;
   width: 100%;
@@ -676,6 +816,8 @@
   color: var(--text);
   font: inherit;
   font-size: calc(var(--fs-meta) * var(--lumir-hp-scale, 1));
+  line-height: var(--lh-ui);
+  resize: vertical;
 }
 .lumir-hp-reason:focus {
   outline: none;
@@ -715,56 +857,31 @@
   opacity: 0.45;
   cursor: default;
 }
-/* 已决策的批准项收敛为终态记录（M384，spec「批准闸呈现与决策后收敛」）：一行 = 工具名 +
-   已采纳/已拒绝 + 相对时间戳，diff/argv 收进默认折叠的详情可展开回看。待决标题与决策按钮
-   随决策退场（置灰按钮会被误读为「还没处理完/在等什么」——Alex 2026-10-08 实证），也
-   不再用整体降透明度表达终态：紧凑记录本身即降视觉权重（agent 产品决策后收敛为结果
-   记录的通行形态）。 */
-.lumir-hp-approval.is-approved,
-.lumir-hp-approval.is-rejected {
-  padding: var(--sp-2) var(--sp-3);
+/* M406 收敛单行生命周期（原型 harness-tool-card-merge variant B）：待决 = 该行就地展开
+   为批准卡（.lumir-hp-pend 壳内、行下挂卡，缩进对齐行文本起点 17px = 图标 14 + 间距 3）；
+   终态 = 同一行收敛为终态行（.lumir-hp-termwrap 单元），diff/argv 收进默认折叠的
+   term-body（行即展开入口），拒绝原因行在详情上方常驻可见。前身 M384 的独立记录卡
+   （.lumir-hp-approval-record / .lumir-hp-approval-details）随收敛退场。 */
+.lumir-hp-pend .lumir-hp-approval {
+  margin: var(--sp-1) 0 var(--sp-1) 17px;
 }
-.lumir-hp-approval-record {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-2);
-  min-width: 0;
-  font-size: calc(var(--fs-meta) * var(--lumir-hp-scale, 1));
-  color: var(--text-2);
-}
-.lumir-hp-approval-ic {
-  flex: none;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--ok);
-}
-.lumir-hp-approval.is-rejected .lumir-hp-approval-ic {
-  color: var(--danger);
-}
-/* 记录文本单行走省略（完整文本仍在 DOM / AX，与工具行同口径）。eink 下 --ok/--danger 同为
-   黑，结果词本身（已采纳/已拒绝）承载语义——与上方 diff +/- 行的可辨性口径一致。 */
-.lumir-hp-approval-record-text {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.lumir-hp-approval-details {
-  margin-top: var(--sp-2);
-}
-.lumir-hp-approval-details summary {
+.lumir-hp-termwrap > .lumir-hp-tool-row[role="button"] {
   cursor: pointer;
+}
+.lumir-hp-term-body {
+  margin: var(--sp-1) 0 var(--sp-1) 17px;
+}
+.lumir-hp-term-body .lumir-hp-diff,
+.lumir-hp-term-body .lumir-hp-argv {
+  margin-bottom: 0;
+}
+.lumir-hp-term-body[hidden] {
+  display: none;
+}
+.lumir-hp-term-reason {
+  margin: 1px 0 var(--sp-1) 17px;
   font-size: calc(var(--fs-meta) * var(--lumir-hp-scale, 1));
   color: var(--text-3);
-}
-.lumir-hp-approval-details[open] summary {
-  margin-bottom: var(--sp-2);
-  color: var(--text-2);
-}
-.lumir-hp-approval-details .lumir-hp-diff,
-.lumir-hp-approval-details .lumir-hp-argv {
-  margin-bottom: 0;
 }
 
 /* ── 上下文 chip（M370 起在 composer 区顶部：横线之下、composerBox 之上——发送前可核对

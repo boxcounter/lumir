@@ -345,7 +345,11 @@ export type HarnessEvent = HarnessEventEnvelope &
     | { type: "text_chunk"; text: string }
     | { type: "reasoning_chunk"; text: string; index: number }
     | { type: "tool_call"; name: string; status: "started" | "done"; summary: string }
-    | { type: "approval_request"; id: string; tool: string; diff?: string; argv?: string }
+    // approval_request 的 argv 是**数组**（后端 events.rs 发完整 argv 的 JSON 数组；
+    // M406 修类型错配——此前这里声明 string，live 渲染成逗号拼接、快照恢复整段丢弃）。
+    // purpose 是 M407 契约的可选字段（模型自述的用途句，阅读辅助——卡片展示用，
+    // 命令原文永远完整可见）；缺字段 = 旧后端，不展示。
+    | { type: "approval_request"; id: string; tool: string; diff?: string; argv?: string[]; purpose?: string }
     | { type: "usage"; ctx_pct: number; cache_pct: number }
     | { type: "compact"; summary: string }
     | { type: "done" }
@@ -397,7 +401,8 @@ export function harnessSetThinkingEffort(effort: ThinkingEffort): Promise<void> 
  * 缺省 = 空态）：`vault`（会话标识 = vault 根路径，M312——与事件信封同源，据此丢弃
  * 「切走之后才回来的」旧快照）、`messages[]`（role: "user" | "assistant" | "tool" |
  * "compact"；text / summary / name / status 字段按 role 取用）、`usage{ctx_pct,cache_pct}`、
- * `pending_approval{id,tool,diff?,argv?}`、`warn_ctx_pct`（缺省 85）、`thinking{level,supported}`
+ * `pending_approval{id,tool,diff?,argv?}`（argv 是**字符串数组**，M406 起与事件侧同型——
+ * 此前前端按 string 读，快照恢复把数组整段丢弃）、`warn_ctx_pct`（缺省 85）、`thinking{level,supported}`
  * （M362：思考程度档位读数 + 当前 provider/model 是否支持程度调节；缺键 = 旧后端 / 桩，
  * 思考 chip 按「不伪造读数」口径隐藏）。
  * 后端不可用（纯浏览器预览 / 命令未注册）时 reject，调用方按「空会话」降级。
@@ -434,6 +439,16 @@ export function harnessListSessions(): Promise<SessionSummary[]> {
  */
 export function harnessResumeSession(session_id: string): Promise<SessionResumeInfo> {
   return invoke<SessionResumeInfo>("harness_resume_session", { session_id });
+}
+
+/**
+ * 删除一份历史会话留存（M406）：`session_id` 是 `sessions/<id>.jsonl` 的文件名。
+ * 后端校验 vault 归属（与列举 / 恢复同一口径），当前活跃会话的留存拒绝删除
+ * （`harness_session_active`）；文件已不存在按幂等成功处理。错误码经 src/copy.ts 的
+ * errorText 渲染。
+ */
+export function harnessDeleteSession(session_id: string): Promise<void> {
+  return invoke<void>("harness_delete_session", { session_id });
 }
 
 /** 解析 harness:event 的载荷：宽容入口——载荷是 string 时先 JSON.parse；形状不认识的

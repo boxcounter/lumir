@@ -446,6 +446,60 @@ impl Runtime {
             messages,
         })
     }
+
+    /// 删除一份历史会话留存（`harness_delete_session` 的实现体，M406）：删的是**文件**
+    ///（`sessions/<id>.jsonl`）。活跃会话的当前留存拒删（`harness_session_active`——
+    /// 它的 writer 还在往这份文件追加，删掉会让留存静默断流；压缩 / 恢复换过文件的，
+    /// 旧文件可删）。文件已不存在按幂等成功处理（重复删除 / 竞态删除不是错误）。
+    /// vault 归属校验与列举 / 恢复同一口径（[`session_belongs_to_scope`]）。
+    pub fn delete_session(&self, scope: &VaultScope, session_id: &str) -> Result<(), CommandError> {
+        if !jsonl::is_valid_session_id(session_id) {
+            return Err(CommandError::new(
+                "harness_session_invalid",
+                format!("非法的 session id：{session_id}"),
+            ));
+        }
+        // 活跃会话拒删先于落盘判读：比对当前会话 writer 的文件名（与 jsonl 的命名纪律同一条
+        // 判据）。须在存在性判断**之前**——writer 是惰性的（create 只挂起 session_open，首条
+        // record 才落盘），「活跃但尚无记录」的会话文件还不存在，走到幂等分支会误报成功。
+        {
+            let mut sessions = self
+                .inner
+                .sessions
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            if let Some(active) = sessions.get_mut(&scope.key()) {
+                let active_id = jsonl::JsonlWriter::session_id_from_path(active.jsonl().path());
+                if active_id.as_deref() == Some(session_id) {
+                    return Err(CommandError::new(
+                        "harness_session_active",
+                        "该会话正在进行中，不能删除",
+                    ));
+                }
+            }
+        }
+        let path = jsonl::sessions_dir()?.join(format!("{session_id}.jsonl"));
+        // 幂等：目标已不存在 = 删除已达成（重复点删除 / 外部清理），不算错误。
+        if !path.exists() {
+            return Ok(());
+        }
+        let file = jsonl::read_session_file(&path)?;
+        if !session_belongs_to_scope(&file.session_open, scope) {
+            return Err(CommandError::new(
+                "harness_session_vault_mismatch",
+                "该会话留存属于另一个 vault，不能删除",
+            )
+            .param("vault_root", file.session_open["vault_root"].to_string()));
+        }
+        std::fs::remove_file(&path).map_err(|e| {
+            CommandError::new(
+                "harness_session_delete_failed",
+                format!("删除会话留存失败（{}）：{e}", path.display()),
+            )
+            .param("path", path.display().to_string())
+            .param("reason", e.to_string())
+        })
+    }
 }
 
 /// 会话留存归属当前 vault 的判据（恢复与列举共用一处——同一语义两处真源会漂，
@@ -544,6 +598,23 @@ fn message_content_text(message: &serde_json::Value) -> Option<String> {
     }
 }
 
+/// 工具输出 JSON → 面板细分终态（done / denied / rejected / error，M406 恢复回填用）：
+/// 与 turn.rs `handle_call` 的 live 持久化是同一张映射表——turn.rs 现归 M407，收编成
+/// 单一真源是两个分支合并后的后续项，先在这里镜像（本注释是唯一的指针；turn.rs 侧的
+/// 回指随 M407 合并后一并补）。
+/// 输出形状不符（缺 `ok` 布尔位）→ None：不推断、不填。
+fn panel_status_of(output: &serde_json::Value) -> Option<&'static str> {
+    match output["ok"].as_bool() {
+        Some(true) => Some("done"),
+        Some(false) => Some(match output["code"].as_str() {
+            Some("permission_denied") => "denied",
+            Some("approval_rejected") => "rejected",
+            _ => "error",
+        }),
+        None => None,
+    }
+}
+
 /// 把灌回 LLM 的 input 项按序映射成面板渲染消息（M398 恢复路径，design §6.2「面板
 /// （transcript）从灌回的 input 重建」）：user → user、assistant 消息项 → assistant、
 /// function_call 项 → tool（摘要走 [`turn::summarize_args`]，与 live 面板持久化的那份同源）。
@@ -553,9 +624,23 @@ fn message_content_text(message: &serde_json::Value) -> Option<String> {
 ///   明文时挂在**紧随其后的** assistant 消息上（kimi 的 `encrypted_content` 项取不到 → 缺席，
 ///   不伪造块）；工具轮只发调用、无正文 assistant 记录承载时该 reasoning 丢弃（面板无宿主）。
 /// - **无 ts**（`ts: 0` = 无读数）：wire 项不带时间戳，前端因此不显示相对时间，不伪造。
-/// - **tool 行 status 缺省**：wire 的 function_call 不带面板细分状态（done/denied/…）——面板
-///   渲染路径不消费 tool 的 status（`appendToolCall` 恒按 done 上屏），故不推断、不填。
+/// - **tool 行细分终态回填**（M406）：function_call 配对得到的 function_call_output
+///   （输出 JSON 原文）提供 `status`（[`panel_status_of`]，与 live 持久化同一映射）与
+///   `text`（输出 JSON 原文——前端拒绝原因 / 失败详情的数据源）；悬空调用（响应未带
+///   输出项）与输出形状不符的，status 缺席（不推断），前端按摘要形状回落判定。
 fn restored_panel_messages(restored: &[serde_json::Value]) -> Vec<session::PanelMessage> {
+    // 工具结果按 call_id 先成图：调用项与输出项在 wire 里成组分离（同轮全部调用在前、
+    // 输出在后，同序配对——provider 合同，M360），function_call 项落面板消息时按此回填。
+    let mut outputs: std::collections::HashMap<&str, &str> = std::collections::HashMap::new();
+    for item in restored {
+        if item["type"].as_str() == Some("function_call_output") {
+            if let (Some(call_id), Some(output)) =
+                (item["call_id"].as_str(), item["output"].as_str())
+            {
+                outputs.insert(call_id, output);
+            }
+        }
+    }
     let mut messages = Vec::new();
     let mut pending_reasoning: Option<String> = None;
     for item in restored {
@@ -566,20 +651,33 @@ fn restored_panel_messages(restored: &[serde_json::Value]) -> Vec<session::Panel
             Some("function_call") => {
                 // 工具轮（本轮无正文 assistant 记录承载 reasoning）：面板无宿主，丢弃。
                 pending_reasoning = None;
+                let output = item["call_id"]
+                    .as_str()
+                    .and_then(|id| outputs.get(id).copied());
+                let (text, status) = match output {
+                    Some(raw) => {
+                        let parsed = serde_json::from_str::<serde_json::Value>(raw).ok();
+                        (
+                            Some(raw.to_string()),
+                            parsed.as_ref().and_then(panel_status_of),
+                        )
+                    }
+                    None => (None, None),
+                };
                 messages.push(session::PanelMessage {
                     role: "tool".into(),
-                    text: None,
+                    text,
                     reasoning: None,
                     summary: Some(turn::summarize_args(
                         item["arguments"].as_str().unwrap_or(""),
                     )),
                     name: Some(item["name"].as_str().unwrap_or("").to_string()),
-                    status: None,
+                    status: status.map(str::to_string),
                     ts: 0,
                 });
             }
-            // 工具结果项不进面板（live 面板只显「调用了什么工具、带了什么参数」；结果摘要由
-            // live 侧的 summarize_result 产出，wire 回放项不含它）。
+            // 工具结果项不单独落面板消息——它的信息已回填给配对的 function_call 消息
+            //（status / text，见上）；live 面板同样只显「调用了什么、带了什么参数」。
             Some("function_call_output") => {}
             _ => match item["role"].as_str() {
                 Some("user") => {
@@ -856,6 +954,20 @@ pub fn harness_list_sessions(
     list_sessions(&scope)
 }
 
+/// 删除一份历史会话留存（M406；面板会话选择器的行内删除入口）：`session_id` 是
+/// `sessions/<id>.jsonl` 的文件名（形态校验防目录穿越）。活跃会话的当前留存拒删
+/// （`harness_session_active`）；vault 归属不符拒删（`harness_session_vault_mismatch`，
+/// 与列举 / 恢复同一口径）；文件已不存在按幂等成功处理。
+#[tauri::command(rename_all = "snake_case")]
+pub fn harness_delete_session(
+    vault: tauri::State<'_, crate::commands::VaultState>,
+    runtime: tauri::State<'_, Runtime>,
+    session_id: String,
+) -> Result<(), CommandError> {
+    let scope = vault_scope(&vault)?;
+    runtime.delete_session(&scope, &session_id)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -896,10 +1008,54 @@ mod tests {
         assert_eq!(messages[1].ts, 0, "重建消息无 wire 时间戳：不伪造");
         assert_eq!(messages[2].name.as_deref(), Some("vault_read"));
         assert_eq!(messages[2].summary.as_deref(), Some(r#"{"path":"a.md"}"#));
+        // M406 细分终态回填：配对输出 {"ok":true} → done + 输出 JSON 原文进 text。
+        assert_eq!(messages[2].status.as_deref(), Some("done"));
+        assert_eq!(messages[2].text.as_deref(), Some(r#"{"ok":true}"#));
         assert_eq!(messages[3].name.as_deref(), Some("vault_bogus"));
+        // 悬空调用（无配对输出项）：status / text 缺席——不推断、不伪造。
+        assert_eq!(messages[3].status, None);
+        assert_eq!(messages[3].text, None);
         // 工具轮挂带的 reasoning 不串到别处，收尾 assistant 无 reasoning。
         assert_eq!(messages[4].text.as_deref(), Some("收尾。"));
         assert_eq!(messages[4].reasoning, None);
+    }
+
+    /// M406：细分终态映射与 live 持久化同表——ok=false 按 code 分 denied / rejected /
+    /// error；输出 JSON 原文随 text 带出（前端拒绝原因的取数点）；输出形状不符
+    /// （缺 ok 位 / 非 JSON）时 status 缺席但原文仍带出（前端按摘要形状回落判定）。
+    #[test]
+    fn restored_panel_messages_backfills_tool_status() {
+        let restored = vec![
+            session::function_call_item("c1", "vault_patch", r#"{"path":"a.md"}"#),
+            session::function_call_item("c2", "cli_run", r#"{"command":"rm"}"#),
+            session::function_call_item("c3", "vault_read", r#"{"path":"b.md"}"#),
+            session::function_call_item("c4", "vault_read", r#"{"path":"c.md"}"#),
+            // 输出项成组压尾（M360 合同：全部调用在前、输出在后，同序配对）。
+            session::function_call_output_item(
+                "c1",
+                r#"{"ok":false,"code":"approval_rejected","message":"别动这个文件"}"#,
+            ),
+            session::function_call_output_item(
+                "c2",
+                r#"{"ok":false,"code":"permission_denied","message":"权限规则拒绝"}"#,
+            ),
+            session::function_call_output_item("c3", "not-json"),
+        ];
+        let messages = restored_panel_messages(&restored);
+        assert_eq!(messages.len(), 4);
+        assert_eq!(messages[0].status.as_deref(), Some("rejected"));
+        assert_eq!(
+            messages[0].text.as_deref(),
+            Some(r#"{"ok":false,"code":"approval_rejected","message":"别动这个文件"}"#),
+            "拒绝原因全文随输出 JSON 原文带出（summary 里那份被截断，不取）"
+        );
+        assert_eq!(messages[1].status.as_deref(), Some("denied"));
+        // c3 的输出非 JSON：status 缺席（不推断），原文仍带出。
+        assert_eq!(messages[2].status, None);
+        assert_eq!(messages[2].text.as_deref(), Some("not-json"));
+        // c4 无配对输出：status / text 双缺席。
+        assert_eq!(messages[3].status, None);
+        assert_eq!(messages[3].text, None);
     }
 
     /// reasoning 明文取不到（kimi 的 `encrypted_content` 形态）时不挂 reasoning——不伪造块。

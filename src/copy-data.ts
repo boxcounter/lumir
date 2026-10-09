@@ -751,16 +751,19 @@ const COPY_TABLE = {
     en: "Reject",
   },
   D338: {
-    zh: "拒绝原因（可选，回送给模型）",
-    en: "Reason for rejection (optional, sent back to the model)",
+    zh: "拒绝原因（可选，会随拒绝回给 Agent）",
+    en: "Reason for rejection (optional, sent back to the agent with the rejection)",
   },
+  // 批准卡问句（M406 收敛单行生命周期，原型 harness-tool-card-merge）：工具名不再进问句
+  // ——卡挂在工具行下方，行里的工具名徽章已承担身份；问句只说动作。D339 = vault_patch、
+  // D340 = cli_run、D412 = vault_create；其它工具回落 D415。副句 D413（写类）/ D414（命令）。
   D339: {
-    zh: "{tool} 请求修改文件，采纳后才落盘：",
-    en: "{tool} asks to modify a file; nothing is written until approved:",
+    zh: "要修改这个文件吗？",
+    en: "Modify this file?",
   },
   D340: {
-    zh: "{tool} 请求执行命令，采纳后才运行：",
-    en: "{tool} asks to run a command; nothing runs until approved:",
+    zh: "要运行这条命令吗？",
+    en: "Run this command?",
   },
   D341: {
     zh: "会话已自动压缩（上下文触顶）——以下为摘要，完整历史仍在本地留存",
@@ -1124,6 +1127,56 @@ const COPY_TABLE = {
     zh: "该会话留存属于另一个 vault（{vault_root}），不能恢复到当前 vault",
     en: "This session recording belongs to a different vault ({vault_root}) and cannot be resumed here",
   },
+  // M406（harness 面板改进批次）：批准卡收敛单行生命周期 + 会话删除。
+  // D412/D413/D414/D415 是批准卡问句与副句（问句分工见 D339 上方注释）；D416 是 gated
+  // 工具行待决态的尾注；D417–D419 是会话删除（行内删除钮读屏名 / 行内确认句 / 确认钮）；
+  // D420/D421 是 harness_delete_session 的两条错误（活跃会话拒删 / 删除 IO 失败）。
+  D412: {
+    zh: "要新建这个文件吗？",
+    en: "Create this file?",
+  },
+  D413: {
+    zh: "批准后才会落盘",
+    en: "Nothing is written until approved",
+  },
+  D414: {
+    zh: "批准后才会在终端运行，输出回到对话里",
+    en: "Nothing runs until approved; output comes back into the chat",
+  },
+  D415: {
+    zh: "要执行这次 {tool} 调用吗？",
+    en: "Run this {tool} call?",
+  },
+  D416: {
+    zh: "等待批准",
+    en: "Awaiting approval",
+  },
+  D417: {
+    zh: "删除该会话",
+    en: "Delete this session",
+  },
+  D418: {
+    zh: "删除这段会话的本地留存？",
+    en: "Delete this session's local recording?",
+  },
+  D419: {
+    zh: "删除",
+    en: "Delete",
+  },
+  D420: {
+    zh: "该会话正在进行中，不能删除",
+    en: "This session is currently active and cannot be deleted",
+  },
+  D421: {
+    zh: "删除会话留存失败（{path}）：{reason}",
+    en: "Failed to delete the session recording ({path}): {reason}",
+  },
+  // D422 是 M407 vault_move 的失败文案（tower 委托代加；M407 分支上的 D300 与本仓 M399 凸排
+  // 文案撞号，此处改用 D422，M407 合并时需对齐）。
+  D422: {
+    zh: "移动失败：{rel} → {newPath}（{reason}）——未覆盖任何既有内容",
+    en: "Couldn't move {rel} to {newPath} ({reason}) — nothing existing was overwritten",
+  },
 } satisfies Record<string, CopyEntry>;
 
 /** 文案表的键（D 编号，多串格带 `.N` 后缀）——由表数据推导，加一条即多一个键。 */
@@ -1175,6 +1228,8 @@ export const ERROR_COPY: Record<string, CopyKey> = {
   fs_create_failed: "D184",
   fs_watch_failed: "D185",
   fs_reveal_failed: "D186",
+  // vault_move 跨目录移动（M407，tower 委托代加；占位键 rel/newPath/reason 与后端逐字对应）。
+  fs_move_failed: "D422",
   document_write_failed: "D187",
   document_write_unknown: "D188",
   document_conflict: "D41",
@@ -1220,6 +1275,9 @@ export const ERROR_COPY: Record<string, CopyKey> = {
   harness_session_unreadable: "D409",
   harness_session_invalid: "D410",
   harness_session_vault_mismatch: "D411",
+  // 会话删除（M406）：harness_delete_session。
+  harness_session_active: "D420",
+  harness_session_delete_failed: "D421",
   open_url_rejected: "D78",
   open_url_failed: "D79",
 };

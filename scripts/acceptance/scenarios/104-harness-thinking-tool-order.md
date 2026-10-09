@@ -42,8 +42,8 @@ steps:
     expect:
       - label: 首轮正文保留（ORD1 与 ORD2 同轮共存）
         ax: { has: "TTO-ORD1-先读文件再回答。" }
-      - label: 工具行带参数摘要在场（成功行口径同场景 103）
-        ax: { has: '工具 vault_read：{"path":"harness-note.md"}' }
+      - label: 工具行 = 徽章 + 人话化参数在场（M406 起成功行口径，同场景 103）
+        ax: { has: '/vault_read\s*harness-note\.md/' }
       - label: 两个折叠行都在场（两段思考各成一块）
         ax: { has: "/思考过程 · \\d+ 秒/" }
 
@@ -65,10 +65,10 @@ steps:
           工具块 / 正文段严格按事件到达序排列（M383；旧实现呈现为 ALPHA → BETA →
           ORD1 → 工具，本正则必红）
         ax:
-          has: '/TTO-THINK-ALPHA 先读文件。[\s\S]*TTO-ORD1-先读文件再回答。[\s\S]*工具 vault_read：\{"path":"harness-note.md"\}[\s\S]*TTO-THINK-BETA 读完再答。[\s\S]*TTO-ORD2-答案在第二段思考之前。/'
+          has: '/TTO-THINK-ALPHA 先读文件。[\s\S]*TTO-ORD1-先读文件再回答。[\s\S]*vault_read\s*harness-note\.md[\s\S]*TTO-THINK-BETA 读完再答。[\s\S]*TTO-ORD2-答案在第二段思考之前。/'
       - label: 反向判据：第二段思考原文不出现在工具行之前（旧实现的倒挂形态）
         ax:
-          not: '/TTO-THINK-BETA 读完再答。[\s\S]*工具 vault_read/'
+          not: '/TTO-THINK-BETA 读完再答。[\s\S]*vault_read/'
 
   - name: "收起两块思考（三态闭环回程，同场景 93 口径；折叠不挪块位，第二块仍在 nth: 1）"
     do: click

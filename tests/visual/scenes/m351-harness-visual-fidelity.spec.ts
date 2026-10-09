@@ -197,12 +197,14 @@ test("快照恢复：按后端 ts 显示相对时间；无 ts 的旧快照只有
   await expect(agentWho.locator(".lumir-hp-when")).toHaveCount(0); // 无 ts 不伪造
   // 恢复的工具记录：挂进最近一条 assistant 消息的清单块，done 行（单行保持展开）。
   // summary 取 M367 之后的真实形状（成功 = 调用参数摘要；M367 之前恒 None、恢复后是空摘要）。
+  // M406 起行文本是三段式：工具名徽章 + 人话化参数（vault_read → 路径提取），JSON 原文不上屏。
   const tools = agentMsg.locator(".lumir-hp-tools");
   await expect(tools).toHaveCount(1);
   const rows = tools.locator(".lumir-hp-tool-row");
   await expect(rows).toHaveCount(1);
   await expect(rows.first()).toHaveClass(/is-done/);
-  await expect(rows.first()).toContainText('工具 vault_read：{"path":"harness-note.md"}');
+  await expect(rows.first().locator(".lumir-hp-tool-name")).toHaveText("vault_read");
+  await expect(rows.first().locator(".lumir-hp-tool-args")).toHaveText("harness-note.md");
   await expect(tools.locator(".lumir-hp-tool-summary")).toHaveCount(0);
 });
 
@@ -343,20 +345,23 @@ test("工具清单：running/done 行 + ≥2 行折叠摘要可回看", async ({
   // ── 轮次一（单工具）：started = running 脉冲行 → done 翻 ✓ 行；终态后单行保持展开 ──
   await page.locator(".lumir-hp-composer").fill("读一下笔记");
   await page.locator(".lumir-hp-send").click();
-  await fire(page, { type: "tool_call", name: "vault_read", status: "started" });
+  await fire(page, { type: "tool_call", name: "vault_read", status: "started", summary: '{"path":"harness-note.md"}' });
   const tools = page.locator(".lumir-hp-msg-assistant .lumir-hp-tools");
   await expect(tools).toHaveCount(1);
   const row = tools.locator(".lumir-hp-tool-row");
   await expect(row).toHaveCount(1);
   await expect(row).toHaveClass(/is-running/);
-  await expect(row).toContainText("调用工具：vault_read");
+  // M406 起行文本是三段式（名徽章 + 人话化参数 + 可选尾注）：running 行 = 名 + 参数。
+  await expect(row.locator(".lumir-hp-tool-name")).toHaveText("vault_read");
+  await expect(row.locator(".lumir-hp-tool-args")).toHaveText("harness-note.md");
   await expect(row.locator(".lumir-hp-tool-pulse")).toHaveCount(1);
   await fire(page, { type: "tool_call", name: "vault_read", status: "done", summary: "成功" });
   await expect(row).toHaveClass(/is-done/);
-  // 模板 = 「工具 {name}：{summary}」（M368 起，原「工具完成：{name} — {summary}」退场）；
-  // 这三处 fire 的 started 都不带 summary，故 done 行的摘要回落 done 事件原文（判定见
-  // src/harness-panel.ts 的 toolDoneSummary）。
-  await expect(row).toContainText("工具 vault_read：成功");
+  // 成功侧 done 摘要恒为固定串（零信息量），M406 起不上屏：done 行 = ✓ + 名 + 参数
+  // （参数取 started 那份——done 不带参数摘要；判定见 src/harness-panel.ts appendToolCall）。
+  await expect(row.locator(".lumir-hp-tool-name")).toHaveText("vault_read");
+  await expect(row.locator(".lumir-hp-tool-args")).toHaveText("harness-note.md");
+  await expect(row.locator(".lumir-hp-tool-out")).toHaveCount(0); // 成功行无尾注
   await expect(row.locator(".lumir-hp-tool-ic svg")).toHaveCount(1); // ✓
   await fire(page, { type: "done" });
   await expect(tools.locator(".lumir-hp-tool-summary")).toHaveCount(0); // 单行不折叠
@@ -365,9 +370,9 @@ test("工具清单：running/done 行 + ≥2 行折叠摘要可回看", async ({
   // ── 轮次二（两个工具）：终态折叠为摘要钮；点击展开回看、再点收回 ──
   await page.locator(".lumir-hp-composer").fill("再搜一遍");
   await page.locator(".lumir-hp-send").click();
-  await fire(page, { type: "tool_call", name: "vault_search", status: "started" });
-  await fire(page, { type: "tool_call", name: "vault_search", status: "done", summary: "命中 5 篇" });
-  await fire(page, { type: "tool_call", name: "vault_read", status: "started" });
+  await fire(page, { type: "tool_call", name: "vault_search", status: "started", summary: '{"query":"笔记"}' });
+  await fire(page, { type: "tool_call", name: "vault_search", status: "done", summary: "成功" });
+  await fire(page, { type: "tool_call", name: "vault_read", status: "started", summary: '{"path":"harness-note.md"}' });
   await fire(page, { type: "tool_call", name: "vault_read", status: "done", summary: "成功" });
   await fire(page, { type: "text_chunk", text: "搜完了。" });
   await fire(page, { type: "done" });
@@ -385,7 +390,8 @@ test("工具清单：running/done 行 + ≥2 行折叠摘要可回看", async ({
   await summary.click();
   await expect(summary).toHaveAttribute("aria-expanded", "true");
   await expect(rows2.nth(0)).toBeVisible();
-  await expect(rows2.nth(0)).toContainText("工具 vault_search：命中 5 篇");
+  await expect(rows2.nth(0).locator(".lumir-hp-tool-name")).toHaveText("vault_search");
+  await expect(rows2.nth(0).locator(".lumir-hp-tool-args")).toHaveText("笔记");
   await expect(rows2.nth(1)).toBeVisible();
   await summary.click();
   await expect(rows2.nth(0)).toBeHidden();
