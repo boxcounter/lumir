@@ -23,6 +23,11 @@
 //!
 //! 会话内批准缓存的**模块**在 [`permission_cache`]（同级文件，design §6）；判定只消费它的一个
 //! 布尔（[`Judge::cached`]），缓存本身不在这里持有状态——判定函数保持纯函数，单测不必碰全局态。
+//!
+//! 三档语义（design §2，2026-10-09 Alex 裁决后的现行口径）：`read_only` = **Always Ask**
+//! （读类自动放行、一切写逐个问）；`vault_write`（默认）= vault 写工具放行（`vault_delete`
+//! 逐个问）加 cli_run 经分类；`full_access` = 写命令免闸（vault 内写仍走第 2 层重定向）。
+//! **模式层不再产生 Deny**——`Decision::Deny` 只可能来自第 1 层的用户 deny 规则。
 
 /// 会话内批准缓存（design §6）。声明点选在这里而不是 `harness.rs`：本 mission 的写入面不含
 /// `harness.rs`（面板批次 mission 拥有它），`#[path]` 形式让模块文件仍落在既定的
@@ -39,33 +44,12 @@ use crate::config::{HarnessPermissions, PermissionMode};
 pub enum Decision {
     Allow,
     Ask,
-    /// 拒绝：规则拒绝（既有语义）或只读档拒绝写操作（design §2）。
-    Deny(DenyReason),
+    /// 拒绝：**只有用户 deny 规则**能走到这里（design §1 第 1 层）。模式层不再产生 Deny——
+    /// 2026-10-09 Alex 裁决把 `read_only` 从「拒绝写」改成「写一律逐个问」（Kimi Code 的
+    /// Always Ask 语义），因此三档的模式层只产出 Allow / Ask 两种。
+    Deny,
     /// cli_run 写 vault 内目标：硬重定向（design §4.2 的固定标记 + JSON 载荷）。
     Redirect(Redirect),
-}
-
-/// 拒绝的原因（决定回送模型的文案；错误码一律 `permission_denied`——面板的 denied 状态
-/// 判定挂在错误码上，细分原因只影响 message，不新增状态）。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DenyReason {
-    /// hit 的是用户 deny 规则。
-    Rule,
-    /// 只读档下调用写工具：deny 而非 ask——批准闸的存在会稀释「不产生写」的承诺
-    /// （design §2：有「允许」按钮的只读不是只读）。
-    ReadOnlyMode,
-}
-
-impl DenyReason {
-    /// 回送模型的人话说明。
-    pub fn message(self, tool: &str, subject: &str) -> String {
-        match self {
-            DenyReason::Rule => format!("权限规则拒绝了 {tool}（{subject}）"),
-            DenyReason::ReadOnlyMode => format!(
-                "当前是「只读」权限档，{tool} 是写操作，已拒绝（{subject}）。如需写入，请让用户在 composer 控制行切换权限档。"
-            ),
-        }
-    }
 }
 
 /// 读类工具：默认 allow（三档一致）。
@@ -83,7 +67,7 @@ pub fn decide(
 ) -> Decision {
     // 第 1 层：用户显式 deny 优先于一切（含重定向与黑名单）。
     if matches_rule(&permissions.deny, tool, subject) {
-        return Decision::Deny(DenyReason::Rule);
+        return Decision::Deny;
     }
 
     let class = (tool == "cli_run")
@@ -142,16 +126,22 @@ fn mode_layer(tool: &str, class: Option<CliClass>, mode: PermissionMode) -> Deci
             },
             _ => Decision::Ask,
         },
+        // vault 写工具（patch / create / move）：`read_only` 档逐个问、`vault_write`（默认）与
+        // `full_access` 档放行。
+        //
+        // `read_only` = **Always Ask**（Alex 2026-10-09 裁决，design §2 修订）：该档的承诺是
+        // 「读自动放行、一切写逐个问」，不是「一切写都拒」——一档全拒的只读没有实用价值
+        // （原「Deny 而非 Ask」口径作废）。默认档的行为差分不变：vault 写工具免闸。
         "vault_patch" | "vault_create" | "vault_move" => match mode {
-            PermissionMode::ReadOnly => Decision::Deny(DenyReason::ReadOnlyMode),
+            PermissionMode::ReadOnly => Decision::Ask,
             PermissionMode::VaultWrite | PermissionMode::FullAccess => Decision::Allow,
         },
         // vault_delete：Vault Write 档仍逐个问（裁决点 1 落 B）——删除是移入废纸篓、可恢复，
-        // 但打断成本高于 patch；与「危险黑名单任何档都问」同一安全侧。
+        // 但打断成本高于 patch；与「危险黑名单任何档都问」同一安全侧。只读档同为逐个问
+        // （Always Ask），语义与上面三个写工具一致。
         "vault_delete" => match mode {
-            PermissionMode::ReadOnly => Decision::Deny(DenyReason::ReadOnlyMode),
-            PermissionMode::VaultWrite => Decision::Ask,
             PermissionMode::FullAccess => Decision::Allow,
+            PermissionMode::ReadOnly | PermissionMode::VaultWrite => Decision::Ask,
         },
         // 清单外工具：调度层在判定之前已按 `tool_unknown` 短路，这里只兜底保守问。
         _ => Decision::Ask,
@@ -825,13 +815,13 @@ mod tests {
         let p = perms(&["cli(demo *)"], &["cli(demo *)"]);
         assert_eq!(
             decide(&p, "cli_run", "demo search x", &judge(&root, None)),
-            Decision::Deny(DenyReason::Rule)
+            Decision::Deny
         );
         // deny 命中即拒绝，即使默认分层是 allow 的工具
         let p = perms(&[], &["vault_read"]);
         assert_eq!(
             decide(&p, "vault_read", "a.md", &judge(&root, None)),
-            Decision::Deny(DenyReason::Rule)
+            Decision::Deny
         );
         std::fs::remove_dir_all(&root).ok();
     }
@@ -877,7 +867,7 @@ mod tests {
         let p = perms(&[], &["cli_run"]);
         assert_eq!(
             decide(&p, "cli_run", "anything at all", &judge(&root, None)),
-            Decision::Deny(DenyReason::Rule)
+            Decision::Deny
         );
         std::fs::remove_dir_all(&root).ok();
     }
@@ -912,7 +902,7 @@ mod tests {
         };
         assert_eq!(
             decide(&denied, "vault_patch", "docs/a.md", &j),
-            Decision::Deny(DenyReason::Rule)
+            Decision::Deny
         );
         std::fs::remove_dir_all(&root).ok();
     }
@@ -922,23 +912,20 @@ mod tests {
     // -----------------------------------------------------------------------
 
     #[test]
-    fn read_only_mode_denies_writes_and_allows_reads() {
+    fn read_only_mode_is_always_ask_for_writes() {
         let root = fixture_root("read-only");
         let p = HarnessPermissions::default();
         let j = Judge {
             mode: PermissionMode::ReadOnly,
             ..judge(&root, None)
         };
+        // 读类：三档一致放行。
         assert_eq!(decide(&p, "vault_read", "a.md", &j), Decision::Allow);
         assert_eq!(decide(&p, "vault_search", "q", &j), Decision::Allow);
         assert_eq!(decide(&p, "skill_load", "demo", &j), Decision::Allow);
-        // 写工具：Deny 而非 Ask（只读档的承诺是「不产生写」）。
+        // 写工具：**Ask 而非 Deny**（Alex 2026-10-09 裁决：read_only = Always Ask，design §2 修订）。
         for tool in ["vault_patch", "vault_create", "vault_move", "vault_delete"] {
-            assert_eq!(
-                decide(&p, tool, "notes/a.md", &j),
-                Decision::Deny(DenyReason::ReadOnlyMode),
-                "{tool}"
-            );
+            assert_eq!(decide(&p, tool, "notes/a.md", &j), Decision::Ask, "{tool}");
         }
         // cli_run 只读白名单放行、写命令逐个问。
         let j = Judge {
@@ -951,6 +938,14 @@ mod tests {
             ..judge(&root, Some(argv(&["cargo", "build"])))
         };
         assert_eq!(decide(&p, "cli_run", "cargo build", &j), Decision::Ask);
+        // 只读档下没有「模式层 Deny」这条路径：无 deny 规则时任何调用面都不产出 Deny。
+        let j = Judge {
+            mode: PermissionMode::ReadOnly,
+            ..judge(&root, None)
+        };
+        for tool in ["vault_patch", "vault_create", "vault_move", "vault_delete"] {
+            assert_ne!(decide(&p, tool, "notes/a.md", &j), Decision::Deny, "{tool}");
+        }
         std::fs::remove_dir_all(&root).ok();
     }
 
@@ -1472,9 +1467,23 @@ mod tests {
             cached: true,
             ..judge(&root, None)
         };
+        assert_eq!(decide(&p, "vault_patch", "a.md", &cached), Decision::Deny);
+        // 缓存命中把模式层判成 Allow：**包括只读档下的 vault 写工具**（design §6 的字面读法——
+        // 缓存只在第 5 层短路、不解锁上面三层；用户在更宽的档位显式给过会话内授权，切到更严的
+        // 档位不回收。口径留节点 2 裁决，见 review-request 第三节）。
+        let cached = Judge {
+            mode: PermissionMode::ReadOnly,
+            cached: true,
+            ..judge(&root, None)
+        };
         assert_eq!(
-            decide(&p, "vault_patch", "a.md", &cached),
-            Decision::Deny(DenyReason::Rule)
+            decide(
+                &HarnessPermissions::default(),
+                "vault_patch",
+                "a.md",
+                &cached
+            ),
+            Decision::Allow
         );
         std::fs::remove_dir_all(&root).ok();
     }

@@ -1149,16 +1149,12 @@ fn unknown_tool_error_feeds_back() {
     assert!(tool.text.as_deref().unwrap().contains("tool_unknown"));
 }
 
-/// `vault_patch` 在默认档（vault_write）**免闸直执行**——这是 change
-/// add-harness-permission-modes 的语义（design §2），也是本用例取代旧
-/// `patch_conflict_when_file_changes_during_approval` 的原因：既然 patch 在三档里都不进批准闸
-/// （只读档是 Deny、其余档是 Allow），「批准窗内文件被改」这个场景在整合层已不可达，
-/// `gated_execute` 传 `preview.revision` 的接线随之成为不可达代码。CAS 本体与接线分别由
-/// `fs_io::tests`（stale revision ⇒ document_conflict）与 `tools::tests` 的
-/// `approval_preview` + `execute_with_revision` 直测覆盖。
+/// `vault_patch` 在**默认档（vault_write）免闸直执行**——这是 change
+/// add-harness-permission-modes 的语义（design §2）：默认档的行为差分正是「vault 写工具免闸」。
 ///
-/// 留这条探针的意义：若后续批次给 patch 重新加上批准闸，本用例会立刻变红，逼作者把批准窗的
-/// CAS 整合用例一并恢复。
+/// 与只读档的对照：2026-10-09 Alex 把 `read_only` 定为 Always Ask 后，patch 在只读档**重新**
+/// 进批准闸，批准窗 CAS 的整合用例随之复活（`read_only_patch_approval_window_cas_conflict`）。
+/// 本用例守的是另一半：**默认档不得重新长出批准闸**（长了就变红）。
 #[test]
 fn vault_patch_bypasses_gate_and_writes_immediately_in_default_mode() {
     let f = Fixture::new("patch-ungated");
@@ -1610,20 +1606,24 @@ fn snapshot_thinking_capability_follows_provider_and_model() {
 /// 判定矩阵的三档 × 五类调用面（design §2）走**判定管线**逐格核验（mock provider 的整链路
 /// 只覆盖代表性几格，逐格矩阵在 `permissions.rs` 单测里；这条额外钉一件事：**模式来自配置**，
 /// 运行时真的读它——config 字段接不上判定管线时本用例必红）。
+///
+/// 只读档按 2026-10-09 Alex 裁决的 **Always Ask** 语义（design §2 修订）：vault_patch 进批准闸、
+/// 拒绝后磁盘不变；vault_write / full_access 两档免闸直执行。用例对只读档的那一格**拒绝**掉，
+/// 从而额外钉住「批准闸挂了、拒绝生效」这条链。
 #[test]
 fn permission_mode_is_read_from_config_per_call_face() {
     use lumir_lib::config::PermissionMode;
 
     let f = Fixture::new("mode-matrix");
     f.write("a.md", "old\n");
-    f.write("b.md", "x\n");
     let runtime = f.runtime();
 
-    for (mode, expect_tool_status, expect_approval) in [
-        (PermissionMode::ReadOnly, "denied", false),
-        (PermissionMode::VaultWrite, "done", false),
-        (PermissionMode::FullAccess, "done", false),
+    for (mode, expect_gate, expect_status, expect_disk) in [
+        (PermissionMode::ReadOnly, true, "rejected", "old\n"),
+        (PermissionMode::VaultWrite, false, "done", "new\n"),
+        (PermissionMode::FullAccess, false, "done", "new\n"),
     ] {
+        f.write("a.md", "old\n");
         let mut config = mock_config();
         config.permission_mode = mode;
         runtime.acquire_turn(&f.scope(), &config).unwrap();
@@ -1634,16 +1634,62 @@ fn permission_mode_is_read_from_config_per_call_face() {
             {"text": "好。"}
         ]}"#;
         let mut client = MockClient::from_str(script, "mode-matrix").unwrap();
-        drive_turn(
-            &sink,
-            &runtime,
-            &f.scope(),
-            &config,
-            "改一下".into(),
-            &mut client,
-        );
+        if expect_gate {
+            // 只读档要等批准：在工作线程里跑轮次，主线程挂起-拒绝。
+            let worker = {
+                let sink = sink.clone();
+                let runtime = runtime.clone();
+                let scope = f.scope();
+                let config = config.clone();
+                std::thread::spawn(move || {
+                    drive_turn(
+                        &sink,
+                        &runtime,
+                        &scope,
+                        &config,
+                        "改一下".into(),
+                        &mut client,
+                    );
+                })
+            };
+            sink.wait_for(
+                |events| {
+                    events
+                        .iter()
+                        .any(|e| e.get("type").and_then(|t| t.as_str()) == Some("approval_request"))
+                },
+                "只读档的批准请求",
+            );
+            let id = sink
+                .events()
+                .into_iter()
+                .find(|e| e.get("type").and_then(|t| t.as_str()) == Some("approval_request"))
+                .and_then(|e| e["id"].as_str().map(str::to_string))
+                .expect("批准请求 id");
+            runtime
+                .with_session(&f.scope(), |s| {
+                    s.resolve_approval(&id, false, Some("先别改".into()))
+                })
+                .unwrap()
+                .unwrap();
+            worker.join().unwrap();
+        } else {
+            drive_turn(
+                &sink,
+                &runtime,
+                &f.scope(),
+                &config,
+                "改一下".into(),
+                &mut client,
+            );
+        }
         runtime.release_turn(&f.scope());
 
+        assert_eq!(
+            sink.types().contains(&"approval_request".to_string()),
+            expect_gate,
+            "{mode:?} 的批准闸与否"
+        );
         let tool = runtime
             .snapshot(&f.scope(), &config)
             .messages
@@ -1651,23 +1697,93 @@ fn permission_mode_is_read_from_config_per_call_face() {
             .rev()
             .find(|m| m.role == "tool")
             .unwrap();
-        // 只读档：Deny（不是 Ask——批准闸的存在会稀释「不产生写」的承诺）。
-        assert_eq!(tool.status.as_deref(), Some(expect_tool_status), "{mode:?}");
+        assert_eq!(tool.status.as_deref(), Some(expect_status), "{mode:?}");
         assert_eq!(
-            sink.types().contains(&"approval_request".to_string()),
-            expect_approval,
-            "{mode:?}"
+            std::fs::read_to_string(f.vault().join("a.md")).unwrap(),
+            expect_disk,
+            "{mode:?} 的落盘结果"
         );
-        // 落盘结果：只读档文件不变、vault_write 档改成功。
-        let disk = std::fs::read_to_string(f.vault().join("a.md")).unwrap();
-        if mode == PermissionMode::ReadOnly {
-            assert_eq!(disk, "old\n", "{mode:?}");
-        } else {
-            assert_eq!(disk, "new\n", "{mode:?}");
-        }
-        // 复位文件，下一档从同一初始态再判。
-        f.write("a.md", "old\n");
     }
+}
+
+/// 只读档重新拥有批准闸 ⇒ `vault_patch` 的**批准窗 CAS** 在整合层复活（M407 r1 时该路径因
+/// 三档全不 gate 而不可达；Alex 2026-10-09 把 read_only 改成 Always Ask 后又可达）。
+///
+/// 场景（原 `patch_conflict_when_file_changes_during_approval`）：批准窗内文件被外部修改，
+/// old_string 在新内容里仍唯一命中——若无 CAS 基准，patch 会静默应用到新内容上。采纳执行必须
+/// 以预览基准 revision 走 CAS，变了就 `document_conflict` 回送模型，落盘不与已批准 diff 分叉。
+#[test]
+fn read_only_patch_approval_window_cas_conflict() {
+    use lumir_lib::config::PermissionMode;
+
+    let f = Fixture::new("approval-cas");
+    f.write("a.md", "old\n");
+    let mut config = mock_config();
+    config.permission_mode = PermissionMode::ReadOnly;
+    let runtime = f.runtime();
+    runtime.acquire_turn(&f.scope(), &config).unwrap();
+    let sink = CollectSink::default();
+    let script = r#"{"responses": [
+        {"tool_calls": [{"id": "c1", "name": "vault_patch",
+            "arguments": "{\"path\":\"a.md\",\"edits\":[{\"old_string\":\"old\",\"new_string\":\"patched\"}]}"}]},
+        {"text": "文件被改了，我需要重新生成 diff。"}
+    ]}"#;
+    let mut client = MockClient::from_str(script, "cas").unwrap();
+    let worker = {
+        let sink = sink.clone();
+        let runtime = runtime.clone();
+        let scope = f.scope();
+        let config = config.clone();
+        std::thread::spawn(move || {
+            drive_turn(
+                &sink,
+                &runtime,
+                &scope,
+                &config,
+                "改成 patched".into(),
+                &mut client,
+            );
+        })
+    };
+    sink.wait_for(
+        |events| {
+            events
+                .iter()
+                .any(|e| e.get("type").and_then(|t| t.as_str()) == Some("approval_request"))
+        },
+        "approval_request 事件",
+    );
+    // 批准卡在只读档也带 diff 预览（写工具的预览不因档位而变）。
+    let request = sink
+        .events()
+        .into_iter()
+        .find(|e| e.get("type").and_then(|t| t.as_str()) == Some("approval_request"))
+        .unwrap();
+    let diff = request["diff"].as_str().expect("patch 附 diff 预览");
+    assert!(diff.contains("-old") && diff.contains("+patched"), "{diff}");
+    // 批准窗内：文件被外部修改。
+    std::fs::write(f.vault().join("a.md"), "old\n用户手改的一行\n").unwrap();
+    let id = request["id"].as_str().unwrap().to_string();
+    runtime
+        .with_session(&f.scope(), |s| s.resolve_approval(&id, true, None))
+        .expect("resolve ok")
+        .expect("resolve ok");
+    worker.join().unwrap();
+    runtime.release_turn(&f.scope());
+
+    // 结果：document_conflict 回送模型；磁盘保持用户改后的内容（无分叉、无覆盖）。
+    let snapshot = runtime.snapshot(&f.scope(), &config);
+    let tool = snapshot.messages.iter().find(|m| m.role == "tool").unwrap();
+    assert_eq!(tool.status.as_deref(), Some("error"));
+    assert!(
+        tool.text.as_deref().unwrap().contains("document_conflict"),
+        "{}",
+        tool.text.as_deref().unwrap()
+    );
+    assert_eq!(
+        std::fs::read_to_string(f.vault().join("a.md")).unwrap(),
+        "old\n用户手改的一行\n"
+    );
 }
 
 /// purpose 链（design §3.4 + 5.1 任务）：

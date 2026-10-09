@@ -8,5 +8,8 @@
  * 重定向 / 危险黑名单 / allow 规则——与模式无关），不是一道独立闸门。默认档 `vault_write`：
  * 相对既有行为只多两处差分（vault 写工具免闸、cli_run 经分类后只读白名单免闸），
  * 不引入任何迁移或过渡层（REVIEW.md 第 21 条：旧默认分层直接替换）。
+ *
+ * `read_only` 自 2026-10-09 Alex 裁决起是 **Always Ask**（Kimi Code 语义：读自动放行、一切写
+ * 逐个问）——**模式层只产出 Allow / Ask，不产出 Deny**。
  */
 export type PermissionMode = "read_only" | "vault_write" | "full_access";

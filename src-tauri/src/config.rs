@@ -469,11 +469,15 @@ pub enum HarnessProvider {
 /// 重定向 / 危险黑名单 / allow 规则——与模式无关），不是一道独立闸门。默认档 `vault_write`：
 /// 相对既有行为只多两处差分（vault 写工具免闸、cli_run 经分类后只读白名单免闸），
 /// 不引入任何迁移或过渡层（REVIEW.md 第 21 条：旧默认分层直接替换）。
+///
+/// `read_only` 自 2026-10-09 Alex 裁决起是 **Always Ask**（Kimi Code 语义：读自动放行、一切写
+/// 逐个问）——**模式层只产出 Allow / Ask，不产出 Deny**。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, TS)]
 #[serde(rename_all = "snake_case")]
 #[ts(export, export_to = "../../src/bindings/")]
 pub enum PermissionMode {
-    /// 只读：vault 写工具直接拒绝（不是 ask——批准闸的存在会稀释「不产生写」的承诺）。
+    /// 只读（**Always Ask**，Alex 2026-10-09 裁决）：读类工具自动放行，一切写逐个问——模式层
+    /// 不产出「拒绝」（deny 规则与黑名单仍优先）。
     ReadOnly,
     /// 保险库写入（默认）：vault 写工具放行（vault_delete 仍逐个问）；cli_run 经分类。
     #[default]

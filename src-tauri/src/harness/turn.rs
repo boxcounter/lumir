@@ -752,9 +752,11 @@ fn handle_call(
         output
     } else {
         match decision {
-            Decision::Deny(reason) => {
-                ToolOutput::err("permission_denied", reason.message(&call.name, &subject))
-            }
+            // 模式层不产出 Deny（只读档 = Always Ask），Deny 只来自第 1 层的用户 deny 规则。
+            Decision::Deny => ToolOutput::err(
+                "permission_denied",
+                format!("权限规则拒绝了 {}（{subject}）", call.name),
+            ),
             // deny 的留痕是 wire 口径：带 `permission_denied` 错误码的结果随历史进
             // 下一条 llm_request.messages（tool_denied 事件类已废弃），面板 tool 行
             // 的细分状态照常由 status 承担。

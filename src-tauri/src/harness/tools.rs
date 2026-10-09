@@ -1103,9 +1103,10 @@ mod tests {
         std::fs::remove_dir_all(&root).ok();
     }
 
-    /// 批准窗 CAS 的**接线**直测（模式设计变更后 patch 不再进批准闸，整合层那条用例已退役——
-    /// 见 `harness_runtime` 的 `vault_patch_bypasses_gate_and_writes_immediately_in_default_mode`）：
-    /// 预览取到的 revision 必须被当作执行基准，批准窗内文件被改即 `document_conflict`。
+    /// 批准窗 CAS 的**接线**直测：预览取到的 revision 必须被当作执行基准，批准窗内文件被改即
+    /// `document_conflict`。整合层的同一条链另见 `harness_runtime` 的
+    /// `read_only_patch_approval_window_cas_conflict`（只读档 = Always Ask，patch 有批准窗）；
+    /// 这条直测与档位无关，守住「接线本身不退化」。
     #[test]
     fn approval_preview_revision_guards_execute_window() {
         let (root, policy) = fixture_vault("cas-window");

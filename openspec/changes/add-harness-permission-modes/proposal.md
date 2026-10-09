@@ -6,6 +6,7 @@
 
 > 评审记录：
 > 节点 1（提案评审）：**2026-10-09 Alex 裁决：6 点全部按倾向 + vault_create 自动建父目录修订确认**（Alex 原话「好。」）。逐点落定——① vault_delete 在 Vault Write 档仍逐个问（倾向 B）；② cli_run 只读白名单首版按 design §3.1 初始表；③ 危险黑名单首版按 design §3.3 初始表；④ 会话内缓存取批准卡显式次级动作（倾向 A）；⑤ allow 规则在任何档生效（倾向 A）；⑥ 重定向绝对（倾向 A）。另经 M404 的 cli_run 使用 survey 暴露 mkdir 缺口，同日确认修订：**mkdir 不另立工具，由 vault_create 自动创建缺失父目录（mkdir -p 语义）吸收**（design §5.2 缺口段与 §4.2 suggested_tool 映射据此改写）。
+> 节点 2 前修订（**2026-10-09 Alex 裁决，read_only 语义 Deny → Ask**）：Alex 原话「我的预期是：Read Only 档位大致类似于 Kimi Code 的 Always Ask。如果 Read Only 拒绝所有写操作，那这个档没有实用价值。」据此 `read_only` 档的 vault 写工具（vault_patch / vault_create / vault_move / vault_delete）由「拒绝」改为「逐个问」，即 **Always Ask**（读自动放行、一切写逐个问；deny 规则与黑名单仍优先于模式层）。design §2 语义表与理由段、§5.3、§8 已按此改写；spec delta 的「只读档拒绝 vault 写」requirement/scenario 同步改为「只读档逐个问」。其余两档（`vault_write` / `full_access`）完全不变，六点裁决的其它结论不受影响。
 > 节点 2（归档评审）：留白（实现完成后填写）。
 
 ## Why
@@ -50,7 +51,7 @@ Alex 的原话诉求：**「我们怎么让 AI 尽可能的使用 vault 提供�
 
 | # | 裁决点 | 选项 | 起草倾向 |
 |---|---|---|---|
-| 1 | **vault_delete 在 Vault Write 档的行为**（read_only 档拒绝、Full Access 档放行的口径不变，见 design §2 语义表） | A. 与 vault_patch / vault_create / vault_move 一致，Vault Write 档自动放行；B. Vault Write 档仍逐个问（read_only 档维持拒绝、Full Access 档维持放行） | **倾向 B**——删除的不可逆性低于 patch 但高于移动（废纸篓可恢复仍属高打断操作）；与 Alex 已确认的「危险黑名单任何档都问」同一安全侧 |
+| 1 | **vault_delete 在 Vault Write 档的行为**（Full Access 档放行的口径不变；read_only 档自 2026-10-09 修订起为逐个问，见评审记录，见 design §2 语义表） | A. 与 vault_patch / vault_create / vault_move 一致，Vault Write 档自动放行；B. Vault Write 档仍逐个问（Full Access 档维持放行） | **倾向 B**——删除的不可逆性低于 patch 但高于移动（废纸篓可恢复仍属高打断操作）；与 Alex 已确认的「危险黑名单任何档都问」同一安全侧 |
 | 2 | **cli_run 只读白名单首版清单** | 见 design §3.1 初始表（ls / cat / rg / git 只读子命令族 / sed 无 -i / jq 等）；黑盒命令（awk 等）首版不进白名单 | **倾向按初始表落地**，实现后 dogfood 增补走 config 规则表即可，不再逐个问 Alex |
 | 3 | **危险黑名单首版清单** | 见 design §3.3 初始表（rm / shutdown·reboot·halt·poweroff / mkfs* / dd / git reset --hard / git clean；shell 包装器类已按 tower 裁决归危险，不在本裁决点内）；黑名单命中是「任何档都问」而非 deny | **倾向按初始表落地**；黑名单成员全部走批准闸（用户可见命令全文），不静默拒绝 |
 | 4 | **会话内缓存的记入方式** | A. 批准卡提供「采纳且本会话不再问」显式次级动作（每次选择性记忆）；B. 凡采纳自动记入缓存 | **倾向 A**——与 Alex 已确认的「cli_run 写命令仍逐个问」精神一致：逐个问是默认，免问是用户每次显式给的 |

@@ -1468,10 +1468,21 @@ pub fn fs_patch_file(
 /// `mkdir -p` 语义的父目录补建（**唯一一份**，`vault_create_file` 专用；`create_file_entry` /
 /// 树界面的新建仍要求父目录已存在——那条路径的父目录来自用户选中的目录，够不到这里）。
 ///
-/// 两趟：先**逐段校验**（`..` 逃逸、内置忽略名），全部合法才开始建——校验失败的输入不留下
-/// 半截目录（先建后校验会把 `keep/.git/x.md` 里的 `keep` 建出来再报错）。再逐段下探：已存在的
-/// 段 canonicalize 后必须在 vault 内（挡住符号链接逃逸），缺的段用 `create_dir` 建出。
+/// 两趟：先**逐段校验**（父路径整体是绝对路径、`..` 逃逸、内置忽略名），全部合法才开始建——
+/// 校验失败的输入不留下半截目录（先建后校验会把 `keep/.git/x.md` 里的 `keep` 建出来再报错）。
+/// 绝对路径这一条不能省：`rel` 为 `/abs/new.md` 时 `parent_rel` 是 `/abs`，`split('/')` 会把开头
+/// 的空段滤掉、只剩 `abs` 一个「合法」段，于是先建出 `root/abs/` 才轮到 `resolve_new_in_vault`
+/// 报 `fs_path_escape`——被拒请求在 vault 里留下一个可见空目录（M407 r1 P2-1 实证）。
+/// 再逐段下探：已存在的段 canonicalize 后必须在 vault 内（挡住符号链接逃逸），缺的段用
+/// `create_dir` 建出。
 fn ensure_parent_dirs(root: &Path, parent_rel: &str) -> Result<(), CommandError> {
+    if Path::new(parent_rel).is_absolute() {
+        return Err(CommandError::new(
+            "fs_path_escape",
+            format!("只允许 vault 内的相对路径：{parent_rel}"),
+        )
+        .param("rel", parent_rel));
+    }
     let segments: Vec<&str> = parent_rel
         .split('/')
         .filter(|segment| !segment.is_empty() && *segment != ".")
@@ -2841,11 +2852,15 @@ mod tests {
         assert_eq!(read_text_file(&v.0, "note.md").unwrap(), "# hello");
     }
 
-    /// 非法目标各自回人话错误且不建任何文件：`..` 逃逸 / 内置忽略名（末段与父段两条路）/
+    /// 非法目标各自回人话错误且**不建任何东西**：`..` 逃逸 / 内置忽略名（末段与父段两条路）/
     /// image-binary 扩展名 / 空路径 / 绝对路径。
     ///
     /// 注：「父目录不存在」自 change add-harness-permission-modes 起**不再是错误**——
     /// 父目录按 mkdir -p 语义自动补建（见 `vault_create_file_creates_parent_dirs`）。
+    ///
+    /// 「不建任何东西」是逐条断言的（不只看错误码）：M407 r1 P2-1 的假绿形态正是「码对、目录
+    /// 已建」——绝对路径输入曾让 `root/abs/` 被建出来（REVIEW.md 第 6 条：断言没钉住承诺的全部
+    /// 内容）。
     #[test]
     fn vault_create_file_rejects_invalid_targets() {
         let v = TempVault::with_fixture();
@@ -2857,12 +2872,16 @@ mod tests {
             (".DS_Store", "fs_name_invalid"),
             ("", "fs_path_invalid"),
             ("/abs/new.md", "fs_path_escape"),
+            ("/abs/deep/new.md", "fs_path_escape"),
         ] {
             let err = vault_create_file(&v.0, rel, "x").unwrap_err();
             assert_eq!(err.code, code, "{rel}");
         }
         assert!(!v.0.join(".git/new.md").exists());
         assert!(!v.0.join("node_modules/x.md").exists());
+        // 绝对路径被拒时 MUST NOT 在 vault 里留下任何目录（P2-1 的回归判据）。
+        assert!(!v.0.join("abs").exists(), "绝对路径输入不得建出 abs/");
+        assert!(!v.0.join("deep").exists());
     }
 
     /// 父目录按 mkdir -p 语义自动补建（change add-harness-permission-modes 修订）：多级缺失

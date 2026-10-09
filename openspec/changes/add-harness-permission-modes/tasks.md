@@ -3,11 +3,14 @@
 > 提案阶段任务清单；Alex 节点 1 裁决通过后方可进入实现。裁决点见 proposal「Alex 裁决点」——实现按裁决结果落表，不替 Alex 选。
 >
 > 勾选与说明由后端实现 mission（M407）填写；第 5 节（UI）与 6.7（验收场景）归面板批次与验收套件维护者，本行以下未勾选项即「本轮未做」的真实状态。
+>
+> **r1 复评后的两项增量**（2026-10-09，同为 M407）：① 修 r1 P2-1（`vault_create_file` 对绝对路径输入会在 vault 里留下 stray 目录——校验趟补绝对路径拒绝 + 用例补「不建任何东西」断言）；② Alex 语义修订：`read_only` 由「拒绝写」改为 **Always Ask**（写逐个问），模式层不再产出 Deny，只读档的批准窗 CAS 用例随之复活（见 1.2 / 6.1 / 6.2 注记）。
 
 ## 1. 判定管线与三档模式
 
 - [x] 1.1 `permissions.rs` 重构为五层判定管线（design §1）：deny 规则 > vault 内写重定向 > 危险黑名单 > allow 规则 > 模式默认分层；`decide` 签名保留，新增模式参数与分类器输入
-- [x] 1.2 三档语义表落地（design §2）：`read_only` / `vault_write`（默认）/ `full_access`；Read Only 档 vault 写工具为 Deny（非 Ask），危险黑名单任何档 Ask
+- [x] 1.2 三档语义表落地（design §2）：`read_only` / `vault_write`（默认）/ `full_access`；危险黑名单任何档 Ask
+  - 说明（M407 r1 修订，2026-10-09 Alex 裁决）：本条原文写作「Read Only 档 vault 写工具为 Deny（非 Ask）」，该口径已作废——`read_only` 改为 **Always Ask**（Kimi Code 语义：读自动放行、一切写逐个问），vault_patch / vault_create / vault_move / vault_delete 在只读档由 Deny 改为 Ask；模式层不再产出 Deny（Deny 只来自 deny 规则）。design §2/§5.3/§8、proposal 评审记录、spec delta 与代码同步。
 - [x] 1.3 `config.rs` 新增 `[harness].permission_mode`：闭集合三值、默认 `vault_write`、非法回落 + 人话 warning（沿用既有校验模板）；ts-rs 绑定重导出随实现同 PR
 
 ## 2. cli_run 分类与重定向
@@ -49,9 +52,11 @@
 
 - [x] 6.1 分类器单测：三表正反例（含包装器类：`bash -c "…"` 在 `full_access` 档仍问——r1 P2-2 口径洞回归）+ 保守降级规则（元字符参数 / 解释器 eval 形态 / 未知命令归写）+ 反向验证（期望改坏必红）
 - [x] 6.2 判定管线集成测试（mock provider）：三档 × 五类调用面全矩阵；deny 在只读档仍第一、黑名单在 full_access 仍问、allow 规则在只读档仍生效
+  - 说明（M407 r1 修订）：只读档那一格按 Always Ask 断言（`vault_patch` 进批准闸、拒绝后磁盘不变）；另补 `read_only_patch_approval_window_cas_conflict`——只读档下 `vault_patch` 批准窗期间文件被外部改 ⇒ `document_conflict` 回送模型、磁盘不与已批准 diff 分叉（该路径在 r1 的三档全不 gate 形态下不可达，语义修订后复活）。
 - [x] 6.3 重定向链测试（mock provider 脚本）：cli_run 写 vault → 收固定标记 → 改调 vault 工具 → 终态断言；「不确定不重定向」反例
 - [x] 6.4 `fs_move_entry` 四例（逃逸 / 撞名 / 跨目录 / 跨卷）+ `vault_delete` 废纸篓与失败不留半态
   - 说明（M407）：「跨卷」在单机测试里不可构造，用例以 `rename` 失败（目录移进自身内部）钉住同一语义——失败即如实报 `fs_move_failed`，源与既有内容都不动、目标位置不存在（不做静默 copy+delete、不留半态）。
+  - 说明（M407 r1 P2-1 修复）：`vault_create_file_rejects_invalid_targets` 补「不建任何东西」断言（绝对路径输入 `/abs/new.md`、`/abs/deep/new.md` 被拒后 `root/abs`、`root/deep` MUST NOT 存在）——原断言只看错误码，漏掉「码对但目录已建」的假绿。
 - [x] 6.5 缓存测试：同主体串免闸、新会话清空、黑名单成员不受缓存影响
 - [x] 6.6 `permission_mode` 配置测试：缺省 / 非法回落 / 写回
 - [ ] 6.7 scripts/acceptance 新增场景：模式切换 chip 与浮层、批准卡次级动作、批准卡 purpose 用途句呈现、重定向链、vault_move / vault_delete 面板呈现（mock provider 驱动，fixture 合成，证据落 test-results/acceptance/）
