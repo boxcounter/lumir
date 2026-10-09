@@ -24,15 +24,17 @@ proposal 的技术面：判定管线、cli_run 分类算法、重定向协议、
 | 调用面 | Read Only `read_only` | Vault Write `vault_write`（默认） | Full Access `full_access` |
 |---|---|---|---|
 | 读类工具（vault_read / vault_search / skill_load） | 放行 | 放行 | 放行 |
-| vault_patch / vault_create / vault_move | **拒绝**（回送说明：当前只读档） | **自动放行** | 自动放行 |
-| vault_delete | 拒绝 | **逐个问**（倾向，裁决点 1） | 放行（倾向） |
+| vault_patch / vault_create / vault_move | **逐个问**（Always Ask） | **自动放行** | 自动放行 |
+| vault_delete | 逐个问（Always Ask） | **逐个问**（裁决点 1 落 B） | 放行（裁决点 1 落 B） |
 | cli_run 只读白名单（§3.1） | 放行 | 放行 | 放行 |
 | cli_run 写命令（白名单与黑名单之外） | 逐个问 | **逐个问**（Alex 已确认） | 自动放行（vault 内目标除外，见 §1 第 2 层） |
 | 危险黑名单（§3.3） | 逐个问 | 逐个问 | 逐个问（Alex 已确认：任何档都问） |
 
 - 模式只替换旧「默认分层」（读 allow / 写与 CLI ask 的那一层），deny > allow 的既有优先序不变（裁决点 5 倾向 A）。
 - 默认档 `vault_write` 的行为差分 = 相对现状只多两处：vault 写工具免闸、cli_run 经分类（现状是 cli_run 一律 ask，分类后白名单只读命令免闸）。读类工具与「写逐个问」的既有体验不变。
-- Read Only 档下 vault 写工具是 Deny 而非 Ask：只读档的承诺是「不产生写」，批准闸的存在会稀释这个承诺（有「允许」按钮的只读不是只读）。
+- **Read Only = Always Ask**（Alex 2026-10-09 裁决，本节修订）：该档的承诺是「读自动放行、一切写逐个问」，语义对应 Kimi Code 的 Always Ask（「Auto-read only; everything else needs your approval first」）。**模式层不产出「拒绝」**——三档只在 Allow / Ask 两种默认之间切换，Deny 只来自用户 deny 规则（第 1 层）、重定向只来自 vault 内写（第 2 层）、黑名单在任何档都问（第 3 层）。
+  - 作废的原口径（保留为历史，防回归）：曾定为「只读档 vault 写工具 Deny 而非 Ask——只读档的承诺是不产生写，批准闸的存在会稀释这个承诺」。作废理由（Alex 原话）：「我的预期是：Read Only 档位大致类似于 Kimi Code 的 Always Ask。如果 Read Only 拒绝所有写操作，那这个档没有实用价值。」
+  - 一个档位全拒的副作用是模型拿到不可恢复的失败、用户也没有放行的机会；Always Ask 让「只读」成为「默认不自动写」而不是「不允许写」。
 
 ## 3. cli_run 命令分类算法
 
@@ -172,7 +174,7 @@ pub fn fs_move_entry(root: &Path, from_rel: &str, to_rel: &str) -> Result<String
 
 ### 5.3 vault_delete 的档行为
 
-按裁决点 1 落表（倾向 Vault Write 档仍逐个问）。无论哪档：**永久删除路径不存在**——工具底层只有 `trash_entry`，`rm -rf` 式的不可恢复删除在本工具集里物理上做不到。
+按裁决点 1 落表（落 B：Vault Write 档仍逐个问、Full Access 档放行）；`read_only` 档同为**逐个问**（§2 的 Always Ask 口径，2026-10-09 Alex 裁决后不再拒绝）。无论哪档：**永久删除路径不存在**——工具底层只有 `trash_entry`，`rm -rf` 式的不可恢复删除在本工具集里物理上做不到。
 
 ## 6. 会话内批准缓存（同类不再问）
 
@@ -185,7 +187,15 @@ pub fn fs_move_entry(root: &Path, from_rel: &str, to_rel: &str) -> Result<String
 ## 7. 模式切换：UI 与配置
 
 - **配置键**：`[harness].permission_mode`，闭集合 `read_only` / `vault_write` / `full_access`，默认 `vault_write`。校验沿用既有模板：闭集合外取值回落默认 + 人话 warning；类型不符整文件回落。运行期写回经 `config_set_value(section, key, value)`（与模型 chip / 思考 chip 同路）。
-- **UI 入口**：composer 控制行新增权限 chip，位于思考 chip 之后、ctx 读数之前；文案 = 当前档名（zh：只读 / 保险库写入 / 完全访问；en：Read Only / Vault Write / Full Access，走文案表）。点击弹浮层：三档单选、当前档勾选、无释义文案（与思考 chip 浮层同一形态，M373 合并选择器的视觉语言）。
+- **UI 入口**：composer 控制行新增权限 chip，位于思考 chip 之后、ctx 读数之前。**文案分两级**（Alex 2026-10-09 裁决，原「chip 显示全名」口径作废）：
+  - **chip = 短名**（zh：只读 / 写入 / 完全；en：Read / Write / Full，走文案表）——控制行在窄面板下要被模型 / 思考 / 权限三个 chip 共同挤占，短名才保证三档都能完整显示。
+  - **浮层列表项 = 全名**（zh：只读 / 保险库写入 / 完全访问；en：Read Only / Vault Write / Full Access）——全名只在浮层里出现一次，那里宽度不受控制行约束。
+  - Alex 原话：「三档在 chip 里能完整显示名称吗？如果不能，可以减省成 Read / Write / Full，然后在点击出现的选择列表里写全名」。
+- **浮层结构**：三档单选、当前档勾选、**每档一行释义**（Kimi 风格：档名短、语义易混，一行释义消歧档名与实际行为的偏差；原「无释义文案」口径作废）。释义口径（措辞可在实现批次微调，语义方向以此为准）：
+  - `read_only`：「读自动放行；写操作都先问你」/ "Auto-approve reads; asks before every write"
+  - `vault_write`：「库内写自动放行；库外命令先问你」/ "Auto-approves vault writes; asks before shell commands"
+  - `full_access`：「全自动；仅危险命令仍问你」/ "Fully automatic; only dangerous commands still ask"
+- **浮层形态**：与思考 chip 浮层同一形态（M373 合并选择器的视觉语言）。
 - **生效时点**：切换对**下一个判定**生效，不打断进行中的轮次（与模型 chip「切换对下一轮生效」同口径）；进行中的轮次按开轮时的模式判完。
 - **浮层可访问性**：复用既有浮层口径（`role="menu"` / `menuitemradio` / `aria-checked`，M373 纪律），不新造交互形态。
 - 会话名 / 标题栏不动；权限 chip 是控制行的第三个 chip（模型 / 思考 / 权限），控制行排布在窄面板下的截断口径沿用 chip 的既有 ellipsis 规则。
@@ -193,13 +203,13 @@ pub fn fs_move_entry(root: &Path, from_rel: &str, to_rel: &str) -> Result<String
 ## 8. 验证方法
 
 - **分类器单测（Rust，核心判据）**：三表成员逐一正反例（`ls -la`→只读、`sed -i`→写、`sh -c cat x`→危险、参数含 `&&`→写、未知命令→写、`git status`→只读 / `git push`→写）；反向验证：把任一白名单成员的期望改坏断言必红。包装器钉死用例：`bash -c "rm -rf …"` 在 `full_access` 档仍进批准闸（r1 P2-2 的口径洞回归）。
-- **判定管线集成测试（mock provider）**：三档 × 五类调用面的全矩阵（§2 语义表逐格一个用例）；deny 规则在只读档仍第一、黑名单在 full_access 档仍问、allow 规则在只读档仍生效（裁决点 5 的落法钉死）。
+- **判定管线集成测试（mock provider）**：三档 × 五类调用面的全矩阵（§2 语义表逐格一个用例，`read_only` 档的写操作按 Always Ask 断言「进批准闸 + 拒绝后磁盘不变」）；deny 规则在只读档仍第一、黑名单在 full_access 档仍问、allow 规则在只读档仍生效（裁决点 5 的落法钉死）。**只读档的批准窗 CAS 用例**（2026-10-09 修订后该路径重新可达）：`vault_patch` 批准卡挂起期间文件被外部改 ⇒ 采纳执行以预览基准走 CAS、`document_conflict` 回送模型、磁盘不与已批准 diff 分叉。
 - **重定向链测试（mock provider 脚本，§4.3）**：`cli_run("mv", …)` 收重定向 → 改调 `vault_move` → 断言标记文本逐字节、建议工具正确、vault 终态正确；另测「判定不确定时不重定向」反例（vault 外相对路径写命令落正常写分类）。
 - **新工具测试**：`fs_move_entry` 逃逸 / 撞名 / 跨目录 / 跨卷失败四例；`vault_delete` 进废纸篓与失败不留半态；工具定义经 mock provider 一轮断言 `execute` 路径。
 - **缓存测试**：同主体串二次调用免闸、新会话清空、黑名单成员不受缓存放行。
 - **purpose 链测试**：mock provider 断言带 purpose 的 cli_run 调用在批准卡载荷中 purpose 与命令同达；空 purpose（缺省 / 空白串）不执行且回送补填错误、模型补填后重发成功；同一命令带粉饰性 purpose 与否判定结果相同（信任边界的负向用例）。
 - **配置测试**：`permission_mode` 缺省 / 非法回落 / `config_set_value` 写回。
-- **验收场景（scripts/acceptance，fixture 合成）**：模式切换 chip 与浮层（真机 AX 口径）、批准卡「采纳且本会话不再问」、批准卡 purpose 用途句展示（命令上方显眼位置、原文完整可见）、重定向场景一轮（mock 驱动 §4.3 链）、vault_move / vault_delete 面板呈现。视觉效果不动者免视觉门禁。
+- **验收场景（scripts/acceptance，fixture 合成）**：模式切换 chip 与浮层（真机 AX 口径；chip 断言短名、浮层断言三档全名与每档一行释义）、批准卡「采纳且本会话不再问」、批准卡 purpose 用途句展示（命令上方显眼位置、原文完整可见）、重定向场景一轮（mock 驱动 §4.3 链）、vault_move / vault_delete 面板呈现。视觉效果不动者免视觉门禁。
 
 ## 9. 明确不实现（防 scope 蔓延）
 

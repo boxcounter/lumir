@@ -59,12 +59,12 @@
 //! ## harness 表（change add-harness-probe §11，M301）
 //!
 //! `{"harness": {"provider": "kimi" | "deepseek" | "mock", "providers": {…},` +
-//! `"permissions": {"allow": [], "deny": []}, "loop_max": 50, "warn_ctx_pct": 85,` +
-//! `"auto_compact": true}}`——对话运行时（harness）的配置面，取值模板与 `editor` / `ui` 同路：
-//! 表内字段缺失 → 默认（不告警）；闭集合取值非法 → 回落默认 + 人话 warning（ADR 0002 §5：
-//! 非法配置不导致启动失败）；表内字段**类型不符**（`"loop_max": "50"`）与整表错形状
-//! （`"harness": "kimi"`）都在 serde 解析期失败 → **整文件回落**（与 `editor.font_size`
-//! / `ui.content_width` 同路，不发明逐字段类型容忍）。
+//! `"permissions": {"allow": [], "deny": []}, "permission_mode": "vault_write",` +
+//! `"loop_max": 50, "warn_ctx_pct": 85, "auto_compact": true}}`——对话运行时（harness）的配置面，
+//! 取值模板与 `editor` / `ui` 同路：表内字段缺失 → 默认（不告警）；闭集合取值非法 → 回落
+//! 默认 + 人话 warning（ADR 0002 §5：非法配置不导致启动失败）；表内字段**类型不符**
+//! （`"loop_max": "50"`）与整表错形状（`"harness": "kimi"`）都在 serde 解析期失败 →
+//! **整文件回落**（与 `editor.font_size` / `ui.content_width` 同路，不发明逐字段类型容忍）。
 //!
 //! `permissions.allow` / `deny` 是**逐项**校验的例外（与 `vault.rule_files` 同形）：清单元素
 //! 收成 `serde_json::Value` 再逐项判定，非法项丢弃并各给一条 warning，其余项照常生效——一项
@@ -462,6 +462,52 @@ pub enum HarnessProvider {
     Mock,
 }
 
+/// harness 权限模式三档（change add-harness-permission-modes，design §2）。**闭集合**：取值
+/// 校验在 Rust 侧完成（与 [`HarnessProvider`] / `UiTheme` 同一形态），运行时拿到的必是三档之一。
+///
+/// 档位只替换判定管线**最底层**的「默认分层」（design §1：前四层——deny 规则 / vault 内写
+/// 重定向 / 危险黑名单 / allow 规则——与模式无关），不是一道独立闸门。默认档 `vault_write`：
+/// 相对既有行为只多两处差分（vault 写工具免闸、cli_run 经分类后只读白名单免闸），
+/// 不引入任何迁移或过渡层（REVIEW.md 第 21 条：旧默认分层直接替换）。
+///
+/// `read_only` 自 2026-10-09 Alex 裁决起是 **Always Ask**（Kimi Code 语义：读自动放行、一切写
+/// 逐个问）——**模式层只产出 Allow / Ask，不产出 Deny**。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export, export_to = "../../src/bindings/")]
+pub enum PermissionMode {
+    /// 只读（**Always Ask**，Alex 2026-10-09 裁决）：读类工具自动放行，一切写逐个问——模式层
+    /// 不产出「拒绝」（deny 规则与黑名单仍优先）。
+    ReadOnly,
+    /// 保险库写入（默认）：vault 写工具放行（vault_delete 仍逐个问）；cli_run 经分类。
+    #[default]
+    VaultWrite,
+    /// 完全访问：cli_run 写命令自动放行（vault 内写仍走 §1 第 2 层重定向）。
+    FullAccess,
+}
+
+impl PermissionMode {
+    /// 配置字面量（config.json 的 `[harness].permission_mode` 取值；也是校验 warning 文案的
+    /// 取值表来源，避免第二处真源）。
+    pub fn as_str(self) -> &'static str {
+        match self {
+            PermissionMode::ReadOnly => "read_only",
+            PermissionMode::VaultWrite => "vault_write",
+            PermissionMode::FullAccess => "full_access",
+        }
+    }
+
+    /// 闭集合解析：未知取值返回 `None`（由 [`validate_harness`] 回落默认 + 人话 warning）。
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "read_only" => Some(PermissionMode::ReadOnly),
+            "vault_write" => Some(PermissionMode::VaultWrite),
+            "full_access" => Some(PermissionMode::FullAccess),
+            _ => None,
+        }
+    }
+}
+
 /// `[harness]` 表（change add-harness-probe §11）：对话运行时的配置面。
 ///
 /// **生效时点**：会话建立 / 每轮请求时由 harness 运行时读一次（M302），不热重载——与
@@ -475,6 +521,9 @@ pub struct HarnessConfig {
     pub providers: HarnessProviders,
     /// 权限规则表（design §6）：deny > allow > 默认分层（读 allow / 写与 CLI ask）。
     pub permissions: HarnessPermissions,
+    /// 权限模式（change add-harness-permission-modes，design §2/§7）：`read_only` /
+    /// `vault_write`（默认）/ `full_access`。切换对下一个判定生效，不打断进行中的轮次。
+    pub permission_mode: PermissionMode,
     /// 工具循环上限（默认 50，合法区间见 [`LOOP_MAX_MIN`] / [`LOOP_MAX_MAX`]）。
     pub loop_max: u32,
     /// 上下文用量警示阈值（百分比，默认 85，合法区间见 [`WARN_CTX_PCT_MIN`] / [`WARN_CTX_PCT_MAX`]）。
@@ -489,6 +538,7 @@ impl Default for HarnessConfig {
             provider: HarnessProvider::Kimi,
             providers: HarnessProviders::default(),
             permissions: HarnessPermissions::default(),
+            permission_mode: PermissionMode::default(),
             loop_max: DEFAULT_LOOP_MAX,
             warn_ctx_pct: DEFAULT_WARN_CTX_PCT,
             auto_compact: true,
@@ -722,6 +772,9 @@ struct RawHarnessConfig {
     /// `api_key` / `model` / `base_url` 给错类型（如 `"api_key": 1`）同路。
     providers: RawHarnessProviders,
     permissions: RawHarnessPermissions,
+    /// 权限模式（change add-harness-permission-modes，design §7）：闭集合取值，非法值到不了
+    /// 这里——在 `validate()` 里回落默认 + warning；类型不符在 serde 解析期失败 → 整文件回落。
+    permission_mode: Option<String>,
     loop_max: Option<u32>,
     warn_ctx_pct: Option<f64>,
     auto_compact: Option<bool>,
@@ -1253,6 +1306,18 @@ fn validate_harness(raw: RawHarnessConfig) -> (HarnessConfig, Vec<String>) {
         deny: validate_harness_rules(raw.permissions.deny, "deny", &mut warnings),
     };
 
+    // 权限模式（change add-harness-permission-modes）：闭集合，缺字段 ⇒ 默认 `vault_write`
+    // （不告警）；闭集合外取值 ⇒ 回落默认 + 人话 warning（与 `harness.provider` 同模板）。
+    let mut permission_mode = defaults.permission_mode;
+    if let Some(raw_mode) = raw.permission_mode.as_deref() {
+        match PermissionMode::parse(raw_mode) {
+            Some(mode) => permission_mode = mode,
+            None => warnings.push(format!(
+                "配置项 harness.permission_mode 取值 \"{raw_mode}\" 非法（可选：read_only、vault_write、full_access），已回退为 vault_write"
+            )),
+        }
+    }
+
     let mut loop_max = defaults.loop_max;
     if let Some(value) = raw.loop_max {
         if (LOOP_MAX_MIN..=LOOP_MAX_MAX).contains(&value) {
@@ -1289,6 +1354,7 @@ fn validate_harness(raw: RawHarnessConfig) -> (HarnessConfig, Vec<String>) {
                 mock,
             },
             permissions,
+            permission_mode,
             loop_max,
             warn_ctx_pct,
             auto_compact,
@@ -2702,6 +2768,120 @@ mod tests {
         assert_eq!(harness.warn_ctx_pct, 70.0);
         assert!(!harness.auto_compact);
         assert!(snap.warnings.is_empty(), "{:?}", snap.warnings);
+    }
+
+    /// 权限模式（change add-harness-permission-modes，design §7）：缺字段 ⇒ 默认 `vault_write`
+    /// 且不告警；三档合法值照实生效；闭集合外取值 ⇒ 回落默认 + 一条人话 warning（取值表在
+    /// warning 文案里列出）。**整字段给错类型**（`"permission_mode": 1`）走解析期失败 → 整文件
+    /// 回落（与 `provider` 同一边界）。
+    #[test]
+    fn harness_permission_mode_closed_set() {
+        // 缺字段 = 默认档，不告警。
+        let snap = load_from(&TempFile::new(r#"{"harness":{}}"#).0);
+        assert_eq!(
+            snap.config.harness.permission_mode,
+            PermissionMode::VaultWrite
+        );
+        assert!(snap.warnings.is_empty(), "{:?}", snap.warnings);
+
+        for (raw, mode) in [
+            (
+                r#"{"harness":{"permission_mode":"read_only"}}"#,
+                PermissionMode::ReadOnly,
+            ),
+            (
+                r#"{"harness":{"permission_mode":"vault_write"}}"#,
+                PermissionMode::VaultWrite,
+            ),
+            (
+                r#"{"harness":{"permission_mode":"full_access"}}"#,
+                PermissionMode::FullAccess,
+            ),
+        ] {
+            let snap = load_from(&TempFile::new(raw).0);
+            assert_eq!(snap.config.harness.permission_mode, mode, "{raw}");
+            assert!(snap.warnings.is_empty(), "{raw}: {:?}", snap.warnings);
+        }
+
+        // 闭集合外：回落默认 + warning（含取值表）。
+        for raw in [
+            r#"{"harness":{"permission_mode":"yolo"}}"#,
+            r#"{"harness":{"permission_mode":""}}"#,
+        ] {
+            let snap = load_from(&TempFile::new(raw).0);
+            assert_eq!(
+                snap.config.harness.permission_mode,
+                PermissionMode::VaultWrite,
+                "{raw}"
+            );
+            assert_eq!(snap.warnings.len(), 1, "{raw}: {:?}", snap.warnings);
+            let warning = &snap.warnings[0];
+            assert!(warning.contains("harness.permission_mode"), "{warning}");
+            assert!(
+                warning.contains("read_only") && warning.contains("full_access"),
+                "{warning}"
+            );
+        }
+
+        // 类型不符 ⇒ 整文件回落默认（`last_vault` 也一起丢，与 provider 给错类型同路）。
+        let snap = load_from(
+            &TempFile::new(r#"{"last_vault":"/tmp/v","harness":{"permission_mode":1}}"#).0,
+        );
+        assert_eq!(snap.config, AppConfig::default());
+    }
+
+    /// 写回：`config_set_value("harness", "permission_mode", …)` 的落点（commands 的「表 + 键」
+    /// 合并写）——写入后重新加载读到该档、其他键不动；写通道**不校验**，非法值由下次加载回落
+    /// 默认 + warning（与 `ui.theme` 同款既有边界）。
+    #[test]
+    fn harness_permission_mode_write_back_round_trips() {
+        let f = TempFile::new(r#"{"version":1,"last_vault":"/tmp/vault","harness":{}}"#);
+        crate::commands::write_config_value_to(
+            &f.0,
+            "harness",
+            "permission_mode",
+            &serde_json::json!("full_access"),
+        )
+        .expect("写回成功");
+        let snap = load_from(&f.0);
+        assert_eq!(
+            snap.config.harness.permission_mode,
+            PermissionMode::FullAccess
+        );
+        assert_eq!(snap.config.last_vault.as_deref(), Some("/tmp/vault"));
+        assert!(snap.warnings.is_empty(), "{:?}", snap.warnings);
+        let persisted: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&f.0).expect("读回配置")).unwrap();
+        assert_eq!(persisted["harness"]["permission_mode"], "full_access");
+
+        // 非法值：写通道照写，下次加载回落默认 + 一条 warning（ADR 0002 §5：不导致启动失败）。
+        crate::commands::write_config_value_to(
+            &f.0,
+            "harness",
+            "permission_mode",
+            &serde_json::json!("yolo"),
+        )
+        .expect("写回成功");
+        let snap = load_from(&f.0);
+        assert_eq!(
+            snap.config.harness.permission_mode,
+            PermissionMode::VaultWrite
+        );
+        assert_eq!(snap.warnings.len(), 1, "{:?}", snap.warnings);
+    }
+
+    /// `as_str` / `parse` 是同一份闭集合取值表的两面（配置字面量与 warning 文案共用一个真源）。
+    #[test]
+    fn permission_mode_str_roundtrip() {
+        for mode in [
+            PermissionMode::ReadOnly,
+            PermissionMode::VaultWrite,
+            PermissionMode::FullAccess,
+        ] {
+            assert_eq!(PermissionMode::parse(mode.as_str()), Some(mode));
+        }
+        assert_eq!(PermissionMode::parse("read-only"), None);
+        assert_eq!(PermissionMode::default(), PermissionMode::VaultWrite);
     }
 
     /// 数值字段越界 ⇒ 回落默认 + warning；区间端点在界内（照 `font_size` / `content_width` 模板）。

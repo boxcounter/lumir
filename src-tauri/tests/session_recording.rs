@@ -855,8 +855,8 @@ fn sidecar_records_approval_decision() {
     runtime.acquire_turn(&f.scope(), &config).unwrap();
     let sink = CollectSink::default();
     let script = r#"{"responses": [
-        {"tool_calls": [{"id": "c1", "name": "vault_patch",
-            "arguments": "{\"path\":\"a.md\",\"edits\":[{\"old_string\":\"old\",\"new_string\":\"patched\"}]}"}]},
+        {"tool_calls": [{"id": "c1", "name": "vault_delete",
+            "arguments": "{\"path\":\"a.md\"}"}]},
         {"text": "收到。"}
     ]}"#;
     let mut client = MockClient::from_str(script, "approval").unwrap();
@@ -871,7 +871,7 @@ fn sidecar_records_approval_decision() {
                 &runtime,
                 &scope,
                 &config,
-                "改成 patched".into(),
+                "删掉 a.md".into(),
                 &mut client,
             );
         })
@@ -912,7 +912,7 @@ fn sidecar_records_approval_decision() {
         .iter()
         .find(|r| r["kind"] == "approval")
         .expect("approval sidecar 在列");
-    assert_eq!(approval["tool"], "vault_patch");
+    assert_eq!(approval["tool"], "vault_delete");
     assert_eq!(approval["decision"], "approved");
     // sidecar 不打断配对：会话轮次对完整。
     assert_eq!(conversation_pairs(&file).len(), 2);

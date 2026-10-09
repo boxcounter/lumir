@@ -1034,6 +1034,49 @@ pub fn rename_entry(root: &Path, rel: &str, new_name: &str) -> Result<String, Co
     Ok(join_rel(&parent_rel, new_name))
 }
 
+/// 跨目录移动 / 重命名（change add-harness-permission-modes，design §5.2）：源与目标**两端都走
+/// vault 内约束**（[`resolve_in_vault`] + [`resolve_new_in_vault`]，逃逸防护与既有写入口同一套）。
+///
+/// - **MUST NOT 覆盖**既有条目：与 [`rename_entry`] 同口径——`resolve_new_in_vault` 的存在性
+///   探测 + 写路径复查两次 `symlink_metadata`，把窗口收窄到两次系统调用之间。`std::fs::rename`
+///   的 POSIX 语义是**原子替换**，因此这仍是「复查 + 极窄窗口」，**不是原子保证**（别在别处读成
+///   更强的东西；零窗口需要平台原子排他改名，本批不做）。
+/// - **目标父目录必须已存在**：不隐式建目录（要建目录用 vault_create 的自动建父目录，或
+///   cli_run 的 mkdir 写命令逐个问）。
+/// - **跨卷**：`std::fs::rename` 跨卷直接失败 ⇒ 如实报 `fs_move_failed`，**不做**静默
+///   copy+delete（半失败状态——源已删、目标只写了一半——比报错糟得多）。
+pub fn fs_move_entry(root: &Path, from_rel: &str, to_rel: &str) -> Result<String, CommandError> {
+    let from = resolve_in_vault(root, from_rel)?;
+    let to_name = match to_rel.rsplit('/').next() {
+        Some(name) if !name.is_empty() => name,
+        _ => {
+            return Err(
+                CommandError::new("fs_path_invalid", format!("目标路径无效：{to_rel}"))
+                    .param("path", to_rel),
+            )
+        }
+    };
+    let to_parent_rel = parent_rel_of(to_rel);
+    let to = resolve_new_in_vault(root, to_parent_rel, to_name)?;
+    // 写路径复查（撞名不覆盖，见本函数文档的取舍说明）。
+    if std::fs::symlink_metadata(&to).is_ok() {
+        return Err(
+            CommandError::new("fs_already_exists", format!("已存在同名条目：{to_rel}"))
+                .param("path", to_rel),
+        );
+    }
+    std::fs::rename(&from, &to).map_err(|e| {
+        CommandError::new(
+            "fs_move_failed",
+            format!("移动失败：{from_rel} → {to_rel}（{e}）——未覆盖任何既有内容"),
+        )
+        .param("rel", from_rel)
+        .param("newPath", to_rel)
+        .param("reason", e.to_string())
+    })?;
+    Ok(to_rel.to_string())
+}
+
 /// 在目录下新建**空文件**（§3.5）：目标走 [`resolve_new_in_vault`]，创建用
 /// `create_new(true)` 的原子语义——撞名由内核裁定，MUST NOT 覆盖既有文件。
 /// 返回新建条目的 vault 相对路径。
@@ -1422,14 +1465,105 @@ pub fn fs_patch_file(
     })
 }
 
+/// `mkdir -p` 语义的父目录补建（**唯一一份**，`vault_create_file` 专用；`create_file_entry` /
+/// 树界面的新建仍要求父目录已存在——那条路径的父目录来自用户选中的目录，够不到这里）。
+///
+/// 两趟：先**逐段校验**（父路径整体是绝对路径、`..` 逃逸、内置忽略名），全部合法才开始建——
+/// 校验失败的输入不留下半截目录（先建后校验会把 `keep/.git/x.md` 里的 `keep` 建出来再报错）。
+/// 绝对路径这一条不能省：`rel` 为 `/abs/new.md` 时 `parent_rel` 是 `/abs`，`split('/')` 会把开头
+/// 的空段滤掉、只剩 `abs` 一个「合法」段，于是先建出 `root/abs/` 才轮到 `resolve_new_in_vault`
+/// 报 `fs_path_escape`——被拒请求在 vault 里留下一个可见空目录（M407 r1 P2-1 实证）。
+/// 再逐段下探：已存在的段 canonicalize 后必须在 vault 内（挡住符号链接逃逸），缺的段用
+/// `create_dir` 建出。
+fn ensure_parent_dirs(root: &Path, parent_rel: &str) -> Result<(), CommandError> {
+    if Path::new(parent_rel).is_absolute() {
+        return Err(CommandError::new(
+            "fs_path_escape",
+            format!("只允许 vault 内的相对路径：{parent_rel}"),
+        )
+        .param("rel", parent_rel));
+    }
+    let segments: Vec<&str> = parent_rel
+        .split('/')
+        .filter(|segment| !segment.is_empty() && *segment != ".")
+        .collect();
+    for segment in &segments {
+        if *segment == ".." {
+            return Err(CommandError::new(
+                "fs_path_escape",
+                format!("路径不允许包含 ..：{parent_rel}"),
+            )
+            .param("rel", parent_rel));
+        }
+        if is_builtin_name(segment) {
+            return Err(CommandError::new(
+                "fs_name_invalid",
+                format!("{segment} 在忽略集内，建在它里面的文件不会出现在文件树里"),
+            )
+            .param("rel", parent_rel));
+        }
+    }
+    let root_canon = root.canonicalize().map_err(|e| {
+        CommandError::new(
+            "fs_root_invalid",
+            format!("无法解析 vault 根 {}：{e}", root.display()),
+        )
+        .param("root", root.display())
+        .param("reason", e.to_string())
+    })?;
+    let mut current = root_canon.clone();
+    for segment in segments {
+        let next = current.join(segment);
+        match std::fs::symlink_metadata(&next) {
+            Ok(meta) => {
+                let canon = next.canonicalize().map_err(|e| {
+                    CommandError::new("fs_read_failed", format!("无法访问 {segment}：{e}"))
+                        .param("rel", parent_rel)
+                        .param("reason", e.to_string())
+                })?;
+                if !canon.starts_with(&root_canon) {
+                    return Err(CommandError::new(
+                        "fs_path_escape",
+                        format!("路径指向 vault 之外（符号链接逃逸）：{parent_rel}"),
+                    )
+                    .param("rel", parent_rel));
+                }
+                if !meta.is_dir() {
+                    return Err(CommandError::new(
+                        "fs_path_invalid",
+                        format!("{parent_rel} 里有同名文件、不是目录"),
+                    )
+                    .param("rel", parent_rel));
+                }
+                current = canon;
+            }
+            Err(_) => {
+                std::fs::create_dir(&next).map_err(|e| {
+                    CommandError::new("fs_create_failed", format!("无法新建目录 {segment}：{e}"))
+                        .param("rel", parent_rel)
+                        .param("reason", e.to_string())
+                })?;
+                // 新建段不可能含符号链接；canonicalize 一次让后续段基于真实路径下探。
+                current = next.canonicalize().unwrap_or(next);
+            }
+        }
+    }
+    Ok(())
+}
+
 /// 新建文档（harness 的 `vault_create`，change add-harness-probe §7）：O_EXCL 语义——
 /// 目标已存在即 `fs_already_exists`，MUST NOT 覆盖任何既有内容。
 ///
 /// 与 [`create_file_entry`]（建空文件）的差别只有两点：内容由调用方给出；目标按**完整
 /// vault 相对路径**给出（`notes/new.md` 的父段用同一套 [`resolve_new_in_vault`] 校验）。
-/// **父目录必须已存在**（不隐式补建中间目录）：agent 的「新建文档」是一个可预测的窄动作，
-/// 隐式建目录会把一次写入的影响面放大到它没声明过的地方；父目录不存在时回人话错误，模型
-/// 据它改路径或先建目录。
+///
+/// **父目录自动补建（mkdir -p 语义）**：change add-harness-permission-modes 修订（Alex
+/// 2026-10-09 裁决）——agent 的「新建文档」可以落在还不存在的目录下，父目录逐段建出。
+/// 这条修订同时吸收了一个工具缺口：模型以前要建目录只能走 cli_run 的 `mkdir`（写命令逐个问），
+/// 而 mkdir 的目标在 vault 内时还会被判为「vault 内写」重定向回来（`permissions.rs` 的
+/// suggested_tool 把 mkdir 映射到 vault_create）；自动建父目录让那条回路自洽。
+/// 补建前**每一段**都过校验：`..` 逃逸、符号链接逃逸、内置忽略名（`.git` / `node_modules` 等）
+/// 一律拒绝——建出的子树若不在文件树里，用户既看不到也删不掉（静默丢失的温床）。
 ///
 /// image/binary 扩展名与两个既有写入口同口径拒绝（`fs_read_only`）——文本工具创造出的
 /// `.png` 只会得到文件树里一个打不开、渲染不了的条目。
@@ -1449,20 +1583,9 @@ pub fn vault_create_file(root: &Path, rel: &str, content: &str) -> Result<String
             )
         }
     };
-    // 末段名由 [`resolve_new_in_vault`] 的 [`validate_new_name`] 管（含内置忽略名），但**父段**
-    // 没人管：`.git/new.md` 或 `node_modules/x.md` 会建出一个文件树里看不见、用户也删不掉的
-    // 文件（内置规则的子树整体隐藏）。harness 的路径是模型给的，父段是完全可及的输入，因此在
-    // 这里补上这一段校验（既有 `fs_create_file` 的父段来自树界面选择，够不到这些名字）。
-    for segment in parent_rel_of(rel).split('/').filter(|s| !s.is_empty()) {
-        if is_builtin_name(segment) {
-            return Err(CommandError::new(
-                "fs_name_invalid",
-                format!("{segment} 在忽略集内，建在它里面的文件不会出现在文件树里"),
-            )
-            .param("path", rel));
-        }
-    }
-    let target = resolve_new_in_vault(root, parent_rel_of(rel), name)?;
+    let parent_rel = parent_rel_of(rel);
+    ensure_parent_dirs(root, parent_rel)?;
+    let target = resolve_new_in_vault(root, parent_rel, name)?;
     // O_EXCL：撞名由内核裁定（`resolve_new_in_vault` 的早失败只是人话提示，保证在这里）。
     let mut file = match std::fs::OpenOptions::new()
         .write(true)
@@ -2729,13 +2852,19 @@ mod tests {
         assert_eq!(read_text_file(&v.0, "note.md").unwrap(), "# hello");
     }
 
-    /// 非法目标各自回人话错误且不建任何文件：父目录不存在 / `..` 逃逸 / 内置忽略名（末段与
-    /// 父段两条路）/ image-binary 扩展名 / 空路径。
+    /// 非法目标各自回人话错误且**不建任何东西**：`..` 逃逸 / 内置忽略名（末段与父段两条路）/
+    /// image-binary 扩展名 / 空路径 / 绝对路径。
+    ///
+    /// 注：「父目录不存在」自 change add-harness-permission-modes 起**不再是错误**——
+    /// 父目录按 mkdir -p 语义自动补建（见 `vault_create_file_creates_parent_dirs`）。
+    ///
+    /// 「不建任何东西」是逐条断言的（不只看错误码）：M407 r1 P2-1 的假绿形态正是「码对、目录
+    /// 已建」——绝对路径输入曾让 `root/abs/` 被建出来（REVIEW.md 第 6 条：断言没钉住承诺的全部
+    /// 内容）。
     #[test]
     fn vault_create_file_rejects_invalid_targets() {
         let v = TempVault::with_fixture();
         for (rel, code) in [
-            ("missing/new.md", "fs_not_found"),
             ("../escape.md", "fs_path_escape"),
             ("pic.png", "fs_read_only"),
             (".git/new.md", "fs_name_invalid"),
@@ -2743,13 +2872,80 @@ mod tests {
             (".DS_Store", "fs_name_invalid"),
             ("", "fs_path_invalid"),
             ("/abs/new.md", "fs_path_escape"),
+            ("/abs/deep/new.md", "fs_path_escape"),
         ] {
             let err = vault_create_file(&v.0, rel, "x").unwrap_err();
             assert_eq!(err.code, code, "{rel}");
         }
-        assert!(!v.0.join("missing").exists());
         assert!(!v.0.join(".git/new.md").exists());
         assert!(!v.0.join("node_modules/x.md").exists());
+        // 绝对路径被拒时 MUST NOT 在 vault 里留下任何目录（P2-1 的回归判据）。
+        assert!(!v.0.join("abs").exists(), "绝对路径输入不得建出 abs/");
+        assert!(!v.0.join("deep").exists());
+    }
+
+    /// 父目录按 mkdir -p 语义自动补建（change add-harness-permission-modes 修订）：多级缺失
+    /// 目录一次建出，文件落在最深一段；父段里的 `..` 与内置忽略名在建之前就拒（不留下半截目录）。
+    #[test]
+    fn vault_create_file_creates_parent_dirs() {
+        let v = TempVault::new();
+        let created = vault_create_file(&v.0, "a/b/c/new.md", "内容").unwrap();
+        assert_eq!(created, "a/b/c/new.md");
+        assert_eq!(read_text_file(&v.0, "a/b/c/new.md").unwrap(), "内容");
+        assert!(v.0.join("a/b/c").is_dir());
+
+        // 父段 `..` 逃逸：拒绝且不建任何目录。
+        let err = vault_create_file(&v.0, "x/../../escape.md", "x").unwrap_err();
+        assert_eq!(err.code, "fs_path_escape");
+        assert!(!v.0.join("x").exists());
+
+        // 父段含内置忽略名：拒绝且不建任何目录。
+        let err = vault_create_file(&v.0, "keep/.git/new.md", "x").unwrap_err();
+        assert_eq!(err.code, "fs_name_invalid");
+        assert!(!v.0.join("keep").exists());
+
+        // 父段落在既有文件上（不是目录）：拒绝。
+        std::fs::write(v.0.join("plain.md"), "x").unwrap();
+        let err = vault_create_file(&v.0, "plain.md/new.md", "x").unwrap_err();
+        assert_eq!(err.code, "fs_path_invalid");
+    }
+
+    /// `fs_move_entry`（change add-harness-permission-modes，design §5.2）四例：
+    /// 跨目录移动成立；撞名不覆盖（源与既有目标都逐字节不变）；`..` 逃逸拒绝；目标父目录
+    /// 不存在拒绝；rename 失败（目录移进自己内部）如实报错、**不留半态**（源仍在、目标不存在）。
+    #[test]
+    fn fs_move_entry_moves_within_vault_and_refuses_unsafe_forms() {
+        let v = TempVault::with_fixture();
+        std::fs::create_dir_all(v.0.join("notes")).unwrap();
+
+        // 跨目录移动成立。
+        let moved = fs_move_entry(&v.0, "sub/deep/a.txt", "notes/a.txt").unwrap();
+        assert_eq!(moved, "notes/a.txt");
+        assert!(!v.0.join("sub/deep/a.txt").exists());
+        assert_eq!(read_text_file(&v.0, "notes/a.txt").unwrap(), "a");
+
+        // 撞名不覆盖：既有目标与源都逐字节不变。
+        std::fs::write(v.0.join("notes/b.txt"), "original").unwrap();
+        let err = fs_move_entry(&v.0, "note.md", "notes/b.txt").unwrap_err();
+        assert_eq!(err.code, "fs_already_exists");
+        assert_eq!(read_text_file(&v.0, "notes/b.txt").unwrap(), "original");
+        assert_eq!(read_text_file(&v.0, "note.md").unwrap(), "# hello");
+
+        // 源逃逸 / 目标逃逸 / 目标父目录不存在。
+        let err = fs_move_entry(&v.0, "../outside.md", "notes/a.txt").unwrap_err();
+        assert_eq!(err.code, "fs_path_escape");
+        let err = fs_move_entry(&v.0, "note.md", "../escape.md").unwrap_err();
+        assert_eq!(err.code, "fs_path_escape");
+        let err = fs_move_entry(&v.0, "note.md", "missing/dir/b.md").unwrap_err();
+        assert_eq!(err.code, "fs_not_found");
+        assert!(v.0.join("note.md").exists());
+
+        // rename 失败（把目录移进它自己内部 = 内核拒绝）如实报错、不静默 copy+delete：
+        // 源目录与内容仍在，目标位置不存在（跨卷失败走同一条错误路径）。
+        let err = fs_move_entry(&v.0, "sub", "sub/deep/inner").unwrap_err();
+        assert_eq!(err.code, "fs_move_failed");
+        assert!(v.0.join("sub/deep").is_dir());
+        assert!(!v.0.join("sub/deep/inner").exists());
     }
 
     #[test]

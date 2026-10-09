@@ -283,10 +283,10 @@ fn abort_withdraws_pending_approval() {
     let runtime = f.runtime();
     runtime.acquire_turn(&f.scope(), &mock_config()).unwrap();
     let sink = CollectSink::default();
-    // patch 默认 ask 档：挂起等批准；中断收回待决项。
+    // vault_delete 在默认档（vault_write）仍逐个问（裁决点 1）：挂起等批准；中断收回待决项。
     let script = r#"{"responses": [
-        {"tool_calls": [{"id": "c1", "name": "vault_patch",
-            "arguments": "{\"path\":\"a.md\",\"edits\":[{\"old_string\":\"old\",\"new_string\":\"patched\"}]}"}]},
+        {"tool_calls": [{"id": "c1", "name": "vault_delete",
+            "arguments": "{\"path\":\"a.md\"}"}]},
         {"text": "收到。"}
     ]}"#;
     let mut client = MockClient::from_str(script, "abort-gate").unwrap();
@@ -360,13 +360,13 @@ fn abort_between_tool_calls_stops_remaining() {
     let runtime = f.runtime();
     runtime.acquire_turn(&f.scope(), &mock_config()).unwrap();
     let sink = CollectSink::default();
-    // 第一条响应：文本 + [patch(ask，挂起等批准), vault_read(allow)]。
-    // 中断收回 patch 的待决项 → handle_call 返回 → 循环顶部停止检查点截住第二个调用。
+    // 第一条响应：文本 + [vault_delete(vault_write 档逐个问，挂起等批准), vault_read(allow)]。
+    // 中断收回待决项 → handle_call 返回 → 循环顶部停止检查点截住第二个调用。
     let script = r#"{"responses": [
-        {"text": "我先改再看。",
+        {"text": "我先删再看。",
          "tool_calls": [
-            {"id": "c1", "name": "vault_patch",
-             "arguments": "{\"path\":\"a.md\",\"edits\":[{\"old_string\":\"内容\",\"new_string\":\"改后\"}]}"},
+            {"id": "c1", "name": "vault_delete",
+             "arguments": "{\"path\":\"a.md\"}"},
             {"id": "c2", "name": "vault_read", "arguments": "{\"path\":\"a.md\"}"}
          ]},
         {"text": "不该到这。"}
@@ -407,9 +407,9 @@ fn abort_between_tool_calls_stops_remaining() {
         .iter()
         .find(|m| m.role == "assistant")
         .expect("本轮文本应保留");
-    assert_eq!(assistant.text.as_deref(), Some("我先改再看。"));
+    assert_eq!(assistant.text.as_deref(), Some("我先删再看。"));
     assert_eq!(assistant.status.as_deref(), Some("stopped"));
-    // 余下调用不再执行：恰好一个 tool 消息（patch，turn_aborted），vault_read 未跑。
+    // 余下调用不再执行：恰好一个 tool 消息（vault_delete，turn_aborted），vault_read 未跑。
     let tools: Vec<_> = snapshot
         .messages
         .iter()
@@ -426,7 +426,7 @@ fn abort_between_tool_calls_stops_remaining() {
                 .collect()
         })
         .unwrap();
-    assert_eq!(call_names, vec!["vault_patch"], "vault_read 不得执行");
+    assert_eq!(call_names, vec!["vault_delete"], "vault_read 不得执行");
     // 成组压栈的另一半保证（M360）：已入 input 的调用项必须与输出项成对——悬空的
     // function_call 会让**下一轮**请求被 provider 以 "No tool output found for tool call"
     // 拒掉（未执行的调用则必须两项都不入，上面 call_names 已钉）。
@@ -451,7 +451,7 @@ fn abort_between_tool_calls_stops_remaining() {
         call_ids, output_ids,
         "每条入 input 的调用项都要有同 call_id 的输出项"
     );
-    // 磁盘未变（patch 未执行）。
+    // 磁盘未变（删除未执行）。
     assert_eq!(
         std::fs::read_to_string(f.vault().join("a.md")).unwrap(),
         "内容\n"
