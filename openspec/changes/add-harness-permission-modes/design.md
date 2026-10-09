@@ -113,7 +113,7 @@ vault_move（移动/重命名）/ vault_delete（删除）。
 ```
 
 - 标记串与错误码是常量，载荷 JSON 字段固定（`reason` / `targets` / `suggested_tool`），实现单测逐字节钉死（含反向验证：改一个字符断言必红——REVIEW.md 第 1 条纪律）。
-- `suggested_tool` 按写目标形态给建议：`mv`/`cp`→`vault_move`，`rm`→`vault_delete`，`sed -i`/重定向→`vault_patch`，`touch`/新文件→`vault_create`；给不出明确对应时缺省，只回原因与 targets。
+- `suggested_tool` 按写目标形态给建议：`mv`/`cp`→`vault_move`，`rm`→`vault_delete`，`sed -i`/重定向→`vault_patch`，`touch`/新文件→`vault_create`，`mkdir`→`vault_create`（建目录由 `vault_create` 自动建父目录的 `mkdir -p` 语义吸收，不另立目录工具）；给不出明确对应时缺省，只回原因与 targets。
 
 ### 4.3 模型换工具后的重试路径
 
@@ -167,7 +167,7 @@ pub fn fs_move_entry(root: &Path, from_rel: &str, to_rel: &str) -> Result<String
 - 源走 `resolve_in_vault`（全部逃逸防护），目标端：父目录走 `resolve_in_vault`、末段名走 `validate_new_name`（与 `rename_entry` / `create_*` 同一套）。
 - MUST NOT 覆盖：写路径复查目标存在（`symlink_metadata`），与 rename 同口径——「撞名不覆盖」是「复查 + 极窄窗口」，不是原子保证（既有注释的同一句话搬过来，不读成更强的东西）。
 - 跨卷：`std::fs::rename` 跨卷直接失败 → 如实报 `fs_move_failed`，**不做**静默 copy+delete（半失败状态不可接受）。
-- 目标父目录必须已存在（不隐式建目录；要建目录模型先 `mkdir`……没有 vault mkdir 工具——这是已知缺口，模型可走 cli_run `mkdir` 写命令逐个问，盘点时若高频再议）。
+- **目标父目录不隐式创建**（`fs_move_entry` 保持「父目录必须已存在」）；**建目录不另立工具**——`vault_create` 自动创建缺失的父目录（`mkdir -p` 语义）：模型要建目录时经 `vault_create` 在目标目录下落一个文件即连带建出父目录，`cli_run mkdir`（写目标在 vault 内）由 §4 重定向层改道 `vault_create`（映射见 §4.2）。M404 survey 提出的 mkdir 缺口据此裁掉（Alex 2026-10-09 裁决）。
 - **tab 联动**：app 内移动命中打开中的文档时，前端按 watch 增量事件流既有口径就地 remap 打开 session 路径（与 rename 同路，不新造通道）。
 
 ### 5.3 vault_delete 的档行为

@@ -640,6 +640,7 @@
     文档标签、没有菜单感——Alex 在浮层被裁的 bug 修复前完全没意识到它可点。M397 只修了「点了不出来」，
     「看不出来能点」是独立的 UX 问题：是否强化（如下拉箭头加重 / hover 态 / 改成明显的菜单钮），
     待 UX 裁决，建议攒到会话管理 UI 一起做（该 UI 本身也是 RSR change 里暂缓的项）。
+43. **横滚代码块的视觉形态：贴正文左边缘、右侧溢出阅读栏宽，是否内缩待裁决**（2026-10-09，tower finding，low；M399 基线过目时 Alex 发现）：不折行代码块的横向滚动容器为**全宽**设计——背景自正文左边缘起、向右超出阅读栏宽，观感「没有左 margin」。Alex 过目 M399 基线时认为观感异常；对照 before / after 证实是 M399 之前的既有形态（`tests/visual/scenes/render-codeblock.spec.ts` 的 wrap-combo-4「双不折行」场景），**非本批回归**。**裁决选项**：(a) 维持全宽横滚（现状，口径最简单）；(b) 横滚容器加左缩进 / 视觉边界（背景内缩或加边框）。若取 (b)，落点为 `src/preview/` 的代码块横滚容器样式 + 相关整页基线重拍（AGENTS.md「基线更新是人肉裁决点」）。finding `.tower/comms/findings/20261009-tower-improve-item.md`（证据：左边缘 before / after 位置一致）。
 
 ## 待修 findings（不阻塞）
 
@@ -3266,6 +3267,7 @@ finding）、2 条套件注入通道缺陷（既有 finding）、1 条 M283 已�
   只读入口的防御），文档/场景只许写成「不可达、不构成覆盖声明」——场景 43 已在 M249 改正（原「只读模式
   （readOnly 提前返回）」的错误前提改为「非列表行无操作（D4a）」）。finding
   `20260927-worker-gate-hygiene-improve-applylistindent-state-readonly-review-md-9.md`。
+- **vault_append（追加工具）视盘点后补**（2026-10-09，change `add-harness-permission-modes` 的 Non-goal 原样登记）：在既有文件末尾的追加写**本包不做**——Alex 打包范围第 ④条原文「视盘点加追加」。触发条件 = vault 写工具的 dogfood 盘点出现「追加」类高频缺口；届时按 ADR 0007 Decision 7 的边界原则（写且需防护才有 vault 工具）判断是否立项、以及追加是否需要 diff 之外的防护形态。
 
 ## 已核销（留痕，定期清理）
 

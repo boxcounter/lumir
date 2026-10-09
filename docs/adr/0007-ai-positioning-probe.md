@@ -40,6 +40,11 @@
    - ADR 0004 M2（agent 集成）维持 deferred：本探针不等于恢复 M2，只是 AI 方向上的一个使用探针。
    - ADR 0005 与 PRODUCT-CONCEPT.md 仍是未来定位决策的输入而非必须恢复的前提（前者留在仓库；后者已按 Alex 裁决于 2026-10-06 从仓库删除，master a99a913，内容可用 `git show 545dd65:PRODUCT-CONCEPT.md` 从 git 历史取回，本 ADR 引用均指该历史版本）。
    - ADR 0006 的 Revisit 条款由本 ADR 消费；0006 其余内容（当前阶段定位 = Emacs keybinding PKM、视觉基线等）继续有效。
+7. **工具集边界原则（2026-10-09 Alex 裁决；工具清单治理的 canonical 口径）。**
+   - **「写且需防护才有 vault 工具」**：vault 工具存在的理由是写入需要防护层（批准预览 diff、vault 根禁锢、可恢复），工具是防护的载体、不是 shell 的替代品。**读操作不建 vault 工具**——读走 `cli_run` 只读白名单（首版清单见 change `add-harness-permission-modes` 的 design §3.1），不因「shell 不熟 / 图方便」另立只读工具（`vault_list` 这类必要性低的工具即被本条挡下）。
+   - **mkdir 不建工具**：目录创建由 `vault_create` 自动创建缺失父目录（`mkdir -p` 语义）吸收；`cli_run mkdir` 写目标在 vault 内者由权限闸门改道 `vault_create`（同 change design §4.2 的 suggested_tool 映射）。
+   - **vault 根路径定向**：vault 绝对根路径注入会话上下文（system 上下文），使「定位 vault 根 / 摸清工作目录」这类需求不再经 `cli_run`（`pwd` / `find <HOME>` 形态；M404 survey 里 3/9 即此类）。
+   - 用途：后续任何「要不要加一个 vault 工具」的讨论先过这三条——读操作、无需防护层、可由既有工具语义吸收者一律不加工具；能力扩张仍按 Decision 2 与 Revisit 条件经 Alex 显式裁决。
 
 ## Consequences
 
