@@ -15,8 +15,10 @@ Alex 原话（2026-10-09）：**「支持黏贴剪贴板里的图片」**。真�
 
 ### 现状盘点（只读结论，均已对着代码坐实）
 
-1. **编辑器没有任何粘贴/剪贴板/拖入处理**：`src/` 全文无 clipboard/paste 处理器（`src/editor.ts`
-   唯一的 paste 提及是 readOnly 拒收注释，`src/editor.ts:1734`），也没有 drop/dragover 处理器。
+1. **编辑器链路没有任何粘贴/剪贴板/拖入处理**：编辑器侧无 clipboard/paste/drop 处理器
+   （`src/editor.ts` 唯一的 paste 提及是 readOnly 拒收注释，`src/editor.ts:1734`；
+   拖入零命中）。`src/harness-panel.ts:3874,3888` 的 paste/drop 监听属 harness 测试面板
+   composer 的输入框净化，与编辑器链路无关，不在本能力射程。
    今天往编辑器 ⌘V 一张截图：CodeMirror 默认粘贴只取文本，图片数据被丢弃，用户无感知。
 2. **渲染侧两种语法都已完整支持**：标准 `![alt](path)` 与 Obsidian 方言 `![[name.png]]` 都经
    `ImageWidget` 内联渲染（`src/preview/attachments.ts:427`；living spec `attachment-display`），
@@ -29,11 +31,16 @@ Alex 原话（2026-10-09）：**「支持黏贴剪贴板里的图片」**。真�
 4. **去重探测的件已存在**：批量存在探测命令 `fs_paths_exist`（`src-tauri/src/lib.rs:81`）。
 5. **既有可沿用的口径**：50MB 附件上限（读侧，fs-io「二进制附件读取」）、`resolve_in_vault`
    路径约束、原子写（`.lumir-{pid}` 临时文件 + rename，`fs_io.rs:1201`）、文件内容 SHA-256
-   先例（`fs_file_revision`，`fs_io.rs:1145`）、vault 内新建自动建缺失父目录先例
-   （M404 裁决，vault_create 的 mkdir -p 语义）。
-6. **vault 内没有「附件目录」约定**：`src/` 对 `attachments/` 零命中，附件就是散在 vault 各处的
+   先例（`fs_file_revision`，`fs_io.rs:1145`）。
+6. **「自动建父目录」不是既有口径，是刻意分叉**：fs-io living spec「新建文档」现行条款写明
+   「父目录 MUST NOT 被隐式创建，不存在时返回 `fs_not_found`」；生产代码 `vault_create_file`
+   路径上亦无父目录创建。本提案的附件写自动建缺失父目录**是对该口径的刻意分叉**（理由与
+   去向见「Alex 裁决点」节下注）——同在未合并 change `add-harness-permission-modes` 里
+   Alex 已批准的「vault_create 自动建缺失父目录」修订同向，但那个 change 尚未合并/归档，
+   **不构成既有先例**。
+7. **vault 内没有「附件目录」约定**：`src/` 对 `attachments/` 零命中，附件就是散在 vault 各处的
    图片文件、靠文件名匹配找到。落盘位置是真空，需要新约定。
-7. **WKWebView 粘贴通道形态**（经验判断，**未在本仓真机实测**）：macOS WKWebView 的 DOM
+8. **WKWebView 粘贴通道形态**（经验判断，**未在本仓真机实测**）：macOS WKWebView 的 DOM
    `paste` 事件经标准 `ClipboardEvent.clipboardData` 暴露剪贴板数据，截图类内容以
    `kind: "file"`、`type: "image/png"`（或 tiff/heic）的 item 出现——Safari 即 WKWebView、
    向 web 编辑器贴图是多年稳定行为。design §2 把「真机探针坐实 MIME 集合」列为实现期
@@ -52,7 +59,8 @@ Alex 原话（2026-10-09）：**「支持黏贴剪贴板里的图片」**。真�
 1. **fs-io 二进制附件写入**（fs-io，ADDED「二进制附件写入」）：新增命令
    `fs_write_attachment(path, data_base64)`——`resolve_in_vault` 路径约束、base64 解码后
    50MB 上限（沿用读侧口径）、同目录临时文件 + rename 原子写、**自动创建缺失父目录**
-   （M404 mkdir -p 先例）、目标已存在 MUST NOT 覆盖（返回 `fs_already_exists`）。
+   （**刻意分叉** vault_create 现行「父目录 MUST NOT 隐式创建」口径，见盘点第 6 条与
+   裁决点节下注）、目标已存在 MUST NOT 覆盖（返回 `fs_already_exists`）。
 2. **粘贴触发与引用插入**（clipboard-image-paste，ADDED「粘贴触发与引用插入」）：md 模式且
    可编辑时，⌘V 到达且剪贴板含 `image/*` 数据 → 阻止默认粘贴、异步落盘、在光标处插入
    `![[文件名]]` 引用（语法形态以节点 1 裁决点 ② 为准）。插入是正常编辑事务（用户发起的
@@ -74,10 +82,19 @@ Alex 原话（2026-10-09）：**「支持黏贴剪贴板里的图片」**。真�
 
 | # | 裁决点 | 选项 | 起草倾向 |
 |---|---|---|---|
-| 1 | **落盘位置** | A. vault 根下固定 `attachments/` 目录（不存在自动创建）；B. 当前笔记同目录；C. vault 根平铺 | **倾向 A**。vault 无既有附件目录约定（盘点第 6 条），建单点约定成本最低；集中一处便于同步/排除策略；与裁决点 ② 的 `![[...]]` 组合后**与笔记目录深度无关**——未保存的新文档里也能贴图；B 让图片散落各笔记目录、C 污染根目录 |
+| 1 | **落盘位置** | A. vault 根下固定 `attachments/` 目录（不存在自动创建）；B. 当前笔记同目录；C. vault 根平铺 | **倾向 A**。vault 无既有附件目录约定（盘点第 7 条），建单点约定成本最低；集中一处便于同步/排除策略；与裁决点 ② 的 `![[...]]` 组合后**与笔记目录深度无关**——未保存的新文档里也能贴图；B 让图片散落各笔记目录、C 污染根目录 |
 | 2 | **插入语法** | A. Obsidian 方言 `![[name.png]]`；B. 标准 `![alt](../attachments/name.png)` 相对路径 | **倾向 A**。渲染与 vault 内文件名唯一匹配解析**今天已存在且是 living spec**（盘点第 2 条），零新增渲染面；与落盘位置组合后插入文本不含路径深度，行为不随笔记搬家而变；B 需要算相对路径（深度相关），且 `..` 解析虽已有口径但无谓引入 |
 | 3 | **命名规则** | A. 内容哈希：`pasted-<sha256 前 16 位>.<ext>`（扩展名按剪贴板 MIME）；B. 时间戳：`Pasted image 20261009143022.png`（Obsidian 默认形态）；C. 剪贴板原始文件名 | **倾向 A**。同名即同内容，去重天然：同一张图再贴一次，`fs_paths_exist` 探测到即跳过写盘、只插引用（不堆副本）；不依赖时钟；仓内已有文件内容 SHA-256 的消费先例（`fs_file_revision`）。B 直观但同图堆副本；C 在 macOS 截图场景通常没有原始文件名 |
 | 4 | **图文同板优先级**（剪贴板同时含文本与图片，如浏览器里复制图片） | A. 图片优先（Obsidian 同款）；B. 文本优先 | **倾向 A**——进笔记工具贴图的动作意图就是图；Alex 的场景（贴截图）剪贴板只有图片数据，两种选项无差别，此项主要给「浏览器复制图片」形态定调 |
+
+> **注：自动建父目录是刻意分叉，不是沿用既有约定。** fs-io living spec「新建文档」现行条款
+> 要求「父目录 MUST NOT 被隐式创建」（`fs_not_found`）；本提案的附件写自动建缺失父目录
+> 与之相反，理由：贴图是瞬间动作，用户没有「先建 `attachments/` 目录」的触点，失败只能
+> 退成 toast 重试，体验不可接受。此分叉与未合并 change `add-harness-permission-modes` 中
+> Alex 已批准的「vault_create 自动建缺失父目录」修订**同向**——该 change 合并/归档后，
+> fs-io living spec 的两处条款（vault_create 与本条）将一致，同步登记已落 tasks 5.1。
+> 此处明示告知 Alex，不另立裁决点（方向已被上述批准背书；若 Alex 认为附件写也应维持
+> 「不隐式创建」，请在节点 1 一并指出）。
 
 ### 沿用既有约定，无需裁决（明示清单）
 

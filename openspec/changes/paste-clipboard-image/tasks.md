@@ -45,3 +45,12 @@
 - [ ] 4.4 `scripts/gate.sh quick` 全绿（照抄 `GATE RESULT` 原文行上报）
 - [ ] 4.5 视觉门禁：引用语法渲染既有场景已覆盖，若动了 `src/style.css` /
   `src/preview/**` 则补跑 `scripts/gate.sh visual` 并在报告声明
+
+## 5. 依赖同步
+
+- [ ] 5.1 fs-io 条款一致性：本 change 的「父目录缺失自动创建」是对 vault_create 现行
+  「父目录 MUST NOT 隐式创建」口径的刻意分叉（proposal 盘点第 6 条），与未合并 change
+  `add-harness-permission-modes` 中 Alex 已批准的 vault_create 同向修订一致。归档前核对：
+  若该 change 已合并/归档，确认 fs-io living spec 两处条款已一致（vault_create 改为
+  自动建父目录），并把本 change 文本中的「刻意分叉」表述改为「同口径沿用」；若该修订
+  仍悬空，在 `docs/backlog.md` 登记「fs-io 建父目录口径两条并存」的待裁决项，不带病归档

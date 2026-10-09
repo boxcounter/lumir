@@ -55,7 +55,7 @@ MUST NOT 覆盖，后到者收到 `fs_already_exists` 后按「已存在」继�
 | 路径 | 全量 `resolve_in_vault` 逃逸防护 | fs-io「vault 内路径约束」 |
 | 上限 | 解码后 > 50MB → 人话错误（`attachment_too_large` 同级 code 族） | 读侧 50MB 口径 |
 | 原子写 | 同目录 `.{名}.lumir-{pid}` 临时文件 + rename；结果不可确认 → 报错不报成功 | `write_document_atomic`（`fs_io.rs:1201`） |
-| 父目录 | 缺失自动创建（mkdir -p 语义） | M404 vault_create 裁决先例 |
+| 父目录 | 缺失自动创建（mkdir -p 语义） | **刻意分叉** vault_create 现行「父目录 MUST NOT 隐式创建」口径（fs-io living spec「新建文档」）；与未合并 change `add-harness-permission-modes` 中 Alex 已批准的同向修订一致——**非既有先例**，理由见 proposal「Alex 裁决点」节下注 |
 | 撞名 | 目标已存在 → `fs_already_exists`，MUST NOT 覆盖 | vault_create 的 O_EXCL 口径 |
 | 绑定 | ts-rs 导出至 `src/bindings/`（bindings-drift 纪律：先 git add 重导出再跑 gate） | M249 |
 
