@@ -148,20 +148,6 @@ export function detectCallout(doc: Text, node: SyntaxNode): CalloutInfo | null {
   };
 }
 
-/** 某一行是否属于 callout（相邻空行的块间距判定用）；非 callout 返回 null。 */
-export function calloutOnLine(
-  tree: ReturnType<typeof syntaxTree>,
-  doc: Text,
-  lineFrom: number,
-): CalloutInfo | null {
-  const line = doc.lineAt(lineFrom);
-  const offset = line.text.search(/\S/);
-  if (offset < 0 || line.text[offset] !== ">") return null;
-  let node: SyntaxNode | null = tree.resolveInner(line.from + offset, 1);
-  while (node && node.name !== "Blockquote") node = node.parent;
-  return node ? detectCallout(doc, node) : null;
-}
-
 // ---------------------------------------------------------------------------
 // 类型标签 widget：替换 [!type] 标记（含可选折叠符）。
 // ---------------------------------------------------------------------------

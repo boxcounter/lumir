@@ -77,23 +77,23 @@ test("表格内 Ctrl+N/P：相邻行进入、逐行移动、末行离开、两�
   await page.locator(".cm-lp-table-scroll").waitFor();
   await setCursor(page, 2); // 行1「上文段落。」
 
-  // 向下：行1 → 表头行3 → 行5 → 行6 → 行8（离开表格）
+  // 向下：行1 → 空行2（M399 起空行是正常行，逐行经过）→ 表头行3 → 行5 → 行6 → 空行7 → 行8（离开表格）
   const downLines: number[] = [];
-  for (let i = 0; i < 4; i++) {
+  for (let i = 0; i < 6; i++) {
     await page.keyboard.press("Control+n");
     await page.waitForTimeout(60);
     downLines.push((await snap(page)).line);
   }
-  expect(downLines).toEqual([3, 5, 6, 8]);
+  expect(downLines).toEqual([2, 3, 5, 6, 7, 8]);
 
-  // 向上（从行8）：行6（进入末行）→ 行5 → 行3 → 行1（离开表格）
+  // 向上（从行8）：空行7 → 行6（进入末行）→ 行5 → 行3 → 空行2 → 行1（离开表格）
   const upLines: number[] = [];
-  for (let i = 0; i < 4; i++) {
+  for (let i = 0; i < 6; i++) {
     await page.keyboard.press("Control+p");
     await page.waitForTimeout(60);
     upLines.push((await snap(page)).line);
   }
-  expect(upLines).toEqual([6, 5, 3, 1]);
+  expect(upLines).toEqual([7, 6, 5, 3, 2, 1]);
 });
 
 test("表格内 Ctrl+N/P 保留列位", async ({ page }) => {

@@ -165,13 +165,76 @@ test("md 列表 / 引用：委派上游续写同级标记并保持层级", () =>
   }
 });
 
-test("md 列表里 `auto_indent = false`：命令不接管（续行仍归上游键位，本层不代跑）", () => {
-  // D5a 的显式不对称：本键只关本 change 新增的两处，MUST NOT 关掉上游的列表续行。
-  // 本层能断言的是「我们不接管、也不改文档」；上游键位在真实 view 上仍会跑
-  //（chromium 场景 m264 有一条端到端断言）。
+test("md 列表里 `auto_indent = false`：续行照旧（M399 起由本键位代跑同一上游命令）", () => {
+  // D5a 的显式不对称：本键只关本 change 新增的两处，MUST NOT 关掉列表续行。M399 之前本层
+  // 返回 false、由 markdownKeymap（Prec.high）代跑默认配置的同一上游命令；M399 为让「空项
+  // 退出」的裁决行为不随缩进开关分叉，把 md 委派提到开关检查之前——因此本层现在直接接管
+  //（handled=true），用户可见行为与之前逐字节一致（除空项退出的裁决差异外）。
   const result = pressEnter("- alpha", "md", false, MD);
-  assert.equal(result.handled, false, "返回 false，按键继续往下传");
-  assert.equal(result.doc, "- alpha", "命令本身 MUST NOT 改文档");
+  assert.equal(result.handled, true, "md 列表续行不随 auto_indent 关闭");
+  assert.equal(result.doc, "- alpha\n- ", "续写同级标记");
+});
+
+// ---------------------------------------------------------------------------
+// 4.5 M399：空列表项上的 Enter（Alex 裁决的主流模式）与行首 Enter 的命令层钉固
+// ---------------------------------------------------------------------------
+
+/** `pressEnter` 的定光标变体：`pos` 显式给光标位（行首 / 行中场景的命令层判定用）。 */
+function pressEnterAt(
+  doc: string,
+  pos: number,
+  mode: EditorMode,
+  autoIndent: boolean,
+  extensions: readonly Extension[],
+): { handled: boolean; doc: string; cursor: number } {
+  const state = EditorState.create({ doc, extensions, selection: EditorSelection.cursor(pos) });
+  let next = state;
+  const view = {
+    state,
+    dispatch: (tr: { state: EditorState }) => {
+      next = tr.state;
+    },
+  } as unknown as EditorView;
+  const handled = enterWithAutoIndent(view, mode, autoIndent);
+  return { handled, doc: next.doc.toString(), cursor: next.selection.main.head };
+}
+
+test("空列表项上 Enter：去掉列表符号、该行保留为普通空行、光标在行首、不新增行（M399 裁决）", () => {
+  // 不变量：任意「marker + 纯空白」的列表项行、光标在 marker 之后，Enter 后该行恒变为空行、
+  // 光标恒在该行行首、文档行数恒不变（MUST NOT 新增行）。嵌套项按主流模式凸一级
+  // （仍是列表项、留待下一次 Enter 退出），不在本条不变量内，单独钉。
+  const cases: Array<[label: string, doc: string, pos: number, expected: string, cursor: number]> = [
+    ["单 item 无序", "- ", 2, "", 0],
+    ["两 item 的空第二项（上游默认会把列表变松、保留 marker——裁决禁止）", "- a\n- ", 6, "- a\n", 4],
+    ["三 item 的空第三项", "- a\n- b\n- ", 10, "- a\n- b\n", 8],
+    ["单 item 有序", "1. ", 3, "", 0],
+    ["两 item 有序的空第二项", "1. a\n2. ", 8, "1. a\n", 5],
+    ["空 item 后面还有内容（行保留、列表断成两段是 markdown 语义的自然结果）", "- a\n- \n- b", 6, "- a\n\n- b", 4],
+  ];
+  for (const [label, doc, pos, expected, cursor] of cases) {
+    const result = pressEnterAt(doc, pos, "md", true, MD);
+    assert.equal(result.handled, true, `${label}：应接管`);
+    assert.equal(result.doc, expected, `${label}：文档应为去标记后的形态`);
+    assert.equal(result.cursor, cursor, `${label}：光标应在该行行首`);
+  }
+});
+
+test("嵌套空列表项上 Enter：凸一级（Obsidian 式逐层退出），仍是有 marker 的列表项", () => {
+  const result = pressEnterAt("- a\n  - ", 8, "md", true, MD);
+  assert.equal(result.handled, true);
+  assert.equal(result.doc, "- a\n- ");
+  assert.equal(result.cursor, 6);
+});
+
+test("行首 Enter 的命令层钉固（M399 问题 1）：换行确实发生、新空行插在光标行之前", () => {
+  // 问题 1 的根因在渲染层（新空行被 0 高隐藏），命令层本就正确——这里钉住防止将来误改。
+  const para = pressEnterAt("hello world", 0, "md", true, MD);
+  assert.equal(para.handled, true);
+  assert.equal(para.doc, "\nhello world", "行首 Enter 应在该行之前插入空行");
+  assert.equal(para.cursor, 1, "光标随内容下移（停在新空行之后的内容行行首）");
+  const list = pressEnterAt("- abc", 0, "md", true, MD);
+  assert.equal(list.doc, "\n- abc");
+  assert.equal(list.cursor, 1);
 });
 
 // ---------------------------------------------------------------------------

@@ -229,7 +229,7 @@ test("倒序经过大尺寸 svg 图（viewBox-only）：正文不发生非用户
   expectNoSelfMovement(await movements(page), "倒序快滚");
 
   // 相位 3：翻屏键（⌥V）——与滚轮不同的输入通道，且每步都要求「真的滚动了视口」。
-  // 先不测量地跳到底部（翻屏键会经过图片，重建路径照走），保证三步都不撞上、下边界。
+  // 先不测量地跳到底部（翻屏键会经过图片，重建路径照走），保证翻屏步不撞上、下边界。
   await page.evaluate(() => {
     const scroller = document.querySelector(".cm-scroller") as HTMLElement;
     scroller.scrollTop = scroller.scrollHeight;
@@ -242,12 +242,17 @@ test("倒序经过大尺寸 svg 图（viewBox-only）：正文不发生非用户
   const focused = await page.evaluate(() => document.activeElement?.className ?? "");
   expect(focused, `焦点不在编辑器上，翻屏键不会落地：${focused}`).toContain("cm-content");
   await page.waitForTimeout(200);
-  for (let i = 0; i < 3; i++) {
+  // M399 起空行有正常行高、文档约两倍高，固定 3 步 ⌥V 到不了图片高度——改为按「图片 widget
+  // 重建进场」停机（上限 12 步防空转），每步仍要求真的滚动了视口。
+  let rebuilt = false;
+  for (let i = 0; i < 12 && !rebuilt; i++) {
     const before = await top(page);
     await page.keyboard.press("Alt+KeyV");
     await page.waitForTimeout(320);
     expect(await top(page), "⌥V 没有滚动视口：输入通道没落地，本例的判据会空转").not.toBe(before);
+    rebuilt = (await page.locator(".cm-lp-image").count()) > 0;
   }
+  expect(rebuilt, "12 步 ⌥V 内图片 widget 未重建进场：文档高度与翻屏步长的配比失真").toBeTruthy();
   expectNoSelfMovement(await movements(page), "翻屏键 ⌥V");
 
   // 自检：图片至少被读两次 = widget 确实被销毁并重建（否则上面三条判据没走到观测路径）。
@@ -266,7 +271,9 @@ test("倒序经过窄定尺寸图片：预留不动包装盒宽度、不拉伸�
   // 预热（不测量）：分步正向滚过图片——它被渲染并加载（几何进会话记忆），随后滚出渲染视口被
   // 销毁。用分步而不是一次跳到底：一次跳越可能让图片整段落在渲染视口之外，从头到尾没被渲染，
   // 重建路径就没被走到（下面的读取次数自检会因此 FAIL——这是有意留的自检，不是放宽）。
-  await wheelSteps(page, 100, 16, 180);
+  // 预热距离 1600→1900（M399）：空行正常行高化后图片的文档坐标更低，1600px 只把它推到可见区
+  // 顶部上方 ~1000px——还压在 CM 渲染视口边距（~1000px）内，widget 不销毁、本断言假红。
+  await wheelSteps(page, 100, 19, 180);
   await expect(page.locator(".cm-lp-image img")).toHaveCount(0);
   await resetRecorder(page);
 

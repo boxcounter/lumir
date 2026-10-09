@@ -60,20 +60,28 @@ test("Ctrl+N/P 跨表格：相邻行进首/末行、表内逐行、末行再按�
   await openDoc(page, "t.md", TABLE_DOC);
   await expect(page.locator(".cm-lp-table-scroll")).toHaveCount(1);
 
-  // 前进：表上方相邻行 → 表头行 → 数据行 → 离开到表下方行
+  // 前进：表上方相邻行 →（空行随 M399 恢复正常行高，逐行经过）→ 表头行 → 数据行 → 离开到表下方
   await setCursor(page, 2);
+  await page.keyboard.press("Control+n");
+  expect((await cmSelection(page)).line).toBe(2);
   await page.keyboard.press("Control+n");
   expect((await cmSelection(page)).line).toBe(3);
   await page.keyboard.press("Control+n");
   expect((await cmSelection(page)).line).toBe(5);
+  await page.keyboard.press("Control+n");
+  expect((await cmSelection(page)).line).toBe(6);
   await page.keyboard.press("Control+n");
   expect((await cmSelection(page)).line).toBe(7);
 
-  // 后退方向对称：表下方相邻行 → 末行（数据行）→ 表头行 → 离开到表上方行
+  // 后退方向对称：表下方相邻行 → 空行 → 末行（数据行）→ 表头行 → 空行 → 离开到表上方行
+  await page.keyboard.press("Control+p");
+  expect((await cmSelection(page)).line).toBe(6);
   await page.keyboard.press("Control+p");
   expect((await cmSelection(page)).line).toBe(5);
   await page.keyboard.press("Control+p");
   expect((await cmSelection(page)).line).toBe(3);
+  await page.keyboard.press("Control+p");
+  expect((await cmSelection(page)).line).toBe(2);
   await page.keyboard.press("Control+p");
   expect((await cmSelection(page)).line).toBe(1);
 
@@ -84,7 +92,11 @@ test("Ctrl+N/P 跨表格：相邻行进首/末行、表内逐行、末行再按�
   await expect(page.locator(".cm-lp-table-scroll")).toHaveCount(1);
   await setCursor(page, 2);
   await page.keyboard.press("Control+n");
+  expect((await cmSelection(page)).line).toBe(2); // 空行（M399 起逐行经过）
+  await page.keyboard.press("Control+n");
   expect((await cmSelection(page)).line).toBe(3); // 表头行
+  await page.keyboard.press("Control+p");
+  expect((await cmSelection(page)).line).toBe(2); // 空行
   await page.keyboard.press("Control+p");
   expect((await cmSelection(page)).line).toBe(1); // 首行再按离开
 

@@ -141,7 +141,9 @@ export const codeTokenTheme = EditorView.theme(CODE_TOKEN_RULES);
 
 export const livePreviewTheme = EditorView.theme({
   ".cm-editor": { color: "var(--text)", backgroundColor: "var(--content-bg)", fontFamily: "var(--editor-font-family)" },
-  ".cm-line.cm-lp-block-separator": { fontSize: "0", lineHeight: "0", height: "0", minHeight: "0" },
+  // M399（Alex 裁决）：空行不再有 `cm-lp-block-separator` 零高压制（原规则与此处的
+  // callout/codeblock 邻接补高规则一并退场，livePreview.ts 已不再产出该类名）——
+  // 空段落行恒以正常行高渲染、光标可见；段距 / 块距随空行恢复行高而变大，是裁决接受的代价。
   // 选中底色 / 选中前景 / 光标色**不在这里**：这三条的真源在 `src/editor.ts` 的 baseTheme
   // （两模式共用，M285 起以 `.cm-selectionBackground` 为唯一落点）。此前本文件里重复了一份同值
   // 声明，与 baseTheme 构成两处写入点（REVIEW.md 第 8 条），M285 一并收口。
@@ -264,20 +266,8 @@ export const livePreviewTheme = EditorView.theme({
   ".cm-lp-callout-title": { fontSize: "1em", fontWeight: "550", color: "var(--text)" },
   // 行内 code 在 callout 正文里按父级 13px 折算回阶梯的 13px（折算约定见文件头注释）。
   ".cm-line.cm-lp-callout-line .cm-lp-inline-code": { fontSize: "calc(13em / 13)" },
-  // 相邻 callout 之间的空行保留块间距（覆盖 0 高分隔，选择器更具体优先）：定稿的
-  // callout 外距 4px × 上下两块 = 8px（--sp-4）。
-  ".cm-line.cm-lp-block-separator.cm-lp-callout-gap": { height: "var(--sp-4)", minHeight: "var(--sp-4)" },
-  // 代码块邻接分隔（M218 C1 阶梯补值，tower 裁决 2026-09-25 的 C6 margin 转换）：容器外距
-  // 上 4（--sp-2）/ 下 12（--sp-6）由相邻分隔行高度承担——.cm-lp-codeblock-scroll 是
-  // BlockWrapper，CSS margin 对 heightmap 不可见（M110 同族）。与 callout-gap 共存时取
-  // 较大值（callout 底色间隔 8 不能被代码块上缘 4 吃掉；代码块下缘 12 > 8 自然胜出）。
-  ".cm-line.cm-lp-block-separator.cm-lp-codeblock-gap-before": { height: "var(--sp-2)", minHeight: "var(--sp-2)" },
-  ".cm-line.cm-lp-block-separator.cm-lp-codeblock-gap-after": { height: "var(--sp-6)", minHeight: "var(--sp-6)" },
-  ".cm-line.cm-lp-block-separator.cm-lp-callout-gap.cm-lp-codeblock-gap-before": { height: "var(--sp-4)", minHeight: "var(--sp-4)" },
-  ".cm-line.cm-lp-block-separator.cm-lp-codeblock-gap-before.cm-lp-codeblock-gap-after": {
-    height: "calc(var(--sp-2) + var(--sp-6))",
-    minHeight: "calc(var(--sp-2) + var(--sp-6))",
-  },
+  // （M399：此处原有的「相邻 callout / 代码块的空行补高」规则已随 0 高分隔模型一并退场，
+  //  见本文件顶部 `.cm-editor` 规则下的注。）
 
   // 代码块（tokens 文档 §字号阶梯「12（doc-meta·代码块·文件路径）」+ §行高「1.55」）：
   // 代码文字 mono 12px/1.55（em 比值 12 ÷ 正文锚 15 = .8），行区带 --code-bg。

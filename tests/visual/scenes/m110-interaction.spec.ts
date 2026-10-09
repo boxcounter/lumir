@@ -91,10 +91,16 @@ test("Ctrl-N 跨块级公式落在近端边界而非一次跳过", async ({ page
   await setCursor(page, 0);
   // 修复前：一次 Ctrl-N 从 0 直接落到 37（块另一侧），跨过整个公式
   await page.keyboard.press("Control+n");
+  expect((await cmSelection(page)).head).toBe(19); // 空行（M399 起正常行高，逐行经过）
+  await page.keyboard.press("Control+n");
   expect((await cmSelection(page)).head).toBe(20); // 钳制到块起始边界
   await page.keyboard.press("Control+n");
-  expect((await cmSelection(page)).head).toBe(37); // 再按才越过块
-  // 对称方向：从块下方 Ctrl-P 钳制到块结束边界
+  expect((await cmSelection(page)).head).toBe(36); // 越过块，落在块下空行（M399 起空行逐行经过）
+  await page.keyboard.press("Control+n");
+  expect((await cmSelection(page)).head).toBe(37); // 再按到末尾段落
+  // 对称方向：从块下方 Ctrl-P 先落空行，再按才钳制到块结束边界
+  await page.keyboard.press("Control+p");
+  expect((await cmSelection(page)).head).toBe(36); // 空行
   await page.keyboard.press("Control+p");
   expect((await cmSelection(page)).head).toBe(35);
   expect(await readDocument(page)).toBe(MATH_DOC);
@@ -283,6 +289,9 @@ test("缺陷1：物理节奏双击表头选中表头词（frontmatter+多表 hei
   await page.locator('.ft-row[title="列表与保存.md"]').click();
   const api = page.locator(".cm-lp-table-cell", { hasText: "API" });
   await api.waitFor();
+  // M399 空行正常行高化后文档变高，「含代码的表格」的自然位置落到视口底部、表头 cell
+  // 中心被 modeline 遮挡（elementFromPoint 实测命中 modeline）——先把它滚进可视区再取点。
+  await api.first().scrollIntoViewIfNeeded();
 
   // 几何不变量：每个表格行内任意点经 posAtCoords 必须映射回本行。
   // 缺陷 1 根因——块级 margin（frontmatter widget / 表格 wrapper）对 CM6 的
