@@ -63,6 +63,7 @@ CI 的 `visual.yml` 只跑结构 / 计算属性断言（置 `LUMIR_VISUAL_STRUCT
 - **配额全瘫 runbook**：tower 主模型与 managed worker/reviewer 同一 Kimi 配额，耗尽即全瘫。恢复：改 `~/.kimi-code/config.toml` 顶层 `default_model = "deepseek/deepseek-flash"`（或 `kimi -m deepseek/deepseek-flash` 起新会话）→ resume 原会话 → tower 从 `.tower/comms/` + `HANDOFF.md` 恢复上下文。
 - **仓库信息卫生**（Alex 裁决 2026-10-05）：任何入库制品——原型 HTML、测试/视觉 fixture、视觉基线与原型截图、文档——MUST NOT 包含真实 vault 内容（真实人名、真实项目/目录/文件名、真实文档正文），一律用合成 fixture；含截图类二进制（内容以像素形式存在，只能靠重截清除）。纪律文本本身也不得引用真实字符串——检索针只活在当次会话，不落 git。提交前对改动面做一次 text 级 grep 清扫。
 - **原型控制面板**（Alex 裁决 2026-10-05）：交互原型 MUST 在页面内置可点击的控制面板（切屏 / 切主题等全部选项点击可达），不得要求人手改 URL query；query 参数（如 `?screen=` / `?theme=`）保留作深链，截图脚本用显式参数（如 `&panel=0`）关面板。
+- **给 Alex 的路径必须当下可开**（2026-10-09 实证）：凡让 Alex 审阅/查看的文件，给出的路径必须在主仓 checkout 里**当下真实存在**——未合并分支 / worktree 里的文件，先复制到 `test-results/` 下（git 外），再给绝对路径 + 一条可整段运行的 `open` 命令；禁止直接给 `docs/...` 这类「分支合并后才存在」的仓内相对路径。与用户级 AGENTS.md「给我的材料零前置知识」同源，仓内钉给 tower 与所有 worker。
 
 ## 子代理模型调度（Alex 裁决 2026-10-02）
 
