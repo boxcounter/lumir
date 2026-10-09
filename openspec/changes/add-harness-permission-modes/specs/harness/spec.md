@@ -91,6 +91,32 @@
 - **WHEN** 在面板权限 chip 把模式从 `vault_write` 切到 `read_only`
 - **THEN** 下一个判定按 `read_only` 执行；`config.json` 的 `[harness].permission_mode` 被写回为 `read_only`，重启后保持
 
+### Requirement: 批准闸呈现与决策后收敛
+
+批准闸的 diff 预览中，以 `+` / `-` 起首的增删行底色 MUST 覆盖该行文本的完整宽度，与卡片可视宽度无关：行文本超出可视宽度（容器出现横向滚动）时，底色 MUST 随文本延伸至整行末尾，MUST NOT 在可视宽度处截断。该不变量对任意行内容长度与任意面板宽度恒成立（渲染缺陷合同先行，条款引用输入分布而非具体案例）。
+
+批准项被采纳或拒绝后，卡片 MUST 收敛为一行终态记录：工具名 + 决策结果（已采纳 / 已拒绝）+ 决策的相对时间戳。diff / argv 预览 MUST 默认折叠，可经单一入口展开回看；待决语义文案（「采纳后才落盘 / 采纳后才运行」）与决策按钮 MUST 随决策退场，MUST NOT 以置灰形态残留在终态记录里（置灰按钮会被误读为「待处理 / 等待中」）。拒绝时若附了原因，原因文本 MUST 在终态记录中直接可见（无需展开详情）。`cli_run` 批准卡 SHALL 在命令上方显眼位置展示模型自述的 `purpose` 用途句，命令原文完整可见、MUST NOT 被用途句替代或截断；purpose 是阅读辅助而非安全判据，权限判定 MUST NOT 参考 purpose。
+
+#### Scenario: diff 行高亮覆盖整行文本
+
+- **WHEN** 面板呈现含超出可视宽度的增删行的 diff 预览（任意行长度 × 任意面板宽度）
+- **THEN** 每个增删行元素的宽度 ≥ 该行文本的完整宽度，底色铺满整行、横向滚动区外无未高亮文本
+
+#### Scenario: 采纳后收敛为终态记录
+
+- **WHEN** Alex 对带 diff 预览的批准项点击采纳
+- **THEN** 卡片收敛为一行记录（工具名 + 已采纳 + 相对时间戳）；diff 默认折叠、展开后可回看；待决标题与决策按钮退场，界面不再出现置灰的采纳 / 拒绝钮
+
+#### Scenario: 拒绝附原因可见
+
+- **WHEN** Alex 填写拒绝原因并点击拒绝
+- **THEN** 终态记录直接显示原因文本（不依赖展开详情）；diff 默认折叠、可展开回看
+
+#### Scenario: 用途句在命令上方呈现
+
+- **WHEN** 一个带 `purpose` 的 `cli_run` 写命令进入批准闸
+- **THEN** 批准卡命令上方显眼位置显示 purpose 用途句，命令原文完整可见；purpose 不参与判定（判定结果与同命令不带 purpose 时一致）
+
 ## ADDED Requirements
 
 ### Requirement: cli_run 命令分类与 vault 写重定向
@@ -170,3 +196,17 @@ composer 控制行 SHALL 提供权限 chip（位于思考 chip 之后、ctx 读�
 
 - **WHEN** 一轮对话正在工具循环中，把模式从 `vault_write` 切到 `read_only`
 - **THEN** 当前轮次按开轮时的模式判完；从下一个判定起按 `read_only` 执行
+
+### Requirement: cli_run 用途说明（purpose 字段）
+
+`cli_run` 工具的参数 schema SHALL 包含必填字符串字段 `purpose`：模型发起调用时 SHALL 用一句人话说明该命令的用途（Claude Code 的 Bash description 同款——描述是调用的一部分）。purpose 缺失或 trim 后为空白串时，调用 MUST NOT 执行：系统 SHALL 在工具调用入口（判定管线之前）按统一错误信封结构化回送（人话 message 指明需补填用途说明），模型补填后重发。purpose 是模型自述的阅读辅助，MUST NOT 参与权限判定的任何一层（命令分类、vault 写重定向、危险黑名单、allow 规则、模式默认分层均只看 argv 本身）。批准卡 SHALL 在 CLI 命令上方显眼位置展示 purpose，命令原文完整可见、MUST NOT 被 purpose 替代或截断。
+
+#### Scenario: purpose 随调用到达批准卡
+
+- **WHEN** 模型发起带 `purpose: "安装依赖以跑测试"` 的 `cli_run` 写命令（ask 档）
+- **THEN** 批准卡命令上方显眼位置显示该用途句；命令原文完整可见；权限判定结果与不带 purpose 的同一命令完全相同
+
+#### Scenario: 空 purpose 拒绝补填
+
+- **WHEN** 模型发起的 `cli_run` 调用缺 `purpose` 字段（或 purpose trim 后为空白串）
+- **THEN** 调用不执行，回送指明需补填用途的错误信封；模型补填 purpose 重发后正常进入判定与执行

@@ -77,6 +77,16 @@ proposal 的技术面：判定管线、cli_run 分类算法、重定向协议、
 
 黑名单与白名单的交集（理论上不应存在）按黑名单处理（更保守侧赢）。**包装器类不走进 §4 的 vault 写重定向**——它停在危险层（Ask，任何档都问），不会以「写」身份被 full_access 自动放行；这是「危险命令黑名单任何档都问」对不可验证内容的直接推论（Alex 分界已确认的推论，tower 2026-10-09 裁决，不新增裁决点）。
 
+### 3.4 批准卡命令用途说明（purpose 字段）
+
+Alex 原话需求（2026-10-09，节点 1 前并入）：「让询问我的时候，除了命令本身，还请告诉我它是干什么的。因为 AI 写的命令经常会组合 cmd1; cmd2 && cmd3 ...，人工检查非常困难，特别是 python 这样的 eval 代码。」
+
+- **首选机制 = 工具 schema 必填 `purpose`**：cli_run 工具定义增加必填字符串字段 `purpose`——模型发起调用时用一句人话自述这条命令是干什么的。这是 Claude Code 的 Bash description 同款手法：描述是**调用的一部分**，随工具调用一起生成，不是事后补注。schema 层 `required: ["command", "purpose"]`。
+- **批准卡呈现**：ask 档批准卡在 CLI 命令上方显眼位置展示 purpose 句；命令原文完整可见，MUST NOT 被 purpose 替代或截断。purpose 的存在把「读命令猜意图」变成「先看用途句再核对命令」，直接降低复合命令与 eval 代码的人工检查成本。
+- **信任边界（写明，防误读）**：purpose 是**模型自述**，是阅读辅助，**不是安全判据**——§1 判定管线的每一层（分类、重定向、黑名单、allow、模式）都只看 argv 本身；模型可能写错甚至写粉饰性的 purpose，审批人仍以命令原文为准。批准卡的「采纳」决策指向命令，不指向 purpose。
+- **vault 类写工具倾向不加 purpose**：`vault_create` 有目标路径 + 全文 diff、`vault_patch` 有路径 + 唯一命中 diff、`vault_move` 有源 → 目标、`vault_delete` 有路径 + 废纸篓说明——参数面与预览已自解释，人工检查成本本来就低；加 purpose 是冗余字段，还会稀释 cli_run 上 purpose 的显眼度。dogfood 若证明 vault 写也需要说明，届时再议（本期不加）。
+- **兜底：空 purpose 拒绝补填**：purpose 缺省或 trim 后为空白串时，调用 MUST NOT 执行——校验点在工具调用入口（判定管线之前，ask 档批准卡必须已有 purpose 可展示），按既有统一错误信封结构化回送（人话 message 指明「需补填 purpose 用途说明」），模型补填后重发。trim 后空白与缺省同等拒绝（防空格绕过必填）。复用既有错误回送机制，不新造通道。
+
 ## 4. vault 写硬引导（重定向协议）
 
 ### 4.1 识别口径
@@ -187,8 +197,9 @@ pub fn fs_move_entry(root: &Path, from_rel: &str, to_rel: &str) -> Result<String
 - **重定向链测试（mock provider 脚本，§4.3）**：`cli_run("mv", …)` 收重定向 → 改调 `vault_move` → 断言标记文本逐字节、建议工具正确、vault 终态正确；另测「判定不确定时不重定向」反例（vault 外相对路径写命令落正常写分类）。
 - **新工具测试**：`fs_move_entry` 逃逸 / 撞名 / 跨目录 / 跨卷失败四例；`vault_delete` 进废纸篓与失败不留半态；工具定义经 mock provider 一轮断言 `execute` 路径。
 - **缓存测试**：同主体串二次调用免闸、新会话清空、黑名单成员不受缓存放行。
+- **purpose 链测试**：mock provider 断言带 purpose 的 cli_run 调用在批准卡载荷中 purpose 与命令同达；空 purpose（缺省 / 空白串）不执行且回送补填错误、模型补填后重发成功；同一命令带粉饰性 purpose 与否判定结果相同（信任边界的负向用例）。
 - **配置测试**：`permission_mode` 缺省 / 非法回落 / `config_set_value` 写回。
-- **验收场景（scripts/acceptance，fixture 合成）**：模式切换 chip 与浮层（真机 AX 口径）、批准卡「采纳且本会话不再问」、重定向场景一轮（mock 驱动 §4.3 链）、vault_move / vault_delete 面板呈现。视觉效果不动者免视觉门禁。
+- **验收场景（scripts/acceptance，fixture 合成）**：模式切换 chip 与浮层（真机 AX 口径）、批准卡「采纳且本会话不再问」、批准卡 purpose 用途句展示（命令上方显眼位置、原文完整可见）、重定向场景一轮（mock 驱动 §4.3 链）、vault_move / vault_delete 面板呈现。视觉效果不动者免视觉门禁。
 
 ## 9. 明确不实现（防 scope 蔓延）
 
