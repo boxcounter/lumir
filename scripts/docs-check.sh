@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# scripts/docs-check.sh — ADR 制品门禁的唯一实现。
+# scripts/docs-check.sh — 制品门禁的唯一实现（docs/adr/ 的结构与索引 + openspec 相对链接可达性）。
 # 本地 `scripts/gate.sh quick` 与 CI 的 .github/workflows/docs-check.yml 调的是同一份脚本：
 # 「本地全绿才允许提交」要求本地跑的就是 CI 跑的那条命令，两处各写一遍必然漂移
 #（M153；REVIEW.md 第 8 条：同一语义不要两处真源）。
@@ -9,10 +9,14 @@
 #      - 状态值合法（合法集合见下），与「deferred 必带全角括号注解」**两条分别校验**
 #        （adr-lifecycle.md 的 `deferred` 一节定稿口径：裸 deferred 非法）
 #   2. docs/adr/README.md 索引与 ADR 文件双向一致
+#   3. openspec/**/*.md 内相对链接的可达性（实现在 scripts/openspec-links.sh，本脚本调它）
 # 输出：失败时逐条打印问题（CI 上同时是 ::error:: 注解）并以 1 退出。
 #
-# 注意：OpenSpec 侧的校验不在这里——权威实现是 `openspec validate --all --strict`
-#（CI 的 docs-check.yml 与本地 gate.sh 都调它，两者同一命令），故无需在此复制一遍。
+# 注意：OpenSpec 的 **结构 / 制品完整性** 校验不在这里——权威实现是 `openspec validate --all
+# --strict`（CI 的 docs-check.yml 与本地 gate.sh 都调它，两者同一命令），故无需在此复制一遍。
+# 第 3 条（相对链接可达性）不同：`validate` 不查链接、归档又会把目录移深一层，是另一条判据，
+# 故落在这里——挂本脚本而非 gate.sh，是为了让本地 `gate.sh quick` 与 CI 的 docs-check.yml
+# 同时继承同一条命令（REVIEW.md 第 8 条：同一语义不要两处真源）。
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -94,9 +98,15 @@ for ref in $(grep -oE '\(([0-9]{4}-[a-z0-9-]+\.md)\)' docs/adr/README.md | tr -d
   fi
 done
 
+# --- OpenSpec 制品相对链接可达性（实现见 scripts/openspec-links.sh） ---
+
+if ! bash scripts/openspec-links.sh; then
+  fail=1
+fi
+
 if [ "$fail" -ne 0 ]; then
   echo "docs-check: FAIL"
   exit 1
 fi
 
-echo "docs-check: PASS（ADR ${#files[@]} 份结构合法 + README 索引双向一致）"
+echo "docs-check: PASS（ADR ${#files[@]} 份结构合法 + README 索引双向一致 + OpenSpec 相对链接可达）"

@@ -21,8 +21,8 @@ Alex 原话：「增加不同层级 heading（H1 H2 H3 ……）的辨识度，�
 H2↔H3 是 1.5px 级差 + 同字重，H3–H5 与正文同字号只靠字重——扫读时层级不可预判。
 
 流程：本提案走「先出稿再裁决」（Alex 流程裁决，M224）。三稿对比原型与截图包已过目：
-[design/prototypes/heading-hierarchy/](../../../../design/prototypes/heading-hierarchy/)
-（base 现行对照 + 稿 A 纯字号阶梯 / 稿 B 双族制 / 稿 C 结构信号，× light/dark/eink）。
+`design/prototypes/heading-hierarchy/`
+（base 现行对照 + 稿 A 纯字号阶梯 / 稿 B 双族制 / 稿 C 结构信号，× light/dark/eink；该目录已随 M335 的原型退役删除）。
 
 **裁决记录（2026-09-25，Alex，M224 notes）**：裁决原文逐字：「我选择 A」——即三稿对比中的
 **稿 A 纯字号阶梯**：H1–H6 = 21/18/16/15/14/13，级差 3/2/1/1/1，字重统一 650，零装饰。代价 Alex 知情接受：
