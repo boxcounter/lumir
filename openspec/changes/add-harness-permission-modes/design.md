@@ -187,7 +187,15 @@ pub fn fs_move_entry(root: &Path, from_rel: &str, to_rel: &str) -> Result<String
 ## 7. 模式切换：UI 与配置
 
 - **配置键**：`[harness].permission_mode`，闭集合 `read_only` / `vault_write` / `full_access`，默认 `vault_write`。校验沿用既有模板：闭集合外取值回落默认 + 人话 warning；类型不符整文件回落。运行期写回经 `config_set_value(section, key, value)`（与模型 chip / 思考 chip 同路）。
-- **UI 入口**：composer 控制行新增权限 chip，位于思考 chip 之后、ctx 读数之前；文案 = 当前档名（zh：只读 / 保险库写入 / 完全访问；en：Read Only / Vault Write / Full Access，走文案表）。点击弹浮层：三档单选、当前档勾选、无释义文案（与思考 chip 浮层同一形态，M373 合并选择器的视觉语言）。
+- **UI 入口**：composer 控制行新增权限 chip，位于思考 chip 之后、ctx 读数之前。**文案分两级**（Alex 2026-10-09 裁决，原「chip 显示全名」口径作废）：
+  - **chip = 短名**（zh：只读 / 写入 / 完全；en：Read / Write / Full，走文案表）——控制行在窄面板下要被模型 / 思考 / 权限三个 chip 共同挤占，短名才保证三档都能完整显示。
+  - **浮层列表项 = 全名**（zh：只读 / 保险库写入 / 完全访问；en：Read Only / Vault Write / Full Access）——全名只在浮层里出现一次，那里宽度不受控制行约束。
+  - Alex 原话：「三档在 chip 里能完整显示名称吗？如果不能，可以减省成 Read / Write / Full，然后在点击出现的选择列表里写全名」。
+- **浮层结构**：三档单选、当前档勾选、**每档一行释义**（Kimi 风格：档名短、语义易混，一行释义消歧档名与实际行为的偏差；原「无释义文案」口径作废）。释义口径（措辞可在实现批次微调，语义方向以此为准）：
+  - `read_only`：「读自动放行；写操作都先问你」/ "Auto-approve reads; asks before every write"
+  - `vault_write`：「库内写自动放行；库外命令先问你」/ "Auto-approves vault writes; asks before shell commands"
+  - `full_access`：「全自动；仅危险命令仍问你」/ "Fully automatic; only dangerous commands still ask"
+- **浮层形态**：与思考 chip 浮层同一形态（M373 合并选择器的视觉语言）。
 - **生效时点**：切换对**下一个判定**生效，不打断进行中的轮次（与模型 chip「切换对下一轮生效」同口径）；进行中的轮次按开轮时的模式判完。
 - **浮层可访问性**：复用既有浮层口径（`role="menu"` / `menuitemradio` / `aria-checked`，M373 纪律），不新造交互形态。
 - 会话名 / 标题栏不动；权限 chip 是控制行的第三个 chip（模型 / 思考 / 权限），控制行排布在窄面板下的截断口径沿用 chip 的既有 ellipsis 规则。
@@ -201,7 +209,7 @@ pub fn fs_move_entry(root: &Path, from_rel: &str, to_rel: &str) -> Result<String
 - **缓存测试**：同主体串二次调用免闸、新会话清空、黑名单成员不受缓存放行。
 - **purpose 链测试**：mock provider 断言带 purpose 的 cli_run 调用在批准卡载荷中 purpose 与命令同达；空 purpose（缺省 / 空白串）不执行且回送补填错误、模型补填后重发成功；同一命令带粉饰性 purpose 与否判定结果相同（信任边界的负向用例）。
 - **配置测试**：`permission_mode` 缺省 / 非法回落 / `config_set_value` 写回。
-- **验收场景（scripts/acceptance，fixture 合成）**：模式切换 chip 与浮层（真机 AX 口径）、批准卡「采纳且本会话不再问」、批准卡 purpose 用途句展示（命令上方显眼位置、原文完整可见）、重定向场景一轮（mock 驱动 §4.3 链）、vault_move / vault_delete 面板呈现。视觉效果不动者免视觉门禁。
+- **验收场景（scripts/acceptance，fixture 合成）**：模式切换 chip 与浮层（真机 AX 口径；chip 断言短名、浮层断言三档全名与每档一行释义）、批准卡「采纳且本会话不再问」、批准卡 purpose 用途句展示（命令上方显眼位置、原文完整可见）、重定向场景一轮（mock 驱动 §4.3 链）、vault_move / vault_delete 面板呈现。视觉效果不动者免视觉门禁。
 
 ## 9. 明确不实现（防 scope 蔓延）
 

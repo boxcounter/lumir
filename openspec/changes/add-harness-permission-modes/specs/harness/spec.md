@@ -191,12 +191,12 @@
 
 ### Requirement: 权限模式切换
 
-composer 控制行 SHALL 提供权限 chip（位于思考 chip 之后、ctx 读数之前），显示当前模式档名（文案表 zh：只读 / 保险库写入 / 完全访问）。点击 SHALL 弹出浮层：三档单选、当前档勾选、无释义文案；浮层 SHALL 复用既有浮层可访问性口径（`role="menu"` / `menuitemradio` / `aria-checked`）。选择一档 SHALL 立即生效并经 `config_set_value` 写回 `[harness].permission_mode`；切换 MUST NOT 打断进行中的轮次（对下一个判定生效，与模型 chip 同口径）。
+composer 控制行 SHALL 提供权限 chip（位于思考 chip 之后、ctx 读数之前），**显示当前模式档的短名**（文案表 zh：只读 / 写入 / 完全；en：Read / Write / Full）——控制行同时被模型 / 思考 / 权限三个 chip 挤占，短名是「三档都能完整显示」的口径（Alex 2026-10-09 裁决）。点击 SHALL 弹出浮层：三档单选、当前档勾选、列表项显示**全名**（zh：只读 / 保险库写入 / 完全访问；en：Read Only / Vault Write / Full Access）、且**每档附一行释义**消歧档名与语义（`read_only` = 读自动放行、写操作都先问；`vault_write` = 库内写自动放行、库外命令先问；`full_access` = 全自动、仅危险命令仍问；措辞可在实现批次微调，语义方向以此为准）。浮层 SHALL 复用既有浮层可访问性口径（`role="menu"` / `menuitemradio` / `aria-checked`）。选择一档 SHALL 立即生效并经 `config_set_value` 写回 `[harness].permission_mode`；切换 MUST NOT 打断进行中的轮次（对下一个判定生效，与模型 chip 同口径）。
 
 #### Scenario: 三档浮层
 
 - **WHEN** 点击权限 chip
-- **THEN** 浮层列出三档、当前档勾选、无释义文案；选择另一档后 chip 文案更新、浮层关闭
+- **THEN** 浮层列出三档（各显示全名 + 一行释义）、当前档勾选；选择另一档后 chip 文案（短名）更新、浮层关闭
 
 #### Scenario: 切换不打断进行中轮次
 
