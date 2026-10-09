@@ -35,8 +35,8 @@ steps:
     waitFor:
       has: ["HNC-SHOULD-NOT-LAND 不应落盘"]
     expect:
-      - label: 批准闸标题在场（create 也是写类工具，默认 ask）
-        ax: { has: "vault_create 请求修改文件，采纳后才落盘：" }
+      - label: 批准闸问句在场（vault_create 专属句 D412；M406 起不带工具名，行徽章承担身份）
+        ax: { has: "要新建这个文件吗？" }
       - shot: 01-撞名闸
 
   - name: 采纳撞名新建（O_EXCL 必须在执行期拒掉）
@@ -50,8 +50,9 @@ steps:
     expect:
       - label: 撞名新建被 O_EXCL 拒掉（错误回送模型）
         ax: { has: "/error · fs_already_exists/" }
-      - label: 第一闸决策后收敛为终态记录（按钮退场，计数锚点消失的前提——M384）
-        ax: { has: "vault_create · 已采纳" }
+      - label: 第一闸决策后同行就地收敛为终态（按钮退场，计数锚点消失的前提——M406：
+          卡片移除不留置灰，第二枚采纳钮即第 0 个）
+        ax: { has: "已采纳" }
       - label: 第二个闸的 diff 预览在场
         ax: { has: "+HNC-NEW 新建落盘内容。" }
       - shot: 02-撞名被拒

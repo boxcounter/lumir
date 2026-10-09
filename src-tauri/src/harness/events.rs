@@ -117,12 +117,28 @@ pub fn approval_request(
     diff: Option<&str>,
     argv: Option<&[String]>,
 ) -> serde_json::Value {
+    approval_request_with_purpose(id, tool, diff, argv, None)
+}
+
+/// 带 purpose 的批准请求事件（M406/M407 契约）：purpose = 模型自述的用途句（cli_run 的
+/// 批准预览载荷，阅读辅助——面板在命令上方展示，命令原文永远完整可见）。`approval_request`
+/// 保持原签名作无 purpose 的包装（turn.rs 的调用点随 M407 的 schema 落地切到本函数）。
+pub fn approval_request_with_purpose(
+    id: &str,
+    tool: &str,
+    diff: Option<&str>,
+    argv: Option<&[String]>,
+    purpose: Option<&str>,
+) -> serde_json::Value {
     let mut value = serde_json::json!({"type": "approval_request", "id": id, "tool": tool});
     if let Some(diff) = diff {
         value["diff"] = serde_json::json!(diff);
     }
     if let Some(argv) = argv {
         value["argv"] = serde_json::json!(argv);
+    }
+    if let Some(purpose) = purpose {
+        value["purpose"] = serde_json::json!(purpose);
     }
     value
 }
@@ -217,6 +233,28 @@ mod tests {
             events[8],
             serde_json::json!({"type": "reasoning_chunk", "text": "先读 a.md。", "index": 0, "vault": "/tmp/vault-a"})
         );
+    }
+
+    /// approval_request 的 argv 形状钉死为 JSON **数组**（M406 类型钉桩：前端曾按 string
+    /// 读，live 渲染成逗号拼接、快照恢复整段丢弃）；purpose 缺省不出现在载荷里
+    /// （None → 字段缺席，旧前端宽容解析不受影响）。
+    #[test]
+    fn approval_request_argv_is_array_and_purpose_optional() {
+        let argv = vec!["git".to_string(), "commit".to_string()];
+        let plain = approval_request("ap-1", "cli_run", None, Some(&argv));
+        assert_eq!(plain["argv"], serde_json::json!(["git", "commit"]));
+        assert!(plain.get("purpose").is_none());
+        assert!(plain.get("diff").is_none());
+
+        let with_purpose = approval_request_with_purpose(
+            "ap-2",
+            "cli_run",
+            None,
+            Some(&argv),
+            Some("提交周报改动"),
+        );
+        assert_eq!(with_purpose["purpose"], serde_json::json!("提交周报改动"));
+        assert_eq!(with_purpose["argv"], serde_json::json!(["git", "commit"]));
     }
 
     /// 标识来自**包装时的作用域**，不是全局态：两个 sink 各盖各的，互不串。

@@ -28,12 +28,15 @@ const VAULT: VaultFixture = {
 /** `harness_state` 的零态桩：与 Rust `StateSnapshot::empty` 同形（session.rs：messages 空、
  *  usage 零值、pending_approval null、warn_ctx_pct 85）。真后端对新会话返回的就是这份；
  * 通用 stub 不认识 harness_* 命令，不补这条桩 transcript 会停在未初始化态——那不是用户看到
- * 的空会话形态（HP1 起用量读数随头部栏退场，本条桩只为 messages 空态服务）。 */
+ * 的空会话形态（HP1 起用量读数随头部栏退场，本条桩只为 messages 空态服务）。
+ * M406 起补两条会话清单桩：harness_list_sessions 返回两份合成留存（浮层只列历史会话），
+ * harness_delete_session 记录参数并成功返回（行内删除的确认路径）。 */
 async function stubHarnessState(page: Page): Promise<void> {
   await page.addInitScript(() => {
     const w = window as unknown as Record<string, any>;
     const invoke = w.__TAURI_INTERNALS__.invoke as (cmd: string, args: unknown) => unknown;
-    w.__TAURI_INTERNALS__.invoke = async (cmd: string, args: unknown) => {
+    w.__deletedSessions = [] as string[];
+    w.__TAURI_INTERNALS__.invoke = async (cmd: string, args: any) => {
       if (cmd === "harness_state") {
         return JSON.stringify({
           messages: [],
@@ -41,6 +44,16 @@ async function stubHarnessState(page: Page): Promise<void> {
           pending_approval: null,
           warn_ctx_pct: 85,
         });
+      }
+      if (cmd === "harness_list_sessions") {
+        return JSON.stringify([
+          { session_id: "s1759912345678-k3x9ab", first_user_text: "帮我整理这份笔记", ts: 1759912345 },
+          { session_id: "s1759912000000-a1b2c3", first_user_text: "旧会话草稿", ts: 1759912000 },
+        ]);
+      }
+      if (cmd === "harness_delete_session") {
+        w.__deletedSessions.push(args.session_id as string);
+        return null;
       }
       return invoke(cmd, args);
     };
@@ -91,7 +104,12 @@ test("对话面板：pane 口径展开态结构 + 标题栏元素级基线", asy
   const seg = page.locator(".lumir-hp-seg");
   await expect(seg).toBeVisible();
   await expect(seg.locator(".lumir-hp-sname")).toHaveText("新会话");
-  await expect(seg.locator(".lumir-hp-seg-new")).toContainText("新会话");
+  // M406：新建会话钮图标化——可见文字退场（纯＋glyph），可读身份 = D330 悬停/读屏名。
+  const segNew = seg.locator(".lumir-hp-seg-new");
+  await expect(segNew).toHaveAttribute("aria-label", "新会话");
+  await expect(segNew).toHaveAttribute("title", "新会话");
+  await expect(segNew.locator(".lumir-hp-plus")).toHaveCount(1);
+  await expect(segNew).not.toContainText("新会话");
   // 双 pane 右簇退让：harness toggle 钮隐藏（标题栏腾给标签段与 harness 段按比分宽）。
   await expect(toggle).toBeHidden();
   // 面板区块：空态提示、chip（视口口径）、composer、发送钮。
@@ -110,12 +128,29 @@ test("对话面板：pane 口径展开态结构 + 标题栏元素级基线", asy
     page.locator(".titlebar-traffic .titlebar-identity"),
   ).toBeVisible();
 
-  // 会话名下拉浮层（节点 1 裁决：只含「新建会话」一个动作项，不列历史）。
+  // 会话名下拉浮层（M406：只列本 vault 历史会话，「新建会话」动作项退场——新建归首行
+  // 加号钮；每行 = 恢复钮 + × 删除钮，删除走行内两步确认）。
   await page.locator(".lumir-hp-session").click();
   const pop = page.locator(".lumir-hp-sesspop");
   await expect(pop).toBeVisible();
-  await expect(pop.locator(".lumir-hp-sesspop-item")).toHaveCount(1);
-  await expect(pop.locator(".lumir-hp-sesspop-item")).toContainText("新会话");
+  const rows = pop.locator(".lumir-hp-sesspop-row");
+  await expect(rows).toHaveCount(2);
+  // 行 = 恢复钮（会话名 + 相对时间）+ 删除钮（×，读屏名 D417）；无「新建会话」动作项。
+  const firstItem = rows.nth(0).locator(".lumir-hp-sesspop-item");
+  await expect(firstItem).toHaveClass(/lumir-hp-sesspop-history/);
+  await expect(firstItem.locator(".lumir-hp-sesspop-name")).toHaveText("帮我整理这份笔记");
+  await expect(pop.locator(".lumir-hp-sesspop-del")).toHaveCount(2);
+  await expect(pop.locator(".lumir-hp-sesspop-del").first()).toHaveAttribute("aria-label", "删除该会话");
+  // 行内两步确认：× → 行换确认态（D418 问句 + 删除/取消）；取消还原，确认才删。
+  await pop.locator(".lumir-hp-sesspop-del").first().click();
+  await expect(rows.nth(0)).toContainText("删除这段会话的本地留存？");
+  await rows.nth(0).locator(".lumir-hp-sesspop-confirm-no").click();
+  await expect(rows.nth(0).locator(".lumir-hp-sesspop-item")).toHaveCount(1); // 还原
+  await pop.locator(".lumir-hp-sesspop-del").first().click();
+  await rows.nth(0).locator(".lumir-hp-sesspop-confirm-yes").click();
+  await expect(rows).toHaveCount(1); // 删除成功：行移除，剩余一行
+  const deleted = await page.evaluate(() => (window as unknown as { __deletedSessions: string[] }).__deletedSessions);
+  expect(deleted).toEqual(["s1759912345678-k3x9ab"]);
   // 浮层外交互收起。
   await page.locator(".lumir-hp-transcript").click();
   await expect(pop).toBeHidden();

@@ -60,8 +60,8 @@ steps:
     expect:
       - label: 根外技能名被拒（路径逃逸拒绝）
         ax: { has: "/error · skill_name_invalid/" }
-      - label: 正常技能加载成功（成功行 = 调用参数摘要；M368 起模板「工具 {name}：{summary}」）
-        ax: { has: '工具 skill_load：{"name":"probe-skill"}' }
+      - label: 正常技能加载成功（成功行 = 工具徽章 + 人话化参数；M406 起 JSON 摘要不上屏）
+        ax: { has: '/skill_load\s*probe-skill/' }
       - shot: 01-skill 加载
 ---
 

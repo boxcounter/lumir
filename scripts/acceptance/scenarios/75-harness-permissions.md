@@ -39,7 +39,7 @@ steps:
       has: ["权限验收回答：一拒一放。"]
     expect:
       - label: 两个调用都没进批准闸（cli 默认 ask，规则命中后不再问）
-        ax: { not: "请求执行命令，采纳后才运行" }
+        ax: { not: "要运行这条命令吗？" }
       - label: rm 没有真跑——文件内容逐字节不变
         file: { path: harness-note.md, unchangedSince: before }
       - label: rm 没有真跑——mtime 未推进
@@ -55,15 +55,15 @@ steps:
     expect:
       - label: rm 被 deny 规则拒掉（同时命中 allow 的 cli(*)——deny 优先）
         ax: { has: "/denied · permission_denied/" }
-      - label: echo 命中 allow 直接执行成功（成功行 = 调用参数摘要；M368 起模板「工具 {name}：{summary}」）
-        ax: { has: '工具 cli_run：{"command":"echo","args":["HNE-ALLOWED"]}' }
+      - label: echo 命中 allow 直接执行成功（成功行 = 工具徽章 + 人话化参数；M406 起 JSON 摘要不上屏）
+        ax: { has: '/cli_run\s*echo HNE-ALLOWED/' }
       - shot: 01-一拒一放
 ---
 
 spec 判据（harness「权限机制 · deny 优先」）：一条 cli_run 同时匹配 allow 与 deny 规则时
 被拒绝并把原因回送模型、不进入批准闸；allow 命中免批准执行。fixture 在同一轮里发两个
 cli_run：rm（同时命中 cli(*) 与 cli(rm *)）与 echo（只命中 cli(*)）。「没进闸」这条
-负向断言的正观测 = 两条工具行都在场（一拒一放：失败行保留状态与错误码、成功行带调用参数摘要）。
+负向断言的正观测 = 两条工具行都在场（一拒一放：失败行保留状态与错误码尾注、成功行为工具徽章加人话化参数）。
 
 M351（change harness-pane-visual-fidelity）起 ≥2 行的工具清单在轮次终态折叠为一行摘要钮
 （D387「{count} 个工具调用 · 全部完成」），折叠态步骤行 `hidden` 不进 AX 树——因此工具行

@@ -42,9 +42,9 @@ steps:
       - label: 有序性三判据（整树正则）：ORD1 → 工具行 → ORD2——工具行保持在它发生的
           文本段之前的原位（M374；旧实现工具块挂消息末尾，本正则必红）
         ax:
-          has: '/ORD1-先读文件再回答。[\s\S]*工具 vault_read：\{"path":"harness-note.md"\}[\s\S]*ORD2-最终答案在工具之后。/'
-      - label: 工具行带参数摘要（成功行上屏形态，M368 口径不变）
-        ax: { has: '工具 vault_read：{"path":"harness-note.md"}' }
+          has: '/ORD1-先读文件再回答。[\s\S]*vault_read\s*harness-note\.md[\s\S]*ORD2-最终答案在工具之后。/'
+      - label: 工具行 = 徽章 + 人话化参数（M406 起成功行上屏形态，JSON 原文不上屏）
+        ax: { has: '/vault_read\s*harness-note\.md/' }
       - label: 首轮正文保留（ORD1 与 ORD2 同轮共存）
         ax: { has: "ORD1-先读文件再回答。" }
       - label: JSONL 记下这次工具调用（wire 口径：llm_response 的 tool_calls）
@@ -66,10 +66,12 @@ sealedToolBlocks），定稿按段全量重渲、工具块位置不动。本场�
 
 ## 断言口径
 
-- **有序性**：`ax.text` 是整棵 AX 树的扁平文本，有序正则 `/ORD1…[\s\S]*工具…[\s\S]*ORD2…/`
+- **有序性**：`ax.text` 是整棵 AX 树的扁平文本，有序正则 `/ORD1…[\s\S]*vault_read…[\s\S]*ORD2…/`
   一次读取里钉死三段相对位置（REVIEW.md 第 1 条的写法：先造必红输入——旧实现工具在
-  ORD2 之后，本正则必红；区分度已自证）。
-- **工具行形态**：沿用 M368 的「工具 {name}：{summary}」成功行口径（71 号场景同锚）。
+  ORD2 之后，本正则必红；区分度已自证）。相邻 span 在 AX 树里会被合并、分隔形态不固定，
+  徽章名与参数之间用 `\s*` 容错（M406 口径）。
+- **工具行形态**：M406 起成功行 = 工具徽章 + `humanizeToolArgs` 人话化参数（71 号场景同锚），
+  参数 JSON 原文不再上屏。
 - **单工具行不折叠**：≥2 行才折叠成摘要钮，本场景恰好 1 行，行本体就是断言锚。
 
 ## 环境与副作用

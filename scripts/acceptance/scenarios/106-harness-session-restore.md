@@ -73,8 +73,10 @@ steps:
           painted: { min: 60 }
       - shot: 01-选择器
 
-  - name: 点历史会话行——恢复续聊（恢复命令读末条 llm_request、折叠末尾响应、开新留存文件）
-    do: click
+  - name: 点历史会话行——恢复续聊（恢复命令读末条 llm_request、折叠末尾响应、开新留存文件；
+      M406 起行走 clickInNode 坐标通道——menuitem 嵌进行壳（div + 删除钮兄弟）后，KimiCU 的
+      菜单快照守卫对索引点击一律报 stale「menu item is no longer on-screen」，两跑两复现）
+    do: clickInNode
     target: { name: "zqxalpha" }
 
   - name: 等恢复完成（会话名落回源会话首条用户消息）
@@ -156,6 +158,9 @@ design §6。
   选择器 chip 同一映射，README「已知边界」的 M351 条）；历史会话行 `role="menuitem"`。**行与恢复
   后的会话名钮都按裸正则源名 `zqxalpha` 定位**，不锁 role——`menuitem` 在 WKWebView 里的映射 role
   未经真机实证，裸名匹配只要求 title/label/value 任一含该串（`lib/ax.mjs` 的 `findNode`）。
+  **点击走 `clickInNode`（坐标注入）而不是 `click`（AX 索引）**（M406 起）：行内加删除钮后
+  menuitem 外面套了 div 行壳，KimiCU 对菜单项的索引点击会过一道「菜单快照未变」守卫，该形态下
+  一律报 stale（「menu item is no longer on-screen」，2026-10-09 两跑两复现）——坐标点击不经该守卫。
 - **浮层真实可见是两段断言（M397，合同 docs/specs/overlay-visibility.md 的 O1/O2）**：`geom` 断言
   对历史行取几何包围盒，一段钉 O2（包围盒完整、非退化、落在视口内），一段钉 O1（在包围盒区域内
   扫描亮度跨度，要求确有已绘制的字形）。**两段缺一不可**：WKWebView 的 AX 对被祖先 `overflow`

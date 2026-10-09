@@ -52,7 +52,10 @@
 // effort 不支持 hover hint / ctx 读数含义 hint / 浮层段标签 ×2 / 浮层读屏名 / chip 读屏名
 // 未知态降级 D399）、D400 为 M374 停止中阶段行（stopping 相位即时反馈）、D401 为 M378
 // hover hint 第二行（cache hit rate 带值）、D402 / D403 为 M381 config-only 空清单提示态
-//（浮层模型段占位句 + chip 读屏名空态——不伪造模型条目）；D409–D411 为 M391 登记的会话恢复
+//（浮层模型段占位句 + chip 读屏名空态——不伪造模型条目）；D405–D408 为批准终态行
+//（结果词 / 详情入口 / 原因句——M406 起挂在收敛后的同一工具行上）；D412–D416 为 M406
+// 批准卡问句分工与副句、待决行尾注（D343/D344 的工具行整句模板随人话化三段式退场，
+// 编号停用）；D417–D419 为 M406 会话删除（行内删除钮读屏名 / 确认句 / 确认钮）；D409–D411 为 M391 登记的会话恢复
 // 三错误码（harness_session_unreadable / _invalid / _vault_mismatch）——M392 恢复选择器的
 // 消费点：恢复失败经 src/copy.ts 的 errorText 按 code 渲染上错误行（D348 的 {message}）；
 // 选择器行本身不新造文案（无历史会话 = 不渲染清单容器，会话名缺原文回落 D330「新会话」））；M378 起面板内容字号支持 ⌘+/- 步进
@@ -73,6 +76,7 @@ import {
   errorMessage,
   harnessAbort,
   harnessApprove,
+  harnessDeleteSession,
   harnessListSessions,
   harnessNewSession,
   harnessResumeSession,
@@ -993,26 +997,13 @@ export function thinkingStateOf(snapshot: unknown): { level: string; supported: 
  * 那份同源，M367）——「`done` 的摘要不是失败形状」即「这次调用成功」。
  *
  * 形状（而非固定状态词清单）是有意的：core 将来加细分状态时前端不用同批改；认不出的摘要
- * （桩环境 / 视觉场景直接 fire 的自定义摘要）走「不是失败」那一支，仍然原样上屏 done 的原文
- * （见 toolDoneSummary 的回落）——不伪造、不吞信息。
+ * （桩环境 / 视觉场景直接 fire 的自定义摘要）走「不是失败」那一支——不伪造、不吞信息。
  *
  * 这是跨层字符串耦合（REVIEW.md 第 8 条的口味，同族：前端认 core 的摘要格式）。根治办法是
  * core 把 live `done` 事件的 summary 也换成持久化的那份（成功 = 参数摘要），前端零判定；
  * 已作为后续项上报，未落之前先在这里判定一次，不各算一份摘要。
  */
 const TOOL_FAILED_SUMMARY = /^[a-z]+ · [a-z0-9_]+: /;
-
-/**
- * 工具行终态上屏的摘要（D344 的 `{summary}`）：
- * - **失败** → `done` 事件的原文（`状态 · 错误码: 消息`），状态与错误原样保留；
- * - **成功** → 参数摘要（`startedSummary`：live 取 `started` 事件、恢复路径取面板持久化的
- *   `summary`，同一份）；`startedSummary` 为空时（恢复路径没有 started 行、乱序 `done`、
- *   桩环境）回落 `done` 的摘要——没有更早的那份可用就不伪造。
- */
-export function toolDoneSummary(doneSummary: string, startedSummary: string): string {
-  if (TOOL_FAILED_SUMMARY.test(doneSummary)) return doneSummary;
-  return startedSummary !== "" ? startedSummary : doneSummary;
-}
 
 /**
  * 快照恢复路径上一条 assistant 记录的正文：缺 `text` / 非字符串 / 空白串 → `null`
@@ -1042,6 +1033,134 @@ export function restoredReasoningText(record: unknown): string | null {
   const reasoning = (record as { reasoning?: unknown }).reasoning;
   if (typeof reasoning !== "string") return null;
   return reasoning.trim() === "" ? null : reasoning;
+}
+
+// ---------------------------------------------------------------------------
+// 工具行摘要人话化 + argv 拼接 + 拒绝原因提取的纯函数层（M406，harness 面板改进批次）。
+// 数据口径：`started` 事件的 summary 是工具参数 JSON 原文（core 侧 `summarize_args`，
+// 80 字截断——单一真源在 src-tauri/src/harness/turn.rs，MUST NOT 前端另算一份参数）；
+// 人话化是**展示层提取**（按工具名取关键参数：cli_run=完整命令、vault_*=路径、
+// vault_search=查询词、skill_load=技能名），截断 / 非 JSON / 未知工具一律回落原文，
+// 不伪造。gated 调用的完整参数在 approval_request 载荷里（argv 数组 / diff 头文件名），
+// 到达后取代截断摘要。与上面几层同一条分层纪律：纯函数零 DOM（tests/unit 直接驱动）。
+// ---------------------------------------------------------------------------
+
+/** argv → 单行命令文本（纯展示拼接）：含空白或引号的参数加双引号，内层 " 与 \ 转义。 */
+export function formatArgv(argv: readonly string[]): string {
+  return argv
+    .map((arg) =>
+      /[\s"']/.test(arg) ? `"${arg.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"` : arg,
+    )
+    .join(" ");
+}
+
+/** 从解析后的工具参数 JSON 提取关键参数（工具参数 schema 的单一真源在 core 的 tools.rs）。
+ *  取不到 → null（调用方回落原文）。 */
+function keyArgOf(name: string, args: Record<string, unknown>): string | null {
+  switch (name) {
+    case "cli_run": {
+      const command = typeof args.command === "string" ? args.command : "";
+      if (command === "") return null;
+      const rest = Array.isArray(args.args)
+        ? args.args.filter((a): a is string => typeof a === "string")
+        : [];
+      return formatArgv([command, ...rest]);
+    }
+    case "vault_read":
+    case "vault_create":
+    case "vault_patch":
+      return typeof args.path === "string" && args.path !== "" ? args.path : null;
+    case "vault_list":
+      return typeof args.path === "string" && args.path !== "" ? args.path : "/";
+    case "vault_search":
+      return typeof args.query === "string" && args.query !== "" ? args.query : null;
+    case "skill_load":
+      return typeof args.name === "string" && args.name !== "" ? args.name : null;
+    default:
+      return null;
+  }
+}
+
+/** started / done 事件 summary 的人话化（见段头注释）：JSON 参数按工具名提取关键参数；
+ *  截断串 / 非 JSON / 未知工具 / 缺关键字段 → 原文返回（不伪造、不吞信息）。 */
+export function humanizeToolArgs(name: string, summary: string): string {
+  if (summary === "") return "";
+  const strict = humanizeToolArgsStrict(name, summary);
+  return strict !== "" ? strict : summary;
+}
+
+/** 严格版人话化：只在 JSON 完整且关键参数取得到时返回值，否则 ""（调用方据此判
+ *  「这份 summary 根本不是参数 JSON」——如持久化失败摘要走原文上屏、恢复路径拒绝行
+ *  的 args 格留空）。 */
+export function humanizeToolArgsStrict(name: string, summary: string): string {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(summary);
+  } catch {
+    return ""; // 80 字截断的 JSON 半边、持久化失败摘要、桩环境的自定义摘要
+  }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return "";
+  return keyArgOf(name, parsed as Record<string, unknown>) ?? "";
+}
+
+/** unified diff 的文件名（core diff.rs 头两行 `--- a/{path}` / `+++ b/{path}`；取不到 → null）。 */
+export function diffPathOf(diff: string): string | null {
+  for (const line of diff.split("\n")) {
+    if (line.startsWith("+++ b/")) return line.slice("+++ b/".length);
+  }
+  return null;
+}
+
+/** 恢复路径的拒绝原因（M406）：tool 面板记录的 text 是工具输出 JSON——approval_rejected
+ *  的 message 即用户拒绝原因全文（summary 里那份被 80 字截断，不取）。形状不符 → null
+ *  （不伪造原因行）。 */
+export function rejectedReasonOf(record: unknown): string | null {
+  if (typeof record !== "object" || record === null) return null;
+  const text = (record as { text?: unknown }).text;
+  if (typeof text !== "string") return null;
+  let value: unknown;
+  try {
+    value = JSON.parse(text);
+  } catch {
+    return null;
+  }
+  if (typeof value !== "object" || value === null) return null;
+  const out = value as { code?: unknown; message?: unknown };
+  if (out.code === "approval_rejected" && typeof out.message === "string" && out.message.trim() !== "") {
+    return out.message;
+  }
+  return null;
+}
+
+/** 恢复路径的失败详情（M406）：tool 面板记录的 text 是工具输出 JSON——denied / error
+ *  终态行尾注用 `{code}: {message}` 全文（summary 里那份被 80 字截断，不取）。输出非
+ *  失败形状 → null（不伪造尾注）。 */
+export function failureTextOf(record: unknown): string | null {
+  if (typeof record !== "object" || record === null) return null;
+  const text = (record as { text?: unknown }).text;
+  if (typeof text !== "string") return null;
+  let value: unknown;
+  try {
+    value = JSON.parse(text);
+  } catch {
+    return null;
+  }
+  if (typeof value !== "object" || value === null) return null;
+  const out = value as { ok?: unknown; code?: unknown; message?: unknown };
+  if (out.ok !== false || typeof out.code !== "string") return null;
+  const message = typeof out.message === "string" ? out.message : "";
+  return message === "" ? out.code : `${out.code}: ${message}`;
+}
+
+/** gated 调用批准载荷的关键参数全文（行内人话化的「完整版」数据源）：cli_run = argv 拼接；
+ *  写工具 = diff 头文件名；都无 → ""。 */
+export function approvalArgsText(request: {
+  diff?: string | undefined;
+  argv?: readonly string[] | undefined;
+}): string {
+  if (request.argv !== undefined) return formatArgv(request.argv);
+  if (request.diff !== undefined) return diffPathOf(request.diff) ?? "";
+  return "";
 }
 
 
@@ -1330,13 +1449,21 @@ function finalizedUpTo(source: string): number {
 // 面板本体
 // ---------------------------------------------------------------------------
 
-/** 待决批准项的已存数据（relabel 时据此重渲，不丢按钮状态）。 */
+/** 待决批准项的已存数据（relabel 时据此重渲，不丢按钮状态）。M406 收敛单行生命周期
+ *（原型 harness-tool-card-merge variant B）：批准卡就地挂在该调用工具行的下方
+ *（.lumir-hp-pend 壳 = 行 + 卡同一单元），row = 挂点行（就地升级为「等待批准」）、
+ * argsText = 批准载荷的关键参数全文（终态行沿用同一份，不再退回截断摘要）。 */
 interface PendingApproval {
   id: string;
   tool: string;
   diff?: string | undefined;
-  argv?: string | undefined;
+  argv?: string[] | undefined;
+  /** 模型自述的用途句（M407 契约字段，可缺席——阅读辅助，不替代命令原文）。 */
+  purpose?: string | undefined;
+  argsText: string;
   element: HTMLElement;
+  row: HTMLElement;
+  wrap: HTMLElement;
 }
 
 export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
@@ -1404,29 +1531,18 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   segNewPlus.className = "lumir-hp-plus";
   segNewPlus.setAttribute("aria-hidden", "true");
   segNewPlus.textContent = "＋"; // i18n-exempt: glyph（全角加号图形，非文案）
-  const segNewLabel = document.createElement("span");
-  segNew.append(segNewPlus, segNewLabel);
-  // 会话浮层：「新建会话」动作项 + 本 vault 历史会话极简选择器（M392，design §6.1——
-  // 只列不管理：无重命名 / 删除 / 搜索 / 分组；点一项即恢复续聊）。清单每次打开现拉现建
-  // （会话在对话进行中持续增长，不囤旧清单）；空历史时清单容器整段隐藏。
+  segNew.append(segNewPlus); // M406：纯加号图标钮（可见文字退场，悬停/读屏名 D330 见 applyLabels）
+  // 会话浮层（M406）：只有本 vault 历史会话选择器（原「新建会话」动作项退场——新建归首行
+  // 加号钮，两个入口一个语义收窄为一个）。清单每次打开现拉现建（会话在对话进行中持续增长，
+  // 不囤旧清单）；每行 = 恢复钮 + 删除钮（行内确认，M406 会话删除）；空历史时浮层不开。
   const sessPop = document.createElement("div");
   sessPop.className = "lumir-hp-sesspop";
   sessPop.setAttribute("role", "menu");
   sessPop.hidden = true;
-  const sessPopItem = document.createElement("button");
-  sessPopItem.type = "button";
-  sessPopItem.className = "lumir-hp-sesspop-item";
-  sessPopItem.setAttribute("role", "menuitem");
-  const popPlus = document.createElement("span");
-  popPlus.className = "lumir-hp-plus";
-  popPlus.setAttribute("aria-hidden", "true");
-  popPlus.textContent = "＋"; // i18n-exempt: glyph（全角加号图形，非文案）
-  const popLabel = document.createElement("span");
-  sessPopItem.append(popPlus, popLabel);
   const sessList = document.createElement("div");
   sessList.className = "lumir-hp-sesspop-list";
   sessList.hidden = true;
-  sessPop.append(sessPopItem, sessList);
+  sessPop.append(sessList);
   sessionWrap.append(sessionButton, sessPop);
   seg.append(sessionWrap, segNew);
   // 段进标题栏（toggle 钮之前；hidden 长驻，在场与否随 attach 状态翻）——装配层只管宽度
@@ -2083,8 +2199,9 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     toggleButton.setAttribute("aria-label", t("D327"));
     panel.setAttribute("aria-label", t("D327"));
     seg.setAttribute("aria-label", t("D375"));
-    segNewLabel.textContent = t("D330");
-    popLabel.textContent = t("D330");
+    // 加号钮的可见文字已退场（M406）：可读身份只剩悬停提示 / 读屏名（与 toggle 钮同口径）。
+    segNew.title = t("D330");
+    segNew.setAttribute("aria-label", t("D330"));
     applySessionName();
     composer.dataset.placeholder = t("D328");
     composer.setAttribute("aria-label", t("D328"));
@@ -2740,13 +2857,13 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   }
 
   // ── 工具调用清单（M351 还原原型屏 4 形态，design §2.4/§3.3；Alex 2026-10-06 裁决）──
-  /** 步骤行图标（i18n-exempt 图形）：done = ✓（原型 SVG，颜色经 .is-done 的 --ok 上色）；
-   *  running = 脉冲点（CSS 呼吸动画，--run 色）。 */
-  function createToolIcon(done: boolean): HTMLElement {
+  /** 步骤行图标（i18n-exempt 图形）：done = ✓、fail = ✕（原型 SVG，颜色经 .is-done /
+   *  .is-fail / .is-rej 的 --ok / --danger 上色）；running = 脉冲点（CSS 呼吸动画，--run 色）。 */
+  function createToolIcon(kind: "running" | "done" | "fail"): HTMLElement {
     const ic = document.createElement("span");
     ic.className = "lumir-hp-tool-ic";
     ic.setAttribute("aria-hidden", "true");
-    if (done) {
+    if (kind !== "running") {
       const svg = document.createElementNS(SVG_NS, "svg");
       svg.setAttribute("width", "11");
       svg.setAttribute("height", "11");
@@ -2757,7 +2874,10 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       svg.setAttribute("stroke-linecap", "round");
       svg.setAttribute("stroke-linejoin", "round");
       const path = document.createElementNS(SVG_NS, "path");
-      path.setAttribute("d", "M2 6.5 4.8 9.3 10 3.5");
+      path.setAttribute(
+        "d",
+        kind === "done" ? "M2 6.5 4.8 9.3 10 3.5" : "M3.5 3.5l5 5M8.5 3.5l-5 5",
+      );
       svg.append(path);
       ic.append(svg);
     } else {
@@ -2766,6 +2886,31 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       ic.append(pulse);
     }
     return ic;
+  }
+
+  /** 工具行的三段式文本（M406 摘要人话化 + Alex 区分度精化，原型 .ttext）：工具名徽章
+   *（mono，身份）+ 关键参数全文（mono accent，等宽完整显示命令 / 文件名）+ 可选尾注
+   *（次级读数：等待批准 / 失败摘要等）。截断只落参数段（CSS ellipsis），尾注不截。 */
+  function createToolText(name: string, args: string, tail?: string): HTMLElement {
+    const text = document.createElement("span");
+    text.className = "lumir-hp-tool-text";
+    const nameEl = document.createElement("span");
+    nameEl.className = "lumir-hp-tool-name";
+    nameEl.textContent = name;
+    text.append(nameEl);
+    if (args !== "") {
+      const argsEl = document.createElement("span");
+      argsEl.className = "lumir-hp-tool-args";
+      argsEl.textContent = args;
+      text.append(document.createTextNode(" "), argsEl);
+    }
+    if (tail !== undefined && tail !== "") {
+      const outEl = document.createElement("span");
+      outEl.className = "lumir-hp-tool-out";
+      outEl.textContent = `· ${tail}`;
+      text.append(document.createTextNode(" "), outEl);
+    }
+    return text;
   }
 
   function createToolLabel(text: string): HTMLElement {
@@ -2849,23 +2994,50 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     }
   }
 
-  /** live「started」行的参数摘要（M368）：done 行取用——工具**成功**时 `done` 事件只发
+  /** live「started」行的参数摘要（M368）：done 翻面取用——工具**成功**时 `done` 事件只发
    *  它自己的固定串（认不出成功侧文案，见 TOOL_FAILED_SUMMARY），参数摘要在 live 路径只有
    *  `started` 这一份。按行元素存（行与事件按 block.running 配对）：随行生灭，WeakMap 不
-   *  阻挡行被回收；恢复路径没有 started 行，故没有条目。 */
+   *  阻挡行被回收；gated 调用在 appendApproval 升级时即弃（批准载荷全文取代截断摘要）；
+   *  恢复路径没有 started 行，故没有条目。 */
   const startedArgs = new WeakMap<HTMLElement, string>();
 
-  /** 步骤行追加 / 翻转：started 追加 running 行；done 翻最后一行 running 行（事件配对与
-   *  既有 lastToolEl 口径同源），无 running 行（恢复路径 / 乱序防御）直接追加 done 行。
-   *  行文案沿用 D343/D344——真机场景 71/72/75/77 的 AX 断言锚这两份文案。
-   *  M368：done 行的 `{summary}` 取 toolDoneSummary 的判定（成功 = 参数摘要、失败 =
-   *  状态+错误），故 started 行的摘要要留到 done 用。 */
+  /** 批准决策后的 done 抑制槽（M406 单行生命周期）：决策把 running 行就地收敛为终态行，
+   *  同一调用的 done 事件随后到达时不再建行（同一调用两份留痕正是本批收敛要消的形态）。
+   *  按名匹配 + 单槽：工具循环顺序执行，同一时刻至多一个已决待收尾的调用。批准了但执行
+   *  失败（失败形状摘要）时把失败文本追加为该行尾注并翻失败态——决策词（已采纳）保留，
+   *  执行结果如实补记。 */
+  let settledAwaitingDone: { name: string; row: HTMLElement; approved: boolean } | null = null;
+
+  /** 步骤行追加 / 翻转（M406 人话化版）：started 追加 running 行（名徽章 + 人话化参数）；
+   *  done 翻 block.running 行——失败（TOOL_FAILED_SUMMARY 形状）→ is-fail + ✕ + 失败摘要
+   *  尾注，成功 → is-done + ✓ + 参数（无尾注：成功侧 done 摘要恒为固定串，零信息量）。
+   *  无 running 行的乱序 done（恢复路径不走这里，见 appendSnapshotMessage）直接建行。 */
   function appendToolCall(name: string, status: "started" | "done", summary: string): void {
+    // 抑制槽判定先于 ensureToolsBlock：槽命中时不建行，也不该为被抑制的 done 开新块。
+    if (status === "done" && settledAwaitingDone !== null && settledAwaitingDone.name === name) {
+      const slot = settledAwaitingDone;
+      settledAwaitingDone = null;
+      if (slot.approved && TOOL_FAILED_SUMMARY.test(summary)) {
+        // 批准了但执行失败：终态行翻失败态 + 失败文本尾注（决策词「已采纳」不动）。
+        slot.row.classList.replace("is-done", "is-fail");
+        const ic = slot.row.querySelector(".lumir-hp-tool-ic");
+        if (ic !== null) ic.replaceWith(createToolIcon("fail"));
+        const text = slot.row.querySelector(".lumir-hp-tool-text");
+        if (text !== null) {
+          const outEl = document.createElement("span");
+          outEl.className = "lumir-hp-tool-out";
+          outEl.textContent = `· ${summary}`;
+          text.append(document.createTextNode(" "), outEl);
+        }
+      }
+      scrollToBottom();
+      return;
+    }
     const block = ensureToolsBlock();
     if (status === "started") {
       const row = document.createElement("div");
       row.className = "lumir-hp-tool-row is-running";
-      row.append(createToolIcon(false), createToolLabel(t("D343", { name })));
+      row.append(createToolIcon("running"), createToolText(name, humanizeToolArgs(name, summary)));
       startedArgs.set(row, summary);
       block.el.append(row);
       block.rows.push(row);
@@ -2873,18 +3045,29 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     } else if (block.running !== null) {
       const row = block.running;
       block.running = null;
-      row.classList.replace("is-running", "is-done");
       const args = startedArgs.get(row) ?? "";
       startedArgs.delete(row);
+      const failed = TOOL_FAILED_SUMMARY.test(summary);
+      row.classList.replace("is-running", failed ? "is-fail" : "is-done");
       row.replaceChildren(
-        createToolIcon(true),
-        createToolLabel(t("D344", { name, summary: toolDoneSummary(summary, args) })),
+        createToolIcon(failed ? "fail" : "done"),
+        // 成功：宽松人话化（截断 JSON 回落原文，有信息量）；失败：严格版（失败摘要不是
+        // 参数 JSON，严格版取空 → 参数格留空，失败全文走尾注）。
+        createToolText(
+          name,
+          failed ? humanizeToolArgsStrict(name, args) : humanizeToolArgs(name, args),
+          failed ? summary : undefined,
+        ),
       );
     } else {
-      // 无 running 行（恢复路径 / 乱序 done）：没有更早的那份摘要可回落，done 的原文即全部。
+      // 无 running 行（乱序 done / 桩环境）：没有更早的那份摘要可用，done 原文按形状判定。
+      const failed = TOOL_FAILED_SUMMARY.test(summary);
       const row = document.createElement("div");
-      row.className = "lumir-hp-tool-row is-done";
-      row.append(createToolIcon(true), createToolLabel(t("D344", { name, summary })));
+      row.className = failed ? "lumir-hp-tool-row is-fail" : "lumir-hp-tool-row is-done";
+      row.append(
+        createToolIcon(failed ? "fail" : "done"),
+        createToolText(name, humanizeToolArgsStrict(name, summary), failed ? summary : undefined),
+      );
       block.el.append(row);
       block.rows.push(row);
     }
@@ -2929,14 +3112,46 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   }
 
   // ── 批准闸 ───────────────────────────────────────────────────────────────
+  /** 批准卡问句与副句（M406 收敛版，文案分工见 copy-data D339 上方注释）：问句按工具名
+   *  分发（cli_run / vault_create / vault_patch 各有专句，其它工具回落 D415）；副句按
+   *  载荷形状（命令类 = argv → D414，写类 = diff → D413，都无则无副句）。 */
+  function approvalAskOf(tool: string, hasDiff: boolean, hasArgv: boolean): { ask: string; sub: string | null } {
+    const ask =
+      tool === "cli_run"
+        ? t("D340")
+        : tool === "vault_create"
+          ? t("D412")
+          : tool === "vault_patch"
+            ? t("D339")
+            : t("D415", { tool });
+    const sub = hasArgv ? t("D414") : hasDiff ? t("D413") : null;
+    return { ask, sub };
+  }
+
   function relabelApproval(pending: PendingApproval): void {
+    const { ask, sub } = approvalAskOf(pending.tool, pending.diff !== undefined, pending.argv !== undefined);
     const titleEl = pending.element.querySelector(".lumir-hp-approval-title");
     if (titleEl !== null) {
-      titleEl.textContent =
-        pending.diff !== undefined ? t("D339", { tool: pending.tool }) : t("D340", { tool: pending.tool });
+      const nodes: Node[] = [document.createTextNode(ask)];
+      if (sub !== null) {
+        const subEl = document.createElement("span");
+        subEl.className = "lumir-hp-approval-sub";
+        subEl.textContent = sub;
+        nodes.push(subEl);
+      }
+      titleEl.replaceChildren(...nodes);
     }
-    const reason = pending.element.querySelector<HTMLInputElement>(".lumir-hp-reason");
-    if (reason !== null) reason.placeholder = t("D338");
+    // 待决行的「等待批准」尾注同口径重取（行是交互中的 UI，不是历史记录）；argsText 是
+    // 数据（命令 / 文件名），不译文。
+    pending.row.replaceChildren(
+      createToolIcon("running"),
+      createToolText(pending.tool, pending.argsText, t("D416")),
+    );
+    const reason = pending.element.querySelector<HTMLTextAreaElement>(".lumir-hp-reason");
+    if (reason !== null) {
+      reason.placeholder = t("D338");
+      reason.setAttribute("aria-label", t("D338"));
+    }
     const approve = pending.element.querySelector("button[data-act=approve]");
     const reject = pending.element.querySelector("button[data-act=reject]");
     if (approve !== null) approve.textContent = t("D336");
@@ -2953,78 +3168,95 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     if (rec.summaryEl !== null) rec.summaryEl.textContent = t("D407");
   }
 
-  /** 终态记录的状态图标（i18n-exempt 图形）：采纳 = ✓、拒绝 = ✕（SVG 内联，本模块无
-   *  innerHTML 渲染纪律）；颜色经 .lumir-hp-approval-ic 的 --ok / --danger 上色。 */
-  function createDecisionIcon(approved: boolean): SVGSVGElement {
-    const svg = document.createElementNS(SVG_NS, "svg");
-    svg.setAttribute("width", "11");
-    svg.setAttribute("height", "11");
-    svg.setAttribute("viewBox", "0 0 12 12");
-    svg.setAttribute("fill", "none");
-    svg.setAttribute("stroke", "currentColor");
-    svg.setAttribute("stroke-width", "1.6");
-    svg.setAttribute("stroke-linecap", "round");
-    svg.setAttribute("stroke-linejoin", "round");
-    svg.setAttribute("aria-hidden", "true");
-    const path = document.createElementNS(SVG_NS, "path");
-    path.setAttribute("d", approved ? "M2.5 6.5 5 9l4.5-5.5" : "M3.5 3.5l5 5M8.5 3.5l-5 5");
-    svg.append(path);
-    return svg;
-  }
-
-  /** 决策后收敛（M384，spec「批准闸呈现与决策后收敛」）：待决标题（D339/D340 的「采纳后
-   *  才落盘 / 运行」语义）与决策按钮、原因输入框整体退场——置灰按钮会被误读为「还没处理完 /
-   *  在等什么」（Alex 2026-10-08 实证）；卡片收敛为一行终态记录 = 工具名 + 已采纳/已拒绝 +
-   *  相对时间戳；diff/argv 移进默认折叠的详情，可展开回看。拒绝附原因时原因直接可见（D408）。 */
+  /** 决策后收敛（M406 收敛单行生命周期，原型 variant B 的 termRow；前身是 M384 的
+   *  独立记录卡）：同一行就地翻终态——图标 ✓/✕ + 名徽章 + 参数全文 + 结果格
+   * （已采纳/已拒绝 · 相对时间戳）；待决卡整体退场（置灰按钮会被误读为「还没处理完」，
+   *  Alex 2026-10-08 实证），卡的 diff/argv 移进默认折叠的 .lumir-hp-term-body 可展开
+   *  回看；拒绝附原因时原因行就地可见（D408）。决策后不再另存工具行：同一调用的 done
+   *  事件到达时经 settledAwaitingDone 抑制槽吞掉（批准了但执行失败则补记失败尾注）。 */
   function settleApprovalRecord(
     pending: PendingApproval,
     approved: boolean,
     reasonText: string | undefined,
     decidedAt: number,
   ): void {
-    const el = pending.element;
-    el.querySelector(".lumir-hp-approval-title")?.remove();
-    el.querySelector(".lumir-hp-reason")?.remove();
-    el.querySelector(".lumir-hp-approval-actions")?.remove();
-    el.classList.add(approved ? "is-approved" : "is-rejected");
+    const card = pending.element;
+    const pre = card.querySelector(".lumir-hp-diff, .lumir-hp-argv");
+    const row = pending.row;
+    card.remove();
+    row.classList.remove("is-running", "is-waiting");
+    row.classList.add(approved ? "is-done" : "is-rej");
 
-    const record = document.createElement("div");
-    record.className = "lumir-hp-approval-record";
-    const ic = document.createElement("span");
-    ic.className = "lumir-hp-approval-ic";
-    ic.setAttribute("aria-hidden", "true");
-    ic.append(createDecisionIcon(approved));
-    const text = document.createElement("span");
-    text.className = "lumir-hp-approval-record-text";
-    const toolEl = document.createElement("span");
-    toolEl.textContent = pending.tool;
-    const outcomeEl = document.createElement("span");
+    const tres = document.createElement("span");
+    tres.className = "lumir-hp-tool-res";
+    const outcomeEl = document.createElement("b");
+    outcomeEl.className = "lumir-hp-tw";
     outcomeEl.textContent = t(approved ? "D405" : "D406");
     const whenEl = document.createElement("span");
     whenEl.className = "lumir-hp-when";
     whenEl.dataset.ts = String(decidedAt);
     whenEl.textContent = `· ${relativeWhen(decidedAt, Date.now())}`;
-    text.append(toolEl, document.createTextNode(" · "), outcomeEl, document.createTextNode(" "), whenEl);
+    tres.append(outcomeEl, document.createTextNode(" "), whenEl);
+    row.replaceChildren(
+      createToolIcon(approved ? "done" : "fail"),
+      createToolText(pending.tool, pending.argsText),
+      tres,
+    );
+
+    // 详情入口与翻转行为（有 diff/argv 才有——恢复路径的拒绝行无载荷可走，不在此列）。
+    let summaryEl: HTMLElement | null = null;
+    let termBody: HTMLElement | null = null;
+    if (pre !== null) {
+      const more = document.createElement("span");
+      more.className = "lumir-hp-tool-more";
+      summaryEl = document.createElement("span");
+      summaryEl.textContent = t("D407");
+      more.append(createThinkChev(), summaryEl);
+      row.append(more);
+      termBody = document.createElement("div");
+      termBody.className = "lumir-hp-term-body";
+      termBody.hidden = true;
+      termBody.append(pre);
+      const toggleDetails = (): void => {
+        if (termBody === null) return;
+        const open = termBody.hidden;
+        termBody.hidden = !open;
+        row.classList.toggle("is-open", open);
+        row.setAttribute("aria-expanded", String(open));
+      };
+      row.setAttribute("role", "button");
+      row.tabIndex = 0;
+      row.setAttribute("aria-expanded", "false");
+      row.addEventListener("click", toggleDetails);
+      row.addEventListener("keydown", (event: KeyboardEvent) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          toggleDetails();
+        }
+      });
+    }
+
+    const term = document.createElement("div");
+    term.className = "lumir-hp-termwrap";
+    term.append(row);
     let reasonEl: HTMLElement | null = null;
     if (!approved && reasonText !== undefined) {
-      reasonEl = document.createElement("span");
+      reasonEl = document.createElement("div");
+      reasonEl.className = "lumir-hp-term-reason";
       reasonEl.textContent = t("D408", { reason: reasonText });
-      text.append(document.createTextNode(" · "), reasonEl);
+      term.append(reasonEl);
     }
-    record.append(ic, text);
-    el.append(record);
+    if (termBody !== null) term.append(termBody);
+    pending.wrap.replaceWith(term);
 
-    // diff / argv 收进默认折叠的详情（summary 即展开入口与读屏名）。
-    const pre = el.querySelector(".lumir-hp-diff, .lumir-hp-argv");
-    let summaryEl: HTMLElement | null = null;
-    if (pre !== null) {
-      const details = document.createElement("details");
-      details.className = "lumir-hp-approval-details";
-      summaryEl = document.createElement("summary");
-      summaryEl.textContent = t("D407");
-      el.append(details);
-      details.append(summaryEl, pre);
+    // 块内行替换成终态单元（折叠时整单元随块隐藏）+ running 指针清掉 + done 抑制槽。
+    for (const block of [activeTools, ...sealedToolBlocks]) {
+      if (block === null) continue;
+      const index = block.rows.indexOf(row);
+      if (index >= 0) block.rows[index] = term;
+      if (block.running === row) block.running = null;
     }
+    settledAwaitingDone = { name: pending.tool, row, approved };
 
     decidedApprovals.set(pending.id, {
       id: pending.id,
@@ -3032,7 +3264,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       approved,
       reason: reasonText,
       ts: decidedAt,
-      element: el,
+      element: term,
       outcomeEl,
       whenEl,
       reasonEl,
@@ -3040,33 +3272,75 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     });
   }
 
-  function appendApproval(request: { id: string; tool: string; diff?: string; argv?: string }): void {
+  function appendApproval(request: {
+    id: string;
+    tool: string;
+    diff?: string | undefined;
+    argv?: string[] | undefined;
+    purpose?: string | undefined;
+  }): void {
+    // 收敛单行生命周期（M406，原型 variant B）：批准卡不再独立挂 transcript 末尾，而是
+    // 就地挂进该调用工具行的 .lumir-hp-pend 壳——同一行承载「运行中 → 等待批准 → 终态」
+    // 全生命周期；其后的思考块 / 正文段按到达序追加在工具块之后，自然落在卡之后
+    // （reject 后思考落点问题随之结构性消解）。
+    ensureStreamingMessage();
+    const block = ensureToolsBlock();
+    const argsText = approvalArgsText(request);
+    let row = block.running;
+    if (row !== null) {
+      // started 行就地升级：截断摘要换成批准载荷全文 +「等待批准」尾注。
+      startedArgs.delete(row);
+      row.classList.add("is-waiting");
+      row.replaceChildren(createToolIcon("running"), createToolText(request.tool, argsText, t("D416")));
+    } else {
+      // 无 running 行（快照恢复的 pending_approval / 协议外到达）：补建待决行。
+      row = document.createElement("div");
+      row.className = "lumir-hp-tool-row is-running is-waiting";
+      row.append(createToolIcon("running"), createToolText(request.tool, argsText, t("D416")));
+      block.el.append(row);
+      block.rows.push(row);
+      block.running = row;
+    }
+
     const el = document.createElement("div");
     el.className = "lumir-hp-approval";
     const titleEl = document.createElement("div");
     titleEl.className = "lumir-hp-approval-title";
     el.append(titleEl);
+    // 模型自述的用途句（M407 契约 purpose 字段）：有则在命令 / diff 上方显眼位置展示——
+    // 信任边界：purpose 只是阅读辅助，命令原文永远完整可见、不被替代或截断。
+    if (typeof request.purpose === "string" && request.purpose.trim() !== "") {
+      const purposeEl = document.createElement("div");
+      purposeEl.className = "lumir-hp-approval-purpose";
+      purposeEl.textContent = request.purpose;
+      el.append(purposeEl);
+    }
     if (request.diff !== undefined) {
       const pre = document.createElement("pre");
       pre.className = "lumir-hp-diff";
       for (const line of request.diff.split("\n")) {
-        const row = document.createElement("div");
-        row.textContent = line;
-        if (line.startsWith("+")) row.className = "lumir-hp-diff-add";
-        else if (line.startsWith("-")) row.className = "lumir-hp-diff-del";
-        else if (line.startsWith("@@")) row.className = "lumir-hp-diff-hunk";
-        pre.append(row);
+        const lineEl = document.createElement("div");
+        lineEl.textContent = line;
+        if (line.startsWith("+")) lineEl.className = "lumir-hp-diff-add";
+        else if (line.startsWith("-")) lineEl.className = "lumir-hp-diff-del";
+        else if (line.startsWith("@@")) lineEl.className = "lumir-hp-diff-hunk";
+        pre.append(lineEl);
       }
       el.append(pre);
     } else if (request.argv !== undefined) {
       const pre = document.createElement("pre");
       pre.className = "lumir-hp-argv";
-      pre.textContent = request.argv;
+      pre.textContent = formatArgv(request.argv);
       el.append(pre);
     }
-    const reason = document.createElement("input");
-    reason.type = "text";
+    // 多行原因框（M406）：裸 Enter = 换行（textarea 原生行为），⌘/Ctrl+Enter = 提交拒绝
+    // （与按钮同一路径）；IME 组合期不接管。aria-label 与 placeholder 同源（D338）——
+    // WKWebView 对只有 placeholder 的 textarea 不暴露 AX 名（占位文案落成子 StaticText），
+    // 无名的框在 AX 树里无法按名定位（73 号验收实证）。
+    const reason = document.createElement("textarea");
     reason.className = "lumir-hp-reason";
+    reason.rows = 2;
+    reason.setAttribute("aria-label", t("D338"));
     const actions = document.createElement("div");
     actions.className = "lumir-hp-approval-actions";
     const approve = document.createElement("button");
@@ -3078,12 +3352,27 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     actions.append(approve, reject);
     el.append(reason, actions);
 
-    const pending: PendingApproval = { id: request.id, tool: request.tool, diff: request.diff, argv: request.argv, element: el };
+    const wrap = document.createElement("div");
+    wrap.className = "lumir-hp-pend";
+    row.replaceWith(wrap);
+    wrap.append(row, el);
+
+    const pending: PendingApproval = {
+      id: request.id,
+      tool: request.tool,
+      diff: request.diff,
+      argv: request.argv,
+      purpose: request.purpose,
+      argsText,
+      element: el,
+      row,
+      wrap,
+    };
     pendingApprovals.set(request.id, pending);
     relabelApproval(pending);
 
-    // 未决项不自动超时：唯一的出口是 Alex 点击。决策幂等——重复点击不会向后端发第二次
-    // （pendingApprovals.delete 只兑现一次）；决策后卡片就地收敛为终态记录
+    // 未决项不自动超时：唯一的出口是 Alex 点击 / ⌘Enter。决策幂等——重复触发不会向后端
+    // 发第二次（pendingApprovals.delete 只兑现一次）；决策后同一行就地收敛为终态记录
     // （settleApprovalRecord），元素留在 transcript 里作决策记录。
     const decide = (approved: boolean): void => {
       if (!pendingApprovals.delete(request.id)) return;
@@ -3095,8 +3384,14 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     };
     approve.addEventListener("click", () => decide(true));
     reject.addEventListener("click", () => decide(false));
+    reason.addEventListener("keydown", (event: KeyboardEvent) => {
+      if (event.isComposing) return;
+      if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+        event.preventDefault();
+        decide(false);
+      }
+    });
 
-    transcript.append(el);
     syncEmptyHint();
     scrollToBottom();
   }
@@ -3429,7 +3724,13 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
         return;
       case "approval_request":
         if (typeof event.id === "string") {
-          appendApproval({ id: event.id, tool: event.tool, diff: event.diff, argv: event.argv });
+          appendApproval({
+            id: event.id,
+            tool: event.tool,
+            diff: event.diff,
+            argv: event.argv,
+            purpose: typeof event.purpose === "string" ? event.purpose : undefined,
+          });
         }
         return;
       case "usage":
@@ -3471,10 +3772,27 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
           syncEmptyHint();
           scrollToBottom();
         }
-        // 待决批准项随中断收回（design §5）：未决策的批准卡片从 transcript 撤下——
-        // 它们的唯一出口（点击）已失效，后端那条通道已被 Withdrawn 关闭。
-        for (const pending of pendingApprovals.values()) pending.element.remove();
+        // 待决批准项随中断收回（design §5）：未决策的批准卡撤下、解壳回工具行——它们的
+        // 唯一出口（点击）已失效，后端那条通道已被 Withdrawn 关闭。正常路径下 Withdrawn
+        // 的 done（turn_aborted 失败摘要）已先把行翻面为 is-fail；没翻面的（事件缺口）
+        // 在这里补翻，不留永恒「等待批准」幻影行。
+        for (const pending of pendingApprovals.values()) {
+          pending.element.remove();
+          pending.wrap.replaceWith(pending.row);
+          pending.row.classList.remove("is-waiting");
+          if (pending.row.classList.contains("is-running")) {
+            pending.row.classList.replace("is-running", "is-fail");
+            pending.row.replaceChildren(
+              createToolIcon("fail"),
+              createToolText(pending.tool, pending.argsText, t("D383")),
+            );
+          }
+          for (const block of [activeTools, ...sealedToolBlocks]) {
+            if (block !== null && block.running === pending.row) block.running = null;
+          }
+        }
         pendingApprovals.clear();
+        settledAwaitingDone = null;
         applySendPhase(reduceSendPhase(sendPhase, { type: "finished" }));
         return;
       }
@@ -3552,9 +3870,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
         lastAssistantEl = el; // 其后的 tool 记录挂进这条消息的清单块
       }
     } else if (role === "tool" && typeof record.name === "string") {
-      // 恢复路径的终态摘要就是持久化的那一份（M367：成功 = 参数摘要、失败 = 状态+错误），
-      // 故不判定、不重算——`appendToolCall` 的 done 分支原样上屏。
-      appendToolCall(record.name, "done", typeof record.summary === "string" ? record.summary : "");
+      appendRestoredToolRow(record as Record<string, unknown> & { name: string });
     } else if (role === "compact" && typeof record.summary === "string") {
       // 压缩记录 = 逻辑会话边界：其后的用户消息属于新逻辑会话——会话名归 null 重算；
       // 工具清单块同样在此收尾（边界两侧的记录不属于同一块）。
@@ -3575,6 +3891,71 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     view.body.hidden = false;
     view.body.textContent = text;
     return view.el;
+  }
+
+  /** 恢复路径的工具行（M406 状态感知版）：record.status 是面板细分终态（done / denied /
+   *  rejected / error——活会话持久化由 turn.rs 写，恢复重建路径由 restored_panel_messages
+   *  经 wire 的 function_call_output 回填；旧快照缺字段）。
+   *  - rejected → ✕「已拒绝」终态行（原型 restored/after-reject 帧）：原因行就地可见
+   *   （原因全文在输出 JSON 里，summary 里那份被 80 字截断不取）；**无详情**——留存里
+   *    没有原 diff/argv，不伪造展开件。
+   *  - denied / error（或缺 status 但摘要命中失败形状的旧快照）→ 失败行：尾注 = 失败
+   *    全文（输出 JSON 的 code+message，summary 兜底）。
+   *  - 其余 → 成功行：参数摘要人话化（持久化 / 重建两份 summary 都是参数 JSON 时才有
+   *    参数格；失败摘要不冒充参数）。 */
+  function appendRestoredToolRow(record: Record<string, unknown> & { name: string }): void {
+    const name = record.name;
+    const summary = typeof record.summary === "string" ? record.summary : "";
+    const status = typeof record.status === "string" ? record.status : "";
+    const block = ensureToolsBlock();
+    if (status === "rejected") {
+      const row = document.createElement("div");
+      row.className = "lumir-hp-tool-row is-rej";
+      row.append(createToolIcon("fail"), createToolText(name, humanizeToolArgsStrict(name, summary)));
+      const tres = document.createElement("span");
+      tres.className = "lumir-hp-tool-res";
+      const outcomeEl = document.createElement("b");
+      outcomeEl.className = "lumir-hp-tw";
+      outcomeEl.textContent = t("D406");
+      tres.append(outcomeEl);
+      const at = messageTs(record);
+      if (at !== null) {
+        const when = document.createElement("span");
+        when.className = "lumir-hp-when";
+        when.dataset.ts = String(at);
+        when.textContent = `· ${relativeWhen(at, Date.now())}`;
+        tres.append(document.createTextNode(" "), when);
+      }
+      row.append(tres);
+      const reason = rejectedReasonOf(record);
+      if (reason !== null) {
+        const term = document.createElement("div");
+        term.className = "lumir-hp-termwrap";
+        const reasonEl = document.createElement("div");
+        reasonEl.className = "lumir-hp-term-reason";
+        reasonEl.textContent = t("D408", { reason });
+        term.append(row, reasonEl);
+        block.el.append(term);
+        block.rows.push(term);
+      } else {
+        block.el.append(row);
+        block.rows.push(row);
+      }
+      return;
+    }
+    const failed =
+      status === "denied" || status === "error" || TOOL_FAILED_SUMMARY.test(summary);
+    const row = document.createElement("div");
+    row.className = failed ? "lumir-hp-tool-row is-fail" : "lumir-hp-tool-row is-done";
+    const tail = failed
+      ? (failureTextOf(record) ?? (TOOL_FAILED_SUMMARY.test(summary) ? summary : undefined))
+      : undefined;
+    row.append(
+      createToolIcon(failed ? "fail" : "done"),
+      createToolText(name, failed ? humanizeToolArgsStrict(name, summary) : humanizeToolArgs(name, summary), tail),
+    );
+    block.el.append(row);
+    block.rows.push(row);
   }
 
   function restoreSnapshot(json: string): void {
@@ -3616,13 +3997,22 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     }
     applySelChip();
     rebuildSelPopIfOpen();
-    const pending = state.pending_approval as { id?: unknown; tool?: unknown; diff?: unknown; argv?: unknown } | null | undefined;
+    const pending = state.pending_approval as
+      | { id?: unknown; tool?: unknown; diff?: unknown; argv?: unknown; purpose?: unknown }
+      | null
+      | undefined;
     if (pending !== null && typeof pending === "object" && typeof pending.id === "string") {
+      // argv 是字符串数组（events.rs / PendingApprovalSnapshot 同型；M406 前按 string 读，
+      // 数组被整段丢弃）。宽容过滤非字符串元素；空数组按缺省处理。
+      const argv = Array.isArray(pending.argv)
+        ? pending.argv.filter((a): a is string => typeof a === "string")
+        : undefined;
       appendApproval({
         id: pending.id,
         tool: typeof pending.tool === "string" ? pending.tool : "?",
         diff: typeof pending.diff === "string" ? pending.diff : undefined,
-        argv: typeof pending.argv === "string" ? pending.argv : undefined,
+        argv: argv !== undefined && argv.length > 0 ? argv : undefined,
+        purpose: typeof pending.purpose === "string" ? pending.purpose : undefined,
       });
     }
     applySessionName();
@@ -3654,6 +4044,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     chunkBuffer = "";
     turnOpen = false;
     activeTools = null;
+    settledAwaitingDone = null;
     lastAssistantEl = null;
     lastErrorEl = null;
     lastErrorText = "";
@@ -3964,16 +4355,26 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     sessPop.style.top = `${top}px`;
   }
 
-  /** 历史会话清单现建（每次打开现拉——会话文件随对话增长，不囤旧清单）：每行 = 会话名
-   *  （首条用户消息，截断口径与标题栏会话名同一份）+ 时间读数；点击即恢复续聊。
-   *  行是临时 DOM（浮层关即弃），不注册 onRelabel——与合并选择器浮层同口径。 */
+  /** 历史会话清单现建（每次打开现拉——会话文件随对话增长，不囤旧清单）：每行 =
+   *  恢复钮（会话名 + 时间读数，点击即恢复续聊）+ 删除钮（×，M406 会话删除——行内
+   *  两步确认，确认后调 harness_delete_session）。行是临时 DOM（浮层关即弃），不注册
+   *  onRelabel——与合并选择器浮层同口径。空清单 = 浮层整层不开（「新建会话」动作项
+   *  已随 M406 退场，浮层不再有空壳形态）。
+   *  恢复钮与删除钮是并列兄弟（div 壳），MUST NOT 钮套钮——WKWebView 把嵌套 button
+   *  当叶子，AX 树不暴露内层（M351 finding，同 sessionWrap 的纪律）。 */
   function buildSessList(): void {
     sessList.replaceChildren();
     sessList.hidden = true;
     harnessListSessions()
       .then((list) => {
         const entries = sessionEntriesOf(list);
+        if (entries.length === 0) {
+          setSessPop(false);
+          return;
+        }
         for (const entry of entries) {
+          const row = document.createElement("div");
+          row.className = "lumir-hp-sesspop-row";
           const item = document.createElement("button");
           item.type = "button";
           item.className = "lumir-hp-sesspop-item lumir-hp-sesspop-history";
@@ -3995,11 +4396,54 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
             setSessPop(false);
             resumeSession(entry);
           });
-          sessList.append(item);
+          const del = document.createElement("button");
+          del.type = "button";
+          del.className = "lumir-hp-sesspop-del";
+          del.setAttribute("aria-label", t("D417"));
+          del.title = t("D417");
+          del.textContent = "×"; // i18n-exempt: glyph（乘号图形，非文案）
+          del.addEventListener("click", (event) => {
+            event.stopPropagation();
+            // 行内两步确认（M406）：第一次点 × 把行换成确认态，确认才删；取消还原行。
+            const promptEl = document.createElement("span");
+            promptEl.className = "lumir-hp-sesspop-confirm-text";
+            promptEl.textContent = t("D418");
+            const confirmBtn = document.createElement("button");
+            confirmBtn.type = "button";
+            confirmBtn.className = "lumir-hp-sesspop-confirm-yes";
+            confirmBtn.textContent = t("D419");
+            const cancelBtn = document.createElement("button");
+            cancelBtn.type = "button";
+            cancelBtn.className = "lumir-hp-sesspop-confirm-no";
+            cancelBtn.textContent = t("D136");
+            const restoreRow = (): void => row.replaceChildren(item, del);
+            cancelBtn.addEventListener("click", (e2) => {
+              e2.stopPropagation();
+              restoreRow();
+            });
+            confirmBtn.addEventListener("click", (e2) => {
+              e2.stopPropagation();
+              harnessDeleteSession(entry.sessionId)
+                .then(() => {
+                  row.remove();
+                  // 删空 = 浮层里没有别的可点了，整层收起。
+                  if (sessList.childElementCount === 0) setSessPop(false);
+                })
+                .catch((e: unknown) => {
+                  // 失败（活跃会话拒删 / IO 失败）上报错误行并收浮层——错误行在
+                  // transcript，浮层留着会挡住它。
+                  setSessPop(false);
+                  appendError(t("D348", { message: errorText(e) }));
+                });
+            });
+            row.replaceChildren(promptEl, confirmBtn, cancelBtn);
+          });
+          row.append(item, del);
+          sessList.append(row);
         }
-        sessList.hidden = sessList.childElementCount === 0;
+        sessList.hidden = false;
         // 清单填充后浮层变高了，纵向夹取必须按新高度重算一遍（M397 r1 P2-1）：placeSessPop() 在
-        // 打开时只量到「新建会话」一项，长清单随后把浮层撑高（.lumir-hp-sesspop-list 上限 320px），
+        // 打开时清单尚未填充，长清单随后把浮层撑高（.lumir-hp-sesspop-list 上限 320px），
         // 不重夹的话矮窗 + 长历史时浮层下端会越出视口——恰是本 PR 立的 O2（打开态包围盒 MUST 完整
         // 落在视口内）所禁。浮层在拉取期间被点掉（hidden）就不必重算。
         if (!sessPop.hidden) placeSessPop();
@@ -4034,13 +4478,10 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       })
       .catch((e: unknown) => appendError(t("D348", { message: errorText(e) })));
   }
-  sessPopItem.addEventListener("click", () => {
-    setSessPop(false);
-    startNewSession();
-  });
-  // 会话名下拉：展开/收起浮层（浮层 = 「新建会话」动作项 + 历史会话选择器，M392）；
-  // 浮层外交互（点击其他处）收起。按钮在标题栏（drag 区）里——clickable 元素由 tauri
-  // drag.js 自动阻断拖拽，不需要 mousedown preventDefault（REVIEW.md 第 16 条）。
+  // 会话名下拉：展开/收起浮层（浮层 = 历史会话选择器，M392；「新建会话」动作项随 M406
+  // 退场，新建归首行加号钮）；浮层外交互（点击其他处）收起。按钮在标题栏（drag 区）
+  // 里——clickable 元素由 tauri drag.js 自动阻断拖拽，不需要 mousedown preventDefault
+  //（REVIEW.md 第 16 条）。
   sessionButton.addEventListener("click", (event) => {
     event.stopPropagation();
     setSessPop(sessPop.hidden);
