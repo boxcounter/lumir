@@ -14,6 +14,7 @@
 - [ ] 2.2 写目标提取与 vault 内判定（design §4.1）：cp/mv/ln/sed -i/tee/dd of=/curl -o/字面重定向 token 的目标提取；绝对路径 containment + vault 相对路径存在性佐证；判定不确定不重定向
 - [ ] 2.3 重定向回送协议（design §4.2）：错误码 `cli_redirected_to_vault_tool` + 固定标记 `<<<LUMIR_REDIRECT_VAULT_TOOL>>>` + JSON 载荷（reason/targets/suggested_tool）；建议工具按写动词形态映射
 - [ ] 2.4 `cli_run` 工具 description 更新：明示「写 vault 内路径会被重定向到 vault 工具」
+- [ ] 2.5 `cli_run` schema 增加必填 `purpose` 字段 + 入口校验（design §3.4）：`required: ["command", "purpose"]`；缺省或 trim 后空白在判定管线之前按统一错误信封回送（指明需补填用途），模型补填重发；purpose 不进判定管线任何一层
 
 ## 3. vault_move / vault_delete
 
@@ -33,6 +34,7 @@
 - [ ] 5.1 权限 chip：composer 控制行第三位（思考 chip 后、ctx 读数前），文案走文案表（zh：只读 / 保险库写入 / 完全访问）；浮层三档单选、当前档勾选、无释义（M373 浮层形态与 AX 纪律复用）
 - [ ] 5.2 切换写回 `config_set_value("harness", "permission_mode", …)`；对下一个判定生效，不打断进行中轮次
 - [ ] 5.3 会话建立 / 每轮读取配置的既有装载时点接入新模式键（与 M302 同路，不热重载）
+- [ ] 5.4 批准卡呈现 `purpose`（design §3.4）：cli_run 批准卡命令上方显眼位置展示用途句，命令原文完整可见、不被替代或截断；批准卡载荷带 purpose 字段（既有 argv 类型错配 bug 另批修，本条不依赖其修复面）
 
 ## 6. 验证
 
@@ -42,5 +44,6 @@
 - [ ] 6.4 `fs_move_entry` 四例（逃逸 / 撞名 / 跨目录 / 跨卷）+ `vault_delete` 废纸篓与失败不留半态
 - [ ] 6.5 缓存测试：同主体串免闸、新会话清空、黑名单成员不受缓存影响
 - [ ] 6.6 `permission_mode` 配置测试：缺省 / 非法回落 / 写回
-- [ ] 6.7 scripts/acceptance 新增场景：模式切换 chip 与浮层、批准卡次级动作、重定向链、vault_move / vault_delete 面板呈现（mock provider 驱动，fixture 合成，证据落 test-results/acceptance/）
-- [ ] 6.8 `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` 通过
+- [ ] 6.7 scripts/acceptance 新增场景：模式切换 chip 与浮层、批准卡次级动作、批准卡 purpose 用途句呈现、重定向链、vault_move / vault_delete 面板呈现（mock provider 驱动，fixture 合成，证据落 test-results/acceptance/）
+- [ ] 6.8 purpose 链测试（mock provider）：带 purpose 调用在批准卡载荷中 purpose 与命令同达；空 purpose（缺省 / 空白串）不执行且回送补填错误、补填重发成功；同命令带粉饰性 purpose 与否判定结果相同
+- [ ] 6.9 `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` 通过

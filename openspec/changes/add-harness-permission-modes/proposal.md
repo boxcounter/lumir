@@ -30,6 +30,8 @@ Alex 的原话诉求：**「我们怎么让 AI 尽可能的使用 vault 提供�
 
 「永久 allow/deny」不在本包——持久授权通道维持现状（只有 config 规则表一个真源），会话内缓存是本包唯一的在产物记忆（理由见 Non-goals）。
 
+**节点 1 前 Alex 追加的需求**（2026-10-09，原话确认并入本提案修订，不另开 change）：「我有一个需要是：让询问我的时候，除了命令本身，还请告诉我它是干什么的。因为 AI 写的命令经常会组合 cmd1; cmd2 && cmd3 ...，人工检查非常困难，特别是 python 这样的 eval 代码。」落法：cli_run 工具 schema 加必填 `purpose` 字段（模型自述一句人话用途，Claude Code 的 Bash description 同款），批准卡命令上方显眼展示；purpose 是阅读辅助不是安全判据，判定仍只看命令本身（design §3.4）。
+
 ## What Changes
 
 每条对应 `specs/harness/spec.md`（或 `specs/fs-io/spec.md`）增量中的一个 requirement：
@@ -40,6 +42,7 @@ Alex 的原话诉求：**「我们怎么让 AI 尽可能的使用 vault 提供�
 4. **本会话同类不再问**（harness，ADDED「会话内批准缓存」）：批准卡新增「采纳且本会话不再问」次级动作；采纳的 (工具, 主体串) 记入会话内存缓存，同会话内同主体串的后续调用直接放行；「新会话」/ 切会话 / app 重启清空。不持久化（持久通道只有 config 规则表）。
 5. **模式切换入口与配置默认**（harness，ADDED「权限模式切换」+ MODIFIED「配置节 [harness]」）：composer 控制行新增权限 chip（思考 chip 之后、ctx 读数之前），点击弹三档单选浮层（当前档勾选），选择即生效并经 `config_set_value` 写回 `[harness].permission_mode`；配置键闭集合 `read_only` / `vault_write` / `full_access`，默认 `vault_write`，非法值回落默认 + 人话 warning（沿用既有模板）。
 6. **fs-io 跨目录移动原语**（fs-io，ADDED「跨目录移动」）：`fs_move_entry(root, from_rel, to_rel)`——源与目标都经 `resolve_in_vault`，目标撞名 MUST NOT 覆盖（沿用 rename 的「复查 + 极窄窗口」口径并如实标注非原子），跨卷失败如实报错、不做静默 copy+delete。
+7. **批准卡命令用途说明**（harness，ADDED「cli_run 用途说明（purpose 字段）」+ MODIFIED「批准闸呈现与决策后收敛」）：cli_run 工具 schema 增加必填 `purpose` 字段——模型生成命令时用一句人话自述用途；批准卡在命令上方显眼位置展示 purpose，命令原文完整可见。信任边界写明：purpose 是模型自述、是阅读辅助不是安全判据，权限判定仍只看命令本身。空 purpose（缺省或 trim 后空白）后端校验拒绝并结构化回送，模型补填重发。vault 类写工具倾向不加 purpose（文件名 + diff 已自解释，理由见 design §3.4）。
 
 ## Alex 裁决点
 
@@ -67,6 +70,6 @@ Alex 的原话诉求：**「我们怎么让 AI 尽可能的使用 vault 提供�
 
 ## Impact
 
-- 影响的 specs：`harness`（MODIFIED ×3：权限机制 / 工具循环 / 配置节 [harness]；ADDED ×4：cli_run 命令分类与 vault 写重定向 / vault 移动与删除工具 / 会话内批准缓存 / 权限模式切换）；`fs-io`（ADDED ×1：跨目录移动）
+- 影响的 specs：`harness`（MODIFIED ×4：权限机制 / 工具循环 / 配置节 [harness] / 批准闸呈现与决策后收敛；ADDED ×5：cli_run 命令分类与 vault 写重定向 / vault 移动与删除工具 / 会话内批准缓存 / 权限模式切换 / cli_run 用途说明（purpose 字段））；`fs-io`（ADDED ×1：跨目录移动）
 - 影响的代码/系统：src-tauri（`harness/permissions.rs` 模式层与分类闸门重构、`harness/tools.rs` 两新工具与分类表、`harness/turn.rs` 判定管线接入、`config.rs` `permission_mode` 键、`harness/session.rs` 批准缓存字段、`fs_io.rs` `fs_move_entry`）；src（`harness-panel.ts` 权限 chip 与三档浮层、批准卡次级动作、`ipc.ts`、ts-rs 绑定重导出）；scripts/acceptance（新增模式/分类/重定向/新工具验收场景，mock provider 驱动，fixture 合成）
 - 关联约束：ADR 0007（工具清单外扩张须经 Alex 裁决——本次即该裁决；探针期边界）；ADR 0002 §5（配置即数据，新键走 schema 校验模板）；REVIEW.md 第 8 条（分类表/黑名单唯一真源，不与前缀规则表语义两处各判一半）；REVIEW.md 第 21 条（不留兼容层——新模式默认 `vault_write` 直接替换旧默认分层，无迁移无过渡）；仓库信息卫生（验收 fixture 合成）
