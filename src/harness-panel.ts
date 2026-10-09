@@ -4025,6 +4025,11 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
         renderSnapshotMessages(Array.isArray(info.messages) ? info.messages : []);
         firstUserText = entry.firstUserText;
         applySessionName();
+        // 恢复批次收尾落在末尾（与 restoreSnapshot 末尾同一句）：`appendSnapshotMessage` 的
+        // assistant 分支是裸 `transcript.append(el)`、不滚——恢复 transcript 以 assistant 收尾
+        // （会话常态：末轮答复后用户尚未再提问）时少了这一句就停在最末 user 消息处、收尾回复
+        // 折在视口外（M398 r1 P1）。user / tool 分支自带滚动不足以覆盖这个尾形态。
+        scrollToBottom();
         refreshThinkingState();
       })
       .catch((e: unknown) => appendError(t("D348", { message: errorText(e) })));
