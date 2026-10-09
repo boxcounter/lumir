@@ -40,6 +40,12 @@ worker 动工前、reviewer 给出 verdict 前逐条过一遍。每条按「症�
 - 证据：提交 `10b8a35`；`scripts/acceptance/README.md:114`；`docs/backlog.md:204-208`。
 - 防线：下次断言运行期生成的产物时，用 glob 取 mtime 最新一份，并做一次**反向验证**——放一个 mtime 更晚但不含目标内容的文件，确认断言如实 FAIL，再删掉它。
 
+**5. AX / 可见性断言不反映祖先裁切（被裁的浮层照样「可见」）**
+- 症状：会话浮层被祖先 `overflow: hidden` 整段裁掉、从未渲染，验收场景 106 的 AXPress + AX 文本断言与视觉用例 m303 的 `toBeVisible()` 全程假绿——WKWebView 的 AX 对被裁内容照样暴露节点、且报**未裁的完整包围盒**；Playwright 可见性只看非空包围盒 + visibility 样式。修前修后包围盒逐字相同。
+- 根因：这两类断言的数据源都在「几何/结构」层，而祖先裁切是**绘制层**事件——元素在盒模型里完整存在，只是像素没画出来。
+- 证据：M397（2026-10-09，`0d36770`）；合同条款 `docs/specs/overlay-visibility.md` O1/O2/O3 与「证伪方式」节（绘制段判据的来历）；反向验证现场 `test-results/m397-reverse-validation/`（git 外）。
+- 防线：凡断言「浮层/弹出物打开了」，纯几何与 AX/可见性断言**不算覆盖**——按 `overlay-visibility.md` 的证伪口径配「几何 + 绘制（包围盒内采像素）」两段断言，并做反向验证（改回裁切态必须红）；chromium 侧需要时另加包围盒包含断言，`toBeVisible` 单独不算数。
+
 ## 二、重试与校验口径
 
 **5. 重试用「拼接后的串」或「出现次数」当成功判据**

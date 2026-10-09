@@ -635,8 +635,42 @@
       （agent MUST NOT 打开他的真实 vault：会写 registry / `last_vault` 到 `~/.config/lumir`）。
     归档记录与逐任务对账结果见该 mission（分支 `feat/archive-node2-tab-reveal-and-vault-ignor`）的
     review-request。
+42. **会话名钮的可发现性**（2026-10-09，M397 期间 Alex 真机反馈）：harness 面板的会话名钮
+    （`<会话名> ▾`，`src/harness-panel.ts:1380` 起）是「打开会话历史浮层」的唯一入口，但形态像
+    文档标签、没有菜单感——Alex 在浮层被裁的 bug 修复前完全没意识到它可点。M397 只修了「点了不出来」，
+    「看不出来能点」是独立的 UX 问题：是否强化（如下拉箭头加重 / hover 态 / 改成明显的菜单钮），
+    待 UX 裁决，建议攒到会话管理 UI 一起做（该 UI 本身也是 RSR change 里暂缓的项）。
 
 ## 待修 findings（不阻塞）
+
+### 会话浮层在极端矮窗（≲392px）下仍越出视口（M397 残余边界，2026-10-09，low）
+
+**症状**：`placeSessPop` 的纵向夹取退到上沿 8px 仍容不下浮层自然高（清单上限 320 + 动作项 ≈ 376px）
+时，浮层下端越出视口——`docs/specs/overlay-visibility.md` O2 在「极端矮窗 + 长历史」输入下不成立。
+`tauri.conf.json` 无 minHeight，该输入理论可达。
+
+**建议处置**：压清单可滚动区高度（vault 切换浮层 place 的同款手法，O2 括注里的「压其可滚动区高度」）
++ 配一条 resizeWindow 矮窗 geom 断言。M397 不做是 tower 裁决：该修法引入当前场景覆盖不到的新行为
+（REVIEW.md 第 9 条「新增行为要给出消费者」）。worker 如实登记见 inbox
+`20261009-worker-m397-popup-tower-review-request-m397-r1-p2-1-p2-2-tip-0d36770.md` 末节。
+
+### m303 视觉用例的 `toBeVisible()` 对祖先裁切无区分度（M397 worker finding，2026-10-09，low）
+
+**症状**：`tests/visual/scenes/m303-harness-panel.spec.ts:116` 的 `expect(pop).toBeVisible()` 只查
+非空包围盒 + visibility 样式——浮层被祖先 overflow 裁掉期间该用例同样假绿（与 REVIEW.md 假绿章
+第 5 条同形态，chromium 侧现场）。
+
+**建议处置**：按 `docs/specs/overlay-visibility.md「与实现的关系」节补包围盒包含断言（元素级
+boundingBox 完整且在其锚点邻近区域内）。finding
+`.tower/comms/findings/20261009-worker-m397-popup-improve-m303-overflow.md`。
+
+### KimiCU AX 快照偶发退化（M397 worker 观察，2026-10-09，环境边界，low）
+
+**症状**：场景 106 首跑遇一次 AX 快照退化（dump 只剩菜单栏、element_count 16，92 因此 INVALID），
+复跑即恢复——注入/快照通道的环境抖动，非产品缺陷。
+
+**建议处置**：攒够第二次现场后写进 `scripts/acceptance/README.md` 的「已知边界」（含「复跑即恢复」
+的处置口径）；单次现场不够成条目，先记在此。
 
 ### 会话浮层快速「关→再开」可重复追加历史会话行（M392 评审观察，2026-10-08，low，攒批处理）
 
