@@ -1,5 +1,7 @@
-//! 工具集（design §4）：**恰好 6 个**——vault_read / vault_search / vault_patch /
-//! vault_create / skill_load / cli_run。清单外扩张须经 Alex 裁决（ADR 0007）。
+//! 工具集（design §4）：**恰好 8 个**——vault_read / vault_search / vault_patch /
+//! vault_create / vault_move / vault_delete / skill_load / cli_run。清单外扩张须经 Alex 裁决
+//! （ADR 0007）；本次扩张（vault_move / vault_delete）即 change add-harness-permission-modes
+//! 的 Alex 节点 1 裁决。
 //!
 //! 执行层抽象（ADR 0007 Decision 3 留口）：「工具名 + JSON 参数 → JSON 结果」注册表——
 //! [`execute`] 就是这个形状的唯一入口，未来 headless CLI 后端翻译成同一中间表示即可。
@@ -7,6 +9,10 @@
 //! 结果信封：成功 `{"ok": true, …}`；失败 `{"ok": false, "code": "…", "message": "…"}`
 //! （失败**带原因回送模型**，模型据错误信息调整后重试——design §4 错误口径）。
 //! 截断一律显式标 `"truncated": true`，MUST NOT 静默截断。
+//!
+//! cli_run 的 `purpose`（用途说明，change add-harness-permission-modes，design §3.4）是
+//! schema 必填字段：模型发起调用时用一句人话自述这条命令干什么，批准卡在命令上方展示它。
+//! 它是**阅读辅助、不是安全判据**——权限判定的每一层只看 argv 本身（`permissions.rs`）。
 
 use std::io::Read;
 use std::path::{Component, Path};
@@ -30,11 +36,16 @@ pub struct ToolContext<'a> {
 pub struct ApprovalPreview {
     /// 写工具的 unified diff（vault_patch / vault_create）。
     pub diff: Option<String>,
-    /// CLI 的完整 argv（cli_run）。
+    /// CLI 的完整 argv（cli_run）；vault_move / vault_delete 的路径清单
+    /// （vault_move = `[源, 目标]`，vault_delete = `[路径]`）——design §5.1 的
+    /// 「源 → 目标路径对」/「路径 + 移入废纸篓可恢复」在批准卡上的呈现由面板侧负责。
     pub argv: Option<Vec<String>>,
     /// vault_patch 的预览基准 revision（批准执行时作 expected_revision 走 CAS——
     /// 批准窗内文件被改即 document_conflict，落盘不与已批准 diff 分叉）。
     pub revision: Option<String>,
+    /// cli_run 的用途说明（design §3.4）：批准卡在命令上方展示它（命令原文仍完整可见）。
+    /// 事件层的载荷键名即 `purpose`（turn.rs 注入），前端有则显示、无则回落现状。
+    pub purpose: Option<String>,
 }
 
 impl ApprovalPreview {
@@ -43,6 +54,7 @@ impl ApprovalPreview {
             diff: None,
             argv: None,
             revision: None,
+            purpose: None,
         }
     }
 }
@@ -79,12 +91,14 @@ impl ToolOutput {
     }
 }
 
-/// 6 个工具的名字表（恰好清单；execute 的 match 以此为准）。
-pub const TOOL_NAMES: [&str; 6] = [
+/// 8 个工具的名字表（恰好清单；execute 的 match 以此为准）。
+pub const TOOL_NAMES: [&str; 8] = [
     "vault_read",
     "vault_search",
     "vault_patch",
     "vault_create",
+    "vault_move",
+    "vault_delete",
     "skill_load",
     "cli_run",
 ];
@@ -146,7 +160,7 @@ pub fn definitions() -> Vec<serde_json::Value> {
         serde_json::json!({
             "type": "function",
             "name": "vault_create",
-            "description": "新建文档（不会覆盖同名文件；父目录必须已存在）。",
+            "description": "新建文档（不会覆盖同名文件；父目录不存在时会自动建出）。",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -154,6 +168,31 @@ pub fn definitions() -> Vec<serde_json::Value> {
                     "content": {"type": "string"}
                 },
                 "required": ["path", "content"]
+            }
+        }),
+        serde_json::json!({
+            "type": "function",
+            "name": "vault_move",
+            "description": "移动 / 重命名 vault 内条目（可跨目录；不会覆盖既有条目；目标父目录必须已存在）。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "vault 相对路径（源）"},
+                    "new_path": {"type": "string", "description": "vault 相对路径（目标，含新末段名）"}
+                },
+                "required": ["path", "new_path"]
+            }
+        }),
+        serde_json::json!({
+            "type": "function",
+            "name": "vault_delete",
+            "description": "删除 vault 内条目：移入系统废纸篓（可经 Finder 恢复），不提供永久删除。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "vault 相对路径"}
+                },
+                "required": ["path"]
             }
         }),
         serde_json::json!({
@@ -172,36 +211,47 @@ pub fn definitions() -> Vec<serde_json::Value> {
         serde_json::json!({
             "type": "function",
             "name": "cli_run",
-            "description": "执行命令行工具（argv 直传，无 shell 展开；默认需用户批准）。默认 60 秒超时，输出截断会标注。",
+            "description": "执行命令行工具（argv 直传，无 shell 展开；默认需用户批准）。默认 60 秒超时，输出截断会标注。写 vault 内路径会被闸门改道到 vault 工具（vault_patch / vault_create / vault_move / vault_delete），不要用 cli_run 写 vault。",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "command": {"type": "string"},
-                    "args": {"type": "array", "items": {"type": "string"}}
+                    "args": {"type": "array", "items": {"type": "string"}},
+                    "purpose": {"type": "string", "description": "一句人话说明这条命令是干什么的（用户批准时先看它，再核对命令原文）"}
                 },
-                "required": ["command"]
+                "required": ["command", "purpose"]
             }
         }),
     ]
+}
+
+/// cli_run 的 argv（command + args）：分类器 / 写目标提取的输入，也是主体串的来源
+/// （单一真源——argv 只在这一处从 JSON 参数里取出，判定层与分类层不各解析一遍）。
+pub fn cli_argv(args: &serde_json::Value) -> Vec<String> {
+    let mut argv = Vec::new();
+    if let Some(command) = args.get("command").and_then(|v| v.as_str()) {
+        argv.push(command.to_string());
+    }
+    if let Some(items) = args.get("args").and_then(|v| v.as_array()) {
+        argv.extend(
+            items
+                .iter()
+                .filter_map(|item| item.as_str())
+                .map(str::to_string),
+        );
+    }
+    argv
 }
 
 /// 权限判定的主体串：cli = 拼接 argv；vault_* = 路径参数；skill_load = 技能名；
 /// vault_search = path_glob（无则 query）。
 pub fn permission_subject(name: &str, args: &serde_json::Value) -> String {
     match name {
-        "cli_run" => {
-            let command = args.get("command").and_then(|v| v.as_str()).unwrap_or("");
-            let args: Vec<&str> = args
-                .get("args")
-                .and_then(|v| v.as_array())
-                .map(|items| items.iter().filter_map(|i| i.as_str()).collect())
-                .unwrap_or_default();
-            std::iter::once(command)
-                .chain(args)
-                .filter(|s| !s.is_empty())
-                .collect::<Vec<_>>()
-                .join(" ")
-        }
+        "cli_run" => cli_argv(args)
+            .into_iter()
+            .filter(|s| !s.is_empty())
+            .collect::<Vec<_>>()
+            .join(" "),
         "skill_load" => args
             .get("name")
             .and_then(|v| v.as_str())
@@ -239,10 +289,33 @@ pub fn execute_with_revision(
         "vault_search" => vault_search(args, ctx),
         "vault_patch" => vault_patch(args, ctx, revision),
         "vault_create" => vault_create(args, ctx),
+        "vault_move" => vault_move(args, ctx),
+        "vault_delete" => vault_delete(args, ctx),
         "skill_load" => skill_load(args, ctx),
         "cli_run" => cli_run(args),
         _ => ToolOutput::err("tool_unknown", format!("未知工具：{name}")),
     }
+}
+
+/// cli_run 的 `purpose` 入口校验（change add-harness-permission-modes，design §3.4）：
+/// **缺省或 trim 后空白一律拒绝**（空白串与缺省同等——防空格绕过必填），在判定管线之前拦下
+/// （ask 档批准卡必须已有 purpose 可展示）。非 cli_run 工具恒 Ok（本期不给 vault 写工具加
+/// purpose——路径 + diff 预览已自解释，多一个字段只会稀释 cli_run 上 purpose 的显眼度）。
+///
+/// 返回的错误走既有统一信封（`tool_args_invalid` 家族的独立码 `cli_purpose_missing`），
+/// 模型补填后重发即可。purpose 的内容**不进任何判定层**（信任边界：模型自述、阅读辅助）。
+pub fn check_purpose(name: &str, args: &serde_json::Value) -> Result<(), ToolOutput> {
+    if name != "cli_run" {
+        return Ok(());
+    }
+    let purpose = args.get("purpose").and_then(|v| v.as_str()).unwrap_or("");
+    if purpose.trim().is_empty() {
+        return Err(ToolOutput::err(
+            "cli_purpose_missing",
+            "cli_run 缺少 purpose：请用一句人话补填这条命令是干什么的（用户批准时先看它），然后重发本次调用。",
+        ));
+    }
+    Ok(())
 }
 
 /// ask 档的批准预览。返回 Err = 预览阶段就失败（如 patch 不唯一命中）——**不进批准闸**，
@@ -264,6 +337,7 @@ pub fn approval_preview(
                 diff: Some(diff::unified_diff(&input.path, &old, &new)),
                 argv: None,
                 revision: Some(revision),
+                purpose: None,
             })
         }
         "vault_create" => {
@@ -272,16 +346,39 @@ pub fn approval_preview(
                 diff: Some(diff::unified_diff(&input.path, "", &input.content)),
                 argv: None,
                 revision: None,
+                purpose: None,
+            })
+        }
+        // vault_move：源 → 目标路径对（design §5.1 的批准预览）。
+        "vault_move" => {
+            let input = parse_args::<MoveArgs>(args)?;
+            Ok(ApprovalPreview {
+                diff: None,
+                argv: Some(vec![input.path, input.new_path]),
+                revision: None,
+                purpose: None,
+            })
+        }
+        // vault_delete：路径（面板侧附「将移入系统废纸篓，可恢复」的说明文案）。
+        "vault_delete" => {
+            let input = parse_args::<DeleteArgs>(args)?;
+            Ok(ApprovalPreview {
+                diff: None,
+                argv: Some(vec![input.path]),
+                revision: None,
+                purpose: None,
             })
         }
         "cli_run" => {
             let input = parse_args::<CliArgs>(args)?;
             let mut argv = vec![input.command.clone()];
             argv.extend(input.args.clone());
+            let purpose = input.purpose.trim();
             Ok(ApprovalPreview {
                 diff: None,
                 argv: Some(argv),
                 revision: None,
+                purpose: (!purpose.is_empty()).then(|| purpose.to_string()),
             })
         }
         _ => Ok(ApprovalPreview::empty()),
@@ -533,6 +630,41 @@ fn vault_create(args: &serde_json::Value, ctx: &ToolContext) -> ToolOutput {
 }
 
 #[derive(Deserialize)]
+struct MoveArgs {
+    path: String,
+    new_path: String,
+}
+
+fn vault_move(args: &serde_json::Value, ctx: &ToolContext) -> ToolOutput {
+    let input = match parse_args::<MoveArgs>(args) {
+        Ok(input) => input,
+        Err(output) => return output,
+    };
+    match fs_io::fs_move_entry(ctx.root, &input.path, &input.new_path) {
+        Ok(path) => ToolOutput::ok(serde_json::json!({ "path": path })),
+        Err(e) => ToolOutput::from_command_error(&e),
+    }
+}
+
+#[derive(Deserialize)]
+struct DeleteArgs {
+    path: String,
+}
+
+/// vault_delete：**只有移入系统废纸篓一条路径**（`trash_entry`），本工具集里物理上做不到
+/// 永久删除（design §5.3）。失败不留半删除状态（`trash` crate 的单次系统调用语义）。
+fn vault_delete(args: &serde_json::Value, ctx: &ToolContext) -> ToolOutput {
+    let input = match parse_args::<DeleteArgs>(args) {
+        Ok(input) => input,
+        Err(output) => return output,
+    };
+    match fs_io::trash_entry(ctx.root, &input.path) {
+        Ok(()) => ToolOutput::ok(serde_json::json!({ "path": input.path })),
+        Err(e) => ToolOutput::from_command_error(&e),
+    }
+}
+
+#[derive(Deserialize)]
 struct SkillArgs {
     name: String,
     file: Option<String>,
@@ -619,6 +751,11 @@ struct CliArgs {
     command: String,
     #[serde(default)]
     args: Vec<String>,
+    /// 用途说明（change add-harness-permission-modes，design §3.4）：schema 必填，但这里收成
+    /// 缺省空串——缺省与空白由 [`check_purpose`] 在判定管线之前按统一信封拒绝（走 serde 必填
+    /// 会得到泛泛的 `tool_args_invalid`，模型拿不到「补填用途」这条人话指引）。
+    #[serde(default)]
+    purpose: String,
 }
 
 /// CLI 输出单侧截断上限（超出标 truncated）。
@@ -852,16 +989,190 @@ mod tests {
         let out = vault_create(&serde_json::json!({"path": "a.md", "content": "new"}), &ctx);
         assert!(!out.succeeded());
         assert_eq!(out.value["code"], "fs_already_exists");
+        // 父目录不存在 ⇒ 自动补建（mkdir -p 语义，change add-harness-permission-modes）。
         let out = vault_create(
             &serde_json::json!({"path": "sub/b.md", "content": "x"}),
             &ctx,
         );
-        assert!(!out.succeeded()); // 父目录须存在（不隐式补建）
-        assert_eq!(out.value["code"], "fs_not_found");
+        assert!(out.succeeded(), "{out:?}");
+        assert!(root.join("sub").is_dir());
         let out = vault_create(&serde_json::json!({"path": "b.md", "content": "new"}), &ctx);
         assert!(out.succeeded());
         assert_eq!(std::fs::read_to_string(root.join("b.md")).unwrap(), "new");
         std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// cli_run 的 purpose 校验（design §3.4）：缺省 / 空白串 / 纯空格同等拒绝，非空即过；
+    /// 其他工具不受影响（本期 vault 写工具不加 purpose）。
+    #[test]
+    fn cli_purpose_requires_non_blank() {
+        for args in [
+            serde_json::json!({"command": "ls"}),
+            serde_json::json!({"command": "ls", "purpose": ""}),
+            serde_json::json!({"command": "ls", "purpose": "   "}),
+            serde_json::json!({"command": "ls", "purpose": "\n\t"}),
+            serde_json::json!({"command": "ls", "purpose": 1}),
+        ] {
+            let err = check_purpose("cli_run", &args).unwrap_err();
+            assert_eq!(err.value["code"], "cli_purpose_missing", "{args}");
+            assert!(
+                err.value["message"].as_str().unwrap().contains("purpose"),
+                "{args}"
+            );
+        }
+        assert!(check_purpose(
+            "cli_run",
+            &serde_json::json!({"command": "ls", "purpose": " 列目录 "})
+        )
+        .is_ok());
+        // 非 cli_run：恒过（purpose 不进判定层，也不给 vault 工具加这一字段）。
+        assert!(check_purpose("vault_patch", &serde_json::json!({"path": "a.md"})).is_ok());
+    }
+
+    /// vault_move / vault_delete 的注册表路径与结果信封（成功 `{"ok": true, "path": …}`）。
+    #[test]
+    fn vault_move_and_delete_through_registry() {
+        let (root, policy) = fixture_vault("move-delete");
+        std::fs::create_dir_all(root.join("sub")).unwrap();
+        std::fs::write(root.join("a.md"), "A").unwrap();
+        let ctx = ctx(&root, &policy, &[]);
+        let out = execute(
+            "vault_move",
+            &serde_json::json!({"path": "a.md", "new_path": "sub/a.md"}),
+            &ctx,
+        );
+        assert!(out.succeeded(), "{out:?}");
+        assert_eq!(out.value["path"], "sub/a.md");
+        assert!(!root.join("a.md").exists());
+        assert_eq!(std::fs::read_to_string(root.join("sub/a.md")).unwrap(), "A");
+
+        let out = execute(
+            "vault_delete",
+            &serde_json::json!({"path": "sub/a.md"}),
+            &ctx,
+        );
+        assert!(out.succeeded(), "{out:?}");
+        assert_eq!(out.value["path"], "sub/a.md");
+        assert!(!root.join("sub/a.md").exists());
+        // 逃逸路径照样被拒（两端防护）。
+        let out = execute(
+            "vault_move",
+            &serde_json::json!({"path": "sub", "new_path": "../escaped"}),
+            &ctx,
+        );
+        assert!(!out.succeeded());
+        assert_eq!(out.value["code"], "fs_path_escape");
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// 批准预览：cli_run 带完整 argv + purpose，vault_move / vault_delete 带路径清单。
+    #[test]
+    fn approval_previews_carry_command_paths_and_purpose() {
+        let (root, policy) = fixture_vault("preview");
+        std::fs::write(root.join("a.md"), "old").unwrap();
+        let ctx = ctx(&root, &policy, &[]);
+
+        let preview = approval_preview(
+            "cli_run",
+            &serde_json::json!({"command": "npm", "args": ["install"], "purpose": " 装依赖 "}),
+            &ctx,
+        )
+        .unwrap();
+        assert_eq!(
+            preview.argv.unwrap(),
+            vec!["npm".to_string(), "install".into()]
+        );
+        assert_eq!(preview.purpose.as_deref(), Some("装依赖"));
+
+        let preview = approval_preview(
+            "vault_move",
+            &serde_json::json!({"path": "a.md", "new_path": "notes/b.md"}),
+            &ctx,
+        )
+        .unwrap();
+        assert_eq!(
+            preview.argv.unwrap(),
+            vec!["a.md".to_string(), "notes/b.md".into()]
+        );
+        assert!(preview.purpose.is_none());
+
+        let preview =
+            approval_preview("vault_delete", &serde_json::json!({"path": "a.md"}), &ctx).unwrap();
+        assert_eq!(preview.argv.unwrap(), vec!["a.md".to_string()]);
+        assert!(preview.diff.is_none());
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// 批准窗 CAS 的**接线**直测（模式设计变更后 patch 不再进批准闸，整合层那条用例已退役——
+    /// 见 `harness_runtime` 的 `vault_patch_bypasses_gate_and_writes_immediately_in_default_mode`）：
+    /// 预览取到的 revision 必须被当作执行基准，批准窗内文件被改即 `document_conflict`。
+    #[test]
+    fn approval_preview_revision_guards_execute_window() {
+        let (root, policy) = fixture_vault("cas-window");
+        std::fs::write(root.join("a.md"), "old\n").unwrap();
+        let ctx = ctx(&root, &policy, &[]);
+        let args = serde_json::json!({
+            "path": "a.md",
+            "edits": [{"old_string": "old", "new_string": "patched"}],
+        });
+        let preview = approval_preview("vault_patch", &args, &ctx).unwrap();
+        let revision = preview.revision.clone().expect("patch 预览带基准 revision");
+        assert!(preview.diff.as_deref().unwrap().contains("-old"));
+
+        // 批准窗内文件被外部修改 ⇒ 以预览基准执行必须被 CAS 拒掉（零覆盖）。
+        std::fs::write(root.join("a.md"), "old\n用户手改\n").unwrap();
+        let out = execute_with_revision("vault_patch", &args, &ctx, Some(&revision));
+        assert!(!out.succeeded(), "{out:?}");
+        assert_eq!(out.value["code"], "document_conflict");
+        assert_eq!(
+            std::fs::read_to_string(root.join("a.md")).unwrap(),
+            "old\n用户手改\n"
+        );
+
+        // 同一参数走「执行时刻当前值」（None）则照常成功——证明上一条的失败来自基准对账，
+        // 不是参数或命中语义错。`old_string` 在新内容里唯一命中 ⇒ 替换后为 patched + 用户那行。
+        let out = execute_with_revision("vault_patch", &args, &ctx, None);
+        assert!(out.succeeded(), "{out:?}");
+        assert_eq!(
+            std::fs::read_to_string(root.join("a.md")).unwrap(),
+            "patched\n用户手改\n"
+        );
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// 工具集扩为 8：名字表、definitions 与 execute 注册表同源（清单外一律 tool_unknown）。
+    #[test]
+    fn tool_registry_has_eight_tools() {
+        assert_eq!(TOOL_NAMES.len(), 8);
+        let defined: Vec<String> = definitions()
+            .iter()
+            .map(|tool| tool["name"].as_str().unwrap().to_string())
+            .collect();
+        assert_eq!(defined, TOOL_NAMES.to_vec());
+        // cli_run 的 purpose 是 schema 必填（缺省即被入口校验拦下，但 schema 也要声明）。
+        let cli = definitions()
+            .into_iter()
+            .find(|tool| tool["name"] == "cli_run")
+            .unwrap();
+        assert_eq!(
+            cli["parameters"]["required"],
+            serde_json::json!(["command", "purpose"])
+        );
+        assert_eq!(
+            permission_subject(
+                "vault_move",
+                &serde_json::json!({"path": "a.md", "new_path": "b.md"})
+            ),
+            "a.md"
+        );
+        assert_eq!(
+            permission_subject("vault_delete", &serde_json::json!({"path": "a.md"})),
+            "a.md"
+        );
+        // argv 的单一取法：主体串由 cli_argv 拼出。
+        let args = serde_json::json!({"command": "echo", "args": ["hi"], "purpose": "打招呼"});
+        assert_eq!(cli_argv(&args), vec!["echo".to_string(), "hi".to_string()]);
+        assert_eq!(permission_subject("cli_run", &args), "echo hi");
     }
 
     #[test]

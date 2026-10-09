@@ -623,10 +623,13 @@ fn deny_beats_allow_and_default_layering() {
     );
 }
 
+/// ask 档的采纳 / 拒绝语义（approval gate）：默认档下仍逐个问的写工具是 `vault_delete`
+/// （裁决点 1 落 B）——vault_patch / vault_create / vault_move 在 vault_write 档已免闸
+/// （design §2），批准闸的载体因此换成 vault_delete。
 #[test]
 fn ask_gate_approve_executes_and_reject_leaves_disk() {
     for (approve, expected_disk, expected_status) in
-        [(true, "patched\n", "done"), (false, "old\n", "rejected")]
+        [(true, None, "done"), (false, Some("old\n"), "rejected")]
     {
         let f = Fixture::new(if approve { "approve" } else { "reject" });
         f.write("a.md", "old\n");
@@ -635,8 +638,8 @@ fn ask_gate_approve_executes_and_reject_leaves_disk() {
         runtime.acquire_turn(&f.scope(), &mock_config()).unwrap();
         let sink = CollectSink::default();
         let script = r#"{"responses": [
-            {"tool_calls": [{"id": "c1", "name": "vault_patch",
-                "arguments": "{\"path\":\"a.md\",\"edits\":[{\"old_string\":\"old\",\"new_string\":\"patched\"}]}"}]},
+            {"tool_calls": [{"id": "c1", "name": "vault_delete",
+                "arguments": "{\"path\":\"a.md\"}"}]},
             {"text": "收到。"}
         ]}"#;
         let mut client = MockClient::from_str(script, "gate").unwrap();
@@ -651,12 +654,12 @@ fn ask_gate_approve_executes_and_reject_leaves_disk() {
                     &runtime,
                     &scope,
                     &config,
-                    "改成 patched".into(),
+                    "删掉 a.md".into(),
                     &mut client,
                 );
             })
         };
-        // 等批准请求挂出，diff 预览附在事件上。
+        // 等批准请求挂出，路径预览附在事件上（vault_delete 无 diff，只有 argv 路径）。
         sink.wait_for(
             |events| {
                 events
@@ -670,10 +673,8 @@ fn ask_gate_approve_executes_and_reject_leaves_disk() {
             .into_iter()
             .find(|e| e.get("type").and_then(|t| t.as_str()) == Some("approval_request"))
             .unwrap();
-        assert_eq!(request["tool"], "vault_patch");
-        let diff = request["diff"].as_str().expect("patch 附 diff 预览");
-        assert!(diff.contains("-old"), "{diff}");
-        assert!(diff.contains("+patched"), "{diff}");
+        assert_eq!(request["tool"], "vault_delete");
+        assert_eq!(request["argv"], serde_json::json!(["a.md"]));
         let id = request["id"].as_str().unwrap().to_string();
         // 面板状态里 pending_approval 可见（harness_state 形状）。
         let pending = runtime.snapshot(&f.scope(), &config).pending_approval;
@@ -681,21 +682,23 @@ fn ask_gate_approve_executes_and_reject_leaves_disk() {
         // 采纳 / 拒绝（拒绝带原因，随结果回送模型）。
         runtime
             .with_session(&f.scope(), |s| {
-                s.resolve_approval(&id, approve, (!approve).then(|| "先别改".to_string()))
+                s.resolve_approval(&id, approve, (!approve).then(|| "先别删".to_string()))
             })
             .expect("resolve ok")
             .expect("resolve ok");
         worker.join().unwrap();
 
+        let disk = std::fs::read_to_string(f.vault().join("a.md")).ok();
         assert_eq!(
-            std::fs::read_to_string(f.vault().join("a.md")).unwrap(),
-            expected_disk
+            disk,
+            expected_disk.map(str::to_string),
+            "采纳⇒进废纸篓；拒绝⇒原样"
         );
         let snapshot = runtime.snapshot(&f.scope(), &config);
         let tool = snapshot.messages.iter().find(|m| m.role == "tool").unwrap();
         assert_eq!(tool.status.as_deref(), Some(expected_status));
         // 事件终态一律 "done"（r1 P1-1）：采纳/拒绝都不发细分值，细分只在 summary。
-        let event = last_tool_call_event(&sink, "vault_patch");
+        let event = last_tool_call_event(&sink, "vault_delete");
         assert_eq!(event["status"], "done", "{event}");
         if approve {
             assert_eq!(event["summary"], "成功", "{event}");
@@ -708,7 +711,7 @@ fn ask_gate_approve_executes_and_reject_leaves_disk() {
         if !approve {
             // 拒绝原因随工具结果回送模型（JSONL 里 tool_result 带 approval_rejected + 原因）。
             assert!(tool.text.as_deref().unwrap().contains("approval_rejected"));
-            assert!(tool.text.as_deref().unwrap().contains("先别改"));
+            assert!(tool.text.as_deref().unwrap().contains("先别删"));
         }
         assert!(snapshot.pending_approval.is_none(), "批准后 pending 清空");
     }
@@ -1146,11 +1149,19 @@ fn unknown_tool_error_feeds_back() {
     assert!(tool.text.as_deref().unwrap().contains("tool_unknown"));
 }
 
+/// `vault_patch` 在默认档（vault_write）**免闸直执行**——这是 change
+/// add-harness-permission-modes 的语义（design §2），也是本用例取代旧
+/// `patch_conflict_when_file_changes_during_approval` 的原因：既然 patch 在三档里都不进批准闸
+/// （只读档是 Deny、其余档是 Allow），「批准窗内文件被改」这个场景在整合层已不可达，
+/// `gated_execute` 传 `preview.revision` 的接线随之成为不可达代码。CAS 本体与接线分别由
+/// `fs_io::tests`（stale revision ⇒ document_conflict）与 `tools::tests` 的
+/// `approval_preview` + `execute_with_revision` 直测覆盖。
+///
+/// 留这条探针的意义：若后续批次给 patch 重新加上批准闸，本用例会立刻变红，逼作者把批准窗的
+/// CAS 整合用例一并恢复。
 #[test]
-fn patch_conflict_when_file_changes_during_approval() {
-    // r1 P2-2：批准窗内用户改了文件（旧内容落盘）——采纳执行必须以预览基准 revision
-    // 走 CAS，变了就 document_conflict 回送模型，落盘不与已批准 diff 静默分叉。
-    let f = Fixture::new("approval-cas");
+fn vault_patch_bypasses_gate_and_writes_immediately_in_default_mode() {
+    let f = Fixture::new("patch-ungated");
     f.write("a.md", "old\n");
     let config = mock_config();
     let runtime = f.runtime();
@@ -1159,63 +1170,35 @@ fn patch_conflict_when_file_changes_during_approval() {
     let script = r#"{"responses": [
         {"tool_calls": [{"id": "c1", "name": "vault_patch",
             "arguments": "{\"path\":\"a.md\",\"edits\":[{\"old_string\":\"old\",\"new_string\":\"patched\"}]}"}]},
-        {"text": "文件被改了，我需要重新生成 diff。"}
+        {"text": "改好了。"}
     ]}"#;
-    let mut client = MockClient::from_str(script, "cas").unwrap();
-    let worker = {
-        let sink = sink.clone();
-        let runtime = runtime.clone();
-        let scope = f.scope();
-        let config = config.clone();
-        std::thread::spawn(move || {
-            drive_turn(
-                &sink,
-                &runtime,
-                &scope,
-                &config,
-                "改成 patched".into(),
-                &mut client,
-            );
-        })
-    };
-    sink.wait_for(
-        |events| {
-            events
-                .iter()
-                .any(|e| e.get("type").and_then(|t| t.as_str()) == Some("approval_request"))
-        },
-        "approval_request 事件",
+    let mut client = MockClient::from_str(script, "patch-ungated").unwrap();
+    drive_turn(
+        &sink,
+        &runtime,
+        &f.scope(),
+        &config,
+        "改成 patched".into(),
+        &mut client,
     );
-    // 批准窗内：文件被外部修改（old_string 在新内容里仍唯一命中——
-    // 若无 CAS 基准，patch 会静默应用到新内容上）。
-    std::fs::write(f.vault().join("a.md"), "old\n用户手改的一行\n").unwrap();
-    let id = sink
-        .events()
-        .into_iter()
-        .find(|e| e.get("type").and_then(|t| t.as_str()) == Some("approval_request"))
-        .unwrap()["id"]
-        .as_str()
-        .unwrap()
-        .to_string();
-    runtime
-        .with_session(&f.scope(), |s| s.resolve_approval(&id, true, None))
-        .expect("resolve ok")
-        .expect("resolve ok");
-    worker.join().unwrap();
+    runtime.release_turn(&f.scope());
 
-    // 结果：document_conflict 回送模型；磁盘保持用户改后的内容（无分叉、无覆盖）。
-    let snapshot = runtime.snapshot(&f.scope(), &config);
-    let tool = snapshot.messages.iter().find(|m| m.role == "tool").unwrap();
-    assert_eq!(tool.status.as_deref(), Some("error"));
     assert!(
-        tool.text.as_deref().unwrap().contains("document_conflict"),
-        "{}",
-        tool.text.as_deref().unwrap()
+        !sink.types().contains(&"approval_request".to_string()),
+        "vault_write 档 patch 不该进批准闸：{:?}",
+        sink.types()
     );
     assert_eq!(
         std::fs::read_to_string(f.vault().join("a.md")).unwrap(),
-        "old\n用户手改的一行\n"
+        "patched\n"
     );
+    let tool = runtime
+        .snapshot(&f.scope(), &config)
+        .messages
+        .into_iter()
+        .find(|m| m.role == "tool")
+        .unwrap();
+    assert_eq!(tool.status.as_deref(), Some("done"));
 }
 
 #[test]
@@ -1232,7 +1215,7 @@ fn cli_run_gated_and_allow_rule_executes() {
     let sink = CollectSink::default();
     let script = r#"{"responses": [
         {"tool_calls": [{"id": "c1", "name": "cli_run",
-            "arguments": "{\"command\":\"echo\",\"args\":[\"hello\"]}"}]},
+            "arguments": "{\"command\":\"echo\",\"args\":[\"hello\"],\"purpose\":\"打个招呼\"}"}]},
         {"text": "执行完了。"}
     ]}"#;
     let mut client = MockClient::from_str(script, "cli").unwrap();
@@ -1618,4 +1601,624 @@ fn snapshot_thinking_capability_follows_provider_and_model() {
     let mut empty = mock_config();
     empty.provider = HarnessProvider::Kimi;
     assert!(!runtime.snapshot(&f.scope(), &empty).thinking.supported);
+}
+
+// ---------------------------------------------------------------------------
+// 三档权限模式 + cli_run 分类闸门（change add-harness-permission-modes，M407）
+// ---------------------------------------------------------------------------
+
+/// 判定矩阵的三档 × 五类调用面（design §2）走**判定管线**逐格核验（mock provider 的整链路
+/// 只覆盖代表性几格，逐格矩阵在 `permissions.rs` 单测里；这条额外钉一件事：**模式来自配置**，
+/// 运行时真的读它——config 字段接不上判定管线时本用例必红）。
+#[test]
+fn permission_mode_is_read_from_config_per_call_face() {
+    use lumir_lib::config::PermissionMode;
+
+    let f = Fixture::new("mode-matrix");
+    f.write("a.md", "old\n");
+    f.write("b.md", "x\n");
+    let runtime = f.runtime();
+
+    for (mode, expect_tool_status, expect_approval) in [
+        (PermissionMode::ReadOnly, "denied", false),
+        (PermissionMode::VaultWrite, "done", false),
+        (PermissionMode::FullAccess, "done", false),
+    ] {
+        let mut config = mock_config();
+        config.permission_mode = mode;
+        runtime.acquire_turn(&f.scope(), &config).unwrap();
+        let sink = CollectSink::default();
+        let script = r#"{"responses": [
+            {"tool_calls": [{"id": "c1", "name": "vault_patch",
+                "arguments": "{\"path\":\"a.md\",\"edits\":[{\"old_string\":\"old\",\"new_string\":\"new\"}]}"}]},
+            {"text": "好。"}
+        ]}"#;
+        let mut client = MockClient::from_str(script, "mode-matrix").unwrap();
+        drive_turn(
+            &sink,
+            &runtime,
+            &f.scope(),
+            &config,
+            "改一下".into(),
+            &mut client,
+        );
+        runtime.release_turn(&f.scope());
+
+        let tool = runtime
+            .snapshot(&f.scope(), &config)
+            .messages
+            .into_iter()
+            .rev()
+            .find(|m| m.role == "tool")
+            .unwrap();
+        // 只读档：Deny（不是 Ask——批准闸的存在会稀释「不产生写」的承诺）。
+        assert_eq!(tool.status.as_deref(), Some(expect_tool_status), "{mode:?}");
+        assert_eq!(
+            sink.types().contains(&"approval_request".to_string()),
+            expect_approval,
+            "{mode:?}"
+        );
+        // 落盘结果：只读档文件不变、vault_write 档改成功。
+        let disk = std::fs::read_to_string(f.vault().join("a.md")).unwrap();
+        if mode == PermissionMode::ReadOnly {
+            assert_eq!(disk, "old\n", "{mode:?}");
+        } else {
+            assert_eq!(disk, "new\n", "{mode:?}");
+        }
+        // 复位文件，下一档从同一初始态再判。
+        f.write("a.md", "old\n");
+    }
+}
+
+/// purpose 链（design §3.4 + 5.1 任务）：
+/// ① 缺 purpose 的 cli_run **不执行**、回送补填错误（`cli_purpose_missing`），模型补填后重发成功；
+/// ② 粉饰性 purpose 不改变判定——黑名单命令（`rm`）在任何档都进批准闸，purpose 只影响阅读。
+#[test]
+fn cli_purpose_required_and_never_widens_permission() {
+    let f = Fixture::new("purpose");
+    let mut config = mock_config();
+    // allow 规则让 echo 免闸：这样「缺 purpose 被拒」只可能来自 purpose 校验，不是权限层。
+    config.permissions = HarnessPermissions {
+        allow: vec!["cli(echo *)".into()],
+        deny: vec![],
+    };
+    let runtime = f.runtime();
+    runtime.acquire_turn(&f.scope(), &config).unwrap();
+    let sink = CollectSink::default();
+    // 第 1 轮：缺 purpose（同一条命令，若放行会直执行）⇒ 拒；第 2 轮：补填后重发 ⇒ 执行。
+    let script = r#"{"responses": [
+        {"tool_calls": [{"id": "c1", "name": "cli_run",
+            "arguments": "{\"command\":\"echo\",\"args\":[\"hello\"]}"}]},
+        {"tool_calls": [{"id": "c2", "name": "cli_run",
+            "arguments": "{\"command\":\"echo\",\"args\":[\"hello\"],\"purpose\":\"打印一句问候\"}"}]},
+        {"text": "完成。"}
+    ]}"#;
+    let mut client = MockClient::from_str(script, "purpose").unwrap();
+    drive_turn(
+        &sink,
+        &runtime,
+        &f.scope(),
+        &config,
+        "跑 echo".into(),
+        &mut client,
+    );
+    runtime.release_turn(&f.scope());
+
+    let tools: Vec<_> = runtime
+        .snapshot(&f.scope(), &config)
+        .messages
+        .into_iter()
+        .filter(|m| m.role == "tool")
+        .collect();
+    assert_eq!(tools.len(), 2, "两次调用各一条工具行：{tools:?}");
+    let first = &tools[0];
+    assert_eq!(first.status.as_deref(), Some("error"));
+    assert!(
+        first
+            .text
+            .as_deref()
+            .unwrap()
+            .contains("cli_purpose_missing"),
+        "{first:?}"
+    );
+    assert!(
+        first.text.as_deref().unwrap().contains("purpose"),
+        "{first:?}"
+    );
+    let second = &tools[1];
+    assert_eq!(second.status.as_deref(), Some("done"), "{second:?}");
+    assert!(
+        second.text.as_deref().unwrap().contains("hello"),
+        "{second:?}"
+    );
+    // allow 规则生效路径上没出现过批准闸。
+    assert!(!sink.types().contains(&"approval_request".to_string()));
+
+    // ② 粉饰性 purpose 不放宽任何判定：黑名单命令在 allow 规则 + vault_write 档下仍进批准闸。
+    let mut deny_config = mock_config();
+    deny_config.permissions = HarnessPermissions {
+        allow: vec!["cli(rm *)".into()],
+        deny: vec![],
+    };
+    let runtime = f.runtime();
+    runtime.acquire_turn(&f.scope(), &deny_config).unwrap();
+    let sink = CollectSink::default();
+    let script = r#"{"responses": [
+        {"tool_calls": [{"id": "c1", "name": "cli_run",
+            "arguments": "{\"command\":\"rm\",\"args\":[\"-rf\",\"/tmp/lumir-m407-none\"] ,\"purpose\":\"清理临时文件（无害）\"}"}]},
+        {"text": "算了。"}
+    ]}"#;
+    let mut client = MockClient::from_str(script, "purpose-black").unwrap();
+    let worker = {
+        let sink = sink.clone();
+        let runtime = runtime.clone();
+        let scope = f.scope();
+        let config = deny_config.clone();
+        std::thread::spawn(move || {
+            drive_turn(&sink, &runtime, &scope, &config, "清理".into(), &mut client);
+        })
+    };
+    sink.wait_for(
+        |events| {
+            events
+                .iter()
+                .any(|e| e.get("type").and_then(|t| t.as_str()) == Some("approval_request"))
+        },
+        "黑名单命令的 approved 请求",
+    );
+    // 拒绝掉，让本轮收口（黑名单命令绝不能被 purpose 放行）。
+    let id = sink
+        .events()
+        .into_iter()
+        .find(|e| e.get("type").and_then(|t| t.as_str()) == Some("approval_request"))
+        .and_then(|e| e["id"].as_str().map(str::to_string))
+        .expect("有批准请求 id");
+    runtime
+        .with_session(&f.scope(), |s| {
+            s.resolve_approval(&id, false, Some("不许删".into()))
+        })
+        .unwrap()
+        .unwrap();
+    worker.join().unwrap();
+}
+
+/// purpose 链的第二半（tasks 6.8）：「带 purpose 的调用在批准卡载荷中 purpose 与命令同达」——
+/// 载荷同时含完整 argv（命令原文不被替代）与 purpose 句。
+#[test]
+fn cli_purpose_reaches_approval_card_payload_with_full_command() {
+    let f = Fixture::new("purpose-payload");
+    let config = mock_config(); // vault_write 档：写命令逐个问
+    let runtime = f.runtime();
+    runtime.acquire_turn(&f.scope(), &config).unwrap();
+    let sink = CollectSink::default();
+    let script = r#"{"responses": [
+        {"tool_calls": [{"id": "c1", "name": "cli_run",
+            "arguments": "{\"command\":\"npm\",\"args\":[\"install\",\"--save\",\"lodash\"],\"purpose\":\"装一个依赖\"}"}]},
+        {"text": "算了。"}
+    ]}"#;
+    let mut client = MockClient::from_str(script, "purpose-payload").unwrap();
+    let worker = {
+        let sink = sink.clone();
+        let runtime = runtime.clone();
+        let scope = f.scope();
+        let config = config.clone();
+        std::thread::spawn(move || {
+            drive_turn(
+                &sink,
+                &runtime,
+                &scope,
+                &config,
+                "装依赖".into(),
+                &mut client,
+            );
+        })
+    };
+    sink.wait_for(
+        |events| {
+            events
+                .iter()
+                .any(|e| e.get("type").and_then(|t| t.as_str()) == Some("approval_request"))
+        },
+        "cli_run 的批准请求",
+    );
+    let request = sink
+        .events()
+        .into_iter()
+        .find(|e| e.get("type").and_then(|t| t.as_str()) == Some("approval_request"))
+        .unwrap();
+    assert_eq!(request["tool"], "cli_run");
+    assert_eq!(request["purpose"], "装一个依赖");
+    // 命令原文完整在场（不被 purpose 替代或截断）。
+    assert_eq!(
+        request["argv"],
+        serde_json::json!(["npm", "install", "--save", "lodash"])
+    );
+    let id = request["id"].as_str().unwrap().to_string();
+    runtime
+        .with_session(&f.scope(), |s| {
+            s.resolve_approval(&id, false, Some("先不装".into()))
+        })
+        .unwrap()
+        .unwrap();
+    worker.join().unwrap();
+}
+
+/// 重定向链（design §4.3）：cli_run 写 vault 内目标 ⇒ 收到固定标记的结构化拒绝 ⇒ 模型下一轮
+/// 改调 vault_move ⇒ 按 vault_write 档放行 ⇒ vault 终态正确。闸门不做自动翻译，重试全靠模型。
+#[test]
+fn cli_write_into_vault_redirects_to_vault_tool() {
+    let f = Fixture::new("redirect");
+    f.write("notes/a.md", "正文\n");
+    let config = mock_config(); // 默认档 vault_write
+    let runtime = f.runtime();
+    runtime.acquire_turn(&f.scope(), &config).unwrap();
+    let sink = CollectSink::default();
+    let script = r#"{"responses": [
+        {"tool_calls": [{"id": "c1", "name": "cli_run",
+            "arguments": "{\"command\":\"mv\",\"args\":[\"notes/a.md\",\"notes/b.md\"],\"purpose\":\"把笔记改名\"}"}]},
+        {"tool_calls": [{"id": "c2", "name": "vault_move",
+            "arguments": "{\"path\":\"notes/a.md\",\"new_path\":\"notes/b.md\"}"}]},
+        {"text": "换工具做完了。"}
+    ]}"#;
+    let mut client = MockClient::from_str(script, "redirect").unwrap();
+    drive_turn(
+        &sink,
+        &runtime,
+        &f.scope(),
+        &config,
+        "改名".into(),
+        &mut client,
+    );
+    runtime.release_turn(&f.scope());
+
+    let tools: Vec<_> = runtime
+        .snapshot(&f.scope(), &config)
+        .messages
+        .into_iter()
+        .filter(|m| m.role == "tool")
+        .collect();
+    let cli_row = tools
+        .iter()
+        .find(|m| m.name.as_deref() == Some("cli_run"))
+        .expect("cli_run 工具行");
+    // 工具行正文是结果信封的 JSON 串：解析出来再看 message 原文（信封里的引号是转义过的）。
+    let envelope: serde_json::Value =
+        serde_json::from_str(cli_row.text.as_deref().unwrap()).expect("结果信封是 JSON");
+    assert_eq!(envelope["code"], "cli_redirected_to_vault_tool");
+    let text = envelope["message"].as_str().unwrap();
+    assert!(
+        text.contains("<<<LUMIR_REDIRECT_VAULT_TOOL>>>"),
+        "固定标记必须逐字在场：{text}"
+    );
+    assert!(
+        text.contains("<<<END_LUMIR_REDIRECT_VAULT_TOOL>>>"),
+        "{text}"
+    );
+    assert!(
+        text.contains(r#""suggested_tool":"vault_move""#),
+        "载荷建议工具：{text}"
+    );
+    assert!(
+        text.contains(r#""targets":["notes/a.md","notes/b.md"]"#),
+        "载荷列出全部 vault 内写目标：{text}"
+    );
+    // 重定向不执行任何东西（文件没动），也不进批准闸。
+    assert!(!sink.types().contains(&"approval_request".to_string()));
+    // 模型改用的 vault_move 生效：终态正确。
+    let move_row = tools
+        .iter()
+        .find(|m| m.name.as_deref() == Some("vault_move"))
+        .expect("vault_move 工具行");
+    assert_eq!(move_row.status.as_deref(), Some("done"), "{move_row:?}");
+    assert!(!f.vault().join("notes/a.md").exists());
+    assert_eq!(
+        std::fs::read_to_string(f.vault().join("notes/b.md")).unwrap(),
+        "正文\n"
+    );
+}
+
+/// vault_delete（design §5.1/§5.3）：vault_write 档仍逐个问（裁决点 1 落 B）、批准预览带路径；
+/// 批准后条目进废纸篓（vault 内消失）。工具集里**没有永久删除路径**（底层只有 trash_entry）。
+#[test]
+fn vault_delete_asks_in_vault_write_and_trashes_on_approve() {
+    let f = Fixture::new("vault-delete");
+    f.write("notes/a.md", "要删的\n");
+    let config = mock_config();
+    let runtime = f.runtime();
+    runtime.acquire_turn(&f.scope(), &config).unwrap();
+    let sink = CollectSink::default();
+    let script = r#"{"responses": [
+        {"tool_calls": [{"id": "c1", "name": "vault_delete",
+            "arguments": "{\"path\":\"notes/a.md\"}"}]},
+        {"text": "删掉了。"}
+    ]}"#;
+    let mut client = MockClient::from_str(script, "vault-delete").unwrap();
+    let worker = {
+        let sink = sink.clone();
+        let runtime = runtime.clone();
+        let scope = f.scope();
+        let config = config.clone();
+        std::thread::spawn(move || {
+            drive_turn(
+                &sink,
+                &runtime,
+                &scope,
+                &config,
+                "删掉 a.md".into(),
+                &mut client,
+            );
+        })
+    };
+    sink.wait_for(
+        |events| {
+            events
+                .iter()
+                .any(|e| e.get("type").and_then(|t| t.as_str()) == Some("approval_request"))
+        },
+        "vault_delete 的批准请求",
+    );
+    let request = sink
+        .events()
+        .into_iter()
+        .find(|e| e.get("type").and_then(|t| t.as_str()) == Some("approval_request"))
+        .unwrap();
+    assert_eq!(request["tool"], "vault_delete");
+    // 批准预览带路径（面板据此显示「路径 + 移入废纸篓可恢复」）。
+    assert_eq!(request["argv"], serde_json::json!(["notes/a.md"]));
+    let id = request["id"].as_str().unwrap().to_string();
+    runtime
+        .with_session(&f.scope(), |s| s.resolve_approval(&id, true, None))
+        .unwrap()
+        .unwrap();
+    worker.join().unwrap();
+    assert!(!f.vault().join("notes/a.md").exists(), "批准后进废纸篓");
+}
+
+/// 会话内批准缓存（design §6）：命中即第 5 层短路（同一 `(工具, 主体串)` 不再问）；
+/// 三层模式无关的判定永远先于缓存（黑名单不受缓存放行）。
+///
+/// 缓存写入点的**前端次级动作 transport** 不在本批（`ApprovalDecision` / `harness_approve`
+/// 的参数表归别的落点，见 mission 的 review-request），因此这里直接按运行时命名空间写缓存，
+/// 钉的是「写进去之后判定管线确实会免问」这条语义。
+#[test]
+fn session_approval_cache_skips_gate_for_same_subject_only() {
+    use lumir_lib::harness::permissions::permission_cache;
+
+    let f = Fixture::new("cache");
+    f.write("notes/a.md", "一\n");
+    f.write("notes/b.md", "二\n");
+    let config = mock_config();
+    let runtime = f.runtime();
+    runtime.acquire_turn(&f.scope(), &config).unwrap();
+    // 命名空间 = (vault 根, 会话 id)——与 turn.rs 的取法同源（留存文件名的 id 段）。
+    let namespace = runtime
+        .with_session(&f.scope(), |s| {
+            let id = lumir_lib::harness::jsonl::JsonlWriter::session_id_from_path(s.jsonl().path())
+                .expect("会话 id");
+            permission_cache::Namespace::new(f.scope().key(), id)
+        })
+        .unwrap();
+    permission_cache::remember(&namespace, "vault_delete", "notes/a.md");
+
+    let sink = CollectSink::default();
+    let script = r#"{"responses": [
+        {"tool_calls": [{"id": "c1", "name": "vault_delete",
+            "arguments": "{\"path\":\"notes/a.md\"}"}]},
+        {"text": "删掉了。"}
+    ]}"#;
+    let mut client = MockClient::from_str(script, "cache-hit").unwrap();
+    drive_turn(
+        &sink,
+        &runtime,
+        &f.scope(),
+        &config,
+        "删 a.md".into(),
+        &mut client,
+    );
+    runtime.release_turn(&f.scope());
+    // 命中缓存 ⇒ vault_delete 不问（vault_write 档本来要问）且直接执行。
+    assert!(
+        !sink.types().contains(&"approval_request".to_string()),
+        "缓存命中不该再问：{:?}",
+        sink.types()
+    );
+    assert!(!f.vault().join("notes/a.md").exists());
+
+    // 另一主体串（b.md）不受影响，仍逐个问。
+    runtime.acquire_turn(&f.scope(), &config).unwrap();
+    let sink = CollectSink::default();
+    let script = r#"{"responses": [
+        {"tool_calls": [{"id": "c1", "name": "vault_delete",
+            "arguments": "{\"path\":\"notes/b.md\"}"}]},
+        {"text": "好。"}
+    ]}"#;
+    let mut client = MockClient::from_str(script, "cache-miss").unwrap();
+    let worker = {
+        let sink = sink.clone();
+        let runtime = runtime.clone();
+        let scope = f.scope();
+        let config = config.clone();
+        std::thread::spawn(move || {
+            drive_turn(
+                &sink,
+                &runtime,
+                &scope,
+                &config,
+                "删 b.md".into(),
+                &mut client,
+            );
+        })
+    };
+    sink.wait_for(
+        |events| {
+            events
+                .iter()
+                .any(|e| e.get("type").and_then(|t| t.as_str()) == Some("approval_request"))
+        },
+        "未缓存主体串仍要问",
+    );
+    let id = sink
+        .events()
+        .into_iter()
+        .find(|e| e.get("type").and_then(|t| t.as_str()) == Some("approval_request"))
+        .and_then(|e| e["id"].as_str().map(str::to_string))
+        .unwrap();
+    runtime
+        .with_session(&f.scope(), |s| {
+            s.resolve_approval(&id, false, Some("先留着".into()))
+        })
+        .unwrap()
+        .unwrap();
+    worker.join().unwrap();
+    runtime.release_turn(&f.scope());
+
+    // 黑名单成员即使被缓存也不放行（第 3 层先于缓存）——用 cli_run 的 rm 写一条缓存再调用。
+    let mut config2 = mock_config();
+    config2.permissions = HarnessPermissions {
+        allow: vec![],
+        deny: vec![],
+    };
+    runtime.acquire_turn(&f.scope(), &config2).unwrap();
+    permission_cache::remember(&namespace, "cli_run", "rm -rf /tmp/lumir-m407-cache");
+    let sink = CollectSink::default();
+    let script = r#"{"responses": [
+        {"tool_calls": [{"id": "c1", "name": "cli_run",
+            "arguments": "{\"command\":\"rm\",\"args\":[\"-rf\",\"/tmp/lumir-m407-cache\"],\"purpose\":\"清理\"}"}]},
+        {"text": "好。"}
+    ]}"#;
+    let mut client = MockClient::from_str(script, "cache-black").unwrap();
+    let worker = {
+        let sink = sink.clone();
+        let runtime = runtime.clone();
+        let scope = f.scope();
+        let config = config2.clone();
+        std::thread::spawn(move || {
+            drive_turn(&sink, &runtime, &scope, &config, "清理".into(), &mut client);
+        })
+    };
+    sink.wait_for(
+        |events| {
+            events
+                .iter()
+                .any(|e| e.get("type").and_then(|t| t.as_str()) == Some("approval_request"))
+        },
+        "黑名单命令不受缓存影响",
+    );
+    let id = sink
+        .events()
+        .into_iter()
+        .find(|e| e.get("type").and_then(|t| t.as_str()) == Some("approval_request"))
+        .and_then(|e| e["id"].as_str().map(str::to_string))
+        .unwrap();
+    runtime
+        .with_session(&f.scope(), |s| {
+            s.resolve_approval(&id, false, Some("不许".into()))
+        })
+        .unwrap()
+        .unwrap();
+    worker.join().unwrap();
+}
+
+/// vault_move 工具（design §5.1）：跨目录移动成立（目标父目录已存在）+ 撞名不覆盖
+/// （源与既有目标都逐字节不变）+ 目标父目录不存在时回 `fs_not_found`。
+#[test]
+fn vault_move_executes_and_refuses_overwrite() {
+    let f = Fixture::new("vault-move");
+    f.write("a.md", "A\n");
+    f.write("b.md", "B\n");
+    f.write("sub/keep.md", "k\n");
+    let config = mock_config(); // vault_write 档：vault_move 免闸
+    let runtime = f.runtime();
+    runtime.acquire_turn(&f.scope(), &config).unwrap();
+    let sink = CollectSink::default();
+    let script = r#"{"responses": [
+        {"tool_calls": [{"id": "c1", "name": "vault_move",
+            "arguments": "{\"path\":\"a.md\",\"new_path\":\"sub/a.md\"}"}]},
+        {"tool_calls": [{"id": "c2", "name": "vault_move",
+            "arguments": "{\"path\":\"b.md\",\"new_path\":\"sub/a.md\"}"}]},
+        {"tool_calls": [{"id": "c3", "name": "vault_move",
+            "arguments": "{\"path\":\"b.md\",\"new_path\":\"missing/a.md\"}"}]},
+        {"text": "好。"}
+    ]}"#;
+    let mut client = MockClient::from_str(script, "vault-move").unwrap();
+    drive_turn(
+        &sink,
+        &runtime,
+        &f.scope(),
+        &config,
+        "挪一下".into(),
+        &mut client,
+    );
+    runtime.release_turn(&f.scope());
+
+    // 第一次跨目录移动成立。
+    assert!(!f.vault().join("a.md").exists());
+    assert_eq!(
+        std::fs::read_to_string(f.vault().join("sub/a.md")).unwrap(),
+        "A\n"
+    );
+    let tools: Vec<_> = runtime
+        .snapshot(&f.scope(), &config)
+        .messages
+        .into_iter()
+        .filter(|m| m.role == "tool" && m.name.as_deref() == Some("vault_move"))
+        .collect();
+    assert_eq!(tools.len(), 3, "{tools:?}");
+    assert_eq!(tools[0].status.as_deref(), Some("done"), "{tools:?}");
+    // 第二次撞名 ⇒ fs_already_exists，且既有目标与源都逐字节不变。
+    assert!(
+        tools[1]
+            .text
+            .as_deref()
+            .unwrap()
+            .contains("fs_already_exists"),
+        "{tools:?}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(f.vault().join("sub/a.md")).unwrap(),
+        "A\n"
+    );
+    assert_eq!(
+        std::fs::read_to_string(f.vault().join("b.md")).unwrap(),
+        "B\n"
+    );
+    // 第三次目标父目录不存在 ⇒ fs_not_found（不隐式建目录）。
+    assert!(
+        tools[2].text.as_deref().unwrap().contains("fs_not_found"),
+        "{tools:?}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(f.vault().join("b.md")).unwrap(),
+        "B\n"
+    );
+}
+
+/// vault_create 自动建父目录（M405 修订的 mkdir -p 语义）在工具链路上成立：
+/// 模型直接写 `drafts/notes/x.md` 即可，不必先建目录。
+#[test]
+fn vault_create_auto_creates_parent_dirs_through_tool_chain() {
+    let f = Fixture::new("create-parents");
+    let config = mock_config();
+    let runtime = f.runtime();
+    runtime.acquire_turn(&f.scope(), &config).unwrap();
+    let sink = CollectSink::default();
+    let script = r#"{"responses": [
+        {"tool_calls": [{"id": "c1", "name": "vault_create",
+            "arguments": "{\"path\":\"drafts/notes/x.md\",\"content\":\"新稿\"}"}]},
+        {"text": "建好了。"}
+    ]}"#;
+    let mut client = MockClient::from_str(script, "create-parents").unwrap();
+    drive_turn(
+        &sink,
+        &runtime,
+        &f.scope(),
+        &config,
+        "新建".into(),
+        &mut client,
+    );
+    runtime.release_turn(&f.scope());
+    assert_eq!(
+        std::fs::read_to_string(f.vault().join("drafts/notes/x.md")).unwrap(),
+        "新稿"
+    );
 }

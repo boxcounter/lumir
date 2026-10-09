@@ -26,7 +26,7 @@ use super::approval::{ApprovalRequest, ApprovalSignal};
 use super::events::{self, EventSink, StreamSink};
 use super::jsonl;
 use super::llm::{self, LlmClient};
-use super::permissions::{self, Decision};
+use super::permissions::{self, permission_cache, Decision};
 use super::session::{self, PanelMessage};
 use super::thinking;
 use super::tools::{self, ToolContext, ToolOutput};
@@ -691,6 +691,18 @@ fn loop_max_notice(
     sink.emit(events::text_chunk(&text));
 }
 
+/// 会话内批准缓存的命名空间：`(vault 根, 会话 id)`（design §6）。会话 id 取自留存文件名——
+/// 新会话 / 切 vault / 压缩开新逻辑会话都会换命名空间，缓存随之清空；同一命名空间内才谈命中。
+/// 无会话（理论上到不了这里）返回 `None`，命中判定按「没缓存」处理。
+fn cache_namespace(runtime: &Runtime, scope: &VaultScope) -> Option<permission_cache::Namespace> {
+    runtime
+        .with_session(scope, |session| {
+            let session_id = jsonl::JsonlWriter::session_id_from_path(session.jsonl().path());
+            permission_cache::Namespace::new(scope.key(), session_id.unwrap_or_default())
+        })
+        .ok()
+}
+
 /// 单个工具调用：权限判定 → （ask 档）批准闸 → 执行 → 结果回送（事件 + 面板 + JSONL）。
 ///
 /// **不直接把消息项压进 input**：返回「调用项 + 输出项」由调用侧成组压栈（见
@@ -715,23 +727,44 @@ fn handle_call(
     // 只会把循环挂死在永远等不到的批准上（工具集是闭集合，MUST NOT 扩张）。
     let known = tools::TOOL_NAMES.contains(&call.name.as_str());
     let subject = tools::permission_subject(&call.name, &args);
-    let decision = permissions::decide(&config.permissions, &call.name, &subject);
+    // cli_run 的分类与写目标提取以 argv 数组为输入（比主体串信息全）；非 cli_run 传 None。
+    let cli_argv = (call.name == "cli_run").then(|| tools::cli_argv(&args));
+    // 会话内批准缓存（design §6）：只在第 5 层（模式默认分层）短路——不解锁 deny / 重定向 /
+    // 黑名单三层（层序在 `permissions::decide` 里，这里只提供命中布尔）。
+    let cached = known
+        && args_ok
+        && cache_namespace(runtime, scope)
+            .is_some_and(|ns| permission_cache::is_remembered(&ns, &call.name, &subject));
+    let judge = permissions::Judge {
+        mode: config.permission_mode,
+        root: tctx.root,
+        argv: cli_argv,
+        cached,
+    };
+    let decision = permissions::decide(&config.permissions, &call.name, &subject, &judge);
 
     let output = if !known {
         ToolOutput::err("tool_unknown", format!("未知工具：{}", call.name))
     } else if !args_ok {
         ToolOutput::err("tool_args_invalid", "工具调用的 arguments 不是合法 JSON")
+    } else if let Err(output) = tools::check_purpose(&call.name, &args) {
+        // purpose 校验在判定管线之前（design §3.4）：ask 档批准卡必须已有用途句可展示。
+        output
     } else {
         match decision {
-            Decision::Deny => ToolOutput::err(
-                "permission_denied",
-                format!("权限规则拒绝了 {}（{subject}）", call.name),
-            ),
+            Decision::Deny(reason) => {
+                ToolOutput::err("permission_denied", reason.message(&call.name, &subject))
+            }
             // deny 的留痕是 wire 口径：带 `permission_denied` 错误码的结果随历史进
             // 下一条 llm_request.messages（tool_denied 事件类已废弃），面板 tool 行
             // 的细分状态照常由 status 承担。
             Decision::Allow => tools::execute(&call.name, &args, tctx),
             Decision::Ask => gated_execute(sink, runtime, scope, tctx, call, &args),
+            // vault 内写硬重定向（design §4）：固定标记 + JSON 载荷，模型据此下一轮改用
+            // vault 工具（闸门不做自动翻译，不留第二事实源）。
+            Decision::Redirect(redirect) => {
+                ToolOutput::err(permissions::REDIRECT_ERROR_CODE, redirect.message())
+            }
         }
     };
 
@@ -830,12 +863,19 @@ fn gated_execute(
         Ok(id) => id,
         Err(e) => return ToolOutput::from_command_error(&e),
     };
-    sink.emit(events::approval_request(
+    // purpose（design §3.4）：cli_run 批准卡载荷里的可选键——前端有则显示在命令上方、
+    // 无则回落现状。事件函数的参数表归 M406 批次；这里按约定的**载荷键名**注入同一个键，
+    // 线上形状即契约形状（合并期 events.rs 加参数时对齐到同一处）。
+    let mut payload = events::approval_request(
         &id,
         &call.name,
         preview.diff.as_deref(),
         preview.argv.as_deref(),
-    ));
+    );
+    if let Some(purpose) = &preview.purpose {
+        payload["purpose"] = serde_json::json!(purpose);
+    }
+    sink.emit(payload);
     // 未决批准项不自动超时通过：无超时地等决定（会话被重置 / vault 切换使发送端
     // 失效时 recv 报错 → 判过期，不执行）。
     let signal = match rx.recv() {

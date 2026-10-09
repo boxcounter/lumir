@@ -2,6 +2,7 @@
 import type { HarnessPermissions } from "./HarnessPermissions";
 import type { HarnessProvider } from "./HarnessProvider";
 import type { HarnessProviders } from "./HarnessProviders";
+import type { PermissionMode } from "./PermissionMode";
 
 /**
  * `[harness]` 表（change add-harness-probe §11）：对话运行时的配置面。
@@ -22,6 +23,11 @@ providers: HarnessProviders,
  * 权限规则表（design §6）：deny > allow > 默认分层（读 allow / 写与 CLI ask）。
  */
 permissions: HarnessPermissions, 
+/**
+ * 权限模式（change add-harness-permission-modes，design §2/§7）：`read_only` /
+ * `vault_write`（默认）/ `full_access`。切换对下一个判定生效，不打断进行中的轮次。
+ */
+permission_mode: PermissionMode, 
 /**
  * 工具循环上限（默认 50，合法区间见 [`LOOP_MAX_MIN`] / [`LOOP_MAX_MAX`]）。
  */
