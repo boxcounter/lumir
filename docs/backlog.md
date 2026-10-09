@@ -1426,7 +1426,7 @@ M240 那条通道问题。本批现场（**连跑两次读数逐字相同**）�
 （threshold 0.2 下 62 额度内）与零容差探针（158px / ratio 0.0025）——两套数字并存时读者无法判断
 该信哪个。**动作**：后续过目包统一用 playwright 读数，或显式标注自写计数器的口径与换算关系。
 
-**归档不重写相对链接、目录深度 +1 无门禁**（low，M253 finding）：`openspec archive` 移动目录但不改
+~~**归档不重写相对链接、目录深度 +1 无门禁**（low，M253 finding）~~ **已修（M409，2026-10-09：`scripts/openspec-links.sh` 落成并挂进 `docs-check.sh`，本地 `gate.sh quick` 与 CI `docs-check.yml` 同时继承；428 条相对链接全量 exists() 校验，含行内代码/围栏块/锚点/外链/裸占位词排除口径；反向验证 FAIL→PASS 闭环，现场 `test-results/m409-reverse-validation/`）**：`openspec archive` 移动目录但不改
 制品内的相对链接；M150 修 17 处、M253 修 25 处（含 living spec 侧两处反向 −2 级，其一
 `specs/ui-design-system/spec.md:11` 是**新建 capability 一出生就带死链**），早期批次
 （`2026-09-05-*` / `2026-09-12-remove-threads-and-theme`）至今残留 6 处死链；`docs-check.sh` 明写
@@ -2367,8 +2367,8 @@ M279 报告 §5 的两条副产物在列，判定为**都不随本修复收口**
 
 ### openspec 归档制品与实验脚本
 
-- **历史归档文件的相对链接死链扫尾**（M150 finding，worker-speccleanup，2026-09-17，low，**待修**；
-  **M155 已逐条在磁盘上复核并在本条更正 finding 的两处误差**）：根因已实证——`openspec archive` 把 change
+- ~~**历史归档文件的相对链接死链扫尾**（M150 finding，worker-speccleanup，2026-09-17，low，**待修**）~~ **已修（M331 修齐 27 条存量 + M409 扫尾最后 3 条并落门禁，2026-10-09；门禁使本类问题此后归档即红，不再静默累积）**：
+  （原 finding 附注：**M155 已逐条在磁盘上复核并在本条更正 finding 的两处误差**）：根因已实证——`openspec archive` 把 change
   目录移到 `archive/<日期>-<id>/`（**深一层**）却不重写制品内的相对链接，而 docs-check 不做链接检查
   （`.github/workflows/docs-check.yml` 只有 ADR 结构与 openspec validate 两步），于是每次归档都静默留下
   死链。M150 本批归档件的 17 处已就地修好；历史件里**真正需要扫尾的是 5 个文件 / 9 条链接**（下表；每条
