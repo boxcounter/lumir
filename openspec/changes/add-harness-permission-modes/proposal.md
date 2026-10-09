@@ -35,7 +35,7 @@ Alex 的原话诉求：**「我们怎么让 AI 尽可能的使用 vault 提供�
 每条对应 `specs/harness/spec.md`（或 `specs/fs-io/spec.md`）增量中的一个 requirement：
 
 1. **三档权限模式**（harness，MODIFIED「权限机制」）：新增模式维度作为**默认分层**的替换物——`read_only` / `vault_write`（默认）/ `full_access` 三档，逐档定义读类工具 / vault 写工具 / cli_run 只读白名单 / cli_run 写命令 / 危险黑名单五类调用面的放行或询问行为。判定总序：**deny 规则 > vault 内写重定向 > 危险黑名单（任何档都问）> allow 规则 > 模式默认分层**——前四层模式无关，模式只决定最底层默认。
-2. **cli_run 命令分类算法与 vault 写硬引导**（harness，ADDED「cli_run 命令分类与 vault 写重定向」）：argv 分类为三态（只读 / 写 / 危险）——命令名白名单 + 参数形态判定；shell 包装器（sh -c 等）与任何含 shell 元字符的 argv 一律保守按写处理；分类不了的未知命令按写处理（保守默认）。分类为写且**写目标解析进 vault 内**的 cli_run，任何档都直接拒绝并回送固定标记文本的结构化重定向提示（错误码 + 固定标记 + JSON 载荷，指明该用哪个 vault 工具），模型据此在下一轮改用 vault 工具——闸门不做自动翻译（不留第二事实源）。
+2. **cli_run 命令分类算法与 vault 写硬引导**（harness，ADDED「cli_run 命令分类与 vault 写重定向」）：argv 分类为三态（只读 / 写 / 危险）——命令名白名单 + 参数形态判定；shell 包装器（sh -c 等，内容不可知即视同潜在危险）归危险（任何档都问，tower 已裁决）；含 shell 元字符的 argv 保守按写处理；分类不了的未知命令按写处理（保守默认）。分类为写且**写目标解析进 vault 内**的 cli_run，任何档都直接拒绝并回送固定标记文本的结构化重定向提示（错误码 + 固定标记 + JSON 载荷，指明该用哪个 vault 工具），模型据此在下一轮改用 vault 工具——闸门不做自动翻译（不留第二事实源）。
 3. **vault_move 与 vault_delete**（harness，ADDED「vault 移动与删除工具」+ MODIFIED「工具循环」）：工具集从 6 扩到 8（ADR 0007 清单外扩张的本次 Alex 裁决）。`vault_move(path, new_path)` = vault 内移动/重命名（跨目录），经 fs-io 新增 `fs_move_entry` 原语（fs-io，ADDED「跨目录移动」：两端都走 `resolve_in_vault` 逃逸防护、MUST NOT 覆盖既有条目）；`vault_delete(path)` = 移入系统废纸篓（可恢复，MUST NOT 永久删除，复用 `trash_entry` 既有口径）。两工具各档行为按语义表落；**vault_delete 在 Vault Write 档是否仍逐个问列为 Alex 裁决点**（倾向：问）。批准预览：vault_move 显示 源→目标 路径对，vault_delete 显示路径 + 「移入废纸篓可恢复」。
 4. **本会话同类不再问**（harness，ADDED「会话内批准缓存」）：批准卡新增「采纳且本会话不再问」次级动作；采纳的 (工具, 主体串) 记入会话内存缓存，同会话内同主体串的后续调用直接放行；「新会话」/ 切会话 / app 重启清空。不持久化（持久通道只有 config 规则表）。
 5. **模式切换入口与配置默认**（harness，ADDED「权限模式切换」+ MODIFIED「配置节 [harness]」）：composer 控制行新增权限 chip（思考 chip 之后、ctx 读数之前），点击弹三档单选浮层（当前档勾选），选择即生效并经 `config_set_value` 写回 `[harness].permission_mode`；配置键闭集合 `read_only` / `vault_write` / `full_access`，默认 `vault_write`，非法值回落默认 + 人话 warning（沿用既有模板）。
@@ -47,9 +47,9 @@ Alex 的原话诉求：**「我们怎么让 AI 尽可能的使用 vault 提供�
 
 | # | 裁决点 | 选项 | 起草倾向 |
 |---|---|---|---|
-| 1 | **vault_delete 在 Vault Write 档的行为** | A. 与其他 vault 写工具一致自动放行；B. 任何档都逐个问（危险面，删除虽可恢复但打断性强）；C. Vault Write 放行、仅 Read Only 拒 | **倾向 B**——删除不可逆性低于 patch 但高于移动（废纸篓可恢复仍属高打断操作）；与 Alex 已确认的「危险黑名单任何档都问」同一安全侧。Full Access 档倾向放行 |
+| 1 | **vault_delete 在 Vault Write 档的行为**（read_only 档拒绝、Full Access 档放行的口径不变，见 design §2 语义表） | A. 与 vault_patch / vault_create / vault_move 一致，Vault Write 档自动放行；B. Vault Write 档仍逐个问（read_only 档维持拒绝、Full Access 档维持放行） | **倾向 B**——删除的不可逆性低于 patch 但高于移动（废纸篓可恢复仍属高打断操作）；与 Alex 已确认的「危险黑名单任何档都问」同一安全侧 |
 | 2 | **cli_run 只读白名单首版清单** | 见 design §3.1 初始表（ls / cat / rg / git 只读子命令族 / sed 无 -i / jq 等）；黑盒命令（awk 等）首版不进白名单 | **倾向按初始表落地**，实现后 dogfood 增补走 config 规则表即可，不再逐个问 Alex |
-| 3 | **危险黑名单首版清单** | 见 design §3.3 初始表（rm / shutdown·reboot·halt·poweroff / mkfs* / dd / git reset --hard / git clean）；黑名单命中是「任何档都问」而非 deny | **倾向按初始表落地**；黑名单成员全部走批准闸（用户可见命令全文），不静默拒绝 |
+| 3 | **危险黑名单首版清单** | 见 design §3.3 初始表（rm / shutdown·reboot·halt·poweroff / mkfs* / dd / git reset --hard / git clean；shell 包装器类已按 tower 裁决归危险，不在本裁决点内）；黑名单命中是「任何档都问」而非 deny | **倾向按初始表落地**；黑名单成员全部走批准闸（用户可见命令全文），不静默拒绝 |
 | 4 | **会话内缓存的记入方式** | A. 批准卡提供「采纳且本会话不再问」显式次级动作（每次选择性记忆）；B. 凡采纳自动记入缓存 | **倾向 A**——与 Alex 已确认的「cli_run 写命令仍逐个问」精神一致：逐个问是默认，免问是用户每次显式给的 |
 | 5 | **allow 规则与模式的关系** | A. deny > 重定向 > 黑名单 > allow > 模式默认（allow 规则在任何档生效，含只读档）；B. 只读档设模式天花板，allow 规则不能越过（只读档最多问到批准闸） | **倾向 A**——模式替换的是「默认分层」，不动用户显式配置的规则；只读档的实际安全姿态 = 「无显式配置则写必问」，与 Kimi Code「模式 × 规则」双旋钮同构。重定向与黑名单两层在 allow 之前，用户 allow 规则也绕不过它们 |
 | 6 | **重定向的绝对性** | A. 任何档下，目标在 vault 内的 cli_run 写操作一律重定向（Full Access 也不例外）；B. Full Access 档放行，重定向只管 Read Only / Vault Write | **倾向 A**——Alex 诉求的原点（「尽可能用 vault 写能力而不是 cli_run」）；Full Access 的「完全」体现在 vault 外写自动放行，vault 内写经一次重定向换工具，代价一轮往返、收益是写全程走 CAS / 预览 / 禁锢 |
@@ -60,7 +60,7 @@ Alex 的原话诉求：**「我们怎么让 AI 尽可能的使用 vault 提供�
 - **从批准卡写永久 allow/deny 规则**：不做——持久授权通道维持 config 规则表单真源（「配置即数据」，ADR 0002 §5）；批准卡只有会话内缓存一个记忆。Kimi Code 的永久规则按钮不在本包。
 - **cli_run 批准卡 argv 类型错配 bug**：另批修（已知 finding，本提案不修、不依赖其修复面；实现时与其解耦）。
 - **vault_append（追加工具）**：视盘点后补，本包不做（Alex 打包范围第 ④条原文「视盘点加追加」）。
-- **cli_run 加 shell / 管道 / 重定向真执行**：不做——argv 直传形态不变；管道、复合命令（&&/;）、重定向经 shell 包装器出现的，一律保守按写命令处理（逐个问或按档放行），不为之开真执行通道。
+- **cli_run 加 shell / 管道 / 重定向真执行**：不做——argv 直传形态不变；管道、复合命令（&&/;）、重定向只有经 shell 包装器才可能出现在 argv 里，包装器归危险（任何档都问），不为之开真执行通道。
 - **按 vault / 按工具细分的自定义模式**：不做，三档是全局维度（探针期单用户）。
 - **网络维度管控**（出网白名单等）：不做。
 - **既有 ask 批准闸的呈现改造**：不动——本提案只在批准卡上加一个次级动作（裁决点 4），diff / argv 预览、收敛行为等既有口径全部保留。

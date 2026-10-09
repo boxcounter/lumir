@@ -57,7 +57,7 @@ proposal 的技术面：判定管线、cli_run 分类算法、重定向协议、
 
 以下任一命中，即使命令名在白名单内也**不按只读**（整 argv 落入写分类，走模式默认分层）：
 
-- **shell 包装器**：command ∈ {`sh` `bash` `zsh` `dash` `fish` `csh` `ksh` `cmd` `powershell` `pwsh` `osascript` `eval` `exec`}——内容不可知，一律写。`python` / `python3` / `node` / `ruby` / `perl` 带 `-c` / `-e` /脚本文件参数同理（可做任何事）。
+- **解释器 eval 形态**：`python` / `python3` / `node` / `ruby` / `perl` 带 `-c` / `-e` 或脚本文件参数——可做任何事，一律写（语义单一，可经 allow / deny 规则精确加减）。
 - **shell 元字符出现在任一参数中**：`|` `;` `&&` `||` `>` `>>` `<` `` ` `` `$(` `${`——argv 直传下这些 token 是无害的**字面参数**，但保守按写处理：一是防止未来若出现 shell 化执行路径时分类表变成隐患；二是模型把复合命令塞进单参数本身说明意图是复合写。
 - **已知写动词**：`cp` `mv` `ln` `touch` `mkdir` `rmdir` `tee` `truncate` `install` `chmod` `chown` `curl` `wget` `scp` `rsync` `npm` `pnpm` `yarn` `cargo`（`build`/`install` 等，纯 `cargo --version` 归白名单形态另列）`make` `tar`（含 `-c` 形态）`ssh` `kill` `launchctl` 等——整表见实现，原则：**拿不准就写**。
 - **未知命令**（三表皆未命中）：**写**（保守默认）。错误方向是「多问一次」，不是「误放行」。
@@ -68,13 +68,14 @@ proposal 的技术面：判定管线、cli_run 分类算法、重定向协议、
 
 | 形态 | 成员 |
 |---|---|
+| 包装器类（tower 已裁决：内容不可知即视同潜在危险） | `sh` `bash` `zsh` `dash` `fish` `csh` `ksh` `cmd` `powershell` `pwsh` `osascript` `eval` `exec`——shell 包装器的全部用途是组合任意命令，黑名单对其内部完全不可见（`bash -c "rm -rf …"` 的命令名是 `bash`）；归写则 full_access 档免闸，是唯一绕开黑名单的口径洞 |
 | 删除类 | `rm`（任何形态——`rm -rf` 是 Alex 点名的那类，保守收到全命令名） |
 | 关机/重启类 | `shutdown` `reboot` `halt` `poweroff` |
 | 磁盘类 | `mkfs` 系（`mkfs.ext4` 等前缀）`fdisk` `diskutil`（带 erase/Partition 形态）`parted` |
 | 裸写类 | `dd` |
 | git 破坏类 | `git reset --hard`、`git clean`（任何形态） |
 
-黑名单与白名单的交集（理论上不应存在）按黑名单处理（更保守侧赢）。
+黑名单与白名单的交集（理论上不应存在）按黑名单处理（更保守侧赢）。**包装器类不走进 §4 的 vault 写重定向**——它停在危险层（Ask，任何档都问），不会以「写」身份被 full_access 自动放行；这是「危险命令黑名单任何档都问」对不可验证内容的直接推论（Alex 分界已确认的推论，tower 2026-10-09 裁决，不新增裁决点）。
 
 ## 4. vault 写硬引导（重定向协议）
 
@@ -181,7 +182,7 @@ pub fn fs_move_entry(root: &Path, from_rel: &str, to_rel: &str) -> Result<String
 
 ## 8. 验证方法
 
-- **分类器单测（Rust，核心判据）**：三表成员逐一正反例（`ls -la`→只读、`sed -i`→写、`sh -c cat x`→写、参数含 `&&`→写、未知命令→写、`git status`→只读 / `git push`→写）；反向验证：把任一白名单成员的期望改坏断言必红。
+- **分类器单测（Rust，核心判据）**：三表成员逐一正反例（`ls -la`→只读、`sed -i`→写、`sh -c cat x`→危险、参数含 `&&`→写、未知命令→写、`git status`→只读 / `git push`→写）；反向验证：把任一白名单成员的期望改坏断言必红。包装器钉死用例：`bash -c "rm -rf …"` 在 `full_access` 档仍进批准闸（r1 P2-2 的口径洞回归）。
 - **判定管线集成测试（mock provider）**：三档 × 五类调用面的全矩阵（§2 语义表逐格一个用例）；deny 规则在只读档仍第一、黑名单在 full_access 档仍问、allow 规则在只读档仍生效（裁决点 5 的落法钉死）。
 - **重定向链测试（mock provider 脚本，§4.3）**：`cli_run("mv", …)` 收重定向 → 改调 `vault_move` → 断言标记文本逐字节、建议工具正确、vault 终态正确；另测「判定不确定时不重定向」反例（vault 外相对路径写命令落正常写分类）。
 - **新工具测试**：`fs_move_entry` 逃逸 / 撞名 / 跨目录 / 跨卷失败四例；`vault_delete` 进废纸篓与失败不留半态；工具定义经 mock provider 一轮断言 `execute` 路径。
