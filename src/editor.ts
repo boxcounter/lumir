@@ -1348,7 +1348,8 @@ const baseCompartment = new Compartment();
  * 优先级取 `Prec.highest`：同一 keyspec 上优先级高的处理器先跑，返回 false 才轮到上游
  * `markdown()` 用 `Prec.high` 装进来的 `markdownKeymap`（`addKeymap` 默认 true）。
  * **先委派上游**是这条实现的核心：上游在列表项 / 引用里返回 true（续写标记、保持层级——既有行为，
- * 本 change MUST NOT 改变），在围栏 / 缩进代码块 / 段落里返回 false，委派因此**恰好**等于
+ * 唯一例外是 M399 裁决的空列表项退出：命令体改用 `nonTightLists: false` 的上游配置版，
+ * 见 `src/enter-indent.ts` 文件头），在围栏 / 缩进代码块 / 段落里返回 false，委派因此**恰好**等于
  * 「只接管本来没人管的那部分」，不必自己抄一份上下文判据（REVIEW.md 第 8 条）。
  *
  * code 模式没有 md 语法树、也没有上游键位，直接自动缩进（同一命令体内的分支）。

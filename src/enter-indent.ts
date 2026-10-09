@@ -14,20 +14,34 @@
 // 放回原生路径」的纪律会与「在列表 / 引用里让位给上游续行」直接冲突（裁决 D1a）。
 //
 // 三条口径（spec「Enter 换行与自动缩进」）：
-// 1. md 列表项 / 引用内：**委派上游** `insertNewlineContinueMarkup`（编辑器内核自带的
-//    markdown 语言包以 `Prec.high` 装了同一个命令的键位），续写标记、保持层级——既有行为，
-//    MUST NOT 改变；
+// 1. md 列表项 / 引用内：**委派上游** `insertNewlineContinueMarkupCommand`（编辑器内核自带的
+//    markdown 语言包以 `Prec.high` 装了同一命令的默认配置版键位），续写标记、保持层级——既有行为，
+//    MUST NOT 改变。**唯一例外（M399，Alex 裁决的主流模式）**：空列表项（marker 后只有空白）上的
+//    `Enter` 恒走「删一级标记」——去掉行首列表符号、该行保留为普通空行、光标留在该行行首、
+//    MUST NOT 额外新增行；嵌套空项则凸一级（Obsidian 式逐层退出）。上游默认配置对「tight 两
+//    item 列表的空第二项」走的是「插空行把列表变松、marker 保留」分支（`- a\n- ` → `- a\n\n- `），
+//    与裁决冲突，故这里用上游导出的工厂函数以 `{ nonTightLists: false }` 关掉该分支——其余路径
+//    （续写、有序重排、引用）与默认配置逐字节一致，仍是同一份上游实现，不是抄来的副本
+//   （REVIEW.md 第 8 条）。该委派在 `autoIndent` 检查**之前**：空项退出是列表语义的一部分，
+//    与缩进开关无关（D5a 的不对称照旧：关掉自动缩进不影响列表 / 引用续行）；
 // 2. 其余上下文：`insertNewlineAndIndent` 自动缩进——有缩进规则的语言取语法缩进
 //    （`getIndentation`），取不到时它自己回落到「光标所在行的行首空白」（md 围栏与缩进代码块、
 //    toml / yaml / shell 一类无规则的语言都走这条）。本模块**不自己写缩进表**；
-// 3. `auto_indent = false`：不接管（返回 false），按键落回浏览器默认 = 本 change 之前的行为。
-//    注意 md 的列表 / 引用续行是**上游**键位的行为，与本标志无关（它照旧执行）——这是 D5a 的
-//    显式不对称，不是漏实现。
+// 3. `auto_indent = false`：md 列表 / 引用之外的上下文不接管（返回 false），按键落回浏览器默认
+//    = 本 change 之前的行为。注意 md 的列表 / 引用续行与本标志无关（它照旧执行，见上）——这是
+//    D5a 的显式不对称，不是漏实现。
 
 import type { EditorView } from "@codemirror/view";
 import { insertNewlineAndIndent } from "@codemirror/commands";
-import { insertNewlineContinueMarkup } from "@codemirror/lang-markdown";
+import { insertNewlineContinueMarkupCommand } from "@codemirror/lang-markdown";
 import type { EditorMode } from "./bindings/EditorMode";
+
+/**
+ * 上游续行命令的本仓配置版（M399）：`nonTightLists: false` 关掉「空第二项把 tight 列表变松」
+ * 分支，空列表项上的 Enter 恒为「删一级标记」（裁决行为）。工厂与默认导出
+ * `insertNewlineContinueMarkup` 是上游同一份实现，仅这一项配置不同。
+ */
+const continueMarkupExitEmptyItem = insertNewlineContinueMarkupCommand({ nonTightLists: false });
 
 /**
  * `editor.auto_indent` 的 TypeScript 侧出厂默认：键缺席 = 出厂 `true`。与
@@ -53,7 +67,7 @@ export function enterWithAutoIndent(
   mode: EditorMode,
   autoIndent: boolean,
 ): boolean {
+  if (mode === "md" && continueMarkupExitEmptyItem(view)) return true;
   if (!autoIndent) return false;
-  if (mode === "md" && insertNewlineContinueMarkup(view)) return true;
   return insertNewlineAndIndent(view);
 }
