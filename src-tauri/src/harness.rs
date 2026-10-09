@@ -600,7 +600,8 @@ fn message_content_text(message: &serde_json::Value) -> Option<String> {
 
 /// 工具输出 JSON → 面板细分终态（done / denied / rejected / error，M406 恢复回填用）：
 /// 与 turn.rs `handle_call` 的 live 持久化是同一张映射表——turn.rs 现归 M407，收编成
-/// 单一真源是两个分支合并后的后续项，先在这里镜像（两处都注了对方的位置）。
+/// 单一真源是两个分支合并后的后续项，先在这里镜像（本注释是唯一的指针；turn.rs 侧的
+/// 回指随 M407 合并后一并补）。
 /// 输出形状不符（缺 `ok` 布尔位）→ None：不推断、不填。
 fn panel_status_of(output: &serde_json::Value) -> Option<&'static str> {
     match output["ok"].as_bool() {
