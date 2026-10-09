@@ -5,7 +5,7 @@
 - 角色: Alex Lee（评审/裁决），AI agent（起草）
 
 > 评审记录：
-> 节点 1（提案评审）：留白（待 Alex 裁决）。
+> 节点 1（提案评审）：**2026-10-09 Alex 裁决：6 点全部按倾向 + vault_create 自动建父目录修订确认**（Alex 原话「好。」）。逐点落定——① vault_delete 在 Vault Write 档仍逐个问（倾向 B）；② cli_run 只读白名单首版按 design §3.1 初始表；③ 危险黑名单首版按 design §3.3 初始表；④ 会话内缓存取批准卡显式次级动作（倾向 A）；⑤ allow 规则在任何档生效（倾向 A）；⑥ 重定向绝对（倾向 A）。另经 M404 的 cli_run 使用 survey 暴露 mkdir 缺口，同日确认修订：**mkdir 不另立工具，由 vault_create 自动创建缺失父目录（mkdir -p 语义）吸收**（design §5.2 缺口段与 §4.2 suggested_tool 映射据此改写）。
 > 节点 2（归档评审）：留白（实现完成后填写）。
 
 ## Why
