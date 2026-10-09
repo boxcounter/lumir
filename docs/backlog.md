@@ -644,6 +644,16 @@
 
 ## 待修 findings（不阻塞）
 
+### Full Access 档下 sudo / xargs / find -exec 间接调 rm 绕过危险命令黑名单（reviewer-m407 r1 finding，2026-10-09 登记；**Alex 2026-10-10 裁决：堵**，medium）
+
+**缺口**：M407 的分类闸门对 argv 做字面命令名匹配，`sudo rm` / `xargs rm` / `find -exec rm` 这类包装/间接
+调用形态不认得 `rm`，在 full_access 档免闸放行。**裁决**：堵——这些间接形态在 Full Access 档仍须进闸。
+**修法方向**（落权限后续批次，`src-tauri/src/harness/permissions.rs` 分类表 + 单测）：把
+sudo/xargs/find -exec（及 -execdir）等 wrapper 的**被包装命令**递归取出再进分类管线；取不出确定形态时
+保守降级为询问（宁多问勿漏拦）。注意边界：递归解析只在「wrapper 名单内的命令」上展开，不做通用 shell
+语义解析；`find -exec` 的 `;`/`+` 终止符与 `\;` 转义形态需用例钉死。
+finding：`.tower/comms/findings/` 下 reviewer-m407 的 sudo/xargs/find -exec 条目（2026-10-09）。
+
 ### 面板滚动行为无机器防线：AX 不反映滚动位置（M398 r1 reviewer 登记，2026-10-09，low）
 
 **症状**：恢复重建后「滚动落底」这类行为没有任何机器断言能守——AX 快照不携带滚动位置，
