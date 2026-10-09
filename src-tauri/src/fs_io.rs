@@ -1512,8 +1512,12 @@ fn ensure_parent_dirs(root: &Path, parent_rel: &str) -> Result<(), CommandError>
         .param("reason", e.to_string())
     })?;
     let mut current = root_canon.clone();
+    // 与 `current` 同步推进的 vault 相对路径——`fs_create_failed` 的 path 参数口径与
+    // create_file_entry / create_dir_entry 的既有构造点一致（D184 的 {path}）。
+    let mut current_rel = String::new();
     for segment in segments {
         let next = current.join(segment);
+        current_rel = join_rel(&current_rel, segment);
         match std::fs::symlink_metadata(&next) {
             Ok(meta) => {
                 let canon = next.canonicalize().map_err(|e| {
@@ -1540,6 +1544,7 @@ fn ensure_parent_dirs(root: &Path, parent_rel: &str) -> Result<(), CommandError>
             Err(_) => {
                 std::fs::create_dir(&next).map_err(|e| {
                     CommandError::new("fs_create_failed", format!("无法新建目录 {segment}：{e}"))
+                        .param("path", current_rel.clone())
                         .param("rel", parent_rel)
                         .param("reason", e.to_string())
                 })?;
