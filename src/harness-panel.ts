@@ -3882,9 +3882,37 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
    *  历史会话清单（M392）；拉取失败（M395 合并前的旧后端 / 桩 / 后端不可用）按空清单
    *  降级——选择器静默不列，不报错打断浮层。 */
   function setSessPop(open: boolean): void {
-    if (open) buildSessList();
-    sessPop.hidden = !open;
+    if (open) {
+      // 先显示再定位：浮层 display:none 时 offsetWidth/Height 量为 0，夹纵向就夹不了。显示与
+      // 定位在同一次同步任务内完成、中间不落绘制，因此不会闪（同 vault 切换浮层的 place 手法）。
+      sessPop.hidden = false;
+      placeSessPop();
+      buildSessList();
+    } else {
+      sessPop.hidden = true;
+    }
     sessionButton.setAttribute("aria-expanded", String(open));
+  }
+
+  /** 会话浮层定位（M397）：浮层是 `position: fixed`（见 harness-panel.css 的同名规则），坐标按
+   *  **会话名钮的视口矩形**现算，并夹在视口内——不变量是「浮层包围盒完整落在视口内、且不被任何
+   *  祖先容器的 overflow 裁切」（docs/specs/overlay-visibility.md）。**打开时与历史清单填充后各算
+   *  一次**（后者在 buildSessList 的 .then 里）：清单是异步拉来的，填充后浮层变高，纵向夹取必须按
+   *  新高度重算，否则长历史 + 矮窗下下端会越出视口（M397 r1 P2-1）。浮层是瞬时形态（点浮层外 /
+   *  Esc / 选中即关），其生命周期内不发生窗口尺寸变化，故不挂 resize 监听（与 vault 切换浮层同
+   *  口径）。纵向 4px 沿用原 CSS `top: 30px` 减去钮高 26 的实测间距。 */
+  function placeSessPop(): void {
+    const gap = 4;
+    const margin = 8;
+    const rect = sessionButton.getBoundingClientRect();
+    const w = sessPop.offsetWidth;
+    const h = sessPop.offsetHeight;
+    // 横向：与钮左缘对齐，右端不越出视口；钮贴右缘时左移让整盒留在视口内。
+    const left = Math.min(Math.max(rect.left, margin), Math.max(margin, window.innerWidth - w - margin));
+    // 纵向：钮下沿之下，下端不越出视口（长历史清单由 .lumir-hp-sesspop-list 的 max-height 兜住）。
+    const top = Math.min(rect.bottom + gap, Math.max(margin, window.innerHeight - h - margin));
+    sessPop.style.left = `${left}px`;
+    sessPop.style.top = `${top}px`;
   }
 
   /** 历史会话清单现建（每次打开现拉——会话文件随对话增长，不囤旧清单）：每行 = 会话名
@@ -3921,6 +3949,11 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
           sessList.append(item);
         }
         sessList.hidden = sessList.childElementCount === 0;
+        // 清单填充后浮层变高了，纵向夹取必须按新高度重算一遍（M397 r1 P2-1）：placeSessPop() 在
+        // 打开时只量到「新建会话」一项，长清单随后把浮层撑高（.lumir-hp-sesspop-list 上限 320px），
+        // 不重夹的话矮窗 + 长历史时浮层下端会越出视口——恰是本 PR 立的 O2（打开态包围盒 MUST 完整
+        // 落在视口内）所禁。浮层在拉取期间被点掉（hidden）就不必重算。
+        if (!sessPop.hidden) placeSessPop();
       })
       .catch(() => {});
   }
