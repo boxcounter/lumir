@@ -355,9 +355,10 @@ export type HarnessEvent = HarnessEventEnvelope &
 
 /** 发送一条消息。context_json 是序列化后的上下文块（src/harness-context.ts 的
  *  `serializeHarnessContext` 是唯一构造点）：`{"path", "selection":{from_line,to_line,text}}`
- *  或 `{"path", "viewport_range":{from_line,to_line,text}}`；调用方决定有无上下文（无上下文
- *  传 null，面板在无路径文档上就这么发）。 */
-export function harnessSend(message: string, context_json: string | null): Promise<void> {
+ *  或 `{"path", "viewport_range":{from_line,to_line,text}}`；无上下文时传**空串**
+ *  （面板在无路径文档上就这么发——后端 `turn::parse_context` 对空串返回默认块，
+ *  参数类型恒为 string；传 null 会触发 `invalid type: null, expected a string`，M398）。 */
+export function harnessSend(message: string, context_json: string): Promise<void> {
   return invoke<void>("harness_send", { message, context_json });
 }
 
@@ -424,8 +425,10 @@ export function harnessListSessions(): Promise<SessionSummary[]> {
  * 从留存文件恢复历史会话并续聊（M392，change reshape-harness-session-recording design §6.2）：
  * `session_id` 是 `sessions/<id>.jsonl` 的文件名。后端读源文件最后一条会话轮次
  * `llm_request` 的完整请求体（折叠其后未入请求的末尾响应），system + input 原样灌进
- * **新**会话并续写新留存文件（`opened_from=restore`）——面板重渲染由调用方经
- * `harness_state` 快照消费。busy 态 reject `harness_busy`；源文件不属于当前 vault reject
+ * **新**会话并续写新留存文件（`opened_from=restore`）。返回的 `SessionResumeInfo.messages`
+ * 是后端把灌回的 input 映射成的**面板重建消息**（M398）——调用方（src/harness-panel.ts 的
+ * resumeSession）据此一次重放历史 transcript，不必再拉 `harness_state`。busy 态 reject
+ * `harness_busy`；源文件不属于当前 vault reject
  * `harness_session_vault_mismatch`；留存不可读 / 格式非法 reject `harness_session_unreadable` /
  * `harness_session_invalid`（D409–D411 经 src/copy.ts 的 errorText 按 code 渲染）。
  */

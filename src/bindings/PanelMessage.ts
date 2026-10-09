@@ -14,6 +14,12 @@ role: string,
  */
 text?: string, 
 /**
+ * 恢复重建的思考展示文本（M398）：仅当 wire 的 reasoning 回放项里取得到**明文**时带值
+ * （kimi 的 `encrypted_content` 项取不到 → 缺省，不伪造）。活会话的思考块由
+ * `reasoning_chunk` 事件驱动、不进面板记录——本字段只在恢复重建的面板消息上有值。
+ */
+reasoning?: string, 
+/**
  * 摘要（compact 消息的压缩摘要，面板可展开）。
  */
 summary?: string, 

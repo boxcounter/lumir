@@ -239,6 +239,7 @@ pub fn run_turn_for(
             summary: None,
             name: None,
             status: None,
+            reasoning: None,
             ts: jsonl::unix_secs_now(),
         });
         s.set_current_context(context_section);
@@ -373,6 +374,7 @@ pub fn run_turn_for(
                     summary: None,
                     name: None,
                     status: None,
+                    reasoning: None,
                     ts: jsonl::unix_secs_now(),
                 });
             }
@@ -496,6 +498,7 @@ fn abort_turn(
                 summary: None,
                 name: None,
                 status: Some("stopped".into()),
+                reasoning: None,
                 ts: jsonl::unix_secs_now(),
             });
             // 半截正文已在响应点随 llm_response 落盘（wire 口径），这里不再记 sidecar。
@@ -677,6 +680,7 @@ fn loop_max_notice(
             summary: None,
             name: None,
             status: None,
+            reasoning: None,
             ts: jsonl::unix_secs_now(),
         });
         s.jsonl().record(&serde_json::json!({
@@ -761,6 +765,7 @@ fn handle_call(
             summary: Some(panel_summary),
             name: Some(call.name.clone()),
             status: Some(status.to_string()),
+            reasoning: None,
             ts: jsonl::unix_secs_now(),
         });
         // 调用与结果的留存是 wire 口径：function_call / function_call_output 项
@@ -951,6 +956,7 @@ fn compact_now(
             summary: Some(summary.clone()),
             name: None,
             status: None,
+            reasoning: None,
             ts: jsonl::unix_secs_now(),
         });
         // 文件边界即压缩留痕：压缩事件类（旧 compact kind）已废弃。
@@ -1011,7 +1017,9 @@ fn truncate_history_line(text: &str) -> String {
     }
 }
 
-fn summarize_args(arguments: &str) -> String {
+/// 参数摘要（截断 80 字）：live `started` 事件、面板持久化（M367）与恢复重建（M398，从
+/// wire 的 function_call 项取参数）共用同一份——MUST NOT 各算各的（REVIEW.md 第 8 条）。
+pub(crate) fn summarize_args(arguments: &str) -> String {
     const MAX: usize = 80;
     if arguments.chars().count() > MAX {
         format!("{}…", arguments.chars().take(MAX).collect::<String>())

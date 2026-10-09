@@ -30,6 +30,12 @@ pub struct PanelMessage {
     #[ts(optional)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub text: Option<String>,
+    /// 恢复重建的思考展示文本（M398）：仅当 wire 的 reasoning 回放项里取得到**明文**时带值
+    /// （kimi 的 `encrypted_content` 项取不到 → 缺省，不伪造）。活会话的思考块由
+    /// `reasoning_chunk` 事件驱动、不进面板记录——本字段只在恢复重建的面板消息上有值。
+    #[ts(optional)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reasoning: Option<String>,
     /// 摘要（compact 消息的压缩摘要，面板可展开）。
     #[ts(optional)]
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -148,6 +154,11 @@ pub struct SessionResumeInfo {
     /// messages，加末尾未入请求的 llm_response 折叠项（design §6.2 第 4 步——reasoning
     /// 回放项 + assistant 消息 + 悬空的 function_call 项）；空会话恢复为 0。
     pub restored_items: usize,
+    /// 面板重建用的渲染消息（M398，design §6.2「面板（transcript）从灌回的 input 重建」）：
+    /// 把灌回的 input 项按序映射成面板视角的 user / assistant / tool 消息（reasoning 明文
+    /// 挂在紧随其后的 assistant 消息上），新会话的 `panel` 与之一致（同一份重建结果的副本，
+    /// 快照恢复与本次返回因此不会漂）。前端据此一次重放、不必再拉 `harness_state`。
+    pub messages: Vec<PanelMessage>,
 }
 
 /// `harness_list_sessions` 的元素（ts-rs 导出；前端会话选择器的消费形状）：

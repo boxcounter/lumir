@@ -303,9 +303,13 @@ impl Runtime {
 
     /// 从留存文件恢复会话（`harness_resume_session` 的实现体）：读源文件最后一条
     /// 会话轮次 `llm_request` 的完整请求体，system + messages 原样灌进一个新会话，
-    /// 续写**新** JSONL 文件（opened_from=restore，restored_from=源会话 id）。面板消息不重建——恢复的是 LLM 侧
-    /// 单一事实源，面板渲染是前端恢复 mission 的消费面。busy 态拒绝（与 new_session
-    /// 同口径）；非 busy 时替换当前会话。
+    /// 续写**新** JSONL 文件（opened_from=restore，restored_from=源会话 id）。busy 态拒绝
+    /// （与 new_session 同口径）；非 busy 时替换当前会话。
+    ///
+    /// **面板视角一并重建**（M398，design §6.2「面板（transcript）从灌回的 input 重建」）：
+    /// 灌回的 wire 条目经 [`restored_panel_messages`] 映射成面板消息（user / assistant /
+    /// tool，reasoning 明文挂其后的 assistant），既存进新会话的 `panel`（会话两份视角不漂，
+    /// 快照重载后照旧渲染历史），也随 [`session::SessionResumeInfo`] 返回给前端一次重放。
     pub fn resume_session(
         &self,
         scope: &VaultScope,
@@ -415,9 +419,17 @@ impl Runtime {
             "assembly": assembly,
         });
         let writer = jsonl::JsonlWriter::create(&new_id, &open_payload)?;
+        // 面板视角重建（M398）：灌回的 input 项映射成面板消息，reasoning 明文挂其后的
+        // assistant。先建好再 move `restored` 进会话。
+        let messages = restored_panel_messages(&restored);
         let restored_items = restored.len();
-        let new_session =
+        let mut new_session =
             session::Session::new(scope.root.clone(), system, restored, effort, writer);
+        // 会话两份视角（input / panel）随同一个动作一起成立——不重建的话恢复出的会话面板为空，
+        // 快照重载（webview reload / 切回）后历史照旧丢，与前端本次一次重放的内容也不一致。
+        for message in messages.iter().cloned() {
+            new_session.push_panel(message);
+        }
         self.inner
             .sessions
             .lock()
@@ -431,6 +443,7 @@ impl Runtime {
         Ok(session::SessionResumeInfo {
             session_id: new_id,
             restored_items,
+            messages,
         })
     }
 }
@@ -504,13 +517,14 @@ fn first_user_text(file: &jsonl::SessionFile) -> Option<String> {
     let request = file.records.iter().find(|r| r["kind"] == "llm_request")?;
     let messages = request["request"]["messages"].as_array()?;
     let message = messages.iter().find(|m| m["role"] == "user")?;
-    let text = user_message_text(message)?;
+    let text = message_content_text(message)?;
     Some(turn::strip_context_section(&text).to_string())
 }
 
-/// 从一条 wire user 消息项取正文（[`session::user_item`] 的逆：content 数组里的各 text part
-/// 拼接；兼容 content 直接是字符串的形态）。
-fn user_message_text(message: &serde_json::Value) -> Option<String> {
+/// 从一条 wire 消息项取正文（[`session::user_item`] / [`session::assistant_item`] 的逆：
+/// content 数组里的各 text part 拼接；兼容 content 直接是字符串的形态）。user 与 assistant 的
+/// content 形状同构（`{type, text}` part 数组），故两处共用这一个取值口。
+fn message_content_text(message: &serde_json::Value) -> Option<String> {
     match &message["content"] {
         serde_json::Value::String(text) => Some(text.clone()),
         serde_json::Value::Array(parts) => {
@@ -528,6 +542,82 @@ fn user_message_text(message: &serde_json::Value) -> Option<String> {
         }
         _ => None,
     }
+}
+
+/// 把灌回 LLM 的 input 项按序映射成面板渲染消息（M398 恢复路径，design §6.2「面板
+/// （transcript）从灌回的 input 重建」）：user → user、assistant 消息项 → assistant、
+/// function_call 项 → tool（摘要走 [`turn::summarize_args`]，与 live 面板持久化的那份同源）。
+///
+/// 边界（如实登记）：
+/// - **reasoning 只带明文**：wire 的 reasoning 回放项经 [`thinking::reasoning_text`] 能取出
+///   明文时挂在**紧随其后的** assistant 消息上（kimi 的 `encrypted_content` 项取不到 → 缺席，
+///   不伪造块）；工具轮只发调用、无正文 assistant 记录承载时该 reasoning 丢弃（面板无宿主）。
+/// - **无 ts**（`ts: 0` = 无读数）：wire 项不带时间戳，前端因此不显示相对时间，不伪造。
+/// - **tool 行 status 缺省**：wire 的 function_call 不带面板细分状态（done/denied/…）——面板
+///   渲染路径不消费 tool 的 status（`appendToolCall` 恒按 done 上屏），故不推断、不填。
+fn restored_panel_messages(restored: &[serde_json::Value]) -> Vec<session::PanelMessage> {
+    let mut messages = Vec::new();
+    let mut pending_reasoning: Option<String> = None;
+    for item in restored {
+        match item["type"].as_str() {
+            Some("reasoning") => {
+                pending_reasoning = thinking::reasoning_text(item);
+            }
+            Some("function_call") => {
+                // 工具轮（本轮无正文 assistant 记录承载 reasoning）：面板无宿主，丢弃。
+                pending_reasoning = None;
+                messages.push(session::PanelMessage {
+                    role: "tool".into(),
+                    text: None,
+                    reasoning: None,
+                    summary: Some(turn::summarize_args(
+                        item["arguments"].as_str().unwrap_or(""),
+                    )),
+                    name: Some(item["name"].as_str().unwrap_or("").to_string()),
+                    status: None,
+                    ts: 0,
+                });
+            }
+            // 工具结果项不进面板（live 面板只显「调用了什么工具、带了什么参数」；结果摘要由
+            // live 侧的 summarize_result 产出，wire 回放项不含它）。
+            Some("function_call_output") => {}
+            _ => match item["role"].as_str() {
+                Some("user") => {
+                    if let Some(text) = message_content_text(item) {
+                        messages.push(session::PanelMessage {
+                            role: "user".into(),
+                            text: Some(text),
+                            reasoning: None,
+                            summary: None,
+                            name: None,
+                            status: None,
+                            ts: 0,
+                        });
+                    }
+                }
+                Some("assistant") => {
+                    let text = message_content_text(item).unwrap_or_default();
+                    if text.is_empty() {
+                        // 空正文轮不落面板消息（与 live 的 M367 口径一致）；其挂带的
+                        // reasoning 无宿主，一并丢弃。
+                        pending_reasoning = None;
+                    } else {
+                        messages.push(session::PanelMessage {
+                            role: "assistant".into(),
+                            text: Some(text),
+                            reasoning: pending_reasoning.take(),
+                            summary: None,
+                            name: None,
+                            status: None,
+                            ts: 0,
+                        });
+                    }
+                }
+                _ => {}
+            },
+        }
+    }
+    messages
 }
 
 /// 取得（必要时建立）该 vault 的会话：会话不存在时装配系统上下文、开新留存文件
@@ -741,9 +831,9 @@ pub fn harness_set_thinking_effort(
 /// `session_id` 是 `sessions/<id>.jsonl` 的文件名（形态校验防目录穿越）。读源文件
 /// 最后一条会话轮次 `llm_request` 的完整请求体，system + messages 原样灌进新会话并
 /// 续写**新**留存文件（opened_from=restore、restored_from=源会话 id——恢复的地基：文件边界 + 会话身份 + 谱系链）。
-/// 返回新会话标识（`SessionResumeInfo`，ts-rs 导出）；面板重渲染由前端恢复 mission
-/// 经 `harness_state` 消费。busy 态返回 `harness_busy`；源文件不属于当前 vault 返回
-/// `harness_session_vault_mismatch`。
+/// 返回 `SessionResumeInfo`（ts-rs 导出）：新会话标识 + 灌回条数 + **面板重建消息**
+/// （M398）——前端据此一次重放历史 transcript，不必再拉 `harness_state`。busy 态返回
+/// `harness_busy`；源文件不属于当前 vault 返回 `harness_session_vault_mismatch`。
 #[tauri::command(rename_all = "snake_case")]
 pub fn harness_resume_session(
     vault: tauri::State<'_, crate::commands::VaultState>,
@@ -764,4 +854,77 @@ pub fn harness_list_sessions(
 ) -> Result<Vec<session::SessionSummary>, CommandError> {
     let scope = vault_scope(&vault)?;
     list_sessions(&scope)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// M398：恢复重建的面板消息映射——wire 项按序映射成面板视角（user / assistant /
+    /// tool），reasoning 明文挂其后的 assistant；空正文轮与工具结果项不落消息；重建消息的
+    /// ts 恒为 0（wire 无时间戳，前端因此不显示相对时间，不伪造读数）。
+    #[test]
+    fn restored_panel_messages_maps_wire_items_in_order() {
+        let restored = vec![
+            session::user_item("zqxalpha"),
+            // deepseek 形态的 reasoning 回放项：明文在 content parts 里。
+            serde_json::json!({
+                "type": "reasoning",
+                "content": [{"type": "reasoning_text", "text": "先想清楚"}],
+            }),
+            session::assistant_item("先答一句。", None)[0].clone(),
+            session::function_call_item("c1", "vault_read", r#"{"path":"a.md"}"#),
+            session::function_call_output_item("c1", r#"{"ok":true}"#),
+            // 工具轮的 reasoning（本轮无正文 assistant 承载）：面板无宿主，丢弃。
+            serde_json::json!({
+                "type": "reasoning",
+                "content": [{"type": "reasoning_text", "text": "被丢的思考"}],
+            }),
+            session::function_call_item("c2", "vault_bogus", "{}"),
+            session::assistant_item("收尾。", None)[0].clone(),
+        ];
+        let messages = restored_panel_messages(&restored);
+        let roles: Vec<&str> = messages.iter().map(|m| m.role.as_str()).collect();
+        assert_eq!(
+            roles,
+            vec!["user", "assistant", "tool", "tool", "assistant"]
+        );
+
+        assert_eq!(messages[0].text.as_deref(), Some("zqxalpha"));
+        assert_eq!(messages[1].text.as_deref(), Some("先答一句。"));
+        assert_eq!(messages[1].reasoning.as_deref(), Some("先想清楚"));
+        assert_eq!(messages[1].ts, 0, "重建消息无 wire 时间戳：不伪造");
+        assert_eq!(messages[2].name.as_deref(), Some("vault_read"));
+        assert_eq!(messages[2].summary.as_deref(), Some(r#"{"path":"a.md"}"#));
+        assert_eq!(messages[3].name.as_deref(), Some("vault_bogus"));
+        // 工具轮挂带的 reasoning 不串到别处，收尾 assistant 无 reasoning。
+        assert_eq!(messages[4].text.as_deref(), Some("收尾。"));
+        assert_eq!(messages[4].reasoning, None);
+    }
+
+    /// reasoning 明文取不到（kimi 的 `encrypted_content` 形态）时不挂 reasoning——不伪造块。
+    #[test]
+    fn restored_panel_messages_drops_opaque_reasoning() {
+        let restored = vec![
+            serde_json::json!({"type": "reasoning", "encrypted_content": "opaque"}),
+            session::assistant_item("正文。", None)[0].clone(),
+        ];
+        let messages = restored_panel_messages(&restored);
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].reasoning, None);
+        assert_eq!(messages[0].text.as_deref(), Some("正文。"));
+    }
+
+    /// 工具行摘要与 live 面板持久化的那份同源（[`turn::summarize_args`]）：超长参数截断。
+    #[test]
+    fn restored_tool_summary_reuses_summarize_args() {
+        let long = format!(r#"{{"path":"{}"}}"#, "a".repeat(200));
+        let restored = vec![session::function_call_item("c1", "vault_read", &long)];
+        let messages = restored_panel_messages(&restored);
+        assert_eq!(
+            messages[0].summary.clone().unwrap(),
+            turn::summarize_args(&long)
+        );
+        assert!(messages[0].summary.as_deref().unwrap().ends_with('…'));
+    }
 }
