@@ -33,4 +33,4 @@ ADR 只有一个评审节点：**`proposed` → `accepted`**。
 
 ## CI 校验口径
 
-`.github/workflows/docs-check.yml`（M153 起把正则收敛到 `scripts/docs-check.sh`，判据只有一份）对每份 ADR 校验：标题格式（`# ADR NNNN: 标题`）、必需头字段（状态/日期/角色）、状态值合法（合法值集合为 `proposed` / `accepted` / `deprecated` / `deferred` / `superseded by ADR-NNNN`，其中 `deferred` 须带全角括号注解）、日期为 `YYYY-MM-DD`、必备章节（Context / Decision / Consequences / Revisit 条件）齐全，以及 README 索引与实际文件一一对应。
+`.github/workflows/docs-check.yml`（M153 起把正则收敛到 `scripts/docs-check.sh`，判据只有一份）对每份 ADR 校验：标题格式（`# ADR NNNN: 标题`）、必需头字段（状态/日期/角色）、状态值合法（合法值集合为 `proposed` / `accepted` / `deprecated` / `deferred` / `superseded by ADR-NNNN`，其中 `deferred` 须带全角括号注解）、日期为 `YYYY-MM-DD`、必备章节（Context / Decision / Consequences / Revisit 条件）齐全，以及 README 索引与实际文件一一对应。此外同一脚本自 M409（2026-10-09）起校验 `openspec/**/*.md` 内相对链接的可达性（`scripts/openspec-links.sh`，判据口径见其头部注释）。
