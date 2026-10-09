@@ -26,7 +26,7 @@ import { findWikilinkSpans } from "./wikilinks";
 import { classifyLinkTarget, literalLinkOfNode, standardLinkParts } from "./links";
 import { collectInlineMath, isInsideCodeContext, mathBlockSet } from "./math";
 import { isMermaidDiagram, mermaidBlockSet, onMermaidSettled } from "./mermaid";
-import { calloutMarkerDecorations, calloutOnLine, detectCallout } from "./callout";
+import { calloutMarkerDecorations, detectCallout } from "./callout";
 import {
   beginPointerPress,
   detachPointerPress,
@@ -891,30 +891,11 @@ function buildDecorations(view: EditorView, ctx: PreviewContext): DecorationSet 
         return slot !== undefined && t <= slot.to;
       },
       decos);
-    for (const { from } of lineRanges(view, vr.from, vr.to)) {
-      const line = view.state.doc.lineAt(from);
-      if (line.text.trim() || inFrontmatter(fm, from, line.to)) continue;
-      const node = syntaxTree(view.state).resolveInner(from, 0);
-      if (node.name !== "Document") continue;
-      // 与 callout 相邻的空行保留块间距：0 高分隔会让相邻 callout 的
-      // 底色连成一块，类型边界不可辨（M109）。
-      const tree = syntaxTree(view.state);
-      const gap =
-        (line.number > 1 && calloutOnLine(tree, view.state.doc, line.from - 1) !== null) ||
-        (line.number < view.state.doc.lines && calloutOnLine(tree, view.state.doc, line.to + 1) !== null);
-      // 代码块邻接分隔（M218 C1 阶梯补值，tower 裁决 2026-09-25 的 C6 margin 转换）：
-      // 容器外距上 4 / 下 12（定稿 direction-c/index.html:360-365 的 `margin: 4px 0 12px`）
-      // 不能落 CSS margin——.cm-lp-codeblock-scroll 是 BlockWrapper，margin 对 heightmap
-      // 不可见（M110 缺陷 1 同族），改由相邻分隔行高度承担；相邻块自身的阶梯 padding
-      // 照旧叠加（无折叠模型，组合间距偏松至多 12px，见 M218 证据）。
-      const prevIsCode = line.number > 1 && codeblockOnLine(tree, view.state.doc, line.from - 1);
-      const nextIsCode = line.number < view.state.doc.lines && codeblockOnLine(tree, view.state.doc, line.to + 1);
-      const classes = ["cm-lp-block-separator"];
-      if (gap) classes.push("cm-lp-callout-gap");
-      if (prevIsCode) classes.push("cm-lp-codeblock-gap-after");
-      if (nextIsCode) classes.push("cm-lp-codeblock-gap-before");
-      decos.push(Decoration.line({ class: classes.join(" ") }).range(from));
-    }
+    // M399（Alex 裁决，推翻 M218 C1 的 0 高分隔模型）：顶层空行**不再**加
+    // `cm-lp-block-separator` 压成零高——空段落行恒以正常行高渲染、光标可见
+    //（合同：openspec/specs/editor-live-preview/spec.md「空行渲染不变量」）。
+    // 原实现（空行 0 高 + callout/codeblock 邻接补高）让「行首 Enter / 空列表项退出 /
+    // 删 marker」三连缺陷里的空行全部不可见；段距变大是裁决接受的代价。
   }
   return Decoration.set(decos, true);
 }
@@ -922,23 +903,6 @@ function buildDecorations(view: EditorView, ctx: PreviewContext): DecorationSet 
 // 节点完全落在 frontmatter 内才跳过（防止相交判断误剪根节点导致整棵树不遍历）。
 const inFrontmatter = (fm: FrontmatterBlock | null, from: number, to: number): boolean =>
   fm !== null && from >= fm.from && to <= fm.to;
-
-/** 某一行是否属于围栏 / 缩进代码块（代码块邻接分隔判定用，M218 C1）；calloutOnLine 同形态。 */
-function codeblockOnLine(
-  tree: ReturnType<typeof syntaxTree>,
-  doc: Text,
-  pos: number,
-): boolean {
-  const line = doc.lineAt(pos);
-  const offset = line.text.search(/\S/);
-  if (offset < 0) return false;
-  let node: SyntaxNode | null = tree.resolveInner(line.from + offset, 1);
-  while (node) {
-    if (node.name === "FencedCode" || node.name === "CodeBlock") return true;
-    node = node.parent;
-  }
-  return false;
-}
 
 function lineRanges(
   view: EditorView,
