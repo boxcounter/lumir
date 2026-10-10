@@ -13,11 +13,11 @@
 //!   缓存命中把模式层判成 Allow：用户在更宽的档位显式给过授权，其后切到更严的档位不回收
 //!   已给的会话内授权（与「turn 停止不回收已批准决定」同侧，design §6 边界条）。
 //!
-//! 写入点（前端次级动作的 transport）**不在本批**：`ApprovalDecision` / `harness_approve`
-//! 的参数表在别的落点，本 module 只提供 [`remember`] / [`is_remembered`]，由接线方调用。
+//! 写入 transport（`ApprovalDecision.remember` → `harness_approve` 的 remember 参数 →
+//! [`super::turn`] 的 gated_execute 在 approved && remember 时调 [`remember`]）M413 已落地；
+//! 本 module 提供 [`remember`] / [`is_remembered`]，由判定层与工具循环接线。
 //!
-//! 模块声明**临时**挂在 `permissions.rs` 的 `#[path]` 形式下（本批不写 `harness.rs`，它归
-//! 面板批次 mission）；后续批次收编时应迁回 `harness.rs` 的模块表。
+//! 模块声明在 `harness.rs` 的模块表（M413 收编：此前为 `permissions.rs` 的 `#[path]` 临时声明）。
 
 use std::collections::HashSet;
 use std::sync::Mutex;

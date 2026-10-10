@@ -7,6 +7,8 @@
 > **r1 复评后的两项增量**（2026-10-09，同为 M407）：① 修 r1 P2-1（`vault_create_file` 对绝对路径输入会在 vault 里留下 stray 目录——校验趟补绝对路径拒绝 + 用例补「不建任何东西」断言）；② Alex 语义修订：`read_only` 由「拒绝写」改为 **Always Ask**（写逐个问），模式层不再产出 Deny，只读档的批准窗 CAS 用例随之复活（见 1.2 / 6.1 / 6.2 注记）。
 >
 > **r3 追加（2026-10-09，纯文档口径）**：design §7 呈现口径修订——chip 显示**短名**（只读 / 写入 / 完全；Read / Write / Full）、浮层列表项显示**全名**并每档附一行释义（原「chip 显示全名」「无释义」作废）。落点：design §7/§8、proposal 评审记录、spec delta「权限模式切换」requirement + 「三档浮层」scenario、本条 5.1 注记；判定代码未动（5.1 仍归 UI 批次勾选）。
+>
+> **M413 后端收口（2026-10-10）**：三项技术债 + 一个裁决洞——① 黑名单 wrapper 递归（sudo / xargs / find -exec 系，spec delta「cli_run 命令分类」requirement 补条款 + 新 scenario；分类器单测 + `full_access` 整合用例 `wrapper_recursion_gates_sudo_rm_in_full_access`）；② 任务 3 的 transport 与工具清单收编见 3.5 / 4.2 注记；③ `vault_create` 深层路径用例补在 tools.rs（`vault_create_deep_path_creates_missing_parents`——父目录补建实际由 M407 r1 落在 `fs_io::vault_create_file`，M410 r3 finding 前提半失效，backlog 条目由 tower 核销）。
 
 ## 1. 判定管线与三档模式
 
@@ -31,15 +33,17 @@
 - [x] 3.4 两工具的档行为按裁决点 1 落定后实现（倾向：Vault Write 档 vault_delete 仍走批准闸，Full Access 放行）
 - [x] 3.5 工具集扩为 8：`TOOL_NAMES` / `definitions()` / `execute` / `approval_preview` / 系统上下文中的工具清单描述同步更新（单一真源，不留两处各写一份）
   - 说明（M407）：前四项已完成；**系统上下文里的工具清单在 `harness/context.rs`（不在 M407 scope）**，仍写「vault_create 父目录必须已存在」且未列 vault_move / vault_delete——已按 finding 20261009-worker-m407 报出，待后续批次收编。
+  - 说明（M413，已收编）：`context.rs` 工具纪律列全 8 件（vault_create 自动建父目录、补 vault_move / vault_delete 各一句）；`harness.rs` 模块头同步（8 工具 / 五层管线）；`permission_cache` 的 `#[path]` 声明收编为 `harness.rs` 正常模块声明。
   - 说明（M407，M405 修订一并落地）：`vault_create` 自动建父目录（mkdir -p 语义）已在 `fs_io::vault_create_file` + `ensure_parent_dirs` 实现，重定向的 `mkdir` → `vault_create` 映射同步生效。
 
 ## 4. 会话内批准缓存
 
 - [x] 4.1 Session 加批准缓存字段：键 `(工具名, 规范化主体串)` 精确匹配；新会话 / 切会话 / 重启清空；不落盘不进 JSONL
   - 说明（M407）：实现为 `harness/permission_cache.rs` 的进程内单例，键 `(工具, 规范化主体串)`、**命名空间 `(vault 根, 会话 id)`**——命名空间一变整表换新，即「新会话 / 切 vault / 重启清空」的同一机制。未加到 `Session` 结构上（`session.rs` 归面板批次 mission），语义等价且不必在每个重置点各挂一支清理钩子。
-- [ ] 4.2 批准卡新增次级动作「采纳且本会话不再问」（裁决点 4 倾向 A：显式逐次记忆，点采纳不自动记）；缓存命中在模式默认分层内短路，deny / 重定向 / 黑名单三层永远先于缓存
-  - 说明（M407，后半句已完成）：缓存命中在第 5 层短路、三层先于缓存已落地并有用例（`permissions.rs::cache_short_circuits_mode_layer_only` + `harness_runtime::session_approval_cache_skips_gate_for_same_subject_only`）。**前半句（次级动作与写入 transport）不在本轮**：按钮是前端动作，且 `ApprovalDecision` / `harness_approve` 的参数表在 `approval.rs` / `commands.rs` / `harness.rs`（均不在 M407 scope，tower 已裁决归后续前端批次）。缓存因此当前恒空——已知中间态，接口契约见 M407 的 review-request。
+- [x] 4.2 批准卡新增次级动作「采纳且本会话不再问」（裁决点 4 倾向 A：显式逐次记忆，点采纳不自动记）；缓存命中在模式默认分层内短路，deny / 重定向 / 黑名单三层永远先于缓存
+  - 说明（M407，后半句已完成）：缓存命中在第 5 层短路、三层先于缓存已落地并有用例（`permissions.rs::cache_short_circuits_mode_layer_only` + `harness_runtime::session_approval_cache_skips_gate_for_same_subject_only`）。
   - 说明（M407）：`approval.rs` 的 `ApprovalRequest` / `ApprovalDecision` 与 `session.rs` 的 `PendingApprovalSnapshot` 需增 `purpose` / `remember` 字段（plumbing 见 review-request）。
+  - 说明（M413，transport 落地，前半句的后端半边完成）：`ApprovalDecision.remember: bool`（点「采纳且本会话不再问」为 true，普通采纳 false）→ `harness_approve` 增可选 `remember` 参数 → `turn.rs::gated_execute` 在 approved && remember 时写 `permission_cache`（唯一写入点；整合用例 `harness_runtime::approval_remember_writes_cache_and_decision_visible` + sidecar `remember` 字段断言）。`PendingApprovalSnapshot` 增 `purpose` / `remember`（remember 恒 true = 次级动作可见性开关）；批准卡**按钮渲染**仍归 UI 批次（第 5 节）。工具行增 `decision` 字段（approved / rejected），快照恢复路径从 JSONL approval sidecar 回填。
 
 ## 5. UI 与配置写回
 

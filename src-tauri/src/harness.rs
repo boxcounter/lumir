@@ -17,8 +17,10 @@
 //!   与 vault → 会话映射
 //! - [`context`]：系统上下文装配（固定身份段 + AGENTS.md 双层 + Skill 索引）与 Skill 双根发现
 //! - [`llm`]：provider 预设表、OpenAI Responses API client（reqwest blocking + SSE）、mock provider
-//! - [`tools`]：恰好 6 个工具的定义与执行
-//! - [`permissions`]：三层规则表判定（deny > allow > 默认分层）
+//! - [`tools`]：恰好 8 个工具的定义与执行
+//! - [`permissions`]：五层判定管线（deny > vault 内写重定向 > 危险黑名单 > allow > 三档模式
+//!   默认分层）与 cli_run 命令分类
+//! - [`permission_cache`]：会话内批准缓存（design §6：「采纳且本会话不再问」的免问索引）
 //! - [`approval`]：批准闸的挂起请求结构
 //! - [`diff`]：edits → unified diff 预览
 //! - [`jsonl`]：会话留存（配置目录，append-only，MUST NOT 写入 vault）
@@ -32,6 +34,7 @@ pub mod diff;
 pub mod events;
 pub mod jsonl;
 pub mod llm;
+pub mod permission_cache;
 pub mod permissions;
 pub mod session;
 pub mod thinking;
@@ -420,8 +423,21 @@ impl Runtime {
         });
         let writer = jsonl::JsonlWriter::create(&new_id, &open_payload)?;
         // 面板视角重建（M398）：灌回的 input 项映射成面板消息，reasoning 明文挂其后的
-        // assistant。先建好再 move `restored` 进会话。
-        let messages = restored_panel_messages(&restored);
+        // assistant。先建好再 move `restored` 进会话。approval sidecar（kind=approval，
+        // 批准的终态记录）按文件序收集，供工具行回填 decision——「已采纳 / 已拒绝」的
+        // 可见性随恢复保留（M413）。
+        let approvals: Vec<(String, String)> = file
+            .records
+            .iter()
+            .filter(|r| r["kind"] == "approval")
+            .filter_map(|r| {
+                Some((
+                    r["tool"].as_str()?.to_string(),
+                    r["decision"].as_str()?.to_string(),
+                ))
+            })
+            .collect();
+        let messages = restored_panel_messages(&restored, &approvals);
         let restored_items = restored.len();
         let mut new_session =
             session::Session::new(scope.root.clone(), system, restored, effort, writer);
@@ -628,7 +644,13 @@ fn panel_status_of(output: &serde_json::Value) -> Option<&'static str> {
 ///   （输出 JSON 原文）提供 `status`（[`panel_status_of`]，与 live 持久化同一映射）与
 ///   `text`（输出 JSON 原文——前端拒绝原因 / 失败详情的数据源）；悬空调用（响应未带
 ///   输出项）与输出形状不符的，status 缺席（不推断），前端按摘要形状回落判定。
-fn restored_panel_messages(restored: &[serde_json::Value]) -> Vec<session::PanelMessage> {
+/// - **decision 回填**（M413）：`approvals` 是 JSONL approval sidecar 按文件序的
+///   `(工具, approved|rejected)` 列表——工具行按工具名次序消费（第 N 次过闸的工具 T
+///   配第 N 条 T 的 sidecar），回填面板 decision 字段；sidecar 耗尽后缺席（不推断）。
+fn restored_panel_messages(
+    restored: &[serde_json::Value],
+    approvals: &[(String, String)],
+) -> Vec<session::PanelMessage> {
     // 工具结果按 call_id 先成图：调用项与输出项在 wire 里成组分离（同轮全部调用在前、
     // 输出在后，同序配对——provider 合同，M360），function_call 项落面板消息时按此回填。
     let mut outputs: std::collections::HashMap<&str, &str> = std::collections::HashMap::new();
@@ -640,6 +662,16 @@ fn restored_panel_messages(restored: &[serde_json::Value]) -> Vec<session::Panel
                 outputs.insert(call_id, output);
             }
         }
+    }
+    // approval sidecar 按工具名分队列：function_call 项按序消费（同工具第 N 次调用配
+    // 第 N 条 sidecar）。
+    let mut approval_queue: std::collections::HashMap<&str, std::collections::VecDeque<&str>> =
+        std::collections::HashMap::new();
+    for (tool, decision) in approvals {
+        approval_queue
+            .entry(tool.as_str())
+            .or_default()
+            .push_back(decision.as_str());
     }
     let mut messages = Vec::new();
     let mut pending_reasoning: Option<String> = None;
@@ -664,6 +696,11 @@ fn restored_panel_messages(restored: &[serde_json::Value]) -> Vec<session::Panel
                     }
                     None => (None, None),
                 };
+                let tool_name = item["name"].as_str().unwrap_or("");
+                let decision = approval_queue
+                    .get_mut(tool_name)
+                    .and_then(|queue| queue.pop_front())
+                    .map(str::to_string);
                 messages.push(session::PanelMessage {
                     role: "tool".into(),
                     text,
@@ -671,8 +708,9 @@ fn restored_panel_messages(restored: &[serde_json::Value]) -> Vec<session::Panel
                     summary: Some(turn::summarize_args(
                         item["arguments"].as_str().unwrap_or(""),
                     )),
-                    name: Some(item["name"].as_str().unwrap_or("").to_string()),
+                    name: Some(tool_name.to_string()),
                     status: status.map(str::to_string),
+                    decision,
                     ts: 0,
                 });
             }
@@ -689,6 +727,7 @@ fn restored_panel_messages(restored: &[serde_json::Value]) -> Vec<session::Panel
                             summary: None,
                             name: None,
                             status: None,
+                            decision: None,
                             ts: 0,
                         });
                     }
@@ -707,6 +746,7 @@ fn restored_panel_messages(restored: &[serde_json::Value]) -> Vec<session::Panel
                             summary: None,
                             name: None,
                             status: None,
+                            decision: None,
                             ts: 0,
                         });
                     }
@@ -853,7 +893,9 @@ pub fn harness_send(
     Ok(())
 }
 
-/// 批准 / 拒绝一个挂起的批准请求。`reason` 为拒绝原因（可选），随工具结果回送模型。
+/// 批准 / 拒绝一个挂起的批准请求。`reason` 为拒绝原因（可选），随工具结果回送模型；
+/// `remember` = 「采纳且本会话不再问」（可选，缺省 false）——true 且采纳时
+/// `(工具, 主体串)` 记入会话内批准缓存（design §6），同会话同主体串后续免闸。
 #[tauri::command(rename_all = "snake_case")]
 pub fn harness_approve(
     vault: tauri::State<'_, crate::commands::VaultState>,
@@ -861,10 +903,11 @@ pub fn harness_approve(
     request_id: String,
     approved: bool,
     reason: Option<String>,
+    remember: Option<bool>,
 ) -> Result<(), CommandError> {
     let scope = vault_scope(&vault)?;
     runtime.with_session(&scope, |s| {
-        s.resolve_approval(&request_id, approved, reason)
+        s.resolve_approval(&request_id, approved, reason, remember.unwrap_or(false))
     })?
 }
 
@@ -995,7 +1038,7 @@ mod tests {
             session::function_call_item("c2", "vault_bogus", "{}"),
             session::assistant_item("收尾。", None)[0].clone(),
         ];
-        let messages = restored_panel_messages(&restored);
+        let messages = restored_panel_messages(&restored, &[]);
         let roles: Vec<&str> = messages.iter().map(|m| m.role.as_str()).collect();
         assert_eq!(
             roles,
@@ -1041,7 +1084,7 @@ mod tests {
             ),
             session::function_call_output_item("c3", "not-json"),
         ];
-        let messages = restored_panel_messages(&restored);
+        let messages = restored_panel_messages(&restored, &[]);
         assert_eq!(messages.len(), 4);
         assert_eq!(messages[0].status.as_deref(), Some("rejected"));
         assert_eq!(
@@ -1065,7 +1108,7 @@ mod tests {
             serde_json::json!({"type": "reasoning", "encrypted_content": "opaque"}),
             session::assistant_item("正文。", None)[0].clone(),
         ];
-        let messages = restored_panel_messages(&restored);
+        let messages = restored_panel_messages(&restored, &[]);
         assert_eq!(messages.len(), 1);
         assert_eq!(messages[0].reasoning, None);
         assert_eq!(messages[0].text.as_deref(), Some("正文。"));
@@ -1076,11 +1119,38 @@ mod tests {
     fn restored_tool_summary_reuses_summarize_args() {
         let long = format!(r#"{{"path":"{}"}}"#, "a".repeat(200));
         let restored = vec![session::function_call_item("c1", "vault_read", &long)];
-        let messages = restored_panel_messages(&restored);
+        let messages = restored_panel_messages(&restored, &[]);
         assert_eq!(
             messages[0].summary.clone().unwrap(),
             turn::summarize_args(&long)
         );
         assert!(messages[0].summary.as_deref().unwrap().ends_with('…'));
+    }
+
+    /// M413：decision 回填——工具行经批准闸的 approved / rejected 终态从 JSONL approval
+    /// sidecar 按工具名次序回填（「已采纳」可见性随恢复保留）；免闸工具行（allow 路径，
+    /// 无 sidecar）与 sidecar 耗尽的行缺席，不推断。
+    #[test]
+    fn restored_tool_decision_backfilled_from_approval_sidecars() {
+        let restored = vec![
+            session::function_call_item("c1", "vault_delete", r#"{"path":"a.md"}"#),
+            session::function_call_output_item("c1", r#"{"ok":true}"#),
+            session::function_call_item("c2", "vault_delete", r#"{"path":"b.md"}"#),
+            session::function_call_output_item(
+                "c2",
+                r#"{"ok":false,"code":"approval_rejected","message":"先别删"}"#,
+            ),
+            // allow 路径直执行（vault_patch 默认档免闸）：无 sidecar，decision 缺席。
+            session::function_call_item("c3", "vault_patch", r#"{"path":"c.md"}"#),
+            session::function_call_output_item("c3", r#"{"ok":true}"#),
+        ];
+        let approvals = vec![
+            ("vault_delete".to_string(), "approved".to_string()),
+            ("vault_delete".to_string(), "rejected".to_string()),
+        ];
+        let messages = restored_panel_messages(&restored, &approvals);
+        assert_eq!(messages[0].decision.as_deref(), Some("approved"));
+        assert_eq!(messages[1].decision.as_deref(), Some("rejected"));
+        assert_eq!(messages[2].decision, None, "免闸工具行没有批准决定");
     }
 }

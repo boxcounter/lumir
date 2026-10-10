@@ -900,7 +900,7 @@ fn sidecar_records_approval_decision() {
         .unwrap()
         .to_string();
     runtime
-        .with_session(&f.scope(), |s| s.resolve_approval(&id, true, None))
+        .with_session(&f.scope(), |s| s.resolve_approval(&id, true, None, true))
         .expect("resolve ok")
         .expect("resolve ok");
     worker.join().unwrap();
@@ -915,6 +915,8 @@ fn sidecar_records_approval_decision() {
         .expect("approval sidecar 在列");
     assert_eq!(approval["tool"], "vault_delete");
     assert_eq!(approval["decision"], "approved");
+    // M413：「采纳且本会话不再问」的终态随 sidecar 落盘（true）；普通采纳为 false。
+    assert_eq!(approval["remember"], true);
     // sidecar 不打断配对：会话轮次对完整。
     assert_eq!(conversation_pairs(&file).len(), 2);
     check_recovery_sufficient(&files[0]).expect("恢复充分性成立");

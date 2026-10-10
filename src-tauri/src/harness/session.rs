@@ -49,6 +49,12 @@ pub struct PanelMessage {
     #[ts(optional)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub status: Option<String>,
+    /// 批准闸决定（tool 消息，M413）：进过批准闸的调用带「approved」/「rejected」——
+    /// 「已采纳」可见性与免闸直执行的区分靠它（status 两者都是 done）。allow / deny 规则
+    /// 路径没有批准动作，字段缺席。快照恢复路径从 JSONL 的 approval sidecar 回填。
+    #[ts(optional)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub decision: Option<String>,
     /// 消息入会话的时刻（UNIX 秒）；面板据它显示相对时间（缺该字段的旧快照退化为不显示）。
     // 打戳点是 `Session::push_panel` 的每个构造处，取时用 `super::jsonl::unix_secs_now`——
     // 与留存记录的 `ts` 同一取时点（两处各自取时会漂）。
@@ -129,6 +135,12 @@ pub struct PendingApprovalSnapshot {
     /// CLI 的完整 argv（无则缺省）。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub argv: Option<Vec<String>>,
+    /// 批准卡上展示的用途句（cli_run，design §3.4；无则缺省）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub purpose: Option<String>,
+    /// 该卡支持「采纳且本会话不再问」次级动作（design §6；批准闸请求恒 true）——
+    /// 面板按钮可见性的数据源。
+    pub remember: bool,
 }
 
 impl PendingApprovalSnapshot {
@@ -138,6 +150,8 @@ impl PendingApprovalSnapshot {
             tool: r.tool.clone(),
             diff: r.diff.clone(),
             argv: r.argv.clone(),
+            purpose: r.purpose.clone(),
+            remember: r.remember,
         }
     }
 }
@@ -336,12 +350,15 @@ impl Session {
         self.pending = Some(request);
     }
 
-    /// `harness_approve` 的落点：按 id 找到挂起请求并把决定发回工具循环线程。
+    /// `harness_approve` 的落点：按 id 找到挂起请求并把决定（含「采纳且本会话不再问」
+    /// 标志，design §6）发回工具循环线程。remember 随决定走通道，由 turn.rs 的
+    /// gated_execute 在 approved && remember 时写会话内批准缓存——缓存写入只在那一处。
     pub fn resolve_approval(
         &mut self,
         request_id: &str,
         approved: bool,
         reason: Option<String>,
+        remember: bool,
     ) -> Result<(), CommandError> {
         let pending = self
             .pending
@@ -361,12 +378,14 @@ impl Session {
             "id": pending.id,
             "tool": pending.tool,
             "decision": if approved { "approved" } else { "rejected" },
+            "remember": remember,
             "reason": reason,
         }));
         // 发送失败 = 等待线程已不在（会话被重置等），人话报错即可，不 panic。
         tx.send(ApprovalSignal::Decided(ApprovalDecision {
             approved,
             reason,
+            remember,
         }))
         .map_err(|_| {
             CommandError::new(
