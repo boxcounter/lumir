@@ -3,7 +3,7 @@
 ## 1. 数据模型与序列化协议
 
 - [ ] 1.1 MessageQuoteCard 数据模型（role 必选 user/assistant、at 可缺 ms 上屏戳、摘录原文=所见文本）；`createMessageQuoteCard` 校验（role 非法/原文为空不得产出卡片，对齐 QuoteCard 的 lines 非空纪律）
-- [ ] 1.2 `<msg-quote role="…" ts="…">摘录原文</msg-quote>` 序列化：混排交错（与 `<quote>` 同规则）、role 必选、ts 可缺、XML 转义、协议无编号（一致性原则）
+- [ ] 1.2 `<msg-quote role="…" at="…">摘录原文</msg-quote>` 序列化：混排交错（与 `<quote>` 同规则）、role 必选、at 可缺（ISO 8601 本地时间串，秒级）、XML 转义、协议无编号（一致性原则）
 - [ ] 1.3 `parseQuoteMessage` 扩展：`<msg-quote>` 解析还原为 msgquote 块（快照恢复 round-trip 与 `<quote>` 同口径）；未知元素保守不丢文
 - [ ] 1.4 序列化/解析不变量属性测试（无编号、转义 round-trip、交错顺序、role 合法性、未知元素行为）
 - [ ] 1.5 prompt 装配：`<msg-quote>` 接入消息投递（两 provider 统一处）；会话层指引 agent 按内容/角色回指
@@ -21,8 +21,8 @@
 
 - [ ] 3.1 `createCardEl` msgquote 分支：复用 `.lumir-hp-qcard` 整族样式（几何零改动），出处行「对话 · 助手/你」，hover 完整摘录 + 绝对时间
 - [ ] 3.2 transcript 用户消息同构沉淀（msgquote 卡与段落交错、无移除钮、整卡可点）
-- [ ] 3.3 跳回：role+ts 定位 → 全文搜索摘录原文（前缀匹配口径）→ toast 失锚三层降级；命中滚动居中 + 整条消息瞬态高亮（新动画类，pending-tint 黄语义 / eink 10% 黑，~1.4s）
-- [ ] 3.4 跳回定位判定纯逻辑层（零 DOM，tests/unit 直驱）：同秒双消息、无 ts 旧消息、流式消息三类边界
+- [ ] 3.3 跳回：role+at 定位 → 全文搜索摘录原文（前缀匹配口径）→ toast 失锚三层降级；命中滚动居中 + 整条消息瞬态高亮（新动画类，pending-tint 黄语义 / eink 10% 黑，~1.4s）
+- [ ] 3.4 跳回定位判定纯逻辑层（零 DOM，tests/unit 直驱）：同秒双消息、无 at 旧消息、流式消息三类边界
 
 ## 4. 文案与文档
 

@@ -22,7 +22,7 @@
 - 设计合同：本 change 的 `specs/harness/spec.md` 增量（两条 ADDED requirement 及其验收场景）。
 - 行为基准：living spec 的「摘录引用卡片 / 混排对话输入区 / 引用消息序列化协议 / 摘录失锚降级」（`openspec/specs/harness/spec.md:301/315/334/358`）——本 change 的全部交互形态以它们为对齐基准。
 - NOT 清单：摘录思考块/工具行/批准卡（MVP）；位置级跳回；跨会话跳回；卡片编号；新键位。
-- **一致性原则**（Alex 2026-10-06，全文适用）：投递给模型的上下文要素对人必须也可查——msgquote 卡的出处（role / ts）由 who 行（角色 + 相对时间）与卡片 hover（完整摘录 + 绝对时间）双可查面满足；协议不含任何 UI 不可查的标识。
+- **一致性原则**（Alex 2026-10-06，全文适用）：投递给模型的上下文要素对人必须也可查——msgquote 卡的出处（role / at）由 who 行（角色 + 相对时间）与卡片 hover（完整摘录 + 绝对时间）双可查面满足；协议不含任何 UI 不可查的标识。
 
 ## 3. 数据模型：MessageQuoteCard（与 QuoteCard 的差异及理由）
 
@@ -49,11 +49,12 @@ interface MessageQuoteCard {
 - **格式**（示例，fixture 为合成内容）：
 
   ```
-  <msg-quote role="assistant" ts="1760217600000">先读结论再读论证——倒序阅读把大部分筛选成本压到最低</msg-quote>
+  <msg-quote role="assistant" at="2026-10-10T21:40:33">先读结论再读论证——倒序阅读把大部分筛选成本压到最低</msg-quote>
   这里说的「筛选成本」具体指什么？
   ```
 
-- **不变量**：每段消息摘录一行；问题文字按交错顺序排布在标签之间（与 `<quote>` 完全一致）；`role` 必选且仅 `user`/`assistant`；`ts` 可缺（不可考时产出 role-only 元素）；属性值与文本节点 XML 转义（复用 `quote-card.ts` 的 escapeXmlText/escapeXmlAttribute）；**无编号**（一致性原则）。
+- **命名与取值**（2026-10-10 Alex 裁决「at 修订」）：属性名 **`at`**（不用 `ts`——`ts` 是仓内 Rust/JSONL 层的程序员面向惯例，落盘 schema 不动；序列化协议是 AI 与人面向的，要可读），取值为 **ISO 8601 本地时间串（秒级）**，由 ms 上屏戳（`when.dataset.ts`）格式化；跳回第一层匹配按「`dataset.ts` 格式化为同一串后相等」判定。
+- **不变量**：每段消息摘录一行；问题文字按交错顺序排布在标签之间（与 `<quote>` 完全一致）；`role` 必选且仅 `user`/`assistant`；`at` 可缺（不可考时产出 role-only 元素）；属性值与文本节点 XML 转义（复用 `quote-card.ts` 的 escapeXmlText/escapeXmlAttribute）；**无编号**（一致性原则）。
 - **解析还原**：`parseQuoteMessage` 扩展识别 `<msg-quote>` 并还原为 `{kind:"msgquote"}` 块——快照恢复与 `<quote>` 同 round-trip 口径；未知元素维持既有「不识别即不还原」的保守行为，MUST NOT 静默丢文。
 - **prompt 层**：序列化结构原样进用户消息；系统/会话层指引 agent 按摘录内容与角色回指（「你上面说的『倒序阅读』那段」）。两 provider 的装配处统一处理。
 - **JSONL 留存**：天然含 `<msg-quote>` 块（留存记序列化后完整消息），Rust 侧零改动。
@@ -72,11 +73,11 @@ interface MessageQuoteCard {
 
 点击卡片（composer 内或 transcript 内）：
 
-1. **role + ts 定位**：在**当前 vault 当前会话**的 transcript 中找 `who.dataset.role` 相符且 `when.dataset.ts` 相等的消息元素；命中 → `scrollIntoView`（居中）+ 整条消息瞬态高亮（新 CSS 动画类，色值借 pending-tint 黄语义，eink 档 10% 黑，与编辑器跳回高亮同族）。
-2. **全文搜索摘录原文**：第 1 层未命中（同秒双消息、旧消息无 ts、消息被流式更新）→ 遍历 transcript 各消息体的渲染文本，找包含摘录原文（前缀匹配口径，复用 `quotePrefixMatched` 的判定语义）的消息；命中 → 同上浮。
+1. **role + at 定位**：在**当前 vault 当前会话**的 transcript 中找 `who.dataset.role` 相符且 `when.dataset.ts` 格式化为同一 ISO 串后相等的消息元素；命中 → `scrollIntoView`（居中）+ 整条消息瞬态高亮（新 CSS 动画类，色值借 pending-tint 黄语义，eink 档 10% 黑，与编辑器跳回高亮同族）。
+2. **全文搜索摘录原文**：第 1 层未命中（同秒双消息、旧消息无 at、消息被流式更新）→ 遍历 transcript 各消息体的渲染文本，找包含摘录原文（前缀匹配口径，复用 `quotePrefixMatched` 的判定语义）的消息；命中 → 同上浮。
 3. **告知失锚**：仍找不到（新会话已重置、切 vault）→ toast 告知该摘录已失锚（新 D-code，文案对齐 D372 措辞改「对话」），MUST NOT 静默跳到别的消息。
 
-**粒度声明（裁决点 5）**：高亮整条消息，不在消息体内定位片段——渲染 Markdown 无源偏移，位置级定位需要重做渲染器偏移映射，代价与收益不成比例；「跳回来看上下文」的用途消息级已满足。流式进行中的消息允许摘录（锚是消息元素，文本后续增长不影响 role+ts 定位）。
+**粒度声明（裁决点 5）**：高亮整条消息，不在消息体内定位片段——渲染 Markdown 无源偏移，位置级定位需要重做渲染器偏移映射，代价与收益不成比例；「跳回来看上下文」的用途消息级已满足。流式进行中的消息允许摘录（锚是消息元素，文本后续增长不影响 role+at 定位）。
 
 ## 7. 渲染与视觉保真
 
@@ -91,7 +92,7 @@ interface MessageQuoteCard {
 
 ## 8. 验收面（机器判定锚点）
 
-- **真机验收新场景**（scripts/acceptance，mock provider）：① transcript 选区 → 浮动钮 → 卡片入 composer（含面板未开先开）；② 排除面（思考块/工具行/卡片内部选区不出钮）；③ 序列化结构断言（`<msg-quote>` 元素、role 必选、ts 可缺、交错顺序、转义、无编号）；④ 跳回三层（role+ts 命中 / 搜索命中 / 失锚 toast）；⑤ 快照恢复 round-trip（含 `<msg-quote>` 的消息恢复后卡片还原）；⑥ 视口注入 skip（携带消息摘录卡时 chip 无视口）。fixture 全部合成（信息卫生纪律）。
+- **真机验收新场景**（scripts/acceptance，mock provider）：① transcript 选区 → 浮动钮 → 卡片入 composer（含面板未开先开）；② 排除面（思考块/工具行/卡片内部选区不出钮）；③ 序列化结构断言（`<msg-quote>` 元素、role 必选、at 可缺、交错顺序、转义、无编号）；④ 跳回三层（role+at 命中 / 搜索命中 / 失锚 toast）；⑤ 快照恢复 round-trip（含 `<msg-quote>` 的消息恢复后卡片还原）；⑥ 视口注入 skip（携带消息摘录卡时 chip 无视口）。fixture 全部合成（信息卫生纪律）。
 - **单元/属性测试**：序列化与解析的不变量（无编号、转义 round-trip、交错顺序、role 合法性、未知元素保守不丢文）走属性测试口径；跳回定位判定（纯逻辑层）零 DOM 直驱。
 - **视觉**：msgquote 卡与浮动钮新增场景基线（Alex 过目后 --update）；既有 harness 相关基线按纪律核对时间戳。
 - **门禁**：`scripts/gate.sh quick` 全绿；动过 `src/harness-panel.css` 补 visual 档。

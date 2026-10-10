@@ -48,17 +48,17 @@
 
 ### Requirement: 消息摘录序列化协议
 
-发送消息时，混排输入区的消息摘录卡片 SHALL 序列化为 `<msg-quote role="…" ts="…">摘录原文</msg-quote>`——每段消息摘录一行，问题文字 SHALL 按交错顺序排布在标签之间（与 `<quote>` 同一交错规则）；`role` MUST 为 `user` 或 `assistant` 且 MUST 在场；`ts`（上屏戳）可缺——不可考时产出 role-only 元素；属性值与文本节点 MUST 做 XML 转义。序列化结构 SHALL NOT 包含任何编号——遵循一致性原则：投递给模型的上下文要素对人必须也可查（transcript who 行显示角色与相对时间、卡片 hover 显示完整摘录与绝对时间），编号对人无区分价值故不进协议。会话 JSONL 留存 SHALL 记录序列化后的完整消息（含 `<msg-quote>` 块，与 `<quote>` 同纪律）。解析还原路径 SHALL 识别 `<msg-quote>` 还原为消息摘录卡片；对不识别元素 SHALL 保守处理，MUST NOT 静默丢弃其文本内容。agent 回复 SHALL 按摘录内容与角色/时间回指。
+发送消息时，混排输入区的消息摘录卡片 SHALL 序列化为 `<msg-quote role="…" at="…">摘录原文</msg-quote>`——每段消息摘录一行，问题文字 SHALL 按交错顺序排布在标签之间（与 `<quote>` 同一交错规则）；`role` MUST 为 `user` 或 `assistant` 且 MUST 在场；`at`（来源消息上屏时刻，ISO 8601 本地时间串、秒级）可缺——不可考时产出 role-only 元素；属性值与文本节点 MUST 做 XML 转义。序列化结构 SHALL NOT 包含任何编号——遵循一致性原则：投递给模型的上下文要素对人必须也可查（transcript who 行显示角色与相对时间、卡片 hover 显示完整摘录与绝对时间），编号对人无区分价值故不进协议。会话 JSONL 留存 SHALL 记录序列化后的完整消息（含 `<msg-quote>` 块，与 `<quote>` 同纪律）。解析还原路径 SHALL 识别 `<msg-quote>` 还原为消息摘录卡片；对不识别元素 SHALL 保守处理，MUST NOT 静默丢弃其文本内容。agent 回复 SHALL 按摘录内容与角色/时间回指。
 
 #### Scenario: 序列化结构
 
 - **WHEN** 发送一条「消息摘录卡 + 问题」的消息
-- **THEN** 模型收到的消息中摘录为一个 `<msg-quote>` 元素（role 属性在场且合法、ts 随来源消息可缺、无编号属性），问题文字位于 `</msg-quote>` 之后
+- **THEN** 模型收到的消息中摘录为一个 `<msg-quote>` 元素（role 属性在场且合法、at 随来源消息可缺、无编号属性），问题文字位于 `</msg-quote>` 之后
 
 #### Scenario: 转义 round-trip
 
-- **WHEN** 摘录原文含 `<`、`&`、`"` 等字符，或来源消息无 ts
-- **THEN** 序列化输出中对应位置为 XML 转义形式，解析后还原为原文；无 ts 来源产出无 ts 属性的元素，解析还原为 at 为空的消息摘录卡片
+- **WHEN** 摘录原文含 `<`、`&`、`"` 等字符，或来源消息无 at
+- **THEN** 序列化输出中对应位置为 XML 转义形式，解析后还原为原文；无 at 来源产出无 at 属性的元素，解析还原为 at 为空的消息摘录卡片
 
 #### Scenario: UI 与协议无编号
 
