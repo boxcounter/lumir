@@ -644,6 +644,16 @@
 
 ## 待修 findings（不阻塞）
 
+### gate quick 不解析验收套件 lib：块注释内 glob `*/` 闭合注释致全套件 SyntaxError 上了 master（2026-10-10，medium，防线缺口）
+
+**现场**：M433 r2 的注释修订把 `env:harness/sessions/*/*.jsonl` 写进 `scripts/acceptance/lib/app.mjs:146`
+的 `/** */` 块注释，`*/` 提前闭合注释 → import 阶段 SyntaxError，全 128 场景不可跑。gate quick 10/10
+照常绿（它不含 acceptance 语法校验），reviewer r2 复跑 quick 也没抓住——**机器网与评审网同时漏**。
+tower hotfix `cf3deea` 直接改措辞修掉（`node --check` + `run.mjs --check` 复绿）。
+**修法方向**：① gate quick 增一项 `node --check scripts/acceptance/lib/*.mjs`（或 `run.mjs --check`，
+秒级）；② REVIEW.md 补一条：块注释里写 glob/路径时警惕 `*/` 序列。两条都小，可随下个动 gate.sh /
+REVIEW.md 的 mission 顺手做。
+
 ### 切 vault 后新开的 harness pane 缺标题栏会话段（worker-m433 finding，2026-10-10，**medium**）
 
 **症状**：切 vault（⌘O）后用 ⌘⇧A 在新 vault 开 harness pane，面板本体在场且可用，但标题栏的
