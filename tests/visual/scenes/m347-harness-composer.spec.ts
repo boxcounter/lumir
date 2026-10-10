@@ -69,7 +69,7 @@ async function stubHarnessComposer(page: Page): Promise<void> {
         return null;
       }
       if (cmd === "harness_send") {
-        w.__sentMessages.push({ message: args.message });
+        w.__sentMessages.push({ parts_json: args.parts_json });
         return null;
       }
       // 停止路径（面板自 M348 起把默认停止钩子接成真实的 harnessAbort）：桩里**成功返回、

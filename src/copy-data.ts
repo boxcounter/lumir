@@ -1286,6 +1286,40 @@ const COPY_TABLE = {
     zh: "跳回来源消息",
     en: "Jump back to the source message",
   },
+  // 图片卡片（change harness-composer-image-paste，design §6/§8）：D445 = 能力闸拒绝
+  // toast（发送被挡下、卡片标错误态；`{model}` 由后端 param 代入）；D446 = 缩略图读回
+  // 失败 toast（`{reason}`）；D447 = transcript 图片卡片的读屏名（`{name}` 是内容寻址
+  // 文件名）；D448–D450 = harness 落盘链路人话出口（无有效 vault / 目录创建失败 /
+  // 非法附件名）。消费点全在 src/harness-panel.ts（send / loadImageThumb /
+  // createImageCardEl），code → D-code 映射在上方 ERROR_COPY。
+  D445: {
+    zh: "当前模型 {model} 不支持图片输入：请移除图片卡片后再发送，或切换到支持图片的模型",
+    en: "Model {model} doesn't accept images. Remove the image cards and send again, or switch to a vision-capable model.",
+  },
+  D446: {
+    zh: "图片缩略图读取失败：{reason}",
+    en: "Couldn't load the image thumbnail: {reason}",
+  },
+  D447: {
+    zh: "图片 {name}",
+    en: "Image {name}",
+  },
+  D448: {
+    zh: "图片未保存：请先打开一个 vault 再粘贴图片",
+    en: "The image wasn't saved: open a vault first, then paste the image.",
+  },
+  D449: {
+    zh: "无法创建图片附件目录：{reason}",
+    en: "Couldn't create the image attachment directory: {reason}",
+  },
+  D450: {
+    zh: "非法的图片附件名：{name}",
+    en: "Invalid image attachment name: {name}",
+  },
+  D451: {
+    zh: "发送内容格式不正确，请重试",
+    en: "The message format is invalid. Please try again.",
+  },
 } satisfies Record<string, CopyEntry>;
 
 /** 文案表的键（D 编号，多串格带 `.N` 后缀）——由表数据推导，加一条即多一个键。 */
@@ -1347,6 +1381,14 @@ export const ERROR_COPY: Record<string, CopyKey> = {
   attachment_encode_failed: "D439",
   attachment_write_failed: "D440",
   attachment_write_unknown: "D441",
+  // harness 贴图（change harness-composer-image-paste）：落盘链路的 code 族与 vault 附件
+  // 同表（上六条），此处只登记 harness 侧新 code（占位键与后端逐字对应）。
+  harness_attachment_no_vault: "D448",
+  harness_attachment_dir_failed: "D449",
+  harness_image_read_failed: "D446",
+  harness_image_name_invalid: "D450",
+  harness_image_unsupported: "D445",
+  harness_parts_invalid: "D451",
   document_write_failed: "D187",
   document_write_unknown: "D188",
   document_conflict: "D41",

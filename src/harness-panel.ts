@@ -84,10 +84,12 @@ import {
   harnessDeleteSession,
   harnessListSessions,
   harnessNewSession,
+  harnessReadImage,
   harnessResumeSession,
   harnessSend,
   harnessSetThinkingEffort,
   harnessState,
+  harnessWriteImage,
   onHarnessEvent,
   openExternalUrl,
 } from "./ipc";
@@ -100,9 +102,11 @@ import {
   createQuoteCard,
   isMessageQuoteCard,
   parseMessageAt,
+  serializeDelivery,
   serializeQuoteMessage,
 } from "./quote-card";
-import type { ComposerBlock, MessageQuoteCard, QuoteCard } from "./quote-card";
+import type { ComposerBlock, ImageCard, MessageQuoteCard, QuoteCard } from "./quote-card";
+import { blobToBase64, firstImageFileIndex } from "./paste-image";
 import { createMessageQuoteGesture, MESSAGE_QUOTE_FLASH_MS, resolveMessageQuoteTarget } from "./message-quote-gesture";
 import { highlightCode } from "./preview/code";
 import { mirrorThemeScope } from "./overlay-scope";
@@ -198,13 +202,14 @@ export function inCurrentVault(payloadVault: unknown, currentVault: string | nul
 
 // ---------------------------------------------------------------------------
 // 混排 composer 的纯模型层（M343，change add-harness-quote-cards design §2/§5）。
-// 顶层块只有两类：quote（原子卡片，数据即 M342 的 QuoteCard）与 paragraph（问题段落，
+// 顶层块只有三类卡片（quote / msgquote / image，原子块）与 paragraph（问题段落，
 // 文本可含 \n 软换行）。DOM 只是这个模型的渲染面：结构性修改先算模型、再整面重渲——
 // 换行与断行后视口的质量合同（HC1 一次 ⇧Enter 恰好一行 × HC2 光标行在视口内）在
 // docs/specs/harness-composer.md：落法是 insertSoftBreakAtCaret（段末 / 卡片前缘落新空
 // 段落块——尾随 \n 不产生行盒）与 caretScrollTop（DOM 侧量读数、纯函数给目标滚动位）。
 // contenteditable 的四个已知 quirk（design §2「不允许侥幸」）因此各有单一收口：
-//   ① 粘贴净化：paste/drop 拦截后只经 insertPlainText 进纯文本；
+//   ① 粘贴分派：剪贴板含 image/* 走图片卡片（图优先），其余只经 insertPlainText
+//     进纯文本（change harness-composer-image-paste design §7）；
 //   ② IME 组合态：组合期的跨卡片删除在 beforeinput 被拦下（面板层）；
 //   ③ 撤销栈：自管 blocks 快照（时间聚簇），原生 historyUndo/Redo 显式禁用；
 //   ④ 新块归一化：一切入口（含粘贴多行、浏览器自身造块）都落成 paragraph 块，
@@ -229,13 +234,14 @@ function caretCompare(a: ComposerCaret, b: ComposerCaret): number {
   return a.block !== b.block ? a.block - b.block : a.offset - b.offset;
 }
 
-/** 混排里的原子卡片块（quote / msgquote 两类）——判空 / 拆段 / 删除都按「原子块」整体作用。 */
+/** 混排里的原子卡片块（quote / msgquote / image 三类）——判空 / 拆段 / 删除都按「原子块」整体作用。 */
 type CardBlock =
   | { readonly kind: "quote"; readonly card: QuoteCard }
-  | { readonly kind: "msgquote"; readonly card: MessageQuoteCard };
+  | { readonly kind: "msgquote"; readonly card: MessageQuoteCard }
+  | { readonly kind: "image"; readonly card: ImageCard };
 
 function isCardBlock(block: ComposerBlock): block is CardBlock {
-  return block.kind === "quote" || block.kind === "msgquote";
+  return block.kind === "quote" || block.kind === "msgquote" || block.kind === "image";
 }
 
 /**
@@ -616,9 +622,21 @@ export function unescapeXmlEntities(value: string): string {
   return value.replace(/&(amp|lt|gt|quot);/g, (_match, entity: string) => table[entity] ?? _match);
 }
 
+/** 错误信封的 code 取值（与 src/copy.ts 的 isErrorEnvelope 同口径）——发送闸
+ *  （harness_image_unsupported）的界面分派判据；非信封返回空串。 */
+export function errorCodeOf(e: unknown): string {
+  return typeof e === "object" && e !== null && typeof (e as { code?: unknown }).code === "string"
+    ? (e as { code: string }).code
+    : "";
+}
+
 const QUOTE_OPEN_RE = /^<quote file="([^"]*)" heading="([^"]*)" lines="([^"]*)">/;
 // 消息摘录元素（change harness-message-excerpt）：role 必选、at 可缺（role-only 出处）。
 const MSG_QUOTE_OPEN_RE = /^<msg-quote role="([^"]*)"(?: at="([^"]*)")?>/;
+// 图片占位元素（change harness-composer-image-paste design §4.2）：自闭合单行，
+// 属性恒在序 ref / type / width / height（尺寸从 wire 引用恢复时后两个缺席）。
+const IMAGE_RE =
+  /^<image ref="([^"]*)" type="([^"]*)"(?: width="([0-9]+)" height="([0-9]+)")?\/>/;
 
 /**
  * 把序列化消息（serializeQuoteMessage 的产物，design §3–§4）解析回块序列——快照恢复
@@ -627,15 +645,36 @@ const MSG_QUOTE_OPEN_RE = /^<msg-quote role="([^"]*)"(?: at="([^"]*)")?>/;
  * 只可能是真标签；连续非元素行合并为一个段落（软换行段落与多段落序列化同形，视觉等价）。
  * 解析宽容：不成形的行（含 role 非法 / 缺 role 的 `<msg-quote>`）按段落落地，**内容守恒、
  * 不抛错**——不识别即不还原，但 MUST NOT 静默丢文。
+ *
+ * 图片占位元素（`<image ref="…" type="…"/>`，自闭合单行）还原为 `{kind:"image"}` 块
+ * （change harness-composer-image-paste §7）；它同时是段落分隔符（占位元素前后各自成段）。
  */
 export function parseQuoteMessage(text: string): ComposerBlock[] {
   const blocks: ComposerBlock[] = [];
   const lines = text.split("\n");
   const isElementStart = (line: string): boolean =>
-    QUOTE_OPEN_RE.test(line) || MSG_QUOTE_OPEN_RE.test(line);
+    QUOTE_OPEN_RE.test(line) || MSG_QUOTE_OPEN_RE.test(line) || IMAGE_RE.test(line);
   let i = 0;
   while (i < lines.length) {
     const line = lines[i];
+    const image = IMAGE_RE.exec(line);
+    if (image !== null && line === image[0]) {
+      // 整行恰是占位元素（自闭合）：还原图片块。属性值转义还原；尺寸缺席 = 从 wire
+      // 引用恢复的旧形态，卡片只显文件名（ImageCard.width/height 可选）。
+      const width = image[3] === undefined ? undefined : Number(image[3]);
+      const height = image[4] === undefined ? undefined : Number(image[4]);
+      blocks.push({
+        kind: "image",
+        card: {
+          name: unescapeXmlEntities(image[1]),
+          sourceMime: unescapeXmlEntities(image[2]),
+          width,
+          height,
+        },
+      });
+      i += 1;
+      continue;
+    }
     const open = QUOTE_OPEN_RE.exec(line);
     if (open !== null) {
       const start = i;
@@ -2098,11 +2137,12 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
    *  消息追加两遍（两条都是可见的错乱）。 */
   let snapshotSeq = 0;
 
-  // ── 混排 composer 状态（M343；消息摘录卡片见 change harness-message-excerpt） ──
+  // ── 混排 composer 状态（M343；消息摘录卡片见 change harness-message-excerpt；
+  //    图片卡片见 change harness-composer-image-paste） ──
   /** 卡片数据寄存：DOM 只负责渲染，卡片数据（单一真源，design §3）经 WeakMap 挂回元素——
-   *  序列化只从模型读，不从 DOM 反推。两类卡片（quote / msgquote）共用一个寄存：判别走
-   *  isMessageQuoteCard（role 字段）。 */
-  const cardData = new WeakMap<Element, QuoteCard | MessageQuoteCard>();
+   *  序列化只从模型读，不从 DOM 反推。三类卡片（quote / msgquote / image）共用一个寄存：
+   *  判别走 isMessageQuoteCard（role 字段）与 isImageCard（sourceMime 字段）。 */
+  const cardData = new WeakMap<Element, QuoteCard | MessageQuoteCard | ImageCard>();
   /** 撤销栈（quirk ③：自管 blocks 快照；原生 historyUndo/Redo 在 beforeinput 显式禁用）。
    *  去重只比 blocks（光标位置不构成新编辑步）。 */
   interface ComposerSnapshot {
@@ -2171,12 +2211,130 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     return `${card.text} —— ${formatDate(new Date(card.at), "short")}`;
   }
 
+  // ── 图片卡片（change harness-composer-image-paste design §3/§7/§8） ──────────
+  /** 卡片数据判别：`sourceMime` 是 ImageCard 独有字段（QuoteCard / MessageQuoteCard 无）。 */
+  function isImageCard(card: QuoteCard | MessageQuoteCard | ImageCard): card is ImageCard {
+    return "sourceMime" in card;
+  }
+
+  /** 缩略图 blob URL 缓存（name → URL / null=读回失败）。渲染每次整面重跑（逐键击），
+   *  读回命令必须只发一次——成功缓存 URL、失败缓存 null（占位 + 每图仅一次的 toast）。
+   *  面板生命周期内不 revoke（卡片移除后 URL 留在缓存，下次贴同一张图直接命中）。 */
+  const imageThumbCache = new Map<string, string | null>();
+  /** 能力闸拒绝过的图片名（design §6 的错误态）：渲染整面重跑会把 DOM class 丢掉，
+   *  错误态因此按名记在模型侧，卡片重建（键入触发重渲）后依旧标出；发送成功才清除。 */
+  const imageGateErrored = new Set<string>();
+
+  /** 图片卡片元信息行（design §3，Alex 2026-10-10 裁决）：**从文件名开始、无 `image ·`
+   *  类型前缀**；尺寸（落盘命令回传）排在其后，从 wire 引用恢复的旧卡片无尺寸只显文件名。 */
+  function imageCardMetaText(card: ImageCard): string {
+    return card.width !== undefined && card.height !== undefined
+      ? `${card.name} · ${card.width}×${card.height}`
+      : card.name;
+  }
+
+  /** 图片卡片的缩略图字节加载（harness_read_image → base64 → blob URL，异步）。 */
+  function loadImageThumb(name: string, thumb: HTMLElement): void {
+    const cached = imageThumbCache.get(name);
+    if (cached !== undefined) {
+      applyImageThumb(name, cached, thumb);
+      return;
+    }
+    thumb.classList.add("is-loading");
+    harnessReadImage(name)
+      .then((base64: string) => {
+        const bytes = Uint8Array.from(atob(base64), (ch) => ch.charCodeAt(0));
+        const mime = name.endsWith(".jpg") ? "image/jpeg" : "image/webp";
+        const url = URL.createObjectURL(new Blob([bytes], { type: mime }));
+        imageThumbCache.set(name, url);
+        applyImageThumb(name, url, thumb);
+      })
+      .catch((e: unknown) => {
+        imageThumbCache.set(name, null);
+        applyImageThumb(name, null, thumb);
+        deps.toast(t("D446", { reason: errorMessage(e) }));
+      });
+  }
+
+  /** 缩略图加载的落盘面：成功换 <img>，失败/无缓存给可见占位（零高度空白不接受，design §8）。 */
+  function applyImageThumb(name: string, url: string | null, thumb: HTMLElement): void {
+    // 渲染整面重跑后元素可能已换——按缓存名校验：读回完成时 thumb 已重建则只写缓存。
+    if (thumb.dataset.thumbName !== name) return;
+    thumb.classList.remove("is-loading");
+    thumb.replaceChildren();
+    if (url !== null) {
+      const img = document.createElement("img");
+      img.className = "lumir-hp-qc-img";
+      img.src = url;
+      img.alt = "";
+      img.setAttribute("aria-hidden", "true");
+      thumb.append(img);
+    } else {
+      // 读回失败占位：CSS 画虚线框 + 「?」（零高度空白不接受，design §8）。
+      thumb.classList.add("is-broken");
+    }
+  }
+
   /**
-   * 卡片 DOM（composer / transcript 两态，两类卡片同构；design §7：几何零改动、复用
-   * .lumir-hp-qcard 整族样式）。差异只在出处行文案、hover title 与整卡的角色（msgquote 卡
-   * 整块可点跳回来源消息，aria 名走 D444）。
+   * 图片卡片 DOM（composer / transcript 两态；design §8：复用 .lumir-hp-qcard 整族样式——
+   * 边框 / 圆角 / 底色同族，**不画引号竖条**（缩略图本身是左锚，这条差异是显式视觉决定））。
+   * 缩略图经读回命令按需取字节（数据模型与快照里不落 base64）；能力闸拒绝时卡片标
+   * is-error（既有 error 语义色，design §6）。
    */
-  function createCardEl(card: QuoteCard | MessageQuoteCard, mode: "composer" | "transcript"): HTMLElement {
+  function createImageCardEl(card: ImageCard, mode: "composer" | "transcript"): HTMLElement {
+    const el = document.createElement("div");
+    el.className = "lumir-hp-qcard lumir-hp-imgcard";
+    if (mode === "composer" && imageGateErrored.has(card.name)) el.classList.add("is-error");
+    cardData.set(el, card);
+    const main = document.createElement("div");
+    main.className = "lumir-hp-qc-main";
+    const thumb = document.createElement("div");
+    thumb.className = "lumir-hp-qc-thumb";
+    thumb.dataset.thumbName = card.name;
+    const source = document.createElement("div");
+    source.className = "lumir-hp-qc-src";
+    source.textContent = imageCardMetaText(card);
+    main.append(thumb, source);
+    el.append(main);
+    loadImageThumb(card.name, thumb);
+    if (mode === "composer") {
+      el.contentEditable = "false";
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.className = "lumir-hp-qc-x";
+      remove.tabIndex = -1;
+      remove.setAttribute("aria-label", t("D371"));
+      remove.textContent = "×";
+      el.append(remove);
+      // 图片卡无跳回：点击（× 除外）无操作。mousedown 拦下是不让 contenteditable=false
+      // 的卡片抢走选区/焦点（面板内元素，无标题栏拖拽问题——REVIEW.md 第 16 条只约束标题栏）。
+      el.addEventListener("mousedown", (event) => event.preventDefault());
+      remove.addEventListener("mousedown", (event) => event.stopPropagation());
+      remove.addEventListener("click", (event) => {
+        event.stopPropagation();
+        const index = [...composer.children].indexOf(el);
+        if (index < 0) return;
+        withModel(() => removeBlockAt(readBlocksFromDom(), index), true);
+        composer.focus();
+      });
+    } else {
+      // transcript：同构呈现，无 ×、无跳回（只呈现缩略图，spec「发送后同构沉淀」）。
+      el.setAttribute("role", "img");
+      el.setAttribute("aria-label", t("D447", { name: card.name }));
+    }
+    return el;
+  }
+
+  /**
+   * 卡片 DOM（composer / transcript 两态，三类卡片同构；design §7：几何零改动、复用
+   * .lumir-hp-qcard 整族样式）。差异在出处行文案、hover title 与整卡的角色（msgquote 卡
+   * 整块可点跳回来源消息；图片卡无跳回、只呈现缩略图）。
+   */
+  function createCardEl(
+    card: QuoteCard | MessageQuoteCard | ImageCard,
+    mode: "composer" | "transcript",
+  ): HTMLElement {
+    if (isImageCard(card)) return createImageCardEl(card, mode);
     const msgCard = isMessageQuoteCard(card);
     const sourceText = msgCard ? messageQuoteSourceText(card) : cardSourceText(card);
     const jump = (): void => (msgCard ? jumpToMessageQuote(card) : quoteJumpHandler?.(card));
@@ -2241,7 +2399,13 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       if (child.classList.contains("lumir-hp-qcard")) {
         const card = cardData.get(child);
         if (card !== undefined) {
-          blocks.push(isMessageQuoteCard(card) ? { kind: "msgquote", card } : { kind: "quote", card });
+          blocks.push(
+            isImageCard(card)
+              ? { kind: "image", card }
+              : isMessageQuoteCard(card)
+                ? { kind: "msgquote", card }
+                : { kind: "quote", card },
+          );
         }
       } else {
         blocks.push({ kind: "paragraph", text: paraTextOf(child) });
@@ -2280,6 +2444,33 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       return insertBlockAtCaret(blocks, caret, { kind: "msgquote", card: valid });
     }, true);
     composer.focus();
+  }
+
+  /** composer 贴图段（change harness-composer-image-paste design §7）：Blob → base64 →
+   *  `harness_write_image`（harness 侧内容寻址落盘，MUST NOT 触碰 vault）→ 光标处插
+   *  图片卡片（insertBlockAtCaret 同路：面板未开先开、拆段、光标落卡片下一行段落）。
+   *  失败一律人话 toast（装配层 deps.toast；落盘链路的 code 族与 vault 附件同一张
+   *  ERROR_COPY 表）、不插卡片、无半截文件。 */
+  async function pasteClipboardImage(blob: Blob): Promise<void> {
+    try {
+      const dataBase64 = await blobToBase64(blob);
+      const written = await harnessWriteImage(dataBase64, blob.type);
+      const card: ImageCard = {
+        name: written.name,
+        sourceMime: blob.type,
+        width: written.width,
+        height: written.height,
+      };
+      if (mountEl === null) deps.togglePane();
+      withModel((blocks) => {
+        const sel = caretFromDom();
+        const caret = sel === null ? { block: blocks.length - 1, offset: 0 } : sel.focus;
+        return insertBlockAtCaret(blocks, caret, { kind: "image", card });
+      }, true);
+      composer.focus();
+    } catch (e) {
+      deps.toast(errorText(e));
+    }
   }
 
   /** transcript 消息折成纯逻辑层的锚序列（role / at / 渲染文本 + DOM 元素，供跳回定位与高亮）。 */
@@ -4665,17 +4856,23 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     if (sendPhase !== "idle") return;
     normalize();
     const blocks = readBlocksFromDom();
-    // 投递文本 = M342 序列化 walker 的产物（两 provider 统一处：harness_send → Rust
-    // assemble_user_message 的装配对两 provider 同一份 input，模型侧适配不散落——design §3）。
+    // 重新发送即解除上一回能力闸的错误态（若再被拒，catch 里按名重新标出）。
+    imageGateErrored.clear();
+    // 投递投影（change harness-composer-image-paste design §4.2）：parts 与文本面由同一个
+    // 函数产出——parts_json 给后端装配 content 数组，text = 面板/复制源/会话名素材的
+    // 序列化文本（含图片占位元素行）。纯文本消息投影为单 text part，与历史行为逐字节一致。
+    const parts = serializeDelivery(blocks);
     const text = serializeQuoteMessage(blocks);
     if (text.trim() === "") return;
-    const hasCards = blocks.some((b) => b.kind === "quote" || b.kind === "msgquote");
+    const hasCards = blocks.some((b) => b.kind !== "paragraph");
     // 携带卡片 ⇒ 跳过视口注入（spec「携带卡片时跳过视口」）；路径注入恒在。
     const block = assembleHarnessContext(editor, { skipViewport: hasCards });
     lastChip = block ?? "none";
     applyChip();
     appendUserMessage(blocks, text, Date.now()); // 上屏打戳（when 的 data-ts）
     // 会话名：本逻辑会话的首条用户消息定名（未发过时）；卡片与序列化文本不作名。
+    // 乐观上屏——发送闸拒绝（harness_image_unsupported）时须在 catch 里回滚（见下方 prev 保存）。
+    const prevFirstUserText = firstUserText;
     if (firstUserText === null) {
       firstUserText = firstUserTextOf(blocks);
       applySessionName();
@@ -4698,11 +4895,31 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     // 无文档上下文时传空串（不是 null）：后端 harness_send 的 context_json 恒为 string，
     // parse_context 对空串返回默认块——传 null 会被参数反序列化拒掉（M398，bug「不打开任何
     // 文件时发送报 invalid type: null」）。
-    harnessSend(text, block !== null ? serializeHarnessContext(block) : "").catch((e: unknown) => {
-      turnOpen = false;
-      applySendPhase(reduceSendPhase(sendPhase, { type: "finished" }));
-      appendError(t("D347", { reason: errorMessage(e) }));
-    });
+    harnessSend(JSON.stringify(parts), block !== null ? serializeHarnessContext(block) : "").catch(
+      (e: unknown) => {
+        turnOpen = false;
+        applySendPhase(reduceSendPhase(sendPhase, { type: "finished" }));
+        // 发送闸拒绝（harness_image_unsupported，design §6）：会话不推进——撤下刚沉淀的
+        // 用户消息、composer 原样恢复（输入区内容保留）、toast 人话错误、图片卡片标错误态
+        // （前端不另立能力判定，只认后端这一个 code）。
+        if (errorCodeOf(e) === "harness_image_unsupported") {
+          const last = transcript.lastElementChild;
+          if (last !== null && last.classList.contains("lumir-hp-msg-user")) last.remove();
+          // 乐观上屏的回滚：会话没推进，会话名也不许留下（否则标题栏像「已发送」）。
+          firstUserText = prevFirstUserText;
+          applySessionName();
+          // 错误态按名记入模型侧（见 imageGateErrored）——renderComposer 重建卡片后依旧标出。
+          for (const block of blocks) {
+            if (block.kind === "image") imageGateErrored.add(block.card.name);
+          }
+          renderComposer(blocks, null);
+          syncEmptyHint();
+          deps.toast(errorText(e));
+          return;
+        }
+        appendError(t("D347", { reason: errorMessage(e) }));
+      },
+    );
   }
 
   // 发送钮的点击路由：空闲相位（= 钮面「发送」）走 send()；running 相位（= 钮面「停止」）
@@ -4827,9 +5044,21 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     undoHistory.breakCluster(); // 组合整段是一个撤销步：下一拍编辑强制重新压栈。
     updateEmptyClass();
   });
-  // 粘贴净化（quirk ①）：只收 text/plain；多行经模型拆成多个段落块；跨块选区先整块删除。
+  // 粘贴分派（quirk ① + change harness-composer-image-paste design §7）：剪贴板含
+  // `image/*` 文件项 → 图优先（读 Blob → base64 → harness 侧落盘 → 光标处插图片卡片；
+  // 夹带文本 MUST NOT 另行落入输入区）；否则只收 text/plain，多行经模型拆成多个段落块，
+  // 跨块选区先整块删除——纯文本路径与本能力存在之前逐字节一致。
   composer.addEventListener("paste", (event: ClipboardEvent) => {
     event.preventDefault();
+    const items = event.clipboardData?.items;
+    if (items !== undefined) {
+      const imageIndex = firstImageFileIndex(items);
+      if (imageIndex >= 0) {
+        const file = items[imageIndex].getAsFile();
+        if (file !== null) void pasteClipboardImage(file);
+        return;
+      }
+    }
     const text = event.clipboardData?.getData("text/plain") ?? "";
     if (text === "") return;
     withModel((blocks) => {

@@ -24,6 +24,7 @@ import type { ThinkingEffort } from "./bindings/ThinkingEffort";
 import type { VaultWorkspace } from "./bindings/VaultWorkspace";
 import type { SessionResumeInfo } from "./bindings/SessionResumeInfo";
 import type { SessionSummary } from "./bindings/SessionSummary";
+import type { HarnessWrittenImage } from "./bindings/HarnessWrittenImage";
 import type { WrittenAttachment } from "./bindings/WrittenAttachment";
 
 /** 判断 invoke 的 reject 值是否为 CommandError 信封。 */
@@ -380,13 +381,38 @@ export type HarnessEvent = HarnessEventEnvelope &
     | { type: "aborted" }
   );
 
-/** 发送一条消息。context_json 是序列化后的上下文块（src/harness-context.ts 的
- *  `serializeHarnessContext` 是唯一构造点）：`{"path", "viewport_range":{from_line,to_line}}`
- *  （M412 起视口块只带行号、不带原文）或历史形态 `{"path", "selection":{…,text}}`；无上下文时
- *  传**空串**（面板在无路径文档上就这么发——后端 `turn::parse_context` 对空串返回默认块，
- *  参数类型恒为 string；传 null 会触发 `invalid type: null, expected a string`，M398）。 */
-export function harnessSend(message: string, context_json: string): Promise<void> {
-  return invoke<void>("harness_send", { message, context_json });
+/** 发送一条消息。`parts_json` 是投递投影的序列化（src/quote-card.ts 的 `serializeDelivery`
+ *  是唯一构造点）：有序 `[{kind:"text",text} | {kind:"image",name}]` 数组（change
+ *  harness-composer-image-paste design §4.2）——字符串承载不了 text/image 交错，故投影
+ *  整体走 JSON；纯文本消息投影为单 text part，与历史串形态逐字节一致。含图片 part 且
+ *  当前模型未声明 vision 能力时 reject `harness_image_unsupported`（不建会话、不入队；
+ *  前端据 code toast + 标出图片卡片）。context_json 是序列化后的上下文块
+ *  （src/harness-context.ts 的 `serializeHarnessContext` 是唯一构造点）：
+ *  `{"path", "viewport_range":{from_line,to_line}}`（M412 起视口块只带行号、不带原文）或
+ *  历史形态 `{"path", "selection":{…,text}}`；无上下文时传**空串**（面板在无路径文档上就
+ *  这么发——后端 `turn::parse_context` 对空串返回默认块，参数类型恒为 string；传 null 会
+ *  触发 `invalid type: null, expected a string`，M398）。 */
+export function harnessSend(parts_json: string, context_json: string): Promise<void> {
+  return invoke<void>("harness_send", { parts_json, context_json });
+}
+
+/** 落盘一张 composer 粘贴的剪贴板图片（change harness-composer-image-paste design §5）：
+ *  harness 侧内容寻址存储 `attachments/<vault 稳定 id>/`（MUST NOT 触碰 vault），
+ *  返回 `{name, width, height}`——前端据此插图片卡片。失败（格式不支持 / 超限 / 转码
+ *  或落盘失败 / 无有效 vault）reject 人话错误（code 族与 vault 附件同：`attachment_*` /
+ *  `harness_attachment_no_vault`），前端 toast、不插卡片。 */
+export function harnessWriteImage(
+  data_base64: string,
+  source_mime: string,
+): Promise<HarnessWrittenImage> {
+  return invoke<HarnessWrittenImage>("harness_write_image", { data_base64, source_mime });
+}
+
+/** 读回一张 harness 图片附件的 base64（缩略图渲染用；design §5.4）：落点 =
+ *  `attachments/<当前 vault 稳定 id>/`，限 `pasted-<hash16>.<ext>` 形态、路径逃逸防护，
+ *  跨 vault 不可见。 */
+export function harnessReadImage(name: string): Promise<string> {
+  return invoke<string>("harness_read_image", { name });
 }
 
 /** 对一条待批准项给出采纳 / 拒绝（reason 可选，拒绝原因回送模型）。`remember` = 「采纳且

@@ -30,7 +30,7 @@ async function stubHarnessIme(page: Page): Promise<void> {
     w.__harnessEventHandlerIds = [];
     internals.invoke = async (cmd: string, args: any) => {
       if (cmd === "harness_send") {
-        w.__sentMessages.push({ message: args.message });
+        w.__sentMessages.push({ parts_json: args.parts_json });
         return null;
       }
       if (cmd === "harness_abort") return null;
@@ -105,7 +105,7 @@ test("IME 组合期 Enter：WebKit 序确认拍不发送 / Chromium 序不残留
   await composer.evaluate((el) => {
     el.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
   });
-  expect(await sent()).toEqual([{ message: "你好" }]);
+  expect(await sent()).toEqual([{ parts_json: '[{"kind":"text","text":"你好"}]' }]);
   await expect(page.locator(".lumir-hp-msg-user")).toHaveCount(1);
   await expect(composer, "发送后 composer 归零").not.toContainText("你好");
 
@@ -119,7 +119,7 @@ test("IME 组合期 Enter：WebKit 序确认拍不发送 / Chromium 序不残留
       new KeyboardEvent("keydown", { key: "Enter", shiftKey: true, bubbles: true, cancelable: true }),
     );
   });
-  expect(await sent(), "⇧Enter 不发送").toEqual([{ message: "你好" }]);
+  expect(await sent(), "⇧Enter 不发送").toEqual([{ parts_json: '[{"kind":"text","text":"你好"}]' }]);
   const paras = composer.locator(".lumir-hp-qpara");
   await expect(paras, "⇧Enter 在段末落一个新空段落块（HC1）").toHaveCount(2);
   expect(await paras.nth(0).evaluate((el) => el.textContent), "原段落内容不动").toBe("x");

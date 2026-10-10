@@ -1610,6 +1610,67 @@
   background: var(--hover);
   color: var(--text);
 }
+/* 图片卡片（change harness-composer-image-paste design §8）：复用 .lumir-hp-qcard 整族
+   样式（边框/圆角/底色/边距零改动），不画引号竖条——缩略图本身是左锚。缩略图
+   object-fit: contain，高度上限取一行到三行正文的高度档（--lh-ui 行高档），宽度不超
+   卡片宽；加载中 / 失败占位按「零高度空白不接受」口径给可见回退。元信息行复用
+   .lumir-hp-qc-src（出处行同一档字号/颜色），从文件名开始、无 image · 前缀。 */
+.lumir-hp-imgcard {
+  cursor: default;
+}
+.lumir-hp-imgcard:hover {
+  border-color: var(--border);
+  background: var(--agent-bg);
+}
+.lumir-hp-qc-thumb {
+  flex: none;
+  width: 96px;
+  height: calc(var(--lh-ui) * 2);
+  max-height: calc(var(--lh-ui) * 3);
+  border-radius: var(--r4);
+  border: 1px dashed transparent;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--hover);
+  /* 加载中占位：轻脉冲由 is-loading 承担（零高度空白不接受）。 */
+  color: var(--text-3);
+  font-size: calc(var(--fs-micro) * var(--lumir-hp-scale, 1));
+}
+.lumir-hp-qc-thumb.is-loading {
+  border-color: var(--border-soft);
+}
+.lumir-hp-qc-thumb.is-loading::after {
+  content: "…";
+}
+.lumir-hp-qc-thumb.is-broken {
+  border-color: var(--border);
+}
+.lumir-hp-qc-thumb.is-broken::after {
+  content: "?";
+}
+.lumir-hp-qc-img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+}
+/* 图片卡片的元信息行与缩略图纵向居中对齐（卡片主区只有两行：缩略图 + 元信息）。 */
+.lumir-hp-imgcard .lumir-hp-qc-main {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+}
+.lumir-hp-imgcard .lumir-hp-qc-src {
+  margin-top: 0;
+}
+/* 能力闸拒绝的错误态（design §6）：既有 error 语义色 + 一次可见强调，卡内保留、
+   可移除后重发。 */
+.lumir-hp-imgcard.is-error {
+  border-color: var(--danger);
+  background: var(--danger-tint);
+}
 /* transcript 内用户消息的卡片（body 体里，M351 起选择器走后代）：同构交错呈现
    （无 × 钮），首末块的纵向边距收口 */
 .lumir-hp-msg-user .lumir-hp-qcard {

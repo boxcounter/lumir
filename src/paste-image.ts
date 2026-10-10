@@ -36,8 +36,12 @@ export interface PasteImagePort {
  *
  * 图文同板（types = `["Files","text/html"]`）时取首个 image file 项，即已定的「图优先」
  * （design §1）；多图剪贴板只取第一张（proposal 非目标）。
+ *
+ * 导出给 harness composer 的粘贴分派复用同一条「找第一个 image file 项」语义
+ * （change harness-composer-image-paste design §7——composer 没有编辑器模式判据，
+ * 复用的是这一步语义本身）。
  */
-function firstImageFileIndex(items: ArrayLike<{ kind: string; type: string }>): number {
+export function firstImageFileIndex(items: ArrayLike<{ kind: string; type: string }>): number {
   for (let index = 0; index < items.length; index += 1) {
     const item = items[index];
     if (item.kind === "file" && item.type.startsWith("image/")) return index;
@@ -84,8 +88,9 @@ export function pastedImageInsertion(
   return { from, to, insert: `${prefix}![[${name}]]${suffix}` };
 }
 
-/** Blob → 标准 base64（分块 btoa：大图不能一次性展开成超长 `fromCharCode` 参数表）。 */
-async function blobToBase64(blob: Blob): Promise<string> {
+/** Blob → 标准 base64（分块 btoa：大图不能一次性展开成超长 `fromCharCode` 参数表）。
+ * 导出给 harness composer 的贴图链路复用（change harness-composer-image-paste）。 */
+export async function blobToBase64(blob: Blob): Promise<string> {
   const bytes = new Uint8Array(await blob.arrayBuffer());
   let binary = "";
   const chunk = 0x8000;
