@@ -1,10 +1,12 @@
 // 上下文组装（M303，change add-harness-probe，design §8；M343 调整见
-// openspec/changes/add-harness-quote-cards design §6 与 spec「上下文注入与可见性」修订）：
+// openspec/changes/add-harness-quote-cards design §6 与 spec「上下文注入与可见性」修订；
+// M412 视口原文移除同据该 spec 条款）：
 // 把「当前编辑器上下文」组装成结构化上下文块，随 harness_send 注入对话。
 //
-// 口径（spec harness「上下文注入与可见性」，add-harness-quote-cards 修订后）：
+// 口径（spec harness「上下文注入与可见性」，M412 修订后）：
 //   - 当前 TAB 的 vault 相对路径 SHALL 始终注入（有活动文件时）；
-//   - 消息未携带引用卡片时注入视口行范围内容；
+//   - 消息未携带引用卡片时注入视口**行范围**（起止行号）——M412 起 MUST NOT 注入该范围的
+//     原文（原文随每条消息进上下文太冗余）；
 //   - 消息携带引用卡片时**跳过**视口注入（用户已显式策展，避免同文重复进上下文）；
 //   - 选区 SHALL NOT 被自动注入——选中片段一律经「摘录引用卡片」手势显式策展（该手势与
 //     卡片混排编辑区是 add-harness-quote-cards 的能力；选区自动注入随本修订移除）。
@@ -17,17 +19,17 @@
 
 import type { EditorView } from "@codemirror/view";
 
-/** 视口文本块：1-based 行号闭区间 + 该范围的原文。 */
-export interface ContextTextRange {
+/** 视口块：1-based 行号闭区间。M412 起**不带原文**——原文随每条消息注入太冗余，
+ *  只留行号作「用户在哪儿」的轻量参照。 */
+export interface ContextLineRange {
   from_line: number;
   to_line: number;
-  text: string;
 }
 
 /** 注入的上下文块：path 恒在（调用方保证有活动文件），视口块随携带卡片与否可选。 */
 export interface HarnessContextBlock {
   path: string;
-  viewport_range?: ContextTextRange;
+  viewport_range?: ContextLineRange;
 }
 
 /** 组装选项：消息携带引用卡片时置 skipViewport（spec：携带卡片 ⇒ 跳过视口注入）。 */
@@ -56,8 +58,8 @@ export function assembleHarnessContext(
   // 携带引用卡片：只注入路径（卡片自带的 <quote> 块即该消息的编辑器上下文）。
   if (options?.skipViewport === true) return { path };
   const { state, viewport } = source.view;
-  // 视口行范围。viewport.from/to 是文档偏移，对齐到整行后取整行文本——半个首行 / 尾行对
-  // 模型没有信息量，反而让「注入了什么」变得难核对。
+  // 视口行范围。viewport.from/to 是文档偏移，对齐到整行后取行号——半个首行 / 尾行对模型
+  // 没有信息量；原文不再随消息注入（M412），行号本身即「视口在哪」的读数。
   const fromLine = state.doc.lineAt(Math.min(viewport.from, state.doc.length));
   const toLine = state.doc.lineAt(Math.min(Math.max(viewport.to, viewport.from), state.doc.length));
   return {
@@ -65,7 +67,6 @@ export function assembleHarnessContext(
     viewport_range: {
       from_line: fromLine.number,
       to_line: toLine.number,
-      text: state.sliceDoc(fromLine.from, toLine.to),
     },
   };
 }
