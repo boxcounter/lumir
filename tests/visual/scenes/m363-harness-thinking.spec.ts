@@ -66,6 +66,8 @@ async function stubHarnessThinking(page: Page, thinking?: unknown): Promise<void
           provider: "mock",
           providers: { mock: { fixture: "f.json" } },
           permissions: { allow: [], deny: [] },
+          // M414：权限 chip 在场（本场景只断言控制行顺序，档位取默认档）。
+          permission_mode: "vault_write",
           loop_max: 8,
           warn_ctx_pct: 85,
           auto_compact: true,
@@ -113,6 +115,7 @@ test("思考程度：合并 chip 读数 / 三裸档浮层 + 当前勾选 / 档�
   );
   expect(ctlOrder).toEqual([
     "lumir-hp-modelwrap",
+    "lumir-hp-permwrap",
     "lumir-hp-ctxwrap",
     "lumir-hp-ctl-spacer",
     "lumir-hp-send",

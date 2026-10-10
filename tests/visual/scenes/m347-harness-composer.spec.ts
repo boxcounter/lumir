@@ -109,6 +109,8 @@ async function stubHarnessComposer(page: Page): Promise<void> {
             mock: { fixture: "f.json" },
           },
           permissions: { allow: [], deny: [] },
+          // M414：权限 chip 的读数来自 `permission_mode`（闭集合；控制行第三位）。
+          permission_mode: "vault_write",
           loop_max: 8,
           warn_ctx_pct: 85,
           auto_compact: true,
@@ -145,8 +147,9 @@ test("composer 控制行：合并选择器三维写回 / 形态合同 / ctx 读�
   await expect(panel).toBeVisible();
 
   // ── composer 区结构（M351，原型 .h-box/.h-ctl）：box = [composer][ctl]；
-  //    ctl = [合并选择器 chip（wrapper）][ctx 读数（wrapper）][spacer][图标发送钮]
-  //    （M373：双 chip 合一，.lumir-hp-effwrap 退役）──
+  //    ctl = [合并选择器 chip（wrapper）][权限 chip（wrapper）][ctx 读数（wrapper）][spacer][图标发送钮]
+  //    （M373：双 chip 合一，.lumir-hp-effwrap 退役；M414：权限 chip 进第三位，思考 chip 之后、
+  //     ctx 读数之前）──
   const boxOrder = await page.locator(".lumir-hp-composer-box > *").evaluateAll((els) =>
     els.map((el) => el.classList[0]),
   );
@@ -156,6 +159,7 @@ test("composer 控制行：合并选择器三维写回 / 形态合同 / ctx 读�
   );
   expect(ctlOrder).toEqual([
     "lumir-hp-modelwrap",
+    "lumir-hp-permwrap",
     "lumir-hp-ctxwrap",
     "lumir-hp-ctl-spacer",
     "lumir-hp-send",
@@ -416,6 +420,82 @@ test("composer 控制行：合并选择器三维写回 / 形态合同 / ctx 读�
   expect(copied).toEqual(["初步回答", "这段会触发压缩吗"]);
 });
 
+test("权限 chip（M414）：短名读数 / 三档浮层全名 + 释义 / 档位写回 config / 选定不关浮层", async ({
+  page,
+}) => {
+  // design §7 的呈现口径（Alex 2026-10-09 裁决）：chip 面 = **短名**（控制行空间紧），
+  // 浮层列表项 = **全名 + 每档一行释义**（全名只在那里出现一次）。写入面 = 配置键
+  // `[harness].permission_mode`（与模型 chip 同一条 config_set_value 通道；切换对下一个
+  // 判定生效，前端不碰在途轮次）。
+  await stubTauri(page, VAULT);
+  await stubHarnessComposer(page);
+  await page.goto("/");
+
+  await page.locator('.ft-row[title="harness-note.md"]').click();
+  await page.locator(".lumir-hp-toggle").click();
+  await expect(page.locator(".lumir-harness")).toBeVisible();
+
+  // ── chip 读数 = 短名（D424 = 写入）+ 读屏名 / title = D426（{mode} 取全名）──
+  const permChip = page.locator(".lumir-hp-perm");
+  await expect(permChip).toBeVisible();
+  await expect(permChip).toHaveAttribute("aria-haspopup", "menu");
+  await expect(permChip.locator(".lumir-hp-perm-name")).toHaveText("写入");
+  await expect(permChip).toHaveAttribute("title", "权限模式：保险库写入（点击切换）");
+  await expect(permChip).toHaveAttribute("aria-label", "权限模式：保险库写入（点击切换）");
+  // 形态合同（computed-style）：与合并 chip 同一份配方（24px / r5 / 11.5px）。
+  const permStyle = await permChip.evaluate((el) => {
+    const s = getComputedStyle(el);
+    return { height: s.height, borderRadius: s.borderRadius, fontSize: s.fontSize };
+  });
+  expect(permStyle).toEqual({ height: "24px", borderRadius: "5px", fontSize: "11.5px" });
+
+  // ── 点开浮层：三档单选，项 = 全名 + 释义；当前档 .is-current + aria-checked ──
+  await permChip.click();
+  const permPop = page.locator(".lumir-hp-permpop");
+  await expect(permPop).toBeVisible();
+  await expect(permPop).toHaveAttribute("aria-label", "权限模式");
+  const items = permPop.locator(".lumir-hp-permpop-item");
+  await expect(items).toHaveCount(3);
+  await expect(items.nth(0).locator(".lumir-hp-permpop-name")).toHaveText("只读");
+  await expect(items.nth(0).locator(".lumir-hp-permpop-desc")).toHaveText("读自动放行；写操作都先问你");
+  await expect(items.nth(1).locator(".lumir-hp-permpop-name")).toHaveText("保险库写入");
+  await expect(items.nth(1).locator(".lumir-hp-permpop-desc")).toHaveText("库内写自动放行；库外命令先问你");
+  await expect(items.nth(2).locator(".lumir-hp-permpop-name")).toHaveText("完全访问");
+  await expect(items.nth(2).locator(".lumir-hp-permpop-desc")).toHaveText("全自动；仅危险命令仍问你");
+  await expect(items.nth(1)).toHaveClass(/is-current/);
+  await expect(items.nth(1)).toHaveAttribute("aria-checked", "true");
+  await expect(items.nth(0)).toHaveAttribute("aria-checked", "false");
+  // 当前档 check 格有勾选图形、非当前档留空（纵对齐靠固定宽格）。
+  await expect(items.nth(1).locator(".lumir-hp-permpop-check svg")).toHaveCount(1);
+  await expect(items.nth(0).locator(".lumir-hp-permpop-check svg")).toHaveCount(0);
+
+  // ── 选「完全访问」：chip 读数先翻（选择先行），写回随后；浮层不自动关 ──
+  await items.nth(2).click();
+  await expect(permChip.locator(".lumir-hp-perm-name")).toHaveText("完全");
+  await expect(permChip).toHaveAttribute("title", "权限模式：完全访问（点击切换）");
+  await expect(items.nth(2)).toHaveClass(/is-current/);
+  await expect(permPop).toBeVisible(); // 选定不自动关（三条关闭路径见下）
+  // 写回判据：config_set_value("harness", "permission_mode", …)（桩的 __providerWrites
+  // 记录全部 config_set_value 调用，键值逐字对账）。
+  const permWrites = await page.evaluate(
+    () => (window as unknown as { __providerWrites: { section: string; key: string; value: unknown }[] }).__providerWrites,
+  );
+  expect(permWrites).toContainEqual({
+    section: "harness",
+    key: "permission_mode",
+    value: "full_access",
+  });
+
+  // ── 合并 chip 与权限浮层互斥：开一个即收另一个 ──
+  await page.locator(".lumir-hp-model").click();
+  await expect(page.locator(".lumir-hp-selpop")).toBeVisible();
+  await expect(permPop).toBeHidden();
+  // ── Esc 收浮层（面板不收：焦点回到 chip，浮层收起是面板内第一段） ──
+  await page.keyboard.press("Escape");
+  await expect(page.locator(".lumir-hp-selpop")).toBeHidden();
+  await expect(page.locator(".lumir-harness")).toBeVisible();
+});
+
 test("ctx hover 泡边界收编：窄面板下完整可见（三主题），不越出面板可视区", async ({ page }) => {
   // M378 根因的复现条件：浮层默认锚 right:-18px、宽 224px（向左延 ~206px），祖先
   // .lumir-harness 有 overflow:hidden——面板窄时浮层左缘被裁（Alex「hint 显示不全」）。
@@ -474,6 +554,77 @@ test("ctx hover 泡边界收编：窄面板下完整可见（三主题），不�
     await page.mouse.move(10, 10);
     await expect(ctxPop).toBeHidden();
     if (i < 2) await page.locator(".modeline-theme").click();
+  }
+});
+
+test("权限浮层边界收编：窄面板下完整可见、未被祖先裁切（O1/O2）", async ({ page }) => {
+  // O1/O2（docs/specs/overlay-visibility.md）：浮层锚在权限 chip 上（left:0 向右展开 208px+），
+  // chip 的位置随 model 名长短浮动，而祖先 .lumir-harness 有 overflow:hidden——窄面板下
+  // 右缘会被祖先裁掉（可见区域 < 包围盒 = O1 违规）。760px 视口把 harness pane 压到必溢出
+  // 的宽度；断言两段：① 几何——收编后浮层完整落在面板可视边界内；② 绘制/命中——浮层内容
+  // 各段端点做 elementFromPoint，落点必须仍在浮层内（chromium 对被祖先裁掉的区域不做命中，
+  // 这一条才是「真的画出来了」的判据；纯包围盒断言对被裁内容无区分度，REVIEW.md 第 5 条）。
+  await page.setViewportSize({ width: 760, height: 600 });
+  await stubTauri(page, VAULT);
+  await stubHarnessComposer(page);
+  await page.goto("/");
+  await page.locator('.ft-row[title="harness-note.md"]').click();
+  await page.locator(".lumir-hp-toggle").click();
+  await expect(page.locator(".lumir-harness")).toBeVisible();
+  await page.locator(".lumir-hp-perm").click();
+  await expect(page.locator(".lumir-hp-permpop")).toBeVisible();
+
+  const m = await page.evaluate(() => {
+    const panelEl = document.querySelector(".lumir-harness");
+    const popEl = document.querySelector(".lumir-hp-permpop");
+    const wrapEl = document.querySelector(".lumir-hp-permwrap");
+    if (panelEl === null || popEl === null || wrapEl === null) return null;
+    const p = panelEl.getBoundingClientRect();
+    const c = popEl.getBoundingClientRect();
+    const w = wrapEl.getBoundingClientRect();
+    const probes: { text: string; x: number; y: number; hitSelf: boolean }[] = [];
+    const spans = popEl.querySelectorAll(".lumir-hp-permpop-name, .lumir-hp-permpop-desc");
+    for (const span of spans) {
+      const box = span.getBoundingClientRect();
+      if (box.width < 12) continue; // 太窄的格子量不出「端点被裁」，跳过（不装作有区分度）
+      for (const x of [box.left + 4, box.right - 4]) {
+        const y = box.top + box.height / 2;
+        const hit = document.elementFromPoint(x, y);
+        probes.push({
+          text: (span.textContent ?? "").slice(0, 12),
+          x,
+          y,
+          hitSelf: hit !== null && popEl.contains(hit),
+        });
+      }
+    }
+    return {
+      panelLeft: p.left,
+      panelRight: p.right,
+      popLeft: c.left,
+      popRight: c.right,
+      popWidth: c.width,
+      // 未收编的自然几何 = chip 左缘 + 浮层最小宽（锚 left:0 向右展开）。
+      unclampedPopRight: w.left + 208,
+      probes,
+    };
+  });
+  expect(m, "读不到面板 / 浮层 / chip（判 FAIL，不当成空）").not.toBeNull();
+  // 复现条件成立：自然几何越出面板右缘——不收编这条断言必红（REVIEW.md 第 1 条的反向验证）。
+  expect(
+    m!.unclampedPopRight,
+    `面板宽度不足以复现溢出（unclampedRight ${m!.unclampedPopRight} ≤ panel ${m!.panelRight}），断言空转`,
+  ).toBeGreaterThan(m!.panelRight);
+  // ① 几何：收编后浮层完整落在面板可视边界内（±0.5 吸收亚像素取整）。
+  expect(m!.popLeft).toBeGreaterThanOrEqual(m!.panelLeft - 0.5);
+  expect(m!.popRight).toBeLessThanOrEqual(m!.panelRight + 0.5);
+  expect(m!.popWidth).toBeGreaterThan(0);
+  // ② 绘制/命中：浮层内容的端点都还在浮层里（被裁的部分命中的是它下方的内容）。
+  expect(m!.probes.length, "探针为空 = 没有可判的浮层内容").toBeGreaterThan(0);
+  for (const probe of m!.probes) {
+    expect(probe.hitSelf, `「${probe.text}」在 (${Math.round(probe.x)}, ${Math.round(probe.y)}) 处被裁（命中浮动层之外）`).toBe(
+      true,
+    );
   }
 });
 

@@ -58,7 +58,10 @@
 // 编号停用）；D417–D419 为 M406 会话删除（行内删除钮读屏名 / 确认句 / 确认钮）；D409–D411 为 M391 登记的会话恢复
 // 三错误码（harness_session_unreadable / _invalid / _vault_mismatch）——M392 恢复选择器的
 // 消费点：恢复失败经 src/copy.ts 的 errorText 按 code 渲染上错误行（D348 的 {message}）；
-// 选择器行本身不新造文案（无历史会话 = 不渲染清单容器，会话名缺原文回落 D330「新会话」））；M378 起面板内容字号支持 ⌘+/- 步进
+// 选择器行本身不新造文案（无历史会话 = 不渲染清单容器，会话名缺原文回落 D330「新会话」））；
+// D423–D434 为 M414 权限 chip 与批准卡次级动作（chip 短名 ×3 / chip 读屏名 / 浮层全名 ×3 /
+// 浮层释义 ×3 / 浮层读屏名 / 「采纳且本会话不再问」——文案分两级见 design §7）、D435 为
+// vault_delete 批准卡的后果说明（design §5.1 的面板半边）；M378 起面板内容字号支持 ⌘+/- 步进
 //（--lumir-hp-scale，与内容 pane 的 textScale 同语义：×1.1 钳 [12,32]、reset 回基线、
 // 不落盘；焦点路由在装配层 src/main.ts）；
 // 长驻元素（toggle 钮 / harness 段 / 输入框 placeholder / 按钮 / 上下文 chip / ctx 读数 /
@@ -690,6 +693,87 @@ export function chipModelReading(selection: HarnessSelection): string {
   return dim.options[0]?.id ?? "";
 }
 
+// ── 权限模式的纯模型层（M414，change add-harness-permission-modes design §7）──────────
+// 与合并选择器同一条分层纪律：档位映射与读数抽取是纯函数（零 DOM，tests/unit 直接驱动），
+// DOM 只是渲染面。三档的**判定语义**在 Rust 侧（src-tauri/src/harness/permissions.rs），
+// 前端只管「读当前档 / 显示 / 写回」，不复制任何判定。
+
+/** 权限模式三档闭集合（与 src/bindings/PermissionMode.ts 的同值域——ts-rs 生成的是编译期
+ *  别名，运行期判定要一份可遍历的表；取值校验在 Rust 侧完成）。 */
+export const PERMISSION_MODES = ["read_only", "vault_write", "full_access"] as const;
+export type PermissionMode = (typeof PERMISSION_MODES)[number];
+
+/**
+ * 权限 chip 的读数（`config.harness` 的宽容提取）：闭集合外取值 / 缺键 / 坏形状一律回落
+ * **默认档 `vault_write`**——后端 validate 对非法值的处置就是「回落默认 + 人话 warning」，
+ * 界面读的是**生效档**而不是配置文件里那一行，回落与后端同一处语义（不显示「未知」：
+ * 生效档在任何配置下都确定）。
+ *
+ * 与模型 chip 的分工：那里「读不到就不显示」（model 名没有缺省可言）；这里档位有明确
+ * 缺省，故 chip 的隐藏判据不落本函数，而由调用方按「harness 段是否在场」决定。
+ */
+export function harnessPermissionMode(harness: unknown): PermissionMode {
+  if (typeof harness !== "object" || harness === null) return "vault_write";
+  const value = (harness as { permission_mode?: unknown }).permission_mode;
+  return PERMISSION_MODES.find((mode) => mode === value) ?? "vault_write";
+}
+
+/** chip 上的短名（D423–D425；Alex 2026-10-09 裁决：控制行空间紧，chip 只放短名）。 */
+export function permissionShortName(mode: PermissionMode): string {
+  return t(mode === "read_only" ? "D423" : mode === "vault_write" ? "D424" : "D425");
+}
+
+/** 浮层里的全名（D427–D429）——同时是 chip 读屏名（D426）的 {mode} 取值。 */
+export function permissionFullName(mode: PermissionMode): string {
+  return t(mode === "read_only" ? "D427" : mode === "vault_write" ? "D428" : "D429");
+}
+
+/** 浮层里的每档一行释义（D430–D432）。 */
+export function permissionDescription(mode: PermissionMode): string {
+  return t(mode === "read_only" ? "D430" : mode === "vault_write" ? "D431" : "D432");
+}
+
+/** 命令拆段时的连接符（长者在前：`&&` 必须先于 `&`、`||` 先于 `|` 命中）。 */
+const COMMAND_CONNECTORS = ["&&", "||", "\r\n", "|", ";", "&", "\n"] as const;
+
+function commandConnectorAt(text: string, index: number): string | null {
+  for (const connector of COMMAND_CONNECTORS) {
+    if (text.startsWith(connector, index)) return connector;
+  }
+  return null;
+}
+
+/**
+ * 组合命令的呈现拆段（design §3.4 / §8：Alex「是否有可能在询问我的时候也把命令做排版上的
+ * 格式化，让人工检查轻松一些」——`cmd1; cmd2 && cmd3`、管道、解释器 eval 是人工检查最费力
+ * 的形态）。按连接符切行：**第一行不带连接符，其后每行以连接符起首**。
+ *
+ * 不变量：`segments.join("") === text`（逐字符无增减、无重排——拆段只是把同一串换行排版，
+ * 批准人看到的仍是命令原文，这一条是「呈现层不改内容」的判据，单测钉死）。引号内的连接符
+ * 同样拆：模型把复合命令塞进 `bash -c "…"` 单个参数正是最需要拆的一类。
+ *
+ * **纯呈现层，不参与判定**：分类 / 重定向 / 黑名单只看 argv（Rust 侧），本函数只在批准卡里
+ * 决定怎么换行。
+ */
+export function splitCommandSegments(text: string): string[] {
+  const segments: string[] = [];
+  let current = "";
+  let index = 0;
+  while (index < text.length) {
+    const connector = commandConnectorAt(text, index);
+    if (connector !== null) {
+      segments.push(current);
+      current = connector;
+      index += connector.length;
+      continue;
+    }
+    current += text[index];
+    index += 1;
+  }
+  segments.push(current);
+  return segments;
+}
+
 /** ctx% 读数的高亮判据：越过（≥）警示阈值即高亮。阈值是配置值（`warn_ctx_pct`，缺省 85）；
  *  边界取高亮侧——读数是压缩行为的前瞻信号，85/85 时下一轮就会触发压缩，按「已越线」呈现。 */
 export function usageOverWarn(ctxPct: number, warnPct: number): boolean {
@@ -1069,7 +1153,15 @@ function keyArgOf(name: string, args: Record<string, unknown>): string | null {
     case "vault_read":
     case "vault_create":
     case "vault_patch":
+    case "vault_delete":
       return typeof args.path === "string" && args.path !== "" ? args.path : null;
+    case "vault_move": {
+      // 移动 = 「源 → 目标」路径对（与批准预览的路径对同口径，M414；缺任一段回落原文）。
+      const from = args.path;
+      const to = args.new_path;
+      if (typeof from !== "string" || from === "" || typeof to !== "string" || to === "") return null;
+      return `${from} → ${to}`; // i18n-exempt: glyph（路径对的连接箭头，非文案）
+    }
     case "vault_list":
       return typeof args.path === "string" && args.path !== "" ? args.path : "/";
     case "vault_search":
@@ -1109,6 +1201,19 @@ export function diffPathOf(diff: string): string | null {
     if (line.startsWith("+++ b/")) return line.slice("+++ b/".length);
   }
   return null;
+}
+
+/** 恢复路径的批准闸决定（M414，M413 契约的消费点）：tool 面板记录的 `decision` 字段——
+ *  **只有进过批准闸的调用**带它（approved / rejected），allow / deny / 重定向路径没有批准
+ *  动作、字段缺席。旧快照的兜底读法是 `status === "rejected"`（那条路径上拒绝是 status 而
+ *  非 decision）。返回值 = 该工具行在恢复渲染里的终态；null = 未进过闸（成功 / 失败行各走
+ *  原判据）。 */
+export function restoredApprovalOutcome(record: unknown): "approved" | "rejected" | null {
+  if (typeof record !== "object" || record === null) return null;
+  const decision = (record as { decision?: unknown }).decision;
+  if (decision === "approved") return "approved";
+  if (decision === "rejected") return "rejected";
+  return (record as { status?: unknown }).status === "rejected" ? "rejected" : null;
 }
 
 /** 恢复路径的拒绝原因（M406）：tool 面板记录的 text 是工具输出 JSON——approval_rejected
@@ -1628,6 +1733,37 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   modelChip.append(modelName, modelSep, effReading, modelChev);
   modelWrap.append(modelChip, selPop, effHint);
 
+  // 权限 chip（M414，change add-harness-permission-modes design §7）：控制行**第三位**
+  //（合并选择器 chip 之后、ctx 读数之前）。chip 面 = **短名**（D423–D425：只读 / 写入 / 完全），
+  // 点开的浮层里才是**全名 + 每档一行释义**（Alex 2026-10-09 裁决：控制行要被两个 chip 与
+  // ctx 读数共同挤占，短名才保证三档都完整显示）。形态逐值沿用合并 chip 配方（无边框小标签、
+  // 24px 高、r5、fs-label-s、text-2、hover 给底、chevron ▾），chip + 浮层同挂 wrapper
+  //（M351 的 a11y 修复口径：浮层 MUST NOT 嵌在 <button> 内，WKWebView 才暴露浮层项）。
+  // chip 隐藏判据 = harness 段不在场（config_get 失败 / 桩环境）——档位本身有明确缺省
+  //（vault_write），故「读到什么」不构成隐藏理由。
+  const permWrap = document.createElement("span");
+  permWrap.className = "lumir-hp-permwrap";
+  const permChip = document.createElement("button");
+  permChip.type = "button";
+  permChip.className = "lumir-hp-perm";
+  permChip.setAttribute("aria-haspopup", "menu");
+  permChip.setAttribute("aria-expanded", "false");
+  permChip.hidden = true; // 配置到达前不显示（config_get 的 then 里翻）
+  const permName = document.createElement("span");
+  permName.className = "lumir-hp-perm-name";
+  const permChev = document.createElement("span");
+  permChev.className = "lumir-hp-perm-chev";
+  permChev.setAttribute("aria-hidden", "true");
+  permChev.textContent = "▾"; // i18n-exempt: glyph（下指 chevron 图形，非文案）
+  // 权限浮层：单浮层三档单选（与合并浮层同一视觉语言——项 = menuitemradio + check 格 +
+  // 当前档 accent-tint 底），每档一行释义挂全名之下。
+  const permPop = document.createElement("div");
+  permPop.className = "lumir-hp-permpop";
+  permPop.setAttribute("role", "menu");
+  permPop.hidden = true;
+  permChip.append(permName, permChev);
+  permWrap.append(permChip, permPop);
+
   // 不定态进度条 + 阶段指示一行（M347）：只在处理中态可见；无百分比——本轮剩余工作量
   // 前端不知道。eink 下转明度表达（见 css 的 keyframes 分叉）。
   const progress = document.createElement("div");
@@ -1706,7 +1842,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   sendStopRect.setAttribute("rx", "1.5");
   sendStop.append(sendStopRect);
   sendButton.append(sendGo, sendStop);
-  ctl.append(modelWrap, ctxWrap, ctlSpacer, sendButton);
+  ctl.append(modelWrap, permWrap, ctxWrap, ctlSpacer, sendButton);
   composerBox.append(composer, ctl);
   composerArea.append(chip, composerBox);
 
@@ -1751,6 +1887,11 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   let thinkConfigured = false;
   let thinkLevel = "";
   let thinkSupported = false;
+  /** 权限模式状态（M414）：permissionConfigured = harness 段是否在场（不在场 = 桩环境 /
+   *  config_get 失败，chip 隐藏，不显示一个读不到的档）；permMode = 当前生效档（闭集合外
+   *  取值 / 缺键按后端同款口径回落默认 `vault_write`）。写回失败回滚本值。 */
+  let permissionConfigured = false;
+  let permMode: PermissionMode = "vault_write";
   let lastChip: HarnessContextBlock | null | "none" = null;
   /** 当前逻辑会话的首条用户消息原文（会话名口径：截断约 20 字上屏；null = 未发消息，
    *  显示「新会话」）。自动压缩开新逻辑会话后归 null，按同口径重算（design §3）。 */
@@ -2209,6 +2350,8 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     applyChip();
     applySelChip();
     rebuildSelPopIfOpen();
+    applyPermChip();
+    rebuildPermPopIfOpen();
     applyUsage();
     // 发送钮 / 阶段指示按当前相位重取文案（running 时钮面是「停止」、进度条阶段行重渲）。
     applySendPhase(sendPhase);
@@ -2354,10 +2497,11 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
         : t("D394", { model });
   }
 
-  /** 勾选项的 check 格（think pop 配方：14px 固定宽，未勾选留空保证纵对齐）。 */
-  function appendCheck(parent: HTMLElement, checked: boolean): void {
+  /** 勾选项的 check 格（think pop 配方：14px 固定宽，未勾选留空保证纵对齐）。className
+   *  按浮层给（两个浮层各自的样式条款互不牵连）。 */
+  function appendCheck(parent: HTMLElement, checked: boolean, className = "lumir-hp-selpop-check"): void {
     const check = document.createElement("span");
-    check.className = "lumir-hp-selpop-check";
+    check.className = className;
     check.setAttribute("aria-hidden", "true");
     if (checked) {
       const svg = document.createElementNS(SVG_NS, "svg");
@@ -2505,6 +2649,114 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     if (!selPop.hidden) buildSelPop();
   }
 
+  // ── 权限 chip 与浮层（M414）────────────────────────────────────────────────
+
+  /** 权限 chip 重渲（长驻元素：读数 / 读屏名 / 悬停提示都从已存状态取，relabel 可重跑）。
+   *  可见文本 = 短名（D423–D425）；读屏名与 title = D426（{mode} 取当前档全名）——
+   *  与合并 chip 同一条「可见面短、可访问名说全」的分工。 */
+  function applyPermChip(): void {
+    permChip.hidden = !permissionConfigured;
+    if (!permissionConfigured) return;
+    permName.textContent = permissionShortName(permMode);
+    const label = t("D426", { mode: permissionFullName(permMode) });
+    permChip.title = label;
+    permChip.setAttribute("aria-label", label);
+  }
+
+  /** 权限浮层：每次打开现建（读数随当前语言与选中档，懒建不囤旧串）。三档单选
+   *  （menuitemradio + check 格 + 当前档 accent-tint 底——M373 浮层配方），项 = 全名
+   *  （D427–D429）+ 一行释义（D430–D432）。 */
+  function buildPermPop(): void {
+    permPop.replaceChildren();
+    permPop.setAttribute("aria-label", t("D433"));
+    for (const mode of PERMISSION_MODES) {
+      const checked = mode === permMode;
+      const item = document.createElement("button");
+      item.type = "button";
+      item.className = "lumir-hp-permpop-item";
+      item.setAttribute("role", "menuitemradio");
+      item.setAttribute("aria-checked", String(checked));
+      appendCheck(item, checked, "lumir-hp-permpop-check");
+      const body = document.createElement("span");
+      body.className = "lumir-hp-permpop-body";
+      const name = document.createElement("span");
+      name.className = "lumir-hp-permpop-name";
+      name.textContent = permissionFullName(mode);
+      const desc = document.createElement("span");
+      desc.className = "lumir-hp-permpop-desc";
+      desc.textContent = permissionDescription(mode);
+      body.append(name, desc);
+      item.append(body);
+      if (checked) item.classList.add("is-current");
+      // stopPropagation：选择后同步重建会把本项摘出 DOM（与合并浮层同一处防误判）。
+      item.addEventListener("click", (event) => {
+        event.stopPropagation();
+        selectPermissionMode(mode);
+      });
+      permPop.append(item);
+    }
+  }
+
+  /** 权限浮层开合（与合并浮层同一条开合语义：选定不自动关——关闭只走 chip 再点 /
+   *  浮层外点击 / Esc 三条路）。 */
+  function setPermPop(open: boolean): void {
+    if (open) buildPermPop();
+    permPop.hidden = !open;
+    permChip.setAttribute("aria-expanded", String(open));
+    if (open) clampPermPop();
+  }
+
+  function rebuildPermPopIfOpen(): void {
+    if (permPop.hidden) return;
+    buildPermPop();
+    clampPermPop();
+  }
+
+  /** 权限浮层的边界收编（O1/O2，docs/specs/overlay-visibility.md；与 clampCtxPop 同款手法）：
+   *  浮层锚在权限 chip 上（`left: 0` 向右展开、最小宽 208px），而控制行的 chip 位置随 model
+   *  名长短浮动、祖先 .lumir-harness 有 overflow:hidden——chip 靠右时浮层右缘会被祖先裁掉
+   *  （打开态的可见区域小于包围盒 = O1 违规）。翻出时按面板可视边界收编：先按最大宽度收窄
+   *  （inline width 同时压掉 CSS 的 min-width——多一条 min-width 会让「收窄」静默失效，
+   *  M414 首跑实证：浮层仍 208px 宽、收编退化成单侧平移），再两侧各留 8px 移位（CSS
+   *  translate）。先复位后量测，重复调用幂等；未越界时零干预（默认形态不变）。 */
+  function clampPermPop(): void {
+    permPop.style.translate = "";
+    permPop.style.width = "";
+    permPop.style.minWidth = "";
+    const panelRect = panel.getBoundingClientRect();
+    const maxWidth = Math.max(140, panelRect.width - 16);
+    if (permPop.offsetWidth > maxWidth) {
+      permPop.style.minWidth = "0";
+      permPop.style.width = `${maxWidth}px`;
+    }
+    const popRect = permPop.getBoundingClientRect();
+    const inset = 8;
+    let shift = 0;
+    if (popRect.left < panelRect.left + inset) {
+      shift = panelRect.left + inset - popRect.left;
+    } else if (popRect.right > panelRect.right - inset) {
+      shift = panelRect.right - inset - popRect.right;
+    }
+    if (shift !== 0) permPop.style.translate = `${shift}px 0`;
+  }
+
+  /** 选择权限档：chip 先更新读数（chip = 人侧可见面），写回失败则回滚——与 selectProvider
+   *  同口径（运行期态不与文件态分叉 + 错误行）。写回 `[harness].permission_mode`：**对下一个
+   *  判定生效，不打断进行中的轮次**（后端每轮现读配置，前端只落盘，不做任何在途轮次的干预）。 */
+  function selectPermissionMode(mode: PermissionMode): void {
+    if (mode === permMode) return;
+    const previous = permMode;
+    permMode = mode;
+    applyPermChip();
+    rebuildPermPopIfOpen();
+    configSetValue("harness", "permission_mode", mode).catch((e: unknown) => {
+      permMode = previous;
+      applyPermChip();
+      rebuildPermPopIfOpen();
+      appendError(t("D348", { message: errorMessage(e) }));
+    });
+  }
+
   /** 选择 provider：chip 先更新读数（chip = 人侧可见面，模型与用量对人同源同值），
    *  写回失败则回滚读数——运行期态不与文件态分叉（D123 同口径），并报错误行。
    *  **切 provider 不抹 effort**（档位会话内生效，与 provider 无关）与 model（每个
@@ -2569,7 +2821,15 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
 
   modelChip.addEventListener("click", (event) => {
     event.stopPropagation();
+    // 两个浮层不同时开：开一个即收另一个（各自的开合语义不变）。
+    setPermPop(false);
     setSelPop(selPop.hidden);
+  });
+
+  permChip.addEventListener("click", (event) => {
+    event.stopPropagation();
+    setSelPop(false);
+    setPermPop(permPop.hidden);
   });
 
   // effort 不支持的 hover hint：mouseenter 读数翻出（仅置灰态），mouseleave 收回——
@@ -2581,10 +2841,16 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     effHint.hidden = true;
   });
 
-  // 合并 chip 数据装载：config_get 宽容提取（harness 段缺失 → chip 隐藏，不伪造读数）。
+  // 控制行数据装载：config_get 宽容提取——合并选择器（harness 段缺失 / providers 不合形
+  // → chip 隐藏，不伪造读数）与权限档（harness 段在场即显示；档位本身有缺省，见
+  // harnessPermissionMode）。两条独立判据：providers 不合形不该连带隐藏权限 chip。
   configGet()
     .then((snapshot) => {
-      const selection = harnessSelection(snapshot.config.harness);
+      const harness = snapshot.config.harness;
+      permissionConfigured = typeof harness === "object" && harness !== null;
+      permMode = harnessPermissionMode(harness);
+      applyPermChip();
+      const selection = harnessSelection(harness);
       if (selection === null) return;
       selSelection = selection;
       modelChip.hidden = false;
@@ -3147,6 +3413,9 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       createToolIcon("running"),
       createToolText(pending.tool, pending.argsText, t("D416")),
     );
+    // vault_delete 的后果说明（D435）是 chrome 文案，随语言重取。
+    const note = pending.element.querySelector(".lumir-hp-approval-note");
+    if (note !== null) note.textContent = t("D435");
     const reason = pending.element.querySelector<HTMLTextAreaElement>(".lumir-hp-reason");
     if (reason !== null) {
       reason.placeholder = t("D338");
@@ -3156,6 +3425,8 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     const reject = pending.element.querySelector("button[data-act=reject]");
     if (approve !== null) approve.textContent = t("D336");
     if (reject !== null) reject.textContent = t("D337");
+    const remember = pending.element.querySelector("button[data-act=approve-remember]");
+    if (remember !== null) remember.textContent = t("D434");
   }
 
   /** 终态记录随语言重渲（M384）：结果词 / 原因句 / 详情摘要重取文案；工具名与原因正文
@@ -3278,6 +3549,8 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     diff?: string | undefined;
     argv?: string[] | undefined;
     purpose?: string | undefined;
+    /** 次级动作可见性（M413 契约：批准闸挂出的请求恒 true；缺键按可见处理）。 */
+    remember?: boolean | undefined;
   }): void {
     // 收敛单行生命周期（M406，原型 variant B）：批准卡不再独立挂 transcript 末尾，而是
     // 就地挂进该调用工具行的 .lumir-hp-pend 壳——同一行承载「运行中 → 等待批准 → 终态」
@@ -3330,8 +3603,26 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     } else if (request.argv !== undefined) {
       const pre = document.createElement("pre");
       pre.className = "lumir-hp-argv";
-      pre.textContent = formatArgv(request.argv);
+      // 组合命令的连接符拆段（M414，design §3.4）：`cmd1; cmd2 && cmd3` / 管道 / 解释器
+      // eval 一行挤在一起最难人工核对——按 `;` `&&` `||` `|` `&` 与换行换行排版，
+      // 每段一行、连接符起首。纯呈现层：`join("")` 逐字符等于原文（不改判定、不截断、
+      // 不重排），命令原文因此仍完整可见。
+      for (const segment of splitCommandSegments(formatArgv(request.argv))) {
+        const lineEl = document.createElement("div");
+        lineEl.className = "lumir-hp-argv-seg";
+        lineEl.textContent = segment;
+        pre.append(lineEl);
+      }
       el.append(pre);
+    }
+    // vault_delete 的批准卡附一句后果说明（design §5.1：路径 + 「移入系统废纸篓、可恢复」；
+    // 后端 approval_preview 只给路径，这句按契约归面板侧）。语义是**如实说可恢复**——
+    // 工具底层只有 trash_entry，永久删除路径不存在。
+    if (request.tool === "vault_delete") {
+      const note = document.createElement("div");
+      note.className = "lumir-hp-approval-note";
+      note.textContent = t("D435");
+      el.append(note);
     }
     // 多行原因框（M406）：裸 Enter = 换行（textarea 原生行为），⌘/Ctrl+Enter = 提交拒绝
     // （与按钮同一路径）；IME 组合期不接管。aria-label 与 placeholder 同源（D338）——
@@ -3351,6 +3642,23 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     reject.dataset.act = "reject";
     actions.append(approve, reject);
     el.append(reason, actions);
+
+    // 次级动作「采纳且本会话不再问」（M414，design §6 裁决点 4 倾向 A：**显式逐次记忆**——
+    // 点上面的「采纳」不自动记，免问由用户逐次给出）。独立一行、弱化样式（次级动作不抢
+    // 「采纳 / 拒绝」这对主决策的视觉重心）。可见性由 request.remember 决定（M413 契约：
+    // 批准闸挂出的请求恒 true；缺键按可见处理）。判据键 = (工具名, 规范化主体串) 精确匹配，
+    // 只活在会话内存里（不落盘、新会话清空）。
+    let rememberButton: HTMLButtonElement | null = null;
+    if (request.remember !== false) {
+      const rememberRow = document.createElement("div");
+      rememberRow.className = "lumir-hp-approval-remember";
+      rememberButton = document.createElement("button");
+      rememberButton.type = "button";
+      rememberButton.className = "lumir-hp-remember";
+      rememberButton.dataset.act = "approve-remember";
+      rememberRow.append(rememberButton);
+      el.append(rememberRow);
+    }
 
     const wrap = document.createElement("div");
     wrap.className = "lumir-hp-pend";
@@ -3374,16 +3682,21 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     // 未决项不自动超时：唯一的出口是 Alex 点击 / ⌘Enter。决策幂等——重复触发不会向后端
     // 发第二次（pendingApprovals.delete 只兑现一次）；决策后同一行就地收敛为终态记录
     // （settleApprovalRecord），元素留在 transcript 里作决策记录。
-    const decide = (approved: boolean): void => {
+    // remember = 「采纳且本会话不再问」（唯一一次带 true 的路径是那颗次级动作钮）。
+    const decide = (approved: boolean, remember = false): void => {
       if (!pendingApprovals.delete(request.id)) return;
       const reasonText = reason.value.trim();
       settleApprovalRecord(pending, approved, reasonText === "" ? undefined : reasonText, Date.now());
-      harnessApprove(request.id, approved, reasonText === "" ? undefined : reasonText).catch(
-        (e: unknown) => appendError(t("D348", { message: errorMessage(e) })),
-      );
+      harnessApprove(
+        request.id,
+        approved,
+        reasonText === "" ? undefined : reasonText,
+        remember ? true : undefined,
+      ).catch((e: unknown) => appendError(t("D348", { message: errorMessage(e) })));
     };
     approve.addEventListener("click", () => decide(true));
     reject.addEventListener("click", () => decide(false));
+    rememberButton?.addEventListener("click", () => decide(true, true));
     reason.addEventListener("keydown", (event: KeyboardEvent) => {
       if (event.isComposing) return;
       if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
@@ -3730,6 +4043,9 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
             diff: event.diff,
             argv: event.argv,
             purpose: typeof event.purpose === "string" ? event.purpose : undefined,
+            // 次级动作可见性（M413 契约）：事件载荷可带 remember；缺键按可见处理
+            //（当前后端的事件载荷不带本键，缺键即「批准闸挂出的请求」，恒可见）。
+            remember: event.remember !== false,
           });
         }
         return;
@@ -3893,12 +4209,15 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     return view.el;
   }
 
-  /** 恢复路径的工具行（M406 状态感知版）：record.status 是面板细分终态（done / denied /
-   *  rejected / error——活会话持久化由 turn.rs 写，恢复重建路径由 restored_panel_messages
-   *  经 wire 的 function_call_output 回填；旧快照缺字段）。
-   *  - rejected → ✕「已拒绝」终态行（原型 restored/after-reject 帧）：原因行就地可见
-   *   （原因全文在输出 JSON 里，summary 里那份被 80 字截断不取）；**无详情**——留存里
-   *    没有原 diff/argv，不伪造展开件。
+  /** 恢复路径的工具行（M406 状态感知版 + M414 decision 收口）：record.status 是面板细分终态
+   *  （done / denied / rejected / error——活会话持久化由 turn.rs 写，恢复重建路径由
+   *  restored_panel_messages 经 wire 的 function_call_output 回填；旧快照缺字段）。
+   *  - **decision = "approved"**（M413 契约：只有进过批准闸的调用带本字段）→ ✓「已采纳」
+   *    终态行，与活会话的终态行同形（M406 遗留的分阶段收口：此前恢复后只丢了「已采纳」
+   *    这一读——同样进过闸的两条路径上，拒绝看得见、采纳看不见）。
+   *  - status = "rejected"（含带 decision 的）→ ✕「已拒绝」终态行（原型 restored/after-reject
+   *    帧）：原因行就地可见（原因全文在输出 JSON 里，summary 里那份被 80 字截断不取）；
+   *    **无详情**——留存里没有原 diff/argv，不伪造展开件。
    *  - denied / error（或缺 status 但摘要命中失败形状的旧快照）→ 失败行：尾注 = 失败
    *    全文（输出 JSON 的 code+message，summary 兜底）。
    *  - 其余 → 成功行：参数摘要人话化（持久化 / 重建两份 summary 都是参数 JSON 时才有
@@ -3908,15 +4227,20 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     const summary = typeof record.summary === "string" ? record.summary : "";
     const status = typeof record.status === "string" ? record.status : "";
     const block = ensureToolsBlock();
-    if (status === "rejected") {
+    const outcome = restoredApprovalOutcome(record);
+    if (outcome !== null) {
+      const approved = outcome === "approved";
       const row = document.createElement("div");
-      row.className = "lumir-hp-tool-row is-rej";
-      row.append(createToolIcon("fail"), createToolText(name, humanizeToolArgsStrict(name, summary)));
+      row.className = approved ? "lumir-hp-tool-row is-done" : "lumir-hp-tool-row is-rej";
+      row.append(
+        createToolIcon(approved ? "done" : "fail"),
+        createToolText(name, humanizeToolArgsStrict(name, summary)),
+      );
       const tres = document.createElement("span");
       tres.className = "lumir-hp-tool-res";
       const outcomeEl = document.createElement("b");
       outcomeEl.className = "lumir-hp-tw";
-      outcomeEl.textContent = t("D406");
+      outcomeEl.textContent = t(approved ? "D405" : "D406");
       tres.append(outcomeEl);
       const at = messageTs(record);
       if (at !== null) {
@@ -3927,7 +4251,8 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
         tres.append(document.createTextNode(" "), when);
       }
       row.append(tres);
-      const reason = rejectedReasonOf(record);
+      // 拒绝原因（采纳侧没有原因行——「采纳后不再问」这类信息不进留存）。
+      const reason = approved ? null : rejectedReasonOf(record);
       if (reason !== null) {
         const term = document.createElement("div");
         term.className = "lumir-hp-termwrap";
@@ -3998,7 +4323,14 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     applySelChip();
     rebuildSelPopIfOpen();
     const pending = state.pending_approval as
-      | { id?: unknown; tool?: unknown; diff?: unknown; argv?: unknown; purpose?: unknown }
+      | {
+          id?: unknown;
+          tool?: unknown;
+          diff?: unknown;
+          argv?: unknown;
+          purpose?: unknown;
+          remember?: unknown;
+        }
       | null
       | undefined;
     if (pending !== null && typeof pending === "object" && typeof pending.id === "string") {
@@ -4013,6 +4345,9 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
         diff: typeof pending.diff === "string" ? pending.diff : undefined,
         argv: argv !== undefined && argv.length > 0 ? argv : undefined,
         purpose: typeof pending.purpose === "string" ? pending.purpose : undefined,
+        // remember = 次级动作可见性（M413 契约：批准闸挂出的请求恒 true；缺键 = 旧载荷，
+        // 按可见处理——旧载荷同样来自批准闸）。
+        remember: pending.remember !== false,
       });
     }
     applySessionName();
@@ -4495,7 +4830,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       sessionButton.focus();
     }
   });
-  // 浮层外交互（点击其他处）收起：会话浮层、合并选择器浮层、ctx hover 泡共用一条出口。
+  // 浮层外交互（点击其他处）收起：会话浮层、合并选择器浮层、权限浮层、ctx hover 泡共用一条出口。
   document.addEventListener("click", (event) => {
     if (event.target instanceof Node && sessPop.contains(event.target)) return;
     if (event.target instanceof Node && sessionButton.contains(event.target)) return;
@@ -4503,6 +4838,9 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     if (event.target instanceof Node && selPop.contains(event.target)) return;
     if (event.target instanceof Node && modelChip.contains(event.target)) return;
     setSelPop(false);
+    if (event.target instanceof Node && permPop.contains(event.target)) return;
+    if (event.target instanceof Node && permChip.contains(event.target)) return;
+    setPermPop(false);
     if (event.target instanceof Node && ctxWrap.contains(event.target)) return;
     ctxPop.hidden = true;
   });
@@ -4517,6 +4855,11 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     if (!selPop.hidden) {
       setSelPop(false);
       modelChip.focus();
+      return;
+    }
+    if (!permPop.hidden) {
+      setPermPop(false);
+      permChip.focus();
       return;
     }
     if (!ctxPop.hidden) {
@@ -4546,6 +4889,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       panel.remove();
       setSessPop(false);
       setSelPop(false);
+      setPermPop(false);
       effHint.hidden = true;
       ctxPop.hidden = true;
       if (whenTimer !== null) {
