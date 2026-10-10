@@ -2615,12 +2615,12 @@ P2-2，2026-10-06）：无文本产出的轮次（assistant 只发工具调用�
 补测方向：① 视觉场景加分隔条横坐标 vs 两列缘的计算属性断言；② 面板单测补截断派生用例。
 finding `.tower/comms/findings/20261006-reviewer-hp4-improve-harness-20-backlog.md`。
 
-**harness vault_create 工具承诺 mkdir -p 但实现直调 vault_create_file（父目录缺失仍拒绝）**（**待修**，
-medium；M410 r3 评审另案发现，reviewer-m410，2026-10-10）：M407 合并的提案口径是 vault_create 自动建
-父目录（Alex 已裁决「好」批准该修订），但实现直调 `vault_create_file`，父目录不存在时仍返回
-fs_not_found——spec 承诺与实现分叉。修法方向：harness 工具层在调 vault_create_file 前先做父目录
-mkdir -p（或复用 fs_io 的 ensure_parent_dirs），并补一条「深层路径直接 vault_create 成功」的用例。
-排期：随权限前端批（harness 工具层本就要动）一并做。finding
+**harness vault_create 工具承诺 mkdir -p 但实现直调 vault_create_file（父目录缺失仍拒绝）**（**已核销——前提不成立**，
+原评 medium；M410 r3 评审另案发现，reviewer-m410，2026-10-10；**更正于 2026-10-10 M413**）：原条目称
+「实现直调 `vault_create_file`，父目录不存在时仍返回 fs_not_found」——M413 worker 现场核对发现该前提
+半失效：`fs_io::vault_create_file`（fs_io.rs:1592）**已内调 `ensure_parent_dirs`**（M407 r1 所落），
+harness 工具层经此调用链本具 mkdir -p 语义，缺口不存在。处置：M413 不加重复调用，补一条「深层路径直接
+vault_create 成功」钉死用例；本条留痕核销。finding
 `.tower/comms/findings/20261010-reviewer-m410-bug-harness-vault-create-mkdir-p-m407.md`。
 
 **turn.rs 仍接受带 text 的 legacy selection 上下文载荷（零活生产者的兼容面）**（**记录在案**，low；
