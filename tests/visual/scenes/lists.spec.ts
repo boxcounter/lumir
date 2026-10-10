@@ -28,6 +28,22 @@ async function geometry(page: Page, text: string) {
     return { rects, marker: el.querySelector('.cm-lp-list-marker')?.getBoundingClientRect().right, style: el.getAttribute('style') };
   });
 }
+/** 任意行的**文本左缘 x**（不要求该行带列表装饰——lazy continuation 行按设计没有装饰）。
+ *  marker widget 内的文本节点跳过（它的 x 是标记列，不是正文列）。 */
+async function textX(page: Page, text: string) {
+  return page.locator('.cm-line').filter({ hasText: text }).first().evaluate((el, needle) => {
+    const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+    while (walker.nextNode()) {
+      const node = walker.currentNode;
+      if (node.parentElement?.closest('.cm-lp-list-marker')) continue;
+      const at = node.textContent?.indexOf(needle) ?? -1;
+      if (at < 0) continue;
+      const range = document.createRange(); range.setStart(node, at); range.setEnd(node, at + 1);
+      return range.getBoundingClientRect().x;
+    }
+    return -1;
+  }, text);
+}
 for (const width of [1280, 640]) {
   test(`列表对齐与源码 ${width}`, async ({ page, context }) => {
       await context.grantPermissions(['clipboard-read', 'clipboard-write']);
@@ -260,4 +276,33 @@ test('短编号标记区紧凑而非语法最大容量', async ({ page }) => {
   // 行宽由 480px 定案改为窗格 80%（M100）后，可用文本宽不再对齐绝对像素阈值；
   // 约束不变：短编号标记区占行宽不足一成，九成以上留给正文
   expect(box.available).toBeGreaterThan(box.line * 0.9);
+});
+
+test('lazy continuation 行按顶层段落渲染在行首（M421；合同 docs/specs/lists.md 的 L1/L2/L3）', async ({ page }) => {
+  // 缺陷现场（M408 survey 定位、Alex 原话）：列表末尾 Enter 造空项 → 再 Enter 退出 → 键入字符，
+  // 该行源码无缩进、被 lezer 解析进列表项内段落（CommonMark lazy continuation），旧判定按
+  // 「项内段落」加 `--lp-list-body` ⇒ 字符落在列表项的缩进位置。Obsidian 1.14.4 live preview
+  // 把同形态渲染在顶层左边距。
+  //
+  // 判据 = 文本第一个字符的 x：lazy 行 == 顶层段落行（L1），带源码缩进的真续行 == 顶层段落 +
+  // 该行的 `padding-inline-start`（L2，反向对照——无条件关掉缩进会在这里红），光标移到 lazy
+  // 行上读数不变（L3）。
+  const text = '- alpha\nlazy line\n  indented line\n\nordinary paragraph\n';
+  await open(page, text);
+  const lazy = await textX(page, 'lazy line');
+  const indented = await textX(page, 'indented line');
+  const paragraph = await textX(page, 'ordinary paragraph');
+  expect(Math.min(lazy, indented, paragraph), '三条读数都要真的落在文本上（取不到时 -1 会让断言红而不是空过）').toBeGreaterThan(0);
+  // L1：lazy 行与顶层段落同 x
+  expect(Math.abs(lazy - paragraph), 'lazy 行 MUST 按顶层段落渲染在行首').toBeLessThanOrEqual(1);
+  // L2：真续行仍在项正文起点（既不落到行首、也不留在缩进前）
+  expect(indented, '带源码缩进的真续行 MUST 保持项内渲染').toBeGreaterThan(lazy + 4);
+  const pad = await page.locator('.cm-line').filter({ hasText: 'indented line' }).first().evaluate(el => parseFloat(getComputedStyle(el).paddingInlineStart));
+  expect(Math.abs((indented - paragraph) - pad), '真续行的正文起点 = 顶层段落 + --lp-list-body').toBeLessThanOrEqual(1);
+  // L3：光标落到 lazy 行上，渲染归属不变
+  await page.locator('.cm-line').filter({ hasText: 'lazy line' }).first().click();
+  await page.waitForTimeout(80);
+  expect(Math.abs((await textX(page, 'lazy line')) - lazy), '判定 MUST NOT 依赖光标位置').toBeLessThanOrEqual(1);
+  // 渲染归属只是渲染层事件：文档逐字节不变
+  expect(await readDocument(page)).toBe(text);
 });

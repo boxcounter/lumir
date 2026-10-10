@@ -1,14 +1,67 @@
 import { forceParsing, syntaxTree, syntaxTreeAvailable } from "@codemirror/language";
 import { StateEffect } from "@codemirror/state";
-import type { EditorState, Range } from "@codemirror/state";
+import type { EditorState, Line, Range, Text } from "@codemirror/state";
 import { Decoration, EditorView, ViewPlugin, WidgetType } from "@codemirror/view";
 import type { DecorationSet, ViewUpdate } from "@codemirror/view";
 import { EDITOR_FONT_FAMILY_TOKEN } from "../typography";
 import { t } from "../copy";
 
 type Node = ReturnType<typeof syntaxTree>["topNode"];
+type Tree = ReturnType<typeof syntaxTree>;
 interface Group { width: number; body: number; depth: number; labels: ReadonlyMap<number, string> }
 const isList = (node: Node) => node.name === "BulletList" || node.name === "OrderedList";
+
+/** 单行的列表归属分析：行首内容列（引用前缀之后）与语法树归属。
+ *
+ *  `ListLayout.build()` 与本模块的单测（tests/unit/list-lazy-continuation.test.ts）共用这一份
+ *  判定——同语义不得两处写值（REVIEW.md 第 8 条）。纯函数：只读解析树与行文本，不碰 view /
+ *  坐标 / 装饰，判定因此与光标位置无关（合同 docs/specs/lists.md 的 L3）。 */
+export interface ListLineInfo {
+  /** 行首内容列（跳过全部连续 `>` 与紧随空格后的首个非空白）；全空白行 -1。 */
+  readonly offset: number;
+  /** 语法树归属的 ListItem（行内容解析进列表项时）；否则 null。 */
+  readonly item: Node | null;
+  /** 本行携带该 ListItem 的 marker（marker 与内容同行）。 */
+  readonly first: boolean;
+  /** 本行是否按列表项行渲染（加 `cm-lp-list-line` / 吞掉行首源码空白）。
+   *
+   *  非首行 + 行首无源码空白（文档第 1 列即非空白，`offset === 0`）+ 解析进项内段落
+   *  = CommonMark 的 **lazy continuation**：按顶层段落渲染在行首（MUST NOT 继承
+   *  `--lp-list-body`），与 Obsidian live preview 编辑层一致（合同 L1）；带源码缩进的
+   *  真续行与项首行渲染不变（L2）。 */
+  readonly rendered: boolean;
+}
+
+export function listLineInfo(tree: Tree, doc: Text, line: Line): ListLineInfo {
+  let offset = line.text.search(/\S/);
+  if (offset >= 0 && line.text[offset] === ">") {
+    // 引用内的列表（M138）：行首是引用标记时内容位置在标记之后，扫过全部连续 `>` 与紧随
+    // 的空格后按常规列表判定——引用内的列表与正文里的列表同一套标记 widget、同一套等宽
+    // 序号与正文缩进。此前只有 callout（M109）放开这一路径，普通引用的列表停在源码态；
+    // 放开后 callout 与普通引用走同一分支（callout 本就是 blockquote），嵌套引用
+    // `> > ` 也自然按最内层内容起点解析。
+    let content = offset;
+    while (line.text[content] === ">") {
+      content++;
+      while (content < line.text.length && line.text[content] === " ") content++;
+    }
+    if (content < line.text.length) offset = content;
+  }
+  if (offset < 0) return { offset, item: null, first: false, rendered: false };
+  let node: Node | null = tree.resolveInner(line.from + offset, 1);
+  let body = false;
+  while (node && node.name !== "ListItem") {
+    if (["FencedCode", "CodeBlock", "HTMLBlock", "Table", "Blockquote"].includes(node.name)) break;
+    if (node.name === "Paragraph" || node.name === "Task") body = true;
+    node = node.parent;
+  }
+  if (node?.name !== "ListItem" || !node.parent || !isList(node.parent)) {
+    return { offset, item: null, first: false, rendered: false };
+  }
+  const mark = node.getChild("ListMark");
+  const first = mark !== null && doc.lineAt(mark.from).from === line.from;
+  return { offset, item: node, first, rendered: first || (body && offset > 0) };
+}
 
 /** ol 复合多级编号（定稿 direction-c/index.html:250-270 的 counter 拼接）：L1 `1.`、
  *  L2 `1.1`、L3 `1.5.1`——只有第一层带尾点。`prefix` 是父项的复合编号（仅当父列表
@@ -307,62 +360,39 @@ class ListLayout {
       while (line.from <= range.to) {
         if (!seen.has(line.from)) {
           seen.add(line.from);
-          let offset = line.text.search(/\S/);
-          if (offset >= 0 && line.text[offset] === ">") {
-            // 引用内的列表（M138）：行首是引用标记时内容位置在标记之后，扫过
-            // 全部连续 `>` 与紧随的空格后按常规列表判定——引用内的列表与正文
-            // 里的列表同一套标记 widget、同一套等宽序号与正文缩进。
-            //
-            // 此前只有 callout（M109）放开这一路径，普通引用的列表停在源码态；
-            // 放开后 callout 与普通引用走同一分支（callout 本就是 blockquote），
-            // 嵌套引用 `> > ` 也自然按最内层内容起点解析。
-            let content = offset;
-            while (line.text[content] === ">") {
-              content++;
-              while (content < line.text.length && line.text[content] === " ") content++;
+          const info = listLineInfo(this.tree, doc, line);
+          // lazy continuation 行（`info.rendered === false` 的项内段落行）按顶层段落渲染：
+          // 不加 `cm-lp-list-line`、不施加 `--lp-list-body`，字符与光标落在行首
+          // （合同 docs/specs/lists.md 的 L1；判定与光标位置无关，L3）。
+          if (info.rendered && info.item) {
+            const mark = info.item.getChild("ListMark");
+            const group = this.group(info.item.parent!, view.state);
+            if (!group || !this.units) {
+              if (line.number === doc.lines) break;
+              line = doc.line(line.number + 1);
+              continue;
             }
-            if (content < line.text.length) offset = content;
-          }
-          if (offset >= 0) {
-            let node: Node | null = this.tree.resolveInner(line.from + offset, 1);
-            let body = false;
-            while (node && node.name !== "ListItem") {
-              if (["FencedCode", "CodeBlock", "HTMLBlock", "Table", "Blockquote"].includes(node.name)) break;
-              if (node.name === "Paragraph" || node.name === "Task") body = true;
-              node = node.parent;
-            }
-            if (node?.name === "ListItem" && node.parent && isList(node.parent)) {
-              const mark = node.getChild("ListMark");
-              const first = mark !== null && doc.lineAt(mark.from).from === line.from;
-              if (first || body) {
-                const group = this.group(node.parent, view.state);
-                if (!group || !this.units) {
-                  if (line.number === doc.lines) break;
-                  line = doc.line(line.number + 1);
-                  continue;
-                }
-                // 测量单位按组深度取档（标记字号逐级递减，见 MARKER_FONT_RATIOS）。
-                const unit = this.units[Math.min(group.depth, 3) - 1];
-                decorations.push(Decoration.line({
-                  class: `cm-lp-list-line${first ? " cm-lp-list-first" : ""}`,
-                  attributes: { style: `--lp-list-body:${group.body * unit}px;--lp-list-marker:${group.width * unit}px` },
-                }).range(line.from));
-                if (first && mark) {
-                  const task = node.getChild("Task")?.getChild("TaskMarker");
-                  let end = task?.to ?? mark.to;
-                  while (end < line.to && /[ \t]/.test(doc.sliceString(end, end + 1))) end++;
-                  const label = doc.sliceString(mark.from, mark.to);
-                  // 显示标记：ol 取组扫描算好的复合编号（扫描保证覆盖本项；陈旧组顶
-                  // 渲染期间取不到时退回源码字面数字，重扫 publish 后归位），ul 按深度
-                  // 取 glyph（`–` / `◦`）。
-                  const display = /^\d/.test(label)
-                    ? group.labels.get(node.from) ?? label
-                    : bulletGlyph(group.depth);
-                  decorations.push(Decoration.replace({ widget: new ListMarker(display, task ? doc.sliceString(task.from, task.to) : null, group.depth) }).range(line.from, end));
-                } else if (offset > 0) {
-                  decorations.push(Decoration.replace({}).range(line.from, line.from + offset));
-                }
-              }
+            // 测量单位按组深度取档（标记字号逐级递减，见 MARKER_FONT_RATIOS）。
+            const unit = this.units[Math.min(group.depth, 3) - 1];
+            decorations.push(Decoration.line({
+              class: `cm-lp-list-line${info.first ? " cm-lp-list-first" : ""}`,
+              attributes: { style: `--lp-list-body:${group.body * unit}px;--lp-list-marker:${group.width * unit}px` },
+            }).range(line.from));
+            if (info.first && mark) {
+              const task = info.item.getChild("Task")?.getChild("TaskMarker");
+              let end = task?.to ?? mark.to;
+              while (end < line.to && /[ \t]/.test(doc.sliceString(end, end + 1))) end++;
+              const label = doc.sliceString(mark.from, mark.to);
+              // 显示标记：ol 取组扫描算好的复合编号（扫描保证覆盖本项；陈旧组顶
+              // 渲染期间取不到时退回源码字面数字，重扫 publish 后归位），ul 按深度
+              // 取 glyph（`–` / `◦`）。
+              const display = /^\d/.test(label)
+                ? group.labels.get(info.item.from) ?? label
+                : bulletGlyph(group.depth);
+              decorations.push(Decoration.replace({ widget: new ListMarker(display, task ? doc.sliceString(task.from, task.to) : null, group.depth) }).range(line.from, end));
+            } else if (info.offset > 0) {
+              // 真续行：吞掉行首源码空白，文本落到项正文起点（L2）。
+              decorations.push(Decoration.replace({}).range(line.from, line.from + info.offset));
             }
           }
         }
