@@ -644,6 +644,14 @@
 
 ## 待修 findings（不阻塞）
 
+### harness 会话留存路径描述有两处真源（worker-m433 观察，2026-10-10，low）
+
+**症状**：`src-tauri/src/harness/session.rs` 的 ts-rs doc 注释（导出进 `src/bindings/SessionSummary.ts`）与
+`src/ipc.ts:457,471,485` 的 IPC 注释描述同一条 `sessions/...` 路径语义，REVIEW.md 第 8 条「同一事实多处
+真源」形态。M433 只按 tasks 1.5 把四处路径描述改准，未动结构。
+**修法方向**：长期看这类路径描述只留一处真源（Rust 侧 doc 为准，ipc.ts 指向它，或反之），随下次动
+这两个文件的 mission 顺手收敛；非独立议题。
+
 ### living spec harness 未覆盖 M373/M381 的「models 逐项模型能力声明」（worker-m424 finding，2026-10-10，low）
 
 **症状**：`[harness].providers.<id>.models` 的 `{id, effort, window}` 声明与保守默认口径（缺 effort → false、

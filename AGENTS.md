@@ -95,6 +95,12 @@ CI 的 `visual.yml` 只跑结构 / 计算属性断言（置 `LUMIR_VISUAL_STRUCT
 - **在途 worker 不中途换模型**：换模型须重开实例、重读代码，总消耗反而更高；下次派发再按新口径。
 - **探针/探错类步骤单独升档**：结果未知、不符假设时需设计退路的任务（如真机通道探针），该步骤升 kimi-for-coding；探针通过后的照章实现段仍归 deepseek。
 
+**2026-10-10 补充裁决二（视觉三分 + 评审分层 + 对账下放，Alex「认可」）**：
+
+- **视觉任务按验收预言机三分**（取代「视觉相关」整行升档的旧口径）：① 样式值机械改动（间距/字号/色 token 替换，期望值可写成计算属性或像素断言）、视觉场景断言/文案/fixture 调整、基线重截的执行动作 → deepseek；② 原型 HTML（`design/prototypes/**`）→ deepseek（playwright 冒烟断言 + Alex 过目截图兜底）；③ 像素表现本身的改动（`src/style.css` 全局面、`src/preview/**` 渲染语义）与一切「看着对不对」是唯一判据的活 → k3-256k。**断言先行**：凡派给 deepseek 的视觉改动，派发时要求先把期望效果写成机器断言再动手——rendering-defect-contract-first 从缺陷修复延伸到视觉改动；基线 `--update` 前 Alex 过目、视觉 review 恒 k3 两条不变。
+- **评审分层**：deepseek 先做机械核验层（diff 对账 tasks、门禁输出比对、scope 越界检查、复跑机器判定命令），产出结构化核验报告；k3 只做判断层——机械层报出差异、或 mission 本身是判断类时才介入。验收 oracle 本来就是全机器判定的 mission（如纯文档修订配 `openspec validate --strict`）可试行「deepseek 审 + k3 抽审」；**代码类 mission 的评审不降档**——评审是 deepseek worker 的安全网，降级评审等于同时拆两道网。
+- **对账与证据复跑下放**：worker 完工后「逐项对账 mission tasks」这步机械比对派 deepseek 实例做，只把对账结果与差异项送回 tower 裁决；gate/验收套件复跑、基线重截、截图归档等「跑命令 + 如实抄输出」的活同样归 deepseek（失败判据=退出码）。tower 自身模型不降：路由错误代价高于配额节省。
+
 ## 工作流分工速查
 
 - **开工前必读**：worker 动工前与 reviewer 给 verdict 前先过一遍 [REVIEW.md](REVIEW.md)，逐条对一眼自己的改动面；重复踩到表内某条时把新现场补进该条证据，不另起条目。
