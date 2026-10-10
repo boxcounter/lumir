@@ -13,12 +13,15 @@
 
 ## 2. harness 侧存储与读写命令
 
-- [ ] 2.1 `<config_dir>/harness/attachments/` 落点（`harness/sessions` 兄弟目录，首次写时建）；命名与转码复用
+- [ ] 2.1 `<config_dir>/harness/attachments/<vault 稳定 id>/` 落点（与会话 `sessions/<vault 稳定 id>/` 同族、
+      与 `sessions/` 根互为兄弟，首次写时建；目录名 = 注册表稳定 id，纪律复用 `vault_dir_name`；id 不合格 →
+      **拒绝落盘** + 人话错误，MUST NOT 落 `_orphaned/` 一类兜底目录）；命名与转码复用
       `fs_io` 原语（`attachment_target` / `transcode_png_to_webp` / `short_hash` / `write_attachment_atomic` /
       `base64_decode` / `ATTACHMENT_MAX_BYTES`），**提为共用函数**，MUST NOT 复制第二份
 - [ ] 2.2 新命令 `harness_write_image(data_base64, source_mime) -> {name, width, height}`：50MB 判定在转码前、
       同名（内容寻址）即同内容 → 跳过写盘、MUST NOT 触碰 vault
-- [ ] 2.3 新命令 `harness_read_image(name) -> base64`：限 `pasted-<hash16>.<ext>` 形态、限尺寸、路径逃逸防护、
+- [ ] 2.3 新命令 `harness_read_image(name) -> base64`：落点 = `attachments/<当前 scope 的 vault id>/`（引用名只在
+      本 vault 目录内唯一，MUST NOT 跨 vault 查找）、限 `pasted-<hash16>.<ext>` 形态、限尺寸、路径逃逸防护、
       非此形态拒绝
 - [ ] 2.4 引用展开纯函数 `expand_image_refs(input) -> Vec<Value>`（`lumir-attachment://<name>` → base64 data URL，
       子类型由扩展名映射；读文件失败 → 人话错误）；真 client 与 mock 走同一条
@@ -63,9 +66,9 @@
       design/notes，作为 Alex 配置里各模型 `vision` 值的依据
 - [ ] 5.2 若 5.1 结论为 Kimi 端不接受 data URL / `input_image`：在 design 里补后备路径（Files API / file_id 或
       有损降级方案）并上报 tower 升级给 Alex，不自行改归宿
-- [ ] 5.3 新增真机验收场景（scripts/acceptance，mock provider，fixture 全合成）并全绿：粘贴落 harness 侧 + vault
-      零新增 / 图文同板图优先 / 非图片回归 / wire content parts 交错 / JSONL 无 base64 / 能力闸拒绝 + 卡片标出 /
-      快照恢复 round-trip（§design 9 的 ①–⑥）
+- [ ] 5.3 新增真机验收场景（scripts/acceptance，mock provider，fixture 全合成）并全绿：粘贴落 harness 侧并按 vault
+      稳定 id 分置 + vault 零新增 / 图文同板图优先 / 非图片回归 / wire content parts 交错 / JSONL 无 base64 /
+      能力闸拒绝 + 卡片标出 / 快照恢复 round-trip / 两 vault 各贴各落、互不可见（§design 9 的 ①–⑦）
 
 ## 6. 验证
 

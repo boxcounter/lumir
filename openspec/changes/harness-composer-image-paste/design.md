@@ -6,7 +6,7 @@
 **术语**：沿用既有制品——**composer** = harness 面板的混排输入区（`contenteditable`，`div.lumir-hp-composer`）；
 **block / 块** = composer 的顶层单元（`ComposerBlock`）；**图片卡片**（本 change 自造词，就地定义）=
 本 change 新增的第三类顶层块，视觉上是图片缩略图 + 元信息 + 移除钮的原子卡片；**harness 附件**（本 change
-自造词）= 落 `<config_dir>/harness/attachments/` 下的内容寻址图片文件（与 vault 附件物理分开）；
+自造词）= 落 `<config_dir>/harness/attachments/<vault 稳定 id>/` 下的内容寻址图片文件（与 vault 附件物理分开）；
 **投递投影**（本 change 自造词）= 把混排块序列映射为 Responses `input` 数组 content parts 的纯函数。
 
 ## 1. 调研结论（现状事实锚点）
@@ -41,8 +41,11 @@
   `write_attachment_atomic`（`:1903`，原子写 + 撞名不覆盖）、`resolve_attachment_dir`（`:1831`，vault 内解析，
   逃逸防护）——最后这个**不能复用**（harness 附件不在 vault）。
 - **配置目录与留存目录**：`config::config_dir()`（`src-tauri/src/config.rs:822`，`$XDG_CONFIG_HOME` 或
-  `~/.config/lumir`）；会话留存 `<config_dir>/harness/sessions`（`harness/jsonl.rs:69`）→ harness 附件取
-  **兄弟目录** `<config_dir>/harness/attachments`。
+  `~/.config/lumir`）；会话留存 `<config_dir>/harness/sessions/<vault 稳定 id>/`（`harness/jsonl.rs:74` 的
+  `sessions_dir` 与 `:103` 的 `vault_sessions_dir`，M425 已合并落地）→ harness 附件取**兄弟根**
+  `<config_dir>/harness/attachments`，其下按**同一个 vault 稳定 id** 分层（§5，2026-10-10 裁决）。
+- **vault 稳定 id 已在手**：`VaultScope.vault_id`（`harness.rs:64`，M425 落地）——harness 侧落点解析不需要新造
+  查表；目录名字符集纪律复用 `jsonl.rs:96` 的 `vault_dir_name`（`valid_id` 通过且 ≠ 保留名 `_orphaned`）。
 - **模型能力声明链**：`HarnessModelSpec {id, effort, window}`（`config.rs:567-577`）→ 逐项校验
   `validate_harness_model_specs`（`config.rs:1454`：缺 `effort` → false + warning、类型不符丢该项）→ 读取点
   `effort_supported`（`config.rs:633`：精确匹配、未列出 = false、mock 恒 true）。→ `vision` 键**照抄这条链**。
@@ -140,10 +143,11 @@ function serializeDelivery(blocks: readonly ComposerBlock[]): DeliveryPart[];
   → `record_llm_request` 落的 `messages` 天然不含 base64（裁决点 2）。
 - **wire 展开点**：`ResponsesClient::complete_inner`（`llm.rs:408`）在 `.json(&body)` 之前，把 `input` 数组里的
   `lumir-attachment://` 项就地换成
-  `{"type":"input_image","image_url":"data:image/<sub>;base64,<…>"}`（`<sub>` 由附件扩展名映射）；读文件失败
-  → 本轮以人话错误收口（MUST NOT 发一条静默缺图的请求）。
+  `{"type":"input_image","image_url":"data:image/<sub>;base64,<…>"}`（`<sub>` 由附件扩展名映射；取字节的落点
+  按当前会话作用域的 vault id 解析，见 §5.2）；读文件失败 → 本轮以人话错误收口（MUST NOT 发一条静默缺图的请求）。
 - **恢复充分性口径的修订（诚实声明）**：living spec 的「会话本地留存」判据是「仅凭 JSONL 逐字节重建任意一轮
-  发给模型的请求」。引用形态下，重建 = JSONL（引用）+ harness 附件**目录**（内容寻址名 → 字节）。因为文件名是
+  发给模型的请求」。引用形态下，重建 = JSONL（引用）+ harness 附件的**同 id 目录**（`attachments/<vault 稳定 id>/`，
+  内容寻址名 → 字节）。因为文件名是
   内容寻址的哈希，`ref → 字节` 是确定性的；spec 增量把这条口径写实（不是放宽"逐字节"，而是补上"字节在哪个
   共存制品里")。这是**知情的口径收窄**，实现期须在 spec 与 design 两侧一致。
 - **mock provider**：不发生网络请求，按其契约消费 `Request`（mock 的 `MockClient::complete`）。测试/验收要断言
@@ -152,21 +156,78 @@ function serializeDelivery(blocks: readonly ComposerBlock[]): DeliveryPart[];
 
 ## 5. harness 侧存储与读写命令
 
-- **目录**：`<config_dir>/harness/attachments/`（`harness/sessions` 的兄弟目录）；首次写时创建（与
-  `sessions_dir()` 同口径）。MUST NOT 触碰 vault。
-- **命名**：`pasted-<hash16>.<ext>`，哈希 = **转码后字节**的 SHA-256 前 16 位（与 vault 附件同口径，`fs_io.rs:1776`）；
-  扩展名由 `attachment_target`（`fs_io.rs:1761`）决定：png → webp（无损转码）、jpeg/webp 原样、其余拒绝。
-  同名即同内容 → 写前 `exists` 即可判定去重（**不做** vault 那样的全库扫描——附件目录是平的、我们自己的）。
-- **原语复用（裁决点 3）**：把 `transcode_png_to_webp` / `short_hash` / `write_attachment_atomic` 与
-  `base64_decode` / `ATTACHMENT_MAX_BYTES` 判据**提为共用函数**（同模块内的 `pub(crate)` 或参数化落点解析），
-  新命令 `harness_write_image(data_base64, source_mime) -> { name, width, height }` 只替换「落点解析」为固定
-  的附件目录。**MUST NOT** 复制一份转码/寻址实现。
-- **读回**：新命令 `harness_read_image(name) -> base64`（限 `pasted-<hash16>.<ext>` 形态、限尺寸、路径逃逸防护
-  同 `fs_io` 口径）——供缩略图渲染与（若需要）恢复期取字节。前端把 base64 转 blob URL 渲染，**数据模型与
-  快照里不落 base64**。
-- **上限**：沿用 `ATTACHMENT_MAX_BYTES`（50MB），判定在转码前（与 vault 链路同口径）；MUST NOT 降采样
-  （裁决点 5）。
-- **孤儿**：不做删除/迁移（Non-goal），登记 `docs/backlog.md`。
+### 5.1 落点与目录命名纪律（2026-10-10 裁决：按 vault 分层）
+
+```
+<config_dir>/harness/attachments/          ← 附件根（sessions/ 的兄弟目录）
+├── vault-1234-1/                          ← 目录名 = vault 注册表稳定 id
+│   ├── pasted-<hash16>.webp
+│   └── ...
+└── vault-1234-2/
+```
+
+- **目录名 = vault 稳定 id**：不 hash、不消毒、不加前缀（消毒名有撞名面，M309 现场）；与
+  `sessions/<vault 稳定 id>/`（`jsonl.rs:103` 的 `vault_sessions_dir`，M425 已落地）、`vault-sessions/<id>.json`、
+  `reading-positions/<id>.json` 共用同一份身份。这一层正是 M433 finding 点出的 M425 排依赖缺口
+  （`docs/backlog.md`「harness 附件落点未按 vault 分置」）：改齐后一个 vault 的**引用与字节**落在同名目录下，
+  成对可取（见 §5.5）。
+- **id 的来源**：`VaultScope.vault_id`（`harness.rs:64`，M425 落地）——粘贴时面板所在 vault 的 id 已在手，
+  写命令不新造查表；目录名字符集纪律复用 sessions 的 `vault_dir_name`（`jsonl.rs:96`：`valid_id` 通过且
+  ≠ `_orphaned`）。
+- **不可归属的处置（与 sessions 不同，如实说明）**：sessions 的 `_orphaned/` 桶服务两处——**一次性归位脚本**的
+  保底存放（存量平铺文件搬不动），以及**运行时非法 id 的防御分支**（`vault_sessions_dir` 对不合格 id 记 stderr
+  后按 `_orphaned/` 落盘，`jsonl.rs:103`；sessions change design §2 同款明文，该分支被标注为不可达）。附件
+  **零存量**（本能力尚未实现、线上零附件数据），没有归位面，故 **不建 `_orphaned/` 桶、不写归位脚本**。剩下的
+  唯一「不可归属」是**写时拿不到合格 vault id**（作用域缺失 / id 形态非法，理论上仅发生在无 vault 打开时）：
+  处置 = **拒绝落盘** + 人话错误（前端 toast、不插卡片、无半截文件），MUST NOT 落进任何兜底目录——附件读路径
+  按当前 vault id 解析，落进兜底目录即永远命不中，等于静默缺图，违背 §2 一致性原则（被丢弃的图片 MUST NOT
+  假装已投递）。
+- **首次写时创建** `attachments/<id>/`（`create_dir_all`，与 `vault_sessions_dir` 同口径）。MUST NOT 触碰 vault。
+
+### 5.2 命名、去重边界与引用解析
+
+- **文件名**：`pasted-<hash16>.<ext>`，哈希 = **转码后字节**的 SHA-256 前 16 位（与 vault 附件同口径，
+  `fs_io.rs:1776`）；扩展名由 `attachment_target`（`fs_io.rs:1761`）决定：png → webp（无损转码）、jpeg / webp
+  原样、其余拒绝。
+- **去重范围 = 当前 vault 目录内**：写前 `exists` 判定即可（**不做** vault 那样的全 vault 扫描）。
+- **同一张图贴进两个 vault 会各存一份**——分层布局的诚实代价（换来了 vault 边界清晰与成对归档）。
+- **引用名不是全局唯一（分层带来的新事实）**：`pasted-<hash16>.<ext>` 只在**本 vault 目录内**唯一。因此**读回与
+  展开 MUST 按当前会话作用域的 vault id 解析**（`attachments/<id>/`），MUST NOT 在附件根下做跨 vault 查找——
+  那既越界，也把"名字全局唯一"这个错误假设钉进实现。
+
+### 5.3 原语复用（裁决点 3）
+
+把 `transcode_png_to_webp` / `short_hash` / `write_attachment_atomic` 与 `base64_decode` / `ATTACHMENT_MAX_BYTES`
+判据**提为共用函数**（同模块内的 `pub(crate)` 或参数化落点解析），新命令
+`harness_write_image(data_base64, source_mime) -> { name, width, height }` 只替换「落点解析」为
+`attachments/<当前 scope 的 vault id>/`；落点解析失败即按 §5.1 的「拒绝落盘」口径回人话错误。**MUST NOT** 复制
+一份转码 / 寻址实现。
+
+### 5.4 读回
+
+新命令 `harness_read_image(name) -> base64`：落点 = `attachments/<当前 scope 的 vault id>/`，限
+`pasted-<hash16>.<ext>` 形态、限尺寸、路径逃逸防护同 `fs_io` 口径（解析出的路径必须仍在该 vault 目录内）——供
+缩略图渲染与（若需要）恢复期取字节。前端把 base64 转 blob URL 渲染，**数据模型与快照里不落 base64**。
+
+### 5.5 清理 / 归档与 vault 边界（2026-10-10 裁决补口径）
+
+- **删会话不牵动附件**：`harness_delete_session` 只删 `sessions/<id>/<session_id>.jsonl`；附件是内容寻址的，
+  同 vault 内可能被多个会话引用，删会话不做引用扫描 → 附件字节**原地保留**（不静默删：只凭一个会话文件无法判定
+  哪些字节仍被引用；GC 是 Non-goal）。
+- **按 vault 备份 / 归档 = 取同名 id 的两个目录**：`sessions/<id>/`（引用）+ `attachments/<id>/`（字节）成对复制
+  即自足的恢复单位——这正是 §4.3「引用 + 字节」恢复充分性口径要求的**共存制品**，分层后二者同 id 可对。
+- **vault 注册项消失**（手工移除注册项 / 卷未挂载）：`attachments/<id>/` 成为不可达残留、无自动清理——与 sessions
+  的 vault 目录同处置，如实登记，不在本 change 的处理面。
+- **附件目录 MUST NOT 触碰 vault**（既有口径不变，ADR 0003）。
+
+### 5.6 上限
+
+沿用 `ATTACHMENT_MAX_BYTES`（50MB），判定在转码前（与 vault 链路同口径）；MUST NOT 降采样（裁决点 5）。
+
+### 5.7 孤儿
+
+不做删除 / 迁移（Non-goal），登记 `docs/backlog.md`；分层后 GC 有了逐 vault 收敛的抓手（一个 vault 的会话与附件
+同 id 成对），设计时可按 vault 扫描。
 
 ## 6. 能力声明与发送闸
 
@@ -226,13 +287,15 @@ function serializeDelivery(blocks: readonly ComposerBlock[]): DeliveryPart[];
 ## 9. 验收面（机器判定锚点）
 
 - **真机验收新场景**（scripts/acceptance，mock provider，fixture 全合成）：
-  ① 粘贴图片 → 落 `<隔离 config>/harness/attachments/`、vault 零新增、composer 出现图片卡片；
+  ① 粘贴图片 → 落 `<隔离 config>/harness/attachments/<vault 稳定 id>/`、vault 零新增、composer 出现图片卡片；
   ② 图文同板图优先、非图片粘贴逐字节不变；
   ③ wire 形态：`llm_request.messages` 的 user content 数组按块序含 `input_text` / `input_image` 交错，
      `image_url` 为 `lumir-attachment://` 引用；
   ④ **JSONL 无 base64**：`llm_request` 记录里不含 `data:image` 或长 base64 串（反向断言）；
   ⑤ 能力闸：把当前模型声明成 `vision: false` → 含图片卡的消息发送被挡、toast 出现、卡片错误态可见、会话不推进；
-  ⑥ 快照恢复 round-trip：重启后带图消息的图片卡片按原交错还原。
+  ⑥ 快照恢复 round-trip：重启后带图消息的图片卡片按原交错还原；
+  ⑦ **按 vault 分置**：在 vault A 与 vault B 各贴一张图并发送 → 字节分别落在 `attachments/<A 的稳定 id>/` 与
+     `attachments/<B 的稳定 id>/`，两处各自可读回（缩略图可见），跨 vault 目录不被读到。
   - 展开投影（`input_image` → data URL）的断言：mock 走同一条 `expand_image_refs`，场景 ③/④ 一起判"引用在
     JSONL、展开在 wire"两侧。
 - **单元/属性测试**（tests/unit，零 DOM）：投递投影的不变量（交错顺序、文本 part 合并规则、纯文本单 part 与今天
@@ -245,7 +308,8 @@ function serializeDelivery(blocks: readonly ComposerBlock[]): DeliveryPart[];
 ## 10. 后续项（本 change 不做，登记 backlog）
 
 - **降采样策略**：大图进上下文的 token 成本（裁决点 5 的 B 方案）留 dogfood 数据后另裁。
-- **harness 附件孤儿清理**：目录只增不减；何时清、按会话还是按年龄，另案。
+- **harness 附件孤儿清理**：目录只增不减；何时清、按会话还是按年龄，另案。分层后有了逐 vault 收敛的抓手
+  （一个 vault 的会话与附件同 id 成对），GC 设计时可逐 vault 扫描。
 - **Files API / file_id 通道**：若 Kimi 端 `input_image` 实测受限（如 data URL 被拒），file_id 是后备路径。
 - **living spec 的既有缺口**：M373/M381 的 `models` 逐项能力声明（`effort` / `window`）未进 spec（§1 末条），
   另立 finding 报 tower，不在本 change 顺手扩 scope。
