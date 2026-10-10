@@ -1,0 +1,843 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Lumir — harness composer 贴图 UX 原型（M424）</title>
+<style>
+/* ============ tokens（逐值取自 src/style.css / src/harness-panel.css 现行登记值） ============ */
+:root {
+  --sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", "PingFang SC", "Hiragino Sans GB", sans-serif;
+  --mono: ui-monospace, "SF Mono", Menlo, monospace;
+  --fs-label-s: 11.5px;
+  --fs-meta: 12px;
+  --fs-micro: 10.5px;
+  --fs-label: 11px;
+  --fs-ui: 13px;
+  --fs-ui-s: 12.5px;
+  --lh-ui: 1.5;
+  --sp-1: 2px; --sp-2: 4px; --sp-3: 6px; --sp-4: 8px; --sp-5: 10px;
+  --sp-7: 14px; --sp-8: 16px;
+  --r4: 4px; --r5: 5px; --r6: 6px; --r7: 7px; --r8: 8px;
+  --dur-ui: 0.12s; --ease-standard: ease;
+}
+:root, :root[data-theme="light"] {
+  --frame: #f4f4f1;
+  --agent-bg: #f7f7f4;
+  --content-bg: #fdfdfc;
+  --preview-bg: #ffffff;
+  --border: #e3e2dd;
+  --border-soft: #edece7;
+  --text: #21201a;
+  --text-2: #6e6c61;
+  --text-3: #a9a79b;
+  --hover: rgba(0,0,0,0.038);
+  --accent: #3a5fcd;
+  --accent-tint: #eef1fb;
+  --pending: #a06e0f;
+  --danger: #bf4438;
+  --danger-tint: #f9ecea;
+  --shadow-raise: 0 4px 16px rgba(0,0,0,0.10);
+  --send-fill: #38372f;
+  --send-fill-hover: #55534a;
+  --send-text: #ffffff;
+}
+:root[data-theme="dark"] {
+  --frame: #1a1b1d;
+  --agent-bg: #1e1f21;
+  --content-bg: #222326;
+  --preview-bg: #26272b;
+  --border: rgba(255,255,255,0.095);
+  --border-soft: rgba(255,255,255,0.055);
+  --text: #e3e2db;
+  --text-2: #9b9a91;
+  --text-3: #62615b;
+  --hover: rgba(255,255,255,0.05);
+  --accent: #8ba3ef;
+  --accent-tint: rgba(128,152,232,0.15);
+  --pending: #d9a75c;
+  --danger: #e08a80;
+  --danger-tint: rgba(224,138,128,0.13);
+  --shadow-raise: 0 4px 16px rgba(0,0,0,0.50);
+  --send-fill: #c7c6bd;
+  --send-fill-hover: #dcd9cd;
+  --send-text: #222326;
+}
+:root[data-theme="eink"] {
+  --frame: #ffffff;
+  --agent-bg: #ffffff;
+  --content-bg: #ffffff;
+  --preview-bg: #ffffff;
+  --border: #000000;
+  --border-soft: #b9b9b9;
+  --text: #000000;
+  --text-2: #3d3d3d;
+  --text-3: #6e6e6e;
+  --sel: #000000;
+  --sel-text: #ffffff;
+  --hover: rgba(0,0,0,0.06);
+  --accent: #000000;
+  --accent-tint: transparent;
+  --pending: #000000;
+  --danger: #000000;
+  --danger-tint: transparent;
+  --shadow-raise: none;
+  --send-fill: #000000;
+  --send-fill-hover: #3a3a3a;
+  --send-text: #ffffff;
+}
+
+/* ============ base ============ */
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: var(--sans);
+  font-size: var(--fs-ui);
+  color: var(--text);
+  background: var(--frame);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+button { font: inherit; color: inherit; background: none; border: none; cursor: pointer; }
+a { color: var(--accent); text-decoration: none; }
+
+/* ============ harness 面板复刻（宽 348 = --layout-agent-w；transcript + composer 全高结构） ============ */
+.hp {
+  width: 348px;
+  background: var(--agent-bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+/* transcript 区：呈现一条已发送的用户消息（同构沉淀态），blocked 场景显示空 transcript */
+.hp-transcript {
+  padding: var(--sp-4) var(--sp-8);
+  border-bottom: 1px solid var(--border);
+  min-height: 60px;
+}
+.hp-transcript:empty { display: none; }
+.hp-t-empty {
+  padding: 14px var(--sp-8);
+  font-size: var(--fs-meta);
+  color: var(--text-3);
+  border-bottom: 1px solid var(--border);
+}
+.hp-msg { font-size: var(--fs-ui-s); line-height: var(--lh-ui); }
+.hp-who {
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+  margin-bottom: var(--sp-2);
+  font-family: var(--mono);
+}
+.hp-who b { color: var(--text-2); font-weight: 600; }
+/* transcript 内块（照 harness-panel.css .lumir-hp-msg-user 口径：卡片同族、首末边距收口） */
+.hp-msg .hp-qcard, .hp-msg .hp-icard { margin: var(--sp-2) 0; }
+.hp-msg .hp-qcard:first-child, .hp-msg .hp-icard:first-child { margin-top: 0; }
+.hp-msg .hp-qcard:last-child, .hp-msg .hp-icard:last-child { margin-bottom: 0; }
+.hp-qtext { margin: var(--sp-1) 0; white-space: pre-wrap; word-break: break-word; }
+
+/* composer 盒（照 harness-panel.css .lumir-hp-composer-box / composer / ctl） */
+.hp-composer-area { padding: var(--sp-3) var(--sp-4) var(--sp-4); }
+.hp-composer-box {
+  background: var(--content-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--r8);
+}
+.hp-composer {
+  min-height: 44px;
+  /* 产品口径 max-height 150px（harness-panel.css）——本原型放宽到 560px：
+     截图与试玩要一眼看全混排块序列，不为还原滚动行为而裁内容。 */
+  max-height: 560px;
+  overflow-y: auto;
+  padding: var(--sp-3) var(--sp-4) var(--sp-1);
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui);
+  word-break: break-word;
+  outline: none;
+}
+.hp-composer.is-empty::before {
+  content: attr(data-placeholder);
+  position: absolute;
+  color: var(--text-3);
+  pointer-events: none;
+}
+.hp-qpara { margin: var(--sp-1) 0; min-height: 1em; white-space: pre-wrap; }
+.hp-composer > .hp-qpara:first-child, .hp-composer > .hp-qcard:first-child, .hp-composer > .hp-icard:first-child { margin-top: 0; }
+.hp-composer > .hp-qpara:last-child, .hp-composer > .hp-qcard:last-child, .hp-composer > .hp-icard:last-child { margin-bottom: 0; }
+
+.hp-ctl {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: var(--sp-1) var(--sp-2) var(--sp-2);
+}
+/* 选择器 chip（静态复刻，本原型不交互） */
+.hp-sel {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  max-width: 224px;
+  height: 24px;
+  padding: 0 var(--sp-3);
+  border-radius: var(--r5);
+  color: var(--text-2);
+  font-size: var(--fs-label-s);
+  white-space: nowrap;
+}
+.hp-sel-model { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.hp-sel-sep { flex: none; color: var(--text-3); }
+.hp-sel-chev { flex: none; color: var(--text-3); font-size: var(--fs-micro); }
+.hp-ctx {
+  font-family: var(--mono);
+  font-size: var(--fs-label);
+  color: var(--text-3);
+  white-space: nowrap;
+}
+.hp-ctl-spacer { flex: 1; }
+.hp-send {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: none;
+  border-radius: var(--r6);
+  background: var(--send-fill);
+  color: var(--send-text);
+  cursor: pointer;
+  transition: background var(--dur-ui) var(--ease-standard);
+}
+.hp-send:hover { background: var(--send-fill-hover); }
+
+/* ── 摘录引用卡片（M343 视觉族逐面照搬：harness-panel.css .lumir-hp-qcard 一族）────
+   3px 引号竖条 + 摘录截断（≤2 行）+ 等宽小字出处行 +（composer 内）× 移除钮。
+   本原型把它作为「同视觉族」的对照件摆在图文混排里。 */
+.hp-qcard {
+  display: flex;
+  align-items: stretch;
+  gap: var(--sp-3);
+  margin: var(--sp-2) 0;
+  padding: var(--sp-2) var(--sp-4) var(--sp-2) var(--sp-3);
+  background: var(--agent-bg);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--r6);
+  position: relative;
+  transition: border-color var(--dur-ui) var(--ease-standard), background var(--dur-ui) var(--ease-standard);
+}
+.hp-qcard:hover { border-color: var(--border); background: var(--hover); }
+:root[data-theme="eink"] .hp-qcard:hover { border-width: 1.4px; }
+.hp-qc-bar { flex: none; width: 3px; border-radius: 2px; background: var(--text-3); }
+.hp-qc-main { flex: 1; min-width: 0; }
+.hp-qc-ex {
+  font-size: var(--fs-meta);
+  line-height: var(--lh-ui);
+  color: var(--text-2);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  word-break: break-word;
+}
+.hp-qc-src {
+  margin-top: 2px;
+  font-family: var(--mono);
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.hp-qc-x {
+  position: absolute;
+  top: var(--sp-1);
+  right: var(--sp-1);
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: none;
+  border-radius: var(--r4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  color: var(--text-3);
+  font-size: var(--fs-label-s);
+  line-height: 1;
+  cursor: pointer;
+}
+.hp-qc-x:hover { background: var(--hover); color: var(--text); }
+
+/* ── 图片卡片（M424 新增第三类块；视觉决定见 change harness-composer-image-paste design §8）──
+   容器复用 qcard 整族配方（边框/圆角/底色/边距/移除钮，不新立视觉物种）；
+   不画引号竖条——缩略图本身做左锚（显式视觉决定，非遗漏）；
+   元信息行（尺寸 · 文件名）逐字取 -qc-src 同档（等宽 fs-micro text-3），不新增字号；
+   缩略图 object-fit:contain，高度上限 ≈ 3 行正文（3 × 13 × 1.5 ≈ 58px），宽度不超卡片宽。 */
+.hp-icard {
+  display: flex;
+  align-items: stretch;
+  gap: var(--sp-3);
+  margin: var(--sp-2) 0;
+  padding: var(--sp-2) var(--sp-4) var(--sp-2) var(--sp-3);
+  background: var(--agent-bg);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--r6);
+  position: relative;
+  transition: border-color var(--dur-ui) var(--ease-standard), background var(--dur-ui) var(--ease-standard);
+}
+.hp-icard:hover { border-color: var(--border); background: var(--hover); }
+:root[data-theme="eink"] .hp-icard:hover { border-width: 1.4px; }
+.hp-icard-thumb {
+  flex: none;
+  align-self: center;
+  width: 88px;
+  max-width: 40%;
+  height: 58px;            /* ≈ 3 行正文高度档 */
+  border-radius: var(--r4);
+  border: 1px solid var(--border-soft);
+  background: var(--content-bg);
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.hp-icard-thumb img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  display: block;
+}
+/* 加载中 / 加载失败占位（attachment-display 口径：可见回退，零高度空白不允许） */
+.hp-icard-thumb.is-loading, .hp-icard-thumb.is-failed {
+  font-size: var(--fs-micro);
+  font-family: var(--mono);
+  color: var(--text-3);
+}
+.hp-icard-thumb.is-loading::before {
+  content: "";
+  width: 12px; height: 12px;
+  margin-right: 4px;
+  border: 1.5px solid var(--border);
+  border-top-color: var(--text-3);
+  border-radius: 50%;
+  animation: hp-spin 0.9s linear infinite;
+}
+@keyframes hp-spin { to { transform: rotate(360deg); } }
+:root[data-theme="eink"] .hp-icard-thumb.is-loading::before { animation: none; }
+.hp-icard-main { flex: 1; min-width: 0; align-self: center; }
+.hp-icard-name {
+  font-size: var(--fs-meta);
+  line-height: var(--lh-ui);
+  color: var(--text-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.hp-icard-meta {
+  margin-top: 2px;
+  font-family: var(--mono);
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* 错误态（能力闸拦下）：既有 --danger 语义色 + --danger-tint 底色，
+   边框/底色标出，卡片保留、可移除后重发（design §6）。 */
+.hp-icard.is-error {
+  border-color: var(--danger);
+  background: var(--danger-tint);
+}
+.hp-icard.is-error:hover { border-color: var(--danger); background: var(--danger-tint); }
+:root[data-theme="eink"] .hp-icard.is-error { border-width: 1.6px; }
+.hp-icard.is-error .hp-icard-thumb { border-color: var(--danger); }
+.hp-icard.is-error .hp-icard-meta { color: var(--danger); }
+.hp-icard .hp-qc-x { /* 与 qcard 同配方 */ }
+
+/* toast（照 style.css .lumir-toast：--text 底、--content-bg 字、r7、右下） */
+.hp-toast {
+  position: absolute;
+  bottom: var(--sp-7);
+  right: var(--sp-8);
+  max-width: 72%;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-4);
+  padding: var(--sp-4) var(--sp-7);
+  background: var(--text);
+  color: var(--content-bg);
+  font-size: var(--fs-ui-s);
+  line-height: 1.45;
+  border-radius: var(--r7);
+  box-shadow: var(--shadow-raise);
+  z-index: 10;
+}
+.hp-toast .t-warn { color: var(--pending); }
+:root[data-theme="eink"] .hp-toast .t-warn { text-decoration: underline; }
+
+/* ============ 控制面板（硬规则：全部选项点击可达；panel=0 供截图隐藏） ============ */
+.cpanel {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 100;
+  width: 280px;
+  background: var(--preview-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--r8);
+  box-shadow: var(--shadow-raise);
+  padding: 10px 12px;
+  font-size: 12px;
+}
+.cpanel[hidden] { display: none; }
+.cpanel h2 { font-size: 12px; font-weight: 650; margin-bottom: 8px; }
+.cpanel .cp-row { display: flex; align-items: center; gap: 6px; margin-top: 6px; flex-wrap: wrap; }
+.cpanel .cp-label { flex: none; width: 56px; color: var(--text-3); font-size: var(--fs-label-s); }
+.cpanel .cp-btn {
+  padding: 3px 9px;
+  border: 1px solid var(--border);
+  border-radius: var(--r5);
+  font-size: var(--fs-label-s);
+  color: var(--text-2);
+  cursor: pointer;
+  transition: background var(--dur-ui) var(--ease-standard), color var(--dur-ui) var(--ease-standard);
+}
+.cpanel .cp-btn:hover { background: var(--hover); color: var(--text); }
+.cpanel .cp-btn.is-on {
+  background: var(--accent-tint);
+  color: var(--accent);
+  border-color: var(--accent);
+}
+:root[data-theme="eink"] .cpanel .cp-btn.is-on { background: #000; color: #fff; border-color: #000; }
+.cpanel .cp-note { margin-top: 8px; font-size: var(--fs-micro); color: var(--text-3); line-height: 1.55; }
+
+/* ============ board 总览（无参数直开：场景行 + 深链） ============ */
+.board-head {
+  position: sticky; top: 0; z-index: 5;
+  background: var(--frame);
+  border-bottom: 1px solid var(--border);
+  padding: 14px 32px 12px;
+}
+.board-head h1 { font-size: 15px; font-weight: 650; letter-spacing: -0.004em; }
+.board-head .hint { font-size: 11.5px; color: var(--text-3); margin-top: 4px; line-height: 1.5; }
+.board-row {
+  display: grid; grid-template-columns: 300px 1fr; gap: 28px;
+  padding: 26px 32px; border-bottom: 1px solid var(--border-soft);
+  align-items: start;
+}
+.board-row .meta .v-id { font-family: var(--mono); font-size: 11px; color: var(--text-3); }
+.board-row .meta .v-name { font-size: 13.5px; font-weight: 650; margin: 4px 0 6px; }
+.board-row .meta .v-desc { font-size: 12px; color: var(--text-2); line-height: 1.55; }
+.board-row .meta .v-link { display: inline-block; margin-top: 8px; font-size: 11.5px; }
+.board-row .stage {
+  background: var(--agent-bg);
+  border: 1px dashed var(--border);
+  border-radius: 10px;
+  padding: 24px;
+  display: flex; justify-content: center;
+}
+.board-row .stage-inner { position: relative; }
+
+/* 场景舞台（单帧模式） */
+.stage-only {
+  min-height: 100vh;
+  display: flex; align-items: center; justify-content: center;
+  padding: 48px;
+  background: var(--frame);
+}
+.stage-only .stage-inner { position: relative; }
+/* 场景说明条（截图模式 &panel=0 一并隐藏——只留干净画面） */
+.scene-caption {
+  position: fixed;
+  left: 16px; bottom: 16px;
+  z-index: 90;
+  max-width: 340px;
+  background: var(--preview-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--r8);
+  box-shadow: var(--shadow-raise);
+  padding: 10px 12px;
+  font-size: 11.5px;
+  color: var(--text-2);
+  line-height: 1.55;
+}
+.scene-caption[hidden] { display: none; }
+.scene-caption b { color: var(--text); }
+</style>
+</head>
+<body>
+<script>
+"use strict";
+/* ---- 参数（query 只作深链；一切选项控制面板点击可达） ---- */
+const q = new URLSearchParams(location.search);
+const theme = ["light", "dark", "eink"].includes(q.get("theme")) ? q.get("theme") : "light";
+document.documentElement.dataset.theme = theme;
+const scene = q.get("scene");              // single | multi | mixed | sent | blocked | thumbstates | free
+const lang = q.get("lang") === "en" ? "en" : "zh";
+const panelOff = q.get("panel") === "0";   // 截图关控制面板（连同场景说明条）
+
+/* ---- i18n（原型文案 zh/en 双档） ---- */
+const T = {
+  zh: {
+    placeholder: "输入消息，试试 / 命令…",
+    you: "你",
+    caption: "场景说明",
+    emptyTranscript: "（transcript 空——消息未发送，会话不推进）",
+    errToast: (m) => `${m} 不支持图片——草稿已保留，移除图片卡片后可重新发送`,
+    loading: "加载中…",
+    failed: "加载失败",
+    modelName: "Atlas 2",
+    send: "发送",
+    remove: "移除",
+    imageTag: "图片",
+    noteBlocked: "能力闸：发送被挡——toast 人话错误（点名模型）+ 图片卡片错误态（边框/底色，保留可移除）。真实产品里判据在后端，前端不预判。",
+    noteFree: "自由试玩：点「模拟粘贴」加图片卡片；发送成功 → 消息按交错顺序沉淀进 transcript（卡片无移除钮）；模型不支持时发送被挡。",
+  },
+  en: {
+    placeholder: "Type a message, try / commands…",
+    you: "You",
+    caption: "Scene notes",
+    emptyTranscript: "(transcript empty — message not sent, session did not advance)",
+    errToast: (m) => `${m} doesn't support images — draft kept; remove the image cards and send again`,
+    loading: "Loading…",
+    failed: "Failed to load",
+    modelName: "Atlas 2",
+    send: "Send",
+    remove: "Remove",
+    imageTag: "image",
+    noteBlocked: "Capability gate: send blocked — human-readable toast (names the model) + image cards in error state (border/tint, kept and removable). In the real product the check lives in the backend; the frontend never pre-judges.",
+    noteFree: "Free play: “simulate paste” adds an image card; a successful send lands the message in the transcript in interleaved order (no remove buttons); with image support off the send is blocked.",
+  },
+};
+const t = (k, ...a) => {
+  const v = T[lang][k];
+  return typeof v === "function" ? v(...a) : v;
+};
+
+/* ---- 合成 fixture（信息卫生：全部虚构——合成图 = 内联 SVG，无真实 vault 内容） ---- */
+function svgURI(svg) { return "data:image/svg+xml;utf8," + encodeURIComponent(svg); }
+const IMAGES = [
+  { name: "pasted-4f3a9c1e2b7d4e60.webp", w: 1200, h: 800, src: svgURI(
+    `<svg xmlns="http://www.w3.org/2000/svg" width="120" height="80" viewBox="0 0 120 80"><rect width="120" height="80" fill="#dfe7ee"/><circle cx="88" cy="22" r="10" fill="#f2c66d"/><path d="M0 80 34 44 56 66 78 40 120 80Z" fill="#8ba3c7"/><path d="M0 80 26 58 48 80Z" fill="#6d87ad"/></svg>`) },
+  { name: "pasted-8b1d77aa03c4f2e1.webp", w: 640, h: 640, src: svgURI(
+    `<svg xmlns="http://www.w3.org/2000/svg" width="80" height="80" viewBox="0 0 80 80"><rect width="80" height="80" fill="#f0ece4"/><rect x="10" y="10" width="26" height="18" rx="3" fill="#c9b8a3"/><rect x="44" y="10" width="26" height="18" rx="3" fill="#c9b8a3"/><rect x="27" y="52" width="26" height="18" rx="3" fill="#a39485"/><path d="M23 28 37 52M57 28 43 52" stroke="#a39485" stroke-width="2" fill="none"/></svg>`) },
+  { name: "pasted-c5e2109d84ab6317.webp", w: 900, h: 1350, src: svgURI(
+    `<svg xmlns="http://www.w3.org/2000/svg" width="60" height="90" viewBox="0 0 60 90"><rect width="60" height="90" fill="#e4ece4"/><rect x="14" y="12" width="32" height="46" rx="4" fill="#93b393"/><rect x="20" y="20" width="20" height="6" rx="2" fill="#e4ece4"/><rect x="20" y="32" width="20" height="6" rx="2" fill="#e4ece4"/><rect x="20" y="44" width="12" height="6" rx="2" fill="#e4ece4"/><rect x="18" y="66" width="24" height="12" rx="3" fill="#93b393"/></svg>`) },
+];
+const QUOTE_FIX = lang === "en" ? {
+  text: "Reorder the read-later list by reading momentum: short pieces first, long reads left for deep-work blocks. Save filter criteria as views, not one-off filters.",
+  src: "reading-workflow.md · Filtering · L12–18",
+} : {
+  text: "把「稍后读」清单按阅读动线重排：先处理短文献，长文留到整块时间。筛选条件保存为视图，而不是一次性过滤。",
+  src: "reading-workflow.md · 筛选流程 · L12–18",
+};
+
+/* ---- 状态 ---- */
+const state = {
+  imageSupport: true,     // 模型图片能力（原型模拟后端判据）
+  blocks: [],             // composer 块序列：{kind:para|quote|image, ...}
+  sent: [],               // transcript 已沉淀消息（块序列数组）
+  toast: null,            // {err:boolean, text:string}
+  imgCursor: 0,           // 模拟粘贴轮流取图
+};
+/* 场景预设 composer 内容 */
+const sceneBlocks = {
+  single: [
+    { kind: "para", text: lang === "en" ? "Take a look at this diagram:" : "帮我看一下这张图：", },
+    { kind: "image", img: 0 },
+  ],
+  multi: [
+    { kind: "para", text: lang === "en" ? "Screenshots from the field survey, three in total:" : "调研现场拍的三张图，都传给你：", },
+    { kind: "image", img: 0 },
+    { kind: "image", img: 1 },
+    { kind: "image", img: 2 },
+  ],
+  mixed: [
+    { kind: "para", text: lang === "en" ? "Based on this excerpt and the photos:" : "结合这段摘录和下面几张图看：", },
+    { kind: "quote" },
+    { kind: "image", img: 0 },
+    { kind: "para", text: lang === "en" ? "The first diagram is the old flow; focus on the differences." : "第一张是旧流程图，重点看差异。", },
+    { kind: "image", img: 1 },
+    { kind: "para", text: lang === "en" ? "And this one is the whiteboard from the workshop." : "这张是工作坊现场的白板。", },
+    { kind: "image", img: 2 },
+  ],
+  blocked: [
+    { kind: "para", text: lang === "en" ? "Read the text on this whiteboard for me:" : "帮我读一下白板上的文字：", },
+    { kind: "image", img: 2 },
+    { kind: "image", img: 1 },
+  ],
+  thumbstates: [ { kind: "image", img: 0 } ],
+  free: [ { kind: "para", text: "" } ],
+  sent: [
+    { kind: "para", text: lang === "en" ? "Summarize the old flow in three sentences, then point out what the new diagram changes." : "用三句话总结旧流程，再指出新图改了什么。", },
+    { kind: "image", img: 0 },
+    { kind: "para", text: lang === "en" ? "The second image is the new proposal." : "第二张是新方案的图。", },
+    { kind: "image", img: 1 },
+  ],
+};
+/* sent 场景：transcript 里已有一条沉淀消息，composer 已清空 */
+const SENT_TRANSCRIPT = [
+  { kind: "para", text: lang === "en" ? "Here is the old flow diagram and the new proposal:" : "这是旧流程图和新方案图：", },
+  { kind: "image", img: 0 },
+  { kind: "image", img: 1 },
+  { kind: "para", text: lang === "en" ? "What changed between the two?" : "两张之间改了什么？", },
+];
+
+const SEND_SVG = '<svg width="13" height="13" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M7 11.5v-9M3.5 6 7 2.5 10.5 6"/></svg>';
+
+/* ---- 块渲染 ---- */
+function imgThumbHTML(img, mode) {
+  const it = IMAGES[img];
+  if (mode === "loading") return `<div class="hp-icard-thumb is-loading">${t("loading")}</div>`;
+  if (mode === "failed") return `<div class="hp-icard-thumb is-failed">⚠ ${t("failed")}</div>`;
+  return `<div class="hp-icard-thumb"><img src="${it.src}" alt=""></div>`;
+}
+function icardHTML(img, mode, err) {
+  const it = IMAGES[img];
+  return `<div class="hp-icard${err ? " is-error" : ""}" data-kind="image" data-img="${img}">
+    ${imgThumbHTML(img, mode)}
+    <div class="hp-icard-main">
+      <div class="hp-icard-name">${t("imageTag")} · ${it.name}</div>
+      <div class="hp-icard-meta">${it.w}×${it.h} · image/webp</div>
+    </div>
+    ${mode === "composer" ? `<button type="button" class="hp-qc-x" data-act="rm" title="${t("remove")}" aria-label="${t("remove")}">×</button>` : ""}
+  </div>`;
+}
+function qcardHTML(mode) {
+  return `<div class="hp-qcard" data-kind="quote">
+    <span class="hp-qc-bar"></span>
+    <div class="hp-qc-main">
+      <div class="hp-qc-ex">${QUOTE_FIX.text}</div>
+      <div class="hp-qc-src">${QUOTE_FIX.src}</div>
+    </div>
+    ${mode === "composer" ? `<button type="button" class="hp-qc-x" data-act="rm" title="${t("remove")}" aria-label="${t("remove")}">×</button>` : ""}
+  </div>`;
+}
+function blockHTML(b, mode, errAll) {
+  if (b.kind === "para") return `<div class="hp-qpara" data-kind="para">${b.text || "<br>"}</div>`;
+  if (b.kind === "quote") return qcardHTML(mode);
+  return icardHTML(b.img, mode, errAll);
+}
+
+/* ---- 面板渲染 ---- */
+function transcriptHTML() {
+  const items = scene === "sent" ? SENT_TRANSCRIPT : state.sent;
+  if (!items.length) {
+    return scene === "blocked" ? `<div class="hp-t-empty">${t("emptyTranscript")}</div>` : "";
+  }
+  const body = items.map((b) => blockHTML(b, "transcript", false)).join("");
+  return `<div class="hp-transcript"><div class="hp-msg"><div class="hp-who"><b>${t("you")}</b> · 21:40</div>${body}</div></div>`;
+}
+function composerHTML() {
+  const blocks = state.blocks.length ? state.blocks : [{ kind: "para", text: "" }];
+  const hasImg = state.blocks.some((b) => b.kind === "image");
+  const empty = !hasImg && state.blocks.every((b) => b.kind !== "quote" && !b.text.trim());
+  const body = blocks.map((b) => blockHTML(b, "composer", state.toast?.err ?? false)).join("");
+  const toast = state.toast ? `<div class="hp-toast">${state.toast.err ? `<span class="t-warn">⚠</span>` : ""}<span>${state.toast.text}</span></div>` : "";
+  return `<div class="hp">
+    ${transcriptHTML()}
+    <div class="hp-composer-area">
+      <div class="hp-composer-box" style="position:relative">
+        <div class="hp-composer${empty ? " is-empty" : ""}" data-placeholder="${t("placeholder")}">${body}</div>
+        <div class="hp-ctl">
+          <span class="hp-sel">
+            <span class="hp-sel-model">${t("modelName")}</span><span class="hp-sel-sep" aria-hidden="true">·</span><span>High</span>
+            <span class="hp-sel-chev" aria-hidden="true">▾</span>
+          </span>
+          <span class="hp-ctx">42% · 38%</span>
+          <span class="hp-ctl-spacer"></span>
+          <button type="button" class="hp-send" data-act="send" title="${t("send")}" aria-label="${t("send")}">${SEND_SVG}</button>
+        </div>
+        ${toast}
+      </div>
+    </div>
+  </div>`;
+}
+
+/* ---- 控制面板 ---- */
+function cpanelHTML() {
+  const scenes = [["single", lang === "en" ? "single image" : "单图"], ["multi", lang === "en" ? "multi image" : "多图"], ["mixed", lang === "en" ? "mixed" : "图文交错"], ["sent", lang === "en" ? "sent" : "已发送沉淀"], ["blocked", lang === "en" ? "blocked" : "发送被挡"], ["thumbstates", lang === "en" ? "thumb states" : "缩略图占位"], ["free", lang === "en" ? "free play" : "自由试玩"]];
+  const sceneBtns = scenes.map(([id, name]) =>
+    `<button type="button" class="cp-btn${id === scene ? " is-on" : ""}" data-act="scene:${id}">${name}</button>`).join("");
+  return `<div class="cpanel" id="cpanel" ${panelOff ? "hidden" : ""}>
+    <h2>${lang === "en" ? "Control panel" : "控制面板"}</h2>
+    <div class="cp-row"><span class="cp-label">${lang === "en" ? "Scene" : "场景"}</span>${sceneBtns}</div>
+    <div class="cp-row"><span class="cp-label">${lang === "en" ? "Model image" : "模型图片能力"}</span>
+      <button type="button" class="cp-btn${state.imageSupport ? " is-on" : ""}" data-act="sup:1">${lang === "en" ? "supported" : "支持"}</button>
+      <button type="button" class="cp-btn${!state.imageSupport ? " is-on" : ""}" data-act="sup:0">${lang === "en" ? "unsupported" : "不支持"}</button>
+    </div>
+    <div class="cp-row"><span class="cp-label">${lang === "en" ? "Language" : "语言"}</span>
+      <button type="button" class="cp-btn${lang === "zh" ? " is-on" : ""}" data-act="lang:zh">zh</button>
+      <button type="button" class="cp-btn${lang === "en" ? " is-on" : ""}" data-act="lang:en">en</button>
+    </div>
+    <div class="cp-row"><span class="cp-label">${lang === "en" ? "Theme" : "主题"}</span>
+      ${["light", "dark", "eink"].map((th) => `<button type="button" class="cp-btn${th === theme ? " is-on" : ""}" data-act="theme:${th}">${th}</button>`).join("")}
+    </div>
+    <div class="cp-row"><span class="cp-label">${lang === "en" ? "Simulate" : "模拟"}</span>
+      <button type="button" class="cp-btn" data-act="paste">${lang === "en" ? "＋ paste image" : "＋ 粘贴图片"}</button>
+    </div>
+    <div class="cp-note">${lang === "en"
+      ? "Changes rewrite the URL (refresh-safe deep links). Screenshots: append &panel=0. The capability toggle simulates the backend check — the real frontend never pre-judges."
+      : "场景/主题/语言改动写回 URL（可刷新复现的深链）；截图用 &panel=0。模型图片能力开关模拟后端判据——真实前端不预判能力。"}</div>
+  </div>`;
+}
+
+/* ---- 场景说明条（截图模式一并隐藏） ---- */
+const SCENE_NOTES = {
+  single: ["单图", "模型支持图片：composer 里 1 张图片卡 + 文字。卡片与摘录卡同视觉族（同边框/圆角/底色/移除钮），不画引号竖条，缩略图做左锚；元信息行（尺寸 · 文件名）取 -qc-src 同档字号。"],
+  multi: ["多图", "多张图片卡连续排布：各卡缩略图按 object-fit:contain 收纳不同宽高比（横图/方图/竖图），卡片高度一致、节奏稳定。"],
+  mixed: ["图文交错混排", "段落、摘录引用卡、图片卡任意交错——卡片都是原子块，与段落的间距节奏一致（sp-2 纵向、首末收口）。这正是投递投影 [text, image, text, …] 的人侧镜像。"],
+  sent: ["已发送沉淀（transcript 同构）", "发送后用户消息在 transcript 按相同交错顺序呈现：图片卡可见但无移除钮；composer 已清空回占位。图片「进了上下文」对人可查（一致性原则）。"],
+  blocked: ["发送被挡（模型不支持图片）", null /* 用 t("noteBlocked") */],
+  thumbstates: ["缩略图占位态", "读字节是异步的：加载中转圈占位、加载失败 ⚠ 占位——两种回退都可见，不允许零高度空白（attachment-display 口径）。错误卡同时演示 is-error 叠加。"],
+  free: ["自由试玩", null /* 用 t("noteFree") */],
+};
+function captionHTML() {
+  const note = SCENE_NOTES[scene];
+  if (!note) return "";
+  const body = scene === "blocked" ? t("noteBlocked") : scene === "free" ? t("noteFree") : note[1];
+  return `<div class="scene-caption" ${panelOff ? "hidden" : ""}><b>${note[0]}</b><br>${body}</div>`;
+}
+
+/* ---- 发送模拟 ---- */
+function doSend() {
+  const hasImg = state.blocks.some((b) => b.kind === "image");
+  if (hasImg && !state.imageSupport) {
+    /* 能力闸：不沉淀、不清 composer；toast 人话错误 + 图片卡标错误态 */
+    state.toast = { err: true, text: t("errToast", t("modelName")) };
+    render();
+    return;
+  }
+  if (!state.blocks.some((b) => (b.kind === "para" && b.text.trim()) || b.kind !== "para")) return;
+  state.sent = state.blocks;
+  state.blocks = [{ kind: "para", text: "" }];
+  state.toast = null;
+  render();
+}
+function doPaste() {
+  state.blocks = state.blocks.filter((b) => !(b.kind === "para" && !b.text.trim()));
+  state.blocks.push({ kind: "image", img: state.imgCursor % IMAGES.length });
+  state.imgCursor += 1;
+  state.toast = null;
+  render();
+}
+function doRemove(el) {
+  const card = el.closest("[data-kind]");
+  const all = [...document.querySelectorAll(".hp-composer [data-kind]")];
+  const idx = all.indexOf(card);
+  if (idx < 0) return;
+  /* 按 DOM 序回读块序列再移除（与产品 withModel(removeBlockAt(...)) 同思路） */
+  state.blocks = all.map((n) => {
+    const k = n.dataset.kind;
+    if (k === "para") return { kind: "para", text: n.textContent };
+    if (k === "quote") return { kind: "quote" };
+    return { kind: "image", img: Number(n.dataset.img) };
+  });
+  state.blocks.splice(idx, 1);
+  if (!state.blocks.length) state.blocks = [{ kind: "para", text: "" }];
+  render();
+}
+
+/* ---- thumbstates 场景：loading / failed / error 三卡并排 ---- */
+function renderThumbstates() {
+  document.body.innerHTML = `<div class="stage-only"><div class="stage-inner"><div class="hp">
+    <div class="hp-composer-area"><div class="hp-composer-box" style="position:relative">
+      <div class="hp-composer">
+        ${icardHTML(0, "loading", false)}
+        ${icardHTML(1, "failed", false)}
+        ${icardHTML(2, "composer", true)}
+      </div>
+      <div class="hp-ctl">
+        <span class="hp-sel"><span class="hp-sel-model">${t("modelName")}</span><span class="hp-sel-sep" aria-hidden="true">·</span><span>High</span><span class="hp-sel-chev" aria-hidden="true">▾</span></span>
+        <span class="hp-ctx">42% · 38%</span>
+        <span class="hp-ctl-spacer"></span>
+        <button type="button" class="hp-send" title="${t("send")}" aria-label="${t("send")}">${SEND_SVG}</button>
+      </div>
+    </div></div>
+  </div></div></div>${captionHTML()}${cpanelHTML()}`;
+  bind();
+}
+
+function render() {
+  if (scene === "thumbstates") return renderThumbstates();
+  document.body.innerHTML = `<div class="stage-only"><div class="stage-inner">${composerHTML()}</div></div>${captionHTML()}${cpanelHTML()}`;
+  bind();
+}
+function bind() {
+  document.body.onclick = (e) => {
+    const rm = e.target.closest('[data-act="rm"]');
+    if (rm) { doRemove(rm); return; }
+    const actEl = e.target.closest("[data-act]");
+    if (!actEl) return;
+    const [kind, val] = actEl.dataset.act.split(":");
+    if (kind === "scene") { location.search = `?scene=${val}&theme=${theme}&lang=${lang}`; return; }
+    if (kind === "theme") { location.search = `?scene=${scene ?? "free"}&theme=${val}&lang=${lang}`; return; }
+    if (kind === "lang") { location.search = `?scene=${scene ?? "free"}&theme=${theme}&lang=${val}`; return; }
+    if (kind === "sup") { state.imageSupport = val === "1"; state.toast = null; render(); return; }
+    if (kind === "send") { doSend(); return; }
+    if (kind === "paste") { doPaste(); return; }
+  };
+}
+
+/* ---- board 总览 ---- */
+const BOARD = [
+  ["single", "单图", "模型支持图片：1 张图片卡 + 文字。图片卡与摘录卡同视觉族——同边框/圆角/底色/移除钮，不画引号竖条（缩略图做左锚），元信息行取 -qc-src 同档字号。"],
+  ["multi", "多图", "多张图片卡连续排布，不同宽高比（横/方/竖）经 object-fit:contain 收纳，卡片高度一致。"],
+  ["mixed", "图文交错混排", "段落 / 摘录卡 / 图片卡任意交错，原子块节奏与既有卡片一致——投递投影 [text, image, text…] 的人侧镜像。"],
+  ["sent", "已发送沉淀", "发送后 transcript 按相同交错顺序呈现：图片可见、无移除钮；composer 回占位。"],
+  ["blocked", "发送被挡", "模型不支持图片：发送被挡 + toast 人话错误（点名模型）+ 图片卡错误态（保留可移除）。"],
+  ["thumbstates", "缩略图占位态", "加载中转圈 / 加载失败 ⚠ 两种可见回退，叠加错误态样式。"],
+  ["free", "自由试玩", "模拟粘贴、发送、移除全链路可点。"],
+];
+function renderBoard() {
+  const rows = BOARD.map(([id, name, desc]) => `
+    <section class="board-row" id="${id}">
+      <div class="meta">
+        <div class="v-id">scene=${id}</div>
+        <div class="v-name">${name}</div>
+        <div class="v-desc">${desc}</div>
+        <a class="v-link" href="?scene=${id}&theme=${theme}&lang=${lang}">单帧 →</a>
+      </div>
+      <div class="stage"><div class="stage-inner">${frameHTML(id)}</div></div>
+    </section>`).join("");
+  document.body.innerHTML = `
+    <header class="board-head">
+      <h1>harness composer 贴图 UX · 原型（M424）</h1>
+      <div class="hint">视觉锚点：openspec/changes/harness-composer-image-paste design §8（图片卡与 M343 摘录卡 / M423 消息摘录卡同视觉族；缩略图左锚替代引号竖条；错误态用既有 --danger 语义色）。全部 fixture 合成。单帧可交互；控制面板点击可达；截图模式 &panel=0。</div>
+    </header>
+    ${rows}
+    <p style="padding:16px 32px;font-size:11.5px;color:var(--text-3)">board 页各帧为静态示意（深链单帧可交互）。</p>
+    ${cpanelHTML()}`;
+  bind();
+}
+/* board 帧 = 各场景静态 HTML */
+function frameHTML(id) {
+  const saved = { b: state.blocks, s: state.sent, to: state.toast };
+  state.blocks = (sceneBlocks[id] ?? sceneBlocks.free).map((b) => ({ ...b }));
+  state.sent = id === "sent" ? SENT_TRANSCRIPT : [];
+  state.toast = id === "blocked" ? { err: true, text: t("errToast", t("modelName")) } : null;
+  const html = id === "thumbstates"
+    ? `<div class="hp"><div class="hp-composer-area"><div class="hp-composer-box" style="position:relative"><div class="hp-composer">${icardHTML(0, "loading", false)}${icardHTML(1, "failed", false)}${icardHTML(2, "composer", true)}</div></div></div></div>`
+    : composerHTML();
+  state.blocks = saved.b; state.sent = saved.s; state.toast = saved.to;
+  return html;
+}
+
+/* ---- 入口 ---- */
+if (scene) {
+  state.blocks = (sceneBlocks[scene] ?? sceneBlocks.free).map((b) => ({ ...b }));
+  if (scene === "blocked") { state.imageSupport = false; state.toast = { err: true, text: t("errToast", t("modelName")) }; }
+  /* sent 场景：消息已沉淀进 transcript（SENT_TRANSCRIPT），composer 回空占位 */
+  if (scene === "sent") state.blocks = [{ kind: "para", text: "" }];
+  document.title = `${scene}（${SCENE_NOTES[scene]?.[0] ?? scene}） · ${theme} — M424`;
+  render();
+} else {
+  document.title = "harness composer 贴图 UX · board — M424";
+  renderBoard();
+}
+</script>
+</body>
+</html>
