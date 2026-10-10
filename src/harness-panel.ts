@@ -1734,7 +1734,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   modelWrap.append(modelChip, selPop, effHint);
 
   // 权限 chip（M414，change add-harness-permission-modes design §7）：控制行**第三位**
-  //（合并选择器 chip 之后、ctx 读数之前）。chip 面 = **短名**（D423–D425：只读 / 写入 / 完全），
+  //（合并选择器 chip 之后、ctx 读数之前）。chip 面 = **短名**（D423–D425：只读 / 可写 / 完全），
   // 点开的浮层里才是**全名 + 每档一行释义**（Alex 2026-10-09 裁决：控制行要被两个 chip 与
   // ctx 读数共同挤占，短名才保证三档都完整显示）。形态逐值沿用合并 chip 配方（无边框小标签、
   // 24px 高、r5、fs-label-s、text-2、hover 给底、chevron ▾），chip + 浮层同挂 wrapper

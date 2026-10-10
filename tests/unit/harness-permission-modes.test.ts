@@ -69,7 +69,7 @@ test("三档文案：zh 档下短名 / 全名 / 释义逐档非空且互不相�
       for (const text of group) assert.notEqual(text.trim(), "", "读数不得为空串");
     }
     // design §7 的裁决口径：chip 短、浮层全名（短名是全名的截省形态，不是另一套命名）。
-    assert.equal(shorts.join("/"), "只读/写入/完全");
+    assert.equal(shorts.join("/"), "只读/可写/完全");
     assert.equal(fulls.join("/"), "只读/保险库写入/完全访问");
   });
 });
