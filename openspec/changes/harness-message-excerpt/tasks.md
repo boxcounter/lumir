@@ -26,7 +26,7 @@
 
 ## 4. 文案与文档
 
-- [ ] 4.1 新 D-code（D440 起）双档 zh/en：出处行（「对话 · 助手/你」）、消息失锚 toast（对齐 D372 措辞改「对话」）、跳回 a11y 名；同步 `文案-Copy.md` 与 copy drift 测试
+- [ ] 4.1 新 D-code（D442 起）双档 zh/en：出处行（「对话 · 助手/你」）、消息失锚 toast（对齐 D372 措辞改「对话」）、跳回 a11y 名；同步 `文案-Copy.md` 与 copy drift 测试
 - [ ] 4.2 本 change 归档时 living spec 增量并入核对（ADDED ×2 与实现一致）
 
 ## 5. 验证

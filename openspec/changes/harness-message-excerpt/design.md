@@ -14,13 +14,13 @@
 - **用户消息是纯文本、助手消息是面板内 Markdown 渲染**：用户段 `textContent` 直出（`harness-panel.ts:3107-3109`）；助手段经 `renderMarkdownInto`（`:1525` 起，lezer commonmark + GFM，DOM API + `textContent`，**不保留源偏移**）。原文来源只在复制钮的 `copySources` WeakMap（`:3009`），不暴露给选区。
 - **composer 混排模型可扩展**：`ComposerBlock = quote | paragraph`（`src/quote-card.ts:35-37`），卡片是 `contenteditable=false` 原子节点，`insertCardAtCaret`（`harness-panel.ts:229-262`）支持任意块在光标处拆段插入。`createCardEl(card, mode)`（`:2048-2101`）一个工厂供 composer 与 transcript 两态。
 - **快照恢复从留存原文解析**：`parseQuoteMessage(record.text)`（`harness-panel.ts:4153`）把 JSONL 留存的用户消息文本还原为 blocks——新元素必须在这里有解析路径，否则恢复丢卡。
-- **视口注入 skip 判定**：`hasCards` 成立即 skipViewport（`harness-panel.ts:4442-4443`），判定挂在「消息携带 `<quote>` 卡」上，扩展判定即可覆盖新块类。
-- **文案**：浮动钮文案 D370「摘录到对话」、失锚 toast D372 已有（`src/copy-data.ts:843/851`）；D372 文案「原文已不在文档中」对消息场景不适用，需要新 D-code（下一空闲段 D440 起，见 `src/copy-data.ts:1260`）。
+- **视口注入 skip 判定**：`hasCards` 成立即 skipViewport（`harness-panel.ts:4441-4443`），判定挂在「消息携带 `<quote>` 卡」上，扩展判定即可覆盖新块类。
+- **文案**：浮动钮文案 D370「摘录到对话」、失锚 toast D372 已有（`src/copy-data.ts:843/851`）；D372 文案「原文已不在文档中」对消息场景不适用，需要新 D-code（下一空闲段 D442 起——D440/D441 已被 attachment 写入失败文案占用）。
 
 ## 2. 设计合同与输入
 
 - 设计合同：本 change 的 `specs/harness/spec.md` 增量（两条 ADDED requirement 及其验收场景）。
-- 行为基准：living spec 的「摘录引用卡片 / 混排对话输入区 / 引用消息序列化协议 / 摘录失锚降级」（`openspec/specs/harness/spec.md:209-279`）——本 change 的全部交互形态以它们为对齐基准。
+- 行为基准：living spec 的「摘录引用卡片 / 混排对话输入区 / 引用消息序列化协议 / 摘录失锚降级」（`openspec/specs/harness/spec.md:301/315/334/358`）——本 change 的全部交互形态以它们为对齐基准。
 - NOT 清单：摘录思考块/工具行/批准卡（MVP）；位置级跳回；跨会话跳回；卡片编号；新键位。
 - **一致性原则**（Alex 2026-10-06，全文适用）：投递给模型的上下文要素对人必须也可查——msgquote 卡的出处（role / ts）由 who 行（角色 + 相对时间）与卡片 hover（完整摘录 + 绝对时间）双可查面满足；协议不含任何 UI 不可查的标识。
 
@@ -57,7 +57,7 @@ interface MessageQuoteCard {
 - **解析还原**：`parseQuoteMessage` 扩展识别 `<msg-quote>` 并还原为 `{kind:"msgquote"}` 块——快照恢复与 `<quote>` 同 round-trip 口径；未知元素维持既有「不识别即不还原」的保守行为，MUST NOT 静默丢文。
 - **prompt 层**：序列化结构原样进用户消息；系统/会话层指引 agent 按摘录内容与角色回指（「你上面说的『倒序阅读』那段」）。两 provider 的装配处统一处理。
 - **JSONL 留存**：天然含 `<msg-quote>` 块（留存记序列化后完整消息），Rust 侧零改动。
-- **视口注入**：`hasCards` 判定扩展为「含 quote 或 msgquote 块」即 skipViewport（`:4442`）——「上下文注入与可见性」的「携带卡片」扩展涵盖两类卡片，注入策略本身不重裁。
+- **视口注入**：`hasCards` 判定扩展为「含 quote 或 msgquote 块」即 skipViewport（`:4441`）——「上下文注入与可见性」的「携带卡片」扩展涵盖两类卡片，注入策略本身不重裁。
 
 ## 5. 手势与装配
 
