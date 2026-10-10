@@ -33,8 +33,9 @@ use super::tools::{self, ToolContext, ToolOutput};
 use super::{Runtime, VaultScope};
 
 /// TS 侧组装的结构化上下文块（tower 钉死形状，宽容解析）：
-/// `{"path":"a/b.md","selection":{"from_line":3,"to_line":7,"text":"…"}}` 或
-/// 同款 `viewport_range`。行号 1-based 闭区间；`path` 可缺（= 无编辑器上下文）。
+/// `{"path":"a/b.md","viewport_range":{"from_line":3,"to_line":7}}`（M412 起视口块只带行号，
+/// 不再带原文）；旧的 `selection`（行号 + `text`，选区注入已于 M343 退役）仍被宽容接受。
+/// 行号 1-based 闭区间；`path` 可缺（= 无编辑器上下文）。
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct ContextBlock {
     pub path: Option<String>,
@@ -44,6 +45,8 @@ pub struct ContextBlock {
     pub viewport_range: Option<RangeBlock>,
 }
 
+/// 行范围块。`text` 缺席是常态——M412 起视口块不带原文，只有历史 `selection` 可能带上，
+/// 留给宽容解析。
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct RangeBlock {
     pub from_line: Option<u64>,
@@ -95,6 +98,10 @@ const CONTEXT_SECTION_OPEN: &str = "[";
 const CONTEXT_SECTION_CLOSE: &str = "]";
 
 /// 把上下文块格式化成注入 user 消息的「当前编辑器上下文」节（压缩续聊时原样重注入）。
+///
+/// 视口块（M412 起）只带行号、不带原文——原文随每条消息进上下文太冗余，节里因此只有
+/// 路径 + `视口（第 X-Y 行）` 一行。历史 `selection`（M343 已退役的选区注入）若带 `text`
+/// 仍按「行号 + 原文」渲染，宽容解析不吃亏。
 pub fn context_section(block: &ContextBlock) -> Option<String> {
     let path = block.path.as_ref()?;
     let mut out = format!("{CONTEXT_SECTION_HEADER}\n文件：{path}");
@@ -110,10 +117,9 @@ pub fn context_section(block: &ContextBlock) -> Option<String> {
             (Some(from), Some(to)) => format!("（第 {from}-{to} 行）"),
             _ => String::new(),
         };
-        out.push_str(&format!("\n{kind}{lines}："));
         match &range.text {
-            Some(text) => out.push_str(&format!("\n{text}")),
-            None => out.push_str("（无文本）"),
+            Some(text) => out.push_str(&format!("\n{kind}{lines}：\n{text}")),
+            None => out.push_str(&format!("\n{kind}{lines}")),
         }
     }
     Some(out)
@@ -1288,6 +1294,43 @@ mod tests {
         let pasted = format!("看这段\n\n[{CONTEXT_SECTION_HEADER}示例]");
         let assembled = assemble_user_message(&pasted, &block_with_selection("选中文本"));
         assert_eq!(strip_context_section(&assembled.text), pasted);
+    }
+
+    /// M412：视口块只带行号、不带原文——`parse_context` 宽容接受缺席的 `text`，
+    /// `context_section` 渲染成「视口（第 X-Y 行）」一行，不再有「（无文本）」占位。
+    #[test]
+    fn viewport_block_renders_line_range_without_text() {
+        let block =
+            parse_context(r#"{"path":"a/b.md","viewport_range":{"from_line":3,"to_line":7}}"#)
+                .unwrap();
+        assert!(block.viewport_range.as_ref().unwrap().text.is_none());
+        let section = context_section(&block).unwrap();
+        assert_eq!(
+            section,
+            format!("{CONTEXT_SECTION_HEADER}\n文件：a/b.md\n视口（第 3-7 行）")
+        );
+        // 区分度（REVIEW.md 第 1 条）：旧实现在无 text 时落「（无文本）」占位——本断言挡它。
+        assert!(!section.contains("（无文本）"));
+        // 全文装配：提问 + 空行 + 方括号节，节里只有路径与行号。
+        let assembled = assemble_user_message("看这里", &block);
+        assert_eq!(
+            assembled.text,
+            format!("看这里\n\n[{CONTEXT_SECTION_HEADER}\n文件：a/b.md\n视口（第 3-7 行）]")
+        );
+    }
+
+    /// 宽容解析不吃亏：历史 `selection`（选区注入 M343 已退役）仍带 `text`，照旧按
+    /// 「行号 + 原文」渲染——M412 只改视口的产出形状，不收窄对旧载荷的接受面。
+    #[test]
+    fn legacy_selection_with_text_still_renders_source_text() {
+        let block = parse_context(
+            r#"{"path":"a.md","selection":{"from_line":3,"to_line":7,"text":"选中文本"}}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            context_section(&block).unwrap(),
+            format!("{CONTEXT_SECTION_HEADER}\n文件：a.md\n选区（第 3-7 行）：\n选中文本")
+        );
     }
 
     /// M367：模型某轮只发工具调用、无正文文本时——
