@@ -96,9 +96,11 @@ vault 会被截图迅速撑大，且 50MB 上限命中的概率随 Retina 截屏
 | 调色板量化（pngquant 式 256 色） | ~20–40% | 渐变/照片明显失真，UI 截图尚可 | `imagequant`（libimagequant 绑定） | 否（有损却不及 WebP 无损通用） |
 | 分辨率降采样（Retina 2x → 1x） | ~25%（线性尺寸减半 → 像素 ×1/4） | 丢失物理分辨率 | 简单 | 否（保留原分辨率，体积交给无损压缩） |
 
-**实测读数（M416，验收场景 116 的证据，`test-results/acceptance/2026-10-10/116-paste-image-transcode-size/`）**：
-2560×1920 的合成类截图 PNG **35055 bytes → WebP 无损 6030 bytes（17.2%）**；另一组 400×260
-合成图 **2792 → 1324 bytes（47.4%）**。合成 fixture 是高可压的渐变 + 文字条，**真实截图的比值会
+**实测读数（M416）**：2560×1920 的合成类截图 PNG **35055 bytes → WebP 无损 6030 bytes（17.2%）**
+（验收场景 116 的证据，`test-results/acceptance/2026-10-10/116-paste-image-transcode-size/`）；
+另一组 480×320 合成图（场景 112 那张，seed=7）**2792 → 1324 bytes（47.4%）**
+（证据 `test-results/acceptance/2026-10-10/112-paste-image-to-vault/`）。合成 fixture 是高可压的
+渐变 + 文字条，**真实截图的比值会
 更高（收益更小）**——这两个数是乐观侧参考，不是产品承诺。转码确实解决了 Alex 提出的「十几兆
 二十几兆」问题：那个量级来自 pasteboard 的 TIFF flavor，web 通道的输入本来就是 PNG 字节
 （§2 实测约 0.6MB），无损再压到一半上下。
