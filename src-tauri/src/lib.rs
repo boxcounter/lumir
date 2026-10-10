@@ -18,6 +18,7 @@ pub mod ready;
 pub mod recovery;
 pub mod vault_registry;
 pub mod vault_session;
+pub mod window_state;
 
 #[cfg(target_os = "macos")]
 use tauri::menu::{Menu, MenuItemBuilder, MenuItemKind};
@@ -146,6 +147,10 @@ pub fn run() {
             ready::emit_ready(started);
             #[cfg(target_os = "macos")]
             install_menu_overrides(app.handle())?;
+            // 窗口尺寸：写侧线程先起来（防抖落盘要能收到 set_size 触发的 Resized），
+            // 再施加启动尺寸并显示窗口（配置里 `visible: false`，见 apply_startup_size）。
+            window_state::init();
+            apply_startup_size(app.handle());
             // last_vault 自动恢复移出主线程（M159）：本回调随即返回，事件循环继续跑
             // ——窗口立即可绘制。setup 内 MUST NOT 同步做 config::load / open_vault。
             start_restore(app.handle());
@@ -193,11 +198,107 @@ pub fn run() {
                 api.prevent_close();
                 let _ = app.emit("app:quit_blocked", ());
             }
+            // 窗口尺寸变化：只更新内存里的「最近尺寸」缓存（写盘在 `lumir-window-state`
+            // 线程上防抖；位置不入档，因此**不监听 `Moved`**）。尺寸以逻辑点落盘，跨
+            // Retina / 非 Retina 迁移时不随物理像素漂移。
+            tauri::RunEvent::WindowEvent {
+                label,
+                event: tauri::WindowEvent::Resized(size),
+                ..
+            } => {
+                if let Some(window) = app.get_webview_window(&label) {
+                    let scale = window.scale_factor().unwrap_or(1.0);
+                    window_state::record_size(
+                        window_state::to_logical(size.width, scale),
+                        window_state::to_logical(size.height, scale),
+                    );
+                }
+            }
             // 退出：把诊断日志缓冲刷盘（丢掉一个批次的量会把「退出前发生了什么」抹掉，
-            // 而那正是最常要查的一段）。正常退出路径都会走到这里。
-            tauri::RunEvent::Exit => logging::flush(),
+            // 而那正是最常要查的一段）。正常退出路径都会走到这里。窗口尺寸一并 flush，
+            // 兜住「最后一次缩放之后、防抖窗口内就退出」这一条路径（macOS Cmd+Q 经
+            // applicationWillTerminate 到达本臂，见 window_state 模块头）。
+            tauri::RunEvent::Exit => {
+                logging::flush();
+                window_state::flush();
+            }
             _ => {}
         });
+}
+
+/// 主窗口 label：`tauri.conf.json` 的 `app.windows[0]` 未声明 `label`，走 tauri 的默认值
+/// `"main"`（`tauri_utils::config` 的 `default_window_label`）。
+const MAIN_WINDOW_LABEL: &str = "main";
+
+/// 施加启动尺寸并显示窗口（change startup-window-pane-defaults，design §3.3）。
+///
+/// 读档 → 存档尺寸（逐维钳进窗口所在显示器的工作区）/ 首启 = 工作区的 90% → `set_size`，
+/// 随后 `show()`。`tauri.conf.json` 的 `1200×800` 因此**降级为占位尺寸**（窗口创建时的
+/// 初值，用户看不到；也是工作区不可得时的兜底），构建配置另置 `visible: false`——窗口的
+/// 显示由本函数负责，`setup` 里少一次 `show()` 就是「屏幕上什么都没有」。
+///
+/// **不调 `set_position` / `center()`**（裁决点 1，Alex 2026-10-10：只记尺寸）：位置由创建
+/// 帧的 OS 默认放置决定，本应用不施加、不持久化、不作判据。
+///
+/// **自身不返回致命错误**：存档损坏 / 工作区不可得都在内部降级（记 warning），因此 `show()`
+/// 一定执行。`set_size` 失败也只降级——窗口按占位尺寸出现，仍强于不出现。
+fn apply_startup_size(app: &tauri::AppHandle) {
+    let Some(window) = app.get_webview_window(MAIN_WINDOW_LABEL) else {
+        eprintln!("lumir: 未找到主窗口，启动尺寸未施加");
+        return;
+    };
+    let scale = window.scale_factor().unwrap_or(1.0);
+    let work = work_area_size(&window);
+    let size = match (window_state::load(), work) {
+        // 非首启：存档尺寸（逻辑点 → 物理像素）逐维钳进工作区；不超过的原样施加。
+        (Some(state), Some(work)) => {
+            let stored = (
+                window_state::to_physical(state.width, scale),
+                window_state::to_physical(state.height, scale),
+            );
+            let (w, h) = window_state::clamp_to_work(stored, work);
+            Some(tauri::PhysicalSize::new(w, h))
+        }
+        // 存档在、工作区取不到：不钳、按存档尺寸施加（spec 的降级路径，记 warning）。
+        (Some(state), None) => {
+            eprintln!("lumir: 取不到工作区，窗口尺寸按存档原样施加（不钳制）");
+            Some(tauri::PhysicalSize::new(
+                window_state::to_physical(state.width, scale),
+                window_state::to_physical(state.height, scale),
+            ))
+        }
+        // 首启（含存档损坏 / 版本不符）：工作区的 90%。
+        (None, Some(work)) => {
+            let (w, h) = window_state::first_launch_size(work.0, work.1);
+            Some(tauri::PhysicalSize::new(w, h))
+        }
+        // 首启且工作区不可得：保持构建配置的占位尺寸（不调 set_size）。
+        (None, None) => {
+            eprintln!("lumir: 取不到工作区，窗口按构建配置的占位尺寸出现");
+            None
+        }
+    };
+    if let Some(size) = size {
+        if let Err(e) = window.set_size(size) {
+            eprintln!("lumir: 施加启动尺寸失败（按占位尺寸出现）：{e}");
+        }
+    }
+    if let Err(e) = window.show() {
+        eprintln!("lumir: 显示主窗口失败：{e}");
+    }
+}
+
+/// 窗口所在显示器的工作区尺寸（物理像素，macOS 上即 `NSScreen.visibleFrame`——已排除菜单栏
+/// 与 Dock）。`current_monitor()` 取不到时回落 `primary_monitor()`；都取不到返回 `None`，
+/// 由调用方走降级路径。位置不参与本 change，取工作区只用于尺寸算式与钳制。
+fn work_area_size(window: &tauri::WebviewWindow) -> Option<(u32, u32)> {
+    let monitor = window
+        .current_monitor()
+        .ok()
+        .flatten()
+        .or_else(|| window.primary_monitor().ok().flatten())?;
+    let area = monitor.work_area().size;
+    Some((area.width, area.height))
 }
 
 /// macOS 菜单改造入口：一次 `Menu::default()` 内完成退出守卫（M101）、撤销/重做让位
