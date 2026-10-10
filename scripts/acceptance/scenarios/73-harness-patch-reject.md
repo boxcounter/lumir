@@ -83,7 +83,7 @@ steps:
         editor: { has: "HNL-BETA 第二行，等待 patch。" }
       - label: JSONL 记下拒绝结果（approval sidecar：decision=rejected + 多行原因原文——
           \n 在 JSON 里是转义的 \n 两字符）
-        file: { path: "env:harness/sessions/*.jsonl", has: '/^.*"decision":"rejected".*"reason":"hold\\noff".*"tool":"vault_patch".*$/' }
+        file: { path: "env:harness/sessions/*/*.jsonl", has: '/^.*"decision":"rejected".*"reason":"hold\\noff".*"tool":"vault_patch".*$/' }
       - label: 待决语义整体退场（卡片被移除：问句不再出现，M406）
         ax: { not: "要修改这个文件吗？" }
       - label: 闸语义副句同退（「批准后才会落盘」不再出现）

@@ -948,7 +948,7 @@ export function truncateSessionName(text: string, max: number = SESSION_NAME_MAX
 /** 历史会话清单的一条（`harness_list_sessions` 的宽容提取结果；M395 合同形状
  *  `SessionSummary` = { session_id, first_user_text, ts }，解析只认这三个键）。 */
 export interface SessionEntry {
-  /** `sessions/<id>.jsonl` 的文件名（恢复命令的入参）。 */
+  /** `sessions/<vault 稳定 id>/<id>.jsonl` 的文件名（恢复命令的入参）。 */
   sessionId: string;
   /** 首条用户消息原文（会话名口径的数据源）；null = 无用户消息（回落 D330「新会话」）。 */
   firstUserText: string | null;

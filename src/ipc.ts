@@ -454,7 +454,7 @@ export function harnessState(): Promise<string> {
 /**
  * 本 vault 的历史会话清单（M392 + M395）：`Vec<SessionSummary>`（ts-rs 导出，真实载荷是
  * JS 数组——与 harness_state 的 JSON String 惯例不同，M395 起平齐类型声明）。
- * 每项含 `session_id`（`sessions/<id>.jsonl` 的文件名，恢复命令的入参）、
+ * 每项含 `session_id`（`sessions/<vault 稳定 id>/<id>.jsonl` 的文件名，恢复命令的入参）、
  * `first_user_text`（该会话首条用户消息的原始提问段——注入的上下文节已由后端剥除，无则缺省；
  * 截断约 20 字是前端展示规则）、
  * `ts`（首行 `session_open` 信封的 unix 秒，缺则缺省）。服务端已按 vault 过滤、按时间
@@ -468,7 +468,7 @@ export function harnessListSessions(): Promise<SessionSummary[]> {
 
 /**
  * 从留存文件恢复历史会话并续聊（M392，change reshape-harness-session-recording design §6.2）：
- * `session_id` 是 `sessions/<id>.jsonl` 的文件名。后端读源文件最后一条会话轮次
+ * `session_id` 是 `sessions/<vault 稳定 id>/<id>.jsonl` 的文件名。后端读源文件最后一条会话轮次
  * `llm_request` 的完整请求体（折叠其后未入请求的末尾响应），system + input 原样灌进
  * **新**会话并续写新留存文件（`opened_from=restore`）。返回的 `SessionResumeInfo.messages`
  * 是后端把灌回的 input 映射成的**面板重建消息**（M398）——调用方（src/harness-panel.ts 的
@@ -482,7 +482,7 @@ export function harnessResumeSession(session_id: string): Promise<SessionResumeI
 }
 
 /**
- * 删除一份历史会话留存（M406）：`session_id` 是 `sessions/<id>.jsonl` 的文件名。
+ * 删除一份历史会话留存（M406）：`session_id` 是 `sessions/<vault 稳定 id>/<id>.jsonl` 的文件名。
  * 后端校验 vault 归属（与列举 / 恢复同一口径），当前活跃会话的留存拒绝删除
  * （`harness_session_active`）；文件已不存在按幂等成功处理。错误码经 src/copy.ts 的
  * errorText 渲染。

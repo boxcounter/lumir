@@ -48,15 +48,15 @@ steps:
       - label: 回答渲染在面板里
         ax: { has: "验收回答：上下文已收到。" }
       - label: 提问以 llm_request 落盘（wire 口径：user 消息在 request.messages）
-        file: { path: "env:harness/sessions/*.jsonl", has: '/^.*"kind":"llm_request".*ctxprobe.*$/' }
+        file: { path: "env:harness/sessions/*/*.jsonl", has: '/^.*"kind":"llm_request".*ctxprobe.*$/' }
       - label: 注入的上下文节在 llm_request 里（文件路径 + 视口节头）
-        file: { path: "env:harness/sessions/*.jsonl", has: "/当前编辑器上下文：\\\\n文件：harness-note\\.md\\\\n视口（第/" }
+        file: { path: "env:harness/sessions/*/*.jsonl", has: "/当前编辑器上下文：\\\\n文件：harness-note\\.md\\\\n视口（第/" }
       - label: 视口节到行号为止、紧跟收尾方括号（M412：节里没有原文段）
-        file: { path: "env:harness/sessions/*.jsonl", has: "/视口（第 \\d+-\\d+ 行）\\]/" }
+        file: { path: "env:harness/sessions/*/*.jsonl", has: "/视口（第 \\d+-\\d+ 行）\\]/" }
       - label: 选区**没有**被自动注入（remove 后的合同：选中片段只经摘录卡片显式策展）
-        file: { path: "env:harness/sessions/*.jsonl", not: "选区（第" }
+        file: { path: "env:harness/sessions/*/*.jsonl", not: "选区（第" }
       - label: 视口原文**不再**随消息注入（M412：视口覆盖内的标题行不进 JSONL）
-        file: { path: "env:harness/sessions/*.jsonl", not: "# Harness 验收笔记" }
+        file: { path: "env:harness/sessions/*/*.jsonl", not: "# Harness 验收笔记" }
       - shot: 02-回答到达
 ---
 
@@ -112,4 +112,4 @@ D331（chip 的选区形态）随之退场。本场景（item 70）当时没跟�
 ## 环境与副作用
 
 - 合成 vault `/tmp/lumir-m102-acceptance` + 隔离 `XDG_CONFIG_HOME`；真实 vault 只读。
-- 只读文档、发一条 mock 提问；JSONL 落在隔离配置目录的 `sessions/` 下（`env:harness/sessions/*.jsonl`）。1420 全程不碰。
+- 只读文档、发一条 mock 提问；JSONL 落在隔离配置目录的 `sessions/` 下（`env:harness/sessions/*/*.jsonl`）。1420 全程不碰。

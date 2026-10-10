@@ -68,9 +68,9 @@ steps:
       - label: 未产出的末片始终没有上屏（停止真的收流，不是等它跑完再收）
         ax: { not: "STREAM-C 第三片。" }
       - label: JSONL 记下中断事件（turn_aborted sidecar）
-        file: { path: "env:harness/sessions/*.jsonl", has: '"kind":"turn_aborted"' }
+        file: { path: "env:harness/sessions/*/*.jsonl", has: '"kind":"turn_aborted"' }
       - label: 已产出正文也已留存（中断前半截响应随 llm_response 落盘）
-        file: { path: "env:harness/sessions/*.jsonl", has: '/^.*"kind":"llm_response".*STREAM-A 第一片。.*$/' }
+        file: { path: "env:harness/sessions/*/*.jsonl", has: '/^.*"kind":"llm_response".*STREAM-A 第一片。.*$/' }
 
   - name: composer 收口回空闲（aborted 经 finished 回 idle）
     do: waitFor
@@ -128,7 +128,7 @@ steps:
   把上面的 `not C` 从一个可能空转的负向断言升级为「在途 + 增量」的联合判据。
 - **在途停止**：`已停止`（D383）是中断**已发生**的正观测；`not C` 与 JSONL 的 `turn_aborted`
   是三处独立事实（界面 / 界面 / 盘），任意一处坏了另外两处不会跟着绿。
-- **JSONL**：`env:harness/sessions/*.jsonl` 取 mtime 最新一份（隔离配置目录每场景清空，glob 口径与
+- **JSONL**：`env:harness/sessions/*/*.jsonl` 取 mtime 最新一份（隔离配置目录每场景清空，glob 口径与
   场景 88 一致）。
 
 ## 已知边界（如实登记）
@@ -149,5 +149,5 @@ steps:
 ## 环境与副作用
 
 - 合成 vault `/tmp/lumir-m102-acceptance` + 隔离 `XDG_CONFIG_HOME`；不写 vault 文件（只发问、
-  停止），JSONL 留存落在隔离配置目录的 `sessions/` 下（`env:harness/sessions/*.jsonl`）。真实 vault 只读。
+  停止），JSONL 留存落在隔离配置目录的 `sessions/` 下（`env:harness/sessions/*/*.jsonl`）。真实 vault 只读。
 - 本场景耗时主要是一次片间隔（6s）+ 收口；1420 全程不碰（实例走 `LUMIR_ACCEPTANCE_PORT=1430`）。

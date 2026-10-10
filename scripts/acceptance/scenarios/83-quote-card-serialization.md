@@ -43,14 +43,14 @@ steps:
     expect:
       - label: 序列化逐字节正确——<quote> 三属性（file/heading/lines）+ 属性值与文本双重转义
         file:
-          path: "env:harness/sessions/*.jsonl"
+          path: "env:harness/sessions/*/*.jsonl"
           has: '<quote file=\"harness-quote-escape.md\" heading=\"A &amp; B 标题\" lines=\"3-4\">QESC 原文含 &lt;尖括号&gt; 与 &amp; 符号。\n</quote>'
       - label: 协议无编号（一致性原则：属性集合恒为 file/heading/lines，无 index 或任何序号）
-        file: { path: "env:harness/sessions/*.jsonl", not: "index=" }
+        file: { path: "env:harness/sessions/*/*.jsonl", not: "index=" }
       - label: 问题文字按交错顺序排在标签之后（卡片阅读顺序 = 序列化顺序）
-        file: { path: "env:harness/sessions/*.jsonl", has: '</quote>\nq' }
+        file: { path: "env:harness/sessions/*/*.jsonl", has: '</quote>\nq' }
       - label: 携带卡片的消息跳过视口注入，路径注入恒在（chip 与 JSONL 同源）
-        file: { path: "env:harness/sessions/*.jsonl", has: '当前编辑器上下文：\n文件：harness-quote-escape.md' }
+        file: { path: "env:harness/sessions/*/*.jsonl", has: '当前编辑器上下文：\n文件：harness-quote-escape.md' }
       - shot: 02-序列化
 ---
 
@@ -62,7 +62,7 @@ XML——每段摘录 `<quote file="…" heading="…" lines="A-B">摘录原文<
 
 ## 判据为什么这样写
 
-- **逐字节断言替代结构解析**：序列化产物落在 JSONL 留存里（`env:harness/sessions/*.jsonl` 的
+- **逐字节断言替代结构解析**：序列化产物落在 JSONL 留存里（`env:harness/sessions/*/*.jsonl` 的
   `llm_request.request.messages` 里那条 user 消息），断言直接写期望的那一行 XML。属性顺序、取值、转义形态任意一处漂移都
   会红——比「解析后再比对字段」更严，也不需要场景里再实现一个 XML 解析器。
 - 转义覆盖两条路径：**属性值**（heading 含 `&` → `&amp;`）与**文本节点**（摘录原文含 `<`、

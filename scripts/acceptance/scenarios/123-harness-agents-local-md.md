@@ -59,13 +59,13 @@ steps:
       - label: 回答渲染（回合真的跑完）
         ax: { has: "验收回答：上下文已收到。" }
       - label: 装配清单记录本地层且文件在场（exists:true，路径以 AGENTS.local.md 结尾）
-        file: { path: "env:harness/sessions/*.jsonl", has: '/^.*"exists":true,"path":"[^"]*AGENTS\.local\.md","source":"agents_vault_root_local".*$/' }
+        file: { path: "env:harness/sessions/*/*.jsonl", has: '/^.*"exists":true,"path":"[^"]*AGENTS\.local\.md","source":"agents_vault_root_local".*$/' }
       - label: 装配清单记录 vault 根 AGENTS.md 在场（exists:true）
-        file: { path: "env:harness/sessions/*.jsonl", has: '/^.*"exists":true,"path":"[^"]*AGENTS\.md","source":"agents_vault_root".*$/' }
+        file: { path: "env:harness/sessions/*/*.jsonl", has: '/^.*"exists":true,"path":"[^"]*AGENTS\.md","source":"agents_vault_root".*$/' }
       - label: system prompt 含两份内容，且本地层排在 vault 根 AGENTS.md 之后（顺序不变量）
-        file: { path: "env:harness/sessions/*.jsonl", has: '/^.*VAL-ROOT-AGENTS.*VAL-LOCAL-AGENTS.*$/' }
+        file: { path: "env:harness/sessions/*/*.jsonl", has: '/^.*VAL-ROOT-AGENTS.*VAL-LOCAL-AGENTS.*$/' }
       - label: 本地层节标题显式声明覆盖优先级（「冲突时以此为准」对模型可读）
-        file: { path: "env:harness/sessions/*.jsonl", has: "本机本地覆盖层，与上文 AGENTS.md 冲突时以此为准" }
+        file: { path: "env:harness/sessions/*/*.jsonl", has: "本机本地覆盖层，与上文 AGENTS.md 冲突时以此为准" }
       - shot: 01-回答
 ---
 

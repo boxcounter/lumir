@@ -48,10 +48,10 @@ steps:
     expect:
       - label: 序列化按块交错顺序：卡片 A → alpha（问题落在卡片之后 = 光标落在卡片下一行）
         file:
-          path: "env:harness/sessions/*.jsonl"
+          path: "env:harness/sessions/*/*.jsonl"
           has: '<quote file=\"harness-quote.md\" heading=\"摘录卡片验收\" lines=\"4-5\">QBETA 乙段：把可执行动作捞出来过一遍。\n</quote>\nalpha'
       - label: 协议无编号
-        file: { path: "env:harness/sessions/*.jsonl", not: "index=" }
+        file: { path: "env:harness/sessions/*/*.jsonl", not: "index=" }
       - shot: 02-第一条消息
 
   - name: 第二条消息——回到编辑器：光标移到 QALPHA 那一行
@@ -106,7 +106,7 @@ steps:
     expect:
       - label: 一条消息里两张卡片按插入顺序序列化（先 QALPHA 后 QBETA）
         file:
-          path: "env:harness/sessions/*.jsonl"
+          path: "env:harness/sessions/*/*.jsonl"
           has: '<quote file=\"harness-quote.md\" heading=\"摘录卡片验收\" lines=\"3-4\">QALPHA 甲段：先读结论再读论证。\n</quote>\n<quote file=\"harness-quote.md\" heading=\"摘录卡片验收\" lines=\"4-5\">QBETA 乙段：把可执行动作捞出来过一遍。\n</quote>'
       - shot: 04-第二条消息
 ---

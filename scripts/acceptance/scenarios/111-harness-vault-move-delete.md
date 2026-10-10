@@ -38,10 +38,10 @@ steps:
       - label: cli_run 没执行而是被改道（错误码 cli_redirected_to_vault_tool 是改道的固定标记）
         ax: { has: "/cli_redirected_to_vault_tool/" }
       - label: JSONL 记下固定标记载荷（模型据此改工具的唯一线索）
-        file: { path: "env:harness/sessions/*.jsonl", has: "/LUMIR_REDIRECT_VAULT_TOOL/" }
+        file: { path: "env:harness/sessions/*/*.jsonl", has: "/LUMIR_REDIRECT_VAULT_TOOL/" }
       - label: 改道建议落到 vault_move（payload 的 suggested_tool 字段；JSONL 里内层载荷的引号被
           转义（\\"），故用 .{0,12} 跨过转义再匹配值）
-        file: { path: "env:harness/sessions/*.jsonl", has: '/suggested_tool.{0,12}vault_move/' }
+        file: { path: "env:harness/sessions/*/*.jsonl", has: '/suggested_tool.{0,12}vault_move/' }
       - label: vault_move 执行成功——新路径在场
         file: { path: harness-renamed.md, exists: true }
       - label: vault_move 执行成功——原路径已不在

@@ -59,10 +59,14 @@ use crate::fs_io::IgnorePolicy;
 pub struct VaultScope {
     pub root: PathBuf,
     pub policy: IgnorePolicy,
+    /// vault 稳定 id（注册表 id，`vault-<pid>-<n>`）：会话留存目录名（`sessions/<id>/`）。
+    /// 已打开的 vault 恒有它（`reconcile_vault` 是登记点），故会话写入路径没有「id 缺失」分支。
+    pub vault_id: String,
 }
 
 impl VaultScope {
-    /// 会话映射的键：vault 根路径字符串。
+    /// 会话映射的键：vault 根路径字符串。**归属判据用它，不是目录名**——同一 vault 的两种
+    /// 路径拼写仍各成一个会话（M312 不修，见 design §3）。
     pub fn key(&self) -> String {
         self.root.display().to_string()
     }
@@ -331,7 +335,7 @@ impl Runtime {
                 format!("非法的 session id：{session_id}"),
             ));
         }
-        let path = jsonl::sessions_dir()?.join(format!("{session_id}.jsonl"));
+        let path = jsonl::vault_sessions_dir(&scope.vault_id)?.join(format!("{session_id}.jsonl"));
         let file = jsonl::read_session_file(&path)?;
         let open = &file.session_open;
         if !session_belongs_to_scope(open, scope) {
@@ -421,7 +425,7 @@ impl Runtime {
             "system": system,
             "assembly": assembly,
         });
-        let writer = jsonl::JsonlWriter::create(&new_id, &open_payload)?;
+        let writer = jsonl::JsonlWriter::create(&new_id, &scope.vault_id, &open_payload)?;
         // 面板视角重建（M398）：灌回的 input 项映射成面板消息，reasoning 明文挂其后的
         // assistant。先建好再 move `restored` 进会话。approval sidecar（kind=approval，
         // 批准的终态记录）按文件序收集，供工具行回填 decision——「已采纳 / 已拒绝」的
@@ -464,7 +468,7 @@ impl Runtime {
     }
 
     /// 删除一份历史会话留存（`harness_delete_session` 的实现体，M406）：删的是**文件**
-    ///（`sessions/<id>.jsonl`）。活跃会话的当前留存拒删（`harness_session_active`——
+    ///（`sessions/<vault 稳定 id>/<id>.jsonl`）。活跃会话的当前留存拒删（`harness_session_active`——
     /// 它的 writer 还在往这份文件追加，删掉会让留存静默断流；压缩 / 恢复换过文件的，
     /// 旧文件可删）。文件已不存在按幂等成功处理（重复删除 / 竞态删除不是错误）。
     /// vault 归属校验与列举 / 恢复同一口径（[`session_belongs_to_scope`]）。
@@ -494,7 +498,7 @@ impl Runtime {
                 }
             }
         }
-        let path = jsonl::sessions_dir()?.join(format!("{session_id}.jsonl"));
+        let path = jsonl::vault_sessions_dir(&scope.vault_id)?.join(format!("{session_id}.jsonl"));
         // 幂等：目标已不存在 = 删除已达成（重复点删除 / 外部清理），不算错误。
         if !path.exists() {
             return Ok(());
@@ -526,15 +530,17 @@ fn session_belongs_to_scope(open: &serde_json::Value, scope: &VaultScope) -> boo
 }
 
 /// 列举当前 vault 的留存会话（`harness_list_sessions` 的实现体，change
-/// reshape-harness-session-recording 任务 2.1）：扫 `<config_dir>/harness/sessions/*.jsonl`，
-/// 按 [`session_belongs_to_scope`]（与恢复命令同一 vault 归属口径）过滤，按 session id
-/// 时间序前缀倒序返回。
+/// reshape-harness-session-recording 任务 2.1）：**只扫本 vault 的目录**
+/// `<config_dir>/harness/sessions/<vault 稳定 id>/*.jsonl`，按 [`session_belongs_to_scope`]
+/// （与恢复命令同一 vault 归属口径）过滤，按 session id 时间序前缀倒序返回。
+/// 根下平铺的 `*.jsonl`（旧布局残留 / 脚本未跑）**不参与列举**——单一布局，无双读过渡层
+/// （design §5；存量文件的可见证据是目录结构与一次性脚本的输出）。
 ///
 /// 读不出 / 首行不是 `session_open` 的文件跳过并打一条 stderr——列举是面板历史选择器的
 /// 数据源，一份损坏的留存不该让整份历史列表消失（恢复命令对**选中的**文件仍严格报错）。
 /// 会话名素材是首条用户消息的**原文**：截断（约 20 字）的规则在前端。
 pub fn list_sessions(scope: &VaultScope) -> Result<Vec<session::SessionSummary>, CommandError> {
-    let dir = jsonl::sessions_dir()?;
+    let dir = jsonl::vault_sessions_dir(&scope.vault_id)?;
     let entries = std::fs::read_dir(&dir).map_err(|e| {
         CommandError::new(
             "harness_session_unreadable",
@@ -795,7 +801,7 @@ fn ensure_session<'a>(
             thinking::ThinkingEffort::default(),
             None,
         );
-        let writer = jsonl::JsonlWriter::create(&session_id, &open)?;
+        let writer = jsonl::JsonlWriter::create(&session_id, &scope.vault_id, &open)?;
         sessions.insert(
             key.clone(),
             session::Session::new(
@@ -851,8 +857,12 @@ pub(crate) fn session_open_payload(
 /// 从 VaultState 解析 harness 作用域（command 层唯一依赖 commands 类型的点；
 /// `root_and_policy` 的 pub 可见性由 M302 申请、tower 批准）。
 fn vault_scope(vault: &crate::commands::VaultState) -> Result<VaultScope, CommandError> {
-    let (root, policy) = vault.root_and_policy()?;
-    Ok(VaultScope { root, policy })
+    let (root, policy, vault_id) = vault.root_policy_and_id()?;
+    Ok(VaultScope {
+        root,
+        policy,
+        vault_id,
+    })
 }
 
 /// 发送一条提问。立即返回：工具循环在 `lumir-harness-llm` 专线程跑，进展经
@@ -973,7 +983,7 @@ pub fn harness_set_thinking_effort(
 }
 
 /// 从留存文件恢复会话（change reshape-harness-session-recording 的恢复入口）：
-/// `session_id` 是 `sessions/<id>.jsonl` 的文件名（形态校验防目录穿越）。读源文件
+/// `session_id` 是 `sessions/<vault 稳定 id>/<id>.jsonl` 的文件名（形态校验防目录穿越）。读源文件
 /// 最后一条会话轮次 `llm_request` 的完整请求体，system + messages 原样灌进新会话并
 /// 续写**新**留存文件（opened_from=restore、restored_from=源会话 id——恢复的地基：文件边界 + 会话身份 + 谱系链）。
 /// 返回 `SessionResumeInfo`（ts-rs 导出）：新会话标识 + 灌回条数 + **面板重建消息**
@@ -1002,7 +1012,7 @@ pub fn harness_list_sessions(
 }
 
 /// 删除一份历史会话留存（M406；面板会话选择器的行内删除入口）：`session_id` 是
-/// `sessions/<id>.jsonl` 的文件名（形态校验防目录穿越）。活跃会话的当前留存拒删
+/// `sessions/<vault 稳定 id>/<id>.jsonl` 的文件名（形态校验防目录穿越）。活跃会话的当前留存拒删
 /// （`harness_session_active`）；vault 归属不符拒删（`harness_session_vault_mismatch`，
 /// 与列举 / 恢复同一口径）；文件已不存在按幂等成功处理。
 #[tauri::command(rename_all = "snake_case")]

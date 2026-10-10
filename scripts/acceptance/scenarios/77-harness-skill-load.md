@@ -52,7 +52,7 @@ steps:
       - label: 回答用上了技能内容（密令来自 SKILL.md 全文）
         ax: { has: "HSK-SECRET-7429" }
       - label: 回送模型的 function_call_output 带回 SKILL.md 全文（密令只在文件里）
-        file: { path: "env:harness/sessions/*.jsonl", has: '/^.*HSK-SECRET-7429.*"type":"function_call_output".*$/' }
+        file: { path: "env:harness/sessions/*/*.jsonl", has: '/^.*HSK-SECRET-7429.*"type":"function_call_output".*$/' }
 
   - name: 展开工具清单（M351 起 ≥2 行的轮次终态折叠为一行摘要钮，步骤行 hidden 不进 AX）
     do: click

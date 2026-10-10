@@ -1027,7 +1027,7 @@ fn compact_now(
         session_effort,
         Some(&summary),
     );
-    let writer = jsonl::JsonlWriter::create(&session_id, &open)?;
+    let writer = jsonl::JsonlWriter::create(&session_id, &scope.vault_id, &open)?;
     let _ = runtime.with_session(scope, |s| {
         let mut items = vec![session::user_item(&format!(
             "（此前会话已压缩为摘要，接着摘要继续）\n{summary}"
@@ -1210,6 +1210,7 @@ mod tests {
         let scope = VaultScope {
             root: vault.clone(),
             policy: IgnorePolicy::load(&vault, &[".gitignore".to_string()]),
+            vault_id: "vault-test-1".to_string(),
         };
         let config = HarnessConfig {
             provider: HarnessProvider::Mock,
@@ -1398,6 +1399,7 @@ mod tests {
         let scope = VaultScope {
             root: vault.clone(),
             policy: IgnorePolicy::load(&vault, &[".gitignore".to_string()]),
+            vault_id: "vault-test-1".to_string(),
         };
         let config = HarnessConfig {
             provider: HarnessProvider::Mock,

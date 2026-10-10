@@ -76,7 +76,7 @@ steps:
       - label: 新文件内容正确
         file: { path: harness-created.md, has: "HNC-NEW 新建落盘内容。" }
       - label: JSONL 记下撞名失败（错误随 function_call_output 回送模型）
-        file: { path: "env:harness/sessions/*.jsonl", has: '/^.*fs_already_exists.*"type":"function_call_output".*$/' }
+        file: { path: "env:harness/sessions/*/*.jsonl", has: '/^.*fs_already_exists.*"type":"function_call_output".*$/' }
       - shot: 03-新建完成
 ---
 

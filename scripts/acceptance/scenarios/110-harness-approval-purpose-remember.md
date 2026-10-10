@@ -77,11 +77,11 @@ steps:
       - label: 全程没有再问（若缓存未命中就会挂起在第三张卡上，等不到这句答复）
         ax: { not: "要运行这条命令吗？" }
       - label: JSONL 的批准 sidecar 记下 decision=approved
-        file: { path: "env:harness/sessions/*.jsonl", has: "/\"decision\":\"approved\"/" }
+        file: { path: "env:harness/sessions/*/*.jsonl", has: "/\"decision\":\"approved\"/" }
       - label: JSONL 的批准 sidecar 记下 remember=true（缓存写入的唯一依据，M413 transport）
-        file: { path: "env:harness/sessions/*.jsonl", has: "/\"remember\":true/" }
+        file: { path: "env:harness/sessions/*/*.jsonl", has: "/\"remember\":true/" }
       - label: 同主体串的第二次调用确实跑了（wire 留存里有它的 call_id）
-        file: { path: "env:harness/sessions/*.jsonl", has: "/\"call_id\":\"call_cache2\"/" }
+        file: { path: "env:harness/sessions/*/*.jsonl", has: "/\"call_id\":\"call_cache2\"/" }
       - shot: 03-收尾
 
   - name: 回看这一轮的调用行（本 fixture 每段响应一个工具调用 ⇒ 每块 1 行、不折叠，行始终行内可见）
@@ -149,4 +149,4 @@ M414 的三项批准卡改动（design §3.4 / §6，Alex 原话：「让询问�
 
 - vault 文件不被改动（fixture 只跑 cli_run 与文本答复）。
 - 合成 vault `/tmp/lumir-m102-acceptance` + 隔离 `XDG_CONFIG_HOME`（wire 留存落
-  `env:harness/sessions/`，每场景重置）；真实 vault 与 `~/.config/lumir` 全程不读写；1420 不碰。
+  `env:harness/sessions/<vault 稳定 id>/`，每场景重置）；真实 vault 与 `~/.config/lumir` 全程不读写；1420 不碰。

@@ -60,7 +60,13 @@ impl Fixture {
         VaultScope {
             root: self.vault(),
             policy: IgnorePolicy::load(&self.vault(), &[".gitignore".to_string()]),
+            vault_id: VAULT_ID.to_string(),
         }
+    }
+
+    /// 会话留存目录读口（新布局 `sessions/<vault 稳定 id>/`）：测试侧路径的单一来源。
+    fn sessions_dir(&self) -> PathBuf {
+        self.root.join("xdg/lumir/harness/sessions").join(VAULT_ID)
     }
 
     fn write(&self, rel: &str, content: &str) {
@@ -424,7 +430,7 @@ fn tool_loop_roundtrip_with_fixture_file() {
     }
 }
 
-/// 读取并解析夹具的唯一一份会话留存（`sessions/<session_id>.jsonl` 布局——文件名是
+/// 读取并解析夹具的唯一一份会话留存（`sessions/<vault 稳定 id>/<session_id>.jsonl` 布局——文件名是
 /// `jsonl::new_session_id` 的产物，测试侧不复刻生成算法，REVIEW.md 第 8 条：两份真源
 /// 会漂）。一个 Fixture 只有一个 vault 且大多数场景只跑一个会话，目录里恰有一份 `.jsonl`，
 /// 直接取它；多会话场景（压缩 / 重置 / 恢复）用 `harness_jsonl_files` 自取。
@@ -434,9 +440,14 @@ fn harness_jsonl_path(fixture: &Fixture) -> PathBuf {
     files.pop().unwrap()
 }
 
+/// 本测试的 vault 稳定 id（会话留存目录名）：`Fixture::scope()` 与留存读取口共用同一份字面量
+/// （REVIEW.md 第 8 条：两份真源会漂）。
+const VAULT_ID: &str = "vault-test-1";
+
 /// 列出夹具留存的全部会话文件（按文件名排序——session id 时间序，即建立顺序）。
+/// 新布局：目录名 = vault 注册表 id（`sessions/<vault 稳定 id>/*.jsonl`）。
 fn harness_jsonl_files(fixture: &Fixture) -> Vec<PathBuf> {
-    let dir = fixture.root.join("xdg/lumir/harness/sessions");
+    let dir = fixture.sessions_dir();
     let mut files: Vec<PathBuf> = std::fs::read_dir(&dir)
         .unwrap_or_else(|e| panic!("读留存目录 {} 失败：{e}", dir.display()))
         .map(|entry| entry.unwrap().path())
@@ -1000,6 +1011,9 @@ fn vault_scoping_switch_restore_and_reset() {
     let scope_b = VaultScope {
         root: vault_b.clone(),
         policy: IgnorePolicy::load(&vault_b, &[".gitignore".to_string()]),
+        // 刻意与 A 共用同一个 vault 目录名：**归属判据是首行 vault_root、不是目录**——
+        // 这一现场正是「文件被手工挪进别的 vault 目录」的形态（design §3）。
+        vault_id: VAULT_ID.to_string(),
     };
     let snap_b = runtime.snapshot(&scope_b, &config);
     assert!(snap_b.messages.is_empty(), "B 是空会话");

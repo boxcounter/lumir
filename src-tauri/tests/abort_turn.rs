@@ -60,7 +60,13 @@ impl Fixture {
         VaultScope {
             root: self.vault(),
             policy: IgnorePolicy::load(&self.vault(), &[".gitignore".to_string()]),
+            vault_id: VAULT_ID.to_string(),
         }
+    }
+
+    /// 会话留存目录读口（新布局 `sessions/<vault 稳定 id>/`）：测试侧路径的单一来源。
+    fn sessions_dir(&self) -> PathBuf {
+        self.root.join("xdg/lumir/harness/sessions").join(VAULT_ID)
     }
 
     fn write(&self, rel: &str, content: &str) {
@@ -136,9 +142,14 @@ impl RuntimeExt for Fixture {
     }
 }
 
-/// 夹具的唯一一份 JSONL 留存（文件名是 `jsonl::sanitize` 的产物，测试侧不复刻该算法）。
+/// 本测试的 vault 稳定 id（会话留存目录名）：`Fixture::scope()` 与留存读取口共用同一份字面量
+/// （REVIEW.md 第 8 条：两份真源会漂）。
+const VAULT_ID: &str = "vault-test-1";
+
+/// 夹具的唯一一份 JSONL 留存（文件名是 `jsonl::new_session_id` 的产物，测试侧不复刻该算法）。
+/// 新布局：目录名 = vault 注册表 id（`sessions/<vault 稳定 id>/*.jsonl`）。
 fn harness_jsonl_path(fixture: &Fixture) -> PathBuf {
-    let dir = fixture.root.join("xdg/lumir/harness/sessions");
+    let dir = fixture.sessions_dir();
     let mut files: Vec<PathBuf> = std::fs::read_dir(&dir)
         .unwrap_or_else(|e| panic!("读留存目录 {} 失败：{e}", dir.display()))
         .map(|entry| entry.unwrap().path())

@@ -6,7 +6,7 @@
  */
 export type SessionSummary = { 
 /**
- * 留存文件名去 `.jsonl`（`sessions/<session_id>.jsonl`）；也是恢复命令的入参。
+ * 留存文件名去 `.jsonl`（`sessions/<vault 稳定 id>/<session_id>.jsonl`）；也是恢复命令的入参。
  */
 session_id: string, 
 /**

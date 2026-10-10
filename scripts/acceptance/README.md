@@ -190,8 +190,9 @@ steps:
 effort 能力 / 上下文窗口按声明现算。**M381 起内置 preset 表彻底删除**：不写 `kimiModels`
 = 空清单（+ 加载 warning + 浮层 D402 提示态）——场景 99 / 101 的配置链必须连带声明
 `kimiModels`，能力判定才有输入。mock provider 跑一轮会把**会话 wire 留存**写入隔离配置目录的
-`harness/sessions/<session_id>.jsonl`（首行 `session_open` 装配记录，其后逐对 `llm_request` /
-`llm_response`，决策类落 sidecar）——留存断言写 `env:harness/sessions/*.jsonl`（schema 见 change
+`harness/sessions/<vault 稳定 id>/<session_id>.jsonl`（首行 `session_open` 装配记录，其后逐对 `llm_request` /
+`llm_response`，决策类落 sidecar）——留存断言写 `env:harness/sessions/*/*.jsonl`（`*` 是 per-vault 的
+`<vault 稳定 id>` 目录层；schema 见 change
 `reshape-harness-session-recording` 的 design §2；`resetHarness` 每场景清整个 `harness/`）。
 
 `editor`（M379，backlog:1905）是**整表透传**的 `[editor]` 表：`config: { editor: { line_wrap: false,
@@ -241,6 +242,7 @@ editor 配置项」构造**启动口径**用——不必每加一个键就回来
 | `seed.registry[]` | `{ id, path, lastOpenedAt?, missingSince?, archivedAt? }` | `<隔离配置>/lumir/vault-registry/<id>.json`（一条一个文件，与 Rust 侧注册表同形） |
 | `seed.legacyRegistry[]` | 同上 | `<隔离配置>/lumir/workspaces/<id>.json`（**旧名**目录，M248）：只服务迁移场景 48，用来构造「更名落地之前」的现场；app 启动时把它整个搬进 `vault-registry/` |
 | `seed.sessions{}` | v1：`{ <id>: { tabs: [...], active } }`；v2（`panes` 给了）：`{ <id>: { panes: [{ tabs, active }], ratio?, harnessPane? } }` | `<隔离配置>/lumir/vault-sessions/<id>.json`。`harnessPane: true`（M349）预置「harness 面板在场」的 v2 会话（ADR 0008 Decision 6 的 `harness_pane` 位，恢复时重新装配面板、内容不持久化）——场景 91 与 96 是样例（91 判布局位、96 判面板内容的恢复渲染） |
+| `seed.harnessFlatSessions[]` | `{ name, vaultRoot? , raw? }`（`name` 须 `*.jsonl`；`vaultRoot` 给 `$vault` / `$vault2` 记号或绝对路径，`raw` 给了就原样落盘） | `<隔离配置>/lumir/harness/sessions/<name>.jsonl`（**旧布局**的平铺留存，场景 125 的现场）：这些文件是「升级前遗留」，产品运行时只按新布局读写（`sessions/<vault 稳定 id>/`），根下平铺的 `*.jsonl` 不参与列举 / 恢复 / 删除；归位由场景动作 `migrateHarnessSessions` 跑一次仓内脚本完成。`vaultRoot` **刻意不做 realpath**（`/tmp/...` vs 注册表里的 `/private/tmp/...`）——脚本的规范化一步因此是承重的（M433） |
 | `seed.bulkVault` | `true` 或 `{ markdown?, files?, dirs?, mdBytes?, maxMdBytes?, ignoredMd?, ignoredDirs?, lazyDirs? }` | **生成**到验收 vault（`$vault`）里（M283）：复刻真实 vault 的 scan-visible 形状——默认 `2142` 文件 / `426` 目录 / `1341` 个 md / ≈`7MB`、行长正常（约 78 字符/行，含标题与 wikilink）、根下带一个 `node_modules`（验证内置规则忽略生效）。前六个参数与 Rust 侧读数 harness（`src-tauri/tests/vault_open_readings.rs`）同形状，**改形状时两边一起改** |
 | ↑ 的两类忽略探针（M296，change `vault-open-ignore-set`） | `ignoredDirs: { <根下目录名>: <md 条数> }`（内置规则的构建产物族）；`lazyDirs: { gitignore: [...], gitignoreNegations: [...], exclude: [...] }`（用户规则：写根 `.gitignore` / 根 `.git/info/exclude`，各目录带一个 `tutorial.md`，正文含 marker「本地教程正文」） | 只服务**可见性判据**（场景 67），不参与任何读数口径，因此**只在 JS 侧**——Rust 读数 harness 不生成它们。探针一律落在 vault **根**下：树的默认态才断得到「这一行在不在」（`ignoredDirs` 命中内置规则 ⇒ 不可见；`lazyDirs` 命中用户规则 ⇒ **行在树里**、展开才枚举）。默认不生成，既有调用方（如场景 60 的 `bulkVault: {}`）逐字节不变 |
 
@@ -285,6 +287,7 @@ editor 配置项」构造**启动口径**用——不必每加一个键就回来
 | `clipboardImage` | `synth: { width, height, seed }`（三个正整数，全可选） | **合成一张 png 并置入系统剪贴板**（M416，change paste-clipboard-image）：`scripts/acceptance/lib/png.mjs` 手写 PNG 编码器（`node:zlib`，零新增依赖）+ 确定性「类截图」生成器（同 `seed` ⇒ 逐字节相同的图，S2 的跨笔记去重据此可复现）；落盘到临时目录后经 `osascript` 的 `«class PNGf»` 置剪贴板（pasteboard 上同时出现 `public.png` + `public.tiff`，即系统截图的形态）。**二进制 fixture 不落 git**——分辨率是场景参数，能生成的东西不落二进制。动作把合成图的分辨率与**字节数**写进证据（`note`），S5 的体积实证取它做「剪贴板侧」读数 |
 | `clipboardText` | `text`（字符串） | 把纯文本置入系统剪贴板（M416 场景 114：文本粘贴回归的输入面）。与 `clipboardRead` / `clipboardImage` 同一条固定命令纪律，不开通用 shell 通道 |
 | `note` | `text`（可选）、`file`（可选，支持 glob） | **证据型读数**（M416）：把一句文本写进证据目录；`file` 给了就附上命中文件（glob 取 mtime 最新一份）的 `size`。给**不卡 PASS/FAIL 的实证场景**用（S5 的转码体积）——它不是断言形态，判不判红由场景自己另写断言 |
+| `migrateHarnessSessions` | — | **跑一次性归位脚本**（M433，change `harness-sessions-per-vault`）：以**隔离配置目录**为入参执行 `scripts/migrate-harness-sessions.mjs`（`node <script> <envHome>/lumir`，cwd = 仓库根），等价于「用户手跑一遍」（脚本不进产品运行时，也不进任何门禁）。把脚本 stdout 与退出码落证据，并断言**退出码 0**（有文件搬不动时脚本自报并返回 1，重跑收敛）——归位正确性 / 孤儿桶 / 幂等的判据由场景自己的 `file` / `glob` 断言给（场景 125）。它是套件里**唯一**会执行仓内脚本的通道，刻意收窄成这一个固定命令（与 `clipboardRead` 同一条「不引入通用 shell 通道」纪律） |
 | `restart` | `requireVault` | 重启 app（崩溃恢复类场景） |
 
 ### `do: settle` 的真实语义与「外部写入后先留一拍」（M249）

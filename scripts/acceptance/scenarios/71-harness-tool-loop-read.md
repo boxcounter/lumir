@@ -41,9 +41,9 @@ steps:
       - label: 读类工具默认 allow——命令类闸问句也不在场（D340）
         ax: { not: "要运行这条命令吗？" }
       - label: JSONL 记下这次工具调用（wire 口径：llm_response 的 tool_calls）
-        file: { path: "env:harness/sessions/*.jsonl", has: '/^.*"kind":"llm_response".*"id":"call_1","name":"vault_read".*$/' }
+        file: { path: "env:harness/sessions/*/*.jsonl", has: '/^.*"kind":"llm_response".*"id":"call_1","name":"vault_read".*$/' }
       - label: 工具结果（文件内容）回送了模型（function_call_output 项）
-        file: { path: "env:harness/sessions/*.jsonl", has: '/^.*"call_id":"call_1".*HNL-ALPHA.*"type":"function_call_output".*$/' }
+        file: { path: "env:harness/sessions/*/*.jsonl", has: '/^.*"call_id":"call_1".*HNL-ALPHA.*"type":"function_call_output".*$/' }
       - shot: 01-工具循环完成
 ---
 

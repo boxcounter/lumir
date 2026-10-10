@@ -45,9 +45,9 @@ steps:
       - label: rm 没有真跑——mtime 未推进
         file: { path: harness-note.md, mtimeUnchangedSince: before }
       - label: JSONL 记下 deny 拒绝（permission_denied + 主体串，随 function_call_output 回送模型）
-        file: { path: "env:harness/sessions/*.jsonl", has: '/^.*"call_id":"call_d1".*permission_denied.*rm harness-note\.md.*$/' }
+        file: { path: "env:harness/sessions/*/*.jsonl", has: '/^.*"call_id":"call_d1".*permission_denied.*rm harness-note\.md.*$/' }
       - label: JSONL 记下 echo 执行（allow 的结果 stdout，随 function_call_output 回送模型）
-        file: { path: "env:harness/sessions/*.jsonl", has: '/^.*"call_id":"call_a1".*HNE-ALLOWED.*$/' }
+        file: { path: "env:harness/sessions/*/*.jsonl", has: '/^.*"call_id":"call_a1".*HNE-ALLOWED.*$/' }
 
   - name: 展开工具清单（M351 起 ≥2 行的轮次终态折叠为一行摘要钮，步骤行 hidden 不进 AX）
     do: click
