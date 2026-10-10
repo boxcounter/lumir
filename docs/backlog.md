@@ -650,8 +650,15 @@
 缺 window → FALLBACK_CONTEXT_WINDOW、类型不符丢该项、未列出 = 不支持）已在实现与验收套件生效，
 但 living spec「配置节 [harness]」（openspec/specs/harness/spec.md:200）没有 `models` 表——已实现未进 spec。
 **修法方向**：补一条「模型清单与能力声明」requirement（或 MODIFY 配置节）；**与 change
-harness-composer-image-paste 的 image 能力增量同表合并归档最省事**——实现该 change 时一并带上。
+harness-composer-image-paste 的 vision 能力增量同表合并归档最省事**——实现该 change 时一并带上。
 finding：`.tower/comms/findings/20261010-worker-m424-improve-living-spec-harness-m373-m381-models.md`。
+
+### 验收场景 123 的 focusWindow 机制描述失准（reviewer-m430 非阻塞观察，2026-10-10，low）
+
+**症状**：`scripts/acceptance/scenarios/123-harness-agents-local-md.md` 文档称「focusWindow 拿不到前台即报错」，
+实际 `scripts/acceptance/lib/execute.mjs:1680` 的 focusWindow 失败只记 note 不抛错，可归因性由随后的
+`ax: { focused: "AXTextArea" }` 断言承担；且 123 用默认 retries=2，64/66 是显式 retries:4，flake 余量略小。
+行为面零影响。**修法**：归档 harness-agents-local-md 节点顺手修正场景文档措辞，retries 是否对齐 4 一并定。
 
 ### 消息摘录跳回三层真机不可判：落点（类名 + 滚动位置）读不进 AX（worker-m423 留口，2026-10-10，low）
 
