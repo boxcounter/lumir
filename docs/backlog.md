@@ -657,15 +657,17 @@ harness 段（会话名钮 + 新建会话钮）既不进 AX 树也不上屏—�
 finding 全文：`.tower/comms/findings/20261010-worker-m433-bug-vault-harness-pane-ax.md`（含 AX dump
 与截图证据路径）。
 
-### harness 附件落点未按 vault 分置（排依赖条款与在途实现不一致，worker-m433 finding，2026-10-10，low，**待 Alex 裁决**）
+### harness 附件落点未按 vault 分置（worker-m433 finding，2026-10-10，low，**已裁决已收口**）
 
-**事实**：`harness-sessions-per-vault` 提案「排依赖」要求 harness 侧附件落 `sessions/<vault 稳定 id>/`
-层级，而在途 `harness-composer-image-paste` design §5 把附件落兄弟目录 `harness/attachments/`（平铺）。
-两 change 无冲突（归位脚本只扫 sessions/ 根 *.jsonl），但「一个 vault 一个目录、方便按 vault 分析」的
-收益在附件上没拿到；附件清理/备份也不受 vault 边界约束。
-**待裁决**（二选一，裁决前不动代码）：① 明确「附件不按 vault 分置」，回改 sessions-per-vault 提案的
-排依赖条款消掉不一致；② 另立 change 把 attachments 提到 vault 层级，复用 M433 一次性归位脚本形态。
+**裁决（Alex，2026-10-10）**：采用「按 vault 分层」案。M436（`feat/revise-composer-image-paste-attachments`）
+已把在途 change `harness-composer-image-paste` 的附件落点改准为 `attachments/<vault 稳定 id>/`（与
+`sessions/<id>/` 同族命名纪律；零存量故无归位脚本；写时拿不到合格 vault id 则拒绝落盘；删会话不牵动
+附件；按 vault 备份 = 取同名 id 两目录）。本条留档备查，不再待办。
+**原事实**：`harness-sessions-per-vault` 提案「排依赖」要求 harness 侧附件落 vault 层级，而在途
+`harness-composer-image-paste` design §5 曾把附件落平铺的 `harness/attachments/`。
 finding 全文：`.tower/comms/findings/20261010-worker-m433-improve-harness-m425-vault-change.md`。
+另：`openspec/changes/harness-sessions-per-vault/tasks.md` 5.1 的 M433 核对结论（「未采用层级」）是当时
+快照、现已过时，归档该 change 时顺手改准。
 
 ### harness 会话留存路径描述有两处真源（worker-m433 观察，2026-10-10，low）
 
