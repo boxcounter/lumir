@@ -5105,6 +5105,14 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     if (mount === mountEl) return;
     mountEl = mount;
     if (mount !== null) {
+      // 段挂接不变量（M435）：收起路径（装配层 disposePaneHandle）会把段从标题栏摘除
+      // （assembly.stripEl.remove()），而构造期的 insertBefore 是一次性的——重开 pane
+      // （切 vault 后 ⌘⇧A；单 vault 收起重开同一条路径）时段引用还在 titlebar 之外，
+      // 只翻 hidden 不会上屏。挂载时按「长驻元素的容器在场」重断言挂回（M351 同族：
+      // 长驻元素被新容器 / 摘出口丢掉后必须重新插入）。已挂接时早退，零成本。
+      if (seg.parentElement !== shell.titlebar) {
+        shell.titlebar.insertBefore(seg, toggleButton);
+      }
       mount.append(panel);
       panel.hidden = false;
       refreshChip();
