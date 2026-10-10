@@ -1188,7 +1188,7 @@ const COPY_TABLE = {
     en: "Read",
   },
   D424: {
-    zh: "写入",
+    zh: "可写",
     en: "Write",
   },
   D425: {

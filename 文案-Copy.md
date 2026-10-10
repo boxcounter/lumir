@@ -409,7 +409,7 @@
 | D421 | 后端错误信封（按 code 渲染） | 作者 | 删除会话留存失败（{path}）：{reason} | Failed to delete the session recording ({path}): {reason} | M406：harness_delete_session 的 IO 失败（`harness_session_delete_failed`）；{path} = 留存文件路径、{reason} = IO 原因（Rust `CommandError.params` 提供，不译文）。消费点 src/copy-data.ts 的 ERROR_COPY。 |
 | D422 | 后端错误信封（按 code 渲染） | 作者 | 移动失败：{rel} → {newPath}（{reason}）——未覆盖任何既有内容 | Couldn't move {rel} to {newPath} ({reason}) — nothing existing was overwritten | M407 vault_move 跨目录移动失败（`fs_move_failed`，tower 委托 M406 代加条目；占位键 rel/newPath/reason 与后端 fs_io::fs_move_entry 逐字对应）。如实说「未覆盖任何既有内容」——移动是原子的 rename 语义，失败即原样。M407 分支合并后生效。消费点 src/copy-data.ts 的 ERROR_COPY。 |
 | D423 | 权限 chip 短名（只读档） | 作者 | 只读 | Read | M414（change add-harness-permission-modes 的前端批，design §7）：composer 控制行第三位的权限 chip 上的**短名**（Alex 2026-10-09 裁决：控制行要被模型 / 权限两个 chip 与 ctx 读数共同挤占，短名才保证三档都完整显示——原「chip 显示全名」口径作废）。消费点 src/harness-panel.ts 的 applyPermChip。 |
-| D424 | 权限 chip 短名（保险库写入档） | 作者 | 写入 | Write | M414：同 D423 的 `vault_write` 档（默认档）。消费点 src/harness-panel.ts 的 applyPermChip。 |
+| D424 | 权限 chip 短名（保险库写入档） | 作者 | 可写 | Write | M414：同 D423 的 `vault_write` 档（默认档）。中文短名 M417 起由「写入」改「可写」（Alex 2026-10-10 对 m351 基线的批复：槽位语义取「可写权限」而非「写入动作」）。消费点 src/harness-panel.ts 的 applyPermChip。 |
 | D425 | 权限 chip 短名（完全访问档） | 作者 | 完全 | Full | M414：同 D423 的 `full_access` 档。消费点 src/harness-panel.ts 的 applyPermChip。 |
 | D426 | 权限 chip 读屏名 / 悬停提示 | 作者 | 权限模式：{mode}（点击切换） | Permission mode: {mode} (click to switch) | M414：权限 chip 的可访问名与 `title`（D393 同构）。{mode} 取当前档的**全名**（D427–D429 的取值，运行时取，不译文）。消费点 src/harness-panel.ts 的 applyPermChip。 |
 | D427 | 权限浮层档位全名（只读档） | 作者 | 只读 | Read Only | M414：权限浮层列表项的**全名**（只在浮层里出现一次，宽度不受控制行约束——与 chip 短名 D423 的分工见 design §7）。消费点 src/harness-panel.ts 的 buildPermPop。 |

@@ -435,11 +435,11 @@ test("权限 chip（M414）：短名读数 / 三档浮层全名 + 释义 / 档�
   await page.locator(".lumir-hp-toggle").click();
   await expect(page.locator(".lumir-harness")).toBeVisible();
 
-  // ── chip 读数 = 短名（D424 = 写入）+ 读屏名 / title = D426（{mode} 取全名）──
+  // ── chip 读数 = 短名（D424 = 可写）+ 读屏名 / title = D426（{mode} 取全名）──
   const permChip = page.locator(".lumir-hp-perm");
   await expect(permChip).toBeVisible();
   await expect(permChip).toHaveAttribute("aria-haspopup", "menu");
-  await expect(permChip.locator(".lumir-hp-perm-name")).toHaveText("写入");
+  await expect(permChip.locator(".lumir-hp-perm-name")).toHaveText("可写");
   await expect(permChip).toHaveAttribute("title", "权限模式：保险库写入（点击切换）");
   await expect(permChip).toHaveAttribute("aria-label", "权限模式：保险库写入（点击切换）");
   // 形态合同（computed-style）：与合并 chip 同一份配方（24px / r5 / 11.5px）。

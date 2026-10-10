@@ -103,7 +103,7 @@ change `add-harness-permission-modes` 的前端批（M414，tasks 5.1 / 5.2）�
 **第三个 chip**（`src/harness-panel.ts` 的 `.lumir-hp-perm`，位于合并选择器 chip 之后、ctx
 读数之前）。三段口径：
 
-1. **chip 面 = 短名**（D423–D425：只读 / 写入 / 完全）——Alex 2026-10-09 裁决：控制行要被模型 /
+1. **chip 面 = 短名**（D423–D425：只读 / 可写 / 完全）——Alex 2026-10-09 裁决：控制行要被模型 /
    权限两个 chip 与 ctx 读数共同挤占，短名才保证三档都完整显示（原「chip 显示全名」口径作废）。
    可访问名 / 悬停提示取 D426 = 「权限模式：{mode}（点击切换）」，{mode} 取当前档**全名**。
 2. **浮层 = 全名 + 每档一行释义**（D427–D432）：全名只在浮层里出现一次（那里宽度不受控制行
@@ -119,7 +119,7 @@ change `add-harness-permission-modes` 的前端批（M414，tasks 5.1 / 5.2）�
 - **「chip 面只有短名」这一条不在本场景判**：chip 的 AX 名取 `aria-label`（D426，内含**全名**），
   可见的短名落在子文本上——AX 面区分不了「chip 显示短名」与「chip 显示全名」。短名的判据在
   DOM 层：`tests/visual/scenes/m347-harness-composer.spec.ts` 断言 `.lumir-hp-perm-name` 的
-  文本 = 短名（写入 / 完全）且浮层项的 `.lumir-hp-permpop-name` = 全名（保险库写入 / 完全访问）。
+  文本 = 短名（可写 / 完全）且浮层项的 `.lumir-hp-permpop-name` = 全名（保险库写入 / 完全访问）。
   本场景判的是 AX 面能读到的两段：读屏名（D426）随档翻转 + 浮层三档全名与释义在场。
 - **「当前档 aria-checked」不在真机直接判**（场景 95 的同款边界）：当前档靠 `.is-current` + 勾选
   SVG + `aria-checked` 表达，AX 文本不暴露这些——归 m347 视觉场景与前端单测。
