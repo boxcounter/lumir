@@ -644,6 +644,29 @@
 
 ## 待修 findings（不阻塞）
 
+### 切 vault 后新开的 harness pane 缺标题栏会话段（worker-m433 finding，2026-10-10，**medium**）
+
+**症状**：切 vault（⌘O）后用 ⌘⇧A 在新 vault 开 harness pane，面板本体在场且可用，但标题栏的
+harness 段（会话名钮 + 新建会话钮）既不进 AX 树也不上屏——**该 vault 里恢复/删除历史会话在 UI 上
+无路可走**（会话历史浮层只有会话名钮一个入口）。两次真机复现（有/无打开文档各一），单 vault 正常。
+**代码线索**（未定位根因）：`src/harness-panel.ts:1768` 段是**一次性** insertBefore 进 titlebar 的
+长驻元素；若切 vault 时 titlebar/pane 装配被重建，段不会被重新插入——与 M351 记过的「长驻元素被新
+容器丢掉」同族。探针：attach/togglePane 路径上加 `seg.isConnected` 断言。
+**修法方向**：定位根因修复后，在场景 78 或 124 的 B 侧补「标题栏段在场」结构断言
+（`ax: { has: "/AXPopUpButton \\(/" }` 形态）——该缺口在套件里一直是空的（78 未断言标题栏段）。
+finding 全文：`.tower/comms/findings/20261010-worker-m433-bug-vault-harness-pane-ax.md`（含 AX dump
+与截图证据路径）。
+
+### harness 附件落点未按 vault 分置（排依赖条款与在途实现不一致，worker-m433 finding，2026-10-10，low，**待 Alex 裁决**）
+
+**事实**：`harness-sessions-per-vault` 提案「排依赖」要求 harness 侧附件落 `sessions/<vault 稳定 id>/`
+层级，而在途 `harness-composer-image-paste` design §5 把附件落兄弟目录 `harness/attachments/`（平铺）。
+两 change 无冲突（归位脚本只扫 sessions/ 根 *.jsonl），但「一个 vault 一个目录、方便按 vault 分析」的
+收益在附件上没拿到；附件清理/备份也不受 vault 边界约束。
+**待裁决**（二选一，裁决前不动代码）：① 明确「附件不按 vault 分置」，回改 sessions-per-vault 提案的
+排依赖条款消掉不一致；② 另立 change 把 attachments 提到 vault 层级，复用 M433 一次性归位脚本形态。
+finding 全文：`.tower/comms/findings/20261010-worker-m433-improve-harness-m425-vault-change.md`。
+
 ### harness 会话留存路径描述有两处真源（worker-m433 观察，2026-10-10，low）
 
 **症状**：`src-tauri/src/harness/session.rs` 的 ts-rs doc 注释（导出进 `src/bindings/SessionSummary.ts`）与
