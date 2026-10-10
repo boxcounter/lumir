@@ -93,7 +93,11 @@ pub const ORPHANED_DIR_NAME: &str = "_orphaned";
 /// vault 目录名（id → 目录名）的保留名纪律：`valid_id` 通过且 ≠ `_orphaned`，否则 `None`。
 /// 不通过是**不可达**分支（id 由 `reconcile_vault` 产出，恒为 `vault-<pid>-<n>`），实现仍显式
 /// 判一次——不 panic、不静默（design §2 保留名纪律 / §6 边界矩阵）。
-fn vault_dir_name(vault_id: &str) -> Option<&str> {
+///
+/// `pub(crate)`：harness 附件目录（`harness::attachments`）复用同一份目录名纪律
+/// （change harness-composer-image-paste design §5.1；附件侧对不合格 id 是**拒绝落盘**，
+/// 不是 sessions 的 `_orphaned/` 兜底——两处处置不同，共用的只是「名字合格」判据）。
+pub(crate) fn vault_dir_name(vault_id: &str) -> Option<&str> {
     (vault_id != ORPHANED_DIR_NAME && crate::vault_registry::valid_id(vault_id).is_ok())
         .then_some(vault_id)
 }

@@ -113,7 +113,7 @@ fn real_deepseek_two_turns_tool_call_and_reasoning_replay() {
         config.providers.deepseek.model = model.clone();
         config.providers.deepseek.base_url = base_url;
 
-        let mut client = lumir_lib::harness::llm::client(&config)
+        let mut client = lumir_lib::harness::llm::client(&config, "vault-test-1")
             .map_err(|e| format!("client 装配失败：code={}", e.code))?;
 
         let scope = VaultScope {
@@ -253,7 +253,7 @@ fn real_deepseek_multi_call_round_replays_grouped() {
         config.providers.deepseek.model = model.clone();
         config.providers.deepseek.base_url = base_url;
 
-        let mut client = lumir_lib::harness::llm::client(&config)
+        let mut client = lumir_lib::harness::llm::client(&config, "vault-test-1")
             .map_err(|e| format!("client 装配失败：code={}", e.code))?;
         let scope = VaultScope {
             root: root.join("vault"),

@@ -1233,7 +1233,7 @@ fn extension_of(rel: &str) -> String {
 
 /// 原子替换写入的**终态**（[`write_bytes_atomic`] 的返回）。
 #[derive(Debug)]
-enum AtomicWriteOutcome {
+pub(crate) enum AtomicWriteOutcome {
     /// tmp 写完并 rename 到位（替换语义：目标已有内容时被原子替换）。
     Written,
     /// `reject_existing` 为真且目标在 rename 前已存在——tmp 已清理，**未覆盖任何内容**，
@@ -1709,7 +1709,10 @@ pub fn base64_encode(data: &[u8]) -> String {
 ///
 /// 输入面来自 webview 的 `FileReader.readAsDataURL`（标准字母表 + padding），因此只认标准表；
 /// 换行与 `=` 容忍——粘贴载荷本身不含换行，容忍只为不把一次格式抖动变成假失败。
-fn base64_decode(input: &str) -> Result<Vec<u8>, CommandError> {
+///
+/// `pub(crate)`：harness 贴图链路（`harness::attachments`）复用同一解码原语，不复制第二份
+/// （change harness-composer-image-paste design §5.3）。
+pub(crate) fn base64_decode(input: &str) -> Result<Vec<u8>, CommandError> {
     fn value(byte: u8) -> Option<u32> {
         match byte {
             b'A'..=b'Z' => Some(u32::from(byte - b'A')),
@@ -1758,7 +1761,10 @@ pub struct WrittenAttachment {
 /// 广告支持的目标格式（design §4.3）：png 转码、jpeg/webp 原样、其余拒绝。
 /// 返回 `(是否转码, 目标扩展名)`。MIME 参数（`image/png;xyz`）只取主类型——WKWebView 的
 /// file item 不带参数，容忍只为不把格式抖动变成假失败。
-fn attachment_target(source_mime: &str) -> Result<(bool, &'static str), CommandError> {
+///
+/// `pub(crate)`：harness 贴图（`harness::attachments`）与 vault 附件共用同一格式判据
+/// （change harness-composer-image-paste design §5.3）。
+pub(crate) fn attachment_target(source_mime: &str) -> Result<(bool, &'static str), CommandError> {
     let mime = source_mime.split(';').next().unwrap_or("").trim();
     match mime {
         "image/png" => Ok((true, "webp")),
@@ -1773,7 +1779,8 @@ fn attachment_target(source_mime: &str) -> Result<(bool, &'static str), CommandE
 }
 
 /// 落盘文件名的 `<hash16>`：转码后字节的 SHA-256 前 16 位十六进制（内容寻址，design §3）。
-fn short_hash(bytes: &[u8]) -> String {
+/// `pub(crate)`：harness 贴图（`harness::attachments`）复用同一寻址口径（design §5.3）。
+pub(crate) fn short_hash(bytes: &[u8]) -> String {
     use sha2::{Digest, Sha256};
     Sha256::digest(bytes)
         .iter()
@@ -1796,7 +1803,8 @@ fn attachment_too_large(bytes: u64) -> CommandError {
 
 /// png 字节 → WebP 无损字节（design §4）：纯 Rust 解码 + 编码（`image` crate），零 C 依赖。
 /// 逐像素保真：带 alpha 的图走 RGBA、其余走 RGB，两条都不丢通道（无损往返的性质由单测钉住）。
-fn transcode_png_to_webp(bytes: &[u8]) -> Result<Vec<u8>, CommandError> {
+/// `pub(crate)`：harness 贴图（`harness::attachments`）复用同一转码原语（design §5.3）。
+pub(crate) fn transcode_png_to_webp(bytes: &[u8]) -> Result<Vec<u8>, CommandError> {
     use image::codecs::webp::WebPEncoder;
     use image::{ExtendedColorType, ImageEncoder, ImageFormat};
     let image = image::load_from_memory_with_format(bytes, ImageFormat::Png).map_err(|e| {
@@ -1900,7 +1908,8 @@ fn find_vault_entry_by_name(root: &Path, name: &str) -> Option<String> {
 
 /// 附件落盘的写路径（[`write_bytes_atomic`] 的 `reject_existing = true` 包装）：撞名按
 /// [`AtomicWriteOutcome::TargetExists`] 收敛，其余失败阶段映射到 `attachment_write_*`。
-fn write_attachment_atomic(
+/// `pub(crate)`：harness 贴图（`harness::attachments`）复用同一原子写原语（design §5.3）。
+pub(crate) fn write_attachment_atomic(
     dir: &Path,
     name: &str,
     bytes: &[u8],
@@ -1926,6 +1935,22 @@ fn write_attachment_atomic(
     })
 }
 
+/// 剪贴板图片 base64 载荷的共用解码段（vault 附件 [`write_attachment`] 与 harness 贴图
+/// `harness::attachments::write_image` 同一条，change harness-composer-image-paste design §5.3）：
+/// 50MB 上限判定在解码**之前**（base64 长度是解码后字节数的上界——先判可保证超限载荷不被
+/// 分配，spec「MUST NOT 分配对应内存」），解码后再按实际字节数判一次。
+pub(crate) fn decode_attachment_base64(data_base64: &str) -> Result<Vec<u8>, CommandError> {
+    let upper_bound = (data_base64.len() / 4 * 3 + 2) as u64;
+    if upper_bound > ATTACHMENT_MAX_BYTES {
+        return Err(attachment_too_large(upper_bound));
+    }
+    let raw = base64_decode(data_base64)?;
+    if raw.len() as u64 > ATTACHMENT_MAX_BYTES {
+        return Err(attachment_too_large(raw.len() as u64));
+    }
+    Ok(raw)
+}
+
 /// 剪贴板图片写原语（change paste-clipboard-image 的 fs-io 增量，design §3）。
 ///
 /// 链路：base64 解码 → 50MB 上限（**转码前**判定）→ 转码（png → WebP 无损；jpeg / webp 原样）
@@ -1941,16 +1966,7 @@ pub fn write_attachment(
     source_mime: &str,
 ) -> Result<WrittenAttachment, CommandError> {
     let (transcode, extension) = attachment_target(source_mime)?;
-    // 超限判定在解码之前：base64 长度是解码后字节数的上界（`len / 4 * 3 + 2`）——先判可以
-    // 保证超限载荷不被分配（spec「MUST NOT 分配对应内存」）。
-    let upper_bound = (data_base64.len() / 4 * 3 + 2) as u64;
-    if upper_bound > ATTACHMENT_MAX_BYTES {
-        return Err(attachment_too_large(upper_bound));
-    }
-    let raw = base64_decode(data_base64)?;
-    if raw.len() as u64 > ATTACHMENT_MAX_BYTES {
-        return Err(attachment_too_large(raw.len() as u64));
-    }
+    let raw = decode_attachment_base64(data_base64)?;
     let bytes = if transcode {
         transcode_png_to_webp(&raw)?
     } else {

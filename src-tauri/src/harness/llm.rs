@@ -284,7 +284,10 @@ pub trait LlmClient: Send {
 }
 
 /// 按配置装配 client：mock ⇒ fixture 驱动；kimi / deepseek ⇒ reqwest blocking。
-pub fn client(config: &HarnessConfig) -> Result<Box<dyn LlmClient>, CommandError> {
+/// `vault_id` 供 wire 展开（`attachments::expand_image_refs`）解析 harness 附件落点——
+/// 会话侧 input 项恒为 `lumir-attachment://` 引用，发送前在 client 内就地展开为
+/// data URL（design §4.3：真 client 与 mock 同一条展开函数）。
+pub fn client(config: &HarnessConfig, vault_id: &str) -> Result<Box<dyn LlmClient>, CommandError> {
     match config.provider {
         HarnessProvider::Mock => {
             let fixture = config.providers.mock.fixture.clone().ok_or_else(|| {
@@ -294,7 +297,7 @@ pub fn client(config: &HarnessConfig) -> Result<Box<dyn LlmClient>, CommandError
                 )
             })?;
             MockClient::from_file(std::path::Path::new(&fixture))
-                .map(|c| Box::new(c) as Box<dyn LlmClient>)
+                .map(|c| Box::new(c.for_vault(vault_id)) as Box<dyn LlmClient>)
         }
         HarnessProvider::Kimi | HarnessProvider::Deepseek => {
             let (api_key, model, base_url) = match config.provider {
@@ -349,6 +352,7 @@ pub fn client(config: &HarnessConfig) -> Result<Box<dyn LlmClient>, CommandError
                 model: model.clone(),
                 store_false: matches!(config.provider, HarnessProvider::Kimi),
                 effort_supported,
+                vault_id: vault_id.to_string(),
                 preset,
             }))
         }
@@ -380,6 +384,9 @@ struct ResponsesClient {
     effort_supported: bool,
     /// kimi 支持 `store` ⇒ 显式 false 声明不留副本；deepseek 不支持（恒 false），不发。
     store_false: bool,
+    /// 当前会话作用域的 vault 稳定 id：wire 展开（附件引用 → data URL）的落点解析
+    /// （design §4.3——只在发送前展开一次，JSONL 留存恒为引用形态）。
+    vault_id: String,
     preset: &'static ProviderPreset,
 }
 
@@ -405,10 +412,14 @@ impl ResponsesClient {
         request: &Request,
         sink: &dyn StreamSink,
     ) -> Result<TurnOutput, CommandError> {
+        // wire 展开（design §4.3）：input 数组里的 lumir-attachment:// 引用就地换成
+        // data URL——发送前唯一的展开点，展开失败（附件缺失等）即 Err，本轮以人话错误
+        // 收口，MUST NOT 发出静默缺图的请求。
+        let input = super::attachments::expand_image_refs(&request.input, &self.vault_id)?;
         let mut body = serde_json::json!({
             "model": self.model,
             "instructions": request.system,
-            "input": request.input,
+            "input": input,
             "tools": request.tools,
             "tool_choice": "auto",
             "stream": true,
@@ -804,6 +815,11 @@ pub struct MockClient {
     /// 请求携带了映射后的参数」。mock 不消费它，只**记录**（真 provider 由
     /// [`super::thinking::apply_effort`] 把它写进请求体）。
     received_efforts: Vec<ThinkingEffort>,
+    /// 当前会话作用域的 vault 稳定 id：wire 展开（附件引用 → data URL）与真 client
+    /// 同一条函数（design §4.3）——验收据此断言「wire 上真的是 input_image」。
+    vault_id: String,
+    /// 每次 `complete` 展开后的 input（按调用序；`received_inputs` 的断言数据源）。
+    received_inputs: Vec<Vec<serde_json::Value>>,
 }
 
 impl MockClient {
@@ -839,12 +855,26 @@ impl MockClient {
             script: file.responses.into(),
             source: source.to_string(),
             received_efforts: Vec::new(),
+            vault_id: String::new(),
+            received_inputs: Vec::new(),
         })
+    }
+
+    /// 绑定会话作用域的 vault 稳定 id（wire 展开的落点解析；`llm::client` 装配路径）。
+    pub fn for_vault(mut self, vault_id: &str) -> Self {
+        self.vault_id = vault_id.to_string();
+        self
     }
 
     /// 收到的档位序列（按调用序），供验收 / 单测断言。
     pub fn received_efforts(&self) -> &[ThinkingEffort] {
         &self.received_efforts
+    }
+
+    /// 每次 `complete` 展开后的 input（按调用序）——「wire 上真的是 input_image / data
+    /// URL」的验收断言口（design §4.3：mock 与真 client 同一条展开投影）。
+    pub fn received_inputs(&self) -> &[Vec<serde_json::Value>] {
+        &self.received_inputs
     }
 }
 
@@ -855,6 +885,24 @@ impl LlmClient for MockClient {
     }
 
     fn complete(&mut self, request: &Request, sink: &dyn StreamSink) -> TurnOutput {
+        // wire 展开与真 client 同一条函数（design §4.3）：附件引用 → data URL。
+        // 展开失败（附件缺失等）以 error 终态收口——与真 provider 路径同口径，
+        // MUST NOT 静默消费一条缺图的请求。
+        let input = match super::attachments::expand_image_refs(&request.input, &self.vault_id) {
+            Ok(input) => input,
+            Err(e) => {
+                self.received_efforts.push(request.effort);
+                return TurnOutput {
+                    error: Some(TurnError {
+                        code: e.code,
+                        message: e.message,
+                        context_overflow: false,
+                    }),
+                    ..Default::default()
+                };
+            }
+        };
+        self.received_inputs.push(input);
         // 记录收到的档位（M362）：与脚本是否弹尽无关——验收要断言的是「发出去的是什么」，
         // 故放在最前面，耗尽路径也留痕。
         self.received_efforts.push(request.effort);
@@ -1020,14 +1068,14 @@ mod tests {
             ..crate::config::HarnessConfig::default()
         };
         // 空 api_key（出厂态）→ api_key 错误先挡。
-        let error = match client(&config) {
+        let error = match client(&config, "vault-test-1") {
             Err(error) => error,
             Ok(_) => panic!("空 api_key 必须被拒"),
         };
         assert_eq!(error.code, "harness_api_key_missing");
         // 有 key 无模型（config-only 空清单、model 空串）→ model 错误。
         config.providers.kimi.api_key = "sk-x".into();
-        let error = match client(&config) {
+        let error = match client(&config, "vault-test-1") {
             Err(error) => error,
             Ok(_) => panic!("空 model 必须被拒"),
         };
@@ -1042,9 +1090,10 @@ mod tests {
         config.providers.kimi.models = vec![crate::config::HarnessModelSpec {
             id: "k3-256k".into(),
             effort: true,
+            vision: false,
             window: 262_144,
         }];
-        assert!(client(&config).is_ok());
+        assert!(client(&config, "vault-test-1").is_ok());
     }
 
     /// 单测用的流式 sink（M369）：记录收到的分片，并可按「已收到多少正文分片」翻真

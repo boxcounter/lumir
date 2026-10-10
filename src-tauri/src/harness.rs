@@ -29,6 +29,7 @@
 //! - [`thinking`]：思考程度档位／provider 能力与请求映射、reasoning 展示文本提取（M362）
 
 pub mod approval;
+pub mod attachments;
 pub mod context;
 pub mod diff;
 pub mod events;
@@ -529,6 +530,32 @@ fn session_belongs_to_scope(open: &serde_json::Value, scope: &VaultScope) -> boo
     open["vault_root"].as_str() == Some(scope.key().as_str())
 }
 
+/// 发送闸判据（change harness-composer-image-paste design §6；能力语义的**唯一**产出点——
+/// 前端 MUST NOT 另立 vision 判定）：投递投影含 image part 且当前 provider + model
+/// 未声明 vision 能力 → `harness_image_unsupported`（人话 message + `param` 模型名）。
+/// 未列出 = 不支持（保守默认，与 `effort` 同侧）；mock 恒放行。抽出纯函数便于单测；
+/// 命令层在 `acquire_turn` **之前**调用——拒绝路径不建会话、不入队。
+fn image_gate_error(
+    parts: &[attachments::DeliveryPart],
+    config: &HarnessConfig,
+) -> Option<CommandError> {
+    if !parts.iter().any(|part| part.kind == "image")
+        || config.vision_supported(&config.provider, llm::active_model(config))
+    {
+        return None;
+    }
+    let model = llm::active_model(config).to_string();
+    Some(
+        CommandError::new(
+            "harness_image_unsupported",
+            format!(
+                "当前模型 {model} 不支持图片输入：请移除图片卡片后再发送，或切换到支持图片的模型"
+            ),
+        )
+        .param("model", model),
+    )
+}
+
 /// 列举当前 vault 的留存会话（`harness_list_sessions` 的实现体，change
 /// reshape-harness-session-recording 任务 2.1）：**只扫本 vault 的目录**
 /// `<config_dir>/harness/sessions/<vault 稳定 id>/*.jsonl`，按 [`session_belongs_to_scope`]
@@ -729,7 +756,16 @@ fn restored_panel_messages(
             Some("function_call_output") => {}
             _ => match item["role"].as_str() {
                 Some("user") => {
-                    if let Some(text) = message_content_text(item) {
+                    // 面板文本从 wire 项还原（design §4.4）：content 数组形态经
+                    // `attachments::panel_text_of_content`——文本 part 原文 + 图片 part 的
+                    // `<image …/>` 占位行，与发送时入队的面板文本**同一条还原函数**，两侧
+                    // 不可能漂（REVIEW.md 第 8 条）；图片卡片因此按原交错还原进面板。
+                    // content 直接是字符串的旧形态走历史拼接口径。
+                    let text = match item["content"].as_array() {
+                        Some(content) => attachments::panel_text_of_content(content),
+                        None => message_content_text(item),
+                    };
+                    if let Some(text) = text {
                         messages.push(session::PanelMessage {
                             role: "user".into(),
                             text: Some(text),
@@ -868,34 +904,39 @@ fn vault_scope(vault: &crate::commands::VaultState) -> Result<VaultScope, Comman
 /// 发送一条提问。立即返回：工具循环在 `lumir-harness-llm` 专线程跑，进展经
 /// `harness:event` 事件推送；上下文块 `context_json` 是 TS 侧组装的
 /// `{path, selection?} | {path, viewport_range?}`（宽容解析，见 [`turn::parse_context`]）。
+///
+/// 投递投影 `parts_json` 是 TS 侧 `serializeDelivery` 的产物（有序 text/image part 数组，
+/// design §4.2）——前端是序列化的唯一执行者，Rust 只做「parts → content 数组」构造。
+///
+/// 发送闸（design §6，能力判据的唯一产出点）：投影含 image part 且当前 provider + model
+/// 未声明 vision 能力 → `harness_image_unsupported`（人话 message + `param` 模型名），
+/// **不建会话、不入队**；前端收到该 code → toast + 把消息里的图片卡片标错误态（前端
+/// MUST NOT 另立能力判定）。放行后含图消息照常入队——会话侧与 JSONL 恒为引用形态，
+/// base64 展开落在 client 发送前（`attachments::expand_image_refs`）。
 #[tauri::command(rename_all = "snake_case")]
 pub fn harness_send(
     vault: tauri::State<'_, crate::commands::VaultState>,
     runtime: tauri::State<'_, Runtime>,
     app: tauri::AppHandle,
-    message: String,
+    parts_json: String,
     context_json: String,
 ) -> Result<(), CommandError> {
     let scope = vault_scope(&vault)?;
     let config = config::load()?.config.harness;
+    let parts = attachments::parse_delivery_parts(&parts_json)?;
+    // 发送闸（design §6，能力判据的唯一产出点）：不建会话、不入队。
+    if let Some(error) = image_gate_error(&parts, &config) {
+        return Err(error);
+    }
     let context = turn::parse_context(&context_json)?;
-    let assembled = turn::assemble_user_message(&message, &context);
+    let context_section = turn::context_section(&context);
     runtime.acquire_turn(&scope, &config)?;
     let runtime_thread = runtime.inner().clone();
     let runtime_release = runtime.inner().clone();
     let scope_release = scope.clone();
     if let Err(e) = std::thread::Builder::new()
         .name("lumir-harness-llm".into())
-        .spawn(move || {
-            turn::run_turn(
-                app,
-                runtime_thread,
-                scope,
-                config,
-                assembled.text,
-                assembled.context_section,
-            )
-        })
+        .spawn(move || turn::run_turn(app, runtime_thread, scope, config, parts, context_section))
     {
         // 起线程失败：释放 busy，别把会话永远留在占用态。
         runtime_release.release_turn(&scope_release);
@@ -905,6 +946,33 @@ pub fn harness_send(
         );
     }
     Ok(())
+}
+
+/// 落盘一张 composer 粘贴的剪贴板图片（change harness-composer-image-paste design §5）：
+/// harness 侧内容寻址存储 `attachments/<vault 稳定 id>/`（MUST NOT 触碰 vault），
+/// 返回 `{name, width, height}`——前端据此插图片卡片。链路复用 vault 附件的
+/// fs_io 原语（转码 / 寻址 / 原子写 / 50MB 上限判据），落点解析失败（无有效 vault）即
+/// 拒绝落盘 + 人话错误，不留半截。
+#[tauri::command(rename_all = "snake_case")]
+pub fn harness_write_image(
+    vault: tauri::State<'_, crate::commands::VaultState>,
+    data_base64: String,
+    source_mime: String,
+) -> Result<attachments::HarnessWrittenImage, CommandError> {
+    let scope = vault_scope(&vault)?;
+    attachments::write_image(&scope.vault_id, &data_base64, &source_mime)
+}
+
+/// 读回一张 harness 图片附件的 base64（缩略图渲染用；design §5.4）：落点 =
+/// `attachments/<当前 vault 稳定 id>/`，限 `pasted-<hash16>.<ext>` 形态、限尺寸、
+/// 路径逃逸防护——引用名只在本 vault 目录内唯一，MUST NOT 跨 vault 查找。
+#[tauri::command(rename_all = "snake_case")]
+pub fn harness_read_image(
+    vault: tauri::State<'_, crate::commands::VaultState>,
+    name: String,
+) -> Result<String, CommandError> {
+    let scope = vault_scope(&vault)?;
+    attachments::read_image(&scope.vault_id, &name)
 }
 
 /// 批准 / 拒绝一个挂起的批准请求。`reason` 为拒绝原因（可选），随工具结果回送模型；
@@ -1167,5 +1235,93 @@ mod tests {
         assert_eq!(messages[0].decision.as_deref(), Some("approved"));
         assert_eq!(messages[1].decision.as_deref(), Some("rejected"));
         assert_eq!(messages[2].decision, None, "免闸工具行没有批准决定");
+    }
+
+    /// harness-composer-image-paste：恢复路径从 wire 引用还原图片卡片（design §4.4）——
+    /// user 项的 content 数组（input_text / input_image 交错，image_url 为
+    /// lumir-attachment:// 引用）经 panel_text_of_content 还原成面板文本占位元素，
+    /// 交错顺序逐位保留，图片引用与留存一致。
+    #[test]
+    fn restored_panel_messages_restores_image_cards_from_refs() {
+        let restored = vec![
+            serde_json::json!({
+                "role": "user",
+                "content": [
+                    {"type": "input_text", "text": "先看图"},
+                    {"type": "input_image", "image_url": "lumir-attachment://pasted-a0123456789bc.webp"},
+                    {"type": "input_text", "text": "这里哪里不对？"},
+                ],
+            }),
+            session::assistant_item("图里第二行有错。", None)[0].clone(),
+        ];
+        let messages = restored_panel_messages(&restored, &[]);
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[0].role, "user");
+        assert_eq!(
+            messages[0].text.as_deref(),
+            Some(
+                "先看图\n<image ref=\"pasted-a0123456789bc.webp\" type=\"image/webp\"/>\n这里哪里不对？"
+            ),
+            "图片卡片按原交错还原成面板文本占位元素"
+        );
+        assert_eq!(messages[1].role, "assistant");
+    }
+
+    /// harness-composer-image-paste 任务 3.5：发送闸的拒绝 / 放行路径（design §6）。
+    /// 判据四档：声明 true 放行、声明 false 拒绝、缺键（未声明）拒绝、mock 恒放行。
+    #[test]
+    fn image_gate_blocks_and_allows_by_vision_declaration() {
+        let text_only = vec![attachments::DeliveryPart {
+            kind: "text".into(),
+            text: Some("纯文本".into()),
+            name: None,
+        }];
+        let with_image = vec![
+            attachments::DeliveryPart {
+                kind: "text".into(),
+                text: Some("看图".into()),
+                name: None,
+            },
+            attachments::DeliveryPart {
+                kind: "image".into(),
+                text: None,
+                name: Some("pasted-a0123456789bc.webp".into()),
+            },
+        ];
+        let model_spec = |vision: bool| crate::config::HarnessModelSpec {
+            id: "kimi-vision-probe".into(),
+            effort: false,
+            vision,
+            window: 262_144,
+        };
+        // kimi + vision:true → 放行（含图消息正常入队）。
+        let mut config = HarnessConfig {
+            provider: config::HarnessProvider::Kimi,
+            ..HarnessConfig::default()
+        };
+        config.providers.kimi.model = "kimi-vision-probe".into();
+        config.providers.kimi.models = vec![model_spec(true)];
+        assert!(image_gate_error(&with_image, &config).is_none());
+        // kimi + vision:false → 拒绝，code/param 形状钉住。
+        config.providers.kimi.models = vec![model_spec(false)];
+        let error = image_gate_error(&with_image, &config).expect("vision:false 必须拒");
+        assert_eq!(error.code, "harness_image_unsupported");
+        assert_eq!(
+            error.params.get("model").map(String::as_str),
+            Some("kimi-vision-probe")
+        );
+        // 缺键（空清单 = 未列出）→ 同样拒绝（保守默认）。
+        config.providers.kimi.models = vec![];
+        assert!(image_gate_error(&with_image, &config).is_some());
+        // 纯文本消息不受闸影响（vision:false 也放行）。
+        config.providers.kimi.models = vec![model_spec(false)];
+        assert!(image_gate_error(&text_only, &config).is_none());
+        // mock 恒放行（fixture 驱动，验收要断言含图消息正常入队）。
+        let mut mock_config = HarnessConfig {
+            provider: config::HarnessProvider::Mock,
+            ..HarnessConfig::default()
+        };
+        mock_config.providers.kimi.model = "mock-model".into();
+        assert!(image_gate_error(&with_image, &mock_config).is_none());
     }
 }

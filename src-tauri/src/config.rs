@@ -572,6 +572,10 @@ pub struct HarnessModelSpec {
     /// 该模型是否支持思考程度调节（`reasoning.effort`）。未声明 / 未列出 = 不支持
     /// （保守默认：不把无效参数发给不支持的模型）。
     pub effort: bool,
+    /// 该模型是否接受图片输入（`input_image`；change harness-composer-image-paste，
+    /// 键名 2026-10-10 由 `image` 改名 `vision`）。未声明 / 未列出 = 不支持
+    /// （保守默认，与 `effort` 同侧）；发送闸（`harness_image_unsupported`）的判据。
+    pub vision: bool,
     /// 上下文窗口（tokens）：ctx% 读数的分母。
     pub window: u64,
 }
@@ -638,6 +642,22 @@ impl HarnessConfig {
                 .iter()
                 .find(|spec| spec.id == model)
                 .is_some_and(|spec| spec.effort),
+        }
+    }
+
+    /// 该 provider + model 是否接受图片输入（change harness-composer-image-paste，
+    /// `harness_send` 发送闸的单一判据，design §6）：生效清单精确匹配取声明值；
+    /// 未列出 = 不支持（保守默认，与 `effort` 同侧）；mock 恒定支持（fixture 驱动，
+    /// 验收要断言含图消息正常入队）。能力语义只有这一处产出——前端 MUST NOT 另立判定
+    /// （REVIEW.md 第 8 条）。
+    pub fn vision_supported(&self, provider: &HarnessProvider, model: &str) -> bool {
+        match provider {
+            HarnessProvider::Mock => true,
+            HarnessProvider::Kimi | HarnessProvider::Deepseek => self
+                .model_specs(provider)
+                .iter()
+                .find(|spec| spec.id == model)
+                .is_some_and(|spec| spec.vision),
         }
     }
 }
@@ -1493,6 +1513,21 @@ fn validate_harness_model_specs(
                 continue;
             }
         };
+        let vision = match map.get("vision") {
+            None => {
+                warnings.push(format!(
+                    "配置项 {at}（id \"{id}\"）未声明 vision 能力，已按不支持处理"
+                ));
+                false
+            }
+            Some(serde_json::Value::Bool(value)) => *value,
+            Some(_) => {
+                warnings.push(format!(
+                    "配置项 {at}（id \"{id}\"）的 vision 应为布尔值，已忽略该项"
+                ));
+                continue;
+            }
+        };
         let window = match map.get("window") {
             None => {
                 warnings.push(format!(
@@ -1518,6 +1553,7 @@ fn validate_harness_model_specs(
         specs.push(HarnessModelSpec {
             id: id.to_string(),
             effort,
+            vision,
             window,
         });
     }
@@ -2726,9 +2762,9 @@ mod tests {
                 "provider": "deepseek",
                 "providers": {
                     "kimi": {"api_key": "sk-kimi", "model": "kimi-custom", "base_url": "https://k.example/v1",
-                             "models": [{"id":"kimi-custom","effort":true,"window":1048576}]},
+                             "models": [{"id":"kimi-custom","effort":true,"vision":true,"window":1048576}]},
                     "deepseek": {"api_key": "sk-deep",
-                                 "models": [{"id":"deepseek-x","effort":false,"window":131072}]},
+                                 "models": [{"id":"deepseek-x","effort":false,"vision":false,"window":131072}]},
                     "mock": {"fixture": "/tmp/fixture.json"}
                 },
                 "permissions": {"allow": ["cli(ls *)", "vault_patch"], "deny": ["cli(rm *)"]},
@@ -2751,6 +2787,7 @@ mod tests {
             vec![HarnessModelSpec {
                 id: "kimi-custom".into(),
                 effort: true,
+                vision: true,
                 window: 1_048_576
             }]
         );
@@ -3058,7 +3095,7 @@ mod tests {
     fn harness_models_user_declaration_is_the_only_source() {
         let snap = load_from(
             &TempFile::new(
-                r#"{"harness":{"providers":{"kimi":{"models":[{"id":"my-model","effort":false,"window":32768},{"id":"second","effort":true,"window":1000}]}}}}"#,
+                r#"{"harness":{"providers":{"kimi":{"models":[{"id":"my-model","effort":false,"vision":false,"window":32768},{"id":"second","effort":true,"vision":true,"window":1000}]}}}}"#,
             )
             .0,
         );
@@ -3069,11 +3106,13 @@ mod tests {
                 HarnessModelSpec {
                     id: "my-model".into(),
                     effort: false,
+                    vision: false,
                     window: 32_768
                 },
                 HarnessModelSpec {
                     id: "second".into(),
                     effort: true,
+                    vision: true,
                     window: 1_000
                 },
             ]
@@ -3104,6 +3143,7 @@ mod tests {
             {"effort":true,"window":100},
             {"id":"","effort":true,"window":100},
             {"id":"bad-effort","effort":"yes","window":100},
+            {"id":"bad-vision","effort":true,"vision":"yes","window":100},
             {"id":"bad-window","effort":true,"window":"262144"},
             {"id":"zero-window","effort":true,"window":0},
             {"id":"huge-window","effort":true,"window":99999999},
@@ -3121,12 +3161,13 @@ mod tests {
         // defaults-missing：effort 回落 false、window 回落保守默认。
         assert!(!models[1].effort);
         assert_eq!(models[1].window, FALLBACK_CONTEXT_WINDOW);
-        // warning 逐条点名（不是对象 / 缺 id / 空 id / effort 类型 / window 类型 / 0 窗 / 超大窗 / 重复）。
+        // warning 逐条点名（不是对象 / 缺 id / 空 id / effort 类型 / vision 类型 / window 类型 / 0 窗 / 超大窗 / 重复）。
         for needle in [
             "不是对象",
             "缺少 id",
             "id 为空",
             "effort 应为布尔值",
+            "vision 应为布尔值",
             "window 应为",
             "重复",
         ] {
@@ -3166,9 +3207,9 @@ mod tests {
             &TempFile::new(
                 r#"{"harness":{"providers":{
                     "kimi":{"model":"kimi-k3","models":[
-                        {"id":"kimi-k3","effort":true,"window":1048576},
+                        {"id":"kimi-k3","effort":true,"vision":true,"window":1048576},
                         {"id":"k3-256k","effort":true,"window":262144},
-                        {"id":"kimi-k2.6","effort":false,"window":262144}]},
+                        {"id":"kimi-k2.6","effort":false,"vision":false,"window":262144}]},
                     "deepseek":{"models":[
                         {"id":"deepseek-flash","effort":true,"window":1048576}]}}}}"#,
             )
@@ -3210,10 +3251,27 @@ mod tests {
             harness.context_window(&HarnessProvider::Mock, "whatever"),
             FALLBACK_CONTEXT_WINDOW
         );
+        // vision（图片输入能力，harness-composer-image-paste）：声明值 / 缺键 / 未列出四档。
+        assert!(harness.vision_supported(&HarnessProvider::Kimi, "kimi-k3"));
+        assert!(!harness.vision_supported(&HarnessProvider::Kimi, "kimi-k2.6"));
+        // k3-256k 缺 vision 键 → 按不支持 + warning（保守默认，与 effort 同侧）。
+        assert!(!harness.vision_supported(&HarnessProvider::Kimi, "k3-256k"));
+        assert!(
+            snap.warnings
+                .iter()
+                .any(|w| w.contains("未声明 vision 能力")),
+            "{:?}",
+            snap.warnings
+        );
+        // deepseek-flash 缺 vision 键 → 不支持；未列出的 id 同样不支持。
+        assert!(!harness.vision_supported(&HarnessProvider::Deepseek, "deepseek-flash"));
+        assert!(!harness.vision_supported(&HarnessProvider::Kimi, "kimi-k30"));
+        // mock：恒定支持（验收要断言含图消息正常入队）。
+        assert!(harness.vision_supported(&HarnessProvider::Mock, "whatever"));
         // 用户覆盖后读取点跟着覆盖走。
         let snap = load_from(
             &TempFile::new(
-                r#"{"harness":{"providers":{"deepseek":{"models":[{"id":"deepseek-x","effort":false,"window":131072}]}}}}"#,
+                r#"{"harness":{"providers":{"deepseek":{"models":[{"id":"deepseek-x","effort":false,"vision":true,"window":131072}]}}}}"#,
             )
             .0,
         );
@@ -3224,6 +3282,8 @@ mod tests {
         );
         assert!(!harness.effort_supported(&HarnessProvider::Deepseek, "deepseek-x"));
         assert!(!harness.effort_supported(&HarnessProvider::Deepseek, "deepseek-flash"));
+        assert!(harness.vision_supported(&HarnessProvider::Deepseek, "deepseek-x"));
+        assert!(!harness.vision_supported(&HarnessProvider::Deepseek, "deepseek-flash"));
     }
 
     /// model 键与 models 清单的关系（M381 worker 定夺并记录的解析规则）：
@@ -3234,7 +3294,7 @@ mod tests {
         // 显式值不在清单内：照实生效 + warning（honest reading——不静默改写用户配置）。
         let snap = load_from(
             &TempFile::new(
-                r#"{"harness":{"providers":{"kimi":{"model":"stray-model","api_key":"sk-x","models":[{"id":"declared","effort":true,"window":1000}]}}}}"#,
+                r#"{"harness":{"providers":{"kimi":{"model":"stray-model","api_key":"sk-x","models":[{"id":"declared","effort":true,"vision":true,"window":1000}]}}}}"#,
             )
             .0,
         );
@@ -3269,7 +3329,7 @@ mod tests {
         // 缺键 → 清单首项，不告警。
         let snap = load_from(
             &TempFile::new(
-                r#"{"harness":{"providers":{"kimi":{"models":[{"id":"first","effort":true,"window":1000}]}}}}"#,
+                r#"{"harness":{"providers":{"kimi":{"models":[{"id":"first","effort":true,"vision":false,"window":1000}]}}}}"#,
             )
             .0,
         );
