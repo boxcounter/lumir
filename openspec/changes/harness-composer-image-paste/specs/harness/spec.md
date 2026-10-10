@@ -89,8 +89,9 @@ SHALL 从 wire 项的引用还原图片卡片，MUST NOT 伪造、MUST NOT 丢�
 
 ### Requirement: 模型图片能力声明
 
-`config.json` 的 `[harness].providers.<id>.models` 逐项声明 SHALL 支持 `image` 布尔键（与既有的 `effort` /
-`window` 同一条 config-only 声明链）：`true` 表示该 provider + 模型接受图片输入；该键缺席 / 模型未列在清单内
+`config.json` 的 `[harness].providers.<id>.models` 逐项声明 SHALL 支持 **`vision`** 布尔键（键名 2026-10-10 由
+`image` 改名，避免与 `image_generation` 混淆；与既有的 `effort` / `window` 同一条 config-only 声明链）：
+`true` 表示该 provider + 模型接受图片输入；该键缺席 / 模型未列在清单内
 SHALL 按**不支持**处理（保守默认，与 `effort` 同侧），SHALL 给一条人话 warning。系统 MUST NOT 内置任何模型的
 图片能力——MUST NOT 硬编码、MUST NOT 出厂回落。
 
@@ -101,17 +102,17 @@ SHALL 按**不支持**处理（保守默认，与 `effort` 同侧），SHALL 给
 
 #### Scenario: 支持时正常投递
 
-- **WHEN** 生效模型的声明含 `"image": true`，发送一条携带图片卡片的消息
+- **WHEN** 生效模型的声明含 `"vision": true`，发送一条携带图片卡片的消息
 - **THEN** 消息正常发出，wire 请求含展开后的 `input_image` part
 
 #### Scenario: 未声明按不支持
 
-- **WHEN** 生效模型的声明缺 `image` 键（或该模型不在清单内）
+- **WHEN** 生效模型的声明缺 `vision` 键（或该模型不在清单内）
 - **THEN** 该模型的图片能力按不支持处理并产生人话 warning；含图片卡片的消息发送被挡下
 
 #### Scenario: 不支持时挡住并标出图片卡片
 
-- **WHEN** 生效模型的 `image` 为 `false` 或未声明，用户在 composer 贴入图片并点击发送
+- **WHEN** 生效模型的 `vision` 为 `false` 或未声明，用户在 composer 贴入图片并点击发送
 - **THEN** 发送被挡下并弹出人话错误；该消息里的图片卡片被标出（错误态可见）；输入区内容原样保留、会话不推进、
   MUST NOT 发出丢弃图片的降级消息；移除图片卡片后同一消息可正常发出
 

@@ -5,6 +5,14 @@
 - 角色: Alex Lee（评审/裁决），AI agent（起草）
 
 > 评审记录：
+> 修订（2026-10-10，UX demo 评审）：Alex 看过 composer 贴图交互原型后「通过」，只提一处小调整——**图片卡片
+> 元信息行去掉 `image ·` 类型前缀、直接从文件名开始**（proposal 与 design §3 / §8 已改准）。
+> 同日第二处修订（命名）：模型图片能力的 config 布尔键由 `image` 改名 **`vision`**——`image` 易与
+> `image_generation` 混淆，且 `vision` 与 `effort` / `window` 同为单词、同样式（tower 建议、Alex 未反对；
+> **Alex 可推翻**）。proposal / design / tasks / spec 增量已同步改准；配套读取点一并改名
+> `vision_supported`（照 `effort_supported` 与键名同形）。**不在改名面内**：错误码
+> `harness_image_unsupported`、协议字段 `input_image` / `image_url`、内容侧命名（图片卡片 / `{kind:"image"}` 块 /
+> `harness_write_image` / `harness_read_image` / `expand_image_refs`）——它们说的是"图片"这件事，不是配置键。
 > 节点 1（提案评审）：留白（待 Alex 裁决）。
 > 节点 2（归档评审）：留白（实现完成后填写）。
 
@@ -43,7 +51,7 @@ Kimi Code 的贴图体验一致。
 - **本仓未实测**：harness 打的是 Kimi 的 Responses 端点（`src-tauri/src/harness/llm.rs:203`，base_url
   `https://api.moonshot.cn/v1`），该端点对 `input_image` 的**接受性**没有本地证据——列为本 change 实现期的
   真机实测项（tasks §5，先例 `src-tauri/tests/harness_real_deepseek.rs` 的真 provider 冒烟）。实测结论决定
-  Alex 配置里各模型的 `image` 声明值。
+  Alex 配置里各模型的 `vision` 声明值。
 
 ## What Changes
 
@@ -51,7 +59,8 @@ Kimi Code 的贴图体验一致。
 
 1. **图片粘贴卡片**（harness，ADDED）：composer 粘贴的剪贴板含 `image/*` 数据时拦截粘贴，把图片落
    **harness 侧存储**（`<config_dir>/harness/attachments/pasted-<hash16>.<ext>`，**不落 vault**、不改写 vault
-   任何文件），在光标处插入 block 级**图片卡片**（缩略图 + 移除钮）；图文同板图优先、多图只取第一张；卡片
+   任何文件），在光标处插入 block 级**图片卡片**（缩略图 + 元信息行 + 移除钮；元信息行**从文件名开始**、无
+   `image ·` 类型前缀——Alex 2026-10-10 看 demo 后的裁决）；图文同板图优先、多图只取第一张；卡片
    是 composer 原子块（与引用卡片同族的拆段 / 光标落点 / 移除语义），发送后 transcript 同构沉淀，快照恢复
    从留存内容解析还原（与 `<quote>` 同 round-trip 口径）；落盘失败一律人话 toast，不留半截。
 2. **图片消息投递协议**（harness，ADDED）：发送时把混排块投影为 Responses 的 content parts——文本块仍按既有
@@ -59,8 +68,9 @@ Kimi Code 的贴图体验一致。
    `input_image` **按混排顺序交错**。会话侧（内存 input 项与 JSONL 留存）记的是**附件引用**（内容寻址名），
    `image_url` 在**发送前**由后端展开为 base64 data URL；**会话 JSONL MUST NOT 内联 base64**。历史会话恢复
    路径从引用还原图片卡片。
-3. **模型图片能力声明**（harness，ADDED）：`[harness].providers.<id>.models` 的逐项声明新增 `image` 布尔键
-   （与 `effort` / `window` 同一条 config-only 链）：`true` = 该模型接受图片输入；未声明 / 未列出 = 不支持
+3. **模型图片能力声明**（harness，ADDED）：`[harness].providers.<id>.models` 的逐项声明新增 **`vision`** 布尔键
+   （键名 2026-10-10 由 `image` 改名，避免与 `image_generation` 混淆；与 `effort` / `window` 同一条 config-only
+   链）：`true` = 该模型接受图片输入；未声明 / 未列出 = 不支持
    （保守默认，与 `effort` 同侧）。当前生效模型不支持时，含图片卡片的消息**在发送时**被挡下并给人话错误，
    同时标出该消息里的图片卡片——**允许贴入、发送时挡人话错误，不静默吞图**。
 4. **混排对话输入区**（harness，MODIFIED）：粘贴净化的作用面收窄——`image/*` 项不再被丢弃，交给上列新能力；
@@ -101,11 +111,11 @@ Kimi Code 的贴图体验一致。
     （对齐 `src/paste-image.ts` 的分层）、文案表新 D-code；
   - src-tauri：user 消息项内容形态从单 `input_text` 扩为 content parts（`harness/session.rs`）、发送前把附件引用
     展开为 data URL（`harness/llm.rs`）、harness 侧附件的写/读原语（复用 `fs_io` 的转码/寻址/原子写原语）、
-    模型声明的 `image` 键（`config.rs` 的 `HarnessModelSpec` 与逐项校验）、发送闸（`harness_send` 错误码）、
+    模型声明的 `vision` 键（`config.rs` 的 `HarnessModelSpec` 与逐项校验）、发送闸（`harness_send` 错误码）、
     ts-rs bindings 重导出；
   - scripts/acceptance：新增验收场景（mock provider 下断言 wire 形态与 JSONL 无 base64）；
   - tests/unit、tests/visual：投递投影/解析不变量单测、图片卡片与缩略图基线。
-- **关联约束**：M373/M381 的 config-only 模型注册表（`image` 同体系声明）；一致性原则（Alex 2026-10-06，
+- **关联约束**：M373/M381 的 config-only 模型注册表（`vision` 同体系声明）；一致性原则（Alex 2026-10-06，
   投递给模型的要素对人必须也可查——图片卡片可见、不可见的图不得进上下文）；ADR 0002 §6 性能合同（base64 展开
   在发送线程，不进 keypress-to-paint 路径）；ADR 0007 双向记录（会话留存仍须满足恢复充分性，图片以引用参与）；
   仓库信息卫生（fixture 截图全合成，不搬真实 vault 内容）。
