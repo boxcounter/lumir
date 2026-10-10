@@ -263,7 +263,7 @@ impl JsonlWriter {
         }
     }
 
-    /// 从留存文件路径取 session id（`sessions/<session_id>.jsonl` 的文件名部分；
+    /// 从留存文件路径取 session id（`sessions/<vault 稳定 id>/<session_id>.jsonl` 的文件名部分；
     /// 测试与恢复命令的解析共用）。
     pub fn session_id_from_path(path: &Path) -> Option<String> {
         path.file_stem()

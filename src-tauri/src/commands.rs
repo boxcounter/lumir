@@ -292,7 +292,7 @@ impl VaultState {
 
     /// 当前 vault 的根 + 规则表 + 稳定 id（[`Self::root_and_policy`] 的姊妹口）。
     /// **pub 消费方：harness 运行时**——会话留存按 vault 稳定 id 分目录
-    /// （`<config_dir>/harness/sessions/<id>/`），id 与根/规则表同一次快照取，不新造查表。
+    /// （`<config_dir>/harness/sessions/<vault 稳定 id>/`），id 与根 / 规则表同一次快照取，不新造查表。
     pub fn root_policy_and_id(
         &self,
     ) -> Result<(PathBuf, fs_io::IgnorePolicy, String), CommandError> {

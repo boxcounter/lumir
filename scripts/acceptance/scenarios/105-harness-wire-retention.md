@@ -77,7 +77,7 @@ append-only JSONL（`<隔离配置>/harness/sessions/<vault 稳定 id>/<session_
 `tool_result` / `usage` / `tool_denied` / …）不再记录。
 
 本场景用一份「思考 + 正文 + 工具调用」的两轮 fixture，跑完一轮含工具循环的对话后，逐条断言
-`sessions/*.jsonl` 的留存形状。断言基准是 change 的 specs delta（scenario「留存落盘」「装配记录
+`sessions/<vault 稳定 id>/*.jsonl` 的留存形状。断言基准是 change 的 specs delta（scenario「留存落盘」「装配记录
 落盘」「思考落盘与回放」）与 design §2 的 schema。
 
 ## 断言口径

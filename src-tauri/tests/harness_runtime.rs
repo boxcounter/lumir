@@ -430,7 +430,7 @@ fn tool_loop_roundtrip_with_fixture_file() {
     }
 }
 
-/// 读取并解析夹具的唯一一份会话留存（`sessions/<session_id>.jsonl` 布局——文件名是
+/// 读取并解析夹具的唯一一份会话留存（`sessions/<vault 稳定 id>/<session_id>.jsonl` 布局——文件名是
 /// `jsonl::new_session_id` 的产物，测试侧不复刻生成算法，REVIEW.md 第 8 条：两份真源
 /// 会漂）。一个 Fixture 只有一个 vault 且大多数场景只跑一个会话，目录里恰有一份 `.jsonl`，
 /// 直接取它；多会话场景（压缩 / 重置 / 恢复）用 `harness_jsonl_files` 自取。

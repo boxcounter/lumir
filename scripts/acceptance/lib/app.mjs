@@ -143,8 +143,8 @@ export async function resetRecovery() {
 /**
  * 清空 harness（对话面板）的会话 wire 留存目录（`env/lumir/harness/`，含 `sessions/`）。
  * 为什么必须做：与 recovery 同因——留存文件在**隔离配置目录**下，只重置 vault 会让上一场景的
- * `session_open` / `llm_request` / `llm_response` 记录残留到本场景，`env:harness/sessions/*.jsonl`
- * 的 file 断言会读到别人的记录而假绿/假红。
+ * `session_open` / `llm_request` / `llm_response` 记录残留到本场景，file 断言（`env:harness/sessions/*/*.jsonl`，
+ * `*` 是 per-vault 的 `<vault 稳定 id>` 目录层）会读到别人的记录而假绿/假红。
  * 实证：M304 首轮 8 场景连跑，50 条记录全部串在一个文件里。
  */
 export async function resetHarness() {

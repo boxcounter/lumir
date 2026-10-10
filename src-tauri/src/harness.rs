@@ -983,7 +983,7 @@ pub fn harness_set_thinking_effort(
 }
 
 /// 从留存文件恢复会话（change reshape-harness-session-recording 的恢复入口）：
-/// `session_id` 是 `sessions/<id>.jsonl` 的文件名（形态校验防目录穿越）。读源文件
+/// `session_id` 是 `sessions/<vault 稳定 id>/<id>.jsonl` 的文件名（形态校验防目录穿越）。读源文件
 /// 最后一条会话轮次 `llm_request` 的完整请求体，system + messages 原样灌进新会话并
 /// 续写**新**留存文件（opened_from=restore、restored_from=源会话 id——恢复的地基：文件边界 + 会话身份 + 谱系链）。
 /// 返回 `SessionResumeInfo`（ts-rs 导出）：新会话标识 + 灌回条数 + **面板重建消息**
@@ -1012,7 +1012,7 @@ pub fn harness_list_sessions(
 }
 
 /// 删除一份历史会话留存（M406；面板会话选择器的行内删除入口）：`session_id` 是
-/// `sessions/<id>.jsonl` 的文件名（形态校验防目录穿越）。活跃会话的当前留存拒删
+/// `sessions/<vault 稳定 id>/<id>.jsonl` 的文件名（形态校验防目录穿越）。活跃会话的当前留存拒删
 /// （`harness_session_active`）；vault 归属不符拒删（`harness_session_vault_mismatch`，
 /// 与列举 / 恢复同一口径）；文件已不存在按幂等成功处理。
 #[tauri::command(rename_all = "snake_case")]
