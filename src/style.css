@@ -821,9 +821,15 @@ body {
 .lumir-toast,
 .toast-surface {
   position: absolute;
+  /* 定位包含块 = 发起 pane 的挂载元素 `.editor-pane`（`position: relative`，M420）——
+   * main.ts 的 toast 把浮条 append 到这个元素，不再挂整个编辑器列 `.pane-editor`：
+   * 分栏态下编辑器列的右下角是右 pane（可能是 harness），会把左 pane 的提示画到别人身上。
+   * 从 `.editor-pane` 到根的祖先链无 overflow 裁切者（O1/O3 结构上成立）。 */
   /* 定稿 .toast5（index.html:745-755）：bottom 14、right 16、gap 8、12.5px。 */
   bottom: var(--sp-7);
   right: var(--sp-8);
+  /* 宽度相对**本 pane**（不再是整个编辑器列）：分栏态下长文案按 pane 宽换行。 */
+  max-width: 70%;
   display: flex;
   align-items: center;
   gap: var(--sp-4);
@@ -835,7 +841,6 @@ body {
   /* 浮出物 → 吃 v1.1 的 elevation 档（eink = none，黑底白字本身成立）。 */
   box-shadow: var(--shadow-raise);
   z-index: 10;
-  max-width: 70%;
 }
 /* 成功确认类 toast 的 ✓ 前缀（定稿 .toast5 .t5-check，index.html:755/1218）：
    语义口径——只标「用户动作已成功完成」的确认（M217 S14，tower 裁决 2026-09-25）。 */
