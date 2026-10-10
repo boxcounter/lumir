@@ -6,7 +6,7 @@
 - [x] 1.2 `<msg-quote role="…" at="…">摘录原文</msg-quote>` 序列化：混排交错（与 `<quote>` 同规则）、role 必选、at 可缺（ISO 8601 本地时间串，秒级）、XML 转义、协议无编号（一致性原则）
 - [x] 1.3 `parseQuoteMessage` 扩展：`<msg-quote>` 解析还原为 msgquote 块（快照恢复 round-trip 与 `<quote>` 同口径）；未知元素保守不丢文
 - [x] 1.4 序列化/解析不变量属性测试（无编号、转义 round-trip、交错顺序、role 合法性、未知元素行为）——tests/unit/message-quote-card.test.ts
-- [x] 1.5 prompt 装配：`<msg-quote>` 接入消息投递（两 provider 统一处 `harness_send` 的 `serializeQuoteMessage` 产物）；会话层指引 agent 按内容/角色回指
+- [x] 1.5 prompt 装配：`<msg-quote>` 接入消息投递（两 provider 统一处 `harness_send` 的 `serializeQuoteMessage` 产物）；会话层指引 agent 按摘录内容与角色/时间回指——落在 `src-tauri/src/harness/context.rs` 的 `QUOTE_REFERENCE`（补 `<msg-quote role at>` 的释义、role/at 语义与按内容/角色/时间回指的纪律；该段是固定段，两 provider 经 `assemble_system` 统一注入），并加 Rust 测试 `quote_reference_covers_both_excerpt_forms` + 扩展 `assemble_system_skips_missing_agents_and_includes_index`
 
 ## 2. 手势与卡片流转
 

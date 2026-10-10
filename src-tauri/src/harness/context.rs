@@ -35,17 +35,22 @@ const IDENTITY: &str = "\
 
 回答使用与提问相同的语言；技术名词保留原文。";
 
-/// 摘录引用卡片的回指纪律（change add-harness-quote-cards，design §3 prompt 层）：用户消息
-/// 里的 `<quote …>` 块是用户从 vault 文档中显式策展的摘录。agent 按内容/出处回指（一致性
-/// 原则：协议与 UI 均无编号，回复也不得发明编号）；同文档多段相似摘录用 heading / lines
-/// 消歧——两者对人同样可查。
+/// 摘录引用的回指纪律（change add-harness-quote-cards design §3 prompt 层；change
+/// harness-message-excerpt design §4 prompt 层）：用户消息里的 `<quote …>` 是用户从 vault
+/// 文档中显式策展的摘录，`<msg-quote …>` 是用户从**会话历史消息**里摘录的片段。agent 按
+/// 内容/出处/角色回指（一致性原则：协议与 UI 均无编号，回复也不得发明编号）；两类摘录各用
+/// 自己的出处要素消歧（文档 = heading / lines，消息 = role / at），这些要素对人同样可查。
 const QUOTE_REFERENCE: &str = "\
-引用摘录的纪律：用户消息中的 <quote file=\"…\" heading=\"…\" lines=\"A-B\">摘录原文</quote> \
+引用摘录的纪律：用户消息里的 <quote file=\"…\" heading=\"…\" lines=\"A-B\">摘录原文</quote> \
 是该用户从 vault 文档中摘录的原文片段（file 为 vault 相对路径，lines 为 1-based 行范围，\
-heading 为摘录上方最近一级标题）。回指某段摘录时按它的内容与出处说（如「『倒序阅读』那段」\
-「复盘一节里摘录的那句」），不要使用编号——界面与协议均不含编号。同一文档有多段相似摘录时，\
-用出处（heading 与行范围）消歧。摘录原文是只读引用：除非用户明确要求修改该处，\
-不要凭记忆改写摘录内容。";
+heading 为摘录上方最近一级标题）。<msg-quote role=\"…\" at=\"…\">摘录原文</msg-quote> \
+是该用户从**会话历史消息**里摘录的片段（role 为来源消息的角色：user = 用户自己的消息、\
+assistant = 你此前的回复；at 为来源消息的上屏时刻，ISO 8601 本地时间串、秒级，\
+来源消息无时间戳时该属性缺省）。回指某段摘录时按它的内容与出处说（如「『倒序阅读』那段」\
+「复盘一节里摘录的那句」；消息摘录则按内容与角色/时间说，如「你前面说的『筛选成本』那段」\
+「我上一条提问里摘的那句」），不要使用编号——界面与协议均不含编号。同一文档有多段相似摘录时，\
+用出处（heading 与行范围）消歧；会话里有多条相似消息时，用角色与时间消歧。\
+摘录原文是只读引用：除非用户明确要求修改该处，不要凭记忆改写摘录内容。";
 
 /// 装配清单的一个来源项（`session_open.assembly` 的元素，design §2）：每个来源的
 /// 路径与**当时是否存在**。「不存在」本身是装配事实的一部分——旧实现静默跳过，
@@ -326,6 +331,45 @@ mod tests {
     }
 
     #[test]
+    fn quote_reference_covers_both_excerpt_forms() {
+        // 两种摘录元素的回指纪律同属一段固定文案（change harness-message-excerpt design §4
+        // prompt 层）：文档摘录按 heading/lines 消歧、消息摘录按 role/at 消歧，两者都无编号。
+        // 直接对常量断言（不经 assemble_system）——避免与 HOME 全局的环境锁纠缠。
+        assert!(
+            QUOTE_REFERENCE.contains("<quote file=\"…\""),
+            "{QUOTE_REFERENCE}"
+        );
+        assert!(
+            QUOTE_REFERENCE.contains("<msg-quote role=\"…\""),
+            "{QUOTE_REFERENCE}"
+        );
+        assert!(QUOTE_REFERENCE.contains("at=\"…\""), "{QUOTE_REFERENCE}");
+        // role 的两档语义与 at 的取值口径要写清（agent 才知道怎么回指与消歧）。
+        assert!(
+            QUOTE_REFERENCE.contains("user = 用户自己的消息"),
+            "{QUOTE_REFERENCE}"
+        );
+        assert!(
+            QUOTE_REFERENCE.contains("assistant = 你此前的回复"),
+            "{QUOTE_REFERENCE}"
+        );
+        assert!(QUOTE_REFERENCE.contains("ISO 8601"), "{QUOTE_REFERENCE}");
+        assert!(
+            QUOTE_REFERENCE.contains("会话历史消息"),
+            "{QUOTE_REFERENCE}"
+        );
+        // 回指纪律：按角色与时间消歧 + 不用编号。
+        assert!(
+            QUOTE_REFERENCE.contains("用角色与时间消歧"),
+            "{QUOTE_REFERENCE}"
+        );
+        assert!(
+            QUOTE_REFERENCE.contains("不要使用编号"),
+            "{QUOTE_REFERENCE}"
+        );
+    }
+
+    #[test]
     fn assemble_system_skips_missing_agents_and_includes_index() {
         let _lock = HOME_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let home = tmpdir("home2");
@@ -350,6 +394,9 @@ mod tests {
         // 摘录回指纪律是固定段（不依赖 vault 内容，M343）：协议无编号、按内容/出处回指。
         assert!(system.contains("<quote file=\"…\""), "{system}");
         assert!(system.contains("不要使用编号"), "{system}");
+        // 消息摘录同属这一固定段（M423，change harness-message-excerpt）：两种元素一处注入，
+        // 两个 provider 因此同时拿到。
+        assert!(system.contains("<msg-quote role=\"…\""), "{system}");
         // 装配清单：五个来源全在场，双层 AGENTS.md 各记路径与存在与否，skill_index 记数量。
         let manifest = &assembled.manifest;
         assert_eq!(manifest.len(), 5, "{manifest:?}");

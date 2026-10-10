@@ -16,8 +16,10 @@ import { stubTauri, type VaultFixture } from "./tauri-stub";
 //
 // 行为层（真机 WKWebView）归验收套件；这里钉结构、计算属性与瞬态纪律。
 //
-// 注：两张新表面基线（m423-message-quote-gesture-button / -card）是**新增**基线的候选，
-// 首跑会因缺基线判红——截图留给 Alex 过目后再补基线（基线更新纪律见 tests/visual/README.md）。
+// 注：两张新表面基线（m423-message-quote-gesture-button / -card）已随本分支提交
+//（Playwright 首跑写入，未用 `--update`、未触碰任何既有基线），并在全量视觉里参与像素对比；
+// 截图另存一份给 Alex 过目（`test-results/alex-review-2026-10-10/m423/`）——若 Alex 对观感有
+// 异议再按 tests/visual/README.md 的基线更新纪律重截。
 
 const DOC = "# 消息摘录基线\n\n第一段，给上下文 chip 一个视口口径。\n";
 
@@ -135,7 +137,7 @@ test("浮动钮：transcript 选区 → 「摘录到对话」钮浮现（挂 tra
   await expect(transcriptBtn).toHaveText("摘录到对话");
   await expect(transcriptBtn).toHaveAttribute("aria-label", "摘录到对话");
 
-  // 元素级基线候选（新表面；Alex 过目后补基线）。
+  // 元素级基线（新表面；基线已随分支提交，截图另存 Alex 过目目录）。
   await expectScreenshot(transcriptBtn, "m423-message-quote-gesture-button.png");
 });
 
@@ -160,7 +162,7 @@ test("点钮：消息摘录卡入 composer（出处行「对话 · Agent」、×
   // 携带消息摘录卡 ⇒ 跳过视口注入：chip 走「仅路径」形态（D373）。
   await expect(page.locator(".lumir-hp-chip")).toHaveText("上下文：harness-note.md");
 
-  // 元素级基线候选（新表面；Alex 过目后补基线）。
+  // 元素级基线（新表面；基线已随分支提交，截图另存 Alex 过目目录）。
   await expectScreenshot(card, "m423-message-quote-card.png");
 });
 
