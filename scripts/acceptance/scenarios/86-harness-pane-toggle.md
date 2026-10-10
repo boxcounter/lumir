@@ -1,7 +1,7 @@
 ---
 id: "86-harness-pane-toggle"
 item: 86
-title: ⌘⇧A 开合 harness pane：自动分栏默认 1:2、再按收起不丢标签、pane.close 于 harness pane 同义
+title: ⌘⇧A 开合 harness pane：自动分栏默认 1:1、再按收起不丢标签、pane.close 于 harness pane 同义
 fixtures: [tabs-a.md]
 open: tabs-a.md
 marker: "标签场景 A"
@@ -46,8 +46,8 @@ steps:
     expect:
       - label: 会话文件记下 harness pane 在场（harness_pane 持久位）
         file: { path: "env:vault-sessions/acc-a.json", has: '"harness_pane": true' }
-      - label: 默认宽度比 = 文档侧 2/3（harness:文档 = 1:2，Alex 裁决）
-        file: { path: "env:vault-sessions/acc-a.json", has: '"pane_split_ratio": 0.666' }
+      - label: 默认宽度比 = 文档侧 1/2（harness:文档 = 1:1，Alex 2026-10-10 裁决）
+        file: { path: "env:vault-sessions/acc-a.json", has: '"pane_split_ratio": 0.5' }
       - label: 会话是 v2 分栏形状
         file: { path: "env:vault-sessions/acc-a.json", has: '"version": 2' }
 
@@ -97,9 +97,9 @@ pane 打开/收起 harness」，且 **harness 在场时文档 pane 至多一个*
 
 1. **自动分栏**：单 pane 下按 `⌘⇧A`，无第二 pane 时自动分栏（分隔条 D368 出现），面板落在
    旁侧 pane 里（发送钮在场）。
-2. **默认宽度比 1:2**（harness:文档）：`splitRatio` 记的是**文档侧**占比，`openHarnessPane`
-   在「本 vault 无存储比例」时置 `HARNESS_DEFAULT_DOC_RATIO = 2/3`。判据落在会话文件
-   `pane_split_ratio`（0.666…）——这是比例的盘上事实（AX 通道读不到栏宽）。
+2. **默认宽度比 1:1**（harness:文档）：`splitRatio` 记的是**文档侧**占比，`openHarnessPane`
+   在「本 vault 无存储比例」时置 `HARNESS_DEFAULT_DOC_RATIO = 1/2`（2026-10-10 裁决，原 2/3）。
+   判据落在会话文件 `pane_split_ratio`（0.5）——这是比例的盘上事实（AX 通道读不到栏宽）。
 3. **再按收起、不丢标签**：`⌘⇧A` 二次按下收 harness pane，文档标签计数与正文都不变。
 4. **`pane.close` 于 harness pane 同义**：分栏态焦点落 composer（活跃 pane = harness），
    `⌥W`（pane.close）因此 = 关 harness，而不是去关文档 pane。
@@ -118,14 +118,20 @@ pane 打开/收起 harness」，且 **harness 在场时文档 pane 至多一个*
 - **标签计数**：用「关闭钮读屏名」计数（每个标签恰一个关闭钮，与场景 14/79 同源）。harness pane
    恒零标签，因此它开合不影响这个计数——计数不变正是「不丢标签 / 不复制标签」的判据。
 - **默认比例**：读 `env:vault-sessions/acc-a.json` 的 `pane_split_ratio`。AX 通道读不到栏宽，
-  比例只能从盘上事实判。`0.666` 是 2/3 的前缀（serde_json 全精度打印 `0.6666666666666666`）。
+  比例只能从盘上事实判。`0.5` 是 1/2 的**精确**值（serde_json 打印 `0.5`，不是 `0.5000…`）。
 
 ## 已知边界
 
 - **拖拽改比例不在本场景**：分隔条拖拽改的是 `pane_split_ratio`，属场景 38（栏宽拖拽）同族的
   坐标通道面，本场景只验「首次打开的默认比例」。
+- **「存储比例优先」这一面未覆盖（本场景只覆盖默认值这一面）**：M434 的 tasks 3.2 要求
+  「无存储比例 → 1:1」与「有存储比例 → 用存储值」两面并存。本场景每次运行都从**无存储比例**
+  起步（`seed` 只预置注册项、不预置会话），因此判的是前者；后者需要一个**非默认比例的预置
+  现场**（`seed.sessions.<id>.ratio` ≈ 0.6）并观察打开时不用默认值——本场景不展开，归
+  pane 比例专项（与下面「收起后比例是否保留」同因：都要一个非默认比例的预置现场）。
+  `storedRatioApplied` 的取值只在收到存储布局后才为真，默认值只在它之外生效。
 - **收起后比例是否保留**：`storedRatioApplied` 在收到存储布局后置真，收起/重开沿用存储比例
-  （不回到默认）。本场景不展开这条（需要一个非默认比例的预置现场，归 pane 比例专项）。
+  （不回到默认）。本场景不展开这条（同上，需要一个非默认比例的预置现场）。
 - **`⌥S`（pane.split）在 harness 在场时无操作**：上限二下 `split()` 返回 null。判据弱（无第三
   pane 的可观测形态与「仍分栏」等价），本场景不写这条，避免一条恒真的断言。
 
