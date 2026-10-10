@@ -354,3 +354,33 @@ export async function resizeWindowAX(pid, width, height) {
     );
   }
 }
+
+/** 工作区尺寸缓存（M437）：屏尺寸在一次跑批里不变，读一次就够——swift 是解释执行，每条断言都
+ *  起一次进程会白付一秒级的代价（相对判据因此只在这一层读一次）。 */
+let workAreaCache = null;
+
+/** 主显示器的工作区尺寸（逻辑点，M437）——`lib/ax-screen.swift` 读 `NSScreen.visibleFrame`。
+ *
+ *  用途：窗口尺寸的**相对判据**（首启 = 工作区 90%、越界存档钳到工作区）。产品侧的同一量取自
+ *  `Monitor::work_area()`（`src-tauri/src/lib.rs` 的 `work_area_size`，macOS 上即 visibleFrame），
+ *  因此两侧同源；逻辑点与 AX 的 `window_bounds` 也是同一空间，算出来的期望值可直接对读数。
+ *
+ *  读不到（swift 缺失 / 无显示器）抛 `InfraError`——那是**本机环境**问题，本次读数整体不可用，
+ *  按套件的分档交 runner 把整场标 INVALID（与「窗口尺寸读不到」的处置分开：后者亮在断言里）。 */
+export function screenWorkArea() {
+  if (workAreaCache) return workAreaCache;
+  const script = new URL("./ax-screen.swift", import.meta.url).pathname;
+  let out = "";
+  try {
+    out = execFileSync("/usr/bin/swift", [script], { encoding: "utf8" }).trim();
+  } catch (e) {
+    throw new InfraError(
+      `读主显示器工作区失败（${e.message}）。这条通道要 /usr/bin/swift（Xcode Command Line Tools）：` +
+        "窗口尺寸的相对判据（工作区 ×比例）依赖它。",
+    );
+  }
+  const m = /visible=(\d+)x(\d+)\s+scale=([\d.]+)/.exec(out);
+  if (!m) throw new InfraError(`工作区读数无法解析：${JSON.stringify(out)}（期望 visible=<w>x<h> scale=<s>）`);
+  workAreaCache = { w: Number(m[1]), h: Number(m[2]), scale: Number(m[3]), raw: out };
+  return workAreaCache;
+}

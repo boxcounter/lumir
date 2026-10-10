@@ -31,6 +31,7 @@ import {
   resetSecondVault,
   resetSessions,
   resetVault,
+  resetWindowState,
   SCENARIO_CONFIG_KEYS,
   stopApp,
   writeConfig,
@@ -351,6 +352,10 @@ async function main() {
       await resetRegistry();
       await resetSessions();
       await resetPositions(); // 阅读位置（M194）：同上，残留会让下一场景一打开文件就换位置
+      // 窗口尺寸存档（M437）：与 recovery / vault-sessions 同因——它在隔离配置目录根下，
+      // 残留会让本场景的「首启」读到上一场景的窗口尺寸（M434 起首启 = 工作区 90%、
+      // 其后按存档恢复，窗口几何断言正对着这个量判）。
+      await resetWindowState();
       // 场景自己的注册表 / 会话预置：**必须在 launchApp 之前**（见 prepareSeed 的说明）。
       await prepareSeed(scenario.seed);
       const scenarioConfig = Object.fromEntries(
@@ -383,8 +388,12 @@ async function main() {
         pid: handle.pid,
         evidence,
         repoRoot: repoRoot(),
-        restartApp: async ({ requireVault = true } = {}) => {
+        restartApp: async ({ requireVault = true, beforeLaunch } = {}) => {
           await stopApp(handle);
+          // 停止之后、启动之前这个空窗（M437）：写 `window-state.json` 这类「只该在一次启动
+          // 开始时在场的」现场必须落在这里——app 退出时会 flush 窗口尺寸存档，在它还活着时
+          // 预置会被那次 flush 覆盖（`do: restart` 的 `windowState:` 参数走这条钩子）。
+          if (beforeLaunch) await beforeLaunch();
           handle = await launchApp({ logFile: appLogFile });
           await sleep(1200);
           // requireVault: false = 本步期待「未打开空态」（如 last_vault 失效），就绪门放宽为

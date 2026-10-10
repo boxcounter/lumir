@@ -401,6 +401,40 @@ export async function resetPositions() {
   return dir;
 }
 
+/** 清掉窗口尺寸存档（`<env>/lumir/window-state.json`，M437，change startup-window-pane-defaults）。
+ *  为什么必须做：M434 起首启尺寸 = 工作区 90%、其后按存档恢复；存档在**隔离配置目录根下**、
+ *  是应用级单份状态，残留会让本场景的「首启」根本不是首启（读到上一场景的窗口尺寸），而窗口
+ *  几何断言正对着这个量判——与 recovery / vault-sessions 同因的跨场景串场。
+ *  对合并 M434 之前的 master 是空操作（那时产品没有这个文件），因此不影响既有场景。 */
+export async function resetWindowState() {
+  const file = path.join(envHome(), "lumir", "window-state.json");
+  await rm(file, { force: true });
+  return file;
+}
+
+/** 构造窗口尺寸存档的现场（M437）。三种形态（与 `do: restart` 的 `windowState:` 参数同源）：
+ *   - `{ clear: true }`：删掉存档（等价 resetWindowState 的单次调用）；
+ *   - `{ width, height }`：写一份合法存档（`version` 由套件补——产品当前 schema 版本），
+ *     用来构造「换到更小的屏之后启动」这类只有磁盘状态能表达的现场；
+ *   - `{ raw: "…" }`：原样落盘（截断 JSON / 版本不符 / 字段类型非法这类**读侧降级**现场）。
+ *  schema 真源是 `src-tauri/src/window_state.rs` 的 `WindowState{version,width,height}`（尺寸是
+ *  逻辑点、无位置字段）；写错字段名会被产品当「无存档」静默回落首启规则，所以断言要对准那个
+ *  后果，而不是对准字段本身。返回落点与内容，供动作写进证据。 */
+export async function writeWindowState(spec) {
+  const file = path.join(envHome(), "lumir", "window-state.json");
+  if (spec?.clear) {
+    await rm(file, { force: true });
+    return { file, content: null };
+  }
+  const content =
+    spec?.raw !== undefined
+      ? String(spec.raw)
+      : `${JSON.stringify({ version: 1, width: spec.width, height: spec.height }, null, 2)}\n`;
+  await mkdirp(path.dirname(file));
+  await writeFile(file, content);
+  return { file, content };
+}
+
 /** 注册项 id 的合法字符（与 Rust 侧 `vault_registry::valid_id` 同源：id 同时是文件名，
  *  因此这是路径逃逸防护）。套件里显式校验，让写错 id 在动作处就报错而不是落一个读不回的盘。 */
 const ID_RE = /^[A-Za-z0-9_-]{1,128}$/;

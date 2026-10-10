@@ -10,7 +10,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import yaml from "js-yaml";
 import { findNode, windowBounds } from "./ax.mjs";
-import { copyFixture, fixturesDir, SCENARIO_CONFIG_KEYS } from "./app.mjs";
+import { copyFixture, fixturesDir, SCENARIO_CONFIG_KEYS, writeWindowState } from "./app.mjs";
 import { encodePng, syntheticScreenshot } from "./png.mjs";
 import { DEFAULT_MIN_DIFF, DEFAULT_PATCH, DEFAULT_TOL, colorDiff, decodeScreenshot, dominantColor, formatColor, lumaSpread } from "./pixel.mjs";
 import {
@@ -23,6 +23,7 @@ import {
   pressKey,
   readAx,
   resizeWindowAX,
+  screenWorkArea,
   settle,
   StepError,
   tryForeground,
@@ -222,6 +223,31 @@ export function checkScenario(scenario) {
       push(`${at} do=note 至少要 text 或 file 之一`);
     if (step.do === "note" && step.text !== undefined && typeof step.text !== "string")
       push(`${at} do=note 的 text 需要字符串`);
+    // `do: restart` 的 `windowState`（M437）：只有这一处能构造「启动时的窗口尺寸存档」现场
+    // （写在停止之后、启动之前——app 活着时预置会被退出 flush 覆盖）。形态写错 = 静默不写 =
+    // 场景以为是「越界存档」而实际是首启，断言因此在错误现场上判绿/判红，故在这里逐键挡掉。
+    if (step.windowState !== undefined) {
+      const ws = step.windowState;
+      if (step.do !== "restart")
+        push(`${at} windowState 只在 do=restart 上生效（写在停止与启动之间的空窗里），当前 do=${step.do}`);
+      else if (!isPlainTable(ws)) push(`${at} restart.windowState 需要对象（{clear:true} / {width,height} / {raw}）`);
+      else {
+        const hasPair = ws.width !== undefined || ws.height !== undefined;
+        const shapes = [ws.clear !== undefined, ws.raw !== undefined, hasPair].filter(Boolean).length;
+        if (shapes !== 1)
+          push(`${at} restart.windowState 需恰取一种形态：{clear:true} / {raw:"…"} / {width,height}，实际 ${JSON.stringify(ws)}`);
+        else if (ws.clear !== undefined && ws.clear !== true) push(`${at} restart.windowState.clear 只能是 true`);
+        else if (ws.raw !== undefined && typeof ws.raw !== "string") push(`${at} restart.windowState.raw 需要字符串`);
+        else if (hasPair) {
+          for (const k of ["width", "height"])
+            if (!Number.isInteger(ws[k]) || ws[k] <= 0)
+              push(`${at} restart.windowState.${k} 需要正整数（逻辑点），实际 ${JSON.stringify(ws[k])}`);
+        }
+        for (const k of Object.keys(ws)) {
+          if (!["clear", "raw", "width", "height"].includes(k)) push(`${at} restart.windowState 未知键 ${k}`);
+        }
+      }
+    }
     for (const [j, exp] of (step.expect ?? []).entries()) {
       const kinds = Object.keys(exp).filter((k) => k !== "label");
       if (kinds.length !== 1) push(`${at} expect[${j}] 应恰好一个断言形态，实际 ${JSON.stringify(kinds)}`);
@@ -233,8 +259,26 @@ export function checkScenario(scenario) {
         push(`${at} expect[${j}] bytes 断言缺 magic/nameHash（写错字段名会静默变成恒真断言）`);
       else if (kinds[0] === "ax" && !["has", "not", "count", "focused"].some((k) => exp.ax[k] !== undefined))
         push(`${at} expect[${j}] ax 断言缺 has/not/count/focused（写错字段名会静默变成恒真断言）`);
-      else if (kinds[0] === "window" && !["moved", "width"].some((k) => exp.window[k] !== undefined))
-        push(`${at} expect[${j}] window 断言缺 moved/width`);
+      else if (kinds[0] === "window") {
+        // 窗口几何断言（M236；相对判据 M437）：至少一维或 moved；width/height 各是数值（绝对）
+        // 或 `{ ofWork: 比例 }`（工作区 × 比例）。字段名 / 键名写错会静默变成「无期望值」，
+        // 因此在这里逐键挡掉（本套件最该挡的假绿形态）。
+        const spec = exp.window;
+        if (!["moved", "width", "height"].some((k) => spec[k] !== undefined))
+          push(`${at} expect[${j}] window 断言缺 moved/width/height（写错字段名会静默变成恒真断言）`);
+        for (const dim of ["width", "height"]) {
+          const v = spec[dim];
+          if (v === undefined || typeof v === "number") continue;
+          if (!isPlainTable(v) || typeof v.ofWork !== "number" || Object.keys(v).length !== 1)
+            push(`${at} expect[${j}] window.${dim} 需要数值或 { ofWork: <比例> }，实际 ${JSON.stringify(v)}`);
+        }
+        if (spec.tol !== undefined && (!Number.isInteger(spec.tol) || spec.tol <= 0))
+          push(`${at} expect[${j}] window.tol 需要正整数（容差，缺省 8pt），实际 ${JSON.stringify(spec.tol)}`);
+        for (const k of Object.keys(spec)) {
+          if (!["moved", "width", "height", "tol"].includes(k))
+            push(`${at} expect[${j}] window 未知键 ${k}（拼错即静默不判）`);
+        }
+      }
       else if (kinds[0] === "clipboard" && !["has", "not", "exact"].some((k) => exp.clipboard[k] !== undefined))
         push(`${at} expect[${j}] clipboard 断言缺 has/not/exact（写错字段名会静默变成恒真断言）`);
       else if (kinds[0] === "pixel") {
@@ -943,9 +987,13 @@ export async function runScenario(ctx, scenario) {
         : fail(`${spec.label ?? label}（期望 ${spec.exact ?? `≥${spec.min}`} 个，实际 ${hits.length}）`, `${dir} 下无匹配 ${spec.pattern}`);
     }
     if (expect.window) {
-      // 窗口几何断言（M236）：标题栏拖拽移动窗口、resizeWindow 调尺寸两类的判据。
-      // moved 对比的是动作前的基线（boundsBefore，步骤执行 do 之前由 runScenario 记录）；
-      // width 容差 ±8pt（窗口管理器可能钳制 / 取整，断言对生效值不对请求值）。
+      // 窗口几何断言（M236；相对判据 M437）：标题栏拖拽移动窗口、resizeWindow 调尺寸、
+      // 启动尺寸三类判据。
+      // - `moved` 对比的是动作前的基线（boundsBefore，步骤执行 do 之前由 runScenario 记录）；
+      // - `width` / `height` 各是**数值**（绝对，容差 `tol`，缺省 8pt——窗口管理器可能钳制 /
+      //   取整，断言对生效值不对请求值）或 **`{ ofWork: 比例 }`**（工作区 × 比例，逻辑点；
+      //   工作区现场读 `NSScreen.visibleFrame`，与产品侧 `Monitor::work_area()` 同源）。
+      //   M437 的首启 90% / 越界钳制两条相对判据走后者——不把某台机器的像素写死进场景。
       const spec = expect.window;
       const ax = await readAx(cu, ctx.pid);
       const bounds = windowBounds(ax.text);
@@ -961,13 +1009,28 @@ export async function runScenario(ctx, scenario) {
           ? pass(label, detail)
           : fail(`${label}（期望 moved=${spec.moved}，实际 ${detail}）`, "", ax);
       }
-      if (spec.width !== undefined) {
-        const ok = Math.abs(bounds.w - spec.width) <= 8;
-        return ok
-          ? pass(label, `窗口宽 ${bounds.w} ≈ ${spec.width}`)
-          : fail(`${label}（期望宽 ≈${spec.width}，实际 ${bounds.w}）`, "", ax);
+      // 一维一条读数，两维都给时并成一条记录（任一维超容差即判红）。
+      const tol = spec.tol ?? 8;
+      const readings = [];
+      const over = [];
+      for (const [dim, axis, zh] of [["width", "w", "宽"], ["height", "h", "高"]]) {
+        const v = spec[dim];
+        if (v === undefined) continue;
+        let expected;
+        if (typeof v === "number") expected = v;
+        else {
+          // 工作区读不到 → InfraError（本机环境问题，交 runner 标 INVALID），不在这里吞成判红。
+          const work = screenWorkArea();
+          expected = Math.round(work[axis] * v.ofWork);
+        }
+        const got = bounds[axis];
+        readings.push(`${zh} ${got}${Math.abs(got - expected) <= tol ? " ≈ " : " ≠ "}${expected}`);
+        if (Math.abs(got - expected) > tol) over.push(`${zh}期望 ≈${expected}，实际 ${got}（容差 ${tol}）`);
       }
-      return fail(`${label}（window 断言缺 moved/width）`, "", ax);
+      if (!readings.length) return fail(`${label}（window 断言缺 moved/width/height）`, "", ax);
+      return over.length === 0
+        ? pass(label, `窗口 ${readings.join("；")}`)
+        : fail(`${label}（${over.join("；")}）`, "", ax);
     }
     return fail(`${label}（未知断言形态）`, JSON.stringify(expect).slice(0, 200));
   }
@@ -1757,10 +1820,30 @@ async function doAction(step, { ctx, cu, scenario, vars, pid, evidence }) {
       }
       return `${file}（${step.size} 字节，稀疏）`;
     }
-    case "restart":
-      await ctx.restartApp({ requireVault: step.requireVault !== false });
+    case "restart": {
+      // `windowState`（M437）：构造「启动时的窗口尺寸存档」现场——必须落在 stop 与 launch
+      // 之间的空窗里（app 退出时会 flush 存档，活着时预置会被覆盖），所以走 restartApp 的
+      // `beforeLaunch` 钩子，而不是一个独立的「先写文件再 restart」步骤。
+      const ws = step.windowState;
+      await ctx.restartApp({
+        requireVault: step.requireVault !== false,
+        beforeLaunch:
+          ws === undefined
+            ? undefined
+            : async () => {
+                const out = await writeWindowState(ws);
+                evidence.record({
+                  kind: "note",
+                  text:
+                    out.content === null
+                      ? `restart.windowState：清空存档（${out.file}）`
+                      : `restart.windowState：写入存档 ${out.file}\n${out.content}`,
+                });
+              },
+      });
       if (ctx.foregroundNote) evidence.record({ kind: "note", text: ctx.foregroundNote });
       return;
+    }
     case "migrateHarnessSessions": {
       // 一次性归位脚本（change harness-sessions-per-vault，M433）：**手动执行**这一步的现场化
       // ——脚本不进产品运行时，验收里由本动作以隔离配置目录为入参跑一次，等价于「用户手跑一遍」。

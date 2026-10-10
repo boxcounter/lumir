@@ -103,7 +103,7 @@ steps:
     timeoutMs: 60000
 
   - name: 在 B 里打开一个文档（其余 harness 场景同形的前置：有打开文档才有上下文 chip；
-      也让 B 侧走一遍最常见的用户现场——切 vault 后 pane 的标题栏段另有已知缺口，见文末覆盖边界）
+      也让 B 侧走一遍最常见的用户现场——切 vault 后重开 pane 的标题栏段由下一步的断言守着，M435 修复）
     do: open
     file: beta.md
     marker: "第二个 vault 的笔记"
@@ -117,6 +117,8 @@ steps:
     expect:
       - label: 面板在位（正观测）
         ax: { has: "/AXButton \\(发送\\)/" }
+      - label: 标题栏 harness 段在场（M435 修复判据）：段 = 会话名钮（AXPopUpButton，未命名时读 D330「新会话」）+ 新建会话钮；切 vault 后重开的 pane 若没把段重挂回 titlebar，这里读不到它（M433 首跑实测两次缺失）
+        ax: { has: "/AXPopUpButton \\(新会话\\)/" }
       - label: transcript 回到空态提示（B 还没有会话——判据「A 的内容没串过来」的正观测）
         ax: { has: "与当前文档对话" }
       - label: A 的提问没有留在 B 的任何界面里（会话名钮 / 浮层都不该有它）
@@ -199,13 +201,15 @@ spec「会话本地留存」MODIFIED 的布局条款：会话落 `<config_dir>/h
 
 ## 覆盖边界（如实记录）
 
-- **B 侧（切 vault 后新开的 pane）未判标题栏会话名钮 / 会话浮层**：实测两次（B 侧有/无打开
-  文档各一次）该标题栏段（`.lumir-hp-seg`：会话名钮 + 新会话钮）在 AX 树与截图里都不在场，
-  而面板本体（transcript / composer / 模型与权限 chip）在场且功能正常——即**切 vault 后新开
-  的 harness pane 拿不到那条标题栏段**，会话历史浮层在那个 vault 里没有 UI 入口（候选缺陷，
-  与本次布局改动无关：本 change 的 diff 一字未动 `src/`，已作为 finding 上报 tower；现场见
-  本场景两次失败运行的 AX dump 与截图）。因此「浮层只见其一」的**跨 vault 方向**在本场景以
-  磁盘断言承担（A/B 两个目录各恰一份、互不含对方的提问）+ Rust 侧集成测试
+- **B 侧的标题栏段已由 M435 修复并纳入断言**：M433/本场景首跑时，切 vault 后 ⌘⇧A 重开的
+  pane 拿不到标题栏 harness 段（`.lumir-hp-seg`：会话名钮 + 新会话钮）——实测两次（B 侧有/无
+  打开文档各一次）该段在 AX 树与截图里都不在场，而面板本体（transcript / composer / 模型与
+  权限 chip）在场且功能正常；根因是收起路径把段从 titlebar 摘除、而重新挂回只在面板构造期
+  做一次（finding `20261010-worker-m433-bug-vault-harness-pane-ax`）。**M435（`b05a3c4`）修**
+  ——`attachTo` 挂接分支按「段还在不在 titlebar 里」重断言挂回；本场景 B 侧新增一条
+  `AXPopUpButton (新会话)` 断言把这条回归**从没人看变成有人守**。仍未判的是 B 侧的**会话
+  浮层本身**（会话名钮为 unnamed 时不列清单）——「浮层只见其一」的**跨 vault 方向**在本场景
+  以磁盘断言承担（A/B 两个目录各恰一份、互不含对方的提问）+ Rust 侧集成测试
   （`sessions_are_partitioned_per_vault_*` 的列举范围与归属过滤）。
 - **不判「切回 A 看得到自己的会话」**：与场景 78 同一处已知边界（同一 vault 的两种路径拼写
   ⇒ 两个会话，M312 在办）。本场景只判**分目录落点与列举范围**，不判切回后的会话可见性。
