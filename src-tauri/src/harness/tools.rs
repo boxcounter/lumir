@@ -1002,6 +1002,34 @@ mod tests {
         std::fs::remove_dir_all(&root).ok();
     }
 
+    /// M410 r3 finding 的 harness 层用例：深层路径直接 vault_create 成功（mkdir -p 语义）。
+    /// 父目录补建实际落在 `fs_io::vault_create_file` → `ensure_parent_dirs`（fs_io 专用、
+    /// 唯一一份）；本用例钉的是「模型经工具层直调深层路径」这条承诺链不断（fs 层语义不改）。
+    #[test]
+    fn vault_create_deep_path_creates_missing_parents() {
+        let (root, policy) = fixture_vault("create-deep");
+        let ctx = ctx(&root, &policy, &[]);
+        let out = vault_create(
+            &serde_json::json!({"path": "deep/a/b/c.md", "content": "x"}),
+            &ctx,
+        );
+        assert!(out.succeeded(), "{out:?}");
+        assert_eq!(out.value["path"], "deep/a/b/c.md");
+        assert!(root.join("deep/a/b").is_dir());
+        assert_eq!(
+            std::fs::read_to_string(root.join("deep/a/b/c.md")).unwrap(),
+            "x"
+        );
+        // 已存在的深层文件照样拒（O_EXCL 语义不随补建改变）。
+        let out = vault_create(
+            &serde_json::json!({"path": "deep/a/b/c.md", "content": "y"}),
+            &ctx,
+        );
+        assert!(!out.succeeded());
+        assert_eq!(out.value["code"], "fs_already_exists");
+        std::fs::remove_dir_all(&root).ok();
+    }
+
     /// cli_run 的 purpose 校验（design §3.4）：缺省 / 空白串 / 纯空格同等拒绝，非空即过；
     /// 其他工具不受影响（本期 vault 写工具不加 purpose）。
     #[test]

@@ -682,7 +682,12 @@ fn ask_gate_approve_executes_and_reject_leaves_disk() {
         // 采纳 / 拒绝（拒绝带原因，随结果回送模型）。
         runtime
             .with_session(&f.scope(), |s| {
-                s.resolve_approval(&id, approve, (!approve).then(|| "先别删".to_string()))
+                s.resolve_approval(
+                    &id,
+                    approve,
+                    (!approve).then(|| "先别删".to_string()),
+                    false,
+                )
             })
             .expect("resolve ok")
             .expect("resolve ok");
@@ -1668,7 +1673,7 @@ fn permission_mode_is_read_from_config_per_call_face() {
                 .expect("批准请求 id");
             runtime
                 .with_session(&f.scope(), |s| {
-                    s.resolve_approval(&id, false, Some("先别改".into()))
+                    s.resolve_approval(&id, false, Some("先别改".into()), false)
                 })
                 .unwrap()
                 .unwrap();
@@ -1765,7 +1770,7 @@ fn read_only_patch_approval_window_cas_conflict() {
     std::fs::write(f.vault().join("a.md"), "old\n用户手改的一行\n").unwrap();
     let id = request["id"].as_str().unwrap().to_string();
     runtime
-        .with_session(&f.scope(), |s| s.resolve_approval(&id, true, None))
+        .with_session(&f.scope(), |s| s.resolve_approval(&id, true, None, false))
         .expect("resolve ok")
         .expect("resolve ok");
     worker.join().unwrap();
@@ -1891,7 +1896,7 @@ fn cli_purpose_required_and_never_widens_permission() {
         .expect("有批准请求 id");
     runtime
         .with_session(&f.scope(), |s| {
-            s.resolve_approval(&id, false, Some("不许删".into()))
+            s.resolve_approval(&id, false, Some("不许删".into()), false)
         })
         .unwrap()
         .unwrap();
@@ -1952,7 +1957,7 @@ fn cli_purpose_reaches_approval_card_payload_with_full_command() {
     let id = request["id"].as_str().unwrap().to_string();
     runtime
         .with_session(&f.scope(), |s| {
-            s.resolve_approval(&id, false, Some("先不装".into()))
+            s.resolve_approval(&id, false, Some("先不装".into()), false)
         })
         .unwrap()
         .unwrap();
@@ -2083,7 +2088,7 @@ fn vault_delete_asks_in_vault_write_and_trashes_on_approve() {
     assert_eq!(request["argv"], serde_json::json!(["notes/a.md"]));
     let id = request["id"].as_str().unwrap().to_string();
     runtime
-        .with_session(&f.scope(), |s| s.resolve_approval(&id, true, None))
+        .with_session(&f.scope(), |s| s.resolve_approval(&id, true, None, false))
         .unwrap()
         .unwrap();
     worker.join().unwrap();
@@ -2093,12 +2098,12 @@ fn vault_delete_asks_in_vault_write_and_trashes_on_approve() {
 /// 会话内批准缓存（design §6）：命中即第 5 层短路（同一 `(工具, 主体串)` 不再问）；
 /// 三层模式无关的判定永远先于缓存（黑名单不受缓存放行）。
 ///
-/// 缓存写入点的**前端次级动作 transport** 不在本批（`ApprovalDecision` / `harness_approve`
-/// 的参数表归别的落点，见 mission 的 review-request），因此这里直接按运行时命名空间写缓存，
-/// 钉的是「写进去之后判定管线确实会免问」这条语义。
+/// 本条直接按运行时命名空间写缓存，钉的是「写进去之后判定管线确实会免问」这条语义；
+/// 写入 transport 本身（harness_approve 的 remember → gated_execute）由
+/// `approval_remember_writes_cache_and_decision_visible` 承担。
 #[test]
 fn session_approval_cache_skips_gate_for_same_subject_only() {
-    use lumir_lib::harness::permissions::permission_cache;
+    use lumir_lib::harness::permission_cache;
 
     let f = Fixture::new("cache");
     f.write("notes/a.md", "一\n");
@@ -2181,7 +2186,7 @@ fn session_approval_cache_skips_gate_for_same_subject_only() {
         .unwrap();
     runtime
         .with_session(&f.scope(), |s| {
-            s.resolve_approval(&id, false, Some("先留着".into()))
+            s.resolve_approval(&id, false, Some("先留着".into()), false)
         })
         .unwrap()
         .unwrap();
@@ -2228,11 +2233,272 @@ fn session_approval_cache_skips_gate_for_same_subject_only() {
         .unwrap();
     runtime
         .with_session(&f.scope(), |s| {
-            s.resolve_approval(&id, false, Some("不许".into()))
+            s.resolve_approval(&id, false, Some("不许".into()), false)
         })
         .unwrap()
         .unwrap();
     worker.join().unwrap();
+}
+
+/// 「采纳且本会话不再问」transport 整合用例（tasks 4.2 前半句的后端半边，M413）：
+/// 批准时 remember=true ⇒ `(工具, 主体串)` 写入会话内批准缓存，同会话同主体串后续调用免闸；
+/// 工具行 decision 字段如实带 approved / rejected，批准卡事件与快照带 purpose 与 remember。
+#[test]
+fn approval_remember_writes_cache_and_decision_visible() {
+    use lumir_lib::harness::permission_cache;
+
+    let f = Fixture::new("remember");
+    f.write("a.md", "一\n");
+    f.write("b.md", "二\n");
+    let config = mock_config();
+    let runtime = f.runtime();
+    runtime.acquire_turn(&f.scope(), &config).unwrap();
+    let sink = CollectSink::default();
+    let script = r#"{"responses": [
+        {"tool_calls": [{"id": "c1", "name": "vault_delete",
+            "arguments": "{\"path\":\"a.md\"}"}]},
+        {"tool_calls": [{"id": "c2", "name": "vault_delete",
+            "arguments": "{\"path\":\"b.md\"}"}]},
+        {"text": "收到。"}
+    ]}"#;
+    let mut client = MockClient::from_str(script, "remember").unwrap();
+    let worker = {
+        let sink = sink.clone();
+        let runtime = runtime.clone();
+        let scope = f.scope();
+        let config = config.clone();
+        std::thread::spawn(move || {
+            drive_turn(
+                &sink,
+                &runtime,
+                &scope,
+                &config,
+                "删掉这两个文件".into(),
+                &mut client,
+            );
+        })
+    };
+    // 第一张批准卡（a.md）：采纳且本会话不再问。
+    sink.wait_for(
+        |events| {
+            events
+                .iter()
+                .any(|e| e.get("type").and_then(|t| t.as_str()) == Some("approval_request"))
+        },
+        "第一张批准卡",
+    );
+    let first = sink
+        .events()
+        .into_iter()
+        .find(|e| e.get("type").and_then(|t| t.as_str()) == Some("approval_request"))
+        .unwrap();
+    assert_eq!(first["tool"], "vault_delete");
+    assert_eq!(first["argv"], serde_json::json!(["a.md"]));
+    let first_id = first["id"].as_str().unwrap().to_string();
+    // 快照镜像：purpose 缺席（非 cli_run）、remember 恒 true（次级动作可见性）。
+    let pending = runtime
+        .snapshot(&f.scope(), &config)
+        .pending_approval
+        .expect("第一张卡在快照里");
+    assert_eq!(pending.id, first_id);
+    assert!(pending.purpose.is_none());
+    assert!(pending.remember, "批准闸请求恒支持 remember 次级动作");
+
+    runtime
+        .with_session(&f.scope(), |s| {
+            s.resolve_approval(&first_id, true, None, true)
+        })
+        .unwrap()
+        .unwrap();
+    // 第二张批准卡（b.md）：普通采纳（remember=false）——b.md 不得被记住。
+    sink.wait_for(
+        |events| {
+            events
+                .iter()
+                .filter(|e| e.get("type").and_then(|t| t.as_str()) == Some("approval_request"))
+                .count()
+                >= 2
+        },
+        "第二张批准卡",
+    );
+    let second = sink
+        .events()
+        .into_iter()
+        .filter(|e| e.get("type").and_then(|t| t.as_str()) == Some("approval_request"))
+        .nth(1)
+        .unwrap();
+    let second_id = second["id"].as_str().unwrap().to_string();
+    runtime
+        .with_session(&f.scope(), |s| {
+            s.resolve_approval(&second_id, true, None, false)
+        })
+        .unwrap()
+        .unwrap();
+    worker.join().unwrap();
+    runtime.release_turn(&f.scope());
+
+    // 两张卡都采纳执行（a.md / b.md 都进废纸篓）。
+    assert!(!f.vault().join("a.md").exists());
+    assert!(!f.vault().join("b.md").exists());
+
+    // 工具行 decision：approved（两张卡都过闸采纳）；allow 路径无 decision 的反面由
+    // harness.rs 单测 restored_tool_decision_backfilled_from_approval_sidecars 承担。
+    let snapshot = runtime.snapshot(&f.scope(), &config);
+    let tools: Vec<_> = snapshot
+        .messages
+        .iter()
+        .filter(|m| m.role == "tool")
+        .collect();
+    assert_eq!(tools.len(), 2);
+    assert_eq!(tools[0].decision.as_deref(), Some("approved"));
+    assert_eq!(tools[1].decision.as_deref(), Some("approved"));
+
+    // 会话内批准缓存只记了 remember=true 的那条：a.md 免闸、b.md 仍问。
+    let namespace = runtime
+        .with_session(&f.scope(), |s| {
+            let id = lumir_lib::harness::jsonl::JsonlWriter::session_id_from_path(s.jsonl().path())
+                .expect("会话 id");
+            permission_cache::Namespace::new(f.scope().key(), id)
+        })
+        .unwrap();
+    assert!(permission_cache::is_remembered(
+        &namespace,
+        "vault_delete",
+        "a.md"
+    ));
+    assert!(
+        !permission_cache::is_remembered(&namespace, "vault_delete", "b.md"),
+        "普通采纳 MUST NOT 记缓存"
+    );
+
+    // a.md 同主体串再调：缓存命中 ⇒ 免闸直执行（无第二张批准卡）。
+    // 注：与既有 cache 用例同口径——判定前显式重写一次缓存键（并行用例的命名空间
+    // 整表互换可能清掉本表的中间态；重写的是同一条记忆，语义等价）。
+    runtime.acquire_turn(&f.scope(), &config).unwrap();
+    let namespace = runtime
+        .with_session(&f.scope(), |s| {
+            let id = lumir_lib::harness::jsonl::JsonlWriter::session_id_from_path(s.jsonl().path())
+                .expect("会话 id");
+            permission_cache::Namespace::new(f.scope().key(), id)
+        })
+        .unwrap();
+    permission_cache::remember(&namespace, "vault_delete", "a.md");
+    f.write("a.md", "三\n");
+    let sink = CollectSink::default();
+    let script = r#"{"responses": [
+        {"tool_calls": [{"id": "c3", "name": "vault_delete",
+            "arguments": "{\"path\":\"a.md\"}"}]},
+        {"text": "好。"}
+    ]}"#;
+    let mut client = MockClient::from_str(script, "remember-hit").unwrap();
+    drive_turn(
+        &sink,
+        &runtime,
+        &f.scope(),
+        &config,
+        "再删一次".into(),
+        &mut client,
+    );
+    runtime.release_turn(&f.scope());
+    assert!(
+        !sink.types().contains(&"approval_request".to_string()),
+        "缓存命中不该再问：{:?}",
+        sink.types()
+    );
+    assert!(!f.vault().join("a.md").exists());
+    permission_cache::clear();
+}
+
+/// 黑名单 wrapper 递归的整合用例（backlog 2026-10-10 Alex 裁决「堵」）：full_access 档下
+/// `sudo rm` 仍进批准闸（自动放行被黑名单递归层拦住）；`sudo ls` 不误伤（只读放行）。
+#[test]
+fn wrapper_recursion_gates_sudo_rm_in_full_access() {
+    let f = Fixture::new("wrapper-sudo");
+    let mut config = mock_config();
+    config.permission_mode = lumir_lib::config::PermissionMode::FullAccess;
+    let runtime = f.runtime();
+    runtime.acquire_turn(&f.scope(), &config).unwrap();
+    let sink = CollectSink::default();
+    let script = r#"{"responses": [
+        {"tool_calls": [{"id": "c1", "name": "cli_run",
+            "arguments": "{\"command\":\"sudo\",\"args\":[\"rm\",\"-rf\",\"/tmp/lumir-m413-none\"],\"purpose\":\"清理临时目录\"}"}]},
+        {"text": "好。"}
+    ]}"#;
+    let mut client = MockClient::from_str(script, "wrapper-sudo").unwrap();
+    let worker = {
+        let sink = sink.clone();
+        let runtime = runtime.clone();
+        let scope = f.scope();
+        let config = config.clone();
+        std::thread::spawn(move || {
+            drive_turn(&sink, &runtime, &scope, &config, "清理".into(), &mut client);
+        })
+    };
+    // full_access 档：裸 rm 本免闸，sudo rm 必须仍问（裁决「堵」的判据）。
+    sink.wait_for(
+        |events| {
+            events
+                .iter()
+                .any(|e| e.get("type").and_then(|t| t.as_str()) == Some("approval_request"))
+        },
+        "sudo rm 在 full_access 档仍进批准闸",
+    );
+    let id = sink
+        .events()
+        .into_iter()
+        .find(|e| e.get("type").and_then(|t| t.as_str()) == Some("approval_request"))
+        .and_then(|e| e["id"].as_str().map(str::to_string))
+        .unwrap();
+    runtime
+        .with_session(&f.scope(), |s| {
+            s.resolve_approval(&id, false, Some("不许".into()), false)
+        })
+        .unwrap()
+        .unwrap();
+    worker.join().unwrap();
+    runtime.release_turn(&f.scope());
+    let tool = runtime
+        .snapshot(&f.scope(), &config)
+        .messages
+        .into_iter()
+        .find(|m| m.role == "tool")
+        .unwrap();
+    assert_eq!(tool.status.as_deref(), Some("rejected"));
+    assert_eq!(tool.decision.as_deref(), Some("rejected"));
+
+    // sudo ls：ReadOnly 分类，full_access（与任何档）直接放行——不误伤。
+    runtime.acquire_turn(&f.scope(), &config).unwrap();
+    let sink = CollectSink::default();
+    let script = r#"{"responses": [
+        {"tool_calls": [{"id": "c2", "name": "cli_run",
+            "arguments": "{\"command\":\"sudo\",\"args\":[\"ls\",\"-la\"],\"purpose\":\"看一下目录\"}"}]},
+        {"text": "列完了。"}
+    ]}"#;
+    let mut client = MockClient::from_str(script, "wrapper-sudo-ls").unwrap();
+    drive_turn(
+        &sink,
+        &runtime,
+        &f.scope(),
+        &config,
+        "列目录".into(),
+        &mut client,
+    );
+    runtime.release_turn(&f.scope());
+    assert!(
+        !sink.types().contains(&"approval_request".to_string()),
+        "sudo ls 不得误伤：{:?}",
+        sink.types()
+    );
+    let tools: Vec<_> = runtime
+        .snapshot(&f.scope(), &config)
+        .messages
+        .into_iter()
+        .filter(|m| m.role == "tool")
+        .collect();
+    assert_eq!(tools.len(), 2, "两轮各一条工具行");
+    let tool = &tools[1];
+    assert_eq!(tool.status.as_deref(), Some("done"));
+    assert_eq!(tool.decision, None, "免闸路径没有批准决定");
 }
 
 /// vault_move 工具（design §5.1）：跨目录移动成立（目标父目录已存在）+ 撞名不覆盖

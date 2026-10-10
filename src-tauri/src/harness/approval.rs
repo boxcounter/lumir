@@ -15,6 +15,10 @@ pub struct ApprovalDecision {
     pub approved: bool,
     /// 拒绝原因（可选），随工具结果回送模型。
     pub reason: Option<String>,
+    /// 「采纳且本会话不再问」（design §6 次级动作）：true 时 `(工具, 主体串)` 由
+    /// gated_execute 写入会话内批准缓存（[`super::permission_cache`]）。点普通采纳是 false
+    /// ——显式逐次记忆，不自动记（裁决点 4 落 A）。
+    pub remember: bool,
 }
 
 /// 批准通道上的一次性信号：采纳 / 拒绝决定，或「本轮被停止」的收回。
@@ -39,6 +43,12 @@ pub struct ApprovalRequest {
     pub diff: Option<String>,
     /// CLI 的完整 argv（cli_run）。
     pub argv: Option<Vec<String>>,
+    /// 批准卡上展示的用途句（cli_run，design §3.4）；来源是
+    /// [`super::tools::ApprovalPreview::purpose`]，事件与快照都从这里取（单一真源）。
+    pub purpose: Option<String>,
+    /// 该批准卡支持「采纳且本会话不再问」次级动作（design §6；批准闸挂出的请求恒 true）。
+    /// 是面板动作可见性的开关——`PendingApprovalSnapshot` 原样镜像给前端。
+    pub remember: bool,
     /// 决定回传通道（harness_approve 发 Decided；停止本轮发 Withdrawn）。
     pub tx: Sender<ApprovalSignal>,
 }
@@ -48,6 +58,8 @@ impl ApprovalRequest {
         tool: String,
         diff: Option<String>,
         argv: Option<Vec<String>>,
+        purpose: Option<String>,
+        remember: bool,
         tx: Sender<ApprovalSignal>,
     ) -> Self {
         Self {
@@ -55,6 +67,8 @@ impl ApprovalRequest {
             tool,
             diff,
             argv,
+            purpose,
+            remember,
             tx,
         }
     }

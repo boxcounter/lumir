@@ -33,6 +33,12 @@ name?: string,
  */
 status?: string, 
 /**
+ * 批准闸决定（tool 消息，M413）：进过批准闸的调用带「approved」/「rejected」——
+ * 「已采纳」可见性与免闸直执行的区分靠它（status 两者都是 done）。allow / deny 规则
+ * 路径没有批准动作，字段缺席。快照恢复路径从 JSONL 的 approval sidecar 回填。
+ */
+decision?: string, 
+/**
  * 消息入会话的时刻（UNIX 秒）；面板据它显示相对时间（缺该字段的旧快照退化为不显示）。
  */
 ts: number, };

@@ -21,7 +21,7 @@
 //! （REVIEW.md 第 8 条：同一个语义不许两处各判一半）。保守默认一律归写——错误方向是「多问一次」，
 //! 不是「误放行」。
 //!
-//! 会话内批准缓存的**模块**在 [`permission_cache`]（同级文件，design §6）；判定只消费它的一个
+//! 会话内批准缓存的**模块**在 [`super::permission_cache`]（design §6）；判定只消费它的一个
 //! 布尔（[`Judge::cached`]），缓存本身不在这里持有状态——判定函数保持纯函数，单测不必碰全局态。
 //!
 //! 三档语义（design §2，2026-10-09 Alex 裁决后的现行口径）：`read_only` = **Always Ask**
@@ -29,11 +29,8 @@
 //! 逐个问）加 cli_run 经分类；`full_access` = 写命令免闸（vault 内写仍走第 2 层重定向）。
 //! **模式层不再产生 Deny**——`Decision::Deny` 只可能来自第 1 层的用户 deny 规则。
 
-/// 会话内批准缓存（design §6）。声明点选在这里而不是 `harness.rs`：本 mission 的写入面不含
-/// `harness.rs`（面板批次 mission 拥有它），`#[path]` 形式让模块文件仍落在既定的
-/// `harness/permission_cache.rs`，不要求动别人的文件、也不新造目录。
-#[path = "permission_cache.rs"]
-pub mod permission_cache;
+// 会话内批准缓存（design §6）是同级模块 [`super::permission_cache`]（M413 起收编为
+// `harness.rs` 的正常模块声明）；本模块只消费它的一个布尔（[`Judge::cached`]）。
 
 use std::path::{Component, Path};
 
@@ -236,7 +233,8 @@ const SHELL_META: [&str; 10] = ["|", ";", "&&", "||", ">", ">>", "<", "`", "$(",
 
 /// argv → 三态分类（design §3）。输入是 argv 数组（command + args），比主体串拼接信息全。
 ///
-/// 判序：危险（黑名单整表，含包装器）→ 保守降级（解释器 / 元字符 / 已知写动词）→ 只读白名单
+/// 判序：危险（黑名单整表，含包装器）→ 间接调用包装器递归（sudo / xargs / find -exec 系，
+/// 取被包装命令再分类，取不出归危险）→ 保守降级（解释器 / 元字符 / 已知写动词）→ 只读白名单
 /// → 未知归写。危险先判是因为黑名单与白名单的交集按黑名单处理（更保守侧赢，design §3.3）。
 pub fn classify_cli(argv: &[String]) -> CliClass {
     let Some(command) = argv.first() else {
@@ -252,6 +250,13 @@ pub fn classify_cli(argv: &[String]) -> CliClass {
 
     if is_dangerous(&name, args) {
         return CliClass::Dangerous;
+    }
+    // 间接调用包装器（sudo / xargs / find -exec 系）：按命令名字面匹配会让 `sudo rm` 在
+    // full_access 档免闸绕过黑名单（backlog 2026-10-10 Alex 裁决「堵」）——先递归取被包装
+    // 命令再进分类管线；取不出确定形态保守归危险（任何档都问）。放在解释器 / 元字符检查
+    // 之前：`sudo bash -c "a;b"` 的外层参数带元字符，先判元字符会落「写」被 full_access 放行。
+    if let Some(class) = classify_wrapped(&name, args) {
+        return class;
     }
     if INTERPRETERS.contains(&name.as_str()) {
         return CliClass::Write;
@@ -334,6 +339,158 @@ fn is_dangerous(name: &str, args: &[String]) -> bool {
         };
     }
     false
+}
+
+// ---------------------------------------------------------------------------
+// 间接调用包装器递归（backlog 2026-10-10 Alex 裁决「堵」）
+// ---------------------------------------------------------------------------
+
+/// sudo 的取值 flag：flag 单独成参数时吞掉下一个参数，`-uVALUE` 粘连形态吞自己。
+const SUDO_VALUE_FLAGS: [&str; 9] = ["-u", "-g", "-h", "-p", "-C", "-T", "-D", "-r", "-t"];
+
+/// xargs 的取值 flag（BSD/GNU 共有集）：同上两种形态。
+const XARGS_VALUE_FLAGS: [&str; 11] = [
+    "-I", "-J", "-L", "-n", "-d", "-D", "-E", "-P", "-R", "-S", "-s",
+];
+
+/// 包装器名单内的命令：把被包装命令取出来递归分类。返回 None = 不是包装器（走正常路径）；
+/// Some(class) = 整条调用的分类（被包装命令的分类，取不出时保守归危险——「任何档都问」的
+/// 唯一表达，full_access 也放不过）。递归只在名单内展开，不做通用 shell 语义解析。
+fn classify_wrapped(name: &str, args: &[String]) -> Option<CliClass> {
+    match name {
+        "sudo" => Some(match extract_wrapped_command(args, &SUDO_VALUE_FLAGS) {
+            Some(argv) => classify_cli(&argv),
+            // 取不出被包装命令（裸 sudo / 只有 flag）：保守归危险，不问形态不漏拦。
+            None => CliClass::Dangerous,
+        }),
+        "xargs" => Some(match extract_wrapped_command(args, &XARGS_VALUE_FLAGS) {
+            Some(argv) => classify_cli(&argv),
+            None => CliClass::Dangerous,
+        }),
+        // find 只在带 -exec / -execdir / -ok / -okdir 时进递归；否则走既有分支。
+        "find" => classify_find_exec(args),
+        _ => None,
+    }
+}
+
+/// 从包装器参数里取被包装 argv：`--` 截断 flag 段；flag 跳过（取值 flag 吞掉下一个参数，
+/// `-uVALUE` 粘连形态吞自己）；第一个非 flag token 是被包装命令，其后全部原样作为它的参数。
+///
+/// 收紧口径（M413 r1 P2-1）：取值 flag 表是**乐观名单**——拿不准的「带值形态」若照常跳过，
+/// 值会被误当命令名（`sudo --user root rm` 的 `root`、`xargs --max-args 1 rm` 的 `1`），
+/// 落「未知 ⇒ 写」被 full_access 放行（取错比取不出更糟）。故两类一律视为**取不出**（返回
+/// None → 保守归危险，宁多问）：未识别的 `--xxx` 长选项（表内全是短 flag，长选项带不带值
+/// 静态不可分）、`KEY=value` 环境赋值形态（sudo 支持、xargs 不支持，包装器间语义不同）。
+fn extract_wrapped_command(args: &[String], value_flags: &[&str]) -> Option<Vec<String>> {
+    let mut index = 0;
+    while index < args.len() {
+        let arg = &args[index];
+        if arg == "--" {
+            index += 1;
+            break;
+        }
+        // 未识别的长选项：保守取不出（见上方 doc）。`--` 已在上支处理。
+        if arg.starts_with("--") {
+            return None;
+        }
+        // `-` 单独成参数不是 flag（虽然 edge，按命令 token 处理）；非 flag token 里
+        // 的 KEY=value 环境赋值形态同样取不出（sudo 认、xargs 不认，包装器间语义不同）。
+        if !arg.starts_with('-') || arg == "-" {
+            if looks_like_env_assignment(arg) {
+                return None;
+            }
+            break;
+        }
+        if looks_like_env_assignment(arg) {
+            return None;
+        }
+        let takes_value = value_flags.contains(&arg.as_str())
+            || value_flags
+                .iter()
+                .any(|flag| arg.starts_with(flag) && arg.len() > flag.len());
+        index += if takes_value && value_flags.contains(&arg.as_str()) {
+            2
+        } else {
+            1
+        };
+    }
+    (index < args.len()).then(|| args[index..].to_vec())
+}
+
+/// `KEY=value` 环境赋值形态：`FOO=bar` 是（sudo 认），`-x=y` / `=x` / `9LIVES=x` 不是。
+fn looks_like_env_assignment(arg: &str) -> bool {
+    let Some(key) = arg.split_once('=').map(|(key, _)| key) else {
+        return false;
+    };
+    let mut chars = key.chars();
+    matches!(chars.next(), Some(c) if c.is_ascii_alphabetic() || c == '_')
+        && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
+/// find 的 `-exec` / `-execdir` / `-ok` / `-okdir` 子句：命令是该 flag 的下一 token，参数到
+/// `;` / `\;` / `+` 终止符为止；整条 find 的分类 = 各子句分类的保守合并（危险 > 写 > 只读）。
+/// 子句取不完整（flag 后没有命令、没有终止符）保守归危险。无 exec 系 flag 返回 None
+/// （走既有分支：`-delete` 归写、纯查找到只读）。
+fn classify_find_exec(args: &[String]) -> Option<CliClass> {
+    const EXEC_FLAGS: [&str; 4] = ["-exec", "-execdir", "-ok", "-okdir"];
+    if !args.iter().any(|arg| EXEC_FLAGS.contains(&arg.as_str())) {
+        return None;
+    }
+    let mut overall = CliClass::ReadOnly;
+    let mut incomplete = false;
+    let mut index = 0;
+    while index < args.len() {
+        if !EXEC_FLAGS.contains(&args[index].as_str()) {
+            index += 1;
+            continue;
+        }
+        let Some(command) = args.get(index + 1) else {
+            incomplete = true;
+            break;
+        };
+        let mut end = index + 2;
+        while end < args.len() && !is_exec_terminator(&args[end]) {
+            end += 1;
+        }
+        if end >= args.len() {
+            // 没有终止符：find 语法非法，保守归危险。
+            incomplete = true;
+            break;
+        }
+        let mut argv = vec![command.clone()];
+        argv.extend(args[index + 2..end].iter().cloned());
+        overall = max_class(overall, classify_cli(&argv));
+        index = end + 1;
+    }
+    // exec 子句之外的写形态折进 overall：`-delete` 直接删文件，`-fprint` / `-fprintf` 把输出
+    // 写进文件。master 上这些形态仅经「-exec 存在 ⇒ 写」兜底；递归后若只看护 exec 子句，它们
+    // 会被吞（`find . -exec ls {} \; -delete` 曾因此归 ReadOnly，在 read_only 档静默放行——
+    // M413 r1 P1-1 回归，修复即本段）。
+    if args
+        .iter()
+        .any(|arg| matches!(arg.as_str(), "-delete" | "-fprint" | "-fprintf"))
+    {
+        overall = max_class(overall, CliClass::Write);
+    }
+    if incomplete {
+        return Some(CliClass::Dangerous);
+    }
+    Some(overall)
+}
+
+/// find -exec 子句的终止符：argv 直传下 `;` 与 `\;` 两种形态都可能出现（`+` 是批量形态）。
+fn is_exec_terminator(arg: &str) -> bool {
+    arg == ";" || arg == "\\;" || arg == "+"
+}
+
+/// 保守合并：危险 > 写 > 只读。
+fn max_class(a: CliClass, b: CliClass) -> CliClass {
+    use CliClass::*;
+    match (a, b) {
+        (Dangerous, _) | (_, Dangerous) => Dangerous,
+        (Write, _) | (_, Write) => Write,
+        _ => ReadOnly,
+    }
 }
 
 /// git 子命令（跳过全局 flag 后的第一个非 flag 参数）。
@@ -1085,7 +1242,8 @@ mod tests {
             vec!["sed", "-i", "s/a/b/", "a.md"],
             vec!["sed", "-i.bak", "s/a/b/", "a.md"],
             vec!["find", ".", "-name", "x", "-delete"],
-            vec!["find", ".", "-exec", "rm", "{}", ";"],
+            // 注意：`find . -exec rm {} ;` 自 M413 起归危险（被包装命令递归分类）——
+            // 用例在 wrapper_recursion_classifies_wrapped_command，不再属于本条。
             // 未知命令（保守默认）
             vec!["definitely-not-a-real-cmd-xyz"],
             vec!["awk", "{print}"],
@@ -1422,6 +1580,192 @@ mod tests {
             Some("vault_patch")
         );
         assert_eq!(suggested_tool(&argv(&["cargo", "build"])), None);
+    }
+
+    // -----------------------------------------------------------------------
+    // 间接调用包装器递归（backlog 2026-10-10 Alex 裁决「堵」：sudo / xargs / find -exec
+    // 在 full_access 档不得绕过危险黑名单）
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn wrapper_recursion_classifies_wrapped_command() {
+        // 被包装命令是黑名单成员 ⇒ 整条 Dangerous（full_access 也问）。
+        for items in [
+            vec!["sudo", "rm", "-rf", "/tmp/x"],
+            vec!["sudo", "-u", "root", "rm", "-rf", "/tmp/x"],
+            vec!["sudo", "-uroot", "rm", "-rf", "/tmp/x"],
+            vec!["sudo", "--", "rm", "-rf", "/tmp/x"],
+            vec!["sudo", "bash", "-c", "rm -rf /"],
+            // 外层参数带 shell 元字符：包装器递归先于元字符检查，仍按被包装命令判危险。
+            vec!["sudo", "bash", "-c", "rm a; rm b"],
+            vec!["xargs", "rm"],
+            vec!["xargs", "-0", "-n", "1", "rm"],
+            vec!["xargs", "-I{}", "rm", "{}"],
+            vec!["find", ".", "-exec", "rm", "{}", ";"],
+            vec!["find", ".", "-name", "x", "-exec", "rm", "{}", "\\;"],
+            vec!["find", ".", "-execdir", "rm", "{}", "+"],
+            vec!["find", ".", "-ok", "rm", "{}", ";"],
+        ] {
+            let argv: Vec<String> = items.iter().map(|s| s.to_string()).collect();
+            assert_eq!(classify_cli(&argv), CliClass::Dangerous, "{argv:?}");
+        }
+        // 被包装命令是写动词 ⇒ 整条 Write（模式默认分层，full_access 放行——黑名单只管黑名单）。
+        for items in [
+            vec!["sudo", "make"],
+            vec!["xargs", "npm", "install"],
+            vec!["find", ".", "-exec", "sed", "-i", "s/a/b/", "{}", ";"],
+        ] {
+            let argv: Vec<String> = items.iter().map(|s| s.to_string()).collect();
+            assert_eq!(classify_cli(&argv), CliClass::Write, "{argv:?}");
+        }
+        // 被包装命令是只读白名单 ⇒ 整条 ReadOnly（sudo ls 不误伤）。
+        for items in [
+            vec!["sudo", "ls", "-la"],
+            vec!["sudo", "-u", "deploy", "ls"],
+            vec!["xargs", "ls"],
+            vec!["xargs", "-I{}", "cat", "{}"],
+            vec!["find", ".", "-exec", "ls", "{}", ";"],
+            vec!["find", ".", "-name", "*.md"],
+        ] {
+            let argv: Vec<String> = items.iter().map(|s| s.to_string()).collect();
+            assert_eq!(classify_cli(&argv), CliClass::ReadOnly, "{argv:?}");
+        }
+        // 取不出确定形态 ⇒ 保守归危险（宁多问勿漏拦）。
+        for items in [
+            vec!["sudo"],
+            vec!["sudo", "-l"],
+            vec!["xargs"],
+            vec!["xargs", "-0"],
+            vec!["find", ".", "-exec"],
+            vec!["find", ".", "-exec", "rm", "{}"],
+            // 收紧口径（r1 P2-1）：乐观 flag 表拿不准的「带值形态」取错比取不出更糟——
+            // 未识别长选项 / 环境赋值一律视为取不出，值不得被误当命令名。
+            vec!["sudo", "--user", "root", "rm", "-rf", "/tmp/x"],
+            vec!["sudo", "--user=root", "rm", "-rf", "/tmp/x"],
+            vec!["sudo", "FOO=bar", "rm", "-rf", "/tmp/x"],
+            vec!["xargs", "--max-args", "1", "rm"],
+            vec!["xargs", "--verbose", "ls"],
+        ] {
+            let argv: Vec<String> = items.iter().map(|s| s.to_string()).collect();
+            assert_eq!(classify_cli(&argv), CliClass::Dangerous, "{argv:?}");
+        }
+        // find 既有形态不受影响：-delete 归写、纯查找归只读。
+        assert_eq!(
+            classify_cli(&argv(&["find", ".", "-name", "x", "-delete"])),
+            CliClass::Write
+        );
+        // r1 P1-1 回归反例：exec 子句之外的写形态不得被递归吞掉——
+        // `find . -exec ls {} \; -delete` 必须仍归写（read_only 档逐个问，不静默放行）；
+        // `-fprint` / `-fprintf` 同族（输出写文件）一并折进。
+        assert_eq!(
+            classify_cli(&argv(&["find", ".", "-exec", "ls", "{}", "\\;", "-delete"])),
+            CliClass::Write
+        );
+        assert_eq!(
+            classify_cli(&argv(&[
+                "find", ".", "-exec", "ls", "{}", ";", "-fprint", "out.txt"
+            ])),
+            CliClass::Write
+        );
+        assert_eq!(
+            classify_cli(&argv(&[
+                "find", ".", "-exec", "ls", "{}", ";", "-fprintf", "%s", "out.txt"
+            ])),
+            CliClass::Write
+        );
+        // 反向区分（REVIEW.md 第 1 条）：修复前 `find . -exec ls {} \; -delete` 归 ReadOnly，
+        // 本断言对修复前代码必红。
+        assert_ne!(
+            classify_cli(&argv(&["find", ".", "-exec", "ls", "{}", "\\;", "-delete"])),
+            CliClass::ReadOnly
+        );
+        // 短 flag 取值路径不被收紧误伤：`sudo -u root ls` 照旧只读。
+        assert_eq!(
+            classify_cli(&argv(&["sudo", "-u", "root", "ls"])),
+            CliClass::ReadOnly
+        );
+        // 区分度自证（REVIEW.md 第 1 条）：旧实现（sudo/xargs 落「未知 ⇒ 写」）在本表上
+        // 第一组全部判 Write 而非 Dangerous——本断言对旧实现必红。
+        assert_ne!(
+            classify_cli(&argv(&["sudo", "rm", "-rf", "/tmp/x"])),
+            CliClass::Write
+        );
+    }
+
+    /// 裁决判据落在判定管线：sudo rm 在 full_access 档仍 Ask；sudo ls 不误伤（任何档放行）；
+    /// allow 规则与批准缓存都绕不过黑名单递归层（第 3 层在 allow / 缓存之前）。
+    #[test]
+    fn wrapper_recursion_holds_across_modes_rules_and_cache() {
+        let root = fixture_root("wrapper-pipeline");
+        let p = HarnessPermissions::default();
+        let cli = argv(&["sudo", "rm", "-rf", "/tmp/x"]);
+        for mode in [
+            PermissionMode::ReadOnly,
+            PermissionMode::VaultWrite,
+            PermissionMode::FullAccess,
+        ] {
+            let j = Judge {
+                mode,
+                ..judge(&root, Some(cli.clone()))
+            };
+            assert_eq!(
+                decide(&p, "cli_run", "sudo rm -rf /tmp/x", &j),
+                Decision::Ask,
+                "{mode:?}"
+            );
+        }
+        // sudo ls：full_access 与默认档都放行（ReadOnly 分类）。
+        let cli = argv(&["sudo", "ls", "-la"]);
+        for mode in [PermissionMode::VaultWrite, PermissionMode::FullAccess] {
+            let j = Judge {
+                mode,
+                ..judge(&root, Some(cli.clone()))
+            };
+            assert_eq!(
+                decide(&p, "cli_run", "sudo ls -la", &j),
+                Decision::Allow,
+                "{mode:?}"
+            );
+        }
+        // allow 规则（cli(sudo *)）+ full_access + 缓存命中：sudo rm 仍 Ask。
+        let p = perms(&["cli(sudo *)"], &[]);
+        let j = Judge {
+            mode: PermissionMode::FullAccess,
+            cached: true,
+            ..judge(&root, Some(argv(&["sudo", "rm", "-rf", "/tmp/x"])))
+        };
+        assert_eq!(
+            decide(&p, "cli_run", "sudo rm -rf /tmp/x", &j),
+            Decision::Ask
+        );
+        // xargs / find -exec 同路。
+        let j = Judge {
+            mode: PermissionMode::FullAccess,
+            ..judge(&root, Some(argv(&["xargs", "rm"])))
+        };
+        assert_eq!(decide(&p, "cli_run", "xargs rm", &j), Decision::Ask);
+        let j = Judge {
+            mode: PermissionMode::FullAccess,
+            ..judge(&root, Some(argv(&["find", ".", "-exec", "rm", "{}", ";"])))
+        };
+        assert_eq!(
+            decide(&p, "cli_run", "find . -exec rm {} ;", &j),
+            Decision::Ask
+        );
+        // r1 P1-1 判据落管线：`-delete` 折进后 `find . -exec ls {} \; -delete` 归写，
+        // read_only（Always Ask）档逐个问——修复前归 ReadOnly 会被静默放行。
+        let j = Judge {
+            mode: PermissionMode::ReadOnly,
+            ..judge(
+                &root,
+                Some(argv(&["find", ".", "-exec", "ls", "{}", "\\;", "-delete"])),
+            )
+        };
+        assert_eq!(
+            decide(&p, "cli_run", "find . -exec ls {} \\; -delete", &j),
+            Decision::Ask
+        );
+        std::fs::remove_dir_all(&root).ok();
     }
 
     // -----------------------------------------------------------------------

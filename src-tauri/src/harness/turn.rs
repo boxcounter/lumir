@@ -26,7 +26,8 @@ use super::approval::{ApprovalRequest, ApprovalSignal};
 use super::events::{self, EventSink, StreamSink};
 use super::jsonl;
 use super::llm::{self, LlmClient};
-use super::permissions::{self, permission_cache, Decision};
+use super::permission_cache;
+use super::permissions::{self, Decision};
 use super::session::{self, PanelMessage};
 use super::thinking;
 use super::tools::{self, ToolContext, ToolOutput};
@@ -246,6 +247,7 @@ pub fn run_turn_for(
             name: None,
             status: None,
             reasoning: None,
+            decision: None,
             ts: jsonl::unix_secs_now(),
         });
         s.set_current_context(context_section);
@@ -381,6 +383,7 @@ pub fn run_turn_for(
                     name: None,
                     status: None,
                     reasoning: None,
+                    decision: None,
                     ts: jsonl::unix_secs_now(),
                 });
             }
@@ -505,6 +508,7 @@ fn abort_turn(
                 name: None,
                 status: Some("stopped".into()),
                 reasoning: None,
+                decision: None,
                 ts: jsonl::unix_secs_now(),
             });
             // 半截正文已在响应点随 llm_response 落盘（wire 口径），这里不再记 sidecar。
@@ -687,6 +691,7 @@ fn loop_max_notice(
             name: None,
             status: None,
             reasoning: None,
+            decision: None,
             ts: jsonl::unix_secs_now(),
         });
         s.jsonl().record(&serde_json::json!({
@@ -749,6 +754,9 @@ fn handle_call(
     };
     let decision = permissions::decide(&config.permissions, &call.name, &subject, &judge);
 
+    // 批准闸决定（面板 decision 字段的数据源，M413）：只有 ask 档批准闸产出
+    // approved / rejected；allow / deny / 重定向路径没有批准动作，字段缺席。
+    let mut gate_decision: Option<&'static str> = None;
     let output = if !known {
         ToolOutput::err("tool_unknown", format!("未知工具：{}", call.name))
     } else if !args_ok {
@@ -767,7 +775,12 @@ fn handle_call(
             // 下一条 llm_request.messages（tool_denied 事件类已废弃），面板 tool 行
             // 的细分状态照常由 status 承担。
             Decision::Allow => tools::execute(&call.name, &args, tctx),
-            Decision::Ask => gated_execute(sink, runtime, scope, tctx, call, &args),
+            Decision::Ask => {
+                let (out, decision) =
+                    gated_execute(sink, runtime, scope, tctx, call, &args, &subject);
+                gate_decision = decision;
+                out
+            }
             // vault 内写硬重定向（design §4）：固定标记 + JSON 载荷，模型据此下一轮改用
             // vault 工具（闸门不做自动翻译，不留第二事实源）。
             Decision::Redirect(redirect) => {
@@ -807,6 +820,7 @@ fn handle_call(
             name: Some(call.name.clone()),
             status: Some(status.to_string()),
             reasoning: None,
+            decision: gate_decision.map(str::to_string),
             ts: jsonl::unix_secs_now(),
         });
         // 调用与结果的留存是 wire 口径：function_call / function_call_output 项
@@ -847,6 +861,9 @@ fn flush_call_items(
 }
 
 /// ask 档：生成预览 → 挂起批准 → 等决定 → 采纳执行 / 拒绝回送。
+///
+/// 返回值带批准闸决定（`Some("approved")` / `Some("rejected")`）——面板工具行的
+/// decision 字段数据源；通道失效 / 本轮被停止没有决定，返回 None。
 fn gated_execute(
     sink: &dyn EventSink,
     runtime: &Runtime,
@@ -854,44 +871,49 @@ fn gated_execute(
     tctx: &ToolContext,
     call: &llm::ToolCall,
     args: &serde_json::Value,
-) -> ToolOutput {
+    subject: &str,
+) -> (ToolOutput, Option<&'static str>) {
     let preview = match tools::approval_preview(&call.name, args, tctx) {
         Ok(preview) => preview,
         // 预览失败（如 patch 不唯一命中）：错误直接回送模型，不进批准闸。
-        Err(output) => return output,
+        Err(output) => return (output, None),
     };
     let (tx, rx) = mpsc::channel();
+    // 批准闸挂出的请求恒支持「采纳且本会话不再问」（design §6 次级动作）——remember
+    // 字段是面板按钮可见性的开关，快照原样镜像。
     let request = ApprovalRequest::new(
         call.name.clone(),
         preview.diff.clone(),
         preview.argv.clone(),
+        preview.purpose.clone(),
+        true,
         tx,
     );
     let id = match runtime.park_approval(scope, request) {
         Ok(id) => id,
-        Err(e) => return ToolOutput::from_command_error(&e),
+        Err(e) => return (ToolOutput::from_command_error(&e), None),
     };
-    // purpose（design §3.4）：cli_run 批准卡载荷里的可选键——前端有则显示在命令上方、
-    // 无则回落现状。事件函数的参数表归 M406 批次；这里按约定的**载荷键名**注入同一个键，
-    // 线上形状即契约形状（合并期 events.rs 加参数时对齐到同一处）。
-    let mut payload = events::approval_request(
+    // purpose（design §3.4）经 events::approval_request_with_purpose 进载荷（M413 收编：
+    // 事件函数带 purpose 参数，turn 不再手工注入键）；批准卡快照的 purpose 与事件同源，
+    // 都取 preview.purpose（单一真源）。
+    sink.emit(events::approval_request_with_purpose(
         &id,
         &call.name,
         preview.diff.as_deref(),
         preview.argv.as_deref(),
-    );
-    if let Some(purpose) = &preview.purpose {
-        payload["purpose"] = serde_json::json!(purpose);
-    }
-    sink.emit(payload);
+        preview.purpose.as_deref(),
+    ));
     // 未决批准项不自动超时通过：无超时地等决定（会话被重置 / vault 切换使发送端
     // 失效时 recv 报错 → 判过期，不执行）。
     let signal = match rx.recv() {
         Ok(signal) => signal,
         Err(_) => {
-            return ToolOutput::err(
-                "approval_stale",
-                "批准通道已关闭（会话被重置或 vault 已切换），本次调用未执行",
+            return (
+                ToolOutput::err(
+                    "approval_stale",
+                    "批准通道已关闭（会话被重置或 vault 已切换），本次调用未执行",
+                ),
+                None,
             )
         }
     };
@@ -900,19 +922,35 @@ fn gated_execute(
     let decision = match signal {
         ApprovalSignal::Decided(decision) => decision,
         ApprovalSignal::Withdrawn => {
-            return ToolOutput::err("turn_aborted", "本轮已停止，待批准的调用未执行");
+            return (
+                ToolOutput::err("turn_aborted", "本轮已停止，待批准的调用未执行"),
+                None,
+            )
         }
     };
     if decision.approved {
+        // 「采纳且本会话不再问」（design §6）：写会话内批准缓存——唯一写入点。
+        // 缓存键 = (工具, 规范化主体串)，与 handle_call 判定时的取法同源（都是这里算的 subject）。
+        if decision.remember {
+            if let Some(namespace) = cache_namespace(runtime, scope) {
+                permission_cache::remember(&namespace, &call.name, subject);
+            }
+        }
         // 写工具带预览基准 revision 执行：批准窗内文件被改 ⇒ fs_patch_file CAS
         // 拒掉（document_conflict 回送模型），落盘不与已批准 diff 分叉。
-        tools::execute_with_revision(&call.name, args, tctx, preview.revision.as_deref())
+        (
+            tools::execute_with_revision(&call.name, args, tctx, preview.revision.as_deref()),
+            Some("approved"),
+        )
     } else {
         let reason = decision
             .reason
             .clone()
             .unwrap_or_else(|| "用户拒绝了该操作".to_string());
-        ToolOutput::err("approval_rejected", reason)
+        (
+            ToolOutput::err("approval_rejected", reason),
+            Some("rejected"),
+        )
     }
 }
 
@@ -1005,6 +1043,7 @@ fn compact_now(
             name: None,
             status: None,
             reasoning: None,
+            decision: None,
             ts: jsonl::unix_secs_now(),
         });
         // 文件边界即压缩留痕：压缩事件类（旧 compact kind）已废弃。

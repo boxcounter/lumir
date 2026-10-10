@@ -120,9 +120,9 @@ pub fn approval_request(
     approval_request_with_purpose(id, tool, diff, argv, None)
 }
 
-/// 带 purpose 的批准请求事件（M406/M407 契约）：purpose = 模型自述的用途句（cli_run 的
-/// 批准预览载荷，阅读辅助——面板在命令上方展示，命令原文永远完整可见）。`approval_request`
-/// 保持原签名作无 purpose 的包装（turn.rs 的调用点随 M407 的 schema 落地切到本函数）。
+/// 带 purpose 的批准请求事件（M406/M407 契约，M413 起 turn.rs 的调用点收编到本函数）：
+/// purpose = 模型自述的用途句（cli_run 的批准预览载荷，阅读辅助——面板在命令上方展示，
+/// 命令原文永远完整可见）。`approval_request` 保持原签名作无 purpose 的包装。
 pub fn approval_request_with_purpose(
     id: &str,
     tool: &str,
