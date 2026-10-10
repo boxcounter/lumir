@@ -654,6 +654,15 @@ sudo/xargs/find -exec（及 -execdir）等 wrapper 的**被包装命令**递归�
 语义解析；`find -exec` 的 `;`/`+` 终止符与 `\;` 转义形态需用例钉死。
 finding：`.tower/comms/findings/` 下 reviewer-m407 的 sudo/xargs/find -exec 条目（2026-10-09）。
 
+### harness 恢复路径 decision 回填的次序启发式会错配（M413 r1 P2-2，low）
+
+**症状**：`harness.rs::restored_panel_messages` 按 `(工具名, 第 N 次出现)` 次序把 JSONL approval sidecar
+回填到工具行 decision 字段——同一会话内同一工具既有 allow 直执行又过批准闸时，sidecar（只记过闸调用）
+与 function_call 出现次序对不齐，decision 贴错行。仅影响恢复路径展示字段（live 路径 decision 由
+turn.rs handle_call 直写，无此问题），前端消费者随 UI 批次落地。
+**修法方向**：approval sidecar 记录增 call id 字段（request id ↔ wire function_call 的 call_id 关联），
+恢复时按 call id 精确配对。
+
 ### 面板滚动行为无机器防线：AX 不反映滚动位置（M398 r1 reviewer 登记，2026-10-09，low）
 
 **症状**：恢复重建后「滚动落底」这类行为没有任何机器断言能守——AX 快照不携带滚动位置，
