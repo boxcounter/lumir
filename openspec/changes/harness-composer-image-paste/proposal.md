@@ -13,6 +13,13 @@
 > `vision_supported`（照 `effort_supported` 与键名同形）。**不在改名面内**：错误码
 > `harness_image_unsupported`、协议字段 `input_image` / `image_url`、内容侧命名（图片卡片 / `{kind:"image"}` 块 /
 > `harness_write_image` / `harness_read_image` / `expand_image_refs`）——它们说的是"图片"这件事，不是配置键。
+> 同日第三处修订（落点，Alex 2026-10-10 裁决「按 vault 分层」）：harness 贴图附件与 M425 会话布局的层级不一致
+> 按「按 vault 分层」案处理——附件落点由平铺 `<config_dir>/harness/attachments/` 改为
+> `<config_dir>/harness/attachments/<vault 稳定 id>/`，与 `sessions/<vault 稳定 id>/` 同族（目录名 = vault
+> 注册表稳定 id；附件根与会话根互为兄弟目录，vault 层各自在其下）。贴图功能尚未实现、线上零附件数据，故为
+> **纯设计修订**：无归位脚本、不建 `_orphaned/` 桶；写时拿不到合格 id 即**拒绝落盘**（MUST NOT 落兜底目录）；
+> 删会话不牵动附件，按 vault 备份取 `sessions/<id>/` + `attachments/<id>/` 同名两目录。proposal / design §5 /
+> spec 增量 / tasks 已同步改准。
 > 节点 1（提案评审）：留白（待 Alex 裁决）。
 > 节点 2（归档评审）：留白（实现完成后填写）。
 
@@ -58,7 +65,8 @@ Kimi Code 的贴图体验一致。
 逐条对应 `specs/harness/spec.md` 增量里的一个 requirement：
 
 1. **图片粘贴卡片**（harness，ADDED）：composer 粘贴的剪贴板含 `image/*` 数据时拦截粘贴，把图片落
-   **harness 侧存储**（`<config_dir>/harness/attachments/pasted-<hash16>.<ext>`，**不落 vault**、不改写 vault
+   **harness 侧存储**（`<config_dir>/harness/attachments/<vault 稳定 id>/pasted-<hash16>.<ext>`，按 vault 稳定 id
+   分层、与会话留存 `sessions/<vault 稳定 id>/` 同族，**不落 vault**、不改写 vault
    任何文件），在光标处插入 block 级**图片卡片**（缩略图 + 元信息行 + 移除钮；元信息行**从文件名开始**、无
    `image ·` 类型前缀——Alex 2026-10-10 看 demo 后的裁决）；图文同板图优先、多图只取第一张；卡片
    是 composer 原子块（与引用卡片同族的拆段 / 光标落点 / 移除语义），发送后 transcript 同构沉淀，快照恢复

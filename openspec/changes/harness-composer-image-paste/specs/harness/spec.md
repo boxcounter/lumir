@@ -10,8 +10,10 @@
 ### Requirement: 图片粘贴卡片
 
 harness 面板输入区（composer）SHALL 支持粘贴剪贴板里的图片：粘贴动作到达且剪贴板含 `image/*` 数据时，
-系统 SHALL 拦截该粘贴、把图片落 **harness 侧存储**（`<config_dir>/harness/attachments/` 下的内容寻址文件
-`pasted-<内容哈希前 16 位>.<扩展名>`），并在光标处插入 block 级**图片卡片**。落盘与转码 SHALL 复用二进制附件
+系统 SHALL 拦截该粘贴、把图片落 **harness 侧存储**（`<config_dir>/harness/attachments/<vault 稳定 id>/` 下的
+内容寻址文件 `pasted-<内容哈希前 16 位>.<扩展名>`），并在光标处插入 block 级**图片卡片**。`<vault 稳定 id>`
+SHALL 是 vault 注册表 id（与会话留存 `sessions/<vault 稳定 id>/` 同一份身份），MUST NOT 用 vault 路径派生的
+消毒名；写时取不到合格 id SHALL 拒绝落盘并给人话反馈，MUST NOT 落进任何兜底目录。落盘与转码 SHALL 复用二进制附件
 写入的既有口径（`image/png` → WebP 无损转码、`image/jpeg` 与 `image/webp` 原样、其余 `image/*` 子类型拒绝并给
 人话反馈；50MB 上限判定在转码之前；分辨率 MUST NOT 降采样）。图片落点 MUST NOT 进 vault——本能力 MUST NOT
 新增或改写 vault 内任何文件。剪贴板同时含文本与图片数据时 SHALL 图优先；多图剪贴板 SHALL 只取第一个
@@ -27,8 +29,8 @@ harness 面板输入区（composer）SHALL 支持粘贴剪贴板里的图片：�
 #### Scenario: 粘贴图片落 harness 侧并插入卡片
 
 - **WHEN** composer 聚焦、剪贴板置一张 png 截图并执行粘贴
-- **THEN** 配置目录 `harness/attachments/` 下出现 `pasted-<hash16>.webp`（解码像素与剪贴板一致），vault 目录
-  零新增或修改；composer 在光标处出现图片卡片（可见缩略图）、可直接继续输入问题
+- **THEN** 配置目录 `harness/attachments/<vault 稳定 id>/` 下出现 `pasted-<hash16>.webp`（解码像素与剪贴板一致），
+  vault 目录零新增或修改；composer 在光标处出现图片卡片（可见缩略图）、可直接继续输入问题
 
 #### Scenario: 图文同板图优先、多图取第一张
 
@@ -38,7 +40,8 @@ harness 面板输入区（composer）SHALL 支持粘贴剪贴板里的图片：�
 #### Scenario: 非图片粘贴回归
 
 - **WHEN** 剪贴板为纯文本（无 `image/*`）并在 composer 执行粘贴
-- **THEN** 行为与本能力存在之前逐字节一致（纯文本净化，多行拆成多个段落块）；`harness/attachments/` 无新增文件
+- **THEN** 行为与本能力存在之前逐字节一致（纯文本净化，多行拆成多个段落块）；`harness/attachments/<vault 稳定 id>/`
+  无新增文件
 
 #### Scenario: 失败一律人话出口
 
@@ -62,7 +65,8 @@ harness 面板输入区（composer）SHALL 支持粘贴剪贴板里的图片：�
 形态在场（`image_url` 为 `lumir-attachment://<内容寻址名>`），MUST NOT 出现 base64 data URL。发给 provider 的
 wire 请求 SHALL 在**发送前**把引用展开为 `{"type":"input_image","image_url":"data:image/<子类型>;base64,…"}`；
 展开失败 SHALL 以人话错误收口，MUST NOT 发出静默缺图的请求。恢复充分性口径随之写实：仅凭 JSONL 的引用 +
-内容寻址的 harness 附件目录（引用名即内容哈希，`引用 → 字节` 确定性）可重建该轮请求。历史会话恢复路径
+内容寻址的 harness 附件**同 id 目录**（`attachments/<vault 稳定 id>/`，引用名即内容哈希，`引用 → 字节` 确定性）
+可重建该轮请求。引用 SHALL 按当前会话作用域的 vault id 在本 vault 目录内解析，MUST NOT 跨 vault 查找。历史会话恢复路径
 SHALL 从 wire 项的引用还原图片卡片，MUST NOT 伪造、MUST NOT 丢弃。
 
 #### Scenario: content parts 交错顺序
