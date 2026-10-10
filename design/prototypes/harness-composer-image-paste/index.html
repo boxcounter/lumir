@@ -492,7 +492,6 @@ const T = {
     modelName: "Atlas 2",
     send: "发送",
     remove: "移除",
-    imageTag: "图片",
     noteBlocked: "能力闸：发送被挡——toast 人话错误（点名模型）+ 图片卡片错误态（边框/底色，保留可移除）。真实产品里判据在后端，前端不预判。",
     noteFree: "自由试玩：点「模拟粘贴」加图片卡片；发送成功 → 消息按交错顺序沉淀进 transcript（卡片无移除钮）；模型不支持时发送被挡。",
   },
@@ -507,7 +506,6 @@ const T = {
     modelName: "Atlas 2",
     send: "Send",
     remove: "Remove",
-    imageTag: "image",
     noteBlocked: "Capability gate: send blocked — human-readable toast (names the model) + image cards in error state (border/tint, kept and removable). In the real product the check lives in the backend; the frontend never pre-judges.",
     noteFree: "Free play: “simulate paste” adds an image card; a successful send lands the message in the transcript in interleaved order (no remove buttons); with image support off the send is blocked.",
   },
@@ -600,7 +598,7 @@ function icardHTML(img, mode, err) {
   return `<div class="hp-icard${err ? " is-error" : ""}" data-kind="image" data-img="${img}">
     ${imgThumbHTML(img, mode)}
     <div class="hp-icard-main">
-      <div class="hp-icard-name">${t("imageTag")} · ${it.name}</div>
+      <div class="hp-icard-name">${it.name}</div>
       <div class="hp-icard-meta">${it.w}×${it.h} · image/webp</div>
     </div>
     ${mode === "composer" ? `<button type="button" class="hp-qc-x" data-act="rm" title="${t("remove")}" aria-label="${t("remove")}">×</button>` : ""}
