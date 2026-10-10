@@ -663,6 +663,15 @@ turn.rs handle_call 直写，无此问题），前端消费者随 UI 批次落�
 **修法方向**：approval sidecar 记录增 call id 字段（request id ↔ wire function_call 的 call_id 关联），
 恢复时按 call id 精确配对。
 
+### 验收套件可跑性靠人肉自觉：预检缺磁盘水位与实例占用硬门（worker-m414 finding，2026-10-10，low）
+
+**症状**：M414 真机段差点跑不起来——数据卷仅剩 2.1G（低于 REVIEW.md 第 12 条「worktree 首次构建 ≥3G」
+预算），且 1420 有 Alex 的 dev 实例在跑（REVIEW.md 第 11 条丢键风险）。runner 预检段
+（scripts/acceptance/run.mjs）现在只查互斥锁与 1430 端口归属，磁盘水位靠 REVIEW.md 的人肉自觉。
+（磁盘侧已由 tower 清理 15 个残留 worktree 恢复至 20Gi 解围，2026-10-10。）
+**修法方向**：预检加两条硬门——可用磁盘 < 3G 直接 FAIL（不进 build，避免半途 ENOSPC 留半截 target）；
+1420/1430 有 LISTEN 时按 REVIEW.md 第 11 条报警提示。
+
 ### 面板滚动行为无机器防线：AX 不反映滚动位置（M398 r1 reviewer 登记，2026-10-09，low）
 
 **症状**：恢复重建后「滚动落底」这类行为没有任何机器断言能守——AX 快照不携带滚动位置，
