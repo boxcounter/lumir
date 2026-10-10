@@ -15,8 +15,8 @@
 - [x] 1.2 会话目录按 vault 分置：`jsonl.rs` 的目录函数收 vault id、建句柄路径为 `sessions/<vault 稳定 id>/<session_id>.jsonl`，目标目录按需创建（失败沿用既有 `harness_jsonl_failed` 口径）
 - [x] 1.3 三处路径拼接改到 id 目录：`resume_session`（`harness.rs:334`）/ `delete_session`（`:497`）/ `list_sessions`（`:537`，只扫本 vault 目录）；`session_belongs_to_scope`（`:521-526`）一字不改——归属判据仍是首行 `vault_root`
 - [x] 1.4 保留名纪律：解析 vault 目录名处校验 `valid_id` 通过且 ≠ `_orphaned`（不通过即记日志并按 `_orphaned` 口径处理，不 panic、不静默）
-- [ ] 1.5 注释与文档漂移收口：`jsonl.rs` 模块头布局注释、`harness.rs` 相关注释、`session.rs` 的 ts-rs 文档注释（重导出 `src/bindings/SessionSummary.ts`）、`src/ipc.ts` 的路径描述
-  - 实现期（M433）：**前两处已完成**；后两处（`src-tauri/src/harness/session.rs` 的 ts-rs doc、`src/ipc.ts`）落点是 **scope 外**（本 mission 不含 `src/**` 与 `src/bindings/**`）——改 ts-rs doc 会重导出 `src/bindings/SessionSummary.ts`，提交它即越 scope、不提交则 bindings-drift 判红。已 `TowerSend`（subject `clarify-request M433: scope 缺 src/ipc.ts 与 src/bindings/SessionSummary.ts`）请 tower 裁决扩 scope；裁决到之前不动这两个文件，本项留未勾。
+- [x] 1.5 注释与文档漂移收口：`jsonl.rs` 模块头布局注释、`harness.rs` 相关注释、`session.rs` 的 ts-rs 文档注释（重导出 `src/bindings/SessionSummary.ts`）、`src/ipc.ts` 的路径描述
+  - 实现期（M433）：四处全部完成——`jsonl.rs` 模块头 + `harness.rs` 的路径 / 扫描注释（commit `c81c8c1`）；`session.rs:165,183` 的 ts-rs doc 与 `src/ipc.ts:457,471,485` 的路径描述（tower 裁决 A 案扩 scope 后补）。**重导出产物是两个**（都是纯注释改动、`git diff -U0` 无非注释行）：`src/bindings/SessionSummary.ts`（裁决名单内）与 `src/bindings/SessionResumeInfo.ts`（同一条 doc 在 `SessionResumeInfo.session_id` 上的镜像，同一机制产生）——后者需 scope 名单补一格，已随 scope-request 追报）。
 
 ## 2. 一次性归位脚本（仓内脚本，不进产品运行时）
 

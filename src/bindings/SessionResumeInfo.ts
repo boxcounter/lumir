@@ -8,7 +8,7 @@ import type { PanelMessage } from "./PanelMessage";
  */
 export type SessionResumeInfo = { 
 /**
- * 续写的新会话 id（`sessions/<id>.jsonl` 的文件名）。
+ * 续写的新会话 id（`sessions/<vault 稳定 id>/<id>.jsonl` 的文件名）。
  */
 session_id: string, 
 /**
