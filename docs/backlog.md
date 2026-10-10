@@ -2623,6 +2623,14 @@ mkdir -p（或复用 fs_io 的 ensure_parent_dirs），并补一条「深层路�
 排期：随权限前端批（harness 工具层本就要动）一并做。finding
 `.tower/comms/findings/20261010-reviewer-m410-bug-harness-vault-create-mkdir-p-m407.md`。
 
+**turn.rs 仍接受带 text 的 legacy selection 上下文载荷（零活生产者的兼容面）**（**记录在案**，low；
+M412 r1 评审 P2-3，reviewer-m412，2026-10-10）：`context_section` 对有 `text` 的 `viewport_range`/selection
+载荷仍按「行号：\n原文」渲染，但 M343 退役选区注入、M412 移除视口原文后，该形状**没有任何活的生产者**
+（恢复路径用的是留存字符串）。保留出自宽容解析接受面考虑、注释已写明；按 REVIEW.md 第 21 条属于可裁
+兼容面。处置建议：不删代码，下次动 turn.rs context 渲染时顺带把该分支与单测
+`legacy_selection_with_text_still_renders_source_text` 一并移除或改写为「拒绝/忽略」口径；若未来要做
+「重新附上视口原文」的显式手势，该接受面可直接复用——届时再定。
+
 ## 工具链与环境（待 Alex 裁决）
 
 1. **1420 端口串行**：vite dev server 固定 `127.0.0.1:1420` 且 strictPort，全机同一时刻只能有一个
