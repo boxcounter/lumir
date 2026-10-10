@@ -1,7 +1,7 @@
 ---
 id: "105-harness-wire-retention"
 item: 105
-title: wire 留存：一轮含工具循环的对话后，sessions/<id>.jsonl 首行装配记录（含来源存在与否）+ 每轮完整 llm_request / llm_response（思考文本 + usage）
+title: wire 留存：一轮含工具循环的对话后，sessions/<vault 稳定 id>/<id>.jsonl 首行装配记录（含来源存在与否）+ 每轮完整 llm_request / llm_response（思考文本 + usage）
 open: harness-note.md
 marker: "HNL-ALPHA"
 # fixture = 两轮脚本（思考 ALPHA + 正文 TTO-ORD1 + vault_read 调用 → 思考 BETA + 正文 TTO-ORD2），
@@ -37,31 +37,31 @@ steps:
       - label: 最终回答渲染（回合真的跑完）
         ax: { has: "TTO-ORD2-答案在第二段思考之前。" }
       - label: 留存文件首行是 session_open（wire 留存的会话入口）
-        file: { path: "env:harness/sessions/*.jsonl", has: '"kind":"session_open"' }
+        file: { path: "env:harness/sessions/*/*.jsonl", has: '"kind":"session_open"' }
       - label: 首行为装配记录（payload 以 assembly 开头，session_open 由首条记录一并写盘）
-        file: { path: "env:harness/sessions/*.jsonl", has: '/^\{"payload":\{"assembly":/' }
+        file: { path: "env:harness/sessions/*/*.jsonl", has: '/^\{"payload":\{"assembly":/' }
       - label: session_open 带 opened_from=new 与 provider 身份
-        file: { path: "env:harness/sessions/*.jsonl", has: '"opened_from":"new","provider":"mock"' }
+        file: { path: "env:harness/sessions/*/*.jsonl", has: '"opened_from":"new","provider":"mock"' }
       - label: session_open 带完整 system prompt 全文（装配结果落盘）
-        file: { path: "env:harness/sessions/*.jsonl", has: '/^.*"kind":"session_open".*"system":".+".*$/' }
+        file: { path: "env:harness/sessions/*/*.jsonl", has: '/^.*"kind":"session_open".*"system":".+".*$/' }
       - label: 装配清单的固定段在场（存在来源的 path 为 null）
-        file: { path: "env:harness/sessions/*.jsonl", has: '"exists":true,"path":null,"source":"identity"' }
+        file: { path: "env:harness/sessions/*/*.jsonl", has: '"exists":true,"path":null,"source":"identity"' }
       - label: 装配清单记录「来源当时不存在」（vault 根无 AGENTS.md，exists:false 同样在场）
-        file: { path: "env:harness/sessions/*.jsonl", has: '/^.*"exists":false,"path":"[^"]*AGENTS\.md","source":"agents_vault_root".*$/' }
+        file: { path: "env:harness/sessions/*/*.jsonl", has: '/^.*"exists":false,"path":"[^"]*AGENTS\.md","source":"agents_vault_root".*$/' }
       - label: 本地覆盖层同理（vault 根无 AGENTS.local.md，exists:false 同样在场）
-        file: { path: "env:harness/sessions/*.jsonl", has: '/^.*"exists":false,"path":"[^"]*AGENTS\.local\.md","source":"agents_vault_root_local".*$/' }
+        file: { path: "env:harness/sessions/*/*.jsonl", has: '/^.*"exists":false,"path":"[^"]*AGENTS\.local\.md","source":"agents_vault_root_local".*$/' }
       - label: 每次迭代落完整 llm_request（迭代 2 的历史里带上一轮的工具调用与结果）
-        file: { path: "env:harness/sessions/*.jsonl", has: '/^.*"kind":"llm_request".*"type":"function_call".*"type":"function_call_output".*$/' }
+        file: { path: "env:harness/sessions/*/*.jsonl", has: '/^.*"kind":"llm_request".*"type":"function_call".*"type":"function_call_output".*$/' }
       - label: llm_request 的请求体齐备（messages + params + provider + system）
-        file: { path: "env:harness/sessions/*.jsonl", has: '/^.*"kind":"llm_request".*"request":\{"messages":\[.*"params":\{"thinking":"[a-z]+"\}.*"provider":"mock".*"system":".+".*$/' }
+        file: { path: "env:harness/sessions/*/*.jsonl", has: '/^.*"kind":"llm_request".*"request":\{"messages":\[.*"params":\{"thinking":"[a-z]+"\}.*"provider":"mock".*"system":".+".*$/' }
       - label: llm_response 带思考展示文本（迭代 1）
-        file: { path: "env:harness/sessions/*.jsonl", has: '"thinking":"TTO-THINK-ALPHA 先读文件。"' }
+        file: { path: "env:harness/sessions/*/*.jsonl", has: '"thinking":"TTO-THINK-ALPHA 先读文件。"' }
       - label: llm_response 带思考展示文本（迭代 2）
-        file: { path: "env:harness/sessions/*.jsonl", has: '"thinking":"TTO-THINK-BETA 读完再答。"' }
+        file: { path: "env:harness/sessions/*/*.jsonl", has: '"thinking":"TTO-THINK-BETA 读完再答。"' }
       - label: llm_response 带 usage（迭代 1）
-        file: { path: "env:harness/sessions/*.jsonl", has: '"usage":{"cached_tokens":300,"input_tokens":900,"output_tokens":20}' }
+        file: { path: "env:harness/sessions/*/*.jsonl", has: '"usage":{"cached_tokens":300,"input_tokens":900,"output_tokens":20}' }
       - label: llm_response 带 usage（迭代 2）
-        file: { path: "env:harness/sessions/*.jsonl", has: '"usage":{"cached_tokens":1000,"input_tokens":1400,"output_tokens":25}' }
+        file: { path: "env:harness/sessions/*/*.jsonl", has: '"usage":{"cached_tokens":1000,"input_tokens":1400,"output_tokens":25}' }
       - shot: 01-工具循环完成
 ---
 
@@ -70,7 +70,7 @@ steps:
 ## 本场景在验什么
 
 留存从「业务事件流水」重塑为 **wire/input 形态**（spec「会话本地留存」MODIFIED）：每会话一个
-append-only JSONL（`<隔离配置>/harness/sessions/<session_id>.jsonl`），首行 `session_open`
+append-only JSONL（`<隔离配置>/harness/sessions/<vault 稳定 id>/<session_id>.jsonl`），首行 `session_open`
 落**完整装配记录**——system prompt 全文、每个来源的路径与**存在与否**、provider / 模型 / 思考档位；
 其后每次发给模型的请求落 `llm_request`（完整请求体），响应落 `llm_response`（正文 / 思考展示文本 /
 工具调用 / usage）。被 wire 覆盖的 11 类事件 kind（`user_message` / `assistant_text` / `tool_call` /

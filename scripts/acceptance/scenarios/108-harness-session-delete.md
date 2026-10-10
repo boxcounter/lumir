@@ -38,7 +38,7 @@ steps:
       - label: 首轮回答渲染（源会话产生的正观测）
         ax: { has: "验收回答：上下文已收到。" }
       - label: delone 会话落盘（session_open 在场）
-        file: { path: "env:harness/sessions/*.jsonl", has: '"kind":"session_open"' }
+        file: { path: "env:harness/sessions/*/*.jsonl", has: '"kind":"session_open"' }
 
   - name: 等回合收口（无在途轮次——「＋新会话」要求非 busy）
     do: waitFor
@@ -180,9 +180,9 @@ steps:
       - label: 盘上只剩一份留存（活跃会话的）
         glob: { dir: "env:harness/sessions", pattern: "\\.jsonl$", exact: 1 }
       - label: 留下的那份是 deltwo 的（删对了对象——留存内容正观测）
-        file: { path: "env:harness/sessions/*.jsonl", has: "deltwo" }
+        file: { path: "env:harness/sessions/*/*.jsonl", has: "deltwo" }
       - label: 留下的那份不含 delone 的记录（反向核对）
-        file: { path: "env:harness/sessions/*.jsonl", not: "delone" }
+        file: { path: "env:harness/sessions/*/*.jsonl", not: "delone" }
       - shot: 03-历史已删
 ---
 
@@ -236,5 +236,5 @@ M406 给会话浮层的每行加了删除钮（×，D417 读屏名），删除�
 ## 环境与副作用
 
 - 合成 vault `/tmp/lumir-m102-acceptance` + 隔离 `XDG_CONFIG_HOME`；删除只作用在验收环境的
-  `env:harness/sessions/` 下（合成会话留存），真实 vault 与用户配置全程不碰。mock 只回文案、
+  `env:harness/sessions/<vault 稳定 id>/` 下（合成会话留存），真实 vault 与用户配置全程不碰。mock 只回文案、
   不写 vault。1420 全程不碰（实例走 `LUMIR_ACCEPTANCE_PORT=1430`）。

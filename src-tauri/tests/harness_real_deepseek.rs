@@ -119,6 +119,7 @@ fn real_deepseek_two_turns_tool_call_and_reasoning_replay() {
         let scope = VaultScope {
             root: root.join("vault"),
             policy: IgnorePolicy::load(&root.join("vault"), &[".gitignore".to_string()]),
+            vault_id: "vault-test-1".to_string(),
         };
         let runtime = Runtime::default();
 
@@ -257,6 +258,7 @@ fn real_deepseek_multi_call_round_replays_grouped() {
         let scope = VaultScope {
             root: root.join("vault"),
             policy: IgnorePolicy::load(&root.join("vault"), &[".gitignore".to_string()]),
+            vault_id: "vault-test-1".to_string(),
         };
         let runtime = Runtime::default();
         runtime.acquire_turn(&scope, &config).unwrap();

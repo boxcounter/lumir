@@ -34,7 +34,7 @@ steps:
       - label: 首轮回答渲染（源会话产生的正观测）
         ax: { has: "验收回答：上下文已收到。" }
       - label: 源会话落盘（session_open 在场）
-        file: { path: "env:harness/sessions/*.jsonl", has: '"kind":"session_open"' }
+        file: { path: "env:harness/sessions/*/*.jsonl", has: '"kind":"session_open"' }
 
   - name: 等回合收口（无在途轮次——「＋新会话」与恢复都要求非 busy）
     do: waitFor
@@ -121,13 +121,13 @@ steps:
       - label: 恢复后新一轮回答渲染（回合真实发生）
         ax: { has: "验收回答：上下文已收到。" }
       - label: 新会话文件首行标 opened_from=restore（恢复谱系）
-        file: { path: "env:harness/sessions/*.jsonl", has: '"opened_from":"restore"' }
+        file: { path: "env:harness/sessions/*/*.jsonl", has: '"opened_from":"restore"' }
       - label: 新会话文件记 restored_from = 源会话 id（s<millis>-<base36>）
-        file: { path: "env:harness/sessions/*.jsonl", has: '/^.*"restored_from":"s[0-9a-z-]+".*$/' }
+        file: { path: "env:harness/sessions/*/*.jsonl", has: '/^.*"restored_from":"s[0-9a-z-]+".*$/' }
       - label: 恢复充分性——新一轮 llm_request 的历史里同时带源会话的 user 消息（zqxalpha）与恢复后的新消息（vwbmore）
-        file: { path: "env:harness/sessions/*.jsonl", has: '/^.*"kind":"llm_request".*zqxalpha.*vwbmore.*$/' }
+        file: { path: "env:harness/sessions/*/*.jsonl", has: '/^.*"kind":"llm_request".*zqxalpha.*vwbmore.*$/' }
       - label: 恢复沿用源 system（不重新装配）——请求体带 system 全文
-        file: { path: "env:harness/sessions/*.jsonl", has: '/^.*"kind":"llm_request".*"provider":"mock".*"system":".+".*$/' }
+        file: { path: "env:harness/sessions/*/*.jsonl", has: '/^.*"kind":"llm_request".*"provider":"mock".*"system":".+".*$/' }
       - shot: 03-恢复续聊
 ---
 

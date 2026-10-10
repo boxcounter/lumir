@@ -4,7 +4,11 @@
 //! 分析与恢复共用同一份事实。留存落在**配置目录**（ADR 0007 双向记录机制的本地一侧），
 //! **MUST NOT 写入 vault**。
 //!
-//! 布局：`<config_dir>/harness/sessions/<session_id>.jsonl`。首行恒为 `session_open`
+//! 布局：`<config_dir>/harness/sessions/<vault 稳定 id>/<session_id>.jsonl`。目录名取 vault
+//! 注册表 id（与 `vault-sessions/<id>.json`、`reading-positions/<id>.json` 同一份身份；MUST NOT
+//! 用 vault 路径派生的消毒名——消毒名有撞名面，M309 现场）。**目录只作组织维度**：会话归属
+//! 判据仍是首行 `session_open.vault_root`（`harness::session_belongs_to_scope`），文件被手工
+//! 挪动 / 拷贝不改归属结论。首行恒为 `session_open`
 //! （完整装配记录：system prompt 全文 + 每来源的路径与存在与否 + provider / 模型 /
 //! 思考档位）；其后 `llm_request` / `llm_response` 严格交替成对（工具循环每次迭代与
 //! 压缩调用自身都各算一次 LLM 调用）；批准 / 拒绝 / 中断 / 错误等 wire 不可推导的
@@ -65,11 +69,49 @@ pub fn is_valid_session_id(id: &str) -> bool {
             .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
 }
 
-/// 会话留存目录：`<config_dir>/harness/sessions`。
+/// 会话留存**根**目录：`<config_dir>/harness/sessions`（各 vault 目录的容器；本目录自身
+/// MUST NOT 再落 `*.jsonl`——存量平铺文件由一次性脚本归位，见 `scripts/migrate-harness-sessions.mjs`）。
 pub fn sessions_dir() -> Result<PathBuf, CommandError> {
     let dir = crate::config::config_dir()?
         .join("harness")
         .join("sessions");
+    std::fs::create_dir_all(&dir).map_err(|e| {
+        CommandError::new(
+            "harness_jsonl_failed",
+            format!("无法创建会话留存目录 {}：{e}", dir.display()),
+        )
+        .param("dir", dir.display().to_string())
+        .param("reason", e.to_string())
+    })?;
+    Ok(dir)
+}
+
+/// 保留目录名：一次性归位脚本搬不动的东西落这里（脚本侧同名常量的单一真源在脚本里，
+/// 见 `scripts/migrate-harness-sessions.mjs` 的 `ORPHANED_DIR_NAME`）。
+pub const ORPHANED_DIR_NAME: &str = "_orphaned";
+
+/// vault 目录名（id → 目录名）的保留名纪律：`valid_id` 通过且 ≠ `_orphaned`，否则 `None`。
+/// 不通过是**不可达**分支（id 由 `reconcile_vault` 产出，恒为 `vault-<pid>-<n>`），实现仍显式
+/// 判一次——不 panic、不静默（design §2 保留名纪律 / §6 边界矩阵）。
+fn vault_dir_name(vault_id: &str) -> Option<&str> {
+    (vault_id != ORPHANED_DIR_NAME && crate::vault_registry::valid_id(vault_id).is_ok())
+        .then_some(vault_id)
+}
+
+/// 本 vault 的会话留存目录 `<config_dir>/harness/sessions/<vault 稳定 id>/`（按需创建）。
+/// id 不合法时记一条 stderr 并按 `_orphaned/` 口径落盘——记录不静默丢、对话不中断。
+pub fn vault_sessions_dir(vault_id: &str) -> Result<PathBuf, CommandError> {
+    let name = match vault_dir_name(vault_id) {
+        Some(name) => name,
+        None => {
+            eprintln!(
+                "lumir: harness 会话目录名非法（{vault_id:?}，须 valid_id 且 ≠ {ORPHANED_DIR_NAME}）\
+                 ——按 {ORPHANED_DIR_NAME} 口径落盘"
+            );
+            ORPHANED_DIR_NAME
+        }
+    };
+    let dir = sessions_dir()?.join(name);
     std::fs::create_dir_all(&dir).map_err(|e| {
         CommandError::new(
             "harness_jsonl_failed",
@@ -92,15 +134,17 @@ pub struct JsonlWriter {
 }
 
 impl JsonlWriter {
-    /// 建一个新会话的留存文件句柄：`sessions/<session_id>.jsonl`，首行挂起
+    /// 建一个新会话的留存文件句柄：`sessions/<vault 稳定 id>/<session_id>.jsonl`，首行挂起
     /// `session_open` 行。文件本身惰性创建（与旧口径一致：句柄可建，文件随首条记录）。
+    /// 目录按需创建（`vault_sessions_dir`；创建失败沿用 `harness_jsonl_failed` 口径）。
     /// `session_open` 形状契约见 design §2（kind / session_id / vault_root / opened_from /
     /// provider / model / thinking / system / assembly / compact_summary?）。
     pub fn create(
         session_id: &str,
+        vault_id: &str,
         session_open: &serde_json::Value,
     ) -> Result<Self, CommandError> {
-        let dir = sessions_dir()?;
+        let dir = vault_sessions_dir(vault_id)?;
         let path = dir.join(format!("{session_id}.jsonl"));
         let line = serde_json::to_string(&serde_json::json!({
             "ts": unix_secs_now(),
@@ -339,6 +383,22 @@ mod tests {
             "s.xxx-yyyyyy",
         ] {
             assert!(!is_valid_session_id(bad), "{bad}");
+        }
+    }
+
+    /// 保留名纪律（design §2 / §6）：目录名 = vault 稳定 id，`valid_id` 与 ≠ `_orphaned`
+    /// 双判；不通过即调用侧记日志并按 `_orphaned/` 口径落盘（不可达分支的显式判——
+    /// 不 panic、不静默）。
+    #[test]
+    fn vault_dir_name_rejects_reserved_and_invalid_ids() {
+        assert_eq!(vault_dir_name("vault-1000-1"), Some("vault-1000-1"));
+        assert_eq!(
+            vault_dir_name(ORPHANED_DIR_NAME),
+            None,
+            "保留名不可作 vault 目录名"
+        );
+        for bad in ["", "..", "a/b", "a b", "s.xxx", "a\\b"] {
+            assert_eq!(vault_dir_name(bad), None, "{bad}");
         }
     }
 

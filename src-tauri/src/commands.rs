@@ -153,6 +153,9 @@ pub struct VaultState {
 struct OpenVault {
     root: PathBuf,
     policy: fs_io::IgnorePolicy,
+    /// vault 稳定 id（注册表 id）：harness 会话留存按它分目录（`sessions/<id>/`）。
+    /// 打开路径上由 `reconcile_vault` 给出、随 `PreparedVaultOpen` 一并提交——不新造查表。
+    vault_id: String,
 }
 
 #[derive(Default)]
@@ -188,10 +191,15 @@ impl VaultInner {
             watcher,
             graph,
             policy,
+            vault_id,
             ..
         } = prepared;
         self.watcher = Some(watcher);
-        self.vault = Some(OpenVault { root, policy });
+        self.vault = Some(OpenVault {
+            root,
+            policy,
+            vault_id,
+        });
         self.notice = None;
         self.graph = graph;
         self.generation += 1;
@@ -278,12 +286,28 @@ impl VaultState {
     /// **pub 消费方：harness 运行时（M302）**——会话按 vault 建、工具路径解析与
     /// vault_search 复用同一份装载时编译的规则表。未打开返回 `vault_not_open`。
     pub fn root_and_policy(&self) -> Result<(PathBuf, fs_io::IgnorePolicy), CommandError> {
+        self.root_policy_and_id()
+            .map(|(root, policy, _)| (root, policy))
+    }
+
+    /// 当前 vault 的根 + 规则表 + 稳定 id（[`Self::root_and_policy`] 的姊妹口）。
+    /// **pub 消费方：harness 运行时**——会话留存按 vault 稳定 id 分目录
+    /// （`<config_dir>/harness/sessions/<id>/`），id 与根/规则表同一次快照取，不新造查表。
+    pub fn root_policy_and_id(
+        &self,
+    ) -> Result<(PathBuf, fs_io::IgnorePolicy, String), CommandError> {
         self.inner
             .lock()
             .expect("vault state poisoned")
             .vault
             .as_ref()
-            .map(|vault| (vault.root.clone(), vault.policy.clone()))
+            .map(|vault| {
+                (
+                    vault.root.clone(),
+                    vault.policy.clone(),
+                    vault.vault_id.clone(),
+                )
+            })
             .ok_or_else(|| CommandError::new("vault_not_open", "尚未打开 vault，请先选择目录"))
     }
 

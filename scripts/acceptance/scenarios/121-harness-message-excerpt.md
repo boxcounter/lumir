@@ -97,11 +97,11 @@ steps:
     expect:
       - label: 投递文本含 `<msg-quote role at>`（role 必选、at 为秒级 ISO 本地串）
         file:
-          path: "env:harness/sessions/*.jsonl"
+          path: "env:harness/sessions/*/*.jsonl"
           has: '/msg-quote role=\\?"assistant\\?" at=\\?"[0-9-]+T[0-9:]+\\?"/'
       - label: 协议零编号（无 index / idx 属性）
         file:
-          path: "env:harness/sessions/*.jsonl"
+          path: "env:harness/sessions/*/*.jsonl"
           not: '/msg-quote[^>]*(index|idx)=/'
 ---
 
@@ -127,7 +127,7 @@ steps:
 - **不判摘录原文逐字**：卡片的摘录取自 `selection.toString()`，其中文串在 AX 里与转录正文同源、
   没有区分度；卡片在场用**出处行**「对话 · Agent」（只由卡片渲染产出）与 × 钮判。
 - **序列化断言取 wire 留存**：投递文本不在 AX 也不在剪贴板，落点是隔离配置目录的
-  `harness/sessions/<id>.jsonl`（`llm_request` 记录）。内容在 JSON 里是转义串，故正则允许
+  `harness/sessions/<vault 稳定 id>/<id>.jsonl`（`llm_request` 记录）。内容在 JSON 里是转义串，故正则允许
   `\"` 与 `"` 两形；`at` 的**具体秒值随机器时区变**，只钉形状（`YYYY-MM-DDThh:mm:ss`）。
 - **零编号**：负向断言 `/<msg-quote[^>]*(index|idx)=/` 不命中——属性集合只能是 role / at。
 - **移除后再摘一次**：证明「移除按钮不破坏手势」（卡片被移除后，手势仍能再产卡片）。

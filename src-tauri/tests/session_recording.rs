@@ -3,7 +3,9 @@
 //! **恢复充分性属性测试**（仅凭 JSONL 逐字节重建任意一轮发给模型的请求，含反向验证）、
 //! 恢复命令 roundtrip（灌回 system + input、续写新文件）、文件边界（重置 / 压缩）、
 //! sidecar 决策类收口（approval / llm_error / loop_max_reached 在列，11 类旧 kind 绝迹）、
-//! 会话删除（M406：删除 + 幂等 / 活跃拒删 / 非法 id / 跨 vault 拒删）。
+//! 会话删除（M406：删除 + 幂等 / 活跃拒删 / 非法 id / 跨 vault 拒删）、
+//! **按 vault 分目录**（change harness-sessions-per-vault：落 `sessions/<vault 稳定 id>/`、
+//! 两 vault 互不可见、根下平铺残留不参与列举 / 恢复 / 删除）。
 //!
 //! 环境隔离与 harness_runtime.rs 同口径：XDG_CONFIG_HOME + HOME 指向临时目录，
 //! 多测串行（静态锁，env 是进程全局；REVIEW.md 第 13 条）。
@@ -20,6 +22,10 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+/// 本测试的 vault 稳定 id（会话留存目录名 = vault 注册表 id）：`Fixture::scope()` 与
+/// `sessions_dir()` 共用同一份字面量（REVIEW.md 第 8 条：两份真源会漂）。
+const VAULT_ID: &str = "vault-test-1";
 
 /// 隔离环境的测试夹具：临时 XDG_CONFIG_HOME + HOME + 合成 vault。
 struct Fixture {
@@ -61,7 +67,13 @@ impl Fixture {
         VaultScope {
             root: self.vault(),
             policy: IgnorePolicy::load(&self.vault(), &[".gitignore".to_string()]),
+            vault_id: VAULT_ID.to_string(),
         }
+    }
+
+    /// 会话留存目录读口（新布局 `sessions/<vault 稳定 id>/`）：测试侧路径的单一来源。
+    fn sessions_dir(&self) -> PathBuf {
+        self.root.join("xdg/lumir/harness/sessions").join(VAULT_ID)
     }
 
     fn write(&self, rel: &str, content: &str) {
@@ -74,7 +86,7 @@ impl Fixture {
 
     /// 列出留存的全部会话文件（按文件名排序 = 建立顺序，session id 时间序）。
     fn session_files(&self) -> Vec<PathBuf> {
-        let dir = self.root.join("xdg/lumir/harness/sessions");
+        let dir = self.sessions_dir();
         let mut files: Vec<PathBuf> = std::fs::read_dir(&dir)
             .unwrap_or_else(|e| panic!("读留存目录 {} 失败：{e}", dir.display()))
             .map(|entry| entry.unwrap().path())
@@ -654,6 +666,9 @@ fn resume_rebuilds_session_and_continues_in_new_file() {
     let scope_b = VaultScope {
         root: vault_b,
         policy: IgnorePolicy::load(&f.root.join("vault-b"), &[".gitignore".to_string()]),
+        // 与 A 共用同一个 vault 目录名：本用例构造的是「文件被手工挪进别的 vault 目录」的现场
+        // ——归属判据是首行 vault_root、不是目录（design §3），所以这里仍须撞 mismatch。
+        vault_id: VAULT_ID.to_string(),
     };
     let err = runtime
         .resume_session(&scope_b, &config, &source_id)
@@ -1044,8 +1059,16 @@ fn sidecar_deny_result_lives_in_next_request() {
 }
 
 /// 直接写一份合成的会话留存（首行 session_open；`user_text` 非空时接一条 llm_request）。
-/// 用于列举的定向用例：文件名 / vault_root / 信封 ts / 首条用户消息都在掌控内。
-fn write_raw_session(dir: &Path, id: &str, ts: u64, vault_root: &str, user_text: Option<&str>) {
+/// 用于列举 / 删除的定向用例：文件名 / vault_root / 信封 ts / 首条用户消息都在掌控内。
+/// 返回落盘路径（调用方据此断言「产品没碰过它」这类判据）。`dir` 由调用方给：本 vault 的
+/// 会话目录（`Fixture::sessions_dir()`）或 `sessions/` 根（旧布局残留的现场）。
+fn write_raw_session(
+    dir: &Path,
+    id: &str,
+    ts: u64,
+    vault_root: &str,
+    user_text: Option<&str>,
+) -> PathBuf {
     let mut lines = vec![serde_json::json!({
         "ts": ts,
         "payload": {
@@ -1078,11 +1101,9 @@ fn write_raw_session(dir: &Path, id: &str, ts: u64, vault_root: &str, user_text:
             .to_string(),
         );
     }
-    std::fs::write(
-        dir.join(format!("{id}.jsonl")),
-        format!("{}\n", lines.join("\n")),
-    )
-    .unwrap();
+    let path = dir.join(format!("{id}.jsonl"));
+    std::fs::write(&path, format!("{}\n", lines.join("\n"))).unwrap();
+    path
 }
 
 /// 会话列举（change reshape-harness-session-recording 任务 2.1）：按 vault 归属过滤
@@ -1091,7 +1112,7 @@ fn write_raw_session(dir: &Path, id: &str, ts: u64, vault_root: &str, user_text:
 #[test]
 fn list_sessions_filters_by_vault_and_orders_descending() {
     let f = Fixture::new("list-sessions");
-    let dir = f.root.join("xdg/lumir/harness/sessions");
+    let dir = f.sessions_dir();
     std::fs::create_dir_all(&dir).unwrap();
     let vault_root = f.vault().display().to_string();
     let other_root = f.root.join("vault-b").display().to_string();
@@ -1119,6 +1140,17 @@ fn list_sessions_filters_by_vault_and_orders_descending() {
         Some("别的 vault"),
     );
     std::fs::write(dir.join("broken.jsonl"), "{ 不是 JSON\n").unwrap();
+    // 旧布局残留：`sessions/` **根**下的平铺文件——内容完全合法、`vault_root` 也是本 vault，
+    // 但产品 MUST NOT 读它（单一布局、无双读过渡层；design §5）。它的归位归一次性脚本，
+    // 可见证据是脚本输出与目录结构，不是运行时行为。id 的时间序排在 bbbbbb 与 aaaaaa 之间，
+    // 一旦被读进列表，下面的 ids 断言必红（判据有区分度）。
+    let flat = write_raw_session(
+        &f.root.join("xdg/lumir/harness/sessions"),
+        "s1759912001-ffffff",
+        1759912001,
+        &vault_root,
+        Some("平铺残留的问题"),
+    );
 
     let list = list_sessions(&f.scope()).unwrap();
     let ids: Vec<&str> = list.iter().map(|s| s.session_id.as_str()).collect();
@@ -1129,8 +1161,9 @@ fn list_sessions_filters_by_vault_and_orders_descending() {
             "s1759912005-bbbbbb",
             "s1759912000-aaaaaa"
         ],
-        "仅本 vault、按时间倒序：{list:?}"
+        "仅本 vault、按时间倒序（根下平铺残留不在列）：{list:?}"
     );
+    assert!(flat.exists(), "产品 MUST NOT 删除 / 搬动根下平铺文件");
     // ts = 首行 session_open 信封的 UNIX 秒。
     assert_eq!(list[0].ts, Some(1759912010));
     // 会话名 = 首条 user 消息原文（未截断）；无用户消息的会话为 None。
@@ -1285,7 +1318,7 @@ fn first_user_text_strips_injected_context_section() {
 #[test]
 fn delete_session_removes_file_and_is_idempotent() {
     let f = Fixture::new("delete-basic");
-    let dir = f.root.join("xdg/lumir/harness/sessions");
+    let dir = f.sessions_dir();
     std::fs::create_dir_all(&dir).unwrap();
     let vault_root = f.vault().display().to_string();
     write_raw_session(
@@ -1355,7 +1388,7 @@ fn delete_session_guards_active_invalid_and_foreign() {
     assert_eq!(err.code, "harness_session_invalid");
 
     // 他 vault 的留存拒删（与列举 / 恢复同一归属口径），文件不动。
-    let dir = f.root.join("xdg/lumir/harness/sessions");
+    let dir = f.sessions_dir();
     write_raw_session(
         &dir,
         "s1759912002-dddddd",
@@ -1371,4 +1404,143 @@ fn delete_session_guards_active_invalid_and_foreign() {
         dir.join("s1759912002-dddddd.jsonl").exists(),
         "拒删后文件仍在"
     );
+}
+
+// ---------------------------------------------------------------------------
+// 按 vault 分目录（change harness-sessions-per-vault：sessions/<vault 稳定 id>/）
+// ---------------------------------------------------------------------------
+
+/// 某目录下的 `*.jsonl`（按文件名排序 = session id 时间序；目录不存在回空）。
+fn jsonl_files_in(dir: &Path) -> Vec<PathBuf> {
+    let mut files: Vec<PathBuf> = std::fs::read_dir(dir)
+        .map(|entries| {
+            entries
+                .flatten()
+                .map(|entry| entry.path())
+                .filter(|p| p.extension().map(|x| x == "jsonl").unwrap_or(false))
+                .collect()
+        })
+        .unwrap_or_default();
+    files.sort();
+    files
+}
+
+/// 新布局的核心判据（change harness-sessions-per-vault）：会话落 `sessions/<vault 稳定 id>/`，
+/// 列举 / 恢复 / 删除**只读本 vault 的目录**——两个 vault 的会话互不可见；且产品运行时
+/// **不含旧布局读取路径**（根下平铺残留不参与列举 / 恢复 / 删除；单一布局、无双读过渡层，
+/// design §3/§5）。归属判据本身不变（首行 `session_open.vault_root`，见上面的跨 vault 用例）。
+#[test]
+fn sessions_are_partitioned_per_vault_and_flat_leftovers_are_invisible() {
+    let f = Fixture::new("per-vault");
+    f.write("a.md", "demo body\n");
+    let config = mock_config();
+    // 第二个 vault：**另一个目录名**（真实的两个 vault 现场），与 `Fixture::scope()` 的
+    // vault-test-1 分置。
+    let vault_b = f.root.join("vault-b");
+    std::fs::create_dir_all(&vault_b).unwrap();
+    let scope_b = VaultScope {
+        root: vault_b.clone(),
+        policy: IgnorePolicy::load(&vault_b, &[".gitignore".to_string()]),
+        vault_id: "vault-test-2".to_string(),
+    };
+    let runtime = Runtime::default();
+    let scope_a = f.scope();
+
+    // 两个 vault 各跑一轮真回合（mock 脚本单条响应，每轮从脚本头重放）。
+    for (scope, marker) in [
+        (&scope_a, "本 vault 的问题"),
+        (&scope_b, "另一个 vault 的问题"),
+    ] {
+        runtime.acquire_turn(scope, &config).unwrap();
+        let sink = CollectSink::default();
+        let mut client =
+            MockClient::from_str(r#"{"responses": [{"text": "好。"}]}"#, "per-vault").unwrap();
+        drive_turn(
+            &sink,
+            &runtime,
+            scope,
+            &config,
+            marker.to_string(),
+            &mut client,
+        );
+        runtime.release_turn(scope);
+        assert_eq!(sink.0.lock().unwrap().last().unwrap()["type"], "done");
+    }
+
+    // 分置：各 vault 目录各恰一份，首行 vault_root 与该 vault 根逐字一致。
+    let sessions_root = f.root.join("xdg/lumir/harness/sessions");
+    let dir_a = f.sessions_dir();
+    let dir_b = sessions_root.join("vault-test-2");
+    let files_a = jsonl_files_in(&dir_a);
+    let files_b = jsonl_files_in(&dir_b);
+    assert_eq!(files_a.len(), 1, "A 的目录里恰一份：{files_a:?}");
+    assert_eq!(files_b.len(), 1, "B 的目录里恰一份：{files_b:?}");
+    assert_eq!(
+        f.read(&files_a[0]).session_open["vault_root"],
+        f.vault().display().to_string()
+    );
+    assert_eq!(
+        f.read(&files_b[0]).session_open["vault_root"],
+        vault_b.display().to_string()
+    );
+    // 新布局是唯一布局：根下不落平铺文件。
+    assert!(
+        jsonl_files_in(&sessions_root).is_empty(),
+        "sessions/ 根下不得有平铺文件"
+    );
+
+    // 列举范围：各见各的。
+    let a_id = jsonl::JsonlWriter::session_id_from_path(&files_a[0]).unwrap();
+    let b_id = jsonl::JsonlWriter::session_id_from_path(&files_b[0]).unwrap();
+    let list_a = list_sessions(&scope_a).unwrap();
+    assert_eq!(
+        list_a
+            .iter()
+            .map(|s| s.session_id.as_str())
+            .collect::<Vec<_>>(),
+        [a_id.as_str()],
+        "A 看不到 B 的会话：{list_a:?}"
+    );
+    let list_b = list_sessions(&scope_b).unwrap();
+    assert_eq!(
+        list_b
+            .iter()
+            .map(|s| s.session_id.as_str())
+            .collect::<Vec<_>>(),
+        [b_id.as_str()],
+        "B 看不到 A 的会话：{list_b:?}"
+    );
+
+    // 恢复 / 删除也只在本 vault 目录内命中：拿 A 的 id 去 B —— 分目录让跨 vault 入口先撞
+    // 「读不到」（归属过滤仍在，见上面的 mismatch 用例）；删除幂等成功但绝不碰 A 的文件。
+    let err = runtime
+        .resume_session(&scope_b, &config, &a_id)
+        .unwrap_err();
+    assert_eq!(
+        err.code, "harness_session_unreadable",
+        "B 目录里没有 A 的会话"
+    );
+    runtime.delete_session(&scope_b, &a_id).unwrap();
+    assert!(files_a[0].exists(), "跨 vault 删除 MUST NOT 碰 A 的文件");
+
+    // 产品不读旧布局：根下平铺一份**完全合法**的文件（首行 vault_root 就是本 vault 根）——
+    // 列举不列它、恢复读不到、删除不碰它。归位是仓内一次性脚本的事（不在这里）。
+    let flat = write_raw_session(
+        &sessions_root,
+        "s1759912001-ffffff",
+        1759912001,
+        &f.vault().display().to_string(),
+        Some("平铺残留的问题"),
+    );
+    let list_a = list_sessions(&scope_a).unwrap();
+    assert_eq!(list_a.len(), 1, "根下平铺残留不参与列举：{list_a:?}");
+    assert_eq!(list_a[0].session_id, a_id);
+    let err = runtime
+        .resume_session(&scope_a, &config, "s1759912001-ffffff")
+        .unwrap_err();
+    assert_eq!(err.code, "harness_session_unreadable");
+    runtime
+        .delete_session(&scope_a, "s1759912001-ffffff")
+        .unwrap();
+    assert!(flat.exists(), "跨布局删除 MUST NOT 碰根下平铺文件");
 }

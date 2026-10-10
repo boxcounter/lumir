@@ -36,7 +36,7 @@ export const ACTIONS = new Set([
   "settle", "waitFor", "sleep", "key", "keys", "type", "click", "clickNodeText", "clickInNode", "clickEditor",
   "doubleClick", "drag", "scroll", "focusWindow", "open", "configWrite", "restart", "record", "recordEditor",
   "vaultWrite", "vaultAppend", "vaultRm", "vaultSparse", "resizeWindow", "clipboardRead",
-  "clipboardImage", "clipboardText", "note",
+  "clipboardImage", "clipboardText", "note", "migrateHarnessSessions",
 ]);
 export const EXPECT_KINDS = new Set(["ax", "editor", "file", "glob", "shot", "window", "clipboard", "pixel", "geom", "bytes"]);
 
@@ -62,6 +62,15 @@ export function checkScenario(scenario) {
   // 旧名注册表（M248）：迁移场景 48 用它构造「升级前现场」，校验口径与现名同一条。
   for (const [i, e] of (scenario.seed?.legacyRegistry ?? []).entries()) {
     if (!e?.id || !e?.path) push(`seed.legacyRegistry[${i}] 需要 id 与 path`);
+  }
+  // 平铺会话种子（M433）：`seed.harnessFlatSessions` 预置的是**旧布局现场**（`sessions/` 根下的
+  // `*.jsonl`），是一次性归位脚本场景的输入。键名写错 = 静默不写 = 归位断言在空输入上假绿，
+  // 故在此按形态挡住。
+  for (const [i, e] of (scenario.seed?.harnessFlatSessions ?? []).entries()) {
+    if (typeof e?.name !== "string" || !e.name.endsWith(".jsonl"))
+      push(`seed.harnessFlatSessions[${i}].name 需要 *.jsonl 文件名`);
+    if (e?.raw === undefined && typeof e?.vaultRoot !== "string")
+      push(`seed.harnessFlatSessions[${i}] 需要 vaultRoot（字符串）或 raw（原样落盘）之一`);
   }
   // 会话种子（M321）：`panes` 是**分栏现场**的形状，写错会静默退化成 v1 空会话——预置的标签
   // 根本没进盘，断言恒红且归因指向别处（写错的键 = 不生效，与其余种子同一条假绿/假红口径）。
@@ -360,30 +369,60 @@ function resolveSpecPath(p) {
 }
 
 /**
- * file 断言的路径解析：字面路径直接用；含 `*` 时按 glob 在父目录里取**匹配文件里 mtime
- * 最新的那一份**。
+ * file 断言的路径解析：字面路径直接用；含 `*` 时按 glob 取**匹配文件里 mtime 最新的那一份**。
  *
  * 为什么需要它：诊断日志按 UTC 日期命名（`<config>/logs/YYYY-MM-DD.jsonl`），而验收环境
  * 的 `env/` 目录跨天复用（`envHome()` 不带日期）——写死日期的断言会在之后每一天读到**上次
  * run 留下的旧文件**，其余内容照样命中，于是断言永久空过（假绿）；换台机器又因文件不存在
  * 直接 FAIL。glob 取最新一份让断言始终对着「这次 run 刚落的那份」。
+ *
+ * `*` 可出现在**目录段**（M433：会话留存按 vault 分目录后，「sessions 下再带一层 vault 目录」
+ * 的两层 glob 是常态）：逐段展开、逐段匹配。任一段不存在 ⇒ 返回**未展开的原路径**，
+ * 让 fileInfo 走「不存在」分支（报错信息仍是原路径；`exists: false` 类断言据此成立）。
  */
 async function resolveSpecFile(p) {
   if (!p.includes("*")) return resolveSpecPath(p);
   const full = resolveSpecPath(p);
-  const dir = path.dirname(full);
-  const pattern = new RegExp(
-    `^${path.basename(full).replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*")}$`,
-  );
-  let hits;
-  try {
-    hits = (await readdir(dir)).filter((name) => pattern.test(name)).map((name) => path.join(dir, name));
-  } catch {
-    return full; // 目录不在：让 fileInfo 走「不存在」分支，报错信息仍是原路径
-  }
+  const hits = await globFiles(full);
   const found = await Promise.all(hits.map(async (file) => ({ file, info: await fileInfo(file) })));
   found.sort((a, b) => (b.info?.mtimeMs ?? 0) - (a.info?.mtimeMs ?? 0));
   return found[0]?.file ?? full;
+}
+
+/**
+ * 逐段 glob（绝对路径形态）：`*` 段按目录名匹配展开，其余段原样下探；只回**文件**匹配
+ * （目录条目不算命中——`.jsonl` 类断言不该被同名目录骗过）。
+ */
+async function globFiles(full) {
+  const segments = full.split(path.sep).filter((s) => s.length > 0);
+  let paths = [path.sep];
+  for (const segment of segments) {
+    const next = [];
+    if (!segment.includes("*")) {
+      for (const dir of paths) next.push(path.join(dir, segment));
+    } else {
+      const re = new RegExp(
+        `^${segment.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*")}$`,
+      );
+      for (const dir of paths) {
+        let names;
+        try {
+          names = await readdir(dir);
+        } catch {
+          continue; // 该目录不存在：这一支不再下探
+        }
+        for (const name of names) if (re.test(name)) next.push(path.join(dir, name));
+      }
+    }
+    paths = next;
+    if (paths.length === 0) break;
+  }
+  const out = [];
+  for (const candidate of paths) {
+    const info = await fileInfo(candidate);
+    if (info && !info.isDir) out.push(candidate);
+  }
+  return out;
 }
 
 /**
@@ -883,12 +922,15 @@ export async function runScenario(ctx, scenario) {
     }
     if (expect.glob) {
       // 崩溃备份、另存副本这类「文件名由 app 决定」的产物只能用 glob 断言。
+      // `recursive: false`（M433）：只数**该目录一层**里的命中——会话留存改按 vault 分目录后，
+      // 「sessions/ 根下零 *.jsonl」这类判据必须与「所有 vault 目录里有 N 份」分开表达，
+      // 递归统计做不到这件事（默认 true = 沿用既有语义）。
       const spec = expect.glob;
       const dir = resolveSpecPath(spec.dir);
       const re = spec.pattern instanceof RegExp ? spec.pattern : new RegExp(spec.pattern);
       let hits = [];
       try {
-        hits = (await readdir(dir, { recursive: true, withFileTypes: true }))
+        hits = (await readdir(dir, { recursive: spec.recursive !== false, withFileTypes: true }))
           .filter((e) => e.isFile())
           .map((e) => path.join(e.parentPath ?? e.path, e.name))
           .filter((f) => re.test(f));
@@ -1719,6 +1761,37 @@ async function doAction(step, { ctx, cu, scenario, vars, pid, evidence }) {
       await ctx.restartApp({ requireVault: step.requireVault !== false });
       if (ctx.foregroundNote) evidence.record({ kind: "note", text: ctx.foregroundNote });
       return;
+    case "migrateHarnessSessions": {
+      // 一次性归位脚本（change harness-sessions-per-vault，M433）：**手动执行**这一步的现场化
+      // ——脚本不进产品运行时，验收里由本动作以隔离配置目录为入参跑一次，等价于「用户手跑一遍」。
+      // 判据两件可机读的事：退出码 0（有文件搬不动时脚本自报并返回 1）与 stdout 计数；完整输出
+      // 落证据（kind=note），复盘时与目录结构对账。脚本本体：
+      // `scripts/migrate-harness-sessions.mjs`（门禁不含它，属一次性制品）。
+      const script = path.join(ctx.repoRoot, "scripts", "migrate-harness-sessions.mjs");
+      const configDir = path.join(envHome(), "lumir");
+      let out = "";
+      let code = 0;
+      try {
+        out = execFileSync(process.execPath, [script, configDir], {
+          encoding: "utf8",
+          cwd: ctx.repoRoot,
+        });
+      } catch (e) {
+        out = `${e.stdout ?? ""}${e.stderr ?? ""}`;
+        code = e.status ?? 1;
+      }
+      evidence.record({
+        kind: "note",
+        text: `do: migrateHarnessSessions（退出码 ${code}）\n${out.trim()}`,
+      });
+      evidence.record({
+        kind: "assert",
+        ok: code === 0,
+        label: "一次性归位脚本退出码 0（有文件搬不动时脚本自报非零，重跑收敛）",
+        detail: out.trim().split("\n").slice(-4).join(" / "),
+      });
+      return;
+    }
     default:
       throw new Error(`未知动作 do=${step.do}`);
   }

@@ -62,9 +62,9 @@ steps:
       - label: 已产出内容保留在 transcript（中断是「不再继续」，不是回滚）
         ax: { has: "ABORT-KEEP 这段产出应当保留。" }
       - label: JSONL 记下中断事件（turn_aborted sidecar）
-        file: { path: "env:harness/sessions/*.jsonl", has: '"kind":"turn_aborted"' }
+        file: { path: "env:harness/sessions/*/*.jsonl", has: '"kind":"turn_aborted"' }
       - label: 已产出文本也已留存（中断前半截响应随 llm_response 落盘）
-        file: { path: "env:harness/sessions/*.jsonl", has: '/^.*"kind":"llm_response".*ABORT-KEEP 这段产出应当保留。.*$/' }
+        file: { path: "env:harness/sessions/*/*.jsonl", has: '/^.*"kind":"llm_response".*ABORT-KEEP 这段产出应当保留。.*$/' }
 
   - name: composer 收口回空闲（aborted 经 finished 回 idle，可继续发问）
     do: waitFor
@@ -142,5 +142,5 @@ M347 把发送钮做成两态（空闲「发送」/ 处理中「停止」），M
 ## 环境与副作用
 
 - 合成 vault `/tmp/lumir-m102-acceptance` + 隔离 `XDG_CONFIG_HOME`；不写 vault 文件（只发问、
-  停止），JSONL 留存落在隔离配置目录的 `sessions/` 下（`env:harness/sessions/*.jsonl`）。真实 vault 只读。
+  停止），JSONL 留存落在隔离配置目录的 `sessions/` 下（`env:harness/sessions/*/*.jsonl`）。真实 vault 只读。
 - 本场景耗时主要是一次 12s 的 mock 延迟；`caffeinate` 包住整批以免休眠漂窗。

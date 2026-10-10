@@ -69,7 +69,7 @@ steps:
           若停止被忽略，本地工具秒级落行，本断言必红）
         ax: { not: "vault_read" }
       - label: JSONL 记下中断事件（turn_aborted sidecar）
-        file: { path: "env:harness/sessions/*.jsonl", has: '"kind":"turn_aborted"' }
+        file: { path: "env:harness/sessions/*/*.jsonl", has: '"kind":"turn_aborted"' }
 
   - name: composer 收口回空闲（可继续发问）
     do: waitFor
@@ -111,9 +111,9 @@ steps:
         ax: { count: { pattern: "已停止", exact: 1 } }
       - label: JSONL 记下新一轮的工具调用结果（function_call_output）——配合停止步的
           「无工具行」断言：被取消轮没有执行工具，故全程只有新一轮落这一条
-        file: { path: "env:harness/sessions/*.jsonl", has: '/^.*"call_id":"call_1".*HNL-ALPHA.*"type":"function_call_output".*$/' }
+        file: { path: "env:harness/sessions/*/*.jsonl", has: '/^.*"call_id":"call_1".*HNL-ALPHA.*"type":"function_call_output".*$/' }
       - label: JSONL 记下第二轮的正文（会话真实继续了）
-        file: { path: "env:harness/sessions/*.jsonl", has: '/^.*"kind":"llm_response".*NEXT-第二轮回答。.*$/' }
+        file: { path: "env:harness/sessions/*/*.jsonl", has: '/^.*"kind":"llm_response".*NEXT-第二轮回答。.*$/' }
 ---
 
 # 104-harness-stop-immediacy —— 停止即时性与轮次封闭（M374 缺陷②④）

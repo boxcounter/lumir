@@ -480,7 +480,7 @@ function resolveSeedPath(p) {
  *  `legacyRegistry`（M248）写进**旧名**目录 `workspaces/`，供迁移场景 48 构造「升级前现场」，
  *  与其他块同一时点、同一纪律。 */
 export async function prepareSeed(seed) {
-  const written = { registry: [], legacyRegistry: [], sessions: [], bulkVault: null };
+  const written = { registry: [], legacyRegistry: [], sessions: [], harnessFlat: [], bulkVault: null };
   if (!seed) return written;
   // 复刻真实形状的批量内容（M283）：先重置（调用方已做）再生成，之后才是注册表 / 会话
   // ——会话里的路径必须指向真实存在的文件，否则恢复时会按「不在 vault 内」跳过。
@@ -521,7 +521,46 @@ export async function prepareSeed(seed) {
       }),
     );
   }
+  for (const e of seed.harnessFlatSessions ?? []) {
+    written.harnessFlat.push(await writeHarnessFlatSession(e));
+  }
   return written;
+}
+
+/**
+ * 写一份**旧布局**的平铺会话留存（`<env>/lumir/harness/sessions/<name>.jsonl`）——M433 的
+ * 一次性归位脚本场景（125）的预置：这些文件是「升级前遗留」，产品运行时只按新布局读写
+ * （`sessions/<vault 稳定 id>/`），根下平铺的 `*.jsonl` 不参与列举 / 恢复 / 删除；归位由
+ * 场景动作 `migrateHarnessSessions` 跑一次脚本完成。
+ *
+ * `vaultRoot` 走 `resolveSeedPath`（`$vault` / `$vault2` 记号），**刻意不做 realpath**：验收 vault
+ * 在 macOS 上位于 `/tmp/...`（注册表里存的是 realpath 后的 `/private/tmp/...`），两者字符串不等
+ * ——脚本的规范化一步因此是**承重的**，真机跑出来的正是那个现场。
+ * `raw` 给了就原样落盘（畸形首行的现场）。
+ */
+export async function writeHarnessFlatSession({ name, vaultRoot, raw }) {
+  if (typeof name !== "string" || !name.endsWith(".jsonl")) {
+    throw new CuError(`平铺会话文件名非法：${JSON.stringify(name)}（需要 *.jsonl）`);
+  }
+  const dir = await mkdirp(path.join(envHome(), "lumir", "harness", "sessions"));
+  const content =
+    raw ??
+    `${JSON.stringify({
+      ts: 1759912000,
+      payload: {
+        kind: "session_open",
+        session_id: name.replace(/\.jsonl$/, ""),
+        vault_root: resolveSeedPath(vaultRoot),
+        opened_from: "new",
+        provider: "mock",
+        model: "mock-model",
+        thinking: "high",
+        system: "S",
+        assembly: [],
+      },
+    })}\n`;
+  await writeFile(path.join(dir, name), content);
+  return path.join(dir, name);
 }
 
 export async function copyFixture(name) {
