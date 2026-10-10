@@ -11,7 +11,9 @@
 ### Requirement: 上下文用量显示与触顶处理
 
 composer 控制行 SHALL 常驻显示上下文用量读数（位于模型 chip 之后、发送钮之前）：context window 已用 %
-（最近一次请求的 input tokens ÷ 模型上下文窗口）与 cache hit %。cache hit % SHALL 以**本逻辑会话累计命中率**
+（最近一次请求的 input tokens ÷ 模型上下文窗口）与 cache hit %（Responses 形态下两 provider 统一走
+`usage.input_tokens_details.cached_tokens`；映射表留在 provider 预设内防字段方言）。cache hit % SHALL 以
+**本逻辑会话累计命中率**
 （`Σcached_tokens ÷ Σinput_tokens`，范围为当前逻辑会话内所有带 usage 的往返；会话建立、「新会话」重置、
 自动压缩开新逻辑会话、从历史恢复各起一段，累计随之归零）作为控制行**主读数**，MUST NOT 以最近一次请求的
 单回合命中率作为控制行主读数。最近一次请求的**单回合命中率**（`cached_tokens ÷ input_tokens`）SHALL 在
@@ -47,8 +49,8 @@ JSONL 文件（封闭不再追加），压缩摘要 SHALL 随新会话 `session_
 #### Scenario: 缓存写入遥测在气泡内呈现
 
 - **WHEN** provider 的 usage 带回 `cache_write_tokens`（kimi），完成一轮对话后悬停读数
-- **THEN** 气泡内显示本回合与本会话累计的缓存写入 tokens；若 provider 不提供该字段（值为零），该行
-  SHALL NOT 渲染
+- **THEN** 气泡内显示本回合与本会话累计的缓存写入 tokens；若 `cache_write_tokens` 为零（provider 不提供
+  该字段时按 0），该行 SHALL NOT 渲染
 
 #### Scenario: 超阈值警示收敛为悬停气泡
 

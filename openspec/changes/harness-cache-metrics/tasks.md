@@ -18,10 +18,10 @@
 
 ## 2. 留存与事件
 
-- [ ] 2.1 `events::usage`（`src-tauri/src/harness/events.rs`）载荷扩为 `ctx_pct` / `cache_pct`
-      （= 会话累计，口径改准并写进函数 doc）/ `cache_pct_turn` / `cache_write_tokens` /
-      `cache_write_tokens_session` / `cache_note`（无标注 → `null`）；事件与快照同吃一个 `UsageSnapshot`，
-      MUST NOT 两套算法
+- [ ] 2.1 `events::usage`（`src-tauri/src/harness/events.rs`）载荷扩为 `ctx_pct` / `cache_pct_session`
+      （= 会话累计，与快照同名字段同值，写进函数 doc）/ `cache_pct_turn` / `cache_write_tokens` /
+      `cache_write_tokens_session` / `cache_note`（无标注 → `null`）；旧 `cache_pct` 键退役；
+      事件与快照同吃一个 `UsageSnapshot`，MUST NOT 两套算法
 - [ ] 2.2 `llm_response` 留存 payload 的 usage 块（`src-tauri/src/harness/turn.rs:645-651`）加
       `cache_write_tokens`；`turn.rs:363-368` 的读数改走 `record_usage`，`turn.rs:392-398` 的
       `set_usage` + `emit` 两处一并改准（同点、同源）
@@ -32,12 +32,12 @@
 
 - [ ] 3.1 `src/harness-panel.ts` 状态位：`lastCache`（语义 = 会话累计）、新增 `lastCacheTurn` /
       `lastCacheNote` / `lastCacheWrite` / `lastCacheWriteSession`；事件入口（`:4283-4290`）读新键，
-      `cache_pct` 缺键 → `null`（回落单读数），新键缺省 → 对应气泡行不渲染（不伪造）
+      `cache_pct_session` 缺键 → `null`（回落单读数），新键缺省 → 对应气泡行不渲染（不伪造）
 - [ ] 3.2 `applyUsage`（`:3123-3140`）：控制行 D334 形态不变、`{cache}` = `cache_pct_session`；
       越线高亮（`usageOverWarn`）与单读数回落口径 MUST NOT 变
 - [ ] 3.3 `buildCtxPop`（`:3145-3154`）：D395 不变；D401 改形为「缓存命中率（会话累计）：{cache}%」；
       新增「本回合缓存命中：{turn}%」行（带 `cache_note` 成因句，`None` 时只出前半句）；新增「缓存写入：
-      本回合 {w} · 本会话累计 {ws}」行（缺失且为零则整行不渲染）；D335 越线行不变
+      本回合 {w} · 本会话累计 {ws}」行（判定键 `cache_write_tokens` 为 0 则整行不渲染）；D335 越线行不变
 - [ ] 3.4 `restoreSnapshot`（`:4532-4540`）：从 `state.usage` 读 `cache_pct_session` 等新键；旧快照缺新键
       → 回落单读数、气泡缺行，MUST NOT 伪造
 - [ ] 3.5 文案（`src/copy-data.ts` + `文案-Copy.md`）：D334 注释改准（cache = 会话累计）、D401 改形、

@@ -152,14 +152,15 @@ pub enum CacheNote {
 
 ### 4.1 usage 事件（`events.rs:146-157`）
 
-载荷扩为（`cache_pct` 键退役，防旧语义误读）：
+载荷扩为（`cache_pct` 键**彻底退役**，与快照 `UsageSnapshot` 同名字段同名同义，防旧语义误读）：
 
 ```json
-{"type":"usage","ctx_pct":67.2,"cache_pct":88.5,"cache_pct_turn":50.1,
+{"type":"usage","ctx_pct":67.2,"cache_pct_session":88.5,"cache_pct_turn":50.1,
  "cache_write_tokens":6174,"cache_write_tokens_session":12044,"cache_note":"block_dilution"}
 ```
 
-- `cache_pct` = **会话累计**（键名保留、口径改准并写明在函数 doc 与消费点注释）；新增
+- `cache_pct_session` = **会话累计**（与快照 `UsageSnapshot::cache_pct_session` 同名同值，同一 `UsageSnapshot`
+  一处算法喂两边）；相对旧事件载荷新增
   `cache_pct_turn` / `cache_write_tokens` / `cache_write_tokens_session` / `cache_note`
   （`Option<CacheNote>` → 无标注时 `null`）。
 - 函数签名相应加参（或改收 `&UsageSnapshot`）；**MUST NOT** 让事件与快照出现两套算法
@@ -198,7 +199,7 @@ usage 块加一个字段（wire 口径，恢复 / 诊断可回溯）：
 | 1 | D395 | 上下文窗口占用：{ctx}% | 不变 |
 | 2 | D401 | 缓存命中率（会话累计）：{cache}% | **改形**（补「（会话累计）」限定词） |
 | 3 | 新 D-code | 本回合缓存命中：{turn}% · {成因句} | **新增**；成因句按 `cache_note` 取值，`None` 时只出前半句 |
-| 4 | 新 D-code | 缓存写入：本回合 {w} tokens · 本会话累计 {ws} tokens | **新增**；`cached_tokens` 缺失且写入为 0 时整行不渲染（与 D401 缺失回落同口径——deepseek 无该字段） |
+| 4 | 新 D-code | 缓存写入：本回合 {w} tokens · 本会话累计 {ws} tokens | **新增**；判定键 `cache_write_tokens` 为 0（provider 不提供该字段时按 0）时整行不渲染（与 D401 缺失回落同口径——deepseek 无该字段） |
 | 5 | D335 | 越线警示句 | 不变（条件追加） |
 
 成因句（zh/en 双档，措辞可在实现批次微调，语义以此为准）：
@@ -213,9 +214,9 @@ usage 块加一个字段（wire 口径，恢复 / 诊断可回溯）：
 
 ### 5.3 前端状态与恢复（`harness-panel.ts`）
 
-- 状态位：`lastCache`（= `cache_pct` 会话累计，语义改准）、新增 `lastCacheTurn` / `lastCacheNote` /
+- 状态位：`lastCache`（= `cache_pct_session` 会话累计，语义改准）、新增 `lastCacheTurn` / `lastCacheNote` /
   `lastCacheWrite` / `lastCacheWriteSession`。
-- 事件入口（`harness-panel.ts:4283-4290`）：读新键；`cache_pct` 缺键 → `lastCache = null`（回落单读数），
+- 事件入口（`harness-panel.ts:4283-4290`）：读新键；`cache_pct_session` 缺键 → `lastCache = null`（回落单读数），
   新键缺省 → 对应气泡行不渲染——与既有「不伪造 cache 值」口径一致。
 - 快照恢复（`harness-panel.ts:4532-4540`）：从 `state.usage` 读 `cache_pct_session` 等新键；旧快照
   （缺新键）回落单读数、气泡缺行，MUST NOT 伪造。
