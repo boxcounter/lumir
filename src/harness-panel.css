@@ -743,6 +743,13 @@
   font-size: calc(var(--fs-meta) * var(--lumir-hp-scale, 1));
   color: var(--text-2);
 }
+/* vault_delete 的后果说明（M414，design §5.1）：路径之下的次级灰一行——「移入系统废纸篓、
+   可恢复」是这次批准的真实后果，让人知道批准不等于不可恢复。 */
+.lumir-hp-approval-note {
+  margin: 0 0 var(--sp-2);
+  font-size: calc(var(--fs-meta) * var(--lumir-hp-scale, 1));
+  color: var(--text-3);
+}
 .lumir-hp-diff,
 .lumir-hp-argv {
   max-height: 240px;
@@ -800,6 +807,13 @@
   width: max-content;
   min-width: 100%;
 }
+/* 组合命令的拆段行（M414）：`<pre>` 的子行 = 一段命令（连接符起首的那段自带前导连接符），
+   逐行纵向排开——行宽同样跟文本走（同 .lumir-hp-diff > div 的理由：横向滚动时不把长行
+   钳在可视宽度）。 */
+.lumir-hp-argv > div {
+  width: max-content;
+  min-width: 100%;
+}
 /* eink：tint 退场后增删行同为黑字——+/− 行首字符本就是 unified diff 的语义载体，
    可辨性不靠色（规则①的正当后果，不另造表达）。 */
 /* 拒绝原因输入框（M406 起多行 textarea：Enter 换行、⌘/Ctrl+Enter 提交拒绝——可纵向
@@ -854,6 +868,31 @@
   color: var(--text);
 }
 .lumir-hp-approval-actions button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+/* 次级动作「采纳且本会话不再问」（M414，design §6 裁决点 4 倾向 A）：主决策行（采纳 /
+   拒绝）之下独立一行、文字钮形态（无边框无底色，hover 才给底）——次级动作不抢主决策的
+   视觉重心；文案长，窄面板里独立成行才不会把「采纳 / 拒绝」挤变形。 */
+.lumir-hp-approval-remember {
+  margin-top: var(--sp-2);
+}
+.lumir-hp-remember {
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--text-2);
+  font: inherit;
+  font-size: calc(var(--fs-meta) * var(--lumir-hp-scale, 1));
+  text-align: left;
+  cursor: pointer;
+  transition: color var(--dur-ui) var(--ease-standard);
+}
+.lumir-hp-remember:hover {
+  color: var(--text);
+  text-decoration: underline;
+}
+.lumir-hp-remember:disabled {
   opacity: 0.45;
   cursor: default;
 }
@@ -1129,6 +1168,130 @@
   padding: var(--sp-1) var(--sp-3) var(--sp-2);
   font-size: calc(var(--fs-label-s) * var(--lumir-hp-scale, 1));
   color: var(--text-3);
+}
+
+/* 权限 chip（M414，change add-harness-permission-modes design §7）：控制行第三位
+   （合并选择器 chip 之后、ctx 读数之前）。形态逐值沿用合并 chip 配方（无边框小标签、
+   24px 高、r5、fs-label-s、text-2、hover 给底、chevron ▾；wrapper 是 absolute 定位的
+   包含块——M351 的 a11y 修复口径，与会话名钮 / 合并 chip 同一个 wrapper 结构）。chip 面
+   只有**短名**（只读 / 写入 / 完全），全名与释义在浮层里——控制行空间紧，短名才保证
+   三档都完整显示。 */
+.lumir-hp-permwrap {
+  position: relative;
+  flex: none;
+  display: flex;
+  min-width: 0;
+}
+.lumir-hp-perm {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  height: 24px;
+  padding: 0 var(--sp-3);
+  border: none;
+  border-radius: var(--r5);
+  background: none;
+  color: var(--text-2);
+  font: inherit;
+  font-size: calc(var(--fs-label-s) * var(--lumir-hp-scale, 1));
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background var(--dur-ui) var(--ease-standard),
+    color var(--dur-ui) var(--ease-standard);
+}
+.lumir-hp-perm[hidden] {
+  display: none;
+}
+.lumir-hp-perm:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+.lumir-hp-perm-chev {
+  flex: none;
+  color: var(--text-3);
+  font-size: calc(var(--fs-micro) * var(--lumir-hp-scale, 1));
+}
+
+/* 权限浮层（M414）：壳配方与合并浮层的浮层同源（--preview-bg + 1px --border + r8 +
+   --shadow-raise，锚在 wrapper 上向上展开）；项 = menuitemradio + check 格 + 全名 +
+   一行释义（两行一体的按钮，全名在上、释义在下），当前档 accent-tint 底（三维统一一种
+   「当前」表达的同一配方）。浮层比合并浮层宽——释义句要读得下去（控制行约束不到这里，
+   design §7 的口径）。 */
+.lumir-hp-permpop {
+  position: absolute;
+  bottom: calc(100% + 4px);
+  left: 0;
+  min-width: 208px;
+  padding: var(--sp-2);
+  background: var(--preview-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--r8);
+  box-shadow: var(--shadow-raise);
+  z-index: 30;
+}
+:root[data-theme="eink"] .lumir-hp-permpop {
+  border-width: 1.4px;
+}
+.lumir-hp-permpop[hidden] {
+  display: none;
+}
+.lumir-hp-permpop-item {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sp-2);
+  width: 100%;
+  padding: var(--sp-2) var(--sp-3);
+  border: none;
+  border-radius: var(--r4);
+  background: none;
+  color: var(--text-2);
+  font: inherit;
+  font-size: calc(var(--fs-meta) * var(--lumir-hp-scale, 1));
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--dur-ui) var(--ease-standard);
+}
+.lumir-hp-permpop-item:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+/* check 格与合并浮层同一配方：14px 固定宽，未勾选留空保证纵对齐（释义换行也不影响
+   左缘对齐——check 格 flex:none）。 */
+.lumir-hp-permpop-item .lumir-hp-permpop-check {
+  flex: none;
+  width: 14px;
+  margin-top: 1px;
+  color: var(--accent);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+:root[data-theme="eink"] .lumir-hp-permpop-item .lumir-hp-permpop-check {
+  color: var(--sel-text);
+}
+.lumir-hp-permpop-body {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  flex: 1;
+  min-width: 0;
+}
+.lumir-hp-permpop-name {
+  white-space: nowrap;
+}
+.lumir-hp-permpop-desc {
+  color: var(--text-3);
+  font-size: calc(var(--fs-label-s) * var(--lumir-hp-scale, 1));
+  white-space: normal;
+}
+.lumir-hp-permpop-item.is-current {
+  background: var(--accent-tint);
+}
+:root[data-theme="eink"] .lumir-hp-permpop-item.is-current {
+  background: var(--sel);
+  color: var(--sel-text);
 }
 
 /* ctx% 读数 + 警示浮层（M347；M351 对齐原型 .h-usage：fs-label 等宽小字；M370 读数改

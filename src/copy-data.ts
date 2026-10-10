@@ -1177,6 +1177,71 @@ const COPY_TABLE = {
     zh: "移动失败：{rel} → {newPath}（{reason}）——未覆盖任何既有内容",
     en: "Couldn't move {rel} to {newPath} ({reason}) — nothing existing was overwritten",
   },
+  // M414（权限前端批，change add-harness-permission-modes 的 design §7 / §8）：权限 chip、
+  // 三档浮层、批准卡次级动作。文案**分两级**（Alex 2026-10-09 裁决）——D423–D425 是 chip
+  // 上的**短名**（控制行要被模型 / 权限两个 chip 与 ctx 读数共同挤占，短名才保证三档都完整
+  // 显示）；D427–D429 是浮层列表项的**全名**（只在浮层里出现一次，宽度不受控制行约束）；
+  // D430–D432 是每档一行的释义（Kimi 风格：档名短、语义易混，一行释义消歧档名与实际行为的
+  // 偏差）。D426 = chip 的读屏名 / 悬停提示（{mode} = 当前档全名，占位在运行时取 D427–D429）。
+  D423: {
+    zh: "只读",
+    en: "Read",
+  },
+  D424: {
+    zh: "写入",
+    en: "Write",
+  },
+  D425: {
+    zh: "完全",
+    en: "Full",
+  },
+  D426: {
+    zh: "权限模式：{mode}（点击切换）",
+    en: "Permission mode: {mode} (click to switch)",
+  },
+  D427: {
+    zh: "只读",
+    en: "Read Only",
+  },
+  D428: {
+    zh: "保险库写入",
+    en: "Vault Write",
+  },
+  D429: {
+    zh: "完全访问",
+    en: "Full Access",
+  },
+  // 三档释义（措辞可按实现批次微调，语义方向以 design §7 为准）：read_only 是 Always Ask
+  // 而不是「拒绝写」——「写操作都先问你」如实说闸在，不承诺「不会写」。
+  D430: {
+    zh: "读自动放行；写操作都先问你",
+    en: "Auto-approve reads; asks before every write",
+  },
+  D431: {
+    zh: "库内写自动放行；库外命令先问你",
+    en: "Auto-approves vault writes; asks before shell commands",
+  },
+  D432: {
+    zh: "全自动；仅危险命令仍问你",
+    en: "Fully automatic; only dangerous commands still ask",
+  },
+  // 权限浮层的读屏名（role=menu 的可读身份；浮层本体是裸的三项单选列表）。
+  D433: {
+    zh: "权限模式",
+    en: "Permission mode",
+  },
+  // 批准卡的次级动作（design §6 裁决点 4 倾向 A：**显式逐次记忆**——点「采纳」不自动记，
+  // 免问由用户逐次显式给出；判据键 = (工具名, 规范化主体串) 精确匹配，不落盘）。
+  D434: {
+    zh: "采纳且本会话不再问",
+    en: "Approve and don't ask again this session",
+  },
+  // vault_delete 批准卡的后果说明（design §5.1：「批准预览（ask 档）：显示路径 + 一句
+  // 『将移入系统废纸篓，可恢复』」——后端 approval_preview 只给路径，这句按契约归面板侧）。
+  D435: {
+    zh: "将移入系统废纸篓，可恢复",
+    en: "Moves to the system trash; recoverable",
+  },
 } satisfies Record<string, CopyEntry>;
 
 /** 文案表的键（D 编号，多串格带 `.N` 后缀）——由表数据推导，加一条即多一个键。 */

@@ -7,12 +7,12 @@
         {
           "id": "call_d1",
           "name": "cli_run",
-          "arguments": "{\"command\":\"rm\",\"args\":[\"harness-note.md\"]}"
+          "arguments": "{\"command\":\"rm\",\"args\":[\"harness-note.md\"],\"purpose\":\"清理这份笔记\"}"
         },
         {
           "id": "call_a1",
           "name": "cli_run",
-          "arguments": "{\"command\":\"echo\",\"args\":[\"HNE-ALLOWED\"]}"
+          "arguments": "{\"command\":\"echo\",\"args\":[\"HNE-ALLOWED\"],\"purpose\":\"回显一个验收标记\"}"
         }
       ]
     },

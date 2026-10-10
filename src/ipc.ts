@@ -349,7 +349,9 @@ export type HarnessEvent = HarnessEventEnvelope &
     // M406 修类型错配——此前这里声明 string，live 渲染成逗号拼接、快照恢复整段丢弃）。
     // purpose 是 M407 契约的可选字段（模型自述的用途句，阅读辅助——卡片展示用，
     // 命令原文永远完整可见）；缺字段 = 旧后端，不展示。
-    | { type: "approval_request"; id: string; tool: string; diff?: string; argv?: string[]; purpose?: string }
+    // remember 是 M413 契约的可选字段（该批准卡支持「采纳且本会话不再问」次级动作）——
+    // 当前后端的事件载荷不带本键，缺键 = 批准闸挂出的请求 = 恒可见（前端按可见处理）。
+    | { type: "approval_request"; id: string; tool: string; diff?: string; argv?: string[]; purpose?: string; remember?: boolean }
     | { type: "usage"; ctx_pct: number; cache_pct: number }
     | { type: "compact"; summary: string }
     | { type: "done" }
@@ -366,9 +368,23 @@ export function harnessSend(message: string, context_json: string): Promise<void
   return invoke<void>("harness_send", { message, context_json });
 }
 
-/** 对一条待批准项给出采纳 / 拒绝（reason 可选，拒绝原因回送模型）。未决项不自动超时。 */
-export function harnessApprove(request_id: string, approved: boolean, reason?: string): Promise<void> {
-  return invoke<void>("harness_approve", { request_id, approved, reason: reason ?? null });
+/** 对一条待批准项给出采纳 / 拒绝（reason 可选，拒绝原因回送模型）。`remember` = 「采纳且
+ *  本会话不再问」（可选，缺省 false；M413 落 transport、M414 落按钮）：true 且采纳时后端把
+ *  该次调用的 (工具, 规范化主体串) 记入**会话内**批准缓存，同会话同主体串后续免闸——
+ *  缓存不落盘、新会话 / 切 vault / 重启即清，且不解锁 deny / vault 内写重定向 / 危险黑名单
+ *  三层。未决项不自动超时。 */
+export function harnessApprove(
+  request_id: string,
+  approved: boolean,
+  reason?: string,
+  remember?: boolean,
+): Promise<void> {
+  return invoke<void>("harness_approve", {
+    request_id,
+    approved,
+    reason: reason ?? null,
+    remember: remember ?? null,
+  });
 }
 
 /** 停止当前在途轮次（M348，发送钮停止态点击；design §5：中断 = 「不再继续」，非回滚）。
@@ -400,9 +416,12 @@ export function harnessSetThinkingEffort(effort: ThinkingEffort): Promise<void> 
  * 会话快照（JSON String）：webview 重载后面板据此恢复渲染。面板消费的键（宽容解析，
  * 缺省 = 空态）：`vault`（会话标识 = vault 根路径，M312——与事件信封同源，据此丢弃
  * 「切走之后才回来的」旧快照）、`messages[]`（role: "user" | "assistant" | "tool" |
- * "compact"；text / summary / name / status 字段按 role 取用）、`usage{ctx_pct,cache_pct}`、
- * `pending_approval{id,tool,diff?,argv?}`（argv 是**字符串数组**，M406 起与事件侧同型——
- * 此前前端按 string 读，快照恢复把数组整段丢弃）、`warn_ctx_pct`（缺省 85）、`thinking{level,supported}`
+ * "compact"；text / summary / name / status 字段按 role 取用；tool 消息另有 decision
+ * 字段 = 批准闸决定 approved / rejected，M413——恢复后「已采纳」与「已拒绝」同样可见）、
+ * `usage{ctx_pct,cache_pct}`、
+ * `pending_approval{id,tool,diff?,argv?,purpose?,remember?}`（argv 是**字符串数组**，M406 起与事件侧同型——
+ * 此前前端按 string 读，快照恢复把数组整段丢弃；purpose / remember 是 M413 契约字段，前者
+ * 供批准卡展示用途句、后者是「采纳且本会话不再问」次级动作的可见性开关）、`warn_ctx_pct`（缺省 85）、`thinking{level,supported}`
  * （M362：思考程度档位读数 + 当前 provider/model 是否支持程度调节；缺键 = 旧后端 / 桩，
  * 思考 chip 按「不伪造读数」口径隐藏）。
  * 后端不可用（纯浏览器预览 / 命令未注册）时 reject，调用方按「空会话」降级。

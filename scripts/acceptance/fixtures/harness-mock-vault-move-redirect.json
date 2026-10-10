@@ -1,0 +1,38 @@
+{
+  "version": 1,
+  "responses": [
+    {
+      "text": "我用 mv 把这条笔记改名。",
+      "tool_calls": [
+        {
+          "id": "call_mv1",
+          "name": "cli_run",
+          "arguments": "{\"command\":\"mv\",\"args\":[\"harness-note.md\",\"harness-renamed.md\"],\"purpose\":\"把笔记改名\"}"
+        }
+      ]
+    },
+    {
+      "text": "闸门改道了，我改用 vault_move。",
+      "tool_calls": [
+        {
+          "id": "call_mv2",
+          "name": "vault_move",
+          "arguments": "{\"path\":\"harness-note.md\",\"new_path\":\"harness-renamed.md\"}"
+        }
+      ]
+    },
+    {
+      "text": "改名完成，接着把它移进废纸篓。",
+      "tool_calls": [
+        {
+          "id": "call_del1",
+          "name": "vault_delete",
+          "arguments": "{\"path\":\"harness-renamed.md\"}"
+        }
+      ]
+    },
+    {
+      "text": "删除请求已发出。"
+    }
+  ]
+}
