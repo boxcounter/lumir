@@ -1241,7 +1241,12 @@ function showEditor() {
   widthDrag.setVisible(true);
 }
 
-// 瞬时提示（锚点缺失 / 创建结果 / 解析错误）：编辑器右下角浮条，自动消隐。
+// 瞬时提示（锚点缺失 / 创建结果 / 解析错误）：**发起它的 pane** 右下角浮条，自动消隐。
+// M420：归属锚定（不跨 pane）——以前挂 `.pane-editor`（整个编辑器列），分栏态下编辑器列
+// 的右下角就是右 pane（可能是 harness），于是「左 pane 里保存」的提示落在右 pane 上，
+// UX 逻辑不准确（Alex 2026-10-10 原话）。现在锚到发起 pane 的挂载元素 `.editor-pane`；
+// 单 pane 时 `.editor-pane` 与 `.pane-editor` 像素等价（零基线漂移），分栏时才分开。
+// 归属判据收敛在下面的 toastOwnerMount / harnessPaneMount（单一来源，调用方不各判一次）。
 // sticky 的提示（如退出被拦截）不自动消隐，点击浮条本体关闭——守卫类反馈
 // 不允许在用户看到之前消失。sticky 提示按文案去重（M107）：连续触发同一守卫
 //（如连按 Cmd+Q）复用既有浮条，不堆叠；自动消隐的普通 toast 不受此限。
@@ -1255,7 +1260,42 @@ function showEditor() {
 // MUST NOT 走这一路（见下面的 stopPropagation），因此它只表示「浮条被点掉」这一种情形。
 // 自动消隐的浮条不通知——它们没有「被用户点掉」以外的生命周期事件可报。
 type ToastTone = "neutral" | "success";
+
+/** toast 的归属挂载元素（M420）：提示锚定到**发起它的 pane** 右下角，不跨 pane。
+ *
+ *  归属判据（收敛在装配层这一处，调用方不各判一次——REVIEW.md 第 8 条）：
+ *   - 默认 = **活跃 doc pane** 的挂载元素 `.editor-pane`：编辑器 / 保存 / 标签 / 大纲 /
+ *     链接跟随 / 复制等提示都由「用户正在操作的那个文档 pane」发起，落它的右下角；
+ *   - harness 面板发起的提示（摘录跳回失锚 D372）由调用方显式经 `harnessPaneMount()` 指定
+ *     ——面板不是 doc pane，不在 `activeDocPane()` 的解析面里。
+ *  定位包含块 = `.editor-pane`（`position: relative`，见 src/style.css）：它在从 toast 到根
+ *  的整条祖先链上没有任何 `overflow` 裁切者（`.pane-editor` / `.app-shell` / body 都无），
+ *  因此 overlay-visibility 合同的 O1/O3 结构上成立；单 pane 时它与旧包含块 `.pane-editor`
+ *  像素等价（零基线漂移），分栏时才把提示收进各自的 pane。 */
+function toastOwnerMount(): HTMLElement {
+  return paneAssemblies.get(activeDocPane().id)?.mountEl ?? shell.editor;
+}
+
+/** harness pane 的挂载元素（面板触发的提示锚它，M420）；无 harness pane 时退回默认归属。 */
+function harnessPaneMount(): HTMLElement {
+  for (const assembly of paneAssemblies.values()) {
+    if (assembly.handle.kind === "harness") return assembly.mountEl;
+  }
+  return toastOwnerMount();
+}
+
 function toast(
+  text: string,
+  actions: Array<{ label: string; run(): void }> = [],
+  sticky = false,
+  tone: ToastTone = "neutral",
+  onDismiss?: () => void,
+): HTMLElement {
+  return showToast(toastOwnerMount(), text, actions, sticky, tone, onDismiss);
+}
+
+function showToast(
+  owner: HTMLElement,
   text: string,
   actions: Array<{ label: string; run(): void }> = [],
   sticky = false,
@@ -1309,7 +1349,9 @@ function toast(
       onDismiss?.();
     });
   }
-  shell.editor.append(el);
+  // 归属挂载元素（M420）：发起 pane 的 `.editor-pane`（`position: relative` 提供包含块）。
+  // 单 pane 时它几何上等价于旧的 `shell.editor`（零基线漂移）；分栏时提示收进各自的 pane。
+  owner.append(el);
   if (!sticky) setTimeout(() => el.remove(), actions.length ? 8000 : 3500);
   return el;
 }
@@ -2179,7 +2221,9 @@ const quoteGesture = createQuoteGesture({
   openFile: async (path) => openFile(path, openKind(path), "current", true),
   extractHeadings: (state) => extractHeadings(state, true),
   insertQuoteCard: (card) => harnessPanel.insertQuoteCard(card),
-  toast: (text) => void toast(text),
+  // 失锚提示（D372）由**点卡片**触发，而卡片在 harness 面板里（jump 只经 setQuoteJumpHandler
+  // 从面板进入）——归属是 harness pane，不是文档 pane（M420：toast 锚定发起它的区域）。
+  toast: (text) => void showToast(harnessPaneMount(), text),
 });
 // composer 与 transcript 内的卡片点击（× 钮除外）都经这一个处理器：跳回 + 高亮，失锚 toast。
 harnessPanel.setQuoteJumpHandler((card) => void quoteGesture.jump(card));
