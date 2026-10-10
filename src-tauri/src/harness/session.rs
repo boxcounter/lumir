@@ -200,7 +200,7 @@ pub struct SessionSummary {
 /// 一个 vault 的会话。
 pub struct Session {
     root: PathBuf,
-    /// 系统上下文（固定身份段 + AGENTS.md 双层 + Skill 索引 的装配全文），
+    /// 系统上下文（固定身份段 + AGENTS.md 三层 + Skill 索引 的装配全文），
     /// 会话建立时装配一次；自动压缩开新逻辑会话时重新装配并整体换入。
     system: String,
     /// LLM 侧消息项（Responses API `input` 形状）。**单一事实源**：面板消息由它派生、

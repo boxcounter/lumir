@@ -370,15 +370,21 @@ fn wire_shape_records_full_session() {
             .contains("Lumir 的内置助手"),
         "{open:?}"
     );
-    // 装配清单：五个来源全在场，vault 根 AGENTS.md 不存在如实记 exists:false。
+    // 装配清单：六个来源全在场，vault 根 AGENTS.md / AGENTS.local.md 不存在如实记 exists:false。
     let assembly = open["assembly"].as_array().unwrap();
-    assert_eq!(assembly.len(), 5, "{assembly:?}");
+    assert_eq!(assembly.len(), 6, "{assembly:?}");
     let vault_root = assembly
         .iter()
         .find(|s| s["source"] == "agents_vault_root")
         .unwrap();
     assert_eq!(vault_root["exists"], false, "{vault_root:?}");
     assert_eq!(vault_root["bytes"], 0);
+    let vault_local = assembly
+        .iter()
+        .find(|s| s["source"] == "agents_vault_root_local")
+        .unwrap();
+    assert_eq!(vault_local["exists"], false, "{vault_local:?}");
+    assert_eq!(vault_local["bytes"], 0, "{vault_local:?}");
     let skill_index = assembly
         .iter()
         .find(|s| s["source"] == "skill_index")

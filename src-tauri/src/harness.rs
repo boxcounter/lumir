@@ -15,7 +15,7 @@
 //! 子模块：
 //! - [`session`]：会话（messages、usage、pending approval、JSONL 句柄）、恢复返回类型
 //!   与 vault → 会话映射
-//! - [`context`]：系统上下文装配（固定身份段 + AGENTS.md 双层 + Skill 索引）与 Skill 双根发现
+//! - [`context`]：系统上下文装配（固定身份段 + AGENTS.md 三层 + Skill 索引）与 Skill 双根发现
 //! - [`llm`]：provider 预设表、OpenAI Responses API client（reqwest blocking + SSE）、mock provider
 //! - [`tools`]：恰好 8 个工具的定义与执行
 //! - [`permissions`]：五层判定管线（deny > vault 内写重定向 > 危险黑名单 > allow > 三档模式

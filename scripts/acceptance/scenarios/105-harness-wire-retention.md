@@ -48,6 +48,8 @@ steps:
         file: { path: "env:harness/sessions/*.jsonl", has: '"exists":true,"path":null,"source":"identity"' }
       - label: 装配清单记录「来源当时不存在」（vault 根无 AGENTS.md，exists:false 同样在场）
         file: { path: "env:harness/sessions/*.jsonl", has: '/^.*"exists":false,"path":"[^"]*AGENTS\.md","source":"agents_vault_root".*$/' }
+      - label: 本地覆盖层同理（vault 根无 AGENTS.local.md，exists:false 同样在场）
+        file: { path: "env:harness/sessions/*.jsonl", has: '/^.*"exists":false,"path":"[^"]*AGENTS\.local\.md","source":"agents_vault_root_local".*$/' }
       - label: 每次迭代落完整 llm_request（迭代 2 的历史里带上一轮的工具调用与结果）
         file: { path: "env:harness/sessions/*.jsonl", has: '/^.*"kind":"llm_request".*"type":"function_call".*"type":"function_call_output".*$/' }
       - label: llm_request 的请求体齐备（messages + params + provider + system）
@@ -85,9 +87,11 @@ append-only JSONL（`<隔离配置>/harness/sessions/<session_id>.jsonl`），�
   **「首行」这条不变量本身**（`JsonlWriter` 的挂起行保证）由 Rust 单测
   `jsonl.rs::first_line_is_always_session_open_and_pending_update_works` 钉住——本套件的 DSL 没有
   「取文件第 N 行」的判据，这里只断言该记录在场且形状正确。
-- **来源存在与否**：`agents_vault_root` 的 `exists:false`——合成 vault 根没有 `AGENTS.md`，这条
-  「来源当时不存在」是旧实现静默跳过的装配事实（design §2）；固定段（identity / quote_reference）
-  `path:null, exists:true`。**不断言 user-wide AGENTS.md**：它的路径含真实用户名，且各机可能不存在
+- **来源存在与否**：`agents_vault_root` 与 `agents_vault_root_local` 的 `exists:false`——合成
+  vault 根既没有 `AGENTS.md` 也没有 `AGENTS.local.md`（第三层，change `harness-agents-local-md`），
+  这条「来源当时不存在」是旧实现静默跳过的装配事实（design §2）；固定段（identity / quote_reference）
+  `path:null, exists:true`。存在态（`exists:true` + 顺序与覆盖声明）由场景 123 覆盖——它自带两份
+  合成 AGENTS 文件。**不断言 user-wide AGENTS.md**：它的路径含真实用户名，且各机可能不存在
   （信息卫生纪律，REVIEW.md 第 17 条）。
 - **每次迭代落完整 llm_request**：迭代 2 的请求历史里带迭代 1 的工具 `function_call` 与
   `function_call_output`——只有「工具循环每轮各落一条 llm_request」才成立。请求体字段齐备用一条
