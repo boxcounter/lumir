@@ -24,6 +24,7 @@ import type { ThinkingEffort } from "./bindings/ThinkingEffort";
 import type { VaultWorkspace } from "./bindings/VaultWorkspace";
 import type { SessionResumeInfo } from "./bindings/SessionResumeInfo";
 import type { SessionSummary } from "./bindings/SessionSummary";
+import type { WrittenAttachment } from "./bindings/WrittenAttachment";
 
 /** 判断 invoke 的 reject 值是否为 CommandError 信封。 */
 export function isCommandError(e: unknown): e is CommandError {
@@ -117,6 +118,26 @@ export function onVaultRestoreFinished(handler: () => void): Promise<() => void>
 /** 读 vault 内二进制附件，返回 base64（裁决点 A：invoke + base64）。 */
 export function fsReadAttachment(path: string): Promise<string> {
   return invoke<string>("fs_read_attachment", { path });
+}
+
+/**
+ * 把剪贴板图片字节落盘为 vault 内附件（change paste-clipboard-image 的写原语，M416）。
+ *
+ * 后端负责转码（png → WebP 无损；jpeg / webp 原样）、内容寻址命名（转码后字节 SHA-256 前
+ * 16 位）与全 vault 去重，返回 `{ path, name }`；前端据此拼 `![[name]]` 引用，**不自己算
+ * hash、不调 `fs_paths_exist`**（命名与去重的唯一事实源在 Rust 侧，一次粘贴恰好一次 invoke）。
+ * 落盘目录 `dirRel` 是**已存在**的 vault 相对目录（空串 = vault 根），后端不隐式建目录。
+ */
+export function fsWriteAttachment(
+  dirRel: string,
+  dataBase64: string,
+  sourceMime: string,
+): Promise<WrittenAttachment> {
+  return invoke<WrittenAttachment>("fs_write_attachment", {
+    dir_rel: dirRel,
+    data_base64: dataBase64,
+    source_mime: sourceMime,
+  });
 }
 
 /** 订阅 watch 增量事件流；返回退订函数。 */

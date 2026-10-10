@@ -1160,6 +1160,12 @@ export interface EditorHandle {
    */
   setBlockCopy(copy: { copy(range: BlockCopyRange): void } | null): void;
   /**
+   * 注入剪贴板图片落盘 / 失败提示口令（M416，change paste-clipboard-image）：装配层在
+   * vault 波注册（`write` 走 ipc 的 `fsWriteAttachment`，`toast` 复用既有 deck 化提示）。
+   * 未注入时粘贴拦截不消费事件、默认文本粘贴逐字节不变。
+   */
+  setPasteImagePort(port: PasteImagePort | null): void;
+  /**
    * 注入跳转到行的输入条（M281，change goto-line-command；能力与浮层 DOM 在
    * `src/goto-line.ts`）。命令执行时才读这个口子，注入**不**触发装饰重建（与上面几个
    * 「装饰层构建期读口子」的注入点不同）。未注入时 `editor.goto-line` 无操作。
@@ -1374,6 +1380,111 @@ const baseCompartment = new Compartment();
  * `Shift-Enter` 天然不受影响：CM 的键位查表在按住 Shift 时只查 `Shift-Enter`
  *（`runHandlers` 的 `modifiers(name, event, !isChar)`，Enter 不是单字符键），本绑定收不到它。
  */
+// ---------------------------------------------------------------------------
+// 剪贴板图片粘贴（change paste-clipboard-image，M416）
+//
+// 链路：DOM paste 事件 → 扫 `clipboardData.items` 找 image/* 文件项 → 取 Blob → base64 →
+// **一次** `fs_write_attachment`（后端转码 + 内容寻址命名 + 全 vault 去重）→ 用返回的 `name`
+// 在光标处插入 `![[name]]`。前端不算 hash、不调 `fs_paths_exist`；命名与去重的唯一事实源在
+// Rust 侧（design §1 / §3）。
+// ---------------------------------------------------------------------------
+
+/**
+ * 剪贴板图片口令（装配层注入）：`write` 走 `ipc.ts` 的 `fsWriteAttachment`，`toast` 复用装配层
+ * 既有的 deck 化提示出口（错误信封按 code 渲染，文案表见 `copy-data.ts` 的 `ERROR_COPY`）。
+ * 未注入时整条拦截不启用——能力没接线是结构性表现，与 `setLightbox` 一族同口径。
+ */
+export interface PasteImagePort {
+  /** 落盘一张剪贴板图片，返回内容寻址文件名（前端据此插引用）。 */
+  write(
+    dirRel: string,
+    dataBase64: string,
+    sourceMime: string,
+  ): Promise<{ path: string; name: string }>;
+  /** 失败出口：人话 toast。MUST NOT 静默失败、MUST NOT 插引用留破图。 */
+  toast(error: unknown): void;
+}
+
+/**
+ * `clipboardData.items` 里第一个 `image/*` **文件项**的序号；没有则 -1。
+ *
+ * **检测面是 `items` 不是 `types`**（M415 真机探针，design §2 随批修订）：本仓 WKWebView 的
+ * `clipboardData.types` 从不出现 `image/*`——文件项一律以 `"Files"` 名义进 types，精确 MIME 只在
+ * `items[i].type` 上。图文同板（types = `["Files","text/html"]`）时取首个 image file 项，
+ * 即已定的「图优先」（design §1）。
+ */
+function firstImageFileIndex(items: ArrayLike<{ kind: string; type: string }>): number {
+  for (let index = 0; index < items.length; index += 1) {
+    const item = items[index];
+    if (item.kind === "file" && item.type.startsWith("image/")) return index;
+  }
+  return -1;
+}
+
+/**
+ * **拦截判定**（纯判据，DOM 无关——单测直接喂形状）：md 模式且可编辑、且剪贴板含 `image/*`
+ * 文件项时返回该项序号；任一不成立返回 null = 不消费事件（默认文本粘贴逐字节不变）。
+ *
+ * code / text 模式编辑器、只读文档 MUST NOT 触发本能力（spec「只读与非 md 模式不触发」）；
+ * 无 `image/*` 的剪贴板（纯文本 / 富文本 / 非图片文件）走降级条款，一律不拦。
+ */
+export function imagePasteItemIndex(
+  session: { mode: EditorMode; editable: boolean },
+  items: ArrayLike<{ kind: string; type: string }>,
+): number | null {
+  if (session.mode !== "md" || !session.editable) return null;
+  const index = firstImageFileIndex(items);
+  return index < 0 ? null : index;
+}
+
+/** 落盘目录 = 当前文件 vault 相对路径的 dirname；无路径（未保存新文档）退 vault 根（空串）。 */
+export function attachmentDirOf(path: string | undefined): string {
+  if (path === undefined) return "";
+  const slash = path.lastIndexOf("/");
+  return slash < 0 ? "" : path.slice(0, slash);
+}
+
+/**
+ * 引用插入的事务形状：`![[<name>]]` **块级独占一行**（design §5）——选区两端若不在行首 /
+ * 行尾，各补一个换行把引用顶成独立一行；已在空行（或文档首尾）则原样插。有选区时替换选区
+ *（与键入同权；调用方把 `from`/`to` 取自当前选区）。返回 `@codemirror/state` 的 ChangeSpec 形状。
+ */
+export function pastedImageInsertion(
+  doc: string,
+  from: number,
+  to: number,
+  name: string,
+): { from: number; to: number; insert: string } {
+  const prefix = from > 0 && doc[from - 1] !== "\n" ? "\n" : "";
+  const suffix = to < doc.length && doc[to] !== "\n" ? "\n" : "";
+  return { from, to, insert: `${prefix}![[${name}]]${suffix}` };
+}
+
+/** Blob → 标准 base64（分块 btoa：大图不能一次性展开成超长 `fromCharCode` 参数表）。 */
+async function blobToBase64(blob: Blob): Promise<string> {
+  const bytes = new Uint8Array(await blob.arrayBuffer());
+  let binary = "";
+  const chunk = 0x8000;
+  for (let offset = 0; offset < bytes.length; offset += chunk) {
+    binary += String.fromCharCode(...bytes.subarray(offset, offset + chunk));
+  }
+  return btoa(binary);
+}
+
+/**
+ * 一次贴图的**落盘段**：Blob → base64 → 端口写（后端转码 + 内容寻址 + 去重）。失败**原样
+ * 抛出**——调用方（paste 处理器）负责 toast。抽出来是因为它是链路里唯一可脱离 DOM 测的一段
+ *（单测用 mock 端口断言成功 / 失败路径与透传的载荷）。
+ */
+export async function writePastedImage(
+  port: Pick<PasteImagePort, "write">,
+  dirRel: string,
+  blob: Blob,
+): Promise<{ path: string; name: string }> {
+  const dataBase64 = await blobToBase64(blob);
+  return port.write(dirRel, dataBase64, blob.type);
+}
+
 export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md", markdownConfig: Parameters<typeof markdown>[0] = { base: markdownLanguage, extensions: [GFM] }): EditorHandle {
   // 三个 Compartment（mode / 折行 / md gutter）是**模块级共享**的，理由见其声明处（M317 4.1）。
   // 前台会话「可编辑性」的**投影**：changeFilter 的闭包在 state 创建时就绑好了，只能读实例
@@ -1442,6 +1553,12 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
    *  「装饰层在构建期读口子」的注入点不同（那些要 previewRefresh）。未注入时命令无操作
    *  （纯桩 / 维护性装配：能力没接上就不假装能打开）。 */
   let gotoLinePrompt: GotoLinePromptPort | null = null;
+  /**
+   * 剪贴板图片口令（M416，change paste-clipboard-image）：装配层经 `setPasteImagePort` 注入。
+   * **DOM 事件处理器执行时才读**（不是装饰层构建期），因此注入不需要重建；未注入时
+   * paste 拦截整条不启用（与 `gotoLinePrompt` 同形态）。
+   */
+  let pasteImagePort: PasteImagePort | null = null;
   /**
    * md 行号 gutter 的档位（`ui.markdown_line_numbers`，change goto-line-command 的 D4 二次改判）：
    * 配置在装载时喂一次（`setMarkdownLineNumbers`），**运行期 MUST NOT 回写**——本 change 不提供
@@ -1826,7 +1943,64 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
           docChangedListeners.forEach((listener) => listener());
         }
       }),
+      // 剪贴板贴图（M416）：装在**基础层**而不是 `sessionState` 的顶层扩展里——它绑实例闭包
+      // （`active` / `pasteImagePort`），必须随 `adoptSession` 用目标实例的闭包重配，否则迁移来的
+      // 会话会用源实例的前台会话判据（同一形态的缺陷见 changeFilter / updateListener 的 P1-1）。
+      //
+      // 拦截判据（spec「粘贴触发与引用插入」）：md 模式 + 可编辑 + 确实有 image/* 文件项。
+      // 任一不成立即 `return false`——默认文本粘贴逐字节不变（降级条款，MUST NOT 消费事件）。
+      // 走 DOM 事件层而不是 keymap 的 ⌘V：⌘V 还有菜单路径（M131 菜单命令事件），事件层两条都罩。
+      EditorView.domEventHandlers({
+        paste: (event, view) => {
+          if (pasteImagePort === null) return false;
+          const items = event.clipboardData?.items;
+          if (items === undefined || items === null) return false;
+          const index = imagePasteItemIndex(active, items);
+          if (index === null) return false;
+          const blob = items[index].getAsFile();
+          if (blob === null) return false;
+          // 图文同板取图（已定 A）：消费事件，阻止 WebKit 默认的文本粘贴。
+          event.preventDefault();
+          void pasteImage(view, active, blob);
+          return true;
+        },
+      }),
     ];
+  }
+
+  /**
+   * 贴图链路（异步，一次 invoke）：Blob → base64 → 落盘（后端转码 + 内容寻址 + 去重）→ 用返回的
+   * `name` 在**dispatch 时的最新选区**插入 `![[name]]`（design §1：插入点取 dispatch 那一刻的
+   * 选区，用户在等待期间继续键入也安全）。任一步失败走 `port.toast`——MUST NOT 静默失败、
+   * MUST NOT 插入引用留下破图。
+   */
+  async function pasteImage(
+    view: EditorView,
+    session: EditorSession,
+    blob: Blob,
+  ): Promise<void> {
+    const port = pasteImagePort;
+    if (port === null) return;
+    try {
+      const { name } = await writePastedImage(port, attachmentDirOf(session.path), blob);
+      // 落盘期间前台会话可能已换（切标签 / 关标签）：换过就不插——插进别的文档比不插更糟。
+      // 图片本身已落盘（内容寻址，重贴即去重命中），不构成「半截状态」。
+      if (active !== session) return;
+      const range = view.state.selection.main;
+      const changes = pastedImageInsertion(
+        view.state.doc.toString(),
+        range.from,
+        range.to,
+        name,
+      );
+      view.dispatch({
+        changes,
+        selection: { anchor: changes.from + changes.insert.length },
+        userEvent: "input.paste",
+      });
+    } catch (error) {
+      port.toast(error);
+    }
   }
 
   /** adopt 时的完整换绑效果（M317 P1-1）：模式 / 折行 / **基础层**三处一起重配到本实例的闭包。
@@ -2508,6 +2682,11 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
       blockCopy = next;
       // 同 setTableFullscreen：复制触发钮的点击接线在构建期读这个口子。
       view.dispatch({ effects: previewRefresh.of(null) });
+    },
+    setPasteImagePort(port) {
+      // 口令在 DOM 事件处理器执行时才读（不是装饰层构建期读），注入**不**派发 previewRefresh
+      // ——与 setGotoLinePrompt 同一形态。
+      pasteImagePort = port;
     },
     setGotoLinePrompt(next: GotoLinePromptPort | null) {
       // **不**派发 previewRefresh（与上面几个注入点的差别）：这个口子在命令执行时才被读

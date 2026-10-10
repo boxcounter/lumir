@@ -1242,6 +1242,33 @@ const COPY_TABLE = {
     zh: "将移入系统废纸篓，可恢复",
     en: "Moves to the system trash; recoverable",
   },
+  // 粘贴剪贴板图片的失败面（change paste-clipboard-image，design §6 / tasks §3.3）：全部经
+  // `fs_write_attachment` 的错误信封按 code 渲染（D6 口径），文案随能力走。六条按失败阶段分：
+  // 格式不支持 / 超限 / 解码失败 / 编码失败 / 写失败 / 写结果未知。
+  D436: {
+    zh: "不支持的剪贴板图片格式：{type}",
+    en: "Unsupported clipboard image format: {type}",
+  },
+  D437: {
+    zh: "图片过大：{mb}MB，超过 {limit}MB 上限",
+    en: "Image too large: {mb} MB — over the {limit} MB limit",
+  },
+  D438: {
+    zh: "无法解码剪贴板图片：{reason}",
+    en: "Couldn't decode the clipboard image: {reason}",
+  },
+  D439: {
+    zh: "无法编码剪贴板图片：{reason}",
+    en: "Couldn't encode the clipboard image: {reason}",
+  },
+  D440: {
+    zh: "保存图片失败：{reason}",
+    en: "Failed to save the image: {reason}",
+  },
+  D441: {
+    zh: "保存图片结果未知：{reason}",
+    en: "The image save result is unknown: {reason}",
+  },
 } satisfies Record<string, CopyEntry>;
 
 /** 文案表的键（D 编号，多串格带 `.N` 后缀）——由表数据推导，加一条即多一个键。 */
@@ -1295,6 +1322,14 @@ export const ERROR_COPY: Record<string, CopyKey> = {
   fs_reveal_failed: "D186",
   // vault_move 跨目录移动（M407，tower 委托代加；占位键 rel/newPath/reason 与后端逐字对应）。
   fs_move_failed: "D422",
+  // 剪贴板图片落盘（change paste-clipboard-image）：六个 code 都由 fs_io::write_attachment 一族
+  // 构造，占位键与后端逐字对应（type / mb+limit / reason）。
+  attachment_type_unsupported: "D436",
+  attachment_too_large: "D437",
+  attachment_decode_failed: "D438",
+  attachment_encode_failed: "D439",
+  attachment_write_failed: "D440",
+  attachment_write_unknown: "D441",
   document_write_failed: "D187",
   document_write_unknown: "D188",
   document_conflict: "D41",
