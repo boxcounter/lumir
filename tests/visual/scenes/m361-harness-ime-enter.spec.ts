@@ -109,7 +109,10 @@ test("IME 组合期 Enter：WebKit 序确认拍不发送 / Chromium 序不残留
   await expect(page.locator(".lumir-hp-msg-user")).toHaveCount(1);
   await expect(composer, "发送后 composer 归零").not.toContainText("你好");
 
-  // ── ⇧Enter = 换行不发送（模型层软换行，qpara 内插 \n、不拆块）。 ──
+  // ── ⇧Enter = 换行不发送（模型层软换行，合同 docs/specs/harness-composer.md 的 HC1：光标在
+  //    段末时为「新起一行」落一个**新的空段落块**——不是往原段落里追加尾随 \n，尾随换行不产生
+  //    行盒）。M419（change harness-composer-newline-fixes）改的就是这条落法，本用例的旧期望
+  //    （单 qpara 文本 "x\n"）随之作废。 ──
   await composer.fill("x");
   await composer.evaluate((el) => {
     el.dispatchEvent(
@@ -117,6 +120,8 @@ test("IME 组合期 Enter：WebKit 序确认拍不发送 / Chromium 序不残留
     );
   });
   expect(await sent(), "⇧Enter 不发送").toEqual([{ message: "你好" }]);
-  const paraText = await composer.locator(".lumir-hp-qpara").evaluate((el) => el.textContent);
-  expect(paraText).toBe("x\n");
+  const paras = composer.locator(".lumir-hp-qpara");
+  await expect(paras, "⇧Enter 在段末落一个新空段落块（HC1）").toHaveCount(2);
+  expect(await paras.nth(0).evaluate((el) => el.textContent), "原段落内容不动").toBe("x");
+  expect(await paras.nth(1).evaluate((el) => el.textContent), "新段落为空（供光标承接）").toBe("");
 });

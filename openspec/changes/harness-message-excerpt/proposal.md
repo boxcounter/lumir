@@ -48,7 +48,7 @@ Alex 原话（2026-10-10）：「Harness 里的消息也可以摘录（类似摘
 ## Impact
 
 - 影响的 specs：`harness`（ADDED ×2：消息摘录卡片 / 消息摘录序列化协议）
-- 影响的代码/系统：src（transcript 选区手势与浮动钮、MessageQuoteCard 数据模型、composer/transcript 卡片渲染扩展、`<msg-quote>` 序列化与解析还原、跳回与失锚降级、视口注入 skip 判定扩展）、src-tauri（无——消息摘录纯前端产物，序列化在投递前完成；JSONL 留存天然含 `<msg-quote>` 块无需改）、scripts/acceptance（新增验收场景）、tests/visual（消息摘录卡与浮动钮基线新增）、文案表（浮动钮可复用 D370，出处行/失锚 toast/hover 新 D-code，D442 起）
+- 影响的代码/系统：src（transcript 选区手势与浮动钮、MessageQuoteCard 数据模型、composer/transcript 卡片渲染扩展、`<msg-quote>` 序列化与解析还原、跳回与失锚降级、视口注入 skip 判定扩展）、src-tauri（`src-tauri/src/harness/context.rs` 的 `QUOTE_REFERENCE` 会话装配段补 `<msg-quote>` 释义与回指纪律——一段固定文案，两 provider 统一注入；JSONL 留存天然含 `<msg-quote>` 块无需改）、scripts/acceptance（新增验收场景）、tests/visual（消息摘录卡与浮动钮基线新增）、文案表（浮动钮可复用 D370，出处行/失锚 toast/hover 新 D-code，D442 起）
 - 关联约束：一致性原则（Alex 2026-10-06，add-harness-quote-cards 评审立，全文适用）；ADR 0004 节点 1 硬门禁；ADR 0002 §6 性能合同（无新增常驻装饰、无新编辑器实例）；仓库信息卫生（验收 fixture 全部合成）
 
 ## 观测闸三问（低成本口径）
