@@ -24,7 +24,7 @@ Alex 原话（2026-10-10）：「Content pane:Harness pane 也默认为 1:1（�
 1. **首启窗口几何**（`app-window`，ADDED）：无窗口几何存档时，主窗口尺寸 SHALL 为**当前工作区**（窗口所在显示器的可用区域——macOS 上即排除菜单栏与 Dock 的 `visibleFrame`）的 90% 并居中；窗口 MUST NOT 越出工作区。工作区不可得时回落构建配置的占位尺寸、不阻断启动。
 2. **窗口几何的持久化与恢复**（`app-window`，ADDED）：窗口的**尺寸与位置**持久化到 `<config>/lumir/window-state.json` 独立小文件（与 vault-sessions / reading-positions 同惯例，MUST NOT 新增 config.json 配置键）；非首启时首帧即以存档几何出现（MUST NOT 先以占位尺寸出现再跳变）；存档缺失 / 损坏 / 版本不符一律等价于「没有存档，按首启规则」；存档几何在窗口所在显示器上解读，显示器布局变化致存档矩形与任一工作区无交集时回落首启规则（MUST NOT 把窗口放到屏外）；尺寸与位置以逻辑像素（点）落盘。写入时机 = 变化后（可防抖）+ 退出前 flush。
 3. **harness 自动分栏默认宽度比 1:1**（MODIFIED ×5：`pane-layout` 的「harness pane」为 canonical 定义处，`harness` 的「对话面板」、`ui-design-system` 的「应用骨架布局」、`keymap-commands` 的「对话面板唤起命令」、`vault-workspace` 的「按 vault 持久化 pane 布局」各处复述一并改值）：`HARNESS_DEFAULT_DOC_RATIO` 由 2/3 改 1/2，harness:文档 = 1:1。**只有本 vault 无存储比例时生效**的既有语义不变（见裁决点 ②）。
-4. **重述面收敛**（随 3 一并做，implementation 面）：代码注释（`src/main.ts:681`、`:773`）、文案表 D345 正文（`文案-Copy.md` + `src/copy-data.ts`，zh/en 双档）、视觉场景 `tests/visual/scenes/m303-harness-panel.spec.ts` 的宽度比断言、验收场景 `scripts/acceptance/scenarios/86-harness-pane-toggle.md` 的判据与注释——凡写「1:2 / 2:1 / 文档侧 2/3」处一并改准。已在 git 里的 `openspec/changes/archive/**` 是历史留档，不回改。
+4. **重述面收敛**（随 3 一并做，implementation 面）：代码注释（`src/main.ts:681`、`:773`、`:2759`）、文案表 D345 正文（`文案-Copy.md` + `src/copy-data.ts`，zh/en 双档）、视觉场景（`m303-harness-panel.spec.ts` 的宽度比断言、`m345-quote-card.spec.ts` 的注释）、验收场景 `scripts/acceptance/scenarios/86-harness-pane-toggle.md`（标题 / 判据 / 注释）、流程文档 `docs/process/openspec-workflow.md:46`（「视觉保真」一节的布局节奏示例）——凡写「1:2 / 2:1 / 文档侧 2/3」处一并改准（清单与检索结论见 design §6）。已在 git 里的 `openspec/changes/archive/**` 是历史留档，不回改。
 
 ## Alex 裁决点
 
@@ -49,7 +49,7 @@ Alex 原话（2026-10-10）：「Content pane:Harness pane 也默认为 1:1（�
 ## Impact
 
 - 影响的 specs：`app-window`（ADDED ×2：首启窗口几何 / 窗口几何的持久化与恢复）；`pane-layout`、`harness`、`ui-design-system`、`keymap-commands`、`vault-workspace`（各 MODIFIED ×1，均为 1:2 → 1:1 的值改准）
-- 影响的代码/系统：src-tauri（`tauri.conf.json` 的窗口尺寸降级为占位 + `visible: false`；`lib.rs` 的 `setup` 与 `RunEvent::Exit` 接线；新模块 `window_state.rs`——配置目录小文件 + tmp+rename + 版本纪律，与 `reading_position.rs` 同形）、src（`main.ts` 的 `HARNESS_DEFAULT_DOC_RATIO` 与两处注释）、文案表（D345 正文 zh/en 同步 `文案-Copy.md` 与 `src/copy-data.ts`）、tests/visual（`m303-harness-panel.spec.ts` 的宽度比断言）、scripts/acceptance（场景 86 的判据与注释）
+- 影响的代码/系统：src-tauri（`tauri.conf.json` 的窗口尺寸降级为占位 + `visible: false`；`lib.rs` 的 `setup` 与 `RunEvent::Exit` 接线；新模块 `window_state.rs`——配置目录小文件 + tmp+rename + 版本纪律，与 `reading_position.rs` 同形）、src（`main.ts` 的 `HARNESS_DEFAULT_DOC_RATIO` 与三处注释）、文案表（D345 正文 zh/en 同步 `文案-Copy.md` 与 `src/copy-data.ts`）、tests/visual（`m303-harness-panel.spec.ts` 的宽度比断言、`m345-quote-card.spec.ts` 的注释）、scripts/acceptance（场景 86 的标题 / 判据 / 注释）、流程文档（`docs/process/openspec-workflow.md:46` 的示例——**实现期**随值改准，见 design §6）
 - 关联约束：ADR 0002 §5（配置即数据、逐字段校验、非法值回落默认）；ADR 0002 §6（冷启动 <300ms——几何施加只多一次本地小文件读 + 一次 `set_size`/`set_position`，MUST NOT 引入同步重活）；ADR 0003 §3（不改写源文件）；仓库信息卫生（验收 / 视觉 fixture 全合成，窗口几何属本机状态不入 git）
 
 ## 观测闸三问（低成本口径）

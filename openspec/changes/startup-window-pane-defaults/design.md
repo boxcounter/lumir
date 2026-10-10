@@ -119,7 +119,7 @@ window.show()?;                                          // 无论 apply 返回 
 
 `src/main.ts:782` 的施加判据（`if (!storedRatioApplied) splitRatio = HARNESS_DEFAULT_DOC_RATIO;`）与 `storedRatioApplied` 的生命周期（恢复路径置真、切 vault 复位，`src/main.ts:701` / `:2760`）**原样不动**——这就是裁决点 ②「默认只在无存储值时生效」的现状语义。
 
-`src/main.ts:681`、`:773` 两处注释里的「1:2」一并改「1:1」，并保留「原 1:2 系 Alex 2026-10-05 裁决、本 change 按 2026-10-10 新裁决改为 1:1」这句来由（本仓注释即文档的既有口径）。
+`src/main.ts:681`、`:773`、`:2759` 三处注释里的「1:2」一并改「1:1」，并保留「原 1:2 系 Alex 2026-10-05 裁决、本 change 按 2026-10-10 新裁决改为 1:1」这句来由（本仓注释即文档的既有口径）。
 
 ### 4.2 为什么不动 `DEFAULT_SPLIT_RATIO`
 
@@ -156,14 +156,20 @@ Alex 原话「不论 pane #2 是 content 还是 harness」在本 change 后成�
 | 构建配置 | `src-tauri/tauri.conf.json` | 加 `"visible": false`；`width`/`height` 注释性降级为占位（不改数值） |
 | 新模块 | `src-tauri/src/window_state.rs` | 存档读写 + 几何纯函数 + 校验；`mod` 登记与 `lib.rs` 接线 |
 | 接线 | `src-tauri/src/lib.rs` | `setup` 施加几何 + `show()`；`WindowEvent::Resized/Moved` 缓存 + 防抖；`RunEvent::Exit` flush |
-| pane 默认值 | `src/main.ts:683`、`:681`、`:773` | `2/3` → `1/2` + 两处注释改准（附来由） |
-| 文案表 | `文案-Copy.md`（D345 行）、`src/copy-data.ts:785` | 正文里的「harness:文档 = 1:2」→「1:1」（zh/en 双档同步；copy drift 测试会拦半边改） |
-| 视觉场景 | `tests/visual/scenes/m303-harness-panel.spec.ts:8,95` | 注释与宽度比断言（现「约两倍」）改 1:1；整页 / 元素基线按「基线更新是人肉裁决点」走 Alex 过目 |
-| 验收场景 | `scripts/acceptance/scenarios/86-harness-pane-toggle.md:49,100-101` | 判据「文档侧 2/3」与注释「默认宽度比 1:2」改 1:1；新增窗口几何场景（首启 / 二次启动 / 存档损坏） |
+| pane 默认值 | `src/main.ts:683`（取值）、`:681` / `:773` / `:2759`（注释） | `2/3` → `1/2` + 三处注释改准（附来由） |
+| 文案表 | `文案-Copy.md`（D345 行）、`src/copy-data.ts:785-786` | 正文里的「harness:文档 = 1:2」→「1:1」（zh/en 双档同步；copy drift 测试会拦半边改） |
+| 视觉场景 | `tests/visual/scenes/m303-harness-panel.spec.ts:8,95`、`tests/visual/scenes/m345-quote-card.spec.ts:103` | 注释与宽度比断言（现「约两倍」）改 1:1；整页 / 元素基线按「基线更新是人肉裁决点」走 Alex 过目 |
+| 验收场景 | `scripts/acceptance/scenarios/86-harness-pane-toggle.md:4,49,100-101` | frontmatter `title`（「自动分栏默认 1:2」）、判据「文档侧 2/3」与注释「默认宽度比 1:2」改 1:1；新增窗口几何场景（首启 / 二次启动 / 存档损坏） |
+| 流程文档 | `docs/process/openspec-workflow.md:46` | 「视觉保真」一节的布局节奏示例「如 pane 1:2」改 1:1。**该处描述的是当前行为**（`docs/process/` 是流程约定，不是本 change 的实现在场物），因此**不在提案期改**，只在实现期随值一起改准 |
 | 单测 | `src-tauri/src/window_state.rs` 内嵌 `#[cfg(test)]` | 解析 / 版本 / 几何回落 / 显示器无交集（注入目录与矩形，纯函数层，**不碰真实配置目录与真实屏幕**——`reading_position.rs` 的 `load_from(dir, id)` 可注入先例） |
 | 历史留档 | `openspec/changes/archive/**` | **不回改**（已归档 change 是历史，改它等于篡改存档） |
 
-**sweep 覆盖与结果（本 change 起草期已逐一检索）**：以 `harness:文档` / `文档 pane = 1:2` / `2:1 宽度` / `文档侧 2/3` 四个针在 `openspec/specs/**`、`docs/**`、`src/**`、`src-tauri/src/**`、`tests/**`、`scripts/**` 全量检索（排除 `node_modules` / `target` / `test-results` / `.tower`），命中即上表各行；**`docs/**` 下无命中**（该默认值不在 docs 的专项规格里复述），`openspec/changes/archive/**` 下的命中是历史留档、不回改。
+**sweep 覆盖与结果（r1 评审后已扩针重扫）**：以 `harness:文档`、`文档 pane = 1:2`、`2:1 宽度`、`文档侧 2/3`、**`pane 1:2`（裸形态）**、以及覆盖全部形态的 **`1:2` / `2:1`** 在 `openspec/specs/**`、`docs/**`、`src/**`、`src-tauri/src/**`、`tests/**`、`scripts/**` 与仓根 `文案-Copy.md` 全量检索（排除 `node_modules` / `target` / `test-results` / `.tower` / `openspec/changes/`）。结论：
+
+- **命中即上表各行**（r1 的 finding：首轮只用前四针，漏了裸「pane 1:2」形态；扩针后补出 `docs/process/openspec-workflow.md:46`、`src/main.ts:2759`、`tests/visual/scenes/m345-quote-card.spec.ts:103`、`scripts/acceptance/scenarios/86-harness-pane-toggle.md:4` 四处，已全部进表）。
+- **`docs/**` 命中恰一处**（`openspec-workflow.md:46`，处置 = 实现期改准，见上表末行）；`docs/` 其余命中均为假阳性或历史证据。
+- **判为不必改的两类**：① 假阳性——`docs/specs/design-tokens-v1.md:158` 的 `--sp-1:2`（token 名）、`src-tauri/src/logging.rs:778,780` 与 `tests/...` 里的时间戳 / 测试输出行号（`scenes/x.spec.ts:22:1`）、`docs/design-parity-contract/evidence/**`（历史证据的截图与日志）；② 原型历史语境——`src/main.ts:650` 的「原型『2:1 flex 近似、差 ~30px』的妥协点 5 不继承」，说的是被放弃的原型做法、不是 harness 默认值，改它会篡改历史结论。
+- `openspec/changes/archive/**` 下的命中是历史留档、不回改。
 
 ## 7. 性能与启动时序（ADR 0002 §6 核对）
 

@@ -16,11 +16,12 @@
 ## 2. pane 默认比例 1:2 → 1:1（spec：`pane-layout` + 四处复述）
 
 - [ ] 2.1 `src/main.ts:683` 的 `HARNESS_DEFAULT_DOC_RATIO`：`2 / 3` → `1 / 2`
-- [ ] 2.2 `src/main.ts:681`、`:773` 两处注释改准为 1:1，并附来由（原 1:2 系 2026-10-05 裁决、本 change 按 2026-10-10 裁决改为 1:1）
+- [ ] 2.2 `src/main.ts:681`、`:773`、`:2759` 三处注释改准为 1:1，并附来由（原 1:2 系 2026-10-05 裁决、本 change 按 2026-10-10 裁决改为 1:1）
 - [ ] 2.3 确认 `src/main.ts:782` 的施加判据与 `storedRatioApplied` 生命周期**零改动**（默认只在无存储值时生效；`pane-layout.ts:57` 与 `vault_session.rs:47` 的 `DEFAULT_SPLIT_RATIO = 0.5` 亦不动）
-- [ ] 2.4 文案表 D345 正文改准「harness:文档 = 1:1」：同步 `文案-Copy.md` 与 `src/copy-data.ts:785`（zh/en 双档），跑既有 copy drift 测试
-- [ ] 2.5 视觉场景 `tests/visual/scenes/m303-harness-panel.spec.ts:8,95` 的注释与宽度比断言改 1:1；涉及整页 / 元素基线更新时按「基线更新是人肉裁决点」截图交 Alex 过目后再提交
-- [ ] 2.6 验收场景 `scripts/acceptance/scenarios/86-harness-pane-toggle.md:49,100-101` 的判据（文档侧 2/3）与注释（1:2）改 1:1
+- [ ] 2.4 文案表 D345 正文改准「harness:文档 = 1:1」：同步 `文案-Copy.md` 与 `src/copy-data.ts:785-786`（zh/en 双档），跑既有 copy drift 测试
+- [ ] 2.5 视觉场景注释与断言改 1:1：`tests/visual/scenes/m303-harness-panel.spec.ts:8,95`（注释 + 宽度比断言，现「约两倍」）、`tests/visual/scenes/m345-quote-card.spec.ts:103`（注释）；涉及整页 / 元素基线更新时按「基线更新是人肉裁决点」截图交 Alex 过目后再提交
+- [ ] 2.6 验收场景 `scripts/acceptance/scenarios/86-harness-pane-toggle.md` 改 1:1：`:4`（frontmatter `title`「自动分栏默认 1:2」）、`:49`（判据「文档侧 2/3」）、`:100-101`（注释「默认宽度比 1:2」）
+- [ ] 2.7 流程文档 `docs/process/openspec-workflow.md:46`（「视觉保真」一节的布局节奏示例「如 pane 1:2」）改 1:1——**该处描述的是当前行为，故不在提案期改**，随实现一并改准（r1 评审 finding）
 
 ## 3. 真机验收场景（`scripts/acceptance/`）
 
