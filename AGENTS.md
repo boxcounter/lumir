@@ -71,11 +71,11 @@ CI 的 `visual.yml` 只跑结构 / 计算属性断言（置 `LUMIR_VISUAL_STRUCT
 
 | 任务类型 | 模型 alias |
 |---|---|
-| 有机器验收的开发（做完须过 gate/测试判定） | `deepseek/deepseek-flash` |
+| 有机器验收的开发（做完须过 gate/测试/验收场景判定） | `deepseek/deepseek-flash` |
 | 文案/文档/数值类、机械批量活 | `deepseek/deepseek-flash` |
 | 代码库探索、定位类查询（explore） | `deepseek/deepseek-flash` |
-| 无机器验收的判断类开发（交互手感、新功能设计、结构调整） | `kimi-code/kimi-for-coding` |
-| 复杂任务、review、视觉相关（`src/style.css`、`src/preview/**`、视觉场景） | `kimi-code/k3-256k` |
+| 无机器验收的判断类开发（交互手感、新功能设计、结构调整） | `Kimi For Coding/kimi-for-coding` |
+| 复杂任务、review、视觉相关（`src/style.css`、`src/preview/**`、视觉场景） | `Kimi For Coding/k3-256k` |
 | k3 1M | **禁用** |
 
 执行规则：
@@ -85,6 +85,12 @@ CI 的 `visual.yml` 只跑结构 / 计算属性断言（置 `LUMIR_VISUAL_STRUCT
 - **优先 resume，少开新实例**；失败升级时 resume 原 agent 换更强模型继续，不同模型重开（重读代码浪费配额），也不同模型原地重试（重复同样失败）。
 - **review 恒为 k3-256k**，但输入收窄：只看 diff + REVIEW.md 相关条目，不做全量代码理解。
 - 拿不准「有无机器验收」时**按没有处理**（升档到 kimi-for-coding），不要为省配额降档。
+
+**2026-10-10 补充裁决（配额紧张期的三条细化）**：
+
+- **「UI 批次」不再自动升档**：设计已被 Alex 裁决（spec/design 有原文口径）、实现属照章落地、且有验收场景 + 视觉门禁兜底的 UI mission（如权限前端批）归 `deepseek/deepseek-flash`；升档触发条件仍是「无机器验收的判断类」。
+- **在途 worker 不中途换模型**：换模型须重开实例、重读代码，总消耗反而更高；下次派发再按新口径。
+- **探针/探错类步骤单独升档**：结果未知、不符假设时需设计退路的任务（如真机通道探针），该步骤升 kimi-for-coding；探针通过后的照章实现段仍归 deepseek。
 
 ## 工作流分工速查
 
