@@ -5,7 +5,7 @@ import { stubTauri, type VaultFixture } from "./tauri-stub";
 // M303 对话面板（change add-harness-probe）的表面基线；M346/HP1（change
 // move-harness-to-pane-chat-frame）改写为 pane 口径：
 //
-//   1. **面板是 pane 内容件**——⌘⇧A/toggle 自动分栏（harness:文档 = 1:2），面板挂进旁侧
+//   1. **面板是 pane 内容件**——⌘⇧A/toggle 自动分栏（harness:文档 = 1:1），面板挂进旁侧
 //      pane 的挂载元素；dock 列（--layout-dock-w / .dock-open）已移除，骨架回到两列。
 //   2. **面板无头部栏**——会话身份（名下拉 + 新建会话钮）在标题栏 harness 段（.lumir-hp-seg），
 //      段宽与 pane 比分宽、与分隔条对齐；ctx% 读数随头部栏退场（M347 已迁入 composer 控制行，
@@ -92,13 +92,13 @@ test("对话面板：pane 口径展开态结构 + 标题栏元素级基线", asy
   });
   expect(shellCols).toBe(2);
   await expect(page.locator(".app-shell")).not.toHaveClass(/dock-open/);
-  // 默认宽度比 harness:文档 = 1:2（Alex 裁决）——分栏后文档 pane 宽约为 harness pane 两倍。
+  // 默认宽度比 harness:文档 = 1:1（Alex 2026-10-10 裁决）——分栏后两个 pane 等宽。
   const panes = await page.locator(".pane-editor > .editor-pane").all();
   const paneBoxes = await Promise.all(panes.map((pane) => pane.boundingBox()));
   const widths = paneBoxes.map((box) => box?.width ?? 0);
   expect(widths.length).toBe(2);
-  expect(widths[0] / widths[1]).toBeGreaterThan(1.8);
-  expect(widths[0] / widths[1]).toBeLessThan(2.2);
+  expect(widths[0] / widths[1]).toBeGreaterThan(0.9);
+  expect(widths[0] / widths[1]).toBeLessThan(1.1);
   // harness 段：与编辑器标签段同构（会话名 + 新建会话钮；段宽由比分宽、与分隔条对齐——
   // 这里钉在场与内容，对齐的几何钉在 m320 的分栏结构断言里）。
   const seg = page.locator(".lumir-hp-seg");

@@ -100,7 +100,7 @@ test("点浮动钮：面板未开先开（pane 口径）、卡片入 composer、
   await expect(panel).toBeHidden();
   await page.locator(".quote-gesture-btn").click();
   // HP1（change move-harness-to-pane-chat-frame）：「未开先开」= 装配层自动分栏（harness:
-  // 文档 = 1:2），面板挂进旁侧 pane——dock 列已移除。
+  // 文档 = 1:1），面板挂进旁侧 pane——dock 列已移除。
   await expect(panel).toBeVisible();
   await expect(page.locator(".pane-divider")).toBeVisible();
 

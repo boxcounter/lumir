@@ -678,9 +678,11 @@ function applySplitChrome(): void {
   renderAllTabStrips();
 }
 
-/** 自动分栏的默认宽度比（harness:文档 = 1:2，Alex 裁决）——splitRatio 记文档侧占比。
+/** 自动分栏的默认宽度比（harness:文档 = 1:1，Alex 2026-10-10 裁决；原 1:2 系 2026-10-05
+ *  裁决，本 change 按新裁决改为 1:1，与双文档 pane 的 DEFAULT_SPLIT_RATIO 取值对齐）——
+ *  splitRatio 记文档侧占比，1/2 即两 pane 等宽。
  *  只在「本 vault 无存储比例」时生效（design §7）；恢复路径置 storedRatioApplied。 */
-const HARNESS_DEFAULT_DOC_RATIO = 2 / 3;
+const HARNESS_DEFAULT_DOC_RATIO = 1 / 2;
 /** 本 vault 是否已有存储的比例值（恢复路径置真；切 vault 复位）。 */
 let storedRatioApplied = false;
 
@@ -770,7 +772,7 @@ function toggleHarnessPane(): void {
   else closeHarnessPane();
 }
 
-/** 打开 harness pane（旁侧 pane；harness:文档默认 1:2）：已有第二 doc pane 时先并标签收拢，
+/** 打开 harness pane（旁侧 pane；harness:文档默认 1:1）：已有第二 doc pane 时先并标签收拢，
  *  再开 harness pane；焦点落 composer。 */
 function openHarnessPane(): void {
   // 已有第二 doc pane：其标签并入 root（closeActivePane 的方案 A 口径，不丢标签）。
@@ -2756,7 +2758,7 @@ async function applyVault(
   emitReadiness("vault-ready", { root, vaultId, restored });
   save.noteVaultReset();
   // HP1：「本 vault 是否已有存储比例」的判定随 vault 切换复位——默认宽度比（harness:
-  // 文档 = 1:2）只在无存储值时生效，恢复路径（applyStoredLayout）按存储值置回。
+  // 文档 = 1:1）只在无存储值时生效，恢复路径（applyStoredLayout）按存储值置回。
   storedRatioApplied = false;
   // 附件索引只由**主动枚举**的条目建出（design §4.6）：惰性条目在树里可见、可打开，但
   // 不进索引——索引的输入必须是磁盘 + 规则的纯函数，不能取决于用户点开过哪些目录
