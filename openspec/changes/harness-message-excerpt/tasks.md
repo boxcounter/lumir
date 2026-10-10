@@ -32,5 +32,5 @@
 ## 5. 验证
 
 - [x] 5.1 `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` 通过（`gate.sh quick` 的 `openspec-validate` 项 PASS）
-- [ ] 5.2 新增真机验收场景并全绿（§8 验收面六项，mock provider；fixture 全部合成）——场景 119 / 120 已落、`--check` 过；**真机判红，成因是套件无 transcript 选区动词**（见两场景「已知边界」：transcript 消息文本是无 bbox 的 `AXStaticText`，`doubleClick`/`drag` 按节点定位不到；修面是给 `scripts/acceptance/lib/` 加 `selectText` 动词，lib 不在本 mission scope，已报 tower）。不勾，待通道补齐后复跑。
-- [x] 5.3 视觉：msgquote 卡与浮动钮场景基线**新增**（由 Playwright 首跑写入 `tests/visual/baselines/m423-message-excerpt.spec.ts-snapshots/`，未用 `--update`、未触碰任何既有基线）；既有基线**零漂移**（全量视觉套件 646 passed / 1 skipped / 0 failed）；截图已复制 `test-results/alex-review-2026-10-10/m423/` 待 Alex 过目；`scripts/gate.sh quick`：`GATE RESULT: 10/10 PASS（SKIP 0）`
+- [x] 5.2 新增真机验收场景并全绿（§8 验收面 ①②⑤⑥，mock provider；fixture 全部合成）——场景 **121**（选区 → 浮动钮 → 卡片入 composer → 移除 → 再摘 → 发送；含 `<msg-quote role at>` wire 断言与视口 skip）与 **122**（排除面：思考块内不出钮 + 消息体出钮正向对照）在真机 `LUMIR_ACCEPTANCE_PORT=1430` 上 PASS（证据 `test-results/acceptance/2026-10-10/{121,122}-*`）。选区通道 = 既有 `drag` 的 `{x,y}` 窗口局部坐标（真实 CGEvent 拖拽；`select_text` 实测不产生 DOM `selectionchange`，见两场景「已知边界」）。§8 的 ③④ 分别在 121 的 wire 断言与 chromium 视觉场景覆盖（同步半）。
+- [x] 5.3 视觉：msgquote 卡与浮动钮场景基线**新增**（由 Playwright 首跑写入 `tests/visual/baselines/m423-message-excerpt.spec.ts-snapshots/`，未用 `--update`、未触碰既有基线）；既有基线**零漂移**（全量视觉套件 646 passed / 1 skipped / 0 failed）；截图已复制 `test-results/alex-review-2026-10-10/m423/` 待 Alex 过目；`scripts/gate.sh quick`：`GATE RESULT: 10/10 PASS（SKIP 0）`

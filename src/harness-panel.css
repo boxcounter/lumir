@@ -82,8 +82,6 @@
   color: var(--text);
   font-family: var(--font-sans);
   font-size: calc(var(--fs-ui) * var(--lumir-hp-scale, 1));
-  /* 面板内瞬态提示（消息摘录失锚 toast）的定位包含块（change harness-message-excerpt）。 */
-  position: relative;
 }
 .lumir-harness[hidden] {
   display: none;

@@ -2190,7 +2190,14 @@ shell.modelineLanguage.addEventListener("click", cycleLanguage);
 // 定义随活跃 doc pane 走（harness pane 持焦时解析到文档 pane，见 activeDocPane）。
 // `HarnessContextSource`（harness-context.ts:31）的接口形状不变，改造面全在这一处注入
 //（design §2 行 5）。
-const harnessPanel = createHarnessPanel({ shell, editor, togglePane: toggleHarnessPane });
+const harnessPanel = createHarnessPanel({
+  shell,
+  editor,
+  togglePane: toggleHarnessPane,
+  // 面板发起的瞬态提示（消息摘录失锚 D443）走装配层的 showToast，锚 harness pane 右下角
+  //（M420 合同 O4：提示锚定**发起它的 pane**）——toast 产出点单一来源，面板不自建。
+  toast: (text) => void showToast(harnessPaneMount(), text),
+});
 
 /** 字号步进的焦点路由（M378）：焦点在 harness 面板内 → 步进面板内容字号；否则 → 步进
  *  编辑器内容字号（M195 的 editor.textScale 路径，行为与 M378 之前逐字节一致——焦点在

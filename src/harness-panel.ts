@@ -123,6 +123,10 @@ export interface HarnessPanelDeps {
    *  面板内 Escape、摘录插入的「未开先开」都经这一条路径——面板自己不碰 pane 账本
    *  （HP1，change move-harness-to-pane-chat-frame；⌘⇧A 命令表也在装配层）。 */
   togglePane(): void;
+  /** 面板发起的瞬态提示出口（装配层的 `showToast`，锚 harness pane 右下角——M420 合同 O4）。
+   *  消息摘录失锚（D443）经它上屏；面板**不自建** toast 产出点（toast 归属单一来源，M423
+   *  按 tower 裁决从面板自持实现收回装配层）。 */
+  toast(text: string): void;
 }
 
 export interface HarnessPanelHandle {
@@ -2316,29 +2320,15 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   }
 
   /**
-   * 面板内瞬态提示（消息摘录失锚告知 D443）。复用全局 `.lumir-toast` 壳样式，挂面板右下角
-   * （`.lumir-harness` 是定位包含块）。这是面板自持的最小 toast——装配层的通用 toast（main.ts）
-   * 不在本模块可达面内；两条链路只在「壳样式」这一层共用（色值 / 圆角 / 定位仍单一来源）。
-   */
-  function panelToast(text: string): void {
-    const el = document.createElement("div");
-    el.className = "lumir-toast toast-surface";
-    const span = document.createElement("span");
-    span.textContent = text;
-    el.append(span);
-    panel.append(el);
-    window.setTimeout(() => el.remove(), 3500);
-  }
-
-  /**
    * 消息摘录卡跳回（design §6 三层降级）：① role + at 定位 → ② 全文搜索摘录原文 → ③ 失锚 toast。
-   * 命中滚动居中 + 整条消息瞬态高亮；MUST NOT 静默跳到别的消息。
+   * 命中滚动居中 + 整条消息瞬态高亮；MUST NOT 静默跳到别的消息。失锚经 `deps.toast` 上屏
+   * （装配层的 showToast，锚 harness pane 右下——面板不自建 toast 产出点）。
    */
   function jumpToMessageQuote(card: MessageQuoteCard): void {
     const messages = collectTranscriptMessages();
     const index = resolveMessageQuoteTarget(messages, card);
     if (index === null) {
-      panelToast(t("D443"));
+      deps.toast(t("D443"));
       return;
     }
     const target = messages[index].element;
