@@ -895,6 +895,25 @@ pub fn fs_read_attachment(
     fs_io::read_attachment(&state.root()?, path)
 }
 
+/// 把剪贴板图片字节落盘为 vault 内附件（change paste-clipboard-image 的写原语，M416）。
+///
+/// 本命令只做一件事：把已打开 vault 的根喂给 [`fs_io::write_attachment`]——解码、50MB 上限
+/// （转码前判定）、转码（png → WebP 无损；jpeg / webp 原样）、内容寻址命名（转码后字节 SHA-256
+/// 前 16 位）、全 vault 同名去重与原子写全在那一处。参数名用 snake_case（`dir_rel`
+/// / `data_base64` / `source_mime`），与 `document_save` 的既有口径一致。
+///
+/// 返回 `{ path, name }`：前端用 `name` 拼 `![[name]]` 引用，**不自己算 hash、不调
+/// `fs_paths_exist`**——命名与去重的唯一事实源在 Rust 侧（design §1 / §3）。
+#[tauri::command(rename_all = "snake_case")]
+pub fn fs_write_attachment(
+    state: tauri::State<'_, VaultState>,
+    dir_rel: &str,
+    data_base64: &str,
+    source_mime: &str,
+) -> Result<fs_io::WrittenAttachment, CommandError> {
+    fs_io::write_attachment(&state.root()?, dir_rel, data_base64, source_mime)
+}
+
 #[tauri::command(rename_all = "snake_case")]
 pub fn fs_file_revision(
     state: tauri::State<'_, VaultState>,
