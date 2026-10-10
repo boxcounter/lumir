@@ -92,8 +92,9 @@ pub fn parse_context(context_json: &str) -> Result<ContextBlock, CommandError> {
 /// 都只从这里取，形态不在两处各写一份（REVIEW.md 第 8 条：同一语义两处真源会漂）。
 /// 节头同时是节本身的开头（[`context_section`] 产出）。
 pub const CONTEXT_SECTION_HEADER: &str = "当前编辑器上下文：";
-/// 提问与注入节之间的空行分隔。
-const CONTEXT_SECTION_SEPARATOR: &str = "\n\n";
+/// 提问与注入节之间的空行分隔。`pub(crate)`：parts 装配（`attachments::apply_context_section`）
+/// 与串装配（`assemble_user_message`）同取这一条，不在两处各写一份（REVIEW.md 第 8 条）。
+pub(crate) const CONTEXT_SECTION_SEPARATOR: &str = "\n\n";
 /// 注入节的方括号（`[当前编辑器上下文：…]`）。
 const CONTEXT_SECTION_OPEN: &str = "[";
 const CONTEXT_SECTION_CLOSE: &str = "]";
@@ -135,11 +136,18 @@ pub struct AssembledMessage {
     pub context_section: Option<String>,
 }
 
+/// 给上下文节加方括号（`[当前编辑器上下文：…]`）——装配的唯一出口：
+/// `assemble_user_message`（串装配）与 `attachments::apply_context_section`（parts 装配）
+/// 同取这一条，方括号形态不在两处各写一份（REVIEW.md 第 8 条）。
+pub fn bracket_context_section(section: &str) -> String {
+    format!("{CONTEXT_SECTION_OPEN}{section}{CONTEXT_SECTION_CLOSE}")
+}
+
 /// user 消息装配 = 提问 + 上下文节；节同时作为结构化值返回供会话留存（同一次生成）。
 pub fn assemble_user_message(message: &str, block: &ContextBlock) -> AssembledMessage {
     match context_section(block) {
         Some(section) => {
-            let bracketed = format!("{CONTEXT_SECTION_OPEN}{section}{CONTEXT_SECTION_CLOSE}");
+            let bracketed = bracket_context_section(&section);
             AssembledMessage {
                 text: format!("{message}{CONTEXT_SECTION_SEPARATOR}{bracketed}"),
                 context_section: Some(bracketed),
@@ -170,6 +178,34 @@ pub fn strip_context_section(text: &str) -> &str {
     }
 }
 
+/// run_turn / run_turn_for 的投递入参面（change harness-composer-image-paste design §4.2）：
+/// 发送路径（`harness_send`）给前端投影的 parts（有序，承载 text/image 交错）；文本调用方
+/// （压缩路径 / 既有单测）经 `From<String>` / `From<&str>` 进**单 text part**——与旧
+/// 「单序列化串」语义逐字节等价（纯文本消息投影仍退化为单 text part）。
+pub struct DeliveryInput(pub Vec<super::attachments::DeliveryPart>);
+
+impl From<String> for DeliveryInput {
+    fn from(text: String) -> Self {
+        Self(vec![super::attachments::DeliveryPart {
+            kind: "text".to_string(),
+            text: Some(text),
+            name: None,
+        }])
+    }
+}
+
+impl From<&str> for DeliveryInput {
+    fn from(text: &str) -> Self {
+        text.to_string().into()
+    }
+}
+
+impl From<Vec<super::attachments::DeliveryPart>> for DeliveryInput {
+    fn from(parts: Vec<super::attachments::DeliveryPart>) -> Self {
+        Self(parts)
+    }
+}
+
 /// run_turn 的 tauri 入口（command 层 spawn 在 `lumir-harness-llm` 专线程上跑）。
 ///
 /// panic 收口（r1 P2-3）：线程中途 panic 若不收口，busy 标志永久残留、
@@ -181,7 +217,7 @@ pub fn run_turn(
     runtime: Runtime,
     scope: VaultScope,
     config: HarnessConfig,
-    message: String,
+    parts: impl Into<DeliveryInput>,
     context_section: Option<String>,
 ) {
     // 事件信封（M312）：每个 harness:event 都带 vault 根路径（= 会话标识），前端据此只渲染
@@ -189,7 +225,7 @@ pub fn run_turn(
     // `run_turn_for` 都不必各带一个 vault 参数。
     let app_sink = TauriEventSink(app);
     let sink = events::ScopedSink::new(&app_sink, scope.key());
-    let mut client = match llm::client(&config) {
+    let mut client = match llm::client(&config, &scope.vault_id) {
         Ok(client) => client,
         Err(e) => {
             // 配置级失败（mock fixture 缺失 / api_key 未配）：错误事件即终态。
@@ -204,7 +240,7 @@ pub fn run_turn(
             &runtime,
             &scope,
             &config,
-            message,
+            parts,
             context_section,
             client.as_mut(),
         );
@@ -231,18 +267,27 @@ pub fn run_turn_for(
     runtime: &Runtime,
     scope: &VaultScope,
     config: &HarnessConfig,
-    message: String,
+    parts: impl Into<DeliveryInput>,
     context_section: Option<String>,
     client: &mut dyn LlmClient,
 ) {
     // user 消息入队（LLM 侧 + 面板侧 + JSONL + 上下文节记录，压缩重注入用）。
     // 上下文节由调用侧从 ContextBlock **同一次生成**并传入（装配与存储同源，M309）——
-    // 不再从拼好的 message 里重解析（正文含 `\n\n[` 时会串味）。
+    // 不再从拼好的 message 里重解析（正文含 `\n\n[` 时会串味）。投递 parts 与面板文本是
+    // 同一块序列的两个投影，由 attachments 模块同一组函数产出（design §4.2，REVIEW.md
+    // 第 8 条）；会话侧（input 项 / JSONL）恒为引用形态，base64 展开只在 client 发送前。
     let enqueue = runtime.with_session(scope, |s| {
-        s.push_input(session::user_item(&message));
+        let parts =
+            super::attachments::apply_context_section(parts.into().0, context_section.as_deref());
+        let item = super::attachments::user_item_of_parts(&parts);
+        let panel_text = item["content"]
+            .as_array()
+            .and_then(|content| super::attachments::panel_text_of_content(content))
+            .unwrap_or_default();
+        s.push_input(item);
         s.push_panel(PanelMessage {
             role: "user".into(),
-            text: Some(message.clone()),
+            text: Some(panel_text),
             summary: None,
             name: None,
             status: None,

@@ -60,7 +60,7 @@ async function stubHarness(page: Page): Promise<void> {
     w.__sentMessages = [];
     internals.invoke = async (cmd: string, args: any) => {
       if (cmd === "harness_send") {
-        w.__sentMessages.push({ message: args.message });
+        w.__sentMessages.push({ parts_json: args.parts_json });
         return null;
       }
       if (cmd === "harness_abort") return null;
@@ -226,9 +226,13 @@ test("序列化结构：发送投递的文本含 <msg-quote role at>（无编号
   await page.keyboard.type("这里说的筛选成本具体指什么？");
   await page.locator(".lumir-hp-send").click();
 
-  const sent = await page.evaluate(() => (window as unknown as { __sentMessages: { message: string }[] }).__sentMessages);
+  const sent = await page.evaluate(() => (window as unknown as { __sentMessages: { parts_json: string }[] }).__sentMessages);
   expect(sent.length).toBe(1);
-  const message = sent[0].message;
+  // 投递投影（M440）：纯文本消息 = 单 text part，文本面与历史序列化逐字节一致。
+  const parts = JSON.parse(sent[0].parts_json) as Array<{ kind: string; text?: string }>;
+  expect(parts).toHaveLength(1);
+  expect(parts[0].kind).toBe("text");
+  const message = parts[0].text ?? "";
   // role 必选且合法；at 是秒级 ISO 本地串（时区无关断言，只钉形状）。
   expect(message).toMatch(/<msg-quote role="assistant" at="\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}">/);
   expect(message).toContain(ASSISTANT_TEXT);

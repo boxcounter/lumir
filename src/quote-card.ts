@@ -44,12 +44,33 @@ export interface MessageQuoteCard {
 }
 
 /**
- * 混排对话输入区的一个块：引用卡片、消息摘录卡片或问题段落，可任意交错。
- * 序列化顺序即数组顺序（卡片阅读顺序 = 序列化顺序），顶层只有这三类块。
+ * harness 附件引用（change harness-composer-image-paste design §3）：内容寻址文件名
+ * `pasted-<hash16>.<ext>` 是单一真源；`sourceMime` 是原始剪贴板 mime，仅供前端显示 /
+ * 诊断，不进投递内容。
+ */
+export interface ImageRef {
+  /** 内容寻址文件名 `pasted-<hash16>.<ext>`。序列化与留存里用的就是它。 */
+  name: string;
+  /** 原始剪贴板 mime（仅供前端显示/诊断，不进投递内容）。 */
+  sourceMime: string;
+}
+
+/** 图片卡片数据（design §3）。字节不落数据模型——缩略图渲染时经读回命令按需取
+ * （避免 base64 渗进快照与 JSONL）。 */
+export interface ImageCard extends ImageRef {
+  /** 像素尺寸（落盘命令回传，元信息行用）；快照从 wire 引用恢复时缺席（只显文件名）。 */
+  width?: number;
+  height?: number;
+}
+
+/**
+ * 混排对话输入区的一个块：引用卡片、消息摘录卡片、图片卡片或问题段落，可任意交错。
+ * 序列化顺序即数组顺序（卡片阅读顺序 = 序列化顺序），顶层只有这四类块。
  */
 export type ComposerBlock =
   | { readonly kind: "quote"; readonly card: QuoteCard }
   | { readonly kind: "msgquote"; readonly card: MessageQuoteCard }
+  | { readonly kind: "image"; readonly card: ImageCard } // harness-composer-image-paste 新增
   | { readonly kind: "paragraph"; readonly text: string };
 
 /** `lines` 缺失时的错误文案：这是调用方的责任（取不到行范围就不得生成卡片），不是可降级的态。
@@ -140,41 +161,100 @@ function escapeXmlAttribute(value: string): string {
 }
 
 /**
- * 把混排块序列序列化为投递给模型的用户消息（XML）。
- *
- * - 引用卡片 → 一行 `<quote file="…" heading="…" lines="A-B">摘录原文</quote>`；三个属性恒在，
- *   heading 为空（摘录在首个标题之前）时产出 `heading=""`，属性集合保持稳定。
- * - 消息摘录卡片 → `<msg-quote role="…" at="…">摘录原文</msg-quote>`；`role` 必选且合法，
- *   `at` 可缺（来源消息上屏戳不可考时产出 role-only 元素，ISO 8601 本地时间串秒级）。
- * - 问题段落 → 一行文本节点，按交错顺序落在标签之间；**空（纯空白）段落不产出**，
- *   序列化里不留空行（不产出内容 ≠ 把空段落投出去）。
- * - 摘录原文与问题文字都按文本节点转义（问题文字也可能含 `<`，不转义会破坏 XML 结构）。
- *   摘录原文里的换行原样保留——转义只处理 XML 保留字符，「round-trip 可还原」优先于「压成一行」；
- *   选区是否跨行、要不要压平，是创建手势在捕获时的决定，不在这一层擅自改写原文。
- * - **协议零编号**：两类卡片的属性集合都是固定的语义键，不带 index 或任何序号（一致性原则）。
- * - 任一卡片的必选字段缺失（quote 的 lines 空 / msgquote 的 role 非法或原文空）→ 抛错，不产出半截消息。
+ * 投递投影（change harness-composer-image-paste design §4）：混排块序列 → Responses
+ * `input` 数组 content parts 的中间形态。`text` part 是已 XML 序列化的文本（可为多行，
+ * 即 serializeQuoteMessage 对一段连续文本块的产出）；`image` part 只带 harness 附件名
+ * （会话侧记引用形态，发送前由后端展开为 data URL）。
  */
-export function serializeQuoteMessage(blocks: readonly ComposerBlock[]): string {
-  const lines: string[] = [];
+export type DeliveryPart = { kind: "text"; text: string } | { kind: "image"; name: string };
+
+/**
+ * 同一块序列的两个投影（design §4.2，REVIEW.md 第 8 条：同一语义 MUST 只有一处产出）：
+ * `panelText` 是面板/transcript/快照用的单字符串（图片块落成 `<image …/>` 占位元素），
+ * `parts` 是投递给模型的 content parts。两者由**同一个函数**产出，不可能漂。
+ */
+export interface DeliveryProjection {
+  panelText: string;
+  parts: DeliveryPart[];
+}
+
+/** 图片块在面板文本里的占位元素（快照恢复 / transcript 复制的往返载体）。 */
+function imagePlaceholderLine(card: ImageCard): string {
+  const dims =
+    card.width !== undefined && card.height !== undefined
+      ? ` width="${card.width}" height="${card.height}"`
+      : "";
+  return `<image ref="${escapeXmlAttribute(card.name)}" type="${escapeXmlAttribute(card.sourceMime)}"${dims}/>`;
+}
+
+/**
+ * 把混排块序列投影为投递 parts + 面板文本（design §4.1）。规则：
+ * - 按块序走：连续文本块（quote / msgquote / 段落）累积进当前 text part（各行以 `\n`
+ *   连接，行生成规则与旧 serializeQuoteMessage 逐字节一致）；遇到 image 块 flush 当前
+ *   text part、推一个 image part。`[段落, 图, 段落]` → `[text, image, text]`，交错顺序逐位保留。
+ * - 图片块在面板文本里落一个 `<image ref="…" type="…" width="…" height="…"/>` 占位元素
+ *   （属性恒在序：ref / type / width / height；尺寸缺席时 width/height 两个属性一起省略）。
+ * - 向后兼容：不含图片块时投影是**单** text part、panelText 与旧 serializeQuoteMessage
+ *   逐字节一致（parts[0].text === panelText）。
+ * - 任一卡通片的必选字段缺失（quote 的 lines 空 / msgquote 的 role 非法或原文空）→ 抛错，
+ *   不产出半截消息（与旧行为一致）。
+ */
+export function projectDelivery(blocks: readonly ComposerBlock[]): DeliveryProjection {
+  const parts: DeliveryPart[] = [];
+  const panelLines: string[] = [];
+  let textRun: string[] = [];
+  const flush = (): void => {
+    if (textRun.length === 0) return;
+    parts.push({ kind: "text", text: textRun.join("\n") });
+    textRun = [];
+  };
+  /** 文本行：同时进当前 text part 的累积与面板文本（两个投影同一次产出）。 */
+  const pushTextLine = (line: string): void => {
+    textRun.push(line);
+    panelLines.push(line);
+  };
   for (const block of blocks) {
+    if (block.kind === "image") {
+      flush();
+      panelLines.push(imagePlaceholderLine(block.card));
+      parts.push({ kind: "image", name: block.card.name });
+      continue;
+    }
     if (block.kind === "quote") {
       const { card } = block;
       if (card.lines.trim() === "") throw new Error(LINES_REQUIRED_MESSAGE);
-      lines.push(
+      pushTextLine(
         `<quote file="${escapeXmlAttribute(card.file)}" heading="${escapeXmlAttribute(card.heading)}"` +
           ` lines="${escapeXmlAttribute(card.lines)}">${escapeXmlText(card.text)}</quote>`,
       );
-    } else if (block.kind === "msgquote") {
+      continue;
+    }
+    if (block.kind === "msgquote") {
       const { card } = block;
       if (card.role !== "user" && card.role !== "assistant") throw new Error(MESSAGE_QUOTE_ROLE_MESSAGE);
       if (card.text.trim() === "") throw new Error(MESSAGE_QUOTE_TEXT_MESSAGE);
       const at = card.at === null ? "" : ` at="${escapeXmlAttribute(formatMessageAt(card.at))}"`;
-      lines.push(
+      pushTextLine(
         `<msg-quote role="${escapeXmlAttribute(card.role)}"${at}>${escapeXmlText(card.text)}</msg-quote>`,
       );
-    } else if (block.text.trim() !== "") {
-      lines.push(escapeXmlText(block.text));
+      continue;
     }
+    if (block.text.trim() !== "") pushTextLine(escapeXmlText(block.text));
   }
-  return lines.join("\n");
+  flush();
+  return { panelText: panelLines.join("\n"), parts };
+}
+
+/** 投递投影的 parts 面（design §4.1 的 `serializeDelivery`）。 */
+export function serializeDelivery(blocks: readonly ComposerBlock[]): DeliveryPart[] {
+  return projectDelivery(blocks).parts;
+}
+
+/**
+ * 把混排块序列序列化为面板文本投影（投递给模型的用户消息的 XML 文本面 + 图片占位
+ * 元素）。= projectDelivery(blocks).panelText。图片卡片的行规则见 imagePlaceholderLine；
+ * 纯文本/卡片消息与历史行为逐字节一致。
+ */
+export function serializeQuoteMessage(blocks: readonly ComposerBlock[]): string {
+  return projectDelivery(blocks).panelText;
 }

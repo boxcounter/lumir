@@ -1578,21 +1578,25 @@ fn snapshot_thinking_capability_follows_provider_and_model() {
             HarnessModelSpec {
                 id: "kimi-k3".into(),
                 effort: true,
+                vision: true,
                 window: 1_048_576,
             },
             HarnessModelSpec {
                 id: "kimi-k2.6".into(),
                 effort: false,
+                vision: false,
                 window: 262_144,
             },
             HarnessModelSpec {
                 id: "kimi-k2.7-code".into(),
                 effort: false,
+                vision: false,
                 window: 262_144,
             },
             HarnessModelSpec {
                 id: "kimi-k2".into(),
                 effort: false,
+                vision: false,
                 window: 131_072,
             },
         ];

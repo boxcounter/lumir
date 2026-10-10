@@ -14,6 +14,7 @@ import {
   deleteForwardAtCaret,
   deleteSelectionRange,
   insertCardAtCaret,
+  insertBlockAtCaret,
   insertPlainTextAtCaret,
   insertSoftBreakAtCaret,
   parseQuoteMessage,
@@ -39,6 +40,16 @@ const cardB: QuoteCard = {
 };
 const para = (text: string): ComposerBlock => ({ kind: "paragraph", text });
 const quote = (card: QuoteCard): ComposerBlock => ({ kind: "quote", card });
+// 图片卡片块（change harness-composer-image-paste）：HC1 生成器的第三类原子卡片。
+const imageBlock: ComposerBlock = {
+  kind: "image",
+  card: {
+    name: "pasted-0123456789abcdef.webp",
+    sourceMime: "image/png",
+    width: 640,
+    height: 360,
+  },
+};
 
 // ── 光标处拆段插入（spec 场景「光标处拆段插入」+ Alex 裁决：光标落卡片下一行） ──
 
@@ -80,6 +91,16 @@ test("insertCardAtCaret：末尾追加（无块）→ 卡片 + 空段落", () =>
   const { blocks, caret } = insertCardAtCaret([], { block: 0, offset: 0 }, cardA);
   assert.deepEqual(blocks, [quote(cardA), para("")]);
   assert.deepEqual(caret, { block: 1, offset: 0 });
+});
+
+test("insertBlockAtCaret：图片卡片块与引用卡同语义（段中拆两段、卡片居中、光标落其后段落）", () => {
+  const { blocks, caret } = insertBlockAtCaret(
+    [para("前段文字后段")],
+    { block: 0, offset: 2 },
+    imageBlock,
+  );
+  assert.deepEqual(blocks, [para("前段"), imageBlock, para("文字后段")]);
+  assert.deepEqual(caret, { block: 2, offset: 0 });
 });
 
 // ── 粘贴净化（quirk ①）：纯文本经模型插入，\n 拆段落 ─────────────────────────
@@ -237,11 +258,17 @@ function blockSequences(): ComposerBlock[][] {
     for (const second of texts) {
       sequences.push([para(first), para(second)]);
       sequences.push([para(first), quote(cardA), para(second)]);
+      // 图片卡片（change harness-composer-image-paste）：与引用卡同族的「不占文本行」
+      // 原子块——HC1 的可见行判据对两类卡片必须同口径成立。
+      sequences.push([para(first), imageBlock, para(second)]);
     }
     sequences.push([quote(cardA), para(first)]);
     sequences.push([para(first), quote(cardA)]);
+    sequences.push([imageBlock, para(first)]);
+    sequences.push([para(first), imageBlock]);
   }
   sequences.push([quote(cardA)]);
+  sequences.push([imageBlock]);
   return sequences;
 }
 

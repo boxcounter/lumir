@@ -135,6 +135,10 @@ pub fn run() {
             harness::harness_list_sessions,
             // 历史会话删除（M406）：选择器行内删除入口的后端，活跃会话拒删。
             harness::harness_delete_session,
+            // composer 粘贴图片（change harness-composer-image-paste）：harness 侧内容
+            // 寻址附件的写 / 读（落点 attachments/<vault 稳定 id>/，MUST NOT 触碰 vault）。
+            harness::harness_write_image,
+            harness::harness_read_image,
         ])
         .setup(move |app| {
             // 诊断日志先初始化：`[log] level` 在第一条事件之前生效（level = off 时

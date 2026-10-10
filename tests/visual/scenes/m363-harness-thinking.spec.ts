@@ -42,7 +42,7 @@ async function stubHarnessThinking(page: Page, thinking?: unknown): Promise<void
         return null;
       }
       if (cmd === "harness_send") {
-        w.__sentMessages.push({ message: args.message });
+        w.__sentMessages.push({ parts_json: args.parts_json });
         return null;
       }
       if (cmd === "harness_abort") {

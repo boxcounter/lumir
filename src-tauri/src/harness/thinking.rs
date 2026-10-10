@@ -177,6 +177,7 @@ mod tests {
         let spec = |id: &str, effort: bool| HarnessModelSpec {
             id: id.into(),
             effort,
+            vision: false,
             window: 262_144,
         };
         let harness = declared(vec![

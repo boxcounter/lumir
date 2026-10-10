@@ -19,6 +19,12 @@ id: string,
  */
 effort: boolean, 
 /**
+ * 该模型是否接受图片输入（`input_image`；change harness-composer-image-paste，
+ * 键名 2026-10-10 由 `image` 改名 `vision`）。未声明 / 未列出 = 不支持
+ * （保守默认，与 `effort` 同侧）；发送闸（`harness_image_unsupported`）的判据。
+ */
+vision: boolean, 
+/**
  * 上下文窗口（tokens）：ctx% 读数的分母。
  */
 window: bigint, };

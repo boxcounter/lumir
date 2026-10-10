@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "responses": [
+    {
+      "text": "验收回答：图片已收到。",
+      "usage": { "input_tokens": 1200, "cached_tokens": 100, "output_tokens": 10 }
+    },
+    {
+      "text": "验收回答：图片已收到。",
+      "usage": { "input_tokens": 1400, "cached_tokens": 200, "output_tokens": 10 }
+    }
+  ]
+}
