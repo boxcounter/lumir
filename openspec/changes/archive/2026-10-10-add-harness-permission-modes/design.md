@@ -189,8 +189,8 @@ pub fn fs_move_entry(root: &Path, from_rel: &str, to_rel: &str) -> Result<String
 ## 7. 模式切换：UI 与配置
 
 - **配置键**：`[harness].permission_mode`，闭集合 `read_only` / `vault_write` / `full_access`，默认 `vault_write`。校验沿用既有模板：闭集合外取值回落默认 + 人话 warning；类型不符整文件回落。运行期写回经 `config_set_value(section, key, value)`（与模型 chip / 思考 chip 同路）。
-- **UI 入口**：composer 控制行新增权限 chip，位于思考 chip 之后、ctx 读数之前。**文案分两级**（Alex 2026-10-09 裁决，原「chip 显示全名」口径作废）：
-  - **chip = 短名**（zh：只读 / 写入 / 完全；en：Read / Write / Full，走文案表）——控制行在窄面板下要被模型 / 思考 / 权限三个 chip 共同挤占，短名才保证三档都能完整显示。
+- **UI 入口**：composer 控制行新增权限 chip，位于模型 / 思考合并选择器 chip 之后、ctx 读数之前（M373 起模型与思考合并为一个 chip，「思考 chip 之后」的旧表述随之改准）。**文案分两级**（Alex 2026-10-09 裁决，原「chip 显示全名」口径作废）：
+  - **chip = 短名**（zh：只读 / 可写 / 完全；en：Read / Write / Full，走文案表）——控制行被合并选择器 chip 与权限 chip 共同挤占，短名才保证三档都能完整显示。zh 短名「写入」于 2026-10-10 批复改为「可写」（M417）。
   - **浮层列表项 = 全名**（zh：只读 / 保险库写入 / 完全访问；en：Read Only / Vault Write / Full Access）——全名只在浮层里出现一次，那里宽度不受控制行约束。
   - Alex 原话：「三档在 chip 里能完整显示名称吗？如果不能，可以减省成 Read / Write / Full，然后在点击出现的选择列表里写全名」。
 - **浮层结构**：三档单选、当前档勾选、**每档一行释义**（Kimi 风格：档名短、语义易混，一行释义消歧档名与实际行为的偏差；原「无释义文案」口径作废）。释义口径（措辞可在实现批次微调，语义方向以此为准）：

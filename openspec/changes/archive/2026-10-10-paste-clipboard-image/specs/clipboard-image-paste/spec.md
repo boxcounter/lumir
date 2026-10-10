@@ -44,8 +44,10 @@ code / text 模式编辑器、只读（不可编辑）文档中的粘贴 MUST NO
 
 落盘位置 SHALL 为**当前笔记所在目录**；无路径文档 SHALL 退落 vault 根。落盘文件名
 SHALL 为内容寻址形态 `pasted-<SHA-256 前 16 位十六进制>.<目标扩展名>`，**哈希以
-转码后字节计算**（内容寻址：同名 ⇒ 同转码结果 ⇒ 同内容）；扩展名按转码目标格式映射，
-映射表 SHALL 收进 `src/preview/attachments.ts` 的既有 MIME 注册表，MUST NOT 另立第二份。
+转码后字节计算**（内容寻址：同名 ⇒ 同转码结果 ⇒ 同内容）；目标扩展名由后端按转码目标格式决定——
+`source_mime` → 目标格式与扩展名的映射 SHALL 只存在于后端 `fs_io` 的 `attachment_target`（唯一真源，
+前端 MUST NOT 另立第二份）；`src/preview/attachments.ts` 的 MIME 注册表只承担渲染侧的
+「扩展名 → MIME」方向，不承担转码目标映射。
 
 同一张图片（字节相同）再次粘贴时——**无论目标笔记在哪个目录**——系统 SHALL 探测到
 全 vault 已有同名文件并跳过写盘，仅插入引用：MUST NOT 产生重复副本（首贴位置赢）。
