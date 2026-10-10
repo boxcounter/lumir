@@ -644,6 +644,62 @@
 
 ## 待修 findings（不阻塞）
 
+### cargo 锁「先复核再创建」存在 check-then-create 竞态（tower finding，2026-10-10，low）
+
+**症状**：worker-m419 与 worker-m421 同秒各自复核「锁不存在」后双双广播持有 `/tmp/lumir-cargo-build.lock`，
+实际只有一方的 cargo 在跑（tower 亲查锁元数据坐实）。本次后果轻微（另一方 cargo 尚未启动即被叫停），窗口客观存在。
+**修法方向**：锁获取改 mkdir 原子语义（创建成功=持有、失败=被占），去掉「先检查后创建」两步流程；
+落点 REVIEW.md 或 HANDOFF 常备纪律的 cargo 锁条目。
+finding：`.tower/comms/findings/20261010-tower-improve-cargo-check-then-create-m419-m421-claim.md`。
+
+### playwright 探针不设 outputDir 会清空 worktree 的 test-results/（worker-m419 实证，2026-10-10，low）
+
+**症状**：worker 在 worktree 内跑 playwright 探针未显式设 outputDir，playwright 默认把 worktree 的
+`test-results/` 当输出目录并在跑前清空——已 PASS 的验收证据被清（已从副本重建，无实际损失）。
+**修法方向**：纪律条目「worktree 内跑 playwright 探针必须显式 outputDir 指向 /tmp，绝不指向仓内 test-results/」，
+落点 REVIEW.md 或 scripts/acceptance/README.md。
+finding：`.tower/comms/findings/20261010-tower-improve-playwright-outputdir-worktree-test-results-m419.md`。
+
+### 「未保存新文档」状态无 UI 入口：贴图退 vault 根这条行为真机不可达（worker-m416 finding，2026-10-10，medium）
+
+**症状**：产品里没有任何可达路径能产生「无路径、可编辑」的文档，因此 paste-clipboard-image 裁决的
+「未保存新文档贴图退 vault 根」真机验不到，只能由单测钉住（M416 收尾坐实，三条路径都封死）。
+**修法方向**：将来若加「新建未保存文档」入口，补一条真机验收场景覆盖该形态。
+finding：`.tower/comms/findings/20261010-worker-m416-idea-ui-vault.md`。
+
+### toast 浮条缺 ARIA live region 语义，读屏不播报瞬时反馈（worker-m420 finding，2026-10-10，low）
+
+**症状**：`.lumir-toast`（保存/复制成功与各类错误提示的唯一出口）无 role、无 aria-live，VoiceOver 不主动播报。
+**未实测**：本仓验收走 KimiCU AX dump，覆盖不到播报行为；且实测加 `role="status"` 对 WKWebView AX 形态无影响
+（浮条只产一个无 bbox 的 AXStaticText），验收层验不到。
+**修法方向**：实现层加 `role="status"`（普通）/ 错误类 `role="alert"`；按「不做无声明的验证」处理，不配验收断言。
+finding：`.tower/comms/findings/20261010-worker-m420-improve-toast-aria-live-region.md`。
+
+### 列表 lazy continuation 渲染归属：引用块内与 1–3 空格缩进两档未覆盖（worker-m421 finding，2026-10-10，low）
+
+**症状**：M421 的 L1 判据取「文档第 1 列即非空白」，两档同族形态未覆盖：① 引用块内 lazy 行（`> - a` 后 `> b`）；
+② lazy 行带 1–3 空格（CommonMark 允许的 lazy 缩进区间）。已写进合同 docs/specs/lists.md「已知边界」。
+**修法方向**：先补 Obsidian 对照（两档），再决定是否把判据推广到「剥离引用前缀后的内容列 == 0」；
+推广前核对行首空白吞除装饰不会把 `> ` 前缀一起吃掉。
+finding：`.tower/comms/findings/20261010-worker-m421-improve-lazy-continuation-1-3-m421-v1.md`。
+
+### composer 显式光标 reveal 在真机验收层无区分度，chromium 侧可补断言（worker-m419 finding，2026-10-10，low）
+
+**症状**：M419 的 `scrollCaretIntoView` 停用后真机场景 118 仍绿——WKWebView 程序化改选区时自己 reveal 光标；
+Blink 不会（chromium 探针实测差整整一行）。该代码是「引擎无关的保证」，真机层拿不到区分度。
+**修法方向**：chromium 视觉套件（tests/visual/scenes/**）补一条「断行后 scrollTop 触及滚动上限」结构断言；
+非紧急，现有判据挂 caretScrollTop 单测已够。
+finding：`.tower/comms/findings/20261010-worker-m419-improve-composer-reveal-chromium.md`。
+
+### living spec 与实现的矛盾无机器防线：validate 只查结构、docs-check 只查链接（worker-m418 finding，2026-10-10，low）
+
+**症状**：living spec harness「上下文用量显示」写「ⓘ 钮点击展开气泡」，实现 2026-10-07 起已是 hover 浮层
+（无 focusable 入口），漂移 3 天无人发现；归档时 reshape delta 整块 MODIFIED 复述旧句，差点把漂移重新固化
+（M418 归档评审抓到并已改准）。`openspec validate --strict` 与 `docs-check` 都看不见 spec↔实现矛盾，
+目前唯一防线是归档评审的逐条对账。
+**修法方向**：无现成机器方案；短期靠归档评审纪律兜底，长期可评估「spec 条款 ↔ 代码锚点」登记制。
+finding：`.tower/comms/findings/20261010-worker-m418-improve-living-spec-harness-ctx-3-m418.md`。
+
 ### Full Access 档下 sudo / xargs / find -exec 间接调 rm 绕过危险命令黑名单（reviewer-m407 r1 finding，2026-10-09 登记；**Alex 2026-10-10 裁决：堵**，medium）
 
 **缺口**：M407 的分类闸门对 argv 做字面命令名匹配，`sudo rm` / `xargs rm` / `find -exec rm` 这类包装/间接
