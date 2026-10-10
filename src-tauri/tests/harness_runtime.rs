@@ -370,14 +370,20 @@ fn tool_loop_roundtrip_with_fixture_file() {
         "{:?}",
         file.session_open
     );
-    // 装配清单在场，且「vault 根 AGENTS.md 不存在」如实记 exists:false。
+    // 装配清单在场，「vault 根 AGENTS.md / AGENTS.local.md 均不存在」如实记 exists:false。
     let assembly = file.session_open["assembly"].as_array().unwrap();
-    assert_eq!(assembly.len(), 5, "{assembly:?}");
+    assert_eq!(assembly.len(), 6, "{assembly:?}");
     let vault_root = assembly
         .iter()
         .find(|s| s["source"] == "agents_vault_root")
         .unwrap();
     assert_eq!(vault_root["exists"], false, "{vault_root:?}");
+    let vault_local = assembly
+        .iter()
+        .find(|s| s["source"] == "agents_vault_root_local")
+        .unwrap();
+    assert_eq!(vault_local["exists"], false, "{vault_local:?}");
+    assert_eq!(vault_local["bytes"], 0, "{vault_local:?}");
     let kinds: Vec<&str> = file
         .records
         .iter()

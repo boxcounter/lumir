@@ -1,7 +1,8 @@
-//! 系统上下文装配（design §5、§12）：固定身份段 + AGENTS.md 双层 + Skill 索引。
+//! 系统上下文装配（design §5、§12）：固定身份段 + AGENTS.md 三层 + Skill 索引。
 //!
 //! - 固定身份段：v1 不做 persona 系统（裁决点 7），固定朴素身份 + 工具使用纪律。
-//! - AGENTS.md 双层：user-wide（`~/.agents/AGENTS.md`）+ vault 根（`<vault>/AGENTS.md`），
+//! - AGENTS.md 三层：user-wide（`~/.agents/AGENTS.md`）、vault 根（`<vault>/AGENTS.md`）、
+//!   vault 根本地覆盖层（`<vault>/AGENTS.local.md`，change `harness-agents-local-md`）；
 //!   文件不存在**静默跳过**（常态）；嵌套子目录级是 Non-goal。
 //! - Skill 索引：双根发现（`~/.agents/skills` + `<vault>/.agents/skills`），vault-wide
 //!   同名覆盖 user-wide（就近原则）；只把 name + description 清单注入系统上下文
@@ -57,7 +58,8 @@ assistant = 你此前的回复；at 为来源消息的上屏时刻，ISO 8601 �
 /// 事后无法区分「没配」与「忘了注入」。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct AssemblySource {
-    /// 来源标识：identity / quote_reference / agents_user_wide / agents_vault_root / skill_index。
+    /// 来源标识：identity / quote_reference / agents_user_wide / agents_vault_root /
+    /// agents_vault_root_local / skill_index。
     pub source: &'static str,
     /// 来源路径（固定段与 Skill 索引无单一文件来源，为 null）。
     pub path: Option<String>,
@@ -99,7 +101,7 @@ pub struct AssembledSystem {
     pub manifest: Vec<AssemblySource>,
 }
 
-/// 装配完整系统上下文（固定身份段 + AGENTS.md 双层 + Skill 索引 + 摘录回指纪律）。
+/// 装配完整系统上下文（固定身份段 + AGENTS.md 三层 + Skill 索引 + 摘录回指纪律）。
 pub fn assemble_system(vault_root: &Path) -> AssembledSystem {
     let mut out = String::from(IDENTITY);
     let mut manifest = vec![AssemblySource::fixed("identity", IDENTITY)];
@@ -128,6 +130,23 @@ pub fn assemble_system(vault_root: &Path) -> AssembledSystem {
     ));
     if let Some(vault_agents) = &vault_agents {
         push_section(&mut out, "vault 根 AGENTS.md", vault_agents);
+    }
+    // 第三层：vault 根本地覆盖层（`<vault>/AGENTS.local.md`，change `harness-agents-local-md`）。
+    // 排 vault 根 AGENTS.md 之后注入——「后位为准」的覆盖语义由位置 + 标题共同表达，系统不解析
+    // 两层内容（不引入 merge）。
+    let vault_local_path = vault_root.join("AGENTS.local.md");
+    let vault_local = read_agents_md(&vault_local_path);
+    manifest.push(AssemblySource::file(
+        "agents_vault_root_local",
+        vault_local_path,
+        vault_local.as_deref(),
+    ));
+    if let Some(vault_local) = &vault_local {
+        push_section(
+            &mut out,
+            "vault 根 AGENTS.local.md（本机本地覆盖层，与上文 AGENTS.md 冲突时以此为准）",
+            vault_local,
+        );
     }
     let skills = discover_skills(vault_root);
     let mut index = String::new();
@@ -397,9 +416,9 @@ mod tests {
         // 消息摘录同属这一固定段（M423，change harness-message-excerpt）：两种元素一处注入，
         // 两个 provider 因此同时拿到。
         assert!(system.contains("<msg-quote role=\"…\""), "{system}");
-        // 装配清单：五个来源全在场，双层 AGENTS.md 各记路径与存在与否，skill_index 记数量。
+        // 装配清单：六个来源全在场，三层 AGENTS 指令文件各记路径与存在与否，skill_index 记数量。
         let manifest = &assembled.manifest;
-        assert_eq!(manifest.len(), 5, "{manifest:?}");
+        assert_eq!(manifest.len(), 6, "{manifest:?}");
         let by_source = |s: &str| manifest.iter().find(|m| m.source == s).unwrap();
         assert!(by_source("identity").exists);
         assert!(by_source("quote_reference").exists);
@@ -409,11 +428,22 @@ mod tests {
         let vault_src = by_source("agents_vault_root");
         assert!(vault_src.path.as_deref().unwrap().ends_with("AGENTS.md"));
         assert!(vault_src.exists && vault_src.bytes == 11, "{vault_src:?}"); // "vault rules"
+                                                                             // 本地覆盖层缺失（vault 根无 AGENTS.local.md）同样在场：exists:false、bytes 0。
+        let vault_local = by_source("agents_vault_root_local");
+        assert!(vault_local
+            .path
+            .as_deref()
+            .unwrap()
+            .ends_with("AGENTS.local.md"));
+        assert!(
+            !vault_local.exists && vault_local.bytes == 0,
+            "{vault_local:?}"
+        );
         let skills = by_source("skill_index");
         assert_eq!(skills.skills, Some(1));
         assert!(skills.exists && skills.bytes > 0, "{skills:?}");
 
-        // 换到「空 HOME」+ 无 AGENTS.md / 无 skills 的 vault：双层与索引静默跳过，
+        // 换到「空 HOME」+ 无 AGENTS.md / 无 skills 的 vault：三层与索引静默跳过，
         // 只剩 identity + 摘录回指纪律两个固定段；清单如实记 exists:false。
         let home3 = tmpdir("home3");
         std::env::set_var("HOME", &home3);
@@ -423,7 +453,7 @@ mod tests {
         assert!(!system.contains("user rules"), "{system}");
         assert!(!system.contains("vault rules"), "{system}");
         assert!(system.contains("引用摘录的纪律"), "{system}");
-        assert_eq!(assembled.manifest.len(), 5);
+        assert_eq!(assembled.manifest.len(), 6);
         assert!(
             !assembled.manifest[2].exists,
             "user-wide 缺失须记 exists:false"
@@ -432,7 +462,81 @@ mod tests {
             !assembled.manifest[3].exists,
             "vault 根缺失须记 exists:false"
         );
-        assert_eq!(assembled.manifest[4].skills, Some(0));
-        assert!(!assembled.manifest[4].exists);
+        assert!(
+            !assembled.manifest[4].exists,
+            "本地覆盖层缺失须记 exists:false"
+        );
+        assert_eq!(assembled.manifest[5].skills, Some(0));
+        assert!(!assembled.manifest[5].exists);
+    }
+
+    /// 三层齐备（change `harness-agents-local-md` design §4-1）：三份文件内容都在文本中、
+    /// 本地层内容下标晚于 vault 根 AGENTS.md 内容（顺序不变量）、清单第六项 path/exists/bytes 正确。
+    #[test]
+    fn assemble_system_injects_agents_local_after_vault_root() {
+        let _lock = HOME_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let home = tmpdir("home-local");
+        let vault = tmpdir("vault-local");
+        let _guard = EnvGuard::new(&home);
+        fs::create_dir_all(home.join(".agents")).unwrap();
+        fs::write(home.join(".agents/AGENTS.md"), "user rules").unwrap();
+        fs::write(vault.join("AGENTS.md"), "vault rules").unwrap();
+        fs::write(vault.join("AGENTS.local.md"), "local override rules").unwrap();
+
+        let assembled = assemble_system(&vault);
+        let system = assembled.text;
+        assert!(system.contains("user rules"), "{system}");
+        assert!(system.contains("vault rules"), "{system}");
+        assert!(system.contains("local override rules"), "{system}");
+        // 覆盖语义的可读载体：本地层节标题显式声明「冲突时以此为准」。
+        assert!(
+            system.contains("本机本地覆盖层，与上文 AGENTS.md 冲突时以此为准"),
+            "{system}"
+        );
+        // 顺序不变量：本地层内容排在 vault 根 AGENTS.md 内容之后。
+        let root_at = system.find("vault rules").unwrap();
+        let local_at = system.find("local override rules").unwrap();
+        assert!(root_at < local_at, "{system}");
+
+        assert_eq!(assembled.manifest.len(), 6, "{:?}", assembled.manifest);
+        let local = assembled
+            .manifest
+            .iter()
+            .find(|m| m.source == "agents_vault_root_local")
+            .unwrap();
+        assert!(local.path.as_deref().unwrap().ends_with("AGENTS.local.md"));
+        assert!(local.exists, "{local:?}");
+        assert_eq!(
+            local.bytes,
+            "local override rules".len() as u64,
+            "{local:?}"
+        );
+    }
+
+    /// 本地层缺失静默跳过（change `harness-agents-local-md` design §4-2）：其余两层照常注入，
+    /// 文本不含本地层内容；清单条目仍在场且记 exists:false / bytes 0。
+    #[test]
+    fn assemble_system_skips_missing_agents_local_silently() {
+        let _lock = HOME_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let home = tmpdir("home-no-local");
+        let vault = tmpdir("vault-no-local");
+        let _guard = EnvGuard::new(&home);
+        fs::create_dir_all(home.join(".agents")).unwrap();
+        fs::write(home.join(".agents/AGENTS.md"), "user rules").unwrap();
+        fs::write(vault.join("AGENTS.md"), "vault rules").unwrap();
+
+        let assembled = assemble_system(&vault);
+        let system = assembled.text;
+        assert!(system.contains("user rules"), "{system}");
+        assert!(system.contains("vault rules"), "{system}");
+        assert!(!system.contains("本机本地覆盖层"), "{system}");
+        assert_eq!(assembled.manifest.len(), 6);
+        let local = assembled
+            .manifest
+            .iter()
+            .find(|m| m.source == "agents_vault_root_local")
+            .unwrap();
+        assert!(!local.exists, "{local:?}");
+        assert_eq!(local.bytes, 0, "{local:?}");
     }
 }
