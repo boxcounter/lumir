@@ -683,44 +683,58 @@ function cpanelHTML() {
   </div>`;
 }
 
-/* ---- 场景说明条（截图模式一并隐藏） ---- */
+/* ---- 场景说明条（截图模式一并隐藏）；名称与说明 zh/en 双档 ---- */
 const SCENE_NOTES = {
-  single: ["单图", "模型支持图片：composer 里 1 张图片卡 + 文字。卡片与摘录卡同视觉族（同边框/圆角/底色/移除钮），不画引号竖条，缩略图做左锚；元信息行（尺寸 · 文件名）取 -qc-src 同档字号。"],
-  multi: ["多图", "多张图片卡连续排布：各卡缩略图按 object-fit:contain 收纳不同宽高比（横图/方图/竖图），卡片高度一致、节奏稳定。"],
-  mixed: ["图文交错混排", "段落、摘录引用卡、图片卡任意交错——卡片都是原子块，与段落的间距节奏一致（sp-2 纵向、首末收口）。这正是投递投影 [text, image, text, …] 的人侧镜像。"],
-  sent: ["已发送沉淀（transcript 同构）", "发送后用户消息在 transcript 按相同交错顺序呈现：图片卡可见但无移除钮；composer 已清空回占位。图片「进了上下文」对人可查（一致性原则）。"],
-  blocked: ["发送被挡（模型不支持图片）", null /* 用 t("noteBlocked") */],
-  thumbstates: ["缩略图占位态", "读字节是异步的：加载中转圈占位、加载失败 ⚠ 占位——两种回退都可见，不允许零高度空白（attachment-display 口径）。错误卡同时演示 is-error 叠加。"],
-  free: ["自由试玩", null /* 用 t("noteFree") */],
+  single: { zh: ["单图", "模型支持图片：composer 里 1 张图片卡 + 文字。卡片与摘录卡同视觉族（同边框/圆角/底色/移除钮），不画引号竖条，缩略图做左锚；元信息行（尺寸 · 文件名）取 -qc-src 同档字号。"],
+            en: ["Single image", "Model supports images: one image card + text in the composer. The card shares the quote-card visual family (same border/radius/background/remove button), no quote bar — the thumbnail is the left anchor; the meta line (dimensions · filename) uses the -qc-src typography tier."] },
+  multi: { zh: ["多图", "多张图片卡连续排布：各卡缩略图按 object-fit:contain 收纳不同宽高比（横图/方图/竖图），卡片高度一致、节奏稳定。"],
+           en: ["Multiple images", "Several image cards in a row: object-fit:contain absorbs different aspect ratios (landscape/square/portrait); card height stays uniform and the rhythm stable."] },
+  mixed: { zh: ["图文交错混排", "段落、摘录引用卡、图片卡任意交错——卡片都是原子块，与段落的间距节奏一致（sp-2 纵向、首末收口）。这正是投递投影 [text, image, text, …] 的人侧镜像。"],
+           en: ["Interleaved text & images", "Paragraphs, quote cards and image cards interleave freely — cards are atomic blocks with the same vertical rhythm as paragraphs (sp-2, first/last margins collapsed). This is the human-side mirror of the delivery projection [text, image, text, …]."] },
+  sent: { zh: ["已发送沉淀（transcript 同构）", "发送后用户消息在 transcript 按相同交错顺序呈现：图片卡可见但无移除钮；composer 已清空回占位。图片「进了上下文」对人可查（一致性原则）。"],
+          en: ["Sent (transcript isomorphic)", "After sending, the user message lands in the transcript in the same interleaved order: image cards visible but without remove buttons; the composer resets to the placeholder. Images \"in context\" stay inspectable for humans (consistency principle)."] },
+  blocked: { zh: ["发送被挡（模型不支持图片）", null /* 用 t("noteBlocked") */],
+             en: ["Send blocked (no image support)", null] },
+  thumbstates: { zh: ["缩略图占位态", "读字节是异步的：加载中转圈占位、加载失败 ⚠ 占位——两种回退都可见，不允许零高度空白（attachment-display 口径）。错误卡同时演示 is-error 叠加。"],
+                 en: ["Thumbnail placeholder states", "Reading bytes is async: a spinner while loading and a ⚠ fallback on failure — both fallbacks visible, zero-height blanks are not allowed (attachment-display semantics). The third card also shows the is-error style on top."] },
+  free: { zh: ["自由试玩", null /* 用 t("noteFree") */],
+          en: ["Free play", null] },
 };
 function captionHTML() {
   const note = SCENE_NOTES[scene];
   if (!note) return "";
-  const body = scene === "blocked" ? t("noteBlocked") : scene === "free" ? t("noteFree") : note[1];
-  return `<div class="scene-caption" ${panelOff ? "hidden" : ""}><b>${note[0]}</b><br>${body}</div>`;
+  const loc = note[lang];
+  const body = scene === "blocked" ? t("noteBlocked") : scene === "free" ? t("noteFree") : loc[1];
+  return `<div class="scene-caption" ${panelOff ? "hidden" : ""}><b>${loc[0]}</b><br>${body}</div>`;
 }
 
 /* ---- 发送模拟 ---- */
+/* 状态变更后的统一重渲染入口：单帧页重渲染舞台；board 页（scene == null）
+   重渲染 board——board 页点控制面板的任何操作都不许把视图踢成单帧。 */
+function rerender() {
+  if (scene === null) renderBoard();
+  else render();
+}
 function doSend() {
   const hasImg = state.blocks.some((b) => b.kind === "image");
   if (hasImg && !state.imageSupport) {
     /* 能力闸：不沉淀、不清 composer；toast 人话错误 + 图片卡标错误态 */
     state.toast = { err: true, text: t("errToast", t("modelName")) };
-    render();
+    rerender();
     return;
   }
   if (!state.blocks.some((b) => (b.kind === "para" && b.text.trim()) || b.kind !== "para")) return;
   state.sent = state.blocks;
   state.blocks = [{ kind: "para", text: "" }];
   state.toast = null;
-  render();
+  rerender();
 }
 function doPaste() {
   state.blocks = state.blocks.filter((b) => !(b.kind === "para" && !b.text.trim()));
   state.blocks.push({ kind: "image", img: state.imgCursor % IMAGES.length });
   state.imgCursor += 1;
   state.toast = null;
-  render();
+  rerender();
 }
 function doRemove(el) {
   const card = el.closest("[data-kind]");
@@ -736,7 +750,7 @@ function doRemove(el) {
   });
   state.blocks.splice(idx, 1);
   if (!state.blocks.length) state.blocks = [{ kind: "para", text: "" }];
-  render();
+  rerender();
 }
 
 /* ---- thumbstates 场景：loading / failed / error 三卡并排 ---- */
@@ -772,42 +786,57 @@ function bind() {
     if (!actEl) return;
     const [kind, val] = actEl.dataset.act.split(":");
     if (kind === "scene") { location.search = `?scene=${val}&theme=${theme}&lang=${lang}`; return; }
-    if (kind === "theme") { location.search = `?scene=${scene ?? "free"}&theme=${val}&lang=${lang}`; return; }
-    if (kind === "lang") { location.search = `?scene=${scene ?? "free"}&theme=${theme}&lang=${val}`; return; }
-    if (kind === "sup") { state.imageSupport = val === "1"; state.toast = null; render(); return; }
+    /* theme / lang：board 页（scene == null）保留 board 态——URL 不带 scene 参数，
+       入口按无 scene 参数重渲染 board；单帧页照旧带 scene 深链。 */
+    const sceneParam = scene === null ? "" : `scene=${scene}&`;
+    if (kind === "theme") { location.search = `?${sceneParam}theme=${val}&lang=${lang}`; return; }
+    if (kind === "lang") { location.search = `?${sceneParam}theme=${theme}&lang=${val}`; return; }
+    if (kind === "sup") { state.imageSupport = val === "1"; state.toast = null; rerender(); return; }
     if (kind === "send") { doSend(); return; }
     if (kind === "paste") { doPaste(); return; }
   };
 }
 
-/* ---- board 总览 ---- */
+/* ---- board 总览；行名与说明 zh/en 双档 ---- */
 const BOARD = [
-  ["single", "单图", "模型支持图片：1 张图片卡 + 文字。图片卡与摘录卡同视觉族——同边框/圆角/底色/移除钮，不画引号竖条（缩略图做左锚），元信息行取 -qc-src 同档字号。"],
-  ["multi", "多图", "多张图片卡连续排布，不同宽高比（横/方/竖）经 object-fit:contain 收纳，卡片高度一致。"],
-  ["mixed", "图文交错混排", "段落 / 摘录卡 / 图片卡任意交错，原子块节奏与既有卡片一致——投递投影 [text, image, text…] 的人侧镜像。"],
-  ["sent", "已发送沉淀", "发送后 transcript 按相同交错顺序呈现：图片可见、无移除钮；composer 回占位。"],
-  ["blocked", "发送被挡", "模型不支持图片：发送被挡 + toast 人话错误（点名模型）+ 图片卡错误态（保留可移除）。"],
-  ["thumbstates", "缩略图占位态", "加载中转圈 / 加载失败 ⚠ 两种可见回退，叠加错误态样式。"],
-  ["free", "自由试玩", "模拟粘贴、发送、移除全链路可点。"],
+  ["single", { zh: ["单图", "模型支持图片：1 张图片卡 + 文字。图片卡与摘录卡同视觉族——同边框/圆角/底色/移除钮，不画引号竖条（缩略图做左锚），元信息行取 -qc-src 同档字号。"],
+                en: ["Single image", "Model supports images: one image card + text. The card shares the quote-card visual family — same border/radius/background/remove button, no quote bar (thumbnail as left anchor); meta line uses the -qc-src typography tier."] }],
+  ["multi", { zh: ["多图", "多张图片卡连续排布，不同宽高比（横/方/竖）经 object-fit:contain 收纳，卡片高度一致。"],
+               en: ["Multiple images", "Several image cards in a row; object-fit:contain absorbs landscape/square/portrait aspect ratios, card height stays uniform."] }],
+  ["mixed", { zh: ["图文交错混排", "段落 / 摘录卡 / 图片卡任意交错，原子块节奏与既有卡片一致——投递投影 [text, image, text…] 的人侧镜像。"],
+               en: ["Interleaved text & images", "Paragraphs / quote cards / image cards interleave freely; atomic blocks keep the existing rhythm — the human-side mirror of the delivery projection [text, image, text…]."] }],
+  ["sent", { zh: ["已发送沉淀", "发送后 transcript 按相同交错顺序呈现：图片可见、无移除钮；composer 回占位。"],
+              en: ["Sent", "After sending, the transcript shows the same interleaved order: images visible, no remove buttons; composer back to placeholder."] }],
+  ["blocked", { zh: ["发送被挡", "模型不支持图片：发送被挡 + toast 人话错误（点名模型）+ 图片卡错误态（保留可移除）。"],
+                 en: ["Send blocked", "Model without image support: send blocked + human-readable toast (names the model) + image cards in error state (kept, removable)."] }],
+  ["thumbstates", { zh: ["缩略图占位态", "加载中转圈 / 加载失败 ⚠ 两种可见回退，叠加错误态样式。"],
+                     en: ["Thumbnail placeholders", "Spinner while loading / ⚠ on failure — both fallbacks visible, plus the error-state style."] }],
+  ["free", { zh: ["自由试玩", "模拟粘贴、发送、移除全链路可点。"],
+              en: ["Free play", "Simulated paste, send and remove — the full loop is clickable."] }],
 ];
 function renderBoard() {
-  const rows = BOARD.map(([id, name, desc]) => `
+  const rows = BOARD.map(([id, labels]) => {
+    const [name, desc] = labels[lang];
+    return `
     <section class="board-row" id="${id}">
       <div class="meta">
         <div class="v-id">scene=${id}</div>
         <div class="v-name">${name}</div>
         <div class="v-desc">${desc}</div>
-        <a class="v-link" href="?scene=${id}&theme=${theme}&lang=${lang}">单帧 →</a>
+        <a class="v-link" href="?scene=${id}&theme=${theme}&lang=${lang}">${lang === "en" ? "single frame →" : "单帧 →"}</a>
       </div>
       <div class="stage"><div class="stage-inner">${frameHTML(id)}</div></div>
-    </section>`).join("");
+    </section>`;
+  }).join("");
   document.body.innerHTML = `
     <header class="board-head">
-      <h1>harness composer 贴图 UX · 原型（M424）</h1>
-      <div class="hint">视觉锚点：openspec/changes/harness-composer-image-paste design §8（图片卡与 M343 摘录卡 / M423 消息摘录卡同视觉族；缩略图左锚替代引号竖条；错误态用既有 --danger 语义色）。全部 fixture 合成。单帧可交互；控制面板点击可达；截图模式 &panel=0。</div>
+      <h1>${lang === "en" ? "harness composer image paste · prototype (M424)" : "harness composer 贴图 UX · 原型（M424）"}</h1>
+      <div class="hint">${lang === "en"
+        ? "Visual anchor: openspec/changes/harness-composer-image-paste design §8 (image cards share the M343 quote-card / M423 message-quote-card visual family; thumbnail as left anchor instead of the quote bar; error state uses the existing --danger tokens). All fixtures are synthetic. Single frames are interactive; everything is reachable from the control panel; screenshot mode &panel=0."
+        : "视觉锚点：openspec/changes/harness-composer-image-paste design §8（图片卡与 M343 摘录卡 / M423 消息摘录卡同视觉族；缩略图左锚替代引号竖条；错误态用既有 --danger 语义色）。全部 fixture 合成。单帧可交互；控制面板点击可达；截图模式 &panel=0。"}</div>
     </header>
     ${rows}
-    <p style="padding:16px 32px;font-size:11.5px;color:var(--text-3)">board 页各帧为静态示意（深链单帧可交互）。</p>
+    <p style="padding:16px 32px;font-size:11.5px;color:var(--text-3)">${lang === "en" ? "Board frames are static previews (deep-link to a single frame for interaction)." : "board 页各帧为静态示意（深链单帧可交互）。"}</p>
     ${cpanelHTML()}`;
   bind();
 }
@@ -830,7 +859,7 @@ if (scene) {
   if (scene === "blocked") { state.imageSupport = false; state.toast = { err: true, text: t("errToast", t("modelName")) }; }
   /* sent 场景：消息已沉淀进 transcript（SENT_TRANSCRIPT），composer 回空占位 */
   if (scene === "sent") state.blocks = [{ kind: "para", text: "" }];
-  document.title = `${scene}（${SCENE_NOTES[scene]?.[0] ?? scene}） · ${theme} — M424`;
+  document.title = `${scene}（${SCENE_NOTES[scene]?.[lang]?.[0] ?? scene}） · ${theme} — M424`;
   render();
 } else {
   document.title = "harness composer 贴图 UX · board — M424";
