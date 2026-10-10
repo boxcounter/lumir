@@ -24,6 +24,7 @@ import {
   fsRenameEntry,
   fsRevealInFinder,
   fsTrashEntry,
+  fsWriteAttachment,
   documentSetDirty,
   onFsEntryChanged,
   onMenuCommand,
@@ -89,6 +90,7 @@ import {
 } from "./theme";
 import {
   currentLanguage,
+  errorText,
   formatNumber,
   languageTag,
   nextLanguage,
@@ -960,6 +962,7 @@ const editor: EditorHandle = {
   setCodeBlockFullscreen: (port) =>
     forEachEditor((handle) => handle.setCodeBlockFullscreen(port)),
   setBlockCopy: (copy) => forEachEditor((handle) => handle.setBlockCopy(copy)),
+  setPasteImagePort: (port) => forEachEditor((handle) => handle.setPasteImagePort(port)),
   setGotoLinePrompt: (prompt) => forEachEditor((handle) => handle.setGotoLinePrompt(prompt)),
   setMarkdownLineNumbers: (tier) =>
     forEachEditor((handle) => handle.setMarkdownLineNumbers(tier)),
@@ -1100,6 +1103,21 @@ injectEach((handle) =>
 injectEach((handle) =>
   handle.setBlockCopy({
     copy: (range: BlockCopyRange) => void copyBlockContent(handle, range),
+  }),
+);
+
+// 剪贴板贴图（M416，change paste-clipboard-image）：口令端口在装配层注册——`write` 走 ipc 的
+// `fsWriteAttachment`（后端转码 + 内容寻址命名 + 全 vault 去重），`toast` 复用下面的既有实现
+// （错误信封按 code 渲染，文案表见 `copy-data.ts` 的 `ERROR_COPY`，本文件不写第二份文案）。
+// 拦截判定 / 落盘目录推导 / 插入事务都在 `src/editor.ts` 的 paste 处理器里（能力随编辑器走），
+// 这里只给两样它看不到的东西：后端调用与提示出口。
+injectEach((handle) =>
+  handle.setPasteImagePort({
+    write: (dirRel, dataBase64, sourceMime) =>
+      fsWriteAttachment(dirRel, dataBase64, sourceMime),
+    toast: (error) => {
+      toast(errorText(error));
+    },
   }),
 );
 

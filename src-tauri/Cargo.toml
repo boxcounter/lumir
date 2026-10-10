@@ -26,6 +26,11 @@ rand = "0.10"
 # 只需要"类型一处定义、TS 自动生成"，不需要它生成的 invoke wrapper。取舍详见 commands.rs 模块文档。
 ts-rs = "11"
 sha2 = "0.10"
+# 剪贴板图片转码（change paste-clipboard-image，design §4）：png 解码 + **无损 WebP** 编码。
+# 用 `default-features = false` 只开需要的两个格式 feature——默认格式集含 avif（ravif）、tiff 等
+# 本 change 用不到的重依赖，开着会白付编译与二进制体积。两条链路都是纯 Rust（`image-webp` +
+# `png`），零 C 依赖、零外部进程，不引入构建面。
+image = { version = "0.25", default-features = false, features = ["png", "webp"] }
 # vault watch（add-vault-workspace）：notify 8 稳定线（9.x 仍是 rc）。
 notify = "8"
 # 目录选择器：rfd 纯 Rust 原生 dialog，不需要 tauri-plugin-dialog 的

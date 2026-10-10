@@ -6,10 +6,12 @@
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { appendFile, open, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import yaml from "js-yaml";
 import { findNode, windowBounds } from "./ax.mjs";
 import { copyFixture, fixturesDir, SCENARIO_CONFIG_KEYS } from "./app.mjs";
+import { encodePng, syntheticScreenshot } from "./png.mjs";
 import { DEFAULT_MIN_DIFF, DEFAULT_PATCH, DEFAULT_TOL, colorDiff, decodeScreenshot, dominantColor, formatColor, lumaSpread } from "./pixel.mjs";
 import {
   clickNode,
@@ -34,8 +36,9 @@ export const ACTIONS = new Set([
   "settle", "waitFor", "sleep", "key", "keys", "type", "click", "clickNodeText", "clickInNode", "clickEditor",
   "doubleClick", "drag", "scroll", "focusWindow", "open", "configWrite", "restart", "record", "recordEditor",
   "vaultWrite", "vaultAppend", "vaultRm", "vaultSparse", "resizeWindow", "clipboardRead",
+  "clipboardImage", "clipboardText", "note",
 ]);
-export const EXPECT_KINDS = new Set(["ax", "editor", "file", "glob", "shot", "window", "clipboard", "pixel", "geom"]);
+export const EXPECT_KINDS = new Set(["ax", "editor", "file", "glob", "shot", "window", "clipboard", "pixel", "geom", "bytes"]);
 
 /** `do: click` 的 `target.modifiers` 允许的修饰键（M379，backlog:1913）：KimiCU 与 swift 两侧的
  *  别名都收（`meta`/`cmd` 是同一个键的两种说法），小写比较。 */
@@ -194,12 +197,31 @@ export function checkScenario(scenario) {
     if (step.do === "vaultSparse" && !step.file) push(`${at} do=vaultSparse 需要 file`);
     if (step.do === "vaultSparse" && step.vault !== undefined && step.vault !== "second")
       push(`${at} do=vaultSparse 的 vault 只能是 "second"（缺省 = 验收 vault）`);
+    // 合成图片置剪贴板（M416）：只有 width/height/seed 三个正整数参数。键名写错会静默走缺省
+    // （合成出不是场景以为的那张图），因此在静态检查里挡掉。
+    if (step.do === "clipboardImage") {
+      for (const [key, value] of Object.entries(step.synth ?? {})) {
+        if (!["width", "height", "seed"].includes(key))
+          push(`${at} do=clipboardImage 的 synth 只认 width/height/seed，多出 ${key}`);
+        else if (!Number.isInteger(value) || value <= 0)
+          push(`${at} do=clipboardImage 的 synth.${key} 需要正整数，收到 ${JSON.stringify(value)}`);
+      }
+    }
+    if (step.do === "clipboardText" && typeof step.text !== "string")
+      push(`${at} do=clipboardText 的 text 需要字符串`);
+    if (step.do === "note" && step.text === undefined && step.file === undefined)
+      push(`${at} do=note 至少要 text 或 file 之一`);
+    if (step.do === "note" && step.text !== undefined && typeof step.text !== "string")
+      push(`${at} do=note 的 text 需要字符串`);
     for (const [j, exp] of (step.expect ?? []).entries()) {
       const kinds = Object.keys(exp).filter((k) => k !== "label");
       if (kinds.length !== 1) push(`${at} expect[${j}] 应恰好一个断言形态，实际 ${JSON.stringify(kinds)}`);
       else if (!EXPECT_KINDS.has(kinds[0])) push(`${at} expect[${j}] 未知断言 ${kinds[0]}`);
       else if (kinds[0] === "file" && !exp.file.path) push(`${at} expect[${j}] file 断言缺 path`);
       else if (kinds[0] === "glob" && (!exp.glob.dir || !exp.glob.pattern)) push(`${at} expect[${j}] glob 断言缺 dir/pattern`);
+      else if (kinds[0] === "bytes" && !exp.bytes.path) push(`${at} expect[${j}] bytes 断言缺 path`);
+      else if (kinds[0] === "bytes" && exp.bytes.magic === undefined && exp.bytes.nameHash === undefined)
+        push(`${at} expect[${j}] bytes 断言缺 magic/nameHash（写错字段名会静默变成恒真断言）`);
       else if (kinds[0] === "ax" && !["has", "not", "count", "focused"].some((k) => exp.ax[k] !== undefined))
         push(`${at} expect[${j}] ax 断言缺 has/not/count/focused（写错字段名会静默变成恒真断言）`);
       else if (kinds[0] === "window" && !["moved", "width"].some((k) => exp.window[k] !== undefined))
@@ -389,6 +411,30 @@ function readClipboard() {
   } catch (e) {
     return { ok: false, text: "", error: e instanceof Error ? e.message : String(e) };
   }
+}
+
+/**
+ * 把一张 png 文件**置入系统剪贴板**（M416，change paste-clipboard-image 的真机验收）。
+ *
+ * 与 `readClipboard` 同一条纪律：**只有这一条固定命令**，不接受通用 shell 通道。`«class PNGf»`
+ * 是 AppleScript 的标准图形类型——osascript 读文件进粘贴板后，pasteboard 上同时有 `public.png`
+ * 与 `public.tiff`，正是系统截图进剪贴板时的形态（M415 探针实测），因此后续的
+ * 「右键 → Paste」走的是与真实用户同一段 WebKit 归一化链路。
+ *
+ * 失败即抛错（`osascript` 非零退出）——不许把「没置上」当成「置上了」。
+ */
+function setClipboardImage(file) {
+  execFileSync("/usr/bin/osascript", [
+    "-e",
+    `set the clipboard to (read (POSIX file "${file}") as «class PNGf»)`,
+  ]);
+}
+
+/** 把**纯文本**置入系统剪贴板（M416 的场景 S3：文本粘贴回归）。同样是固定命令，不接受
+ *  通用 shell 通道——`text` 经 `osascript` 的字符串字面量传入，引号与反斜杠做转义。 */
+function setClipboardText(text) {
+  const literal = `"${text.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+  execFileSync("/usr/bin/osascript", ["-e", `set the clipboard to ${literal}`]);
 }
 
 async function clickWithRetry(cu, pid, x, y, { retries = 3, count, button } = {}) {
@@ -802,6 +848,38 @@ export async function runScenario(ctx, scenario) {
         return !m.test(text) ? pass(label2) : fail(`${label2}（期望不含 ${m.show}）`);
       }
       return fail(`${label2}（file 断言无法识别）`);
+    }
+    // 二进制文件的字节级断言（M416，change paste-clipboard-image）：`file` 的 has/not 读的是
+    // UTF-8 文本，对 WebP 这类二进制没有可观测量。两种判据都在这里：
+    //   - `magic`：文件首字节的十六进制前缀（WebP 容器 = RIFF….WEBP，取 `52494646` + 偏移 8 的
+    //     `57454250` 两段，用 `magic` 的字符串形式 `"52494646……57454250"` 表达不了「中间跳过」，
+    //     因此这里只判**前缀**，容器标识由随后的渲染断言兜）；
+    //   - `nameHash`：内容寻址命名的一致性——文件名里 `pasted-<hex16>.` 的 `<hex16>` 必须等于
+    //     落盘字节 SHA-256 的前 16 位（spec「哈希以转码后字节计算」）。
+    if (expect.bytes) {
+      const spec = expect.bytes;
+      const file = await resolveSpecFile(spec.path);
+      const buf = await readFile(file).catch(() => null);
+      if (buf === null) return fail(`${spec.label ?? label}（文件不存在：${spec.path}）`);
+      if (spec.magic !== undefined) {
+        const want = spec.magic.toLowerCase();
+        const got = buf.subarray(0, want.length / 2).toString("hex");
+        if (got !== want) {
+          return fail(`${spec.label ?? label}（首字节期望 ${want}，实际 ${got}）`);
+        }
+      }
+      if (spec.nameHash) {
+        const name = path.basename(file);
+        const embedded = /^pasted-([0-9a-f]{16})\./.exec(name)?.[1];
+        const digest = createHash("sha256").update(buf).digest("hex").slice(0, 16);
+        if (embedded === undefined) {
+          return fail(`${spec.label ?? label}（文件名不是 pasted-<hash16>.<ext> 形态：${name}）`);
+        }
+        if (embedded !== digest) {
+          return fail(`${spec.label ?? label}（文件名哈希 ${embedded} ≠ 落盘字节 sha256 前 16 位 ${digest}）`);
+        }
+      }
+      return pass(spec.label ?? label, `${path.basename(file)}（${buf.length} bytes）`);
     }
     if (expect.glob) {
       // 崩溃备份、另存副本这类「文件名由 app 决定」的产物只能用 glob 断言。
@@ -1351,6 +1429,43 @@ async function doAction(step, { ctx, cu, scenario, vars, pid, evidence }) {
       const clip = readClipboard();
       if (!clip.ok) throw new Error(`读剪贴板失败：${clip.error}`);
       return clip.text;
+    }
+    // 合成一张 png 并置入系统剪贴板（M416）：`synth` 给分辨率与确定性种子。
+    // 截图字节量进证据（S5 的「剪贴板字节 vs 落盘字节」比值要这两个数）。
+    case "clipboardImage": {
+      const synth = step.synth ?? {};
+      const width = synth.width ?? 320;
+      const height = synth.height ?? 200;
+      const seed = synth.seed ?? 1;
+      const png = encodePng(width, height, syntheticScreenshot(width, height, seed));
+      const file = path.join(tmpdir(), `lumir-acceptance-clip-${process.pid}-${seed}.png`);
+      await writeFile(file, png);
+      setClipboardImage(file);
+      evidence.record({
+        kind: "note",
+        text: `剪贴板置合成 png：${width}×${height}，seed=${seed}，png ${png.length} bytes（${file}）`,
+      });
+      return file;
+    }
+    // 纯文本置剪贴板（M416 S3）：与 clipboardImage 同一条固定命令纪律。
+    case "clipboardText": {
+      setClipboardText(step.text ?? "");
+      evidence.record({ kind: "note", text: `剪贴板置纯文本：${JSON.stringify(step.text ?? "")}` });
+      return step.text ?? "";
+    }
+    // 证据型读数（`do: note`）：把文本与（可选的）某个文件的大小写进证据目录。
+    // 给**不卡 PASS/FAIL 的实证场景**用（S5 的转码体积），不是断言形态。
+    case "note": {
+      let suffix = "";
+      if (step.file !== undefined) {
+        const file = await resolveSpecFile(step.file);
+        const info = await fileInfo(file);
+        if (!info) throw new Error(`note 目标文件不存在：${step.file}`);
+        suffix = `；${step.file} = ${info.size} bytes`;
+      }
+      const text = `${step.text ?? ""}${suffix}`;
+      evidence.record({ kind: "note", text });
+      return text;
     }
     case "clickNodeText": {
       const ax = await readAx(cu, p);

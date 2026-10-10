@@ -10,7 +10,7 @@
 ```
 ⌘V（编辑器聚焦、md 模式、可编辑）
   → DOM paste 事件（ClipboardEvent）
-  → clipboardData 含 image/* 数据？
+  → clipboardData.items 里有 image/* 文件项吗？（**items 面，不是 types**——M415 实测见 §2）
     ├─ 否 → 不拦截，CodeMirror 默认文本粘贴（现状逐字节不变）
     └─ 是 → preventDefault
         → 取第一个 image/* item 的 Blob → base64
@@ -32,24 +32,30 @@
 命名与去重收进后端后，前端不再算 hash、不再调 `fs_paths_exist`：一次粘贴恰好一次
 invoke（往返数从 ≤2 降为 1），内容寻址的唯一事实源落在 Rust 侧（`sha2` 已在依赖内）。
 
-## 2. 粘贴通道形态（⚠ 实现期真机探针，经验判断未实测）
+## 2. 粘贴通道形态（M415 真机探针已实测，本节按实测修订）
 
 - 拦截挂法：`EditorView.domEventHandlers({ paste })`（`src/editor.ts` 装配处），在 CM
   默认粘贴之前拿到 `ClipboardEvent`；判定无 `image/*` 时返回不消费，默认行为不变。
   不用 keymap 绑 `Mod-v`——`⌘V` 还有菜单路径（M131 菜单命令事件），DOM 事件层拦截
   两条路径都罩得住。
-- 数据形态（部分有据、部分经验判断）：W3C Clipboard API 规范要求 paste 事件在原生
-  类型存在时暴露 `image/png`（[Clipboard API and events](https://www.w3.org/TR/clipboard-apis/)）；
-  macOS 系统截图进剪贴板的真实形态是 `public.tiff` + `public.png`（无损，Apple 支持
-  社区与剪贴板查看器实测：[discussions.apple.com](https://discussions.apple.com/thread/253100004)、
-  [latenightsw.com](https://forum.latenightsw.com/t/how-do-i-copy-image-file-to-clipboard-and-retain-format/590/13)）——
-  即 WebKit 会把 NSPasteboard 的 TIFF/PNG 归一化为 paste 事件的 `image/png` item。
-  **但本仓 WKWebView 未实测**。
-- **探针任务（tasks 1.1，实现期第一项）**：真机起 app，探针打印 `paste` 事件
-  `clipboardData.types` / items 全集——分别置入 ①系统截图（合成替代）②Finder 复制
-  png 文件 ③浏览器复制图片。坐实：MIME 集合、item 是否可直接 `getAsFile()`、
-  单张 Retina 截图经 WebKit 归一化后的实际字节量。形态与本文假设不符 →
-  停手走升级线（TowerSend tower），不猜退路。
+- 数据形态（**M415 真机探针实测**，原始读数见
+  `.tower/comms/inbox/20261010-worker-m415-tower-survey-summary-wkwebview-paste-design-2-types-items.md`）：
+  - **检测面是 `items`，不是 `types`**——本仓 WKWebView 的 `types` 面上**从不**出现 `image/*`
+    （文件项一律以 `"Files"` 名义进 types）；精确 MIME 只在 `items[i].type` 上，
+    实测取值 `image/png` / `image/jpeg`。原「paste 事件在 types 面暴露 image/png」的字面口径
+    **作废**（W3C 规范要求与实际 WebKit 行为不一致，以实测为准）。
+  - **`getAsFile()` 全部可用**：返回 Blob，`size` 与来源字节逐字节相等；jpeg 原样保留、不重编码。
+  - **归一化更宽**：TIFF-only、Finder 复制的文件、浏览器 `html+png` 全部归一到 file image item。
+  - **图文同板**（`types = ["Files","text/html"]`）时取首个 image file 项——与已定的「图优先」一致。
+  - **Retina 字节量**：2560×1920 类截图经 WebKit 归一化后 web 通道拿到的是 **PNG 压缩字节
+    约 0.6MB**（pasteboard 上那个 19.66MB 的 TIFF flavor **不进入 web 链路**）——§4.1 引用的
+    18.8MB 因此不是本链路的输入口径，50MB 上限几乎不会命中。
+  - 检测判据的落地：`src/paste-image.ts` 的 `firstImageFileIndex`（`kind === "file" &&
+    type.startsWith("image/")`），单测见 `tests/unit/paste-image.test.ts`。
+- **真机粘贴通道（M345 的边界被绕过）**：`⌘V` 注入在真机不落地（M345 实测），但
+  **WebKit 原生上下文菜单的 Paste 项**是可用通道：对内容区右键 → 点菜单里的 Paste →
+  paste 事件到达 DOM（M415 探针 7/7 命中，M416 的验收场景据此驱动，4/4 PASS）。
+  拦截挂在 **DOM 事件层**因此同时罩住 ⌘V 与菜单两条路径——这条前提由 M415 获得真机验证。
 
 ## 3. fs-io 新原语：`fs_write_attachment`
 
@@ -81,7 +87,7 @@ vault 会被截图迅速撑大，且 50MB 上限命中的概率随 Retina 截屏
 
 ### 4.2 目标格式权衡（截图 = 文字/界面为主）
 
-| 候选 | 体积（相对无损 PNG，经验值**未实测**，实现期 fixture 填实测） | 保真 | 实现成本 | 结论 |
+| 候选 | 体积（相对无损 PNG；**已实测**，读数见表下注） | 保真 | 实现成本 | 结论 |
 |---|---|---|---|---|
 | 有损 JPEG | 最小（~10–20%） | **不适合**：文字边缘振铃、色块化，截图阅读场景不可接受 | — | 否（Alex 明示不适合） |
 | **WebP 无损** | ~30–60% | 逐像素无损，文字完美 | `image` crate 自带**纯 Rust 无损 WebP 编码器**（0.25 起；有损编码器已移除，[CHANGES.md](https://github.com/image-rs/image/blob/main/CHANGES.md)、[r/rust 发布帖](https://www.reddit.com/r/rust/comments/1cj94va/image_v025_performance_improvements/)）——**零 C 依赖** | **默认** |
@@ -89,6 +95,15 @@ vault 会被截图迅速撑大，且 50MB 上限命中的概率随 Retina 截屏
 | 优化 PNG（oxipng 式无损重整） | ~70–90% | 无损 | 纯 Rust，但收益有限 | 否（收益不解决 18.8MB 级问题） |
 | 调色板量化（pngquant 式 256 色） | ~20–40% | 渐变/照片明显失真，UI 截图尚可 | `imagequant`（libimagequant 绑定） | 否（有损却不及 WebP 无损通用） |
 | 分辨率降采样（Retina 2x → 1x） | ~25%（线性尺寸减半 → 像素 ×1/4） | 丢失物理分辨率 | 简单 | 否（保留原分辨率，体积交给无损压缩） |
+
+**实测读数（M416）**：2560×1920 的合成类截图 PNG **35055 bytes → WebP 无损 6030 bytes（17.2%）**
+（验收场景 116 的证据，`test-results/acceptance/2026-10-10/116-paste-image-transcode-size/`）；
+另一组 480×320 合成图（场景 112 那张，seed=7）**2792 → 1324 bytes（47.4%）**
+（证据 `test-results/acceptance/2026-10-10/112-paste-image-to-vault/`）。合成 fixture 是高可压的
+渐变 + 文字条，**真实截图的比值会
+更高（收益更小）**——这两个数是乐观侧参考，不是产品承诺。转码确实解决了 Alex 提出的「十几兆
+二十几兆」问题：那个量级来自 pasteboard 的 TIFF flavor，web 通道的输入本来就是 PNG 字节
+（§2 实测约 0.6MB），无损再压到一半上下。
 
 WKWebView 解码侧无虞：WebP 自 Safari 14 / macOS 11 起原生支持（[caniuse webp](https://caniuse.com/webp)、
 [WebKit WWDC24](https://webkit.org/blog/15443/news-from-wwdc24-webkit-in-safari-18-beta/)），
@@ -165,6 +180,20 @@ WKWebView 解码侧无虞：WebP 自 Safari 14 / macOS 11 起原生支持（[can
   为 §4.2 的经验值填实测（体积数字进 design 修订，不卡 PASS/FAIL）。
 - **S6 失败面（实现期定可注入性）**：超限/坏数据路径若真机不可注入，降为
   Rust 侧单测覆盖 + 前端单测 mock invoke 覆盖；验收套件只留 S1–S5。
+
+**实现期落成状态（M416）**：
+
+- S1 / S2 / S3 / S5 → 场景 **112 / 113 / 114 / 116**，真机 **4/4 PASS**
+  （证据 `test-results/acceptance/2026-10-10/`）。粘贴驱动走 WebKit 原生上下文菜单的 Paste 项
+  （M415 通道；⌘V 注入真机不落地），剪贴板置图走 `osascript` 的 `«class PNGf»`。
+- **S4（未保存新文档退 vault 根）不写场景**（tower 裁决 A）：真机上没有可达入口——
+  装载完成而无标签时 `showNotice()` 隐藏编辑器（`src/main.ts:1231-1236`），分栏空 pane 结构性
+  只读（M329），未打开 vault 时粘贴走 `vault_not_open`。硬写只会产出恒假红或恒真绿。该行为由
+  两条单测钉住（`fs_io::tests::write_attachment_targets_vault_root_for_empty_dir`、
+  前端 `attachmentDirOf(undefined) === ""`），**真机覆盖缺口如实登记**，缺口已落 finding。
+- S1 的「逐像素无损」不落在真机层：验收套件没有 PNG/WebP 解码器（零新增依赖），像素级往返由
+  Rust 单测钉（带 alpha 与不带 alpha 两条）；真机判「字节是 WebP 容器 + 文件名哈希 = 落盘字节
+  sha256 前 16 位 + 引用渲染得出来」。
 
 真机纪律：跑批前确认 1420/1430 无 Lumir 实例（跑批锁与端口由套件自理）；本 change
 不碰 1420/1430 端口配置。

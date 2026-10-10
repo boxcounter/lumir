@@ -81,6 +81,9 @@ pub fn run() {
             commands::fs_paths_exist,
             commands::fs_read_snapshot,
             commands::fs_read_attachment,
+            // 剪贴板图片落盘（change paste-clipboard-image，M416）：转码 + 内容寻址命名 +
+            // 全 vault 去重 + 原子写（见 fs_io::write_attachment）。
+            commands::fs_write_attachment,
             commands::fs_file_revision,
             commands::fs_file_mtime,
             commands::document_save,

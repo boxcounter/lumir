@@ -58,6 +58,13 @@ import {
   readScrollPosition,
 } from "./scroll-position-view";
 import { fsFileMtime } from "./ipc";
+import {
+  attachmentDirOf,
+  imagePasteItemIndex,
+  pastedImageInsertion,
+  writePastedImage,
+} from "./paste-image";
+import type { PasteImagePort } from "./paste-image";
 
 // 编辑器单内核双模式（ADR 0002 §2）：一个 CM6 内核、两种模式。
 // md = 高亮 + live preview 装饰层（src/preview/）；code = 仅高亮。
@@ -1160,6 +1167,12 @@ export interface EditorHandle {
    */
   setBlockCopy(copy: { copy(range: BlockCopyRange): void } | null): void;
   /**
+   * 注入剪贴板图片落盘 / 失败提示口令（M416，change paste-clipboard-image）：装配层在
+   * vault 波注册（`write` 走 ipc 的 `fsWriteAttachment`，`toast` 复用既有 deck 化提示）。
+   * 未注入时粘贴拦截不消费事件、默认文本粘贴逐字节不变。
+   */
+  setPasteImagePort(port: PasteImagePort | null): void;
+  /**
    * 注入跳转到行的输入条（M281，change goto-line-command；能力与浮层 DOM 在
    * `src/goto-line.ts`）。命令执行时才读这个口子，注入**不**触发装饰重建（与上面几个
    * 「装饰层构建期读口子」的注入点不同）。未注入时 `editor.goto-line` 无操作。
@@ -1374,6 +1387,14 @@ const baseCompartment = new Compartment();
  * `Shift-Enter` 天然不受影响：CM 的键位查表在按住 Shift 时只查 `Shift-Enter`
  *（`runHandlers` 的 `modifiers(name, event, !isChar)`，Enter 不是单字符键），本绑定收不到它。
  */
+// 剪贴板图片粘贴（change paste-clipboard-image，M416）：**纯判据**（拦截判定 / 落盘目录推导 /
+// 插入事务形态 / 落盘段）住在 `src/paste-image.ts`——那一层 DOM 无关、可被 `tests/unit` 直接测
+// （`editor.ts` 的 import 链带参数属性，本层跑不了）。本文件只留 **DOM 接线**：paste 事件拦截、
+// EditorView 事务派发、口令端口。
+//
+// 链路：DOM paste 事件 → `imagePasteItemIndex` 判拦不拦 → 取 Blob → **一次** `fs_write_attachment`
+// （后端转码 + 内容寻址命名 + 全 vault 去重）→ 用返回的 `name` 在光标处插 `![[name]]`。
+// 前端不算 hash、不调 `fs_paths_exist`；命名与去重的唯一事实源在 Rust 侧（design §1 / §3）。
 export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md", markdownConfig: Parameters<typeof markdown>[0] = { base: markdownLanguage, extensions: [GFM] }): EditorHandle {
   // 三个 Compartment（mode / 折行 / md gutter）是**模块级共享**的，理由见其声明处（M317 4.1）。
   // 前台会话「可编辑性」的**投影**：changeFilter 的闭包在 state 创建时就绑好了，只能读实例
@@ -1442,6 +1463,12 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
    *  「装饰层在构建期读口子」的注入点不同（那些要 previewRefresh）。未注入时命令无操作
    *  （纯桩 / 维护性装配：能力没接上就不假装能打开）。 */
   let gotoLinePrompt: GotoLinePromptPort | null = null;
+  /**
+   * 剪贴板图片口令（M416，change paste-clipboard-image）：装配层经 `setPasteImagePort` 注入。
+   * **DOM 事件处理器执行时才读**（不是装饰层构建期），因此注入不需要重建；未注入时
+   * paste 拦截整条不启用（与 `gotoLinePrompt` 同形态）。
+   */
+  let pasteImagePort: PasteImagePort | null = null;
   /**
    * md 行号 gutter 的档位（`ui.markdown_line_numbers`，change goto-line-command 的 D4 二次改判）：
    * 配置在装载时喂一次（`setMarkdownLineNumbers`），**运行期 MUST NOT 回写**——本 change 不提供
@@ -1826,7 +1853,64 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
           docChangedListeners.forEach((listener) => listener());
         }
       }),
+      // 剪贴板贴图（M416）：装在**基础层**而不是 `sessionState` 的顶层扩展里——它绑实例闭包
+      // （`active` / `pasteImagePort`），必须随 `adoptSession` 用目标实例的闭包重配，否则迁移来的
+      // 会话会用源实例的前台会话判据（同一形态的缺陷见 changeFilter / updateListener 的 P1-1）。
+      //
+      // 拦截判据（spec「粘贴触发与引用插入」）：md 模式 + 可编辑 + 确实有 image/* 文件项。
+      // 任一不成立即 `return false`——默认文本粘贴逐字节不变（降级条款，MUST NOT 消费事件）。
+      // 走 DOM 事件层而不是 keymap 的 ⌘V：⌘V 还有菜单路径（M131 菜单命令事件），事件层两条都罩。
+      EditorView.domEventHandlers({
+        paste: (event, view) => {
+          if (pasteImagePort === null) return false;
+          const items = event.clipboardData?.items;
+          if (items === undefined || items === null) return false;
+          const index = imagePasteItemIndex(active, items);
+          if (index === null) return false;
+          const blob = items[index].getAsFile();
+          if (blob === null) return false;
+          // 图文同板取图（已定 A）：消费事件，阻止 WebKit 默认的文本粘贴。
+          event.preventDefault();
+          void pasteImage(view, active, blob);
+          return true;
+        },
+      }),
     ];
+  }
+
+  /**
+   * 贴图链路（异步，一次 invoke）：Blob → base64 → 落盘（后端转码 + 内容寻址 + 去重）→ 用返回的
+   * `name` 在**dispatch 时的最新选区**插入 `![[name]]`（design §1：插入点取 dispatch 那一刻的
+   * 选区，用户在等待期间继续键入也安全）。任一步失败走 `port.toast`——MUST NOT 静默失败、
+   * MUST NOT 插入引用留下破图。
+   */
+  async function pasteImage(
+    view: EditorView,
+    session: EditorSession,
+    blob: Blob,
+  ): Promise<void> {
+    const port = pasteImagePort;
+    if (port === null) return;
+    try {
+      const { name } = await writePastedImage(port, attachmentDirOf(session.path), blob);
+      // 落盘期间前台会话可能已换（切标签 / 关标签）：换过就不插——插进别的文档比不插更糟。
+      // 图片本身已落盘（内容寻址，重贴即去重命中），不构成「半截状态」。
+      if (active !== session) return;
+      const range = view.state.selection.main;
+      const changes = pastedImageInsertion(
+        view.state.doc.toString(),
+        range.from,
+        range.to,
+        name,
+      );
+      view.dispatch({
+        changes,
+        selection: { anchor: changes.from + changes.insert.length },
+        userEvent: "input.paste",
+      });
+    } catch (error) {
+      port.toast(error);
+    }
   }
 
   /** adopt 时的完整换绑效果（M317 P1-1）：模式 / 折行 / **基础层**三处一起重配到本实例的闭包。
@@ -2508,6 +2592,11 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
       blockCopy = next;
       // 同 setTableFullscreen：复制触发钮的点击接线在构建期读这个口子。
       view.dispatch({ effects: previewRefresh.of(null) });
+    },
+    setPasteImagePort(port) {
+      // 口令在 DOM 事件处理器执行时才读（不是装饰层构建期读），注入**不**派发 previewRefresh
+      // ——与 setGotoLinePrompt 同一形态。
+      pasteImagePort = port;
     },
     setGotoLinePrompt(next: GotoLinePromptPort | null) {
       // **不**派发 previewRefresh（与上面几个注入点的差别）：这个口子在命令执行时才被读

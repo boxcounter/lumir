@@ -1231,20 +1231,51 @@ fn extension_of(rel: &str) -> String {
     }
 }
 
-/// 文档落盘的共用写核心：同目录 `.lumir-` 临时文件 + `sync_all` + 原子 rename。
-///
-/// `document_save` 与 [`fs_patch_file`] **共用这一份**（REVIEW.md 第 8 条：同一语义不留两处
-/// 实现）——「局部 patch 与整文件保存走同一套写纪律」因此是结构性的，不是巧合。三条纪律：
+/// 原子替换写入的**终态**（[`write_bytes_atomic`] 的返回）。
+#[derive(Debug)]
+enum AtomicWriteOutcome {
+    /// tmp 写完并 rename 到位（替换语义：目标已有内容时被原子替换）。
+    Written,
+    /// `reject_existing` 为真且目标在 rename 前已存在——tmp 已清理，**未覆盖任何内容**，
+    /// 调用方按「已存在」收敛（内容寻址写入的竞态去重路径）。
+    TargetExists,
+}
+
+/// 原子替换写入的**失败阶段**。写核心不持有错误码族（文档 / 附件各有自己的 envelope），
+/// 只把阶段与底层错误交回调用方渲染（REVIEW.md 第 8 条：写纪律一处实现、错误文案各自持有）。
+#[derive(Debug)]
+enum AtomicWriteError {
+    /// 目标没有父目录（只可能来自把文件系统根当目标这种非法入参）。
+    InvalidTarget,
+    CreateTemp(std::io::Error),
+    Write(std::io::Error),
+    Sync(std::io::Error),
+    Rename(std::io::Error),
+}
+
+/// **全仓唯一的原子替换写核心**：同目录 `.lumir-` 临时文件 + `sync_all` + 原子 rename。
+/// 三个写入方共用这一份——`document_save` / [`fs_patch_file`]（文本）与
+/// [`write_attachment`]（二进制附件）——「整文件保存 / 局部 patch / 贴图落盘走同一套写纪律」
+/// 因此是结构性的，不是巧合（REVIEW.md 第 8 条）。三条纪律：
 /// - **`.lumir-` 标记**：tmp 名形如 `.{name}.lumir-{pid}`，命中忽略集（[`LUMIR_TMP_PATTERNS`]），
 ///   因此写入过程不在文件树 / watch 流里留下临时条目（`fs-io` spec 的「局部 patch 写入」把
 ///   这层口径称作写盘方的自身标记）；
-/// - **ghost 重试**：`create_new` 撞上同名文件 = 上次保存进程崩溃留下的残留（tmp 名含自身
+/// - **ghost 重试**：`create_new` 撞上同名文件 = 上次写入进程崩溃留下的残留（tmp 名含自身
 ///   pid，活着的进程互不挡道），删掉重试一次；再失败才是真错误；
 /// - **失败即清理 tmp**，不留半截目标文件。
-fn write_document_atomic(target: &Path, content: &str) -> Result<(), CommandError> {
-    let parent = target
-        .parent()
-        .ok_or_else(|| CommandError::new("fs_path_invalid", "目标目录无效"))?;
+///
+/// `reject_existing` 是**内容寻址写入**专用的「撞名不覆盖」开关（change paste-clipboard-image
+/// 的 fs-io 增量）：为真时在 rename 之前复查目标是否已被建出，命中即清理 tmp 并按
+/// [`AtomicWriteOutcome::TargetExists`] 返回，MUST NOT 覆盖。复查把检查-执行窗口收窄到两次
+/// 系统调用之间；`std::fs::rename` 的 POSIX 语义是**原子替换**，零窗口需要平台的原子排他改名，
+/// 本批不做（与 [`rename_entry`] / [`fs_move_entry`] 同一取舍，别在别处读成更强的保证）。
+/// 文档路径传 `false`——替换既有文件正是它的语义。
+fn write_bytes_atomic(
+    target: &Path,
+    bytes: &[u8],
+    reject_existing: bool,
+) -> Result<AtomicWriteOutcome, AtomicWriteError> {
+    let parent = target.parent().ok_or(AtomicWriteError::InvalidTarget)?;
     let name = target
         .file_name()
         .and_then(|n| n.to_str())
@@ -1264,44 +1295,51 @@ fn write_document_atomic(target: &Path, content: &str) -> Result<(), CommandErro
                 .open(&tmp)
             {
                 Ok(file) => file,
-                Err(e) => {
-                    return Err(CommandError::new(
-                        "document_write_failed",
-                        format!("无法创建临时文件：{e}"),
-                    ))
-                }
+                Err(e) => return Err(AtomicWriteError::CreateTemp(e)),
             }
         }
-        Err(e) => {
-            return Err(CommandError::new(
-                "document_write_failed",
-                format!("无法创建临时文件：{e}"),
-            ))
-        }
+        Err(e) => return Err(AtomicWriteError::CreateTemp(e)),
     };
     use std::io::Write;
-    if let Err(e) = file.write_all(content.as_bytes()) {
+    if let Err(e) = file.write_all(bytes) {
         let _ = std::fs::remove_file(&tmp);
-        return Err(CommandError::new(
-            "document_write_failed",
-            format!("无法写入文档：{e}"),
-        ));
+        return Err(AtomicWriteError::Write(e));
     }
     if let Err(e) = file.sync_all() {
         let _ = std::fs::remove_file(&tmp);
-        return Err(CommandError::new(
-            "document_write_unknown",
-            format!("文档写入结果未知：{e}"),
-        ));
+        return Err(AtomicWriteError::Sync(e));
+    }
+    if reject_existing && std::fs::symlink_metadata(target).is_ok() {
+        let _ = std::fs::remove_file(&tmp);
+        return Ok(AtomicWriteOutcome::TargetExists);
     }
     if let Err(e) = std::fs::rename(&tmp, target) {
         let _ = std::fs::remove_file(&tmp);
-        return Err(CommandError::new(
-            "document_write_unknown",
-            format!("文档替换结果未知：{e}"),
-        ));
+        return Err(AtomicWriteError::Rename(e));
     }
-    Ok(())
+    Ok(AtomicWriteOutcome::Written)
+}
+
+/// 文档落盘的薄壳：字节核心的错误阶段映射到 `document_write_*` 两个 code（文案逐字沿用，
+/// 本批的重构不改变任何上屏字符串）。
+fn write_document_atomic(target: &Path, content: &str) -> Result<(), CommandError> {
+    write_bytes_atomic(target, content.as_bytes(), false)
+        .map(|_| ())
+        .map_err(|e| match e {
+            AtomicWriteError::InvalidTarget => CommandError::new("fs_path_invalid", "目标目录无效"),
+            AtomicWriteError::CreateTemp(e) => {
+                CommandError::new("document_write_failed", format!("无法创建临时文件：{e}"))
+            }
+            AtomicWriteError::Write(e) => {
+                CommandError::new("document_write_failed", format!("无法写入文档：{e}"))
+            }
+            AtomicWriteError::Sync(e) => {
+                CommandError::new("document_write_unknown", format!("文档写入结果未知：{e}"))
+            }
+            AtomicWriteError::Rename(e) => {
+                CommandError::new("document_write_unknown", format!("文档替换结果未知：{e}"))
+            }
+        })
 }
 
 /// 保存 vault 内文本文档：原子替换 + revision CAS。
@@ -1665,6 +1703,285 @@ pub fn base64_encode(data: &[u8]) -> String {
         });
     }
     out
+}
+
+/// 标准 base64（带 padding）解码。与 [`base64_encode`] 同一取向：不引 base64 crate。
+///
+/// 输入面来自 webview 的 `FileReader.readAsDataURL`（标准字母表 + padding），因此只认标准表；
+/// 换行与 `=` 容忍——粘贴载荷本身不含换行，容忍只为不把一次格式抖动变成假失败。
+fn base64_decode(input: &str) -> Result<Vec<u8>, CommandError> {
+    fn value(byte: u8) -> Option<u32> {
+        match byte {
+            b'A'..=b'Z' => Some(u32::from(byte - b'A')),
+            b'a'..=b'z' => Some(u32::from(byte - b'a') + 26),
+            b'0'..=b'9' => Some(u32::from(byte - b'0') + 52),
+            b'+' => Some(62),
+            b'/' => Some(63),
+            _ => None,
+        }
+    }
+    let mut out: Vec<u8> = Vec::with_capacity(input.len() / 4 * 3 + 3);
+    let mut acc: u32 = 0;
+    let mut bits: u32 = 0;
+    for &byte in input.as_bytes() {
+        if byte == b'=' || byte == b'\n' || byte == b'\r' {
+            continue;
+        }
+        let Some(value) = value(byte) else {
+            return Err(CommandError::new(
+                "attachment_decode_failed",
+                "无法解码剪贴板图片：数据不是合法 base64",
+            )
+            .param("reason", "数据不是合法 base64"));
+        };
+        acc = (acc << 6) | value;
+        bits += 6;
+        if bits >= 8 {
+            bits -= 8;
+            out.push(((acc >> bits) & 0xff) as u8);
+            acc &= (1u32 << bits) - 1;
+        }
+    }
+    Ok(out)
+}
+
+/// 剪贴板图片落盘结果（`fs_write_attachment` 的返回值，ts-rs 导出给前端）。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+#[ts(export, export_to = "../../src/bindings/")]
+pub struct WrittenAttachment {
+    /// 最终 vault 相对路径（去重命中时为既有文件所在位置——首贴位置赢）。
+    pub path: String,
+    /// 内容寻址文件名 `pasted-<hash16>.<ext>`——前端据此拼 `![[name]]` 引用，不自己拼名字。
+    pub name: String,
+}
+
+/// 广告支持的目标格式（design §4.3）：png 转码、jpeg/webp 原样、其余拒绝。
+/// 返回 `(是否转码, 目标扩展名)`。MIME 参数（`image/png;xyz`）只取主类型——WKWebView 的
+/// file item 不带参数，容忍只为不把格式抖动变成假失败。
+fn attachment_target(source_mime: &str) -> Result<(bool, &'static str), CommandError> {
+    let mime = source_mime.split(';').next().unwrap_or("").trim();
+    match mime {
+        "image/png" => Ok((true, "webp")),
+        "image/jpeg" => Ok((false, "jpg")),
+        "image/webp" => Ok((false, "webp")),
+        other => Err(CommandError::new(
+            "attachment_type_unsupported",
+            format!("不支持的剪贴板图片格式：{other}"),
+        )
+        .param("type", other)),
+    }
+}
+
+/// 落盘文件名的 `<hash16>`：转码后字节的 SHA-256 前 16 位十六进制（内容寻址，design §3）。
+fn short_hash(bytes: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    Sha256::digest(bytes)
+        .iter()
+        .take(8)
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
+/// 超限人话错误（50MB 上限与读侧 [`ATTACHMENT_MAX_BYTES`] 同口径，判定在转码**之前**）。
+fn attachment_too_large(bytes: u64) -> CommandError {
+    let mb = bytes / (1024 * 1024);
+    let limit = ATTACHMENT_MAX_BYTES / (1024 * 1024);
+    CommandError::new(
+        "attachment_too_large",
+        format!("图片过大：{mb}MB，超过 {limit}MB 上限"),
+    )
+    .param("mb", mb)
+    .param("limit", limit)
+}
+
+/// png 字节 → WebP 无损字节（design §4）：纯 Rust 解码 + 编码（`image` crate），零 C 依赖。
+/// 逐像素保真：带 alpha 的图走 RGBA、其余走 RGB，两条都不丢通道（无损往返的性质由单测钉住）。
+fn transcode_png_to_webp(bytes: &[u8]) -> Result<Vec<u8>, CommandError> {
+    use image::codecs::webp::WebPEncoder;
+    use image::{ExtendedColorType, ImageEncoder, ImageFormat};
+    let image = image::load_from_memory_with_format(bytes, ImageFormat::Png).map_err(|e| {
+        CommandError::new(
+            "attachment_decode_failed",
+            format!("无法解码剪贴板图片：{e}"),
+        )
+        .param("reason", e.to_string())
+    })?;
+    let (width, height) = (image.width(), image.height());
+    let (raw, color) = if image.color().has_alpha() {
+        (image.to_rgba8().into_raw(), ExtendedColorType::Rgba8)
+    } else {
+        (image.to_rgb8().into_raw(), ExtendedColorType::Rgb8)
+    };
+    let mut out: Vec<u8> = Vec::new();
+    WebPEncoder::new_lossless(&mut out)
+        .write_image(&raw, width, height, color)
+        .map_err(|e| {
+            CommandError::new(
+                "attachment_encode_failed",
+                format!("无法编码剪贴板图片：{e}"),
+            )
+            .param("reason", e.to_string())
+        })?;
+    Ok(out)
+}
+
+/// 落盘目录解析：`dir_rel` 空串 = vault 根，其余走 [`resolve_in_vault`]（继承全部逃逸防护：
+/// 绝对路径 / `..` / 符号链接逃逸）。目录必须**已存在**——不存在由 `resolve_in_vault` 返回
+/// `fs_not_found`，**不隐式建目录**（落盘目录恒为笔记所在目录或 vault 根，二者必然存在）。
+fn resolve_attachment_dir(root: &Path, dir_rel: &str) -> Result<PathBuf, CommandError> {
+    if dir_rel.is_empty() {
+        return root.canonicalize().map_err(|e| {
+            CommandError::new(
+                "fs_root_invalid",
+                format!("无法解析 vault 根 {}：{e}", root.display()),
+            )
+            .param("root", root.display())
+            .param("reason", e.to_string())
+        });
+    }
+    let dir = resolve_in_vault(root, dir_rel)?;
+    let meta = std::fs::metadata(&dir).map_err(|e| {
+        CommandError::new("fs_read_failed", format!("无法访问 {dir_rel}：{e}"))
+            .param("rel", dir_rel)
+            .param("reason", e.to_string())
+    })?;
+    if !meta.is_dir() {
+        return Err(
+            CommandError::new("fs_path_invalid", format!("{dir_rel} 不是目录"))
+                .param("rel", dir_rel),
+        );
+    }
+    Ok(dir)
+}
+
+/// 全 vault 按**文件名**探测既有条目，返回字典序最小的 vault 相对路径（无命中为 None）。
+///
+/// 不用 [`scan_workspace`]：那条路径按**可见性规则**枚举（用户规则命中的目录出一行不递归），
+/// 而去重判据是「这个名字在 vault 里已经存在」，与可见性正交——用户在 `.gitignore` 里写规则
+/// 不该让同一张图被重复落盘。剪枝口径仍与枚举同源：内置规则命中的目录整棵跳过（工具目录里的
+/// 同名文件不是本能力的产物）、符号链接目录不跟随（`file_type()` 不 follow，防循环 / 防逃逸）。
+///
+/// 多个命中时取字典序最小者：内容寻址命名下同名即同内容，多命中只可能来自用户手工放入的
+/// 副本，字典序是既有的确定性兜底口径（design §5）。
+fn find_vault_entry_by_name(root: &Path, name: &str) -> Option<String> {
+    let mut best: Option<String> = None;
+    let mut stack = vec![root.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        let Ok(read) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for item in read.flatten() {
+            let Ok(file_type) = item.file_type() else {
+                continue;
+            };
+            let path = item.path();
+            if file_type.is_file() && item.file_name().to_string_lossy().as_ref() == name {
+                if let Some(rel) = rel_string(root, &path) {
+                    if best.as_ref().is_none_or(|seen| rel < *seen) {
+                        best = Some(rel);
+                    }
+                }
+                continue;
+            }
+            if !file_type.is_dir() {
+                continue;
+            }
+            let Some(rel) = rel_string(root, &path) else {
+                continue;
+            };
+            if is_builtin_hidden(&rel, true) {
+                continue;
+            }
+            stack.push(path);
+        }
+    }
+    best
+}
+
+/// 附件落盘的写路径（[`write_bytes_atomic`] 的 `reject_existing = true` 包装）：撞名按
+/// [`AtomicWriteOutcome::TargetExists`] 收敛，其余失败阶段映射到 `attachment_write_*`。
+fn write_attachment_atomic(
+    dir: &Path,
+    name: &str,
+    bytes: &[u8],
+) -> Result<AtomicWriteOutcome, CommandError> {
+    write_bytes_atomic(&dir.join(name), bytes, true).map_err(|e| match e {
+        AtomicWriteError::InvalidTarget => CommandError::new("fs_path_invalid", "目标目录无效"),
+        AtomicWriteError::CreateTemp(e) => {
+            CommandError::new("attachment_write_failed", format!("无法创建临时文件：{e}"))
+                .param("reason", e.to_string())
+        }
+        AtomicWriteError::Write(e) => {
+            CommandError::new("attachment_write_failed", format!("无法写入图片：{e}"))
+                .param("reason", e.to_string())
+        }
+        AtomicWriteError::Sync(e) => {
+            CommandError::new("attachment_write_unknown", format!("图片写入结果未知：{e}"))
+                .param("reason", e.to_string())
+        }
+        AtomicWriteError::Rename(e) => {
+            CommandError::new("attachment_write_unknown", format!("图片替换结果未知：{e}"))
+                .param("reason", e.to_string())
+        }
+    })
+}
+
+/// 剪贴板图片写原语（change paste-clipboard-image 的 fs-io 增量，design §3）。
+///
+/// 链路：base64 解码 → 50MB 上限（**转码前**判定）→ 转码（png → WebP 无损；jpeg / webp 原样）
+/// → 转码后字节 SHA-256 前 16 位内容寻址命名 `pasted-<hash16>.<ext>` → 全 vault 同名探测
+/// （命中即跳过写盘、按去重返回既有位置）→ 原子写（[`write_bytes_atomic`]，撞名不覆盖）。
+///
+/// 写入产生的文件系统变化经既有 watch 增量事件流自然扩散（文件树刷新等消费方走既有口径），
+/// 本函数零事件接线。命名与去重收进后端 ⇒ 前端一次粘贴恰好一次 invoke，不自己算 hash。
+pub fn write_attachment(
+    root: &Path,
+    dir_rel: &str,
+    data_base64: &str,
+    source_mime: &str,
+) -> Result<WrittenAttachment, CommandError> {
+    let (transcode, extension) = attachment_target(source_mime)?;
+    // 超限判定在解码之前：base64 长度是解码后字节数的上界（`len / 4 * 3 + 2`）——先判可以
+    // 保证超限载荷不被分配（spec「MUST NOT 分配对应内存」）。
+    let upper_bound = (data_base64.len() / 4 * 3 + 2) as u64;
+    if upper_bound > ATTACHMENT_MAX_BYTES {
+        return Err(attachment_too_large(upper_bound));
+    }
+    let raw = base64_decode(data_base64)?;
+    if raw.len() as u64 > ATTACHMENT_MAX_BYTES {
+        return Err(attachment_too_large(raw.len() as u64));
+    }
+    let bytes = if transcode {
+        transcode_png_to_webp(&raw)?
+    } else {
+        raw
+    };
+    let name = format!("pasted-{}.{extension}", short_hash(&bytes));
+    let dir = resolve_attachment_dir(root, dir_rel)?;
+    if let Some(existing) = find_vault_entry_by_name(root, &name) {
+        return Ok(WrittenAttachment {
+            path: existing,
+            name,
+        });
+    }
+    let path = join_rel(dir_rel, &name);
+    match write_attachment_atomic(&dir, &name, &bytes)? {
+        AtomicWriteOutcome::Written => Ok(WrittenAttachment { path, name }),
+        // 竞态：探测与 rename 之间目标被建出 ⇒ 按去重收敛（不覆盖、不报错），返回既有位置。
+        // 只在确实存在同名**文件**时收敛——目标名被目录 / 符号链接占用时无文件可指，
+        // 报错而 MUST NOT 报成功（spec「写入结果无法确认时返回错误」）。
+        AtomicWriteOutcome::TargetExists => match find_vault_entry_by_name(root, &name) {
+            Some(existing) => Ok(WrittenAttachment {
+                path: existing,
+                name,
+            }),
+            None => Err(CommandError::new(
+                "attachment_write_failed",
+                format!("目标名被非文件条目占用：{path}"),
+            )
+            .param("reason", "目标名被非文件条目占用")),
+        },
+    }
 }
 
 /// 把 notify 事件映射为增量清单（按 [`watch_verdict`] 过滤、转相对路径）。
@@ -3964,5 +4281,319 @@ mod tests {
             None,
             "未物化的子目录内部仍被物化闸挡下（白名单不许把它翻成「不是惰性」）"
         );
+    }
+
+    // ---------------------------------------------------------------------------
+    // 剪贴板图片写入（change paste-clipboard-image 的 fs-io 增量）
+    // ---------------------------------------------------------------------------
+
+    /// 合成 png（**带 alpha** 的固定像素图——覆盖 RGBA 路径；内容确定性，测试可逐像素比对）。
+    fn sample_png_rgba() -> Vec<u8> {
+        let mut img = image::RgbaImage::new(4, 3);
+        for (x, y, pixel) in img.enumerate_pixels_mut() {
+            *pixel = image::Rgba([
+                (x * 40) as u8,
+                (y * 80) as u8,
+                ((x + y) * 20) as u8,
+                255 - (x * 30) as u8,
+            ]);
+        }
+        encode_png(image::DynamicImage::ImageRgba8(img))
+    }
+
+    /// 合成 png（**无 alpha** 的 RGB 图——覆盖不透明那一支编码路径）。
+    fn sample_png_rgb() -> Vec<u8> {
+        let mut img = image::RgbImage::new(5, 2);
+        for (x, y, pixel) in img.enumerate_pixels_mut() {
+            *pixel = image::Rgb([(x * 50) as u8, (y * 90) as u8, ((x * y) * 30) as u8]);
+        }
+        encode_png(image::DynamicImage::ImageRgb8(img))
+    }
+
+    fn encode_png(image: image::DynamicImage) -> Vec<u8> {
+        let mut out = Vec::new();
+        image
+            .write_to(&mut std::io::Cursor::new(&mut out), image::ImageFormat::Png)
+            .expect("合成 png");
+        out
+    }
+
+    /// 任意图片字节 → RGBA8 原始像素（逐像素比对用；解码失败即 panic）。
+    fn pixels_of(bytes: &[u8]) -> Vec<u8> {
+        image::load_from_memory(bytes)
+            .expect("解码图片")
+            .to_rgba8()
+            .into_raw()
+    }
+
+    /// vault 内（含子目录，跳过内置忽略目录）名为 `name` 的文件个数。
+    fn count_files_named(root: &Path, name: &str) -> usize {
+        let mut count = 0;
+        let mut stack = vec![root.to_path_buf()];
+        while let Some(dir) = stack.pop() {
+            for item in std::fs::read_dir(&dir).unwrap().flatten() {
+                let ft = item.file_type().unwrap();
+                if ft.is_file() {
+                    if item.file_name().to_string_lossy().as_ref() == name {
+                        count += 1;
+                    }
+                } else if ft.is_dir() {
+                    stack.push(item.path());
+                }
+            }
+        }
+        count
+    }
+
+    /// 断言 vault 内没有任何 `.lumir-` 临时文件残留（半态不落的判据）。
+    fn assert_no_lumir_tmp(root: &Path) {
+        let mut stack = vec![root.to_path_buf()];
+        while let Some(dir) = stack.pop() {
+            for item in std::fs::read_dir(&dir).unwrap().flatten() {
+                let name = item.file_name().to_string_lossy().to_string();
+                assert!(
+                    !name.contains(".lumir-"),
+                    "残留临时文件：{}",
+                    item.path().display()
+                );
+                if item.file_type().unwrap().is_dir() {
+                    stack.push(item.path());
+                }
+            }
+        }
+    }
+
+    /// 非 root 才跑权限类用例：root 能写 0555 目录，权限断言的输入面会失效。
+    fn is_root() -> bool {
+        std::env::var("USER")
+            .map(|user| user == "root")
+            .unwrap_or(false)
+    }
+
+    #[test]
+    fn write_attachment_transcodes_png_to_lossless_webp_and_round_trips_pixels() {
+        let v = TempVault::new();
+        std::fs::create_dir(v.0.join("notes")).unwrap();
+        let png = sample_png_rgba();
+        let written =
+            write_attachment(&v.0, "notes", &base64_encode(&png), "image/png").expect("落盘");
+        assert!(written.name.starts_with("pasted-"), "{}", written.name);
+        assert!(written.name.ends_with(".webp"), "{}", written.name);
+        assert_eq!(written.path, format!("notes/{}", written.name));
+        let on_disk = std::fs::read(v.0.join(&written.path)).expect("读回");
+        assert_eq!(&on_disk[0..4], b"RIFF", "不是 WebP 容器");
+        assert_eq!(&on_disk[8..12], b"WEBP", "不是 WebP 容器");
+        // 命名哈希以**转码后字节**计（不是剪贴板原始字节）。
+        assert_eq!(
+            written.name,
+            format!("pasted-{}.webp", short_hash(&on_disk))
+        );
+        // 无损往返：解码像素与源 png 逐像素一致。
+        assert_eq!(pixels_of(&on_disk), pixels_of(&png));
+    }
+
+    #[test]
+    fn write_attachment_round_trips_rgb_png_without_alpha() {
+        let v = TempVault::new();
+        let png = sample_png_rgb();
+        let written = write_attachment(&v.0, "", &base64_encode(&png), "image/png").expect("落盘");
+        let on_disk = std::fs::read(v.0.join(&written.path)).expect("读回");
+        assert_eq!(pixels_of(&on_disk), pixels_of(&png));
+    }
+
+    #[test]
+    fn write_attachment_passes_through_already_compressed_formats() {
+        let v = TempVault::new();
+        let webp = transcode_png_to_webp(&sample_png_rgba()).expect("先造一份 webp");
+        let written =
+            write_attachment(&v.0, "", &base64_encode(&webp), "image/webp").expect("落盘");
+        assert!(written.name.ends_with(".webp"));
+        assert_eq!(
+            std::fs::read(v.0.join(&written.path)).unwrap(),
+            webp,
+            "已是压缩格式，MUST NOT 再编码"
+        );
+        assert_eq!(written.name, format!("pasted-{}.webp", short_hash(&webp)));
+    }
+
+    #[test]
+    fn write_attachment_rejects_unsupported_mime() {
+        let v = TempVault::new();
+        let err = write_attachment(
+            &v.0,
+            "",
+            &base64_encode(&sample_png_rgba()),
+            "image/x-unknown",
+        )
+        .unwrap_err();
+        assert_eq!(err.code, "attachment_type_unsupported");
+        assert_eq!(
+            err.params.get("type").map(String::as_str),
+            Some("image/x-unknown")
+        );
+        assert_eq!(std::fs::read_dir(&v.0).unwrap().count(), 0, "不落盘");
+    }
+
+    #[test]
+    fn write_attachment_rejects_invalid_base64() {
+        let v = TempVault::new();
+        let err = write_attachment(&v.0, "", "not base64!!!", "image/png").unwrap_err();
+        assert_eq!(err.code, "attachment_decode_failed");
+        assert_eq!(std::fs::read_dir(&v.0).unwrap().count(), 0, "不落盘");
+    }
+
+    #[test]
+    fn write_attachment_rejects_oversized_payload_before_decoding() {
+        let v = TempVault::new();
+        // `len / 4 * 3 + 2` 是解码后字节数的上界：先判可以保证超限载荷不被分配。
+        let huge = "A".repeat(ATTACHMENT_MAX_BYTES as usize / 3 * 4 + 8);
+        let err = write_attachment(&v.0, "", &huge, "image/png").unwrap_err();
+        assert_eq!(err.code, "attachment_too_large");
+        assert_eq!(err.params.get("limit").map(String::as_str), Some("50"));
+        assert_no_lumir_tmp(&v.0);
+        assert_eq!(std::fs::read_dir(&v.0).unwrap().count(), 0, "不落盘");
+    }
+
+    #[test]
+    fn write_attachment_rejects_missing_dir_without_creating_it() {
+        let v = TempVault::new();
+        let err = write_attachment(
+            &v.0,
+            "missing",
+            &base64_encode(&sample_png_rgba()),
+            "image/png",
+        )
+        .unwrap_err();
+        assert_eq!(err.code, "fs_not_found");
+        assert!(!v.0.join("missing").exists(), "MUST NOT 隐式建目录");
+        assert_eq!(std::fs::read_dir(&v.0).unwrap().count(), 0, "不落盘");
+    }
+
+    #[test]
+    fn write_attachment_rejects_out_of_bounds_dirs() {
+        let v = TempVault::new();
+        let data = base64_encode(&sample_png_rgba());
+        for rel in ["../outside", "/etc", "notes/../../etc"] {
+            let err = write_attachment(&v.0, rel, &data, "image/png").unwrap_err();
+            assert_eq!(
+                err.code, "fs_path_escape",
+                "{rel} 应被拒绝：{}",
+                err.message
+            );
+        }
+        assert_eq!(std::fs::read_dir(&v.0).unwrap().count(), 0, "不落盘");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn write_attachment_rejects_symlink_escape_dir() {
+        let v = TempVault::new();
+        let outside = TempVault::new();
+        std::os::unix::fs::symlink(&outside.0, v.0.join("link")).unwrap();
+        let err = write_attachment(
+            &v.0,
+            "link",
+            &base64_encode(&sample_png_rgba()),
+            "image/png",
+        )
+        .unwrap_err();
+        assert_eq!(err.code, "fs_path_escape");
+        assert_eq!(
+            std::fs::read_dir(&outside.0).unwrap().count(),
+            0,
+            "MUST NOT 写入 vault 之外的目录"
+        );
+    }
+
+    #[test]
+    fn write_attachment_dedupes_same_image_across_dirs() {
+        let v = TempVault::new();
+        std::fs::create_dir(v.0.join("notes")).unwrap();
+        std::fs::create_dir(v.0.join("other")).unwrap();
+        let data = base64_encode(&sample_png_rgba());
+        let first = write_attachment(&v.0, "notes", &data, "image/png").expect("首贴");
+        let before = std::fs::metadata(v.0.join(&first.path)).unwrap();
+        let second = write_attachment(&v.0, "other", &data, "image/png").expect("再贴");
+        assert_eq!(second.name, first.name);
+        assert_eq!(
+            second.path, first.path,
+            "去重命中返回首贴位置（首贴位置赢）"
+        );
+        assert!(
+            !v.0.join("other").join(&second.name).exists(),
+            "第二次 MUST NOT 写盘"
+        );
+        let after = std::fs::metadata(v.0.join(&first.path)).unwrap();
+        assert_eq!(
+            before.modified().unwrap(),
+            after.modified().unwrap(),
+            "首贴文件未被改写"
+        );
+        assert_eq!(
+            count_files_named(&v.0, &first.name),
+            1,
+            "全 vault 只有一个副本"
+        );
+    }
+
+    #[test]
+    fn write_attachment_never_overwrites_existing_name() {
+        let v = TempVault::new();
+        let data = base64_encode(&sample_png_rgba());
+        let first = write_attachment(&v.0, "", &data, "image/png").expect("首贴");
+        let target = v.0.join(&first.path);
+        std::fs::write(&target, b"sentinel").unwrap();
+        let second = write_attachment(&v.0, "", &data, "image/png").expect("再贴");
+        assert_eq!(second.path, first.path, "按去重收敛到既有位置");
+        assert_eq!(
+            std::fs::read(&target).unwrap(),
+            b"sentinel",
+            "MUST NOT 覆盖既有内容"
+        );
+    }
+
+    #[test]
+    fn write_attachment_errors_when_target_name_is_occupied_by_a_non_file() {
+        let v = TempVault::new();
+        let png = sample_png_rgba();
+        let first = write_attachment(&v.0, "", &base64_encode(&png), "image/png").expect("首贴");
+        std::fs::remove_file(v.0.join(&first.path)).unwrap();
+        // 同名位置放一个**目录**：没有文件可指，写路径必须报错、MUST NOT 报成功。
+        std::fs::create_dir(v.0.join(&first.name)).unwrap();
+        let err = write_attachment(&v.0, "", &base64_encode(&png), "image/png").unwrap_err();
+        assert_eq!(err.code, "attachment_write_failed");
+        assert!(v.0.join(&first.name).is_dir(), "占位目录原样保留");
+        assert_no_lumir_tmp(&v.0);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn write_attachment_leaves_no_tmp_when_target_dir_is_not_writable() {
+        use std::os::unix::fs::PermissionsExt;
+        if is_root() {
+            return; // root 能写 0555 目录，这条以权限为输入面的用例无意义
+        }
+        let v = TempVault::new();
+        let dir = v.0.join("ro");
+        std::fs::create_dir(&dir).unwrap();
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o555)).unwrap();
+        let err = write_attachment(&v.0, "ro", &base64_encode(&sample_png_rgba()), "image/png")
+            .unwrap_err();
+        assert_eq!(err.code, "attachment_write_failed");
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert_eq!(
+            std::fs::read_dir(&dir).unwrap().count(),
+            0,
+            "不留半截文件 / tmp"
+        );
+    }
+
+    #[test]
+    fn write_attachment_targets_vault_root_for_empty_dir() {
+        let v = TempVault::new();
+        let written = write_attachment(&v.0, "", &base64_encode(&sample_png_rgba()), "image/png")
+            .expect("落盘");
+        assert!(!written.path.contains('/'), "无路径文档退 vault 根");
+        assert!(v.0.join(&written.path).is_file());
     }
 }
