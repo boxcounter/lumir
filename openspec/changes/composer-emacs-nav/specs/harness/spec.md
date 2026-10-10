@@ -32,8 +32,10 @@ harness 面板输入区（composer）内的 Emacs 文本导航族 SHALL 经统�
 
 **删除族**：⌃D / ⌃H SHALL 与 Delete / Backspace 键走**同一份**模型语义（后删 / 前删一字符；光标在卡片前缘 /
 段末遇卡片时对整块作用；有选区时删除选区），MUST NOT 存在第二份删除判定。⌥D / ⌥⌫ SHALL 按词 kill 到词尾 /
-词首并并入 kill 槽；词边界口径 SHALL 与编辑器侧共用同一份实现。词级 kill 与 ⌃K MUST NOT 跨块——到达段落
-边界即停（段边界处无动作），MUST NOT 隐式合并段落、MUST NOT 隐式删除卡片。
+词首并并入 kill 槽；词边界口径 SHALL 与编辑器侧共用同一份实现。`⌥⌫` 与 `⌥Delete` SHALL 由本能力接管（经统一
+键位表），MUST NOT 被输入区既有的就地退格 / 前删路径吞掉——它们今天在 composer 内被当作**普通逐字符退格**
+消费（引擎原生词删除从未生效），接管后 MUST 表现为词级 kill。词级 kill 与 ⌃K MUST NOT 跨块——到达段落边界即
+停（段边界处无动作），MUST NOT 隐式合并段落、MUST NOT 隐式删除卡片。
 
 **kill 与 yank**：kill 槽 SHALL 是**跨面共用**的单一真源（编辑器与 composer 同一槽、同一份连续 kill 相接
 判定）；kill 的内容 MUST NOT 含卡片（本能力的 kill 只作用于文本）。⌃K SHALL kill 到当前逻辑行行尾，已在行尾
@@ -71,6 +73,13 @@ harness 面板输入区（composer）内的 Emacs 文本导航族 SHALL 经统�
   按 ⌥⌫
 - **THEN** 前两次都删掉整张卡片（与 Delete / Backspace 键同结果）；第三次停在段落边界、块序列逐字节不变
   （词级 kill 不跨块、不隐式合并段落、不隐式删卡片）
+
+#### Scenario: ⌥⌫ 是词级删除（不被就地退格路径吞掉）
+
+- **WHEN** composer 的段落文本是 `alpha beta`、光标在行尾，按 ⌥⌫
+- **THEN** 段落变成 `alpha `——删掉的是**整个词**，不是单个字符；被杀文本进了 kill 槽（在别处按 ⌃Y 可插回）。
+  若实现退化为逐字符退格（今天的形态：就地退格路径先消费了这拍），本条 MUST 变红。裸 Backspace 仍是逐字符
+  退格，本能力 MUST NOT 改变它。
 
 #### Scenario: kill 槽跨面共用
 

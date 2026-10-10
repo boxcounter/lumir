@@ -21,8 +21,14 @@
   ⇒ 族内绑定不命中。
 - **族内绑定清单**：`src/keys.ts:451-521`（作用域均 `editor`）——移动 ⌃F/⌃B/⌃A/⌃E/⌃N/⌃P；删除 ⌃D/⌃H/⌥D/⌥⌫；
   kill-yank ⌃K/⌃Y；转置 ⌃T；扩选 ⌃⇧F/B/N/P/A/E；按词扩选 ⌥F/⌥B（= `editor.extend-word-*`，**不是**词移动）。
-- **composer keydown 的放行口**：`src/harness-panel.ts:5002` 的 `if (mod) return`（此前只拦 ⌘Z / ⌘⇧Z / ⌘Y，
-  `:4990-5001`）。Enter / Backspace / Delete / 粘贴 / 拖入走面板就地模型路径（`:5003-5027`、`:5033` 起）。
+- **composer keydown 里族的逐类出路**（`src/harness-panel.ts:4972-5027`；**此处更正 finding 原文的机制
+  描述**——它写「对所有修饰键直接 `return`」，系沿用未核）：`mod = event.metaKey || event.ctrlKey`
+  （`:4990`，**不含 `altKey`**）⇒ ① ⌘/⌃ 系在 `:5002` 的 `if (mod) return` 放行（例外 `⌘Z` / `⌘⇧Z` / `⌘Y`
+  在 `:4991-5001` 被面板自管的撤销栈拦下）；② ⌥F / ⌥B / ⌥D 不经 `:5002`、后续分支也不命中（macOS 的 Alt
+  层替换 `event.key`），**落空放行**——与 ① 殊途同归，同样走原生路径；③ **⌥⌫ 命中 `:5016` 的 Backspace
+  分支**（Alt 不改变该键的 `event.key`），被当**普通退格**消费（逐字符、词级语义丢失；`caretFromDom()`
+  读不回时 `:5017-5018` 又退回原生路径）。Enter / 裸 Backspace / Delete / 粘贴 / 拖入走面板就地模型路径
+  （`:5003-5027`、`:5033` 起）。③ 属静态推断（判据：`altKey` 不改变 ⌫ 的 `event.key`），列入实现期探针。
 - **composer 的块模型与光标表示**：`ComposerCaret {block, offset}`（`:220-231`）；顶层块 = 原子卡片
   （composer 态 `contentEditable="false"`，`:2337` / `:2394`）与段落；删除族已有「卡片按整体」的模型函数
   （`backspaceAtCaret` `:458`、`deleteForwardAtCaret` `:500`、`deleteSelectionRange` `:417`）；纯文本入库口是
@@ -58,8 +64,11 @@
     互相打脸（`tests/unit/keys.test.ts:105` 现有判据的泛化）。
 - **B（否决）：同 token 允许两条作用域互斥的绑定。** 与表内已落定的「一个 token 一条绑定」正面冲突——该
   不变量此前**已被用来否决**「再给 ⌥F 绑一条词移动」（`keymap-commands` spec:224），放开它等于推翻那条裁决。
-  另有两处代价：`[keys]` 的「某个键重绑 / 解绑」对同名两条绑定产生歧义（格式里没有作用域维度）；键位面板
-  一行变两行，"一个键一个动作"的呈现被打破。
+  同一条不变量也让这个形态**已经在途**地建不起来：`composer-intercard-caret`（M444）tasks 3.2 写的就是
+  「加 composer 作用域的 `Ctrl-b` / `Ctrl-f` 绑定……与 `editor` 作用域互不命中」，落进 `src/keys.ts` 会在
+  构造期撞「重复绑定」抛错（`:830-834`），`tests/unit/keys.test.ts:105` 的作用域对账也不放行。另有两处代价：
+  `[keys]` 的「某个键重绑 / 解绑」对同名两条绑定产生歧义（格式里没有作用域维度）；键位面板一行变两行，
+  "一个键一个动作"的呈现被打破。
 - **C（否决）：composer 的就地 keydown 自己接管整族。** 这一族将既不可配（不进 `[keys]`）又不可查（不进
   键位面板），且新增一条与既有 editor 绑定并列的旁路——本仓在 M131 已把键位旁路收敛过一次，`keymap-commands`
   的「分发 SHALL 只有一条路径」是那次收敛的结论。**已知边界**：composer 今天已有一条就地路径（Enter /
@@ -180,11 +189,20 @@ runtime[id] = (event) => inComposer(event) ? panel.composerCommand(id, event) : 
 | 键 | 走哪条路径 | 本 change |
 |---|---|---|
 | ⌃ 族（本 change 接管清单） | 统一键位表（`text` 作用域）→ 面板命令入口 → 模型层 | 新增 |
-| Enter / ⇧Enter / Backspace / Delete / 粘贴 / 拖入 | 面板就地（`src/harness-panel.ts:5003-5033`） | 不变 |
+| ⌥F / ⌥B / ⌥D | 今天落空放行给引擎；接管后同上表 | 新增（进表） |
+| **⌥⌫ / ⌥Delete** | 今天被面板的 Backspace 分支当**普通退格 / 前删**消费（`:5016`） | **进表，且面板的就地分支须同步收窄**（见下） |
+| 裸 Enter / ⇧Enter / Backspace / Delete / 粘贴 / 拖入 | 面板就地（`src/harness-panel.ts:5003-5033`） | 不变 |
 | ⌘Z / ⌘⇧Z / ⌘Y | 面板就地（`:4990-5001`） | 不变（撤销族不是导航族，另案） |
 | ⌃/ 、⌃_ | 表内 `editor.undo`，composer 内不命中 ⇒ 引擎无对应 ⇒ **无动作** | 不变（登记为已知缺口） |
 
-**MUST NOT 出现同一物理组合的两条映射**：上表每一行互不重叠（族内键在表内、就地路径的 token 都不在表内）。
+- **面板先消费、分发器让路的陷阱（实现期必须处理）**：面板的 keydown 挂在 composer 元素上、**先于** window
+  上的分发器执行，而 `Keymap.handle` 对 `defaultPrevented` 的事件让路（`src/keys.ts:852-855`）。今天
+  ⌥⌫ 会被 `:5016` 的 Backspace 分支 `preventDefault`（只要 `caretFromDom()` 读得回），因此**只加表内绑定
+  是无效的**——面板分支必须同步收窄：就地分支 SHALL 只处理**不带任何修饰键**的 Backspace / Delete
+  （`!metaKey && !ctrlKey && !altKey`），带 ⌥ 的变体让给键位层；否则 ⌥⌫ 的表内绑定永远不命中，而用户看到的
+  仍是逐字符退格（一个「绑了没用」的静默失配，`REVIEW.md` 一·假绿的同族形态）。
+- **MUST NOT 出现同一物理组合的两条映射**：上表除「⌥⌫ 过渡」一行外每行互不重叠；⌥⌫ 的过渡是**同一处
+  分支的收窄**（面板让位），不是新增第二条映射。
 
 ## 5. 机器判据设计
 
@@ -216,9 +234,11 @@ runtime[id] = (event) => inComposer(event) ? panel.composerCommand(id, event) : 
    这一条同时是「MUST NOT 整面重渲」与 ADR 0002 §6（导航不进重路径）的机器判据。
 4. **导航不成撤销步**：导航后按 ⌘Z，回到的是**导航前的编辑前态**（不是导航前态）——读数 = 块序列 + 文本。
 5. **删除族按整卡**：⌃D 在卡片前缘删整卡；⌃H 在段首遇卡片删整卡；⌥⌫ 在段首**不**删卡。
-6. **kill-yank 跨面**：编辑器里 ⌃K 杀一段 → 焦点到 composer 按 ⌃Y 插出来（同一槽）。
-7. **扩选**：⌃⇧F 扩选后 anchor 读数不变。
-8. **族外不回退**：composer 内按 ⌥G / ⌃V / Tab 不产生本层动作（与今天一致）。
+6. **⌥⌫ 确实走表（面板让位生效）**：在 `alpha beta` 的行尾按 ⌥⌫ ⇒ 删掉的是**整个词**（不是单个字符）——
+   这条把 §4.5 的「面板先消费、分发器让路」陷阱变成红灯判据（陷阱形态下它退化为逐字符退格）。
+7. **kill-yank 跨面**：编辑器里 ⌃K 杀一段 → 焦点到 composer 按 ⌃Y 插出来（同一槽）。
+8. **扩选**：⌃⇧F 扩选后 anchor 读数不变。
+9. **族外不回退**：composer 内按 ⌥G / ⌃V / Tab 不产生本层动作（与今天一致）。
 
 场景编号按实现期套件现状顺排（写本提案时最高 130，见 `scripts/acceptance/scenarios/`）；**新增/更新验收
 场景随实现同 PR**。
@@ -227,7 +247,9 @@ runtime[id] = (event) => inComposer(event) ? panel.composerCommand(id, event) : 
 
 - 把某条命令在 composer 内临时改回原生路径（不消费事件）⇒ §5.3 的落点断言 MUST 变红；
 - 把导航改为走整面重渲 ⇒ §5.3 第 3 条（零 DOM 变更）MUST 变红；
-- 把 ⌥⌫ 的实现改成「跨块删卡片」⇒ 不跨块不变量 MUST 变红。
+- 把 ⌥⌫ 的实现改成「跨块删卡片」⇒ 不跨块不变量 MUST 变红；
+- 把面板的就地分支放回「带修饰键也处理」（即 `:5016` 不排除 `altKey`）⇒ §5.3 第 6 条 MUST 变红（⌥⌫ 退化
+  为逐字符退格）。
 
 ## 6. 性能与质量合同
 
