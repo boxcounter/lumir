@@ -74,8 +74,12 @@
 且会转文件把草稿拆散；localStorage 在本仓无先例且不跟 vault 绑定）。
 
 **为什么 per vault 而非 per 会话**：见 proposal 裁决点 1 起草倾向（会话 id 不稳定且为新会话首条消息前不存在，
-唯一稳定身份是 vault；per-vault 恰好等于「一个 vault 一个会话」的内存模型，也保留了今天同 vault 内切会话草稿留存
-的实际行为）。
+唯一稳定身份是 vault）。**对齐面须写准**：per-vault 对齐的是**内存态「一个 vault 一个活跃会话」**
+（`RuntimeInner.sessions` 按 vault 键控，`harness.rs:85`；resume 铸 new_id 替换该槽位，`harness.rs:321-469`），
+**不是**「一个 vault 一个会话」这个整体表述——盘上按 vault 分目录可并存**多份历史会话留存**（M433 落地的一 vault
+多会话：浮层可切换 / 新建 / 恢复，living spec「会话边界」`openspec/specs/harness/spec.md:219-221`）。而
+「切会话不丢草稿」的既有行为（`resetView` `:4828-4861` 只清 transcript、不碰 composer）在一 vault 多会话的现实下，
+客观上就是**草稿在 vault 内跨会话共享**——per-vault 只是把这个既有事实从「内存意外留存」变成「显式落盘」。
 
 ## 4. 保存时机（裁决点 3）
 
