@@ -1174,7 +1174,7 @@
    （合并选择器 chip 之后、ctx 读数之前）。形态逐值沿用合并 chip 配方（无边框小标签、
    24px 高、r5、fs-label-s、text-2、hover 给底、chevron ▾；wrapper 是 absolute 定位的
    包含块——M351 的 a11y 修复口径，与会话名钮 / 合并 chip 同一个 wrapper 结构）。chip 面
-   只有**短名**（只读 / 写入 / 完全），全名与释义在浮层里——控制行空间紧，短名才保证
+   只有**短名**（只读 / 可写 / 完全），全名与释义在浮层里——控制行空间紧，短名才保证
    三档都完整显示。 */
 .lumir-hp-permwrap {
   position: relative;
