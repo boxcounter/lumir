@@ -25,7 +25,7 @@
 
 ## 3. 测试
 
-- [ ] 3.1 迁移正确性属性测试（任意 `session_open` 首行 → 落到正确 vault 目录）：含不可归属 → `_orphaned`、同目录两种路径拼写并存、迁移后根下零 `*.jsonl`、文件字节不变、二次运行零搬运（幂等）
+- [ ] 3.1 迁移正确性属性测试（任意 `session_open` 首行 → 落到正确 vault 目录）：含不可归属 → `_orphaned`、同目录两种路径拼写并存、迁移后根下零 `*.jsonl`（无 IO 失败时）、注入 IO 失败时失败者留原地且下次运行收敛、文件字节不变、二次运行零搬运（幂等）
 - [ ] 3.2 反向验证（REVIEW.md 第 1 条）：故意写错归属映射 / 去掉规范化一步，断言必红
 - [ ] 3.3 `src-tauri/tests/session_recording.rs` 换代：路径断言到 `<vault 稳定 id>/`；新增「两个 vault 的会话互不可见（列举范围）」与「恢复 / 删除在 id 目录内命中」
 - [ ] 3.4 门禁：`scripts/gate.sh quick` 全绿（报告照抄 `GATE RESULT` 原文行 + 退出码，SKIP 单列）；`npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` 通过

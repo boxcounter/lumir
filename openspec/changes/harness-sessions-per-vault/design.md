@@ -73,7 +73,7 @@ proposal 的技术面：目录布局与身份来源、归属判据的边界、�
   3. `vault_root` → 规范化 → 查注册表（复用 `find_by_path` 的比对语义，实现期以 `pub(crate) fn id_for_path` 暴露，规范化沿用 `is_registered` 的同一惯用法）；
   4. 命中 → `fs::rename` 到 `sessions/<id>/`（同目录树内移动，原子；目标目录按需 `create_dir_all`）；
   5. 任一步失败 / `vault_root` 缺或不可解析 / 注册表无该项 / 目标已有同名文件 → `fs::rename` 到 `sessions/_orphaned/`。
-- **不变量**：迁移结束时 `sessions/` 根下零 `*.jsonl`；每个文件要么在某个 vault 目录里，要么在 `_orphaned/`；任何文件都不被改写（rename 只换位置，字节不变）。
+- **不变量**：迁移结束时 `sessions/` 根下零 `*.jsonl`（唯一例外：rename 失败留原地待重试的文件——见「失败处置」）；每个文件要么在某个 vault 目录里、要么在 `_orphaned/`、要么是待重试的失败者；任何文件都不被改写（rename 只换位置，字节不变）。
 - **失败处置**：单文件 best-effort——失败只跳过、留原地、打 stderr，下次启动重试（幂等保证重试安全）。结果落一条诊断日志（仿 M248 的四态：无事 / 已迁移 N 个 / 有孤儿 / 失败），使「日志里没有这一行」与「没做迁移」事后可区分。
 - **并发**：启动时内存态会话尚不存在（`Runtime::sessions` 是进程内映射，随会话建立才惰性建文件，`jsonl.rs:84-92` 与 `harness.rs:111-140`），因此没有在写的文件被搬走；writer 的 `create_new(true)` 语义不受布局影响。若进程被杀在迁移中途，残局是「部分文件已归位、部分在根下」——幂等重跑收敛，无需事务。
 
@@ -99,7 +99,7 @@ proposal 的技术面：目录布局与身份来源、归属判据的边界、�
 
 ## 7. 验收面（机器判定锚点）
 
-- **迁移正确性属性测试（核心判据，Rust）**：迁移内核按参数注入两个入参——`sessions/` 根目录与「路径 → id」解析器（stub）——**零环境变量扰动**（REVIEW.md 第 13 条：不改 `XDG_CONFIG_HOME`，`Cargo` 并行跑）。属性：对任意一组合成 `session_open` 首行（含需规范化的拼写、注册表里没有的路径、相对路径、畸形首行）与任意输入文件集，断言每个文件落在**预期**位置（vault 目录或 `_orphaned/`）、根下零 `*.jsonl`、文件字节不变、二次运行零搬运（幂等）。**反向验证**（REVIEW.md 第 1 条）：把归属映射故意写错 / 去掉规范化一步，断言必红。
+- **迁移正确性属性测试（核心判据，Rust）**：迁移内核按参数注入两个入参——`sessions/` 根目录与「路径 → id」解析器（stub）——**零环境变量扰动**（REVIEW.md 第 13 条：不改 `XDG_CONFIG_HOME`，`Cargo` 并行跑）。属性：对任意一组合成 `session_open` 首行（含需规范化的拼写、注册表里没有的路径、相对路径、畸形首行）与任意输入文件集，断言每个文件落在**预期**位置（vault 目录或 `_orphaned/`）、根下零 `*.jsonl`（注入 IO 失败时改为断言「失败者留原地、再次运行收敛」）、文件字节不变、二次运行零搬运（幂等）。**反向验证**（REVIEW.md 第 1 条）：把归属映射故意写错 / 去掉规范化一步，断言必红。
 - **路径与范围集成断言**：`src-tauri/tests/session_recording.rs` 更新为「新会话落在 `<vault 稳定 id>/` 下」；新增用例「vault A 与 vault B 的会话互不可见（列举范围）」与「恢复 / 删除在 id 目录内命中」。
 - **真机验收**：21 个场景共 70 处 `env:harness` 引用逐处核对（实测分布：64 处 `sessions/*.jsonl` 的 file 断言 glob、4 处 `sessions` 目录形态、2 处 `sessions/`——即全部落在留存路径上，无 `config.json` 一类混入），glob 改为 `<vault 稳定 id>/` 层级；新增或扩展一个场景覆盖「两个 vault 各落各目录 + 浮层只见其一」；迁移的现场核验落成场景（预置平铺文件 + 一个不可归属文件 → 启动 → 断言归位与 `_orphaned/`），证据落 `test-results/`（本地留存、git 外）。`scripts/acceptance/lib/app.mjs:143-154` 的 `resetHarness` 已是整目录递归删除（`lib/` 下无别的路径拼接代码，已核），新布局天然被清；`scripts/acceptance/lib/app.mjs:144-148` 与 `scripts/acceptance/README.md:193-195` 的路径文档一并改准。
 - **视觉**：本 change 无 UI 面、不动 `src/style.css` / `src/preview/**` / `tests/visual/scenes/**`，**不产生视觉基线改动**；`scripts/gate.sh quick` 为准（动过 ts-rs 导出面时按既有纪律先 `git add` 重导出产物）。

@@ -25,7 +25,7 @@ Alex 原话（2026-10-10）：「harness session JSONL 是否按 vault 分目录
 
 每条对应 `specs/harness/spec.md` 增量中的一个 requirement：
 
-1. **会话本地留存**（harness，MODIFIED）：留存路径从 `sessions/<session_id>.jsonl` 改为 `sessions/<vault 稳定 id>/<session_id>.jsonl`——目录名取 vault 注册表 id（与 `vault-sessions/<id>.json`、`reading-positions/<id>.json` 同一份身份），MUST NOT 用 vault 路径派生的消毒名。新增三条纪律：① 会话文件的 vault 归属**判据不变**，仍是首行 `session_open.vault_root`，目录只作组织维度、MUST NOT 成为第二真源；② 一次性迁移——启动时把平铺的 `*.jsonl` 按首行 `vault_root` 归入对应 vault 目录，不可归属者进保留目录 `_orphaned/`，幂等、逐文件 best-effort、失败下次启动重试；③ 迁移完成后只读新布局，MUST NOT 留双读 / 双写过渡层。对应场景：留存落盘（路径更新）、新增三个场景（按 vault 分置与列举范围 / 平铺文件一次性归位 / 不可归属者进孤儿桶）、「旧文件孤儿化」（场景名保留——validator 要求 MODIFIED 不得丢基线场景名——内容收紧为「上一代**聚合**形态不做迁移」，与新增的平铺归位区分开）；其余五个场景（废弃 kind / 装配记录 / 恢复充分性 / 思考落盘与回放）逐字不变。
+1. **会话本地留存**（harness，MODIFIED）：留存路径从 `sessions/<session_id>.jsonl` 改为 `sessions/<vault 稳定 id>/<session_id>.jsonl`——目录名取 vault 注册表 id（与 `vault-sessions/<id>.json`、`reading-positions/<id>.json` 同一份身份），MUST NOT 用 vault 路径派生的消毒名。新增三条纪律：① 会话文件的 vault 归属**判据不变**，仍是首行 `session_open.vault_root`，目录只作组织维度、MUST NOT 成为第二真源；② 一次性迁移——启动时把平铺的 `*.jsonl` 按首行 `vault_root` 归入对应 vault 目录，不可归属者进保留目录 `_orphaned/`，幂等、逐文件 best-effort、失败下次启动重试；③ 迁移完成后只读新布局，MUST NOT 留双读 / 双写过渡层。对应场景：留存落盘（路径更新）、新增三个场景（按 vault 分置与列举范围 / 平铺文件一次性归位 / 不可归属者进孤儿桶）、「旧文件孤儿化」（场景名保留——validator 要求 MODIFIED 不得丢基线场景名——内容收紧为「上一代**聚合**形态不做迁移」，与新增的平铺归位区分开）；其余四个场景（废弃 kind / 装配记录 / 恢复充分性 / 思考落盘与回放）逐字不变。
 
 ## Alex 裁决点
 
@@ -68,4 +68,4 @@ Alex 原话（2026-10-10）：「harness session JSONL 是否按 vault 分目录
 
 - **怎么知道它生效**：`ls ~/.config/lumir/harness/sessions/`（即 `<config_dir>/harness/sessions/`）应只见 vault 目录（每个 vault 一个，必要时加 `_orphaned/`），根下零 `*.jsonl`；目录名与 `vault-registry/<id>.json` 的 `path` 对照即知哪个 vault。
 - **怎么知道它有效**：dogfood 期 Alex 找某个 vault 的会话时是否需要 grep / 打开别的 vault 的文件——「一个 vault 一个目录，目录内即全部」是否真的比平铺好找；取证面是目录结构本身，无需埋点。
-- **出问题怎么发现**：机器面兜底——迁移正确性属性测试（任意 `session_open` 首行 → 落到正确 vault 目录，含反向验证必红）、迁移幂等性断言、`sessions/` 根下零 `*.jsonl` 的终态断言、两 vault 会话互不可见的集成断言、验收场景的路径断言更新；迁移结果落诊断日志（四态），「日志里没有这一行」与「没做迁移」事后可区分。
+- **出问题怎么发现**：机器面兜底——迁移正确性属性测试（任意 `session_open` 首行 → 落到正确 vault 目录，含反向验证必红）、迁移幂等性断言、`sessions/` 根下零 `*.jsonl` 的终态断言（IO 失败路径另断言失败者留原地且下次运行收敛）、两 vault 会话互不可见的集成断言、验收场景的路径断言更新；迁移结果落诊断日志（四态），「日志里没有这一行」与「没做迁移」事后可区分。
