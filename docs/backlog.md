@@ -644,6 +644,15 @@
 
 ## 待修 findings（不阻塞）
 
+### living spec harness 未覆盖 M373/M381 的「models 逐项模型能力声明」（worker-m424 finding，2026-10-10，low）
+
+**症状**：`[harness].providers.<id>.models` 的 `{id, effort, window}` 声明与保守默认口径（缺 effort → false、
+缺 window → FALLBACK_CONTEXT_WINDOW、类型不符丢该项、未列出 = 不支持）已在实现与验收套件生效，
+但 living spec「配置节 [harness]」（openspec/specs/harness/spec.md:200）没有 `models` 表——已实现未进 spec。
+**修法方向**：补一条「模型清单与能力声明」requirement（或 MODIFY 配置节）；**与 change
+harness-composer-image-paste 的 image 能力增量同表合并归档最省事**——实现该 change 时一并带上。
+finding：`.tower/comms/findings/20261010-worker-m424-improve-living-spec-harness-m373-m381-models.md`。
+
 ### 消息摘录跳回三层真机不可判：落点（类名 + 滚动位置）读不进 AX（worker-m423 留口，2026-10-10，low）
 
 **症状**：harness-message-excerpt design §8 的④跳回三层（上屏卡点击跳回来源消息并高亮），真机侧落点
