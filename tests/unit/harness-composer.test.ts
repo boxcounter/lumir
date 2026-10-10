@@ -9,6 +9,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   backspaceAtCaret,
+  caretScrollTop,
   createUndoHistory,
   deleteForwardAtCaret,
   deleteSelectionRange,
@@ -107,7 +108,51 @@ test("insertPlainTextAtCaret：光标在卡片前缘 → 视该处为空段落",
   assert.deepEqual(caret, { block: 0, offset: 1 });
 });
 
-// ── 软换行（⇧Enter）：段内插 \n，不拆块 ─────────────────────────────────────
+// ── 软换行（⇧Enter）：不变量 HC1 / HC2（docs/specs/harness-composer.md）──────────────
+//
+// 缺陷现场（M419，Alex 2026-10-10）：「Harness composer 里按两次 SHIFT + Enter 才会换行」。
+// 根因：段末的换行以往落成**尾随 \n**，而 CSS 里尾随换行不产生行盒（pre-wrap 下
+// "ab\n" 与 "ab" 同高）——一次 ⇧Enter 因此零可见变化，第二次才把前一次的尾随换行挤成
+// 内部换行。HC1 把「一次 ⇧Enter 恰好加一行、且光标落在可见行上」写死成不变量。
+
+/**
+ * 一个段落的**渲染行数**（渲染口径的纯函数复刻）：`pre-wrap` 下**尾随换行不产生行盒**
+ * （"ab\n" 与 "ab" 同高，探针实测见 docs/specs/harness-composer.md §实测依据），空段落
+ * 仍占 1 行（`min-height:1em`）。计数与 `visibleLines` / 光标可见性判据共用一份。
+ */
+function renderedLines(text: string): number {
+  if (text === "") return 1;
+  const breaks = text.split("\n").length - 1;
+  return text.endsWith("\n") ? breaks : breaks + 1;
+}
+
+/** 段落文本里第 `offset` 个字符之前有几个换行 = 光标落在第几行（0 基）。 */
+function lineOfOffset(text: string, offset: number): number {
+  return text.slice(0, offset).split("\n").length - 1;
+}
+
+/** 可见行数（HC1 的增量断言用）：卡片不占文本行，只数段落。 */
+function visibleLines(blocks: readonly ComposerBlock[]): number {
+  return blocks.reduce(
+    (n, block) => n + (block.kind === "paragraph" ? renderedLines(block.text) : 0),
+    0,
+  );
+}
+
+/**
+ * 光标是否落在**可见行**上（HC1 第二条判据）：所在块是段落，且光标的行号 < 该段落的渲染行数。
+ *
+ * 判据必须是**充要**形态、不能省成「段落文本不以 \n 结尾」：后者只是充分条件——段落文本
+ * 可以以 \n 结尾（原生编辑残留的 `<br>` 经 `paraTextOf` 记为 `\n`、`normalize` 不剥除），
+ * 此时「段落尾随 \n」与「光标落在最后一行的尾随换行之后」是两件事：`"\na\n"` 的光标在
+ * offset 1（第二行行首）是**可见**的，而 `"a\n"` 的光标在 offset 2（尾随换行之后）不是。
+ * 详见 docs/specs/harness-composer.md §证伪方式。
+ */
+function caretOnVisibleLine(blocks: readonly ComposerBlock[], caret: { block: number; offset: number }): boolean {
+  const block = blocks[caret.block];
+  if (block === undefined || block.kind !== "paragraph") return false;
+  return lineOfOffset(block.text, caret.offset) < renderedLines(block.text);
+}
 
 test("insertSoftBreakAtCaret：段内插软换行、光标前进一格", () => {
   const { blocks, caret } = insertSoftBreakAtCaret([para("ab")], { block: 0, offset: 1 });
@@ -115,10 +160,187 @@ test("insertSoftBreakAtCaret：段内插软换行、光标前进一格", () => {
   assert.deepEqual(caret, { block: 0, offset: 2 });
 });
 
-test("insertSoftBreakAtCaret：卡片前缘 → 贴前一个段落末尾", () => {
+test("insertSoftBreakAtCaret：段末一次 ⇧Enter = 新空段落一块（不是不可见的尾随 \\n）", () => {
+  // 缺陷回归位：旧实现给 [para("ab")] 段末插出 [para("ab\n")]——渲染上与 [para("ab")] 同高，
+  // 用户看到的是「按了没反应」；新段落块 min-height:1em，一行真实落地。
+  const { blocks, caret } = insertSoftBreakAtCaret([para("ab")], { block: 0, offset: 2 });
+  assert.deepEqual(blocks, [para("ab"), para("")]);
+  assert.deepEqual(caret, { block: 1, offset: 0 });
+});
+
+test("insertSoftBreakAtCaret：空段落上一按 = 光标落到第二行（首行留白）", () => {
+  const { blocks, caret } = insertSoftBreakAtCaret([para("")], { block: 0, offset: 0 });
+  assert.deepEqual(blocks, [para(""), para("")]);
+  assert.deepEqual(caret, { block: 1, offset: 0 });
+});
+
+test("insertSoftBreakAtCaret：卡片前缘 → 光标所在处落一个新空段落（新行在卡片之上）", () => {
   const { blocks, caret } = insertSoftBreakAtCaret([para("前"), quote(cardA)], { block: 1, offset: 0 });
-  assert.deepEqual(blocks, [para("前\n"), quote(cardA)]);
-  assert.deepEqual(caret, { block: 0, offset: 2 });
+  assert.deepEqual(blocks, [para("前"), para(""), quote(cardA)]);
+  assert.deepEqual(caret, { block: 1, offset: 0 });
+});
+
+test("insertSoftBreakAtCaret：composer 以卡片开头（无前段落）→ 照样加一行（不静默无操作）", () => {
+  const { blocks, caret } = insertSoftBreakAtCaret([quote(cardA), para("后")], { block: 0, offset: 0 });
+  assert.deepEqual(blocks, [para(""), quote(cardA), para("后")]);
+  assert.deepEqual(caret, { block: 0, offset: 0 });
+});
+
+// ── 尾随换行段落（原生 <br> 残留形态，P2-1）：判据的充要形态 ────────────────────────────
+//
+// 模型里**可以**出现以 \n 结尾的段落：原生编辑路径（如删空一行后 WebKit 留下的 `<br>`）经
+// `paraTextOf` 记为 \n、`normalize` 不剥除。它同时也是「光标在可见行上」判据的试金石——
+// 「段落文本不以 \n 结尾」只是**充分**条件，对本形态会假红。
+
+test("insertSoftBreakAtCaret：段落已以 \\n 结尾 → 仍恰好加一行，光标不停在尾随换行之后", () => {
+  // 段首按（offset 0 < length）走段中分支：换行插在段首 ⇒ "\na\n"，光标落第二行行首（可见）。
+  const head = insertSoftBreakAtCaret([para("a\n")], { block: 0, offset: 0 });
+  assert.deepEqual(head.blocks, [para("\na\n")]);
+  assert.deepEqual(head.caret, { block: 0, offset: 1 });
+  assert.equal(renderedLines("\na\n"), 2);
+  assert.equal(caretOnVisibleLine(head.blocks, head.caret), true);
+
+  // 段末（光标本就在尾随换行之后）走段末分支：落新空段落块，光标离开那个没有行盒的位置。
+  const tail = insertSoftBreakAtCaret([para("a\n")], { block: 0, offset: 2 });
+  assert.deepEqual(tail.blocks, [para("a\n"), para("")]);
+  assert.deepEqual(tail.caret, { block: 1, offset: 0 });
+  assert.equal(caretOnVisibleLine(tail.blocks, tail.caret), true);
+});
+
+test("caretOnVisibleLine 判据的充要性：同一段「以 \\n 结尾」的文本里，行内光标与尾随换行之后的光标必须分开判", () => {
+  // 反例一对：\n 之后的光标不可见（尾随换行不产生行盒），段内第二行行首的光标可见。
+  assert.equal(caretOnVisibleLine([para("a\n")], { block: 0, offset: 2 }), false);
+  assert.equal(caretOnVisibleLine([para("\na\n")], { block: 0, offset: 1 }), true);
+  // 反例二对：卡片的「前缘」不是可见文本行；段落任何 < 渲染行号 的位置都在可见行上。
+  assert.equal(caretOnVisibleLine([quote(cardA)], { block: 0, offset: 0 }), false);
+  assert.equal(caretOnVisibleLine([para("")], { block: 0, offset: 0 }), true);
+});
+
+// ── HC1 的不变量（属性测试：输入维度 = 块序列 × 光标位置全枚举）────────────────────────
+//
+// 合同条款（docs/specs/harness-composer.md HC1）：「对任意块序列与任意光标位置，一次
+// ⇧Enter 恰好增加一行可见行，且结束后光标落在可见行上」。逐案断言只能证明报告里的那个
+// 案例被修好（docs/process/rendering-defect-contract-first.md §反例），这里扫全枚举。
+
+/**
+ * 生成器：段落文本分布（4 个长度/结构档 × 卡片在场形态）。文本档覆盖：
+ * 空段落 · 单字 · 多字 · **已含内部换行**（粘贴 / 快照恢复带进来的 `\n`） · **以换行结尾**
+ * （原生编辑路径可达：WebKit 删空一行后残留 `<br>`，`paraTextOf` 记为 `\n`、`normalize`
+ * 不剥除）。末一档是 P2-1 补的——它会把「光标落在尾随换行之后」与「光标在可见行上」的
+ * 区别暴露出来，见 `caretOnVisibleLine` 的判据说明。
+ */
+function blockSequences(): ComposerBlock[][] {
+  const texts = ["", "a", "abc", "a\nb", "a\n"];
+  const sequences: ComposerBlock[][] = [];
+  for (const first of texts) {
+    sequences.push([para(first)]);
+    for (const second of texts) {
+      sequences.push([para(first), para(second)]);
+      sequences.push([para(first), quote(cardA), para(second)]);
+    }
+    sequences.push([quote(cardA), para(first)]);
+    sequences.push([para(first), quote(cardA)]);
+  }
+  sequences.push([quote(cardA)]);
+  return sequences;
+}
+
+test("HC1 属性：任意块序列 × 任意光标处，一次 ⇧Enter 恰好 +1 可见行且光标落可见行", () => {
+  let cases = 0;
+  for (const blocks of blockSequences()) {
+    const offsetsOf = (index: number): number[] => {
+      const block = blocks[index];
+      if (block === undefined || block.kind !== "paragraph") return [0];
+      return Array.from({ length: block.text.length + 1 }, (_, i) => i);
+    };
+    for (let index = 0; index < blocks.length; index += 1) {
+      for (const offset of offsetsOf(index)) {
+        const before = visibleLines(blocks);
+        const result = insertSoftBreakAtCaret(blocks, { block: index, offset });
+        cases += 1;
+        const at = `${JSON.stringify(blocks)} @${index}:${offset}`;
+        assert.equal(
+          visibleLines(result.blocks),
+          before + 1,
+          `${at}：一次 ⇧Enter 必须恰好增加一行可见行（旧形态：段末尾随 \\n 不产生行盒）`,
+        );
+        assert.equal(
+          caretOnVisibleLine(result.blocks, result.caret),
+          true,
+          `${at}：断行后光标必须落在可见行上，实际落在 ${JSON.stringify(result.caret)}`,
+        );
+      }
+    }
+  }
+  assert.ok(cases >= 40, `枚举样本过少（${cases}），属性测试会空转`);
+});
+
+test("HC1 属性：断行不吞内容（除换行外逐字符守恒）", () => {
+  const flatten = (blocks: readonly ComposerBlock[]): string =>
+    blocks.map((b) => (b.kind === "paragraph" ? b.text : "")).join("");
+  for (const blocks of blockSequences()) {
+    for (let index = 0; index < blocks.length; index += 1) {
+      const block = blocks[index];
+      const text = block !== undefined && block.kind === "paragraph" ? block.text : "";
+      for (let offset = 0; offset <= text.length; offset += 1) {
+        const result = insertSoftBreakAtCaret(blocks, { block: index, offset });
+        assert.equal(
+          flatten(result.blocks).replace(/\n/g, ""),
+          flatten(blocks).replace(/\n/g, ""),
+          `${JSON.stringify(blocks)} @${index}:${offset}：断行只应影响换行，不得增删其它字符`,
+        );
+      }
+    }
+  }
+});
+
+// ── HC2：断行 / 光标移动后的 composer 视口自动滚动（纯函数，DOM 只喂读数）─────────────
+//
+// 合同条款（docs/specs/harness-composer.md HC2）：「composer 视口必须把光标所在行纳入可见区，
+// 不需要人工滑动」。composer 的 DOM 是重渲出来的（renderComposer → setDomCaret 用
+// Range 程序化落光标），浏览器的「插入后把光标滚进视野」因此不生效——视口停在原处，
+// 用户要手动往下滑。判据（该滚到哪）抽成纯函数，DOM 侧只负责量读数、写 scrollTop。
+
+test("caretScrollTop：光标在可视区下方 → 滚到光标行贴底（留边距）", () => {
+  const target = caretScrollTop(
+    { scrollTop: 0, clientHeight: 100, scrollHeight: 400 },
+    { top: 180, bottom: 200 },
+  );
+  assert.equal(target, 200 + 4 - 100); // 光标行下沿 + 边距 = 可视区底边
+});
+
+test("caretScrollTop：光标在可视区上方 → 滚到光标行贴上沿（留边距）", () => {
+  const target = caretScrollTop(
+    { scrollTop: 104, clientHeight: 100, scrollHeight: 400 },
+    { top: 40, bottom: 60 },
+  );
+  assert.equal(target, 36);
+});
+
+test("caretScrollTop：光标已在可视区内 → 原值（不因重渲抖动视口）", () => {
+  const view = { scrollTop: 100, clientHeight: 100, scrollHeight: 400 };
+  assert.equal(caretScrollTop(view, { top: 120, bottom: 140 }), 100);
+  // 边界有余量：光标行正好落在「下沿 - 边距」处不动，越过 1px 才滚。
+  assert.equal(caretScrollTop(view, { top: 176, bottom: 196 }), 100);
+  assert.equal(caretScrollTop(view, { top: 177, bottom: 197 }), 101);
+});
+
+test("caretScrollTop：内容不足一屏 → 0（无滚动空间，视口不动）", () => {
+  assert.equal(caretScrollTop({ scrollTop: 0, clientHeight: 150, scrollHeight: 120 }, { top: 0, bottom: 20 }), 0);
+});
+
+test("caretScrollTop：结果钳在 [0, scrollHeight - clientHeight]（不产生越界滚动）", () => {
+  const view = { scrollTop: 0, clientHeight: 100, scrollHeight: 400 };
+  // 光标远在下方：贴底算式会超出最大滚动位，钳到 300。
+  assert.equal(caretScrollTop(view, { top: 395, bottom: 420 }), 300);
+  // 光标在内容原点：贴顶算式会产出负值，钳到 0。
+  assert.equal(caretScrollTop({ ...view, scrollTop: 50 }, { top: 0, bottom: 10 }), 0);
+});
+
+test("caretScrollTop：边距可显式调小 / 归零（调用方按容器 padding 覆盖）", () => {
+  const view = { scrollTop: 0, clientHeight: 100, scrollHeight: 400 };
+  assert.equal(caretScrollTop(view, { top: 180, bottom: 200 }, 0), 100);
+  assert.equal(caretScrollTop(view, { top: 180, bottom: 200 }, 20), 120);
 });
 
 // ── 选区删除（跨块安全：区间内卡片整块移除） ────────────────────────────────

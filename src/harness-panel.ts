@@ -187,6 +187,9 @@ export function inCurrentVault(payloadVault: unknown, currentVault: string | nul
 // 混排 composer 的纯模型层（M343，change add-harness-quote-cards design §2/§5）。
 // 顶层块只有两类：quote（原子卡片，数据即 M342 的 QuoteCard）与 paragraph（问题段落，
 // 文本可含 \n 软换行）。DOM 只是这个模型的渲染面：结构性修改先算模型、再整面重渲——
+// 换行与断行后视口的质量合同（HC1 一次 ⇧Enter 恰好一行 × HC2 光标行在视口内）在
+// docs/specs/harness-composer.md：落法是 insertSoftBreakAtCaret（段末 / 卡片前缘落新空
+// 段落块——尾随 \n 不产生行盒）与 caretScrollTop（DOM 侧量读数、纯函数给目标滚动位）。
 // contenteditable 的四个已知 quirk（design §2「不允许侥幸」）因此各有单一收口：
 //   ① 粘贴净化：paste/drop 拦截后只经 insertPlainText 进纯文本；
 //   ② IME 组合态：组合期的跨卡片删除在 beforeinput 被拦下（面板层）；
@@ -305,7 +308,20 @@ export function insertPlainTextAtCaret(
   return { blocks: next, caret: { block: caretBlock, offset: caretOffset } };
 }
 
-/** ⇧Enter 软换行：段内插 \n（不拆块），光标前进一格。光标在卡片前缘时落到前一个文本块。 */
+/**
+ * ⇧Enter 软换行：**一次按键恰好加一行可见行**，光标落在新行的可见位置
+ * （不变量 HC1，合同 docs/specs/harness-composer.md）。
+ *
+ * 两条落法（同一按键路径，model 层一次算出）：
+ * - 光标在段落**中间**：段内插 `\n`（不拆块）——内部换行照常产生行盒，光标落换行之后；
+ * - 光标在段落**末尾**（含空段落）或**卡片前缘**：在光标处落一个**新的空段落块**，
+ *   光标落到它段首。不给段落追加尾随 `\n`：CSS 里尾随换行**不产生行盒**（`white-space:
+ *   pre-wrap` 下 "ab\n" 与 "ab" 同高），旧实现因此让第一次 ⇧Enter 零可见变化、要按两次
+ *   才看到换行（Alex 2026-10-10 现场）。空段落块有 `min-height: 1em`，一行真实落地。
+ *
+ * 返回的块序列里，光标所在段落**恒不以 `\n` 结尾**——这是「光标在可见行上」的机器判据，
+ * 属性测试按块序列 × 光标位置全枚举钉死。
+ */
 export function insertSoftBreakAtCaret(
   blocks: readonly ComposerBlock[],
   caret: ComposerCaret,
@@ -313,21 +329,53 @@ export function insertSoftBreakAtCaret(
   const at = Math.max(0, Math.min(caret.block, blocks.length - 1));
   const target = blocks[at];
   if (target === undefined || target.kind !== "paragraph") {
-    // 卡片前缘：找前一个段落贴末插软换行；没有前段落则不动作（保持模型稳定）。
-    for (let i = at - 1; i >= 0; i -= 1) {
-      if (blocks[i].kind === "paragraph") {
-        const text = (blocks[i] as { text: string }).text;
-        const next = blocks.slice() as ComposerBlock[];
-        next[i] = { kind: "paragraph", text: `${text}\n` };
-        return { blocks: next, caret: { block: i, offset: text.length + 1 } };
-      }
-    }
-    return { blocks: [...blocks], caret };
+    // 卡片前缘（含 composer 以卡片开头、无前段落）：在光标处落一个新空段落——新行就在
+    // 卡片那一行的上方；没有前段落时同样加行，不静默无操作（HC1 对全部光标位置成立）。
+    const next = blocks.slice() as ComposerBlock[];
+    next.splice(at, 0, { kind: "paragraph", text: "" });
+    return { blocks: next, caret: { block: at, offset: 0 } };
   }
   const offset = Math.max(0, Math.min(caret.offset, target.text.length));
   const next = blocks.slice() as ComposerBlock[];
+  if (offset >= target.text.length) {
+    // 段末：新空段落块承接光标（尾随 \n 的形态在这里被取代——见函数头）。
+    next.splice(at + 1, 0, { kind: "paragraph", text: "" });
+    return { blocks: next, caret: { block: at + 1, offset: 0 } };
+  }
   next[at] = { kind: "paragraph", text: `${target.text.slice(0, offset)}\n${target.text.slice(offset)}` };
   return { blocks: next, caret: { block: at, offset: offset + 1 } };
+}
+
+/** composer 视口自动滚动的边距（px）：光标行不贴容器边沿，留一点呼吸（HC2）。 */
+export const CARET_SCROLL_MARGIN = 4;
+
+/**
+ * 光标行滚进视口的目标 scrollTop（纯函数，不变量 HC2 —— 合同 docs/specs/harness-composer.md）。
+ *
+ * composer 的 DOM 是**重渲**出来的（renderComposer 之后 setDomCaret 用程序化 Range 落光标），
+ * 引擎在选区变化时的 reveal 行为是引擎特性：WKWebView 会 reveal、Blink 不会（见
+ * scrollCaretIntoView 的实测记录）。判据抽在这里，DOM 侧只负责量读数、写 scrollTop——
+ * 条款（光标行在视口内）因此不依赖某一份引擎实现。
+ *
+ * 坐标系：`caret.top/bottom` 是光标行在**滚动内容坐标系**里的上下沿
+ * （= 视口坐标 − 容器上沿 + view.scrollTop；调用方换算）。判定：
+ * - 光标行末带边距仍在可视区内 → 返回原 scrollTop（**同一性**：每次重渲都动视口会抖）；
+ * - 越出上沿 → 滚到 `top - margin`；
+ * - 越出下沿 → 滚到 `bottom + margin - clientHeight`（光标行贴可视区底边）；
+ * - 结果钳在 `[0, scrollHeight - clientHeight]`——内容不足一屏时恒 0，不产出越界滚动位。
+ */
+export function caretScrollTop(
+  view: { scrollTop: number; clientHeight: number; scrollHeight: number },
+  caret: { top: number; bottom: number },
+  margin: number = CARET_SCROLL_MARGIN,
+): number {
+  const maxScroll = Math.max(0, view.scrollHeight - view.clientHeight);
+  const clamp = (value: number): number => Math.max(0, Math.min(value, maxScroll));
+  if (caret.top - margin < view.scrollTop) return clamp(caret.top - margin);
+  if (caret.bottom + margin > view.scrollTop + view.clientHeight) {
+    return clamp(caret.bottom + margin - view.clientHeight);
+  }
+  return clamp(view.scrollTop);
 }
 
 /** 删除选区（跨块安全）：区间内的卡片整块移除，两端段落按端点截断保留。 */
@@ -2279,6 +2327,33 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       selection.removeAllRanges();
       selection.addRange(range);
     }
+    scrollCaretIntoView(range, blockEl);
+  }
+
+  /**
+   * 把光标行滚进 composer 视口（HC2，合同 docs/specs/harness-composer.md）：光标是程序化
+   * Range 落的，引擎在选区变化时的 reveal 行为是**引擎特性**——WKWebView 会 reveal
+   * （M419 实测：把调用停用后断行后的新行照样在视口里），Blink 不会（chromium 探针：不写
+   * scrollTop 时视口停在滚动上限之前整整一行）。这里给一条**引擎无关的保证**：量光标行读数
+   * → 纯函数 caretScrollTop 算目标 scrollTop → 需要时写回（已在视野内时返回原值，不写回、不抖）。
+   *
+   * 光标行矩形取 Range 包围盒；空段落（断行新落的空行）上 Range 可能量出零高，回落块元素
+   * 矩形（空段落有 min-height:1em，量得到行位）。面板未挂载时两种矩形都是 0，纯函数钳回 0。
+   */
+  function scrollCaretIntoView(range: Range, blockEl: Element): void {
+    const box = composer.getBoundingClientRect();
+    const rangeRect = range.getBoundingClientRect();
+    const rect = rangeRect.height > 0 ? rangeRect : blockEl.getBoundingClientRect();
+    const offsetInContent = composer.scrollTop - box.top;
+    const target = caretScrollTop(
+      {
+        scrollTop: composer.scrollTop,
+        clientHeight: composer.clientHeight,
+        scrollHeight: composer.scrollHeight,
+      },
+      { top: rect.top + offsetInContent, bottom: rect.bottom + offsetInContent },
+    );
+    if (target !== composer.scrollTop) composer.scrollTop = target;
   }
 
   // ── 撤销栈（quirk ③：自管快照；原生 undo 显式禁用并登记在 beforeinput 拦截里） ──
