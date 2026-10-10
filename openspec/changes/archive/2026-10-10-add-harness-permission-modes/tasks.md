@@ -2,11 +2,11 @@
 
 > 提案阶段任务清单；Alex 节点 1 裁决通过后方可进入实现。裁决点见 proposal「Alex 裁决点」——实现按裁决结果落表，不替 Alex 选。
 >
-> 勾选与说明由后端实现 mission（M407）填写；第 5 节（UI）与 6.7（验收场景）归面板批次与验收套件维护者，本行以下未勾选项即「本轮未做」的真实状态。
+> 勾选与说明由后端实现 mission（M407）填写；第 5 节（UI）与 6.7（验收场景）归面板批次与验收套件维护者。**归档对账（M418 归档评审，2026-10-10）**：后置批次已落地（M414 权限前端批、M417 中文短名批复、M411/M416 验收场景），5.1 / 5.2 / 5.4 / 6.7 四条据此补勾、其「归面板批次 / 本轮未做」注记同批改准——本清单现 28/28 全勾。
 >
 > **r1 复评后的两项增量**（2026-10-09，同为 M407）：① 修 r1 P2-1（`vault_create_file` 对绝对路径输入会在 vault 里留下 stray 目录——校验趟补绝对路径拒绝 + 用例补「不建任何东西」断言）；② Alex 语义修订：`read_only` 由「拒绝写」改为 **Always Ask**（写逐个问），模式层不再产出 Deny，只读档的批准窗 CAS 用例随之复活（见 1.2 / 6.1 / 6.2 注记）。
 >
-> **r3 追加（2026-10-09，纯文档口径）**：design §7 呈现口径修订——chip 显示**短名**（只读 / 写入 / 完全；Read / Write / Full）、浮层列表项显示**全名**并每档附一行释义（原「chip 显示全名」「无释义」作废）。落点：design §7/§8、proposal 评审记录、spec delta「权限模式切换」requirement + 「三档浮层」scenario、本条 5.1 注记；判定代码未动（5.1 仍归 UI 批次勾选）。
+> **r3 追加（2026-10-09，纯文档口径）**：design §7 呈现口径修订——chip 显示**短名**（只读 / 写入 / 完全；Read / Write / Full；**中文短名于 2026-10-10 批复改为「只读 / 可写 / 完全」**，M417）、浮层列表项显示**全名**并每档附一行释义（原「chip 显示全名」「无释义」作废）。落点：design §7/§8、proposal 评审记录、spec delta「权限模式切换」requirement + 「三档浮层」scenario、本条 5.1 注记；判定代码未动。
 >
 > **M413 后端收口（2026-10-10）**：三项技术债 + 一个裁决洞——① 黑名单 wrapper 递归（sudo / xargs / find -exec 系，spec delta「cli_run 命令分类」requirement 补条款 + 新 scenario；分类器单测 + `full_access` 整合用例 `wrapper_recursion_gates_sudo_rm_in_full_access`）；② 任务 3 的 transport 与工具清单收编见 3.5 / 4.2 注记；③ `vault_create` 深层路径用例补在 tools.rs（`vault_create_deep_path_creates_missing_parents`——父目录补建实际由 M407 r1 落在 `fs_io::vault_create_file`，M410 r3 finding 前提半失效，backlog 条目由 tower 核销）。
 
@@ -47,13 +47,16 @@
 
 ## 5. UI 与配置写回
 
-- [ ] 5.1 权限 chip：composer 控制行第三位（思考 chip 后、ctx 读数前），文案走文案表；浮层三档单选、当前档勾选（M373 浮层形态与 AX 纪律复用）
-  - 说明（M407 r3，2026-10-09 Alex 裁决的 §7 修订）：本条原文写作「chip 文案 = 全名（zh：只读 / 保险库写入 / 完全访问）；浮层…无释义」，已作废——**chip 显示短名**（zh：只读 / 写入 / 完全；en：Read / Write / Full）、**浮层列表项显示全名并每档附一行释义**（Kimi 风格，消歧档名与语义）。口径见 design §7 与 spec delta「权限模式切换」requirement；验收场景须断言 chip 短名与浮层「全名 + 释义」（design §8）。属面板批次实现，本条仍归 UI 批次勾选。
-- [ ] 5.2 切换写回 `config_set_value("harness", "permission_mode", …)`；对下一个判定生效，不打断进行中轮次
+- [x] 5.1 权限 chip：composer 控制行第三位（模型 / 思考合并选择器 chip 后、ctx 读数前），文案走文案表；浮层三档单选、当前档勾选（M373 浮层形态与 AX 纪律复用）
+  - 说明（M407 r3，2026-10-09 Alex 裁决的 §7 修订）：本条原文写作「chip 文案 = 全名（zh：只读 / 保险库写入 / 完全访问）；浮层…无释义」，已作废——**chip 显示短名**（zh：只读 / 可写 / 完全；en：Read / Write / Full）、**浮层列表项显示全名并每档附一行释义**（Kimi 风格，消歧档名与语义）。口径见 design §7 与 spec delta「权限模式切换」requirement；验收场景须断言 chip 短名与浮层「全名 + 释义」（design §8）。
+  - 说明（M418 归档对账）：**已随 M414 面板批次落地**——`harness-panel.ts` 的权限 chip（`.lumir-hp-perm-name`）与三档浮层（全名 + 释义 + `menuitemradio` / `aria-checked`）；`tests/unit/harness-permission-modes.test.ts` 钉死短名「只读 / 可写 / 完全」，真机场景 109；中文短名「写入」→「可写」为 M417 批复。
+- [x] 5.2 切换写回 `config_set_value("harness", "permission_mode", …)`；对下一个判定生效，不打断进行中轮次
+  - 说明（M418 归档对账）：M414 落地——`harness-panel.ts` 的 `selectPermissionMode` 写回（失败乐观回滚），真机场景 109 断言 `env:config.json` 的 `permission_mode` 随选择变化。
 - [x] 5.3 会话建立 / 每轮读取配置的既有装载时点接入新模式键（与 M302 同路，不热重载）
   - 说明（M407）：后端消费已接好——`turn.rs` 的 `handle_call` 每轮从 `config.permission_mode` 现读（「切换对下一个判定生效」因此天然成立），无需新增装载时点。
-- [ ] 5.4 批准卡呈现 `purpose`（design §3.4）：cli_run 批准卡命令上方显眼位置展示用途句，命令原文完整可见、不被替代或截断；批准卡载荷带 purpose 字段（既有 argv 类型错配 bug 另批修，本条不依赖其修复面）
-  - 说明（M407，后端半边已完成）：`approval_request` 事件在 cli_run 被挂起时已带 `purpose` 键（`tools::ApprovalPreview.purpose` → `turn.rs` 注入），`argv` 仍带完整命令原文。渲染（命令上方显眼位置）归面板批次；`events::approval_request` 的参数表按 tower 裁决由面板批次补可选参数。
+- [x] 5.4 批准卡呈现 `purpose`（design §3.4）：cli_run 批准卡命令上方显眼位置展示用途句，命令原文完整可见、不被替代或截断；批准卡载荷带 purpose 字段（既有 argv 类型错配 bug 另批修，本条不依赖其修复面）
+  - 说明（M407，后端半边已完成）：`approval_request` 事件在 cli_run 被挂起时已带 `purpose` 键（`tools::ApprovalPreview.purpose` → `turn.rs` 注入），`argv` 仍带完整命令原文。
+  - 说明（M418 归档对账）：渲染半边由 **M414 面板批次**补齐——`harness-panel.ts` 的 `.lumir-hp-approval-purpose` 落在命令上方，命令原文经 `splitCommandSegments(formatArgv(...))` 完整呈现（不替代、不截断）；真机场景 110 断言用途句与命令拆段；`events::approval_request` 的可选参数由该批次补。
 
 ## 6. 验证
 
@@ -66,7 +69,8 @@
   - 说明（M407 r1 P2-1 修复）：`vault_create_file_rejects_invalid_targets` 补「不建任何东西」断言（绝对路径输入 `/abs/new.md`、`/abs/deep/new.md` 被拒后 `root/abs`、`root/deep` MUST NOT 存在）——原断言只看错误码，漏掉「码对但目录已建」的假绿。
 - [x] 6.5 缓存测试：同主体串免闸、新会话清空、黑名单成员不受缓存影响
 - [x] 6.6 `permission_mode` 配置测试：缺省 / 非法回落 / 写回
-- [ ] 6.7 scripts/acceptance 新增场景：模式切换 chip 与浮层、批准卡次级动作、批准卡 purpose 用途句呈现、重定向链、vault_move / vault_delete 面板呈现（mock provider 驱动，fixture 合成，证据落 test-results/acceptance/）
-  - 说明（M407）：`scripts/acceptance/**` 不在 M407 scope（归面板批次与验收套件维护者），本轮未做。
+- [x] 6.7 scripts/acceptance 新增场景：模式切换 chip 与浮层、批准卡次级动作、批准卡 purpose 用途句呈现、重定向链、vault_move / vault_delete 面板呈现（mock provider 驱动，fixture 合成，证据落 test-results/acceptance/）
+  - 说明（M407）：`scripts/acceptance/**` 不在 M407 scope（归面板批次与验收套件维护者）。
+  - 说明（M418 归档对账）：**已随面板批次落地**，五项分工——场景 109 覆盖「模式切换 chip 与浮层」（含写回持久化）；110 覆盖「批准卡 purpose 用途句呈现」+「批准卡次级动作（采纳且本会话不再问）生效」；111 覆盖「重定向链」（cli_run mv → `cli_redirected_to_vault_tool` + 固定标记 + `suggested_tool=vault_move` → 模型改道 vault_move 执行）与「vault_move / vault_delete 面板呈现」（含批准预览与删除后文件消失）。mock provider 驱动、fixture 合成（`harness-mock-basic.json` / `harness-mock-approval-remember.json` / `harness-mock-vault-move-redirect.json`），证据落 `test-results/acceptance/`。
 - [x] 6.8 purpose 链测试（mock provider）：带 purpose 调用在批准卡载荷中 purpose 与命令同达；空 purpose（缺省 / 空白串）不执行且回送补填错误、补填重发成功；同命令带粉饰性 purpose 与否判定结果相同
 - [x] 6.9 `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` 通过

@@ -8,7 +8,10 @@
 > 节点 1（提案评审）：**2026-10-09 Alex 裁决：6 点全部按倾向 + vault_create 自动建父目录修订确认**（Alex 原话「好。」）。逐点落定——① vault_delete 在 Vault Write 档仍逐个问（倾向 B）；② cli_run 只读白名单首版按 design §3.1 初始表；③ 危险黑名单首版按 design §3.3 初始表；④ 会话内缓存取批准卡显式次级动作（倾向 A）；⑤ allow 规则在任何档生效（倾向 A）；⑥ 重定向绝对（倾向 A）。另经 M404 的 cli_run 使用 survey 暴露 mkdir 缺口，同日确认修订：**mkdir 不另立工具，由 vault_create 自动创建缺失父目录（mkdir -p 语义）吸收**（design §5.2 缺口段与 §4.2 suggested_tool 映射据此改写）。
 > 节点 2 前修订（**2026-10-09 Alex 裁决，read_only 语义 Deny → Ask**）：Alex 原话「我的预期是：Read Only 档位大致类似于 Kimi Code 的 Always Ask。如果 Read Only 拒绝所有写操作，那这个档没有实用价值。」据此 `read_only` 档的 vault 写工具（vault_patch / vault_create / vault_move / vault_delete）由「拒绝」改为「逐个问」，即 **Always Ask**（读自动放行、一切写逐个问；deny 规则与黑名单仍优先于模式层）。design §2 语义表与理由段、§5.3、§8 已按此改写；spec delta 的「只读档拒绝 vault 写」requirement/scenario 同步改为「只读档逐个问」。其余两档（`vault_write` / `full_access`）完全不变，六点裁决的其它结论不受影响。
 > 节点 2 前修订之二（**2026-10-09 Alex 裁决，design §7 呈现口径**）：权限 chip 的文案改为两级——**chip 显示短名**（zh：只读 / 写入 / 完全；en：Read / Write / Full）、**浮层列表项显示全名并每档附一行释义**（原「chip 显示全名」「无释义文案」两条口径作废）。Alex 原话：「三档在 chip 里能完整显示名称吗？如果不能，可以减省成 Read / Write / Full，然后在点击出现的选择列表里写全名」；释义为 Kimi 风格（read_only = 读自动放行、写操作都先问；vault_write = 库内写自动放行、库外命令先问；full_access = 全自动、仅危险命令仍问），措辞可在实现批次微调。design §7/§8 与 spec delta 的「权限模式切换」requirement + 「三档浮层」scenario 已同步；判定逻辑不受影响。
-> 节点 2（归档评审）：留白（实现完成后填写）。
+> 节点 2（归档评审）：**2026-10-10 Alex 点头归档**（原话「三个归档点头：权限提案、会话留存改版、贴图提案——都是『实现已完成，确认收尾归档』性质。通过。」，同批三件之一）。归档对账（M418）：
+> ① tasks 补勾 5.1 / 5.2 / 5.4 / 6.7——四条实现期标注「归面板批次 / 本轮未做」，实际已随 M414（权限前端批：chip + 三档浮层 + 批准卡 purpose / 拆段 / 次级动作）与 M417（中文短名「写入」→「可写」）落地，其「本轮未做」注记已改准；
+> ② delta 措辞改准三处——批准闸副句引文改为上线原文（写类「批准后才会落盘」/ 命令类「批准后才会在终端运行，输出回到对话里」）、chip 位置改为「模型 / 思考合并选择器 chip 之后」、chip 中文短名改为「只读 / 可写 / 完全」；design §7 同批改准；
+> ③ 实现侧零改动。6.7 的五项由验收场景 109（chip 与三档浮层 + 写回持久化）/ 110（purpose 呈现在命令上方、命令拆段、次级动作 remember 生效）/ 111（cli_run 重定向链 + vault_move / vault_delete 面板呈现）覆盖。
 
 ## Why
 

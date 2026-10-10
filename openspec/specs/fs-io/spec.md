@@ -2,7 +2,7 @@
 
 ## Purpose
 
-定义 vault 文件系统 IO 的 webview 侧契约：全类型递归枚举（全文件类型一等公民，ADR 0001）、watch 增量事件流、文本/二进制附件读取，以及所有按路径读取的 vault 内路径约束安全边界（ADR 0002 §3：webview 不直接触文件系统）。由 change `add-vault-workspace` 归档并入（2026-09-05，实现 M18；fs_io 经架构复查 P2-5 整体重写，旧 stub 签名废弃）。
+定义 vault 文件系统 IO 的 webview 侧契约：全类型递归枚举（全文件类型一等公民，ADR 0001）、watch 增量事件流、文本/二进制附件读取与二进制附件写入（剪贴板图片转码落盘）、vault 内跨目录移动，以及所有按路径读取的 vault 内路径约束安全边界（ADR 0002 §3：webview 不直接触文件系统）。由 change `add-vault-workspace` 归档并入（2026-09-05，实现 M18；fs_io 经架构复查 P2-5 整体重写，旧 stub 签名废弃）；change `add-harness-permission-modes` 与 `paste-clipboard-image` 归档并入（2026-10-10）叠加 `fs_move_entry` 与 `fs_write_attachment` 两件原语。
 
 ## Requirements
 
@@ -557,3 +557,77 @@ patch SHALL 携带调用方持有的 revision（SHA-256），与 `document_save`
 
 - **WHEN** 以 `../../etc/passwd`、绝对路径或不存在的相对路径调用 `fs_paths_exist`
 - **THEN** 它们都不出现在返回集合里，且不读取任何 vault 之外的内容、不产生任何写操作
+
+### Requirement: 跨目录移动
+
+系统 SHALL 提供后端命令 `fs_move_entry(root, from_rel, to_rel)`：源路径 SHALL 经 `resolve_in_vault` 解析（vault 内路径约束的全部逃逸防护），目标端 SHALL 复用新建变体的两段式解析（父目录经 `resolve_in_vault`、末段名经新建名校验）。目标撞名 MUST NOT 覆盖既有条目（写路径复查目标存在；该保证是「复查 + 极窄窗口」口径，不是原子保证，与既有重命名同纪律）。目标父目录 MUST 已存在，MUST NOT 隐式创建。跨卷移动 SHALL 如实报错（`fs_move_failed`），MUST NOT 静默退化为 copy+delete（不允许半移动状态）。app 内移动命中打开中的文档时，打开 session 的路径联动 SHALL 走 watch 增量事件流既有口径（与重命名同路）。
+
+#### Scenario: 跨目录移动成功
+
+- **WHEN** `fs_move_entry` 收到 `from_rel = "drafts/a.md"` 与 `to_rel = "notes/2026/a.md"`（两端均在 vault 内、目标父目录存在、目标不存在）
+- **THEN** 条目移动到目标路径，源路径消失，返回移动后的 vault 相对路径
+
+#### Scenario: 撞名不覆盖
+
+- **WHEN** 目标路径已有同名条目时调用 `fs_move_entry`
+- **THEN** 返回 `fs_already_exists`，源与目标均逐字节不变
+
+#### Scenario: 逃逸路径拒绝
+
+- **WHEN** `fs_move_entry` 的任一路径参数含 `..` 或绝对路径
+- **THEN** 返回 `fs_path_escape`（或既有等价错误码），文件系统不变
+
+#### Scenario: 跨卷如实失败
+
+- **WHEN** 移动跨文件系统且底层 rename 失败
+- **THEN** 返回 `fs_move_failed`；源与目标均不变，MUST NOT 出现源已删目标未建的半态
+
+### Requirement: 二进制附件写入
+
+系统 SHALL 提供 `fs_write_attachment(dir_rel, data_base64, source_mime)` command：
+将 base64 解码后的剪贴板图片字节**转码压缩**后写入 vault 内指定**已存在**的相对目录，
+返回 `{ path, name }`（最终 vault 相对路径与内容寻址文件名）。`dir_rel` SHALL 经
+`resolve_in_vault` 全量逃逸防护（`..` 穿越、绝对路径、符号链接逃逸 MUST 拒绝），
+MUST NOT 由调用方自觉保证；目录不存在时 SHALL 返回 `fs_not_found`，MUST NOT 隐式创建。
+
+剪贴板字节解码后超过 50MB（与「二进制附件读取」同口径）时 SHALL 返回人话错误，
+MUST NOT 分配对应内存。转码策略：默认目标格式为 **WebP 无损**（策略明细见 change
+design §4，`image/png` 输入转码、`image/jpeg` / `image/webp` 原样落盘、其余 `image/*`
+ 子类型拒绝）；转码失败 SHALL 返回人话错误，MUST NOT 插引用留半截。
+
+文件名 SHALL 为内容寻址形态 `pasted-<转码后字节 SHA-256 前 16 位十六进制>.<目标扩展名>`。
+写入前 SHALL 先全 vault 按文件名探测：已存在即 MUST NOT 重复写盘，返回既有路径
+（内容寻址保证同名同内容，按去重命中收敛）；探测后的写入仍撞名（并发竞态）时
+MUST NOT 覆盖，同样按去重命中收敛。写入 MUST 为原子替换：内容先写入同目录临时文件
+（`.{文件名}.lumir-{pid}`），再 rename 替换目标；写入或替换结果无法确认时 SHALL 返回
+错误，MUST NOT 向用户报告成功。写入产生的文件系统变化 SHALL 经既有 watch 增量事件流
+自然扩散（文件树刷新等消费方走既有口径）。
+
+#### Scenario: 转码写入成功并可读回
+
+- **WHEN** `fs_write_attachment("notes", <合法 png 的 base64>, "image/png")`，目录
+  `notes/` 存在、全 vault 无同名文件
+- **THEN** 落盘 `notes/pasted-<hash16>.webp`：字节为 WebP 格式、解码后像素与源 png
+  逐像素一致（无损）；`<hash16>` 等于落盘字节的 SHA-256 前 16 位；返回的 `path` / `name`
+  与该文件一致；同一相对路径经 `fs_read_attachment` 读回逐字节一致
+
+#### Scenario: 全 vault 同名去重
+
+- **WHEN** 同一 png 内容在第二个目录再次调用（全 vault 已存在其转码后同名文件）
+- **THEN** 不重复写盘（首贴位置的文件 mtime 不变），返回既有路径
+
+#### Scenario: 超限拒绝
+
+- **WHEN** 解码后超过 50MB 的 base64 载荷
+- **THEN** 返回人话错误，目标路径无任何文件创建或修改
+
+#### Scenario: 目录不存在与逃逸路径拒绝
+
+- **WHEN** `dir_rel` 不存在 / 为 `../../etc` / 绝对路径 / 指向 vault 外的符号链接
+- **THEN** 返回 `CommandError`（目录不存在为 `fs_not_found`），不写入任何 vault 外内容、
+  MUST NOT 隐式创建目录
+
+#### Scenario: 不支持的输入格式
+
+- **WHEN** `source_mime` 为 `image/x-unknown` 等未支持子类型
+- **THEN** 返回人话错误，不猜扩展名、不落盘
