@@ -672,6 +672,13 @@ turn.rs handle_call 直写，无此问题），前端消费者随 UI 批次落�
 **修法方向**：预检加两条硬门——可用磁盘 < 3G 直接 FAIL（不进 build，避免半途 ENOSPC 留半截 target）；
 1420/1430 有 LISTEN 时按 REVIEW.md 第 11 条报警提示。
 
+### 权限档位表前后端两份手工保持一致，漂移无机器防线（reviewer-m414 r1 观察项，2026-10-10，low）
+
+**症状**：前端 `PERMISSION_MODES`（src/harness-panel.ts:703）与 Rust `PermissionMode` 闭集合是两份手工
+保持一致的表；ts-rs 绑定 `src/bindings/PermissionMode.ts` 是类型别名、运行期不可遍历，bindings-drift
+门禁抓不住取值漂移。漂了的前端表现是静默回落 vault_write（安全方向），注释已写明分工，故不阻塞。
+**修法方向**：加一条类型层断言或单测对照后端 as_str 取值表，把两份表的等价性钉进门禁。
+
 ### 面板滚动行为无机器防线：AX 不反映滚动位置（M398 r1 reviewer 登记，2026-10-09，low）
 
 **症状**：恢复重建后「滚动落底」这类行为没有任何机器断言能守——AX 快照不携带滚动位置，
