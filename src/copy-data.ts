@@ -1269,6 +1269,23 @@ const COPY_TABLE = {
     zh: "保存图片结果未知：{reason}",
     en: "The image save result is unknown: {reason}",
   },
+  // 消息摘录卡片（change harness-message-excerpt，design §7 / tasks 4.1）：transcript 消息选区
+  // → 卡片入 composer 的可见文案。D442 = 卡片出处行的来源标签（「对话」；角色词复用 who 行的
+  // D385/D386，同一语义一条串）；D443 = 跳回失锚 toast（措辞对齐 D372，把「文档」改成「对话」——
+  // 消息摘录的锚在会话里，不在文档里）；D444 = transcript 卡片的跳回读屏名（对应文档卡的 D374）。
+  // 消费点全在 src/harness-panel.ts（messageQuoteSourceText / jumpToMessageQuote / createCardEl）。
+  D442: {
+    zh: "对话 · {role}",
+    en: "Chat · {role}",
+  },
+  D443: {
+    zh: "该摘录已失锚：原文已不在对话中",
+    en: "This quote is no longer anchored: the text is gone from the conversation",
+  },
+  D444: {
+    zh: "跳回来源消息",
+    en: "Jump back to the source message",
+  },
 } satisfies Record<string, CopyEntry>;
 
 /** 文案表的键（D 编号，多串格带 `.N` 后缀）——由表数据推导，加一条即多一个键。 */

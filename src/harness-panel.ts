@@ -61,7 +61,9 @@
 // 选择器行本身不新造文案（无历史会话 = 不渲染清单容器，会话名缺原文回落 D330「新会话」））；
 // D423–D434 为 M414 权限 chip 与批准卡次级动作（chip 短名 ×3 / chip 读屏名 / 浮层全名 ×3 /
 // 浮层释义 ×3 / 浮层读屏名 / 「采纳且本会话不再问」——文案分两级见 design §7）、D435 为
-// vault_delete 批准卡的后果说明（design §5.1 的面板半边）；M378 起面板内容字号支持 ⌘+/- 步进
+// vault_delete 批准卡的后果说明（design §5.1 的面板半边）；D442–D444 为消息摘录卡片
+//（change harness-message-excerpt：出处行模板 / 失锚 toast / transcript 卡跳回读屏名），
+// 消息摘录手势与跳回在 src/message-quote-gesture.ts；M378 起面板内容字号支持 ⌘+/- 步进
 //（--lumir-hp-scale，与内容 pane 的 textScale 同语义：×1.1 钳 [12,32]、reset 回基线、
 // 不落盘；焦点路由在装配层 src/main.ts）；
 // 长驻元素（toggle 钮 / harness 段 / 输入框 placeholder / 按钮 / 上下文 chip / ctx 读数 /
@@ -93,8 +95,15 @@ import type { HarnessEvent } from "./ipc";
 import type { ThinkingEffort } from "./bindings/ThinkingEffort";
 import { assembleHarnessContext, serializeHarnessContext } from "./harness-context";
 import type { HarnessContextBlock, HarnessContextSource } from "./harness-context";
-import { createQuoteCard, serializeQuoteMessage } from "./quote-card";
-import type { ComposerBlock, QuoteCard } from "./quote-card";
+import {
+  createMessageQuoteCard,
+  createQuoteCard,
+  isMessageQuoteCard,
+  parseMessageAt,
+  serializeQuoteMessage,
+} from "./quote-card";
+import type { ComposerBlock, MessageQuoteCard, QuoteCard } from "./quote-card";
+import { createMessageQuoteGesture, MESSAGE_QUOTE_FLASH_MS, resolveMessageQuoteTarget } from "./message-quote-gesture";
 import { highlightCode } from "./preview/code";
 import { mirrorThemeScope } from "./overlay-scope";
 import { nextFontSize } from "./typography";
@@ -216,30 +225,37 @@ function caretCompare(a: ComposerCaret, b: ComposerCaret): number {
   return a.block !== b.block ? a.block - b.block : a.offset - b.offset;
 }
 
-function isQuote(block: ComposerBlock): boolean {
-  return block.kind === "quote";
+/** 混排里的原子卡片块（quote / msgquote 两类）——判空 / 拆段 / 删除都按「原子块」整体作用。 */
+type CardBlock =
+  | { readonly kind: "quote"; readonly card: QuoteCard }
+  | { readonly kind: "msgquote"; readonly card: MessageQuoteCard };
+
+function isCardBlock(block: ComposerBlock): block is CardBlock {
+  return block.kind === "quote" || block.kind === "msgquote";
 }
 
 /**
- * 光标处拆段插入卡片（design §5 装配合同 + Alex 2026-10-06 裁决：插入后光标落到卡片
+ * 光标处拆段插入**卡片块**（design §5 装配合同 + Alex 2026-10-06 裁决：插入后光标落到卡片
  * 下一行的问题段落——该处已有段落复用、否则新建）：
  * - 光标在段落中间：段落从光标处拆两段，卡片插两段之间，光标落第二段段首；
  * - 光标在段落起始：卡片插在该段落之前，光标落原段落段首；
  * - 光标在段落末尾：卡片插在段落之后，随后补一个空段落承接光标（末尾已有空段落则复用——
  *   空段落末尾即「段落起始」分支，天然复用）；
- * - 光标在卡片前缘：卡片插在其前，其后补空段落承接光标。
+ * - 光标在卡片（quote / msgquote 两类原子块）前缘：卡片插在其前，其后补空段落承接光标。
+ *
+ * 两类卡片共用本函数（insertCardAtCaret 是 quote 的薄封装、msgquote 走 insertMessageQuoteCard）：
+ * 卡片在混排里的行为（拆段 / 光标落点 / 复用空段落）与卡片种类无关。
  */
-export function insertCardAtCaret(
+export function insertBlockAtCaret(
   blocks: readonly ComposerBlock[],
   caret: ComposerCaret,
-  card: QuoteCard,
+  block: ComposerBlock,
 ): { blocks: ComposerBlock[]; caret: ComposerCaret } {
   const at = Math.max(0, Math.min(caret.block, blocks.length));
   const target = blocks[at];
-  const quote: ComposerBlock = { kind: "quote", card };
   const emptyPara: ComposerBlock = { kind: "paragraph", text: "" };
-  if (target !== undefined && isQuote(target)) {
-    const next: ComposerBlock[] = [...blocks.slice(0, at), quote, emptyPara, ...blocks.slice(at)];
+  if (target !== undefined && isCardBlock(target)) {
+    const next: ComposerBlock[] = [...blocks.slice(0, at), block, emptyPara, ...blocks.slice(at)];
     return { blocks: next, caret: { block: at + 1, offset: 0 } };
   }
   const text = target?.kind === "paragraph" ? target.text : "";
@@ -247,21 +263,30 @@ export function insertCardAtCaret(
   if (offset === 0) {
     // 段落起始 / 空段落 / composer 末尾的空追加：卡片在前，原段落（或新空段落）承接光标。
     const rest: ComposerBlock[] = target === undefined ? [emptyPara] : blocks.slice(at);
-    const next: ComposerBlock[] = [...blocks.slice(0, at), quote, ...rest];
+    const next: ComposerBlock[] = [...blocks.slice(0, at), block, ...rest];
     return { blocks: next, caret: { block: at + 1, offset: 0 } };
   }
   const before = blocks.slice(0, at);
   const after = blocks.slice(at + 1);
   if (offset >= text.length) {
     // 段落末尾（非空）：保留原段落，卡片在后，新空段落承接光标。
-    const next: ComposerBlock[] = [...before, target!, quote, emptyPara, ...after];
+    const next: ComposerBlock[] = [...before, target!, block, emptyPara, ...after];
     return { blocks: next, caret: { block: at + 2, offset: 0 } };
   }
   // 段落中间：拆两段，卡片居中，光标落第二段段首（复用卡片下一行的段落）。
   const head: ComposerBlock = { kind: "paragraph", text: text.slice(0, offset) };
   const tail: ComposerBlock = { kind: "paragraph", text: text.slice(offset) };
-  const next = [...before, head, quote, tail, ...after];
+  const next = [...before, head, block, tail, ...after];
   return { blocks: next, caret: { block: at + 2, offset: 0 } };
+}
+
+/** 光标处插入**引用卡片**（insertBlockAtCaret 的薄封装，签名保持 M343 既有消费者不变）。 */
+export function insertCardAtCaret(
+  blocks: readonly ComposerBlock[],
+  caret: ComposerCaret,
+  card: QuoteCard,
+): { blocks: ComposerBlock[]; caret: ComposerCaret } {
+  return insertBlockAtCaret(blocks, caret, { kind: "quote", card });
 }
 
 /** 移除一个块（卡片 × 钮的公共件）：光标落被删块的前一个文本块末尾（无前者则后继块前缘）。 */
@@ -427,12 +452,12 @@ export function backspaceAtCaret(
   const at = Math.max(0, Math.min(caret.block, blocks.length - 1));
   const target = blocks[at];
   if (target === undefined) return null;
-  if (target.kind === "quote") {
+  if (isCardBlock(target)) {
     // 光标在卡片前缘（= 上一块之后）：退格作用于**前一块**——前块是卡片则整块删，
     // 是段落则删其末字符（光标落段落末尾）；块首则无物可删。
     if (at === 0) return null;
     const prev = blocks[at - 1];
-    if (prev.kind === "quote") {
+    if (isCardBlock(prev)) {
       const next = blocks.slice() as ComposerBlock[];
       next.splice(at - 1, 1);
       return { blocks: next, caret: { block: at - 1, offset: 0 } };
@@ -451,7 +476,7 @@ export function backspaceAtCaret(
   if (at === 0) return null;
   const prev = blocks[at - 1];
   const next = blocks.slice() as ComposerBlock[];
-  if (prev.kind === "quote") {
+  if (isCardBlock(prev)) {
     // 卡片按整体作用：整块移除，光标留在当前段落段首。
     next.splice(at - 1, 1);
     return { blocks: next, caret: { block: at - 1, offset: 0 } };
@@ -469,7 +494,7 @@ export function deleteForwardAtCaret(
   const at = Math.max(0, Math.min(caret.block, blocks.length - 1));
   const target = blocks[at];
   if (target === undefined) return null;
-  if (target.kind === "quote") {
+  if (isCardBlock(target)) {
     const next = blocks.slice() as ComposerBlock[];
     next.splice(at, 1);
     return { blocks: next.length === 0 ? [{ kind: "paragraph", text: "" }] : next, caret: { block: at, offset: 0 } };
@@ -485,7 +510,7 @@ export function deleteForwardAtCaret(
   const nxt = blocks[at + 1];
   if (nxt === undefined) return null;
   const next = blocks.slice() as ComposerBlock[];
-  if (nxt.kind === "quote") {
+  if (isCardBlock(nxt)) {
     next.splice(at + 1, 1);
     return { blocks: next, caret };
   }
@@ -588,17 +613,22 @@ export function unescapeXmlEntities(value: string): string {
 }
 
 const QUOTE_OPEN_RE = /^<quote file="([^"]*)" heading="([^"]*)" lines="([^"]*)">/;
+// 消息摘录元素（change harness-message-excerpt）：role 必选、at 可缺（role-only 出处）。
+const MSG_QUOTE_OPEN_RE = /^<msg-quote role="([^"]*)"(?: at="([^"]*)")?>/;
 
 /**
- * 把序列化消息（serializeQuoteMessage 的产物，design §3）解析回块序列——快照恢复
+ * 把序列化消息（serializeQuoteMessage 的产物，design §3–§4）解析回块序列——快照恢复
  * （webview 重载 / 切 vault 回填）时 transcript 同构呈现用。格式的可解析性由序列化侧
- * 的不变量保证：属性值与文本节点转义 ⇒ 输出里的裸 `<quote ` 行首与 `</quote>` 只可能是
- * 真标签；连续非引用行合并为一个段落（软换行段落与多段落序列化同形，视觉等价）。
- * 解析宽容：不成形的行按段落落地，不抛错打断快照恢复。
+ * 的不变量保证：属性值与文本节点转义 ⇒ 输出里的裸 `<quote `/`<msg-quote ` 行首与闭合标签
+ * 只可能是真标签；连续非元素行合并为一个段落（软换行段落与多段落序列化同形，视觉等价）。
+ * 解析宽容：不成形的行（含 role 非法 / 缺 role 的 `<msg-quote>`）按段落落地，**内容守恒、
+ * 不抛错**——不识别即不还原，但 MUST NOT 静默丢文。
  */
 export function parseQuoteMessage(text: string): ComposerBlock[] {
   const blocks: ComposerBlock[] = [];
   const lines = text.split("\n");
+  const isElementStart = (line: string): boolean =>
+    QUOTE_OPEN_RE.test(line) || MSG_QUOTE_OPEN_RE.test(line);
   let i = 0;
   while (i < lines.length) {
     const line = lines[i];
@@ -632,9 +662,38 @@ export function parseQuoteMessage(text: string): ComposerBlock[] {
       i += 1;
       continue;
     }
+    const msg = MSG_QUOTE_OPEN_RE.exec(line);
+    // role 合法才还原为卡片；role 非法 / 缺失落下面的段落分支（内容守恒，不静默丢文）。
+    if (msg !== null && (msg[1] === "user" || msg[1] === "assistant")) {
+      const start = i;
+      let body = line.slice(msg[0].length);
+      let end = body.indexOf("</msg-quote>");
+      while (end === -1 && i + 1 < lines.length) {
+        i += 1;
+        body += `\n${lines[i]}`;
+        end = body.indexOf("</msg-quote>");
+      }
+      if (end === -1) {
+        blocks.push({ kind: "paragraph", text: lines.slice(start, i + 1).join("\n") });
+        i += 1;
+        continue;
+      }
+      const excerpt = body.slice(0, end);
+      const atAttr = msg[2];
+      blocks.push({
+        kind: "msgquote",
+        card: {
+          role: msg[1],
+          at: atAttr === undefined ? null : parseMessageAt(unescapeXmlEntities(atAttr)),
+          text: unescapeXmlEntities(excerpt),
+        },
+      });
+      i += 1;
+      continue;
+    }
     const paragraphLines = [line];
     i += 1;
-    while (i < lines.length && QUOTE_OPEN_RE.test(lines[i]) === false) {
+    while (i < lines.length && isElementStart(lines[i]) === false) {
       paragraphLines.push(lines[i]);
       i += 1;
     }
@@ -2035,10 +2094,11 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
    *  消息追加两遍（两条都是可见的错乱）。 */
   let snapshotSeq = 0;
 
-  // ── 混排 composer 状态（M343） ────────────────────────────────────────────
+  // ── 混排 composer 状态（M343；消息摘录卡片见 change harness-message-excerpt） ──
   /** 卡片数据寄存：DOM 只负责渲染，卡片数据（单一真源，design §3）经 WeakMap 挂回元素——
-   *  序列化只从模型读，不从 DOM 反推。 */
-  const cardData = new WeakMap<Element, QuoteCard>();
+   *  序列化只从模型读，不从 DOM 反推。两类卡片（quote / msgquote）共用一个寄存：判别走
+   *  isMessageQuoteCard（role 字段）。 */
+  const cardData = new WeakMap<Element, QuoteCard | MessageQuoteCard>();
   /** 撤销栈（quirk ③：自管 blocks 快照；原生 historyUndo/Redo 在 beforeinput 显式禁用）。
    *  去重只比 blocks（光标位置不构成新编辑步）。 */
   interface ComposerSnapshot {
@@ -2093,9 +2153,31 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     return `${card.text} —— ${chain}`;
   }
 
-  function createCardEl(card: QuoteCard, mode: "composer" | "transcript"): HTMLElement {
+  /**
+   * 消息摘录卡的出处行（change harness-message-excerpt design §7）：「对话 · 角色」。角色词复用
+   * who 行同一份 D385/D386（同一语义一条串——换新词就是在同一面板里给同一角色起第二个名字）。
+   */
+  function messageQuoteSourceText(card: MessageQuoteCard): string {
+    return t("D442", { role: t(card.role === "user" ? "D385" : "D386") });
+  }
+
+  /** 消息摘录卡的 hover title：完整摘录 + 来源消息绝对时间（本地化短格式；无 at 时只给摘录）。 */
+  function messageQuoteHoverTitle(card: MessageQuoteCard): string {
+    if (card.at === null) return card.text;
+    return `${card.text} —— ${formatDate(new Date(card.at), "short")}`;
+  }
+
+  /**
+   * 卡片 DOM（composer / transcript 两态，两类卡片同构；design §7：几何零改动、复用
+   * .lumir-hp-qcard 整族样式）。差异只在出处行文案、hover title 与整卡的角色（msgquote 卡
+   * 整块可点跳回来源消息，aria 名走 D444）。
+   */
+  function createCardEl(card: QuoteCard | MessageQuoteCard, mode: "composer" | "transcript"): HTMLElement {
+    const msgCard = isMessageQuoteCard(card);
+    const sourceText = msgCard ? messageQuoteSourceText(card) : cardSourceText(card);
+    const jump = (): void => (msgCard ? jumpToMessageQuote(card) : quoteJumpHandler?.(card));
     const el = document.createElement("div");
-    el.className = "lumir-hp-qcard";
+    el.className = msgCard ? "lumir-hp-qcard lumir-hp-msgquote" : "lumir-hp-qcard";
     cardData.set(el, card);
     const bar = document.createElement("span");
     bar.className = "lumir-hp-qc-bar";
@@ -2106,10 +2188,10 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     excerpt.textContent = card.text;
     const source = document.createElement("div");
     source.className = "lumir-hp-qc-src";
-    source.textContent = cardSourceText(card);
+    source.textContent = sourceText;
     main.append(excerpt, source);
     el.append(bar, main);
-    el.title = cardHoverTitle(card);
+    el.title = msgCard ? messageQuoteHoverTitle(card) : cardHoverTitle(card);
     if (mode === "composer") {
       el.contentEditable = "false";
       const remove = document.createElement("button");
@@ -2119,9 +2201,9 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       remove.setAttribute("aria-label", t("D371"));
       remove.textContent = "×";
       el.append(remove);
-      // 卡片点击（× 除外）= 跳回原文（QC3 注册处理器后才生效）；mousedown 拦下是为不让
-      // contenteditable=false 的卡片抢走选区/焦点（面板内元素，无标题栏拖拽问题——
-      // REVIEW.md 第 16 条只约束标题栏容器）。
+      // 卡片点击（× 除外）= 跳回来源（quote 走 QC3 注册的编辑器处理器、msgquote 走 transcript
+      // 定位）；mousedown 拦下是为不让 contenteditable=false 的卡片抢走选区/焦点（面板内元素，
+      // 无标题栏拖拽问题——REVIEW.md 第 16 条只约束标题栏容器）。
       el.addEventListener("mousedown", (event) => event.preventDefault());
       remove.addEventListener("mousedown", (event) => event.stopPropagation());
       remove.addEventListener("click", (event) => {
@@ -2131,17 +2213,17 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
         withModel(() => removeBlockAt(readBlocksFromDom(), index), true);
         composer.focus();
       });
-      el.addEventListener("click", () => quoteJumpHandler?.(card));
+      el.addEventListener("click", jump);
     } else {
-      // transcript：同构呈现，无 ×；整块是跳回按钮（键盘可达）。
+      // transcript：同构呈现，无 ×；整块是跳回入口（键盘可达）。
       el.setAttribute("role", "button");
       el.tabIndex = 0;
-      el.setAttribute("aria-label", `${t("D374")}: ${cardSourceText(card)}`);
-      el.addEventListener("click", () => quoteJumpHandler?.(card));
+      el.setAttribute("aria-label", `${t(msgCard ? "D444" : "D374")}: ${sourceText}`);
+      el.addEventListener("click", jump);
       el.addEventListener("keydown", (event: KeyboardEvent) => {
         if (event.key === "Enter" || event.key === " ") {
           event.preventDefault();
-          quoteJumpHandler?.(card);
+          jump();
         }
       });
     }
@@ -2154,7 +2236,9 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     for (const child of composer.children) {
       if (child.classList.contains("lumir-hp-qcard")) {
         const card = cardData.get(child);
-        if (card !== undefined) blocks.push({ kind: "quote", card });
+        if (card !== undefined) {
+          blocks.push(isMessageQuoteCard(card) ? { kind: "msgquote", card } : { kind: "quote", card });
+        }
       } else {
         blocks.push({ kind: "paragraph", text: paraTextOf(child) });
       }
@@ -2166,7 +2250,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     composer.replaceChildren();
     for (const block of blocks) {
       composer.append(
-        block.kind === "quote" ? createCardEl(block.card, "composer") : createParaEl(block.text),
+        block.kind === "paragraph" ? createParaEl(block.text) : createCardEl(block.card, "composer"),
       );
     }
     if (composer.childElementCount === 0) composer.append(createParaEl(""));
@@ -2178,6 +2262,88 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     const empty =
       composer.querySelector(".lumir-hp-qcard") === null && composer.textContent.trim() === "";
     composer.classList.toggle("is-empty", empty);
+  }
+
+  // ── 消息摘录：插入流转 / 跳回 / 失锚（change harness-message-excerpt design §5–§6） ──
+
+  /** 消息摘录卡入 composer（走 insertBlockAtCaret 同路，面板未开先开、光标落卡片下一行段落）。 */
+  function insertMessageQuoteCard(card: MessageQuoteCard): void {
+    const valid = createMessageQuoteCard(card); // role / 原文非空校验（取不到不得生成卡片）
+    if (mountEl === null) deps.togglePane(); // 装配层开 pane 后焦点已落 composer
+    withModel((blocks) => {
+      const sel = caretFromDom();
+      const caret = sel === null ? { block: blocks.length - 1, offset: 0 } : sel.focus;
+      return insertBlockAtCaret(blocks, caret, { kind: "msgquote", card: valid });
+    }, true);
+    composer.focus();
+  }
+
+  /** transcript 消息折成纯逻辑层的锚序列（role / at / 渲染文本 + DOM 元素，供跳回定位与高亮）。 */
+  function collectTranscriptMessages(): Array<{
+    role: string;
+    at: number | null;
+    text: string;
+    element: HTMLElement;
+  }> {
+    const out: Array<{ role: string; at: number | null; text: string; element: HTMLElement }> = [];
+    for (const element of transcript.querySelectorAll<HTMLElement>(".lumir-hp-msg")) {
+      const who = element.querySelector<HTMLElement>(".lumir-hp-who");
+      const role = who?.dataset.role ?? "";
+      const when = who?.querySelector<HTMLElement>(".lumir-hp-when");
+      const raw = when?.dataset.ts;
+      const at = raw === undefined ? null : Number(raw);
+      const body = element.querySelector<HTMLElement>(".lumir-hp-body");
+      out.push({ role, at: at !== null && Number.isFinite(at) ? at : null, text: body?.textContent ?? "", element });
+    }
+    return out;
+  }
+
+  /** 跳回高亮：整条消息瞬态着色（新动画类，pending-tint 语义），~1.4s 无条件退场（零常驻装饰）。 */
+  const flashTimers = new WeakMap<HTMLElement, number>();
+  function flashMessage(el: HTMLElement): void {
+    const prev = flashTimers.get(el);
+    if (prev !== undefined) window.clearTimeout(prev);
+    el.classList.remove("is-jump-flash");
+    void el.offsetWidth; // 强制重排以重启动画（重复点同一消息时动画重新播放）
+    el.classList.add("is-jump-flash");
+    flashTimers.set(
+      el,
+      window.setTimeout(() => {
+        el.classList.remove("is-jump-flash");
+        flashTimers.delete(el);
+      }, MESSAGE_QUOTE_FLASH_MS),
+    );
+  }
+
+  /**
+   * 面板内瞬态提示（消息摘录失锚告知 D443）。复用全局 `.lumir-toast` 壳样式，挂面板右下角
+   * （`.lumir-harness` 是定位包含块）。这是面板自持的最小 toast——装配层的通用 toast（main.ts）
+   * 不在本模块可达面内；两条链路只在「壳样式」这一层共用（色值 / 圆角 / 定位仍单一来源）。
+   */
+  function panelToast(text: string): void {
+    const el = document.createElement("div");
+    el.className = "lumir-toast toast-surface";
+    const span = document.createElement("span");
+    span.textContent = text;
+    el.append(span);
+    panel.append(el);
+    window.setTimeout(() => el.remove(), 3500);
+  }
+
+  /**
+   * 消息摘录卡跳回（design §6 三层降级）：① role + at 定位 → ② 全文搜索摘录原文 → ③ 失锚 toast。
+   * 命中滚动居中 + 整条消息瞬态高亮；MUST NOT 静默跳到别的消息。
+   */
+  function jumpToMessageQuote(card: MessageQuoteCard): void {
+    const messages = collectTranscriptMessages();
+    const index = resolveMessageQuoteTarget(messages, card);
+    if (index === null) {
+      panelToast(t("D443"));
+      return;
+    }
+    const target = messages[index].element;
+    target.scrollIntoView({ block: "center" });
+    flashMessage(target);
   }
 
   /**
@@ -3176,7 +3342,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     const body = document.createElement("div");
     body.className = "lumir-hp-body";
     for (const block of blocks) {
-      if (block.kind === "quote") {
+      if (block.kind !== "paragraph") {
         body.append(createCardEl(block.card, "transcript"));
       } else if (block.text !== "") {
         const p = document.createElement("div");
@@ -4513,7 +4679,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     // assemble_user_message 的装配对两 provider 同一份 input，模型侧适配不散落——design §3）。
     const text = serializeQuoteMessage(blocks);
     if (text.trim() === "") return;
-    const hasCards = blocks.some((b) => b.kind === "quote");
+    const hasCards = blocks.some((b) => b.kind === "quote" || b.kind === "msgquote");
     // 携带卡片 ⇒ 跳过视口注入（spec「携带卡片时跳过视口」）；路径注入恒在。
     const block = assembleHarnessContext(editor, { skipViewport: hasCards });
     lastChip = block ?? "none";
@@ -4982,6 +5148,13 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   }
 
   toggleButton.addEventListener("click", () => deps.togglePane());
+
+  // 消息摘录手势（change harness-message-excerpt）：transcript 消息体选区 → 浮动钮 → 卡片入
+  // composer。面板单例、进程内长驻，句柄的 dispose 不接生命周期（构造期注册即终态）。
+  createMessageQuoteGesture({
+    transcript,
+    insert: insertMessageQuoteCard,
+  });
 
   applyLabels();
   onRelabel(applyLabels);

@@ -317,13 +317,24 @@ test("属性：任意块序列 —— 转义 round-trip / 交错顺序保持 / �
     const xml = serializeQuoteMessage(blocks);
 
     // 期望投影：卡片原样，空白段落不产出（生成器不产空段落，此处仅做一般化过滤）
-    const expected = blocks
-      .filter((block) => (block.kind === "quote" ? true : block.text.trim() !== ""))
-      .map((block) =>
-        block.kind === "paragraph"
-          ? { kind: "paragraph", text: block.text }
-          : { kind: "quote", file: block.card.file, heading: block.card.heading, lines: block.card.lines, text: block.card.text },
-      );
+    const expected = blocks.flatMap((block) => {
+      if (block.kind === "paragraph") {
+        return block.text.trim() === "" ? [] : [{ kind: "paragraph", text: block.text }];
+      }
+      if (block.kind === "quote") {
+        return [
+          {
+            kind: "quote",
+            file: block.card.file,
+            heading: block.card.heading,
+            lines: block.card.lines,
+            text: block.card.text,
+          },
+        ];
+      }
+      // msgquote 不在本测试的生成面内（生成器只产 quote / paragraph）。
+      throw new Error("unexpected msgquote block in quote-card generator");
+    });
     const parsed = parseMessage(xml);
     assert.deepEqual(comparable(parsed), expected, `seed ${seed}：round-trip 与交错顺序`);
 

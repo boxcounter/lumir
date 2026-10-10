@@ -82,6 +82,8 @@
   color: var(--text);
   font-family: var(--font-sans);
   font-size: calc(var(--fs-ui) * var(--lumir-hp-scale, 1));
+  /* 面板内瞬态提示（消息摘录失锚 toast）的定位包含块（change harness-message-excerpt）。 */
+  position: relative;
 }
 .lumir-harness[hidden] {
   display: none;
@@ -325,6 +327,9 @@
   gap: var(--sp-4);
   font-size: calc(var(--fs-ui) * var(--lumir-hp-scale, 1));
   line-height: var(--lh-ui);
+  /* 消息摘录浮动钮的定位基准（change harness-message-excerpt design §7）：钮挂在本容器内，
+     与选区内容一起滚动（scrollTop 折算进定位）。abspos 子节点不参与 flex 布局。 */
+  position: relative;
 }
 .lumir-hp-empty {
   margin: auto;
@@ -1410,6 +1415,14 @@
   }
 }
 
+/* transcript 内的消息摘录浮动钮（change harness-message-excerpt design §7）：复用 .quote-gesture-btn
+   形态，只加一条 scoped 覆写——abspos 收缩盒受「left 到容器右缘」约束，贴右缘时会逐字换行；
+   width: max-content 让盒子恒为内容宽，收编定位由 src/message-quote-gesture.ts 的 placeButton 做。
+   编辑器那颗钮（挂 .editor-pane）不受影响，M345 基线零漂移。 */
+.lumir-hp-transcript > .quote-gesture-btn {
+  width: max-content;
+}
+
 /* ── 消息复制钮（M347）：hover 浮现在消息右上角与 who 行同高（键盘可达：focus 也显形）。
    复制源 = Markdown 源文本 / 发送前原始输入，非渲染后 HTML（源经 copySources 单挂）。 ── */
 .lumir-hp-msg {
@@ -1443,6 +1456,29 @@
 .lumir-hp-copy.is-copied {
   color: var(--ok);
   opacity: 1;
+}
+
+/* ── 消息摘录跳回高亮（change harness-message-excerpt design §7）：整条消息瞬态着色，色值同
+   find-in-page 的 pending-tint（eink 档转 10% 黑，与 .cm-quote-jump-flash 同语义），~1.4s 消退
+   由面板计时器收口（这里只管色值）。挂消息壳与其 body（用户消息 body 有 --sel 底，两处一起动着色
+   才可见；无 forwards 填充，动画结束即回落到本态，零常驻装饰）。 ── */
+.lumir-hp-msg.is-jump-flash {
+  --lumir-hp-jump-tint: var(--pending-tint);
+}
+.lumir-hp-msg.is-jump-flash,
+.lumir-hp-msg.is-jump-flash > .lumir-hp-body {
+  animation: lumir-hp-msg-jump-flash 1.4s var(--ease-standard);
+}
+:root[data-theme="eink"] .lumir-hp-msg.is-jump-flash {
+  --lumir-hp-jump-tint: rgba(0, 0, 0, 0.1);
+}
+@keyframes lumir-hp-msg-jump-flash {
+  from {
+    background-color: var(--lumir-hp-jump-tint);
+  }
+  to {
+    background-color: transparent;
+  }
 }
 
 /* ── 输入区（M343 混排编辑区，change add-harness-quote-cards design §2/§5）：
