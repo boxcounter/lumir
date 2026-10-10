@@ -116,24 +116,42 @@ test("insertPlainTextAtCaret：光标在卡片前缘 → 视该处为空段落",
 // 内部换行。HC1 把「一次 ⇧Enter 恰好加一行、且光标落在可见行上」写死成不变量。
 
 /**
- * 可见行数（渲染口径的纯函数复刻）：段落按「尾随换行不产生行盒」计（"ab\n" 与 "ab" 同高，
- * 探针实测见 docs/specs/harness-composer.md 的证伪方式节）；空段落 = 1 行（min-height:1em）。
- * 卡片不占文本行，只数段落——本函数只服务 HC1 的可见行增量断言。
+ * 一个段落的**渲染行数**（渲染口径的纯函数复刻）：`pre-wrap` 下**尾随换行不产生行盒**
+ * （"ab\n" 与 "ab" 同高，探针实测见 docs/specs/harness-composer.md §实测依据），空段落
+ * 仍占 1 行（`min-height:1em`）。计数与 `visibleLines` / 光标可见性判据共用一份。
  */
-function visibleLines(blocks: readonly ComposerBlock[]): number {
-  return blocks.reduce((n, block) => {
-    if (block.kind !== "paragraph") return n;
-    if (block.text === "") return n + 1;
-    const breaks = block.text.split("\n").length - 1;
-    return n + (block.text.endsWith("\n") ? breaks : breaks + 1);
-  }, 0);
+function renderedLines(text: string): number {
+  if (text === "") return 1;
+  const breaks = text.split("\n").length - 1;
+  return text.endsWith("\n") ? breaks : breaks + 1;
 }
 
-/** 光标是否落在**可见行**上：所在块是段落，且该段文本不以换行结尾（尾随换行不产生行盒，
- *  落在它之后的光标没有可渲染的行）。 */
+/** 段落文本里第 `offset` 个字符之前有几个换行 = 光标落在第几行（0 基）。 */
+function lineOfOffset(text: string, offset: number): number {
+  return text.slice(0, offset).split("\n").length - 1;
+}
+
+/** 可见行数（HC1 的增量断言用）：卡片不占文本行，只数段落。 */
+function visibleLines(blocks: readonly ComposerBlock[]): number {
+  return blocks.reduce(
+    (n, block) => n + (block.kind === "paragraph" ? renderedLines(block.text) : 0),
+    0,
+  );
+}
+
+/**
+ * 光标是否落在**可见行**上（HC1 第二条判据）：所在块是段落，且光标的行号 < 该段落的渲染行数。
+ *
+ * 判据必须是**充要**形态、不能省成「段落文本不以 \n 结尾」：后者只是充分条件——段落文本
+ * 可以以 \n 结尾（原生编辑残留的 `<br>` 经 `paraTextOf` 记为 `\n`、`normalize` 不剥除），
+ * 此时「段落尾随 \n」与「光标落在最后一行的尾随换行之后」是两件事：`"\na\n"` 的光标在
+ * offset 1（第二行行首）是**可见**的，而 `"a\n"` 的光标在 offset 2（尾随换行之后）不是。
+ * 详见 docs/specs/harness-composer.md §证伪方式。
+ */
 function caretOnVisibleLine(blocks: readonly ComposerBlock[], caret: { block: number; offset: number }): boolean {
   const block = blocks[caret.block];
-  return block !== undefined && block.kind === "paragraph" && !block.text.endsWith("\n");
+  if (block === undefined || block.kind !== "paragraph") return false;
+  return lineOfOffset(block.text, caret.offset) < renderedLines(block.text);
 }
 
 test("insertSoftBreakAtCaret：段内插软换行、光标前进一格", () => {
@@ -168,15 +186,51 @@ test("insertSoftBreakAtCaret：composer 以卡片开头（无前段落）→ 照
   assert.deepEqual(caret, { block: 0, offset: 0 });
 });
 
+// ── 尾随换行段落（原生 <br> 残留形态，P2-1）：判据的充要形态 ────────────────────────────
+//
+// 模型里**可以**出现以 \n 结尾的段落：原生编辑路径（如删空一行后 WebKit 留下的 `<br>`）经
+// `paraTextOf` 记为 \n、`normalize` 不剥除。它同时也是「光标在可见行上」判据的试金石——
+// 「段落文本不以 \n 结尾」只是**充分**条件，对本形态会假红。
+
+test("insertSoftBreakAtCaret：段落已以 \\n 结尾 → 仍恰好加一行，光标不停在尾随换行之后", () => {
+  // 段首按（offset 0 < length）走段中分支：换行插在段首 ⇒ "\na\n"，光标落第二行行首（可见）。
+  const head = insertSoftBreakAtCaret([para("a\n")], { block: 0, offset: 0 });
+  assert.deepEqual(head.blocks, [para("\na\n")]);
+  assert.deepEqual(head.caret, { block: 0, offset: 1 });
+  assert.equal(renderedLines("\na\n"), 2);
+  assert.equal(caretOnVisibleLine(head.blocks, head.caret), true);
+
+  // 段末（光标本就在尾随换行之后）走段末分支：落新空段落块，光标离开那个没有行盒的位置。
+  const tail = insertSoftBreakAtCaret([para("a\n")], { block: 0, offset: 2 });
+  assert.deepEqual(tail.blocks, [para("a\n"), para("")]);
+  assert.deepEqual(tail.caret, { block: 1, offset: 0 });
+  assert.equal(caretOnVisibleLine(tail.blocks, tail.caret), true);
+});
+
+test("caretOnVisibleLine 判据的充要性：同一段「以 \\n 结尾」的文本里，行内光标与尾随换行之后的光标必须分开判", () => {
+  // 反例一对：\n 之后的光标不可见（尾随换行不产生行盒），段内第二行行首的光标可见。
+  assert.equal(caretOnVisibleLine([para("a\n")], { block: 0, offset: 2 }), false);
+  assert.equal(caretOnVisibleLine([para("\na\n")], { block: 0, offset: 1 }), true);
+  // 反例二对：卡片的「前缘」不是可见文本行；段落任何 < 渲染行号 的位置都在可见行上。
+  assert.equal(caretOnVisibleLine([quote(cardA)], { block: 0, offset: 0 }), false);
+  assert.equal(caretOnVisibleLine([para("")], { block: 0, offset: 0 }), true);
+});
+
 // ── HC1 的不变量（属性测试：输入维度 = 块序列 × 光标位置全枚举）────────────────────────
 //
 // 合同条款（docs/specs/harness-composer.md HC1）：「对任意块序列与任意光标位置，一次
 // ⇧Enter 恰好增加一行可见行，且结束后光标落在可见行上」。逐案断言只能证明报告里的那个
 // 案例被修好（docs/process/rendering-defect-contract-first.md §反例），这里扫全枚举。
 
-/** 生成器：段落长度分布（空 / 单字 / 多字 / 已含内部换行）× 卡片在场形态。 */
+/**
+ * 生成器：段落文本分布（4 个长度/结构档 × 卡片在场形态）。文本档覆盖：
+ * 空段落 · 单字 · 多字 · **已含内部换行**（粘贴 / 快照恢复带进来的 `\n`） · **以换行结尾**
+ * （原生编辑路径可达：WebKit 删空一行后残留 `<br>`，`paraTextOf` 记为 `\n`、`normalize`
+ * 不剥除）。末一档是 P2-1 补的——它会把「光标落在尾随换行之后」与「光标在可见行上」的
+ * 区别暴露出来，见 `caretOnVisibleLine` 的判据说明。
+ */
 function blockSequences(): ComposerBlock[][] {
-  const texts = ["", "a", "abc", "a\nb"];
+  const texts = ["", "a", "abc", "a\nb", "a\n"];
   const sequences: ComposerBlock[][] = [];
   for (const first of texts) {
     sequences.push([para(first)]);
