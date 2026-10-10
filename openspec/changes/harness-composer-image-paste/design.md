@@ -313,3 +313,17 @@ function serializeDelivery(blocks: readonly ComposerBlock[]): DeliveryPart[];
 - **Files API / file_id 通道**：若 Kimi 端 `input_image` 实测受限（如 data URL 被拒），file_id 是后备路径。
 - **living spec 的既有缺口**：M373/M381 的 `models` 逐项能力声明（`effort` / `window`）未进 spec（§1 末条），
   另立 finding 报 tower，不在本 change 顺手扩 scope。
+
+## 11. 实现期实测记录（tasks §5 收口）
+
+- **Kimi Responses 端点 `input_image` 接受性（tasks 5.1，2026-10-10 实测）**：真 provider 冒烟
+  `src-tauri/tests/harness_real_kimi_image.rs`（`#[ignore]`，跑法与 key 纪律见文件头）对 Alex
+  当前生效模型 `k3-256k` 直发 base64 data URL 形态的 `input_image`，**接受**
+  且模型应答出合成图的正确颜色。⇒ Alex 配置里 `k3-256k` 的 `vision` 声明值可为 `true`；
+  其余模型未实测，按「未声明 = 不支持」保守默认。结论同步登记 `docs/backlog.md`
+  （2026-10-10 条目）。后备路径（Files API / file_id，tasks 5.2）本轮未触发。
+- **mock 同路展开（tasks §9 ③/④ 的机器判据）**：`expand_image_refs` 抽为 `attachments` 模块的
+  具名函数，真 client（`ResponsesClient::complete_inner` 的 `.json(&body)` 之前）与 mock
+  （`MockClient::complete` 开头）同调；mock 另把展开后的 input 记入 `received_inputs` 供验收
+  断言「wire 上真的是 input_image」。JSONL 留存（`record_llm_request`）恒在展开**之前**——
+  引用进留存、展开进 wire 两侧由同一条发送链路的时序保证，无二次序列化。

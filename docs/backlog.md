@@ -673,6 +673,8 @@ finding 全文：`.tower/comms/findings/20261010-worker-m433-bug-vault-harness-p
 已把在途 change `harness-composer-image-paste` 的附件落点改准为 `attachments/<vault 稳定 id>/`（与
 `sessions/<id>/` 同族命名纪律；零存量故无归位脚本；写时拿不到合格 vault id 则拒绝落盘；删会话不牵动
 附件；按 vault 备份 = 取同名 id 两目录）。本条留档备查，不再待办。
+**实现落点（M440 收口）**：`src-tauri/src/harness/attachments.rs` 落地（写/读/展开三件套 + 落点逃逸拒绝），
+验收场景 127–128 覆盖两 vault 分置与互不可见；真机实测通过。
 **原事实**：`harness-sessions-per-vault` 提案「排依赖」要求 harness 侧附件落 vault 层级，而在途
 `harness-composer-image-paste` design §5 曾把附件落平铺的 `harness/attachments/`。
 finding 全文：`.tower/comms/findings/20261010-worker-m433-improve-harness-m425-vault-change.md`。
@@ -4376,3 +4378,11 @@ M292 把打开段移出主线程之后，`do: settle`（判「界面此刻静止
 - 2026-10-05：**2026-09 月份归档件的存量断链修齐**（原 finding `20261005-reviewer-archive-m327-improve-27-broken`，reviewer-archive-m327 报告；M331 修复，分支 `feat/fix-stale-archive-broken-links-2026-09`）：`openspec/changes/archive/2026-09-*` 下按「归档件指向仓根的相对链接比 change 原位多一层 `../`」的惯例，逐条用路径解析脚本（`exists()`）核对，**27 条 `](../` 形态断链全部修齐**。拆开是——**20 条**按惯例补一层 `../`（指向仓根的 `docs/adr/*` ×7、`docs/specs/perf-measurement.md` ×2、`REVIEW.md` ×6、`tests/visual/README.md` ×4、`文案-Copy.md` ×1）；**2 条**方向相反：`2026-09-28-bare-url-cmd-click/specs/editor-live-preview/spec.md` 的两处 `../../../proposal.md` 是**多**了一层，改回 `../../proposal.md`（该目标在归档前就写错，与「缺一层」无关，故与 finding 的「补一层」描述不同，如实报差）；**5 条**为 spec 正文里有意虚构的示例路径（`../top.md` ×2、`../docs/a.md`、`../docs/guide.md`、`../outside.pdf`，出现在外链分类的 Scenario 与说明段），**故意不修**。链接文本与语义一律未动，只改相对层数；未触碰 2026-10 归档件。修后复跑同款脚本：2026-09 归档件内 `../` 形态断链 **0**（示例除外，与 finding 口径一致）。核销判据 = 路径解析脚本 0 broken + `scripts/gate.sh quick` 全绿。
 
 - 2026-10-09：**点历史会话行面板不重建 + 无文档发送 context_json null**（M398，分支 `feat/harness-restore-transcript-rebuild-m398`，merge `9a9a422`；两轮 review，r2 clean）：根因是 RSR 批刻意留的最小形态——`resumeSession` 成功路径只做 `resetView` + 改名，面板不重建历史消息（当时无 wire 数据通道）。修复：`SessionResumeInfo` 携带 `messages: Vec<PanelMessage>`（复用 `turn::summarize_args`，`restored_items` 保留兼容 `src-tauri/tests/session_recording.rs`），恢复消息同时入 session.panel 和返回值（重载不丢）；前端抽 `renderSnapshotMessages`/`appendSnapshotMessage` 供 `restoreSnapshot` 与 `resumeSession` 共用，恢复点击后面板完整重建 transcript（用户气泡 / Thinking 段 / assistant 正文 / tool calls 组）；r1 P1 补 `scrollToBottom()`（assistant 分支裸 append 不滚，以 assistant 收尾时折在视口外——滚动位置 AX 读不到，机器防线缺口另立 low 条目见「待修 findings」）。同批核销 context_json null：前端无文档时改传空串（后端 `parse_context` 空串→默认块的分支本已存在），`ipc.ts` 签名收窄 `string|null`→`string`；新增验收场景 `scripts/acceptance/scenarios/107-harness-send-no-doc.md`。证据：gate quick 9/9 PASS（SKIP 1 = tsc-visual 依赖未装，未动视觉面）；真机场景 106（19 断言，含恢复后面板可见源会话用户消息与助手回复的 AX 断言）/ 107 多次 PASS；107 反向验证红（断言有区分度）。
+
+- 2026-10-10：**Kimi Responses 端点接受 `input_image`（data URL 形态）实测通过**（M440，change
+  harness-composer-image-paste tasks 5.1）：真 provider 冒烟 `src-tauri/tests/harness_real_kimi_image.rs`
+  （`#[ignore]`，原地读 key、零打印）对 Alex 当前生效模型 `k3-256k` 直发
+  `{"type":"input_image","image_url":"data:image/png;base64,…"}`（合成 64×64 纯红 png），
+  端点接受且模型应答出正确颜色（「真读到了图」判据成立）。⇒ Alex 配置里 `k3-256k` 的
+  `vision` 声明值可为 `true`；其余模型未经实测，按「未声明 = 不支持」保守默认（发送闸会
+  人话挡下）。若未来某模型拒收 data URL，后备路径（Files API / file_id）已在 design §10 登记。
