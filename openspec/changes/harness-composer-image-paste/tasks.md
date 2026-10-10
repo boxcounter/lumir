@@ -54,7 +54,7 @@
       （`restored_panel_messages`）从 wire 引用还原图片卡片
 - [x] 4.5 文案新增（`文案-Copy.md` + `src/copy-data.ts`）：落盘失败、能力不支持、缩略图读回失败、图片卡片 a11y
       名（D-code 取当前空闲段）；同步 copy drift 测试
-- [ ] 4.6 动过 `src/harness-panel.css` → 图片卡片视觉场景基线新增（Alex 过目后 `--update`）；既有 harness 相关
+- [x] 4.6 动过 `src/harness-panel.css` → 图片卡片视觉场景基线新增（Alex 过目后 `--update`）；既有 harness 相关
       基线按纪律核对时间戳；`docs/specs/harness-composer.md` 的 HC1/HC2 生成器纳入图片块（卡片不占文本行）
 
 ## 5. 真机实测（实现期执行）
@@ -72,13 +72,19 @@
 
 ## 6. 验证
 
-- [ ] 6.1 `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` 通过
-- [ ] 6.2 `bash scripts/gate.sh quick` 全绿（照抄 `GATE RESULT` 原文行 + 退出码，SKIP 单列）
-- [ ] 6.3 动过视觉面 → `bash scripts/gate.sh visual` 全绿；图片卡片基线经 Alex 过目后 `--update`，既有基线零漂移
-- [ ] 6.4 信息卫生：改动面一次 text 级 grep 清扫（无真实 vault 内容；验收 fixture 截图全部合成）
-- [ ] 6.5 归档前逐条对账：tasks / spec 增量 / 实现三者一致；本 change 归档时 living spec 增量并入核对（ADDED ×3 +
+- [x] 6.1 `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` 通过
+- [x] 6.2 `bash scripts/gate.sh quick` 全绿（照抄 `GATE RESULT` 原文行 + 退出码，SKIP 单列）
+- [x] 6.3 动过视觉面 → `bash scripts/gate.sh visual` 全绿；图片卡片基线经 Alex 过目后 `--update`，既有基线零漂移
+- [x] 6.4 信息卫生：改动面一次 text 级 grep 清扫（无真实 vault 内容；验收 fixture 截图全部合成）
+- [x] 6.5 归档前逐条对账：tasks / spec 增量 / 实现三者一致；本 change 归档时 living spec 增量并入核对（ADDED ×3 +
       MODIFIED ×1）
 
 > M440 实现期注记（2026-10-10）：5.1 真机实测 **PASS**（`k3-256k` 接受 input_image
 > data URL 且读图正确）⇒ 5.2 后备路径未触发（不适用，design §11 已记录）；5.3 场景 127/128/129
 > 已建并通过 `--check`，真机跑批结果见证据目录。
+
+> M440 验证读数（2026-10-11，worker 自验）：openspec validate --all --strict = 26 passed, 0 failed；
+> gate quick `GATE RESULT: 10/10 PASS（SKIP 0）`（退出码 0）；gate visual `GATE RESULT: 12/12 PASS（SKIP 0）`
+> （退出码 0，visual-regression 648+ 用例全过、既有基线零漂移）；验收场景 127/128/129 真机全 PASS
+>（证据 test-results/acceptance/2026-10-10/）；四张新图片卡片基线随分支提交、截图另存
+> test-results/alex-review-2026-10-11/m440/ 待 Alex 过目（未自行 --update，Playwright 首跑写入）。
