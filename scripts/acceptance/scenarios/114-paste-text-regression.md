@@ -11,9 +11,18 @@ steps:
       - label: 笔记已落盘
         file: { path: notes/t.md, has: "S3 文本粘贴" }
 
+  - name: 等 watch 增量把 notes 目录刷进树（行进场再点，不等则点击会扑空）
+    do: waitFor
+    waitFor:
+      has: ["/AXButton \\(notes\\)/"]
+    timeoutMs: 30000
+
   - name: 展开 notes 目录
     do: click
-    target: { name: "notes" }
+    target: { any: "/^notes$/" }
+    expect:
+      - label: notes 目录行在场（watch 增量已刷新）
+        ax: { has: "/AXButton \\(notes\\)/" }
 
   - name: 打开笔记
     do: open
@@ -36,7 +45,7 @@ steps:
 
   - name: 点 Paste
     do: click
-    target: { role: AXMenuItem, name: "/(Paste|粘贴)/" }
+    target: { role: AXMenuItem, any: "/(Paste|粘贴)/" }
 
   - name: 等文本落地
     do: waitFor

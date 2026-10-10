@@ -11,9 +11,18 @@ steps:
       - label: 笔记已落盘
         file: { path: notes/s5.md, has: "S5 体积实证" }
 
+  - name: 等 watch 增量把 notes 目录刷进树（行进场再点，不等则点击会扑空）
+    do: waitFor
+    waitFor:
+      has: ["/AXButton \\(notes\\)/"]
+    timeoutMs: 30000
+
   - name: 展开 notes 目录
     do: click
-    target: { name: "notes" }
+    target: { any: "/^notes$/" }
+    expect:
+      - label: notes 目录行在场（watch 增量已刷新）
+        ax: { has: "/AXButton \\(notes\\)/" }
 
   - name: 打开笔记
     do: open
@@ -35,7 +44,7 @@ steps:
 
   - name: 点 Paste
     do: click
-    target: { role: AXMenuItem, name: "/(Paste|粘贴)/" }
+    target: { role: AXMenuItem, any: "/(Paste|粘贴)/" }
 
   - name: 等落盘完成
     do: waitFor
@@ -44,7 +53,7 @@ steps:
     timeoutMs: 40000
     expect:
       - label: 落盘出现转码后的附件
-        glob: { dir: notes, pattern: "^pasted-[0-9a-f]{16}\\.webp$", exact: 1 }
+        glob: { dir: notes, pattern: "pasted-[0-9a-f]{16}\\.webp$", exact: 1 }
       - label: 落盘字节是 WebP 容器
         bytes: { path: "notes/pasted-*.webp", magic: "52494646" }
       - shot: S5-落盘

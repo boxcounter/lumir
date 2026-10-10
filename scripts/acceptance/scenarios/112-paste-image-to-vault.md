@@ -11,12 +11,18 @@ steps:
       - label: 嵌套笔记已落盘
         file: { path: notes/s1.md, has: "S1 粘贴目标" }
 
-  - name: 等 watch 增量把 notes 目录刷进树，再展开它
+  - name: 等 watch 增量把 notes 目录刷进树（行进场再点，不等则点击会扑空）
+    do: waitFor
+    waitFor:
+      has: ["/AXButton \\(notes\\)/"]
+    timeoutMs: 30000
+
+  - name: 展开 notes 目录
     do: click
-    target: { name: "notes" }
+    target: { any: "/^notes$/" }
     expect:
       - label: notes 目录行在场（watch 增量已刷新）
-        ax: { has: "notes" }
+        ax: { has: "/AXButton \\(notes\\)/" }
 
   - name: 打开 notes/s1.md
     do: open
@@ -44,7 +50,7 @@ steps:
 
   - name: 点原生菜单 Paste 完成真实粘贴
     do: click
-    target: { role: AXMenuItem, name: "/(Paste|粘贴)/" }
+    target: { role: AXMenuItem, any: "/(Paste|粘贴)/" }
 
   - name: 等落盘与引用插入（状态驱动，不用 sleep 猜时长）
     do: waitFor
@@ -56,8 +62,8 @@ steps:
         glob: { dir: notes, pattern: "pasted-[0-9a-f]{16}\\.webp$", exact: 1 }
       - label: 落盘字节是 WebP 容器，且文件名哈希 = 落盘字节 sha256 前 16 位
         bytes: { path: "notes/pasted-*.webp", magic: "52494646", nameHash: true }
-      - label: 文档插入 ![[pasted-<hash16>.webp]] 引用
-        editor: { has: "/!\\[\\[pasted-[0-9a-f]{16}\\.webp\\]\\]/" }
+      - label: 文档插入 ![[pasted-<hash16>.webp]] 引用（编辑器把该行渲染成图片 widget，AXTextArea value 不含它；按实跑 AX 形态断言编辑器子树的图片节点 label）
+        ax: { has: "/AXImage \\(!\\[\\[pasted-[0-9a-f]{16}\\.webp\\]\\]\\)/" }
       - label: live preview 渲染出该图片（AX 有引用这条附件的图片节点）
         ax: { has: "/AXImage[^\n]*pasted-[0-9a-f]{16}\\.webp/" }
       - shot: S1-贴图入vault

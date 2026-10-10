@@ -282,6 +282,9 @@ editor 配置项」构造**启动口径**用——不必每加一个键就回来
 | `vaultRm` | `file` 或 `files` | 从外部**真删除**（不存在即报错）——触发 `fs_not_found` 与「保存冲突」是两条不同分支 |
 | `vaultSparse` | `file`、`size`（正整数，字节）、`vault?` | `ftruncate` 出一个「大小 = size、内容为零、几乎不占磁盘」的稀疏文件。用途：把 app 的**按大小拒绝**分支（50MB 上限）变成可达，或给**瞬时状态**（装载指示这类）撑开观察窗（场景 49 / 60）。`vault: "second"` 指定写入第二个合成 vault——**撑窗口的放大器必须落在切换目标那一侧**（场景 60：切换目标是 B，窗口就在 B 的装载段）；缺省是验收 vault |
 | `configWrite` | `lastVault`、`keys`、`restart`、`requireVault`、`theme`、`contentWidth`、排版三项、`autoIndent`、`editor` | 改写隔离 config.json（默认重启 app）。`lastVault` **缺省沿用当前值**（显式给才覆盖）——启动恢复的失效路径靠它把 `last_vault` 指向一个不存在的目录；`requireVault: false` 只放宽本步重启的就绪门（见下条）。`theme` / `contentWidth` / 排版三项 / `autoIndent`（M272，`editor.auto_indent`）同样**缺省沿用当前值**（M228 起含 `ui.content_width`）：一次 configWrite MUST NOT 把前面设过的键连表抹掉。**`editor`（M379，backlog:1905）**：给一张 `[editor]` 表（snake_case 键）**整表透传**——当前表整份带过来、这张表覆盖，具名参数仍优先。用于构造「M180 这类新增 editor 配置项」的启动口径，新键不必回来改套件；同一张表也可直接写在 front-matter 的 `config: { editor: … }` 里（起 app 之前生效） |
+| `clipboardImage` | `synth: { width, height, seed }`（三个正整数，全可选） | **合成一张 png 并置入系统剪贴板**（M416，change paste-clipboard-image）：`scripts/acceptance/lib/png.mjs` 手写 PNG 编码器（`node:zlib`，零新增依赖）+ 确定性「类截图」生成器（同 `seed` ⇒ 逐字节相同的图，S2 的跨笔记去重据此可复现）；落盘到临时目录后经 `osascript` 的 `«class PNGf»` 置剪贴板（pasteboard 上同时出现 `public.png` + `public.tiff`，即系统截图的形态）。**二进制 fixture 不落 git**——分辨率是场景参数，能生成的东西不落二进制。动作把合成图的分辨率与**字节数**写进证据（`note`），S5 的体积实证取它做「剪贴板侧」读数 |
+| `clipboardText` | `text`（字符串） | 把纯文本置入系统剪贴板（M416 场景 114：文本粘贴回归的输入面）。与 `clipboardRead` / `clipboardImage` 同一条固定命令纪律，不开通用 shell 通道 |
+| `note` | `text`（可选）、`file`（可选，支持 glob） | **证据型读数**（M416）：把一句文本写进证据目录；`file` 给了就附上命中文件（glob 取 mtime 最新一份）的 `size`。给**不卡 PASS/FAIL 的实证场景**用（S5 的转码体积）——它不是断言形态，判不判红由场景自己另写断言 |
 | `restart` | `requireVault` | 重启 app（崩溃恢复类场景） |
 
 ### `do: settle` 的真实语义与「外部写入后先留一拍」（M249）
@@ -349,7 +352,8 @@ not: ["AXProgressIndicator"] }`）；`settle` 只在「判据明确不依赖任�
 | `ax` | `has` / `not` / `count:{pattern,exact,min,max}` / `focused` | `has`/`not`/`count` 在 AX 树**文本**上匹配；`focused: "AXTextArea"` 走**解析结果**——要求 AX 里恰有一个 focused 节点且其 role 命中（键盘落点类断言用这个，别用跨节点的正则，见「已知边界」） |
 | `editor` | `has` / `not` / `unchangedSince` / `changedSince` | 在编辑器文档文本（AXTextArea.value）上匹配；`*Since` 引用 `recordEditor` 记的基线，做逐字节比较 |
 | `file` | `path`、`exists`、`has`、`not`、`changedSince`、`unchangedSince`、`mtimeUnchangedSince`、`mtimeNewerThan` | `path` 相对验收 vault；`env:` 前缀指隔离配置目录；`xxxSince` 引用 `record` 记下的基线。`unchangedSince` 只比 sha256，`mtimeUnchangedSince` 比 mtime 精确相等——「不落盘」这类判据两个一起用（写了同一份内容时 sha256 相同而 mtime 会推进）。`path` 含 `*` 时按 glob 在父目录里取**匹配文件里 mtime 最新的那一份**再断言（诊断日志按 UTC 日期命名、`env/` 目录跨天复用，写死日期的断言会在之后每天读到上次 run 的旧文件而永久空过——这条是给那类「按日期滚动、目录不重置」的产物用的）。**目录**（M324）：`exists` 对目录成立（只有它读得到目录——`fileInfo` 走 `stat` 的目录旁路，只回 mtime/size、**不读 sha256**）；目录上的 `has` / `not` 与 sha256 类判据（`changedSince` / `unchangedSince`）**一律判 FAIL**，那几项对目录没有可观测量（改动前它们分别抛 EISDIR 与在 `undefined === undefined` 上恒真） |
-| `glob` | `dir`、`pattern`、`min`/`exact` | 文件名由 app 决定的产物（崩溃备份、另存副本）用 glob 断言 |
+| `glob` | `dir`、`pattern`、`min`/`exact` | 文件名由 app 决定的产物（崩溃备份、另存副本）用 glob 断言。`pattern` 用 `new RegExp(pattern)` 在**全路径**上匹配——**别写 `^` 锚**（它锚的是绝对路径的开头，永远不命中；要锚开头写成 `"/pasted-…"` 这类不含 `^` 的片段） |
+| `bytes` | `path`（支持 glob）、`magic`（十六进制前缀）、`nameHash`（布尔） | **二进制文件的字节级断言**（M416，change paste-clipboard-image）：`file` 的 `has`/`not` 读的是 UTF-8 文本，对 WebP 这类二进制没有可观测量。`magic` 判文件首字节的十六进制前缀（WebP 容器取 `52494646` = `RIFF`）；`nameHash` 判**内容寻址命名一致性**——文件名 `pasted-<hex16>.<ext>` 里的 `<hex16>` 必须等于落盘字节 SHA-256 的前 16 位 |
 | `window` | `moved: true/false` 或 `width: N` | 窗口几何（M236）：`moved` 对比**动作前**的 window_bounds 基线（步骤须有 `do`，位移 ≥8pt 才算动——标题栏拖拽移动窗口的判据）；`width` 断言生效宽度（±8pt 容差，对窗口管理器钳制后的真实值，不对请求值） |
 | `clipboard` | `has` / `not` / `exact` | 在**系统剪贴板文本**上匹配（M244）：与 `clipboardRead` 共用同一条固定 `osascript` 命令（含上面那条行尾归一，因此多行内容可以直接写 `exact`）；`has`/`not` 按子串或 `/…/` 正则，`exact` 逐字等于。**读不到一律 FAIL**——不许在不可观测的窗口里下结论（REVIEW.md 第 2 条：「读不到」被当成「为空」时 `not` 类断言会退化成恒真） |
 | `shot` | 名称 | 截图 + AX dump 留档 |
@@ -525,6 +529,14 @@ Alex 抽审路径：先看 `summary.md`，再进 FAIL 场景看 `steps.md` + `sh
   `tests/visual/scenes/m345-quote-card.spec.ts` 直接派发带 `text/html` + `text/plain` 的
   `paste` 事件，断言只取纯文本面。同理，任何依赖 `⌘C` 读回选区文本的真机判据都不可靠
   （场景 64 只把它当**记录**、不写断言，原委见那条场景的「已知边界」）。
+  **2026-10-10 补（M415 探针 + M416 落地）**：粘贴不必再绕道 chromium——**WebKit 原生上下文菜单
+  的 Paste 项**是本套件可用的真实粘贴通道：对编辑器内容区右键（`click` 带
+  `target: {role: AXTextArea, button: right}`，非左键自动走真实指针事件的坐标路径）→ AX 树里出现
+  菜单 → 点其中的 Paste 项（`click` 带 `target: {role: AXMenuItem, any: "/(Paste|粘贴)/"}`）→
+  paste 事件到达 DOM。M415 探针 7/7 命中，M416 的场景 112/113/114/116 全 PASS。两条注意：
+  ① 菜单项在 AX 里的索引每次快照都可能变，**按键名正则定位、不锁索引**；
+  ② 走 `any:` 而不是 `name:`——`findNode` 的 `name` 把字符串裸传给 `new RegExp()`，不认 `/…/`
+  定界符（`any` 才过 `matcher()`）。剪贴板置图仍走 `osascript` 的 `«class PNGf»`。
 - **嵌在 `<button>` 里的浮层不进 AX 树（M349 实测；M351 已修复，2026-10-07）**：WKWebView 的
   AX 树把嵌在 button 内的 button 当**叶子**——浮层项一个都不暴露。M349 首跑现场：场景 90
   截图里 provider 浮层清楚可见，同一时刻 AX dump 里 chip 节点零子节点、`deepseek` 全树零命中
