@@ -319,6 +319,30 @@ export async function injectClickWithModifiers(pid, point, { modifiers = [], cou
   }
 }
 
+/** 鼠标悬停（M443，mode 0）：只投 `mouseMoved`（不按任何鼠标键），DOM 侧因此收到
+ *  mouseover / mouseenter，可在真机上驱动 hover 类 UI（如 ctx 读数的含义气泡）。
+ *
+ *  为什么加它：套件此前没有 hover 动词，hover 类判据在真机层只能写负向（「文案默认不在 AX 树里」），
+ *  显隐的正观测整个落在 chromium 层（README「已知边界」原条目）。M443 的气泡新增行（本回合命中 /
+ *  缓存写入）需要真机正观测，故复用 doubleClick / drag 同一条已验证的 swift + CGEvent 通道。
+ *
+ *  `point` 是 **Quartz 全局屏幕坐标**（与 injectClickWithClickState 同口径，换算由调用方做）；
+ *  代价与那条通道一致：要 /usr/bin/swift + 辅助功能权限、**会移动真实光标**、要求目标窗口在前台
+ *  且未被遮挡。光标**恰好已在目标上**时单次 mouseMoved 不产生 mouseenter（hover 目标没变化），
+ *  调用方（execute.mjs 的 hover 动作）因此先 park 到别处再移到目标。 */
+export async function injectHover(pid, point) {
+  const script = new URL("./cgevent-click.swift", import.meta.url).pathname;
+  const args = ["/usr/bin/swift", script, String(Math.round(point.x)), String(Math.round(point.y)), "0"];
+  try {
+    return execFileSync(args[0], args.slice(1), { encoding: "utf8" }).trim();
+  } catch (e) {
+    throw new StepError(
+      `swift + CGEvent 悬停注入失败（${e.message}）。这条通道要 /usr/bin/swift（Xcode Command Line Tools）` +
+        `且进程要有辅助功能权限；README「已知边界」的 hover 条有说明。`,
+    );
+  }
+}
+
 /** CGEvent 拖拽（M228，mode 5）：leftMouseDown → 插值 dragged 序列 → leftMouseUp。
  *  KimiCU 的 drag 工具在 WKWebView 里不产生 DOM 拖拽（连文本选择都造不出来，M228 实测），
  *  与 dblclick 同一类注入边界，因此走同一条 swift 通道。坐标是 Quartz 全局屏幕点（与

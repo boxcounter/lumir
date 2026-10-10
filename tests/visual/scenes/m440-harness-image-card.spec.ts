@@ -48,7 +48,7 @@ const STATE = {
     },
     { role: "assistant", text: "图里第二行的数字算错了。", ts: TS_USER + 5 },
   ],
-  usage: { ctx_pct: 0, cache_pct: 0 },
+  usage: { ctx_pct: 0, cache_pct_session: 0 },
   pending_approval: null,
   warn_ctx_pct: 85,
 };
@@ -56,7 +56,7 @@ const STATE = {
 /** 空会话初值（错误态 / 投递投影用：transcript 从零开始，用户消息条数可判）。 */
 const EMPTY_STATE = {
   messages: [],
-  usage: { ctx_pct: 0, cache_pct: 0 },
+  usage: { ctx_pct: 0, cache_pct_session: 0 },
   pending_approval: null,
   warn_ctx_pct: 85,
 };

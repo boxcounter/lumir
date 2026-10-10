@@ -361,7 +361,7 @@ interface HarnessEventEnvelope {
 /** harness:event 的事件载荷（九类，type 字段判别；每类都带信封字段 `vault`）。
  *  aborted 为 M348 新增的第八类（本轮被用户停止）；reasoning_chunk 为 M362 新增的
  *  第九类（思考文本分片，index 0 起、同块多个分片共用同一 index，在该轮 text_chunk
- *  之前发出）；既有七类的形状一律未动。 */
+ *  之前发出）；既有七类的形状一律未动——**usage 除外**（M443 起换键，见下条注）。 */
 export type HarnessEvent = HarnessEventEnvelope &
   (
     | { type: "text_chunk"; text: string }
@@ -374,7 +374,12 @@ export type HarnessEvent = HarnessEventEnvelope &
     // remember 是 M413 契约的可选字段（该批准卡支持「采纳且本会话不再问」次级动作）——
     // 当前后端的事件载荷不带本键，缺键 = 批准闸挂出的请求 = 恒可见（前端按可见处理）。
     | { type: "approval_request"; id: string; tool: string; diff?: string; argv?: string[]; purpose?: string; remember?: boolean }
-    | { type: "usage"; ctx_pct: number; cache_pct: number }
+    // usage（M443，change harness-cache-metrics §4.1）：cache 侧口径拆成会话累计与单回合两个
+    // 投影——`cache_pct_session` = 控制行主读数（本逻辑会话 Σcached÷Σinput）、`cache_pct_turn`
+    // = hover 气泡里的单回合值、`cache_write_tokens[_session]` = 本回合 / 本会话累计的缓存写入、
+    // `cache_note` = 本回合成因标注（无则 null）。旧键 `cache_pct`（单回合值复用旧名）随本
+    // change **退役**，事件与快照两条通道一并换键。
+    | { type: "usage"; ctx_pct: number; cache_pct_session: number; cache_pct_turn: number; cache_write_tokens: number; cache_write_tokens_session: number; cache_note: "cold_start" | "block_dilution" | null }
     | { type: "compact"; summary: string }
     | { type: "done" }
     | { type: "error"; code: string; message: string }
@@ -465,7 +470,8 @@ export function harnessSetThinkingEffort(effort: ThinkingEffort): Promise<void> 
  * 「切走之后才回来的」旧快照）、`messages[]`（role: "user" | "assistant" | "tool" |
  * "compact"；text / summary / name / status 字段按 role 取用；tool 消息另有 decision
  * 字段 = 批准闸决定 approved / rejected，M413——恢复后「已采纳」与「已拒绝」同样可见）、
- * `usage{ctx_pct,cache_pct}`、
+ * `usage{ctx_pct,cache_pct_session,cache_pct_turn,cache_write_tokens,cache_write_tokens_session,cache_note}`（M443 起换键：cache 侧 = 会话累计主读数 + 单回合辅读数 +
+ * 缓存写入两值 + 成因标注；旧 `cache_pct` 单回合键退役）、
  * `pending_approval{id,tool,diff?,argv?,purpose?,remember?}`（argv 是**字符串数组**，M406 起与事件侧同型——
  * 此前前端按 string 读，快照恢复把数组整段丢弃；purpose / remember 是 M413 契约字段，前者
  * 供批准卡展示用途句、后者是「采纳且本会话不再问」次级动作的可见性开关）、`warn_ctx_pct`（缺省 85）、`thinking{level,supported}`

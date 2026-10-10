@@ -19,6 +19,7 @@ import {
   injectClickWithClickState,
   injectClickWithModifiers,
   injectDrag,
+  injectHover,
   openFile,
   pressKey,
   readAx,
@@ -35,7 +36,7 @@ import { envHome, InfraError, mkdirp, readText, repoRoot, secondVaultDir, sleep,
 /** 动作与断言的白名单：`--check` 用它做静态校验，避免写错 key 要等一整轮真机才发现。 */
 export const ACTIONS = new Set([
   "settle", "waitFor", "sleep", "key", "keys", "type", "click", "clickNodeText", "clickInNode", "clickEditor",
-  "doubleClick", "drag", "scroll", "focusWindow", "open", "configWrite", "restart", "record", "recordEditor",
+  "doubleClick", "drag", "hover", "scroll", "focusWindow", "open", "configWrite", "restart", "record", "recordEditor",
   "vaultWrite", "vaultAppend", "vaultRm", "vaultSparse", "resizeWindow", "clipboardRead",
   "clipboardImage", "clipboardText", "note", "migrateHarnessSessions",
 ]);
@@ -167,6 +168,23 @@ export function checkScenario(scenario) {
         push(`${at} do=waitFor 的 timeoutMs 需要正整数，实际 ${JSON.stringify(step.timeoutMs)}`);
     }
     if (step.do === "doubleClick" && !step.target) push(`${at} do=doubleClick 需要 target（节点或 {x,y} 窗口局部坐标）`);
+    // hover（M443）：与 doubleClick / drag 同一条坐标口径，`target` 是唯一必填项——漏写会让
+    // windowLocalTarget 抛「找不到带 bbox 的节点」，但那要等一整轮真机；静态这里先挡。
+    if (step.do === "hover" && !step.target) push(`${at} do=hover 需要 target（节点 / {x,y} / anchor 锚点）`);
+    if (step.do === "hover" && step.target?.anchor !== undefined) {
+      // 锚点形态：`anchor` 是「有 bbox 的邻居节点」，偏移是**像素**（offsetX / offsetY）。
+      // 与节点形态的 dx/dy（0..1 比例）不同名不通用——写错键就是静默用 0 偏移，落点跑到
+      // 节点边缘（gap 里）而 hover 不到目标，症状与产品缺陷无法区分（M443 的 ctx 读数即此：
+      // 它在 AX 里没有 bbox，只能锚左邻 chip）。
+      const a = step.target.anchor;
+      if (typeof a !== "object" || a === null || (a.any === undefined && a.name === undefined && a.text === undefined))
+        push(`${at} do=hover 的 target.anchor 需要 {role?,any|name,text,nth?}（有 bbox 的邻居节点）`);
+      if (typeof step.target.offsetX !== "number")
+        push(`${at} do=hover 的 target.anchor 需要数值 offsetX（像素，自锚点右缘起算）`);
+      for (const k of ["dx", "dy"])
+        if (step.target[k] !== undefined)
+          push(`${at} do=hover 的 target.anchor 与 target.${k}（0..1 比例）不能同写——锚点形态用像素的 offsetX/offsetY`);
+    }
     if (step.do === "click" && step.target?.button !== undefined && !["left", "right", "middle"].includes(step.target.button))
       push(`${at} do=click 的 target.button 只能是 left/right/middle，实际 ${JSON.stringify(step.target.button)}`);
     if (step.do === "click" && step.target?.modifiers !== undefined) {
@@ -1734,6 +1752,33 @@ async function doAction(step, { ctx, cu, scenario, vars, pid, evidence }) {
       await sleep(step.settleMs ?? 500); // 松手后的提交（rAF 末帧 + 写盘）之间有一拍
       return `窗口局部 ${Math.round(local.x)},${Math.round(local.y)} → +${step.dx ?? 0},${step.dy ?? 0}｜${out}`;
     }
+    case "hover": {
+      // 悬停（M443）：真机层驱动 hover 类 UI 的唯一通道（此前套件没有 hover 动词，hover 判据
+      // 只能写负向——见 README「已知边界」原条目）。通道 = cgevent-click.swift 的 mode 0
+      // （只投 `mouseMoved`，不按鼠标键），坐标换算与前台前置复用 doubleClick / drag 同一份
+      // `windowLocalTarget`（三种 target 形态：节点中心 / `{x,y}` 窗口局部点 / `anchor` 锚点 +
+      // 像素偏移——ctx 读数在 AX 里没有 bbox，只能锚它左邻的权限 chip）；代价也一致（要 swift
+      // + 辅助功能权限、会移动真实光标、目标窗口必须在前台未被遮挡）。
+      //
+      // **先 park 再移**：`mouseenter` 只在「hover 目标发生变化」时触发——光标恰好已在目标上
+      // 时单次 mouseMoved 不产生事件，气泡不会开，场景会得到一条与产品无关的假红（REVIEW.md
+      // 第 1 条：「先造一个必须让它 FAIL 的输入」）。park 点取窗口左上角内侧 2px（标题栏区，
+      // 不带 hover UI），与目标点接近时跳过 park（不值得为几像素多起一次 swift 进程）。
+      const { bounds, local, point } = await windowLocalTarget(cu, p, step.target, {
+        retries: step.retries ?? 4,
+        label: "hover",
+        dx: step.dx,
+        dy: step.dy,
+      });
+      const park = { x: bounds.x + 2, y: bounds.y + 2 };
+      if (Math.abs(park.x - point.x) > 4 || Math.abs(park.y - point.y) > 4) {
+        await injectHover(p, park);
+      }
+      const out = await injectHover(p, point);
+      evidence.record({ kind: "note", text: `hover 自报：${out}` });
+      await sleep(step.settleMs ?? 500); // hover 到前端开浮层之间有一拍（mouseenter → 建 DOM）
+      return `窗口局部 ${Math.round(local.x)},${Math.round(local.y)} → 屏幕 ${Math.round(point.x)},${Math.round(point.y)}｜${out}`;
+    }
     case "resizeWindow": {
       // AX 直写窗口尺寸（M236，窄窗退让的真机验证）：确定值通道。高度缺省保持当前。
       const ax = await readAx(cu, p);
@@ -1995,6 +2040,22 @@ async function windowLocalTarget(cu, pid, target, { retries = 4, label = "动作
   let local;
   if (target?.x !== undefined) {
     local = { x: target.x, y: target.y };
+  } else if (target?.anchor !== undefined) {
+    // 锚点形态（M443，hover 用）：以**有 bbox 的邻居节点**为基点，右缘中点 + 像素偏移。
+    // 为什么需要它：WKWebView 对 inline-flex 里的裸 span（ctx 读数）在 AX 树里给节点但不给
+    // bbox，`{role,name}` 形态因此定位不到；把窗口坐标写死进场景又会在窗口尺寸 / 字号 / 主题
+    // 变化时静默漂走。锚在紧邻的节点上（如权限 chip，ctx 读数的左邻）按像素偏移既确定又跟着
+    // 布局走。offsetX/offsetY 是**像素**（与节点形态的 dx/dy 比例不是一回事，故另起键名）。
+    const a = target.anchor;
+    const anchorNode =
+      a.any !== undefined
+        ? findByAny(ax.nodes, { role: a.role, any: a.any, nth: a.nth ?? 0 })
+        : findNode(ax.nodes, { role: a.role, name: a.name ?? a.text, nth: a.nth ?? 0 });
+    if (!anchorNode?.bbox) throw new Error(`${label}：锚点节点没有 bbox（${JSON.stringify(a)}）`);
+    local = {
+      x: anchorNode.bbox.x + anchorNode.bbox.w + (target.offsetX ?? 0),
+      y: anchorNode.bbox.y + anchorNode.bbox.h / 2 + (target.offsetY ?? 0),
+    };
   } else {
     const node =
       target?.any !== undefined

@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "responses": [
+    {
+      "text": "写缓存回答。",
+      "usage": { "input_tokens": 20000, "cached_tokens": 4000, "output_tokens": 10, "cache_write_tokens": 16000 }
+    },
+    {
+      "text": "零写入回答。",
+      "usage": { "input_tokens": 22000, "cached_tokens": 21000, "output_tokens": 10, "cache_write_tokens": 0 }
+    }
+  ]
+}

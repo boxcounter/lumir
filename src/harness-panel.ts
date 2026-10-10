@@ -930,6 +930,51 @@ export function usageOverWarn(ctxPct: number, warnPct: number): boolean {
   return ctxPct >= warnPct;
 }
 
+// ── usage 载荷的读数映射（M443，change harness-cache-metrics §5.3）────────────────
+// 事件载荷与 `harness_state` 快照的 `usage` 字段**同一份键名与缺省口径**，只在这里映射一次
+// （REVIEW.md 第 8 条：跨层同一条语义只应有一处产出）。缺键 / 非数值一律落 `null`——
+// 「读不到」不等于「为 0」，回落单读数与气泡缺行都由消费方按 null 处理（REVIEW.md 第 2 条：
+// 不许把「读不到」当「为空」下结论）。
+
+/** usage 载荷映射出的六项读数（`null` = 该键缺失 / 非数值）。 */
+export interface UsageReadings {
+  /** 上下文窗口占用 %（最近一次请求）。 */
+  ctx: number | null;
+  /** 会话累计命中率（控制行主读数）。 */
+  cacheSession: number | null;
+  /** 本回合单回合命中率（气泡辅读数）。 */
+  cacheTurn: number | null;
+  /** 本回合成因标注（后端判定值，前端只按值取文案）。 */
+  cacheNote: "cold_start" | "block_dilution" | null;
+  /** 本回合缓存写入 tokens。 */
+  cacheWrite: number | null;
+  /** 本逻辑会话累计缓存写入 tokens。 */
+  cacheWriteSession: number | null;
+}
+
+/** `usage` 载荷 → 读数（键名映射的唯一一处）。 */
+export function usageReadings(payload: unknown): UsageReadings {
+  const source =
+    typeof payload === "object" && payload !== null
+      ? (payload as Record<string, unknown>)
+      : null;
+  const number = (key: string): number | null => {
+    const value = source?.[key];
+    // 只认有限数值：`NaN` / `Infinity` 不是读数（渲染成「NaN%」比缺失更糟），落 null ⇒
+    // 消费方走回落分支。
+    return typeof value === "number" && Number.isFinite(value) ? value : null;
+  };
+  const note = source?.cache_note;
+  return {
+    ctx: number("ctx_pct"),
+    cacheSession: number("cache_pct_session"),
+    cacheTurn: number("cache_pct_turn"),
+    cacheNote: note === "cold_start" || note === "block_dilution" ? note : null,
+    cacheWrite: number("cache_write_tokens"),
+    cacheWriteSession: number("cache_write_tokens_session"),
+  };
+}
+
 // ── harness pane 内容字号步进的纯模型层（M378）────────────────────────────────
 // 与内容 pane 的 textScale（src/editor.ts，change typography-and-zoom）同一条语义：
 // up / down 复用 nextFontSize（×1.1 取整、钳 [12,32]）、reset 回基线、到界无变化、运行期
@@ -2054,9 +2099,19 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   };
   /** ctx% 读数（usage 事件 / 快照同源消费；null = 尚无读数，读数件整体隐藏）。 */
   let lastUsage: number | null = null;
-  /** cache hit rate 读数（M370，usage 事件 / 快照的 cache_pct 字段纯前端消费；
-   *  null = 读数缺失（旧事件 / 桩）——回落单读数「{ctx}%」，不伪造 cache 值）。 */
+  /** cache 主读数 = **本逻辑会话累计命中率**（M443 改准语义，原 M370 的单回合值；usage 事件 /
+   *  快照的 `cache_pct_session` 字段消费；null = 读数缺失（旧事件 / 桩）——回落单读数
+   *  「{ctx}%」，不伪造 cache 值）。 */
   let lastCache: number | null = null;
+  /** 本回合单回合命中率（M443，hover 气泡辅读数；缺失 → 该行不渲染）。 */
+  let lastCacheTurn: number | null = null;
+  /** 本回合成因标注（M443，后端判定的值：`cold_start` / `block_dilution`；null = 无标注——
+   *  气泡只出「本回合缓存命中」前半句。前端 MUST NOT 自行猜成因：判定算法在后端一处）。 */
+  let lastCacheNote: "cold_start" | "block_dilution" | null = null;
+  /** 本回合缓存写入 tokens 与本文逻辑会话累计（M443，气泡第四行的两个数）。判定键是本回合值：
+   *  为 0（provider 不提供该字段，deepseek / Kimi Code 端点即此）⇒ 整行不渲染。 */
+  let lastCacheWrite: number | null = null;
+  let lastCacheWriteSession: number | null = null;
   /** 上下文用量警示阈值（快照 warn_ctx_pct，缺省 85——与 Rust 侧 DEFAULT_WARN_CTX_PCT 同值）。 */
   let warnCtxPct = 85;
   /** harness pane 内容字号（M378，运行期态、不落盘、不回写 config）：hpBaseFontSize = 基线
@@ -3343,10 +3398,25 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       .catch(() => {});
   }
 
+  /** usage 读数落状态（M443）：事件路径与快照路径**同一处入口**——两条通道喂进来的是同一种
+   *  `UsageReadings`（键名映射见 [`usageReadings`]），一处赋值就不可能出现「事件面与快照面
+   *  读数不一致」（REVIEW.md 第 8 条）。整体覆盖是刻意的：本轮没有的键落 null，气泡对应行
+   *  随之不渲染，不残留上一轮的值。 */
+  function applyUsageReadings(readings: UsageReadings): void {
+    lastUsage = readings.ctx;
+    lastCache = readings.cacheSession;
+    lastCacheTurn = readings.cacheTurn;
+    lastCacheNote = readings.cacheNote;
+    lastCacheWrite = readings.cacheWrite;
+    lastCacheWriteSession = readings.cacheWriteSession;
+  }
+
   /** ctx% 读数重渲（usage 事件 / 快照 / relabel 的共用出口）。M370：读数 = D334 双读数
    *  「{ctx}% · {cache}%」（分隔符 U+00B7，cache 缺失回落单读数）；越线高亮不动。
    *  M373：hover 浮层常驻含义句；M378 改两行带值形态（D395 第一行 + D401 第二行，
-   *  越线时 D335 警示句追加其下）并按面板边界收编（clampCtxPop）。浮层内容在 hover 时现建。 */
+   *  越线时 D335 警示句追加其下）并按面板边界收编（clampCtxPop）。浮层内容在 hover 时现建。
+   *  **M443：D334 的 `{cache}` 口径改为会话累计命中率**（`lastCache` 语义随之改准）——
+   *  形态与回落口径、越线高亮（usageOverWarn）一律不变；单回合值降为气泡里的辅值。 */
   function applyUsage(): void {
     if (lastUsage === null) {
       ctxWrap.hidden = true;
@@ -3366,9 +3436,11 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     }
   }
 
-  /** ctx hover 浮层内容现建（M378 两行带值形态）：第一行上下文窗口占用（D395，{ctx} =
-   *  当时的实际读数）、第二行 cache hit rate（D401，cache 读数缺失时整行不渲染）；
-   *  越线时警示句（D335）追加在两行之下（同泡第三行，追加行为保留）。 */
+  /** ctx hover 浮层内容现建（M378 两行带值形态 + M443 补两行）：第一行上下文窗口占用（D395，
+   *  {ctx} = 当时的实际读数）、第二行**会话累计**命中率（D401，读数缺失时整行不渲染）、
+   *  第三行本回合命中率（D452，带成因句 D453/D454——成因由后端标注，前端只按值取句）、
+   *  第四行缓存写入（D455，本回合值为 0 或会话累计键缺失时整行不渲染——两个数必须都来自
+   *  载荷，不拿本回合值冒充累计值）；越线时警示句（D335）追加在最后（追加行为保留）。 */
   function buildCtxPop(): void {
     ctxPop.replaceChildren();
     const meaning = document.createElement("div");
@@ -3380,6 +3452,27 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       cache.className = "lumir-hp-ctxpop-cache";
       cache.textContent = t("D401", { cache: Math.round(lastCache) });
       ctxPop.append(cache);
+    }
+    if (lastCacheTurn !== null) {
+      const turn = document.createElement("div");
+      turn.className = "lumir-hp-ctxpop-cache-turn";
+      // 成因句是「同一行的追加半句」：无标注时只出前半句（D452），有标注时用 U+00B7 接上
+      // 成因句（D453 / D454）——分隔符是排版、与句内措辞无关（同 modeline 的小圆点口径）。
+      const note =
+        lastCacheNote === null
+          ? ""
+          : ` · ${t(lastCacheNote === "cold_start" ? "D453" : "D454")}`;
+      turn.textContent = `${t("D452", { turn: Math.round(lastCacheTurn) })}${note}`;
+      ctxPop.append(turn);
+    }
+    if (lastCacheWrite !== null && lastCacheWrite !== 0 && lastCacheWriteSession !== null) {
+      const write = document.createElement("div");
+      write.className = "lumir-hp-ctxpop-cache-write";
+      write.textContent = t("D455", {
+        write: lastCacheWrite,
+        total: lastCacheWriteSession,
+      });
+      ctxPop.append(write);
     }
     if (ctxRead.classList.contains("is-warn")) {
       const warn = document.createElement("div");
@@ -4507,14 +4600,18 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
           });
         }
         return;
-      case "usage":
+      case "usage": {
         // M347：读数迁入 composer 控制行（模型 chip 之后、发送钮之前）——事件源自 HP1 起
         // 一直在发（头部栏已移除、事件未断），这里直接消费，不新造通道。
-        // M370：cache_pct 一并消费（同一事件里已带，纯前端读取）——「{ctx}% · {cache}%」。
-        lastUsage = typeof event.ctx_pct === "number" ? event.ctx_pct : null;
-        lastCache = typeof event.cache_pct === "number" ? event.cache_pct : null;
+        // M370：cache 读数一并消费（同一事件里已带，纯前端读取）——「{ctx}% · {cache}%」。
+        // M443：cache 侧换键——`cache_pct_session`（控制行主读数，会话累计）取代退役的
+        // `cache_pct`；单回合值 / 缓存写入两值 / 成因标注供 hover 气泡。键名映射与缺省口径
+        // 走 usageReadings 一处（快照路径同一份），缺键一律落 null：读数回落单读数、气泡
+        // 对应行不渲染——不伪造、不用 0 冒充实测值。
+        applyUsageReadings(usageReadings(event));
         applyUsage();
         return;
+      }
       case "compact":
         // 自动压缩 = 开新逻辑会话：会话名按同口径重算（下一条用户消息成为新名，
         // 未发前显示「新会话」——design §3）。
@@ -4756,15 +4853,11 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     const messages = Array.isArray(state.messages) ? state.messages : [];
     renderSnapshotMessages(messages);
     // ctx% 读数与警示阈值随快照恢复（webview 重载后读数不断源；缺键 = 缺省 85 / 无读数）。
-    // M370：cache_pct 同读数一并恢复（缺键保持 null，回落单读数）。
-    const usage = state.usage as { ctx_pct?: unknown; cache_pct?: unknown } | null | undefined;
-    if (usage !== null && usage !== undefined && typeof usage === "object" &&
-        typeof usage.ctx_pct === "number") {
-      lastUsage = usage.ctx_pct;
-    }
-    if (usage !== null && usage !== undefined && typeof usage === "object" &&
-        typeof usage.cache_pct === "number") {
-      lastCache = usage.cache_pct;
+    // M370：cache 读数一并恢复；M443：走与事件路径同一份映射（`usageReadings`）——旧快照
+    // （只有退役的 `cache_pct`、没有新键）读到 null ⇒ 回落单读数、气泡缺行，MUST NOT 伪造。
+    const usage = state.usage;
+    if (typeof usage === "object" && usage !== null) {
+      applyUsageReadings(usageReadings(usage));
     }
     const warn = state.warn_ctx_pct;
     if (typeof warn === "number" && Number.isFinite(warn)) warnCtxPct = warn;
@@ -4853,9 +4946,14 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     //  后被过滤，见 handleEvent）——不复位的话新会话的发送钮会被一个等不到的「处理中」锁死。
     applySendPhase(reduceSendPhase(sendPhase, { type: "finished" }));
     stageWaiting = true;
-    // ctx% 读数归无（新 vault 会话的快照会随后带到它自己的读数）。
+    // ctx% 读数归无（新 vault 会话的快照会随后带到它自己的读数）。M443：cache 侧五个读数
+    // 一并不留——新逻辑会话的累计归零，旧值残留会让控制行/气泡显示上一会话的数。
     lastUsage = null;
     lastCache = null;
+    lastCacheTurn = null;
+    lastCacheNote = null;
+    lastCacheWrite = null;
+    lastCacheWriteSession = null;
     applyUsage();
     syncEmptyHint();
   }

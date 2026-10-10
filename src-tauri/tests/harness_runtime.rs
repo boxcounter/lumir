@@ -357,10 +357,34 @@ fn tool_loop_roundtrip_with_fixture_file() {
         vec!["user", "assistant", "tool", "assistant"]
     );
 
-    // 用量：mock 第二轮 input 1400 / 窗口 131072 ≈ 1.1%，cache 1000/1400 ≈ 71.4%。
+    // 用量（M443 起口径拆开）：mock 第二轮 input 1400 / 窗口 131072 ≈ 1.1%；
+    // **单回合** 1000/1400 ≈ 71.4%；**会话累计** (300+1000)/(900+1400) = 1300/2300 ≈ 56.5%
+    // ——两个投影都断言，正是本 change 要防的「一个数说不清口径」。
     let snapshot = runtime.snapshot(&f.scope(), &mock_config());
     assert!((snapshot.usage.ctx_pct - 1400.0 * 100.0 / 131072.0).abs() < 0.2);
-    assert!((snapshot.usage.cache_pct - 1000.0 * 100.0 / 1400.0).abs() < 0.2);
+    assert!((snapshot.usage.cache_pct_turn - 1000.0 * 100.0 / 1400.0).abs() < 0.2);
+    assert!((snapshot.usage.cache_pct_session - 1300.0 * 100.0 / 2300.0).abs() < 0.2);
+    // 两个读数确实不同（否则这条判据没有区分度）。
+    assert!((snapshot.usage.cache_pct_turn - snapshot.usage.cache_pct_session).abs() > 5.0);
+    // 第二条 usage 事件与快照同源（同一 UsageSnapshot 喂事件与快照两条通道，MUST NOT 两套算法）：
+    // 旧 `cache_pct` 键退役——载荷里只有 session / turn 两个新键。
+    let usage_event = sink
+        .events()
+        .into_iter()
+        .rfind(|e| e.get("type").and_then(|t| t.as_str()) == Some("usage"))
+        .expect("usage 事件在场");
+    assert!(usage_event.get("cache_pct").is_none(), "{usage_event:?}");
+    assert!(
+        (usage_event["cache_pct_turn"].as_f64().unwrap() - snapshot.usage.cache_pct_turn).abs()
+            < 0.05,
+        "{usage_event:?}"
+    );
+    assert!(
+        (usage_event["cache_pct_session"].as_f64().unwrap() - snapshot.usage.cache_pct_session)
+            .abs()
+            < 0.05,
+        "{usage_event:?}"
+    );
 
     // wire 留存：配置目录（不是 vault）有记录——首行 session_open，其后 llm_request /
     // llm_response 成对，工具调用与结果逐字节在 llm_request.messages 里。
@@ -409,6 +433,10 @@ fn tool_loop_roundtrip_with_fixture_file() {
     assert!(wire.contains("demo content"), "{wire}");
     // usage 并入 llm_response（独立的 usage 事件类已废弃）。
     assert_eq!(file.records[2]["usage"]["output_tokens"], 20);
+    // M443：usage 块恒带 cache_write_tokens（provider / fixture 不带该字段时记 0，不留缺键——
+    // 消费侧因此不必再判 null）。
+    assert_eq!(file.records[2]["usage"]["cache_write_tokens"], 0);
+    assert_eq!(file.records[4]["usage"]["cache_write_tokens"], 0);
     // mock provider 的因果链字段。
     assert!(file.records[2]["mock_fixture"]
         .as_str()
@@ -2627,4 +2655,132 @@ fn vault_create_auto_creates_parent_dirs_through_tool_chain() {
         std::fs::read_to_string(f.vault().join("drafts/notes/x.md")).unwrap(),
         "新稿"
     );
+}
+
+/// M443：`cache_write_tokens` 全链路在场——fixture → 解析 → `llm_response.usage` 留存块 /
+/// usage 事件载荷 / `harness_state` 快照三处都带同一个值。
+///
+/// 数值取自 M438 的实测形状（kimi：前缀已缓存、新增大块内容写进缓存）：
+/// input 65536 / cached 5136 ⇒ 单回合 7.8%、新增 60400 > 已缓存 5136 的一半 ⇒ 大块摊薄成因。
+/// 「provider 不带该字段时记 0」的另一半在 `tool_loop_roundtrip_with_fixture_file` 的
+/// 留存断言里（mock_basic fixture 无该键 ⇒ 0）。
+#[test]
+fn cache_write_tokens_flows_to_retention_event_and_snapshot() {
+    let f = Fixture::new("cache-write");
+    let runtime = f.runtime();
+    runtime.acquire_turn(&f.scope(), &mock_config()).unwrap();
+    let sink = CollectSink::default();
+    let script = r#"{"responses": [
+        {"text": "写缓存的一轮。",
+         "usage": {"input_tokens": 65536, "cached_tokens": 5136, "output_tokens": 10, "cache_write_tokens": 60400}}
+    ]}"#;
+    let mut client = MockClient::from_str(script, "cache-write").unwrap();
+    drive_turn(
+        &sink,
+        &runtime,
+        &f.scope(),
+        &mock_config(),
+        "问一句".into(),
+        &mut client,
+    );
+    runtime.release_turn(&f.scope());
+
+    // ① 会话快照（面板读数与气泡的数据源）。
+    let snapshot = runtime.snapshot(&f.scope(), &mock_config());
+    assert_eq!(snapshot.usage.cache_write_tokens, 60400);
+    assert_eq!(snapshot.usage.cache_write_tokens_session, 60400);
+    assert!((snapshot.usage.cache_pct_turn - 5136.0 * 100.0 / 65536.0).abs() < 0.2);
+    assert_eq!(
+        snapshot.usage.cache_note,
+        Some(lumir_lib::harness::session::CacheNote::BlockDilution),
+        "新增大块内容 ⇒ 摊薄成因，不是缓存失效"
+    );
+
+    // ② usage 事件载荷（与快照同源：同一 UsageSnapshot 喂两条通道）。
+    let event = sink
+        .events()
+        .into_iter()
+        .find(|e| e["type"] == "usage")
+        .expect("usage 事件在场");
+    assert_eq!(event["cache_write_tokens"], 60400);
+    assert_eq!(event["cache_write_tokens_session"], 60400);
+    assert_eq!(event["cache_note"], "block_dilution");
+    assert!(event.get("cache_pct").is_none(), "{event:?}");
+
+    // ③ wire 留存（恢复 / 诊断可回溯）。
+    let file = read_session_file(&harness_jsonl_path(&f));
+    assert_eq!(file.records[2]["usage"]["cache_write_tokens"], 60400);
+    assert_eq!(file.records[2]["usage"]["cached_tokens"], 5136);
+}
+
+/// M443 累计边界（design §3.2）：自动压缩开新逻辑会话后，会话累计命中率**只从新会话起算**，
+/// 压缩前那些往返的计数不得混进来。
+///
+/// 区分度：压缩前一轮 input 120000 / cached 118000（98.3%），压缩后一轮 input 1000 / cached 100
+/// （10.0%）。不重置累计的话读数是 (118000+100)/(120000+1000) ≈ 97.6%——与重置后的 10% 相距 87
+/// 个点，这条判据分得开（REVIEW.md 第 1 条：先想清楚「什么输入会让它红」）。
+#[test]
+fn session_cache_reading_restarts_after_auto_compact() {
+    let f = Fixture::new("cache-reset");
+    let mut config = mock_config();
+    config.warn_ctx_pct = 50.0; // 首轮 120000/131072 ≈ 91.6% ⇒ 越线触发自动压缩
+    let runtime = f.runtime();
+    runtime.acquire_turn(&f.scope(), &mock_config()).unwrap();
+    let sink = CollectSink::default();
+    let script = r#"{"responses": [
+        {"text": "长回答。", "usage": {"input_tokens": 120000, "cached_tokens": 118000, "output_tokens": 500}},
+        {"text": "会话摘要。"},
+        {"text": "压缩后继续。", "usage": {"input_tokens": 1000, "cached_tokens": 100, "cache_write_tokens": 900, "output_tokens": 10}}
+    ]}"#;
+    let mut client = MockClient::from_str(script, "cache-reset").unwrap();
+    drive_turn(
+        &sink,
+        &runtime,
+        &f.scope(),
+        &config,
+        "问个大的".into(),
+        &mut client,
+    );
+    runtime.release_turn(&f.scope());
+    assert!(
+        sink.types().contains(&"compact".to_string()),
+        "{:?}",
+        sink.types()
+    );
+    let after_first = runtime.snapshot(&f.scope(), &config);
+    assert!((after_first.usage.cache_pct_session - 98.33).abs() < 0.2);
+
+    // 压缩后的首个提问：脚本前两条是给上一轮的（响应 + 摘要），本轮只用第三条。
+    runtime.acquire_turn(&f.scope(), &mock_config()).unwrap();
+    let sink2 = CollectSink::default();
+    let mut client2 = MockClient::from_str(script, "cache-reset-2").unwrap();
+    for _ in 0..2 {
+        client2.complete(
+            &lumir_lib::harness::llm::Request {
+                system: "x".into(),
+                input: vec![],
+                tools: vec![],
+                effort: Default::default(),
+            },
+            &lumir_lib::harness::llm::DiscardStreamSink,
+        );
+    }
+    drive_turn(
+        &sink2,
+        &runtime,
+        &f.scope(),
+        &config,
+        "接着问".into(),
+        &mut client2,
+    );
+    runtime.release_turn(&f.scope());
+
+    let after = runtime.snapshot(&f.scope(), &config);
+    assert!(
+        (after.usage.cache_pct_session - 10.0).abs() < 0.2,
+        "累计须随新逻辑会话重新起算：{:?}",
+        after.usage
+    );
+    // 缓存写入的会话累计同样归零重算（只算新会话这一轮）。
+    assert_eq!(after.usage.cache_write_tokens_session, 900);
 }

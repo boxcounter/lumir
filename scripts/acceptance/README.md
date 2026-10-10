@@ -270,6 +270,7 @@ editor 配置项」构造**启动口径**用——不必每加一个键就回来
 | `clickInNode` | `target`、`dx`、`dy`、`count` | 点「某个有 bbox 的节点内部」的相对位置（如 `AXTable`）；`count` 同上，未观察到 `dblclick`（判据限制见「已知边界」） |
 | `clickEditor` | `dx`（默认 40）、`dy`（默认 6） | 点编辑器顶部建立渲染层焦点（编辑器内元素无 AX bbox，只能按坐标） |
 | `doubleClick` | `target`（`{role,name\|any,nth}` 或 `{x,y}`）、`dx`/`dy`、`mode`、`retries`、`settleMs` | **双击**（M209 起套件唯一的双击通道）：swift + `CGEvent` 显式设 `kCGMouseEventClickState`（详见「已知边界」）。`target` 取节点 bbox 中心、`dx`/`dy` 按其宽高比例偏移（默认 0.5）；`{x,y}` 给窗口局部坐标（遮罩这类没有 AX 节点的全屏层用）。动作内部先拿前台（**拿不到即报错**——真鼠标点击落在最上层那扇窗上），再把窗口局部点换算成 Quartz 屏幕坐标。**会移动真实光标**；目标窗口被遮挡或 KimiCU 的 AX 快照退化时按错因报错，不静默 |
+| `hover` | `target`（`{role,name\|any,nth}` / `{x,y}` / `{anchor:{role,any\|name,nth?}, offsetX, offsetY}`）、`retries`、`settleMs` | **鼠标悬停**（M443，change harness-cache-metrics）：只投 `mouseMoved`（不按鼠标键），驱动 hover 类 UI（当前消费者 = ctx 读数的含义气泡）。通道 = `cgevent-click.swift` 的 mode 0，坐标换算与前台前置复用 `doubleClick` 的同一条函数，代价也一致（要 `/usr/bin/swift` + 辅助功能权限、**会移动真实光标**、目标窗口必须在前台未遮挡）。**`anchor` 形态**（M443）：以某个**有 bbox 的邻居节点**为基点，右缘中点 + `offsetX`/`offsetY` **像素**——给「在 AX 树里有节点但没有 bbox」的目标用（WKWebView 对 inline-flex 里的裸 span 不给框，ctx 读数即此例）。节点形态的 `dx`/`dy` 是 0..1 比例，与 `anchor` 的像素偏移不是一回事（同写由 `--check` 挡）。动作先 park 到窗口左上角再移到目标：`mouseenter` 只在 hover 目标**发生变化**时触发，光标恰好已在目标上时单次移动不产生事件 |
 | `drag` | `target`（`{role,name\|any,nth}` 节点须有 bbox、`{x,y}` 窗口局部坐标（M236 起，标题栏展示元素这类不一定有 AX bbox 的目标用），或 `{textareaEdge:"left"\|"right"}` 从编辑器列缘内侧起拖）、`dx`/`dy`（窗口局部点，UI 位移是**确定值**）、`allowOutOfBounds`、`retries`、`settleMs` | **拖拽**（M228 起，栏宽手柄这类「只能拖」的控件的唯一通道）：swift + `CGEvent` 显式投 `leftMouseDown → 插值 dragged ×24 → leftMouseUp`（与 `doubleClick` 同一通道——KimiCU 的 `drag` 工具在 WKWebView 里连文本选择都造不出来，M228 实测，见「已知边界」）。坐标换算与 `doubleClick` 同口径：先拿前台（**拿不到即报错**——真鼠标拖拽落在最上层那扇窗上），窗口局部点 + `window_bounds` 原点 → Quartz 屏幕坐标。**会移动真实光标**。起止点默认都必须在窗口内（防坐标空间错乱）；拖标题栏移动窗口时终点**故意**出窗，显式写 `allowOutOfBounds: true` 跳过终点检查。`textareaEdge` 形态存在的原因：WKWebView 把 `role=separator` 暴露成**无 bbox 的 AXSplitter**（M228 实测），栏宽手柄按节点定位不到，只能从 AXTextArea 的 bbox 边缘起拖。**只读静态文本的选区也走这一条**（M423 实证）：transcript 消息体这类文本在 AX 里是无 bbox 的 `AXStaticText`（节点定位报「找不到带 bbox 的节点」），而 `{x,y}` 真实拖拽会在它上面造出真实选区并触发 DOM `selectionchange`——KimiCU 的 `select_text` 看似更对口，但它只作用于 AX 选区层、**不产生 `selectionchange`**，驱动不了任何「选区驱动」的 UI（M423 用编辑器手势做过对照复验），故套件不引入该动词 |
 | `scroll` | `target`（`{role,name\|any,nth}` 滚动区节点，或 `{x,y}` 截图像素落点），或 step 上的 `page`（整页，正上负下）/ `dx` / `dy`（行式增量）/ `index`（快照节点序号） | **滚动**（M379 接入，backlog:1853 / 1186——此前只有 `lib/cu.mjs` 的 MCP 封装，场景 DSL 里没有这个动作，「先滚动再把某行带进视口」类场景写不出来）。参数与 KimiCU 的 `scroll` 同形，**只透传写了的字段**（不补缺省值：KimiCU 侧「没给就是没给」）。定位方式：`target` 节点 → 取它的 index 滚那个滚动区；`target: {x,y}` → 在该截图像素点滚；`page`/`dx`/`dy` 直接透传。**`ok:false`（没检测到位移 / 已到末尾）一律报错**，不当成功静默放过——后面的「某行在视口内」类断言会对着没滚动的现场判红/假绿（REVIEW.md 第 2 条同族）。**读不到 scrollTop**：套件没有滚动位置读数（AX 不暴露），因此本动作只能证明「滚动调用生效链路通」，「滚到哪儿了」要靠视口内的可见元素间接判（见「已知边界」的滚动条） |
 | `resizeWindow` | `width`（数值，必填）、`height`（缺省保持当前）、`settleMs` | **AX 直写窗口尺寸**（M236，窄窗退让这类「精确几何」验证）：`lib/ax-window.swift` 经 Accessibility API 设 AXSize，确定值通道（不拖窗口边缘——命中区与落点都不稳）。前提是调用进程有辅助功能权限（与 CGEvent 注入同）；窗口管理器的钳制会如实反映在回读值里，断言用 `window.width` 对生效值 |
@@ -770,10 +771,15 @@ Alex 抽审路径：先看 `summary.md`，再进 FAIL 场景看 `steps.md` + `sh
   切换的刷新走面板内的**会话身份看守**（attach 期间每 400ms 比一次活跃会话引用，变了才重取）——
   断言这类判据前先 `settle`（连续两次 AX 快照一致），刷新拍会落进 settle 的等待窗；直接连读
   容易抢到刷新前半截状态。场景 98 是首个消费者（正反双判 + 反向一步）。
-- **真机套件没有 hover 动词**：hover 类交互（M370 起 ctx 越线读数的警示浮层是 hover 读数才
-  翻出）在真机层只判负向（文案默认不在 AX 树里），显隐正观测归 chromium 视觉层
-  （`tests/visual/scenes/m347-harness-composer.spec.ts` 的 playwright hover 断言）。若在
-  runner 加了 hover 动词，可把正观测镜像回场景 87。
+- **真机套件的 hover 动词（M443 补齐）**：此前套件没有 hover 动作，hover 类交互在真机层只能判负向
+  （「文案默认不在 AX 树里」），显隐正观测整个落在 chromium 视觉层。M443 补了 `do: hover`
+  （通道 = 已验证的 `cgevent-click.swift` mode 0 只投 `mouseMoved`；落点支持 `anchor` 锚点形态，
+  给「在 AX 树里有节点但没有 bbox」的目标用），场景 87 的警示浮层正观测与 131/132/133 的气泡断言
+  因此回到真机层。**边界如实登记**：① 代价与 `doubleClick` / `drag` 同一条——要 `/usr/bin/swift`
+  + 辅助功能权限、**会移动真实光标**、目标窗口必须在前台未被遮挡（被盖住时动作报错、不静默）；
+  ② `mouseenter` 只在 hover 目标变化时触发，动作因此先 park 再移到目标，光标「停在原地不动」
+  的情形不构成判据；③ 折行会让 AX dump 里多出一个空白，气泡这类必然折行的长文案断言要写成
+  `\s*` 容忍的正则（写死逐字串会随折行位置随机假红），见场景 131 的「断言口径」。
 - **停止即时性的真机断言是「时长上界」，不是绝对时延（M374 登记）**：场景 104 用
   `chunk_delay_ms: 8000` 把停止动作钉在片间隔里，`waitFor has 已停止 + not 正在生成回复…,
   timeoutMs: 3000` 作上界——新实现（chunk_gap 25ms 小步轮询 + SSE 读循环 100ms 超时轮询）

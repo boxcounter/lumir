@@ -77,7 +77,7 @@ async function stubHarnessApproval(page: Page): Promise<void> {
       if (cmd === "harness_state") {
         return JSON.stringify({
           messages: [],
-          usage: { ctx_pct: 0, cache_pct: 0 },
+          usage: { ctx_pct: 0, cache_pct_session: 0 },
           pending_approval: { id: "call_p1", tool: "vault_patch", diff, argv: undefined },
           warn_ctx_pct: 85,
         });

@@ -66,7 +66,7 @@ async function stubHarness(page: Page, state: unknown): Promise<void> {
 
 const EMPTY_STATE = {
   messages: [],
-  usage: { ctx_pct: 0, cache_pct: 0 },
+  usage: { ctx_pct: 0, cache_pct_session: 0 },
   pending_approval: null,
   warn_ctx_pct: 85,
 };
@@ -183,7 +183,7 @@ test("快照恢复：按后端 ts 显示相对时间；无 ts 的旧快照只有
       { role: "assistant", text: "恢复的回答" }, // 缺 ts 的旧快照 → 只显示角色
       { role: "tool", name: "vault_read", summary: '{"path":"harness-note.md"}', ts: NOW_S - 90 },
     ],
-    usage: { ctx_pct: 42, cache_pct: 0 },
+    usage: { ctx_pct: 42, cache_pct_session: 0 },
     pending_approval: null,
     warn_ctx_pct: 85,
   });
