@@ -84,7 +84,7 @@ interface MessageQuoteCard {
 - **卡片 DOM**：`createCardEl` 扩展 msgquote 分支，结构完全对齐文档卡（`div.lumir-hp-qcard` / `span.lumir-hp-qc-bar` / `div.lumir-hp-qc-main` / 摘录 `.-qc-ex` + 出处行 `.-qc-src`），复用 `harness-panel.css:1505-1599` 整族样式，不新立视觉物种。
 - **视觉保真口径**（逐面对账，无原型可对照，以产品内既有文档卡为基准）：
   - **布局节奏**：与文档卡同——3px 引号竖条（中性灰阶）+ 摘录 `-webkit-line-clamp: 2` 截断 + 等宽小字出处行；composer 与 transcript 两态的内外边距、圆角、字号全部沿用既有 `.lumir-hp-qcard` 规则，msgquote 卡只改出处行文案内容不改任何几何值。
-  - **出处行**：文档卡「文档名 · 最近一级标题」→ msgquote 卡「对话 · 助手/你」（D-code 双档，zh/en）；摘录在 hover 显示完整摘录 + 绝对时间（`date` 本地化短格式）。时间不进出处行正文（裁决点 6）。
+  - **出处行**：文档卡「文档名 · 最近一级标题」→ msgquote 卡「对话 · Agent/你」（D-code 双档，zh/en；「Agent」不译，Alex 2026-10-10 裁决）；摘录在 hover 显示完整摘录 + 绝对时间（`date` 本地化短格式）。时间不进出处行正文（裁决点 6）。
   - **浮动钮**：复用 `.quote-gesture-btn` 形态（选区右下 +4px 偏移、同字号同底色），只改定位基准为 transcript 容器。
   - **跳回高亮**：新动画类挂在 `.lumir-hp-msg` 上，色值 = find-in-page 黄同源 pending-tint（eink 10% 黑），~1.4s 消退——与编辑器 `.cm-quote-jump-flash` 同语义同节奏。
   - **状态**：composer 态 × 移除钮、transcript 态整卡可点（role=button + a11y 名「跳回来源消息」）——与文档卡两态完全一致。
