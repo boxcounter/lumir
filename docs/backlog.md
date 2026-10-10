@@ -644,6 +644,32 @@
 
 ## 待修 findings（不阻塞）
 
+### 消息摘录跳回三层真机不可判：落点（类名 + 滚动位置）读不进 AX（worker-m423 留口，2026-10-10，low）
+
+**症状**：harness-message-excerpt design §8 的④跳回三层（上屏卡点击跳回来源消息并高亮），真机侧落点
+读不进 AX 树，场景 121 只能判到「点击后无报错」；结构半已由 chromium 场景覆盖
+（`.is-jump-flash` 出现→退场、高亮落在来源消息）。
+**修法方向**：真机侧若要判，需验收套件加一条「读回 DOM 选区/类名」的通道（evaluate 类动词），属独立议题。
+
+### 消息摘录快照恢复 round-trip 真机无预置口（worker-m423 留口，2026-10-10，low）
+
+**症状**：design §8 的⑤快照恢复「重启后摘录卡片从会话留存还原」——解析半已由
+`tests/unit/message-quote-card.test.ts` 互逆测试钉住；真机「重启后卡片还原」需要预置 harness
+会话留存（JSONL），验收套件当前无该预置口。
+**修法方向**：套件加「预置 harness 会话留存」夹具（往隔离 `XDG_CONFIG_HOME` 写合成 JSONL），
+随后补一条重启还原场景。
+
+### transcript 静态文本在 AX 树无 bbox：选区类动词通道结论（worker-m423 finding，2026-10-10，**已有结论**，medium→low）
+
+**症状**：harness transcript 的消息文本在 AX 树里是无 bbox 的 `AXStaticText`，`doubleClick`/`drag`
+的节点定位报「找不到带 bbox 的节点」，`click` 的 AXPress 对静态文本不产选区。
+**结论（tower 裁决，2026-10-10，取代 finding 原建议）**：**不加 `selectText` 动词**——KimiCU
+`select_text` 只作用 AX 选区层、不产 DOM selectionchange（编辑器手势对照组实证），包成动词也是假通道。
+真机选区通道用既有 `drag {x,y}`（真实 CGEvent 拖选），落点坐标用常量，配合三道内容判据兜底
+（场景 121/122 已以此全绿）。finding 原建议（`cu.mjs` 封装 `select_text`）作废。
+**残余**：将来任何「在只读文本上选中一段」的新场景，照场景 121/122 的 drag + 内容判据写法，
+不要再提 selectText 方案。finding：`.tower/comms/findings/20261010-worker-m423-improve-transcript.md`。
+
 ### cargo 锁「先复核再创建」存在 check-then-create 竞态（tower finding，2026-10-10，low）
 
 **症状**：worker-m419 与 worker-m421 同秒各自复核「锁不存在」后双双广播持有 `/tmp/lumir-cargo-build.lock`，
