@@ -57,6 +57,8 @@ CI 的 `visual.yml` 只跑结构 / 计算属性断言（置 `LUMIR_VISUAL_STRUCT
 - **HANDOFF.md 永不入 git**（Alex 裁决 2026-09-10）。
 - **影响面升级线**（Alex 裁决 2026-09-28）：Alex 提的需求若对既有产品设定 / 逻辑 / 实现有重大影响乃至推倒重做，**先告知 Alex 并讨论，不得蛮干**。判定与举证责任在 tower / agent：规划期发现即升级；worker 实施期发现走 TowerSend 升级给 tower，由 tower 报 Alex。
 - **tower 操作**：worker 必须在 mission 分支提交；TowerMerge 前清 `.review-worktree` 残留（`git worktree remove --force`）；TowerPlan 分支 slug 须与历史分支（含 abandoned）逐一核对；resume reviewer 时核对 assigned reviewer 是否正确；批次收尾顺带 `git push origin master` 保持两端同步。
+- **已裁决事项不等开工口令**（Alex 裁决 2026-10-10）：提案 / 需求一经 Alex 裁决（含「按倾向」「通过」「好」式批准），实现与后续批次由 tower 直接立项开工，**不停下来等「开始」**。只有真正缺裁决时才停：未裁的裁决点、影响面升级线（见上条）命中的事项、基线过目等人肉裁决点。
+- **worktree 即合即清**（Alex 裁决 2026-10-10，磁盘耗尽多次实证）：mission 合并后立即清掉对应 worktree（`git worktree remove`，残留仅 gitignore 产物如 node_modules/target 时加 `--force`），不攒到批次 teardown；TowerTeardown 只是批次收尾的兜底通道。磁盘占用自查：`du -sh .tower/worktrees/*`。
 - **视觉门禁卫生**（2026-09-16 起强制执行）：删除/移动 UI 元素后，核对该元素出现过的所有整页基线的时间戳是否随本次更新——容差收紧到 0.001 之前，「删左栏 UI」级变化曾静默假绿（批次二实证）。
 - **基线更新是人肉裁决点**：视觉基线 `--update` 前截图须 Alex 过目，不要机械执行（[tests/visual/README.md](tests/visual/README.md)）。
 - **真机复验**：`pnpm tauri dev` 起真实 app，用 KimiCU 操作（pid 用 `ps aux | grep target/debug/lumir` 找）；桌面验收 vault：`/tmp/lumir-m102-acceptance`；用户真实 vault **只读**（真实路径按信息卫生纪律不落库，需要时由 tower 在会话内提供）。**白屏陷阱**：`cargo test` 会把 `target/debug/lumir` 重编译为不带 `custom-protocol` 的 dev flavour，此后裸二进制起 app 会去加载 devUrl `http://127.0.0.1:1420` 而整窗白屏；起实例前须重新 `cargo build --features custom-protocol`（或直接用 `pnpm tauri dev`）。批次四 M134 实证，2026-09-16。
@@ -75,7 +77,7 @@ CI 的 `visual.yml` 只跑结构 / 计算属性断言（置 `LUMIR_VISUAL_STRUCT
 | 文案/文档/数值类、机械批量活 | `deepseek/deepseek-flash` |
 | 代码库探索、定位类查询（explore） | `deepseek/deepseek-flash` |
 | 无机器验收的判断类开发（交互手感、新功能设计、结构调整） | `Kimi For Coding/kimi-for-coding` |
-| 复杂任务、review、视觉相关（`src/style.css`、`src/preview/**`、视觉场景） | `Kimi For Coding/k3-256k` |
+| 复杂任务、review、视觉像素表现本身的改动（`src/style.css`、`src/preview/**` 渲染逻辑——成败只能靠基线/人眼判定） | `Kimi For Coding/k3-256k` |
 | k3 1M | **禁用** |
 
 执行规则：
@@ -85,6 +87,7 @@ CI 的 `visual.yml` 只跑结构 / 计算属性断言（置 `LUMIR_VISUAL_STRUCT
 - **优先 resume，少开新实例**；失败升级时 resume 原 agent 换更强模型继续，不同模型重开（重读代码浪费配额），也不同模型原地重试（重复同样失败）。
 - **review 恒为 k3-256k**，但输入收窄：只看 diff + REVIEW.md 相关条目，不做全量代码理解。
 - 拿不准「有无机器验收」时**按没有处理**（升档到 kimi-for-coding），不要为省配额降档。
+- **视觉场景（tests/visual/scenes/**）的断言值/文案改准属有机器验收**（结构断言 + gate 兜底），归 deepseek——「视觉相关升 k3」只指像素表现本身的改动（2026-10-10 Alex 指正 M434 误派后沉淀）。
 
 **2026-10-10 补充裁决（配额紧张期的三条细化）**：
 
