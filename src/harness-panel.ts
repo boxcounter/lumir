@@ -1047,6 +1047,41 @@ export function sessionWhen(ts: number, now: number, lang: Language = currentLan
   return formatDate(new Date(at), "short", lang);
 }
 
+/** 会话浮层取数结果（M442，`harness_list_sessions` 往返的三种终态）。 */
+export type SessListOutcome =
+  | { kind: "entries"; count: number } // 取数成功，清单有 count 条
+  | { kind: "empty" } // 取数成功但清单为空
+  | { kind: "failed" }; // 取数失败（后端不可用 / 命令未注册 / 读取报错）
+
+/** 会话浮层的揭示决策（O5，合同 docs/specs/overlay-visibility.md）：取数结果 → 揭示与否 +
+ *  是否给用户可感知反馈。纯函数——DOM 层（`buildSessList`）唯一消费点，单测矩阵直接驱动它。 */
+export interface SessPopDecision {
+  /** 是否揭示浮层——唯一前提是「内容已确认为非空」。 */
+  visible: boolean;
+  /** 是否给用户可感知反馈——空 / 失败路径 MUST NOT 静默（O5 的「不得静默」半边）。 */
+  notify: boolean;
+}
+
+/**
+ * 会话浮层揭示决策（M442）：**内容已确认为非空**才揭示；空清单与取数失败一律不揭示且需反馈。
+ * 不变量（O5）：`visible` ⟹ 取数成功且 `count > 0`——「可见但无内容」的中间态因此不可达
+ * （这正是 M442 现场：浮层先以空盒画出、IPC 往返后因空清单收起 = 「闪现即消失」）。
+ */
+export function sessPopDecision(outcome: SessListOutcome): SessPopDecision {
+  const nonEmpty = outcome.kind === "entries" && outcome.count > 0;
+  return { visible: nonEmpty, notify: !nonEmpty };
+}
+
+/**
+ * 可见态 → 两个 DOM 面（`hidden` 与 `aria-expanded`）。**两面 MUST 同源派生**（单一来源，
+ * REVIEW.md 第 8 条）：分开写正是 M442 的形态——`aria-expanded` 按「展开意图」翻 true，而
+ * 浮层因空清单实际未揭示，属性与真实可见态脱节。M442 起 `setSessPop` 的一切跃迁都经
+ * `applySessPop` 这一个写入口，两面恒相等。
+ */
+export function sessPopDom(visible: boolean): { hidden: boolean; ariaExpanded: "true" | "false" } {
+  return { hidden: !visible, ariaExpanded: visible ? "true" : "false" };
+}
+
 /**
  * 发送钮两态状态机（M347）：idle = 可发送；running = 处理中（钮面 = 停止态，点击走
  * 停止钩子）；stopping = 停止已请求、等后端终态（连点幂等——第二次 stop-clicked 被吞，
@@ -1793,7 +1828,8 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   const sessPop = document.createElement("div");
   sessPop.className = "lumir-hp-sesspop";
   sessPop.setAttribute("role", "menu");
-  sessPop.hidden = true;
+  // 初始收起态也走唯一写入口（M442）：`hidden` 与 `aria-expanded` 两面同源派生。
+  applySessPop(false);
   const sessList = document.createElement("div");
   sessList.className = "lumir-hp-sesspop-list";
   sessList.hidden = true;
@@ -5113,29 +5149,43 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       .catch((e: unknown) => appendError(t("D348", { message: errorMessage(e) })));
   }
   segNew.addEventListener("click", startNewSession);
-  /** 会话浮层开合（aria-expanded 随开合翻转；M351 a11y，design §5）。打开时现拉现建
-   *  历史会话清单（M392）；拉取失败（M395 合并前的旧后端 / 桩 / 后端不可用）按空清单
-   *  降级——选择器静默不列，不报错打断浮层。 */
+
+  /** 会话浮层可见态的唯一写入口（O5 / aria-expanded 同步，M442）：`sessPop.hidden` 与
+   *  `aria-expanded` 是同一次跃迁的两面，由 `sessPopDom` 从同一个布尔派生（合同
+   *  docs/specs/overlay-visibility.md 的 O5）。分开写正是 M442 缺陷的形态——`aria-expanded`
+   *  按展开意图翻 true，而浮层因空清单从未真正揭示，属性与真实可见态脱节。 */
+  function applySessPop(visible: boolean): void {
+    const dom = sessPopDom(visible);
+    sessPop.hidden = dom.hidden;
+    sessionButton.setAttribute("aria-expanded", dom.ariaExpanded);
+  }
+
+  /** 每轮展开分配一个序号；取数回调只认自己那一次。迟到的旧取数（取数期间浮层被收起 /
+   *  用户又点了一次）作废——不揭示、也不反馈，避免「点了又点弹出两条提示」这类错位。 */
+  let sessPopSeq = 0;
+
+  /** 会话浮层开合（M351 a11y + M442 合同，design §5）。展开**先取数、确认清单非空才揭示**
+   *  （O5）——MUST NOT 先开出空浮层再因空清单收起：「可见但无内容」的中间态正是 M442 现场
+   *  （200px 空盒先画出、IPC 往返后收起 = 用户看到的「闪现即消失」）。空清单 / 取数失败一律
+   *  不揭示，并给用户可感知反馈（D362 / 错误 toast），不得静默。 */
   function setSessPop(open: boolean): void {
-    if (open) {
-      // 先显示再定位：浮层 display:none 时 offsetWidth/Height 量为 0，夹纵向就夹不了。显示与
-      // 定位在同一次同步任务内完成、中间不落绘制，因此不会闪（同 vault 切换浮层的 place 手法）。
-      sessPop.hidden = false;
-      placeSessPop();
-      buildSessList();
-    } else {
-      sessPop.hidden = true;
+    sessPopSeq += 1; // 任何跃迁都作废在途揭示
+    if (!open) {
+      applySessPop(false);
+      return;
     }
-    sessionButton.setAttribute("aria-expanded", String(open));
+    buildSessList(sessPopSeq);
   }
 
   /** 会话浮层定位（M397）：浮层是 `position: fixed`（见 harness-panel.css 的同名规则），坐标按
    *  **会话名钮的视口矩形**现算，并夹在视口内——不变量是「浮层包围盒完整落在视口内、且不被任何
-   *  祖先容器的 overflow 裁切」（docs/specs/overlay-visibility.md）。**打开时与历史清单填充后各算
-   *  一次**（后者在 buildSessList 的 .then 里）：清单是异步拉来的，填充后浮层变高，纵向夹取必须按
-   *  新高度重算，否则长历史 + 矮窗下下端会越出视口（M397 r1 P2-1）。浮层是瞬时形态（点浮层外 /
-   *  Esc / 选中即关），其生命周期内不发生窗口尺寸变化，故不挂 resize 监听（与 vault 切换浮层同
-   *  口径）。纵向 4px 沿用原 CSS `top: 30px` 减去钮高 26 的实测间距。 */
+   *  祖先容器的 overflow 裁切」（docs/specs/overlay-visibility.md）。**揭示之后、清单已填充时
+   *  算一次**（调用点在 buildSessList 的 .then 里、applySessPop(true) 之后）：M442 起浮层只在
+   *  清单非空时揭示，揭示与定位因此同处「清单已就位」这一个时刻——显示与定位在同一次同步任务内
+   *  完成、中间不落空内容帧，纵向夹取也按最终高度一次算准（不再有「先按空盒夹、填清单后再重夹」
+   *  的两段，M397 r1 P2-1 的旧形态随之消失）。浮层是瞬时形态（点浮层外 / Esc / 选中即关），其
+   *  生命周期内不发生窗口尺寸变化，故不挂 resize 监听（与 vault 切换浮层同口径）。纵向 4px
+   *  沿用原 CSS `top: 30px` 减去钮高 26 的实测间距。 */
   function placeSessPop(): void {
     const gap = 4;
     const margin = 8;
@@ -5153,18 +5203,26 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   /** 历史会话清单现建（每次打开现拉——会话文件随对话增长，不囤旧清单）：每行 =
    *  恢复钮（会话名 + 时间读数，点击即恢复续聊）+ 删除钮（×，M406 会话删除——行内
    *  两步确认，确认后调 harness_delete_session）。行是临时 DOM（浮层关即弃），不注册
-   *  onRelabel——与合并选择器浮层同口径。空清单 = 浮层整层不开（「新建会话」动作项
-   *  已随 M406 退场，浮层不再有空壳形态）。
+   *  onRelabel——与合并选择器浮层同口径。空清单 / 取数失败 = 浮层整层不开且给可感知反馈
+   *  （M442 起走 sessPopDecision；「新建会话」动作项已随 M406 退场，浮层没有空壳形态）。
    *  恢复钮与删除钮是并列兄弟（div 壳），MUST NOT 钮套钮——WKWebView 把嵌套 button
-   *  当叶子，AX 树不暴露内层（M351 finding，同 sessionWrap 的纪律）。 */
-  function buildSessList(): void {
+   *  当叶子，AX 树不暴露内层（M351 finding，同 sessionWrap 的纪律）。
+   *
+   *  `seq` 是本轮展开的序号：回调开头核对 `seq === sessPopSeq`，不符即作废（取数期间浮层被
+   *  收起 / 用户又点了一次——见 sessPopSeq 注释）。 */
+  function buildSessList(seq: number): void {
     sessList.replaceChildren();
     sessList.hidden = true;
     harnessListSessions()
       .then((list) => {
+        if (seq !== sessPopSeq) return; // 期间已收起 / 又点了一次：这次取数作废
         const entries = sessionEntriesOf(list);
-        if (entries.length === 0) {
-          setSessPop(false);
+        const decision = sessPopDecision(
+          entries.length === 0 ? { kind: "empty" } : { kind: "entries", count: entries.length },
+        );
+        if (!decision.visible) {
+          // 空清单：不揭示 + 可感知反馈（D362），不得静默（O5）。
+          if (decision.notify) deps.toast(t("D362"));
           return;
         }
         for (const entry of entries) {
@@ -5237,13 +5295,17 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
           sessList.append(row);
         }
         sessList.hidden = false;
-        // 清单填充后浮层变高了，纵向夹取必须按新高度重算一遍（M397 r1 P2-1）：placeSessPop() 在
-        // 打开时清单尚未填充，长清单随后把浮层撑高（.lumir-hp-sesspop-list 上限 320px），
-        // 不重夹的话矮窗 + 长历史时浮层下端会越出视口——恰是本 PR 立的 O2（打开态包围盒 MUST 完整
-        // 落在视口内）所禁。浮层在拉取期间被点掉（hidden）就不必重算。
-        if (!sessPop.hidden) placeSessPop();
+        // 此刻才揭示（O5）：清单已确认非空。揭示与定位同处「清单已就位」这一个同步任务内、
+        // 中间不落空内容帧——placeSessPop 按最终高度一次夹准（M397 r1 P2-1 的「先按空盒夹、
+        // 填清单后再重夹」两段随之消失）。
+        applySessPop(true);
+        placeSessPop();
       })
-      .catch(() => {});
+      .catch((e: unknown) => {
+        if (seq !== sessPopSeq) return; // 期间已收起 / 又点了一次：这次取数作废
+        // 取数失败（后端不可用 / 命令未注册 / 读取报错）：不揭示 + 可感知反馈，不得静默（O5）。
+        if (sessPopDecision({ kind: "failed" }).notify) deps.toast(errorText(e));
+      });
   }
 
   /** 恢复选中历史会话（选择器点击路径，M392/M398）：恢复 = 后端读源文件最后一条会话轮次

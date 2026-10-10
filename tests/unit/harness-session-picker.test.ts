@@ -16,8 +16,11 @@ import {
   SESSION_NAME_MAX,
   sessionEntriesOf,
   sessionWhen,
+  sessPopDecision,
+  sessPopDom,
   truncateSessionName,
 } from "../../src/harness-panel.ts";
+import type { SessListOutcome } from "../../src/harness-panel.ts";
 
 // ── 清单解析（任务 1：合同形状 → SessionEntry） ──
 
@@ -123,3 +126,67 @@ test("未来时间钳进 0 秒档（时钟回拨不产出负数读数）", () =>
   const out = sessionWhen((NOW + 60_000) / 1000, NOW, "zh");
   assert.ok(!out.includes("-"), `不产出负时间：${out}`);
 });
+
+// ── 会话浮层揭示决策与可见态（M442，合同 docs/specs/overlay-visibility.md 的 O5） ──
+//   O5：内容已确认为非空才揭示；空清单 / 取数失败一律不揭示且给可感知反馈（不得静默）；
+//   aria-expanded 与浮层实际可见态同源（sessPopDom 从同一布尔派生两面）。这两条纯函数是
+//   DOM 层（setSessPop / applySessPop）的唯一决策来源——真机层判后果（不闪现 + 有反馈）。
+
+const OUTCOME_SWEEP: SessListOutcome[] = [
+  { kind: "empty" },
+  { kind: "failed" },
+  { kind: "entries", count: 0 },
+  { kind: "entries", count: 1 },
+  { kind: "entries", count: 3 },
+  { kind: "entries", count: 99 },
+];
+
+test("O5 空清单：不揭示且有反馈（不得静默）", () => {
+  assert.deepEqual(sessPopDecision({ kind: "empty" }), { visible: false, notify: true });
+});
+
+test("O5 取数成功但零条 = 空态（边界）：不揭示且有反馈", () => {
+  // 反向验证：{ kind: "entries", count: 0 } 若被判成「有内容」（visible true），
+  // 就会重演「先开出空浮层」的 M442 形态——这条断言因此有区分度。
+  assert.deepEqual(sessPopDecision({ kind: "entries", count: 0 }), { visible: false, notify: true });
+});
+
+test("O5 非空清单：正常揭示，且不额外打扰（无反馈）", () => {
+  assert.deepEqual(sessPopDecision({ kind: "entries", count: 1 }), { visible: true, notify: false });
+  assert.deepEqual(sessPopDecision({ kind: "entries", count: 3 }), { visible: true, notify: false });
+});
+
+test("O5 取数失败：不揭示且有反馈（后端不可用 / 命令未注册 / 读取报错）", () => {
+  assert.deepEqual(sessPopDecision({ kind: "failed" }), { visible: false, notify: true });
+});
+
+test("O5 不变量扫掠：visible ⟺ 取数成功且 count>0；visible 与 notify 恒互斥", () => {
+  // 输入分布按「内容体量 × 取数结果」取样（O5 的可证伪表述）：逐点断言不变量本体，
+  // 而不是逐个案例。任一取样点被误判（如 count 0 判 visible）即红。
+  for (const outcome of OUTCOME_SWEEP) {
+    const decision = sessPopDecision(outcome);
+    const nonEmpty = outcome.kind === "entries" && outcome.count > 0;
+    const tag = JSON.stringify(outcome);
+    assert.equal(decision.visible, nonEmpty, `visible 判据（${tag}）`);
+    assert.equal(decision.notify, !nonEmpty, `notify 判据（${tag}）`);
+    assert.notEqual(decision.visible, decision.notify, `visible 与 notify MUST 恰一为真（${tag}）`);
+  }
+});
+
+test("sessPopDom：hidden 与 aria-expanded 由同一布尔派生（单一写入口的同源保证）", () => {
+  assert.deepEqual(sessPopDom(true), { hidden: false, ariaExpanded: "true" });
+  assert.deepEqual(sessPopDom(false), { hidden: true, ariaExpanded: "false" });
+});
+
+test("O5 aria 一致性：aria-expanded==='true' ⟺ 浮层可见（hidden===false），覆盖决策全分布", () => {
+  // 组合决策与 DOM 两面（与 DOM 层 applySessPop 的消费链同形）：任取样点都不得出现
+  // 「aria 说开着、浮层实际隐藏」或反过来的脱节——那正是 M442 的属性与真实态不同步形态。
+  for (const outcome of OUTCOME_SWEEP) {
+    const decision = sessPopDecision(outcome);
+    const dom = sessPopDom(decision.visible);
+    const tag = JSON.stringify(outcome);
+    assert.equal(dom.hidden, !decision.visible, `hidden 与可见态一致（${tag}）`);
+    assert.equal(dom.ariaExpanded === "true", !dom.hidden, `aria-expanded 与可见态一致（${tag}）`);
+  }
+});
+
