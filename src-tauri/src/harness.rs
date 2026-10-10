@@ -645,8 +645,12 @@ fn panel_status_of(output: &serde_json::Value) -> Option<&'static str> {
 ///   `text`（输出 JSON 原文——前端拒绝原因 / 失败详情的数据源）；悬空调用（响应未带
 ///   输出项）与输出形状不符的，status 缺席（不推断），前端按摘要形状回落判定。
 /// - **decision 回填**（M413）：`approvals` 是 JSONL approval sidecar 按文件序的
-///   `(工具, approved|rejected)` 列表——工具行按工具名次序消费（第 N 次过闸的工具 T
-///   配第 N 条 T 的 sidecar），回填面板 decision 字段；sidecar 耗尽后缺席（不推断）。
+///   `(工具, approved|rejected)` 列表——工具行按工具名对**每一次 function_call 出现**次序
+///   消费（第 N 次出现的工具 T 配第 N 条 T 的 sidecar，与实现一致），回填面板 decision 字段；
+///   sidecar 耗尽后缺席（不推断）。**已知错配面**（M413 r1 P2-2，backlog 在案）：sidecar 只
+///   记过闸的调用、不记 call 关联，同一会话内同工具既有 allow 直执行又过闸时，两侧次序对
+///   不齐，decision 会贴错行——精确配对待 sidecar 记 request id ↔ call id。仅影响恢复路径的
+///   展示字段（live 路径 decision 由 handle_call 直写，无此问题）。
 fn restored_panel_messages(
     restored: &[serde_json::Value],
     approvals: &[(String, String)],
@@ -1129,7 +1133,8 @@ mod tests {
 
     /// M413：decision 回填——工具行经批准闸的 approved / rejected 终态从 JSONL approval
     /// sidecar 按工具名次序回填（「已采纳」可见性随恢复保留）；免闸工具行（allow 路径，
-    /// 无 sidecar）与 sidecar 耗尽的行缺席，不推断。
+    /// 无 sidecar）与 sidecar 耗尽的行缺席，不推断。已知错配面（同工具闸内/闸外混合调用
+    /// 次序对不齐）见 `restored_panel_messages` 的 doc comment 与 backlog，本条不覆盖。
     #[test]
     fn restored_tool_decision_backfilled_from_approval_sidecars() {
         let restored = vec![

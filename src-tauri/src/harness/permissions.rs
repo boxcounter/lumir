@@ -375,6 +375,12 @@ fn classify_wrapped(name: &str, args: &[String]) -> Option<CliClass> {
 
 /// 从包装器参数里取被包装 argv：`--` 截断 flag 段；flag 跳过（取值 flag 吞掉下一个参数，
 /// `-uVALUE` 粘连形态吞自己）；第一个非 flag token 是被包装命令，其后全部原样作为它的参数。
+///
+/// 收紧口径（M413 r1 P2-1）：取值 flag 表是**乐观名单**——拿不准的「带值形态」若照常跳过，
+/// 值会被误当命令名（`sudo --user root rm` 的 `root`、`xargs --max-args 1 rm` 的 `1`），
+/// 落「未知 ⇒ 写」被 full_access 放行（取错比取不出更糟）。故两类一律视为**取不出**（返回
+/// None → 保守归危险，宁多问）：未识别的 `--xxx` 长选项（表内全是短 flag，长选项带不带值
+/// 静态不可分）、`KEY=value` 环境赋值形态（sudo 支持、xargs 不支持，包装器间语义不同）。
 fn extract_wrapped_command(args: &[String], value_flags: &[&str]) -> Option<Vec<String>> {
     let mut index = 0;
     while index < args.len() {
@@ -383,9 +389,20 @@ fn extract_wrapped_command(args: &[String], value_flags: &[&str]) -> Option<Vec<
             index += 1;
             break;
         }
-        // `-` 单独成参数不是 flag（虽然 edge，按命令 token 处理）。
+        // 未识别的长选项：保守取不出（见上方 doc）。`--` 已在上支处理。
+        if arg.starts_with("--") {
+            return None;
+        }
+        // `-` 单独成参数不是 flag（虽然 edge，按命令 token 处理）；非 flag token 里
+        // 的 KEY=value 环境赋值形态同样取不出（sudo 认、xargs 不认，包装器间语义不同）。
         if !arg.starts_with('-') || arg == "-" {
+            if looks_like_env_assignment(arg) {
+                return None;
+            }
             break;
+        }
+        if looks_like_env_assignment(arg) {
+            return None;
         }
         let takes_value = value_flags.contains(&arg.as_str())
             || value_flags
@@ -398,6 +415,16 @@ fn extract_wrapped_command(args: &[String], value_flags: &[&str]) -> Option<Vec<
         };
     }
     (index < args.len()).then(|| args[index..].to_vec())
+}
+
+/// `KEY=value` 环境赋值形态：`FOO=bar` 是（sudo 认），`-x=y` / `=x` / `9LIVES=x` 不是。
+fn looks_like_env_assignment(arg: &str) -> bool {
+    let Some(key) = arg.split_once('=').map(|(key, _)| key) else {
+        return false;
+    };
+    let mut chars = key.chars();
+    matches!(chars.next(), Some(c) if c.is_ascii_alphabetic() || c == '_')
+        && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
 /// find 的 `-exec` / `-execdir` / `-ok` / `-okdir` 子句：命令是该 flag 的下一 token，参数到
@@ -434,6 +461,16 @@ fn classify_find_exec(args: &[String]) -> Option<CliClass> {
         argv.extend(args[index + 2..end].iter().cloned());
         overall = max_class(overall, classify_cli(&argv));
         index = end + 1;
+    }
+    // exec 子句之外的写形态折进 overall：`-delete` 直接删文件，`-fprint` / `-fprintf` 把输出
+    // 写进文件。master 上这些形态仅经「-exec 存在 ⇒ 写」兜底；递归后若只看护 exec 子句，它们
+    // 会被吞（`find . -exec ls {} \; -delete` 曾因此归 ReadOnly，在 read_only 档静默放行——
+    // M413 r1 P1-1 回归，修复即本段）。
+    if args
+        .iter()
+        .any(|arg| matches!(arg.as_str(), "-delete" | "-fprint" | "-fprintf"))
+    {
+        overall = max_class(overall, CliClass::Write);
     }
     if incomplete {
         return Some(CliClass::Dangerous);
@@ -1601,6 +1638,13 @@ mod tests {
             vec!["xargs", "-0"],
             vec!["find", ".", "-exec"],
             vec!["find", ".", "-exec", "rm", "{}"],
+            // 收紧口径（r1 P2-1）：乐观 flag 表拿不准的「带值形态」取错比取不出更糟——
+            // 未识别长选项 / 环境赋值一律视为取不出，值不得被误当命令名。
+            vec!["sudo", "--user", "root", "rm", "-rf", "/tmp/x"],
+            vec!["sudo", "--user=root", "rm", "-rf", "/tmp/x"],
+            vec!["sudo", "FOO=bar", "rm", "-rf", "/tmp/x"],
+            vec!["xargs", "--max-args", "1", "rm"],
+            vec!["xargs", "--verbose", "ls"],
         ] {
             let argv: Vec<String> = items.iter().map(|s| s.to_string()).collect();
             assert_eq!(classify_cli(&argv), CliClass::Dangerous, "{argv:?}");
@@ -1609,6 +1653,36 @@ mod tests {
         assert_eq!(
             classify_cli(&argv(&["find", ".", "-name", "x", "-delete"])),
             CliClass::Write
+        );
+        // r1 P1-1 回归反例：exec 子句之外的写形态不得被递归吞掉——
+        // `find . -exec ls {} \; -delete` 必须仍归写（read_only 档逐个问，不静默放行）；
+        // `-fprint` / `-fprintf` 同族（输出写文件）一并折进。
+        assert_eq!(
+            classify_cli(&argv(&["find", ".", "-exec", "ls", "{}", "\\;", "-delete"])),
+            CliClass::Write
+        );
+        assert_eq!(
+            classify_cli(&argv(&[
+                "find", ".", "-exec", "ls", "{}", ";", "-fprint", "out.txt"
+            ])),
+            CliClass::Write
+        );
+        assert_eq!(
+            classify_cli(&argv(&[
+                "find", ".", "-exec", "ls", "{}", ";", "-fprintf", "%s", "out.txt"
+            ])),
+            CliClass::Write
+        );
+        // 反向区分（REVIEW.md 第 1 条）：修复前 `find . -exec ls {} \; -delete` 归 ReadOnly，
+        // 本断言对修复前代码必红。
+        assert_ne!(
+            classify_cli(&argv(&["find", ".", "-exec", "ls", "{}", "\\;", "-delete"])),
+            CliClass::ReadOnly
+        );
+        // 短 flag 取值路径不被收紧误伤：`sudo -u root ls` 照旧只读。
+        assert_eq!(
+            classify_cli(&argv(&["sudo", "-u", "root", "ls"])),
+            CliClass::ReadOnly
         );
         // 区分度自证（REVIEW.md 第 1 条）：旧实现（sudo/xargs 落「未知 ⇒ 写」）在本表上
         // 第一组全部判 Write 而非 Dangerous——本断言对旧实现必红。
@@ -1676,6 +1750,19 @@ mod tests {
         };
         assert_eq!(
             decide(&p, "cli_run", "find . -exec rm {} ;", &j),
+            Decision::Ask
+        );
+        // r1 P1-1 判据落管线：`-delete` 折进后 `find . -exec ls {} \; -delete` 归写，
+        // read_only（Always Ask）档逐个问——修复前归 ReadOnly 会被静默放行。
+        let j = Judge {
+            mode: PermissionMode::ReadOnly,
+            ..judge(
+                &root,
+                Some(argv(&["find", ".", "-exec", "ls", "{}", "\\;", "-delete"])),
+            )
+        };
+        assert_eq!(
+            decide(&p, "cli_run", "find . -exec ls {} \\; -delete", &j),
             Decision::Ask
         );
         std::fs::remove_dir_all(&root).ok();
