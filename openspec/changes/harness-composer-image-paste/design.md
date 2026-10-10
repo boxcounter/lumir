@@ -174,12 +174,14 @@ function serializeDelivery(blocks: readonly ComposerBlock[]): DeliveryPart[];
 - **id 的来源**：`VaultScope.vault_id`（`harness.rs:64`，M425 落地）——粘贴时面板所在 vault 的 id 已在手，
   写命令不新造查表；目录名字符集纪律复用 sessions 的 `vault_dir_name`（`jsonl.rs:96`：`valid_id` 通过且
   ≠ `_orphaned`）。
-- **不可归属的处置（与 sessions 不同，如实说明）**：sessions 的 `_orphaned/` 桶只服务**一次性归位脚本**
-  （存量平铺文件搬不动时的保底存放）。附件**零存量**（本能力尚未实现、线上零附件数据），没有归位面，故
-  **不建 `_orphaned/` 桶、不写归位脚本**。剩下的唯一「不可归属」是**写时拿不到合格 vault id**（作用域缺失 /
-  id 形态非法，理论上仅发生在无 vault 打开时）：处置 = **拒绝落盘** + 人话错误（前端 toast、不插卡片、无半截
-  文件），MUST NOT 落进任何兜底目录——写进本 vault 读路径永远命不中的目录，等于静默缺图，违背 §2 一致性原则
-  （被丢弃的图片 MUST NOT 假装已投递）。
+- **不可归属的处置（与 sessions 不同，如实说明）**：sessions 的 `_orphaned/` 桶服务两处——**一次性归位脚本**的
+  保底存放（存量平铺文件搬不动），以及**运行时非法 id 的防御分支**（`vault_sessions_dir` 对不合格 id 记 stderr
+  后按 `_orphaned/` 落盘，`jsonl.rs:103`；sessions change design §2 同款明文，该分支被标注为不可达）。附件
+  **零存量**（本能力尚未实现、线上零附件数据），没有归位面，故 **不建 `_orphaned/` 桶、不写归位脚本**。剩下的
+  唯一「不可归属」是**写时拿不到合格 vault id**（作用域缺失 / id 形态非法，理论上仅发生在无 vault 打开时）：
+  处置 = **拒绝落盘** + 人话错误（前端 toast、不插卡片、无半截文件），MUST NOT 落进任何兜底目录——附件读路径
+  按当前 vault id 解析，落进兜底目录即永远命不中，等于静默缺图，违背 §2 一致性原则（被丢弃的图片 MUST NOT
+  假装已投递）。
 - **首次写时创建** `attachments/<id>/`（`create_dir_all`，与 `vault_sessions_dir` 同口径）。MUST NOT 触碰 vault。
 
 ### 5.2 命名、去重边界与引用解析
