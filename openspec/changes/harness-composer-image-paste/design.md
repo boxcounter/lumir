@@ -45,11 +45,11 @@
   **兄弟目录** `<config_dir>/harness/attachments`。
 - **模型能力声明链**：`HarnessModelSpec {id, effort, window}`（`config.rs:567-577`）→ 逐项校验
   `validate_harness_model_specs`（`config.rs:1454`：缺 `effort` → false + warning、类型不符丢该项）→ 读取点
-  `effort_supported`（`config.rs:633`：精确匹配、未列出 = false、mock 恒 true）。→ `image` 键**照抄这条链**。
+  `effort_supported`（`config.rs:633`：精确匹配、未列出 = false、mock 恒 true）。→ `vision` 键**照抄这条链**。
 - **真 provider 冒烟的既有先例**：`src-tauri/tests/harness_real_deepseek.rs`（`#[ignore]`、从
   `~/.config/lumir/config.json` 原地读 key、无 key 自动 SKIP、key 绝不打印、模型 id 可用环境变量临时覆盖）。
 - **既有缺口（如实登记）**：M373/M381 落地的「`models` 逐项能力声明（`effort` / `window`）」**尚未进 living
-  spec**——`openspec/specs/harness/spec.md` 的「配置节 [harness]」没有 `models` 表。本 change 只为 `image`
+  spec**——`openspec/specs/harness/spec.md` 的「配置节 [harness]」没有 `models` 表。本 change 只为 `vision`
   写 ADDED requirement（见 §6），不顺手把既存的 `effort` / `window` 补进 spec（那是别处的 scope，另立 finding）。
 
 ## 2. 设计合同与输入
@@ -92,7 +92,9 @@ type ComposerBlock =
   全部与既有卡片同语义，**零新机制**。
 - **不塞进 QuoteCard / MessageQuoteCard**：卡片的「核」（file/lines、role/at）与图片语义无关；沿用 M423 的
   判据（`quote-card.ts:90` 一路的「角色字段是判别键」思路），用 `kind` 作顶层判别。
-- **来源信息（尺寸）**：卡片可显示尺寸（`W×H`），由落盘命令一并回传（后端解码时已知）；不进投递内容。
+- **元信息行内容**：卡片元信息行**从文件名开始**（内容寻址名 `pasted-<hash16>.<ext>`），**无 `image ·`
+  类型前缀**——Alex 2026-10-10 看 demo 后裁决：该前缀不提供有效信息、还占卡片空间（原型的名字行形态是
+  `image · <name>`，据此改准）。尺寸（`W×H`）排在其后，由落盘命令一并回传（后端解码时已知）；元信息行不进投递内容。
 
 ## 4. 投递协议：content parts 投影
 
@@ -168,18 +170,19 @@ function serializeDelivery(blocks: readonly ComposerBlock[]): DeliveryPart[];
 
 ## 6. 能力声明与发送闸
 
-- **声明**：`HarnessModelSpec` 增 `image: bool`；`validate_harness_model_specs` 缺 `image` → false + warning、
-  类型不符 → 丢该项 + warning（逐字照抄 `effort` 的分支形态，`config.rs:1481-1495`）；新增读取点
-  `image_supported(provider, model)`（照 `effort_supported`，`config.rs:633`；未列出 = false；mock 恒 true）。
+- **声明**：`HarnessModelSpec` 增 **`vision: bool`**（键名 2026-10-10 由 `image` 改名，避免与 `image_generation`
+  混淆，见 proposal 评审记录）；`validate_harness_model_specs` 缺 `vision` → false + warning、类型不符 →
+  丢该项 + warning（逐字照抄 `effort` 的分支形态，`config.rs:1481-1495`）；新增读取点
+  `vision_supported(provider, model)`（照 `effort_supported`，`config.rs:633`；未列出 = false；mock 恒 true）。
 - **发送闸（单一判据在后端）**：`harness_send` 在装配前检查——投递投影含 `image` part 且
-  `!image_supported(生效 provider/model)` → 返回 CommandError `harness_image_unsupported`（人话 message +
+  `!vision_supported(生效 provider/model)` → 返回 CommandError `harness_image_unsupported`（人话 message +
   `param`：模型名），**不建会话、不入队**。前端收到该 code → toast（新 D-code，zh/en 双档）+ 把该消息里的
   图片卡片标成错误态（边框/底色，卡内保留、可移除后重发）。
-  - **不允许两个判据**（REVIEW.md 第 8 条）：前端**不**自行判能力，MUST NOT 让前端也有一个 `image_supported`
+  - **不允许两个判据**（REVIEW.md 第 8 条）：前端**不**自行判能力，MUST NOT 让前端也有一个 `vision_supported`
     分支——能力语义只在后端一处产出。
   - 「标出哪张卡」不靠编号（协议与 UI 均无编号，一致性原则）：前端知道自己刚投影的块序列里哪些是图片卡，
     整体标出即可。
-- **真机实测（tasks §5）**：Alex 配置里各模型的 `image` 值由真 provider 冒烟实测得出，不靠猜。
+- **真机实测（tasks §5）**：Alex 配置里各模型的 `vision` 值由真 provider 冒烟实测得出，不靠猜。
 
 ## 7. 手势与装配
 
@@ -201,17 +204,21 @@ function serializeDelivery(blocks: readonly ComposerBlock[]): DeliveryPart[];
 
 ## 8. 渲染与视觉保真
 
-**无原型可对照**（Alex 原话只给行为，未给屏位）：视觉口径以**产品内既有卡片族**为基准，并排对照既有引用卡片
-（`.lumir-hp-qcard`，`src/harness-panel.css:1540` 起的一族）与 M423 消息摘录卡。逐面对账：
+**原型已过目**（M431 的 composer 贴图交互原型，Alex 2026-10-10 看过后「通过」，唯一调整是元信息行去 `image ·`
+前缀）：视觉口径以该原型 + **产品内既有卡片族**为基准，并排对照既有引用卡片（`.lumir-hp-qcard`，
+`src/harness-panel.css:1540` 起的一族）与 M423 消息摘录卡。逐面对账：
 
 - **布局节奏**：图片卡片与既有卡片同族——原子块、同一水平缩进、与段落之间同 `margin`；缩略图在卡片内左对齐，
-  元信息（尺寸）在其右或下方，与 qcard 的「竖条 + 主区」骨架保持一致的比例感。
+  元信息行（**从文件名开始、无 `image ·` 类型前缀**，Alex 2026-10-10 看 demo 后的裁决）在其右或下方，与
+  qcard 的「竖条 + 主区」骨架保持一致的比例感。
 - **卡片容器样式**：复用 `.lumir-hp-qcard` 的边框 / 圆角 / 底色（**不新立视觉物种**）；图片卡片不画引号竖条
   （那是引用的语义符号），改用缩略图本身作为左锚——这条差异是本 change 显式的视觉决定，不是遗漏。
 - **缩略图**：`object-fit: contain`，高度上限取一行到三行正文的高度档（量级口径，实现期取 token 层既有档位值），
   宽度不超卡片宽；加载中占位与加载失败占位按既有图片占位语义（`attachment-display` 口径）给可见回退，
   **不出现零高度空白**。
-- **字层级**：元信息行（尺寸）取现有卡片出处行（`-qc-src`）同一档字号/颜色，不新增字号。
+- **字层级**：元信息行取现有卡片出处行（`-qc-src`）同一档字号/颜色，不新增字号；行内容**从文件名开始**
+  （如 `pasted-<hash16>.webp`），**MUST NOT** 带 `image ·` 之类的类型前缀（Alex 2026-10-10 看 demo 后裁决：
+  该前缀不提供有效信息、还占空间），尺寸等信息排在其后。
 - **各状态样式**：hover / focus / 移除钮沿用既有卡片；**错误态**（能力闸拦下）用既有
   error 语义色（token 层，不新写色值）+ 一次可见强调；eink 主题按既有 token 降级规则走。
 - **手感 / 审美**（缩略图大小选取、错误态强调的强弱）归 Alex dogfood 手感裁决，不进机器判据。
@@ -224,12 +231,12 @@ function serializeDelivery(blocks: readonly ComposerBlock[]): DeliveryPart[];
   ③ wire 形态：`llm_request.messages` 的 user content 数组按块序含 `input_text` / `input_image` 交错，
      `image_url` 为 `lumir-attachment://` 引用；
   ④ **JSONL 无 base64**：`llm_request` 记录里不含 `data:image` 或长 base64 串（反向断言）；
-  ⑤ 能力闸：把当前模型声明成 `image: false` → 含图片卡的消息发送被挡、toast 出现、卡片错误态可见、会话不推进；
+  ⑤ 能力闸：把当前模型声明成 `vision: false` → 含图片卡的消息发送被挡、toast 出现、卡片错误态可见、会话不推进；
   ⑥ 快照恢复 round-trip：重启后带图消息的图片卡片按原交错还原。
   - 展开投影（`input_image` → data URL）的断言：mock 走同一条 `expand_image_refs`，场景 ③/④ 一起判"引用在
     JSONL、展开在 wire"两侧。
 - **单元/属性测试**（tests/unit，零 DOM）：投递投影的不变量（交错顺序、文本 part 合并规则、纯文本单 part 与今天
-  逐字节一致、XML 转义 round-trip、零编号）；面板文本 ⟺ 投递 parts 的双向一致性（同一块序列）；`image_supported`
+  逐字节一致、XML 转义 round-trip、零编号）；面板文本 ⟺ 投递 parts 的双向一致性（同一块序列）；`vision_supported`
   的 config 判定（`effort` 同款负向用例：缺键 / 类型错 / 未列出）；引用展开纯函数（含读文件失败路径的分支）。
 - **视觉**：图片卡片（composer 态 × transcript 态 × 错误态 × 加载失败态）新增场景基线，Alex 过目后 `--update`；
   动过 `src/harness-panel.css` 后跑 `gate.sh visual`，既有基线按纪律核对时间戳。

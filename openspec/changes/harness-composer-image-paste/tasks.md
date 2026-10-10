@@ -27,11 +27,12 @@
 
 ## 3. 能力声明与发送闸
 
-- [ ] 3.1 `HarnessModelSpec` 增 `image: bool`；`validate_harness_model_specs` 缺键 → false + warning、类型不符 →
-      丢该项 + warning（逐字照抄 `effort` 分支形态）；`HarnessConfig::image_supported(provider, model)` 照
-      `effort_supported`（未列出 = false、mock 恒 true）
-- [ ] 3.2 ts-rs bindings 重导出（`src/bindings/**`）；config 单测补 `image` 的缺键 / 类型错 / 未列出 / 声明值四档
-- [ ] 3.3 `harness_send` 发送闸：投递投影含 image part 且 `!image_supported` → 错误码 `harness_image_unsupported`
+- [ ] 3.1 `HarnessModelSpec` 增 **`vision: bool`**（键名 2026-10-10 由 `image` 改名，见 proposal 评审记录）；
+      `validate_harness_model_specs` 缺键 → false + warning、类型不符 → 丢该项 + warning（逐字照抄 `effort`
+      分支形态）；`HarnessConfig::vision_supported(provider, model)` 照 `effort_supported`（未列出 = false、
+      mock 恒 true）
+- [ ] 3.2 ts-rs bindings 重导出（`src/bindings/**`）；config 单测补 `vision` 的缺键 / 类型错 / 未列出 / 声明值四档
+- [ ] 3.3 `harness_send` 发送闸：投递投影含 image part 且 `!vision_supported` → 错误码 `harness_image_unsupported`
       （人话 message + `param` 模型名），不建会话、不入队；`harness_send` 入参形态随投递 parts 调整（§design 4.2）
 - [ ] 3.4 会话侧 input 项用引用形态（`image_url = lumir-attachment://<name>`）；`record_llm_request` 落的
       `llm_request.messages` 断言无 base64；wire 展开点落在 `llm.rs` 的发送前（非 send 点之后的二次序列化）
@@ -43,7 +44,8 @@
       `harness_write_image` → `insertBlockAtCaret` 插图片卡片（图优先）；否则走既有纯文本净化（逐字节不变）；
       失败 → 人话 toast、不插卡片、无半截
 - [ ] 4.2 图片卡片渲染：复用 `.lumir-hp-qcard` 整族样式（几何零改动，不画引号竖条）、可见缩略图（经
-      `harness_read_image` 取字节）、加载中/失败占位、移除钮；composer 态与 transcript 态两态
+      `harness_read_image` 取字节）、加载中/失败占位、移除钮；元信息行**从文件名开始、无 `image ·` 类型前缀**
+      （2026-10-10 裁决）；composer 态与 transcript 态两态
 - [ ] 4.3 能力闸拒绝的界面出口：toast（新 D-code，zh/en 双档）+ 该消息图片卡片错误态标出（前端不另立能力判定）
 - [ ] 4.4 快照恢复 round-trip：`parseQuoteMessage` 识别图片占位元素；历史会话恢复路径
       （`restored_panel_messages`）从 wire 引用还原图片卡片
@@ -58,7 +60,7 @@
       写一条真 provider 冒烟用例（`#[ignore]`、从 `~/.config/lumir/config.json` 原地读 key、无 key 自动 SKIP、
       key 绝不打印/落日志、模型 id 可用环境变量临时覆盖），发一条含合成小图的 `input_image`（data URL）消息，
       断言不报 400 且模型回复体现读到了图；把实测结论（哪些模型接受）写进 `docs/backlog.md` 与本 change 的
-      design/notes，作为 Alex 配置里各模型 `image` 值的依据
+      design/notes，作为 Alex 配置里各模型 `vision` 值的依据
 - [ ] 5.2 若 5.1 结论为 Kimi 端不接受 data URL / `input_image`：在 design 里补后备路径（Files API / file_id 或
       有损降级方案）并上报 tower 升级给 Alex，不自行改归宿
 - [ ] 5.3 新增真机验收场景（scripts/acceptance，mock provider，fixture 全合成）并全绿：粘贴落 harness 侧 + vault
