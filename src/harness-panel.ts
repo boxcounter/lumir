@@ -745,6 +745,30 @@ export function parseQuoteMessage(text: string): ComposerBlock[] {
   return blocks;
 }
 
+// ── 图片卡片元信息行（design §3；M449 补恢复路径）────────────────────────────
+/** 图片卡片元信息行文案：**从文件名开始、无 `image ·` 类型前缀**（Alex 2026-10-10 裁决）；
+ *  有尺寸显「文件名 · W×H」，无尺寸（快照从 wire 引用恢复的旧卡片，M440 可选字段）只显文件名。
+ *  渲染首帧与缩略图 load 后的补记共用这一份（单一来源，REVIEW.md 第 8 条）。 */
+export function imageCardMetaText(
+  name: string,
+  width: number | undefined,
+  height: number | undefined,
+): string {
+  return width !== undefined && height !== undefined ? `${name} · ${width}×${height}` : name;
+}
+
+/** 缩略图 `<img>` load 后补记宽高的口径（M449）：naturalWidth/naturalHeight 是**有限正
+ *  整数**才作数——加载失败（natural 全 0）与未就绪（NaN / 非有限 / 非正）一律 null，调用方
+ *  据此保持元信息行只显文件名，绝不把 0 / NaN / undefined 写进文案。 */
+export function imageDimensionsFromNatural(
+  naturalWidth: number,
+  naturalHeight: number,
+): { width: number; height: number } | null {
+  if (!Number.isFinite(naturalWidth) || !Number.isFinite(naturalHeight)) return null;
+  if (naturalWidth <= 0 || naturalHeight <= 0) return null;
+  return { width: naturalWidth, height: naturalHeight };
+}
+
 // ---------------------------------------------------------------------------
 // composer 控制行的纯模型层（M347）：模型 chip / ctx 读数 / 发送钮两态。
 // 与混排 composer 同一条分层纪律：判据与状态机是纯函数（零 DOM 环境直接驱动，
@@ -2316,19 +2340,16 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
    *  错误态因此按名记在模型侧，卡片重建（键入触发重渲）后依旧标出；发送成功才清除。 */
   const imageGateErrored = new Set<string>();
 
-  /** 图片卡片元信息行（design §3，Alex 2026-10-10 裁决）：**从文件名开始、无 `image ·`
-   *  类型前缀**；尺寸（落盘命令回传）排在其后，从 wire 引用恢复的旧卡片无尺寸只显文件名。 */
-  function imageCardMetaText(card: ImageCard): string {
-    return card.width !== undefined && card.height !== undefined
-      ? `${card.name} · ${card.width}×${card.height}`
-      : card.name;
-  }
-
-  /** 图片卡片的缩略图字节加载（harness_read_image → base64 → blob URL，异步）。 */
-  function loadImageThumb(name: string, thumb: HTMLElement): void {
+  /** 图片卡片的缩略图字节加载（harness_read_image → base64 → blob URL，异步）。`onImgLoad`
+   *  在成功挂出的 `<img>` load 后回调（恢复路径补记宽高用，见 createImageCardEl）。 */
+  function loadImageThumb(
+    name: string,
+    thumb: HTMLElement,
+    onImgLoad: (img: HTMLImageElement) => void,
+  ): void {
     const cached = imageThumbCache.get(name);
     if (cached !== undefined) {
-      applyImageThumb(name, cached, thumb);
+      applyImageThumb(name, cached, thumb, onImgLoad);
       return;
     }
     thumb.classList.add("is-loading");
@@ -2338,17 +2359,22 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
         const mime = name.endsWith(".jpg") ? "image/jpeg" : "image/webp";
         const url = URL.createObjectURL(new Blob([bytes], { type: mime }));
         imageThumbCache.set(name, url);
-        applyImageThumb(name, url, thumb);
+        applyImageThumb(name, url, thumb, onImgLoad);
       })
       .catch((e: unknown) => {
         imageThumbCache.set(name, null);
-        applyImageThumb(name, null, thumb);
+        applyImageThumb(name, null, thumb, onImgLoad);
         deps.toast(t("D446", { reason: errorMessage(e) }));
       });
   }
 
   /** 缩略图加载的落盘面：成功换 <img>，失败/无缓存给可见占位（零高度空白不接受，design §8）。 */
-  function applyImageThumb(name: string, url: string | null, thumb: HTMLElement): void {
+  function applyImageThumb(
+    name: string,
+    url: string | null,
+    thumb: HTMLElement,
+    onImgLoad: (img: HTMLImageElement) => void,
+  ): void {
     // 渲染整面重跑后元素可能已换——按缓存名校验：读回完成时 thumb 已重建则只写缓存。
     if (thumb.dataset.thumbName !== name) return;
     thumb.classList.remove("is-loading");
@@ -2359,6 +2385,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       img.src = url;
       img.alt = "";
       img.setAttribute("aria-hidden", "true");
+      img.addEventListener("load", () => onImgLoad(img));
       thumb.append(img);
     } else {
       // 读回失败占位：CSS 画虚线框 + 「?」（零高度空白不接受，design §8）。
@@ -2384,10 +2411,19 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     thumb.dataset.thumbName = card.name;
     const source = document.createElement("div");
     source.className = "lumir-hp-qc-src";
-    source.textContent = imageCardMetaText(card);
+    source.textContent = imageCardMetaText(card.name, card.width, card.height);
     main.append(thumb, source);
     el.append(main);
-    loadImageThumb(card.name, thumb);
+    // 恢复路径补记宽高（M449）：建模时无尺寸的卡片（快照从 wire 引用恢复，ImageCard
+    // width/height 可选）在缩略图 <img> load 后读自然尺寸补进元信息行。只改这一行 DOM
+    // 文本、不写回卡片模型：重渲时该 <img> 会重新 load 再补一次（缩略图 URL 缓存不含
+    // 尺寸），故不丢。加载失败 / 未就绪（natural 非正）→ 保持只显文件名，不出 0/NaN。
+    loadImageThumb(card.name, thumb, (img) => {
+      if (card.width !== undefined && card.height !== undefined) return;
+      const dims = imageDimensionsFromNatural(img.naturalWidth, img.naturalHeight);
+      if (dims === null) return;
+      source.textContent = imageCardMetaText(card.name, dims.width, dims.height);
+    });
     if (mode === "composer") {
       el.contentEditable = "false";
       const remove = document.createElement("button");
