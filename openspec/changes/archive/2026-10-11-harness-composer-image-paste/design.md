@@ -60,7 +60,7 @@
 - 设计合同：本 change 的 `specs/harness/spec.md` 增量（ADDED ×3 + MODIFIED ×1 及其验收场景）。
 - 行为基准：living spec 的「混排对话输入区」「引用消息序列化协议」「会话本地留存」「上下文注入与可见性」
   （`openspec/specs/harness/spec.md:315 / 334 / 258 / 42`）；composer 的换行/视口质量合同
-  [docs/specs/harness-composer.md](../../../docs/specs/harness-composer.md)（新块类 MUST NOT 破 HC1/HC2）。
+  [docs/specs/harness-composer.md](../../../../docs/specs/harness-composer.md)（新块类 MUST NOT 破 HC1/HC2）。
 - NOT 清单：图片生成/编辑、Files API、URL 形态、一次多图、附件 GC、历史会话图片迁移、前端独立能力提示
   （proposal §Non-goals）。
 - **一致性原则**（Alex 2026-10-06，全文适用）：投递给模型的上下文要素对人必须也可查——图片卡片把"图进了上下文"

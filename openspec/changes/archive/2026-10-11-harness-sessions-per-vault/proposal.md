@@ -6,7 +6,10 @@
 
 > 评审记录：
 > 节点 1（提案评审）：留白（待 Alex 裁决）。
-> 节点 2（归档评审）：留白（实现完成后填写）。
+> 节点 2（归档评审）：**2026-10-11 Alex 点头归档**（原话「三个归档点头：权限提案、会话留存改版、贴图提案——都是『实现已完成，确认收尾归档』性质。通过。」，同批三件之一）。归档对账（M451）：
+> ① tasks 全勾（22/22）：6.1 归档手工项核对——living spec `openspec/specs/harness/spec.md:13` 的 `sessions/<vault 稳定 id>/<session_id>.jsonl` 目录层已由 M448（commit `041a24d`）提前改准，本次核对一致、无需再改；6.2 delta 与实现逐条对账一致（实现 M433：`c81c8c1` + `2d48218`，均在 master），无静默扩 scope；
+> ② delta 的 MODIFIED「会话本地留存」替换 living spec 同名 requirement：正文改 `sessions/<vault 稳定 id>/<session_id>.jsonl`，「留存落盘」与「旧文件孤儿化」两场景改准，新增三场景（按 vault 分置与列举范围 / 平铺文件一次性归位 / 不可归属者进孤儿桶），其余四场景逐字保留；
+> ③ 实现侧零改动。
 
 ## Why
 
