@@ -129,6 +129,12 @@ composer 的边界光标，需另想写法）。
 `projectDelivery`（`src/quote-card.ts:242`）对 `text.trim() === ""` 的段落直接跳过，空段落既不进
 panelText 也不进 parts，物化出来的段落只在其非空时进投递面。
 
+**tower 追加项（2026-10-11 下达，已落地）**：delta 的「混排对话输入区」MODIFIED 块补了
+「粘贴按剪贴板内容分派」场景（逐字拷自在途 change `harness-composer-image-paste` 的同名场景）——
+那条 change 归档后该场景进入 living spec，MODIFIED 整块替换下不带它即 `validate --strict` 报红。
+验收：`validate composer-intercard-caret --strict` 通过、`validate --all --strict` 31/31 通过。
+requirement 正文那句的落准仍留给归档节点（proposal 的归档对账注记）。
+
 **未完成的一项**：§1.1 的真机探针有效读数（→ 决定 §3 方案 C 做不做）。根因是环境：
 跑批期间前台是 Google Chrome 且其窗口完全覆盖验收窗口，真实鼠标与键盘事件到不了被测 app
 （KimiCU 自报 `occluded: true`）。DOM 层的替代读数（§1 的表格）已经证明**读回 / 物化 / 撤销这三段
