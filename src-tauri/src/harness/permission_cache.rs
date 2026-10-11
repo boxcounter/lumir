@@ -44,7 +44,7 @@ struct CacheState {
     entries: HashSet<(String, String)>,
 }
 
-/// 进程内单例（一个 vault 一个会话是运行时的既有形态，见 `harness.rs` 模块头）。用
+/// 进程内单例（内存态一个 vault 一个活跃会话是运行时的既有形态，见 `harness.rs` 模块头）。用
 /// `Mutex<Option<CacheState>>` 而非多命名空间表：命名空间一变就整表换掉，正是「切会话即清空」
 /// 的语义，顺带把内存占用封在一个会话的量级。（`Option` 而非直接 `CacheState`：`static` 里的
 /// 初始化表达式必须是 const，`HashSet::new()` 不是。）
