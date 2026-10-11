@@ -10,6 +10,9 @@
 # （`keys` / `key`）对 composer 确定性死亡；KimiCU `type_text(index)` 在套件 spawn 的 MCP 会话里
 # 也不落地（插件侧直调同 index 立刻落地）。⇒ 本场景的探针串注入同样**待注入通道修复**；
 # 「⌃B 是否真的落地」也因此无法侧证（探针串是它的观测手段）。判据不动，由 tower 呈 Alex 裁决。
+# **降级登记**（Alex 2026-10-11 裁决）：卡片「一步跨过」的模型层语义由单测覆盖
+# （`tests/unit/harness-composer.test.ts`），本场景的真机读数在通道修好前不再刷红；
+# 完整归因与修法方向见 `docs/backlog.md`「验收套件注入通道」条。
 id: "141-harness-composer-nav-intercard"
 item: 141
 title: composer 相邻卡片：⌃B 一步跨过 → 探针落在两卡之前（M447）

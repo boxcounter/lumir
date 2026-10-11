@@ -644,6 +644,25 @@
 
 ## 待修 findings（不阻塞）
 
+### 验收套件注入通道：菜单 Paste 之后 CGEvent 与套件内 type_text 均不落地（worker-m456 finding，2026-10-11，**high**，阻塞 134/141）
+
+**症状**：composer 上走完**原生菜单 Paste**（右键 → 菜单里的 Paste 项）之后，**所有合成键盘/文本注入都拿不到 DOM**：
+- **通道 1（CGEvent 逐键）**：`do: keys` / `do: key`（KimiCU `press_key`）**确定性死亡**——3/3 注入后目标串 0 命中，工具自报 `ok:true, occluded:false`；
+- **通道 2（AX-focus + editing-command）**：KimiCU `type_text` **带 `index` 定向 composer** 在**套件 spawn 的 MCP 会话里也不落**（工具返回 `{"verification_required":"screenshot","message":"delivery_unverified: input events were sent but the text was not observed via AX readback"}`）；**不带 `index` 的「当前焦点」分支**同样不落。
+
+**为什么不是环境/落点/聚焦**（逐条排除，证据齐）：同期 `ax: { focused: "AXTextArea" }` 断言 **PASS**（composer 真的拿到键盘焦点）、`gate` 前台已取得、`do: focusWindow` 无效；**index 一致**（套件诊断打印 `index=236`，与插件侧直探的 `236` 相同）；**参数形状一致**（`lib/cu.mjs:190` 的 `typeText` 传 `{pid,text,index}`）；**时序排除**（注入前加 `sleep(600)` 无效）；**二进制一致**（套件 `spawn("/Applications/KimiCU.app/Contents/MacOS/kimi-cu", ["mcp"])`，插件 wrapper `bin/kimi-cu-mcp` 是 `exec "$APP" mcp`，同一个）。
+
+**关键对照**：**插件侧**对**同一 index** 直调 `type_text`（`mcp__kimi-cu__type_text(index=236, text=… )`）**立刻落地**（回读 composer value 出现目标串、并生成对应 `AXStaticText`）。⇒ 差异落在**调用方 MCP 会话/上下文**（套件 spawn 的 stdio server vs 插件的 server；AX 编辑路径对该上下文的 TCC/会话归属敏感）。
+
+**影响面**：真机场景 **134 / 141** 的探针串注入（HC3 落点判据的观测手段）**不可达**——两条场景头已如实标注「通道阻塞，判据待修复或换形态」，**判据未动**；HC3 的模型层语义由单测覆盖（`tests/unit/harness-composer.test.ts` 的边界光标位用例）。
+
+**修它要查的方向**：
+1. 套件 spawn 的 MCP server 与插件 server 的**上下文差异**——TCC 授权按（binary + **responsible process**）走：套件 server 的父进程是 `node`（从 shell 起），插件 server 的父进程是 kimi CLI；AX 编辑命令路径可能对 responsible process 敏感（而 `get_app_state`/`click` 等 AX 读取与 CGEvent 鼠标路径两边都通，只有这条编辑路径分化）。
+2. KimiCU 对 `type_text` 的 AX 前置要求（是否需要同源 `get_app_state` 缓存、或某个 AX 信任标记）。
+3. 备选：给套件加一条**不依赖键盘注入**的注入通道（如 `lib/cgevent-click.swift` 同族的 swift 键注入，绕过 KimiCU），或给 HC3 换一条可用通道观测的判据形态。
+
+**证据（本地，git 外）**：`test-results/acceptance/2026-10-11/134-harness-composer-intercard-caret/steps.md`（`do=keys` 0/3 的那几轮 + 诊断 note `M456-probe: type target index=236 role=AXTextArea baselineLen=89`）；`scripts/acceptance/README.md` 已知边界的 M456 条（结论全文）。
+
 ### M443 的 tasks.md 把未经真机验证的读数当「已通过」登记（worker-m456 finding，2026-10-11，medium，对账口径）
 
 **症状**：`openspec/changes/harness-cache-metrics/tasks.md` §5.2 末的「真机跑批读数（2026-10-11）」
