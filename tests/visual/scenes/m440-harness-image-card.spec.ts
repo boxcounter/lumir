@@ -164,7 +164,9 @@ test("transcript 态：快照带图消息按原交错还原（无 ×、读屏名
   await expect(card).toHaveCount(1);
   await expect(card.locator(".lumir-hp-qc-x")).toHaveCount(0);
   await expect(card).toHaveAttribute("role", "img");
-  await expect(card).toHaveAttribute("aria-label", `图片 ${WRITTEN.name}`);
+  // M454（change composer-image-mention）：D447 改形为含编号的形态 `图片 {n}：{name}`
+  //（编号是人的指代把手，读屏也要能听到）。
+  await expect(card).toHaveAttribute("aria-label", `图片 1：${WRITTEN.name}`);
   await expect(card.locator(".lumir-hp-qc-src")).toHaveText(`${WRITTEN.name} · ${WRITTEN.width}×${WRITTEN.height}`);
   await expect(card.locator(".lumir-hp-qc-img")).toBeVisible();
   // 交错顺序：图片卡片在问题段落之间。

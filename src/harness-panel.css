@@ -1610,6 +1610,66 @@
   background: var(--hover);
   color: var(--text);
 }
+/* 图片卡片的动作区（change composer-image-mention design §8）：`@`（插入引用）在左、既有 `×`
+   （移除）在右，两钮恒显（裁决点 5 的 A）。容器承担绝对定位（右上角，与既有 `×` 同位）；容器
+   内的 `×` 回到静态排布——它是最右子元素，视觉位置与既有一致。既有引用卡片仍用裸
+   `.lumir-hp-qc-x`（不在此容器内），可见行为不变。 */
+.lumir-hp-qc-actions {
+  position: absolute;
+  top: var(--sp-1);
+  right: var(--sp-1);
+  display: flex;
+  align-items: center;
+  gap: var(--sp-1);
+}
+.lumir-hp-qc-actions .lumir-hp-qc-x {
+  position: static;
+}
+/* 「插入引用」钮（`@` 形态）：复用 `×` 的尺寸与 hover 样式族（design §8），不改既有 `×` 的可见
+   行为。 */
+.lumir-hp-qc-at {
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: none;
+  border-radius: var(--r4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  color: var(--text-3);
+  font-family: var(--font-mono);
+  font-size: calc(var(--fs-label-s) * var(--lumir-hp-scale, 1));
+  line-height: 1;
+  cursor: pointer;
+}
+.lumir-hp-qc-at:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+/* 编号徽标（design §8）：缩略图左上角的小圆角徽标，内容是裸编号 `1` / `2`。压在图上的纯读数，
+   不参与指针（pointer-events: none）——点击穿透到缩略图。反色底（--text 底 + --bg 字）在任意
+   图片内容上都有对比度，eink 主题同样成立。 */
+.lumir-hp-qc-ord {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  box-sizing: border-box;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 3px;
+  border-radius: var(--r4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--text);
+  color: var(--bg);
+  font-family: var(--font-mono);
+  font-size: calc(var(--fs-micro) * var(--lumir-hp-scale, 1));
+  font-weight: 600;
+  line-height: 1;
+  pointer-events: none;
+}
 /* 图片卡片（change harness-composer-image-paste design §8）：复用 .lumir-hp-qcard 整族
    样式（边框/圆角/底色/边距零改动），不画引号竖条——缩略图本身是左锚。缩略图
    object-fit: contain，高度上限取一行到三行正文的高度档（--lh-ui 行高档），宽度不超
@@ -1624,6 +1684,7 @@
 }
 .lumir-hp-qc-thumb {
   flex: none;
+  position: relative;
   width: 96px;
   height: calc(var(--lh-ui) * 2);
   max-height: calc(var(--lh-ui) * 3);

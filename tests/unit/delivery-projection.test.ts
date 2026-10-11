@@ -11,7 +11,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
+  imageMentionText,
+  imageOrdinals,
+  parseComposerDraft,
   projectDelivery,
+  serializeComposerDraft,
   serializeDelivery,
   serializeQuoteMessage,
   type ComposerBlock,
@@ -55,7 +59,7 @@ test("交错顺序：[段落, 图, 段落] → [text, image, text]，逐位保�
   const projection = projectDelivery(blocks);
   assert.deepEqual(projection.parts, [
     { kind: "text", text: "先看这张图" },
-    { kind: "image", name: image.name },
+    { kind: "image", name: image.name, label: "Image 1" },
     { kind: "text", text: "图里哪里不对？" },
   ]);
   assert.equal(
@@ -64,16 +68,16 @@ test("交错顺序：[段落, 图, 段落] → [text, image, text]，逐位保�
   );
 });
 
-test("连续图片块各自成 part；图在首 / 图在尾", () => {
+test("连续图片块各自成 part；图在首 / 图在尾；标签按位序 1..n", () => {
   const two = projectDelivery([imageBlock, imageBlock]);
   assert.deepEqual(two.parts, [
-    { kind: "image", name: image.name },
-    { kind: "image", name: image.name },
+    { kind: "image", name: image.name, label: "Image 1" },
+    { kind: "image", name: image.name, label: "Image 2" },
   ]);
   assert.equal(two.panelText.split("\n").length, 2);
   const head = projectDelivery([imageBlock, para("什么问题？")]);
   assert.deepEqual(head.parts, [
-    { kind: "image", name: image.name },
+    { kind: "image", name: image.name, label: "Image 1" },
     { kind: "text", text: "什么问题？" },
   ]);
 });
@@ -84,8 +88,8 @@ test("图片卡片属性转义 round-trip：name / sourceMime 含 XML 保留字�
   const projection = projectDelivery(blocks);
   const restored = parseQuoteMessage(projection.panelText);
   assert.deepEqual(restored, [para("问"), { kind: "image", card: { name: tricky.name, sourceMime: tricky.sourceMime, width: undefined, height: undefined } }, para("尾")]);
-  // 投递 part 只带 name（sourceMime 不进投递内容）。
-  assert.deepEqual(projection.parts[1], { kind: "image", name: tricky.name });
+  // 投递 part 只带 name（sourceMime 不进投递内容）+ label（编号同源）。
+  assert.deepEqual(projection.parts[1], { kind: "image", name: tricky.name, label: "Image 1" });
 });
 
 test("round-trip：面板文本 ⟺ 块序列（含 quote / msgquote / image 三类卡片）", () => {
@@ -142,4 +146,93 @@ test("卡片字段缺失仍抛错（quote 空 lines），不产出半截投影",
   const bad = [{ kind: "quote", card: { ...cardA, lines: " " } }] as ComposerBlock[];
   assert.throws(() => projectDelivery(bad), /lines/);
   assert.throws(() => serializeQuoteMessage(bad), /lines/);
+});
+
+// ---------------------------------------------------------------------------
+// 图片编号（change composer-image-mention design §3）：imageOrdinals / imageMentionText 是编号面的
+// 唯一真源——卡片徽标、投递标签、`@` 插入共用。这里钉规则本身的不变量。
+// ---------------------------------------------------------------------------
+
+test("imageOrdinals：只数 image 块、1-based、与块序一一对应、其余块不进表", () => {
+  const blocks: ComposerBlock[] = [
+    para("前言"),
+    imageBlock, // index 1 → 1
+    { kind: "quote", card: cardA }, // 不编号
+    imageBlock, // index 3 → 2
+    { kind: "msgquote", card: { role: "user", at: null, text: "上一句" } }, // 不编号
+    imageBlock, // index 5 → 3
+    para("后语"),
+  ];
+  const ordinals = imageOrdinals(blocks);
+  assert.deepEqual([...ordinals.entries()], [
+    [1, 1],
+    [3, 2],
+    [5, 3],
+  ]);
+  // 非 image 块下标不在表里。
+  for (const index of [0, 2, 4, 6]) assert.equal(ordinals.get(index), undefined, `index ${index}`);
+});
+
+test("imageOrdinals：移除图片后重编为无空号位序（1..n）", () => {
+  const three: ComposerBlock[] = [imageBlock, imageBlock, imageBlock];
+  assert.deepEqual([...imageOrdinals(three).values()], [1, 2, 3]);
+  // 移除中间那张（index 1）后重算：剩下两张是 1 / 2，无空号。
+  const two = [three[0], three[2]];
+  assert.deepEqual([...imageOrdinals(two).values()], [1, 2]);
+  // 纯文本 / 仅卡片消息：无编号（空表）。
+  assert.equal(imageOrdinals([para("只有字"), { kind: "quote", card: cardA }]).size, 0);
+});
+
+test("imageMentionText：形态固定 `Image N`；投递标签与该函数同源", () => {
+  assert.equal(imageMentionText(1), "Image 1");
+  assert.equal(imageMentionText(12), "Image 12");
+  // 标签 = 该位置编号经 imageMentionText 的产出（一处真源）：块序第 2 张图的 label 恰为 Image 2。
+  const parts = serializeDelivery([imageBlock, para("x"), imageBlock]);
+  assert.equal(parts[0].kind === "image" ? parts[0].label : "", "Image 1");
+  assert.equal(parts[2].kind === "image" ? parts[2].label : "", "Image 2");
+});
+
+test("回归：纯文本 / 仅卡片消息的 parts 与 panelText 不因编号改动（逐字节）", () => {
+  // 无图片块的投影路径逐字节与历史一致（parts[0].text === panelText，单 text part）。
+  const textOnly: ComposerBlock[] = [para("这段是什么意思？"), { kind: "quote", card: cardA }];
+  const projection = projectDelivery(textOnly);
+  assert.deepEqual(projection.parts, [{ kind: "text", text: projection.panelText }]);
+  const legacy = [
+    "这段是什么意思？",
+    '<quote file="reading-workflow.md" heading="筛选" lines="9-10">先读结论再读论证</quote>',
+  ].join("\n");
+  assert.equal(projection.panelText, legacy);
+  assert.equal(serializeQuoteMessage(textOnly), legacy);
+});
+
+// ---------------------------------------------------------------------------
+// 恢复 / transcript / 快照一致性（tasks §4）：编号是块序的派生读数——只要求块序不丢，编号自然一致。
+// ---------------------------------------------------------------------------
+
+test("§4.1 恢复链路：panelText → parseQuoteMessage → imageOrdinals 与发送时一致", () => {
+  const blocks: ComposerBlock[] = [
+    para("先看"),
+    imageBlock,
+    para("中间"),
+    imageBlock,
+    { kind: "quote", card: cardA },
+    imageBlock,
+  ];
+  const { panelText } = projectDelivery(blocks);
+  const restored = parseQuoteMessage(panelText); // 恢复路径（引用卡片 / 图片块顺序不变）
+  assert.deepEqual(
+    [...imageOrdinals(restored).values()],
+    [...imageOrdinals(blocks).values()],
+    "恢复出的编号序列与发送时一致（位序规则确定性重建，无编号字段持久化）",
+  );
+  assert.deepEqual([...imageOrdinals(restored).values()], [1, 2, 3]);
+});
+
+test("§4.3 composer 快照 round-trip：块序不变 ⇒ 编号自然一致（快照面零改动）", () => {
+  const blocks: ComposerBlock[] = [imageBlock, para("x"), imageBlock];
+  const restored = parseComposerDraft(serializeComposerDraft(blocks, null));
+  assert.ok(restored !== null);
+  assert.deepEqual([...imageOrdinals(restored.blocks).values()], [1, 2]);
+  // 再投影：label 也随块序重建，与首次发送一致。
+  assert.deepEqual(serializeDelivery(restored.blocks), serializeDelivery(blocks));
 });

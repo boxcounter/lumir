@@ -190,6 +190,7 @@ impl From<String> for DeliveryInput {
             kind: "text".to_string(),
             text: Some(text),
             name: None,
+            label: None,
         }])
     }
 }

@@ -566,6 +566,13 @@ export async function stubTauri(page: Page, vault: VaultFixture | null): Promise
         if (current?.files) current.files[created] = "";
         return { created };
       },
+      // composer 草稿（M452 引入 harness_draft_get / harness_draft_put；M454 补桩）：不处理时
+      // 会落到下面的 `unknown_command` 抛错，草稿写失败经 `deps.warn` 弹一条 toast 覆盖在
+      // 发送钮上——真机/后续 click 的 mouseup 落到 toast 上，`send()` 永不触发（M454 复现：
+      // 点发送的 mousedown 打中按钮、mouseup 打中 `.lumir-toast`）。桩按「无草稿 / 落盘成功」
+      // 应答：读回 null（无从盘上恢复的草稿）、写入收下（不报错）。
+      harness_draft_get: () => null,
+      harness_draft_put: () => null,
     };
 
     // 文件级操作的调用记录（场景断言参数用；M244）。
