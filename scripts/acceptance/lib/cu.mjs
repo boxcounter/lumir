@@ -14,17 +14,20 @@ const DEFAULT_BIN = "/Applications/KimiCU.app/Contents/MacOS/kimi-cu";
  *
  * `-` 在 DSL 里是**修饰键分隔符**（与 `+` 同义，实测 `a-b` 报 `unknown modifier \`a\``），
  * 因此字面量连字符没有拼法：`press_key("-")` 报 `error: empty key DSL`（本机实测，0.5.11），
- * 而键名表里有 `minus`。这里只做两处确定性改写：
+ * 而键名表里有 `minus`。这里只做三处确定性改写：
  *   - 整串恰为 `-` → `minus`（`keys: ["-"]` / `key: "-"` 这条最常用的写法）；
- *   - `+` 分隔后某一段恰为 `-` → `minus`（`cmd+-` 这类 chord 里的主键）。
+ *   - `+` 分隔后某一段恰为 `-` → `minus`（`cmd+-` 这类 chord 里的主键）；
+ *   - 整串恰为一个空格 → `space`（M455：空格同样没有字面量拼法，`press_key(" ")` 报
+ *     `error: empty key DSL`——场景 144 键入 `alpha beta gamma` 时踩到；键名表里有 `space`）。
  * 其余含 `-` 的形态（`Cmd--` 之类）歧义不可消除，原样透传让 KimiCU 如实报错——不猜。
  *
  * 位置放在这一层（而不是场景层）：`do: key` 与 `do: keys` 都经 `drive.pressKey` 落到这里，
  * 单一入口；同时**不改场景侧的键名字面量**，`keys` 动作的可打印字符判定与回读期望值仍按
- * 场景写的 `-` 走（注入 `minus` 键产出的就是 `-`）。
+ * 场景写的 `-` / ` ` 走（注入 `minus` / `space` 键产出的就是 `-` / 空格）。
  */
 function keyDsl(keys) {
   if (keys === "-") return "minus";
+  if (keys === " ") return "space";
   if (typeof keys !== "string" || !keys.includes("+")) return keys;
   return keys
     .split("+")

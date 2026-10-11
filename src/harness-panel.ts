@@ -742,9 +742,18 @@ function adjacentParagraph(
   return null;
 }
 
-/** ⌃N / ⌃P：逻辑行之间移动（同列位，超出目标行长度取行尾）；出段落跨到相邻段落块，无则不动。 */
+/** ⌃N / ⌃P：逻辑行之间移动（同列位，超出目标行长度取行尾）；出段落跨到相邻段落块，无则不动。
+ *
+ *  段落**末缘**（`offset === 文本长度`，即光标停在该段最后一行行尾——键入后的常态位置）的原始
+ *  光标带着真实的列位；而 `normalizeComposerCaret` 会把它归一到下一块前缘（末段则是「末尾之后」），
+ *  列位随之丢失。M455 修：末缘保留原始光标走段内步进，⌃P/⌃N 因此落到相邻行的**同列位**而不是
+ *  行首（实测缺陷形态：`yabzcdw` ⇧Enter `mn` 后按 ⌃P 落在第二段行首，应为第一段第 2 列）。其余
+ *  情形（卡片前缘 / 末尾之后）沿用既有归一语义——那两种边界位没有列位可言。 */
 function moveLineVertical(blocks: readonly ComposerBlock[], caret: ComposerCaret, delta: number): ComposerCaret {
-  const norm = normalizeComposerCaret(blocks, caret);
+  const rawBlock = blocks[caret.block];
+  const atParagraphEnd =
+    rawBlock !== undefined && rawBlock.kind === "paragraph" && caret.offset === rawBlock.text.length;
+  const norm = atParagraphEnd ? caret : normalizeComposerCaret(blocks, caret);
   const block = blocks[norm.block];
   if (block !== undefined && block.kind === "paragraph") {
     const lines = paragraphLines(block.text);
@@ -5823,6 +5832,13 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     // 真正清草稿（下面 then 里的 `draft.clear()`），被拒 / 失败时草稿保持原样（spec 的核心
     // 改变之一：MUST NOT 在乐观清空与回滚之间留下「崩溃即丢字」的空草稿窗口）。
     undoHistory.clear();
+    // 记下发送前光标（M455）：拒发回滚要把输入区**原样**还回来——含光标。乐观清空的
+    // `replaceChildren` 会把 WebKit 里既有的 DOM 选区塌到 composer 元素边界，回滚若用
+    // `renderComposer(blocks, null)` 不落光标，DOM 选区就永远停在边界位（`{block:0,offset:0}`）；
+    // 紧接的 `markDraft()` 会按这个错误的 caret 判「内容变了」，把盘上草稿重写一遍——只有 caret
+    // 字段变（M455 实测：草稿 sha 由 `85da8511` 变 `d6a41e72`，违反 design §9⑤「被拒后草稿文件
+    // 内容不变」）。回滚时把这份光标连同块一起还原，模型态才真正回到发送前。
+    const preSendCaret = caretFromDom()?.focus ?? null;
     renderComposer([{ kind: "paragraph", text: "" }], null);
     // 焦点与光标回 composer（M372）：replaceChildren 会把 WebKit 里既有的 DOM 选区塌到
     // composer 元素边界——视觉上光标跑到输入区最左上角，且后续键入落点不可预期。显式
@@ -5863,9 +5879,12 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
             for (const block of blocks) {
               if (block.kind === "image") imageGateErrored.add(block.card.name);
             }
-            renderComposer(blocks, null);
+            // 连同发送前的光标一起还原（M455）：只还原块会让 DOM 选区停在乐观清空塌下来的
+            // 边界位，下面那次 markDraft() 便按错误 caret 把草稿重写一遍。
+            renderComposer(blocks, preSendCaret);
             // 被拒 = 内容还在输入区、也还在未发送状态：草稿按回滚后的块重新对齐（与盘上那份
-            // 内容相同时不写盘；若发送前的待写被别的路径清掉过，这一步把它补回来）。
+            // 内容相同时不写盘；若发送前的待写被别的路径清掉过，这一步把它补回来）。光标已还原
+            // ⇒ 内容与 caret 都与盘上一致时这次 schedule 是 no-op，草稿逐字节不变。
             markDraft();
             syncEmptyHint();
             deps.toast(errorText(e));
@@ -5915,7 +5934,13 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       else undo();
       return;
     }
-    if (mod && event.key.toLowerCase() === "y") {
+    // M455：就地 redo 只归 **⌘Y**。⌃Y 是统一键位表里 `text` 作用域的 `editor.yank`
+    //（`Ctrl-y`，keys.ts:585）——若在此 `preventDefault` 吞掉，分发器对已消费事件让路
+    //（keys.ts:934 的 defaultPrevented 早退），composer 的 ⌃Y 永远落不到 `yankAtCaret`，
+    // 而编辑器侧 ⌃K 写进**跨面共用** kill 槽的内容因此插不回来（验收场景 145 实测）。
+    // 收窄到 meta-only 与下方 §5.3a 对 Backspace/Delete 的收窄同形：修饰键不匹配的键
+    // 落到 `if (mod) return;`（不 preventDefault），照常冒泡给分发器。
+    if (event.metaKey && event.key.toLowerCase() === "y") {
       event.preventDefault();
       redo();
       return;

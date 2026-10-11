@@ -79,7 +79,7 @@ steps:
     gapMs: 150
     expect:
       - label: p 落在第一段同列位——⌃P 的落点读数
-        ax: { has: "ypabzcdw" }
+        ax: { has: "yapbzcdw" }
 
   - name: ⌃N 下移一行后键入 q
     do: keys
@@ -109,6 +109,12 @@ change `composer-emacs-nav` 把 composer 的 Emacs 文本导航族收回统一�
   需要真实存在的第二段。⇧Enter 落一个新空段落（HC1），随后键入的 `mn` 落进它。
 - **`gapMs`**：键入按默认 250ms 间隔注入，四拍可能越过撤销聚簇窗口（1000ms）而碎成多步——
   本场景不判撤销，压小间隔只是让读取窗口稳定。
+- **⌃P 的期望值是 `yapbzcdw`（同列位 2）**：键入 `mn` 后光标停在第二逻辑段**行尾**（列 2），
+  ⌃P 按 spec「同列位」应落到第一段第 2 列（`ya|bzcdw`）⇒ 键入 p 得 `yapbzcdw`；随后 ⌃N 从
+  该处下移同列、超出第二段长度取行尾 ⇒ 键入 q 得 `mnq`（本步期望不变）。M455 修正了原写错的
+  `ypabzcdw`（列 1，与「行尾在列 2」自相矛盾），并修好 ⌃P 在**段落末缘**丢列位的实现缺陷
+  （`src/harness-panel.ts` 的 `moveLineVertical`：末缘光标被 `normalizeComposerCaret` 归一到
+  边界位、列位随之丢失，⌃P 会落到上一行行首而非同列位）。
 
 ## 已知边界（如实登记）
 

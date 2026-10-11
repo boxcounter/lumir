@@ -10,6 +10,7 @@ import {
   Keymap,
   keyToken,
   normalizeKey,
+  scopeOfCommand,
 } from "../../../src/keys";
 
 // M131 统一键位层：表本身的不变量（无需页面，直接断言源码导出）。
@@ -55,7 +56,12 @@ test("键位表不变量：无重复键、每绑定有归属命令、命令无�
     // 来由文本的居所是文案表（M282：绑定只存 docKey），显式按 zh 取值——本套件跑在 zh 面
     expect(docTextOf(binding).trim(), `${binding.key} 缺少归属说明`).not.toBe("");
     expect(COMMAND_IDS, `${binding.key} 的 ${binding.command} 不在命令清单里`).toContain(binding.command);
-    expect(["global", "editor"]).toContain(binding.scope);
+    // 作用域三值（M447 起含 `text` 文本面：编辑器内容区**或** harness composer 内生效）；与命令面
+    // 机械派生对齐（单一来源 scopeOfCommand，与 tests/unit/keys.test.ts 的断言同口径）。
+    expect(["global", "editor", "text"]).toContain(binding.scope);
+    expect(binding.scope, `${binding.key} 的作用域与 ${binding.command} 的命令面不一致`).toBe(
+      scopeOfCommand(binding.command),
+    );
   }
 
   // 无孤儿命令（M180 起是三项对账）：每条命令要么有绑定、要么登记在默认不绑键清单里。
@@ -74,7 +80,9 @@ test("键位表不变量：无重复键、每绑定有归属命令、命令无�
     ).toBe(false);
   }
   for (const binding of KEY_BINDINGS) {
-    const owner = binding.scope === "editor" ? EDITOR_COMMAND_IDS : GLOBAL_COMMAND_IDS;
+    // editor 与 text 两个面都落在编辑器侧命令清单里（text 面命令组是 EDITOR_COMMAND_IDS 的子集）；
+    // 只有 global 面挂到 GLOBAL_COMMAND_IDS。
+    const owner = binding.scope === "global" ? GLOBAL_COMMAND_IDS : EDITOR_COMMAND_IDS;
     expect(owner, `${binding.key} 的命令 ${binding.command} 与作用域 ${binding.scope} 不匹配`).toContain(binding.command);
   }
   // 编辑器命令要么带上绑定、要么显式登记为「默认不绑键」——M277 起这条口径与上面那条对账同形：
