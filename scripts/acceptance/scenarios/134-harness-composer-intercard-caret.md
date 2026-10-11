@@ -10,6 +10,18 @@
 # 不成立时的处置（两条路都在 change 的授权面内，不回来二次裁决）：见 design §6 的判定表——
 # 落位/落点读不到边界 ⇒ 启用方案 C（键位层接管 composer 的水平移动）。本次读数如实记入
 # change 的 tasks 对账。
+#
+# 【M456 通道阻塞，2026-10-11 实测，如实登记】本场景的**探针串注入**在现有配套通道下不可达：
+# ① 原生菜单 Paste 之后，CGEvent 逐键注入（`do: keys` / `do: key`）对 composer **确定性死亡**
+#    （3/3，工具自报 ok、目标串 0 命中；聚焦断言 `ax: {focused: AXTextArea}` 同期 PASS ⇒ 不是聚焦）；
+# ② 改走 KimiCU `type_text`（带 `index` 定向 composer，AX-focus + editing-command 路径）在
+#    **套件 spawn 的 MCP 会话里也不落地**（返回 `delivery_unverified`）——**同一 index=236、
+#    同一二进制**（套件 `/Applications/KimiCU.app/Contents/MacOS/kimi-cu mcp`，
+#    插件 wrapper 也是 exec 同一个），**插件侧直调该 index 立刻落地**；不带 index 的「当前焦点」
+#    分支同样不落。
+# ③ 结论：注入通道（MCP 会话/调用方上下文）是本场景当前唯一阻塞；菜单落点本身已由 M456 的
+#    布局修复打通（`src/harness-panel.css` 的 composer 末尾空行）。HC3 真机判据**待注入通道修复
+#    或换判据形态**，由 tower 呈 Alex 裁决——本场景文件保持原判据不动。
 id: "134-harness-composer-intercard-caret"
 item: 134
 title: composer 两张相邻卡片之间：⌃B 落位 → 键入落在两卡之间 → 一次撤销回到前态（M450，HC3）

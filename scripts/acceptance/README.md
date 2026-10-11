@@ -554,8 +554,21 @@ Alex 抽审路径：先看 `summary.md`，再进 FAIL 场景看 `steps.md` + `sh
   实测：AX 里 composer 始终只有第一张卡）。⇒ 「图片可用 ⌘V 贴」在**套件动作面**还没打通，场景
   134/141 的第二张贴图仍待解。② 「原生菜单是唯一粘贴通道」也不全对：菜单需要一个**可编辑区里的
   右键落点**，而 composer 里已有图片卡片时，卡片几乎占满 composer 可视区，内部**没有**这样的落点
-  （M456 实测 dy 0.86/0.94/0.98 全落到卡片上、开出非可编辑菜单）。⇒ **两条通道在当前布局下都拿不到
-  「贴第二张图」**（M456 实测结论；根因是布局可达性，属待裁决项，不在验收套件侧修）。
+  （M456 实测 dy 0.86/0.94/0.98 全落到卡片上、开出非可编辑菜单）。⇒ 当时两条通道都拿不到「贴第二张图」。
+  **2026-10-11 收口（M456，Alex 裁决后）——把结论写全**：
+  - **布局面已修**：`src/harness-panel.css` 给 composer 末尾空段落恒留一条可见、可点入的行（`commit ad372fa`）。
+    修后实测：菜单 Paste 通道**通**（第二步右键开出含 Paste 的编辑菜单）、第二张图**贴上且次序正确**。
+    漂移 6 条整页/元素基线，前后对比见主仓 `test-results/m456-visual/`（Alex 过目后才 `--update`）。
+  - **注入面仍阻塞（本条的硬知识，值钱）**：**原生菜单 Paste 交互之后，CGEvent 逐键注入
+    （`press_key` / `do: keys` / `do: key`）对 composer 确定性死亡**——3/3 不落地、工具自报 ok、
+    目标串 0 命中；同期 `ax: { focused: "AXTextArea" }` 断言 **PASS**（⇒ 不是聚焦、不是前台）。
+    **换 `type_text`（AX-focus + editing-command 路径）在套件 spawn 的 MCP 会话里同样不落**
+    （工具返回 `delivery_unverified`）——**同一 index（236）、同一二进制**
+    （套件 `spawn("/Applications/KimiCU.app/Contents/MacOS/kimi-cu", ["mcp"])`；插件 wrapper
+    `exec "$APP" mcp` 也是同一个），而**插件侧直调该 index 立刻落地**；不带 index 的「当前焦点」
+    分支也不落。⇒ 差异落在**调用方 MCP 会话/上下文**，不在 index、不在参数形状、不在时序
+    （加 600ms settle 无效）。**受影响的真机判据**：场景 134/141 的探针串注入（HC3 落点判据的
+    观测手段）——两条场景头已如实标注「通道阻塞，判据待修复或换形态」，**未动判据**。
 - **嵌在 `<button>` 里的浮层不进 AX 树（M349 实测；M351 已修复，2026-10-07）**：WKWebView 的
   AX 树把嵌在 button 内的 button 当**叶子**——浮层项一个都不暴露。M349 首跑现场：场景 90
   截图里 provider 浮层清楚可见，同一时刻 AX dump 里 chip 节点零子节点、`deepseek` 全树零命中
