@@ -30,7 +30,7 @@ import Foundation
 
 let args = CommandLine.arguments
 guard args.count >= 4, let x = Double(args[1]), let y = Double(args[2]), let mode = Int(args[3]) else {
-    FileHandle.standardError.write("usage: cgevent-click <x> <y> <mode 0|1|2|3|4|5|6> [pid | x2 y2 | mods [count]]\n".data(using: .utf8)!)
+    FileHandle.standardError.write("usage: cgevent-click <x> <y> <mode 0|1|2|3|4|5|6|7> [pid | x2 y2 | mods [count]]\n".data(using: .utf8)!)
     exit(2)
 }
 let point = CGPoint(x: x, y: y)

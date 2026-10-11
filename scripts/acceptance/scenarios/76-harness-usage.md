@@ -41,8 +41,9 @@ steps:
       - label: 未越警示线（50 < 85）——hover 浮层无内容，警示文案不在界面上
         ax: { not: "越过 85% 警示线" }
       - label: JSONL 记下 usage 原值（wire 口径：llm_response.usage；M443 起含 cache_write_tokens，
-          本 fixture 不带该字段 ⇒ 记 0 且不留缺键）
-        file: { path: "env:harness/sessions/*/*.jsonl", has: '/^.*"kind":"llm_response".*"cached_tokens":32768.*"input_tokens":65536.*"cache_write_tokens":0.*$/' }
+          本 fixture 不带该字段 ⇒ 记 0 且不留缺键。**键序是字母序**——serde_json 的 Map 默认 BTreeMap，
+          断言按 `cache_write_tokens` → `cached_tokens` → `input_tokens` 的序写）
+        file: { path: "env:harness/sessions/*/*.jsonl", has: '/^.*"kind":"llm_response".*"cache_write_tokens":0.*"cached_tokens":32768.*"input_tokens":65536.*$/' }
       - shot: 01-控制行-ctx读数
 
   - name: hover 读数——口径文本（M443 改准后气泡第二行点明「会话累计」）

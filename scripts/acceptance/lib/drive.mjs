@@ -319,8 +319,8 @@ export async function injectClickWithModifiers(pid, point, { modifiers = [], cou
   }
 }
 
-/** 鼠标悬停（M443，mode 0）：只投 `mouseMoved`（不按任何鼠标键），DOM 侧因此收到
- *  mouseover / mouseenter，可在真机上驱动 hover 类 UI（如 ctx 读数的含义气泡）。
+/** 鼠标悬停（M443）：只投 `mouseMoved`（不按任何鼠标键），DOM 侧因此收到 mouseover / mouseenter，
+ *  可在真机上驱动 hover 类 UI（如 ctx 读数的含义气泡）。
  *
  *  为什么加它：套件此前没有 hover 动词，hover 类判据在真机层只能写负向（「文案默认不在 AX 树里」），
  *  显隐的正观测整个落在 chromium 层（README「已知边界」原条目）。M443 的气泡新增行（本回合命中 /
@@ -328,8 +328,9 @@ export async function injectClickWithModifiers(pid, point, { modifiers = [], cou
  *
  *  `point` 是 **Quartz 全局屏幕坐标**（与 injectClickWithClickState 同口径，换算由调用方做）；
  *  代价与那条通道一致：要 /usr/bin/swift + 辅助功能权限、**会移动真实光标**、要求目标窗口在前台
- *  且未被遮挡。光标**恰好已在目标上**时单次 mouseMoved 不产生 mouseenter（hover 目标没变化），
- *  调用方（execute.mjs 的 hover 动作）因此先 park 到别处再移到目标。 */
+ *  且未被遮挡（后台跑批时拿不到前台 ⇒ `do: hover` 按环境项报 INVALID，见 README 与 execute.mjs）。
+ *  光标**恰好已在目标上**时单次 mouseMoved 不产生 mouseenter（hover 目标没变化），调用方
+ *  （execute.mjs 的 hover 动作）因此先 park 到别处再移到目标。 */
 export async function injectHover(pid, point) {
   const script = new URL("./cgevent-click.swift", import.meta.url).pathname;
   const args = ["/usr/bin/swift", script, String(Math.round(point.x)), String(Math.round(point.y)), "0"];

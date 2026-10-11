@@ -57,6 +57,11 @@ steps:
   - name: 移开读数（移到发送钮）
     do: hover
     target: { role: AXButton, name: "^发送$" }
+    expect:
+      - label: 移动后读数仍在屏上（正观测：面板活着）
+        ax: { has: "15% · 20%" }
+      - label: 气泡收起（前一步读到过写入行）
+        ax: { not: "缓存写入" }
 
   # ── 第二轮：本回合写入为 0 ⇒ 该行不渲染，会话累计仍在 ─────────────────────────
   - name: 点 composer 聚焦
@@ -95,6 +100,11 @@ steps:
   - name: 移开读数
     do: hover
     target: { role: AXButton, name: "^发送$" }
+    expect:
+      - label: 移动后读数仍在屏上（正观测：面板活着）
+        ax: { has: "17% · 60%" }
+      - label: 气泡收起（前一步读到过本回合行）
+        ax: { not: "本回合缓存命中" }
 ---
 
 # 133-harness-cache-write —— 缓存写入遥测（气泡第四行 + 留存）（M443）

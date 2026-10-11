@@ -1755,20 +1755,34 @@ async function doAction(step, { ctx, cu, scenario, vars, pid, evidence }) {
     case "hover": {
       // 悬停（M443）：真机层驱动 hover 类 UI 的唯一通道（此前套件没有 hover 动词，hover 判据
       // 只能写负向——见 README「已知边界」原条目）。通道 = cgevent-click.swift 的 mode 0
-      // （只投 `mouseMoved`，不按鼠标键），坐标换算与前台前置复用 doubleClick / drag 同一份
+      // （只投 `mouseMoved`，不按鼠标键），坐标换算复用 doubleClick / drag 同一份
       // `windowLocalTarget`（三种 target 形态：节点中心 / `{x,y}` 窗口局部点 / `anchor` 锚点 +
-      // 像素偏移——ctx 读数在 AX 里没有 bbox，只能锚它左邻的权限 chip）；代价也一致（要 swift
-      // + 辅助功能权限、会移动真实光标、目标窗口必须在前台未被遮挡）。
+      // 像素偏移——ctx 读数在 AX 里没有 bbox，只能锚它左邻的权限 chip）。
+      //
+      // **前台是硬前提，拿不到按「环境项」报 INVALID**：真鼠标事件落在该点最上层的那扇窗上，
+      // 窗口被别的应用盖住时事件根本不到 Lumir。AXRaise **无法**把后台 app 抢到前台（M135 r2
+      // 实测，tower 纪律明令不抢焦点），因此后台跑批时这一条会红——而红的是环境不是产品。
+      // 抛 InfraError（而不是普通 Error）让整场标 INVALID、退出码升到 2（README「退出码」节
+      // 的语义：本次运行的读数不算数），复跑条件 = 把前台让给 Lumir。
       //
       // **先 park 再移**：`mouseenter` 只在「hover 目标发生变化」时触发——光标恰好已在目标上
       // 时单次 mouseMoved 不产生事件，气泡不会开，场景会得到一条与产品无关的假红（REVIEW.md
       // 第 1 条：「先造一个必须让它 FAIL 的输入」）。park 点取窗口左上角内侧 2px（标题栏区，
       // 不带 hover UI），与目标点接近时跳过 park（不值得为几像素多起一次 swift 进程）。
+      const fg = await tryForeground(cu, p, { retries: step.retries ?? 4 });
+      if (!fg.frontmost) {
+        throw new InfraError(
+          `hover 需要目标窗口在前台（当前前台 pid=${fg.frontPid ?? "未知"}）：真实鼠标事件落在最上层的那扇窗上，` +
+            `窗口被别的应用盖住时事件不会到达 Lumir。本次运行该场景读数不算数（环境项，非产品缺陷）——` +
+            `把前台让给 Lumir 后复跑。`,
+        );
+      }
       const { bounds, local, point } = await windowLocalTarget(cu, p, step.target, {
-        retries: step.retries ?? 4,
+        retries: 1,
         label: "hover",
         dx: step.dx,
         dy: step.dy,
+        requireFrontmost: false,
       });
       const park = { x: bounds.x + 2, y: bounds.y + 2 };
       if (Math.abs(park.x - point.x) > 4 || Math.abs(park.y - point.y) > 4) {
@@ -2027,9 +2041,9 @@ async function readAxForScreenPoint(cu, pid, { retries = 3 } = {}) {
  * 前台是硬前提：真鼠标事件落在**该点最上层的那扇窗**上，目标被别的应用盖住时事件打到别人身上
  *（表现为「遮罩不出现」这类与产品无关的假红）。KimiCU 的键盘注入可以后台走，这条通道不行。
  */
-async function windowLocalTarget(cu, pid, target, { retries = 4, label = "动作", dx, dy } = {}) {
+async function windowLocalTarget(cu, pid, target, { retries = 4, label = "动作", dx, dy, requireFrontmost = true } = {}) {
   const fg = await tryForeground(cu, pid, { retries });
-  if (!fg.frontmost) {
+  if (requireFrontmost && !fg.frontmost) {
     throw new Error(
       `${label} 需要目标窗口在前台（当前前台 pid=${fg.frontPid ?? "未知"}）：真鼠标事件会落到最上层那扇窗上，` +
         `此时不会到达 Lumir。跑这类场景时目标窗口需可见且未被别的应用盖住。`,

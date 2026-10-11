@@ -64,6 +64,8 @@ steps:
     do: hover
     target: { role: AXButton, name: "^发送$" }
     expect:
+      - label: 移动后读数仍在屏上（正观测：这次读取真的读到了一个活着的面板）
+        ax: { has: "10% · 50%" }
       - label: 气泡收起后摊薄句不在 AX 树里（负向断言的正观测 = 上一步曾读到它）
         ax: { not: "命中率被摊薄" }
 ---

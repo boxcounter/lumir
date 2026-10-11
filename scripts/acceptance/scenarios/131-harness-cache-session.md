@@ -120,6 +120,8 @@ steps:
     do: hover
     target: { role: AXButton, name: "^发送$" }
     expect:
+      - label: 移动后读数仍在屏上（正观测：这次读取真的读到了一个活着的面板）
+        ax: { has: "50% · 0%" }
       - label: 气泡收起后成因句不在 AX 树里（负向断言的正观测 = 上面那条 hover 曾读到它）
         ax: { not: "本回合未命中缓存" }
 
@@ -164,6 +166,11 @@ steps:
   - name: 移开读数
     do: hover
     target: { role: AXButton, name: "^发送$" }
+    expect:
+      - label: 移动后读数仍在屏上（正观测：面板活着）
+        ax: { has: "50% · 46%" }
+      - label: 气泡已收起（前一步读到过它的内容，本步读不到——负向断言有正观测配对）
+        ax: { not: "本回合缓存命中" }
 
   # ── 切走再切回：控制行读数仍来自 core 侧的会话快照（前端不自作累加）──────────────
   # 套件没有触发前端整页重载的动作（`restart` 会连 Rust 进程一起重启）；重载后读数回归走的是

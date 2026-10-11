@@ -65,6 +65,8 @@ steps:
     do: hover
     target: { role: AXButton, name: "^发送$" }
     expect:
+      - label: 移动后读数仍在屏上（正观测：面板活着）
+        ax: { has: "90% · 50%" }
       - label: 警示句随 mouseleave 收起（负向断言的正观测 = 上一步曾读到它）
         ax: { not: "越过 85% 警示线" }
 ---
