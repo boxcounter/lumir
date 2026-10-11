@@ -10,7 +10,7 @@
 `vault_write` / `full_access`）与五层判定管线（deny 规则 > vault 内写重定向 > 危险黑名单 > allow
 规则 > 模式默认分层），以及写类 / CLI 的批准闸（含 cli_run 用途句与会话内「采纳且本会话不再问」
 缓存）；上下文触顶的自动压缩（可见压缩标记 + wire 完整留存）；`[harness]` 配置节；会话边界
-（绑 vault、内存态、每个逻辑会话一个 `sessions/<session_id>.jsonl` 的 wire 形态留存、以及从历史
+（绑 vault、内存态、每个逻辑会话一个 `sessions/<vault 稳定 id>/<session_id>.jsonl` 的 wire 形态留存、以及从历史
 会话最小恢复的入口）；以及不依赖外部 API 的 mock provider。能力边界以 ADR 0007 Decision 2 为准，
 清单外工具扩张须经 Alex 裁决。由 change `add-harness-probe` 归档并入（2026-10-03，实现 M301–M306）；
 change `add-harness-permission-modes` 与 `reshape-harness-session-recording` 归档并入（2026-10-10）
