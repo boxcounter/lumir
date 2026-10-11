@@ -35,14 +35,20 @@
       装配期对账（`tests/unit/keys.test.ts` 的泛化断言）、`applyKeyOverrides` 三处共用它
 - [x] 3.3 族内绑定（⌃F/⌃B/⌃A/⌃E/⌃N/⌃P/⌃D/⌃H/⌥D/⌥⌫/⌃K/⌃Y/⌃T/⌃⇧F/B/N/P/A/E/⌥F/⌥B 及方向键两条
       别名）的作用域由 `editor` 改判 `text`（由 `scopeOfCommand` 派生）；命令 id 与编辑器侧实现
-      不变；族外 editor 命令（⌥G、widget 族、Tab 缩进等）作用域不动
+      不变；族外 editor 命令（⌥G、widget 族、Tab 缩进等）作用域不动。**评审 r1 P2-1 补齐**：⌥Delete
+      也是族内键（design §4.5 / HC4.4 / 场景 144 三处都写「⌥⌫ / ⌥Delete 进表」），补 `Alt-Delete →
+      editor.delete-word-forward`（与 ⌥D 同命令、同 `text` 作用域）+ keys 单测一行
 - [x] 3.4 `KeymapContext` 加 `isComposerEvent(event)`（装配层实现：`event.target` 在
       `.lumir-hp-composer` 内）；分发器对 `text` 作用域按「编辑器面或 composer 面」判定命中
 - [x] 3.5 装配层加**一处**命令包装 `composerTextFaceCommands()`：`text` 面命令按事件目标分派到
       编辑器侧实现或面板的 composer 命令入口（与 `isComposerEvent` 调同一个 `isComposerTarget`
-      助手——面判定只有一处）
+      助手——面判定只有一处）。**评审 r1 P2-2 改准**：原验收句「面板未在场 / 该处无动作时不消费
+      事件」与实现不符——实现是**命中即消费**（分发器命中绑定即 `preventDefault`），「无动作」表现为
+      无操作；MUST NOT 放行原生路径（段首 ⌥⌫ 放行后 WKWebView 的原生 `deleteWordBackward` 会跨块
+      合并 / 删卡，违反「词级 kill 不跨块」）。design §3.2 与 HC4 同步改准
 - [x] 3.6 面板句柄（`HarnessPanelHandle`）加 `composerCommand(command)`：按命令 id 分派到模型层
-      操作，返回是否消费
+      操作。**签名无返回**——命中即消费（见 §3.5 的改准），原先的「返回是否消费」boolean 无人消费、
+      与 design 的约定成死代码，故改签名并同步改准 design §3.2
 - [x] 3.7 键位查看面板与文案：`text` 面命令**归入既有分组**（`BINDING_GROUPS` 不动——族内命令
       本就在「移动与选择 / 扩选 / 删除 / kill-yank」四组里）；来由文案（本例采取**改准既有条目**
       而非另铸编号：D260–D267 / D278–D284 / D286–D293 三条连续段的 zh/en 各追加一句「M447：编辑器
@@ -157,3 +163,13 @@ import 图里有 TypeScript 参数属性（`src/preview/livePreview.ts` 一族�
 ② §7.3 / §6.2 的 MutationObserver 计数判据——真机套件无 JS 求值通道，需另加一条 suite verb 或在
 `tests/visual` 加 chromium 结构断言（两者都超出本 mission 的写入面）；③ §8.3 真机跑绿（场景已就绪，
 `--check` 已过，等 tower 统一安排前台窗口）。
+
+**评审 r1（reviewer-m453，两条 P2）的处置**：
+
+1. **P2-1 ⌥Delete 未进表**——已补 `Alt-Delete` → `editor.delete-word-forward`（与 ⌥D 同命令、作用域由
+   `scopeOfCommand` 派生为 `text`）一行绑定；`tests/unit/keys.test.ts` 补一行断言（命令 / 作用域 / 与
+   `Alt-Backspace` 是不同 token）；场景 144 的已知边界改准（⌥Delete 在表内、与 ⌥⌫ 对称）。
+2. **P2-2「无动作时不消费事件」口径被改写**——实现取**命中即消费**（语义更稳：段首 ⌥⌫ 放行原生会让
+   WKWebView 的 `deleteWordBackward` 跨块合并 / 删卡，违反不变量；「面板未在场」档本就不可达）。按偏差
+   处理流程登记并改准三处文本：design §3.2（含修订注记）、tasks §3.5 / §3.6、HC4 的「消费口径」段；
+   `composerCommand` 的签名由 `boolean` 改为 `void`（原返回值无人消费、与 design 的约定成死代码）。

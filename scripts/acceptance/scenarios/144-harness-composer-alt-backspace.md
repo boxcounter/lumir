@@ -94,7 +94,9 @@ steps:
 
 ## 已知边界（如实登记）
 
-- ⌥⌫ 的反向变体（⌥Delete = 前删词）本场景不单独判：它与 ⌥⌫ 走同一份词边界口径与同一键位层
-  分派，方向由命令 id 决定（⌥⌫ → `editor.delete-word-backward`）；模型层单测覆盖两个方向。
+- ⌥Delete（前删词）本场景不单独判，但**它在表内**：`Alt-Delete` → `editor.delete-word-forward`
+  （与 ⌥D 同命令），与 ⌥⌫ 的 `Alt-Backspace` → `editor.delete-word-backward` 对称——两者走同一份
+  词边界口径与同一键位层分派，方向由命令 id 决定；模型层单测覆盖 `killWordForward` /
+  `killWordBackward` 两个方向。
 - 「⌥⌫ 在段落段首不删前一张卡」的判据在场景 143。
 - 不发消息、不写 vault；真实 vault 与 `~/.config/lumir` 全程不读写。

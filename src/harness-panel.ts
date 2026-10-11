@@ -192,11 +192,13 @@ export interface HarnessPanelHandle {
   hasFocus(): boolean;
   /**
    * composer 侧的文本面命令入口（M447，change composer-emacs-nav design §3.2）：按命令 id 分派
-   * 到 composer 的模型层动作（移动 / 扩选 / 删除 / kill-yank / 转置），返回是否消费。
-   * 装配层的一处分派包装在事件目标落在 composer 内时调它（`text` 作用域命令的 composer 面）；
-   * 面板未在场 / 该处无动作时返回 false。命令实现是模型层纯函数驱动，不认识「事件目标」。
+   * 到 composer 的模型层动作（移动 / 扩选 / 删除 / kill-yank / 转置）。**命中即消费**——装配层的
+   * 分派包装在事件目标落在 composer 内时调它，而分发器命中绑定即 `preventDefault`（命中即吞默认
+   * 行为），因此本入口**不返回**「是否消费」；「该处无动作」按**无操作**处理，MUST NOT 放行原生
+   * 路径（放行会让段首 ⌥⌫ 的原生 deleteWordBackward 跨块合并 / 删卡）。命令实现是模型层纯函数
+   * 驱动，不认识「事件目标」。
    */
-  composerCommand(command: CommandId): boolean;
+  composerCommand(command: CommandId): void;
 }
 
 /**
@@ -3278,71 +3280,95 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   // 命令的两个面）。**移动 / 扩选只写选区与滚动位**——MUST NOT 重渲、MUST NOT 压撤销步
   // （design §6 的质量合同；导航的 DOM 稳定性由验收场景的 MutationObserver 计数钉住）。
 
-  /** 命令 id → composer 侧的模型动作；返回是否消费（面板未在场 / 该处无动作时 false）。 */
-  function runComposerCommand(command: CommandId): boolean {
+  /** 命令 id → composer 侧的模型动作。**命中即消费**：`text` 作用域的命令由分发器在命中时
+   *  `preventDefault`（命中即吞默认行为，命令本身无事可做也不放行原生路径——见 keymap-commands
+   *  增量的「分发」段），因此这里**没有**「是否消费」的返回值；「该处无动作」表现为无操作。
+   *  这条口径是 M453 实现期与 design §3.2 的第一次修订：若把「无动作」放行原生，段首 ⌥⌫ 的
+   *  WKWebView `deleteWordBackward` 会跨块合并 / 删卡，直接违反「词级 kill 不跨块」不变量。 */
+  function runComposerCommand(command: CommandId): void {
     const blocks = readBlocksFromDom();
     const sel = caretFromDom();
     const caret = sel === null ? null : sel.focus;
     switch (command) {
       case "editor.cursor-forward":
-        return navigate(blocks, caret, moveCharForward);
+        navigate(blocks, caret, moveCharForward);
+        return;
       case "editor.cursor-backward":
-        return navigate(blocks, caret, moveCharBackward);
+        navigate(blocks, caret, moveCharBackward);
+        return;
       case "editor.line-start":
-        return navigate(blocks, caret, moveLineStart);
+        navigate(blocks, caret, moveLineStart);
+        return;
       case "editor.line-end":
-        return navigate(blocks, caret, moveLineEnd);
+        navigate(blocks, caret, moveLineEnd);
+        return;
       case "editor.cursor-down":
-        return navigate(blocks, caret, moveLineDown);
+        navigate(blocks, caret, moveLineDown);
+        return;
       case "editor.cursor-up":
-        return navigate(blocks, caret, moveLineUp);
+        navigate(blocks, caret, moveLineUp);
+        return;
       case "editor.extend-char-forward":
-        return extendSelection(blocks, sel, moveCharForward);
+        extendSelection(blocks, sel, moveCharForward);
+        return;
       case "editor.extend-char-backward":
-        return extendSelection(blocks, sel, moveCharBackward);
+        extendSelection(blocks, sel, moveCharBackward);
+        return;
       case "editor.extend-line-start":
-        return extendSelection(blocks, sel, moveLineStart);
+        extendSelection(blocks, sel, moveLineStart);
+        return;
       case "editor.extend-line-end":
-        return extendSelection(blocks, sel, moveLineEnd);
+        extendSelection(blocks, sel, moveLineEnd);
+        return;
       case "editor.extend-line-down":
-        return extendSelection(blocks, sel, moveLineDown);
+        extendSelection(blocks, sel, moveLineDown);
+        return;
       case "editor.extend-line-up":
-        return extendSelection(blocks, sel, moveLineUp);
+        extendSelection(blocks, sel, moveLineUp);
+        return;
       case "editor.extend-word-forward":
-        return extendSelection(blocks, sel, moveWordForward);
+        extendSelection(blocks, sel, moveWordForward);
+        return;
       case "editor.extend-word-backward":
-        return extendSelection(blocks, sel, moveWordBackward);
+        extendSelection(blocks, sel, moveWordBackward);
+        return;
       case "editor.delete-char-forward":
-        return deleteAtCaret(blocks, sel, deleteForwardAtCaret);
+        deleteAtCaret(blocks, sel, deleteForwardAtCaret);
+        return;
       case "editor.delete-char-backward":
-        return deleteAtCaret(blocks, sel, backspaceAtCaret);
+        deleteAtCaret(blocks, sel, backspaceAtCaret);
+        return;
       case "editor.delete-word-forward":
-        return killWordAtCaret(blocks, sel, true);
+        killWordAtCaret(blocks, sel, true);
+        return;
       case "editor.delete-word-backward":
-        return killWordAtCaret(blocks, sel, false);
+        killWordAtCaret(blocks, sel, false);
+        return;
       case "editor.kill-line":
-        return killLineAtCaretCommand(blocks, sel);
+        killLineAtCaretCommand(blocks, sel);
+        return;
       case "editor.yank":
-        return yankAtCaret(blocks, sel);
+        yankAtCaret(blocks, sel);
+        return;
       case "editor.transpose-chars":
-        return transposeAtCaret(blocks, sel);
+        transposeAtCaret(blocks, sel);
+        return;
       default:
-        return false;
+        return;
     }
   }
 
-  /** 纯移动：只写选区 + 滚动位（不重渲、不压栈）。返回是否消费。 */
+  /** 纯移动：只写选区 + 滚动位（不重渲、不压栈）；无动作时不动 DOM。 */
   function navigate(
     blocks: readonly ComposerBlock[],
     caret: ComposerCaret | null,
     move: (blocks: readonly ComposerBlock[], caret: ComposerCaret) => ComposerCaret,
-  ): boolean {
-    if (caret === null) return false;
+  ): void {
+    if (caret === null) return;
     const from = normalizeComposerCaret(blocks, caret);
     const next = move(blocks, caret);
-    if (sameCaret(from, next)) return false; // 无动作：不动 DOM（含「原地空走」被归一吃掉的那一拍）
+    if (sameCaret(from, next)) return; // 无动作：不动 DOM（含「原地空走」被归一吃掉的那一拍）
     setDomCaret(next);
-    return true;
   }
 
   /** 扩选：anchor 不动、head 走同一套移动纯函数（design §4.4）。 */
@@ -3350,13 +3376,12 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     blocks: readonly ComposerBlock[],
     sel: ComposerSelection | null,
     move: (blocks: readonly ComposerBlock[], caret: ComposerCaret) => ComposerCaret,
-  ): boolean {
-    if (sel === null) return false;
+  ): void {
+    if (sel === null) return;
     const from = normalizeComposerCaret(blocks, sel.focus);
     const head = move(blocks, sel.focus);
-    if (sameCaret(from, head)) return false;
+    if (sameCaret(from, head)) return;
     setDomSelection(sel.anchor, head);
-    return true;
   }
 
   /** ⌃D / ⌃H：接既有 `deleteForwardAtCaret` / `backspaceAtCaret`（有选区先删选区）。 */
@@ -3364,42 +3389,40 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     blocks: readonly ComposerBlock[],
     sel: ComposerSelection | null,
     op: (blocks: readonly ComposerBlock[], caret: ComposerCaret) => { blocks: ComposerBlock[]; caret: ComposerCaret } | null,
-  ): boolean {
-    if (sel === null) return false;
+  ): void {
+    if (sel === null) return;
     if (!sameCaret(sel.anchor, sel.focus)) {
       withModel((current) => deleteSelectionRange(current, sel), false);
-      return true;
+      return;
     }
-    if (op(blocks, sel.focus) === null) return false;
+    if (op(blocks, sel.focus) === null) return;
     withModel((current) => op(current, sel.focus) ?? { blocks: [...current], caret: sel.focus }, false);
-    return true;
   }
 
-  /** ⌥D / ⌥⌫：词级 kill（不跨块），杀掉的文本并入**跨面共用**的 kill 槽。有选区时按删除族
-   *  口径先删选区（不并入槽——跨块的任意选区文本提取不在本 change 的范围，登记为边界）。 */
-  function killWordAtCaret(blocks: readonly ComposerBlock[], sel: ComposerSelection | null, forward: boolean): boolean {
-    if (sel === null) return false;
+  /** ⌥D / ⌥⌫（含 ⌥Delete 的对称命令）：词级 kill（不跨块），杀掉的文本并入**跨面共用**的
+   *  kill 槽。有选区时按删除族口径先删选区（不并入槽——跨块的任意选区文本提取不在本 change
+   *  的范围，登记为边界）。 */
+  function killWordAtCaret(blocks: readonly ComposerBlock[], sel: ComposerSelection | null, forward: boolean): void {
+    if (sel === null) return;
     if (!sameCaret(sel.anchor, sel.focus)) {
       withModel((current) => deleteSelectionRange(current, sel), false);
-      return true;
+      return;
     }
     const result = forward ? killWordForward(blocks, sel.focus) : killWordBackward(blocks, sel.focus);
-    if (result === null) return false;
+    if (result === null) return;
     applyKill(result, forward);
-    return true;
   }
 
   /** ⌃K：kill 到逻辑行行尾（不跨块），并入同一 kill 槽。 */
-  function killLineAtCaretCommand(blocks: readonly ComposerBlock[], sel: ComposerSelection | null): boolean {
-    if (sel === null) return false;
+  function killLineAtCaretCommand(blocks: readonly ComposerBlock[], sel: ComposerSelection | null): void {
+    if (sel === null) return;
     if (!sameCaret(sel.anchor, sel.focus)) {
       withModel((current) => deleteSelectionRange(current, sel), false);
-      return true;
+      return;
     }
     const result = killLineAtCaret(blocks, sel.focus);
-    if (result === null) return false;
+    if (result === null) return;
     applyKill(result, true);
-    return true;
   }
 
   /** 把一次 kill 的文本并入跨面共用的 kill 槽（相接判定与编辑器侧共用 `mergeKillText`——
@@ -3414,27 +3437,25 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
 
   /** ⌃Y：把 kill 槽内容插入光标处（有选区先删选区；多行经 `insertPlainTextAtCaret` 拆段；
    *  卡片边界位由它物化段落——卡片不被吞）。 */
-  function yankAtCaret(blocks: readonly ComposerBlock[], sel: ComposerSelection | null): boolean {
+  function yankAtCaret(blocks: readonly ComposerBlock[], sel: ComposerSelection | null): void {
     const text = currentKillSlot()?.text ?? "";
-    if (text === "" || sel === null) return false;
+    if (text === "" || sel === null) return;
     const collapsed = sameCaret(sel.anchor, sel.focus);
     withModel((current) => {
       const base = collapsed ? { blocks: [...current], caret: sel.focus } : deleteSelectionRange(current, sel);
       return insertPlainTextAtCaret(base.blocks, base.caret, text);
     }, true);
-    return true;
   }
 
   /** ⌃T：转置（段首 / 卡片边界无动作；有选区时不插手——与编辑器侧同口径）。 */
-  function transposeAtCaret(blocks: readonly ComposerBlock[], sel: ComposerSelection | null): boolean {
-    if (sel === null) return false;
-    if (!sameCaret(sel.anchor, sel.focus)) return false;
-    if (transposeCharsAtCaret(blocks, sel.focus) === null) return false;
+  function transposeAtCaret(blocks: readonly ComposerBlock[], sel: ComposerSelection | null): void {
+    if (sel === null) return;
+    if (!sameCaret(sel.anchor, sel.focus)) return;
+    if (transposeCharsAtCaret(blocks, sel.focus) === null) return;
     withModel(
       (current) => transposeCharsAtCaret(current, sel.focus) ?? { blocks: [...current], caret: sel.focus },
       false,
     );
-    return true;
   }
 
   /**
@@ -6355,8 +6376,8 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     hasFocus(): boolean {
       return document.activeElement instanceof Node && panel.contains(document.activeElement);
     },
-    composerCommand(command: CommandId): boolean {
-      return runComposerCommand(command);
+    composerCommand(command: CommandId): void {
+      runComposerCommand(command);
     },
   };
 }

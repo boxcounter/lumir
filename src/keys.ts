@@ -572,6 +572,13 @@ export const KEY_BINDINGS: readonly KeyBinding[] = [
   { key: "Ctrl-t", command: "editor.transpose-chars", scope: scopeOfCommand("editor.transpose-chars"), docKey: "D280" },
   { key: "Alt-KeyD", command: "editor.delete-word-forward", scope: scopeOfCommand("editor.delete-word-forward"), docKey: "D281" },
   { key: "Alt-Backspace", command: "editor.delete-word-backward", scope: scopeOfCommand("editor.delete-word-backward"), docKey: "D282" },
+  // M447 补：⌥Delete 是 ⌥D 的**另一个物理键形态**（前删词）——macOS 上 ⌥⌫ 与 ⌥Delete 是两个物理键，
+  // 前者在本表是 `Alt-Backspace`（该组合没有 Alt 层字符替换，`event.key` 仍为 "Backspace"），后者是
+  // `Alt-Delete`（`event.code` 为 "Delete"，含 Alt 的组合一律按物理键判定）。两者同族、方向相反，与 ⌥D
+  // 指向**同一条**命令 id（`editor.delete-word-forward`）——不新增命令。作用域由 `scopeOfCommand` 派生为
+  // `text`：M447 起编辑器与 composer 两处文本面共用同一条绑定（composer 内的 ⌥Delete 因此走
+  // `killWordForward`，与 ⌥⌫ 的 `killWordBackward` 对称；不补这条绑定它是落空放行给原生路径的）。
+  { key: "Alt-Delete", command: "editor.delete-word-forward", scope: scopeOfCommand("editor.delete-word-forward"), docKey: "D281" },
 
   // ── 编辑器内：kill / yank（M132 档 2；单槽 kill buffer，kill ring 后续）
   { key: "Ctrl-k", command: "editor.kill-line", scope: scopeOfCommand("editor.kill-line"), docKey: "D283" },

@@ -1007,6 +1007,21 @@ test("text 面命令组：与 design §4 的键表逐条对应、作用域派生
       `${id} 缺少默认绑定`,
     );
   }
+  // M447 补（r1 P2-1）：⌥Delete 是 ⌥D 的**另一个物理键形态**（前删词）——与 ⌥D 同命令、同
+  // `text` 作用域。不补这条绑定它会落空放行给原生路径（composer 内「词级 kill 不跨块」因此失去
+  // 模型层担保；design §4.5 / HC4.4 / 场景 144 三处都写明它进表）。
+  const altDelete = KEY_BINDINGS.find((binding) => normalizeKey(binding.key) === "Alt-Delete");
+  assert.equal(
+    altDelete?.command,
+    "editor.delete-word-forward",
+    "⌥Delete 应绑定 editor.delete-word-forward（与 ⌥D 同命令）",
+  );
+  assert.equal(altDelete?.scope, "text", "⌥Delete 的作用域应派生为 text");
+  assert.notEqual(
+    normalizeKey("Alt-Delete"),
+    normalizeKey("Alt-Backspace"),
+    "⌥Delete 与 ⌥⌫ 必须归一到不同 token（两个物理键）",
+  );
 });
 
 test("分发器：text 作用域在 composer 目标上命中，族外 editor 命令在 composer 内不命中、chrome 上都不命中", () => {

@@ -106,13 +106,19 @@ export type KeyScope = "global" | "editor" | "text";
 装配层注入的命令表里，`text` 面命令由一个包装产出：
 
 ```
-runtime[id] = (event) => inComposer(event) ? panel.composerCommand(id, event) : editorCommand(id, event)
+runtime[id] = (event) => { if (inComposer(event)) panel.composerCommand(id); else editorCommand(id, event); }
 ```
 
-- `panel.composerCommand(id, event)` 是面板句柄新增的入口（`HarnessPanelHandle` 加一个方法，形态与既有
-  `insertQuoteCard` / `focusComposer` 的挂载点同款）：按命令 id 分派到 composer 的模型层操作；**返回是否消费**
-  （面板未挂载 / composer 不在场 / 该光标位无动作时返回 false，事件不消费、放行给原生路径——例如 composer
-  从没被创建时）。
+- `panel.composerCommand(id)` 是面板句柄新增的入口（`HarnessPanelHandle` 加一个方法，形态与既有
+  `insertQuoteCard` / `focusComposer` 的挂载点同款）：按命令 id 分派到 composer 的模型层操作。
+  **命中即消费**——分发器命中绑定即 `preventDefault`（命中即吞默认行为，命令本身无事可做也不放行
+  原生路径），因此本入口**不返回**「是否消费」；「该处无动作」（块首 ⌃B / 段首 ⌥⌫ / 有选区的 ⌃T 等）
+  按**无操作**处理，MUST NOT 放行原生路径。
+  > **M453 实现期修订（本条的第一次更正，评审 r1 P2-2）**：草案曾写「`composerCommand` 返回是否消费的
+  > boolean，面板未挂载 / composer 不在场 / 该光标位无动作时返回 false、事件放行原生」。实测那样会**破坏
+  > 合同**——段首 ⌥⌫ 放行后 WKWebView 的原生 `deleteWordBackward` 会跨块合并 / 删卡，直接违反「词级 kill
+  > 不跨块」不变量；且「面板未在场」档本就不可达（composer 不在 DOM 时 `isComposerTarget` 为假）。实现取
+  > 「命中即消费、无动作即无操作」，入口签名改为 `composerCommand(command): void`。
 - 面判定（`inComposer`）SHALL 只有一处实现（小助手 `isComposerTarget(event)`，判 `event.target` 在
   `.lumir-hp-composer` 内）；`KeymapContext.isComposerEvent` 与上面这个包装**调同一个**助手——两条路径各写
   一遍判定就是第二个真源（REVIEW.md 第 8 条）。命令实现本身仍是纯函数驱动，不认识「事件目标」。
