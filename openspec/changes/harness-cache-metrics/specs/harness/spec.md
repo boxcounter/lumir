@@ -124,3 +124,18 @@ LLM 错误、循环上限）SHALL 以 sidecar 记录留存，被 wire 覆盖或�
 
 - **WHEN** 本 change 落地后进行首次对话
 - **THEN** 新会话写入 `sessions/` 新文件；旧 vault 聚合文件不被续写、不被改写、不做迁移
+
+#### Scenario: 按 vault 分置与列举范围
+
+- **WHEN** vault A 与 vault B 各有历史会话，随后在 vault A 打开 harness 段的会话浮层
+- **THEN** 两边的会话文件各自落在 `sessions/<A 的 vault 稳定 id>/` 与 `sessions/<B 的 vault 稳定 id>/` 下；浮层只列 A 目录里的会话，且仍按 `session_open.vault_root` 过滤（目录内容不构成归属判据）
+
+#### Scenario: 平铺文件一次性归位
+
+- **WHEN** 在仓内手动执行一次性迁移脚本，`sessions/` 根下存在平铺的 `<session_id>.jsonl`（首行 `session_open` 带 `vault_root`）
+- **THEN** 每个文件被移入其 vault 的目录（逐字节不变，只换位置），脚本跑完后根下不再有 `*.jsonl`；再跑一次脚本不产生任何搬运（幂等）
+
+#### Scenario: 不可归属者进孤儿桶
+
+- **WHEN** 一次性迁移脚本遇到平铺文件不可读 / 首行不是 `session_open` / 其 `vault_root` 在注册表里找不到 / 目标位置已有同名文件
+- **THEN** 该文件被移入保留目录 `sessions/_orphaned/`，不删除、不改写；它不出现在任何 vault 的会话列举里，也不被任何恢复入口读到
