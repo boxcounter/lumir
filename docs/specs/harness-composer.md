@@ -84,6 +84,42 @@ composer 的模型层 SHALL 把「相邻两个原子块之间的位置」当作�
 `blocks[at]` 整个跳过、卡片被删）。退格 / 前删在该位置的语义沿用既有卡片语义（退格删**前**一张、
 前删删**后**一张），不在本条另立新语义。
 
+### HC4 — Emacs 文本导航族：停靠点一步必有位移，导航不是编辑、不重渲
+
+composer 内的 Emacs 文本导航族（⌃F / ⌃B、⌃A / ⌃E、⌃N / ⌃P、⌃D / ⌃H、⌥D / ⌥⌫、⌃K / ⌃Y、⌃T、
+扩选六键 ⌃⇧F/B/N/P/A/E 与按词扩选 ⌥F / ⌥B）SHALL 经**统一键位表**（作用域 `text` = 编辑器内容区
+或 composer 输入区，change composer-emacs-nav）分发并按模型层语义执行；MUST NOT 由引擎的原生
+caret 路径决定行为。族外的键位（⌃G、⌥G、翻屏族 ⌃V / ⌥V / ⌃L、`Tab` / `⇧Tab`、撤销族）MUST NOT
+被本 capability 改变。
+
+1. **停靠点与同形位归一**：停靠点序列 = 段落各**码点边界**偏移（代理对整体一步；低位代理不构成
+   独立停靠点）· 卡片前缘 `(i, 0)`（后缘 = 下一块前缘）· 末尾之后的 `(块数, 0)`。段落**非空**末缘
+   `(i, len)` 与紧邻后块的前缘同形，归一到**后块前缘**表示（末段末缘归一到「末尾之后」）；归一
+   SHALL 只有一处实现（`normalizeComposerCaret`，移动 / 扩选命令共用）。**归一等价类后，序列上
+   任意相邻两个停靠点必不相同**——一步必有位移（不得「原地空走」）。空段落只有 `offset 0` 一个
+   停靠点、不参与归一。⌃F / ⌃B SHALL 在停靠点序列上移动**一步**，遇原子卡片 SHALL 整块一步跨过；
+   ⌃A / ⌃E 落当前逻辑行行首 / 行尾（`\n` 为界）；⌃N / ⌃P 在逻辑行之间移动（同列位，超出目标行
+   长度取行尾），出段落跨到相邻**段落**块，卡片不产生停靠行。
+2. **导航不是编辑**：仅移动光标 MUST NOT 改变块序列、MUST NOT 产生撤销步、MUST NOT 触发
+   `renderComposer` 那类整面重渲（只允许写选区与滚动位）；移动后光标行 SHALL 在 composer 视口内
+   （HC2）。失败形态（无动作、块边界、无法落位）SHALL 表现为「无动作」，MUST NOT 留下半截状态。
+3. **扩选**：anchor 不动、head 走与移动族**同一份**移动纯函数；⌥F / ⌥B 是**按词扩选**（与键位表内
+   既有语义一致），MUST NOT 被实现为词移动。
+4. **删除族与 kill-yank**：⌃D / ⌃H SHALL 与 Delete / Backspace 走**同一份**模型语义（卡片前缘 /
+   段末遇卡片时对整块作用；有选区时删除选区），MUST NOT 存在第二份删除判定；⌥D / ⌥⌫ SHALL 按词
+   kill 到词尾 / 词首并并入 kill 槽，词边界口径与编辑器侧共用同一份实现；⌥⌫ / ⌥Delete SHALL 由
+   本能力接管（MUST NOT 被输入区既有的就地退格 / 前删路径吞掉）。词级 kill 与 ⌃K MUST NOT 跨块
+   ——到达段落边界即停（段边界处无动作），MUST NOT 隐式合并段落、MUST NOT 隐式删除卡片。⌃K kill
+   到当前逻辑行行尾（已在行尾则杀该行界、段内合并两行）。kill 槽 SHALL 是**跨面共用**的单一真源
+   （编辑器与 composer 同一槽、同一份连续 kill 相接判定）；kill 的内容 MUST NOT 含卡片。⌃Y 把
+   kill 槽内容插入光标处（有选区先删选区），多行经段落拆分入口落成多个段落块，光标在卡片边界位
+   时先物化一个段落。
+
+> 归一口径的一处**实现注记**（与 change 的 design §4.1「读回处也调它」不同）：`caretFromDom` 的
+> 编辑读回**不**调 `normalizeComposerCaret`——编辑动词（退格 / 前删 / 键入分派 / 粘贴）依赖
+> 「段落末缘 `(i, len)`」与「后块前缘 `(i+1, 0)`」是两个不同的模型值（归一后段落末缘的退格会
+> 变成跨块合并、段末键入会插到下一段段首）。等价类服务的是**导航**（移动 / 扩选命令）。
+
 ## 证伪方式（属性测试口径）
 
 对「光标落点 × 段落文本 × 内容体量」的输入分布逐个取样：
@@ -129,6 +165,17 @@ composer 的模型层 SHALL 把「相邻两个原子块之间的位置」当作�
    - 已知边界：显式滚动只在 Blink 上可观测到差异，而真机是 WKWebView——118 覆盖不到
      「显式代码被删」这一形态，如需在 chromium 层补一条结构断言另开（本 change 的改动面不含
      `tests/visual/scenes/**`）。
+8. **HC4 判据层（零 DOM 单测）**：`normalizeComposerCaret` / `composerCaretStops` 与移动 / 删除 /
+   kill / 转置纯函数——小块序列全枚举下断言「相邻停靠点必不同类、序列线性有序」、移动族落点
+   （代理对整步、卡片一步跨过、跨段跳过卡片）、词级 kill 不跨块、导航函数在冻结入参上返回
+   （块序列逐字节不变）。落点：`tests/unit/composer-nav.test.ts`。
+9. **HC4 行为层（真机验收）**：`scripts/acceptance/scenarios/140`–`147` 八条——移动族落点 /
+   相邻卡片一步跨过 / 导航不成撤销步 / 删除族按整卡 / ⌥⌫ 是词级删除 / kill 槽跨面共用 /
+   扩选 anchor 不动 / 族外键不回退。
+   **已知未覆盖**：「导航不重渲」这一条要求 MutationObserver 计数 = 0，而真机套件只有
+   KimiCU 的 AX / 截图 / 输入通道、**没有 JS 求值通道**（`scripts/acceptance/lib/cu.mjs`），
+   当前判不了；场景 142 用「导航后文本不变 + 导航不成撤销步」这条可观测后果替代，缺口登记在
+   change 的 tasks §7 与场景 142 的已知边界节。
 
 ## 实测依据（M419 现场，2026-10-10）
 
@@ -162,6 +209,14 @@ chromium 探针（`vite dev` + 视觉套件的桩，光标读回 / 高度 / 滚�
   内容型输入的物化收口在两处：`beforeinput` 的 `insertText`（键入）与 `compositionstart`（IME
   组合的首次落字）；粘贴 / 拖入 / ⇧Enter / 插卡片各自的入口**不改落法**——它们的「卡片前缘」
   分支早已实现，本条款只是让那个位置**读得出来**。
+- HC4 的模型层是 `src/harness-panel.ts` 的一组纯函数：`normalizeComposerCaret`（同形位归一）、
+  `composerCaretStops`（停靠点序列）、`moveCharForward` / `moveCharBackward` / `moveLineStart` /
+  `moveLineEnd` / `moveLineDown` / `moveLineUp` / `moveWordForward` / `moveWordBackward`（移动与
+  扩选 head）、`killWordForward` / `killWordBackward` / `killLineAtCaret` / `transposeCharsAtCaret`
+  （删除族与转置）。装配层的**一处**包装按事件目标分派到 `HarnessPanelHandle.composerCommand`
+  （编辑器面走 `src/editor.ts` 的既有命令、composer 面走这些纯函数）；移动 / 扩选只写选区
+  （`setDomCaret` / `setDomSelection`）与滚动位，**不**走整面重渲。词 / 字素簇扫描与 kill 槽的
+  **共用**实现住在叶子模块 `src/quote-card.ts`（编辑器侧与 composer 侧同一份）。
 - 已知边界：卡片上按 ⇧Enter 时「新行」落在卡片那一行的上方（光标所在处），不改变卡片与
   文本块的相对次序——卡片是原子块，本条不承诺它内部出现换行。
 - 已知边界（HC3）：`compositionstart` 的物化**不走整面重渲**（`withModel`），只就地插入那一个

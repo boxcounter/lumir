@@ -9,6 +9,7 @@ import type { CopyKey } from "../../src/copy-data.ts";
 import {
   BLOCK_SCROLL_CLASS,
   COMMAND_IDS,
+  COMPOSER_TEXT_COMMAND_IDS,
   EDITOR_COMMAND_IDS,
   KEYLESS_COMMAND_IDS,
   KEY_BINDINGS,
@@ -20,8 +21,9 @@ import {
   applyKeyOverrides,
   keyToken,
   normalizeKey,
+  scopeOfCommand,
 } from "../../src/keys.ts";
-import type { CommandRuntime, KeyBinding } from "../../src/keys.ts";
+import type { CommandId, CommandRuntime, KeyBinding } from "../../src/keys.ts";
 
 // ---------------------------------------------------------------------------
 // token 归一化
@@ -102,17 +104,18 @@ test("keyToken：含 Alt 的组合按物理键 code 判定，无 code 时回落 
 const commandIds = COMMAND_IDS as readonly string[];
 const editorCommandIds = EDITOR_COMMAND_IDS as readonly string[];
 
-test("KEY_BINDINGS：token 唯一、命令都在 COMMAND_IDS 里、作用域与命令组一致", () => {
+test("KEY_BINDINGS：token 唯一、命令都在 COMMAND_IDS 里、作用域与命令面一致（单一来源 scopeOfCommand）", () => {
   const tokens = KEY_BINDINGS.map((binding) => binding.key.split(/\s+/).map(normalizeKey).join(" "));
   assert.equal(new Set(tokens).size, tokens.length, "表内存在归一到同一序列的绑定");
   assert.equal(KEY_BINDINGS.length, tokens.length);
   for (const binding of KEY_BINDINGS) {
     assert.ok(commandIds.includes(binding.command), `${binding.key} → ${binding.command} 不在 COMMAND_IDS`);
-    // scope 由命令归属决定：editor 组命令只能绑 editor，其余只能绑 global（配置重绑同口径）
+    // 作用域由命令面机械派生（M447 的**单一来源** scopeOfCommand：text 面命令组 → text，
+    // 其余 editor 组 → editor，其余 → global）。配置重绑同口径——MUST NOT 两处各写一份判据。
     assert.equal(
       binding.scope,
-      editorCommandIds.includes(binding.command) ? "editor" : "global",
-      `${binding.key} 的作用域与 ${binding.command} 的命令组不一致`,
+      scopeOfCommand(binding.command),
+      `${binding.key} 的作用域与 ${binding.command} 的命令面不一致`,
     );
     assert.ok(docTextOf(binding).length > 0, `${binding.key} 缺少来由说明（表即文档）`);
   }
@@ -933,4 +936,134 @@ test("pane.* 命令可由 [keys] 重绑 / 解绑（默认键位单段无空白�
   assert.deepEqual(unbound.warnings, []);
   assert.equal(unbound.bindings.find((binding) => normalizeKey(binding.key) === "Alt-KeyW"), undefined);
   assert.equal(unbound.bindings.find((binding) => binding.command === "pane.close"), undefined);
+});
+
+// ---------------------------------------------------------------------------
+// M447（change composer-emacs-nav）：text 面（文本面 = 编辑器内容区 或 harness composer）
+// ---------------------------------------------------------------------------
+
+test("text 面命令组：与 design §4 的键表逐条对应、作用域派生为 text、族外 editor 命令不放宽", () => {
+  const expected: string[] = [
+    "editor.cursor-forward",
+    "editor.cursor-backward",
+    "editor.line-start",
+    "editor.line-end",
+    "editor.cursor-down",
+    "editor.cursor-up",
+    "editor.delete-char-forward",
+    "editor.delete-char-backward",
+    "editor.delete-word-forward",
+    "editor.delete-word-backward",
+    "editor.kill-line",
+    "editor.yank",
+    "editor.transpose-chars",
+    "editor.extend-char-forward",
+    "editor.extend-char-backward",
+    "editor.extend-line-down",
+    "editor.extend-line-up",
+    "editor.extend-line-start",
+    "editor.extend-line-end",
+    "editor.extend-word-forward",
+    "editor.extend-word-backward",
+  ];
+  // 清单逐条对应（缺一条即红）：顺序无关、集合相等。
+  assert.deepEqual([...COMPOSER_TEXT_COMMAND_IDS].sort(), [...expected].sort());
+  for (const id of COMPOSER_TEXT_COMMAND_IDS) {
+    assert.ok(commandIds.includes(id), `${id} 不在 COMMAND_IDS`);
+    assert.ok(editorCommandIds.includes(id), `${id} 应仍在编辑器命令组里（实现在 editor.ts）`);
+    assert.equal(scopeOfCommand(id), "text", `${id} 的作用域应派生为 text`);
+  }
+  // 族外的 editor 命令作用域不放宽（在 composer 内照旧不命中）。
+  for (const id of [
+    "editor.goto-line",
+    "editor.scroll-page-down",
+    "editor.scroll-page-up",
+    "editor.recenter",
+    "editor.keyboard-quit",
+    "editor.select-all",
+    "editor.undo",
+    "editor.redo",
+    "editor.list-indent",
+    "editor.list-outdent",
+    "block.copy",
+  ]) {
+    assert.equal(scopeOfCommand(id as CommandId), "editor", `${id} MUST NOT 被放宽到 text`);
+  }
+  // 表内：族内绑定全为 text；每条 text 面命令都有默认绑定（无孤儿）。
+  const textBindings = KEY_BINDINGS.filter((binding) => binding.scope === "text");
+  assert.ok(
+    textBindings.length >= COMPOSER_TEXT_COMMAND_IDS.length,
+    `text 面绑定数（${textBindings.length}）应 ≥ 命令数（${COMPOSER_TEXT_COMMAND_IDS.length}）——方向键与 ⌃N/⌃P 共用命令`,
+  );
+  for (const binding of textBindings) {
+    assert.ok(
+      (COMPOSER_TEXT_COMMAND_IDS as readonly string[]).includes(binding.command),
+      `${binding.key} 的 scope 是 text 但命令 ${binding.command} 不在 text 面命令组里`,
+    );
+  }
+  for (const id of COMPOSER_TEXT_COMMAND_IDS) {
+    assert.ok(
+      KEY_BINDINGS.some((binding) => binding.command === id),
+      `${id} 缺少默认绑定`,
+    );
+  }
+});
+
+test("分发器：text 作用域在 composer 目标上命中，族外 editor 命令在 composer 内不命中、chrome 上都不命中", () => {
+  const host = fakeWindow();
+  const { runtime, runs } = recordingRuntime();
+  let inEditor = false;
+  let inComposer = false;
+  new Keymap().attach(host.target, runtime, {
+    isEditorEvent: () => inEditor,
+    isComposerEvent: () => inComposer,
+  });
+
+  // composer 内：族内键命中（⌃B）
+  inComposer = true;
+  const ctrlB = keyEvent({ key: "b", ctrlKey: true, target: { isContentEditable: true } });
+  host.fire(ctrlB);
+  assert.equal(ctrlB.defaultPrevented, true, "composer 内 text 面键应命中");
+  assert.deepEqual(runs, ["editor.cursor-backward"]);
+
+  // composer 内：族外 editor 命令不命中（⌥G = editor.goto-line）
+  const altG = keyEvent({ key: "©", code: "KeyG", altKey: true, target: { isContentEditable: true } });
+  host.fire(altG);
+  assert.equal(altG.defaultPrevented, false, "族外 editor 命令在 composer 内不命中（作用域不越界）");
+  assert.deepEqual(runs, ["editor.cursor-backward"]);
+
+  // composer 内：Tab（editor.list-indent）同样不命中
+  const tab = keyEvent({ key: "Tab", target: { isContentEditable: true } });
+  host.fire(tab);
+  assert.equal(tab.defaultPrevented, false, "Tab 归 editor 作用域，composer 内不命中");
+  assert.deepEqual(runs, ["editor.cursor-backward"]);
+
+  // chrome（既不在编辑器也不在 composer）上：text 面键不命中
+  inComposer = false;
+  const onChrome = keyEvent({ key: "b", ctrlKey: true, target: { tagName: "BUTTON" } });
+  host.fire(onChrome);
+  assert.equal(onChrome.defaultPrevented, false, "两个面都不在时不消费");
+  assert.deepEqual(runs, ["editor.cursor-backward"]);
+
+  // contentDOM 内：行为与今天逐条一致
+  inEditor = true;
+  const inEditorEvent = keyEvent({ key: "b", ctrlKey: true, target: { isContentEditable: true } });
+  host.fire(inEditorEvent);
+  assert.equal(inEditorEvent.defaultPrevented, true);
+  assert.deepEqual(runs, ["editor.cursor-backward", "editor.cursor-backward"]);
+});
+
+test("text 面命令可经 [keys] 重绑 / 解绑，作用域仍派生为 text", () => {
+  const rebound = applyKeyOverrides({ "Ctrl-j": "editor.cursor-forward" });
+  assert.deepEqual(rebound.warnings, []);
+  const moved = rebound.bindings.find((binding) => normalizeKey(binding.key) === "Ctrl-J");
+  assert.equal(moved?.command, "editor.cursor-forward");
+  assert.equal(moved?.scope, "text", "重绑后作用域仍由命令面派生（不随配置漂移）");
+  const unbound = applyKeyOverrides({ "Ctrl-f": null });
+  assert.deepEqual(unbound.warnings, []);
+  assert.equal(unbound.bindings.find((binding) => normalizeKey(binding.key) === "Ctrl-F"), undefined);
+  assert.equal(
+    unbound.bindings.find((binding) => binding.command === "editor.cursor-forward" && normalizeKey(binding.key) === "Ctrl-F"),
+    undefined,
+  );
 });

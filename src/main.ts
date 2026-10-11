@@ -2,7 +2,7 @@ import { createShell } from "./shell";
 import { createEditor } from "./editor";
 import type { EditorHandle, EditorSession } from "./editor";
 import type { EditorView } from "@codemirror/view";
-import { applyKeyOverrides, BLOCK_SCROLL_CLASS, EDITOR_COMMAND_IDS, KEY_BINDINGS, Keymap, TAB_GOTO_IDS } from "./keys";
+import { applyKeyOverrides, BLOCK_SCROLL_CLASS, COMPOSER_TEXT_COMMAND_IDS, EDITOR_COMMAND_IDS, KEY_BINDINGS, Keymap, TAB_GOTO_IDS } from "./keys";
 import type { CommandId, CommandRunner, CommandRuntime, EditorCommandId, KeyBinding, KeyOverrides } from "./keys";
 import { DEFAULT_SPLIT_RATIO, clampSplitRatio, createDividerDrag, createPaneLayout, emptyPaneGuideVisible, paneBlocksInput } from "./pane-layout";
 import type { DividerDrag, PaneId, PaneKind } from "./pane-layout";
@@ -2243,8 +2243,39 @@ harnessPanel.setQuoteJumpHandler((card) => void quoteGesture.jump(card));
 // 原先散落的四条旁路（keys.ts 的 window trie、editor 的 CM keymap 与 domEventHandlers、
 // 此处的裸 window 监听）已全部迁入；剩下的只有这一处 attach。
 // ---------------------------------------------------------------------------
+/** harness composer 输入区的 class（M447）：`text` 作用域的面判定选择器。 */
+const COMPOSER_INPUT_CLASS = "lumir-hp-composer";
+
+/** 事件目标是否落在 harness composer 输入区内（M447）。`KeymapContext.isComposerEvent` 与
+ *  `text` 面命令的分派包装**调同一个**助手——两条路径各写一遍判定就是第二个真源
+ *（REVIEW.md 第 8 条）。面板未开 / harness pane 不在场时 composer 元素不在 DOM 里，判定
+ *  自然为假。 */
+function isComposerTarget(event: KeyboardEvent | undefined): boolean {
+  const target = event?.target;
+  return target instanceof Element && target.closest(`.${COMPOSER_INPUT_CLASS}`) !== null;
+}
+
+/** `text` 面命令的**一处**面内分派包装（M447，change composer-emacs-nav design §3.2）：事件
+ *  目标在 composer 内时交给面板句柄的 composer 命令入口（模型层纯函数），否则走编辑器侧既有
+ *  实现。MUST NOT 每条命令各写一遍面判定——这一处是唯一分派点。 */
+function composerTextFaceCommands(): Partial<Record<CommandId, CommandRunner>> {
+  const wrapped: Partial<Record<CommandId, CommandRunner>> = {};
+  for (const id of COMPOSER_TEXT_COMMAND_IDS) {
+    const base = editor.commands[id];
+    wrapped[id] = (event) => {
+      if (isComposerTarget(event)) {
+        harnessPanel.composerCommand(id);
+        return;
+      }
+      base(event);
+    };
+  }
+  return wrapped;
+}
+
 const commands: CommandRuntime = {
   ...editor.commands,
+  ...composerTextFaceCommands(),
   "document.save": () => {
     void save.save();
   },
@@ -2370,6 +2401,9 @@ const keymapContext = {
       )
     );
   },
+  // `text` 作用域的第二个面（M447）：事件目标在 harness composer 内。与上面那条包装同一
+  // 个助手（单一真源），面板不在场时为假——族外 editor 命令与 chrome 上的按键照旧不命中。
+  isComposerEvent: isComposerTarget,
   // 命令级命中条件（M240，理由见 keys.ts 的 KeymapContext.commandGate）：`table.toggle-fullscreen`
   // 的命中条件需要编辑器状态（caret 在不在渲染为 grid 的表内 / 容器是否持焦），而
   // `[keys]` 覆盖产出的绑定没有 `when` 字段——条件因此落在命令实现方。不满足时返回 false，

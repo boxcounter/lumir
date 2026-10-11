@@ -1,4 +1,4 @@
-import { Annotation, Compartment, EditorSelection, EditorState, Prec, StateEffect, Transaction, findClusterBreak } from "@codemirror/state";
+import { Annotation, Compartment, EditorSelection, EditorState, Prec, StateEffect, Transaction } from "@codemirror/state";
 import type { Extension, SelectionRange, Text } from "@codemirror/state";
 import { EditorView, drawSelection, keymap, lineNumbers, highlightActiveLine, highlightActiveLineGutter } from "@codemirror/view";
 import type { ViewUpdate } from "@codemirror/view";
@@ -9,6 +9,21 @@ export type ScrollSnapshot = ReturnType<EditorView["scrollSnapshot"]>;
 import { history, redo, undo } from "@codemirror/commands";
 import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
 import { DEFAULT_AUTO_INDENT, enterWithAutoIndent } from "./enter-indent";
+// M447：词 / 字素簇扫描与 kill 槽的**共用**实现（两侧只有一份）住在叶子模块 src/quote-card.ts
+// ——composer 侧的模块图必须能进零 DOM 单测，而本模块的 import 图里有参数属性，两侧不能直接互
+// import（同 src/enter-indent.ts / src/list-indent.ts 的模块头所述）。
+import {
+  clusterBackward,
+  clusterForward,
+  currentKillSlot,
+  mergeKillText,
+  scanRunBackward,
+  scanRunForward,
+  setKillSlot,
+  wordEndForward,
+  wordStartBackward,
+} from "./quote-card";
+import type { TextReader } from "./quote-card";
 import { HighlightStyle, syntaxHighlighting, syntaxTree, ensureSyntaxTree } from "@codemirror/language";
 import type { Language } from "@codemirror/language";
 import { tags } from "@lezer/highlight";
@@ -446,11 +461,11 @@ function horizontalTarget(view: EditorView, from: SelectionRange, forward: boole
   let head = view.moveByChar(from, forward).head;
   const span = mathSpanCrossed(view.state, from.head, head, forward);
   if (span !== null) {
-    // findClusterBreak 接收 string；取 ±64 字符窗口避免大文档整篇 sliceString。
+    // 字素簇步进走共用核（src/quote-card.ts）——取 ±64 字符窗口避免大文档整篇 sliceString
+    // 的那件事由核自己按窗口读（口径与编辑器 / composer 两侧一致，只有一份）。
+    const read = (a: number, b: number): string => view.state.doc.sliceString(a, b);
     const edge = forward ? span.from : span.to;
-    const winFrom = Math.max(0, edge - 64);
-    const win = view.state.doc.sliceString(winFrom, Math.min(view.state.doc.length, edge + 64));
-    head = winFrom + findClusterBreak(win, edge - winFrom, forward);
+    head = forward ? clusterForward(read, edge, view.state.doc.length) : clusterBackward(read, edge, 0);
   }
   return head;
 }
@@ -579,59 +594,20 @@ function editLimits(state: EditorState, pos: number): { from: number; to: number
   return { from: clamp?.from ?? 0, to: clamp?.to ?? state.doc.length, clamp };
 }
 
-/** 词字符（Emacs 词法口径的近似）：Unicode 字母 / 数字 / 下划线。 */
-const WORD_CHAR = /[\p{L}\p{N}_]/u;
-const isWordChar = (ch: string): boolean => WORD_CHAR.test(ch);
-
-/** 向前扫描同类码点（码点粒度，避免拆开代理对）；到 limit 或首个异类为止。 */
-function scanForward(state: EditorState, pos: number, limit: number, match: (ch: string) => boolean): number {
-  let i = pos;
-  while (i < limit) {
-    for (const ch of state.doc.sliceString(i, Math.min(limit, i + 256))) {
-      if (!match(ch)) return i;
-      i += ch.length;
-    }
-  }
-  return Math.min(i, limit);
-}
-
-/** 向后扫描同类码点；到 limit 或首个异类为止。 */
-function scanBackward(state: EditorState, pos: number, limit: number, match: (ch: string) => boolean): number {
-  let i = pos;
-  while (i > limit) {
-    const chars = [...state.doc.sliceString(Math.max(limit, i - 256), i)];
-    for (let k = chars.length - 1; k >= 0; k--) {
-      if (!match(chars[k])) return i;
-      i -= chars[k].length;
-    }
-  }
-  return Math.max(i, limit);
-}
-
-/** Emacs forward-word：先跳过非词字符，再走到当前词尾。 */
-function forwardWordEnd(state: EditorState, pos: number, limit: number): number {
-  return scanForward(state, scanForward(state, pos, limit, (ch) => !isWordChar(ch)), limit, isWordChar);
-}
-
-/** Emacs backward-word：反向跳过非词字符，再走到词首。 */
-function backwardWordStart(state: EditorState, pos: number, limit: number): number {
-  return scanBackward(state, scanBackward(state, pos, limit, (ch) => !isWordChar(ch)), limit, isWordChar);
-}
-
-/** 下一个字素簇；换行符也是合法步长（Emacs C-d 在行尾删掉换行、两行合并）。 */
-function nextCluster(state: EditorState, pos: number, limit: number): number {
-  if (pos >= limit) return limit;
-  const win = state.doc.sliceString(pos, Math.min(limit, pos + 64));
-  return pos + Math.min(findClusterBreak(win, 0, true), limit - pos);
-}
-
-/** 上一个字素簇。 */
-function prevCluster(state: EditorState, pos: number, limit: number): number {
-  if (pos <= limit) return limit;
-  const from = Math.max(limit, pos - 64);
-  const win = state.doc.sliceString(from, pos);
-  return from + findClusterBreak(win, win.length, false);
-}
+/** 编辑器侧的薄包装：口径的唯一来源是 `src/quote-card.ts` 的共用核（reader 读 `EditorState.doc`）。 */
+const docReader = (state: EditorState): TextReader => (from, to) => state.doc.sliceString(from, to);
+const scanForward = (state: EditorState, pos: number, limit: number, match: (ch: string) => boolean): number =>
+  scanRunForward(docReader(state), pos, limit, match);
+const scanBackward = (state: EditorState, pos: number, limit: number, match: (ch: string) => boolean): number =>
+  scanRunBackward(docReader(state), pos, limit, match);
+const forwardWordEnd = (state: EditorState, pos: number, limit: number): number =>
+  wordEndForward(docReader(state), pos, limit);
+const backwardWordStart = (state: EditorState, pos: number, limit: number): number =>
+  wordStartBackward(docReader(state), pos, limit);
+const nextCluster = (state: EditorState, pos: number, limit: number): number =>
+  clusterForward(docReader(state), pos, limit);
+const prevCluster = (state: EditorState, pos: number, limit: number): number =>
+  clusterBackward(docReader(state), pos, limit);
 
 /** 删除一段并把光标落在删除起点：变更与落点同一事务（可见侧 assoc + 揭示滚动）。 */
 function deleteRange(view: EditorView, from: number, to: number, userEvent: string): void {
@@ -701,29 +677,20 @@ function deleteWordBackward(view: EditorView): void {
   killRange(view, backwardWordStart(state, end, limits.from), end, false);
 }
 
-/** 单槽 kill buffer（kill ring 后续）：连续同向 kill 相接时合并，其余 kill 覆盖。
- *
- *  **模块级单例、跨 pane 共享**（M317 tasks 4.4）：kill ring 在 Emacs 本就是全局的——在
- *  一个 pane 里 `⌃K` 杀了内容，切到另一个 pane `⌃Y` 应当能插进去。因此它 MUST NOT 下沉成
- *  逐实例状态（此处无改动，补记口径；`⌃K` / `⌃Y` 的 view 参数是**发起 pane** 自己的）。 */
-let killSlot: { text: string; caret: number; forward: boolean } | null = null;
-
 /** kill 一段：并入 kill 槽后删除。相接判定用「上次 kill 结束后的光标位置 = 本次 kill
  *  的相接端」——连续同向 kill（含 C-k C-k 先杀行内容再杀换行、⌥⌫ ⌥⌫ 连续杀词）因此合并
- *  成一条，与 Emacs 一致。**不变量**：deleteRange 把光标落在 `from`，故槽里记的 `caret`
+ *  成一条，与 Emacs 一致。**不变量**：deleteRange 把光标落在 `from`，故槽里记的 `anchor`
  *  恒为 `from`（后向 kill 亦然）——后向的相接端是本次的 `to`，即上一次 kill 后的光标位置。
  *  已知近似：kill 之后若在**同一位置**做别的编辑再 kill，会误判为连续 kill（kill ring
- *  是后续版本的事，此处不为此引入全局命令序号）。 */
+ *  是后续版本的事，此处不为此引入全局命令序号）。
+ *
+ *  M447：槽本体（`src/quote-card.ts` 的模块级单例）已提为**跨面共用**——编辑器与 composer
+ *  的 `⌃K` / `⌃Y` / `⌥⌫` / `⌥D` 共用同一槽与同一份相接判定（`mergeKillText`）。 */
 function killRange(view: EditorView, from: number, to: number, forward: boolean): void {
   if (from >= to) return;
   const text = view.state.doc.sliceString(from, to);
-  const prev = killSlot;
-  const joins = prev !== null && prev.forward === forward && prev.caret === (forward ? from : to);
-  killSlot = {
-    text: joins ? (forward ? prev.text + text : text + prev.text) : text,
-    caret: from,
-    forward,
-  };
+  const merged = mergeKillText(currentKillSlot(), text, forward, String(forward ? from : to));
+  setKillSlot({ text: merged, forward, anchor: String(from) });
   deleteRange(view, from, to, "delete.kill");
 }
 
@@ -754,7 +721,7 @@ function killLine(view: EditorView): void {
 function yank(view: EditorView): void {
   const state = view.state;
   if (state.readOnly) return;
-  const text = killSlot?.text ?? "";
+  const text = currentKillSlot()?.text ?? "";
   if (text === "") return;
   const main = state.selection.main;
   const head = main.from + text.length;

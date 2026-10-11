@@ -117,6 +117,8 @@ import type { ComposerBlock, ImageCard, MessageQuoteCard, QuoteCard } from "./qu
 import { blobToBase64, firstImageFileIndex } from "./paste-image";
 import { createMessageQuoteGesture, MESSAGE_QUOTE_FLASH_MS, resolveMessageQuoteTarget } from "./message-quote-gesture";
 import { highlightCode } from "./preview/code";
+import { clusterBackward, clusterForward, currentKillSlot, mergeKillText, setKillSlot, wordEndForward, wordStartBackward } from "./quote-card";
+import type { CommandId } from "./keys";
 import { mirrorThemeScope } from "./overlay-scope";
 import { nextFontSize } from "./typography";
 import type { TextScaleDirection } from "./typography";
@@ -188,6 +190,13 @@ export interface HarnessPanelHandle {
   /** 焦点是否在面板内（pane 内容件持焦判据）：缩放命令经它决定作用于 harness 面板
    *  还是编辑器——与内容 pane「焦点在哪个 pane，⌘+/- 就缩放哪个 pane 的内容」同口径。 */
   hasFocus(): boolean;
+  /**
+   * composer 侧的文本面命令入口（M447，change composer-emacs-nav design §3.2）：按命令 id 分派
+   * 到 composer 的模型层动作（移动 / 扩选 / 删除 / kill-yank / 转置），返回是否消费。
+   * 装配层的一处分派包装在事件目标落在 composer 内时调它（`text` 作用域命令的 composer 面）；
+   * 面板未在场 / 该处无动作时返回 false。命令实现是模型层纯函数驱动，不认识「事件目标」。
+   */
+  composerCommand(command: CommandId): boolean;
 }
 
 /**
@@ -580,6 +589,313 @@ export function deleteForwardAtCaret(
   const merged = target.text + nxt.text;
   next.splice(at, 2, { kind: "paragraph", text: merged });
   return { blocks: next, caret };
+}
+
+// ---------------------------------------------------------------------------
+// M447（change composer-emacs-nav design §4）：Emacs 文本导航族的模型层——停靠点序列与
+// 同形位归一等价类、移动 / 扩选、词级 kill / kill-line / 转置的纯函数。全部零 DOM。
+// ---------------------------------------------------------------------------
+
+/** 模型端点相等（同一块下标 + 同一偏移）。 */
+function sameCaret(a: ComposerCaret, b: ComposerCaret): boolean {
+  return a.block === b.block && a.offset === b.offset;
+}
+
+/** 模型端点的可比标识（kill 槽的相接端——槽的坐标空间跨编辑器 / composer，故用不透明串）。 */
+function caretKey(caret: ComposerCaret): string {
+  return `${caret.block}:${caret.offset}`;
+}
+
+/**
+ * 同形位归一等价类（design §4.1）：段落**非空**末缘（`offset ≥ 文本长度`）与紧邻后块的前缘
+ * 视觉同形 ⇒ 归一到后块前缘的表示（最后一段的末缘归一到「末尾之后」= `{block: 块数, offset: 0}`）。
+ * 空段落不归一（它自占一行，只有 `offset 0` 一个停靠点）。归一只有这一处实现。
+ *
+ * **实现注记（与 design §4.1「读回处也调它」的偏差）**：`caretFromDom` 的编辑读回**不**调本
+ * 函数——编辑动词（退格 / 前删 / 键入分派 / 粘贴）依赖「段落末缘 `(i, len)`」与「后块前缘
+ * `(i+1, 0)`」是**两个**不同的模型值（归一后 `backspaceAtCaret` 会把段落末缘的退格当成跨块
+ * 合并、`insertPlainTextAtCaret` 会把段末键入插到下一段段首）。本等价类服务的是**导航**
+ *（移动 / 扩选命令），在那里它正是避免「原地空走」所需要的。
+ */
+export function normalizeComposerCaret(blocks: readonly ComposerBlock[], caret: ComposerCaret): ComposerCaret {
+  const block = Math.max(0, Math.min(caret.block, blocks.length));
+  const target = blocks[block];
+  if (target === undefined || isCardBlock(target)) return { block, offset: 0 };
+  const offset = Math.max(0, Math.min(caret.offset, target.text.length));
+  if (target.text.length > 0 && offset >= target.text.length) return { block: block + 1, offset: 0 };
+  return { block, offset };
+}
+
+/**
+ * 停靠点序列（归一等价类后的商集，线性有序）：段落块 → 各**码点边界**偏移（代理对整体一步，
+ * design §4.2；低位代理不构成独立停靠点）；卡片块 → 前缘 `(i, 0)`（后缘用下一块的前缘表达）；
+ * 末尾再补「末尾之后」`(块数, 0)`。相邻两项在归一等价类后必不相同（design §4.1 的判据——一步
+ * 必有位移）。
+ */
+export function composerCaretStops(blocks: readonly ComposerBlock[]): ComposerCaret[] {
+  const stops: ComposerCaret[] = [];
+  const push = (caret: ComposerCaret): void => {
+    const norm = normalizeComposerCaret(blocks, caret);
+    const last = stops[stops.length - 1];
+    if (last !== undefined && sameCaret(last, norm)) return;
+    stops.push(norm);
+  };
+  for (let i = 0; i < blocks.length; i += 1) {
+    const block = blocks[i];
+    if (isCardBlock(block)) {
+      push({ block: i, offset: 0 });
+      continue;
+    }
+    const text = block.text;
+    push({ block: i, offset: 0 });
+    let offset = 0;
+    while (offset < text.length) {
+      const code = text.charCodeAt(offset);
+      offset += code >= 0xd800 && code <= 0xdbff && offset + 1 < text.length ? 2 : 1;
+      push({ block: i, offset: Math.min(offset, text.length) });
+    }
+  }
+  push({ block: blocks.length, offset: 0 });
+  return stops;
+}
+
+/** 在停靠点序列上走一步（`delta` = ±1）；到头 / 找不到时返回归一后的原位（无动作）。
+ *  「找不到」是病态输入（DOM 读回落在代理对中间）——归一不改它，此处退化为无动作，不猜。 */
+function stepStops(blocks: readonly ComposerBlock[], caret: ComposerCaret, delta: number): ComposerCaret {
+  const stops = composerCaretStops(blocks);
+  const norm = normalizeComposerCaret(blocks, caret);
+  const index = stops.findIndex((stop) => sameCaret(stop, norm));
+  if (index < 0) return norm;
+  const target = index + delta;
+  return target >= 0 && target < stops.length ? stops[target] : norm;
+}
+
+/** ⌃F / ⌃B：停靠点序列上前进 / 后退一步（段内字符步进，原子卡片一步跨过）。 */
+export function moveCharForward(blocks: readonly ComposerBlock[], caret: ComposerCaret): ComposerCaret {
+  return stepStops(blocks, caret, 1);
+}
+export function moveCharBackward(blocks: readonly ComposerBlock[], caret: ComposerCaret): ComposerCaret {
+  return stepStops(blocks, caret, -1);
+}
+
+/** 段落的逻辑行（`\n` 为界；`end` 不含 `\n`；空段落 = 一个 `[0,0)` 的空行）。 */
+interface TextLine {
+  readonly start: number;
+  readonly end: number;
+}
+function paragraphLines(text: string): TextLine[] {
+  const lines: TextLine[] = [];
+  let start = 0;
+  for (let i = 0; i < text.length; i += 1) {
+    if (text[i] === "\n") {
+      lines.push({ start, end: i });
+      start = i + 1;
+    }
+  }
+  lines.push({ start, end: text.length });
+  return lines;
+}
+/** offset 所在行的下标（行界归**前**一行：`offset === 行末` 时仍算该行）。 */
+function lineIndexOf(lines: readonly TextLine[], offset: number): number {
+  let index = 0;
+  for (let i = 0; i < lines.length; i += 1) if (lines[i].start <= offset) index = i;
+  return index;
+}
+
+/** ⌃A：段落内逻辑行行首；已是 / 光标在卡片边界位时不动。 */
+export function moveLineStart(blocks: readonly ComposerBlock[], caret: ComposerCaret): ComposerCaret {
+  const norm = normalizeComposerCaret(blocks, caret);
+  const block = blocks[norm.block];
+  if (block === undefined || block.kind !== "paragraph") return norm;
+  const lines = paragraphLines(block.text);
+  return normalizeComposerCaret(blocks, { block: norm.block, offset: lines[lineIndexOf(lines, norm.offset)].start });
+}
+
+/** ⌃E：段落内逻辑行行尾；已是 / 光标在卡片边界位时不动。 */
+export function moveLineEnd(blocks: readonly ComposerBlock[], caret: ComposerCaret): ComposerCaret {
+  const norm = normalizeComposerCaret(blocks, caret);
+  const block = blocks[norm.block];
+  if (block === undefined || block.kind !== "paragraph") return norm;
+  const lines = paragraphLines(block.text);
+  return normalizeComposerCaret(blocks, { block: norm.block, offset: lines[lineIndexOf(lines, norm.offset)].end });
+}
+
+/** 相邻段落块（delta > 0 向后找、< 0 向前找）；卡片不产生停靠行，被整体跳过。 */
+function adjacentParagraph(
+  blocks: readonly ComposerBlock[],
+  fromBlock: number,
+  delta: number,
+): { index: number; text: string } | null {
+  if (delta > 0) {
+    for (let i = fromBlock + 1; i < blocks.length; i += 1) {
+      const b = blocks[i];
+      if (b.kind === "paragraph") return { index: i, text: b.text };
+    }
+    return null;
+  }
+  for (let i = Math.min(fromBlock, blocks.length) - 1; i >= 0; i -= 1) {
+    const b = blocks[i];
+    if (b.kind === "paragraph") return { index: i, text: b.text };
+  }
+  return null;
+}
+
+/** ⌃N / ⌃P：逻辑行之间移动（同列位，超出目标行长度取行尾）；出段落跨到相邻段落块，无则不动。 */
+function moveLineVertical(blocks: readonly ComposerBlock[], caret: ComposerCaret, delta: number): ComposerCaret {
+  const norm = normalizeComposerCaret(blocks, caret);
+  const block = blocks[norm.block];
+  if (block !== undefined && block.kind === "paragraph") {
+    const lines = paragraphLines(block.text);
+    const index = lineIndexOf(lines, norm.offset);
+    const column = norm.offset - lines[index].start;
+    const target = index + delta;
+    if (target >= 0 && target < lines.length) {
+      const line = lines[target];
+      return normalizeComposerCaret(blocks, {
+        block: norm.block,
+        offset: line.start + Math.min(column, line.end - line.start),
+      });
+    }
+    const neighbor = adjacentParagraph(blocks, norm.block, delta);
+    if (neighbor === null) return norm;
+    const nLines = paragraphLines(neighbor.text);
+    const line = delta > 0 ? nLines[0] : nLines[nLines.length - 1];
+    return normalizeComposerCaret(blocks, {
+      block: neighbor.index,
+      offset: line.start + Math.min(column, line.end - line.start),
+    });
+  }
+  // 卡片前缘 / 「末尾之后」：卡片不产生停靠行 ⇒ 直接跳到相邻段落的行首。
+  const neighbor = adjacentParagraph(blocks, norm.block, delta);
+  if (neighbor === null) return norm;
+  const nLines = paragraphLines(neighbor.text);
+  const line = delta > 0 ? nLines[0] : nLines[nLines.length - 1];
+  return normalizeComposerCaret(blocks, { block: neighbor.index, offset: line.start });
+}
+
+export function moveLineDown(blocks: readonly ComposerBlock[], caret: ComposerCaret): ComposerCaret {
+  return moveLineVertical(blocks, caret, 1);
+}
+export function moveLineUp(blocks: readonly ComposerBlock[], caret: ComposerCaret): ComposerCaret {
+  return moveLineVertical(blocks, caret, -1);
+}
+
+/** 按词一步（⌥F / ⌥B 的扩选 head 走它）：段落内用与编辑器侧共用的词边界扫描；卡片边界位不动。 */
+export function moveWordForward(blocks: readonly ComposerBlock[], caret: ComposerCaret): ComposerCaret {
+  const norm = normalizeComposerCaret(blocks, caret);
+  const block = blocks[norm.block];
+  if (block === undefined || block.kind !== "paragraph") return norm;
+  const end = wordEndForward((a, b) => block.text.slice(a, b), norm.offset, block.text.length);
+  if (end <= norm.offset) return norm;
+  return normalizeComposerCaret(blocks, { block: norm.block, offset: end });
+}
+export function moveWordBackward(blocks: readonly ComposerBlock[], caret: ComposerCaret): ComposerCaret {
+  const norm = normalizeComposerCaret(blocks, caret);
+  const block = blocks[norm.block];
+  if (block === undefined || block.kind !== "paragraph") return norm;
+  const start = wordStartBackward((a, b) => block.text.slice(a, b), norm.offset, 0);
+  if (start >= norm.offset) return norm;
+  return normalizeComposerCaret(blocks, { block: norm.block, offset: start });
+}
+
+/** 编辑动词用的文本目标：段落块 + 段内钳制偏移（`block` 越界时钳到末块、按段末处理）。 */
+function textTargetAt(
+  blocks: readonly ComposerBlock[],
+  caret: ComposerCaret,
+): { index: number; text: string; offset: number } | null {
+  const index = Math.max(0, Math.min(caret.block, blocks.length - 1));
+  const block = blocks[index];
+  if (block === undefined || block.kind !== "paragraph") return null;
+  const offset = caret.block >= blocks.length ? block.text.length : Math.max(0, Math.min(caret.offset, block.text.length));
+  return { index, text: block.text, offset };
+}
+
+/** 一次 kill 的产物：新块序列 + 落点 + 被杀文本 + 被杀区间的两端（供 kill 槽的相接判定）。 */
+export interface ComposerKill {
+  blocks: ComposerBlock[];
+  caret: ComposerCaret;
+  killed: string;
+  from: ComposerCaret;
+  to: ComposerCaret;
+}
+
+function removeTextAt(
+  blocks: readonly ComposerBlock[],
+  index: number,
+  text: string,
+  from: number,
+  to: number,
+  caretOffset: number,
+): ComposerKill {
+  const next = blocks.slice() as ComposerBlock[];
+  next[index] = { kind: "paragraph", text: text.slice(0, from) + text.slice(to) };
+  return {
+    blocks: next,
+    caret: { block: index, offset: caretOffset },
+    killed: text.slice(from, to),
+    from: { block: index, offset: from },
+    to: { block: index, offset: to },
+  };
+}
+
+/** ⌥D：kill 到下一词尾（不跨块——到段边界即停，段边界处无动作）。 */
+export function killWordForward(blocks: readonly ComposerBlock[], caret: ComposerCaret): ComposerKill | null {
+  const target = textTargetAt(blocks, caret);
+  if (target === null) return null;
+  const end = Math.min(wordEndForward((a, b) => target.text.slice(a, b), target.offset, target.text.length), target.text.length);
+  if (end <= target.offset) return null;
+  return removeTextAt(blocks, target.index, target.text, target.offset, end, target.offset);
+}
+
+/** ⌥⌫：kill 到上一词首（不跨块）。 */
+export function killWordBackward(blocks: readonly ComposerBlock[], caret: ComposerCaret): ComposerKill | null {
+  const target = textTargetAt(blocks, caret);
+  if (target === null) return null;
+  const start = Math.max(wordStartBackward((a, b) => target.text.slice(a, b), target.offset, 0), 0);
+  if (start >= target.offset) return null;
+  return removeTextAt(blocks, target.index, target.text, start, target.offset, start);
+}
+
+/** ⌃K：kill 到当前逻辑行行尾；已在行尾则杀掉该行界（段内合并两行）；段落末行行尾无动作（不跨块）。 */
+export function killLineAtCaret(blocks: readonly ComposerBlock[], caret: ComposerCaret): ComposerKill | null {
+  const target = textTargetAt(blocks, caret);
+  if (target === null) return null;
+  const newline = target.text.indexOf("\n", target.offset);
+  let end: number;
+  if (newline === target.offset) end = target.offset + 1;
+  else if (newline > target.offset) end = newline;
+  else if (target.offset < target.text.length) end = target.text.length;
+  else return null;
+  return removeTextAt(blocks, target.index, target.text, target.offset, end, target.offset);
+}
+
+/** ⌃T：转置光标左右两个字素簇并把光标移到两者之后（与 `src/editor.ts` 的 `transposeChars`
+ *  逐条同语义——段首 / 卡片边界处无动作；段尾与编辑器侧同形，转置末两个簇）。 */
+export function transposeCharsAtCaret(
+  blocks: readonly ComposerBlock[],
+  caret: ComposerCaret,
+): { blocks: ComposerBlock[]; caret: ComposerCaret } | null {
+  const target = textTargetAt(blocks, caret);
+  if (target === null) return null;
+  const { index, text, offset: pos } = target;
+  const read = (a: number, b: number): string => text.slice(a, b);
+  const write = (newText: string, caretOffset: number): { blocks: ComposerBlock[]; caret: ComposerCaret } => {
+    const next = blocks.slice() as ComposerBlock[];
+    next[index] = { kind: "paragraph", text: newText };
+    return { blocks: next, caret: { block: index, offset: caretOffset } };
+  };
+  const left = clusterBackward(read, pos, 0);
+  const right = clusterForward(read, pos, text.length);
+  if (left < pos && right > pos) {
+    const a = text.slice(left, pos);
+    const b = text.slice(pos, right);
+    return write(text.slice(0, left) + b + a + text.slice(right), right);
+  }
+  const prev = clusterBackward(read, left, 0);
+  if (prev >= left) return null;
+  const a = text.slice(prev, left);
+  const b = text.slice(left, pos);
+  return write(text.slice(0, prev) + b + a + text.slice(pos), pos);
 }
 
 // ── 撤销栈历史（quirk ③ 的自管核心；导出供单测用假时钟驱动复现链） ──────────
@@ -2877,57 +3193,248 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     return { anchor, focus };
   }
 
-  /** 把模型光标写回 DOM（段落内按字符偏移定位；卡片 / 边界落块前缘——落点形态见
-   *  `domCaretTarget`，与 `boundaryCaretAt` 互为逆运算）。 */
-  function setDomCaret(caret: ComposerCaret): void {
+  /** 模型光标 → DOM 点（节点 + 偏移；边界档落在 composer 元素上）。`setDomCaret` /
+   *  `setDomSelection` 共用——落点形态见 `domCaretTarget`，与 `boundaryCaretAt` 互为逆运算。 */
+  function domPointOf(caret: ComposerCaret): { node: Node; offset: number; blockEl: Element | null } {
     if (composer.children.length === 0) composer.append(createParaEl(""));
     const target = domCaretTarget(readBlocksFromDom(), caret);
     const blockEl = [...composer.children][target.index] ?? null;
-    const range = document.createRange();
     if (target.kind === "boundary" || blockEl === null) {
-      range.setStart(composer, target.kind === "boundary" ? target.index : composer.children.length);
-    } else {
-      const text = paraTextOf(blockEl);
-      if (text.length === 0) {
-        range.setStart(blockEl, 0);
-      } else {
-        let remaining = target.offset;
-        let placed = false;
-        const walk = (current: Node): void => {
-          if (placed) return;
-          if (current.nodeType === Node.TEXT_NODE) {
-            const len = current.textContent?.length ?? 0;
-            if (remaining <= len) {
-              range.setStart(current, remaining);
-              placed = true;
-            } else {
-              remaining -= len;
-            }
-          } else if (current.nodeName === "BR") {
-            if (remaining === 0) {
-              range.setStartBefore(current);
-              placed = true;
-            } else {
-              remaining -= 1;
-            }
-          } else {
-            current.childNodes.forEach(walk);
-          }
-        };
-        blockEl.childNodes.forEach(walk);
-        if (!placed) range.setStart(blockEl, blockEl.childNodes.length);
-      }
+      return { node: composer, offset: target.kind === "boundary" ? target.index : composer.children.length, blockEl };
     }
-    range.collapse(true);
+    const text = paraTextOf(blockEl);
+    if (text.length === 0) return { node: blockEl, offset: 0, blockEl };
+    let node: Node | null = null;
+    let offset = 0;
+    let remaining = target.offset;
+    const walk = (current: Node): void => {
+      if (node !== null) return;
+      if (current.nodeType === Node.TEXT_NODE) {
+        const len = current.textContent?.length ?? 0;
+        if (remaining <= len) {
+          node = current;
+          offset = remaining;
+        } else {
+          remaining -= len;
+        }
+      } else if (current.nodeName === "BR") {
+        if (remaining === 0) {
+          node = blockEl;
+          offset = [...blockEl.childNodes].indexOf(current as ChildNode);
+        } else {
+          remaining -= 1;
+        }
+      } else {
+        current.childNodes.forEach(walk);
+      }
+    };
+    blockEl.childNodes.forEach(walk);
+    if (node === null) {
+      node = blockEl;
+      offset = blockEl.childNodes.length;
+    }
+    return { node, offset, blockEl };
+  }
+
+  /** 把模型光标写回 DOM（折叠光标；段落内按字符偏移定位，卡片 / 边界落块前缘）。 */
+  function setDomCaret(caret: ComposerCaret): void {
+    const point = domPointOf(caret);
     const selection = window.getSelection();
     if (selection !== null) {
       selection.removeAllRanges();
+      const range = document.createRange();
+      range.setStart(point.node, point.offset);
+      range.collapse(true);
       selection.addRange(range);
     }
     // 零高回落的块：边界档（卡片前缘 / 相邻两卡之间）用**后一张卡片**的矩形，
     // 「末尾之后」（block = 块数）没有后一块，回落最后一个块——不拿 composer 自身的
     // 矩形当「光标行」（那会让 caretScrollTop 恒判「越出上沿」、每次重渲把视口顶 4px）。
-    scrollCaretIntoView(range, blockEl ?? composer.lastElementChild ?? composer);
+    const measure = document.createRange();
+    measure.setStart(point.node, point.offset);
+    measure.collapse(true);
+    scrollCaretIntoView(measure, point.blockEl ?? composer.lastElementChild ?? composer);
+  }
+
+  /** 把模型选区写回 DOM（M447 的扩选族用）：anchor / head 两端都落位、方向保持——`setBaseAndExtent`
+   *  按文档序自动规范，`extend` 把 head 端与 anchor 端分开（否则后续扩选会从错误的一端继续）。
+   *  滚动位跟 head 端。 */
+  function setDomSelection(anchor: ComposerCaret, head: ComposerCaret): void {
+    const a = domPointOf(anchor);
+    const h = domPointOf(head);
+    const selection = window.getSelection();
+    if (selection !== null) {
+      selection.removeAllRanges();
+      selection.setBaseAndExtent(a.node, a.offset, h.node, h.offset);
+    }
+    const measure = document.createRange();
+    measure.setStart(h.node, h.offset);
+    measure.collapse(true);
+    scrollCaretIntoView(measure, h.blockEl ?? composer.lastElementChild ?? composer);
+  }
+
+  // ── composer 侧的文本面命令入口（M447，change composer-emacs-nav design §3.2 / §4） ──
+  // 装配层的一处分派包装在事件目标落在 composer 内时调 `runComposerCommand`（`text` 作用域
+  // 命令的两个面）。**移动 / 扩选只写选区与滚动位**——MUST NOT 重渲、MUST NOT 压撤销步
+  // （design §6 的质量合同；导航的 DOM 稳定性由验收场景的 MutationObserver 计数钉住）。
+
+  /** 命令 id → composer 侧的模型动作；返回是否消费（面板未在场 / 该处无动作时 false）。 */
+  function runComposerCommand(command: CommandId): boolean {
+    const blocks = readBlocksFromDom();
+    const sel = caretFromDom();
+    const caret = sel === null ? null : sel.focus;
+    switch (command) {
+      case "editor.cursor-forward":
+        return navigate(blocks, caret, moveCharForward);
+      case "editor.cursor-backward":
+        return navigate(blocks, caret, moveCharBackward);
+      case "editor.line-start":
+        return navigate(blocks, caret, moveLineStart);
+      case "editor.line-end":
+        return navigate(blocks, caret, moveLineEnd);
+      case "editor.cursor-down":
+        return navigate(blocks, caret, moveLineDown);
+      case "editor.cursor-up":
+        return navigate(blocks, caret, moveLineUp);
+      case "editor.extend-char-forward":
+        return extendSelection(blocks, sel, moveCharForward);
+      case "editor.extend-char-backward":
+        return extendSelection(blocks, sel, moveCharBackward);
+      case "editor.extend-line-start":
+        return extendSelection(blocks, sel, moveLineStart);
+      case "editor.extend-line-end":
+        return extendSelection(blocks, sel, moveLineEnd);
+      case "editor.extend-line-down":
+        return extendSelection(blocks, sel, moveLineDown);
+      case "editor.extend-line-up":
+        return extendSelection(blocks, sel, moveLineUp);
+      case "editor.extend-word-forward":
+        return extendSelection(blocks, sel, moveWordForward);
+      case "editor.extend-word-backward":
+        return extendSelection(blocks, sel, moveWordBackward);
+      case "editor.delete-char-forward":
+        return deleteAtCaret(blocks, sel, deleteForwardAtCaret);
+      case "editor.delete-char-backward":
+        return deleteAtCaret(blocks, sel, backspaceAtCaret);
+      case "editor.delete-word-forward":
+        return killWordAtCaret(blocks, sel, true);
+      case "editor.delete-word-backward":
+        return killWordAtCaret(blocks, sel, false);
+      case "editor.kill-line":
+        return killLineAtCaretCommand(blocks, sel);
+      case "editor.yank":
+        return yankAtCaret(blocks, sel);
+      case "editor.transpose-chars":
+        return transposeAtCaret(blocks, sel);
+      default:
+        return false;
+    }
+  }
+
+  /** 纯移动：只写选区 + 滚动位（不重渲、不压栈）。返回是否消费。 */
+  function navigate(
+    blocks: readonly ComposerBlock[],
+    caret: ComposerCaret | null,
+    move: (blocks: readonly ComposerBlock[], caret: ComposerCaret) => ComposerCaret,
+  ): boolean {
+    if (caret === null) return false;
+    const from = normalizeComposerCaret(blocks, caret);
+    const next = move(blocks, caret);
+    if (sameCaret(from, next)) return false; // 无动作：不动 DOM（含「原地空走」被归一吃掉的那一拍）
+    setDomCaret(next);
+    return true;
+  }
+
+  /** 扩选：anchor 不动、head 走同一套移动纯函数（design §4.4）。 */
+  function extendSelection(
+    blocks: readonly ComposerBlock[],
+    sel: ComposerSelection | null,
+    move: (blocks: readonly ComposerBlock[], caret: ComposerCaret) => ComposerCaret,
+  ): boolean {
+    if (sel === null) return false;
+    const from = normalizeComposerCaret(blocks, sel.focus);
+    const head = move(blocks, sel.focus);
+    if (sameCaret(from, head)) return false;
+    setDomSelection(sel.anchor, head);
+    return true;
+  }
+
+  /** ⌃D / ⌃H：接既有 `deleteForwardAtCaret` / `backspaceAtCaret`（有选区先删选区）。 */
+  function deleteAtCaret(
+    blocks: readonly ComposerBlock[],
+    sel: ComposerSelection | null,
+    op: (blocks: readonly ComposerBlock[], caret: ComposerCaret) => { blocks: ComposerBlock[]; caret: ComposerCaret } | null,
+  ): boolean {
+    if (sel === null) return false;
+    if (!sameCaret(sel.anchor, sel.focus)) {
+      withModel((current) => deleteSelectionRange(current, sel), false);
+      return true;
+    }
+    if (op(blocks, sel.focus) === null) return false;
+    withModel((current) => op(current, sel.focus) ?? { blocks: [...current], caret: sel.focus }, false);
+    return true;
+  }
+
+  /** ⌥D / ⌥⌫：词级 kill（不跨块），杀掉的文本并入**跨面共用**的 kill 槽。有选区时按删除族
+   *  口径先删选区（不并入槽——跨块的任意选区文本提取不在本 change 的范围，登记为边界）。 */
+  function killWordAtCaret(blocks: readonly ComposerBlock[], sel: ComposerSelection | null, forward: boolean): boolean {
+    if (sel === null) return false;
+    if (!sameCaret(sel.anchor, sel.focus)) {
+      withModel((current) => deleteSelectionRange(current, sel), false);
+      return true;
+    }
+    const result = forward ? killWordForward(blocks, sel.focus) : killWordBackward(blocks, sel.focus);
+    if (result === null) return false;
+    applyKill(result, forward);
+    return true;
+  }
+
+  /** ⌃K：kill 到逻辑行行尾（不跨块），并入同一 kill 槽。 */
+  function killLineAtCaretCommand(blocks: readonly ComposerBlock[], sel: ComposerSelection | null): boolean {
+    if (sel === null) return false;
+    if (!sameCaret(sel.anchor, sel.focus)) {
+      withModel((current) => deleteSelectionRange(current, sel), false);
+      return true;
+    }
+    const result = killLineAtCaret(blocks, sel.focus);
+    if (result === null) return false;
+    applyKill(result, true);
+    return true;
+  }
+
+  /** 把一次 kill 的文本并入跨面共用的 kill 槽（相接判定与编辑器侧共用 `mergeKillText`——
+   *  槽是模块级单例，编辑器与 composer 一致）。 */
+  function applyKill(result: ComposerKill, forward: boolean): void {
+    const from = caretKey(result.from);
+    const to = caretKey(result.to);
+    const merged = mergeKillText(currentKillSlot(), result.killed, forward, forward ? from : to);
+    setKillSlot({ text: merged, forward, anchor: from });
+    withModel(() => ({ blocks: result.blocks, caret: result.caret }), true);
+  }
+
+  /** ⌃Y：把 kill 槽内容插入光标处（有选区先删选区；多行经 `insertPlainTextAtCaret` 拆段；
+   *  卡片边界位由它物化段落——卡片不被吞）。 */
+  function yankAtCaret(blocks: readonly ComposerBlock[], sel: ComposerSelection | null): boolean {
+    const text = currentKillSlot()?.text ?? "";
+    if (text === "" || sel === null) return false;
+    const collapsed = sameCaret(sel.anchor, sel.focus);
+    withModel((current) => {
+      const base = collapsed ? { blocks: [...current], caret: sel.focus } : deleteSelectionRange(current, sel);
+      return insertPlainTextAtCaret(base.blocks, base.caret, text);
+    }, true);
+    return true;
+  }
+
+  /** ⌃T：转置（段首 / 卡片边界无动作；有选区时不插手——与编辑器侧同口径）。 */
+  function transposeAtCaret(blocks: readonly ComposerBlock[], sel: ComposerSelection | null): boolean {
+    if (sel === null) return false;
+    if (!sameCaret(sel.anchor, sel.focus)) return false;
+    if (transposeCharsAtCaret(blocks, sel.focus) === null) return false;
+    withModel(
+      (current) => transposeCharsAtCaret(current, sel.focus) ?? { blocks: [...current], caret: sel.focus },
+      false,
+    );
+    return true;
   }
 
   /**
@@ -5329,7 +5836,17 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       }
       return;
     }
-    if (event.key === "Backspace" || event.key === "Delete") {
+    // M447（change composer-emacs-nav §5.3a）：就地路径只处理**不带任何修饰键**的那一拍——
+    // ⌥⌫ / ⌥Delete 让给统一键位表（`text` 作用域）。不收窄则面板的 keydown（挂在 composer 上、
+    // 先于 window 分发器）先 `preventDefault`，而分发器对已消费事件让路（src/keys.ts 的
+    // `defaultPrevented` 早退）⇒ ⌥⌫ 的表内绑定**永远不命中**、退化为逐字符退格（一个「绑了
+    // 没用」的静默失配）。裸 Backspace / Delete 仍是既有模型路径（本能力 MUST NOT 改变它）。
+    if (
+      (event.key === "Backspace" || event.key === "Delete") &&
+      !event.metaKey &&
+      !event.ctrlKey &&
+      !event.altKey
+    ) {
       const sel = caretFromDom();
       if (sel === null) return;
       const collapsed = sel.anchor.block === sel.focus.block && sel.anchor.offset === sel.focus.offset;
@@ -5837,6 +6354,9 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     },
     hasFocus(): boolean {
       return document.activeElement instanceof Node && panel.contains(document.activeElement);
+    },
+    composerCommand(command: CommandId): boolean {
+      return runComposerCommand(command);
     },
   };
 }
