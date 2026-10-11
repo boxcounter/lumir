@@ -74,6 +74,13 @@ steps:
         ax: { has: "/360×200[\\s\\S]{0,120}?200×120/" }
       - shot: 01-两张相邻卡片
 
+  # M456：原生菜单 Paste 之后 window 键盘焦点丢失，⌃B / 探针串注入不落地——先点一次末尾空行
+  # 重建 DOM 焦点（布局修复后末尾空行恒有一条可见、可点入的行）。
+  - name: 点末尾空行重建 composer 的 DOM 焦点（原生菜单粘贴后 window 失焦，M456 实测）
+    do: clickInNode
+    target: { role: AXTextArea, name: "200×120" }
+    dy: 0.97
+
   - name: ⌃B 两次（末尾段落 → 两卡之间 → 第一张卡片前缘）
     do: keys
     keys: ["ctrl+b", "ctrl+b"]
