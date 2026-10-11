@@ -13,6 +13,8 @@ import {
   createUndoHistory,
   deleteForwardAtCaret,
   deleteSelectionRange,
+  imageCardMetaText,
+  imageDimensionsFromNatural,
   insertCardAtCaret,
   insertBlockAtCaret,
   insertPlainTextAtCaret,
@@ -585,4 +587,52 @@ test("撤销栈：breakCluster 让下一拍聚簇失效（IME 组合整段一步
   assert.equal(history.redoSize, 0);
   assert.equal(history.undo("x"), null);
   assert.equal(history.redo("x"), null);
+});
+
+// ── 图片卡片元信息行的恢复路径宽高补记（M449）──────────────────────────────
+//
+// 恢复路径（快照从 wire 引用重建，ImageCard.width/height 可选）的图片卡片首帧无尺寸、元信息行
+// 只显文件名；缩略图 <img> load 后读 naturalWidth/naturalHeight 补记。DOM 侧接线归真机验收
+// （scripts/acceptance），这一层覆盖两条纯判据——文案格式 `imageCardMetaText` 与「哪个读数算
+// 有效尺寸」`imageDimensionsFromNatural`（createImageCardEl 的首帧渲染与 load 回调共用这两条）。
+
+test("imageCardMetaText：有宽高显「文件名 · W×H」、无宽高只显文件名", () => {
+  assert.equal(imageCardMetaText("a.webp", 640, 360), "a.webp · 640×360");
+  assert.equal(imageCardMetaText("a.webp", undefined, undefined), "a.webp");
+  // 半缺（只在数据被改坏时可达）按无尺寸处理，不产出「a.webp · 640×undefined」。
+  assert.equal(imageCardMetaText("a.webp", 640, undefined), "a.webp");
+  assert.equal(imageCardMetaText("a.webp", undefined, 360), "a.webp");
+});
+
+test("恢复卡片无宽高 → <img> load 报出有效自然尺寸 → 元信息行出现宽高", () => {
+  const name = "pasted-0123456789abcdef.webp";
+  // 恢复态首帧：卡片无尺寸，只显文件名
+  assert.equal(imageCardMetaText(name, undefined, undefined), name);
+  // load 回调读到自然尺寸 → 补记
+  const dims = imageDimensionsFromNatural(1024, 768);
+  assert.deepEqual(dims, { width: 1024, height: 768 });
+  assert.equal(imageCardMetaText(name, dims?.width, dims?.height), `${name} · 1024×768`);
+});
+
+test("加载失败 / 未就绪 → 尺寸判据返回 null，元信息行保持只显文件名（不出 0/NaN/undefined）", () => {
+  const name = "pasted-0123456789abcdef.webp";
+  const invalid: ReadonlyArray<readonly [number, number]> = [
+    [0, 0], // 加载失败：naturalWidth/Height 全 0
+    [0, 600], // 半读数
+    [800, 0],
+    [Number.NaN, Number.NaN], // 未就绪
+    [Number.POSITIVE_INFINITY, 600],
+    [-5, 10], // 非法负值
+  ];
+  for (const [w, h] of invalid) {
+    const dims = imageDimensionsFromNatural(w, h);
+    assert.equal(dims, null, `natural ${w}×${h} 不应算作有效尺寸`);
+    const meta = imageCardMetaText(name, dims?.width, dims?.height);
+    assert.equal(meta, name);
+    assert.equal(
+      /NaN|undefined|Infinity|·/.test(meta),
+      false,
+      `无效读数不得落进元信息行，实际 ${meta}`,
+    );
+  }
 });
