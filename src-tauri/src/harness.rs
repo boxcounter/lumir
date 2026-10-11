@@ -2,8 +2,10 @@
 //!
 //! 分层与既有纪律：
 //! - 面板（m303）只消费事件与 `harness_state` 快照，本会话状态全部在 Rust、绑定 vault
-//!   （design §2）：一个 vault 一个会话（内存态），切 vault 切换、切回恢复、关 vault 丢弃、
-//!   app 重启清空；webview 重载经 `harness_state` 恢复渲染。
+//!   （design §2）：内存态一个 vault 一个活跃会话（sessions 按 vault 键控、resume 铸新 id
+//!   替换槽位），切 vault 切换、切回恢复、关 vault 丢弃、app 重启清空；盘上按 vault 分目录
+//!   留存多份历史会话 JSONL、浮层可切换 / 新建 / 恢复（M433）；webview 重载经 `harness_state`
+//!   恢复渲染。
 //! - LLM 调用与 SSE 解析在专线程（`lumir-harness-llm`，ADR 0002 §6 热路径隔离），
 //!   keypress-to-paint 零新增。
 //! - IPC 边界走 JSON String（M302 纪律：命令返回值不为此新增 ts-rs 类型）；

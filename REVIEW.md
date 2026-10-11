@@ -86,6 +86,12 @@ worker 动工前、reviewer 给出 verdict 前逐条过一遍。每条按「症�
 - 证据：`scripts/gate.sh` 的 `GATE RESULT: ${pass}/$((pass + fail)) PASS（SKIP ${skip}）` 行（分母口径的单一来源）；M372 r1 现场 finding `.tower/comms/findings/20261007-tower-improve-worker-skip.md`。
 - 防线：报告门禁结果时 MUST 照抄 `GATE RESULT` 原文行并附退出码，不得用「X/Y PASS」这类脱离分母口径的复述；`SKIP` 必须单列，不得并进 PASS 数。
 
+**22. 设定类现状断言只读了 requirement 的一句话，把已过时的旧表述当现状引用**
+- 症状：worker-m445 起草方案时把「一个 vault 一个会话」当**现状**写进依据；而 M433（change `harness-sessions-per-vault`）落地后，盘上早已按 vault 分目录并存多份历史会话 JSONL、浮层可切换 / 新建 / 恢复，内存态也只是「一个 vault 一个活跃会话」（`RuntimeInner.sessions` 按 vault 键控、resume 铸新 id 替换槽位）。它引用的是 living spec 里**与新版表述并存的旧句**，且三处旧注释（`harness.rs` / `events.rs` / `permission_cache.rs` 模块头）同口径残留，读到任一处即可坐实这个错误印象。
+- 根因：现状断言的取证面太窄——只读了 requirement 里的**一句话**（恰好是 M433 没同步改到的那一句），没读全条、也没 grep 最新 change 核对；同时 change 改设定时只落了**新增**表述，旧句与旧注释没同步清扫，living spec 里新旧并存，给「读到旧句」留了入口。
+- 证据：worker-m445 把已过时「一个 vault 一个会话」当现状引用一事（`.tower/comms/` 该 mission 的起草依据，`.tower/**` 不入 git）；`openspec/specs/harness/spec.md` 会话边界 requirement 新旧表述并存（M448 一并改准）；三处旧注释 `src-tauri/src/harness.rs:5` / `src-tauri/src/harness/events.rs:14` / `src-tauri/src/harness/permission_cache.rs:47`；设定变更的事实源是 M433（change `harness-sessions-per-vault`）。
+- 防线：断言「现状是什么」时 MUST 读**整条** requirement（不是其中一句）并 `rg` 最新相关 change 核对设定是否已改；change 改了设定后，MUST `rg` 旧表述（含注释）一并清扫，不留新旧并存——living spec 里一句过时的旧话就是下一次误引用的入口。
+
 ## 四、真机与并行环境
 
 **10. `cargo test` 换掉二进制 flavour，整窗白屏被误判成产品缺陷**
