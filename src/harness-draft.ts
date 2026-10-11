@@ -7,8 +7,9 @@
 //   - **落盘纪律**在 Rust（`src-tauri/src/harness/draft.rs`：tmp+rename 原子替换、vault 稳定 id
 //     目录名校验、无 vault 静默不落盘、写失败返回错误信封）；
 //   - **装配时机**在 src/harness-panel.ts（哪个时点 schedule / flush / 恢复 / 清除）。
-//   本模块只回答「什么时候写、写什么、什么时候不写」——零 DOM（防抖窗口 / 无变更不写 / flush /
-//   切换丢弃待写都在 tests/unit 直接驱动）。
+//   本模块只回答「什么时候写、写什么、什么时候不写」以及「后端 mutation 的次序」（写与删除
+//   都经一条串行链：并发会让 rename 压在 remove 之后，把已发送内容复活成草稿）——零 DOM
+//   （防抖窗口 / 无变更不写 / flush / 切换丢弃待写都在 tests/unit 直接驱动）。
 //
 // 为什么与阅读位置（`src/reading-position.ts`）分开而不是复用它：那份的键是**vault 相对路径**
 // （一个 vault 一份表，键在表内），草稿是**一个 vault 一份整体内容**、按 vault 稳定 id 编址且落点
@@ -64,6 +65,11 @@ export function createHarnessDraftStore(deps: HarnessDraftStoreDeps): HarnessDra
   /** 上次已落盘的内容（`null` = 未知——尚未读回 / 尚未写过）。「无变更不写」的比对基准。 */
   let written: string | null = null;
   let timer: ReturnType<typeof setTimeout> | null = null;
+  /** 后端 mutation 的串行链：一次写 / 一次删除落定之后才发出下一次（见 [`enqueue`]）。 */
+  let chain: Promise<unknown> = Promise.resolve();
+  /** 作废世代：`discard`（切 vault / clear 的取消待写）递增。**在途写**落地时若世代已变，
+   *  它不再回填待写、也不更新「已落盘」基准——那次写属于已经被作废的那一版内容。 */
+  let epoch = 0;
   /** 装载世代：读盘是异步的，读盘途中再次装载 vault 时本次结果整体作废（同阅读位置的让位
    *  规则）。它守的是**store 内部状态**；装配层渲染侧另有一道世代（面板自己的 draftSeq）。 */
   let loadGen = 0;
@@ -74,16 +80,40 @@ export function createHarnessDraftStore(deps: HarnessDraftStoreDeps): HarnessDra
     timer = null;
   }
 
-  /** 写盘（flush / clear 共用）：失败只降级 + 把待写内容放回（下一次 flush 重试），
-   *  **MUST NOT** 谎报已保存——`written` 不动，下一次比对照旧认为「盘上没有这份内容」。 */
-  async function write(draftJson: string): Promise<void> {
-    try {
-      await deps.putDraft(draftJson);
-      written = draftJson;
-    } catch (e) {
-      pending = draftJson;
-      deps.warn(e);
-    }
+  /**
+   * 把一次后端 mutation 排进串行链：前一次落定之后才发出下一次。
+   *
+   * **为什么必须串行**（review r1 的 P2-2）：写是 tmp + rename、清除是 remove，两条 IPC 并发
+   * 时**次序无保证**——在途的 rename 落在 remove 之后，盘上就留下一份「已发送内容」的草稿，
+   * 下次装载把它恢复回来（发出去的字复活）。串行之后，`clear` 的删除必然排在在途写之后。
+   */
+  function enqueue<T>(op: () => Promise<T>): Promise<T> {
+    const run = chain.then(op, op);
+    chain = run.then(
+      () => undefined,
+      () => undefined, // 前一次失败不阻塞后续：错误由各 op 自己消化（降级为人话 warning）
+    );
+    return run;
+  }
+
+  /** 写盘：失败只降级（warn）+ 把「这份内容还没落盘」留在待写，**MUST NOT** 谎报已保存
+   *  （`written` 不动，下一次比对照旧认为「盘上没有这份内容」）。两条回填 / 记账都带世代守卫。 */
+  function write(draftJson: string): Promise<void> {
+    const gen = epoch;
+    return enqueue(async () => {
+      try {
+        await deps.putDraft(draftJson);
+        // 期间发生过 clear / 切 vault（世代变了）：这次写属于被作废的那一版内容，不许再记账
+        // ——否则 clear 设的 `written = ""` 会被改回旧内容，用户接着打同样的字会被「无变更
+        // 不写」吞掉（盘上其实没有那份）。文件本身由串行链上的那次删除收尾。
+        if (gen === epoch) written = draftJson;
+      } catch (e) {
+        // 回填**只在期间没有更新的编辑**时发生（`??=`）：在途写失败 MUST NOT 把用户刚打的新
+        // 内容覆盖回旧内容（review r1 的 P2-1）——新内容自带防抖定时器，会自己写走。
+        if (gen === epoch) pending ??= draftJson;
+        deps.warn(e);
+      }
+    });
   }
 
   function schedule(blocks: readonly ComposerBlock[], caret: DraftCaret | null): void {
@@ -110,6 +140,10 @@ export function createHarnessDraftStore(deps: HarnessDraftStoreDeps): HarnessDra
   function discard(): void {
     cancelTimer();
     pending = null;
+    // 作废一切在途写的下落（回填待写 / 更新「已落盘」基准都不再适用）：调用点都是「这一版内容
+    // 已经不该再由本 store 负责」——切 vault 装载（旧 vault 的待写已由切换前的 flush 写走）、
+    // 发送成功后的清除（内容已进会话）。
+    epoch += 1;
   }
 
   async function load(): Promise<ComposerDraftLoaded | null> {
@@ -140,17 +174,20 @@ export function createHarnessDraftStore(deps: HarnessDraftStoreDeps): HarnessDra
   }
 
   async function clear(): Promise<void> {
-    // 发送成功后：取消窗口里那一份旧内容的待写（否则它会在 1s 后把已发送的内容写回盘上），
-    // 再删文件。删除失败由后端降级（stderr，不当成保存失败报出来）；这里只兜住取配置目录
-    // 失败这类更早的错误——它不影响「内容已进会话」这个事实，也不该把发送路径上的 promise
-    // 变成 reject。
+    // 发送成功后：取消窗口里那一份旧内容的待写 + 作废在途写（否则它会在 1s 后把已发送的内容
+    // 写回盘上），再删文件——**删除排在串行链上**，必然落在在途写之后（P2-2：防 rename 压在
+    // remove 之后把已发送内容复活成草稿）。删除失败由后端降级（stderr，不当成保存失败报出来）；
+    // 这里只兜住取配置目录失败这类更早的错误——它不影响「内容已进会话」这个事实，也不该把发送
+    // 路径上的 promise 变成 reject。
     discard();
     written = "";
-    try {
-      await deps.putDraft("");
-    } catch (e) {
-      deps.warn(e);
-    }
+    await enqueue(async () => {
+      try {
+        await deps.putDraft("");
+      } catch (e) {
+        deps.warn(e);
+      }
+    });
   }
 
   return { schedule, flush, discard, load, clear };

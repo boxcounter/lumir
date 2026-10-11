@@ -78,3 +78,20 @@
 - **7（会话生命周期的四条不动草稿）没有独立真机场景**：切会话 / 新建 / 压缩 / 删除会话都不经过
   草稿 store（实现面上零触点），判据落在单元层与实现面；如需真机判据另立场景（见 136 的覆盖边界）。
 - **6.4 未动 `src/harness-panel.css`**：零新视觉元素（design §8），未跑 visual 门禁。
+
+## 评审 r1 修复（reviewer-m452，2026-10-11，两条 P2 同根：在途写未串行化）
+
+- **P2-1 写失败重试覆盖更新的待写**：`write()` 的 catch 原为无条件 `pending = draftJson`——在途写
+  期间用户新编辑的内容会被旧内容的失败重填覆盖。改为 `pending ??= draftJson`（只在期间没有更新的
+  编辑时回填；新内容自带防抖定时器会自己写走）。
+- **P2-2 在途写与发送成功的删除并发**：写的 rename 与 clear 的 remove 次序无保证，rename 落在
+  remove 之后时盘上留下「已发送内容」的草稿，下次装载把它恢复回来。改为**一条 promise 链串行
+  store 的全部后端 mutation**（`enqueue`，flush 的写与 clear 的删除共用），删除必然排在在途写之后。
+  另加**作废世代**（`epoch`）：`discard`（切 vault / clear）递增，在途写落地时若世代已变则不回填
+  待写、也不更新「已落盘」基准——否则 clear 设的 `written = ""` 会被在途写的成功回调改回旧内容，
+  用户接着打同样的字会被「无变更不写」吞掉（盘上其实没有那份）。
+- **两条新单测**（`tests/unit/harness-draft.test.ts`）：挂起式 `putDraft` 桩驱动「写失败窗口内有
+  新编辑」与「flush 在途 + clear」两个现场。两条都做过**反向验证**——分别把修法退回旧写法时对应
+  断言如实变红（P2-1 退回后第一条红、P2-2 退回后第二条红且失败详情正是「删除先落地、写在后落地」）。
+- 复跑读数：`node tests/unit/run.mjs` → 834 passed / 0 failed；`bash scripts/gate.sh quick` →
+  `GATE RESULT: 9/9 PASS（SKIP 1）`，exit 0。

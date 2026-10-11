@@ -29,6 +29,8 @@ interface Rig {
   getCalls: number;
   /** 读盘的实现（可替换：有的用例要把它挂住，用来模拟「读盘窗口里又切了一次 vault」）。 */
   getImpl: () => Promise<string | null>;
+  /** 写盘的闸（可替换）：返回 promise 时 `putDraft` 会等它——模拟「这次 IPC 在途」。 */
+  putGate: ((draftJson: string) => Promise<void> | undefined) | undefined;
 }
 
 function createRig() {
@@ -38,6 +40,8 @@ function createRig() {
       return rig.getImpl();
     },
     putDraft: async (draftJson) => {
+      const gate = rig.putGate?.(draftJson);
+      if (gate !== undefined) await gate;
       if (rig.failWrite) throw { code: "harness_draft_write_failed", message: "磁盘只读" };
       rig.writes.push(draftJson);
       rig.file = draftJson === "" ? null : draftJson;
@@ -52,6 +56,7 @@ function createRig() {
     warns: [],
     getCalls: 0,
     getImpl: async () => rig.file,
+    putGate: undefined,
   };
   return { store, rig };
 }
@@ -221,6 +226,85 @@ test("load 之后「无变更不写」以读回的内容为基准（未编辑则
     mock.timers.tick(5000);
     await flushAwait();
     assert.deepEqual(rig.writes, [], "装载后未编辑不该再写一份");
+  } finally {
+    mock.timers.reset();
+  }
+});
+
+test("写失败窗口内有新编辑：重试写的是新内容（旧内容的失败不覆盖待写，r1 P2-1）", async () => {
+  mock.timers.enable({ apis: ["setTimeout"] });
+  try {
+    const { store, rig } = createRig();
+    // 第一份内容的写在途（挂住），期间用户继续编辑；随后这次写在途失败。
+    const gate: { release: (() => void) | undefined } = { release: undefined };
+    rig.putGate = (draftJson) =>
+      draftJson === serializeComposerDraft(MSG, null)
+        ? new Promise<void>((resolve) => void (gate.release = resolve))
+        : undefined;
+
+    store.schedule(MSG, null);
+    mock.timers.tick(1200); // 防抖到点 → flush → 写 MSG（在途）
+    await flushAwait();
+    store.schedule(MSG2, null); // 在途期间的新编辑（更新的内容）
+    rig.failWrite = true; // 这次在途写会失败
+
+    const release = gate.release;
+    assert.ok(release !== undefined, "第一份内容的写确实在途");
+    release();
+    await flushAwait();
+    assert.equal(rig.warns.length, 1, "失败降级为人话 warning");
+    assert.deepEqual(rig.writes, [], "失败的那一份没落盘");
+
+    // 下一次 flush 写走的是**新内容**，不是被失败回填顶回来的旧内容
+    rig.failWrite = false;
+    rig.putGate = undefined;
+    await store.flush();
+    assert.deepEqual(rig.writes, [serializeComposerDraft(MSG2, null)], "重试写的是新内容");
+  } finally {
+    mock.timers.reset();
+  }
+});
+
+test("flush 在途 + 发送成功 clear：删除排在在途写之后（已发送内容不复活，r1 P2-2）", async () => {
+  mock.timers.enable({ apis: ["setTimeout"] });
+  try {
+    const { store, rig } = createRig();
+    const gate: { release: (() => void) | undefined } = { release: undefined };
+    rig.putGate = (draftJson) =>
+      draftJson === serializeComposerDraft(MSG, null)
+        ? new Promise<void>((resolve) => void (gate.release = resolve))
+        : undefined;
+
+    store.schedule(MSG, null);
+    mock.timers.tick(1200); // flush → 写 MSG（在途）
+    await flushAwait();
+    const clearing = store.clear(); // 发送成功：删除入队（须等在途写之后）
+    await flushAwait();
+
+    const release = gate.release;
+    assert.ok(release !== undefined, "第一份内容的写确实在途");
+    release(); // 在途写落地
+    await clearing;
+    await flushAwait();
+
+    assert.deepEqual(
+      rig.writes,
+      [serializeComposerDraft(MSG, null), ""],
+      "次序：写在先、删除在后（并发时 rename 可能压在 remove 之后）",
+    );
+    assert.equal(rig.file, null, "已发送内容不复活成草稿");
+
+    // 「已落盘」基准也跟着归空：同样的内容再打一次要能写盘（MUST NOT 谎报已保存）
+    rig.putGate = undefined; // 闸撤掉：第三次写不再挂住
+    store.schedule(MSG, null);
+    mock.timers.tick(1200);
+    await flushAwait();
+    assert.deepEqual(
+      rig.writes,
+      [serializeComposerDraft(MSG, null), "", serializeComposerDraft(MSG, null)],
+      "清除后同样的内容再编辑一次仍然落盘",
+    );
+    assert.equal(rig.file, serializeComposerDraft(MSG, null));
   } finally {
     mock.timers.reset();
   }
