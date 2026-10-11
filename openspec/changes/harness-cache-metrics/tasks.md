@@ -1,9 +1,11 @@
 # Tasks: harness-cache-metrics
 
-> 实现期注记（M443）：本文件逐条勾选时附上证据指针与两处如实登记的偏离——① 真 provider 实测
+> 实现期注记（M443）：本文件逐条勾选时附上证据指针与三处如实登记的偏离——① 真 provider 实测
 > `cache_write_tokens` 在 Kimi Code 端点恒 0（路径已钉死、取值恒 0，见设计 §6）；② §5.2 ④
 > 的「webview 重载」用「切 vault 再切回」同源通道判（套件没有触发整页重载的动作，与场景 96
-> 的既有处置一致，理由写在 131 场景正文）。
+> 的既有处置一致，理由写在 131 场景正文）；③ **真机 hover 面未验**（本机前台被别的应用占用、
+> `AXRaise` 抢不回来，两条替代投递路径实测否决）——tower 2026-10-11 裁决按 ③ 收尾：气泡两行
+> 的判据由 chromium 视觉层 + Rust 单测承担，场景保留 hover 步待前台空闲时复跑，详见 §5.2 / §5.3。
 
 ## 1. 数据模型与统计口径
 
@@ -104,23 +106,40 @@
       M438 实测形状）；③ 在 `133-harness-cache-write`（16000 → 0 两轮 + 留存两值）；三份 fixture
       `harness-mock-cache-{two,dilution,write}.json` 全合成。**偏离（④）**：套件没有触发前端整页重载的
       动作，改用「切 vault 再切回」这条同源通道（同一个 `restoreSnapshot`）——处置与场景 96 一致，
-      理由写进 131 的正文与覆盖边界
-- [ ] 5.3 `bash scripts/gate.sh quick` 全绿；若动过视觉场景 → `bash scripts/gate.sh visual` 全绿、既有基线
+      理由写进 131 的正文与覆盖边界。
+      **真机跑批读数（2026-10-11）**：非 hover 断言**全部通过**（控制行 `50% · 50%` / `10% · 50%` /
+      `15% · 20%` / `17% · 60%`、留存 `llm_response.usage.cache_write_tokens` 0 / 16000 落盘、面板结构），
+      **hover 步跑不了**——本机前台被 Google Chrome（pid 8608）占着，`AXRaise` 抢不回来（M135 r2 实测的
+      既有限制 + tower 明令不抢焦点），真鼠标事件到不了 Lumir。两条替代投递路径（`CGEventPostToPid` /
+      「去掉前台前置的 HID 移动」）各做一次探针，**气泡都没翻出**，已删掉不留旁路（README 记了结论）。
+      `do: hover` 因此在前台拿不到时抛 `InfraError` → 该场标 **INVALID**（退出码 2，本次读数不算数），
+      不是产品判红；tower 裁决按③收尾（见 5.3）
+- [x] 5.3 `bash scripts/gate.sh quick` 全绿；若动过视觉场景 → `bash scripts/gate.sh visual` 全绿、既有基线
       零漂移、气泡新增两行经 Alex 过目
-      —— quick 见 §6.2；视觉：m347 新增一条**元素像素基线**（`m347-ctxpop-cache-metrics-chromium-darwin.png`，
-      首跑由 playwright 写入，非 `--update` 覆盖既有基线），既有基线零漂移（全量 654 条通过，唯一失败是
-      该新基线「不存在、写 actual」）；截图已复制到主仓
-      `test-results/alex-review-2026-10-11/m443/01-气泡四行-越线态-基线候选.png` 报 tower 呈 Alex 过目
+      —— quick 见 §6.2；视觉见 §6.3：m347 新增一条**元素像素基线**
+      （`m347-ctxpop-cache-metrics-chromium-darwin.png`，首跑由 playwright 写入，非 `--update` 覆盖既有
+      基线），既有基线**零漂移**（全量 655 条通过）；截图已复制到主仓
+      `test-results/alex-review-2026-10-11/m443/01-气泡四行-越线态-基线候选.png` 报 tower 呈 Alex 过目。
+      **覆盖边界（tower 裁决 2026-10-11，按 ③ 收尾）**：真机 hover 面**未验**（环境阻塞，探针①②已实测
+      否决并记录）；气泡两行的判据证据 = chromium 视觉层的 m347 hover 断言（四行行序 / 文案 / 零值不
+      渲染）+ 该元素像素基线 + Rust 单测（成因真值表 / 累计口径 / 载荷键集合）。场景文件里的 hover 步
+      **保留不删**（前台空闲时即可执行）；tower 在 Alex 本机前台空闲时安排复跑、证据落
+      `test-results/acceptance/`
 
 ## 6. 验证
 
 - [x] 6.1 `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` 通过
       —— `GATE PASS openspec-validate`（gate.sh quick / visual 两次全绿）
-- [ ] 6.2 `bash scripts/gate.sh quick` 全绿（照抄 `GATE RESULT` 原文行 + 退出码，SKIP 单列）
-      —— 收尾复跑后在 mission 报告里照抄原文行（首次跑出 1 FAIL = `cargo clippy` 的 `unused_mut` /
-      `filter_next` 两条，已修；重跑见报告）
-- [ ] 6.3 动过视觉面 → `bash scripts/gate.sh visual` 全绿；气泡新增行的基线经 Alex 过目后 `--update`
-      —— 全绿读数与基线截图路径见 5.3；「Alex 过目」是外部裁决点，已把截图交 tower
+- [x] 6.2 `bash scripts/gate.sh quick` 全绿（照抄 `GATE RESULT` 原文行 + 退出码，SKIP 单列）
+      —— 最终 tip（`df84385`）复跑：**`GATE RESULT: 10/10 PASS（SKIP 0）`**，exit 0，**SKIP 0**（10 条
+      全跑：cargo-fmt / cargo-clippy / cargo-test / bindings-drift / tsc-root / tsc-visual / tsc-unit /
+      unit-tests / docs-check / openspec-validate）。首跑曾出 1 FAIL = `cargo clippy` 的 `unused_mut`
+      与 `filter_next` 两条，已修
+- [x] 6.3 动过视觉面 → `bash scripts/gate.sh visual` 全绿；气泡新增行的基线经 Alex 过目后 `--update`
+      —— 最终视觉面复跑：**`GATE RESULT: 12/12 PASS（SKIP 0）`**，exit 0（含 isolation-runs 与
+      visual-regression；视觉用例 **655 passed**）。**未跑过 `--update`**：新基线由首跑「不存在、写
+      actual」写入（既有基线零漂移，首跑唯一失败就是这条新基线不存在）；「Alex 过目」是外部裁决点——
+      截图已交 tower（见 5.3 的路径与 `open` 命令）
 - [x] 6.4 信息卫生：改动面一次 text 级 grep 清扫（fixture 数值与截图全合成，无真实留存内容）
       —— 改动面 37 个文件 grep 无真实 vault 内容 / 无本机路径 / 无凭据；三份 fixture 与三份场景
       全部合成（`harness-note.md` / `lumir-m102-acceptance` / 纯数值 usage）
