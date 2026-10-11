@@ -162,11 +162,31 @@
 // 全部 cfg(macos)），因此该口径变化无实害。将来若跨平台，需重新引入平台门（给 ⌃ 系绑定
 // 加平台维度，或把 ⌃N 一类让回系统惯例）。
 
+// M447（change composer-emacs-nav）：表新增第三个作用域 `text`（**文本面** = 编辑器内容区
+// 或 harness composer 输入区）。composer 里的 Emacs 文本导航整族（⌃F/⌃B/⌃A/⌃E/⌃N/⌃P/⌃D/⌃H/
+// ⌥D/⌥⌫/⌃K/⌃Y/⌃T/扩选六键/⌥F/⌥B）此前全走 macOS 文本系统的原生 caret 路径——不受本表约束、
+// 不进 [keys]、不进键位面板、无机器判据。本 change 把这一族的作用域由 `editor` 改判 `text`：
+// 同一物理键在编辑器与 composer 两处**共用同一条绑定**（「一个 token 一条绑定」一字不改），
+// 实现在装配层（src/main.ts）的一处包装里按事件目标分派——编辑器面走 editor.ts 的既有实现，
+// composer 面走面板句柄的 composer 命令入口（模型层纯函数）。作用域派生的**单一来源**是
+// `scopeOfCommand`（表内 scope 字段、applyKeyOverrides、装配期 / 单测对账三处共用）。
+// 族外 editor 命令（⌥G / widget 族 / Tab 缩进等）作用域不变，在 composer 内照旧不命中。
+// 已知边界（设计明账）：含 Alt 的组合忽略 Shift ⇒ ⌥F/⌥B 无法再绑词移动，故接管后两侧都没有
+// 词移动键位（⌥F 在 composer 里从「原生词移动」变为「按词扩选」，与表内语义一致）。
+
 // 键位来由的文本住在文案表（M282，change ui-language-i18n 的 D8 裁决）——本文件只留
 // 「绑定 → 文案表键」的引用，因此是纯类型导入（类型剥离后不留任何运行期依赖）。
 import type { CopyKey } from "./copy-data";
 
-export type KeyScope = "global" | "editor";
+/**
+ * 绑定作用域（M447 起三值）：
+ *  - `global`：任意焦点生效；
+ *  - `editor`：事件目标落在编辑器内容区（CM contentDOM）内才生效（含其中的 widget）；
+ *  - `text`  ：**文本面**——事件目标落在编辑器内容区内**或** harness 面板的 composer 输入区内
+ *    才生效。两条文本面共用同一条绑定（一个 token 一条绑定不变），实现在面内分派
+ *（change composer-emacs-nav design §3）。
+ */
+export type KeyScope = "global" | "editor" | "text";
 
 /** 编辑器内核侧命令 id（实现落在 editor.ts 的 commands 记录）。 */
 const EDITOR_CORE_COMMAND_IDS = [
@@ -234,6 +254,39 @@ export type WidgetCommandId = (typeof WIDGET_COMMAND_IDS)[number];
 
 /** 编辑器侧全部命令 id（内核 + widget）。 */
 export const EDITOR_COMMAND_IDS = [...EDITOR_CORE_COMMAND_IDS, ...WIDGET_COMMAND_IDS] as const;
+
+/**
+ * `text` 面（文本面）命令组（M447，change composer-emacs-nav design §3.1）：编辑器内容区与
+ * harness composer **两处可编辑文本面**都成立的文本编辑命令——即 Emacs 文本导航整族
+ *（移动 / 删除 / kill-yank / 转置 / 扩选）。这批命令的绑定作用域由 `scopeOfCommand` 派生为
+ * `text`：同一物理键在编辑器与 composer 两处共用**同一条**绑定，实现在装配层的一处包装里
+ * 按事件目标分派到编辑器侧或 composer 侧（MUST NOT 为 composer 另立同 token 绑定）。
+ *
+ * 清单与 design §4 的键表一一对应（keys 层单测逐条对账，缺一条即红）。
+ */
+export const COMPOSER_TEXT_COMMAND_IDS = [
+  "editor.cursor-forward",
+  "editor.cursor-backward",
+  "editor.line-start",
+  "editor.line-end",
+  "editor.cursor-down",
+  "editor.cursor-up",
+  "editor.delete-char-forward",
+  "editor.delete-char-backward",
+  "editor.delete-word-forward",
+  "editor.delete-word-backward",
+  "editor.kill-line",
+  "editor.yank",
+  "editor.transpose-chars",
+  "editor.extend-char-forward",
+  "editor.extend-char-backward",
+  "editor.extend-line-down",
+  "editor.extend-line-up",
+  "editor.extend-line-start",
+  "editor.extend-line-end",
+  "editor.extend-word-forward",
+  "editor.extend-word-backward",
+] as const;
 
 /** ⌘1–9 直达第 1–9 个标签的命令 id（M149）。命令层没有参数通道，序号只能落在 id 上——
  *  这样 `[keys]` 配置重绑与键位面板都能如实显示「⌘3 → tab.goto-3」，也不会出现
@@ -338,6 +391,18 @@ export const GLOBAL_COMMAND_IDS = [
 
 /** 全部命令 id：类型与运行期清单同源，测试据此断言无孤儿命令、无越界绑定。 */
 export const COMMAND_IDS = [...EDITOR_COMMAND_IDS, ...GLOBAL_COMMAND_IDS] as const;
+
+/**
+ * 作用域派生的**单一来源**（M447，change composer-emacs-nav design §3.1）：`text` 面命令组 →
+ * `"text"`；其余编辑器侧命令 → `"editor"`；其余 → `"global"`。三处消费者共用它——
+ * `KEY_BINDINGS` 的 `scope` 字段、`applyKeyOverrides` 的作用域派生、装配期 / 单测的作用域
+ * 对账（MUST NOT 三处各写一份判据，否则 `editor.*` 前缀与 `text` 作用域会被两处判成不一致）。
+ */
+export function scopeOfCommand(command: CommandId): KeyScope {
+  if ((COMPOSER_TEXT_COMMAND_IDS as readonly string[]).includes(command)) return "text";
+  if ((EDITOR_COMMAND_IDS as readonly string[]).includes(command)) return "editor";
+  return "global";
+}
 
 /**
  * 默认不绑键的命令 id 清单（M180）：「有实现、有 id、有意不占键位」是**要签字的决定**，
@@ -450,18 +515,21 @@ const TAB_GOTO_BINDINGS: readonly KeyBinding[] = TAB_GOTO_IDS.map((command, inde
  */
 export const KEY_BINDINGS: readonly KeyBinding[] = [
   // ── 编辑器内：垂直移动（M103 硬化路径：逐视觉行 + 跨原子块钳制 + SelectionRange 揭示）
-  { key: "ArrowDown", command: "editor.cursor-down", scope: "editor", docKey: "D260" },
-  { key: "ArrowUp", command: "editor.cursor-up", scope: "editor", docKey: "D261" },
-  { key: "Ctrl-n", command: "editor.cursor-down", scope: "editor", docKey: "D262" },
-  { key: "Ctrl-p", command: "editor.cursor-up", scope: "editor", docKey: "D263" },
+  // M447（change composer-emacs-nav）：本族（垂直 / 水平 / 行首尾 / 删除 / kill-yank / 转置 /
+  // 扩选）的作用域由 `editor` 改判 `text`——编辑器内容区**或** harness composer 内生效，一条
+  // 绑定在两个面上各归其位（作用域由 scopeOfCommand 派生；命令 id 与编辑器侧实现一字不改）。
+  { key: "ArrowDown", command: "editor.cursor-down", scope: scopeOfCommand("editor.cursor-down"), docKey: "D260" },
+  { key: "ArrowUp", command: "editor.cursor-up", scope: scopeOfCommand("editor.cursor-up"), docKey: "D261" },
+  { key: "Ctrl-n", command: "editor.cursor-down", scope: scopeOfCommand("editor.cursor-down"), docKey: "D262" },
+  { key: "Ctrl-p", command: "editor.cursor-up", scope: scopeOfCommand("editor.cursor-up"), docKey: "D263" },
 
   // ── 编辑器内：水平移动（M110/M111 硬化路径：原子块跨入钳制 + 退化测量回退）
-  { key: "Ctrl-f", command: "editor.cursor-forward", scope: "editor", docKey: "D264" },
-  { key: "Ctrl-b", command: "editor.cursor-backward", scope: "editor", docKey: "D265" },
+  { key: "Ctrl-f", command: "editor.cursor-forward", scope: scopeOfCommand("editor.cursor-forward"), docKey: "D264" },
+  { key: "Ctrl-b", command: "editor.cursor-backward", scope: scopeOfCommand("editor.cursor-backward"), docKey: "D265" },
 
   // ── 编辑器内：行首 / 行尾（对称的一对；⌃E 既有，⌃A 本 mission 新增）
-  { key: "Ctrl-e", command: "editor.line-end", scope: "editor", docKey: "D266" },
-  { key: "Ctrl-a", command: "editor.line-start", scope: "editor", docKey: "D267" },
+  { key: "Ctrl-e", command: "editor.line-end", scope: scopeOfCommand("editor.line-end"), docKey: "D266" },
+  { key: "Ctrl-a", command: "editor.line-start", scope: scopeOfCommand("editor.line-start"), docKey: "D267" },
 
   // ── 编辑器内：全选（⌘ 系归 mac 惯例）
   { key: "Cmd-a", command: "editor.select-all", scope: "editor", docKey: "D268" },
@@ -499,26 +567,33 @@ export const KEY_BINDINGS: readonly KeyBinding[] = [
   { key: "Alt-KeyG", command: "editor.goto-line", scope: "editor", docKey: "D277" },
 
   // ── 编辑器内：删除与转置（M132 档 1；表格 cell 内一律钳到 cell 边界，绝不跨过隐藏管道符）
-  { key: "Ctrl-d", command: "editor.delete-char-forward", scope: "editor", docKey: "D278" },
-  { key: "Ctrl-h", command: "editor.delete-char-backward", scope: "editor", docKey: "D279" },
-  { key: "Ctrl-t", command: "editor.transpose-chars", scope: "editor", docKey: "D280" },
-  { key: "Alt-KeyD", command: "editor.delete-word-forward", scope: "editor", docKey: "D281" },
-  { key: "Alt-Backspace", command: "editor.delete-word-backward", scope: "editor", docKey: "D282" },
+  { key: "Ctrl-d", command: "editor.delete-char-forward", scope: scopeOfCommand("editor.delete-char-forward"), docKey: "D278" },
+  { key: "Ctrl-h", command: "editor.delete-char-backward", scope: scopeOfCommand("editor.delete-char-backward"), docKey: "D279" },
+  { key: "Ctrl-t", command: "editor.transpose-chars", scope: scopeOfCommand("editor.transpose-chars"), docKey: "D280" },
+  { key: "Alt-KeyD", command: "editor.delete-word-forward", scope: scopeOfCommand("editor.delete-word-forward"), docKey: "D281" },
+  { key: "Alt-Backspace", command: "editor.delete-word-backward", scope: scopeOfCommand("editor.delete-word-backward"), docKey: "D282" },
+  // M447 补：⌥Delete 是 ⌥D 的**另一个物理键形态**（前删词）——macOS 上 ⌥⌫ 与 ⌥Delete 是两个物理键，
+  // 前者在本表是 `Alt-Backspace`（该组合没有 Alt 层字符替换，`event.key` 仍为 "Backspace"），后者是
+  // `Alt-Delete`（`event.code` 为 "Delete"，含 Alt 的组合一律按物理键判定）。两者同族、方向相反，与 ⌥D
+  // 指向**同一条**命令 id（`editor.delete-word-forward`）——不新增命令。作用域由 `scopeOfCommand` 派生为
+  // `text`：M447 起编辑器与 composer 两处文本面共用同一条绑定（composer 内的 ⌥Delete 因此走
+  // `killWordForward`，与 ⌥⌫ 的 `killWordBackward` 对称；不补这条绑定它是落空放行给原生路径的）。
+  { key: "Alt-Delete", command: "editor.delete-word-forward", scope: scopeOfCommand("editor.delete-word-forward"), docKey: "D281" },
 
   // ── 编辑器内：kill / yank（M132 档 2；单槽 kill buffer，kill ring 后续）
-  { key: "Ctrl-k", command: "editor.kill-line", scope: "editor", docKey: "D283" },
-  { key: "Ctrl-y", command: "editor.yank", scope: "editor", docKey: "D284" },
+  { key: "Ctrl-k", command: "editor.kill-line", scope: scopeOfCommand("editor.kill-line"), docKey: "D283" },
+  { key: "Ctrl-y", command: "editor.yank", scope: scopeOfCommand("editor.yank"), docKey: "D284" },
   { key: "Ctrl-g", command: "editor.keyboard-quit", scope: "editor", docKey: "D285" },
 
   // ── 编辑器内：shift-extend 扩选（M132；v0 不做 mark mode，选区只有 anchor/head 两端）
-  { key: "Ctrl-Shift-f", command: "editor.extend-char-forward", scope: "editor", docKey: "D286" },
-  { key: "Ctrl-Shift-b", command: "editor.extend-char-backward", scope: "editor", docKey: "D287" },
-  { key: "Ctrl-Shift-n", command: "editor.extend-line-down", scope: "editor", docKey: "D288" },
-  { key: "Ctrl-Shift-p", command: "editor.extend-line-up", scope: "editor", docKey: "D289" },
-  { key: "Ctrl-Shift-a", command: "editor.extend-line-start", scope: "editor", docKey: "D290" },
-  { key: "Ctrl-Shift-e", command: "editor.extend-line-end", scope: "editor", docKey: "D291" },
-  { key: "Alt-KeyF", command: "editor.extend-word-forward", scope: "editor", docKey: "D292" },
-  { key: "Alt-KeyB", command: "editor.extend-word-backward", scope: "editor", docKey: "D293" },
+  { key: "Ctrl-Shift-f", command: "editor.extend-char-forward", scope: scopeOfCommand("editor.extend-char-forward"), docKey: "D286" },
+  { key: "Ctrl-Shift-b", command: "editor.extend-char-backward", scope: scopeOfCommand("editor.extend-char-backward"), docKey: "D287" },
+  { key: "Ctrl-Shift-n", command: "editor.extend-line-down", scope: scopeOfCommand("editor.extend-line-down"), docKey: "D288" },
+  { key: "Ctrl-Shift-p", command: "editor.extend-line-up", scope: scopeOfCommand("editor.extend-line-up"), docKey: "D289" },
+  { key: "Ctrl-Shift-a", command: "editor.extend-line-start", scope: scopeOfCommand("editor.extend-line-start"), docKey: "D290" },
+  { key: "Ctrl-Shift-e", command: "editor.extend-line-end", scope: scopeOfCommand("editor.extend-line-end"), docKey: "D291" },
+  { key: "Alt-KeyF", command: "editor.extend-word-forward", scope: scopeOfCommand("editor.extend-word-forward"), docKey: "D292" },
+  { key: "Alt-KeyB", command: "editor.extend-word-backward", scope: scopeOfCommand("editor.extend-word-backward"), docKey: "D293" },
 
   // ── 编辑器内：轨道 D 的**块级横滚容器**焦点键（M132 从 livePreview 手柄收编；M180 从
   // 「表格滚动容器」泛化为「块级横滚容器」：表格容器与围栏 / 缩进代码块的横滚容器共用同一个
@@ -632,6 +707,13 @@ export type CommandRuntime = Record<CommandId, CommandRunner>;
 export interface KeymapContext {
   /** 事件目标是否落在编辑器内容区内（含其中的 widget，如表格滚动容器）。 */
   isEditorEvent(event: KeyboardEvent): boolean;
+  /**
+   * 事件目标是否落在 harness 面板的 composer 输入区（`.lumir-hp-composer`）内（M447）。
+   * `text` 作用域的绑定按「编辑器内容区内**或** composer 内」判定命中；实现落在装配层
+   *（`src/main.ts`，它同时持有 pane 布局与面板句柄）。可选——缺省视为 false，只有 `text`
+   * 作用域的绑定会读它；两个面共用同一条绑定，不做第二条旁路。
+   */
+  isComposerEvent?(event: KeyboardEvent): boolean;
   /**
    * 命令级命中条件（M240）：返回 `false` 时该绑定不接管、事件原样留给原生路径
    *（不 `preventDefault`），语义与 `KeyBinding.when` 相同。
@@ -750,9 +832,9 @@ export type KeyOverrides = Readonly<Record<string, string | null | undefined>>;
  * 把 [keys] 配置覆盖应用到键位表（M132）：单键重绑 / 解绑，返回新表与人话 warning。
  *
  * 口径：
- * - 覆盖**只换「键 → 命令」的对应**：作用域由命令的归属决定（editor 组 → editor，
- *   其余 → global），不随配置漂移，也不允许把 editor 命令绑成 global（否则焦点在
- *   别处时命令拿不到编辑器上下文）。
+ * - 覆盖**只换「键 → 命令」的对应**：作用域由命令归属决定（`scopeOfCommand` 的**单一来源**：
+ *   `text` 面命令组 → text，其余 editor 组 → editor，其余 → global），不随配置漂移，也不允许
+ *   把 editor 命令绑成 global（否则焦点在别处时命令拿不到编辑器上下文）。
  * - 未知命令 id：warning + 忽略该条（保留默认绑定），MUST NOT 抛错——配置文件打错
  *   一个字不该让应用起不来。命令清单的单一来源是本文件的 COMMAND_IDS（Rust 侧只
  *   校验形状，不复制这张清单，见 openspec change emacs-keys-pack 的分层说明）。
@@ -790,7 +872,7 @@ export function applyKeyOverrides(
       warnings.push(`配置项 keys.${rawKey} 的命令 "${command}" 未知，已忽略该覆盖（保留默认绑定）`); // i18n-exempt: log
       continue;
     }
-    const scope: KeyScope = (EDITOR_COMMAND_IDS as readonly string[]).includes(command) ? "editor" : "global";
+    const scope: KeyScope = scopeOfCommand(command as CommandId);
     byToken.set(token, {
       key: raw,
       command: command as CommandId,
@@ -898,6 +980,14 @@ export class Keymap {
     if (binding) {
       this.reset();
       if (binding.scope === "editor" && !ctx.isEditorEvent(event)) return; // 作用域外：不消费
+      // text 面（M447）：编辑器内容区内**或** composer 内都命中——同一物理键在两处文本面共用
+      // 同一条绑定，实现在装配层按事件目标分派（面板外 / chrome 上都不命中，不消费）。
+      if (
+        binding.scope === "text" &&
+        !(ctx.isEditorEvent(event) || ctx.isComposerEvent?.(event) === true)
+      ) {
+        return;
+      }
       // 条件不满足（如表格容器键在文本里）：不消费、不 preventDefault，按键留给原生路径
       if (binding.when !== undefined && !binding.when(event)) return;
       // 命令级命中条件（M240）：与 when 同语义，只是条件归命令实现方（理由见 KeymapContext）。

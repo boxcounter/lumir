@@ -1,6 +1,14 @@
 // 摘录引用卡片的数据模型与引用消息序列化（change add-harness-quote-cards / M342；
 // 消息摘录卡片扩展见 change harness-message-excerpt design §3–§4）。
 //
+// **M447 起本模块还承载「两侧共用的文本原语」**（词 / 字素簇扫描 + 单槽 kill buffer）：编辑器侧
+//（`src/editor.ts`）与 composer 侧（`src/harness-panel.ts`）都要用同一份，而 harness 面板的模块
+// 图必须能进零 DOM 单测（`tests/unit`）——`src/editor.ts` 的模块图里有 TypeScript 参数属性
+//（`src/preview/livePreview.ts` 一族），`node --experimental-strip-types` 直接报
+// `ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX`（同 `src/enter-indent.ts` / `src/list-indent.ts` 的模块头
+// 所述）。这个叶子模块是两侧都能 import 的最小共同点；因此它不再是「无 CodeMirror」——字素簇
+// 扫描借 `@codemirror/state` 的 `findClusterBreak`（与编辑器侧同一口径，MUST NOT 各写一份）。
+//
 // 合同在 openspec/changes/add-harness-quote-cards/design.md §3「数据模型与序列化协议」与
 // proposal.md 头部评审记录（一致性原则，Alex 2026-10-06）：
 //   - 卡片数据是**单一真源**；序列化是它的**投影**——walker 只取 file / heading / lines /
@@ -16,8 +24,10 @@
 // 唯一实现点：`serializeComposerDraft` / `parseComposerDraft` 见文件末尾一节（与投递投影分开，
 // 后者有损、不得当存储形态）。
 //
-// 本模块是纯数据 + 纯函数（无 DOM、无 CodeMirror、无文案），消费者（composer 混排编辑区、
+// 本模块是纯数据 + 纯函数（无 DOM、无文案），消费者（composer 混排编辑区、
 // 消息装配、transcript 沉淀）在后续 mission 接线。
+
+import { findClusterBreak } from "@codemirror/state";
 
 /** 摘录引用卡片。 */
 export interface QuoteCard {
@@ -436,4 +446,101 @@ export function draftUnknownBlockText(block: ComposerBlock): string {
   } catch {
     return "";
   }
+}
+
+// ---------------------------------------------------------------------------
+// 两侧共用的文本原语（M447，change composer-emacs-nav design §5.2 / §5.4）：词边界与字素簇
+// 扫描口径、单槽 kill buffer。编辑器侧与 composer 侧共用同一份，MUST NOT 复制第二份。
+// ---------------------------------------------------------------------------
+
+/** 词字符（Emacs 词法口径的近似）：Unicode 字母 / 数字 / 下划线。 */
+export const WORD_CHAR = /[\p{L}\p{N}_]/u;
+export const isWordChar = (ch: string): boolean => WORD_CHAR.test(ch);
+
+/** 文本读取器：从区间取子串——编辑器传 `EditorState.doc` 的切片、composer 传普通字符串的切片。
+ *  共用扫描核因此不绑死在某一种文本载体上，两侧只有**一份**实现。 */
+export type TextReader = (from: number, to: number) => string;
+
+/** 向前扫描同类码点（码点粒度，避免拆开代理对）；到 limit 或首个异类为止。 */
+export function scanRunForward(read: TextReader, pos: number, limit: number, match: (ch: string) => boolean): number {
+  let i = pos;
+  while (i < limit) {
+    for (const ch of read(i, Math.min(limit, i + 256))) {
+      if (!match(ch)) return i;
+      i += ch.length;
+    }
+  }
+  return Math.min(i, limit);
+}
+
+/** 向后扫描同类码点；到 limit 或首个异类为止。 */
+export function scanRunBackward(read: TextReader, pos: number, limit: number, match: (ch: string) => boolean): number {
+  let i = pos;
+  while (i > limit) {
+    const chars = [...read(Math.max(limit, i - 256), i)];
+    for (let k = chars.length - 1; k >= 0; k--) {
+      if (!match(chars[k])) return i;
+      i -= chars[k].length;
+    }
+  }
+  return Math.max(i, limit);
+}
+
+/** Emacs forward-word：先跳过非词字符，再走到当前词尾。 */
+export function wordEndForward(read: TextReader, pos: number, limit: number): number {
+  return scanRunForward(read, scanRunForward(read, pos, limit, (ch) => !isWordChar(ch)), limit, isWordChar);
+}
+
+/** Emacs backward-word：反向跳过非词字符，再走到词首。 */
+export function wordStartBackward(read: TextReader, pos: number, limit: number): number {
+  return scanRunBackward(read, scanRunBackward(read, pos, limit, (ch) => !isWordChar(ch)), limit, isWordChar);
+}
+
+/** 下一个字素簇；换行符也是合法步长（Emacs C-d 在行尾删掉换行、两行合并）。 */
+export function clusterForward(read: TextReader, pos: number, limit: number): number {
+  if (pos >= limit) return limit;
+  const win = read(pos, Math.min(limit, pos + 64));
+  return pos + Math.min(findClusterBreak(win, 0, true), limit - pos);
+}
+
+/** 上一个字素簇。 */
+export function clusterBackward(read: TextReader, pos: number, limit: number): number {
+  if (pos <= limit) return limit;
+  const from = Math.max(limit, pos - 64);
+  const win = read(from, pos);
+  return from + findClusterBreak(win, win.length, false);
+}
+
+/** 单槽 kill buffer（kill ring 后续）：连续同向 kill 相接时合并，其余 kill 覆盖。
+ *
+ *  **模块级单例、跨面共用**（M317 tasks 4.4 的跨 pane 口径 + M447 的跨面口径）：kill ring 在
+ *  Emacs 本就是全局的——一个 pane 里 `⌃K` 杀了内容，切到另一个 pane（或 composer）`⌃Y` 应当能
+ *  插进去。因此它 MUST NOT 下沉成逐实例状态，也 MUST NOT 在 composer 侧复制第二份
+ *（change composer-emacs-nav 的裁决点 4）。
+ *
+ *  `anchor` 是相接端的**可比标识**（编辑器传字符位置，composer 传 `块:偏移` 串）——两侧的坐标
+ *  空间不同，相接判定因此只比这个不透明串，逻辑仍只有一份（`mergeKillText`）。 */
+export interface KillSlotState {
+  text: string;
+  forward: boolean;
+  /** 上次 kill 结束后光标所在端的可比标识（下一次 kill 的相接端与它相等即合并）。 */
+  anchor: string;
+}
+let killSlot: KillSlotState | null = null;
+
+/** 当前 kill 槽。 */
+export function currentKillSlot(): KillSlotState | null {
+  return killSlot;
+}
+
+/** 覆写 kill 槽。 */
+export function setKillSlot(state: KillSlotState): void {
+  killSlot = state;
+}
+
+/** 连续同向 kill 的相接合并判定（纯函数，编辑器与 composer 共用同一份）：本次的相接端
+ *  `joinAt` 等于上次记录的 `anchor` 且同向时并入，否则覆盖。 */
+export function mergeKillText(prev: KillSlotState | null, text: string, forward: boolean, joinAt: string): string {
+  if (prev === null || prev.forward !== forward || prev.anchor !== joinAt) return text;
+  return forward ? prev.text + text : text + prev.text;
 }
