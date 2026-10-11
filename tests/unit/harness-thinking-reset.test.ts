@@ -397,7 +397,7 @@ test("新会话：chip 从会话档位（Max）回落默认 High，读屏名与�
     JSON.stringify({
       vault: VAULT,
       messages: [],
-      usage: { ctx_pct: 0, cache_pct: 0 },
+      usage: { ctx_pct: 0, cache_pct_session: 0 },
       warn_ctx_pct: 85,
       thinking: { level: sessionLevel, supported: true },
     }),

@@ -726,9 +726,10 @@ const COPY_TABLE = {
   // M370 改形（编号沿用，Alex 2026-10-07 原话「ctx: XX% 改为 XX% • YY%」）：双裸读数
   // 「{ctx}% · {cache}%」（分隔符小圆点 U+00B7 与 modeline 同款——Alex 过目基线候选后的复裁决
   // 「基线截图里的圆点很大，我希望是小圆点，类似 modeline 的那种」，原话写作 • 以复裁决为准）
-  // ——ctx = 上下文窗口使用率、cache = cache hit rate（cache_pct 已在
-  // usage 事件与会话快照里，纯前端消费）；「ctx 」前缀随原话一并去掉。cache 缺失（旧事件 /
-  // 桩）时回落单读数「{ctx}%」（数据驱动形态，不另起模板）。
+  // ——ctx = 上下文窗口使用率、cache = **本逻辑会话累计**缓存命中率（M443 改口径：主读数
+  // 取 `cache_pct_session`，单回合值降为气泡辅值——一次大块新增不再让控制行读数跳崖）；
+  // 「ctx 」前缀随原话一并去掉。cache 缺失（旧事件 / 桩）时回落单读数「{ctx}%」
+  // （数据驱动形态，不另起模板）。
   D334: {
     zh: "{ctx}% · {cache}%",
     en: "{ctx}% · {cache}%",
@@ -1029,18 +1030,47 @@ const COPY_TABLE = {
   // ctx% · cache% 读数的含义 hover hint（两个裸读数无任何前缀，hover 读数才浮出说明）。
   // **M378 改形（编号沿用，Alex 2026-10-07 裁决「比如 context window usage: 12%.
   // cache hit rate: 54%……按照这个『清晰简洁』的思路来设计」）**：不再是一句并列说明，
-  // 改两行带当时实际值——本句 = 第一行（上下文窗口占用，{ctx} 取当时读数），第二行
-  // cache hit rate 为 D401；cache 缺失（旧事件 / 桩）时第二行整行不渲染。越过警示阈值时
-  // 警示句（D335）追加在两行之下（同泡第三行，追加行为保留）。
+  // 改带当时实际值的多行——本句 = 第一行（上下文窗口占用，{ctx} 取当时读数），第二行
+  // 缓存命中率（会话累计）为 D401；cache 缺失（旧事件 / 桩）时第二行整行不渲染。
+  // **M443 补两行**：第三行本回合缓存命中（D452，带 D453/D454 成因句）、第四行缓存写入
+  // （D455，本回合值为 0 时整行不渲染）。越过警示阈值时警示句（D335）追加在最后
+  // （追加行为保留，行序在前的含义句不动）。
   D395: {
     zh: "上下文窗口占用：{ctx}%",
     en: "Context window usage: {ctx}%",
   },
-  // hover hint 第二行：cache hit rate 带当时实际值（M378，与 D395 同泡上下排列）。
+  // hover hint 第二行：**缓存命中率（会话累计）**带当时实际值（M378 起为第二行，M443 改形——
+  // 补「（会话累计）」限定词：cache 主读数改口径后，气泡里必须说清这一行是哪个口径的值）。
   // cache 读数缺失（旧事件 / 桩）时本行不渲染——读数回落单读数「{ctx}%」（D334）同口径。
   D401: {
-    zh: "缓存命中率：{cache}%",
-    en: "Cache hit rate: {cache}%",
+    zh: "缓存命中率（会话累计）：{cache}%",
+    en: "Cache hit rate (session cumulative): {cache}%",
+  },
+  // hover hint 第三行：**本回合**缓存命中率（M443 新增，change harness-cache-metrics §5.2）。
+  // 主读数（D334 / D401）是会话累计——一次大块新增只压低本行这个单回合值，控制行不跳崖；
+  // 这正是「50% 低谷被误读成缓存坏了」的修法。本回合值缺失（旧事件 / 桩）时整行不渲染。
+  D452: {
+    zh: "本回合缓存命中：{turn}%",
+    en: "Cache hit this turn: {turn}%",
+  },
+  // 第三行的成因句（M443，按后端判定的 `cache_note` 取值追加在 D452 之后，分隔符是小圆点 ·
+  // ——与 modeline / D334 同款的排版分隔符）。两句都点破「非缓存失效」：冷启动是本回合
+  // cached_tokens 为 0（会话首个请求的典型，或前缀缓存过期），大块摊薄是新增内容超过已缓存
+  // 前缀的一半。判定算法在后端一处产出，前端 MUST NOT 自行猜成因。
+  D453: {
+    zh: "本回合未命中缓存（会话首个请求，或前缀缓存已过期）——非异常。",
+    en: "No cache hit this turn (first request of the session, or the prefix cache has expired) — not an anomaly.",
+  },
+  D454: {
+    zh: "本回合新增内容已超过已缓存前缀的一半，命中率被摊薄——非缓存失效。",
+    en: "New content this turn exceeds half of the cached prefix; the hit rate is diluted — not a cache failure.",
+  },
+  // hover hint 第四行：缓存写入 tokens（M443，本回合 + 本逻辑会话累计）。判定键是**本回合值**：
+  // 为 0（provider 不提供该字段，或确实没写）时整行不渲染——与 D401 的缺失回落同口径
+  // （deepseek 无该字段；Kimi Code 端点实测恒 0，见 design §6）。
+  D455: {
+    zh: "缓存写入：本回合 {write} tokens · 本会话累计 {total} tokens",
+    en: "Cache writes: {write} tokens this turn · {total} tokens this session",
   },
   // 合并浮层的段标签（Provider / 模型；effort 段复用 D392）。浮层本体每段是裸列表
   // （项 = 配置值读数），段标签是它的可读身份。

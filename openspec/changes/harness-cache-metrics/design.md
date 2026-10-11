@@ -223,14 +223,36 @@ usage 块加一个字段（wire 口径，恢复 / 诊断可回溯）：
 - 文案：`copy-data.ts` 的 D334 注释改准（cache = 会话累计）；D401 改形；新增两个 D-code（成因句 /
   缓存写入行），同步 `文案-Copy.md` 与 copy drift 测试。
 
-## 6. 未核实项与实现期真机核实（任务 §5）
+## 6. 未核实项与实现期真机核实（任务 §5）——**已核实（2026-10-11，M443 实现期）**
 
-- **`cache_write_tokens` 的 usage 嵌套路径**：本仓无实测样本。按 `llm.rs` 既有先例
-  （`src-tauri/tests/harness_real_deepseek.rs`：`#[ignore]`、从 `~/.config/lumir/config.json` 原地读 key、
-  无 key 自动 SKIP、key 绝不打印）写一条真 provider 冒烟，打印（脱敏）一条真响应的 usage 键形状，
-  据此钉死解析路径并写进本文档与代码注释。**未核实前**：双路解析 + 0 兜底，MUST NOT 因字段猜错而报错。
-- **若 kimi 该字段在 `input_tokens_details` 之外**：以实测为准修正解析；mock fixture 用同一形状脚本化。
-- **若 deepseek 也返回该字段**（与官方「无缓存写入计费」不符的可能）：照常记录，不特判 provider。
+- **`cache_write_tokens` 的 usage 嵌套路径 = `usage.input_tokens_details.cache_write_tokens`**（与
+  `cached_tokens` 同层）。实机冒烟 `src-tauri/tests/harness_real_kimi_cache.rs`（`#[ignore]`、从
+  `~/.config/lumir/config.json` 原地读 key、无 key 自动 SKIP、key 绝不打印、只打印 usage 的**键形状**）
+  跑出的真响应形状（model `k3-256k`，base_url `https://api.kimi.com/coding/v1`）：
+
+  ```jsonc
+  "usage": {
+    "input_tokens": 2641,
+    "input_tokens_details": { "cache_write_tokens": 0, "cached_tokens": 2641 },
+    "output_tokens": 59,
+    "output_tokens_details": { "reasoning_tokens": 45 },
+    "total_tokens": 2700
+  }
+  ```
+
+  **顶层 `usage.cache_write_tokens` 不存在**。解析因此定为「详情块优先、顶层回退」（`or_else` 两路，
+  两路都读不到即 0）——回退路保留给官方平台端点 / 未来方言，实测样本走的是详情块。
+- **取值：该端点恒报 0**。三次调用（首见前缀 / 重发同前缀 / 换新前缀）`cache_write_tokens` 都是 0，
+  而 `cached_tokens` 照常工作（重发同前缀：1024 → 2641 全命中）。⇒ Kimi Code 订阅端点上官方平台的
+  「缓存写单独计费」口径**不体现**，面板的缓存写入行在真机上因此**常态不渲染**（零值不渲染是既定
+  规则）。这是如实读数、不是缺陷：该 change 的价值落在「口径可解释」（会话累计主读数 + 成因句），
+  缓存写入这一项当前对 Alex 的配置无诊断价值（DeepSeek 同理无该字段）。已报 tower。
+- **deepseek**：仍无该字段 ⇒ 恒 0，不特判 provider（照常记录）。
+- **实现期偏离说明**：`design §3.2` 曾写「`set_usage` 保留给整体重置语义」——实现期改为
+  `Session::record_usage` 单一入口 + `rotate()` 就地清零累计器（未留存无消费者的 `set_usage`）；
+  「整体重置」语义仍在（新会话 / 恢复是新建 `Session`、压缩走 `rotate` 清零）。读数快照不在
+  `rotate` 里清零：与既有 ctx% 行为一致（压缩后读数仍是压缩前那一轮，下轮请求才更新），且事件与
+  快照两条通道看到同一个值。
 
 ## 7. 明确不改什么（与 proposal §Non-goals 对齐）
 

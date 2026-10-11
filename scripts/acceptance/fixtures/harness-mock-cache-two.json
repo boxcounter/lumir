@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "responses": [
+    {
+      "text": "第一轮回答。",
+      "usage": { "input_tokens": 65536, "cached_tokens": 0, "output_tokens": 10, "cache_write_tokens": 65536 }
+    },
+    {
+      "text": "第二轮回答。",
+      "usage": { "input_tokens": 65536, "cached_tokens": 60000, "output_tokens": 10, "cache_write_tokens": 5536 }
+    }
+  ]
+}

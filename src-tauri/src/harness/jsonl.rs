@@ -253,8 +253,9 @@ impl JsonlWriter {
 
     /// 测试专用：直接指定留存路径（绕开 config_dir，零环境变量扰动——env 是进程全局，
     /// cargo test 并行跑，改 XDG_CONFIG_HOME 会踩到别的用例；REVIEW.md 第 13 条）。
+    /// `pub(crate)`：`session::tests` 也要构造带句柄的 `Session`（M443 的累计边界用例）。
     #[cfg(test)]
-    fn at_path(path: PathBuf, session_open: &serde_json::Value) -> Self {
+    pub(crate) fn at_path(path: PathBuf, session_open: &serde_json::Value) -> Self {
         let line = serde_json::to_string(&serde_json::json!({
             "ts": unix_secs_now(),
             "payload": session_open,

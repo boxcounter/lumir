@@ -30,7 +30,7 @@
 //!       ],
 //!       "reasoning": {"type":"reasoning","id":"rs_1","encrypted_content":"…"},  // 可选：回放项
 //!       "reasoning_chunks": ["先想清楚", "再答。"],  // 可选：思考文本分片（M362，给人看，见下）
-//!       "usage": {"input_tokens": 1200, "cached_tokens": 300, "output_tokens": 40},  // 可选
+//!       "usage": {"input_tokens": 1200, "cached_tokens": 300, "output_tokens": 40, "cache_write_tokens": 900},  // 可选（cache_write_tokens 为 M443 新增，缺键即 0）
 //!       "delay_ms": 45000,                        // 可选：返回前先睡这么久（见下「脚本化延迟」）
 //!       "chunk_delay_ms": 5000                   // 可选：分片之间的间隔（见下「逐片延迟」）
 //!     },
@@ -125,7 +125,6 @@ use crate::commands::CommandError;
 use crate::config::{HarnessConfig, HarnessProvider};
 
 use super::events::StreamSink;
-use super::session::UsageSnapshot;
 use super::thinking::{self, ThinkingEffort};
 
 /// 一次工具调用的解析结果（Responses API function_call 项）。
@@ -144,6 +143,10 @@ pub struct Usage {
     pub input_tokens: u64,
     pub cached_tokens: u64,
     pub output_tokens: u64,
+    /// 缓存写入 tokens（kimi K3 的缓存写**单独计费**的那部分）。provider 不提供该字段时
+    /// 恒 0（deepseek 即此）——**0 是「不提供」与「确实没写」的同一读数**，消费侧因此
+    /// 按「为 0 即不展示」处理（面板气泡的缓存写入行，design §5.2）。
+    pub cache_write_tokens: u64,
 }
 
 /// 一次 LLM 调用的结果：流式文本 + 输出项（回放）+ 调用 + 用量，或错误。
@@ -199,7 +202,8 @@ pub struct ProviderPreset {
 }
 
 /// kimi 预设（[官方 Responses schema](https://platform.kimi.ai/docs/api/responses)）：
-/// store 支持 ⇒ 显式 `store:false`；usage 含 `cache_write_tokens`（暂不展示）。
+/// store 支持 ⇒ 显式 `store:false`；usage 含 `cache_write_tokens`（M443 起进留存与面板，
+/// 解析路径见 [`collect_final_response`] 的注释）。
 const KIMI_PRESET: ProviderPreset = ProviderPreset {
     base_url: "https://api.moonshot.cn/v1", // 未核实（验收批对真 API 验证；config 可覆盖）
     overflow_indicators: &[
@@ -226,21 +230,6 @@ pub fn preset(provider: &HarnessProvider) -> &'static ProviderPreset {
         HarnessProvider::Deepseek => &DEEPSEEK_PRESET,
         HarnessProvider::Mock => &DEEPSEEK_PRESET, // mock 只消费 usage，预设仅作 fallback
     }
-}
-
-/// 用量 → 面板快照：ctx% = input ÷ 窗口；cache% = cached ÷ input。
-pub fn usage_snapshot(usage: &Usage, window: u64) -> UsageSnapshot {
-    let ctx_pct = if window == 0 {
-        0.0
-    } else {
-        usage.input_tokens as f64 * 100.0 / window as f64
-    };
-    let cache_pct = if usage.input_tokens == 0 {
-        0.0
-    } else {
-        usage.cached_tokens as f64 * 100.0 / usage.input_tokens as f64
-    };
-    UsageSnapshot { ctx_pct, cache_pct }
 }
 
 /// 判定错误是否上下文超限（按 provider 特征串）。
@@ -727,10 +716,23 @@ fn collect_final_response(response: &serde_json::Value, output: &mut TurnOutput)
             .get("output_tokens")
             .and_then(|v| v.as_u64())
             .unwrap_or(0);
+        // 缓存写入（M443）：**实测路径 = `usage.input_tokens_details.cache_write_tokens`**
+        //（2026-10-11 真机冒烟，model `k3-256k` @ `https://api.kimi.com/coding/v1`：与
+        // `cached_tokens` 同层，顶层 `usage.cache_write_tokens` 不存在。现场与形状见
+        // `src-tauri/tests/harness_real_kimi_cache.rs` 的模块文档）。顶层回退**保留**为
+        // 官方平台端点 / 未来方言的保险（design §6 的两路口径），两路都读不到即 0
+        // （= provider 不提供，不是错误——DeepSeek 即此）。
+        let cache_write = usage
+            .get("input_tokens_details")
+            .and_then(|d| d.get("cache_write_tokens"))
+            .or_else(|| usage.get("cache_write_tokens"))
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
         output.usage = Some(Usage {
             input_tokens: input,
             cached_tokens: cached,
             output_tokens: out,
+            cache_write_tokens: cache_write,
         });
     }
     // incomplete（如 max_output_tokens 截断）带 incomplete_details，但非错误——
@@ -797,6 +799,9 @@ struct FixtureUsage {
     cached_tokens: u64,
     #[serde(default)]
     output_tokens: u64,
+    /// 缓存写入（M443）：fixture 可脚本化该字段（验收无需真 API）；缺键即 0。
+    #[serde(default)]
+    cache_write_tokens: u64,
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -972,6 +977,7 @@ impl LlmClient for MockClient {
                 input_tokens: u.input_tokens,
                 cached_tokens: u.cached_tokens,
                 output_tokens: u.output_tokens,
+                cache_write_tokens: u.cache_write_tokens,
             }),
             error: None,
         };
@@ -1152,7 +1158,9 @@ mod tests {
             Some(Usage {
                 input_tokens: 100,
                 cached_tokens: 40,
-                output_tokens: 5
+                output_tokens: 5,
+                // fixture 未写该键 ⇒ 0（M443：缺键与「不提供」同一读数）。
+                cache_write_tokens: 0
             })
         );
         // reasoning 回放项原样透传（M306：mock 路径零行为变化即指此）。
@@ -1164,16 +1172,93 @@ mod tests {
         assert_eq!(third.error.unwrap().code, "fixture_exhausted");
     }
 
+    // ---- M443：usage 的 cache_write_tokens 解析（双路兜底 + 缺键 0） ----
+    //
+    // 口径：`input_tokens_details.cache_write_tokens` 优先，顶层 `usage.cache_write_tokens`
+    // 回退，两路都读不到即 0（provider 不提供 = 0，不是错误）。真 provider 的实测路径见
+    // `src-tauri/tests/harness_real_kimi_cache.rs` 与 design §6。
+
+    /// 从一段完整响应 JSON 解析 usage（只走 `collect_final_response`，与真 provider 同一条路径）。
+    fn parse_usage(response: &serde_json::Value) -> Usage {
+        let mut output = TurnOutput::default();
+        collect_final_response(response, &mut output);
+        output.usage.expect("usage 在场")
+    }
+
     #[test]
-    fn usage_snapshot_percentages() {
-        let usage = Usage {
-            input_tokens: 65536,
-            cached_tokens: 32768,
-            output_tokens: 10,
-        };
-        let snap = usage_snapshot(&usage, 131_072);
-        assert!((snap.ctx_pct - 50.0).abs() < f64::EPSILON);
-        assert!((snap.cache_pct - 50.0).abs() < f64::EPSILON);
+    fn usage_parses_cache_write_from_details_block() {
+        let usage = parse_usage(&serde_json::json!({
+            "usage": {
+                "input_tokens": 12786,
+                "input_tokens_details": {"cached_tokens": 6400, "cache_write_tokens": 6174},
+                "output_tokens": 210
+            }
+        }));
+        assert_eq!(usage.input_tokens, 12786);
+        assert_eq!(usage.cached_tokens, 6400);
+        assert_eq!(usage.output_tokens, 210);
+        assert_eq!(usage.cache_write_tokens, 6174);
+    }
+
+    #[test]
+    fn usage_parses_cache_write_from_top_level_fallback() {
+        // 顶层回退路（详情块里没有该键时）。
+        let usage = parse_usage(&serde_json::json!({
+            "usage": {
+                "input_tokens": 100,
+                "cache_write_tokens": 60,
+                "output_tokens": 5
+            }
+        }));
+        assert_eq!(usage.cache_write_tokens, 60);
+    }
+
+    #[test]
+    fn usage_cache_write_defaults_to_zero_when_absent() {
+        // deepseek 形状：无该字段 ⇒ 0（不是错误、不留缺键语义）。
+        let usage = parse_usage(&serde_json::json!({
+            "usage": {
+                "input_tokens": 100,
+                "input_tokens_details": {"cached_tokens": 40},
+                "output_tokens": 5
+            }
+        }));
+        assert_eq!(usage.cache_write_tokens, 0);
+    }
+
+    #[test]
+    fn usage_cache_write_prefers_details_block() {
+        // 两路都在场时以详情块为准（优先序是合同的一部分，不能靠 serde 的解析顺序碰运气）。
+        let usage = parse_usage(&serde_json::json!({
+            "usage": {
+                "input_tokens": 100,
+                "cache_write_tokens": 7,
+                "input_tokens_details": {"cached_tokens": 40, "cache_write_tokens": 70},
+                "output_tokens": 5
+            }
+        }));
+        assert_eq!(usage.cache_write_tokens, 70);
+    }
+
+    #[test]
+    fn usage_parses_kimi_real_shape() {
+        // M443 §4.1 真机实测的**逐字节形状**（`k3-256k` @ `api.kimi.com/coding/v1`，
+        // 2026-10-11；现场 `tests/harness_real_kimi_cache.rs` 的模块文档）：该端点
+        // `cache_write_tokens` 恒 0，但路径在 `input_tokens_details` 内、与 `cached_tokens`
+        // 同层。这条判据把「真响应形状 → 解析结果」钉在门禁里，不依赖真实 key 也能守住。
+        let usage = parse_usage(&serde_json::json!({
+            "usage": {
+                "input_tokens": 2641,
+                "input_tokens_details": {"cache_write_tokens": 0, "cached_tokens": 2641},
+                "output_tokens": 59,
+                "output_tokens_details": {"reasoning_tokens": 45},
+                "total_tokens": 2700
+            }
+        }));
+        assert_eq!(usage.input_tokens, 2641);
+        assert_eq!(usage.cached_tokens, 2641);
+        assert_eq!(usage.output_tokens, 59);
+        assert_eq!(usage.cache_write_tokens, 0);
     }
 
     #[test]

@@ -17,6 +17,7 @@ use crate::commands::CommandError;
 
 use super::approval::{ApprovalDecision, ApprovalRequest, ApprovalSignal};
 use super::jsonl::JsonlWriter;
+use super::llm::Usage;
 use super::thinking::ThinkingEffort;
 
 /// 面板消息（`harness_state` 快照 `messages[]` 的元素；m303 宽容解析，缺字段=空态）。
@@ -63,13 +64,79 @@ pub struct PanelMessage {
     pub ts: u64,
 }
 
-/// 最近一次请求的用量（面板常驻 ctx% / cache% 的数据源）。
+/// 本回合缓存命中率的**成因标注**（M443，design §3.4）：仅针对最近一次往返，由后端一处判定
+/// （前端 MUST NOT 自行猜成因）。序列化为 snake_case 字符串（`cold_start` / `block_dilution`），
+/// 前端按值取文案（成因句落 hover 气泡，见 design §5.2）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CacheNote {
+    /// 本回合 `cached_tokens == 0`：会话首个请求的典型冷启动；中途前缀缓存过期导致的零命中
+    /// 落同一句（裁决点 3 的 A 案——用户问的是「为什么没命中」，两者同一解释）。
+    ColdStart,
+    /// 本回合新增 tokens 超过已缓存前缀的一半：大块新内容把命中率**算术摊薄**，非缓存失效。
+    BlockDilution,
+}
+
+/// 面板用量读数（常驻控制行 ctx% / cache% 与其 hover 气泡的数据源）。
+///
+/// M443 起口径拆开：`ctx_pct` 仍是最近一次请求的值，cache 侧分**会话累计**（控制行主读数）
+/// 与**单回合**（气泡辅读数）两个投影——两者是同一批计数器的两个投影，MUST NOT 各算各的
+/// （design §2 的一致性原则）。
 #[derive(Debug, Clone, Copy, Default, Serialize)]
 pub struct UsageSnapshot {
-    /// 上下文窗口已用 %（最近一次 input tokens ÷ 模型窗口，预设表见 [`super::llm`]）。
+    /// 上下文窗口已用 %（最近一次 input tokens ÷ 模型窗口，窗口来自配置 schema）。
     pub ctx_pct: f64,
-    /// cache hit %（cached tokens ÷ input tokens；无 input 时为 0）。
-    pub cache_pct: f64,
+    /// 会话累计命中率（`Σcached ÷ Σinput`，本逻辑会话内所有带 usage 的往返）——控制行主读数。
+    pub cache_pct_session: f64,
+    /// 最近一次往返的单回合命中率（`cached ÷ input`）——hover 气泡辅读数。
+    pub cache_pct_turn: f64,
+    /// 最近一次往返的缓存写入 tokens（provider 不提供时 0）。
+    pub cache_write_tokens: u64,
+    /// 本逻辑会话累计的缓存写入 tokens。
+    pub cache_write_tokens_session: u64,
+    /// 本回合的成因标注（无标注 = null）。
+    pub cache_note: Option<CacheNote>,
+}
+
+/// 本逻辑会话的缓存计数累计器（design §3.2）：挂在 [`Session`] 上、只增不减；会话建立 /
+/// 「新会话」重置 / 自动压缩开新逻辑会话 / 从历史恢复各起一段（前两者与恢复是新建 `Session`，
+/// 压缩是 [`Session::rotate`] 的就地清零——四个节点都是既有的逻辑会话边界）。
+#[derive(Debug, Clone, Copy, Default)]
+struct CacheTotals {
+    /// Σ input_tokens。
+    input: u64,
+    /// Σ cached_tokens。
+    cached: u64,
+    /// Σ cache_write_tokens。
+    writes: u64,
+    /// 带 usage 的往返计数（「有没有样本」的判据；`Σinput` 可能为 0 而样本非 0）。
+    samples: u64,
+}
+
+/// 本回合成因判定（后端唯一一处，design §3.4）：
+///
+/// 1. `cached == 0`（且 `input > 0`）→ [`CacheNote::ColdStart`]；
+/// 2. 否则 `cached > 0` 且 `input − cached > cached ÷ 2`（等价于单回合命中率 < 66.7%）→
+///    [`CacheNote::BlockDilution`]；
+/// 3. 否则 `None`。
+///
+/// 阈值取「新增 > 已缓存前缀的一半」——落在 M438 实测的摊薄现场（input 12786 / cached 6400：
+/// 新增 6386 > 3200），稳态（新增仅最后不完整块）不误报。MUST NOT 用「比上一回合低多少」
+/// 一类相对判据（无基线、易抖动）。
+fn cache_note(usage: &Usage) -> Option<CacheNote> {
+    if usage.input_tokens == 0 {
+        return None; // 无输入的往返谈不上命中率，不标注（input==0 边界）。
+    }
+    if usage.cached_tokens == 0 {
+        return Some(CacheNote::ColdStart);
+    }
+    // 新增 > 已缓存的一半（整数口径与实数口径等价：cached 为偶数时 cached÷2 整除，
+    // 为奇数时 floor 后 +1 恰是「> 半数」的最小整数）；saturating_sub 防 provider 报出
+    // cached > input 的异常读数时下溢。
+    if usage.input_tokens.saturating_sub(usage.cached_tokens) * 2 > usage.cached_tokens {
+        return Some(CacheNote::BlockDilution);
+    }
+    None
 }
 
 impl StateSnapshot {
@@ -209,6 +276,8 @@ pub struct Session {
     /// 面板渲染消息。
     panel: Vec<PanelMessage>,
     usage: UsageSnapshot,
+    /// 本逻辑会话的缓存计数累计（M443；随 [`Session::rotate`] 清零，见 [`CacheTotals`]）。
+    cache_totals: CacheTotals,
     busy: bool,
     /// 挂起的批准请求（一次一个：一轮里 ask 档逐个过闸）。
     pending: Option<ApprovalRequest>,
@@ -237,6 +306,7 @@ impl Session {
             input,
             panel: Vec::new(),
             usage: UsageSnapshot::default(),
+            cache_totals: CacheTotals::default(),
             busy: false,
             pending: None,
             abort_requested: false,
@@ -293,8 +363,40 @@ impl Session {
         self.panel.push(message);
     }
 
-    pub fn set_usage(&mut self, usage: UsageSnapshot) {
-        self.usage = usage;
+    /// 记录一次带 usage 的 LLM 往返（M443，design §3.2/§3.3）：先把本次计数累加进会话累计器，
+    /// 再由此算出全部读数、存下并**返回**快照——turn 侧拿这一个返回值同时喂事件与快照两条通道
+    /// （MUST NOT 两套算法，REVIEW.md 第 8 条）。
+    pub fn record_usage(&mut self, usage: &Usage, window: u64) -> UsageSnapshot {
+        self.cache_totals.input += usage.input_tokens;
+        self.cache_totals.cached += usage.cached_tokens;
+        self.cache_totals.writes += usage.cache_write_tokens;
+        self.cache_totals.samples += 1;
+        let totals = self.cache_totals;
+        let ctx_pct = if window == 0 {
+            0.0
+        } else {
+            usage.input_tokens as f64 * 100.0 / window as f64
+        };
+        let cache_pct_turn = if usage.input_tokens == 0 {
+            0.0
+        } else {
+            usage.cached_tokens as f64 * 100.0 / usage.input_tokens as f64
+        };
+        let cache_pct_session = if totals.samples == 0 || totals.input == 0 {
+            0.0
+        } else {
+            totals.cached as f64 * 100.0 / totals.input as f64
+        };
+        let snapshot = UsageSnapshot {
+            ctx_pct,
+            cache_pct_session,
+            cache_pct_turn,
+            cache_write_tokens: usage.cache_write_tokens,
+            cache_write_tokens_session: totals.writes,
+            cache_note: cache_note(usage),
+        };
+        self.usage = snapshot;
+        snapshot
     }
 
     pub fn usage(&self) -> UsageSnapshot {
@@ -307,9 +409,15 @@ impl Session {
 
     /// 换系统上下文 + 换留存句柄（自动压缩开新逻辑会话的落点）：旧文件封闭不再追加，
     /// 新句柄带自己的 `session_open`（opened_from=compact）。输入历史由调用侧替换。
+    ///
+    /// 累计器随逻辑会话边界清零（M443）——压缩后的读数从零重新起算。**读数快照不清零**：
+    /// 面板此刻显示的是压缩前那一轮的读数，与既有的 ctx% 行为一致（「压缩后 usage 仍是压缩前
+    /// 读数，下轮请求才更新」），且两条通道（事件 / 快照）看到的是同一个值——在这里清快照会让
+    /// 「实时面仍是旧值、重载后面变成 0」的错位出现（REVIEW.md 第 8 条同族）。
     pub fn rotate(&mut self, system: String, jsonl: JsonlWriter) {
         self.system = system;
         self.jsonl = jsonl;
+        self.cache_totals = CacheTotals::default();
     }
 
     pub fn set_current_context(&mut self, section: Option<String>) {
@@ -507,6 +615,8 @@ pub fn function_call_output_item(call_id: &str, output: &str) -> serde_json::Val
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::harness::jsonl::JsonlWriter;
+    use crate::harness::llm::Usage;
 
     /// M372：空正文的 assistant 消息项不进回放 input（Kimi Code 订阅端对空 `output_text`
     /// 整条 400：`Invalid request: text content is empty`）。reasoning 项不受文本空否影响，
@@ -531,5 +641,159 @@ mod tests {
         let items = assistant_item("只有正文", None);
         assert_eq!(items.len(), 1);
         assert_eq!(items[0]["role"], "assistant");
+    }
+
+    // ---- M443：缓存读数（会话累计 / 单回合 / 成因标注 / 序列化键集合） ----
+
+    /// 测试用会话：留存句柄指向一个不会写盘的临时路径（`JsonlWriter::at_path` 惰性建文件，
+    /// 本组用例只碰读数内存态，零磁盘副作用、零环境变量扰动——REVIEW.md 第 13 条）。
+    fn test_session() -> Session {
+        Session::new(
+            std::path::PathBuf::from("/tmp/lumir-m443-session-test"),
+            "sys".into(),
+            Vec::new(),
+            ThinkingEffort::default(),
+            JsonlWriter::at_path(
+                std::path::PathBuf::from("/tmp/lumir-m443-session-test/x.jsonl"),
+                &serde_json::json!({}),
+            ),
+        )
+    }
+
+    fn usage(input: u64, cached: u64, writes: u64) -> Usage {
+        Usage {
+            input_tokens: input,
+            cached_tokens: cached,
+            output_tokens: 0,
+            cache_write_tokens: writes,
+        }
+    }
+
+    const WINDOW: u64 = 131_072;
+
+    #[test]
+    fn record_usage_splits_session_and_turn_readings() {
+        let mut session = test_session();
+        // 首轮：cached == 0 ⇒ 会话累计与单回合都是 0%（M438 的「50%」读数就是这么来的）。
+        let first = session.record_usage(&usage(65536, 0, 1000), WINDOW);
+        assert!((first.ctx_pct - 50.0).abs() < 1e-9);
+        assert!((first.cache_pct_session - 0.0).abs() < 1e-9);
+        assert!((first.cache_pct_turn - 0.0).abs() < 1e-9);
+        assert_eq!(first.cache_write_tokens, 1000);
+        assert_eq!(first.cache_write_tokens_session, 1000);
+        assert_eq!(first.cache_note, Some(CacheNote::ColdStart));
+
+        // 次轮高命中：会话累计 = Σcached ÷ Σinput = (0 + 9272) ÷ (65536 + 10146)。
+        let second = session.record_usage(&usage(10146, 9272, 874), WINDOW);
+        assert!((second.cache_pct_turn - 9272.0 * 100.0 / 10146.0).abs() < 1e-9);
+        assert!((second.cache_pct_session - 9272.0 * 100.0 / 75682.0).abs() < 1e-9);
+        // 单回合值与累计值确实不同（否则这条判据没有区分度）。
+        assert!((second.cache_pct_turn - second.cache_pct_session).abs() > 1.0);
+        assert_eq!(second.cache_write_tokens, 874);
+        assert_eq!(second.cache_write_tokens_session, 1874);
+        assert_eq!(second.cache_note, None);
+        // 会话快照与返回值同源（事件与快照两条通道吃同一个值）。
+        assert_eq!(session.usage().cache_pct_session, second.cache_pct_session);
+    }
+
+    #[test]
+    fn record_usage_accumulates_across_three_turns() {
+        let mut session = test_session();
+        session.record_usage(&usage(1000, 200, 0), WINDOW);
+        session.record_usage(&usage(2000, 1800, 0), WINDOW);
+        let third = session.record_usage(&usage(4000, 3900, 0), WINDOW);
+        // Σcached ÷ Σinput = (200 + 1800 + 3900) ÷ (1000 + 2000 + 4000)。
+        assert!((third.cache_pct_session - 5900.0 * 100.0 / 7000.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn new_logic_session_restarts_accumulation() {
+        let mut session = test_session();
+        session.record_usage(&usage(1000, 200, 0), WINDOW);
+        session.record_usage(&usage(1000, 200, 0), WINDOW);
+        assert!((session.usage().cache_pct_session - 20.0).abs() < 1e-9);
+        // 自动压缩开新逻辑会话（就地轮换）：累计器清零、下一条读数只算新会话这一轮。
+        session.rotate(
+            "sys2".into(),
+            JsonlWriter::at_path(
+                std::path::PathBuf::from("/tmp/lumir-m443-session-test/y.jsonl"),
+                &serde_json::json!({}),
+            ),
+        );
+        let after = session.record_usage(&usage(1000, 500, 0), WINDOW);
+        assert!((after.cache_pct_session - 50.0).abs() < 1e-9);
+        assert_eq!(after.cache_write_tokens_session, 0);
+    }
+
+    #[test]
+    fn cache_note_truth_table() {
+        // 1. 冷启动：cached == 0 且 input > 0（会话首个请求的典型；TTL 过期落同一句）。
+        assert_eq!(cache_note(&usage(1000, 0, 0)), Some(CacheNote::ColdStart));
+        // 2. 大块摊薄：M438 实测现场 input 12786 / cached 6400 ⇒ 新增 6386 > 3200。
+        assert_eq!(
+            cache_note(&usage(12786, 6400, 0)),
+            Some(CacheNote::BlockDilution)
+        );
+        // 3. 稳态（新增仅最后的不完整块）：新增 = 已缓存的一半整 —— 不大于，不标注。
+        assert_eq!(cache_note(&usage(1500, 1000, 0)), None);
+        // 4. 边界：恰好超过一半即标注。
+        assert_eq!(
+            cache_note(&usage(1501, 1000, 0)),
+            Some(CacheNote::BlockDilution)
+        );
+        // 5. 命中率高的常态：无标注。
+        assert_eq!(cache_note(&usage(10000, 9500, 0)), None);
+        // 6. input == 0：谈不上命中率，不标注（也不落 ColdStart）。
+        assert_eq!(cache_note(&usage(0, 0, 0)), None);
+        // 7. cached == input（全命中）：无标注。
+        assert_eq!(cache_note(&usage(1000, 1000, 0)), None);
+        // 8. 异常读数（provider 报 cached > input）不下溢、不标注。
+        assert_eq!(cache_note(&usage(100, 200, 0)), None);
+    }
+
+    #[test]
+    fn usage_snapshot_serializes_new_key_set_only() {
+        let snapshot = UsageSnapshot {
+            ctx_pct: 67.2,
+            cache_pct_session: 88.5,
+            cache_pct_turn: 50.1,
+            cache_write_tokens: 6174,
+            cache_write_tokens_session: 12044,
+            cache_note: Some(CacheNote::BlockDilution),
+        };
+        let value = serde_json::to_value(snapshot).unwrap();
+        let mut keys: Vec<&str> = value
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect();
+        keys.sort_unstable();
+        assert_eq!(
+            keys,
+            vec![
+                "cache_note",
+                "cache_pct_session",
+                "cache_pct_turn",
+                "cache_write_tokens",
+                "cache_write_tokens_session",
+                "ctx_pct",
+            ]
+        );
+        // 旧键退役：`cache_pct` 不再出现（复用旧键会留下「以为还是单回合」的静默陷阱）。
+        assert!(value.get("cache_pct").is_none());
+        // 成因标注按 snake_case 序列化（前端按值取文案）。
+        assert_eq!(value["cache_note"], "block_dilution");
+        assert_eq!(
+            serde_json::to_value(CacheNote::ColdStart).unwrap(),
+            "cold_start"
+        );
+        // 无标注时是 null（不是缺键）。
+        let clean = serde_json::to_value(UsageSnapshot {
+            cache_note: None,
+            ..Default::default()
+        })
+        .unwrap();
+        assert!(clean["cache_note"].is_null());
     }
 }

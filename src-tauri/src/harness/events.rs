@@ -17,6 +17,8 @@
 //! 载荷之上，本模块持有输出侧的两个 trait：[`EventSink`]（事件发射通道）与 [`StreamSink`]
 //!（M369 的流式增量转发口——解析层收到增量即转成上面的事件，而不是攒够整条响应再补发）。
 
+use super::session::UsageSnapshot;
+
 /// 后端 → 面板的事件名（MUST NOT 改名，面板钉死）。
 pub const EVENT_NAME: &str = "harness:event";
 
@@ -40,7 +42,6 @@ pub fn stamp_vault(payload: &mut serde_json::Value, vault: &str) {
 pub trait EventSink {
     fn emit(&self, payload: serde_json::Value);
 }
-
 /// 流式增量转发口（M369 真流式）：LLM 解析层（[`super::llm`]）每收到一个增量即回调，
 /// **不再攒够整条响应再事后补发**——这是「回答逐字出现」而不是「一次性出现」的唯一落点。
 ///
@@ -143,12 +144,25 @@ pub fn approval_request_with_purpose(
     value
 }
 
-/// `{"type":"usage","ctx_pct":NN,"cache_pct":NN}`（百分比保留一位小数，面板显示用）。
-pub fn usage(ctx_pct: f64, cache_pct: f64) -> serde_json::Value {
+/// `{"type":"usage","ctx_pct":NN,"cache_pct_session":NN,"cache_pct_turn":NN,
+/// "cache_write_tokens":NN,"cache_write_tokens_session":NN,"cache_note":null|"cold_start"|
+/// "block_dilution"}`（三个百分比保留一位小数，面板显示用）。
+///
+/// M443：载荷**整体收一个 [`UsageSnapshot`]**——事件与 `harness_state` 快照同吃一个来源，
+/// MUST NOT 各算一套（REVIEW.md 第 8 条）。键名与快照字段同名同义：`cache_pct_session` =
+/// 会话累计命中率（控制行主读数）、`cache_pct_turn` = 最近一次往返的单回合值（气泡辅读数）、
+/// `cache_write_tokens[_session]` = 本回合 / 本逻辑会话累计的缓存写入、`cache_note` = 本回合
+/// 成因标注（无则 null）。旧 `cache_pct` 键**退役**——复用旧键会留一个「读到 cache_pct 的人
+/// 以为还是单回合」的静默陷阱（design §4.1）。
+pub fn usage(snapshot: &UsageSnapshot) -> serde_json::Value {
     serde_json::json!({
         "type": "usage",
-        "ctx_pct": round1(ctx_pct),
-        "cache_pct": round1(cache_pct),
+        "ctx_pct": round1(snapshot.ctx_pct),
+        "cache_pct_session": round1(snapshot.cache_pct_session),
+        "cache_pct_turn": round1(snapshot.cache_pct_turn),
+        "cache_write_tokens": snapshot.cache_write_tokens,
+        "cache_write_tokens_session": snapshot.cache_write_tokens_session,
+        "cache_note": snapshot.cache_note,
     })
 }
 
@@ -202,7 +216,7 @@ mod tests {
         sink.emit(text_chunk("你好"));
         sink.emit(tool_call("vault_read", "started", "读 a.md"));
         sink.emit(approval_request("ap-1", "vault_patch", Some("@@"), None));
-        sink.emit(usage(12.34, 5.6));
+        sink.emit(usage(&UsageSnapshot::default()));
         sink.emit(compact("摘要"));
         sink.emit(done());
         sink.emit(error("harness_busy", "忙"));

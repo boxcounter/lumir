@@ -405,12 +405,11 @@ pub fn run_turn_for(
 
         // —— 输出项入队（分片不在这里发：M369 起正文 / 思考分片都在流式路径即时转发）——
         let assistant_text = output.text.clone();
-        let usage = output.usage.map(|usage| {
-            // 窗口按配置 schema 读取（M373：`providers.<id>.models` 的逐模型声明，未列出回落
-            // 保守默认）——llm.rs 的预设窗口表已退役。
-            let window = config.context_window(&config.provider, llm::active_model(config));
-            (usage, llm::usage_snapshot(&usage, window))
-        });
+        // 本轮 usage 的累计与读数（M443）：入口是 [`session::Session::record_usage`]——先累加
+        // 本逻辑会话的计数、再算全部读数并返回快照。返回值同时喂快照（会话状态）与事件两条
+        // 通道：同一份算法一处产出，MUST NOT 各算一套（REVIEW.md 第 8 条）。
+        let turn_usage = output.usage;
+        let mut usage_snapshot = None;
         let _ = runtime.with_session(scope, |s| {
             for item in session::assistant_item(&assistant_text, output.reasoning.as_ref()) {
                 s.push_input(item);
@@ -434,12 +433,15 @@ pub fn run_turn_for(
             }
             // 正文 / 思考 / 调用 / 用量已随上面的 llm_response 落盘（wire 口径）——
             // 这里不再各记一份 sidecar（被 wire 覆盖的 kind 全部废弃，防双写）。
-            if let Some((_, snapshot)) = usage {
-                s.set_usage(snapshot);
+            if let Some(usage) = turn_usage {
+                // 窗口按配置 schema 读取（M373：`providers.<id>.models` 的逐模型声明，未列出
+                // 回落保守默认）——llm.rs 的预设窗口表已退役。
+                let window = config.context_window(&config.provider, llm::active_model(config));
+                usage_snapshot = Some(s.record_usage(&usage, window));
             }
         });
-        if let Some((_, snapshot)) = usage {
-            sink.emit(events::usage(snapshot.ctx_pct, snapshot.cache_pct));
+        if let Some(snapshot) = usage_snapshot {
+            sink.emit(events::usage(&snapshot));
         }
 
         if output.is_empty_response() {
@@ -453,7 +455,7 @@ pub fn run_turn_for(
         if output.calls.is_empty() {
             // 轮完成：按 design §9 检查自动压缩（越阈值即压缩续聊；失败不阻断）。
             if config.auto_compact {
-                if let Some((_, snapshot)) = usage {
+                if let Some(snapshot) = usage_snapshot {
                     if snapshot.ctx_pct >= config.warn_ctx_pct {
                         let _ = compact_now(sink, runtime, scope, config, client);
                         // 停止检查点（M374）：压缩调用用 DiscardStreamSink（流里不问停止），
@@ -692,6 +694,7 @@ fn record_llm_response(
             "input_tokens": usage.input_tokens,
             "cached_tokens": usage.cached_tokens,
             "output_tokens": usage.output_tokens,
+            "cache_write_tokens": usage.cache_write_tokens,
         });
     }
     if let Some(error) = &output.error {

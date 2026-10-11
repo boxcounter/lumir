@@ -51,7 +51,7 @@ async function stubHarnessThinking(page: Page, thinking?: unknown): Promise<void
       if (cmd === "harness_state") {
         return JSON.stringify({
           messages: [],
-          usage: { ctx_pct: 0, cache_pct: 0 },
+          usage: { ctx_pct: 0, cache_pct_session: 0 },
           pending_approval: null,
           warn_ctx_pct: 85,
           thinking: thinkingSnapshot,
