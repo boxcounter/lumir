@@ -195,6 +195,15 @@ steps:
       - label: ⑥ 交错顺序保持：前段文本与后段文本同屏（imgmark-b 未串到图前）
         ax: { has: "txtprobe-plain" }
       - shot: 03-恢复后-带图消息
+
+  - name: 等恢复卡片的缩略图 load 完成（元信息行从文件名补出宽高，M449 口径）
+    do: waitFor
+    waitFor:
+      has: ["/pasted-[0-9a-f]{16}\\.webp · \\d+×\\d+/"]
+    timeoutMs: 20000
+    expect:
+      - label: ⑥ 恢复路径补出宽高：元信息行呈「文件名 · W×H」（M449 的 load 后补记；首帧只显文件名）
+        ax: { has: "/pasted-[0-9a-f]{16}\\.webp · \\d+×\\d+/" }
 ---
 
 # 127-harness-composer-image-paste —— composer 贴图全链路（change harness-composer-image-paste）
@@ -226,9 +235,11 @@ design §9 验收面的 ①②③④⑥ 四条（⑤ 能力闸在场景 128，�
   附件目录名因此是场景可预期的确定值（产品自生成的 `vault-<pid>-<n>` 无从预知）。
 - **③ 的交错用一条行内正则**：JSONL 一行一事件，`^…$` 行锚 + 三段按序出现，避免被文件里
   别的事件满足（套件 README「`^`/`$` 也是跨行保护」节的口径）。
-- **⑥ 不判缩略图像素**：恢复后的卡片元信息行来自 wire 引用（无宽高属性，只显文件名——
-  ImageCard.width/height 可选的设计口径），缩略图渲染读字节在 Rust 单测与视觉场景钉；
-  本层判「卡片与交错还原」的结构面。
+- **⑥ 恢复后元信息行的两态**（M449 起修正）：恢复路径的卡片宽高来自 wire 引用、`ImageCard.width/
+  height` 可选，故**首帧**元信息行只显文件名（无宽高属性）；缩略图 `<img>` load 完成后由
+  `naturalWidth/Height` 补记，元信息行变成「文件名 · W×H」——恢复步因此等 `load` 完成再断言
+  这条（`waitFor` 状态驱动，不做固定等待）。缩略图的像素渲染本身仍归 Rust 单测与视觉场景；
+  本层判的是「补记真的落到了元信息行上」这条与 wire 无关的 DOM 后果。
 - **覆盖边界（如实登记）**：⑤（能力闸的 toast / 卡片错误态 / 会话不推进）在场景 128；
   ⑦（两 vault 分置与互不可见）在场景 129；wire 展开后的 data URL 形态由 Rust 单测钉
   （mock 与真 client 同一条 `expand_image_refs`），真机 JSONL 只承载引用侧。
