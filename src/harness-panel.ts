@@ -2856,7 +2856,10 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       selection.removeAllRanges();
       selection.addRange(range);
     }
-    scrollCaretIntoView(range, blockEl ?? composer);
+    // 零高回落的块：边界档（卡片前缘 / 相邻两卡之间）用**后一张卡片**的矩形，
+    // 「末尾之后」（block = 块数）没有后一块，回落最后一个块——不拿 composer 自身的
+    // 矩形当「光标行」（那会让 caretScrollTop 恒判「越出上沿」、每次重渲把视口顶 4px）。
+    scrollCaretIntoView(range, blockEl ?? composer.lastElementChild ?? composer);
   }
 
   /**
