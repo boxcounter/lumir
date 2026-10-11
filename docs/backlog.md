@@ -644,6 +644,30 @@
 
 ## 待修 findings（不阻塞）
 
+### M443 的 tasks.md 把未经真机验证的读数当「已通过」登记（worker-m456 finding，2026-10-11，medium，对账口径）
+
+**症状**：`openspec/changes/harness-cache-metrics/tasks.md` §5.2 末的「真机跑批读数（2026-10-11）」
+把一串**具体读数**（`50% · 50%` / `10% · 50%` / `15% · 20%` / `17% · 60%` …）写成「非 hover 断言
+**全部通过**」；但该轮真机跑批的证据（`test-results/alex-review-2026-10-11/m443/acceptance/summary.md`）
+五个场景**全部 INVALID**——第一步 hover 就因前台被 Chrome（pid 8608）占用而抛 InfraError，
+**第二轮从未跑到**。其中 `17% · 60%` 恰是 133 **第二轮**才出现的值，而 M456 实测该值在 master 上
+根本产生不出来（见下「证据」）——那条读数不可能来自任何一次真实跑批。
+**为什么会漏**：131/133 是第一批需要**跨轮推进** mock 脚本的场景（第二轮要弹 `responses[1]`），
+而 mock 的脚本游标一直是**每轮重建、从 `responses[0]` 重放**（既有语义，场景 104/106 的头注与断言
+都写明并依赖它）。M443 的真机对账因环境项整轮作废、没人回看，于是「第二轮拿不到 `responses[1]`」
+这个缺口被当成「已通过」。根因形态同 REVIEW.md 第 6 条「覆盖声明超出真实验证」，只是这次越过了
+场景层、直接进了 change 的验收对账。
+**证据**：`test-results/alex-review-2026-10-11/m443/acceptance/summary.md`（5/5 INVALID）、
+`.../131-harness-cache-session/steps.md`（第一步 hover 即 INVALID）；M456 现场
+`test-results/acceptance/2026-10-11/133-harness-cache-write/ax/03-*等第二轮回答到达*.txt`
+（第二轮 assistant 行 = `写缓存回答。` = `responses[0]`，控制行仍 `15% · 20%`）。
+**建议防线**：① 真机读数只在**该轮 acceptance 的 `results.json` / `summary.md` 有对应 PASS 行**时
+才写进 tasks.md，并把「跑于 / 证据目录」一并钉上——引用门禁/套件结论照抄脚本原文行，不复述
+（REVIEW.md 第 6/7/20 条同一精神，这次是执行没跟上）；② acceptance 把因环境项 `INVALID` 的场景
+与 `FAIL` 分列（脚本已如此），对账时**不得把 INVALID 计入「已通过」**；③ 起草 / 评审期遇到
+「本 change 的验收依赖某个 mock 语义」时，先跑一遍最小场景确认真拿得到目标响应，再写进
+「已通过」。
+
 ### gate quick 不解析验收套件 lib：块注释内 glob `*/` 闭合注释致全套件 SyntaxError 上了 master（2026-10-10，medium，防线缺口）
 
 **现场**：M433 r2 的注释修订把 `env:harness/sessions/*/*.jsonl` 写进 `scripts/acceptance/lib/app.mjs:146`

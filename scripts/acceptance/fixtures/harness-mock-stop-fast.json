@@ -15,6 +15,16 @@
       "usage": { "input_tokens": 1200, "cached_tokens": 300, "output_tokens": 30 }
     },
     {
+      "text": "",
+      "tool_calls": [
+        {
+          "id": "call_1",
+          "name": "vault_read",
+          "arguments": "{\"path\":\"harness-note.md\"}"
+        }
+      ]
+    },
+    {
       "text": "NEXT-第二轮回答。",
       "chunks": ["NEXT-第二轮回答。"],
       "usage": { "input_tokens": 1500, "cached_tokens": 900, "output_tokens": 12 }

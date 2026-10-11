@@ -17,6 +17,9 @@
 //! # mock provider 与 fixture 格式（验收专用，真机验收不依赖真实外部 API）
 //!
 //! `provider = "mock"` 时从配置的 fixture 路径读脚本化响应，**每次 LLM 调用按顺序弹一条**：
+//! 脚本是**会话级**的——同一会话的后续轮次接着上一轮往下弹（游标存在 `Session` 上，见
+//! [`super::turn::run_turn`] 与 [`wrap_cursor`]），弹尽后 wrap 回 `responses[0]`（单条 response
+//! 的 fixture 因此每轮都重放同一条）。
 //!
 //! ```jsonc
 //! {
@@ -270,6 +273,27 @@ pub trait LlmClient: Send {
     fn fixture_source(&self) -> Option<&str> {
         None
     }
+
+    /// mock：脚本原始条数（会话级游标的模；M456）。真 provider 无此概念，缺省 None ⇒
+    /// 调用方对游标推进一步不落（[`super::turn`] 的 `run_turn` 据此只对 mock 生效）。
+    fn mock_script_len(&self) -> Option<usize> {
+        None
+    }
+
+    /// mock：本 client 实例累计弹出的脚本条数（会话游标按 `start + consumed` 推进）。
+    fn mock_consumed(&self) -> usize {
+        0
+    }
+}
+
+/// 会话级 mock 游标推进（M456）：`start` 是本轮起点、`consumed` 是本轮弹出的条数，
+/// 按脚本长度 `len` 取模——耗尽即 wrap 回 0。`len == 0` 退化为 0。
+pub fn wrap_cursor(start: usize, consumed: usize, len: usize) -> usize {
+    if len == 0 {
+        0
+    } else {
+        (start + consumed) % len
+    }
 }
 
 /// 按配置装配 client：mock ⇒ fixture 驱动；kimi / deepseek ⇒ reqwest blocking。
@@ -277,6 +301,18 @@ pub trait LlmClient: Send {
 /// 会话侧 input 项恒为 `lumir-attachment://` 引用，发送前在 client 内就地展开为
 /// data URL（design §4.3：真 client 与 mock 同一条展开函数）。
 pub fn client(config: &HarnessConfig, vault_id: &str) -> Result<Box<dyn LlmClient>, CommandError> {
+    client_at(config, vault_id, 0)
+}
+
+/// [`client`] 的会话游标形态（M456）：`mock_start` 是**会话级 mock 游标**的起点，mock 路径
+/// 据此接着同一会话的上一轮往下弹（[`MockClient::with_start`]），真 provider 忽略它。
+/// 生产装配点只有 [`super::turn::run_turn`]；其余调用方（含真 provider 冒烟测试）走 `client`
+/// ——它们没有会话游标，语义即「从脚本头开始」。
+pub fn client_at(
+    config: &HarnessConfig,
+    vault_id: &str,
+    mock_start: usize,
+) -> Result<Box<dyn LlmClient>, CommandError> {
     match config.provider {
         HarnessProvider::Mock => {
             let fixture = config.providers.mock.fixture.clone().ok_or_else(|| {
@@ -285,8 +321,9 @@ pub fn client(config: &HarnessConfig, vault_id: &str) -> Result<Box<dyn LlmClien
                     "provider 为 mock 但 harness.providers.mock.fixture 未配置",
                 )
             })?;
-            MockClient::from_file(std::path::Path::new(&fixture))
-                .map(|c| Box::new(c.for_vault(vault_id)) as Box<dyn LlmClient>)
+            MockClient::from_file(std::path::Path::new(&fixture)).map(|c| {
+                Box::new(c.for_vault(vault_id).with_start(mock_start)) as Box<dyn LlmClient>
+            })
         }
         HarnessProvider::Kimi | HarnessProvider::Deepseek => {
             let (api_key, model, base_url) = match config.provider {
@@ -814,6 +851,11 @@ struct FixtureError {
 /// fixture 驱动的确定性 client：每次 `complete` 按序弹一条脚本。
 pub struct MockClient {
     script: std::collections::VecDeque<FixtureResponse>,
+    /// 脚本原始条数（会话级游标 wrap 的除数）。`script` 会被 [`Self::with_start`] 削去前缀，
+    /// 故长度单独记一份（削完仍要回答「会话从哪条续」）。
+    script_len: usize,
+    /// 本实例已弹出的条数（会话游标按 `start + consumed` 推进，见 [`super::turn`] 的 `run_turn`）。
+    consumed: usize,
     /// 可读名字（JSONL 记录用）：fixture 路径。
     source: String,
     /// 每次 `complete` 收到的思考程度档位（按调用序，M362）——验收据此断言「切档位后下一轮
@@ -857,7 +899,9 @@ impl MockClient {
             .param("reason", e.to_string())
         })?;
         Ok(Self {
+            script_len: file.responses.len(),
             script: file.responses.into(),
+            consumed: 0,
             source: source.to_string(),
             received_efforts: Vec::new(),
             vault_id: String::new(),
@@ -868,6 +912,19 @@ impl MockClient {
     /// 绑定会话作用域的 vault 稳定 id（wire 展开的落点解析；`llm::client` 装配路径）。
     pub fn for_vault(mut self, vault_id: &str) -> Self {
         self.vault_id = vault_id.to_string();
+        self
+    }
+
+    /// 从会话游标 `start` 处开始弹（M456）：削掉脚本前 `start` 条，使**同一会话的后续轮次**
+    /// 接着上一条往下弹而不是每轮重放 `responses[0]`。`start` 按脚本长度取模——会话级游标
+    /// 耗尽即 wrap 回 0（单条 response 的 fixture 因此与旧「每轮重放」行为逐字节一致，见场景
+    /// 106/108/121/124/82）。`start >= len` 与 `len == 0` 都退化为不削（弹尽仍是 `fixture_exhausted`）。
+    pub fn with_start(mut self, start: usize) -> Self {
+        if self.script_len > 0 {
+            for _ in 0..(start % self.script_len) {
+                self.script.pop_front();
+            }
+        }
         self
     }
 
@@ -887,6 +944,16 @@ impl LlmClient for MockClient {
     /// fixture 路径（`llm_response.mock_fixture` 的因果链字段）。
     fn fixture_source(&self) -> Option<&str> {
         Some(&self.source)
+    }
+
+    /// 脚本原始条数（会话级游标的模；M456）。
+    fn mock_script_len(&self) -> Option<usize> {
+        Some(self.script_len)
+    }
+
+    /// 本实例累计弹出的条数（会话游标推进用）。
+    fn mock_consumed(&self) -> usize {
+        self.consumed
     }
 
     fn complete(&mut self, request: &Request, sink: &dyn StreamSink) -> TurnOutput {
@@ -924,6 +991,8 @@ impl LlmClient for MockClient {
                 ..Default::default()
             };
         };
+        // 成功弹出一条即推进本实例的计数（会话游标 `start + consumed` 的加数）。
+        self.consumed += 1;
         // 脚本化延迟（默认 0）：撑住「回合在途」的窗口供验收断言用。放在错误分支之前——
         // 「迟到的是错误」同样是跨 vault 拒收的对象（理由见模块文档）。**不可中断**：
         // 一次睡到底（见模块头「逐片延迟」里与 `chunk_delay_ms` 的分工）。
@@ -1170,6 +1239,50 @@ mod tests {
         assert!(error.context_overflow);
         let third = client.complete(&request(), &TestStream::default());
         assert_eq!(third.error.unwrap().code, "fixture_exhausted");
+    }
+
+    /// M456：会话级 mock 游标——同一会话的第二轮接着上一轮往下弹（原本每轮从脚本头重放，
+    /// 131/133 因此永远拿不到 `responses[1]`）。反向验证：拿掉 `with_start`（游标恒 0）时
+    /// 第二轮会弹回 `第一轮`，本用例即红。
+    #[test]
+    fn session_cursor_advances_mock_script_across_turns() {
+        const TWO: &str = r#"{"responses": [{"text": "第一轮"}, {"text": "第二轮"}]}"#;
+        // 第一轮：start=0 弹 responses[0]，推进出会话游标。
+        let mut turn1 = MockClient::from_str(TWO, "two").unwrap().with_start(0);
+        assert_eq!(
+            turn1.complete(&request(), &TestStream::default()).text,
+            "第一轮"
+        );
+        let next = wrap_cursor(0, turn1.mock_consumed(), turn1.mock_script_len().unwrap());
+        assert_eq!(next, 1);
+        // 第二轮：从会话游标 1 起——弹 responses[1]（旧的每轮重放行为会弹回「第一轮」）。
+        let mut turn2 = MockClient::from_str(TWO, "two").unwrap().with_start(next);
+        assert_eq!(
+            turn2.complete(&request(), &TestStream::default()).text,
+            "第二轮"
+        );
+        // 耗尽即 wrap 回 0：单条 response 的 fixture 第二轮仍弹 responses[0]（场景 106/108/121/
+        // 124/82 的既有行为不变）。
+        let mut one = MockClient::from_str(r#"{"responses": [{"text": "仅此一条"}]}"#, "one")
+            .unwrap()
+            .with_start(wrap_cursor(0, 1, 1));
+        assert_eq!(
+            one.complete(&request(), &TestStream::default()).text,
+            "仅此一条"
+        );
+        // 越界与空脚本都不 panic：退化为不削 / 恒 0。
+        assert_eq!(wrap_cursor(5, 3, 0), 0);
+        let mut empty = MockClient::from_str(r#"{"responses": []}"#, "empty")
+            .unwrap()
+            .with_start(3);
+        assert_eq!(
+            empty
+                .complete(&request(), &TestStream::default())
+                .error
+                .unwrap()
+                .code,
+            "fixture_exhausted"
+        );
     }
 
     // ---- M443：usage 的 cache_write_tokens 解析（双路兜底 + 缺键 0） ----

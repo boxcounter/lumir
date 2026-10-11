@@ -112,7 +112,7 @@ steps:
     do: key
     key: enter
 
-  - name: 等恢复后新一轮回答到达（mock 每轮从脚本头重放同一文案）
+  - name: 等恢复后新一轮回答到达（本 fixture 只有 1 条响应，会话游标 wrap 回它——每轮同文案）
     do: waitFor
     waitFor:
       has: ["验收回答：上下文已收到。"]

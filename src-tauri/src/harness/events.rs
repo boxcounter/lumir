@@ -146,7 +146,7 @@ pub fn approval_request_with_purpose(
 
 /// `{"type":"usage","ctx_pct":NN,"cache_pct_session":NN,"cache_pct_turn":NN,
 /// "cache_write_tokens":NN,"cache_write_tokens_session":NN,"cache_note":null|"cold_start"|
-/// "block_dilution"}`（三个百分比保留一位小数，面板显示用）。
+/// "block_dilution"}`（三个百分比为**原始 f64**，取整由前端一次性 `Math.round`）。
 ///
 /// M443：载荷**整体收一个 [`UsageSnapshot`]**——事件与 `harness_state` 快照同吃一个来源，
 /// MUST NOT 各算一套（REVIEW.md 第 8 条）。键名与快照字段同名同义：`cache_pct_session` =
@@ -154,20 +154,21 @@ pub fn approval_request_with_purpose(
 /// `cache_write_tokens[_session]` = 本回合 / 本逻辑会话累计的缓存写入、`cache_note` = 本回合
 /// 成因标注（无则 null）。旧 `cache_pct` 键**退役**——复用旧键会留一个「读到 cache_pct 的人
 /// 以为还是单回合」的静默陷阱（design §4.1）。
+///
+/// **M456 修正**：三个百分比原先在此**先 [`round1`] 到一位小数**，前端拿到 95.5 再
+/// `Math.round` ⇒ 把 95.45% 显示成 96%（双舍入）；而**同一条读数**经 `harness_state` 快照
+/// （原始 f64、前端只舍一次）出来是 95% —— 事件面与快照面因此在 `.x5` 边界上不一致
+/// （场景 133 的次轮单回合即此）。载荷改为原样带 f64，取整只在消费端做一次。
 pub fn usage(snapshot: &UsageSnapshot) -> serde_json::Value {
     serde_json::json!({
         "type": "usage",
-        "ctx_pct": round1(snapshot.ctx_pct),
-        "cache_pct_session": round1(snapshot.cache_pct_session),
-        "cache_pct_turn": round1(snapshot.cache_pct_turn),
+        "ctx_pct": snapshot.ctx_pct,
+        "cache_pct_session": snapshot.cache_pct_session,
+        "cache_pct_turn": snapshot.cache_pct_turn,
         "cache_write_tokens": snapshot.cache_write_tokens,
         "cache_write_tokens_session": snapshot.cache_write_tokens_session,
         "cache_note": snapshot.cache_note,
     })
-}
-
-fn round1(value: f64) -> f64 {
-    (value * 10.0).round() / 10.0
 }
 
 /// `{"type":"compact","summary":"..."}`（摘要可供面板展开）。
@@ -247,6 +248,28 @@ mod tests {
             events[8],
             serde_json::json!({"type": "reasoning_chunk", "text": "先读 a.md。", "index": 0, "vault": "/tmp/vault-a"})
         );
+    }
+
+    /// usage 载荷的三个百分比**原样带 f64**（M456）：事件面与 `harness_state` 快照面必须同精度，
+    /// 否则同一读数在 `.x5` 边界上两端各舍一次、显示值不一致（场景 133 次轮单回合：
+    /// 事件面曾把 95.4545 先舍成 95.5、前端再 `Math.round` 得 96%，而快照面的原值舍一次是 95%）。
+    /// 反向验证：把 `usage()` 改回 `round1(...)` 时 95.4545→95.5，本用例即红。
+    #[test]
+    fn usage_payload_carries_raw_percentages() {
+        let snapshot = UsageSnapshot {
+            cache_pct_turn: 95.45454545454545,
+            cache_pct_session: 59.52380952380952,
+            ctx_pct: 16.784423828125,
+            ..UsageSnapshot::default()
+        };
+        let payload = usage(&snapshot);
+        let turn = payload["cache_pct_turn"].as_f64().unwrap();
+        assert!(
+            (turn - 95.45454545454545).abs() < 1e-9,
+            "单回合值被提前舍入：{turn}"
+        );
+        // 前端一次性 Math.round ⇒ 95（真值 95.45% 的舍入结果），不是双舍入的 96。
+        assert_eq!(turn.round() as i64, 95);
     }
 
     /// approval_request 的 argv 形状钉死为 JSON **数组**（M406 类型钉桩：前端曾按 string
