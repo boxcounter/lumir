@@ -1280,17 +1280,20 @@ mod tests {
             kind: "text".into(),
             text: Some("纯文本".into()),
             name: None,
+            label: None,
         }];
         let with_image = vec![
             attachments::DeliveryPart {
                 kind: "text".into(),
                 text: Some("看图".into()),
                 name: None,
+                label: None,
             },
             attachments::DeliveryPart {
                 kind: "image".into(),
                 text: None,
                 name: Some("pasted-a0123456789bc.webp".into()),
+                label: Some("Image 1".into()),
             },
         ];
         let model_spec = |vision: bool| crate::config::HarnessModelSpec {

@@ -1316,12 +1316,13 @@ const COPY_TABLE = {
     zh: "跳回来源消息",
     en: "Jump back to the source message",
   },
-  // 图片卡片（change harness-composer-image-paste，design §6/§8）：D445 = 能力闸拒绝
-  // toast（发送被挡下、卡片标错误态；`{model}` 由后端 param 代入）；D446 = 缩略图读回
-  // 失败 toast（`{reason}`）；D447 = transcript 图片卡片的读屏名（`{name}` 是内容寻址
-  // 文件名）；D448–D450 = harness 落盘链路人话出口（无有效 vault / 目录创建失败 /
-  // 非法附件名）。消费点全在 src/harness-panel.ts（send / loadImageThumb /
-  // createImageCardEl），code → D-code 映射在上方 ERROR_COPY。
+  // 图片卡片（change harness-composer-image-paste，design §6/§8；编号形态见 change
+  // composer-image-mention design §8）：D445 = 能力闸拒绝 toast（发送被挡下、卡片标错误态；
+  // `{model}` 由后端 param 代入）；D446 = 缩略图读回失败 toast（`{reason}`）；D447 = 图片卡片的
+  // 可访问名（`{n}` 是编号、`{name}` 是内容寻址文件名——M454 起含编号，读屏也能听到人的指代把手）；
+  // D448–D450 = harness 落盘链路人话出口（无有效 vault / 目录创建失败 / 非法附件名）。消费点全在
+  // src/harness-panel.ts（send / loadImageThumb / createImageCardEl），code → D-code 映射在上方
+  // ERROR_COPY。
   D445: {
     zh: "当前模型 {model} 不支持图片输入：请移除图片卡片后再发送，或切换到支持图片的模型",
     en: "Model {model} doesn't accept images. Remove the image cards and send again, or switch to a vision-capable model.",
@@ -1331,8 +1332,8 @@ const COPY_TABLE = {
     en: "Couldn't load the image thumbnail: {reason}",
   },
   D447: {
-    zh: "图片 {name}",
-    en: "Image {name}",
+    zh: "图片 {n}：{name}",
+    en: "Image {n}: {name}",
   },
   D448: {
     zh: "图片未保存：请先打开一个 vault 再粘贴图片",
@@ -1356,6 +1357,13 @@ const COPY_TABLE = {
   D456: {
     zh: "草稿保存失败：{reason}",
     en: "Couldn't save the draft: {reason}",
+  },
+  // 图片编号与引用（change composer-image-mention，design §4/§8）：D457 = 图片卡片 `@` 钮的
+  // 「插入引用」读屏名——点击在光标处插入该图的引用文本 `Image N`（N = 卡片当前编号，形态见
+  // src/quote-card.ts 的 imageMentionText）。消费点 src/harness-panel.ts 的 createImageMentionButton。
+  D457: {
+    zh: "插入图片引用",
+    en: "Insert image reference",
   },
 } satisfies Record<string, CopyEntry>;
 

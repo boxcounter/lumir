@@ -117,7 +117,7 @@ import type { ComposerBlock, ImageCard, MessageQuoteCard, QuoteCard } from "./qu
 import { blobToBase64, firstImageFileIndex } from "./paste-image";
 import { createMessageQuoteGesture, MESSAGE_QUOTE_FLASH_MS, resolveMessageQuoteTarget } from "./message-quote-gesture";
 import { highlightCode } from "./preview/code";
-import { clusterBackward, clusterForward, currentKillSlot, mergeKillText, setKillSlot, wordEndForward, wordStartBackward } from "./quote-card";
+import { clusterBackward, clusterForward, currentKillSlot, imageMentionText, imageOrdinals, mergeKillText, setKillSlot, wordEndForward, wordStartBackward } from "./quote-card";
 import type { CommandId } from "./keys";
 import { mirrorThemeScope } from "./overlay-scope";
 import { nextFontSize } from "./typography";
@@ -2799,7 +2799,10 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     // 渲染整面重跑后元素可能已换——按缓存名校验：读回完成时 thumb 已重建则只写缓存。
     if (thumb.dataset.thumbName !== name) return;
     thumb.classList.remove("is-loading");
-    thumb.replaceChildren();
+    // 只清掉上一次的缩略内容，**保留编号徽标**（徽标是卡片结构的一部分，不是缩略内容）。
+    for (const child of [...thumb.children]) {
+      if (!child.classList.contains("lumir-hp-qc-ord")) child.remove();
+    }
     if (url !== null) {
       const img = document.createElement("img");
       img.className = "lumir-hp-qc-img";
@@ -2814,13 +2817,66 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     }
   }
 
+  /** 编号徽标（change composer-image-mention design §8）：缩略图角上的裸编号 `1` / `2`；读屏名与
+   *  transcript 卡片的可访问名同一文案（D447 含编号形态）。编号是块序列的派生读数，非卡片字段。 */
+  function createImageOrdinalBadge(ordinal: number, name: string): HTMLElement {
+    const badge = document.createElement("span");
+    badge.className = "lumir-hp-qc-ord";
+    badge.textContent = String(ordinal);
+    badge.setAttribute("aria-label", t("D447", { n: String(ordinal), name }));
+    return badge;
+  }
+
+  /**
+   * 图片卡片的「插入引用」钮（`@` 形态；change composer-image-mention design §4）：点击在**当前
+   * 光标处**插入该图的引用文本 `Image N`（N = 该卡在点击时的编号）——走既有 `insertPlainTextAtCaret`
+   * （段落中间拆两段），插入后光标落插入文本之后。光标不可得按既有口径落 composer 末尾。
+   * 事件处置与既有 × 钮同款（mousedown 拦下，不夺 composer 选区）。
+   */
+  function createImageMentionButton(el: HTMLElement): HTMLButtonElement {
+    const at = document.createElement("button");
+    at.type = "button";
+    at.className = "lumir-hp-qc-at";
+    at.tabIndex = -1;
+    at.setAttribute("aria-label", t("D457"));
+    at.textContent = "@";
+    // 让卡片级 mousedown preventDefault 生效（不 stopPropagation）——点 `@` 不夺走 composer 的
+    // 选区/焦点，`caretFromDom()` 因此就是用户点 `@` 之前的光标（design §4 的落点前提）。
+    at.addEventListener("mousedown", (event) => event.preventDefault());
+    at.addEventListener("click", (event) => {
+      event.stopPropagation();
+      const index = [...composer.children].indexOf(el);
+      if (index < 0) return;
+      // 插入落点由 withModel 侧重渲（renderComposer 应用 result.caret）；composer.focus() 后
+      // 显式再落一次光标（与 send 路径同口径：focus 可能归位选区，最后精调）。
+      const landed: { caret: ComposerCaret | null } = { caret: null };
+      withModel((blocks) => {
+        const ordinal = imageOrdinals(blocks).get(index);
+        const sel = caretFromDom();
+        const caret = sel === null ? { block: blocks.length - 1, offset: 0 } : sel.focus;
+        if (ordinal === undefined) return { blocks: [...blocks], caret };
+        const result = insertPlainTextAtCaret(blocks, caret, imageMentionText(ordinal));
+        landed.caret = result.caret;
+        return result;
+      }, true);
+      composer.focus();
+      if (landed.caret !== null) setDomCaret(landed.caret);
+    });
+    return at;
+  }
+
   /**
    * 图片卡片 DOM（composer / transcript 两态；design §8：复用 .lumir-hp-qcard 整族样式——
    * 边框 / 圆角 / 底色同族，**不画引号竖条**（缩略图本身是左锚，这条差异是显式视觉决定））。
    * 缩略图经读回命令按需取字节（数据模型与快照里不落 base64）；能力闸拒绝时卡片标
-   * is-error（既有 error 语义色，design §6）。
+   * is-error（既有 error 语义色，design §6）。`ordinal` 是块序列的派生编号（`imageOrdinals`），
+   * 渲染编号徽标；composer 态另挂「插入引用」钮（`@`）。
    */
-  function createImageCardEl(card: ImageCard, mode: "composer" | "transcript"): HTMLElement {
+  function createImageCardEl(
+    card: ImageCard,
+    mode: "composer" | "transcript",
+    ordinal: number | null,
+  ): HTMLElement {
     const el = document.createElement("div");
     el.className = "lumir-hp-qcard lumir-hp-imgcard";
     if (mode === "composer" && imageGateErrored.has(card.name)) el.classList.add("is-error");
@@ -2830,6 +2886,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     const thumb = document.createElement("div");
     thumb.className = "lumir-hp-qc-thumb";
     thumb.dataset.thumbName = card.name;
+    if (ordinal !== null) thumb.append(createImageOrdinalBadge(ordinal, card.name));
     const source = document.createElement("div");
     source.className = "lumir-hp-qc-src";
     source.textContent = imageCardMetaText(card.name, card.width, card.height);
@@ -2847,14 +2904,20 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     });
     if (mode === "composer") {
       el.contentEditable = "false";
+      // 动作区（右上角）：`@`（插入引用）在左、既有 `×`（移除）在右；两钮恒显（裁决点 5 的 A，
+      // 与既有 `×` 同口径；design §8）。
+      const actions = document.createElement("div");
+      actions.className = "lumir-hp-qc-actions";
+      if (ordinal !== null) actions.append(createImageMentionButton(el));
       const remove = document.createElement("button");
       remove.type = "button";
       remove.className = "lumir-hp-qc-x";
       remove.tabIndex = -1;
       remove.setAttribute("aria-label", t("D371"));
       remove.textContent = "×";
-      el.append(remove);
-      // 图片卡无跳回：点击（× 除外）无操作。mousedown 拦下是不让 contenteditable=false
+      actions.append(remove);
+      el.append(actions);
+      // 图片卡无跳回：点击（两钮除外）无操作。mousedown 拦下是不让 contenteditable=false
       // 的卡片抢走选区/焦点（面板内元素，无标题栏拖拽问题——REVIEW.md 第 16 条只约束标题栏）。
       el.addEventListener("mousedown", (event) => event.preventDefault());
       remove.addEventListener("mousedown", (event) => event.stopPropagation());
@@ -2866,9 +2929,13 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
         composer.focus();
       });
     } else {
-      // transcript：同构呈现，无 ×、无跳回（只呈现缩略图，spec「发送后同构沉淀」）。
+      // transcript：同构呈现，无钮、无跳回（只呈现缩略图，spec「发送后同构沉淀」）。可访问名
+      // 含编号（D447 含编号形态）：编号是人的指代把手，读屏同样要能听到。
       el.setAttribute("role", "img");
-      el.setAttribute("aria-label", t("D447", { name: card.name }));
+      el.setAttribute(
+        "aria-label",
+        ordinal === null ? t("D447", { n: "", name: card.name }) : t("D447", { n: String(ordinal), name: card.name }),
+      );
     }
     return el;
   }
@@ -2881,8 +2948,9 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   function createCardEl(
     card: QuoteCard | MessageQuoteCard | ImageCard,
     mode: "composer" | "transcript",
+    ordinal: number | null,
   ): HTMLElement {
-    if (isImageCard(card)) return createImageCardEl(card, mode);
+    if (isImageCard(card)) return createImageCardEl(card, mode, ordinal);
     const msgCard = isMessageQuoteCard(card);
     const sourceText = msgCard ? messageQuoteSourceText(card) : cardSourceText(card);
     const jump = (): void => (msgCard ? jumpToMessageQuote(card) : quoteJumpHandler?.(card));
@@ -2964,8 +3032,10 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
 
   function renderComposer(blocks: readonly ComposerBlock[], caret: ComposerCaret | null): void {
     composer.replaceChildren();
-    for (const block of blocks) {
-      composer.append(composerBlockEl(block));
+    // 编号一次算出（一处真源），随块下标传给卡片工厂：卡片徽标因此与投递标签 / 恢复编号同源。
+    const ordinals = imageOrdinals(blocks);
+    for (let index = 0; index < blocks.length; index += 1) {
+      composer.append(composerBlockEl(blocks[index], ordinals.get(index) ?? null));
     }
     if (composer.childElementCount === 0) composer.append(createParaEl(""));
     if (caret !== null) setDomCaret(caret);
@@ -2975,11 +3045,12 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   /** 一个块 → 一个 composer 子元素。已知块类按各自形态；**未知块类保守保留**——内容以 JSON
    *  原文落回输入区（可编辑、可删），MUST NOT 静默丢弃。今天没有未知块类，这是防御面：草稿
    *  由更新版本写入、更旧版本读到时的唯一出口（change composer-draft-persistence design §6；
-   *  与 `parseQuoteMessage` 的「不识别即不还原，但 MUST NOT 静默丢文」同口径）。 */
-  function composerBlockEl(block: ComposerBlock): HTMLElement {
+   *  与 `parseQuoteMessage` 的「不识别即不还原，但 MUST NOT 静默丢文」同口径）。`ordinal` 是
+   *  图片块的派生编号（非图片块 / 未知块传 null，不渲染徽标）。 */
+  function composerBlockEl(block: ComposerBlock, ordinal: number | null): HTMLElement {
     if (block.kind === "paragraph") return createParaEl(block.text);
     if (block.kind === "quote" || block.kind === "msgquote" || block.kind === "image") {
-      return createCardEl(block.card, "composer");
+      return createCardEl(block.card, "composer", ordinal);
     }
     return createParaEl(draftUnknownBlockText(block));
   }
@@ -4344,9 +4415,13 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     el.append(createWhoLine("user", at));
     const body = document.createElement("div");
     body.className = "lumir-hp-body";
-    for (const block of blocks) {
+    // 编号一次算出（与 composer 侧同源）：transcript 上每条消息各按自己的图序显示编号——
+    // 消息发出即冻结其图序（change composer-image-mention design §6）。
+    const ordinals = imageOrdinals(blocks);
+    for (let index = 0; index < blocks.length; index += 1) {
+      const block = blocks[index];
       if (block.kind !== "paragraph") {
-        body.append(createCardEl(block.card, "transcript"));
+        body.append(createCardEl(block.card, "transcript", ordinals.get(index) ?? null));
       } else if (block.text !== "") {
         const p = document.createElement("div");
         p.className = "lumir-hp-qtext";

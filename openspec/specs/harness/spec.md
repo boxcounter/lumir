@@ -755,7 +755,9 @@ SHALL 是 vault 注册表 id（与会话留存 `sessions/<vault 稳定 id>/` 同
 发送消息时，系统 SHALL 把混排输入区的块序列投影为 Responses API 的 content parts：文本块 SHALL 按
 「引用消息序列化协议」的既有 XML 形态序列化为 `input_text` part，图片块 SHALL 产出 `input_image` part；
 `input_text` 与 `input_image` SHALL 按块序交错排布（图片在文本流中的位置 MUST 与 composer 里的交错顺序一致）。
-文本 part 的序列化 MUST NOT 包含卡片编号（沿用一致性原则）。
+文本 part 的序列化 MUST NOT 包含卡片编号（沿用一致性原则）——该编号禁令的作用面是**引用卡片与
+消息摘录卡片**；**图片块是唯一例外**，按「图片编号与引用」携带 `Image N` 标签与编号（图片在 wire 上
+没有文本身份，编号是模型指代单张图的唯一把手；change composer-image-mention）。
 
 会话侧（内存 input 项与 JSONL 留存）MUST NOT 内联图片字节：图片在 input 项里 SHALL 以 **harness 附件引用**
 形态在场（`image_url` 为 `lumir-attachment://<内容寻址名>`），MUST NOT 出现 base64 data URL。发给 provider 的
@@ -769,7 +771,8 @@ SHALL 从 wire 项的引用还原图片卡片，MUST NOT 伪造、MUST NOT 丢�
 
 - **WHEN** 发送一条「问题段落 + 图片卡片 + 问题段落」的消息
 - **THEN** 该 user 消息的 content 数组按块序为 `input_text` / `input_image` / `input_text`；图片 part 的位置与
-  composer 里的交错顺序一致；文本 part 无卡片编号
+  composer 里的交错顺序一致；文本 part 无引用卡片 / 消息摘录卡片的编号（图片块按「图片编号与引用」
+  携带 `Image N` 标签）
 
 #### Scenario: 引用进留存、展开进 wire
 

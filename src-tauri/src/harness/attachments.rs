@@ -28,7 +28,11 @@ use super::jsonl;
 pub const ATTACHMENT_SCHEME: &str = "lumir-attachment://";
 
 /// 投递投影的一个 part（前端 `serializeDelivery` 的产物，经 `harness_send` 的 parts_json
-/// 传入；design §4.2）。`kind` 判别：`text` 取 `text`，`image` 取 `name`。
+/// 传入；design §4.2）。`kind` 判别：`text` 取 `text`，`image` 取 `name` + `label`。
+///
+/// `label`（change composer-image-mention design §5.1）是图片块携带的**投递标签** `Image N`
+/// ——与卡片徽标同源的编号，模型指代单张图的唯一把手。**图片 part 缺 label 即非法**
+/// （缺标签破坏「模型看到编号」这条硬保证，MUST NOT 静默放行）。
 #[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
 pub struct DeliveryPart {
     pub kind: String,
@@ -36,6 +40,9 @@ pub struct DeliveryPart {
     pub text: Option<String>,
     #[serde(default)]
     pub name: Option<String>,
+    /// 图片 part 的投递标签（`Image N`）；文本 part 恒为 None。
+    #[serde(default)]
+    pub label: Option<String>,
 }
 
 impl DeliveryPart {
@@ -44,8 +51,9 @@ impl DeliveryPart {
     }
 }
 
-/// 解析 parts_json（`harness_send` 的入参面）：必须是 JSON 数组，逐项宽容取 kind/text/name。
-/// 形状非法拒绝本次发送（与 `parse_context` 同口径：不空转线程）。
+/// 解析 parts_json（`harness_send` 的入参面）：必须是 JSON 数组，逐项宽容取 kind/text/name/label。
+/// 形状非法拒绝本次发送（与 `parse_context` 同口径：不空转线程）。图片 part 缺 `label`
+/// 同样按非法投影拒绝（缺标签 = 破坏「模型看到编号」，见 `DeliveryPart` 的字段注释）。
 pub fn parse_delivery_parts(parts_json: &str) -> Result<Vec<DeliveryPart>, CommandError> {
     let value: serde_json::Value = serde_json::from_str(parts_json).map_err(|e| {
         CommandError::new(
@@ -65,10 +73,18 @@ pub fn parse_delivery_parts(parts_json: &str) -> Result<Vec<DeliveryPart>, Comma
                 format!("投递投影含未知 part 类型：{kind}"),
             ));
         }
+        let label = item["label"].as_str().map(str::to_string);
+        if kind == "image" && label.is_none() {
+            return Err(CommandError::new(
+                "harness_parts_invalid",
+                "投递投影的图片 part 缺少标签（Image N）".to_string(),
+            ));
+        }
         parts.push(DeliveryPart {
             kind,
             text: item["text"].as_str().map(str::to_string),
             name: item["name"].as_str().map(str::to_string),
+            label,
         });
     }
     Ok(parts)
@@ -239,11 +255,16 @@ pub fn read_image(vault_id: &str, name: &str) -> Result<String, CommandError> {
     Ok(fs_io::base64_encode(&read_image_bytes(vault_id, name)?))
 }
 
-/// wire 展开核心（给定 vault 目录；design §4.3）：把 input 数组里
-/// `image_url = lumir-attachment://<name>` 的 part 就地换成
-/// `data:image/<sub>;base64,<…>`（子类型由扩展名映射）。读文件失败 → Err（本轮以人话
+/// wire 展开核心（给定 vault 目录；design §4.3；标签注入见 change composer-image-mention
+/// design §5.3）：把 input 数组里 `image_url = lumir-attachment://<name>` 的 part 就地换成
+/// `data:image/<sub>;base64,<…>`（子类型由扩展名映射），并在该图片 part **之前**插入一个
+/// `{"type":"input_text","text":"<label>"}` part（label 取自 part 的本地字段 `lumir_label`、
+/// 取自后剥掉该字段）——模型因此读到「编号 → 图」的紧邻配对。读文件失败 → Err（本轮以人话
 /// 错误收口，MUST NOT 发出静默缺图的请求）；无引用项时原样克隆。真 client 与 mock
 /// 同调这一条（mock 的验收断言因此覆盖「wire 上真的是 input_image」）。
+///
+/// `lumir_label` 缺席（理论上不可达：装配侧 [`content_of_parts`] 恒带上它，入参 face
+/// [`parse_delivery_parts`] 又拒绝缺标签的图片 part）时不插标签行、照常展开——防御面，不 panic。
 fn expand_image_refs_from(
     input: &[serde_json::Value],
     dir: &Path,
@@ -272,6 +293,17 @@ fn expand_image_refs_from(
                 mime_of_name(name),
                 fs_io::base64_encode(&bytes),
             ));
+            // 本地字段只活在留存 / 装配面：wire part 只剩标准字段（剥掉 lumir_label）。
+            if let Some(obj) = expanded.as_object_mut() {
+                obj.remove("lumir_label");
+            }
+            // 标签行紧邻图片之前（设计 §5.3：`) [input_text "Image 1"], [input_image dataURL]`）。
+            if let Some(label) = part["lumir_label"].as_str() {
+                expanded_parts.push(serde_json::json!({
+                    "type": "input_text",
+                    "text": label,
+                }));
+            }
             expanded_parts.push(expanded);
         }
         let mut expanded_item = item.clone();
@@ -310,7 +342,9 @@ pub fn expand_image_refs(
 /// （REVIEW.md 第 8 条）。
 ///
 /// 占位元素只带 ref / type（宽度/高度在 wire 引用形态里不存在，恢复的卡片只显文件名——
-/// ImageCard.width/height 是可选字段，与解析侧宽容口径一致）。
+/// ImageCard.width/height 是可选字段，与解析侧宽容口径一致）。图片 part 的本地标签字段
+/// `lumir_label` 被**有意忽略**——它承载编号但只进 wire，正文面不得出现标签行
+/// （change composer-image-mention design §5.2）。
 pub fn panel_text_of_content(content: &[serde_json::Value]) -> Option<String> {
     let mut lines: Vec<String> = Vec::new();
     for part in content {
@@ -343,17 +377,28 @@ pub fn panel_text_of_content(content: &[serde_json::Value]) -> Option<String> {
 }
 
 /// user 消息项的 content 数组（引用形态；design §4.2）——`input_text` part 逐个来自
-/// 投影的 text part，`input_image` part 的 `image_url` 是 `lumir-attachment://` 引用。
-/// parts 为空（全空消息的理论路径）时产出单个空 text part，保持历史 content 形状。
+/// 投影的 text part，`input_image` part 的 `image_url` 是 `lumir-attachment://` 引用，
+/// 并携带**本地字段** `lumir_label`（图片块的投递标签 `Image N`；change composer-image-mention
+/// design §5.2）。
+///
+/// `lumir_label` 只活在留存与装配面：它进留存的 messages（可审计地带着编号），但
+/// `panel_text_of_content` 只取文本 part 原文、图片 part 只还占位行——**留存的文本面不含标签行**，
+/// 恢复路径因此不会把 `Image N` 复现成正文。发送前由 [`expand_image_refs_from`] 生成标签行并剥掉
+/// 该字段，provider 永不看见。parts 为空（全空消息的理论路径）时产出单个空 text part，保持历史
+/// content 形状。
 pub fn content_of_parts(parts: &[DeliveryPart]) -> Vec<serde_json::Value> {
     let mut content = Vec::with_capacity(parts.len());
     for part in parts {
         if part.is_image() {
             let name = part.name.clone().unwrap_or_default();
-            content.push(serde_json::json!({
+            let mut image = serde_json::json!({
                 "type": "input_image",
                 "image_url": format!("{ATTACHMENT_SCHEME}{name}"),
-            }));
+            });
+            if let Some(label) = part.label.as_deref() {
+                image["lumir_label"] = serde_json::json!(label);
+            }
+            content.push(image);
         } else {
             content.push(serde_json::json!({
                 "type": "input_text",
@@ -399,6 +444,7 @@ pub fn apply_context_section(
             kind: "text".to_string(),
             text: Some(bracketed),
             name: None,
+            label: None,
         }),
     }
     parts
@@ -527,12 +573,22 @@ mod tests {
             "role": "user",
             "content": [
                 {"type": "input_text", "text": "看图"},
-                {"type": "input_image", "image_url": format!("lumir-attachment://{}", written.name)},
+                {"type": "input_image", "image_url": format!("lumir-attachment://{}", written.name), "lumir_label": "Image 1"},
             ],
         })];
         let expanded = expand_image_refs_from(&input, &dir).unwrap();
-        let url = expanded[0]["content"][1]["image_url"].as_str().unwrap();
+        // 标签行紧邻图片之前：`[text "看图"], [text "Image 1"], [image dataURL]`。
+        assert_eq!(expanded[0]["content"][1]["type"], "input_text");
+        assert_eq!(expanded[0]["content"][1]["text"], "Image 1");
+        let image = &expanded[0]["content"][2];
+        assert_eq!(image["type"], "input_image");
+        let url = image["image_url"].as_str().unwrap();
         assert!(url.starts_with("data:image/webp;base64,"), "{url}");
+        // 本地字段被剥掉——wire part 只剩标准字段，provider 看不到 lumir_label。
+        assert!(
+            image.get("lumir_label").is_none(),
+            "lumir_label 必须从 wire part 剥掉"
+        );
         // 引用项之外原样：文本 part 与消息骨架不动。
         assert_eq!(expanded[0]["content"][0], input[0]["content"][0]);
         assert_eq!(expanded[0]["role"], "user");
@@ -553,9 +609,19 @@ mod tests {
     }
 
     #[test]
+    fn expand_image_refs_no_refs_is_zero_side_effect() {
+        // 无引用项：原样 clone，不解析落点（纯文本会话路径零附件面副作用）——逐字节相同。
+        let input = vec![serde_json::json!({
+            "role": "user",
+            "content": [{"type": "input_text", "text": "纯文本"}],
+        })];
+        assert_eq!(expand_image_refs(&input, "any-vault-id").unwrap(), input);
+    }
+
+    #[test]
     fn parse_delivery_parts_validates_shape() {
         let parts = parse_delivery_parts(
-            r#"[{"kind":"text","text":"问"},{"kind":"image","name":"pasted-x.webp"}]"#,
+            r#"[{"kind":"text","text":"问"},{"kind":"image","name":"pasted-x.webp","label":"Image 1"}]"#,
         )
         .unwrap();
         assert_eq!(parts.len(), 2);
@@ -563,12 +629,17 @@ mod tests {
         assert!(parse_delivery_parts("not json").is_err());
         assert!(parse_delivery_parts("{}").is_err());
         assert!(parse_delivery_parts(r#"[{"kind":"video"}]"#).is_err());
+        // 图片 part 缺 label = 破坏「模型看到编号」→ 拒绝本次发送（MUST NOT 静默放行）。
+        let err = parse_delivery_parts(r#"[{"kind":"image","name":"pasted-x.webp"}]"#).unwrap_err();
+        assert_eq!(err.code, "harness_parts_invalid");
+        // 文本 part 不带 label 合法（label 只对图片 part 必选）。
+        assert!(parse_delivery_parts(r#"[{"kind":"text","text":"问"}]"#).is_ok());
     }
 
     #[test]
     fn content_of_parts_interleaves_reference_form() {
         let parts = parse_delivery_parts(
-            r#"[{"kind":"text","text":"先看图"},{"kind":"image","name":"pasted-a.webp"},{"kind":"text","text":"哪里不对"}]"#,
+            r#"[{"kind":"text","text":"先看图"},{"kind":"image","name":"pasted-a.webp","label":"Image 1"},{"kind":"text","text":"哪里不对"}]"#,
         )
         .unwrap();
         let content = content_of_parts(&parts);
@@ -579,6 +650,8 @@ mod tests {
             "会话侧恒为引用形态，MUST NOT 内联 base64"
         );
         assert!(!content[1]["image_url"].as_str().unwrap().contains("base64"));
+        // 本地标签字段在场（留存可审计地带着编号），但**文本面**不含标签行。
+        assert_eq!(content[1]["lumir_label"], "Image 1");
         // 空投影：保持历史 content 形状（单空 text part）。
         let empty = content_of_parts(&[]);
         assert_eq!(empty.len(), 1);
@@ -588,7 +661,7 @@ mod tests {
     #[test]
     fn panel_text_of_content_round_trips_placeholder() {
         let parts = parse_delivery_parts(
-            r#"[{"kind":"text","text":"先看图"},{"kind":"image","name":"pasted-a.webp"},{"kind":"text","text":"哪里不对"}]"#,
+            r#"[{"kind":"text","text":"先看图"},{"kind":"image","name":"pasted-a.webp","label":"Image 1"},{"kind":"text","text":"哪里不对"}]"#,
         )
         .unwrap();
         let text = panel_text_of_content(&content_of_parts(&parts)).unwrap();
@@ -596,6 +669,8 @@ mod tests {
             text,
             "先看图\n<image ref=\"pasted-a.webp\" type=\"image/webp\"/>\n哪里不对"
         );
+        // 文本面 MUST NOT 出现标签行（恢复路径不会把 `Image N` 复现成正文）。
+        assert!(!text.contains("Image 1"));
         // 还原回 parts 的形状（恢复路径：面板文本 ⟺ 块序列，与前端 parseQuoteMessage 同口径）。
         let image_line = text.lines().nth(1).unwrap();
         assert!(image_line.starts_with("<image ref=\"pasted-a.webp\""));
@@ -612,13 +687,14 @@ mod tests {
         );
         // 图片-only 消息：新建只含节的 text part 压尾。
         let image_only =
-            parse_delivery_parts(r#"[{"kind":"image","name":"pasted-a.webp"}]"#).unwrap();
+            parse_delivery_parts(r#"[{"kind":"image","name":"pasted-a.webp","label":"Image 1"}]"#)
+                .unwrap();
         let applied = apply_context_section(image_only, Some("节"));
         assert_eq!(applied.len(), 2);
         assert_eq!(applied[1].text.as_deref(), Some("[节]"));
         // 图在中间的交错：节落最后的 text part，交错不被打散。
         let mixed = parse_delivery_parts(
-            r#"[{"kind":"text","text":"前"},{"kind":"image","name":"pasted-a.webp"},{"kind":"text","text":"后"}]"#,
+            r#"[{"kind":"text","text":"前"},{"kind":"image","name":"pasted-a.webp","label":"Image 1"},{"kind":"text","text":"后"}]"#,
         )
         .unwrap();
         let applied = apply_context_section(mixed, Some("节"));

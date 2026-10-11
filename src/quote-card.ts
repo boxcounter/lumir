@@ -17,8 +17,11 @@
 //     顺序排布在标签之间（卡片阅读顺序 = 序列化顺序）；
 //   - lines MUST 非空（Alex：「想不到获取不到的场景」，取不到行范围则手势不产出卡片）；
 //   - 属性值与文本节点 XML 转义，round-trip 可还原；
-//   - **协议零编号**——不含 index 或任何序号属性（一致性原则：投递给模型的上下文要素对人必须
-//     也可查，编号对人无区分价值）。
+//   - **协议零编号**——引用卡片 / 消息摘录卡片（`<quote>` / `<msg-quote>`）不含 index 或任何
+//     序号属性（一致性原则：投递给模型的上下文要素对人必须也可查，编号对它们无区分价值）。
+//     **图片块是唯一例外**（change composer-image-mention）：图片在 wire 上没有文本身份，编号是
+//     模型指代单张图的唯一把手，故图片块携带 `Image N` 标签与编号（见 `imageOrdinals` /
+//     `imageMentionText` 与该 change 的 spec 增量）。
 //
 // composer 草稿（change composer-draft-persistence）复用本模块作为块模型的**无损存储形态**的
 // 唯一实现点：`serializeComposerDraft` / `parseComposerDraft` 见文件末尾一节（与投递投影分开，
@@ -175,12 +178,18 @@ function escapeXmlAttribute(value: string): string {
 }
 
 /**
- * 投递投影（change harness-composer-image-paste design §4）：混排块序列 → Responses
- * `input` 数组 content parts 的中间形态。`text` part 是已 XML 序列化的文本（可为多行，
- * 即 serializeQuoteMessage 对一段连续文本块的产出）；`image` part 只带 harness 附件名
- * （会话侧记引用形态，发送前由后端展开为 data URL）。
+ * 投递投影（change harness-composer-image-paste design §4；图片标签见 change
+ * composer-image-mention design §5）：混排块序列 → Responses `input` 数组 content parts 的
+ * 中间形态。`text` part 是已 XML 序列化的文本（可为多行，即 serializeQuoteMessage 对一段连续
+ * 文本块的产出）；`image` part 带 harness 附件名（会话侧记引用形态，发送前由后端展开为 data URL）
+ * 与**投递标签** `label`（`Image N`，`imageMentionText` 产出）。
+ *
+ * `label` 是「模型看到的编号」的载体：它进 wire（后端装配时记成结构化字段、展开时生成标签行），
+ * 但**不进会话留存的文本面**（恢复路径不把它复现成正文）。
  */
-export type DeliveryPart = { kind: "text"; text: string } | { kind: "image"; name: string };
+export type DeliveryPart =
+  | { kind: "text"; text: string }
+  | { kind: "image"; name: string; label: string };
 
 /**
  * 同一块序列的两个投影（design §4.2，REVIEW.md 第 8 条：同一语义 MUST 只有一处产出）：
@@ -201,6 +210,30 @@ function imagePlaceholderLine(card: ImageCard): string {
   return `<image ref="${escapeXmlAttribute(card.name)}" type="${escapeXmlAttribute(card.sourceMime)}"${dims}/>`;
 }
 
+// ---------------------------------------------------------------------------
+// 图片编号（change composer-image-mention design §3）：**一处真源、三处消费**——卡片徽标、
+// `@` 插入的引用文本、投递标签共用这两个纯函数。编号是块序列的**派生读数**，不进卡片数据
+// 模型、不进快照；恢复路径按同一规则重建，与发送时天然一致。
+// ---------------------------------------------------------------------------
+
+/**
+ * 块下标 → 编号（1-based，只数 `image` 块）。未编号的块（引用卡片 / 消息摘录卡片 / 段落）
+ * **不出现在表里**。编号自 1 起、无空号，与图片块在序列里的出现次序一一对应；移除图片块后
+ * 重算即得无空号序列。
+ */
+export function imageOrdinals(blocks: readonly ComposerBlock[]): ReadonlyMap<number, number> {
+  const ordinals = new Map<number, number>();
+  for (let index = 0; index < blocks.length; index += 1) {
+    if (blocks[index].kind === "image") ordinals.set(index, ordinals.size + 1);
+  }
+  return ordinals;
+}
+
+/** 编号 → 引用 / 标签文本（`Image N`）：`@` 插入、投递标签、卡片可访问名共用同一份格式。 */
+export function imageMentionText(ordinal: number): string {
+  return `Image ${ordinal}`;
+}
+
 /**
  * 把混排块序列投影为投递 parts + 面板文本（design §4.1）。规则：
  * - 按块序走：连续文本块（quote / msgquote / 段落）累积进当前 text part（各行以 `\n`
@@ -216,6 +249,7 @@ function imagePlaceholderLine(card: ImageCard): string {
 export function projectDelivery(blocks: readonly ComposerBlock[]): DeliveryProjection {
   const parts: DeliveryPart[] = [];
   const panelLines: string[] = [];
+  const ordinals = imageOrdinals(blocks);
   let textRun: string[] = [];
   const flush = (): void => {
     if (textRun.length === 0) return;
@@ -227,11 +261,13 @@ export function projectDelivery(blocks: readonly ComposerBlock[]): DeliveryProje
     textRun.push(line);
     panelLines.push(line);
   };
-  for (const block of blocks) {
+  for (let index = 0; index < blocks.length; index += 1) {
+    const block = blocks[index];
     if (block.kind === "image") {
       flush();
       panelLines.push(imagePlaceholderLine(block.card));
-      parts.push({ kind: "image", name: block.card.name });
+      // 投递标签与卡片徽标同源：同一个 imageOrdinals 的读数（design §3 的一处真源、三处消费）。
+      parts.push({ kind: "image", name: block.card.name, label: imageMentionText(ordinals.get(index) ?? 0) });
       continue;
     }
     if (block.kind === "quote") {
