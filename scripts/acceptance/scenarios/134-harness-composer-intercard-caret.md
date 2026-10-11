@@ -91,15 +91,27 @@ steps:
     do: clickInNode
     target: { role: AXTextArea, name: "200×120" }
     dy: 0.97
+    expect:
+      - label: composer 拿到键盘焦点（AX 里恰一个 focused 的 AXTextArea）
+        ax: { focused: "AXTextArea" }
+
+  - name: 抢回窗口前台（原生菜单交互后键盘焦点可能没回 webview——M456 在排查）
+    do: focusWindow
+    retries: 3
 
   - name: ⌃B（原生 caret 回移——实测闸：它到底把光标挪到了哪一格）
     do: key
     key: "ctrl+b"
 
-  - name: 键入探针串（落进哪一格 = 上面那一次 ⌃B 把光标挪到了哪）
-    do: keys
-    keys: ["x", "q", "z", "k"]
-    gapMs: 100
+  # M456：`do: keys` 的逐键注入在这里 0/3（focus 断言已 PASS、focusWindow 也做了 ⇒ 不是聚焦
+  # 问题，是注入没落地，README「键盘注入整批丢键」同族）。改走剪贴板文本 + ⌘V 的粘贴通道。
+  - name: 探针串置剪贴板（keys 注入 0/3 不落地 ⇒ 换粘贴通道）
+    do: clipboardText
+    text: "xqzk"
+
+  - name: ⌘V 把探针串贴进 composer（落进哪一格 = 上面那一次 ⌃B 把光标挪到了哪）
+    do: key
+    key: cmd+v
     expect:
       - label: 探针串落在**两张卡片之间**（AX 文本里 xqzk 夹在 360×200 与 200×120 两条元信息行之间）
         ax: { has: "/360×200[\\s\\S]{0,200}?xqzk[\\s\\S]{0,200}?200×120/" }
