@@ -67,6 +67,12 @@ export function installBackend(): FakeBackend {
 
   const host = globalThis as unknown as Record<string, unknown>;
   host.window = globalThis;
+  // 浏览器里 window 就是全局对象，**窗口级事件也挂在它身上**；Node 的 globalThis 只有定时器，
+  // 没有 `addEventListener`。长驻模块在构造期注册「窗口失焦 / 退出前 flush」这类监听（面板的
+  // 草稿 flush、装配层的 beforeunload 同族）时，缺这一对就会在导入期炸掉整个单测层。
+  // 补一对 no-op：本层不派发窗口事件——那类时点的判据在真机验收场景里，不在这一层。
+  host.addEventListener ??= (): void => {};
+  host.removeEventListener ??= (): void => {};
   host.__TAURI_INTERNALS__ = {
     invoke(cmd: string, args: Record<string, unknown>) {
       calls.push({ cmd, args });

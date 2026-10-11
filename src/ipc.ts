@@ -420,6 +420,23 @@ export function harnessReadImage(name: string): Promise<string> {
   return invoke<string>("harness_read_image", { name });
 }
 
+/** 读当前 vault 的 composer 草稿（change composer-draft-persistence）：块模型 JSON **原文**
+ *  （`{"version":1,"blocks":[…],"caret":…}`），无草稿 / 无 vault → `null`。落点由后端按当前
+ *  vault scope 解析（前端不传 vault——`harness_write_image` 同形态）。**本层不解析内容**：
+ *  (反)序列化的唯一实现点在 `src/quote-card.ts`（`parseComposerDraft`）。读取失败（不可读 /
+ *  损坏）与「无草稿」在界面上同一处置：安静回落到空输入区。 */
+export function harnessDraftGet(): Promise<string | null> {
+  return invoke<string | null>("harness_draft_get");
+}
+
+/** 写当前 vault 的 composer 草稿：`draft_json` 是块模型 JSON 原文；**空串 = 清除**（发送成功
+ *  后删掉草稿文件）。前端经防抖写控制器（`src/harness-draft.ts`）调用。无 vault 时后端静默
+ *  no-op（不落盘、不报错）；写失败 reject `harness_draft_write_failed`——调用方降级为一条
+ *  人话 warning，**MUST NOT** 阻断输入。 */
+export function harnessDraftPut(draft_json: string): Promise<void> {
+  return invoke<void>("harness_draft_put", { draft_json });
+}
+
 /** 对一条待批准项给出采纳 / 拒绝（reason 可选，拒绝原因回送模型）。`remember` = 「采纳且
  *  本会话不再问」（可选，缺省 false；M413 落 transport、M414 落按钮）：true 且采纳时后端把
  *  该次调用的 (工具, 规范化主体串) 记入**会话内**批准缓存，同会话同主体串后续免闸——

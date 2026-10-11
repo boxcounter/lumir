@@ -63,7 +63,11 @@
 // 浮层释义 ×3 / 浮层读屏名 / 「采纳且本会话不再问」——文案分两级见 design §7）、D435 为
 // vault_delete 批准卡的后果说明（design §5.1 的面板半边）；D442–D444 为消息摘录卡片
 //（change harness-message-excerpt：出处行模板 / 失锚 toast / transcript 卡跳回读屏名），
-// 消息摘录手势与跳回在 src/message-quote-gesture.ts；M378 起面板内容字号支持 ⌘+/- 步进
+// 消息摘录手势与跳回在 src/message-quote-gesture.ts；D456 为 composer 草稿保存失败 warning
+//（change composer-draft-persistence：防抖写控制器在 src/harness-draft.ts、落盘在 Rust 的
+// harness::draft、块模型 ⟺ 草稿 JSON 在 src/quote-card.ts——本模块只挂时点：编辑后防抖、
+// 输入区失焦 / 面板关闭 / 窗口失焦或退出前 flush、装载 vault 后恢复、发送成功后清除）；
+// M378 起面板内容字号支持 ⌘+/- 步进
 //（--lumir-hp-scale，与内容 pane 的 textScale 同语义：×1.1 钳 [12,32]、reset 回基线、
 // 不落盘；焦点路由在装配层 src/main.ts）；
 // 长驻元素（toggle 钮 / harness 段 / 输入框 placeholder / 按钮 / 上下文 chip / ctx 读数 /
@@ -82,6 +86,8 @@ import {
   harnessAbort,
   harnessApprove,
   harnessDeleteSession,
+  harnessDraftGet,
+  harnessDraftPut,
   harnessListSessions,
   harnessNewSession,
   harnessReadImage,
@@ -97,9 +103,11 @@ import type { HarnessEvent } from "./ipc";
 import type { ThinkingEffort } from "./bindings/ThinkingEffort";
 import { assembleHarnessContext, serializeHarnessContext } from "./harness-context";
 import type { HarnessContextBlock, HarnessContextSource } from "./harness-context";
+import { createHarnessDraftStore } from "./harness-draft";
 import {
   createMessageQuoteCard,
   createQuoteCard,
+  draftUnknownBlockText,
   isMessageQuoteCard,
   parseMessageAt,
   serializeDelivery,
@@ -2318,6 +2326,56 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   /** QC3（M344）注册的卡片跳回处理器；未注册时卡片点击无操作。 */
   let quoteJumpHandler: ((card: QuoteCard) => void) | null = null;
 
+  // ── composer 草稿（change composer-draft-persistence，design §4/§5/§7）──────────────
+  /** 防抖写控制器（零 DOM 逻辑在 `src/harness-draft.ts`，这里只接三个口子：读
+   *  `harness_draft_get` / 写 `harness_draft_put` / 失败提示走装配层 toast——错误信封按 code
+   *  取 D456，本面板不自造文案）。落点按后端当前 vault scope 解析，前端不持有 vault id。 */
+  const draft = createHarnessDraftStore({
+    getDraft: () => harnessDraftGet(),
+    putDraft: (draftJson) => harnessDraftPut(draftJson),
+    warn: (e) => deps.toast(errorText(e)),
+  });
+  /** 草稿装载世代：读盘在途时又切了一次 vault，旧结果作废（与快照的 snapshotSeq 同口径——
+   *  store 内部另有一道世代守它自己的状态，这条守的是**渲染**）。 */
+  let draftSeq = 0;
+
+  /** 内容变化后把当前块序列 + 光标落位交给防抖控制器（内容没变则不排期）。挂点见
+   *  withModel / undo / redo / input / compositionend——它们是「模型被改」的全部出口。 */
+  function markDraft(): void {
+    const sel = caretFromDom();
+    draft.schedule(readBlocksFromDom(), sel === null ? null : sel.focus);
+  }
+
+  /** 离散 flush：把待写内容立刻落盘（输入区失焦 / 面板关闭 / 窗口失焦 / 退出）。防抖是主
+   *  路径，这些是补漏——切走之后就再没有「当前 vault」这个上下文可写了（design §4）。
+   *
+   *  **为什么 flush 挂点在离开输入区这一类时点、而不是 `vaultChanged` 里**：`vaultChanged`
+   *  由装配层在**后端已经切完 vault 之后**调用（`applyVault` 跑在 `vault_open_path` 之后），
+   *  那一刻写入会按**新** vault 解析落点，把旧 vault 的草稿写进新 vault 的文件（跨 vault
+   *  串台）。而「待写存在」蕴含「输入区持焦」——落盘由编辑触发、编辑要求输入区持焦，且任何
+   *  一次离焦都会走本函数写走——于是切 vault 必经的「先离开输入区」就是那个时点。
+   *  `vaultChanged` 里因此只做「丢弃旧 vault 的待写 + 装载新 vault 的草稿」。 */
+  function flushDraft(): void {
+    void draft.flush();
+  }
+
+  /** composer 是否还是「刚装载完」的原始空态（一个空段落）。恢复草稿前的**用户已动手**判据：
+   *  读盘是一次 IPC 往返，用户可能在这段窗口里已经开始输入——那就不许用盘上的旧内容覆盖他。 */
+  function composerIsPristine(): boolean {
+    return (
+      composer.childElementCount === 1 &&
+      composer.querySelector(".lumir-hp-qcard") === null &&
+      composer.textContent === ""
+    );
+  }
+
+  // 窗口级离散 flush（design §4 的「窗口失焦 / 退出」）：面板是长驻单例，这两条监听随构造
+  // 注册一次，与装配层 `src/main.ts` 的 beforeunload（标签会话 / 阅读位置同一批）并列——
+  // 各模块 flush 自己那份状态，互不代管。best-effort：invoke 是异步的，webview 拆除可能早于
+  // 它完成（与装配层那条同一条边界，防抖写入是主路径）。
+  window.addEventListener("blur", flushDraft);
+  window.addEventListener("beforeunload", flushDraft);
+
   // ── 混排 composer：DOM 层（渲染 / 读模型 / 光标 / 归一化） ──────────────────
   // 纪律：结构性修改一律「normalize → 读模型 → 纯函数算新模型 → 整面重渲」，typed 文本才
   // 交给浏览器原生处理（内容始终落在 .qpara 内）。卡片 DOM 只渲染 cardData 里的数据。
@@ -2589,13 +2647,23 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   function renderComposer(blocks: readonly ComposerBlock[], caret: ComposerCaret | null): void {
     composer.replaceChildren();
     for (const block of blocks) {
-      composer.append(
-        block.kind === "paragraph" ? createParaEl(block.text) : createCardEl(block.card, "composer"),
-      );
+      composer.append(composerBlockEl(block));
     }
     if (composer.childElementCount === 0) composer.append(createParaEl(""));
     if (caret !== null) setDomCaret(caret);
     updateEmptyClass();
+  }
+
+  /** 一个块 → 一个 composer 子元素。已知块类按各自形态；**未知块类保守保留**——内容以 JSON
+   *  原文落回输入区（可编辑、可删），MUST NOT 静默丢弃。今天没有未知块类，这是防御面：草稿
+   *  由更新版本写入、更旧版本读到时的唯一出口（change composer-draft-persistence design §6；
+   *  与 `parseQuoteMessage` 的「不识别即不还原，但 MUST NOT 静默丢文」同口径）。 */
+  function composerBlockEl(block: ComposerBlock): HTMLElement {
+    if (block.kind === "paragraph") return createParaEl(block.text);
+    if (block.kind === "quote" || block.kind === "msgquote" || block.kind === "image") {
+      return createCardEl(block.card, "composer");
+    }
+    return createParaEl(draftUnknownBlockText(block));
   }
 
   function updateEmptyClass(): void {
@@ -2911,6 +2979,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     const result = op(readBlocksFromDom());
     renderComposer(result.blocks, result.caret);
     refreshChip();
+    markDraft();
   }
 
   function undo(): void {
@@ -2919,6 +2988,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     if (snap === null) return;
     renderComposer(snap.blocks, snap.caret);
     refreshChip();
+    markDraft();
   }
 
   function redo(): void {
@@ -2926,6 +2996,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     if (snap === null) return;
     renderComposer(snap.blocks, snap.caret);
     refreshChip();
+    markDraft();
   }
 
   /**
@@ -5057,8 +5128,10 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
    * 按 vault 分桶，这里把作用域基准切过去、丢掉旧 vault 的渲染面，并按当前 vault 重拉快照。
    *
    * 本地态的处置口径（写在这里，免得下次再推一遍）：
-   * - **composer 草稿清空**：草稿是在旧 vault 的上下文里写的（当时的 chip 指着旧 vault 的
-   *   文档），留着就会被当成本 vault 的提问发出去；
+   * - **composer 草稿换成新 vault 的那一份**（change composer-draft-persistence）：先丢弃
+   *   属于旧 vault 的待写内容，再按**当前 vault**（后端已切完，落点按 scope 解析）读回草稿
+   *   铺进输入区。旧 vault 的待写由**切换前**的 flush 写走（见 `flushDraft` 的调用点）——
+   *   本函数跑在后端切完 vault 之后，此刻再写就会把旧草稿写进新 vault 的文件；
    * - **上下文 chip 重取**：同上，改指新 vault 的当前文档（此刻多数是「无」）；
    * - 发送相位经 finished 收口回 idle：见 resetView；
    * - 语言 / 主题 / 面板开合状态都不动（它们不属于会话）。
@@ -5067,11 +5140,46 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     if (root === currentVault) return; // 同一个 vault 的重复装载（重定位 / 重开）不重置视图
     currentVault = root;
     resetView();
-    // 草稿清空 = 模型层清空（连带撤销史——草稿是旧 vault 上下文里的产物）。
+    // 输入区回空态（连带撤销史——新 vault 的草稿是新的编辑史），随后异步换上新 vault 的草稿。
     undoHistory.clear();
     renderComposer([{ kind: "paragraph", text: "" }], null);
     refreshChip();
     fetchSnapshot();
+    void restoreDraft();
+  }
+
+  /**
+   * 读回当前 vault 的草稿并铺进输入区（装载 vault 后调用；app 启动装载与切 vault 共用这条路）。
+   *
+   * 三道守卫：
+   * - **世代**：读盘是一次 IPC 往返，途中又切了一次 vault 时本次结果作废（旧 vault 的草稿
+   *   绝不许落到新 vault 的输入区——与快照的 snapshotSeq 同一条纪律）；
+   * - **用户已动手**：窗口里用户可能已经开始输入，那就只用「仍是原始空态」时才恢复
+   *   （`composerIsPristine`），不覆盖用户刚打的字；
+   * - **光标**：恢复的光标落位只在**输入区持焦**时施加——面板不持焦时那支光标属于别人
+   *   （编辑器 / 树），程序化改选区会把它拽走（M343 起 composer 的选区只在本面板持焦时动）。
+   *
+   * 无草稿 / 文件损坏 / 版本不符（store 的 `load` 返回 null / 抛出）→ 保持空输入区，不报错、
+   * 不伪造内容（spec「草稿损坏时安静回落」）。
+   */
+  async function restoreDraft(): Promise<void> {
+    const seq = (draftSeq += 1);
+    let loaded: { blocks: ComposerBlock[]; caret: { block: number; offset: number } | null } | null;
+    try {
+      loaded = await draft.load();
+    } catch {
+      loaded = null;
+    }
+    if (seq !== draftSeq) return; // 读盘途中又切了一次 vault：本次结果作废
+    if (loaded === null || loaded.blocks.length === 0) return;
+    if (!composerIsPristine()) return; // 用户已经动手：不用盘上的旧内容覆盖他
+    undoHistory.clear();
+    renderComposer(loaded.blocks, null);
+    // 光标落位：只在输入区持焦时施加（见函数头第三条守卫）。
+    if (loaded.caret !== null && composer.contains(document.activeElement)) {
+      setDomCaret(loaded.caret);
+    }
+    updateEmptyClass();
   }
 
   // 后端不可用（纯浏览器预览 / 命令未注册）时按空会话降级——面板本身照常可用，
@@ -5105,7 +5213,10 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       firstUserText = firstUserTextOf(blocks);
       applySessionName();
     }
-    // 投递成功入队后草稿与撤销史一并归零（新消息是新的编辑史）。
+    // 投递成功入队后草稿与撤销史一并归零（新消息是新的编辑史）。**清空动作本身不排期草稿**
+    // （markDraft 只在模型修改出口调用，send 走的 renderComposer 不在其中）——发送成功后才
+    // 真正清草稿（下面 then 里的 `draft.clear()`），被拒 / 失败时草稿保持原样（spec 的核心
+    // 改变之一：MUST NOT 在乐观清空与回滚之间留下「崩溃即丢字」的空草稿窗口）。
     undoHistory.clear();
     renderComposer([{ kind: "paragraph", text: "" }], null);
     // 焦点与光标回 composer（M372）：replaceChildren 会把 WebKit 里既有的 DOM 选区塌到
@@ -5123,31 +5234,44 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     // 无文档上下文时传空串（不是 null）：后端 harness_send 的 context_json 恒为 string，
     // parse_context 对空串返回默认块——传 null 会被参数反序列化拒掉（M398，bug「不打开任何
     // 文件时发送报 invalid type: null」）。
-    harnessSend(JSON.stringify(parts), block !== null ? serializeHarnessContext(block) : "").catch(
-      (e: unknown) => {
-        turnOpen = false;
-        applySendPhase(reduceSendPhase(sendPhase, { type: "finished" }));
-        // 发送闸拒绝（harness_image_unsupported，design §6）：会话不推进——撤下刚沉淀的
-        // 用户消息、composer 原样恢复（输入区内容保留）、toast 人话错误、图片卡片标错误态
-        // （前端不另立能力判定，只认后端这一个 code）。
-        if (errorCodeOf(e) === "harness_image_unsupported") {
-          const last = transcript.lastElementChild;
-          if (last !== null && last.classList.contains("lumir-hp-msg-user")) last.remove();
-          // 乐观上屏的回滚：会话没推进，会话名也不许留下（否则标题栏像「已发送」）。
-          firstUserText = prevFirstUserText;
-          applySessionName();
-          // 错误态按名记入模型侧（见 imageGateErrored）——renderComposer 重建卡片后依旧标出。
-          for (const block of blocks) {
-            if (block.kind === "image") imageGateErrored.add(block.card.name);
+    harnessSend(JSON.stringify(parts), block !== null ? serializeHarnessContext(block) : "")
+      .then(() => {
+        // 发送被接受（后端已入队）→ 清除草稿（含落盘）：内容已进会话，不再是「未发送的输入」
+        // （spec「发送成功后清除」）。clear 同时取消防抖窗口里那份旧内容的待写——否则它会在
+        // 1s 后把刚发出去的内容又写回盘上；失败只记 warning（不影响「已发送」这个事实）。
+        void draft.clear();
+      })
+      .catch(
+        (e: unknown) => {
+          turnOpen = false;
+          applySendPhase(reduceSendPhase(sendPhase, { type: "finished" }));
+          // 发送闸拒绝（harness_image_unsupported，design §6）：会话不推进——撤下刚沉淀的
+          // 用户消息、composer 原样恢复（输入区内容保留）、toast 人话错误、图片卡片标错误态
+          // （前端不另立能力判定，只认后端这一个 code）。
+          if (errorCodeOf(e) === "harness_image_unsupported") {
+            const last = transcript.lastElementChild;
+            if (last !== null && last.classList.contains("lumir-hp-msg-user")) last.remove();
+            // 乐观上屏的回滚：会话没推进，会话名也不许留下（否则标题栏像「已发送」）。
+            firstUserText = prevFirstUserText;
+            applySessionName();
+            // 错误态按名记入模型侧（见 imageGateErrored）——renderComposer 重建卡片后依旧标出。
+            for (const block of blocks) {
+              if (block.kind === "image") imageGateErrored.add(block.card.name);
+            }
+            renderComposer(blocks, null);
+            // 被拒 = 内容还在输入区、也还在未发送状态：草稿按回滚后的块重新对齐（与盘上那份
+            // 内容相同时不写盘；若发送前的待写被别的路径清掉过，这一步把它补回来）。
+            markDraft();
+            syncEmptyHint();
+            deps.toast(errorText(e));
+            return;
           }
-          renderComposer(blocks, null);
-          syncEmptyHint();
-          deps.toast(errorText(e));
-          return;
-        }
-        appendError(t("D347", { reason: errorMessage(e) }));
-      },
-    );
+          // 其余失败（busy / 线程起不来 / …）：输入区已乐观清空、内容进了 transcript 的那条
+          // 用户消息。草稿**原样保留**（MUST NOT 因一次失败丢掉用户打的字，spec「发送被拒 /
+          // 失败时草稿 SHALL 原样保留」）——它会在下次编辑时被新内容自然覆盖。
+          appendError(t("D347", { reason: errorMessage(e) }));
+        },
+      );
   }
 
   // 发送钮的点击路由：空闲相位（= 钮面「发送」）走 send()；running 相位（= 钮面「停止」）
@@ -5292,6 +5416,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     imeGateState = imeGateCompositionEnd(imeGateState, Date.now());
     undoHistory.breakCluster(); // 组合整段是一个撤销步：下一拍编辑强制重新压栈。
     updateEmptyClass();
+    markDraft(); // IME 落定的字符在此刻才进 DOM（组合期不排期），草稿按最终文本落盘
   });
   // 粘贴分派（quirk ① + change harness-composer-image-paste design §7）：剪贴板含
   // `image/*` 文件项 → 图优先（读 Blob → base64 → harness 侧落盘 → 光标处插图片卡片；
@@ -5343,8 +5468,14 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       true,
     );
   });
-  composer.addEventListener("input", () => updateEmptyClass());
+  composer.addEventListener("input", () => {
+    updateEmptyClass();
+    markDraft();
+  });
   composer.addEventListener("focus", refreshChip);
+  // 输入区失焦 = 本面板的**离散 flush 主挂点**（change composer-draft-persistence design §4）。
+  // 理由见 flushDraft 的注释：切 vault 必经「先离开输入区」，而 vaultChanged 跑在后端切完之后。
+  composer.addEventListener("blur", flushDraft);
 
   // ── 新建会话（harness 段 ＋钮与会话浮层动作项共用一条路径；两个入口一个语义）──
   function startNewSession(): void {
@@ -5629,6 +5760,9 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       chipWatchTimer = window.setInterval(watchActiveSession, 400);
     } else {
       // 摘出 DOM（元素长驻内存：订阅 / 撤销栈 / 流式态不丢），浮层与刷新表随之收起。
+      // 摘之前先把待写的草稿落盘（面板关闭是一个离散 flush 时点，design §4：面板收起后输入区
+      // 不在屏幕上，用户不会再「顺手」给它一次防抖机会）——草稿没写走就再也没有第二次机会。
+      flushDraft();
       panel.remove();
       setSessPop(false);
       setSelPop(false);

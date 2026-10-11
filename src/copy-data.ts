@@ -1350,6 +1350,13 @@ const COPY_TABLE = {
     zh: "发送内容格式不正确，请重试",
     en: "The message format is invalid. Please try again.",
   },
+  // composer 草稿（change composer-draft-persistence，design §4/§7）：D456 = 草稿落盘失败的人话
+  // warning。只降级、不阻断输入、不谎报已保存（内容始终留在内存的输入区里）——`{reason}` 透传
+  // 底层原因；code → D-code 映射在上方 ERROR_COPY（`harness_draft_write_failed`）。
+  D456: {
+    zh: "草稿保存失败：{reason}",
+    en: "Couldn't save the draft: {reason}",
+  },
 } satisfies Record<string, CopyEntry>;
 
 /** 文案表的键（D 编号，多串格带 `.N` 后缀）——由表数据推导，加一条即多一个键。 */
@@ -1419,6 +1426,8 @@ export const ERROR_COPY: Record<string, CopyKey> = {
   harness_image_name_invalid: "D450",
   harness_image_unsupported: "D445",
   harness_parts_invalid: "D451",
+  // composer 草稿（change composer-draft-persistence）：写失败的人话 warning。
+  harness_draft_write_failed: "D456",
   document_write_failed: "D187",
   document_write_unknown: "D188",
   document_conflict: "D41",
