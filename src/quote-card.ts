@@ -12,6 +12,10 @@
 //   - **协议零编号**——不含 index 或任何序号属性（一致性原则：投递给模型的上下文要素对人必须
 //     也可查，编号对人无区分价值）。
 //
+// composer 草稿（change composer-draft-persistence）复用本模块作为块模型的**无损存储形态**的
+// 唯一实现点：`serializeComposerDraft` / `parseComposerDraft` 见文件末尾一节（与投递投影分开，
+// 后者有损、不得当存储形态）。
+//
 // 本模块是纯数据 + 纯函数（无 DOM、无 CodeMirror、无文案），消费者（composer 混排编辑区、
 // 消息装配、transcript 沉淀）在后续 mission 接线。
 
@@ -257,4 +261,179 @@ export function serializeDelivery(blocks: readonly ComposerBlock[]): DeliveryPar
  */
 export function serializeQuoteMessage(blocks: readonly ComposerBlock[]): string {
   return projectDelivery(blocks).panelText;
+}
+
+// ---------------------------------------------------------------------------
+// composer 草稿的 (反)序列化（change composer-draft-persistence design §6）
+//
+// 草稿是**存储形态**，与投递形态（`serializeQuoteMessage` 的面板文本投影）分开：投影是有损的
+// （`headingPath` 不序列化、图片缺省宽高丢），块模型才是 composer 的真模型，天然无损 round-trip。
+// 本段是「块模型 ⟺ 草稿 JSON」的**唯一实现点**（design §2 的单源纪律，REVIEW.md 第 8 条）：
+// Rust 侧只做搬运、不解析内容（`src-tauri/src/harness/draft.rs`）。
+// ---------------------------------------------------------------------------
+
+/**
+ * 草稿 schema 版本（首版即终态）。版本不符按「没有草稿」处理、不尝试解释——草稿零存量，
+ * 不存在旧格式消费者，不写迁移分支（REVIEW.md 第 21 条：先问「消费者是谁」）。
+ */
+export const DRAFT_VERSION = 1;
+
+/** 草稿里的光标落位（块下标 + 段内 UTF-16 偏移，与 `ComposerCaret` 同口径）。 */
+export interface DraftCaret {
+  block: number;
+  offset: number;
+}
+
+/** 草稿文件形状（`serializeComposerDraft` 的产物、`parseComposerDraft` 的输入）。 */
+export interface ComposerDraft {
+  version: number;
+  blocks: ComposerBlock[];
+  /** 恢复时把光标放回用户离开时的位置；缺席（旧文件 / 手改）按「光标在末尾」处理。 */
+  caret: DraftCaret | null;
+}
+
+/**
+ * 块序列 → 草稿 JSON（存储形态的唯一产出点）。
+ *
+ * 内容逐字段照录、不做归一化与改写：块模型是单一真源，序列化只是它的投影。图片卡片存的是
+ * **内容寻址引用**（`name` + `sourceMime` + 可选宽高），**MUST NOT 内联 base64**——与会话留存
+ * 同口径，附件字节在 `attachments/<vault 稳定 id>/` 里不被 GC，恢复后仍可经读回命令取回。
+ */
+export function serializeComposerDraft(
+  blocks: readonly ComposerBlock[],
+  caret: DraftCaret | null,
+): string {
+  const draft: ComposerDraft = { version: DRAFT_VERSION, blocks: [...blocks], caret };
+  return JSON.stringify(draft);
+}
+
+/** JSON 值的对象（非数组、非 null）判别。 */
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** 有限正数（图片像素尺寸）。 */
+function positiveNumber(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : undefined;
+}
+
+/**
+ * 草稿 JSON → 块序列 / 光标。**拿不到合法草稿一律返回 `null`**（空串 / 非 JSON / 版本不符 /
+ * `blocks` 非数组 / 任一**已知**块类不成形），调用方据此安静回落到空的单段落输入区——
+ * 判据是「是否拿到合法草稿」，不是 `text ?? ""`（REVIEW.md 第 2 条：读不到与为空不是一回事）。
+ *
+ * **未知块类保守保留**：`kind` 不在已知集合内的块原样返回（未来的块类落地前也不丢内容，
+ * 与既有的「解析未知元素 MUST NOT 静默丢文」同口径）。已知块类则逐个校验到「能被 composer
+ * 安全编辑」这一档：不成形 = 整份草稿按损坏处理（半份草稿比没有草稿更危险——它会让发送
+ * 路径上的投影函数抛错）。
+ *
+ * 光标：非法 / 缺席 → `null`（调用方按末尾落位）。
+ */
+export function parseComposerDraft(text: string): ComposerDraft | null {
+  let value: unknown;
+  try {
+    value = JSON.parse(text);
+  } catch {
+    return null;
+  }
+  if (!isRecord(value)) return null;
+  if (value.version !== DRAFT_VERSION) return null;
+  const raw = value.blocks;
+  if (!Array.isArray(raw)) return null;
+  const blocks: ComposerBlock[] = [];
+  for (const item of raw) {
+    const block = parseDraftBlock(item);
+    if (block === null) return null;
+    blocks.push(block);
+  }
+  return { version: DRAFT_VERSION, blocks, caret: parseDraftCaret(value.caret, blocks.length) };
+}
+
+/** 单个块：已知块类逐字段校验（不合法 → `null`）；未知块类原样保留。 */
+function parseDraftBlock(item: unknown): ComposerBlock | null {
+  if (!isRecord(item) || typeof item.kind !== "string") return null;
+  const { card } = item;
+  switch (item.kind) {
+    case "paragraph":
+      return typeof item.text === "string" ? { kind: "paragraph", text: item.text } : null;
+    case "quote": {
+      const parsed = parseDraftQuoteCard(card);
+      return parsed === null ? null : { kind: "quote", card: parsed };
+    }
+    case "msgquote": {
+      const parsed = parseDraftMessageQuoteCard(card);
+      return parsed === null ? null : { kind: "msgquote", card: parsed };
+    }
+    case "image": {
+      const parsed = parseDraftImageCard(card);
+      return parsed === null ? null : { kind: "image", card: parsed };
+    }
+    default:
+      // 未知块类：内容原样保留（MUST NOT 静默丢弃）。composer 渲染侧给它一个可见的兜底形态
+      // （见 `draftUnknownBlockText`）。
+      return item as unknown as ComposerBlock;
+  }
+}
+
+function parseDraftQuoteCard(raw: unknown): QuoteCard | null {
+  if (!isRecord(raw)) return null;
+  const { file, heading, headingPath, lines, text } = raw;
+  if (
+    typeof file !== "string" ||
+    typeof heading !== "string" ||
+    typeof lines !== "string" ||
+    typeof text !== "string"
+  ) {
+    return null;
+  }
+  // 建卡不变量（createQuoteCard 同判据）：lines 非空才是一张能投递的卡片。
+  if (lines.trim() === "") return null;
+  // headingPath 是人侧专用字段（hover title），缺席按 heading 回落——不因它丢整份草稿。
+  return { file, heading, headingPath: typeof headingPath === "string" ? headingPath : heading, lines, text };
+}
+
+function parseDraftMessageQuoteCard(raw: unknown): MessageQuoteCard | null {
+  if (!isRecord(raw)) return null;
+  const { role, at, text } = raw;
+  if (role !== "user" && role !== "assistant") return null;
+  if (typeof text !== "string" || text.trim() === "") return null;
+  // at 可缺（null）：缺席与显式 null 同义（快照恢复无 ts 的旧消息本就不显示时间）。
+  const when = at === undefined || at === null ? null : at;
+  if (when !== null && !(typeof when === "number" && Number.isFinite(when))) return null;
+  return { role, at: when, text };
+}
+
+function parseDraftImageCard(raw: unknown): ImageCard | null {
+  if (!isRecord(raw)) return null;
+  const { name, sourceMime, width, height } = raw;
+  if (typeof name !== "string" || name === "" || typeof sourceMime !== "string") return null;
+  const w = positiveNumber(width);
+  const h = positiveNumber(height);
+  // 尺寸是可选的一对：任一缺席即整对不还原（半对尺寸会让元信息行显示半个数）。
+  return w === undefined || h === undefined
+    ? { name, sourceMime }
+    : { name, sourceMime, width: w, height: h };
+}
+
+/** 光标落位：块下标越界 / 偏移非负整数不成立 → `null`（调用方按末尾落位）。 */
+function parseDraftCaret(raw: unknown, blockCount: number): DraftCaret | null {
+  if (!isRecord(raw)) return null;
+  const { block, offset } = raw;
+  if (!Number.isInteger(block) || !Number.isInteger(offset)) return null;
+  if ((block as number) < 0 || (block as number) >= blockCount || (offset as number) < 0) return null;
+  return { block: block as number, offset: offset as number };
+}
+
+/**
+ * 未知块类的可见兜底文本（composer 渲染侧用）：内容以 JSON 原文落回输入区——**不静默丢弃**，
+ * 与 `parseQuoteMessage` 的「不识别即不还原，但 MUST NOT 静默丢文」同一处置（那边落成段落文本，
+ * 这边落成 JSON 原文，因为未知块的「内容」不是一段可读文本）。今天没有未知块类，这是防御面：
+ * 未来块类由更旧的版本读到时的唯一出口。
+ */
+export function draftUnknownBlockText(block: ComposerBlock): string {
+  try {
+    return JSON.stringify(block);
+  } catch {
+    return "";
+  }
 }

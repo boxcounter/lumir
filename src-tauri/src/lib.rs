@@ -139,6 +139,11 @@ pub fn run() {
             // 寻址附件的写 / 读（落点 attachments/<vault 稳定 id>/，MUST NOT 触碰 vault）。
             harness::harness_write_image,
             harness::harness_read_image,
+            // composer 草稿（change composer-draft-persistence）：按 vault 一份的草稿读写
+            // （落点 harness/drafts/<vault 稳定 id>.json，MUST NOT 触碰 vault；落点按当前
+            // vault scope 解析，前端不传 vault——harness_write_image 同形态）。
+            harness::draft::harness_draft_get,
+            harness::draft::harness_draft_put,
         ])
         .setup(move |app| {
             // 诊断日志先初始化：`[log] level` 在第一条事件之前生效（level = off 时
