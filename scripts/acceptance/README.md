@@ -544,6 +544,18 @@ Alex 抽审路径：先看 `summary.md`，再进 FAIL 场景看 `steps.md` + `sh
   ① 菜单项在 AX 里的索引每次快照都可能变，**按键名正则定位、不锁索引**；
   ② 走 `any:` 而不是 `name:`——`findNode` 的 `name` 把字符串裸传给 `new RegExp()`，不认 `/…/`
   定界符（`any` 才过 `matcher()`）。剪贴板置图仍走 `osascript` 的 `«class PNGf»`。
+  **2026-10-11 修正（M456）——上面两条各放宽一格**：① 「⌘V 不落地」**只对文本成立**：对**图片**，
+  ⌘V 经同一 KimiCU `press_key` 注入**真的落地**（M456 探针：osascript 把一个合成 png 置入剪贴板，
+  `press_key("cmd+v")` 打到已聚焦的 composer 上，AX 里立刻多出一张 `pasted-<hex>.webp · 200×120`
+  的图片卡片；现场 `test-results/acceptance/2026-10-11/134-harness-composer-intercard-caret/`）。
+  **注意：这条只在 KimiCU 层成立，套件动作面尚未成立**——⌘V 直接在 KimiCU 的 `press_key` 注入
+  （探针）确实落；但经套件的 `do: key { key: "cmd+v" }` 注入时，紧跟 `clipboardImage`（osascript
+  置剪贴板）之后毫秒级发出**不落地**，加一拍（`do: sleep { ms: 800 }`）后**仍不落地**（M456 两次
+  实测：AX 里 composer 始终只有第一张卡）。⇒ 「图片可用 ⌘V 贴」在**套件动作面**还没打通，场景
+  134/141 的第二张贴图仍待解。② 「原生菜单是唯一粘贴通道」也不全对：菜单需要一个**可编辑区里的
+  右键落点**，而 composer 里已有图片卡片时，卡片几乎占满 composer 可视区，内部**没有**这样的落点
+  （M456 实测 dy 0.86/0.94/0.98 全落到卡片上、开出非可编辑菜单）。⇒ **两条通道在当前布局下都拿不到
+  「贴第二张图」**（M456 实测结论；根因是布局可达性，属待裁决项，不在验收套件侧修）。
 - **嵌在 `<button>` 里的浮层不进 AX 树（M349 实测；M351 已修复，2026-10-07）**：WKWebView 的
   AX 树把嵌在 button 内的 button 当**叶子**——浮层项一个都不暴露。M349 首跑现场：场景 90
   截图里 provider 浮层清楚可见，同一时刻 AX dump 里 chip 节点零子节点、`deepseek` 全树零命中
