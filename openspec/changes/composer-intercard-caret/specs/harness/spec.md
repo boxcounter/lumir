@@ -99,3 +99,15 @@ composer 的模型层 SHALL 把「相邻两个原子块（卡片）之间的位�
 
 - **WHEN** 携带两张卡片与两段问题的消息发送完成
 - **THEN** transcript 中该用户消息按相同交错顺序呈现卡片与问题段落，卡片无移除钮且可点击跳回
+
+#### Scenario: 粘贴按剪贴板内容分派
+
+- **WHEN** 在输入区粘贴纯文本，或粘贴剪贴板里的图片
+- **THEN** 纯文本走既有净化（多行拆成多个段落块）；图片走「图片粘贴卡片」落 harness 侧并插入图片卡片——
+  两者互不串台
+
+> 上面这条场景逐字拷自在途 change `harness-composer-image-paste` 的同名场景（tower 2026-10-11 下达）：
+> 那条 change 归档后它会进入 living spec，而本条是 MODIFIED 整块替换——本块不带上它，归档时就会把
+> 它整条丢掉（`validate --strict` 报红）。**requirement 正文的那一句**（「粘贴进输入区的内容 SHALL
+> 净化为纯文本」→ 按剪贴板内容分派）仍按 proposal 的归档对账注记在归档节点重新落准，避免与在途
+> change 的同一句互相覆盖。

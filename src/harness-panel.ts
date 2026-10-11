@@ -245,6 +245,49 @@ function isCardBlock(block: ComposerBlock): block is CardBlock {
 }
 
 /**
+ * 光标位是否是「卡片前缘」这一档（= 相邻原子块之间的**边界光标位**，design §3.1）：
+ * 块下标指向原子卡片、offset 为 0。三种现场归同一个模型值——相邻两张卡之间、卡片与段落
+ * 之间、composer 以卡片开头。
+ *
+ * 该位置在 DOM 里是**无文本宿主**的块级边界（`Range(composer, N)`），内容型输入到达时
+ * 要按「在该处物化一个段落」处理（见 insertPlainTextAtCaret / beforeinput 的拦截）。
+ */
+export function isCardFrontCaret(blocks: readonly ComposerBlock[], caret: ComposerCaret): boolean {
+  if (caret.offset !== 0) return false;
+  const target = blocks[caret.block];
+  return target !== undefined && isCardBlock(target);
+}
+
+/**
+ * 边界光标位的 DOM → 模型归一（design §3.1）：容器元素自身的第 N 个子边界
+ * （`Range(composer, N)`）就是「第 N 块的前缘」= `{block: N, offset: 0}`；N 允许等于块数
+ * （末尾之后 = composer 的末尾边界），故此值钳在 `[0, blockCount]`。
+ *
+ * 与 `domCaretTarget` 互为逆运算：写回落在同一个边界上、读回得到同一个模型值——这正是
+ * 「卡片前缘的模型位置写得进去、读得出来」的往返对称（今天读回是 null 的那个缺口）。
+ */
+export function boundaryCaretAt(containerIndex: number, blockCount: number): ComposerCaret {
+  return { block: Math.max(0, Math.min(containerIndex, blockCount)), offset: 0 };
+}
+
+/** 光标写回 DOM 的落点形态：块级容器边界（`Range(composer, index)`）或段落内字符偏移。 */
+export type DomCaretTarget =
+  | { readonly kind: "boundary"; readonly index: number }
+  | { readonly kind: "text"; readonly index: number; readonly offset: number };
+
+/**
+ * 光标位写回 DOM 的落点形态（`setDomCaret` 的唯一判据）：原子卡片前缘（含相邻卡片之间、
+ * composer 末尾之后）落**块级容器边界**、段落内落字符偏移。抽成纯函数是为了让读写两侧
+ * 共用同一条规则——`boundaryCaretAt` 是它的逆向，两者的同一性由单测逐块序全枚举钉住。
+ */
+export function domCaretTarget(blocks: readonly ComposerBlock[], caret: ComposerCaret): DomCaretTarget {
+  const index = Math.max(0, Math.min(caret.block, blocks.length));
+  const block = blocks[index];
+  if (block === undefined || isCardBlock(block)) return { kind: "boundary", index };
+  return { kind: "text", index, offset: Math.max(0, Math.min(caret.offset, block.text.length)) };
+}
+
+/**
  * 光标处拆段插入**卡片块**（design §5 装配合同 + Alex 2026-10-06 裁决：插入后光标落到卡片
  * 下一行的问题段落——该处已有段落复用、否则新建）：
  * - 光标在段落中间：段落从光标处拆两段，卡片插两段之间，光标落第二段段首；
@@ -318,7 +361,8 @@ export function removeBlockAt(
 /**
  * 在光标处插入纯文本（粘贴净化的唯一数据入口，quirk ①）：\n 拆出新段落块
  * （新块一律是 paragraph——quirk ④ 的模型侧保证），光标落插入文本末尾。
- * 光标在卡片前缘时视为在该处有一个空段落。
+ * 光标在卡片前缘（含相邻两张卡之间）时视为在该处有一个空段落——**卡片原样保留**
+ * （design §3.3：旧实现用 `slice(at + 1)` 跳过了 `blocks[at]`，把那张卡片删掉）。
  */
 export function insertPlainTextAtCaret(
   blocks: readonly ComposerBlock[],
@@ -327,6 +371,7 @@ export function insertPlainTextAtCaret(
 ): { blocks: ComposerBlock[]; caret: ComposerCaret } {
   const at = Math.max(0, Math.min(caret.block, blocks.length));
   const target = blocks[at];
+  const isCard = target !== undefined && isCardBlock(target);
   const current = target?.kind === "paragraph" ? target.text : "";
   const offset = target?.kind === "paragraph" ? Math.max(0, Math.min(caret.offset, current.length)) : 0;
   const segments = text.split("\n");
@@ -337,7 +382,7 @@ export function insertPlainTextAtCaret(
     kind: "paragraph",
     text: (i === 0 ? prefix : "") + segment + (i === segments.length - 1 ? suffix : ""),
   }));
-  const next = [...blocks.slice(0, at), ...replacements, ...blocks.slice(at + 1)];
+  const next = [...blocks.slice(0, at), ...replacements, ...blocks.slice(isCard ? at : at + 1)];
   const caretBlock = at + replacements.length - 1;
   const caretOffset = (segments.length === 1 ? prefix.length : 0) + segments[segments.length - 1].length;
   return { blocks: next, caret: { block: caretBlock, offset: caretOffset } };
@@ -2706,12 +2751,23 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     }
   }
 
+  /** 当前折叠选区的模型光标（无选区 / 非折叠返回 null）。 */
+  function collapsedCaret(): ComposerCaret | null {
+    const sel = caretFromDom();
+    if (sel === null) return null;
+    return sel.anchor.block === sel.focus.block && sel.anchor.offset === sel.focus.offset ? sel.focus : null;
+  }
+
   /** 把 DOM 选区读成模型端点（选区不在 composer 内返回 null）。 */
   function caretFromDom(): ComposerSelection | null {
     const selection = window.getSelection();
     if (selection === null || selection.rangeCount === 0) return null;
     const caretOf = (node: Node | null, domOffset: number): ComposerCaret | null => {
       if (node === null) return null;
+      // 选区锚在 composer 元素自身 = 两个顶层块之间的块级边界（`Range(composer, N)`）。
+      // 这是「相邻两张卡之间」在 DOM 里的形态（无文本宿主），归一成第 N 块的前缘
+      // （design §3.1；旧实现爬到 composer 之上即放弃、整体返回 null）。
+      if (node === composer) return boundaryCaretAt(domOffset, composer.children.length);
       let blockEl = node.nodeType === Node.ELEMENT_NODE ? (node as Element) : node.parentElement;
       while (blockEl !== null && blockEl.parentElement !== composer) {
         blockEl = blockEl.parentElement;
@@ -2753,22 +2809,21 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     return { anchor, focus };
   }
 
-  /** 把模型光标写回 DOM（段落内按字符偏移定位；卡片/边界落块前缘）。 */
+  /** 把模型光标写回 DOM（段落内按字符偏移定位；卡片 / 边界落块前缘——落点形态见
+   *  `domCaretTarget`，与 `boundaryCaretAt` 互为逆运算）。 */
   function setDomCaret(caret: ComposerCaret): void {
-    const children = [...composer.children];
+    if (composer.children.length === 0) composer.append(createParaEl(""));
+    const target = domCaretTarget(readBlocksFromDom(), caret);
+    const blockEl = [...composer.children][target.index] ?? null;
     const range = document.createRange();
-    if (children.length === 0) composer.append(createParaEl(""));
-    const index = Math.max(0, Math.min(caret.block, composer.children.length - 1));
-    const blockEl = [...composer.children][index];
-    if (blockEl.classList.contains("lumir-hp-qcard")) {
-      range.setStart(composer, index);
+    if (target.kind === "boundary" || blockEl === null) {
+      range.setStart(composer, target.kind === "boundary" ? target.index : composer.children.length);
     } else {
       const text = paraTextOf(blockEl);
-      const offset = Math.max(0, Math.min(caret.offset, text.length));
       if (text.length === 0) {
         range.setStart(blockEl, 0);
       } else {
-        let remaining = offset;
+        let remaining = target.offset;
         let placed = false;
         const walk = (current: Node): void => {
           if (placed) return;
@@ -2801,7 +2856,10 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       selection.removeAllRanges();
       selection.addRange(range);
     }
-    scrollCaretIntoView(range, blockEl);
+    // 零高回落的块：边界档（卡片前缘 / 相邻两卡之间）用**后一张卡片**的矩形，
+    // 「末尾之后」（block = 块数）没有后一块，回落最后一个块——不拿 composer 自身的
+    // 矩形当「光标行」（那会让 caretScrollTop 恒判「越出上沿」、每次重渲把视口顶 4px）。
+    scrollCaretIntoView(range, blockEl ?? composer.lastElementChild ?? composer);
   }
 
   /**
@@ -5195,6 +5253,17 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       }
       return;
     }
+    if (type === "insertText" || type === "insertReplacementText") {
+      // 边界光标位（卡片前缘）上的键入走模型（design §3.2）：物化一个段落把字符写进去，
+      // 与该次输入合成**一个**撤销步。原生路径在这里会让字符落进相邻段落、或自造裸节点。
+      const caret = collapsedCaret();
+      const typed = event.data ?? "";
+      if (caret !== null && typed !== "" && isCardFrontCaret(readBlocksFromDom(), caret)) {
+        event.preventDefault();
+        withModel((blocks) => insertPlainTextAtCaret(blocks, caret, typed), true);
+        return;
+      }
+    }
     if (type === "insertText" || type === "insertReplacementText" ||
         type === "deleteContentBackward" || type === "deleteContentForward" ||
         type === "deleteByCut" || type === "deleteWordBackward" || type === "deleteWordForward" ||
@@ -5207,6 +5276,16 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   });
   composer.addEventListener("compositionstart", () => {
     imeGateState = imeGateCompositionStart(imeGateState);
+    const caret = collapsedCaret();
+    if (caret !== null && isCardFrontCaret(readBlocksFromDom(), caret)) {
+      // 边界光标位上的 IME（design §3.2）：先物化一个空段落承接组合内容。**此处刻意不整面
+      // 重渲**——withModel 的 replaceChildren 会销毁正要开始组合的目标节点、打断 IME 会话；
+      // 模型侧读法（readBlocksFromDom）随之看到新段落，其余 DOM（含两张卡片）原样不动。
+      undoHistory.push(snapshot(), true);
+      composer.insertBefore(createParaEl(""), composer.children[caret.block] ?? null);
+      setDomCaret({ block: caret.block, offset: 0 });
+      return;
+    }
     undoHistory.push(snapshot(), true);
   });
   composer.addEventListener("compositionend", () => {

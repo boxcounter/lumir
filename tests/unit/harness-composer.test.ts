@@ -9,16 +9,19 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   backspaceAtCaret,
+  boundaryCaretAt,
   caretScrollTop,
   createUndoHistory,
   deleteForwardAtCaret,
   deleteSelectionRange,
+  domCaretTarget,
   imageCardMetaText,
   imageDimensionsFromNatural,
   insertCardAtCaret,
   insertBlockAtCaret,
   insertPlainTextAtCaret,
   insertSoftBreakAtCaret,
+  isCardFrontCaret,
   parseQuoteMessage,
   removeBlockAt,
   unescapeXmlEntities,
@@ -125,10 +128,115 @@ test("insertPlainTextAtCaret：段落中间多行粘贴 → 首尾与残段正�
   assert.deepEqual(caret, { block: 1, offset: 1 });
 });
 
-test("insertPlainTextAtCaret：光标在卡片前缘 → 视该处为空段落", () => {
+test("insertPlainTextAtCaret：光标在卡片前缘 → 视该处为空段落，且**不吞卡**（M450 缺陷修复位）", () => {
+  // 缺陷形态（design §3.3）：旧实现用 `blocks.slice(at + 1)` 跳过了 `blocks[at]`，
+  // 把光标后面的那张卡片直接删掉——与函数自身注释（「视为在该处有一个空段落」）矛盾。
   const { blocks, caret } = insertPlainTextAtCaret([quote(cardA), para("后")], { block: 0, offset: 0 }, "问");
-  assert.deepEqual(blocks, [para("问"), para("后")]);
+  assert.deepEqual(blocks, [para("问"), quote(cardA), para("后")]);
   assert.deepEqual(caret, { block: 0, offset: 1 });
+});
+
+test("insertPlainTextAtCaret：两张相邻卡片之间粘贴 → 文本落在新段落、两卡留在原位", () => {
+  const { blocks, caret } = insertPlainTextAtCaret(
+    [imageBlock, quote(cardA), para("后")],
+    { block: 1, offset: 0 },
+    "问",
+  );
+  assert.deepEqual(blocks, [imageBlock, para("问"), quote(cardA), para("后")]);
+  assert.deepEqual(caret, { block: 1, offset: 1 });
+});
+
+test("insertPlainTextAtCaret：卡片前缘多行粘贴 → 逐行拆段、卡片次序不变", () => {
+  const { blocks, caret } = insertPlainTextAtCaret(
+    [imageBlock, quote(cardA)],
+    { block: 1, offset: 0 },
+    "一\n二",
+  );
+  assert.deepEqual(blocks, [imageBlock, para("一"), para("二"), quote(cardA)]);
+  assert.deepEqual(caret, { block: 2, offset: 1 });
+});
+
+test("insertPlainTextAtCaret：composer 以卡片开头（block 0）→ 文本落在卡片之前，卡片不丢", () => {
+  const { blocks, caret } = insertPlainTextAtCaret([quote(cardA)], { block: 0, offset: 0 }, "问");
+  assert.deepEqual(blocks, [para("问"), quote(cardA)]);
+  assert.deepEqual(caret, { block: 0, offset: 1 });
+});
+
+// ── 边界光标位（M450，change composer-intercard-caret design §3.1）────────────────
+//
+// 模型里「相邻两个原子块之间」= `{block: 后一块下标, offset: 0}`（卡片前缘）。这一组用例钉
+// 两件事：① 哪一档光标算边界位（内容输入要走物化路径）；② DOM 写回 / 读回共用同一条规则
+// ——`domCaretTarget` 与 `boundaryCaretAt` 互为逆运算（单测层是零 DOM，往返的同一性靠这
+// 一对纯函数表达；真机侧的落位由验收场景 134 判）。
+
+test("isCardFrontCaret：指向卡片且 offset 0 → 真；段落 / 卡片内偏移 / 越界 → 假", () => {
+  const blocks = [imageBlock, quote(cardA), para("后")];
+  assert.equal(isCardFrontCaret(blocks, { block: 0, offset: 0 }), true); // 相邻卡片之间
+  assert.equal(isCardFrontCaret(blocks, { block: 1, offset: 0 }), true); // 卡片与段落之间
+  assert.equal(isCardFrontCaret(blocks, { block: 2, offset: 0 }), false); // 段落前缘不是边界位
+  assert.equal(isCardFrontCaret(blocks, { block: 0, offset: 1 }), false); // 卡片上无文本偏移
+  assert.equal(isCardFrontCaret(blocks, { block: 9, offset: 0 }), false); // 越界没有「前缘」
+});
+
+test("边界光标位往返：写回的落点形态恒是同一个块级边界、读回得到同一个模型值（全枚举）", () => {
+  const sequences: ComposerBlock[][] = [
+    [imageBlock, quote(cardA)],
+    [quote(cardA), imageBlock, para("后")],
+    [para("前"), imageBlock, quote(cardA), para("后")],
+    [imageBlock, quote(cardA), imageBlock],
+  ];
+  for (const blocks of sequences) {
+    // 关键性质：边界位的读回归一不依赖块种类——「第 N 块前缘」只由 N 与块数决定。
+    for (let n = 0; n <= blocks.length; n += 1) {
+      const caret = boundaryCaretAt(n, blocks.length);
+      assert.deepEqual(caret, { block: n, offset: 0 });
+      const target = domCaretTarget(blocks, caret);
+      assert.equal(target.index, n, `${JSON.stringify(blocks)} @${n}`); // 落点下标不漂
+      const block = blocks[n];
+      if (block === undefined || block.kind !== "paragraph") {
+        assert.deepEqual(target, { kind: "boundary", index: n }, `${JSON.stringify(blocks)} @${n}`);
+      }
+    }
+    // 反向：段落内的光标仍走文本偏移档（边界档没有把普通段落位吃掉）。
+    for (let n = 0; n < blocks.length; n += 1) {
+      const block = blocks[n];
+      if (block.kind !== "paragraph") continue;
+      assert.deepEqual(domCaretTarget(blocks, { block: n, offset: 1 }), { kind: "text", index: n, offset: 1 });
+    }
+    // 越界钳制：越前的下标钳到 0、越后的下标钳到块数（不产出越界块下标）。
+    assert.deepEqual(boundaryCaretAt(-3, blocks.length), { block: 0, offset: 0 });
+    assert.deepEqual(boundaryCaretAt(99, blocks.length), { block: blocks.length, offset: 0 });
+  }
+});
+
+test("removeBlockAt 的兜底光标可指向卡片前缘（相邻卡片中删掉中间那张）", () => {
+  // next = [cardA, cardC]，index = 1，前一块不是段落 ⇒ 走 `{block: min(index, len-1), offset: 0}`
+  // 兜底（design §1 第 11 条）——这是「写回 DOM 再读回应当同一值」要护住的形态之一。
+  const { blocks, caret } = removeBlockAt([quote(cardA), imageBlock, quote(cardB)], 1);
+  assert.deepEqual(blocks, [quote(cardA), quote(cardB)]);
+  assert.deepEqual(caret, { block: 1, offset: 0 });
+  assert.equal(isCardFrontCaret(blocks, caret), true);
+  assert.deepEqual(domCaretTarget(blocks, caret), { kind: "boundary", index: 1 });
+  assert.deepEqual(boundaryCaretAt(caret.block, blocks.length), caret);
+});
+
+test("insertSoftBreakAtCaret：两张相邻卡片之间 → 在边界处落一个新空段落（HC1 的边界档）", () => {
+  const { blocks, caret } = insertSoftBreakAtCaret([imageBlock, quote(cardA)], { block: 1, offset: 0 });
+  assert.deepEqual(blocks, [imageBlock, para(""), quote(cardA)]);
+  assert.deepEqual(caret, { block: 1, offset: 0 });
+});
+
+test("边界光标位的删除语义（读回修好后可达）：退格删前一张卡、前删删后一张卡、块首退格无操作", () => {
+  const blocks = [imageBlock, quote(cardA), para("后")];
+  assert.deepEqual(backspaceAtCaret(blocks, { block: 1, offset: 0 }), {
+    blocks: [quote(cardA), para("后")],
+    caret: { block: 0, offset: 0 },
+  });
+  assert.deepEqual(deleteForwardAtCaret(blocks, { block: 1, offset: 0 }), {
+    blocks: [imageBlock, para("后")],
+    caret: { block: 1, offset: 0 },
+  });
+  assert.equal(backspaceAtCaret(blocks, { block: 0, offset: 0 }), null);
 });
 
 // ── 软换行（⇧Enter）：不变量 HC1 / HC2（docs/specs/harness-composer.md）──────────────
@@ -268,9 +376,18 @@ function blockSequences(): ComposerBlock[][] {
     sequences.push([para(first), quote(cardA)]);
     sequences.push([imageBlock, para(first)]);
     sequences.push([para(first), imageBlock]);
+    // 相邻卡片序列（M450，change composer-intercard-caret tasks 4.2）：两张卡之间没有段落是
+    // **合法状态**（方案 A 的骨干），HC1 的「对任意块序列」承诺必须把它纳进来——旧生成器只
+    // 有「卡片与段落交错」形态，边界光标位这一档因此从未被属性测试网住。
+    sequences.push([quote(cardA), imageBlock]);
+    sequences.push([imageBlock, quote(cardA)]);
+    sequences.push([para(first), imageBlock, quote(cardA), para(first)]);
+    sequences.push([quote(cardA), para(first), imageBlock]);
   }
   sequences.push([quote(cardA)]);
   sequences.push([imageBlock]);
+  sequences.push([quote(cardA), imageBlock, quote(cardB)]);
+  sequences.push([imageBlock, imageBlock]);
   return sequences;
 }
 
