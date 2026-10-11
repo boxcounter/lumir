@@ -10,6 +10,21 @@
 # 不成立时的处置（两条路都在 change 的授权面内，不回来二次裁决）：见 design §6 的判定表——
 # 落位/落点读不到边界 ⇒ 启用方案 C（键位层接管 composer 的水平移动）。本次读数如实记入
 # change 的 tasks 对账。
+#
+# 【M456 通道阻塞，2026-10-11 实测，如实登记】本场景的**探针串注入**在现有配套通道下不可达：
+# ① 原生菜单 Paste 之后，CGEvent 逐键注入（`do: keys` / `do: key`）对 composer **确定性死亡**
+#    （3/3，工具自报 ok、目标串 0 命中；聚焦断言 `ax: {focused: AXTextArea}` 同期 PASS ⇒ 不是聚焦）；
+# ② 改走 KimiCU `type_text`（带 `index` 定向 composer，AX-focus + editing-command 路径）在
+#    **套件 spawn 的 MCP 会话里也不落地**（返回 `delivery_unverified`）——**同一 index=236、
+#    同一二进制**（套件 `/Applications/KimiCU.app/Contents/MacOS/kimi-cu mcp`，
+#    插件 wrapper 也是 exec 同一个），**插件侧直调该 index 立刻落地**；不带 index 的「当前焦点」
+#    分支同样不落。
+# ③ 结论：注入通道（MCP 会话/调用方上下文）是本场景当前唯一阻塞；菜单落点本身已由 M456 的
+#    布局修复打通（`src/harness-panel.css` 的 composer 末尾空行）。HC3 真机判据**待注入通道修复
+#    或换判据形态**，由 tower 呈 Alex 裁决——本场景文件保持原判据不动。**降级登记**（Alex
+#    2026-10-11 裁决）：HC3 的模型层语义由单测覆盖（`tests/unit/harness-composer.test.ts` 的边界
+#    光标位 / 物化段落用例），本场景的真机读数在通道修好前不再刷红；完整归因与修法方向见
+#    `docs/backlog.md`「验收套件注入通道」条。
 id: "134-harness-composer-intercard-caret"
 item: 134
 title: composer 两张相邻卡片之间：⌃B 落位 → 键入落在两卡之间 → 一次撤销回到前态（M450，HC3）
@@ -84,14 +99,34 @@ steps:
         ax: { has: "/360×200[\\s\\S]{0,120}?200×120/" }
       - shot: 01-两张相邻卡片-光标在末尾段落
 
+  # M456：原生菜单的 Paste 点完之后，window 的键盘焦点会丢（⌃B / 探针串注入因此 0/3 落地，
+  # 套件的 keys 回读退到「编辑器优先」）。用一次真实鼠标点回到末尾空行重建 DOM 焦点——
+  # 布局修复后末尾空行恒有一条可见、可点入的行（本步不移动光标语义：点的是空段落自身）。
+  - name: 点末尾空行重建 composer 的 DOM 焦点（原生菜单粘贴后 window 失焦，M456 实测）
+    do: clickInNode
+    target: { role: AXTextArea, name: "200×120" }
+    dy: 0.97
+    expect:
+      - label: composer 拿到键盘焦点（AX 里恰一个 focused 的 AXTextArea）
+        ax: { focused: "AXTextArea" }
+
+  - name: 抢回窗口前台（原生菜单交互后键盘焦点可能没回 webview——M456 在排查）
+    do: focusWindow
+    retries: 3
+
   - name: ⌃B（原生 caret 回移——实测闸：它到底把光标挪到了哪一格）
     do: key
     key: "ctrl+b"
 
-  - name: 键入探针串（落进哪一格 = 上面那一次 ⌃B 把光标挪到了哪）
-    do: keys
-    keys: ["x", "q", "z", "k"]
-    gapMs: 100
+  # M456：`do: keys` 的逐键注入在这里 0/3（focus 断言已 PASS、focusWindow 也做了 ⇒ 不是聚焦
+  # 问题，是注入没落地，README「键盘注入整批丢键」同族）。改走剪贴板文本 + ⌘V 的粘贴通道。
+  - name: 探针串置剪贴板（keys 注入 0/3 不落地 ⇒ 换粘贴通道）
+    do: clipboardText
+    text: "xqzk"
+
+  - name: ⌘V 把探针串贴进 composer（落进哪一格 = 上面那一次 ⌃B 把光标挪到了哪）
+    do: key
+    key: cmd+v
     expect:
       - label: 探针串落在**两张卡片之间**（AX 文本里 xqzk 夹在 360×200 与 200×120 两条元信息行之间）
         ax: { has: "/360×200[\\s\\S]{0,200}?xqzk[\\s\\S]{0,200}?200×120/" }

@@ -644,6 +644,49 @@
 
 ## 待修 findings（不阻塞）
 
+### 验收套件注入通道：菜单 Paste 之后 CGEvent 与套件内 type_text 均不落地（worker-m456 finding，2026-10-11，**high**，阻塞 134/141）
+
+**症状**：composer 上走完**原生菜单 Paste**（右键 → 菜单里的 Paste 项）之后，**所有合成键盘/文本注入都拿不到 DOM**：
+- **通道 1（CGEvent 逐键）**：`do: keys` / `do: key`（KimiCU `press_key`）**确定性死亡**——3/3 注入后目标串 0 命中，工具自报 `ok:true, occluded:false`；
+- **通道 2（AX-focus + editing-command）**：KimiCU `type_text` **带 `index` 定向 composer** 在**套件 spawn 的 MCP 会话里也不落**（工具返回 `{"verification_required":"screenshot","message":"delivery_unverified: input events were sent but the text was not observed via AX readback"}`）；**不带 `index` 的「当前焦点」分支**同样不落。
+
+**为什么不是环境/落点/聚焦**（逐条排除，证据齐）：同期 `ax: { focused: "AXTextArea" }` 断言 **PASS**（composer 真的拿到键盘焦点）、`gate` 前台已取得、`do: focusWindow` 无效；**index 一致**（套件诊断打印 `index=236`，与插件侧直探的 `236` 相同）；**参数形状一致**（`lib/cu.mjs:190` 的 `typeText` 传 `{pid,text,index}`）；**时序排除**（注入前加 `sleep(600)` 无效）；**二进制一致**（套件 `spawn("/Applications/KimiCU.app/Contents/MacOS/kimi-cu", ["mcp"])`，插件 wrapper `bin/kimi-cu-mcp` 是 `exec "$APP" mcp`，同一个）。
+
+**关键对照**：**插件侧**对**同一 index** 直调 `type_text`（`mcp__kimi-cu__type_text(index=236, text=… )`）**立刻落地**（回读 composer value 出现目标串、并生成对应 `AXStaticText`）。⇒ 差异落在**调用方 MCP 会话/上下文**（套件 spawn 的 stdio server vs 插件的 server；AX 编辑路径对该上下文的 TCC/会话归属敏感）。
+
+**影响面**：真机场景 **134 / 141** 的探针串注入（HC3 落点判据的观测手段）**不可达**——两条场景头已如实标注「通道阻塞，判据待修复或换形态」，**判据未动**；HC3 的模型层语义由单测覆盖（`tests/unit/harness-composer.test.ts` 的边界光标位用例）。
+
+**修它要查的方向**：
+1. 套件 spawn 的 MCP server 与插件 server 的**上下文差异**——TCC 授权按（binary + **responsible process**）走：套件 server 的父进程是 `node`（从 shell 起），插件 server 的父进程是 kimi CLI；AX 编辑命令路径可能对 responsible process 敏感（而 `get_app_state`/`click` 等 AX 读取与 CGEvent 鼠标路径两边都通，只有这条编辑路径分化）。
+2. KimiCU 对 `type_text` 的 AX 前置要求（是否需要同源 `get_app_state` 缓存、或某个 AX 信任标记）。
+3. 备选：给套件加一条**不依赖键盘注入**的注入通道（如 `lib/cgevent-click.swift` 同族的 swift 键注入，绕过 KimiCU），或给 HC3 换一条可用通道观测的判据形态。
+
+**证据（本地，git 外）**：`test-results/acceptance/2026-10-11/134-harness-composer-intercard-caret/steps.md`（`do=keys` 0/3 的那几轮 + 诊断 note `M456-probe: type target index=236 role=AXTextArea baselineLen=89`）；`scripts/acceptance/README.md` 已知边界的 M456 条（结论全文）。
+
+### M443 的 tasks.md 把未经真机验证的读数当「已通过」登记（worker-m456 finding，2026-10-11，medium，对账口径）
+
+**症状**：`openspec/changes/harness-cache-metrics/tasks.md` §5.2 末的「真机跑批读数（2026-10-11）」
+把一串**具体读数**（`50% · 50%` / `10% · 50%` / `15% · 20%` / `17% · 60%` …）写成「非 hover 断言
+**全部通过**」；但该轮真机跑批的证据（`test-results/alex-review-2026-10-11/m443/acceptance/summary.md`）
+五个场景**全部 INVALID**——第一步 hover 就因前台被 Chrome（pid 8608）占用而抛 InfraError，
+**第二轮从未跑到**。其中 `17% · 60%` 恰是 133 **第二轮**才出现的值，而 M456 实测该值在 master 上
+根本产生不出来（见下「证据」）——那条读数不可能来自任何一次真实跑批。
+**为什么会漏**：131/133 是第一批需要**跨轮推进** mock 脚本的场景（第二轮要弹 `responses[1]`），
+而 mock 的脚本游标一直是**每轮重建、从 `responses[0]` 重放**（既有语义，场景 104/106 的头注与断言
+都写明并依赖它）。M443 的真机对账因环境项整轮作废、没人回看，于是「第二轮拿不到 `responses[1]`」
+这个缺口被当成「已通过」。根因形态同 REVIEW.md 第 6 条「覆盖声明超出真实验证」，只是这次越过了
+场景层、直接进了 change 的验收对账。
+**证据**：`test-results/alex-review-2026-10-11/m443/acceptance/summary.md`（5/5 INVALID）、
+`.../131-harness-cache-session/steps.md`（第一步 hover 即 INVALID）；M456 现场
+`test-results/acceptance/2026-10-11/133-harness-cache-write/ax/03-*等第二轮回答到达*.txt`
+（第二轮 assistant 行 = `写缓存回答。` = `responses[0]`，控制行仍 `15% · 20%`）。
+**建议防线**：① 真机读数只在**该轮 acceptance 的 `results.json` / `summary.md` 有对应 PASS 行**时
+才写进 tasks.md，并把「跑于 / 证据目录」一并钉上——引用门禁/套件结论照抄脚本原文行，不复述
+（REVIEW.md 第 6/7/20 条同一精神，这次是执行没跟上）；② acceptance 把因环境项 `INVALID` 的场景
+与 `FAIL` 分列（脚本已如此），对账时**不得把 INVALID 计入「已通过」**；③ 起草 / 评审期遇到
+「本 change 的验收依赖某个 mock 语义」时，先跑一遍最小场景确认真拿得到目标响应，再写进
+「已通过」。
+
 ### gate quick 不解析验收套件 lib：块注释内 glob `*/` 闭合注释致全套件 SyntaxError 上了 master（2026-10-10，medium，防线缺口）
 
 **现场**：M433 r2 的注释修订把 `env:harness/sessions/*/*.jsonl` 写进 `scripts/acceptance/lib/app.mjs:146`

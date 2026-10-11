@@ -1531,6 +1531,20 @@
 .lumir-hp-composer > .lumir-hp-qcard:last-child {
   margin-bottom: 0;
 }
+/* M456（Alex 裁决的布局修复）：图片卡片之后的末尾空段落必须始终留一条**可见、可点入**的行。
+   贴入一张图片后卡片几乎占满 composer 的可视区（实测 composer 高 90px、卡片 ~79px），末尾空
+   段落被挤到折线外：右键它落不到编辑区（原生菜单开出的是非可编辑菜单、没有 Paste），点击也把
+   不进光标——于是「贴第二张图」无路可走（场景 134/141 的根因）。
+   **撑出行盒的是 `:empty::after` 的零宽字符**：空段落没有子节点，`min-height` 那类尺寸声明量不出
+   行盒（M456 r1 评审指正——此前写成 `min-height: var(--lh-ui)`，而 `--lh-ui` 是无单位的 `1.5`，
+   `min-height` 不接受裸数字，该声明按 invalid-at-computed-value-time 处理、**自始未生效**，已删）；
+   零宽字符给出一个真实行盒，`scroll-margin-bottom` 再保证它不被 `overflow-y: auto` 裁在折线之下。 */
+.lumir-hp-composer > .lumir-hp-qpara:last-child {
+  scroll-margin-bottom: var(--sp-3);
+}
+.lumir-hp-composer > .lumir-hp-qpara:last-child:empty::after {
+  content: "\200b";
+}
 
 /* ── 摘录引用卡片（M343，设计合同 = change add-harness-quote-cards 的 specs/harness 增量；
    来源原型屏 5，原型已退役）：3px 引号竖条（中性

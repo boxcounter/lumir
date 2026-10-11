@@ -5,6 +5,14 @@
 #
 # 与场景 134 的关系：134 判「⌃B 一次到两卡之间」（M444 的边界位）；本场景判**再一步跨过第一张
 # 卡片**（M447 的「卡片一步跨过」）。两条都走同一套模型层移动纯函数。
+#
+# 【M456 通道阻塞，2026-10-11 实测，如实登记】与 134 同因：原生菜单 Paste 之后 CGEvent 逐键注入
+# （`keys` / `key`）对 composer 确定性死亡；KimiCU `type_text(index)` 在套件 spawn 的 MCP 会话里
+# 也不落地（插件侧直调同 index 立刻落地）。⇒ 本场景的探针串注入同样**待注入通道修复**；
+# 「⌃B 是否真的落地」也因此无法侧证（探针串是它的观测手段）。判据不动，由 tower 呈 Alex 裁决。
+# **降级登记**（Alex 2026-10-11 裁决）：卡片「一步跨过」的模型层语义由单测覆盖
+# （`tests/unit/harness-composer.test.ts`），本场景的真机读数在通道修好前不再刷红；
+# 完整归因与修法方向见 `docs/backlog.md`「验收套件注入通道」条。
 id: "141-harness-composer-nav-intercard"
 item: 141
 title: composer 相邻卡片：⌃B 一步跨过 → 探针落在两卡之前（M447）
@@ -73,6 +81,13 @@ steps:
       - label: 两张图片卡片相邻在场（两条元信息行按大小可区分）
         ax: { has: "/360×200[\\s\\S]{0,120}?200×120/" }
       - shot: 01-两张相邻卡片
+
+  # M456：原生菜单 Paste 之后 window 键盘焦点丢失，⌃B / 探针串注入不落地——先点一次末尾空行
+  # 重建 DOM 焦点（布局修复后末尾空行恒有一条可见、可点入的行）。
+  - name: 点末尾空行重建 composer 的 DOM 焦点（原生菜单粘贴后 window 失焦，M456 实测）
+    do: clickInNode
+    target: { role: AXTextArea, name: "200×120" }
+    dy: 0.97
 
   - name: ⌃B 两次（末尾段落 → 两卡之间 → 第一张卡片前缘）
     do: keys

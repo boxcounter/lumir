@@ -289,6 +289,11 @@ pub struct Session {
     /// 思考程度档位（M362，Alex 2026-10-06 裁决：Low / High / Max，默认 High）。
     /// **会话内生效、不写回配置**：影响其后发出的消息，新会话（对象被丢弃重造）随之回到默认。
     thinking_effort: ThinkingEffort,
+    /// 会话级 mock 游标（M456）：本会话已弹出的 fixture 条数。mock provider 的 client 每轮
+    /// 重建，游标存在会话上才能「同一会话的第二轮接着上一轮弹」（见
+    /// [`super::turn::run_turn`] 与 [`super::llm::wrap_cursor`]）。真 provider 不消费它。
+    /// 新会话（对象被丢弃重造）随之回到 0。
+    mock_cursor: usize,
     jsonl: JsonlWriter,
 }
 
@@ -312,6 +317,7 @@ impl Session {
             abort_requested: false,
             current_context: None,
             thinking_effort,
+            mock_cursor: 0,
             jsonl,
         }
     }
@@ -336,6 +342,16 @@ impl Session {
         let value = effort.as_str();
         self.jsonl
             .update_pending_open(|open| open["thinking"] = value.into());
+    }
+
+    /// 会话级 mock 游标（M456，见字段注释）。
+    pub fn mock_cursor(&self) -> usize {
+        self.mock_cursor
+    }
+
+    /// 设置会话级 mock 游标（[`super::turn::run_turn`] 一轮结束回写，按脚本长度 wrap）。
+    pub fn set_mock_cursor(&mut self, cursor: usize) {
+        self.mock_cursor = cursor;
     }
 
     pub fn is_busy(&self) -> bool {

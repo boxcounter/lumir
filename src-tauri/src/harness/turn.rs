@@ -226,7 +226,13 @@ pub fn run_turn(
     // `run_turn_for` 都不必各带一个 vault 参数。
     let app_sink = TauriEventSink(app);
     let sink = events::ScopedSink::new(&app_sink, scope.key());
-    let mut client = match llm::client(&config, &scope.vault_id) {
+    // 会话级 mock 游标（M456）：mock client 每轮重建，游标存在会话上才能让同一会话的第二轮
+    // 接着上一轮往下弹（131/133 的「两轮不同 usage」依赖它）。真 provider 的 client 两方法
+    // 返回默认值，下面的回写恒 no-op。
+    let mock_start = runtime
+        .with_session(&scope, |s| s.mock_cursor())
+        .unwrap_or(0);
+    let mut client = match llm::client_at(&config, &scope.vault_id, mock_start) {
         Ok(client) => client,
         Err(e) => {
             // 配置级失败（mock fixture 缺失 / api_key 未配）：错误事件即终态。
@@ -252,6 +258,10 @@ pub fn run_turn(
             "harness_internal_error",
             "对话线程发生内部错误，本轮已终止；请重试，必要时开新会话",
         ));
+    }
+    if let Some(len) = client.mock_script_len() {
+        let next = llm::wrap_cursor(mock_start, client.mock_consumed(), len);
+        let _ = runtime.with_session(&scope, |s| s.set_mock_cursor(next));
     }
     runtime.release_turn(&scope);
 }
