@@ -21,6 +21,28 @@
       未完成：**等 1.1 复跑**。另登记：`docs/backlog.md` 不在 M450 的写入面，复跑后由带该面
       scope 的 mission 落笔（或由 tower 代录）。
 
+**§1 的替代读数（M450 补，真机探针被前台挡住时的降档量法）**：写了一个一次性 DOM 探针
+（`tests/visual/runtime/m450-probe/`，落在 `tests/visual/.gitignore` 的 `runtime/` 下、**不入库**；
+`pnpm --dir tests/visual exec playwright test --config runtime/m450-probe/probe.config.ts`），
+在 chromium 与 **Playwright 的真 WebKit 引擎**（与 `tests/visual` 的 webkit-realua 同一取向）两档下
+驱动 composer 的真实 DOM：
+
+| 读数（两档一致，除标 * 者） | chromium | 真 WebKit |
+|---|---|---|
+| 两次贴图后块序 = `[卡片, 卡片, 段落]`（相邻两卡） | ✔ | ✔ |
+| 选区写到 `Range(composer, 1)` → 键入 `x` 后块序 = `[卡片, 段落"x", 卡片, 段落]`，光标在新段落内 offset 1 | ✔ | ✔ |
+| 一次 ⌘Z → 块序回到 `[卡片, 卡片, 段落]`，光标回到边界位 | 块序 ✔ / 选区读作 `none`* | ✔ `container:1` |
+| 另一种 DOM 形态（锚在卡片元素内部）键入 → 同样物化到两卡之间 | ✔ | ✔ |
+| 负向对照：光标在**段落**里键入 → 不走物化路径、块序不变 | ✔ | ✔ |
+
+\* chromium 在 keydown 处理器内程序化设置**容器边界**选区时会把整条选区丢掉（`anchorNode` 为
+null）；真机是 WKWebView（真 WebKit 这一档）——那里读回的是 `container:1`，边界光标跨撤销存活。
+这条差异是 chromium 的选择集行为，不是产品缺陷，**如实登记在此**（若将来要在 chromium 上跑
+composer 的边界光标，需另想写法）。
+
+**它替代不了什么**：design §6 的未知数「**原生 ⌃B** 在真机上落不落到边界」——键位绑定走系统层
+（AppKit key binding → 编辑命令），协议级合成键到不了那一层。那一条仍归验收场景 134。
+
 ## 2. 模型层：边界光标位（方案 A 的骨干）
 
 - [x] 2.1 `caretFromDom` 增一档（`src/harness-panel.ts`）：选区锚在 composer 元素自身时归一为
@@ -73,9 +95,11 @@
 
 - [x] 5.1 新增真机验收场景 `scripts/acceptance/scenarios/134-harness-composer-intercard-caret.md`
       （⌃B 落位 + 两卡之间键入 + 一次撤销；`--check` 通过）。**真机读数待复跑**（§1.1）。
-- [ ] 5.2 `bash scripts/gate.sh visual` 全绿且既有基线零漂移：本次会话未跑（改动面**不含**
-      `src/style.css` 与 `tests/visual/**`；期望零像素变化）。复跑口径：视觉套件内含 composer
-      场景（m347 / m361 / m440 等），改过 composer 的读回 / 写回 / 键入分派后应跑一次确认。
+- [x] 5.2 视觉门禁：`LUMIR_VISUAL_PORT=4273 bash scripts/visual/run.sh` **655 passed / 1 skipped /
+      0 failed（8.9m）**，含 composer 场景（m347 / m361 / m440 / m345 等）与 webkit-realua
+      分支；**未跑 `--update`、既有基线零漂移**（design §7 的预期成立：方案 A 不改样式面）。
+      另注明：`gate.sh quick` 的 `tsc-visual` 一档为此 worktree 未装 `tests/visual` 依赖而 SKIP
+      （我在跑视觉前用 `pnpm --dir tests/visual install --ignore-workspace` 现装），不是改动引入。
 
 ## 6. 验证
 
@@ -97,15 +121,18 @@
 `tests/visual/**`、投递序列化面。
 
 **机器验证**：`node tests/unit/run.mjs` 全绿（815 用例）；`tsc-root` / `tsc-unit` 通过；
-`gate.sh quick` 见 §6.2；`run.mjs --check` 137 个场景静态校验通过。
+`gate.sh quick` **9/9 PASS（SKIP 1 = tsc-visual，依赖未装）**；`run.mjs --check` 137 个场景静态校验
+通过；视觉门禁 **655 passed / 1 skipped / 0 failed**（§5.2，零基线漂移）；一次性 DOM 探针
+（§1 的替代读数）在 chromium 与真 WebKit 两档全过。
 
 **空段落进 wire 的复核（proposal Non-goals 要求「若发现真问题就地登记」）**：无问题——
 `projectDelivery`（`src/quote-card.ts:242`）对 `text.trim() === ""` 的段落直接跳过，空段落既不进
 panelText 也不进 parts，物化出来的段落只在其非空时进投递面。
 
-**未完成的两项**（均为同一根因：跑批期间前台被占）：
-1. §1.1 的探针有效读数 → 决定 §3（方案 C）做不做；
-2. §5.2 的视觉门禁复跑。
-
-两项都不阻塞代码合入，但**第一项决定这个 change 的功能在真机是否真的可用**，应在取得干净前台
-的第一时间复跑 `node scripts/acceptance/run.mjs 134`（场景已就绪、`--check` 通过）。
+**未完成的一项**：§1.1 的真机探针有效读数（→ 决定 §3 方案 C 做不做）。根因是环境：
+跑批期间前台是 Google Chrome 且其窗口完全覆盖验收窗口，真实鼠标与键盘事件到不了被测 app
+（KimiCU 自报 `occluded: true`）。DOM 层的替代读数（§1 的表格）已经证明**读回 / 物化 / 撤销这三段
+实现在真 WebKit 里成立**；剩下的未知数只有「原生 ⌃B 落不落到边界」这一条。
+在取得干净前台的第一时间复跑 `node scripts/acceptance/run.mjs 134`（场景已就绪、`--check` 通过）
+即可收口；若判「不可达」，方案 C 的落点在 `src/harness-panel.ts` 的 composer keydown
+（`src/keys.ts` 不在本 mission 写入面）。
