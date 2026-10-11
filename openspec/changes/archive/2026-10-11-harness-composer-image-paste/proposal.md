@@ -21,7 +21,11 @@
 > 删会话不牵动附件，按 vault 备份取 `sessions/<id>/` + `attachments/<id>/` 同名两目录。proposal / design §5 /
 > spec 增量 / tasks 已同步改准。
 > 节点 1（提案评审）：留白（待 Alex 裁决）。
-> 节点 2（归档评审）：留白（实现完成后填写）。
+> 节点 2（归档评审）：**2026-10-11 Alex 点头归档**（原话「三个归档点头：权限提案、会话留存改版、贴图提案——都是『实现已完成，确认收尾归档』性质。通过。」，同批三件之一）。归档对账（M451）：
+> ① tasks 全勾（21/21，M440 落地）：5.1 真机实测 PASS（`k3-256k` 接受 `input_image` data URL）、5.2 后备路径不适用、6.1–6.5 验证齐全；
+> ② delta 与实现逐条一致——ADDED ×3（图片粘贴卡片 / 图片消息投递协议 / 模型图片能力声明）+ MODIFIED ×1（混排对话输入区）原样并入 `openspec/specs/harness/spec.md`，无实现期静默扩 scope；实现侧零改动；
+> ③ **跨 change 对账接口（composer-image-mention）**：「图片消息投递协议」里「文本 part 的序列化 MUST NOT 包含卡片编号」一句**原样落入** living spec（本归档不修订）；在途 change `composer-image-mention`（tasks 6.5）会在它自己归档前把该句修订为「卡片编号（引用卡片与消息摘录卡片）」，两处措辞届时同口径；
+> ④ 归档期观察（非本 change 缺陷）：「混排对话输入区」的 MODIFIED 版本引出了「消息摘录卡片」（在途 change `harness-message-excerpt` 的能力，其定义 requirement 尚未并入 living spec）——该句为前向引用，待 `harness-message-excerpt` 归档时其 ADDED requirement 补入后自洽。
 
 ## Why
 

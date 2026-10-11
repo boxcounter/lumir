@@ -11,10 +11,13 @@
 规则 > 模式默认分层），以及写类 / CLI 的批准闸（含 cli_run 用途句与会话内「采纳且本会话不再问」
 缓存）；上下文触顶的自动压缩（可见压缩标记 + wire 完整留存）；`[harness]` 配置节；会话边界
 （绑 vault、内存态、每个逻辑会话一个 `sessions/<vault 稳定 id>/<session_id>.jsonl` 的 wire 形态留存、以及从历史
-会话最小恢复的入口）；以及不依赖外部 API 的 mock provider。能力边界以 ADR 0007 Decision 2 为准，
-清单外工具扩张须经 Alex 裁决。由 change `add-harness-probe` 归档并入（2026-10-03，实现 M301–M306）；
-change `add-harness-permission-modes` 与 `reshape-harness-session-recording` 归档并入（2026-10-10）
-叠加上述权限模式、vault 移动 / 删除工具与 wire 留存 / 最小恢复口径。
+会话最小恢复的入口）；composer 粘贴剪贴板图片（图片落 harness 侧内容寻址存储、随消息以 content
+parts 交错的形态进上下文，逐模型 `vision` 能力声明把关）；以及不依赖外部 API 的 mock provider。能力
+边界以 ADR 0007 Decision 2 为准，清单外工具扩张须经 Alex 裁决。由 change `add-harness-probe` 归档并
+入（2026-10-03，实现 M301–M306）；change `add-harness-permission-modes` 与
+`reshape-harness-session-recording` 归档并入（2026-10-10）叠加上述权限模式、vault 移动 / 删除工具与
+wire 留存 / 最小恢复口径；change `harness-composer-image-paste` 与 `harness-sessions-per-vault`
+归档并入（2026-10-11）叠加 composer 图片粘贴 / 投递协议与按 vault 分目录的会话留存。
 
 ## Requirements
 
@@ -257,12 +260,34 @@ composer 控制行 SHALL 常驻显示上下文用量读数（位于模型 chip �
 
 ### Requirement: 会话本地留存
 
-会话 SHALL 以 wire/input 形态落配置目录（MUST NOT 写入 vault），作为 ADR 0007 双向记录机制的一侧：每会话一个 append-only JSONL 文件（`<config_dir>/harness/sessions/<session_id>.jsonl`），文件首行 SHALL 为 `session_open` 记录——含 session id、vault 根路径、provider / 模型 / 思考档位、**完整装配后 system prompt 全文**与装配清单（每个来源的路径、存在与否、字节数；不存在的来源 SHALL 同样在场）。每次发给模型的请求（含工具循环的每次迭代与压缩调用）SHALL 落一条 `llm_request` 记录（完整请求体：system + messages + 参数），每次响应 SHALL 落一条 `llm_response` 记录（正文 / 思考回放项与展示文本 / 工具调用 / usage / 错误；思考 MUST 落盘——回放项 provider 方言原样、展示文本另存）；wire 不可推导的决策与事件（批准 / 拒绝、停止中断、LLM 错误、循环上限）SHALL 以 sidecar 记录留存，被 wire 覆盖或失去意义的 11 类事件 kind（`user_message` / `assistant_text` / `tool_call` / `tool_result` / `usage` / `tool_denied` / `compact` / `session_reset` / `approval_overwritten` / `approval_withdrawn` / `turn_abort_requested`）SHALL NOT 再记（重复记录即第二事实源）。记录点 SHALL 与发送点同点，MUST NOT 经二次序列化产生第二事实源。验收口径 SHALL 为恢复充分性：仅凭 JSONL 能逐字节重建任意一轮发给模型的请求。旧「按 vault 聚合的业务事件流水」形态不再续写，存量文件不做迁移（运行时 / 产品侧零读者，验收套件的 JSONL 断言随实现迁移至 wire 口径；M309 孤儿先例）。写失败不阻断对话的既有纪律不变。
+会话 SHALL 以 wire/input 形态落配置目录（MUST NOT 写入 vault），作为 ADR 0007 双向记录机制的一侧：每会话一个 append-only JSONL 文件（`<config_dir>/harness/sessions/<vault 稳定 id>/<session_id>.jsonl`），文件首行 SHALL 为 `session_open` 记录——含 session id、vault 根路径、provider / 模型 / 思考档位、**完整装配后 system prompt 全文**与装配清单（每个来源的路径、存在与否、字节数；不存在的来源 SHALL 同样在场）。`<vault 稳定 id>` SHALL 是 vault 注册表 id（与 `vault-sessions/<id>.json`、`reading-positions/<id>.json` 同一份身份），MUST NOT 用 vault 路径派生的消毒名（消毒名有撞名面且无长度 / 字符集保证，M309 现场）。每次发给模型的请求（含工具循环的每次迭代与压缩调用）SHALL 落一条 `llm_request` 记录（完整请求体：system + messages + 参数），每次响应 SHALL 落一条 `llm_response` 记录（正文 / 思考回放项与展示文本 / 工具调用 / usage / 错误；思考 MUST 落盘——回放项 provider 方言原样、展示文本另存）；wire 不可推导的决策与事件（批准 / 拒绝、停止中断、LLM 错误、循环上限）SHALL 以 sidecar 记录留存，被 wire 覆盖或失去意义的 11 类事件 kind（`user_message` / `assistant_text` / `tool_call` / `tool_result` / `usage` / `tool_denied` / `compact` / `session_reset` / `approval_overwritten` / `approval_withdrawn` / `turn_abort_requested`）SHALL NOT 再记（重复记录即第二事实源）。记录点 SHALL 与发送点同点，MUST NOT 经二次序列化产生第二事实源。验收口径 SHALL 为恢复充分性：仅凭 JSONL 能逐字节重建任意一轮发给模型的请求。
+
+会话文件的 vault 归属 SHALL 仍以首行 `session_open.vault_root` 为**唯一**判据：列举、恢复、删除三处的归属过滤口径不变，目录只作组织维度，MUST NOT 成为归属判据的第二真源（文件被手工挪动 / 拷贝不改变其归属结论）。目录名 SHALL NOT 与保留目录名 `_orphaned` 相同。`sessions/<vault 稳定 id>/<session_id>.jsonl` SHALL 是**唯一布局**：新建会话 SHALL 只落其 vault 的目录，列举 / 恢复 / 删除 SHALL 只读该目录；产品运行时 MUST NOT 含任何迁移逻辑（无启动迁移入口、无旧布局读取路径），也 MUST NOT 读平铺在 `sessions/` 根下的 `*.jsonl`——MUST NOT 保留平铺布局的双读 / 双写过渡层（本仓无外部消费者，兼容层保护对象的举证责任在建层一方；REVIEW.md「消费者是谁」）。存量平铺文件（升级前遗留）的归位 SHALL 由**仓内一次性脚本**（`scripts/` 下，手动执行一次即弃，不进产品运行时）完成：脚本按各文件首行 `session_open.vault_root`（先规范化再查注册表）移入对应 vault 目录，`vault_root` 不可解析 / 在注册表里找不到 / 目标位置已有同名文件的 SHALL 移入保留目录 `sessions/_orphaned/`，MUST NOT 删除或改写任何文件，且 MUST be 幂等（重复执行零搬运）；脚本遇单文件失败时留原地并自报，重跑脚本收敛。上一代「按 vault 聚合的业务事件流水」形态（`<config_dir>/harness/<消毒名>.jsonl`）照旧不再续写、不做迁移（运行时 / 产品侧零读者，验收套件的 JSONL 断言随实现迁移至 wire 口径；M309 孤儿先例）。写失败不阻断对话的既有纪律不变。
 
 #### Scenario: 留存落盘
 
 - **WHEN** 完成一轮含工具调用的对话
-- **THEN** 配置目录下 `sessions/<session_id>.jsonl` 追加完整 wire 记录（`session_open` / 成对的 `llm_request` / `llm_response` / sidecar 决策记录），vault 目录无任何新增或修改
+- **THEN** 配置目录下 `sessions/<vault 稳定 id>/<session_id>.jsonl` 追加完整 wire 记录（`session_open` / 成对的 `llm_request` / `llm_response` / sidecar 决策记录），vault 目录无任何新增或修改，`sessions/` 根下不新建任何文件
+
+#### Scenario: 按 vault 分置与列举范围
+
+- **WHEN** vault A 与 vault B 各有历史会话，随后在 vault A 打开 harness 段的会话浮层
+- **THEN** 两边的会话文件各自落在 `sessions/<A 的 vault 稳定 id>/` 与 `sessions/<B 的 vault 稳定 id>/` 下；浮层只列 A 目录里的会话，且仍按 `session_open.vault_root` 过滤（目录内容不构成归属判据）
+
+#### Scenario: 平铺文件一次性归位
+
+- **WHEN** 在仓内手动执行一次性迁移脚本，`sessions/` 根下存在平铺的 `<session_id>.jsonl`（首行 `session_open` 带 `vault_root`）
+- **THEN** 每个文件被移入其 vault 的目录（逐字节不变，只换位置），脚本跑完后根下不再有 `*.jsonl`；再跑一次脚本不产生任何搬运（幂等）
+
+#### Scenario: 不可归属者进孤儿桶
+
+- **WHEN** 一次性迁移脚本遇到平铺文件不可读 / 首行不是 `session_open` / 其 `vault_root` 在注册表里找不到 / 目标位置已有同名文件
+- **THEN** 该文件被移入保留目录 `sessions/_orphaned/`，不删除、不改写；它不出现在任何 vault 的会话列举里，也不被任何恢复入口读到
+
+#### Scenario: 旧文件孤儿化
+
+- **WHEN** 本 change 落地后进行首次对话
+- **THEN** 上一代「按 vault 聚合的业务事件流水」文件（`<config_dir>/harness/<消毒名>.jsonl`）不被续写、不被改写、不做迁移（M309 孤儿先例不变）
 
 #### Scenario: 废弃 kind 不再记
 
@@ -283,11 +308,6 @@ composer 控制行 SHALL 常驻显示上下文用量读数（位于模型 chip �
 
 - **WHEN** 一轮响应含 reasoning 文本
 - **THEN** `llm_response` 记录思考——回放项（provider 方言，原样）与展示文本（给人看）分别在 `reasoning` / `thinking` 字段；后续请求的历史中该 reasoning 回放项逐字节在场
-
-#### Scenario: 旧文件孤儿化
-
-- **WHEN** 本 change 落地后进行首次对话
-- **THEN** 新会话写入 `sessions/` 新文件；旧 vault 聚合文件不被续写、不被改写、不做迁移
 
 ### Requirement: mock provider
 
@@ -314,22 +334,37 @@ composer 控制行 SHALL 常驻显示上下文用量读数（位于模型 chip �
 
 ### Requirement: 混排对话输入区
 
-对话输入区 SHALL 为混排编辑区且是全 composer 的唯一形态（无卡片时退化为纯文本输入，不存在两种输入框并存）：引用卡片是原子 block 节点（删除/选择按整体作用），问题文字在卡片之间的段落中，卡片与段落可任意交错。「摘录到对话」 SHALL 在光标处插入卡片——光标落在段落中间时 SHALL 把该段落从光标处拆为两段、卡片插入中间；**插入后光标 SHALL 落到卡片下一行的问题段落**（该处已有空段落则复用、否则新建）。卡片 SHALL 可经移除钮移除。粘贴进输入区的内容 SHALL 净化为纯文本。已发送的用户消息 SHALL 同构呈现（卡片与问题段落上下交替，卡片无移除钮）。
+对话输入区 SHALL 为混排编辑区且是全 composer 的唯一形态（无卡片时退化为纯文本输入，不存在两种输入框并存）：
+引用卡片、消息摘录卡片与**图片卡片**（本 change 新增）都是原子 block 节点（删除/选择按整体作用），问题文字在
+卡片之间的段落中，各类卡片与段落可任意交错。「摘录到对话」 SHALL 在光标处插入卡片——光标落在段落中间时 SHALL
+把该段落从光标处拆为两段、卡片插入中间；**插入后光标 SHALL 落到卡片下一行的问题段落**（该处已有空段落则复用、
+否则新建）。卡片 SHALL 可经移除钮移除（图片卡片的移除钮语义与引用卡片一致）。粘贴进输入区的内容 SHALL 按
+剪贴板内容分派：剪贴板含 `image/*` 数据时 SHALL 走「图片粘贴卡片」（图优先，不净化）；其余内容 SHALL 净化为
+纯文本。已发送的用户消息 SHALL 同构呈现（卡片与问题段落上下交替，卡片无移除钮）。
 
 #### Scenario: 卡片与问题交错
 
-- **WHEN** 输入区已有「卡片1 + 问题1」，用户在问题1 之后继续摘录并输入问题2
-- **THEN** 输入区呈现 卡片1 / 问题1 / 卡片2 / 问题2 上下交替；光标可在任意卡片前后继续输入
+- **WHEN** 输入区已有「卡片1 + 问题1」，用户在问题1 之后继续摘录或贴入一张图片并输入问题2
+- **THEN** 输入区呈现 卡片1 / 问题1 / 卡片2 / 问题2 上下交替（卡片2 可以是引用卡片、消息摘录卡片或图片卡片）；
+  光标可在任意卡片前后继续输入
 
 #### Scenario: 光标处拆段插入
 
-- **WHEN** 光标落在某问题段落中间时触发「摘录到对话」
-- **THEN** 该段落从光标处拆为两段，新卡片插入两段之间，光标落到新卡片下一行的问题段落（无则新建），可直接继续输入问题
+- **WHEN** 光标落在某问题段落中间时触发「摘录到对话」或贴入一张图片
+- **THEN** 该段落从光标处拆为两段，新卡片插入两段之间，光标落到新卡片下一行的问题段落（无则新建），可直接
+  继续输入问题
 
 #### Scenario: 发送后同构沉淀
 
 - **WHEN** 携带两张卡片与两段问题的消息发送完成
-- **THEN** transcript 中该用户消息按相同交错顺序呈现卡片与问题段落，卡片无移除钮且可点击跳回
+- **THEN** transcript 中该用户消息按相同交错顺序呈现卡片与问题段落，卡片无移除钮且可点击跳回（图片卡片无跳回、
+  只呈现缩略图）
+
+#### Scenario: 粘贴按剪贴板内容分派
+
+- **WHEN** 在输入区粘贴纯文本，或粘贴剪贴板里的图片
+- **THEN** 纯文本走既有净化（多行拆成多个段落块）；图片走「图片粘贴卡片」落 harness 侧并插入图片卡片——
+  两者互不串台
 
 ### Requirement: 引用消息序列化协议
 
@@ -667,3 +702,116 @@ composer 控制行 SHALL 提供权限 chip（位于模型 / 思考合并选择�
 
 - **WHEN** 模型发起的 `cli_run` 调用缺 `purpose` 字段（或 purpose trim 后为空白串）
 - **THEN** 调用不执行，回送指明需补填用途的错误信封；模型补填 purpose 重发后正常进入判定与执行
+
+### Requirement: 图片粘贴卡片
+
+harness 面板输入区（composer）SHALL 支持粘贴剪贴板里的图片：粘贴动作到达且剪贴板含 `image/*` 数据时，
+系统 SHALL 拦截该粘贴、把图片落 **harness 侧存储**（`<config_dir>/harness/attachments/<vault 稳定 id>/` 下的
+内容寻址文件 `pasted-<内容哈希前 16 位>.<扩展名>`），并在光标处插入 block 级**图片卡片**。`<vault 稳定 id>`
+SHALL 是 vault 注册表 id（与会话留存 `sessions/<vault 稳定 id>/` 同一份身份），MUST NOT 用 vault 路径派生的
+消毒名；写时取不到合格 id SHALL 拒绝落盘并给人话反馈，MUST NOT 落进任何兜底目录。落盘与转码 SHALL 复用二进制附件
+写入的既有口径（`image/png` → WebP 无损转码、`image/jpeg` 与 `image/webp` 原样、其余 `image/*` 子类型拒绝并给
+人话反馈；50MB 上限判定在转码之前；分辨率 MUST NOT 降采样）。图片落点 MUST NOT 进 vault——本能力 MUST NOT
+新增或改写 vault 内任何文件。剪贴板同时含文本与图片数据时 SHALL 图优先；多图剪贴板 SHALL 只取第一个
+`image/*` 项。
+
+图片卡片 SHALL 是 composer 的**原子块**，与既有引用卡片同族：拆段插入、插入后光标落卡片下一行的问题段落、
+移除钮（输入区内）、整体选择与删除、发送后在 transcript 同构沉淀（无移除钮）——全部与「混排对话输入区」的
+既有卡片语义一致。卡片 SHALL 呈现可见缩略图（字节经读回命令按需取，MUST NOT 把 base64 落进卡片数据、快照或
+留存）。快照恢复时图片卡片 SHALL 从留存内容解析还原（与 `<quote>` / `<msg-quote>` 同 round-trip 口径）。
+任一步失败（格式不支持、超限、转码/落盘/读回失败）SHALL 给人话 toast，MUST NOT 静默失败、MUST NOT 插入卡片
+后留破图、MUST NOT 留半截临时文件。非图片剪贴板的粘贴行为 MUST NOT 被本能力改变。
+
+#### Scenario: 粘贴图片落 harness 侧并插入卡片
+
+- **WHEN** composer 聚焦、剪贴板置一张 png 截图并执行粘贴
+- **THEN** 配置目录 `harness/attachments/<vault 稳定 id>/` 下出现 `pasted-<hash16>.webp`（解码像素与剪贴板一致），
+  vault 目录零新增或修改；composer 在光标处出现图片卡片（可见缩略图）、可直接继续输入问题
+
+#### Scenario: 图文同板图优先、多图取第一张
+
+- **WHEN** 剪贴板同时含文本与一张图片，或含两张图片
+- **THEN** 只产出该剪贴板里第一个 `image/*` 项的图片卡片；夹带的文本 MUST NOT 另行作为纯文本落入输入区
+
+#### Scenario: 非图片粘贴回归
+
+- **WHEN** 剪贴板为纯文本（无 `image/*`）并在 composer 执行粘贴
+- **THEN** 行为与本能力存在之前逐字节一致（纯文本净化，多行拆成多个段落块）；`harness/attachments/<vault 稳定 id>/`
+  无新增文件
+
+#### Scenario: 失败一律人话出口
+
+- **WHEN** 剪贴板图片的 MIME 子类型未支持、或超过 50MB、或转码/落盘失败
+- **THEN** 弹出对应人话 toast；composer 不出现该图片卡片；附件目录无半截临时文件残留
+
+#### Scenario: 发送后同构沉淀与快照恢复
+
+- **WHEN** 携带图片卡片与问题段落的交错消息发送完成，随后重启 app 恢复会话
+- **THEN** transcript 中该用户消息按相同交错顺序呈现图片卡片（无移除钮、缩略图可见）；恢复后图片卡片与原文
+  交错顺序、附件引用与发送前一致
+
+### Requirement: 图片消息投递协议
+
+发送消息时，系统 SHALL 把混排输入区的块序列投影为 Responses API 的 content parts：文本块 SHALL 按
+「引用消息序列化协议」的既有 XML 形态序列化为 `input_text` part，图片块 SHALL 产出 `input_image` part；
+`input_text` 与 `input_image` SHALL 按块序交错排布（图片在文本流中的位置 MUST 与 composer 里的交错顺序一致）。
+文本 part 的序列化 MUST NOT 包含卡片编号（沿用一致性原则）。
+
+会话侧（内存 input 项与 JSONL 留存）MUST NOT 内联图片字节：图片在 input 项里 SHALL 以 **harness 附件引用**
+形态在场（`image_url` 为 `lumir-attachment://<内容寻址名>`），MUST NOT 出现 base64 data URL。发给 provider 的
+wire 请求 SHALL 在**发送前**把引用展开为 `{"type":"input_image","image_url":"data:image/<子类型>;base64,…"}`；
+展开失败 SHALL 以人话错误收口，MUST NOT 发出静默缺图的请求。恢复充分性口径随之写实：仅凭 JSONL 的引用 +
+内容寻址的 harness 附件**同 id 目录**（`attachments/<vault 稳定 id>/`，引用名即内容哈希，`引用 → 字节` 确定性）
+可重建该轮请求。引用 SHALL 按当前会话作用域的 vault id 在本 vault 目录内解析，MUST NOT 跨 vault 查找。历史会话恢复路径
+SHALL 从 wire 项的引用还原图片卡片，MUST NOT 伪造、MUST NOT 丢弃。
+
+#### Scenario: content parts 交错顺序
+
+- **WHEN** 发送一条「问题段落 + 图片卡片 + 问题段落」的消息
+- **THEN** 该 user 消息的 content 数组按块序为 `input_text` / `input_image` / `input_text`；图片 part 的位置与
+  composer 里的交错顺序一致；文本 part 无卡片编号
+
+#### Scenario: 引用进留存、展开进 wire
+
+- **WHEN** 携带图片卡片的消息发出并落盘
+- **THEN** 对应 `llm_request` 的 messages 中该 user 项的图片为 `lumir-attachment://<内容寻址名>` 引用，记录里
+  **不含 base64**（无 `data:image` 串）；而发给 provider 的请求体里同一位置是 base64 data URL
+
+#### Scenario: 展开失败不静默缺图
+
+- **WHEN** 引用的附件文件缺失或不可读
+- **THEN** 本轮以人话错误收口，MUST NOT 发出一份缺该图片的请求、MUST NOT 假装图片已投递
+
+#### Scenario: 恢复还原图片卡片
+
+- **WHEN** 从历史会话恢复（留存里该 user 项的图片是引用形态）
+- **THEN** 恢复后的面板消息含对应图片卡片，交错顺序与附件引用与留存一致
+
+### Requirement: 模型图片能力声明
+
+`config.json` 的 `[harness].providers.<id>.models` 逐项声明 SHALL 支持 **`vision`** 布尔键（键名 2026-10-10 由
+`image` 改名，避免与 `image_generation` 混淆；与既有的 `effort` / `window` 同一条 config-only 声明链）：
+`true` 表示该 provider + 模型接受图片输入；该键缺席 / 模型未列在清单内
+SHALL 按**不支持**处理（保守默认，与 `effort` 同侧），SHALL 给一条人话 warning。系统 MUST NOT 内置任何模型的
+图片能力——MUST NOT 硬编码、MUST NOT 出厂回落。
+
+当前生效 provider + 模型的图片能力为**不支持**时，含图片卡片的消息 SHALL 在**发送时**被挡下：系统 SHALL 返回
+人话错误（错误码区分"图片不受支持"这一成因）并保留输入区内容，界面 SHALL 标出该消息里的图片卡片（用户可移除
+后重发）。系统 MUST NOT 静默丢弃图片后照发、MUST NOT 在粘贴时即拒收（贴入动作本身不受能力声明限制）。
+能力判据 SHALL 只有一处（发送路径），界面 MUST NOT 另立第二套能力判定。
+
+#### Scenario: 支持时正常投递
+
+- **WHEN** 生效模型的声明含 `"vision": true`，发送一条携带图片卡片的消息
+- **THEN** 消息正常发出，wire 请求含展开后的 `input_image` part
+
+#### Scenario: 未声明按不支持
+
+- **WHEN** 生效模型的声明缺 `vision` 键（或该模型不在清单内）
+- **THEN** 该模型的图片能力按不支持处理并产生人话 warning；含图片卡片的消息发送被挡下
+
+#### Scenario: 不支持时挡住并标出图片卡片
+
+- **WHEN** 生效模型的 `vision` 为 `false` 或未声明，用户在 composer 贴入图片并点击发送
+- **THEN** 发送被挡下并弹出人话错误；该消息里的图片卡片被标出（错误态可见）；输入区内容原样保留、会话不推进、
+  MUST NOT 发出丢弃图片的降级消息；移除图片卡片后同一消息可正常发出

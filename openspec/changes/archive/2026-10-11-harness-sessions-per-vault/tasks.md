@@ -56,6 +56,8 @@
 
 ## 6. 归档核对
 
-- [ ] 6.1 `openspec/specs/harness/spec.md` 的 `Purpose` 段（`:13`）路径表述改准——delta 机制改不到 `Purpose`，属归档时手工项（见 `specs/harness/spec.md` 的起草注记）
-- [ ] 6.2 spec 增量（MODIFIED 会话本地留存）与实现逐条对账：语义一致的才归档；有静默扩 scope 的停下重走节点 1
+- [x] 6.1 `openspec/specs/harness/spec.md` 的 `Purpose` 段（`:13`）路径表述改准——delta 机制改不到 `Purpose`，属归档时手工项（见 `specs/harness/spec.md` 的起草注记）
+  - M451 归档核对（2026-10-11）：该处已由 M448（commit `041a24d`）提前改为 `sessions/<vault 稳定 id>/<session_id>.jsonl`，与 delta 一致，无需再改。
+- [x] 6.2 spec 增量（MODIFIED 会话本地留存）与实现逐条对账：语义一致的才归档；有静默扩 scope 的停下重走节点 1
+  - M451 归档核对（2026-10-11）：实现 M433（`c81c8c1` + `2d48218`，均在 master）与 delta 语义一致——新布局 `<vault 稳定 id>/`、归属判据仍取首行 `session_open.vault_root`、产品运行时零迁移（归位由仓内一次性脚本承担）、`_orphaned/` 保留目录；无静默扩 scope。
 
