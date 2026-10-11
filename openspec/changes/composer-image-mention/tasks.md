@@ -59,8 +59,12 @@
       - **M440 的 4 张图片卡片基线如今全部过期**：本 change 给图片卡片加了编号徽标与 `@` 钮，M440 的
         `m440-image-card-{composer,transcript,error,broken}.png` 像素形态已变 → 走同一次 Alex 过目 +
         `--update`（视觉门禁卫生：动过 `src/harness-panel.css` 后核对相关基线时间戳）。
-      - 待过目截图已复制到主仓 `test-results/m454-visual-review/`（git 外）：
-        `open /Users/boxcounter/Code/Boxcounter/lumir/test-results/m454-visual-review`。
+      - **呈阅截图包（6 张，主仓 `test-results/m454-visual-review/`，git 外）**：2 张 m454 新表面
+        （composer-numbered / transcript-numbered）+ 4 张 M440 更新后候选（composer / transcript /
+        error / broken）。给出：`open /Users/boxcounter/Code/Boxcounter/lumir/test-results/m454-visual-review`。
+        **error 候选的来历（如实登记）**：M440 场景的 error 态经「发送被能力闸拒绝」触发，而 chromium 桩下
+        send 路径是本分支**既有**红（见下），到不了截图行——error 态画面 = 卡片加 `is-error` 类
+        （CSS 只改边框/底色两处），故候选图由粘贴后直接施加该类截出，与真实 error 态逐像素相同。
       - `tests/visual/scenes/m440-harness-image-card.spec.ts` 的 transcript 读屏名断言随 D447 改形更新为
         `图片 1：{name}`（本分支内）。
       - **既有红（非本 change 引入）**：m440 场景的 test 3（错误态）/ test 5（投递投影）在 master 基线上

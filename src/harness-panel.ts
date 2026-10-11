@@ -2930,11 +2930,13 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       });
     } else {
       // transcript：同构呈现，无钮、无跳回（只呈现缩略图，spec「发送后同构沉淀」）。可访问名
-      // 含编号（D447 含编号形态）：编号是人的指代把手，读屏同样要能听到。
+      // 含编号（D447 含编号形态）：编号是人的指代把手，读屏同样要能听到。ordinal 是本函数对
+      // 图片块的恒有入参（调用点逐点核实），null 分支是防御面——回落文件名（代入空编号会产出
+      // 「图片 ：name」畸形读屏名）。
       el.setAttribute("role", "img");
       el.setAttribute(
         "aria-label",
-        ordinal === null ? t("D447", { n: "", name: card.name }) : t("D447", { n: String(ordinal), name: card.name }),
+        ordinal === null ? card.name : t("D447", { n: String(ordinal), name: card.name }),
       );
     }
     return el;
