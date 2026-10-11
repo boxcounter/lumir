@@ -159,6 +159,23 @@ test("M447 ⌃N/⌃P：逻辑行步进（同列位、超出取行尾）、跨段
   assert.deepEqual(moveLineUp(single, at(0, 1)), at(0, 1), "无相邻段落：上移不动");
 });
 
+test("M455 ⌃N/⌃P 段落末缘：保留列位（不被归一成边界位吞掉）", () => {
+  // 键入之后光标停在该段最后一行行尾（末缘）是常态；`normalizeComposerCaret` 曾把它折成下一块
+  // 前缘 / 「末尾之后」，列位随之丢失，⌃P 落到上一行行首而不是同列位（验收场景 140 实测）。
+  const soft = [para("yabzcdw\nmn")];
+  assert.deepEqual(moveLineUp(soft, at(0, 10)), at(0, 2), "末缘 ⌃P：同列位 2 回到上一逻辑行");
+  assert.deepEqual(moveLineDown(soft, at(0, 10)), at(0, 10), "末缘 ⌃N：无下一行，不动");
+  const twoParas = [para("yabzcdw"), para("mn")];
+  assert.deepEqual(moveLineUp(twoParas, at(1, 2)), at(0, 2), "末段末缘 ⌃P：同列位跨到上一段");
+  assert.deepEqual(moveLineDown(twoParas, at(1, 2)), at(1, 2), "末段末缘 ⌃N：无相邻段，不动");
+  const longer = [para("abcdef"), para("wxyz")];
+  assert.deepEqual(moveLineUp(longer, at(1, 4)), at(0, 4), "末段末缘 ⌃P：同列位 4 落在上一段内");
+  // 列位超出目标行长度 ⇒ 取目标行行尾；该处正是块边界，归一到下一块前缘（**同一 DOM 位**，
+  // 是块模型固有的边界表示，不是列位再丢一次）。
+  const clamp = [para("ab"), para("wxyz")];
+  assert.deepEqual(moveLineUp(clamp, at(1, 4)), at(1, 0), "列 4 超出上一段长度 ⇒ 取行尾（块边界）");
+});
+
 test("M447 ⌥F/⌥B 扩选 head：按词一步（与编辑器侧共用词边界口径）", () => {
   const blocks = [para("alpha beta  gamma")];
   assert.deepEqual(moveWordForward(blocks, at(0, 0)), at(0, 5), "从词首到词尾");

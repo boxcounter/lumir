@@ -2799,6 +2799,59 @@ M412 r1 评审 P2-3，reviewer-m412，2026-10-10）：`context_section` 对有 `
 `legacy_selection_with_text_still_renders_source_text` 一并移除或改写为「拒绝/忽略」口径；若未来要做
 「重新附上视口原文」的显式手势，该接受面可直接复用——届时再定。
 
+## M455 真机验收 FAIL 归因 + master 视觉门禁修复（2026-10-11，worker-m455）
+
+背景：2026-10-11 真机复验批 5 场景 FAIL（138/140/142/144/145）待归因；另 master 本地视觉门禁
+m131/m133 两条红（`text` 作用域经 M453 合并 `59e4f68` 入库后既存）。逐项处置如下——**四项真机
+FAIL 均为可确定性复现的产品缺陷或场景 bug，无一项判为环境噪音**；同批 76/87/131/132/133/134
+（hover 族）仍属环境项，由 tower 统一安排复跑。
+
+- **138 `harness-draft-send-reject` — 产品缺陷（已修）**：发送被能力闸拒绝后回滚**只还原块、不落
+  光标**，`replaceChildren` 打散的 DOM 选区停在边界位 ⇒ 紧随的 `markDraft()` 按错误 caret 判
+  「内容变了」，防抖窗口到点把盘上草稿重写一遍——**只有 caret 字段变**（sha `85da85117018` →
+  `d6a41e72d3ac`），违反 change `composer-draft-persistence` design §9⑤。修：`src/harness-panel.ts`
+  的 send 路径在乐观清空**前**记下发前光标，拒发回滚 `renderComposer(blocks, preSendCaret)` 连同
+  光标一起还原。回归：新增 chromium 场景 `tests/visual/scenes/m455-draft-reject-no-rewrite.spec.ts`
+  （判据 = `harness_draft_put` 调用次数不因拒发回滚增加；反向验证：还原该行即红，写盘次数 1→2）。
+- **140 `harness-composer-nav-move` — 产品缺陷（已修）+ 场景期望值算错（已改准）**：段落**末缘**
+  （光标停在末段行尾，键入后的常态位）被 `normalizeComposerCaret` 归一到边界位，列位随之丢失，
+  ⌃P 落到上一行**行首**而非同列位（实测 `yabzcdw` ⇧Enter `mn` 后 ⌃P 落在第二段行首
+  `yabzcdw\npmn`）。修：`src/harness-panel.ts` 的 `moveLineVertical` 对末缘保留原始光标走段内步进。
+  场景原期望 `ypabzcdw`（列 1）与「行尾在列 2」自相矛盾，改准为 `yapbzcdw`（同列位 2）。回归：
+  `tests/unit/composer-nav.test.ts` 新增「段落末缘保留列位」用例。
+- **142 `harness-composer-nav-no-rerender` — 场景 bug（已修）**：该负向断言 `ax: { not: "z" }` 是
+  140/141 的探针形态，但本场景**从未键入探针字符**；单字符负向断言对着整份 AX 文本匹配，命中无关
+  界面文案（语言钮 `语言：zh`、窗口按钮 help `…action to zoom…`）⇒ 静默假红（REVIEW.md 第 1 条：
+  判据无区分度）。改为钉 composer 节点值 `/AXTextArea = "abcde" @/`（值恰为 `abcde` 才命中）。
+- **144 `harness-composer-alt-backspace` — 场景 bug（已修）**：`keys: […, " ", …]` 用字面空格作键名，
+  `press_key(" ")` 报 `error: empty key DSL`（键名表里是 `space`，与 `-`→`minus` 同族）。修在套件侧：
+  `scripts/acceptance/lib/cu.mjs` 把整串 `" "` 译为 `space`，`lib/execute.mjs` 的可打印判定含空格
+  ⇒ 该步仍走可回读通道（不降级盲发）；README 的 `keys` 行同步。
+- **145 `harness-composer-kill-yank` — 产品缺陷（已修）**：面板自己的 keydown（挂在 composer 上、
+  先于 window 分发器）把 `mod+y`（⌘Y 与 ⌃Y）一律当就地 redo `preventDefault` 掉，分发器对已消费
+  事件让路（`src/keys.ts:934`）⇒ composer 的 ⌃Y 永远落不到 `yankAtCaret`，编辑器 ⌃K 写进**跨面
+  共用** kill 槽的内容插不回来。同批 143/146 等 ⌃ 系命令能过，正因它们落到 `if (mod) return;` 而
+  不 `preventDefault`——`editor.yank` 是唯一被就地路径遮蔽的 `text` 作用域绑定。修：就地 redo 收窄
+  到 meta-only（`src/harness-panel.ts`）。回归：新增 chromium 场景
+  `tests/visual/scenes/m455-composer-ctrl-y.spec.ts`（编辑器 ⌃K → composer ⌃Y → 被杀文本出现；
+  反向验证：还原该行即红，composer 仍空）。
+- **m131 视觉用例 `m131-keymap-table.spec.ts` — 场景 bug（已修）**：scope 不变量写死 `["global",
+  "editor"]`，M447 新增 `text` 作用域后整表断言红。对齐为三值 + `binding.scope ===
+  scopeOfCommand(binding.command)`（与 `tests/unit/keys.test.ts` 同口径），owner 映射改为
+  `global → GLOBAL_COMMAND_IDS / 其余（editor + text）→ EDITOR_COMMAND_IDS`。
+- **m133 视觉用例 `m133-describe-bindings.spec.ts` — 基线待更新（人肉裁决点）**：M447 给 `text`
+  作用域键位**加长了来由文案**（如「M447：编辑器与 composer 两处文本面共用同一绑定」），面板每行
+  折行增加 ⇒ 整页像素 4%（32685px）重排；同 spec 的结构断言（分组 / 行数 / 文案 / 未绑定行 / 穿透）
+  全过。截图已复制到 `test-results/m455-m133-baseline/`（git 外）呈 Alex 过目，**待 Alex 说「通过」
+  后再 `--update`**（AGENTS 硬规则：基线更新前须过目）。
+
+未完成项 / 交 tower：
+- m133 基线 `--update` 待 Alex 裁决（如上）；在此之前 `gate.sh visual` 的唯一红即此条。
+- 真机复跑由 tower 统一安排：本轮修复落在 **chromium / 单测** 的可确定性判据上（138/140/145 各有
+  反向验证）；真机侧 138/140/144/145 与同批 hover 族（76/87/131/132/133/134）待复跑收口。
+- 145 同族观察（非本次 FAIL，未改）：面板 keydown 的 `mod+z` 仍把 ⌘Z 与 ⌃Z 都当就地 undo，而统一
+  键位表无 `Ctrl-z` 绑定——未遮蔽任何 `text` 命令，留给 change 属主裁是否收窄。
+
 ## 工具链与环境（待 Alex 裁决）
 
 1. **1420 端口串行**：vite dev server 固定 `127.0.0.1:1420` 且 strictPort，全机同一时刻只能有一个

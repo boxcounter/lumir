@@ -559,8 +559,11 @@ async function clickWithRetry(cu, pid, x, y, { retries = 3, count, button } = {}
  *  三次注入的残段累积）——正是 README「历史教训（别再回到旧口径）」那类假绿/脏文本形态。 */
 const TEXT_FIELD_ROLES = new Set(["AXTextField", "AXSearchField", "AXSecureTextField", "AXComboBox"]);
 
-/** 单个可打印字符（非空白 ASCII）：keys 动作里只有这种键名有唯一的文本语义。 */
-const PRINTABLE_KEY_RE = /^[\x21-\x7e]$/;
+/** 单个可打印字符（ASCII 可打印段，含空格）：keys 动作里只有这种键名有唯一的文本语义。
+ *  空格（`\x20`）也计入——它插入的就是一个空格字符，`keys: [" ", …]` 因此同样走回读通道
+ *  （M455：场景 144 键入 `alpha beta gamma` 需要它；`lib/cu.mjs` 的 `keyDsl` 把 `" "` 译为
+ *  键名 `space`）。 */
+const PRINTABLE_KEY_RE = /^[\x20-\x7e]$/;
 
 /** `do: settle` 的等待上限（M249）。15s 是「两次一致」的宽裕上界（每拍 700ms），同时给
  *  「界面一直不收敛」这种异常收一个可预期的代价——到点走兜底，不无限等。 */
