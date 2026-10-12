@@ -394,6 +394,32 @@ test("M465 属性：停靠点相邻即互为一步（⌃F / ⌃B 正反向对称
   }
 });
 
+test("M465 词步的段-段边界（两方向都钉）：段末 ⌥F 无动作、⌥B 回本段词首，不跨段", () => {
+  // **语义裁决**（tower 2026-10-12，M465 r1 评审 P2-1）：采用「不跨段」——段末 ⌥F 无动作、
+  // 段首 ⌥B 停在本段段首。理由：与 `⌃B` 段首无动作对称、与 `killWordForward` 的「段边界处无
+  // 动作」口径一致。这是 M465 那次折叠收紧带来的**第二处行为变更**（第一处是 ⌃B/⌃E/⌃F 的
+  // 段-段落点），在此显式钉住：旧形态下段末 ⌥F 被折进后段（一步跳到后段词尾、末段则表现为
+  // 「末尾之后」）、段末 ⌥B 折到后段前缘（**反向按键却向前跳**）——两条都是那条无条件折叠的
+  // 副产物，不是有意的跨段语义。
+  const twoParas = [para("abc"), para("de")];
+  assert.deepEqual(moveWordForward(twoParas, at(0, 3)), at(0, 3), "段末 ⌥F：本段已无下一词 ⇒ 无动作（不跨段）");
+  assert.deepEqual(moveWordBackward(twoParas, at(0, 3)), at(0, 0), "段末 ⌥B：回本段词首（不跨段）");
+  assert.deepEqual(moveWordBackward(twoParas, at(1, 0)), at(1, 0), "段首 ⌥B：本段之前无词 ⇒ 无动作（停在本段段首）");
+  assert.deepEqual(moveWordForward(twoParas, at(0, 0)), at(0, 3), "段首 ⌥F：到本段词尾（一步不出段）");
+  assert.deepEqual(moveWordForward(twoParas, at(1, 1)), at(2, 0), "段内 ⌥F 到末段词尾 = 末段末缘（归一表示，M447 口径不变）");
+  const three = [para("abc"), para("de"), para("f")];
+  assert.deepEqual(moveWordForward(three, at(1, 0)), at(1, 2), "中间段 ⌥F：落本段词尾（旧形态会写到下一段行首）");
+  assert.deepEqual(moveWordBackward(three, at(2, 0)), at(2, 0), "末段段首 ⌥B：无动作");
+  assert.deepEqual(moveWordBackward(three, at(1, 2)), at(1, 0), "段内 ⌥B：回本段词首");
+  // **卡片档的既有口径**（M465 未改，与上面两档不同）：段落后紧邻卡片时，`normalizeComposerCaret`
+  // 仍把段末缘折成卡片前缘，词步取到的是**卡片**块 ⇒ `block.kind !== "paragraph"` 早退，
+  // 两个方向都表现为「不动」（⌥B 在卡片档不回词首，而在段落档回）。旧形态同样如此（卡片档折叠
+  // 一直在），M465 未把它一并对齐——登记在 docs/backlog.md，不在此当作新语义钉住。
+  const withCard = [para("abc"), card()];
+  assert.deepEqual(moveWordForward(withCard, at(0, 3)), at(1, 0), "卡片前 ⌥F：落到卡片前缘（与段末缘同一位 ⇒ 无视觉位移；既有口径）");
+  assert.deepEqual(moveWordBackward(withCard, at(0, 3)), at(1, 0), "卡片前 ⌥B：同上（既有口径，与段落档不对称，已登记）");
+});
+
 // ---------------------------------------------------------------------------
 // 导航不是编辑
 // ---------------------------------------------------------------------------
