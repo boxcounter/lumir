@@ -179,7 +179,7 @@ test("isCardFrontCaret：指向卡片且 offset 0 → 真；段落 / 卡片内�
   assert.equal(isCardFrontCaret(blocks, { block: 9, offset: 0 }), false); // 越界没有「前缘」
 });
 
-test("边界光标位的写回落点：MUST 是有文本宿主的相邻位（前一段落末缘 / 后一张卡片的首个文本位）", () => {
+test("边界光标位的写回落点：MUST 是有文本宿主的相邻位（前一段落末缘 / 后一张卡片的首个文本位）；M473 末尾之后落末块边界", () => {
   // M457（真缺陷现场：Alex 2026-10-12「⌃B 之后光标落在摘录卡正文里」）。写回形态不是实现
   // 细节——它是光标**画在哪**的唯一输入：
   //   - M450 起用的 `Range(composer, n)`（块级容器边界）在引擎里量不出 caret 几何
@@ -189,13 +189,16 @@ test("边界光标位的写回落点：MUST 是有文本宿主的相邻位（前
   //   （真机读数：852,641 的行位），且与前块非空时的 `{block: n, offset: 0}` 同属
   //   `normalizeComposerCaret` 的归一等价类（导航 / 行级命令的口径因此不变）；
   //   - 两侧都没有文本宿主（两卡相邻 / composer 以卡片开头）时写回**后一张卡片的首个文本位**
-  //   （DOM 读回按「锚在卡片内」归一为同一个边界位，HC3 第 1 条已声明这一档）。
+  //   （DOM 读回按「锚在卡片内」归一为同一个边界位，HC3 第 1 条已声明这一档）；
+  //   - 「末尾之后」（`block = 块数`，M473 收进来）：末块是非空段落时写回**该段文本末缘**
+  //   （与「末尾之后」同属归一等价类），末块是空段落 / 卡片时保留块级容器末尾边界（已知边界）。
   const sequences: ComposerBlock[][] = [
     [imageBlock, quote(cardA)],
     [quote(cardA), imageBlock, para("后")],
     [para("前"), imageBlock, quote(cardA), para("后")],
     [imageBlock, quote(cardA), imageBlock],
     [para("前"), para(""), quote(cardA)],
+    [quote(cardA), para("")],
   ];
   for (const blocks of sequences) {
     const label = JSON.stringify(blocks.map((b) => (b.kind === "paragraph" ? `p:"${b.text}"` : b.kind)));
@@ -203,7 +206,28 @@ test("边界光标位的写回落点：MUST 是有文本宿主的相邻位（前
       const caret = boundaryCaretAt(n, blocks.length);
       assert.deepEqual(caret, { block: n, offset: 0 });
       const block = blocks[n];
-      if (block === undefined) continue; // 「末尾之后」不在本轮改动面（残余登记在 docs/backlog.md）
+      if (block === undefined) {
+        // 「末尾之后」（M473）：模型值不动（仍是 `{block: 块数, offset: 0}`），写回落**最后一个块**
+        // 的边界——末块是非空段落 ⇒ 该段**文本末缘**（有 caret 几何，且与「末尾之后」同属归一等价
+        // 类）；末块是空段落 / 卡片 ⇒ 保留块级容器末尾边界（理由见 `domCaretTarget` 的函数头：
+        // 空段落只有一个停靠点、落到它会与空段落前缘的写回位重合；卡片没有文本末缘宿主）。
+        const last = blocks[blocks.length - 1];
+        if (last.kind === "paragraph" && last.text.length > 0) {
+          assert.deepEqual(
+            domCaretTarget(blocks, caret),
+            { kind: "text", index: blocks.length - 1, offset: last.text.length },
+            `末尾之后必须落末段文本末缘：${label} @${n}`,
+          );
+          assert.deepEqual(
+            normalizeComposerCaret(blocks, { block: blocks.length - 1, offset: last.text.length }),
+            normalizeComposerCaret(blocks, caret),
+            `末段末缘与「末尾之后」必须同属一个归一等价类：${label} @${n}`,
+          );
+        } else {
+          assert.deepEqual(domCaretTarget(blocks, caret), { kind: "boundary", index: n }, `${label} @${n}`);
+        }
+        continue;
+      }
       if (block.kind === "paragraph") continue; // 段落前缘不是边界档（下面的反向断言）
       const target = domCaretTarget(blocks, caret);
       assert.notEqual(target.kind, "boundary", `边界位不得写回无 caret 几何的块级容器边界：${label} @${n}`);
@@ -237,15 +261,15 @@ test("边界光标位的写回落点：MUST 是有文本宿主的相邻位（前
   }
 });
 
-test("写回落点的编辑语义：前段落非空时，退格 / 前删 / ⇧Enter 的**块序列**与边界位逐字节一致", () => {
+test("写回落点的编辑语义：前段落非空时，退格 / 前删 / ⇧Enter 的**块序列与光标**与边界位逐字节一致", () => {
   // 写回落在「前一段落末缘」这一档时，那一拍按键的模型读回是**段落末缘位**——它必须与边界位
-  // （`{block: n, offset: 0}`）给出同样的编辑结果，否则修光标几何就会顺手改掉编辑行为。
-  // （HC4 的实现注记已把两个位置定义为不同的模型值，此处钉的是它们在**这一档相邻关系**下
-  // 的动词一致性：退格删前块末字符、前删删后一张卡片、⇧Enter 在边界落新空段落。）
-  // **光标位不是这三条的共同判据**：退格 / ⇧Enter 把卡片档代理到前段末缘处理 ⇒ 两条路径同值；
-  // 前删按「整块移除、光标留在被删块原下标」处理 ⇒ 两条路径的落点不同（见循环里的例外分支与
-  // docs/backlog.md 的登记）。M465 收紧 `normalizeComposerCaret` 的折叠后，原先靠折叠判「同一
-  // 等价类」的写法不再成立——判据改成本处更如实的形态。
+  // （`{block: n, offset: 0}`）给出同样的编辑结果（块序列**与落点**），否则修光标几何就会顺手
+  // 改掉编辑行为。HC4 的实现注记把两个位置定义为不同的模型值，此处钉的是它们在**这一档相邻
+  // 关系**下的动词一致性：退格删前块末字符、前删删后一张卡片、⇧Enter 在边界落新空段落。
+  // **前删的落点一度是例外**（M465 暴露、登记 docs/backlog.md）：卡片档按「整块移除、光标留在
+  // 被删块原下标」处理，与写回位那一路的「前段末缘」不同值。M473 把 `deleteForwardAtCaret` 的
+  // 卡片档改成直接复用 `removeBlockAt` ⇒ 两条路径的光标同值，例外分支随之删除（判据回到一条
+  // `assert`，不再分档）。
   const sequences: ComposerBlock[][] = [
     [para("前"), imageBlock, para("后")],
     [para("前"), quote(cardA), imageBlock, para("后")],
@@ -271,16 +295,6 @@ test("写回落点的编辑语义：前段落非空时，退格 / 前删 / ⇧En
         assert.equal(a === null, b === null, `${label}：一边有动作一边没有`);
         if (a === null || b === null) continue;
         assert.deepEqual(a.blocks, b.blocks, `${label}：块序列不一致`);
-        if (op.run === deleteForwardAtCaret) {
-          // **前删是唯一的例外**（M465 暴露、登记在 docs/backlog.md）：卡片档按「整块移除、光标留在
-          // 被删块原下标」（= 后一块前缘）处理，写回位那一路则留在「前段末缘」（光标不动）。两个
-          // 模型值、两个行位——**只在被删卡片的后一块是段落**时可见（后一块是卡片时，两个落点的写回
-          // 位又重合）。M465 之前无条件折叠把两者折成「同一类」，这里因此看不出差别；折叠收紧后按
-          // 各自的落点断言（不在 M465 的改动面：⌃D / Delete 族的光标口径是另一件事）。
-          assert.deepEqual(a.caret, { block: n, offset: 0 }, `${label}：边界位那一路的落点`);
-          assert.deepEqual(b.caret, writeback, `${label}：写回位那一路光标不动`);
-          continue;
-        }
         assert.deepEqual(a.caret, b.caret, `${label}：两条路径的光标必须同值`);
       }
     }
@@ -736,6 +750,24 @@ test("deleteForwardAtCaret：段末遇段落 → 合并", () => {
 });
 
 // ── 卡片移除（× 钮）：光标落被删块的前一个文本块末尾 ─────────────────────────
+
+test("M473 ⌃D / Delete 在卡片前缘：落点与 removeBlockAt 同口径（贴前一段落末缘）", () => {
+  // 缺陷现场（worker-m465 finding）：卡片前缘按 ⌃D，光标从上一行行尾跳到下一行行首——卡片档
+  // 自己写「被删块的原下标」（= 后一块前缘），而同位置的「写回位」那一路按 `removeBlockAt` 的
+  // 「贴前一块末尾」处理，两者落点不同。M473 让卡片档直接复用 `removeBlockAt`（一份实现）。
+  const inner = [para("前"), quote(cardA), para("后")];
+  assert.deepEqual(deleteForwardAtCaret(inner, { block: 1, offset: 0 }), removeBlockAt(inner, 1));
+  assert.deepEqual(deleteForwardAtCaret(inner, { block: 1, offset: 0 })?.caret, { block: 0, offset: 1 });
+  // 前一块是卡片（无可贴的前段落）⇒ 两侧同走「后继块前缘」兜底。
+  const cards = [quote(cardA), imageBlock, para("后")];
+  assert.deepEqual(deleteForwardAtCaret(cards, { block: 1, offset: 0 }), removeBlockAt(cards, 1));
+  assert.deepEqual(deleteForwardAtCaret(cards, { block: 1, offset: 0 })?.caret, { block: 1, offset: 0 });
+  // 唯一块（删掉最后一张卡）⇒ 落回一个空段落。
+  assert.deepEqual(deleteForwardAtCaret([quote(cardA)], { block: 0, offset: 0 }), {
+    blocks: [para("")],
+    caret: { block: 0, offset: 0 },
+  });
+});
 
 test("removeBlockAt：移除中间卡片、光标贴前段末尾", () => {
   const { blocks, caret } = removeBlockAt([para("前"), quote(cardA), para("后")], 1);
