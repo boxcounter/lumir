@@ -102,8 +102,9 @@ pub struct CreateNoteResult {
 // §2 词法
 // ---------------------------------------------------------------------------
 
-/// frontmatter 扫描行数上限（与 src/preview/wikilinks.ts 同口径）。
-const MAX_FRONTMATTER_LINES: usize = 200;
+/// frontmatter 扫描行数上限（与 src/preview/frontmatter.ts 的 MAX_FRONTMATTER_LINES 同口径；
+/// 语义见该常量的论证——词法排除区必须对齐渲染层的 properties 区块）。
+const MAX_FRONTMATTER_LINES: usize = 512;
 
 /// 识别并分解文本中的全部 wikilink（spec §2）。span 为 code point 偏移。
 /// inline code / fenced code block / frontmatter 内部的 `[[...]]` 不识别；
@@ -1186,6 +1187,62 @@ mod tests {
     fn unmatched_backtick_run_is_literal() {
         // 找不到闭合串时反引号按原文（GFM），其后的链接照常识别。
         assert_eq!(links_of("`开头 [[Beta]]"), [("Beta".to_string(), false)]);
+    }
+
+    fn link_paths_in(doc: &str) -> Vec<String> {
+        parse_links(doc).into_iter().map(|l| l.path).collect()
+    }
+
+    #[test]
+    fn frontmatter_exclusion_follows_ts_scan_limit() {
+        // 首部区块跨过 200 行（旧上限）：闭合围栏第 302 行，区块内的链接按 frontmatter 排除，
+        // 区块后的链接照常识别——与 src/preview/frontmatter.ts 的 scanFrontmatter 同口径。
+        // 内嵌链接固定在第 250 行（>200、<512）：旧上限下区块整段不算 frontmatter，该链接会被
+        // 误识别，本断言据此判红（反向验证见 mission 报告）。行长用字面值、不引用受测常量，
+        // 否则常量变小会把文档一起缩短，测试对上限变化失去区分度。
+        let mut doc = String::from("---\n");
+        for i in 0..300 {
+            if i == 248 {
+                doc.push_str("note: \"[[InFm]]\"\n");
+            } else {
+                doc.push_str(&format!("key{i}: value\n"));
+            }
+        }
+        doc.push_str("---\n[[After]]\n");
+        assert_eq!(link_paths_in(&doc), ["After".to_string()]);
+    }
+
+    #[test]
+    fn frontmatter_limit_matches_ts_constant() {
+        // 上限的唯一真源在 src/preview/frontmatter.ts；本常量是第二份，改动只落到一处即静默
+        // 漂移（REVIEW.md 第 8 条），故机械断言两侧相等。
+        let source = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../src/preview/frontmatter.ts"
+        ))
+        .expect("读不到 src/preview/frontmatter.ts");
+        let prefix = "export const MAX_FRONTMATTER_LINES";
+        assert_eq!(
+            source.matches(prefix).count(),
+            1,
+            "frontmatter.ts 里应恰好有一处 {prefix}（口径真源唯一）"
+        );
+        let line = source
+            .lines()
+            .find(|line| line.trim_start().starts_with(prefix))
+            .expect("frontmatter.ts 缺 MAX_FRONTMATTER_LINES 声明");
+        let value = line
+            .split('=')
+            .nth(1)
+            .expect("声明行缺 = 号")
+            .trim()
+            .trim_end_matches(';')
+            .trim();
+        assert_eq!(
+            value.parse::<usize>().expect("右侧不是整数字面值"),
+            MAX_FRONTMATTER_LINES,
+            "Rust 上限与 frontmatter.ts: {line}"
+        );
     }
 
     #[test]
