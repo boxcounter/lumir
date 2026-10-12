@@ -17,7 +17,7 @@ use crate::commands::CommandError;
 
 use super::approval::{ApprovalDecision, ApprovalRequest, ApprovalSignal};
 use super::jsonl::JsonlWriter;
-use super::llm::Usage;
+use super::llm::{normalize_reasoning_item, Usage};
 use super::permissions::DecisionReason;
 use super::thinking::ThinkingEffort;
 
@@ -314,6 +314,14 @@ impl Session {
         thinking_effort: ThinkingEffort,
         jsonl: JsonlWriter,
     ) -> Self {
+        // 回放形状归一（M464）：恢复旧会话时灌回的 input 里，reasoning 项可能仍是带 `rs_*`
+        // id 的旧形状（记录早于本改动）；会话 input 是 wire 请求的**唯一事实源**，在此归一
+        // 保证其后每条 llm_request 与 wire body 都不再带 id。新会话 input 为空、非 reasoning
+        // 项原样通过，故幂等无副作用（[`normalize_reasoning_item`] 对非 reasoning 项是 no-op）。
+        let input: Vec<serde_json::Value> = input
+            .into_iter()
+            .map(|item| normalize_reasoning_item(&item))
+            .collect();
         Self {
             root,
             system,
@@ -590,22 +598,25 @@ pub fn user_item(text: &str) -> serde_json::Value {
     })
 }
 
-/// assistant 消息项（文本 + 可选 reasoning 项原文，reasoning 按各厂规则原样回传）。
+/// assistant 消息项（文本 + 可选 reasoning 项，reasoning 按各厂规则归一回放形状）。
 ///
 /// Responses API 的回放口径：assistant 输出以 message 项承载（content 用 `output_text`），
-/// reasoning 项作为独立项**紧随其前**——kimi 的 `encrypted_content` 项、deepseek
-/// thinking 的 `reasoning_text` content parts 项同此位置（deepseek 带 tools 时
-/// 不回传即 400，M306 真机实测；协议依据见 [`super::llm`] 模块文档）。
+/// reasoning 项作为独立项**紧随其前**——kimi 的 `summary` 项、deepseek thinking 的
+/// `content` reasoning_text parts 项同此位置（deepseek 带 tools 时不回传即 400，M306 真机
+/// 实测；协议依据见 [`super::llm`] 模块文档）。reasoning 项经
+/// [`super::llm::normalize_reasoning_item`] 归一（M464：**剥掉 `id`**、保
+/// summary/content/encrypted_content）——恢复旧会话时记录里的 reasoning 可能仍是带 `rs_*`
+/// id 的旧形状，这道归一是**回放构造**上的兜底（新会话在捕获侧已归一，此处幂等）。
 ///
 /// **空正文不发消息项**（M372，真 API 实测）：`text` 为空时（工具轮只发调用、无正文）
 /// 返回里只有 reasoning 项、没有 assistant 消息项——空 `output_text` 会原样进下一次
 /// 请求的 input，Kimi Code 订阅端（`k3-256k` 等，兼容层）即以
-/// `Invalid request: text content is empty` 400 拒掉整条请求。reasoning 项仍原样回传
+/// `Invalid request: text content is empty` 400 拒掉整条请求。reasoning 项仍照上述形状回传
 /// （M306 纪律一行不改）。
 pub fn assistant_item(text: &str, reasoning: Option<&serde_json::Value>) -> Vec<serde_json::Value> {
     let mut items = Vec::new();
     if let Some(r) = reasoning {
-        items.push(r.clone());
+        items.push(normalize_reasoning_item(r));
     }
     if !text.is_empty() {
         items.push(serde_json::json!({
@@ -645,20 +656,21 @@ mod tests {
 
     /// M372：空正文的 assistant 消息项不进回放 input（Kimi Code 订阅端对空 `output_text`
     /// 整条 400：`Invalid request: text content is empty`）。reasoning 项不受文本空否影响，
-    /// 按 M306 纪律原样回传。
+    /// 按 M306 纪律回传（M464 起先归一回放形状——剥 id）。
     #[test]
     fn assistant_item_omits_empty_text_message() {
         // 空正文且无 reasoning：什么都不产出（工具轮的常态——调用项另走
         // function_call_item，不经本函数）。
         assert!(assistant_item("", None).is_empty());
-        // 空正文但有 reasoning：只有 reasoning 项。
+        // 空正文但有 reasoning：只有 reasoning 项（归一后 id 被剥，其余字段照旧）。
         let reasoning = serde_json::json!({"type": "reasoning", "id": "rs_1"});
         let items = assistant_item("", Some(&reasoning));
-        assert_eq!(items, vec![reasoning.clone()]);
+        assert_eq!(items, vec![serde_json::json!({"type": "reasoning"})]);
         // 非空正文：reasoning 在前、消息项在后（M306 形状不变）。
         let items = assistant_item("答案", Some(&reasoning));
         assert_eq!(items.len(), 2);
-        assert_eq!(items[0], reasoning);
+        assert_eq!(items[0], serde_json::json!({"type": "reasoning"}));
+        assert!(items[0].get("id").is_none(), "回放项不得带 id");
         assert_eq!(items[1]["role"], "assistant");
         assert_eq!(items[1]["content"][0]["type"], "output_text");
         assert_eq!(items[1]["content"][0]["text"], "答案");
@@ -666,6 +678,74 @@ mod tests {
         let items = assistant_item("只有正文", None);
         assert_eq!(items.len(), 1);
         assert_eq!(items[0]["role"], "assistant");
+    }
+
+    /// M464：回放构造对 reasoning 项归一（剥 id、保 summary/encrypted_content）——覆盖
+    /// 「任何路径产物中不出现 id」里的回放 input 半边。三形态：新会话带 blob / 旧会话无 blob
+    /// 降级为「摘要无 id」/ 非 reasoning 项原样。
+    #[test]
+    fn assistant_item_normalizes_reasoning_replay_shape() {
+        let with_blob = serde_json::json!({
+            "type": "reasoning", "id": "rs_new", "status": "completed",
+            "summary": [{"type": "summary_text", "text": "新摘要"}],
+            "encrypted_content": "blob-9"
+        });
+        let items = assistant_item("答", Some(&with_blob));
+        assert!(items[0].get("id").is_none(), "id 必须剥掉：{}", items[0]);
+        assert_eq!(items[0]["encrypted_content"], "blob-9");
+        assert_eq!(
+            items[0]["summary"],
+            serde_json::json!([{"type": "summary_text", "text": "新摘要"}])
+        );
+
+        // 旧会话（无 blob）：降级为「摘要无 id」——仍是合法回放项，比带 id 更合官方口径。
+        let old = serde_json::json!({
+            "type": "reasoning", "id": "rs_old",
+            "summary": [{"type": "summary_text", "text": "旧摘要"}]
+        });
+        let items = assistant_item("", Some(&old));
+        assert_eq!(
+            items,
+            vec![serde_json::json!({
+                "type": "reasoning",
+                "summary": [{"type": "summary_text", "text": "旧摘要"}]
+            })]
+        );
+    }
+
+    /// M464：恢复旧会话时灌回的 input 在 [`Session::new`] 处归一回放形状——记录早于本改动、
+    /// reasoning 项仍带 `rs_*` id，会话 input 是 wire 请求的唯一事实源，归一后其后每条请求都
+    /// 不带 id。非 reasoning 项（user / assistant 消息）逐字节不变。
+    #[test]
+    fn session_input_normalizes_legacy_reasoning_items() {
+        let restored = vec![
+            serde_json::json!({"role": "user", "content": [{"type": "input_text", "text": "问"}]}),
+            serde_json::json!({"type": "reasoning", "id": "rs_legacy",
+                "summary": [{"type": "summary_text", "text": "旧思考"}]}),
+            serde_json::json!({"role": "assistant", "content": [{"type": "output_text", "text": "答"}]}),
+        ];
+        let session = Session::new(
+            std::path::PathBuf::from("/tmp/lumir-m464-session-test"),
+            "sys".into(),
+            restored,
+            ThinkingEffort::default(),
+            JsonlWriter::at_path(
+                std::path::PathBuf::from("/tmp/lumir-m464-session-test/x.jsonl"),
+                &serde_json::json!({}),
+            ),
+        );
+        let input = session.input();
+        assert_eq!(input.len(), 3);
+        assert!(
+            input[1].get("id").is_none(),
+            "恢复的 reasoning 项不得带 id：{}",
+            input[1]
+        );
+        assert_eq!(input[1]["type"], "reasoning");
+        assert_eq!(input[1]["summary"][0]["text"], "旧思考");
+        // 非 reasoning 项逐字节不变。
+        assert_eq!(input[0]["role"], "user");
+        assert_eq!(input[2]["role"], "assistant");
     }
 
     // ---- M443：缓存读数（会话累计 / 单回合 / 成因标注 / 序列化键集合） ----
