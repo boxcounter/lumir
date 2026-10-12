@@ -134,7 +134,7 @@ export function checkScenario(scenario) {
   for (const k of Object.keys(scenario.config ?? {})) {
     if (!SCENARIO_CONFIG_KEYS.includes(k)) push(`config 未知键 ${k}（拼错即静默不生效，允许：${SCENARIO_CONFIG_KEYS.join(" / ")}）`);
   }
-  // `config.editor`（M379，backlog「`[editor]` 表整表透传」）：**整表透传**的 `[editor]` 表（snake_case 键），给
+  // `config.editor`（M379，backlog「验收套件表达力缺口」条的「`config` 通道只透传 `keys`」项）：**整表透传**的 `[editor]` 表（snake_case 键），给
   // 「M180 之后新增的 editor 配置项」构造启动口径用——不写这条，每个新键都要回来改一次套件。
   // 写成非表（如列表 / 字符串）时 writeConfig 会把它当普通值铺开，静默丢掉半张表，故在此挡住。
   if (scenario.config?.editor !== undefined && !isPlainTable(scenario.config.editor))
@@ -1062,7 +1062,7 @@ export async function runScenario(ctx, scenario) {
     // 场景 front-matter 的 `config:` **不在这里生效**：它由 run.mjs 在 `launchApp()` 之前
     // 折进隔离 config.json（M284）——早先在这里是「起一次 app → 写配置 → 重启」，每个声明
     // config 的场景都多付一次重启。折叠之后 app 的**首帧**就是场景声明的起点，语义更强
-    // （与 backlog「窗口配置只有一份真源」同一取向）。
+    // （与窗口配置只有一份真源同一取向，见 REVIEW.md 第 8 条）。
     if (scenario.open) {
       await openFile(cu, ctx.pid, scenario.open, { marker: scenario.marker });
       evidence.record({ kind: "note", text: `已打开 ${scenario.open}` });
@@ -1638,7 +1638,7 @@ async function doAction(step, { ctx, cu, scenario, vars, pid, evidence }) {
         // 界面语言（M282）同形沿用：一次 configWrite MUST NOT 抹掉 `ui.language`
         //（本场景的第一步就要把语言设成 zh，后续步骤若抹掉它，语言切换的起点就没了）。
         language: step.language !== undefined ? step.language : cur.ui?.language,
-        // `[editor]` 表**整表透传**（M379，backlog「`[editor]` 表整表透传」）：当前表整份带过来、`step.editor` 覆盖，
+        // `[editor]` 表**整表透传**（M379，backlog「验收套件表达力缺口」条的「`config` 通道只透传 `keys`」项）：当前表整份带过来、`step.editor` 覆盖，
         // 具名参数（autoIndent / 排版三项…）在 writeConfig 里排在这张表之后，显式值仍然优先。
         //
         // 为什么要有这条：早先这里逐键列举，M180 新增的 `editor.line_wrap` / `code_block_wrap`

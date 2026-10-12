@@ -50,7 +50,7 @@ runner 在启动前做预检，不满足直接退出且不产生半截证据：
 的前台归属；**拿不到前台就报 FAIL**，不静默跳过、也不改用 `set_value` 伪造键盘语义（`set_value`
 不经键位分发链路，验不到 `keys.ts`）。副作用：跑套件期间 Lumir 窗口会到前台。
 
-**启动实例的窗口形态自检**（M236，修「套件覆写窗口配置丢掉 overlay 标题栏」缺口）：`waitAppReady` 每次就绪（含 `restart` 后重启）
+**启动实例的窗口形态自检**（M236，修「套件覆写窗口配置丢掉 overlay 标题栏」缺口——窗口配置只有一份真源，见 REVIEW.md 第 8 条）：`waitAppReady` 每次就绪（含 `restart` 后重启）
 都反查一遍「webview 铺满整窗」——`AXScrollArea` 的顶边与高度对 `AXWindow` 的差 ≤4px。不是 overlay
 就报 FAIL 并点名成因。
 
@@ -198,7 +198,7 @@ effort 能力 / 上下文窗口按声明现算。**M381 起内置 preset 表彻�
 `cache_write_tokens` → `cached_tokens` → `input_tokens` → `output_tokens` 这样的字母序写
 （M443 实测：把 `cache_write_tokens` 写在 `input_tokens` 之后的断言恒不命中）。
 
-`editor`（M379，`[editor]` 表整表透传）是**整表透传**的 `[editor]` 表：`config: { editor: { line_wrap: false,
+`editor`（M379，backlog「验收套件表达力缺口」条的「`config` 通道只透传 `keys`」项）是**整表透传**的 `[editor]` 表：`config: { editor: { line_wrap: false,
 future_key: 42 } }` 原样写进 `editor` 表（snake_case 键，非表即由 `--check` 挡住）。给「新增的
 editor 配置项」构造**启动口径**用——不必每加一个键就回来改套件；同名字段仍由具名键（`lineWrap`
 / `codeBlockWrap` / `autoIndent` / 排版三项 / `mode`）优先。`configWrite` 动作的 `editor:` 是同一
@@ -287,7 +287,7 @@ editor 配置项」构造**启动口径**用——不必每加一个键就回来
 | `vaultWrite` / `vaultAppend` | `file`、`content` | 从外部改写验收 vault（模拟外部修改） |
 | `vaultRm` | `file` 或 `files` | 从外部**真删除**（不存在即报错）——触发 `fs_not_found` 与「保存冲突」是两条不同分支 |
 | `vaultSparse` | `file`、`size`（正整数，字节）、`vault?` | `ftruncate` 出一个「大小 = size、内容为零、几乎不占磁盘」的稀疏文件。用途：把 app 的**按大小拒绝**分支（50MB 上限）变成可达，或给**瞬时状态**（装载指示这类）撑开观察窗（场景 49 / 60）。`vault: "second"` 指定写入第二个合成 vault——**撑窗口的放大器必须落在切换目标那一侧**（场景 60：切换目标是 B，窗口就在 B 的装载段）；缺省是验收 vault |
-| `configWrite` | `lastVault`、`keys`、`restart`、`requireVault`、`theme`、`contentWidth`、排版三项、`autoIndent`、`editor` | 改写隔离 config.json（默认重启 app）。`lastVault` **缺省沿用当前值**（显式给才覆盖）——启动恢复的失效路径靠它把 `last_vault` 指向一个不存在的目录；`requireVault: false` 只放宽本步重启的就绪门（见下条）。`theme` / `contentWidth` / 排版三项 / `autoIndent`（M272，`editor.auto_indent`）同样**缺省沿用当前值**（M228 起含 `ui.content_width`）：一次 configWrite MUST NOT 把前面设过的键连表抹掉。**`editor`（M379，`[editor]` 表整表透传）**：给一张 `[editor]` 表（snake_case 键）**整表透传**——当前表整份带过来、这张表覆盖，具名参数仍优先。用于构造「M180 这类新增 editor 配置项」的启动口径，新键不必回来改套件；同一张表也可直接写在 front-matter 的 `config: { editor: … }` 里（起 app 之前生效） |
+| `configWrite` | `lastVault`、`keys`、`restart`、`requireVault`、`theme`、`contentWidth`、排版三项、`autoIndent`、`editor` | 改写隔离 config.json（默认重启 app）。`lastVault` **缺省沿用当前值**（显式给才覆盖）——启动恢复的失效路径靠它把 `last_vault` 指向一个不存在的目录；`requireVault: false` 只放宽本步重启的就绪门（见下条）。`theme` / `contentWidth` / 排版三项 / `autoIndent`（M272，`editor.auto_indent`）同样**缺省沿用当前值**（M228 起含 `ui.content_width`）：一次 configWrite MUST NOT 把前面设过的键连表抹掉。**`editor`（M379，backlog「验收套件表达力缺口」条的「`config` 通道只透传 `keys`」项）**：给一张 `[editor]` 表（snake_case 键）**整表透传**——当前表整份带过来、这张表覆盖，具名参数仍优先。用于构造「M180 这类新增 editor 配置项」的启动口径，新键不必回来改套件；同一张表也可直接写在 front-matter 的 `config: { editor: … }` 里（起 app 之前生效） |
 | `clipboardImage` | `synth: { width, height, seed }`（三个正整数，全可选） | **合成一张 png 并置入系统剪贴板**（M416，change paste-clipboard-image）：`scripts/acceptance/lib/png.mjs` 手写 PNG 编码器（`node:zlib`，零新增依赖）+ 确定性「类截图」生成器（同 `seed` ⇒ 逐字节相同的图，S2 的跨笔记去重据此可复现）；落盘到临时目录后经 `osascript` 的 `«class PNGf»` 置剪贴板（pasteboard 上同时出现 `public.png` + `public.tiff`，即系统截图的形态）。**二进制 fixture 不落 git**——分辨率是场景参数，能生成的东西不落二进制。动作把合成图的分辨率与**字节数**写进证据（`note`），S5 的体积实证取它做「剪贴板侧」读数 |
 | `clipboardText` | `text`（字符串） | 把纯文本置入系统剪贴板（M416 场景 114：文本粘贴回归的输入面）。与 `clipboardRead` / `clipboardImage` 同一条固定命令纪律，不开通用 shell 通道 |
 | `note` | `text`（可选）、`file`（可选，支持 glob） | **证据型读数**（M416）：把一句文本写进证据目录；`file` 给了就附上命中文件（glob 取 mtime 最新一份）的 `size`。给**不卡 PASS/FAIL 的实证场景**用（S5 的转码体积）——它不是断言形态，判不判红由场景自己另写断言 |
@@ -444,12 +444,12 @@ PASS，只有锚定那条 FAIL）。要锚定这类行，把 `- [\d+] ` 前缀�
     └── ax/NN-*.txt       # 断言失败时的 AX dump（复盘用）
 ```
 
-**一次 run 的目录只含本次 run 的产物**（M379，backlog「场景证据目录跨 run 累积」条）：`startScenario` 会把
+**一次 run 的目录只含本次 run 的产物**（M379，backlog「验收套件表达力缺口」条的「场景证据目录跨 run 不清空」项）：`startScenario` 会把
 `<场景 id>/` **整个目录重建**后再落盘。此前只 `mkdirp`，同一天重复跑同一场景（迭代调试的常态）
 时序号重新计、旧文件被覆盖一半留下一半——实测同一目录里同时存在两轮的 `01-首开.txt`，复盘时
 会把上一轮的 dump 当本轮结论（REVIEW.md 第 2/7 条同族）。
 
-**索引是跨 run 增量合并的**（M379，backlog「批次报告索引」的 M254 / M256 条）：`summary.md` / `results.json` 按场景
+**索引是跨 run 增量合并的**（M379，backlog「待修 findings」的 M254 / M256 条）：`summary.md` / `results.json` 按场景
 id 并入——同一场景取最近一次 run 的行（表里的 `跑于` 列即那次 run 的时间），其余场景保留原行。
 同一天跑多次单场景、或多 mission 共用同一日期目录时，索引因此不再只反映最后一次 run
 （M256 的全量批曾把同一天早先三个 mission 的场景目录换掉、索引一并只剩本批）。

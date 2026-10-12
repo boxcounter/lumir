@@ -8,7 +8,7 @@
 
 > 用途：回答「有什么可配、默认是什么、改了什么时候生效」。应用内 `describe-config` 面板（照
 > `describe-bindings` 的模式：每键当前生效值 / 出厂值 / 改法）是**另立项**的中期能力（原 backlog 的
-> 「配置参考文档 / describe-config 面板」条的第②项；去向记于 backlog「记录在案」的「describe-config 面板」条），
+> 「配置参考文档 / describe-config 面板」条的第②项；去向记于 backlog「承接残项」的「describe-config 面板」条），
 > 本文档不依赖它。
 
 ## 1. 键值表
