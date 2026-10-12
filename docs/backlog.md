@@ -19,18 +19,12 @@
 
 - **harness ctx% meter 的分母口径（暂缓，待 M464 修复的活体验证后重估）**（M463/M464，2026-10-12）：原结论「端点实际生效输入上限 ≈ 名义窗口 38%」**已作废**（Alex 驳回并实证：同端点 k3-256k 成功服务到 234,656 input tokens = 名义窗口 91%，零真实 token limit 报错）。M464 三发对照探测钉死膨胀源 = **reasoning 项本身**（62 条思考摘要在上限闸被计成 ≥18.6 万 token，与用量报价差约 8 倍；与 `rs_*` id 无关），修复取 OpenAI `store:false` 模式（请求 `include:["reasoning.encrypted_content"]`、回放剥 id）。**分母裁决等该修复的活体验证**；在此之前超限兜底靠 M463 的「自动压缩重试」。附带口径决策仍待裁：超限时 meter 是否同步读数（现行错误路径 return 早于 `record_usage`，读数停在旧值）。证据 `test-results/m464-probe/`（git 外）。
 - **「在途停止丢掉该轮的 reasoning 回放项」是否触发 400**（M369，2026-10-07，medium）：未实测、**需真 API 才能定性**，下批排真 API 探针；在此之前 MUST NOT 当缺陷修。落点 `src-tauri/src/harness/llm.rs` 的 `parse_sse_reader` 与 `turn.rs` 的 `abort_turn`。指针 `.tower/comms/findings/20261007-worker-sts1-improve-reasoning-provider-backlog.md`。
-- **m133 键位面板基线待 Alex 过目**（M455 尾巴，2026-10-11）：M447 给 `text` 作用域键位加长来由文案 ⇒ 整页像素 4%（32685px）重排；结构断言全过。截图副本在 `test-results/m455-m133-baseline/`（git 外），**Alex 说「通过」后才 `--update`**（AGENTS.md「基线更新是人肉裁决点」）；在此之前 `gate.sh visual` 的唯一红即此条。
 - **M251 的两张菜单基线（23px 真实差异）是否重建**（2026-09-27）：新高亮让菜单左上角圆角处透出的底色变化，未重建（零容差读数 `test-results/m251/baseline-review/tree-menu-menu-target/`）；基线更新是人肉裁决点。
 - **共享 `CARGO_TARGET_DIR` 与 dev-only 脚本化驱动入口**（工具链节 2/3 的长期候选）：是否立项待裁。副作用现状：跨 worktree 复用旧测试二进制曾致假绿（见「待修 findings」的同名条）。
 
 ## 已裁已立项（落地由 tower 派发的 mission 承担）
 
-- **跨语言 frontmatter 上限对齐 512** → M469（已合并）：Rust `src-tauri/src/link_graph.rs` 的 200 对齐 TS `src/preview/frontmatter.ts` 的 512（附跨语言一致性单测或 bindings 下发，二选一）。
-- **`save_markdown` 的 CAS 窗口收窄（方案 a）** → M470：rename 前重取 `(dev, ino, mtime, size)` 与 CAS 快照比对，不符报 `document_conflict`；窗口缩到微秒级但仍有理论间隙（方案 b 见「记录在案」）。
-- **前端单测层进 CI** → M471：`visual.yml` 已有 node + pnpm 环境，加一行 `pnpm test`（`tests/unit` 现只接进本地 `gate.sh quick`）。
-- **远程 http(s) 图片：删直连分支（方案 a）** → M472：并入可见占位、成因中立文案；若要支持联网取图，需先裁「是否允许联网」再改 CSP + Rust 侧代理（独立 change）。
-- **composer 三处导航口径（Alex 2026-10-12 裁）** → M473：① 卡片档前删（⌃D / Delete）对齐 `removeBlockAt` 同口径；② 词步（⌥F / ⌥B）卡片档对齐段落档（⌥B 回本段词首）；③「末尾之后」写回取保守案——保持模型值、只把写回落到最后一块边界修可见性。
-- **横滚代码块内缩（方案 b）+ 块级横滚容器焦点入口** → M474：代码块横滚容器加左缩进 / 视觉边界并重拍相关整页基线（人肉裁决点）；`editor.focus-block-scroll` 一类新键把焦点交给当前光标所在块的横滚容器，M132 收编的那五条 widget 滚动键（`←` `→` `Home` `End` `Escape`）因此重新可达。
+- **文档收口小批** → M476（2026-10-12 立项）：M472 finding（attachment-display spec 三处与 deck 成因枚举失真，改准为「远程引用不发起请求、落可见占位」）、M471 finding（README 与 AGENTS.md 的 visual.yml 描述滞后，M471 已把 pnpm test 接进 CI）、M467 finding（跨仓断链/旧编号引用收口，backlog 引用一律改主题关键词锚）、M475 finding（D412–D460 编号沿革回填）、M474 retro change（keymap-commands 与 editor-live-preview 两份 living spec 的「无焦点入口」记述改准为 ⌃⌥S `editor.focus-block-scroll` 已落地）。
 
 ## 承接残项（仍在生效的长期口径 + 未闭合尾巴）
 
@@ -46,8 +40,15 @@
 
 - **验收 82/121 在未改动的 master 上即已 FAIL（交付序列化的 quote / msg-quote 断言不命中）**（worker-m456，2026-10-11，medium，**待归因、不在 M456 scope**）→ 82-quote-card-mixed-edit 与 121-harness-message-excerpt 在未改动 master（`2608e64`）上即 FAIL，此前是绿的（82：10-06/07/08 PASS；121：10-10 PASS）；断言读到的是系统装配记录（`assembly`），期望的 `<quote …>` / `<msg-quote …>` 交付文本不在其中，根因候选面是 `src/quote-card.ts` 的 projectDelivery / serializeDelivery 与 `src/harness-panel.ts` 的投递投影（约 M454 `6f2b614`）。复现：`node scripts/acceptance/run.mjs 82` → `0/1 PASS`。指针 `.tower/comms/findings/20261011-worker-m456-bug-82-121-master-fail-quote-msg-quote.md`。
 
+- **tests/unit 在机器有负载时间歇红：三条用例读的是 syntaxTree 过期快照**（worker-m471，2026-10-12，**high**）→ M471 已把 pnpm test 接进 CI（visual.yml），该 flake 会直接在 CI 显现。指针 `.tower/comms/findings/20261012-worker-m471-bug-tests-unit-syntaxtree.md`。
+- **`fs_patch_file` 有与 `save_document` 同款的 CAS→rename 静默覆盖窗口**（worker-m470，2026-10-12，medium，vuln）→ M470 只收窄了 `save_document`；修法可复用 M470 的 RenameGuard 形态。指针 `.tower/comms/findings/20261012-worker-m470-vuln-fs-patch-file-save-document-cas-rename-m470-save-document.md`。
+- **harness 面板的外链打开失败一律静默（无 toast）**（worker-m460，2026-10-12，medium）→ 点「看起来能点」的链接零反馈。指针 `.tower/comms/findings/20261012-worker-m460-improve-harness-toast.md`。
+- **登录 shell PATH 解析失败静默回退，无可观测信号**（worker-m466，2026-10-12，low，idea）→ M466 后续候选。指针 `.tower/comms/findings/20261012-worker-m466-idea-shell-path-m466.md`。
+- **worker 长命令用 sleep 盲等轮询（反模式），须沉淀纪律**（tower，2026-10-12，low）→ 落点 = 纪律文本（worker briefing / AGENTS.md）。指针 `.tower/comms/findings/20261012-tower-improve-worker-sleep.md`。
+- **render-codeblock.spec.ts 缺 ⌃⌥S 焦点入口的常驻结构断言**（worker-m474 建议、reviewer-m474 附议，2026-10-12，low）→ M474 用临时 spec 验过的三条断言（⌃⌥S 交焦容器 / `→`=120px / Escape 交还）用完即删、未入库，键盘入口暂无机器判据；断言形态见 M474 完工报告。指针：无独立 finding。
+
 - **composer 导航写回：后块是段落时行级命令把光标写到下一段段首**（worker-m462，2026-10-12，medium，**M465 已修、待验收**）→ 根因在读侧（`normalizeComposerCaret` 无条件把段落末缘折成后块前缘，折出的模型值描述的是下一行行首）；M465 收紧折叠条件。指针：无独立 finding（原文见 git 历史）。
-- **「末尾之后」的光标写回仍是块级容器边界：caret 几何为零**（worker-m457，2026-10-12，low，**M473 承接**）→ M465 选了折叠层修法、不动它；口径见 `docs/specs/harness-composer.md` 的 HC3 已知边界与 §实测依据 M465 节。
+- **「末尾之后」写回：主档已由 M473 修，末块是空段落 / 卡片两子档保留块级边界（可见性未收口）**（worker-m457，2026-10-12，low）→ 空段落子档与「空段落前缘」写回位重合、卡片子档无文本末缘宿主，均受「一步必有位移」机器判据强制保留；收口需先改模型语义或 DOM 结构。口径见 `docs/specs/harness-composer.md` 的 HC3 已知边界。
 - **两卡相邻之间无法用 IME 组合输入**（worker-m457，2026-10-12，medium，待修/待验收）→ 组合需要一个可编辑的行内宿主；边界位只派 `beforeinput`、`Range(composer, N)` 量不出 caret 几何（WebKit 与 Blink 同）。指针：无独立 finding。
 - **M457 的 WebKit 探针未入 git：DOM 层的永久回归判据缺位**（worker-m457，2026-10-12，medium）→ 核心缺陷只在 DOM / 引擎层可见，探针形状见 `test-results/m462-probe/`。指针 `.tower/comms/findings/20261012-worker-m457-improve-composer-dom-m457-git.md`。
 - **像素类验收场景的窗口几何不再被钉住 ⇒ 坐标静默腐烂**（worker-m462，2026-10-12，medium，117 已加固、其余未扫）→ 套件 `--config` 只钉位置不钉尺寸，M437 起尺寸按工作区 90% 现算；几何一漂整片读到亮度跨度 0，且与「元素不在场」不可区分。指针 `.tower/comms/findings/20261012-worker-m462-improve-m437-117-m456-m462.md`。
@@ -176,7 +177,7 @@
 - **dogfood 性能专项（攒批）**：内存合同存量超标（2026-09-06 evidence 218–222MB 已超 <200MB 合同，现门禁 250MB——放宽合同还是专项治理随该专项拍板）；perf 端点 `open-1mb-file` 从「磁盘 IO 占位口径」修订为真实打开路径（现端点只量读文件 + UTF-8 解码，却被 100ms 绝对阈值 enforce）；「用户主动打开 / 切换 vault」仍走同步路径（真实 vault 约 125ms、4× 规模约 770ms，被动恢复那段已由 M159 移出主线程）；vault 切换缺 perf 门禁端点（见「待修 findings」同名条）。
 - **链接形态矩阵三处口径：维持现状**（tower 2026-10-12 裁）：相对路径**非 md** 带 `↗︎`（语义「会离开本应用」）；**纯锚点**带 `→` 但激活只给「暂不支持锚点跳转」toast；`[x](note.md#sec)` 按「应用内跳转 + 锚点部分忽略」。落点 `src/preview/links.ts` 的 `classifyLinkTarget` 与 `src/main.ts` 的 `followLink`。
 - **`save_markdown` 原子替换方案（CAS 窗口方案 b，未采用）**：macOS `renameatx_np(RENAME_SWAP)` 原子交换 + 读交换出的旧内容算 hash 与 `expected_revision` 比对、不符则 swap 回来报冲突；回滚语义（swap 回失败怎么办）要单独设计，属独立 mission。M470 走方案 a（收窄）。
-- **composer 的两处「一步必有位移」既有豁免档**（M465 未折，不是改动面）：卡片前缘 `(i,0)` 与其前空段落前缘 `(i-1,0)` 写回同位（两模型位编辑语义不同）；「末尾空段落前缘」与「末尾之后」同为零几何位（本通道无法读出绘制位置）。收口先要一条能读「绘制位置」的通道或由 Alex 裁这两档的表现。
+- **composer 的「一步必有位移」既有豁免档（M473 后口径收窄）**：卡片前缘 `(i,0)` 与其前空段落前缘 `(i-1,0)` 写回同位（两模型位编辑语义不同）；「末尾之后」在末块是空段落 / 卡片时仍为块级容器零几何位（M473 已把主档写回落到末块文本末缘，两子档受机器判据强制保留，见「待修 findings」同名条）。收口先要一条能读「绘制位置」的通道或由 Alex 裁这两档的表现。
 - **增量建图：暂缓**（M283 裁）：`build_graph` 的持久化缓存本阶段不做（收益与索引一致性风险不成比例）。
 - **树 DOM 虚拟化：否决**（M283 裁）：否决依据是代码结构（切换路径上的 DOM 行数 = 根级条目数，不是「一次建出 8000+ 行」），代价是跨 capability 高风险重写。
 - **M455 收尾尾巴**：真机复跑（138/140/144/145 与 hover 族 76/87/131/132/133/134）由 tower 统一安排；145 同族观察（面板 keydown 的 `mod+z` 把 ⌘Z 与 ⌃Z 都当就地 undo）留给 change 属主裁是否收窄。
@@ -213,6 +214,7 @@
 7. **同机第二个 Lumir 实例显著加剧 press_key 丢键**：跑真机验收前的预检须同时确认 1420（dev）与 1430（验收）都没有 Lumir 实例在跑。
 8. **孤儿进程巡检**：批次收尾回收 `ps -o pid,ppid,etime,command | grep -E 'playwright|chromium|vite preview'` 中 ppid=1 且 elapsed > 1 天的孤儿；**别碰 Alex 的 dogfood 实例（1420 端口的 vite / `target/debug/lumir`）**。
 9. **批次内 target 纪律**：每个 worktree 同一时刻至多一份 cargo target，最后一次 cargo 门禁跑完立即删 target 并广播释放，进真机验收前 `df -h`、<3G 不起构建（详见「记录在案」的沉淀建议）。
+10. **真机探针的发键通道可泄漏到真实前台 app**（tower，2026-10-12，medium）：IME 组合态不可合成；探针执行期间注意前台焦点归属。指针 `.tower/comms/findings/20261012-tower-improve-app-ime.md`。
 
 ## 批次报告索引
 
