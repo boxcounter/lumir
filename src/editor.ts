@@ -8,7 +8,7 @@ import type { ViewUpdate } from "@codemirror/view";
 export type ScrollSnapshot = ReturnType<EditorView["scrollSnapshot"]>;
 import { history, redo, undo } from "@codemirror/commands";
 import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
-import { DEFAULT_AUTO_INDENT, enterWithAutoIndent } from "./enter-indent";
+import { DEFAULT_AUTO_INDENT, enterWithAutoIndent, swallowNativeListBeforeInput } from "./enter-indent";
 // M447：词 / 字素簇扫描与 kill 槽的**共用**实现（两侧只有一份）住在叶子模块 src/quote-card.ts
 // ——composer 侧的模块图必须能进零 DOM 单测，而本模块的 import 图里有参数属性，两侧不能直接互
 // import（同 src/enter-indent.ts / src/list-indent.ts 的模块头所述）。
@@ -1600,6 +1600,15 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
         run: (view) => enterWithAutoIndent(view, mode, autoIndent),
       }]),
     );
+    // M461②：md 模式在 DOM 输入入口拒收 WebKit 原生自动列表（insertOrderedList /
+    // insertUnorderedList）——组合期重复插入 marker 的插入者（探针证据 test-results/
+    // m461-probe/readings.md）。英文直输无这两个事件，拦截对英文路径零影响；编辑器的
+    // 列表语义只有裸 marker 行特判 + 上游续行 + TAB 缩进一条合法路径。判定本体在
+    // src/enter-indent.ts（可单测），这里只做装配。
+    const nativeListGuard =
+      mode === "md"
+        ? [EditorView.domEventHandlers({ beforeinput: swallowNativeListBeforeInput })]
+        : [];
     // md 走 lezer markdown 解析器（高亮规则维持 M1 以来口径不动）；
     // code 按扩展名选 legacy-modes StreamLanguage（M120），未知扩展纯文本不着色。
     const highlight: Extension[] = mode === "md"
@@ -1754,6 +1763,7 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
           endMarker,
           mdGutterCompartment.of(mdGutterExtensions()),
           autoIndentKeymap,
+          ...nativeListGuard,
         ]
       : [...editability, ...highlight, baseTheme, codeTokenTheme, codeBindingTheme, ...lineNumberGutter, highlightActiveLine(), autoIndentKeymap];
   }

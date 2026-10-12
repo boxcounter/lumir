@@ -4,6 +4,7 @@ import type { EditorState, Line, Range, Text } from "@codemirror/state";
 import { Decoration, EditorView, ViewPlugin, WidgetType } from "@codemirror/view";
 import type { DecorationSet, ViewUpdate } from "@codemirror/view";
 import { EDITOR_FONT_FAMILY_TOKEN } from "../typography";
+import { pointerPressFrame, revealSelection } from "./reveal-gate";
 import { t } from "../copy";
 
 type Node = ReturnType<typeof syntaxTree>["topNode"];
@@ -61,6 +62,75 @@ export function listLineInfo(tree: Tree, doc: Text, line: Line): ListLineInfo {
   const mark = node.getChild("ListMark");
   const first = mark !== null && doc.lineAt(mark.from).from === line.from;
   return { offset, item: node, first, rendered: first || (body && offset > 0) };
+}
+
+/** 裸 marker 行（文本模式特判，M461）：行首是合法列表标记、标记后只有空白到行尾（空项）
+ *  或带内容但语法树不接管（lazy continuation），且语法树未把它认作列表项首行。典型形态
+ *  `para\n1. `——空列表项按 CommonMark 不能打断段落，行被解析进段落，既有渲染与
+ *  Enter 续行都不认它；Alex 2026-10-12 dogfood 裁决：该行在光标驻留时按列表项渲染、
+ *  Enter 按列表语义分派（实现见 src/enter-indent.ts 与 ListLayout.build 的裸行分支）。
+ *
+ *  判定是 `listLineInfo` 的**补集**而非替代：语法树已认作项首行（真列表，含空行后的
+ *  `1. `、`- `、引用内 `> 1. `、列表自身的空续项）一律返回 null——那些形态既有渲染与
+ *  M399 退出行为已覆盖，同语义不得两处抢（REVIEW.md 第 8 条）。排除面：setext 标题
+ *  下线（`para\n- ` 的 `- `，与 Obsidian 同口径交给标题语义）、围栏 / 缩进代码块、
+ *  HTMLBlock、表格——那些上下文里 marker 形文本不是列表。 */
+export interface BareMarkerLine {
+  /** marker 起点（绝对位，= 行首 + 前缀宽）。 */
+  readonly markerFrom: number;
+  /** marker 终点（绝对位，`.` / `)` 之后）。 */
+  readonly markerTo: number;
+  /** 内容起点（marker 后空白之后；空项时 = 行尾）。 */
+  readonly contentFrom: number;
+  /** marker 字面文本（`1.` / `2)` / `-` / `+` / `*`）。 */
+  readonly marker: string;
+  readonly ordered: boolean;
+  /** 有序：数字部分；无序：null。 */
+  readonly number: number | null;
+  /** 有序：分隔符 `.` / `)`；无序：空串。 */
+  readonly delimiter: string;
+  /** 引用前缀 + 行首缩进的原文（续行时原样复用）。 */
+  readonly prefix: string;
+}
+
+const BARE_MARKER_RE = /^((?:>[ \t]*)*)([ \t]*)((\d{1,9})([.)])|([-+*]))([ \t]+)(.*)$/;
+
+/** 裸 marker 行判定：null = 不是（含语法树已接管的全部形态）。纯函数，只读树与行文本。 */
+export function bareListMarkerLine(tree: Tree, doc: Text, line: Line): BareMarkerLine | null {
+  const m = BARE_MARKER_RE.exec(line.text);
+  if (!m) return null;
+  const prefix = m[1] + m[2];
+  const markerText = m[3];
+  const ordered = m[4] !== undefined;
+  const markerFrom = line.from + prefix.length;
+  // resolve 取 marker 内的位置（markerFrom 的右邻 = marker 首字符），向上排除非列表上下文。
+  let node: Node | null = tree.resolveInner(markerFrom, 1);
+  for (; node; node = node.parent) {
+    const name = node.name;
+    if (
+      name === "FencedCode" || name === "CodeBlock" || name === "HTMLBlock" ||
+      name === "Table" || name.startsWith("SetextHeading") || name.startsWith("ATXHeading") ||
+      name === "HeaderMark"
+    ) {
+      return null;
+    }
+    if (name === "Document") break;
+  }
+  // 真源唯一：语法树已把本行认作列表项首行时，既有路径（渲染 + M399 退出）接管。
+  const info = listLineInfo(tree, doc, line);
+  if (info.item !== null && info.first) return null;
+  const markerTo = markerFrom + markerText.length;
+  const contentFrom = Math.min(markerTo + m[7].length, line.to);
+  return {
+    markerFrom,
+    markerTo,
+    contentFrom,
+    marker: markerText,
+    ordered,
+    number: ordered ? Number(m[4]) : null,
+    delimiter: ordered ? m[5] : "",
+    prefix,
+  };
 }
 
 /** ol 复合多级编号（定稿 direction-c/index.html:250-270 的 counter 拼接）：L1 `1.`、
@@ -207,9 +277,13 @@ class ListLayout {
   update(update: ViewUpdate) {
     const tree = syntaxTree(update.state);
     let resized = false;
+    // 裸 marker 行的渲染门控是「判据选区」（reveal-gate，M259 按压快照）——按压窗口
+    // 开 / 关本身不改选区，不触发重建会让冻结那一帧的门控判错（M461）。
+    let pointerMoved = false;
     for (const tr of update.transactions) for (const effect of tr.effects) {
       if (effect.is(measured)) { this.units = effect.value; resized = true; }
       if (effect.is(metadataReady)) resized = true;
+      if (effect.is(pointerPressFrame)) pointerMoved = true;
     }
     if (update.docChanged) {
       // 编辑不清掉已发布的组：键位经 changes 映射后旧宽度先顶着渲染，stale
@@ -238,7 +312,7 @@ class ListLayout {
     // pass 都 geometryChanged → 每 pass 再排一次 requestMeasure → 测量环路被洪峰
     // 打断（CM 的 "Measure loop restarted more than 5 times"），scrollTarget 的末次
     // 校正跑不完，无 fm 长文档的 ↓ 揭示不足（cursor-motion.spec.ts:84）。
-    if (resized || update.docChanged || tree !== syntaxTree(update.startState) || update.viewportChanged) this.build(update.view);
+    if (resized || update.docChanged || tree !== syntaxTree(update.startState) || update.viewportChanged || update.selectionSet || pointerMoved) this.build(update.view);
   }
 
   private schedule() {
@@ -355,6 +429,13 @@ class ListLayout {
     const decorations: Range<Decoration>[] = [];
     const seen = new Set<number>();
     const { doc } = view.state;
+    // 裸 marker 行的列表编辑态门控（M461）：判据选区（reveal-gate 的按压快照，M259）
+    // 与行范围**相接即算**（含端点）——光标在行首（marker 之前）也算驻留：与 M110
+    // 行级显露同取向，空 caret 落在行首时该行必须已进入编辑态，否则作者看不到
+    // 自己刚敲入的标记被如何接管。光标在上一行行尾（= 本行行首 - 1）不满足
+    // `r.to >= line.from`，不会误触发。
+    const cursorOnLine = (line: Line): boolean =>
+      revealSelection(view.state).ranges.some((r) => r.from <= line.to && r.to >= line.from);
     for (const range of view.visibleRanges) {
       let line = doc.lineAt(range.from);
       while (line.from <= range.to) {
@@ -393,6 +474,23 @@ class ListLayout {
             } else if (info.offset > 0) {
               // 真续行：吞掉行首源码空白，文本落到项正文起点（L2）。
               decorations.push(Decoration.replace({}).range(line.from, line.from + info.offset));
+            }
+          } else if (this.units && cursorOnLine(line)) {
+            // 裸 marker 行的列表编辑态（M461，合同 docs/specs/lists.md 的 B1/B2）：
+            // 光标驻留时按列表项首行渲染——藏源码标记（含引用前缀，与真实引用内
+            // 列表的 replace 落点同口径）、上 widget、悬挂缩进按字面标记宽 + 前缀列
+            // 算；光标离开即回到字面文本（门控是渲染层事件，不改文档，L4 照旧）。
+            const bare = bareListMarkerLine(this.tree, doc, line);
+            if (bare) {
+              const unit = this.units[0];
+              const label = bare.ordered ? bare.marker : bulletGlyph(1);
+              const width = label.length + 1;
+              const body = (bare.markerFrom - line.from) + width;
+              decorations.push(Decoration.line({
+                class: "cm-lp-list-line cm-lp-list-first cm-lp-bare",
+                attributes: { style: `--lp-list-body:${body * unit}px;--lp-list-marker:${width * unit}px` },
+              }).range(line.from));
+              decorations.push(Decoration.replace({ widget: new ListMarker(label, null, 1) }).range(line.from, bare.contentFrom));
             }
           }
         }
