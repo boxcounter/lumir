@@ -42,7 +42,7 @@ export const ACTIONS = new Set([
 ]);
 export const EXPECT_KINDS = new Set(["ax", "editor", "file", "glob", "shot", "window", "clipboard", "pixel", "geom", "bytes"]);
 
-/** `do: click` 的 `target.modifiers` 允许的修饰键（M379，backlog:1913）：KimiCU 与 swift 两侧的
+/** `do: click` 的 `target.modifiers` 允许的修饰键（M379，backlog「`click` 不支持修饰键」）：KimiCU 与 swift 两侧的
  *  别名都收（`meta`/`cmd` 是同一个键的两种说法），小写比较。 */
 const MODIFIER_ALIASES = new Set(["meta", "cmd", "command", "super", "control", "ctrl", "shift", "alt", "option"]);
 
@@ -134,7 +134,7 @@ export function checkScenario(scenario) {
   for (const k of Object.keys(scenario.config ?? {})) {
     if (!SCENARIO_CONFIG_KEYS.includes(k)) push(`config 未知键 ${k}（拼错即静默不生效，允许：${SCENARIO_CONFIG_KEYS.join(" / ")}）`);
   }
-  // `config.editor`（M379，backlog:1905）：**整表透传**的 `[editor]` 表（snake_case 键），给
+  // `config.editor`（M379，backlog「验收套件表达力缺口」条的「`config` 通道只透传 `keys`」项）：**整表透传**的 `[editor]` 表（snake_case 键），给
   // 「M180 之后新增的 editor 配置项」构造启动口径用——不写这条，每个新键都要回来改一次套件。
   // 写成非表（如列表 / 字符串）时 writeConfig 会把它当普通值铺开，静默丢掉半张表，故在此挡住。
   if (scenario.config?.editor !== undefined && !isPlainTable(scenario.config.editor))
@@ -146,7 +146,7 @@ export function checkScenario(scenario) {
     if (step.do === "keys" && !Array.isArray(step.keys)) push(`${at} do=keys 需要 keys 数组`);
     if (step.do === "key" && !step.key) push(`${at} do=key 需要 key`);
     // `do: type` 的 text 漏写会在真机注入 `undefined`（`String(undefined)`），连报 3 次「未落地」
-    // 才暴露成因——静态校验期就该挡住（M379，backlog:1922 / finding
+    // 才暴露成因——静态校验期就该挡住（M379，backlog「`do: type` 的 text 非空校验」/ finding
     // `20260916-worker-typefix-improve-checkscenario-do-type-text-undefined`）。
     if (step.do === "type" && (typeof step.text !== "string" || step.text.length === 0))
       push(`${at} do=type 需要非空 text（漏写会注入 undefined，真机上表现为连报 3 次未落地）`);
@@ -188,7 +188,7 @@ export function checkScenario(scenario) {
     if (step.do === "click" && step.target?.button !== undefined && !["left", "right", "middle"].includes(step.target.button))
       push(`${at} do=click 的 target.button 只能是 left/right/middle，实际 ${JSON.stringify(step.target.button)}`);
     if (step.do === "click" && step.target?.modifiers !== undefined) {
-      // 修饰键（M379，backlog:1913）：写错键名会静默变成「无修饰键的普通点击」，而场景的断言
+      // 修饰键（M379，backlog「`click` 不支持修饰键」）：写错键名会静默变成「无修饰键的普通点击」，而场景的断言
       //（如「⌘-点击跟随链接」）会因此假红——在这里按白名单挡掉（KimiCU 之外的通道由套件自己译）。
       const mods = step.target.modifiers;
       if (!Array.isArray(mods) || mods.length === 0 || mods.some((m) => typeof m !== "string" || !m))
@@ -1062,7 +1062,7 @@ export async function runScenario(ctx, scenario) {
     // 场景 front-matter 的 `config:` **不在这里生效**：它由 run.mjs 在 `launchApp()` 之前
     // 折进隔离 config.json（M284）——早先在这里是「起一次 app → 写配置 → 重启」，每个声明
     // config 的场景都多付一次重启。折叠之后 app 的**首帧**就是场景声明的起点，语义更强
-    // （与 backlog:366 的「窗口配置只有一份真源」同一取向）。
+    // （与窗口配置只有一份真源同一取向，见 REVIEW.md 第 8 条）。
     if (scenario.open) {
       await openFile(cu, ctx.pid, scenario.open, { marker: scenario.marker });
       evidence.record({ kind: "note", text: `已打开 ${scenario.open}` });
@@ -1242,7 +1242,7 @@ async function doAction(step, { ctx, cu, scenario, vars, pid, evidence }) {
     case "sleep":
       return sleep(step.ms ?? 1000);
     case "scroll": {
-      // 滚动（M379 接入，backlog:1853 / 1186）：此前只有 `lib/cu.mjs:184` 的 MCP 封装，场景 DSL
+      // 滚动（M379 接入，backlog「验收套件表达力缺口」条的「缺 `scroll` 动作」项）：此前只有 `lib/cu.mjs:184` 的 MCP 封装，场景 DSL
       // 里没有这个动作——「先滚动容器再断言」类场景因此写不出来（受影响的是「左栏滚到中部后
       // ⌘O 浮层被裁」这类定位缺陷，判据只能退回代码级复算）。
       //
@@ -1481,7 +1481,7 @@ async function doAction(step, { ctx, cu, scenario, vars, pid, evidence }) {
     }
     case "click": {
       const t = step.target ?? {};
-      // 修饰键点击（M379，backlog:1913）：KimiCU 的 click **没有修饰键参数**（工具 schema 实测
+      // 修饰键点击（M379，backlog「`click` 不支持修饰键」）：KimiCU 的 click **没有修饰键参数**（工具 schema 实测
       // 只有 button / mouse_button / count / hold_ms），因此 ⌘-Click 这类路径（跟随链接）在真机上
       // 原本无法触发。这里走 doubleClick 同一条 swift + CGEvent 通道，把修饰键作为**鼠标事件的
       // flags** 投递——DOM 侧收到的就是 `metaKey: true` 的点击（与 Playwright 的
@@ -1638,7 +1638,7 @@ async function doAction(step, { ctx, cu, scenario, vars, pid, evidence }) {
         // 界面语言（M282）同形沿用：一次 configWrite MUST NOT 抹掉 `ui.language`
         //（本场景的第一步就要把语言设成 zh，后续步骤若抹掉它，语言切换的起点就没了）。
         language: step.language !== undefined ? step.language : cur.ui?.language,
-        // `[editor]` 表**整表透传**（M379，backlog:1905）：当前表整份带过来、`step.editor` 覆盖，
+        // `[editor]` 表**整表透传**（M379，backlog「验收套件表达力缺口」条的「`config` 通道只透传 `keys`」项）：当前表整份带过来、`step.editor` 覆盖，
         // 具名参数（autoIndent / 排版三项…）在 writeConfig 里排在这张表之后，显式值仍然优先。
         //
         // 为什么要有这条：早先这里逐键列举，M180 新增的 `editor.line_wrap` / `code_block_wrap`

@@ -429,8 +429,8 @@ MUST NOT 因本 change 变成全文档扫描。任何一项 MUST NOT 改写文�
 
 #### Scenario: 代码块容器的键盘可达性
 
-- **WHEN** 默认配置下打开含超长代码行的 Markdown，用 `Tab` 把焦点移入代码块横滚容器，依次按 `→`、
-  `End`、`Home`、`Escape`
+- **WHEN** 默认配置下打开含超长代码行的 Markdown，把光标放进该代码块、按 `⌃⌥S`
+  （`editor.focus-block-scroll`，M474）把焦点交给代码块横滚容器，依次按 `→`、`End`、`Home`、`Escape`
 - **THEN** 容器横向滚动、滚到最右、回到最左，`Escape` 把焦点交还编辑器内容区（行为与表格滚动
   容器一致）；全程文档内容逐字节不变、编辑器光标位置不变
 

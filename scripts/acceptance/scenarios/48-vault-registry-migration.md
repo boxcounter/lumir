@@ -67,7 +67,7 @@ teardown:
     file: { path: env:workspaces, exists: false }
 ---
 
-# 注册表目录更名迁移（M248，backlog #37）
+# 注册表目录更名迁移（M248；原 backlog 的「注册表目录更名」条已核销落地、原文见 git 历史）
 
 ## 这个场景验什么
 

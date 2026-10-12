@@ -50,7 +50,7 @@ runner 在启动前做预检，不满足直接退出且不产生半截证据：
 的前台归属；**拿不到前台就报 FAIL**，不静默跳过、也不改用 `set_value` 伪造键盘语义（`set_value`
 不经键位分发链路，验不到 `keys.ts`）。副作用：跑套件期间 Lumir 窗口会到前台。
 
-**启动实例的窗口形态自检**（M236，修 backlog:366）：`waitAppReady` 每次就绪（含 `restart` 后重启）
+**启动实例的窗口形态自检**（M236，修「套件覆写窗口配置丢掉 overlay 标题栏」缺口——窗口配置只有一份真源，见 REVIEW.md 第 8 条）：`waitAppReady` 每次就绪（含 `restart` 后重启）
 都反查一遍「webview 铺满整窗」——`AXScrollArea` 的顶边与高度对 `AXWindow` 的差 ≤4px。不是 overlay
 就报 FAIL 并点名成因。
 
@@ -198,7 +198,7 @@ effort 能力 / 上下文窗口按声明现算。**M381 起内置 preset 表彻�
 `cache_write_tokens` → `cached_tokens` → `input_tokens` → `output_tokens` 这样的字母序写
 （M443 实测：把 `cache_write_tokens` 写在 `input_tokens` 之后的断言恒不命中）。
 
-`editor`（M379，backlog:1905）是**整表透传**的 `[editor]` 表：`config: { editor: { line_wrap: false,
+`editor`（M379，backlog「验收套件表达力缺口」条的「`config` 通道只透传 `keys`」项）是**整表透传**的 `[editor]` 表：`config: { editor: { line_wrap: false,
 future_key: 42 } }` 原样写进 `editor` 表（snake_case 键，非表即由 `--check` 挡住）。给「新增的
 editor 配置项」构造**启动口径**用——不必每加一个键就回来改套件；同名字段仍由具名键（`lineWrap`
 / `codeBlockWrap` / `autoIndent` / 排版三项 / `mode`）优先。`configWrite` 动作的 `editor:` 是同一
@@ -216,7 +216,7 @@ editor 配置项」构造**启动口径**用——不必每加一个键就回来
 
 | | 取值 | 为什么 |
 |---|---|---|
-| 套件默认 | **`zh`**（`run.mjs` 的 `SUITE_LANGUAGE`） | 存量场景的 chrome 断言（`关闭 {name}` / `保存并切换` / `vault：{name}（点击查看全部 vault）` / `（未保存）` / `Markdown 表格 {n}` / 右键菜单 7 项 …）全部取文案表的 **zh 列**，M282 之前已逐条评审过；改断言到 en 面是 403 条 matcher 的机械改写（去重口径逐场景求和，见 `docs/backlog.md` 的 M284 节），风险与收益不成比例 |
+| 套件默认 | **`zh`**（`run.mjs` 的 `SUITE_LANGUAGE`） | 存量场景的 chrome 断言（`关闭 {name}` / `保存并切换` / `vault：{name}（点击查看全部 vault）` / `（未保存）` / `Markdown 表格 {n}` / 右键菜单 7 项 …）全部取文案表的 **zh 列**，M282 之前已逐条评审过；改断言到 en 面是 403 条 matcher 的机械改写（去重口径逐场景求和，见 backlog「批次报告索引」的 M284 条），风险与收益不成比例 |
 | 覆盖方式 | front-matter 的 `config: { language: "en" }` | 场景要验 en 面就在自己身上钉（场景 60 是例子）；写错值由 `--check` 挡 |
 
 **为什么必须有这一条**：chrome 文案只可能是**某一档**语言的取值，而产品的出厂默认会变——M282
@@ -232,7 +232,7 @@ editor 配置项」构造**启动口径**用——不必每加一个键就回来
   走完切换守卫三出口 + 空 vault 引导 + dirty 标记）；视觉 `tests/visual/scenes/m282-ui-language.spec.ts`
   （直接用 `src/copy-data.ts` 的 `COPY` 取值）；文案表本身的漂移/占位门禁在 `tests/unit/copy.test.ts`。
 - 因此**产品出厂默认面（en）在真机上的整场景覆盖只有 55 / 60 两块**——这是本条选择的已知代价，
-  与视觉层同一条（`docs/backlog.md`「M282 遗留」节已登记视觉侧的同款代价）。
+  与视觉层同一条（backlog「批次报告索引」的 M282 遗留条已登记视觉侧的同款代价）。
 
 ### 预置状态（`seed`）
 
@@ -275,10 +275,10 @@ editor 配置项」构造**启动口径**用——不必每加一个键就回来
 | `doubleClick` | `target`（`{role,name\|any,nth}` 或 `{x,y}`）、`dx`/`dy`、`mode`、`retries`、`settleMs` | **双击**（M209 起套件唯一的双击通道）：swift + `CGEvent` 显式设 `kCGMouseEventClickState`（详见「已知边界」）。`target` 取节点 bbox 中心、`dx`/`dy` 按其宽高比例偏移（默认 0.5）；`{x,y}` 给窗口局部坐标（遮罩这类没有 AX 节点的全屏层用）。动作内部先拿前台（**拿不到即报错**——真鼠标点击落在最上层那扇窗上），再把窗口局部点换算成 Quartz 屏幕坐标。**会移动真实光标**；目标窗口被遮挡或 KimiCU 的 AX 快照退化时按错因报错，不静默 |
 | `hover` | `target`（`{role,name\|any,nth}` / `{x,y}` / `{anchor:{role,any\|name,nth?}, offsetX, offsetY}`）、`retries`、`settleMs` | **鼠标悬停**（M443，change harness-cache-metrics）：只投 `mouseMoved`（不按鼠标键），驱动 hover 类 UI（当前消费者 = ctx 读数的含义气泡）。通道 = `cgevent-click.swift` 的 mode 0，坐标换算复用 `doubleClick` 的同一条函数，代价也一致（要 `/usr/bin/swift` + 辅助功能权限、**会移动真实光标**）。**前台是硬前提**：真鼠标事件落在该点最上层的那扇窗上，拿不到前台时动作抛 `InfraError`（整场标 INVALID、退出码 2——是环境项不是产品缺陷），复跑条件 = 把前台让给 Lumir（探针结论与两条被否决的替代路径见「已知边界」的 hover 条）。**`anchor` 形态**（M443）：以某个**有 bbox 的邻居节点**为基点，右缘中点 + `offsetX`/`offsetY` **像素**——给「在 AX 树里有节点但没有 bbox」的目标用（WKWebView 对 inline-flex 里的裸 span 不给框，ctx 读数即此例）。节点形态的 `dx`/`dy` 是 0..1 比例，与 `anchor` 的像素偏移不是一回事（同写由 `--check` 挡）。动作先 park 到窗口左上角再移到目标：`mouseenter` 只在 hover 目标**发生变化**时触发，光标恰好已在目标上时单次移动不产生事件 |
 | `drag` | `target`（`{role,name\|any,nth}` 节点须有 bbox、`{x,y}` 窗口局部坐标（M236 起，标题栏展示元素这类不一定有 AX bbox 的目标用），或 `{textareaEdge:"left"\|"right"}` 从编辑器列缘内侧起拖）、`dx`/`dy`（窗口局部点，UI 位移是**确定值**）、`allowOutOfBounds`、`retries`、`settleMs` | **拖拽**（M228 起，栏宽手柄这类「只能拖」的控件的唯一通道）：swift + `CGEvent` 显式投 `leftMouseDown → 插值 dragged ×24 → leftMouseUp`（与 `doubleClick` 同一通道——KimiCU 的 `drag` 工具在 WKWebView 里连文本选择都造不出来，M228 实测，见「已知边界」）。坐标换算与 `doubleClick` 同口径：先拿前台（**拿不到即报错**——真鼠标拖拽落在最上层那扇窗上），窗口局部点 + `window_bounds` 原点 → Quartz 屏幕坐标。**会移动真实光标**。起止点默认都必须在窗口内（防坐标空间错乱）；拖标题栏移动窗口时终点**故意**出窗，显式写 `allowOutOfBounds: true` 跳过终点检查。`textareaEdge` 形态存在的原因：WKWebView 把 `role=separator` 暴露成**无 bbox 的 AXSplitter**（M228 实测），栏宽手柄按节点定位不到，只能从 AXTextArea 的 bbox 边缘起拖。**只读静态文本的选区也走这一条**（M423 实证）：transcript 消息体这类文本在 AX 里是无 bbox 的 `AXStaticText`（节点定位报「找不到带 bbox 的节点」），而 `{x,y}` 真实拖拽会在它上面造出真实选区并触发 DOM `selectionchange`——KimiCU 的 `select_text` 看似更对口，但它只作用于 AX 选区层、**不产生 `selectionchange`**，驱动不了任何「选区驱动」的 UI（M423 用编辑器手势做过对照复验），故套件不引入该动词 |
-| `scroll` | `target`（`{role,name\|any,nth}` 滚动区节点，或 `{x,y}` 截图像素落点），或 step 上的 `page`（整页，正上负下）/ `dx` / `dy`（行式增量）/ `index`（快照节点序号） | **滚动**（M379 接入，backlog:1853 / 1186——此前只有 `lib/cu.mjs` 的 MCP 封装，场景 DSL 里没有这个动作，「先滚动再把某行带进视口」类场景写不出来）。参数与 KimiCU 的 `scroll` 同形，**只透传写了的字段**（不补缺省值：KimiCU 侧「没给就是没给」）。定位方式：`target` 节点 → 取它的 index 滚那个滚动区；`target: {x,y}` → 在该截图像素点滚；`page`/`dx`/`dy` 直接透传。**`ok:false`（没检测到位移 / 已到末尾）一律报错**，不当成功静默放过——后面的「某行在视口内」类断言会对着没滚动的现场判红/假绿（REVIEW.md 第 2 条同族）。**读不到 scrollTop**：套件没有滚动位置读数（AX 不暴露），因此本动作只能证明「滚动调用生效链路通」，「滚到哪儿了」要靠视口内的可见元素间接判（见「已知边界」的滚动条） |
+| `scroll` | `target`（`{role,name\|any,nth}` 滚动区节点，或 `{x,y}` 截图像素落点），或 step 上的 `page`（整页，正上负下）/ `dx` / `dy`（行式增量）/ `index`（快照节点序号） | **滚动**（M379 接入；「缺 `scroll` 动作」是 backlog「验收套件表达力缺口」条的一项——此前只有 `lib/cu.mjs` 的 MCP 封装，场景 DSL 里没有这个动作，「先滚动再把某行带进视口」类场景写不出来）。参数与 KimiCU 的 `scroll` 同形，**只透传写了的字段**（不补缺省值：KimiCU 侧「没给就是没给」）。定位方式：`target` 节点 → 取它的 index 滚那个滚动区；`target: {x,y}` → 在该截图像素点滚；`page`/`dx`/`dy` 直接透传。**`ok:false`（没检测到位移 / 已到末尾）一律报错**，不当成功静默放过——后面的「某行在视口内」类断言会对着没滚动的现场判红/假绿（REVIEW.md 第 2 条同族）。**读不到 scrollTop**：套件没有滚动位置读数（AX 不暴露），因此本动作只能证明「滚动调用生效链路通」，「滚到哪儿了」要靠视口内的可见元素间接判（见「已知边界」的滚动条） |
 | `resizeWindow` | `width`（数值，必填）、`height`（缺省保持当前）、`settleMs` | **AX 直写窗口尺寸**（M236，窄窗退让这类「精确几何」验证）：`lib/ax-window.swift` 经 Accessibility API 设 AXSize，确定值通道（不拖窗口边缘——命中区与落点都不稳）。前提是调用进程有辅助功能权限（与 CGEvent 注入同）；窗口管理器的钳制会如实反映在回读值里，断言用 `window.width` 对生效值 |
 | `focusWindow` | `retries` | 确保目标窗口在前台（键盘场景的前台纪律，见上） |
-| `key` / `keys` | `key` / `keys: [...]`、`gapMs`、`retries` | 键盘注入（`ctrl+n`、`cmd+s`、`cmd+/` …）。`keys` 对**整串都是可打印单字符**的序列额外做回读 + 有限重试（≤3）；chord / 混合序列 / 无可读目标一律保持盲发不重试（判定边界见「已知边界」）。**连字符写 `-` 即可**（M379，backlog:782）：KimiCU 的 DSL 把 `-` 当修饰键分隔符（与 `+` 同义），字面量原本没有拼法（`press_key("-")` 报 `error: empty key DSL`），套件在 `lib/cu.mjs` 侧把整串 `-` 与 `+` 分隔出的 `-` 段译为键名表里的 `minus`——因此 `keys: ["-"]` 仍走**可回读通道**，不降级成盲发。**空格写 `" "`**（M455）：空格同样没有字面量拼法（`press_key(" ")` 报 `error: empty key DSL`），`lib/cu.mjs` 把整串 `" "` 译为键名表里的 `space`，`lib/execute.mjs` 的可打印判定含空格 ⇒ `keys: [" ", …]` 也走可回读通道 |
+| `key` / `keys` | `key` / `keys: [...]`、`gapMs`、`retries` | 键盘注入（`ctrl+n`、`cmd+s`、`cmd+/` …）。`keys` 对**整串都是可打印单字符**的序列额外做回读 + 有限重试（≤3）；chord / 混合序列 / 无可读目标一律保持盲发不重试（判定边界见「已知边界」）。**连字符写 `-` 即可**（M379；backlog「验收套件 `press_key` 键名 DSL 没有 `-` 的拼法」条）：KimiCU 的 DSL 把 `-` 当修饰键分隔符（与 `+` 同义），字面量原本没有拼法（`press_key("-")` 报 `error: empty key DSL`），套件在 `lib/cu.mjs` 侧把整串 `-` 与 `+` 分隔出的 `-` 段译为键名表里的 `minus`——因此 `keys: ["-"]` 仍走**可回读通道**，不降级成盲发。**空格写 `" "`**（M455）：空格同样没有字面量拼法（`press_key(" ")` 报 `error: empty key DSL`），`lib/cu.mjs` 把整串 `" "` 译为键名表里的 `space`，`lib/execute.mjs` 的可打印判定含空格 ⇒ `keys: [" ", …]` 也走可回读通道 |
 | `type` | `text`（非空字符串）、`clear`、`retries` | 输入到编辑器（内部先真实点击聚焦，避免落陈旧选区）；回读 + 有限重试与 `keys` **同一口径**：只在编辑器字节完全未变时重试（≤3），partial landing 直接报错不重试（判定边界见「已知边界」）。`text` 漏写在 `--check` 阶段即报（M379；此前会注入 `undefined`、连报 3 次未落地才暴露） |
 | `clipboardRead` | — | 读**系统剪贴板**（M244）：固定 `osascript -e 'the clipboard'`，不接受命令与参数——套件刻意不引入通用 shell 通道（这条口径见 `38-content-width-drag.md` 的登记），只开这一个可断言的读数出口。返回命令 stdout 并做**行尾归一**（`\r\n` / `\r` → `\n`，再去掉一个尾换行）——AppleScript 把粘贴板文本按经典 Mac 行尾（CR）返回，不归一的话多行内容的 `exact` 断言必然假红（app 侧写的是 LF；M277 实测）；命令失败即**报错**（不把「读不到」当空）。日常断言用 `clipboard` 断言形态，本动作用于把读数写进证据 |
 | `sleep` | `ms` | 等待 |
@@ -287,7 +287,7 @@ editor 配置项」构造**启动口径**用——不必每加一个键就回来
 | `vaultWrite` / `vaultAppend` | `file`、`content` | 从外部改写验收 vault（模拟外部修改） |
 | `vaultRm` | `file` 或 `files` | 从外部**真删除**（不存在即报错）——触发 `fs_not_found` 与「保存冲突」是两条不同分支 |
 | `vaultSparse` | `file`、`size`（正整数，字节）、`vault?` | `ftruncate` 出一个「大小 = size、内容为零、几乎不占磁盘」的稀疏文件。用途：把 app 的**按大小拒绝**分支（50MB 上限）变成可达，或给**瞬时状态**（装载指示这类）撑开观察窗（场景 49 / 60）。`vault: "second"` 指定写入第二个合成 vault——**撑窗口的放大器必须落在切换目标那一侧**（场景 60：切换目标是 B，窗口就在 B 的装载段）；缺省是验收 vault |
-| `configWrite` | `lastVault`、`keys`、`restart`、`requireVault`、`theme`、`contentWidth`、排版三项、`autoIndent`、`editor` | 改写隔离 config.json（默认重启 app）。`lastVault` **缺省沿用当前值**（显式给才覆盖）——启动恢复的失效路径靠它把 `last_vault` 指向一个不存在的目录；`requireVault: false` 只放宽本步重启的就绪门（见下条）。`theme` / `contentWidth` / 排版三项 / `autoIndent`（M272，`editor.auto_indent`）同样**缺省沿用当前值**（M228 起含 `ui.content_width`）：一次 configWrite MUST NOT 把前面设过的键连表抹掉。**`editor`（M379，backlog:1905）**：给一张 `[editor]` 表（snake_case 键）**整表透传**——当前表整份带过来、这张表覆盖，具名参数仍优先。用于构造「M180 这类新增 editor 配置项」的启动口径，新键不必回来改套件；同一张表也可直接写在 front-matter 的 `config: { editor: … }` 里（起 app 之前生效） |
+| `configWrite` | `lastVault`、`keys`、`restart`、`requireVault`、`theme`、`contentWidth`、排版三项、`autoIndent`、`editor` | 改写隔离 config.json（默认重启 app）。`lastVault` **缺省沿用当前值**（显式给才覆盖）——启动恢复的失效路径靠它把 `last_vault` 指向一个不存在的目录；`requireVault: false` 只放宽本步重启的就绪门（见下条）。`theme` / `contentWidth` / 排版三项 / `autoIndent`（M272，`editor.auto_indent`）同样**缺省沿用当前值**（M228 起含 `ui.content_width`）：一次 configWrite MUST NOT 把前面设过的键连表抹掉。**`editor`（M379，backlog「验收套件表达力缺口」条的「`config` 通道只透传 `keys`」项）**：给一张 `[editor]` 表（snake_case 键）**整表透传**——当前表整份带过来、这张表覆盖，具名参数仍优先。用于构造「M180 这类新增 editor 配置项」的启动口径，新键不必回来改套件；同一张表也可直接写在 front-matter 的 `config: { editor: … }` 里（起 app 之前生效） |
 | `clipboardImage` | `synth: { width, height, seed }`（三个正整数，全可选） | **合成一张 png 并置入系统剪贴板**（M416，change paste-clipboard-image）：`scripts/acceptance/lib/png.mjs` 手写 PNG 编码器（`node:zlib`，零新增依赖）+ 确定性「类截图」生成器（同 `seed` ⇒ 逐字节相同的图，S2 的跨笔记去重据此可复现）；落盘到临时目录后经 `osascript` 的 `«class PNGf»` 置剪贴板（pasteboard 上同时出现 `public.png` + `public.tiff`，即系统截图的形态）。**二进制 fixture 不落 git**——分辨率是场景参数，能生成的东西不落二进制。动作把合成图的分辨率与**字节数**写进证据（`note`），S5 的体积实证取它做「剪贴板侧」读数 |
 | `clipboardText` | `text`（字符串） | 把纯文本置入系统剪贴板（M416 场景 114：文本粘贴回归的输入面）。与 `clipboardRead` / `clipboardImage` 同一条固定命令纪律，不开通用 shell 通道 |
 | `note` | `text`（可选）、`file`（可选，支持 glob） | **证据型读数**（M416）：把一句文本写进证据目录；`file` 给了就附上命中文件（glob 取 mtime 最新一份）的 `size`。给**不卡 PASS/FAIL 的实证场景**用（S5 的转码体积）——它不是断言形态，判不判红由场景自己另写断言 |
@@ -444,12 +444,12 @@ PASS，只有锚定那条 FAIL）。要锚定这类行，把 `- [\d+] ` 前缀�
     └── ax/NN-*.txt       # 断言失败时的 AX dump（复盘用）
 ```
 
-**一次 run 的目录只含本次 run 的产物**（M379，backlog M182 现场）：`startScenario` 会把
+**一次 run 的目录只含本次 run 的产物**（M379，backlog「验收套件表达力缺口」条的「场景证据目录跨 run 不清空」项）：`startScenario` 会把
 `<场景 id>/` **整个目录重建**后再落盘。此前只 `mkdirp`，同一天重复跑同一场景（迭代调试的常态）
 时序号重新计、旧文件被覆盖一半留下一半——实测同一目录里同时存在两轮的 `01-首开.txt`，复盘时
 会把上一轮的 dump 当本轮结论（REVIEW.md 第 2/7 条同族）。
 
-**索引是跨 run 增量合并的**（M379，backlog M254/M256 现场）：`summary.md` / `results.json` 按场景
+**索引是跨 run 增量合并的**（M379，backlog「待修 findings」的 M254 / M256 条）：`summary.md` / `results.json` 按场景
 id 并入——同一场景取最近一次 run 的行（表里的 `跑于` 列即那次 run 的时间），其余场景保留原行。
 同一天跑多次单场景、或多 mission 共用同一日期目录时，索引因此不再只反映最后一次 run
 （M256 的全量批曾把同一天早先三个 mission 的场景目录换掉、索引一并只剩本批）。
@@ -484,8 +484,7 @@ Alex 抽审路径：先看 `summary.md`，再进 FAIL 场景看 `steps.md` + `sh
   假绿形态。判据改落在**可观测后果**上——折叠态判「内容不显」、展开态判「内容上屏」（场景 93 的
   思考块三态即此），当前档勾选归前端单测 / 视觉层。
 - **`do: scroll` 已接进 DSL，但 KimiCU 的 scroll 在本 app 上是否产得出位移仍待复验（M379 接入，
-  M252 三轮探针的结论在此）**：动作**在**了（`lib/cu.mjs` 的 MCP 封装接进动作表，backlog:1853 /
-  1186），参数与 KimiCU 同形、并按 M252 的 ① 在调用前先取一次 `mode=full` 快照（那次探针里点路径
+  M252 三轮探针的结论在此）**：动作**在**了（`lib/cu.mjs` 的 MCP 封装接进动作表，backlog「验收套件表达力缺口」条的「缺 `scroll` 动作」项），参数与 KimiCU 同形、并按 M252 的 ① 在调用前先取一次 `mode=full` 快照（那次探针里点路径
   不带图时报 `no cached geometry — call get_app_state first`，补图后该错误消失）。但 M252 的四种
   组合（树行 bbox 中心 × `page` 正/负、左栏 padding 点、legacy `dy`）当时**全部**返回
   `no scroll movement / already at end`——即 KimiCU 在该点上找不到可滚动的元素。**M379 在 299 行长
@@ -762,7 +761,7 @@ Alex 抽审路径：先看 `summary.md`，再进 FAIL 场景看 `steps.md` + `sh
   **截图像素**，实测 1152×768 对 1200 点，两种空间混用会让点击落到别处）——口径对不上或 AX 快照
   退化成只剩菜单栏时，动作按错因分别报错，不猜。**`click` 的 `modifiers` 走同一条通道、同一套
   环境依赖与坐标口径**（M379 起共用 `windowLocalTarget` 这一份换算）。
-- **修饰键点击：KimiCU 的 `click` 没有修饰键参数，套件自建一条（M379，backlog:1913）**：KimiCU 的
+- **修饰键点击：KimiCU 的 `click` 没有修饰键参数，套件自建一条（M379；backlog「验收套件表达力缺口」条的「`click` 动作不支持修饰键」项）**：KimiCU 的
   `click` 工具 schema 实测只有 `button` / `mouse_button` / `count` / `hold_ms`，没有 modifiers——
   因此「⌘-Click 跟随链接」这类路径在真机上原本无法触发（M144 只能把判据退到 chromium 层，
   `tests/visual/scenes/render-link.spec.ts`）。套件动作 `click` 的 `target.modifiers` 因此走
