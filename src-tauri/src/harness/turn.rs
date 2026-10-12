@@ -690,12 +690,13 @@ fn llm_error_payload(error: &llm::TurnError) -> serde_json::Value {
 /// 严格成对——失败、空响应、在途停止的半截响应都如实记录（`error` 字段在场）。
 ///
 /// reasoning 与 thinking **物理分离**（design §2，M362 纪律）：`reasoning` = 回放项
-/// 原文（provider 方言——kimi 的 encrypted_content 项 / deepseek 的 reasoning_text
-/// parts 项各按真实形状），恢复时原样回传（M306 / M360 回放语义逐字节保真，无需按
-/// provider 分支重建，design §6.2 的恢复算法从本键取回放项）；`thinking` = **展示
-/// 文本**（展示通道分片汇总）——分片缺席（老 fixture / 只发 `output_item.done` 的
-/// provider）时退回从回放项提取明文，与面板所见同源；密文永不进 thinking
-/// （`thinking::reasoning_text` 只返明文）。
+/// （provider 方言的明文载体——kimi 的 `summary` / deepseek 的 `reasoning_text` content
+/// parts 各按真实形状，`encrypted_content` 在场即带），**M464 起已是归一形状**（捕获侧经
+/// [`llm::normalize_reasoning_item`] 剥掉 `rs_*` id——`store:false` 下重放 id 属非标用法），
+/// 恢复时按同一归一回传（M306 / M360 回放语义保真，无需按 provider 分支重建，design §6.2
+/// 的恢复算法从本键取回放项）；`thinking` = **展示文本**（展示通道分片汇总）——分片缺席
+/// （老 fixture / 只发 `output_item.done` 的 provider）时退回从回放项提取明文，与面板所见
+/// 同源；密文永不进 thinking（`thinking::reasoning_text` 只返明文）。
 fn record_llm_response(
     runtime: &Runtime,
     scope: &VaultScope,

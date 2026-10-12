@@ -108,6 +108,20 @@
 //! [`super::turn`]（`flush_call_items`），单测
 //! `harness_runtime::multi_call_round_groups_call_items_before_outputs` 钉住项序。
 //!
+//! **回放形状归一（M464，2026-10-12）**：`store:false` 下**剥掉 reasoning 项的 `id`**，改用
+//! `{type:"reasoning", summary, [content], encrypted_content}` 回放。`id`（`rs_*`）在
+//! store:false 下不可解析，重放它属非标用法——头号假设是服务端按 id 展开完整思考、把隐形
+//! token 计入 input（事故会话可见 ≈10.1 万 token 却被判超 262144）。对齐两处靶子：OpenAI
+//! store:false 官方回放模式（请求 `include:["reasoning.encrypted_content"]`、重放
+//! `{summary, encrypted_content}` 不带 id）与 Kimi Code 内嵌的 responses base
+//! （`openai-responses/lower.ts` 的 `{summary, type, encrypted_content}` 无 id；请求侧
+//! `normalizeOpenAIResponsesReasoning` 把 `reasoning:{effort,summary:"auto"}` 与
+//! `include:["reasoning.encrypted_content"]` 一并写入）。归一落在 [`normalize_reasoning_item`]
+//! ——响应捕获（[`collect_output_item`] / mock）与会话 input 入口（[`super::session`]）都经它，
+//! 故「任何路径产物」（wire 请求 input、会话 JSONL 留存）中不出现 `id` 字段。`content`
+//! （deepseek 的 `reasoning_text` 明文载体）保留：kimi 用 `summary`、deepseek 用 `content`，
+//! 删任一都会破坏对应 provider 的重放（M306）。
+//!
 //! # 展示侧思考文本与档位记录（M362，change add-harness-thinking-display-and-effort）
 //!
 //! 上面那节是**回放**（回传给模型），本节是**展示**（给人看），两者物理隔离、互不借道：
@@ -594,6 +608,13 @@ impl ResponsesClient {
         // 思考程度按档位映射（M362）：schema 声明支持时写顶层 `reasoning.effort`，
         // 不支持时不写该字段——能力判据 client 构建时已从 schema 现算（M373）。
         thinking::apply_effort(&mut body, self.effort_supported, request.effort);
+        // M464：请求服务端在 reasoning item 里回传 `encrypted_content`（store:false 官方回放
+        // 模式的前提——重放 `{summary, encrypted_content}` 不带 id 才有密文可还）。与
+        // `reasoning` 同条件发（Kimi Code 内嵌的 responses base 把 `include` 与 `reasoning`
+        // 一并写入；能力判据同 `effort_supported`）。
+        if self.effort_supported {
+            body["include"] = serde_json::json!(["reasoning.encrypted_content"]);
+        }
         Ok(body)
     }
 
@@ -810,14 +831,42 @@ fn dispatch_event(
     }
 }
 
-/// 输出项归集：reasoning 项留作回放（item 级原样；message 里的 `reasoning_text`
-/// part 在 item 级缺位时合成 reasoning 回放项）；function_call 项记入调用表；
-/// message 项的 output_text 与流式 delta 应一致（以流式为准，这里只补 delta 漏网的文本）。
+/// 把 provider 回传的 reasoning 项归一到**回放形状**（M464，见模块头「回放形状归一」）：
+/// `{"type":"reasoning", summary, [content], [encrypted_content]}`——**剥掉 `id`**（`rs_*`
+/// 在 store:false 下不可解析；重放它属非标用法）。非 reasoning 项原样返回（幂等、可无差别
+/// 作用于整条 input）。
+///
+/// 保留 `summary`（kimi）与 `content`（deepseek 的 `reasoning_text` parts）两个明文载体——
+/// 各厂各用一个，删任一都会破坏对应 provider 的重放（M306：deepseek 不回传 reasoning_text
+/// 即 400）。`encrypted_content` 有（字符串）才带：这是 store:false 下让服务端免于按 id
+/// 展开完整思考的密文回放体（请求侧 `include:["reasoning.encrypted_content"]` 才回传）。
+/// `status` 等非回放字段一并丢弃；旧会话（记录里无 `encrypted_content`）降级为
+/// 「摘要无 id」——仍比带 id 更符合官方口径。
+pub fn normalize_reasoning_item(item: &serde_json::Value) -> serde_json::Value {
+    if item.get("type").and_then(|t| t.as_str()) != Some("reasoning") {
+        return item.clone();
+    }
+    let mut out = serde_json::json!({ "type": "reasoning" });
+    for key in ["summary", "content"] {
+        if let Some(parts) = item.get(key).filter(|v| v.is_array()) {
+            out[key] = parts.clone();
+        }
+    }
+    if let Some(blob) = item.get("encrypted_content").and_then(|v| v.as_str()) {
+        out["encrypted_content"] = serde_json::Value::String(blob.to_string());
+    }
+    out
+}
+
+/// 输出项归集：reasoning 项归一回放形状（[`normalize_reasoning_item`]——剥 id、保
+/// summary/content/encrypted_content）留作回放；message 里的 `reasoning_text` part 在 item
+/// 级缺位时合成 reasoning 回放项；function_call 项记入调用表；message 项的 output_text 与
+/// 流式 delta 应一致（以流式为准，这里只补 delta 漏网的文本）。
 fn collect_output_item(item: &serde_json::Value, output: &mut TurnOutput) {
     match item.get("type").and_then(|t| t.as_str()) {
         Some("reasoning") => {
             if output.reasoning.is_none() {
-                output.reasoning = Some(item.clone());
+                output.reasoning = Some(normalize_reasoning_item(item));
             }
         }
         Some("function_call") => {
@@ -867,10 +916,10 @@ fn collect_output_item(item: &serde_json::Value, output: &mut TurnOutput) {
                     }
                 }
                 if !reasoning_parts.is_empty() && output.reasoning.is_none() {
-                    output.reasoning = Some(serde_json::json!({
+                    output.reasoning = Some(normalize_reasoning_item(&serde_json::json!({
                         "type": "reasoning",
                         "content": reasoning_parts,
-                    }));
+                    })));
                 }
             }
         }
@@ -1163,7 +1212,10 @@ impl LlmClient for MockClient {
         // 下一轮 provider 才不会因为缺项而报错，M306）。
         let mut output = TurnOutput {
             text: String::new(),
-            reasoning: entry.reasoning,
+            // 回放形状归一（M464）：mock fixture 的 reasoning 项与真 provider 的走同一条
+            // [`normalize_reasoning_item`]——剥 id 后的形状是「outgoing input / 留存」的
+            // 不变量，mock 路径不得是例外（否则验收断言到的回放形状非真）。
+            reasoning: entry.reasoning.as_ref().map(normalize_reasoning_item),
             reasoning_deltas: Vec::new(),
             calls: entry
                 .tool_calls
@@ -1364,8 +1416,13 @@ mod tests {
                 cache_write_tokens: 0
             })
         );
-        // reasoning 回放项原样透传（M306：mock 路径零行为变化即指此）。
-        assert_eq!(first.reasoning.as_ref().unwrap()["id"], "rs_1");
+        // reasoning 回放项归一形状（M464）：剥掉 `rs_*` id、encrypted_content 保留。
+        let reasoning = first.reasoning.as_ref().expect("reasoning 项应被捕获");
+        assert!(
+            reasoning.get("id").is_none(),
+            "回放项不得带 id：{reasoning}"
+        );
+        assert_eq!(reasoning["encrypted_content"], "enc");
         let second = client.complete(&request(), &TestStream::default());
         let error = second.error.expect("scripted error");
         assert!(error.context_overflow);
@@ -1651,6 +1708,12 @@ mod tests {
         let body = client.wire_body(&request).unwrap();
         assert_eq!(body["store"], serde_json::json!(false));
         assert_eq!(body["reasoning"]["effort"], serde_json::json!("high"));
+        // M464：effort 受支持（= 会发 reasoning）时一并请求 encrypted_content——
+        // store:false 官方回放模式的前提（重放 `{summary, encrypted_content}` 不带 id）。
+        assert_eq!(
+            body["include"],
+            serde_json::json!(["reasoning.encrypted_content"])
+        );
     }
 
     // ---- M305：SSE 输出项收集去重 ----
@@ -1772,7 +1835,13 @@ data: {"response":{"output":[{"type":"reasoning","id":"rs_1","encrypted_content"
 "#;
         let output = sse_parse(sse);
         assert_eq!(output.text, "你好", "message 文本不应因两个事件重复拼接");
-        assert_eq!(output.reasoning.as_ref().unwrap()["id"], "rs_1");
+        // 回放项归一见 M464：id 被剥掉、encrypted_content 保留（去重仍只留一份）。
+        let reasoning = output.reasoning.as_ref().expect("reasoning 项");
+        assert!(
+            reasoning.get("id").is_none(),
+            "回放项不得带 id：{reasoning}"
+        );
+        assert_eq!(reasoning["encrypted_content"], "enc");
     }
 
     /// 流式 text delta 在文本收集里优先于 message 项：message 文本因 text 已非空被跳过，
@@ -1806,11 +1875,11 @@ data: {"response":{"output":[{"type":"message","content":[{"type":"output_text",
 
     /// 完整 thinking 工具流（done + completed 双事件，与 M305 去重测试同骨架）：
     /// reasoning 项 + function_call 项各经 `response.output_item.done` 与
-    /// `response.completed` 双投递。断言：reasoning content 形状（reasoning_text
-    /// parts，与官方 thinking 文档一致）原样在列、调用去重、回放构造里 reasoning
-    /// 项紧随 assistant message 之前。
+    /// `response.completed` 双投递。断言：reasoning 归一后 content 形状（reasoning_text
+    /// parts，与官方 thinking 文档一致）与 encrypted_content 在列、**`id` 被剥掉**（M464）、
+    /// 调用去重、回放构造里 reasoning 项紧随 assistant message 之前。
     #[test]
-    fn sse_deepseek_thinking_reasoning_replayed_verbatim() {
+    fn sse_deepseek_thinking_reasoning_normalized_for_replay() {
         let sse = format!(
             r#"event: response.output_text.delta
 data: {{"delta":"我先"}}
@@ -1831,9 +1900,14 @@ data: {{"response":{{"output":[{DEEPSEEK_REASONING_ITEM},{{"type":"function_call
         );
         let output = sse_parse(&sse);
 
-        // 捕获：reasoning 项原样（含 encrypted_content 等全字段）。
+        // 捕获：reasoning 项已归一（M464）——剥掉 provider 的 `id` / `status`，
+        // content（reasoning_text parts）与 encrypted_content 保留。
         let reasoning = output.reasoning.clone().expect("reasoning 项应被捕获");
         assert_eq!(reasoning["type"], "reasoning");
+        assert!(
+            reasoning.get("id").is_none(),
+            "回放项不得带 id（store:false 下重放 id 属非标用法）：{reasoning}"
+        );
         assert_eq!(
             reasoning["encrypted_content"],
             "891a103a-5fff-47b2-899d-573104b0d161-0"
@@ -1848,11 +1922,11 @@ data: {{"response":{{"output":[{DEEPSEEK_REASONING_ITEM},{{"type":"function_call
         assert_eq!(output.text, "我先读一下。");
         assert_eq!(output.calls.len(), 1, "{:?}", output.calls);
 
-        // 回放构造：reasoning 项原样在前，assistant message 在后（session 契约）。
+        // 回放构造：归一的 reasoning 项在前，assistant message 在后（session 契约）。
         let items =
             crate::harness::session::assistant_item(&output.text, output.reasoning.as_ref());
         assert_eq!(items.len(), 2);
-        assert_eq!(items[0], reasoning, "reasoning 项应原样入回放 input");
+        assert_eq!(items[0], reasoning, "归一的 reasoning 项应入回放 input");
         assert_eq!(items[1]["role"], "assistant");
         assert_eq!(items[1]["content"][0]["type"], "output_text");
     }
@@ -1901,6 +1975,57 @@ data: {{"response":{{"output":[{DEEPSEEK_REASONING_ITEM}],"usage":{{"input_token
             reasoning["content"][0]["text"],
             "用户问的是 2+2。不需要工具。"
         );
+    }
+
+    /// M464：reasoning 回放形状归一（[`normalize_reasoning_item`]）——三种形态 + 幂等 + 非
+    /// reasoning 项原样。回放项在任何路径产物中都不得带 `id`（store:false 下重放 id 属非标）。
+    #[test]
+    fn normalize_reasoning_item_three_forms_strip_id() {
+        // ① 新会话带 blob（kimi 形状：id + summary + encrypted_content）⇒ 剥 id/status、
+        //    保 summary 与 encrypted_content。
+        let kimi = serde_json::json!({
+            "type": "reasoning", "id": "rs_abc", "status": "completed",
+            "summary": [{"type": "summary_text", "text": "摘要"}],
+            "encrypted_content": "blob-1"
+        });
+        let out = normalize_reasoning_item(&kimi);
+        assert_eq!(out["type"], "reasoning");
+        assert!(out.get("id").is_none(), "id 必须剥掉：{out}");
+        assert!(out.get("status").is_none(), "status 非回放字段：{out}");
+        assert_eq!(
+            out["summary"],
+            serde_json::json!([{"type": "summary_text", "text": "摘要"}])
+        );
+        assert_eq!(out["encrypted_content"], "blob-1");
+
+        // ② 旧会话无 blob（只有 id + summary）⇒ 降级为「摘要无 id」。
+        let old = serde_json::json!({
+            "type": "reasoning", "id": "rs_old",
+            "summary": [{"type": "summary_text", "text": "旧摘要"}]
+        });
+        let out_old = normalize_reasoning_item(&old);
+        assert!(out_old.get("id").is_none());
+        assert!(out_old.get("encrypted_content").is_none());
+        assert_eq!(
+            out_old["summary"],
+            serde_json::json!([{"type": "summary_text", "text": "旧摘要"}])
+        );
+
+        // deepseek 形状（content 为 reasoning_text parts）：明文载体 content 与
+        // encrypted_content 保留、id 剥掉。
+        let ds = serde_json::from_str::<serde_json::Value>(DEEPSEEK_REASONING_ITEM).unwrap();
+        let out_ds = normalize_reasoning_item(&ds);
+        assert!(out_ds.get("id").is_none());
+        assert_eq!(out_ds["content"][0]["type"], "reasoning_text");
+        assert_eq!(
+            out_ds["encrypted_content"],
+            "891a103a-5fff-47b2-899d-573104b0d161-0"
+        );
+
+        // 幂等（可无差别作用于整条 input）+ 非 reasoning 项原样通过。
+        assert_eq!(normalize_reasoning_item(&out_ds), out_ds);
+        let message = serde_json::json!({"type": "message", "role": "user"});
+        assert_eq!(normalize_reasoning_item(&message), message);
     }
 
     // ---- M362：展示侧思考分片（不改回放路径）----
@@ -1973,13 +2098,22 @@ data: {"delta":"第二步。"}
         req.effort = ThinkingEffort::Max;
         let stream = TestStream::default();
         let first = client.complete(&req, &stream);
-        assert_eq!(first.reasoning_deltas, vec!["先想", "再答"]);
+        assert_eq!(
+            first.reasoning_deltas,
+            vec!["先想".to_string(), "再答".to_string()]
+        );
         // 思考分片也即时转发（M369），且转发与记录一致。
         assert_eq!(
             stream.reasoning(),
             vec!["先想".to_string(), "再答".to_string()]
         );
-        assert_eq!(first.reasoning.as_ref().unwrap()["id"], "rs_1");
+        // 回放项归一回放形状（M464）：剥 id、保 content。
+        let reasoning = first.reasoning.as_ref().expect("reasoning 项");
+        assert!(
+            reasoning.get("id").is_none(),
+            "回放项不得带 id：{reasoning}"
+        );
+        assert_eq!(reasoning["content"][0]["text"], "回放用思考");
         req.effort = ThinkingEffort::Low;
         let _ = client.complete(&req, &TestStream::default());
         // 逐次记录（含耗尽那一次也无妨——这里两次都在脚本内）。
@@ -2175,8 +2309,14 @@ data: {"response":{"output":[],"usage":{"input_tokens":10,"output_tokens":3}}}
         let output = client.complete(&request(), &stream);
         assert_eq!(output.text, "第一片。", "已产出的分片保留");
         assert_eq!(stream.text(), vec!["第一片。".to_string()]);
-        // 分片之外的非流式字段不受影响（尽力带回）。
-        assert_eq!(output.reasoning.as_ref().unwrap()["id"], "rs_1");
+        // 分片之外的非流式字段不受影响（尽力带回）。回放项归一回放形状（M464）：剥 id、
+        // 保 encrypted_content。
+        let reasoning = output.reasoning.as_ref().expect("reasoning 项");
+        assert!(
+            reasoning.get("id").is_none(),
+            "回放项不得带 id：{reasoning}"
+        );
+        assert_eq!(reasoning["encrypted_content"], "enc");
         assert_eq!(output.calls.len(), 1);
         assert!(output.usage.is_some());
         assert!(output.error.is_none());
