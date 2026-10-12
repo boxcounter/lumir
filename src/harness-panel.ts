@@ -264,6 +264,16 @@ function isCardBlock(block: ComposerBlock): block is CardBlock {
 }
 
 /**
+ * 元素内**文档序第一个文本节点**（M457：卡片边界光标位的落点宿主）。卡片的文本住在
+ * `.lumir-hp-qc-ex` / `.lumir-hp-qc-src` / 图片元信息行里，落在**文本节点上**才有 caret 几何
+ * （落在卡片元素上量不到，见 `domCaretTarget` 的说明）。没有文本节点时返回 `null`。
+ */
+function firstTextNodeIn(el: Element): Text | null {
+  const walker = el.ownerDocument.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+  return walker.nextNode() as Text | null;
+}
+
+/**
  * 光标位是否是「卡片前缘」这一档（= 相邻原子块之间的**边界光标位**，design §3.1）：
  * 块下标指向原子卡片、offset 为 0。三种现场归同一个模型值——相邻两张卡之间、卡片与段落
  * 之间、composer 以卡片开头。
@@ -275,6 +285,46 @@ export function isCardFrontCaret(blocks: readonly ComposerBlock[], caret: Compos
   if (caret.offset !== 0) return false;
   const target = blocks[caret.block];
   return target !== undefined && isCardBlock(target);
+}
+
+/** 一次**内容型键入**的键面事实（`boundaryTypingCaret` 的入参，与 KeyboardEvent 解耦——
+ *  模型层不认识事件对象，只认识这四个判据）。 */
+export interface ComposerTypingKey {
+  /** `KeyboardEvent.key`（可打印单字符判据 = 长度为 1）。 */
+  readonly key: string;
+  /** ⌘ / ⌃（与面板 keydown 里 `mod` 同口径）。 */
+  readonly mod: boolean;
+  /** ⌥（macOS 的 Alt 层会替换字符，按键归输入区既有的就地路径与统一键位表，不在本判据内）。 */
+  readonly alt: boolean;
+  /** IME 组合期（组合内容走 compositionstart 的物化档）。 */
+  readonly composing: boolean;
+}
+
+/**
+ * composer 边界光标位上的**内容型键入**判据（HC3 第 3 条的实现面，M457）：命中返回要物化的
+ * 模型位，未命中返回 `null`。
+ *
+ * 为什么需要它：边界位是**无文本宿主**的位置——卡片是 `contenteditable=false` 的原子块、块级
+ * 容器边界又量不出 caret 几何，引擎因此**不派 `beforeinput` / `input`**（WebKit 实测：keydown
+ * 到达 composer、`beforeinput` / `input` 都不派、字也不落）。物化若只挂在 `beforeinput` 上，
+ * 在「两张相邻卡片之间」这一档永远不可达——那正是 Alex 2026-10-12 报的「两卡之间不能输入」
+ * （M450 的模型层语义与单测都是对的，挂点挂到了不派发的事件上）。
+ *
+ * 判据与既有键入档**同一份锚点**：折叠选区 + 非修饰键 + 可打印单字符 + 非组合期 + 光标是
+ * 卡片前缘（`isCardFrontCaret`）。有选区、⌘/⌃/⌥ 组合、Enter/退格/方向键与 IME 进程键（key
+ * 长度 > 1）一律不命中，照旧走各自既有路径。
+ */
+export function boundaryTypingCaret(
+  blocks: readonly ComposerBlock[],
+  selection: ComposerSelection | null,
+  key: ComposerTypingKey,
+): ComposerCaret | null {
+  if (selection === null) return null;
+  const { anchor, focus } = selection;
+  if (anchor.block !== focus.block || anchor.offset !== focus.offset) return null;
+  if (key.composing || key.mod || key.alt) return null;
+  if (key.key.length !== 1) return null;
+  return isCardFrontCaret(blocks, focus) ? focus : null;
 }
 
 /**
@@ -289,20 +339,41 @@ export function boundaryCaretAt(containerIndex: number, blockCount: number): Com
   return { block: Math.max(0, Math.min(containerIndex, blockCount)), offset: 0 };
 }
 
-/** 光标写回 DOM 的落点形态：块级容器边界（`Range(composer, index)`）或段落内字符偏移。 */
+/** 光标写回 DOM 的落点形态：块级容器边界（`Range(composer, index)`）、段落内字符偏移，或
+ *  **卡片内的首个文本位**（无文本宿主的边界位的落点宿主，见 `domCaretTarget`）。 */
 export type DomCaretTarget =
   | { readonly kind: "boundary"; readonly index: number }
-  | { readonly kind: "text"; readonly index: number; readonly offset: number };
+  | { readonly kind: "text"; readonly index: number; readonly offset: number }
+  | { readonly kind: "cardText"; readonly index: number };
 
 /**
- * 光标位写回 DOM 的落点形态（`setDomCaret` 的唯一判据）：原子卡片前缘（含相邻卡片之间、
- * composer 末尾之后）落**块级容器边界**、段落内落字符偏移。抽成纯函数是为了让读写两侧
- * 共用同一条规则——`boundaryCaretAt` 是它的逆向，两者的同一性由单测逐块序全枚举钉住。
+ * 光标位写回 DOM 的落点形态（`setDomCaret` 的唯一判据）：**有文本宿主的相邻位优先**，段落内
+ * 落字符偏移、卡片边界位落相邻的文本位；只有「末尾之后」沿用块级容器边界。
+ *
+ * M457 起卡片边界位（含相邻两张卡片之间、composer 以卡片开头）不再写 `Range(composer, index)`：
+ * 那个位置在两个块级盒之间，**量不出 caret 几何**（`getBoundingClientRect()` 全 0，WebKit 与
+ * Blink 实测同结果，见 docs/specs/harness-composer.md §实测依据）——画在哪由引擎自行决定，真机
+ * 现场就是「⌃B 之后光标落进卡片正文里」（Alex 2026-10-12）。落点因此改成两类**有文本宿主**的
+ * 相邻位：
+ * - 前一块是段落 → 该段落的**末缘**（文本节点给出几何与行位；段落非空时与边界位同属
+ *   `normalizeComposerCaret` 的归一等价类，导航 / 行级命令的口径不变）；
+ * - 两侧都没有文本宿主（两卡相邻 / composer 以卡片开头）→ 后一张卡片的**首个文本位**
+ *   （DOM 读回按「锚在卡片内」归一为同一个边界位，HC3 第 1 条已声明这一档）。
+ *
+ * 抽成纯函数是为了让读写两侧共用同一条规则——`boundaryCaretAt` 是它的逆向，两者的同一性由
+ * 单测逐块序全枚举钉住。
  */
 export function domCaretTarget(blocks: readonly ComposerBlock[], caret: ComposerCaret): DomCaretTarget {
   const index = Math.max(0, Math.min(caret.block, blocks.length));
   const block = blocks[index];
-  if (block === undefined || isCardBlock(block)) return { kind: "boundary", index };
+  if (block !== undefined && isCardBlock(block)) {
+    const prev = blocks[index - 1];
+    if (prev !== undefined && prev.kind === "paragraph") {
+      return { kind: "text", index: index - 1, offset: prev.text.length };
+    }
+    return { kind: "cardText", index };
+  }
+  if (block === undefined) return { kind: "boundary", index };
   return { kind: "text", index, offset: Math.max(0, Math.min(caret.offset, block.text.length)) };
 }
 
@@ -704,22 +775,43 @@ function lineIndexOf(lines: readonly TextLine[], offset: number): number {
   return index;
 }
 
+/**
+ * 行级命令（⌃A / ⌃E / ⌃N / ⌃P）的**基准光标**：caret 落在段落内时取**原始位**（它带着真实的
+ * 列位与「光标视觉上在哪一行」），否则取归一位。
+ *
+ * 为什么必须分这一档：`normalizeComposerCaret` 把段落**末缘**折到下一块前缘（末段则折到
+ * 「末尾之后」），而键入之后光标恒停在段末——折过之后行级命令就开始对着**下一块**算行：
+ * 下一块是卡片 / 越界（无行）⇒ 一行都算不出来 ⇒ ⌃A 表现为「按了没反应」（Alex 2026-10-12
+ * 现场，真机探针实测段末 (0,11) 按 ⌃A 选区完全不动）；下一块是段落 ⇒ 被算到**下一段**的行首尾
+ * 去。M455 为 ⌃N / ⌃P 修过同族问题（当时是本函数的一处内联特判），M457 把 ⌃A / ⌃E 一并收进来
+ * ——行级命令的基准只有这一处实现（REVIEW.md 第 8 条）。
+ *
+ * 卡片边界位 / 越界位没有行语义，仍走归一位（回落到各自的「无动作」判据）。
+ */
+function lineBasisCaret(blocks: readonly ComposerBlock[], caret: ComposerCaret): ComposerCaret {
+  const raw = blocks[caret.block];
+  if (raw !== undefined && raw.kind === "paragraph") {
+    return { block: caret.block, offset: Math.max(0, Math.min(caret.offset, raw.text.length)) };
+  }
+  return normalizeComposerCaret(blocks, caret);
+}
+
 /** ⌃A：段落内逻辑行行首；已是 / 光标在卡片边界位时不动。 */
 export function moveLineStart(blocks: readonly ComposerBlock[], caret: ComposerCaret): ComposerCaret {
-  const norm = normalizeComposerCaret(blocks, caret);
-  const block = blocks[norm.block];
-  if (block === undefined || block.kind !== "paragraph") return norm;
+  const basis = lineBasisCaret(blocks, caret);
+  const block = blocks[basis.block];
+  if (block === undefined || block.kind !== "paragraph") return basis;
   const lines = paragraphLines(block.text);
-  return normalizeComposerCaret(blocks, { block: norm.block, offset: lines[lineIndexOf(lines, norm.offset)].start });
+  return normalizeComposerCaret(blocks, { block: basis.block, offset: lines[lineIndexOf(lines, basis.offset)].start });
 }
 
 /** ⌃E：段落内逻辑行行尾；已是 / 光标在卡片边界位时不动。 */
 export function moveLineEnd(blocks: readonly ComposerBlock[], caret: ComposerCaret): ComposerCaret {
-  const norm = normalizeComposerCaret(blocks, caret);
-  const block = blocks[norm.block];
-  if (block === undefined || block.kind !== "paragraph") return norm;
+  const basis = lineBasisCaret(blocks, caret);
+  const block = blocks[basis.block];
+  if (block === undefined || block.kind !== "paragraph") return basis;
   const lines = paragraphLines(block.text);
-  return normalizeComposerCaret(blocks, { block: norm.block, offset: lines[lineIndexOf(lines, norm.offset)].end });
+  return normalizeComposerCaret(blocks, { block: basis.block, offset: lines[lineIndexOf(lines, basis.offset)].end });
 }
 
 /** 相邻段落块（delta > 0 向后找、< 0 向前找）；卡片不产生停靠行，被整体跳过。 */
@@ -744,16 +836,13 @@ function adjacentParagraph(
 
 /** ⌃N / ⌃P：逻辑行之间移动（同列位，超出目标行长度取行尾）；出段落跨到相邻段落块，无则不动。
  *
- *  段落**末缘**（`offset === 文本长度`，即光标停在该段最后一行行尾——键入后的常态位置）的原始
- *  光标带着真实的列位；而 `normalizeComposerCaret` 会把它归一到下一块前缘（末段则是「末尾之后」），
- *  列位随之丢失。M455 修：末缘保留原始光标走段内步进，⌃P/⌃N 因此落到相邻行的**同列位**而不是
- *  行首（实测缺陷形态：`yabzcdw` ⇧Enter `mn` 后按 ⌃P 落在第二段行首，应为第一段第 2 列）。其余
- *  情形（卡片前缘 / 末尾之后）沿用既有归一语义——那两种边界位没有列位可言。 */
+ *  基准光标取 `lineBasisCaret`（段落内取原始位、否则取归一位）：段落**末缘**（`offset === 文本
+ *  长度`，即光标停在该段最后一行行尾——键入后的常态位置）的原始光标带着真实的列位；而归一会把
+ *  它折到下一块前缘，列位随之丢失。M455 修：末缘保留原始光标走段内步进，⌃P/⌃N 因此落到相邻行
+ *  的**同列位**而不是行首（实测缺陷形态：`yabzcdw` ⇧Enter `mn` 后按 ⌃P 落在第二段行首，应为第一
+ *  段第 2 列）。M457 起这一档与 ⌃A / ⌃E 共用同一个 `lineBasisCaret`。 */
 function moveLineVertical(blocks: readonly ComposerBlock[], caret: ComposerCaret, delta: number): ComposerCaret {
-  const rawBlock = blocks[caret.block];
-  const atParagraphEnd =
-    rawBlock !== undefined && rawBlock.kind === "paragraph" && caret.offset === rawBlock.text.length;
-  const norm = atParagraphEnd ? caret : normalizeComposerCaret(blocks, caret);
+  const norm = lineBasisCaret(blocks, caret);
   const block = blocks[norm.block];
   if (block !== undefined && block.kind === "paragraph") {
     const lines = paragraphLines(block.text);
@@ -789,6 +878,27 @@ export function moveLineDown(blocks: readonly ComposerBlock[], caret: ComposerCa
 }
 export function moveLineUp(blocks: readonly ComposerBlock[], caret: ComposerCaret): ComposerCaret {
   return moveLineVertical(blocks, caret, -1);
+}
+
+/**
+ * ⌃N / ⌃P 的**渲染行**一步是否真的跨了一行（M457，Alex 2026-10-12 裁决「按视觉行、与编辑器正文
+ * 对齐」）。
+ *
+ * 判据：目标位置的行盒上沿相对光标行盒**至少错开半行高**——同一条渲染行上的解算结果（引擎把点
+ * 钳回原行、或 x 位那侧没有字符而落到同一行的别处）一律判「没跨」，调用方据此回落到既有的跨段落
+ * 行为（超集：段内有相邻渲染行才走渲染行）。行盒以 `Range.getBoundingClientRect()` 为准
+ * （`top` 是行盒上沿、`height` 是行高）；量不到行盒（零高：卡片边界位 / 空段落）返回 false。
+ */
+export function visualLineStepCrossed(
+  from: { readonly top: number; readonly height: number },
+  to: { readonly top: number; readonly height: number } | null,
+  delta: number,
+): boolean {
+  if (to === null) return false;
+  const lineHeight = Math.max(from.height, to.height);
+  if (!(lineHeight > 0)) return false;
+  const step = to.top - from.top;
+  return delta < 0 ? step <= -lineHeight / 2 : step >= lineHeight / 2;
 }
 
 /** 按词一步（⌥F / ⌥B 的扩选 head 走它）：段落内用与编辑器侧共用的词边界扫描；卡片边界位不动。 */
@@ -3230,51 +3340,54 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   function caretFromDom(): ComposerSelection | null {
     const selection = window.getSelection();
     if (selection === null || selection.rangeCount === 0) return null;
-    const caretOf = (node: Node | null, domOffset: number): ComposerCaret | null => {
-      if (node === null) return null;
-      // 选区锚在 composer 元素自身 = 两个顶层块之间的块级边界（`Range(composer, N)`）。
-      // 这是「相邻两张卡之间」在 DOM 里的形态（无文本宿主），归一成第 N 块的前缘
-      // （design §3.1；旧实现爬到 composer 之上即放弃、整体返回 null）。
-      if (node === composer) return boundaryCaretAt(domOffset, composer.children.length);
-      let blockEl = node.nodeType === Node.ELEMENT_NODE ? (node as Element) : node.parentElement;
-      while (blockEl !== null && blockEl.parentElement !== composer) {
-        blockEl = blockEl.parentElement;
-      }
-      if (blockEl === null) return null;
-      const block = [...composer.children].indexOf(blockEl);
-      if (blockEl.classList.contains("lumir-hp-qcard")) return { block, offset: 0 };
-      // 段落内字符偏移：累加目标之前的文本（<br> 记 1）。
-      let chars = 0;
-      let found = false;
-      const walk = (current: Node): void => {
-        if (found) return;
-        if (current === node) {
-          if (current.nodeType === Node.TEXT_NODE) chars += domOffset;
-          else {
-            // 元素内偏移 = 其前 domOffset 个子节点的文本量。
-            for (let i = 0; i < Math.min(domOffset, current.childNodes.length); i += 1) {
-              const kid = current.childNodes[i];
-              chars += kid.nodeType === Node.TEXT_NODE ? (kid.textContent ?? "").length : 1;
-            }
-          }
-          found = true;
-          return;
-        }
-        if (current.nodeType === Node.TEXT_NODE) {
-          chars += current.textContent?.length ?? 0;
-        } else if (current.nodeName === "BR") {
-          chars += 1;
-        } else {
-          current.childNodes.forEach(walk);
-        }
-      };
-      blockEl.childNodes.forEach(walk);
-      return { block, offset: chars };
-    };
-    const anchor = caretOf(selection.anchorNode, selection.anchorOffset);
-    const focus = caretOf(selection.focusNode, selection.focusOffset);
+    const anchor = modelCaretAt(selection.anchorNode, selection.anchorOffset);
+    const focus = modelCaretAt(selection.focusNode, selection.focusOffset);
     if (anchor === null || focus === null) return null;
     return { anchor, focus };
+  }
+
+  /** 一个 DOM 点（节点 + 偏移）→ 模型端点；不在 composer 内返回 null。**DOM→模型的唯一读法**：
+   *  `caretFromDom`（选区）与 `caretRangeFromPoint`（几何解算出的点，⌃N/⌃P 的渲染行一步）共用。 */
+  function modelCaretAt(node: Node | null, domOffset: number): ComposerCaret | null {
+    if (node === null) return null;
+    // 选区锚在 composer 元素自身 = 两个顶层块之间的块级边界（`Range(composer, N)`）。
+    // 这是「相邻两张卡之间」在 DOM 里的形态（无文本宿主），归一成第 N 块的前缘
+    // （design §3.1；旧实现爬到 composer 之上即放弃、整体返回 null）。
+    if (node === composer) return boundaryCaretAt(domOffset, composer.children.length);
+    let blockEl = node.nodeType === Node.ELEMENT_NODE ? (node as Element) : node.parentElement;
+    while (blockEl !== null && blockEl.parentElement !== composer) {
+      blockEl = blockEl.parentElement;
+    }
+    if (blockEl === null) return null;
+    const block = [...composer.children].indexOf(blockEl);
+    if (blockEl.classList.contains("lumir-hp-qcard")) return { block, offset: 0 };
+    // 段落内字符偏移：累加目标之前的文本（<br> 记 1）。
+    let chars = 0;
+    let found = false;
+    const walk = (current: Node): void => {
+      if (found) return;
+      if (current === node) {
+        if (current.nodeType === Node.TEXT_NODE) chars += domOffset;
+        else {
+          // 元素内偏移 = 其前 domOffset 个子节点的文本量。
+          for (let i = 0; i < Math.min(domOffset, current.childNodes.length); i += 1) {
+            const kid = current.childNodes[i];
+            chars += kid.nodeType === Node.TEXT_NODE ? (kid.textContent ?? "").length : 1;
+          }
+        }
+        found = true;
+        return;
+      }
+      if (current.nodeType === Node.TEXT_NODE) {
+        chars += current.textContent?.length ?? 0;
+      } else if (current.nodeName === "BR") {
+        chars += 1;
+      } else {
+        current.childNodes.forEach(walk);
+      }
+    };
+    blockEl.childNodes.forEach(walk);
+    return { block, offset: chars };
   }
 
   /** 模型光标 → DOM 点（节点 + 偏移；边界档落在 composer 元素上）。`setDomCaret` /
@@ -3285,6 +3398,13 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     const blockEl = [...composer.children][target.index] ?? null;
     if (target.kind === "boundary" || blockEl === null) {
       return { node: composer, offset: target.kind === "boundary" ? target.index : composer.children.length, blockEl };
+    }
+    if (target.kind === "cardText") {
+      // 卡片内的**首个文本位**（M457）：卡片是 contenteditable=false 的原子块，它的文本住在
+      // `.lumir-hp-qc-ex` 一类子节点里。落在文本位上才有 caret 几何；DOM 读回按「锚在卡片内」
+      // 归一为同一个边界位（`caretFromDom` 的卡片档）。卡片内没有文本节点时回落元素本身
+      // （几何为零的退化形态，卡片生成路径保证原文非空，正常不可达）。
+      return { node: firstTextNodeIn(blockEl) ?? blockEl, offset: 0, blockEl };
     }
     const text = paraTextOf(blockEl);
     if (text.length === 0) return { node: blockEl, offset: 0, blockEl };
@@ -3385,10 +3505,10 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
         navigate(blocks, caret, moveLineEnd);
         return;
       case "editor.cursor-down":
-        navigate(blocks, caret, moveLineDown);
+        navigate(blocks, caret, (b, c) => stepVisualLine(b, c, 1));
         return;
       case "editor.cursor-up":
-        navigate(blocks, caret, moveLineUp);
+        navigate(blocks, caret, (b, c) => stepVisualLine(b, c, -1));
         return;
       case "editor.extend-char-forward":
         extendSelection(blocks, sel, moveCharForward);
@@ -3403,10 +3523,10 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
         extendSelection(blocks, sel, moveLineEnd);
         return;
       case "editor.extend-line-down":
-        extendSelection(blocks, sel, moveLineDown);
+        extendSelection(blocks, sel, (b, c) => stepVisualLine(b, c, 1));
         return;
       case "editor.extend-line-up":
-        extendSelection(blocks, sel, moveLineUp);
+        extendSelection(blocks, sel, (b, c) => stepVisualLine(b, c, -1));
         return;
       case "editor.extend-word-forward":
         extendSelection(blocks, sel, moveWordForward);
@@ -3438,6 +3558,42 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       default:
         return;
     }
+  }
+
+  /**
+   * ⌃N / ⌃P 的一步（M457，Alex 2026-10-12 裁决「按视觉行、与编辑器正文对齐」）：**渲染行优先**。
+   *
+   * 顺序（超集，模型层一字不改）：
+   * 1. 光标在段落内、且量得到行盒时，按光标的 **x 位 + 相邻行的 y 位**解一个 DOM 位置
+   *    （`document.caretRangeFromPoint`，与编辑器侧 CodeMirror `cursorLineDown/Up` 同口径：
+   *    同 x 位跨一行）——解出来的位置必须落在**同一个段落**里、且**真的跨了一行**
+   *    （`visualLineStepCrossed`）才采信；
+   * 2. 否则回落到模型层的 `moveLineUp` / `moveLineDown`（逻辑行 + 跨相邻段落块，既有行为）。
+   *
+   * 为什么不是「直接在模型层按渲染行算」：软折行的行界只有引擎知道（模型层是零 DOM 的），
+   * 因此渲染行这一步只能问 DOM 几何；模型层的停靠点序列与归一等价类**不受影响**（⌃F/⌃B 不动）。
+   */
+  function stepVisualLine(blocks: readonly ComposerBlock[], caret: ComposerCaret, delta: number): ComposerCaret {
+    const logical = delta < 0 ? moveLineUp(blocks, caret) : moveLineDown(blocks, caret);
+    const block = blocks[caret.block];
+    if (block === undefined || block.kind !== "paragraph") return logical;
+    const api = (document as Document & { caretRangeFromPoint?: (x: number, y: number) => Range | null })
+      .caretRangeFromPoint;
+    if (typeof api !== "function") return logical;
+    const point = domPointOf(caret);
+    const probe = document.createRange();
+    probe.setStart(point.node, point.offset);
+    probe.collapse(true);
+    const from = probe.getBoundingClientRect();
+    if (!(from.height > 0)) return logical; // 量不到行盒（空段落 / 边界位）：没有渲染行可言
+    const y = delta < 0 ? from.top - from.height / 2 : from.bottom + from.height / 2;
+    const hit = api.call(document, from.left, y);
+    if (hit === null) return logical;
+    const resolved = modelCaretAt(hit.startContainer, hit.startOffset);
+    if (resolved === null || resolved.block !== caret.block) return logical; // 出段落：交给模型层的跨段落行为
+    const to = hit.getBoundingClientRect();
+    if (!visualLineStepCrossed(from, { top: to.top, height: to.height }, delta)) return logical;
+    return resolved;
   }
 
   /** 纯移动：只写选区 + 滚动位（不重渲、不压栈）；无动作时不动 DOM。 */
@@ -5946,6 +6102,24 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       return;
     }
     if (mod) return;
+    // M457（HC3 第 3 条）：边界光标位上的**内容型键入**由本层自己走模型。边界位（卡片前缘 /
+    // 两张相邻卡片之间）是无文本宿主的位置——卡片是 contenteditable=false 的原子块、块级容器
+    // 边界量不出 caret 几何，引擎因此**不派 beforeinput / input**（WebKit 实测：keydown 到达
+    // composer、beforeinput 与 input 都不派、字也不落）。挂在 beforeinput 上的物化（下方
+    // §insertText 档）在「两张相邻卡片之间」永远不可达——Alex 2026-10-12 的「两卡之间不能输入」
+    // 即此。判据收在模型层纯函数 `boundaryTypingCaret` 里（折叠选区 + 非修饰 + 可打印单字符 +
+    // 非组合期 + 卡片前缘），命中才 preventDefault + 物化，其余按键照旧走各自路径。
+    const boundaryTyped = boundaryTypingCaret(readBlocksFromDom(), caretFromDom(), {
+      key: event.key,
+      mod,
+      alt: event.altKey,
+      composing: imeGateState.composing,
+    });
+    if (boundaryTyped !== null) {
+      event.preventDefault();
+      withModel((blocks) => insertPlainTextAtCaret(blocks, boundaryTyped, event.key), true);
+      return;
+    }
     if (event.key === "Enter") {
       event.preventDefault();
       if (event.shiftKey) {

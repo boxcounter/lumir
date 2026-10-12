@@ -1,6 +1,7 @@
 # Harness composer 交互合同（harness composer）
 
-> 状态：新增（M419，2026-10-10；M450 补 HC3）。本文档是 **harness 面板输入区（composer）的
+> 状态：新增（M419，2026-10-10；M450 补 HC3；M457 修订 HC3 的写回形态与键入挂点、HC4 的行级
+> 基准光标）。本文档是 **harness 面板输入区（composer）的
 > 换行、视口与边界光标位**质量合同：可被测试证伪的不变量条款。渲染/交互缺陷修复的「合同先行」规则见
 > [../process/rendering-defect-contract-first.md](../process/rendering-defect-contract-first.md)——
 > 定位到本文件某一条、配不变量级属性测试，两者与修复同 PR。
@@ -57,8 +58,9 @@ composer 视口（`.lumir-hp-composer` 的 `overflow-y: auto` 区）MUST 把**�
 （`caretScrollTop` + 写 `scrollTop`，光标已在视口内时不动）：它保证条款在任何引擎 / 任何
 重渲路径上成立，而不是依赖引擎的默认行为。
 
-边界光标位（HC3）的 `Range` 可能量出**零高**（它落在两个块级元素的边界上，不是文本行），
-此处回落**后一张卡片**的块矩形——「后一张卡片在视口内」是「边界可见」的可用代理。
+边界光标位（HC3）中**写作块级容器边界**的那一档（今天只剩「末尾之后」）其 `Range` 会量出
+**零高**，此处回落**后一张卡片**的块矩形——「后一张卡片在视口内」是「边界可见」的可用代理。
+M457 起有文本宿主的边界位不再走这一档（落点是文本节点 / 卡片内文本位，几何真实）。
 
 ### HC3 — 边界光标位：相邻卡片之间可停光标，内容输入在该处物化段落
 
@@ -69,16 +71,41 @@ composer 的模型层 SHALL 把「相邻两个原子块之间的位置」当作�
 
 1. **往返对称**：该位置从 DOM 读回 SHALL 得到 `{block: N, offset: 0}`——`Range(composer, N)`
    与「选区锚在某张卡片元素内部或卡片元素本身」两种 DOM 形态归一到同一个模型值；把该位置写回
-   DOM SHALL 落在同一个块级边界上；该光标位 SHALL 跨整面重渲（`renderComposer` + 写回光标）与
-   撤销 / 重做恢复保持一致；
-2. **导航不是编辑**：仅把光标移动到该位置 MUST NOT 改变块序列、MUST NOT 产生撤销步；
-3. **内容输入物化段落**：内容型输入到达该位置时 SHALL 在该处物化一个问题段落块并把内容落进它
-   ——键入字符与 IME 组合落字落在新段落里；粘贴 / 拖入的纯文本同样落在新段落里；⇧Enter 在该处
-   落一个新空段落（与 HC1 的「卡片前缘」档同一条落法，仍满足「恰好多一行可见行」）；插入卡片
-   SHALL 把卡片落在该边界上并保证其后仍有承接光标的问题段落。物化 MUST NOT 吞掉被该边界分隔的
-   卡片、MUST NOT 把内容折进相邻的其它段落块；
-4. **一个撤销步**：物化与该次输入 SHALL 合成**一个**撤销步——一次撤销后回到「两张卡片相邻、
+   DOM SHALL 落在**有文本宿主的相邻位**上（第 2 条，M457 修订）；该光标位 SHALL 跨整面重渲
+   （`renderComposer` + 写回光标）与撤销 / 重做恢复保持一致；
+2. **写回落点 MUST 有 caret 几何**（M457 新增）：边界位是**无文本宿主**的位置——卡片是
+   `contenteditable=false` 的原子块、块级容器边界又落在两个块级盒之间，`Range(composer, N)`
+   在引擎里**量不出 caret 几何**（`getBoundingClientRect()` 全 0，WebKit 与 Blink 实测同结果，见
+   §实测依据）——画在哪由引擎自行决定（真机现场：⌃B 之后光标落进卡片正文里，Alex 2026-10-12）。
+   写回因此落**有文本宿主**的相邻位：
+   - 前一块是段落 → 该段落的**末缘**（段落非空时与边界位同属 `normalizeComposerCaret` 的归一
+     等价类 ⇒ 导航 / 行级命令 / 退格 / 前删 / ⇧Enter 的口径逐字节不变；空段落自占一行、不参与
+     归一，落点 = 该空段落的行位）；
+   - 两侧都没有文本宿主（两卡相邻 / composer 以卡片开头）→ **后一张卡片的首个文本位**（DOM
+     读回按「锚在卡片内」归一为同一个边界位）。
+   唯一的例外是「末尾之后」（`block = 块数`）：没有文本宿主也没有后一块，仍写块级容器末尾边界
+   ——**已知边界**，登记在 §已知边界与 docs/backlog.md；
+3. **导航不是编辑**：仅把光标移动到该位置 MUST NOT 改变块序列、MUST NOT 产生撤销步；
+4. **内容输入物化段落**：内容型输入到达该位置时 SHALL 在该处物化一个问题段落块并把内容落进它
+   ——键入字符落在新段落里；粘贴 / 拖入的纯文本同样落在新段落里；⇧Enter 在该处落一个新空段落
+   （与 HC1 的「卡片前缘」档同一条落法，仍满足「恰好多一行可见行」）；插入卡片 SHALL 把卡片落在
+   该边界上并保证其后仍有承接光标的问题段落。物化 MUST NOT 吞掉被该边界分隔的卡片、MUST NOT
+   把内容折进相邻的其它段落块；
+5. **一个撤销步**：物化与该次输入 SHALL 合成**一个**撤销步——一次撤销后回到「两张卡片相邻、
    两者之间无段落、光标在边界位」的前态（新段落与其中的文字一并消失、两张卡片不丢）。
+
+**键入的挂点 MUST 落在会派发的事件上**（M457）：引擎在边界位**不派 `beforeinput` / `input`**
+（卡片内是 `contenteditable=false` 的不可编辑区、容器边界又不参与编辑，WebKit 实测：`keydown`
+到达 composer，`beforeinput` / `input` 都不派、字也不落）——物化若只挂在 `beforeinput` 上，
+「两张相邻卡片之间」这一档永远不可达（M450 的模型层语义与单测都对，挂点挂到了不派发的事件上，
+Alex 2026-10-12 的「两卡之间不能输入」即此）。内容型键入（折叠选区 + 非修饰键 + 可打印单字符 +
+非组合期 + 卡片前缘）因此由 composer 的 `keydown` 这一拍走模型（`boundaryTypingCaret` 是判据的
+唯一居所）；`beforeinput` 那一档保留给引擎会把边界位解析成相邻可编辑位的形态（如「段落 + 卡片」
+之间的边界，WebKit 在该处会派 `beforeinput`）。
+
+**已知边界（HC3）**：IME 组合在「两卡相邻」这一档起不来——组合需要一个可编辑的行内宿主，而
+该位置在 DOM 里没有（卡片是原子块）。可行路径：先 ⇧Enter（走模型物化一个空段落，光标随之进入
+可编辑位）再组合；登记在 docs/backlog.md，真机判据在注入通道修复后补。
 
 **卡片前缘输入纯文本 MUST NOT 删除该卡片**（`insertPlainTextAtCaret` 的既存缺陷：旧实现把
 `blocks[at]` 整个跳过、卡片被删）。退格 / 前删在该位置的语义沿用既有卡片语义（退格删**前**一张、
@@ -98,8 +125,14 @@ caret 路径决定行为。族外的键位（⌃G、⌥G、翻屏族 ⌃V / ⌥V
    SHALL 只有一处实现（`normalizeComposerCaret`，移动 / 扩选命令共用）。**归一等价类后，序列上
    任意相邻两个停靠点必不相同**——一步必有位移（不得「原地空走」）。空段落只有 `offset 0` 一个
    停靠点、不参与归一。⌃F / ⌃B SHALL 在停靠点序列上移动**一步**，遇原子卡片 SHALL 整块一步跨过；
-   ⌃A / ⌃E 落当前逻辑行行首 / 行尾（`\n` 为界）；⌃N / ⌃P 在逻辑行之间移动（同列位，超出目标行
-   长度取行尾），出段落跨到相邻**段落**块，卡片不产生停靠行。
+   ⌃A / ⌃E 落当前逻辑行行首 / 行尾（`\n` 为界）；⌃N / ⌃P SHALL 优先在**渲染行**之间移动（软折行
+   产生的每一屏行是一行，同 x 位；M457 起，Alex 2026-10-12 裁决「与编辑器正文对齐」），**段内没有
+   相邻渲染行时**才沿用既有的逻辑行 / 跨相邻段落块行为（超集）；卡片不产生停靠行。
+   **行级命令的基准光标 SHALL 取光标所在段落的原始位**（M457，与 M455 的 ⌃N/⌃P 同一条）：段落
+   **末缘**（`offset = 文本长度`——键入之后的常态光标位）在归一后会折到下一块前缘，行级命令随即
+   对着**别的块**算行——下一块是卡片 / 越界（无行）⇒ 一行都算不出来 ⇒ 表现为「⌃A 按了没反应」；
+   下一块是段落 ⇒ 算到下一段的行首尾去。原始位上算行、归一只服务停靠点序列（`lineBasisCaret`
+   一处实现，⌃A / ⌃E / ⌃N / ⌃P 共用）。
 2. **导航不是编辑**：仅移动光标 MUST NOT 改变块序列、MUST NOT 产生撤销步、MUST NOT 触发
    `renderComposer` 那类整面重渲（只允许写选区与滚动位）；移动后光标行 SHALL 在 composer 视口内
    （HC2）。失败形态（无动作、块边界、无法落位）SHALL 表现为「无动作」，MUST NOT 留下半截状态。
@@ -145,17 +178,31 @@ caret 路径决定行为。族外的键位（⌃G、⌥G、翻屏族 ⌃V / ⌥V
 4. **HC2 行为层（真机验收）**：内容超 `max-height` 后断行，断言 composer **可视区的最后一行是
    刚断出来的空行**（像素层判据：该行带内无字形，与其右侧空白同色）；缺陷形态下那一带是上一行
    的字形。落点：`scripts/acceptance/scenarios/118-harness-composer-autoscroll.md`。
-5. **HC3 判据层（零 DOM 单测）**：`boundaryCaretAt` / `domCaretTarget` / `isCardFrontCaret` 三个
-   纯函数——块序 × 全部边界位（含「末尾之后」）全枚举，断言写回落点恒为同一个块级边界、读回
-   归一恒为同一模型值、段落位不被边界档吃掉；外加边界位的输入动词矩阵（`insertPlainTextAtCaret`
-   卡片档不丢卡、内容落在新段落、块序守恒、offset 落点）与删除语义（退格删前 / 前删删后 / 块首
-   无操作）。落点：`tests/unit/harness-composer.test.ts` 的 HC3 用例。
+5. **HC3 判据层（零 DOM 单测）**：`boundaryCaretAt` / `domCaretTarget` / `boundaryTypingCaret` /
+   `isCardFrontCaret` 四个纯函数——块序 × 全部边界位（含「末尾之后」）全枚举，断言写回落点
+   **恒有文本宿主**（前段落末缘 / 后一张卡片的首个文本位；MUST NOT 是块级容器边界，M457）、
+   与前块非空时的边界位同属归一等价类、段落位不被边界档吃掉；写回形态 × 编辑动词的一致性
+   （退格 / 前删 / ⇧Enter 与边界位逐字节同结果）；边界位的键入判据（`boundaryTypingCaret`：
+   折叠选区 + 非修饰 + 可打印单字符 + 非组合期 + 卡片前缘五项，其余一律 `null`）；外加边界位的
+   输入动词矩阵（`insertPlainTextAtCaret` 卡片档不丢卡、内容落在新段落、块序守恒、offset 落点）
+   与删除语义（退格删前 / 前删删后 / 块首无操作）。落点：`tests/unit/harness-composer.test.ts`
+   的 HC3 用例。
 6. **HC3 行为层（真机验收）**：两张合成图片卡片相邻、光标在其后段落，⌃B 回移 → 键入一个探针串
    → 断言该串落在**两张卡片之间**（AX 文本里探针串夹在两条卡片元信息行之间）→ 一次撤销回到
    「两卡相邻、之间无段落」的块序。落点：`scripts/acceptance/scenarios/134-harness-composer-intercard-caret.md`。
    这一条同时是裁决点 2 的**实测闸**（原生 ⌃B 能否落到边界）：落位不成立时的处置见 change
    `composer-intercard-caret` 的 design §6。
-7. **反向验证**：把两条修复各自临时改回缺陷形态，断言 MUST 变红；不变红即说明该断言对该缺陷
+   **M457 追加的两条读数**（同一场景）：① ⌃B 回移后光标的 `Range.getBoundingClientRect()` MUST
+   非零高（容器边界形态恒为 0×0 ⇒ 画在哪由引擎决定）；② 卡片后空行行首按 ⌃B，落点 MUST 是
+   **前一行行末**（段落后紧邻卡片这一档的写回形态 = 前段落末缘），MUST NOT 落进卡片内部文本。
+7. **HC3 探针层（真实引擎，M457 诊断口径）**：真实 app + Playwright **WebKit**（真机同族引擎，
+   含真机同款 UA）+ Tauri 桩 + 草稿恢复预置合成块序列，逐键注入后读 DOM 选区锚 + `rect` +
+   块序列。它判三件事：① `text` 作用域的端到端分派（不过原生路径的签名：⌃A 在段末「不动」只能
+   由「键位层命中 + 模型层无动作」产生）；② 边界位的光标几何（容器边界 0×0 vs 文本宿主位
+   852,641）；③ 两卡之间键入后块序列（字落在两卡之间、两卡不丢）。**本层不随 mission 入 git**
+   （探针脚本落 `test-results/`，git 外），永久化的回归判据建议落在 `tests/visual/scenes/**`
+   （该目录不在 M457 的改动面，已作为 finding 上报）。
+8. **反向验证**：把两条修复各自临时改回缺陷形态，断言 MUST 变红；不变红即说明该断言对该缺陷
    无区分度，不算覆盖。
    - **HC1**（段末改回尾随 `\n`）：实测 117 变红——像素条「第二行行位有字形」读到亮度跨度 0
      （修后 186），AX 两条也变红（文本是同行拼接的 `hnl-brk-aahnl-brk-cd`）。区分度成立。
@@ -171,13 +218,17 @@ caret 路径决定行为。族外的键位（⌃G、⌥G、翻屏族 ⌃V / ⌥V
    - 已知边界：显式滚动只在 Blink 上可观测到差异，而真机是 WKWebView——118 覆盖不到
      「显式代码被删」这一形态，如需在 chromium 层补一条结构断言另开（本 change 的改动面不含
      `tests/visual/scenes/**`）。
-8. **HC4 判据层（零 DOM 单测）**：`normalizeComposerCaret` / `composerCaretStops` 与移动 / 删除 /
-   kill / 转置纯函数——小块序列全枚举下断言「相邻停靠点必不同类、序列线性有序」、移动族落点
-   （代理对整步、卡片一步跨过、跨段跳过卡片）、词级 kill 不跨块、导航函数在冻结入参上返回
-   （块序列逐字节不变）。落点：`tests/unit/composer-nav.test.ts`。
-9. **HC4 行为层（真机验收）**：`scripts/acceptance/scenarios/140`–`147` 八条——移动族落点 /
+9. **HC4 判据层（零 DOM 单测）**：`normalizeComposerCaret` / `composerCaretStops` / `lineBasisCaret` /
+   `visualLineStepCrossed` 与移动 / 删除 / kill / 转置纯函数——小块序列全枚举下断言「相邻停靠点必
+   不同类、序列线性有序」、移动族落点（代理对整步、卡片一步跨过、跨段跳过卡片）、**行级命令在段落
+   末缘按该行算**（⌃A 回本行行首、⌃E 与行尾同属一个归一等价类、后接段落时不得跑到下一段；M457
+   新增）、**渲染行一步的闸门**（真跨一行才采信几何解出的位置：同行 / 钳回原行 / 方向反了 / 零高
+   行盒一律不采信；M457 新增）、词级 kill 不跨块、导航函数在冻结入参上返回（块序列逐字节不变）。
+   落点：`tests/unit/composer-nav.test.ts`。
+10. **HC4 行为层（真机验收）**：`scripts/acceptance/scenarios/140`–`147` 八条——移动族落点 /
    相邻卡片一步跨过 / 导航不成撤销步 / 删除族按整卡 / ⌥⌫ 是词级删除 / kill 槽跨面共用 /
-   扩选 anchor 不动 / 族外键不回退。
+   扩选 anchor 不动 / 族外键不回退。M457 追加：场景 150（⌃A / ⌃E 的段落末缘档 + ⌃B 的落点
+   几何 + `text` 作用域的端到端分派读数）。
    **已知未覆盖**：「导航不重渲」这一条要求 MutationObserver 计数 = 0，而真机套件只有
    KimiCU 的 AX / 截图 / 输入通道、**没有 JS 求值通道**（`scripts/acceptance/lib/cu.mjs`），
    当前判不了；场景 142 用「导航后文本不变 + 导航不成撤销步」这条可观测后果替代，缺口登记在
@@ -202,6 +253,29 @@ chromium 探针（`vite dev` + 视觉套件的桩，光标读回 / 高度 / 滚�
 真实占一行），光标落在新行；继续键入 `cd` ⇒ 第二块为 `"cd"`。滚动位：11 行内容时
 `scrollTop = scrollHeight − clientHeight`（贴底），光标行在可视区内。
 
+### M457 现场（2026-10-12）：边界光标位的 caret 几何 + 键入挂点
+
+缺陷现场（Alex）：「Ctrl+A 无法把光标移动到行首」「光标在卡片后空行行首按 Ctrl+B 落到摘录卡
+正文里」「两个摘录之间不能输入内容」。
+
+探针口径：真实 app（master 构建的 dist）+ Playwright **WebKit**（真机同族引擎、真机同款 UA）+
+Tauri 桩 + 草稿恢复预置合成块序列，逐键注入后读 DOM 选区锚 + `Range.getBoundingClientRect()`。
+
+| 读数 | 修前 | 修后 |
+|---|---|---|
+| `Range(composer, N)`（块级容器边界，写回形态） | rect **0×0**（无 caret 几何；WebKit 与 Blink 同结果） | 不再被写回（除「末尾之后」） |
+| 相邻前段落末缘的文本宿主位 | rect **857,641 0×15**（真实行位） | 边界位写回该位 |
+| 卡片后空行行首 + ⌃B | 选区锚 `#composer@1`，rect **0×0**（引擎自行决定画在哪 ⇒ 真机落进卡片正文） | 锚 `#text(<qpara>)@11`，rect **857,641**（前一行行末） |
+| 两卡相邻之间 + ⌃B → 键入 `XQZK` | 块序列**零变化**（keydown 到达、`beforeinput` / `input` 都不派、字不落） | 块序列 `[…, 卡A, 段落 "XQZK", 卡B, …]`（字落在两卡之间、两卡不丢） |
+| 段末（键入后的常态位）+ ⌃A | 选区**完全不动** | 回本行行首（offset 11 → 0） |
+| 段中 + ⌃E | 锚 `#composer@1`，rect 0×0（行尾被归一成卡片前缘） | 锚 `#text@11`，rect 857,641（本行行末） |
+| ⌃F / ⌃N / ⌃P（对照） | 派发正常（一步字符 / 跨段） | 不变 |
+
+**「`text` 作用域到底有没有派发」的判据**（Alex 疑「是不是没实现 / 合并到 master 了吗」）：⌃A 在
+段末「不动」这一形态只能由「键位层命中 + 模型层无动作」组合产生——原生 ⌃A 会回行首；⌃B / ⌃E
+之后的选区锚是块级容器边界，只有产品自己的 `domCaretTarget` 会产出该形态。两条合起来证明绑定在
+composer 内**确实派发**（M450 / M453 / M456 均在 master），缺陷在模型层与写回形态，不在接线。
+
 ## 与实现的关系
 
 - HC1 的落法由 `src/harness-panel.ts` 的纯模型层 `insertSoftBreakAtCaret` 决定（段末 / 卡片前缘
@@ -209,22 +283,36 @@ chromium 探针（`vite dev` + 视觉套件的桩，光标读回 / 高度 / 滚�
   键盘处理路径。
 - HC2 的判据是纯函数 `caretScrollTop`（`src/harness-panel.ts`），DOM 侧（`setDomCaret` 的
   收尾）只负责量读数、写 `scrollTop`；光标已在视口内时纯函数返回原值，不抖动视口。
-- HC3 的读回 / 写回规则是 `src/harness-panel.ts` 的三个纯函数：`boundaryCaretAt`（DOM 边界
-  → 模型位）、`domCaretTarget`（模型位 → DOM 落点形态）、`isCardFrontCaret`（是不是边界位）。
-  `caretFromDom` / `setDomCaret` 只是这两个规则在真 DOM 上的执行面，两者必须互为逆运算。
-  内容型输入的物化收口在两处：`beforeinput` 的 `insertText`（键入）与 `compositionstart`（IME
-  组合的首次落字）；粘贴 / 拖入 / ⇧Enter / 插卡片各自的入口**不改落法**——它们的「卡片前缘」
-  分支早已实现，本条款只是让那个位置**读得出来**。
+- HC3 的读回 / 写回规则是 `src/harness-panel.ts` 的四个纯函数：`boundaryCaretAt`（DOM 边界
+  → 模型位）、`domCaretTarget`（模型位 → DOM 落点形态）、`isCardFrontCaret`（是不是边界位）、
+  `boundaryTypingCaret`（边界位上的内容型键入判据）。
+  `caretFromDom` / `setDomCaret` / `domPointOf` 只是这些规则在真 DOM 上的执行面，读 / 写必须互为
+  逆运算（写落的阶梯见 `domCaretTarget`：前段落末缘 → 后一张卡片的首个文本位 → 仅「末尾之后」
+  用块级容器边界）。
+  内容型输入的物化收口在三处：composer `keydown` 的可打印单字符（`boundaryTypingCaret` 命中才
+  consume——边界位上**唯一会派发**的事件）、`beforeinput` 的 `insertText`（引擎把边界位解析成
+  相邻可编辑位的形态）、`compositionstart`（IME 组合的首次落字）；粘贴 / 拖入 / ⇧Enter /
+  插卡片各自的入口**不改落法**——它们的「卡片前缘」分支早已实现。
 - HC4 的模型层是 `src/harness-panel.ts` 的一组纯函数：`normalizeComposerCaret`（同形位归一）、
-  `composerCaretStops`（停靠点序列）、`moveCharForward` / `moveCharBackward` / `moveLineStart` /
-  `moveLineEnd` / `moveLineDown` / `moveLineUp` / `moveWordForward` / `moveWordBackward`（移动与
-  扩选 head）、`killWordForward` / `killWordBackward` / `killLineAtCaret` / `transposeCharsAtCaret`
-  （删除族与转置）。装配层的**一处**包装按事件目标分派到 `HarnessPanelHandle.composerCommand`
-  （编辑器面走 `src/editor.ts` 的既有命令、composer 面走这些纯函数）；移动 / 扩选只写选区
-  （`setDomCaret` / `setDomSelection`）与滚动位，**不**走整面重渲。词 / 字素簇扫描与 kill 槽的
-  **共用**实现住在叶子模块 `src/quote-card.ts`（编辑器侧与 composer 侧同一份）。
+  `composerCaretStops`（停靠点序列）、`lineBasisCaret`（行级命令的基准光标：段落内取原始位，
+  M457 起 ⌃A / ⌃E / ⌃N / ⌃P 共用）、`visualLineStepCrossed`（渲染行一步的闸门，M457）、
+  `moveCharForward` / `moveCharBackward` / `moveLineStart` / `moveLineEnd` / `moveLineDown` /
+  `moveLineUp` / `moveWordForward` / `moveWordBackward`（移动与扩选 head）、`killWordForward` /
+  `killWordBackward` / `killLineAtCaret` / `transposeCharsAtCaret`（删除族与转置）。**⌃N / ⌃P 的
+  渲染行一步**在模型层之上加了一薄层 DOM 几何（`stepVisualLine`：`document.caretRangeFromPoint`
+  按同 x 位解相邻行的位置 → `modelCaretAt` 读回模型 → `visualLineStepCrossed` 判「真跨了一行」，
+  不成立则回落到模型层的逻辑行 / 跨段落行为）；⌃⇧N / ⌃⇧P 走**同一份**实现。装配层的
+  **一处**包装按事件目标分派到 `HarnessPanelHandle.composerCommand`（编辑器面走 `src/editor.ts`
+  的既有命令、composer 面走这些纯函数）；移动 / 扩选只写选区（`setDomCaret` / `setDomSelection`）
+  与滚动位，**不**走整面重渲。词 / 字素簇扫描与 kill 槽的**共用**实现住在叶子模块
+  `src/quote-card.ts`（编辑器侧与 composer 侧同一份）。
 - 已知边界：卡片上按 ⇧Enter 时「新行」落在卡片那一行的上方（光标所在处），不改变卡片与
   文本块的相对次序——卡片是原子块，本条不承诺它内部出现换行。
+- 已知边界（HC3，M457）：
+  - **「末尾之后」**（`block = 块数`）仍写块级容器末尾边界（没有文本宿主、也没有后一块）——
+    caret 几何为零、画在哪由引擎决定，与本次修掉的形态同族，登记在 `docs/backlog.md`；
+  - **两卡相邻之间的 IME**：组合需要一个可编辑的行内宿主，该位置没有（卡片是原子块）⇒ 组合
+    起不来；先 ⇧Enter（模型在该处物化空段落、光标进入可编辑位）再组合是可行路径。
 - 已知边界（HC3）：`compositionstart` 的物化**不走整面重渲**（`withModel`），只就地插入那一个
   空段落块——重渲会销毁正要开始组合的目标节点、打断 IME 会话。它仍与撤销栈的「前态」口径一致
   （先压前态再插块），代价是这一步的实现偏离「结构性修改一律整面重渲」的常规路径，写在这里备案。
