@@ -183,12 +183,109 @@ impl TurnOutput {
 }
 
 /// LLM 调用错误（含上下文超限判定，供自动压缩重试）。
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// M463 起带**错误路径可观察性**字段：非 2xx 的 HTTP 错误把状态码 / 原始响应 body
+/// （截断）/ 服务端 request id 一并带出，供 llm_error 记录落盘（诊断「服务端为什么拒」
+/// 时不必再靠猜）。这些字段对网络层失败 / 脚本化错误 / 流内错误恒为空（它们没有 HTTP 面）。
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct TurnError {
     pub code: String,
     pub message: String,
     /// 命中 provider 预设的上下文超限特征串。
     pub context_overflow: bool,
+    /// HTTP 状态码（非 2xx 才有）。
+    pub http_status: Option<u16>,
+    /// 原始响应 body（已按 [`ERROR_BODY_MAX_CHARS`] 截断）。
+    pub raw_body: Option<String>,
+    /// body 是否被 [`ERROR_BODY_MAX_CHARS`] 截断（截断时 raw_body 是前缀）。
+    pub body_truncated: bool,
+    /// 服务端 request id（响应头优先，body 兜底；都没有则 None）。
+    pub request_id: Option<String>,
+}
+
+impl TurnError {
+    /// 无 HTTP 面的错误（网络层 / 脚本化 / 流内）：新字段全空。仅控制流用的三元组。
+    pub fn new(
+        code: impl Into<String>,
+        message: impl Into<String>,
+        context_overflow: bool,
+    ) -> Self {
+        Self {
+            code: code.into(),
+            message: message.into(),
+            context_overflow,
+            ..Default::default()
+        }
+    }
+}
+
+/// 错误 body 的留存上限（字符，非字节——按字符截断不会切坏 UTF-8）。巨型 body（HTML 网关页 /
+/// 大段 JSON）截到该上限，防止一条错误记录把会话 JSONL 撑爆；截断时置 `body_truncated`。
+const ERROR_BODY_MAX_CHARS: usize = 4096;
+
+/// 取服务端 request id 的响应头候选名（各家命名不一，按序取第一个在场的；都缺则回 None）。
+/// 响应头之外还在错误 body 里找（[`parse_request_id`]）——两条路都要，免得取决于哪家网关。
+const REQUEST_ID_HEADERS: &[&str] = &[
+    "x-request-id",
+    "request-id",
+    "x-msh-request-id",
+    "x-trace-id",
+    "trace-id",
+];
+
+/// 按 [`ERROR_BODY_MAX_CHARS`] 截断错误 body，返回 (截断后的文本, 是否截断过)。
+fn truncate_error_body(text: &str) -> (String, bool) {
+    if text.chars().count() <= ERROR_BODY_MAX_CHARS {
+        return (text.to_string(), false);
+    }
+    (text.chars().take(ERROR_BODY_MAX_CHARS).collect(), true)
+}
+
+/// 从响应头取 request id（候选名见 [`REQUEST_ID_HEADERS`]）。
+fn request_id_from_headers(headers: &reqwest::header::HeaderMap) -> Option<String> {
+    REQUEST_ID_HEADERS.iter().find_map(|name| {
+        headers
+            .get(*name)
+            .and_then(|value| value.to_str().ok())
+            .map(str::to_string)
+    })
+}
+
+/// 从错误 body 的 JSON 里取 request id（顶层 `request_id` 或 `error.request_id`，两家常见形态）。
+fn parse_request_id(text: &str) -> Option<String> {
+    let value: serde_json::Value = serde_json::from_str(text).ok()?;
+    ["request_id", "request-id"].iter().find_map(|key| {
+        value
+            .get(*key)
+            .or_else(|| value.get("error").and_then(|e| e.get(*key)))
+            .and_then(|v| v.as_str())
+            .map(str::to_string)
+    })
+}
+
+/// 非 2xx 响应 → [`TurnError`]（含 wire 面字段）。抽成纯函数，便于单测（不必起 HTTP 服务）。
+fn http_error_turn_error(
+    preset: &ProviderPreset,
+    status: u16,
+    header_request_id: Option<String>,
+    text: &str,
+) -> TurnError {
+    let (code, message) = parse_error_body(text).unwrap_or_else(|| {
+        (
+            "harness_http_error".to_string(),
+            format!("HTTP {status}: {text}"),
+        )
+    });
+    let (raw_body, body_truncated) = truncate_error_body(text);
+    TurnError {
+        context_overflow: is_overflow(preset, &code, &message),
+        code,
+        message,
+        http_status: Some(status),
+        raw_body: Some(raw_body),
+        body_truncated,
+        request_id: header_request_id.or_else(|| parse_request_id(text)),
+    }
 }
 
 /// provider 预设表（design §11 双预设）：base_url 默认、超限特征串。
@@ -249,6 +346,16 @@ fn is_overflow(preset: &ProviderPreset, code: &str, message: &str) -> bool {
         .any(|needle| haystack.contains(needle))
 }
 
+/// mock 的 overflow 判定：脚本要能写出**任一家 provider** 的方言（fixture 与实现同 PR，
+/// 验的就是「认不认这条话术」），故对全部 provider 预设取**并集**。旧实现是一份硬编码的
+/// 两串列表（第二事实源，REVIEW.md 第 8 条），且漏掉了 M463 给 kimi 补的 coding 端点话术
+/// 「model token limit」——那条形态在 mock 驱动下因此永远判不出 overflow。
+fn is_overflow_any(code: &str, message: &str) -> bool {
+    [&KIMI_PRESET, &DEEPSEEK_PRESET]
+        .iter()
+        .any(|preset| is_overflow(preset, code, message))
+}
+
 /// LLM 调用入参（owned：会话历史每轮本就整体序列化，克隆成本已在关键路径上）。
 pub struct Request {
     pub system: String,
@@ -272,6 +379,13 @@ pub trait LlmClient: Send {
     /// 调用方 MUST NOT 持有会话锁调用本方法（一轮可能流式几分钟，持锁会把
     /// `harness_state` / 批准通道全堵住）——`sink` 的回调里可能反过来短暂查会话（中断探测）。
     fn complete(&mut self, request: &Request, sink: &dyn StreamSink) -> TurnOutput;
+
+    /// 本 client **实际会发**的请求体字节数（含 wire 展开后的尺寸；M463 发送量计量：
+    /// 发送点记录 `llm_request.request_bytes`，让「这次请求多大」不再需要按字节比外推）。
+    /// 缺省 None = 该实现没有真实 HTTP body（mock 只弹脚本）——记录侧据此省略该字段。
+    fn wire_body_bytes(&self, _request: &Request) -> Option<u64> {
+        None
+    }
 
     /// mock provider 的 fixture 路径（留存 `llm_response.mock_fixture` 的因果链字段：
     /// 哪份 fixture 驱动了这一轮）。真 provider 无此概念，缺省 None。
@@ -425,27 +539,42 @@ impl LlmClient for ResponsesClient {
     fn complete(&mut self, request: &Request, sink: &dyn StreamSink) -> TurnOutput {
         match self.complete_inner(request, sink) {
             Ok(output) => output,
+            // 网络层失败 / 附件展开失败等**没有 HTTP 面**的错误：wire 面字段全空
+            //（`TurnError::new`）。非 2xx 走 complete_inner 的 Ok(error) 分支，那条带
+            // http_status / raw_body / request_id（M463）。
             Err(e) => TurnOutput {
-                error: Some(TurnError {
-                    code: e.code.clone(),
-                    message: e.message.clone(),
-                    context_overflow: is_overflow(self.preset, &e.code, &e.message),
-                }),
+                error: Some(TurnError::new(
+                    e.code.clone(),
+                    e.message.clone(),
+                    is_overflow(self.preset, &e.code, &e.message),
+                )),
                 ..Default::default()
             },
         }
     }
+
+    /// 发送量计量（M463）：构造一次**实际会发**的 body 并回其序列化字节数（含 wire 展开后的
+    /// 尺寸）——发送点记录 `llm_request.request_bytes` 用它，省掉「按字节比外推」。
+    /// 与 [`Self::complete_inner`] 共用 [`Self::wire_body`]：同一份构造，MUST NOT 各拼一套
+    /// （REVIEW.md 第 8 条）。构造失败（附件缺失等）返回 None——那条路径随后以同因报错。
+    fn wire_body_bytes(&self, request: &Request) -> Option<u64> {
+        let body = self
+            .wire_body(request)
+            .map_err(|e| eprintln!("lumir: harness 发送量计量跳过（构造失败）：{e}"))
+            .ok()?;
+        serde_json::to_vec(&body)
+            .map_err(|e| eprintln!("lumir: harness 发送量计量跳过（序列化失败）：{e}"))
+            .ok()
+            .map(|bytes| bytes.len() as u64)
+    }
 }
 
 impl ResponsesClient {
-    fn complete_inner(
-        &mut self,
-        request: &Request,
-        sink: &dyn StreamSink,
-    ) -> Result<TurnOutput, CommandError> {
-        // wire 展开（design §4.3）：input 数组里的 lumir-attachment:// 引用就地换成
-        // data URL——发送前唯一的展开点，展开失败（附件缺失等）即 Err，本轮以人话错误
-        // 收口，MUST NOT 发出静默缺图的请求。
+    /// 构造实际发送体（wire 展开 + 参数），发送与发送量计量**共用这一份**（单一真源）。
+    /// wire 展开（design §4.3）：input 数组里的 `lumir-attachment://` 引用就地换成 data URL
+    /// ——发送前唯一的展开点，展开失败（附件缺失等）即 Err（调用侧以人话错误收口，
+    /// MUST NOT 发出静默缺图的请求）。
+    fn wire_body(&self, request: &Request) -> Result<serde_json::Value, CommandError> {
         let input = super::attachments::expand_image_refs(&request.input, &self.vault_id)?;
         let mut body = serde_json::json!({
             "model": self.model,
@@ -461,6 +590,15 @@ impl ResponsesClient {
         // 思考程度按档位映射（M362）：schema 声明支持时写顶层 `reasoning.effort`，
         // 不支持时不写该字段——能力判据 client 构建时已从 schema 现算（M373）。
         thinking::apply_effort(&mut body, self.effort_supported, request.effort);
+        Ok(body)
+    }
+
+    fn complete_inner(
+        &mut self,
+        request: &Request,
+        sink: &dyn StreamSink,
+    ) -> Result<TurnOutput, CommandError> {
+        let body = self.wire_body(request)?;
         let response = self
             .http
             .post(&self.endpoint)
@@ -473,14 +611,19 @@ impl ResponsesClient {
             })?;
         let status = response.status();
         if !status.is_success() {
+            // M463 错误路径可观察性：wire 面三件（状态码 / 原始 body / request id）一并带出，
+            // 落 llm_error 记录。头先读——`text()` 会消费 response。
+            let header_request_id = request_id_from_headers(response.headers());
             let text = response.text().unwrap_or_default();
-            let (code, message) = parse_error_body(&text).unwrap_or_else(|| {
-                (
-                    "harness_http_error".to_string(),
-                    format!("HTTP {status}: {text}"),
-                )
+            return Ok(TurnOutput {
+                error: Some(http_error_turn_error(
+                    self.preset,
+                    status.as_u16(),
+                    header_request_id,
+                    &text,
+                )),
+                ..Default::default()
             });
-            return Err(CommandError::new(code, message));
         }
         parse_sse(response, self.preset, sink)
     }
@@ -650,20 +793,14 @@ fn dispatch_event(
                         "响应失败".to_string(),
                     )
                 });
-            output.error = Some(TurnError {
-                context_overflow: is_overflow(preset, &code, &message),
-                code,
-                message,
-            });
+            let context_overflow = is_overflow(preset, &code, &message);
+            output.error = Some(TurnError::new(code, message, context_overflow));
         }
         "error" => {
             let (code, message) = parse_error_value(&value)
                 .unwrap_or_else(|| ("harness_stream_error".to_string(), "流式错误".to_string()));
-            output.error = Some(TurnError {
-                context_overflow: is_overflow(preset, &code, &message),
-                code,
-                message,
-            });
+            let context_overflow = is_overflow(preset, &code, &message);
+            output.error = Some(TurnError::new(code, message, context_overflow));
         }
         _ => {}
     }
@@ -970,11 +1107,7 @@ impl LlmClient for MockClient {
             Err(e) => {
                 self.received_efforts.push(request.effort);
                 return TurnOutput {
-                    error: Some(TurnError {
-                        code: e.code,
-                        message: e.message,
-                        context_overflow: false,
-                    }),
+                    error: Some(TurnError::new(e.code, e.message, false)),
                     ..Default::default()
                 };
             }
@@ -985,14 +1118,14 @@ impl LlmClient for MockClient {
         self.received_efforts.push(request.effort);
         let Some(entry) = self.script.pop_front() else {
             return TurnOutput {
-                error: Some(TurnError {
-                    code: "fixture_exhausted".to_string(),
-                    message: format!(
+                error: Some(TurnError::new(
+                    "fixture_exhausted",
+                    format!(
                         "mock fixture（{}）脚本已弹尽，测试脚本漏写响应",
                         self.source
                     ),
-                    context_overflow: false,
-                }),
+                    false,
+                )),
                 ..Default::default()
             };
         };
@@ -1005,19 +1138,9 @@ impl LlmClient for MockClient {
             std::thread::sleep(std::time::Duration::from_millis(entry.delay_ms));
         }
         if let Some(error) = entry.error {
+            let context_overflow = is_overflow_any(&error.code, &error.message);
             return TurnOutput {
-                error: Some(TurnError {
-                    code: error.code.clone(),
-                    message: error.message.clone(),
-                    // 脚本能写出各家特征串；overflow 判定用特征串本身（与真 client 同口径）。
-                    context_overflow: ["context_length_exceeded", "maximum context length"]
-                        .iter()
-                        .any(|needle| {
-                            format!("{} {}", error.code, error.message)
-                                .to_lowercase()
-                                .contains(needle)
-                        }),
-                }),
+                error: Some(TurnError::new(error.code, error.message, context_overflow)),
                 ..Default::default()
             };
         }
@@ -1397,6 +1520,111 @@ mod tests {
             "This model's maximum context length is 65536"
         ));
         assert!(!is_overflow(deepseek, "rate_limit", "slow down"));
+        // M463：mock 的 overflow 判定对**两家预设取并集**（脚本可写任一家方言）——
+        // 修前的硬编码两串列表漏掉 kimi 的 coding 端点话术，这条必 FAIL（区分度自证）。
+        assert!(is_overflow_any(
+            "harness_http_error",
+            "Your request exceeded k3-256k model token limit: 262144"
+        ));
+        assert!(is_overflow_any(
+            "invalid_request_error",
+            "maximum context length 65536"
+        ));
+        assert!(!is_overflow_any("rate_limit", "slow down"));
+    }
+
+    // ---- M463：错误路径可观察性（HTTP 状态 / 原始 body / request id） ----
+
+    /// 非 2xx → TurnError 带 wire 面三件；code/message 与超限判定沿用原口径。
+    #[test]
+    fn http_error_carries_wire_diagnostics() {
+        let kimi = preset(&HarnessProvider::Kimi);
+        let err = http_error_turn_error(
+            kimi,
+            400,
+            None,
+            r#"{"error":{"message":"Your request exceeded k3-256k model token limit: 262144"}}"#,
+        );
+        assert_eq!(err.http_status, Some(400));
+        assert_eq!(err.code, "harness_http_error");
+        assert!(err.context_overflow, "coding 端点话术必须判成超限");
+        assert!(!err.body_truncated);
+        assert_eq!(
+            err.raw_body.as_deref(),
+            Some(
+                r#"{"error":{"message":"Your request exceeded k3-256k model token limit: 262144"}}"#
+            )
+        );
+        // 响应头优先，都没有则 body 兜底——这里两者都无。
+        assert_eq!(err.request_id, None);
+
+        // 头里有 request id 时优先取头；body 里的作兜底。
+        let err = http_error_turn_error(
+            kimi,
+            500,
+            Some("hdr-1".into()),
+            r#"{"request_id":"body-1"}"#,
+        );
+        assert_eq!(err.request_id.as_deref(), Some("hdr-1"));
+        let err = http_error_turn_error(kimi, 500, None, r#"{"error":{"request_id":"body-2"}}"#);
+        assert_eq!(err.request_id.as_deref(), Some("body-2"));
+    }
+
+    /// 巨型 body 截到 [`ERROR_BODY_MAX_CHARS`]（防撑爆会话日志），并按字符截断不切坏 UTF-8。
+    #[test]
+    fn error_body_is_capped_at_the_limit() {
+        let long = "汉".repeat(ERROR_BODY_MAX_CHARS + 500);
+        let (body, truncated) = truncate_error_body(&long);
+        assert!(truncated);
+        assert_eq!(body.chars().count(), ERROR_BODY_MAX_CHARS);
+        let (short, truncated) = truncate_error_body("短");
+        assert!(!truncated);
+        assert_eq!(short, "短");
+    }
+
+    /// 响应头取 request id：按候选名序取第一个在场的。
+    #[test]
+    fn request_id_from_headers_picks_known_names() {
+        let mut headers = reqwest::header::HeaderMap::new();
+        headers.insert("x-request-id", "req-42".parse().unwrap());
+        assert_eq!(request_id_from_headers(&headers).as_deref(), Some("req-42"));
+        assert_eq!(
+            request_id_from_headers(&reqwest::header::HeaderMap::new()),
+            None
+        );
+    }
+
+    /// 发送量计量：`wire_body_bytes` = 实际 wire body 的序列化字节数（单一构造，非第二套）。
+    #[test]
+    fn wire_body_bytes_matches_the_serialized_body() {
+        let client = ResponsesClient {
+            http: reqwest::blocking::Client::new(),
+            endpoint: "https://example.invalid/responses".into(),
+            api_key: "test-key".into(),
+            model: "k3-256k".into(),
+            effort_supported: true,
+            store_false: true,
+            vault_id: "vault-test-1".into(),
+            preset: &KIMI_PRESET,
+        };
+        let request = Request {
+            system: "sys".into(),
+            input: vec![serde_json::json!({
+                "type": "message", "role": "user",
+                "content": [{"type": "input_text", "text": "你好"}],
+            })],
+            tools: vec![serde_json::json!({"type": "function", "name": "vault_read"})],
+            effort: ThinkingEffort::High,
+        };
+        let expected = serde_json::to_vec(&client.wire_body(&request).unwrap())
+            .unwrap()
+            .len() as u64;
+        assert_eq!(client.wire_body_bytes(&request), Some(expected));
+        assert!(expected > 0);
+        // 真 client 发的 body 带 store:false（kimi）与 reasoning.effort（单一构造点）。
+        let body = client.wire_body(&request).unwrap();
+        assert_eq!(body["store"], serde_json::json!(false));
+        assert_eq!(body["reasoning"]["effort"], serde_json::json!("high"));
     }
 
     // ---- M305：SSE 输出项收集去重 ----

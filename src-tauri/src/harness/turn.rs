@@ -337,9 +337,12 @@ pub fn run_turn_for(
         rounds += 1;
 
         let request = build_request(runtime, scope);
+        // 发送量（M463）：实际会发的 body 字节数，与发送共用 client 的同一份 body 构造
+        //（wire 展开只此一份），紧贴发送点取。
+        let request_bytes = client.wire_body_bytes(&request);
         // wire 留存（发送点记录，design §2）：发给 LLM 的同一个结构化请求体原样落
         // llm_request——记录点与发送点同点，无二次序列化，不存在翻译层。
-        record_llm_request(runtime, scope, config, &request);
+        record_llm_request(runtime, scope, config, &request, request_bytes);
         // 真流式（M369）：分片在 `complete` 期间收到即转发（正文逐字上屏），中断探测也在流里
         // （`aborted()`）——流式期间点停止即收流，已产出内容留在 `output` 里。思考块序号在
         // 本轮开始时定下：一次 LLM 往返最多一个思考块，该块的所有分片共用同一序号。
@@ -403,13 +406,9 @@ pub fn run_turn_for(
                     }
                 }
             }
-            let _ = runtime.with_session(scope, |s| {
-                s.jsonl().record(&serde_json::json!({
-                    "kind": "llm_error",
-                    "code": error.code,
-                    "message": error.message,
-                }));
-            });
+            let error_payload = llm_error_payload(&error);
+            let _ = runtime.with_session(scope, |s| s.jsonl().record(&error_payload));
+            // SSE 事件形态**不变**（前端只读 code/message）：wire 面诊断字段只进留存。
             sink.emit(events::error(&error.code, &error.message));
             return;
         }
@@ -637,8 +636,9 @@ fn record_llm_request(
     scope: &VaultScope,
     config: &HarnessConfig,
     request: &llm::Request,
+    request_bytes: Option<u64>,
 ) {
-    let payload = serde_json::json!({
+    let mut payload = serde_json::json!({
         "kind": "llm_request",
         "request": {
             "provider": config.provider,
@@ -648,7 +648,41 @@ fn record_llm_request(
             "params": { "thinking": request.effort.as_str() },
         },
     });
+    // 发送量计量（M463）：**实际会发**的 body 字节数（含 wire 展开后的尺寸——附件 data URL
+    // 已算进去）。None = 该 client 不发真实 HTTP body（mock 只弹脚本），此时省略该键。
+    // 让「这次请求多大」有一个直接读数，不必再按会话字节比外推（M463 探测的教训）。
+    if let Some(bytes) = request_bytes {
+        payload["request_bytes"] = serde_json::json!(bytes);
+    }
     let _ = runtime.with_session(scope, |s| s.jsonl().record(&payload));
+}
+
+/// `llm_error` sidecar 记录的载荷（M463 起带 wire 面诊断字段）：`code` / `message` 恒在，
+/// 其余**按在场与否**追加——非 2xx 的 HTTP 错误带 `http_status` / `raw_body`（已截断，
+/// 见 `llm::ERROR_BODY_MAX_CHARS`）/ 可选 `request_id`；网络层失败、mock 脚本化错误、流内
+/// 错误只落 `code`+`message`（新键缺席 = 该错误没有 HTTP 面，**不是**空值）。
+///
+/// 抽成纯函数：① 单测不必起 HTTP 服务就能钉记录形状；② 记录形状只有这一处产出（免得
+/// 记录点与测试各拼一份，REVIEW.md 第 8 条）。
+fn llm_error_payload(error: &llm::TurnError) -> serde_json::Value {
+    let mut payload = serde_json::json!({
+        "kind": "llm_error",
+        "code": error.code,
+        "message": error.message,
+    });
+    if let Some(status) = error.http_status {
+        payload["http_status"] = serde_json::json!(status);
+    }
+    if let Some(body) = &error.raw_body {
+        payload["raw_body"] = serde_json::json!(body);
+    }
+    if error.body_truncated {
+        payload["body_truncated"] = serde_json::json!(true);
+    }
+    if let Some(id) = &error.request_id {
+        payload["request_id"] = serde_json::json!(id);
+    }
+    payload
 }
 
 /// 响应点落 `llm_response`：正文 / reasoning 回放项原文 / thinking 展示文本 / 工具调用 /
@@ -1077,7 +1111,9 @@ fn compact_now(
         effort,
     };
     // 压缩调用的逐请求留存（wire 口径；落在旧文件，先于下面的文件轮换）。
-    record_llm_request(runtime, scope, config, &compact_request);
+    // 发送量同 llm_request 一起记（M463，与发送共用 client 的 body 构造）。
+    let compact_bytes = client.wire_body_bytes(&compact_request);
+    record_llm_request(runtime, scope, config, &compact_request, compact_bytes);
     let output = client.complete(&compact_request, &llm::DiscardStreamSink);
     record_llm_response(runtime, scope, &output, client.fixture_source());
     let summary = match output {
@@ -1680,5 +1716,35 @@ mod tests {
             format!("权限规则拒绝了 cli_run（{subject}）"),
             "超限退回既有文案"
         );
+    }
+
+    /// M463：`llm_error` 记录的载荷——HTTP 面三件按在场与否追加；没有 HTTP 面的错误
+    /// （网络层 / 脚本化 / 流内）只落 code+message，新键缺席（不是空值）。
+    #[test]
+    fn llm_error_payload_carries_wire_fields_only_when_present() {
+        let bare = llm::TurnError::new("harness_network_failed", "连不上", false);
+        let payload = llm_error_payload(&bare);
+        assert_eq!(payload["kind"], serde_json::json!("llm_error"));
+        assert_eq!(payload["code"], serde_json::json!("harness_network_failed"));
+        assert_eq!(payload["message"], serde_json::json!("连不上"));
+        for key in ["http_status", "raw_body", "request_id", "body_truncated"] {
+            assert!(payload.get(key).is_none(), "无 HTTP 面时不该出现 {key}");
+        }
+
+        let http = llm::TurnError {
+            code: "harness_http_error".into(),
+            message: "Your request exceeded k3-256k model token limit: 262144".into(),
+            context_overflow: true,
+            http_status: Some(400),
+            raw_body: Some(r#"{"error":{"message":"…"}}"#.into()),
+            body_truncated: false,
+            request_id: Some("req-9".into()),
+        };
+        let payload = llm_error_payload(&http);
+        assert_eq!(payload["http_status"], serde_json::json!(400));
+        assert_eq!(payload["request_id"], serde_json::json!("req-9"));
+        assert!(payload["raw_body"].is_string());
+        // 未截断时不留 body_truncated 键（缺席 = 未截断）。
+        assert!(payload.get("body_truncated").is_none());
     }
 }
