@@ -10,6 +10,8 @@ import { test } from "node:test";
 import {
   boundaryCaretAt,
   composerCaretStops,
+  domCaretTarget,
+  isCardFrontCaret,
   killLineAtCaret,
   killWordBackward,
   killWordForward,
@@ -196,10 +198,14 @@ test("M455 ⌃N/⌃P 段落末缘：保留列位（不被归一成边界位吞�
   assert.deepEqual(moveLineDown(twoParas, at(1, 2)), at(1, 2), "末段末缘 ⌃N：无相邻段，不动");
   const longer = [para("abcdef"), para("wxyz")];
   assert.deepEqual(moveLineUp(longer, at(1, 4)), at(0, 4), "末段末缘 ⌃P：同列位 4 落在上一段内");
-  // 列位超出目标行长度 ⇒ 取目标行行尾；该处正是块边界，归一到下一块前缘（**同一 DOM 位**，
-  // 是块模型固有的边界表示，不是列位再丢一次）。
+  // 列位超出目标行长度 ⇒ 取目标行行尾。**落点是「上一段最后一行行尾」本身**（`(0, 2)`）——
+  // M465 前这里写 `at(1, 0)`（后一段前缘）：那时末缘被无条件折到后块前缘，两处看起来「同一 DOM
+  // 位」，其实不是（后一段前缘写回的是**下一行的行首**）。M465 收紧折叠后列位钳制如实落在上一行
+  // 行尾，与函数自己的口径（「取目标行行尾」）一致。
   const clamp = [para("ab"), para("wxyz")];
-  assert.deepEqual(moveLineUp(clamp, at(1, 4)), at(1, 0), "列 4 超出上一段长度 ⇒ 取行尾（块边界）");
+  assert.deepEqual(moveLineUp(clamp, at(1, 4)), at(0, 2), "列 4 超出上一段长度 ⇒ 取上一行行尾（本段内）");
+  // 反向：⌃N 从上一段行尾回到下一段（同列位 → 该段行尾），一步往返不丢位。
+  assert.deepEqual(moveLineDown(clamp, at(0, 2)), at(1, 2), "⌃N 从上一段行尾回到下一段同列位");
 });
 
 test("M457 渲染行一步的判据（⌃N/⌃P 视觉行超集）：真跨一行才算数", () => {
@@ -276,6 +282,142 @@ test("M447 ⌃T：段内转置（光标落右端）；段首 / 卡片边界无�
   const tail = transposeCharsAtCaret([para("abc")], at(0, 3));
   assert.ok(tail !== null);
   assert.deepEqual(tail.blocks[0], para("acb"), "段尾：转置末两个簇（与编辑器侧同形）");
+});
+
+// ---------------------------------------------------------------------------
+// M465：段落后紧邻段落的「段末停靠点」不得被归一折叠吃掉
+// ---------------------------------------------------------------------------
+//
+// 缺陷现场（Alex 2026-10-12）：「光标放在末行行首，按 ⌃B，光标移动到上一行的倒数第二个字符
+// 后面，而不是行末」。块序 = 两行文本 + 末尾空行（M456 起 ⇧Enter 在段末落下的常驻空段落）。
+//
+// 根因：`composerCaretStops` / `stepStops` 对每个候选位先过 `normalizeComposerCaret`，而该折叠
+// 不加条件地把**任何**段落非空末缘 `(i, len)` 折成后块前缘 `(i+1, 0)`。折叠只对**卡片**档成立
+// （`domCaretTarget` 把卡片前缘写回前一段落末缘——同一位），对**后块是段落**这一档不成立：两个
+// 段落各占自己的行盒，末缘在上一行行尾、后段前缘在下一行行首。折叠后 `(i, len)` 与后块前缘同值、
+// 被去重合并吃掉 ⇒ 序列里 `(i+1, 0)` 的前一项退化成 `(i, len-1)`，⌃B 落在倒数第二个字符之后。
+//
+// 判据取**不变量形态**（覆盖不丢点 + 相邻即互为一步），复现用例只作现场锚点——单靠它只证明这一个
+// 案例被修好（docs/process/rendering-defect-contract-first.md）。
+
+test("M465 复现：末段空行行首 ⌃B 落上一行行末（不是 len-1），⌃F 反向对称", () => {
+  const alex: ComposerBlock[] = [para("hnl-brk-aa"), para("hnl-brk-cd"), para("")];
+  assert.deepEqual(moveCharBackward(alex, at(2, 0)), at(1, 10), "空行行首 ⌃B ⇒ 上一行行末");
+  assert.deepEqual(moveCharBackward(alex, at(1, 0)), at(0, 10), "第二行行首 ⌃B ⇒ 第一行行末");
+  assert.deepEqual(moveCharForward(alex, at(1, 10)), at(2, 0), "反向：上一行行末 ⌃F ⇒ 下一段前缘");
+
+  const twoParas = [para("abc"), para("de")];
+  assert.deepEqual(moveCharBackward(twoParas, at(1, 0)), at(0, 3), "后段前缘 ⌃B ⇒ 前段末缘");
+  assert.deepEqual(moveCharForward(twoParas, at(0, 3)), at(1, 0), "前段末缘 ⌃F ⇒ 后段前缘（一步一个真实位）");
+  assert.deepEqual(moveCharForward(twoParas, at(0, 2)), at(0, 3), "段内 ⌃F 仍是一步一字符（不跳位）");
+
+  // 卡片档不变：卡片前缘的写回位就是前段末缘（`domCaretTarget` 的卡片档）⇒ 仍折叠、仍退一个字符。
+  const withCard = [para("abc"), card(), para("de")];
+  assert.deepEqual(moveCharBackward(withCard, at(1, 0)), at(0, 2), "卡片前缘 ⌃B：退一个字符（M447 口径不变）");
+  assert.deepEqual(moveCharForward(withCard, at(0, 2)), at(1, 0), "段末 ⌃F 一步跳过卡片（M447 口径不变）");
+  // 末段末缘 → 「末尾之后」（M462 口径不变：容器边界无 caret 几何，写回它即末段末缘）。
+  assert.deepEqual(moveCharBackward([para("abc")], at(1, 0)), at(0, 2), "末段末缘的等价表示 ⌃B：退一个字符");
+});
+
+test("M465 属性：停靠点序列不丢点——每个非末块段落的每个码点边界都有自己的**写回位**", () => {
+  // 判据形态取「写回 DOM 位」（`domCaretTarget` 的输出）而不是模型值：卡片档的折叠让 `(i, len)`
+  // 由卡片前缘那一项**代为写回同一个位**，拿模型值判会把合法的折叠误判成丢点。末段末缘同样有
+  // 合法的等价表示（「末尾之后」），故末块不入枚举面（已知边界见合同 §实测依据 M465 节）。
+  const cases: ComposerBlock[][] = [
+    [para("")],
+    [para("abc"), para("")],
+    [para("abc"), para("de")],
+    [para("ab\ncd"), para("")],
+    [para("ab\ncd"), para("ef\ngh")],
+    [para("a\u{1F600}b"), para("c")],
+    [para("abc"), card(), para("de")],
+    [para("abc"), card()],
+    [card(), para("abc")],
+    [card(), card(), para("abc"), para("")],
+    [para("前"), para(""), card(), para("后")],
+  ];
+  for (const blocks of cases) {
+    const label = JSON.stringify(blocks.map((b) => (b.kind === "paragraph" ? `p:"${(b as { text: string }).text}"` : b.kind)));
+    const stops = composerCaretStops(blocks);
+    const targets = new Set(stops.map((stop) => JSON.stringify(domCaretTarget(blocks, stop))));
+    for (let i = 0; i < blocks.length - 1; i += 1) {
+      const block = blocks[i];
+      if (block.kind !== "paragraph") continue;
+      let offset = 0;
+      for (;;) {
+        const key = JSON.stringify(domCaretTarget(blocks, { block: i, offset }));
+        assert.ok(targets.has(key), `停靠点序列丢了 ${label} 的码点边界 ${i}:${offset}`);
+        if (offset >= block.text.length) break;
+        const code = block.text.charCodeAt(offset);
+        offset += code >= 0xd800 && code <= 0xdbff && offset + 1 < block.text.length ? 2 : 1;
+      }
+    }
+  }
+});
+
+test("M465 属性：停靠点相邻即互为一步（⌃F / ⌃B 正反向对称）+ 相邻两点写回位不同", () => {
+  // 「一步必有位移」的判据同样取**写回位**：相邻两点写回同一个 DOM 位就是「原地空走」。
+  // 这一条同时把 ⌃⇧F / ⌃⇧B 的 head 走法纳入——扩选族走的是同一份移动纯函数（HC4 第 3 条）。
+  const cases: ComposerBlock[][] = [
+    [para("")],
+    [para("abc"), para("")],
+    [para("abc"), para("de")],
+    [para("a\u{1F600}b")],
+    [para("ab\ncd"), para("ef\ngh"), para("")],
+    [para("abc"), card(), para("de")],
+    [card(), card(), para("x")],
+    [card(), para("abc"), card(), para("")],
+    [para("前"), para(""), card(), para("后")],
+  ];
+  for (const blocks of cases) {
+    const label = JSON.stringify(blocks.map((b) => (b.kind === "paragraph" ? `p:"${(b as { text: string }).text}"` : b.kind)));
+    const stops = composerCaretStops(blocks);
+    for (let i = 1; i < stops.length; i += 1) {
+      const prev = stops[i - 1];
+      const curr = stops[i];
+      const targetsDiffer =
+        JSON.stringify(domCaretTarget(blocks, curr)) !== JSON.stringify(domCaretTarget(blocks, prev));
+      if (!targetsDiffer) {
+        // 「一步必有位移」的唯一豁免：**卡片前缘** `(i, 0)` 与它前一块（空段落）的前缘写回同一个
+        // DOM 位（`domCaretTarget` 的卡片档：前块是段落 ⇒ 写回该段末缘，而空段落只有一个位）。
+        // 两个模型位都得留着——它们的**编辑语义不同**（卡片前缘的内容型键入物化新段落、空段落
+        // 前缘插进该段，HC3 第 3 条 / M457）。这一对因此表现为「一次不动的步」，登记为已知边界
+        // （docs/backlog.md），不在 M465 的改动面；段落 - 段落这种**同类**碰撞不被豁免。
+        assert.ok(
+          isCardFrontCaret(blocks, curr) || isCardFrontCaret(blocks, prev),
+          `相邻停靠点写回同一个 DOM 位（原地空走）：${label} @${i - 1}→${i}`,
+        );
+      }
+      assert.deepEqual(moveCharForward(blocks, prev), curr, `⌃F 从 ${label} 的停靠点 ${i - 1} 不是一步到下一停靠点`);
+      assert.deepEqual(moveCharBackward(blocks, curr), prev, `⌃B 从 ${label} 的停靠点 ${i} 不是一步回上一停靠点`);
+    }
+  }
+});
+
+test("M465 词步的段-段边界（两方向都钉）：段末 ⌥F 无动作、⌥B 回本段词首，不跨段", () => {
+  // **语义裁决**（tower 2026-10-12，M465 r1 评审 P2-1）：采用「不跨段」——段末 ⌥F 无动作、
+  // 段首 ⌥B 停在本段段首。理由：与 `⌃B` 段首无动作对称、与 `killWordForward` 的「段边界处无
+  // 动作」口径一致。这是 M465 那次折叠收紧带来的**第二处行为变更**（第一处是 ⌃B/⌃E/⌃F 的
+  // 段-段落点），在此显式钉住：旧形态下段末 ⌥F 被折进后段（一步跳到后段词尾、末段则表现为
+  // 「末尾之后」）、段末 ⌥B 折到后段前缘（**反向按键却向前跳**）——两条都是那条无条件折叠的
+  // 副产物，不是有意的跨段语义。
+  const twoParas = [para("abc"), para("de")];
+  assert.deepEqual(moveWordForward(twoParas, at(0, 3)), at(0, 3), "段末 ⌥F：本段已无下一词 ⇒ 无动作（不跨段）");
+  assert.deepEqual(moveWordBackward(twoParas, at(0, 3)), at(0, 0), "段末 ⌥B：回本段词首（不跨段）");
+  assert.deepEqual(moveWordBackward(twoParas, at(1, 0)), at(1, 0), "段首 ⌥B：本段之前无词 ⇒ 无动作（停在本段段首）");
+  assert.deepEqual(moveWordForward(twoParas, at(0, 0)), at(0, 3), "段首 ⌥F：到本段词尾（一步不出段）");
+  assert.deepEqual(moveWordForward(twoParas, at(1, 1)), at(2, 0), "段内 ⌥F 到末段词尾 = 末段末缘（归一表示，M447 口径不变）");
+  const three = [para("abc"), para("de"), para("f")];
+  assert.deepEqual(moveWordForward(three, at(1, 0)), at(1, 2), "中间段 ⌥F：落本段词尾（旧形态会写到下一段行首）");
+  assert.deepEqual(moveWordBackward(three, at(2, 0)), at(2, 0), "末段段首 ⌥B：无动作");
+  assert.deepEqual(moveWordBackward(three, at(1, 2)), at(1, 0), "段内 ⌥B：回本段词首");
+  // **卡片档的既有口径**（M465 未改，与上面两档不同）：段落后紧邻卡片时，`normalizeComposerCaret`
+  // 仍把段末缘折成卡片前缘，词步取到的是**卡片**块 ⇒ `block.kind !== "paragraph"` 早退，
+  // 两个方向都表现为「不动」（⌥B 在卡片档不回词首，而在段落档回）。旧形态同样如此（卡片档折叠
+  // 一直在），M465 未把它一并对齐——登记在 docs/backlog.md，不在此当作新语义钉住。
+  const withCard = [para("abc"), card()];
+  assert.deepEqual(moveWordForward(withCard, at(0, 3)), at(1, 0), "卡片前 ⌥F：落到卡片前缘（与段末缘同一位 ⇒ 无视觉位移；既有口径）");
+  assert.deepEqual(moveWordBackward(withCard, at(0, 3)), at(1, 0), "卡片前 ⌥B：同上（既有口径，与段落档不对称，已登记）");
 });
 
 // ---------------------------------------------------------------------------

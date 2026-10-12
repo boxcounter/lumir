@@ -496,8 +496,9 @@ export function insertPlainTextAtCaret(
  *
  * 光标位是**越界位**——「末尾之后」`{block: 块数, offset: 0}`（M462）时当作「末块之后」处理
  * （HC1 第 3 条的落点）：它既是 HC4 停靠点序列的末项、HC3 第 2 条点名的合法光标位，
- * 又是末段末缘的**归一等价表示**
- * （`normalizeComposerCaret` 把非空末缘折到这里，行级命令 ⌃E / ⌃F 落在这里并把该值写回 DOM
+ * 又是**末段**末缘的**归一等价表示**
+ * （`normalizeComposerCaret` 把**末段**的非空末缘折到这里——M465 起只有末段档与卡片档还折，
+ * 行级命令 ⌃E / ⌃F 落在末段末缘时即此值，并把该值写回 DOM
  * 的块级容器边界，真机探针实测选区锚 `#composer@块数`）。不加这一档，下面的钳制会把 `offset 0`
  * 当成**末段段首**：`\n` 落到末段文本第 0 位 ⇒ 空行出现在当前行**之前**、光标停在文字行行首
  * （Alex 2026-10-12 现场）。落新空段落块取代钳制，同时保证 HC1 第 3 条的落点（新行在该段之后）。
@@ -695,9 +696,22 @@ function caretKey(caret: ComposerCaret): string {
 }
 
 /**
- * 同形位归一等价类（design §4.1）：段落**非空**末缘（`offset ≥ 文本长度`）与紧邻后块的前缘
- * 视觉同形 ⇒ 归一到后块前缘的表示（最后一段的末缘归一到「末尾之后」= `{block: 块数, offset: 0}`）。
- * 空段落不归一（它自占一行，只有 `offset 0` 一个停靠点）。归一只有这一处实现。
+ * 同形位归一等价类（design §4.1）：段落**非空**末缘（`offset ≥ 文本长度`）只在**写回同一个 DOM
+ * 位**时才归一到紧邻后块的前缘——M465 起折叠条件按「落点形态的同一性」收紧，不再只看「相邻」：
+ *
+ * - **后块是原子卡片**（或没有后块）⇒ 折叠。卡片前缘的写回位就是本段末缘（`domCaretTarget` 的
+ *   卡片档：前块是段落 ⇒ `{kind: "text", index: i, offset: len}`），同一位、同一个表示；末段末缘
+ *   则归一到「末尾之后」（`{block: 块数, offset: 0}`——容器边界恒无 caret 几何，M457 / M462 已声明
+ *   这一档即末段末缘的等价表示）。
+ * - **后块是段落**（含 M456 起常驻的末尾空段落）⇒ **不折叠**。两个段落各占自己的行盒
+ *   （`.lumir-hp-qpara` 是块级盒），本段末缘在上一行行尾、后块前缘在下一行行首，两个**不同**的
+ *   DOM 位。旧实现无条件折叠，把「本段末缘」这个真实停靠点从序列里抹掉：`⌃B` 从后块前缘退一步
+ *   落到 `(i, len - 1)`（Alex 2026-10-12 现场：「光标移动到上一行的倒数第二个字符后面，而不是
+ *   行末」）。
+ *
+ * 空段落不归一（它自占一行，只有 `offset 0` 一个停靠点）；MUST NOT 把它折进「末尾之后」——那会让
+ * 归一变成非传递关系（`(i, len)`→`(i+1, 0)`、`(i+1, 0)`→`(n, 0)` 而 `(i, len)` 与 `(n, 0)` 不同类），
+ * 等价类随即把 `(i, len)` 一并吃掉，正是上面那条缺陷。
  *
  * **实现注记（与 design §4.1「读回处也调它」的偏差）**：`caretFromDom` 的编辑读回**不**调本
  * 函数——编辑动词（退格 / 前删 / 键入分派 / 粘贴）依赖「段落末缘 `(i, len)`」与「后块前缘
@@ -710,15 +724,22 @@ export function normalizeComposerCaret(blocks: readonly ComposerBlock[], caret: 
   const target = blocks[block];
   if (target === undefined || isCardBlock(target)) return { block, offset: 0 };
   const offset = Math.max(0, Math.min(caret.offset, target.text.length));
-  if (target.text.length > 0 && offset >= target.text.length) return { block: block + 1, offset: 0 };
+  if (target.text.length > 0 && offset >= target.text.length) {
+    const next = blocks[block + 1];
+    if (next === undefined || isCardBlock(next)) return { block: block + 1, offset: 0 };
+    return { block, offset: target.text.length };
+  }
   return { block, offset };
 }
 
 /**
  * 停靠点序列（归一等价类后的商集，线性有序）：段落块 → 各**码点边界**偏移（代理对整体一步，
  * design §4.2；低位代理不构成独立停靠点）；卡片块 → 前缘 `(i, 0)`（后缘用下一块的前缘表达）；
- * 末尾再补「末尾之后」`(块数, 0)`。相邻两项在归一等价类后必不相同（design §4.1 的判据——一步
- * 必有位移）。
+ * 末尾再补「末尾之后」`(块数, 0)`。
+ *
+ * 两条不变量（M465 起按**写回 DOM 位**判，见 `normalizeComposerCaret` 与合同 HC4 第 1 条）：
+ * 序列线性有序且相邻两点的写回位必不相同（一步必有位移）；序列**不丢点**——每个非末块段落的每个
+ * 码点边界都有自己的停靠点（后块是段落时 `(i, len)` 不得被折叠吃掉）。
  */
 export function composerCaretStops(blocks: readonly ComposerBlock[]): ComposerCaret[] {
   const stops: ComposerCaret[] = [];
@@ -794,11 +815,15 @@ function lineIndexOf(lines: readonly TextLine[], offset: number): number {
  * 行级命令（⌃A / ⌃E / ⌃N / ⌃P）的**基准光标**：caret 落在段落内时取**原始位**（它带着真实的
  * 列位与「光标视觉上在哪一行」），否则取归一位。
  *
- * 为什么必须分这一档：`normalizeComposerCaret` 把段落**末缘**折到下一块前缘（末段则折到
- * 「末尾之后」），而键入之后光标恒停在段末——折过之后行级命令就开始对着**下一块**算行：
- * 下一块是卡片 / 越界（无行）⇒ 一行都算不出来 ⇒ ⌃A 表现为「按了没反应」（Alex 2026-10-12
- * 现场，真机探针实测段末 (0,11) 按 ⌃A 选区完全不动）；下一块是段落 ⇒ 被算到**下一段**的行首尾
- * 去。M455 为 ⌃N / ⌃P 修过同族问题（当时是本函数的一处内联特判），M457 把 ⌃A / ⌃E 一并收进来
+ * 为什么必须分这一档：`normalizeComposerCaret` 在**卡片档 / 末段档**把段落**末缘**折到下一块
+ * 前缘（末段折到「末尾之后」），而这两个落点位**没有行语义**——行级命令随即对着那个块算行，一行
+ * 都算不出来 ⇒ ⌃A 表现为「按了没反应」（Alex 2026-10-12 现场，真机探针实测段末 (0,11) 按 ⌃A
+ * 选区完全不动）。**M465 起「后块是段落」这一档不再折叠**（合同 HC4 第 1 条：折叠只在后块是无
+ * 文本宿主前缘时才成立），但卡片档 / 末段档照旧折——分档因此在这两档上仍然承重。
+ * 段落内（含末缘）的原始位还带着**真实列位**，这是 ⌃N / ⌃P 同列位步进要的东西（M455 修：
+ * 末缘折走后列位随之丢失，⌃P 落到上一行行首而不是同列位）。
+ *
+ * M455 为 ⌃N / ⌃P 修过同族问题（当时是本函数的一处内联特判），M457 把 ⌃A / ⌃E 一并收进来
  * ——行级命令的基准只有这一处实现（REVIEW.md 第 8 条）。
  *
  * 卡片边界位 / 越界位没有行语义，仍走归一位（回落到各自的「无动作」判据）。
@@ -852,10 +877,12 @@ function adjacentParagraph(
 /** ⌃N / ⌃P：逻辑行之间移动（同列位，超出目标行长度取行尾）；出段落跨到相邻段落块，无则不动。
  *
  *  基准光标取 `lineBasisCaret`（段落内取原始位、否则取归一位）：段落**末缘**（`offset === 文本
- *  长度`，即光标停在该段最后一行行尾——键入后的常态位置）的原始光标带着真实的列位；而归一会把
- *  它折到下一块前缘，列位随之丢失。M455 修：末缘保留原始光标走段内步进，⌃P/⌃N 因此落到相邻行
+ *  长度`，即光标停在该段最后一行行尾——键入后的常态位置）的原始光标带着真实的列位；而归一在
+ *  **卡片档 / 末段档**会把它折到下一块前缘（末段折到「末尾之后」），列位随之丢失。M455 修：
+ *  末缘保留原始光标走段内步进，⌃P/⌃N 因此落到相邻行
  *  的**同列位**而不是行首（实测缺陷形态：`yabzcdw` ⇧Enter `mn` 后按 ⌃P 落在第二段行首，应为第一
- *  段第 2 列）。M457 起这一档与 ⌃A / ⌃E 共用同一个 `lineBasisCaret`。 */
+ *  段第 2 列）。M457 起这一档与 ⌃A / ⌃E 共用同一个 `lineBasisCaret`；M465 起「后块是段落」档不再
+ *  折叠，但基准分档对卡片档 / 末段档仍然承重（列位与「光标在不在段落里」两件事都靠它）。 */
 function moveLineVertical(blocks: readonly ComposerBlock[], caret: ComposerCaret, delta: number): ComposerCaret {
   const norm = lineBasisCaret(blocks, caret);
   const block = blocks[norm.block];
@@ -916,7 +943,14 @@ export function visualLineStepCrossed(
   return delta < 0 ? step <= -lineHeight / 2 : step >= lineHeight / 2;
 }
 
-/** 按词一步（⌥F / ⌥B 的扩选 head 走它）：段落内用与编辑器侧共用的词边界扫描；卡片边界位不动。 */
+/** 按词一步（⌥F / ⌥B 的扩选 head 走它）：段落内用与编辑器侧共用的词边界扫描。
+ *
+ *  **段-段边界不跨段**（M465 裁决，理由与口径见 docs/specs/harness-composer.md §实测依据 M465 节）：
+ *  段末 ⌥F **无动作**（本段已无下一词）、段末 ⌥B **回本段词首**、段首 ⌥B 无动作（停在本段段首）——
+ *  与词级 kill 的「段边界处无动作」同口径。M465 之前无条件折叠把段末折进后段，⌥F 会一步跳到后段
+ *  词尾、⌥B 会折到后段前缘（反向按键却向前跳），两条都是那条折叠的副产物。
+ *  卡片档（段落末缘紧邻卡片）仍走归一位 ⇒ 取到的是卡片块、早退 ⇒ 两个方向都表现为不动——既有
+ *  不对称（M465 未引入、也未对齐），登记在 docs/backlog.md。 */
 export function moveWordForward(blocks: readonly ComposerBlock[], caret: ComposerCaret): ComposerCaret {
   const norm = normalizeComposerCaret(blocks, caret);
   const block = blocks[norm.block];
