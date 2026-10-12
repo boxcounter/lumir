@@ -306,3 +306,95 @@ test('lazy continuation 行按顶层段落渲染在行首（M421；合同 docs/s
   // 渲染归属只是渲染层事件：文档逐字节不变
   expect(await readDocument(page)).toBe(text);
 });
+
+/** M461 专用打开助手：裸行 fixture 里没有真列表 marker，`open()` 的
+ *  marker 等待门不适用；只等编辑器就位。 */
+async function openBare(page: Page, text: string) {
+  await stubTauri(page, { entries: [{ path: 'lists.md', kind: 'file', size: text.length, mtime_ms: 0 }], files: { 'lists.md': text } });
+  await page.goto('/');
+  await page.locator('.ft-row[title="lists.md"]').click();
+  await expect(page.locator('.cm-content')).toBeVisible();
+}
+
+test('裸 marker 行光标驻留进入列表编辑态、离开还原（M461；合同 docs/specs/lists.md 的 B1/B2）', async ({ page }) => {
+  // 缺陷现场（Alex 2026-10-12 dogfood）：`para\n1. ` 的行是段落 lazy continuation，
+  // 树驱动渲染不认。本 change 按文本模式特判：判据选区与行相接（含端点）时按列表
+  // 项首行渲染，离开即还原；B2：全程不改文档。
+  const text = 'ordinary paragraph\n1. \n';
+  await openBare(page, text);
+  // 光标在段落行尾（= 裸行行首前一字符，B1 的负侧）：不触发。
+  await page.locator('.cm-line').filter({ hasText: 'ordinary paragraph' }).click();
+  await page.keyboard.press('End');
+  await expect(page.locator('.cm-lp-bare')).toHaveCount(0);
+  // 光标移上裸行：进入编辑态（cm-lp-bare 行 + 字面标记 widget）。
+  await page.locator('.cm-line').nth(1).click();
+  await expect(page.locator('.cm-lp-bare')).toHaveCount(1);
+  await expect(page.locator('.cm-lp-bare .cm-lp-list-marker')).toHaveText('1.');
+  // B1 正侧：光标回到行首（marker 之前）仍算驻留。
+  await page.keyboard.press('Home');
+  await expect(page.locator('.cm-lp-bare')).toHaveCount(1);
+  // 光标离开：还原字面文本。
+  await page.locator('.cm-line').filter({ hasText: 'ordinary paragraph' }).click();
+  await expect(page.locator('.cm-lp-bare')).toHaveCount(0);
+  // B2：三种门控状态下文档逐字节不变。
+  expect(await readDocument(page)).toBe(text);
+});
+
+test('裸 marker 行 Enter 两态：非 1 起号续行、空项退出、单步撤销（M461）', async ({ page }) => {
+  const text = 'ordinary paragraph\n';
+  await openBare(page, text);
+  await page.locator('.cm-line').filter({ hasText: 'ordinary paragraph' }).click();
+  await page.keyboard.press('End');
+  await page.keyboard.press('Enter');
+  // 非 1 起号（5.）不能打断段落 → 裸行编辑态。
+  await page.keyboard.type('5. abc');
+  await expect(page.locator('.cm-lp-bare')).toHaveCount(1);
+  // 有内容 Enter = 续行：字面序号 +1、光标落在新 marker 后。
+  // 每步之间留一拍：CM 历史按 500ms 静默分组，快键连发会把多条编辑并进一个撤销组，
+  // 干扰下一条「一次撤销一步」的判据（单事务本身由单测层钉）。
+  await page.waitForTimeout(600);
+  await page.keyboard.press('Enter');
+  expect(await readDocument(page)).toBe('ordinary paragraph\n5. abc\n6. \n');
+  // 新行仍是裸空项 → 再 Enter = 退出：删标记留空行、不新增行。
+  await page.waitForTimeout(600);
+  await page.keyboard.press('Enter');
+  expect(await readDocument(page)).toBe('ordinary paragraph\n5. abc\n\n');
+  // 一次撤销一步：回到退出前。
+  await page.waitForTimeout(600);
+  await page.keyboard.press('Meta+z');
+  expect(await readDocument(page)).toBe('ordinary paragraph\n5. abc\n6. \n');
+  // 1. 起号有内容时语法树接管（真列表），回上游续行——cm-lp-bare 退场。
+  await openBare(page, text);
+  await page.locator('.cm-line').filter({ hasText: 'ordinary paragraph' }).click();
+  await page.keyboard.press('End');
+  await page.keyboard.press('Enter');
+  await page.keyboard.type('1. first');
+  await expect(page.locator('.cm-lp-bare')).toHaveCount(0);
+  await page.keyboard.press('Enter');
+  expect(await readDocument(page)).toBe('ordinary paragraph\n1. first\n2. \n');
+});
+
+test('setext 下线与 beforeinput 拒收名单的接线（M461）', async ({ page }) => {
+  // `- ` 紧接段落是 setext 标题下线（Obsidian 同口径）——MUST NOT 进裸行编辑态。
+  await openBare(page, 'para\n- \n');
+  await page.locator('.cm-line').nth(1).click();
+  await expect(page.locator('.cm-lp-bare')).toHaveCount(0);
+  // `+ ` 同族 lazy 形态则进入（无序 glyph）。
+  await openBare(page, 'para\n+ \n');
+  await page.locator('.cm-line').nth(1).click();
+  await expect(page.locator('.cm-lp-bare')).toHaveCount(1);
+  await expect(page.locator('.cm-lp-bare .cm-lp-list-marker')).toHaveText('–');
+  // beforeinput 拒收名单的接线：insertOrderedList 被 preventDefault（可观测），
+  // insertText 放行——派发合成事件、回读事件对象上的 defaultPrevented。
+  const prevented = await page.evaluate(() => {
+    const content = document.querySelector('.cm-content')!;
+    const blocked = new InputEvent('beforeinput', { inputType: 'insertOrderedList', bubbles: true, cancelable: true });
+    content.dispatchEvent(blocked);
+    const allowed = new InputEvent('beforeinput', { inputType: 'insertText', bubbles: true, cancelable: true });
+    content.dispatchEvent(allowed);
+    return { blocked: blocked.defaultPrevented, allowed: allowed.defaultPrevented };
+  });
+  expect(prevented.blocked, 'insertOrderedList MUST 被 preventDefault').toBe(true);
+  expect(prevented.allowed, 'insertText MUST 放行').toBe(false);
+  expect(await readDocument(page)).toBe('para\n+ \n');
+});

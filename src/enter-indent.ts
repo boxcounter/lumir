@@ -14,6 +14,10 @@
 // 放回原生路径」的纪律会与「在列表 / 引用里让位给上游续行」直接冲突（裁决 D1a）。
 //
 // 三条口径（spec「Enter 换行与自动缩进」）：
+// 0. md 裸 marker 行（M461，`para\n1. ` 等语法树不接管形态，判定在 src/preview/lists.ts
+//    的 bareListMarkerLine）：Enter 两态分派——空项退出（删标记留空行）、有内容续行
+//    （下一序号 / 同标记），先于下条的树驱动续行检查；详细口径见文件尾部的
+//    enterBareMarkerLine 一节；
 // 1. md 列表项 / 引用内：**委派上游** `insertNewlineContinueMarkupCommand`（编辑器内核自带的
 //    markdown 语言包以 `Prec.high` 装了同一命令的默认配置版键位），续写标记、保持层级——既有行为，
 //    MUST NOT 改变。**唯一例外（M399，Alex 裁决的主流模式）**：空列表项（marker 后只有空白）上的
@@ -34,6 +38,8 @@
 import type { EditorView } from "@codemirror/view";
 import { insertNewlineAndIndent } from "@codemirror/commands";
 import { insertNewlineContinueMarkupCommand } from "@codemirror/lang-markdown";
+import { syntaxTree } from "@codemirror/language";
+import { bareListMarkerLine } from "./preview/lists";
 import type { EditorMode } from "./bindings/EditorMode";
 
 /**
@@ -67,7 +73,85 @@ export function enterWithAutoIndent(
   mode: EditorMode,
   autoIndent: boolean,
 ): boolean {
+  if (mode === "md" && enterBareMarkerLine(view)) return true;
   if (mode === "md" && continueMarkupExitEmptyItem(view)) return true;
   if (!autoIndent) return false;
   return insertNewlineAndIndent(view);
+}
+
+// ---------------------------------------------------------------------------
+// M461：裸 marker 行（`para\n1. ` 等语法树不接管形态）的 Enter 两态分派
+// ---------------------------------------------------------------------------
+//
+// 背景（probe 证据见 test-results/m461-probe/readings.md）：空列表项按 CommonMark 不能
+// 打断段落，`para\n1. ` 的行被解析为段落 lazy continuation——既有续行命令（树驱动）不认
+// 它。Alex 2026-10-12 dogfood 裁决：输入「1. + 空格」即进入列表编辑（渲染判定在
+// src/preview/lists.ts 的 bareListMarkerLine，与这里共用同一份纯判定）。
+//
+// 两态口径（tower 告 Alex 的 Obsidian 惯例）：
+// - 空项（marker 后只有空白）Enter = 退出：删 marker 与其后空白，行保留为空行、光标
+//   落在删后位置（引用前缀 / 行首缩进保留）、MUST NOT 新增行；
+// - 有内容 Enter = 续行：插 `\n` + 前缀原文 + 下一 marker（有序 = 字面序号 +1、分隔符
+//   沿用；无序 = 同标记），光标落在新 marker 之后。
+// 两态都是**单次 dispatch**（一次 Enter = 一次撤销步）。光标在 marker 之前（行首结构
+// 前缀内）时不接管——回到行首 Enter 的默认行为（该行之前插空行），与 M399 对真实列表
+// 项的钉固同口径。判定与渲染层同源（REVIEW.md 第 8 条），MUST NOT 在此复写一份。
+
+/** 光标所在行是裸 marker 行时的 Enter 分派；非裸行 / 只读 / 光标在 marker 前返回 false。 */
+export function enterBareMarkerLine(view: EditorView): boolean {
+  const state = view.state;
+  if (state.readOnly) return false;
+  const { head } = state.selection.main;
+  const line = state.doc.lineAt(head);
+  const bare = bareListMarkerLine(syntaxTree(state), state.doc, line);
+  if (bare === null || head < bare.markerFrom) return false;
+  const empty = state.doc.sliceString(bare.contentFrom, line.to).trim() === "";
+  if (empty) {
+    view.dispatch(
+      state.update({
+        changes: { from: bare.markerFrom, to: line.to },
+        selection: { anchor: bare.markerFrom },
+      }),
+    );
+    return true;
+  }
+  const next = bare.ordered ? `${(bare.number ?? 0) + 1}${bare.delimiter} ` : `${bare.marker} `;
+  const insert = `\n${bare.prefix}${next}`;
+  view.dispatch(
+    state.update({
+      changes: { from: head, to: state.selection.main.to, insert },
+      selection: { anchor: head + insert.length },
+    }),
+  );
+  return true;
+}
+
+// ---------------------------------------------------------------------------
+// M461②：DOM 输入入口拦 WebKit 原生自动列表（组合期重复插入 marker 的插入者）
+// ---------------------------------------------------------------------------
+//
+// 探针结论（test-results/m461-probe/readings.md）：编辑器全仓无自写 marker 代码，CM 的
+// beforeinput 处理器（@codemirror/view dist/index.js 的 handlers.beforeinput）对
+// insertOrderedList / insertUnorderedList **不 preventDefault、返回 false**——WebKit
+// contenteditable 的原生 smart-list 转换（Alex 中文 IME 组合期重复「1. 」的唯一候选
+// 插入者）若触发，默认动作完整执行、CM 再把 DOM 读回成文档变更。这里在 DOM 入口拒收
+// 这两个 inputType：编辑器自己的列表语义（裸 marker 行特判 + 上游续行 + TAB 缩进）是
+// 唯一合法的列表编辑路径。英文直输路径无这两个事件（probe 实测逐键只有 insertText），
+// 拦截对英文输入零影响。
+
+/** WebKit 原生自动列表命令的 inputType 集合（本仓列表语义的「拒收名单」）。 */
+export const NATIVE_LIST_INPUT_TYPES: ReadonlySet<string> = new Set([
+  "insertOrderedList",
+  "insertUnorderedList",
+]);
+
+/** beforeinput 入口拦截：inputType 命中拒收名单时 preventDefault 并消费事件。
+ *  形态取最小结构（{inputType, preventDefault}）以便单测直驱，生产事件天然满足。 */
+export function swallowNativeListBeforeInput(event: {
+  inputType?: string;
+  preventDefault?: () => void;
+}): boolean {
+  if (event.inputType === undefined || !NATIVE_LIST_INPUT_TYPES.has(event.inputType)) return false;
+  event.preventDefault?.();
+  return true;
 }

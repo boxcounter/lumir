@@ -3508,6 +3508,19 @@ finding）、2 条套件注入通道缺陷（既有 finding）、1 条 M283 已�
     **覆盖边界**：「档位 → 请求参数」那一段不在真机断言（套件无可读 `MockClient::received_efforts`
     的通道，tower 裁决不开 JSONL 新通道），由 core 集成测试 `session_thinking_effort_reaches_request`
     覆盖（场景「已知边界」已登记）。
+96. **列表自动模式三态（「1. + 空格」进入 / Enter 续行 / 空项退出）+ IME 组合期不重复**
+    （2026-10-12，M461，change `editor-ordered-list-auto-mode-on-marker`）——
+    `153-ordered-list-auto-mode`（**真机留 dogfood 批次跑**）。Alex dogfood 原话立案：
+    「当我输入『1. 』（注意：有空格）……时，没有自动进入列表编辑模式，这不符合预期。
+    但还有一个问题是：如果此时我用中文输入法输入一个字符……就会多出现一个『1. 』。」
+    根因①：空列表项按 CommonMark 不能打断段落，`para\n1. ` 的行是 lazy continuation，
+    树驱动渲染与续行都不认——按文本模式特判修（`bareListMarkerLine` 纯判定 + Enter
+    两态 + 光标驻留渲染，不动解析器配置）；根因②：全仓无自写 marker 代码、CM 的
+    beforeinput 处理器不拦 `insertOrderedList` 族，唯一候选插入者 = WebKit 原生
+    smart-list——DOM 入口拒收修复。**已知边界**（如实登记）：真机组合态无法用合成
+    键盘复现（合成事件不进 TSM，证据 `test-results/m461-probe/readings.md`），
+    beforeinput 形态被拦已由 chromium 派发断言钉住，**裸 DOM 变更形态不兜、留
+    dogfood**；若复现另立项。
 
 **已机验到渲染/结构层，行为细节仍缺可观测面**
 
