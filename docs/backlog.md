@@ -642,7 +642,21 @@
     待 UX 裁决，建议攒到会话管理 UI 一起做（该 UI 本身也是 RSR change 里暂缓的项）。
 43. **横滚代码块的视觉形态：贴正文左边缘、右侧溢出阅读栏宽，是否内缩待裁决**（2026-10-09，tower finding，low；M399 基线过目时 Alex 发现）：不折行代码块的横向滚动容器为**全宽**设计——背景自正文左边缘起、向右超出阅读栏宽，观感「没有左 margin」。Alex 过目 M399 基线时认为观感异常；对照 before / after 证实是 M399 之前的既有形态（`tests/visual/scenes/render-codeblock.spec.ts` 的 wrap-combo-4「双不折行」场景），**非本批回归**。**裁决选项**：(a) 维持全宽横滚（现状，口径最简单）；(b) 横滚容器加左缩进 / 视觉边界（背景内缩或加边框）。若取 (b)，落点为 `src/preview/` 的代码块横滚容器样式 + 相关整页基线重拍（AGENTS.md「基线更新是人肉裁决点」）。finding `.tower/comms/findings/20261009-tower-improve-item.md`（证据：左边缘 before / after 位置一致）。
 
+44. **harness ctx% meter 的分母口径（暂缓，待 reasoning 重放根因钉死后重估）**（2026-10-12，M463）：**原结论「端点实际生效输入上限 ≈ 名义窗口的 38%」已作废**——Alex 驳回（标称 256k 用 10 万就拒不合理 + Kimi Code 同模型会话 159k 正常工作的截图），tower 复核证实驳回成立：Kimi Code 本机全部 wire 日志中，同端点（api.kimi.com/coding）同模型 k3-256k 成功服务到 **234,656 input tokens**（名义窗口 91%），超 21.5 万的成功请求十余次，零真实 token limit 报错。meter 分子（服务端回报的 `input_tokens`）准确不变（探测 R1 证实服务端把 instructions 计入 input、回报即自身计数）；事故会话可见成分 ≈10.1 万 token 却被判超 262144，约 16 万隐形差额的头号假设：Lumir 以 Responses 形状重放 reasoning item（`rs_*` id + 摘要、不带 `encrypted_content`）时服务端按 id 展开完整思考计账（对照：Kimi Code 对 kimi 端点走 chat completions、`reasoning_content` 明文全文重放，诚实计账到 23.5 万无问题；Kimi Code 自带的 responses base 则按 OpenAI 官方 store:false 模式请求并重放 `encrypted_content`、不带 id）。**钉死手段**：对照探测（同一事故请求体去掉 reasoning id 重发）需 Alex 授权动用真实 key。**裁决暂缓**：若 reasoning 重放修复落地、报价回到诚实口径，meter 用名义分母即天然恢复准确，原 (a) 撞限自学习 / (b) 写死常量两个选项可能都不再需要；在此之前超限兜底靠 M463 已修的「自动压缩重试」（`overflow_indicators` 补 "token limit"）。证据：`test-results/m463-probe/`（git 外，5 发探测全表）+ Kimi Code wire 日志与二进制内嵌源码排查（tower 会话内结论，未落库）。附带口径决策保留：超限时 meter 是否同步读数（现行错误路径 return 早于 record_usage，读数停在旧值）。
+
 ## 待修 findings（不阻塞）
+
+### composer 导航写回：行级命令在「后块是段落」时把光标写到下一段段首（worker-m462 finding，2026-10-12，medium，待修）
+
+⌃E / ⌃A→⌃E 等行级命令经 `normalizeComposerCaret` 把段落末缘折成「后块前缘」，`domCaretTarget` 对「后块是段落」这一档写回 `{kind:"text", index:i+1, offset:0}` = **下一段段首**——视觉上光标跳到下一行行首而非停在本行行末（「后块是卡片」档 M457 已修成写回前段末缘，段落档没修；M462 只修了末段档在 ⇧Enter 上的落法）。证据强度：末段档写回块级容器边界（rect 0×0）已实测；「后块是段落 → 下段段首」档为代码路径推断，缺一条独立探针（从行内位置按 ⌃E 读选区 rect，脚本形状见 `test-results/m462-probe/probe2.spec.ts` E3/E5）。修复面 = `src/harness-panel.ts` 的 `domCaretTarget`/`navigate` + `tests/unit/composer-nav.test.ts` 的等价类断言（同一语义两处真源，须连改）。候选修法两条（写回不折叠=推荐 / 只修末段例外=最小，后者可顺带关闭 worker-m457 那条「末尾之后写块级容器边界」已知边界）与验收层建议（真机读数断言选区落在本行，同 M457 场景 150 ⌃B 口径）见 finding `.tower/comms/findings/20261012-worker-m462-bug-composer-hc4-m462.md`。
+
+### 像素类验收场景的窗口几何不再被钉住 ⇒ 坐标静默腐烂（worker-m462 finding，2026-10-12，medium，117 已加固、其余场景未扫）
+
+套件的 `--config` 只钉窗口**位置**不钉尺寸；M437 起主窗口尺寸按工作区 90% 现算（实测 1152×864 ≠ conf 的 1200×800）。像素采样点是窗口局部坐标，几何一漂整片读到亮度跨度 0，且失败形态与「元素不在场」不可区分——场景 117 自 M456（composer 布局变动）起整片静默落空，直到 M462 才发现。117 已加固：第一步 `do: resizeWindow {width:1200, height:800}` 钉尺寸、采样点改实测值、场景头写清 composer「底部锚定、向上生长」（同一条 y 在不同行数下装不同的行）。**其余用 `pixel` 断言的场景未全仓扫**。可选加固三档（成本从小到大）：① 场景纪律写进 `scripts/acceptance/README.md`（pixel 场景首步钉尺寸 + 采样点注明实测出处）；② `pixel` 断言加节点相对形态 `{node, dx, dy}`（采样点由目标 bbox 现算，顺带消掉行数变化坑）；③ 腐烂看守（contrast 读 0 时落「该点是否在字形行带内」诊断，区分坐标落空 vs 元素缺席）。finding `.tower/comms/findings/20261012-worker-m462-improve-m437-117-m456-m462.md`。
+
+### worktree 的 node_modules 软链是未跟踪项：`git add -A` 会把断链提交进仓（worker-m462 finding，2026-10-12，low）
+
+`.gitignore` 的 `node_modules/` 带尾斜杠只匹配**目录**，worktree 起手铺的 `ln -s <主仓>/node_modules` 软链因此显示为 `?? node_modules` 未跟踪项——worker 若用 `git add -A` / `git add .` 收尾就会把指向主仓的软链提交进仓（跨机器断链）。修法：`.gitignore` 去掉尾斜杠或补一行无斜杠 `node_modules`（一行改动堵死）+ 在 AGENTS.md 硬规则 / `scripts/gate.sh` 头部注释写清 worktree 的 node_modules 铺垫口径与「收尾不要 `git add -A`」。finding `.tower/comms/findings/20261012-worker-m462-improve-worktree-node-modules-gitignore-node-modules-git-add-a.md`。
 
 ### 验收套件注入通道：菜单 Paste 之后 CGEvent 与套件内 type_text 均不落地（worker-m456 finding，2026-10-11，**high**，阻塞 134/141）
 
