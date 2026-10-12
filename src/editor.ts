@@ -30,7 +30,7 @@ import { tags } from "@lezer/highlight";
 import { GFM } from "@lezer/markdown";
 import type { EditorMode } from "./bindings/EditorMode";
 import { livePreview, previewRefresh, widgetCommands } from "./preview/livePreview";
-import { blockCopyTarget, codeBlockSlotWrappers, codeBlockWrappers } from "./preview/livePreview";
+import { blockCopyTarget, codeBlockSlotWrappers, codeBlockWrappers, focusBlockScroll } from "./preview/livePreview";
 import { endMarker } from "./preview/endMarker";
 import type { PreviewContext, WikilinkResolver } from "./preview/livePreview";
 import type { BlockCopyRange } from "./preview/block-copy";
@@ -2020,6 +2020,13 @@ export function createEditor(parent: HTMLElement, initialMode: EditorMode = "md"
       const range = blockCopyTarget(view);
       if (range === null) return;
       blockCopy?.copy(range);
+    },
+    // 块级横滚容器的焦点入口（M474，`⌃⌥S`）：实现在 livePreview.ts（与 `block.copy` 同一个
+    // 模块——「块级横滚容器」这个概念的归属地），这里只做装配。命中即已消费：caret 不在块内
+    // 或该块没有容器时静默无操作，键位层统一吞掉默认行为（不用 commandGate 做前置门——
+    // 门的作用是「不命中就放行给原生路径」，而 ⌃⌥S 没有原生含义可放行）。
+    "editor.focus-block-scroll": () => {
+      focusBlockScroll(view);
     },
     "editor.cursor-up": () => {
       moveCaretVertically(view, false);

@@ -536,6 +536,33 @@ export function blockCopyTarget(view: EditorView): BlockCopyRange | null {
 }
 
 /**
+ * `editor.focus-block-scroll` 的实现（M474）：把焦点交给 caret 所在块的**块级横滚容器**
+ * （表格与围栏 / 缩进代码块共用同一个 `BLOCK_SCROLL_CLASS`，判据的单一来源在 keys.ts）。
+ *
+ * 与上面 `blockCopyTarget` 的分工：那条命令的命中判据取自语法树与表格模型，因为「这块能不能
+ * 复制」是一个**关于文档**的判断（DOM 只是它的投影，两者可能不同步）；本命令的落点是一个
+ * **DOM 元素本身**——判据与落点是同一个东西，读 DOM 就是读真源，故这里不绕模型（模型还说不出
+ * 容器在不在：折行档按既有口径不装容器，那种档位下 caret 在代码块里也没有任何东西可滚动，
+ * 命令静默无操作正是正确结果）。
+ *
+ * 无 caret 在块内、块没有容器（代码块折行档）、或不在 md 模式（code 模式没有块包装层）时
+ * 一律无操作——命中即消费的语义由键位层统一承担，与其余编辑器命令一致。
+ *
+ * `preventScroll`：容器就在 caret 处、必然已在视口内；显式关掉聚焦引发的滚动，避开 WebKit
+ * 那条「聚焦把阅读位置拽走」的旧账（M274，`widget-escape` 的 `focusPreservingReadingPosition`
+ * 是同一个坑的另一侧）。
+ *
+ * 焦点进入容器后，`focusin` 处理器（本文件 `EditorView.domEventHandlers`）会核对 DOM 选区是否
+ * 仍在 contentDOM 内——本命令触发时编辑器持焦、选区必然在，故那条处理器不介入、选区原样保留。
+ */
+export function focusBlockScroll(view: EditorView): void {
+  const at = view.domAtPos(view.state.selection.main.head);
+  const node = at.node instanceof Element ? at.node : at.node.parentElement;
+  const container = node?.closest<HTMLElement>(`.${BLOCK_SCROLL_CLASS}`) ?? null;
+  container?.focus({ preventScroll: true });
+}
+
+/**
  * 轨道 D 的 widget 命令实现（M132 收编进统一键位表）。
  *
  * 迁移前这些键由本文件的 domEventHandlers 手柄消费（焦点在滚动容器上时生效），键位因此

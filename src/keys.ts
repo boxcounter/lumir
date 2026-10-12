@@ -174,6 +174,18 @@
 // 已知边界（设计明账）：含 Alt 的组合忽略 Shift ⇒ ⌥F/⌥B 无法再绑词移动，故接管后两侧都没有
 // 词移动键位（⌥F 在 composer 里从「原生词移动」变为「按词扩选」，与表内语义一致）。
 
+// M474：表新增一条**有默认绑定**的编辑器命令（`⌃⌥S` → `editor.focus-block-scroll`，
+// backlog「块级横滚容器失去焦点入口」的候选①，tower 2026-10-12 裁决）。它把 M239 那次
+// 「Tab 归列表缩进 ⇒ 容器再无入口」切断的能力接回来一端：焦点送进 caret 所在块的横滚容器，
+// 容器持焦后 M132 收编的五条键（←/→/Home/End/Escape）与 `widgetCommands` 的实现一字不动地复活。
+// 键位取 **⌃⌥S**（S = Scroll）：⌃ 系的 ⌃⌥ 单段是表内既有形态（`Ctrl-Alt-Minus` = 重做），
+// 且 ⌃⌥S 的 token 与三条冲突来源均无交集（逐条核对写在条目 D461 的正文里：表内 / 原生菜单
+// accelerator / macOS 系统级）。token 形态含 Alt ⇒ MUST 写物理键名 `Ctrl-Alt-KeyS`
+//（`Alt-s` 一类字符形态永远不命中，同 M195 / M277 / M319 的坑）。命令不带 `when`：语义不随
+// 焦点变（`when` 只在「同一物理键在不同焦点下语义不同」时才有意义）——文本编辑里 ⌃⌥S 无原生
+// 含义，用不着守卫；这也是它不进 `WIDGET_COMMAND_IDS` 的原因（那一组每条都要求带 when，
+// 判据见 tests/unit/keys.test.ts 的对账）。
+
 // 键位来由的文本住在文案表（M282，change ui-language-i18n 的 D8 裁决）——本文件只留
 // 「绑定 → 文案表键」的引用，因此是纯类型导入（类型剥离后不留任何运行期依赖）。
 import type { CopyKey } from "./copy-data";
@@ -237,6 +249,13 @@ const EDITOR_CORE_COMMAND_IDS = [
   // 块上的 hover 复制钮承担（双入口，实现在 src/preview/block-trigger.ts，实现在 main.ts）。
   // 命中条件见 KeymapContext.commandGate 的说明（条件需要编辑器状态，绑定层表达不了）。
   "block.copy",
+  // M474：把焦点交给 caret 所在块的**块级横滚容器**（backlog「块级横滚容器失去焦点入口」
+  // （M239 登记）的候选①，tower 2026-10-12 裁决）。归 editor 组的理由同 `block.copy`：
+  // 命令读 caret 判「是哪一块」，前提正是编辑器持焦；命中后焦点离开编辑器（进入容器）是
+  // 这条命令的**目的**，不是副作用。默认键位 ⌃⌥S 有绑定，MUST NOT 登记进 KEYLESS_COMMAND_IDS。
+  // 与 WIDGET_COMMAND_IDS 的分界：那一组是「容器持焦后**用**容器」的键（故每条都带 when），
+  // 本条是「**进**容器」的入口，语义不随焦点变，因此不带 when、也不进那一组。
+  "editor.focus-block-scroll",
 ] as const;
 
 /** 轨道 D 的 widget 焦点作用域命令（M132 收编进统一表；实现在 livePreview.ts）。
@@ -606,6 +625,14 @@ export const KEY_BINDINGS: readonly KeyBinding[] = [
   { key: "Home", command: "editor.widget-scroll-home", scope: "editor", when: isWidgetKeyTarget, docKey: "D296" },
   { key: "End", command: "editor.widget-scroll-end", scope: "editor", when: isWidgetKeyTarget, docKey: "D297" },
   { key: "Escape", command: "editor.widget-escape", scope: "editor", when: isWidgetKeyTarget, docKey: "D298" },
+
+  // ── 编辑器内：块级横滚容器的**焦点入口**（M474，backlog「块级横滚容器失去焦点入口」候选①，
+  // tower 2026-10-12 裁决；与上面五条的关系见 `EDITOR_CORE_COMMAND_IDS` 那条 id 的注释）。
+  // 键位 ⌃⌥S（S = Scroll）：取 ⌃ 系的 ⌃⌥ 单段——表内该族现只有 `Ctrl-Alt-Minus`（重做，
+  // Emacs 的 C-M-_），⌃⌥S 零占用；语义随命令（把焦点交给横滚容器），不随焦点变，故**不带 when**
+  // （与上面五条的分界：那五条若不带 when 会把文本编辑里的 Home/End/方向键/Escape 一起吞掉）。
+  // 三条独立来源的零冲突核对写在条目 D461 的正文里（表即文档，本文件不另抄一份）。
+  { key: "Ctrl-Alt-KeyS", command: "editor.focus-block-scroll", scope: scopeOfCommand("editor.focus-block-scroll"), docKey: "D461" },
 
   // ── 编辑器内：列表项缩进 / 凸排（M239，change list-tab-indent）
   // 语义（Alex 节点 1 裁决）：TAB = 把 head 归属的列表项连同续行与子树整体缩进一层，

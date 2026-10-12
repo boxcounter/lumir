@@ -1314,10 +1314,28 @@ body {
 }
 
 /* 代码块动作钮的坐标系统（M277，BlockWrapper rank 20 = 最外）：与 .cm-lp-table-slot 同机制，
-   唯一职责是给钮当包含块。零足迹：无背景 / 边框 / 内外边距 / overflow——因此 M180 的
-   「代码块折行时块内 MUST NOT 出现横向滚动容器」口径不变（slot 只是定位层）。 */
+   职责是给钮当包含块。零足迹：无背景 / 边框 / 内边距 / overflow——因此 M180 的
+   「代码块折行时块内 MUST NOT 出现横向滚动容器」口径不变（slot 只是定位层）。
+   **唯一的非零足迹是横向外边距，即 M474 的内缩**（取值与理由见下一条）。
+
+   M474（2026-10-12 Alex 授权 tower 直裁，方案 b）：不折行代码块的横滚容器原先与正文**同宽**
+   ——实测容器盒 672px = 正文文字测度，左右边缘与正文逐像素对齐（`tests/visual/scenes/
+   render-codeblock.spec.ts` 的四组合场景，证据 `test-results/m474/`），Alex 过目 M399 基线时
+   判「观感异常、没有 margin」。内缩落在 slot 而**不**落在 `.cm-lp-codeblock-scroll`，一条规则
+   覆盖两种折行档：折行档没有横滚容器，而 slot 两种档位都在场。且容器盒（定宽块的包含块）、
+   容器那两个负 z-index 伪元素（绝对定位，包含块取 slot 的 padding 盒）、块级动作钮
+   （`top` / `right` 相对 slot）三者的基准都是 slot 盒——slot 一缩三者同时跟着缩，不会分家；
+   内缩若写在容器上，折行档的 slot 底板（见 `.cm-lp-codeblock-slot:not(:has(...))::before`）
+   与动作钮会留在原宽度，两种档位的几何当场分家。
+   MUST NOT 改成纵向 margin：CM 经 border-box 测高，块级纵向 margin 对 heightmap 不可见、
+   会让其下内容的 posAtCoords 累计错位（M110 缺陷 1）。横向 margin 不参与高度，不触该合同。 */
 .cm-lp-codeblock-slot {
   position: relative;
+  /* 内缩一档 = `--sp-7`（14px），与容器自己的行内 padding（下一条 `.cm-lp-codeblock-scroll` 的
+     `9px var(--sp-7) var(--sp-5)`）同值：卡片的左右外边距因此等于它的内边距，卡片边缘与
+     卡片内文字同宽一档，不引入第二个魔数。左右同值（而不是只缩左侧）：左右任一贴住正文边缘
+     都会把卡片读回「与正文同宽的色块」——Alex 报的正是这个形态。 */
+  margin-inline: var(--sp-7);
 }
 
 .cm-lp-table-scroll {

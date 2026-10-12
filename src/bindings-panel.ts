@@ -57,7 +57,10 @@ export const BINDING_GROUPS: ReadonlyArray<{ titleKey: CopyKey; commands: readon
   // （表格 / 代码块），与光标族、列表族都不是一族。同批的代码块全屏命令（作用域 global）留在
   // 「全局」组：那一组的成员定义就是 NON_TAB_GLOBAL_COMMAND_IDS，挪出来会与它重复渲染
   // （分组互斥是硬约束，见文件头）。
-  { titleKey: "D64.8", commands: ["block.copy"] },
+  // M474 把 `editor.focus-block-scroll`（⌃⌥S，焦点送进 caret 所在块的横滚容器）并进同一组：
+  // 作用对象同样是「文档里的一个块」，且它与 `block.copy` 是一对——一个把焦点送进块内的
+  // 横滚容器、一个复制整块，同属「对块本身的操作」。组标题是「块」（D64.8），加成员不改标题。
+  { titleKey: "D64.8", commands: ["block.copy", "editor.focus-block-scroll"] },
   { titleKey: "D64.9", commands: WIDGET_COMMAND_IDS },
   // M149：标签单列一组（而不是并进「全局」）——⌘W 的语义变化与 ⌘1–9 的九条直达是
   // dogfood 期最需要一眼核对的两件事，混在全局组里不容易看全。两组必须**互斥**：
