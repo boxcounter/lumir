@@ -394,7 +394,7 @@ test("M465 属性：停靠点相邻即互为一步（⌃F / ⌃B 正反向对称
   }
 });
 
-test("M465 词步的段-段边界（两方向都钉）：段末 ⌥F 无动作、⌥B 回本段词首，不跨段", () => {
+test("M465 词步的段-段边界（两方向都钉）：段末 ⌥F 无动作、⌥B 回本段词首，不跨段；M473 卡片/末段档对齐", () => {
   // **语义裁决**（tower 2026-10-12，M465 r1 评审 P2-1）：采用「不跨段」——段末 ⌥F 无动作、
   // 段首 ⌥B 停在本段段首。理由：与 `⌃B` 段首无动作对称、与 `killWordForward` 的「段边界处无
   // 动作」口径一致。这是 M465 那次折叠收紧带来的**第二处行为变更**（第一处是 ⌃B/⌃E/⌃F 的
@@ -411,13 +411,17 @@ test("M465 词步的段-段边界（两方向都钉）：段末 ⌥F 无动作�
   assert.deepEqual(moveWordForward(three, at(1, 0)), at(1, 2), "中间段 ⌥F：落本段词尾（旧形态会写到下一段行首）");
   assert.deepEqual(moveWordBackward(three, at(2, 0)), at(2, 0), "末段段首 ⌥B：无动作");
   assert.deepEqual(moveWordBackward(three, at(1, 2)), at(1, 0), "段内 ⌥B：回本段词首");
-  // **卡片档的既有口径**（M465 未改，与上面两档不同）：段落后紧邻卡片时，`normalizeComposerCaret`
-  // 仍把段末缘折成卡片前缘，词步取到的是**卡片**块 ⇒ `block.kind !== "paragraph"` 早退，
-  // 两个方向都表现为「不动」（⌥B 在卡片档不回词首，而在段落档回）。旧形态同样如此（卡片档折叠
-  // 一直在），M465 未把它一并对齐——登记在 docs/backlog.md，不在此当作新语义钉住。
+  // **卡片档 / 末段档与段落档一致**（M473）：基准位取**段落内的原始位**（`lineBasisCaret`），
+  // 段末紧邻卡片、或段末就是末段时不再折到卡片前缘 / 「末尾之后」——那两个落点无文本宿主，
+  // 折走后 `block.kind !== "paragraph"` 早退 ⇒ 两个方向都「不动」，与段落档不对称（同一现场下
+  // ⌥B 在段落档回词首、在卡片档不动；登记 docs/backlog.md 的 worker-m465 r1 finding）。
+  // 取原始位后：⌥B 回本段词首、⌥F 无动作，三档同形。
   const withCard = [para("abc"), card()];
-  assert.deepEqual(moveWordForward(withCard, at(0, 3)), at(1, 0), "卡片前 ⌥F：落到卡片前缘（与段末缘同一位 ⇒ 无视觉位移；既有口径）");
-  assert.deepEqual(moveWordBackward(withCard, at(0, 3)), at(1, 0), "卡片前 ⌥B：同上（既有口径，与段落档不对称，已登记）");
+  assert.deepEqual(moveWordForward(withCard, at(0, 3)), at(0, 3), "段末紧邻卡片 ⌥F：本段已无下一词 ⇒ 无动作（M473 对齐段落档）");
+  assert.deepEqual(moveWordBackward(withCard, at(0, 3)), at(0, 0), "段末紧邻卡片 ⌥B：回本段词首（M473 对齐段落档）");
+  const alone = [para("abc")];
+  assert.deepEqual(moveWordForward(alone, at(0, 3)), at(0, 3), "末段段末 ⌥F：无动作（末段档同样取原始位）");
+  assert.deepEqual(moveWordBackward(alone, at(0, 3)), at(0, 0), "末段段末 ⌥B：回本段词首（末段档同样取原始位）");
 });
 
 // ---------------------------------------------------------------------------
