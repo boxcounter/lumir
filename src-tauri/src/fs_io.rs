@@ -1236,8 +1236,8 @@ fn extension_of(rel: &str) -> String {
 pub(crate) enum AtomicWriteOutcome {
     /// tmp 写完并 rename 到位（替换语义：目标已有内容时被原子替换）。
     Written,
-    /// `reject_existing` 为真且目标在 rename 前已存在——tmp 已清理，**未覆盖任何内容**，
-    /// 调用方按「已存在」收敛（内容寻址写入的竞态去重路径）。
+    /// [`RenameGuard::RejectExisting`] 且目标在 rename 前已存在——tmp 已清理，**未覆盖任何
+    /// 内容**，调用方按「已存在」收敛（内容寻址写入的竞态去重路径）。
     TargetExists,
 }
 
@@ -1251,6 +1251,53 @@ enum AtomicWriteError {
     Write(std::io::Error),
     Sync(std::io::Error),
     Rename(std::io::Error),
+    /// [`RenameGuard::ExpectSnapshot`] 在 rename 前重取的 stat 与快照不一致：目标在
+    /// 「CAS 校验通过」到「rename」之间被外部改写。tmp 已清理、**未覆盖任何内容**，
+    /// 调用方按冲突收敛（M470）。
+    TargetChanged,
+}
+
+/// 目标文件在某一刻的身份四元组 `(dev, ino, mtime, size)`（M470）。
+///
+/// 用来把「CAS 校验通过」与「rename 落地」之间那段窗口收窄到两次系统调用之间：rename 前
+/// 重取一次快照，与 CAS 时的快照不一致即放弃覆盖。四个字段缺一不可——`dev`/`ino` 抓
+/// 「换了一个文件」（外部编辑器常见的 rename-into-place 会换 inode），`mtime`/`size` 抓
+/// 「同一个文件被就地改写」（同 inode）；任取其一都会漏掉另一类改写。
+///
+/// mtime 取 [`SystemTime`]（macOS 上 APFS 给到纳秒），不用 `mtime_ms` 的毫秒口径——毫秒会
+/// 把「同一毫秒内的两次改写」判成未变。
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct FileStatSnapshot {
+    dev: u64,
+    ino: u64,
+    mtime: Option<SystemTime>,
+    size: u64,
+}
+
+/// 取目标文件的 [`FileStatSnapshot`]（跟随符号链接：`target` 已经过 [`resolve_in_vault`]）。
+fn stat_snapshot(target: &Path) -> std::io::Result<FileStatSnapshot> {
+    use std::os::unix::fs::MetadataExt;
+    let meta = std::fs::metadata(target)?;
+    Ok(FileStatSnapshot {
+        dev: meta.dev(),
+        ino: meta.ino(),
+        mtime: meta.modified().ok(),
+        size: meta.len(),
+    })
+}
+
+/// rename 之前的前置守卫（三选一、互斥）：决定「tmp 写完 + `sync_all` 之后，rename 到底
+/// 该不该发生」。各调用方自己的「检查 → 替换」窗口因此统一压到同一段代码里。
+enum RenameGuard<'a> {
+    /// 无条件替换（调用方已完成自己的检查）。
+    Replace,
+    /// 目标已存在即不覆盖（内容寻址写入的竞态去重，见 [`write_attachment_atomic`]）。
+    RejectExisting,
+    /// CAS 收窄（M470）：rename 前重取 [`FileStatSnapshot`] 与快照比对，不一致即放弃 rename，
+    /// 返回 [`AtomicWriteError::TargetChanged`]。覆盖窗口只剩「取快照」与「rename」两次系统
+    /// 调用之间的距离（微秒级）——零窗口需要平台的原子排他改名（`renameatx_np` 的 swap），
+    /// 本批不做。
+    ExpectSnapshot(&'a FileStatSnapshot),
 }
 
 /// **全仓唯一的原子替换写核心**：同目录 `.lumir-` 临时文件 + `sync_all` + 原子 rename。
@@ -1264,16 +1311,17 @@ enum AtomicWriteError {
 ///   pid，活着的进程互不挡道），删掉重试一次；再失败才是真错误；
 /// - **失败即清理 tmp**，不留半截目标文件。
 ///
-/// `reject_existing` 是**内容寻址写入**专用的「撞名不覆盖」开关（change paste-clipboard-image
-/// 的 fs-io 增量）：为真时在 rename 之前复查目标是否已被建出，命中即清理 tmp 并按
-/// [`AtomicWriteOutcome::TargetExists`] 返回，MUST NOT 覆盖。复查把检查-执行窗口收窄到两次
-/// 系统调用之间；`std::fs::rename` 的 POSIX 语义是**原子替换**，零窗口需要平台的原子排他改名，
-/// 本批不做（与 [`rename_entry`] / [`fs_move_entry`] 同一取舍，别在别处读成更强的保证）。
-/// 文档路径传 `false`——替换既有文件正是它的语义。
+/// `guard` 决定 rename 之前的那一刻是否放行（见 [`RenameGuard`]）：每个前置守卫都在
+/// **tmp 写完 + `sync_all` 之后**才执行，它与 rename 之间没有可被外部写入插空的重活——这是
+/// 「收窄覆盖窗口」的关键。守卫不放行时一律先清理 tmp 再交回调用方（[`RenameGuard::RejectExisting`]
+/// 走 [`AtomicWriteOutcome::TargetExists`]，[`RenameGuard::ExpectSnapshot`] 走
+/// [`AtomicWriteError::TargetChanged`]），MUST NOT 覆盖。`std::fs::rename` 的 POSIX 语义是
+/// **原子替换**，零窗口需要平台的原子排他改名，本批不做（与 [`rename_entry`] /
+/// [`fs_move_entry`] 同一取舍，别在别处读成更强的保证）。
 fn write_bytes_atomic(
     target: &Path,
     bytes: &[u8],
-    reject_existing: bool,
+    guard: RenameGuard<'_>,
 ) -> Result<AtomicWriteOutcome, AtomicWriteError> {
     let parent = target.parent().ok_or(AtomicWriteError::InvalidTarget)?;
     let name = target
@@ -1309,9 +1357,23 @@ fn write_bytes_atomic(
         let _ = std::fs::remove_file(&tmp);
         return Err(AtomicWriteError::Sync(e));
     }
-    if reject_existing && std::fs::symlink_metadata(target).is_ok() {
-        let _ = std::fs::remove_file(&tmp);
-        return Ok(AtomicWriteOutcome::TargetExists);
+    match guard {
+        RenameGuard::Replace => {}
+        RenameGuard::RejectExisting => {
+            if std::fs::symlink_metadata(target).is_ok() {
+                let _ = std::fs::remove_file(&tmp);
+                return Ok(AtomicWriteOutcome::TargetExists);
+            }
+        }
+        RenameGuard::ExpectSnapshot(expected) => {
+            // 重取目标 stat 与快照比对：这是「CAS 校验」与「rename」之间唯一一次触碰目标的
+            // 系统调用，覆盖窗口只剩它与 rename 之间的距离（微秒级）。取不到（目标在窗口内
+            // 消失）同样判为已变更——宁可报冲突，也不在目标已被移走 / 换掉时把 tmp 顶上去。
+            if !stat_snapshot(target).is_ok_and(|now| now == *expected) {
+                let _ = std::fs::remove_file(&tmp);
+                return Err(AtomicWriteError::TargetChanged);
+            }
+        }
     }
     if let Err(e) = std::fs::rename(&tmp, target) {
         let _ = std::fs::remove_file(&tmp);
@@ -1322,8 +1384,20 @@ fn write_bytes_atomic(
 
 /// 文档落盘的薄壳：字节核心的错误阶段映射到 `document_write_*` 两个 code（文案逐字沿用，
 /// 本批的重构不改变任何上屏字符串）。
-fn write_document_atomic(target: &Path, content: &str) -> Result<(), CommandError> {
-    write_bytes_atomic(target, content.as_bytes(), false)
+///
+/// `expected` 是 CAS 收窄用的 [`FileStatSnapshot`]（M470）：`Some` 时 rename 前重取目标
+/// stat 比对，不符即按 `document_conflict` 收敛（与 CAS 校验同一错误码、同一句人话）；
+/// `None` 走无条件替换。
+fn write_document_atomic(
+    target: &Path,
+    content: &str,
+    expected: Option<&FileStatSnapshot>,
+) -> Result<(), CommandError> {
+    let guard = match expected {
+        Some(snapshot) => RenameGuard::ExpectSnapshot(snapshot),
+        None => RenameGuard::Replace,
+    };
+    write_bytes_atomic(target, content.as_bytes(), guard)
         .map(|_| ())
         .map_err(|e| match e {
             AtomicWriteError::InvalidTarget => CommandError::new("fs_path_invalid", "目标目录无效"),
@@ -1339,6 +1413,11 @@ fn write_document_atomic(target: &Path, content: &str) -> Result<(), CommandErro
             AtomicWriteError::Rename(e) => {
                 CommandError::new("document_write_unknown", format!("文档替换结果未知：{e}"))
             }
+            // 收窄后的新失败面：目标在 CAS 与 rename 之间被外部改写 ⇒ 复用既有冲突语义
+            // 收敛（M470 只新增触发时机，不新增错误码 / 文案）。
+            AtomicWriteError::TargetChanged => {
+                CommandError::new("document_conflict", "文件已被外部修改，请先协调冲突")
+            }
         })
 }
 
@@ -1352,6 +1431,12 @@ fn write_document_atomic(target: &Path, content: &str) -> Result<(), CommandErro
 ///
 /// 落盘走 [`write_document_atomic`]——**局部 patch 走的是同一个函数**，两者的写纪律
 /// （`.lumir-` 标记 / ghost 重试 / 原子替换）因此逐条同源。
+///
+/// **CAS 窗口收窄**（M470）：CAS 校验（`file_revision`）与 rename 之间原本隔着建 tmp /
+/// 写内容 / `sync_all` 一段毫秒级窗口，窗口内的外部改写会被 rename 静默覆盖。现取一份
+/// [`FileStatSnapshot`] 交给写核心，在 rename 前重取比对，不符即走既有 `document_conflict`
+/// 路径。快照取在**读内容之前**——快照若晚于被校验的字节，就会出现「revision 描述旧字节、
+/// 快照描述新文件」的错配，rename 前的比对反而会放行一次覆盖。
 pub fn save_document(
     root: &Path,
     rel: &str,
@@ -1365,6 +1450,12 @@ pub fn save_document(
         ));
     }
     let target = resolve_in_vault(root, rel)?;
+    // 快照先于读内容（见函数文档）：它描述的是「被校验的那份字节所在的那一代文件」。
+    let snapshot = stat_snapshot(&target).map_err(|e| {
+        CommandError::new("fs_read_failed", format!("无法读取 {rel}：{e}"))
+            .param("rel", rel)
+            .param("reason", e.to_string())
+    })?;
     let actual = file_revision(root, rel)?;
     if actual != expected_revision {
         return Err(CommandError::new(
@@ -1372,7 +1463,7 @@ pub fn save_document(
             "文件已被外部修改，请先协调冲突",
         ));
     }
-    write_document_atomic(&target, content)?;
+    write_document_atomic(&target, content, Some(&snapshot))?;
     file_revision(root, rel).map_err(|e| {
         CommandError::new(
             "document_write_unknown",
@@ -1494,7 +1585,10 @@ pub fn fs_patch_file(
         }
     }
 
-    write_document_atomic(&target, &content)?;
+    // 局部 patch 与 `save_document` 的 CAS 校验同源，但 M470 的 rename 前窗口收窄只落在
+    // `save_document` 上：这里显式传 `None` = 维持原有无条件替换语义。不要因为「走同一个
+    // 函数」就把它读成「同一个窗口保证」——该路径的同款窗口尚未收窄（已另记 finding）。
+    write_document_atomic(&target, &content, None)?;
     file_revision(root, rel).map_err(|e| {
         CommandError::new(
             "document_write_unknown",
@@ -1906,7 +2000,7 @@ fn find_vault_entry_by_name(root: &Path, name: &str) -> Option<String> {
     best
 }
 
-/// 附件落盘的写路径（[`write_bytes_atomic`] 的 `reject_existing = true` 包装）：撞名按
+/// 附件落盘的写路径（[`write_bytes_atomic`] 的 [`RenameGuard::RejectExisting`] 包装）：撞名按
 /// [`AtomicWriteOutcome::TargetExists`] 收敛，其余失败阶段映射到 `attachment_write_*`。
 /// `pub(crate)`：harness 贴图（`harness::attachments`）复用同一原子写原语（design §5.3）。
 pub(crate) fn write_attachment_atomic(
@@ -1914,7 +2008,7 @@ pub(crate) fn write_attachment_atomic(
     name: &str,
     bytes: &[u8],
 ) -> Result<AtomicWriteOutcome, CommandError> {
-    write_bytes_atomic(&dir.join(name), bytes, true).map_err(|e| match e {
+    write_bytes_atomic(&dir.join(name), bytes, RenameGuard::RejectExisting).map_err(|e| match e {
         AtomicWriteError::InvalidTarget => CommandError::new("fs_path_invalid", "目标目录无效"),
         AtomicWriteError::CreateTemp(e) => {
             CommandError::new("attachment_write_failed", format!("无法创建临时文件：{e}"))
@@ -1932,6 +2026,13 @@ pub(crate) fn write_attachment_atomic(
             CommandError::new("attachment_write_unknown", format!("图片替换结果未知：{e}"))
                 .param("reason", e.to_string())
         }
+        // 附件路径传 RejectExisting，永不触发 ExpectSnapshot ⇒ 本条不可达；真到达说明守卫
+        // 接错，按「写入未完成」报错而不是静默当成功。
+        AtomicWriteError::TargetChanged => CommandError::new(
+            "attachment_write_failed",
+            "图片写入前置检查失败：目标在写入窗口内被改写",
+        )
+        .param("reason", "target changed"),
     })
 }
 
@@ -2962,6 +3063,104 @@ mod tests {
         assert_ne!(revision, next);
         assert_eq!(read_text_file(&v.0, "note.md").unwrap(), "# recovered");
         assert!(!ghost.exists(), "ghost 应已被删除重试清理");
+    }
+
+    // -----------------------------------------------------------------------
+    // CAS 窗口收窄（M470）
+    // -----------------------------------------------------------------------
+
+    /// 正向路径：新加的 rename 前守卫在「无外部改写」的普通保存上 MUST NOT 误报冲突。
+    /// 连做两次保存（每次都拿上一次返回的 revision），两次都必须成功、内容都落盘。
+    #[test]
+    fn document_save_window_guard_does_not_false_report_on_normal_saves() {
+        let v = TempVault::with_fixture();
+        let first = file_revision(&v.0, "note.md").unwrap();
+        let after_first = save_document(&v.0, "note.md", &first, "# first").unwrap();
+        assert_eq!(read_text_file(&v.0, "note.md").unwrap(), "# first");
+        let after_second = save_document(&v.0, "note.md", &after_first, "# second").unwrap();
+        assert_eq!(read_text_file(&v.0, "note.md").unwrap(), "# second");
+        assert_ne!(after_first, after_second, "每次保存 revision 都应前进");
+        assert_eq!(after_second, file_revision(&v.0, "note.md").unwrap());
+    }
+
+    /// 反向路径之一：**换 inode** 的改写——外部编辑器常见的 rename-into-place。写完 tmp、
+    /// `sync_all` 之后、rename 之前重取 stat 与快照不一致，写核心 MUST 拦下（`TargetChanged`），
+    /// 外部内容不得被静默覆盖，tmp 一并清理。
+    #[test]
+    fn atomic_write_aborts_when_target_is_swapped_between_snapshot_and_rename() {
+        let v = TempVault::with_fixture();
+        let target = v.0.join("note.md");
+        let snapshot = stat_snapshot(&target).unwrap();
+        // 模拟窗口内被换掉：另建一份文件 rename 到位（换 inode，size/mtime 也变）
+        let intruder = v.0.join("intruder.md");
+        std::fs::write(&intruder, "# external edit").unwrap();
+        std::fs::rename(&intruder, &target).unwrap();
+
+        let err = write_bytes_atomic(
+            &target,
+            b"# overwritten",
+            RenameGuard::ExpectSnapshot(&snapshot),
+        )
+        .unwrap_err();
+        assert!(
+            matches!(err, AtomicWriteError::TargetChanged),
+            "换 inode 应判为目标已变更：{err:?}"
+        );
+        assert_eq!(
+            read_text_file(&v.0, "note.md").unwrap(),
+            "# external edit",
+            "外部内容 MUST NOT 被静默覆盖"
+        );
+        assert!(
+            !v.0.join(format!(".note.md.lumir-{}", std::process::id()))
+                .exists(),
+            "被拦下时 tmp 必须清理"
+        );
+    }
+
+    /// 反向路径之二：**同 inode 就地改写**——dev/ino 不变，只有 mtime/size 能抓到。这条守住
+    /// 「四字段缺一不可」：丢掉 mtime/size 会漏掉这一类改写。改写取**同长度**内容，让 size
+    /// 保持不变，判据只剩 mtime（macOS/APFS 纳秒精度）。
+    #[test]
+    fn atomic_write_aborts_when_target_is_rewritten_in_place_between_snapshot_and_rename() {
+        let v = TempVault::with_fixture();
+        let target = v.0.join("note.md");
+        let snapshot = stat_snapshot(&target).unwrap();
+        // "# hello" → "#world!"：同为 7 字节，inode 不变，只有 mtime 变
+        std::fs::write(&target, "#world!").unwrap();
+        let now = stat_snapshot(&target).unwrap();
+        assert_eq!(now.ino, snapshot.ino, "本用例要的就是同 inode");
+        assert_eq!(now.size, snapshot.size, "同长度：size 不参与判定");
+        assert_ne!(now, snapshot, "同 inode 同长度的就地改写仍须被 mtime 区分");
+
+        let err = write_bytes_atomic(
+            &target,
+            b"# overwritten",
+            RenameGuard::ExpectSnapshot(&snapshot),
+        )
+        .unwrap_err();
+        assert!(matches!(err, AtomicWriteError::TargetChanged));
+        assert_eq!(read_text_file(&v.0, "note.md").unwrap(), "#world!");
+    }
+
+    /// 冲突上报口径：写核心的 `TargetChanged` 在文档薄壳里映射成 `document_conflict`
+    /// （与 CAS 校验同一错误码、同一句人话），不是通用写失败。
+    #[test]
+    fn write_document_atomic_maps_stale_snapshot_to_document_conflict() {
+        let v = TempVault::with_fixture();
+        let target = v.0.join("note.md");
+        let snapshot = stat_snapshot(&target).unwrap();
+        // 窗口内被换掉（把另一份文件 rename 到目标上，换 inode）
+        std::fs::rename(v.0.join("main.rs"), &target).unwrap();
+
+        let err = write_document_atomic(&target, "# mine", Some(&snapshot)).unwrap_err();
+        assert_eq!(err.code, "document_conflict");
+        assert_eq!(err.message, "文件已被外部修改，请先协调冲突");
+        assert_eq!(
+            read_text_file(&v.0, "note.md").unwrap(),
+            "fn main() {}",
+            "被换上的内容 MUST NOT 被覆盖"
+        );
     }
 
     // -----------------------------------------------------------------------
