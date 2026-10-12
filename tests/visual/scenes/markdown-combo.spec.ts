@@ -206,7 +206,7 @@ test("图片无法显示时占位保持可见", async ({ page }) => {
 
 test("图片终态：尺寸兜底画出来 + 不可见即可见占位", async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 1000 });
-  // 外部 URL 引用必然失败：abort 让它在两条路径（外部图片引用 / svg 内的外链）上都快而确定。
+  // M472 起远程 http(s) 引用不再直连（直接落占位），本用例不产生这条请求；这行留着防「直连被加回来」时慢等——abort 让它快而确定。
   await page.route("**/example.invalid/**", (route) => route.abort());
   await open(page, images, "images.md", undefined, imageAssets);
 
@@ -238,7 +238,8 @@ test("图片终态：尺寸兜底画出来 + 不可见即可见占位", async ({
   expect(await imageReadings(page, REFS.wide), "超宽图仍按既有 max-width 口径收窄").toEqual({ box: box(600 / 2000), natural: "2000x600", complete: true });
 
   // 不可见的四处各自落地可见占位，且占位文本含原始引用串（alt 与路径都在其中）。
-  // 两条分支各有输入：解码失败（空位图 / 外链被拦）与「兜底取不到宽度」（固有尺寸为零的 svg）。
+  // 两条分支各有输入：解码失败（空位图 / 远程引用——M472 起它不再直连，改喂一个解不出可见像素的
+  // 本地源，与本地附件失败落同一条占位）与「兜底取不到宽度」（固有尺寸为零的 svg）。
   const chips = page.locator(".cm-lp-image-error");
   await expect(chips).toHaveCount(4);
   await expect(chips.filter({ hasText: REFS.empty })).toHaveText(`图片无法显示：${REFS.empty}`);
@@ -259,6 +260,7 @@ test("SVG 安全腿：脚本不执行、内嵌外链不发起请求、两处终�
   const requests: string[] = [];
   page.on("request", (request) => requests.push(request.url()));
   await page.setViewportSize({ width: 1280, height: 1000 });
+  // M472 起远程 http(s) 引用不再直连（直接落占位），本用例不产生这条请求；这行留着防「直连被加回来」时慢等——abort 让它快而确定。
   await page.route("**/example.invalid/**", (route) => route.abort());
   await open(page, images, "images.md", undefined, imageAssets);
   await expect(page.locator(".cm-lp-image-error")).toHaveCount(4);
@@ -272,15 +274,19 @@ test("SVG 安全腿：脚本不执行、内嵌外链不发起请求、两处终�
   expect(await page.evaluate(() => (window as any).__lumirSvgScriptRan ?? null)).toBeNull();
   expect(await page.title()).toBe("Lumir");
 
-  // 外部请求的**全集**：只有 md 里显式写的那条引用；svg 内嵌的
-  // `https://example.invalid/lumir-svg-external-ref.png` 一次都没出现（外链腿有区分度：
-  // 内联渲染时它必然出现，见 PR 说明里的临时内联实验）。
+  // 外部请求的**全集**：M472 起为空——md 里那条远程引用不再尝试直连（`buildStandardImage` 直接落
+  // 占位），svg 内嵌的 `https://example.invalid/lumir-svg-external-ref.png` 同样一次都没出现
+  //（外链腿有区分度：内联渲染时它必然出现，见 PR 说明里的临时内联实验）。
+  // 两腿判，防「空集恒真」的空转（REVIEW.md 第 2 条）：先证请求记录器活着（页面自身从 dev server
+  // 取资源，全集必然非空），再判外部子集为空。
+  expect(requests.length, "请求记录器活着（否则下面的空集断言是空转）").toBeGreaterThan(0);
   const external = requests.filter((url) => !url.startsWith("http://127.0.0.1")).sort();
-  expect(external).toEqual(["https://example.invalid/remote.png"]);
+  expect(external, "外部请求全集为空：远程引用不直连、svg 内嵌的外链也不请求").toEqual([]);
 });
 
 test("加载中状态在终态前始终可见（不留空窗）", async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 1000 });
+  // M472 起远程 http(s) 引用不再直连（直接落占位），本用例不产生这条请求；这行留着防「直连被加回来」时慢等——abort 让它快而确定。
   await page.route("**/example.invalid/**", (route) => route.abort());
   // 读字节慢一拍（读桩注入延迟，真机上这段窗口由附件大小与磁盘决定）：源码已被 replace
   // 装饰藏起来，此刻替换区若不可见就是用户看到的「空白」。延迟取得长一些，让采样落在
@@ -405,6 +411,7 @@ async function waitForLightboxImage(page: Page) {
 
 test("M184 双击打开遮罩、三条关闭路径与焦点归还", async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 1000 });
+  // M472 起远程 http(s) 引用不再直连（直接落占位），本用例不产生这条请求；这行留着防「直连被加回来」时慢等——abort 让它快而确定。
   await page.route("**/example.invalid/**", (route) => route.abort());
   await open(page, images, "images.md", undefined, imageAssets);
   await expect(page.locator(".cm-lp-image-status")).toHaveCount(0);
@@ -482,6 +489,7 @@ test("M184 双击打开遮罩、三条关闭路径与焦点归还", async ({ pag
 test("M246 lightbox 元素级基线：遮罩 + 放大图的形态钉住", async ({ page }) => {
   // 默认 1200x800 视口（基线统一口径）；行为合同（三条关闭路径 / 焦点归还 / 适配口径）
   // 归上面 M184 组，本条只钉视觉形态——lightbox 是零基线覆盖的三个周边表面之一（M214 登记）。
+  // M472 起远程 http(s) 引用不再直连（直接落占位），本用例不产生这条请求；这行留着防「直连被加回来」时慢等——abort 让它快而确定。
   await page.route("**/example.invalid/**", (route) => route.abort());
   await open(page, images, "images.md", undefined, imageAssets);
   await inlineImage(page, REFS.fixed).dblclick();
@@ -497,6 +505,7 @@ test("M246 lightbox 元素级基线：遮罩 + 放大图的形态钉住", async 
 
 test("M184 放大口径：宽图与高图都不越出遮罩、小图不放大", async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 1000 });
+  // M472 起远程 http(s) 引用不再直连（直接落占位），本用例不产生这条请求；这行留着防「直连被加回来」时慢等——abort 让它快而确定。
   await page.route("**/example.invalid/**", (route) => route.abort());
   // 三个尺寸面各自需要一张会「被不同维度夹住」的图（VIEWPORT 1280×1000 → 遮罩可用 1120×720 左右）：
   // 宽图（2000×150）由**宽度**夹住、高图（600×2000）由**高度**夹住、小图（240×80）两个维度都不夹。
@@ -563,6 +572,7 @@ test("M184 放大口径：宽图与高图都不越出遮罩、小图不放大", 
 
 test("M184 占位与加载态没有打开路径（同场景配对正观测）", async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 1000 });
+  // M472 起远程 http(s) 引用不再直连（直接落占位），本用例不产生这条请求；这行留着防「直连被加回来」时慢等——abort 让它快而确定。
   await page.route("**/example.invalid/**", (route) => route.abort());
   const doc = [
     "# 占位与加载态",
@@ -587,7 +597,7 @@ test("M184 占位与加载态没有打开路径（同场景配对正观测）", 
     "",
     "![[note.md]]",
     "",
-    "外部 URL（安全策略拦下）：",
+    "外部 URL（远程引用，落占位）：",
     "",
     "![remote](https://example.invalid/remote.png)",
     "",
@@ -635,6 +645,7 @@ test("M184 占位与加载态没有打开路径（同场景配对正观测）", 
 
 test("M184 加载中状态块没有打开路径", async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 1000 });
+  // M472 起远程 http(s) 引用不再直连（直接落占位），本用例不产生这条请求；这行留着防「直连被加回来」时慢等——abort 让它快而确定。
   await page.route("**/example.invalid/**", (route) => route.abort());
   // 读字节慢一拍：源码已被 replace 装饰藏起，此刻替换区是加载中状态块（还没有 `<img>`）。
   await open(page, images, "images.md", undefined, imageAssets, 5000);
@@ -653,6 +664,7 @@ test("M184 加载中状态块没有打开路径", async ({ page }) => {
 
 test("M184 打开遮罩不重读字节、惰性建立不预建", async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 1000 });
+  // M472 起远程 http(s) 引用不再直连（直接落占位），本用例不产生这条请求；这行留着防「直连被加回来」时慢等——abort 让它快而确定。
   await page.route("**/example.invalid/**", (route) => route.abort());
   await open(page, images, "images.md", undefined, imageAssets);
   await expect(page.locator(".cm-lp-image-status")).toHaveCount(0);
@@ -682,6 +694,7 @@ test("M184 打开遮罩不重读字节、惰性建立不预建", async ({ page }
 
 test("M209 方言形态（![[percent-width.svg]]）打开遮罩且图像源一致（G1①）", async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 1000 });
+  // M472 起远程 http(s) 引用不再直连（直接落占位），本用例不产生这条请求；这行留着防「直连被加回来」时慢等——abort 让它快而确定。
   await page.route("**/example.invalid/**", (route) => route.abort());
   await open(page, images, "images.md", undefined, imageAssets);
   await expect(page.locator(".cm-lp-image-status")).toHaveCount(0);
@@ -752,6 +765,7 @@ test("M209 放大层不发起外链请求、无脚本副作用（G1③）", asyn
   const requests: string[] = [];
   page.on("request", (request) => requests.push(request.url()));
   await page.setViewportSize({ width: 1280, height: 1000 });
+  // M472 起远程 http(s) 引用不再直连（直接落占位），本用例不产生这条请求；这行留着防「直连被加回来」时慢等——abort 让它快而确定。
   await page.route("**/example.invalid/**", (route) => route.abort());
   await open(page, images, "images.md", undefined, imageAssets);
   await expect(page.locator(".cm-lp-image-status")).toHaveCount(0);
@@ -760,7 +774,13 @@ test("M209 放大层不发起外链请求、无脚本副作用（G1③）", asyn
   // 安全腿二（先判，防负向断言空转）：含外部 `<image href>` 的那张 svg 内联渲染成功。
   expect(await imageReadings(page, REFS.externalRef), "含外链的 svg 内联渲染成功").toEqual({ box: "240x80", natural: "240x80", complete: true });
   const external = () => requests.filter((url) => !url.startsWith("http://127.0.0.1")).sort();
-  expect(external(), "内联层的外链集合（对照基线）").toEqual(["https://example.invalid/remote.png"]);
+  // M472 起远程引用不再直连，外部请求全集**本来就是空的**——原先那条「内联层确实会请求远程 URL」
+  // 的对照基线随之消失。本用例的判据因此换成「请求集合在打开遮罩前后逐项相同」：任何新请求
+  //（svg 内嵌的外链、内联进 DOM 的图片资源都算）都会让集合增长、当场判红，比原先只比外部子集更强。
+  // 先补正观测（REVIEW.md 第 2 条）：记录器得是活的，否则空集断言在空转。
+  expect(requests.length, "请求记录器活着（否则下面的空集断言是空转）").toBeGreaterThan(0);
+  expect(external(), "内联层的外链集合：远程引用不直连，为空").toEqual([]);
+  const requestsBeforeOverlay = [...requests];
 
   const overlay = page.locator(LIGHTBOX_OVERLAY);
   await inlineImage(page, REFS.externalRef).dblclick();
@@ -771,7 +791,7 @@ test("M209 放大层不发起外链请求、无脚本副作用（G1③）", asyn
   // `https://example.invalid/lumir-svg-external-ref.png` 就会出现——内联渲染时的现场见上方
   // 「SVG 安全腿」用例。给一拍时间让迟到请求也落进集合，再比**全集**。
   await page.waitForTimeout(500);
-  expect(external(), "放大层不得发起任何新的外部请求").toEqual(["https://example.invalid/remote.png"]);
+  expect(requests, "放大层不得发起任何新请求（打开遮罩前后的请求集合逐项相同）").toEqual(requestsBeforeOverlay);
 
   // 另一张含 `<script>` / `onload` 的 svg：放大同样不得执行它们（两个可观测副作用：window 标记
   // 与 document.title，后者若被改写说明脚本在放大层里真的跑了）。

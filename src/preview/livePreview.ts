@@ -1352,16 +1352,22 @@ function imageOpenHandler(ctx: PreviewContext): ImageOpenHandler | undefined {
   return lightbox === null ? undefined : (img, rawRef) => lightbox.open(img.src, rawRef);
 }
 
-/** 标准 ![alt](path)：外部 URL 直接渲染，否则相对当前文件解析并经 provider 读取。 */
+/** 远程 http(s) 引用的「字节来源」：空 payload 的 `data:` URL——`<img>` 解不出可见像素，
+ *  失败事件随即把引用交给 ImageWidget 的占位终态（成因中立的 D113，见 attachments.ts）。 */
+const REMOTE_IMAGE_SRC = (): Promise<string> => Promise.resolve("data:image/png;base64,");
+
+/** 标准 ![alt](path)：**一律**经 vault 相对路径解析 + provider 读取。远程 http(s) 引用没有
+ *  字节来源可读（现行 CSP 的 `img-src 'self' asset: data:` 不含 http(s)，直连在打包态与 dev
+ *  态都走不通——M472 据此删掉原先那条死直连分支），落与本地附件失败**同一个** ImageWidget
+ *  占位终态，原始引用串保留在占位文本里。不接 lightbox：幻影源永远渲染不出 `<img>`，双击路径
+ *  因此不存在——与「占位与加载态没有打开路径」同一条结构性事实，不需要额外开关。 */
 function buildStandardImage(
   target: string,
   rawRef: string,
   ctx: PreviewContext,
 ): Decoration {
   if (/^https?:\/\//.test(target)) {
-    return Decoration.replace({
-      widget: new ImageWidget(target, () => Promise.resolve(target), rawRef, imageOpenHandler(ctx)),
-    });
+    return Decoration.replace({ widget: new ImageWidget(target, REMOTE_IMAGE_SRC, rawRef) });
   }
   const provider = ctx.attachmentProvider();
   if (!provider) {
