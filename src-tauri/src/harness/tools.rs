@@ -13,10 +13,16 @@
 //! cli_run 的 `purpose`（用途说明，change add-harness-permission-modes，design §3.4）是
 //! schema 必填字段：模型发起调用时用一句人话自述这条命令干什么，批准卡在命令上方展示它。
 //! 它是**阅读辅助、不是安全判据**——权限判定的每一层只看 argv 本身（`permissions.rs`）。
+//!
+//! cli_run 子进程的 PATH（change harness-cli-login-shell-path）：会话内首次调用时经用户登录
+//! shell 解析一份完整 PATH、缓存并注入子进程，让裸命令（如装在 `~/.local/bin` 的 CLI）无需
+//! `zsh -lc` 包裹即可被找到；解析失败回退继承 app 的 PATH。它只影响「能否找到命令」，
+//! MUST NOT 影响「命令是否被放行」——权限判定照旧只看 argv（`permissions.rs`）。
 
 use std::io::Read;
 use std::path::{Component, Path};
 use std::process::Stdio;
+use std::sync::OnceLock;
 
 use serde::Deserialize;
 
@@ -763,6 +769,130 @@ const CLI_MAX_CHARS: usize = 10_000;
 /// CLI 超时（毫秒）：阻塞 wait 的轮询上限，超时即 kill（无 tokio 的条件变量替代）。
 const CLI_TIMEOUT_MS: u128 = 60_000;
 
+/// 登录 shell PATH 解析超时（change harness-cli-login-shell-path）：解析在独立子进程里跑，
+/// 用户的 zsh / bash 启动文件可能挂住（交互式读 stdin、慢插件），超时即放弃、回退继承 PATH。
+const SHELL_PATH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+/// PATH 解析的夹取标记：启动文件（starship / pyenv / zoxide 的 init）会往 stdout 打杂输出，
+/// 用一对标记把真正的 PATH 夹在中间再切出来——比「取整行」更抗尾部杂输出。
+const PATH_MARKER_START: &str = "__LUMIR_PATH_START__";
+const PATH_MARKER_END: &str = "__LUMIR_PATH_END__";
+
+/// 会话内首次 cli_run 时解析一次的登录 shell PATH（含失败结果）。
+/// 惰性初始化（不拖慢 app 启动）、进程内单例；失败也缓存，避免每条命令都重试一遍超时。
+static CLI_PATH: OnceLock<Option<String>> = OnceLock::new();
+
+/// cli_run 子进程要用的 PATH：解析到登录 shell 的完整 PATH 就注入，否则返回 None
+/// （不改子进程环境，照常继承 app 自身的 PATH——回退语义）。
+fn cli_path() -> Option<String> {
+    CLI_PATH
+        .get_or_init(|| {
+            let inherited = std::env::var("PATH").ok();
+            merge_paths(resolve_login_shell_path().as_deref(), inherited.as_deref())
+        })
+        .clone()
+}
+
+/// 经用户登录 shell 解析完整 PATH。shell 取 `$SHELL`（缺失或空白时回落 `/bin/zsh`）。
+fn resolve_login_shell_path() -> Option<String> {
+    let shell = std::env::var("SHELL")
+        .ok()
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(|| "/bin/zsh".to_string());
+    resolve_path_via_shell(Path::new(&shell), SHELL_PATH_TIMEOUT)
+}
+
+/// 已知 shell 的「登录 + 交互」旗标。zsh 的 `-l -c` 只读登录启动文件、`-i -c` 只读交互
+/// 启动文件——实证（2026-10-12，本机 zsh，见 change harness-cli-login-shell-path）PATH 增补
+/// 同时定义在两者里，只取其一都拿不全，故用 `-l -i -c` 同时加载。其余 shell（fish / nu 等）
+/// 的启动文件与旗标语义不同，不猜——返回 None 即回落继承 PATH。
+fn login_shell_flags(shell: &Path) -> Option<[&'static str; 3]> {
+    match shell.file_name().and_then(|name| name.to_str()) {
+        Some("zsh") | Some("bash") => Some(["-l", "-i", "-c"]),
+        _ => None,
+    }
+}
+
+/// 起 `shell -l -i -c '<只打印 PATH 的命令>'` 取 PATH。整个解析受 `timeout` 约束：
+/// 超时 / 进程错误 / 标记缺失或为空白，一律返回 None（不把「读不到」当空串）。
+fn resolve_path_via_shell(shell: &Path, timeout: std::time::Duration) -> Option<String> {
+    let flags = login_shell_flags(shell)?;
+    let script = format!("printf '%s%s%s' '{PATH_MARKER_START}' \"$PATH\" '{PATH_MARKER_END}'");
+    let mut child = std::process::Command::new(shell)
+        .args(flags)
+        .arg(&script)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .ok()?;
+    // 读管道放独立线程（阻塞 read 等 EOF），结果经通道回传；主路径只做截止时间轮询，
+    // 且只 recv_timeout 到截止时间——孙进程占着管道不放也不会把解析拖过 timeout。
+    let mut stdout = child.stdout.take()?;
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let mut buf = Vec::new();
+        let _ = stdout.read_to_end(&mut buf);
+        let _ = tx.send(buf);
+    });
+    let deadline = std::time::Instant::now() + timeout;
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => break,
+            Ok(None) => {
+                if std::time::Instant::now() >= deadline {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return None;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+            Err(_) => {
+                let _ = child.kill();
+                return None;
+            }
+        }
+    }
+    let _ = child.wait();
+    let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+    let output = rx
+        .recv_timeout(remaining.max(std::time::Duration::from_millis(1)))
+        .ok()?;
+    parse_marked_path(&String::from_utf8_lossy(&output))
+}
+
+/// 从（可能夹带启动文件杂输出的）shell 输出里切出夹在标记之间的 PATH。标记缺失或中间为空白
+/// 时返回 None。
+fn parse_marked_path(output: &str) -> Option<String> {
+    let start = output.find(PATH_MARKER_START)? + PATH_MARKER_START.len();
+    let rest = &output[start..];
+    let end = rest.find(PATH_MARKER_END)?;
+    let path = rest[..end].trim();
+    if path.is_empty() {
+        None
+    } else {
+        Some(path.to_string())
+    }
+}
+
+/// 决策：解析到 PATH ⇒ 「解析结果在前 + 应用继承到的额外目录去重追加在后」；
+/// 解析失败（None / 空白）⇒ None（不改子进程环境，回退继承 app 的 PATH）。
+/// 解析结果优先，是为了让用户 shell 的语义胜出；追加继承里的额外目录，是为了不丢
+/// app 启动上下文（如 dev 工具链）注入的目录。
+fn merge_paths(resolved: Option<&str>, inherited: Option<&str>) -> Option<String> {
+    let resolved = resolved.map(str::trim).filter(|s| !s.is_empty())?;
+    let mut segments: Vec<&str> = Vec::new();
+    for segment in resolved
+        .split(':')
+        .chain(inherited.into_iter().flat_map(|value| value.split(':')))
+    {
+        if segment.is_empty() || segments.contains(&segment) {
+            continue;
+        }
+        segments.push(segment);
+    }
+    Some(segments.join(":"))
+}
+
 fn cli_run(args: &serde_json::Value) -> ToolOutput {
     let input = match parse_args::<CliArgs>(args) {
         Ok(input) => input,
@@ -771,12 +901,17 @@ fn cli_run(args: &serde_json::Value) -> ToolOutput {
     if input.command.trim().is_empty() {
         return ToolOutput::err("cli_command_empty", "command 为空");
     }
-    let mut child = match std::process::Command::new(&input.command)
+    let mut command = std::process::Command::new(&input.command);
+    command
         .args(&input.args)
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-    {
+        .stderr(Stdio::piped());
+    // 登录 shell PATH（change harness-cli-login-shell-path）：只在解析到结果时注入，
+    // 解析失败什么都不做、子进程照常继承 app 的 PATH。权限判定不在此处、不受影响。
+    if let Some(path) = cli_path() {
+        command.env("PATH", path);
+    }
+    let mut child = match command.spawn() {
         Ok(child) => child,
         Err(e) => {
             return ToolOutput::err(
@@ -1239,5 +1374,125 @@ mod tests {
         let out = cli_run(&serde_json::json!({"command": "definitely-not-a-real-cmd-xyz"}));
         assert!(!out.succeeded());
         assert_eq!(out.value["code"], "cli_spawn_failed");
+    }
+
+    #[test]
+    fn parse_marked_path_isolates_path_from_chatter() {
+        assert_eq!(
+            parse_marked_path(&format!("{PATH_MARKER_START}/a:/b{PATH_MARKER_END}")).as_deref(),
+            Some("/a:/b")
+        );
+        // 启动文件杂输出落在标记前后都不进结果（尾部杂输出是「取整行」口径会踩的坑）。
+        let noisy = format!(
+            "pyenv: init ok\nwarning: whatever\n{PATH_MARKER_START}/usr/bin:/bin{PATH_MARKER_END}\nbye\n"
+        );
+        assert_eq!(parse_marked_path(&noisy).as_deref(), Some("/usr/bin:/bin"));
+        // 「读不到」不是「为空」：标记缺失 / 只有起点 / 中间为空白，一律 None。
+        assert_eq!(parse_marked_path("no markers here"), None);
+        assert_eq!(parse_marked_path(PATH_MARKER_START), None);
+        assert_eq!(
+            parse_marked_path(&format!("{PATH_MARKER_START}{PATH_MARKER_END}")),
+            None
+        );
+        assert_eq!(
+            parse_marked_path(&format!("{PATH_MARKER_START}   {PATH_MARKER_END}")),
+            None
+        );
+    }
+
+    #[test]
+    fn merge_paths_prefers_resolved_and_appends_inherited_extras() {
+        // 解析成功：解析结果在前，继承里多出的目录追加在后，重复目录只留一份。
+        assert_eq!(
+            merge_paths(Some("/a:/b"), Some("/b:/c:/a")).as_deref(),
+            Some("/a:/b:/c")
+        );
+        // 无继承值：原样用解析结果（空段丢弃）。
+        assert_eq!(
+            merge_paths(Some("/a::/a:/b"), None).as_deref(),
+            Some("/a:/b")
+        );
+        // 解析失败（None / 空白）⇒ 不改环境，回退继承（None = 不注入）。
+        assert_eq!(merge_paths(None, Some("/usr/bin:/bin")), None);
+        assert_eq!(merge_paths(Some("   "), Some("/usr/bin")), None);
+        assert_eq!(merge_paths(None, None), None);
+    }
+
+    #[test]
+    fn login_shell_flags_only_for_known_shells() {
+        assert_eq!(
+            login_shell_flags(Path::new("/bin/zsh")),
+            Some(["-l", "-i", "-c"])
+        );
+        assert_eq!(
+            login_shell_flags(Path::new("/usr/local/bin/bash")),
+            Some(["-l", "-i", "-c"])
+        );
+        // 未知 shell 不猜旗标 ⇒ 回落继承 PATH。
+        assert_eq!(login_shell_flags(Path::new("/opt/homebrew/bin/fish")), None);
+        assert_eq!(login_shell_flags(Path::new("nu")), None);
+    }
+
+    /// 受控假 shell：验证「起子进程 → 夹取标记 → 解析」完整链路。真 zsh 会读用户启动文件，
+    /// 结果随本机环境变，不能拿来做确定性断言；这里用脚本模拟 shell 执行 `-c` 命令。
+    #[cfg(unix)]
+    fn fake_shell(dir: &Path, name: &str, body: &str) -> PathBuf {
+        use std::os::unix::fs::PermissionsExt;
+        let path = dir.join(name);
+        std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
+        let mut perms = std::fs::metadata(&path).unwrap().permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&path, perms).unwrap();
+        path
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn resolve_path_via_shell_round_trips_marker() {
+        let dir = std::env::temp_dir().join(format!("lumir-shell-probe-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        // argv = <fake> -l -i -c <script>；shift 3 后 eval 那段脚本（等价于 shell 执行命令）。
+        let shell = fake_shell(&dir, "zsh", "shift 3\neval \"$1\"");
+        let got = resolve_path_via_shell(&shell, std::time::Duration::from_secs(5));
+        let got = got.expect("假 shell 应回传夹取标记里的 PATH");
+        assert!(got.contains('/'), "解析结果不像 PATH：{got}");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn resolve_path_via_shell_fails_closed_on_hang() {
+        let dir = std::env::temp_dir().join(format!("lumir-shell-hang-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        // exec 让 sleep 顶替 /bin/sh 本体，kill 能直接收掉（不留 30s 孤儿进程）。
+        let shell = fake_shell(&dir, "zsh", "exec sleep 30");
+        let started = std::time::Instant::now();
+        let got = resolve_path_via_shell(&shell, std::time::Duration::from_millis(300));
+        assert_eq!(got, None, "挂住的 shell 必须判 None（回退继承）");
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(5),
+            "超时未生效，实际耗时 {:?}",
+            started.elapsed()
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// 真 zsh 冒烟（可选）：/bin/zsh 存在才跑。登录 + 交互会读用户启动文件，结果随环境变，
+    /// 故只断言「解析成功且像个 PATH」，不逐字断言。CI 干净环境与开发机都应通过。
+    #[cfg(unix)]
+    #[test]
+    fn resolve_login_shell_path_from_real_zsh() {
+        if !Path::new("/bin/zsh").exists() {
+            return;
+        }
+        let got = resolve_path_via_shell(Path::new("/bin/zsh"), std::time::Duration::from_secs(10));
+        let got = got.expect("/bin/zsh -l -i -c 应能解析出 PATH");
+        assert!(got.contains(':'), "解析结果不像 PATH：{got}");
+        assert!(
+            got.contains("/usr/bin") || got.contains("/bin"),
+            "缺基本目录：{got}"
+        );
     }
 }
