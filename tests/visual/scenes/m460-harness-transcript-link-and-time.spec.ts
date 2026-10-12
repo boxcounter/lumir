@@ -163,9 +163,11 @@ test("会话恢复重放：who 行带留存 ts 的时间读数（同日窄相对
   const userWhen = page.locator(".lumir-hp-msg-user .lumir-hp-when");
   await expect(userWhen).toHaveCount(1);
   await expect(userWhen).toHaveText(/· 1分钟前/);
+  // 秒档读数与真实时间竞态：ts 在用例开头取 NOW_S-30，渲染时已过 0–2s，读数在 30/31 之间摆动
+  // （实测 3 连跑 = 通过/失败/通过）。断言放宽到相邻两秒，仍钉住「restored 档给 N秒前」这一形态。
   await expect(
     page.locator(".lumir-hp-msg", { hasText: "恢复的历史回答" }).locator(".lumir-hp-when"),
-  ).toHaveText(/· 30秒前/);
+  ).toHaveText(/· 3[01]秒前/);
 
   // 跨天那条是区分度判据：一周前的消息给短日期，**不是** live 档的「昨天」。
   const older = page.locator(".lumir-hp-msg", { hasText: "三天前的回答" }).locator(".lumir-hp-when");
