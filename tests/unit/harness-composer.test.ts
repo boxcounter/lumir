@@ -22,6 +22,7 @@ import {
   insertPlainTextAtCaret,
   insertSoftBreakAtCaret,
   isCardFrontCaret,
+  normalizeComposerCaret,
   parseQuoteMessage,
   removeBlockAt,
   unescapeXmlEntities,
@@ -178,30 +179,57 @@ test("isCardFrontCaret：指向卡片且 offset 0 → 真；段落 / 卡片内�
   assert.equal(isCardFrontCaret(blocks, { block: 9, offset: 0 }), false); // 越界没有「前缘」
 });
 
-test("边界光标位往返：写回的落点形态恒是同一个块级边界、读回得到同一个模型值（全枚举）", () => {
+test("边界光标位的写回落点：MUST 是有文本宿主的相邻位（前一段落末缘 / 后一张卡片的首个文本位）", () => {
+  // M457（真缺陷现场：Alex 2026-10-12「⌃B 之后光标落在摘录卡正文里」）。写回形态不是实现
+  // 细节——它是光标**画在哪**的唯一输入：
+  //   - M450 起用的 `Range(composer, n)`（块级容器边界）在引擎里量不出 caret 几何
+  //   （`getBoundingClientRect()` 全 0，WebKit 与 Blink 实测同结果，见
+  //   docs/specs/harness-composer.md §实测依据），画在哪由引擎自行决定；
+  //   - 相邻位有文本宿主时（前一块是段落）写回**该段落的末缘**：几何与行位都由文本节点给出
+  //   （真机读数：852,641 的行位），且与前块非空时的 `{block: n, offset: 0}` 同属
+  //   `normalizeComposerCaret` 的归一等价类（导航 / 行级命令的口径因此不变）；
+  //   - 两侧都没有文本宿主（两卡相邻 / composer 以卡片开头）时写回**后一张卡片的首个文本位**
+  //   （DOM 读回按「锚在卡片内」归一为同一个边界位，HC3 第 1 条已声明这一档）。
   const sequences: ComposerBlock[][] = [
     [imageBlock, quote(cardA)],
     [quote(cardA), imageBlock, para("后")],
     [para("前"), imageBlock, quote(cardA), para("后")],
     [imageBlock, quote(cardA), imageBlock],
+    [para("前"), para(""), quote(cardA)],
   ];
   for (const blocks of sequences) {
-    // 关键性质：边界位的读回归一不依赖块种类——「第 N 块前缘」只由 N 与块数决定。
+    const label = JSON.stringify(blocks.map((b) => (b.kind === "paragraph" ? `p:"${b.text}"` : b.kind)));
     for (let n = 0; n <= blocks.length; n += 1) {
       const caret = boundaryCaretAt(n, blocks.length);
       assert.deepEqual(caret, { block: n, offset: 0 });
-      const target = domCaretTarget(blocks, caret);
-      assert.equal(target.index, n, `${JSON.stringify(blocks)} @${n}`); // 落点下标不漂
       const block = blocks[n];
-      if (block === undefined || block.kind !== "paragraph") {
-        assert.deepEqual(target, { kind: "boundary", index: n }, `${JSON.stringify(blocks)} @${n}`);
+      if (block === undefined) continue; // 「末尾之后」不在本轮改动面（残余登记在 docs/backlog.md）
+      if (block.kind === "paragraph") continue; // 段落前缘不是边界档（下面的反向断言）
+      const target = domCaretTarget(blocks, caret);
+      assert.notEqual(target.kind, "boundary", `边界位不得写回无 caret 几何的块级容器边界：${label} @${n}`);
+      const prev = blocks[n - 1];
+      if (prev !== undefined && prev.kind === "paragraph") {
+        assert.deepEqual(target, { kind: "text", index: n - 1, offset: prev.text.length }, `${label} @${n}`);
+        if (prev.text.length > 0) {
+          assert.deepEqual(
+            normalizeComposerCaret(blocks, { block: n - 1, offset: prev.text.length }),
+            normalizeComposerCaret(blocks, caret),
+            `写回形态与边界位必须同属一个归一等价类：${label} @${n}`,
+          );
+        }
+      } else {
+        assert.deepEqual(target, { kind: "cardText", index: n }, `${label} @${n}`);
       }
     }
-    // 反向：段落内的光标仍走文本偏移档（边界档没有把普通段落位吃掉）。
+    // 反向：段落内的光标仍走文本偏移档（边界档没有把普通段落位吃掉；空段落钳到 offset 0）。
     for (let n = 0; n < blocks.length; n += 1) {
       const block = blocks[n];
       if (block.kind !== "paragraph") continue;
-      assert.deepEqual(domCaretTarget(blocks, { block: n, offset: 1 }), { kind: "text", index: n, offset: 1 });
+      assert.deepEqual(domCaretTarget(blocks, { block: n, offset: 1 }), {
+        kind: "text",
+        index: n,
+        offset: Math.min(1, block.text.length),
+      });
     }
     // 越界钳制：越前的下标钳到 0、越后的下标钳到块数（不产出越界块下标）。
     assert.deepEqual(boundaryCaretAt(-3, blocks.length), { block: 0, offset: 0 });
@@ -209,14 +237,70 @@ test("边界光标位往返：写回的落点形态恒是同一个块级边界�
   }
 });
 
+test("写回落点的编辑语义：前段落非空时，退格 / 前删 / ⇧Enter 三族结果与边界位逐字节一致", () => {
+  // 写回落在「前一段落末缘」这一档时，那一拍按键的模型读回是**段落末缘位**——它必须与边界位
+  // （`{block: n, offset: 0}`）给出同样的编辑结果，否则修光标几何就会顺手改掉编辑行为。
+  // （HC4 的实现注记已把两个位置定义为不同的模型值，此处钉的是它们在**这一档相邻关系**下
+  // 的动词一致性：退格删前块末字符、前删删后一张卡片、⇧Enter 在边界落新空段落。）
+  const sequences: ComposerBlock[][] = [
+    [para("前"), imageBlock, para("后")],
+    [para("前"), quote(cardA), imageBlock, para("后")],
+    [para("ab\ncd"), imageBlock, quote(cardA)],
+    [para("前"), para(""), quote(cardA), para("后")],
+  ];
+  const ops = [
+    { name: "退格", run: backspaceAtCaret },
+    { name: "前删", run: deleteForwardAtCaret },
+    { name: "⇧Enter", run: insertSoftBreakAtCaret },
+  ];
+  for (const blocks of sequences) {
+    for (let n = 0; n < blocks.length; n += 1) {
+      if (blocks[n].kind === "paragraph") continue;
+      const prev = blocks[n - 1];
+      if (prev === undefined || prev.kind !== "paragraph" || prev.text.length === 0) continue;
+      const boundary = { block: n, offset: 0 };
+      const writeback = { block: n - 1, offset: prev.text.length };
+      for (const op of ops) {
+        const a = op.run(blocks, boundary);
+        const b = op.run(blocks, writeback);
+        const label = `${op.name} @ ${JSON.stringify(blocks.map((x) => x.kind))} n=${n}`;
+        assert.equal(a === null, b === null, `${label}：一边有动作一边没有`);
+        if (a === null || b === null) continue;
+        assert.deepEqual(a.blocks, b.blocks, `${label}：块序列不一致`);
+        assert.deepEqual(
+          normalizeComposerCaret(a.blocks, a.caret),
+          normalizeComposerCaret(b.blocks, b.caret),
+          `${label}：光标不在同一个归一等价类里`,
+        );
+      }
+    }
+  }
+});
+
+test("边界位键入的落法（刻意与写回形态不同）：边界位物化新段落、前段末缘接进前段", () => {
+  // 设计决策（M457，登记在 mission notes）：内容输入落在**前一段落末缘**那一档时接进前段
+  // （光标画在那一行的行末，字就落在那儿——与引擎原生 ⌃B 后的行为一致）；只有两侧都没有
+  // 文本宿主（边界位本身）才物化新段落，即 Alex 真正要的「两张摘录之间输入内容」。
+  const blocks = [para("前"), quote(cardA)];
+  assert.deepEqual(insertPlainTextAtCaret(blocks, { block: 1, offset: 0 }, "X"), {
+    blocks: [para("前"), para("X"), quote(cardA)],
+    caret: { block: 1, offset: 1 },
+  });
+  assert.deepEqual(insertPlainTextAtCaret(blocks, { block: 0, offset: 1 }, "X"), {
+    blocks: [para("前X"), quote(cardA)],
+    caret: { block: 0, offset: 2 },
+  });
+});
+
 test("removeBlockAt 的兜底光标可指向卡片前缘（相邻卡片中删掉中间那张）", () => {
   // next = [cardA, cardC]，index = 1，前一块不是段落 ⇒ 走 `{block: min(index, len-1), offset: 0}`
   // 兜底（design §1 第 11 条）——这是「写回 DOM 再读回应当同一值」要护住的形态之一。
+  // M457：两卡相邻 ⇒ 写回落点 = 后一张卡片的**首个文本位**（无文本宿主的边界位不再写块级边界）。
   const { blocks, caret } = removeBlockAt([quote(cardA), imageBlock, quote(cardB)], 1);
   assert.deepEqual(blocks, [quote(cardA), quote(cardB)]);
   assert.deepEqual(caret, { block: 1, offset: 0 });
   assert.equal(isCardFrontCaret(blocks, caret), true);
-  assert.deepEqual(domCaretTarget(blocks, caret), { kind: "boundary", index: 1 });
+  assert.deepEqual(domCaretTarget(blocks, caret), { kind: "cardText", index: 1 });
   assert.deepEqual(boundaryCaretAt(caret.block, blocks.length), caret);
 });
 

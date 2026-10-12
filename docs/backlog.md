@@ -663,6 +663,83 @@
 
 **证据（本地，git 外）**：`test-results/acceptance/2026-10-11/134-harness-composer-intercard-caret/steps.md`（`do=keys` 0/3 的那几轮 + 诊断 note `M456-probe: type target index=236 role=AXTextArea baselineLen=89`）；`scripts/acceptance/README.md` 已知边界的 M456 条（结论全文）。
 
+**M457 补充（worker-m457，2026-10-12，同一条通道缺口）**：M457 在**真实 app + WebKit**（Playwright，
+非真机套件）上把 composer 的边界光标位逐键量了一遍，得到两条**与本条同族、但成因在引擎侧**的
+实测结论，一并登记在这里免得下次再花一轮排查：
+1. **边界位不派 `beforeinput`**：光标锚在**两张相邻卡片之间**（块级容器边界）时，WebKit 只派
+   `keydown`——`beforeinput` / `input` **都不派**、字也不落（对照：光标锚在**段落 + 卡片之间**时
+   WebKit 会把编辑目标解析到相邻段落、`beforeinput` 照常派）。M450 的物化挂在 `beforeinput` 上，
+   因此在两卡之间永远不可达。M457 的修法：内容型键入改由 composer `keydown` 那一拍走模型
+   （`boundaryTypingCaret` 纯函数判据），已修。
+2. **`Range(composer, N)` 量不出 caret 几何**（`getBoundingClientRect()` 全 0，WebKit 与 Blink
+   同结果），画在哪由引擎自行决定——真机现场表现为「⌃B 之后光标落进卡片正文里」。M457 的修法：
+   边界位的写回改成**有文本宿主的相邻位**，已修（见 `docs/specs/harness-composer.md` 的 HC3 与
+   M457 实测表）。
+
+### 「末尾之后」的光标写回仍是块级容器边界：caret 几何为零（worker-m457，2026-10-12，low，待修）
+
+**症状**：composer 的「末尾之后」（模型 `{block: 块数, offset: 0}`，⌃F 在最后一块之后 / ⌃N 出段落的
+落点）写回 DOM 时仍是 `Range(composer, 块数)`——与 M457 修掉的卡片边界位同族：**量不出 caret 几何**，
+画在哪由引擎自行决定（真机表现为「光标不知道跑哪去了」）。
+**为什么这次没修**：它与卡片边界位不同——**没有文本宿主也没有后一块**，任何替代落点都会改掉模型值
+（等价类里没有真实位置），属于「模型语义要不要跟着改」的问题，超出 M457 的改动面。
+**修它要先定的口径**：把「末尾之后」的写回归一到最后一段落的末缘（读回随之变成段落末缘位 ⇒ 该处键入
+从「末尾追加一个新段落」变成「接进最后一段落」），还是保持现有模型值、只让它可见（例如把
+`{block: 块数}` 的写回落回**最后一个块**的边界）。
+**证据**：`test-results/m457-probe/`（M457 的 WebKit 探针读数，git 外）；`docs/specs/harness-composer.md`
+§已知边界（HC3，M457）第一条。
+
+### 两卡相邻之间无法用 IME 组合输入：组合需要一个可编辑行内宿主（worker-m457，2026-10-12，medium，待修/待验收）
+
+**症状**：光标停在**两张相邻卡片之间**（卡片边界位）时，中文等 IME 组合输入起不来——组合要求插入点
+落在**可编辑**的行内宿主上，而该位置在 DOM 里没有（卡片是 `contenteditable=false` 的原子块，块级
+容器边界又不参与编辑）。M457 已让**拉丁字符键入**与粘贴在该位置可用（keydown 拍走模型物化），IME
+这一档仍是死的。
+**可行路径（已实测的一条）**：先按 ⇧Enter —— 模型在该处物化一个空段落、光标随之进入可编辑位，之后
+组合正常。可作为**已知边界**先文档化（`docs/specs/harness-composer.md` §已知边界已写）。
+**彻底修的方向**（都不便宜，别当小补丁做）：给边界位一个**零高、不产生行盒**的可编辑宿主元素（会
+动「顶层块只有三类 + 段落」的结构不变量与 composer.children ↔ blocks 的逐位对应），或在 keydown 的
+组合起始拍（`key` 为 `Process` / keyCode 229）先物化一个空段落再让组合接手（时序依赖 IME，须真机实测）。
+**判据缺口**：本条的自动化判据要真机（合成的组合事件造不出真实 IME 会话），而注入通道即上一条条目
+的缺口。
+
+### M457 的 WebKit 探针未入 git：DOM 层的永久回归判据缺位（worker-m457，2026-10-12，medium）
+
+**症状**：M457 的核心缺陷（边界位 caret 几何为零 ⇒ 光标画进卡片正文）**只在 DOM / 引擎层可见**，
+而 M457 的改动面（`src/harness-panel.ts` 等 + `tests/unit/**` + `scripts/acceptance/**`）**不含**
+`tests/visual/**`——探针只能作为诊断证据落 `test-results/m457-probe/`（git 外），**没有永久回归防线**：
+下次谁把 `domCaretTarget` 的落点阶梯改回块级容器边界，单测会红（写回形态是模型层可判的），但
+「光标到底画在哪 / 引擎会不会派 beforeinput」这两条**只有引擎层判得了**的判据没有任何机器守着。
+**建议**：在 `tests/visual/scenes/**` 补一条 WebKit 回归（`playwright.config.ts` 已有 `webkit-realua`
+project 与真机同款 UA 的现成先例），判据 = ① `Range(composer, N)` 形态不再被写回；② 两卡之间逐键
+注入后块序列出现新段落且两卡不丢。**该目录不在 M457 的改动面**，故未做（finding
+`.tower/comms/findings/20261012-worker-m457-improve-composer-dom-m457-git.md`）。
+
+### ⌃N / ⌃P 的「行」：逻辑行 → **渲染行**（worker-m457，2026-10-12；**Alex 已裁决，M457 已落地**）
+
+**症状**：Alex 原话（2026-10-12）「Ctrl+N/P 也无法移动光标」。**不是没派发**——M457 在真实 app + WebKit
+上逐键实测：⌃N / ⌃P / ⌃F / ⌃A（段中）/ ⌃E 都按模型层语义动了（⌃N 从段中跨过卡片落到下一段落、
+⌃P 从末段跨回上一段落）。真因是**「行」的定义**：composer 侧按 `\n` 划**逻辑行**（原 HC4 原文），
+软折行出来的视觉行不算行——一个窄 composer 里打满一句（5 个视觉行）仍然只有**一个**逻辑行 ⇒
+段内 ⌃N/⌃P 一动不动；而编辑器侧（CodeMirror `cursorLineDown/Up`）走的是**视觉行**。用户看到的
+就是「⌃N/⌃P 是死的」，且同一物理键在两个文本面行为不一致（`text` 作用域的本意是「两处文本面
+共用同一命令」）。
+
+**裁决与落地（2026-10-12）**：Alex 裁「按视觉行，与编辑器正文对齐」，按**超集**做——
+`⌃N / ⌃P` 先试渲染行（`document.caretRangeFromPoint` 按同 x 位解相邻行的位置，`visualLineStepCrossed`
+判「真跨了一行」才采信），**段内没有相邻渲染行时**沿用既有跨段落行为；⌃⇧N / ⌃⇧P 走同一份实现；
+模型层的停靠点序列与归一等价类（⌃F/⌃B 的语义）一字未动。合同条款见
+`docs/specs/harness-composer.md` HC4；判据 = 单测的闸门判据 + WebKit 探针的几何读数。
+
+**仍未收口的一半（待 tower 扩 scope）**：`openspec/changes/composer-emacs-nav/specs/harness/spec.md`
+（待归档 change 的 delta，:25-26 与 :61-63 的场景）与同 change 的
+`specs/keymap-commands/spec.md:72` 仍写着「⌃N / ⌃P 在逻辑行之间移动」——该 change 尚未归档，故
+**living spec（`openspec/specs/harness/spec.md`）里还没有这句**。改它不在 M457 的改动面内，已按纪律
+报 tower（等扩 scope；归档时 living spec 才会带上新口径）。
+
+**证据**：`test-results/m457-probe/` 的探针 B 读数（第一段 447px 宽、5 个视觉行；修前：段末按 ⌃P
+选区完全不动、按 ⌃N 才跨到下一段落；修后：⌃P/⌃N 各走一个**渲染行**）；`docs/specs/harness-composer.md` HC4。
+
 ### M443 的 tasks.md 把未经真机验证的读数当「已通过」登记（worker-m456 finding，2026-10-11，medium，对账口径）
 
 **症状**：`openspec/changes/harness-cache-metrics/tasks.md` §5.2 末的「真机跑批读数（2026-10-11）」

@@ -23,6 +23,7 @@ import {
   moveWordForward,
   normalizeComposerCaret,
   transposeCharsAtCaret,
+  visualLineStepCrossed,
 } from "../../src/harness-panel.ts";
 import type { ComposerBlock } from "../../src/quote-card.ts";
 
@@ -146,6 +147,31 @@ test("M447 ⌃A/⌃E：段落内逻辑行行首 / 行尾；卡片边界位无动
   assert.deepEqual(moveLineEnd(withCard, at(0, 0)), at(0, 0));
 });
 
+test("M457 ⌃A/⌃E 段末档：光标在该行时行级命令按**该行**算（typed 后的常态位）", () => {
+  // 缺陷现场（Alex 2026-10-12「Ctrl-A 无法把光标移动到行首」，真机探针复现：段末 (0,11)
+  // 按 ⌃A 选区完全不动）。根因与 M455 修过的 ⌃N/⌃P 同族：`normalizeComposerCaret` 把段落
+  // **末缘**折到下一块前缘，行级命令随即对着"下一块"算行——末段折成「末尾之后」（无行），
+  // 下一块是卡片（无行）⇒ 一行都算不出来 ⇒ 无动作；下一块是段落时更糟：会被算到**下一段**
+  // 的行首尾去。键入之后光标恒停在段末，这是最高频的位置，缺陷因此表现为「⌃A 是死的」。
+  const withCard = [para("abc"), card()];
+  assert.deepEqual(moveLineStart(withCard, at(0, 3)), at(0, 0), "段末紧邻卡片：⌃A 回本行行首");
+  // ⌃E 的落点是行尾——段落非空时它被归一成下一块前缘（写回侧再落回本行行末，M457 的
+  // domCaretTarget），判据因此写成「与行尾同属一个归一等价类」，与 navigate 的无动作守卫同口径。
+  assert.deepEqual(
+    normalizeComposerCaret(withCard, moveLineEnd(withCard, at(0, 1))),
+    normalizeComposerCaret(withCard, at(0, 3)),
+    "⌃E 回本行行尾",
+  );
+  assert.deepEqual(moveLineStart([para("abc")], at(0, 3)), at(0, 0), "末段段末：⌃A 回本行行首");
+  const withPara = [para("abc"), para("de\nfg")];
+  assert.deepEqual(moveLineStart(withPara, at(0, 3)), at(0, 0), "段末后接段落：⌃A 不得跑到下一段");
+  // ⌃E 已在行尾 ⇒ 不动（判据是「归一等价类不变」，与 navigate 的无动作守卫同口径）。
+  const held = moveLineEnd(withPara, at(0, 3));
+  assert.deepEqual(normalizeComposerCaret(withPara, held), normalizeComposerCaret(withPara, at(0, 3)));
+  const multiline = [para("ab\ncde\nf"), card()];
+  assert.deepEqual(moveLineStart(multiline, at(0, 8)), at(0, 7), "多行段落段末：⌃A 回**最后一行**行首");
+});
+
 test("M447 ⌃N/⌃P：逻辑行步进（同列位、超出取行尾）、跨段跳过卡片、无邻块无动作", () => {
   const blocks = [para("ab\ncdef"), card(), para("xy\nz")];
   assert.deepEqual(moveLineDown(blocks, at(0, 1)), at(0, 4), "同列位下移一行（列 1 → 行首 +1）");
@@ -174,6 +200,22 @@ test("M455 ⌃N/⌃P 段落末缘：保留列位（不被归一成边界位吞�
   // 是块模型固有的边界表示，不是列位再丢一次）。
   const clamp = [para("ab"), para("wxyz")];
   assert.deepEqual(moveLineUp(clamp, at(1, 4)), at(1, 0), "列 4 超出上一段长度 ⇒ 取行尾（块边界）");
+});
+
+test("M457 渲染行一步的判据（⌃N/⌃P 视觉行超集）：真跨一行才算数", () => {
+  // 这条纯判据是「渲染行优先」的闸门（`stepVisualLine` 只在它成立时采信几何解出的位置）：
+  // 引擎把点钳回原行、或 x 位落在同一行的别处时，解出的位置**不是**渲染行的一步，必须回落
+  // 到模型层的跨段落行为（超集：段内有相邻渲染行才走渲染行）。行盒 = 折叠 Range 的 rect。
+  const line = { top: 100, height: 20 };
+  assert.equal(visualLineStepCrossed(line, { top: 80, height: 20 }, -1), true, "上一行：跨了");
+  assert.equal(visualLineStepCrossed(line, { top: 120, height: 20 }, 1), true, "下一行：跨了");
+  assert.equal(visualLineStepCrossed(line, { top: 100, height: 20 }, 1), false, "同一行：没跨（钳回原行）");
+  assert.equal(visualLineStepCrossed(line, { top: 106, height: 20 }, 1), false, "同行内的微差：没跨");
+  assert.equal(visualLineStepCrossed(line, { top: 120, height: 20 }, -1), false, "方向反了：不采信");
+  assert.equal(visualLineStepCrossed(line, null, 1), false, "解不出位置：不采信");
+  assert.equal(visualLineStepCrossed({ top: 100, height: 0 }, { top: 120, height: 0 }, 1), false, "零高行盒：无从判跨行");
+  // 行高不等（不同字号 / 行内元素）时按两者较大者的一半做阈值，仍要求**真跨一行**。
+  assert.equal(visualLineStepCrossed({ top: 100, height: 20 }, { top: 118, height: 24 }, 1), true);
 });
 
 test("M447 ⌥F/⌥B 扩选 head：按词一步（与编辑器侧共用词边界口径）", () => {
