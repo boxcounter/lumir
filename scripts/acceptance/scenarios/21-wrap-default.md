@@ -8,6 +8,13 @@ steps:
     do: vaultWrite
     file: wrap-probe.md
     content: |
+      ```text
+      TOP-BLOCK-MARK（M474：这一块刻意坐在**文档首行**——clickEditor 的落点是编辑器可见区的
+      左上角（dx 40 / dy 6），CM 会把那个落点钳到第一行；首行是围栏行 ⇒ 它落在一个代码块内，
+      ⌃⌥S 的「caret 所在块」因此确定。MUST NOT 靠数行 / 按坐标点中间那块：两者都随窗口尺寸
+      与折行口径漂移。）
+      ```
+
       # 折行口径探针
 
       正文段落：一行普通长度的句子。
@@ -40,11 +47,13 @@ steps:
         editor: { has: "PROSE-END-MARK" }
       - shot: 默认口径
 
-  - name: 把焦点交给编辑器内容区（后续按键的确定起点）
+  - name: 把焦点交给编辑器内容区（clickEditor 的落点被钳到首行 ⇒ 首行那一块内的 caret 位置确定）
     do: clickEditor
     expect:
       - label: 焦点在编辑器内容区
         ax: { focused: "AXTextArea" }
+      - label: 首行代码块在场（下面的 ⌃⌥S 把焦点送进的就是它——caret 落点确定的前提）
+        ax: { has: "TOP-BLOCK-MARK" }
       - shot: 编辑器聚焦
 
   - name: 记录编辑器文本基线（后面两处「未变」断言逐字节比，不是子串）
