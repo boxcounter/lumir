@@ -33,7 +33,12 @@
       `dangerous_kind_separates_wrappers_from_other_members`、
       `reason_serializes_with_snake_case_kind_tag`（wire 形状逐字钉死：`{"kind": …}`）；
       `events.rs` 的 `approval_request_argv_is_array_and_purpose_optional` 扩了 `reason` 在场 / 缺席两态
-      —— lib 测试 **445 passed / 0 failed**（M459 前 441）
+      —— lib 测试 **445 passed / 0 failed**（M459 前 441）。
+      **r1 补强**（评审 P2-2：`denied_message` 首版零测试引用、>80 字符兜底分支实际无覆盖）：
+      `turn.rs` 增 3 条——`denied_message_leads_with_the_rule`（领读形态）、
+      `denied_message_without_a_rule_keeps_the_plain_text`（无依据 / 非 DenyRule 退回 plain）、
+      `denied_message_falls_back_when_over_the_summary_limit`（恰好等于上限仍带规则原文、多一字符即退回
+      ——边界两侧都判）。本轮 lib **448 passed / 0 failed**
 - [x] 1.7 集成测试（`src-tauri/tests/harness_runtime.rs`）：`approval_reason_reaches_event_and_snapshot_alike`
       （包装器层：事件与快照同值 + 点名 `zsh`）、`approval_reason_carries_mode_default_layer`
       （`vault_write` 档库外写命令 → `{"kind":"mode_default","mode":"vault_write"}`）、
@@ -45,7 +50,9 @@
 - [x] 2.1 `文案-Copy.md` + `src/copy-data.ts`：新增 `D458`（模式默认分层行）、`D459`（shell 包装器行）、
       `D460`（其余危险命令行）；`D426` 改形（编号沿用）追加 `· {desc}`。deck 尾部补 M459 批次注记
       —— `tests/unit/copy.test.ts` 的 deck↔表漂移与占位符对齐门禁全绿（`node tests/unit/run.mjs`
-      → **867 passed / 0 failed**，M459 前 855）
+      → **867 passed / 0 failed**，M459 前 855）。**r1 更正**：deck 批次注记在首版**漏了**（评审 P2-3，
+      tasks 与 review-request 都声称已补而实际没有，REVIEW.md 第 6 条同族）；本轮已补在 deck 末尾
+      （格式沿用 M443/M452/M454 惯例：号段占用 + 改形清单 + 消费点 + 不进本表的那半边）
 
 ## 3. 面板
 
@@ -72,7 +79,10 @@
 - [x] 4.1 新增 `scripts/acceptance/scenarios/151-harness-approval-reason.md` + fixture
       `harness-mock-approval-reason.json`（全合成）：① `zsh -lc` 包装器卡断言 D459；② `npm install`
       卡断言 D458（含「保险库写入」档与释义）；③ deny 规则命中 ⇒ 断言工具行含规则原文、
-      **不出现批准卡**、JSONL 留存含规则原文；并加了两段互斥断言（A 段的档释义句不得出现在第一张卡上）
+      **不出现批准卡**、JSONL 留存含规则原文；并加了两段互斥断言（A 段的档释义句不得出现在第一张卡上）。
+      **r1 更正**（评审 P2-2a）：正文「断言口径与已知边界」节原写「规则原文拼在末尾」与实现（领读）相反，
+      已改准并补上领读的实证理由；同节原声称兜底分支由 turn.rs 单测钉——首版实际零覆盖，本轮补齐单测
+      （见 1.6 的 r1 补强）后该声称成立
 - [x] 4.2 `node scripts/acceptance/run.mjs --check` → **场景静态校验通过（154 个）**（M459 前 153）
 
 ## 5. 视觉与呈现

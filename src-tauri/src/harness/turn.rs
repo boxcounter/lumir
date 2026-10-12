@@ -1620,4 +1620,65 @@ mod tests {
 
         let _ = std::fs::remove_dir_all(&root);
     }
+
+    // -----------------------------------------------------------------------
+    // deny 回送文案（M459，change add-approval-decision-reason）
+    // -----------------------------------------------------------------------
+
+    /// 规则原文**领读**（design §4.3）：工具行是单行省略号行，句末的规则名会被整段吞掉——
+    /// 领读位置保证「是哪条规则拦的」落在可见头部。
+    #[test]
+    fn denied_message_leads_with_the_rule() {
+        let reason = permissions::DecisionReason::DenyRule {
+            rule: "cli(npm run deploy*)".into(),
+        };
+        assert_eq!(
+            denied_message("cli_run", "npm run deploy", Some(&reason)),
+            "命中 deny 规则 cli(npm run deploy*)：权限规则拒绝了 cli_run（npm run deploy）"
+        );
+    }
+
+    /// 无规则原文（`None` / 非 `DenyRule` 的依据）：退回既有文案，不凭空多一句「命中」。
+    #[test]
+    fn denied_message_without_a_rule_keeps_the_plain_text() {
+        assert_eq!(
+            denied_message("vault_patch", "a.md", None),
+            "权限规则拒绝了 vault_patch（a.md）"
+        );
+        assert_eq!(
+            denied_message(
+                "cli_run",
+                "rm -rf /tmp/x",
+                Some(&permissions::DecisionReason::DangerousCommand)
+            ),
+            "权限规则拒绝了 cli_run（rm -rf /tmp/x）"
+        );
+    }
+
+    /// 超限退回（REVIEW.md 第 6 条：覆盖声明要与真实验证一致）：拼接后超过工具行摘要的字符预算即
+    /// 退回 plain，MUST NOT 呈现被截断的半截规则名。边界两侧都判——恰好等于上限仍带规则原文，
+    /// 多一个字符即退回。
+    #[test]
+    fn denied_message_falls_back_when_over_the_summary_limit() {
+        let reason = permissions::DecisionReason::DenyRule {
+            rule: "cli(x*)".into(),
+        };
+        // 骨架（subject 留空）＝「命中 deny 规则 cli(x*)：权限规则拒绝了 cli_run（）」。
+        let skeleton = "命中 deny 规则 cli(x*)：权限规则拒绝了 cli_run（）";
+        let subject = "s".repeat(SUMMARY_MESSAGE_LIMIT - skeleton.chars().count());
+        let detailed = format!("命中 deny 规则 cli(x*)：权限规则拒绝了 cli_run（{subject}）");
+        assert_eq!(detailed.chars().count(), SUMMARY_MESSAGE_LIMIT);
+        assert_eq!(
+            denied_message("cli_run", &subject, Some(&reason)),
+            detailed,
+            "恰好等于上限时仍带规则原文（判据是 <=）"
+        );
+        // 再长一个字符即超限 ⇒ 退回 plain。
+        let subject = format!("{subject}s");
+        assert_eq!(
+            denied_message("cli_run", &subject, Some(&reason)),
+            format!("权限规则拒绝了 cli_run（{subject}）"),
+            "超限退回既有文案"
+        );
+    }
 }
