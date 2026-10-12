@@ -431,11 +431,70 @@ test("caretOnVisibleLine 判据的充要性：同一段「以 \\n 结尾」的�
   assert.equal(caretOnVisibleLine([para("")], { block: 0, offset: 0 }), true);
 });
 
+// ── 末段末缘的归一等价表示（「末尾之后」）：M462 缺陷（HC1 第 3 条）─────────────────
+//
+// 缺陷现场（Alex 2026-10-12）：「光标放在**最后一行**的行末，按 ⇧Enter 不是新起一行，而是在
+// 当前这一行**前面**加了一个换行，光标留在文字行行首」。
+//
+// 根因：`{block: 块数, offset: 0}`（「末尾之后」）是**末段末缘**的归一等价表示
+// （`normalizeComposerCaret`：段落非空末缘折到后块前缘、末段折到「末尾之后」），行级命令
+// （⌃E / ⌃F）落在这里并把该值写回 DOM 的块级容器边界（真机 WebKit 探针：⌃A 后 ⌃E ⇒ 选区
+// 锚 `#composer@块数`）。旧实现只把这个越界位**钳**到末块、`offset` 仍取 0 ⇒ 走进「段中」
+// 分支，把 `\n` 插进末段文本的第 0 位：空行落到当前行**之前**、光标停在文字行行首——与现场
+// 逐字对应（探针读数：⌃E 后 ⇧Enter ⇒ 末段文本 `"\n<原文>"`）。
+//
+// 判据取**不变量形态**（不是那个案例）：末段末缘的两种表示必须给同一个结果。
+// 为什么 HC1 现有两条判不动它：「恰好多一行可见行」与「光标在可见行上」在缺陷形态下**恒真**
+// （`\n` 插在段内同样 +1 行、光标同样落在可见行上）——落点必须另立条款。
+
+test("insertSoftBreakAtCaret：末段末缘的两种等价表示（末缘 / 末尾之后）给同一个结果", () => {
+  const blocks = [para("hnl-a"), para("hnl-b")];
+  const raw = insertSoftBreakAtCaret(blocks, { block: 1, offset: 5 });
+  const folded = insertSoftBreakAtCaret(blocks, { block: 2, offset: 0 });
+  assert.deepEqual(folded.blocks, raw.blocks, "两种表示必须逐字节同结果");
+  assert.deepEqual(folded.blocks, [para("hnl-a"), para("hnl-b"), para("")]);
+  assert.deepEqual(folded.caret, { block: 2, offset: 0 });
+});
+
+test("insertSoftBreakAtCaret：「末尾之后」不得把 \\n 插进末段文本（缺陷形态的签名）", () => {
+  const { blocks, caret } = insertSoftBreakAtCaret([para("hnl-a"), para("hnl-b")], { block: 2, offset: 0 });
+  assert.deepEqual(blocks[1], para("hnl-b"), '末段文本必须逐字节不变（缺陷形态：变成 "\\nhnl-b"）');
+  assert.equal(blocks.length, 3, "新行必须是**新增的空段落块**，不是末段里的一个 \\n");
+  assert.deepEqual(caret, { block: 2, offset: 0 }, "光标落新段段首");
+});
+
+test("insertSoftBreakAtCaret：末块是卡片时的「末尾之后」→ 新空段落追加在末尾（不插到卡片之前）", () => {
+  // 「末尾之后」= 末块之后，与「卡片前缘」是**两个**不同的模型位（后者落新行在卡片之上）。
+  const { blocks, caret } = insertSoftBreakAtCaret([para("hnl-a"), quote(cardA)], { block: 2, offset: 0 });
+  assert.deepEqual(blocks, [para("hnl-a"), quote(cardA), para("")]);
+  assert.deepEqual(caret, { block: 2, offset: 0 });
+});
+
+test("insertSoftBreakAtCaret：「末尾之后」在空块序列 / 只有卡片时照样加一行（不静默无操作、不丢卡）", () => {
+  const empty = insertSoftBreakAtCaret([], { block: 0, offset: 0 });
+  assert.deepEqual(empty.blocks, [para("")]);
+  const cardOnly = insertSoftBreakAtCaret([quote(cardA)], { block: 1, offset: 0 });
+  assert.deepEqual(cardOnly.blocks, [quote(cardA), para("")]);
+  assert.deepEqual(cardOnly.caret, { block: 1, offset: 0 });
+});
+
+test("insertSoftBreakAtCaret：「末尾之后」与末段**段首**是两件事（钳制不得把前者折成后者）", () => {
+  // 末段段首（`{block: 末块下标, offset: 0}`）走段内分支：`\n` 插在段首、光标落第二行行首
+  // （Emacs 口径，见 `insertSoftBreakAtCaret` 函数头）。越界位「末尾之后」钳到同一个块下标，
+  // 但语义是「末块之后」——两者 MUST NOT 同结果，否则就是本缺陷的形态。
+  const head = insertSoftBreakAtCaret([para("hnl-a"), para("hnl-b")], { block: 1, offset: 0 });
+  const past = insertSoftBreakAtCaret([para("hnl-a"), para("hnl-b")], { block: 2, offset: 0 });
+  assert.deepEqual(head.blocks, [para("hnl-a"), para("\nhnl-b")]);
+  assert.notDeepEqual(past.blocks, head.blocks);
+});
+
 // ── HC1 的不变量（属性测试：输入维度 = 块序列 × 光标位置全枚举）────────────────────────
 //
 // 合同条款（docs/specs/harness-composer.md HC1）：「对任意块序列与任意光标位置，一次
 // ⇧Enter 恰好增加一行可见行，且结束后光标落在可见行上」。逐案断言只能证明报告里的那个
 // 案例被修好（docs/process/rendering-defect-contract-first.md §反例），这里扫全枚举。
+// **光标位分布含「末尾之后」`(块数, 0)`**（M462）：HC4 停靠点序列的末项、HC3 第 2 条点名的
+// 那一档，也是末段末缘的归一等价表示——「任意光标位置」的承诺必须把它纳进来。
 
 /**
  * 生成器：段落文本分布（4 个长度/结构档 × 卡片在场形态）。文本档覆盖：
@@ -483,7 +542,8 @@ test("HC1 属性：任意块序列 × 任意光标处，一次 ⇧Enter 恰好 +
       if (block === undefined || block.kind !== "paragraph") return [0];
       return Array.from({ length: block.text.length + 1 }, (_, i) => i);
     };
-    for (let index = 0; index < blocks.length; index += 1) {
+    // `index === blocks.length`（= 「末尾之后」，`offsetsOf` 给 [0]）也在枚举面内（M462）。
+    for (let index = 0; index <= blocks.length; index += 1) {
       for (const offset of offsetsOf(index)) {
         const before = visibleLines(blocks);
         const result = insertSoftBreakAtCaret(blocks, { block: index, offset });
@@ -505,11 +565,41 @@ test("HC1 属性：任意块序列 × 任意光标处，一次 ⇧Enter 恰好 +
   assert.ok(cases >= 40, `枚举样本过少（${cases}），属性测试会空转`);
 });
 
+// HC1 第 3 条（落点，M462）：段末断行 MUST 把新空段落块落在**该段之后**——末块内容逐字节不变、
+// 新块追加在末尾、光标落新段段首。「末尾之后」是末段末缘的归一等价表示，两者必须同结果。
+// 这条判据与上面两条的关系：上面两条（+1 行 / 光标在可见行上）对本缺陷形态恒真，落点是唯一
+// 有区分度的判据（见本文件 M462 那一节）。
+test("HC1 属性（第 3 条·落点）：任意块序列的「末尾之后」⇒ 新空段落落末尾、既有块逐字节不变、与末段末缘同结果", () => {
+  let cases = 0;
+  for (const blocks of blockSequences()) {
+    const count = blocks.length;
+    const label = JSON.stringify(blocks.map((b) => (b.kind === "paragraph" ? `p:"${b.text}"` : b.kind)));
+    const folded = insertSoftBreakAtCaret(blocks, { block: count, offset: 0 });
+    cases += 1;
+    assert.deepEqual(
+      folded.blocks.slice(0, count),
+      blocks,
+      `${label}：既有块必须逐字节不变（缺陷形态 = 末段文本被插进一个 \\n）`,
+    );
+    assert.deepEqual(folded.blocks[count], para(""), `${label}：新空段落块必须落在末尾`);
+    assert.equal(folded.blocks.length, count + 1, `${label}：一次 ⇧Enter 只加一个块`);
+    assert.deepEqual(folded.caret, { block: count, offset: 0 }, `${label}：光标落新段段首`);
+    assert.equal(visibleLines(folded.blocks), visibleLines(blocks) + 1, `${label}：恰好 +1 可见行`);
+    assert.equal(caretOnVisibleLine(folded.blocks, folded.caret), true, `${label}：光标在可见行上`);
+    const last = blocks[count - 1];
+    if (last !== undefined && last.kind === "paragraph") {
+      const raw = insertSoftBreakAtCaret(blocks, { block: count - 1, offset: last.text.length });
+      assert.deepEqual(folded, raw, `${label}：末段末缘与「末尾之后」必须同结果`);
+    }
+  }
+  assert.ok(cases >= 20, `枚举样本过少（${cases}），属性测试会空转`);
+});
+
 test("HC1 属性：断行不吞内容（除换行外逐字符守恒）", () => {
   const flatten = (blocks: readonly ComposerBlock[]): string =>
     blocks.map((b) => (b.kind === "paragraph" ? b.text : "")).join("");
   for (const blocks of blockSequences()) {
-    for (let index = 0; index < blocks.length; index += 1) {
+    for (let index = 0; index <= blocks.length; index += 1) {
       const block = blocks[index];
       const text = block !== undefined && block.kind === "paragraph" ? block.text : "";
       for (let offset = 0; offset <= text.length; offset += 1) {
