@@ -483,20 +483,34 @@ export function insertPlainTextAtCaret(
  * ⇧Enter 软换行：**一次按键恰好加一行可见行**，光标落在新行的可见位置
  * （不变量 HC1，合同 docs/specs/harness-composer.md）。
  *
- * 两条落法（同一按键路径，model 层一次算出）：
+ * 三条落法（同一按键路径，model 层一次算出）：
  * - 光标在段落**中间**：段内插 `\n`（不拆块）——内部换行照常产生行盒，光标落换行之后；
  * - 光标在段落**末尾**（含空段落）或**卡片前缘**：在光标处落一个**新的空段落块**，
  *   光标落到它段首。不给段落追加尾随 `\n`：CSS 里尾随换行**不产生行盒**（`white-space:
  *   pre-wrap` 下 "ab\n" 与 "ab" 同高），旧实现因此让第一次 ⇧Enter 零可见变化、要按两次
- *   才看到换行（Alex 2026-10-10 现场）。空段落块有 `min-height: 1em`，一行真实落地。
+ *   才看到换行（Alex 2026-10-10 现场）。空段落块有 `min-height: 1em`，一行真实落地；
+ * - 光标在**「末尾之后」**（越界位，见下文）：新空段落块追加在**末尾**。
  *
  * 返回的块序列里，光标所在段落**恒不以 `\n` 结尾**——这是「光标在可见行上」的机器判据，
  * 属性测试按块序列 × 光标位置全枚举钉死。
+ *
+ * 光标位是**越界位**——「末尾之后」`{block: 块数, offset: 0}`（M462）时当作「末块之后」处理
+ * （HC1 第 3 条的落点）：它既是 HC4 停靠点序列的末项、HC3 第 2 条点名的合法光标位，
+ * 又是末段末缘的**归一等价表示**
+ * （`normalizeComposerCaret` 把非空末缘折到这里，行级命令 ⌃E / ⌃F 落在这里并把该值写回 DOM
+ * 的块级容器边界，真机探针实测选区锚 `#composer@块数`）。不加这一档，下面的钳制会把 `offset 0`
+ * 当成**末段段首**：`\n` 落到末段文本第 0 位 ⇒ 空行出现在当前行**之前**、光标停在文字行行首
+ * （Alex 2026-10-12 现场）。落新空段落块取代钳制，同时保证 HC1 第 3 条的落点（新行在该段之后）。
  */
 export function insertSoftBreakAtCaret(
   blocks: readonly ComposerBlock[],
   caret: ComposerCaret,
 ): { blocks: ComposerBlock[]; caret: ComposerCaret } {
+  if (caret.block >= blocks.length) {
+    // 「末尾之后」：新空段落追加在**末尾**（末块是卡片时同样在末尾——「卡片前缘」是另一个模型位）。
+    const next = [...blocks, { kind: "paragraph", text: "" }] as ComposerBlock[];
+    return { blocks: next, caret: { block: next.length - 1, offset: 0 } };
+  }
   const at = Math.max(0, Math.min(caret.block, blocks.length - 1));
   const target = blocks[at];
   if (target === undefined || target.kind !== "paragraph") {
