@@ -270,13 +270,17 @@ fn http_error_turn_error(
     header_request_id: Option<String>,
     text: &str,
 ) -> TurnError {
+    // body 先按上限截断（`raw_body` / `body_truncated`）：兜底 message 复用**同一份限长结果**
+    // ——巨型 HTML 网关页不得靠 message 绕过限长（message 会进 llm_error 记录与 SSE error
+    // 事件）；截断时尾部加省略号，让读者知道被裁过。JSON 解析仍用完整 `text`（截断会切坏 JSON）。
+    let (raw_body, body_truncated) = truncate_error_body(text);
     let (code, message) = parse_error_body(text).unwrap_or_else(|| {
+        let ellipsis = if body_truncated { "…" } else { "" };
         (
             "harness_http_error".to_string(),
-            format!("HTTP {status}: {text}"),
+            format!("HTTP {status}: {raw_body}{ellipsis}"),
         )
     });
-    let (raw_body, body_truncated) = truncate_error_body(text);
     TurnError {
         context_overflow: is_overflow(preset, &code, &message),
         code,
@@ -1580,6 +1584,28 @@ mod tests {
         let (short, truncated) = truncate_error_body("短");
         assert!(!truncated);
         assert_eq!(short, "短");
+    }
+
+    /// P2-2：兜底 message（非 JSON body 如网关 HTML 页）与 `raw_body` **同口径限长**——
+    /// 不得靠 message 绕过上限（它会进 llm_error 记录与 SSE error 事件）。修前 message
+    /// 内嵌完整 body，本断言必 FAIL（区分度自证）。
+    #[test]
+    fn http_error_fallback_message_is_capped_too() {
+        let kimi = preset(&HarnessProvider::Kimi);
+        let huge = "x".repeat(ERROR_BODY_MAX_CHARS * 2);
+        let err = http_error_turn_error(kimi, 502, None, &huge);
+        assert_eq!(err.code, "harness_http_error");
+        assert!(err.body_truncated);
+        assert!(err.message.starts_with("HTTP 502: "), "{}", err.message);
+        // 前缀 + 截断后的 body + 省略号，逐项钉住，不靠「差不多」。
+        let cap = "HTTP 502: ".chars().count() + ERROR_BODY_MAX_CHARS + 1;
+        assert_eq!(
+            err.message.chars().count(),
+            cap,
+            "兜底 message 未按同一上限限长：{} 字符",
+            err.message.chars().count()
+        );
+        assert!(err.message.ends_with('…'), "截断须留可见标记");
     }
 
     /// 响应头取 request id：按候选名序取第一个在场的。

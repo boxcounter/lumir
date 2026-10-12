@@ -180,9 +180,11 @@ composer（输入区）与控制行 SHALL 收进同一个圆角卡片容器（�
 
 composer 控制行 SHALL 常驻显示上下文用量读数（位于模型 chip 之后、发送钮之前）：context window 已用 %（最近一次请求的 input tokens ÷ 模型上下文窗口）与 cache hit %（Responses 形态下两 provider 统一走 `usage.input_tokens_details.cached_tokens`；映射表留在 provider 预设内防字段方言）。用量超过警示阈值（默认 85%，可配）时读数 SHALL 高亮，指针悬停读数 SHALL 浮出说明气泡（向上展开、右缘对齐读数右缘）、移开即收起；SHALL NOT 常驻显示警示句，也 SHALL NOT 另挂 ⓘ 类可点入口（2026-10-07 去感叹号改 hover 形态，读数高亮已承担警示语义）。系统 SHALL 默认自动压缩（`auto_compact = true`）：每轮响应完成后检查，越阈值即自动把会话历史压缩为摘要、开新逻辑会话并注入摘要 + 当前编辑器上下文 + 系统上下文；自动压缩 MUST NOT 静默——面板插入可见压缩标记（摘要可展开），压缩前历史 SHALL 完整留存在旧会话 JSONL 文件（封闭不再追加），压缩摘要 SHALL 随新会话 `session_open` 留存。API 返回上下文超限错误时 SHALL 自动压缩后重试该轮一次。系统 MUST NOT 静默截断会话历史。
 
-> **已知边界（实测依据，非规格变更；2026-10-12 真机探测）**：k3-256k 的 coding 端点（`api.kimi.com/coding/v1`）名义 context 为 262144，但**实际生效的输入上限**按其回报的 `input_tokens` 计约为 **10 万**（≈ 名义窗口的 38%）——真实会话里成功的最大值 99,399，紧接着的一次请求被端点以 400 拒（`Your request exceeded k3-256k model token limit: 262144`）；30 万字符的纯合成输入（剔除 reasoning 重放 / tools）同样被拒 ⇒ 该拒绝由**输入体量**驱动。同一批探测另坐实两点：端点**忽略**客户端 `max_output_tokens`（照收、回显 `null`），改 thinking 档位也不改变结论；该变体的报错**不带** `(requested: N)`，服务端算的那个数拿不到。
+> **已知边界（现象记录 + 根因调查进行中，非规格变更；2026-10-12 起）**：在 k3-256k 的 coding 端点（`api.kimi.com/coding/v1`，走 Responses 形状）上，Lumir 的真实会话里出现过「回报 `input_tokens` 尚不足名义窗口一半、紧接着的一次请求却被端点以 400 拒」（`Your request exceeded k3-256k model token limit: 262144`）——该会话成功的最大回报值 99,399，下一发即被拒；30 万字符的纯合成输入（剔除 reasoning 重放与 tools）同样被拒。另两点已坐实：端点**忽略**客户端 `max_output_tokens`（照收、响应回显 `null`），改 thinking 档位也不改变结论；该变体的报错**不带** `(requested: N)`，服务端算出的那个数拿不到。
 >
-> 控制行 ctx% 读数的**现行口径仍为**「最近一次成功往返的 `input_tokens` ÷ 模型声明窗口」（上段之口径不变）——分母取名义窗口使读数在该端点上封顶到 ~38%，对「逼近真实上限」的预警失效。是否改分母口径（为「实际生效上限」引入一个申报来源或撞限自学习）**待裁决**，见 `docs/backlog.md` 第 44 条；本条只登记实测事实，**不改变任何既有行为**。错误路径的可观察性与每次请求的实际发送体字节数见「会话本地留存」条。
+> **「该端点存在远低于名义窗口的输入上限」这一结论已被证伪、不再成立**：同在 `api.kimi.com/coding`、同一模型 `k3-256k`，Kimi Code 的历史会话已被成功服务到 **234,656 input tokens**（≈ 名义窗口的 91%），其 wire 日志零真实 token-limit 报错。差异线索：Kimi Code 走 chat completions 形状、思考全文以 `reasoning_content` 明文重放；Lumir 走 Responses 形状、reasoning item 以 `rs_*` id + 摘要回放（不带 `encrypted_content`）。**头号假设** = 服务端按 id 展开完整思考参与计账、造成隐形膨胀——**尚未钉死**。本条因此只登记现象与调查状态，**不对该端点的输入上限作任何断言**。
+>
+> 控制行 ctx% 读数的**现行口径仍为**「最近一次成功往返的 `input_tokens` ÷ 模型声明窗口」（上段之口径不变；meter 本体与错误路径均未因此改动）。是否调整分母口径（`docs/backlog.md` 第 44 条；该条所述「分母有效上限」结论处于**争议 / 调查中**）**待裁决**。错误路径的可观察性与每次请求的实际发送体字节数见「会话本地留存」条。
 
 #### Scenario: 用量显示
 
