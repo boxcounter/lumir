@@ -646,9 +646,31 @@
 
 ## 待修 findings（不阻塞）
 
-### composer 导航写回：行级命令在「后块是段落」时把光标写到下一段段首（worker-m462 finding，2026-10-12，medium，待修）
+### composer 导航写回：行级命令在「后块是段落」时把光标写到下一段段首（worker-m462 finding，2026-10-12，medium，**M465 已修 2026-10-12，待验收**）
 
-⌃E / ⌃A→⌃E 等行级命令经 `normalizeComposerCaret` 把段落末缘折成「后块前缘」，`domCaretTarget` 对「后块是段落」这一档写回 `{kind:"text", index:i+1, offset:0}` = **下一段段首**——视觉上光标跳到下一行行首而非停在本行行末（「后块是卡片」档 M457 已修成写回前段末缘，段落档没修；M462 只修了末段档在 ⇧Enter 上的落法）。证据强度：末段档写回块级容器边界（rect 0×0）已实测；「后块是段落 → 下段段首」档为代码路径推断，缺一条独立探针（从行内位置按 ⌃E 读选区 rect，脚本形状见 `test-results/m462-probe/probe2.spec.ts` E3/E5）。修复面 = `src/harness-panel.ts` 的 `domCaretTarget`/`navigate` + `tests/unit/composer-nav.test.ts` 的等价类断言（同一语义两处真源，须连改）。候选修法两条（写回不折叠=推荐 / 只修末段例外=最小，后者可顺带关闭 worker-m457 那条「末尾之后写块级容器边界」已知边界）与验收层建议（真机读数断言选区落在本行，同 M457 场景 150 ⌃B 口径）见 finding `.tower/comms/findings/20261012-worker-m462-bug-composer-hc4-m462.md`。
+**修法落点与本条建议的两条候选都不同（`normalizeComposerCaret` 的折叠条件，而非写回形态）**：根因在**读侧**——折叠无条件把段落末缘折成后块前缘，那个被折出来的模型值是错的（它描述的是**下一行行首**），再由 `domCaretTarget` 如实写回就成了本条的现象。M465 把折叠条件收紧为「后块**无文本宿主前缘**」（卡片 / 末段之后）才折，后块是段落时保留 `(i, len)`：写回侧一行不改（它对每个模型值都是对的），⌃E 因此如实落在**本行行末**，⌃B 从后段前缘如实退回**前段末缘**（Alex 2026-10-12 的 ⌃B 现场，M465 mission 的缺陷）。
+
+**改动面**：`src/harness-panel.ts` 的 `normalizeComposerCaret`（+ 两处函数头口径）；判据三条在 `tests/unit/composer-nav.test.ts`（复现 + 覆盖不丢点属性 + 相邻即互为一步属性，修前红）；真机判据 = 验收场景 `scripts/acceptance/scenarios/154-harness-composer-prev-line-end.md`。**这两档的同族缺口一并关闭**：⌃F 从段末不再跳过一个真实位（旧：一步落到后段第 1 个字符之后）、⌃P 的「列位超出取目标行行尾」不再写到下一段行首（`tests/unit/composer-nav.test.ts` 的 M455 clamp 档改准）。
+
+**未关闭的一条（M462 提到的「顺带关闭」没做，如实登记）**：`「末尾之后」`（`block = 块数`）仍写块级容器末尾边界（rect 0×0）——M465 选了折叠层修法，不动它；口径见 `docs/specs/harness-composer.md` 的 HC3 已知边界 + 该文件 §实测依据 M465 节的已知边界第 1 条（末尾空段落前缘与「末尾之后」同为零几何位，本通道判不了绘制位置）。
+
+### 卡片档前删（⌃D / Delete）的光标落点与写回位那一路不一致（worker-m465 finding，2026-10-12，low，待裁决）
+
+**症状（真机可感知）**：光标停在**卡片前缘**（模型位 `{block: n, offset: 0}`，M457 起它**画在**前一段落末缘那一行）时按 ⌃D / Delete：卡片整块被删，光标却留在 `{block: n, offset: 0}` = **后一块（段落）的前缘**，视觉上光标从上一行行尾**跳到下一行行首**。同一位置经「写回位」（`{block: n-1, offset: prev.text.length}`）那一档按同一键：光标**不动**（留在前段末缘）。两条路径的块序列逐字节一致，只有光标落点不同。
+
+**成因**：`deleteForwardAtCaret` 的卡片档写 `caret: {block: at, offset: 0}`（被删块的原下标），与 `removeBlockAt` 的「光标优先贴被删块的前一个块」口径不一致；**只在被删卡片的后一块是段落**时可见——后一块是卡片时两个落点的写回位又重合（前段落非空 ⇒ 卡片前缘写回前段末缘），因此一直没暴露。
+
+**为什么现在登记**：M465 之前 `normalizeComposerCaret` 的无条件折叠把这两处折成「同一等价类」，`tests/unit/harness-composer.test.ts` 的写回语义用例因此看不出差别；M465 收紧折叠后该用例改按各自落点断言（判据形态见该用例的例外分支）。**M465 未改删除族的行为**（mission 明确不动编辑动词），只把它暴露出来。
+
+**建议**：把 `deleteForwardAtCaret` 的卡片档改成 `removeBlockAt` 同口径（前一块是段落 ⇒ 光标落 `{block: at-1, offset: prev.text.length}`；否则 `{block: at, offset: 0}`）——一行量级的改动，但要连带核 ⌃D / Delete 的真机判据（场景 143）与 `tests/unit/harness-composer.test.ts` 的例外分支（改后该分支可删）。判据面：单测断言两条路径的光标同值；真机面可复用场景 154 的探针串读数形态。
+
+### 导航「一步必有位移」的两处既有豁免档（worker-m465 finding，2026-10-12，low，记录在案）
+
+**症状**：`composerCaretStops` 的相邻两点里有两处**写回同一个 DOM 位**（= 按 ⌃F / ⌃B 一次没有视觉位移，键被吞掉）：
+1. **卡片前缘** `(i, 0)` 与它前一块（**空**段落）的前缘 `(i-1, 0)`——卡片档的写回是「前段末缘」，空段落只有这一个位，两者重合（`[para("前"), para(""), card]`：`(1,0)`→`{text,1,0}`、`(2,0)`→`{text,1,0}`）。
+2. **末尾空段落前缘** `(i, 0)` 与 `「末尾之后」` `(n, 0)`——两者都是零几何位（`Range` 量不到位，M456 的 `:empty::after` 只撑行盒），本通道判不出绘制位置是否同一。
+
+**M465 未折这两对**（不是改动面）：① 里的两个模型位**编辑语义不同**（卡片前缘的内容型键入物化新段落、空段落前缘插进该段，HC3 第 3 条），折掉任一个都会改掉可达行为；② 折算这两对需要先有一条能读出「绘制位置」的通道（套件只有 AX / 截图 / 键入注入，**没有 JS 求值**——真机读数只能走 `Range.getBoundingClientRect()` 那条 Playwright WebKit 探针，形状见 `test-results/m462-probe/`）。**判据面**：`tests/unit/composer-nav.test.ts` 的「相邻即互为一步」属性对 ① 显式豁免（豁免条件写成「其中一项是卡片前缘」，段落 - 段落这种同类碰撞不被豁免），② 则以「写回位不同」通过。要收口请先裁「卡片前缘的空段落档如何表现」与「零几何位的绘制位置算不算同一位」。
 
 ### 像素类验收场景的窗口几何不再被钉住 ⇒ 坐标静默腐烂（worker-m462 finding，2026-10-12，medium，117 已加固、其余场景未扫）
 

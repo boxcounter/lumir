@@ -695,9 +695,22 @@ function caretKey(caret: ComposerCaret): string {
 }
 
 /**
- * 同形位归一等价类（design §4.1）：段落**非空**末缘（`offset ≥ 文本长度`）与紧邻后块的前缘
- * 视觉同形 ⇒ 归一到后块前缘的表示（最后一段的末缘归一到「末尾之后」= `{block: 块数, offset: 0}`）。
- * 空段落不归一（它自占一行，只有 `offset 0` 一个停靠点）。归一只有这一处实现。
+ * 同形位归一等价类（design §4.1）：段落**非空**末缘（`offset ≥ 文本长度`）只在**写回同一个 DOM
+ * 位**时才归一到紧邻后块的前缘——M465 起折叠条件按「落点形态的同一性」收紧，不再只看「相邻」：
+ *
+ * - **后块是原子卡片**（或没有后块）⇒ 折叠。卡片前缘的写回位就是本段末缘（`domCaretTarget` 的
+ *   卡片档：前块是段落 ⇒ `{kind: "text", index: i, offset: len}`），同一位、同一个表示；末段末缘
+ *   则归一到「末尾之后」（`{block: 块数, offset: 0}`——容器边界恒无 caret 几何，M457 / M462 已声明
+ *   这一档即末段末缘的等价表示）。
+ * - **后块是段落**（含 M456 起常驻的末尾空段落）⇒ **不折叠**。两个段落各占自己的行盒
+ *   （`.lumir-hp-qpara` 是块级盒），本段末缘在上一行行尾、后块前缘在下一行行首，两个**不同**的
+ *   DOM 位。旧实现无条件折叠，把「本段末缘」这个真实停靠点从序列里抹掉：`⌃B` 从后块前缘退一步
+ *   落到 `(i, len - 1)`（Alex 2026-10-12 现场：「光标移动到上一行的倒数第二个字符后面，而不是
+ *   行末」）。
+ *
+ * 空段落不归一（它自占一行，只有 `offset 0` 一个停靠点）；MUST NOT 把它折进「末尾之后」——那会让
+ * 归一变成非传递关系（`(i, len)`→`(i+1, 0)`、`(i+1, 0)`→`(n, 0)` 而 `(i, len)` 与 `(n, 0)` 不同类），
+ * 等价类随即把 `(i, len)` 一并吃掉，正是上面那条缺陷。
  *
  * **实现注记（与 design §4.1「读回处也调它」的偏差）**：`caretFromDom` 的编辑读回**不**调本
  * 函数——编辑动词（退格 / 前删 / 键入分派 / 粘贴）依赖「段落末缘 `(i, len)`」与「后块前缘
@@ -710,15 +723,22 @@ export function normalizeComposerCaret(blocks: readonly ComposerBlock[], caret: 
   const target = blocks[block];
   if (target === undefined || isCardBlock(target)) return { block, offset: 0 };
   const offset = Math.max(0, Math.min(caret.offset, target.text.length));
-  if (target.text.length > 0 && offset >= target.text.length) return { block: block + 1, offset: 0 };
+  if (target.text.length > 0 && offset >= target.text.length) {
+    const next = blocks[block + 1];
+    if (next === undefined || isCardBlock(next)) return { block: block + 1, offset: 0 };
+    return { block, offset: target.text.length };
+  }
   return { block, offset };
 }
 
 /**
  * 停靠点序列（归一等价类后的商集，线性有序）：段落块 → 各**码点边界**偏移（代理对整体一步，
  * design §4.2；低位代理不构成独立停靠点）；卡片块 → 前缘 `(i, 0)`（后缘用下一块的前缘表达）；
- * 末尾再补「末尾之后」`(块数, 0)`。相邻两项在归一等价类后必不相同（design §4.1 的判据——一步
- * 必有位移）。
+ * 末尾再补「末尾之后」`(块数, 0)`。
+ *
+ * 两条不变量（M465 起按**写回 DOM 位**判，见 `normalizeComposerCaret` 与合同 HC4 第 1 条）：
+ * 序列线性有序且相邻两点的写回位必不相同（一步必有位移）；序列**不丢点**——每个非末块段落的每个
+ * 码点边界都有自己的停靠点（后块是段落时 `(i, len)` 不得被折叠吃掉）。
  */
 export function composerCaretStops(blocks: readonly ComposerBlock[]): ComposerCaret[] {
   const stops: ComposerCaret[] = [];

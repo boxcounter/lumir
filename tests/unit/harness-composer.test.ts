@@ -237,11 +237,15 @@ test("边界光标位的写回落点：MUST 是有文本宿主的相邻位（前
   }
 });
 
-test("写回落点的编辑语义：前段落非空时，退格 / 前删 / ⇧Enter 三族结果与边界位逐字节一致", () => {
+test("写回落点的编辑语义：前段落非空时，退格 / 前删 / ⇧Enter 的**块序列**与边界位逐字节一致", () => {
   // 写回落在「前一段落末缘」这一档时，那一拍按键的模型读回是**段落末缘位**——它必须与边界位
   // （`{block: n, offset: 0}`）给出同样的编辑结果，否则修光标几何就会顺手改掉编辑行为。
   // （HC4 的实现注记已把两个位置定义为不同的模型值，此处钉的是它们在**这一档相邻关系**下
   // 的动词一致性：退格删前块末字符、前删删后一张卡片、⇧Enter 在边界落新空段落。）
+  // **光标位不是这三条的共同判据**：退格 / ⇧Enter 把卡片档代理到前段末缘处理 ⇒ 两条路径同值；
+  // 前删按「整块移除、光标留在被删块原下标」处理 ⇒ 两条路径的落点不同（见循环里的例外分支与
+  // docs/backlog.md 的登记）。M465 收紧 `normalizeComposerCaret` 的折叠后，原先靠折叠判「同一
+  // 等价类」的写法不再成立——判据改成本处更如实的形态。
   const sequences: ComposerBlock[][] = [
     [para("前"), imageBlock, para("后")],
     [para("前"), quote(cardA), imageBlock, para("后")],
@@ -267,11 +271,17 @@ test("写回落点的编辑语义：前段落非空时，退格 / 前删 / ⇧En
         assert.equal(a === null, b === null, `${label}：一边有动作一边没有`);
         if (a === null || b === null) continue;
         assert.deepEqual(a.blocks, b.blocks, `${label}：块序列不一致`);
-        assert.deepEqual(
-          normalizeComposerCaret(a.blocks, a.caret),
-          normalizeComposerCaret(b.blocks, b.caret),
-          `${label}：光标不在同一个归一等价类里`,
-        );
+        if (op.run === deleteForwardAtCaret) {
+          // **前删是唯一的例外**（M465 暴露、登记在 docs/backlog.md）：卡片档按「整块移除、光标留在
+          // 被删块原下标」（= 后一块前缘）处理，写回位那一路则留在「前段末缘」（光标不动）。两个
+          // 模型值、两个行位——**只在被删卡片的后一块是段落**时可见（后一块是卡片时，两个落点的写回
+          // 位又重合）。M465 之前无条件折叠把两者折成「同一类」，这里因此看不出差别；折叠收紧后按
+          // 各自的落点断言（不在 M465 的改动面：⌃D / Delete 族的光标口径是另一件事）。
+          assert.deepEqual(a.caret, { block: n, offset: 0 }, `${label}：边界位那一路的落点`);
+          assert.deepEqual(b.caret, writeback, `${label}：写回位那一路光标不动`);
+          continue;
+        }
+        assert.deepEqual(a.caret, b.caret, `${label}：两条路径的光标必须同值`);
       }
     }
   }
