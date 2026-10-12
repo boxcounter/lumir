@@ -24,8 +24,6 @@
 
 ## 已裁已立项（落地由 tower 派发的 mission 承担）
 
-- **文档收口小批** → M476（2026-10-12 立项）：M472 finding（attachment-display spec 三处与 deck 成因枚举失真，改准为「远程引用不发起请求、落可见占位」）、M471 finding（README 与 AGENTS.md 的 visual.yml 描述滞后，M471 已把 pnpm test 接进 CI）、M467 finding（跨仓断链/旧编号引用收口，backlog 引用一律改主题关键词锚）、M475 finding（D412–D460 编号沿革回填）、M474 retro change（keymap-commands 与 editor-live-preview 两份 living spec 的「无焦点入口」记述改准为 ⌃⌥S `editor.focus-block-scroll` 已落地）。
-
 ## 承接残项（仍在生效的长期口径 + 未闭合尾巴）
 
 - **版本号 bump 口径（原「版本号 bump 策略」条的 canonical 段）**：批次收尾按 semver bump——0.x 期间功能批 MINOR、缺陷批 PATCH；唯一真源 `src-tauri/tauri.conf.json` 的 `version`，`package.json` 同步跟随；改真源副本时逐处跟改（视觉桩 `tests/visual/scenes/tauri-stub.ts` 的缺省 `appMeta`、`tests/visual/scenes/titlebar-identity.spec.ts` 的 `VERSION`、`src-tauri/Cargo.toml:3` 与 `Cargo.lock` 的 `[[package]] name = "lumir"`）。**未落地的一格**：把 bump 动作写进 `docs/process/openspec-workflow.md` 的批次收尾 checklist 不在 M238 scope 内，待 tower 补。
@@ -39,6 +37,8 @@
 一条一行（主题 + 来源/日期/severity + gist + finding 指针）；叙述与读数明细见 git 历史与指针文件。
 
 - **验收 82/121 在未改动的 master 上即已 FAIL（交付序列化的 quote / msg-quote 断言不命中）**（worker-m456，2026-10-11，medium，**待归因、不在 M456 scope**）→ 82-quote-card-mixed-edit 与 121-harness-message-excerpt 在未改动 master（`2608e64`）上即 FAIL，此前是绿的（82：10-06/07/08 PASS；121：10-10 PASS）；断言读到的是系统装配记录（`assembly`），期望的 `<quote …>` / `<msg-quote …>` 交付文本不在其中，根因候选面是 `src/quote-card.ts` 的 projectDelivery / serializeDelivery 与 `src/harness-panel.ts` 的投递投影（约 M454 `6f2b614`）。复现：`node scripts/acceptance/run.mjs 82` → `0/1 PASS`。指针 `.tower/comms/findings/20261011-worker-m456-bug-82-121-master-fail-quote-msg-quote.md`。
+
+- **tests 与 scripts 下残余的旧编号 / 裸行号 backlog 引用**（worker-m476，2026-10-13，low，M476 scope 外残余）→ `tests/**` 4 处、`scripts/gate.sh:14`、`scripts/openspec-links.sh:4,18,20`；同类口径（改主题关键词锚）随下一个文档批处理。指针 `.tower/comms/findings/20261013-worker-m476-improve-m476-scope-backlog-tests-4-scripts-gate-sh-scripts-openspec.md`。
 
 - **tests/unit 在机器有负载时间歇红：三条用例读的是 syntaxTree 过期快照**（worker-m471，2026-10-12，**high**）→ M471 已把 pnpm test 接进 CI（visual.yml），该 flake 会直接在 CI 显现。指针 `.tower/comms/findings/20261012-worker-m471-bug-tests-unit-syntaxtree.md`。
 - **`fs_patch_file` 有与 `save_document` 同款的 CAS→rename 静默覆盖窗口**（worker-m470，2026-10-12，medium，vuln）→ M470 只收窄了 `save_document`；修法可复用 M470 的 RenameGuard 形态。指针 `.tower/comms/findings/20261012-worker-m470-vuln-fs-patch-file-save-document-cas-rename-m470-save-document.md`。
