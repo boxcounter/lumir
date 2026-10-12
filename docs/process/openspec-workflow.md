@@ -70,6 +70,7 @@ spec 增量（delta）约定：change 目录下的 `specs/<capability>/spec.md` 
 - [ ] **本批 merge 的 change 全部列入归档待办并跟踪到归档**：每个 change 在实现 PR 合并时即落一条待归档记录（`docs/backlog.md` 的「待 Alex 裁决」节），批次收尾时用 `npx --yes @fission-ai/openspec@1.12.0 list` 逐个核对——列表里出现 `✓ Complete` 却仍在活跃列表里的，就是漏跟踪的那个。
 - [ ] **归档前逐条对账**（对账口径）：tasks 勾选状态 / spec 增量 / 当前实现三者一致才归档；任务未勾但有正当理由的，先就地标注放弃原因再归档；spec 增量与实现矛盾的，**不归档**，并在 `docs/backlog.md` 说明矛盾点。
 - [ ] **归档后核对新建 capability 的 Purpose**：`archive` 会为新建的 living spec 写入占位 Purpose（`TBD - created by archiving change …`），`validate --all --strict` 会因此报红——须手写替换为「这个 capability 是干什么的」，再跑一次 validate 确认全绿。
+- [ ] **backlog 卫生（2026-10-12 M467 补）**：本批核销 / 裁决落地的条目从 `docs/backlog.md` 正文移出（只留一行索引：日期 + 主题 + 去向），批次报告与全量回归总表只留指针；顺带检查体量红线——`wc -l docs/backlog.md` 超 3000 行即触发一次结构清理（口径见该文件头部的「维护规则」）。
 
 ## 撤回（withdrawn）：放弃一个 change
 

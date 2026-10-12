@@ -5,28 +5,31 @@
 维护规则：
 
 - 新 findings 由发现者（worker / reviewer / tower）落成条目，注明**来源 mission/批次**与**日期**；HANDOFF.md 只记 session 状态，不再积压。
-- 条目状态：`待裁决` / `待修` / `待验收` / `记录在案`；核销后移入文末「已核销」并定期清理。
+- 条目状态：`待裁决` / `待修` / `待验收` / `记录在案`；核销后移入「已核销」区并定期清理。
 - 每条尽量附复现/证据指针；裁决类条目给出选项与推荐。
+- **核销即移出正文**（2026-10-12 Alex 裁决：backlog 里的存量信息持续消耗阅读成本）：条目一经核销 / 裁决落地，在**当次批次收尾**即移出原所在区，只留一行索引（日期 + 主题 + 去向）——禁止以全文形态滞留；带未闭合尾巴的压缩成短条目放「承接残项」。
+- **批次报告与总表不留正文**：mission 批次报告、全量回归总表一律只留指针（git 历史 / `test-results/` / `.tower/`），不把报告正文写进本文件。
+- **体量红线 3000 行**：全文超 3000 行即触发一次结构清理，批次收尾时检查一次（`wc -l docs/backlog.md`）；这一条已同步进 `docs/process/openspec-workflow.md` 的批次收尾 checklist。
 
 ## 待 Alex 裁决
 
+**编号对照（2026-10-12 M467 结构性清理时重编号一次）**：旧号 → 新号 = 1→1、2→2、4→3、5→4、7→5、8→6、9→7、11→8、13→9、14→10、15→11、16→12、18→13、21→14、41→15、42→16、43→17、44→18。本节原有的 32 / 33 各重复一次（已消除）；移出本节的僵尸条目（3、6、10、12、17、19、20、22–40）在「已核销」区按 `（原第 N 条）` 保留一行索引，带未闭合尾巴的见「承接残项」。仓内其它文件按旧号引用的几处（`docs/specs/perf-measurement.md` 的「第 7 条」、`docs/specs/config-reference.md` 的「#36① / #36② / #37」、`scripts/gate.sh` 的「#34」、`tests/unit/tree-increment.test.ts` 的「backlog 32」、`tests/visual/scenes/end-marker.spec.ts` 的「backlog #31」）在本 mission scope 之外，已投 finding 追改。
+
 1. **历史敏感信息是否 filter-repo**：M111/M115 历史提交中的真实文件名；`docs/design-parity-contract/evidence/*.log` 约 20 行本机路径。tower 建议不必（仓库 M3 前不公开）。遗留自批次一。
+
 2. **demo 右侧探针栏去留**：版面/文案决策，建议随 theme 重做一并处理。遗留自批次二。
-3. **「保留我的版本」后自动保存暂停但用户无感知**：无回归；提示文案留 UX 重做阶段。遗留自批次二。
-   **已失效（2026-09-28，M287 归档批）**：自动保存整条移除（change `remove-autosave`，M278，2026-09-27 合并）
-   后「自动保存暂停」这个状态不再存在，本条随之作废。冲突处置后若仍有「用户不知道文档仍是 dirty」的提示
-   诉求，那要针对**显式保存**路径重开一条新条目（本条不再承接）。
-4. **宽表横向溢出裁切是否预期**：实测溢出 1549pt vs 栏宽 766pt，AX 层完整。待 Alex 对照设计规格确认。遗留自桌面复验（M116 期）。
-5. **Emacs 档 3 与全产品键位**：isearch / mark / region / ⌃X 前缀，及左栏 tree/shell 零键盘支持——待 UX 重做会话与 dogfood 反馈后立项。批次三遗留。
-6. ~~**openspec 归档 `add-diagnostics-logging`**（M134 已合并，2026-09-16）：实现与文档已入库，归档评审待 Alex 点头。~~ **2026-09-17 M150 已按批次授权执行**（Alex 对整体 review 的裁决「好，采纳。你动手吧」含归档节点 2 批量授权）：归档为 `openspec/changes/archive/2026-09-17-add-diagnostics-logging`，living spec 落 `openspec/specs/diagnostics/spec.md`；其未勾任务 4.2（`gate.sh all` 全绿）就地标注改由 CI perf.yml 承担（本地 `all` 因既有内存合同超标不可能全绿，见本条下方第 7 项），核销记录见「已核销」。
-7. **内存合同存量超标**：2026-09-06 evidence 218–222MB 已超 <200MB 合同（2026-09-16 未复测）——放宽合同还是专项治理，随 dogfood 性能专项拍板。
-8. **共享 `CARGO_TARGET_DIR` 与 dev-only 脚本化驱动入口**（工具链节 2/3 的长期候选）：是否立项待裁决。
-9. **链接形态矩阵的两处 tower 裁决**（M145，2026-09-17，Alex 未逐条点头）：① 相对路径**非 md**（`[x](./doc.pdf)`）带 `↗︎`（语义「会离开本应用」）而不是 `→`；② **纯锚点** `[x](#sec)` 带 `→` 但激活只给「暂不支持锚点跳转」toast（不做文档内滚动）。附一处同批未单独确认的口径：`[x](note.md#sec)` 按「应用内跳转 + 锚点部分忽略」处理。三处若要翻转，落点是 `src/preview/links.ts` 的 `classifyLinkTarget`（标记）与 `src/main.ts` 的 `followLink`（激活）。
-10. **多标签会话恢复**（M149，2026-09-17）：重启后按「路径列表 + 激活项」重开上次的标签。v1 明确不做（当时口径「留 backlog」），做成什么形状与何时做待裁决。建议形状：存 vault 维度（registry 旁 `last_session`）、只存有序路径 + 激活下标（可选滚动 offset），**不存**未保存内容与撤销史；打开必须走 `openFile` 既有链路；文件已删/不在 vault 内时跳过并记诊断；启动日志记一条 `session_restored{count}`（`log_event` 通道已有）。时机建议：等 dogfood 反馈「常态开几个标签」后再定，避免为 2 个标签的场景过度设计。finding `20260917-worker-tabs-idea-m149-backlog.md`。
-    **状态更新（M164 收口，2026-09-17；change `multi-vault-workspaces` 任务 7.1 口径）**：本项已由该 change **承接并落地**——后端 M162（`eafd258`）与前端 M163（`fb2dc26`）均已合并；**归档评审已过（2026-09-18，节点 2），已归档**为 `openspec/changes/archive/2026-09-18-multi-vault-workspaces/`（living spec 落 `openspec/specs/vault-workspace/spec.md` 的 7 条 ADD 与 `openspec/specs/multi-tabs/spec.md` 的 1 条 MODIFIED）。落地的形状与上面的建议有**三处有意差异**：① 会话**不与注册项同文件**，单独落在 `<config>/lumir/vault-sessions/<id>.json`（design §2：注册项是身份，其读取路径对解析失败一律跳过，把易变的界面状态混进身份文件会把「会话写坏」升级成「vault 从列表与 remap 候选中消失」）；② 激活项存**相对路径**而不是下标（下标在列表变化后指向别处；不可用时按「退化到第一个可打开的标签」处理）；③ 恢复走 `openFile` 的 **`pinned` 意图**逐标签打开（预览意图会让第二个起顶掉前一个，只剩最后一个）。落定口径见 `openspec/specs/vault-workspace/spec.md` 的「按 vault 持久化标签列表」与「装载后恢复标签列表」；真机证据见本文件「待真机验收」第 18 项。
-    **v1 建议里唯一未落地的一条（如实登记，不当缺陷）**：启动日志的 `session_restored{count}` 没有实现——`src-tauri/src/logging.rs` 的事件白名单里没有该事件，`src/vault-switcher.ts` 的恢复路径也不发埋点（实测 `grep -rn session_restored src/ src-tauri/src/` 零命中）。design §9 把它写成「观察点（`log_event` 通道已有）」，那句**与实现不符**；它是建议里的观测手段、不是 spec 的 SHALL，故不改已评审的 design 正文，记在这里。**观测缺口**：目前「上次恢复了几个标签、跳过了几个」只能靠真机截图与场景断言看，跑不套件时看不到。若补，落点是恢复结束时发一条 `log_event`（需同时扩 Rust 白名单）。
-    **仍未做的边界**：光标位置、滚动位置与撤销史都不恢复（决策 3 的口径，未变）；**其中「滚动位置」这一格已由** change `remember-reading-position` **承接**（M194，2026-09-24 实现完成：按 vault 存在 `<config>/lumir/reading-positions/<id>.json`，装载时恢复该文档上次离开的位置；光标与撤销史仍不做，本项其余面不重开）。「常态开几个标签」的 dogfood 反馈仍未取得，因此本项**不做**「会话数量上限 / 清理策略」这类后续设计。
-11. **跨语言 frontmatter 上限 Rust 200 vs TS 512（201–512 行分歧）**（**待裁决**；M152 finding，worker-langunify，
+
+3. **宽表横向溢出裁切是否预期**：实测溢出 1549pt vs 栏宽 766pt，AX 层完整。待 Alex 对照设计规格确认。遗留自桌面复验（M116 期）。
+
+4. **Emacs 档 3 与全产品键位**：isearch / mark / region / ⌃X 前缀，及左栏 tree/shell 零键盘支持——待 UX 重做会话与 dogfood 反馈后立项。批次三遗留。
+
+5. **内存合同存量超标**：2026-09-06 evidence 218–222MB 已超 <200MB 合同（2026-09-16 未复测）——放宽合同还是专项治理，随 dogfood 性能专项拍板。
+
+6. **共享 `CARGO_TARGET_DIR` 与 dev-only 脚本化驱动入口**（工具链节 2/3 的长期候选）：是否立项待裁决。
+
+7. **链接形态矩阵的两处 tower 裁决**（M145，2026-09-17，Alex 未逐条点头）：① 相对路径**非 md**（`[x](./doc.pdf)`）带 `↗︎`（语义「会离开本应用」）而不是 `→`；② **纯锚点** `[x](#sec)` 带 `→` 但激活只给「暂不支持锚点跳转」toast（不做文档内滚动）。附一处同批未单独确认的口径：`[x](note.md#sec)` 按「应用内跳转 + 锚点部分忽略」处理。三处若要翻转，落点是 `src/preview/links.ts` 的 `classifyLinkTarget`（标记）与 `src/main.ts` 的 `followLink`（激活）。
+
+8. **跨语言 frontmatter 上限 Rust 200 vs TS 512（201–512 行分歧）**（**待裁决**；M152 finding，worker-langunify，
     2026-09-17，low）：M152 把 TS 侧上限收敛为单一常量 `src/preview/frontmatter.ts:19` 的 512（装饰层 /
     wikilink 排除区 / toc 同源），Rust 的 `src-tauri/src/link_graph.rs:106` 仍是 200，且 `:105` 的注释
     「与 src/preview/wikilinks.ts 同口径」在该文件不再持有这个常量后已成**错误自述**。后果：201–512 行的
@@ -37,26 +40,8 @@
     做法——(a) 直接改 Rust 常量 + 加一条 Rust 单测读 `src/preview/frontmatter.ts` 抓值断言两边一致（跨语言
     最省事的机械防线）；(b) 常量经 ts-rs bindings 单向下发。finding
     `20260917-worker-langunify-improve-frontmatter-rust-200-vs-ts-512-m152-201-512.md`。
-12. **冷启动 `restore_last_vault` 在 setup 主线程同步跑（真实 vault ~125ms、4× 规模 ~770ms），推迟首帧且
-    perf 门禁看不见**（**已立项并实现**（M156 提案 → M159 实现，2026-09-17；**已归档 2026-09-18，节点 2**，`openspec/changes/archive/2026-09-18-startup-restore-off-main-thread/`）；M154 survey，
-    worker-rustasync，2026-09-17，high——本批唯一「用户可感」的主线程阻塞项）：`src-tauri/src/lib.rs:97`
-    在 setup 内同步调 `open_vault`，其内部串行做注册表 IO + watch + `scan_workspace` + `build_graph`
-    （逐 md 读文件 + 解析 wikilink 建索引，实测 scan 14.0ms + build_graph 111.2ms；4× 规模 32.9 + 736.7ms），
-    随 vault 线性放大（约 12–16ms/MB md 字节）。tauri 在 setup 之前就已按 config 建好窗口
-    （tauri 2.11.5 `app.rs:2524-2531`），所以这段占着主线程、用户可见首帧被推迟。
-    **机制表述更正（M159，证据见 `openspec/changes/archive/2026-09-18-startup-restore-off-main-thread/design.md` §1）**：不是
-    「run loop 未启动」——用户 setup hook 由事件循环的**首个 `Ready` 回调**驱动（`app.rs:1423-1427`），
-    准确说法是「主线程被占在事件循环首个回调内，回调返回前无法绘制」。结论不变：这段耗时直接加在
-    「用户看到可用界面」之前，且它不是 command、`#[tauri::command(async)]` 覆盖不到它。
-    **可见性缺口**：perf 合同的冷启动端点是 stdout `LUMIR_READY`（`ready.rs:27-43`），该行在恢复之前打印
-    （`lib.rs:94`），因此 <300ms 合同与 CI 相对回归门禁对这段耗时结构性失明；M159 的处置是**让这段工作不再
-    占主线程**（ready 行的位置与语义不动，见 `docs/specs/perf-measurement.md` §1 的说明），不是挪 ready 行。
-    **tower 处置（已执行）**：P1 立项走 OpenSpec change——finding 明确「改的是启动时序（首帧与恢复的可见性
-    顺序），属行为变更，不要作为补丁直推」。提案 `startup-restore-off-main-thread`（M156）已合并且节点 1 已裁决，
-    实现见 M159：`VaultState` 增打开世代号 + `restore_pending`，恢复落在命名线程 `lumir-vault-restore`，
-    完成信号 `vault:restore_finished` + 前端以 `vault_current` 为权威状态。finding
-    `20260917-worker-rustasync-bug-restore-last-vault-setup-scan-build-graph-perf.md`。
-13. **`save_markdown` 的 CAS 窗口实测 4–94ms，窗口内的外部改写会被 rename 静默覆盖**（**待裁决（先裁方案
+
+9. **`save_markdown` 的 CAS 窗口实测 4–94ms，窗口内的外部改写会被 rename 静默覆盖**（**待裁决（先裁方案
     再立项）**；M154 survey，worker-rustasync，2026-09-17，medium，vuln）：CAS 检查
     （`src-tauri/src/fs_io.rs:347-353`）与 `rename`（`:408`）之间要做「建 tmp + 写全量内容 + fsync」，
     实测窗口 ≈3KB 4.0ms（max 4.8）/ 1MB 4.0ms（max 22.1）/ 50MB 58.0ms（max 94.1），慢盘与同步盘更宽。
@@ -69,7 +54,8 @@
     （swap 回失败怎么办）要单独设计，属独立 mission。本仓已有直调 syscall 先例（`link_graph.rs:807-841`）。
     tower 处置建议：不要在窗口语义未定前直接从 backlog 拉实现。finding
     `20260917-worker-rustasync-vuln-save-markdown-cas-4ms-94ms-rename.md`。
-14. **前端单测层（`tests/unit`，26 用例）只在本地 gate，未进任何 CI workflow**（**待裁决**；
+
+10. **前端单测层（`tests/unit`，26 用例）只在本地 gate，未进任何 CI workflow**（**待裁决**；
     reviewer-testinfra finding，2026-09-17，low，无归属 mission）：M153 落地的单测层只接进
     `scripts/gate.sh quick`；`.github/workflows/rust.yml` 的路径过滤仅 `src-tauri/**` 与 `src/bindings/**`
     （不含 `src/**`），`visual.yml` 触发 `src/**` 但步骤里没有 `pnpm test`。于是 `keys.ts` 的 chord 解析、
@@ -78,7 +64,8 @@
     若要做，成本极低：`visual.yml` 已有 node 22 + pnpm 环境，加一行 `run: pnpm test` 即可（单测层秒级）；
     M153 的 mission 书本身把这一层定位为「本地快速反馈层」，所以这属于**定位裁决**而非缺口补齐。finding
     `20260917-reviewer-testinfra-improve-gate-sh-quick-ci-workflow.md`。
-15. **perf 端点 `open-1mb-file` 从「磁盘 IO 占位口径」修订为真实打开路径**（**待裁决（立项）**；
+
+11. **perf 端点 `open-1mb-file` 从「磁盘 IO 占位口径」修订为真实打开路径**（**待裁决（立项）**；
     worker-testinfra idea，M153，2026-09-17，medium）：该端点现在量的是「读 1MB 文件到内存 + UTF-8 解码」
     （M1 遗留占位，实测 p95 1.12ms / median 0.44ms），却被 `perf.yml` 与 `tests/perf/thresholds.json` 以
     100ms 绝对阈值 enforce——它变绿**不等于**「打开文档」体验没退化（不含读取后的解析、CodeMirror 装载与
@@ -88,61 +75,20 @@
     沿用 100ms）；③ 重建滚动基线并归档旧口径结果，避免新旧数字混比；④ `docs/specs/perf-measurement.md`
     记口径变更与不可比说明。可等 dogfood 性能专项一起做。finding
     `20260917-worker-testinfra-idea-open-1mb-file-io.md`。
-16. **「用户主动打开 / 切换 vault」仍走同步路径，大 vault 上会有等量级的界面无响应**（**待裁决（是否立项）**；
+
+12. **「用户主动打开 / 切换 vault」仍走同步路径，大 vault 上会有等量级的界面无响应**（**待裁决（是否立项）**；
     change `multi-vault-workspaces` design §9 登记的后续项，M164 收口时按任务 7.2 落到这里）。M159 只把**启动恢复**
     移出了主线程（`lumir-vault-restore`），用户主动触发的打开/切换仍走 command 线程上的同步 `open_vault`：
     注册表 IO + 建 watch + `scan_workspace` + `build_graph` 全在一段里跑完才返回，实测真实 vault 约 125ms、
-    4× 规模约 770ms（同一段代码，数字出自身为本变更提供依据的冷启动实测，见本文件第 12 条），期间界面不重绘。
+    4× 规模约 770ms（同一段代码，数字出自身为那次启动时序改造提供依据的冷启动实测，见「已核销」的 2026-09-18 三件核销条），期间界面不重绘。
     change 明确**不修**（非目标），且**刻意不引入进度条 / 遮罩**——同步路径下界面在此期间不重绘，这类元素不可见
     （口径见 spec「vault 切换与整窗上下文替换」最后一句）。**需 Alex 裁的是要不要立项异步化**：① 收益是切换
     「人手可感知的卡顿」消失；② 代价与 M159 同族——先后端把提交移出主线程、再处理与用户后续操作的让位规则
     （M159 已有的 `restore_pending` / 世代号是先例，可复用），前端则要重新设计过渡态（进度或乐观切换），
     这会推翻本变更「不做过渡元素」的口径，因此不属收口范畴。建议时机：与 dogfood 的性能专项一起裁
-    （与第 12 条同批），不要单独提前做。
-17. **CI 的 visual 与 perf 在 master 上长期红（自 2026-09-13），与本地 gate.sh 全绿结论相反**（**已核销**：治理批 M173/M174/M175 全部合并，核销记录见文末「已核销」节的 2026-09-18 条；M169 survey
-    finding，worker-archive-survey，2026-09-18，high）：master 最后一次 push（`2f16f86`）上 visual 30+ 条
-    失败（整页基线像素差 3176–7207px，容差仅 ~960px，远超临界抖动）、perf failure（但冷启动 median
-    117.76ms < 300ms 合同，失败端点未定位）；rust / docs-check success。同一提交本地 `gate.sh visual`
-    12/12 PASS——同 commit 两种结论，说明 CI runner 与本地渲染环境不等价（或基线本身失效）。**需 Alex 裁**：
-    ① 先立项判定 visual 红是环境漂移还是基线失效；若确认环境不等价，整页像素断言退出 CI（CI 只守结构/
-    计算属性断言、像素归本地），口径写进 `tests/visual/README.md`；② perf 定位失败端点（可能落在第 7 条
-    内存合同存量超标）。**修好之前，任何引用「CI 全绿」的裁决依据显式降级为「本地 gate.sh 全绿 +
-    rust/docs-check 绿」**。finding
-    `20260918-worker-archive-survey-bug-master-ci-visual-2026-09-13-perf-gate-sh.md`。
-    **状态更新（2026-09-18，M175 登记）**：**M172 已定位，治理批已立项，本条不核销——核销时点是治理批
-    M173 / M174 合并之后**。survey 报告 `.tower/comms/inbox/20260918-worker-ci-diagnosis-tower-survey-summary-m172-ci-visual-perf-perf.md`（M172，已并入 master；survey 零文件改动，正文只活在 `.tower/` 内，此处留名备查）。定位结果：
-    - **visual = 渲染环境不等价，不是基线失效（M169 让裁的两选项「环境漂移 / 基线失效」已判定为前者）**：把 CI 的 `visual-diff`
-      artifact 里 40 张 `*-expected.png` 与入库基线做 sha256 → **40/40 全同**（CI 没拿错基线、基线也没被改坏）；
-      差异只落在字形栅格层——纯色平区域与 4px 实心几何**逐字节相同**、24px 宋体标题**零差异**、字体身份未被替换
-      （二值墨迹 IoU 0.46–0.79 而墨量不变）；同 run 首跑与 retry 报**完全相同的像素数**（确定性，不是抖动）；
-      runner 镜像与浏览器在绿 run（09-05）与红 run 之间**完全一致**（macos-26-arm64 / macOS 26.6.2 25G83 /
-      Chrome for Testing 151.0.7922.34），故漂移源在本地侧或字体解析。形态是 CJK / 拉丁混排行被撑宽
-      （导航行末端 +5px/200px ≈2.5%、frontmatter 值列 +7px），纯 ASCII 标签与 mono 元素裁图零差异；
-      实测 22 条基线 20 红 2 绿（`22 failed / 232 passed`，run `35295440948` @`007aa086`）。触发窗口 =
-      `0804552`（09-06 引入 text-autospace 等 editorial token）→ `cca9462`（09-12 基线重建）。**候选机制
-      「入库基线可能由更新构建（chromium-1243）渲染」已被 M173 任务 1 实测推翻（2026-09-18）**：frozen
-      lockfile 把 @playwright/test 钉在 1.62.1，其 chromium 即 v1234（Chrome for Testing 151.0.7922.34），
-      与 CI 逐字同一构建；本机缓存里的 1243（153.0.8010.12）从未进入任何一次比对；本地同工具链全量
-      254 passed。差异只能来自 runner 侧系统字体 / 渲染链。finding
-      `20260918-worker-visual-ci-bug-m173-1-m172-frozen-ci-v1234.md`。
-      反证已排除「本地假绿」：`scripts/visual/run.sh:12-23` 先查端口占用、再 `pnpm build`，并置
-      `LUMIR_VISUAL_FRESH_SERVER=1` 关掉 `reuseExistingServer`，两种结论确实来自两个渲染环境。
-    - **perf = 两个端点 + 一处结构性死锁**：`resident-memory` **9/9 确定性超阈**（实测 206.50–215.28MB >
-      200MB 合同；2026-09-05 校准值约 110MB，稳态翻倍）；`keypress-to-paint` 9 次 6 红、读数散布
-      **22.35–53.20ms（2.4 倍）**，而基线是单样本 28.15ms、40% 容忍线（39.4ms）正好落在散布中间；
-      `perf.yml:102-104` 的 update-baseline 条件是 `if: success() && push && master`，内存永久超阈
-      ⇒ **滚动基线永久冻结**（日志「最近 1 次 master」即证据）。`cold-start`（median 117.76ms < 300ms）
-      与 `open-1mb-file` 全部合格，不动。
-    - **治理批已立项（Alex 同日裁决，2026-09-18）**：M173 `feat/visualci`（原话「采纳你的建议」——CI 只守
-      结构/计算属性断言、22 处整页像素对比挪回本地 `gate.sh visual`、`@playwright/test` 钉精确版本 +
-      浏览器构建自证进日志、`macos-latest` 钉显式镜像）；M174 `feat/perf`（原话「允许提高 thresholds」+
-      「无异议」——resident-memory 提阈（建议 250MB 档）、解锁基线死锁、keypress-to-paint 改与最近 N 次
-      master 中位数比较或提容忍）。**三支均已合并**（M175 `7bea675`、M174 `d967ce8`、M173 `475f069`，
-      评审全 clean，M174 经两轮）；合并后首个 master push（`475f069`）上的 visual / perf run 即新规程首跑。
-    - **口径收尾（2026-09-18，治理批合并后）**：本条上段的降级规则解除，但「CI 全绿」的含义已被 M173
-      永久改变——`visual.yml` 绿只代表结构层不回归，整页像素没有 CI 兜底（口径见 `README.md` /
-      `AGENTS.md` / `tests/visual/README.md`）；像素层断言只能引用本地 `gate.sh visual` 的结果。
-18. **远程 http(s) 图片直连分支在现行 CSP 下必然失败，且错误文案误归因为「解码失败」**（M165 finding，
+    （与那次启动时序改造同批），不要单独提前做。
+
+13. **远程 http(s) 图片直连分支在现行 CSP 下必然失败，且错误文案误归因为「解码失败」**（M165 finding，
     worker-svg-proposal-2，2026-09-18，low，**待裁决**）：`src/preview/livePreview.ts:869-872` 把外链直接
     交给 `img.src`，而 `src-tauri/tauri.conf.json:21` 的 `img-src 'self' asset: data:` 不含 http(s)——
     该路径在打包态与 dev 态都 100% 走不通（静态核对，未真机坐实），用户看到的是 `attachments.ts:240-242`
@@ -157,19 +103,8 @@
     的替换区文本逐字为 `图片无法显示：![remote image](https://example.invalid/remote.png)`，且不残留
     「解码失败」归因）。该路径在成品里仍 100% 走不通（CSP 不含 http(s)，静态核对、未真机坐实）；本批做的
     是**不撒谎的成因**，不是让它可用——(a)/(b) 的处置权仍在 Alex。
-19. **图片行不受「光标触及即显露源码」覆盖**（M165 finding，worker-svg-proposal-2，2026-09-18，medium，
-    **节点 1 已裁：A = 维持现状**）：`src/preview/livePreview.ts:807-815`
-    的 Image 分支无 `touchesSelection` 判断（对照 Link 分支 `:821` 有），图片引用被 replace 装饰整条藏起、
-    光标进入该行不显露源码；且无 atomicRanges，光标可落进被替换区间而不可见（与 M119 修过的 callout 缺陷
-    同族）。living spec `editor-live-preview/spec.md:25` 的显露枚举不含图片。提案给过两支：A 维持现状、
-    单独立项（worker 建议）；B 并入该 change 给 Image 分支加选区判断 + spec 枚举补「图片」+ 一条 Scenario。
-    **Alex 于 2026-09-18（change `image-svg-and-fallback` 节点 1）裁决 A = 维持现状**：该 change 不动图片行的
-    显露口径（M178 实现期实测确认：`rg touchesSelection src/preview/livePreview.ts` 仍是六处调用、图片分支
-    仍未触及它）。「图片行是否与链接/分隔线同口径」**留作将来单独立项**，本条保留、不核销——将来立项时
-    落点是 Image 分支的 `touchesSelection` 判断 + `editor-live-preview` spec 的显露覆盖集枚举。
-    finding `20260918-worker-svg-proposal-2-bug-live-preview.md`。
-20. **change `toc-popover-emacs-keys-and-max-height` 待归档跟踪**（**已核销**：归档前补记、同日随归档核销，核销记录见文末「已核销」节的 2026-09-18 条；2026-09-18，M170）：流程口径要求每个 change 在实现 PR 合并时即落一条待归档记录并跟踪到归档（`docs/process/openspec-workflow.md` 的批次收尾 checklist 第一条）。该 change（浮层 80% 总高 + `⌃N` / `⌃P` 就地键，M160，merge `d4ca60a`）**合并时没有落这条记录**——全仓 grep `toc-popover-emacs-keys` 当时零命中，正是 M150 记过的失效模式（当时 7 个 change 只有 1 个被跟踪）。本 mission（M170 归档节点 2）在归档前补记本条，随后即随归档核销：归档为 `openspec/changes/archive/2026-09-18-toc-popover-emacs-keys-and-max-height/`，living spec 落 `toc-outline`（2 条 MODIFIED）与 `keymap-commands`（1 条 MODIFIED）；未勾任务 3.1 / 3.2 / 6.2 / 6.4 / 6.6 在归档动作里按证据勾齐（3.1 / 3.2 的产物由 tower 的 integration fix `a779cbb` 落在 `文案-Copy.md:77` / `:103` / `:111`；6.2 改由「零 Rust diff + CI `rust.yml` 在 `2f16f86` success」继承；6.4 由 M164 全量 26/26 与此后的 `13-toc` 复跑覆盖；6.6 即本条）。
-21. **行内（同一行还有正文）图片引用现在会独占一行**（M182，worker-img-width-fix，2026-09-18，medium，
+
+14. **行内（同一行还有正文）图片引用现在会独占一行**（M182，worker-img-width-fix，2026-09-18，medium，
     **待 Alex 裁决**）：M182 把图片替换区包装盒的宽度定成栏宽（`src/preview/theme.ts` 的 `.cm-lp-image`
     `width: 100%`，机制说明见 `docs/specs/image-reading.md` §3），换来「显示宽度不因加载时序 / 缓存命中 /
     打开次序而变」这条不变量（条款同文件 §2）。代价是行内图片引用会把所在行切开：引用前的正文 / 图片 /
@@ -180,437 +115,7 @@
     时序依赖的旧宽度，不变量只覆盖独占行形态，需要一处行内容判定）。worker 建议 (a)。证据（真机两态
     几何读数 / 反向验证）：`test-results/m182/`、`test-results/acceptance/2026-09-18/23-image-first-open-width/`。
 
-22. **change `code-variable-highlight` 待归档跟踪**（2026-09-24，M198 实现完成；**已核销**：M205 归档节点 2，2026-09-24）：
-    流程口径要求每个 change 在实现 PR 合并时即落一条待归档记录并跟踪到归档
-    （`docs/process/openspec-workflow.md` 的批次收尾 checklist 第一条）。本 change 的提案四件在 2026-09-24
-    节点 1 裁决通过（裁决点 2 原话「采纳推荐」，其余 5 点按推荐落定；逐条落点见 `proposal.md` 的
-    「裁决记录」节），实现在 M198 完成：判据落 `src/code-identifiers.ts`（位置类别 / 名字 / 可见域三层，
-    8 门 T1 语言）、呈现落 `src/preview/theme.ts` 的 `codeBindingTheme`、解析复用 M197 的
-    `src/code-structure.ts`（新增一条只读入口 `structureTree`，解析次数仍为 1）。**归档动作的三处口径**：
-    ① 实现期有两处偏离已在 `tasks.md` 就地标注并在 M198 的 review-request 里单列——呈现色值取 `--bg-3`
-    而非 `--bg-2`（后者与 code 模式当前行底色重合、底纹会隐形，tower 2026-09-24 裁决采纳），真机验收的
-    触发通道改用「⌘F + 查询词 + 回车」生成选区（双击手势在该通道合成不出、AX 不暴露装饰，tower 裁决
-    采纳）；② **一张新增元素级视觉基线待 Alex 过目**
-    （`tests/visual/baselines/m198-code-variable-highlight.spec.ts-snapshots/binding-highlight-chromium-darwin.png`，
-    截图副本与说明见 `test-results/m198/baseline-check.md`）——AGENTS.md 的「基线更新是人肉裁决点」；
-    ③ 1MB 级文件的索引构建读数**不达标**：落盘读数是**首次触发 648.4 ms = 解析 205.8 + 索引构建 442.6**
-    （本行原写「首次触发 ≈ 0.9s（解析 0.28s + 索引构建 0.64s）」，与 `test-results/m198/perf-var-highlight.json`
-    不符，M205 归档时按落盘读数改准；**超标归因是索引构建**——解析 205.8 ms 落在 design §1.6 的
-    78–291 ms 估计区间内，索引构建 442.6 ms 远超该处 6–8 ms 的树遍历估计），后续路径按 design §8 备选②。
-    **核销（M205 归档节点 2，2026-09-24）**：归档为 `openspec/changes/archive/2026-09-24-code-variable-highlight/`，
-    `editor-live-preview` 落 2 条 ADDED，tasks 37/37 全勾；delta 正文两次引用的「代码文件的结构解析
-    （语言分层注册表）」requirement 由**同批先归档**的 code-outline 并入（归档顺序硬约束，避免 living spec
-    里出现指向不存在 requirement 的引用）；归档件内 18 条相对链接按「补一层 `../` / 改指归档目录名」两类
-    逐条改准；design §7 的「未实测的声明位形态」按 M198 实测收口（tasks 9.4 就地标注「实现期未做、M205
-    补齐」）、`--bg-2` 三处按实现的 `--bg-3` 改准；证据指针的四处失效文件名（`index-cost.json` /
-    `perf-var-highlight-*.json` / `task8-ax-probe.md` / `29-code-variable-highlight/`）一并改准。
-    **残留人肉点**：② 的那张新增元素级基线在归档件里仍标「待 Alex 过目」——本批没有可引的过目记录，
-    标注按原样保留、未擅改，需要时请在批次验收里一并确认。
-
-23. **change `list-filter` 待归档跟踪**（2026-09-24，M199 实现；**已核销**：M205 归档节点 2，2026-09-24）：流程口径要求
-    每个 change 在实现 PR 合并时即落一条待归档记录并跟踪到归档
-    （`docs/process/openspec-workflow.md` 的批次收尾 checklist 第一条）。本 change 的四件制品在 2026-09-24
-    节点 1 裁决通过（Alex 原话「五个点都采纳推荐」，逐条落点见 `proposal.md` 的「裁决记录」节，五个条件是
-    第 10 组全部未触发），实现在 M199：匹配与查询状态落 `src/list-filter.ts`（**唯一**一份实现，两处浮层
-    共用），接入落 `src/toc.ts`（输入行 / 焦点迁移五挂点 / 结果集下标映射 / 无命中态）与
-    `src/vault-switcher.ts`（输入行 + 同款迁移 + `rowEntries` 保持完整列表 + 输入框排除在浮层级
-    `mousedown` 之外），样式落 `src/style.css`（取既有 token）。**归档动作须一并看的三处**：
-    ① 实现期两处编号漂移已就地校正——真机场景编号取 **32**（提案里写的 29 已被 `29-typography-and-zoom`
-    占用；30/31 为 code-outline / code-variable-highlight），文案编号 **D117–D119**（code-outline 遗留的
-    两条空态提示先占 D115/D116，随本 mission 一并补登），delta 里的 `D115–D117` 指针已同步校正；
-    ② **四张浮层元素级基线待 Alex 过目后重拍**（`toc-popover` / `toc-popover-long` / `vault-popover`，
-    外加实现期发现的第四张 `code-outline-popover`——它拍的是同一个 `.lumir-toc`），截图与读数见
-    `test-results/m199/baseline-check.md` 与 `test-results/m199/baseline-review/`——AGENTS.md 的
-    「基线更新是人肉裁决点」；③ delta 的「失效行参与筛选且 Enter 仍走重定位」scenario 里「用键盘选中它」
-    一句与**筛选前**的既有口径不一致（失效行不在键盘游标空间里，`mv-vault-switcher.spec.ts` 钉着
-    「↓ 只在可用行之间走」），实现按「与筛选前逐条一致」落地（失效行参与筛选、点击走重定位、键盘仍不
-    可达）。
-    **核销（M205 归档节点 2，2026-09-24）**：归档为 `openspec/changes/archive/2026-09-24-list-filter/`，
-    `toc-outline` 落 2 条 ADDED + 1 条 MODIFIED、`vault-workspace` 落 1 条 ADDED，tasks 48/48 全勾。
-    三处的处置：① 场景编号已按实测 32 改准（`proposal.md` 两处同步）；② 四张基线**已结清**——`03ca450`
-    按 Alex 过目口径「合并指示即通过」重拍并随 merge `b517052` 入库，随后 `gate-visual-final.log` 为
-    12/12 PASS（`test-results/m199/baseline-update.log` 那次 `--update` 是失败的尝试）；③ 按 Alex 裁决
-    改写该 scenario 为「失效行 SHALL 出现在结果集里但 MUST NOT 进入键盘游标空间（与筛选前一致）」，删去
-    Enter 一句；同一 requirement 的**正文**里那句「`Enter` 与点击的动作 SHALL 保持现状」按同一裁决只保留
-    「**点击**」半（r1 评审指出首轮只改了 scenario、正文漏改，已由 r1 修复提交补齐；delta 与 living 两处
-    同改，`tests/unit/vault-switcher.test.ts` 覆盖点击那半）。归档件内 3 条相对链接补一层 `../`；`tasks.md`
-    1.1 的判据由「`rg toLowerCase` 只在模块内命中」（实测 8 处、字面为假）改准为「两处消费者 import
-    同一份模块」。本 change 的四处覆盖缺口另立条目（见「待修 findings」节）。
-
-24. **change `code-outline` 待归档跟踪**（2026-09-24，M197 实现完成；**已核销**：M205 归档节点 2，2026-09-24；本条由 M199
-    按 M197 的 finding 补登，findings 原文：`.tower/comms/findings/20260924-worker-code-outline-impl-improve-docs-backlog-md-lezer-yaml-code-outline.md`）：
-    本 change 的实现已在 `feat/code-outline-implementation` 上完成（指示段 / 浮层 / 跳转落点 / 两条新文案
-    全部落地，有真机与视觉证据），但 backlog 里没有待归档记录——`docs/backlog.md` 不在 M197 的改动范围，
-    M197 按协议投出 finding 由 tower 路由，本 mission（M199）顺带补登。**归档时须一并处理的两处**：
-    ① 两条空态文案（`src/toc.ts` 的 `NO_SYMBOLS_TEXT` / `NO_STRUCTURE_TEXT`）在 M197 实现期未进 deck，
-    已由 M199 补登为 **D115/D116**（逐字取自 `openspec/changes/code-outline/tasks.md` 的 5.1 待补表）；
-    ② 证据目录：`test-results/m197/`（本机，git 外）与 `test-results/acceptance/2026-09-24/30-code-outline/`。
-    **核销（M205 归档节点 2，2026-09-24）**：归档为 `openspec/changes/archive/2026-09-24-code-outline/`，
-    `editor-live-preview` 与 `toc-outline` 各落 1 条 ADDED，tasks 36/36 全勾。**补记一处本条第①段原未
-    记入的实质矛盾**：delta 的解析时机条款原写「换文件、外部重载、切换标签 SHALL 使缓存失效」、scenario
-    原写「切回时缓存按『换文件即失效』重建」，而实现按「语言 + 文档内容」缓存（切回同一份内容命中旧键、
-    不重建）——tasks 9.3 自陈过但 delta 未改。**Alex 节点 2 裁决取前者**：措辞改为「缓存身份 = 文档内容」，
-    实现侧零改动；M205 已在归档提交里改准 delta 的两处（requirement ③ + scenario）与同批 design 的对应
-    措辞——`code-variable-highlight/design.md` §1.6 / §4.3 在归档提交里改准，**`code-outline/design.md` §1.6
-    首轮漏改**（自报已改、实际 diff 为零），由 r1 修复提交按同一口径补齐（r1 评审 P2-1，2026-09-24），并入
-    living `editor-live-preview` 后与实现一致。归档件内 19 条相对链接分两类改准（10 条补一层
-    `../`、9 条改指归档目录名含自指一条）；5 处文本/指针漂移 + 上述缓存矛盾共 6 处一并收口（`40 张 *-expected.png` → 实际命名与
-    32 张、`(focused)` 形态按 M199 改写、`visual-toast-d84.log` → `-reused.log`、deck 编号待分配 → D115/D116、
-    基线「待 Alex 过目」由 backlog #23 承接）。`src/` 侧两处失效注释指针与其余仓内旧路径指针不在本 mission
-    scope，已登记进「文档指针与门禁清单」节。
-
-25. **change `typography-and-zoom` 待归档跟踪**（**补登 + 核销同日**，2026-09-24，M205）：流程口径要求每个
-    change 在实现 PR 合并时即落一条待归档记录（`docs/process/openspec-workflow.md` 的批次收尾 checklist
-    第一条）。本 change（M195 实现 merge `c988c80`）**合并时没有落这条记录**——全仓 grep `typography` 在
-    `docs/backlog.md` 只命中 list-filter 条目里的一处顺带提及，`M195` / `M193` 零命中，正是 M150 记过的
-    失效模式。M205 在归档前补登本条、随归档核销：归档为
-    `openspec/changes/archive/2026-09-24-typography-and-zoom/`，**新建 living capability `typography`**
-    （ADDED ×4，`## Purpose` 已按惯例手写替换掉 `archive` 生成的 TBD 占位）+ `keymap-commands` 落 1 条
-    ADDED，tasks 43/43 全勾。归档动作的四处收口：① `tasks.md` 三条 `../../../REVIEW.md` 补一层；② 登记性
-    缺陷就地改准——8.1① 的 `font_size: 20` → 实测场景用的 **32**（含 `⌘0` 回配置值 32）、`36 个场景全通过`
-    → **39**（M195 时点 36、归档复跑 39）、`proposal.md` 的 Impact 条目名「编辑器内字体引用的单一来源」→
-    delta 实际交付的 **「字号步进的运行期口径」**、delta req4 的「30 张既有基线」→ 改成带时点的写法并补
-    内容级判据（`30` 在 M195 时点准确，今日 non-typography 基线已 32 张——数字写死在 living spec 里会一直
-    过期）；③ 覆盖缺口如实留在归档件里（「全会话一致」零断言、config 的 12/32 与 code 模式同步未在渲染层
-    验、`⌘⇧=` 真机形态未验）；④ 跨 change 风险已单列（见第 27 条）。
-
-26. **change `remember-reading-position` 待归档跟踪**（**补登 + 核销同日**，2026-09-24，M205）：同上，本
-    change（M194 实现）合并时没有落待归档记录（backlog 里只有第 10 条边界段的一句能力承接）。归档为
-    `openspec/changes/archive/2026-09-24-remember-reading-position/`，`multi-tabs` 落 1 条 ADDED、
-    `vault-workspace` 落 1 条 ADDED + 2 条 MODIFIED，tasks 38/38 全勾；两份 living spec 的 `## Purpose`
-    按 M170 惯例补归属记录。四处证据口径按磁盘实况改准：1.1 的 `reading-position-before/readings.json`
-    与 1.2 的 `red-before-implementation.log` **未留档**（以反向验证现场代替，已如实标注）、1.4 的读数实际
-    落在 `test-results/m194/design7-probe/`、8.1 的 fixture 实际复用既有 `toc-long.md`（**无新增 fixture
-    文件**）、单测条数 15 → **17**；4.2 / 4.3 的反向验证**红侧未单独留档**已就地如实标注（绿侧断言在位）；
-    `tasks.md` 三条 `../../../REVIEW.md` 补一层。
-
-27. ~~**前置提醒：`restyle-ui-tokens-v1` 实现时必须补一条 `typography` 的 MODIFIED delta**~~
-    （2026-09-24，M205 登记；**2026-09-25 由 M213 核销**）：`restyle-ui-tokens-v1` 的 D1 把编辑器内容字号
-    默认值 **16 → 15px**（`tasks.md` 的 3.4，Rust `DEFAULT_FONT_SIZE` 同步），而它的 delta 集当时只有
-    `editor-live-preview` / `file-tree` / `frontmatter-properties` / `multi-tabs` / `ui-design-system`，
-    **没有 `typography`**——不补就会复现 M150 记过的形态：**living spec 与实现直接矛盾**（spec 说 16px、
-    实现出 15px），且 `validate` 不查这类矛盾。**核销落点**：
-    `openspec/changes/restyle-ui-tokens-v1/specs/typography/spec.md`（新增 MODIFIED ×4：token 层与配置来源 /
-    字号步进的运行期口径 / 排版变更后的重测量 / 出厂默认口径不变，四处 16px 字面值与「与本 change 之前
-    逐项相同」的表述一并改写为 D1 的 15px 锚 + 新 token 名 `--font-sans` / `--lh-reading` /
-    `--layout-doc-measure`）；proposal 的 Impact 同步补 `typography —— MODIFIED ×4`。
-    **未做的部分（另立条目跟踪，见本文件「待修 findings」的「living spec Purpose 漂移」条）**：
-    `openspec/specs/typography/spec.md` 的 `## Purpose` 段仍写「shell（左栏、masthead、浮层…）」与
-    「30 张基线零差异」——openspec 的 delta 格式只覆盖 `## Requirements`，Purpose 只能等归档时手写。
-
-28. **change `document-end-marker` 待归档跟踪**（2026-09-24，M205 finding 补登，**待 Alex 节点 2**）：
-    M205 归档五件后 `openspec list` 复核发现 `document-end-marker` 已 `✓ Complete` 却仍留活跃列表，且
-    实现合并时未落待归档记录——M150 记过的漏跟踪失效模式复现（finding
-    `.tower/comms/findings/20260924-worker-archive-five-bug-document-end-marker-complete-change.md`）。
-    归档评审须带上 M189 的**机制偏离签字**（没用 design 候选 A/B，落在「真元素挂 .cm-scroller」的第三条路，
-    reviewer r1/r2 已判成立）；若要给完读标记加像素基线，先过目
-    `test-results/m189/acceptance-27-pass/shots/` 再 `--update`。归档后按其 living 落点补 Purpose 归属
-    记录、实测归档件内相对链接层级。
-    **核销（M208 归档节点 2，2026-09-25）**：归档为 `openspec/changes/archive/2026-09-25-document-end-marker/`，
-    `editor-live-preview` 落 2 条 ADDED（无新建 capability），tasks 37/37 全勾（未触发的条件项 7.2 已就地
-    标注「不适用」）。归档期四处收口：① tasks 6.1 把 `test-results/acceptance/2026-09-20/27-document-end-marker/`
-    从「同一场景在前一版代码上的首次 PASS」改准为**反向验证 FAIL**（实测 `status.txt` = FAIL、14 断言 /
-    2 失败，与 6.4 的记载同一场地）；② 验收数字三处按 `test-results/acceptance/2026-09-21/results.json`
-    改准为 **14 断言 / 0 失败 / 30.195s**（原 tasks 6.1 写 25.4s、8.3 写 15 断言 / 26.7s、本条下游的
-    「待真机验收」节写 15 断言）；③ delta 的「已知边界」句与同文件规范性条款的矛盾改准（判据读的是
-    **不含标记自身贡献**的内容盒高度与滚动容器的可用高度，不是原文写的「滚动容器的可滚动高度」；
-    「实现期须实测是否被编辑器的尺寸观察机制观测到」改为已实测的无反应结论 + 归档件 design §7 指针）；
-    ④ 归档件内 **15 条** `../../../` 链接各补一层（脚本逐条拼路径 `exists()` 实测：补前 15 条不可达、
-    补后 0 条不可达；= M206 对账时的 14 条 + 本 mission 在 proposal 补「机制偏离记录」时新增的 1 条
-    `[REVIEW.md]` 链接）。另：proposal 补「机制偏离记录」
-    （design 候选 A 的三条判据不可断言 → 落第三条路「真元素挂 `.cm-scroller`」，含 reviewer r1/r2 判定
-    与节点 2 签字），`editor-live-preview` 的 Purpose 补本 change 的归属句。**未追改的两处（如实留档）**：
-    tasks 5.7 的「13 个像素基线场景 / 43 处像素断言」是 M189 时点读数（现 `tests/visual/baselines/` 已有
-    16 个快照目录），且 `43` 只在 `gate.sh visual` 的汇总结论里有支撑——归档件按原样保留，读时带时点。
-
-29. ~~**`restyle-ui-tokens-v1` 的 ui-design-system delta 有一条层级错的相对链接**~~（**已核销**，
-    2026-09-25）：tower 直接修（4 层 `../` → 5 层），`test -f` 实测可解析、`validate --strict` 绿。
-    遗留建议仍有效：把 M205 的「相对链接可达性实测」做成归档收尾可复跑脚本（docs-check 与 validate
-    都不查相对链接）。
-
-30. **change `open-image-lightbox` 待归档跟踪**（**补登 + 核销同日**，2026-09-25，M208）：流程口径要求每个
-    change 在实现 PR 合并时即落一条待归档记录（`docs/process/openspec-workflow.md` 的批次收尾 checklist
-    第一条）。本 change（M184 实现 merge `501369c`）**合并时没有落这条记录**——全仓 grep
-    `open-image-lightbox` 在 `docs/backlog.md` 只命中 dblclick 通道条与 `src/preview/attachments.ts` 的旧
-    路径指针，没有待归档条目，正是 M150 记过的失效模式。它此前还**卡在通道边界上**：以 `dblclick` 为唯一
-    打开路径的交互被记作「真机不可验」（见「验收套件」节的 dblclick 条）。处置：① 双击通道由 M209 打通
-    （swift + `CGEvent` 显式 `kCGMouseEventClickState`），真机场景 33 落库并 PASS（36 断言）+ 反向验证
-    FAIL 7 红，6.1–6.3 / 6.5 / 8.3 五条未勾项补做；② 归档期两项 chromium 断言缺口（G1①②③ 方言形态 /
-    位图形态 / 放大层不发起外链与无脚本副作用、G2 模态期间的字符键）由 M209 补齐并各自反向验证；③ 归档期
-    措辞改准：读取计数按实现口径为 **9**（十处引用里有一条外部 `http(s)` 直连分支不读附件字节，「计数等于
-    引用条数」的等式不成立）、requirement 的三种形态列表注明外部 `http(s)` 只在渲染成可见图像时落在射程内
-    （出厂 CSP 下它必然落占位、没有打开路径）、proposal 与 design 的场景编号 23 → 33、人工清单收窄到
-    手感层（行为判别层由场景 33 + chromium 断言组承担）。**核销**：归档为
-    `openspec/changes/archive/2026-09-25-open-image-lightbox/`，`attachment-display` 落 2 条 ADDED（无新建
-    capability），tasks 34/37（3 条未勾各有就地理由：6.4 的判据钉在「本 change 的实现 PR」上，场景与 fixture
-    是 M209 的 PR 才落的；3.4 与 9.2 是可裁决条件项且节点 1 未选中）；归档件内 14 条 `../../../` 链接各补
-    一层（拼接 `exists()` 实测 0 条不可达；= M207 对账时的 13 条 + 本 mission 收口时在 6.1 记录里新增的
-    1 条 `[REVIEW.md]` 链接），`attachment-display` 的 Purpose 补本 change 归属句并回填 M178
-    （`image-svg-and-fallback`）漏掉的那半句。**另有两处残留如实登记**：① `src/preview/attachments.ts:415`
-    与 `scripts/acceptance/scenarios/33-image-lightbox.md:151` 的旧路径指针见「文档指针与门禁清单」节；
-    ② M184 探针实测的运行期 `attachmentReads` = 10 与「9 处引用需要读字节」这个静态条数不一致（成因未定位，
-    机制上装饰被滚动淘汰后重建会再读一次）——归档件把两个数都如实写出、**不编造解释**，若要对齐先起一次
-    读数实测。
-
-31. ~~**结束标记（`.cm-lp-end-marker`）的字号基准与正文分叉**~~（2026-09-25，M208 登记；
-    **2026-09-25 由 M213 核销**）：标记旧口径的 `0.82em` / `4em` 以 `.cm-scroller` 为基准，而它没有自己的
-    字号声明、只继承 `.cm-editor` 写死的 `14px` ⇒ M195 的排版能力放大正文时标记**不跟随**
-    （线宽反推 45.9px = 4 × 0.82 × 14px 佐证基准是 14px）。**核销落点（R2b 修复 + M213 补门禁断言）**：
-    ① 修复 `src/preview/theme.ts` 的 `.cm-lp-end-marker`——字号改 `calc(var(--editor-font-size) * 0.8)`
-    （基准 = 内容字号的单一来源；默认锚 15px ⇒ 12px = 字号阶梯的 doc-meta 档），线段仍写 `4em`
-    （随根字号解析，因而随基准缩放）；真机分叉的探针读数与修前/修后对照见
-    `test-results/m212/backlog-31-end-marker.md`（15px 档 12px / 线段 48px；24px 档 19.2px / 线段 76.8px；
-    修前两档恒为 11.48px）。② 门禁断言：`tests/visual/scenes/end-marker.spec.ts` 新增
-    「backlog #31：标记字号跟随内容字号」——两档（15px / 24px）各断言标记字号 = 0.8 × 内容字号、
-    线段长 = 4 × 标记字号，并前置断言两页内容字号确实不同（否则比值判据会在「两页一样」上空转）。
-32. ~~**watch 增量不覆盖外部新建目录：文件树不刷新（重启可见）**~~ **已核销（M245，2026-09-27）——
-    产品侧无缺陷，原 finding 的根因判断不成立；错在验收断言的观测时序**（2026-09-25，M221 finding，
-    worker-fix-closeout，low；**2026-09-26 Alex 裁决：修**——「你在 Finder 里整理 vault 是常态操作，
-    树不刷新会显得 app 死了」）：原 finding 依据「app 运行中经外部在 vault 里新建目录（含文件）后，
-    文件树 60 秒内不刷新出该目录行；重启后可见」判定 watch 增量不覆盖「新建目录」形态。
-    **M245 逐段定位（每一段都有落盘证据）**：
-    ① 后端**确实**发出该增量——真机实测 `flush − 文件 mtime = 104–122ms`，批次为
-    `[Created restyle-dir (dir), Created restyle-dir/note-in-dir.md (file)]`
-    （`test-results/acceptance/m245-probe5/app.log`；定位用的临时 `eprintln!` 已随 06a64c7 撤除）；
-    ② 前端 `applyChanges` 对该批次的处理正确：目录行模型→DOM 一步到位、可展开、可级联删
-    （`tests/unit/tree-increment.test.ts` 六例，含「父缺失丢弃」反向对照）；
-    ③ 真机五轮探针（`test-results/acceptance/m245-probe1…5/`）：**写完立刻读 AX 必 FAIL，先
-    `sleep 200` 再读必 PASS**，其后每一次读都 PASS——紧跟写入的第一次 AX 读取与那次刷新抢
-    （候选机制：AX 枚举本身占着 webview 主线程；未直接证实）；
-    ④ 原 finding 的「60 秒」是**断言链级联**：第一读漏掉目录行 → 下一步点不到目录行 → 再下一步
-    `open restyle-dir/note-in-dir.md` 等的是「左栏出现**子文件行**」，而目录折叠时子行永远不会
-    出现，于是 60s 超时（probe1/probe2 逐字复现这条级联）；
-    ⑤ 外部新建**文件**（原 finding 未测的那一半）同一条 watch 路径、无此问题：场景 47 的
-    「树里有 aaa-menu.md / aab-tab.md」「目录行已在树里」三条断言在本分支真机运行 PASS
-    （`test-results/acceptance/m245-final/47-file-tree-context-menu/steps.md`）。
-    **落地（M245，分支 `feat/fix-watch-external-mkdir-tree-refresh-m2`，提交 `06a64c7`，合并 `b6ecfd7`）**：验收场景 36
-    删掉 `do: restart` 绕行步，断言翻为「运行中刷新可见」（前置 `sleep 1000` 只取观测时序，判据未
-    弱化，口径写进场景「已知边界」）；后端补 `watch_delivers_external_new_dir_with_nested_file` 与
-    `refine_with_known_keeps_new_dir_created_and_normalizes_seeded_replay`（Rust lib 162 全绿）；
-    前端补 `tests/unit/tree-increment.test.ts`（374 全绿）；真机场景 36 PASS（14/14，证据
-    `test-results/acceptance/m245-final/36-restyle-content/`）；`gate.sh quick` 9/9 PASS。
-    finding `20260925-worker-fix-closeout-bug-watch.md`（其结论已被本条更正）。
-    **同因的另一条 finding**：`20260927-worker-watch-mkdir-improve-vaultwrite-ax-do-settle-60.md`
-    （`do: settle` 其实只读一次 AX，名实不符；建议把「外部写入后先留一拍再读」写进套件 README）。
-33. **版本号 bump 策略**（2026-09-25，M225 finding，worker-proposal-version，low；
-    **2026-09-26 Alex 裁决：按 semantic versioning**）：版本号真源 `src-tauri/tauri.conf.json:4` 的
-    `version` 是占位 `"0.0.0"`（`package.json:3` 同），仓内无任何 bump 工具链或发布流程
-    （`bundle.active = false`）。M236 把产品名+版本号常显到标题栏后界面会如实显示 0.0.0。
-    **执行口径（tower 按 semver 裁决细化）**：起始 0.1.0；0.x 期间 MINOR = 功能批次、PATCH = 缺陷
-    修复批；bump 时机 = 每个合并批次收尾由 tower 执行、随批次 push；唯一真源 tauri.conf.json，
-    package.json 同步跟 bump；首次 bump（0.0.0 → 0.1.0）随下一个缺陷/工具批落地。bump 动作补进
-    批次收尾 checklist。finding
-    `20260925-worker-proposal-version-idea-tauri-conf-json-version-0-0-0-0-0-0.md`。
-    **已裁已落地（M238，2026-09-26）**：首次 bump 落 `0.0.0 → 0.1.0`——`src-tauri/tauri.conf.json:4`
-    与 `package.json:3` 同步；两处「真源副本」同批跟改（REVIEW.md 第 8 条）：视觉桩的缺省 appMeta
-    （`tests/visual/scenes/tauri-stub.ts` 的 `{ name: "Lumir", version: "0.1.0" }`）与
-    `tests/visual/scenes/titlebar-identity.spec.ts` 的 `VERSION`（两处刻意各写一份：桩模拟后端、
-    场景断言「前端如实显示后端给的值」）；真机场景 39 的两处 dump 示例同步改准（断言本身早就走
-    `$appVersion` 占位符，从 `tauri.conf.json` 读真值）；**Cargo 侧两处随同批改（r2 追加）**——
-    `src-tauri/Cargo.toml:3` 与 `src-tauri/Cargo.lock` 的 `[[package]] name = "lumir"` 一并落 `0.1.0`，
-    理由见下条。**此后口径**（本条即 canonical 记录）：
-    批次收尾时按 semver bump——**功能批 MINOR、缺陷批 PATCH**（0.x 期间），唯一真源
-    `src-tauri/tauri.conf.json` 的 `version`，`package.json` 的 `version` 同步跟随，随批次 push；
-    改真源副本时按上列清单逐处跟改（桩 / 场景示例 / 文档示例 / **`src-tauri/Cargo.toml` +
-    `src-tauri/Cargo.lock`**）。**未落地的一格**：把 bump 动作写进
-    `docs/process/openspec-workflow.md` 的「批次收尾 checklist」不在 M238 的 scope 内，待 tower 补。
-    **Cargo 侧纳入跟改清单（r1 P2-4 提出 → r2 落地）**：`src-tauri/Cargo.toml:3` 与 `Cargo.lock` 的
-    `[[package]] name = "lumir"` 的 `version` 本次**已随批改为 `0.1.0`**（tower r2 裁决：不接受
-    「有意不跟随」——它是同一语义的第三份拷贝，留着正是 REVIEW.md 第 8 条要灭的隐患）。
-    **为什么要跟改（r1 的查证结论保留在此当理由）**：① tauri 的配置 schema 明写 `version` 字段
-    「If removed the version number from `Cargo.toml` is used」
-    （`node_modules/@tauri-apps/cli/config.schema.json:34`，同句还写「recommended to manage the app
-    versioning in the Tauri config」）——**字段在场时 Cargo 侧不是版本来源**，但一旦有人删掉该字段
-    （或在别的 change 里把它改成指向 package.json 的路径），应用版本会**静默回落**到 Cargo 侧那个号，
-    陈旧号因此是「将来踩坑」的形态；② 实测佐证该字段当前确实压过 Cargo：M238 的真机场景 39（断言
-    AX 树含 `$appVersion`，占位符从 `tauri.conf.json` 读真值）在 Cargo 侧仍是 `0.0.0` 的状态下 PASS
-    ——运行期读到的就是配置里那个 `0.1.0`。两处一起跟改后，「运行时取哪个」与「仓里躺着哪个」
-    不再有分叉。**非副本、无需动**（r1 同批核过）：`tests/visual/package.json`（独立私有包）、
-    `scripts/visual/table-probe72/tauri.conf.json`（独立探针工程）、`tests/unit/modeline.test.ts` 的
-    `0.0.0`（渲染输入 fixture，不是真源副本）。
-34. **gate.sh PASS 时删临时日志，看不到逐用例读数**（2026-09-25，M214 worker-restyle-r4-baseline
-    提的改进点，tower 转录登记，low；**2026-09-26 Alex 裁决：改**——PASS 也保留日志并打印路径）：
-    `scripts/gate.sh` 的 `run_gate` 只在 FAIL 时打印日志路径，PASS 即删临时日志——门禁输出只有
-    一行 `GATE PASS visual-regression`，用例数、逐用例读数都看不到；M214 当时不得不改用
-    `scripts/visual/run.sh` 同端口补跑一次才把「34 张逐张比对通过」落成可 grep 的证据。落地：
-    PASS 时保留日志、输出打印一行路径（不展开内容），临时文件不再即删。
-    **已裁已落地（M238，2026-09-26）**：`run_gate` 的 PASS 分支去掉 `rm -f "$log"`、PASS 行改为
-    `GATE PASS <名> <耗时>s — 完整日志：<路径>`（FAIL 行为不变：路径 + 末 30 行回显）；脚本头部
-    注释同步写明「PASS 也留日志」的理由与落点。日志走 `mktemp -t`（`$TMPDIR` 下），按门禁名命名。
-35. **分模式折行默认（md 折 / code 不折）**（2026-09-26，Alex 使用反馈发起探讨，tower 登记；
-    **2026-09-26 Alex 裁决：采纳 tower 建议**——机制=覆盖键 + 出厂分叉）：现状
-    `[editor] line_wrap`（默认 true）是全局单键，`code_block_wrap` 只管 md 围栏块；M231（非 md
-    可编辑）落地后 code 模式是一等表面，长代码行被全局折行基本不可读。落地口径：① 机制 = 可选
-    覆盖键（如 `editor.code_mode_line_wrap`，缺省跟随全局 `line_wrap`）——只有 md/code 两个模式，
-    单键比 per-language 表成比例；② 出厂默认直接分叉（code 默认 false）——md 折 / code 不折是
-    行业通行出厂口径（VS Code / JetBrains 出厂不折行），不是个人怪癖；「配置即数据」约束下个人
-    偏好的居所是配置文件而非硬编码。
-    **已裁已落地（M247，2026-09-27）**：键名定为 `editor.code_mode_line_wrap`（布尔，出厂 `false`），
-    全链落地——`config.rs`（字段 + 宽容镜像 + 逐字段回落 + 三条单测）、`src/preview/theme.ts`
-    （`WrapSettings` 第三轴、`DEFAULT_CODE_MODE_LINE_WRAP`、`wrapSpec` 按模式取轴）、`src/editor.ts`
-    （运行期真源第三轴 + `toggleLineWrap` 按前台会话模式选轴）、`src/main.ts`（配置消费点）、
-    bindings 重导出。**语义收紧一处（本 mission 写死，覆盖上面 ① 的措辞）**：①里的「缺省跟随全局
-    `line_wrap`」与 ②的「出厂分叉」在 `line_wrap = true` 时字面冲突——跟随会让 code 出厂折行；采 ②
-    为准：缺省值 = 本键自己的出厂 `false`，MUST NOT 读 `line_wrap`（spec 的「code 模式缺字段时
-    不跟随 line_wrap」scenario 钉这条）。证据：`openspec/changes/code-mode-line-wrap/`
-    （proposal/design/tasks + `editor-live-preview` delta）、`tests/unit/wrap.test.ts`、
-    `tests/visual/scenes/m247-code-mode-line-wrap.spec.ts`。
-36. **配置项可发现性**（2026-09-26，Alex 使用反馈发起探讨，tower 登记；**2026-09-26 Alex 裁决：
-    采纳两步走**——① 配置参考文档随 #35 同批落地；② describe-config 面板中期另立项）：`config.json`
-    只落用户显式设过的键，完整键面（`editor.*` 6 键 / `ui.*` 2 键 / `keys` 表 / `log.level`）与
-    默认值只写在 `config.rs` 注释里，用户无从知晓有什么可配。落地口径：① 配置参考文档
-    （canonical 键值表：类型 / 默认 / 取值范围 / 生效时机，真源对齐 `config.rs`；附配置目录布局节
-    ——`vault-registry/` = vault 注册表（身份，#37 更名后）、`vault-sessions/` = 标签会话（易变
-    状态），两者同一 vault 实体刻意分存（`vault_session.rs` 头注释 / multi-vault-workspaces
-    design §2），另覆盖 `reading-positions/`、`logs/`）；② 中期应用内 `describe-config` 面板
-    （照 `describe-bindings` 模式：每键当前生效值 / 出厂值 / 改法）。**明确不推荐**「写全量默认
-    进 config.json」——会把缺字段跟随出厂默认钉死成旧值，与合并写纪律冲突。
-    **① 已裁已落地（M247，2026-09-27）**：`docs/specs/config-reference.md` 新建——顶层 4 项 +
-    `[editor]` 7 键（含 #35 的新键）+ `[ui]` 2 键的键值表（逐键给类型 / 默认 / 取值范围 / 生效时机 /
-    `config.rs` 真源行号）、解析容错口径节（逐字段回落 vs 整文件回落）、写回纪律节（合并写、
-    未知键保留、不推荐写全量默认）、配置目录布局节（`workspaces/` 现名 + #37 更名前向注记 /
-    `vault-sessions/` / `reading-positions/` / `logs/`，同一 vault 实体刻意分存的生产原因引
-    `vault_session.rs` 头注释）。**② 保持「中期另立项」不动**——本 mission 未做面板、未留钩子。
-37. **配置目录改名 `workspaces/` → `vault-registry/`**（2026-09-26，Alex 裁决：**改**——他
-    对 tower「不建议动」的唯一不同意见）：`workspaces/` 装的是 vault 注册表（身份：id ↔ path、
-    治理标记、`last_opened_at`），名字与「工作区状态」语义错位，与 `vault-sessions/` 并置时
-    误导为两个业务概念。落地口径：① 目录名改 `vault-registry/`（与 `vault-sessions/` 对仗，
-    「同一 vault 实体的两个面」从名字可读）；② 迁移 = 启动时一次性 `fs::rename`（同目录同文件
-    系统，原子；新目录已存在则不动作），迁移记一条诊断事件；③ Rust 模块 `workspaces.rs` →
-    `vault_registry.rs` 连带引用更新（commands/lib/reading_position/recovery/vault_session），
-    保持名实一致；④ 验收套件隔离 `XDG_CONFIG_HOME` 下补迁移场景（旧目录 + 文件 → 启动后新目录
-    可见、注册项不丢）。历史文档（multi-vault-workspaces 等 change 名）不改写。
-    **已落地（M248，2026-09-27）**：① 目录名 = `vault-registry/`，真源是 `src-tauri/src/vault_registry.rs`
-    的 `REGISTRY_DIR_NAME`；② 迁移 = 启动路径上一次 `fs::rename`（同目录同文件系统，原子；新目录已存在
-    则不动作；rename 失败原地保留、下次启动重试），四态单测落在同文件的 `#[cfg(test)] mod tests`，迁移
-    记一条 `vault_registry_migrated` 诊断事件（`logging` 新增事件名，`src/bindings/LogEventName.ts` 增量
-    一行字面量）；③ 模块 `workspaces.rs` → `vault_registry.rs`，`commands` / `lib` / `reading_position`
-    / `vault_session` 的引用与注释一并同步；**类型名 `VaultWorkspace` 与 `workspace_read|write|path`
-    错误码刻意保留**——它们经 ts-rs 进 `src/bindings/`、被前端 import，改名会波及 webview 契约面，属
-    另一件事；④ 真机场景 `48-vault-registry-migration`（套件新增 `seed.legacyRegistry` 预置通道与
-    `resetRegistry()` 同清新旧两名目录）。文档面同步：`docs/specs/config-reference.md` §4 改为现状描述
-    并删 #35 写的前向注记；历史文档（change `multi-vault-workspaces` 等）仍按原口径不改写。
-    **合同文本同步（M250，2026-09-27）**：living spec 的注册表路径此前仍写旧名（`openspec/specs/
-    vault-workspace/spec.md:49`），与实现矛盾——新增 change `sync-vault-registry-dir-spec`
-    （MODIFIED「vault 注册表与显式重映射」：路径字面改 `~/.config/lumir/vault-registry/` + 迁移口径段 +
-    新增 scenario「旧注册表目录在启动时迁移」，其余条款逐字携带）并同批把 delta 应用到 living spec
-    （两侧同名 requirement 正文 sha256 相同 ⇒ 归档是幂等替换）。`validate --all --strict` 28/28 绿；
-    归档节点 2 待 Alex（见「待 Alex 裁决」第 38 条）。至此本条 ①②③④ 与文档面全部落地。
-
-32. **change `product-version-display` 待归档跟踪**（2026-09-26，M236 登记；**已核销**：经核该 change 早已由
-    M253 归档批归档（2026-09-27，archive/2026-09-27-product-version-display 在场、validate 绿），本跟踪条
-    当时未同步核销；2026-10-03 M308 批次收尾由 tower 核销）：流程口径要求
-    每个 change 在实现 PR 合并时即落一条待归档记录（`docs/process/openspec-workflow.md` 的批次收尾
-    checklist 第一条）。本 change（提案评审节点 1 已于 2026-09-25 通过，D1/D2/D3 裁决见 `proposal.md`
-    头部）**实现已完成、未归档**，卡在两件事上：
-    ① **视觉基线待 Alex 裁决**——标识块让 21 张整页基线 + 3 张标签栏元素基线内容变化，过目包在
-    `test-results/m236/baseline-review/`（**基线一律未改**，等批准才 `--update`）；
-    ② **归档顺序**——本 change 的 `specs/ui-design-system/spec.md` delta 含 **MODIFIED Requirements**，
-    而它依赖的 `restyle-ui-tokens-v1` **仍未归档**（`openspec list`：49/51 tasks），此时 archive 会被拒。
-    按裁决「不强行 archive」，等 ① 过、② 的前置 change 归档后再走节点 2。归档对账要点预记：本 change
-    的 tasks.md §1–§5 已逐条勾选并附证据指针；真机判据为场景 39（`scripts/acceptance/scenarios/
-    39-titlebar-identity.md`，1/1 PASS）。
-
-33. **change `live-theme-switch` 待归档跟踪**（2026-09-26，M237 登记；**已核销**：经核该 change 早已由
-    M253 归档批归档（2026-09-27，archive/2026-09-27-live-theme-switch 在场、validate 绿），本跟踪条
-    当时未同步核销；2026-10-03 M308 批次收尾由 tower 核销）：流程口径要求
-    每个 change 在实现 PR 合并时即落一条待归档记录（`docs/process/openspec-workflow.md` 的批次收尾
-    checklist 第一条）。本 change（提案节点 1 已于 2026-09-25 通过，D1/D2/D3 裁决见 `proposal.md`
-    头部）**实现已完成、未归档**，卡在两件事上：
-    ① **视觉门禁对本 change 的可见变化是「看不见」的（如实登记，不是绿灯）**——modeline 右段新增
-    主题指示钮（`.modeline-theme`，可见文本 = 当前主题名），该元素实测整块 **41.6×19.75 ≈ 821 px²**
-    （证据 `test-results/m237/chip-area-probe.log`），而 1200×800 下 `maxDiffPixelRatio: 0.001` 的预算是
-    **960 px**：即使钮内每个像素都变，diff 比例也只有 0.000856 < 0.001。后果是**全量视觉套件照绿**，
-    但那不等于「基线与界面一致」——21 张整页基线都少了这个钮。**2026-09-26 tower 裁决（依据 Alex 总授权 +
-    M236 立范流程）：随本批重建**——21 张整页基线已 `--update` 重建，过目包在
-    `test-results/m237/baseline-review/`：逐张 pre/post 差异对账 `audit-table.md`、逐张对照图
-    `img/*-pair.png`、sha256 manifest `baselines-{pre,post}-sha256.txt`，另有独立复核脚本
-    `independent-check.py` / `independent-profile.py` 与其日志（列级墨迹谱对账）。重建后的像素对账结论：
-    21 张的差异**全部**落在 modeline 条带（y778..797）内，形态 = 新增指示钮（右对齐 x1144..1185，宽 42px）
-    + 既有 modeline 右段文本整体左移 54px（钮宽 41.6 + 间距 12），条带外像素逐字节不变；钮区域像素在
-    6 个场景间逐字节相同。**这仍是 REVIEW.md 第 3 条的同族现场**——容差按「最小真实变化的下限」核算时，
-    41×20 ≈ 821 px² 的新增元素在 0.001 档（预算 960 px）结构性不可见，基线要靠人裁决推动才重建、门禁
-    本身照绿；若 Alex 认为该收，落点是给这类小元素补元素级基线（标识块已有先例）或收紧容差，二者都不
-    在本 change 的 scope 内（proposal 明写「不动视觉基线口径」）。
-    ② **归档顺序**——本 change 的 `specs/ui-design-system/spec.md` delta 含 **MODIFIED Requirements**，
-    而它依赖的 `restyle-ui-tokens-v1` **仍未归档**（`openspec list`：49/51 tasks；2026-09-26 复检仍如此），
-    此时 archive 会被拒。按 task §5.1 的口径「不强行 archive」，等 ① 有结论、② 的前置 change 归档后再走
-    节点 2。归档对账要点预记：本 change
-    的 tasks.md §1–§5 已逐条勾选并附证据指针（含两处**过时项修正**：§3.1 不新增 Rust 命令、走 M228 的
-    通用合并写 IPC；§4.3 场景号 44）；真机判据为场景 44（`scripts/acceptance/scenarios/
-    44-theme-live-switch.md`）；文案新增 D122（主题钮的悬停提示 / 读屏名）与 D123（写盘失败 toast）；
-    附带修订两处既有自述：`35-restyle-three-themes` 正文的「不存在运行期切换通道」与本文件
-    restyle 段里「`[ui] theme` 的『重启生效』口径」。
-
-38. **change `sync-vault-registry-dir-spec` 待归档跟踪**（2026-09-27，M250 登记，**待 Alex 节点 2**）：
-    流程口径要求每个 change 在实现 PR 合并时即落一条待归档记录（`docs/process/openspec-workflow.md`
-    的批次收尾 checklist 第一条）。本 change 是 **retro 型**（实现先于规格：M248 已合并 `d989197`，
-    而 living spec 的注册表路径仍是旧名、与实现矛盾），**无代码 diff**；制品 = delta（MODIFIED ×1，
-    路径字面 + 迁移口径段 + 新增 scenario）+ living spec 同步落盘（两侧同名 requirement 正文
-    `sha256` 相同，归档是幂等替换）。**节点 1 由 M248 的 #37 裁决覆盖**（改名 + 启动迁移是 Alex
-    2026-09-26 已裁行为，proposal 的「裁决记录」节写明这一点）。归档对账要点预记：delta 与 living spec
-    逐句一致、requirement 名在 living spec 出现恰好一次、`validate --all --strict` 28/28；节点 2 通过后
-    `npx --yes @fission-ai/openspec@1.12.0 archive sync-vault-registry-dir-spec --yes`，预期 living
-    spec **零 diff**。
-    **状态更新（2026-09-27，M254 收口）**：归档**已执行**——`5ac43e3`（master，M255 的
-    `6f301b4` 「归档 sync-vault-registry-dir-spec 并复核幂等」，节点 2 已授权）把该 change 移入
-    `openspec/changes/archive/2026-09-27-sync-vault-registry-dir-spec/`，living spec 的注册表路径与
-    迁移口径已并入，无代码 diff。本条核销。（M254 的分支 base 早于该合并，因此本分支上
-    `openspec list` 仍会列出它——不是漏归档，是合并顺序。）
-
-
-39. **M254 两个 change 待归档跟踪 + 一个待裁决点**（2026-09-27，worker-tab-strip 登记，**待 Alex 节点 2**）：
-    同批两个 change：`tab-strip-context-menu`（标签右键菜单三条关闭路径，ADDED ×1）与
-    `preview-tab-removal`（移除预览标签机制：`multi-tabs` 一条 REMOVED + 一条 ADDED + 一条 MODIFIED，
-    `vault-workspace` 两条 MODIFIED）。节点 1 的口径已由 tower 2026-09-27 的裁决覆盖（标签菜单三条关闭
-    路径 + 移除预览机制 + 扩 scope 到 `src/editor.ts` / `src/vault-switcher.ts` / 场景 14、31），
-    本条是实现 PR 合并时的待归档记录（`docs/process/openspec-workflow.md` 的批次收尾 checklist 第一条）。
-    归档对账要点预记：delta 与 living spec 逐条对账——`preview-tab-removal` 的 MODIFIED 块保留了三个
-    历史 scenario 名（`dirty 与预览态在标签上可见` / `预览标签不入盘` / `固定标签语义`），理由写在 delta
-    正文与该 change 的 design §三（OpenSpec 1.12 的 MODIFIED 块不允许改 scenario 名，改名通道是整条
-    REMOVED + 新增承接条）；`validate --all --strict` 期望 21 passed / 0 failed；真机判据为场景 50
-    （实现期另改齐 14 / 31 两条既有场景的预览断言）；文案新增 D148–D151、改述 D99。
-    待裁决点：**菜单三项的上屏语言**——Alex 给的原文是英文（Close / Close Other Tabs /
-    Close Tabs to the Right），而上屏取的是中文列（关闭 / 关闭其他标签 / 关闭右侧标签；英文原文逐字进
-    deck 的 English 列）。依据是界面语言是中文、全仓唯一不跟界面语言走的可见文案仍只有 D114 的 END。
-    若 Alex 要菜单直接上英文，改动面是 `src/tabs.ts` 的三个常量 + deck 两列对调 + 一条视觉断言
-    （`tests/visual/scenes/tab-menu.spec.ts` 的菜单文案断言）。
-    **已裁决（2026-09-27，Alex「上屏」英文）**：菜单三项改英文上屏由 M257 落地并合并（`cd9142d`：
-    `src/tabs.ts` 三常量改 Close / Close Other Tabs / Close Tabs to the Right，deck D149–D151 双列对调、
-    原中文措辞移右列备查）。场景 50 与 change spec 的中文文案残留归 M266 收口。本条待节点 2 归档时
-    一并核销。
-    **归档动作已执行（2026-09-28，M287 归档批）**：两个 change 都已归档（`openspec/changes/archive/2026-09-28-tab-strip-context-menu` / `…-preview-tab-removal`），`multi-tabs` 的
-    REMOVED ×1 + ADDED ×1 + MODIFIED ×1 与 `vault-workspace` 的两条 MODIFIED 逐字落进 living spec
-    （逐 requirement 字节比对，`openspec list` 已空）。**Alex 节点 2 的过目包见 M287 的 review-request**，
-    本条随该评审一并核销。
-40. **归档 change `goto-line-command`**（M281 实现，2026-09-27；**2026-09-28 Alex 二次改判 D4**，**待 Alex 节点 2**）：
-    Alex 原话「增加类似 Emacs 那样跳转到指定行号的快捷键」；节点 1 裁决（2026-09-27）已落定 D1/D2/D3
-    并**改判 D4**（md 不再豁免行号 gutter）；**二次改判（2026-09-28）把 D4 收成可配置三档**——
-    `[ui] markdown_line_numbers = "on-demand"（默认）/ "always" / "off"`，只管 md；code 恒常显、
-    不进配置（Alex 原话：「显示行号是可配置的，markdown 默认不显示、go-to-line 时出现、完成后隐藏。
-    代码默认显示」）。M261 交付提案、M271 按第一次裁决修订、M281 实现 + 中途按二次改判转向（先 amend
-    提案再改实现）。本条是 `docs/process/openspec-workflow.md` 批次收尾 checklist 第一条要求的待归档记录。
-    归档对账要点预记：delta（`keymap-commands` 一条 ADDED ×1，**11 条 scenario**）与实现逐条对账；归档时
-    living spec 落 `openspec/specs/keymap-commands/spec.md`；`validate --all --strict` 的 passed 数按
-    归档当时的基线核（不背口头值）。
-    **三处与本文件的既有登记不同步，归档时要读准**：
-    ① md 的行号 gutter 在真机 AX 树里不可读（CM 给 `.cm-gutters` 带 `aria-hidden`），真机只留截图证据
-    （场景 56 的步 1 / 步 4 / 步 6 三张配对图），几何判据在 chromium 层；
-    ② 图片行之后的行号会低约一个文字盒（CM 高度表 vs DOM 行盒的既有差，非本 change 引入）——见下面
-    「md 行含 inline widget 时的高度表差」条；
-    ③ **md 默认档下没有行号列**，因此整页视觉基线对 master 零 diff（22 张常显形态的重拍随二次改判作废）；
-    只有本 change 自己新增的两张场景基线（`m281-md-gutter` = `always` 档常驻形态、`m281-goto-prompt` =
-    `on-demand` 档输入条打开态）。
-    归档时若 Alex 对 md gutter 的观感（贴正文列左缘的位置、无底色）有改判，改动面是
-    `src/preview/theme.ts` 的 gutter 段 + `always` 档的整页基线重拍；若要**运行期**切换档位（照 Emacs
-    `display-line-numbers` 的随时 toggle），那是一个新 change（`[ui]` 回写通道 + 一个命令 / 键位 / UI
-    落点，先例是 `ui.theme` 的 modeline 主题钮）。
-    **归档动作已执行（2026-09-28，M287 归档批）**：已归档为
-    `openspec/changes/archive/2026-09-28-goto-line-command`，delta 的 ADDED ×1（11 条 scenario）逐字落进
-    `openspec/specs/keymap-commands/spec.md`；归档当时的基线读数 **18 passed / 0 failed**（不背口头值）。
-    **Alex 节点 2 的过目包见 M287 的 review-request**，本条随该评审一并核销。
-
-41. **M327 归档批：change `tab-reveal-in-tree` 与 `vault-open-ignore-set` 已归档（2026-10-05）**：
+15. **M327 归档批：change `tab-reveal-in-tree` 与 `vault-open-ignore-set` 已归档（2026-10-05）**：
     两件均已由 Alex 归档评审（节点 2）批准后落档（2026-10-05 原话「都批准。」），归档的既有惯例
     （整块替换 MODIFIED、相对链接补一层、自指路径改指归档目录名）逐条照办。
     - **`tab-reveal-in-tree`** → `openspec/changes/archive/2026-10-05-tab-reveal-in-tree/`（实现 M300，
@@ -629,20 +134,28 @@
       （0 broken）**；`tab-reveal-in-tree/tasks.md` 的自指路径 `openspec/changes/tab-reveal-in-tree/`
       改指归档目录名。`npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` → **20 passed /
       0 failed**（归档前 22 = 20 specs + 2 changes）。
-    - **待 Alex 的一格**：`vault-open-ignore-set` 的任务 **8.4** 只能由 Alex 本机做——在本机切一次真实
-      vault 后 grep `~/.config/lumir/logs/*.jsonl` 的 `vault_open_scan` / `vault_open_graph` /
-      `vault_load_open` / `vault_open_watch` 四条读数，把残差写回归档件内的 `design.md` §6.3
-      （agent MUST NOT 打开他的真实 vault：会写 registry / `last_vault` 到 `~/.config/lumir`）。
+    - **原「待 Alex 的一格」（8.4，Alex 本机 grep 四条读数）已核销（2026-10-12）**：Alex 裁决「grep `~/.config/lumir/logs/*.jsonl` 这一条没有输出，估计路径已经过期了（后续迭代改了路径），直接销掉吧」——读数动作随日志路径行进而失效，不再跟踪。
     归档记录与逐任务对账结果见该 mission（分支 `feat/archive-node2-tab-reveal-and-vault-ignor`）的
     review-request。
-42. **会话名钮的可发现性**（2026-10-09，M397 期间 Alex 真机反馈）：harness 面板的会话名钮
+
+16. **会话名钮的可发现性**（2026-10-09，M397 期间 Alex 真机反馈）：harness 面板的会话名钮
     （`<会话名> ▾`，`src/harness-panel.ts:1380` 起）是「打开会话历史浮层」的唯一入口，但形态像
     文档标签、没有菜单感——Alex 在浮层被裁的 bug 修复前完全没意识到它可点。M397 只修了「点了不出来」，
     「看不出来能点」是独立的 UX 问题：是否强化（如下拉箭头加重 / hover 态 / 改成明显的菜单钮），
     待 UX 裁决，建议攒到会话管理 UI 一起做（该 UI 本身也是 RSR change 里暂缓的项）。
-43. **横滚代码块的视觉形态：贴正文左边缘、右侧溢出阅读栏宽，是否内缩待裁决**（2026-10-09，tower finding，low；M399 基线过目时 Alex 发现）：不折行代码块的横向滚动容器为**全宽**设计——背景自正文左边缘起、向右超出阅读栏宽，观感「没有左 margin」。Alex 过目 M399 基线时认为观感异常；对照 before / after 证实是 M399 之前的既有形态（`tests/visual/scenes/render-codeblock.spec.ts` 的 wrap-combo-4「双不折行」场景），**非本批回归**。**裁决选项**：(a) 维持全宽横滚（现状，口径最简单）；(b) 横滚容器加左缩进 / 视觉边界（背景内缩或加边框）。若取 (b)，落点为 `src/preview/` 的代码块横滚容器样式 + 相关整页基线重拍（AGENTS.md「基线更新是人肉裁决点」）。finding `.tower/comms/findings/20261009-tower-improve-item.md`（证据：左边缘 before / after 位置一致）。
 
-44. **harness ctx% meter 的分母口径（暂缓，待 M464 修复的活体验证后重估）**（2026-10-12，M463/M464）：**原结论「端点实际生效输入上限 ≈ 名义窗口的 38%」已作废**——Alex 驳回（标称 256k 用 10 万就拒不合理 + Kimi Code 同模型会话 159k 正常工作的截图），tower 复核证实驳回成立：Kimi Code 本机全部 wire 日志中，同端点（api.kimi.com/coding）同模型 k3-256k 成功服务到 **234,656 input tokens**（名义窗口 91%），零真实 token limit 报错。**M464 三发对照探测（Alex 授权，证据 `test-results/m464-probe/` git 外）钉死膨胀源**：同一事故请求体，A 原样带 `rs_*` id = 400、B 剥 id = 400（同一报错 ⇒ 「按 id 展开」假设未被支持）、C 删尽 62 条 reasoning 项 = **200**（非 reasoning 部分 30.6 万字节诚实报价 76,149 input tokens）。即 **reasoning 项本身（与 id 无关）是膨胀源**：62 条思考摘要（约 11.1 万字节，用量报价口径约 2.3 万 token）在上限闸被计成 ≥18.6 万 token——上限闸与用量报价对 reasoning 项的口径相差约 8 倍（上限闸疑似按完整思考原文展开，报价只算传输的摘要）。Kimi Code 不受影响的原因：它对 kimi 端点走 chat completions、思考全文以 `reasoning_content` 明文重放，两本账看到同一内容。判别力边界（如实）：未分离「展开原文」与「摘要按更大口径计账」（第四发等长文本替换可做未做，机制细节不改变产品决策）。**M464 修复**（重放对齐 OpenAI store:false 官方模式：请求 `include:["reasoning.encrypted_content"]`、回放 `{type:"reasoning", summary, encrypted_content}` 剥 id）：间接支持但未直接验证——带密文的会话要等合并后自然积累，届时报价是否回归诚实、会话是否不再早夭即活体验证；若 kimi 端点 `/responses` 路径对 `encrypted_content` 支持不良，退路是 kimi provider 改走 chat completions 形状（与 Kimi Code 完全一致）。**裁决暂缓维持**：meter 分子（服务端报价）在 reasoning 项上不可信已被实证，分母裁决等活体验证结果；在此之前超限兜底靠 M463 已修的「自动压缩重试」（`overflow_indicators` 补 "token limit"）。附带口径决策保留：超限时 meter 是否同步读数（现行错误路径 return 早于 record_usage，读数停在旧值）。
+17. **横滚代码块的视觉形态：贴正文左边缘、右侧溢出阅读栏宽，是否内缩待裁决**（2026-10-09，tower finding，low；M399 基线过目时 Alex 发现）：不折行代码块的横向滚动容器为**全宽**设计——背景自正文左边缘起、向右超出阅读栏宽，观感「没有左 margin」。Alex 过目 M399 基线时认为观感异常；对照 before / after 证实是 M399 之前的既有形态（`tests/visual/scenes/render-codeblock.spec.ts` 的 wrap-combo-4「双不折行」场景），**非本批回归**。**裁决选项**：(a) 维持全宽横滚（现状，口径最简单）；(b) 横滚容器加左缩进 / 视觉边界（背景内缩或加边框）。若取 (b)，落点为 `src/preview/` 的代码块横滚容器样式 + 相关整页基线重拍（AGENTS.md「基线更新是人肉裁决点」）。finding `.tower/comms/findings/20261009-tower-improve-item.md`（证据：左边缘 before / after 位置一致）。
+
+18. **harness ctx% meter 的分母口径（暂缓，待 M464 修复的活体验证后重估）**（2026-10-12，M463/M464）：**原结论「端点实际生效输入上限 ≈ 名义窗口的 38%」已作废**——Alex 驳回（标称 256k 用 10 万就拒不合理 + Kimi Code 同模型会话 159k 正常工作的截图），tower 复核证实驳回成立：Kimi Code 本机全部 wire 日志中，同端点（api.kimi.com/coding）同模型 k3-256k 成功服务到 **234,656 input tokens**（名义窗口 91%），零真实 token limit 报错。**M464 三发对照探测（Alex 授权，证据 `test-results/m464-probe/` git 外）钉死膨胀源**：同一事故请求体，A 原样带 `rs_*` id = 400、B 剥 id = 400（同一报错 ⇒ 「按 id 展开」假设未被支持）、C 删尽 62 条 reasoning 项 = **200**（非 reasoning 部分 30.6 万字节诚实报价 76,149 input tokens）。即 **reasoning 项本身（与 id 无关）是膨胀源**：62 条思考摘要（约 11.1 万字节，用量报价口径约 2.3 万 token）在上限闸被计成 ≥18.6 万 token——上限闸与用量报价对 reasoning 项的口径相差约 8 倍（上限闸疑似按完整思考原文展开，报价只算传输的摘要）。Kimi Code 不受影响的原因：它对 kimi 端点走 chat completions、思考全文以 `reasoning_content` 明文重放，两本账看到同一内容。判别力边界（如实）：未分离「展开原文」与「摘要按更大口径计账」（第四发等长文本替换可做未做，机制细节不改变产品决策）。**M464 修复**（重放对齐 OpenAI store:false 官方模式：请求 `include:["reasoning.encrypted_content"]`、回放 `{type:"reasoning", summary, encrypted_content}` 剥 id）：间接支持但未直接验证——带密文的会话要等合并后自然积累，届时报价是否回归诚实、会话是否不再早夭即活体验证；若 kimi 端点 `/responses` 路径对 `encrypted_content` 支持不良，退路是 kimi provider 改走 chat completions 形状（与 Kimi Code 完全一致）。**裁决暂缓维持**：meter 分子（服务端报价）在 reasoning 项上不可信已被实证，分母裁决等活体验证结果；在此之前超限兜底靠 M463 已修的「自动压缩重试」（`overflow_indicators` 补 "token limit"）。附带口径决策保留：超限时 meter 是否同步读数（现行错误路径 return 早于 record_usage，读数停在旧值）。
+
+## 承接残项（原「待 Alex 裁决」区移出条目的未闭合尾巴）
+
+已裁、只是尾巴还没收的条目集中在这里；每条都指回它在「已核销」区的索引行。
+
+- **多标签会话恢复：观测缺口与边界（原第 10 条）**：启动日志的 `session_restored{count}` 没实现——`src-tauri/src/logging.rs` 的事件白名单里没有该事件，`src/vault-switcher.ts` 的恢复路径也不发埋点；「上次恢复了几个标签、跳过了几个」目前只能靠真机截图与场景断言看。补的落点是恢复结束时发一条 `log_event`（需同时扩 Rust 白名单）。光标位置、滚动位置与撤销史都不恢复（决策 3 的口径，未变；滚动那一格已由 change `remember-reading-position` 承接）。
+- **图片行显露口径（原第 19 条）**：Alex 节点 1 裁 A = 维持现状（change `image-svg-and-fallback` 不动图片行）；「图片行是否与链接 / 分隔线同口径」留作将来单独立项，落点 = `src/preview/livePreview.ts` 的 Image 分支补 `touchesSelection` 判断 + `editor-live-preview` spec 的显露覆盖集枚举。
+- **版本号 bump 动作补进批次收尾 checklist（原第 33 条）**：M238 落地了 bump 口径与真源清单，但「把 bump 动作写进 `docs/process/openspec-workflow.md` 的批次收尾 checklist」不在 M238 scope 内，待 tower 补。口径原文（原第 33 条的 canonical 段）：批次收尾时按 semver bump——0.x 期间功能批 MINOR、缺陷批 PATCH；唯一真源 `src-tauri/tauri.conf.json` 的 `version`，`package.json` 同步跟随；改真源副本时逐处跟改（视觉桩 `tests/visual/scenes/tauri-stub.ts` 的缺省 `appMeta`、`titlebar-identity.spec.ts` 的 `VERSION`、`src-tauri/Cargo.toml:3` 与 `Cargo.lock` 的 `[[package]] name = "lumir"`）。
+- **describe-config 面板（原第 36②）**：Alex 裁决「中期另立项」——照 `describe-bindings` 模式做「每键当前生效值 / 出厂值 / 改法」的面板；本批未做面板、未留钩子（config 参考文档那半边已由 M247 落地 `docs/specs/config-reference.md`）。
 
 ## 待修 findings（不阻塞）
 
@@ -998,7 +511,7 @@ M398 r1 的 P1 正是靠 reviewer 读代码抓的，不是机器抓的。与 m30
 **建议处置**：几何探针防线（transcript 容器 scrollTop 近底断言，或「最末渲染件包围盒落在视口内」
 的 geom 断言——M397 的 geom 形态现成）；攒批处理，不单独立项。
 
-### ~~不打开任何文件时 harness 发送直接失败：`context_json` 传了 null（tower 复现期实测，2026-10-09，medium）~~ **已核销（2026-10-09，M398，merge `9a9a422`，核销记录见文末「已核销」）**
+### ~~不打开任何文件时 harness 发送直接失败：`context_json` 传了 null（tower 复现期实测，2026-10-09，medium）~~ **已核销（2026-10-09，M398，merge `9a9a422`，核销记录见「已核销」区）**
 
 **症状**：vault 里不打开任何文件（面板上下文行显示「上下文：无（未打开文件）」——UI 明示这是
 合法状态）时发消息，立刻报红：`发送失败：invalid args 'context_json' for command 'harness_send':
@@ -1269,10 +782,9 @@ worktree wt-369）；`src-tauri/src/harness/llm.rs` 模块头的「真流式与�
 ### `vault-open-ignore-set` 归档件的 5 处未完成项（M327 归档对账，2026-10-05，medium）
 
 **是什么**：change `vault-open-ignore-set` 已归档（`openspec/changes/archive/2026-10-05-vault-open-ignore-set/`），
-其 `tasks.md` 勾 38/43，**5 项如实保留未勾**。归档评审（节点 2）时 Alex 已批准整体，这 5 项是记录在案的
-缺口，**MUST NOT 读成已覆盖**；它们的就地注记在归档件 `tasks.md` 顶部「归档对账」块与各未勾项下。
+其 `tasks.md` 勾 38/43，**5 项如实保留未勾**（其中 8.4 已于 2026-10-12 核销，见下）。归档评审（节点 2）时 Alex 已批准整体，这些未勾项是记录在案的缺口，**MUST NOT 读成已覆盖**；它们的就地注记在归档件 `tasks.md` 顶部「归档对账」块与各未勾项下。
 
-**4 类**（对应归档件 5 个未勾项：7.2 / 8.3 / 8.4 / 9.3 / 10.4；按严重度）：
+**3 类在办 + 1 类已核销**（对应归档件 5 个未勾项：7.2 / 8.3 / 8.4 / 9.3 / 10.4；按严重度）：
 
 1. **7.2 / 9.3 的 ①②③⑤：真机反向验证（先红后绿）未跑（medium）**——`#[command(async)]` 的反向验证
    （临时摘掉它重跑场景 67，「打开段内界面可响应」应 FAIL）未做；9.3 的 ① ② ⑤ 同样未跑（只做了第 ④
@@ -1281,22 +793,22 @@ worktree wt-369）；`src-tauri/src/harness/llm.rs` 模块头的「真流式与�
 2. **10.4：视觉门禁未跑（medium）**——本 change 触到 `src/tree.ts` 的树行 / 展开行为面，但
    `bash scripts/gate.sh visual` 未在实现/验收批执行（M292 的 worktree 缺 `tests/visual` 依赖、
    `tsc-visual` 在 quick 里 SKIP；M296 只跑真机）。**本条是 M327 归档对账时新暴露的**：M296 的报告与
-   本文件 M296 节 §5 只登记了 8.3 / 8.4 / 9.3，未提 10.4。
+   本文件「批次报告索引」的 M296 条只登记了 8.3 / 8.4 / 9.3，未提 10.4。
 3. **8.3：真形状读数复采部分完成（low）**——release harness 已在本实现上跑通两次（Rust 侧合计
    **82.3 / 81.4ms**，`test-results/m296/rust-harness-release.txt`，与 M283 时代同形状 92–107ms 同量级
    ⇒ 无回退），但 **166,626 文件量级的「收窄后残余」档未重建** ⇒ change 的 `design.md` §1 的 **65.8ms
    仍是 M289 的手工收口数，不是本实现的实测**。
-4. **8.4：Alex 本机 grep 四条读数（medium，需 Alex）**——见「待 Alex 裁决」第 41 条末格。
+4. ~~**8.4：Alex 本机 grep 四条读数（medium，需 Alex）**~~ **已核销（2026-10-12，Alex 裁决）**：原话「grep `~/.config/lumir/logs/*.jsonl` 这一条没有输出，估计路径已经过期了（后续迭代改了路径），直接销掉吧。」——该读数动作随日志路径行进而失效，不再跟踪（本文件「待 Alex 裁决」区的同名一格同批移除，两处核销记录一致）。
 
-**证据**：归档件 `tasks.md`（7.2 / 8.3 / 8.4 / 9.3 / 10.4 五条的就地注记）；本文件 M296 节 §5；
+**证据**：归档件 `tasks.md`（7.2 / 8.3 / 8.4 / 9.3 / 10.4 五条的就地注记）；本文件「批次报告索引」的 M296 条；
 `.tower/comms/reviews/review-feat-vault-open-ignore-acceptance-m296-reviewer-acceptance-m296-r2.md`
 （r2 复核明确列 8.3 收窄后残余档 / 8.4 Alex 本机 / 9.3 ①②③⑤ 为未完成项）。
 
 **建议处置**：7.2 + 9.3①②⑤ + 10.4 可并成一个小验收 mission（真机反向验证 + `bash scripts/gate.sh visual`
 在触到 `src/tree.ts` 的当前 master 上跑一次）；8.3 需要重建 166,626 文件量级的 fixture（成本高，可只做
-「残余档」合成复采）；8.4 只能由 Alex 做，不再派 agent。
+「残余档」合成复采）。
 
-### ~~真机验收 4 项持续失败（31/47/49/52）：2026-10-02 sweep 起同现，非 pane 化引入（M319 现场，2026-10-04，medium）~~ **已核销（2026-10-04，M323/M324/M325 全部合并，核销记录见文末「已核销」）**
+### ~~真机验收 4 项持续失败（31/47/49/52）：2026-10-02 sweep 起同现，非 pane 化引入（M319 现场，2026-10-04，medium）~~ **已核销（2026-10-04，M323/M324/M325 全部合并，核销记录见「已核销」区）**
 
 **症状**：全量真机验收 77/81 PASS，4 项 FAIL 且单跑复跑仍红（非 flake）：
 31-code-variable-highlight（「md 模式文档逐字节未变」判红——标题 caret 显露态随光标行变化，断言与光标位置耦合）、
@@ -1516,7 +1028,7 @@ M154 的 737ms 出现在 45MB md 的 4× 合成规模，不是当前档）。它
 
 **现状**：`scripts/perf/` 只有 `cold-start` / `keypress-to-paint` / `memory` / `open-file` 四个端点，
 **没有 vault 切换端点** ⇒ 切换的优化效果没有任何门禁能锁住（可被后续改动静默回退）。与「待 Alex 裁决」
-第 12 条（同类缺口）同族。
+冷启动恢复同步跑主线程那次改造（旧编号第 12 条，见「已核销」2026-09-18 条）同族。
 
 **为什么不顺手加**：这是**性能合同语义的扩张**（ADR 0002 §6 的四条合同不含切换；新增门禁数字要先定
 「绝对阈值还是相对回归」），不是加一个脚本。端点草案（合成真实形状 vault ≈2500 项 / 1341 md / 7MB +
@@ -1678,7 +1190,8 @@ finding（`.tower/comms/findings/20260927-worker-bold-click-bug-math-mermaid-m25
 
 M256（分支 `feat/final-acceptance-regression-sweep-m256`）跑了**全量真机套件**：57 场景，串行独占
 （`node scripts/acceptance/run.mjs`，`caffeinate -dimsu` 包住，1430 专用口，1420 全程未碰）。
-读数 **49 PASS / 8 FAIL**；逐场景结论与耗时见「待真机验收」的 **M256 全量回归总表**，
+读数 **49 PASS / 8 FAIL**；逐场景结论与耗时见「待真机验收」的 M256 一行索引与 git 历史（本文件的逐场景
+总表已按体量红线压缩，`git log -p -- docs/backlog.md`），
 证据 `test-results/acceptance/2026-09-27/`（git 外）。本节登记本批**新确认**的 finding；
 M254 已登记的两条（`OpenIntent` union / `VaultSession.ts` 注释、套件索引重写）不在本节重复——
 索引那条的**新现场**补写在了原条目里，`$vault2` 前缀吞噬已由 `8758756` 修好、无残留动作。
@@ -2204,7 +1717,7 @@ M279 报告 §5 的两条副产物在列，判定为**都不随本修复收口**
 - ~~**验收套件的 `--config` 覆盖会静默丢掉 `app.windows[0]` 里的窗口级配置**（2026-09-25，M213 登记，
   **medium**）~~ **2026-09-26 M236 已修**：worker 的修法是「从 `src-tauri/tauri.conf.json` 读
   `app.windows[0]` 原件再 spread」，并加运行期自检 `assertOverlayChrome`；修前/修后对照、反向输入
-  实测与验收判据见文末「已核销」的同日条目。
+  实测与验收判据见「已核销」区的同日条目。
 - **验收 README 的 `configWrite` / 场景 front-matter `config:` 行没写 `theme` / `fontFamily` /
   `monoFontFamily` / `fontSize`**（2026-09-25，M213 登记，low）：`scripts/acceptance/README.md` 的动作表
   里 `configWrite` 只列 `lastVault、keys、restart、requireVault`，而实现（`lib/execute.mjs、
@@ -2316,7 +1829,7 @@ M279 报告 §5 的两条副产物在列，判定为**都不随本修复收口**
   rust 场景基线。finding `20260917-worker-jsonhl-bug-tag-token-rust-code.md`。
   **已核销（2026-10-07，M375，merge `b79e13a`）**：M375 按 finding 建议 diff 修 `tagsForStyle`
   （跳 part 不丢整条）、补不变量测试并先红后绿；`openspec/specs/editor-live-preview/spec.md` 的「已知例外 (a)」
-  段同批删除。核销记录见文末「已核销」。
+  段同批删除。核销记录见「已核销」区。
 - **隐藏管道符用 `display:none` 承载，是「caret 落到无位置处」缺陷族的共同结构根因**（M168 finding，
   worker-interaction-fixes-2，2026-09-18，medium）：`src/preview/livePreview.ts:482-519` 的
   `Decoration.replace({})` 隐藏管道符在 DOM 里无盒子，`coordsAtPos(pos, 1)` 退化为全零 rect、DOM 选区
@@ -2543,7 +2056,7 @@ M279 报告 §5 的两条副产物在列，判定为**都不随本修复收口**
   `vault_current` 在锁内调 `reconcile_vault`（含 `sweep_registry` 写盘）与 `scan_workspace`（14ms）；
   `fs_scan_workspace`（`:394-398`）已是正确形态（`state.root()` 短锁 clone 后 IO 在锁外），对齐即可。
   **注意两件事正交**：收窄锁**不会**把 IO 移出主线程，别把「收窄锁」当成「不阻塞主线程」。tower 处置
-  建议：P2，与「待 Alex 裁决」第 12 条的启动时序分开处理（本项可直接做）。finding
+  建议：P2，与启动恢复移出主线程那次改造（旧编号第 12 条，见「已核销」2026-09-18 条）分开处理（本项可直接做）。finding
   `20260917-worker-rustasync-improve-apply-fs-changes-vaultstate-io-vault-current-scan.md`。
 
 ### 启动恢复让位判定与提交返回值（M171 遗留）
@@ -2645,7 +2158,7 @@ M279 报告 §5 的两条副产物在列，判定为**都不随本修复收口**
   `scripts/acceptance/**` 的 mission 顺带改指 `openspec/changes/archive/2026-09-25-open-image-lightbox/tasks.md`。
   两处都不影响门禁（`docs-check.sh` 不查相对链接、`validate` 不查路径），但 REVIEW.md 第 7 条要求指针可 `ls`。
 - **门禁清单三处过期**（M153 finding，worker-testinfra，2026-09-17，low，**已核销**：2026-09-18 治理批
-  收尾由 tower 直改闭合，核销记录见文末「已核销」节）：M153 给
+  收尾由 tower 直改闭合，核销记录见「已核销」区）：M153 给
   `gate.sh quick` 加了 `docs-check` 与单测层、给 visual 层加了 isolation 断言，三处复刻门禁清单的文档随之
   过期——① `AGENTS.md:32-34` 逐行复刻了 `scripts/gate.sh` 的用法（现缺 quick 的 `docs-check` 与单测层
   `tsc-unit` + `unit-tests`，也缺 visual 层的 `isolation-runs`）；② `tests/visual/README.md` 全篇未提
@@ -3074,7 +2587,7 @@ FAIL 均为可确定性复现的产品缺陷或场景 bug，无一项判为环�
    **代价与边界**：本条只动 `docs/backlog.md`（本 mission scope），若 Alex 同意，改 REVIEW.md 第 12 条的
    证据（补本批现场）与防线（加「最后一次 cargo 门禁后立即删 target 并广播；同一 worktree 同时至多一份
    target」）需要一个能写该文件的动作（随下次碰 REVIEW.md 的 mission 顺带做即可）。
-   长期方案候选仍是本节第 2 条的「worktree 共享 `CARGO_TARGET_DIR`」与「待 Alex 裁决」第 8 条，与本条不冲突。
+   长期方案候选仍是本节第 2 条的「worktree 共享 `CARGO_TARGET_DIR`」与「待 Alex 裁决」第 6 条（旧编号第 8 条），与本条不冲突。
 
 ### 块级横滚容器失去焦点入口（M239 登记，2026-09-26，待裁决）
 
@@ -3111,484 +2624,56 @@ living spec 两处已随本 change 改写口径（`keymap-commands` 的「轨道
 ## 待真机验收
 
 行为判定已下沉为 agent 可执行场景（入口 [scripts/acceptance/](../scripts/acceptance/README.md)，
-设计见 [docs/process/real-machine-acceptance.md](process/real-machine-acceptance.md)）；手感/审美项仍归 Alex。
+设计见 [docs/process/real-machine-acceptance.md](process/real-machine-acceptance.md)）；手感/审美项归 Alex。
 
-分类依据 = **证据目录里真实 PASS 的场景**，不是「场景写了就算覆盖」。最近一次全量实跑：
-**M284（2026-09-28，语言面修复批）——65 场景 / 57 PASS / 8 FAIL**（`node scripts/acceptance/run.mjs`，
-`caffeinate -dimsu` 包住、串行独占 1430），证据 `test-results/acceptance/2026-09-28/`（git 外，
-`summary.md` + 各场景 `steps.md`/`shots/`/`ax/`）；8 条红逐条归因见下面的 M284 总表。**上一次全量：
-M256（2026-09-27）——57 场景 / 49 PASS / 8 FAIL，那是 M282 改判默认语言之前的现场（场景当时跑在 zh
-面），读数不再可复现**：M256 的 8 条红（28/29/31/32/38/43/47/50）与本批的 8 条红（见下）只有 **28、
-47** 两条重合，其余是 M266/M277/M278/M280/M281/M283 各批修完或新增的。M256 的表格保留在下面仅作
-沿革对照。**上一次全量：
-M240 批次（2026-09-26）49 场景 / 47 PASS / 2 FAIL（`32-list-filter`、`43-list-tab-indent`）**；更早 M164 批次（本地 2026-09-18 凌晨，
-证据目录按 UTC 记为 `2026-09-17`）26/26 PASS，其套件改动与运行纪律（就绪门改判形态 A、窗口经
-`--config` 钉主屏、每场景清 `workspaces/` 与 `vault-sessions/`、新增 `seed` 与第二个合成 vault、
-`caffeinate -dimsu` 包住）见本文件「多 vault 收口遗留」一节。
+分类依据 = **证据目录里真实 PASS 的场景**，不是「场景写了就算覆盖」。全量回归的现场按维护规则的
+「一行式索引」留档——报告正文与逐场景读数不再进本文件：
 
-**M296 的真机批已跑完（2026-09-29）**——新增的场景 `67-vault-open-ignore-set` **PASS**，
-多 vault 回归 16 / 17 / 19 / 25 / 48 / 60 **全绿**（`node scripts/acceptance/run.mjs 67 16 17 19 25 48 60`
-→ **7/7 PASS**，证据 `test-results/acceptance/2026-09-29-final/`，git 外）。读数与结论（
-`#[command(async)]` 成立、忽略集收窄在验收 vault 上量不出来、`vault_scan_ignored` 计数）见本文件末尾的
-「M296」节，原始读数落 `test-results/m296/readings.md`。
-
-### M284 全量回归总表（2026-09-28）
-
-前提已 `lsof` 复核：1420 / 1430 起跑前后均无监听、无 `target/debug/lumir` 残留；磁盘 21G 可用；
-套件自带隔离配置与两个合成 vault（`~/.config/lumir` 与用户真实 vault 全程未读写）；`caffeinate -dimsu`
-包住、串行独占 1430。**65 场景 / 57 PASS / 8 FAIL，1685 断言 / 53 条失败断言，总耗时 2496s。**
-
-| 场景 | 结果 | 断言 | 失败 | 耗时 |
-|---|---|---|---|---|
-| `01-mermaid-click` | PASS | 9 | 0 | 13.2s |
-| `02-math-click` | PASS | 8 | 0 | 20.9s |
-| `03-table-ctrl-np` | PASS | 15 | 0 | 28.6s |
-| `05-cell-math` | PASS | 8 | 0 | 16.4s |
-| `06-callout-and-width` | PASS | 10 | 0 | 25.2s |
-| `07-recovery-paths` | PASS | 10 | 0 | 15.4s |
-| `07b-recovery-saveas` | PASS | 12 | 0 | 22.1s |
-| `07c-external-reload` | PASS | 6 | 0 | 14.9s |
-| `08c-crash-recovery` | PASS | 15 | 0 | 35.4s |
-| `08d-crash-discard` | PASS | 8 | 0 | 31.8s |
-| `08e-force-overwrite` | PASS | 12 | 0 | 21.2s |
-| `09-emacs-keys` | PASS | 15 | 0 | 22.6s |
-| `09b-keys-config` | PASS | 6 | 0 | 18.6s |
-| `12-links` | PASS | 53 | 0 | 55.4s |
-| `13-toc` | PASS | 49 | 0 | 47.3s |
-| `14-tabs` | PASS | 51 | 0 | 74.7s |
-| `16-startup-restore` | PASS | 10 | 0 | 20.7s |
-| `17-multi-vault-switch` | PASS | 38 | 0 | 36.4s |
-| `18-vault-session-restore` | PASS | 7 | 0 | 19.2s |
-| `19-vault-switch-guard` | PASS | 35 | 0 | 26.4s |
-| `20-image-fallback` | PASS | 17 | 0 | 13.9s |
-| `21-wrap-default` | PASS | 15 | 0 | 21.4s |
-| `22-wrap-toggle` | PASS | 17 | 0 | 18.3s |
-| `23-image-first-open-width` | PASS | 9 | 0 | 20.7s |
-| `24-table-cell-ctrl-e-seq` | PASS | 11 | 0 | 27.2s |
-| `25-vault-list-close-keeps-reading-position` | PASS | 26 | 0 | 28.9s |
-| `26-svg-scroll-stability` | PASS | 17 | 0 | 33.6s |
-| `27-document-end-marker` | PASS | 19 | 0 | 33.1s |
-| `28-remember-reading-position` | **FAIL** | 16 | 6 | 103.5s |
-| `29-typography-and-zoom` | PASS | 31 | 0 | 87.4s |
-| `30-code-outline` | PASS | 38 | 0 | 53.5s |
-| `31-code-variable-highlight` | PASS | 29 | 0 | 47.5s |
-| `32-list-filter` | PASS | 47 | 0 | 47.5s |
-| `33-image-lightbox` | PASS | 36 | 0 | 34.5s |
-| `34-restyle-theme-skeleton` | PASS | 16 | 0 | 19.5s |
-| `35-restyle-three-themes` | **FAIL** | 16 | 1 | 61.9s |
-| `36-restyle-content` | PASS | 14 | 0 | 21.0s |
-| `37-heading-hierarchy` | PASS | 11 | 0 | 14.8s |
-| `38-content-width-drag` | PASS | 18 | 0 | 30.9s |
-| `39-titlebar-identity` | **FAIL** | 19 | 1 | 49.0s |
-| `40-table-fullscreen-view` | PASS | 30 | 0 | 29.5s |
-| `41-editable-non-md-files` | PASS | 58 | 0 | 51.1s |
-| `42-non-md-edit-guardrails` | PASS | 29 | 0 | 34.5s |
-| `43-list-tab-indent` | PASS | 70 | 0 | 76.8s |
-| `44-theme-live-switch` | PASS | 38 | 0 | 57.2s |
-| `45-tab-cycle-keys` | PASS | 44 | 0 | 48.7s |
-| `46-dotfile-jsonc-highlight` | PASS | 46 | 0 | 50.7s |
-| `47-file-tree-context-menu` | **FAIL** | 101 | 23 | 98.3s |
-| `48-vault-registry-migration` | PASS | 17 | 0 | 18.6s |
-| `49-vault-switch-feedback` | **FAIL** | 22 | 1 | 25.2s |
-| `50-tab-context-menu` | PASS | 46 | 0 | 40.8s |
-| `51-tab-overflow` | PASS | 25 | 0 | 28.2s |
-| `52-dir-rename-expand` | **FAIL** | 32 | 15 | 36.0s |
-| `53-bold-click-selection` | **FAIL** | 23 | 4 | 43.4s |
-| `54-bare-url-cmd-click` | PASS | 38 | 0 | 42.7s |
-| `55-ui-language-switch` | PASS | 29 | 0 | 42.1s |
-| `56-goto-line` | PASS | 39 | 0 | 55.7s |
-| `59-enter-auto-indent` | **FAIL** | 29 | 2 | 116.9s |
-| `60-vault-switch-restore` | PASS | 39 | 0 | 51.7s |
-| `61-block-copy` | PASS | 31 | 0 | 57.9s |
-| `62-code-block-fullscreen` | PASS | 45 | 0 | 60.0s |
-| `render-markdown` | PASS | 14 | 0 | 19.8s |
-| `render-table-degrade` | PASS | 9 | 0 | 13.9s |
-| `search-01-find` | PASS | 22 | 0 | 42.1s |
-| `search-02-binding` | PASS | 10 | 0 | 19.8s |
-
-#### 8 条红逐条归因（每条都复跑过一轮，读数 `test-results/acceptance/2026-09-28-rerun-reds/`）
-
-复跑 **4/8 转绿**、**4 条稳定红**；**无一条由 M284 的语言面改动引入**（本批只动 `scripts/acceptance/**`
-与本文档，`src/**`、`src-tauri/**` 零 diff）。当轮读数的环境因子：跑批期间 Alex 在用机，
-`Chrome`(pid 1103) / `Ghostty`(pid 1206) / `Lark`(pid 5842) 反复抢走前台 ⇒ 依赖「目标窗口前台且未被遮挡」
-的键鼠注入类断言区间性失效（套件自己的 `前台焦点：未取得` 行是现场证据）。
-
-| 场景 | 本轮现象 | 复跑 | 归因 |
-|---|---|---|---|
-| `28` | 视口类断言（「第 1 章两行不在渲染行里」）+ `env:reading-positions/*.json` 不存在 | PASS | **判据本身不稳**：README「已知边界」已记「AXTextArea.value 会截断、`行在不在 AX 里`不是视口判据」（M281 实测），28 用的正是这条形态 ⇒ 随快照截断位置摇摆。**待修**（改判据形态），不是产品缺陷 |
-| `35` | `/AXTabGroup \(打开的文档\)/` 读到 `Open documents` | FAIL | **产品缺陷**（M284 新发现，finding `20260928-worker-fix-zh-scenarios-bug-relabel-zh-axtabgroup-en.md`：`src/shell.ts:89` 的标签段读屏名无 relabel 通道）。**本批的 zh 面把它照出来了**——若按「断言改 en」的修法，这条会被永久掩盖。**已修（M285，2026-09-28）**：`shell.ts` 的标签段读屏名挂进 `onRelabel`；场景 35 先红后绿，见本文件末的「M285」节 |
-| `39` | 标识块上拖拽窗口成立 → `Δ=(0,0)` | PASS | **环境**：CGEvent 拖拽落在最上层那扇窗上（跑批时前台在别的 app）。REVIEW.md 第 16 条的同类症状另见，但那需要 DOM 里存在 `mousedown`+preventDefault 的监听（本批未复核到新增） |
-| `47` | `press_key 失败：error: empty key DSL`（`keys` 里的裸 `-`）+ 级联 23 条 | FAIL | **套件注入通道已知未修**（finding `20260927-worker-impl-remove-autosave-bug-keys-kimicu-press-key-empty-key-dsl-47-52.md`；本文件 M256 节亦有登记）。建议单独派一个套件 mission |
-| `49` | 「装载指示此刻在场」（`AXProgressIndicator`）读不到 | FAIL | **M283 之后的已知窗口问题**：M283 的 finding 已证「同步 command 阻塞期间主线程不空闲、AX 读不到节点；本 change 又把恢复段压到毫秒级」，指示窗口在真机上没有可读部分（本文件「M252 装载指示立论在打开段不成立」同族）。49 的快照采样窗口因此不够；**修法是探针口径**（M283 在场景 60 已按此处置），不是产品缺陷 |
-| `52` | 同 `47` 的 `empty key DSL`（新名 `ren-subx` 含 `-`）+ 级联 15 条 | FAIL | 同 `47` |
-| `53` | 拖拽类动作「目标窗口不在前台」（实测前台 pid=1206 = Ghostty）+ 见证字符未落地 | PASS | **环境**（前台被抢） |
-| `59` | 两条「正观测：Enter 确实落地」sha256 未变 | PASS | **环境**（键盘注入丢键；当轮 59 相关步骤重试到 116.9s）。丢键是间歇的，REVIEW.md 第 11 条要求先按丢键复跑再判产品缺陷——复跑即绿 |
-
-⇒ **本批把语言面假红清干净了**（语言面无一条红），剩下的 4 条稳定红各有归属：1 条产品缺陷（已 file
-finding）、2 条套件注入通道缺陷（既有 finding）、1 条 M283 已定的窗口口径问题。
-
-### M256 全量回归总表（2026-09-27，**M282 之前的现场**：场景当时跑在 zh 面，读数不再可复现）
-
-前提已 `lsof` 复核：1420 / 1430 起跑前后均无监听、无 `target/debug/lumir` 残留；磁盘 35Gi 可用；
-套件自带隔离配置与两个合成 vault（`~/.config/lumir` 与用户真实 vault 全程未读写）。
-
-| 场景 | 结果 | 断言 | 失败 | 耗时 |
-|---|---|---|---|---|
-| `01-mermaid-click` | PASS | 9 | 0 | 22.3s |
-| `02-math-click` | PASS | 8 | 0 | 22.7s |
-| `03-table-ctrl-np` | PASS | 15 | 0 | 28.4s |
-| `05-cell-math` | PASS | 8 | 0 | 15.8s |
-| `06-callout-and-width` | PASS | 10 | 0 | 23.6s |
-| `07-recovery-paths` | PASS | 10 | 0 | 15.0s |
-| `07b-recovery-saveas` | PASS | 12 | 0 | 22.2s |
-| `07c-external-reload` | PASS | 6 | 0 | 14.5s |
-| `08-autosave` | PASS | 6 | 0 | 21.7s |
-| `08b-autosave-pause` | PASS | 13 | 0 | 26.7s |
-| `08c-crash-recovery` | PASS | 11 | 0 | 31.7s |
-| `08d-crash-discard` | PASS | 7 | 0 | 30.9s |
-| `08e-force-overwrite` | PASS | 12 | 0 | 21.0s |
-| `09-emacs-keys` | PASS | 15 | 0 | 22.4s |
-| `09b-keys-config` | PASS | 6 | 0 | 27.6s |
-| `12-links` | PASS | 53 | 0 | 52.4s |
-| `13-toc` | PASS | 49 | 0 | 49.2s |
-| `14-tabs` | PASS | 51 | 0 | 52.6s |
-| `16-startup-restore` | PASS | 10 | 0 | 21.3s |
-| `17-multi-vault-switch` | PASS | 38 | 0 | 37.0s |
-| `18-vault-session-restore` | PASS | 7 | 0 | 18.7s |
-| `19-vault-switch-guard` | PASS | 35 | 0 | 27.6s |
-| `20-image-fallback` | PASS | 17 | 0 | 14.0s |
-| `21-wrap-default` | PASS | 15 | 0 | 22.8s |
-| `22-wrap-toggle` | PASS | 17 | 0 | 26.2s |
-| `23-image-first-open-width` | PASS | 9 | 0 | 20.8s |
-| `24-table-cell-ctrl-e-seq` | PASS | 11 | 0 | 21.7s |
-| `25-vault-list-close-keeps-reading-position` | PASS | 26 | 0 | 29.2s |
-| `26-svg-scroll-stability` | PASS | 17 | 0 | 33.9s |
-| `27-document-end-marker` | PASS | 19 | 0 | 35.3s |
-| `28-remember-reading-position` | **FAIL** | 17 | 1 | 40.6s |
-| `29-typography-and-zoom` | **FAIL** | 29 | 2 | 68.8s |
-| `30-code-outline` | PASS | 38 | 0 | 52.5s |
-| `31-code-variable-highlight` | **FAIL** | 27 | 4 | 38.8s |
-| `32-list-filter` | **FAIL** | 47 | 1 | 47.7s |
-| `33-image-lightbox` | PASS | 36 | 0 | 34.7s |
-| `34-restyle-theme-skeleton` | PASS | 16 | 0 | 28.5s |
-| `35-restyle-three-themes` | PASS | 16 | 0 | 59.6s |
-| `36-restyle-content` | PASS | 14 | 0 | 21.0s |
-| `37-heading-hierarchy` | PASS | 11 | 0 | 14.4s |
-| `38-content-width-drag` | **FAIL** | 17 | 1 | 30.5s |
-| `39-titlebar-identity` | PASS | 19 | 0 | 48.2s |
-| `40-table-fullscreen-view` | PASS | 30 | 0 | 38.1s |
-| `41-editable-non-md-files` | PASS | 58 | 0 | 51.3s |
-| `42-non-md-edit-guardrails` | PASS | 29 | 0 | 33.2s |
-| `43-list-tab-indent` | **FAIL** | 66 | 2 | 84.0s |
-| `44-theme-live-switch` | PASS | 38 | 0 | 52.3s |
-| `45-tab-cycle-keys` | PASS | 44 | 0 | 28.6s |
-| `46-dotfile-jsonc-highlight` | PASS | 46 | 0 | 48.9s |
-| `47-file-tree-context-menu` | **FAIL** | 80 | 45 | 108.2s |
-| `48-vault-registry-migration` | PASS | 17 | 0 | 18.0s |
-| `49-vault-switch-feedback` | PASS | 22 | 0 | 26.6s |
-| `50-tab-context-menu` | **FAIL** | 24 | 12 | 17.2s |
-| `render-markdown` | PASS | 14 | 0 | 18.3s |
-| `render-table-degrade` | PASS | 9 | 0 | 13.3s |
-| `search-01-find` | PASS | 22 | 0 | 26.2s |
-| `search-02-binding` | PASS | 10 | 0 | 27.8s |
-
-**8 条红的一行结论**（详细归因与动作见「待修 findings」的「M256 全量回归现场」）：
-
-- `28` / `38` —— **陈旧断言**：判据是「重启后没有标签（空 vault 引导在场）」，而 M254 移除预览
-  机制后标签一律入盘、重启会恢复，空 vault 引导不再出现。非产品缺陷。
-- `29` —— **陈旧断言**（同上族）：重启后 `do: open` 命中的是已被恢复的同名标签，`openFile` 对
-  同路径短路 ⇒ 「全新装载」前提不成立，渲染行快照是上一轮的。同场景后面先 `⌘W` 再 `open` 的
-  同类断言全 PASS 即为指纹。第二处红（末步逐字节比较）未单独定位。
-- `31` —— **陈旧断言**：断言「搜索状态跨文件保留」；M254 前是预览标签就地替换（同一个
-  `EditorView`），现在新标签 = 新视图 = 空查询。
-- `32` —— **陈旧断言**：断言 AX 含 vault 的绝对路径，而 M217 裁决后列表行不再上屏路径
-  （`src/vault-switcher.ts:828-830`）。第二个 vault 本身注册正确。
-- `43` —— **未定位（need triage）**：编辑器内已缩进、`sleep 2600` 后磁盘仍是旧内容；同一轮里
-  有序 / 引用 / 嵌套三条同类断言都落了盘。命令生效而落盘窗口被挤穿的嫌疑最大，但需加长等待 +
-  读 `document_save` 诊断日志坐实。**不是** M240 登记的那条 Tab 通道红（M249 已改走 ⌘J 并 PASS 过）。
-- `47` / `50` —— **套件通道边界**：`button: right` 取不到窗口截图（M244 / M249 / M251 / M252 /
-  M254 同族），右键类断言整段 FAIL 并级联出下游红；判定退回 chromium 层，**不判产品缺陷**。
-  `47` 另含一条已知边界（右键目标在视口外）与两条 `empty key DSL` 的套件侧未定位异常。
-- 并发污染 / 探针污染：本批**未出现**（串行独占、单实例、起跑前已复核端口与进程）。
-  同日的证据目录覆盖问题见「待修 findings」的「套件每次运行都会重写证据目录的索引文件」条。
-
-**M164 批次的套件改动（历史读数，保留原文要点）**：就绪门改判形态 A 的
-入口读屏名（`AXPopUpButton`，不是 `AXButton`——写死角色会让整套在启动就超时）、窗口经 `--config`
-定位到主屏（否则 macOS 会把窗口放到屏幕外、键盘注入整批不落地）、每场景增清 `workspaces/` 与
-`vault-sessions/`、新增 `seed`（注册表 / 会话预置）与第二个合成 vault。**运行纪律**：无人值守批次用
-`caffeinate -dimsu <cmd>` 包住（见「多 vault 收口遗留」里的实测现场）；本批另加一条——
-`cargo build --features custom-protocol` 之前必须先 `pnpm build`（见「M256 全量回归现场」末条）。
-
-**M159 单场景实跑（2026-09-17，非全量）**：`16-startup-restore` **PASS / 10 断言 / 0 失败 / 29.4s**
-（`node scripts/acceptance/run.mjs 16`，证据 `test-results/acceptance/2026-09-17/16-startup-restore/`，
-含两张截图与 AX dump）。套件现 **23** 个场景（本条为该批新增）；全量实跑留待批次收尾，不在此宣称。
+- **M284 全量（2026-09-28，语言面修复批）**：65 场景 / 57 PASS / 8 FAIL、1685 断言 / 53 条失败断言、总耗时 2496s → `test-results/acceptance/2026-09-28/summary.md`。8 条红复跑 4/8 转绿、4 条稳定红（1 条产品缺陷已 file finding、2 条套件注入通道缺陷、1 条 M283 已定的窗口口径），**无一条由 M284 引入**（本批 `src/**`、`src-tauri/**` 零 diff）→ 复跑读数 `test-results/acceptance/2026-09-28-rerun-reds/`。
+- **M256 全量（2026-09-27，M282 之前的现场）**：57 场景 / 49 PASS / 8 FAIL——**场景当时跑在 zh 面，读数不再可复现**，本行仅作沿革对照（与 M284 只有 28、47 两条红重合，其余由 M266/M277/M278/M280/M281/M283 各批修完或新增）→ 归因见「待修 findings」的「M256 全量回归现场」条。
+- **M240（2026-09-26）**：49 场景 / 47 PASS / 2 FAIL（`32-list-filter`、`43-list-tab-indent`）。
+- **M164（2026-09-18，证据目录按 UTC 记为 `2026-09-17`）**：26/26 PASS。
+- **M296 的真机批（2026-09-29）**：场景 67 + 多 vault 回归 16 / 17 / 19 / 25 / 48 / 60 → **7/7 PASS**（`test-results/acceptance/2026-09-29-final/`），读数与结论见 `test-results/m296/readings.md`。
+- **沿革：真机运行的纪律（M164 起，写场景前必读）**：就绪门的入口读屏名是 `AXPopUpButton`（写死 `AXButton` 会让整套在启动就超时）、窗口经 `--config` 钉主屏（否则 macOS 会把窗口放到屏幕外、键盘注入整批不落地）、每场景清 `workspaces/` 与 `vault-sessions/`、`seed` 预置注册表与会话并挂第二个合成 vault、无人值守用 `caffeinate -dimsu` 包住、`cargo build --features custom-protocol` 之前必须先 `pnpm build`。
 
 **已机验（行为判定落定，有 PASS 证据）**
 
-1. **Mermaid 点击进源码编辑** —— `01-mermaid-click`：渲染态（成功块为 `help=围栏原文` 的 widget、
-   失败块给「图表解析失败」+ 原文）→ 点击 widget → 源码显露、widget 让位。渲染中(pending)态窗口极短，
-   只留截图。
-7. **M124 三条恢复路径全部覆盖** ——
-   `07-recovery-paths`（冲突双动作：外部改写后保存给「重新载入 / 强制覆盖」、内存改动未丢、磁盘未被静默覆盖）；
-   `07b-recovery-saveas`（**真删除**触发 `fs_not_found`，不是清空——清空走冲突分支：⌘S 给「保存失败：文件
-   已被外部删除或移动」+「另存为新文件」，点击后 `plain-恢复.md` 真实落盘且内容 = 内存缓冲）；
-   `07c-external-reload`（干净缓冲 + 外部改写 → 编辑器文本自动换成磁盘内容，不打扰用户）。
-8. **M127 崩溃备份链路三条子行为全部覆盖**（本项 2026-09-27 由 M278 收窄：`08-autosave` 与
-   `08b-autosave-pause` 断言的是**已移除**的自动保存——2s 落盘与冲突期待决期间的暂停——随 change
-   `remove-autosave` 一并删除；「编辑内容不丢」的覆盖由 43/41/42/46 的显式保存断言承接） ——
-   ~~`08-autosave`（2s 落盘：磁盘 sha256 变化且内容含输入）；~~
-   ~~`08b-autosave-pause`（**冲突待决期间自动保存暂停**：记录磁盘 sha256，跨 2s 去抖再等 7s，磁盘逐字节不变、
-   仍是外部版本、冲突提示未消解；前置断言「探测串落在文档末尾 + AX 焦点在编辑器」M140 重做后稳定 PASS）；~~
-   `08c-crash-recovery`（app 自己在隔离目录写的崩溃备份 →  重启后提示「恢复内容 / 丢弃备份」，
-   点「恢复内容」后崩溃前内容回到编辑器）；
-   `08d-crash-discard`（同现场点「丢弃备份」：给丢弃反馈且内容**不**进编辑器）；
-   `08e-force-overwrite`（强制覆盖的不可撤销二次确认「覆盖保存」；覆盖后磁盘确是内存版本；
-   再次冲突仍给同一组动作且磁盘未被静默覆盖）。
-9. **Emacs 键位 / ⌘Z / ⌘/ 面板 / `config.json` keys 表** —— `09-emacs-keys`、`09b-keys-config`：
-   **⌘Z 未被 macOS 视图层级吃掉**（插入 → ⌘Z → 内容消失，menu swap 真机成立，回退方案不必启用）；
-   ⌘/ 面板打开/关闭、打开期间文档逐字节不变（作用域键与可打印字符都不穿透）；
-   keys 表解绑 ⌘S / 重绑 ⌃S 生效。
-10. **Markdown 渲染三件套**（M138）—— `render-markdown`：`---` 渲染为横线且 frontmatter 定界符
-    不误渲（AX 面读到读屏名「分隔线」、`editor.not "---"`）；围栏代码块源码逐字保留、未收录语言
-    保持纯文本；引用内有序/无序/嵌套列表按常规列表渲染（`- ` 与 `>` 都不再显露）。
-    **配色与几何不进真机**：横线宽度=栏宽且本体 0 高、标记走等宽字体且同级正文列对齐、token 色值
-    全部取自既有 editorial token——由视觉门禁 `tests/visual/scenes/render-{hr,codeblock,quote-list}.spec.ts`
-    的计算色/几何断言守（chromium），真机只验文本层与 AX 结构。
-11. **表格降级文案归因**（M138）—— `render-table-degrade`：表头声明 3 列、第 10 行有 4 格（**多列**，M142 起降级只由多列/槽位不可映射触发）时，
-    AX 面读到「第 10 行单元格数与表头不符（应为 3 列）」与「保留原始 Markdown」，同时整块保持
-    源码态（不丢列、不截断）；同 fixture 的短行表（末行少一格）自 M142 起按矩形渲染，AX 面读到
-    `Markdown 表格`、该行源码不再显露。
-12. **文件内搜索 v0**（M139）—— `search-01-find`（⌘F panel 出现、匹配计数、上一个/下一个导航、
-    Esc 还原焦点）、`search-02-binding`（`config.json` keys 表重绑搜索命令生效）。
-13. **链接渲染与激活（全形态）**（M144 起，M145 补齐）—— `12-links`（53 断言）：外链 / 相对
-    路径 md / vault 内非 md 资产 / 纯锚点 / 白名单外 scheme 五类的装饰与激活分流；外链与资产的
-    目标源码隐藏、光标触及整条显露、文档逐字节不变；⌘⏎ 开外链（日志 `link_open` 落盘且不含
-    URL 原文）/ wikilink 跳转与未创建不建文件 / 相对路径 md 跳进目标笔记 / 解析不到只 toast /
-    锚点只提示 / 不可用形态不装饰也不激活；`link_open` 的 `category`（external / internal-md /
-    asset / anchor / blocked-scheme）逐类断言。
-    **M272（2026-09-27）扩面**：判定面从 `Link` 节点扩到 `URL` 节点——**裸 URL 与链接定义行的
-    URL 纳入判定面**（含角括号自动链接），三者的装饰、⌘⏎ 激活与「光标触及撤下装饰」由场景
-    `54-bare-url-cmd-click` 真机验收；引用点 `[text][ref]` / `[ref]` 与无 scheme 的字面
-    （`www.` / 裸邮箱 / `xmpp:`）仍保持原文（半覆盖，如实登记在 change 的边界节）。
+证据目录统一在 `test-results/acceptance/<批次>/<场景>/`（git 外）；每条只留主题 + 场景 id + 关键边界，
+叙述与读数明细看场景文件（`scripts/acceptance/scenarios/*.md` 的「已知边界」节）与 git 历史。
 
-14. **TOC 大纲 popover**（M148）—— `13-toc`（17 步 / 32 断言）：masthead 当前位置指示段、
-    ⌘⇧O 浮层开合、↑↓ 导航不穿透到编辑器、Enter 跳转后光标恰在标题行尾、空 heading 文档给 toast。
-    配色与几何由视觉门禁元素级基线 `toc-popover-chromium-darwin.png` 守。
-15. **多标签**（M149）—— `14-tabs`（**51 断言** / 21 步；M238 起由 43 增至 51）：单击预览替换 /
-    首次输入或双击固定 / ⌘1–9 直达 / ⌃⇥ 循环 / ⌘W 关当前标签（未命名 dirty 才确认）/
-    后台标签外部删除被浮条点名。
-    **语义变化（Alex 使用习惯）**：⌘W 从关窗变为关当前标签（菜单「关闭」项保留但无加速键，
-    退出走 ⌘Q / 红灯）；有路径的标签间切换不再有 dirty 守卫；切换 vault 升级为任一标签 dirty 即拦。
-    **M238（2026-09-26）新增两段**：① 标签**整区可点**——凑满三个标签 + 各点边缘 / 空白区即切换、
-    `×` 仍独立（点击可表达的判据在真机，几何与 hit-area 的严格断言在 chromium
-    `tests/visual/scenes/m149-tabs.spec.ts`）；② 标签栏**溢出时活跃标签完整可见**——三标签 + 窗口
-    收窄到 520（标签栏可视区随之收窄）+ `⌘1` 再 `⌘3` 直达最后一个，真机只留截图证据（本套件读不到
-    标签 bbox，矩形判据在 chromium 同一条用例里，含「手动滚走即判红」的反向配对）。
-    证据 `test-results/acceptance/2026-09-26/14-tabs/`（51 PASS / 55.5s）。
-16. **启动自动恢复 last_vault**（M159，2026-09-17）—— `16-startup-restore`（10 断言 / 29.4s）：
-    默认 config（`last_vault` = 验收 vault）启动后自动进入 vault（树里出现文件）且**不残留**「恢复中」
-    提示；`last_vault` 指向不存在目录后重启 → 未打开空态 + 「上次打开的 vault 已不可用：{路径}，
-    请重新选择目录」+ 「打开 vault」入口（AXButton）在位、树里没有装载任何文件。
-    **边界**：恢复中态本身通常不可见（典型 vault 远比前端挂载快），所以这里断言的是「不残留」而非「看见」；
-    入口断言带 `AXButton` role 前缀——裸子串「打开 vault」在该 AX dump 里命中 4 行（masthead 的
-    「未打开 vault」、编辑器提示也都含这四个字），带 role 后只命中真正的按钮行（实测 4 → 1）。
-    **不宣称性能改进**：恢复耗时不再占主线程，但 `LUMIR_READY` 的出现时刻不变（本 change 不动该行位置）；
-    「树晚出现」的观感归 Alex（截图在证据目录）。
-
-17. **多 vault 列表与切换**（M164，2026-09-18）—— `17-multi-vault-switch`（38 断言 / 35.0s）：
-    树头部入口（形态 A，D96 读屏名）打开列表浮层 → 浮层里两个 vault（当前项带「当前」标 +
-    「2 个标签 · 现在打开」、没有历史的行给 D101 的串、底部 D104 的新增入口）→ ⌘O 开 / Esc 关的键位路径 →
-    点列表行切到另一个 vault（整窗上下文替换：入口、树、正文、空 vault 引导都换）→ 切走前把当前 vault 的
-    会话按**稳定 id** 落盘（`env:vault-sessions/acc-a.json` 的存在性 + `tabs` 有序 + `active`，三条 `file`
-    断言直读盘，不是「界面看起来对」）→ 切回后按会话恢复两个固定标签且激活项正确（`BPIN` 只可能来自被存的
-    激活标签；`editor.not "标签场景 A"` 是「激活项退化成了第一个」的反证）。两个固定标签经「单击打开 →
-    键入（首次输入即固定）」这条真实路径得到——**双击固定在该套件里不可表达**：索引点击走的是 AXPress ×2
-    （不是真 dblclick），`target.count` 也没有 x/y 变体，该路径由视觉通道覆盖。
-18. **启动恢复 vault 并一并恢复它的标签列表**（M164，2026-09-18）—— `18-vault-session-restore`
-    （7 断言 / 18.1s）：`seed.sessions` 预置 acc-a 的两个固定标签与会话里的激活项 → 启动后 vault 按
-    `last_vault` 自动恢复、两个标签按会话恢复（`关闭 ` ×2）、激活项是 tabs-b、不残留空 vault 引导。
-    与 16 的分工：16 验「vault 恢复本身」（含失效路径），本条验「装载后紧接着的标签恢复」；会话**写入**侧
-    由 17 的 `file` 断言覆盖，本条只验读回与恢复。
-19. **切换 vault 的 dirty 前置门三条出口**（M164，2026-09-18）—— `19-vault-switch-guard`
-    （35 断言 / 24.2s）：用**外部改写**把 dirty 变成持久状态（M278 之后这一步其实已无必要——
-    写盘只由用户的显式动作触发，dirty 天然持久、不被任何定时器清掉；改述见场景 19 的说明段）
-    → 点另一行被拦下（D109 点名**当前** vault + 脏标签数，三出口齐全）→ 取消（留在 A、内容不丢、浮条撤下）
-    → 同一条文案的第二次请求再次拦下（浮条按文案去重不得复用旧 proceed，M163 r1 P2-1 那条）→
-    保存并切换（**保存未闭环 → 不切走** + 沿用既有的「重载 / 保留我的版本」出口，任务 4.2 的原文）→
-    放弃修改并切换（切到 B、被放弃的内存改动不落盘、磁盘仍是外部那一版）。
-    **未覆盖（套件表达力缺口，已记 `scripts/acceptance/README.md`「已知边界」）**：保存**能**闭环时
-    「保存成功 → 继续切换」那条顺路（M278 之前它要求「文档变更后 2s 内发出切换请求」，因为自动保存的
-    防抖 2s 会把 dirty 清掉，而键盘注入每键约 250ms 抢不到那个窗口；自动保存移除后这个窗口约束**不再
-    存在**，但**场景 19 仍未覆盖该顺路**）。该路径由 chromium
-    视觉通道 `tests/visual/scenes/mv-vault-switch-guard.spec.ts`（4 用例，含 `document_save` 写动作级
-    判据）覆盖——**不要把 19 的 PASS 读成「三条出口的每条顺路都在真机验过」**。
-20. **表格 cell 内 ⌃E→⌃F→⌃E 不再跳回前一 cell**（M185，2026-09-20/21）—— `24-table-cell-ctrl-e-seq`：
-    cell 内 ⌃E 到内容尾 → ⌃F 越过闭合管道符落进下一 cell → 再按 ⌃E 应停在**当前** cell 内容尾
-    （修复前会跳回前一 cell 尾部）。判据形态：序列后键入 `x`，断言它落在正确的 cell
-    （AX 逐 cell 落点不可回读，用插入字符的归属反推光标位置）。证据
-    `test-results/acceptance/2026-09-20/24-table-cell-ctrl-e-seq/`；2026-09-21 在 master `b82834e`
-    （含 M189 完读标记）复跑仍 PASS（24.5s）。
-21. **vault 列表 ESC 收起保持阅读位置**（M186，2026-09-20/21）—— `25-vault-list-close-keeps-reading-position`
-    （真机 PASS 三次 / 22–29s）：⌃V 滚到长文档尾部 → 打开 vault 浮层 → Esc 收起 → 断言渲染行仍在尾部。
-    **如实标注：该缺陷在 chromium 与真机均未复现**（修前跑同场景也 PASS），修复是结构性的
-    （收起 = 取滚动快照 → 聚焦 → 写回，走 `scrollSnapshot()` + dispatch）；场景末尾带 ⌘/ 键位面板与
-    ⌘F 搜索面板两条对照步骤（同样修前修后都 PASS）。唯一未覆盖现场：触控板滚动 + 编辑器从未聚焦
-    （套件造不出）。证据 `test-results/acceptance/2026-09-20/25-vault-list-close-keeps-reading-position/`；
-    2026-09-21 在 master `b82834e`（含 M189 完读标记）复跑仍 PASS（27.4s）。
-22. **svg 倒序滚动终态稳定**（M187，场景修复 M190，2026-09-21）—— `26-svg-scroll-stability`
-    （17 断言 / 真机 PASS 两次，merge `e06f295`）：正向翻屏过大图（渲染、几何进会话记忆）→ 到底
-    （widget 销毁、节点缺席）→ 倒序三屏回到大图（重建在场、不在加载中、图片行仍被装饰）→ 停手
-    一拍终态稳定。同一匹配器在 起点(不在)/三屏(在)/到底(不在)/倒序(在) 四态断言，负向不空转。
-    **这是该场景的出生首个真机 PASS**（M187 时未起真机只过 `--check`）；首跑 FAIL 两条均为场景
-    设计误差（图片在初始渲染视口内、「AX 含 svg 滚动夹具」只在冷渲染 AXGroup 形状成立），M189
-    与 M187 产品代码均无缺陷（M190 三分支判别，`test-results/m190/M190-root-cause.md`）。
-    **两条通道语义坐实**（后来者写场景的硬知识，已写进场景说明）：① `AXTextArea.value` = CM
-    **当前渲染区间**（可见区 ±1000px）的 DOM 文本，不是整篇——且渲染区间 == 装饰区间，「装饰前
-    源码可见」在本通道结构性不可达；② 带 `<text>` 的 svg 在 AX 里的形状（AXImage 叶子 vs
-    AXGroup 含子文本）由 WebKit 曝光时机决定、夹具稳不住——终态可见性只能判「节点在场 + 几何归
-    chromium 层 + 截图」。场景 25 说明与 M148 finding 条目里「value 是整篇文本」的错误口径已随
-    本批订正。判别性验证（瞬态）仍在 chromium 层 `tests/visual/scenes/m187-image-scroll-stability.spec.ts`。
-    证据 `test-results/m190/26-pass-2026-09-21/`、`test-results/m190/batch-2026-09-21/`（24/25/26/27
-    同批 4/4 PASS）。
-23. **文档末尾完读标记**（M189，2026-09-21）—— `27-document-end-marker`（**14 断言** / 30.2s，
-    master `b82834e` 真机 PASS；断言数订正于 M208 归档节点 2，ground truth =
-    `test-results/acceptance/2026-09-21/results.json`）：长文档（超一屏）末尾出现「到底了」节点、短文档（装得下）不出现
-    （同一匹配器，非恒真）、文档文本纯度与磁盘逐字节不变。**覆盖边界（场景说明已写）**：这条 AX
-    通道不给纯文本节点 bbox，「可见性」不在真机通道判——真机只判节点在场/缺席 + 纯度，可见性由
-    chromium 几何断言（`tests/visual/scenes/end-marker.spec.ts`）+ 截图承担。反向验证（判据改成
-    恒不显示 → **2/14** 红）留档 `test-results/m189/acceptance-27-reverse-fail/`。证据
-    `test-results/acceptance/2026-09-21/27-document-end-marker/`。归档为
-    `openspec/changes/archive/2026-09-25-document-end-marker/`（2026-09-25 节点 2）。
-    **M238（2026-09-26）三处变化**：① 可见文案由「到底了」改为「**— End —**」（Alex 裁决，
-    场景断言与说明同步改；deck D114 两列同形）；② 挂载改为推迟到 CM 测量周期之外（一帧落地，
-    双帧实测会把阅读位置恢复推离 13px，见 `tests/visual/scenes/reading-position-probe.spec.ts`
-    的 §7-3）；③ 正文行的尺寸口径与标记在场解耦（`minmax(max-content, 1fr)` + 行尺寸口径不再由
-    scroller class 键控），位置不变量的判据落在 chromium 层新增的两条用例（跨判据两方向翻转 +
-    「行尺寸口径不得由 class 键控」回归探针，修前实测红：`|markerTop−contentBottom| = 1369.7`）。
-    复跑读数 `test-results/acceptance/2026-09-26/27-document-end-marker/`（14 断言 / 27.7s PASS）。
-    **M251（2026-09-27）两处变化**：① 可见文案**去掉破折号**改为「**END**」（Alex 裁决；deck D114
-    两列同形照旧），本场景的匹配器（`AXStaticText = "END"`）与说明同步改；② 修掉「**非 md 文件里
-    标记漂在正文右侧空白区**」（Alex 真机报告：`.gitignore` / `NOTICE` / `lefthook.yml` 等）——
-    根因是**模式切换的历史**：md → code 的 `EditorView.setState` 里插件确实被 `destroy`、元素当场离场，
-    但**销毁前排进 CM 测量队列的请求在销毁后照常执行**（CM 的 `requestMeasure` 没有取消口），
-    那一趟走回插件的 `write` 排下新的一帧，帧回调把元素挂回 `.cm-scroller`；此时 state 已不含该插件，
-    元素成了孤儿——而 code 模式的 `.cm-scroller` 同样是三列 grid（行 1 前两列被 gutter 与正文占住），
-    孤儿没有 md 那套定位声明，自动落位到第 3 列，于是显示在正文右侧的空白列。修法是**生命周期守卫**
-    （`src/preview/endMarker.ts` 的 `destroyed` 标志 + `schedule`/`apply` 守卫），不变量是
-    「元素在场 ⇔ 当前 state 装配了该插件且判据成立」；**不变量级的矩阵属性测试**在 chromium 层
-    （`end-marker.spec.ts` 的「M251 属性」用例扫 源模式 × 目标模式 × 打开方式，修前实测红：
-    `dblclick end-marker-long.md → end-marker-code-long.txt` 处 `Expected 0 / Received 1`）。
-    证据与前后图见 `test-results/m251/`；**真机复跑读数：19 断言 / 0 FAIL / 32.2s**（本场景由 14 断言
-    增至 19，证据 `test-results/acceptance/2026-09-27/27-document-end-marker/`，新增那一步的截图
-    `shots/03-非_md_文件_标记应已离场_.jpeg` 可直接肉眼复核：code 模式 + 正文列干净、无游离标记）。
-    首跑在新增那一步 FAIL 的现场与成因（`open` 的目标文件名排序靠后 → 树里那一行不在 AX 可达范围内）
-    登记在场景的「已知边界」，原始日志 `test-results/m251/acceptance-27.log`。
-24. **restyle 主题通道与骨架落位**（M213，2026-09-25）—— `34-restyle-theme-skeleton`：
-    `ui.theme: "eink"` 经**配置通道**（front-matter 的 `config`，与 `font_size` / `[keys]` 同形）
-    起一个实例 → 断言 `env:config.json` 里确实是 `eink`、应用起得来、骨架与信息落位三点各自在场
-    （侧栏头 vault 入口 / modeline 文件路径 / modeline 右段「Markdown · N 行 · UTF-8」）、
-    **旧 masthead 的独有 AX 指纹**（vault 名与路径合并成的那一条 `AXStaticText`）不出现、
-    整轮前后验收 vault 文件 sha256 与 mtime 不变。**覆盖边界（场景说明已详述）**：本套件无计算属性
-    通道，eink 的色值/对比只能给截图（手眼项）；主题接线由 chromium 场景
-    `tests/visual/scenes/restyle-theme.spec.ts` 守。见「待修 findings」的「真机套件没有计算属性通道」条。
-25. **三主题真机呈现 + overlay 标题栏窗口级读数**（M213，2026-09-25）—— `35-restyle-three-themes`：
-    `light → dark → eink` 各走一次 `configWrite`（默认重启）+ 截图，三步各自断言配置里就是该主题、
-    上一步的主题已被覆盖（「读到 dark」≠「读到任意一份 config」）；末步落一张带 `AXTabGroup` /
-    文件树节点的读数截图，供标题栏与 traffic 灯位核对。**标题栏的三项窗口级证据**（traffic 灯原生绘制、
-    标题文字不显示、栏区可拖拽）不在断言里——真机截图 + 拖拽前后的窗口 bounds 读数落
-    `test-results/m213/titlebar/`，判定归 Alex（手感/审美不下沉）。
-26. **主题运行期切换**（M237，2026-09-26，change `live-theme-switch`）—— `44-theme-live-switch`
-    （**34 断言 / 55.5s**，证据 `test-results/acceptance/2026-09-26/44-theme-live-switch/`：
-    `steps.md` + 8 张截图 + 8 份 AX dump）：⌘⇧T 连按三次走完 `light → dark → eink → light` 的循环、
-    再点 modeline 主题钮推进一档，**每档**断言当时主题（读数是 modeline 主题钮的 AX 文本
-    `AXButton (主题：{主题名}（点击切换）)`，实测 dump 见 `ax/08-重启-首帧.txt:81`）与
-    `env:config.json` 的 `[ui] theme` 已写回、上一档已被覆盖；含 mermaid 块的文档切换后断言块
-    重渲完成（源码仍不在编辑器文本里、不残留 pending 占位、不降级）；末步重启实例断言首帧即最后
-    切换的那一档（持久性闭环）。**反向验证**（判据换成必须 FAIL 的输入实测 3/3 红：主题没切 /
-    mermaid 源码可见 / 配置未写回）：`test-results/m237/reverse-validation-acceptance.log`。
-    **覆盖边界（场景说明已详述）**：本套件无计算属性通道，色值 / eink 九条降级 / mermaid SVG 内联色
-    这三类**视觉取值**真机判不了——它们由 chromium 场景 `tests/visual/scenes/theme-live-switch.spec.ts`
-    （8 条，含 4 条反向验证）守；指示钮的「是哪一档」与「看起来对不对」是两件事，本场景只判前者。
-27. **文件树条目右键菜单的 M251 增量：命中面与作用行高亮**（2026-09-27，M251，change
-    `file-tree-context-menu`）—— `47-file-tree-context-menu` 新增一步「右键点在行的空白区（名字右侧、
-    行盒右缘之内）也作用于该行」。三件事逐个登记：
-    ① **右键目标行 = 菜单作用行**：命中判定从每行元素提升到**树容器**（`src/tree.ts` 的 `rowLiAt` +
-    纯函数 `rowBandHit`）：行元素内任意横向位置、以及**行元素右缘到面板右缘之间那条带**
-    （`.filetree` 的右内边距，实测 ~9px）都作用于该行；树头部 / 面板空白 / 编辑中的行照旧不参与。
-    真机侧判「名字右侧的空白区」（`dx` 比例落点），**右内边距那条带只在 chromium 层判**（真机坐标
-    通道只能表达节点 bbox 内的比例，越界那条带无法按比例表达；判据在
-    `tests/visual/scenes/tree-menu.spec.ts` 的「M251：右键落在行右侧的空白带也作用于该行」，
-    按容器 bbox 实测）。修前实测：同一落点 `menu=false`（旧监听在行元素上）。
-    ② **作用行高亮**（`is-menu-target`，只在菜单开着时在场）：**真机侧只能给截图**（套件无计算属性
-    通道，与第 26 项的边界同因），取值判据在 chromium 层两条用例（在场/离场 + 同指针位置对照 +
-    eink 黑底反白）。形态是 tower 裁决的 A 形态（不改树的选中语义、不动 tab）。
-    ③ **两张菜单基线出现 23px 真实差异（未重建，待裁决）**：新高亮让菜单左上角圆角处透出的底色变化，
-    零容差读数见 `test-results/m251/baseline-review/tree-menu-menu-target/`（含前后图与差异图）；
-    新 UI 的观感是 Alex 的人肉裁决点，因此没有跟着重建。
-    **本批真机执行情况（如实登记，不读成「真机已验」）**：场景 47 在本机**卡在第一条右键步**——
-    `button: right` 的坐标路径要求一张窗口截图，KimiCU 本机取不到（`取不到窗口截图，无法用 right 键在
-    坐标上点击`），其后依赖菜单节点的步骤级联失败（原始日志 `test-results/m251/acceptance-47.log`；
-    与 M244 / M249 的同一现场同因，是通道限制不是产品缺陷）。所以 ①② 的**真机判据本批未取得**，
-    判定全部由 chromium 层承担（两条 M251 用例，含「删掉容器级命中即红」的反向验证）。
-93. **思考块三态（折叠默认 / 展开见原文 / 时长读数在场）**（2026-10-07，M364，change
-    `add-harness-thinking-display-and-effort`）—— `93-harness-thinking-blocks`（真机 PASS / 22.5s）：
-    mock fixture 产出 `reasoning_chunks` ⇒ agent 消息内渲染可折叠思考块。**折叠默认**：折叠行
-    「思考过程 · N 秒」（D388）在场、思考原文不进 AX（`body[hidden]`）；**展开见原文**：点折叠行
-    ⇒ 同一块的两片原文都上屏、折叠行仍在；**再折叠**：原文重新不可见。折叠判「原文不显」而非
-    `aria-expanded`（WKWebView 的 AX 文本不暴露展开态，套件 README「已知边界」已登记）；时长读数
-    在 mock 下恒为 0 秒（分片连发无间隔），本场景只断言读数在场、不断言非零（计时取整由前端单测
-    `thinkingDurationSec` 守）。
-94. **无 reasoning ⇒ 零思考块（反向验证）**（2026-10-07，M364，change
-    `add-harness-thinking-display-and-effort`）—— `94-harness-thinking-absent`（真机 PASS / 23.4s）：
-    mock 响应不含 `reasoning` / `reasoning_chunks` ⇒ `思考过程 ·` 折叠行**计数为 0**（design §3
-    「零噪声」），配一条「回答正文在场」的正观测——没有它，「零块」会在「消息根本没渲染」的空输入
-    上恒真（设计 §6.4 明写的反恒真空转）。
-95. **思考程度 chip 会话态（默认 High / 浮层三档 / 选 Max / 新会话回 High）**（2026-10-07，M364，change
-    `add-harness-thinking-display-and-effort`）—— `95-harness-thinking-effort`（真机 PASS / 18.7s）：
-    默认 High → 点 chip 浮层列 Low/High/Max 三裸档 → 选 Max 读数翻 Max → 点「＋新会话」chip 回落默认
-    High。**首跑时末步红**：新建会话后 chip 停在旧档、而 core 会话已丢弃（下一轮按默认 High 构造请求），
-    违反该 change spec 的 `Scenario: 新会话重置默认`；缺陷在 `src/harness-panel.ts`（`startNewSession` →
-    `resetView` 不重取 `harness_state`、不 `applyThinkingChip`），finding
-    `20261007-worker-tha1-bug-chip-core-high-spec`。**M366（`9aa25e1`）修复后本场景真机转绿**——上面
-    读数即修复后现场（AX 四帧：High → High（浮层开）→ Max → High（新会话后））。
-    **覆盖边界**：「档位 → 请求参数」那一段不在真机断言（套件无可读 `MockClient::received_efforts`
-    的通道，tower 裁决不开 JSONL 新通道），由 core 集成测试 `session_thinking_effort_reaches_request`
-    覆盖（场景「已知边界」已登记）。
-96. **列表自动模式三态（「1. + 空格」进入 / Enter 续行 / 空项退出）+ IME 组合期不重复**
-    （2026-10-12，M461，change `editor-ordered-list-auto-mode-on-marker`）——
-    `153-ordered-list-auto-mode`（**真机留 dogfood 批次跑**）。Alex dogfood 原话立案：
-    「当我输入『1. 』（注意：有空格）……时，没有自动进入列表编辑模式，这不符合预期。
-    但还有一个问题是：如果此时我用中文输入法输入一个字符……就会多出现一个『1. 』。」
-    根因①：空列表项按 CommonMark 不能打断段落，`para\n1. ` 的行是 lazy continuation，
-    树驱动渲染与续行都不认——按文本模式特判修（`bareListMarkerLine` 纯判定 + Enter
-    两态 + 光标驻留渲染，不动解析器配置）；根因②：全仓无自写 marker 代码、CM 的
-    beforeinput 处理器不拦 `insertOrderedList` 族，唯一候选插入者 = WebKit 原生
-    smart-list——DOM 入口拒收修复。**已知边界**（如实登记）：真机组合态无法用合成
-    键盘复现（合成事件不进 TSM，证据 `test-results/m461-probe/readings.md`），
-    beforeinput 形态被拦已由 chromium 派发断言钉住，**裸 DOM 变更形态不兜、留
-    dogfood**；若复现另立项。
+1. **Mermaid 点击进源码编辑** → `01-mermaid-click`：渲染态点击 → 源码显露、widget 让位；渲染中（pending）态窗口极短，只留截图。
+7. **M124 三条恢复路径全部覆盖** → `07-recovery-paths`（冲突双动作 + 内存改动未丢 + 磁盘未被静默覆盖）、`07b-recovery-saveas`（真删除触发 `fs_not_found` → 另存为新文件真实落盘）、`07c-external-reload`（干净缓冲 + 外部改写 → 编辑器文本自动换成磁盘内容）。
+8. **M127 崩溃备份链路三条子行为** → `08c-crash-recovery`、`08d-crash-discard`、`08e-force-overwrite`；`08-autosave` / `08b-autosave-pause` 断言的是**已移除**的自动保存（M278 随 change `remove-autosave` 删除），「编辑内容不丢」由 41 / 42 / 43 / 46 的显式保存断言承接。
+9. **Emacs 键位 / ⌘Z / ⌘/ 面板 / `config.json` keys 表** → `09-emacs-keys`、`09b-keys-config`（⌘Z 未被 macOS 视图层级吃掉、⌘/ 面板打开期间文档逐字节不变、keys 表解绑 ⌘S / 重绑 ⌃S 生效）。
+10. **Markdown 渲染三件套**（M138）→ `render-markdown`；配色与几何不进真机，由视觉门禁守。
+11. **表格降级文案归因**（M138）→ `render-table-degrade`（M142 起降级只由多列 / 槽位不可映射触发；短行表按矩形渲染）。
+12. **文件内搜索 v0**（M139）→ `search-01-find`、`search-02-binding`。
+13. **链接渲染与激活（全形态）**（M144 起、M145 补齐；M272 扩面到裸 URL）→ `12-links`（53 断言）、`54-bare-url-cmd-click`；引用式 `[text][ref]` 与无 scheme 字面仍保持原文（半覆盖，如实登记在 change 边界节）。
+14. **TOC 大纲 popover**（M148）→ `13-toc`；配色与几何由元素级基线守。
+15. **多标签**（M149；M238 扩两段）→ `14-tabs`（51 断言 / 21 步）；⌘W 从关窗改为关当前标签、切换 vault 升级为任一标签 dirty 即拦等语义变化见场景说明。
+16. **启动自动恢复 last_vault**（M159）→ `16-startup-restore`（10 断言）；恢复中态本身通常不可见，故断言的是「不残留」而非「看见」；不宣称性能改进（`LUMIR_READY` 的出现时刻不变）。
+17. **多 vault 列表与切换**（M164）→ `17-multi-vault-switch`（38 断言，含直读盘的三条 `file` 断言）；「双击固定标签」在该套件不可表达（由视觉通道覆盖）。
+18. **启动恢复 vault 并一并恢复它的标签列表**（M164）→ `18-vault-session-restore`（7 断言）；与 16 的分工是「vault 恢复本身」vs「装载后紧接着的标签恢复」。
+19. **切换 vault 的 dirty 前置门三条出口**（M164）→ `19-vault-switch-guard`（35 断言）；**未覆盖**「保存能闭环 → 继续切换」那条顺路（由 chromium `mv-vault-switch-guard.spec.ts` 覆盖）——MUST NOT 把 19 的 PASS 读成「每条顺路都在真机验过」。
+20. **表格 cell 内 ⌃E→⌃F→⌃E 不再跳回前一 cell**（M185）→ `24-table-cell-ctrl-e-seq`；AX 逐 cell 落点不可回读，用插入字符的归属反推光标位置。
+21. **vault 列表 ESC 收起保持阅读位置**（M186）→ `25-vault-list-close-keeps-reading-position`；该缺陷在 chromium 与真机均未复现，修复是结构性的（如实登记）。
+22. **svg 倒序滚动终态稳定**（M187 / 场景修复 M190）→ `26-svg-scroll-stability`（17 断言）；两条通道语义（`AXTextArea.value` = CM 当前渲染区间；带 `<text>` 的 svg 在 AX 里的形状不稳）已写进套件 README 与场景说明。
+23. **文档末尾完读标记**（M189；M238 / M251 两处变化）→ `27-document-end-marker`（19 断言）；可见性不在真机通道判（AX 不给纯文本节点 bbox），由 chromium 几何断言 + 截图承担。
+24. **restyle 主题通道与骨架落位**（M213）→ `34-restyle-theme-skeleton`；eink 色值 / 对比无计算属性通道，只能给截图（手眼项）。
+25. **三主题真机呈现 + overlay 标题栏窗口级读数**（M213）→ `35-restyle-three-themes`；标题栏三项窗口级证据（traffic 灯 / 标题文字 / 拖拽）不在断言里，判定归 Alex。
+26. **主题运行期切换**（M237）→ `44-theme-live-switch`（34 断言，含反向验证）；色值 / eink 九条降级 / mermaid SVG 内联色三类视觉取值由 chromium 场景守。
+27. **文件树条目右键菜单的 M251 增量**（M251）→ `47-file-tree-context-menu` 新增「点在行右侧空白区也作用于该行」；**该批真机判据未取得**（`button: right` 取不到窗口截图，M244 / M249 同因），判定由 chromium 层承担；**待裁决**：两张菜单基线有 23px 真实差异未重建（`test-results/m251/baseline-review/tree-menu-menu-target/`）。
+93. **思考块三态（折叠默认 / 展开见原文 / 时长读数在场）**（M364）→ `93-harness-thinking-blocks`（真机 PASS / 22.5s）。
+94. **无 reasoning ⇒ 零思考块（反向验证）**（M364）→ `94-harness-thinking-absent`（真机 PASS / 23.4s）。
+95. **思考程度 chip 会话态（默认 High / 浮层三档 / 选 Max / 新会话回 High）**（M364）→ `95-harness-thinking-effort`（真机 PASS / 18.7s）；「档位 → 请求参数」那一段由 core 集成测试 `session_thinking_effort_reaches_request` 覆盖。
+96. **列表自动模式三态（「1. + 空格」进入 / Enter 续行 / 空项退出）+ IME 组合期不重复**（M461）→ `153-ordered-list-auto-mode`（**真机留 dogfood 批次跑**）；裸 DOM 变更形态不兜、留 dogfood，若复现另立项。
 
 **已机验到渲染/结构层，行为细节仍缺可观测面**
 
-2. 公式进编辑 —— `02-math-click`：行内/块级公式均渲染为 KaTeX、源码不显露。
-   **「公式后 ⌃B 是否 1–2 次」仍待判定**（需光标停在公式 span 之后；AX 输出不暴露光标/选区，
-   纯键盘落位无法回读校验；代码口径 1 次，`mathSpanCrossed` 落点 = span.to−1）。
-3. Ctrl+N/P 表格行为 —— `03-table-ctrl-np`：grid 表确实渲染成 `AXTable (Markdown 表格 N)` + `AXRow`
-   单元格文本；⌃N/⌃P 序列后表格与文档内容完好。**逐 cell 落点不可回读**；实测按坐标点进 AXTable 的
-   bbox 内也不会让渲染态表格让位给源码行，故不做该断言。
-5. cell 内公式 —— `05-cell-math`：`$y$`/`$$y$$` 在 cell 内按行内样式渲染（AX 行文本 `行内 / y / 块级 / y`）。
-   **「点击渲染态公式进编辑」不可机验**（KaTeX span 既不进 AX 树也不带 bbox，与项 2 同因）。
-6. Callout —— `06-callout-and-width`：渲染态下 `[!note]` 标记与 `>` 前缀都不显露、内容按块渲染。
-   **「光标进该行后源码显露」不可机验**（需光标落在 callout 首行）；表格宽度只留截图证据。
-
-**仍归 Alex 手感（不下沉）**
-
-4. 表头 cell 双击 padding 的选中手感。
-5. 表格 cell 内公式点击手感；6. 表格宽度观感（欠宽不拉伸、超宽横滚是否合意，与「待 Alex 裁决」4 同源）；
-7. WKWebView 下三条恢复路径的手感；9. Emacs 翻屏/扩选真机手感。截图在证据目录，判定归 Alex。
-10. 分隔线的粗细与上下留白、围栏代码块配色的观感（M138）——机器断言只钉「渲成横线（发丝线、
-    宽度=栏宽）」与「色值取自既有 editorial token」，合不合意归 Alex；前后对比见
-    `tests/visual/baselines/render-*.spec.ts-snapshots/` 与真机截图。
+2. 公式进编辑 → `02-math-click`；**「公式后 ⌃B 是否 1–2 次」仍待判定**（AX 不暴露光标 / 选区，纯键盘落位无法回读校验）。
+3. Ctrl+N/P 表格行为 → `03-table-ctrl-np`；grid 表渲染成 `AXTable` + `AXRow`，**逐 cell 落点不可回读**。
+5. cell 内公式 → `05-cell-math`；**「点击渲染态公式进编辑」不可机验**（KaTeX span 既不进 AX 树也不带 bbox）。
+6. Callout → `06-callout-and-width`；**「光标进该行后源码显露」不可机验**；表格宽度只留截图证据。
 
 ## 记录在案（无需动作）
 
@@ -3697,924 +2782,71 @@ finding）、2 条套件注入通道缺陷（既有 finding）、1 条 M283 已�
 
 ## 已核销（留痕，定期清理）
 
-- 2026-09-16：**文件内搜索 v0**（M139，merge `647f519`）：`@codemirror/search` 6.7.2 能力底座 +
-  editorial panel 重制（`src/search.ts`，createPanel），⌘F 走 keys.ts global 可重绑；匹配计数 /
-  上一个/下一个 / 大小写切换。文案 D68–D72（M141 补录）。
-- 2026-09-16：**验收套件注入假绿同族核销**（M140 merge `098918d` + M143 merge `d460535`）：
-  keys 动作补回读 + 有限重试（≤3，只在目标字节完全未变时重试，partial landing 直接报错）；
-  type 动作对齐同一口径（删除「次数校验能抓住前缀型 partial landing」的错误辩护注释）；
-  08b 落点重做（探测串移文末 + 改走 type 通道 + `ax.focused` 新断言形态，走解析结果而非正则）；
-  checkScenario 守卫（ax 断言必须带 has/not/count/focused 之一）。
-  口径级验证 8 判定（假 CU 驱动真实代码路径）在 `_type-retry-unit/`。
-
-- 2026-09-16：**验收套件 `file` 断言支持 glob 路径**（M144 落地，finding `20260916-worker-links-improve-file-glob-dated.md` + tower clarify-reply 裁决）：`file.path` 含 `*` 时按 glob 在父目录里取**匹配文件里 mtime 最新的那一份**再断言内容。动因是诊断日志按 UTC 日期命名、而验收环境的 `env/` 目录跨天复用（`envHome()` 不带日期）——写死日期的断言会在之后每天读到上次 run 留下的旧文件而**永久空过**（假绿），换机又直接 FAIL。落点：`scripts/acceptance/lib/execute.mjs` 的 `resolveSpecFile`（约 20 行）+ `scripts/acceptance/README.md` 断言表一句 + `scenarios/12-links.md` 用 `env:logs/*.jsonl` 断言 `link_open` 落盘并顺带断言日志里没有 URL 原文。**反向验证过**：在日志目录植入一个 mtime 更晚、不含 `link_open` 的文件后场景如实 FAIL（证明确实取最新那份、断言不空转），移除后 PASS。已知残余风险（同日重复跑时最新文件里可能有上一次的事件）写在场景正文，该断言与三条负断言联合构成判定。
-
-- 2026-09-16：**外链渲染与打开快捷键**（M144）→ Alex 裁决采纳（原话「链接（[title](link)）渲染成 title↗︎，并增加打开它的快捷键」「wikilink 内部跳转体系不动」）：`[title](url)` 在 md 模式渲染为 `title` + 尾部 `↗︎`（U+2197 + U+FE0E），括号与 `(url)` 走 replace 装饰隐藏、文档逐字节不变（ADR 0003 §3）；光标/选区触及链接时整条显露源码——编辑态与改动前一致（改动前没有链接装饰，编辑 URL 看到的就是原文），同时避免长 URL 被隐藏后中间出现「按键而光标不动」的死区。`⌘⏎` 与 `⌘-Click` 走同一条命令（`wikilink.follow` → `link.follow`）：外链经 Rust 的 `open_external_url` 交给系统默认应用，wikilink 走既有 link_graph 跳转链路（未解析只提示、不建文件），都不在链接上则无操作。非外链形态（相对路径 / 纯锚点 / 白名单外 scheme / 自动链接 / 引用式链接）当时保持原文不装饰——「能开的才看起来能开」。**这一条口径已被 M145 推翻**（相对路径、锚点改为装饰，见下条核销）：M144 当时的非目标表述不再有效，此处保留原文仅为留痕。落点：`src/preview/links.ts` 新增（判定取自 lezer 语法树，不手写词法；`ensureSyntaxTree` 同步推进避免大文档刚打开时 ⌘⏎ 静默无反应）、`src/preview/livePreview.ts` + `theme.ts`（`Link` 节点装饰、`↗︎` widget、`.cm-lp-link` 样式）、`src/main.ts`（`link.follow` 命令与鼠标路径；⌘-Click 不再以 `currentPath` 提前返回——外链不需要 vault 上下文）、`src/keys.ts`（命令更名）、`src/ipc.ts` + `src-tauri/src/commands.rs`（`open_external_url`：scheme 白名单 **http/https/mailto** + 目标可信性校验，拒绝 → `open_url_rejected`，系统调用失败 → `open_url_failed`）、`src-tauri/src/lib.rs`（注册 `tauri-plugin-opener`，并以 `open_js_links_on_click(false)` 关掉插件注入的「点击 `<a target=_blank>` 直接开浏览器」脚本——那是绕开校验的第二条打开路径）、`src-tauri/src/logging.rs`（`link_open` 事件，字段 `scheme`/`outcome`，**不记 URL 原文**——URL 是文档内容，隐私边界优先于排查便利）。**权限最小化**：capabilities 不新增任何 `opener:*`，webview 对插件 IPC 保持默认拒绝，唯一入口是本仓 command（与 rfd 不引 tauri-plugin-dialog 同一取舍，见 `src-tauri/Cargo.toml` 注释）。提案 `add-external-link-open`。证据：视觉场景 `tests/visual/scenes/render-link.spec.ts` + 基线 `render-link-chromium-darwin.png`（渲染态 / 源码显露 / 文档逐字节不变 / 桩记录 `open_external_url` 的调用目标，零浏览器启动）；真机场景 `scripts/acceptance/scenarios/12-links.md` + fixture `links.md` / `links-wiki.md` / `links-missing.md`。文案 D77–D79。
-
-- 2026-09-16：**表格合同收窄——短行尾部补空列对齐 GFM**（M137 finding `20260916-worker-table-survey-idea-gfm.md`，M142 落地）→ Alex 裁决采纳（原话「好，采纳。」）：数据行 cell 数少于表头时**尾部补空 cell 正常渲染**（GFM spec §4.10，GitHub/Obsidian 同款）；**多列仍整块回退**（GFM 对多列是 excess ignored，静默丢列与「不猜测修复」冲突）。落点：`src/preview/table.ts` 补零宽空 slot（`padShortRow`，一个槽位都没恢复出来的行不补——那是映射失败，必须降级）；`src/preview/livePreview.ts` 零宽空 cell 的空槽装饰改走 point widget（CM6 对零宽 replace 装饰抛 `RangeError: Invalid range for replacement decoration`，两侧默认非 inclusive）。降级文案措辞未变（收窄后只由多列/槽位不可映射触发，D73–D75 仍然准确）。合同 `docs/specs/table-reading.md` §2/§9 收窄；OpenSpec 提案 `narrow-table-short-row-gfm-padding`（含 `complete-markdown-reading` / `foundation-table-reading` 两份未归档 delta 的同主题口径对账）。证据：视觉场景 `tests/visual/scenes/table-foundation-v2.spec.ts`（短行 fixture 翻转为渲染断言 + outline.md 同款 6 列表头/5 cell 行专门断言 + 多列降级断言）；真机场景 `render-table-degrade` 改多列形态并补短行表渲染断言。
-
-- 2026-09-16：**表格降级文案不暴露原因**（M137 finding `20260916-worker-table-survey-improve-reason.md`）→ M138 落地：降级文案带上出错**文档行号**与应为列数（`第 N 行单元格数与表头不符（应为 M 列）`），oversize 走体积/上限文案，无法识别结构走兜底文案；文案单一来源 `src/preview/table.ts` 的 `degradationNotice`，上屏（`::after` 经 data 属性）与 aria-label 同一份。同步断言在视觉场景 `table-foundation-v2` 与真机场景 `render-table-degrade`。
-- 2026-09-16：**视觉门禁容差假绿** → Alex 裁决收紧 `maxDiffPixelRatio` 0.005→0.001 + 删 UI 后核对相关基线时间戳（卫生步骤入 tests/visual/README.md 与 AGENTS.md）。
-- 2026-09-16：**lists 100k 性能预算** → Alex 裁决放宽 p95 40→60ms（间歇超属环境噪声；随 dogfood 性能专项复核是否回调）。
-- 2026-09-16：**run.sh 端口占用检查只查 4173** → 已修，检查 `${LUMIR_VISUAL_PORT:-4173}` 实际端口。
-
-- 2026-09-17：**链接装饰全形态覆盖**（M145）→ Alex dogfood 反馈（第 4 条，原话「我启动后看到的链接并没有渲染成 title↗︎」）驱动的口径补齐。M144 只装饰 http/https/mailto，把「相对路径不装饰」写进 Non-goals 时**未向 Alex 显式确认**（tower 已认领为裁决疏漏）。M145 补齐后的形态矩阵：外链（含 `mailto`）→ `title↗︎` 交系统默认应用；相对路径 md / 无扩展名 → `title→` 应用内跳转（Alex 裁决原话「内部跳转的带→，也就是 title→」）；相对路径非 md 与目录 → `title↗︎` 交系统默认应用；纯锚点 → `title→` 但激活只 toast；白名单外 scheme → 原文不装饰。装饰与激活解耦：分类只看目标原文（`src/preview/links.ts` 的 `classifyLinkTarget`），文件存不存在是激活时才问的问题，因此「目标不存在」的链接照常装饰、代价由 toast 承担。落点：`src/preview/links.ts`（`classifyLinkTarget` 五类 + `standardLinkAt`）、`src/preview/livePreview.ts`（`LinkMarkWidget` 按类别出 `↗︎`/`→`）、`src/main.ts`（`linkTargetAt` 五态 + `followLink` 分流 + 相对路径未解析只 toast 不创建）、`src/ipc.ts`（`linkResolveNote` / `linkOpenPath`）、`src-tauri/src/link_graph.rs`（`relative_vault_path` + `resolve_relative`：相对当前文件目录的路径语义，`./` `..` 归一、`/` 开头按 vault 根相对、`#fragment` 忽略、**不退化到 wikilink 的名称匹配**）、`src-tauri/src/commands.rs`（`link_resolve_note` + `link_open_path`，后者经 `fs_io::resolve_in_vault` 做 vault 内约束与存在性校验）、`src-tauri/src/logging.rs`（`link_open` 增 `category` 字段：external / internal-md / asset / anchor / blocked-scheme）。**权限面未变**：capabilities 仍零 `opener:*`，新增的资产打开走同一条 Rust 侧最小权限路径（`app.opener().open_path`，不经 webview IPC）。规格：修订 `openspec/changes/add-external-link-open` 的两份 spec delta（就地扩为形态矩阵，避免归档后 living spec 出现两条自相矛盾 requirement）；文案 D80–D83。证据：视觉场景 `tests/visual/scenes/render-link.spec.ts`（12 条用例，含分类纯函数与四类激活分流；桩记录 `open_external_url` / `link_open_path` / `link_resolve_note`）+ 更新后的整页基线；真机场景 `scripts/acceptance/scenarios/12-links.md`（25 步，含相对 md 跳转成功 / 未解析 toast、锚点 toast、非 md 打开、不可用不装饰；`link_open` 各类别断言带 `^…$` 行锚）。**两处待 Alex 复核的裁决已录入「待 Alex 裁决」第 9 条**（非 md 带 ↗︎、锚点带 → 仅 toast），另有 `note.md#sec` 锚点忽略口径同批披露。
-- 2026-09-17：**归档积压清理——7 个已合并未归档的 change 批量归档**（M150，Alex 对整体 review 的裁决「好，采纳。你动手吧」，含归档节点 2 的批量授权）。归档清单（`openspec/changes/archive/2026-09-17-*`）：`add-wikilink`（积压 12 天）、`add-diagnostics-logging`、`add-external-link-open`、`fix-json-key-highlight`、`add-toc-outline`、`add-multi-tabs`、`narrow-table-short-row-gfm-padding`；对账结果——7 个的 spec 增量与实现逐条一致，其中 `add-wikilink` 的 `specs/backlinks-panel/` 增量**不随归档**（该 capability 已按 ADR 0004 §2 挤压预案推迟且实现已移除，照旧归档会凭空生成一份描述「面板存在」的 living spec），其推迟记录移入 proposal 的「归档对账」节；未勾任务就地标注放弃原因（`add-wikilink` 5.3、`add-diagnostics-logging` 4.2）。**教训（本批次的核心发现）**：7 个 change 里**只有 1 个**（`add-diagnostics-logging`）在 `docs/backlog.md` 里被记为待归档，其余 6 个合并后无人跟踪——living spec 因此长期落后，`editor-live-preview` 甚至与实现直接矛盾（自称「M1 只读口径」而 md 模式早已可编辑）。**防线**：`docs/process/openspec-workflow.md` 新增「批次收尾 checklist（归档跟踪）」三条（每个 merge 的 change 即记待归档并跟踪到归档 / 归档前逐条对账 / 归档后手写新建 capability 的 Purpose）；同文件新增「撤回（withdrawn）」口径（僵尸提案的处置三步）。归档后 `openspec list` 活跃列表为空，`validate --all --strict` 14 项全绿（含 5 处新建 living spec 的手写 Purpose）。
-- 2026-09-17：**僵尸提案撤回 4 个**（M150）：`foundation-vault-recovery`（0/9）/ `foundation-markdown-quality`（0/14）/ `foundation-table-reading`（0/17）/ `complete-markdown-reading`（2/17）。处置：整体移到 `openspec/changes/archive/2026-09-17-withdrawn-<id>/`，各自 proposal 头部写入「撤回记录」（理由 / 承接者 / 遗留面）。逐个的对账结论：① `foundation-vault-recovery` 的核心机制**在仓内不存在**（全仓 `grep operation_id` 零命中，`intent` / `ledger` 同样零命中），其要解决的问题已由 `archive/2026-09-12-save-hardening`（崩溃备份 + 启动恢复）与 `archive/2026-09-12-save-and-watch-recovery`（冲突 / 外部修改处置）承接，`docs/specs/vault-recovery.md` 状态头改为「已撤回（留档作重启输入）」；② `foundation-markdown-quality` 是「只立合同」的提案，合同本体 `docs/specs/foundation-markdown.md` 仍在被实现注释引用（`src/preview/table.ts`、`callout.ts`、`math.ts`、`mermaid.ts`），状态头改为「生效中的质量合同」；③ `foundation-table-reading` 同理，合同本体 `docs/specs/table-reading.md` 已被 M142 按 Alex 裁决收窄，状态头同步；④ `complete-markdown-reading` 的四项 requirement 均已实现（列表布局 `src/preview/lists.ts`、表格 `src/preview/table.ts`），但其出口验证从未按其形态执行、节点 2 未过，故撤回而非归档。**遗留缺口（需另立 change，本批不做）**：列表对齐与基础表格阅读的 requirement 文本至今未进 living spec——只有实现、门禁与 `docs/specs/table-reading.md` 合同，没有 requirement 级规格。另：`scripts/visual/table-probe72/matrix.mjs` 的产出路径指向 `openspec/changes/complete-markdown-reading/`（随本次移动失效），已投 finding 待处置。
-- 2026-09-17：**补记两处规格缺口（M150）**：① **文件内搜索 v0**（M139 实现先于规格落地，merge `647f519`）→ 补 retro change `add-in-file-search` 并归档，新建 living spec `openspec/specs/in-file-search/spec.md`（入口与键位归属 / 能力集与匹配口径 / 关闭与焦点归还三条 requirement，含「不做替换」「高亮只看视口」等如实边界）；② **`editor-live-preview` 规格对齐 + M138 渲染三件套补记** → retro change `align-editor-live-preview-spec`：删掉 living spec 里与实现矛盾的「M1 只读口径，不含编辑态行为」与「MUST NOT 实现光标所在行 reveal 源码」（现状是 md 模式可编辑、选区触及即显露源码），补入 `Markdown 渲染保真（分隔线 / 围栏代码着色 / 引用内列表）` requirement，并重写 Purpose（`## Purpose` 的增量只在 capability 创建时被读取）。两份 retro change 的 tasks 全部按「已存在实现与证据」核对勾选。
-- 2026-09-17：**`tests/visual/README.md` 卫生节 missing**（M146 finding `20260917-worker-reviewmd-bug-ui-readme.md`）→ 已由 M147 `c81b3ed` 闭合：`tests/visual/README.md` 补入「删除 / 移动 UI 元素后的核对（卫生步骤，强制）」一节（现 67–85 行），`playwright.config.ts:11` 与 AGENTS.md 的指针恢复可达。**未做**：finding 里顺带建议的「`scripts/visual/run.sh --update` 输出回显该提醒」未落地（建议项，非必需）。
-- 2026-09-17：**`src/preview/livePreview.ts:427` 注释引用已删除的 `openDocument`**（M149 r1 nit `20260917-worker-tabs-improve-m149-nit-livepreview-ts-opendocument-scope.md`）→ M150 改「装载（`editor.reloadSession`）」，与 M149 同批另两处（`mermaid.spec.ts:296` / `toc-outline.spec.ts:84`）同形。同时顺手改掉同文件第 4 行的同族陈述——文件头「只读口径：不做光标行 reveal 源码的编辑态逻辑」同样与实现矛盾（该文件里有完整的选区显露实现），一并改为现行编辑态口径。
-- 2026-09-17：**`docs/process/real-machine-acceptance.md` 证据落点指针悬空**（M150 顺手修）：裁决点 1 的备选「摘要表入 `docs/design-parity-contract/evidence/`」指向的契约已随 ADR 0006 失效（`docs/design-parity-contract/README.md` 自述「状态：失效（2026-09-12）」），改为「证据统一落 `test-results/acceptance/`（已 gitignore），摘要表入 `docs/backlog.md` 的待真机验收节」。
-- 2026-09-17：**两条清扫类 finding 由 M152 闭合核销**（worker-langunify，commit `6e8e70a`，原「待修
-  findings／编辑器·键位」的两条）：① **`TableModel.reason` 的 `"incomplete"` 死值已删**
-  （`src/preview/table.ts:37` 的类型联合收敛为 `"oversize" | "non-rectangular"`，全仓零生产零消费）；
-  ② **语言注册表两处漂移已收口**（`src/preview/code.ts` 的 `LANGUAGES` 成为唯一一份着色语言表并导出为
-  `Record<CodeLanguage, StreamLanguage<unknown>>`，`CodeLanguage` 由 `src/preview/attachments.ts` 的扩展名
-  注册表推导、经 `import type` 编译期擦除；`src/editor.ts` 删掉整块 legacy-modes import、7 个具名 parser
-  常量与自建表，只留查表；token 的 tag 分组同源落在 `code.ts` 的 `TOKEN_GROUPS`，两侧只做渲染映射——类名与
-  内联色值）。**核销口径提示**：M152 分支 `feat/language-registry-and-frontmatter-unify`（tip `59d05a2`）
-  在本条落盘时**尚未并入 master**（r2 复审中），所以这两条核销记的是「决策已定」，在 M152 合并后才对 master
-  生效。**附带影响（跨文件，本 mission 的 scope 只含 `docs/backlog.md`）**：本次改动净增 171 行
-  （264 → 435），`REVIEW.md` 里 9 处以 `docs/backlog.md:NNN` 为证据指针的条目（第 3/4/5/6/7/8/9/11/12 条）
-  行号全部随之漂移；**逐条实测发现其中 7 处在本次改动之前就已指向别的条目**（裸行号这种写法早就失效了，本批
-  只是让它更失效）——明细与建议见 finding
-  `20260917-worker-backlog-improve-review-md-docs-backlog-md-9-7-m155.md`。
-  建议 `REVIEW.md` 的证据指针改用可 grep 的条目名 / 节名而不是行号；本次核销涉及的两条已移到本节（内容见上）。
-- 2026-09-17：**link_graph.rs `MAX_FRONTMATTER_LINES` 注释失联 finding 关闭（前提失效）**
-  （M152 首发 finding `20260917-worker-langunify-improve-link-graph-rs-max-frontmatter-lines-ts-m152.md`；
-  severity 标为 medium）：该条写于 512 裁决翻转**之前**，其前提「M152 把 TS 侧收敛为 200、Rust 应改注释指向
-  `src/preview/frontmatter.ts`」已被推翻——M152 最终把 TS 侧定为 512。它唯一仍成立的点（`link_graph.rs:105`
-  的注释指向的文件名 `src/preview/wikilinks.ts` 不再持有该常量，已成错误自述）已并入现行条目「待 Alex 裁决」
-  第 11 条，随该条一并处置。按 finding 正文自己的请求（「请以本条为准，前一条可关」）核销，不再单独立项。
-- 2026-09-18：**归档待办三件核销**（M170 归档节点 2；Alex 三件裁决同日）——三个已合并未归档的 change 在本次一次性归档，各自的跟踪一条一条核清；归档后 `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` = **17 passed / 0 failed**，活跃 change 只剩 3 个（`codeblock-toml-yaml-highlight` / `image-svg-and-fallback` / `line-wrap-options`）：
-  ① **`startup-restore-off-main-thread`**（M156 提案 → M159 实现，merge `ad93a03`）→ `openspec/changes/archive/2026-09-18-startup-restore-off-main-thread/`；「待 Alex 裁决」第 12 条的「归档待 Alex 节点 2」改为已归档。对账：tasks 25/27（3.6 自标「可选证据，非门禁」→ 标注不执行；5.5「冷启动读数前后对比」→ 本地未跑、改取 CI 旁证，两条**保留未勾**并就地标注理由），spec 增量（`vault-workspace` 的 MODIFIED「last_vault 记忆与启动恢复」+ ADDED「启动恢复的时序与可见性」）与实现逐条一致；Alex 节点 2 裁决 design §4.5 的语义边缘「**不收紧**」。
-  ② **`multi-vault-workspaces`**（M162 + M163 + M164，merge `eafd258` / `fb2dc26` / `2f16f86`）→ `openspec/changes/archive/2026-09-18-multi-vault-workspaces/`；「待 Alex 裁决」第 10 条状态更新段的「归档评审待 Alex」改为已归档。对账：tasks 39/39、7 条 ADD 落 `vault-workspace`、1 条 MODIFIED 落 `multi-tabs`（与 living 逐字只差 proposal 声明的两处，归档未误删 living 其它内容）；Alex 节点 2 裁决守卫判据的宽窄措辞差「**接受差异**」（living `multi-tabs/spec.md:127` 原文不动，理由是判据先于该 change 存在、行为不变）。
-  ③ **`toc-popover-emacs-keys-and-max-height`**（M160，merge `d4ca60a`）→ `openspec/changes/archive/2026-09-18-toc-popover-emacs-keys-and-max-height/`；核销「待 Alex 裁决」第 20 条。对账：tasks 34/34（3.1 / 3.2 的产物由 tower 的 integration fix `a779cbb` 落盘；6.2 改由「零 Rust diff + CI `rust.yml` 在 `2f16f86` success」继承；6.4 由 M164 全量 26/26 与 `2026-09-18/13-toc` PASS 覆盖），2 条 MODIFIED 落 `toc-outline`、1 条 MODIFIED 落 `keymap-commands`。
-  三份 living spec 的 Purpose 补了归属记录（`vault-workspace` / `toc-outline` / `keymap-commands`）。**顺带修正的失效指针**：`docs/backlog.md` 第 10 条指向的 `openspec/changes/multi-vault-workspaces/specs/...` 与第 12 条指向的 `openspec/changes/startup-restore-off-main-thread/design.md` 已改为 living spec / archive 路径；另有两处同类失效指针在 `scripts/acceptance/scenarios/13-toc.md:224` 与 `16-startup-restore.md:34`（本 mission scope 外），已投 finding（**M175 已闭合**：两处改指 `openspec/changes/archive/2026-09-18-*` 实际路径）。**追踪闭环（同日补记，M181）**：本条第 1 行记的「活跃 change 只剩 3 个」随后清零——那三个 change 同日由 M181 归档节点 2 归档，核销记录见本节 2026-09-18 的「另三个 change 归档核销——活跃 change 清零」条；`validate --all --strict` 从本条记录时的 17 项（3 change + 14 spec）落到 14 项（0 change + 14 spec）。
-- 2026-09-18：**CI visual/perf 长期红治理批核销**（「待 Alex 裁决」第 17 条；M172 诊断 → Alex 三项裁决
-  → M173/M174/M175 落地）。M172（survey）定位：visual = runner 侧渲染环境不等价（基线 40/40 sha256
-  相同、差异只在字形栅格层、确定性复现）；perf = resident-memory 9/9 确定性超 200MB 阈 + keypress 基线
-  单样本冻结 + `update-baseline` 的 `if: success()` 结构性死锁。M173（merge `475f069`）：`visual.yml`
-  收窄为结构/计算属性断言（`LUMIR_VISUAL_STRUCTURAL=1`，22 处像素断言经 `expectScreenshot` 包装跳过，
-  空基线反向验证证明断言真执行/真跳过）、`@playwright/test` 钉 1.62.1、浏览器构建自证步骤（本地/CI
-  同一脚本）、`runs-on` 钉 `macos-26`、结构模式 `--update` 防呆；其任务 1 顺带推翻「基线由更新浏览器
-  构建渲染」的候选机制。M174（merge `d967ce8`）：resident-memory 阈 200→250MB（ADR 0002 §6 分叉双处
-  标注 + follow-up finding 待文本修订）、`update-baseline`/`cache-save` 改 `always()` 且逐指标裁决落盘
-  `perf-results/gate-status.json`（fail 不进基线、缺判据 fail-closed、薄基线 `minRuns=5` 降级不拒合）、
-  keypress 容忍线 60% + `spreadHeadroom` 浮动护栏；r1 评审抓出一处「浮动项惰性」措辞失真（真实上界
-  57.9%×1.2=69.4%），r2 修三处文字并补两条真差分探针后 clean。M175（merge `7bea675`）：backlog 第 17
-  条立项登记与验收场景失效指针修复。合并态 `gate.sh quick` 10/10 PASS。**留白**：runner 字体探针与
-  keypress 帧量化观察见「门禁测量与 CI 环境」节；新规程的首次 CI 实证以 `475f069` 上的 visual / perf
-  run 为准。
-- 2026-09-18：**门禁清单三处过期**（M153 finding `20260917-worker-testinfra-improve-agents-md-gate-sh-tests-visual-readme-md-isolation-readme-vi.md`，
-  原「待修 findings／文档指针与门禁清单」首条）→ 治理批收尾由 tower 直改闭合：① `AGENTS.md` 删掉
-  gate.sh 三行用法副本、改为指向脚本头注释的指针（canonical 居所原则）；② `tests/visual/README.md`
-  目录结构补 `isolation.test.mjs`（2 用例 / 7 条：run 目录隔离、证据脱敏与 fail-closed、symlink 拒绝）；
-  ③ `README.md` 门禁表 `visual.yml` 行补「另跑套件隔离断言」——目标行已被 M173 改写为结构层口径，
-  在其上补一句而非恢复原措辞。
-- 2026-09-18：**另三个 change 归档核销——活跃 change 清零**（M181 归档节点 2；Alex 拍板原话「归档」）——`image-svg-and-fallback` / `codeblock-toml-yaml-highlight` / `line-wrap-options` 三个已合并未归档的 change 本次一次性归档。归档前后实测：`npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` 由 **17 passed / 0 failed（3 个活跃 change + 14 份 living spec）** 变为 **14 passed / 0 failed（0 活跃 change + 14 份 living spec）、退出码 0**；`openspec list` = 「No active changes found.」（无 `✓ Complete` 残留）；`scripts/docs-check.sh` PASS（ADR 6 份 + README 索引）。三项对账结论：
-  ① **`image-svg-and-fallback`**（M165 提案 merge `fe46310` → M178 实现 merge `e471b88`，r1 clean）→ `openspec/changes/archive/2026-09-18-image-svg-and-fallback/`：tasks **全部勾选、无放弃项**；`attachment-display` 落 **2 条 MODIFIED + 2 条 ADDED**（`openspec archive` 报 `+ 2, ~ 2, - 0, → 0`），逐 requirement 与 delta 字节比对**全部 EXACT**，living 的删除行只落在两条被 MODIFIED 的 requirement 内部（零误删、零未申报改动）；实现与 delta 一致（`src/preview/attachments.ts` 的 `ImageWidget`：`<img>` 是图片链路唯一渲染路径、尺寸兜底是主修法、三种引用形态共用同一条终态处置且无扩展名特判），**无实现期静默扩 scope**。节点 1 裁决 A（图片行维持现状、不加选区显露）落账不动，第 19 条**保留、不核销**；第 18 条外链直连分支的 (a)/(b) 处置权仍在 Alex，不在本次归档范围。
-  ② **`codeblock-toml-yaml-highlight`**（M167 提案 merge `ef8f596` → M179 实现 merge `485dba5`，三轮评审 r3 clean @`8710036`）→ `openspec/changes/archive/2026-09-18-codeblock-toml-yaml-highlight/`：tasks **27/27**（2.3 / 3.8 标注放弃原因——裁决点 2 = 方案 A 不实现；归档期三条 5.2 / 5.3 / 6.5 本次在归档件里逐条收口）；`editor-live-preview` 落 **1 条 MODIFIED + 1 条 ADDED**（`+ 1, ~ 1, - 0, → 0`），逐 requirement 字节比对 EXACT——**「Markdown 渲染保真」的「已知例外」段并入后并列 rust 与 toml 两条**（归档前只列 rust，这正是本 change 要补的那格），另两条 M138/M152 既有行为的 spec 回填（语言表同源 / 长度上限）也在位。实现期两处订正（5.4 把「带引号的键」从 MUST 收成边界 scenario、3.7 的整页容差 958/960 → 0.0005）都已在 delta 与 design §5/§6 落定，无静默扩 scope。toml 的 `atom` 复用缺陷作为**记录在案**留在本节（见「记录在案」节的条目），本次不修。
-  ③ **`line-wrap-options`**（M166 提案 merge `bda4fe4` → M180 实现 merge `9a15a65`，两轮评审 r2 clean @`d5e860f`）→ `openspec/changes/archive/2026-09-18-line-wrap-options/`：tasks **54/56**（9.4 / 9.5 按**如实标注的覆盖边界**保留未勾——sha256 逐字节口径下无 mtime 断言词汇、真机无计算属性通道，按节点 2 口径接受为边界，不当缺陷也不冒称已验；9.2 由 tower 复裁决收口：`scripts/acceptance/lib/execute.mjs` 的 1 行 scope 外改动理由成立、scope 已扩纳入）；`editor-live-preview` 落 **3 条 ADDED**、`keymap-commands` 落 **1 条 ADDED + 3 条 MODIFIED**（`+ 4, ~ 3, - 0, → 0`），两份 delta 的 7 条 requirement 逐 requirement 字节比对 EXACT、零误删（living 的删除行只落在三条被 MODIFIED 的 requirement 内部，含「表格滚动容器」→「块级横滚容器」泛化与命中条件收紧两处申报过的修订）；D1–D5 五件裁决与 proposal 的「裁决记录」节一致，四件制品已改写为应用级语义（grep 无标签页级残留）。**无实现期静默扩 scope**。
-  **归档动作的配套收尾**：① 三个 archive 目录内的相对链接各补一层 `../`（`openspec archive` 把目录移深一层却不重写制品内链接，这是本节「openspec 归档制品与实验脚本」记过的根因）——三个目录共 20 条相对链接逐条用「拼到制品所在目录再 `exists()`」实测，**19 条补一层后可达、1 条为 spec 正文里的示意例子**（`specs/attachment-display/spec.md` 的 `./assets/shot.png`，按 M155 坐实的误报形态排除、不改）；② `scripts/acceptance/scenarios/20-image-fallback.md:76` 指向旧 change 目录的指针改指 archive 路径。`src/preview/attachments.ts:253` 的同型指针在 mission scope 外，已投 finding 不在本次改。**三个 change 均未新建 capability**（落点全在既有 living spec），故无 Purpose 占位待补。
-
-- 2026-09-24：**五个 change 归档核销——活跃 change 从 8 降到 3**（M205 归档节点 2；Alex 逐件确认五件全部
-  归档，另下两项裁决：① code-outline delta 的缓存条款改措辞为「缓存身份 = 文档内容」（实现零改动）；
-  ② list-filter 的「失效行参与筛选」scenario 改写为「SHALL 出现在结果集里但 MUST NOT 进入键盘游标空间
-  （与筛选前一致）」，删去 Enter 句）。**归档顺序是硬约束**：`typography-and-zoom` → `code-outline` →
-  `code-variable-highlight` → `list-filter` → `remember-reading-position`——code-variable-highlight 的 delta
-  明文引用「代码文件的结构解析（语言分层注册表）」这条 requirement（它只由 code-outline 引入），`validate`
-  不查这类引用，先归后者才不会有悬空引用。**归档前后实测**：`validate --all --strict` 由
-  **22 passed / 0 failed**（8 活跃 change + 14 living spec）逐件降到 **18 passed / 0 failed**（3 活跃 change +
-  15 living spec）、退出码 0；`bash scripts/docs-check.sh` = PASS（ADR 6 份 + README 索引双向一致）；
-  `openspec list` 里五件均已移出活跃列表。**五件的落点**：typography-and-zoom → **新建 living
-  `openspec/specs/typography/`**（ADDED ×4，`## Purpose` 已按 toc-outline 的句式手写替换 `archive` 生成的
-  TBD 占位）+ `keymap-commands` 1 条 ADDED；code-outline → `editor-live-preview`、`toc-outline` 各 1 条 ADDED；
-  code-variable-highlight → `editor-live-preview` 2 条 ADDED；list-filter → `toc-outline` 2 条 ADDED +
-  1 条 MODIFIED、`vault-workspace` 1 条 ADDED；remember-reading-position → `multi-tabs` 1 条 ADDED、
-  `vault-workspace` 1 条 ADDED + 2 条 MODIFIED。归档后逐条核对：五件的 requirement 名在各自 living spec 里
-  各出现**恰好一次**（无重复并入）、六份 living spec 的 `## Purpose` 补齐了新并入 change 的归属记录。
-  **归档动作的配套收尾**：① **相对链接 108 条逐条实测**（脚本：把每条 `](相对路径)` 按制品所在目录拼出
-  绝对路径再 `exists()`）——**0 条不可达**；本次改动到链接**目标**的共 **46 处**（逐件：typography 3 /
-  code-outline 19 / code-variable-highlight 18 / list-filter 3 / remember-reading-position 3；口径是
-  「新旧文件的相对链接目标做多重集差」实测，不按行数估），分两类：「把相对路径改深一层（补 `../`）」
-  **24 处**（typography 3 / code-outline 10 / code-variable-highlight 5 / list-filter 3 /
-  remember-reading-position 3——其中 2 处是两个 evidence/01 的 `../../../../REVIEW.md`：survey 判它「已正确、
-  无需改」，归档后实测还差一层，**实测捞回**）、「把目录名改指归档名（跨 change 与自指 1 处）」**22 处**
-  （code-outline 9 / code-variable-highlight 13，其中 1 处是 code-variable-highlight 的 evidence/03
-  把 `[code-outline]` 链到了自己的 proposal）。
-  **M181 记过的失效模式在本批的形态**：survey 只数了「需要补层的」与「跨 change 的」，漏掉的正是
-  4 层变 5 层这类**深度换算错**——所以本批以脚本实测为判据，不认清单。② 一批数字/指针订正（详见第 22–26
-  条与「文档指针与门禁清单」节）；③ 五件归档件内**零**声明式扩 scope：所有文本改动都是「与实现/磁盘对齐」
-  或按裁决改措辞，实现侧零改动。**未做的（如实声明）**：M195 的两张 typography 基线、M198 的一张
-  var-highlight 基线在归档件里仍标「待 Alex 过目」——本批没有可引的过目记录，标注按原样保留未擅改；
-  `src/` 侧的失效注释指针与仓内其余旧路径指针按 scope 登记进「文档指针与门禁清单」节。
-  **r1 评审（2026-09-24，p2-2items / fix-then-merge）的两处修复**：① `code-outline` 归档件的 `design.md`
-  §1.6 缓存矛盾句**首轮漏改**（backlog 与 review-request 都自报已改，实际 diff 为零——「自报改了、diff 为零」
-  正是 REVIEW.md 第 7 条的同族形态），已按 `code-variable-highlight` 的同型口径补齐并加归档标注；②
-  `list-filter` 的裁决②首轮只改了 scenario，同一 requirement **正文**（delta 与 living 两处）仍留
-  「`Enter` 与点击的动作 SHALL 保持现状」的 Enter 半，已按裁决删 Enter 半、保留点击半（点击那半由
-  `tests/unit/vault-switcher.test.ts` 覆盖）。两处均在 r1 修复提交里改准，backlog 第 23/24 条的核销表述
-  按实情对齐。
-- 批次三：键位分发三轨并行 + 扩展名注册表漂移（M130/M131/M132）；save-ipc.ts 折回 ipc.ts（M132）；Ctrl-K/D/T 原生路径风险（M132）。
-- 批次二：DeepSeek Flash 试用结论——可做 build，review 环节（k3-256k）不能省。
-
-- 2026-09-25：**表格首列字重 550 静默失效（`td:first-child` 撞 CM 的 widgetBuffer）修复**（M213，
-  tower 收编）：`src/style.css` 的 `.cm-lp-table-row:not(:first-child) .cm-lp-table-cell:first-child`
-  永不匹配——CM6 会在行内自动放置 `img.cm-widgetBuffer` / 占位 span，它们可能落在第一个 cell **之前**，
-  于是「首列 550」（tokens 文档的 td 层次档）整条静默失效（M212 reviewer 独立复现；M212 探针先发现）。
-  **修法**：判据改**列索引**——`[aria-colindex="1"]`（装饰层按列写死、与 DOM 子节点次序无关，
-  且它同时是读屏的列号语义，两处同源）。**闭环断言**：`tests/visual/scenes/restyle-content-types.spec.ts`
-  的「表格」条按列号取首列断言 550（旧 CSS 下该断言恒为 400 ⇒ 红）。**连带影响（如实登记）**：首列 550
-  让 cell 的 `min-inline-size: 7ch` 略微变宽（`ch` 随字重变），原本「贴合不横滚」的 fixture 会掉进
-  「横滚」档——`m119-table-width.spec.ts` 的欠宽用例把填充字数从 34 收到 30 以留在同一判据档内
-  （用例守的合同不变，见该处注释）。
-- 2026-09-25：**restyle R3 收尾：场景与真机验收场景全量改写**（M213，`feat/restyle-r3-scenes-acceptance-closeout`）：
-  ① `tests/visual/scenes/**` 的既有断言随 token 层/R2b 渲染层迁移（`.masthead-*` → `.modeline-*` /
-  `.ft-vault-name`，callout 图标体系退役 → `.cm-lp-callout-type`，旧色字面量 → `--tk-*` / `--border-soft` /
-  `--code-bg`，栏宽 80% → 定值 664 且「栏宽」改为读 `.cm-content` 的**内容盒**，typography 的基准
-  16px/1.75/.85em → 15px/1.7/.9em）；② 新增四个场景：`restyle-theme`（三主题 + tasks §1.2 的三条判据）、
-  `restyle-skeleton`（骨架几何 / 信息落位 / 标题栏空态）、`restyle-eink`（eink 九条逐条）、
-  `restyle-content-types`（表格首列 550 / 代码块头部条 / 引用 / 列表）；③ 视觉桩补 `ui.theme`
-  注入通道（`tauri-stub.ts`）并同步 `font_size` 出厂值 16→15；④ 真机新增场景 `34` / `35`（见「待真机验收」）。
-  **口径**：新场景不新增像素基线（实现期禁止零碎基线动作），三主题的截图证据走 Playwright 的
-  `info.attach` 产物（`tests/visual/test-results/`，git 外）。
-- 2026-09-25：**backlog #27 / #31 核销**（M213）：#27 补 `typography` 的 MODIFIED delta ×4（16px → D1 的
-  15px 锚 + 新 token 名），#31 由 R2b 修 `.cm-lp-end-marker` 的字号基准 + M213 补「正文放大后标记随之缩放」
-  的双档门禁断言。两条的详细落点见各自条目。
-  （2026-09-25，M220 补记：本条之后原本紧接六条 restyle findings，且第一条（mermaid）与「各自条目。」
-  挤在同一行没有分隔。那六条是**进行中的 findings**（待立项 / 待裁决 / 待修），与本节「已核销」的语义
-  相反，已按维护规则迁到「待修 findings（不阻塞）」的「restyle 追加修复批」小节；本节的语义恢复为
-  「进来的是已核销条目」。）
-
-- 2026-09-25：**`.cm-lp-quote-line` 的 `padding-left` 声明无消费者（引用块文字贴竖线）核销**（M213 登记，
-  M218 任务 C4 修复，tower 收尾）：CM baseTheme 的 `.cm-line { padding: 0 }` 与引用行规则同等特异性、
-  注入更晚，实测计算值 0px。修法 = 双类选择器 `.cm-line.cm-lp-quote-line` 提权到 14px（定稿
-  index.html:293）。**核销判据（合并后实测，非「分支上有提交」）**：M218 merge `456ee47`，探针三主题
-  实测 `paddingLeft` 计算值 = 14px（255/255 中逐项），reviewer-fix-content r1 独立复跑一致。
-- 2026-09-25：**mermaid 不随主题（dark 连线对比度 1.07 / eink off-palette 淡紫）核销**（M214 finding，
-  M219 任务 C10 修复，tower 收尾）：静态 MERMAID_CONFIG 拆为 initialize 时读 `getComputedStyle` 的
-  token 计算值（`theme: "base"` + themeVariables），TS 侧零硬编码色值，单一真源 = style.css 三组
-  `:root[data-theme]`。**核销判据（合并后三主题实测取色，三份不再相同）**：M219 merge `7208867`，
-  dark 连线/箭头对比度 1.07 → **10.45**、eink 全 #000 对比度 21 且填充 transparent（淡紫消除）、
-  light 连线 14.44 / 描边 5.02——reviewer-fix-mermaid r1 重建 dist 独立复跑逐项一致；两个 mermaid
-  视觉场景 fail 坐实为 pre-restyle 旧基线漂移（delta 严格限定 SVG 区，master 同跑同红）。
-- 2026-09-25：**段落间距 / 标题间距未按 tokens 间距阶梯落地核销**（M212 finding，M218 任务 C1 修复，
-  tower 收尾）：间距阶梯全量值（段落 8 / h1 24-9 / h2 20-6 / h3 16-5 / li 2 / hr 20，M216 gap 报告
-  §2.3 #1）落进 livePreview.ts 分隔行高度与 theme.ts，替换旧基线魔术数；代码块邻接外距 4 上/12 下
-  经 tower 裁决同走分隔行通道（CM heightmap 对 margin 不可见，M110 缺陷 1 同族）。
-  **核销判据（合并后实测间距读数）**：M218 merge `456ee47`，探针三主题逐项对照 gap 表全量值
-  255/255 PASS，reviewer-fix-content r1 独立复跑一致。**已接受取舍（reviewer r2 落 checks）**：
-  CM 无 margin 折叠，段落→标题 ≤8px、代码块→标题 ≤12px 偏松；li 下缘 2px 放弃（末 item 无机制）。
-- 2026-09-26：**验收套件 `--config` 静默丢掉 `app.windows[0]` 窗口级配置**（原「待修 findings」medium 条，
-  M213 登记 → **M236 修复**）：Alex 在自测实例截图里看到「两行标题栏」，根因即此——`pnpm tauri dev
-  --config` 的深合并对**数组按下标整体替换**，`app.mjs` 里手抄的 `{title,width,height,x,y,focus}`
-  把 `titleBarStyle: "Overlay"` 与 `hiddenTitle: true` 静默吃掉，套件实例因此长出原生标题栏
-  （webview 让出 32pt、屏幕上出现窗口标题「Lumir」），**全程零报错**。落点：
-  `scripts/acceptance/lib/app.mjs` 的 `launchApp` 改成从 `src-tauri/tauri.conf.json` 读
-  `app.windows[0]` **原件再 spread**、只叠 `x/y/focus`（窗口配置单一真源，REVIEW.md 第 8 条；
-  读不到窗口对象直接抛错，不回落手抄）；`lib/drive.mjs` 的 `waitAppReady` 就绪点上加
-  `assertOverlayChrome`（`AXScrollArea` 顶边与高度对 `AXWindow` 的差 >4px 即 FAIL 并点名成因，
-  `restart` 后重启同样过）；`scripts/acceptance/README.md` 补自检与配置侧纪律。
-  **判据（tower 验收口径）**：修后 AX 读数 `AXScrollArea @0,0 1152×768` 与窗口重合（修前
-  `@0,31 1152×737`）；套件实例截图单行 tab 栏、红灯叠在 tab 栏上，无原生标题栏行。
-  **反向前置验证**：把 `windows` 临时改回手抄写法跑场景 39 → 自检报「顶边差 32、高度差 32」如实 FAIL
-  （证明自检有区分度，也坐实该 bug 真实存在），改回 spread 后场景 39 **1/1 PASS**。
-  证据：`test-results/m236/baseline-review/backlog366-before-after/`（修前/修后截图 + AX 各两份）、
-  `test-results/m236/reverse-probe-backlog366-buggy-config.log`、
-  `test-results/m236/acceptance-39-backlog366-fixed.log`。
-  **连带修正**：本修复让全量场景从「非 overlay」切到「真 overlay」（视口 768 → 800），凡把视口高度
-  烘进断言的场景都要重算——扫描后只有 `scripts/acceptance/scenarios/33-image-lightbox.md` 烘了绝对坐标
-  （三条读数按 `水平 40+(1120-w)/2`、`垂直 40+(720-h)/2` 重算，场景内写明推导）。
-
-- 2026-09-27：**文档合同卫生批（M250）**（`feat/docs-contract-hygiene-m250`）：living spec 路径同步 +
-  changeFilter 文字面清扫 + 场景 39 悬案入 `REVIEW.md` + `tab-cycle-keys` 任务对账，四件。
-  ① **living spec 路径同步**：M248 的注册表更名（`workspaces/` → `vault-registry/`，merge `d989197`）
-  此前只在代码与 `docs/specs/config-reference.md` 落地，living spec 仍写旧名——新增 change
-  `sync-vault-registry-dir-spec`（MODIFIED ×1：路径字面 + 迁移口径 + 新增迁移 scenario，其余条款逐字
-  携带）并同批把 delta 应用到 `openspec/specs/vault-workspace/spec.md`；两侧同名 requirement 正文
-  `sha256` 相同（`0856d8db…`）⇒ 归档是幂等替换。`validate --all --strict` 28/28。节点 2 待 Alex（「待 Alex
-  裁决」第 38 条）。② **changeFilter 文字面（scope 内）**：改掉 `src/editor.ts:896-899` 的过期 doc（原称
-  「`changeFilter` 的拦截闭包读 `mode`」，M241 后闭包读 `currentEditable` 投影），并核 `:1434` / `:1501`
-  两处兜底正文已与真实机制一致。**tower 2026-09-27 裁决把 scope 扩入** `openspec/changes/editable-non-md-files/**`
-  与 `openspec/changes/list-tab-indent/design.md`（两处失实断言最集中的落点），按「不改写历史结论原文、只加更正
-  注记」落：`editable-non-md-files` 的 `design.md`（§2.2 末节 + 「四处窄门」句）与 `proposal.md`（§2 的 P1 清单 +
-  裁决点 D3 表行 + 「按文件类」条）各一条注记、`list-tab-indent/design.md`（「任何绕过 DOM 的程序化 dispatch 都会
-  被拦」+ S6 行）一条注记。**转 M249 两处**（与 M249 的活 scope 同文件，避免 merge 撞车）：
-  `scripts/acceptance/scenarios/43-list-tab-indent.md` 的两处「changeFilter 再兜一层」由 M249 顺手落，**不计为
-  本批缺口**；`tests/visual/scenes/m130-text-open-trap.spec.ts:19` 的注释经复核**判为准确**（说的是当前返回
-  `false` 形态下漏同步 `syncProjection` 会吞键），无需改。**独立复现**（`@codemirror/state` 6.7.4 探针）：
-  `changeFilter` 返回 `[]` 时 change 照常落地、返回 `false` 才拦——与 M241 的
-  `test-results/m241/reverse-input/README.md` 一致。
-  **M101/M97 复盘结论**：M97 的只读结论**确实只靠旧 changeFilter 成立**（M101 的提交自述逐字：「M97 只靠
-  changeFilter 在事务层拒绝，contenteditable 恒为 true，真实 WKWebView 的 AX 注入 / IME 组合路径下 DOM
-  回滚不可靠，文本滞留内存并误标 dirty」）；该缺口已在 M101 当年闭合（视图层 `editable(false)` /
-  `readOnly(true)` 拒收 + 真机复验 + `tests/visual/scenes/save-guard.spec.ts` 四场景），M241 把该行改成
-  `false` 后 dispatch 层兜底才第一次真实存在（判据 = m130 的切标签序列用例 + m241 探针）。**逐仓复查未发现
-  任何以「changeFilter / 程序化 dispatch」为目标的验收断言**（`tests/**`、`scripts/acceptance/**` 里
-  `changeFilter` 只出现在注释中）⇒ **无需要补的真判据**；清扫的逐处结论见「待修 findings」的「文档指针与
-  门禁清单」节。③ **场景 39 mousedown 悬案**：依 finding
-  `20260926-worker-fix-pack-improve-39-mousedown-preventdefault` 收进 `REVIEW.md` **第 16 条**（四段式，
-  根因照录「未定位」+ 候选机制，未虚构因果）。④ **`tab-cycle-keys` 任务对账**：11 个未勾项里 10 项对照
-  master 已合并实现（`c672be7`）逐条核实属实并勾选（键位表两条绑定 + 两条 doc + 文件头 M242 留痕 / 单测
-  定点断言与 token 形态专测 / spec 对账无偏差 / 场景 45 与真机 2/2 PASS），第 11 项（§5.1 归档评审核对）
-  如实不勾——它是节点 2 的动作。证据：`openspec/changes/sync-vault-registry-dir-spec/**`、`REVIEW.md`
-  第 16 条、`src/editor.ts` 注释、`gate quick` 9/9 PASS（SKIP 1 = `tsc-visual` 依赖未装）、单测 375/375。
-
-- 2026-10-07：**M375 修复 rust 字符字面量在围栏代码块里着色（M147 parity 缺口）核销**
-  （merge `b79e13a`，Alex「零散小修批」之一）——原「待修 findings／编辑器·键位」条闭环。修法：
-  `src/preview/code.ts` 的 `tagsForStyle` 改为与 CM6 `createTokenType` 同语义逐名字段结算（跳过的 part
-  不再丢整条），rust simpleMode 的 `string.special` 复合 token（字符 / 字节字符字面量）因此在围栏里取到
-  与 code 模式同一套 tag / 配色；chromium 场景 `tests/visual/scenes/render-codeblock.spec.ts` 加「同一
-  rust 片段在围栏与 code 模式产出的高亮 tag / 类名集合一致」的不变量断言，先红后绿留证
-  （`test-results/m375/red-phase.log` / `green-phase-rust.log`，主仓、git 外）。**同批文档面收口**：
-  `openspec/specs/editor-live-preview/spec.md`「Markdown 渲染保真」第 2 款的「已知例外」段删去 (a) rust
-  一条与「本条在（a）修复前不成立」句（(b) toml atom 例外仍有效，不受本修复影响）。**核销读数**：
-  render-codeblock 场景 20/20 绿、全部像素基线零差异（fixture 的 rust 块不含字符字面量，基线无需重建）。
-- 2026-10-07：**`startup-restore-off-main-thread` 归档件的旧签名文字核销**（finding
-  `20260918-worker-rm-dead-param-improve-m171-openspec-change-design-tasks-expect-generation.md`，M380
-  移交）——该 finding 报 `openspec/changes/startup-restore-off-main-thread/{design.md:67,tasks.md:6}` 仍把
-  `commit_vault_open(..., expect_generation: Option<u64>)` 记作现行 API，而 M171（`efd27f1`）已删该参数。
-  **核销理由**：该 change 已于 2026-09-18 归档（`openspec/changes/archive/2026-09-18-startup-restore-off-main-thread/`，
-  M170 `c367adc` 先归档、M171 `efd27f1` 后删参），归档件因此是「提案当时的冻结快照」；归档件的设计正文按
-  M150/M250 的既有口径不改写（历史结论原文不动），现行签名由 living spec
-  `openspec/specs/vault-workspace/spec.md` 与代码 `src-tauri/src/commands.rs` 承载（`commit_vault_open(&state,
-  prepared) -> bool`，无 `expect_generation`），漂移只在归档件这一处、不进入任何 living 判据。finding 属
-  worker-rm-dead-param 家族；该家族落在实现侧的两条（`finish_restore` 的 `root.is_some()` 分支补测试、
-  `-> bool` 死返回值，M380 已补测试）见「启动恢复让位判定与提交返回值」节。
-- 2026-10-07：**M374 轮次闸门未适配 m347 场景致 master 主用例红——已由 M378 修复**（finding
-  `20261007-worker-uxpol1-bug-m374-m347-master-m347.md`，merge `2bd79d4`）——M374（`43111de`）给
-  `src/harness-panel.ts` 的 `handleEvent` 加了轮次闸门（`turnOpen=false` 时丢弃 `usage` / `text_chunk`
-  等事件），而 `tests/visual/scenes/m347-harness-composer.spec.ts` 主用例在 `send()` **之前**注入 usage
-  断言 ctx 读数——事件被闸门丢弃、读数停在快照的 0% · 0%，该用例在 master 上稳定 FAIL（本地 `run.sh`
-  复跑实证，与 M378 改动无关）。M378 把 m347 的 usage 注入移进开轮窗口（`send()` 之后、`done` 之前），
-  随场景适配同批修复，merge `2bd79d4`。**遗留（如实登记）**：finding 的 (a)「其它场景若有同类 pre-send
-  注入需逐一核对」未逐一核，最便宜的防线是全量 visual 回归（master 全绿即证）；(b)「改事件闸门语义时
-  grep 全部 `__fireHarnessEvent` 注入点做回归」作为防线记在 finding 里，本轮不另立条目。
-
-## M282（change `ui-language-i18n` 实现批，2026-09-28）遗留
-
-- ~~**后端错误文案的参数面（D6 的后半）未落地**~~ **2026-09-28 已闭合**：`CommandError` 加 `params`
-  （空时不序列化）+ `param(k, v)` 链式构造；35 处构造点按「模板里的 `{name}` 就是 Rust `format!` 的
-  内联变量名」补参数（`e` 一类的 Display 值映射成 `reason`）；`tests/unit/error-text.test.ts` 立了两条
-  机械门禁（code 集合与 `ERROR_COPY` 一一对应 + **每处构造点都提供该 code 文案的全部占位名**），
-  en 界面下带参数的 code 上屏英文且参数插值正确（不再回落中文 `message`）。
-- **验收套件把「环境无效运行」与「产品判红」都表达成 0/1 PASS + 退出码 1**（M281 的 low finding，
-  `.tower/comms/findings/20260928-worker-impl-goto-line-c-improve-0-1-pass-1.md`）：环境类失败
-  （磁盘水位、app 没起来、端口被占）与产品类失败在读数上不可区分，复盘时要人读 run.log。**待修**：
-  run.mjs 的退出码分档（0 = 全 PASS、1 = 有产品失败、2 = 环境无效），`status.txt` 同步分档。
-- ~~**原生目录选择器标题未按语言取值**~~ **2026-09-28 已闭合**：`commands.rs` 的 `picker_title()` 在
-  弹出时读一次 `config::load()` 的语言（`current_ui_language()`）再设标题，两档文案落在 deck 的
-  D321（**全仓唯一一处 Rust 持有可见文案的地方**，理由与边界写在那一行的设计意图列里）；已弹出的
-  对话框不跟随切换（如实登记）。
-- ~~**启动首帧闪烁未实测**~~ **2026-09-28 已实测、未测出可见闪烁**：真机（`ui.language = zh` 的隔离
-  环境）逐帧采样（每帧记 `document.documentElement.lang` + 可见文本长度 + modeline/树文本），首帧
-  确实还没有语言属性（文案层在那 16ms 里按默认档 `en` 取值），但**首帧没有任何语言相关的可见文案**
-  （modeline 左段与文件树都为空——承载文案的 chrome 都在配置到达之后才写入），第二帧起就是配置语言。
-  逐帧读数落 `test-results/m282/ui-language-startup-flash/README.md`；两条候选缓解因此不采用
-  （现状的写入次序已经满足缓解 ①，缓解 ② 会换来「配置到位前整窗空白」）。
-- **视觉层的覆盖选择如实登记**：`tests/visual/scenes/tauri-stub.ts` 的桩把界面语言**钉在 `zh`**
-  （与产品出厂默认 `en` 不同），理由是既有整页基线全是 zh 形态、它们承担「结构与外观」的回归面；
-  `en` 面由新场景 `tests/visual/scenes/m282-ui-language.spec.ts` 覆盖。**代价**：视觉套件不再代表
-  产品的默认语言面；若要让基线代表默认语言，需一次性重拍全部整页基线（人肉裁决点）。
-- **zh 侧唯一一处可见措辞变化**：`src/vault-switcher.ts` 的相对时间改走
-  `Intl.RelativeTimeFormat`，zh 下的数字与量词之间不再有空格（`5 分钟前` → `5分钟前`）。这是
-  design §6.2「相对时间走 Intl」的直接后果，已在 `tests/unit/vault-switcher.test.ts` 就地标注；
-  若 Alex 要保留空格，则相对时间不能走 `Intl`（回到查表），两条不能同时成立。
-- **日志文本语言的口径待确认（沿 proposal 的报备）**：终裁说「日志消息固定用英文」，而现状日志
-  `message` 是中文（事件名 / 字段名是英文标识符）。本批按「日志面不进语言面、文本不动」执行，
-  未改写任何日志文本。
-
-## M284（验收套件语言面修复，2026-09-28）
-
-### 修的是什么
-
-M282（change `ui-language-i18n`）把 `[ui] language` 的**出厂默认从 `zh` 裁成 `en`**，但验收套件里
-断言 chrome 文案（`关闭 {name}` / `保存并切换` / `vault：{name}（点击查看全部 vault）` / `（未保存）` /
-`Markdown 表格 1` / 右键菜单 7 项 …）的场景**从没钉过语言**——它们一直隐式跟随产品默认值。默认值一
-改，这些断言在默认面下整批变红，而失败形态与真实产品缺陷一模一样（M283 首轮真机跑撞上，现场
-`test-results/m283/before-run-language-face/`）。**根因不是「钉错了语言」，是「没钉」。**
-
-### 盘点（实测，不是 finding 里那个 27）
-
-机械口径（探针脚本与读数落 `test-results/m284/inventory.{txt,json}`，脚本 `copy2.mjs` / `inv4.mjs` 同目录）：
-把场景 front-matter 里**真正送给 AX 匹配器**的字段（`ax.has/not/focused/count.pattern`、`target.name/
-any/help`、`clickNodeText.text`、`clipboard.*`）全部抽出，与 `src/copy-data.ts` 的**字面片段**（按
-`{占位名}` 切分，不做 trim；CJK 片段 ≥3 字符、纯 ASCII 片段 ≥4 字符）做双向包含比对。
-
-| 读数 | 值 |
-|---|---|
-| 场景总数 | 65 |
-| 断言里的 matcher 总数 | 867 |
-| **消费了文案表某条目字面片段的场景** | **54 / 65** |
-| 命中记录数（同一条 matcher 命中多个文案键时**重复计**） | 759 |
-| **被命中的 matcher 条数（去重口径：同一场景内同一个 `where` 只计一次，再逐场景求和——与上面「按场景逐条对照」的口径一致）** | **403** |
-
-（**口径记账（M284 r1 评审 P2-1）**：本表首版写的是 379——那是探针**中间版本**的读数，改了字面片段
-切分口径后没回改；`inventory.json` 的三个可复现数是：raw hits **759**、逐场景去重 **403**、
-跨场景全局去重 **137**。下文提到的「403 条 matcher」一律指逐场景去重那一档。）
-
-finding 报的「约 27 个」是拿四条中文串 grep 出来的**下限**；实际面更大——finding 没列的还有
-`Markdown 表格 {n}`（表格 widget 的读屏名）、`Markdown 代码块 {n}`、`关闭 {name}`（标签列）、
-`（未保存）`（D90）、`保存并切换` / `放弃修改并切换`（D110.x）、`关闭其他标签` / `关闭右侧标签`（D150/D151）、
-`主题：{theme}（点击切换）`（D122）、`键位（生效中）`（D63）、`输入以筛选` / `没有匹配的条目`（D117/D118）
-这些面。口径是**静态启发式**，已知两侧误差：**欠包含**（`/A|B/` 正则形态的 matcher 与短于阈值的片段
-会漏检）与**少量过包含**（`vault` 这类 ASCII 短串会把个别 fixture 文本算进来）。要按场景逐条对照，
-看 `test-results/m284/inventory.json` 的 `hits[].where` / `.val`。
-
-### 修法：套件自己钉住语言面（不是逐场景改断言）
-
-| | 决定 | 理由 |
-|---|---|---|
-| 机制 | `run.mjs` 的 `SUITE_LANGUAGE = "zh"`：每个场景起 app 之前把 `[ui] language` 写进隔离 `config.json` | 一条线消掉整类问题：套件不再依赖**产品**默认值，产品的默认值以后再改也不会动到套件 |
-| 取值 | `zh`（存量断言取的就是 zh 列） | 另一条路是把 403 条 matcher 改写成 en 列——机械改写 + 逐条核对插值/复数/`Intl` 格式，风险与收益不成比例；且断言是 M282 之前逐条评审过的制品 |
-| 先例 | 与视觉层同一条：`tests/visual/scenes/tauri-stub.ts` 的桩同样钉 `zh`（`en` 面交给 `m282-ui-language.spec.ts`） | 两层的覆盖选择一致，代价一次说清（见下） |
-| 覆盖方式 | 场景要验别的面就自己钉：front-matter `config: { language: "en" }`（场景 60） | 场景 55 两端都断言，保持 `zh` 起点 |
-| 静态门 | `run.mjs --check` 校验 `config.language ∈ {zh, en}` 且 `config` 的键在白名单内（`lib/app.mjs` 的 `SCENARIO_CONFIG_KEYS`，单点真源） | 拼错即静默落回产品默认——正是本批要根除的形态 |
-
-**顺带修掉的一处代价**：`config:` 原先在场景执行期写第二次并触发一次 app 重启；本批折进 `launchApp()`
-之前的那次写（首帧即场景声明的起点，与 backlog:366 的「窗口配置只有一份真源」同一取向）。因此钉语言
-面**不额外花重启**，全量批还比原来少 11 次重启（原先声明 `config` 的场景）。
-
-**反向验证（先红后绿，REVIEW.md 第 1 条）**：把 `SUITE_LANGUAGE` 临时改成 `en` 跑场景 16 →
-**FAIL**（AX dump 里 `AXButton (Open vault)` / `Open a folder as a vault…`，现场
-`test-results/m284/reverse-en-face/`）；改回 `zh` 复跑 → **PASS**（`test-results/m284/precheck-zh/`，
-同批 34 / 09b 也 PASS，证明 `theme` / `keys` 从场景 `config` 折到起 app 之前同样生效）。
-
-### 覆盖边界（如实登记）
-
-- `zh` 面：本套件全量 + 视觉套件（桩钉 `zh`）；
-- `en` 面：本套件场景 **55**（⌘⇧L 切换，两端都断言）与 **60**（钉 `en`，走完守卫三出口 / 空 vault 引导 /
-  dirty 标记 / 标签计数）；视觉 `m282-ui-language.spec.ts`（直接 import `COPY`）；文案表本身的漂移与占位
-  门禁在 `tests/unit/copy.test.ts`。
-- 因此**产品出厂默认面（`en`）在真机上的整场景覆盖只有 55 / 60 两块**——这是本批选择的已知代价，与
-  上面「M282 遗留」里视觉侧的同款代价并列。
-- **本批没做**：把 403 条 matcher 改写成 en 列（见上表理由）。若 Alex 要求套件整体代表出厂默认面，
-  那是一次独立的重写批。
-
-### 本批顺带发现（都已 file finding，不在本批修）
-
-1. **`src/shell.ts:89` 的标签段读屏名不在 relabel 通道**（medium，真机实证）：配置 `zh` 时
-   `AXTabGroup` 停在 `Open documents`。同一类型的长驻 chrome 违反点**只有这一处**（其余 6 类都已有
-   `onRelabel`，逐项 file:line 见 finding）。finding：`20260928-worker-fix-zh-scenarios-bug-relabel-zh-axtabgroup-en.md`。
-   **这就是场景 35 在本批全量里唯一那条红**——它是**产品缺陷**，不是套件问题（本批的 zh 面把 M282 的
-   迁移缺口照出来了；若按「断言改 en」的那条修法，这条缺陷会被永久掩盖）。
-2. **preview widget 的 `eq()` 语言盲区**（low–medium，静态实证）：一批 widget 的 `eq()` 只比语言无关
-   字段，`applyLanguage` 依赖的 `refreshPreview()` 因而不重建 DOM，`toDOM()` 里的 `t()` 钉死在首次渲染
-   那一档（含**可见文本**的 mermaid/frontmatter/math 一类）。清单与对照组在同一个 finding 里。
-3. **启动恢复 notice 在 en 面泄漏中文**（low，实测）：`src-tauri/src/lib.rs:513` 的
-   `"上次打开的 vault 已不可用：{last}，请重新选择目录"` 是硬编码中文串、不走文案表——reverse-en 跑
-   的 AX dump 里可见「中文前缀 + 英文尾巴」混排。这条**已在 change `ui-language-i18n` 的 tasks 5.5 里
-   记为未勾选项**，故不另立 finding，只在这里记账。
-
-## M285（选区自绘 + 标签段读屏名，2026-09-28）
-
-两个真机缺陷一批修。分支 `feat/fix-bold-selection-drawselection-and-tab`（**核销**：M284 那句
-「场景 35 唯一稳定红」的成因，即下面 B）。
-
-### A. 选中跨粗体时粗体段没有选中底色（M273 survey 定位）
-
-**根因**（全量报告 `test-results/m277/findings.md`）：编辑器没装 CM6 的 `drawSelection()`，可见高亮
-全靠浏览器原生选区；md 的 live preview 在 `mouseup` 解冻那一拍重建强调段（`**粗体**` 显露）的 DOM，
-WebKit 没把重建出来的那段画进选中层 ⇒ 粗体段是一个「洞」（而复制内容是对的——复制走 CM 的 state）。
-
-**修法**（四个落点，后两条是实现期实测才发现必须一起做的）：
-
-| 落点 | 改动 | 为什么 |
-|---|---|---|
-| `src/editor.ts` sessionState | 装 `drawSelection()`（模式无关的基础层） | 选区与光标改由 CM 的 state 画在 `.cm-selectionLayer` / `.cm-cursorLayer` 上，绕开「原生选区的绘制 vs 装饰重建」那条同帧竞态；此前 `.cm-selectionBackground` / `.cm-cursor` 那几条规则是「声明了没有消费者」的存量（REVIEW.md 第 9 条） |
-| `src/editor.ts` baseTheme | `.cm-selectionBackground` 的底色加 `!important` | CM base theme 自带 `.ͼ2.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground { #d7d4f0 }`——**5 个类的选择器**（实测把 `document.styleSheets` 里所有含 `cm-selectionBackground` 的规则逐条读出来），应用自己的 2–3 类规则特异性上必然输；不写 `!important` 时选区会变成库默认**淡紫**（chromium 实测 `rgb(215,212,240)`），`--sel` 被静默架空。`::selection` 那条**不写** `!important`（要有意让 `hideNativeSelection` 赢，否则原生层与自绘层叠成两层）；eink 的反白靠它的 `color` 生效（`hideNativeSelection` 只写 backgroundColor） |
-| `src/preview/theme.ts` | 删掉与 baseTheme **逐字重复**的一份选中底色 / 光标声明 | 两处写入点（REVIEW.md 第 8 条）；选择底色的真源收口到 `editor.ts` 的 baseTheme（两模式共用） |
-| `src/table-fullscreen.ts`（仅注释） | 快照拒绝表那两条选择器从「纯防御」改成「真拦得住」 | M285 起这两个层真实在场；旧注释自述「实测本应用未装 drawSelection」已成错误自述 |
-
-**chromium 侧判据**（`tests/visual/scenes/m285-selection-layer.spec.ts`，6 条，结构层）：逐字符
-`.cm-selectionBackground` 覆盖 = CM 选区（5 种范围类型 × 3 主题）、显露态（源码可见、装饰已撤）
-不回退、鼠标按压窗口内与抬起后都覆盖、空选区时零覆盖层、选区外字符零覆盖；色值判据是
-`.cm-selectionBackground` 的计算样式 == `--sel`、eink 的 `::selection` 前景 == `--sel-text`。
-**它不能替代真机判据**：chromium 的像素层对这条缺陷是假绿（survey 实测 4 条交互路径 × 3 主题逐字符
-底色全绿——无头引擎在装饰重建后会把原生选区重新同步到新建的文本节点）。
-
-**真机侧判据**（场景 64）：见「先红后绿」与「M285 新增的 pixel 断言通道」。
-
-**M273 两问的关闭（Alex 2026-09-28 裁决，dogfood 实证）**：① 选中底色 α≈0.77（当时疑似 eink + 失焦
-dimming）——Alex dogfood 后答「**已好**」⇒ 本条修复在真实手感上成立，不再跟踪；② 行内 code 药丸
-padding 窄条不染色（M277 报告 §5 的独立小观感项，survey 当时建议另立）——Alex 裁决「**不立**」⇒ 不立项、
-不收进待办（`test-results/m277/findings.md` §5 与 finding
-`20260927-worker-survey-bold-sel-m277-improve-code-padding-selection.md` 留档即可）。
-
-### B. 标签段读屏名不在 relabel 通道（M284 照出的产品缺陷）
-
-`src/shell.ts` 的标签段读屏名只在构造期取一次 `t("D88")`——那时配置还没到达，取值落默认档 `en`，
-且全文没有 `onRelabel` 注册 ⇒ 配置 `zh` 时读屏名永久停在 `Open documents`（M282 design §5.2 的
-不变量「承载语言相关文案的长驻元素 MUST 有一条能在运行期重跑它的写入路径」被违反）。
-修法：抽成 `applyTabStripLabel()`（**保持单一写入点**）并挂进 `onRelabel`，与 `src/toc.ts` 的指示段、
-`src/tree.ts` 的树头入口同形。判据两层：真机场景 35（`AXTabGroup (打开的文档)`）+ chromium
-`tests/visual/scenes/m282-ui-language.spec.ts` 的「标签段的读屏名跟着语言走」（zh 桩下取中文列、
-⌘⇧L 切 en 后取英文列——同一 DOM 元素上的值随语言变，证明重绘回调真的注册了）。
-
-### 先红后绿（真机，`node scripts/acceptance/run.mjs 64 35`，两轮）
-
-| 场景 | 修前（`src/` 摘掉两处修复） | 修后 |
-|---|---|---|
-| `35` | **FAIL**（1 条红）：`AXTabGroup (Open documents)` —— zh 面里唯一一处英文 | **PASS** |
-| `64` | **FAIL**（1/21 条红）：「第 1 行行尾空白 vs 选区内文字」应同色却不同（`#fdfdfd` / `#e8e8e0`，最大通道差 **29** > 容差 8） | **PASS**（21/21） |
-
-证据（git 外，均已同步到主 checkout）：`test-results/m285/pre-fix/`、`test-results/m285/post-fix/`
-（两轮的 `steps.md` / `shots/` / `ax/` 全量）；标定探针现场
-`test-results/acceptance/2026-09-28/m285-probe/{light,eink}-v3/`。
-
-**判据为什么是「行尾空白」而不是「某个洞」**：M273 的洞只在鼠标那条时序（`mouseup` 解冻 → 装饰重建）
-出现，而合成的 CGEvent 拖拽在本机不可用（见下「已知边界」）⇒ 真机判据改判**绘制来源**：跨段选区的
-**开放端**由 CM 自己的几何算出（`rectanglesForRange` 对未闭合的一侧取内容框内缘 ⇒ 整行涂到正文栏
-右缘），原生选区不涂这一块。这一条的区分度已由上面两轮实测钉住（修前 29 / 修后 ≤ 2）。
-「粗体段底色 == 选区内普通文字底色」那条在两轮里都 PASS —— 它在**这条通道上**没有区分度（键盘建立的
-选区不触发那一拍重建），它的价值是钉住缺陷的主体读数不回归；如实登记，不当作区分度证据。
-
-**顺带实测到的两处口径**（不是本批引入，登记备查）：
-
-- **eink 档的选中底色在修前不是 token 值**：原生选区在真机渲染成 `#333333`（实测），修后由 CM 画的
-  是恰好 `--sel`（`#000000`）。即本修法顺带让「选中底色 == token」在像素层成立。
-- **键盘建立的选区不进 DOM 选区（窗口非前台时）**：`⌘C` 在真机对这类选区复制不到内容（原生 ⌘C 需要
-  key window；窗口在前台时正常——两轮实测：pre-fix 轮「前台焦点：已取得」时 DOM 选区有内容、
-  post-fix 轮前台未取得时剪贴板是上一个 app 的残留）。**场景 64 因此只把剪贴板当「读数」记进证据、
-  不写断言**（`do: clipboardRead`）。真机上前台是场景级前置条件（套件 README 的「键盘场景的前台
-  纪律」），不是本批引入的行为。
-
-### M285 新增的 pixel 断言通道（真机取色的第一处通道）
-
-渲染类缺陷在真机的既有通道里**全不可见**（AX 读不到选区、文件与剪贴板只看内容），M273 的 survey 把
-这类判据落到「逐字符底色」上，而真机此前只有截图没有取色通道。本批补上：`lib/pixel.mjs` +
-`expect.pixel`（`same` / `differ` / `contrast` 三种相对关系，窗口局部坐标采样、窗口截图经 `sips` 转
-BMP 后取采样方块主色）。细节与边界见 `scripts/acceptance/README.md` 的断言表与 `pixel` 小节。
-
-### 已知边界与未覆盖
-
-- **鼠标路径那一拍（缺陷的原始触发时序）在真机没有被场景覆盖**：合成拖拽在本机不可用——三轮探针
-  里同一条 `drag` 路径先（v1）把文档截断成 `…**粗体段wo`、后（v3）在文末追加 `hao`，两次都是拼音串
-  （环境里有中文输入法在跑，合成鼠标事件触发了它的预编辑提交；真手拖拽不经这条通道）。已记进
-  套件 README 的「已知边界」。该时序的几何不变量由 chromium 的 `m259` 场景覆盖。
-- ~~**`openspec/specs/editor-live-preview/spec.md` 的合同条款未落**：M277 报告 §6 建议新增一条不变量
-  （「选区可见范围 MUST 等于编辑器选区范围」）。本批 scope 不含 `openspec/**`，故只把结构判据落成
-  测试（`m285-selection-layer.spec.ts`），条款落点留给后续 proposal/归档批。~~
-  **已落（M287 归档批，2026-09-28）**：条款作为不变量段落 + 配套 scenario 落进
-  `openspec/specs/editor-live-preview/spec.md` 的 `Requirement: live preview 装饰层`（M277 §6 指定的
-  落点，与 M259 那条同层），`openspec validate --all --strict` 绿。判据层按条款要求写成「chromium 结构层
-  + 真机层」，并写明 chromium 的像素层对本条是假绿。
-- **基线未动**：装 `drawSelection` 动了编辑器的绘制层，但整套视觉回归（含 22 处整页 / 元素像素断言）
-  **一条基线都没红**——实测那些场景里没有「有选区的编辑器」形态。两条新场景（`m285-selection-layer`
-  与 m282 的那条）都是结构 / 计算属性断言，不新增整页基线。
-
-## M291 选区族对比度（三主题；2026-09-28，已修，合并以后补记）
-
-- **现象（Alex 报告，同一族的多个面）**：① light / dark 下看不出选区落点（「我人眼压根看不出来我从哪里
-  选中的」，他从「取消」的「取」字开始选）；② eink 下代码块里「几乎看不到文字」；③ Alex 裁决 eink 的
-  chrome 侧反白也不可用（「现在是白字灰底，我人眼几乎看不清字是什么」）；④ 补充现场：eink 下引用块内
-  **粗体**被选中后不可见（普通文字呈浅色、粗体段与黑底融为一体）。
-- **定性（两档机制，都不是「画不出来」）**：
-  1. **撞色**（①②③的共同底色）：编辑器选区带的真源 `--sel` 与它要压住的承载面太近。真机读数
-     （窗口局部 7×7 主色）：light 正文带 `#e8e7e2` vs 纸 `#fdfdfd` = **27**、代码块内 vs 纸 = 27
-     （M288 时的块内撞色读数 11）；dark 正文带 `#323337` vs 底 `#222327` = **16**、代码块内
-     `#47484c` vs 底 = 37。
-  2. **eink 的「黑底反白」只有一半**：反白靠原生选区的 `::selection { color }`，而它只作用于**仍被
-     原生选区覆盖**的文字——选区驱动的装饰重建（显露强调段）把那段 DOM 重建出来，WKWebView 不把
-     重建出的节点画进选中层（M273 的机理；M285 只修了**底色**那一半）。同一条选区里普通文字正常、
-     重建段被吞。另一半：**行内 code 药丸**自带底色画在选区带**之上**，`::selection` 把药丸里的字改成
-     白字 ⇒ 白字压浅灰（chromium 实测跨度 **15**）。
-  3. **chrome 侧的反白靠逐表面 `:not(:hover)` 排除条款兜底**：`--hover` 档会压过选中底色，于是
-     「白字压 `#f0f0f0`」只差漏一条条款或一个过渡帧（过渡帧实测差 **15**，稳态差 255/240）。
-  4. **起点位置对现象无判定意义**（Alex 从引用块中间起选的疑点）：显露判据按**节点源码区间**接壤
-     判定，与选区起点落在行内哪个位置无关 —— 起点在块外、块内、行首都产生同一条读数。
-- **复现边界（如实登记，不粉饰）**：
-  - **可复现**：light / dark 的撞色（真机 27 / 21）；eink 的**行内 code 药丸**被吞（真机跨度 15，
-    chromium 15）；chrome 侧「白字压 `#f0f0f0`」的形态（chromium 15，**由注入复现**）。
-  - **未复现**：① Alex 的「eink 引用块粗体被选中后不可见」——我这套 replicate（真机 + 同一场景）
-    修前读到强调段跨度 **193（可读）**；② 「eink chrome 白字灰底」在**稳态**读数是白字压黑底
-    （255）与悬停后黑字压浅底（240）——CSS 里每个表面都带着一条 `:not(:hover)` 排除条款兜着它，
-    只有**过渡帧**或**漏掉条款**才落到 15。两条都按 Alex 的裁决做了**类级消除**（反白整条退场），
-    因此这两类现场在本版之后不可能再造出来；若 Alex 手上仍有可复现的现场，请给表面名/截图，
-    按新判据补一栏（判据落在 `m291-selection-contrast.spec.ts` 的 chrome 用例，加一个选择器即可）。
-- **修法（token 层，真源 `docs/specs/design-tokens-v1.md`）**：
-  - 编辑器选区带的真源从 `--sel` 拆出为 **`--sel-band`**（画在文字之下、前景改不了，下界还要压住
-    `--code-bg`）：light `#c6c5bf` / dark `rgba(255,255,255,.22)` / eink `#b9b9b9`；
-    `src/editor.ts` 的 `.cm-selectionBackground` 改读它，并删掉那段**从未生效**的 `::selection` 底色
-    声明（CM 的 `hideNativeSelection` 用 `!important` 置透明，裸声明永远输）。
-  - **eink 的 `--sel` 族整体重定**（Alex 裁决，chrome 与编辑器同批）：`--sel` 纯黑 → 明度带
-    `#b9b9b9`、`--sel-text` 白 → 黑（= `--text`）。反白路线整条退场 ⇒ 任选区内文字都可辨，
-    也不再依赖原生选区的覆盖；`src/style.css` 里 5 处 `:not(:hover)` 排除条款随之删除（它们此前是
-    唯一的可读性保障）。
-- **修前 → 修后读数（同一天、同一台机）**：
-
-  | 判据（窗口局部 7×7 主色） | light | dark | eink |
-  |---|---|---|---|
-  | 正文带 vs 选区外（**真机**，起点/中段/代码块三处同值） | `#e8e7e2`/`#fdfdfd` = **27** → `#c6c5c0`/`#fdfdfd` = 61 | `#37383a`/`#222327` = **21** → `#5a5b5d`/`#222327` = 58 | `#000`/`#fff` = 255 → `#b9b9b9`/`#fff` = 70 |
-  | 带在代码块内 == 块外（同色判据） | 修前 0 → 修后 0（不透明带，形态不变） | 相对判据（半透明，合成色随面变） | 修前 0 → 修后 0 |
-  | 代码块内带 vs 代码行区带（chromium） | 11 → 45 | 16 → 44 | 240 → 55 |
-  | 选区**起点**两侧（chromium） | 27 → 61 | 16 → 49 | 255 → 70 |
-  | **强调段**（显露重建）字形跨度（真机；chromium 对这条假绿） | 117 → 85 | 96 → 66 | 修前 **193（可读，未复现 Alex 的现场）** → 修后 141 |
-  | **行内 code 药丸**字形跨度（真机） | — | — | **15 → 227** |
-  | 着色字符串字形跨度（真机） | — | — | 169 → 120 |
-  | chrome 树当前行（指针在行上，底色被 `--hover` 压过；chromium） | — | — | **15**（「白字灰底」的形态，注入复现）→ 240 |
-  | chrome 浮层当前项（chromium） | — | — | 255 → 185 |
-
-  （真机两轮：先红 `test-results/m291/before/steps.md`、后绿 `test-results/m291/after/steps.md`；
-  chromium 读数 `test-results/m291/chromium-{before,after}.txt`。）
-
-- **判据**：chromium `tests/visual/scenes/m291-selection-contrast.spec.ts`（编辑器矩阵 + eink 字形 +
-  chrome 侧含 hover 组合 + 区分度自证，4 用例）；真机场景 **68**（先红 / 后绿两轮，含 eink 强调段与
-  药丸的 `contrast` 判据、chrome 侧截图证据）。三处既有断言按新口径更新并逐条注明理由：
-  `m285-selection-layer`（`--sel` → `--sel-band`；eink 的 `::selection` 断言从「反白 = --sel-text」改成
-  「字色 = 正文色」）、`m198-code-variable-highlight`（三层可区分里的选区一层改读 `--sel-band`）、
-  `restyle-eink` 规则④（黑底反白 → 明度带 + 黑字）、场景 66（eink 的标签与说明按新 token 更新，
-  **断言与阈值未动**）。
-- **未收口（另立）**：**行内 code 药丸 / callout 行底色 / frontmatter 区**这类 `.cm-content` 内的
-  in-flow 底色仍画在选区带之上（选中时那一段读到的是它自己的底而不是带色）——M288 已登记的同类
-  表面、M291 只保证「那里的字可读」，覆盖问题见 finding
-  `20260928-worker-selection-contrast-m291-improve-inline-surface-band-coverage`。
-- **r3（Alex 追加裁决）**：`.lumir-block-trigger` 在 eink 下的**热态**原先是硬编码黑底白字
-  （`src/style.css` 的 eink 块），按 M291 的方向**退场**——改为选中族（`--sel` 明度带 + `--sel-text`
-  黑字），同时把该块静止态的三处字面值（`#fff`/`#000`/`#000`）按收敛规则 1 归位到
-  `--preview-bg` / `--border` / `--text`（值不变）。**light/dark 没有硬编码可退**：基础规则本就取
-  `--preview-bg` + `--text`（hot 只是字色深一档），只有 eink 需要一整块实心底。**同族残留（登记待
-  裁决，本批未改）**：搜索面板的两处实心档（大小写开关「开」态、当前搜索匹配）与代码块 / frontmatter
-  区的 eink 黑框仍是字面值（与 `--accent-fill` 那对 / `--border` 在这一档同值，行为未变）。
-  **（M293 已核销，2026-09-29）**：这批字面值已按收敛规则 1 归位到 `--accent-fill` 那对与
-  `--border`（三主题渲染值逐值不变，核对表见本文件末的 M293 节）；同批随 scope 扩宽一并收了
-  `src/preview/theme.ts` 侧的 frontmatter 盒 / 两个 chip 描边 / callout 左色条。仍留在字面值上的
-  只剩「面」族（`#fff` 白底四处）与 callout 类型标签的一处前景色（同节列明，未动）。
-- **r3 复现路径的验证（已跑完，结论 PASS，先红后绿都在档）**：Alex 给的路径
-  （`docs/design-parity-contract/README.md`，从「另见的上一行」拖到「2026-09-06」，跨引用块与标题，
-  **等 1 秒**）在**他的原文件区域**（前 20 行逐字，eink）上实测：
-  - **master 等价形态（3497478）复现**：带纯黑 `#000000`，带内字形跨度 **0 / 57 / 0 / 62**
-    （`另见` 行 / `独立` 行 / 正文 / 药丸）⇒ 字被吞、正是 Alex 的现场；
-  - **修复版（42cc1dd）通过**：带 `#b8b8b8`（= `--sel`）对纸 **71**，带内跨度 **185 / 127 / 189 / 215**
-    ⇒ 全部可读。截图与逐点读数：`test-results/m291/{repro-real-before,repro-real-after}/` +
-    `r3-repro-verdict.md`（复量脚本 `measure.mjs`，与套件 `pixel` 同一口径）。
-  - 机制：mouseup 后 livePreview 重建强调段 DOM，重建出的节点不再被原生选区覆盖 ⇒ `::selection` 的
-    反白够不到它们（M285 只修了底色那一半）；改成明度带 + 黑字后字色不再依赖原生选区覆盖。
-- **套件通道的两条边界（本轮实测，供后批）**：
-  1. **超长 fixture 会让 AX 快照退化**：把整份 127 行的 README 写进 vault 时，像素断言一律报
-     「取不到窗口截图，像素断言无法判定」；截成前 20 行（覆盖被选区域）即恢复。要看这种长文的真机读数，
-     只能用「套件存 shot + 自己按 `lib/pixel.mjs` 口径复量」这条路（本轮的读数就是这么来的）。
-  2. **合成拖选后紧跟的 `pixel` 断言也常取不到截图**（同一时刻的 `shot` 步骤却能存下）⇒ 拖拽类场景的
-     像素判据要么挪到 shot 之后，要么接受「复量证据」。已 file finding（见下）。
-- **核销**：M288 的 finding `20260928-worker-codeblock-selection-m28-improve-m288-sel-code-bg-11-callout-code.md`
-  的「11 够不够」人裁决点由本 mission 回答（不够 ⇒ 已按 `--sel-band` 收口），finding 核销；
-  callout 色与 code-bg 的关系未变，那半条不在本 mission 面内。
-
-## M288 代码块内选区不可见（2026-09-28，已修 dac89c0，合并 eef2556）
-
-- 现象：md 的围栏代码块里扩选 / 拖选看不见选区（Alex 报告；他猜「撞色」）。
-- 定性（机制）：**绘制顺序**。drawSelection 的 `.cm-selectionLayer` 是 `.cm-scroller` 里的
-  **负** z-index 层（CM `layer({above:false})` ⇒ `-1 - pos`，实测 **-2**），而块底色（容器 +
-  行两个 in-flow 背景）按 CSS 绘制顺序排在它之后 ⇒ 整块盖住。真机三主题修前读数：light 差 0、
-  eink 差 0、dark 差 14（半透明 --code-bg 恰好透出来，故 dark 修前也可辨 **= 非缺陷档**）。
-- 修法：块底色搬到容器的两个负 z-index 伪元素（`::before` 底板 / `::after` 行区带，
-  `padding: inherit` + `background-clip: content-box` 让行区带与容器 padding 同源）；折行档
-  由 `.cm-lp-codeblock-slot::before` 承担；行底色在 slot 在场时让位（`:has()`）。
-  **容器与行 MUST NOT 定位**——否则块级动作钮的包含块从 slot 变成容器、横滚时跟着内容滚
-  （M240 口径，实测钮 x 992 → 692）。零新增 token、不动 drawSelection 装配。
-- **残差（待 Alex 裁决）**：修后 light 的块内选区与块底色仍只差 **11**（`--sel` #e8e7e1 vs
-  `--code-bg` #f2f1ec；正文档差 21），dark 14、eink 240。要更重只能改 token（`--sel` /
-  `--code-bg`，真源 docs/specs/design-tokens-v1.md）或给块内选区造更重的变体（需动 drawSelection
-  装配或新增 token）——finding 已记（`20260928-worker-codeblock-selection-m28-improve-m288-sel-code-bg-11-callout-code.md`）。
-- 判据：chromium `tests/visual/scenes/m288-codeblock-selection.spec.ts`（三主题 × 两种折行口径 ×
-  四种选区形态 + 区分度自证；修前 2 failed → 修后 3 passed）；真机场景 **66**（修前 FAIL 0/1 →
-  修后 PASS 1/1，三主题读数在档）。**未给 m285-selection-layer spec 加 code 块分支**：那条几何覆盖
-  对本缺陷无区分度（加了是假绿）。
-- 同类表面（**机制推演、未逐一实测**，候选另立 survey）：行内 code 药丸 / callout 行底色 /
-  frontmatter 区 / code 模式的变量底纹——同一机制（.cm-content 内的 in-flow 底色盖住负 z-index
-  选区层），其中不透明的几处预期 100% 盖住选区。
-- 门禁：gate quick 10/10、gate visual 12/12（556 passed / 1 skipped，22 处像素对比零基线 diff、
-  未做 --update）；三处既有计算样式断言按新落点更新（理由就地注明；reviewer 复核确认保住原不变量）。
-
-## M293 eink 字面值归位 token（2026-09-29，Alex 裁决「改。你可以安排时就动手。」，已修）
-
-- **缘起**：M291 r3 的 review-request 登记了同族硬编码残留（搜索面板两处**实心档** = 大小写开关
-  「开」态与当前搜索匹配、代码块 / frontmatter 区的 eink 黑框），当时判「与 token 同值、行为未变，
-  不属 M291 的裁决面」。本 mission 单独一批收，依据是 `docs/specs/design-tokens-v1.md` 的
-  **收敛规则 1**（eink 的手工反白语义上属于既有 token 的 eink 值，收敛时归位、不新增色）。
-  tower 2026-09-29 按 task 2 的需要把本 mission 的 scope 扩到 `src/preview/theme.ts`（frontmatter
-  半边的唯一真源在那里）。
-- **不变量**：**归位后三主题渲染值逐值不变**——纯收敛，不是改设计。因此本批**零基线更新**：
-  若哪张既有像素基线变红，那是「值变了」的警报，不是「基线该更新」。
-- **判据两层（缺一层即假绿）**：
-  ① **值**：元素的计算色 == 归属 token 的计算值（三主题）；
-  ② **归属**：把归属 token 临时改成一个三主题都不用的探测色（`rgb(7,8,9)`），该元素的计算色
-  MUST 跟着变——**写死字面值的声明不会跟着变**。②才是「不再硬编码」的判据（REVIEW.md 第 1 条）。
-  实证（先红后绿）：修前跑 `tests/visual/scenes/m293-eink-literal-tokens.spec.ts`，eink 的 4 条用例
-  全红在 ②（读到 `rgb(0,0,0)` 纹丝不动）、① 全绿；修后 12/12 绿。
-- **归位清单（11 条规则 / 3 个文件；线宽一律不动）**：
-
-| 文件:行 | 选择器（eink 覆盖块） | 属性 | 原字面值 | 归位 token |
-|---|---|---|---|---|
-| `src/search-panel.css:108` | `:root[data-theme="eink"] .lumir-search-case.is-on` | background / color | `#000` / `#fff` | `--accent-fill` / `--accent-fill-text` |
-| `src/search-panel.css:143` | `:root[data-theme="eink"] … .cm-searchMatch-selected` | background / color | `#000` / `#fff` | 同上 |
-| `src/style.css:1051` | `:root[data-theme="eink"] .cm-lp-codeblock-scroll` | border | `1px solid #000` | `1px solid var(--border)` |
-| `src/style.css:955` | `:root[data-theme="eink"] .ft-open-btn` | border-color | `#000` | `var(--border)` |
-| `src/style.css:1456` | `:root[data-theme="eink"] .lumir-table-fs-panel` | border | `1.4px solid #000` | `1.4px solid var(--border)` |
-| `src/style.css:1512` | `:root[data-theme="eink"] .lumir-codeblock-fs-panel` | border | `1.4px solid #000` | 同上 |
-| `src/style.css:1541` | `:root[data-theme="eink"] .lumir-codeblock-fs-content` | border | `1px solid #000` | `1px solid var(--border)` |
-| `src/preview/theme.ts:198` | `:root[data-theme="eink"] & .cm-line.cm-lp-callout-line` | borderLeftColor | `#000` | `var(--border)`（与引用块 `2px` 竖线同属结构档：`theme.ts:156` 本就是 `2px solid var(--border)`） |
-| `src/preview/theme.ts:449` | `:root[data-theme="eink"] & .cm-lp-frontmatter` | border | `1px solid #000` | `1px solid var(--border)` |
-| `src/preview/theme.ts:490` | `:root[data-theme="eink"] & .cm-lp-fm-status` | border | `1px solid #000` | `1px solid var(--border)` |
-| `src/preview/theme.ts:506` | `:root[data-theme="eink"] & .cm-lp-tag` | border | `1px solid #000` | `1px solid var(--border)` |
-
-- **三主题值不变核对表**（chromium，计算色；`test-results/m293/readings-{before,after}.txt` 逐字节
-  `diff` 为空——4 组 × 3 主题共 12 条读数行，含各 token 的计算值）：
-
-| 读数面 | light | dark | eink（归位前 → 归位后） |
-|---|---|---|---|
-| `.lumir-search-case.is-on` 底 / 字 | `rgb(238,241,251)` / `rgb(58,95,205)` | `rgba(128,152,232,.15)` / `rgb(139,163,239)` | `rgb(0,0,0)` / `rgb(255,255,255)`（同值） |
-| `.cm-searchMatch-selected` 底 / 字 | `rgb(58,95,205)` / `rgb(255,255,255)` | `rgb(100,126,207)` / `rgb(255,255,255)` | `rgb(0,0,0)` / `rgb(255,255,255)`（同值） |
-| `.cm-lp-codeblock-scroll` 框 | 无框 | 无框 | `1px solid rgb(0,0,0)`（同值） |
-| `.ft-open-btn` 框 | `1px solid rgb(227,226,221)` | `1px solid rgba(255,255,255,.094)` | `1px solid rgb(0,0,0)`（同值） |
-| 两处全屏面板（`.lumir-{table,codeblock}-fs-panel`）框 | `1px solid rgb(227,226,221)` | `1px solid rgba(255,255,255,.094)` | `1px solid rgb(0,0,0)`（声明 1.4px，见下注；同值） |
-| `.lumir-codeblock-fs-content` 框 | 无框 | 无框 | `1px solid rgb(0,0,0)`（同值） |
-| `.cm-lp-frontmatter` 框 | 无框 | 无框 | `1px solid rgb(0,0,0)`（同值） |
-| `.cm-lp-fm-status` / `.cm-lp-tag` 框 | 无框 | 无框 | `1px solid rgb(0,0,0)`（同值） |
-| `.cm-line.cm-lp-callout-line` 左色条 | `2px solid rgb(58,95,205)` | `2px solid rgb(139,163,239)` | `2px solid rgb(0,0,0)`（同值） |
-
-  **注（本批新查实的平台口径）**：chromium 在 `deviceScaleFactor=1`（视觉门禁与 CI 的口径）下把
-  1.4px 边框折成整数档，`getComputedStyle` 读回 `1px` ⇒ 规则⑧的 1.4px 强调档在**视觉层没有判别力**，
-  这一层只能钉「有框 + 色 = `--border`」；该档的可辨差异要到真机（WKWebView，dsf=2）才成立。
-  已写进 `docs/specs/design-tokens-v1.md` 的字面值归位节。
-
-- **本批不动（不属裁决的两族，逐条理由）**：
-
-| 位置 | 字面值 | 不动的理由 |
-|---|---|---|
-| `src/style.css:1049` `.cm-lp-codeblock-scroll::before`（eink） | `background-color: #fff` | 属「面」族（规则⑤的**白底**半边），不是「实心强调 / 边框」；eink 下 `#fff` 与 4 个 token 同值（`--preview-bg` / `--frame` / `--content-bg` / `--agent-bg`），归位要先定语义位 |
-| `src/style.css:1542` `.lumir-codeblock-fs-content`（eink） | 同上 | 同上 |
-| `src/preview/theme.ts:198` `.cm-line.cm-lp-callout-line`（eink） | `backgroundColor: "#fff"` | 同上 |
-| `src/preview/theme.ts:449` `.cm-lp-frontmatter`（eink） | 同上 | 同上；**附加**：这一处的覆盖在本档是**冗余**的（基规则读 `--agent-bg`，eink 的 `--agent-bg` 也是 `#ffffff`）——归位到 `var(--agent-bg)` 或直接删都能值不变，两种收法都行，等裁决 |
-| `src/preview/theme.ts:202` `.cm-lp-callout-type`（eink） | `color: "#000"` | **前景色**，不是两族；且 eink 下与 `--accent` / `--ok` / `--pending` / `--danger` / `--text` 同值（五族合一），归位要先定语义位（族色还是正文色） |
-
-- **（M294 已核销，2026-09-29）**：上表 5 行按 Alex 2026-09-29 裁决「1. 立；2，删。」全部收干净——
-  4 处「面」字面值逐处定了语义位（代码块底板 / 全屏代码块内容容器 / callout 行 → `--content-bg`；
-  frontmatter 盒那处**冗余覆盖删除**、由基规则 `--agent-bg` 接管）、callout 类型标签的前景归位
-  `--text`（不是族色）。语义位理由、两条 MUST NOT（行区带那一层不动）与读数对照见本文件末的 M294 节。
-
-- **判据与证据**：
-  - 新增场景 `tests/visual/scenes/m293-eink-literal-tokens.spec.ts`（12 用例 = 4 组 × 3 主题：
-    实心强调族 / 边框族（文档内 + 两处全屏浮层）/ 边框族（打开入口）/ 边框族（内容面 frontmatter +
-    两个 chip + callout 色条）；每组都断言「值 == 归属 token」并做 token 探测归属判据）。
-  - 先红后绿：`test-results/m293/before.log`（eink 4 条红在归属判据 + light/dark 8 条绿）、
-    `after.log`（12 passed）；读数对照 `readings-{before,after}.txt`（diff 为空）。
-  - **旁证（既有断言在原值层面照绿）**：`restyle-eink.spec.ts` 的规则⑤⑥用例断言的是**硬编码 rgb
-    值**（代码块底板白 / frontmatter 白底黑框 / chip 1px 黑框），本批若不值变它们必然红——它们照绿
-    即「值不变」的第二条独立证据。
-  - 门禁：见本 mission 的 review-request（视觉全量本地跑、**零基线 diff、未做 `--update`**）。
-- **核销**：本文件 M291 节的 r3 同族残留清单（搜索面板两处实心档 + 代码块 / frontmatter 黑框）
-  核销；同批随 scope 扩宽收了 `theme.ts` 侧的 frontmatter 盒 / 两个 chip / callout 色条。
-- **留给后批的一条现场**：`docs/specs/design-tokens-v1.md` 的「字面值归位」节已把两族口径与两层判据
-  写成规则——下次再遇到 eink 硬编码，直接按「角色（实心底 / 边框）→ token」归位 + 补 token 探测
-  判据，不要按「哪个 token 恰好也是这个值」反查（eink 下 `#000` 与 5 个 token 同值，反查会选错语义位）。
-
-## M294「面」族与一处处前景色归位（2026-09-29，Alex 裁决「1. 立；2，删。」，已修）
-
-- **缘起**：M293 把「实心强调 / 边框」两族收干净后，M293 节留了一张「本批不动」清单（4 处
-  `background-color: #fff` 的「面」字面值 + callout 类型标签的 `color: "#000"`）。Alex 2026-09-29
-  裁决把这条尾巴一次收完：「**1. 立；2，删。**」——① 立「面族 / 前景」的语义位口径并归位那 4 处；
-  ② frontmatter 盒那处**冗余**覆盖直接删。依据仍是 tokens 文档的**收敛规则 1**，口径是 M293
-  「角色归位」的推广：按声明在规则里的**角色**选 token，不按字面值反查（eink 下 `#fff` 与四个面
-  token 同值、`#000` 与五个 token 同值，反查必选错语义位）。
-- **不变量**：**归位 / 删除前后三主题渲染值逐值不变**——纯收敛，零基线更新（若哪张既有像素基线
-  变红，那是「值变了」的警报，MUST NOT 用 `--update` 抹平）。
-- **5 处落点与语义位理由**（行号为本批提交时的值）：
-
-| 文件:行 | 选择器（eink） | 属性 | 原字面值 | 处置 | 语义位理由 |
-|---|---|---|---|---|---|
-| `src/style.css:1048` | `.cm-lp-codeblock-scroll::before`（底板） | background-color | `#fff` | → `var(--content-bg)` | 规则⑤ 的「白底」半边：eink「无灰底可用」⇒ 区块**不另立色面**、回落成它所在的面（正文面）。`--code-bg` 在本档另有承载者（行区带 `::after` 仍是 `#f0f0f0` 的灰，见下面的 MUST NOT），取不得 |
-| `src/style.css:1545` | `.lumir-codeblock-fs-content` | background-color | `#fff` | → `var(--content-bg)` | 与上一处**同一角色**（代码块内容面）⇒ 取同一 token，不因它坐在全屏浮层里而分家（否则同一语义在 eink 落到两个 token 上） |
-| `src/preview/theme.ts:197` | `.cm-line.cm-lp-callout-line`（底色） | backgroundColor | `#fff` | → `var(--content-bg)` | tint 在 eink 全退场 ⇒ 底色 = 正文面——tokens 文档 §callout 语义收敛 规则 3 早就把这条写死过（「tint 全 transparent（底色 = `--content-bg`）」），本批是把它推广到代码块 |
-| `src/preview/theme.ts:452` | `.cm-lp-frontmatter` | backgroundColor | `#fff` | **删除**（裁决「2，删。」） | 基规则（`theme.ts:444`）已读 `--agent-bg`——§bg 层级把 frontmatter 区点名为「次级表面」；eink 的 `--agent-bg` 同为 `#ffffff` ⇒ 这处覆盖在本档**冗余**，删后由基规则接管、值不变 |
-| `src/preview/theme.ts:203` | `.cm-lp-callout-type` | color | `#000` | → `var(--text)` | 角色是「五族合一后的**统一前景**」，不是族色：五族族色分散在 `--accent` / `--ok` / `--pending` / `--danger` / `--text-3` 上，**没有一个 token 能代表五族**；规则② 之后 eink 的颜色不承担信息，标签靠文案区分。同口径先例：M291 r3 把触发钮静止态的 `color` 归到 `--text` |
-
-- **两条 MUST NOT（本批查实的既有事实，防后人顺手「修」错）**：
-  1. 代码块在 eink 是**两层**——底板（`::before`，本批归位的那处，白）与**行区带**（`::after`，
-     读 `--code-bg` = `#f0f0f0` 的灰）；`restyle-eink` 规则⑤的用例把这条写成断言（「只有底板翻转」），
-     `--code-bg` 在本档另有消费者（行区带、变量绑定底纹 `theme.ts:108`、mermaid 集群底色）。**MUST NOT
-     把 `--code-bg` 一并翻白**——场景为此单列一条断言钉住行区带的值。
-  2. `.lumir-codeblock-fs-content`（全屏）是**单层**（整块白，没有行区带那一层）——两处取同一 token，
-     但形态不同，改一处不应推及另一处的层数。
-- **判据与证据**（`test-results/m294/`）：
-  - 新场景 `tests/visual/scenes/m294-surface-and-foreground-literals.spec.ts`（6 用例 = 2 组 ×
-    3 主题：面族 4 处 / 前景 1 处）。两层判据（M293 同形）：① 计算色 == 归属 token 的计算值；
-    ② 把归属 token 改成三主题都不用的探测色 `rgb(7, 8, 9)`，元素计算色 MUST 跟着变——**写死字面值
-    的声明不会变**（②用 `expect.soft`，让五位落点的失败在同一轮日志里各自可见）。
-  - 先红后绿（同一份 spec，`git stash` 掉 `src/` 前后各跑一轮）：`before.log` = light / dark 4 条绿 ·
-    **eink 2 条红**，红点全落在 ②——「代码块底板 / 全屏代码块内容容器 / callout 行底色 / frontmatter
-    盒底色 / callout 类型标签」五处**逐一**读到写死的 `rgb(255, 255, 255)` / `rgb(0, 0, 0)` 纹丝不动，
-    ① 全绿；`after.log` = 6 passed。
-  - 三主题读数对照 `readings-{before,after}.txt`（6 行 = 2 组 × 3 主题，每行含 7 个表面读数 + 6 个
-    token 计算值）`diff` **退出码 0、零输出行**（`readings.diff.txt`）。
-  - **旁证（既有断言在原值层面照绿）**：`restyle-eink.spec.ts` 的规则⑤⑥用例断言的是**硬编码 rgb 值**
-    （代码块底板白 / 行区带 `#f0f0f0` / frontmatter 白底黑框 / chip 1px 黑框）——本批若不值变它们必然红，
-    它们照绿即「值不变」的第二条独立证据。
-  - 门禁：视觉全量本地跑，**零基线 diff、未做任何 `--update`**；`cargo` 层未跑的缺口与理由同 M293
-    （磁盘水位）——见本 mission 的 review-request。
-- **核销**：本文件 M293 节的「本批不动（不属裁决的两族）」5 行全部核销；`docs/specs/design-tokens-v1.md`
-  新增「面族与前景区位（v1.5 增补）」节，把这三族角色 → token 的口径与两条 MUST NOT 写成规则。
-
-## M295 行内 code 药丸的选中态不可辨（2026-09-29，Alex 裁决「1. A。2. 顺手收 3. 认。」，已修）
-
-- **现象（Alex 报告，附 light / eink 两张截图）**：「选中态的问题没有彻底解决，举例 1. 在图一中，
-  light theme，我肉眼看不清选中了什么。（实际我选中了 tests/visual/scenes/paragraph.spec.ts，
-  但分辨不出）2. 在图二中，eink theme，问题同上」。两张图都是列表项里的行内 code 药丸。
-- **定性（绘制顺序，不是撞色）**：药丸自带的底色是 **in-flow 行内底色**（`--code-bg`），按 CSS
-  绘制顺序排在 `drawSelection` 的负 z-index 选区层（`.cm-selectionLayer`，M288 实测 -2）**之后**
-  ⇒ 药丸盒内读到的是药丸自己的灰，选中与未选中**逐像素同色**。与 M288（代码块内选区不可见）同一
-  条机制；M291 已把这批「`.cm-content` 内的 in-flow 底色」登记为未收口，本 mission 收其中
-  **行内 code 药丸**那一份。M285 的「逐字符覆盖」判据是**几何层**，对药丸**恒真**（带矩形确实
-  盖着药丸，只是被药丸底色挡住）——这是本缺陷能长期假绿的原因，判据因此落到像素层。
-- **修前读数（chromium，隔离端口，7×7 主色，与 M291 同口径）**：
-
-| 读数 | light | dark | eink |
-|---|---|---|---|
-| 整行选中：选中药丸内 / 未选中药丸内 | `#f2f1ec` / `#f2f1ec` | `#5a5b5d` / `#2d2e31` | `#f0f0f0` / `#f0f0f0` |
-| 同一选区在药丸外的带色 / 纸 | `#c6c5bf` / `#fdfdfc` | `#525355` / `#222326` | `#b9b9b9` / `#ffffff` |
-| ① 选中 vs 未选中药丸（判据 ≥ 40） | **0 ✗** | 45 ✓ | **0 ✗** |
-| ② 选中药丸 vs 药丸外的带（不透明档 ≤ 8） | **45 ✗** | （本档相对判据） | **55 ✗** |
-| 选中药丸内字形跨度（M291 不变量 ≥ 60） | 201 ✓ | 129 ✓ | 230 ✓ |
-
-  选区**恰好等于药丸**（Alex 的现场形态）时：带矩形 x `464..777` **完全落在**药丸盒 `459..782`
-  内部 ⇒ 没有一像素露出药丸，肉眼完全看不出选中（light / eink 差 0）。
-- **顺带纠正一件旧事**：Alex 早先裁「不立」的「药丸 padding 窄条不染色」**不是带的几何缺口**——
-  带矩形按文档位置算、边界落在**文本盒**上；整行选中时带矩形 `399..876` 覆盖药丸**整个盒**（含
-  左右各 5px 内边距），只是那一段被药丸自己的底色盖住了。旧判断的现场与真因不一样。
-- **修法（token 层零新增色，不动明度梯队）**：**选中的药丸 = 选区带的一部分**——被选区盖住的
-  那一段底色**换挡到 `--sel-band`**（`--sel-band` 的第二处消费者）。落点：
-  - `src/preview/livePreview.ts` 新增 `pushInlineCodeMarks`：InlineCode 分支按**活选区**
-    （`view.state.selection`，不用 reveal-gate 的按压快照——本改动不改布局，用快照会让药丸高亮
-    滞后到 mouseup）与药丸区间求交，拆成 ≤3 段 mark（覆盖段 / 左未覆盖段 / 右未覆盖段）；
-  - `src/preview/theme.ts` 三条类：`.cm-lp-inline-code-sel`（覆盖段 = `var(--sel-band)`）、
-    `.cm-lp-inline-code-flat-left` / `-flat-right`（**不落在药丸左 / 右端**的段：内边距与圆角归零）。
-- **三条不变量**：① **零基线 diff**（类只在「选区与药丸相交」时挂上，静止帧逐像素不变）；
-  ② **零几何位移**（拆段的 padding/圆角按「内边 0」重分配：原 5+5 → 5+0 / 0+5，段宽总和与拆前
-  逐值相同、字形坐标不动——M259 按压窗口的前提）；③ **逐字符精确**（部分选中时未覆盖段保持药丸灰，
-  「选区内每个字符显示选中底色」与「选区外不得出现选中呈现」两向同时成立）。
-- **修前 → 修后读数（同一台机、同一 fixture、同一采样口径）**：
-
-| 判据 | light | dark | eink |
-|---|---|---|---|
-| 整行选中：选中药丸内 | `#f2f1ec` → **`#c6c5bf`** | `#5a5b5d` → `#78787a` | `#f0f0f0` → **`#b9b9b9`** |
-| ① 选中 vs 未选中药丸（≥ 40） | 0 → **45** | 45 → **75** | 0 → **55** |
-| ② 选中药丸 vs 药丸外的带（≤ 8） | 45 → **0** | （相对判据 37 ≥ 16） | 55 → **0** |
-| 选中药丸内字形跨度（≥ 60） | 201 → 159 | 129 → 101 | 230 → 178 |
-| 选区 == 药丸时药丸内 | `#f2f1ec` → `#c6c5bf` | → `#525355`/`#78787a`/`#525355` | `#f0f0f0` → `#b9b9b9` |
-| 部分选中：覆盖段 / 未覆盖段 | `#f2f1ec`/`#f2f1ec` → `#c6c5bf`/`#f2f1ec` | → `#78787a`/`#2d2e31` | `#f0f0f0`/`#f0f0f0` → `#b9b9b9`/`#f0f0f0` |
-
-  dark 的选中态药丸读到 `#78787a`（`--sel-band` 的半透明白叠在带之上）⇒ 与带（`#525355`）差 37、
-  与未选中药丸（`#2d2e31`）差 75：本档的带是半透明，合成色随承载面变，判据用**相对判据**（M288
-  对 dark 的同一登记）。顺带修正一处推测：本 mission 的方案预估 dark 的选中态可辨差为 75 ✓、但与
-  带的差 37（不是 0）——因为药丸的两端 5px 内边距落在带的 x 之外，读到的是 `.22` 叠在纸面上的色。
-- **纯 CSS 不可达（三条实测理由，防后人重试）**：原生 `::selection` 被 CM 的 `hideNativeSelection`
-  以 `!important` 置透明（M291 已实测「裸声明永远输」）；抬选区层到文字之上会盖住字（M288 明文
-  禁止）；`mix-blend-mode` 会改静止帧的渲染色（与承载面耦合，light 的纸不是纯白 ⇒ 静止帧不再逐值
-  不变）。**被否的候选**：① 让位（覆盖段 `transparent`）——带的边界落在文本盒上，药丸两端会各露
-  5px 纸色缺口；② 保留药丸块的第三档面色——light / dark 的既有档位里没有一个值与药丸灰、带色
-  都拉开 ≥40（light：`--sel` 距药丸 11、`--border` 15、`--text-3` 距带 36；eink 只有
-  `--tk-c`/`--text-3` `#6e6e6e` 数值上够，但黑字压它约 4.1:1、会破 M291 的「药丸里的字可读」），
-  要新增明度档位 = design system 改动 ⇒ Alex 裁决取 A、不走此路；③ 选中态文字反色——M291 已把
-  「黑底反白」整条退场。
-- **同场收 M294 的 finding（Alex 裁决「顺手收」）**：`eink + editor.code_block_wrap: true` 时
-  规则⑤ 的黑框无处可挂（容器按既有口径不装）⇒ 折行档的 eink 代码块是「无框的 `--code-bg` 灰带」。
-  修法：框改挂 `.cm-lp-codeblock-slot`（`--border` 1px + r8）。**白底半边在折行档不可表达**（如实
-  登记）：容器档靠容器那一圈 padding 让底板（容器盒）与行区带（容器内容盒）分成两层，折行档没有
-  容器、**slot 盒与行盒并集逐值重合**（实测两侧同为 slot 盒）⇒ 两层无从分开；且本档 `--content-bg`
-  与纸面同值（写上去 = 零消费者的声明，REVIEW.md 第 9 条）。因此折行档保留 `--code-bg` 行区带、
-  只补框——这也保住了 m288 的「块底色 MUST 与块外正文可辨 ≥ 8」不变量（若把行区带翻白，该断言
-  当场红：白底压白纸 = 差 0，整块只剩框）。**残差**：eink 折行档与容器档的差异只剩「白边那一圈」。
-- **判据与证据**（`test-results/m295/`）：
-  - 新场景 `tests/visual/scenes/m295-inline-code-pill-selection.spec.ts`（**7 用例**）：三主题 ×
-    整行选中（① 可辨 ≥ 40 + 反向对照）、三主题 × **选区 == 药丸**（Alex 现场形态）、light / eink
-    绝对判据（选中药丸 == 药丸外的带，≤ 8）、三主题可读性（跨度 ≥ 60，M291 的不变量不许退化）、
-    **零几何位移**（选区进 / 出药丸时药丸盒与两侧字符格逐值相等）、区分度自证（注入修前形态后
-    ① 判红）。**先红 4 failed / 2 passed（提交 `c538e6f`）→ 修后 7 passed**，同一份判据闭环。
-  - `tests/visual/scenes/restyle-eink.spec.ts` 新增「规则⑤（折行档）」用例：容器 MUST 缺席（前提
-    防空转）+ 计算色 == token（框 = `--border`、行区带 = `--code-bg`、r8）+ 像素层（框那一列读
-    `#000000`、框内读 `#f0f0f0`）+ 区分度自证（按回无框形态后框那条判红）。
-  - **一处既有断言按新口径更新**（M291 的 spec）：`m291-selection-contrast.spec.ts` 的
-    「区分度自证」用例在 eink 段追加 `.cm-lp-inline-code-sel { background-color: var(--code-bg)
-    !important }`。理由：M295 起药丸的选中底色跟随 `--sel-band`，而该用例的注入把 `--sel-band`
-    设成纯黑（造 M291 的修前形态）⇒ 药丸跟着变黑，白字压黑底跨度为 246、自证反而假红。**只补
-    这一条构造、不动任何阈值**——判据与口径不变，变的是「修前形态」得怎么造。
-  - 门禁：视觉全量本地跑（隔离端口）**587 passed / 1 skipped**（1 skipped 与 M294 基线同）、
-    **零基线 diff**（54 张基线 sha256 逐字节相同、未做任何 `--update`）；quick 层非 Rust 部分全绿；
-    `cargo` 层按磁盘水位未跑（同 M293 / M294 先例，`src-tauri/` 零改动；旁证是本次真机运行完成了
-    一次成功的 `cargo build`）。真机运行把 `CARGO_TARGET_DIR` 指向主仓的 warm target（零 Rust 改动
-    ⇒ 产物等价），以避开本 worktree 的首次全量构建（磁盘 3.6G，REVIEW.md 第 12 条）。
-- **真机复验（scenario 68，1/1 PASS，100.0s）**：before / after 读数——light 药丸内部 `#f2f1ec`
-  → **`#c6c5c0`**（= 药丸外的带色，逐值相同）、eink `#f0f0f0` → **`#b9b9b9`**（同上）、dark
-  `#5c5b5d` → `#79797b`（与未选中药丸差 75）。before 侧复用 M291 的 after 轮 scenario 68 截图
-  （同一台机、同一 fixture、同一口径；M291 分支即「M295 之前」的状态）。**覆盖边界**：scenario 68
-  的形态是「选区**跨过**药丸」；Alex 现场的「选区恰好等于药丸」与「部分选中」两种形态**没有既有
-  验收场景**，而 `scripts/acceptance/scenarios/**` 不在本 mission scope 内 ⇒ 这两种只有 chromium
-  读数（要补真机读数需给临时探针场景的写权限，M291 r3 用过该路径）。
-- **仍在册未收口（同一机制，另立）**：`.cm-content` 内的其他 in-flow 底色——**callout 行底色**
-  （含族 tint）、**frontmatter 区**、**code 模式的变量绑定底纹**（`.cm-lp-code-binding`）——三处与
-  药丸同机制（选中时读到的是自己的底而不是带色）。callout 行在选区内是「整行染色」还是「随带」
-  需要先定语义；不在 M295 面内。另：本 mission 未测**药丸折行**（同一药丸跨行）的形态。
-
-## M296 大 vault 打开忽略集的验收半边（2026-09-29，**真机批 7/7 PASS**；收窄在验收 vault 上量不出来）
-
-对应 change `openspec/changes/vault-open-ignore-set/`（M290 提案 / M292 实现）。本 mission 是它的
-**验收半边**：把提案的三组判据落成真机可执行场景，外加多 vault 回归与性能复采。**产品代码零改动**。
-
-### 1. 场景 67 落地（三组判据）
-
-`scripts/acceptance/scenarios/67-vault-open-ignore-set.md`（35 步，47 条断言全绿）：
-
-- **两类忽略的可见性**：内置规则命中的 `target` / `dist` / `test-results` / `node_modules`
-  **不在**树里——且 fixture 根 `.gitignore` 里那条 `!target/` **取反也放不回来**；用户规则命中的
-  `.local`（根 `.gitignore`）与 `.excluded-dir`（根 `.git/info/exclude`）**行在**树里、展开后
-  `.local/tutorial.md` 行出现、点开后正文「本地教程正文」进编辑器。
-- **外部写入不产生幻影行**：`target/probe.md`（子孙事件）与 `.venv/probe.md`（**新建**一个内置
-  规则目录——r2 评审 P1-2 的直接形态），同一步配 `external-probe.md` 正见证证明事件已被处理。
-- **打开段不冻结界面**：放大器撑开的 ~8s 窗口里同一份 AX 快照同时读到 `AXProgressIndicator`、
-  界面节点、以及「此刻入口仍是 B」的**时间见证**（证明快照取自提交之前）。
-
-配套的生成器扩展（`generateBulkVault` 新增 `ignoredDirs` / `lazyDirs`，只在 JS 侧——Rust 读数
-harness 不生成忽略探针，它们不参与读数口径）+ `--check` 的对应校验 + 套件 README 的 2 处口径更新，
-细节见 change 的 `acceptance-scenario.md` 顶部「落地记录」。
-
-### 2. 真机批：**7/7 PASS**
-
-`node scripts/acceptance/run.mjs 67 16 17 19 25 48 60`（实际执行序 16→17→19→25→48→60→67），
-证据 `test-results/acceptance/2026-09-29-final/`（git 外）。**多 vault 回归 16 / 17 / 19 / 25 / 48 / 60
-全绿**——其中 **16 / 19 / 25 / 48 首跑（batch1）即绿，17 / 60 在 rerun1 转绿**；场景 67 **经两处形式
-修复后转绿**——它的首绿在 rerun2（batch1 与 rerun1 都红，见下表与 §1 的三份复跑目录）。
-
-首跑（batch1）是 4/7（17 / 60 / 67 红），三处红**全部是套件的等待/断言形式问题，产品零缺陷**——
-M292 把打开段移出主线程之后，`do: settle`（判「界面此刻静止」）不再顺带兼任「等装载跑完」：
-
-| 红项 | 根因 | 修法（只改形式，判据语义不动） |
-|---|---|---|
-| 60 / 67 切换后的终态断言 | 装载期间界面保持响应、AX 快照逐字节一致 ⇒ `settle` 在装载**途中**返回（返回时仍是旧 vault + 指示在场） | 新增 `do: waitFor`（轮询可观测终态：入口按钮换成目标 vault + 指示退场） |
-| 17 的浮层开合 | `Esc` / `⌘O` 都是**盲发 chord**，紧随的 AX 读取与「按键被处理」那一拍抢，两个按键叠在一起 | 两次按键各自 `do: waitFor` 确认生效 |
-| 67 的完整性见证 | AX 新见一种截断源 `truncated: [closed_menu, fanout_cap]`：根节点子行列表按上限截断，字母表靠后的 `var-highlight.md` 被截掉 | 见证改取文件组**首行**（`block-copy.md`）+ 目录组末行（`area-23`） |
-
-**新增能力 `do: waitFor`**（`scripts/acceptance/lib/execute.mjs`，约 30 行）：轮询 `has`/`not` 两份
-字符串清单直到成立，超时**抛错判 FAIL**（不静默），成立时把「第几次读取成立/耗时」记进证据。
-套件 README 的「动作」表、`settle` 行与新增的「`settle` 不是等异步活儿干完」一节是它的 canonical
-居所；`fanout_cap` 那条截断边界也写进了 README 的「已知边界」。
-
-### 3. 性能读数：**`#[command(async)]` 成立；忽略集收窄在验收 vault 上量不出来**
-
-读数与完整口径见 `test-results/m296/readings.md`（+ `readings.json`），要点：
-
-| 读数（同形状、同通道） | M292 前 | M292 后 | 结论 |
-|---|---|---|---|
-| bulk 验收 vault 的「切回」打开段（`vault_load_open`） | **616.0ms**（2026-09-28 批） | **647.0ms**（最终批）/ 639.0ms | **+3~5%，噪声内** |
-| 同段期间界面可响应 | 主线程被同步 command 占住，快照只回 `element_count: 1`（M283 实测，判不了） | 装载全程 AX 可读（67 的三条判据） | **质变，本批最强实证** |
-| `vault_scan_ignored`（内置规则剪掉的内置名条目数） | —（本 change 新增的事件名） | 验收 vault **1**（只有 `node_modules`）/ 带探针时 **5**、外部新建 `.venv` 后 **6** | 机制在跑、计数对得上 |
-| **release harness 的 Rust 侧合计**（`scan + build_graph`，2,142 文件形状，5 次中位） | **92–107ms**（M283 时代同形状） | **82.3 / 81.4ms**（本实现两次跑） | **同量级、无回退**（change tasks 8.3 的复采落地） |
-
-**为什么收窄量不出来**：验收 vault 的可见集本来就等于真内容，**没有可剪的子树**——收窄收益是
-「被剪子树有多大」的函数。真形状上的收益有既有读数（M289 harness，release，166,626 文件 /
-200,274 条目的复刻真 vault 形状）：`scan 1,231.1 + build_graph 1,879.1 = 3,110.2ms` →
-收口后 `14.0 + 51.7 = 65.8ms`（change `design.md` §1）。本批**没有**在验收环境重建那个量级的形状。
-
-**如实入档但不作结论**：20×8MB 放大器把打开段撑到 M292 前 **4,474ms** → M292 后
-**7,619 / 7,643 / 7,915 / 7,953 / 7,986ms**。两个数**不可比**（放大器读数按场景 60/67 的明文声明
-不是规模口径；两次 RUN 相隔 3 小时、机器负载不同，而该段是 debug 构建下对 160MB 零填充 md 做
-正则解析，纯 CPU、对负载敏感）。这是本批唯一一个「看起来是回归」的数字，**没有机制支持**，也不
-构成结论。
-
-### 4. 本批现场发现（已登记 / 已收口）
-
-- **验收 vault 根下的非 `.md` 残留不被 `resetVault` 清理**（low，会咬人的口径）——见「待修 findings」
-  的同名条目；套件 README 里「重置为 fixtures 的精确副本」这句不准确的表述已改准。
-- **`settle` 不能当「等异步活儿干完」用**（§2 第 1 行）——已固化进套件 README 的「动作」表与
-  「已知边界」，连同 `waitFor` 的正确用法。
-- **AX 快照的 `fanout_cap` 截断**（§2 第 3 行）——已写进套件 README 的「已知边界」，含
-  「负向断言的完整性见证要取被截断方向的反面」这条可执行口径。
-
-### 5. 仍未完成（如实登记，MUST NOT 读成已覆盖）
-
-- **change tasks 8.3 的读数复采：部分完成**。`src-tauri/tests/vault_open_readings.rs`（M289 的
-  release harness）**已在本实现上跑通两次**（Rust 侧合计 82.3 / 81.4ms，与 M283 时代的 92–107ms
-  同量级 ⇒ 无回退），原始输出 `test-results/m296/rust-harness-release.txt`。**未跑的是「主动枚举量
-  收窄后残余」那一档**（166,626 文件量级）——harness 自身只生成 2,142 文件的形状，本 mission 未重建
-  那个量级的 fixture，因此 `design.md` §1 的 65.8ms 仍是 M289 的手工收口数，**不是**本实现的实测。
-- **change tasks 8.4**：Alex 在本机切一次真实 vault 后 grep 四条读数——**agent 不能打开他的真实
-  vault**（会写 registry / `last_vault` 到 `~/.config/lumir`），由 tower 另行向他收取。
-- change 的归档（§10 / §11 的门禁项）不在本 mission 面内。
-
-- 2026-10-04：**真机验收 4 项预存失败（31/47/49/52）全部修复**（M323 merge `f04276d`、M324 merge `801312e`、M325 merge `f872a66`；review 均一轮 clean，M322 另经一轮 comment rework）：四项根因**全在测试套件/场景侧，产品代码零改动**——
-  - **31-code-variable-highlight**（M323）：断言与光标行耦合——`var-highlight.md` 首行是 heading，`livePreview.ts` 的 ATXHeading 源码显露随光标所在行翻转，旧场景在光标第 1 行（`# ` 显露）记基线、findNext 送光标到第 2 行后（`# ` 隐去）复验。修法=基线改在 clickEditor 后记 + Esc 后移回同一光标行再复验；逐字节 unchangedSince 断言原样保留，反证（注入单字符）实测能红。
-  - **47/52**（M324）：四条根因全套件侧——① 非空值 `<input>` 的读屏名在真机 AX 通道不渲染（WKWebView 行为，场景 56 先例，chromium 层 `tree-menu.spec.ts:138/:512` 措辞断言原样守着），判据换为「在场 + 获焦 + 预填值 == 原名」（focused 严格强于原子串断言，非放宽）；② `press_key` 键名 DSL 无 `-` 拼法（绕开，缺口另立条目，见「待修 findings」）；③ `execute.mjs` 的 `fileInfo` 对目录恒 null（sha256 走 readFile 遇目录 EISDIR 被吞）——修为 lstat 旁路：目录只回 mtime/size、目录上 sha256 类与 has/not 判据一律显式 FAIL，文件路径语义逐字不变（reviewer 复核全 82 场景使用点：目录 exists 仅 47/48/旧52 三处，record 类零目录使用，48 真机复跑绿）；④ 场景 47 两处自身缺陷（跨 run 剪贴板残留改 in-run 对照；tab 联动段自相矛盾改写对齐实际意图）。47 自 M244 起首次转绿（119 断言）、52 自 M258 起首次转绿（38 断言）；反证（beginRename 打桩）双红在新判据上。
-  - **49-vault-switch-feedback**（M325）：`do: settle` 在装载途中误判「界面静止」——vault 打开段移出 IPC 主线程（M296）后装载期间前端状态静止，settle 提前返回；M296 当时修好 60/67，49 漏改。修法=两处加 `do: waitFor` 终态门（入口按钮换目标 vault + `not: AXProgressIndicator`），原 settle 与全部断言一条未删。反证（has 换成非终态串）30s/38 次读取超时 FAIL。
-  「全量绿通过线显式扣除 4 项」的 interim 口径自本次合并起**撤销**，恢复不扣除口径。遗留两条另立条目（见「待修 findings」）：49「指示此刻在场」假红时间窗、`press_key` 键名 DSL 无 `-` 拼法。
-
-- 2026-10-05：**2026-09 月份归档件的存量断链修齐**（原 finding `20261005-reviewer-archive-m327-improve-27-broken`，reviewer-archive-m327 报告；M331 修复，分支 `feat/fix-stale-archive-broken-links-2026-09`）：`openspec/changes/archive/2026-09-*` 下按「归档件指向仓根的相对链接比 change 原位多一层 `../`」的惯例，逐条用路径解析脚本（`exists()`）核对，**27 条 `](../` 形态断链全部修齐**。拆开是——**20 条**按惯例补一层 `../`（指向仓根的 `docs/adr/*` ×7、`docs/specs/perf-measurement.md` ×2、`REVIEW.md` ×6、`tests/visual/README.md` ×4、`文案-Copy.md` ×1）；**2 条**方向相反：`2026-09-28-bare-url-cmd-click/specs/editor-live-preview/spec.md` 的两处 `../../../proposal.md` 是**多**了一层，改回 `../../proposal.md`（该目标在归档前就写错，与「缺一层」无关，故与 finding 的「补一层」描述不同，如实报差）；**5 条**为 spec 正文里有意虚构的示例路径（`../top.md` ×2、`../docs/a.md`、`../docs/guide.md`、`../outside.pdf`，出现在外链分类的 Scenario 与说明段），**故意不修**。链接文本与语义一律未动，只改相对层数；未触碰 2026-10 归档件。修后复跑同款脚本：2026-09 归档件内 `../` 形态断链 **0**（示例除外，与 finding 口径一致）。核销判据 = 路径解析脚本 0 broken + `scripts/gate.sh quick` 全绿。
-
-- 2026-10-09：**点历史会话行面板不重建 + 无文档发送 context_json null**（M398，分支 `feat/harness-restore-transcript-rebuild-m398`，merge `9a9a422`；两轮 review，r2 clean）：根因是 RSR 批刻意留的最小形态——`resumeSession` 成功路径只做 `resetView` + 改名，面板不重建历史消息（当时无 wire 数据通道）。修复：`SessionResumeInfo` 携带 `messages: Vec<PanelMessage>`（复用 `turn::summarize_args`，`restored_items` 保留兼容 `src-tauri/tests/session_recording.rs`），恢复消息同时入 session.panel 和返回值（重载不丢）；前端抽 `renderSnapshotMessages`/`appendSnapshotMessage` 供 `restoreSnapshot` 与 `resumeSession` 共用，恢复点击后面板完整重建 transcript（用户气泡 / Thinking 段 / assistant 正文 / tool calls 组）；r1 P1 补 `scrollToBottom()`（assistant 分支裸 append 不滚，以 assistant 收尾时折在视口外——滚动位置 AX 读不到，机器防线缺口另立 low 条目见「待修 findings」）。同批核销 context_json null：前端无文档时改传空串（后端 `parse_context` 空串→默认块的分支本已存在），`ipc.ts` 签名收窄 `string|null`→`string`；新增验收场景 `scripts/acceptance/scenarios/107-harness-send-no-doc.md`。证据：gate quick 9/9 PASS（SKIP 1 = tsc-visual 依赖未装，未动视觉面）；真机场景 106（19 断言，含恢复后面板可见源会话用户消息与助手回复的 AX 断言）/ 107 多次 PASS；107 反向验证红（断言有区分度）。
-
-- 2026-10-10：**Kimi Responses 端点接受 `input_image`（data URL 形态）实测通过**（M440，change
-  harness-composer-image-paste tasks 5.1）：真 provider 冒烟 `src-tauri/tests/harness_real_kimi_image.rs`
-  （`#[ignore]`，原地读 key、零打印）对 Alex 当前生效模型 `k3-256k` 直发
-  `{"type":"input_image","image_url":"data:image/png;base64,…"}`（合成 64×64 纯红 png），
-  端点接受且模型应答出正确颜色（「真读到了图」判据成立）。⇒ Alex 配置里 `k3-256k` 的
-  `vision` 声明值可为 `true`；其余模型未经实测，按「未声明 = 不支持」保守默认（发送闸会
-  人话挡下）。若未来某模型拒收 data URL，后备路径（Files API / file_id）已在 design §10 登记。
+一行一条（日期 + 主题 + 去向）；从「待 Alex 裁决」区移出的条目沿用原编号（`原第 N 条`），旧引用按它对号。
+条目正文已按维护规则移出本文件，需要原文时看 git 历史（`git log -p -- docs/backlog.md`）。
+
+- 2026-09-16：**文件内搜索 v0**（M139，merge `647f519`）→ `src/search.ts` 的 editorial panel（⌘F 走 `keys.ts` 可重绑）；文案 D68–D72（M141 补录）。
+- 2026-09-16：**验收套件注入假绿同族核销**（M140 merge `098918d` + M143 merge `d460535`）→ keys / type 动作补回读 + 有限重试、08b 落点重做、`checkScenario` 守卫；口径验证落 `_type-retry-unit/`。
+- 2026-09-16：**验收套件 `file` 断言支持 glob 路径**（M144）→ `scripts/acceptance/lib/execute.mjs` 的 `resolveSpecFile`（取 mtime 最新的匹配）；同日重复跑时的残余风险写进场景正文。
+- 2026-09-16：**外链渲染与打开快捷键**（M144）→ `⌘⏎` / `⌘-Click` 走 `link.follow`，scheme 白名单 http/https/mailto；其「非外链形态一律不装饰」的表述已被 M145 推翻（见下条）。
+- 2026-09-16：**表格合同收窄——短行尾部补空列对齐 GFM**（M137 finding → M142 落地）→ `docs/specs/table-reading.md` §2/§9；证据 `tests/visual/scenes/table-foundation-v2.spec.ts`。
+- 2026-09-16：**表格降级文案不暴露原因**（M137 → M138）→ 文案带文档行号与应为列数，单一来源 `src/preview/table.ts` 的 `degradationNotice`。
+- 2026-09-16：**视觉门禁容差假绿** → `maxDiffPixelRatio` 0.005→0.001 + 删 UI 后核对基线时间戳（卫生步骤入 `tests/visual/README.md` 与 AGENTS.md）。
+- 2026-09-16：**lists 100k 性能预算** → p95 40→60ms（随 dogfood 性能专项复核是否回调）。
+- 2026-09-16：**`run.sh` 端口占用检查只查 4173** → 改查 `${LUMIR_VISUAL_PORT:-4173}`。
+- 2026-09-17：**链接装饰全形态覆盖**（M145）→ 形态矩阵落 `src/preview/links.ts` 的 `classifyLinkTarget` / `src/main.ts` 的 `followLink` / `src-tauri/src/logging.rs` 的 `link_open{category}`；其两处待复核裁决即「待 Alex 裁决」第 7 条。
+- 2026-09-17：**归档积压清理——7 个已合并未归档的 change 批量归档**（M150，Alex「好，采纳。你动手吧」含归档节点 2 批量授权）→ `openspec/changes/archive/2026-09-17-*`；防线 = `openspec-workflow.md` 新增的批次收尾 checklist 三条 + 撤回口径。
+- 2026-09-17：**僵尸提案撤回 4 个**（M150）→ `archive/2026-09-17-withdrawn-*`（各 proposal 头部留撤回记录）；遗留缺口：列表对齐与基础表格阅读的 requirement 至今未进 living spec。
+- 2026-09-17：**补记两处规格缺口**（M150）→ retro change `add-in-file-search` 与 `align-editor-live-preview-spec` 并归档（新建 living `in-file-search`）。
+- 2026-09-17：**`tests/visual/README.md` 卫生节 missing**（M146 finding → M147 `c81b3ed`）→ 补「删除 / 移动 UI 元素后的核对（强制）」一节；finding 里顺带建议的 `run.sh --update` 回显提醒未落地。
+- 2026-09-17：**`livePreview.ts:427` 注释引用已删除的 `openDocument`**（M149 r1 nit → M150）→ 改「装载（`editor.reloadSession`）」，同文件头「只读口径」的失实陈述一并改准。
+- 2026-09-17：**`real-machine-acceptance.md` 证据落点指针悬空**（M150 顺手修）→ 改指 `test-results/acceptance/`（gitignore）+ 本文件的待真机验收节。
+- 2026-09-17：**两条清扫类 finding 由 M152 闭合**（`6e8e70a`）→ `TableModel.reason` 的 `"incomplete"` 死值已删、语言注册表两处漂移收口到 `src/preview/code.ts`；**顺带暴露**：`REVIEW.md` 里 9 处以 `docs/backlog.md:NNN` 为证据指针的条目行号随之漂移，其中 7 处在本次之前就已指错——建议改用可 grep 的条目名（finding `20260917-worker-backlog-improve-review-md-docs-backlog-md-9-7-m155.md`）。
+- 2026-09-17：**`link_graph.rs` 的 `MAX_FRONTMATTER_LINES` 注释失联 finding 关闭（前提失效）**（M152）→ 唯一仍成立的一点并入「待 Alex 裁决」第 8 条（frontmatter 上限分歧）。
+- 2026-09-17：**openspec 归档 `add-diagnostics-logging`**（原第 6 条）→ `archive/2026-09-17-add-diagnostics-logging/`，living spec 落 `openspec/specs/diagnostics/spec.md`（M150 按批次授权执行；未勾任务 4.2 改由 CI `perf.yml` 承担）。
+- 2026-09-18：**归档待办三件核销**（M170 归档节点 2）→ `archive/2026-09-18-startup-restore-off-main-thread/`（M156 提案 / M159 实现，merge `ad93a03`；**原第 12 条**）、`archive/2026-09-18-multi-vault-workspaces/`（M162/M163/M164，**原第 10 条**）、`archive/2026-09-18-toc-popover-emacs-keys-and-max-height/`（M160，merge `d4ca60a`；**原第 20 条**）；`validate --all --strict` 17 passed。
+- 2026-09-18：**CI visual/perf 在 master 上长期红的治理批核销**（**原第 17 条**；M172 诊断 → M173 merge `475f069` / M174 `d967ce8` / M175 `7bea675`）：visual = runner 侧渲染环境不等价（非基线失效）；perf = resident-memory 确定性超阈 + `update-baseline` 结构死锁。口径：`visual.yml` 只守结构层、整页像素归本地 `gate.sh visual`（见 `tests/visual/README.md`）。
+- 2026-09-18：**门禁清单三处过期**（M153 finding → 治理批 tower 直改）→ `AGENTS.md` 的 gate.sh 副本改指针、`tests/visual/README.md` 补 `isolation.test.mjs`、`README.md` 门禁表补一句。
+- 2026-09-18：**另三个 change 归档核销——活跃 change 清零**（M181）→ `archive/2026-09-18-image-svg-and-fallback/`、`…-codeblock-toml-yaml-highlight/`、`…-line-wrap-options/`；`validate --all --strict` 14 passed / 0 failed。**原第 19 条**（图片行显露）在该批节点 1 裁 A = 维持现状，尾巴见「承接残项」。
+- 2026-09-24：**五个 change 归档核销——活跃 change 从 8 降到 3**（M205 归档节点 2）→ `archive/2026-09-24-{typography-and-zoom,code-outline,code-variable-highlight,list-filter,remember-reading-position}/`（**原第 22–26 条**；归档顺序是硬约束：code-outline 先于 code-variable-highlight 才无悬空引用）；新建 living `openspec/specs/typography/`。
+- 2026-09-25：**表格首列字重 550 静默失效**（M213，tower 收编）→ 判据改列索引 `[aria-colindex="1"]`（`src/style.css`）；闭环断言在 `tests/visual/scenes/restyle-content-types.spec.ts`。
+- 2026-09-25：**restyle R3 收尾：场景与真机验收场景全量改写**（M213）→ `tests/visual/scenes/**` 断言随 token 层迁移、新增四个主题场景、真机新增场景 34 / 35；新场景不新增像素基线。
+- 2026-09-25：**backlog #27 / #29 / #31 核销**（M213）：#27（原第 27 条）补 `typography` 的 MODIFIED delta ×4（16px → D1 的 15px 锚 + 新 token 名）→ `openspec/changes/restyle-ui-tokens-v1/specs/typography/spec.md`；#29（原第 29 条）的层级错相对链接由 tower 直修（4 层 `../` → 5 层）；#31（原第 31 条，结束标记字号基准与正文分叉）由 R2b 把 `.cm-lp-end-marker` 的基准改 `calc(var(--editor-font-size) * 0.8)` + M213 补双档门禁断言（`tests/visual/scenes/end-marker.spec.ts` 里以「backlog #31」命名的那两条用例）。
+- 2026-09-25：**`.cm-lp-quote-line` 的 `padding-left` 声明无消费者**（M213 登记 → M218 任务 C4 修复，merge `456ee47`）→ 双类选择器提权到 14px；探针三主题实测 255/255 PASS。
+- 2026-09-25：**mermaid 不随主题**（M214 finding → M219 任务 C10 修复，merge `7208867`）→ 静态 `MERMAID_CONFIG` 改为 `initialize` 时读 token 计算值（`theme: "base"` + themeVariables）；dark 连线对比度 1.07 → 10.45。
+- 2026-09-25：**段落间距 / 标题间距未按 tokens 间距阶梯落地**（M212 finding → M218 任务 C1 修复，merge `456ee47`）→ 间距阶梯落 `livePreview.ts` / `theme.ts`，探针三主题 255/255 PASS。
+- 2026-09-25：**M208 归档批两件**（**原第 28、30 条**）→ `archive/2026-09-25-document-end-marker/`（M189 实现；含任务的数字 / 口径订正与 15 条相对链接补层）、`archive/2026-09-25-open-image-lightbox/`（M184 实现；双击通道由 M209 打通、真机场景 33 落库）。
+- 2026-09-26：**验收套件 `--config` 静默丢掉 `app.windows[0]` 窗口级配置**（M213 登记 → M236 修复）→ `launchApp` 改从 `tauri.conf.json` 读原件再 spread + `assertOverlayChrome` 自检；证据 `test-results/m236/`，反向前置验证红。
+- 2026-09-26：**版本号 bump 策略**（**原第 33 条**）→ Alex 裁按 semantic versioning，M238 首 bump `0.0.0 → 0.1.0`（真源 `src-tauri/tauri.conf.json`，`package.json` / Cargo 侧随同批跟改）；口径原文与未落地的那一格见「承接残项」。
+- 2026-09-26：**gate.sh PASS 时删临时日志**（**原第 34 条**）→ 已裁已落地（M238：PASS 分支去掉 `rm -f`、PASS 行打印完整日志路径）。
+- 2026-09-26：**分模式折行默认（md 折 / code 不折）**（**原第 35 条**）→ 已裁已落地（M247）：新键 `editor.code_mode_line_wrap`（布尔，出厂 `false`，MUST NOT 回读 `line_wrap`），change `code-mode-line-wrap`；证据 `tests/unit/wrap.test.ts` + `tests/visual/scenes/m247-code-mode-line-wrap.spec.ts`。
+- 2026-09-26：**配置项可发现性**（**原第 36 条**）→ ① `docs/specs/config-reference.md` 已落地（M247：键值表 + 容错口径 + 写回纪律 + 配置目录布局）；② describe-config 面板中期另立项，尾巴见「承接残项」。
+- 2026-09-27：**文档合同卫生批**（M250）→ living spec 路径同步（change `sync-vault-registry-dir-spec`）、`changeFilter` 文字面清扫（含把 scope 扩入两个 change 目录）、场景 39 mousedown 悬案收进 `REVIEW.md` 第 16 条、`tab-cycle-keys` 任务对账（11 项里 10 项核实勾选）。
+- 2026-09-27：**watch 增量不覆盖外部新建目录（文件树不刷新）**（**原第 32 条**）→ 已核销（M245，merge `b6ecfd7`）：产品侧无缺陷、原 finding 的根因判断不成立，错在验收断言的观测时序；证据 `test-results/acceptance/m245-final/36-restyle-content/`。
+- 2026-09-27：**配置目录改名 `workspaces/` → `vault-registry/`**（**原第 37 条**）→ 已裁已落地（M248，merge `d989197`）；living spec 由 change `sync-vault-registry-dir-spec` 同步并归档（merge `5ac43e3`，幂等替换）。
+- 2026-09-27：**change `product-version-display` / `live-theme-switch` 待归档跟踪**（**原两处重复编号的第 32 / 33 条**）→ 早已由 M253 归档批归档（`archive/2026-09-27-product-version-display/`、`archive/2026-09-27-live-theme-switch/`），跟踪条当时未同步核销，2026-10-03 由 M308 批次收尾核销。
+- 2026-09-27：**change `sync-vault-registry-dir-spec` 待归档跟踪**（**原第 38 条**）→ 归档已执行（M254 收口，merge `5ac43e3`）。
+- 2026-09-28：**M254 两个 change 归档 + 菜单上屏语言裁决点**（**原第 39 条**）→ `archive/2026-09-28-tab-strip-context-menu/`、`archive/2026-09-28-preview-tab-removal/`（M287 归档批）；上屏语言已裁英文并由 M257 落地（merge `cd9142d`）。
+- 2026-09-28：**归档 change `goto-line-command`**（**原第 40 条**）→ `archive/2026-09-28-goto-line-command/`（M287 归档批；归档当时基线 18 passed / 0 failed）。
+- 2026-10-03：**「保留我的版本」后自动保存暂停但用户无感知**（**原第 3 条**）→ 已失效：自动保存整条移除（change `remove-autosave`，M278，2026-09-27 合并）；若仍有「用户不知道文档仍是 dirty」的诉求，须针对显式保存路径重开新条目。
+- 2026-10-04：**真机验收 4 项预存失败（31/47/49/52）全部修复**（M323 merge `f04276d`、M324 merge `801312e`、M325 merge `f872a66`）→ 四项根因全在测试套件 / 场景侧、产品代码零改动；「全量绿通过线显式扣除 4 项」的 interim 口径撤销。
+- 2026-10-05：**2026-09 月份归档件的存量断链修齐**（M331，分支 `feat/fix-stale-archive-broken-links-2026-09`）→ 27 条 `](../` 断链修齐（20 条补一层 `../`、2 条多一层改回、5 条有意虚构示例不修）。
+- 2026-10-07：**M375 rust 字符字面量在围栏代码块里着色**（merge `b79e13a`）→ `tagsForStyle` 改按 CM6 `createTokenType` 语义逐名结算；同批删 living spec 的 rust 例外句。**M380 移交的旧签名文字核销**（`startup-restore-off-main-thread` 归档件仍记已删的 `expect_generation`）→ 归档件是冻结快照，现行签名由 living spec 与代码承载。**M374 轮次闸门致 m347 主用例红** → 由 M378 把 usage 注入移进开轮窗口修复（merge `2bd79d4`）。
+- 2026-10-09：**点历史会话行面板不重建 + 无文档发送 `context_json` null**（M398，merge `9a9a422`）→ `SessionResumeInfo` 携带消息、前端抽 `renderSnapshotMessages` 复用；新增验收场景 107。
+- 2026-10-10：**Kimi Responses 端点接受 `input_image`（data URL 形态）实测通过**（M440，`src-tauri/tests/harness_real_kimi_image.rs`）→ Alex 配置里 `k3-256k` 的 `vision` 可声明 `true`，其余模型按「未声明 = 不支持」保守默认。
+- 2026-10-12：**M467 结构性清理本次移出的条目**——本节上述带 `原第 N 条` 的行即其去向；**原第 41 条末格（`vault-open-ignore-set` 任务 8.4）核销**：Alex 裁决「grep `~/.config/lumir/logs/*.jsonl` 这一条没有输出，估计路径已经过期了（后续迭代改了路径），直接销掉吧」——读数动作随日志路径行进而失效，不再跟踪（同批从「待 Alex 裁决」区与「待修 findings」的同名条移除）。
+- 沿革两条（原文已收进本节索引）：**批次三** = 键位分发三轨并行 + 扩展名注册表漂移（M130/M131/M132）、`save-ipc.ts` 折回 `ipc.ts`（M132）、Ctrl-K/D/T 原生路径风险（M132）；**批次二** = DeepSeek Flash 试用结论（可做 build，review 环节 k3-256k 不能省）。
+
+## 批次报告索引（原 M282–M296 报告节，2026-10-12 按体量红线压缩）
+
+报告正文移出本文件，一行一条留指针；原文看 git 历史（`git log -p -- docs/backlog.md`）。
+
+- **M282 遗留**（change `ui-language-i18n` 实现批，2026-09-28）：D6 参数面已闭合、`picker_title()` 已按语言取值；**残留** = 日志文本语言口径待确认 + 验收套件退出码分档（另条跟踪） → 证据 `test-results/m282/`。
+- **M284**（验收套件语言面修复，2026-09-28）：机制 = `run.mjs` 的 `SUITE_LANGUAGE = "zh"`（套件不再依赖产品默认值）；盘点读数与探针落 `test-results/m284/inventory.json`；顺带发现三件（`src/shell.ts:89` 标签段读屏名、preview `eq()` 语言盲区、启动恢复 notice 泄漏中文）已 file finding。
+- **M285**（选区自绘 + 标签段读屏名，2026-09-28）：装 CM `drawSelection()` + 标签段读屏名挂 `onRelabel`；先红后绿 `test-results/m285/{pre,post}-fix/`；新增真机取色通道 `lib/pixel.mjs`（口径见 `scripts/acceptance/README.md` 的 `pixel` 小节）。
+- **M291 选区族对比度**（三主题，2026-09-28）：token 层拆 `--sel-band` + eink `--sel` 族整体重定；真机读数 `test-results/m291/{before,after}/steps.md`；未收口面（in-flow 底色盖住选区带）见 finding `20260928-worker-selection-contrast-m291-improve-inline-surface-band-coverage`。
+- **M288 代码块内选区不可见**（2026-09-28，merge `eef2556`）：块底色搬到容器的负 z-index 伪元素；判据 `tests/visual/scenes/m288-codeblock-selection.spec.ts` + 真机场景 66。
+- **M293 eink 字面值归位 token**（2026-09-29，Alex 裁「改。你可以安排时就动手。」）：11 条规则归位、三主题渲染值逐值不变；读数 `test-results/m293/readings-{before,after}.txt`。
+- **M294「面」族与一处前景色归位**（2026-09-29，Alex 裁「1. 立；2，删。」）：5 处落点 + 两条 MUST NOT（行区带那一层不动）；读数 `test-results/m294/`。
+- **M295 行内 code 药丸选中态不可辨**（2026-09-29，Alex 裁「1. A。2. 顺手收 3. 认。」）：选中段换挡 `--sel-band`；真机场景 68 PASS；同机制未收口面（callout 行底色 / frontmatter 区 / code 模式变量底纹）另立。
+- **M296 大 vault 打开忽略集的验收半边**（2026-09-29）：场景 67 落地 + 真机 7/7 PASS + 套件新增 `do: waitFor`；读数 `test-results/m296/readings.md`；**未完成项**（8.3 残余档、归档门禁）见「待修 findings」的 `vault-open-ignore-set` 条。
