@@ -57,9 +57,11 @@ pub struct PanelMessage {
     #[ts(optional)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub decision: Option<String>,
-    /// 消息入会话的时刻（UNIX 秒）；面板据它显示相对时间（缺该字段的旧快照退化为不显示）。
+    /// 消息入会话的时刻（UNIX 秒）；面板据它显示时间读数（0 = 无读数，前端不显示、不伪造）。
     // 打戳点是 `Session::push_panel` 的每个构造处，取时用 `super::jsonl::unix_secs_now`——
-    // 与留存记录的 `ts` 同一取时点（两处各自取时会漂）。
+    // 与留存记录的 `ts` 同一取时点（两处各自取时会漂）。**恢复重建的消息**（M460）的戳不是
+    // 当下时刻，而是留存**信封 ts** 沿记录序的归属值（`harness::restored_messages_ts`），
+    // 归属不到记 0。
     // ts-rs 默认把 u64 映成 bigint，而 JSON.parse 出来的是 number：与 FsEntry::size 同处理。
     #[ts(type = "number")]
     pub ts: u64,

@@ -388,17 +388,29 @@ impl Runtime {
         // tool_calls 的 function_call 项成组压尾（M360 项序）。带悬空调用的形态按原样
         // 灌回（响应未带、wire 里也无处可取输出项）——design 登记的边界口径。
         let mut restored = messages;
+        // 灌回项的逐项时间戳（M460）：与 `restored` 同步增长、逐位对齐（先按锚点请求的
+        // messages 归位，随后折叠进来的响应项各归该响应的信封 ts）。
+        let mut restored_ts = match conversation_requests.last() {
+            Some((index, _)) => {
+                restored_messages_ts(&file.records, &file.record_ts, *index, &system)
+            }
+            None => Vec::new(),
+        };
         if let Some((index, _)) = conversation_requests.last() {
             if let Some(response) = file
                 .records
                 .get(index + 1)
                 .filter(|r| r["kind"] == "llm_response")
             {
+                // 折叠项的戳 = 这条响应的信封 ts（响应落盘时刻）；记录缺 ts 时记 None
+                //（前端不显示时间，不伪造读数）。
+                let at = file.record_ts.get(index + 1).copied().flatten();
                 for item in session::assistant_item(
                     response["text"].as_str().unwrap_or(""),
                     response.get("reasoning"),
                 ) {
                     restored.push(item);
+                    restored_ts.push(at);
                 }
                 if let Some(calls) = response["tool_calls"].as_array() {
                     for call in calls {
@@ -407,6 +419,7 @@ impl Runtime {
                             call["name"].as_str().unwrap_or(""),
                             call["arguments"].as_str().unwrap_or(""),
                         ));
+                        restored_ts.push(at);
                     }
                 }
             }
@@ -447,7 +460,7 @@ impl Runtime {
                 ))
             })
             .collect();
-        let messages = restored_panel_messages(&restored, &approvals);
+        let messages = restored_panel_messages(&restored, &restored_ts, &approvals);
         let restored_items = restored.len();
         let mut new_session =
             session::Session::new(scope.root.clone(), system, restored, effort, writer);
@@ -669,6 +682,61 @@ fn panel_status_of(output: &serde_json::Value) -> Option<&'static str> {
     }
 }
 
+/// 灌回项的时间读数归属（M460 缺陷二的数据源）：给会话轮次某一条 `llm_request` 的 messages
+/// 逐项配一个**留存信封 ts**（UNIX 秒），返回表与那批 messages 等长、逐位对齐。
+///
+/// 归属沿**记录的写入点**推——不猜时间：
+/// - `llm_request` 的信封 ts = 该请求的发送时刻，其 messages 里**本轮新增的 user 项**就是
+///   这一刻入队的 ⇒ 归这条请求的 ts（[`turn::record_llm_request`] 是写入点）。
+/// - assistant / function_call / function_call_output 项由更早一次 `llm_response` 产出 ⇒
+///   归**产出它的那条响应**的信封 ts（工具循环内同轮多项共享同一次响应的时刻）。
+/// - messages 数组按轮**累积追加**：同一项在后续请求里原样重复出现，逐位比对后
+///   **沿用上次归属**（不因再次出现而改戳）；压缩把数组换掉时前缀比对失配，新项按自己的
+///   角色重新归位，旧戳不串到新项上。
+/// - 压缩调用自己的 `llm_request`（system 是压缩指令）**不参与**：它的 messages 不是会话
+///   数组，纳入比对会把前缀错位。
+/// - 归属不到（记录缺 ts / 该位置之前没有响应记录）记 `None` —— 前端不显示时间，不伪造读数。
+fn restored_messages_ts(
+    records: &[serde_json::Value],
+    record_ts: &[Option<u64>],
+    request_index: usize,
+    system: &str,
+) -> Vec<Option<u64>> {
+    let mut ts_of: Vec<Option<u64>> = Vec::new();
+    let mut prev_msgs: &[serde_json::Value] = &[];
+    let mut last_response_ts: Option<u64> = None;
+    for (index, record) in records.iter().enumerate().take(request_index + 1) {
+        if record["kind"] == "llm_response" {
+            last_response_ts = record_ts.get(index).copied().flatten();
+            continue;
+        }
+        if record["kind"] != "llm_request" || record["request"]["system"].as_str() != Some(system) {
+            continue;
+        }
+        let Some(messages) = record["request"]["messages"].as_array() else {
+            continue;
+        };
+        let at = record_ts.get(index).copied().flatten();
+        let next: Vec<Option<u64>> = messages
+            .iter()
+            .enumerate()
+            .map(|(position, item)| {
+                if position < prev_msgs.len() && prev_msgs[position] == *item {
+                    return ts_of.get(position).copied().flatten();
+                }
+                if item["role"].as_str() == Some("user") {
+                    at
+                } else {
+                    last_response_ts
+                }
+            })
+            .collect();
+        ts_of = next;
+        prev_msgs = messages;
+    }
+    ts_of
+}
+
 /// 把灌回 LLM 的 input 项按序映射成面板渲染消息（M398 恢复路径，design §6.2「面板
 /// （transcript）从灌回的 input 重建」）：user → user、assistant 消息项 → assistant、
 /// function_call 项 → tool（摘要走 [`turn::summarize_args`]，与 live 面板持久化的那份同源）。
@@ -677,7 +745,10 @@ fn panel_status_of(output: &serde_json::Value) -> Option<&'static str> {
 /// - **reasoning 只带明文**：wire 的 reasoning 回放项经 [`thinking::reasoning_text`] 能取出
 ///   明文时挂在**紧随其后的** assistant 消息上（kimi 的 `encrypted_content` 项取不到 → 缺席，
 ///   不伪造块）；工具轮只发调用、无正文 assistant 记录承载时该 reasoning 丢弃（面板无宿主）。
-/// - **无 ts**（`ts: 0` = 无读数）：wire 项不带时间戳，前端因此不显示相对时间，不伪造。
+/// - **ts 来自留存信封**（M460）：wire 项自身不带时间戳，逐项戳由
+///   [`restored_messages_ts`] 沿记录序归位（user 项 = 所属请求的发送时刻，assistant /
+///   function_call 项 = 产出它的那次响应时刻）；归属不到的项记 0 = 无读数
+///   （前端不显示相对时间，不伪造）。
 /// - **tool 行细分终态回填**（M406）：function_call 配对得到的 function_call_output
 ///   （输出 JSON 原文）提供 `status`（[`panel_status_of`]，与 live 持久化同一映射）与
 ///   `text`（输出 JSON 原文——前端拒绝原因 / 失败详情的数据源）；悬空调用（响应未带
@@ -691,6 +762,7 @@ fn panel_status_of(output: &serde_json::Value) -> Option<&'static str> {
 ///   展示字段（live 路径 decision 由 handle_call 直写，无此问题）。
 fn restored_panel_messages(
     restored: &[serde_json::Value],
+    restored_ts: &[Option<u64>],
     approvals: &[(String, String)],
 ) -> Vec<session::PanelMessage> {
     // 工具结果按 call_id 先成图：调用项与输出项在 wire 里成组分离（同轮全部调用在前、
@@ -717,7 +789,8 @@ fn restored_panel_messages(
     }
     let mut messages = Vec::new();
     let mut pending_reasoning: Option<String> = None;
-    for item in restored {
+    for (index, item) in restored.iter().enumerate() {
+        let at = restored_ts.get(index).copied().flatten().unwrap_or(0);
         match item["type"].as_str() {
             Some("reasoning") => {
                 pending_reasoning = thinking::reasoning_text(item);
@@ -753,7 +826,7 @@ fn restored_panel_messages(
                     name: Some(tool_name.to_string()),
                     status: status.map(str::to_string),
                     decision,
-                    ts: 0,
+                    ts: at,
                 });
             }
             // 工具结果项不单独落面板消息——它的信息已回填给配对的 function_call 消息
@@ -779,7 +852,7 @@ fn restored_panel_messages(
                             name: None,
                             status: None,
                             decision: None,
-                            ts: 0,
+                            ts: at,
                         });
                     }
                 }
@@ -798,7 +871,7 @@ fn restored_panel_messages(
                             name: None,
                             status: None,
                             decision: None,
-                            ts: 0,
+                            ts: at,
                         });
                     }
                 }
@@ -1103,8 +1176,9 @@ mod tests {
     use super::*;
 
     /// M398：恢复重建的面板消息映射——wire 项按序映射成面板视角（user / assistant /
-    /// tool），reasoning 明文挂其后的 assistant；空正文轮与工具结果项不落消息；重建消息的
-    /// ts 恒为 0（wire 无时间戳，前端因此不显示相对时间，不伪造读数）。
+    /// tool），reasoning 明文挂其后的 assistant；空正文轮与工具结果项不落消息；不带时间
+    /// 归属表（`&[]`）时重建消息的 ts 恒为 0（= 无读数，前端不显示时间、不伪造）；
+    /// 戳的归属本身见 `restored_panel_messages_carries_envelope_ts_per_item`（M460）。
     #[test]
     fn restored_panel_messages_maps_wire_items_in_order() {
         let restored = vec![
@@ -1125,7 +1199,7 @@ mod tests {
             session::function_call_item("c2", "vault_bogus", "{}"),
             session::assistant_item("收尾。", None)[0].clone(),
         ];
-        let messages = restored_panel_messages(&restored, &[]);
+        let messages = restored_panel_messages(&restored, &[], &[]);
         let roles: Vec<&str> = messages.iter().map(|m| m.role.as_str()).collect();
         assert_eq!(
             roles,
@@ -1150,6 +1224,91 @@ mod tests {
         assert_eq!(messages[4].reasoning, None);
     }
 
+    /// M460（缺陷二的数据源）：恢复重建的面板消息带**留存信封 ts**，逐项按
+    /// [`restored_messages_ts`] 的归属取自己那一项的值；归属不到（旧文件缺 ts）的项记 0 =
+    /// 无读数，前端不显示时间（与带 ts 的项并存时逐项独立，不整批伪造）。
+    #[test]
+    fn restored_panel_messages_carries_envelope_ts_per_item() {
+        let restored = vec![
+            session::user_item("问"),
+            session::assistant_item("答。", None)[0].clone(),
+            session::function_call_item("c1", "vault_read", r#"{"path":"a.md"}"#),
+            session::function_call_output_item("c1", r#"{"ok":true}"#),
+        ];
+        // ts 表与 wire 项逐位对齐（工具输出项不落面板消息，表照旧给全）。
+        let ts = [Some(100), Some(105), Some(105), Some(105)];
+        let messages = restored_panel_messages(&restored, &ts, &[]);
+        assert_eq!(
+            messages.iter().map(|m| m.ts).collect::<Vec<u64>>(),
+            vec![100, 105, 105]
+        );
+        let messages = restored_panel_messages(&restored, &[Some(100), None, None, None], &[]);
+        assert_eq!(
+            messages.iter().map(|m| m.ts).collect::<Vec<u64>>(),
+            vec![100, 0, 0]
+        );
+    }
+
+    /// 会话轮次的 `llm_request`（时间读数归属走查的素材）。
+    fn conversation_request(messages: Vec<serde_json::Value>) -> serde_json::Value {
+        serde_json::json!({"kind": "llm_request", "request": {"system": "S", "messages": messages}})
+    }
+
+    /// M460：逐项 ts 的**归属走查**（沿记录序，不猜时间）——user 项归它所属 `llm_request`
+    /// 的信封 ts；assistant / function_call / function_call_output 项归产出它的上一条
+    /// `llm_response`；数组按轮累积追加，前缀延续项**沿用上次归属**（同一项不因再次出现而
+    /// 改戳）；压缩调用（system 不同）不参与比对；缺记录 ts / 没有前序响应时记 `None`。
+    #[test]
+    fn restored_messages_ts_walks_the_record_sequence() {
+        let q1 = session::user_item("q1");
+        let a1 = session::assistant_item("a1", None)[0].clone();
+        let q2 = session::user_item("q2");
+        let a2 = session::assistant_item("a2", None)[0].clone();
+        let q3 = session::user_item("q3");
+        let records = vec![
+            conversation_request(vec![q1.clone()]),
+            serde_json::json!({"kind": "llm_response", "text": "a1"}),
+            conversation_request(vec![q1.clone(), a1.clone(), q2.clone()]),
+            serde_json::json!({"kind": "llm_response", "text": "a2"}),
+            // 压缩调用：system 不同、messages 是压缩提示——不参与会话数组的前缀比对。
+            serde_json::json!({
+                "kind": "llm_request",
+                "request": {"system": "压缩指令", "messages": [session::user_item("汇总")]},
+            }),
+            conversation_request(vec![
+                q1.clone(),
+                a1.clone(),
+                q2.clone(),
+                a2.clone(),
+                q3.clone(),
+            ]),
+        ];
+        let record_ts = [
+            Some(100),
+            Some(105),
+            Some(200),
+            Some(208),
+            Some(250),
+            Some(300),
+        ];
+        assert_eq!(
+            restored_messages_ts(&records, &record_ts, 5, "S"),
+            vec![Some(100), Some(105), Some(200), Some(208), Some(300)]
+        );
+        // 缺 ts 的记录：它那一项（及沿用它的项）记 None，其余按各自记录归位。
+        let record_ts = [None, Some(105), None, Some(208), Some(250), Some(300)];
+        assert_eq!(
+            restored_messages_ts(&records, &record_ts, 5, "S"),
+            vec![None, Some(105), None, Some(208), Some(300)]
+        );
+        // 首条请求之前没有响应可归：非 user 项的戳缺席（构造性边界，不猜）。
+        let head = vec![conversation_request(vec![a1.clone()])];
+        assert_eq!(
+            restored_messages_ts(&head, &[Some(100)], 0, "S"),
+            vec![None]
+        );
+    }
+
     /// M406：细分终态映射与 live 持久化同表——ok=false 按 code 分 denied / rejected /
     /// error；输出 JSON 原文随 text 带出（前端拒绝原因的取数点）；输出形状不符
     /// （缺 ok 位 / 非 JSON）时 status 缺席但原文仍带出（前端按摘要形状回落判定）。
@@ -1171,7 +1330,7 @@ mod tests {
             ),
             session::function_call_output_item("c3", "not-json"),
         ];
-        let messages = restored_panel_messages(&restored, &[]);
+        let messages = restored_panel_messages(&restored, &[], &[]);
         assert_eq!(messages.len(), 4);
         assert_eq!(messages[0].status.as_deref(), Some("rejected"));
         assert_eq!(
@@ -1195,7 +1354,7 @@ mod tests {
             serde_json::json!({"type": "reasoning", "encrypted_content": "opaque"}),
             session::assistant_item("正文。", None)[0].clone(),
         ];
-        let messages = restored_panel_messages(&restored, &[]);
+        let messages = restored_panel_messages(&restored, &[], &[]);
         assert_eq!(messages.len(), 1);
         assert_eq!(messages[0].reasoning, None);
         assert_eq!(messages[0].text.as_deref(), Some("正文。"));
@@ -1206,7 +1365,7 @@ mod tests {
     fn restored_tool_summary_reuses_summarize_args() {
         let long = format!(r#"{{"path":"{}"}}"#, "a".repeat(200));
         let restored = vec![session::function_call_item("c1", "vault_read", &long)];
-        let messages = restored_panel_messages(&restored, &[]);
+        let messages = restored_panel_messages(&restored, &[], &[]);
         assert_eq!(
             messages[0].summary.clone().unwrap(),
             turn::summarize_args(&long)
@@ -1236,7 +1395,7 @@ mod tests {
             ("vault_delete".to_string(), "approved".to_string()),
             ("vault_delete".to_string(), "rejected".to_string()),
         ];
-        let messages = restored_panel_messages(&restored, &approvals);
+        let messages = restored_panel_messages(&restored, &[], &approvals);
         assert_eq!(messages[0].decision.as_deref(), Some("approved"));
         assert_eq!(messages[1].decision.as_deref(), Some("rejected"));
         assert_eq!(messages[2].decision, None, "免闸工具行没有批准决定");
@@ -1259,7 +1418,7 @@ mod tests {
             }),
             session::assistant_item("图里第二行有错。", None)[0].clone(),
         ];
-        let messages = restored_panel_messages(&restored, &[]);
+        let messages = restored_panel_messages(&restored, &[], &[]);
         assert_eq!(messages.len(), 2);
         assert_eq!(messages[0].role, "user");
         assert_eq!(

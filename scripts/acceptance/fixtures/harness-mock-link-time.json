@@ -1,0 +1,8 @@
+{
+  "version": 1,
+  "responses": [
+    {
+      "text": "段落里的裸链接 https://example.com/para/x 收尾。\n\n| 列 |\n|---|\n| https://example.com/cell/y |\n\n标准写法 [示例站点](https://example.com/std/z) 也在。"
+    }
+  ]
+}
