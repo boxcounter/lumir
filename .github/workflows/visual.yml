@@ -8,6 +8,12 @@ name: visual
 # 依据：CI runner 与本地渲染不等价，整页像素在两套环境下没有可比性（证据与口径见
 # tests/visual/README.md）。scenes 里的 22 处像素断言保留在代码中，由 LUMIR_VISUAL_STRUCTURAL=1
 # 跳过（消费者 scenes/expect-screenshot.ts），本地默认全量跑。
+#
+# 前端单测层也挂在这个 job（M471，2026-10-12 tower 裁决，原 backlog 待裁决 #14）：ADR 0004
+# 「AI-only 模式下 CI 是唯一防线」——`tests/unit` 的纯逻辑（`keys.ts` 的 chord 解析、
+# `save-controller` 状态机等）此前只接在本地 `scripts/gate.sh quick`，于是 `src/**` 的纯逻辑
+# 回归会留下「CI 全绿、只有本地红」。步骤与本地调同一入口 `pnpm test`（= `node tests/unit/run.mjs`，
+# 秒级）。路径过滤随之补 `tests/unit/**`（与 `tests/visual/**` 同形：只动测试文件的 PR 也要跑到它）。
 
 on:
   pull_request:
@@ -18,6 +24,7 @@ on:
       - "package.json"
       - "pnpm-lock.yaml"
       - "tests/visual/**"
+      - "tests/unit/**"
       - ".github/workflows/visual.yml"
   push:
     branches: [master]
@@ -28,6 +35,7 @@ on:
       - "package.json"
       - "pnpm-lock.yaml"
       - "tests/visual/**"
+      - "tests/unit/**"
       - ".github/workflows/visual.yml"
 
 permissions:
@@ -61,6 +69,14 @@ jobs:
         run: |
           pnpm install --frozen-lockfile
           pnpm build
+
+      - name: 前端单测：src 纯逻辑（pnpm test）
+        # 入口与本地 `scripts/gate.sh quick` 的 `unit-tests` 逐字同一条（`node tests/unit/run.mjs`），
+        # 两侧输出可逐行对照。跑的是 `src/*.ts` 源码（Node 类型剥离），不是上面那份构建产物，
+        # 故只需依赖装好——**不能上移到 `pnpm install` 之前**（实测：无 node_modules 时
+        # `src` 的三方导入解析失败，全量红）。Node 下限（类型剥离需 ≥22.6）由上面的 node 22 与
+        # 「版本不足即报错退出、不静默跳过」的 run.mjs 共同保证。
+        run: pnpm test
 
       - name: 缓存 Playwright 浏览器
         uses: actions/cache@v4
