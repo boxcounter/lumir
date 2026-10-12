@@ -67,10 +67,12 @@ spec 增量（delta）约定：change 目录下的 `specs/<capability>/spec.md` 
 
 实测失效模式（M150 归档对账，2026-09-17）：**实现 PR 合并后没人跟进归档**——当时 11 个活跃 change 里 7 个已实现未归档（`add-wikilink` 积压 12 天），living spec 因此长期落后于实现，其间还出现 living spec 与实现直接矛盾（`editor-live-preview` 自称「M1 只读口径」而 md 模式早已可编辑）。防线是把它做成批次收尾的强制项：
 
-- [ ] **本批 merge 的 change 全部列入归档待办并跟踪到归档**：每个 change 在实现 PR 合并时即落一条待归档记录（`docs/backlog.md` 的「待 Alex 裁决」节），批次收尾时用 `npx --yes @fission-ai/openspec@1.12.0 list` 逐个核对——列表里出现 `✓ Complete` 却仍在活跃列表里的，就是漏跟踪的那个。
+- [ ] **本批 merge 的 change 全部列入归档待办并跟踪到归档**：每个 change 在实现 PR 合并时即落一条归档跟踪记录（记在 `docs/backlog.md`；待归档属可客观核对的事项，由 tower 记账、不进「待 Alex 裁决」区），批次收尾时用 `npx --yes @fission-ai/openspec@1.12.0 list` 逐个核对——列表里出现 `✓ Complete` 却仍在活跃列表里的，就是漏跟踪的那个。
 - [ ] **归档前逐条对账**（对账口径）：tasks 勾选状态 / spec 增量 / 当前实现三者一致才归档；任务未勾但有正当理由的，先就地标注放弃原因再归档；spec 增量与实现矛盾的，**不归档**，并在 `docs/backlog.md` 说明矛盾点。
 - [ ] **归档后核对新建 capability 的 Purpose**：`archive` 会为新建的 living spec 写入占位 Purpose（`TBD - created by archiving change …`），`validate --all --strict` 会因此报红——须手写替换为「这个 capability 是干什么的」，再跑一次 validate 确认全绿。
-- [ ] **backlog 卫生（2026-10-12 M467 补）**：本批核销 / 裁决落地的条目从 `docs/backlog.md` 正文移出（只留一行索引：日期 + 主题 + 去向），批次报告与全量回归总表只留指针；顺带检查体量红线——`wc -l docs/backlog.md` 超 3000 行即触发一次结构清理（口径见该文件头部的「维护规则」）。
+- [ ] **backlog 卫生（2026-10-12 Alex 裁决）**：本批核销 / 裁决落地的条目**直接从 `docs/backlog.md` 删除、不留索引**（git 历史即台账；含仍在生效的长期口径时改移「承接残项」）；条目一律一行 gist + 证据指针，批次报告与全量回归总表只留指针；顺带检查体量红线——`wc -l docs/backlog.md` 超 **1000** 行即触发一次结构清理（口径见该文件头部的「维护规则」）。
+- [ ] **finding 落账率对账（2026-10-12 Alex 认可）**：本批 `.tower/comms/findings/` 新增文件数与 `docs/backlog.md` 新增条目数逐一核对，不等即查漏——漏落账的 finding 等于没登记。
+- [ ] **新条目准入与引用写法自检（2026-10-12 Alex 认可）**：本批新增的「待 Alex 裁决」条目只收**价值取舍 / 产品语义**类（答案客观可核的由 tower 直接裁并记录）；跨文件引用 backlog 条目一律用**主题关键词锚**，不用编号 / 行号。
 
 ## 撤回（withdrawn）：放弃一个 change
 
