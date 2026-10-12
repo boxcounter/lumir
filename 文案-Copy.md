@@ -447,63 +447,126 @@
 | D450 | 非法图片附件名 | 作者 | 非法的图片附件名：{name} | Invalid image attachment name: {name} | M440：`harness_image_name_invalid`——读回限 `pasted-<hash16>.<ext>` 形态（路径逃逸防护），非此形态拒绝。`{name}` 透传入参。消费点 src/copy-data.ts 的 ERROR_COPY。 |
 | D451 | 投递投影格式非法 | 作者 | 发送内容格式不正确，请重试 | The message format is invalid. Please try again. | M440：`harness_parts_invalid`——`harness_send` 的 parts_json 不是合法投影数组（前后端契约被破坏的兜底，正常界面不可达）。消费点 src/copy-data.ts 的 ERROR_COPY。 |
 
-D30 已合并入 D18；D30 编号停用，不复用。**D4「切换」随多 vault 切换器（M163）停用，不复用**——树头部的入口改为 vault 名称本身（形态 A），那句「切换」文字按钮退场。D2–D3、D8–D18、D27–D29 随 Thread 特性删除（ADR 0006，2026-09-12）停用，不复用。D23–D24 随 panel 空壳清除（M124，2026-09-12）停用，不复用。**D55–D56 于 M278（change `remove-autosave`，2026-09-27）退场**——「已自动保存」与「已自动保存当前快照，仍有未保存修改」两条 toast 随自动保存整条移除而失去产出路径，编号停用、不复用；D57–D62（崩溃备份四条 + 发现/恢复/丢弃/不存在）保留不动。D57–D62 为保存链路加固新增（M127，2026-09-12）。D63–D67 为键位查看面板新增（M133，2026-09-13）。D68–D72 为文件内搜索 panel 新增（M139，2026-09-16）。D73–D76 为 Markdown 渲染批新增（M138，2026-09-16）——表格降级归因句三种形态与分隔线读屏名。D77–D79 为外链批新增（M144，2026-09-16）——外链尾部标记与两条打开链路的失败提示。D80–D83 为链接形态矩阵补全新增（M145，2026-09-17）——应用内跳转标记与三种新提示（相对路径未解析、锚点不支持、vault 内文件打开失败）。D84–D87 为轻量大纲新增（M148，2026-09-17）——空标题提示、浮层读屏名、浮层键位提示与位置指示段的悬停提示。D88–D94 为多标签页新增（M149，2026-09-17）——标签栏与关闭按钮的读屏名、标签的未保存标记与悬停提示、关闭未保存标签的确认与三个动作、以及保存侧提示的「路径」前缀模板。D95 为启动恢复进行态新增（M159，2026-09-17）——恢复移出主线程后「恢复中」这一可见态在树空态里的提示行。D86 于 M160（2026-09-17）扩为覆盖五个就地键（新增 ⌃N / ⌃P，与 ↑↓ 等价），编号沿用不改。D66 于 M180（2026-09-18）扩为**按成因分两种说明**（默认不占键位 / 已被配置解绑，各自指出下一步），编号沿用不改。D111–D113 为图片可见回退批新增（M178，2026-09-18）——图片位的加载态与两条占位（读取失败 / 终态不可见）。D114 为文档结束标记批新增（M189，2026-09-21）——正文末尾的终点线索（只在 md 模式、文档内容超过一屏时出现）；**D114 的可见文案于 M238 改为英文「— End —」**（2026-09-26 Alex 裁决，原中文串「到底了」退场）、**于 M251 再去破折号改为「END」**（2026-09-27 Alex 裁决），编号沿用不改。**D115–D116 为 code 模式大纲的两条空态提示补登**（M199，2026-09-24）——两条串在 M197（code-outline）实现期就存在，当时 `文案-Copy.md` 不在那个 mission 的改动范围，措辞逐字记在 `openspec/changes/code-outline/tasks.md` 的 5.1 待补表里，本批原样搬入并补编号。D117–D119 为两处列表浮层的输入筛选新增（M199，change list-filter）——无匹配提示、筛选输入框的占位与读屏名（两处浮层共用同一份常量）。D120–D121 为栏宽拖拽新增（M228，change content-width-drag）——手柄读屏名与写盘失败 toast。D122–D123 为主题运行期切换新增（M237，change live-theme-switch）——modeline 主题钮的悬停提示 / 读屏名与写盘失败 toast（钮的**可见文本**是主题名本身，属读数不属文案，不进编号）。D124 为表格放大全屏查看新增（M240，change table-fullscreen-view）——表格全屏触发钮的读屏名；同一能力的遮罩读屏名复用表格容器既有的 `Markdown 表格 N` 标签（零新条目），故本批只有一条。 D125–D147 为文件树条目操作新增（M244，change file-tree-context-menu）——菜单浮层的读屏名与六个菜单项、删除确认框的五句、复制路径的两条 toast、内联编辑的占位与三条读屏名、以及五条行内校验原因（D143–D147 与 Rust 侧 `fs_io.rs` 的同名分支同源）。 D148–D151 为标签右键菜单新增（M254，change tab-strip-context-menu）——菜单读屏名与三个关闭项，英文原文（Close / Close Other Tabs / Close Tabs to the Right）是 Alex 2026-09-27 给的、逐字保留；**M257（同日 Alex 裁决「上屏」）把 D149–D151 的上屏文案换成英文原文、deck 两列对调**（原中文措辞移到右列备查）——不跟界面语言走的可见文案由此不止 D114 的 END 一处，还有这三项。同批 change preview-tab-removal 让「预览标签」这一形态退场（D88–D99 里关于它的表述逐条对账：D89/D90/D91 是标签读屏名与未保存标记，与预览无关、口径不变；**D99 的「预览标签不入盘」一句本批已改述**——`src/vault-switcher.ts` 的入盘过滤与 `EditorSession.preview` 字段随本 change 一起删除，摘要数字现在等于「全部有路径的标签数」）。`src/bindings/VaultSession.ts` 的生成注释里还留着一句「预览标签不入盘」（源在 Rust 侧 doc comment，改动面之外），已落 `docs/backlog.md` 的收尾条目。**D153–D155 为块级复制新增**（M277，change block-copy-affordance）——触发钮读屏名、成功 toast 与失败 toast；**D156 为代码块放大全屏查看新增**（M277，change code-block-fullscreen）——代码块全屏触发钮的读屏名，与 D124 同族。**D152 编号保留给 M261（`goto-line-command`）**：`docs/backlog.md` 的「文案 deck D152 编号碰撞」节 tower 裁决（2026-09-27）把 D152 起分配给先合并的 M261；本批（M277）按同一条裁决取 D153–D155（M263 的原声明），而 code-block-fullscreen 的原稿声明（D152）与那条裁决撞号，实现期改取当时的下一个可用编号 **D156**（M267 的提案原预计「实现期 deck 末位续接」≈D156，其实现期须再核一次末位，不盲取）。deck 因此出现一处 D152 的**保留空号**（不是停用、不复用——它归 M261 的实现期落地）。**M282（`ui-language-i18n` 的实现期）**：deck 在动工前重核末位（当时最大 **D158**，M281 已用掉 D152 并把两条新条目接到 D157/D158），因此本批按「只追加」的规则取 **D159 起**，连续到 **D320**（162 行，`文案-Copy.md` 的表行因此从 138 增至 300）。本批的形态约定有三条要记：① **一格多串的行改用可直接机读的 ` / ` 连接**（D64 一格 12 串、D66 二串、D72 二串、D99 三串、D104 二串；D69 / D93 / D110 原本就是）；D100 只留表条目那一串（`刚刚`），其余档由 `Intl.RelativeTimeFormat` 产出（见该行的设计意图列）；② **D149–D151 恢复自然列序**（中文列 = 沿革备查措辞、English 列 = 上屏英文），锁列方向改由「设计意图」列的 `【上屏列锁定 en】` 标记承载——上屏结论与 M257 完全一致，只是把「哪一列上屏」从列的位置搬进了条目的属性（运行时表里是 `lock: "en"`）；③ 新增 `D100` 之外的相对时间档、`{n}` 一类复数档由 `Intl.PluralRules` 在表的两列上选形态。本批的条目**成组共享同一条设计意图**（后端信封、块类型词、装配层、预览装饰、保存链路、callout 类型标签、键位来由…）——逐条的语境在各模块注释与运行时文案表（`src/copy-data.ts`）里，deck 这 162 行不逐条复述。**M281（`goto-line-command` 的实现期）落地这次分配**：D152 用掉那个保留号（输入条读屏名），另外两条（占位 / 总行数提示）按「新增条目只追加」的规则接在当时末位 D156 之后 ⇒ 取 **D157 / D158**；M267（`ui-language-i18n`）的实现期重基起点随之从「预计 D157 起」再后移到 **D159 起**（它本来就要求「实现时按当时末位再核一次」，此处同步记明，避免它按旧预计取号而与 D157/D158 撞号）。**M303（add-harness-probe 的面板 UI）**：动工前重核末位——M301（同 change 的配置与 patch 后端）已在 D323–D325 落了三条 patch 错误信封（在表的错误信封区，不在末位追加区），故面板条目按「只追加」取 **D326–D348**（23 行：面板标题 / toggle / 输入框 / 发送 / 新会话 / 上下文 chip 三形态 / 用量条 / 警示条 / 批准闸五条 / 压缩标记两条 / 工具行两条 / 键位来由 / 空态 / 两条错误行；其中 chip 选区形态 D331 后于 M343 退场，见末段）。消费点集中在 `src/harness-panel.ts` 与 `src/keys.ts`（D345 来由）；D334 两列同形（读数不是措辞，同 D317 口径）；M303 初期曾按旧预计占 D323–D345，rebase 到含 M301 的 master 后整段改号到 D326–D348，此处记明防后批按旧简报取号。**M319（`pane-system-split-view` 分组 6.1 的键位指配）**：动工前重核末位——M303 用到 D348、M302 的错误信封占到 D364，故本批按「只追加」取 **D365–D368**（D365–D367 = pane 三条命令的键位来由，D368 = 分隔条读屏名）。消费点：`src/keys.ts`（三条绑定的 `docKey`）与键位面板 `src/bindings-panel.ts` 的 doc 列；`src/main.ts`（D368 的 `SPLITTER_LABEL`，建元素时写、`onRelabel` 重写）。命令本体 M316 已进表，本批只把三条从 `KEYLESS_COMMAND_IDS` 移到默认绑定表；空 pane 引导（可见 DOM + 样式 + 基线联动 + 上屏文案）另立 M321，不在本批。（tower 2026-10-04 裁决：`文案-Copy.md` 与 `src/main.ts` 入 M319 scope。）**M322（同 change 分组 6.2 的空 pane 引导——原属 M319 的 6.2，经 Alex 裁决拆分非取消、另立 M322 承载；上条里的「另立 M321」是当时的暂定编号）**：动工前重核末位（M319 用到 D368），按「只追加」取 **D369**（一条，zh/en 双档）。消费点 `src/main.ts` 的 `PANE_GUIDE_LABEL`（建元素时写、`onRelabel` 重写）；显示谓词 `src/pane-layout.ts` 的 `emptyPaneGuideVisible`（仅分栏态空 pane、未装 vault 不显示；单 pane 零标签维持既有形态——触发语义三项均为 Alex 2026-10-04 裁决）。**M343（change `add-harness-quote-cards` 的混排 composer mission）**：动工前重核末位（M322 用到 D369），按「只追加」取 **D370–D374**（五条，zh/en 双档：浮动钮「摘录到对话」/ 卡片 × 钮读屏名 / 失锚 toast / chip 仅路径形态 / 卡片跳回读屏名；卡片出处行与 hover 全文是数据驱动呈现，不进编号）。同一 change 的「上下文注入与可见性」修订让 **D331 退场**——选区不再自动注入上下文（选中片段一律经摘录卡片手势显式策展），chip 选区形态失去产出路径，编号停用、不复用（与 D55–D56 同处置）；chip 现存两形态：视口（D332，前提是「消息未携带卡片」）与仅路径（D373，携带卡片时跳过视口注入）。消费点：`src/harness-panel.ts`（D371 / D373 / D374）与 M344 / QC3（D370 / D372，浮动钮与失锚降级链是 QC3 的实现面，文案在本批预登记）。**M347（composer 控制行 + 复制 + 进度）**：动工前重核末位（M346 用到 D375），按「只追加」取 **D376–D382**（七条：模型 chip 悬停/读屏名、ctx ⓘ 钮读屏名、发送钮停止态、消息复制钮读屏名、复制就地反馈、阶段指示两档）；**D334 / D335 编号沿用改形**（用量条 → 控制行 ctx 读数；常驻警示条 → ⓘ 按需气泡——Alex 2026-10-06 裁决常驻句退场，依据逐条写在该行设计意图列）；**D98 复用**为第三处列表浮层（模型 provider 浮层）的当前项标记。消费点全部在 `src/harness-panel.ts`。**M348（Rust 轮次 abort 能力，change move-harness-to-pane-chat-frame design §5）**：动工前重核末位（M347 用到 D382），按「只追加」取 **D383–D384**（两条，zh/en 双档：D383 = 中断标注「已停止」——处理中点击发送钮停止态 = 停止本轮，中断语义是「不再继续」，已流式产出保留在 transcript 并挂本徽标，消费点 `src/harness-panel.ts` 的两条渲染路径（aborted 事件实时收口 / 快照恢复 status="stopped" 的留存消息）共用；D384 = harness_abort 无非在途轮次时的错误信封）；消费点：`src/harness-panel.ts` 与 `src/copy-data.ts` 的 ERROR_COPY。**M351（harness pane 视觉保真还原，change `harness-pane-visual-fidelity`）**：动工前重核末位（M348 用到 D384），按「只追加」取 **D385–D387**（三条：who meta 行角色名 ×2、工具清单折叠摘要）；**相对时间分档不新增编号**——「刚刚」复用 D100.1，其余档经 `formatRelative`（Intl narrow 式）产出（机制同 D100 族，narrow 为「10秒前」对齐原型「12 秒前」）；**D329 / D378 编号沿用改形**——发送钮图标化（↑ / ■ 两态 glyph），两句退为 `title` 与 `aria-label`（真机 AX 名断言锚这两句，不受影响）；工具调用区按 Alex 2026-10-06 裁决还原原型屏 4 清单形态（D343 / D344 行文案沿用、编号不动）。消费点：`src/harness-panel.ts`。**M363（change add-harness-thinking-display-and-effort 的面板半边）**：动工前重核末位（M351 用到 D387），按「只追加」取 **D388–D392**（五条：思考块折叠行（含时长 {sec} 占位）、思考 chip 支持态悬停 / 读屏名、不支持态悬停说明（Alex 裁决点 2 原句）、chip 面文本「思考：{level}」、思考浮层读屏名）。**档位名 Low / High / Max 不新增编号**——专有名词（Alex 裁决：zh / en 均英文原文），作为数据读数上屏，同 provider 名 / D386 口径；**思考块时长分档也不新增编号**——整串模板走 D388（zh「思考过程 · {sec} 秒」/ en「Thinking · {sec}s」两串不同模板，不走上屏列锁定）。消费点：`src/harness-panel.ts`（D388–D392 全数）与 `src/ipc.ts`（reasoning_chunk 事件入 HarnessEvent 联合 + parseHarnessEvent 判别、`harness_set_thinking_effort` 的 invoke 封装——M362 只落 Rust core 与 bindings，前端薄封装的居所按层纪律在 ipc.ts）。**M370（harness 面板显示打磨，Alex 2026-10-07 五条原话）**：D334 / D335 编号沿用再改形——ctx 读数改双裸读数「{ctx}% • {cache}%」（+cache hit rate，cache_pct 纯前端消费）、ⓘ 钮移除改越线时 hover 读数浮出；**D326 / D377 退场**（编号停用、不复用）——toggle 钮可见文字换原型同款火花 SVG 图标、ⓘ 钮随感叹号一并移除，各失去唯一消费点；chip 位置（横线之下、composer 之上）与用户气泡底色（--sel）是视觉面改动，无新文案。消费点全部在 `src/harness-panel.ts`。**M373（harness-selector-merge，Alex 2026-10-07 八条裁决：双 chip 合一「model · effort」/ 只截 model 名 / 选定不自动关 / effort 不支持置灰 + 段禁用 + hover hint / 配置 schema 动刀 / 能力窗口表进 schema / ctx·cache 加含义 hover hint / 基线自动刷新）**：动工前重核末位（M370 用到 D392），按「只追加」取 **D393–D398**（六条：合并 chip 读屏名、effort 不支持 hover hint、ctx·cache 含义 hover hint、浮层段标签 Provider / 模型、浮层读屏名）；**D376 / D389 / D391 退场**（编号停用、不复用）——双 chip 合并后 provider 名不上 chip、思考 chip 读数并入选择器，三条失去唯一消费点；**D390 / D392 编号沿用改消费点**（D390 = 合并 chip 不支持态读屏名 + 浮层 effort 段禁用说明，D392 = 合并浮层 effort 段可见标签）；D334 / D335 设计意图列补记 M373 的 hover 泡形态（含义句 D395 常驻第一行、警示句追加其下）。消费点：`src/harness-panel.ts`（D393–D398 全数 + D390 / D392 新消费点）与 `src-tauri/src/config.rs`（能力 / 窗口表进 schema 后 D390 的判定真源——`[harness].providers.<id>.models` 逐模型声明，M362 的 core 词元判定与 llm.rs 的 KIMI_PRESET 窗口表随之退役）。**M373 r2**（review r1 三个 P2 的修正批）：补 **D399**（chip 读屏名的未知态降级——effort 会话态尚未读到时取中性「未知」，与 D390 的「不支持」能力断言区分；P2-3），消费点 `src/harness-panel.ts` 的 applySelChip；P2-1（session.rs 两处指向已退役 `thinking::supported` 的 doc 链接改指 `HarnessConfig::effort_supported`）同批修正，无文案面。**M374（harness 停止语义与工具时序，Alex 2026-10-07 四条原话：工具时序倒置 / 停止延迟数秒到十秒 / 停止后无取消标记 / 继续提问后已取消轮的回复复活）**：动工前重核末位（M373 r2 用到 D399），按「只追加」取 **D400**（一条，zh/en 双档：stopping 相位阶段行「正在停止…」——点击停止到后端收口之间的窗口的状态行即时反馈）。消费点 `src/harness-panel.ts` 的 applyStage。**M378（harness hint 修复与 Cmd 缩放，Alex 2026-10-07 三条原话：ctx/cache hint 显示不全且要含当时实际百分比 / hint 按「context window usage: 12%. cache hit rate: 54%」的清晰简洁思路重设计 / harness pane 也支持 CMD +/- 缩放）**：动工前重核末位（M374 用到 D400），按「只追加」取 **D401**（一条，zh/en 双档：hover hint 第二行 cache hit rate，与 D395 同泡）；**D395 编号沿用改形**（一句并列说明 → 第一行带值「上下文窗口占用：{ctx}%」，第二行走 D401）；**D335 编号沿用**——M378 起它是 hover 泡第三行（追加行为不变）。harness pane 的 ⌘+/- 缩放无新文案（能力复用 `view.text-scale-*` 三条命令，键位面板文案 D307–D310 不变）。消费点：`src/harness-panel.ts`（buildCtxPop / 字号步进）、`src/main.ts`（焦点路由）。**M381（config-only 模型注册表，Alex 2026-10-07 终裁原话「只显示配置里写的模型。彻底不使用内置表」「不要内置/硬编码任何对模型的配置。只从配置文件里读取」）**：动工前重核末位（M378 用到 D401），按「只追加」取 **D402–D404**（三条：D402 = 合并浮层模型段空清单提示态 + chip hover hint、D403 = 合并 chip 读屏名空清单态、D404 = `harness_model_missing` 错误信封）。内置模型 preset 表（config.rs 的 KIMI_MODEL_PRESET / DEEPSEEK_MODEL_PRESET）与出厂模型常量（DEFAULT_KIMI_MODEL / DEFAULT_DEEPSEEK_MODEL）随本批彻底删除——M373 的「缺省 = 内置 preset、用户声明整体覆盖」语义随之退役：models 缺省 = 空清单 + warning + D402 提示态。消费点：`src/harness-panel.ts`（buildSelPop / applySelChip）、`src/copy-data.ts`（ERROR_COPY）、`src-tauri/src/harness/llm.rs`（harness_model_missing 构造点）。
-**M391（change reshape-harness-session-recording 的恢复命令错误信封批，tower 2026-10-08 批准 scope 扩至 `src/copy-data.ts`，deck 行为 gate 机械对账的必伴物）**：动工前重核末位（M384 用到 D408），按「只追加」取 **D409–D411**（三条：`harness_session_unreadable` / `harness_session_invalid` / `harness_session_vault_mismatch`——harness_resume_session 的读失败、格式/形态防线、vault 归属校验）。消费点 `src/copy-data.ts` 的 ERROR_COPY（前端恢复 UI mission 的实际渲染在其 scope 内）。
+## 编号沿革
+
+**编号规则**：D1 起连续编号；新增条目只追加，不复用已删除编号。动工取号前先核当前末位（本 deck 表里最大的 D 号）——沿革只登记「取到哪一段」，末位以表为准。**当前末位：D460**（M459 的运行时表条目，未进本 deck 表行）。
+
+**不复用编号（停用 / 保留 / 退场）**：D2–D3、D4、D8–D18、D23–D24、D27–D30、D55–D56、D326、D331、D377。D152 是**保留空号**（归 M261 的实现期，非停用）。D100 之余的相对时间档与 `{n}` 一类复数档由 `Intl.RelativeTimeFormat` / `Intl.PluralRules` 产出，不占编号。
+
+**分配记录**（批 → D 区间；未登记的批按「只追加」接末位，编号碰撞裁决见 `docs/backlog.md`）：
+
+- M127 D57–D62 保存链路加固
+- M133 D63–D67 键位查看面板
+- M138 D73–D76 Markdown 渲染批
+- M139 D68–D72 文件内搜索 panel
+- M144 D77–D79 外链批
+- M145 D80–D83 链接形态矩阵补全
+- M148 D84–D87 轻量大纲
+- M149 D88–D94 多标签页
+- M159 D95 启动恢复进行态
+- M160 D86 扩充为五个就地键（编号沿用）
+- M163 D96–D110 多 vault 切换器
+- M178 D111–D113 图片可见回退
+- M180 D66 改为按成因两种说明（编号沿用）
+- M189 D114 文档结束标记
+- M199 D115–D119 code 大纲空态补登 + 列表浮层输入筛选
+- M228 D120–D121 栏宽拖拽
+- M237 D122–D123 主题运行期切换
+- M238 D114 改英文「— End —」（编号沿用）
+- M240 D124 表格放大全屏查看
+- M244 D125–D147 文件树条目操作
+- M251 D114 去破折号改「END」（编号沿用）
+- M254 D148–D151 标签右键菜单
+- M257 D149–D151 改为上屏英文原文（编号沿用）
+- M261 D152 跳转行输入条读屏名（保留号落地）
+- M277 D153–D156 块级复制 + 代码块放大全屏
+- M281 D157–D158 跳转行占位 / 总行数提示
+- M282 D159–D320 ui-language-i18n 实现批（162 行：后端信封、块类型词、装配层、预览装饰、保存链路、callout 类型标签、键位来由等成组共享设计意图）
+- M301 D321–D325 harness 配置与 patch 后端
+- M303 D326–D348 harness 面板 UI
+- M319 D365–D368 pane 三条命令键位来由 + 分隔条读屏名
+- M322 D369 空 pane 引导
+- M343 D370–D374 消息摘录卡片
+- M347 D376–D382 composer 控制行 + 复制 + 进度
+- M348 D383–D384 Rust 轮次 abort
+- M351 D385–D387 harness pane 视觉保真
+- M363 D388–D392 思考显示与 effort
+- M373 D393–D399 选择器合并
+- M374 D400 停止相位阶段行
+- M378 D401 ctx/cache hint 第二行
+- M381 D402–D404 config-only 模型注册表
+- M391 D409–D411 会话恢复错误信封
+
+各批的取号过程、改号经过与被推翻的旧预计由 git history 承担（历次改写见 `git log -p -- 文案-Copy.md`）。
 
 ## 文案实现备注
 
-**M282（change `ui-language-i18n`）起，本 deck 多了一层运行时对应物**：`src/copy-data.ts` 的
-`COPY`（按 D 编号索引的双列表，多串格取 `D<n>.<格内序>`）+ `src/copy.ts` 的取值函数 `t()` /
-`tPlural()` / `errorText()`。三者的分工是：**deck 是规范文本与人的评审面，运行时表是唯一取值
-入口**，两边由 `tests/unit/copy.test.ts` 的**全量漂移门禁**钉住（改一处必红）。门禁的比对口径
-有两处要说清：① deck 的中文列保留中文占位名（`{原因}` / `{路径}`）作可读性，表里两列一律 ASCII
-同名，比对时按占位**位置**归一；② 一格多串的行在测试里**显式声明键序列**（不按 ` / ` 机械切分——
-D67 本身就是一条含 ` / ` 的串）。另外两条同批立起来的门禁：**取值门禁**（`src/**` 除 `src/copy*.ts`
-外零含 CJK 的串字面量，`typescript` 的 AST 扫描；只进诊断日志的串、进磁盘的派生文件名与纯字形
-就地标 `// i18n-exempt: log|data|glyph`）与**上屏列锁定断言**（D149–D151 在 zh / en 两态下上屏的
-都是 English 列）。
+**运行时对应物与门禁**：`src/copy-data.ts` 的 `COPY`（按 D 编号索引的双列表，多串格取 `D<n>.<格内序>`）+ `src/copy.ts` 的 `t()` / `tPlural()` / `errorText()`。deck 是规范文本与人的评审面，运行时表是唯一取值入口，两者由 `tests/unit/copy.test.ts` 的全量漂移门禁钉住（deck 表行改一处必红）。门禁三处口径：① deck 中文列保留中文占位名（`{原因}` / `{路径}`），表里两列一律 ASCII 同名，比对按占位**位置**归一；② 一格多串的行在测试里**显式声明键序列**（不按 ` / ` 机械切分，D67 本身含 ` / `）；③ `src/**` 除 `src/copy*.ts` 外零含 CJK 串字面量（`typescript` AST 扫描，例外就地标 `// i18n-exempt: log|data|glyph`），另有上屏列锁定断言（D149–D151 在 zh / en 两态下上屏 English 列）。
 
+**D 区间 → 归属文件 / 常量**（其余单元测试按 deck 表格行逐字断言，逐字漂移即红；「读 deck」= 直接解析 deck 表行）：
 
-树、编辑器、toast 的动态错误由 `src/tree.ts` / `src/save-controller.ts` 持有或透传；本 deck 收编其稳定可见部分。保存链路的稳定文案（含守卫提示与冲突/备份动作）随 M127 的拆分集中在 `src/save-controller.ts`。键位面板（D63–D67）的文案在 `src/main.ts` 的 `createBindingsPanel` 内；面板里逐条显示的**键位来由**不是本 deck 的条目——它来自 `src/keys.ts` 键位表的 `doc` 字段（表即文档，随绑定一起维护）。搜索 panel（D68–D72）的文案在 `src/search.ts` 的 `LumirSearchPanel` 内——与键位面板把文案写在 `main.ts` 的写法并列；计数串的三态（`当前/总数`、`0/0`、`总数+`）由同文件的 `tallyLabel` 生成，deck 里的 `{当前}/{总数}` 即它的模板。表格降级归因句（D73–D75）的文案在 `src/preview/table.ts` 的 `degradationNotice`：`src/preview/livePreview.ts` 把同一句话同时写进 `aria-label` 与 `data-degraded`（单一来源），上屏文本由 `src/style.css` 的 `.cm-lp-table-degraded::after` 用 `attr(data-degraded)` 取用——读屏与视觉看到的是同一份归因，CSS 里不另写一份。分隔线读屏名（D76）同样在 `src/preview/livePreview.ts`，由 `HorizontalRuleWidget` 写入。外链（D77–D79）分两处：`↗︎` 字形在 `src/preview/livePreview.ts` 的 `LinkMarkWidget`（D77；M145 起同一个 widget 也出 `→`，D80），两条失败提示是 `src-tauri/src/commands.rs` 的 `open_external_url` 返回的错误信封 message（D78 拒绝 / D79 系统调用失败），前端 toast 直接透传——文案在 Rust 侧是因为判定也在那一侧。连接形态矩阵补全（M145，D80–D83）：应用内标记 `→` 与 `↗︎` 同在一个 widget（`LinkMarkWidget`，字形由链接类别决定）；「链接目标不存在」（D81）与「暂不支持锚点跳转」（D82）写在 `src/main.ts` 的 `followNoteLink` / `followLink`；「打不开这个目标」（D83）是 `src-tauri/src/commands.rs` 的 `link_open_path` 返回的错误信封 message（原因片段同为该函数产出），前端 toast 透传。`link_open_path` 里 `fs_io::resolve_in_vault` 的 fs 类错误（如「文件不存在：{路径}」）按 D19 通用错误形态透传，不另立条目。外链标记用字形而非文案的理由（每条链接都跟一句「在新窗口打开」会把正文淹掉），是本条不适用「文案必须有可读出口」通例的例外依据：URL 经链接的 `title` 属性对悬停与读屏可取。
+- **D63–D67** — `src/main.ts` `createBindingsPanel`（键位来由由 `src/keys.ts` 键位表的 `doc` 字段产出，表即文档）
+- **D68–D72** — `src/search.ts` `LumirSearchPanel`（计数串三态由 `tallyLabel` 生成）
+- **D73–D75** — `src/preview/table.ts` `degradationNotice`；`src/preview/livePreview.ts` 单源写 `aria-label` / `data-degraded`；`src/style.css` `.cm-lp-table-degraded::after` 取 `attr(data-degraded)`
+- **D76** — `src/preview/livePreview.ts` `HorizontalRuleWidget`
+- **D77–D80** — `src/preview/livePreview.ts` `LinkMarkWidget`（`↗︎` / `→` 字形）
+- **D78 / D79 / D83** — `src-tauri/src/commands.rs`（`open_external_url` / `link_open_path` 的错误信封 message；判定在 Rust 侧故文案在 Rust 侧）
+- **D81 / D82** — `src/main.ts` `followNoteLink` / `followLink`
+- **D84–D87** — `src/toc.ts`（M160 只改 D86 串长，仍由 `POPOVER_HINT` 一处持有）
+- **D95** — `src/main.ts` `RESTORING_NOTICE` → `tree.showEmpty()`
+- **D96** — `src/tree.ts`（入口 DOM 归它）
+- **D97–D104 / D108–D110** — `src/vault-switcher.ts`（切换闸判据经 `VaultSwitchGateDeps.block()` 取自 `src/save-controller.ts` `vaultSwitchBlock()`；相对时间档 `relativeTime()` 单点生成；`{名称}` 取 `src/tree.ts` `baseName()`）
+- **D105–D107** — `src/main.ts`（需装配层上下文）
+- **D111–D113** — `src/preview/attachments.ts` `imageLoadingText` / `imageReadErrorText` / `imageFallbackText`（`tests/unit/image-widget.test.ts` 读 deck）
+- **D114** — `src/preview/endMarker.ts` `END_MARKER_TEXT`（`tests/unit/end-marker.test.ts` 读 deck）
+- **D115–D116** — `src/toc.ts` `NO_SYMBOLS_TEXT` / `NO_STRUCTURE_TEXT`（与 D84 `NO_HEADINGS_TEXT` 两条串，MUST NOT 复用）
+- **D117–D119** — `src/list-filter.ts` `NO_MATCH_TEXT` / `FILTER_PLACEHOLDER` / `FILTER_LABEL`（两处浮层共用，MUST NOT 各处再写字面量）
+- **D120–D121** — `src/content-width.ts` `WIDTH_HANDLE_LABEL` / `WIDTH_SAVE_FAILED_TEXT`（toast 由 `src/main.ts` 发出）
+- **D122–D123** — `src/theme.ts` `THEME_INDICATOR_LABEL` / `THEME_SAVE_FAILED_TEXT`（DOM 写入在 `src/main.ts` `applyTheme`）
+- **D124** — `src/preview/table-trigger.ts` `TABLE_TRIGGER_LABEL`；遮罩读屏名复用 `Markdown 表格 N`（`src/preview/livePreview.ts` `tableWrappers` 唯一生成处）
+- **D125–D138** — `src/tree-menu.ts`（`TRASH_CONFIRM_DIR_BODY` / `TRASH_CONFIRM_FILE_BODY` 两个模板函数）
+- **D139–D142** — `src/tree.ts`（内联编辑）
+- **D143–D147** — `src/tree.ts` `validateEntryName` **与** `src-tauri/src/fs_io.rs`（前后端同源，Rust 侧权威）
+- **D148–D151** — `src/tabs.ts` `TAB_MENU_LABEL` / `TAB_MENU_CLOSE` / `TAB_MENU_CLOSE_OTHERS` / `TAB_MENU_CLOSE_RIGHT`
+- **D152 / D157 / D158** — `src/goto-line.ts` `GOTO_LINE_LABEL` / `GOTO_LINE_PLACEHOLDER` / `gotoLineTotalText`；越界与取消静默（沿用既有机制，无新增条目）
+- **D153 / D156** — `src/preview/block-trigger.ts` `blockCopyLabel()` / `CODEBLOCK_FS_TRIGGER_LABEL`（同带 `CORNERS_ICON`）
+- **D154–D155** — `src/main.ts` `COPIED_TABLE_TOAST` / `COPIED_CODE_BLOCK_TOAST` / `COPY_BLOCK_FAILED_TOAST`
+- **D159–D320** — 成组的运行时表条目（后端信封、块类型词、装配层、预览装饰、保存链路、callout 类型标签、键位来由、pane、相对时间与复数档等）；逐条语境在模块注释与 `src/copy-data.ts`，本表不逐条复述
+- **D321–D325** — `src/copy-data.ts` 后端错误信封（patch 后端）
+- **D326–D348** — `src/harness-panel.ts`（D345 键位来由在 `src/keys.ts`）
+- **D365–D368** — `src/keys.ts`（三条 `docKey`）+ `src/bindings-panel.ts`（doc 列）+ `src/main.ts`（D368 `SPLITTER_LABEL`）
+- **D369** — `src/main.ts` `PANE_GUIDE_LABEL`（显示谓词 `src/pane-layout.ts` `emptyPaneGuideVisible`）
+- **D370–D374** — `src/harness-panel.ts`（D370 / D372 属 QC3 实现面，文案本批预登记）
+- **D376–D382** — `src/harness-panel.ts`
+- **D383–D384** — `src/harness-panel.ts` + `src/copy-data.ts` `ERROR_COPY`
+- **D385–D387** — `src/harness-panel.ts`
+- **D388–D392** — `src/harness-panel.ts` + `src/ipc.ts`（事件与 invoke 薄封装）
+- **D393–D399** — `src/harness-panel.ts` + `src-tauri/src/config.rs`（能力 / 窗口表进 schema 后 D390 的判定真源）
+- **D400–D401** — `src/harness-panel.ts`（`applyStage` / `buildCtxPop`）
+- **D402–D404** — `src/harness-panel.ts`（`buildSelPop` / `applySelChip`）+ `src/copy-data.ts` + `src-tauri/src/harness/llm.rs`
+- **D405–D411** — `src/harness-panel.ts` / `src/copy-data.ts` `ERROR_COPY`（D409–D411 = 会话恢复三错误码）
+- **D412–D422** — `src/harness-panel.ts`（D412–D416 批准闸问句与副句、gated 工具行待决尾注 `approvalAskOf` / `appendApproval` / `relabelApproval`；D417–D419 会话浮层删除钮与行内两步确认 `buildSessList`）+ `src/copy-data.ts` `ERROR_COPY`（D420–D422 = 会话删除两错误码 + `fs_move_failed`）
+- **D423–D434** — `src/harness-panel.ts`（`applyPermChip` / `buildPermPop` / `appendApproval`）+ `src/copy-data.ts`
+- **D435** — `src/harness-panel.ts`（vault_delete 批准卡的后果说明句，按 design §5.1 归面板侧；后端 `approval_preview` 只给路径参数）
+- **D436–D451** — vault 附件与 composer 贴图共用 fs_io 原语（错误 code 族不另立）；消费点 `src/harness-panel.ts`（`send` / `loadImageThumb` / `createImageCardEl`）+ `src/copy-data.ts` `ERROR_COPY`（D447 是 aria 名，不经 ERROR_COPY）
+- **D452–D455** — `src/harness-panel.ts`（`buildCtxPop` / `usageReadings`）+ `src/copy-data.ts`；Rust 侧换键 `cache_pct_session` + `cache_pct_turn`
+- **D456** — `src/harness-draft.ts` → `src/harness-panel.ts`（toast 出口经 `errorText`）+ `src/copy-data.ts`
+- **D457** — `src/harness-panel.ts`（`createImageMentionButton` / `createImageOrdinalBadge` / `createImageCardEl`）+ `src/copy-data.ts`（投递标签 `Image N` 由 `src/quote-card.ts` `imageMentionText` 生成，不进本表）
+- **D458–D460** — `src/harness-panel.ts`（`approvalReasonText` / `parseDecisionReason` / `appendApproval` / `relabelApproval` / `applyPermChip`）+ `src/copy-data.ts`（判定层级来自 Rust `DecisionReason`，前端只按 `kind` 取模板）
 
-另记一条**非可见文案**的改名（不进编号）：M144 把命令 id `wikilink.follow` 更名为 `link.follow`（命令跟随的已经是链接本身，不再只管 wikilink）。`[keys]` 配置里引用旧 id 会按既有口径走「未知命令」warning 并忽略该条——不是用户可见文案，但配置层面的影响记在这里，避免只在代码里留痕。
+**不进编号的条目与其缘由**：
 
-轻量大纲（D84–D87）的文案在 `src/toc.ts`：D84 是空标题文档的 toast（命令入口在 `src/main.ts`，toast 本体在装配层，文案串随能力模块走）；D85 是浮层 listbox 的 `aria-label`；D86 是浮层底部提示；D87 是 masthead 位置指示段（`shell.ts` 建的 `.masthead-section` 按钮）的 `title`。标题链的分隔符 `›` 是纯排版分隔（不承载语义，也不是可读出口），因此不进编号——位置指示段的读屏名就是标题链本身。M160 未新增条目：只有 D86 的串变长，仍由 `src/toc.ts` 的 `POPOVER_HINT` 一处持有（前缀 `↑↓ ⌃N⌃P`），提示宽度经元素基线实测仍单行。
+- M236 标题栏产品标识（change product-version-display）：文本取自 `tauri.conf.json`，前端只组装（`src/modeline.ts` `identityView()`）；分隔符 `·` 纯排版。
+- M144 命令 id 更名 `wikilink.follow` → `link.follow`：非可见文案，配置层影响记此。
+- D100 之余的相对时间档、`{n}` 一类复数档：由 `Intl.RelativeTimeFormat` / `Intl.PluralRules` 产出。
+- 表格 / 代码块全屏遮罩与块级复制的遮罩读屏名（M240 / M277）：复用 `Markdown 表格 N` / `Markdown 代码块 N`（`src/preview/livePreview.ts` 唯一生成处）。
+- 键位面板逐条的键位来由：来自 `src/keys.ts` 键位表 `doc` 字段（表即文档）。
+- M163 未进 deck 的 mock 文案（`demo/multi-vault.html` V5/V10/V11/V12/V13/V15_saved/V17/V18/V19）：两拍过渡态属非目标，「已加入」/ 恢复 / 「已保存 {n} 个标签」提示默认不发（主动动作本身即结果；保存留痕走逐标签既有 toast，D55/D56 一族），V5 不可达，V17/V18 是 mock 示意，V19 由系统目录选择器承担。
+- 编号徽标裸数字、modeline 主题名、provider 名、档位名 Low/High/Max：读数不属措辞。
+- 多串格的格内分档由 `Intl` 产出、callout 类型标签等成组条目见 D159–D320 行。
 
-启动恢复进行态（D95）的文案在 `src/main.ts` 的 `RESTORING_NOTICE`：`refreshVaultStatus()` 在 `VaultStatus.restore_pending === true` 时把它交给 `tree.showEmpty()`（`src/tree.ts` 的 notice 行，与 D7 同一个落点），恢复终态到达后由下一次拉取覆盖——树空态的几何与 D5/D6 完全同一份布局，因此不新增视觉基线。
+**已退场 / 被替代的条目**（编号停用，见「编号沿革」）：
 
-多 vault 切换器（D96–D110）的文案分四处，与「能力在哪文案就在哪」的既有口径一致：D96 是树头部入口的 `title` 与 `aria-label`，在 `src/tree.ts`（入口 DOM 归它）；D97–D104、D108 与切换拦截提示 D109 及其三条动作 D110 在 `src/vault-switcher.ts`（浮层渲染、行摘要与相对时间、跳过计数提示、切换流程的门与闸——判据经 `VaultSwitchGateDeps.block()` 取自 `src/save-controller.ts` 的 `vaultSwitchBlock()`，提示与出口摆在拦下它的地方）；D105–D107 在 `src/main.ts`（重定位的两种拒绝、空 vault 引导——它们要的是「当前 vault 根 / 本次列表快照 / 编辑器覆盖层」这些只有装配层才有的上下文）。行摘要里的相对时间档（D100）由 `src/vault-switcher.ts` 的 `relativeTime()` 一处生成，测试场景与实现读的是同一份；`{名称}` 一律取路径 basename（`src/tree.ts` 的 `baseName()` 是全前端唯一一份派生，列表行的名字则由后端 `vault_list` 给出，前端不重复派生）。**未进 deck 的 mock 文案**（`demo/multi-vault.html` 的 V5/V10/V11/V12/V13/V15_saved/V17/V18/V19）：V10 的两拍过渡态与本 change 的非目标一致（同步打开路径下行内进度不可见，不做）；V11/V12 的「已加入」提示与 V13 的恢复提示默认不发（切换是用户主动动作，整窗换上下文本身已是可见结果，口径 7）；**V15_saved（「已保存 {n} 个标签」，保存并切换成功后的留痕）同样不发**——「保存并切换」逐标签走既有保存链路，每个落盘的标签各自已经给出「已保存」（保存链路既有的逐标签成功 toast；deck 里保存留痕一族是 D55/D56，手动「已保存」无独立条目），再补一条汇总既重复又会与逐标签提示争同一块浮条位置（M163 r1 P2-4）；V5「还没有 vault」不可达（装载成功即意味着注册表里至少有当前项，列表读失败走 D19 通用错误）；V17/V18 是 mock 对系统目录选择器的示意，不是产品 UI；V19 的「重新定位」预告由系统目录选择器承担（点「重新定位…」直接弹选择器，预告反而落在模态之后不可见）。
-
-图片态文案（D111–D113）在 `src/preview/attachments.ts`：D111 由 `imageLoadingText()` 组装（`ImageWidget.toDOM` 的首帧状态块）、D112 由 `imageReadErrorText()` 组装（字节读取失败，原因取自 `errorMessage()`）、D113 由 `imageFallbackText()` 组装（终态不可见：解码失败 / 格式不被引擎支持 / 渲染尺寸为零 / 外部目标被安全策略拦下——`img` 的 error 事件不携带原因，所以措辞止于「无法显示」）。`tests/unit/image-widget.test.ts` 按 deck 表格行的模板逐字断言这三个函数的输出，两边漂移即红。**退场**：`图片解码失败：{引用}`（M178，2026-09-18）——它把「无法解码的格式 / 被 CSP 拦下的外部 URL / 渲染为零尺寸的图」一律说成解码失败，对第二类是错误的人话；改由 D113 承担。**补登**：D111 与 D112 在实现期就存在（图片首次内联渲染那一批），此前从未进 deck，本次一并补登。
-
-结束标记（D114）的文案在 `src/preview/endMarker.ts` 的 `END_MARKER_TEXT`：元素由同模块的 ViewPlugin 挂到 `.cm-scroller` 上（与 `.cm-content` 同级，因此不进文档、不被复制与搜索带出），显隐判据（不含标记的内容高度 > 可用视口高度）与样式分别在 `src/preview/endMarker.ts` 与 `src/preview/theme.ts`；`tests/unit/end-marker.test.ts` 按本 deck 的表格行逐字断言该常量，两边漂移即红。
-
-列表浮层输入筛选（D117–D119）的文案在 `src/list-filter.ts` 的三个常量（`NO_MATCH_TEXT` / `FILTER_PLACEHOLDER` / `FILTER_LABEL`）：这一份由**两处**浮层共用（大纲浮层与 vault 切换器浮层 import 同一组常量，MUST NOT 在各处再写一份字面量——同一动作在两处说两种话正是本 deck 要防的漂移）。`tests/unit/list-filter.test.ts` 按上表的表格行逐字断言三个常量；两处浮层的视觉场景（`tests/visual/scenes/list-filter.spec.ts`）断言渲染出来的占位 / 读屏名 / 无匹配提示，实现侧漂移即红。
-
-code 模式大纲的两条空态提示（D115–D116）在 `src/toc.ts` 的 `NO_SYMBOLS_TEXT` / `NO_STRUCTURE_TEXT`（M197 实现，M199 补登编号）：`tests/visual/scenes/code-outline.spec.ts` 与真机场景 `scripts/acceptance/scenarios/30-code-outline.md` 按本 deck 的表格行逐字断言，两边漂移即红。D84（md 无标题）仍是 `NO_HEADINGS_TEXT`，与 D115 是两种情形、两条串，MUST NOT 复用。
-
-栏宽拖拽（D120–D121）的文案在 `src/content-width.ts` 的两个常量（`WIDTH_HANDLE_LABEL` / `WIDTH_SAVE_FAILED_TEXT`）：读屏名由左右两个手柄共用（`src/shell.ts` 建 DOM 时从同一常量取）；写盘失败 toast 由 `src/main.ts` 的拖拽提交回调在 `config_set_ui_value` 失败时发出，`{原因}` 片段透传后端错误信封的 message。`tests/unit/content-width.test.ts` 按本 deck 的表格行逐字断言这两个常量，两边漂移即红。
-
-标题栏产品标识（M236，change product-version-display）**不进编号**：标识块的文本（产品名与版本号）不是静态文案，而是运行期经 `getName()` / `getVersion()` 取自 `src-tauri/tauri.conf.json` 的真值，前端只组装不持有字面量；组装的唯一真源是 `src/modeline.ts` 的 `identityView()`（宽窗进标题栏右端 `.titlebar-identity`，窄窗 <640px 版本号退 modeline 右段尾部，分隔规则同一份函数产出）。分隔符 `·` 循 masthead 标题链 `›` 的先例——纯排版分隔、不承载语义，不进编号，且标了 `aria-hidden="true"` 不进读屏。读屏口径：标识块不用容器 `aria-label`（generic `span` 的 `aria-label` 在 WebKit / Chromium 均不报读，是假读屏名），可见文本本身即可访问。降级路径（`getName` / `getVersion` 被 ACL 拒绝或抛错）整块隐藏并记 `app_meta_unavailable` 诊断事件，不显示半截标识。`tests/unit/modeline.test.ts` 断言 `identityView()` 的全部分支，视觉场景 `tests/visual/scenes/titlebar-identity.spec.ts` 断言上屏文本与窄窗退让，漂移即红。
-
-表格全屏触发钮（D124）的读屏名在 `src/preview/table-trigger.ts` 的 `TABLE_TRIGGER_LABEL`：按钮 DOM 由同模块的 `TableFullscreenTrigger`（`Decoration.widget`）在表头行行首生成，`aria-label` 从该常量取；`tests/unit/table-fullscreen.test.ts` 按本 deck 的表格行逐字断言这个常量，两边漂移即红。**遮罩自己的读屏名不在这里**：它复用表格容器既有的 `Markdown 表格 N` 标签（`src/preview/livePreview.ts` 的 `tableWrappers` 是唯一生成处），触发钮点击时从源元素的 `aria-label` 现取、经 `PreviewContext.tableFullscreen().open(el, label)` 交给遮罩——MUST NOT 在遮罩或触发钮里另写一份字面量（同一张表两个名字正是本 deck 要防的漂移）。hover 时机（M235 裁决）使这句读屏名只在静止态之外才进 AX 树：钮在 rest 态是 `visibility: hidden`，不进读屏树、不可聚焦。
-
-文件树条目操作（D125–D147）的文案分三处，与「能力在哪文案就在哪」的既有口径一致：D125–D138 在 `src/tree-menu.ts`（菜单浮层与删除确认框同属「菜单动作的界面形态」，两句目录/文件正文是 `TRASH_CONFIRM_DIR_BODY` / `TRASH_CONFIRM_FILE_BODY` 两个模板函数）；D139–D142 在 `src/tree.ts`（内联编辑的行 DOM 归它）；D143–D147 在 `src/tree.ts` 的 `validateEntryName` **与** `src-tauri/src/fs_io.rs` 的 `validate_new_name` / `resolve_new_in_vault` / `create_file_entry` 等处（前后端同源，措辞逐字一致——前端只是提前说，后端是权威）。`tests/unit/tree-menu.test.ts` 与 `tests/unit/tree-paths.test.ts` 按本 deck 的表格行逐字断言这些常量（含校验矩阵逐项：空 / 含斜杠 / 点 / 点点 / 忽略集 / 撞名），两边漂移即红；真机场景 `scripts/acceptance/scenarios/47-file-tree-context-menu.md` 与视觉场景 `tests/visual/scenes/tree-menu.spec.ts` 断言渲染出来的那一份。
-
-主题运行期切换（D122–D123）的文案在 `src/theme.ts` 的两个常量（`THEME_INDICATOR_LABEL` / `THEME_SAVE_FAILED_TEXT`）：指示钮的可见文本是主题名本身（主题域的纯逻辑与这两条串同在一个模块，它同时是 `view.theme-cycle` 的循环序 `THEME_CYCLE` 与当前主题读取 `currentTheme` 的居所）；文案由 `src/main.ts` 的唯一施加点 `applyTheme` 写入钮的 `title` 与 `aria-label`（写 DOM 在装配层，串在能力模块），写盘失败 toast 在 `src/main.ts` 的同一条命令实现 `cycleTheme` 里于 `config_set_ui_value` 失败时发出，`{原因}` 片段透传后端错误信封的 message。`tests/unit/theme.test.ts` 按本 deck 的表格行逐字断言这两条串（以及循环序），两边漂移即红；真机侧场景 `scripts/acceptance/scenarios/44-theme-live-switch.md` 按 `AXButton (主题：{主题名}（点击切换）)` 的形态读回当前主题。
-
-标签右键菜单（D148–D151）的文案在 `src/tabs.ts` 的四个常量（`TAB_MENU_LABEL` / `TAB_MENU_CLOSE` / `TAB_MENU_CLOSE_OTHERS` / `TAB_MENU_CLOSE_RIGHT`）：菜单浮层与三条关闭路径同在这个模块（能力的会话模型、三条路径的落点（关闭 / 关闭其他 / 关闭右侧）都在这一层，文案随能力走），与文件树菜单「浮层在 tree-menu.ts、动作在 main.ts」的分工不同——那边要 vault 根与后端命令，这边不要。`tests/unit/tab-menu.test.ts` 按本 deck 的表格行逐字断言这四条串（含三个菜单项的标签与顺序），两边漂移即红；视觉场景 `tests/visual/scenes/tab-menu.spec.ts` 与真机场景 `scripts/acceptance/scenarios/50-tab-context-menu.md` 断言渲染出来的那一份。
-
-块级复制（D153–D155）与代码块全屏（D156）的文案分三处（M277）：D153 在 `src/preview/block-trigger.ts` 的 `blockCopyLabel()`（「表格 / 代码块」两个词表只在那一处；按钮 DOM 由同模块的 `BlockCopyTrigger` 生成，`aria-label` 从该函数取）；D154 / D155 在 `src/main.ts` 的三个常量（`COPIED_TABLE_TOAST` / `COPIED_CODE_BLOCK_TOAST` / `COPY_BLOCK_FAILED_TOAST`——复制动作、剪贴板写入与 toast 都在装配层，文案随实现走）；D156 在 `src/preview/block-trigger.ts` 的 `CODEBLOCK_FS_TRIGGER_LABEL`（与 D124 的 `TABLE_TRIGGER_LABEL` 同族，四角框字形常量 `CORNERS_ICON` 也是同一份）。`tests/unit/block-copy.test.ts` 与 `tests/unit/code-block-fullscreen.test.ts` 按本 deck 的表格行逐字断言这几条串（含块类型词的两侧一致性），两边漂移即红。**两个新能力的遮罩读屏名都不在这里**：它们复用容器既有的 `Markdown 表格 N` / `Markdown 代码块 N` 标签（`src/preview/livePreview.ts` 是唯一生成处）——MUST NOT 在遮罩或触发钮里另写一份字面量。
-
-跳转到行（D152 / D157 / D158）的文案在 `src/goto-line.ts` 的三个常量（`GOTO_LINE_LABEL` / `GOTO_LINE_PLACEHOLDER` / `gotoLineTotalText`）：浮层 DOM、就地键消费与收起都在这个模块（能力在哪文案就在哪，与 `src/list-filter.ts` / `src/content-width.ts` 同口径），装配层只把 `shell.modeline` 与两条回调交给它。`tests/unit/goto-line.test.ts` 按本 deck 的表格行逐字断言这三条串（含 `共 {M} 行` 的模板代入），两边漂移即红；视觉场景 `tests/visual/scenes/m281-goto-line.spec.ts` 从 `src/goto-line.ts` **import** 同一份常量断言上屏值（单一来源，不在场景里手抄字面量）。越界与取消都**静默**（D3 裁决）：本批零 toast、零新提示文案。
-
-**M414（change add-harness-permission-modes 的前端批：权限 chip、三档浮层、批准卡次级动作，Alex 2026-10-09 三条裁决原话）**：动工前重核末位（M407 用到 D422），按「只追加」取 **D423–D434**（十二条：chip 短名 ×3 / chip 读屏名 / 浮层档位全名 ×3 / 浮层档位释义 ×3 / 浮层读屏名 / 批准卡次级动作）。三条裁决的落点：① 「为了 Read Only / Vault Write / Full Access 这三档在 chip 里能完整显示名称吗？如果不能，可以减省成 Read / Write / Full，然后在点击出现的选择列表里写全名」⇒ 文案**分两级**（D423–D425 短名上 chip、D427–D429 全名进浮层，原「chip 显示全名」口径作废）；② 「采纳你的建议」（浮层每档一行释义）⇒ D430–D432（原「无释义文案」口径作废）；③ 「采纳且本会话不再问」（裁决点 4 倾向 A：显式逐次记忆，点采纳不自动记）⇒ D434（次级动作钮，走 `harness_approve(remember=true)`）。**没有新文案**的三项：批准卡的 purpose 用途句（模型自述原文，属数据读数不是措辞，D422 前一批已落渲染）、命令连接符拆段（纯排版，零文案）、恢复路径的「已采纳」终态（复用 D405 / D406 / D407 / D408）。消费点全在 `src/harness-panel.ts`（applyPermChip / buildPermPop / appendApproval）与 `src/copy-data.ts`（表本体，deck ↔ 表漂移门禁的必伴物）。
-**M440（change harness-composer-image-paste：composer 粘贴剪贴板图片，Alex 2026-10-10 原话「Harness composer 支持黏贴剪贴板里的图片」）**：动工前重核末位（M423 用到 D444），按「只追加」取 **D445–D451**（七条：能力闸拒绝 toast / 缩略图读回失败 toast / 图片卡片读屏名 / 贴图无有效 vault / 附件目录创建失败 / 非法附件名 / 投递投影格式非法）。落盘链路的错误 code 族（`attachment_type_unsupported` / `attachment_too_large` / `attachment_decode_failed` / `attachment_encode_failed` / `attachment_write_failed` / `attachment_write_unknown`）与 vault 附件**共用**既有 D436–D441 表——harness 侧写盘复用同一组 fs_io 原语（design §5.3），code 族不另立。消费点：`src/harness-panel.ts`（send / loadImageThumb / createImageCardEl）与 `src/copy-data.ts` 的 ERROR_COPY（D445 / D446 / D448 / D449 / D450 / D451 的 code 映射；D447 是 aria 名、不经 ERROR_COPY）。
-**M443（change harness-cache-metrics：面板 cache 读数改可解释口径 + `cache_write_tokens` 遥测，Alex 2026-10-10 裁决「可观测性两项做、其余 4 项不做」）**：动工前重核末位（M440 用到 D451），按「只追加」取 **D452–D455**（四条：本回合缓存命中行 / 冷启动成因句 / 大块摊薄成因句 / 缓存写入行）。**D334 / D335 / D395 / D401 编号沿用改形**——D334 的 `{cache}` 口径由单回合改为**本逻辑会话累计**（控制行形态与回落口径、越线高亮一律不变），D401 补「（会话累计）」限定词，D335 / D395 补记 M443 起的四行含义句结构。改动面：`src/harness-panel.ts`（buildCtxPop 的行序与判定键、usageReadings 的键名映射一处）、`src/copy-data.ts`（表本体）、Rust 侧事件与快照两条通道的载荷换键（`cache_pct` 退役拆 `cache_pct_session` + `cache_pct_turn`）。**本批不改请求装配**（wire 请求体逐字节不变）、不动缓存利用方式、不加 TTL 参数——`cache_write_tokens` 只做读数与留存。
-
-**M452（change composer-draft-persistence：composer 草稿自动保存与恢复，Alex 2026-10-11「按倾向」裁决）**：动工前重核末位（M443 用到 D455），按「只追加」取 **D456**（一条：草稿保存失败 warning）。本批**零新视觉元素**（草稿恢复后就是 composer 里原本的内容，design §8），唯一可见的新反馈就是这条失败提示——它沿既有 toast 通道，不新立视觉物种。消费点：`src/harness-draft.ts`（store 的写失败经 `deps.warn` 上抛错误信封）→ `src/harness-panel.ts`（装配层的 `toast` 出口按 `src/copy.ts` 的 `errorText` 取本条）与 `src/copy-data.ts` 的 ERROR_COPY（`harness_draft_write_failed` → D456）。
-
-**M454（change composer-image-mention：图片编号与 `@` 引用，Alex 2026-10-11 五裁决点全按倾向 + 恒显确认采纳）**：动工前重核末位（M452 用到 D456），按「只追加」取 **D457**（一条：图片卡片 `@` 钮的「插入引用」读屏名）。**D447 编号沿用改形**——加 `{n}` 编号前缀（`图片 {name}` → `图片 {n}：{name}`），编号是人的指代把手、读屏也要能听到；composer 态的编号徽标挂同一句。编号徽标本身（缩略图角上的裸编号 `1` / `2`）是**读数不属措辞**，不进编号（与 modeline 主题名、provider 名同口径）；投递标签 `Image N` 由 `src/quote-card.ts` 的 `imageMentionText` 生成（形态固定、非本表条目）。消费点：`src/harness-panel.ts`（createImageMentionButton / createImageOrdinalBadge / createImageCardEl）与 `src/copy-data.ts`（表本体）。
-
-**M459（change add-approval-decision-reason：批准卡的判定依据行，Alex 2026-10-12 原话「这个逻辑不用改，但有什么方法能让减少后续的疑惑。比如这次我产生的疑惑？」）**：动工前重核末位（M454 用到 D457），按「只追加」取 **D458–D460**（三条：模式默认分层行 / shell 包装器行 / 其余危险命令行）。**D426 编号沿用改形**——chip 的读屏名与悬停提示在「（点击切换）」之后补上当前档的一行释义（`{desc}` = D430–D432，与浮层释义同源、不新增信息），档名不足以说明这一档的承诺（Alex 现场疑惑的一半来自此）。判定层级来自 Rust 判定管线（`DecisionReason`，随批准请求事件与 `harness_state` 快照两条通道到达），前端只按 `kind` 取模板、MUST NOT 自行推导。消费点：`src/harness-panel.ts`（approvalReasonText / parseDecisionReason / appendApproval / relabelApproval / applyPermChip）与 `src/copy-data.ts`（表本体）。**deny 规则命中不产批准卡**——它的理由（规则原文）走回送模型的工具结果文案、落工具行的 denied 细分状态，那句是 Rust 侧文案（`turn.rs` 的 `denied_message`），不进本表、不占 D 号。
+- `图片解码失败：{引用}`（M178）——把「格式不支持 / 被 CSP 拦下 / 渲染为零尺寸」一律说成解码失败，改由 D113 承担（D111 / D112 为同批补登）。
+- 「预览标签不入盘」的表述（D99）——`src/vault-switcher.ts` 入盘过滤与 `EditorSession.preview` 随 change preview-tab-removal 删除，摘要数字 = 全部有路径的标签数。
+- D55–D56 / D326 / D331 / D377 等已退场条目：缘由（失去唯一消费点 / 能力退场）由 git history 与该条目行承担。
