@@ -363,8 +363,8 @@ async function main() {
       );
       // 场景 front-matter 的 `config:`：**在起 app 之前**写进隔离 config.json（M284）。
       // 早先这里是裸 `writeConfig({mode:"md"})`，场景配置靠 runScenario 里的第二次写 + 一次重启
-      // 生效。折叠到这里之后 app 的**首帧**就是场景声明的起点（与 backlog:366「窗口配置只有一份
-      // 真源」同一取向），也省掉每次约 6–8s 的重启。
+      // 生效。折叠到这里之后 app 的**首帧**就是场景声明的起点（与「窗口配置只有一份
+      // 真源」同一取向，见 REVIEW.md 第 8 条），也省掉每次约 6–8s 的重启。
       // 键的白名单是 `SCENARIO_CONFIG_KEYS`（单点真源，`--check` 用同一份挡拼错）；缺省值在场
       // 时不传（传 `undefined` 会被 writeConfig 忽略，故先滤掉）。
       await writeConfig({
@@ -411,7 +411,7 @@ async function main() {
       // 判红分开表达：前者整场标 INVALID、整轮退出码升到 2（本次读数不可用于判产品缺陷，请复跑），
       // 后者照旧 FAIL（退出码 1）。混在一起时复盘只能靠人读步骤形态区分——M281 实证（finding
       // `.tower/comms/findings/20260928-worker-impl-goto-line-c-improve-0-1-pass-1.md`，本批
-      // 的退出码分档见 backlog「M282 遗留」节）。
+      // 的退出码分档见 backlog「批次报告索引」的 M282 遗留条）。
       if (setupPhase || e instanceof InfraError) {
         invalidCount += 1;
         log(`  ⚠ 运行环境无效（非产品判红，请复跑）：${e.message}`);

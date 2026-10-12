@@ -247,14 +247,16 @@ macOS 原生菜单 MUST NOT 提供第二套撤销：Edit 子菜单 MUST NOT 保�
 MUST NOT 依赖全局焦点猜测。行为 SHALL 与迁移前一致：左右各 120px 步进、`Home` 横向回最左、`End`
 横向到最右、`Escape` 把焦点交还编辑器。
 
-**焦点入口（本 change 后的实测状态，如实记录）**：编辑器内容区里的 `Tab` 已被列表缩进命令
-`editor.list-indent` 接管（见本 change 的「列表项缩进键（TAB / SHIFT+TAB）」requirement，Alex 裁决
-D1a）⇒ 从编辑器按 `Tab` 走原生焦点遍历这条**唯一**入口不再存在。容器本身仍是 `tabindex=0`、
-键位分发与命中条件**均不变**，但**当前没有任何真机验通的路径**把焦点送进容器：场景 21 实测
-`AXPress` 点容器节点（`role=region` → AXGroup）不改变焦点（`focused=AXTextArea`，证据
+**焦点入口（M474 起）**：编辑器内容区里的 `Tab` 已被列表缩进命令 `editor.list-indent` 接管
+（见本 spec 的「列表项缩进键（TAB / SHIFT+TAB）」requirement，Alex 裁决 D1a）⇒ 从编辑器按 `Tab`
+走原生焦点遍历这条入口不再存在。M474 因此新增**有默认绑定**的编辑器命令 `editor.focus-block-scroll`
+（`⌃⌥S`）：它把焦点交给**当前光标所在块的块级横滚容器**（表格容器与围栏 / 缩进代码块的横滚容器同
+判据）；光标不在任何块内、或所在块没有容器（`editor.code_block_wrap = true` 的折行档）时 SHALL 静默
+无操作——不报错、不动文档。命令 SHALL 由统一键位表分发（与五条滚动键同一条通路），MUST NOT 另加
+`keydown` 路径。容器本身仍是 `tabindex=0`、键位分发与命中条件**均不变**；场景 21 实测 `AXPress`
+点容器节点（`role=region` → AXGroup）不改变焦点（`focused=AXTextArea`，证据
 `test-results/acceptance/2026-09-26-m239-21/21-wrap-default/`），AX 里该节点既无 bbox 也无
-`AXPress` 动作。因此本 requirement 与场景 MUST NOT 再以「用 `Tab` 移入容器」为前提；恢复焦点入口的
-候选（新键 / 新命令，或确认容器的可点区域）记在 `docs/backlog.md`，由后续 change 处置。
+`AXPress` 动作，故点选不构成入口——焦点入口只由本键提供。
 
 本 requirement 取代 change `keymap-unify` 增量中「widget 自己的焦点作用域键（Escape / Home / End /
 左右方向键）仍由该 widget 现有手柄先消费，本层对已消费事件让路」一句——该句描述的是收编前的分工，
@@ -273,10 +275,8 @@ D1a）⇒ 从编辑器按 `Tab` 走原生焦点遍历这条**唯一**入口不�
 
 #### Scenario: 代码块容器与表格容器同判据同行为
 
-- **WHEN** 默认折行口径下打开含超长代码行的 Markdown，焦点落在代码块横滚容器上时——**本版起真机没有
-  产品入口**（编辑器内 `Tab` 已归列表缩进命令、点容器不生效，见上文），键盘行为由 chromium 层
-  `tests/visual/scenes/render-codeblock.spec.ts` 以**编程聚焦**承担——依次按下 `→`、`End`、`Home`、
-  `Escape`
+- **WHEN** 默认折行口径下打开含超长代码行的 Markdown，把光标放进该代码块、按 `⌃⌥S`
+  （`editor.focus-block-scroll`）把焦点交给代码块横滚容器，依次按下 `→`、`End`、`Home`、`Escape`
 - **THEN** 与表格容器完全同形的结果：横向滚动 120px、滚到最右、回到最左，`Escape` 把焦点交还编辑器
   内容区；全程文档内容逐字节不变。MUST NOT 出现「容器焦点了但方向键无反应」的第三种状态
 

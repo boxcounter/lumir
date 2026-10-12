@@ -39,7 +39,7 @@ export const SCENARIO_CONFIG_KEYS = [
   "language",
   "keys",
   "harness",
-  // `[editor]` 表整表透传（M379，backlog:1905）：snake_case 键写进 `editor` 表（`writeConfig`
+  // `[editor]` 表整表透传（M379，backlog「`[editor]` 表整表透传」）：snake_case 键写进 `editor` 表（`writeConfig`
   // 的同名参数），给「新增的 editor 配置项」构造**启动口径**用——不必每加一个键就回来改套件。
   // 形状校验见 execute.mjs 的 checkScenario（非表即报，避免静默丢半张表）。
   "editor",
@@ -68,7 +68,7 @@ export async function writeConfig({
   // 界面语言（M282，change ui-language-i18n）：与 theme / contentWidth 同形，缺省沿用当前值。
   language = undefined,
   keys = undefined,
-  // `[editor]` 表**整表透传**（M379，backlog:1905）：snake_case 键原样并入 `editor` 表，写在具名
+  // `[editor]` 表**整表透传**（M379，backlog「`[editor]` 表整表透传」）：snake_case 键原样并入 `editor` 表，写在具名
   // 参数**之前**——具名参数（mode / line_wrap / …）仍然优先，显式值不会被这张表吃掉。
   // 用途：场景 front-matter 的 `config: { editor: {…} }` 与 `configWrite` 动作的 `editor:` 都走它，
   // 于是「M180 这类新增的 editor 配置项」不必回来改套件就能构造启动口径。
@@ -633,7 +633,7 @@ function spawnSyncText(cmd, args) {
  * 「target WebArea did not acquire stable keyboard focus; no keys were sent」，整步的注入
  * 全部不落地，表现为一堆与产品无关的 FAIL（同一场景、同一提交，窗口在屏内时全 PASS）。
  *
- * **窗口对象必须从仓库 tauri.conf.json 读原件再叠位置**（M236 修 backlog:366）：tauri 的
+ * **窗口对象必须从仓库 tauri.conf.json 读原件再叠位置**（M236，backlog「窗口配置只有一份真源」）：tauri 的
  * `--config` 是深合并，但**数组按下标整体替换**——`app.windows[0]` 会被这里传的对象整根替掉。
  * 早先的写法是在这里手抄 title/width/height（+注释提醒「改那边要同步这里」），结果
  * `titleBarStyle: "Overlay"` 与 `hiddenTitle: true` 被**静默**吃掉：套件实例长出原生标题栏
@@ -650,7 +650,7 @@ export async function launchApp({ port = acceptPort(), timeoutMs = 300_000, logF
   if (!baseWindow) {
     throw new Error(
       "launchApp：src-tauri/tauri.conf.json 里没有 app.windows[0]，无法构造 --config 覆写" +
-        "（拒绝在这里手抄一份窗口配置——那正是 backlog:366 的成因）。",
+        "（拒绝在这里手抄一份窗口配置——那正是 backlog「窗口配置只有一份真源」的成因）。",
     );
   }
   const config = {

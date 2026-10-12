@@ -10,7 +10,7 @@ import { spawn } from "node:child_process";
 const DEFAULT_BIN = "/Applications/KimiCU.app/Contents/MacOS/kimi-cu";
 
 /**
- * KimiCU `press_key` 的键名 DSL 归一（M379，backlog:782 / M324 现场）。
+ * KimiCU `press_key` 的键名 DSL 归一（M379，backlog「`-` 键字面量」/ M324 现场）。
  *
  * `-` 在 DSL 里是**修饰键分隔符**（与 `+` 同义，实测 `a-b` 报 `unknown modifier \`a\``），
  * 因此字面量连字符没有拼法：`press_key("-")` 报 `error: empty key DSL`（本机实测，0.5.11），

@@ -106,7 +106,7 @@ export async function waitAppReady(cu, pid, { timeoutMs = 30_000, requireVault =
     if (seen >= 2) {
       await sleep(600);
       const final = await readAx(cu, pid);
-      // 窗口形态自检（M236，backlog:366）：每次启动（含 restartApp 重启）都反查一次
+      // 窗口形态自检（M236，backlog「窗口配置只有一份真源」）：每次启动（含 restartApp 重启）都反查一次
       // 「webview 铺满整窗 = overlay 标题栏」，不让套件静默跑在非 overlay 形态上。
       assertOverlayChrome(final);
       return final;
@@ -119,7 +119,7 @@ export async function waitAppReady(cu, pid, { timeoutMs = 30_000, requireVault =
 }
 
 /**
- * 套件实例的窗口形态自检（M236，修 backlog:366）：断言 webview **铺满整窗** = 真·overlay 标题栏。
+ * 套件实例的窗口形态自检（M236，backlog「窗口配置只有一份真源」）：断言 webview **铺满整窗** = 真·overlay 标题栏。
  *
  * 为什么需要它：套件走 `--config` 覆写窗口对象，而 tauri 的深合并对数组是**按下标整体替换**。
  * 早先覆写对象漏抄 `titleBarStyle: "Overlay"` / `hiddenTitle: true`，套件实例因此长出原生
@@ -147,7 +147,7 @@ function assertOverlayChrome(ax) {
   const heightGap = win.bbox.h - area.bbox.h;
   if (topGap > 4 || heightGap > 4) {
     throw new InfraError(
-      `窗口形态自检（backlog:366）：webview 没有铺满窗口——AXWindow ${win.bbox.w}×${win.bbox.h} @${win.bbox.y}` +
+      `窗口形态自检（backlog「窗口配置只有一份真源」）：webview 没有铺满窗口——AXWindow ${win.bbox.w}×${win.bbox.h} @${win.bbox.y}` +
         `，最大 AXScrollArea ${area.bbox.w}×${area.bbox.h} @${area.bbox.y}（顶边差 ${topGap}、高度差 ${heightGap}）。` +
         `这是「原生标题栏回来了」的信号：套件的 --config 覆写把 app.windows[0] 整根替换、` +
         `titleBarStyle/hiddenTitle 被静默吃掉。修法见 lib/app.mjs 的 launchApp（从 tauri.conf.json 读原件再 spread）。` +
@@ -297,7 +297,7 @@ export async function injectClickWithClickState(pid, point, { mode = 2 } = {}) {
  *
  *  为什么必须有它：KimiCU 的 `click` 没有修饰键参数（工具 schema 实测只有
  *  button/mouse_button/count/hold_ms），⌘-Click 这类路径（跟随链接）在真机上因此无法触发
- * （backlog:1913 的 M144 现场：该路径只能退到 chromium 层）。
+ * （backlog「`click` 不支持修饰键」的 M144 现场：该路径只能退到 chromium 层）。
  *
  *  `point` 是 **Quartz 全局屏幕坐标**（与 injectClickWithClickState 同口径，换算由调用方做）；
  *  会移动真实光标、要求目标窗口在前台。`modifiers` 是别名集合（meta/cmd/control/ctrl/shift/
