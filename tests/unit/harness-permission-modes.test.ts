@@ -15,16 +15,18 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   PERMISSION_MODES,
+  approvalReasonText,
   formatArgv,
   harnessPermissionMode,
   humanizeToolArgs,
+  parseDecisionReason,
   permissionDescription,
   permissionFullName,
   permissionShortName,
   restoredApprovalOutcome,
   splitCommandSegments,
 } from "../../src/harness-panel.ts";
-import { setLanguageRoot } from "../../src/copy.ts";
+import { setLanguageRoot, t } from "../../src/copy.ts";
 
 /** 在给定语言下跑一段断言，结束后恢复语言读取口（默认无 DOM → 取 en 档）。 */
 function inLanguage(lang: "zh" | "en", run: () => void): void {
@@ -174,4 +176,97 @@ test("humanizeToolArgs：vault_move 缺任一段回落到原文（不伪造半�
 test("humanizeToolArgs：vault_delete 的行内参数 = 路径；缺路径回落原文", () => {
   assert.equal(humanizeToolArgs("vault_delete", JSON.stringify({ path: "notes/a.md" })), "notes/a.md");
   assert.equal(humanizeToolArgs("vault_delete", JSON.stringify({})), "{}");
+});
+
+// ── 批准卡判定依据行与 chip 悬停提示（M459，change add-approval-decision-reason） ──
+
+test("approvalReasonText：危险黑名单·shell 包装器点名包装器命令名", () => {
+  inLanguage("zh", () => {
+    const text = approvalReasonText({ kind: "dangerous_wrapper", command: "zsh" });
+    assert.equal(text, "shell 包装器命令（zsh）：内容不可知，任何权限档都需逐个确认");
+  });
+  inLanguage("en", () => {
+    const text = approvalReasonText({ kind: "dangerous_wrapper", command: "zsh" });
+    assert.ok(text !== null && text.includes("zsh"), `包装器名必须在场：${text}`);
+  });
+});
+
+test("approvalReasonText：其余危险命令走统一句（不点名——点名会写出错误主词）", () => {
+  inLanguage("zh", () => {
+    assert.equal(approvalReasonText({ kind: "dangerous_command" }), "命中安全黑名单：任何权限档都需逐个确认");
+  });
+  inLanguage("en", () => {
+    const text = approvalReasonText({ kind: "dangerous_command" });
+    assert.ok(text !== null && text.includes("blacklist"), `英文句在场：${text}`);
+  });
+});
+
+test("approvalReasonText：模式默认分层带当时档位与该档释义（档名 / 释义同源 D427–D432）", () => {
+  inLanguage("zh", () => {
+    for (const mode of PERMISSION_MODES) {
+      const text = approvalReasonText({ kind: "mode_default", mode });
+      assert.equal(text, `当前为 ${permissionFullName(mode)} 档：${permissionDescription(mode)}`);
+    }
+  });
+  inLanguage("en", () => {
+    const text = approvalReasonText({ kind: "mode_default", mode: "vault_write" });
+    assert.ok(text !== null && text.includes("Vault Write"), `档全名在场：${text}`);
+    assert.ok(text !== null && text.includes(permissionDescription("vault_write")), `档释义在场：${text}`);
+  });
+});
+
+test("approvalReasonText：无依据 / 不可上卡的 kind 返回 null（调用方据此不出该行，不伪造）", () => {
+  assert.equal(approvalReasonText(undefined), null);
+  // Rust 侧的 deny_rule 不产批准卡、不会到前端——真到了也不渲染（不出猜测文案）。
+  assert.equal(approvalReasonText({ kind: "deny_rule", rule: "cli(npm run deploy*)" }), null);
+});
+
+test("parseDecisionReason：三个可上卡的 kind 逐形状接受（事件与快照两条入口同一份判据）", () => {
+  assert.deepEqual(parseDecisionReason({ kind: "dangerous_wrapper", command: "zsh" }), {
+    kind: "dangerous_wrapper",
+    command: "zsh",
+  });
+  assert.deepEqual(parseDecisionReason({ kind: "dangerous_command" }), { kind: "dangerous_command" });
+  assert.deepEqual(parseDecisionReason({ kind: "mode_default", mode: "full_access" }), {
+    kind: "mode_default",
+    mode: "full_access",
+  });
+});
+
+test("parseDecisionReason：形状不合一律 undefined（坏载荷降级成「不出该行」，不放行猜测）", () => {
+  // 坏载荷：缺键 / 类型错 / 闭集合外的档 / 空命令名 / 未知 kind / deny_rule（不上卡）/ 非对象。
+  for (const bad of [
+    undefined,
+    null,
+    "dangerous_wrapper",
+    {},
+    { kind: "dangerous_wrapper" },
+    { kind: "dangerous_wrapper", command: "" },
+    { kind: "dangerous_wrapper", command: 7 },
+    { kind: "mode_default" },
+    { kind: "mode_default", mode: "always_ask" },
+    { kind: "mode_default", mode: null },
+    { kind: "deny_rule", rule: "cli(npm run deploy*)" },
+    { kind: "unknown_kind" },
+  ]) {
+    assert.equal(parseDecisionReason(bad), undefined, JSON.stringify(bad));
+  }
+});
+
+test("chip 悬停提示（D426 改形）：含档全名与该档释义——与浮层释义同源、不新增信息", () => {
+  inLanguage("zh", () => {
+    for (const mode of PERMISSION_MODES) {
+      const label = t("D426", { mode: permissionFullName(mode), desc: permissionDescription(mode) });
+      assert.ok(label.includes(permissionFullName(mode)), label);
+      assert.ok(label.includes(permissionDescription(mode)), label);
+    }
+    assert.equal(
+      t("D426", { mode: permissionFullName("vault_write"), desc: permissionDescription("vault_write") }),
+      "权限模式：保险库写入（点击切换）· 库内写自动放行；库外命令先问你",
+    );
+  });
+  inLanguage("en", () => {
+    const label = t("D426", { mode: permissionFullName("vault_write"), desc: permissionDescription("vault_write") });
+    assert.ok(label.includes("Vault Write") && label.includes(permissionDescription("vault_write")), label);
+  });
 });

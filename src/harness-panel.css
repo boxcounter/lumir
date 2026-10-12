@@ -746,6 +746,15 @@
   font-size: calc(var(--fs-meta) * var(--lumir-hp-scale, 1));
   color: var(--text-2);
 }
+/* 判定依据行（M459，change add-approval-decision-reason）：这次调用**为什么**进闸——层级由 Rust
+   判定管线产出、随批准请求事件与 `harness_state` 快照两条通道到达（前端只按 kind 取文案）。位置在
+   问句行之下、用途句与命令之上（先回答「为什么问我」，再看要批准什么）；随决策随卡退场。信息副行：
+   字号取 meta 档、色取次级灰（--text-3，弱于用途句的 --text-2 与命令原文），不抢命令的视觉重心。 */
+.lumir-hp-approval-basis {
+  margin: 0 0 var(--sp-2);
+  font-size: calc(var(--fs-meta) * var(--lumir-hp-scale, 1));
+  color: var(--text-3);
+}
 /* vault_delete 的后果说明（M414，design §5.1）：路径之下的次级灰一行——「移入系统废纸篓、
    可恢复」是这次批准的真实后果，让人知道批准不等于不可恢复。 */
 .lumir-hp-approval-note {

@@ -28,11 +28,18 @@
 //! （读类自动放行、一切写逐个问）；`vault_write`（默认）= vault 写工具放行（`vault_delete`
 //! 逐个问）加 cli_run 经分类；`full_access` = 写命令免闸（vault 内写仍走第 2 层重定向）。
 //! **模式层不再产生 Deny**——`Decision::Deny` 只可能来自第 1 层的用户 deny 规则。
+//!
+//! M459（change add-approval-decision-reason）：判定除结论外还产出**判定依据**
+//! （[`DecisionReason`]，`Verdict::reason`）——「这次为什么进闸 / 为什么被拒」的唯一产出点。
+//! 层序与结论一律未改，只是把「哪一层拦的」一并返回；批准卡依据行与 deny 回送文案都消费它。
 
 // 会话内批准缓存（design §6）是同级模块 [`super::permission_cache`]（M413 起收编为
 // `harness.rs` 的正常模块声明）；本模块只消费它的一个布尔（[`Judge::cached`]）。
 
 use std::path::{Component, Path};
+
+use serde::Serialize;
+use ts_rs::TS;
 
 use crate::config::{HarnessPermissions, PermissionMode};
 
@@ -49,6 +56,47 @@ pub enum Decision {
     Redirect(Redirect),
 }
 
+/// 判定依据（M459，change add-approval-decision-reason）：这次调用**为什么**走到这个结论。
+/// 批准卡「判定依据」行与 deny 回送文案的共同数据源——前端只按 `kind` 取文案，MUST NOT 自行推导层级。
+///
+/// 只列**有消费者**的层（REVIEW.md 第 9 条）：`DenyRule` 只进回送模型的错误文案（deny 不产批准卡，
+/// 见 change design §3）；其余三个变体随批准请求事件与 `harness_state` 快照两条通道到前端。
+/// 自动放行的层（allow 规则命中 / 会话内缓存命中 / 只读白名单 / vault 内写重定向）**不产出依据**
+/// ——它们没有「被拦下」的界面面。序列化形状是 internally tagged（`{"kind": …, …}`，serde 与
+/// ts-rs 共用同一份定义）。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+#[ts(export, export_to = "../../src/bindings/")]
+pub enum DecisionReason {
+    /// 第 1 层：用户 deny 规则命中（`rule` = 命中的规则原文）。
+    DenyRule { rule: String },
+    /// 第 3 层：危险黑名单 · shell 包装器（`command` = 包装器命令名，如 `zsh`）。
+    DangerousWrapper { command: String },
+    /// 第 3 层：危险黑名单 · 其余成员。**不点名**：`sudo rm -rf …` 这类调用的命中者是包装器递归
+    /// 展开后的内层命令，外层 argv[0] 点名会写出错误主词（change design §2 裁决点 2）。
+    DangerousCommand,
+    /// 第 5 层：模式默认分层（`mode` = 判定当时读到的档位；前端据它取档名与档释义）。
+    ModeDefault { mode: PermissionMode },
+}
+
+/// 判定输出（M459）：结论 + 依据。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Verdict {
+    pub decision: Decision,
+    /// 判定依据：`None` = 自动放行的层。不变式：`decision == Decision::Ask` 时恒为 `Some`。
+    pub reason: Option<DecisionReason>,
+}
+
+impl Verdict {
+    /// 自动放行的层（allow 规则 / 缓存 / 只读白名单 / vault 内写重定向）：无依据可讲。
+    fn auto(decision: Decision) -> Self {
+        Self {
+            decision,
+            reason: None,
+        }
+    }
+}
+
 /// 读类工具：默认 allow（三档一致）。
 const READ_TOOLS: [&str; 3] = ["vault_read", "vault_search", "skill_load"];
 
@@ -56,15 +104,22 @@ const READ_TOOLS: [&str; 3] = ["vault_read", "vault_search", "skill_load"];
 ///
 /// `subject`：模式匹配的主体串（cli 为拼接 argv，vault 工具为路径参数）。
 /// `judge`：模式 / vault 根（重定向判定用）/ argv（cli_run 分类与写目标提取用）/ 缓存命中。
+///
+/// 返回 [`Verdict`]：结论 + 判定依据（M459）。层序与结论与 M459 前逐字节一致。
 pub fn decide(
     permissions: &HarnessPermissions,
     tool: &str,
     subject: &str,
     judge: &Judge,
-) -> Decision {
-    // 第 1 层：用户显式 deny 优先于一切（含重定向与黑名单）。
-    if matches_rule(&permissions.deny, tool, subject) {
-        return Decision::Deny;
+) -> Verdict {
+    // 第 1 层：用户显式 deny 优先于一切（含重定向与黑名单）。规则原文随依据带出（回送文案用）。
+    if let Some(rule) = matching_rule(&permissions.deny, tool, subject) {
+        return Verdict {
+            decision: Decision::Deny,
+            reason: Some(DecisionReason::DenyRule {
+                rule: rule.to_string(),
+            }),
+        };
     }
 
     let class = (tool == "cli_run")
@@ -74,25 +129,47 @@ pub fn decide(
     // 第 2 层：vault 内写硬重定向（任何档，含 full_access；design §4 + 裁决点 6）。
     if class == Some(CliClass::Write) {
         if let Some(redirect) = redirect_for(judge.root, judge.argv.as_deref().unwrap_or(&[])) {
-            return Decision::Redirect(redirect);
+            return Verdict::auto(Decision::Redirect(redirect));
         }
     }
 
     // 第 3 层：危险黑名单（任何档都问，不静默 deny——用户在批准卡里看得到完整命令）。
     if class == Some(CliClass::Dangerous) {
-        return Decision::Ask;
+        return Verdict {
+            decision: Decision::Ask,
+            reason: Some(dangerous_reason(judge.argv.as_deref().unwrap_or(&[]))),
+        };
     }
 
     // 第 4 层：用户显式 allow。
-    if matches_rule(&permissions.allow, tool, subject) {
-        return Decision::Allow;
+    if matching_rule(&permissions.allow, tool, subject).is_some() {
+        return Verdict::auto(Decision::Allow);
     }
 
     // 第 5 层：模式默认分层（会话内批准缓存命中即在此层短路——它不解锁上面三层）。
     if judge.cached {
-        return Decision::Allow;
+        return Verdict::auto(Decision::Allow);
     }
-    mode_layer(tool, class, judge.mode)
+    let decision = mode_layer(tool, class, judge.mode);
+    // 本层产 Ask 时才带依据（放行无需解释）；档位取自判定输入，不让前端读自己那份读数。
+    let reason =
+        (decision == Decision::Ask).then_some(DecisionReason::ModeDefault { mode: judge.mode });
+    Verdict { decision, reason }
+}
+
+/// 危险黑名单命中的依据：只看**外层 argv[0]**——包装器类点名（`zsh -lc …` 的「内容不可知」
+/// 正是用户疑惑的原点），其余成员走统一句（不点名，理由见 [`DecisionReason::DangerousCommand`]）。
+/// argv 为空（cli_run 无命令形态）时按「其余成员」给句。
+fn dangerous_reason(argv: &[String]) -> DecisionReason {
+    let name = argv
+        .first()
+        .map(|command| command_basename(command))
+        .unwrap_or_default();
+    let args = argv.get(1..).unwrap_or(&[]);
+    match dangerous_kind(&name, args) {
+        Some(DangerousKind::Wrapper) => DecisionReason::DangerousWrapper { command: name },
+        _ => DecisionReason::DangerousCommand,
+    }
 }
 
 /// 判定的输入面（工具名与主体串之外的一切）：模式、vault 根、cli argv、会话内缓存命中。
@@ -311,34 +388,54 @@ fn command_basename(command: &str) -> String {
         .unwrap_or_default()
 }
 
-/// 危险黑名单命中（design §3.3）。
-fn is_dangerous(name: &str, args: &[String]) -> bool {
-    if DANGEROUS_WRAPPERS.contains(&name) || DANGEROUS_COMMANDS.contains(&name) {
-        return true;
+/// 危险黑名单命中的类别（M459）：`is_dangerous` 与判定依据共用这一次判定——同一语义不许两处
+/// 各判一半（REVIEW.md 第 8 条）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DangerousKind {
+    /// shell 包装器类（`sh` / `bash` / `zsh` / … / `eval` / `exec`）。
+    Wrapper,
+    /// 其余危险成员（`rm` / 关机重启 / `dd` / `mkfs` 系 / 磁盘类 / `git clean`·`reset --hard`）。
+    Command,
+}
+
+/// 危险黑名单命中（design §3.3），命中时带出类别。
+fn dangerous_kind(name: &str, args: &[String]) -> Option<DangerousKind> {
+    if DANGEROUS_WRAPPERS.contains(&name) {
+        return Some(DangerousKind::Wrapper);
+    }
+    if DANGEROUS_COMMANDS.contains(&name) {
+        return Some(DangerousKind::Command);
     }
     // mkfs 系（mkfs / mkfs.ext4 / …）按前缀判。
     if name == "mkfs" || name.starts_with("mkfs.") {
-        return true;
+        return Some(DangerousKind::Command);
     }
     if DANGEROUS_DISK.contains(&name) {
-        return true;
+        return Some(DangerousKind::Command);
     }
     // diskutil 只在破坏形态（erase* / *Partition*）入黑名单；其余形态（list / info）落
     // 「未知 ⇒ 写」，仍要过闸。
     if name == "diskutil" {
-        return args.iter().any(|arg| {
-            let lower = arg.to_lowercase();
-            lower.contains("erase") || lower.contains("partition")
-        });
+        return args
+            .iter()
+            .any(|arg| {
+                let lower = arg.to_lowercase();
+                lower.contains("erase") || lower.contains("partition")
+            })
+            .then_some(DangerousKind::Command);
     }
     if name == "git" {
         return match git_subcommand(args).as_deref() {
-            Some("clean") => true,
-            Some("reset") => args.iter().any(|arg| arg == "--hard"),
-            _ => false,
+            Some("clean") => Some(DangerousKind::Command),
+            Some("reset") if args.iter().any(|arg| arg == "--hard") => Some(DangerousKind::Command),
+            _ => None,
         };
     }
-    false
+    None
+}
+
+fn is_dangerous(name: &str, args: &[String]) -> bool {
+    dangerous_kind(name, args).is_some()
 }
 
 // ---------------------------------------------------------------------------
@@ -842,9 +939,13 @@ fn normalize(path: &Path) -> std::path::PathBuf {
 // 规则表匹配（既有语义，未改）
 // ---------------------------------------------------------------------------
 
-/// 规则清单任一条命中即 true。
-fn matches_rule(rules: &[String], tool: &str, subject: &str) -> bool {
-    rules.iter().any(|rule| rule_matches(rule, tool, subject))
+/// 首个命中的规则原文（无命中为 `None`）——M459 起 `decide` 用它的带值形态（deny 规则原文要
+/// 随依据回送）；匹配语义完全共用 [`rule_matches`]，不存在第二份匹配实现（REVIEW.md 第 8 条）。
+fn matching_rule<'a>(rules: &'a [String], tool: &str, subject: &str) -> Option<&'a str> {
+    rules
+        .iter()
+        .find(|rule| rule_matches(rule, tool, subject))
+        .map(String::as_str)
 }
 
 /// 单条规则匹配：tool 级等值，或 `tool(模式)` 的 subject 前缀 / 等值匹配。
@@ -943,6 +1044,18 @@ mod tests {
         std::fs::create_dir_all(root.join("notes")).unwrap();
         std::fs::write(root.join("notes/a.md"), "x\n").unwrap();
         root
+    }
+
+    /// 判定结论投影：本模块的回归断言只看结论（五层短路出来的 `Decision`），M459 起
+    /// `super::decide` 返回带依据的 `Verdict`——本地的同名函数把它投影回 `Decision`，既有
+    /// 断言因此逐字不改。**依据映射**的断言直接调 `super::decide`（见本模块末段）。
+    fn decide(
+        perms: &HarnessPermissions,
+        tool: &str,
+        subject: &str,
+        judge: &Judge<'_>,
+    ) -> Decision {
+        super::decide(perms, tool, subject, judge).decision
     }
 
     // -----------------------------------------------------------------------
@@ -1830,5 +1943,286 @@ mod tests {
             Decision::Allow
         );
         std::fs::remove_dir_all(&root).ok();
+    }
+
+    // -----------------------------------------------------------------------
+    // 判定依据（M459，change add-approval-decision-reason）
+    // -----------------------------------------------------------------------
+
+    /// 层级映射真值表：四个变体各由哪一层产出、带什么载荷；自动放行的层一律 `None`。
+    #[test]
+    fn reason_mapping_covers_every_gated_layer() {
+        let root = fixture_root("reason");
+        let default = HarnessPermissions::default();
+
+        // 第 1 层：deny 规则命中 → DenyRule（带命中的规则原文；多条命中取配置顺序里的第一条）。
+        let p = perms(&[], &["cli(npm run deploy*)"]);
+        let v = super::decide(
+            &p,
+            "cli_run",
+            "npm run deploy --prod",
+            &judge(&root, Some(argv(&["npm", "run", "deploy", "--prod"]))),
+        );
+        assert_eq!(v.decision, Decision::Deny);
+        assert_eq!(
+            v.reason,
+            Some(DecisionReason::DenyRule {
+                rule: "cli(npm run deploy*)".into()
+            })
+        );
+        let p = perms(&[], &["cli(demo *)", "cli_run"]);
+        let v = super::decide(&p, "cli_run", "demo x", &judge(&root, None));
+        assert_eq!(
+            v.reason,
+            Some(DecisionReason::DenyRule {
+                rule: "cli(demo *)".into()
+            })
+        );
+
+        // 第 3 层：shell 包装器点名（Alex 2026-10-12 现场那一类）。
+        let v = super::decide(
+            &default,
+            "cli_run",
+            "zsh -lc pwd",
+            &judge(&root, Some(argv(&["zsh", "-lc", "pwd"]))),
+        );
+        assert_eq!(v.decision, Decision::Ask);
+        assert_eq!(
+            v.reason,
+            Some(DecisionReason::DangerousWrapper {
+                command: "zsh".into()
+            })
+        );
+        // 绝对路径同样取 basename（`/bin/zsh` → `zsh`）。
+        let v = super::decide(
+            &default,
+            "cli_run",
+            "/bin/bash -c ls",
+            &judge(&root, Some(argv(&["/bin/bash", "-c", "ls"]))),
+        );
+        assert_eq!(
+            v.reason,
+            Some(DecisionReason::DangerousWrapper {
+                command: "bash".into()
+            })
+        );
+
+        // 第 3 层其余成员：统一句、不点名（`sudo rm …` 的命中者是递归展开后的内层命令，
+        // 外层 argv[0] 点名会写出错误主词）。
+        for cli in [
+            argv(&["rm", "-rf", "/tmp/x"]),
+            argv(&["sudo", "rm", "-rf", "/tmp/x"]),
+            argv(&["xargs", "rm"]),
+            argv(&["git", "clean", "-fdx"]),
+            argv(&["find", ".", "-exec", "rm", "{}", ";"]),
+        ] {
+            let subject = cli.join(" ");
+            let v = super::decide(&default, "cli_run", &subject, &judge(&root, Some(cli)));
+            assert_eq!(v.decision, Decision::Ask, "{subject}");
+            assert_eq!(
+                v.reason,
+                Some(DecisionReason::DangerousCommand),
+                "{subject}"
+            );
+        }
+
+        // 第 5 层：模式默认分层带**当时判定的档位**（不是前端自己那份读数）。
+        let v = super::decide(
+            &default,
+            "cli_run",
+            "npm install",
+            &judge(&root, Some(argv(&["npm", "install"]))),
+        );
+        assert_eq!(v.decision, Decision::Ask);
+        assert_eq!(
+            v.reason,
+            Some(DecisionReason::ModeDefault {
+                mode: PermissionMode::VaultWrite
+            })
+        );
+        let v = super::decide(&default, "vault_delete", "a.md", &judge(&root, None));
+        assert_eq!(
+            v.reason,
+            Some(DecisionReason::ModeDefault {
+                mode: PermissionMode::VaultWrite
+            })
+        );
+        let read_only = Judge {
+            mode: PermissionMode::ReadOnly,
+            ..judge(&root, None)
+        };
+        let v = super::decide(&default, "vault_patch", "a.md", &read_only);
+        assert_eq!(v.decision, Decision::Ask);
+        assert_eq!(
+            v.reason,
+            Some(DecisionReason::ModeDefault {
+                mode: PermissionMode::ReadOnly
+            })
+        );
+
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// 不变式（前端与错误文案共享的契约）：Ask 恒带**可上卡的三类依据**（MUST NOT 是 `DenyRule`）、
+    /// Deny 恒带 `DenyRule`（规则原文，进回送文案）、自动放行的层（Allow / Redirect）恒不带依据。
+    #[test]
+    fn reason_presence_matches_the_decision() {
+        let root = fixture_root("reason-invariant");
+        let default = HarnessPermissions::default();
+        let check = |p: &HarnessPermissions, tool: &str, subject: &str, j: &Judge<'_>| {
+            let v = super::decide(p, tool, subject, j);
+            let card_reason = matches!(
+                v.reason.as_ref(),
+                Some(DecisionReason::DangerousWrapper { .. })
+                    | Some(DecisionReason::DangerousCommand)
+                    | Some(DecisionReason::ModeDefault { .. })
+            );
+            match v.decision {
+                Decision::Ask => assert!(
+                    card_reason,
+                    "{tool} {subject}: Ask 必须带可上卡的依据，实际 {:?}",
+                    v.reason
+                ),
+                Decision::Deny => assert!(
+                    matches!(v.reason.as_ref(), Some(DecisionReason::DenyRule { .. })),
+                    "{tool} {subject}: Deny 必须带规则原文，实际 {:?}",
+                    v.reason
+                ),
+                _ => assert!(
+                    v.reason.is_none(),
+                    "{tool} {subject}: 自动放行的层不该带依据，实际 {:?}",
+                    v.reason
+                ),
+            }
+        };
+        // 自动放行的层：只读白名单、默认档写工具、allow 规则、缓存命中、vault 内写重定向。
+        check(&default, "vault_read", "a.md", &judge(&root, None));
+        check(&default, "vault_patch", "a.md", &judge(&root, None));
+        check(
+            &default,
+            "cli_run",
+            "ls -la",
+            &judge(&root, Some(argv(&["ls", "-la"]))),
+        );
+        check(
+            &default,
+            "cli_run",
+            "tee notes/a.md",
+            &judge(&root, Some(argv(&["tee", "notes/a.md"]))),
+        );
+        check(
+            &perms(&["vault_patch"], &[]),
+            "vault_patch",
+            "a.md",
+            &judge(&root, None),
+        );
+        let cached = Judge {
+            cached: true,
+            ..judge(&root, Some(argv(&["npm", "install"])))
+        };
+        check(&default, "cli_run", "npm install", &cached);
+        // 被拦下的层：deny 规则、危险黑名单、模式默认分层。
+        check(
+            &perms(&[], &["vault_patch"]),
+            "vault_patch",
+            "a.md",
+            &judge(&root, None),
+        );
+        check(
+            &default,
+            "cli_run",
+            "rm -rf /tmp/x",
+            &judge(&root, Some(argv(&["rm", "-rf", "/tmp/x"]))),
+        );
+        check(
+            &default,
+            "cli_run",
+            "npm install",
+            &judge(&root, Some(argv(&["npm", "install"]))),
+        );
+        check(&default, "vault_delete", "a.md", &judge(&root, None));
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// 危险类别真值表（M459 把 `is_dangerous` 改成 `dangerous_kind().is_some()` 的伴随断言）：
+    /// 包装器与其余成员分得开，且 `is_dangerous` 的既有语义逐格不变。
+    #[test]
+    fn dangerous_kind_separates_wrappers_from_other_members() {
+        let kind = |name: &str, args: &[&str]| dangerous_kind(name, &argv(args));
+        for name in [
+            "sh",
+            "bash",
+            "zsh",
+            "dash",
+            "fish",
+            "csh",
+            "ksh",
+            "pwsh",
+            "osascript",
+            "eval",
+        ] {
+            assert_eq!(
+                kind(name, &["-c", "x"]),
+                Some(DangerousKind::Wrapper),
+                "{name}"
+            );
+        }
+        assert_eq!(kind("rm", &["-rf", "/tmp/x"]), Some(DangerousKind::Command));
+        assert_eq!(kind("shutdown", &[]), Some(DangerousKind::Command));
+        assert_eq!(kind("dd", &["if=x"]), Some(DangerousKind::Command));
+        assert_eq!(kind("mkfs", &["/dev/x"]), Some(DangerousKind::Command));
+        assert_eq!(kind("mkfs.ext4", &["/dev/x"]), Some(DangerousKind::Command));
+        assert_eq!(kind("fdisk", &[]), Some(DangerousKind::Command));
+        assert_eq!(
+            kind("diskutil", &["eraseDisk"]),
+            Some(DangerousKind::Command)
+        );
+        assert_eq!(
+            kind("git", &["clean", "-fdx"]),
+            Some(DangerousKind::Command)
+        );
+        assert_eq!(
+            kind("git", &["reset", "--hard"]),
+            Some(DangerousKind::Command)
+        );
+        // 非黑名单形态：破坏性形态之外的 diskutil / git 与普通命令都不入表。
+        assert_eq!(kind("diskutil", &["list"]), None);
+        assert_eq!(kind("git", &["reset", "--soft"]), None);
+        assert_eq!(kind("git", &["status"]), None);
+        assert_eq!(kind("ls", &["-la"]), None);
+        // 单一真源（REVIEW.md 第 8 条）：`is_dangerous` 与类别判定同源。
+        assert!(is_dangerous("zsh", &argv(&["-lc", "pwd"])));
+        assert!(is_dangerous("git", &argv(&["reset", "--hard"])));
+        assert!(!is_dangerous("git", &argv(&["reset", "--soft"])));
+        assert!(!is_dangerous("ls", &argv(&["-la"])));
+    }
+
+    /// 序列化形状：internally tagged 的 `kind` + snake_case（前端按 `kind` 取文案，事件与快照
+    /// 两条通道同吃这一份 serde 定义）。
+    #[test]
+    fn reason_serializes_with_snake_case_kind_tag() {
+        let json = |reason: &DecisionReason| serde_json::to_value(reason).unwrap();
+        assert_eq!(
+            json(&DecisionReason::DangerousWrapper {
+                command: "zsh".into()
+            }),
+            serde_json::json!({"kind": "dangerous_wrapper", "command": "zsh"})
+        );
+        assert_eq!(
+            json(&DecisionReason::DangerousCommand),
+            serde_json::json!({"kind": "dangerous_command"})
+        );
+        assert_eq!(
+            json(&DecisionReason::ModeDefault {
+                mode: PermissionMode::VaultWrite
+            }),
+            serde_json::json!({"kind": "mode_default", "mode": "vault_write"})
+        );
+        assert_eq!(
+            json(&DecisionReason::DenyRule {
+                rule: "cli(npm run deploy*)".into()
+            }),
+            serde_json::json!({"kind": "deny_rule", "rule": "cli(npm run deploy*)"})
+        );
     }
 }

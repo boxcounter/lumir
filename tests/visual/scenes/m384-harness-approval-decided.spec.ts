@@ -67,7 +67,9 @@ async function measureDiffRows(page: Page) {
 }
 
 /** 批准闸桩：harness_state 带 pending_approval（恢复路径渲染批准卡），harness_approve
- *  记录参数并成功返回（决策路径不报错）。 */
+ *  记录参数并成功返回（决策路径不报错）。`pending_approval` 默认是 vault_patch + DIFF；页面侧
+ *  可经全局 `__pendingApprovalOverride`（见 `stubPendingApproval`）换成别的载荷——读数在**调用
+ *  时**取，与两个 init 脚本的注册顺序无关。 */
 async function stubHarnessApproval(page: Page): Promise<void> {
   await page.addInitScript((diff: string) => {
     const w = window as unknown as Record<string, any>;
@@ -75,10 +77,12 @@ async function stubHarnessApproval(page: Page): Promise<void> {
     w.__approvals = [] as unknown[];
     w.__TAURI_INTERNALS__.invoke = async (cmd: string, args: any) => {
       if (cmd === "harness_state") {
+        const override = w.__pendingApprovalOverride as Record<string, unknown> | undefined;
         return JSON.stringify({
           messages: [],
           usage: { ctx_pct: 0, cache_pct_session: 0 },
-          pending_approval: { id: "call_p1", tool: "vault_patch", diff, argv: undefined },
+          pending_approval:
+            override ?? { id: "call_p1", tool: "vault_patch", diff, argv: undefined },
           warn_ctx_pct: 85,
         });
       }
@@ -92,6 +96,7 @@ async function stubHarnessApproval(page: Page): Promise<void> {
 }
 
 async function openPanelWithApproval(page: Page) {
+  await openPanel(page);
   await page.locator('.ft-row[title="harness-note.md"]').click();
   await expect(page.locator(".cm-content")).toContainText("第一段");
   await page.locator(".lumir-hp-toggle").click();
@@ -116,11 +121,18 @@ async function openPanelWithApproval(page: Page) {
   return { pend, row, card };
 }
 
+// 桩在导航**之前**注册（`addInitScript` 只对之后的导航生效）——因此 `page.goto` 不在这里，
+// 而在各测试的打开助手（`openPanel`）里：测试体在 `beforeEach` 之后运行，需要在导航前
+// 追加桩（如 M459 的 `stubPendingApproval`）的测试才能把载荷注进去。
 test.beforeEach(async ({ page }) => {
   await stubTauri(page, VAULT);
   await stubHarnessApproval(page);
-  await page.goto("/");
 });
+
+/** 打开 harness pane 的公共前奏（含导航——桩注册之后才 goto，见上方 beforeEach 注）。 */
+async function openPanel(page: Page): Promise<void> {
+  await page.goto("/");
+}
 
 test("diff 行高亮覆盖整行文本（与可视宽度无关）", async ({ page }) => {
   await openPanelWithApproval(page);
@@ -200,4 +212,77 @@ test("拒绝附原因：原因行就地可见，diff 折叠", async ({ page }) =
   await expect(page.locator(".lumir-hp-diff")).toBeHidden();
   const approvals = await page.evaluate(() => (window as unknown as { __approvals: unknown[] }).__approvals);
   expect(approvals).toEqual([{ request_id: "call_p1", approved: false, reason: "hold off" }]);
+});
+
+// ── 判定依据行（M459，change add-approval-decision-reason）─────────────────────
+//
+// 依据的**层级**由 Rust 判定管线产出（`DecisionReason`，随批准请求事件与 `harness_state`
+// 快照两条通道到达），面板只按 `kind` 取文案——本组断言判呈现层：在场 / 文案 / 位置 /
+// 缺键不出行 / 随决策退场。三份桩数据与真实管线各自自洽（工具与层对得上），不是随手填的载荷。
+
+/** 判定依据桩：把 `harness_state` 的 `pending_approval` 换成给定载荷——写法是**设一个页面全局**，
+ *  由 `stubHarnessApproval` 的 invoke 桩在调用时读取（因此与两个 init 脚本的注册顺序无关；
+ *  外层再包一层 invoke 的做法会被 Playwright 的注册顺序反噬，M459 实测）。 */
+async function stubPendingApproval(page: Page, pending: Record<string, unknown>): Promise<void> {
+  await page.addInitScript((payload: Record<string, unknown>) => {
+    (window as unknown as Record<string, unknown>).__pendingApprovalOverride = payload;
+  }, pending);
+}
+
+async function openApprovalPanel(page: Page) {
+  await openPanel(page);
+  await page.locator('.ft-row[title="harness-note.md"]').click();
+  await page.locator(".lumir-hp-toggle").click();
+  await expect(page.locator(".lumir-hp-pend")).toHaveCount(1);
+  const card = page.locator(".lumir-hp-approval");
+  await expect(card).toBeVisible();
+  return { card, basis: card.locator(".lumir-hp-approval-basis") };
+}
+
+test("判定依据行：危险黑名单·shell 包装器点名包装器名，位置在问句之下", async ({ page }) => {
+  // 载荷与管线自洽：cli_run 的 zsh 包装器 → 第 3 层危险黑名单 → Ask（任何档都问）。
+  await stubPendingApproval(page, {
+    id: "call_w1",
+    tool: "cli_run",
+    argv: ["zsh", "-lc", "echo hi"],
+    purpose: "看一眼环境",
+    reason: { kind: "dangerous_wrapper", command: "zsh" },
+  });
+  const { card, basis } = await openApprovalPanel(page);
+  await expect(basis).toHaveCount(1);
+  await expect(basis).toHaveText("shell 包装器命令（zsh）：内容不可知，任何权限档都需逐个确认");
+  // 位置契约：先回答「为什么问我」（问句 → 依据行），再看要批准什么（用途句 / 命令）。
+  const order = await card.evaluate((el) =>
+    [...el.children].map((child) => (child.className.split(" ")[0] ?? "")),
+  );
+  expect(order.slice(0, 4)).toEqual([
+    "lumir-hp-approval-title",
+    "lumir-hp-approval-basis",
+    "lumir-hp-approval-purpose",
+    "lumir-hp-argv",
+  ]);
+  // 决策后依据行随卡退场（与待决副句 / 按钮同一生命周期，零残留）。
+  await page.locator('button[data-act="reject"]').click();
+  await expect(page.locator(".lumir-hp-approval")).toHaveCount(0);
+  await expect(page.locator(".lumir-hp-approval-basis")).toHaveCount(0);
+});
+
+test("判定依据行：模式默认分层带当时档位与该档释义（read_only 档的写工具卡）", async ({ page }) => {
+  // 载荷与管线自洽：read_only 档下 vault_patch 走第 5 层模式默认分层 → Ask。
+  await stubPendingApproval(page, {
+    id: "call_p2",
+    tool: "vault_patch",
+    diff: DIFF,
+    reason: { kind: "mode_default", mode: "read_only" },
+  });
+  const { basis } = await openApprovalPanel(page);
+  await expect(basis).toHaveCount(1);
+  await expect(basis).toHaveText("当前为 只读 档：读自动放行；写操作都先问你");
+});
+
+test("判定依据行：缺 reason 的旧载荷不出该行（不伪造依据）", async ({ page }) => {
+  await stubPendingApproval(page, { id: "call_p3", tool: "vault_patch", diff: DIFF });
+  const { card, basis } = await openApprovalPanel(page);
+  await expect(card.locator(".lumir-hp-approval-title")).toContainText("要修改这个文件吗？");
+  await expect(basis).toHaveCount(0);
 });

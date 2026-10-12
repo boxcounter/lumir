@@ -1225,9 +1225,12 @@ const COPY_TABLE = {
     zh: "完全",
     en: "Full",
   },
+  // 权限 chip 的读屏名 / 悬停提示（M414 落地；**M459 改形**，编号沿用：在「点击切换」之后附上
+  // 当前档的一行释义——与浮层释义同源（D430–D432），不新增信息。悬停与读屏同一份文本：
+  // 只把释义补进悬停面会让读屏用户拿不到同样的解释。消费点 src/harness-panel.ts 的 applyPermChip。
   D426: {
-    zh: "权限模式：{mode}（点击切换）",
-    en: "Permission mode: {mode} (click to switch)",
+    zh: "权限模式：{mode}（点击切换）· {desc}",
+    en: "Permission mode: {mode} (click to switch) · {desc}",
   },
   D427: {
     zh: "只读",
@@ -1364,6 +1367,23 @@ const COPY_TABLE = {
   D457: {
     zh: "插入图片引用",
     en: "Insert image reference",
+  },
+  // 批准卡判定依据行（change add-approval-decision-reason，design §4.1）：D458 = 模式默认分层层、
+  // D459 = 危险黑名单·shell 包装器（点名包装器命令名）、D460 = 危险黑名单·其余成员（不点名——
+  // `sudo rm …` 的命中者是递归展开后的内层命令）。层级由 Rust 判定管线产出（`DecisionReason`，
+  // 随批准请求事件与快照两条通道到达），前端只按 `kind` 取模板，MUST NOT 自行推导。
+  // 消费点 src/harness-panel.ts 的 approvalReasonText。
+  D458: {
+    zh: "当前为 {mode} 档：{desc}",
+    en: "Currently in {mode} mode — {desc}",
+  },
+  D459: {
+    zh: "shell 包装器命令（{command}）：内容不可知，任何权限档都需逐个确认",
+    en: "Shell wrapper command ({command}): its contents are opaque, so it always asks in every permission mode",
+  },
+  D460: {
+    zh: "命中安全黑名单：任何权限档都需逐个确认",
+    en: "On the safety blacklist: it always asks in every permission mode",
   },
 } satisfies Record<string, CopyEntry>;
 
