@@ -545,7 +545,9 @@
 - **D400–D401** — `src/harness-panel.ts`（`applyStage` / `buildCtxPop`）
 - **D402–D404** — `src/harness-panel.ts`（`buildSelPop` / `applySelChip`）+ `src/copy-data.ts` + `src-tauri/src/harness/llm.rs`
 - **D405–D411** — `src/harness-panel.ts` / `src/copy-data.ts` `ERROR_COPY`（D409–D411 = 会话恢复三错误码）
+- **D412–D422** — `src/harness-panel.ts`（D412–D416 批准闸问句与副句、gated 工具行待决尾注 `approvalAskOf` / `appendApproval` / `relabelApproval`；D417–D419 会话浮层删除钮与行内两步确认 `buildSessList`）+ `src/copy-data.ts` `ERROR_COPY`（D420–D422 = 会话删除两错误码 + `fs_move_failed`）
 - **D423–D434** — `src/harness-panel.ts`（`applyPermChip` / `buildPermPop` / `appendApproval`）+ `src/copy-data.ts`
+- **D435** — `src/harness-panel.ts`（vault_delete 批准卡的后果说明句，按 design §5.1 归面板侧；后端 `approval_preview` 只给路径参数）
 - **D436–D451** — vault 附件与 composer 贴图共用 fs_io 原语（错误 code 族不另立）；消费点 `src/harness-panel.ts`（`send` / `loadImageThumb` / `createImageCardEl`）+ `src/copy-data.ts` `ERROR_COPY`（D447 是 aria 名，不经 ERROR_COPY）
 - **D452–D455** — `src/harness-panel.ts`（`buildCtxPop` / `usageReadings`）+ `src/copy-data.ts`；Rust 侧换键 `cache_pct_session` + `cache_pct_turn`
 - **D456** — `src/harness-draft.ts` → `src/harness-panel.ts`（toast 出口经 `errorText`）+ `src/copy-data.ts`
