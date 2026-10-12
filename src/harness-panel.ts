@@ -100,6 +100,7 @@ import {
   openExternalUrl,
 } from "./ipc";
 import type { HarnessEvent } from "./ipc";
+import type { DecisionReason } from "./bindings/DecisionReason";
 import type { ThinkingEffort } from "./bindings/ThinkingEffort";
 import { assembleHarnessContext, serializeHarnessContext } from "./harness-context";
 import type { HarnessContextBlock, HarnessContextSource } from "./harness-context";
@@ -1392,9 +1393,53 @@ export function permissionFullName(mode: PermissionMode): string {
   return t(mode === "read_only" ? "D427" : mode === "vault_write" ? "D428" : "D429");
 }
 
-/** 浮层里的每档一行释义（D430–D432）。 */
+/** 浮层里的每档一行释义（D430–D432）。M459 起也是 chip 悬停提示（D426）与批准卡判定依据行
+ *  （D458）的 `{desc}` 取值——同一档的承诺只写一份（REVIEW.md 第 8 条）。 */
 export function permissionDescription(mode: PermissionMode): string {
   return t(mode === "read_only" ? "D430" : mode === "vault_write" ? "D431" : "D432");
+}
+
+/** 判定依据的宽容解析（M459，事件与快照两条入口同一份判据）：只认三个**可上卡**的 kind
+ *  （Rust `DecisionReason` 的 `deny_rule` 不产批准卡、不会到前端，故不认）；形状不合一律
+ *  `undefined`——调用方据此不出该行，MUST NOT 伪造依据（旧载荷 / 未来新增 kind 的降级面）。 */
+export function parseDecisionReason(value: unknown): DecisionReason | undefined {
+  if (typeof value !== "object" || value === null) return undefined;
+  const raw = value as { kind?: unknown; command?: unknown; mode?: unknown };
+  switch (raw.kind) {
+    case "dangerous_wrapper":
+      return typeof raw.command === "string" && raw.command !== ""
+        ? { kind: "dangerous_wrapper", command: raw.command }
+        : undefined;
+    case "dangerous_command":
+      return { kind: "dangerous_command" };
+    case "mode_default":
+      return PERMISSION_MODES.find((mode) => mode === raw.mode) !== undefined
+        ? { kind: "mode_default", mode: raw.mode as PermissionMode }
+        : undefined;
+    default:
+      return undefined;
+  }
+}
+
+/** 判定依据行的文案（M459，change add-approval-decision-reason design §4.1）：层级由 Rust 判定
+ *  管线产出、前端只做「kind → 模板」映射（MUST NOT 自行推导层级）。`{mode}` / `{desc}` 取
+ *  D427–D429 / D430–D432 的读数（与浮层、chip 悬停提示同源）。无依据（`undefined` / 不可上卡的
+ *  kind）返回 `null`——调用方不出该行。 */
+export function approvalReasonText(reason: DecisionReason | undefined): string | null {
+  if (reason === undefined) return null;
+  switch (reason.kind) {
+    case "dangerous_wrapper":
+      return t("D459", { command: reason.command });
+    case "dangerous_command":
+      return t("D460");
+    case "mode_default":
+      return t("D458", {
+        mode: permissionFullName(reason.mode),
+        desc: permissionDescription(reason.mode),
+      });
+    default:
+      return null;
+  }
 }
 
 /** 命令拆段时的连接符（长者在前：`&&` 必须先于 `&`、`||` 先于 `|` 命中）。 */
@@ -2309,6 +2354,9 @@ interface PendingApproval {
   argv?: string[] | undefined;
   /** 模型自述的用途句（M407 契约字段，可缺席——阅读辅助，不替代命令原文）。 */
   purpose?: string | undefined;
+  /** 判定依据（M459 契约字段，可缺席 = 旧载荷 / 不可上卡的层）：批准卡「判定依据」行的数据源，
+   *  层级由 Rust 判定管线产出，前端只按 kind 取文案。 */
+  reason?: DecisionReason | undefined;
   argsText: string;
   element: HTMLElement;
   row: HTMLElement;
@@ -4096,13 +4144,17 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   // ── 权限 chip 与浮层（M414）────────────────────────────────────────────────
 
   /** 权限 chip 重渲（长驻元素：读数 / 读屏名 / 悬停提示都从已存状态取，relabel 可重跑）。
-   *  可见文本 = 短名（D423–D425）；读屏名与 title = D426（{mode} 取当前档全名）——
-   *  与合并 chip 同一条「可见面短、可访问名说全」的分工。 */
+   *  可见文本 = 短名（D423–D425）；读屏名与 title = D426（{mode} 取当前档全名、{desc} 取该档释义
+   *  D430–D432）——与合并 chip 同一条「可见面短、可访问名说全」的分工。M459 起提示里补上档释义
+   *  （Alex 2026-10-12：档名不足以说明这一档的承诺），与浮层释义同源、不新增信息。 */
   function applyPermChip(): void {
     permChip.hidden = !permissionConfigured;
     if (!permissionConfigured) return;
     permName.textContent = permissionShortName(permMode);
-    const label = t("D426", { mode: permissionFullName(permMode) });
+    const label = t("D426", {
+      mode: permissionFullName(permMode),
+      desc: permissionDescription(permMode),
+    });
     permChip.title = label;
     permChip.setAttribute("aria-label", label);
   }
@@ -4893,6 +4945,11 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       }
       titleEl.replaceChildren(...nodes);
     }
+    // 判定依据行（M459）是 chrome 文案（档名 / 档释义 / 包装器句式都要译文），随语言重取；
+    // 元素只在构建时按「有依据」决定建不建（不伪造），这里只重写文本。
+    const basis = pending.element.querySelector(".lumir-hp-approval-basis");
+    const basisText = approvalReasonText(pending.reason);
+    if (basis !== null && basisText !== null) basis.textContent = basisText;
     // 待决行的「等待批准」尾注同口径重取（行是交互中的 UI，不是历史记录）；argsText 是
     // 数据（命令 / 文件名），不译文。
     pending.row.replaceChildren(
@@ -5035,6 +5092,8 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     diff?: string | undefined;
     argv?: string[] | undefined;
     purpose?: string | undefined;
+    /** 判定依据（M459 契约：哪一层让这次调用进闸）——层级来自 Rust 判定管线，前端不推导。 */
+    reason?: DecisionReason | undefined;
     /** 次级动作可见性（M413 契约：批准闸挂出的请求恒 true；缺键按可见处理）。 */
     remember?: boolean | undefined;
   }): void {
@@ -5066,6 +5125,16 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     const titleEl = document.createElement("div");
     titleEl.className = "lumir-hp-approval-title";
     el.append(titleEl);
+    // 判定依据行（M459）：这次**为什么**进闸——先回答疑惑，再看要批准什么。层级由 Rust 判定
+    // 管线产出（批准请求事件 / 快照两条通道），前端只按 kind 取文案（MUST NOT 自行推导）；
+    // 文本在 relabelApproval 里落（chrome 文案随语言重取）。无依据（旧载荷 / 不可上卡的层）
+    // 时不建元素——不出空行、不伪造。样式见 src/harness-panel.css 的 `.lumir-hp-approval-basis`
+    //（次级灰信息副行；M459 起该文件在改动面内）。
+    if (approvalReasonText(request.reason) !== null) {
+      const basis = document.createElement("div");
+      basis.className = "lumir-hp-approval-basis";
+      el.append(basis);
+    }
     // 模型自述的用途句（M407 契约 purpose 字段）：有则在命令 / diff 上方显眼位置展示——
     // 信任边界：purpose 只是阅读辅助，命令原文永远完整可见、不被替代或截断。
     if (typeof request.purpose === "string" && request.purpose.trim() !== "") {
@@ -5157,6 +5226,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       diff: request.diff,
       argv: request.argv,
       purpose: request.purpose,
+      reason: request.reason,
       argsText,
       element: el,
       row,
@@ -5529,6 +5599,8 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
             diff: event.diff,
             argv: event.argv,
             purpose: typeof event.purpose === "string" ? event.purpose : undefined,
+            // 判定依据（M459 契约）：宽容解析，形状不合 / 缺键 = undefined ⇒ 不出该行。
+            reason: parseDecisionReason(event.reason),
             // 次级动作可见性（M413 契约）：事件载荷可带 remember；缺键按可见处理
             //（当前后端的事件载荷不带本键，缺键即「批准闸挂出的请求」，恒可见）。
             remember: event.remember !== false,
@@ -5815,6 +5887,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
           diff?: unknown;
           argv?: unknown;
           purpose?: unknown;
+          reason?: unknown;
           remember?: unknown;
         }
       | null
@@ -5831,6 +5904,8 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
         diff: typeof pending.diff === "string" ? pending.diff : undefined,
         argv: argv !== undefined && argv.length > 0 ? argv : undefined,
         purpose: typeof pending.purpose === "string" ? pending.purpose : undefined,
+        // 判定依据（M459）：与事件入口同一份宽容解析（快照缺键 = 旧后端，不出该行）。
+        reason: parseDecisionReason(pending.reason),
         // remember = 次级动作可见性（M413 契约：批准闸挂出的请求恒 true；缺键 = 旧载荷，
         // 按可见处理——旧载荷同样来自批准闸）。
         remember: pending.remember !== false,

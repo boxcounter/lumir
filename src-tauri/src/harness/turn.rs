@@ -811,7 +811,7 @@ fn handle_call(
         argv: cli_argv,
         cached,
     };
-    let decision = permissions::decide(&config.permissions, &call.name, &subject, &judge);
+    let verdict = permissions::decide(&config.permissions, &call.name, &subject, &judge);
 
     // 批准闸决定（面板 decision 字段的数据源，M413）：只有 ask 档批准闸产出
     // approved / rejected；allow / deny / 重定向路径没有批准动作，字段缺席。
@@ -824,19 +824,31 @@ fn handle_call(
         // purpose 校验在判定管线之前（design §3.4）：ask 档批准卡必须已有用途句可展示。
         output
     } else {
-        match decision {
+        match verdict.decision {
             // 模式层不产出 Deny（只读档 = Always Ask），Deny 只来自第 1 层的用户 deny 规则。
+            // M459：回送文案带上命中的规则原文（「是哪条规则拦的」不必回配置文件核对）。
             Decision::Deny => ToolOutput::err(
                 "permission_denied",
-                format!("权限规则拒绝了 {}（{subject}）", call.name),
+                denied_message(&call.name, &subject, verdict.reason.as_ref()),
             ),
             // deny 的留痕是 wire 口径：带 `permission_denied` 错误码的结果随历史进
             // 下一条 llm_request.messages（tool_denied 事件类已废弃），面板 tool 行
             // 的细分状态照常由 status 承担。
             Decision::Allow => tools::execute(&call.name, &args, tctx),
             Decision::Ask => {
-                let (out, decision) =
-                    gated_execute(sink, runtime, scope, tctx, call, &args, &subject);
+                // 判定依据（M459）随批准请求进批准闸——事件与快照两条通道同取这一个值。
+                let (out, decision) = gated_execute(
+                    sink,
+                    runtime,
+                    scope,
+                    tctx,
+                    GatedCall {
+                        call,
+                        args: &args,
+                        subject: &subject,
+                        reason: verdict.reason,
+                    },
+                );
                 gate_decision = decision;
                 out
             }
@@ -919,6 +931,17 @@ fn flush_call_items(
     });
 }
 
+/// 进批准闸的一次调用（[`gated_execute`] 的输入面）：工具调用本体 + 判定用的主体串 + 判定依据。
+/// 归成一组，是因为它们都描述「被闸住的这一次调用」、且主体串与判定依据同源（都出自
+/// `handle_call` 的同一轮判定）——散成三个参数只会把调用点拉长，也让闸函数的参数面失去内聚。
+struct GatedCall<'a> {
+    call: &'a llm::ToolCall,
+    args: &'a serde_json::Value,
+    subject: &'a str,
+    /// 判定依据（M459）：随批准请求进 `ApprovalRequest`，事件与快照两条 UI 通道都从这里取。
+    reason: Option<permissions::DecisionReason>,
+}
+
 /// ask 档：生成预览 → 挂起批准 → 等决定 → 采纳执行 / 拒绝回送。
 ///
 /// 返回值带批准闸决定（`Some("approved")` / `Some("rejected")`）——面板工具行的
@@ -928,10 +951,14 @@ fn gated_execute(
     runtime: &Runtime,
     scope: &VaultScope,
     tctx: &ToolContext,
-    call: &llm::ToolCall,
-    args: &serde_json::Value,
-    subject: &str,
+    gated: GatedCall<'_>,
 ) -> (ToolOutput, Option<&'static str>) {
+    let GatedCall {
+        call,
+        args,
+        subject,
+        reason,
+    } = gated;
     let preview = match tools::approval_preview(&call.name, args, tctx) {
         Ok(preview) => preview,
         // 预览失败（如 patch 不唯一命中）：错误直接回送模型，不进批准闸。
@@ -945,6 +972,7 @@ fn gated_execute(
         preview.diff.clone(),
         preview.argv.clone(),
         preview.purpose.clone(),
+        reason.clone(),
         true,
         tx,
     );
@@ -954,13 +982,14 @@ fn gated_execute(
     };
     // purpose（design §3.4）经 events::approval_request_with_purpose 进载荷（M413 收编：
     // 事件函数带 purpose 参数，turn 不再手工注入键）；批准卡快照的 purpose 与事件同源，
-    // 都取 preview.purpose（单一真源）。
+    // 都取 preview.purpose（单一真源）。M459：判定依据同理走同一个 `reason`。
     sink.emit(events::approval_request_with_purpose(
         &id,
         &call.name,
         preview.diff.as_deref(),
         preview.argv.as_deref(),
         preview.purpose.as_deref(),
+        reason.as_ref(),
     ));
     // 未决批准项不自动超时通过：无超时地等决定（会话被重置 / vault 切换使发送端
     // 失效时 recv 报错 → 判过期，不执行）。
@@ -1187,9 +1216,41 @@ fn summarize_result(status: &str, output: &ToolOutput) -> String {
                 .as_str()
                 .unwrap_or("")
                 .chars()
-                .take(80)
+                .take(SUMMARY_MESSAGE_LIMIT)
                 .collect::<String>()
         )
+    }
+}
+
+/// 工具行摘要里 message 的字符上限。M459 起也是 deny 文案「带不带规则原文」的判据——
+/// 同一个长度预算只能有一处声明（本常量）。
+const SUMMARY_MESSAGE_LIMIT: usize = 80;
+
+/// deny 规则命中的回送文案（M459，change add-approval-decision-reason）：拼上命中的**规则原文**，
+/// 让「是哪条规则拦的」不必回配置文件核对。
+///
+/// **规则原文放在最前**：工具行是**单行省略号**行（`.lumir-hp-tool-text` 的 `nowrap +
+/// text-overflow: ellipsis`，CSS 注释明写「截断只落这一格」），拼在末尾时窄面板下整段规则名会被
+/// 省略号吞掉——Alex 看到的世界与改造前一样（M459 实测：482px 宽的面板里末尾的规则名完全不可见）。
+/// 领读位置保证「规则原文」落在可见头部，被省略的是它后面的从属信息。与 tower 裁决文里给的例句
+/// 顺序（规则原文在句末）不同，属实现期口径修正，理由见 change 的评审记录。
+///
+/// 上限口径：工具行摘要按 [`SUMMARY_MESSAGE_LIMIT`] 截断 message——拼接后超限就**退回**既有文案，
+/// MUST NOT 呈现被截断的半截规则名（那比不说更坏，见 change design §4.3）。
+fn denied_message(
+    tool: &str,
+    subject: &str,
+    reason: Option<&permissions::DecisionReason>,
+) -> String {
+    let plain = format!("权限规则拒绝了 {tool}（{subject}）");
+    let Some(permissions::DecisionReason::DenyRule { rule }) = reason else {
+        return plain;
+    };
+    let detailed = format!("命中 deny 规则 {rule}：{plain}");
+    if detailed.chars().count() <= SUMMARY_MESSAGE_LIMIT {
+        detailed
+    } else {
+        plain
     }
 }
 
@@ -1558,5 +1619,66 @@ mod tests {
         );
 
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // -----------------------------------------------------------------------
+    // deny 回送文案（M459，change add-approval-decision-reason）
+    // -----------------------------------------------------------------------
+
+    /// 规则原文**领读**（design §4.3）：工具行是单行省略号行，句末的规则名会被整段吞掉——
+    /// 领读位置保证「是哪条规则拦的」落在可见头部。
+    #[test]
+    fn denied_message_leads_with_the_rule() {
+        let reason = permissions::DecisionReason::DenyRule {
+            rule: "cli(npm run deploy*)".into(),
+        };
+        assert_eq!(
+            denied_message("cli_run", "npm run deploy", Some(&reason)),
+            "命中 deny 规则 cli(npm run deploy*)：权限规则拒绝了 cli_run（npm run deploy）"
+        );
+    }
+
+    /// 无规则原文（`None` / 非 `DenyRule` 的依据）：退回既有文案，不凭空多一句「命中」。
+    #[test]
+    fn denied_message_without_a_rule_keeps_the_plain_text() {
+        assert_eq!(
+            denied_message("vault_patch", "a.md", None),
+            "权限规则拒绝了 vault_patch（a.md）"
+        );
+        assert_eq!(
+            denied_message(
+                "cli_run",
+                "rm -rf /tmp/x",
+                Some(&permissions::DecisionReason::DangerousCommand)
+            ),
+            "权限规则拒绝了 cli_run（rm -rf /tmp/x）"
+        );
+    }
+
+    /// 超限退回（REVIEW.md 第 6 条：覆盖声明要与真实验证一致）：拼接后超过工具行摘要的字符预算即
+    /// 退回 plain，MUST NOT 呈现被截断的半截规则名。边界两侧都判——恰好等于上限仍带规则原文，
+    /// 多一个字符即退回。
+    #[test]
+    fn denied_message_falls_back_when_over_the_summary_limit() {
+        let reason = permissions::DecisionReason::DenyRule {
+            rule: "cli(x*)".into(),
+        };
+        // 骨架（subject 留空）＝「命中 deny 规则 cli(x*)：权限规则拒绝了 cli_run（）」。
+        let skeleton = "命中 deny 规则 cli(x*)：权限规则拒绝了 cli_run（）";
+        let subject = "s".repeat(SUMMARY_MESSAGE_LIMIT - skeleton.chars().count());
+        let detailed = format!("命中 deny 规则 cli(x*)：权限规则拒绝了 cli_run（{subject}）");
+        assert_eq!(detailed.chars().count(), SUMMARY_MESSAGE_LIMIT);
+        assert_eq!(
+            denied_message("cli_run", &subject, Some(&reason)),
+            detailed,
+            "恰好等于上限时仍带规则原文（判据是 <=）"
+        );
+        // 再长一个字符即超限 ⇒ 退回 plain。
+        let subject = format!("{subject}s");
+        assert_eq!(
+            denied_message("cli_run", &subject, Some(&reason)),
+            format!("权限规则拒绝了 cli_run（{subject}）"),
+            "超限退回既有文案"
+        );
     }
 }

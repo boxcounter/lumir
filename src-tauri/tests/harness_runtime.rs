@@ -2784,3 +2784,185 @@ fn session_cache_reading_restarts_after_auto_compact() {
     // 缓存写入的会话累计同样归零重算（只算新会话这一轮）。
     assert_eq!(after.usage.cache_write_tokens_session, 900);
 }
+
+// ---------------------------------------------------------------------------
+// 判定依据（M459，change add-approval-decision-reason）
+// ---------------------------------------------------------------------------
+
+/// 危险黑名单·shell 包装器进闸时的依据：事件与快照**两条通道同值**（同一个 `Verdict` 喂两边，
+/// REVIEW.md 第 8 条）——面板批准卡的「判定依据」行据它渲染，前端不推导层级。包装器点名。
+#[test]
+fn approval_reason_reaches_event_and_snapshot_alike() {
+    let f = Fixture::new("approval-reason-wrapper");
+    let config = mock_config();
+    let runtime = f.runtime();
+    runtime.acquire_turn(&f.scope(), &config).unwrap();
+    let sink = CollectSink::default();
+    let script = r#"{"responses": [
+        {"tool_calls": [{"id": "c1", "name": "cli_run",
+            "arguments": "{\"command\":\"zsh\",\"args\":[\"-lc\",\"echo hi\"],\"purpose\":\"看一眼环境\"}"}]},
+        {"text": "那算了。"}
+    ]}"#;
+    let mut client = MockClient::from_str(script, "approval-reason-wrapper").unwrap();
+    let worker = {
+        let sink = sink.clone();
+        let runtime = runtime.clone();
+        let scope = f.scope();
+        let config = config.clone();
+        std::thread::spawn(move || {
+            drive_turn(
+                &sink,
+                &runtime,
+                &scope,
+                &config,
+                "看看版本".into(),
+                &mut client,
+            );
+        })
+    };
+    sink.wait_for(
+        |events| {
+            events
+                .iter()
+                .any(|e| e.get("type").and_then(|t| t.as_str()) == Some("approval_request"))
+        },
+        "zsh 包装器的批准请求",
+    );
+    let request = sink
+        .events()
+        .into_iter()
+        .find(|e| e.get("type").and_then(|t| t.as_str()) == Some("approval_request"))
+        .unwrap();
+    assert_eq!(request["tool"], "cli_run");
+    // 包装器类点名（`zsh`）——「`zsh -lc …` 看起来无害」正是现场疑惑的原点。
+    assert_eq!(
+        request["reason"],
+        serde_json::json!({"kind": "dangerous_wrapper", "command": "zsh"})
+    );
+    let id = request["id"].as_str().unwrap().to_string();
+    // 快照面同值（同一个 Verdict 喂两条通道）。
+    let pending = runtime
+        .snapshot(&f.scope(), &config)
+        .pending_approval
+        .expect("待决项在快照里");
+    assert_eq!(pending.id, id);
+    assert_eq!(
+        pending.reason,
+        Some(
+            lumir_lib::harness::permissions::DecisionReason::DangerousWrapper {
+                command: "zsh".into()
+            }
+        )
+    );
+    // 拒绝掉收口本轮（危险命令绝不落盘）。
+    runtime
+        .with_session(&f.scope(), |s| s.resolve_approval(&id, false, None, false))
+        .unwrap()
+        .unwrap();
+    worker.join().unwrap();
+}
+
+/// 模式默认分层层的依据：`vault_write` 档下的库外写命令进闸时带**当时判定的档位**——
+/// 「已是 Write 档为何还问」在卡上自洽可读（档位取自判定输入，不让前端读自己那份读数）。
+#[test]
+fn approval_reason_carries_mode_default_layer() {
+    let f = Fixture::new("approval-reason-mode");
+    let config = mock_config();
+    let runtime = f.runtime();
+    runtime.acquire_turn(&f.scope(), &config).unwrap();
+    let sink = CollectSink::default();
+    let script = r#"{"responses": [
+        {"tool_calls": [{"id": "c1", "name": "cli_run",
+            "arguments": "{\"command\":\"npm\",\"args\":[\"install\"],\"purpose\":\"装依赖\"}"}]},
+        {"text": "那算了。"}
+    ]}"#;
+    let mut client = MockClient::from_str(script, "approval-reason-mode").unwrap();
+    let worker = {
+        let sink = sink.clone();
+        let runtime = runtime.clone();
+        let scope = f.scope();
+        let config = config.clone();
+        std::thread::spawn(move || {
+            drive_turn(
+                &sink,
+                &runtime,
+                &scope,
+                &config,
+                "装依赖".into(),
+                &mut client,
+            );
+        })
+    };
+    sink.wait_for(
+        |events| {
+            events
+                .iter()
+                .any(|e| e.get("type").and_then(|t| t.as_str()) == Some("approval_request"))
+        },
+        "npm install 的批准请求",
+    );
+    let request = sink
+        .events()
+        .into_iter()
+        .find(|e| e.get("type").and_then(|t| t.as_str()) == Some("approval_request"))
+        .unwrap();
+    assert_eq!(
+        request["reason"],
+        serde_json::json!({"kind": "mode_default", "mode": "vault_write"})
+    );
+    let id = request["id"].as_str().unwrap().to_string();
+    runtime
+        .with_session(&f.scope(), |s| s.resolve_approval(&id, false, None, false))
+        .unwrap()
+        .unwrap();
+    worker.join().unwrap();
+}
+
+/// deny 规则命中：拒绝对话**不进批准闸**（无批准请求事件），回送模型的消息带上**命中的规则原文**
+/// ——「是哪条规则拦的」不必回配置文件核对（M459，change design §3/§4.3）。
+#[test]
+fn deny_rule_text_reaches_the_tool_result_message() {
+    let f = Fixture::new("deny-rule-text");
+    let mut config = mock_config();
+    config.permissions = HarnessPermissions {
+        allow: vec![],
+        deny: vec!["cli(npm run deploy*)".into()],
+    };
+    let runtime = f.runtime();
+    runtime.acquire_turn(&f.scope(), &config).unwrap();
+    let sink = CollectSink::default();
+    let script = r#"{"responses": [
+        {"tool_calls": [{"id": "c1", "name": "cli_run",
+            "arguments": "{\"command\":\"npm\",\"args\":[\"run\",\"deploy\"],\"purpose\":\"上线\"}"}]},
+        {"text": "好，那我不部署了。"}
+    ]}"#;
+    let mut client = MockClient::from_str(script, "deny-rule-text").unwrap();
+    drive_turn(
+        &sink,
+        &runtime,
+        &f.scope(),
+        &config,
+        "部署一下".into(),
+        &mut client,
+    );
+    runtime.release_turn(&f.scope());
+
+    // 不产批准卡：deny 是拒绝、不是询问。
+    assert!(
+        !sink.types().contains(&"approval_request".to_string()),
+        "{:?}",
+        sink.types()
+    );
+    let snapshot = runtime.snapshot(&f.scope(), &config);
+    let tool = snapshot
+        .messages
+        .iter()
+        .find(|m| m.role == "tool")
+        .expect("工具有终态消息");
+    assert_eq!(tool.status.as_deref(), Some("denied"));
+    let text = tool.text.clone().unwrap_or_default();
+    assert!(
+        text.contains("命中 deny 规则 cli(npm run deploy*)"),
+        "规则原文随拒绝回送：{text}"
+    );
+}

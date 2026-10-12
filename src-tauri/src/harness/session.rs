@@ -18,6 +18,7 @@ use crate::commands::CommandError;
 use super::approval::{ApprovalDecision, ApprovalRequest, ApprovalSignal};
 use super::jsonl::JsonlWriter;
 use super::llm::Usage;
+use super::permissions::DecisionReason;
 use super::thinking::ThinkingEffort;
 
 /// 面板消息（`harness_state` 快照 `messages[]` 的元素；m303 宽容解析，缺字段=空态）。
@@ -205,6 +206,11 @@ pub struct PendingApprovalSnapshot {
     /// 批准卡上展示的用途句（cli_run，design §3.4；无则缺省）。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub purpose: Option<String>,
+    /// 判定依据（M459）：这次调用为什么进闸——面板批准卡「判定依据」行的数据源。与
+    /// `harness:event` 的 `approval_request.reason` 同源同形（都取自 `ApprovalRequest.reason`）；
+    /// 无则缺省（旧载荷 / 自动放行的层）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<DecisionReason>,
     /// 该卡支持「采纳且本会话不再问」次级动作（design §6；批准闸请求恒 true）——
     /// 面板按钮可见性的数据源。
     pub remember: bool,
@@ -218,6 +224,7 @@ impl PendingApprovalSnapshot {
             diff: r.diff.clone(),
             argv: r.argv.clone(),
             purpose: r.purpose.clone(),
+            reason: r.reason.clone(),
             remember: r.remember,
         }
     }

@@ -475,13 +475,14 @@ test("权限 chip（M414）：短名读数 / 三档浮层全名 + 释义 / 档�
   await page.locator(".lumir-hp-toggle").click();
   await expect(page.locator(".lumir-harness")).toBeVisible();
 
-  // ── chip 读数 = 短名（D424 = 可写）+ 读屏名 / title = D426（{mode} 取全名）──
+  // ── chip 读数 = 短名（D424 = 可写）+ 读屏名 / title = D426（{mode} 取全名、{desc} 取该档释义
+  // ——M459 改形：提示里补上浮层释义，档名不足以说明这一档的承诺）──
   const permChip = page.locator(".lumir-hp-perm");
   await expect(permChip).toBeVisible();
   await expect(permChip).toHaveAttribute("aria-haspopup", "menu");
   await expect(permChip.locator(".lumir-hp-perm-name")).toHaveText("可写");
-  await expect(permChip).toHaveAttribute("title", "权限模式：保险库写入（点击切换）");
-  await expect(permChip).toHaveAttribute("aria-label", "权限模式：保险库写入（点击切换）");
+  await expect(permChip).toHaveAttribute("title", "权限模式：保险库写入（点击切换）· 库内写自动放行；库外命令先问你");
+  await expect(permChip).toHaveAttribute("aria-label", "权限模式：保险库写入（点击切换）· 库内写自动放行；库外命令先问你");
   // 形态合同（computed-style）：与合并 chip 同一份配方（24px / r5 / 11.5px）。
   const permStyle = await permChip.evaluate((el) => {
     const s = getComputedStyle(el);
@@ -512,7 +513,7 @@ test("权限 chip（M414）：短名读数 / 三档浮层全名 + 释义 / 档�
   // ── 选「完全访问」：chip 读数先翻（选择先行），写回随后；浮层不自动关 ──
   await items.nth(2).click();
   await expect(permChip.locator(".lumir-hp-perm-name")).toHaveText("完全");
-  await expect(permChip).toHaveAttribute("title", "权限模式：完全访问（点击切换）");
+  await expect(permChip).toHaveAttribute("title", "权限模式：完全访问（点击切换）· 全自动；仅危险命令仍问你");
   await expect(items.nth(2)).toHaveClass(/is-current/);
   await expect(permPop).toBeVisible(); // 选定不自动关（三条关闭路径见下）
   // 写回判据：config_set_value("harness", "permission_mode", …)（桩的 __providerWrites

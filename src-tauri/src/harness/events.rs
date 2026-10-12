@@ -118,18 +118,24 @@ pub fn approval_request(
     diff: Option<&str>,
     argv: Option<&[String]>,
 ) -> serde_json::Value {
-    approval_request_with_purpose(id, tool, diff, argv, None)
+    approval_request_with_purpose(id, tool, diff, argv, None, None)
 }
 
 /// 带 purpose 的批准请求事件（M406/M407 契约，M413 起 turn.rs 的调用点收编到本函数）：
 /// purpose = 模型自述的用途句（cli_run 的批准预览载荷，阅读辅助——面板在命令上方展示，
 /// 命令原文永远完整可见）。`approval_request` 保持原签名作无 purpose 的包装。
+///
+/// M459：`reason` = 判定依据（[`super::permissions::DecisionReason`]，哪一层让这次调用进闸）——
+/// 面板批准卡的「判定依据」行据此渲染，前端 MUST NOT 自行推导层级。缺席 = 无依据可讲（旧载荷 /
+/// 自动放行的层）。与 `PendingApprovalSnapshot.reason` **同源同形**：两者都取
+/// `gated_execute` 手上的同一个 `Verdict`（REVIEW.md 第 8 条）。
 pub fn approval_request_with_purpose(
     id: &str,
     tool: &str,
     diff: Option<&str>,
     argv: Option<&[String]>,
     purpose: Option<&str>,
+    reason: Option<&super::permissions::DecisionReason>,
 ) -> serde_json::Value {
     let mut value = serde_json::json!({"type": "approval_request", "id": id, "tool": tool});
     if let Some(diff) = diff {
@@ -140,6 +146,11 @@ pub fn approval_request_with_purpose(
     }
     if let Some(purpose) = purpose {
         value["purpose"] = serde_json::json!(purpose);
+    }
+    if let Some(reason) = reason {
+        if let Ok(encoded) = serde_json::to_value(reason) {
+            value["reason"] = encoded;
+        }
     }
     value
 }
@@ -274,14 +285,19 @@ mod tests {
 
     /// approval_request 的 argv 形状钉死为 JSON **数组**（M406 类型钉桩：前端曾按 string
     /// 读，live 渲染成逗号拼接、快照恢复整段丢弃）；purpose 缺省不出现在载荷里
-    /// （None → 字段缺席，旧前端宽容解析不受影响）。
+    /// （None → 字段缺席，旧前端宽容解析不受影响）。M459：`reason`（判定依据）同口径——
+    /// 有值时是 internally tagged 的对象，缺省时键整体缺席。
     #[test]
     fn approval_request_argv_is_array_and_purpose_optional() {
+        use crate::config::PermissionMode;
+        use crate::harness::permissions::DecisionReason;
+
         let argv = vec!["git".to_string(), "commit".to_string()];
         let plain = approval_request("ap-1", "cli_run", None, Some(&argv));
         assert_eq!(plain["argv"], serde_json::json!(["git", "commit"]));
         assert!(plain.get("purpose").is_none());
         assert!(plain.get("diff").is_none());
+        assert!(plain.get("reason").is_none());
 
         let with_purpose = approval_request_with_purpose(
             "ap-2",
@@ -289,9 +305,28 @@ mod tests {
             None,
             Some(&argv),
             Some("提交周报改动"),
+            None,
         );
         assert_eq!(with_purpose["purpose"], serde_json::json!("提交周报改动"));
         assert_eq!(with_purpose["argv"], serde_json::json!(["git", "commit"]));
+        assert!(with_purpose.get("reason").is_none());
+
+        // 判定依据随载荷到达前端（面板按 `kind` 取文案；形状与 permissions.rs 的单测同源）。
+        let reason = DecisionReason::ModeDefault {
+            mode: PermissionMode::VaultWrite,
+        };
+        let with_reason = approval_request_with_purpose(
+            "ap-3",
+            "cli_run",
+            None,
+            Some(&argv),
+            Some("安装依赖"),
+            Some(&reason),
+        );
+        assert_eq!(
+            with_reason["reason"],
+            serde_json::json!({"kind": "mode_default", "mode": "vault_write"})
+        );
     }
 
     /// 标识来自**包装时的作用域**，不是全局态：两个 sink 各盖各的，互不串。

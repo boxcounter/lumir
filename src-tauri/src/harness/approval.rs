@@ -9,6 +9,8 @@
 
 use std::sync::mpsc::Sender;
 
+use super::permissions::DecisionReason;
+
 /// 面板发回的采纳 / 拒绝决定。
 #[derive(Debug, Clone)]
 pub struct ApprovalDecision {
@@ -46,6 +48,10 @@ pub struct ApprovalRequest {
     /// 批准卡上展示的用途句（cli_run，design §3.4）；来源是
     /// [`super::tools::ApprovalPreview::purpose`]，事件与快照都从这里取（单一真源）。
     pub purpose: Option<String>,
+    /// 判定依据（M459，change add-approval-decision-reason）：这次调用**为什么**进闸
+    /// （`DecisionReason`，只可能来自产批准卡的两层）。事件与快照两条 UI 通道都从这里取
+    /// （单一真源）；`None` = 无依据可讲（旧载荷 / 未来新增的 Ask 层未标依据）。
+    pub reason: Option<DecisionReason>,
     /// 该批准卡支持「采纳且本会话不再问」次级动作（design §6；批准闸挂出的请求恒 true）。
     /// 是面板动作可见性的开关——`PendingApprovalSnapshot` 原样镜像给前端。
     pub remember: bool,
@@ -59,6 +65,7 @@ impl ApprovalRequest {
         diff: Option<String>,
         argv: Option<Vec<String>>,
         purpose: Option<String>,
+        reason: Option<DecisionReason>,
         remember: bool,
         tx: Sender<ApprovalSignal>,
     ) -> Self {
@@ -68,6 +75,7 @@ impl ApprovalRequest {
             diff,
             argv,
             purpose,
+            reason,
             remember,
             tx,
         }

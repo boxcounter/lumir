@@ -1,0 +1,38 @@
+{
+  "version": 1,
+  "responses": [
+    {
+      "text": "先看一眼环境。",
+      "tool_calls": [
+        {
+          "id": "call_wrap1",
+          "name": "cli_run",
+          "arguments": "{\"command\":\"zsh\",\"args\":[\"-lc\",\"echo HNA-WRAP\"],\"purpose\":\"用登录 shell 看一眼环境变量\"}"
+        }
+      ]
+    },
+    {
+      "text": "那装个依赖。",
+      "tool_calls": [
+        {
+          "id": "call_mode1",
+          "name": "cli_run",
+          "arguments": "{\"command\":\"npm\",\"args\":[\"install\"],\"purpose\":\"装一个依赖\"}"
+        }
+      ]
+    },
+    {
+      "text": "再试一条部署命令。",
+      "tool_calls": [
+        {
+          "id": "call_deny1",
+          "name": "cli_run",
+          "arguments": "{\"command\":\"npm\",\"args\":[\"run\",\"deploy\"],\"purpose\":\"把当前分支部署到预发\"}"
+        }
+      ]
+    },
+    {
+      "text": "部署被规则挡住了。"
+    }
+  ]
+}

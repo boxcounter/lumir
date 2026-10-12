@@ -21,6 +21,7 @@ import type { VaultStatus } from "./bindings/VaultStatus";
 import type { LinkResolveResult } from "./bindings/LinkResolveResult";
 import type { CreateNoteResult } from "./bindings/CreateNoteResult";
 import type { ThinkingEffort } from "./bindings/ThinkingEffort";
+import type { DecisionReason } from "./bindings/DecisionReason";
 import type { VaultWorkspace } from "./bindings/VaultWorkspace";
 import type { SessionResumeInfo } from "./bindings/SessionResumeInfo";
 import type { SessionSummary } from "./bindings/SessionSummary";
@@ -373,7 +374,11 @@ export type HarnessEvent = HarnessEventEnvelope &
     // 命令原文永远完整可见）；缺字段 = 旧后端，不展示。
     // remember 是 M413 契约的可选字段（该批准卡支持「采纳且本会话不再问」次级动作）——
     // 当前后端的事件载荷不带本键，缺键 = 批准闸挂出的请求 = 恒可见（前端按可见处理）。
-    | { type: "approval_request"; id: string; tool: string; diff?: string; argv?: string[]; purpose?: string; remember?: boolean }
+    // reason 是 M459 契约的可选字段（判定依据：哪一层让这次调用进闸，面板「判定依据」行据它渲染）；
+    // 类型取 Rust 侧的 ts-rs 导出（`src/bindings/DecisionReason.ts`，单一来源）。注意该联合里的
+    // `deny_rule` 变体**不会到达前端**（deny 不产批准卡，规则原文走工具行的错误文案）——
+    // 前端只处理三个可上卡的 kind（见 harness-panel.ts 的 parseDecisionReason）。
+    | { type: "approval_request"; id: string; tool: string; diff?: string; argv?: string[]; purpose?: string; reason?: DecisionReason; remember?: boolean }
     // usage（M443，change harness-cache-metrics §4.1）：cache 侧口径拆成会话累计与单回合两个
     // 投影——`cache_pct_session` = 控制行主读数（本逻辑会话 Σcached÷Σinput）、`cache_pct_turn`
     // = hover 气泡里的单回合值、`cache_write_tokens[_session]` = 本回合 / 本会话累计的缓存写入、
