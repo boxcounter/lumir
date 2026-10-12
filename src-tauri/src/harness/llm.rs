@@ -213,6 +213,11 @@ const KIMI_PRESET: ProviderPreset = ProviderPreset {
         "context_length_exceeded",
         "maximum context length",
         "context window",
+        // M463：Kimi coding 端点（`api.kimi.com/coding/v1`）的超限话术与平台端点不同
+        // ——实测原文「Your request exceeded k3-256k model token limit: 262144」，
+        // 上面三条一条都不命中，`context_overflow` 因此恒 false，spec「超限兜底」的
+        // 自动压缩+重试对该端点从不触发（回合直接终态报错）。补 "token limit" 覆盖该形态。
+        "token limit",
     ],
 };
 
@@ -1378,6 +1383,13 @@ mod tests {
     fn overflow_indicators_match_provider_dialects() {
         let kimi = preset(&HarnessProvider::Kimi);
         assert!(is_overflow(kimi, "context_length_exceeded", ""));
+        // M463：coding 端点的真实超限话术（原文来自真机会话 JSONL 的 llm_error）——
+        // 修前三条特征串一条都不命中，这条断言对修前的预设必 FAIL（区分度自证）。
+        assert!(is_overflow(
+            kimi,
+            "harness_http_error",
+            "Your request exceeded k3-256k model token limit: 262144"
+        ));
         let deepseek = preset(&HarnessProvider::Deepseek);
         assert!(is_overflow(
             deepseek,
