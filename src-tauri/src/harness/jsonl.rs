@@ -291,6 +291,11 @@ pub struct SessionFile {
     pub session_open: serde_json::Value,
     /// 全部记录的 payload（含 `session_open` 自身，按文件序）。
     pub records: Vec<serde_json::Value>,
+    /// 每条记录**信封**的 `ts`（UNIX 秒），与 [`SessionFile::records`] 逐位对齐；历史行缺该
+    /// 字段时记 `None`（宽容读，不因此判整份文件非法）。会话恢复的时间读数数据源（M460）：
+    /// wire 项自身不带时间戳，重建面板消息时按它所在的记录时刻归属
+    /// （[`crate::harness::restored_messages_ts`]）。
+    pub record_ts: Vec<Option<u64>>,
 }
 
 /// 读取并解析一份会话留存文件。每行 envelope（`{ts, payload}`）逐条解析；首行必须是
@@ -305,6 +310,7 @@ pub fn read_session_file(path: &Path) -> Result<SessionFile, CommandError> {
         .param("reason", e.to_string())
     })?;
     let mut records = Vec::new();
+    let mut record_ts = Vec::new();
     let mut first_ts = None;
     for (index, line) in content.lines().enumerate() {
         if line.trim().is_empty() {
@@ -320,6 +326,7 @@ pub fn read_session_file(path: &Path) -> Result<SessionFile, CommandError> {
         if records.is_empty() {
             first_ts = envelope["ts"].as_u64();
         }
+        record_ts.push(envelope["ts"].as_u64());
         records.push(envelope["payload"].clone());
     }
     let Some(session_open) = records.first().filter(|r| r["kind"] == "session_open") else {
@@ -332,6 +339,7 @@ pub fn read_session_file(path: &Path) -> Result<SessionFile, CommandError> {
         first_ts,
         session_open: session_open.clone(),
         records,
+        record_ts,
     })
 }
 
@@ -468,6 +476,24 @@ mod tests {
             "留存必须逐字节保序列化消息"
         );
         assert!(second["ts"].is_u64(), "{lines:?}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// M460：读取侧保留每条记录**信封**的 `ts`（与 payload 逐位对齐）——会话恢复的时间读数
+    /// 数据源。缺该字段的历史行记 `None`（宽容读，不伪造读数）。
+    #[test]
+    fn read_session_file_keeps_per_record_envelope_ts() {
+        let dir = tmpdir("record-ts");
+        let path = dir.join("s1759912345678-tsread.jsonl");
+        let lines = [
+            r#"{"ts":100,"payload":{"kind":"session_open","session_id":"s1759912345678-tsread"}}"#,
+            r#"{"ts":105,"payload":{"kind":"llm_request","request":{"messages":[]}}}"#,
+            r#"{"payload":{"kind":"llm_response","text":"旧行缺 ts"}}"#,
+        ];
+        std::fs::write(&path, lines.join("\n")).unwrap();
+        let file = read_session_file(&path).unwrap();
+        assert_eq!(file.record_ts, vec![Some(100), Some(105), None]);
+        assert_eq!(file.first_ts, Some(100));
         let _ = std::fs::remove_dir_all(&dir);
     }
 

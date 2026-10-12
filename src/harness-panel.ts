@@ -1651,6 +1651,30 @@ export function sessionWhen(ts: number, now: number, lang: Language = currentLan
   return formatDate(new Date(at), "short", lang);
 }
 
+/** 消息时间读数的形态（M460）：
+ *  - `live` = 上屏打戳的消息（本轮刚发的）——沿用 M351 的分档（见 [`relativeWhen`]，含「刚刚」
+ *    与「昨天」兜底），读数一定新；
+ *  - `restored` = 恢复重放 / 快照重建的消息——读数来自留存，可以跨天甚至跨周，「昨天」对一周前
+ *    的消息是错读数，故按 [`sessionWhen`] 同族口径：同日窄相对、跨天短日期。
+ *  两种形态并存是刻意的：live 档的「刚刚」是 M351 定下的观感（sessionWhen 的 `0秒前` 更差），
+ *  而 restored 档必须能表达「很久以前」。 */
+export type WhenForm = "live" | "restored";
+
+/** 消息 meta 行的时间读数文本（`· ` + 读数）：首绘与 30s 刷新 / 语言切换共用这一个出口——
+ *  两处各算一次会让重绘与首绘漂（REVIEW.md 第 8 条）。 */
+export function whenTextOf(
+  at: number,
+  now: number,
+  form: WhenForm = "live",
+  lang: Language = currentLanguage(),
+): string {
+  const body =
+    form === "restored"
+      ? sessionWhen(Math.floor(at / 1000), now, lang)
+      : relativeWhen(at, now, lang);
+  return `· ${body}`;
+}
+
 /** 会话浮层取数结果（M442，`harness_list_sessions` 往返的三种终态）。 */
 export type SessListOutcome =
   | { kind: "entries"; count: number } // 取数成功，清单有 count 条
@@ -2070,14 +2094,16 @@ type MdSyntaxNode = ReturnType<typeof mdParser.parse>["topNode"];
 
 /** 不产出的节点：各类「标记」（** 的星号、代码围栏的 ```、链接的 []()、引用的 > 等）与
  *  链接定义行。它们是有名子节点，跳过即可；节点之间的纯文本由间隙填充承担（见
- *  renderInlineChildren——lezer 不给纯文本包节点，有名子节点之间的区间就是文本）。 */
+ *  renderInlineChildren——lezer 不给纯文本包节点，有名子节点之间的区间就是文本）。
+ *  **`URL` 不在此列**（M460）：裸 URL 是 GFM 产出的**顶层节点**（段落、表格 cell 里都是），
+ *  跳过它等于把消息里的 URL 整段吃掉；它在 `Link` / `Autolink` **之下**时仍须跳过（那是
+ *  `[文字](url)` 括号里那段，由宿主分支取作 href），该区分见 renderInlineNode 的 URL 分支。 */
 const SKIP_NODES = new Set([
   "EmphasisMark",
   "CodeMark",
   "StrikethroughMark",
   "LinkMark",
   "LinkTitle",
-  "URL",
   "HeaderMark",
   "QuoteMark",
   "ListMark",
@@ -2098,6 +2124,21 @@ function renderInlineChildren(container: HTMLElement, node: MdSyntaxNode, doc: s
     pos = Math.max(pos, child.to);
   }
   if (node.to > pos) container.append(document.createTextNode(doc.slice(pos, node.to)));
+}
+
+/** 链接元素（三种入口共用：`Link` / `Autolink` / 裸 `URL` 节点）。href 只作展示与 title，
+ *  导航一律被拦下交给 openExternalUrl（scheme 白名单在 Rust 侧判定，前端不自行判能不能开
+ *  ——与编辑器内外链同一条信任边界）。三条入口共用这一个出口是刻意的：信任边界只有一份。 */
+function createLinkEl(href: string): HTMLAnchorElement {
+  const el = document.createElement("a");
+  el.className = "lumir-hp-link";
+  el.href = href;
+  el.title = href;
+  el.addEventListener("click", (event) => {
+    event.preventDefault();
+    if (href !== "") openExternalUrl(href).catch(() => {});
+  });
+  return el;
 }
 
 function renderInlineNode(container: HTMLElement, node: MdSyntaxNode, doc: string): void {
@@ -2134,21 +2175,27 @@ function renderInlineNode(container: HTMLElement, node: MdSyntaxNode, doc: strin
     case "Autolink": {
       const urlNode = node.getChild("URL");
       const href = urlNode !== null ? textOf(doc, urlNode) : "";
-      const el = document.createElement("a");
-      el.className = "lumir-hp-link";
-      // href 只作展示与 title，导航一律被拦下交给 openExternalUrl（scheme 白名单在
-      // Rust 侧判定，前端不自行判能不能开——与编辑器内外链同一条信任边界）。
-      el.href = href;
-      el.title = href;
-      el.addEventListener("click", (event) => {
-        event.preventDefault();
-        if (href !== "") openExternalUrl(href).catch(() => {});
-      });
+      const el = createLinkEl(href);
       if (node.name === "Autolink") {
         el.textContent = textOf(doc, node).replace(/^<|>$/g, "");
       } else {
         renderInlineChildren(el, node, doc);
       }
+      container.append(el);
+      return;
+    }
+    case "URL": {
+      // 裸 URL（M460）：GFM 对 `https://…` / `www.…` / 邮箱字面量直接产 `URL` 节点——段落与
+      // 表格 cell 里都是**顶层**节点（父节点是 Paragraph / TableCell 一类宿主）。它必须上屏
+      // 为链接，否则整段 URL 在面板里隐身（Alex 2026-10-12 dogfood：表格里的链接没渲染出来）。
+      // 作为 `Link` / `Autolink` 的**子节点**时跳过：那段 URL 是链接语法的一部分，宿主分支
+      // 已经把它取作 href，再上屏一次就是重复显示源码。
+      if (node.parent !== null && (node.parent.name === "Link" || node.parent.name === "Autolink")) {
+        return;
+      }
+      const url = textOf(doc, node);
+      const el = createLinkEl(url);
+      el.textContent = url; // 裸 URL 的可见文本就是 URL 原文（没有「显示文本」之说）
       container.append(el);
       return;
     }
@@ -2310,8 +2357,10 @@ function renderBlock(container: HTMLElement, node: MdSyntaxNode, doc: string): v
   }
 }
 
-/** 一段完整 Markdown → 追加渲染到容器（多块）。 */
-function renderMarkdownInto(container: HTMLElement, source: string): void {
+/** 一段完整 Markdown → 追加渲染到容器（多块）。导出是为了让单测用最小 DOM 替身驱动**这份
+ *  真渲染件**（tests/unit/harness-transcript-render.test.ts：裸 URL 上屏为锚、Link 之下的
+ *  URL 不重复上屏）——纯函数层驱动不到 DOM 面，重建一份渲染器则失去判据（REVIEW.md 第 8 条）。 */
+export function renderMarkdownInto(container: HTMLElement, source: string): void {
   const tree = mdParser.parse(source);
   renderBlock(container, tree.topNode, source);
 }
@@ -4580,11 +4629,16 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     }
   }
 
-  // ── 消息 meta 行（M351，design §3.1/§4）：who（角色）+ when（相对时间）─────────────
-  /** 建 who 行：角色 span + 可选 when span（at = 上屏时间戳 ms；null = 无戳不建——快照
-   *  恢复的历史消息无戳，只显示角色，不伪造读数）。when 文本 = 「· 」间隔号（i18n-exempt
-   *  标点）+ relativeWhen；初始值立即算一次（不等 30s 刷新拍）。 */
-  function createWhoLine(role: "user" | "assistant", at: number | null): HTMLElement {
+  // ── 消息 meta 行（M351，design §3.1/§4）：who（角色）+ when（时间读数）─────────────
+  /** 建 who 行：角色 span + 可选 when span（at = 消息时间戳 ms；null = 无戳不建——缺 ts 的
+   *  旧快照只显示角色，不伪造读数）。when 文本 = 「· 」间隔号（i18n-exempt 标点）+ 读数，
+   *  读数形态按 `form`（M460：live = 上屏打戳、restored = 恢复重放）经 [`whenTextOf`] 取值；
+   *  初始值立即算一次（不等 30s 刷新拍），形态落 dataset 供重绘读回（两处同源）。 */
+  function createWhoLine(
+    role: "user" | "assistant",
+    at: number | null,
+    form: WhenForm = "live",
+  ): HTMLElement {
     const who = document.createElement("div");
     who.className = "lumir-hp-who";
     who.dataset.role = role;
@@ -4596,14 +4650,15 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       const when = document.createElement("span");
       when.className = "lumir-hp-when";
       when.dataset.ts = String(at);
-      when.textContent = `· ${relativeWhen(at, Date.now())}`;
+      when.dataset.whenForm = form;
+      when.textContent = whenTextOf(at, Date.now(), form);
       who.append(when);
     }
     return who;
   }
 
   /** who/when 重绘共用出口：30s 定时器与 applyLabels（语言切换）都走这里——角色名随语言、
-   *  when 随时间与语言重算；消息正文不改写。 */
+   *  when 随时间与语言重算（读数形态按 dataset 里那份读回，不重算——M460）；消息正文不改写。 */
   function refreshWhoLines(): void {
     const now = Date.now();
     for (const who of transcript.querySelectorAll<HTMLElement>(".lumir-hp-who")) {
@@ -4611,7 +4666,8 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       if (roleEl !== null) roleEl.textContent = t(who.dataset.role === "user" ? "D385" : "D386");
       const when = who.querySelector<HTMLElement>(".lumir-hp-when");
       if (when?.dataset.ts !== undefined) {
-        when.textContent = `· ${relativeWhen(Number(when.dataset.ts), now)}`;
+        const form: WhenForm = when.dataset.whenForm === "restored" ? "restored" : "live";
+        when.textContent = whenTextOf(Number(when.dataset.ts), now, form);
       }
     }
     // 批准决策记录的相对时间戳同口径（M384）：30s 定时器驱动，与 who 行的 when 一致重算。
@@ -4624,14 +4680,20 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
    * 用户消息同构沉淀（add-harness-quote-cards spec「发送后同构沉淀」）：卡片与问题段落
    * 按交错顺序上下排布，卡片无 ×、可点击跳回（QC3 注册处理器后生效）。空段落不渲染
    * （序列化也不产出，视觉与数据同形）。source = 发送前原始输入（序列化文本）——
-   * 复制钮的源，非渲染后 HTML。at = 上屏时间戳（快照恢复传 null：无戳不显示 when）。
+   * 复制钮的源，非渲染后 HTML。at = 消息时间戳（缺 ts 传 null：不显示 when）；form = 读数
+   * 形态（M460：live = 本轮上屏打戳、restored = 快照 / 会话恢复重放）。
    * M351：结构 = who 行 + body 体（气泡样式挂 body，design §3.1）。
    */
-  function appendUserMessage(blocks: readonly ComposerBlock[], source: string, at: number | null): void {
+  function appendUserMessage(
+    blocks: readonly ComposerBlock[],
+    source: string,
+    at: number | null,
+    form: WhenForm = "live",
+  ): void {
     collapseTools(); // 新用户消息 = 上一轮终态（幂等，无在途块时无操作）
     const el = document.createElement("div");
     el.className = "lumir-hp-msg lumir-hp-msg-user";
-    el.append(createWhoLine("user", at));
+    el.append(createWhoLine("user", at, form));
     const body = document.createElement("div");
     body.className = "lumir-hp-body";
     // 编号一次算出（与 composer 侧同源）：transcript 上每条消息各按自己的图序显示编号——
@@ -5715,7 +5777,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       const blocks = parseQuoteMessage(record.text);
       // 会话名按同口径从恢复的消息重算（首条用户消息的原始问题文本）。
       if (firstUserText === null) firstUserText = firstUserTextOf(blocks);
-      appendUserMessage(blocks, record.text, messageTs(record)); // 复制源 = 留存原文；戳 = 后端 ts（无则不显示）
+      appendUserMessage(blocks, record.text, messageTs(record), "restored"); // 复制源 = 留存原文；戳 = 后端 ts（无则不显示）
     } else if (role === "assistant") {
       // 消息边界（M368）：上一条 assistant 消息的工具清单块在此收尾。不收尾的话
       // ensureToolsBlock 会把其后的工具记录塞回**上一条**消息的块里——一段长会话的全部
@@ -5733,7 +5795,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       } else {
         const el = document.createElement("div");
         el.className = "lumir-hp-msg lumir-hp-msg-assistant";
-        el.append(createWhoLine("assistant", messageTs(record))); // 无 ts 的旧快照：只显示角色（不伪造）
+        el.append(createWhoLine("assistant", messageTs(record), "restored")); // 无 ts 的旧快照：只显示角色（不伪造）
         if (reasoning !== null) el.append(createRestoredThinking(reasoning));
         if (text !== null) {
           const body = document.createElement("div");
@@ -5809,7 +5871,8 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
         const when = document.createElement("span");
         when.className = "lumir-hp-when";
         when.dataset.ts = String(at);
-        when.textContent = `· ${relativeWhen(at, Date.now())}`;
+        // 恢复路径的工具行：读数按 restored 形态（M460——留存 ts 可以很老，跨天给短日期）。
+        when.textContent = whenTextOf(at, Date.now(), "restored");
         tres.append(document.createTextNode(" "), when);
       }
       row.append(tres);
