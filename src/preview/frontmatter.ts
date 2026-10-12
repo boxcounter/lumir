@@ -43,8 +43,8 @@ export interface FrontmatterBlock {
  *   不是清扫范围；
  * - 排除区与渲染层必须同口径：wikilink 排除的范围就是「properties 区块盖住的那段文字」。
  *   改动前两者不同口径（512 vs 200），后果是 >200 行区块里「看不见却能激活」的链接。
- * 已知残留：Rust 的 link_graph.rs 仍自带一份 200（本 mission 未碰 Rust），201–512 行这一段
- * 两侧口径仍不同——改动前即如此，已另发 finding 建议对齐（或经 bindings 单向下发）。
+ * 跨语言同口径已闭合（M469，2026-10-12）：Rust 的 link_graph.rs 上限已对齐 512，
+ * 并有机械单测 frontmatter_limit_matches_ts_constant 读本文件抓值断言两侧一致。
  */
 export const MAX_FRONTMATTER_LINES = 512;
 
