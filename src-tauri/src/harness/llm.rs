@@ -110,9 +110,12 @@
 //!
 //! **回放形状归一（M464，2026-10-12）**：`store:false` 下**剥掉 reasoning 项的 `id`**，改用
 //! `{type:"reasoning", summary, [content], encrypted_content}` 回放。`id`（`rs_*`）在
-//! store:false 下不可解析，重放它属非标用法——头号假设是服务端按 id 展开完整思考、把隐形
-//! token 计入 input（事故会话可见 ≈10.1 万 token 却被判超 262144）。对齐两处靶子：OpenAI
-//! store:false 官方回放模式（请求 `include:["reasoning.encrypted_content"]`、重放
+//! store:false 下不可解析，重放它属非标用法。该「id 展开计账」的头号假设经 M464 三发对照
+//! 探测**未被支持**——剥 id 不改变判定，**reasoning 项本身的在场**才是端点 400 的膨胀源
+//! （机制未完全钉死，等长替换第四发未跑）；结论与证据的 canonical 居所是
+//! `openspec/specs/harness/spec.md` 的「已知边界」注与 `test-results/m464-probe/`，此处只留指针。
+//! 本次归一按「对齐官方 store:false 回放形状」独立成立——靶子两处：OpenAI 的 store:false
+//! 官方回放模式（请求 `include:["reasoning.encrypted_content"]`、重放
 //! `{summary, encrypted_content}` 不带 id）与 Kimi Code 内嵌的 responses base
 //! （`openai-responses/lower.ts` 的 `{summary, type, encrypted_content}` 无 id；请求侧
 //! `normalizeOpenAIResponsesReasoning` 把 `reasoning:{effort,summary:"auto"}` 与
