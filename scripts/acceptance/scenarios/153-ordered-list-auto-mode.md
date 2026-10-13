@@ -100,7 +100,8 @@ lazy continuation，树驱动的渲染与续行都不认它。本 change 按文�
   截图证据与 Alex 手感，与套件「不做手感判定」分工一致。
 - **IME 组合期不重复**（Alex 报告的第二缺陷：中文输入法输入字符时多出「1. 」）的
   判据：修复落在 DOM 入口拒收 WebKit 原生自动列表（insertOrderedList 族
-  beforeinput），英文路径直输照绿（本场景的「恰出现一次」断言）+ chromium 视觉层
+  beforeinput），英文路径直输照绿（本场景用例 1 的落盘断言：续出 `/1\. alpha\n2\. /`、
+  无重复 marker `/1\. 1\. /` 为负）+ chromium 视觉层
   有派发事件的接线断言。真机组合态无法用合成键盘复现（合成事件不进 TSM，
   探针证据 test-results/m461-probe/readings.md），**真 IME 复验留 dogfood**——若
   Alex 的中文输入法仍复现重复，按「裸 DOM 变更路径」另立项（本拦截不兜该形态，
