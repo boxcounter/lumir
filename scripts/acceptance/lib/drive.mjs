@@ -490,6 +490,56 @@ export async function resizeWindowAX(pid, width, height) {
   }
 }
 
+/** 启动后把窗口钉到固定尺寸（M491）：产品侧 `apply_startup_size`（src-tauri/src/lib.rs:242-322）
+ *  把首启尺寸设为工作区 90%、静默盖过 tauri.conf 的 1200×800 占位（且该行为本身是场景 126 的
+ *  判据本体），坐标/像素敏感场景（53、122 等）因此拿到不确定几何。本函数在就绪门之后把窗口经
+ *  AXSize 直写钉回构建配置的占位尺寸，恢复确定性；通道即本文件 `resizeWindowAX`（M236 已验证），
+ *  不在套件里新增第二条 resize 通道。
+ *
+ *  返回**证据行**（实际宽高取回读的生效值，不取请求值——窗口管理器可能钳制）；`prefix` 让重启
+ *  路径写成「重启窗口钉尺寸：…」与首启区分。钉不上抛错（swift 缺失 / 无辅助功能权限 / 回读无法
+ *  解析）——由调用方（run.mjs 的启动段）判基建 INVALID，不静默放行：钉不住尺寸的跑批与没钉一样，
+ *  坐标场景照旧漂移。 */
+export async function pinWindowSize(cu, pid, { width, height }, { prefix = "" } = {}) {
+  const startMs = Date.now();
+  const out = await resizeWindowAX(pid, width, height);
+  const m = /size=(\d+)x(\d+)/.exec(out);
+  if (!m) throw new InfraError(`窗口钉尺寸：回读无法解析（${JSON.stringify(out)}，期望 size=<w>x<h>）`);
+  const actualW = Number(m[1]);
+  const actualH = Number(m[2]);
+  const clamped = actualW !== Math.round(width) || actualH !== Math.round(height);
+  // 等 webview 跟随新尺寸重排：AXSize 写入后 webview 有一拍过渡（M491 探针实测钉后 +0ms 出现
+  // 「webview 比窗口高 64px」的过渡态、+2s 内收敛成铺满）。轮询「铺满差 ≤4px」（判据与
+  // assertOverlayChrome 同源）最多 6s；等不到不判死——残余差如实写进证据行，几何/像素断言
+  // 自己会对着真实画面判，不在这一步发明新的失败类别。
+  let topGap = null;
+  let heightGap = null;
+  const deadline = Date.now() + 6000;
+  do {
+    const ax = await readAx(cu, pid).catch(() => null);
+    const win = ax?.nodes.find((n) => n.role === "AXWindow" && n.bbox);
+    const areas = ax?.nodes.filter((n) => n.role === "AXScrollArea" && n.bbox) ?? [];
+    if (win && areas.length) {
+      const area = areas.reduce((a, b) => (a.bbox.w * a.bbox.h >= b.bbox.w * b.bbox.h ? a : b));
+      topGap = area.bbox.y - win.bbox.y;
+      heightGap = win.bbox.h - area.bbox.h;
+      if (topGap <= 4 && heightGap <= 4) {
+        return (
+          `${prefix}窗口钉尺寸：请求 ${width}×${height}，回读生效 ${actualW}×${actualH}（AXSize 直写；` +
+          `webview 重排 settle ${Date.now() - startMs}ms）` +
+          (clamped ? "；⚠ 生效值 ≠ 请求值——窗口管理器钳制（屏幕放不下该尺寸的已知环境边界），坐标场景按生效值漂" : "")
+        );
+      }
+    }
+    await sleep(400);
+  } while (Date.now() < deadline);
+  return (
+    `${prefix}窗口钉尺寸：请求 ${width}×${height}，回读生效 ${actualW}×${actualH}（AXSize 直写）；` +
+    `⚠ webview 未在 6s 内铺满新尺寸（残余：顶边差 ${topGap}px / 高度差 ${heightGap}px）` +
+    (clamped ? "；⚠ 生效值 ≠ 请求值——窗口管理器钳制" : "")
+  );
+}
+
 /** 工作区尺寸缓存（M437）：屏尺寸在一次跑批里不变，读一次就够——swift 是解释执行，每条断言都
  *  起一次进程会白付一秒级的代价（相对判据因此只在这一层读一次）。 */
 let workAreaCache = null;
