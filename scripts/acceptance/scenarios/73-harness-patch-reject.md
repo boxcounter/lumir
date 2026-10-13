@@ -8,6 +8,10 @@ config:
   harness:
     provider: mock
     fixture: "$fixtures/harness-mock-patch.json"
+    # read_only 档是「读自动放行、一切写逐个问」（change add-harness-permission-modes，2026-10-09
+    # Alex 裁决）——本场景判的批准闸（vault_patch 逐个问）只在该档成立。默认档 vault_write 下
+    # vault_patch 自动放行、无闸，本场景必红（M480 归因，M481 回扫）。
+    permission_mode: read_only
 steps:
   - name: 记下基线（sha256 + mtime）
     do: record
@@ -111,7 +115,11 @@ steps:
       - shot: 03-详情展开
 ---
 
-spec 判据（harness「权限机制 · 采纳与拒绝」的拒绝侧）：拒绝则磁盘逐字节不变，模型收到
+spec 判据（harness「权限机制 · 采纳与拒绝」的拒绝侧）：
+**模式前提**：本场景在 `read_only` 档下跑（`config.harness.permission_mode: read_only`）——
+该档「读自动放行、一切写逐个问」，`vault_patch` 因此逐个问、批准闸成立。默认档 `vault_write`
+下 `vault_patch` 自动放行、无闸（三档权限 2026-10-09 落地后本场景从未回扫，M481 补此前提）。
+拒绝则磁盘逐字节不变，模型收到
 对应结果。fixture 与场景 72 共用同一份（harness-mock-patch.json）——同一个 patch 提案，
 72 采纳、73 拒绝，两侧判据互斥。
 

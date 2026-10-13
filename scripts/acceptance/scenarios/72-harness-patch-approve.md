@@ -8,6 +8,10 @@ config:
   harness:
     provider: mock
     fixture: "$fixtures/harness-mock-patch.json"
+    # read_only 档是「读自动放行、一切写逐个问」（change add-harness-permission-modes，2026-10-09
+    # Alex 裁决）——本场景判的批准闸（vault_patch 逐个问）只在该档成立。默认档 vault_write 下
+    # vault_patch 自动放行、无闸，本场景必红（M480 归因，M481 回扫）。
+    permission_mode: read_only
 steps:
   - name: 记下 patch 前的磁盘基线（sha256 + mtime）
     do: record
@@ -35,7 +39,7 @@ steps:
     do: key
     key: enter
 
-  - name: 等批准闸出现（写类工具默认 ask，循环挂起）
+  - name: 等批准闸出现（read_only 档：vault_patch 逐个问，循环挂起）
     do: waitFor
     waitFor:
       has: ["要修改这个文件吗？"]
@@ -119,6 +123,9 @@ steps:
 ---
 
 spec 判据（harness「权限机制 · 采纳与拒绝」的采纳侧 + fs-io「局部 patch 写入」）：
+**模式前提**：本场景在 `read_only` 档下跑（`config.harness.permission_mode: read_only`）——
+该档「读自动放行、一切写逐个问」，`vault_patch` 因此逐个问、批准闸成立。默认档 `vault_write`
+下 `vault_patch` 自动放行、无闸（三档权限 2026-10-09 落地后本场景从未回扫，M481 补此前提）。
 采纳前磁盘逐字节不变；采纳后 patch 按口径落盘——old_string 唯一命中替换、未触及部分
 不变（用三行连续块断言：若未触及部分被动过，连续块必然断开）；被 patch 文件有打开中的
 编辑器会话，经既有 watch → 会话刷新通路同步（本场景的编辑器从开头就开着
