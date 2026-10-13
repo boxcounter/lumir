@@ -45,6 +45,7 @@
 - **harness 面板的外链打开失败一律静默（无 toast）**（worker-m460，2026-10-12，medium）→ 点「看起来能点」的链接零反馈。指针 `.tower/comms/findings/20261012-worker-m460-improve-harness-toast.md`。
 - **登录 shell PATH 解析失败静默回退，无可观测信号**（worker-m466，2026-10-12，low，idea）→ M466 后续候选。指针 `.tower/comms/findings/20261012-worker-m466-idea-shell-path-m466.md`。
 - **worker 长命令用 sleep 盲等轮询（反模式），须沉淀纪律**（tower，2026-10-12，low）→ 落点 = 纪律文本（worker briefing / AGENTS.md）。指针 `.tower/comms/findings/20261012-tower-improve-worker-sleep.md`。
+- **m149-tabs 视觉用例偶发超时（`.ft-row[title="long.md"]` 30s 等不到），负载相关 flake**（tower，2026-10-13，low）→ 同日三次运行：全量 PASS → 全量 FAIL（11.0m 高负载跑）→ 定向 12/12 PASS；非产品回归。复发 ≥2 次再改显式就绪等待。指针 `.tower/comms/findings/20261013-tower-bug-m149-tabs-ft-row-30s-flake.md`。
 - **render-codeblock.spec.ts 缺 ⌃⌥S 焦点入口的常驻结构断言**（worker-m474 建议、reviewer-m474 附议，2026-10-12，low）→ M474 用临时 spec 验过的三条断言（⌃⌥S 交焦容器 / `→`=120px / Escape 交还）用完即删、未入库，键盘入口暂无机器判据；断言形态见 M474 完工报告。指针：无独立 finding。
 
 - **composer 导航写回：后块是段落时行级命令把光标写到下一段段首**（worker-m462，2026-10-12，medium，**M465 已修、待验收**）→ 根因在读侧（`normalizeComposerCaret` 无条件把段落末缘折成后块前缘，折出的模型值描述的是下一行行首）；M465 收紧折叠条件。指针：无独立 finding（原文见 git 历史）。
