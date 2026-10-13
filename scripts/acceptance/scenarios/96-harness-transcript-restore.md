@@ -103,7 +103,7 @@ steps:
 
   # ── live 路径：一轮里两条工具行 → 终态折叠为一行摘要钮 ────────────────────────────
   - name: 点 composer 聚焦（面板随存储装配，焦点不在输入框里，与 ⌘⇧A 打开的形态不同）
-    do: click
+    do: clickInNode
     target: { role: AXTextArea, name: "问点什么" }
   - name: 输入提问并 Enter 发送
     do: keys

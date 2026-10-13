@@ -77,7 +77,7 @@ steps:
 
   # ── 第一轮：冷启动（cached_tokens == 0）────────────────────────────────────────
   - name: 点 composer 聚焦
-    do: click
+    do: clickInNode
     target: { role: AXTextArea, name: "问点什么" }
   - name: 输入提问并 Enter 发送
     do: keys
@@ -127,7 +127,7 @@ steps:
 
   # ── 第二轮：高命中（cached 60000/65536 = 92%）——控制行主读数仍是累计 ────────────
   - name: 点 composer 聚焦
-    do: click
+    do: clickInNode
     target: { role: AXTextArea, name: "问点什么" }
   - name: 输入第二个提问并发送
     do: keys
