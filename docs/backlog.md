@@ -24,6 +24,8 @@
 
 ## 已裁已立项（落地由 tower 派发的 mission 承担）
 
+- **验收套件 harness 透传面缺 `permission_mode` 键 + 72/73/74 场景期望过期**（agent-m480，2026-10-13）→ 由 M481 落地：app.mjs 透传面加 `permission_mode`、72/73/74 走 `read_only` 档复活批准流断言。归因：M407 权限模式（默认 vault_write 档库内写免闸，2026-10-09 Alex 裁决）合入后场景未回扫。指针 `.tower/comms/findings/20261013-agent-m480-improve-harness-permission-mode.md`。
+
 ## 承接残项（仍在生效的长期口径 + 未闭合尾巴）
 
 - **版本号 bump 口径（原「版本号 bump 策略」条的 canonical 段）**：批次收尾按 semver bump——0.x 期间功能批 MINOR、缺陷批 PATCH；唯一真源 `src-tauri/tauri.conf.json` 的 `version`，`package.json` 同步跟随；改真源副本时逐处跟改（视觉桩 `tests/visual/scenes/tauri-stub.ts` 的缺省 `appMeta`、`tests/visual/scenes/titlebar-identity.spec.ts` 的 `VERSION`、`src-tauri/Cargo.toml:3` 与 `Cargo.lock` 的 `[[package]] name = "lumir"`）。**未落地的一格**：把 bump 动作写进 `docs/process/openspec-workflow.md` 的批次收尾 checklist 不在 M238 scope 内，待 tower 补。
@@ -35,6 +37,8 @@
 ## 待修 findings（不阻塞）
 
 一条一行（主题 + 来源/日期/severity + gist + finding 指针）；叙述与读数明细见 git 历史与指针文件。
+
+- **权限语义类 change 的 tasks 缺「回扫既有场景的闸期望」一项（流程缺口）**（agent-m480，2026-10-13，medium）→ M407 归档 tasks 6.7 只新增 109/110/111、未回扫 72/73/74，导致三轮验收假红才暴露；建议沉淀进 `docs/process/openspec-workflow.md`：凡改权限/闸语义的 change，tasks 必须含「回扫既有验收场景的闸期望」一项。指针 `.tower/comms/findings/20261013-agent-m480-improve-change-72-73-74.md`。
 
 - **验收 82/121 在未改动的 master 上即已 FAIL（交付序列化的 quote / msg-quote 断言不命中）**（worker-m456，2026-10-11，medium，**待归因、不在 M456 scope**）→ 82-quote-card-mixed-edit 与 121-harness-message-excerpt 在未改动 master（`2608e64`）上即 FAIL，此前是绿的（82：10-06/07/08 PASS；121：10-10 PASS）；断言读到的是系统装配记录（`assembly`），期望的 `<quote …>` / `<msg-quote …>` 交付文本不在其中，根因候选面是 `src/quote-card.ts` 的 projectDelivery / serializeDelivery 与 `src/harness-panel.ts` 的投递投影（约 M454 `6f2b614`）。复现：`node scripts/acceptance/run.mjs 82` → `0/1 PASS`。指针 `.tower/comms/findings/20261011-worker-m456-bug-82-121-master-fail-quote-msg-quote.md`。
 
