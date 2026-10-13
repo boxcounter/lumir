@@ -1104,6 +1104,23 @@ export function transposeCharsAtCaret(
   return write(text.slice(0, prev) + b + a + text.slice(pos), pos);
 }
 
+/** 一步模型编辑的模型步：交给 `withModel` 的模型操作 + force。 */
+export interface ComposerDeleteStep {
+  readonly op: (current: readonly ComposerBlock[]) => { blocks: ComposerBlock[]; caret: ComposerCaret };
+  readonly force: boolean;
+}
+
+/** 选区删除的模型步（删除族与 kill 族的**选区档**共用）：把当前选区整段删掉。
+ *
+ * force 恒为 **true**——删除是结构性操作（选区可跨卡片整块移除），SHALL 独立成一个撤销步；
+ * 与 `deleteFamilyStep` 的就地档同款判词（贴图等 force=true 的结构操作后 1s 内的选区删除若
+ * 被聚簇早退吞掉，⌘Z 会弹回结构操作前的空态）。返回 null = 无选区或选区折叠（没有要删的选区）。
+ */
+export function selectionDeleteStep(sel: ComposerSelection | null): ComposerDeleteStep | null {
+  if (sel === null || sameCaret(sel.anchor, sel.focus)) return null;
+  return { op: (current) => deleteSelectionRange(current, sel), force: true };
+}
+
 /** 删除族（⌃D / ⌃H 与裸 Backspace / Delete）的模型步：交给 `withModel` 的模型操作 + force。
  *
  * force 恒为 **true**——删除是结构性操作（卡片按整体作用、可整块移除），SHALL 独立成一个撤销步：
@@ -1114,24 +1131,18 @@ export function transposeCharsAtCaret(
  * 三个入口（`runComposerCommand` 的 `deleteAtCaret` 两档、composer 的裸 Backspace/Delete 分支）
  * 共用本函数——force 的判定因此只有一处真源，MUST NOT 各写一份字面量（M447/M453 曾把这三处各自
  * 落成 false，与 `withModel` 文档「force=true 用于结构性操作（卡片插入/移除、粘贴、拆段、退格）」
- * 漂移而无人可对账）。
+ * 漂移而无人可对账）。选区档与 kill 族的选区档再共用一个 `selectionDeleteStep`。
  *
  * 返回 null = 本拍无模型动作（无选区，或就地删除的空转：段首退格 / 前向删除到末缘）。
  */
-export interface ComposerDeleteStep {
-  readonly op: (current: readonly ComposerBlock[]) => { blocks: ComposerBlock[]; caret: ComposerCaret };
-  readonly force: boolean;
-}
-
 export function deleteFamilyStep(
   blocks: readonly ComposerBlock[],
   sel: ComposerSelection | null,
   op: (blocks: readonly ComposerBlock[], caret: ComposerCaret) => { blocks: ComposerBlock[]; caret: ComposerCaret } | null,
 ): ComposerDeleteStep | null {
   if (sel === null) return null;
-  if (!sameCaret(sel.anchor, sel.focus)) {
-    return { op: (current) => deleteSelectionRange(current, sel), force: true };
-  }
+  const selection = selectionDeleteStep(sel);
+  if (selection !== null) return selection;
   if (op(blocks, sel.focus) === null) return null;
   return {
     op: (current) => op(current, sel.focus) ?? { blocks: [...current], caret: sel.focus },
@@ -3857,8 +3868,9 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
    *  的范围，登记为边界）。 */
   function killWordAtCaret(blocks: readonly ComposerBlock[], sel: ComposerSelection | null, forward: boolean): void {
     if (sel === null) return;
-    if (!sameCaret(sel.anchor, sel.focus)) {
-      withModel((current) => deleteSelectionRange(current, sel), false);
+    const selection = selectionDeleteStep(sel);
+    if (selection !== null) {
+      withModel(selection.op, selection.force);
       return;
     }
     const result = forward ? killWordForward(blocks, sel.focus) : killWordBackward(blocks, sel.focus);
@@ -3869,8 +3881,9 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   /** ⌃K：kill 到逻辑行行尾（不跨块），并入同一 kill 槽。 */
   function killLineAtCaretCommand(blocks: readonly ComposerBlock[], sel: ComposerSelection | null): void {
     if (sel === null) return;
-    if (!sameCaret(sel.anchor, sel.focus)) {
-      withModel((current) => deleteSelectionRange(current, sel), false);
+    const selection = selectionDeleteStep(sel);
+    if (selection !== null) {
+      withModel(selection.op, selection.force);
       return;
     }
     const result = killLineAtCaret(blocks, sel.focus);

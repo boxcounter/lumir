@@ -379,12 +379,13 @@ composer 控制行 SHALL 常驻显示上下文用量读数（位于模型 chip �
 **结构性操作** SHALL 强制独立成步（跳过聚簇），MUST NOT 与相邻键入或另一结构性操作共用一个前态。
 结构性操作 SHALL 至少含：原子卡片（引用 / 消息摘录 / 图片）的插入与移除、粘贴（含图片粘贴卡片）、
 拆段（`⇧Enter` 软断行），以及**删除族**（`⌃D` / `⌃H` 与裸 `Backspace` / `Delete` 的删字符、
-删选区、删卡片）。栈顶同态去重 SHALL 让 no-op 不产生幽灵撤销步。删除族的各入口 SHALL 共用同一份
-force 判定（单一真源），MUST NOT 各写一处字面量。
+删选区、删卡片）。删除族与 kill 族（`⌥D` / `⌥⌫` / `⌃K`）的**选区档**（有选区时先删选区）SHALL 同为
+结构性操作。栈顶同态去重 SHALL 让 no-op 不产生幽灵撤销步。删除族与 kill 族选区档的各入口 SHALL
+共用同一份 force 判定（单一真源），MUST NOT 各写一处字面量。
 
 这条不变量 M343 引入撤销栈时只落在实现注释里（`withModel` 的「force=true 用于结构性操作」），
 living spec 缺条款；M447/M453 的 `deleteAtCaret` 与裸 `Backspace`/`Delete` 分支因此写成 force=false
-而无人可对账（M510 补条款）。
+而无人可对账（M510 补条款；kill 族选区档一并收口）。
 
 #### Scenario: 结构操作之后的删除仍能单独撤销
 
@@ -392,6 +393,13 @@ living spec 缺条款；M447/M453 的 `deleteAtCaret` 与裸 `Backspace`/`Delete
   （或裸 `Backspace` / `⌃D` / `Delete`）把该卡片删掉
 - **THEN** 删除这一步 SHALL 独立压入「贴图后、删卡前」的前态；紧随的 `⌘Z` SHALL 恢复该卡片，
   MUST NOT 跳过删除直接弹回贴图前的空输入区
+
+#### Scenario: 结构操作之后的选区 kill 仍能单独撤销
+
+- **WHEN** 在输入区贴入一张卡片（结构性操作），光标处已有跨该卡片的选区，并在聚簇窗口内按 `⌥D` /
+  `⌥⌫`（`killWordAtCaret`）或 `⌃K`（`killLineAtCaretCommand`）走选区删除档
+- **THEN** 这一步 SHALL 独立压入「贴图后、删选区前」的前态；紧随的 `⌘Z` SHALL 恢复该卡片，
+  MUST NOT 弹回贴图前的空输入区
 
 #### Scenario: 连续键入聚合成一步
 

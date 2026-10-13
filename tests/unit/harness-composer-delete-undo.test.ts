@@ -1,4 +1,4 @@
-// M510 单测：删除族的撤销 force 语义。
+// M510 单测：删除族（⌃D / ⌃H / 裸 Backspace·Delete）与 kill 族选区档（⌥D / ⌥⌫ / ⌃K）的撤销 force 语义。
 //
 // 合同：openspec/specs/harness/spec.md「混排输入区的撤销栈聚簇与结构操作独立成步」——结构性操作
 // （卡片插入/移除、粘贴、拆段、删除族）SHALL 强制独立成撤销步（force=true），MUST NOT 与聚簇窗口内
@@ -19,7 +19,9 @@ import {
   createUndoHistory,
   deleteFamilyStep,
   deleteForwardAtCaret,
+  selectionDeleteStep,
 } from "../../src/harness-panel.ts";
+import type { ComposerDeleteStep } from "../../src/harness-panel.ts";
 import type { ComposerBlock, QuoteCard } from "../../src/quote-card.ts";
 
 type Caret = { block: number; offset: number };
@@ -60,9 +62,9 @@ const ENTRIES: ReadonlyArray<{ label: string; sel: Sel; op: DeleteOp; caret: Car
   },
 ];
 
-/** 复现链：贴图（force=true）→ 簇窗口内删除族一步 → 返回撤销栈、该步与删除后的模型。
- *  `forceOverride` 用于反向守卫——把删除族的 force 强制回缺陷值，验证断言确有区分度。 */
-function pasteThenDelete(entry: (typeof ENTRIES)[number], forceOverride?: boolean) {
+/** 复现链：贴图（force=true 压栈）→ Δt=200ms（落在 1000ms 聚簇窗口内）→ 某一步删除。
+ *  返回撤销栈、该步与删除后的模型；`forceOverride` 把 force 强制回缺陷值以验证断言有区分度。 */
+function pasteThenStep(step: ComposerDeleteStep, caret: Caret, forceOverride?: boolean) {
   const clock = { t: 1000 };
   const history = createUndoHistory<Snap>({
     now: () => clock.t,
@@ -70,19 +72,23 @@ function pasteThenDelete(entry: (typeof ENTRIES)[number], forceOverride?: boolea
   });
   history.push({ blocks: EMPTY, caret: { block: 0, offset: 0 } }, true); // 贴图：结构性操作
   clock.t = 1200; // 距贴图 200ms，落在 1000ms 聚簇窗口内
+  history.push({ blocks: AFTER_PASTE, caret }, forceOverride ?? step.force);
+  const after = step.op(AFTER_PASTE);
+  return { history, step, after };
+}
+
+/** 删除族三入口的模型步（走 `deleteFamilyStep`）。 */
+function deleteStepFor(entry: (typeof ENTRIES)[number]): ComposerDeleteStep {
   const step = deleteFamilyStep(AFTER_PASTE, entry.sel, entry.op);
   assert.ok(step !== null, `${entry.label}：卡片档删除不应是空转`);
-  const force = forceOverride ?? step.force;
-  history.push({ blocks: AFTER_PASTE, caret: entry.caret }, force);
-  const afterDelete = step!.op(AFTER_PASTE);
-  return { history, step: step!, afterDelete };
+  return step;
 }
 
 for (const entry of ENTRIES) {
   test(`撤销：${entry.label}——贴图后簇窗口内删卡，⌘Z 复原卡片`, () => {
-    const { history, step, afterDelete } = pasteThenDelete(entry);
+    const { history, step, after } = pasteThenStep(deleteStepFor(entry), entry.caret);
     assert.equal(step.force, true, `${entry.label}：删除是结构性操作，MUST force 独立成步（不受聚簇吞并）`);
-    const restored = history.undo({ blocks: afterDelete.blocks, caret: afterDelete.caret });
+    const restored = history.undo({ blocks: after.blocks, caret: after.caret });
     assert.deepEqual(
       restored?.blocks,
       AFTER_PASTE,
@@ -93,8 +99,8 @@ for (const entry of ENTRIES) {
 
 test("反向守卫：同一复现链把删除族 force 强制回 false，⌘Z 弹回贴图前的空态", () => {
   for (const entry of ENTRIES) {
-    const { history, afterDelete } = pasteThenDelete(entry, false);
-    const restored = history.undo({ blocks: afterDelete.blocks, caret: afterDelete.caret });
+    const { history, after } = pasteThenStep(deleteStepFor(entry), entry.caret, false);
+    const restored = history.undo({ blocks: after.blocks, caret: after.caret });
     assert.deepEqual(
       restored?.blocks,
       EMPTY,
@@ -116,4 +122,58 @@ test("删除族无动作（段首退格 / 前向删除到末缘 / 无选区）�
     "前向删除到末缘无物可删",
   );
   assert.equal(deleteFamilyStep(blocks, null, backspaceAtCaret), null, "无选区无动作");
+});
+
+// ── kill 族选区档（⌥D / ⌥⌫ 的 `killWordAtCaret`、⌃K 的 `killLineAtCaretCommand`）─────────
+// 与删除族选区档同一缺陷机制：force=true 的结构操作后、聚簇窗口内的选区 kill 也不得被吞。
+// 两个入口今天共用 `selectionDeleteStep`（force 的单一真源）。
+
+const KILL_ENTRIES: ReadonlyArray<{ label: string; sel: Sel; caret: Caret }> = [
+  {
+    label: "⌥D / ⌥⌫ 选区档（killWordAtCaret）",
+    sel: { anchor: { block: 0, offset: 0 }, focus: { block: 1, offset: 0 } },
+    caret: { block: 1, offset: 0 },
+  },
+  {
+    label: "⌃K 选区档（killLineAtCaretCommand）",
+    sel: { anchor: { block: 0, offset: 0 }, focus: { block: 1, offset: 0 } },
+    caret: { block: 1, offset: 0 },
+  },
+];
+
+for (const entry of KILL_ENTRIES) {
+  test(`撤销：${entry.label}——贴图后簇窗口内删选区，⌘Z 复原卡片`, () => {
+    const step = selectionDeleteStep(entry.sel);
+    assert.ok(step !== null, `${entry.label}：非折叠选区必有删除步`);
+    const { history, after } = pasteThenStep(step!, entry.caret);
+    assert.equal(step!.force, true, `${entry.label}：选区删除是结构性操作，MUST force 独立成步`);
+    const restored = history.undo({ blocks: after.blocks, caret: after.caret });
+    assert.deepEqual(
+      restored?.blocks,
+      AFTER_PASTE,
+      `${entry.label}：⌘Z 必须恢复「贴图后、选区 kill 前」状态（卡片仍在），而非弹回贴图前的空态`,
+    );
+  });
+}
+
+test("反向守卫：kill 族选区档 force 强制回 false，⌘Z 弹回贴图前的空态", () => {
+  for (const entry of KILL_ENTRIES) {
+    const step = selectionDeleteStep(entry.sel)!;
+    const { history, after } = pasteThenStep(step, entry.caret, false);
+    const restored = history.undo({ blocks: after.blocks, caret: after.caret });
+    assert.deepEqual(
+      restored?.blocks,
+      EMPTY,
+      `${entry.label}：force=false 时选区删除被聚簇吞掉——缺陷现场，证明上面的断言有区分度`,
+    );
+  }
+});
+
+test("选区删除步：无选区 / 折叠选区返回 null（无动作不产生幽灵撤销步）", () => {
+  assert.equal(selectionDeleteStep(null), null, "无选区无动作");
+  assert.equal(
+    selectionDeleteStep({ anchor: { block: 0, offset: 1 }, focus: { block: 0, offset: 1 } }),
+    null,
+    "折叠选区无动作",
+  );
 });
