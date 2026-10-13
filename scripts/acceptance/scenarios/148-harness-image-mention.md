@@ -123,6 +123,10 @@ steps:
   # M498 收口跑（tag- 版）实证：'e' 丢失已消除（DOM 落 "tag-"），但 post-menu 键入只到
   # DOM、composer 模型的 caret 仍钉在段落首（@ 插入成「Image 1tag-」），①② 断言与下游
   # Escape 收起步同受 M456 影响——残红全部归于已报的 M456/模型边界 finding。
+  # M498 有界收口·重组尝试实证（tag- 挪至首次贴图前，pre-menu）：假设「@ 引用插入其后」
+  # 被证伪——pre-menu 键入不 garble（DOM「qrefmarktag-」同段落），但贴图把模型 caret 带离
+  # tag-，@ 引用落贴图后的承接空段落成**独立 part**（「Image 1」standalone），② 必红。
+  # 结论：② 的区分度形态要求「图先贴、前缀后打、引用即插」，前缀步不可能 pre-menu。
   # 随机连续丢键段风险已报 finding。
   - name: 键入引用前缀 tag-（`keys` 动作走 composer 的键盘注入；`type` 动作会落到第一个
       `AXTextArea` = 编辑器——本步是 post-menu + 模型一致性双边界，见上注；
@@ -191,7 +195,11 @@ steps:
         file: { path: "env:harness/sessions/acc-img/*.jsonl", not: "data:image" }
       - shot: 02-发送后-transcript编号
 
-  - name: 收起 harness pane（面板内 Escape——重启后 pane 开/关取决于会话存档，先显式钉「关」）
+  - name: 收起 harness pane（面板内 Escape——重启后 pane 开/关取决于会话存档，先显式钉「关」；
+      M498 登记：Escape 收起步 post-menu 不稳定（近 3 跑 1 过 2 红——发送后焦点停在
+      composer，Escape 被 composer 消费的形态）；替代通道「标题栏对话面板开关」在
+      **pane 开时不在 AX 树**（AXCheckBox 找不到，仅 pane 闭时出现，1 跑实证）——
+      两条 close 通道都有边界，残红归 finding，不再迭代）
     do: key
     key: escape
   - name: 等 pane 收起（状态驱动）
