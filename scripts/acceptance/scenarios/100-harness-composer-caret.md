@@ -63,9 +63,10 @@ steps:
         ax: { focused: "AXTextArea" }
       - shot: 01-发送后-焦点回-composer
 
-  - name: 续打字 probe（落点 = 上一步验过的 focused 节点）
+  - name: 续打字 probe（落点 = 上一步验过的 focused 节点；target 含空态占位读名——发送后
+      composer 清空、可访问名回到「问点什么…」，两态命中规则同 README typeInNode 条）
     do: typeInNode
-    target: { role: AXTextArea, name: "caretprobe1|caretback2" }
+    target: { role: AXTextArea, name: "问点什么|caretback2" }
     text: "caretback2"
     expect:
       - label: 续打字落进 composer（AX 里 composer 值含 probe）
