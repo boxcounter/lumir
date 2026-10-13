@@ -1106,16 +1106,17 @@ export function transposeCharsAtCaret(
 
 /** 结构性操作 ⇒ 撤销栈强制独立成步（`withModel` / `undoHistory.push` 的 force 跳过聚簇）。
  *
- * **这是本 mission 收口面上 force=true 的唯一产出点**：删除族（⌃D / ⌃H、裸 Backspace / Delete、
- * 两族的选区档）、kill-yank 族（⌥D / ⌥⌫ / ⌃K、⌃Y 的选区与就地档）、拆段（⇧Enter 软断行）都读它，
- * MUST NOT 再散落 `true` 字面量（M510：M447/M453 的删除族、M343 起的 ⇧Enter 各自写字面量且写成
- * false，与 `withModel` 文档「force=true 用于结构性操作（卡片插入/移除、粘贴、**拆段**、退格）」
- * 漂移而无人可对账）。条款见 openspec/specs/harness/spec.md「混排输入区的撤销栈聚簇与结构操作
- * 独立成步」（同一枚举里的卡片插入/移除与粘贴，其 call site 不在本 mission 的收口面、仍为
- * 正确值 `true`）。
+ * **composer 模型路径上 force=true 的唯一产出点**——结构性操作全部读它：卡片（引用 / 消息摘录 /
+ * 图片）的插入与移除、粘贴（文本 / 图片 / 拖入）、`@` 提及插入、拆段（`⇧Enter` 软断行）、删除族
+ * （⌃D / ⌃H、裸 Backspace / Delete、两族的选区档）、kill-yank 族（⌥D / ⌥⌫ / ⌃K、⌃Y）、边界光标位
+ * 的物化键入、IME 组合物化。MUST NOT 再散落 `true` 字面量（M510 的三处现场：M447/M453 的删除族、
+ * M343 起的 ⇧Enter 各自写字面量且写成 false，与 `withModel` 文档「force=true 用于结构性操作
+ * （卡片插入/移除、粘贴、**拆段**、退格）」漂移而无人可对账）。条款见
+ * openspec/specs/harness/spec.md「混排输入区的撤销栈聚簇与结构操作独立成步」。
  *
  * 判据：一次编辑改的是**结构**（卡片的存在与位置、段落的分合）而非打字流；结构步若与相邻键入
- * 共用一个撤销前态，就会被聚簇早退吞掉、⌘Z 弹回结构操作前的状态。
+ * 共用一个撤销前态，就会被聚簇早退吞掉、⌘Z 弹回结构操作前的状态。**三处 `false` 豁免**（不读本
+ * 常量，就地注释点名）：键入（原生文本编辑的压栈）、字符级编辑（⌃T 转置）、删除族的空转空模型写。
  */
 export const STRUCTURAL_EDIT_FORCE = true;
 
@@ -3228,7 +3229,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
         const result = insertPlainTextAtCaret(blocks, caret, imageMentionText(ordinal));
         landed.caret = result.caret;
         return result;
-      }, true);
+      }, STRUCTURAL_EDIT_FORCE);
       composer.focus();
       if (landed.caret !== null) setDomCaret(landed.caret);
     });
@@ -3295,7 +3296,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
         event.stopPropagation();
         const index = [...composer.children].indexOf(el);
         if (index < 0) return;
-        withModel(() => removeBlockAt(readBlocksFromDom(), index), true);
+        withModel(() => removeBlockAt(readBlocksFromDom(), index), STRUCTURAL_EDIT_FORCE);
         composer.focus();
       });
     } else {
@@ -3360,7 +3361,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
         event.stopPropagation();
         const index = [...composer.children].indexOf(el);
         if (index < 0) return;
-        withModel(() => removeBlockAt(readBlocksFromDom(), index), true);
+        withModel(() => removeBlockAt(readBlocksFromDom(), index), STRUCTURAL_EDIT_FORCE);
         composer.focus();
       });
       el.addEventListener("click", jump);
@@ -3443,7 +3444,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       const sel = caretFromDom();
       const caret = sel === null ? { block: blocks.length - 1, offset: 0 } : sel.focus;
       return insertBlockAtCaret(blocks, caret, { kind: "msgquote", card: valid });
-    }, true);
+    }, STRUCTURAL_EDIT_FORCE);
     composer.focus();
   }
 
@@ -3467,7 +3468,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
         const sel = caretFromDom();
         const caret = sel === null ? { block: blocks.length - 1, offset: 0 } : sel.focus;
         return insertBlockAtCaret(blocks, caret, { kind: "image", card });
-      }, true);
+      }, STRUCTURAL_EDIT_FORCE);
       composer.focus();
     } catch (e) {
       deps.toast(errorText(e));
@@ -3937,7 +3938,8 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     }, STRUCTURAL_EDIT_FORCE);
   }
 
-  /** ⌃T：转置（段首 / 卡片边界无动作；有选区时不插手——与编辑器侧同口径）。 */
+  /** ⌃T：转置（段首 / 卡片边界无动作；有选区时不插手——与编辑器侧同口径）。
+   *  force=false 是**豁免**：转置是字符级编辑（不是结构性操作），与相邻键入同簇即可。 */
   function transposeAtCaret(blocks: readonly ComposerBlock[], sel: ComposerSelection | null): void {
     if (sel === null) return;
     if (!sameCaret(sel.anchor, sel.focus)) return;
@@ -3985,8 +3987,9 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
 
   /**
    * 模型修改的统一出口：压撤销栈（修改前态；聚簇/去重/redo 作废纪律见 createUndoHistory）
-   * → 算新模型 → 整面重渲。force=true 用于结构性操作（卡片插入/移除、粘贴、拆段、退格），
-   * 强制独立成步。
+   * → 算新模型 → 整面重渲。`force` 取值唯一来自 `STRUCTURAL_EDIT_FORCE`（结构性操作：卡片插入/
+   * 移除、粘贴、拆段、删除族与 kill 族）——本文件不再写 force 字面量；`false` 只留给三处豁免：
+   * 键入（原生文本编辑的压栈）、字符级编辑（⌃T 转置）、删除族的空转空模型写（见各自就地注释）。
    */
   function withModel(
     op: (blocks: readonly ComposerBlock[]) => { blocks: ComposerBlock[]; caret: ComposerCaret },
@@ -6410,7 +6413,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     });
     if (boundaryTyped !== null) {
       event.preventDefault();
-      withModel((blocks) => insertPlainTextAtCaret(blocks, boundaryTyped, event.key), true);
+      withModel((blocks) => insertPlainTextAtCaret(blocks, boundaryTyped, event.key), STRUCTURAL_EDIT_FORCE);
       return;
     }
     if (event.key === "Enter") {
@@ -6447,7 +6450,8 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       );
       if (step === null) {
         // 空转（段首退格 / 前向删除到末缘）：既有语义是仍走一次空模型写（归一化重渲、不留半截
-        // 状态），force=false 让聚簇照常吞掉这一拍、不产生幽灵撤销步。
+        // 状态）。force=false 是**删除族路径上唯一的豁免**：空转不是编辑，给个 `true` 反而会在
+        // 栈顶造出「撤销了看不出变化」的幽灵撤销步（与栈顶去重同旨）；聚簇照常吞掉这一拍。
         withModel((blocks) => ({ blocks: [...blocks], caret: sel.focus }), false);
         return;
       }
@@ -6496,7 +6500,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       const typed = event.data ?? "";
       if (caret !== null && typed !== "" && isCardFrontCaret(readBlocksFromDom(), caret)) {
         event.preventDefault();
-        withModel((blocks) => insertPlainTextAtCaret(blocks, caret, typed), true);
+        withModel((blocks) => insertPlainTextAtCaret(blocks, caret, typed), STRUCTURAL_EDIT_FORCE);
         return;
       }
     }
@@ -6505,6 +6509,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
         type === "deleteByCut" || type === "deleteWordBackward" || type === "deleteWordForward" ||
         type === "deleteSoftLineBackward" || type === "deleteSoftLineForward") {
       // 原生文本编辑：允许落进 .qpara，但压一次撤销前态（聚簇/去重/redo 作废在 history 里）。
+      // force=false 是**豁免**：这是**键入**（打字流），本就该与相邻键入聚合成一个撤销步。
       undoHistory.push(snapshot(), false);
       return;
     }
@@ -6517,12 +6522,12 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       // 边界光标位上的 IME（design §3.2）：先物化一个空段落承接组合内容。**此处刻意不整面
       // 重渲**——withModel 的 replaceChildren 会销毁正要开始组合的目标节点、打断 IME 会话；
       // 模型侧读法（readBlocksFromDom）随之看到新段落，其余 DOM（含两张卡片）原样不动。
-      undoHistory.push(snapshot(), true);
+      undoHistory.push(snapshot(), STRUCTURAL_EDIT_FORCE);
       composer.insertBefore(createParaEl(""), composer.children[caret.block] ?? null);
       setDomCaret({ block: caret.block, offset: 0 });
       return;
     }
-    undoHistory.push(snapshot(), true);
+    undoHistory.push(snapshot(), STRUCTURAL_EDIT_FORCE);
   });
   composer.addEventListener("compositionend", () => {
     imeGateState = imeGateCompositionEnd(imeGateState, Date.now());
@@ -6553,7 +6558,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       const collapsed = sel.anchor.block === sel.focus.block && sel.anchor.offset === sel.focus.offset;
       const base = collapsed ? { blocks: [...blocks], caret: sel.focus } : deleteSelectionRange(blocks, sel);
       return insertPlainTextAtCaret(base.blocks, base.caret, text);
-    }, true);
+    }, STRUCTURAL_EDIT_FORCE);
   });
   // 拖入净化（同 quirk ①，只收 text/plain）：落点跟随指针——caretRangeFromPoint 取
   // 落点光标（WebKit 系；取不到退化 composer 末尾，与 paste 的无选区退化同值）。
@@ -6577,7 +6582,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     }
     withModel(
       (blocks) => insertPlainTextAtCaret(blocks, caret ?? { block: blocks.length - 1, offset: 0 }, text),
-      true,
+      STRUCTURAL_EDIT_FORCE,
     );
   });
   composer.addEventListener("input", () => {
@@ -6929,7 +6934,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
         const sel = caretFromDom();
         const caret = sel === null ? { block: blocks.length - 1, offset: 0 } : sel.focus;
         return insertCardAtCaret(blocks, caret, valid);
-      }, true);
+      }, STRUCTURAL_EDIT_FORCE);
       composer.focus();
     },
     setQuoteJumpHandler(handler) {
