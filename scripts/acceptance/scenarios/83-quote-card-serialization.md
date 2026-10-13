@@ -30,11 +30,11 @@ steps:
       - label: 卡片出处行（文档名 · 标题，标题里的 & 原样显示）
         ax: { has: "harness-quote-escape.md · A & B 标题" }
       - shot: 01-卡片
-  - name: 记录编辑器基线（守卫：typeInNode 注入不得漏进编辑器）
+  - name: 记录编辑器基线（守卫：素材注入不得漏进编辑器）
     do: recordEditor
     as: 编辑器基线-首问
   - name: 点 composer 确立焦点（AXPress 插卡后渲染层焦点可能仍在编辑器——M501/M500 归因；
-      点底部空段落把焦点与 caret 都交给 composer，供随后的整串注入与 Enter 发送）
+      点底部空段落把焦点与 caret 都交给 composer，供随后的素材注入与 Enter 发送）
     do: clickInNode
     target: { role: AXTextArea, name: "A & B 标题" }
     dy: 0.9
@@ -42,10 +42,17 @@ steps:
       - label: 焦点落在 composer（focused 标记在 AXTextArea 上）
         ax: { focused: "AXTextArea" }
 
+  # M502 回退（tower 裁决，M500 归因）：卡片语境（AXPress 插卡后）三通道边界——
+  #   type_text 无 index：真实投递与 AX (focused) 标记背离（标记在 composer、盲注落进编辑器）；
+  #   type_text 带 index：AX 注入不进 composer 模型（后续读模型状态的步骤穿帮）；
+  #   本步 press_key：该语境可靠（85 于 2026-10-13 03:39Z pre-M498 整场景 PASS 的对照）⇒ 回退 do:keys。
+  # 素材串刻意无 'e'（press_key 确定性丢 'e'，M497 finding）——本族素材（alpha/q/tpmsg）均不含 'e'。
+  # 保留：composer 焦点确立步（clickInNode）与 editor.unchangedSince 守卫。M501 的 typeInNode
+  #   attempt-1 焦点校验防不住本族（真机复跑实证漏注入编辑器），守卫断言才是终防线。
   - name: 在卡片后的问题段落写一个字（证明携带卡片的消息照常投递）
-    do: typeInNode
-    target: { role: AXTextArea, name: "A & B 标题|q" }
-    text: "q"
+    do: keys
+    keys: ["q"]
+    gapMs: 100
     expect:
       - label: 注入没有漏进编辑器（逐字节比对基线）
         editor: { unchangedSince: 编辑器基线-首问 }
@@ -81,9 +88,13 @@ XML——每段摘录 `<quote file="…" heading="…" lines="A-B">摘录原文<
 - **逐字节断言替代结构解析**：序列化产物落在 JSONL 留存里（`env:harness/sessions/*/*.jsonl` 的
   `llm_request.request.messages` 里那条 user 消息），断言直接写期望的那一行 XML。属性顺序、取值、转义形态任意一处漂移都
   会红——比「解析后再比对字段」更严，也不需要场景里再实现一个 XML 解析器。
-- **插卡后有点 composer 确立焦点一步**（M501，M500 归因）：卡片钮是 AXPress，之后渲染层焦点可能
-  仍留在编辑器，`type_text` 无 index 注入会漏进去；这步点击 + `editor.unchangedSince` 守卫与
-  场景 82 同构，drive.mjs 的 typeInNode attempt-1 焦点守卫另有兜底。
+- **插卡后有点 composer 确立焦点一步**（M501，M500 归因）：与场景 82/85 同构——卡片钮是 AXPress，
+  之后渲染层焦点可能仍在编辑器；这步点击是 `editor.unchangedSince` 守卫的前置，也让 `do: keys`
+  的回读目标落在 composer。
+- **素材注入走 `do: keys` 而非 `typeInNode`**（M502 回退，tower 裁决）：卡片语境（AXPress 插卡后）
+  里 `type_text` 无 index 的真实投递与 AX `(focused)` 标记背离、带 index 的注入不进 composer 模型，
+  而 press_key 在此语境可靠（85 于 2026-10-13 03:39Z pre-M498 整场景 PASS 的对照）；素材串
+  `q` 刻意无 'e'（press_key 确定性丢 'e'，M497 finding）。
 - 转义覆盖两条路径：**属性值**（heading 含 `&` → `&amp;`）与**文本节点**（摘录原文含 `<`、
   `>`、`&` → `&lt;` / `&gt;` / `&amp;`）。fixture `harness-quote-escape.md` 就是为这两条造的。
 - 「无编号」是**一致性原则**（Alex 2026-10-06）的机器判据：`not: "index="` 挡任何序号属性复活。

@@ -29,11 +29,11 @@ steps:
     expect:
       - label: 卡片入 composer
         ax: { has: "harness-quote.md · 摘录卡片验收" }
-  - name: 记录编辑器基线（守卫：typeInNode 注入不得漏进编辑器）
+  - name: 记录编辑器基线（守卫：素材注入不得漏进编辑器）
     do: recordEditor
     as: 编辑器基线-首问
   - name: 点 composer 确立焦点（AXPress 插卡后渲染层焦点可能仍在编辑器——M501/M500 归因；
-      点底部空段落把焦点与 caret 都交给 composer，供随后的整串注入与 Enter 发送）
+      点底部空段落把焦点与 caret 都交给 composer，供随后的素材注入与 Enter 发送）
     do: clickInNode
     target: { role: AXTextArea, name: "摘录卡片验收" }
     dy: 0.9
@@ -41,10 +41,17 @@ steps:
       - label: 焦点落在 composer（focused 标记在 AXTextArea 上）
         ax: { focused: "AXTextArea" }
 
+  # M502 回退（tower 裁决，M500 归因）：卡片语境（AXPress 插卡后）三通道边界——
+  #   type_text 无 index：真实投递与 AX (focused) 标记背离（标记在 composer、盲注落进编辑器）；
+  #   type_text 带 index：AX 注入不进 composer 模型（后续读模型状态的步骤穿帮）；
+  #   本步 press_key：该语境可靠（本场景 2026-10-13 03:39Z pre-M498 整场景 PASS 的对照）⇒ 回退 do:keys。
+  # 素材串刻意无 'e'（press_key 确定性丢 'e'，M497 finding）——本族素材（alpha/q/tpmsg）均不含 'e'。
+  # 保留：composer 焦点确立步（clickInNode）与 editor.unchangedSince 守卫。M501 的 typeInNode
+  #   attempt-1 焦点校验防不住本族（真机复跑实证漏注入编辑器），守卫断言才是终防线。
   - name: 在卡片后的段落写问题
-    do: typeInNode
-    target: { role: AXTextArea, name: "摘录卡片验收|tpmsg" }
-    text: "tpmsg"
+    do: keys
+    keys: ["t", "p", "m", "s", "g"]
+    gapMs: 100
     expect:
       - label: 注入没有漏进编辑器（逐字节比对基线）
         editor: { unchangedSince: 编辑器基线-首问 }
@@ -77,8 +84,12 @@ spec 判据（change add-harness-quote-cards 的「混排对话输入区 · 已�
   transcript 里的卡片带 `role=button` 与读屏名 `跳回原文位置: 文档名 · 标题`——本场景断言后者
   在场，正是「同构沉淀 + 变成跳回入口」的可读签名。
 - **插卡后有点 composer 确立焦点一步**（M501，M500 归因）：与场景 82/83 同构——AXPress 插卡后
-  渲染层焦点可能仍在编辑器，`type_text` 无 index 注入会漏进去；点击 + `editor.unchangedSince`
-  守卫，drive.mjs 的 typeInNode attempt-1 焦点守卫另有兜底。
+  渲染层焦点可能仍在编辑器；点击是 `editor.unchangedSince` 守卫的前置，也让 `do: keys` 的回读
+  目标落在 composer。
+- **素材注入走 `do: keys` 而非 `typeInNode`**（M502 回退，tower 裁决）：卡片语境里 `type_text`
+  无 index 的真实投递与 AX `(focused)` 标记背离、带 index 的注入不进 composer 模型，而 press_key
+  在此语境可靠（本场景 2026-10-13 03:39Z pre-M498 整场景 PASS 的对照）；素材串 `tpmsg` 刻意无 'e'
+  （press_key 确定性丢 'e'，M497 finding）。
 - 「无 ×」的负观测配一条正观测：transcript 卡片按钮在场（`AXButton (跳回原文位置…`）证明消息确实
   渲染出来了，负观测不是空转。
 - 发送后 composer 清零：断言 composer 的出处行消失（否则负观测会读到残留的 composer 卡片）。
