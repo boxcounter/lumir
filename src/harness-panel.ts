@@ -1104,34 +1104,44 @@ export function transposeCharsAtCaret(
   return write(text.slice(0, prev) + b + a + text.slice(pos), pos);
 }
 
+/** 结构性操作 ⇒ 撤销栈强制独立成步（`withModel` / `undoHistory.push` 的 force 跳过聚簇）。
+ *
+ * **这是本 mission 收口面上 force=true 的唯一产出点**：删除族（⌃D / ⌃H、裸 Backspace / Delete、
+ * 两族的选区档）、kill-yank 族（⌥D / ⌥⌫ / ⌃K、⌃Y 的选区与就地档）、拆段（⇧Enter 软断行）都读它，
+ * MUST NOT 再散落 `true` 字面量（M510：M447/M453 的删除族、M343 起的 ⇧Enter 各自写字面量且写成
+ * false，与 `withModel` 文档「force=true 用于结构性操作（卡片插入/移除、粘贴、**拆段**、退格）」
+ * 漂移而无人可对账）。条款见 openspec/specs/harness/spec.md「混排输入区的撤销栈聚簇与结构操作
+ * 独立成步」（同一枚举里的卡片插入/移除与粘贴，其 call site 不在本 mission 的收口面、仍为
+ * 正确值 `true`）。
+ *
+ * 判据：一次编辑改的是**结构**（卡片的存在与位置、段落的分合）而非打字流；结构步若与相邻键入
+ * 共用一个撤销前态，就会被聚簇早退吞掉、⌘Z 弹回结构操作前的状态。
+ */
+export const STRUCTURAL_EDIT_FORCE = true;
+
 /** 一步模型编辑的模型步：交给 `withModel` 的模型操作 + force。 */
-export interface ComposerDeleteStep {
+export interface ComposerEditStep {
   readonly op: (current: readonly ComposerBlock[]) => { blocks: ComposerBlock[]; caret: ComposerCaret };
   readonly force: boolean;
 }
 
 /** 选区删除的模型步（删除族与 kill 族的**选区档**共用）：把当前选区整段删掉。
  *
- * force 恒为 **true**——删除是结构性操作（选区可跨卡片整块移除），SHALL 独立成一个撤销步；
- * 与 `deleteFamilyStep` 的就地档同款判词（贴图等 force=true 的结构操作后 1s 内的选区删除若
- * 被聚簇早退吞掉，⌘Z 会弹回结构操作前的空态）。返回 null = 无选区或选区折叠（没有要删的选区）。
+ * force = `STRUCTURAL_EDIT_FORCE`——删除是结构性操作（选区可跨卡片整块移除），SHALL 独立成一个
+ * 撤销步；与 `deleteFamilyStep` 的就地档同款判词（贴图等结构操作后 1s 内的选区删除若被聚簇早退
+ * 吞掉，⌘Z 会弹回结构操作前的空态）。返回 null = 无选区或选区折叠（没有要删的选区）。
  */
-export function selectionDeleteStep(sel: ComposerSelection | null): ComposerDeleteStep | null {
+export function selectionDeleteStep(sel: ComposerSelection | null): ComposerEditStep | null {
   if (sel === null || sameCaret(sel.anchor, sel.focus)) return null;
-  return { op: (current) => deleteSelectionRange(current, sel), force: true };
+  return { op: (current) => deleteSelectionRange(current, sel), force: STRUCTURAL_EDIT_FORCE };
 }
 
 /** 删除族（⌃D / ⌃H 与裸 Backspace / Delete）的模型步：交给 `withModel` 的模型操作 + force。
  *
- * force 恒为 **true**——删除是结构性操作（卡片按整体作用、可整块移除），SHALL 独立成一个撤销步：
- * 与聚簇窗口内的前一步（如贴图与卡片插入，它们本身就是 force=true 的结构操作）共用一个前态，
- * 会让「贴图后 1s 内删卡」这一步不入撤销栈——⌘Z 于是弹回贴图前的空 composer（M510；条款见
- * openspec/specs/harness/spec.md「混排输入区的撤销栈聚簇与结构操作独立成步」）。
- *
- * 三个入口（`runComposerCommand` 的 `deleteAtCaret` 两档、composer 的裸 Backspace/Delete 分支）
- * 共用本函数——force 的判定因此只有一处真源，MUST NOT 各写一份字面量（M447/M453 曾把这三处各自
- * 落成 false，与 `withModel` 文档「force=true 用于结构性操作（卡片插入/移除、粘贴、拆段、退格）」
- * 漂移而无人可对账）。选区档与 kill 族的选区档再共用一个 `selectionDeleteStep`。
+ * force = `STRUCTURAL_EDIT_FORCE`——删除是结构性操作（卡片按整体作用、可整块移除）。三个入口
+ * （`runComposerCommand` 的 `deleteAtCaret` 两档、composer 的裸 Backspace/Delete 分支）共用本
+ * 函数——force 的判定因此只有一处真源，MUST NOT 各写一份字面量（M447/M453 曾把这三处各自落成
+ * false）。选区档与 kill 族的选区档再共用一个 `selectionDeleteStep`。
  *
  * 返回 null = 本拍无模型动作（无选区，或就地删除的空转：段首退格 / 前向删除到末缘）。
  */
@@ -1139,14 +1149,28 @@ export function deleteFamilyStep(
   blocks: readonly ComposerBlock[],
   sel: ComposerSelection | null,
   op: (blocks: readonly ComposerBlock[], caret: ComposerCaret) => { blocks: ComposerBlock[]; caret: ComposerCaret } | null,
-): ComposerDeleteStep | null {
+): ComposerEditStep | null {
   if (sel === null) return null;
   const selection = selectionDeleteStep(sel);
   if (selection !== null) return selection;
   if (op(blocks, sel.focus) === null) return null;
   return {
     op: (current) => op(current, sel.focus) ?? { blocks: [...current], caret: sel.focus },
-    force: true,
+    force: STRUCTURAL_EDIT_FORCE,
+  };
+}
+
+/** 拆段（`⇧Enter` 软断行）的模型步：结构性操作，force = `STRUCTURAL_EDIT_FORCE`（`withModel` 的
+ *  M343 文档自始即把「拆段」列为 force=true；composer keydown 的 `⇧Enter` 分支原写字面量 false
+ *  是漂移，M510 修准）。
+ *
+ * `readCaret` 是**延迟读取**：落点必须在 `withModel` 的 `normalize()` 之后从 DOM 取（与改动前
+ * 的取值时机逐拍一致），故以 thunk 传入而不是先算好再传。取不到选区时落末块末尾之后（同原口径）。
+ */
+export function softBreakStep(readCaret: () => ComposerCaret | null): ComposerEditStep {
+  return {
+    op: (blocks) => insertSoftBreakAtCaret(blocks, readCaret() ?? { block: blocks.length - 1, offset: 0 }),
+    force: STRUCTURAL_EDIT_FORCE,
   };
 }
 
@@ -3892,17 +3916,17 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
   }
 
   /** 把一次 kill 的文本并入跨面共用的 kill 槽（相接判定与编辑器侧共用 `mergeKillText`——
-   *  槽是模块级单例，编辑器与 composer 一致）。 */
+   *  槽是模块级单例，编辑器与 composer 一致）。kill 是结构性操作，force 走单一真源。 */
   function applyKill(result: ComposerKill, forward: boolean): void {
     const from = caretKey(result.from);
     const to = caretKey(result.to);
     const merged = mergeKillText(currentKillSlot(), result.killed, forward, forward ? from : to);
     setKillSlot({ text: merged, forward, anchor: from });
-    withModel(() => ({ blocks: result.blocks, caret: result.caret }), true);
+    withModel(() => ({ blocks: result.blocks, caret: result.caret }), STRUCTURAL_EDIT_FORCE);
   }
 
   /** ⌃Y：把 kill 槽内容插入光标处（有选区先删选区；多行经 `insertPlainTextAtCaret` 拆段；
-   *  卡片边界位由它物化段落——卡片不被吞）。 */
+   *  卡片边界位由它物化段落——卡片不被吞）。yank 是结构性操作（kill-yank 族），force 走单一真源。 */
   function yankAtCaret(blocks: readonly ComposerBlock[], sel: ComposerSelection | null): void {
     const text = currentKillSlot()?.text ?? "";
     if (text === "" || sel === null) return;
@@ -3910,7 +3934,7 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     withModel((current) => {
       const base = collapsed ? { blocks: [...current], caret: sel.focus } : deleteSelectionRange(current, sel);
       return insertPlainTextAtCaret(base.blocks, base.caret, text);
-    }, true);
+    }, STRUCTURAL_EDIT_FORCE);
   }
 
   /** ⌃T：转置（段首 / 卡片边界无动作；有选区时不插手——与编辑器侧同口径）。 */
@@ -6392,11 +6416,10 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     if (event.key === "Enter") {
       event.preventDefault();
       if (event.shiftKey) {
-        withModel((blocks) => {
-          const sel = caretFromDom();
-          const caret = sel === null ? { block: blocks.length - 1, offset: 0 } : sel.focus;
-          return insertSoftBreakAtCaret(blocks, caret);
-        }, false);
+        // ⇧Enter 软断行是结构性操作（拆段），force 走 `softBreakStep` / `STRUCTURAL_EDIT_FORCE`
+        // 的单一真源（M510 之前此处写字面量 false，与 withModel 文档的「拆段」漂移）。
+        const step = softBreakStep(() => caretFromDom()?.focus ?? null);
+        withModel(step.op, step.force);
       } else {
         send();
       }

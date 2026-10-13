@@ -20,8 +20,9 @@ import {
   deleteFamilyStep,
   deleteForwardAtCaret,
   selectionDeleteStep,
+  softBreakStep,
 } from "../../src/harness-panel.ts";
-import type { ComposerDeleteStep } from "../../src/harness-panel.ts";
+import type { ComposerEditStep } from "../../src/harness-panel.ts";
 import type { ComposerBlock, QuoteCard } from "../../src/quote-card.ts";
 
 type Caret = { block: number; offset: number };
@@ -64,7 +65,7 @@ const ENTRIES: ReadonlyArray<{ label: string; sel: Sel; op: DeleteOp; caret: Car
 
 /** 复现链：贴图（force=true 压栈）→ Δt=200ms（落在 1000ms 聚簇窗口内）→ 某一步删除。
  *  返回撤销栈、该步与删除后的模型；`forceOverride` 把 force 强制回缺陷值以验证断言有区分度。 */
-function pasteThenStep(step: ComposerDeleteStep, caret: Caret, forceOverride?: boolean) {
+function pasteThenStep(step: ComposerEditStep, caret: Caret, forceOverride?: boolean) {
   const clock = { t: 1000 };
   const history = createUndoHistory<Snap>({
     now: () => clock.t,
@@ -78,7 +79,7 @@ function pasteThenStep(step: ComposerDeleteStep, caret: Caret, forceOverride?: b
 }
 
 /** 删除族三入口的模型步（走 `deleteFamilyStep`）。 */
-function deleteStepFor(entry: (typeof ENTRIES)[number]): ComposerDeleteStep {
+function deleteStepFor(entry: (typeof ENTRIES)[number]): ComposerEditStep {
   const step = deleteFamilyStep(AFTER_PASTE, entry.sel, entry.op);
   assert.ok(step !== null, `${entry.label}：卡片档删除不应是空转`);
   return step;
@@ -175,5 +176,40 @@ test("选区删除步：无选区 / 折叠选区返回 null（无动作不产生
     selectionDeleteStep({ anchor: { block: 0, offset: 1 }, focus: { block: 0, offset: 1 } }),
     null,
     "折叠选区无动作",
+  );
+});
+
+// ── 拆段（⇧Enter 软断行）────────────────────────────────────────────────────
+// 同一缺陷机制第三实例（M510 r1 评审 P1-1）：贴图 force 压栈后 1s 内的 ⇧Enter 拆段若 force=false
+// 会被聚簇吞掉，⌘Z 一步连贴图一起弹没。拆段是结构性操作——`withModel` 的 M343 文档自始即把
+// 「拆段」列为 force=true。
+
+const SOFT_BREAK_CARET: Caret = { block: 1, offset: 0 }; // 贴图后光标落在卡片下一行的问题段落
+
+test("撤销：⇧Enter 拆段（softBreakStep）——贴图后簇窗口内拆段，⌘Z 复原贴图后态", () => {
+  const step = softBreakStep(() => SOFT_BREAK_CARET);
+  const { history, after } = pasteThenStep(step, SOFT_BREAK_CARET);
+  assert.deepEqual(
+    after.blocks,
+    [card(), para(""), para("")],
+    "前置：拆段确实落了新段落块（拆段是结构变化，不是空转）",
+  );
+  assert.equal(step.force, true, "拆段是结构性操作，MUST force 独立成步（不受聚簇吞并）");
+  const restored = history.undo({ blocks: after.blocks, caret: after.caret });
+  assert.deepEqual(
+    restored?.blocks,
+    AFTER_PASTE,
+    "⌘Z 必须恢复「贴图后、拆段前」状态（卡片与问题段落仍在），而非弹回贴图前的空态",
+  );
+});
+
+test("反向守卫：拆段 force 强制回 false，⌘Z 连贴图一起弹没", () => {
+  const step = softBreakStep(() => SOFT_BREAK_CARET);
+  const { history, after } = pasteThenStep(step, SOFT_BREAK_CARET, false);
+  const restored = history.undo({ blocks: after.blocks, caret: after.caret });
+  assert.deepEqual(
+    restored?.blocks,
+    EMPTY,
+    "force=false 时拆段步被聚簇吞掉——这一步正是缺陷现场，证明上面的断言有区分度",
   );
 });
