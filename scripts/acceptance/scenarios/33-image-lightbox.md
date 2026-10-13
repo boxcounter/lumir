@@ -116,6 +116,17 @@ steps:
       - label: 遮罩已退场
         ax: { not: "/AXImage .*@480,360 240×80/" }
 
+  # M399（c4bc368 空段落正常行高化，Alex 裁决 A：每处空行 +21px）+ M491（窗口钉回 1200×800）后，
+  # lightbox.md 的三张图整体下移，位图的 AX bbox 落到窗口下缘之外（2026-10-13 读数：@367,855
+  # 92×31，窗口高 800）⇒ doubleClick 会因目标不在视口内报错。双击前先把编辑器翻到底把位图带进
+  # 视口：⌃V 是编辑器翻页键，多按无害（到末尾后浏览器把 scrollTop 夹住）。
+  # 失效条件：fixture 行高 / 窗口尺寸再变时，位图可能重新落回视口（这一步无害）或被推到更远处
+  # （加按一次即可）；判红形态是 doubleClick 报「算出的屏幕点落在窗口之外」。
+  - name: 建立渲染层焦点（下面的翻屏键要落到编辑器上）
+    do: clickEditor
+  - name: 翻屏到文档底部把位图带进视口（M399+M491 后位图 bbox 在视口外）
+    do: keys
+    keys: ["ctrl+v", "ctrl+v"]
   - name: 位图（96×32）：双击同样打开遮罩，按自然尺寸显示（不放大）
     do: doubleClick
     target: { role: AXImage, name: "lightbox bitmap" }
@@ -182,6 +193,12 @@ steps:
   「双击打开了遮罩」无法排除「随便点一下就会开」。
 - **`focused` 断言走解析结果**：`ax: { focused: "AXTextArea" }` 要求 AX 里恰有一个 focused 节点
   且 role 命中——跨节点正则在这里没有节点边界意识（REVIEW.md 第 1 条）。
+- **位图双击前先滚到底（M399 + M491，2026-10-14）**：M399（`c4bc368` 空段落正常行高化，Alex 裁决 A：
+  每处空行 +21px）叠加 M491（窗口钉回 1200×800）后，lightbox.md 三张图整体下移，位图的 AX bbox 落到
+  窗口下缘之外（2026-10-13 读数 `@367,855 92×31`，窗口高 800）⇒ `doubleClick` 会按「算出的屏幕点
+  落在窗口之外」报错。处置：双击位图前 `do: keys ["ctrl+v", "ctrl+v"]` 把编辑器翻到底、把位图带进
+  视口（⌃V 到末尾后是空操作，多按无害）。**失效条件**：fixture 行高 / 窗口尺寸再变时，位图可能落回
+  视口（这一步无害）或被推更远（加按一次）；判红形态是 `doubleClick` 报「算出的屏幕点落在窗口之外」。
 - **坐标口径**：`do: doubleClick` 的 `target` 取节点 bbox（AX dump 的**窗口局部**坐标），动作内部
   加 `window_bounds` 原点换成 Quartz 全局屏幕坐标再交给 swift；`do: click` 的 `{x,y}` 是 KimiCU
   的窗口局部点。两种空间不混用。

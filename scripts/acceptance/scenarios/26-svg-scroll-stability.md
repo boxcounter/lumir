@@ -20,10 +20,25 @@ steps:
       - label: 编辑器已就位（AXTextArea 可读）
         editor: { has: "段落 01" }
 
-  - name: 正向翻屏三屏：大图第一次进渲染视口（渲染一次，几何进会话记忆）
+  # 翻页预算（M399 空段落全行高化，c4bc368，Alex 裁决 A：每处空行 +21px）：文档整体拉长，旧标定的
+  # 「正向 3 屏 / 倒序 3 屏」落点已经到不了大图（大图在 fixture 第 159 行／第 78 段之后）。
+  # 2026-10-13 读数：3 屏后渲染窗口只到第 23 段前后（大图不在 AX），11 屏后仍到不了第 148 段。
+  # 处置：三处翻页都放大，并改用 **waitFor 驱动**（按目标出现/消失停手），不再依赖精确落点。
+  # ⌃V / ⌥V 是 chord（盲发、不回读；盲发不重试是既有口径），到两端后继续按是空操作（scrollTop
+  # 被夹住），因此「到底」给足屏数对文档长度不敏感；「正向」「倒序」的落点靠渲染窗口（可见区
+  # ±1000px）的容差吸收——本场景判的是「大图在/不在渲染窗口」，不是某个精确 scrollTop。
+  # 失效条件：**窗口几何变化**（M491 起窗口钉回 1200×800；翻页步长 = clientHeight − 2×行高、
+  # 渲染窗口 = 可见区 ± 1000px，视口一变这组屏数就失准）——红就先看这三条，按新读数加/减屏数，
+  # 别放宽断言（断言守的是 M187 的终态不变量，不是翻页落点）。
+  - name: 正向翻屏到大图（⌃V ×7：M399 后翻页预算比旧标定大）
     do: keys
-    keys: [ctrl+v, ctrl+v, ctrl+v]
+    keys: [ctrl+v, ctrl+v, ctrl+v, ctrl+v, ctrl+v, ctrl+v, ctrl+v]
     gapMs: 500
+  - name: 等大图进入渲染视口（waitFor 驱动：按「滚动大图」出现停手）
+    do: waitFor
+    waitFor:
+      has: ["![滚动大图](svg-scroll-tall.svg)"]
+    timeoutMs: 15000
     expect:
       - label: 大图的替换区已在 AX 树里（同一个匹配器：起点判「不在」、这里判「在」）
         ax: { has: "![滚动大图](svg-scroll-tall.svg)" }
@@ -31,10 +46,16 @@ steps:
         editor: { not: "加载中…" }
       - shot: 大图已渲染
 
-  - name: 继续翻屏到底：大图滚出渲染视口（widget 被销毁）
+  - name: 继续翻屏到底：大图滚出渲染视口（widget 被销毁；⌃V ×10，末尾多余按键是空操作）
     do: keys
-    keys: [ctrl+v, ctrl+v, ctrl+v, ctrl+v, ctrl+v, ctrl+v, ctrl+v, ctrl+v]
+    keys: [ctrl+v, ctrl+v, ctrl+v, ctrl+v, ctrl+v, ctrl+v, ctrl+v, ctrl+v, ctrl+v, ctrl+v]
     gapMs: 500
+  - name: 等翻到文档末尾（waitFor 驱动：按「段落 148」出现停手）
+    do: waitFor
+    waitFor:
+      has: ["段落 148"]
+      not: ["![滚动大图](svg-scroll-tall.svg)"]
+    timeoutMs: 15000
     expect:
       - label: 已到文档末尾（末段在渲染窗口里——本步的「不在」因此不得在空读上成立）
         editor: { has: "段落 148" }
@@ -42,10 +63,15 @@ steps:
         ax: { not: "![滚动大图](svg-scroll-tall.svg)" }
       - shot: 到底
 
-  - name: 倒序翻屏回到大图：三屏内落到图片处（重建 widget，缺陷现场）
+  - name: 倒序翻屏回到大图（⌥V ×5：M399 后倒序预算比旧标定大；落到图片处重建 widget，缺陷现场）
     do: keys
-    keys: [alt+v, alt+v, alt+v]
+    keys: [alt+v, alt+v, alt+v, alt+v, alt+v]
     gapMs: 500
+  - name: 等大图重建回 AX（waitFor 驱动：按「滚动大图」出现停手）
+    do: waitFor
+    waitFor:
+      has: ["![滚动大图](svg-scroll-tall.svg)"]
+    timeoutMs: 15000
     expect:
       - label: 大图的替换区回到 AX 树里（与「到底」步同一个匹配器，形成对照）
         ax: { has: "![滚动大图](svg-scroll-tall.svg)" }
@@ -151,9 +177,19 @@ steps:
   不动光标）。套件没有滚轮动作（`lib/execute.mjs` 的动作表里没有 scroll），所以「慢速倒序滚动」
   在这条通道上表达不了；翻屏键是这条通道能做到的「倒序滚动」。两个键都要求编辑器持有渲染层焦点，
   因此先 `clickEditor`。
-- **步长与落点**：步长 = `scroller.clientHeight − 2×行高`（`src/editor.ts` 的 `scrollPage`），真机
-  1200×800 窗口下实测约 585px（clientHeight ≈633px）；到两端后继续按是空操作（浏览器把 scrollTop
-  夹在 `[0, max]`，所以「正向到底」用多按几次表达，不去数到刚好）。
+- **步长与落点**：步长 = `scroller.clientHeight − 2×行高`（`src/editor.ts` 的 `scrollPage`）；到两端后
+  继续按是空操作（浏览器把 scrollTop 夹在 `[0, max]`，所以「正向到底」用多按几次表达，不去数到刚好）。
+- **M399 后重标翻页预算（2026-10-14）**：M399（`c4bc368` 空段落正常行高化，Alex 裁决 A：每处空行
+  +21px）把文档整体拉长，旧标定的「正向 3 屏 / 倒序 3 屏」已经到不了大图。2026-10-13 读数：
+  3 屏后渲染窗口只到第 23 段前后（大图不在 AX）；3+8=11 屏后仍未到第 148 段；11 屏后倒序 3 屏恰好
+  把大图带回 AX（当时是撞上的，不是标定）。处置：三处翻页都放大（正向 7 / 到底 10 / 倒序 5），并把
+  三步断言改成 **`do: waitFor` 驱动**（按目标出现/消失停手）——这修不了「落点对不对」，但能把渲染
+  时序等掉，且落点错了会在 waitFor 超时里报清楚缺哪个串。
+  **这里的翻页数仍是标定的**（DSL 没有「按条件翻页」的原语：`do: waitFor` 只能轮询、不能注入按键；
+  `do: scroll` 是死通道，见 README「已知边界」的滚动条）。落点靠渲染窗口（可见区 ±1000px）的容差
+  吸收，所以留了屏数区间而不是精确值。**失效条件：窗口几何变化**（M491 起窗口钉回 1200×800——
+  视口一变，翻页步长 `clientHeight − 2×行高` 与渲染窗口容差都跟着变）——这三条会先红，按当时的
+  读数加/减屏数（或按文末口径调夹具段数），不要放宽断言。
 - **夹具按三段约束设计**（真机 1200×800 下实测：段块高 ≈27px、可见区高 ≈633px、一屏 ≈585px）：
   1. **图片上方 78 段**（≈2100px）保证图片落在**初始渲染视口之外**。CM 视口 = 可见区 ± 1000px（margin
      的上下分配随滚动状态变，最坏情况 1000px 全在可见底之下 ⇒ 视口底 = 633 + 1000 = 1633px），78 段
