@@ -57,7 +57,7 @@ steps:
 
   - name: 键入 A 侧标记
     do: typeInNode
-    target: { role: AXTextArea, name: "问点什么|vaulta-img" }
+    target: { role: AXTextArea, name: "问点什么|vaulta-img|pasted-[0-9a-f]{16}\\.webp" }
     text: "vaulta-img"
 
   - name: 发送 A 的含图消息
@@ -155,7 +155,7 @@ steps:
 
   - name: 键入 B 侧标记
     do: typeInNode
-    target: { role: AXTextArea, name: "问点什么|vaultb-img" }
+    target: { role: AXTextArea, name: "问点什么|vaultb-img|pasted-[0-9a-f]{16}\\.webp" }
     text: "vaultb-img"
 
   - name: 发送 B 的含图消息
