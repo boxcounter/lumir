@@ -15,6 +15,8 @@ import { encodePng, syntheticScreenshot } from "./png.mjs";
 import { DEFAULT_MIN_DIFF, DEFAULT_PATCH, DEFAULT_TOL, colorDiff, decodeScreenshot, dominantColor, formatColor, lumaSpread } from "./pixel.mjs";
 import {
   clickNode,
+  foregroundNote,
+  foregroundWhy,
   frontmostPid,
   injectClickWithClickState,
   injectClickWithModifiers,
@@ -1121,13 +1123,15 @@ export async function runScenario(ctx, scenario) {
   return result;
 }
 
-/** 键盘动作前复查前台；中途丢失（可能被别的窗口抢走）就尽力抢回并留痕。 */
+/** 键盘动作前复查前台；中途丢失（可能被别的窗口抢走）就尽力抢回并留痕。
+ *  M478：抢回的**手段与失败原因**一并留痕——`foregroundNote` 把 AXRaise 与 System Events
+ *  两条通道的尝试记录成一行（此前只写「已尽力抢回，前台 pid=…」，看不出是两条通道都投过）。 */
 async function noteIfFocusLost(ctx, pid) {
   if (frontmostPid() === pid) return;
-  await tryForeground(ctx.cu, pid, { retries: 2 });
+  const fg = await tryForeground(ctx.cu, pid, { retries: 2 });
   ctx.foregroundNote =
-    `键盘注入前复检：前台焦点中途丢失（已尽力抢回，前台 pid=${frontmostPid() ?? "未知"}）——` +
-    "若后续键盘断言 FAIL，先按 tower 纪律排除 frontmost-required 因素再判 app 缺陷";
+    "键盘注入前复检：前台焦点中途丢失（已按 AXRaise → System Events 两条通道尽力抢回）——" +
+    `${foregroundNote(fg)}；若后续键盘断言 FAIL，先按 tower 纪律排除 frontmost-required 因素再判 app 缺陷`;
 }
 
 /** `do: settle` 的真实语义（M249）：**连续两次 AX 快照逐字节一致**才算界面已落定。
@@ -1713,7 +1717,8 @@ async function doAction(step, { ctx, cu, scenario, vars, pid, evidence }) {
       if (!fg.frontmost) {
         throw new Error(
           `drag 需要目标窗口在前台（当前前台 pid=${fg.frontPid ?? "未知"}）：真鼠标拖拽会落到最上层那扇窗上，` +
-            `此时拖拽不会到达 Lumir。跑拖拽类场景时目标窗口需可见且未被别的应用盖住。`,
+            `此时拖拽不会到达 Lumir。跑拖拽类场景时目标窗口需可见且未被别的应用盖住。` +
+            `激活尝试：${foregroundWhy(fg)}`, // M478：两条通道的成败与 osascript stderr 一并给出，不再只有一句「未取得」
         );
       }
       const ax = await readAxForScreenPoint(cu, p);
@@ -1777,7 +1782,7 @@ async function doAction(step, { ctx, cu, scenario, vars, pid, evidence }) {
         throw new InfraError(
           `hover 需要目标窗口在前台（当前前台 pid=${fg.frontPid ?? "未知"}）：真实鼠标事件落在最上层的那扇窗上，` +
             `窗口被别的应用盖住时事件不会到达 Lumir。本次运行该场景读数不算数（环境项，非产品缺陷）——` +
-            `把前台让给 Lumir 后复跑。`,
+            `把前台让给 Lumir 后复跑。激活尝试：${foregroundWhy(fg)}`,
         );
       }
       const { bounds, local, point } = await windowLocalTarget(cu, p, step.target, {
@@ -1847,7 +1852,8 @@ async function doAction(step, { ctx, cu, scenario, vars, pid, evidence }) {
     case "focusWindow": {
       const fg = await tryForeground(cu, p, { retries: step.retries ?? 2 });
       vars.__foreground = fg;
-      return fg.frontmost ? "前台已取得" : `前台未取得（前台 pid=${fg.frontPid ?? "未知"}），走 KimiCU 后台注入路径`;
+      // M478：这一步的结果（手段与失败原因）就是它的产出，直接写进证据，不再只回一句「已取得 / 未取得」。
+      return foregroundNote(fg);
     }
     case "vaultWrite": {
       const file = path.join(vaultDir(), step.file);
@@ -2049,7 +2055,8 @@ async function windowLocalTarget(cu, pid, target, { retries = 4, label = "动作
   if (requireFrontmost && !fg.frontmost) {
     throw new Error(
       `${label} 需要目标窗口在前台（当前前台 pid=${fg.frontPid ?? "未知"}）：真鼠标事件会落到最上层那扇窗上，` +
-        `此时不会到达 Lumir。跑这类场景时目标窗口需可见且未被别的应用盖住。`,
+        `此时不会到达 Lumir。跑这类场景时目标窗口需可见且未被别的应用盖住。` +
+        `激活尝试：${foregroundWhy(fg)}`, // M478：两条通道的成败与 osascript stderr 一并给出
     );
   }
   const ax = await readAxForScreenPoint(cu, pid);

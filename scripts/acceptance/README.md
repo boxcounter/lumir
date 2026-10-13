@@ -41,14 +41,36 @@ runner 在启动前做预检，不满足直接退出且不产生半截证据：
 |---|---|---|
 | KimiCU 可用 | 二进制不存在即报错并给安装命令 | 驱动通道缺失时跑也是白跑 |
 | 磁盘水位 | `< 2G` 拒绝启动（可选显式绕过，见下） | 真机实例触发 cargo/vite 时 ENOSPC 硬失败（批次四实证） |
+| 同机已有 Lumir 实例 | 检出**安装版**（`*.app/Contents/MacOS/lumir`）或**残留的开发实例**（`target/debug/lumir`）即拒绝启动，消息给出 pid 与逐个 `kill` 的清除方法（退出码 2） | 在场的第二个实例与套件实例同 bundle 身份、共用同一份 AX / 前台归属，会**静默**改变「前台焦点归谁」这个所有键盘 / 鼠标动作的前提，产出一串与产品缺陷无法区分的假 FAIL（REVIEW.md 第 11 条；2026-10-13 的复跑就是在这样的现场上跑的） |
 | 1420 端口 | 只报告占用情况 | 全机同一时刻只能有一个 `pnpm tauri dev`（vite strictPort 1420）；本套件走独立端口，但仍先看一眼同机负载 |
 | 跑批独占锁 | 需持锁的真跑批先 `mkdir` 抢 `/tmp/lumir-acceptance-rmachine.lock`；已被别人持有时拒绝启动（退出码 2） | 合成 vault 与 dev 端口都是**全机共享**的，光靠人工约定会漏——两条跑批错开启动就能互相 `resetVault`（见下节） |
 
-**键盘场景的前台纪律**（tower 定，M134 实证）：KimiCU 对 WKWebView 内 CodeMirror 的键盘注入在窗口
-**被遮挡时不落地**（返回 `occluded:true`），activate 后也未必恢复。因此 runner 在每个场景就绪后、
-以及每次 `restart` 之后都会 `ensureForeground`：已在前台不动窗口，否则 AXRaise 并复验 `lsappinfo`
-的前台归属；**拿不到前台就报 FAIL**，不静默跳过、也不改用 `set_value` 伪造键盘语义（`set_value`
-不经键位分发链路，验不到 `keys.ts`）。副作用：跑套件期间 Lumir 窗口会到前台。
+**键盘场景的前台纪律**（tower 定，M134 实证；M478 补第二条通道）：KimiCU 对 WKWebView 内 CodeMirror
+的键盘注入在窗口**被遮挡时不落地**（返回 `occluded:true`），activate 后也未必恢复。因此 runner 在每个
+场景就绪后、以及每次 `restart` 之后都会 `tryForeground`，它按代价递增试两条通道：
+
+| 通道 | 做什么 | 代价 / 边界 |
+|---|---|---|
+| 1. `AXRaise`（M134 起） | 抬高自己那扇窗，**不改前台归属** | 对后台 app **无效**（M135 r2 实测：前台 pid 仍是别人的进程） |
+| 2. System Events `set frontmost`（按 unix id，M478 加） | **真的把 app 提到前台** | 会打断用户当前操作；套件跑批期间本就会把 Lumir 提到前台（见下「副作用」） |
+
+第 2 条是必需的，不是锦上添花：历史上「取得前台」靠的是 **app 启动时 macOS 自动置前**这个外部条件，
+而 `1184a17` 把窗口改成 `visible: false` 创建、在 `apply_startup_size` 里延迟 `show()`
+（`src-tauri/src/lib.rs`）之后 `show()` 不再激活 app，dev 实例又是 cargo 直接 exec（不走
+LaunchServices、没有启动激活）⇒ **启动零激活**：无人在场的跑批整轮前台都留在别的 app 手里
+（2026-10-13 复跑实证：207 条记录、0 条「已取得」）。
+
+**结果一律写进证据**（M478）：每个场景的 `steps.md` 都有一行「前台焦点」——成功写
+`前台焦点：已取得（手段：System Events set frontmost；此前 2 次尝试未生效）`，失败写
+`前台焦点：未取得（当前前台 pid=85818（Safari））——AXRaise 失败（…）；System Events set frontmost
+失败（osascript 退出码 1：…）`。
+
+**这一行怎么读**：`未取得` 本身只说明套件没抢到前台（键位类断言 FAIL 时先排除 frontmost-required
+因素），**不是**产品缺陷；真正指向「激活链路坏了」的是括号里那段——哪条通道、失败文本是什么。这条
+线此前只有「已取得 / 未取得」两个词，2026-10-13 的复跑因此无法归因（外挂看门狗的 osascript stderr
+被 `>/dev/null` 吞了）。**拿不到前台不静默跳过，也不改用 `set_value` 伪造键盘语义**（`set_value`
+不经键位分发链路，验不到 `keys.ts`）；注入是否真的落地由场景自己的行为断言证明。副作用：跑套件
+期间 Lumir 窗口会到前台。
 
 **启动实例的窗口形态自检**（M236，修「套件覆写窗口配置丢掉 overlay 标题栏」缺口——窗口配置只有一份真源，见 REVIEW.md 第 8 条）：`waitAppReady` 每次就绪（含 `restart` 后重启）
 都反查一遍「webview 铺满整窗」——`AXScrollArea` 的顶边与高度对 `AXWindow` 的差 ≤4px。不是 overlay
@@ -98,9 +120,11 @@ dev 端口是**全机共享**的，`reclaimPort()` 只在两个 app 实例同时
 端口是第二份共享资源：要真并行还必须**同时**覆写 `LUMIR_ACCEPTANCE_PORT`，否则 `reclaimPort()` 会按
 「端口被非本 worktree 的进程占用」报错（报错不静默，但那次跑批起不来）。
 
-**已知边界**：`SIGINT` / `SIGTERM` 只释放锁，**不回收**已起的 app 实例——残留实例由下一次跑批的
-`reclaimPort` 处理（本 worktree 的会被回收，别的 worktree 的按错因报错，不静默）。`--keep-app` 同理：
-锁守的是 **runner 的执行窗口**，不是 app 的生命周期，进程退出即释放锁，留下的 app 交下一个跑批处理。
+**已知边界**：`SIGINT` / `SIGTERM` 只释放锁，**不回收**已起的 app 实例。`--keep-app` 同理：锁守的是
+**runner 的执行窗口**，不是 app 的生命周期，进程退出即释放锁。留下的实例此后怎么处理，M478 起分两段：
+下一次跑批的**起跑自检**先挡（同机任何 Lumir 实例在场都拒跑并给出 pid，见上表「同机已有 Lumir
+实例」行）；清掉之后 `reclaimPort` 仍按老口径回收**本 worktree** 的残留、对别的 worktree 的按错因
+报错（不静默）。⇒ `--keep-app` 之后想再跑批，得先自己退出那个实例。
 
 ### 运行环境是隔离的（这些事一起保证可复现）
 

@@ -207,33 +207,143 @@ export function frontmostPid() {
   }
 }
 
+/** 前台 pid 的可读化（`85818（Safari）`）——M478：诊断「前台被谁占着」时人要的是这个名字，
+ *  只留一个 pid 数字的证据几乎不可读。进程已退出 / 读不到时退回纯 pid。 */
+export function frontmostLabel(pid = frontmostPid()) {
+  if (pid === null || pid === undefined) return "未知";
+  try {
+    const comm = execFileSync("/bin/ps", ["-o", "comm=", "-p", String(pid)], { encoding: "utf8" }).trim();
+    const name = comm.split("/").filter(Boolean).pop();
+    if (name) return `${pid}（${name}）`;
+  } catch {
+    /* 进程可能刚退出：退回纯 pid */
+  }
+  return String(pid);
+}
+
+/** 激活手段 → 证据里的措辞（同一张表，`foregroundNote` 与各动作的错误消息共用）。 */
+const METHOD_LABEL = {
+  "already-frontmost": "启动即在前台（无需激活）",
+  AXRaise: "AXRaise",
+  "SystemEvents.frontmost": "System Events set frontmost",
+};
+
+/**
+ * System Events `set frontmost`（按 unix id）——M478 加的第二条抢前台通道。
+ *
+ * 为什么必须有它：套件此前唯一的手段是 `AXRaise`，而它**本就抢不动**（M135 r2 实测：用户在用
+ * 别的 app 时 AXRaise 之后前台 pid 仍是别人的进程）。历史批次全绿靠的是「app 启动时 macOS
+ * 自动置前」这个外部条件，而 `1184a17` 把窗口改成 `visible: false` 创建、在 `apply_startup_size`
+ * 里延迟 `show()`（`src-tauri/src/lib.rs:160,245-247,295`）之后，`show()` 不激活 app；dev 实例
+ * 又是 cargo 直接 exec（不走 LaunchServices，没有启动激活）⇒ **启动零激活**。于是无人在场的
+ * 跑批整轮前台归属都在别的 app 手里（2026-10-13 复跑实证：全程 frontmost = Safari pid 85818，
+ * 每条 FAIL 都挂着「需先排除 frontmost-required」的警示）。
+ *
+ * 与 AXPress 类动作不同，这条通道是**真的把 app 提到前台**——会打断用户当前的操作。套件跑批
+ * 期间本就会把 Lumir 提到前台（README「键盘场景的前台纪律」已写明这条副作用），故代价可接受。
+ *
+ * 返回值是尝试记录 `{ method, ok, ms, detail }`：失败时 `detail` 带上 osascript 的 **stderr**
+ * ——2026-10-13 那次外挂看门狗把 osascript 的输出吞进了 /dev/null，事后只剩「激活始终未生效」
+ * 这一句无从归因的观察。结论无论如何都要落进证据，不许再吞。
+ */
+export function activateViaSystemEvents(pid) {
+  const startedAt = Date.now();
+  const script = `tell application "System Events" to set frontmost of (first process whose unix id is ${pid}) to true`;
+  try {
+    const out = execFileSync("/usr/bin/osascript", ["-e", script], { encoding: "utf8", timeout: 10_000 }).trim();
+    return { method: "SystemEvents.frontmost", ok: true, ms: Date.now() - startedAt, detail: out || "osascript 退出码 0" };
+  } catch (e) {
+    // execFileSync 把子进程 stderr 收在 e.stderr（本文件的用法不重定向 stdio），这正是要留的东西。
+    const stderr = String(e.stderr ?? "").trim().replace(/\s+/g, " ");
+    return {
+      method: "SystemEvents.frontmost",
+      ok: false,
+      ms: Date.now() - startedAt,
+      detail: `osascript 退出码 ${e.status ?? "?"}${stderr ? `：${stderr}` : `：${e.message}`}`,
+    };
+  }
+}
+
+/** 激活尝试（成功与失败都算）的可读摘要——`foregroundNote` 与动作的错误消息共用一份措辞。 */
+export function foregroundWhy(fg) {
+  return (fg?.attempts ?? [])
+    .filter((a) => a.method !== "already-frontmost")
+    .map(
+      (a) =>
+        `${METHOD_LABEL[a.method] ?? a.method} ${a.ok ? "已投递但前台未改变" : "失败"}` +
+        `${a.detail ? `（${a.detail}）` : ""}`,
+    )
+    .join("；");
+}
+
+/** 抢前台的尝试记录 → 证据里的那一行（steps.md 的「前台焦点」行）。
+ *
+ *  M478 的动因：此前只有成功那一句「已取得」，失败也只写「未取得」+ 前台 pid——用了哪种手段、
+ *  为什么失败一概不留，复盘时无法归因（2026-10-13 的看门狗把 osascript 的 stderr 吞了，整轮
+ *  只能看出「激活没生效」）。现在两条路径都把手段与失败原因写进证据。
+ *  **格式约束（下游按子串匹配，改文案要一起改）**：成功行含 `前台焦点：已取得`，失败行含
+ *  `未取得`——`execute.mjs` 的收尾警示（frontmost-required 提醒）与 README 的解读口径都按这两个
+ *  子串走。 */
+export function foregroundNote(fg, { prefix = "前台焦点" } = {}) {
+  const tries = (fg?.attempts ?? []).filter((a) => a.method !== "already-frontmost");
+  if (fg?.frontmost) {
+    const failed = tries.filter((a) => !a.ok).length;
+    const by = METHOD_LABEL[fg.method] ?? fg.method ?? "未知手段";
+    return `${prefix}：已取得（手段：${by}${failed ? `；此前 ${failed} 次尝试未生效` : ""}）`;
+  }
+  const why = foregroundWhy(fg);
+  return (
+    `${prefix}：未取得（当前前台 pid=${frontmostLabel(fg?.frontPid)}）` +
+    (why ? `——${why}` : "") +
+    "；键盘走 KimiCU 后台注入路径（键位类断言 FAIL 时先按 tower 纪律排除 frontmost-required 因素）"
+  );
+}
+
 /**
  * tower 纪律（2026-09-16，M134 实证）：KimiCU 对 WKWebView 内 CodeMirror 的键盘注入在窗口被遮挡时
  * 可能不落地（返回 occluded:true），activate 后也未必恢复。键盘驱动场景应先让目标窗口成为前台。
  *
- * 实测补充（M135 r2）：当用户正在用别的 app 时，`AXRaise` **无法**把后台 app 抢到前台
- * （前台 pid 仍是别的进程），且强行抢焦点会打断用户——KimiCU 的 press_key/type_text 默认走
- * **后台注入**路径，正是为这种场景设计的。因此这里做成**尽力而为 + 如实记录**：
- * 拿到前台记 true，拿不到记 false 并留在证据里，由场景自己的行为断言证明注入是否真的落地
- * （注入没落地时那些断言必然 FAIL——不存在「没验到也算过」的路径）。
- * 纪律里禁止的两件事仍然禁止：静默跳过、改用 set_value 伪造键盘语义。
- */
-export async function tryForeground(cu, pid, { retries = 2 } = {}) {
+ * 两条通道，按代价递增（M478）：
+ *   1. `AXRaise`（自 M134 起）——**尽力而为**：不动前台归属、不打断用户，但对后台 app 无效
+ *      （M135 r2 实测）；
+ *   2. System Events `set frontmost`（M478 加）——AXRaise 之后仍不在前台时兜底，**真的抢前台**
+ *      （见 activateViaSystemEvents 的来由：启动零激活的实例全靠它）。
+ *
+ * 返回值仍**如实**报前台归属：拿到记 true，拿不到记 false 并带完整的尝试记录（手段 / 成败 /
+ * 失败原因），由场景自己的行为断言证明注入是否真的落地（注入没落地时那些断言必然 FAIL——
+ * 不存在「没验到也算过」的路径）。纪律里禁止的两件事仍然禁止：静默跳过、改用 set_value 伪造
+ * 键盘语义。 */
+export async function tryForeground(cu, pid, { retries = 2, systemEventsRetries = 2 } = {}) {
+  const attempts = [];
+  const outcome = (frontmost, method) => ({
+    frontmost,
+    frontPid: frontmost ? pid : frontmostPid(),
+    method,
+    attempts,
+  });
+  if (frontmostPid() === pid) return outcome(true, "already-frontmost");
   for (let i = 0; i < retries; i++) {
-    const front = frontmostPid();
-    if (front === pid) return { frontmost: true, frontPid: pid, raised: i > 0 };
     const ax = await readAx(cu, pid).catch(() => null);
     const win = ax?.nodes.find((n) => n.role === "AXWindow");
-    if (win) {
+    if (!win) {
+      attempts.push({ method: "AXRaise", ok: false, detail: "AX 快照里读不到 AXWindow（快照退化 / 窗口未就绪）" });
+    } else {
       try {
         await cu.performSecondaryAction(pid, win.index, "AXRaise");
-      } catch {
-        /* 无 AXRaise 权限/动作时忽略：后台注入路径仍可用 */
+        attempts.push({ method: "AXRaise", ok: true, detail: `AXRaise 已投递（第 ${i + 1} 轮）` });
+      } catch (e) {
+        attempts.push({ method: "AXRaise", ok: false, detail: `AXRaise 失败：${e.message}` });
       }
     }
     await sleep(700);
+    if (frontmostPid() === pid) return outcome(true, attempts.at(-1)?.method ?? "AXRaise");
   }
-  return { frontmost: frontmostPid() === pid, frontPid: frontmostPid(), raised: true };
+  for (let i = 0; i < systemEventsRetries; i++) {
+    attempts.push(activateViaSystemEvents(pid));
+    await sleep(800); // 激活是异步的：投递之后前台归属要过一拍才切过来
+    if (frontmostPid() === pid) return outcome(true, "SystemEvents.frontmost");
+  }
+  return outcome(false, attempts.at(-1)?.method ?? null);
 }
 
 /** 编辑器当前文档文本（AXTextArea.value）。 */
