@@ -103,6 +103,9 @@ steps:
   - name: ⌘V 落字（落进哪一格 = 上面那一次 ⌃B 把光标挪到了哪）
     do: key
     key: cmd+v
+    # M507：chord 副作用回读 verify-retry——⌘V 的直接副作用 = composer 值里多出 "xqzk"（AX 可读，
+    # 丢键时值逐字节不变 ⇒ 未变才重注 ≤3 次）。
+    verify: { pattern: "xqzk" }
     expect:
       - label: 探针串**接在 marker 段落末尾**（同一行 ⇒ AX 里 hnl 之后紧邻 xqzk）
         ax: { has: "/hnlxqzk/" }
@@ -123,6 +126,7 @@ steps:
   - name: ⌘V 落字（⌃A 生效 ⇒ 字落在**行首**）
     do: key
     key: cmd+v
+    verify: { pattern: "yqzk" }
     expect:
       - label: 探针串落在 marker 段落**行首**（AX 里 yqzk 在 hnl 之前）
         ax: { has: "/yqzkhnl/" }

@@ -168,15 +168,16 @@ steps:
     expect:
       - label: 行内出现输入框，预填的是原名（读屏名 `重命名 {名称}` 的措辞在真机 AX 通道上读不到，见「已知边界」；这里是同一份信息里可读的那一半）
         ax: { has: '/AXTextField = "aaa-menu.md" /' }
-      - label: 输入框持焦点（下一步的逐字符注入落在它身上）
+      - label: 输入框持焦点（下一步的注入落在它身上）
         ax: { focused: "AXTextField" }
       - shot: 内联重命名输入框
   - name: 全选原名（chord 盲发不重试）
     do: key
     key: "cmd+a"
-  - name: 输入新名（逐字符，回读校验 + 只在字节未变时重试）
-    do: keys
-    keys: ["a", "a", "a", "r", "e", "n", ".", "m", "d"]
+  - name: 输入新名（M507：原生输入原子注入 type_text 单串 + 计数回读；逐字符 press_key 会丢 'e'）
+    do: typeInNode
+    target: { role: AXTextField, name: "aaa-menu.md|aaaren.md" }
+    text: "aaaren.md"
     expect:
       - label: 输入框里是 aaaren.md（注入真的落地了）
         ax: { has: '/AXTextField = "aaaren.md" /' }
@@ -217,9 +218,10 @@ steps:
   - name: 全选并输入撞名
     do: key
     key: "cmd+a"
-  - name: 输入 note.md（与既有 fixture 撞名）
-    do: keys
-    keys: ["n", "o", "t", "e", ".", "m", "d"]
+  - name: 输入 note.md（与既有 fixture 撞名；M507 原子注入）
+    do: typeInNode
+    target: { role: AXTextField, name: "aaaren.md|note.md" }
+    text: "note.md"
     expect:
       - label: 行内给出撞名原因（前端预检，提交前就说清）
         ax: { has: "已存在同名条目：note.md" }
@@ -327,9 +329,10 @@ steps:
       - label: 行内输入框出现（新建文件的读屏名）
         ax: { has: "新建文件的名称" }
       - shot: 新建文件输入框
-  - name: 输入 fresh.md
-    do: keys
-    keys: ["f", "r", "e", "s", "h", ".", "m", "d"]
+  - name: 输入 fresh.md（M507 原子注入）
+    do: typeInNode
+    target: { role: AXTextField, name: "新建文件的名称|fresh.md" }
+    text: "fresh.md"
     expect:
       - label: 输入落地
         ax: { has: "fresh.md" }
@@ -357,9 +360,10 @@ steps:
     expect:
       - label: 行内输入框出现（新建子目录的读屏名）
         ax: { has: "新建子目录的名称" }
-  - name: 输入 freshdir
-    do: keys
-    keys: ["f", "r", "e", "s", "h", "d", "i", "r"]
+  - name: 输入 freshdir（M507 原子注入）
+    do: typeInNode
+    target: { role: AXTextField, name: "新建子目录的名称|freshdir" }
+    text: "freshdir"
     expect:
       - label: 输入落地（空输入框的基线是空串，出现次数判据因此有区分度）
         ax: { has: '/AXTextField = "freshdir" /' }
@@ -392,8 +396,9 @@ steps:
       - label: 行内输入框出现
         ax: { has: "新建文件的名称" }
   - name: 输入 probe.md
-    do: keys
-    keys: ["p", "r", "o", "b", "e", ".", "m", "d"]
+    do: typeInNode
+    target: { role: AXTextField, name: "新建文件的名称|probe.md" }
+    text: "probe.md"
   - name: Enter 提交
     do: key
     key: "return"
@@ -442,9 +447,10 @@ steps:
   - name: 全选并输入新名
     do: key
     key: "cmd+a"
-  - name: 输入 aabren.md
-    do: keys
-    keys: ["a", "a", "b", "r", "e", "n", ".", "m", "d"]
+  - name: 输入 aabren.md（M507 原子注入）
+    do: typeInNode
+    target: { role: AXTextField, name: "aab-tab.md|aabren.md" }
+    text: "aabren.md"
     expect:
       - label: 输入框里是 aabren.md（注入真的落地了）
         ax: { has: '/AXTextField = "aabren.md" /' }
@@ -635,8 +641,10 @@ Alex 请求的六个条目级操作（删除、重命名、复制完整路径、
   套件侧——让验收实例的 dev server 不 watch `.tower/**`（以及 `dist/**`、`test-results/**`、
   `playwright-report/**`），已按 M358 上报（finding）。
 - **注入通道的两条老账**：① `cmd+a` 是 chord，套件**盲发不重试**（丢键就 red，按 README 先复跑
-  一次再判产品缺陷）；② `keys` 的逐字符注入对 WKWebView 间歇丢键，本场景的判据都是「回读 +
-  只在字节未变时重试」，仍可能整批丢键——红了先复跑。
+  一次再判产品缺陷）；② 内联输入框的**素材串注入已迁 `do: typeInNode`**（M507：`type_text` 整串一次
+  + M143 计数回读重试）——旧写法逐字符 `do: keys` 对 WKWebView 丢键（'e' 本机确定性丢失，M497 归因、
+  M504 实测本场景「aaaren.md」落「aaarn.」），回读重试修不了确定性丢失。**唯一未迁的是忽略集名
+  `.git`**（不含 'e'、M504 未观察到丢键），它仍走逐字符 `do: keys` 的回读通道；红了先复跑。
 - **不做手感判定**：菜单的间距/阴影观感、内联输入框的宽度手感归 Alex；本场景只留截图。
 - **不新增像素基线**：`shot` 是给人看的证据；形态的逐像素回归在 chromium 侧
   （`tests/visual/scenes/tree-menu.spec.ts` 的五个元素级基线 + M251 新增的「行右侧空白带」用例）。

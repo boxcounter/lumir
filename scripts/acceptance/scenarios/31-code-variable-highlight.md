@@ -35,10 +35,10 @@ steps:
         ax: { has: "0/0" }
       - shot: 面板已开（查询词为空）
 
-  - name: 逐字符敲入查询词 limit（`keys` 对纯可打印序列做回读 + 有限重试）
-    do: keys
-    keys: ["l", "i", "m", "i", "t"]
-    gapMs: 250
+  - name: 敲入查询词 limit（M507：原生输入原子注入 type_text 单串 + 计数回读，替换逐字符 press_key——后者丢 'e' 等键）
+    do: typeInNode
+    target: { role: AXTextField, name: "查找|limit" }
+    text: "limit"
     expect:
       - label: 查询词落地为 limit（回读判据：AXTextField 的 value 逐字等于注入的串）
         ax: { has: '/AXTextField = "limit"/' }
@@ -86,10 +86,10 @@ steps:
       - label: 面板就位且查询词为空（每个标签各自持搜索状态：新标签 = 新视图 = 空查询）
         ax: { has: "0/0" }
 
-  - name: 逐字符敲入查询词 limit（与 js 段同一通道：`keys` 对纯可打印序列做回读 + 有限重试）
-    do: keys
-    keys: ["l", "i", "m", "i", "t"]
-    gapMs: 250
+  - name: 敲入查询词 limit（M507：原生输入原子注入，与 js 段同一通道）
+    do: typeInNode
+    target: { role: AXTextField, name: "查找|limit" }
+    text: "limit"
     expect:
       - label: 查询词落地为 limit（回读判据：AXTextField 的 value 逐字等于注入的串）
         ax: { has: '/AXTextField = "limit"/' }
@@ -136,10 +136,10 @@ steps:
       - label: 面板就位且查询词为空（同上：搜索状态随各自标签的编辑器走）
         ax: { has: "0/0" }
 
-  - name: 逐字符敲入查询词 limit
-    do: keys
-    keys: ["l", "i", "m", "i", "t"]
-    gapMs: 250
+  - name: 敲入查询词 limit（M507：原生输入原子注入）
+    do: typeInNode
+    target: { role: AXTextField, name: "查找|limit" }
+    text: "limit"
     expect:
       - label: 查询词落地为 limit
         ax: { has: '/AXTextField = "limit"/' }
@@ -182,7 +182,7 @@ steps:
 判据实现见 `src/code-identifiers.ts`（位置类别 / 名字 / 可见域三层），呈现见
 `src/preview/theme.ts` 的 `codeBindingTheme`。
 
-## 触发通道：为什么用「⌘F + 逐字符查询词 + 回车」，而不是双击
+## 触发通道：为什么用「⌘F + 查询词 + 回车」，而不是双击
 
 **双击通道的现状（M209 修订，2026-09-25）**：README「已知边界」的 dblclick 条已整体改写，两处要点
 （按条目标题引用，不写行号——行号会漂）：
@@ -199,10 +199,17 @@ steps:
 位置的标识符节点内」），不写在手势上——换通道不改变被测行为，而 `doubleClick` 走真鼠标、要求目标窗口
 在前台且不被别的应用遮挡（README「已知边界」那条的纪律），选区通道没有这个环境依赖。
 
-**这条替代通道的落点**：`⌘F` 打开面板 → 逐字符敲入 `LIMIT` → **回车**：回车走官方 `findNext`，
+**这条替代通道的落点**：`⌘F` 打开面板 → 敲入 `LIMIT` → **回车**：回车走官方 `findNext`，
 把**选区移到该匹配上**（`src/search.ts` 的既有语义），于是触发判据所要求的「非空、单区间、落在标识符
 里」三条同时成立。两条机器证据把这件事钉死：**查询词**（`AXTextField` 的 value 逐字等于 `LIMIT`）证明
 查询落地的文本，**计数**（`1/6`）证明选区落在哪一处匹配上（AX 不暴露选区范围，计数是它的函数）。
+
+**查询词注入通道（M507 改）**：搜索框的查询词改走 `do: typeInNode`（原生输入原子注入——KimiCU
+`type_text` 整串一次 + M143 计数回读重试），**不再是逐字符 `do: keys`**。原因：`press_key` 逐键注入
+对搜索框丢键（'e' 本机确定性丢失 + 随机连续丢键段，M497 归因、M504 实测本场景只落 'li'）——回读重试
+修不了确定性丢失，必须换通道（`type_text` 单串）。目标写法 `{ role: AXTextField, name: "查找|limit" }`
+同时覆盖注入前（空框 = 读屏名「查找」）与注入后（`= "limit"`）两个 AX 形态，与 `typeInNode` 的回读
+口径一致。
 
 **查询词按标签重敲，不跨标签沿用（M266 对齐 M254）**：旧写法假设「搜索状态跨文件保留」，那建立在
 M254 之前「单击树文件 = 预览意图、就地替换同一个标签（同一个 `EditorView`）」之上；预览机制退场后
@@ -214,8 +221,8 @@ M254 之前「单击树文件 = 预览意图、就地替换同一个标签（同
 **为什么不走「⌥⇧F 扩选 → ⌘F 带查询词」那条既有写法**：M198 实测（两轮真机）该组合在本机注入链路
 上**不落地**——`⌃E/⌃A/⌃N` 这类 ⌃ 组合正常生效（光标确实移到了末行，截图为证），而 `⌥⇧F` 之后 ⌘F
 打开的面板里**查询词是空的**（`search-01-find` 用的是同一条通道；本轮没有回跑它，只作为本场景不采用
-该路径的记录）。逐字符注入由 `keys` 的**回读 + 有限重试**（README「已知边界」，≤3 次、只在目标字节
-完全未变时重试）兜底，落地结果由查询词的 AX 值判。
+该路径的记录）。查询词注入的兜底是 `typeInNode` 的**计数回读**（M507：整串一次注入，目标字节完全
+未变才重注 ≤3 次），落地结果由查询词的 AX 值判。
 
 ## 断言口径（为什么这么写）
 
