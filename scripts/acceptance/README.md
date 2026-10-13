@@ -88,6 +88,23 @@ LaunchServices、没有启动激活）⇒ **启动零激活**：无人在场的�
 再 spread**（窗口配置只有一份真源，REVIEW.md 第 8 条），只叠 `x/y/focus`。读不到窗口对象就抛错，
 不回落手抄一份——回到手抄就是回到这个坑。**新增窗口级配置键时不需要改本套件**。
 
+**窗口几何的确定性：启动后钉尺寸**（M491，根因记录）：M434 起产品侧 `apply_startup_size`
+（`src-tauri/src/lib.rs:242-322`）把**首启尺寸设为工作区 90%**、其后按 `window-state.json` 存档
+恢复——`tauri.conf.json` 的 `1200×800` 被降级为占位尺寸，`launchApp` 经 `--config` 传的尺寸意图被
+静默盖过。而一批场景（53、122 等）按 1200×800 标定了硬编码窗口局部坐标，工作区随机器/显示器状态
+变（2026-10-13 轮实测同一 run 内跳变于 1361×855 与 1152×864 之间），坐标/像素断言随之命中错误
+落点（finding `.tower/comms/findings/20261013-agent-m484-bug-m434.md`）。
+
+套件的口径：**每个场景启动（含 `restart` 重启）过就绪门后，立刻把窗口经 AXSize 直写钉回
+`tauri.conf.json` 的占位尺寸**（`run.mjs` 首启与 `restartApp` 两条路径；目标值从 conf 现读，不手抄
+字面量）。通道是 M236 已验证的 `resizeWindowAX`（`lib/ax-window.swift`），不新增第二条 resize 通道；
+钉尺寸的结果（回读生效宽高 + webview 重排 settle 耗时）并入 steps.md 的「前台焦点」证据行。两个
+如实登记的边界：① 屏幕放不下该尺寸时窗口管理器会钳制，生效值 ≠ 请求值会在证据行标 ⚠（坐标场景
+按生效值漂，那是环境信号）；② 写入后 webview 有 ≤2s 重排过渡，`pinWindowSize` 轮询「铺满 ≤4px」
+最多 6s，等不到也只在证据行标 ⚠、不判死。**豁免**：`126-window-geometry` 不钉——它的判据本体就是
+启动尺寸行为本身（首启 90% / 存档恢复 / 越界钳制 / 损坏回落），钉了它每一步几何断言必红；豁免是
+`run.mjs` 的显式清单 `NO_PIN_WINDOW_SCENARIOS`（tower 已批此口径；新增豁免必须附同等理由）。
+
 **磁盘水位绕过**：`LUMIR_ACCEPTANCE_ALLOW_LOW_DISK=1` 可越过 2G 阈值，**只在 target 已热、本次不会
 触发 Rust 重编**（实际磁盘需求仅几 MB）时使用；绕过会写进 run.log 留痕，不静默。
 

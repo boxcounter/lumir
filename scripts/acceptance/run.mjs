@@ -36,7 +36,7 @@ import {
   stopApp,
   writeConfig,
 } from "./lib/app.mjs";
-import { foregroundNote, tryForeground, waitAppReady } from "./lib/drive.mjs";
+import { foregroundNote, pinWindowSize, tryForeground, waitAppReady } from "./lib/drive.mjs";
 import { Evidence, appendRunLog, writeSummary } from "./lib/evidence.mjs";
 import { checkScenario, loadScenario, runScenario } from "./lib/execute.mjs";
 import { envHome, InfraError, log, mkdirp, repoRoot, resultsRoot, sleep, vaultDir } from "./lib/util.mjs";
@@ -57,6 +57,31 @@ const scenariosDir = path.join(repoRoot(), "scripts/acceptance/scenarios");
  * 取值与两侧覆盖边界见套件 README 的「语言面」节（canonical 居所）。
  */
 const SUITE_LANGUAGE = "zh";
+
+/**
+ * 套件钉尺寸的目标（M491）：从 `src-tauri/tauri.conf.json` 的 `app.windows[0]` 现场读——
+ * 与 `launchApp` 的同一份真源（REVIEW.md 第 8 条：窗口配置只有一份真源），不在这里手抄
+ * 1200×800；产品侧 apply_startup_size 把该尺寸降级为占位、首启取工作区 90%（lib.rs:242-322，
+ * 见 README「窗口几何」），钉尺寸即把窗口恢复成构建配置的占位值。读不到 width/height 抛错，
+ * 不回落字面量。
+ */
+function suiteWindowSize() {
+  const conf = JSON.parse(readFileSync(path.join(repoRoot(), "src-tauri", "tauri.conf.json"), "utf8"));
+  const w = conf.app?.windows?.[0];
+  if (!w?.width || !w?.height) {
+    throw new Error("suiteWindowSize：src-tauri/tauri.conf.json 的 app.windows[0] 缺 width/height");
+  }
+  return { width: w.width, height: w.height };
+}
+
+/**
+ * 豁免钉尺寸的场景（M491）：126-window-geometry 的判据**本体**就是「首启 = 工作区 90% / 按存档
+ * 恢复 / 越界钳制 / 损坏回落」这条产品启动行为（spec: app-window）——钉尺寸会把它每一步的几何
+ * 断言全部判红。豁免按场景 id 显式列出：front-matter 级开关要动 execute.mjs 的静态校验面与
+ * 场景文件，超出本 mission 的 scope；这份清单是刻意的窄例外（只有这一个场景的 oracle 建立在
+ * 「启动尺寸不被套件碰」上），新增豁免必须附同等理由。
+ */
+const NO_PIN_WINDOW_SCENARIOS = new Set(["126-window-geometry"]);
 
 async function listScenarios() {
   const names = (await readdir(scenariosDir)).filter((n) => n.endsWith(".md")).sort();
@@ -441,13 +466,22 @@ async function main() {
       handle = await launchApp({ logFile: appLogFile });
       await sleep(1200);
       await waitAppReady(cu, handle.pid); // 前端就绪门：左栏文件树 + 编辑器节点就位再开跑
+      // M491：就绪后立刻把窗口钉到构建配置的占位尺寸（产品侧 apply_startup_size 的首启 90% /
+      // 存档恢复会盖过它，坐标/像素敏感场景需要确定几何）。豁免场景（目前是 126，其判据本体
+      // 就是启动行为）走原始几何。钉尺寸的结果（回读生效宽高）经 fgNote 一并落进证据行。
+      const pinWindow = !NO_PIN_WINDOW_SCENARIOS.has(scenario.id);
+      let pinNote = "";
+      if (pinWindow) {
+        pinNote = await pinWindowSize(cu, handle.pid, suiteWindowSize());
+        log(`  ${pinNote}`);
+      }
       // tower 纪律：键盘场景先尽力拿前台并如实记录（拿不到不中止——行为断言才是注入是否落地的证据）。
       // 手段与失败原因由 `drive.mjs` 的 foregroundNote 统一成一行（M478）：用了 AXRaise 还是
       // System Events、失败时的 osascript stderr 全落进证据——此前只有「已取得 / 未取得」两个词，
       // 复盘时分不出「激活没投出去」与「投出去了没生效」。
       const fg = await tryForeground(cu, handle.pid);
-      fgNote = foregroundNote(fg);
-      log(`  ${fgNote}`);
+      fgNote = [pinNote, foregroundNote(fg)].filter(Boolean).join("\n");
+      log(`  ${foregroundNote(fg)}`);
       const ctx = {
         cu,
         foregroundNote: fgNote,
@@ -465,8 +499,12 @@ async function main() {
           // requireVault: false = 本步期待「未打开空态」（如 last_vault 失效），就绪门放宽为
           // 「树 pane 任一形态 + 编辑器在位」。默认仍是严格门（树里有 .md 行）。
           await waitAppReady(cu, handle.pid, { requireVault });
+          let pinNote2 = "";
+          if (pinWindow) {
+            pinNote2 = await pinWindowSize(cu, handle.pid, suiteWindowSize(), { prefix: "重启" });
+          }
           const fg2 = await tryForeground(cu, handle.pid);
-          ctx.foregroundNote = foregroundNote(fg2, { prefix: "重启前台焦点" });
+          ctx.foregroundNote = [pinNote2, foregroundNote(fg2, { prefix: "重启前台焦点" })].filter(Boolean).join("\n");
           ctx.pid = handle.pid;
         },
       };
