@@ -34,25 +34,20 @@ steps:
       - label: 输入框的占位文案在位（deck D118：本浮层没有提示行，输入的可发现性只靠它）
         ax: { has: "输入以筛选" }
 
-  # 查询串逐字符一步：单字符的注入要么落地要么没落地（`keys` 的回读判据对单字符是完备的），
-  # 多字符串一旦部分落地会按「不重试、直接报错」处置（README 的历史教训），本场景因此不用多字符串。
-  - name: 键入 b（输入即筛的第一个字符）
-    do: keys
-    keys: ["b"]
-    expect:
-      - label: 浮层仍开着（打字不关浮层）
-        ax: { has: "⌃N⌃P 选择" }
-
-  - name: 键入 a
-    do: keys
-    keys: ["a"]
-
-  - name: 键入 n（查询 = ban）
-    do: keys
-    keys: ["n"]
+  # M507：查询串注入改走 `do: typeInNode`（原生输入原子注入——`type_text` 整串一次 + M143 计数
+  # 回读重试），不再逐字符 `do: keys`。原因：`press_key` 逐键对浮层输入框丢键（'e' 本机确定性
+  # 丢失 + 随机连续丢键段，M497 归因、M504 实测本场景 'e' 三次注入值逐字节不变）；回读重试修不了
+  # 确定性丢失，必须换通道。目标写法 `{ role: AXComboBox, name: "筛选" }` 命中读屏名（AXComboBox
+  # 的 label 恒为「筛选」，注入前后都在），与 `typeInNode` 的回读口径（`Value: …`）一致。
+  - name: 键入 ban（命中 Banana 两条）
+    do: typeInNode
+    target: { role: AXComboBox, name: "筛选" }
+    text: "ban"
     expect:
       - shot: 输入 ban 之后
-      - label: 查询串落在输入框里（AXValue 逐字；这也正是 `keys` 回读判据读的字段）
+      - label: 浮层仍开着（打字不关浮层）
+        ax: { has: "⌃N⌃P 选择" }
+      - label: 查询串落在输入框里（AXValue 逐字；这也正是 typeInNode 回读判据读的字段）
         ax: { has: "/AXComboBox \\(筛选\\) Value: ban(?![a-zA-Z])/" }
       - label: 占位文案已让位（查询非空）
         ax: { not: "输入以筛选" }
@@ -94,21 +89,10 @@ steps:
       - label: 浮层已展开
         ax: { has: "⌃N⌃P 选择" }
 
-  - name: 键入 z（零命中查询的第一个字符）
-    do: keys
-    keys: ["z"]
-
-  - name: 键入 z
-    do: keys
-    keys: ["z"]
-
-  - name: 键入 z
-    do: keys
-    keys: ["z"]
-
-  - name: 键入 z（查询 = zzzz，无命中）
-    do: keys
-    keys: ["z"]
+  - name: 键入 zzzz（零命中查询）
+    do: typeInNode
+    target: { role: AXComboBox, name: "筛选" }
+    text: "zzzz"
     expect:
       - shot: 无命中态（浮层保持打开 + 一行提示 + 底部提示仍常驻）
       - label: 浮层保持打开（无命中不关浮层）
@@ -145,25 +129,10 @@ steps:
       - label: 焦点仍在输入框上
         ax: { focused: "AXComboBox" }
 
-  - name: 键入 a
-    do: keys
-    keys: ["a"]
-
-  - name: 键入 p
-    do: keys
-    keys: ["p"]
-
-  - name: 键入 p
-    do: keys
-    keys: ["p"]
-
-  - name: 键入 l
-    do: keys
-    keys: ["l"]
-
-  - name: 键入 e（查询 = apple）
-    do: keys
-    keys: ["e"]
+  - name: 键入 apple（小写查询；M507 原子注入）
+    do: typeInNode
+    target: { role: AXComboBox, name: "筛选" }
+    text: "apple"
     expect:
       - label: 查询串逐字落进输入框
         ax: { has: "/AXComboBox \\(筛选\\) Value: apple(?![a-z])/" }
@@ -182,9 +151,10 @@ steps:
       - label: 浮层已展开
         ax: { has: "⌃N⌃P 选择" }
 
-  - name: 键入 c
-    do: keys
-    keys: ["c"]
+  - name: 键入 c（M507 原子注入）
+    do: typeInNode
+    target: { role: AXComboBox, name: "筛选" }
+    text: "c"
     expect:
       - label: 查询非空 → 占位文案让位
         ax: { not: "输入以筛选" }
@@ -228,9 +198,10 @@ steps:
       - label: 焦点在可编辑的输入框上
         ax: { focused: "AXComboBox" }
 
-  - name: 键入 b（只命中名字含 b 的那个 vault）
-    do: keys
-    keys: ["b"]
+  - name: 键入 b（只命中名字含 b 的那个 vault；M507 原子注入）
+    do: typeInNode
+    target: { role: AXComboBox, name: "筛选" }
+    text: "b"
     expect:
       - shot: 输入 b 之后的 vault 列表
       - label: 被筛掉的那一行不在列表里（当前 vault 的**行**不再上屏）
@@ -276,12 +247,13 @@ steps:
      里移动（否则落到全文第 2 条 `Apple 小节`）、`Enter` 的落点经「结果集下标 → 源下标」映射回源条目
      （否则落到全文第 1 条）。
    - 重开后直接 `Enter` 给出当前段那一段，判「查询随关闭丢弃、重开是空查询 + 全量态起点」。
-2. **单字符注入走 `do: keys` 的回读通道**（`type_text` 会先真实点击编辑器，落不到浮层里的输入框）：
-   因此 fixture 的标题用 ASCII（`Apple` / `Banana` / `Cherry`），查询串也取 ASCII，且**一个字符一步**
-   （多字符串一旦部分落地会按「不重试、直接报错」处置）。**大小写也只走小写方向**：CGEvent 注入的
-   `A` 在真机上落成 `a`（同族边界见 `scripts/acceptance/README.md` 的 ⌘⇧= 那条），因此「大写查询命中
-   混合大小写文本」这一半依赖反向情形覆盖——`Apple 小节` 用 `apple` 命中，折叠的语义已经吃到。
-   中文查询串的注入依赖输入法，真机通道造不出来
+2. **查询词注入通道（M507 改）**：改走 `do: typeInNode`（原生输入原子注入——`type_text` **不带
+   index**落在当前焦点元素、整串一次；组合框在浮层打开时就持焦点，故不点击、不落地到编辑器）。
+   旧写法是逐字符 `do: keys`，但 `press_key` 逐键对浮层输入框丢键（'e' 确定性丢失 + 随机连续丢键段，
+   M497 归因、M504 实测），回读重试修不了确定性丢失。fixture 的标题仍取 ASCII（`Apple` / `Banana` /
+   `Cherry`），查询串也取 ASCII。**大小写也只走小写方向**：合成注入的 `A` 在真机上落成 `a`（同族边界见
+   `scripts/acceptance/README.md` 的 ⌘⇧= 那条），因此「大写查询命中混合大小写文本」这一半依赖反向情形
+   覆盖——`Apple 小节` 用 `apple` 命中，折叠的语义已经吃到。中文查询串的注入依赖输入法，真机通道造不出来
    ——**这一条如实记为未覆盖**（中文匹配由 `tests/unit/list-filter.test.ts` 的 CJK 用例与
    `tests/visual/scenes/list-filter.spec.ts` 覆盖）。
 

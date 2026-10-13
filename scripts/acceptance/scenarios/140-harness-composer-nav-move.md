@@ -65,6 +65,10 @@ steps:
         ax: { has: "yabzcdw" }
       - shot: 01-段落内移动族落点
 
+  # M507 裁决（勿迁）：本步是「⇧Enter + 可打印字符」的混合序列，chord 那一半的副作用在 AX 里
+  # **逐次不可观测**（段末空段落不序列化 + bbox min-height 封顶）。**不要给本步加 `verify`**：命中会被判
+  # 「未落地」重注后假 FAIL，重注还可能多落一个查不出来的空段落。判据与证据见 README「已知边界」的 chord
+  # verify 条（⇧Enter 族的根治方向 = 套件自有 CGEvent 键盘注入通道，M509 探针立项中）。
   - name: ⇧Enter 换行后键入第二段 mn
     do: keys
     keys: ["shift+return", "m", "n"]

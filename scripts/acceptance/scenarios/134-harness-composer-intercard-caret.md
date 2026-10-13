@@ -133,6 +133,9 @@ steps:
   - name: ⌘V 把探针串贴进 composer（落进哪一格 = 上面那一次 ⌃B 把光标挪到了哪）
     do: key
     key: cmd+v
+    # M507：chord 的副作用回读 verify-retry——⌘V 的直接副作用 = composer 值里多出 "xqzk"，
+    # 是 AX 可读的（丢键时值逐字节不变 ⇒ 按「未变才重注」再贴 ≤3 次）。
+    verify: { pattern: "xqzk" }
     expect:
       - label: 探针串落在**两张卡片之间**（AX 文本里 xqzk 夹在 360×200 与 200×120 两条元信息行之间）
         ax: { has: "/360×200[\\s\\S]{0,200}?xqzk[\\s\\S]{0,200}?200×120/" }
@@ -174,6 +177,7 @@ steps:
   - name: M457 读数②：⌘V 落字 —— 字落在**第一张卡片之前**（两卡不丢）
     do: key
     key: cmd+v
+    verify: { pattern: "yqzk" }
     expect:
       - label: 探针串落在第一张卡片**之上**（AX 里 yqzk 在 360×200 那条元信息行之前）
         ax: { has: "/yqzk[\\s\\S]{0,200}?360×200/" }

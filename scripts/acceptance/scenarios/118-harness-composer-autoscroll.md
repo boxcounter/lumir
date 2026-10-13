@@ -26,6 +26,10 @@ steps:
     do: typeInNode
     target: { role: AXTextArea, name: "问点什么|l01" }
     text: "l01"
+  # M507 裁决（勿迁）：本步 chord 的副作用在 AX 里**逐次不可观测**——段末 ⇧Enter 落的空段落不序列化
+  # （AX 只在块之间插 \n），bbox 又受 composer min-height 封顶。**不要加 `verify`**：命中会被判
+  # 「未落地」重注后假 FAIL，重注还可能多落一个查不出来的空段落。判据与证据见 README「已知边界」的
+  # chord verify 条（⇧Enter 族的根治方向 = 套件自有 CGEvent 键盘注入通道，M509 探针立项中）。
   - do: key
     key: "shift+return"
     name: 第 1 行后的 ⇧Enter

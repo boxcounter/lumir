@@ -156,6 +156,28 @@ export function checkScenario(scenario) {
     if (step.do !== undefined && !ACTIONS.has(step.do)) push(`${at} 未知动作 do=${step.do}`);
     if (step.do === "keys" && !Array.isArray(step.keys)) push(`${at} do=keys 需要 keys 数组`);
     if (step.do === "key" && !step.key) push(`${at} do=key 需要 key`);
+    // verify（M507）：chord 步的「副作用回读」重试（`do: key` / `do: keys` 可选）。写错键名 /
+    // 类型会**静默不生效**（与不挂 verify 同形，真机跑一整轮才发现），按「拼错即静默」的同一
+    // 口径在这里挡。**换行写法提醒**：YAML 双引号 `"\n"` = 换行字符，单引号 `'\n'` = 反斜杠+n
+    // 两个字符（不匹配换行）——写成后者会永远判「未落地」。
+    if ((step.do === "key" || step.do === "keys") && step.verify !== undefined) {
+      const v = step.verify;
+      if (!isPlainTable(v)) {
+        push(`${at} 的 verify 需要对象 {pattern, delta?, target?}`);
+      } else {
+        if (typeof v.pattern !== "string" || v.pattern.length === 0)
+          push(`${at} 的 verify 需要非空字符串 pattern（读目标值里该 pattern 的出现次数）`);
+        if (v.delta !== undefined && (!Number.isInteger(v.delta) || v.delta <= 0))
+          push(`${at} 的 verify.delta 需要正整数，实际 ${JSON.stringify(v.delta)}`);
+        if (v.target !== undefined) {
+          if (!isPlainTable(v.target)) push(`${at} 的 verify.target 需要对象（{role,name|any,nth}，与 clickInNode 同一解析）`);
+          else if (v.target.name === undefined && v.target.any === undefined)
+            push(`${at} 的 verify.target 需要 name 或 any 至少一项`);
+        }
+        for (const k of Object.keys(v))
+          if (!["pattern", "delta", "target"].includes(k)) push(`${at} 的 verify 未知键 verify.${k}（拼错即静默不生效）`);
+      }
+    }
     // `do: type` 的 text 漏写会在真机注入 `undefined`（`String(undefined)`），连报 3 次「未落地」
     // 才暴露成因——静态校验期就该挡住（M379，backlog「`do: type` 的 text 非空校验」/ finding
     // `20260916-worker-typefix-improve-checkscenario-do-type-text-undefined`）。
@@ -454,6 +476,22 @@ export function matcher(pattern) {
   return { test: (v) => String(v).includes(s), show: JSON.stringify(s) };
 }
 
+/** 一处文本里 `pattern` 出现的次数（M507 的 chord `verify` 用）。**与 `matcher` 同一口径**：
+ *  裸串按子串计、`/.../ `按正则计（这里按全局匹配计次数；`matcher` 只判有无，故两处口径同源）。
+ *  空 pattern 一律 0 次（`--check` 已挡非空，这里是兜底）。 */
+function countOccurrences(value, pattern) {
+  const s = String(value ?? "");
+  if (pattern instanceof RegExp) {
+    const flags = pattern.flags.includes("g") ? pattern.flags : `${pattern.flags}g`;
+    return (s.match(new RegExp(pattern.source, flags)) ?? []).length;
+  }
+  const p = String(pattern);
+  if (p.length > 1 && p.startsWith("/") && p.endsWith("/")) {
+    return (s.match(new RegExp(p.slice(1, -1), "gm")) ?? []).length;
+  }
+  return p ? s.split(p).length - 1 : 0;
+}
+
 async function sha256(file) {
   return createHash("sha256").update(await readFile(file)).digest("hex").slice(0, 12);
 }
@@ -621,6 +659,127 @@ function keysTarget(ax) {
   // 焦点在非文本节点上（按钮 / toast 动作条 / 面板）：键盘落在它身上，注入进不了任何文档文本。
   // 把它自己也当回读目标，才能把这种情况如实判成「按键未落地」而不是盯错编辑器。
   return { kind: node.role, value: node.title ?? node.label ?? node.value ?? "" };
+}
+
+/**
+ * chord `verify` 的回读目标值（M507）：从一次 AX 快照里取「这次 chord 的副作用落在哪」的
+ * 文本。两种解析口径——
+ *   1. `verify.target` 显式给时，按与 `clickInNode` / `typeInNode` 同一套选择子
+ *      （`{role,name|any,nth}`）解析，取 `node.value ?? ""`；
+ *   2. 不给时退到 `keysTarget(ax)`（focused 节点优先）——与 `keys` / `type` 的回读同一目标，
+ *      composer / 编辑器 / 原生输入框都覆盖。
+ * 节点解析不到时返回 **null**（不可读）：调用方一律判 FAIL，不把「读不到」当「为空」
+ * （REVIEW.md 第 2 条）。
+ */
+function verifyReadValue(ax, spec) {
+  const t = spec?.target;
+  if (t) {
+    const node =
+      t.any !== undefined
+        ? findByAny(ax.nodes, { role: t.role, any: t.any, nth: t.nth ?? 0 })
+        : findNode(ax.nodes, { role: t.role, name: t.name, nth: t.nth ?? 0 });
+    if (!node) return null;
+    return node.value ?? "";
+  }
+  const kt = keysTarget(ax);
+  return kt ? kt.value : null;
+}
+
+/**
+ * chord 步的「副作用回读」verify-retry（M507，`do: key` / `do: keys` 的可选 `verify`）。
+ *
+ * **适用面（挂之前必须先确认副作用在 AX 里可读）**：只有「按下去的直接副作用会改变
+ * 目标文本」的 chord 才能挂 `verify`——如 ⌘V 把剪贴板文本贴进 composer（值里多出那段
+ * 文本）。**副作用在 AX 里逐字节不可见的 chord 一律不能挂**：段末 ⇧Enter 落空段落
+ * （AX 只在**块之间**插 `\\n`，末尾空段落不产字符；几何又受 composer min-height 下限压住，
+ * 1 块与 2 块 bbox 同值）、纯导航键（⌃B/⌃A/⌃P）、浮层内被列表消费的 ⌃N（overlay 游标不进
+ * AX）。这些 chord 若挂 verify，命中时目标字节不变，会被判成「未落地」重注到上限后 **假 FAIL**
+ * ——比不挂更糟。判据来自 M507 的 dump 核查（`test-results/acceptance/**`，git 外）。
+ *
+ * 判据（M143，与 `keys` / `type` 同一口径，只把「目标串」换成 `verify.pattern`）：
+ *   注入前记 pattern 在目标值里出现 N 次，落地要求恰为 N + delta（delta 缺省 1）；
+ *   **目标字节完全未变才重注（≤3 次）**；值变了却次数不对（partial）直接判败、不在残段后重注；
+ *   次数超出（duplicated）判败。每次重试落一条证据 note，判败的诊断随抛出的错误进证据。
+ *
+ * 返回 void（失败抛错）。`inject()` 由调用方给（`key` / `keys` 各自的注入路径）。
+ */
+async function runChordVerify(cu, p, step, inject, evidence) {
+  const spec = step.verify ?? {};
+  const where = spec.target ? JSON.stringify(spec.target) : "默认 keysTarget 口径";
+  const tag = `chord verify(pattern=${JSON.stringify(spec.pattern)}, delta=${spec.delta ?? 1}, 目标=${where})`;
+  const countOf = (v) => countOccurrences(v, spec.pattern);
+  const delta = spec.delta ?? 1;
+  const max = Math.min(step.retries ?? 3, 3);
+
+  const read = async () => verifyReadValue(await readAx(cu, p), spec);
+  const baselineValue = await read();
+  if (baselineValue === null) {
+    throw new Error(
+      `${tag} 的回读目标不可读（${where}）——读不到一律判 FAIL，不在不可观测的窗口里下结论` +
+        "（REVIEW.md 第 2 条）",
+    );
+  }
+  const baseline = countOf(baselineValue);
+  const goal = baseline + delta;
+  const classify = (v) => {
+    const c = countOf(v);
+    if (c === goal) return "landed";
+    if (c > goal) return "duplicated";
+    return v === baselineValue ? "unchanged" : "partial";
+  };
+
+  let attempt = 0;
+  let lastValue = baselineValue;
+  let verdict = "unchanged";
+  for (attempt = 1; attempt <= max; attempt++) {
+    await inject();
+    await sleep(600);
+    const v1 = await read();
+    if (v1 === null) throw new Error(`${tag} 回读目标在注入过程中不可读——不在不可观测的窗口里下结论，不重试`);
+    lastValue = v1;
+    verdict = classify(v1);
+    if (verdict === "landed") break;
+    // 再等一拍复读：DOM 落地与 AX 快照之间有时序，不能拿一次过早的读当结论。
+    await sleep(700);
+    const v2 = await read();
+    if (v2 === null) throw new Error(`${tag} 回读目标在注入过程中不可读——不在不可观测的窗口里下结论，不重试`);
+    lastValue = v2;
+    verdict = classify(v2);
+    if (verdict === "landed") break;
+    // 只有「目标字节完全没变」才允许再注入——整批丢键正是本重试要修的场景；值变了却没达
+    // 到期望（partial）绝不能重试：再注入会叠加副作用（重复粘贴 / 重复跳转 / 重复换行）。
+    if (verdict !== "unchanged") break;
+    if (attempt < max) {
+      evidence.record({
+        kind: "note",
+        text: `${tag} 第 ${attempt} 次注入后目标值逐字节未变（疑似丢键），按「未变才重注」再注一次`,
+      });
+    }
+  }
+  if (verdict === "landed") {
+    if (attempt > 1) {
+      evidence.record({
+        kind: "note",
+        text: `${tag} 第 ${attempt} 次注入才落地（前 ${attempt - 1} 次目标值逐字节未变；已按出现次数校验无重复）`,
+      });
+    }
+    return;
+  }
+  const seen = `pattern 出现 ${countOf(lastValue)} 次（期望 ${goal}）`;
+  if (verdict === "duplicated") {
+    throw new Error(`${tag} 副作用重复落地：${seen} ——疑似重试叠加，目标文本已被破坏，不按 PASS 处理`);
+  }
+  if (verdict === "partial") {
+    throw new Error(
+      `${tag} 副作用部分落地：${seen}，且目标内容已变——不重试（再注入会叠加副作用）。` +
+        `基线=${JSON.stringify(baselineValue.slice(0, 200))} 现值=${JSON.stringify(lastValue.slice(0, 200))}`,
+    );
+  }
+  throw new Error(
+    `${tag} 副作用未落地：${max} 次注入后 ${seen}，目标值每次注入前后逐字节一致（丢在注入链路，` +
+      "见 README 已知边界）。若这条 chord 的副作用本就不可见（段末 ⇧Enter / 纯导航键 / 浮层 ⌃N），" +
+      "说明它不该挂 verify——判据见 `runChordVerify` 的适用面注释。",
+  );
 }
 
 /** 编辑器内 widget 没有 title/label，只有 help（如 mermaid 的 AXGroup.help = 围栏原文）。 */
@@ -1325,6 +1484,11 @@ async function doAction(step, { ctx, cu, scenario, vars, pid, evidence }) {
     }
     case "key":
       await noteIfFocusLost(ctx, p);
+      // verify（M507）：chord 的「副作用回读」重试——只给「副作用在 AX 里可读」的 chord 挂
+      // （适用面见 runChordVerify 注释）；不给 verify 的既有步行为一字不变（仍是盲发）。
+      if (step.verify) {
+        return await runChordVerify(cu, p, step, async () => pressKey(cu, p, step.key), evidence);
+      }
       return pressKey(cu, p, step.key);
     case "keys": {
       // 回读/重试的判定边界（两条都满足才做，缺一不可）：
@@ -1344,6 +1508,12 @@ async function doAction(step, { ctx, cu, scenario, vars, pid, evidence }) {
         }
       };
       const printable = step.keys.every((k) => PRINTABLE_KEY_RE.test(k));
+      // verify（M507）：显式挂了 verify 的步走「副作用回读」重试（适用面见 runChordVerify 的
+      // 注释——只有副作用在 AX 里可读的 chord 才能挂）。**不挂 verify 的步（含整串可打印序列）
+      // 行为一字不变**，仍是下面那条判定边界。
+      if (step.verify) {
+        return await runChordVerify(cu, p, step, inject, evidence);
+      }
       const target = printable ? keysTarget(await readAx(cu, p)) : null;
       if (!target) {
         if (printable) {

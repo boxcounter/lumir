@@ -54,18 +54,20 @@ steps:
     do: clickInNode
     target: { role: AXTextArea, name: "拒绝原因" }
 
-  - name: 输入拒绝原因第一行（合成串；走可回读通道，丢键会按套件口径重试）
-    do: keys
-    keys: ["h", "o", "l", "d"]
+  - name: 输入拒绝原因第一行（M507：原生输入原子注入 type_text 单串 + 计数回读，替换逐字符 keys）
+    do: typeInNode
+    target: { role: AXTextArea, name: "拒绝原因|hold" }
+    text: "hold"
 
   - name: Enter 换行（M406 多行化：裸 Enter = 换行不提交——若提交，决策会提前触发、
       下一步输入落空，后续断言必红）
     do: key
     key: enter
 
-  - name: 输入拒绝原因第二行
-    do: keys
-    keys: ["o", "f", "f"]
+  - name: 输入拒绝原因第二行（M507：同原子通道；M504 实测逐字符注只落 'o'）
+    do: typeInNode
+    target: { role: AXTextArea, name: "拒绝原因|hold" }
+    text: "off"
 
   - name: ⌘Enter 提交拒绝（M406：⌘/Ctrl+Enter 与拒绝钮同一路径；裸 Enter 已证明是换行）
     do: key

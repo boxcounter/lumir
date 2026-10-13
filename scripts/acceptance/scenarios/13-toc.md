@@ -124,6 +124,9 @@ steps:
       - label: 条目表里 H4 层也在（文档块 + 条目 = 2 行以上）
         ax: { count: { pattern: "第 1 章 深一层", min: 2 } }
 
+  # M507 裁决（勿迁）：浮层内被列表消费的 ⌃N，游标不进 AX（mine 位置指示在浮层开着时恒 = 文档游标），
+  # 没有「未变才重注」的判据。**不要加 `verify`**——命中会被判「未落地」重注后假 FAIL。判据与证据见
+  # README「已知边界」的 chord verify 条。
   - name: ⌃N 连按四次（Emacs next-line；与 ↓ 共用同一移动实现）
     do: keys
     keys: ["ctrl+n", "ctrl+n", "ctrl+n", "ctrl+n"]

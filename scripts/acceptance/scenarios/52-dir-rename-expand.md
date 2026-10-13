@@ -60,14 +60,15 @@ steps:
     expect:
       - label: 行内出现输入框（谁获焦由下一条钉住）
         ax: { has: '/AXTextField = "rensub" /' }
-      - label: 输入框持焦点（下一步的逐字符注入就落在它身上）
+      - label: 输入框持焦点（下一步的注入落在它身上）
         ax: { focused: "AXTextField" }
-  - name: 全选原名（chord 盲发不重试）
+  - name: 全选原名（chord 盲发不重试；typeInNode 的整串注入会替换选区）
     do: key
     key: "cmd+a"
-  - name: 输入新名（逐字符，回读校验 + 只在字节未变时重试）
-    do: keys
-    keys: ["r", "e", "n", "d", "i", "r"]
+  - name: 输入新名（M507：原生输入原子注入，整串一次 + 计数回读；逐字符 press_key 会丢 'e'）
+    do: typeInNode
+    target: { role: AXTextField, name: "rensub|rendir" }
+    text: "rendir"
     expect:
       - label: 输入框里是 rendir（注入真的落地了）
         ax: { has: '/AXTextField = "rendir" /' }
@@ -105,12 +106,13 @@ steps:
         ax: { has: '/AXTextField = "rendir" /' }
       - label: 输入框持焦点
         ax: { focused: "AXTextField" }
-  - name: 全选并输入原名
+  - name: 全选并输入原名（M507 原子注入）
     do: key
     key: "cmd+a"
   - name: 输入 rensub
-    do: keys
-    keys: ["r", "e", "n", "s", "u", "b"]
+    do: typeInNode
+    target: { role: AXTextField, name: "rendir|rensub" }
+    text: "rensub"
     expect:
       - label: 输入框里是 rensub（注入落地；用的是原名，与当前名 rendir 不同）
         ax: { has: '/AXTextField = "rensub" /' }
@@ -219,8 +221,9 @@ Alex 2026-09-27 的现场（fieldnotes vault，非只读）：把 `.local` 下�
   且**留在可回读通道**（不降级盲发）——`keys: ["-"]` 现在合法可注入。既有 fixture 名保持不动
   （改名无收益），后续新场景可以直接用连字符。注意底层仍有另一个坑：行首注入的 `-` 会被 markdown
   渲染成列表符号 `–`（README 动作表的 `key`/`keys` 条与已知边界）。
-- **两个名字互不为子串（M324，回读判据约束）**：`keys` 的落地判据是「目标串在回读值里的出现次数
-  = 注入前 + 1」。改名框是**全选替换**，注入后值恰等于目标串（出现 1 次），所以要求**目标串在
+- **两个名字互不为子串（M324 的回读判据约束，M507 起对 `typeInNode` 同样成立）**：改名输入改走
+  `do: typeInNode` 后，落地判据仍是「目标串在回读值里的出现次数 = 注入前 + 1」（`typeInNode` 用
+  M143 同一口径）。改名框是**全选替换**，注入后值恰等于目标串（出现 1 次），所以要求**目标串在
   原名里一次都不出现**——名字互为前缀/子串时这条会把自己判成「部分落地」而报错（M324 首跑实测：
   `rensubx` → `rensub` 时基线 `rensubx` 已含 `rensub` 一次，期望 2 实得 1，断言把**正确落地**判成
   FAIL）。两个方向都成立才用得上，故取 `rensub` ↔ `rendir`（首跑用的 `rensubx` 是 `rensub` 的前缀）。
@@ -231,8 +234,10 @@ Alex 2026-09-27 的现场（fieldnotes vault，非只读）：把 `.local` 下�
   `tests/unit/tree-rename.test.ts` 有反向对照条）。外部改名（Finder / 别的编辑器）在真机侧只保
   证「目录仍可展开、子树齐全」，本场景不构造那条现场。
 - **注入通道的两条老账**：① `cmd+a` 是 chord，套件盲发不重试（丢键就红，先复跑一次再判产品
-  缺陷）；② `keys` 的逐字符注入对 WKWebView 间歇丢键，本场景的判据是「回读 + 只在字节未变时
-  重试」。两条见 `scripts/acceptance/README.md` 的「已知边界」。
+  缺陷）；② 改名素材串注入已迁 `do: typeInNode`（M507：`type_text` 整串一次 + M143 计数回读重试），
+  不再逐字符 `do: keys`——后者对 WKWebView 丢键（'e' 本机确定性丢失，M497 归因、M504 实测本场景
+  「rendir」落「rndir」），回读重试修不了确定性丢失。两条见 `scripts/acceptance/README.md` 的
+  「已知边界」与动作表 `typeInNode` 条。
 - **不做手感判定**：内联输入框的宽度、菜单观感、改名后行的滚动位置归 Alex；本场景只留截图。
 - **不覆盖**：跨目录移动（非目标）、改名的并发（同一目录连续两次改名）、折叠态的像素表现
   （视觉门禁）。
