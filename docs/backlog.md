@@ -40,7 +40,7 @@
 
 - **tests 与 scripts 下残余的旧编号 / 裸行号 backlog 引用**（worker-m476，2026-10-13，low，M476 scope 外残余）→ `tests/**` 4 处、`scripts/gate.sh:14`、`scripts/openspec-links.sh:4,18,20`；同类口径（改主题关键词锚）随下一个文档批处理。指针 `.tower/comms/findings/20261013-worker-m476-improve-m476-scope-backlog-tests-4-scripts-gate-sh-scripts-openspec.md`。
 
-- **tests/unit 在机器有负载时间歇红：三条用例读的是 syntaxTree 过期快照**（worker-m471，2026-10-12，**high**）→ M471 已把 pnpm test 接进 CI（visual.yml），该 flake 会直接在 CI 显现。指针 `.tower/comms/findings/20261012-worker-m471-bug-tests-unit-syntaxtree.md`。
+- **tests/unit 在机器有负载时间歇红：三条用例读的是 syntaxTree 过期快照**（worker-m471，2026-10-12，**high**）→ M471 已把 pnpm test 接进 CI（visual.yml），该 flake 会直接在 CI 显现。指针 `.tower/comms/findings/20261012-worker-m471-bug-tests-unit-syntaxtree.md`。同族新增（worker-m477，2026-10-13，medium）：block-copy.test.ts 的 `covered()` 用 `ensureSyntaxTree` 返回值守卫，但被测函数读的是 `syntaxTree(state)` 快照字段——守的不是同一棵树，机器负载时 20ms 初始解析预算错过即假红（M477 gate 首跑实证 903/904）；修法取向 = 改断快照树本身覆盖整篇。指针 `.tower/comms/findings/20261013-worker-m477-bug-block-copy-covered-codeblockcontentat.md`。
 - **`fs_patch_file` 有与 `save_document` 同款的 CAS→rename 静默覆盖窗口**（worker-m470，2026-10-12，medium，vuln）→ M470 只收窄了 `save_document`；修法可复用 M470 的 RenameGuard 形态。指针 `.tower/comms/findings/20261012-worker-m470-vuln-fs-patch-file-save-document-cas-rename-m470-save-document.md`。
 - **harness 面板的外链打开失败一律静默（无 toast）**（worker-m460，2026-10-12，medium）→ 点「看起来能点」的链接零反馈。指针 `.tower/comms/findings/20261012-worker-m460-improve-harness-toast.md`。
 - **登录 shell PATH 解析失败静默回退，无可观测信号**（worker-m466，2026-10-12，low，idea）→ M466 后续候选。指针 `.tower/comms/findings/20261012-worker-m466-idea-shell-path-m466.md`。
