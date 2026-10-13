@@ -15,7 +15,9 @@ marker: "HNL-ALPHA"
 # **恢复路径按消息边界切块**（工具行各挂各自的 assistant 消息、带参数摘要、消息数 = 面板记录数），
 # 不是 live/recovery 的折叠对比（该对比随 M383 退场，见正文「断言口径」；M406 起「参数摘要」
 # 改为人话化参数，JSON 原文不上屏）。
-# `allow: [vault_create]` 免批准闸（写类工具默认 ask，本场景判的不是闸）。
+# `allow: [vault_create]` 免批准闸——默认 `vault_write` 档下 `vault_create` 本已自动放行（三档
+# 权限 2026-10-09 落地后，写类工具不再「默认 ask」），这条 `allow` 保留为**显式免闸声明**
+# （本场景判的不是闸，是恢复渲染；闸的判据在场景 72/73/74）。
 config:
   harness:
     provider: mock

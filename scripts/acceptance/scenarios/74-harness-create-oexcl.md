@@ -8,6 +8,10 @@ config:
   harness:
     provider: mock
     fixture: "$fixtures/harness-mock-create.json"
+    # read_only 档是「读自动放行、一切写逐个问」（change add-harness-permission-modes，2026-10-09
+    # Alex 裁决）——本场景判的两道批准闸（vault_create 逐个问）只在该档成立。默认档 vault_write
+    # 下 vault_create 自动放行、无闸，本场景必红（M480 归因，M481 回扫）。
+    permission_mode: read_only
 steps:
   - name: 记下既有文件的基线（sha256 + mtime）
     do: record

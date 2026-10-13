@@ -204,8 +204,12 @@ steps:
 的同名参数一一对应，`--check` 用同一份挡拼错），缺省不写 = 走应用出厂口径。
 
 `harness`（M304，change add-harness-probe §11）是唯一的**嵌套**键：
-`{ provider, fixture, permissions: { allow, deny }, loopMax, warnCtxPct, autoCompact, kimiModel, kimiModels }` → `[harness]` 节
-（camelCase 键名映射到配置文件的 snake_case）。`fixture` 写 `$fixtures/...` 只读引用套件 fixtures
+`{ provider, fixture, permissions: { allow, deny }, permission_mode, loopMax, warnCtxPct, autoCompact, kimiModel, kimiModels }` → `[harness]` 节
+（camelCase 键名映射到配置文件的 snake_case；`permission_mode` 与配置文件同形，不是多词驼峰）。
+`permission_mode`（M481，change add-harness-permission-modes）是三档**闭集合**——`read_only`
+= 读自动放行、一切写逐个问（写类批准闸场景 72/73/74 显式钉它），`vault_write`（缺省）= 库内写
+自动放行，`full_access` = 全自动（仅危险命令仍问）；非法值在应用侧会**静默**回落 `vault_write`
+（只发一条 warning），故 `--check` 按闭集合挡拼错。`fixture` 写 `$fixtures/...` 只读引用套件 fixtures
 目录（见下文「占位符」），mock provider 场景（70–77、87–98）是样例。`kimiModel`（M372，场景 99）
 写了就构造 `providers.kimi` 节（model + 占位 api_key）——自定义模型 id（如 Kimi Code 订阅端的
 `k3-256k`）的能力判定（effort 置灰判据）按 config 现算，不发消息就验得到；发消息的场景不会配

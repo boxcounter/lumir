@@ -133,6 +133,14 @@ export function checkScenario(scenario) {
   if (lang !== undefined && lang !== "zh" && lang !== "en") {
     push(`config.language 只能是 zh/en（实际 ${JSON.stringify(lang)}）——写错会静默落回产品出厂口径`);
   }
+  // harness 权限模式（M481，change add-harness-permission-modes）：三档**闭集合**，非法值在
+  // Rust 侧只发一条人话 warning 并回落 `vault_write`（不失败）。回落是静默的：写类批准闸场景
+  // （72/73/74）若把档名拼错，会拿到默认档的自动放行、断言对着没有闸的界面判红，归因指向别处。
+  // 与 `language` 同一条口径——声明了就必须是合法档（缺省不写 = 走 vault_write 出厂口径）。
+  const pm = scenario.config?.harness?.permission_mode;
+  if (pm !== undefined && !["read_only", "vault_write", "full_access"].includes(pm)) {
+    push(`config.harness.permission_mode 只能是 read_only/vault_write/full_access（实际 ${JSON.stringify(pm)}）——写错会静默回落 vault_write`);
+  }
   for (const k of Object.keys(scenario.config ?? {})) {
     if (!SCENARIO_CONFIG_KEYS.includes(k)) push(`config 未知键 ${k}（拼错即静默不生效，允许：${SCENARIO_CONFIG_KEYS.join(" / ")}）`);
   }

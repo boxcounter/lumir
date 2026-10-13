@@ -74,8 +74,8 @@ export async function writeConfig({
   // 于是「M180 这类新增的 editor 配置项」不必回来改套件就能构造启动口径。
   editor = undefined,
   // [harness] 节（M304，change add-harness-probe §11）：传了才写。形状：
-  // { provider, fixture, permissions: { allow, deny }, loopMax, warnCtxPct, autoCompact,
-  //   kimiModel, kimiModels }——
+  // { provider, fixture, permissions: { allow, deny }, permission_mode, loopMax, warnCtxPct,
+  //   autoCompact, kimiModel, kimiModels }——
   // fixture 路径在场景加载期已被 token 替换为绝对路径（mock 脚本用 $fixtures 只读引用套件
   // fixtures 目录，不拷进 vault——拷进 vault 会留下非 .md 残留，串红场景 28/65 的
   // 「vault 里无 json/tmp 产物」断言）；$vault / $vault2 精确记号仍可经 resolveSeedPath 解析。
@@ -114,6 +114,12 @@ export async function writeConfig({
       h.providers.kimi = { ...(h.providers.kimi ?? {}), models: harness.kimiModels };
     }
     if (harness.permissions !== undefined) h.permissions = harness.permissions;
+    // 权限模式（M481，change add-harness-permission-modes）：三档闭集合 `read_only` / `vault_write`
+    // / `full_access`，缺省 `vault_write`（应用出厂口径，缺省即不写该字段）。键名与配置文件
+    // `[harness].permission_mode` 同形。**为什么场景要显式写**：默认档 `vault_write` 下
+    // `vault_patch` / `vault_create` / `vault_move` 自动放行、无批准闸，而「一切写逐个问」那批
+    // 场景（72/73/74）在 2026-10-09 三档权限落地后从未回扫——显式钉 `read_only` 才能让闸复活。
+    if (harness.permission_mode !== undefined) h.permission_mode = harness.permission_mode;
     if (harness.loopMax !== undefined) h.loop_max = harness.loopMax;
     if (harness.warnCtxPct !== undefined) h.warn_ctx_pct = harness.warnCtxPct;
     if (harness.autoCompact !== undefined) h.auto_compact = harness.autoCompact;
