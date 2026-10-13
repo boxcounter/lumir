@@ -34,10 +34,25 @@ steps:
         ax: { has: "harness-quote.md · 摘录卡片验收" }
       - shot: 01-卡片A
 
+  - name: 记录编辑器基线（守卫：typeInNode 注入不得漏进编辑器）
+    do: recordEditor
+    as: 编辑器基线-首问
+  - name: 点 composer 确立焦点（AXPress 插卡后渲染层焦点可能仍在编辑器——M501/M500 归因；
+      点底部空段落把焦点与 caret 都交给 composer，供随后的整串注入与 Enter 发送）
+    do: clickInNode
+    target: { role: AXTextArea, name: "摘录卡片验收" }
+    dy: 0.9
+    expect:
+      - label: 焦点落在 composer（focused 标记在 AXTextArea 上）
+        ax: { focused: "AXTextArea" }
+
   - name: 直接在卡片下一行的问题段落写问题（证明插入后光标落在卡片下一行）
     do: typeInNode
     target: { role: AXTextArea, name: "摘录卡片验收|alpha" }
     text: "alpha"
+    expect:
+      - label: 注入没有漏进编辑器（逐字节比对基线）
+        editor: { unchangedSince: 编辑器基线-首问 }
 
   - name: 发送第一条消息（一张卡片 + 一段问题）
     do: key
@@ -122,6 +137,10 @@ spec 判据（change add-harness-quote-cards 的「混排对话输入区」）�
 
 - **「光标落卡片下一行」**：插入卡片 A 后立刻键入 `alpha`，序列化里 `</quote>\nalpha` 证明这段
   文字落在卡片之后。若光标落在卡片之前，`alpha` 会排在标签之前。
+- **插卡后有点 composer 确立焦点一步**（M501，M500 归因）：卡片钮是 AXPress，之后渲染层焦点可能
+  仍留在编辑器——`type_text` 无 index 的整串注入会落进编辑器（82/83/85 三场景实证，编辑器转
+  「未保存」）。这步点击同时是「注入不漏进编辑器」守卫（`editor.unchangedSince` 逐字节比对）的
+  前置；drive.mjs 的 typeInNode 另有 attempt-1 焦点守卫兜底（无 `(focused)` 标记先点目标再注）。
 - **一条消息两张卡片**：第二条消息先摘 QALPHA（`lines=3-4`）再摘 QBETA（`lines=4-5`），逐字节
   断言两张卡片的序列化顺序——顺序倒置或丢卡都会红。
 - 两处摘录同文档同标题，判据只能靠 `lines` 区分，顺带把「同文档相似摘录用 lines 消歧」这条

@@ -389,6 +389,14 @@ export async function typeInEditor(cu, pid, text, { clear = false } = {}) {
  *  retained 步骤建立）。焦点在别处时注入会落到焦点元素——与旧 `do: keys` 同一信任模型
  * （keysTarget = focused 节点），回读 + 场景侧 `editor.unchangedSince` 守卫双保险。
  *
+ * attempt-1 焦点守卫（M501，M500 归因的落地）：AXPress 插卡等动作之后，AX 的 `(focused)`
+ *  标记可能与 type_text 无 index 走的「当前焦点」投递背离（82/83/85 三场景实证：插卡后
+ *  标记在 composer、盲注却落进编辑器，编辑器转「未保存」）。因此第 1 次注入前校验目标节点的
+ *  `(focused)` 标记——**无标记先点目标（AX 索引点击，与 clickInNode 同一信任模型）再注**。
+ *  焦点已在目标时零开销零行为变化（只读标记，不多点一下）；守卫只在「本就要失败」的路径上
+ *  多加一次点击。点击会移动 caret（KimiCU AXPress 落在节点中心）——typeInNode 语义是
+ *  「追加到末尾」，注入落点不随 caret 走；后续依赖 caret 的步骤由场景自己重建。
+ *
  * 重试口径（M143，与 `keys` / `type` 同一判据）：注入前记目标串在目标节点 value 里出现 N 次，
  * 落地要求恰为 N+1；**目标字节完全未变才重注（≤3 次）**；值变了但次数不是 N+1（partial /
  * duplicated）直接判败，由调用方给诊断——绝不在残段后重注整串（M140 假绿路径）。
@@ -399,7 +407,7 @@ export async function typeInEditor(cu, pid, text, { clear = false } = {}) {
  * 匹配注入前（composer 空 = 占位读屏名「问点什么…」）与注入后（可访问名 = 内容）两种形态，
  * 如 `问点什么|qrefmark`。
  *
- * 返回判定报告（不直接抛业务错）：{ attempts, verdict, baselineValue, lastValue, focused }。
+ * 返回判定报告（不直接抛业务错）：{ attempts, verdict, baselineValue, lastValue, focused, focusClicked }。
  * verdict ∈ landed | unchanged | partial | duplicated | target-lost（结构错误抛 StepError）。
  */
 export async function typeInNode(cu, pid, { resolve, text, retries = 3, label = "" } = {}) {
@@ -417,17 +425,26 @@ export async function typeInNode(cu, pid, { resolve, text, retries = 3, label = 
   let used = 0;
   let lastValue = baselineValue;
   let verdict = "unchanged";
+  let focusClicked = false;
   for (let attempt = 1; attempt <= max; attempt++) {
     used = attempt;
-    // 投递策略：第 1 次不带 index（向当前焦点元素整串注入，不点击、不污染 caret）；
-    // 重试起带**当次重新解析的**节点 index——原生菜单 Paste 交互后 window 级键盘焦点会丢
-    // （M456 实测；148 的 note- 步即此现场），此时无 index 的焦点投递路径不落地，而带 index
-    // 的 AX-focus + editing-command 路径照落（M498 探针 1 stage 7 实测）。代价是带 index
-    // 会先点节点 bbox 中心（caret 移到该处）——只发生在重试上，且 typeInNode 的语义本就是
-    // 「追加」，caret 落点由后续步骤自己重建。
+    // 投递策略：第 1 次不带 index（向当前焦点元素整串注入，不点击、不污染 caret），但先过
+    // M501 焦点守卫——目标无 (focused) 标记时点它一下（AXPress 索引点击），把渲染层焦点
+    // 交给目标再注；重试起带**当次重新解析的**节点 index——原生菜单 Paste 交互后 window 级
+    // 键盘焦点会丢（M456 实测；148 的 note- 步即此现场），此时无 index 的焦点投递路径不落地，
+    // 而带 index 的 AX-focus + editing-command 路径照落（M498 探针 1 stage 7 实测）。代价是
+    // 带 index 会先点节点 bbox 中心（caret 移到该处）——只发生在重试上，且 typeInNode 的语义
+    // 本就是「追加」，caret 落点由后续步骤自己重建。
     const axPre = await readAx(cu, pid);
     const targetNow = resolve(axPre);
-    if (attempt === 1 || !targetNow) {
+    if (attempt === 1) {
+      if (targetNow && !targetNow.focused) {
+        focusClicked = true;
+        await cu.click(pid, { index: targetNow.index });
+        await sleep(500); // 点击到焦点投递之间有一拍
+      }
+      await cu.typeText(pid, text);
+    } else if (!targetNow) {
       await cu.typeText(pid, text);
     } else {
       await cu.typeText(pid, text, { index: targetNow.index });
@@ -456,7 +473,7 @@ export async function typeInNode(cu, pid, { resolve, text, retries = 3, label = 
     verdict = c2 === baseline + 1 ? "landed" : c2 > baseline + 1 ? "duplicated" : lastValue === baselineValue ? "unchanged" : "partial";
     if (verdict !== "unchanged") break;
   }
-  return { attempts: used, verdict, baselineValue, lastValue, focused, baseline };
+  return { attempts: used, verdict, baselineValue, lastValue, focused, baseline, focusClicked };
 }
 
 export async function pressKey(cu, pid, keys) {

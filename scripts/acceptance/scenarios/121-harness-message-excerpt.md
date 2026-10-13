@@ -39,8 +39,9 @@ steps:
     target: { x: 900, y: 130 }
     dx: 120
     dy: 0
+    selection: "/AXButton \\(摘录到对话\\)/"
     expect:
-      - label: 浮动「摘录到对话」钮在场（D370）
+      - label: 浮动「摘录到对话」钮在场（D370；同时是选区建立的正观测）
         ax: { has: "/AXButton \\(摘录到对话\\)/" }
       - shot: 02-浮动钮
 
@@ -70,6 +71,7 @@ steps:
     target: { x: 900, y: 130 }
     dx: 120
     dy: 0
+    selection: "/AXButton \\(摘录到对话\\)/"
   - name: 点浮动钮把卡片放回 composer
     do: click
     target: { role: AXButton, name: "摘录到对话" }
@@ -126,6 +128,10 @@ steps:
   harness pane 固定比分、两条短消息），**改 fixture / 窗口尺寸须重取**：跑
   `node scripts/acceptance/run.mjs 121 --keep-app`，看截图里 assistant 正文那一行的窗口局部
   坐标（截图像素 ÷ (截图像素宽/1200)）。
+- **选区建立的 flake 与有界重试（M501）**：真实拖选通道偶发造不出选区（本场景当日 4 跑 1 PASS
+  的独立 flake，与 M498 无关）。两个 drag 步因此带 `selection` 正观测（浮动钮在场 = 选区建立的
+  下游可观测产物——选区本身 AX 读不到）：拖完即验，未命中重试拖选 ≤2 次，耗尽仍无选区**如实判
+  FAIL**（不掩成绿）；成功路径与不给 `selection` 的步骤（如 53）行为一字不变。
 - **不判摘录原文逐字**：卡片的摘录取自 `selection.toString()`，其中文串在 AX 里与转录正文同源、
   没有区分度；卡片在场用**出处行**「对话 · Agent」（只由卡片渲染产出）与 × 钮判。
 - **序列化断言取 wire 留存**：投递文本不在 AX 也不在剪贴板，落点是隔离配置目录的
