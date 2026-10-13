@@ -208,7 +208,9 @@
 - **rename 的「撞名不覆盖」是复查 + 极窄窗口，不是原子保证**（M244 r1 P2-2）：零窗口需平台原子排他改名（macOS `renamex_np(RENAME_EXCL)` 等），引 libc 与平台分支收益与风险不成比例。
 - **`applyListIndent` 的 `state.readOnly` 守卫当前无可达入口**（M249，tower 裁「保留守卫」）：文档 / 场景只许写成「不可达、不构成覆盖声明」。
 - **`vault_append`（追加工具）视盘点后补**（2026-10-09，change `add-harness-permission-modes` 的 Non-goal）：触发条件 = vault 写工具的 dogfood 盘点出现「追加」类高频缺口，届时按 ADR 0007 Decision 7 的边界原则判断是否立项。
-- **验收批次条件下的「按键部分落地」：核销为环境噪音（tower 探针，2026-10-13）**：干净全量轮（46 场景连跑）里 11+ 场景出现「逐键注入丢尾部 3–4 字符」（`aaaren.md`→`aaarn.` 等），全程散布；探针一（137 单跑）与探针二（11 场景批次复跑）后 7/11 转绿，剩余 4 个各有独立归因（96/131=场景用错聚焦动词、151/152=断言口径）。结论：丢键是批次负载下的注入链路劣化（KimiCU 自报 ok:true 但事件未到），非 M482 前台化的回归；若复发且频次上升再立项。
+- **验收批次条件下的「按键部分落地」：定案为注入通道缺陷（M497/M498，2026-10-13，推翻同日较早的「环境噪音」核销）**：根因 = KimiCU `press_key` 的**字符/键码特异丢弃**——字母 'e' 本机确定性丢失（慢速 4/4 全丢）、`cmd+v` 8/9 不落地，外加随机连续丢键段；跨目标族（composer/搜索框/编辑器）老毛病，M139 时代就有，非批次负载、非产品回归。套件侧处置 = M498 新增 `typeInNode` 原语（type_text 无 index 追加 + M143 回读重试），composer 素材注入 81 步迁移，`do: keys` 只留 chord 与豁免面。残余边界：post-menu 态无可靠通道（148 note-/tag- 步与 caret 定位步 141/154 不迁）。指针 `.tower/comms/findings/20261013-agent-m497-bug-composer-keys-kimicu-press-key-e.md`、`20261014-agent-m498-bug-148-note-post-menu-ax-composer.md`。KimiCU 侧值得独立报 bug（跨目标、慢速稳定复现）。
+- **场景 148 残红 5 项（post-menu + composer 模型双边界，medium，2026-10-13）**：①组合断言/②标签行负断言/Escape 收起/harness_pane/重开开关。结构定论：② 的区分度形态要求「先贴图、后打前缀、即插引用」，前缀步不可能 pre-menu，post-menu 边界不可绕（pre-menu 重组已证伪）；两条 close 通道（Escape post-menu 不稳、标题栏开关 pane 开时不在 AX 树）均无替代。转绿条件 = 产品侧 reconcile 或套件新通道落地。指针 `20261014-agent-m498-bug-m498-extends-148-note-finding-pre-menu-pane.md`。
+- **73 等非 composer 可打印 keys 残留面**（M498，low）：73 拒绝原因 textarea 等少数非 composer 目标仍在 `do: keys` 上，同族丢键风险存在但频次低；复发再迁。指针 `.tower/comms/findings/20261013-agent-m498-improve-m498-73-textarea-composer-keys-press-key.md`。
 
 ## 工具链与环境
 
@@ -219,7 +221,7 @@
 3. **KimiCU 键盘注入对 WKWebView 在窗口遮挡时不可靠**：返回 `occluded:true`，activate 后也未必恢复；AX 写入（`set_value`）可靠。故键盘场景须前台焦点纪律，且**不得用 `set_value` 伪造键盘语义**（不经键位分发链路，验不到 `keys.ts`）。
 4. **KimiCU AX 服务会中途全局退化**：`get_app_state` 只剩菜单栏（`element_count` 1–18、`window_bounds x=0 y=0 w=1 h=1`），Finder / Reminders / Lumir 一起坏而 `xpc-ping` 仍报已授权；恢复手段 = 重注册服务（`/Applications/KimiCU.app/Contents/MacOS/kimi-cu install`，tower 两次复验有效）。诊断线索：退化期间 `log show --predicate 'process CONTAINS "kimi-cu"'` 每秒一次 `TCCAccessRequest() IPC`，两次退化都发生在磁盘 <1G 时。
 5. **`scripts/perf/memory.mjs` 的 WebKit pid 差集归因在非独占主机不可靠**：外来 helper 会虚高读数（实测一次 409.7MB）。
-6. **KimiCU `press_key` 逐键注入会整批丢键**：原生 input 与 contenteditable 都会发生，丢在 DOM 之前，间歇性、成因未定位；套件侧已由「回读 + 字节未变才重试」口径兜住。指针 `.tower/comms/findings/20260916-worker-search-bug-kimicu-press-key-wkwebview-input-acceptance-keys.md`。
+6. **KimiCU `press_key` 逐键注入丢键（升级为字符/键码特异丢弃，M497 定案 2026-10-13）**：字母 'e' 确定性丢失（慢速 4/4 全丢）、`cmd+v` 8/9 不落地，外加随机连续丢键段；原生 input 与 contenteditable 同族，丢在 DOM 之前。套件侧兜底 = M143 回读重试 + M498 `typeInNode` 换通道（type_text 追加）；注意 type_text 带 index 是 bbox 中心点击语义（毁 caret）、不带 index 在 post-menu 态死（M456）。指针 `.tower/comms/findings/20260916-worker-search-bug-kimicu-press-key-wkwebview-input-acceptance-keys.md`、`20261013-agent-m497-bug-composer-keys-kimicu-press-key-e.md`。
 7. **同机第二个 Lumir 实例显著加剧 press_key 丢键**：跑真机验收前的预检须同时确认 1420（dev）与 1430（验收）都没有 Lumir 实例在跑。
 8. **孤儿进程巡检**：批次收尾回收 `ps -o pid,ppid,etime,command | grep -E 'playwright|chromium|vite preview'` 中 ppid=1 且 elapsed > 1 天的孤儿；**别碰 Alex 的 dogfood 实例（1420 端口的 vite / `target/debug/lumir`）**。
 9. **批次内 target 纪律**：每个 worktree 同一时刻至多一份 cargo target，最后一次 cargo 门禁跑完立即删 target 并广播释放，进真机验收前 `df -h`、<3G 不起构建（详见「记录在案」的沉淀建议）。
