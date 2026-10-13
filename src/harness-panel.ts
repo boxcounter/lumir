@@ -1104,6 +1104,41 @@ export function transposeCharsAtCaret(
   return write(text.slice(0, prev) + b + a + text.slice(pos), pos);
 }
 
+/** 删除族（⌃D / ⌃H 与裸 Backspace / Delete）的模型步：交给 `withModel` 的模型操作 + force。
+ *
+ * force 恒为 **true**——删除是结构性操作（卡片按整体作用、可整块移除），SHALL 独立成一个撤销步：
+ * 与聚簇窗口内的前一步（如贴图与卡片插入，它们本身就是 force=true 的结构操作）共用一个前态，
+ * 会让「贴图后 1s 内删卡」这一步不入撤销栈——⌘Z 于是弹回贴图前的空 composer（M510；条款见
+ * openspec/specs/harness/spec.md「混排输入区的撤销栈聚簇与结构操作独立成步」）。
+ *
+ * 三个入口（`runComposerCommand` 的 `deleteAtCaret` 两档、composer 的裸 Backspace/Delete 分支）
+ * 共用本函数——force 的判定因此只有一处真源，MUST NOT 各写一份字面量（M447/M453 曾把这三处各自
+ * 落成 false，与 `withModel` 文档「force=true 用于结构性操作（卡片插入/移除、粘贴、拆段、退格）」
+ * 漂移而无人可对账）。
+ *
+ * 返回 null = 本拍无模型动作（无选区，或就地删除的空转：段首退格 / 前向删除到末缘）。
+ */
+export interface ComposerDeleteStep {
+  readonly op: (current: readonly ComposerBlock[]) => { blocks: ComposerBlock[]; caret: ComposerCaret };
+  readonly force: boolean;
+}
+
+export function deleteFamilyStep(
+  blocks: readonly ComposerBlock[],
+  sel: ComposerSelection | null,
+  op: (blocks: readonly ComposerBlock[], caret: ComposerCaret) => { blocks: ComposerBlock[]; caret: ComposerCaret } | null,
+): ComposerDeleteStep | null {
+  if (sel === null) return null;
+  if (!sameCaret(sel.anchor, sel.focus)) {
+    return { op: (current) => deleteSelectionRange(current, sel), force: true };
+  }
+  if (op(blocks, sel.focus) === null) return null;
+  return {
+    op: (current) => op(current, sel.focus) ?? { blocks: [...current], caret: sel.focus },
+    force: true,
+  };
+}
+
 // ── 撤销栈历史（quirk ③ 的自管核心；导出供单测用假时钟驱动复现链） ──────────
 
 export interface UndoHistory<T> {
@@ -3805,19 +3840,16 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     setDomSelection(sel.anchor, head);
   }
 
-  /** ⌃D / ⌃H：接既有 `deleteForwardAtCaret` / `backspaceAtCaret`（有选区先删选区）。 */
+  /** ⌃D / ⌃H：接既有 `deleteForwardAtCaret` / `backspaceAtCaret`（有选区先删选区）。删除族的
+   *  force 判定在 `deleteFamilyStep` 里（单一真源，与裸 Backspace/Delete 分支共用）。 */
   function deleteAtCaret(
     blocks: readonly ComposerBlock[],
     sel: ComposerSelection | null,
     op: (blocks: readonly ComposerBlock[], caret: ComposerCaret) => { blocks: ComposerBlock[]; caret: ComposerCaret } | null,
   ): void {
-    if (sel === null) return;
-    if (!sameCaret(sel.anchor, sel.focus)) {
-      withModel((current) => deleteSelectionRange(current, sel), false);
-      return;
-    }
-    if (op(blocks, sel.focus) === null) return;
-    withModel((current) => op(current, sel.focus) ?? { blocks: [...current], caret: sel.focus }, false);
+    const step = deleteFamilyStep(blocks, sel, op);
+    if (step === null) return;
+    withModel(step.op, step.force);
   }
 
   /** ⌥D / ⌥⌫（含 ⌥Delete 的对称命令）：词级 kill（不跨块），杀掉的文本并入**跨面共用**的
@@ -6370,14 +6402,20 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
     ) {
       const sel = caretFromDom();
       if (sel === null) return;
-      const collapsed = sel.anchor.block === sel.focus.block && sel.anchor.offset === sel.focus.offset;
       event.preventDefault();
-      if (collapsed) {
-        const op = event.key === "Backspace" ? backspaceAtCaret : deleteForwardAtCaret;
-        withModel((blocks) => op(blocks, sel.focus) ?? { blocks: [...blocks], caret: sel.focus }, false);
-      } else {
-        withModel((blocks) => deleteSelectionRange(blocks, sel), false);
+      // 裸 Backspace / Delete 与 ⌃D / ⌃H 同走删除族的模型步（`deleteFamilyStep`，force 单一真源）。
+      const step = deleteFamilyStep(
+        readBlocksFromDom(),
+        sel,
+        event.key === "Backspace" ? backspaceAtCaret : deleteForwardAtCaret,
+      );
+      if (step === null) {
+        // 空转（段首退格 / 前向删除到末缘）：既有语义是仍走一次空模型写（归一化重渲、不留半截
+        // 状态），force=false 让聚簇照常吞掉这一拍、不产生幽灵撤销步。
+        withModel((blocks) => ({ blocks: [...blocks], caret: sel.focus }), false);
+        return;
       }
+      withModel(step.op, step.force);
     }
   });
   // beforeinput 收口：原生 undo 显式禁用（撤销栈自管，quirk ③ 的「登记」）；富文本格式化

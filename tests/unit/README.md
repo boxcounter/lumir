@@ -26,6 +26,7 @@ node tests/unit/run.mjs     # = pnpm test
 | `src/harness-panel.ts`（思考纯模型层） | 思考块四态与时长（M363，change add-harness-thinking-display-and-effort）：`accumulateThinkingBlock` 首分片开块 / 同块合并 / 乱序到达按块序号归位、`thinkingDurationSec` 四舍五入与负差 clamp（轮次结束定格 = 不再进分片即冻结）、`thinkingHeadText` 的 zh/en 两串模板（D388）、`thinkingStateOf` 的快照宽容提取（缺键 / 非法档 → null，supported 严格 true）、`effortLabel` 小写原词 → 首字母大写（zh/en 均英文原文的档位名） |
 | `src/harness-panel.ts`（工具行摘要人话化 + 快照恢复判定） | M368 起，M406 重写：`humanizeToolArgs` / `humanizeToolArgsStrict` 的参数格展示层提取（按工具名取关键参数——cli_run 拼完整命令行、vault_* 取路径、vault_search 取查询词、skill_load 取技能名；截断 / 非 JSON / 未知工具一律回落不伪造）、`rejectedReasonOf` / `failureTextOf` 的恢复路径拒绝原因与失败尾注（数据源是输出 JSON 原文，summary 那份被 core 80 字截断不取）、`formatArgv` / `diffPathOf` / `approvalArgsText` 的批准载荷拼取，以及 `restoredAssistantText` 的空正文跳过（空串 / 纯空白 / 缺 text / 非字符串 → 不渲染）。后者的**形状在当前流水线上造不出来**（core 侧 M367 起不落空正文面板消息、套件 fixtures 里也没有纯工具轮），故它是「空正文记录被渲染成光秃 who 行」这条缺陷唯一的判据落点——验收场景 96 的覆盖边界里如实登记了这个盲区 |
 | `src/harness-panel.ts`（M378 hint 文案 + pane 字号步进） | hint 两行带值文案插值（D395 第一行 ctx、D401 第二行 cache，zh/en 双档，缺占位参数抛错）与 `nextHarnessFontSize` 的步进状态（与内容 pane `nextFontSize` 同档位表、reset 回基线、到界返回原值、共享钳制 [12,32]） |
+| `src/harness-panel.ts`（M510 删除族撤销 force） | `deleteFamilyStep` 的 force 单一真源（删除族三入口共用：⌃D/⌃H 选区档与就地档、裸 Backspace/Delete 档）：贴图（force 压栈）后 1000ms 聚簇窗口内删卡的复现链，撤销时 MUST 恢复「贴图后、删卡前」状态；反向守卫（把 force 强制回 false）证明该断言确有区分度——契约见 `openspec/specs/harness/spec.md`「混排输入区的撤销栈聚簇与结构操作独立成步」 |
 
 不在这一层：DOM 交互、CodeMirror view、渲染与布局（归 `tests/visual`）、真实 WKWebView
 下的行为（归 `scripts/acceptance`）。真 `EditorView` 需要 DOM，硬造只会得到一层假实现，
