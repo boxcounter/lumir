@@ -17,10 +17,10 @@ steps:
   - name: 抢前台
     do: focusWindow
     retries: 4
-  - name: 光标下移到 QANCHOR 那一行
+  - name: 光标下移到 QANCHOR 那一行（两拍 ⌃N：M399 后空白行是真视觉行，一拍只到第 2 行）
     do: keys
-    keys: ["ctrl+n"]
-  - name: ⌃⇧N 扩选
+    keys: ["ctrl+n", "ctrl+n"]
+  - name: ⌃⇧N 扩选（选区从第 3 行行首起，摘录原文 = QANCHOR 那一行）
     do: keys
     keys: ["ctrl+shift+n"]
   - name: 点浮动钮把摘录做成卡片
@@ -62,9 +62,9 @@ steps:
     expect:
       - label: (定位前的稳定) 焦点在编辑器
         ax: { focused: "AXTextArea" }
-  - name: 光标下移到 QANCHOR 行首
+  - name: 光标下移到 QANCHOR 行首（同两拍 ⌃N，再 ⌃A 归行首）
     do: keys
-    keys: ["ctrl+n", "ctrl+a"]
+    keys: ["ctrl+n", "ctrl+n", "ctrl+a"]
   - name: 行首插入 x（行号不变、前缀失配 ⇒ 第一层应失败、落到第二层）
     do: keys
     keys: ["x"]
@@ -123,3 +123,20 @@ spec 判据（change add-harness-quote-cards 的「摘录失锚降级链」）�
 - 每层都先断言**没弹失锚 toast**（或第三层断言弹了）——把「层与层」的分界钉在可见文案上。
 - 撤销一步是为了让第二层用同一张卡片：`edit` 的落点判据与卡片数据无关，撤销后卡片仍指向
   原始 lines / 原文。
+
+## 行几何假设：空白行是一条真视觉行（无「空白行透明」假设）
+
+fixture 的第 2 行是空段落（第 1 行标题、第 3 行 QANCHOR、第 4 行 QSECOND）。**⌃N / ⌃⇧N 是按
+视觉行移动的**（`editor.cursor-down` → `view.moveVertically`，`src/editor.ts` 的垂直移动族；
+绑定见 `src/keys.ts` 的 `Ctrl-n` / `Ctrl-Shift-n` 两条）。M399（2026-10-09，Alex 裁决 A）
+删掉了空段落的零高规则之后，**空白行占一条正常行高，光标会停在它上面**——本场景因此显式写
+两拍 ⌃N（第 1 行 → 第 2 行空白行 → 第 3 行 QANCHOR），不再隐含「空白行透明、一拍跨过」。
+
+这不是场景的措辞偏好，是判据的生死线：只按一拍时，光标停在空白行，`⌃⇧N` 摘出的原文是空串
+（2026-10-13 真机现场：composer 卡片 `help` 只剩 `\n —— 失锚验收`，摘录正文为空），随后
+第二层的「搜索摘录原文」无串可搜、第三层的失锚现场也建不起来——三条断言同时红，但红的是
+**场景对行几何的过期假设**，不是产品行为。
+
+**反向失配也会红**（判据有区分度）：若行几何回到「空白行零高」，两拍 ⌃N 会落到第 4 行
+（QSECOND），`⌃⇧N` 摘出的是 QSECOND 那一行 ⇒ 第二层的 `xwQSECOND…` 与「摘录原文已消失」
+两条断言必然红，不会静默通过。
