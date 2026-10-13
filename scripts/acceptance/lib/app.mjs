@@ -389,15 +389,71 @@ export async function resetRegistry() {
   return dir;
 }
 
+/** 会话状态目录（隔离配置目录下的 `vault-sessions/`）：vault 标签布局与 **pane 几何**
+ *  （`pane_split_ratio` / `harness_pane`）的盘上落点，见 `src-tauri/src/vault_session.rs`。
+ *  路径口径与 recovery / reading-positions / vault-registry 同族：都在隔离 `XDG_CONFIG_HOME`
+ *  下，用户的 `~/.config/lumir` 与真实 vault 全程不碰。 */
+export function vaultSessionsDir() {
+  return path.join(envHome(), "lumir", "vault-sessions");
+}
+
+/** 本场景 seed 预置的会话内容（`id → 盘上全文`）：启动前那次清场（见 `applySessionReset`）
+ *  用它把 seed 的形状原样铺回。只有 seed 通道（`writeSession`）进这份账。 */
+const seededSessions = new Map();
+
+/** 复位声明的「启动前清场」是否已武装（见 `resetSessions` 与 `applySessionReset`）。 */
+let sessionPurgeArmed = false;
+
 /**
  * 清空按 vault 的标签会话（隔离配置目录下的 `vault-sessions/`）。
  * 为什么必须做：会话决定「装载完 vault 后恢复哪些标签」，残留会让本场景的启动恢复出上一场景
  * 的标签（08c 曾因 recovery 残留恢复出 keys.md 的内容——同族）。
+ *
+ * **为什么清完还不够（M494，收 agent-m490 的 finding）**：会话文件同时记 pane 几何
+ * （`pane_split_ratio` / `harness_pane`），而本函数跑在**上一场景的实例还活着的时候**——
+ * run.mjs 的复位段在前、`stopApp` 在后。于是「此刻清干净」不是最后一句：上一实例在这段窗口
+ * 里任何一次会话落盘（防抖的最后一拍 / 退出前的 flush）都落在复位之后；它写的 id 若与本场景
+ * 要开的 vault 同号（seed 复用 id 的场景就是），本场景便从**别人的** pane 宽度起步——窗口
+ * 尺寸定得住、pane 宽度定不住（M490 记的 121/122 坐标落点漂即这一族）。因此复位只做「清」
+ * 不够，还要**武装**一次启动前清场（`applySessionReset` 在 `launchApp` 里兑现）：把「会话
+ * 起点」钉在本场景实例启动前那一刻，与写者时序无关。
+ *
+ * **调用顺序有约束**：必须在 `prepareSeed` **之前**（run.mjs 复位段即是此序）。seed 记进
+ *  `seededSessions` 的那份账随本次复位清空，启动前清场照 seed 铺回；顺序颠倒会把本场景的
+ *  seed 也当成残留。
  */
 export async function resetSessions() {
-  const dir = path.join(envHome(), "lumir", "vault-sessions");
+  const dir = vaultSessionsDir();
   await rm(dir, { recursive: true, force: true });
+  seededSessions.clear();
+  sessionPurgeArmed = true;
   return dir;
+}
+
+/**
+ * 启动前把会话状态钉到**本场景的起点**：清空目录 → 只把本场景 seed 的会话铺回去（没有 seed
+ * 就是空目录 ⇒ 产品按无历史走默认 pane 比 1/2）。
+ *
+ * 由 `launchApp` 在**每次启动**时调用，但只在 `resetSessions` 武装过的那一次生效——
+ * 场景内的 `do: restart`（`ctx.restartApp`）复用同一个 `launchApp`，那一次正是「会话恢复」
+ * 场景（28 / 80 / 91 / 96 / 135 …）要的：重启前的布局必须留在盘上。武装标记在第一次启动时
+ * 用掉，因此同一场景内的后续重启不再清场。
+ *
+ * 只动**隔离配置目录**（`vaultSessionsDir()`，`assertSafeTargets` 另对 XDG 根兜底），
+ * 不碰真实 vault 与用户的 `~/.config/lumir`。
+ */
+export async function applySessionReset() {
+  if (!sessionPurgeArmed) return;
+  sessionPurgeArmed = false;
+  const seeds = new Map(seededSessions);
+  seededSessions.clear();
+  const dir = vaultSessionsDir();
+  await rm(dir, { recursive: true, force: true });
+  if (seeds.size === 0) return;
+  await mkdirp(dir);
+  for (const [id, content] of seeds) {
+    await writeFile(path.join(dir, `${id}.json`), content);
+  }
 }
 
 /** 清掉按 vault 的阅读位置（M194，change remember-reading-position）。与 recovery / vault-registry /
@@ -492,17 +548,22 @@ export async function writeLegacyRegistryEntry(entry) {
  *     比例——用于预置**分栏**会场的现场（M321）；
  *   - **v1**（缺省）：`tabs` 是 vault 相对路径的有序列表、`active` 是激活项（单 pane 形态，
  *     与 M318 之前一致）。
- *  非法 `active` 一律按「退化到第一个可打开标签」处理（`vault_session::sanitize` 同口径）。 */
+ *  非法 `active` 一律按「退化到第一个可打开标签」处理（`vault_session::sanitize` 同口径）。
+ *
+ *  写下的内容同时记进 `seededSessions`：这是「本场景的会话起点」的账，启动前清场
+ *  （`applySessionReset`）据此把 seed 形状铺回（见 `resetSessions`）。 */
 export async function writeSession({ id, tabs, active = null, panes = null, ratio = null, harnessPane = false }) {
   if (!ID_RE.test(id ?? "")) throw new CuError(`会话 id 非法：${JSON.stringify(id)}（只允许字母数字与 -_）`);
-  const dir = await mkdirp(path.join(envHome(), "lumir", "vault-sessions"));
+  const dir = await mkdirp(vaultSessionsDir());
   // `harness_pane`（M349）：v2 会话里记「harness 面板在场」的持久位（ADR 0008 Decision 6 的
   // Phase 2 消费位）。恢复时它决定旁侧 pane 是否重新装配成 harness（会话内容不持久化，恢复出
   // 空会话）。旧版 v2 文件无此字段时 Rust 读取侧按 false——这里缺省同为 false。
   const payload = panes
     ? { version: 2, panes, harness_pane: Boolean(harnessPane), pane_split_ratio: ratio ?? 0.5, updated_at: Date.now() }
     : { version: 1, tabs, active, updated_at: Date.now() };
-  await writeFile(path.join(dir, `${id}.json`), `${JSON.stringify(payload, null, 2)}\n`);
+  const content = `${JSON.stringify(payload, null, 2)}\n`;
+  await writeFile(path.join(dir, `${id}.json`), content);
+  seededSessions.set(id, content);
   return payload;
 }
 
@@ -682,6 +743,10 @@ export async function launchApp({ port = acceptPort(), timeoutMs = 300_000, logF
       windows: [{ ...baseWindow, x: 8, y: 40, focus: true }],
     },
   };
+  // 场景复位武装过的启动前清场（M494 / M490 finding）：会话状态（pane 几何在内）只许是
+  // 本场景 seed 的形状，上一实例在复位之后、退出之前写回的一律覆盖掉。场景内的 `do: restart`
+  // 复用本函数，但那时武装标记已用掉，不动会话——重启要的正是盘上的布局。
+  await applySessionReset();
   const child = spawn(
     "pnpm",
     ["tauri", "dev", "--config", JSON.stringify(config)],
