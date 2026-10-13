@@ -36,7 +36,7 @@ import {
   stopApp,
   writeConfig,
 } from "./lib/app.mjs";
-import { tryForeground, waitAppReady } from "./lib/drive.mjs";
+import { foregroundNote, tryForeground, waitAppReady } from "./lib/drive.mjs";
 import { Evidence, appendRunLog, writeSummary } from "./lib/evidence.mjs";
 import { checkScenario, loadScenario, runScenario } from "./lib/execute.mjs";
 import { envHome, InfraError, log, mkdirp, repoRoot, resultsRoot, sleep, vaultDir } from "./lib/util.mjs";
@@ -261,6 +261,7 @@ function defaultVaultDir() {
  * 起实例前的环境预检（tower 纪律，2026-09-16）：
  * - KimiCU 不存在 → 直接说清安装命令，不要跑到一半才发现；
  * - 磁盘水位 < 2G 不起真机实例（cargo/vite 会 ENOSPC 硬失败，批次四实证）；
+ * - **同机已有 Lumir 实例在场**（安装版 / 残留的开发实例）→ 拒跑并给出 pid 与清除方法（M478）；
  * - 报告 1420 端口占用情况（套件自身走 1430，但仍先看一眼：1420 被占说明同机有别的
  *   `pnpm tauri dev` 在跑，机器负载与 AX 稳定性都会受影响）。
  */
@@ -289,6 +290,7 @@ async function preflight() {
     log(`磁盘可用 ${freeGb.toFixed(1)}G`);
   }
   const { execFileSync } = await import("node:child_process");
+  assertNoForeignLumir(execFileSync);
   let on1420 = "";
   try {
     on1420 = execFileSync("/usr/sbin/lsof", ["-nP", "-iTCP:1420", "-sTCP:LISTEN"], { encoding: "utf8" }).trim();
@@ -299,6 +301,69 @@ async function preflight() {
     on1420
       ? `注意：1420 端口被占用（同机有别的 tauri dev 在跑）；套件自身走 ${acceptPort()} 不受影响\n`
       : `1420 端口空闲；套件自身走 ${acceptPort()}\n`,
+  );
+}
+
+/**
+ * 起跑自检：同机已有 Lumir 实例在场即**拒跑**（M478）。
+ *
+ * 检出两类目标（都按「这个进程自己就是要跑的那个二进制」判定，不做宽松的子串匹配）：
+ *   - **安装版实例**：命令行以 `<某个>.app/Contents/MacOS/lumir` 结尾（打包产物，通常来自
+ *     /Applications）。它与套件实例同 bundle 身份（`com.lumir.app`）、共用同一份 AX / 前台归属，
+ *     窗口还可能盖在套件实例上（键盘注入 `occluded` 的成因之一）；
+ *   - **残留的开发实例**：命令行以 `target/debug/lumir` 结尾。上一次跑批没清干净、或**另一个
+ *     worktree** 的实例——`reclaimPort` 只回收**本 worktree** 的残留，别的 worktree 的会与本次
+ *     跑批争夺同一个前台归属。
+ *
+ * 为什么升成门禁而不是提醒：在场的第二个实例会**静默**改变「前台焦点归谁」这个所有键盘 / 鼠标
+ * 动作的前提，产出一串与产品缺陷无法区分的假 FAIL（REVIEW.md 第 11 条：同机第二个实例显著加剧
+ * 丢键）。2026-10-13 的复跑整轮前台焦点未取得（前台始终是别的 app），当时无从归因的干扰源之一
+ * 就是场上的其他实例（M478）。
+ *
+ * 两条判据都是**路径行尾锚定**，且再叠一条「**可执行文件名必须是 `lumir`**」：命令行里「提到」
+ * 这个路径的进程不算实例——按模式查进程的 watchdog shell 与 `pkill -f target/debug/lumir` 这类命令
+ * 都会以该路径结尾（前者是 M478 现场的干扰源之一，后者正是下面明确禁止的清除方式）。
+ *
+ * 清除方法只给**逐个 kill**，不给 `pkill -f` 这类模式匹配——那条误伤过用户手头的实例
+ * （README「已知边界」的清理条，M164 实证）。
+ */
+function assertNoForeignLumir(execFileSync) {
+  const rows = execFileSync("/bin/ps", ["-axo", "pid=,command="], { encoding: "utf8" }).split("\n");
+  const installed = [];
+  const dev = [];
+  for (const row of rows) {
+    const m = /^\s*(\d+)\s+(.*)$/.exec(row);
+    if (!m) continue;
+    const pid = Number(m[1]);
+    const cmd = m[2].trim();
+    const isInstalled = /\.app\/Contents\/MacOS\/lumir$/.test(cmd);
+    const isDev = /(?:^|[\s/])target\/debug\/lumir$/.test(cmd);
+    if (!isInstalled && !isDev) continue;
+    let comm = "";
+    try {
+      comm = execFileSync("/bin/ps", ["-o", "comm=", "-p", String(pid)], { encoding: "utf8" }).trim();
+    } catch {
+      continue; // 进程在这一瞬退出了
+    }
+    if (comm.split("/").pop() !== "lumir") continue;
+    (isInstalled ? installed : dev).push({ pid, cmd });
+  }
+  if (installed.length === 0 && dev.length === 0) return;
+  const found = [...installed, ...dev];
+  throw new Error(
+    [
+      "✗ 起跑自检不过：同机已有 Lumir 实例在场，拒绝启动（M478）",
+      ...installed.map((p) => `  安装版实例：pid ${p.pid}（${p.cmd}）`),
+      ...dev.map((p) => `  开发实例：pid ${p.pid}（${p.cmd}）`),
+      "  为什么挡：套件实例与它们同 bundle 身份（com.lumir.app），共用同一份 AX / 前台归属——在场的",
+      "  第二个实例会静默改变「前台焦点归谁」这个所有键盘 / 鼠标动作的前提，产出一串与产品缺陷无法",
+      "  区分的假 FAIL（REVIEW.md 第 11 条：同机第二个实例显著加剧丢键）。",
+      "  清除方法：安装版退出（⌘Q 或它的「退出」菜单）；开发实例逐个退出：",
+      `    kill ${found.map((p) => p.pid).join(" ")}`,
+      '  MUST NOT 用 pkill -f "target/debug/lumir" 这类模式匹配——它会连别人手头的实例一起打掉',
+      "  （README「已知边界」的清理条，M164 实证误伤过用户的实例）。",
+      "  清完重跑。`--keep-app` 留下的实例同样会被这条挡住：留现场请自己在下次跑批前先退出它。",
+    ].join("\n"),
   );
 }
 
@@ -377,10 +442,11 @@ async function main() {
       await sleep(1200);
       await waitAppReady(cu, handle.pid); // 前端就绪门：左栏文件树 + 编辑器节点就位再开跑
       // tower 纪律：键盘场景先尽力拿前台并如实记录（拿不到不中止——行为断言才是注入是否落地的证据）。
+      // 手段与失败原因由 `drive.mjs` 的 foregroundNote 统一成一行（M478）：用了 AXRaise 还是
+      // System Events、失败时的 osascript stderr 全落进证据——此前只有「已取得 / 未取得」两个词，
+      // 复盘时分不出「激活没投出去」与「投出去了没生效」。
       const fg = await tryForeground(cu, handle.pid);
-      fgNote = fg.frontmost
-        ? "前台焦点：已取得"
-        : `前台焦点：未取得（前台 pid=${fg.frontPid ?? "未知"}）——键盘走 KimiCU 后台注入路径`;
+      fgNote = foregroundNote(fg);
       log(`  ${fgNote}`);
       const ctx = {
         cu,
@@ -400,7 +466,7 @@ async function main() {
           // 「树 pane 任一形态 + 编辑器在位」。默认仍是严格门（树里有 .md 行）。
           await waitAppReady(cu, handle.pid, { requireVault });
           const fg2 = await tryForeground(cu, handle.pid);
-          ctx.foregroundNote = `重启前台焦点：${fg2.frontmost ? "已取得" : `未取得（pid=${fg2.frontPid ?? "?"}）`}`;
+          ctx.foregroundNote = foregroundNote(fg2, { prefix: "重启前台焦点" });
           ctx.pid = handle.pid;
         },
       };
