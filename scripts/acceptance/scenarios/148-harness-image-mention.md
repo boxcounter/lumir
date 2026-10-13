@@ -118,15 +118,21 @@ steps:
   #   剪贴板 + 原生菜单 Paste 文本 —— 产品 paste 管线本可插入（模型一致），但两张卡片时
   #     composer 达 max-height 滚动，dy 0.94 的右键落点命中卡片元信息行的链接区，
   #     开出 Look Up/Copy Link 菜单（1 跑实证）——套件无可靠的「点可见末尾空段落」通道。
-  # 留在 do:keys：探针串 note- 无 'e'，避开确定性丢键；随机连续丢键段风险已报 finding。
-  - name: 键入引用前缀（`keys` 动作走 composer 的键盘注入；`type` 动作会落到第一个
-      `AXTextArea` = 编辑器——本步是 post-menu + 模型一致性双边界，见上注）
+  # 留在 do:keys。**素材串刻意无 'e'**——press_key 确定性丢 'e'（M497/M498 finding），
+  # 该步因 post-menu+模型双边界无替代通道；同判法既有实证：场景 137 的 "draftclear"。
+  # M498 收口跑（tag- 版）实证：'e' 丢失已消除（DOM 落 "tag-"），但 post-menu 键入只到
+  # DOM、composer 模型的 caret 仍钉在段落首（@ 插入成「Image 1tag-」），①② 断言与下游
+  # Escape 收起步同受 M456 影响——残红全部归于已报的 M456/模型边界 finding。
+  # 随机连续丢键段风险已报 finding。
+  - name: 键入引用前缀 tag-（`keys` 动作走 composer 的键盘注入；`type` 动作会落到第一个
+      `AXTextArea` = 编辑器——本步是 post-menu + 模型一致性双边界，见上注；
+      素材串刻意无 'e'，见上注）
     do: keys
-    keys: ["n", "o", "t", "e", "-"]
+    keys: ["t", "a", "g", "-"]
     gapMs: 100
     expect:
-      - label: 前缀落在 composer（与 `@` 插入的引用拼成 note-Image N）
-        ax: { has: "note-" }
+      - label: 前缀落在 composer（与 `@` 插入的引用拼成 tag-Image N）
+        ax: { has: "tag-" }
       - label: 前缀没有漏进编辑器文档（焦点确在 composer，编辑器逐字节未变）
         editor: { unchangedSince: doc-before-composer }
 
@@ -136,11 +142,11 @@ steps:
   - name: 等引用文本落进 composer
     do: waitFor
     waitFor:
-      has: ["note-Image 1"]
+      has: ["tag-Image 1"]
     timeoutMs: 10000
     expect:
       - label: ① `@` 在光标处插入 `Image 1`（与图 A 的编号一致）
-        ax: { has: "note-Image 1" }
+        ax: { has: "tag-Image 1" }
 
   - name: ① 点图 B 的 `@` 钮（第 2 个）→ 光标处插入 `Image 2`
     do: click
@@ -157,7 +163,7 @@ steps:
         ax: { has: "/AXButton \\(移除摘录\\)/" }
       - shot: 01-composer-两图带编号与@钮
 
-  - name: 发送（composer = [段落 qrefmark, 图 A, 段 note-Image 1Image 2, 图 B, 空段]）
+  - name: 发送（composer = [段落 qrefmark, 图 A, 段 tag-Image 1Image 2, 图 B, 空段]）
     do: key
     key: enter
 
@@ -338,14 +344,16 @@ design §10 的真机验收面 ①②③④（⑤ 引用卡片 / 消息摘录卡
   下一步右键 `name:"qrefmark"` 被编辑器抢先命中，贴图进了编辑器 ⇒ composer 从没有图片卡片、`@` 钮自然
   不在 AX。M489 起改用「`clickInNode(composer)` + composer 向键盘注入」，M498 起首步（会话名
   素材，pre-menu）注入动作是 `typeInNode`（type_text 无 index 整串追加——`do: keys` 的 press_key
-  逐键通道对 composer 丢键：'e' 本机确定性丢失，M497 归因）；贴图后的 note- 步是 post-menu +
-  模型一致性双边界（三通道全试不过，见该步注释），留在 `do: keys`。全程配 `recordEditor` +
+  逐键通道对 composer 丢键：'e' 本机确定性丢失，M497 归因）；贴图后的 tag- 步是 post-menu +
+  模型一致性双边界（三通道全试不过，见该步注释），留在 `do: keys`、素材串刻意无 'e'。全程配 `recordEditor` +
   `editor.unchangedSince` 守卫，把「素材落在 composer、编辑器逐字节未变」钉成断言。
 - **编号读数的两面（如实登记）**：transcript 图片卡 `role="img"` 的可访问名 `图片 {n}：{name}`
   是 AX 稳定形态，用来钉「卡片编号」；composer 态的序号徽标（缩略图角上的裸数字）是图上的视觉读数、
   AX 无稳定形态，**不进机器判据**（归视觉场景 `tests/visual/scenes/m454-...` 与 Alex 手感）。
 - **② 的文本面无标签行判据**：断言留存里不存在**独立**的 `"text":"Image ` part。前缀素材
-  `note-` 刻意让用户 `@` 插入的引用落在更长段落里（`note-Image 1Image 2`），与「系统标签行」
+  `tag-`（M498 起；原 `note-` 含 'e'，press_key 确定性丢键必红——该步 post-menu+模型双边界
+  无替代通道，素材改无 'e' 判法，同场景 137 的 "draftclear"）刻意让用户 `@` 插入的引用落在
+  更长段落里（`tag-Image 1Image 2`），与「系统标签行」
   （独立 text part）在 JSON 形态上可区分——否则一条恰为 `Image N` 的用户段落会让该负向断言误红。
 - **wire 展开的边界**：发给 provider 的请求体里，图片 part 之前有一个 `{"type":"input_text",
   "text":"Image N"}` 标签行、且 `lumir_label` 被剥掉——这一形态**不在磁盘上**（只活在 mock 的
