@@ -250,7 +250,8 @@ const MAIN_WINDOW_LABEL: &str = "main";
 /// 帧的 OS 默认放置决定，本应用不施加、不持久化、不作判据。
 ///
 /// **自身不返回致命错误**：存档损坏 / 工作区不可得都在内部降级（记 warning），因此 `show()`
-/// 一定执行。`set_size` 失败也只降级——窗口按占位尺寸出现，仍强于不出现。
+/// 一定执行。`set_size` 失败也只降级——窗口按占位尺寸出现，仍强于不出现。`show()` 成功后
+/// 紧跟一次 `set_focus()` 把 app 激活到前台（见函数尾注记）。
 fn apply_startup_size(app: &tauri::AppHandle) {
     let Some(window) = app.get_webview_window(MAIN_WINDOW_LABEL) else {
         eprintln!("lumir: 未找到主窗口，启动尺寸未施加");
@@ -294,6 +295,16 @@ fn apply_startup_size(app: &tauri::AppHandle) {
     }
     if let Err(e) = window.show() {
         eprintln!("lumir: 显示主窗口失败：{e}");
+        return;
+    }
+    // 首启 show 后无条件激活到前台（Alex 2026-10-13）：show() 只 orderFront、不激活
+    // app，命令行直接 exec 的实例（不走 LaunchServices，如验收套件的 dev 实例）启动
+    // 后零激活。tao 的 set_focus 在 macOS 上做 makeKeyAndOrderFront +
+    // activateIgnoringOtherApps，重复激活无害（Dock/LaunchServices 启动本就会激活）。
+    // 只发生在启动落窗这一次；tao 的 set_focus 对已最小化/不可见窗口自行跳过，
+    // 后续恢复路径不再调用本函数，不会重复抢前台。
+    if let Err(e) = window.set_focus() {
+        eprintln!("lumir: 启动激活前台失败：{e}");
     }
 }
 
