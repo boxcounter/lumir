@@ -9,7 +9,7 @@
 //   3. 端口隔离：dev server 走独立端口，绝不与 Alex 手头的 `pnpm tauri dev` 抢 1420。
 import { execFileSync, spawn } from "node:child_process";
 import { appendFileSync, mkdirSync, realpathSync } from "node:fs";
-import { cp, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { cp, readdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { CuError } from "./cu.mjs";
 import { envHome, exists, InfraError, log, mkdirp, readText, repoRoot, secondVaultDir, sleep, stripAnsi, vaultDir } from "./util.mjs";
@@ -159,21 +159,24 @@ export async function resetHarness() {
   return dir;
 }
 
-/** 把 vault 重置为 fixtures 的 `.md` 副本：清 vault 根下的 `.md` 与**目录**（合成 vault 的既有
- *  内容形态 + M221 起场景可经 vaultWrite 建嵌套路径——目录不跨场景残留）。
+/** 把 vault 重置为 fixtures 的 `.md` 副本：清 vault 根下的**全部**条目（文件与目录），再拷回
+ *  fixtures 的 `.md`。
  *
- *  **已知缺口（canonical 居所，M296 登记）**：根下的**非 `.md` 产物**不被这次重置覆盖——场景
- *  `fixtures:` 带进来的 `.gitignore` / `.gitattributes` / `x.jsonc` / `notes.txt` / `huge.log`
- *  等等会留到后面的场景（实测：跑完一轮全量批之后 `/tmp/lumir-m102-acceptance` 里有 40+ 个这类
- *  文件）。它们在本套件里都**是惰性的**（依赖它们的场景各自用 `fixtures:` 重新拷一份），但新场景
- *  MUST NOT 依赖或假设这类残留存在；要判「某文件在场」就得自己声明 `fixtures:` 或用 `vaultWrite`
- *  造。清干净它不在本 mission 的改动面内（会牵动全部 69 个场景），已记进 `docs/backlog.md`。 */
+ *  **为什么连非 `.md` 产物一起清（M296 缺口，M489 收口）**：此前只清 `.md` 与目录，根下的
+ *  非 `.md` 残留会跨场景留到后面的 run——`fixtures:` 带进来的 `.gitignore` / `.gitattributes` /
+ *  `x.jsonc` / `notes.txt` / `huge.log`（实测一轮全量批之后 `/tmp/lumir-m102-acceptance` 里
+ *  有 40+ 个），以及**贴图落进根级笔记编辑器时留下的 `pasted-*.webp`**。实证：148 的注入泄漏往
+ *  共享 vault 根丢了一个 `pasted-<hash>.webp`，经此缺口污染了随后 127 的「vault 零新增」断言
+ *  （根下多一份同名贴图 ⇒ `glob … exact: 0` 假红）。清干净不改变任何场景的起点：依赖非 `.md`
+ *  fixture 的场景各自在自己的 front-matter 里声明 `fixtures:`，`copyFixture` 在本函数之后重拷。
+ *  新场景仍 MUST NOT 依赖这类残留——要判「某文件在场」得声明 `fixtures:` 或用 `vaultWrite` 造。
+ *
+ *  只动**合成验收 vault**（`vaultDir()`），不碰真实 vault 与用户的 `~/.config/lumir`。 */
 export async function resetVault() {
   const vault = vaultDir();
   await mkdirp(vault);
   for (const name of await readdir(vault)) {
-    if (name.endsWith(".md")) await rm(path.join(vault, name), { force: true });
-    else if ((await stat(path.join(vault, name))).isDirectory()) await rm(path.join(vault, name), { recursive: true, force: true });
+    await rm(path.join(vault, name), { recursive: true, force: true });
   }
   for (const name of await readdir(fixturesDir())) {
     if (!name.endsWith(".md")) continue;
