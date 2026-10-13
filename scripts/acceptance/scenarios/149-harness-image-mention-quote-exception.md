@@ -45,15 +45,18 @@ steps:
       - label: composer 内的引用卡片带出处行（文档名 · 最近一级标题，无编号）
         ax: { has: "harness-note.md · Harness 验收笔记" }
 
-  - name: 真实鼠标点 composer（图卡片的输入面）
+  - name: 真实鼠标点 composer（图卡片的输入面；`findNode` 的 `name` 是**裸正则源**，不认 `/…/`
+      定界符——写了 `/…/` 会去找字面量 `/harness-note.md/`，永远找不到。README「匹配器口径」条）
     do: clickInNode
-    target: { role: AXTextArea, name: "/harness-note\\.md/" }
+    target: { role: AXTextArea, name: "harness-note\\.md" }
   - name: 剪贴板置合成 png（seed 11）
     do: clipboardImage
     synth: { width: 320, height: 200, seed: 11 }
-  - name: 右键 composer 唤原生菜单（引用卡片 + 待贴图）
+  - name: 右键 composer 的**末尾空段落**唤原生菜单（引用卡片 + 待贴图；卡片是
+      contenteditable=false，右键落在卡片本体上会开出**无可编辑项**的菜单——没有 Paste。
+      dy 0.94 落在卡片下方的末尾段落上，与场景 134 同一落点口径）
     do: click
-    target: { role: AXTextArea, name: "harness-note.md", button: right }
+    target: { role: AXTextArea, name: "harness-note\\.md", button: right, dy: 0.94 }
     expect:
       - label: 原生菜单出现且 Paste 项在场
         ax: { has: "/AXMenuItem[^\n]*(Paste|粘贴)/" }
@@ -70,9 +73,23 @@ steps:
         ax: { has: "/AXButton \\(插入图片引用\\)/" }
       - label: 引用卡片的 × 移除钮仍在（两卡片各自的动作钮）
         ax: { has: "/AXButton \\(移除摘录\\)/" }
-  - name: 键入问题段（让文本 part 非空，消息更接近真实形态）
-    do: type
-    text: "xqmark"
+  - name: 点 composer 末尾空段落重建键盘焦点（原生菜单 Paste 之后 window 焦点会丢——M456 实证）
+    do: clickInNode
+    target: { role: AXTextArea, name: "harness-note\\.md" }
+    dy: 0.97
+  - name: 记编辑器文档基线（素材注入 MUST NOT 漏进文档——注入落错面的通用防线，场景 140 同口径）
+    do: recordEditor
+    as: doc-before-composer
+  - name: 键入问题段（让文本 part 非空，消息更接近真实形态；`keys` 动作走 composer 的键盘注入，
+      `type` 动作会落到 AX 树第一个 `AXTextArea` = 编辑器）
+    do: keys
+    keys: ["x", "q", "m", "a", "r", "k"]
+    gapMs: 100
+    expect:
+      - label: 问题段落在 composer（文档正文里不含 xqmark）
+        ax: { has: "xqmark" }
+      - label: 问题段没有漏进编辑器文档（焦点确在 composer，编辑器逐字节未变）
+        editor: { unchangedSince: doc-before-composer }
 
   - name: 发送（composer = [引用卡, 图片卡, 段落 xqmark]）
     do: key
@@ -116,6 +133,11 @@ design §10 ⑤ 与 MODIFIED「引用消息序列化协议」的「图片块的�
 
 - **手势**：选区在 AX 层不可断言，用 ⌃⇧N 键盘扩选建立选区（同场景 81）；浮动钮「摘录到对话」
   是 D370。
+- **定位器与落点（M489 修正）**：①`target.name` 是**裸正则源**（`findNode` 把字符串直接喂
+  `new RegExp()`，不认 `/…/` 定界符），composer 的可访问名写 `harness-note\\.md`（`.` 转义）；
+  ②右键落点取 composer 的**末尾空段落**而非中心——composer 里已有引用卡片（`contenteditable=false`）
+  时，中心落在卡片上会开出**无可编辑项**的菜单（实测只有 Copy / Speech / Inspect，没有 Paste）。
+  ③素材注入同样走 `do: keys`（`do: type` 会落到 AX 树第一个 `AXTextArea` = 编辑器）。
 - **并存形态**：引用卡片用「出处行」正观测（只由卡片渲染产出）；图片卡片用 `@` 钮（D457）正观测；
   两者各自的动作钮（× D371）都在场，证明两张卡片真的并存于 composer。
 - **序列化判据落磁盘事实**：`llm_request` 留存的引用形态逐字节落 JSONL——`<quote file=` 在场

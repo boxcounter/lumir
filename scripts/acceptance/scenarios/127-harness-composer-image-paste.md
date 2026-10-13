@@ -32,6 +32,12 @@ steps:
       - label: composer 在位（空输入态 = D328 占位读屏名）
         ax: { has: "问点什么" }
 
+  - name: 记 vault 根目录 mtime 基线（下面的「vault 零新增」用**贴图前后对比**取代绝对 0——
+      根下可能有上一场景留下的非 `.md` 产物，绝对 0 会被它假红；见本场景末「判据为什么这样写」）
+    do: record
+    as: vault-root
+    file: "."
+
   - name: 真实鼠标点 composer（contenteditable 的 DOM 焦点靠真实 mousedown 建立）
     do: clickInNode
     target: { role: AXTextArea, name: "问点什么" }
@@ -62,8 +68,8 @@ steps:
         ax: { has: "txtprobe-plain" }
       - label: 文本粘贴不产生任何 harness 附件（attachments 根下零 webp）
         glob: { dir: "env:harness/attachments", pattern: "\\.webp$", exact: 0 }
-      - label: vault 零新增（attachments 没落进 vault 的任何角落）
-        glob: { dir: ".", pattern: "pasted-[0-9a-f]{16}\\.webp$", exact: 0 }
+      - label: vault 根目录零改动（贴图前后对比：根 mtime 未推进 ⇒ attachments 没落进 vault 的任何角落）
+        file: { path: ".", mtimeUnchangedSince: vault-root }
 
   - name: 剪贴板置合成 png（seed 7 ⇒ 逐字节确定，AppleScript «class PNGf» 标准通道）
     do: clipboardImage
@@ -80,22 +86,26 @@ steps:
     do: click
     target: { role: AXMenuItem, any: "/(Paste|粘贴)/" }
 
-  - name: 等卡片出现（落盘 + 插卡的状态驱动等待）
+  - name: 等卡片出现（落盘 + 插卡 + 缩略图 load 后元信息行带宽高的状态驱动等待）
     do: waitFor
     waitFor:
-      has: ["/pasted-[0-9a-f]{16}\\.webp/"]
+      has: ["/pasted-[0-9a-f]{16}\\.webp · 480×320/"]
     timeoutMs: 30000
     expect:
       - label: composer 出现图片卡片（元信息行从文件名开始、无 image · 前缀）
         ax: { has: "/pasted-[0-9a-f]{16}\\.webp/" }
+      - label: ⑥ 元信息行补出宽高「文件名 · W×H」（M449 口径；合成图 = 480×320。判据搬到了
+          **composer 卡面**——恢复路径的 transcript 卡是 `role=img` AX 叶子，维度文本不进 AX，
+          见本场景末「判据为什么这样写」）
+        ax: { has: "/pasted-[0-9a-f]{16}\\.webp · 480×320/" }
       - label: 纯文本段落未被图片粘贴冲掉（② 两不串台）
         ax: { has: "txtprobe-plain" }
       - label: 附件落 harness 侧 vault 目录（目录名 = 预置注册表 id acc-img，恰好一份）
         glob: { dir: "env:harness/attachments/acc-img", pattern: "pasted-[0-9a-f]{16}\\.webp$", exact: 1 }
       - label: 落盘字节是 WebP 容器，且文件名哈希 = 落盘字节 sha256 前 16 位（内容寻址）
         bytes: { path: "env:harness/attachments/acc-img/pasted-*.webp", magic: "52494646", nameHash: true }
-      - label: vault 依旧零新增
-        glob: { dir: ".", pattern: "pasted-[0-9a-f]{16}\\.webp$", exact: 0 }
+      - label: vault 根目录依旧零改动（贴图前后对比：mtime 未推进——图片落 harness 侧，vault 零新增）
+        file: { path: ".", mtimeUnchangedSince: vault-root }
       - shot: 01-贴图后-composer卡片
 
   - name: 焦点回 composer（值 = 卡片元信息行，可访问名随之变成它），键入图片后的问题段
@@ -196,14 +206,9 @@ steps:
         ax: { has: "txtprobe-plain" }
       - shot: 03-恢复后-带图消息
 
-  - name: 等恢复卡片的缩略图 load 完成（元信息行从文件名补出宽高，M449 口径）
-    do: waitFor
-    waitFor:
-      has: ["/pasted-[0-9a-f]{16}\\.webp · \\d+×\\d+/"]
-    timeoutMs: 20000
-    expect:
-      - label: ⑥ 恢复路径补出宽高：元信息行呈「文件名 · W×H」（M449 的 load 后补记；首帧只显文件名）
-        ax: { has: "/pasted-[0-9a-f]{16}\\.webp · \\d+×\\d+/" }
+  - name: 恢复路径的宽高补记（M449）在真机 AX 面**不可观测**——如实登记，不做断言
+    do: note
+    text: "恢复后 transcript 图片卡是 role=img（AX 叶子），元信息行的 W×H 文本不进 AX（实测：AXImage 只暴露可访问名「图片 N：name」）。该补记的机器判据 = ① composer 卡面的 W×H（本场景贴图步已断言）② 单测 tests/unit/harness-composer.test.ts 的恢复路径补记用例。"
 ---
 
 # 127-harness-composer-image-paste —— composer 贴图全链路（change harness-composer-image-paste）
@@ -217,7 +222,8 @@ design §9 验收面的 ①②③④⑥ 四条（⑤ 能力闸在场景 128，�
    图片卡片出现在 composer（元信息行**从文件名开始**、无 `image ·` 前缀——Alex 2026-10-10
    裁决），字节落 `<隔离配置>/harness/attachments/acc-img/`（acc-img 是本场景预置的注册表
    id——附件目录名 = vault 稳定 id，M433 分层裁决），内容寻址命名（`bytes.nameHash` 钉
-   「文件名哈希 = 落盘字节 sha256 前 16 位」），且 **vault 零新增**（根下全目录 glob 0 命中）。
+   「文件名哈希 = 落盘字节 sha256 前 16 位」），且 **vault 根目录零改动**（贴图前后对比：
+   根 mtime 未推进）。
 2. **② 非图片回归**：同一条 Paste 通道先贴纯文本——净化照常、附件目录零新增；随后贴图，
    两段互不串台（文本段未被冲掉）。
 3. **③④ 投递与留存**：发送「文本 + 图 + 文本」后，JSONL 的 `llm_request` 里 user content
@@ -235,11 +241,19 @@ design §9 验收面的 ①②③④⑥ 四条（⑤ 能力闸在场景 128，�
   附件目录名因此是场景可预期的确定值（产品自生成的 `vault-<pid>-<n>` 无从预知）。
 - **③ 的交错用一条行内正则**：JSONL 一行一事件，`^…$` 行锚 + 三段按序出现，避免被文件里
   别的事件满足（套件 README「`^`/`$` 也是跨行保护」节的口径）。
-- **⑥ 恢复后元信息行的两态**（M449 起修正）：恢复路径的卡片宽高来自 wire 引用、`ImageCard.width/
-  height` 可选，故**首帧**元信息行只显文件名（无宽高属性）；缩略图 `<img>` load 完成后由
-  `naturalWidth/Height` 补记，元信息行变成「文件名 · W×H」——恢复步因此等 `load` 完成再断言
-  这条（`waitFor` 状态驱动，不做固定等待）。缩略图的像素渲染本身仍归 Rust 单测与视觉场景；
-  本层判的是「补记真的落到了元信息行上」这条与 wire 无关的 DOM 后果。
+- **vault 零新增用「贴图前后对比」而不是「根下 glob 绝对 0」（M489 修正）**：`resetVault`（M489
+  起收口 M296 缺口）已把根下非 `.md` 产物一并清掉，但绝对 0 仍脆弱——只要隔离链有一处漏，
+  上一场景的残留就会让它**假红**（实证：148 的注入泄漏往共享 vault 根丢了一个
+  `pasted-<hash>.webp`，污染了本场景的「vault 零新增」断言）。改为开头 `record` 根目录 mtime、
+  贴图前后比对（`mtimeUnchangedSince`）：根下**任何**新增/删除都会推进根 mtime，故这条比只看
+  `pasted-*.webp` 更强，且对「基线之前就存在的残留」免疫。
+- **⑥ 恢复后宽高补记的判据搬到 composer 卡面（M489 修正的 oracle 换面）**：M449 的补记发生在
+  恢复路径的卡片上（元信息行首帧只显文件名，缩略图 `<img>` load 后由 `naturalWidth/Height`
+  补出 `· W×H`）。但恢复后的卡片在 **transcript**、被渲染成 `role=img` 的 **AX 叶子**——其
+  可访问名只有「图片 N：name」，元信息行的 W×H 文本**不进 AX**（实测 dump 只有 `AXImage (图片 1：…)`）。
+  该补记因此在真机 AX 面**原理性不可观测**，本场景改在 **composer 卡面**断言「元信息行带宽高」
+  （合成图 480×320，贴图步 `waitFor` + `ax.has`），恢复路径的补记语义留在单测
+  `tests/unit/harness-composer.test.ts`。恢复面本身仍由「后段文本 + 引用名 + 交错顺序」三条覆盖。
 - **覆盖边界（如实登记）**：⑤（能力闸的 toast / 卡片错误态 / 会话不推进）在场景 128；
   ⑦（两 vault 分置与互不可见）在场景 129；wire 展开后的 data URL 形态由 Rust 单测钉
   （mock 与真 client 同一条 `expand_image_refs`），真机 JSONL 只承载引用侧。

@@ -38,9 +38,20 @@ steps:
     do: clickInNode
     target: { role: AXTextArea, name: "问点什么" }
 
+  - name: 记编辑器文档基线（素材注入 MUST NOT 漏进文档——注入落错面的通用防线，场景 140 同口径）
+    do: recordEditor
+    as: doc-before-composer
+
   - name: 键入会话名素材（本逻辑会话首条用户消息定名——恢复步按它定位会话行）
-    do: type
-    text: "qrefmark"
+      （`keys` 动作走 composer 的键盘注入；`type` 动作会落到第一个 `AXTextArea` = 编辑器，素材漏面）
+    do: keys
+    keys: ["q", "r", "e", "f", "m", "a", "r", "k"]
+    gapMs: 100
+    expect:
+      - label: 素材落在 composer（会话名来源）
+        ax: { has: "qrefmark" }
+      - label: 素材没有漏进编辑器文档（焦点确在 composer，编辑器逐字节未变）
+        editor: { unchangedSince: doc-before-composer }
 
   - name: 剪贴板置合成 png A（seed 7）
     do: clipboardImage
@@ -90,13 +101,19 @@ steps:
       - label: 两张图片卡片各自带 `@` 钮（恰好两个）
         ax: { has: "/AXButton \\(插入图片引用\\)/", count: { pattern: "/AXButton \\(插入图片引用\\)/", exact: 2 } }
 
-  - name: 点 composer 把光标落到末尾空段落、键入引用前缀（避免出现「整段恰是 Image N」的文本，
+  - name: 点 composer 把光标落到末尾空段落（避免出现「整段恰是 Image N」的文本，
       让 ② 的「文本面无标签行」判据有区分度：标签行是**独立** text part）
     do: clickInNode
     target: { role: AXTextArea, name: "pasted-[0-9a-f]{16}\\.webp" }
-  - name: 键入前缀
-    do: type
-    text: "note-"
+  - name: 键入引用前缀（`keys` 动作走 composer；`type` 动作会落到第一个 `AXTextArea` = 编辑器）
+    do: keys
+    keys: ["n", "o", "t", "e", "-"]
+    gapMs: 100
+    expect:
+      - label: 前缀落在 composer（与 `@` 插入的引用拼成 note-Image N）
+        ax: { has: "note-" }
+      - label: 前缀没有漏进编辑器文档（焦点确在 composer，编辑器逐字节未变）
+        editor: { unchangedSince: doc-before-composer }
 
   - name: ① 点图 A 的 `@` 钮（第 1 个）→ 光标处插入 `Image 1`
     do: click
@@ -297,6 +314,12 @@ design §10 的真机验收面 ①②③④（⑤ 引用卡片 / 消息摘录卡
 
 - **Paste 通道**：同 127（M415 探针的 WebKit 原生上下文菜单通道）——合成剪贴板造不出富 paste 事件，
   原生菜单 Paste 是与真实用户同一条 WebKit 链路。菜单项按键名正则定位不锁索引。
+- **composer 注入用 `do: keys` 不用 `do: type`（M489 修正）**：`do: type` 走 `typeInEditor`
+  （`lib/drive.mjs`），取 AX 树里**第一个** `AXTextArea`——那是**编辑器**，不是 composer（本场景 dump
+  里编辑器节点在 composer 之前）。素材因此曾漏进文档：`qrefmark` 落进编辑器后，下一步右键
+  `name:"qrefmark"` 被编辑器抢先命中，贴图进了编辑器 ⇒ composer 从没有图片卡片、`@` 钮自然不在 AX。
+  改用「`clickInNode(composer)` + `do: keys`」（140–147 的既有写法），并配 `recordEditor` +
+  `editor.unchangedSince` 守卫，把「素材落在 composer、编辑器逐字节未变」钉成断言。
 - **编号读数的两面（如实登记）**：transcript 图片卡 `role="img"` 的可访问名 `图片 {n}：{name}`
   是 AX 稳定形态，用来钉「卡片编号」；composer 态的序号徽标（缩略图角上的裸数字）是图上的视觉读数、
   AX 无稳定形态，**不进机器判据**（归视觉场景 `tests/visual/scenes/m454-...` 与 Alex 手感）。
