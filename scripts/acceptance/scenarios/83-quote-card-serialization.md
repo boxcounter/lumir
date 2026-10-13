@@ -30,10 +30,25 @@ steps:
       - label: 卡片出处行（文档名 · 标题，标题里的 & 原样显示）
         ax: { has: "harness-quote-escape.md · A & B 标题" }
       - shot: 01-卡片
+  - name: 记录编辑器基线（守卫：typeInNode 注入不得漏进编辑器）
+    do: recordEditor
+    as: 编辑器基线-首问
+  - name: 点 composer 确立焦点（AXPress 插卡后渲染层焦点可能仍在编辑器——M501/M500 归因；
+      点底部空段落把焦点与 caret 都交给 composer，供随后的整串注入与 Enter 发送）
+    do: clickInNode
+    target: { role: AXTextArea, name: "A & B 标题" }
+    dy: 0.9
+    expect:
+      - label: 焦点落在 composer（focused 标记在 AXTextArea 上）
+        ax: { focused: "AXTextArea" }
+
   - name: 在卡片后的问题段落写一个字（证明携带卡片的消息照常投递）
     do: typeInNode
     target: { role: AXTextArea, name: "A & B 标题|q" }
     text: "q"
+    expect:
+      - label: 注入没有漏进编辑器（逐字节比对基线）
+        editor: { unchangedSince: 编辑器基线-首问 }
   - name: 发送
     do: key
     key: enter
@@ -66,6 +81,9 @@ XML——每段摘录 `<quote file="…" heading="…" lines="A-B">摘录原文<
 - **逐字节断言替代结构解析**：序列化产物落在 JSONL 留存里（`env:harness/sessions/*/*.jsonl` 的
   `llm_request.request.messages` 里那条 user 消息），断言直接写期望的那一行 XML。属性顺序、取值、转义形态任意一处漂移都
   会红——比「解析后再比对字段」更严，也不需要场景里再实现一个 XML 解析器。
+- **插卡后有点 composer 确立焦点一步**（M501，M500 归因）：卡片钮是 AXPress，之后渲染层焦点可能
+  仍留在编辑器，`type_text` 无 index 注入会漏进去；这步点击 + `editor.unchangedSince` 守卫与
+  场景 82 同构，drive.mjs 的 typeInNode attempt-1 焦点守卫另有兜底。
 - 转义覆盖两条路径：**属性值**（heading 含 `&` → `&amp;`）与**文本节点**（摘录原文含 `<`、
   `>`、`&` → `&lt;` / `&gt;` / `&amp;`）。fixture `harness-quote-escape.md` 就是为这两条造的。
 - 「无编号」是**一致性原则**（Alex 2026-10-06）的机器判据：`not: "index="` 挡任何序号属性复活。

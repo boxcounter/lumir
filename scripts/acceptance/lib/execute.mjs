@@ -248,6 +248,10 @@ export function checkScenario(scenario) {
       push(`${at} do=configWrite 的 mode 需要字符串（editor.mode），实际 ${JSON.stringify(step.mode)}`);
     if (step.do === "drag" && (!step.target || (step.dx === undefined && step.dy === undefined)))
       push(`${at} do=drag 需要 target（带 bbox 的节点、{x,y} 窗口局部坐标或 textareaEdge）与 dx/dy 位移（窗口局部点）`);
+    // 选区正观测（M501）：与 ax.has 同一 matcher 口径（子串或 /正则/），写错类型会在真机
+    // 等一整轮才发现——静态这里按「拼错即静默不生效」的同一口径挡掉。
+    if (step.do === "drag" && step.selection !== undefined && (typeof step.selection !== "string" || !step.selection))
+      push(`${at} do=drag 的 selection 需要非空字符串（选区正观测，与 ax.has 同一 matcher 口径）`);
     if (step.do === "resizeWindow" && typeof step.width !== "number")
       push(`${at} do=resizeWindow 需要数值 width（height 缺省保持当前）`);
     if (step.do === "vaultSparse" && (!Number.isInteger(step.size) || step.size <= 0))
@@ -1538,7 +1542,8 @@ async function doAction(step, { ctx, cu, scenario, vars, pid, evidence }) {
           kind: "note",
           text:
             `typeInNode「${step.text}」注入前目标节点没有 (focused) 标记——type_text 无 index 注入落在` +
-            "当前焦点元素上，若焦点在别处会漏进焦点元素；以下判据以回读为准",
+            "当前焦点元素上，若焦点在别处会漏进焦点元素；以下判据以回读为准" +
+            (out.focusClicked ? "（本次已按 M501 守卫先点目标建立焦点再注）" : ""),
         });
       }
       if (out.verdict === "landed") {
@@ -1816,44 +1821,85 @@ async function doAction(step, { ctx, cu, scenario, vars, pid, evidence }) {
             `激活尝试：${foregroundWhy(fg)}`, // M478：两条通道的成败与 osascript stderr 一并给出，不再只有一句「未取得」
         );
       }
-      const ax = await readAxForScreenPoint(cu, p);
-      const bounds = windowBounds(ax.text);
-      const t = step.target ?? {};
-      let local;
-      if (t.x !== undefined) {
-        // 窗口局部坐标直给（M236：标题栏标识块这类不一定有 AX bbox 的展示元素）
-        local = { x: t.x, y: t.y };
-      } else if (t.textareaEdge !== undefined) {
-        const ta = ax.textarea;
-        if (!ta?.bbox) throw new Error("drag(textareaEdge)：编辑器节点没有 bbox，无法定位列缘");
-        local = {
-          x: t.textareaEdge === "left" ? ta.bbox.x + 2 : ta.bbox.x + ta.bbox.w - 2,
-          y: ta.bbox.y + ta.bbox.h / 2,
-        };
-      } else {
-        const node =
-          t.any !== undefined
-            ? findByAny(ax.nodes, { role: t.role, any: t.any, nth: t.nth ?? 0 })
-            : findNode(ax.nodes, { role: t.role, name: t.name, nth: t.nth ?? 0 });
-        if (!node?.bbox) throw new Error(`drag：找不到带 bbox 的节点 ${JSON.stringify(t)}`);
-        local = { x: node.bbox.x + node.bbox.w * (t.dx0 ?? 0.5), y: node.bbox.y + node.bbox.h * (t.dy0 ?? 0.5) };
-      }
-      const from = { x: bounds.x + local.x, y: bounds.y + local.y };
-      const to = { x: from.x + (step.dx ?? 0), y: from.y + (step.dy ?? 0) };
-      // 越界检查默认开着（防坐标空间错乱假现场）；拖标题栏移动窗口时终点**故意**出窗
-      // （窗口跟着光标走），这种步骤显式写 allowOutOfBounds: true 跳过终点检查。
-      const checkPoints = step.allowOutOfBounds === true ? [from] : [from, to];
-      for (const pt of checkPoints) {
-        if (pt.x < bounds.x || pt.x > bounds.x + bounds.w || pt.y < bounds.y || pt.y > bounds.y + bounds.h) {
-          throw new Error(`drag：算出的屏幕点 ${JSON.stringify(pt)} 落在窗口 (${bounds.x},${bounds.y} ${bounds.w}×${bounds.h}) 之外`);
+      const performDrag = async () => {
+        const ax = await readAxForScreenPoint(cu, p);
+        const bounds = windowBounds(ax.text);
+        const t = step.target ?? {};
+        let local;
+        if (t.x !== undefined) {
+          // 窗口局部坐标直给（M236：标题栏标识块这类不一定有 AX bbox 的展示元素）
+          local = { x: t.x, y: t.y };
+        } else if (t.textareaEdge !== undefined) {
+          const ta = ax.textarea;
+          if (!ta?.bbox) throw new Error("drag(textareaEdge)：编辑器节点没有 bbox，无法定位列缘");
+          local = {
+            x: t.textareaEdge === "left" ? ta.bbox.x + 2 : ta.bbox.x + ta.bbox.w - 2,
+            y: ta.bbox.y + ta.bbox.h / 2,
+          };
+        } else {
+          const node =
+            t.any !== undefined
+              ? findByAny(ax.nodes, { role: t.role, any: t.any, nth: t.nth ?? 0 })
+              : findNode(ax.nodes, { role: t.role, name: t.name, nth: t.nth ?? 0 });
+          if (!node?.bbox) throw new Error(`drag：找不到带 bbox 的节点 ${JSON.stringify(t)}`);
+          local = { x: node.bbox.x + node.bbox.w * (t.dx0 ?? 0.5), y: node.bbox.y + node.bbox.h * (t.dy0 ?? 0.5) };
+        }
+        const from = { x: bounds.x + local.x, y: bounds.y + local.y };
+        const to = { x: from.x + (step.dx ?? 0), y: from.y + (step.dy ?? 0) };
+        // 越界检查默认开着（防坐标空间错乱假现场）；拖标题栏移动窗口时终点**故意**出窗
+        // （窗口跟着光标走），这种步骤显式写 allowOutOfBounds: true 跳过终点检查。
+        const checkPoints = step.allowOutOfBounds === true ? [from] : [from, to];
+        for (const pt of checkPoints) {
+          if (pt.x < bounds.x || pt.x > bounds.x + bounds.w || pt.y < bounds.y || pt.y > bounds.y + bounds.h) {
+            throw new Error(`drag：算出的屏幕点 ${JSON.stringify(pt)} 落在窗口 (${bounds.x},${bounds.y} ${bounds.w}×${bounds.h}) 之外`);
+          }
+        }
+        const out = await injectDrag(from, to);
+        // 通道自报落盘（REVIEW.md 第 7 条：证据要落成可 ls 的文件，别只在终端跑过）——
+        // 这三个 swift 通道的动作只回一行文本，落进 steps.md 才能复盘「frontmost 是谁 / 点在哪」。
+        evidence.record({ kind: "note", text: `drag 自报：${out}` });
+        await sleep(step.settleMs ?? 500); // 松手后的提交（rAF 末帧 + 写盘）之间有一拍
+        return { out, local };
+      };
+      const first = await performDrag();
+      // 选区建立的正观测 + 有界重试（M501，121 的独立拖选 flake 落地）：真实 CGEvent 拖选
+      // 偶发造不出选区（121 当日 4 跑 1 PASS）——选区本身 AX 读不到（README「已知边界」），
+      // 可观测的下游产物由场景给 `selection` 模式（与 ax.has 同一 matcher 口径：子串或 /正则/，
+      // 如选区驱动的浮动钮）。给了才启用：拖完即验，未命中重试拖选（每次重选重新解析坐标），
+      // 至多 2 次；重试耗尽仍无选区**如实判 FAIL**——不得把产品缺陷掩成绿（REVIEW.md 第 11 条
+      // 同族纪律）。不给 `selection` 的步骤（53 等）行为一字不变。
+      if (step.selection !== undefined) {
+        const want = matcher(step.selection);
+        const maxRetry = 2;
+        let attempts = 1;
+        while (true) {
+          const axNow = await readAx(cu, p);
+          if (want.test(axNow.text)) {
+            if (attempts > 1) {
+              evidence.record({
+                kind: "note",
+                text: `drag 选区正观测第 ${attempts} 次拖选才建立（前 ${attempts - 1} 次真实拖选未造出选区）`,
+              });
+            }
+            break;
+          }
+          if (attempts > maxRetry) {
+            throw new Error(
+              `drag 后选区未建立：正观测 ${want.show} 在 ${maxRetry + 1} 次真实拖选后仍未命中——` +
+                "真实拖选通道本次未造出选区（121 实证过的 flake 形态），如实判 FAIL，不静默放过；" +
+                "若连续复跑仍红，按产品缺陷归因（与 REVIEW.md 第 11 条同口径：先复跑一次再判）",
+            );
+          }
+          evidence.record({
+            kind: "note",
+            text: `drag 后选区未建立（正观测 ${want.show} 未命中），重试拖选第 ${attempts}/${maxRetry} 次`,
+          });
+          await sleep(600); // 前一次松手到下一次按下之间留一拍（连发可能合成一次长按）
+          await performDrag();
+          attempts += 1;
         }
       }
-      const out = await injectDrag(from, to);
-      // 通道自报落盘（REVIEW.md 第 7 条：证据要落成可 ls 的文件，别只在终端跑过）——
-      // 这三个 swift 通道的动作只回一行文本，落进 steps.md 才能复盘「frontmost 是谁 / 点在哪」。
-      evidence.record({ kind: "note", text: `drag 自报：${out}` });
-      await sleep(step.settleMs ?? 500); // 松手后的提交（rAF 末帧 + 写盘）之间有一拍
-      return `窗口局部 ${Math.round(local.x)},${Math.round(local.y)} → +${step.dx ?? 0},${step.dy ?? 0}｜${out}`;
+      return `窗口局部 ${Math.round(first.local.x)},${Math.round(first.local.y)} → +${step.dx ?? 0},${step.dy ?? 0}｜${first.out}`;
     }
     case "hover": {
       // 悬停（M443）：真机层驱动 hover 类 UI 的唯一通道（此前套件没有 hover 动词，hover 判据
