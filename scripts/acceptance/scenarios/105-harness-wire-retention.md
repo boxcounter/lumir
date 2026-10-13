@@ -58,10 +58,22 @@ steps:
         file: { path: "env:harness/sessions/*/*.jsonl", has: '"thinking":"TTO-THINK-ALPHA 先读文件。"' }
       - label: llm_response 带思考展示文本（迭代 2）
         file: { path: "env:harness/sessions/*/*.jsonl", has: '"thinking":"TTO-THINK-BETA 读完再答。"' }
-      - label: llm_response 带 usage（迭代 1）
-        file: { path: "env:harness/sessions/*/*.jsonl", has: '"usage":{"cached_tokens":300,"input_tokens":900,"output_tokens":20}' }
-      - label: llm_response 带 usage（迭代 2）
-        file: { path: "env:harness/sessions/*/*.jsonl", has: '"usage":{"cached_tokens":1000,"input_tokens":1400,"output_tokens":25}' }
+      - label: llm_response 带 usage 的 cache_write_tokens（迭代 1）
+        file: { path: "env:harness/sessions/*/*.jsonl", has: '"cache_write_tokens":0' }
+      - label: llm_response 带 usage 的 cached_tokens（迭代 1）
+        file: { path: "env:harness/sessions/*/*.jsonl", has: '"cached_tokens":300' }
+      - label: llm_response 带 usage 的 input_tokens（迭代 1）
+        file: { path: "env:harness/sessions/*/*.jsonl", has: '"input_tokens":900' }
+      - label: llm_response 带 usage 的 output_tokens（迭代 1）
+        file: { path: "env:harness/sessions/*/*.jsonl", has: '"output_tokens":20' }
+      - label: llm_response 带 usage 的 cache_write_tokens（迭代 2）
+        file: { path: "env:harness/sessions/*/*.jsonl", has: '"cache_write_tokens":0' }
+      - label: llm_response 带 usage 的 cached_tokens（迭代 2）
+        file: { path: "env:harness/sessions/*/*.jsonl", has: '"cached_tokens":1000' }
+      - label: llm_response 带 usage 的 input_tokens（迭代 2）
+        file: { path: "env:harness/sessions/*/*.jsonl", has: '"input_tokens":1400' }
+      - label: llm_response 带 usage 的 output_tokens（迭代 2）
+        file: { path: "env:harness/sessions/*/*.jsonl", has: '"output_tokens":25' }
       - shot: 01-工具循环完成
 ---
 
@@ -97,8 +109,10 @@ append-only JSONL（`<隔离配置>/harness/sessions/<vault 稳定 id>/<session_
   `function_call_output`——只有「工具循环每轮各落一条 llm_request」才成立。请求体字段齐备用一条
   整行正则判（messages / params / provider / system 同时在场，字典序：messages → model → params →
   provider → system）。
-- **思考与 usage 落 llm_response**：`thinking`（展示文本，来自 fixture 的 `reasoning_chunks`）与
-  `usage`（`cached_tokens` < `input_tokens` < `output_tokens` 的字典序）逐条在场。
+- **思考与 usage 落 llm_response**：`thinking`（展示文本，来自 fixture 的 `reasoning_chunks`）逐条在场；
+  `usage` 的四个键（字典序 `cache_write_tokens` < `cached_tokens` < `input_tokens` < `output_tokens`）
+  **逐键各一条独立子串断言**——不假设字段相邻或键序，未来新增 usage 字段不会连带失效
+  （M443 新增 `cache_write_tokens` 曾使旧的「连续子串」写法永不命中）。
 - **键序说明**：本仓 `serde_json` 未启用 `preserve_order`，对象键按字典序序列化——所有多键断言
   都按字典序写（既有旧断言 `"decision":"allow","id":…,"kind":…,"name":…` 即此口径）。
 
