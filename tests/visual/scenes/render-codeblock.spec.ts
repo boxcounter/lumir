@@ -808,6 +808,185 @@ test("四种组合逐格可判：两个轴正交，代码块折行时不装容�
   await expectScreenshot(page, "wrap-combo-4-both-wrap.png");
 });
 
+// ---------------------------------------------------------------------------
+// M477（Alex 2026-10-13 裁决）：块盒回到正文测度 + 块内左侧留白一档。
+//
+// 现场：M474 把内缩做成 `.cm-lp-codeblock-slot { margin-inline: var(--sp-7) }`——留白落在块的
+// **外边距**上，整个块盒右移一档。Alex 判该方向不对：「不符预期。我之前反馈的是 code block
+// **里面** 代码贴着 block 左边缘、而没有隔一点空间，导致视觉上局促。但我看了基线，发现现在
+// 整个 code block 也往右缩进了，这不符合预期。」M477 撤回那条 margin，留白改由块内内边距承担
+// （横滚档 = 容器自己的行内 padding，折行档 = slot 的 `padding-inline`，同一份 `--sp-7`）。
+//
+// 合同先行（docs/process/rendering-defect-contract-first.md）：把裁决后的几何钉成两条不变量，
+// 而不是只对着一张 after 截图说「看着对」——
+//   ① 块盒不内缩：`.cm-lp-codeblock-slot` 的左缘 == 正文测度左缘、右缘 == 测度右缘；
+//   ② 块内左侧留白：代码行文字左缘 − 块背景左缘 == `--sp-7`（横滚 / 折行两档同口径）。
+// 引用块内的嵌套代码块只守「两档同口径」那一半：它的行自带 2px 竖线 + 14px 内边距，
+// ② 的绝对值在引用语境里天然更大（实测 30 = 14 + 16，差值由引用行的样式给出），拿 14 去卡
+// 它得到的是一条永远判红的假判据。
+// ---------------------------------------------------------------------------
+
+/** 折行 fixture + 指定主题 / 折行档（M477 的几何用例要四态：两档 × light / eink）。
+ *  与 `openWrap` 的分工：那条走 `patchEditorConfig` 测「配置项真的被消费」的启动接线；
+ *  本条只需要桩的 config 通道把两档摆出来，主题也从同一通道给（**不**手贴 `data-theme`——
+ *  那样只证明 CSS 有第三套取值，验不到主题施加那条接线）。 */
+async function openWrapMode(page: Page, theme: "light" | "eink", blockWrap: boolean): Promise<void> {
+  await stubTauri(page, {
+    entries: [{ path: "wrap.md", kind: "file", size: WRAP_SOURCE.length, mtime_ms: 0 }],
+    files: { "wrap.md": WRAP_SOURCE },
+    config: { keys: WRAP_KEYS, theme, code_block_wrap: blockWrap },
+  });
+  await page.goto("/");
+  await expect.poll(() => page.evaluate(() => document.documentElement.dataset.theme)).toBe(theme);
+  await page.locator('.ft-row[title="wrap.md"]').click();
+  await expect(page.locator(".modeline-path")).toHaveText("wrap.md");
+  // 正观测：三个代码块（两处围栏 + 引用块内嵌套那处）都已被装饰层发现——`codeBlocksIn` 是
+  // 视口有界的，装饰没到位时下面的读数会落到别的元素上，先把它挡掉（REVIEW.md 第 2 条）。
+  await expect(page.locator(".cm-lp-codeblock-slot")).toHaveCount(3);
+}
+
+/** 一份代码块的几何读数（页面坐标）。四处坐标的定义与来源：
+ *  · 正文测度 = `.cm-content` 的内容盒（`src/editor.ts` 的 baseTheme：中列是
+ *    `--layout-doc-measure`、`paddingInline: var(--sp-13)`，而 `.cm-line` 的 padding 为 0）
+ *    —— 块外正文文字实测就落在这条线上，故下面拿块外正文行当正观测；
+ *  · 块盒 = `.cm-lp-codeblock-slot` 的 border box（两种折行档都在场的定位层）；
+ *  · 块背景左缘 = **画底那一层**的 padding 盒左缘：横滚档是容器的 `::before`（`inset: 0`、
+ *    包含块取 slot 的 padding 盒，容器盒与 slot 盒重合），折行档是 slot 自己的 `::before`。
+ *    取 padding 盒（border box 左缘 + 该元素自己的 border-left）是为了让 eink 的 1px 黑框
+ *    在两种档位下同样不算进内缩——框不是留白；
+ *  · 代码行文字左缘 = 行内文本 Range 的左缘。MUST NOT 直接用 `.cm-line` 的行盒：引用块里的行
+ *    带 2px 竖线 + 14px 内边距，行盒与文字不同位（那正是嵌套块读数更大的原因）。 */
+async function blockGeometry(page: Page, needle: string) {
+  return page.evaluate((text) => {
+    const content = document.querySelector<HTMLElement>(".cm-content")!;
+    const contentStyle = getComputedStyle(content);
+    const contentRect = content.getBoundingClientRect();
+    const measureLeft = contentRect.left + parseFloat(contentStyle.paddingLeft);
+    const measureRight = contentRect.right - parseFloat(contentStyle.paddingRight);
+    const prose = [...document.querySelectorAll<HTMLElement>(".cm-line")].find((el) =>
+      (el.textContent ?? "").includes("正文段落"),
+    );
+    const slot = [...document.querySelectorAll<HTMLElement>(".cm-lp-codeblock-slot")].find((el) =>
+      (el.textContent ?? "").includes(text),
+    );
+    if (!slot) throw new Error(`找不到含「${text}」的代码块（装饰未到位或 fixture 变了）`);
+    const line = [...slot.querySelectorAll<HTMLElement>(".cm-line")].find((el) =>
+      (el.textContent ?? "").includes(text),
+    );
+    if (!line) throw new Error(`含「${text}」的代码块里找不到那一行`);
+    const slotRect = slot.getBoundingClientRect();
+    const slotStyle = getComputedStyle(slot);
+    const container = slot.querySelector<HTMLElement>(".cm-lp-codeblock-scroll");
+    const containerRect = container?.getBoundingClientRect() ?? null;
+    const containerStyle = container ? getComputedStyle(container) : null;
+    const range = document.createRange();
+    range.selectNodeContents(line);
+    const textLeft = range.getBoundingClientRect().left;
+    // 画底那一层（横滚档是容器、折行档是 slot）的 padding 盒左缘，见函数头。
+    const paint = container ?? slot;
+    const paintStyle = container ? containerStyle! : slotStyle;
+    const paintLeft = paint.getBoundingClientRect().left + parseFloat(paintStyle.borderLeftWidth);
+    return {
+      measureLeft,
+      measureRight,
+      proseLeft: prose ? prose.getBoundingClientRect().left : null,
+      slotLeft: slotRect.left,
+      slotRight: slotRect.right,
+      slotBorderLeft: parseFloat(slotStyle.borderLeftWidth),
+      containerLeft: containerRect?.left ?? null,
+      containerRight: containerRect?.right ?? null,
+      containerBorderLeft: containerStyle ? parseFloat(containerStyle.borderLeftWidth) : null,
+      paintLeft,
+      textLeft,
+      inset: textLeft - paintLeft,
+      sp7: parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--sp-7")),
+    };
+  }, needle);
+}
+
+/** 一组断言（① + ② + 容器盒），返回读数供跨档比对。`nested` 为真时只守 ② 的「同口径」半边。 */
+async function expectBlockGeometry(
+  page: Page,
+  needle: string,
+  label: string,
+  options: { nested?: boolean; blockWrap?: boolean } = {},
+) {
+  const g = await blockGeometry(page, needle);
+  // 容差一律 0.5px（toBeCloseTo 的 precision 0）：判据要抓的是「差一档 `--sp-7` = 14px」，
+  // 0.5 的余量足够吸收亚像素抖动而不放进任何真实偏移。
+  // 正观测：块外正文行确实落在测度左缘（否则下面的测度基准是空的，REVIEW.md 第 2 条）。
+  expect(g.proseLeft, `${label}·正观测：块外正文行必须落在正文测度左缘`).toBeCloseTo(g.measureLeft, 0);
+  // ① 块盒不内缩（M474 的形态是这里差一档 `--sp-7`）。
+  expect(g.slotLeft, `${label}·① 块盒左缘 == 正文测度左缘（不得内缩）`).toBeCloseTo(g.measureLeft, 0);
+  expect(g.slotRight, `${label}·① 块盒右缘 == 正文测度右缘`).toBeCloseTo(g.measureRight, 0);
+  // ② 块内左侧留白。
+  if (options.nested) {
+    expect(g.inset, `${label}·② 嵌套块：文字不得贴住块背景左缘（同一口径的下界）`).toBeGreaterThanOrEqual(g.sp7);
+  } else {
+    expect(
+      Math.abs(g.inset - g.sp7),
+      `${label}·② 代码文字左缘 − 块背景左缘 == --sp-7（实测差 ${g.inset}、token ${g.sp7}）`,
+    ).toBeLessThanOrEqual(0.5);
+  }
+  // 容器盒 = slot 盒（M477 的折行档内边距 MUST NOT 漏进横滚档；eink 的 1px 黑框挂容器）。
+  if (options.blockWrap === true) {
+    expect(g.containerLeft, `${label}·折行档 MUST NOT 装横滚容器`).toBeNull();
+  } else if (options.blockWrap === false) {
+    expect(g.containerLeft, `${label}·横滚档 MUST 装容器`).not.toBeNull();
+    expect(g.containerLeft, `${label}·容器盒左缘 == slot 盒左缘`).toBeCloseTo(g.slotLeft, 1);
+    expect(g.containerRight, `${label}·容器盒右缘 == slot 盒右缘`).toBeCloseTo(g.slotRight, 1);
+  }
+  return g;
+}
+
+test("几何：块盒与正文测度对齐、块内左侧留白一档（横滚 / 折行 × light / eink）", async ({ page }) => {
+  const MODES = [
+    { theme: "light", blockWrap: false, label: "light·横滚档" },
+    { theme: "light", blockWrap: true, label: "light·折行档" },
+    { theme: "eink", blockWrap: false, label: "eink·横滚档" },
+    { theme: "eink", blockWrap: true, label: "eink·折行档" },
+  ] as const;
+
+  const insets: Record<string, { top: number; nested: number }> = {};
+  const frames: Record<string, number> = {};
+  for (const mode of MODES) {
+    await openWrapMode(page, mode.theme, mode.blockWrap);
+    const top = await expectBlockGeometry(page, CODE_NEEDLE, mode.label, { blockWrap: mode.blockWrap });
+    const nested = await expectBlockGeometry(page, "NESTED-END-MARK", mode.label, {
+      nested: true,
+      blockWrap: mode.blockWrap,
+    });
+    insets[mode.label] = { top: top.inset, nested: nested.inset };
+    // eink 规则⑤ 的黑框：横滚档挂在容器上、折行档挂在 slot 上（M295），都在 slot 盒上
+    // ——本 mission 只加内边距，框 / 底板 / 行区带的关系一字不动，这里就把「框还在」钉一下；
+    // 框色与底板 / 行区带的取值归 restyle-eink.spec.ts 的规则⑤ 用例（不在这里抄第二份，
+    // REVIEW.md 第 8 条）。
+    frames[mode.label] = mode.blockWrap ? top.slotBorderLeft : top.containerBorderLeft!;
+    // 折行档的两处读数都属于同一个 slot，故只查顶层块那条即可代表本行。
+  }
+  for (const mode of MODES) {
+    expect(frames[mode.label], `${mode.label}·eink 规则⑤：1px 黑框（本就挂在 slot 盒上）`).toBe(
+      mode.theme === "eink" ? 1 : 0,
+    );
+  }
+
+  // 「折行档与横滚档同一口径」：同一主题下两档的留白读数必须相同（顶层块 = token、
+  // 嵌套块 = token + 引用行的 2px 竖线 + 14px 内边距）。这条是本 mission 的另一半判据——
+  // 只写「折行档有一个留白」会让两档各缩一个不同的量也能过。
+  for (const theme of ["light", "eink"] as const) {
+    const roll = insets[`${theme}·横滚档`];
+    const wrap = insets[`${theme}·折行档`];
+    expect(
+      Math.abs(wrap.top - roll.top),
+      `${theme}：折行档与横滚档的块内左侧留白必须同口径（折行 ${wrap.top} / 横滚 ${roll.top}）`,
+    ).toBeLessThanOrEqual(0.5);
+    expect(
+      Math.abs(wrap.nested - roll.nested),
+      `${theme}：嵌套块的折行 / 横滚两档同样同口径（折行 ${wrap.nested} / 横滚 ${roll.nested}）`,
+    ).toBeLessThanOrEqual(0.5);
+  }
+});
+
 test("容器不改变纵向节奏；滚到右端不露白底（底板取自 --bg-2）", async ({ page }) => {
   // 两个 fixture 一起挂：纵向节奏要用**代码行都短于栏宽**的文档比（长行在折行打开时必然变高，
   // 那是折行本身的变化，不是容器的副作用）；底板要用真的会溢出的长行才能滚起来。
