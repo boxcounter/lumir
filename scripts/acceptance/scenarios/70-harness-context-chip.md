@@ -34,8 +34,9 @@ steps:
       - shot: 01-视口-chip
 
   - name: 输入提问并 Enter 发送
-    do: keys
-    keys: ["c", "t", "x", "p", "r", "o", "b", "e"]
+    do: typeInNode
+    target: { role: AXTextArea, name: "问点什么|ctxprobe" }
+    text: "ctxprobe"
   - name: 发送
     do: key
     key: enter

@@ -34,8 +34,9 @@ steps:
         ax: { has: "与当前文档对话" }
 
   - name: 在 A 里输入提问标记（两串标记各只由本场景注入）
-    do: keys
-    keys: ["p", "v", "a", "u", "l", "t", "a", "l", "p", "h", "a"]
+    do: typeInNode
+    target: { role: AXTextArea, name: "问点什么|pvaultalpha" }
+    text: "pvaultalpha"
     expect:
       - label: 标记落在 composer 里（注入落地）
         ax: { has: "pvaultalpha" }
@@ -126,8 +127,9 @@ steps:
       - shot: 02-B-空态
 
   - name: 在 B 里输入提问标记
-    do: keys
-    keys: ["p", "v", "a", "u", "l", "t", "b", "e", "t", "a"]
+    do: typeInNode
+    target: { role: AXTextArea, name: "问点什么|pvaultbeta" }
+    text: "pvaultbeta"
     expect:
       - label: 标记落在 composer 里（注入落地）
         ax: { has: "pvaultbeta" }

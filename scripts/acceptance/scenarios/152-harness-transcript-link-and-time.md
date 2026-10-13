@@ -27,8 +27,9 @@ steps:
     do: clickInNode
     target: { role: AXTextArea, name: "问点什么" }
   - name: 输入提问
-    do: keys
-    keys: ["l", "k", "t", "s", "m", "a", "r", "k"]
+    do: typeInNode
+    target: { role: AXTextArea, name: "问点什么|lktsmark" }
+    text: "lktsmark"
     expect:
       - label: 提问落进 composer（注入落地的正观测）
         ax: { has: "lktsmark" }

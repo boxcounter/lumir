@@ -28,8 +28,9 @@ steps:
         ax: { has: "/AXButton \\(发送\\)/" }
 
   - name: 输入提问并 Enter 发送
-    do: keys
-    keys: ["m", "a", "k", "e", "i", "t"]
+    do: typeInNode
+    target: { role: AXTextArea, name: "问点什么|makeit" }
+    text: "makeit"
   - name: 发送
     do: key
     key: enter

@@ -42,8 +42,9 @@ steps:
     do: clickInNode
     target: { role: AXTextArea, name: "问点什么" }
   - name: 键入标记串
-    do: keys
-    keys: ["n", "o", "v", "a", "u", "l", "t", "m", "a", "r", "k"]
+    do: typeInNode
+    target: { role: AXTextArea, name: "问点什么|novaultmark" }
+    text: "novaultmark"
     expect:
       - label: 标记落在输入区（无 vault 不阻断输入）
         ax: { has: "novaultmark" }

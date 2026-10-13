@@ -24,8 +24,9 @@ steps:
         ax: { not: "越过 85% 警示线" }
 
   - name: 输入提问并 Enter 发送
-    do: keys
-    keys: ["o", "v", "e", "r"]
+    do: typeInNode
+    target: { role: AXTextArea, name: "问点什么|over" }
+    text: "over"
   - name: 发送
     do: key
     key: enter

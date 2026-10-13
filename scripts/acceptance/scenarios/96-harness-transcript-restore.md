@@ -106,8 +106,9 @@ steps:
     do: clickInNode
     target: { role: AXTextArea, name: "问点什么" }
   - name: 输入提问并 Enter 发送
-    do: keys
-    keys: ["n", "e", "w", "f", "i", "l", "e"]
+    do: typeInNode
+    target: { role: AXTextArea, name: "问点什么|newfile" }
+    text: "newfile"
     expect:
       - label: 提问落在 composer 里（注入落地的正观测）
         ax: { has: "newfile" }

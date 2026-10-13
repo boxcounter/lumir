@@ -25,10 +25,10 @@ steps:
     do: clickInNode
     target: { role: AXTextArea, name: "问点什么" }
 
-  - name: 键入一段文本 abcde（一次编辑；gapMs 压在同一聚簇窗口内 ⇒ 一个撤销步）
-    do: keys
-    keys: ["a", "b", "c", "d", "e"]
-    gapMs: 80
+  - name: 键入一段文本 abcde（typeInNode 整串一次粘贴 = 一个撤销步）
+    do: typeInNode
+    target: { role: AXTextArea, name: "问点什么|abcde" }
+    text: "abcde"
     expect:
       - label: 文本到位（abcde）
         ax: { has: "abcde" }

@@ -44,8 +44,9 @@ steps:
         ax: { focused: "AXTextArea" }
 
   - name: 输入提问
-    do: keys
-    keys: ["a", "g", "e", "n", "t", "s"]
+    do: typeInNode
+    target: { role: AXTextArea, name: "问点什么|agents" }
+    text: "agents"
   - name: 发送（会话在这里建立，装配同时发生——两份 AGENTS 文件已在 vault 根）
     do: key
     key: enter

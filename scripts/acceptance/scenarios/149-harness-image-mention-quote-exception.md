@@ -80,11 +80,11 @@ steps:
   - name: 记编辑器文档基线（素材注入 MUST NOT 漏进文档——注入落错面的通用防线，场景 140 同口径）
     do: recordEditor
     as: doc-before-composer
-  - name: 键入问题段（让文本 part 非空，消息更接近真实形态；`keys` 动作走 composer 的键盘注入，
-      `type` 动作会落到 AX 树第一个 `AXTextArea` = 编辑器）
-    do: keys
-    keys: ["x", "q", "m", "a", "r", "k"]
-    gapMs: 100
+  - name: 键入问题段（让文本 part 非空，消息更接近真实形态；M498 起 typeInNode 粘贴注入 composer，
+      旧 `keys` 逐键丢键、`type` 动作会落到 AX 树第一个 `AXTextArea` = 编辑器）
+    do: typeInNode
+    target: { role: AXTextArea, name: "harness-note\\.md|xqmark" }
+    text: "xqmark"
     expect:
       - label: 问题段落在 composer（文档正文里不含 xqmark）
         ax: { has: "xqmark" }
@@ -137,7 +137,7 @@ design §10 ⑤ 与 MODIFIED「引用消息序列化协议」的「图片块的�
   `new RegExp()`，不认 `/…/` 定界符），composer 的可访问名写 `harness-note\\.md`（`.` 转义）；
   ②右键落点取 composer 的**末尾空段落**而非中心——composer 里已有引用卡片（`contenteditable=false`）
   时，中心落在卡片上会开出**无可编辑项**的菜单（实测只有 Copy / Speech / Inspect，没有 Paste）。
-  ③素材注入同样走 `do: keys`（`do: type` 会落到 AX 树第一个 `AXTextArea` = 编辑器）。
+  ③素材注入同样走 `do: typeInNode`（M498 迁移；`do: type` 会落到 AX 树第一个 `AXTextArea` = 编辑器）。
 - **并存形态**：引用卡片用「出处行」正观测（只由卡片渲染产出）；图片卡片用 `@` 钮（D457）正观测；
   两者各自的动作钮（× D371）都在场，证明两张卡片真的并存于 composer。
 - **序列化判据落磁盘事实**：`llm_request` 留存的引用形态逐字节落 JSONL——`<quote file=` 在场

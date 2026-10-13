@@ -25,8 +25,9 @@ steps:
         ax: { has: "/AXButton \\(发送\\)/" }
 
   - name: 输入提问并 Enter 发送
-    do: keys
-    keys: ["d", "i", "l", "u", "t", "e"]
+    do: typeInNode
+    target: { role: AXTextArea, name: "问点什么|dilute" }
+    text: "dilute"
     expect:
       - label: 提问落在 composer 里（注入落地的正观测）
         ax: { has: "dilute" }

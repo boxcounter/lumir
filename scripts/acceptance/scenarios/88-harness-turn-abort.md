@@ -26,8 +26,9 @@ steps:
         ax: { not: "/AXButton \\(停止\\)/" }
 
   - name: 输入提问并 Enter 发送——相位入 running
-    do: keys
-    keys: ["a", "b", "o", "r", "t"]
+    do: typeInNode
+    target: { role: AXTextArea, name: "问点什么|abort" }
+    text: "abort"
   - name: 发送
     do: key
     key: enter

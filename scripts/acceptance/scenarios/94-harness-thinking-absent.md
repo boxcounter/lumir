@@ -19,8 +19,9 @@ steps:
         ax: { has: "/AXButton \\(发送\\)/" }
 
   - name: 输入提问
-    do: keys
-    keys: ["n", "o", "t", "h", "k", "p", "r", "o", "b", "e"]
+    do: typeInNode
+    target: { role: AXTextArea, name: "问点什么|nothkprobe" }
+    text: "nothkprobe"
     expect:
       - label: 提问落在 composer 里（注入落地）
         ax: { has: "nothkprobe" }

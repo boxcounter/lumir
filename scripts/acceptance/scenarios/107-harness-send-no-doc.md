@@ -41,8 +41,9 @@ steps:
         ax: { focused: "AXTextArea" }
 
   - name: 输入提问（无文档的纯对话）
-    do: keys
-    keys: ["n", "o", "d", "o", "c"]
+    do: typeInNode
+    target: { role: AXTextArea, name: "问点什么|nodoc" }
+    text: "nodoc"
     expect:
       - label: 提问落在 composer 里（注入落地的正观测）
         ax: { has: "nodoc" }

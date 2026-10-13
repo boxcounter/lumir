@@ -19,8 +19,9 @@ steps:
         ax: { has: "/AXButton \\(发送\\)/" }
 
   - name: 先发一条普通提问，建立一条 assistant 消息（稍后的选区目标）
-    do: keys
-    keys: ["h", "m", "e"]
+    do: typeInNode
+    target: { role: AXTextArea, name: "问点什么|hme" }
+    text: "hme"
   - name: 发送
     do: key
     key: enter
@@ -76,8 +77,9 @@ steps:
       - label: 卡片再次入 composer
         ax: { has: "对话 · Agent" }
   - name: 在卡片后的问题段落里写问题（插入后光标落卡片下一行）
-    do: keys
-    keys: ["w", "h", "y"]
+    do: typeInNode
+    target: { role: AXTextArea, name: "Agent|why" }
+    text: "why"
   - name: 发送
     do: key
     key: enter

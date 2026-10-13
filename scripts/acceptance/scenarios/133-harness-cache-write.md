@@ -24,8 +24,9 @@ steps:
 
   # ── 第一轮：写入非零 ────────────────────────────────────────────────────────
   - name: 输入提问并 Enter 发送
-    do: keys
-    keys: ["w", "r", "i", "t", "e"]
+    do: typeInNode
+    target: { role: AXTextArea, name: "问点什么|write" }
+    text: "write"
     expect:
       - label: 提问落在 composer 里（注入落地的正观测）
         ax: { has: "write" }
@@ -68,8 +69,9 @@ steps:
     do: clickInNode
     target: { role: AXTextArea, name: "问点什么" }
   - name: 输入第二个提问并发送
-    do: keys
-    keys: ["a", "g", "a", "i", "n"]
+    do: typeInNode
+    target: { role: AXTextArea, name: "问点什么|again" }
+    text: "again"
   - name: 发送
     do: key
     key: enter

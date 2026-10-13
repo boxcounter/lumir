@@ -113,8 +113,9 @@ steps:
     target: { role: AXTextArea, name: "pasted-[0-9a-f]{16}\\.webp" }
 
   - name: 键入后段问题
-    do: keys
-    keys: ["i", "m", "g", "m", "a", "r", "k", "-", "b"]
+    do: typeInNode
+    target: { role: AXTextArea, name: "pasted-[0-9a-f]{16}|imgmark-b" }
+    text: "imgmark-b"
     expect:
       - label: 后段文本落地
         ax: { has: "imgmark-b" }

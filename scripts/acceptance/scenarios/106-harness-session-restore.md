@@ -19,8 +19,9 @@ steps:
         ax: { has: "/AXButton \\(发送\\)/" }
 
   - name: 输入第一条提问并发送（产生一个会话）
-    do: keys
-    keys: ["z", "q", "x", "a", "l", "p", "h", "a"]
+    do: typeInNode
+    target: { role: AXTextArea, name: "问点什么|zqxalpha" }
+    text: "zqxalpha"
   - name: 发送
     do: key
     key: enter
@@ -106,8 +107,9 @@ steps:
     target: { role: AXTextArea, name: "问点什么" }
 
   - name: 输入恢复后的新提问并发送
-    do: keys
-    keys: ["v", "w", "b", "m", "o", "r", "e"]
+    do: typeInNode
+    target: { role: AXTextArea, name: "问点什么|vwbmore" }
+    text: "vwbmore"
   - name: 发送
     do: key
     key: enter

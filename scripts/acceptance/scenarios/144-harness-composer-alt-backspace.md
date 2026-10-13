@@ -30,9 +30,9 @@ steps:
     as: doc-before-alt-bs
 
   - name: 键入 alpha beta gamma
-    do: keys
-    keys: ["a", "l", "p", "h", "a", " ", "b", "e", "t", "a", " ", "g", "a", "m", "m", "a"]
-    gapMs: 80
+    do: typeInNode
+    target: { role: AXTextArea, name: "问点什么|alpha beta gamma" }
+    text: "alpha beta gamma"
     expect:
       - label: 文本到位
         ax: { has: "alpha beta gamma" }

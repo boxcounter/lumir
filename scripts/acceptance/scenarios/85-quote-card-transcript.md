@@ -30,8 +30,9 @@ steps:
       - label: 卡片入 composer
         ax: { has: "harness-quote.md · 摘录卡片验收" }
   - name: 在卡片后的段落写问题
-    do: keys
-    keys: ["t", "p", "m", "s", "g"]
+    do: typeInNode
+    target: { role: AXTextArea, name: "摘录卡片验收|tpmsg" }
+    text: "tpmsg"
   - name: 发送
     do: key
     key: enter

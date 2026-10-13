@@ -39,8 +39,9 @@ steps:
       - shot: 01-A-面板打开
 
   - name: 在 A 里输入提问标记（两串字符两个 vault 都不复现）
-    do: keys
-    keys: ["a", "l", "p", "h", "a", "o", "n", "l", "y"]
+    do: typeInNode
+    target: { role: AXTextArea, name: "问点什么|alphaonly" }
+    text: "alphaonly"
     expect:
       - label: 标记落在 composer 里（注入落地）
         ax: { has: "alphaonly" }

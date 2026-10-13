@@ -33,8 +33,9 @@ steps:
     retries: 4
 
   - name: 输入提问并 Enter 发送
-    do: keys
-    keys: ["p", "a", "t", "c", "h", "i", "t"]
+    do: typeInNode
+    target: { role: AXTextArea, name: "问点什么|patchit" }
+    text: "patchit"
   - name: 发送
     do: key
     key: enter
