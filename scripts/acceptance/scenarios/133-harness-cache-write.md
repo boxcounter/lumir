@@ -65,7 +65,7 @@ steps:
 
   # ── 第二轮：本回合写入为 0 ⇒ 该行不渲染，会话累计仍在 ─────────────────────────
   - name: 点 composer 聚焦
-    do: click
+    do: clickInNode
     target: { role: AXTextArea, name: "问点什么" }
   - name: 输入第二个提问并发送
     do: keys
