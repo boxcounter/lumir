@@ -32,17 +32,19 @@ steps:
     do: clickInNode
     target: { role: AXTextArea, name: "问点什么" }
 
-  - name: 键入第一行（小写——KimiCU 的 press_key 注入字母恒为小写，场景的探针串因此全小写）
-    do: keys
-    keys: ["h", "n", "l", "-", "b", "r", "k", "-", "a", "a"]
+  - name: 键入第一行（小写探针串；typeInNode 粘贴通道原样落地）
+    do: typeInNode
+    target: { role: AXTextArea, name: "问点什么|hnl-brk-aa" }
+    text: "hnl-brk-aa"
 
   - name: 一次 ⇧Enter（本场景的待验动作——修前它只追加一个不可见的尾随换行）
     do: key
     key: "shift+return"
 
   - name: 键入第二行
-    do: keys
-    keys: ["h", "n", "l", "-", "b", "r", "k", "-", "c", "d"]
+    do: typeInNode
+    target: { role: AXTextArea, name: "hnl-brk-aa|hnl-brk-cd" }
+    text: "hnl-brk-cd"
     expect:
       - label: 第二行落在**下一行的行位**上有字形（像素层判据：y≈723 是第二行；修前这一带是空白——那一次 ⇧Enter 只写进了不可见的尾随换行）
         pixel:
@@ -77,8 +79,9 @@ steps:
     key: "shift+return"
 
   - name: 键入第三行（探针串）
-    do: keys
-    keys: ["h", "n", "l", "-", "b", "r", "k", "-", "e", "e"]
+    do: typeInNode
+    target: { role: AXTextArea, name: "hnl-brk-cd|hnl-brk-ee" }
+    text: "hnl-brk-ee"
     expect:
       - label: 第二行（hnl-brk-cd）**没有被挤下去**（像素：y≈702 有字形——三行态下这是第二行）。缺陷形态下那一带是**空白**：`\n` 被插到末段文本第 0 位，cd 整行被挤到下一行
         pixel:

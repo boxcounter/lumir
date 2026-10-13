@@ -26,8 +26,9 @@ steps:
         ax: { has: "/AXButton \\(发送\\)/" }
 
   - name: 输入提问（可打印序列，注入回读校验由 keys 动作内部完成）
-    do: keys
-    keys: ["s", "f", "a", "s"]
+    do: typeInNode
+    target: { role: AXTextArea, name: "问点什么|sfas" }
+    text: "sfas"
     expect:
       - label: 提问落在 composer 里（注入落地——下一步 Enter 才有东西可发）
         ax: { has: "sfas" }
@@ -82,8 +83,9 @@ steps:
         ax: { has: "/AXButton \\(发送\\)/" }
 
   - name: 继续提问（同一会话发第二个问题）
-    do: keys
-    keys: ["n", "e", "x", "t"]
+    do: typeInNode
+    target: { role: AXTextArea, name: "问点什么|next" }
+    text: "next"
     expect:
       - label: 第二个问题落在 composer 里
         ax: { has: "next" }

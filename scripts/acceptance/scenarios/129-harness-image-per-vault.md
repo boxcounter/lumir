@@ -56,8 +56,9 @@ steps:
     target: { role: AXTextArea, name: "pasted-[0-9a-f]{16}\\.webp" }
 
   - name: 键入 A 侧标记
-    do: keys
-    keys: ["v", "a", "u", "l", "t", "a", "-", "i", "m", "g"]
+    do: typeInNode
+    target: { role: AXTextArea, name: "问点什么|vaulta-img" }
+    text: "vaulta-img"
 
   - name: 发送 A 的含图消息
     do: key
@@ -153,8 +154,9 @@ steps:
     target: { role: AXTextArea, name: "pasted-[0-9a-f]{16}\\.webp" }
 
   - name: 键入 B 侧标记
-    do: keys
-    keys: ["v", "a", "u", "l", "t", "b", "-", "i", "m", "g"]
+    do: typeInNode
+    target: { role: AXTextArea, name: "问点什么|vaultb-img" }
+    text: "vaultb-img"
 
   - name: 发送 B 的含图消息
     do: key

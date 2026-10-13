@@ -29,9 +29,9 @@ steps:
     as: doc-before-outside
 
   - name: 键入 abc（composer 里有一段已知文本）
-    do: keys
-    keys: ["a", "b", "c"]
-    gapMs: 80
+    do: typeInNode
+    target: { role: AXTextArea, name: "问点什么|abc" }
+    text: "abc"
     expect:
       - label: 文本到位
         ax: { has: "abc" }

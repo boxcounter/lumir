@@ -23,62 +23,72 @@ steps:
     target: { role: AXTextArea, name: "问点什么" }
 
   - name: 键入第 1 行（行尾 ⇧Enter）
-    do: keys
-    keys: ["l", "0", "1"]
+    do: typeInNode
+    target: { role: AXTextArea, name: "问点什么|l01" }
+    text: "l01"
   - do: key
     key: "shift+return"
     name: 第 1 行后的 ⇧Enter
   - name: 键入第 2 行
-    do: keys
-    keys: ["l", "0", "2"]
+    do: typeInNode
+    target: { role: AXTextArea, name: "l01|l02" }
+    text: "l02"
   - do: key
     key: "shift+return"
     name: 第 2 行后的 ⇧Enter
   - name: 键入第 3 行
-    do: keys
-    keys: ["l", "0", "3"]
+    do: typeInNode
+    target: { role: AXTextArea, name: "l02|l03" }
+    text: "l03"
   - do: key
     key: "shift+return"
     name: 第 3 行后的 ⇧Enter
   - name: 键入第 4 行
-    do: keys
-    keys: ["l", "0", "4"]
+    do: typeInNode
+    target: { role: AXTextArea, name: "l03|l04" }
+    text: "l04"
   - do: key
     key: "shift+return"
     name: 第 4 行后的 ⇧Enter
   - name: 键入第 5 行
-    do: keys
-    keys: ["l", "0", "5"]
+    do: typeInNode
+    target: { role: AXTextArea, name: "l04|l05" }
+    text: "l05"
   - do: key
     key: "shift+return"
     name: 第 5 行后的 ⇧Enter
   - name: 键入第 6 行
-    do: keys
-    keys: ["l", "0", "6"]
+    do: typeInNode
+    target: { role: AXTextArea, name: "l05|l06" }
+    text: "l06"
   - do: key
     key: "shift+return"
     name: 第 6 行后的 ⇧Enter
   - name: 键入第 7 行
-    do: keys
-    keys: ["l", "0", "7"]
+    do: typeInNode
+    target: { role: AXTextArea, name: "l06|l07" }
+    text: "l07"
   - do: key
     key: "shift+return"
     name: 第 7 行后的 ⇧Enter
   - name: 键入第 8 行
-    do: keys
-    keys: ["l", "0", "8"]
+    do: typeInNode
+    target: { role: AXTextArea, name: "l07|l08" }
+    text: "l08"
   - do: key
     key: "shift+return"
     name: 第 8 行后的 ⇧Enter
   - name: 键入第 9 行
-    do: keys
-    keys: ["l", "0", "9"]
+    do: typeInNode
+    target: { role: AXTextArea, name: "l08|l09" }
+    text: "l09"
   - do: key
     key: "shift+return"
     name: 第 9 行后的 ⇧Enter
   - name: 键入第 10 行（内容至此超过 composer 的 max-height 150px）
-    do: keys
-    keys: ["l", "1", "0"]
+    do: typeInNode
+    target: { role: AXTextArea, name: "l09|l10" }
+    text: "l10"
 
   - name: 最后一次 ⇧Enter——新行必须落在视口内（HC2）
     do: key

@@ -361,6 +361,104 @@ export async function typeInEditor(cu, pid, text, { clear = false } = {}) {
   return res.json;
 }
 
+/**
+ * composer 素材注入原语（M498，替代 composer 上的 `do: keys` 逐键注入）。
+ *
+ * 通道：**KimiCU `type_text` 不带 index（当前焦点注入，整串一次）**。这是 M498 七个真机探针
+ * 把候选通道逐个毙掉后剩的唯一可靠通道：
+ *   1. `press_key` 逐键注入对 composer 丢键（字母 'e' 本机确定性丢失 4/4 + 随机连续丢键段，
+ *      M497 归因）——`do: keys` 在此通道上无解，必须换通道；
+ *   2. `press_key("cmd+v")`（剪贴板粘贴 chord）本机 8/9 确定性不落地（P4/P5/P6 探针）——
+ *      chord 族里 cmd+shift+a 能落地、cmd+v 不能，又一个键码级丢弃；
+ *   3. `type_text` 带 index 会点节点 bbox 中心再键入：不保留 caret，长单行下落在正文中段
+ *      （P3 探针：60 字符单行注入 Z 落第 31 位），还会污染后续依赖 caret 的步骤；
+ *   4. `type_text` **不带 index** 落在当前焦点元素、整串追加到内容末尾（P7 探针 4/4 落地）——
+ *      无点击、无键码合成，是四条候选里唯一既可靠又不引入额外副作用的；
+ *   5. 但 ④在**原生菜单 Paste 之后**不落地（148 note- 步真机 3/3 未落地：M456 的 window 级
+ *      键盘焦点丢失杀的是焦点投递路径）；带 index 的 ③在 post-menu 照落（探针 1 stage 7）。
+ *      因此本原语**第 1 次不带 index，重试起带当次重解析的节点 index**（代价 = 一次 bbox 中心
+ *      点击，语义本就是追加，可接受）。
+ *
+ * 因此本原语的语义 = **「把 text 追加到 composer 末尾」**，不是「在 caret 处键入」。
+ * 迁移适用面：注入时 composer 的 caret 本就在内容末尾的场景（空 composer 首问、发送后复问、
+ * ⇧Enter 新行、卡片/贴图后的承接段落）——与旧 `do: keys` 逐字等价。**caret 由键盘导航定位、
+ * 落点即判据**的步骤（141 的 ⌃B 后落字、154 的 ⌃B/⌃A 往返）不能用本原语（会改变被测行为），
+ * 那些步骤留在 `do: keys`（M498 探针结论：该形态没有可靠通道，finding 已报）。
+ *
+ * 前置条件：注入时 composer 必须持有 DOM 焦点（场景沿用各自的 clickInNode / 发送后焦点
+ *  retained 步骤建立）。焦点在别处时注入会落到焦点元素——与旧 `do: keys` 同一信任模型
+ * （keysTarget = focused 节点），回读 + 场景侧 `editor.unchangedSince` 守卫双保险。
+ *
+ * 重试口径（M143，与 `keys` / `type` 同一判据）：注入前记目标串在目标节点 value 里出现 N 次，
+ * 落地要求恰为 N+1；**目标字节完全未变才重注（≤3 次）**；值变了但次数不是 N+1（partial /
+ * duplicated）直接判败，由调用方给诊断——绝不在残段后重注整串（M140 假绿路径）。
+ *
+ * 目标解析由调用方（execute.mjs）以 `resolve(ax) → node` 注入：与 `clickInNode` 同一套
+ * `{role,name|any,nth}` 选择子（**裸正则源码、不带 `/…/` 包裹**——findNode 口径），但解析
+ * 发生在**每一次回读**（AX index 是快照域的，不能跨快照复用）。场景写 target.name 时要同时
+ * 匹配注入前（composer 空 = 占位读屏名「问点什么…」）与注入后（可访问名 = 内容）两种形态，
+ * 如 `问点什么|qrefmark`。
+ *
+ * 返回判定报告（不直接抛业务错）：{ attempts, verdict, baselineValue, lastValue, focused }。
+ * verdict ∈ landed | unchanged | partial | duplicated | target-lost（结构错误抛 StepError）。
+ */
+export async function typeInNode(cu, pid, { resolve, text, retries = 3, label = "" } = {}) {
+  if (typeof resolve !== "function") throw new StepError("typeInNode：缺少 resolve(ax) 目标解析函数");
+  const countOf = (v) => (text ? v.split(text).length - 1 : 0);
+
+  const first = await readAx(cu, pid);
+  const node = resolve(first);
+  if (!node) throw new StepError(`typeInNode：AX 中找不到目标节点 ${label}（解析口径与 clickInNode 相同）`);
+  const baselineValue = node.value ?? "";
+  const baseline = countOf(baselineValue);
+  const focused = Boolean(node.focused);
+
+  const max = Math.min(retries, 3);
+  let used = 0;
+  let lastValue = baselineValue;
+  let verdict = "unchanged";
+  for (let attempt = 1; attempt <= max; attempt++) {
+    used = attempt;
+    // 投递策略：第 1 次不带 index（向当前焦点元素整串注入，不点击、不污染 caret）；
+    // 重试起带**当次重新解析的**节点 index——原生菜单 Paste 交互后 window 级键盘焦点会丢
+    // （M456 实测；148 的 note- 步即此现场），此时无 index 的焦点投递路径不落地，而带 index
+    // 的 AX-focus + editing-command 路径照落（M498 探针 1 stage 7 实测）。代价是带 index
+    // 会先点节点 bbox 中心（caret 移到该处）——只发生在重试上，且 typeInNode 的语义本就是
+    // 「追加」，caret 落点由后续步骤自己重建。
+    const axPre = await readAx(cu, pid);
+    const targetNow = resolve(axPre);
+    if (attempt === 1 || !targetNow) {
+      await cu.typeText(pid, text);
+    } else {
+      await cu.typeText(pid, text, { index: targetNow.index });
+    }
+    await sleep(800);
+    const ax = await readAx(cu, pid);
+    const again = resolve(ax);
+    if (!again) {
+      verdict = "target-lost";
+      break;
+    }
+    lastValue = again.value ?? "";
+    const c = countOf(lastValue);
+    verdict = c === baseline + 1 ? "landed" : c > baseline + 1 ? "duplicated" : lastValue === baselineValue ? "unchanged" : "partial";
+    if (verdict === "landed") break;
+    // 再等一拍复读：DOM 落地与 AX 快照之间有时序，不能拿一次过早的读当结论。
+    await sleep(700);
+    const ax2 = await readAx(cu, pid);
+    const again2 = resolve(ax2);
+    if (!again2) {
+      verdict = "target-lost";
+      break;
+    }
+    lastValue = again2.value ?? "";
+    const c2 = countOf(lastValue);
+    verdict = c2 === baseline + 1 ? "landed" : c2 > baseline + 1 ? "duplicated" : lastValue === baselineValue ? "unchanged" : "partial";
+    if (verdict !== "unchanged") break;
+  }
+  return { attempts: used, verdict, baselineValue, lastValue, focused, baseline };
+}
+
 export async function pressKey(cu, pid, keys) {
   const { json } = await cu.pressKey(pid, keys);
   return json;

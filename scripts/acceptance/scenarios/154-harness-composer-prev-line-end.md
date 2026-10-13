@@ -49,18 +49,18 @@ steps:
     as: doc-before-caret
 
   - name: 键入第一行
-    do: keys
-    keys: ["h", "n", "l", "-", "b", "r", "k", "-", "a", "a"]
-    gapMs: 60
+    do: typeInNode
+    target: { role: AXTextArea, name: "问点什么|hnl-brk-aa" }
+    text: "hnl-brk-aa"
 
   - name: ⇧Enter（段末落一个新空段落，光标在其段首）
     do: key
     key: "shift+return"
 
   - name: 键入第二行
-    do: keys
-    keys: ["h", "n", "l", "-", "b", "r", "k", "-", "c", "d"]
-    gapMs: 60
+    do: typeInNode
+    target: { role: AXTextArea, name: "hnl-brk-aa|hnl-brk-cd" }
+    text: "hnl-brk-cd"
 
   - name: ⇧Enter（第二行之后落末尾空行——光标停在空行行首 = 待验位置）
     do: key
@@ -77,6 +77,9 @@ steps:
       - label: 导航不改文本（不是编辑）
         ax: { has: '/hnl-brk-aa[\r\n]+hnl-brk-cd/' }
 
+  # M498 迁移边界（如实登记）：⌃B/⌃F 后的落点即判据，typeInNode 的可靠通道是「追加到末尾」
+  # ——语义不合，本步与下面第二个探针串留在 do:keys（探针串无 'e'，避开了确定性丢键；
+  # 随机连续丢键段风险 finding 已报）。
   - name: 键入探针串（落进 ⌃B 之后的那个位置）
     do: keys
     keys: ["x", "q", "z", "k"]

@@ -47,10 +47,10 @@ steps:
     do: recordEditor
     as: doc-before-caret
 
-  - name: 键入合成 marker（小写——KimiCU 的按键注入恒为小写）
-    do: keys
-    keys: ["h", "n", "l"]
-    gapMs: 120
+  - name: 键入合成 marker（小写探针串；typeInNode 粘贴通道原样落地）
+    do: typeInNode
+    target: { role: AXTextArea, name: "问点什么|hnl" }
+    text: "hnl"
     expect:
       - label: marker 落进 composer
         ax: { has: "hnl" }
@@ -136,9 +136,9 @@ steps:
   # 修前 ⌃P 完全不动，修后 top 减一个行高）；真机套件这一档只留截图给 Alex 过目——AX 不暴露
   # contenteditable 内的光标位，「打字落点」在这里又依赖折行点（脆判据），故不写文本位置断言。
   - name: 键入一段长文本（窄 composer 里软折成多行视觉行）
-    do: keys
-    keys: ["h", "n", "l", "x", "q", "z", "k", "y", "q", "z", "k", "h", "n", "l", "x", "q", "z", "k"]
-    gapMs: 60
+    do: typeInNode
+    target: { role: AXTextArea, name: "yqzk|hnlxqzkyqzkhnlxqzk" }
+    text: "hnlxqzkyqzkhnlxqzk"
     expect:
       - label: 长文本落进 composer
         ax: { has: "hnlxqzkyqzkhnlxqzk" }

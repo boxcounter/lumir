@@ -23,8 +23,9 @@ steps:
     retries: 4
 
   - name: 输入提问并 Enter 发送
-    do: keys
-    keys: ["m", "o", "v", "e"]
+    do: typeInNode
+    target: { role: AXTextArea, name: "问点什么|move" }
+    text: "move"
   - name: 发送
     do: key
     key: enter

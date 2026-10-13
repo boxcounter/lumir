@@ -35,8 +35,9 @@ steps:
       - shot: 01-卡片A
 
   - name: 直接在卡片下一行的问题段落写问题（证明插入后光标落在卡片下一行）
-    do: keys
-    keys: ["a", "l", "p", "h", "a"]
+    do: typeInNode
+    target: { role: AXTextArea, name: "摘录卡片验收|alpha" }
+    text: "alpha"
 
   - name: 发送第一条消息（一张卡片 + 一段问题）
     do: key

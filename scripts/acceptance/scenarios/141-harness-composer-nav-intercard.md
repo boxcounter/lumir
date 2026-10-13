@@ -94,6 +94,9 @@ steps:
     keys: ["ctrl+b", "ctrl+b"]
     gapMs: 150
 
+  # M498 迁移边界（如实登记）：本步的落点即判据（⌃B 把光标推到两卡之前，探针串必须落在那里），
+  # 而 typeInNode 的可靠通道是「追加到末尾」——语义不合，留在 do:keys。press_key 逐键通道
+  # 对 composer 丢键（M497）在本步的形态：探针串 xqzk 无 'e'，暴露在随机连续丢键段风险下。
   - name: 键入探针串 xqzk（落进哪一格 = 上面两条 ⌃B 把光标推到了哪）
     do: keys
     keys: ["x", "q", "z", "k"]

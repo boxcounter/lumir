@@ -38,9 +38,10 @@ steps:
     do: recordEditor
     as: doc-before-send
 
-  - name: 键入提问（keys 对可打印序列做回读 + 重试）
-    do: keys
-    keys: ["c", "a", "r", "e", "t", "p", "r", "o", "b", "e", "1"]
+  - name: 键入提问（typeInNode 整串粘贴 + 回读重试）
+    do: typeInNode
+    target: { role: AXTextArea, name: "问点什么|caretprobe1" }
+    text: "caretprobe1"
     expect:
       - label: 提问落在 composer 里（点焦点成立——下一步发送才有内容）
         ax: { has: "caretprobe1" }
@@ -63,8 +64,9 @@ steps:
       - shot: 01-发送后-焦点回-composer
 
   - name: 续打字 probe（落点 = 上一步验过的 focused 节点）
-    do: keys
-    keys: ["c", "a", "r", "e", "t", "b", "a", "c", "k", "2"]
+    do: typeInNode
+    target: { role: AXTextArea, name: "caretprobe1|caretback2" }
+    text: "caretback2"
     expect:
       - label: 续打字落进 composer（AX 里 composer 值含 probe）
         ax: { has: "caretback2" }

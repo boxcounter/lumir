@@ -19,11 +19,9 @@ steps:
         ax: { has: "/AXButton \\(发送\\)/" }
 
   - name: 发一条长提问（mock 产出 reasoning_chunks 的响应）——问题够长，正向对照的落点才不落在气泡的空白处
-    do: keys
-    keys: ["h", "a", "r", "n", "e", "s", "s", "-", "u", "s", "e", "r", "-", "m", "e", "s", "s", "a", "g", "e",
-           "-", "b", "o", "d", "y", "-", "p", "o", "s", "i", "t", "i", "v", "e", "-", "c", "o", "n", "t", "r",
-           "o", "l", "-", "p", "r", "o", "b", "e", "-", "a", "l", "p", "h", "a", "-", "b", "r", "a", "v", "o",
-           "-", "c", "h", "a", "r", "l", "i", "e"]
+    do: typeInNode
+    target: { role: AXTextArea, name: "问点什么|harness-user-message-body-positive-control-probe-alpha-bravo-charlie" }
+    text: "harness-user-message-body-positive-control-probe-alpha-bravo-charlie"
   - name: 发送
     do: key
     key: enter

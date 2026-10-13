@@ -43,10 +43,11 @@ steps:
     as: doc-before-composer
 
   - name: 键入会话名素材（本逻辑会话首条用户消息定名——恢复步按它定位会话行）
-      （`keys` 动作走 composer 的键盘注入；`type` 动作会落到第一个 `AXTextArea` = 编辑器，素材漏面）
-    do: keys
-    keys: ["q", "r", "e", "f", "m", "a", "r", "k"]
-    gapMs: 100
+      （M498 起 typeInNode 注入 composer；旧 `keys` 逐键注入丢键（'e' 确定性丢失）、
+      `type` 动作会落到第一个 `AXTextArea` = 编辑器，素材漏面）
+    do: typeInNode
+    target: { role: AXTextArea, name: "问点什么|qrefmark" }
+    text: "qrefmark"
     expect:
       - label: 素材落在 composer（会话名来源）
         ax: { has: "qrefmark" }
@@ -81,9 +82,11 @@ steps:
     do: clipboardImage
     synth: { width: 300, height: 300, seed: 8 }
 
-  - name: 右键 composer 唤出原生菜单（图 B 的输入面）
+  - name: 右键 composer 唤出原生菜单（图 B 的输入面——dy 0.94 落在末尾空段落带；
+      composer 此刻含图 A 卡片，中心点落在卡片上会开出**图片菜单**（Look Up/Copy，无 Paste），
+      M498 首跑实证（ax dump 17 条 AXMenuItem 无 Paste）；同 149 正文②的落点口径）
     do: click
-    target: { role: AXTextArea, name: "pasted-[0-9a-f]{16}\\.webp", button: right }
+    target: { role: AXTextArea, name: "pasted-[0-9a-f]{16}\\.webp", button: right, dy: 0.94 }
     expect:
       - label: 原生菜单出现且 Paste 项在场
         ax: { has: "/AXMenuItem[^\n]*(Paste|粘贴)/" }
@@ -102,10 +105,22 @@ steps:
         ax: { has: "/AXButton \\(插入图片引用\\)/", count: { pattern: "/AXButton \\(插入图片引用\\)/", exact: 2 } }
 
   - name: 点 composer 把光标落到末尾空段落（避免出现「整段恰是 Image N」的文本，
-      让 ② 的「文本面无标签行」判据有区分度：标签行是**独立** text part）
+      让 ② 的「文本面无标签行」判据有区分度：标签行是**独立** text part；
+      dy 0.94 落末尾空段落带——中心点会落在图 B 卡片上（contenteditable=false），
+      光标/焦点不会进文本（M498 首跑实证）
     do: clickInNode
     target: { role: AXTextArea, name: "pasted-[0-9a-f]{16}\\.webp" }
-  - name: 键入引用前缀（`keys` 动作走 composer；`type` 动作会落到第一个 `AXTextArea` = 编辑器）
+    dy: 0.94
+  # M498 迁移边界（如实登记，本步自 M454 起从未转绿——三个通道全试过）：
+  #   do:keys 逐键 —— post-menu 键盘注入死亡（M456，focusWindow 也救不回）；
+  #   typeInNode（type_text）—— post-menu 重试带 index 能落 DOM，但 AX 注入不进 composer
+  #     模型（内容输入走 keydown 路径），@ 钮按模型 caret 插入 ⇒ 「Image 1note-」穿帮（3 跑实证）；
+  #   剪贴板 + 原生菜单 Paste 文本 —— 产品 paste 管线本可插入（模型一致），但两张卡片时
+  #     composer 达 max-height 滚动，dy 0.94 的右键落点命中卡片元信息行的链接区，
+  #     开出 Look Up/Copy Link 菜单（1 跑实证）——套件无可靠的「点可见末尾空段落」通道。
+  # 留在 do:keys：探针串 note- 无 'e'，避开确定性丢键；随机连续丢键段风险已报 finding。
+  - name: 键入引用前缀（`keys` 动作走 composer 的键盘注入；`type` 动作会落到第一个
+      `AXTextArea` = 编辑器——本步是 post-menu + 模型一致性双边界，见上注）
     do: keys
     keys: ["n", "o", "t", "e", "-"]
     gapMs: 100
@@ -224,7 +239,7 @@ steps:
   - name: ④ 回 composer 新起一条消息：贴两张图后移除第一张，余图位序重编为 1
       （`@` 钮重启后在 composer 态；composer 此刻为空）
     do: clickInNode
-    target: { role: AXTextArea, name: "/问点什么|pasted-/" }
+    target: { role: AXTextArea, name: "问点什么|pasted-" }
   - name: 剪贴板置合成 png C（seed 9）
     do: clipboardImage
     synth: { width: 260, height: 260, seed: 9 }
@@ -245,9 +260,10 @@ steps:
   - name: 剪贴板置合成 png D（seed 10）
     do: clipboardImage
     synth: { width: 240, height: 240, seed: 10 }
-  - name: 右键 composer → Paste（图 D）
+  - name: 右键 composer → Paste（图 D——dy 0.94 落末尾空段落带，中心点会落在图 C 卡片上
+      开出图片菜单，同图 B 步的 M498 实证）
     do: click
-    target: { role: AXTextArea, name: "pasted-[0-9a-f]{16}\\.webp", button: right }
+    target: { role: AXTextArea, name: "pasted-[0-9a-f]{16}\\.webp", button: right, dy: 0.94 }
     expect:
       - label: 原生菜单出现且 Paste 项在场
         ax: { has: "/AXMenuItem[^\n]*(Paste|粘贴)/" }
@@ -276,8 +292,10 @@ steps:
         ax: { count: { pattern: "/AXButton \\(插入图片引用\\)/", exact: 1 } }
 
   - name: ④ 点余图的 `@` 钮——它的编号应即时重编为 1（无空号）
+      （dy 0.94 落文本区，中心点会落在卡片上）
     do: clickInNode
-    target: { role: AXTextArea, name: "/问点什么|pasted-/" }
+    target: { role: AXTextArea, name: "问点什么|pasted-" }
+    dy: 0.94
   - name: 点唯一的 `@` 钮
     do: click
     target: { role: AXButton, name: "插入图片引用" }
@@ -314,11 +332,14 @@ design §10 的真机验收面 ①②③④（⑤ 引用卡片 / 消息摘录卡
 
 - **Paste 通道**：同 127（M415 探针的 WebKit 原生上下文菜单通道）——合成剪贴板造不出富 paste 事件，
   原生菜单 Paste 是与真实用户同一条 WebKit 链路。菜单项按键名正则定位不锁索引。
-- **composer 注入用 `do: keys` 不用 `do: type`（M489 修正）**：`do: type` 走 `typeInEditor`
-  （`lib/drive.mjs`），取 AX 树里**第一个** `AXTextArea`——那是**编辑器**，不是 composer（本场景 dump
-  里编辑器节点在 composer 之前）。素材因此曾漏进文档：`qrefmark` 落进编辑器后，下一步右键
-  `name:"qrefmark"` 被编辑器抢先命中，贴图进了编辑器 ⇒ composer 从没有图片卡片、`@` 钮自然不在 AX。
-  改用「`clickInNode(composer)` + `do: keys`」（140–147 的既有写法），并配 `recordEditor` +
+- **composer 注入用 `do: typeInNode`（M498 迁移；M489 时代是 `do: keys`）**：`do: type` 走
+  `typeInEditor`（`lib/drive.mjs`），取 AX 树里**第一个** `AXTextArea`——那是**编辑器**，不是 composer
+  （本场景 dump 里编辑器节点在 composer 之前）。素材因此曾漏进文档（M489 前）：`qrefmark` 落进编辑器后，
+  下一步右键 `name:"qrefmark"` 被编辑器抢先命中，贴图进了编辑器 ⇒ composer 从没有图片卡片、`@` 钮自然
+  不在 AX。M489 起改用「`clickInNode(composer)` + composer 向键盘注入」，M498 起首步（会话名
+  素材，pre-menu）注入动作是 `typeInNode`（type_text 无 index 整串追加——`do: keys` 的 press_key
+  逐键通道对 composer 丢键：'e' 本机确定性丢失，M497 归因）；贴图后的 note- 步是 post-menu +
+  模型一致性双边界（三通道全试不过，见该步注释），留在 `do: keys`。全程配 `recordEditor` +
   `editor.unchangedSince` 守卫，把「素材落在 composer、编辑器逐字节未变」钉成断言。
 - **编号读数的两面（如实登记）**：transcript 图片卡 `role="img"` 的可访问名 `图片 {n}：{name}`
   是 AX 稳定形态，用来钉「卡片编号」；composer 态的序号徽标（缩略图角上的裸数字）是图上的视觉读数、

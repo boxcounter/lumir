@@ -23,8 +23,9 @@ steps:
     retries: 4
 
   - name: 输入提问并 Enter 发送（本场景只发这一条消息——见「已知边界」的键盘注入口径）
-    do: keys
-    keys: ["s", "e", "g"]
+    do: typeInNode
+    target: { role: AXTextArea, name: "问点什么|seg" }
+    text: "seg"
   - name: 发送
     do: key
     key: enter

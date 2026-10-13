@@ -49,8 +49,9 @@ steps:
     target: { role: AXTextArea, name: "问点什么" }
 
   - name: 在 A 键入库草稿标记
-    do: keys
-    keys: ["d", "r", "a", "f", "t", "s", "c", "o", "p", "e", "a"]
+    do: typeInNode
+    target: { role: AXTextArea, name: "问点什么|draftscopea" }
+    text: "draftscopea"
     expect:
       - label: A 的标记落在 composer（注入落地的正观测）
         ax: { has: "draftscopea" }
@@ -68,8 +69,9 @@ steps:
       - shot: 02-A-草稿落盘
 
   - name: 追加第二次编辑（`-end`）
-    do: keys
-    keys: ["-", "e", "n", "d"]
+    do: typeInNode
+    target: { role: AXTextArea, name: "draftscopea|-end" }
+    text: "-end"
     expect:
       - label: 追加落在 A 的 composer
         ax: { has: "draftscopea-end" }
@@ -113,8 +115,9 @@ steps:
     do: clickInNode
     target: { role: AXTextArea, name: "问点什么" }
   - name: 键入 B 的标记
-    do: keys
-    keys: ["d", "r", "a", "f", "t", "s", "c", "o", "p", "e", "b"]
+    do: typeInNode
+    target: { role: AXTextArea, name: "问点什么|draftscopeb" }
+    text: "draftscopeb"
 
   - name: 等防抖落盘
     do: sleep

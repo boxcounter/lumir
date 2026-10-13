@@ -44,8 +44,9 @@ steps:
     target: { role: AXTextArea, name: "问点什么" }
 
   - name: 键入草稿文本（本场景独有的标记串）
-    do: keys
-    keys: ["d", "r", "a", "f", "t", "m", "a", "r", "k"]
+    do: typeInNode
+    target: { role: AXTextArea, name: "问点什么|draftmark" }
+    text: "draftmark"
     expect:
       - label: 标记落在 composer（注入落地的正观测）
         ax: { has: "draftmark" }

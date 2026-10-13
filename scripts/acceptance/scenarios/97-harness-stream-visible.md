@@ -25,10 +25,11 @@ steps:
         ax: { has: "/AXButton \\(发送\\)/" }
 
   - name: 输入提问（可打印序列，注入回读校验由 keys 动作内部完成）
-    do: keys
+    do: typeInNode
+    target: { role: AXTextArea, name: "问点什么|strm" }
+    text: "strm"
     # 探针取 4 个字符：本场景只求 composer 非空以便发送（提问内容不参与任何断言），
     # 序列越短越少受 KimiCU 逐键注入的丢键/串键噪声影响（REVIEW.md 第 11 条）。
-    keys: ["s", "t", "r", "m"]
     expect:
       - label: 提问落在 composer 里（注入落地——下一步 Enter 才有东西可发）
         ax: { has: "strm" }

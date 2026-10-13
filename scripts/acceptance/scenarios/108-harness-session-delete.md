@@ -23,8 +23,9 @@ steps:
         ax: { has: "/AXButton \\(发送\\)/" }
 
   - name: 输入第一条提问并发送（产生历史会话 delone）
-    do: keys
-    keys: ["d", "e", "l", "o", "n", "e"]
+    do: typeInNode
+    target: { role: AXTextArea, name: "问点什么|delone" }
+    text: "delone"
   - name: 发送
     do: key
     key: enter
@@ -62,8 +63,9 @@ steps:
     target: { role: AXTextArea, name: "问点什么" }
 
   - name: 输入第二条提问并发送（产生活跃会话 deltwo）
-    do: keys
-    keys: ["d", "e", "l", "t", "w", "o"]
+    do: typeInNode
+    target: { role: AXTextArea, name: "问点什么|deltwo" }
+    text: "deltwo"
   - name: 发送
     do: key
     key: enter

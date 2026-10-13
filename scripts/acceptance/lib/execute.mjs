@@ -31,13 +31,14 @@ import {
   StepError,
   tryForeground,
   typeInEditor,
+  typeInNode,
   waitUntil,
 } from "./drive.mjs";
 import { envHome, InfraError, mkdirp, readText, repoRoot, secondVaultDir, sleep, vaultDir } from "./util.mjs";
 
 /** 动作与断言的白名单：`--check` 用它做静态校验，避免写错 key 要等一整轮真机才发现。 */
 export const ACTIONS = new Set([
-  "settle", "waitFor", "sleep", "key", "keys", "type", "click", "clickNodeText", "clickInNode", "clickEditor",
+  "settle", "waitFor", "sleep", "key", "keys", "type", "typeInNode", "click", "clickNodeText", "clickInNode", "clickEditor",
   "doubleClick", "drag", "hover", "scroll", "focusWindow", "open", "configWrite", "restart", "record", "recordEditor",
   "vaultWrite", "vaultAppend", "vaultRm", "vaultSparse", "resizeWindow", "clipboardRead",
   "clipboardImage", "clipboardText", "note", "migrateHarnessSessions",
@@ -160,6 +161,25 @@ export function checkScenario(scenario) {
     // `20260916-worker-typefix-improve-checkscenario-do-type-text-undefined`）。
     if (step.do === "type" && (typeof step.text !== "string" || step.text.length === 0))
       push(`${at} do=type 需要非空 text（漏写会注入 undefined，真机上表现为连报 3 次未落地）`);
+    // typeInNode（M498，composer 素材注入从 do:keys 迁移的新原语）：target 解析口径与
+    // clickInNode 同一套，漏写/写错会在真机等一整轮才发现；gapMs / keys 是迁移残留，
+    // 整串一次粘贴没有逐键间隔，留着是静默无效键——按「拼错即静默不生效」的同一口径挡掉。
+    if (step.do === "typeInNode") {
+      if (!step.target) {
+        push(`${at} do=typeInNode 需要 target（{role,name|any,nth}，与 clickInNode 同一解析）`);
+      } else {
+        if (step.target.role === undefined || typeof step.target.role !== "string")
+          push(`${at} do=typeInNode 的 target.role 需要字符串（AX 角色，如 AXTextArea）`);
+        if (step.target.name === undefined && step.target.any === undefined)
+          push(`${at} do=typeInNode 的 target 需要 name 或 any 至少一项（读读两个状态都要能命中：注入前与注入后）`);
+      }
+      if (typeof step.text !== "string" || step.text.length === 0)
+        push(`${at} do=typeInNode 需要非空 text`);
+      if (step.gapMs !== undefined)
+        push(`${at} do=typeInNode 不接受 gapMs（整串一次粘贴，无逐键间隔——迁移自 do:keys 时请删掉）`);
+      if (step.keys !== undefined)
+        push(`${at} do=typeInNode 与 keys 互斥（迁移自 do:keys 时把 keys 数组合成 text 字符串后删掉 keys）`);
+    }
     if (step.do === "waitFor") {
       // 轮询判据（M296）：`has` / `not` 两份字符串清单，至少一项非空；写错键名会静默变成
       // 「立刻成立」的空条件（本套件最该挡的假绿形态），因此在这里死板校验。
@@ -1490,6 +1510,73 @@ async function doAction(step, { ctx, cu, scenario, vars, pid, evidence }) {
         });
       }
       return;
+    }
+    // composer 素材注入（M498）：type_text 无 index 整串追加 + M143 口径回读重试。
+    // 为什么存在：press_key 逐键注入对 composer 丢键（'e' 本机确定性丢失 + 随机连续丢键段，
+    // M497 归因定论），composer 上「整串都是可打印单字符」的 do:keys 步骤因此迁到本动作；
+    // do:keys 从此只留 chord 与编辑器/原生输入框目标（判定边界见 README 动作表 keys 条）。
+    // 通道盘点（M498 探针 1–7，全在 lib/drive.mjs typeInNode 注释）：press_key 逐键丢键、
+    // press_key("cmd+v") 8/9 不落地、type_text 带 index 点 bbox 中心不保留 caret、
+    // **type_text 不带 index 追加到当前焦点元素末尾 4/4 落地**——唯一可靠通道。
+    // 语义注意：本动作 = 「追加到 composer 末尾」，不是「在 caret 处键入」；caret 由键盘导航
+    // 定位、落点即判据的步骤（141/154 的 ⌃B/⌃A 后落字）不迁（留在 do:keys，finding 已报）。
+    // 前置：composer 须持 DOM 焦点（场景各自的 clickInNode / 发送后焦点 retained 建立）。
+    case "typeInNode": {
+      const t = step.target ?? {};
+      const resolve = (ax) =>
+        t.any !== undefined
+          ? findByAny(ax.nodes, { role: t.role, any: t.any, nth: t.nth ?? 0 })
+          : findNode(ax.nodes, { role: t.role, name: t.name, nth: t.nth ?? 0 });
+      const out = await typeInNode(cu, p, {
+        resolve,
+        text: step.text,
+        retries: step.retries ?? 3,
+        label: JSON.stringify(t),
+      });
+      if (!out.focused) {
+        evidence.record({
+          kind: "note",
+          text:
+            `typeInNode「${step.text}」注入前目标节点没有 (focused) 标记——type_text 无 index 注入落在` +
+            "当前焦点元素上，若焦点在别处会漏进焦点元素；以下判据以回读为准",
+        });
+      }
+      if (out.verdict === "landed") {
+        if (out.attempts > 1) {
+          evidence.record({
+            kind: "note",
+            text:
+              `typeInNode「${step.text}」第 ${out.attempts} 次注入才落地（前 ${out.attempts - 1} 次目标内容逐字节未变；` +
+              "已按出现次数校验确认无重复）",
+          });
+        }
+        return;
+      }
+      const countOf = (v) => v.split(step.text).length - 1;
+      if (out.verdict === "target-lost") {
+        throw new Error(
+          `typeInNode 回读目标在注入过程中从 AX 里消失（${JSON.stringify(t)}）——` +
+            "不在不可观测的窗口里下结论，不重试",
+        );
+      }
+      if (out.verdict === "duplicated") {
+        throw new Error(
+          `typeInNode 注入重复落地：目标串「${step.text}」出现 ${countOf(out.lastValue)} 次（期望 ${out.baseline + 1}）——` +
+            "疑似重试叠打，目标内容已被破坏，不按 PASS 处理",
+        );
+      }
+      if (out.verdict === "partial") {
+        throw new Error(
+          `typeInNode 注入部分落地：目标串「${step.text}」出现 ${countOf(out.lastValue)} 次（期望 ${out.baseline + 1}），但目标内容已变——` +
+            `不重试：再注入整串会拼出脏文本。基线=${JSON.stringify(out.baselineValue.slice(0, 200))} ` +
+            `现值=${JSON.stringify(out.lastValue.slice(0, 200))}`,
+        );
+      }
+      throw new Error(
+        `typeInNode 注入未落地：${out.attempts} 次注入后目标串「${step.text}」出现 ${countOf(out.lastValue)} 次（期望 ${out.baseline + 1}）；` +
+          `目标内容每次注入前后逐字节一致（丢在注入链路；前置诊断：目标节点${out.focused ? "有" : "无"} (focused) 标记，` +
+          "无标记时注入落在当前焦点元素上、回读必然未落地）",
+      );
     }
     case "click": {
       const t = step.target ?? {};

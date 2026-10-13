@@ -29,9 +29,9 @@ steps:
     as: doc-before-extend
 
   - name: 键入 abcd
-    do: keys
-    keys: ["a", "b", "c", "d"]
-    gapMs: 80
+    do: typeInNode
+    target: { role: AXTextArea, name: "问点什么|abcd" }
+    text: "abcd"
     expect:
       - label: 文本到位
         ax: { has: "abcd" }

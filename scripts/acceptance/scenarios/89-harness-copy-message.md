@@ -19,8 +19,9 @@ steps:
         ax: { has: "/AXButton \\(发送\\)/" }
 
   - name: 输入提问并 Enter 发送（提问串全小写，与回答的大写标记互不互为子串）
-    do: keys
-    keys: ["c", "o", "p", "y"]
+    do: typeInNode
+    target: { role: AXTextArea, name: "问点什么|copy" }
+    text: "copy"
   - name: 发送
     do: key
     key: enter

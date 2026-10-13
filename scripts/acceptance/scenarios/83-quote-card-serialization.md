@@ -31,8 +31,9 @@ steps:
         ax: { has: "harness-quote-escape.md · A & B 标题" }
       - shot: 01-卡片
   - name: 在卡片后的问题段落写一个字（证明携带卡片的消息照常投递）
-    do: keys
-    keys: ["q"]
+    do: typeInNode
+    target: { role: AXTextArea, name: "A & B 标题|q" }
+    text: "q"
   - name: 发送
     do: key
     key: enter

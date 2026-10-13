@@ -32,8 +32,9 @@ steps:
     target: { role: AXTextArea, name: "问点什么" }
 
   - name: 键入提问（本场景独有的标记串）
-    do: keys
-    keys: ["g", "a", "t", "e", "p", "r", "o", "b", "e"]
+    do: typeInNode
+    target: { role: AXTextArea, name: "问点什么|gateprobe" }
+    text: "gateprobe"
     expect:
       - label: 标记落地
         ax: { has: "gateprobe" }

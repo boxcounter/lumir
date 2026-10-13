@@ -30,10 +30,10 @@ steps:
     do: recordEditor
     as: doc-before-nav
 
-  - name: 键入探针串 abcd（小写——KimiCU 的按键注入恒为小写）
-    do: keys
-    keys: ["a", "b", "c", "d"]
-    gapMs: 100
+  - name: 键入探针串 abcd（小写探针串；typeInNode 粘贴通道原样落地）
+    do: typeInNode
+    target: { role: AXTextArea, name: "问点什么|abcd" }
+    text: "abcd"
     expect:
       - label: 探针串落进 composer（abcd）
         ax: { has: "abcd" }
@@ -104,7 +104,7 @@ change `composer-emacs-nav` 把 composer 的 Emacs 文本导航族收回统一�
 - **落点读数换形态**：AX 通道不暴露 contenteditable 内的光标位，因此每条导航后**键入一个探针
   字符**，断言它在文本里的**位置**（左右邻字符）——模型读回的光标位决定探针落在哪一格，这条
   是「读数换形态」，不是判据放宽。
-- **小写探针串**：KimiCU 的按键注入恒为小写字母（场景 117 的既有口径）。
+- **小写探针串**：历史口径（press_key 注入恒为小写）的遗留；M498 起 typeInNode 走粘贴通道、大小写原样，探针串维持小写不变。
 - **`shift+return` 造第二段**：composer 的段落块是逻辑行单位；两段之间的跨块移动（⌃P 出段落）
   需要真实存在的第二段。⇧Enter 落一个新空段落（HC1），随后键入的 `mn` 落进它。
 - **`gapMs`**：键入按默认 250ms 间隔注入，四拍可能越过撤销聚簇窗口（1000ms）而碎成多步——
