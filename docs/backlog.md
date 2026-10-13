@@ -38,6 +38,9 @@
 
 一条一行（主题 + 来源/日期/severity + gist + finding 指针）；叙述与读数明细见 git 历史与指针文件。
 
+- **场景 143 定案为产品 bug：composer 贴图后 1 秒内删卡的撤销语义错（high，M510 修复在途）**（agent-m508，2026-10-14）→ 删除族模型路径 `withModel(op, force=false)`（`src/harness-panel.ts` deleteAtCaret 两处 + 裸 Backspace 分支一处）撞 undo 1000ms 聚簇：贴图（force=true 压栈）后簇窗口内 ⌃H 删卡不入栈，⌘Z 弹回贴图前空态；间歇性 = 贴图→删除间隔是否 >1000ms。回归面 = M447/M453（`1d063fd`），与 M343「结构操作 force=true」文档意图漂移。修 = 三处 withModel 传 true + 单测（合同先行）。指针 `.tower/comms/findings/20261014-agent-m508-bug-143-z-force-false-undo-m447-m453.md`。
+- **场景 49「会话恢复静默丢非 md 标签」盘侧否证**（agent-m508，2026-10-14，medium）→ 同一份产品代码上逐字 46-tab seed 恢复出 46/46，x.jsonc/var-highlight.js/var-highlight.lua 全在场；全链路（Rust sanitize → restorePlan → createShell → renderTabs）无扩展名过滤，10-08→10-13 恢复链路零产品提交。当轮 43/46 成因未定位（候选：套件会话文件时序 / 该轮 AX 观测面），**待解锁后 AX 复验**，倾向观测/时序问题而非产品回归。指针 `.tower/comms/findings/20261014-agent-m508-bug-m508-49-md-46-46-ax.md`。
+
 - **权限语义类 change 的 tasks 缺「回扫既有场景的闸期望」一项（流程缺口）**（agent-m480，2026-10-13，medium）→ M407 归档 tasks 6.7 只新增 109/110/111、未回扫 72/73/74，导致三轮验收假红才暴露；建议沉淀进 `docs/process/openspec-workflow.md`：凡改权限/闸语义的 change，tasks 必须含「回扫既有验收场景的闸期望」一项。指针 `.tower/comms/findings/20261013-agent-m480-improve-change-72-73-74.md`。
 
 - **验收 82/121 在未改动的 master 上即已 FAIL（交付序列化的 quote / msg-quote 断言不命中）**（worker-m456，2026-10-11，medium，**待归因、不在 M456 scope**）→ 82-quote-card-mixed-edit 与 121-harness-message-excerpt 在未改动 master（`2608e64`）上即 FAIL，此前是绿的（82：10-06/07/08 PASS；121：10-10 PASS）；断言读到的是系统装配记录（`assembly`），期望的 `<quote …>` / `<msg-quote …>` 交付文本不在其中，根因候选面是 `src/quote-card.ts` 的 projectDelivery / serializeDelivery 与 `src/harness-panel.ts` 的投递投影（约 M454 `6f2b614`）。复现：`node scripts/acceptance/run.mjs 82` → `0/1 PASS`。指针 `.tower/comms/findings/20261011-worker-m456-bug-82-121-master-fail-quote-msg-quote.md`。**定案（M503 裁决，2026-10-14）**：断言与产品双合规、均不修改——spec 钉的是序列化文本形态且字节级仿真证明现行 parts 形投递下断言照样命中（parts 形落地于 M440 `9e3fd85`，非 M454）；82/121 的残红是上游真机注入/拖选通道级联（带卡片的 llm_request 根本没生成，断言在「不存在」上如实判红），非投影回归、不阻塞 0.7.0；注入通道修通后两条断言应自然转绿。本条核销，通道级问题由 REVIEW.md #11 族口径继续跟。
@@ -226,6 +229,9 @@
 8. **孤儿进程巡检**：批次收尾回收 `ps -o pid,ppid,etime,command | grep -E 'playwright|chromium|vite preview'` 中 ppid=1 且 elapsed > 1 天的孤儿；**别碰 Alex 的 dogfood 实例（1420 端口的 vite / `target/debug/lumir`）**。
 9. **批次内 target 纪律**：每个 worktree 同一时刻至多一份 cargo target，最后一次 cargo 门禁跑完立即删 target 并广播释放，进真机验收前 `df -h`、<3G 不起构建（详见「记录在案」的沉淀建议）。
 10. **真机探针的发键通道可泄漏到真实前台 app**（tower，2026-10-12，medium）：IME 组合态不可合成；探针执行期间注意前台焦点归属。指针 `.tower/comms/findings/20261012-tower-improve-app-ime.md`。
+11. **锁屏 ⇒ 全机 AX 树退化，一切 AX/截图通道失效**（agent-m508 实证，2026-10-14）：`IOConsoleLocked=Yes` 时 macOS 不向后台暴露窗口 AX 内容——全 app AX 树只剩菜单栏、KimiCU 截图空、System Events 报 0 窗口（CGWindowList 却显示在屏）；重启 KimiCU 服务 / fresh MCP 直连均无效。一行判别：`ioreg -n Root -d1 | grep IOConsoleLocked`；真机批预检加这条，锁屏即停（runner 预检建议内置）。与第 4 条（服务中途退化，可重注册恢复）区分：锁屏型退化只能等解锁。
+12. **本机装有安装版 /Applications/Lumir.app：绝不按名字 `activate "Lumir"`**（agent-m508 事故，2026-10-14）：按名 activate 会经 LaunchServices 拉起安装版第二个实例，写真实配置（window-state 被覆盖、自动注册新 vault 项）。激活一律用 `System Events set frontmost of first process whose unix id is <pid>`。
+13. **KimiCU 长驻服务的 CPU 累积观察**（agent-m508，2026-10-14）：旧服务实例存活周一→周三累计 37h CPU 后被重启；未见功能受损直接证据，但批次开工前值得看一眼服务 CPU 时间，异常偏高就重注册（同第 4 条手段）。
 
 ## 批次报告索引
 
