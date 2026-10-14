@@ -10,7 +10,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import yaml from "js-yaml";
 import { findNode, windowBounds } from "./ax.mjs";
-import { copyFixture, fixturesDir, SCENARIO_CONFIG_KEYS, writeWindowState } from "./app.mjs";
+import { fixturesDir, SCENARIO_CONFIG_KEYS, writeWindowState } from "./app.mjs";
 import { encodePng, syntheticScreenshot } from "./png.mjs";
 import { DEFAULT_MIN_DIFF, DEFAULT_PATCH, DEFAULT_TOL, colorDiff, decodeScreenshot, dominantColor, formatColor, lumaSpread } from "./pixel.mjs";
 import {
@@ -1251,7 +1251,10 @@ export async function runScenario(ctx, scenario) {
 
   let result = null;
   try {
-    if (scenario.fixtures) for (const f of scenario.fixtures) await copyFixture(f);
+    // 场景 front-matter 的 `fixtures:` **不在这里拷贝**（M516）：它是场景的**初始状态**，
+    // 必须早于 app 打开 vault（否则产品的首次枚举/会话恢复看到的是缺文件的 vault，见 run.mjs
+    // 起 app 之前那一句）。此前这里在 `runScenario` 开头（起 app 之后）补拷，场景 49 的 3 个
+    // 非 md 标签因此被恢复段按「不在 vault 内」丢掉。
     // 场景 front-matter 的 `config:` **不在这里生效**：它由 run.mjs 在 `launchApp()` 之前
     // 折进隔离 config.json（M284）——早先在这里是「起一次 app → 写配置 → 重启」，每个声明
     // config 的场景都多付一次重启。折叠之后 app 的**首帧**就是场景声明的起点，语义更强

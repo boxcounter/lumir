@@ -168,7 +168,9 @@ export async function resetHarness() {
  *  有 40+ 个），以及**贴图落进根级笔记编辑器时留下的 `pasted-*.webp`**。实证：148 的注入泄漏往
  *  共享 vault 根丢了一个 `pasted-<hash>.webp`，经此缺口污染了随后 127 的「vault 零新增」断言
  *  （根下多一份同名贴图 ⇒ `glob … exact: 0` 假红）。清干净不改变任何场景的起点：依赖非 `.md`
- *  fixture 的场景各自在自己的 front-matter 里声明 `fixtures:`，`copyFixture` 在本函数之后重拷。
+ *  fixture 的场景各自在自己的 front-matter 里声明 `fixtures:`，由 `run.mjs` 在本函数之后、
+ *  **起 app 之前**逐条 `copyFixture` 重拷（M516 挪的位置——此前那句在 `execute.mjs` 的
+ *  `runScenario` 里、起 app 之后，与这里写的口径漂了，见 run.mjs 该处注释）。
  *  新场景仍 MUST NOT 依赖这类残留——要判「某文件在场」得声明 `fixtures:` 或用 `vaultWrite` 造。
  *
  *  只动**合成验收 vault**（`vaultDir()`），不碰真实 vault 与用户的 `~/.config/lumir`。 */

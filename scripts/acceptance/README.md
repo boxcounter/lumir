@@ -105,6 +105,29 @@ LaunchServices、没有启动激活）⇒ **启动零激活**：无人在场的�
 启动尺寸行为本身（首启 90% / 存档恢复 / 越界钳制 / 损坏回落），钉了它每一步几何断言必红；豁免是
 `run.mjs` 的显式清单 `NO_PIN_WINDOW_SCENARIOS`（tower 已批此口径；新增豁免必须附同等理由）。
 
+**钉尺寸不许落在启动恢复窗口里**（M516）：钉窗口是**写**——它触发 relayout，而产品的启动
+恢复段就在就绪门之后跑：`applyVault`（`src/main.ts:2769-2840`）先
+`emitReadiness("vault-ready")`（`:2792`）与 `tree.setVault`（`:2813`）**再**起
+`void switcher.onVaultLoaded(...)`（`:2836`）的会话恢复段（批量存在探测 `fs_paths_exist` +
+建壳都在这一段里）。因此**门必须落在恢复段自己的终态上，不能落在 `vault-ready` / vault 入口
+节点上**——那两个信号都在恢复段之前出现，按它们放行等于没等。套件口径：seed 里带会话标签的
+场景（`seedHasRestoredTabs`），首启与 `restart` 两条路径都在就绪门之后先过 `drive.mjs` 的
+`waitStartupRestore`（等标签条建壳出现标签且读数不变），再过 `pinWindowSize`；无标签可恢复的
+场景不付这个等待。门的读数是正观测（「> 0 且不变」= 恢复计划已落定），超时只落一条 ⚠ note、
+不判死——恢复为空还是产品真丢标签，判定权在场景自己的断言。等待耗时写进 steps.md 的证据行。
+
+**场景 fixture 必须在起 app 之前落进 vault**（M516，场景 49「3 个非 md 标签丢失」的真因）：
+`fixtures:` 是场景的**初始状态**声明——`.md` 由 `resetVault` 铺，非 `.md`（`x.jsonc` /
+`var-highlight.js` / `.gitignore` / `notes.txt` …）由 `run.mjs` 在起 app **之前**逐条
+`copyFixture` 重拷。产品在**打开 vault 时**做首次枚举与会话恢复，晚于它的拷贝会让「以初始
+状态为判据」的场景拿到缺文件的 vault：场景 49 的 46 标签会话种子里那 3 个非 md 文件当时还
+不存在，恢复段的「在不在 vault 内」探测如实判它们不在场并丢弃 ⇒ runner 启动恒出 43/46。
+这句此前在 `execute.mjs` 的 `runScenario` 开头（**起 app 之后**），与 `app.mjs` 的
+`resetVault` 注释里写着的「copyFixture 在本函数之后重拷」漂了位置（REVIEW.md 第 8 条同族）。
+**排查口径留给后来者**：M513 曾把 43/46 归因于 M491 的钉窗与启动恢复窗口重叠，M516 用
+「启动后 10s 内零 AX 活动」的对照实验否掉了这个归因（同一 vault、同一 seed，照旧 43/46）；
+判「套件某一步是否扰动产品」时，先做一次把该步整体拿掉的对照，别拿时间线吻合当证据。
+
 **磁盘水位绕过**：`LUMIR_ACCEPTANCE_ALLOW_LOW_DISK=1` 可越过 2G 阈值，**只在 target 已热、本次不会
 触发 Rust 重编**（实际磁盘需求仅几 MB）时使用；绕过会写进 run.log 留痕，不静默。
 

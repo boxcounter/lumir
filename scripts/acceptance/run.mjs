@@ -21,6 +21,7 @@ import { CuClient } from "./lib/cu.mjs";
 import {
   acceptPort,
   assertSafeTargets,
+  copyFixture,
   launchApp,
   prepareSeed,
   reclaimPort,
@@ -36,7 +37,13 @@ import {
   stopApp,
   writeConfig,
 } from "./lib/app.mjs";
-import { foregroundNote, pinWindowSize, tryForeground, waitAppReady } from "./lib/drive.mjs";
+import {
+  foregroundNote,
+  pinWindowSize,
+  tryForeground,
+  waitAppReady,
+  waitStartupRestore,
+} from "./lib/drive.mjs";
 import { Evidence, appendRunLog, writeSummary } from "./lib/evidence.mjs";
 import { checkScenario, loadScenario, runScenario } from "./lib/execute.mjs";
 import { envHome, InfraError, log, mkdirp, repoRoot, resultsRoot, sleep, vaultDir } from "./lib/util.mjs";
@@ -82,6 +89,23 @@ function suiteWindowSize() {
  * 「启动尺寸不被套件碰」上），新增豁免必须附同等理由。
  */
 const NO_PIN_WINDOW_SCENARIOS = new Set(["126-window-geometry"]);
+
+/**
+ * 本场景的启动会不会恢复标签条（M516）：`seed.sessions` 里任一会话带非空 `tabs`（含 `panes`
+ * 形态的每个 pane）即为真。**只有这种启动才有「恢复窗口」**——没有会话（或会话为空）的场景
+ * 不付这个等待，也就不会被启动门拖慢。判据只看 seed 声明，不读盘、不猜产品行为。
+ *
+ * 为什么按「有没有标签要恢复」分流而不是全场景统一等：门本身要等的是一个**正**观测
+ * （见 `drive.mjs` 的 `waitStartupRestore`），没有标签要恢复的启动拿不到这个观测、只能靠
+ * 超时收场——那会让每个无会话场景白等一次超时。分流点因此只能落在「本场景有没有恢复段」。
+ */
+function seedHasRestoredTabs(seed) {
+  for (const session of Object.values(seed?.sessions ?? {})) {
+    if ((session?.panes ?? []).some((pane) => (pane?.tabs?.length ?? 0) > 0)) return true;
+    if ((session?.tabs?.length ?? 0) > 0) return true;
+  }
+  return false;
+}
 
 async function listScenarios() {
   const names = (await readdir(scenariosDir)).filter((n) => n.endsWith(".md")).sort();
@@ -429,11 +453,27 @@ async function main() {
     log(`▶ ${scenario.id}（backlog 项 ${scenario.item}）${scenario.title}`);
     let fgNote = "";
     let out;
+    // 本场景启动是否有会话恢复段（M516）：决定两次启动（首启 / `restart`）要不要先等恢复跑完
+    // 再钉窗。见 seedHasRestoredTabs 与 drive.mjs 的 waitStartupRestore。
+    const restoreTabsAtStartup = seedHasRestoredTabs(scenario.seed);
     // 基建阶段标记：这一段里任何异常都说明「实例没起来 / 环境不可用」——整场判 INVALID（退出码
     // 2），不按产品判红记（退出码 1）。越过 `runScenario` 之后，异常才是场景自己的事。
     let setupPhase = true;
     try {
       await resetVault();
+      // 场景 front-matter 声明的 vault fixture 必须在**起 app 之前**落进 vault（M516）。
+      // `fixtures:` 是场景的**初始状态**声明：`.md` 由 `resetVault` 铺，非 `.md`
+      // （`x.jsonc` / `var-highlight.js` / `.gitignore` / `notes.txt` …）只由这一句铺。产品在
+      // **打开 vault 时**做首次枚举与会话恢复，晚于它的拷贝会让「以初始状态为判据」的场景拿到
+      // 缺文件的 vault——M516 实测：场景 49 的会话种子里 3 个非 md 标签（x.jsonc /
+      // var-highlight.js / var-highlight.lua）在装载时文件还不存在，恢复段的「在不在 vault 内」
+      // 探测如实判它们不在场并丢弃，runner 启动恒出 43/46。
+      //
+      // 此前这句在 `execute.mjs` 的 `runScenario` 开头（= 起 app **之后**），与 `app.mjs` 的
+      // `resetVault` 注释里写着的「copyFixture 在本函数之后重拷」漂了位置（REVIEW.md 第 8 条
+      // 同族：同一件事两处实现、口径不一致）；挪回声明的位置后，场景的首帧就是它声明的起点
+      // ——与 `config:` 折叠进 `launchApp`（M284）同一取向。
+      if (scenario.fixtures) for (const f of scenario.fixtures) await copyFixture(f);
       await resetSecondVault(); // 第二个合成 vault：多 vault 场景的切换目标
       await resetRecovery(); // 备份目录在隔离配置下，不清会让上一场景的备份串场
       await resetHarness(); // 对话面板 JSONL 同因：在隔离配置下，不清会跨场景串记录（M304 实证）
@@ -466,7 +506,21 @@ async function main() {
       handle = await launchApp({ logFile: appLogFile });
       await sleep(1200);
       await waitAppReady(cu, handle.pid); // 前端就绪门：左栏文件树 + 编辑器节点就位再开跑
-      // M491：就绪后立刻把窗口钉到构建配置的占位尺寸（产品侧 apply_startup_size 的首启 90% /
+      // M516：钉窗口之前先等**启动会话恢复**跑完（只有会恢复标签的场景才有这一段，见
+      // seedHasRestoredTabs）。就绪门判的是「树 + 编辑器就位」，而产品在树渲染**之后**才起
+      // 恢复段——就绪门一过立刻钉窗，AXSize 写就落在恢复段里。这是排序隐患不是本次丢标签的
+      // 成因（成因见上面 fixtures 那一句；10s 零 AX 的对照实验同样丢成 43），详见 drive.mjs
+      // 的 waitStartupRestore。
+      let restoreNote = "";
+      if (restoreTabsAtStartup) {
+        const restore = await waitStartupRestore(cu, handle.pid);
+        restoreNote = restore.settled
+          ? `启动恢复：标签条已建壳 ${restore.tabs} 个标签（等 ${restore.ms}ms）`
+          : `⚠ 启动恢复：${restore.ms}ms 内标签条一直没出现标签（最后读数 ${restore.tabs}）——` +
+            "本次钉窗仍落在恢复窗口内，恢复为空或恢复段异常时都会是这个形态，交由场景断言判";
+        log(`  ${restoreNote}`);
+      }
+      // M491：就绪后把窗口钉到构建配置的占位尺寸（产品侧 apply_startup_size 的首启 90% /
       // 存档恢复会盖过它，坐标/像素敏感场景需要确定几何）。豁免场景（目前是 126，其判据本体
       // 就是启动行为）走原始几何。钉尺寸的结果（回读生效宽高）经 fgNote 一并落进证据行。
       const pinWindow = !NO_PIN_WINDOW_SCENARIOS.has(scenario.id);
@@ -480,7 +534,7 @@ async function main() {
       // System Events、失败时的 osascript stderr 全落进证据——此前只有「已取得 / 未取得」两个词，
       // 复盘时分不出「激活没投出去」与「投出去了没生效」。
       const fg = await tryForeground(cu, handle.pid);
-      fgNote = [pinNote, foregroundNote(fg)].filter(Boolean).join("\n");
+      fgNote = [restoreNote, pinNote, foregroundNote(fg)].filter(Boolean).join("\n");
       log(`  ${foregroundNote(fg)}`);
       const ctx = {
         cu,
@@ -499,12 +553,23 @@ async function main() {
           // requireVault: false = 本步期待「未打开空态」（如 last_vault 失效），就绪门放宽为
           // 「树 pane 任一形态 + 编辑器在位」。默认仍是严格门（树里有 .md 行）。
           await waitAppReady(cu, handle.pid, { requireVault });
+          // M516：重启路径同口径——恢复段（重启恢复的是本场景前半段写回的会话）跑完再钉窗。
+          let restoreNote2 = "";
+          if (restoreTabsAtStartup) {
+            const restore2 = await waitStartupRestore(cu, handle.pid);
+            restoreNote2 = restore2.settled
+              ? `重启恢复：标签条已建壳 ${restore2.tabs} 个标签（等 ${restore2.ms}ms）`
+              : `⚠ 重启恢复：${restore2.ms}ms 内标签条一直没出现标签（最后读数 ${restore2.tabs}）——` +
+                "重启后本就没有恢复标签时是这个形态，交由场景断言判";
+          }
           let pinNote2 = "";
           if (pinWindow) {
             pinNote2 = await pinWindowSize(cu, handle.pid, suiteWindowSize(), { prefix: "重启" });
           }
           const fg2 = await tryForeground(cu, handle.pid);
-          ctx.foregroundNote = [pinNote2, foregroundNote(fg2, { prefix: "重启前台焦点" })].filter(Boolean).join("\n");
+          ctx.foregroundNote = [restoreNote2, pinNote2, foregroundNote(fg2, { prefix: "重启前台焦点" })]
+            .filter(Boolean)
+            .join("\n");
           ctx.pid = handle.pid;
         },
       };
