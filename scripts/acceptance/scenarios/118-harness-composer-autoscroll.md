@@ -33,66 +33,71 @@ steps:
   - do: key
     key: "shift+return"
     name: 第 1 行后的 ⇧Enter
+  # M518：⇧Enter 之后的素材注入改走 keys（逐键 press_key），不再用 typeInNode——M517 探针定案
+  # （2026-10-14）：typeInNode 的 type_text 是无 index 的 AX 注入、不进 composer 模型，软断行之后
+  # composerObserver 从 DOM 回灌模型时把软断行块折叠掉，注入文本落进上一块（M514 批的 118 现场 =
+  # AXTextArea 值 "l01l02\nl03l04\nl05l06\nl07l08l09l10"：十行被折成五块）。键串不含 'e'
+  # （press_key 丢键史字符，M497/M509）。第 1 行（软断行之前）仍走 typeInNode。
   - name: 键入第 2 行
-    do: typeInNode
-    target: { role: AXTextArea, name: "l01|l02" }
-    text: "l02"
+    do: keys
+    keys: ["l", "0", "2"]
+    gapMs: 60
   - do: key
     key: "shift+return"
     name: 第 2 行后的 ⇧Enter
   - name: 键入第 3 行
-    do: typeInNode
-    target: { role: AXTextArea, name: "l02|l03" }
-    text: "l03"
+    do: keys
+    keys: ["l", "0", "3"]
+    gapMs: 60
   - do: key
     key: "shift+return"
     name: 第 3 行后的 ⇧Enter
   - name: 键入第 4 行
-    do: typeInNode
-    target: { role: AXTextArea, name: "l03|l04" }
-    text: "l04"
+    do: keys
+    keys: ["l", "0", "4"]
+    gapMs: 60
   - do: key
     key: "shift+return"
     name: 第 4 行后的 ⇧Enter
   - name: 键入第 5 行
-    do: typeInNode
-    target: { role: AXTextArea, name: "l04|l05" }
-    text: "l05"
+    do: keys
+    keys: ["l", "0", "5"]
+    gapMs: 60
   - do: key
     key: "shift+return"
     name: 第 5 行后的 ⇧Enter
   - name: 键入第 6 行
-    do: typeInNode
-    target: { role: AXTextArea, name: "l05|l06" }
-    text: "l06"
+    do: keys
+    keys: ["l", "0", "6"]
+    gapMs: 60
   - do: key
     key: "shift+return"
     name: 第 6 行后的 ⇧Enter
   - name: 键入第 7 行
-    do: typeInNode
-    target: { role: AXTextArea, name: "l06|l07" }
-    text: "l07"
+    do: keys
+    keys: ["l", "0", "7"]
+    gapMs: 60
   - do: key
     key: "shift+return"
     name: 第 7 行后的 ⇧Enter
   - name: 键入第 8 行
-    do: typeInNode
-    target: { role: AXTextArea, name: "l07|l08" }
-    text: "l08"
+    do: keys
+    keys: ["l", "0", "8"]
+    gapMs: 60
   - do: key
     key: "shift+return"
     name: 第 8 行后的 ⇧Enter
   - name: 键入第 9 行
-    do: typeInNode
-    target: { role: AXTextArea, name: "l08|l09" }
-    text: "l09"
+    do: keys
+    keys: ["l", "0", "9"]
+    gapMs: 60
   - do: key
     key: "shift+return"
     name: 第 9 行后的 ⇧Enter
   - name: 键入第 10 行（内容至此超过 composer 的 max-height 150px）
-    do: typeInNode
-    target: { role: AXTextArea, name: "l09|l10" }
-    text: "l10"
+    do: keys
+    keys: ["l", "1", "0"]
+    gapMs: 60
 
   - name: 最后一次 ⇧Enter——新行必须落在视口内（HC2）
     do: key
@@ -105,11 +110,11 @@ steps:
       - label: 上部的文字行照旧有字形（对照：面板真的在渲染文字，不是空的/塌的）
         pixel:
           contrast:
-            - { x: 905, y: 707, as: "倒数第二行文字行（l10）", min: 60 }
+            - { x: 748, y: 702, as: "倒数第二行文字行（l10）", min: 60 }
       - label: 换行后光标行在视口内：composer 可视区**最下一行带是空白** = 刚断出来的空行（缺陷形态下这一带是「盒子长高但没有可渲染行」留下的幻影空白，本条是行为守卫、不区分显式滚动代码——口径见正文）
         pixel:
           same:
-            - [ { x: 905, y: 725, as: "最下一行带（新断出的空行）" }, { x: 1150, y: 725, as: "同一行带右侧空白" } ]
+            - [ { x: 748, y: 723, as: "最下一行带（新断出的空行）" }, { x: 1150, y: 723, as: "同一行带右侧空白" } ]
       - label: 十行内容逐行落地（换行真的存在，不是同行拼接）
         ax: { has: "/l09[\r\n]+l10/" }
       - shot: 01-断行后-视口在最末行
@@ -145,19 +150,36 @@ Alex 原话（2026-10-10）：「Harness composer 里换行时自动滚动到最
   chromium 探针里停用显式滚动后视口停在 max 之前 19px、正好差一行）。显式滚动本身的判据挂在
   `caretScrollTop` 的单测上（`tests/unit/harness-composer.test.ts`）；真机这条覆盖的是 Alex 报的
   症状面（「断行后最末一行要在视口里」），不是「哪份代码把它送进视口」。
-- **坐标从布局读数来**（1200×800 窗口、⌘⇧A 默认分栏）：composer 底边 y=734、行高 19.5px；
-  十行 + 一空行时倒数第二行（`l10`）的行位中心 y≈707、最下一行带（空行）中心 y≈725。
-  chromium 探针实测，逐像素可复算；真机 AX 里 composer 的包围盒 @853,561 290×144（截图像素）
-  = 窗口点 889,584 302×150，与探针逐值一致。
+- **坐标从布局读数来**（1200×800 窗口、⌘⇧A 默认分栏）：composer 底边 y=734、行高 ≈20.8；
+  十行 + 一空行时倒数第二行（`l10`）的行位中心 y≈702、最下一行带（空行）中心 y≈723。
+  **M518 重测**（换通道后真机复跑，读数落 `test-results/acceptance/2026-10-14/118-…/`）：真机 AX 里
+  composer 的包围盒 @699,561 **444**×144（截图像素）= 窗口点 728,584 462×150；截图像素逐行扫描
+  实测字形行 y=568/588/608/628/648/669（步长 20px，即窗口点 20.8），最后一行文字（`l10`）的行位中心
+  落在窗口点 701、其下的空行带 722。**旧的 x=905 已不成立**：那份读数是分栏宽 290px（窗口点左缘
+  889）时代的，M462 之后的真机分栏是 444px（左缘 728）——`l05`…`l10` 的字形横跨截图像素
+  x≈708..727（窗口点 737..757），905 落在文本右侧的空白上，于是这条对照条被**静默喂成恒空**
+  （2026-10-13 起 118 的像素对照条就是这样红的：不是产品缺陷，是坐标漂了）。新 x=748 取字形中段
+  （截图像素 718），对分栏左缘的漂移比旧的右段坐标结实。
 - **`geom` 的目标按内容定位**（`role: AXTextArea, any: "l01"`）：composer 有内容时 WKWebView 的
   AX 名称为空、值即文本，第一个 AXTextArea 是编辑器——按值定位比按序定位结实。
 - **空白带用 `same`（两点同色）**，字形带用 `contrast`（亮度跨度）——「空」要跟同一行带的
   右侧空白比，不能跟背景 token 比（后者会把底板色变化算成差异），也不能用 `not` 类文本框断言。
 
+## 注入通道（M518）
+
+- **第 1 行用 `typeInNode`**（软断行之前，caret 在空 composer 末尾，与追加语义等价）；**第 2…10 行一律
+  `do: keys`**（逐键 `press_key`）——软断行之后的素材注入不能走 `typeInNode`：它的 `type_text` 是无
+  index 的 AX 注入、不进 composer 模型，`composerObserver` 从 DOM 回灌模型时把软断行块折叠，注入的
+  行落进上一块（M514 批的现场：十行折成五块，AXTextArea 值 `l01l02\nl03l04\n…`）。M517 探针定案
+  （2026-10-14），产品级判据一字未动。键串（`l02`…`l10`）不含 'e'（`press_key` 丢键史字符，M497/M509）。
+- 本场景的几何条正对着「断行真的落地」判（十行 = 144px，缺陷形态五行 = 117px）——通道换掉之前，
+  正是折叠把这个高度判据喂成缺陷形态。
+
 ## 反向验证（2026-10-10 实测）
 
 把 `insertSoftBreakAtCaret` 临时改回缺陷形态（段末追加尾随 `\n`）后重跑本场景：几何条读到
-composer 包围盒 **290×117**（修后 290×144）、AX 条读到 `l01l02 / l03l04 / … / l09l10` 同行拼接，
+composer 包围盒 **290×117**（修后 290×144；宽度是那次运行时的分栏宽，高度才是判据——M518 的真机
+分栏已是 444px 宽）、AX 条读到 `l01l02 / l03l04 / … / l09l10` 同行拼接，
 两条红；像素两条仍绿（缺陷形态下盒子长高但没有可渲染行，最下一行带同样是空白）——因此本场景的
 覆盖声明只到「断行落地 + 最末行在视口」这一层，不声明「显式滚动代码被覆盖」。
 
