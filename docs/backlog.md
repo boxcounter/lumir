@@ -236,6 +236,7 @@
 12. **本机装有安装版 /Applications/Lumir.app：绝不按名字 `activate "Lumir"`**（agent-m508 事故，2026-10-14）：按名 activate 会经 LaunchServices 拉起安装版第二个实例，写真实配置（window-state 被覆盖、自动注册新 vault 项）。激活一律用 `System Events set frontmost of first process whose unix id is <pid>`。
 13. **KimiCU 长驻服务的 CPU 累积观察**（agent-m508，2026-10-14）：旧服务实例存活周一→周三累计 37h CPU 后被重启；未见功能受损直接证据，但批次开工前值得看一眼服务 CPU 时间，异常偏高就重注册（同第 4 条手段）。
 14. **M509 探针硬知识四条**（2026-10-14，写场景前必读）：① 空 composer 的 ⇧Enter 确定性 no-op（app 侧语义，两通道实证 20/20）——「空 composer 起步按 ⇧Enter」类判据必假红；② composer 滚动后其 AXTextArea 读数退化成滑窗（前缀漂移 + 内容重复），长 composer 上逐字节 / endsWith / 行数差判据全不可信；③ composer 焦点必须真实 mousedown（AXPress 3/3 不建 DOM 焦点，CGEvent mousedown 1/1 成）——更正 M497 finding 中「AXPress 建焦点」的表述；④ KimiCU listApps 不列新起的 lumir 实例（get_app_state 按 pid 直寻址正常），长跑批留意。指针 `.tower/comms/findings/20261014-agent-m509-improve-m509-cgevent-press-key-kimicu.md`。
+15. **起跑预检须覆盖安装版 /Applications/Lumir.app，不只 dev/调试二进制**（agent-m518，2026-10-14）：起跑自检的 pgrep 模式只盯 `target/debug/lumir` 与端口时，装版实例会漏检并挡道（占用配置/窗口通道）。装版实例**空闲 ≥10 分钟且前台是别的 app 时可优雅退出（Apple Event quit）但必须在完工报告/消息里登记**；若它正处于活跃使用（前台、近期有输入），先问 tower 再动，不自行退出。
 
 ## 批次报告索引
 
