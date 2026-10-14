@@ -1,6 +1,6 @@
 // src/vault-switcher.ts 的单测（M163）：会话过滤（预览不入盘 / 越界丢弃 / 激活项退化 /
-// 跳过计数）、装载后恢复的执行口径与世代让位、切换门的三动作状态机与「一次只处理一个切换」、
-// 行摘要与路径派生。
+// 跳过计数）、装载后恢复的执行口径与世代让位、存在探测失败的重试与恢复对账读数（M515）、
+// 切换门的三动作状态机与「一次只处理一个切换」、行摘要与路径派生。
 //
 // 这一层是 M153 的延续：本 mission 的判定（哪些条目不落盘、哪些条目不恢复、拦下后三条出口
 // 各自做什么）大多与 DOM 和渲染无关，是纯状态迁移，因此不该只靠浏览器场景间接兜底。
@@ -13,6 +13,8 @@ import type { PaneSession } from "../../src/bindings/PaneSession.ts";
 import type { VaultSession } from "../../src/bindings/VaultSession.ts";
 import type { EditorSession, ScrollSnapshot } from "../../src/editor.ts";
 import type { ToastAction, VaultSwitchBlock } from "../../src/save-controller.ts";
+import { commandError, installBackend } from "./harness.ts";
+import type { FakeBackend } from "./harness.ts";
 import { NO_MATCH_TEXT } from "../../src/list-filter.ts";
 import {
   SESSION_WRITE_DEBOUNCE_MS,
@@ -786,6 +788,141 @@ test("装载后恢复：探测失败等价于「不在 vault 内」（与只看�
   await rig.store.onVaultLoaded("vault-a", [fileEntry("a.md")]);
   assert.deepEqual(rig.shells, [{ path: "a.md", pane: 0 }]);
   assert.deepEqual(rig.toasts, [skippedText(1)]);
+});
+
+// ---------------------------------------------------------------------------
+// M515：探测失败的加固面——失败重试一次、降级留痕、恢复对账读数
+// ---------------------------------------------------------------------------
+
+/** 假后端记下的诊断读数：`slow_callback` 且读数名以 `prefix `（带空格）开头的那些，返回
+ *  name 原文供逐字断言。本模块的读数一律带负载（`<读数名> <key=value>…`），带空格的精确前缀
+ *  才不会被相邻读数名互吞（`vault_restore_probe` 与 `vault_restore_probe_retry`）。 */
+function readings(backend: FakeBackend, prefix: string): string[] {
+  return backend.logEvents
+    .filter(
+      (record) => record.event === "slow_callback" && record.fields.name.startsWith(`${prefix} `),
+    )
+    .map((record) => record.fields.name);
+}
+
+test("装载后恢复：探测首次失败重试一次，重试成功则条目照常恢复（M515）", async () => {
+  const backend = installBackend();
+  const rig = createStoreRig();
+  let attempts = 0;
+  rig.pathsExistImpl = async (paths) => {
+    attempts += 1;
+    if (attempts === 1) throw commandError("ipc_io", "后端不可用");
+    return paths.filter((path) => path === "x.jsonc");
+  };
+  rig.setGetSession(async () => sessionOf(["a.md", "x.jsonc"], "a.md"));
+  await rig.store.onVaultLoaded("vault-a", [fileEntry("a.md")]);
+
+  assert.deepEqual(rig.probes, [["x.jsonc"], ["x.jsonc"]], "同批同参重试一次（仍是一次批量 IPC）");
+  assert.deepEqual(
+    rig.shells,
+    [
+      { path: "a.md", pane: 0 },
+      { path: "x.jsonc", pane: 0 },
+    ],
+    "探测回来的条目照常建壳——不丢条目",
+  );
+  assert.deepEqual(rig.toasts, [], "没有条目被丢，跳过提示不出现");
+  assert.deepEqual(
+    readings(backend, "vault_restore_probe_retry"),
+    ["vault_restore_probe_retry count=1 err=ipc_io"],
+    "首次失败留痕：重试成功时，它是「这个窗口里探测会抖」的唯一现场证据",
+  );
+  assert.deepEqual(readings(backend, "vault_restore_probe_failed"), [], "重试成功即不记降级");
+  assert.deepEqual(readings(backend, "vault_restore_reconcile"), [
+    "vault_restore_reconcile stored=2 shells=2 skipped=0",
+  ]);
+});
+
+test("装载后恢复：两次探测都失败 → 按旧口径降级（跳过计数与 toast 不变）并留痕（M515）", async () => {
+  const backend = installBackend();
+  const rig = createStoreRig();
+  rig.pathsExistImpl = async () => {
+    throw commandError("ipc_io", "后端不可用");
+  };
+  rig.setGetSession(async () => sessionOf(["a.md", "gone.md"], "a.md"));
+  await rig.store.onVaultLoaded("vault-a", [fileEntry("a.md")]);
+
+  assert.equal(rig.probes.length, 2, "失败只重试一次，不无限重试");
+  assert.deepEqual(rig.shells, [{ path: "a.md", pane: 0 }]);
+  assert.deepEqual(rig.toasts, [skippedText(1)], "降级口径与旧行为逐字一致：跳过计数照旧");
+  assert.deepEqual(readings(backend, "vault_restore_probe_retry"), [
+    "vault_restore_probe_retry count=1 err=ipc_io",
+  ]);
+  assert.deepEqual(readings(backend, "vault_restore_probe_failed"), [
+    "vault_restore_probe_failed dropped=1 err=ipc_io",
+  ]);
+  assert.deepEqual(readings(backend, "vault_restore_reconcile"), [
+    "vault_restore_reconcile stored=2 shells=1 skipped=1",
+  ]);
+});
+
+test("装载后恢复：探测一次就成功时不留任何探测读数（读数只在失败路径上开口）", async () => {
+  const backend = installBackend();
+  const rig = createStoreRig();
+  rig.pathsExistImpl = async (paths) => paths;
+  rig.setGetSession(async () => sessionOf(["x.jsonc"], "x.jsonc"));
+  await rig.store.onVaultLoaded("vault-a", [fileEntry("a.md")]);
+
+  assert.deepEqual(rig.probes, [["x.jsonc"]], "零失败即零重试");
+  assert.deepEqual(readings(backend, "vault_restore_probe_retry"), []);
+  assert.deepEqual(readings(backend, "vault_restore_probe_failed"), []);
+  assert.deepEqual(
+    readings(backend, "vault_restore_reconcile"),
+    ["vault_restore_reconcile stored=1 shells=1 skipped=0"],
+    "对账读数是每次恢复一条（稳态也留）",
+  );
+});
+
+test("装载后恢复：探测首次失败且世代已翻 → 不再发第二次探测（让位优先，M515）", async () => {
+  const backend = installBackend();
+  const rig = createStoreRig();
+  // 闸门：**只**把第一次探测挂在在途态（好让测试在它返回之前切走 vault）。第二次探测立刻
+  // 失败——让位守卫若被删掉，本例是干净地断言失败（attempts=2），不是挂死在这里。
+  const gate: { open: () => void } = { open: () => {} };
+  let attempts = 0;
+  rig.pathsExistImpl = async () => {
+    attempts += 1;
+    if (attempts === 1) {
+      await new Promise<void>((resolve) => {
+        gate.open = () => resolve();
+      });
+    }
+    throw commandError("ipc_io");
+  };
+  rig.setGetSession(async (vaultId) =>
+    vaultId === "vault-a" ? sessionOf(["a.md", "gone.md"], "a.md") : null,
+  );
+  const first = rig.store.onVaultLoaded("vault-a", [fileEntry("a.md")]);
+  await flush(); // 第一次探测在途
+  await rig.store.onVaultLoaded("vault-b", [fileEntry("b.md")]); // 用户已抢到别的 vault
+  gate.open();
+  await first;
+
+  assert.equal(attempts, 1, "让位的那次不再发第二次探测");
+  assert.deepEqual(rig.shells, [], "被让位的那次连壳都不许建");
+  assert.deepEqual(readings(backend, "vault_restore_probe_retry"), []);
+});
+
+test("装载后恢复：对账读数在正常收口与空态回落两条路径上各一条（M515）", async () => {
+  const backend = installBackend();
+  const rig = createStoreRig();
+
+  rig.setGetSession(async () => sessionOf(["a.md", "b.md"], "a.md"));
+  await rig.store.onVaultLoaded("vault-a", [fileEntry("a.md"), fileEntry("b.md")]);
+
+  rig.setGetSession(async () => sessionOf(["gone.md"], "gone.md"));
+  await rig.store.onVaultLoaded("vault-b", [fileEntry("c.md")]);
+
+  assert.deepEqual(readings(backend, "vault_restore_reconcile"), [
+    "vault_restore_reconcile stored=2 shells=2 skipped=0",
+    "vault_restore_reconcile stored=1 shells=0 skipped=1",
+  ]);
+  assert.deepEqual(rig.toasts, [skippedText(1)], "空态回落那条的跳过计数不变");
 });
 
 test("装载后恢复：没有历史或全部不可用 → 空 vault 首入态（不建任何壳）", async () => {
