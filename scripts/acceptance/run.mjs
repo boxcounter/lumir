@@ -454,7 +454,8 @@ async function main() {
     let fgNote = "";
     let out;
     // 本场景启动是否有会话恢复段（M516）：决定两次启动（首启 / `restart`）要不要先等恢复跑完
-    // 再钉窗。见 seedHasRestoredTabs 与 drive.mjs 的 waitStartupRestore。
+    // 再钉窗。判据是**静态 seed**，因此 `restart` 那一段只覆盖 seed 带标签的场景——边界与理由
+    // 写在 restartApp 内的注释里。见 seedHasRestoredTabs 与 drive.mjs 的 waitStartupRestore。
     const restoreTabsAtStartup = seedHasRestoredTabs(scenario.seed);
     // 基建阶段标记：这一段里任何异常都说明「实例没起来 / 环境不可用」——整场判 INVALID（退出码
     // 2），不按产品判红记（退出码 1）。越过 `runScenario` 之后，异常才是场景自己的事。
@@ -553,7 +554,13 @@ async function main() {
           // requireVault: false = 本步期待「未打开空态」（如 last_vault 失效），就绪门放宽为
           // 「树 pane 任一形态 + 编辑器在位」。默认仍是严格门（树里有 .md 行）。
           await waitAppReady(cu, handle.pid, { requireVault });
-          // M516：重启路径同口径——恢复段（重启恢复的是本场景前半段写回的会话）跑完再钉窗。
+          // M516：这一段的路由判据是 `restoreTabsAtStartup`（见上，**静态 seed**），所以门只覆盖
+          // **seed 带会话标签**的场景。首启那一段语义完整；重启这一段有已知边界：前半程自己写
+          // 出会话、再 `do: restart` 的场景（10 个带 `restart` 的场景里 9 个属此类，如
+          // `28-remember-reading-position`）seed 里没有 tabs，门不触发 ⇒ 这些场景重启后**仍可能
+          // 把钉窗落进恢复窗口**。按「不做动态分流」收口：这是排序纪律不是任何已知失败的成因
+          // （见 drive.mjs 的 waitStartupRestore），观测无影响；要覆盖它得在重启前回读当前会话
+          // （动态判据），属后续候选，不在本 mission。
           let restoreNote2 = "";
           if (restoreTabsAtStartup) {
             const restore2 = await waitStartupRestore(cu, handle.pid);
