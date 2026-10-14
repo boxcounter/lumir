@@ -156,6 +156,68 @@ function assertOverlayChrome(ax) {
   }
 }
 
+/** 标签条里已建壳的标签数（M516）：把每个 `AXTabGroup` 子树里的 `AXRadioButton` 数加起来。
+ *
+ *  用结构判据而不是场景断言的读屏名「关闭 <名>」：那串文案随语言面漂（与 `waitAppReady` 的
+ *  LANG_PATTERNS 同因），而「标签 = AXTabGroup 下的 AXRadioButton」是 dump 上复核过的结构事实
+ *  ——M511 的 49 号证据（`test-results/acceptance/2026-10-14-m511/`）里，43 个标签的那份 dump
+ *  恰 43 个 AXRadioButton，空 vault（B 侧）的 dump 里 0 个；本仓库里 AXRadioButton 的 label
+ *  也全是标签名（2026-10-14-full 全量 dump 复核）。
+ *
+ *  **逐组求和**而不是只看第一组：分栏场景两个 pane 各有一条标签条（场景 80 实测两组
+ *  `AXTabGroup (打开的文档)`），只看第一组会把读数报小——`> 0` 的判据不受影响，但证据行里的
+ *  数字会与场景自己的标签数断言对不上。子树边界按 `depth` 取。
+ *
+ *  读不到 `AXTabGroup` 返回 0（与「0 个标签」同形）——唯一的调用方 `waitStartupRestore` 判的
+ *  是「> 0」，两种情形在它的判据里等价（都表示「恢复段还没落地」）。 */
+export function restoredTabCount(nodes) {
+  let count = 0;
+  for (let i = 0; i < nodes.length; i += 1) {
+    if (nodes[i].role !== "AXTabGroup") continue;
+    const depth = nodes[i].depth;
+    for (let j = i + 1; j < nodes.length; j += 1) {
+      if (nodes[j].depth <= depth) break;
+      if (nodes[j].role === "AXRadioButton") count += 1;
+    }
+  }
+  return count;
+}
+
+/** 等**启动会话恢复**跑完：标签条出现标签且读数不变（M516）。
+ *
+ *  **它挡的是什么**：套件在就绪门之后要经 AXSize **写**窗口尺寸（M491 的钉尺寸），而产品在
+ *  就绪门那一刻的启动还没走完——`applyVault`（`src/main.ts:2769-2840`）先
+ *  `emitReadiness("vault-ready")`（`:2792`）与 `tree.setVault`（`:2813`）**再**起
+ *  `void switcher.onVaultLoaded(...)`（`:2836`）的会话恢复段，恢复段的批量存在探测
+ *  （`vault-switcher.ts:592-598` 的 `fs_paths_exist`）与建壳都在这一段里。窗口写落进别人
+ *  的启动段里是实打实的排序隐患，本门把它排开：恢复段跑完再碰窗口。
+ *
+ *  **门的位置不能前移到 `vault-ready` / vault 入口节点**：那两个信号都在恢复段**之前**出现
+ *  （同上一段），按它们放行等于没等。本门等的是恢复段自己的终态——壳是**同一帧**批量建出来
+ *  的（`vault-switcher.ts` 的 `plans` 之后同步建壳，M283 起「所有标签一次回来」就是这条
+ *  契约），标签数是 0 → N 的跳变、没有中间态；读到 `> 0` 再确认一次不变，即证明恢复段已越过
+ *  那次探测。超时**不抛错**（返回 `settled: false` + 最后读数）：恢复为空或产品真丢了标签时，
+ *  判定权在场景自己的断言，不在这里发明失败类别。
+ *
+ *  **边界（M516 实测，写进证据以免后人重走）**：本门**不是** 场景 49「3 个非 md 标签丢失」
+ *  的修复——那次丢标签的真因是套件把场景 fixture 拷进 vault 的时机晚于 app 启动（见 run.mjs
+ *  起 app 之前那一句），与 AX 活动无关：M516 的对照实验（启动后 10s 内**零** AX 活动）同一
+ *  vault 同样丢成 43/46。这里的排序门照留——钉窗是写、恢复段是别人的启动流程，顺序本来就该
+ *  是这样，顺带把「恢复出多少标签」记进证据行。 */
+export async function waitStartupRestore(cu, pid, { timeoutMs = 15_000, everyMs = 400 } = {}) {
+  const started = Date.now();
+  const deadline = started + timeoutMs;
+  let prev = -1;
+  for (;;) {
+    const ax = await readAx(cu, pid);
+    const tabs = restoredTabCount(ax.nodes);
+    if (tabs > 0 && tabs === prev) return { tabs, settled: true, ms: Date.now() - started };
+    prev = tabs;
+    if (Date.now() >= deadline) return { tabs, settled: false, ms: Date.now() - started };
+    await sleep(everyMs);
+  }
+}
+
 export async function clickNode(cu, pid, { role, name, nth = 0, needNode = true }) {
   const ax = await readAx(cu, pid);
   const node = findNode(ax.nodes, { role, name, nth });
