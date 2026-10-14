@@ -45,10 +45,15 @@ steps:
     do: key
     key: "shift+return"
 
+  # M518：⇧Enter 之后的素材注入改走 keys（逐键 press_key），不再用 typeInNode——M517 探针定案
+  # （2026-10-14）：typeInNode 走的 type_text 是无 index 的 AX 注入，不进 composer 模型；软断行
+  # 之后 composerObserver 从 DOM 回灌模型时把软断行块折叠掉，注入文本因此落点错位（README 的
+  # typeInNode 条本就写明：caret 由键盘导航定位、落点即判据的步骤不适用）。键串全为可打印字符
+  # 且不含 'e'（press_key 丢键史字符，M497/M509）。
   - name: 键入第二行
-    do: typeInNode
-    target: { role: AXTextArea, name: "hnl-brk-aa|hnl-brk-cd" }
-    text: "hnl-brk-cd"
+    do: keys
+    keys: ["h", "n", "l", "-", "b", "r", "k", "-", "c", "d"]
+    gapMs: 60
     expect:
       - label: 第二行落在**下一行的行位**上有字形（像素层判据：y≈723 是第二行；修前这一带是空白——那一次 ⇧Enter 只写进了不可见的尾随换行）
         pixel:
@@ -83,9 +88,11 @@ steps:
     key: "shift+return"
 
   - name: 键入第三行（探针串）
-    do: typeInNode
-    target: { role: AXTextArea, name: "hnl-brk-cd|hnl-brk-ee" }
-    text: "hnl-brk-ee"
+    # M518：同走 keys。探针串由 `hnl-brk-ee` 改为 `hnl-brk-gg`——原串含 'e'（press_key 确定性
+    # 丢键史字符，M497/M509），改字符不改语义（判据仍是「探针串另起一行、不接在 cd 行首」）。
+    do: keys
+    keys: ["h", "n", "l", "-", "b", "r", "k", "-", "g", "g"]
+    gapMs: 60
     expect:
       - label: 第二行（hnl-brk-cd）**没有被挤下去**（像素：y≈702 有字形——三行态下这是第二行）。缺陷形态下那一带是**空白**：`\n` 被插到末段文本第 0 位，cd 整行被挤到下一行
         pixel:
@@ -94,11 +101,11 @@ steps:
       - label: 对照：探针串落在**新的一行**（y≈723 有字形——三行态第三行；防「换行把字挤没了」的空转读数）
         pixel:
           contrast:
-            - { x: 780, y: 723, as: "第三行行位（hnl-brk-ee 的字形）", min: 60 }
+            - { x: 780, y: 723, as: "第三行行位（hnl-brk-gg 的字形）", min: 60 }
       - label: AX：探针串另起一行接在第二行之后（换行 = 新空段落块落在末行之后）
-        ax: { has: '/hnl-brk-cd[\r\n]+hnl-brk-ee/' }
+        ax: { has: '/hnl-brk-cd[\r\n]+hnl-brk-gg/' }
       - label: 缺陷签名串不在场（探针串接在 `cd` **行首** = 空行插到了当前行之前）
-        ax: { not: "hnl-brk-eehnl-brk-cd" }
+        ax: { not: "hnl-brk-gghnl-brk-cd" }
       - shot: 02-末行行末shift-enter-新行落在末行之后
 ---
 
@@ -135,11 +142,11 @@ Alex 原话（2026-10-10）：「Harness composer 里按两次 SHIFT + Enter 才
 真机可观测回路（接着上面的两行往下做）：
 
 5. `⌃A`（到末行行首）→ `⌃E`（到末行行末 = 归一表示，缺陷形态在这一档可达）→ 一次 ⇧Enter →
-   键入 `HNL-BRK-EE`。
+   键入 `HNL-BRK-GG`（M518 前是 `HNL-BRK-EE`，因原串含 'e' 而改名，见下）。
 6. **像素层**：第二行行位（y≈702）**仍有字形**（`hnl-brk-cd` 没被挤下去）。缺陷形态下那一带
    是空白——空行被插到了它**前面**、整行文字下移一行 ⇒ 该条红。
-7. **AX 层**：`hnl-brk-cd` 与 `hnl-brk-ee` 之间有换行（新空段落块落在末行之后）；缺陷签名串
-   `hnl-brk-eehnl-brk-cd`（探针串接在 `cd` 行首）不在场。
+7. **AX 层**：`hnl-brk-cd` 与 `hnl-brk-gg` 之间有换行（新空段落块落在末行之后）；缺陷签名串
+   `hnl-brk-gghnl-brk-cd`（探针串接在 `cd` 行首）不在场。
 8. 反面对照：第三行行位（y≈723）有字形——防「换行把字挤没了」的空转读数。
 
 ## 断言口径
@@ -172,11 +179,21 @@ Alex 原话（2026-10-10）：「Harness composer 里按两次 SHIFT + Enter 才
   光标停到该表示的路径（⌃E 从行内到行末会把等价值写回 DOM）。这一段同时是 HC4 与 HC1 的**接口
   回归**：导航写回的光标位必须能被编辑动词读懂。
 - **AX 在这一段是主判据、像素是判「行位没被挤动」的那条**：`contrast` 判的是「这一带有字形」，
-  而三行态**第三行（y≈723）**在缺陷形态（`ee` 与 `cd` 挤在同一行）与修后（`ee` 自成一行）下
+  而三行态**第三行（y≈723）**在缺陷形态（`gg` 与 `cd` 挤在同一行）与修后（`gg` 自成一行）下
   **各自都有字形**——它只防「字被挤没」的空转；真正有区分度的是**第二行（y≈702）**那条（修后
-  `cd` 在、缺陷是空行），而它只覆盖「`cd` 被挤下去」这一半，另一半（`cd` 与 `ee` 是否同一行）
-  只有 AX 的分层串能判：`/hnl-brk-cd[\r\n]+hnl-brk-ee/` 命中 + `hnl-brk-eehnl-brk-cd` 不在场。
+  `cd` 在、缺陷是空行），而它只覆盖「`cd` 被挤下去」这一半，另一半（`cd` 与 `gg` 是否同一行）
+  只有 AX 的分层串能判：`/hnl-brk-cd[\r\n]+hnl-brk-gg/` 命中 + `hnl-brk-gghnl-brk-cd` 不在场。
   两条一起才是完整判据，缺一不可。
+
+## 注入通道（M518）
+
+- **⇧Enter 之后的素材注入走 `do: keys`**（逐键 `press_key`），第一行（软断行之前）仍是 `typeInNode`。
+  来历（M517 探针，2026-10-14）：`typeInNode` 的 `type_text` 是 AX 注入、不进 composer 模型，
+  软断行之后 `composerObserver` 从 DOM 回灌模型时把软断行块折叠，注入文本落点错位——这三个场景
+  因此违反 README 的 `typeInNode` 条既有口径（「caret 由键盘导航定位、落点即判据的步骤不适用」）。
+  不迁 CGEvent（对本族无收益，M517 裁决），产品级判据（第二行落在新块）一字未动。
+- **探针串不含 'e'**：第三个探针串由 `hnl-brk-ee` 改名 `hnl-brk-gg`（'e' 是 `press_key` 的
+  确定性丢键史字符，M497/M509——服务健康时不复现，但探针串本就任选，绕开它是零成本的）。
 
 ## 环境与副作用
 

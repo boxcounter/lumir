@@ -61,10 +61,15 @@ steps:
     do: key
     key: "shift+return"
 
+  # M518：⇧Enter 之后的素材注入改走 keys（逐键 press_key），不再用 typeInNode——M517 探针定案
+  # （2026-10-14）：typeInNode 的 type_text 是 AX 注入、不进 composer 模型，软断行之后
+  # composerObserver 从 DOM 回灌模型时把软断行块折叠掉，注入落点错位（README 的 typeInNode 条本就
+  # 写明：caret 由键盘导航定位、落点即判据的步骤不适用）。本步键串不含 'e'（丢键史字符，M497/M509）。
+  # 第一行（软断行之前）仍走 typeInNode：注入时 caret 在空 composer 末尾，与追加语义等价。
   - name: 键入第二行
-    do: typeInNode
-    target: { role: AXTextArea, name: "hnl-brk-aa|hnl-brk-cd" }
-    text: "hnl-brk-cd"
+    do: keys
+    keys: ["h", "n", "l", "-", "b", "r", "k", "-", "c", "d"]
+    gapMs: 60
 
   - name: ⇧Enter（第二行之后落末尾空行——光标停在空行行首 = 待验位置）
     do: key
@@ -148,9 +153,13 @@ Alex 原话（2026-10-12）：「当我把光标放在末行行首，按 Ctrl+B�
   - 修前那次 ⌃B 落 `(i, len-1)` ⇒ 探针串夹在末尾两字符之间（`hnl-brk-cxqzkd`）；
   - 修前 ⌃F 从段末落到「末尾之后」⇒ 往返后探针串另起一行；
   - 「接在上一行行末」这条是正向签名，与上面的负向签名互为反向验证。
-- **本场景全程只用 `keys` 注入**（不碰原生菜单 Paste）——134 / 141 / 150 的注入阻塞来自
-  「原生菜单粘贴之后 CGEvent 逐键确定性死亡」（`docs/backlog.md` 的验收套件注入通道条），
-  本场景不经过那条路径，因此真机可跑（同场景 117 的 M462 段）。
+- **注入通道（M518）**：第一行（软断行之前）用 `typeInNode`，⇧Enter 之后的两行文本与两个探针串
+  一律 `do: keys`（逐键 `press_key`）。软断行之后的素材注入不能走 `typeInNode`——它的 `type_text`
+  是 AX 注入、不进 composer 模型，`composerObserver` 从 DOM 回灌时把软断行块折叠，落点错位
+  （M517 探针定案；README 的 `typeInNode` 条本就写明「caret 由键盘导航定位、落点即判据的步骤不适用」）。
+  **全程不碰原生菜单 Paste**——134 / 141 / 150 的注入阻塞来自「原生菜单粘贴之后 CGEvent 逐键确定性
+  死亡」（`docs/backlog.md` 的验收套件注入通道条），本场景不经过那条路径，因此真机可跑
+  （同场景 117 的 M462 段）。
 
 ## 已知边界（如实登记）
 
