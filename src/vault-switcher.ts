@@ -40,6 +40,8 @@ import type { EditorSession, ScrollSnapshot } from "./editor";
 import { keyToken } from "./keys";
 import { FILTER_LABEL, FILTER_PLACEHOLDER, NO_MATCH_TEXT, createListFilter } from "./list-filter";
 import { errorText, formatRelative, t, tPlural } from "./copy";
+// 诊断读数出口（见本文件 diagnostics）：前端唯一的日志通道，落盘在 Rust 侧。
+import { logEvent } from "./diagnostics";
 import type { ListFilter } from "./list-filter";
 // pane 数上限与比例缺省取自 pane 模块的单一来源（REVIEW.md 第 8 条）：本模块不另抄一份。
 import { DEFAULT_SPLIT_RATIO, MAX_PANES } from "./pane-layout";
@@ -456,7 +458,8 @@ export interface VaultSessionStoreDeps {
    *
    *  存在探测而不是「在枚举集合里」的原因见 [`restorePlan`]；**批量**而不是逐条是因为候选数
    *  不小（会话条目数），逐条走 IPC 会把 N 次往返叠在装载路径上。MUST NOT 逐条发起。
-   *  探测失败（后端不可用等）按「都不存在」处置——与只看枚举集合的旧行为一致。 */
+   *  探测失败（后端不可用等）由调用方按「都不存在」处置——与只看枚举集合的旧行为一致；
+   *  M515 起先在调用方**重试一次**再降级，并留一条诊断读数（见 [`restore`] 的探测段）。 */
   pathsExist(paths: string[]): Promise<string[]>;
   /** 为会话里的一个条目**建壳**（M283，change vault-switch-restore-perf 的 3.1/3.2）：同步、
    *  当帧，产出「有路径、内容未装载」的标签，落在第 `pane` 个 pane（M318：按 pane 恢复）。
@@ -508,6 +511,28 @@ export interface VaultSessionStore {
   onVaultLoaded(vaultId: string, entries: readonly FsEntry[]): Promise<void>;
 }
 
+/** 本模块的诊断读数出口。事件名与字段白名单的唯一来源是 `src-tauri/src/logging.rs`；前端
+ *  「不新增事件」的现成通道是它给读数留的那条 `slow_callback`（白名单就是 name / ms，与
+ *  `src/main.ts` 的 phaseMs、`src/toc.ts` 的 sampleCallback 同款）——加一个新事件要动 Rust
+ *  侧与 ts-rs 导出面，不在本 mission 的改动面里。因此读数名与它的负载编在同一个 `name` 里：
+ *  `<读数名> <key=value>…`（读法 `grep vault_restore_ <config>/lumir/logs/*.jsonl`），
+ *  `ms` 是这段动作的真实耗时。负载 MUST NOT 带路径或文件名原文（隐私边界与 logging.rs 同
+ *  口径：只记计数与**分类后**的错误码）。 */
+function diagnostics(name: string, startedAt: number): void {
+  logEvent("slow_callback", { name, ms: (performance.now() - startedAt).toFixed(1) });
+}
+
+/** 探测失败的**分类**错误码（不记原文：后端错误文本可能带上路径）。截断只为保证整条读数
+ *  不因超长的值被白名单拒掉——被拒掉又是一次静默丢失，而这条读数的存在理由正是「不再静默」。 */
+function probeErrorCode(e: unknown): string {
+  const code = typeof e === "object" && e !== null ? (e as { code?: unknown }).code : undefined;
+  return typeof code === "string" ? code.slice(0, 64) : "unknown";
+}
+
+/** 批量存在探测的一次尝试：成功给「确实存在」的那些路径，失败给分类后的错误码。
+ *  失败不抛——重试与降级的处置归调用方（`restore` 的探测段）。 */
+type ProbeAttempt = { ok: true; paths: string[] } | { ok: false; code: string };
+
 /** 会话存储：无 DOM，可脱离浏览器单测（防抖窗口 / flush 时机 / 恢复的过滤与跳过）。 */
 export function createVaultSessionStore(deps: VaultSessionStoreDeps): VaultSessionStore {
   /** 写盘的键：当前 vault 的稳定 id。没有它（启动早期）时一切写操作都是 no-op。 */
@@ -541,7 +566,17 @@ export function createVaultSessionStore(deps: VaultSessionStoreDeps): VaultSessi
     }
   }
 
+  /** 批量存在探测的一次尝试（M515）：失败不抛，转成分类错误码交给调用方处置（重试 / 降级）。 */
+  async function probePaths(paths: readonly string[]): Promise<ProbeAttempt> {
+    try {
+      return { ok: true, paths: await deps.pathsExist([...paths]) };
+    } catch (e) {
+      return { ok: false, code: probeErrorCode(e) };
+    }
+  }
+
   async function restore(vaultId: string, gen: number, entries: readonly FsEntry[]): Promise<void> {
+    const restoreStartedAt = performance.now();
     let session: VaultSession | null = null;
     try {
       session = await deps.getSession(vaultId);
@@ -581,18 +616,38 @@ export function createVaultSessionStore(deps: VaultSessionStoreDeps): VaultSessi
     const hasStoredLayout = session !== null;
     // 不在枚举集里的条目先过一次**批量**存在探测：惰性条目（被 vault 自己的忽略声明挡住、
     // 因而未进枚举）同样是 vault 内文件，在文件树里可见可打开（spec「装载后恢复标签列表」）。
-    // 探测是**一次**、跨全部 pane 合并发起（MUST NOT 逐 pane / 逐条）。探测是新的 await，之后
-    // 必须**再查一次世代**——用户可能在探测途中切走，那次恢复的结果整体作废。
-    const missing = stored
-      .slice(0, paneCount)
-      .flatMap((pane) => pane.tabs)
-      .filter((path) => !available.has(path));
+    // 探测是**批**语义、跨全部 pane 合并发起（MUST NOT 逐 pane / 逐条）。探测（含失败后的那次
+    // 重试）都是新的 await，之后必须**再查一次世代**——用户可能在探测途中切走，那次恢复的结果
+    // 整体作废。
+    const considered = stored.slice(0, paneCount).flatMap((pane) => pane.tabs);
+    const missing = considered.filter((path) => !available.has(path));
     let present = new Set<string>();
     if (missing.length > 0) {
-      try {
-        present = new Set(await deps.pathsExist(missing));
-      } catch {
-        present = new Set(); // 探测失败等价于「都不在 vault 内」（与只看枚举集合时同结果）
+      const probeStartedAt = performance.now();
+      // 探测失败**重试一次**再降级（M515）：旧口径把一次失败静默当成「都不在 vault 内」——
+      // 探测在启动恢复窗口里抖一下（M513 场景 49 的实测现场）就无声丢掉恢复条目，无重试、
+      // 无告警、无日志。重试同批同参、不放大探测面（仍是一次批量 IPC），只在失败路径上多
+      // 一次往返。
+      let attempt = await probePaths(missing);
+      if (!attempt.ok) {
+        // 世代复查：重试是又一个新的 await，用户可能已经切走——让位时不再发第二次探测。
+        if (gen !== restoreGen) return;
+        // 首次失败**留痕**：重试成功时，这一行正是「这个窗口里探测会抖」的唯一现场证据。
+        diagnostics(
+          `vault_restore_probe_retry count=${missing.length} err=${attempt.code}`,
+          probeStartedAt,
+        );
+        attempt = await probePaths(missing);
+      }
+      if (attempt.ok) {
+        present = new Set(attempt.paths);
+      } else {
+        // 两次都失败：降级口径与旧行为逐字一致（按「都不存在」处置，跳过计数与 toast 不变），
+        // 但这一次留下读数——「丢了几条、什么错」不再只能靠猜。
+        diagnostics(
+          `vault_restore_probe_failed dropped=${missing.length} err=${attempt.code}`,
+          probeStartedAt,
+        );
       }
       if (gen !== restoreGen) return;
     }
@@ -602,7 +657,19 @@ export function createVaultSessionStore(deps: VaultSessionStoreDeps): VaultSessi
     }
     const openCount = plans.reduce((n, plan) => n + plan.open.length, 0);
     const storedSkipped = plans.reduce((n, plan) => n + plan.skipped, 0);
+    // 恢复对账读数（M515）：`stored` 是本次恢复**考虑过**的存储条目数，`shells` 是真建成壳的
+    // 数——两者不等就是「会话里有 N 条、标签栏只有 M 条」，M513 场景 49 的现场（46 stored /
+    // 43 shells）靠这一行直接读出，不必再从标签栏或盘侧会话反推。三处收口各记一条（正常收口 +
+    // 两条空态回落），「一条都没恢复出来」也有读数。不设阈值：恢复是低频动作，而「日志里没有
+    // 这一行」与「这一段没跑」不可区分（同 M283 给恢复段 phaseMs 的 always 口径）。
+    const reconcile = (shells: number, skipped: number): void => {
+      diagnostics(
+        `vault_restore_reconcile stored=${considered.length} shells=${shells} skipped=${skipped}`,
+        restoreStartedAt,
+      );
+    };
     if (openCount === 0) {
+      reconcile(0, storedSkipped);
       // 全部条目都不在 vault 内（或本来就没有历史）：**单 doc pane** 空 vault 首入态——不建任何壳，
       // 标签栏因此隐藏（MUST NOT 伪造内容）；上一 vault 留下的分栏拓扑也在这里收拢回 root。
       // harness pane 不受「零可开条目」影响（它本就是空会话面板）——在场与否照存储恢复。
@@ -629,6 +696,7 @@ export function createVaultSessionStore(deps: VaultSessionStoreDeps): VaultSessi
       // 条目都在 vault 里、却一个壳都建不成（不可打开的文件类）：同样回落**单 doc pane** 空态。
       deps.applyPaneCount(1, ratio, harnessPane, hasStoredLayout);
       const skipped = storedSkipped + (openCount - shellCount);
+      reconcile(0, skipped);
       if (skipped > 0) deps.toast(skippedText(skipped));
       deps.onEmptyVault();
       return;
@@ -669,6 +737,7 @@ export function createVaultSessionStore(deps: VaultSessionStoreDeps): VaultSessi
     // 一次计数提示：不在 vault 的条目 + 建不成壳的 + 内容装载失败过的那几个（MUST NOT 逐个报错，
     // 也 MUST NOT 因为内容推迟装载而推迟或消失）。退化循环里**失败过的每一次**都计入。
     const skipped = storedSkipped + (openCount - shellCount) + failed;
+    reconcile(shellCount, skipped);
     if (skipped > 0) deps.toast(skippedText(skipped));
     if (loadedCount === 0) {
       // 一个都没装载成功：标签栏里留着的壳是**合法**的会话条目（路径确实来自会话，只是内容
