@@ -67,6 +67,7 @@ finding 上报）。替代方案是 tsc 预编译成 CJS 再打补丁替换模�
 | `register.mjs` | 用 `node --import` 挂上解析钩子 |
 | `hooks.mjs` | 解析钩子：无扩展名的相对导入按 `.ts` 再解析一次 |
 | `harness.ts` | 测试替身：假 Tauri 后端（`window.__TAURI_INTERNALS__`）、假 toast 挂载点、假 `EditorHandle` |
+| `syntax-tree.ts` | 「拿到覆盖整篇的语法树快照」的共享 helper（`completeTree`）——读语法树的用例一律先过它 |
 | `*.test.ts` | 用例 |
 | `node-env.d.ts` | 用到的 Node API 的环境声明 |
 | `tsconfig.json` | `tsc --noEmit` 的类型防线（`gate.sh` 的 `tsc-unit`） |
@@ -79,6 +80,10 @@ reject，避免「测试没实现的命令」变成静默怪现象。
 ## 纪律
 
 - 新增纯逻辑先在这里补断言：这一层的价值是「秒级、可复现、坏了一看就懂」，不是覆盖率数字。
+- **读语法树的用例先过 `completeTree`（`syntax-tree.ts`）**：`syntaxTree(state)` 读的是 state
+  构造时定格的 **field 快照**，而初始解析只有 20ms 墙钟预算；机器有负载（多 worktree 并发）时
+  快照残缺，`ensureSyntaxTree(...) !== null` 这条守卫守的是另一棵树（context），既造成假红，
+  又让「MUST NOT 命中」类负向断言因节点缺失而假绿。坑的完整说明与确定性读数见该文件头。
 - 三个 `.mjs`（runner 与钩子）不参与 `tsc`（`checkJs` 关）：它们的正确性由「每次门禁都真的
   跑它」承担，不靠声明文件。
 - 类型剥离只认**可擦除语法**：`enum`、构造函数参数属性之类会在运行期直接抛

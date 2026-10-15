@@ -24,13 +24,15 @@ import { GFM } from "@lezer/markdown";
 import { bareListMarkerLine } from "../../src/preview/lists.ts";
 import { enterWithAutoIndent, swallowNativeListBeforeInput } from "../../src/enter-indent.ts";
 import type { EditorMode } from "../../src/bindings/EditorMode.ts";
+import { completeTree } from "./syntax-tree.ts";
 
 /** 与生产同一份解析配置（src/editor.ts 的 md 模式）。 */
 const MD: Extension[] = [markdown({ base: markdownLanguage, extensions: [GFM] })];
 
-/** 对 doc 的第 lineNumber 行跑生产判定；返回可断言的扁平形态（null = 非裸 marker 行）。 */
+/** 对 doc 的第 lineNumber 行跑生产判定；返回可断言的扁平形态（null = 非裸 marker 行）。
+ *  先过 `completeTree`：`bareListMarkerLine` 吃的是 `syntaxTree` 快照（见 `syntax-tree.ts`）。 */
 function detect(doc: string, lineNumber: number) {
-  const state = EditorState.create({ doc, extensions: MD });
+  const state = completeTree(EditorState.create({ doc, extensions: MD }));
   const line = state.doc.line(lineNumber);
   const hit = bareListMarkerLine(syntaxTree(state), state.doc, line);
   if (hit === null) return null;
@@ -49,9 +51,10 @@ function detect(doc: string, lineNumber: number) {
 /**
  * 生产 Enter 命令体的假 view 驱动（与 tests/unit/enter-indent.test.ts 的 pressEnterAt
  * 同源）：真 EditorState + 真 parser，光标落在 pos；返回命令跑完后的全文与光标。
+ * 状态先过 `completeTree`——`enterBareMarkerLine` 读 `syntaxTree` 快照（见 `syntax-tree.ts`）。
  */
 function pressEnterAt(doc: string, pos: number, mode: EditorMode = "md") {
-  const state = EditorState.create({ doc, extensions: MD, selection: EditorSelection.cursor(pos) });
+  const state = completeTree(EditorState.create({ doc, extensions: MD, selection: EditorSelection.cursor(pos) }));
   let next = state;
   let dispatches = 0;
   const view = {
@@ -208,11 +211,11 @@ test("Enter：真实解析的列表项路径行为不被本 change 改动（空�
 
 test("Enter：只读会话里裸 marker 行 MUST NOT 产生文档变更", () => {
   const doc = "para\n1. ";
-  const state = EditorState.create({
+  const state = completeTree(EditorState.create({
     doc,
     extensions: [...MD, EditorState.readOnly.of(true)],
     selection: EditorSelection.cursor(doc.length),
-  });
+  }));
   let next = state;
   const view = {
     state,

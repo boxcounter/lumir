@@ -24,14 +24,17 @@ import { GFM } from "@lezer/markdown";
 import { history, undo } from "@codemirror/commands";
 import { listIndentChange } from "../../src/list-indent.ts";
 import type { ListIndentDirection } from "../../src/list-indent.ts";
+import { completeTree } from "./syntax-tree.ts";
 
 const MD = [markdown({ base: markdownLanguage, extensions: [GFM] })];
 
-/** 真 EditorState + 真 markdown 解析器，光标落在 `needle` 首次出现处（+ offset）。 */
+/** 真 EditorState + 真 markdown 解析器，光标落在 `needle` 首次出现处（+ offset）。
+ *  先过 `completeTree`：被测的 `listIndentChange` 读语法树快照，机器有负载时快照会残缺
+ *  （见 `syntax-tree.ts` 的文件头）。 */
 function stateAt(doc: string, needle: string, offset = 0): EditorState {
   const at = doc.indexOf(needle);
   assert.ok(at >= 0, `fixture 里找不到 ${JSON.stringify(needle)}`);
-  return EditorState.create({ doc, extensions: MD }).update({ selection: { anchor: at + offset } }).state;
+  return completeTree(EditorState.create({ doc, extensions: MD })).update({ selection: { anchor: at + offset } }).state;
 }
 
 /** 一次平移后的文档全文；命令无操作（不 dispatch）时返回 null——与「动完正好等于原样」区分开。 */
@@ -156,7 +159,7 @@ test("D2c 不越界：任务标记、标记字符、列表之外的行逐字节�
 
 test("平移是单次 dispatch：一次 undo 还原整次平移（含子树与编号重排）", () => {
   const doc = "1. a\n2. b\n3. c\n4. d\n";
-  let state = EditorState.create({ doc, extensions: [...MD, history()] }).update({
+  let state = completeTree(EditorState.create({ doc, extensions: [...MD, history()] })).update({
     selection: { anchor: doc.indexOf("3. c") + 2 },
   }).state;
   const edit = listIndentChange(state, "indent");

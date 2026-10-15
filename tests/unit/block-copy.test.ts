@@ -17,7 +17,8 @@ import { GFM } from "@lezer/markdown";
 import { blockCopyText, codeBlockContentAt } from "../../src/preview/block-copy.ts";
 import type { BlockCopyRange } from "../../src/preview/block-copy.ts";
 import { fullscreenTableAt, findTables } from "../../src/preview/table.ts";
-import { ensureSyntaxTree } from "@codemirror/language";
+import { syntaxTree } from "@codemirror/language";
+import { completeTree } from "./syntax-tree.ts";
 
 const MD = [markdown({ base: markdownLanguage, extensions: [GFM] })];
 
@@ -25,18 +26,16 @@ function stateOf(doc: string): EditorState {
   return EditorState.create({ doc, extensions: MD });
 }
 
-/** 语法树必须已覆盖整篇（`blockCopyText` 走 `syntaxTree` 快照；测试里显式推进到文档末尾）。 */
+/** 语法树必须已覆盖整篇（`blockCopyText` / `codeBlockContentAt` 读的是 `syntaxTree` 的 field
+ *  快照，不是 `ensureSyntaxTree` 推进的那份 context——见 `syntax-tree.ts` 的文件头）。 */
 function covered(doc: string): EditorState {
-  const state = stateOf(doc);
-  assert.ok(ensureSyntaxTree(state, state.doc.length, 5000) !== null, "语法树未覆盖整篇");
-  return state;
+  return completeTree(stateOf(doc));
 }
 
 /** 文档里唯一一张「可复制」的表（矩形 + 非降级）的范围——判据与装饰层同一份模型。 */
 function tableRange(doc: string): BlockCopyRange {
   const state = covered(doc);
-  const tree = ensureSyntaxTree(state, state.doc.length, 5000)!;
-  const models = findTables((from, to) => state.doc.sliceString(from, to), state.doc.length, tree);
+  const models = findTables((from, to) => state.doc.sliceString(from, to), state.doc.length, syntaxTree(state));
   const table = fullscreenTableAt(models, models[0]?.from ?? 0);
   assert.ok(table !== undefined, "fixture 里没有渲染为 grid 的表");
   return { kind: "table", from: table.from, to: table.to };
