@@ -20,6 +20,7 @@ import { EditorState } from "@codemirror/state";
 import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
 import { GFM } from "@lezer/markdown";
 import { cellClamp, cellContentEdge } from "../../src/cell-geometry.ts";
+import { completeTree } from "./syntax-tree.ts";
 
 /** 一个 grid 表形态：表头 / 分隔线 / 数据行（列数一致，否则表判非矩形、不参与 cell 钳制）。 */
 interface Shape {
@@ -43,7 +44,7 @@ const DOC_TAIL = ["", "尾巴段。", ""].join("\n");
 
 function stateFor(shape: Shape): EditorState {
   const doc = [shape.header, shape.sep, shape.row, DOC_TAIL].join("\n");
-  return EditorState.create({ doc, extensions: [markdown({ base: markdownLanguage, extensions: [GFM] })] });
+  return completeTree(EditorState.create({ doc, extensions: [markdown({ base: markdownLanguage, extensions: [GFM] })] }));
 }
 
 function rowFrom(state: EditorState): number {
@@ -165,7 +166,7 @@ test("落点幂等：在归属 cell 的内容右缘上再算一次不漂移", ()
 test("非 grid 表格行不参与：降级表 / 非矩形表返回 null（调用方回落整篇文档口径）", () => {
   // 表头声明 3 列、数据行只有 2 列且不能被补空列解释的形态不成立；这里用「无分隔线」证明不参与钳制
   const doc = ["| h1 | h2 |", "| c1 | c2 |", "", "尾巴段。", ""].join("\n");
-  const state = EditorState.create({ doc, extensions: [markdown({ base: markdownLanguage, extensions: [GFM] })] });
+  const state = completeTree(EditorState.create({ doc, extensions: [markdown({ base: markdownLanguage, extensions: [GFM] })] }));
   assert.equal(cellContentEdge(state, state.doc.line(2).from + 2), null, "没有分隔线的表不是 grid 表，不参与 cell 钳制");
   assert.equal(cellClamp(state, state.doc.line(1).from), null, "元信息行同样不在 grid 表内");
 });

@@ -24,6 +24,7 @@ import { GFM } from "@lezer/markdown";
 import type { MarkdownParser } from "@lezer/markdown";
 import { listLineInfo } from "../../src/preview/lists.ts";
 import { enterWithAutoIndent } from "../../src/enter-indent.ts";
+import { completeTree } from "./syntax-tree.ts";
 
 /** 与生产同一份解析配置（src/editor.ts 的 md 模式：`markdown({ base: markdownLanguage,
  *  extensions: [GFM] })`）——判定必须对着真解析器的同一种配置。 */
@@ -111,9 +112,10 @@ test("判定与光标位置无关（L3）：同一 doc 在不同选区下归属�
 // Alex 现场（报告原话的 doc 演化）+ L4：渲染归属不改写文档
 // ---------------------------------------------------------------------------
 
-/** 在 `pos` 处按 Enter（真键位命令体），返回新状态。 */
+/** 在 `pos` 处按 Enter（真键位命令体），返回新状态。状态先过 `completeTree`——命令体读
+ *  `syntaxTree` 快照（见 `syntax-tree.ts` 的文件头）。 */
 function pressEnterAt(doc: string, pos: number): EditorState {
-  const state = EditorState.create({ doc, extensions: MD, selection: EditorSelection.cursor(pos) });
+  const state = completeTree(EditorState.create({ doc, extensions: MD, selection: EditorSelection.cursor(pos) }));
   let next = state;
   const view = {
     state,

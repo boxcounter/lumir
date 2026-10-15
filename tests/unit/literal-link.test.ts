@@ -18,11 +18,14 @@ import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
 import { GFM } from "@lezer/markdown";
 import { syntaxTree } from "@codemirror/language";
 import { literalLinkAt, literalLinkOfNode } from "../../src/preview/links.ts";
+import { completeTree } from "./syntax-tree.ts";
 
 const MD = [markdown({ base: markdownLanguage, extensions: [GFM] })];
 
+/** 已 `completeTree` 的真 EditorState（被测的 `literalLinkAt` 读语法树快照——见
+ *  `syntax-tree.ts` 的文件头）。 */
 function stateOf(doc: string): EditorState {
-  return EditorState.create({ doc, extensions: MD });
+  return completeTree(EditorState.create({ doc, extensions: MD }));
 }
 
 /** 在 `needle` 首次出现处（+ offset）查询字面 URL。 */

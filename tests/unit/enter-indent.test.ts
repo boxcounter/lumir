@@ -25,6 +25,7 @@ import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
 import { GFM } from "@lezer/markdown";
 import { DEFAULT_AUTO_INDENT, enterWithAutoIndent } from "../../src/enter-indent.ts";
 import type { EditorMode } from "../../src/bindings/EditorMode.ts";
+import { completeTree } from "./syntax-tree.ts";
 
 const MD: Extension[] = [markdown({ base: markdownLanguage, extensions: [GFM] })];
 
@@ -42,14 +43,14 @@ function pressEnter(
   extensions: readonly Extension[],
   readOnly = false,
 ): { handled: boolean; doc: string } {
-  const state = EditorState.create({
+  const state = completeTree(EditorState.create({
     doc,
     extensions: [
       ...extensions,
       ...(readOnly ? [EditorState.readOnly.of(true)] : []),
     ],
     selection: EditorSelection.cursor(doc.length),
-  });
+  }));
   let next = state;
   const view = {
     state,
@@ -179,7 +180,8 @@ test("md 列表里 `auto_indent = false`：续行照旧（M399 起由本键位�
 // 4.5 M399：空列表项上的 Enter（Alex 裁决的主流模式）与行首 Enter 的命令层钉固
 // ---------------------------------------------------------------------------
 
-/** `pressEnter` 的定光标变体：`pos` 显式给光标位（行首 / 行中场景的命令层判定用）。 */
+/** `pressEnter` 的定光标变体：`pos` 显式给光标位（行首 / 行中场景的命令层判定用）。状态先过
+ *  `completeTree`（命令体读 `syntaxTree` 快照——见 `syntax-tree.ts` 的文件头）。 */
 function pressEnterAt(
   doc: string,
   pos: number,
@@ -187,7 +189,7 @@ function pressEnterAt(
   autoIndent: boolean,
   extensions: readonly Extension[],
 ): { handled: boolean; doc: string; cursor: number } {
-  const state = EditorState.create({ doc, extensions, selection: EditorSelection.cursor(pos) });
+  const state = completeTree(EditorState.create({ doc, extensions, selection: EditorSelection.cursor(pos) }));
   let next = state;
   const view = {
     state,
