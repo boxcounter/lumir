@@ -592,6 +592,7 @@ Alex 抽审路径：先看 `summary.md`，再进 FAIL 场景看 `steps.md` + `sh
   **两类共通的纪律**：键盘类场景的**负向断言**必须配一条同通道可达的**正观测**（同一场景里先有一次
   成功的注入证明通道通着，再判「没变」）；红了先按丢键复跑一次再判产品缺陷（丢键是间歇的，REVIEW.md
   第 11 条）。
+- **面板内的局部键只在焦点留在该面板内时命中——「面板内 Escape 收 harness pane」因此不是确定性通道（M523 定案，2026-10-15）**：harness 面板的 Escape 收起处理器挂在 `panel` 元素上（`src/harness-panel.ts:6835-6853`），靠 keydown 从**面板内的焦点**冒泡上来；焦点移到面板外（点编辑器）那拍 Escape 不再经过 panel，收起**整体失效**——M523 真机探针实测「`clickEditor` 移焦后再 Escape」→ pane 照旧开着（`test-results/acceptance/2026-10-15-m523-probe/148-harness-image-mention/`：`等 pane 收起` 15s 超时、存档位停在 `"harness_pane": true`）。**套件口径**：断言「pane 已收起」用 `⌘⇧A`（`harness.toggle`，`src/keys.ts:700`，全局绑定、与焦点无关；「pane 开着 + 焦点在 composer」这一同款现场由场景 86 守）；场景 148 的收起步因此从 Escape 换成 `⌘⇧A`，**「Escape 收 pane」这一覆盖随之从 148 撤出**（仍由场景 127 守——它的前置是「焦点留在 composer」，焦点一移出面板它就红，别当确定性通道复用）。**顺带更正一条归因（未实测坐实，只作候选登记）**：M498 记的「Escape 被 composer 消费」站不住——composer 的 keydown 没有 Escape 分支（`src/harness-panel.ts:6364-6460`），keydown 从 composer 冒泡到 panel 照常命中收起；当时那两跑的红更可能来自面板的两段式收敛（`selPop` / `permPop` / `ctxPop` 任一在场时第一拍 Escape 只收浮层，`src/harness-panel.ts:6838-6851`）。
 - **原生剪贴板命令（⌘C / ⌘V）在真机通道不落地（M345 实测，2026-10-06）**：`⌘C` 与 `⌘V` 是
   WKWebView 的原生命令（`src/keys.ts` 里没有它们，因此不经 DOM 的 keydown 链路），KimiCU 的
   `press_key` 注入在这台机器上**产不出它们的副作用**——M345 的一次真机探针（**未入库**，现场

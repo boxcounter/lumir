@@ -189,19 +189,29 @@ steps:
         file: { path: "env:harness/sessions/acc-img/*.jsonl", has: '"lumir_label":"Image 2"' }
       - label: ② 留存图片 part 仍是 lumir-attachment:// 引用（不是 data URL）
         file: { path: "env:harness/sessions/acc-img/*.jsonl", has: '/"image_url":"lumir-attachment:\/\/pasted-[0-9a-f]{16}\.webp"/' }
-      - label: ② 留存文本面 MUST NOT 出现标签行（独立的 `Image N` text part）
-        file: { path: "env:harness/sessions/acc-img/*.jsonl", not: '"text":"Image ' }
+      # M523 收紧：旧口径 `not: '"text":"Image '` 是**子串**判据，用户自己段落恰以 `Image ` 开头
+      # （本轮实际值 = `Image 2Image 1tag-`，见 ① 的 post-menu 通道边界）就被它判红——负断言过宽
+      # 造成的假红，且顺带把「标签行」与「用户段落」区分不开（REVIEW.md 第 1 条同族）。新口径只否
+      # **恰为 `Image N` 的 text part**（`"text":"Image \d+"` 的闭合引号要求值到数字为止）。
+      - label: ② 留存文本面 MUST NOT 出现标签行（恰为 `Image N` 的 text part）
+        file: { path: "env:harness/sessions/acc-img/*.jsonl", not: "/\"text\":\"Image \\d+\"/" }
       - label: ② 留存无 base64（引用形态进留存、展开只在 wire）
         file: { path: "env:harness/sessions/acc-img/*.jsonl", not: "data:image" }
       - shot: 02-发送后-transcript编号
 
-  - name: 收起 harness pane（面板内 Escape——重启后 pane 开/关取决于会话存档，先显式钉「关」；
-      M498 登记：Escape 收起步 post-menu 不稳定（近 3 跑 1 过 2 红——发送后焦点停在
-      composer，Escape 被 composer 消费的形态）；替代通道「标题栏对话面板开关」在
-      **pane 开时不在 AX 树**（AXCheckBox 找不到，仅 pane 闭时出现，1 跑实证）——
-      两条 close 通道都有边界，残红归 finding，不再迭代）
+  # 收起通道（M523 换键）：本步原用「面板内 Escape」。M523 真机探针把它的边界钉死了——Escape 的
+  # 收起处理器挂在 **panel 元素**上（`src/harness-panel.ts:6835-6853`，靠 keydown 从面板内的焦点
+  # 冒泡上来），焦点一旦移出面板这条通道**整体失效**：探针跑「clickEditor 移焦后再 Escape」
+  # （证据 `test-results/acceptance/2026-10-15-m523-probe/148-harness-image-mention/steps.md:55-58`）
+  # 里 pane 照旧开着（「等 pane 收起」15s 超时、存档位停在 `true`）。⇒「先移焦再 Escape」不是可用
+  # 通道，改用 `⌘⇧A`（`harness.toggle`，`src/keys.ts:700`，全局绑定、与焦点无关；「pane 开着 + 焦点
+  # 在 composer」这一同款现场由场景 86 的「⌘⇧A 再按——收起 harness pane」步守着）。
+  # **覆盖损失如实登记**：「面板内 Escape 收 pane」这一条从本场景撤出（仍由场景 127 守）；边界口径
+  # 写进 `scripts/acceptance/README.md` 的已知边界（与 127 的前置条件一起）。
+  - name: 收起 harness pane（⌘⇧A——重启后 pane 开/关取决于会话存档，先显式钉「关」；
+      M498 原记「面板内 Escape 不稳定」，M523 定性为「Escape 依赖面板内焦点」并换通道，见上注）
     do: key
-    key: escape
+    key: "cmd+shift+a"
   - name: 等 pane 收起（状态驱动）
     do: waitFor
     waitFor:
@@ -358,14 +368,29 @@ design §10 的真机验收面 ①②③④（⑤ 引用卡片 / 消息摘录卡
 - **编号读数的两面（如实登记）**：transcript 图片卡 `role="img"` 的可访问名 `图片 {n}：{name}`
   是 AX 稳定形态，用来钉「卡片编号」；composer 态的序号徽标（缩略图角上的裸数字）是图上的视觉读数、
   AX 无稳定形态，**不进机器判据**（归视觉场景 `tests/visual/scenes/m454-...` 与 Alex 手感）。
-- **② 的文本面无标签行判据**：断言留存里不存在**独立**的 `"text":"Image ` part。前缀素材
-  `tag-`（M498 起；原 `note-` 含 'e'，press_key 确定性丢键必红——该步 post-menu+模型双边界
-  无替代通道，素材改无 'e' 判法，同场景 137 的 "draftclear"）刻意让用户 `@` 插入的引用落在
-  更长段落里（`tag-Image 1Image 2`），与「系统标签行」
-  （独立 text part）在 JSON 形态上可区分——否则一条恰为 `Image N` 的用户段落会让该负向断言误红。
+- **② 的文本面无标签行判据（M523 收紧）**：断言留存里不存在**恰为 `Image N` 的 text part**
+  （`not: /"text":"Image \d+"/`）。旧口径是子串 `not: '"text":"Image '`——它把用户自己那条以
+  `Image ` 开头的段落（本轮真实值 = `Image 2Image 1tag-`）一起否掉，于是恒红（假红，非产品偏差），
+  同时「标签行 vs 用户段落」也分不开（REVIEW.md 第 1 条同族：断言看着有覆盖、实际不判形态）。
+  新口径的闭合引号要求值到数字为止：独立标签行 `{"type":"input_text","text":"Image 1"}` 命中、
+  `"text":"Image 2Image 1tag-"` 不命中。前缀素材 `tag-`（M498 起；原 `note-` 含 'e'，press_key
+  确定性丢键必红——该步 post-menu+模型双边界无替代通道，素材改无 'e' 判法，同场景 137 的
+  "draftclear"）保留：它仍是 ①「引用插在光标处」的读数（`tag-Image 1`），收紧后的 ② 不再依赖它
+  给负断言做区分。
+- **收起 pane 用 `⌘⇧A`、不用「面板内 Escape」（M523 换键；覆盖损失如实登记）**：Escape 的收起
+  处理器挂在 **panel 元素**上（`src/harness-panel.ts:6835-6853`），靠 keydown 从**面板内的焦点**
+  冒泡上来——焦点移到面板外（点编辑器）这条通道整体失效。M523 真机探针实测「clickEditor 移焦后
+  再 Escape」→ pane 照旧开着（`test-results/acceptance/2026-10-15-m523-probe/148-harness-image-mention/`
+  的 `等 pane 收起` 15s 超时 + 存档位停在 `true`）。`⌘⇧A`（`harness.toggle`，`src/keys.ts:700`）是
+  全局绑定、与焦点无关，且「pane 开着 + 焦点在 composer」这一同款现场由场景 86 守着。
+  **代价**：「面板内 Escape 收 pane」这一条覆盖从本场景撤出（仍由场景 127 覆盖，其前置是焦点留在
+  composer）；M498 记的「Escape 被 composer 消费」在这一读法下不成立——composer 的 keydown 没有
+  Escape 分支（`src/harness-panel.ts:6364-6460`），keydown 从 composer 冒泡到 panel 照常命中收起。
 - **wire 展开的边界**：发给 provider 的请求体里，图片 part 之前有一个 `{"type":"input_text",
   "text":"Image N"}` 标签行、且 `lumir_label` 被剥掉——这一形态**不在磁盘上**（只活在 mock 的
   in-memory `received_inputs`），由 Rust 单测 `expand_image_refs_from` 钉（mock 与真 client 同一条
   函数）。本场景只断言磁盘可读的留存侧（引用形态 + `lumir_label`）。
-- **覆盖边界（如实登记）**：⑤（引用卡片 / 消息摘录卡片零编号回归）在场景 149；
+- **覆盖边界（如实登记）**：① 的「引用插在**光标处**」这一面仍是红的（post-menu 素材注入只到
+  DOM、不进 composer 模型，`@` 按钮按模型 caret 插入 → 段落头 `Image 1tag-`；M456/M498 边界，
+  修法在产品侧或新注入通道，见 README）；⑤（引用卡片 / 消息摘录卡片零编号回归）在场景 149；
   composer 态徽标的确切视觉形态归视觉场景与 Alex 过目。
