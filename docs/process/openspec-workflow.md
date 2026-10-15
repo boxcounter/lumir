@@ -73,6 +73,7 @@ spec 增量（delta）约定：change 目录下的 `specs/<capability>/spec.md` 
 - [ ] **backlog 卫生（2026-10-12 Alex 裁决）**：本批核销 / 裁决落地的条目**直接从 `docs/backlog.md` 删除、不留索引**（git 历史即台账；含仍在生效的长期口径时改移「承接残项」）；条目一律一行 gist + 证据指针，批次报告与全量回归总表只留指针；顺带检查体量红线——`wc -l docs/backlog.md` 超 **300** 行即触发一次结构清理（口径见该文件头部的「维护规则」；无核销/僵尸项可清时记「已查」即过，不为压行数删活条目）。
 - [ ] **finding 落账率对账（2026-10-12 Alex 认可）**：本批 `.tower/comms/findings/` 新增文件数与 `docs/backlog.md` 新增条目数逐一核对，不等即查漏——漏落账的 finding 等于没登记。
 - [ ] **新条目准入与引用写法自检（2026-10-12 Alex 认可）**：本批新增的「待 Alex 裁决」条目只收**价值取舍 / 产品语义**类（答案客观可核的由 tower 直接裁并记录）；跨文件引用 backlog 条目一律用**主题关键词锚**，不用编号 / 行号。
+- [ ] **版本与打包（仅本批需要交付安装包时）**：按 `docs/process/release.md` 执行——semver 口径、bump 面（`src-tauri/tauri.conf.json` 的 `version` 为唯一真源，`package.json` / `Cargo.toml` / `Cargo.lock` 同步；视觉桩钉死 9.9.9 不跟随）、打包前置条件、产物路径与 sha256 记录惯例均以该文为 canonical（M522 落地，2026-10-15）。
 
 ## 撤回（withdrawn）：放弃一个 change
 
