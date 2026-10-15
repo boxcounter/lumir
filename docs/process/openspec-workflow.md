@@ -70,7 +70,7 @@ spec 增量（delta）约定：change 目录下的 `specs/<capability>/spec.md` 
 - [ ] **本批 merge 的 change 全部列入归档待办并跟踪到归档**：每个 change 在实现 PR 合并时即落一条归档跟踪记录（记在 `docs/backlog.md`；待归档属可客观核对的事项，由 tower 记账、不进「待 Alex 裁决」区），批次收尾时用 `npx --yes @fission-ai/openspec@1.12.0 list` 逐个核对——列表里出现 `✓ Complete` 却仍在活跃列表里的，就是漏跟踪的那个。
 - [ ] **归档前逐条对账**（对账口径）：tasks 勾选状态 / spec 增量 / 当前实现三者一致才归档；任务未勾但有正当理由的，先就地标注放弃原因再归档；spec 增量与实现矛盾的，**不归档**，并在 `docs/backlog.md` 说明矛盾点。
 - [ ] **归档后核对新建 capability 的 Purpose**：`archive` 会为新建的 living spec 写入占位 Purpose（`TBD - created by archiving change …`），`validate --all --strict` 会因此报红——须手写替换为「这个 capability 是干什么的」，再跑一次 validate 确认全绿。
-- [ ] **backlog 卫生（2026-10-12 Alex 裁决）**：本批核销 / 裁决落地的条目**直接从 `docs/backlog.md` 删除、不留索引**（git 历史即台账；含仍在生效的长期口径时改移「承接残项」）；条目一律一行 gist + 证据指针，批次报告与全量回归总表只留指针；顺带检查体量红线——`wc -l docs/backlog.md` 超 **300** 行即触发一次结构清理（口径见该文件头部的「维护规则」；无核销/僵尸项可清时记「已查」即过，不为压行数删活条目）。
+- [ ] **backlog 卫生（2026-10-12 Alex 裁决）**：本批核销 / 裁决落地的条目**直接从 `docs/backlog.md` 删除、不留索引**（git 历史即台账；含仍在生效的长期口径时改移「承接残项」）；条目一律一行 gist + 证据指针，批次报告与全量回归总表只留指针；只记改变未来动作的信息（结论 / 待办 / 裁决点 / 复现口径）——过程性验证状态（「跑完、PASS」类）不入账（2026-10-16 Alex 裁决，口径见该文件头部「维护规则」）；顺带检查体量红线——`wc -l docs/backlog.md` 超 **300** 行即触发一次结构清理（口径见该文件头部的「维护规则」；无核销/僵尸项可清时记「已查」即过，不为压行数删活条目）。
 - [ ] **finding 落账率对账（2026-10-12 Alex 认可）**：本批 `.tower/comms/findings/` 新增文件数与 `docs/backlog.md` 新增条目数逐一核对，不等即查漏——漏落账的 finding 等于没登记。
 - [ ] **新条目准入与引用写法自检（2026-10-12 Alex 认可）**：本批新增的「待 Alex 裁决」条目只收**价值取舍 / 产品语义**类（答案客观可核的由 tower 直接裁并记录）；跨文件引用 backlog 条目一律用**主题关键词锚**，不用编号 / 行号。
 - [ ] **版本与打包（仅本批需要交付安装包时）**：按 `docs/process/release.md` 执行——semver 口径、bump 面（`src-tauri/tauri.conf.json` 的 `version` 为唯一真源，`package.json` / `Cargo.toml` / `Cargo.lock` 同步；视觉桩钉死 9.9.9 不跟随）、打包前置条件、产物路径与 sha256 记录惯例均以该文为 canonical（M522 落地，2026-10-15）。
