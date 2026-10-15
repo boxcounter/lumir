@@ -146,6 +146,13 @@ function fsPathsExist(paths: string[]): Promise<string[]> {
   return invoke<string[]>("fs_paths_exist", { paths });
 }
 
+/** 同步原生窗口底色（后端 `window_set_background_color`，M525）：`applyTheme` 的唯一伴生
+ *  调用。色值由调用方从计算样式读取（CSS token 是唯一色值真源，本封装不判色值、不持色值表）。
+ *  失败 reject 人话 `CommandError`；调用方按合同只降级记录（console 线索），不上屏。 */
+function windowSetBackgroundColor(r: number, g: number, b: number): Promise<void> {
+  return invoke<void>("window_set_background_color", { r, g, b });
+}
+
 // M1 装配：app-shell 三栏 + 编辑器内核 + 键位框架 + 全类型文件树
 //（add-vault-workspace），M20 接上附件链路（add-editor-live-preview）。
 // editor.ts 的 EditorHandle 由 editor 波持有，此处只消费，不改其签名。
@@ -2104,6 +2111,33 @@ function applyTheme(theme: UiTheme): void {
   shell.modelineTheme.title = label;
   shell.modelineTheme.setAttribute("aria-label", label);
   shell.modelineTheme.hidden = false;
+  syncWindowBackground();
+}
+
+/** 窗口底色同步（M525，openspec/specs/app-window「窗口底色跟随主题」）：data-theme 落盘后
+ *  读 body 计算底色——它刚被本函数写成当前主题的 `--content-bg` 解析值（CSS token 是色值
+ *  唯一真源，这里不查表、不判档）——经命令送达 Rust 更新原生窗口底色（webview 未绘制区
+ *  的呈现色，含后台化/遮挡后的揭示重绘间隙）。**唯一写点**：启动装配与运行期切换都经
+ *  applyTheme，MUST NOT 出现第二处同步调用（与 data-theme 写入同一条纪律）。
+ *
+ * 全程只降级：解析失败 / invoke 失败都只留 console 线索——底色不同步不影响任何功能，
+ *  合同明确 MUST NOT 上屏报错，也 MUST NOT 让主题切换本身失败。 */
+function syncWindowBackground(): void {
+  let rgb: string;
+  try {
+    rgb = getComputedStyle(document.body).backgroundColor;
+  } catch (e) {
+    console.warn(`lumir: 读取窗口底色失败：${errorMessage(e)}`); // i18n-exempt: log
+    return;
+  }
+  const m = /^rgba?\((\d+),\s*(\d+),\s*(\d+)/.exec(rgb);
+  if (m === null) {
+    console.warn(`lumir: 解析窗口底色失败：${rgb}`); // i18n-exempt: log
+    return;
+  }
+  windowSetBackgroundColor(Number(m[1]), Number(m[2]), Number(m[3])).catch((e: unknown) => {
+    console.warn(`lumir: 窗口底色同步失败：${errorMessage(e)}`); // i18n-exempt: log
+  });
 }
 
 /** 循环切换到下一档（命令 `view.theme-cycle` 与 modeline 主题钮的**同一条实现路径**，

@@ -272,7 +272,12 @@ body,
   height: 100%;
 }
 body {
-  background: var(--frame);
+  /* 窗口底色 = 当前主题正文面（M525）：稳态下 .app-shell（--frame）铺满视口、本条零像素
+     影响，它呈现的唯一时机是 webview 内未绘制区——重绘间隙露出的是主题底色而不是默认白。
+     真源是 token 层三主题块的 --content-bg；原生窗口层（NSWindow background）由 Rust 侧
+     同一真源驱动（applyTheme 读本条计算值经 window_set_background_color 送达），见
+     openspec/specs/app-window「窗口底色跟随主题」。 */
+  background: var(--content-bg);
   color: var(--text);
   font-family: var(--font-sans);
   font-size: var(--fs-ui);
