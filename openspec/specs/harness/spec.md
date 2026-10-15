@@ -3,7 +3,8 @@
 ## Purpose
 定义 AI 探针（harness）的落地口径——ADR 0007 授权的探索期能力：应用骨架右栏 dock 的对话面板
 （唤起 / 收起、流式 Markdown 呈现、上下文用量常驻显示）；唤起时的编辑器上下文注入（当前路径 +
-视口行范围，发送前可核对）；AGENTS.md 双层（user-wide `~/.agents/AGENTS.md` + vault 根）与 Skill
+视口行范围，发送前可核对）；AGENTS.md 三层（user-wide `~/.agents/AGENTS.md` + vault 根 +
+vault 根 `AGENTS.local.md` 本地覆盖层）与 Skill
 双根（user-wide + vault-wide）的自动装配；Rust core 的工具循环与固定工具集（`vault_read` /
 `vault_search` / `vault_patch` / `vault_create` / `vault_move` / `vault_delete` / `skill_load` /
 `cli_run`，共 8 件）；三层权限规则（allow / ask / deny）之上的**三档权限模式**（`read_only` /
@@ -25,12 +26,14 @@ wire 留存 / 最小恢复口径；change `harness-composer-image-paste` 与 `ha
 
 系统 SHALL 提供对话面板，位于**旁侧 pane**（pane 容器的内容件，见 `pane-layout` 的「harness pane」；不再位于骨架右栏 dock 列——dock 列随 `move-harness-to-pane-chat-frame` 移除），可经 `harness.toggle` 命令（⌘⇧A）与标题栏 toggle 钮唤起与收起。面板 SHALL 支持多轮对话并以流式增量呈现模型输出；模型输出 SHALL 按 Markdown 渲染（GFM 基本面含代码块高亮），一切模型输出 MUST 经转义后注入（零 HTML 直插）。全部可见文案 SHALL 走文案表（zh/en 双档），样式 SHALL 只消费 token 层取值。流式渲染与网络处理 MUST NOT 进入编辑器 keypress-to-paint 路径（ADR 0002 §6）。
 
+模型输出里的链接 SHALL 上屏为可点锚元素：`[文字](url)` 按显示文本呈现、`<url>` 自动链接按 URL 呈现，**裸 URL**（GFM 直接产 `URL` 节点的三种形态：`https://…`、无 scheme 的 `www.…`、邮箱字面量）SHALL 以 URL 原文为上屏文本渲染为同一形态的锚——**MUST NOT 整段跳过**（跳过 = URL 在面板里隐身；表格 cell 里的裸 URL 同样在列）。锚的 `href` 只作展示与 `title`，一切点击 SHALL 被拦下交给既有的外链打开命令（scheme 白名单在 Rust 侧判定，前端 MUST NOT 自行判定能不能开）；`[文字](url)` 的 URL 部分 MUST NOT 作为可见文本二次上屏。代码块与行内代码里的 URL SHALL 保持代码原文（不产锚）。
+
 composer（输入区）与控制行 SHALL 收进同一个圆角卡片容器（内容底色 + 边框 + focus-within 强调框）；控制行位于容器底部，自左向右为模型 chip、ctx 读数、弹性间隔、发送钮。发送钮 SHALL 为图标钮（↑ / ■ 两态 glyph），配色 SHALL 按原型中性实心取值（浅色深灰近黑 + 白 glyph、深色浅灰 + 深 glyph、eink 纯黑，经组件级变量落账，不改全局 accent 一族）；处理中（busy）态 SHALL 显示脉冲环（box-shadow 呼吸动画，环色为与按钮同族的中性 tint；eink 下环不可见、状态由 glyph 承担；prefers-reduced-motion 下不脉冲）。其可读名称与悬停提示 SHALL 沿用文案表两态文案（发送 / 停止），行为口径（Enter 发送、处理中点击停止、stopping 幂等）不变。
 
 #### Scenario: 唤起与流式对话
 
 - **WHEN** 面板经命令唤起并发送一条提问
-- **THEN** 面板出现在旁侧 pane（无第二 pane 时自动分栏，默认宽度比 harness:文档 pane = 1:2）；模型输出以增量方式逐段呈现并按 Markdown 渲染；期间编辑器键入响应不受影响
+- **THEN** 面板出现在旁侧 pane（无第二 pane 时自动分栏，默认宽度比 harness:文档 pane = **1:1**，canonical 定义见 `pane-layout` 的「harness pane」）；模型输出以增量方式逐段呈现并按 Markdown 渲染；期间编辑器键入响应不受影响
 
 #### Scenario: composer 容器形态
 
@@ -41,6 +44,16 @@ composer（输入区）与控制行 SHALL 收进同一个圆角卡片容器（�
 
 - **WHEN** 界面语言切换（zh ↔ en）
 - **THEN** 面板全部长驻文案经 `onRelabel` 重绘为对应语言；面板样式全部取值自 token 层
+
+#### Scenario: 裸 URL 上屏为链接
+
+- **WHEN** 模型输出的正文（含表格 cell 内）出现裸 URL（`https://…`、`www.…`、邮箱字面量）
+- **THEN** 该 URL 以原文为上屏文本渲染为可点锚元素（与 `[文字](url)` 同一个样式与同一个打开入口），MUST NOT 在面板里缺席；点击把 URL 原文交给外链打开命令（能不能开由后端 scheme 白名单判定），导航被拦下
+
+#### Scenario: 标准链接的 URL 不二次上屏
+
+- **WHEN** 模型输出的正文出现 `[文字](https://…)`
+- **THEN** 面板显示的链接文本是「文字」，URL 部分只作为锚的 `href` 与悬停提示，MUST NOT 作为可见文本再上屏一次
 
 ### Requirement: 上下文注入与可见性
 
@@ -63,12 +76,32 @@ composer（输入区）与控制行 SHALL 收进同一个圆角卡片容器（�
 
 ### Requirement: AGENTS.md 自动加载
 
-会话建立时，系统 SHALL 自动装配系统上下文，包含 user-wide（`~/.agents/AGENTS.md`）与 vault-wide（vault 根 `AGENTS.md`）两层文件内容；文件不存在 SHALL 静默跳过。嵌套子目录级 AGENTS.md 不在本期。
+会话建立时，系统 SHALL 自动装配系统上下文，包含三层 AGENTS 指令文件内容，注入顺序为：user-wide（`~/.agents/AGENTS.md`）→ vault 根（`<vault>/AGENTS.md`）→ vault 根本地覆盖层（`<vault>/AGENTS.local.md`）。第三层 SHALL 排在 vault 根 `AGENTS.md` 之后注入，承担「本机本地覆盖层」语义——当两层对同一事项给出相互冲突的指示时，以后注入的 `AGENTS.local.md` 为准；该优先级口径 SHALL 在系统上下文中由 `AGENTS.local.md` 所在节的标题显式表达（模型读得到），MUST NOT 依赖模型从注入先后自行推断。三层文件各自不存在、非文件或读取失败时 SHALL 静默跳过（不注入、不告警、不阻断会话），与既有两层同口径；系统 SHALL NOT 为文件缺失或读取失败产出 config warning 或任何界面提示。装配清单（`session_open.assembly`，形态见「会话本地留存」）SHALL 为本层记一条来源条目，记录路径与存在与否（不存在的来源同样在场、`exists:false`）。嵌套子目录级 AGENTS 指令文件不在本期。requirement 名保留「AGENTS.md 自动加载」——`AGENTS.local.md` 属同一 AGENTS 指令文件族，本 change 的语义扩围以本条正文为准。
 
 #### Scenario: 双层注入
 
-- **WHEN** 两处 AGENTS.md 均存在并发起新会话
+- **WHEN** 两处 AGENTS.md（user-wide 与 vault 根）均存在并发起新会话
 - **THEN** 系统上下文包含两份文件的内容；仅一处存在时注入存在的一份，不报错
+
+#### Scenario: 本地层注入与顺序
+
+- **WHEN** user-wide `~/.agents/AGENTS.md`、vault 根 `AGENTS.md`、vault 根 `AGENTS.local.md` 三处均存在并发起新会话
+- **THEN** 系统上下文依次包含三份文件的内容；`AGENTS.local.md` 的内容在文本次序上晚于 vault 根 `AGENTS.md` 的内容
+
+#### Scenario: 本地层缺失静默跳过
+
+- **WHEN** vault 根 `AGENTS.local.md` 不存在（或非文件 / 读取失败），其余层照常存在，发起新会话
+- **THEN** 系统上下文不包含本地层内容，会话正常建立，不产生告警或界面提示；其余各层的注入不受影响
+
+#### Scenario: 装配清单记录本地层
+
+- **WHEN** vault 根 `AGENTS.local.md` 不存在（或存在）并发起新会话
+- **THEN** `session_open` 的装配清单含本地层来源条目：路径为 vault 根 `AGENTS.local.md`；不存在时 `exists:false` 且字节数为 0，存在时 `exists:true` 且字节数为该层注入文本的长度
+
+#### Scenario: 覆盖语义随装配表达
+
+- **WHEN** vault 根 `AGENTS.md` 与 vault 根 `AGENTS.local.md` 均存在且对同一事项给出相互冲突的指示
+- **THEN** 系统上下文中 `AGENTS.local.md` 一节排在其后，且该节标题标明其为本地覆盖层、冲突时以该层为准；系统 MUST NOT 自行解析或合并两层的内容语义
 
 ### Requirement: Skill 支持
 
@@ -107,7 +140,7 @@ composer（输入区）与控制行 SHALL 收进同一个圆角卡片容器（�
 
 系统 SHALL 实现三层权限规则：allow / ask / deny，判定顺序 deny > allow > 默认分层。规则语法 SHALL 支持 tool 级与 tool+模式级（如 `cli(tavily *)` 的命令前缀匹配）。权限规则之外，系统 SHALL 提供**三档权限模式**作为默认分层的档位：`read_only` / `vault_write`（默认）/ `full_access`，逐档语义如下——读类工具（`vault_read` / `vault_search` / `skill_load`）三档均直接放行；`vault_patch` / `vault_create` / `vault_move` 在 `read_only` 档 SHALL 逐个问（Always Ask，2026-10-09 Alex 裁决：该档语义为「读自动放行、一切写逐个问」，模式层 MUST NOT 直接拒绝），在 `vault_write` 与 `full_access` 档 SHALL 自动放行；`vault_delete` 在 `read_only` 与 `vault_write` 档 SHALL 逐个问（Vault Write 档的分界以 Alex 裁决点 1 为口径），在 `full_access` 档 SHALL 自动放行；`cli_run` 只读白名单命令三档均直接放行；`cli_run` 写命令在 `read_only` 与 `vault_write` 档 SHALL 逐个问，在 `full_access` 档 SHALL 自动放行（写目标在 vault 内者除外，见「cli_run 命令分类与 vault 写重定向」）；危险黑名单命令（rm / shutdown·reboot·halt·poweroff / mkfs 系 / dd / git reset --hard / git clean / shell 包装器类，首版清单）**任何档都 SHALL 逐个问**，MUST NOT 自动放行。模式层 SHALL 只在「直接放行」与「逐个问」之间切换，SHALL NOT 产出「拒绝」——拒绝只来自用户 deny 规则。
 
-判定总序 SHALL 为：deny 规则 > vault 内写重定向 > 危险黑名单 > allow 规则 > 模式默认分层——前四层模式无关，allow 规则 SHALL 在任何档生效（含 `read_only` 档），模式只替换最底层默认分层。deny 命中 SHALL 直接拒绝并回送模型；ask 档 SHALL 以批准闸呈现：执行前挂起循环，面板显示待批准项（写文档显示 diff 预览，CLI 显示完整命令），Alex 采纳后才执行，拒绝（及可选原因）回送模型；未决批准项 MUST NOT 自动超时通过。
+判定总序 SHALL 为：deny 规则 > vault 内写重定向 > 危险黑名单 > allow 规则 > 模式默认分层——前四层模式无关，allow 规则 SHALL 在任何档生效（含 `read_only` 档），模式只替换最底层默认分层。deny 命中 SHALL 直接拒绝并回送模型：拒绝对话 MUST NOT 进入批准闸（不产批准卡、不等待用户决定），且回送的错误 SHALL 带上**命中的规则原文**（如「命中 deny 规则 cli(npm run deploy*)」），使「是哪条规则拦的」不必回配置文件核对；规则原文拼入后若超出工具行摘要的展示长度上限，SHALL 退回不带规则原文的既有文案，MUST NOT 呈现被截断的规则名。ask 档 SHALL 以批准闸呈现：执行前挂起循环，面板显示待批准项（写文档显示 diff 预览，CLI 显示完整命令），Alex 采纳后才执行，拒绝（及可选原因）回送模型；未决批准项 MUST NOT 自动超时通过。
 
 #### Scenario: 默认档放行矩阵
 
@@ -129,6 +162,11 @@ composer（输入区）与控制行 SHALL 收进同一个圆角卡片容器（�
 
 - **WHEN** 模式为 `read_only`，配置 allow 规则含 `cli(npm run *)`，deny 规则含 `cli(npm run deploy*)`；模型调用 `cli_run("npm", ["run", "test"])`
 - **THEN** `npm run test` 直接执行（allow 规则在只读档生效）；同模式下调 `npm run deploy` 则被 deny 规则拒绝
+
+#### Scenario: deny 规则原文随拒绝回送
+
+- **WHEN** 配置 deny 规则含 `cli(npm run deploy*)`，模型在任意档调用 `cli_run("npm", ["run", "deploy"])`
+- **THEN** 调用被拒（不进批准闸、面板不出现批准卡），回送模型的错误里出现命中的规则原文 `cli(npm run deploy*)`，工具行显示该错误摘要
 
 #### Scenario: 会话内同类不再问
 
@@ -154,7 +192,9 @@ composer（输入区）与控制行 SHALL 收进同一个圆角卡片容器（�
 
 批准闸的 diff 预览中，以 `+` / `-` 起首的增删行底色 MUST 覆盖该行文本的完整宽度，与卡片可视宽度无关：行文本超出可视宽度（容器出现横向滚动）时，底色 MUST 随文本延伸至整行末尾，MUST NOT 在可视宽度处截断。该不变量对任意行内容长度与任意面板宽度恒成立（渲染缺陷合同先行，条款引用输入分布而非具体案例）。
 
-批准项被采纳或拒绝后，卡片 MUST 收敛为一行终态记录：工具名 + 决策结果（已采纳 / 已拒绝）+ 决策的相对时间戳。diff / argv 预览 MUST 默认折叠，可经单一入口展开回看；待决语义副句（写类「批准后才会落盘」/ 命令类「批准后才会在终端运行，输出回到对话里」）与决策按钮 MUST 随决策退场，MUST NOT 以置灰形态残留在终态记录里（置灰按钮会被误读为「待处理 / 等待中」）。拒绝时若附了原因，原因文本 MUST 在终态记录中直接可见（无需展开详情）。`cli_run` 批准卡 SHALL 在命令上方显眼位置展示模型自述的 `purpose` 用途句，命令原文完整可见、MUST NOT 被用途句替代或截断；purpose 是阅读辅助而非安全判据，权限判定 MUST NOT 参考 purpose。
+批准项被采纳或拒绝后，卡片 MUST 收敛为一行终态记录：工具名 + 决策结果（已采纳 / 已拒绝）+ 决策的相对时间戳。diff / argv 预览 MUST 默认折叠，可经单一入口展开回看；待决语义副句（写类「批准后才会落盘」/ 命令类「批准后才会在终端运行，输出回到对话里」）、判定依据行与决策按钮 MUST 随决策退场，MUST NOT 以置灰形态残留在终态记录里（置灰按钮会被误读为「待处理 / 等待中」）。拒绝时若附了原因，原因文本 MUST 在终态记录中直接可见（无需展开详情）。`cli_run` 批准卡 SHALL 在命令上方显眼位置展示模型自述的 `purpose` 用途句，命令原文完整可见、MUST NOT 被用途句替代或截断；purpose 是阅读辅助而非安全判据，权限判定 MUST NOT 参考 purpose。
+
+批准卡 SHALL 在待决问句下方展示一行**判定依据**，说明这次调用**为什么进闸**（人话一行，随卡片出现）。判定依据 SHALL 由后端判定管线产出并随批准请求事件与 `harness_state` 快照两条通道同源到达前端，前端 MUST NOT 自行推导层级；依据 SHALL 覆盖产批准卡的两层，并如实区分：**危险黑名单**命中（shell 包装器类点名包装器命令名并说明其内容不可知；其余危险命令类说明命中安全黑名单）与**模式默认分层**（带当时判定的档位名与该档释义）。判定依据 MISSING（旧后端 / 旧快照载荷）时该行 SHALL NOT 渲染，MUST NOT 以猜测或默认文案填充。该行 SHALL 随界面语言重取文案，MUST NOT 残留旧语言串。
 
 #### Scenario: diff 行高亮覆盖整行文本
 
@@ -164,7 +204,7 @@ composer（输入区）与控制行 SHALL 收进同一个圆角卡片容器（�
 #### Scenario: 采纳后收敛为终态记录
 
 - **WHEN** Alex 对带 diff 预览的批准项点击采纳
-- **THEN** 卡片收敛为一行记录（工具名 + 已采纳 + 相对时间戳）；diff 默认折叠、展开后可回看；待决标题与决策按钮退场，界面不再出现置灰的采纳 / 拒绝钮
+- **THEN** 卡片收敛为一行记录（工具名 + 已采纳 + 相对时间戳）；diff 默认折叠、展开后可回看；待决标题、判定依据行与决策按钮退场，界面不再出现置灰的采纳 / 拒绝钮
 
 #### Scenario: 拒绝附原因可见
 
@@ -176,20 +216,53 @@ composer（输入区）与控制行 SHALL 收进同一个圆角卡片容器（�
 - **WHEN** 一个带 `purpose` 的 `cli_run` 写命令进入批准闸
 - **THEN** 批准卡命令上方显眼位置显示 purpose 用途句，命令原文完整可见；purpose 不参与判定（判定结果与同命令不带 purpose 时一致）
 
-### Requirement: 上下文用量显示与触顶处理
+#### Scenario: 危险黑名单进闸时的判定依据
 
-composer 控制行 SHALL 常驻显示上下文用量读数（位于模型 chip 之后、发送钮之前）：context window 已用 %（最近一次请求的 input tokens ÷ 模型上下文窗口）与 cache hit %（Responses 形态下两 provider 统一走 `usage.input_tokens_details.cached_tokens`；映射表留在 provider 预设内防字段方言）。用量超过警示阈值（默认 85%，可配）时读数 SHALL 高亮，指针悬停读数 SHALL 浮出说明气泡（向上展开、右缘对齐读数右缘）、移开即收起；SHALL NOT 常驻显示警示句，也 SHALL NOT 另挂 ⓘ 类可点入口（2026-10-07 去感叹号改 hover 形态，读数高亮已承担警示语义）。系统 SHALL 默认自动压缩（`auto_compact = true`）：每轮响应完成后检查，越阈值即自动把会话历史压缩为摘要、开新逻辑会话并注入摘要 + 当前编辑器上下文 + 系统上下文；自动压缩 MUST NOT 静默——面板插入可见压缩标记（摘要可展开），压缩前历史 SHALL 完整留存在旧会话 JSONL 文件（封闭不再追加），压缩摘要 SHALL 随新会话 `session_open` 留存。API 返回上下文超限错误时 SHALL 自动压缩后重试该轮一次。系统 MUST NOT 静默截断会话历史。
+- **WHEN** 模型在任意档（含 `full_access`）调用 shell 包装器命令（如 `cli_run("zsh", ["-lc", "…"])`）
+- **THEN** 批准卡的判定依据行说明这是 shell 包装器命令、点出包装器命令名、并说明内容不可知因而任何权限档都需逐个确认
+
+#### Scenario: 模式默认分层进闸时的判定依据
+
+- **WHEN** 默认 `vault_write` 档下模型调用库外写命令（如 `cli_run("npm", ["install"])`）进入批准闸
+- **THEN** 批准卡的判定依据行带出当时档位（`保险库写入` / `Vault Write`）与该档释义（库内写自动放行、库外命令先问），使「已是 Write 档为何还问」在卡上自洽可读
+
+#### Scenario: 判定依据随决策退场
+
+- **WHEN** Alex 对带判定依据行的批准项点击采纳或拒绝
+- **THEN** 终态记录里不出现判定依据行（与待决副句、决策按钮一同退场），界面零残留
+
+### Requirement: 上下文用量显示与触顶处理
+composer 控制行 SHALL 常驻显示上下文用量读数（位于模型 chip 之后、发送钮之前）：context window 已用 %（最近一次请求的 input tokens ÷ 模型上下文窗口）与 cache hit %（Responses 形态下两 provider 统一走 `usage.input_tokens_details.cached_tokens`；映射表留在 provider 预设内防字段方言）。cache hit % SHALL 以**本逻辑会话累计命中率**（`Σcached_tokens ÷ Σinput_tokens`，范围为当前逻辑会话内所有带 usage 的往返；会话建立、「新会话」重置、自动压缩开新逻辑会话、从历史恢复各起一段，累计随之归零）作为控制行**主读数**，MUST NOT 以最近一次请求的单回合命中率作为控制行主读数。最近一次请求的**单回合命中率**（`cached_tokens ÷ input_tokens`）SHALL 在 hover 气泡内与主读数并列呈现；该回合处于**冷启动**（`cached_tokens` 为零）或**大块摊薄**（该回合新增 tokens 超过已缓存前缀的一半）时，气泡 SHALL 附带一句成因说明，点明两种情形均非缓存失效。缓存写入 tokens（provider usage 的 `cache_write_tokens`）SHALL 在 hover 气泡内呈现本回合与本会话累计值，字段缺失且为零时该行 SHALL NOT 渲染。用量超过警示阈值（默认 85%，可配）时读数 SHALL 高亮，指针悬停读数 SHALL 浮出说明气泡（向上展开、右缘对齐读数右缘）、移开即收起；SHALL NOT 常驻显示警示句，也 SHALL NOT 另挂 ⓘ 类可点入口（2026-10-07 去感叹号改 hover 形态，读数高亮已承担警示语义）。系统 SHALL 默认自动压缩（`auto_compact = true`）：每轮响应完成后检查，越阈值即自动把会话历史压缩为摘要、开新逻辑会话并注入摘要 + 当前编辑器上下文 + 系统上下文；自动压缩 MUST NOT 静默——面板插入可见压缩标记（摘要可展开），压缩前历史 SHALL 完整留存在旧会话 JSONL 文件（封闭不再追加），压缩摘要 SHALL 随新会话 `session_open` 留存。API 返回上下文超限错误时 SHALL 自动压缩后重试该轮一次。系统 MUST NOT 静默截断会话历史。
 
 > **已知边界（现象记录 + 根因调查进行中，非规格变更；2026-10-12 起）**：在 k3-256k 的 coding 端点（`api.kimi.com/coding/v1`，走 Responses 形状）上，Lumir 的真实会话里出现过「回报 `input_tokens` 尚不足名义窗口一半、紧接着的一次请求却被端点以 400 拒」（`Your request exceeded k3-256k model token limit: 262144`）——该会话成功的最大回报值 99,399，下一发即被拒；30 万字符的纯合成输入（剔除 reasoning 重放与 tools）同样被拒。另两点已坐实：端点**忽略**客户端 `max_output_tokens`（照收、响应回显 `null`），改 thinking 档位也不改变结论；该变体的报错**不带** `(requested: N)`，服务端算出的那个数拿不到。
 >
-> **「该端点存在远低于名义窗口的输入上限」这一结论已被证伪、不再成立**：同在 `api.kimi.com/coding`、同一模型 `k3-256k`，Kimi Code 的历史会话已被成功服务到 **234,656 input tokens**（≈ 名义窗口的 91%），其 wire 日志零真实 token-limit 报错。差异线索：Kimi Code 走 chat completions 形状、思考全文以 `reasoning_content` 明文重放；Lumir 走 Responses 形状、reasoning item 以 `rs_*` id + 摘要回放（不带 `encrypted_content`）。**头号假设**（服务端按 id 展开完整思考参与计账）**经 M464 三发对照探测未被支持，方向收窄为「reasoning 项本身的在场」**（2026-10-12）：把事故会话的请求体（主体 420 KB、251 个 input 项含 62 条 reasoning 项）三发——①原样带 `rs_*` id、②剥掉全部 `rs_*` id、③整项删尽 62 条 reasoning 项。**①与②都返回同一条 400**（`Your request exceeded k3-256k model token limit: 262144`；body 仅差 0.8%），**③返回 200**（服务端回报 `input_tokens = 76,149`、`reasoning_tokens = 0`）⇒ 移除 id 不改变判定、**移除 reasoning 项才越过闸**，即隐形膨胀来自 reasoning 项本身（与 id 无关）——62 条项（正文仅约 111 KB）在上限闸被计成 ≥18.6 万 token，而非 reasoning 部分被诚实报为 7.6 万。**机制尚未完全钉死**：③ 的 200 不能区分「服务端把 reasoning 项展开为完整思考原文计账」与「摘要文本按更大口径计账」——分离需第四发（把 62 条 reasoning 项替换成等长普通文本），**尚未跑**（待裁决）。修复方向（请求 `include` + 重放带 `encrypted_content`）不受此影响、独立成立于对齐官方 store:false 形状；事故项录于本改动之前、不含密文，故本探测**未直接验证**「带 blob 的新会话重放」是否越过闸（合并后新会话自然积累密文，留作活体验证）。本条只登记现象与调查状态，**不对该端点输入上限作任何断言**，也不对根因下结论（`docs/backlog.md` 第 44 条仍悬，探针全表见 `test-results/m464-probe/`，git 外）。
+> **「该端点存在远低于名义窗口的输入上限」这一结论已被证伪、不再成立**：同在 `api.kimi.com/coding`、同一模型 `k3-256k`，Kimi Code 的历史会话已被成功服务到 **234,656 input tokens**（≈ 名义窗口的 91%），其 wire 日志零真实 token-limit 报错。差异线索：Kimi Code 走 chat completions 形状、思考全文以 `reasoning_content` 明文重放；Lumir 走 Responses 形状、reasoning item 以 `rs_*` id + 摘要回放（不带 `encrypted_content`）。**头号假设**（服务端按 id 展开完整思考参与计账）**经 M464 三发对照探测未被支持，方向收窄为「reasoning 项本身的在场」**（2026-10-12）：把事故会话的请求体（主体 420 KB、251 个 input 项含 62 条 reasoning 项）三发——①原样带 `rs_*` id、②剥掉全部 `rs_*` id、③整项删尽 62 条 reasoning 项。**①与②都返回同一条 400**（`Your request exceeded k3-256k model token limit: 262144`；body 仅差 0.8%），**③返回 200**（服务端回报 `input_tokens = 76,149`、`reasoning_tokens = 0`）⇒ 移除 id 不改变判定、**移除 reasoning 项才越过闸**，即隐形膨胀来自 reasoning 项本身（与 id 无关）——62 条项（正文仅约 111 KB）在上限闸被计成 ≥18.6 万 token，而非 reasoning 部分被诚实报为 7.6 万。**机制尚未完全钉死**：③ 的 200 不能区分「服务端把 reasoning 项展开为完整思考原文计账」与「摘要文本按更大口径计账」——分离需第四发（把 62 条 reasoning 项替换成等长普通文本），**尚未跑**（待裁决）。修复方向（请求 `include` + 重放带 `encrypted_content`）不受此影响、独立成立于对齐官方 store:false 形状；事故项录于本改动之前、不含密文，故本探测**未直接验证**「带 blob 的新会话重放」是否越过闸（合并后新会话自然积累密文，留作活体验证）。本条只登记现象与调查状态，**不对该端点输入上限作任何断言**，也不对根因下结论（`docs/backlog.md`「harness ctx% meter 的分母口径」条仍悬，探针全表见 `test-results/m464-probe/`，git 外）。
 >
-> 控制行 ctx% 读数的**现行口径仍为**「最近一次成功往返的 `input_tokens` ÷ 模型声明窗口」（上段之口径不变；meter 本体与错误路径均未因此改动）。是否调整分母口径（`docs/backlog.md` 第 44 条；该条所述「分母有效上限」结论处于**争议 / 调查中**）**待裁决**。错误路径的可观察性与每次请求的实际发送体字节数见「会话本地留存」条。
+> 控制行 ctx% 读数的**现行口径仍为**「最近一次成功往返的 `input_tokens` ÷ 模型声明窗口」（上段之口径不变；meter 本体与错误路径均未因此改动）。是否调整分母口径（`docs/backlog.md`「harness ctx% meter 的分母口径」条；该条所述「分母有效上限」结论处于**争议 / 调查中**）**待裁决**。错误路径的可观察性与每次请求的实际发送体字节数见「会话本地留存」条。
 
 #### Scenario: 用量显示
 
 - **WHEN** 完成一轮对话（含 mock provider 给出的 usage 数值）
-- **THEN** 控制行读数显示与 usage 字段一致的 ctx% 与 cache hit%；读数位于模型 chip 与发送钮之间
+- **THEN** 控制行读数显示与 usage 字段一致的 ctx% 与会话累计 cache hit%；读数位于模型 chip 与发送钮之间
+
+#### Scenario: 会话累计读数跨回合
+
+- **WHEN** 同一逻辑会话内先后完成多个带 usage 的回合
+- **THEN** 控制行 cache 读数 SHALL 等于该会话至今的 `Σcached_tokens ÷ Σinput_tokens`（MUST NOT 只反映
+  最近一回合的单回合值）；开启新逻辑会话（「新会话」重置 / 自动压缩）后累计 SHALL 重新起算
+
+#### Scenario: 单回合低谷带成因标注
+
+- **WHEN** 某一回合 `cached_tokens` 为零（会话首个请求的典型冷启动，或前缀缓存过期），或该回合新增
+  tokens 超过已缓存前缀的一半（大块内容摊薄）
+- **THEN** 控制行主读数仍显示会话累计值；hover 气泡内该回合的单回合命中率旁 SHALL 出现对应成因说明句，
+  说明该情形非缓存失效
+
+#### Scenario: 缓存写入遥测在气泡内呈现
+
+- **WHEN** provider 的 usage 带回 `cache_write_tokens`（kimi），完成一轮对话后悬停读数
+- **THEN** 气泡内显示本回合与本会话累计的缓存写入 tokens；若 `cache_write_tokens` 为零（provider 不提供
+  该字段时按 0），该行 SHALL NOT 渲染
 
 #### Scenario: 超阈值警示收敛为悬停气泡
 
@@ -266,7 +339,7 @@ composer 控制行 SHALL 常驻显示上下文用量读数（位于模型 chip �
 
 ### Requirement: 会话本地留存
 
-会话 SHALL 以 wire/input 形态落配置目录（MUST NOT 写入 vault），作为 ADR 0007 双向记录机制的一侧：每会话一个 append-only JSONL 文件（`<config_dir>/harness/sessions/<vault 稳定 id>/<session_id>.jsonl`），文件首行 SHALL 为 `session_open` 记录——含 session id、vault 根路径、provider / 模型 / 思考档位、**完整装配后 system prompt 全文**与装配清单（每个来源的路径、存在与否、字节数；不存在的来源 SHALL 同样在场）。`<vault 稳定 id>` SHALL 是 vault 注册表 id（与 `vault-sessions/<id>.json`、`reading-positions/<id>.json` 同一份身份），MUST NOT 用 vault 路径派生的消毒名（消毒名有撞名面且无长度 / 字符集保证，M309 现场）。每次发给模型的请求（含工具循环的每次迭代与压缩调用）SHALL 落一条 `llm_request` 记录（完整请求体：system + messages + 参数，**另带本次实际发送体的字节数 `request_bytes`**——按 wire 展开后的尺寸算，省掉「按字节比外推请求多大」；不具备真实 HTTP body 的 mock 档省略该键），每次响应 SHALL 落一条 `llm_response` 记录（正文 / 思考归一回放项与展示文本 / 工具调用 / usage / 错误；思考 MUST 落盘——**回放项归一回放形状**（`{"type":"reasoning", summary, [content], [encrypted_content]}`：kimi 的明文载体是 `summary`、deepseek 的是 `content`，各按在场项保留；`encrypted_content` 有则在场），`id` 字段 MUST NOT 进入回放项（`store:false` 下重放 `rs_*` id 属非标用法），展示文本另存）；请求侧 **在模型声明支持思考档位时**（与顶层 `reasoning.effort` 同条件——判据 `HarnessConfig::effort_supported`，读配置 schema 的 per-model `effort` 声明）SHALL 带 `include:["reasoning.encrypted_content"]`（store:false 官方回放模式的前提——让服务端在 reasoning item 里回传密文，重放时无需 id 即可还原）；未声明 effort 的模型（含 deepseek 现役形态）MUST NOT 发该字段；wire 不可推导的决策与事件（批准 / 拒绝、停止中断、LLM 错误、循环上限）SHALL 以 sidecar 记录留存——其中 **LLM 错误的 sidecar 记录 SHALL 另带 HTTP 面诊断**（非 2xx 时的 HTTP 状态码、原始响应 body——按固定上限截断防巨型 body 撑爆留存、服务端 request id 若响应头或 body 提供；不具备 HTTP 面的错误省略这些键），且**错误事件的既有形态（`type`/`code`/`message`）不变**（新诊断只进留存，不破坏既有消费方），被 wire 覆盖或失去意义的 11 类事件 kind（`user_message` / `assistant_text` / `tool_call` / `tool_result` / `usage` / `tool_denied` / `compact` / `session_reset` / `approval_overwritten` / `approval_withdrawn` / `turn_abort_requested`）SHALL NOT 再记（重复记录即第二事实源）。记录点 SHALL 与发送点同点，MUST NOT 经二次序列化产生第二事实源。验收口径 SHALL 为恢复充分性：仅凭 JSONL 能逐字节重建任意一轮发给模型的请求。
+会话 SHALL 以 wire/input 形态落配置目录（MUST NOT 写入 vault），作为 ADR 0007 双向记录机制的一侧：每会话一个 append-only JSONL 文件（`<config_dir>/harness/sessions/<vault 稳定 id>/<session_id>.jsonl`），文件首行 SHALL 为 `session_open` 记录——含 session id、vault 根路径、provider / 模型 / 思考档位、**完整装配后 system prompt 全文**与装配清单（每个来源的路径、存在与否、字节数；不存在的来源 SHALL 同样在场）。`<vault 稳定 id>` SHALL 是 vault 注册表 id（与 `vault-sessions/<id>.json`、`reading-positions/<id>.json` 同一份身份），MUST NOT 用 vault 路径派生的消毒名（消毒名有撞名面且无长度 / 字符集保证，M309 现场）。每次发给模型的请求（含工具循环的每次迭代与压缩调用）SHALL 落一条 `llm_request` 记录（完整请求体：system + messages + 参数，**另带本次实际发送体的字节数 `request_bytes`**——按 wire 展开后的尺寸算，省掉「按字节比外推请求多大」；不具备真实 HTTP body 的 mock 档省略该键），每次响应 SHALL 落一条 `llm_response` 记录（正文 / 思考归一回放项与展示文本 / 工具调用 / usage（SHALL 含 input / cached / output 与**缓存写入 `cache_write_tokens`**——provider 不提供时按 0 记录）/ 错误；思考 MUST 落盘——**回放项归一回放形状**（`{"type":"reasoning", summary, [content], [encrypted_content]}`：kimi 的明文载体是 `summary`、deepseek 的是 `content`，各按在场项保留；`encrypted_content` 有则在场），`id` 字段 MUST NOT 进入回放项（`store:false` 下重放 `rs_*` id 属非标用法），展示文本另存）；请求侧 **在模型声明支持思考档位时**（与顶层 `reasoning.effort` 同条件——判据 `HarnessConfig::effort_supported`，读配置 schema 的 per-model `effort` 声明）SHALL 带 `include:["reasoning.encrypted_content"]`（store:false 官方回放模式的前提——让服务端在 reasoning item 里回传密文，重放时无需 id 即可还原）；未声明 effort 的模型（含 deepseek 现役形态）MUST NOT 发该字段；wire 不可推导的决策与事件（批准 / 拒绝、停止中断、LLM 错误、循环上限）SHALL 以 sidecar 记录留存——其中 **LLM 错误的 sidecar 记录 SHALL 另带 HTTP 面诊断**（非 2xx 时的 HTTP 状态码、原始响应 body——按固定上限截断防巨型 body 撑爆留存、服务端 request id 若响应头或 body 提供；不具备 HTTP 面的错误省略这些键），且**错误事件的既有形态（`type`/`code`/`message`）不变**（新诊断只进留存，不破坏既有消费方），被 wire 覆盖或失去意义的 11 类事件 kind（`user_message` / `assistant_text` / `tool_call` / `tool_result` / `usage` / `tool_denied` / `compact` / `session_reset` / `approval_overwritten` / `approval_withdrawn` / `turn_abort_requested`）SHALL NOT 再记（重复记录即第二事实源）。记录点 SHALL 与发送点同点，MUST NOT 经二次序列化产生第二事实源。验收口径 SHALL 为恢复充分性：仅凭 JSONL 能逐字节重建任意一轮发给模型的请求。
 
 会话文件的 vault 归属 SHALL 仍以首行 `session_open.vault_root` 为**唯一**判据：列举、恢复、删除三处的归属过滤口径不变，目录只作组织维度，MUST NOT 成为归属判据的第二真源（文件被手工挪动 / 拷贝不改变其归属结论）。目录名 SHALL NOT 与保留目录名 `_orphaned` 相同。`sessions/<vault 稳定 id>/<session_id>.jsonl` SHALL 是**唯一布局**：新建会话 SHALL 只落其 vault 的目录，列举 / 恢复 / 删除 SHALL 只读该目录；产品运行时 MUST NOT 含任何迁移逻辑（无启动迁移入口、无旧布局读取路径），也 MUST NOT 读平铺在 `sessions/` 根下的 `*.jsonl`——MUST NOT 保留平铺布局的双读 / 双写过渡层（本仓无外部消费者，兼容层保护对象的举证责任在建层一方；REVIEW.md「消费者是谁」）。存量平铺文件（升级前遗留）的归位 SHALL 由**仓内一次性脚本**（`scripts/` 下，手动执行一次即弃，不进产品运行时）完成：脚本按各文件首行 `session_open.vault_root`（先规范化再查注册表）移入对应 vault 目录，`vault_root` 不可解析 / 在注册表里找不到 / 目标位置已有同名文件的 SHALL 移入保留目录 `sessions/_orphaned/`，MUST NOT 删除或改写任何文件，且 MUST be 幂等（重复执行零搬运）；脚本遇单文件失败时留原地并自报，重跑脚本收敛。上一代「按 vault 聚合的业务事件流水」形态（`<config_dir>/harness/<消毒名>.jsonl`）照旧不再续写、不做迁移（运行时 / 产品侧零读者，验收套件的 JSONL 断言随实现迁移至 wire 口径；M309 孤儿先例）。写失败不阻断对话的既有纪律不变。
 
@@ -314,6 +387,10 @@ composer 控制行 SHALL 常驻显示上下文用量读数（位于模型 chip �
 
 - **WHEN** 一轮响应含 reasoning 文本，其后一轮把上一轮响应的 reasoning 项带回历史
 - **THEN** `llm_response` 记录思考——回放项（**归一形状**：剥掉 `id`、`MUST NOT` 含 `id`；保 `summary` / `content` / `encrypted_content`）与展示文本（给人看）分别在 `reasoning` / `thinking` 字段；后续请求的历史中该归一后的 reasoning 回放项逐字节在场，且请求体**在模型声明支持思考档位时**带 `include:["reasoning.encrypted_content"]`；恢复旧会话（记录早于本改动、reasoning 项仍带 `rs_*` id）时，重建的 input 同样不含 `id`
+#### Scenario: 缓存写入随 usage 落盘
+
+- **WHEN** provider 的响应 usage 带回 `cache_write_tokens`，完成一轮对话
+- **THEN** 对应 `llm_response` 记录的 `usage` 块含 `cache_write_tokens` 原值；provider 不提供该字段时记为 0
 
 ### Requirement: mock provider
 
@@ -346,19 +423,30 @@ composer 控制行 SHALL 常驻显示上下文用量读数（位于模型 chip �
 把该段落从光标处拆为两段、卡片插入中间；**插入后光标 SHALL 落到卡片下一行的问题段落**（该处已有空段落则复用、
 否则新建）。卡片 SHALL 可经移除钮移除（图片卡片的移除钮语义与引用卡片一致）。粘贴进输入区的内容 SHALL 按
 剪贴板内容分派：剪贴板含 `image/*` 数据时 SHALL 走「图片粘贴卡片」（图优先，不净化）；其余内容 SHALL 净化为
-纯文本。已发送的用户消息 SHALL 同构呈现（卡片与问题段落上下交替，卡片无移除钮）。
+纯文本。已发送的用户消息 SHALL 同构呈现（卡片与问题段落上下交替，卡片无移除钮）。光标位 SHALL 覆盖段落内的
+字符偏移与卡片的前缘（含相邻两张卡片之间的边界位），且这些位置 SHALL 可由键盘导航一族到达与互相移动
+（见「composer 的 Emacs 文本导航族」条）；仅移动光标 MUST NOT 改变块序列。卡片与卡片之间、卡片与段落之间
+SHALL 同样存在可编辑的光标位（相邻两张卡片之间无段落时亦然，见「原子块边界光标位」）；在任一此类位置上输入
+内容 SHALL 物化一个承接它的问题段落（见「边界光标位上的内容输入物化段落」）。
 
 #### Scenario: 卡片与问题交错
 
 - **WHEN** 输入区已有「卡片1 + 问题1」，用户在问题1 之后继续摘录或贴入一张图片并输入问题2
 - **THEN** 输入区呈现 卡片1 / 问题1 / 卡片2 / 问题2 上下交替（卡片2 可以是引用卡片、消息摘录卡片或图片卡片）；
-  光标可在任意卡片前后继续输入
+  光标可在任意卡片前后继续输入；**两张卡片相邻（中间没有段落）时，两卡之间的边界位同样可由键盘导航到达并
+  就地输入**
 
 #### Scenario: 光标处拆段插入
 
 - **WHEN** 光标落在某问题段落中间时触发「摘录到对话」或贴入一张图片
 - **THEN** 该段落从光标处拆为两段，新卡片插入两段之间，光标落到新卡片下一行的问题段落（无则新建），可直接
   继续输入问题
+
+#### Scenario: 相邻卡片之间就地输入
+
+- **WHEN** 输入区有两张相邻的卡片（两者之间无段落），用户把光标移进它们之间并输入问题文字
+- **THEN** 两张卡片之间出现该文字所在的问题段落，卡片次序与内容不变；随后该消息按既有序列化协议投递
+  （卡片按块序产出各自的元素，问题段落落在两者之间）
 
 #### Scenario: 发送后同构沉淀
 
@@ -420,7 +508,7 @@ living spec 缺条款；M447/M453 的 `deleteAtCaret` 与裸 `Backspace`/`Delete
 
 ### Requirement: 引用消息序列化协议
 
-发送消息时，系统 SHALL 把混排输入区序列化为 XML 结构投递给模型：每段摘录一行 `<quote file="…" heading="…" lines="A-B">摘录原文</quote>`，问题文字 SHALL 按交错顺序排布在标签之间（卡片阅读顺序 = 序列化顺序）；`lines` MUST 非空；`heading` SHALL 与卡片出处行显示的最近一级标题一致；属性值与文本节点 MUST 做 XML 转义。序列化结构 SHALL NOT 包含任何编号——遵循一致性原则：投递给模型的上下文要素对人必须也可查（卡片出处行、hover 完整摘录与标题链、注入 chip），编号对人无区分价值故不进协议。UI SHALL NOT 显示卡片编号；agent 回复 SHALL 按摘录内容/出处回指，同文档多段相似摘录时用出处（标题 / 行范围）消歧。序列化后的完整消息（含 `<quote>` 块）SHALL 以 wire 形态留存：在对应 `llm_request` 记录的 messages 数组中逐字节在场，经请求体重建即得。
+发送消息时，系统 SHALL 把混排输入区序列化为 XML 结构投递给模型：每段摘录一行 `<quote file="…" heading="…" lines="A-B">摘录原文</quote>`，问题文字 SHALL 按交错顺序排布在标签之间（卡片阅读顺序 = 序列化顺序）；`lines` MUST 非空；`heading` SHALL 与卡片出处行显示的最近一级标题一致；属性值与文本节点 MUST 做 XML 转义。序列化结构 SHALL NOT 包含**卡片编号**——`<quote>` / `<msg-quote>` 元素 MUST NOT 带任何序号属性（遵循一致性原则：它们的 `file` / `heading` / `lines` / `role` / `at` 属性本身就是身份，投递给模型的上下文要素对人必须也可查，编号对人无区分价值故不进协议）。**图片块是该禁令的唯一例外**：图片在 wire 上没有文本身份（`input_image` part 只承载字节），编号是模型指代单张图的唯一把手，故图片块按「图片编号与引用」携带 `Image N` 标签与编号。UI SHALL NOT 对引用卡片与消息摘录卡片显示编号；图片卡片 SHALL 按「图片编号与引用」显示编号。agent 回复 SHALL 按摘录内容/出处回指，同文档多段相似摘录时用出处（标题 / 行范围）消歧。序列化后的完整消息（含 `<quote>` 块）SHALL 以 wire 形态留存：在对应 `llm_request` 记录的 messages 数组中逐字节在场，经请求体重建即得。
 
 #### Scenario: 序列化结构
 
@@ -434,8 +522,16 @@ living spec 缺条款；M447/M453 的 `deleteAtCaret` 与裸 `Backspace`/`Delete
 
 #### Scenario: UI 与协议无编号
 
-- **WHEN** 输入区或 transcript 呈现引用卡片，或 agent 回复引用某段摘录
-- **THEN** 界面任何位置与投递给模型的消息中均不出现 `#N` / `index` 形式的卡片编号；agent 回复按摘录内容/出处回指（如「『倒序阅读』那段」）
+- **WHEN** 输入区或 transcript 呈现引用卡片 / 消息摘录卡片，或 agent 回复引用某段摘录
+- **THEN** 界面任何位置与投递给模型的消息中均不出现这些卡片的编号（无 `#N` / 序号属性）——本禁令的
+  作用面是引用卡片与消息摘录卡片，图片卡片的编号与标签不在其内（见「图片编号与引用」）；agent 回复按
+  摘录内容/出处回指（如「『倒序阅读』那段」）
+
+#### Scenario: 图片块的编号例外
+
+- **WHEN** 发送一条同时含引用卡片与图片卡片的交错消息
+- **THEN** 模型中该消息里的 `<quote>` 元素保持无编号属性，而图片块前带 `Image N` 标签、其 N 与该图片
+  卡片徽标一致
 
 #### Scenario: 留存逐字节在场
 
@@ -514,17 +610,17 @@ transcript 中的消息（用户 / agent）SHALL 在 hover 时浮现复制钮，
 
 ### Requirement: 消息呈现
 
-transcript 中的用户与 agent 消息 SHALL 带角色 + 相对时间 meta 行（如「你 · 12 秒前 / Agent · 刚刚」）：角色名与相对时间同行，视觉上降档于消息正文（micro 字号、三级文字色）。用户消息 SHALL 以描边气泡呈现（内容底色 + 柔和边框 + 圆角），正文色降一档以区分于 agent 消息；agent 消息 SHALL 平铺排版（无气泡）。相对时间 SHALL 按「刚刚 / N 秒前 / N 分钟前 / N 小时前 / 昨天」分档并随时间低频刷新与随语言切换重绘。快照恢复的历史消息 SHALL 以后端时间戳（`PanelMessage.ts`）显示真实相对时间；无时间戳的旧快照 SHALL 只显示角色、SHALL NOT 伪造相对时间。快照消息面 SHALL 保真：正文为空的 assistant 轮（模型只发工具调用、无正文）MUST NOT 落成面板记录——快照恢复 MUST NOT 出现只有角色 meta 行、正文为空的「空气泡」；工具记录（`role: tool`）SHALL 持久化摘要（`PanelMessage.summary`），成功为调用参数摘要、失败含细分状态与错误码，使 webview 重载后工具行仍有信息。
+transcript 中的用户与 agent 消息 SHALL 带角色 + 时间读数 meta 行（如「你 · 12 秒前 / Agent · 刚刚」）：角色名与时间读数同行，视觉上降档于消息正文（micro 字号、三级文字色）。用户消息 SHALL 以描边气泡呈现（内容底色 + 柔和边框 + 圆角），正文色降一档以区分于 agent 消息；agent 消息 SHALL 平铺排版（无气泡）。读数形态 SHALL 按数据来源分两档：**live**（本轮上屏打戳的消息）按「刚刚 / N 秒前 / N 分钟前 / N 小时前 / 昨天」分档；**restored**（快照恢复与会话恢复重放的消息，时间读数来自留存）按「同日窄相对 / 跨天短日期」呈现——留存在盘上，读数可以跨天甚至跨周，「昨天」对更老的消息是错读数。两档 SHALL 随时间低频刷新与随语言切换重绘（形态随消息携带、重绘不重算）。快照 / 恢复重建的消息 SHALL 以后端时间戳（`PanelMessage.ts`）显示真实读数；**会话恢复的 ts SHALL 来自留存记录的信封**（wire 项自身不带时间戳，按项在记录序里的产出时刻归属，见 design §3）；无时间戳可归的消息 SHALL 只显示角色、SHALL NOT 伪造读数。快照消息面 SHALL 保真：正文为空的 assistant 轮（模型只发工具调用、无正文）MUST NOT 落成面板记录——快照恢复 MUST NOT 出现只有角色 meta 行、正文为空的「空气泡」；工具记录（`role: tool`）SHALL 持久化摘要（`PanelMessage.summary`），成功为调用参数摘要、失败含细分状态与错误码，使 webview 重载后工具行仍有信息。
 
 #### Scenario: 新消息带 meta 行
 
 - **WHEN** 发送一条提问并收到 agent 回答
-- **THEN** 两条消息都带角色 + 相对时间 meta 行（用户消息在描边气泡内，agent 消息平铺）；相对时间初始落在「刚刚 / N 秒前」档
+- **THEN** 两条消息都带角色 + 时间读数 meta 行（用户消息在描边气泡内，agent 消息平铺）；读数初始落在「刚刚 / N 秒前」档
 
 #### Scenario: 恢复消息按后端时间戳显示
 
-- **WHEN** webview 重载或 pane 恢复后从快照重建 transcript
-- **THEN** 携带后端 `ts` 的恢复消息按该戳显示相对时间；缺 `ts` 的旧快照消息只显示角色、不显示相对时间（不伪造）
+- **WHEN** webview 重载或 pane 恢复后从快照重建 transcript，或从会话浮层恢复历史会话后重放 transcript
+- **THEN** 携带 `ts` 的恢复消息按该戳显示时间读数（同日给窄相对、跨天给短日期）；缺 `ts` 的消息只显示角色、不显示时间读数（不伪造）
 
 #### Scenario: 工具轮快照保真
 
@@ -534,7 +630,12 @@ transcript 中的用户与 agent 消息 SHALL 带角色 + 相对时间 meta 行�
 #### Scenario: 语言切换重绘
 
 - **WHEN** 界面语言切换（zh ↔ en）
-- **THEN** 角色名与相对时间随 `onRelabel` 重绘为对应语言
+- **THEN** 角色名与时间读数随 `onRelabel` 重绘为对应语言；恢复消息的读数形态保持 restored（不因重绘回落到 live 档）
+
+#### Scenario: 会话恢复的消息带留存时间
+
+- **WHEN** 从会话浮层选择一个历史会话恢复（源会话留存在盘上，可能已跨天）
+- **THEN** 重放出的每条消息的 meta 行都带该消息在源会话里的时间读数（用户消息 = 它所属请求的发送时刻，助手回复 = 产出它的那次响应时刻）；跨天的消息显示短日期而不是「昨天」；源记录缺 `ts` 时该消息不显示时间读数
 
 ### Requirement: 错误呈现
 
@@ -729,7 +830,7 @@ provider 映射到各家实际 reasoning 参数。档位 SHALL 会话内生效�
 
 ### Requirement: 权限模式切换
 
-composer 控制行 SHALL 提供权限 chip（位于模型 / 思考合并选择器 chip 之后、ctx 读数之前），**显示当前模式档的短名**（文案表 zh：只读 / 可写 / 完全；en：Read / Write / Full）——控制行被合并选择器 chip 与权限 chip 共同挤占，短名是「三档都能完整显示」的口径（Alex 2026-10-09 裁决；zh 短名「写入」于 2026-10-10 批复改为「可写」）。点击 SHALL 弹出浮层：三档单选、当前档勾选、列表项显示**全名**（zh：只读 / 保险库写入 / 完全访问；en：Read Only / Vault Write / Full Access）、且**每档附一行释义**消歧档名与语义（`read_only` = 读自动放行、写操作都先问；`vault_write` = 库内写自动放行、库外命令先问；`full_access` = 全自动、仅危险命令仍问；措辞可在实现批次微调，语义方向以此为准）。浮层 SHALL 复用既有浮层可访问性口径（`role="menu"` / `menuitemradio` / `aria-checked`）。选择一档 SHALL 立即生效并经 `config_set_value` 写回 `[harness].permission_mode`；切换 MUST NOT 打断进行中的轮次（对下一个判定生效，与模型 chip 同口径）。
+composer 控制行 SHALL 提供权限 chip（位于模型 / 思考合并选择器 chip 之后、ctx 读数之前），**显示当前模式档的短名**（文案表 zh：只读 / 可写 / 完全；en：Read / Write / Full）——控制行被合并选择器 chip 与权限 chip 共同挤占，短名是「三档都能完整显示」的口径（Alex 2026-10-09 裁决；zh 短名「写入」于 2026-10-10 批复改为「可写」）。点击 SHALL 弹出浮层：三档单选、当前档勾选、列表项显示**全名**（zh：只读 / 保险库写入 / 完全访问；en：Read Only / Vault Write / Full Access）、且**每档附一行释义**消歧档名与语义（`read_only` = 读自动放行、写操作都先问；`vault_write` = 库内写自动放行、库外命令先问；`full_access` = 全自动、仅危险命令仍问；措辞可在实现批次微调，语义方向以此为准）。chip 的悬停提示与可访问名 SHALL 说明当前档并附上**该档的同一行释义**（与浮层释义同源，不新增信息）。浮层 SHALL 复用既有浮层可访问性口径（`role="menu"` / `menuitemradio` / `aria-checked`）。选择一档 SHALL 立即生效并经 `config_set_value` 写回 `[harness].permission_mode`；切换 MUST NOT 打断进行中的轮次（对下一个判定生效，与模型 chip 同口径）。
 
 #### Scenario: 三档浮层
 
@@ -740,6 +841,11 @@ composer 控制行 SHALL 提供权限 chip（位于模型 / 思考合并选择�
 
 - **WHEN** 一轮对话正在工具循环中，把模式从 `vault_write` 切到 `read_only`
 - **THEN** 当前轮次按开轮时的模式判完；从下一个判定起按 `read_only` 执行
+
+#### Scenario: chip 悬停提示带当前档释义
+
+- **WHEN** 指针悬停在权限 chip 上（或读屏取该 chip 的可访问名）
+- **THEN** 提示文本包含当前档全名与浮层里的那行释义（如「权限模式：保险库写入（点击切换）· 库内写自动放行；库外命令先问你」），且与浮层同一档的释义逐字相同
 
 ### Requirement: cli_run 用途说明（purpose 字段）
 
@@ -870,3 +976,413 @@ SHALL 按**不支持**处理（保守默认，与 `effort` 同侧），SHALL 给
 - **WHEN** 生效模型的 `vision` 为 `false` 或未声明，用户在 composer 贴入图片并点击发送
 - **THEN** 发送被挡下并弹出人话错误；该消息里的图片卡片被标出（错误态可见）；输入区内容原样保留、会话不推进、
   MUST NOT 发出丢弃图片的降级消息；移除图片卡片后同一消息可正常发出
+
+### Requirement: composer 草稿自动保存与恢复
+
+混排对话输入区（composer）的内容 SHALL 作为**当前 vault 的草稿**自动保存并在装载该 vault 时自动恢复；粒度 SHALL 为
+**一个 vault 一份草稿**（草稿绑定 vault 稳定 id，不绑定会话）。草稿 SHALL 落配置目录
+（`<config_dir>/harness/drafts/<vault 稳定 id>.json`，tmp + rename 原子替换），MUST NOT 写入 vault、MUST NOT 新增或
+改写 vault 内任何文件；目录名 SHALL 是 vault 注册表稳定 id（与会话留存 `sessions/<vault 稳定 id>/`、附件
+`attachments/<vault 稳定 id>/` 同一份身份），MUST NOT 用 vault 路径派生的消毒名。无 vault 打开时系统 SHALL 只在内存
+中工作——MUST NOT 落盘、MUST NOT 报错、MUST NOT 落任何兜底目录。
+
+草稿 SHALL 存混排块模型（`ComposerBlock` 序列），MUST NOT 存有损的面板文本投影：图片卡片 SHALL 以内容寻址名
+（`pasted-<内容哈希前 16 位>.<扩展名>`）+ 源 mime（+ 可选像素宽高）的**引用形态**入草稿，MUST NOT 内联 base64；
+解析到未知块类 SHALL 保守保留、MUST NOT 静默丢弃内容。
+
+保存 SHALL 为**防抖**（编辑停顿后落盘，窗口沿用同族 sidecar 的既有量级）+ **离散时点显式 flush**（切 vault 之前、
+面板关闭、窗口失焦 / 退出）；系统 MUST NOT 只依赖防抖（切走之后不再有「当前 vault」这一上下文）。内容未变化时
+SHALL 跳过写盘。写失败 SHALL 降级为人话 warning、MUST NOT 阻断输入、MUST NOT 谎报已保存。
+
+恢复 SHALL 发生在装载 vault 时（app 启动装载后、切 vault 装载后）：读回该 vault 草稿并还原到输入区——块序、块类、
+光标落位与图片卡片引用 SHALL 与保存前一致。无草稿 / 文件损坏 / 解析失败时 SHALL 安静回落到空的单段落输入区，
+MUST NOT 报错、MUST NOT 伪造内容。恢复出的草稿是新编辑史——撤销 / 重做栈 MUST NOT 跨进程恢复。
+
+**与其他时刻的交互**：发送**成功**后草稿 SHALL 清除（含落盘）；发送**被拒 / 失败**时草稿 SHALL 与输入区内容一并
+原样保留，MUST NOT 出现「解析失败吞字」或「发送被拒即丢字」的空草稿窗口。切 vault 时 SHALL 先 flush 当前 vault 草稿、
+再装载目标 vault 草稿。切换会话、新建会话、自动压缩 SHALL NOT 改变草稿（草稿属 vault 不属会话）；删除会话 MUST NOT
+牵动草稿。
+
+#### Scenario: 编辑后重开 app 恢复
+
+- **WHEN** 在 composer 输入一段文本与一张引用卡片、停顿至防抖落盘，随后重启 app 并装载同一 vault
+- **THEN** 输入区按相同块序还原该文本与引用卡片（引用卡片的 file / heading / lines 与保存前一致）；
+  `<config_dir>/harness/drafts/<vault 稳定 id>.json` 是这次恢复的数据来源
+
+#### Scenario: 切 vault 各留各的
+
+- **WHEN** 在 vault A 的 composer 留有草稿，切到 vault B（其输入区为空），再切回 A
+- **THEN** 切到 B 时 A 的草稿已 flush 落盘、B 的输入区呈现 B 自己的草稿（无则空）；切回 A 时 A 的草稿原样还原；
+  `drafts/<A 的稳定 id>.json` 与 `drafts/<B 的稳定 id>.json` 互不影响；vault 目录零新增或修改
+
+#### Scenario: 发送成功后清除
+
+- **WHEN** 一条携带输入内容的用户消息发送被接受
+- **THEN** 输入区清空，且该 vault 的草稿被清除（文件被删除或内容为空）——内容已进会话，不再作为未发送草稿留存
+
+#### Scenario: 发送被拒时保留
+
+- **WHEN** 当前模型不支持图片、一条携带图片卡片的草稿被发送闸挡下（未建会话、未入队）
+- **THEN** 输入区原内容（含图片卡片）原样保留、图片卡片被标出错误态；该 vault 的草稿文件内容不变；
+  MUST NOT 出现草稿先被清空再回滚的丢字窗口
+
+#### Scenario: 图片卡片引用 round-trip 且草稿无 base64
+
+- **WHEN** 草稿含图片卡片，重启后恢复该 vault
+- **THEN** 还原出的图片卡片引用名与保存前一致、缩略图可经读回命令取回；草稿文件内不含 `data:image` 或长 base64 串
+  （图片以内容寻址引用在场）
+
+#### Scenario: 会话生命周期不动草稿
+
+- **WHEN** 在留有草稿时切换历史会话、点击「新会话」、或发生自动压缩、或删除一份历史会话留存
+- **THEN** composer 的草稿与 `<config_dir>/harness/drafts/<vault 稳定 id>.json` 均不受影响（切回该 vault 时草稿仍在）
+
+#### Scenario: 无 vault 不落盘、不报错
+
+- **WHEN** 尚未打开任何 vault 时在 composer 输入内容
+- **THEN** 输入区照常可编辑，不产生任何 `drafts/` 文件、不弹错误、不落兜底目录
+
+#### Scenario: 草稿损坏时安静回落
+
+- **WHEN** 该 vault 的草稿文件缺失、为空或内容无法解析为草稿结构
+- **THEN** 输入区回落到空的单段落形态，不报错、不伪造内容；随后编辑照常触发保存
+
+#### Scenario: 写失败降级不阻断
+
+- **WHEN** 草稿落盘失败（如磁盘不可写）
+- **THEN** 产生一条人话 warning；输入区照常可用、内容不丢（仍留在内存），MUST NOT 阻断输入、MUST NOT 谎报已保存
+
+### Requirement: 原子块边界光标位
+
+composer 的模型层 SHALL 把「相邻两个原子块（卡片）之间的位置」当作一等公民的光标位：其表示 SHALL 为
+`{block: 后一块的下标, offset: 0}`（等价于「后一块的前缘」）。该光标位 SHALL 满足 DOM 往返对称——从 DOM 读回时，
+「选区锚在 composer 元素自身第 N 个子块边界」（`Range(composer, N)`）SHALL 归一为 `{block: N, offset: 0}`，
+「选区锚在某张卡片元素内部或卡片元素本身」SHALL 归一为 `{block: 该卡片下标, offset: 0}`；把该位置写回 DOM SHALL
+落在同一个边界上。该光标位 SHALL 跨整面重渲（`renderComposer` + 写回光标）与撤销 / 重做恢复保持一致。
+
+仅把光标移动到该位置 MUST NOT 改变块序列、MUST NOT 产生撤销步——导航不是编辑。相邻两张卡片之间没有段落块是
+**合法状态**，归一化 MUST NOT 为此凭空插入段落。
+
+#### Scenario: ⌃B 落到两张相邻卡片之间
+
+- **WHEN** composer 里有两张相邻的卡片（两者之间无段落）、光标在它们之后的段落里，用户按 ⌃B 把光标往回移
+- **THEN** 模型读回的光标是 `{block: 后一张卡片的下标, offset: 0}`；块序列逐字节不变；撤销栈无新增步
+
+#### Scenario: 相邻卡片之间的光标跨重渲与撤销保真
+
+- **WHEN** 光标停在两张相邻卡片之间，此后发生一次整面重渲、或一次撤销后再重做
+- **THEN** 光标被重新落在同一个边界上；块序列与重渲前一致
+
+#### Scenario: 归一化不破坏边界光标位
+
+- **WHEN** 光标停在两张相邻卡片之间，随后一次归一化折进了一个裸块
+- **THEN** 归一化完成后光标仍在同一个边界位上；两张卡片之间不会被插入新段落
+
+### Requirement: 边界光标位上的内容输入物化段落
+
+光标停在相邻原子块之间的边界位上时，到达**内容型输入** SHALL 在该位置物化一个段落块并把内容落进它：
+键入的字符、IME 组合的落字、粘贴与拖入的纯文本 SHALL 落在新段落里；⇧Enter SHALL 在该处落一个新空段落
+（与「一次 ⇧Enter 恰好多一行可见行」的「卡片前缘」档同一条落法）；插入卡片 SHALL 把卡片落在该边界上，并保证
+边界之后仍有承接光标的问题段落。
+
+物化 MUST NOT 改动被该边界分隔的两张卡片、MUST NOT 把内容折进相邻的其它段落块。物化与该次输入 SHALL 合成
+**一个**撤销步：一次撤销后 SHALL 回到「两张卡片相邻、两者之间无段落、光标在边界位」的前态。光标落在边界位本身
+（无内容输入）MUST NOT 产生撤销步。在卡片前缘的位置输入纯文本时，系统 MUST NOT 删除该卡片。
+
+#### Scenario: 在两张图之间打字
+
+- **WHEN** 两张相邻的图片卡片之间的边界位上有光标，用户键入文字
+- **THEN** 该边界处出现一个新的问题段落，文字落在其中；两张图片卡片原样保留、次序不变；光标落在该段落内
+
+#### Scenario: 在两张图之间粘贴与 ⇧Enter
+
+- **WHEN** 边界位上有光标，用户粘贴一行纯文本、或按 ⇧Enter
+- **THEN** 该边界处出现承接内容的问题段落（⇧Enter 时为一个新空段落，`SHALL` 恰好多一行可见行）；两张图片
+  卡片不受影响
+
+#### Scenario: 在卡片前缘输入不吞卡
+
+- **WHEN** 光标位于某张卡片的前缘，用户粘贴或键入一段纯文本
+- **THEN** 该卡片仍在块序列中、内容与次序不变；文本落在该处物化的段落里
+
+#### Scenario: 物化与输入合成一个撤销步
+
+- **WHEN** 在边界位上键入文字后按一次撤销
+- **THEN** 块序列回到「两张卡片相邻、两者之间无段落、光标在边界位」的前态；文字与新段落一并消失，两张卡片
+  不丢
+
+### Requirement: 图片编号与引用
+
+系统 SHALL 为对话里的图片提供**编号**，且该编号在人可见的界面与投递给模型的消息两侧**同源**。
+
+**编号规则**：编号 SHALL 在**一条消息内**按图片块在序列中的出现次序 1-based 分配（`Image 1` /
+`Image 2`…），只计图片块，MUST NOT 计入引用卡片、消息摘录卡片或段落；编号自 1 起、MUST NOT 有空号；
+图片块被移除后，同一消息内其余图片的编号 SHALL 即时重编（位序编号）。编号 SHALL 是块序列的**派生读数**
+——MUST NOT 作为字段持久化进图片卡片的源数据、MUST NOT 进 composer 快照（恢复路径按同一规则重建）；
+编号的计算 SHALL 只有一处（同一个纯函数既供卡片呈现、又供投递投影消费），界面 MUST NOT 另立第二份编号
+判定。
+
+**界面呈现**：composer 与 transcript 的图片卡片 SHALL 显示自己的编号；同一条消息在 composer、transcript
+与恢复后三处显示的编号 SHALL 相同。引用卡片与消息摘录卡片 MUST NOT 显示编号。
+
+**引用插入**：composer 内的图片卡片 SHALL 提供「插入引用」钮（`@` 形态；引用卡片与消息摘录卡片 MUST NOT
+有该钮），点击该钮 SHALL 在**当前光标处**插入该图片的引用文本 `Image N`（N = 该卡片在点击时的编号）：
+光标落在段落中间时 SHALL 按既有光标语义把该段落拆为两段、引用文本落在光标处；插入后光标 SHALL 落在
+插入文本之后，可直接继续输入；光标不可得时 SHALL 按既有口径落 composer 末尾。插入的引用文本 SHALL 是
+**普通可编辑文本**：系统 MUST NOT 在后续编辑中静默改写它——图片被移除导致编号重编后，已插入的文本可能
+悬空，这是**可见**的、由用户处置的状态，系统 MUST NOT 静默错投。
+
+**投递同源编号**：发送时**每个**图片块 SHALL 在投递序列里携带标签行 `Image N`，标签 SHALL 紧邻该图片
+内容之前（模型因此能读到「编号 → 图」的配对）；标签的 N MUST 来自与卡片徽标同一份编号（一处真源，
+MUST NOT 由第二处重算）。标签 SHALL 进入发给 provider 的 wire 请求；会话留存的**文本面 MUST NOT 出现
+标签行**（恢复路径把留存当正文还原，标签若落在文本 part 会被复现成正文），留存 SHALL 以图片 part 上的
+**结构化标签字段**承载编号，标签文本在发送前由该字段生成（真 client 与 mock 走同一条展开链）。
+系统 MUST NOT 因用户已用 `@` 插入过引用而不注入标签。
+
+**恢复与 transcript**：恢复路径 SHALL 按同一编号规则重建图片卡片的编号，MUST NOT 伪造、MUST NOT 丢弃；
+一条已发送消息在 transcript 上的编号 SHALL 与该消息投递时模型看到的编号一致（消息发出即冻结其图序）。
+
+#### Scenario: 编号按图序、只数图片块
+
+- **WHEN** composer 里依次放入图片 A、引用卡片、图片 B、段落
+- **THEN** 图片 A 的卡片显示编号 1、图片 B 的卡片显示编号 2；引用卡片与段落不参与编号
+
+#### Scenario: 删除后位序重编
+
+- **WHEN** composer 里有编号 1 / 2 / 3 的三张图片，移除其中编号 1 的那张
+- **THEN** 剩余两张的卡片编号即时变为 1 / 2（无空号）；已插入正文的引用文本不被改写
+
+#### Scenario: @ 钮在光标处插入引用
+
+- **WHEN** 光标落在某问题段落中间，点击图片 B（编号 2）卡片上的 `@` 钮
+- **THEN** 该段落从光标处拆为两段，`Image 2` 文本插入两段之间，光标落在插入文本之后可直接继续输入；
+  正文中不出现编号以外的任何标记
+
+#### Scenario: 卡片徽标与 wire 标签同源同 N
+
+- **WHEN** 发送一条含两张图片（卡片徽标 1 / 2）的消息
+- **THEN** wire 请求里第一个图片内容之前有 `Image 1` 标签、第二个之前有 `Image 2` 标签，且标签的编号与
+  对应卡片徽标逐一对上；用户未使用过 `@` 引用时同样如此
+
+#### Scenario: 留存文本面无标签、恢复后编号一致
+
+- **WHEN** 一条含图片的消息发送完成，随后重启 app 恢复该会话
+- **THEN** 该轮 `llm_request` 记录里 user 项的文本面不含 `Image N` 行（标签以结构化字段记在图片 part 上，
+  不留 base64）；恢复后各图片卡片的编号与发送时一致，恢复出的消息正文不出现多余标签行
+
+#### Scenario: 引用卡片与消息摘录卡片零编号（回归）
+
+- **WHEN** composer 或 transcript 呈现引用卡片 / 消息摘录卡片，或发送含它们的消息
+- **THEN** 界面与投递消息中均不出现它们的编号或序号属性（`<quote>` / `<msg-quote>` 零编号口径不变）
+
+### Requirement: cli_run 执行环境（登录 shell PATH）
+
+系统 SHALL 在进程内**首次**执行 `cli_run` 时经用户登录 shell 解析一份完整 `PATH`，并把解析结果注入
+此后每个 `cli_run` 子进程的环境变量 `PATH`——目的是让裸命令（如装在用户 shell 启动文件追加目录里的
+CLI）无需 `zsh -lc` 一类包裹即可被找到，从而不再因「找不到命令」逐条进入批准闸。
+
+shell SHALL 取环境变量 `SHELL`（缺失或 trim 后为空白时回落 `/bin/zsh`）。当 shell 的 basename 为
+`zsh` 或 `bash` 时，系统 SHALL 以**登录 + 交互**旗标（`-l -i -c`）执行一条只打印 `PATH` 的命令
+（实证：PATH 增补同时定义在登录启动文件与交互启动文件两处，只加载其一拿不全）；其余 shell MUST NOT
+猜测旗标，直接按解析失败处理。解析 SHALL 在独立子进程内进行，`stdin` 置空、`stderr` 丢弃；输出 SHALL
+用一对固定标记夹取 `PATH`（启动文件会向 stdout 打杂输出，MUST NOT 被当作 PATH）。解析 SHALL 带超时
+（默认 5 秒）：超时 / 子进程错误 / 取不到标记 / 标记之间为空白，一律判**解析失败**。解析结果 SHALL
+在进程内缓存复用（成功与失败都缓存），MUST NOT 每次 `cli_run` 都重新解析。
+
+解析成功时注入的 `PATH` SHALL 为「解析结果在前 + 应用继承到的额外目录去重追加在后」（空段丢弃）；
+解析失败时 MUST NOT 改写子进程环境——`cli_run` 子进程照常继承应用自身 `PATH`。本机制 MUST NOT 改动
+权限模型：解析出的 `PATH` 只影响子进程能否找到命令，MUST NOT 影响命令是否被放行——命令分类、危险
+黑名单、shell 包装器规则、allow / deny 规则、模式默认分层与批准缓存全部照旧只以 argv 为判据。
+
+#### Scenario: 裸命令找到登录 shell 里的工具
+
+- **WHEN** 用户 shell 的启动文件把某工具目录追加进 PATH，且该目录不在应用进程自身 PATH 里；模型调用
+  `cli_run("tvly", ["--version"])`（裸命令，无 `zsh -lc` 包裹）
+- **THEN** 子进程带上解析出的完整 PATH，命令被正常找到并执行，MUST NOT 出现「command not found」
+
+#### Scenario: 解析失败回退继承 PATH
+
+- **WHEN** 登录 shell 解析超时，或输出的标记之间为空（启动文件挂住 / 子进程被 kill / 启动文件把 PATH 清空）
+- **THEN** `cli_run` 子进程不改写 PATH、照常继承应用自身环境，命令执行行为与本次改动前一致；
+  AND 该失败结果被缓存，后续 `cli_run` MUST NOT 反复触发超时重试
+
+#### Scenario: 只对已知 shell 解析
+
+- **WHEN** `$SHELL` 指向 zsh / bash 之外的 shell（如 fish / nu），或缺失、为空白
+- **THEN** zsh / bash ⇒ 以 `-l -i -c` 解析；其他 shell ⇒ 不猜旗标、按解析失败回退继承 PATH；
+  `$SHELL` 缺失或空白 ⇒ 以 `/bin/zsh` 解析
+
+#### Scenario: 权限判定不受 PATH 注入影响
+
+- **WHEN** 解析出的 PATH 让某个此前找不到的命令变得可执行（如裸 `tvly`）
+- **THEN** 该命令仍按既有分类走判定管线（只读直接放行、写在对应档逐个问、危险黑名单任何档都问），
+  PATH 注入 MUST NOT 使任何命令免于判定；`zsh -lc` 一类 shell 包装器仍归危险、任何档都逐个问
+
+### Requirement: 消息摘录卡片
+
+系统 SHALL 提供消息摘录手势：在 transcript 的用户消息或助手消息体内选中片段后出现浮动「摘录到对话」钮（与「摘录引用卡片」同手势形态），点击把该片段作为 block 级**消息摘录卡片**加入混排输入区；harness 面板未打开时 SHALL 先打开面板再入卡片。每张消息摘录卡片 SHALL 呈现：引号竖条、摘录原文截断（至多两行）、出处行（`对话 · 角色`）、（输入区内）移除钮；hover SHALL 显示完整摘录与来源消息的绝对时间。卡片数据 SHALL 携带：来源角色 role（`user`/`assistant`，必选）、上屏时间戳 at（可缺——快照恢复无戳的旧消息允许 role-only 出处）、摘录原文（所见文本，即渲染后选区文本）。思考块、工具行、批准卡与消息内引用卡片内部的选区 MUST NOT 产出消息摘录。点击卡片 SHALL 跳回 transcript 中对应来源消息并瞬态高亮整条消息（约 1.4s 消退）；定位按三层降级——① role + 上屏戳匹配；② 未命中则在 transcript 各消息体内搜索摘录原文（前缀匹配口径）；③ 仍找不到则 toast 告知该摘录已失锚（如「新会话」已重置、切换 vault），MUST NOT 静默跳到其他消息。快照恢复时消息摘录卡片 SHALL 从留存原文解析还原（与 `<quote>` 同 round-trip 口径）。消息携带消息摘录卡片时 SHALL 同「携带卡片时跳过视口」口径跳过视口注入（「上下文注入与可见性」的「携带卡片」涵盖文档引用卡片与消息摘录卡片两类）。消息摘录手势与编辑器摘录手势 SHALL 互斥并存——同屏至多浮现一个浮动钮，以后发生选区变化的来源容器为准。
+
+#### Scenario: 消息选区创建卡片
+
+- **WHEN** 在 transcript 某条助手消息体内选中一段文字并点击浮动「摘录到对话」钮
+- **THEN** 混排输入区出现一张消息摘录卡片（竖条 + 至多两行摘录 + 出处行「对话 · Agent」）；卡片数据含来源角色、上屏时间戳与摘录原文；transcript 侧无任何常驻装饰残留
+
+#### Scenario: 排除面
+
+- **WHEN** 在思考块内、工具行上、批准卡内或消息内的引用卡片内部选中文字
+- **THEN** 不出现浮动「摘录到对话」钮，不产生任何摘录产物
+
+#### Scenario: 两手势互斥
+
+- **WHEN** 先在编辑器中选中文字（编辑器浮动钮浮现），随后在 transcript 消息中选中文字（或反之）
+- **THEN** 同屏只存在一个浮动钮；后发生的选区来源容器决定哪个钮在场
+
+#### Scenario: 点击跳回消息高亮
+
+- **WHEN** 点击输入区或已发送消息中的消息摘录卡片，且来源消息仍在当前会话 transcript 中
+- **THEN** transcript 滚动定位到该消息，整条消息瞬态高亮（约 1.4s 消退）
+
+#### Scenario: 失锚告知
+
+- **WHEN** 点击消息摘录卡片，但来源消息已不在当前会话 transcript 中（「新会话」已重置或已切换 vault）
+- **THEN** 面板出现 toast 告知该摘录已失锚，transcript 不发生任何跳转
+
+#### Scenario: 快照恢复还原
+
+- **WHEN** 重启 app 恢复会话，历史用户消息中含消息摘录卡片的序列化原文
+- **THEN** 该消息还原后消息摘录卡片按原交错顺序呈现，卡片可点击跳回；卡片数据（role / at / 摘录原文）与留存一致
+
+#### Scenario: 携带消息摘录卡跳过视口
+
+- **WHEN** 发送一条仅携带消息摘录卡片（无文档引用卡片）的消息
+- **THEN** 该条消息不附加视口行范围注入；chip 不显示视口（与携带文档引用卡片同口径）
+
+### Requirement: 消息摘录序列化协议
+
+发送消息时，混排输入区的消息摘录卡片 SHALL 序列化为 `<msg-quote role="…" at="…">摘录原文</msg-quote>`——每段消息摘录一行，问题文字 SHALL 按交错顺序排布在标签之间（与 `<quote>` 同一交错规则）；`role` MUST 为 `user` 或 `assistant` 且 MUST 在场；`at`（来源消息上屏时刻，ISO 8601 本地时间串、秒级）可缺——不可考时产出 role-only 元素；属性值与文本节点 MUST 做 XML 转义。序列化结构 SHALL NOT 包含任何编号——遵循一致性原则：投递给模型的上下文要素对人必须也可查（transcript who 行显示角色与相对时间、卡片 hover 显示完整摘录与绝对时间），编号对人无区分价值故不进协议。会话 JSONL 留存 SHALL 记录序列化后的完整消息（含 `<msg-quote>` 块，与 `<quote>` 同纪律）。解析还原路径 SHALL 识别 `<msg-quote>` 还原为消息摘录卡片；对不识别元素 SHALL 保守处理，MUST NOT 静默丢弃其文本内容。agent 回复 SHALL 按摘录内容与角色/时间回指。
+
+#### Scenario: 序列化结构
+
+- **WHEN** 发送一条「消息摘录卡 + 问题」的消息
+- **THEN** 模型收到的消息中摘录为一个 `<msg-quote>` 元素（role 属性在场且合法、at 随来源消息可缺、无编号属性），问题文字位于 `</msg-quote>` 之后
+
+#### Scenario: 转义 round-trip
+
+- **WHEN** 摘录原文含 `<`、`&`、`"` 等字符，或来源消息无 at
+- **THEN** 序列化输出中对应位置为 XML 转义形式，解析后还原为原文；无 at 来源产出无 at 属性的元素，解析还原为 at 为空的消息摘录卡片
+
+#### Scenario: UI 与协议无编号
+
+- **WHEN** 输入区或 transcript 呈现消息摘录卡片，或 agent 回复引用某段消息摘录
+- **THEN** 界面任何位置与投递给模型的消息中均不出现 `#N` / `index` 形式的卡片编号
+
+#### Scenario: 未知元素保守处理
+
+- **WHEN** 快照恢复的留存消息文本中含序列化协议不认识的元素
+- **THEN** 该元素的文本内容 MUST NOT 被静默丢弃（维持既有保守解析口径）
+
+### Requirement: composer 的 Emacs 文本导航族
+
+harness 面板输入区（composer）内的 Emacs 文本导航族 SHALL 经统一键位表分发（作用域 `text`），并按模型层
+语义执行；MUST NOT 由引擎的原生 caret 路径决定行为。本能力覆盖的键位 SHALL 为：⌃F / ⌃B、⌃A / ⌃E、
+⌃N / ⌃P、⌃D / ⌃H、⌥D / ⌥⌫、⌃K / ⌃Y、⌃T、扩选六键 ⌃⇧F / ⌃⇧B / ⌃⇧N / ⌃⇧P / ⌃⇧A / ⌃⇧E 与按词扩选
+⌥F / ⌥B。族外的键位（⌃G、⌥G、翻屏族 ⌃V / ⌥V / ⌃L、`Tab` / `⇧Tab`、撤销族 ⌘Z / ⌘⇧Z / ⌘Y 及其 Emacs
+别名）MUST NOT 被本能力改变——它们在 composer 内照旧走各自既有路径。
+
+**停靠点与移动**：composer 的光标位 SHALL 由「块下标 + 段内偏移」表示；段落块 SHALL 提供其文本的全部偏移位，
+原子卡片 SHALL 提供其**前缘**（= 该卡片下标 + 偏移 0）与**后缘**（= 下一块前缘）两个位置。视觉重合的相邻
+表示（段落末缘与紧邻后块的前缘、相邻两段落之间的公共边界）SHALL 归一到**后一块前缘**的表示，且归一 SHALL
+只有一处实现（从 DOM 读回与全部移动命令共用）。⌃F / ⌃B SHALL 在停靠点序列上移动**一步**——段内按字符
+（组合字符 / 代理对作为整体一步），遇原子卡片 SHALL 整块一步跨过。⌃A / ⌃E SHALL 落到当前**逻辑行**的行首 /
+行尾（`\n` 为行界）。⌃N / ⌃P SHALL 优先在**渲染行**之间移动（软折行产生的每一屏行是一行；同 x 位，超出目标行
+长度取行尾）——**段内没有相邻渲染行时**才沿用既有的逻辑行 / 跨相邻段落块行为（超集；本 change 的原始口径是
+「逻辑行之间移动」，M457 按 Alex 2026-10-12 裁决「与编辑器正文对齐」升为渲染行，故 change 的 design §4 与
+tasks 里「逻辑行」的措辞停留在当时口径、未回改，**以本增量为准**）；卡片 MUST NOT 产生停靠行（被整体跳过）。
+任一步移动 MUST NOT 原地空走（相邻停靠点在归一等价类后必不相同）。
+
+**导航不是编辑**：仅移动光标 MUST NOT 改变块序列、MUST NOT 产生撤销步、MUST NOT 触发 composer 的整面重渲
+（只允许写选区与滚动位）；移动后光标行 SHALL 在 composer 视口内（沿用既有视口合同）。
+
+**删除族**：⌃D / ⌃H SHALL 与 Delete / Backspace 键走**同一份**模型语义（后删 / 前删一字符；光标在卡片前缘 /
+段末遇卡片时对整块作用；有选区时删除选区），MUST NOT 存在第二份删除判定。⌥D / ⌥⌫ SHALL 按词 kill 到词尾 /
+词首并并入 kill 槽；词边界口径 SHALL 与编辑器侧共用同一份实现。`⌥⌫` 与 `⌥Delete` SHALL 由本能力接管（经统一
+键位表），MUST NOT 被输入区既有的就地退格 / 前删路径吞掉——它们今天在 composer 内被当作**普通逐字符退格**
+消费（引擎原生词删除从未生效），接管后 MUST 表现为词级 kill。词级 kill 与 ⌃K MUST NOT 跨块——到达段落边界即
+停（段边界处无动作），MUST NOT 隐式合并段落、MUST NOT 隐式删除卡片。
+
+**kill 与 yank**：kill 槽 SHALL 是**跨面共用**的单一真源（编辑器与 composer 同一槽、同一份连续 kill 相接
+判定）；kill 的内容 MUST NOT 含卡片（本能力的 kill 只作用于文本）。⌃K SHALL kill 到当前逻辑行行尾，已在行尾
+则 kill 该行界（段落内合并两行），已在段落末行行尾则无动作。⌃Y SHALL 把 kill 槽内容插入光标处（有选区时先
+删除选区），多行内容 SHALL 经段落拆分入口落成多个段落块；光标在卡片边界位时 yank SHALL 先在该处物化一个段落
+再把内容落进去。
+
+**转置与扩选**：⌃T SHALL 与编辑器侧转置语义一致（光标左右两个字符簇交换、光标落右端），在段首 /
+卡片边界处无动作（段尾与编辑器侧同形——转置末两个字素簇，Emacs C-t 的原义）。扩选族 SHALL 保持
+**anchor 不动**、由同一份移动纯函数驱动 head；⌥F / ⌥B SHALL 为**按词扩选**（与键位表内既有语义一致），
+MUST NOT 被实现为词移动。
+
+任一步失败（无动作、块边界、无法插入）SHALL 表现为「无动作」，MUST NOT 改动块序列、MUST NOT 留下半截状态。
+
+#### Scenario: 原子卡片一步跨过
+
+- **WHEN** composer 的块序列里有相邻的两张卡片（两者之间没有段落），光标在它们之后的段落里，按 ⌃B
+- **THEN** 光标落到两张卡片之间（模型值 = 后一张卡片的前缘）；再按 ⌃B 落到第一张卡片的**前缘**（一步跨过两张
+  卡片中的后一张）；块序列逐字节不变；撤销栈无新增步
+
+#### Scenario: 段内与跨块移动
+
+- **WHEN** 光标停在一个含软换行（`\n`）的段落中间，依次按 ⌃E、⌃N、⌃P
+- **THEN** ⌃E 落到该逻辑行行尾；⌃N 落到下一渲染行的同 x 位（该段落每逻辑行只有一屏行时即「下一逻辑行的同列位」；
+  超出目标行长度取行尾）；⌃P 回到上一渲染行；段落已是最后一段再按 ⌃N 时**光标不动**（无相邻段落块，且卡片
+  不产生停靠行）
+
+#### Scenario: ⌃N / ⌃P 走渲染行（软折行段落内）
+
+- **WHEN** 光标停在一个**长到在 composer 里软折成多屏行**的段落内某一行，按 ⌃P（或 ⌃N）
+- **THEN** 光标落到**上一屏（下一屏）渲染行的同 x 位**——块序列与文本逐字节不变（导航不是编辑）、撤销栈无新增
+  步；该段落内那一方向**没有**相邻渲染行（已在首行 / 末行）时才落到既有行为上：跨到相邻段落块的对应行，
+  没有相邻段落块则不动
+
+#### Scenario: 导航不改块序列、不成撤销步、不重渲
+
+- **WHEN** 在 composer 内连续按 ⌃F / ⌃B / ⌃N / ⌃P 若干次（只移动、不输入）
+- **THEN** 块序列与全部块内容逐字节不变；撤销栈无新增步（随后一次 ⌘Z 撤销的是导航之前的最后一次编辑，不是
+  导航本身）；composer 的 DOM 子树在这批按键期间无结构性变更（无整面重渲）
+
+#### Scenario: 删除族按整卡与词级不跨块
+
+- **WHEN** 光标在卡片前缘按 ⌃D；光标在段落段首、其前一块是卡片时按 ⌃H；光标在段落段首、其前一块是段落时
+  按 ⌥⌫
+- **THEN** 前两次都删掉整张卡片（与 Delete / Backspace 键同结果）；第三次停在段落边界、块序列逐字节不变
+  （词级 kill 不跨块、不隐式合并段落、不隐式删卡片）
+
+#### Scenario: ⌥⌫ 是词级删除（不被就地退格路径吞掉）
+
+- **WHEN** composer 的段落文本是 `alpha beta`、光标在行尾，按 ⌥⌫
+- **THEN** 段落变成 `alpha `——删掉的是**整个词**，不是单个字符；被杀文本进了 kill 槽（在别处按 ⌃Y 可插回）。
+  若实现退化为逐字符退格（今天的形态：就地退格路径先消费了这拍），本条 MUST 变红。裸 Backspace 仍是逐字符
+  退格，本能力 MUST NOT 改变它。
+
+#### Scenario: kill 槽跨面共用
+
+- **WHEN** 在编辑器里 ⌃K 杀掉一段文本，随后把焦点移到 composer 按 ⌃Y
+- **THEN** 编辑器侧杀掉的那段文本插入 composer 的光标处；反向（composer ⌃K → 编辑器 ⌃Y）同样成立；两处用的是
+  同一个槽（编辑器侧行为逐字节不变）
+
+#### Scenario: yank 的多行内容与边界位物化
+
+- **WHEN** kill 槽里是多行文本，光标停在两个相邻卡片之间按 ⌃Y
+- **THEN** 该处先物化一个段落块，多行内容按段落拆分落进相邻的多个段落块（块序为：前卡片 / 新段落… / 后卡片），
+  光标落在插入内容末尾；卡片不被吞、不被删
+
+#### Scenario: 扩选族 anchor 不动
+
+- **WHEN** 光标在段落中间，按 ⌃⇧F 若干次（跨越一张卡片）
+- **THEN** 选区的 anchor 端点保持不动，head 端点按移动族同一套停靠点前进（含整块跨过卡片）；随后的 ⌃D 或 ⌃H
+  删除该选区
+
+#### Scenario: 族外键在 composer 内不受影响
+
+- **WHEN** 焦点在 composer 内，依次按 ⌥G、⌃V、`Tab`、⌘Z
+- **THEN** 它们的路径与行为与本能力存在之前一致（本能力不接管、不消费）：⌥G 与 `Tab` 不产生任何本层动作，
+  ⌃V 走视口滚动，⌘Z 仍由 composer 既有的撤销栈处理

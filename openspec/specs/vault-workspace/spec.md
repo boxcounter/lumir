@@ -589,7 +589,7 @@ vault 侧的作用面。
 
 - `panes`：数组，每元素为该 pane 的 `{tabs: 有序 vault 相对路径[], active: 相对路径}`——per pane 的标签列表与激活项；v1 至多两个元素。条目的路径校验 SHALL 复用既有 `valid_entry` 口径（绝对路径 / 含 `..` / 越出 vault 一律丢弃），MUST NOT 被用来打开 vault 之外的文件。
 - `harness_pane`：bool——记录 harness pane 是否在场。恢复时 `harness_pane: true` SHALL 重新装配 harness pane（面板本体为无文档状态件；**会话内容不持久化**——恢复出的是空会话，会话内存态口径不变）。无 `harness_pane` 字段的旧版会话文件 SHALL 按 `false` 解释（读取侧兼容，MUST NOT 写双份真源）。
-- `pane_split_ratio`：分隔条位置（0–1），per-vault 布局数据；分隔条拖拽松手 SHALL 写入本会话文件（MUST NOT 复用全局 `ui.content_width` 的配置键——栏宽是全局偏好，分栏比例是 vault 布局，两个真源各管一层）。harness 自动分栏的默认宽度比（harness:文档 pane = 1:2）SHALL 只在无存储值时生效。
+- `pane_split_ratio`：分隔条位置（0–1），per-vault 布局数据；分隔条拖拽松手 SHALL 写入本会话文件（MUST NOT 复用全局 `ui.content_width` 的配置键——栏宽是全局偏好，分栏比例是 vault 布局，两个真源各管一层）。harness 自动分栏的默认宽度比（harness:文档 pane = **1:1**，canonical 定义见 `pane-layout` 的「harness pane」）SHALL 只在无存储值时生效。
 
 持久化纪律 SHALL 与既有标签列表逐条同构：写入 SHALL 用临时文件 + rename 原子替换；`version` 与实现不符 SHALL 等价于「没有 pane 历史」（不报错、不提示，回落默认布局）；写失败 SHALL 降级为 warning（不拦停切换 / 退出 / 分栏动作）。无 `panes` 字段的旧版会话文件 SHALL 在读取侧按「单 pane = 既有顶层 tabs / active」解释（向后兼容只做在读取侧，MUST NOT 写双份真源）。
 
@@ -626,3 +626,13 @@ vault 侧的作用面。
 
 - **WHEN** 双 pane 时执行 `pane.close`（标签并入另一 pane）后切换 vault 再切回
 - **THEN** 恢复出的是收起后的单 pane 布局：并入 pane 的标签按序在该 pane 的标签条上，激活项为 `pane.close` 后的前台标签
+
+#### Scenario: 无存储比例的 vault 用新默认值
+
+- **WHEN** 某 vault 从未分栏过（会话文件里没有存储的分隔条比例），在其中执行 `harness.toggle` 自动分栏
+- **THEN** 分栏按 harness:文档 = 1:1 出现（该默认值只在无存储值时生效）
+
+#### Scenario: 已存比例的 vault 不受新默认值影响
+
+- **WHEN** 某 vault 的会话文件里已存有分隔条比例（用户此前拖拽过），在其中执行 `harness.toggle` 自动分栏
+- **THEN** 分栏按**存储的比例**出现，MUST NOT 被新默认值（1:1）覆盖

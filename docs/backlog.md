@@ -45,8 +45,6 @@
 
 - **权限语义类 change 的 tasks 缺「回扫既有场景的闸期望」一项（流程缺口）**（agent-m480，2026-10-13，medium）→ M407 归档 tasks 6.7 只新增 109/110/111、未回扫 72/73/74，导致三轮验收假红才暴露；建议沉淀进 `docs/process/openspec-workflow.md`：凡改权限/闸语义的 change，tasks 必须含「回扫既有验收场景的闸期望」一项。指针 `.tower/comms/findings/20261013-agent-m480-improve-change-72-73-74.md`。
 
-- **验收 82/121 在未改动的 master 上即已 FAIL（交付序列化的 quote / msg-quote 断言不命中）**（worker-m456，2026-10-11，medium，**待归因、不在 M456 scope**）→ 82-quote-card-mixed-edit 与 121-harness-message-excerpt 在未改动 master（`2608e64`）上即 FAIL，此前是绿的（82：10-06/07/08 PASS；121：10-10 PASS）；断言读到的是系统装配记录（`assembly`），期望的 `<quote …>` / `<msg-quote …>` 交付文本不在其中，根因候选面是 `src/quote-card.ts` 的 projectDelivery / serializeDelivery 与 `src/harness-panel.ts` 的投递投影（约 M454 `6f2b614`）。复现：`node scripts/acceptance/run.mjs 82` → `0/1 PASS`。指针 `.tower/comms/findings/20261011-worker-m456-bug-82-121-master-fail-quote-msg-quote.md`。**定案（M503 裁决，2026-10-14）**：断言与产品双合规、均不修改——spec 钉的是序列化文本形态且字节级仿真证明现行 parts 形投递下断言照样命中（parts 形落地于 M440 `9e3fd85`，非 M454）；82/121 的残红是上游真机注入/拖选通道级联（带卡片的 llm_request 根本没生成，断言在「不存在」上如实判红），非投影回归、不阻塞 0.7.0；注入通道修通后两条断言应自然转绿。本条核销，通道级问题由 REVIEW.md #11 族口径继续跟。
-
 - **tests 与 scripts 下残余的旧编号 / 裸行号 backlog 引用**（worker-m476，2026-10-13，low，M476 scope 外残余）→ `tests/**` 4 处、`scripts/gate.sh:14`、`scripts/openspec-links.sh:4,18,20`；同类口径（改主题关键词锚）随下一个文档批处理。指针 `.tower/comms/findings/20261013-worker-m476-improve-m476-scope-backlog-tests-4-scripts-gate-sh-scripts-openspec.md`。
 
 - **tests/unit 在机器有负载时间歇红：三条用例读的是 syntaxTree 过期快照**（worker-m471，2026-10-12，**high**）→ M471 已把 pnpm test 接进 CI（visual.yml），该 flake 会直接在 CI 显现。指针 `.tower/comms/findings/20261012-worker-m471-bug-tests-unit-syntaxtree.md`。同族新增（worker-m477，2026-10-13，medium）：block-copy.test.ts 的 `covered()` 用 `ensureSyntaxTree` 返回值守卫，但被测函数读的是 `syntaxTree(state)` 快照字段——守的不是同一棵树，机器负载时 20ms 初始解析预算错过即假红（M477 gate 首跑实证 903/904）；修法取向 = 改断快照树本身覆盖整篇。指针 `.tower/comms/findings/20261013-worker-m477-bug-block-copy-covered-codeblockcontentat.md`。
@@ -68,7 +66,6 @@
 - **场景 53 按压粗体：引入提交 = 12cdaca（M399 空段落正常行高化），非产品回归**（agent-m495 二分，2026-10-13）→ M495 三轮真机：pre-M399 PASS / M399 点 FAIL 同签名 / master tip FAIL 新签名（drag 步已被 M490 修好，残留红在 clickEditor——显露态 `**` 占宽 12px 致同屏幕点映射靠前 1.5 字符）。按压命中/事件投递/焦点路径全部排除。残留标定由 **M496 修**（clickEditor dx 80→94）；M491 finding 中「两轮截图逐像素一致」表述被证伪（粗体行 y≈187 vs ≈197），在此订正。指针 `.tower/comms/findings/20261013-agent-m495-bug-53-master-tip-m490-clickeditor-12px.md`。
 - **worktree 的 `node_modules` 软链是未跟踪项：`git add -A` 会把断链提交进仓**（worker-m462，2026-10-12，low）→ `.gitignore` 的 `node_modules/` 带尾斜杠只匹配目录。指针 `.tower/comms/findings/20261012-worker-m462-improve-worktree-node-modules-gitignore-node-modules-git-add-a.md`。
 - **验收套件注入通道：菜单 Paste 之后 CGEvent 与套件内 `type_text` 均不落地**（worker-m456，2026-10-11，**high**，阻塞场景 134/141）→ 疑似 TCC 按 responsible process 授权；备选是给套件加一条不依赖键盘注入的通道。指针：无独立 finding（原文见 git 历史）。**收窄（M485 归因，2026-10-13）**：本条的适用面只剩 134 的 ⌘V 探针通道（M456 登记不变）；148/149 的红与此无关——真因是场景用错注入原语（`do: type` 落在 AX 树第一个 AXTextArea = 编辑器，非 composer）与定位器 `/…/` 定界符误用，已由 M489 修复。另：134 的 ⌘V 即使修好测的也是 paste 路径而非 HC3 的 keydown 物化路径，探针通道选择需回到真实 keydown 注入。
-- **M443 的 `tasks.md` 把未经真机验证的读数当「已通过」登记**（worker-m456，2026-10-11，medium，对账口径）→ `openspec/changes/harness-cache-metrics/tasks.md` §5.2 末的「真机跑批读数」条目与实际不符。指针：无独立 finding。
 - **gate quick 不解析验收套件 lib：块注释内 glob `*/` 闭合注释致全套件 SyntaxError 上了 master**（2026-10-10，medium，防线缺口）→ `scripts/acceptance/lib/app.mjs` 的注释把 `env:harness/sessions/*/*.jsonl` 写进块注释。指针：无独立 finding。
 - **切 vault 后新开的 harness pane 缺标题栏会话段**（worker-m433，2026-10-10，medium）→ 面板本体在场可用，标题栏会话段缺席。指针 `.tower/comms/findings/20261010-worker-m433-bug-vault-harness-pane-ax.md`。
 - **harness 会话留存路径描述有两处真源**（worker-m433，2026-10-10，low）→ `src-tauri/src/harness/session.rs` 的 ts-rs doc 注释与 `src/ipc.ts` 的 IPC 注释各写一份。指针：无独立 finding。
@@ -146,6 +143,7 @@
 - **M240（2026-09-26）**：49 场景 / 47 PASS / 2 FAIL（`32-list-filter`、`43-list-tab-indent`）。**M164（2026-09-18，证据目录按 UTC 记为 `2026-09-17`）**：26/26 PASS。
 - **M296 的真机批（2026-09-29）**：场景 67 + 多 vault 回归 16 / 17 / 19 / 25 / 48 / 60 → **7/7 PASS**（`test-results/acceptance/2026-09-29-final/`），读数 `test-results/m296/readings.md`。
 - **沿革：真机运行纪律（写场景前必读）**：就绪门入口读屏名是 `AXPopUpButton`（写死 `AXButton` 会让整套启动即超时）；窗口经 `--config` 钉主屏（否则窗口跑到屏幕外、键盘注入整批不落地）；每场景清 `workspaces/` 与 `vault-sessions/`；`seed` 预置注册表与会话并挂第二个合成 vault；无人值守用 `caffeinate -dimsu` 包住；`cargo build --features custom-protocol` 之前必须先 `pnpm build`。
+- **composer-intercard-caret 归档留下的探针尾巴（M519 归档对账，2026-10-15）**：场景 134 的复跑 2026-10-13/14 多轮仍失败于注入通道（红归族 A 族②，M456 老边界，非产品回归——同「M455 收尾尾巴」条的 134 复跑安排）；「是否启用方案 C」的登记对象已不存在——方案 C 键位层由 composer-emacs-nav（M447）节点 1 裁决吸收。归档件 tasks.md 1.2 的就地标注含全链证据。
 
 **已机验（行为判定落定，有 PASS 证据）**——证据目录统一在 `test-results/acceptance/<批次>/<场景>/`（git 外）；叙述与读数明细看场景文件（`scripts/acceptance/scenarios/*.md` 的「已知边界」节）与 git 历史。
 

@@ -19,5 +19,6 @@
 - [x] 3.1 `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` 通过（26 items 全过，含 `change/harness-agents-local-md`）
 - [x] 3.2 `cargo test` 的 harness context 装配单测全绿（含 1.4–1.6 新增/同步用例）
 - [x] 3.3 `scripts/gate.sh quick` 全绿（附 `GATE RESULT` 原文行与退出码）
-- [ ] 3.4 本 change 归档时 living spec 增量并入核对（MODIFIED「AGENTS.md 自动加载」与实现一致），并同步 `openspec/specs/harness/spec.md` 的 Purpose 段——现有「AGENTS.md 双层（user-wide `~/.agents/AGENTS.md` + vault 根）」措辞须改为三层口径（archive 不会自动重写既有 capability 的 Purpose）
+- [x] 3.4 本 change 归档时 living spec 增量并入核对（MODIFIED「AGENTS.md 自动加载」与实现一致），并同步 `openspec/specs/harness/spec.md` 的 Purpose 段——现有「AGENTS.md 双层（user-wide `~/.agents/AGENTS.md` + vault 根）」措辞须改为三层口径（archive 不会自动重写既有 capability 的 Purpose）
+  - M519 归档执行（2026-10-15）：living spec 并入后逐句核对——三层注入顺序、本地覆盖层优先级、静默跳过、装配清单来源条目均与 `src-tauri/src/harness/context.rs` 实现一致；Purpose 段「双层」措辞已手写改为三层口径。
   - 注（M430）：3.4 是**归档节点**（节点 2）的动作，落点在 `openspec/specs/harness/spec.md`——本实现 mission 的写域只含 `openspec/changes/harness-agents-local-md/**`，故留空、由归档节点执行。

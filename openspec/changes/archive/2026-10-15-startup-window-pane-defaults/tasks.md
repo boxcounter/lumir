@@ -26,23 +26,31 @@
 - [x] 2.3 确认 `src/main.ts:782` 的施加判据与 `storedRatioApplied` 生命周期**零改动**（默认只在无存储值时生效；`pane-layout.ts:57` 与 `vault_session.rs:47` 的 `DEFAULT_SPLIT_RATIO = 0.5` 亦不动）
 - [x] 2.4 文案表 D345 正文改准「harness:文档 = 1:1」：同步 `文案-Copy.md` 与 `src/copy-data.ts:785-786`（zh/en 双档），跑既有 copy drift 测试
 - [x] 2.5 视觉场景注释与断言改 1:1：`tests/visual/scenes/m303-harness-panel.spec.ts:8,95`（注释 + 宽度比断言，现「约两倍」）、`tests/visual/scenes/m345-quote-card.spec.ts:103`（注释）；涉及整页 / 元素基线更新时按「基线更新是人肉裁决点」截图交 Alex 过目后再提交
-- [ ] 2.6 验收场景 `scripts/acceptance/scenarios/86-harness-pane-toggle.md` 改 1:1：`:4`（frontmatter `title`「自动分栏默认 1:2」）、`:49`（判据「文档侧 2/3」）、`:100-101`（注释「默认宽度比 1:2」）
-      —— **顺延**（验收场景归后续 mission；tower 裁决 2026-10-10：`scripts/acceptance/**` 归 M433）
+- [x] 2.6 验收场景 `scripts/acceptance/scenarios/86-harness-pane-toggle.md` 改 1:1：`:4`（frontmatter `title`「自动分栏默认 1:2」）、`:49`（判据「文档侧 2/3」）、`:100-101`（注释「默认宽度比 1:2」）
+      —— **已由 M437 完成**（commit `4ed8a8c`）：场景 86 现标题「自动分栏默认 1:1」、`:49` 判据
+      「文档侧 1/2」、`:100-101` 注释均为 1:1 口径；原「顺延」标注核销
 - [x] 2.7 流程文档 `docs/process/openspec-workflow.md:46`（「视觉保真」一节的布局节奏示例「如 pane 1:2」）改 1:1——**该处描述的是当前行为，故不在提案期改**，随实现一并改准（r1 评审 finding）
 
 ## 3. 真机验收场景（`scripts/acceptance/`）
 
 - [ ] 3.1 新增窗口尺寸场景：① 清空存档 → 启动 → 窗口约为工作区 90%（位置不作断言）；② 调整尺寸 → 退出 → 再启动 → 首帧尺寸与退出前一致（位置不作断言）；③ 存档写成非法 JSON → 启动 → 按 90% 规则出现且不报错；④ 存档尺寸大于当前工作区 → 启动后窗口被钳到工作区尺寸。判据取**相对值**（≈ 工作区 ×0.9 ± 容差），不写绝对像素；另断言 `window-state.json` 只含 `version` / `width` / `height`（无位置字段）
-      —— **顺延**（验收场景归后续 mission；tower 裁决 2026-10-10：`scripts/acceptance/**` 归 M433）
-- [ ] 3.2 场景 86 补一条「无存储比例时自动分栏为 1:1」的断言（与既有「存储比例优先」断言并存，覆盖裁决点 ② 的两面）
-      —— **顺延**（同上）
+      —— **已由 M437 完成**（commit `4ed8a8c`）：新场景 `126-window-geometry.md` 覆盖首启 90% /
+      存档恢复 / 非法 JSON 回落 / 越界钳制四态，判据取 `ofWork` 相对值，并断言存档只含
+      `version`/`width`/`height`；原「顺延」标注核销
+- [x] 3.2 场景 86 补一条「无存储比例时自动分栏为 1:1」的断言（与既有「存储比例优先」断言并存，覆盖裁决点 ② 的两面）
+      —— **已由 M437 完成**（commit `4ed8a8c`）：场景 86 现有「『无存储比例 → 1:1』与
+      『有存储比例 → 用存储值』两面并存」断言；原「顺延」标注核销
 
 ## 4. 验证
 
 - [x] 4.1 `npx --yes @fission-ai/openspec@1.12.0 validate --all --strict` 通过
 - [x] 4.2 `scripts/gate.sh quick` 全绿（含 `openspec-validate`、Rust 测试、copy drift、session-schema-drift）
 - [x] 4.3 动了视觉相关面（`tests/visual/scenes/**`）后本地跑 `scripts/gate.sh visual`；整页 / 元素基线的任何更新逐张交 Alex 过目
-- [ ] 4.4 真机验收套件全绿（`node scripts/acceptance/run.mjs`，含 §3 新增场景与场景 86 的补充断言），证据落 `test-results/acceptance/`
-      —— **顺延**（同上：真机场景本体归 M433）
-- [ ] 4.5 归档前对账：`app-window` 的占位 Purpose 手写替换为「这个 capability 是干什么的」后复跑 validate（新建 capability 的既有归档纪律）
+- [x] 4.4 真机验收套件全绿（`node scripts/acceptance/run.mjs`，含 §3 新增场景与场景 86 的补充断言），证据落 `test-results/acceptance/`
+      —— **已由 M437 及后续真机轮次完成**：`test-results/acceptance/2026-10-13/` 与
+      `2026-10-14-full/` 两轮中场景 `126-window-geometry` 与 `86-harness-pane-toggle` 均 PASS；
+      原「顺延」标注核销
+- [x] 4.5 归档前对账：`app-window` 的占位 Purpose 手写替换为「这个 capability 是干什么的」后复跑 validate（新建 capability 的既有归档纪律）
+      —— M519 归档执行（2026-10-15）：占位 Purpose 已替换为「主窗口尺寸的启动规则与持久化：首启按
+      工作区 90% 出现，之后的尺寸跨启动恢复（位置永远交给 OS）」；validate 复跑见批次收尾读数。
       —— 归档评审节点（节点 2）执行，不在实现期

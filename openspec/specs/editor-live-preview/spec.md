@@ -1063,20 +1063,27 @@ MUST NOT 在键入路径与文档打开路径上新增解析或测量工作（AD
 `Enter` 在可编辑会话中的换行行为 SHALL 按**光标所在的结构上下文**分派，逐条口径如下
 （各条的实测依据与来源见 change 的 `design.md` §1 / §4）：
 
+- **md 模式的裸 marker 行**（M461，`para\n1. ` 等语法树不接管形态，判定见「裸 marker 行
+  的列表编辑态」requirement）：光标在 marker 之后时，`Enter` 两态分派——**空项**
+  （marker 后只有空白）SHALL 删去 marker 与其后空白：该行保留为空行、光标留在删后
+  位置（引用前缀 / 行首缩进保留）、MUST NOT 额外新增行（Obsidian 惯例的退出语义）；
+  **有内容** SHALL 插入换行 + 前缀原文 + 下一 marker（有序 = 字面序号 + 1、分隔符
+  沿用；无序 = 同标记）。两态 MUST 各为单次事务（一次 Enter = 一次撤销步）。光标在
+  marker 之前（行首结构前缀内）时本键 MUST NOT 接管（落回行首 Enter 的默认行为）。
+  该分派在树驱动的续行命令之前检查；只读会话 MUST NOT 产生文档变更。
 - **md 模式的列表项 / 引用内**：`Enter` SHALL 续写同级标记并保持该项的嵌套层级（无序项续标记、
   有序项续下一个序号、引用续 `> `）。这条是**既有行为**（编辑器内核所装 markdown 语言支持包
   自带的键位），本 change MUST NOT 改变它。**例外（M399，Alex 裁决的主流模式）**：空列表项
   （marker 之后只有空白）上的 `Enter` SHALL 删去一级列表标记——顶层空项变为普通空行（该行保留、
   光标留在该行行首、MUST NOT 额外新增行），嵌套空项凸一级（仍是列表项，逐层退出）。实现取上游
-  同一命令的 `nonTightLists: false` 配置版；上游默认配置对「tight 两 item 列表的空第二项」的
-  「插空行把列表变松、marker 保留」分支 MUST NOT 再出现。该退出行为 MUST NOT 随
+  同一命令的 `nonTightLists: false` 配置版；上游默认配置对「tight 两
+  item 列表的空第二项」的「插空行把列表变松、marker 保留」分支 MUST NOT 再出现。该退出行为 MUST NOT 随
   `editor.auto_indent` 开关分叉（列表语义与缩进开关无关）。
 - **code 模式**：`Enter` SHALL 插入换行，且新行的缩进 SHALL 取该文件语言的**语法缩进**（由编辑器
-  内核的缩进服务按语法树判定）；该语言没有缩进规则时（如 `shell` / `toml` / `yaml` / 未收录扩展
-  的纯文本），SHALL 沿用光标所在行的行首空白。
+  内核的缩进服务按语法树判定）；该语言没有缩进规则时（如 `shell` / `toml` / `yaml` / 未收录扩展的
+  纯文本），SHALL 沿用光标所在行的行首空白。
 - **md 模式的围栏代码块与缩进代码块内**：`Enter` SHALL 插入换行并沿用光标所在行的行首空白。
-  MUST NOT 在该上下文里续写列表标记（围栏内的 `- x` 是代码文本，不是列表项）。本 change MUST NOT
-  为围栏内容引入语法级缩进——围栏内容在编辑器的语法树里没有子语言，本 change 如实登记这条能力
+  MUST NOT 在该上下文里续写列表标记（围栏内的 `- x` 是代码文本，不是列表项）。本 change MUST NOT 为围栏内容引入语法级缩进——围栏内容在编辑器的语法树里没有子语言，本 change 如实登记这条能力
   边界，MUST NOT 假装已覆盖。
 - **md 模式的正文段落**：光标所在行行首无空白时，`Enter` 的呈现 SHALL 与现状一致（平换行，
   MUST NOT 凭空加缩进）。
@@ -1101,6 +1108,18 @@ MUST NOT 受本键影响（本键的作用面只有本 change 新增的两处，
 `Shift-Enter` MUST NOT 被本 change 改变：它维持现状（裸换行）。因此 code 模式下两个键的行为从此不同
 ——这是知情的不对称（`Shift-Enter` 成为「插一个不缩进的裸换行」的逃生口），也是本 change 的显式
 Non-goal。
+
+#### Scenario: 裸 marker 行空项 Enter 退出（M461，Obsidian 惯例）
+
+- **WHEN** 在裸 marker 行（如段落下一行的 `1. `，语法树不接管形态；光标在 marker 之后）按 `Enter`
+- **THEN** 该行的 marker 与其后空白被删去、引用前缀 / 行首缩进保留、该行保留为空行、光标留在删后位置，文档行数不变（MUST NOT 额外新增行）
+- **AND** 退出是单次事务（一次撤销即回到按键前）
+
+#### Scenario: 裸 marker 行有内容 Enter 续行（M461）
+
+- **WHEN** 在带内容但语法树不接管的有序行（如段落下一行的 `2. abc`，非 1 起号不能打断段落）或引用内同形态（`> 2. abc`）行尾按 `Enter`
+- **THEN** 插入换行 + 前缀原文 + 下一 marker（有序 = 字面序号 + 1、分隔符沿用；无序 = 同标记），光标落在新 marker 之后
+- **AND** 续行是单次事务；光标在 marker 之前（行首结构前缀内）时本键不接管
 
 #### Scenario: code 模式继承语法缩进
 
@@ -1421,3 +1440,60 @@ DOM（视口语义），因此 MUST NOT 出现「只显示文档视口内那几�
 - **WHEN** 对一块源码超过单块着色上限（64 KiB）的代码块执行该命令，读浮层内容的文本与其节点数
 - **THEN** 文本与整块源码逐字节一致（含超出文档视口的行）；内容节点数有界、不随行数线性增长
   （未逐行建 DOM）；该块在文档内的既有呈现与折行口径不受影响
+
+### Requirement: 裸 marker 行的列表编辑态（文本模式特判）
+
+行首为合法列表标记（有序 `\d{1,9}[.)]`、无序 `-` / `+` / `*`）、标记后为空白至行尾
+（空项）或带内容但**语法树未把该行认作列表项首行**的形态（典型：`para\n1. `——空
+列表项按 CommonMark 不能打断段落，行是 lazy continuation），SHALL 在光标驻留时按
+列表项首行进入列表编辑态：源码标记（含引用前缀与行首缩进）隐藏、显示既有列表
+marker widget、悬挂缩进按字面标记宽与前缀列计算。判定是纯文本 + 语法树的纯函数
+（`bareListMarkerLine`），与 `listLineInfo` 同文件同源；树已接管的形态（真列表、
+空行后的 `1. `、列表自身的空续项、引用内 `> 1. `）MUST 由既有路径接管，裸行判定
+MUST NOT 抢（同语义不得两处真源）。
+
+排除面（MUST NOT 进入列表编辑态）：setext 标题下线（`para\n- ` 的 `- `，标题语义
+优先，与 Obsidian 同口径）、围栏 / 缩进代码块、HTMLBlock、表格内的 marker 形文本。
+
+门控 SHALL 取判据选区（reveal-gate 的按压快照口径）与行范围**相接即算**（含端点）：
+光标在该行任何位置（含行首）即为驻留；光标在上一行行尾（= 本行行首前一字符）MUST
+NOT 触发。光标离开该行即回到字面文本渲染。门控与渲染 MUST NOT 改写文档（行内源码
+逐字节不变，ADR 0003 §3 铁律）。
+
+#### Scenario: 段落后输入「1. 」进入列表编辑态
+
+- **WHEN** 在一段正文之后的新行行首输入 `1. `（无空行间隔），光标驻留该行
+- **THEN** 该行按列表项首行渲染（源码 `1. ` 隐藏、列表 marker widget 在场、悬挂缩进生效）；文档内容逐字节不变
+
+#### Scenario: 光标离开裸 marker 行回到字面文本
+
+- **WHEN** 把光标从该 `1. ` 行移到其他行
+- **THEN** 该行回到字面文本渲染（`1. ` 原文可见）；两种状态下文档内容相同
+
+#### Scenario: 语法树已接管的形态不受影响
+
+- **WHEN** 文档首行或空行后输入 `1. `（语法树解析为真列表空项），或列表项行上按 Enter 续行
+- **THEN** 既有渲染与 M399 空项退出行为逐字节不变（裸行判定对这些形态返回「不接管」）
+
+### Requirement: IME 组合期不重复插入列表 marker
+
+编辑器 MUST 在 DOM 输入入口（beforeinput）拒收 WebKit contenteditable 的原生自动
+列表命令：`insertOrderedList` 与 `insertUnorderedList` 两个 inputType SHALL 被
+preventDefault 并消费——本仓的列表编辑语义（裸 marker 行特判、上游续行、TAB 缩进）
+是唯一合法的列表编辑路径，MUST NOT 允许原生转换绕过它产生文档变更。其余 inputType
+（`insertText` / `insertCompositionText` / `insertParagraph` / 删除类等）MUST 放行，
+且放行动 MUST NOT preventDefault。
+
+已知边界（如实登记）：本拦截覆盖原生转换走 beforeinput 的形态；若 WebKit 以无
+beforeinput 的裸 DOM 变更路径插入（自动化合成键盘事件不进 TSM，组合态无法在本层
+复现），本拦截不兜，该形态留真机 dogfood 复验。
+
+#### Scenario: 原生自动列表命令被拦下
+
+- **WHEN** beforeinput 事件携带 inputType 为 `insertOrderedList` 或 `insertUnorderedList`（如 WebKit 原生 smart-list 转换，中文 IME 组合期为已报告的触发场景）
+- **THEN** 事件被 preventDefault 且不再传播，文档逐字节不变，不产生任何列表结构
+
+#### Scenario: 普通输入事件放行
+
+- **WHEN** beforeinput 事件携带 `insertText` / `insertCompositionText` / `insertParagraph` 等其余 inputType
+- **THEN** 事件不被消费、不被 preventDefault，输入照常到达编辑器

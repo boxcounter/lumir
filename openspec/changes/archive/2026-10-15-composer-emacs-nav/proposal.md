@@ -34,7 +34,7 @@ keydown 对所有修饰键直接 `return`（`src/harness-panel.ts:5002`），与
 登记、由 `src/editor.ts` 的模型层实现、由 `tests/unit` 与 `visual` 两层钉住；同一个物理键在 composer 里
 却由引擎的原生 caret 路径决定行为——既不可配（不进 `[keys]` 覆盖面）、不可查（不进键位查看面板）、也没有
 判据。同一族键在一次按键序列里可能「模型算一半、引擎算一半」。Lumir 的当前阶段定位是 Emacs keybinding
-PKM（[ADR 0006](../../../docs/adr/0006-agent-positioning-deferred.md) §2），而 composer 是 harness 面板
+PKM（[ADR 0006](../../../../docs/adr/0006-agent-positioning-deferred.md) §2），而 composer 是 harness 面板
 里 Alex 高频输入区——这一族的语义一致性属于定位本身，不是打磨项。
 
 **现状锚点**（逐条已核实，均为静态读源码 + 既有测试，非真机实测）：
