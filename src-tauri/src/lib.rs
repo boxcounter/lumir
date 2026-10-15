@@ -18,6 +18,7 @@ pub mod ready;
 pub mod recovery;
 pub mod vault_registry;
 pub mod vault_session;
+pub mod window_chrome;
 pub mod window_state;
 
 #[cfg(target_os = "macos")]
@@ -144,6 +145,8 @@ pub fn run() {
             // vault scope 解析，前端不传 vault——harness_write_image 同形态）。
             harness::draft::harness_draft_get,
             harness::draft::harness_draft_put,
+            // 窗口底色跟随主题（M525，app-window spec）：applyTheme 的运行期同步通道。
+            window_chrome::window_set_background_color,
         ])
         .setup(move |app| {
             // 诊断日志先初始化：`[log] level` 在第一条事件之前生效（level = off 时
@@ -237,7 +240,7 @@ pub fn run() {
 
 /// 主窗口 label：`tauri.conf.json` 的 `app.windows[0]` 未声明 `label`，走 tauri 的默认值
 /// `"main"`（`tauri_utils::config` 的 `default_window_label`）。
-const MAIN_WINDOW_LABEL: &str = "main";
+pub(crate) const MAIN_WINDOW_LABEL: &str = "main";
 
 /// 施加启动尺寸并显示窗口（change startup-window-pane-defaults，design §3.3）。
 ///
@@ -640,6 +643,10 @@ const RESTORE_FINISHED_EVENT: &str = "vault:restore_finished";
 fn restore_last_vault(app: &tauri::AppHandle) {
     let generation = app.state::<commands::VaultState>().begin_restore();
     let guard = RestoreGuard::new(app, generation);
+    // M525：启动窗口底色（config theme → 原生窗口底色）先于恢复执行——webview JS
+    // 运行前的底色由它负责，运行期由前端 applyTheme 经 window_set_background_color
+    // 驱动（见 window_chrome 模块头）。
+    window_chrome::apply_startup_window_background(app);
     guard.finish(restore_outcome(app));
 }
 

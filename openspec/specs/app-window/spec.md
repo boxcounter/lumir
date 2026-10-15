@@ -53,3 +53,19 @@
 
 - **WHEN** 检查配置目录与 `config.json`
 - **THEN** 窗口尺寸只存在于 `window-state.json`，`config.json` 不出现任何窗口尺寸或位置键
+
+### Requirement: 窗口底色跟随主题
+
+原生窗口底色（macOS 上即 `NSWindow` background color）是 WKWebView **未绘制区域**的呈现色：冷启动首帧、后台化/遮挡后的揭示重绘间隙，webview 尚未（重新）合成内容时用户看到的就是它。它 SHALL 等于当前主题的 `--content-bg` 解析值——「窗口任何重绘间隙的呈现色 = 当前主题底色」是不变量：light `#fdfdfc` / dark `#222326` / eink `#ffffff`。网页侧 `body` 的 `background` SHALL 同样取 `var(--content-bg)`（双层兜底：窗口层遮原生白，页面层遮 webview 内未绘制区）。
+
+主题切换 SHALL 经唯一施加点 `applyTheme`（`src/main.ts`）同步：施加 `data-theme` 后读 `getComputedStyle(body)` 解析值 invoke 后端命令更新窗口底色，**色值真源只有 CSS token 一处**（`src/style.css` 的三主题块），Rust 侧 MUST NOT 另存一份运行期色值表。启动路径的例外：webview JS 运行前窗口就要有色，`[ui] theme` → RGB 的映射允许以启动常量存在，但该常量 MUST 有机器断言钉死与 CSS token 逐值一致（cargo test 解析 `src/style.css` 比对）。同步失败 SHALL 只降级（console 线索），MUST NOT 阻断主题切换、MUST NOT 上屏报错。
+
+#### Scenario: 三主题启动态窗口底色
+
+- **WHEN** 分别以 `[ui] theme` = light / dark / eink 启动
+- **THEN** `getComputedStyle(body).backgroundColor` 等于该主题 `--content-bg` 的解析值，且 Rust 侧收到同值的窗口底色设置
+
+#### Scenario: 运行期切换主题后窗口底色跟随
+
+- **WHEN** 启动后经 `view.theme-cycle`（⌘⇧T）或 modeline 主题钮切到另一档
+- **THEN** `body` 计算底色与新主题 `--content-bg` 解析值逐值相等，且 Rust 侧收到新值的窗口底色设置

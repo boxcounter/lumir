@@ -161,7 +161,7 @@ export async function stubTauri(page: Page, vault: VaultFixture | null): Promise
     //（与真后端 open_vault 的替换语义对齐）。
     let current = v;
 
-    type Args = { path?: string; from?: string; rel?: string; new_name?: string; parent_rel?: string; name?: string; link?: string; target?: string; id?: string; title?: string; vault_id?: string; expected_revision?: string; content?: string; dirty?: boolean; force_new?: boolean; event?: string; fields?: Record<string, string>; url?: string; tabs?: string[]; active?: string | null; panes?: Array<{ tabs: string[]; active: string | null }>; pane_split_ratio?: number; entries?: Record<string, { pos: number; y: number; x: number; at: number }>; key?: string; value?: unknown };
+    type Args = { path?: string; from?: string; rel?: string; new_name?: string; parent_rel?: string; name?: string; link?: string; target?: string; id?: string; title?: string; vault_id?: string; expected_revision?: string; content?: string; dirty?: boolean; force_new?: boolean; event?: string; fields?: Record<string, string>; url?: string; tabs?: string[]; active?: string | null; panes?: Array<{ tabs: string[]; active: string | null }>; pane_split_ratio?: number; entries?: Record<string, { pos: number; y: number; x: number; at: number }>; key?: string; value?: unknown; r?: number; g?: number; b?: number };
     const checkVault = (args: Args) => {
       if (args.vault_id !== (current?.vault_id ?? "fixture-vault")) throw { code: "fixture_contract", message: "vault_id mismatch" };
     };
@@ -183,6 +183,9 @@ export async function stubTauri(page: Page, vault: VaultFixture | null): Promise
     const baseName = (p: string) => p.split("/").filter((s) => s !== "").pop() ?? p;
     // 退出守卫桩：document_set_dirty 的上报记录（场景断言 dirty 已镜像给后端）。
     w.__dirtyReports = [] as boolean[];
+    // window_set_background_color 的调用记录（M525，app-window「窗口底色跟随主题」）：
+    // 场景据此断言 applyTheme 把 CSS token 解析值同步给了后端。桩只记录不解释。
+    w.__windowBgCalls = [] as Array<{ r?: number; g?: number; b?: number }>;
     // config_get 的调用计数（M132 场景用它等「配置已加载 → 键位覆盖已挂上」）。
     w.__configGets = 0;
     // 全部 invoke 的命令名，按调用顺序（M195）。「按 ⌘= 后 config.json 逐字节不变」这条判据
@@ -347,6 +350,16 @@ export async function stubTauri(page: Page, vault: VaultFixture | null): Promise
         (w.__logEvents as LogEventRecord[]).push({
           event: args.event ?? "",
           fields: args.fields ?? {},
+        });
+        return null;
+      },
+      // 窗口底色同步（M525）：记录前端经 applyTheme 送来的 RGB，场景据此断言
+      // 「窗口底色跟随主题」合同（openspec/specs/app-window）。桩按成功应答。
+      window_set_background_color: (args) => {
+        (w.__windowBgCalls as Array<{ r?: number; g?: number; b?: number }>).push({
+          r: args.r,
+          g: args.g,
+          b: args.b,
         });
         return null;
       },
@@ -735,6 +748,15 @@ export async function logEvents(page: Page, event?: string): Promise<LogEventRec
 /** document_set_dirty 的上报记录（前端 dirty 镜像给后端的证据）。 */
 export async function dirtyReports(page: Page): Promise<boolean[]> {
   return page.evaluate(() => (window as unknown as { __dirtyReports: boolean[] }).__dirtyReports);
+}
+
+/** window_set_background_color 的调用记录（M525：applyTheme 同步给后端的窗口底色 RGB，按顺序）。 */
+export async function windowBgCalls(
+  page: Page,
+): Promise<Array<{ r?: number; g?: number; b?: number }>> {
+  return page.evaluate(
+    () => (window as unknown as { __windowBgCalls: Array<{ r?: number; g?: number; b?: number }> }).__windowBgCalls,
+  );
 }
 
 /** open_external_url 的调用记录（外链打开请求的实际目标，按调用顺序）。 */

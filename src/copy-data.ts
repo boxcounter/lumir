@@ -1391,6 +1391,13 @@ const COPY_TABLE = {
     zh: "命中安全黑名单：任何权限档都需逐个确认",
     en: "On the safety blacklist: it always asks in every permission mode",
   },
+  // 窗口底色同步（M525，app-window「窗口底色跟随主题」）：D462 = window_set_background_color
+  // 失败的人话。该失败只走 console 降级（合同 MUST NOT 上屏报错），本条永不实际渲染——
+  // 存在只为满足 error-text 机械门禁（tests/unit/error-text.test.ts 的 1:1 对账）。
+  D462: {
+    zh: "窗口底色设置失败：{reason}",
+    en: "Couldn't set the window background: {reason}",
+  },
 } satisfies Record<string, CopyEntry>;
 
 /** 文案表的键（D 编号，多串格带 `.N` 后缀）——由表数据推导，加一条即多一个键。 */
@@ -1512,4 +1519,6 @@ export const ERROR_COPY: Record<string, CopyKey> = {
   harness_session_delete_failed: "D421",
   open_url_rejected: "D78",
   open_url_failed: "D79",
+  // 窗口底色同步（M525）：只走 console 降级、永不上屏（见 D462 条目注记）。
+  window_background_failed: "D462",
 };
