@@ -2,7 +2,7 @@
 
 技术方案与权衡。事实依据均来自本仓现状，逐条附 `文件:行`。
 
-**「视觉保真」一节不适用（显式声明）**：本 change 无原型、不在提案期以屏幕形态定下方向——窗口启动尺寸是**既有界面的尺寸来源**，不改任何布局比例、配色、字层级或状态样式；pane 比例改动只把一个既有数字由 1:2 改 1:1，视觉层无新增表面（整页基线的差异由既有视觉门禁照常兜底）。因此按 [openspec-workflow.md](../../../docs/process/openspec-workflow.md)「有原型时必填」的反面，本节不写。
+**「视觉保真」一节不适用（显式声明）**：本 change 无原型、不在提案期以屏幕形态定下方向——窗口启动尺寸是**既有界面的尺寸来源**，不改任何布局比例、配色、字层级或状态样式；pane 比例改动只把一个既有数字由 1:2 改 1:1，视觉层无新增表面（整页基线的差异由既有视觉门禁照常兜底）。因此按 [openspec-workflow.md](../../../../docs/process/openspec-workflow.md)「有原型时必填」的反面，本节不写。
 
 ## 1. 现状锚点（逐条带证据）
 
@@ -88,7 +88,7 @@ window.show()?;                                     // 无论 apply 返回 Ok/Er
 }
 ```
 
-**只有尺寸**：`x` / `y`（位置）不落盘——裁决点 1 取「只记尺寸」，位置在两次启动之间交给 OS 默认放置（§1 证据）。本 change 尚未发布、无存量存档，因此**不存在需要兼容的旧格式**（无消费者 ⇒ 不写双读、不做迁移，[REVIEW.md](../../../REVIEW.md) 第 21 条）；存档里出现未知字段按「忽略」处理。
+**只有尺寸**：`x` / `y`（位置）不落盘——裁决点 1 取「只记尺寸」，位置在两次启动之间交给 OS 默认放置（§1 证据）。本 change 尚未发布、无存量存档，因此**不存在需要兼容的旧格式**（无消费者 ⇒ 不写双读、不做迁移，[REVIEW.md](../../../../REVIEW.md) 第 21 条）；存档里出现未知字段按「忽略」处理。
 
 **为什么逻辑像素而不是物理像素**：macOS 的显示器可能是 Retina（scale 2）或非 Retina（scale 1），同一窗口的物理像素尺寸在换屏后会变（同一逻辑尺寸在 scale 2 屏上占两倍物理像素），而逻辑点稳定。落盘前用 `scale_factor()` 换算（`PhysicalSize::to_logical`），恢复时反向换算（`LogicalSize::to_physical`）。
 
@@ -133,7 +133,7 @@ Alex 原话「不论 pane #2 是 content 还是 harness」在本 change 后成�
 
 ### 4.3 重述面收敛：canonical 定义留在 `pane-layout`
 
-值改准之外，顺手把「同一语义一处真源」（[REVIEW.md](../../../REVIEW.md) 第 8 条）落实：
+值改准之外，顺手把「同一语义一处真源」（[REVIEW.md](../../../../REVIEW.md) 第 8 条）落实：
 
 - **canonical 定义处** = `pane-layout` 的「harness pane」（它本就是该行为的定义 requirement，另外四处都是括号里的复述）；
 - 另外四处（`harness` / `ui-design-system` / `keymap-commands` / `vault-workspace`）**保留取值但仍写数**（不回退成纯引用）：spec 是给人读的裁决依据，一处括号里的「1:1」比一次跳转更可裁决；改法是在值后补一句「canonical 定义见 `pane-layout` 的「harness pane」」。
@@ -151,7 +151,7 @@ Alex 原话「不论 pane #2 是 content 还是 harness」在本 change 后成�
 | `keymap-commands` | MODIFIED | 对话面板唤起命令（harness.toggle） | 正文括号值 1:2 → 1:1 |
 | `vault-workspace` | MODIFIED | 按 vault 持久化 pane 布局 | 正文括号值 1:2 → 1:1 |
 
-`app-window` 是**新建 capability**：归档时 `openspec archive` 会写入占位 Purpose，须手写替换为「这个 capability 是干什么的」，再复跑 validate（[openspec-workflow.md](../../../docs/process/openspec-workflow.md) 批次收尾 checklist 的既有条文）。
+`app-window` 是**新建 capability**：归档时 `openspec archive` 会写入占位 Purpose，须手写替换为「这个 capability 是干什么的」，再复跑 validate（[openspec-workflow.md](../../../../docs/process/openspec-workflow.md) 批次收尾 checklist 的既有条文）。
 
 ## 6. 代码 / 测试 / 文档影响面清单（implementation 期执行）
 

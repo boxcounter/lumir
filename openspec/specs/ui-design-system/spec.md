@@ -156,7 +156,7 @@ eink 主题 SHALL 按 tokens 文档 §eink 规则 的 9 条系统性降级（不
 #### Scenario: harness 的打开与收起
 
 - **WHEN** 经标题栏 toggle 钮或 `harness.toggle` 命令唤起 / 收起 harness 面板
-- **THEN** harness 在旁侧 pane 打开（无第二 pane 时自动分栏，默认宽度比 harness:文档 pane = 1:2）或收起回到单 pane；切换不改变正文阅读宽居中的既有口径；harness 在场时标题栏出现 harness 段且段缘与 pane 分隔条对齐
+- **THEN** harness 在旁侧 pane 打开（无第二 pane 时自动分栏，默认宽度比 harness:文档 pane = **1:1**，canonical 定义见 `pane-layout` 的「harness pane」）或收起回到单 pane；切换不改变正文阅读宽居中的既有口径；harness 在场时标题栏出现 harness 段且段缘与 pane 分隔条对齐
 
 #### Scenario: dock 展开与收起
 

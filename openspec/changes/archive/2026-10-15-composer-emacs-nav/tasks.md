@@ -11,7 +11,8 @@
 - [x] 1.3 起草 proposal / design / tasks / specs 增量（harness + keymap-commands 两份 delta），
       含接管方案、与 M444 的衔接声明、机器判据设计、观测闸三问、裁决点与起草倾向
 - [x] 1.4 `npx --yes @fission-ai/openspec@1.12.0 validate composer-emacs-nav --strict` 通过
-- [ ] 1.5 呈 tower 报 Alex 节点 1 裁决（本任务在呈报后勾选）
+- [x] 1.5 呈 tower 报 Alex 节点 1 裁决（本任务在呈报后勾选）——已呈报并获裁决
+      （proposal 评审记录：Alex 2026-10-11「按倾向」，六个裁决点逐条落槌）
 
 ## 2. 前置与落地次序（proposal 裁决点 5）
 

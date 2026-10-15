@@ -27,7 +27,10 @@
 ## 4. 文案与文档
 
 - [x] 4.1 新 D-code（D442–D444）双档 zh/en：出处行（D442 `对话 · {role}`，角色词复用 D385/D386）、消息失锚 toast（D443，对齐 D372 措辞改「对话」）、跳回 a11y 名（D444）；同步 `文案-Copy.md` 与 copy drift 测试
-- [ ] 4.2 本 change 归档时 living spec 增量并入核对（ADDED ×2 与实现一致）
+- [x] 4.2 本 change 归档时 living spec 增量并入核对（ADDED ×2 与实现一致）
+      —— M519 归档执行（2026-10-15）：ADDED「消息摘录卡片」「消息摘录序列化协议」已并入 living spec；
+      实现锚点在场（`src/message-quote-gesture.ts`、`src/quote-card.ts` 的 `formatMessageAt` / msgquote
+      序列化、D442–D444 文案），两者一致。
 
 ## 5. 验证
 

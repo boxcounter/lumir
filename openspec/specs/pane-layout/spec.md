@@ -203,12 +203,12 @@ SHALL 插入 B 的文档（kill ring 在 Emacs 本就是全局的）。本版 MU
 
 ### Requirement: harness pane
 
-harness 对话面板 SHALL 作为 pane 容器的一种内容件存在：一个 pane 要么承载一组文档标签，要么是 harness pane，二者必居其一。harness pane SHALL NOT 承载标签条与文档会话；「分栏态空 pane 不接受文本输入」条款 SHALL NOT 适用于 harness pane（它不是空 pane，其可编辑性是面板自身的输入区）。pane 命令族对 harness pane 的语义：`pane.close` 于 harness pane SHALL 等价于关闭 harness（同 `harness.toggle` 收起路径）；`pane.other` SHALL 可在文档 pane 与 harness pane 之间切换活跃；harness 在场时 `pane.split` SHALL 为无操作（上限二）。harness pane 的打开 SHALL 由 `harness.toggle` 承担：无第二 pane 时自动分栏（默认宽度比 harness:文档 pane = 1:2），已有第二 pane 时该 pane 的文档标签并入另一 pane 后换位为 harness（沿用「移动标签非复制」口径，MUST NOT 丢标签）。
+harness 对话面板 SHALL 作为 pane 容器的一种内容件存在：一个 pane 要么承载一组文档标签，要么是 harness pane，二者必居其一。harness pane SHALL NOT 承载标签条与文档会话；「分栏态空 pane 不接受文本输入」条款 SHALL NOT 适用于 harness pane（它不是空 pane，其可编辑性是面板自身的输入区）。pane 命令族对 harness pane 的语义：`pane.close` 于 harness pane SHALL 等价于关闭 harness（同 `harness.toggle` 收起路径）；`pane.other` SHALL 可在文档 pane 与 harness pane 之间切换活跃；harness 在场时 `pane.split` SHALL 为无操作（上限二）。harness pane 的打开 SHALL 由 `harness.toggle` 承担：无第二 pane 时自动分栏（默认宽度比 harness:文档 pane = **1:1**——本值是本仓该默认值的 canonical 定义，其他 spec 只引用不重述），已有第二 pane 时该 pane 的文档标签并入另一 pane 后换位为 harness（沿用「移动标签非复制」口径，MUST NOT 丢标签）。
 
 #### Scenario: 无第二 pane 时自动分栏打开
 
 - **WHEN** 单 pane 开着文档，执行 `harness.toggle`
-- **THEN** 自动分栏：文档 pane 与 harness pane 按 2:1 宽度出现；文档标签与活跃 pane 归属不受影响
+- **THEN** 自动分栏：文档 pane 与 harness pane 按 1:1 宽度出现（各占内容区一半）；文档标签与活跃 pane 归属不受影响
 
 #### Scenario: 已有双文档 pane 时换位打开
 

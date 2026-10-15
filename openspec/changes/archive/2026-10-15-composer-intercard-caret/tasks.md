@@ -20,6 +20,12 @@
 - [ ] 1.2 把 1.1 的结论（读数 + 截图 + 是否启用方案 C）登记进本 change 的 notes 与 `docs/backlog.md`。
       未完成：**等 1.1 复跑**。另登记：`docs/backlog.md` 不在 M450 的写入面，复跑后由带该面
       scope 的 mission 落笔（或由 tower 代录）。
+      —— **M519 归档对账补充（2026-10-15，放弃执行，就地标注原因）**：①「是否启用方案 C」的
+      问题已被 `composer-emacs-nav`（M447）节点 1 裁决吸收——方案 C 的键位层整族移交
+      `text` 作用域接管，本 change 不发生键位层改动（见 §3 的移交标注），登记对象已不存在；
+      ② 场景 134 的复跑在 2026-10-13 / 10-14 多轮执行，但均失败于 harness 环境边界
+      （M517 归因：post-native-menu 语境，M456 老边界；非产品回归，HANDOFF「验收读数终态」），
+      有效读数仍不可得；残余风险登记 `docs/backlog.md`（M519 归档对账条）。据此归档。
 
 **§1 的替代读数（M450 补，真机探针被前台挡住时的降档量法）**：写了一个一次性 DOM 探针
 （`tests/visual/runtime/m450-probe/`，落在 `tests/visual/.gitignore` 的 `runtime/` 下、**不入库**；

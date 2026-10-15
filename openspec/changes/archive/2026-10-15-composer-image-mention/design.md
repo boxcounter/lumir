@@ -53,7 +53,7 @@
   序列化协议」及其验收场景）。
 - 行为基准：living spec 的「混排对话输入区」「引用消息序列化协议」「会话本地留存」
   （`openspec/specs/harness/spec.md:315 / 334 / 258`）；composer 质量合同
-  [docs/specs/harness-composer.md](../../../docs/specs/harness-composer.md)（HC1/HC2 不因本 change 变化
+  [docs/specs/harness-composer.md](../../../../docs/specs/harness-composer.md)（HC1/HC2 不因本 change 变化
   ——本 change 不加块类、不改行盒）。
 - NOT 清单：引用卡片 / 消息摘录卡片编号、跨消息编号、悬空引用检测与改写、原子 mention 块、图片卡片其余
   形态、M440 的投递与落盘口径（proposal §Non-goals）。
