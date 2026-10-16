@@ -2,7 +2,7 @@
 
 ## Purpose
 
-定义编辑器单内核双模式（ADR 0002 §2）的落地口径：md 模式 = 高亮 + live preview 装饰层且可编辑、code 模式 = 仅高亮且只读（M130 的「非 md 即只读」）、按文件类型选模式、配置 `editor.mode` 仅作无类型线索时的默认；装饰层视口增量构建以满足打开 1MB <100ms 性能合同（ADR 0002 §6）。**编辑态口径**：md 模式下光标/选区触及的结构显露源码（callout 行、标题行、标准 Markdown 链接、frontmatter 块、公式与 mermaid widget、分隔线行），显露由选区驱动的装饰重建实现、不改文档——M1 期的只读口径已随编辑能力落地而作废。由 change `add-editor-live-preview` 归档并入（2026-09-05，实现 M19 + M20 接线；真实打开路径 perf 端点的演进义务见 perf-measurement spec），并由 `align-editor-live-preview-spec` 对齐到现状（2026-09-17，同时补记 M138 渲染保真三件套），由 change `code-outline` 归档并入（2026-09-24，实现 M197——代码文件的结构解析（语言分层注册表）与解析缓存），由 change `code-variable-highlight` 归档并入（2026-09-24，实现 M198——双击标识符高亮同一变量及其呈现与生命周期），并由 change `document-end-marker` 归档并入（2026-09-25，实现 M189——正文末尾的「到底了」结束标记：静态显示判据、与作者分隔线可区分的形态，以及「非文档性与几何稳定」两条新增 requirement），M259（2026-09-27，缺陷修复）补记显露的隐含前提：按压期间的落点判定 MUST NOT 跨布局；M297（2026-10-01，缺陷修复）把标题行纳入显露口径——`#` 定界符不再被无条件隐藏，光标触及标题行（含行首）即显露；M399（2026-10-09，缺陷修复 + Alex 裁决）新增「空行渲染不变量」——顶层空段落行恒以正常行高渲染、光标可见，推翻 M218 C1 的 0 高分隔模型，并把「空列表项 Enter 退出列表」收进「Enter 换行与自动缩进」。
+定义编辑器单内核双模式（ADR 0002 §2）的落地口径：md 模式 = 高亮 + live preview 装饰层且可编辑、code 模式 = 仅高亮且只读（M130 的「非 md 即只读」）、按文件类型选模式、配置 `editor.mode` 仅作无类型线索时的默认；装饰层视口增量构建以满足打开 1MB <100ms 性能合同（ADR 0002 §6）。**编辑态口径**：md 模式下光标/选区触及的结构显露源码（callout 行、标题行、标准 Markdown 链接、frontmatter 块、公式与 mermaid widget、分隔线行），显露由选区驱动的装饰重建实现、不改文档——M1 期的只读口径已随编辑能力落地而作废。由 change `add-editor-live-preview` 归档并入（2026-09-05，实现 M19 + M20 接线；真实打开路径 perf 端点的演进义务见 perf-measurement spec），并由 `align-editor-live-preview-spec` 对齐到现状（2026-09-17，同时补记 M138 渲染保真三件套），由 change `code-outline` 归档并入（2026-09-24，实现 M197——代码文件的结构解析（语言分层注册表）与解析缓存），由 change `code-variable-highlight` 归档并入（2026-09-24，实现 M198——双击标识符高亮同一变量及其呈现与生命周期），并由 change `document-end-marker` 归档并入（2026-09-25，实现 M189——正文末尾的「到底了」结束标记：静态显示判据、与作者分隔线可区分的形态，以及「非文档性与几何稳定」两条新增 requirement），M259（2026-09-27，缺陷修复）补记显露的隐含前提：按压期间的落点判定 MUST NOT 跨布局；M297（2026-10-01，缺陷修复）把标题行纳入显露口径——`#` 定界符不再被无条件隐藏，光标触及标题行（含行首）即显露；M399（2026-10-09，缺陷修复 + Alex 裁决）新增「空行渲染不变量」——顶层空段落行恒以正常行高渲染、光标可见，推翻 M218 C1 的 0 高分隔模型，并把「空列表项 Enter 退出列表」收进「Enter 换行与自动缩进」，M529（2026-10-16，缺陷修复）为「IME 组合期不重复插入列表 marker」补第二层拦截——DOM 读回入口（inputHandler）拒收 WebKit 裸 DOM 变更形态的重复 marker（Alex 现场「2. 3.」逃逸形态，探针证据 test-results/m529-probe/readings.md）。
 
 ## Requirements
 
@@ -1477,16 +1477,30 @@ NOT 触发。光标离开该行即回到字面文本渲染。门控与渲染 MUS
 
 ### Requirement: IME 组合期不重复插入列表 marker
 
-编辑器 MUST 在 DOM 输入入口（beforeinput）拒收 WebKit contenteditable 的原生自动
-列表命令：`insertOrderedList` 与 `insertUnorderedList` 两个 inputType SHALL 被
-preventDefault 并消费——本仓的列表编辑语义（裸 marker 行特判、上游续行、TAB 缩进）
+编辑器 MUST 在 DOM 输入入口（beforeinput 层，M461②）拒收 WebKit contenteditable
+的原生自动列表命令：`insertOrderedList` 与 `insertUnorderedList` 两个 inputType SHALL
+被 preventDefault 并消费——本仓的列表编辑语义（裸 marker 行特判、上游续行、TAB 缩进）
 是唯一合法的列表编辑路径，MUST NOT 允许原生转换绕过它产生文档变更。其余 inputType
 （`insertText` / `insertCompositionText` / `insertParagraph` / 删除类等）MUST 放行，
 且放行动 MUST NOT preventDefault。
 
-已知边界（如实登记）：本拦截覆盖原生转换走 beforeinput 的形态；若 WebKit 以无
-beforeinput 的裸 DOM 变更路径插入（自动化合成键盘事件不进 TSM，组合态无法在本层
-复现），本拦截不兜，该形态留真机 dogfood 复验。
+编辑器 MUST 同时在 DOM 读回入口（inputHandler 层，M529②）拒收裸 DOM 变更形态的
+重复 marker（Alex 2026-10-15 dogfood 现场「2. 3.」）：读回变更为**纯插入**、插入
+文本恰为一个**裸列表 marker**（有序 `\d{1,9}[.)]` / 无序 `-` `+` `*`，后随空白、
+无内容，判定与渲染层 `bareListMarkerLine` 同一份正则）、且**行首至插入点恰为一个
+裸列表 marker**（该行是空列表项、光标在 marker 之后）——三个条件同时成立时，该
+读回变更 SHALL 被丢弃：MUST NOT 产生文档变更、MUST NOT 产生撤销步，被丢弃后编辑器
+DOM MUST 自愈回文档状态。其余读回变更 MUST NOT 被拦截：逐字符键入（单字符不构成
+裸 marker 整串）、含内容的插入、行首 / 有内容行上的插入、`换行 + marker` 的整段
+续行（纯 IME 路径下光标在内容行尾、不命中）、替换、粘贴与组合提交文本。键位层的
+列表续行（M399 / M461）是唯一合法的续行来源，本层 MUST NOT 主动插入任何 marker。
+
+已知边界（如实登记）：两层拦截覆盖「带 insertOrderedList 族 inputType 的命令形态」
+与「裸 DOM 文本插入的读回形态」。真实组合期事件序列在本机无法合成复现（合成键盘
+不进 TSM，探针证据 test-results/m461-probe/readings.md §缺陷②）；M529 探针以等价
+注入（绕开 beforeinput 直接向 contenteditable 插 marker 文本）复现裸 DOM 形态的
+落点形状与文档层结果（test-results/m529-probe/readings.md）。若 Alex 的输入法路径
+仍复现其它形态的重复 marker，按新探针读数另立项。
 
 #### Scenario: 原生自动列表命令被拦下
 
@@ -1497,3 +1511,13 @@ beforeinput 的裸 DOM 变更路径插入（自动化合成键盘事件不进 TS
 
 - **WHEN** beforeinput 事件携带 `insertText` / `insertCompositionText` / `insertParagraph` 等其余 inputType
 - **THEN** 事件不被消费、不被 preventDefault，输入照常到达编辑器
+
+#### Scenario: 裸 DOM 变更插入重复 marker 被丢弃（M529②）
+
+- **WHEN** 光标在空列表项的 marker 之后（行首至光标恰为一个裸 marker，如 CM 续行刚产出「2. 」），DOM 读回变更为在该点纯插入另一个裸 marker（如 WebKit smart-list 把下一序号「3. 」作为裸文本插入同一光标位）
+- **THEN** 该读回变更被丢弃：文档逐字节不变、无撤销步，编辑器 DOM 自愈回文档状态；行末 Enter 只产生一个新 item
+
+#### Scenario: 普通 DOM 读回变更不被误拦（M529② 放行面）
+
+- **WHEN** DOM 读回变更为逐字符键入、含内容的插入、行首或有内容行上的 marker 形插入、`换行 + marker` 的整段续行、替换、粘贴或 IME 组合提交文本
+- **THEN** 变更原样应用为文档变更，判定层 MUST NOT 拦截

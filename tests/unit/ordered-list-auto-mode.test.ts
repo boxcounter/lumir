@@ -22,7 +22,12 @@ import { syntaxTree } from "@codemirror/language";
 import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
 import { GFM } from "@lezer/markdown";
 import { bareListMarkerLine } from "../../src/preview/lists.ts";
-import { enterWithAutoIndent, swallowNativeListBeforeInput } from "../../src/enter-indent.ts";
+import {
+  enterWithAutoIndent,
+  isDuplicateMarkerInsertion,
+  swallowDuplicateMarkerInput,
+  swallowNativeListBeforeInput,
+} from "../../src/enter-indent.ts";
 import type { EditorMode } from "../../src/bindings/EditorMode.ts";
 import { completeTree } from "./syntax-tree.ts";
 
@@ -255,4 +260,91 @@ test("beforeinput 拦截：普通输入事件（insertText / 无 inputType）一
   let prevented = 0;
   assert.equal(swallowNativeListBeforeInput({ inputType: "insertText", preventDefault: () => { prevented += 1; } }), false);
   assert.equal(prevented, 0);
+});
+
+// ---------------------------------------------------------------------------
+// F. M529②：DOM 读回入口拒收裸 DOM 变更的重复 marker（inputHandler 层）
+// ---------------------------------------------------------------------------
+//
+// 缺陷形态（Alex 2026-10-15 dogfood）：有序列表行末 Enter 后新行出现「2. 3.」——
+// CM 键位续出「2. 」后，WebKit smart-list 又把下一序号作为**裸 DOM 文本**插进同一
+// 光标位（M461② beforeinput 拒收名单不兜的形态，探针以等价注入复现落点形状，
+// 证据 test-results/m529-probe/readings.md）。本组是属性测试：不变量 = 读回变更为
+// 「纯插入 + 插入文本恰为裸 marker + 行首至光标恰为裸 marker（空项 marker 之后）」
+// 时 MUST 被吞掉；其余读回形态 MUST NOT 被误吞。
+
+/** 以「光标在文档末（或显式 pos）」构造真 Text，跑生产判定。 */
+function dupInsertion(doc: string, text: string, pos?: number) {
+  const state = EditorState.create({ doc, extensions: MD });
+  const at = pos ?? doc.length;
+  return isDuplicateMarkerInsertion(state.doc, at, at, text);
+}
+
+test("读回拦截：空项 marker 之后插入裸 marker MUST 判重复（有序同族）", () => {
+  // 行首至光标恰为裸 marker（空列表项、光标在 marker 之后）+ 插入文本恰为裸 marker。
+  const cases: Array<[label: string, doc: string, text: string]> = [
+    ["有序 .（Alex 现场形态）", "1. 甲项\n2. ", "3. "],
+    ["任意序号", "1. 甲项\n2. ", "9. "],
+    ["多位序号", "8. 甲项\n9. ", "10. "],
+    ["有序 ) 分隔符", "1) 甲项\n2) ", "3) "],
+    ["无序同标记", "- 甲项\n- ", "- "],
+    ["无序跨标记", "- 甲项\n- ", "* "],
+    ["引用前缀（插入带前缀）", "> 1. 甲项\n> 2. ", "> 3. "],
+    ["引用前缀（插入不带前缀）", "> 1. 甲项\n> 2. ", "3. "],
+    ["行首缩进", "  1. 甲项\n  2. ", "3. "],
+    ["尾随 tab", "1. 甲项\n2. ", "3.\t"],
+    ["单项列表", "1. ", "2. "],
+    ["裸 marker 行（lazy 形态，纯文本判定不读语法树，同口径吞）", "甲项\n1. ", "2. "],
+  ];
+  for (const [label, doc, text] of cases) {
+    assert.equal(dupInsertion(doc, text), true, `${label}：应判重复`);
+  }
+});
+
+test("读回拦截：有内容行 / 行首 / 非纯插入 / 非 marker 文本 MUST NOT 判重复（放行面）", () => {
+  const cases: Array<[label: string, doc: string, text: string, pos?: number]> = [
+    ["插入文本带内容", "1. 甲项\n2. ", "3. 乙项"],
+    ["单字符不是整串 marker", "1. 甲项\n2. ", "3"],
+    ["光标在内容之后（行首至光标含内容）", "1. 甲项\n2. 丙项", "3. "],
+    ["行首（行首至光标为空串）", "1. 甲项\n2. ", "3. ", 6],
+    ["换行 + marker（纯 IME 续行形态，不兜）", "1. 甲项", "\n2. "],
+    ["普通文本插入", "1. 甲项\n2. ", "x"],
+    ["空串", "1. 甲项\n2. ", ""],
+    ["段落行尾", "甲项段落", "1. "],
+    ["文档首行空行", "", "1. "],
+  ];
+  for (const [label, doc, text, pos] of cases) {
+    assert.equal(dupInsertion(doc, text, pos), false, `${label}：应放行`);
+  }
+  // 替换（from < to）不是纯插入，MUST 放行。
+  const state = EditorState.create({ doc: "1. 甲项\n2. ", extensions: MD });
+  assert.equal(isDuplicateMarkerInsertion(state.doc, 8, 9, "3. "), false, "替换变更：放行");
+});
+
+test("读回拦截：命中时吞掉 = 零 dispatch、文档逐字节不变（inputHandler 行为）", () => {
+  // 不变量：吞掉路径 MUST NOT 产生任何文档变更 / 撤销步——键位层仍是唯一合法续行来源。
+  const doc = "1. 甲项\n2. ";
+  const state = completeTree(EditorState.create({ doc, extensions: MD, selection: EditorSelection.cursor(doc.length) }));
+  let dispatches = 0;
+  const view = {
+    state,
+    dispatch: () => {
+      dispatches += 1;
+    },
+  } as unknown as EditorView;
+  const swallowed = swallowDuplicateMarkerInput(view, doc.length, doc.length, "3. ");
+  assert.equal(swallowed, true, "重复 marker 读回应被吞");
+  assert.equal(dispatches, 0, "吞掉 MUST NOT dispatch（无文档变更、无撤销步）");
+  const passed = swallowDuplicateMarkerInput(view, doc.length, doc.length, "丙");
+  assert.equal(passed, false, "普通读回放行走默认插入");
+});
+
+test("读回拦截：真实列表续行路径逐字节不回归（CM 自己的续行不被误伤）", () => {
+  // 防回归：键位层的合法续行产出「2. 」空项后，若再有 marker 读回才判重复；
+  // 键位层本身 MUST NOT 经过 inputHandler（dispatch 不经 DOM 读回）。
+  const result = pressEnterAtEnd("1. 甲项");
+  assert.equal(result.doc, "1. 甲项\n2. ", "Enter 续行照旧（键位层唯一合法路径）");
+  assert.equal(result.handled, true);
+  // 续行后的空项上，WebKit 裸插入下一序号 ⇒ 判重复（防御二次叠加）。
+  assert.equal(dupInsertion(result.doc, "3. "), true);
 });
