@@ -148,5 +148,6 @@ transcript 里并非所有文字都能摘：思考块、工具行、批准卡、
   M541 版本时，本步换 `clickInNode`（KimiCU 坐标通道）仍 FAIL（`run6-clickinnode`），换
   `doubleClick` + `mode: 1`（swift 真实指针单击，同一坐标）则 12/12 PASS（`run7-realclick`）。
   ⇒ 两个 KimiCU 通道都无效、真实指针点击有效；缺口是「该钮经辅助功能 press 不再可按下」
-  （M541 新加的 document 级 pointer 监听 + `hideButton()` 摘 DOM，把这次按下当成了新拖拽），
+  （**候选机制**：M541 新加的 document 级 pointer 监听把这次按下当成新拖拽、`hideButton()`
+  把钮摘出 DOM；未最终坐实，详见 finding），
   **产品侧修复前本步会一直红**，换 KimiCU 通道绕不过去（详情与复现见 M549 的 finding）。
