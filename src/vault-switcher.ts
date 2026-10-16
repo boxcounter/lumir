@@ -517,7 +517,12 @@ export interface VaultSessionStore {
  *  侧与 ts-rs 导出面，不在本 mission 的改动面里。因此读数名与它的负载编在同一个 `name` 里：
  *  `<读数名> <key=value>…`（读法 `grep vault_restore_ <config>/lumir/logs/*.jsonl`），
  *  `ms` 是这段动作的真实耗时。负载 MUST NOT 带路径或文件名原文（隐私边界与 logging.rs 同
- *  口径：只记计数与**分类后**的错误码）。 */
+ *  口径：只记计数与**分类后**的错误码）。
+ *
+ *  **孪生**：`src/reading-position.ts`（M546）——同一通道、同一读数名与负载形状（读数名前缀
+ *  `reading_position_`）；下面这三个小函数与探测段的「失败重试一次再降级」口径**改动须两侧
+ *  同步**。收敛成一个共享模块的提案见 finding
+ *  `20261016-worker-readpos-improve-reading-position-vault-switcher.md`（尚未立项）。 */
 function diagnostics(name: string, startedAt: number): void {
   logEvent("slow_callback", { name, ms: (performance.now() - startedAt).toFixed(1) });
 }
@@ -627,7 +632,8 @@ export function createVaultSessionStore(deps: VaultSessionStoreDeps): VaultSessi
       // 探测失败**重试一次**再降级（M515）：旧口径把一次失败静默当成「都不在 vault 内」——
       // 探测在启动恢复窗口里抖一下（M513 场景 49 的实测现场）就无声丢掉恢复条目，无重试、
       // 无告警、无日志。重试同批同参、不放大探测面（仍是一次批量 IPC），只在失败路径上多
-      // 一次往返。
+      // 一次往返。**孪生**：`src/reading-position.ts`（M546）的装载探测段同口径——改这里要
+      // 一并改那边（收敛见本文件 `diagnostics` 处的 finding 指针）。
       let attempt = await probePaths(missing);
       if (!attempt.ok) {
         // 世代复查：重试是又一个新的 await，用户可能已经切走——让位时不再发第二次探测。

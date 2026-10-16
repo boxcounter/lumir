@@ -158,6 +158,8 @@ export function mergePending(
  *  读数的现成通道是它给读数留的那条 `slow_callback`（白名单就是 name / ms，与前端 `phaseMs`
  *  以及 M515 落在 `src/vault-switcher.ts` 的 `vault_restore_*` 同款）——本模块沿用同一条通道、
  *  同一种行形，两处孪生读数因此用同一种读法（`grep reading_position_ <config>/lumir/logs/*.jsonl`）。
+ *  下面这三个小函数与探测段口径**改动须两侧同步**（收敛成一个共享模块见 finding
+ *  `20261016-worker-readpos-improve-reading-position-vault-switcher.md`，尚未立项）。
  *  读数名与它的负载编在同一个 `name` 里：`<读数名> <key=value>…`，`ms` 是这段动作的真实耗时。
  *  负载 MUST NOT 带路径或文件名原文（隐私边界与 logging.rs 同口径：只记计数与**分类后**的错误码）。 */
 function diagnostics(name: string, startedAt: number): void {
