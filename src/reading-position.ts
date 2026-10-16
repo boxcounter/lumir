@@ -1,5 +1,6 @@
 // 文档阅读位置的跨会话持久化（change remember-reading-position 的 3.x / 4.x / 5.x）：
-// 防抖捕获、整份落盘、装载后按本次枚举清理、装载复位之后恢复。
+// 防抖捕获、整份落盘、装载后按本次枚举清理（枚举之外的键另过一次批量存在探测，M546 起该探测
+// 失败先重试一次再降级）、装载复位之后恢复。
 //
 // 模块边界（谁在哪）：
 //   - **值形态与两个口径**在 src/scroll-position.ts（`ScrollPosition` / `positionFromReadings` /
@@ -30,6 +31,7 @@ import type { FsEntry } from "./bindings/FsEntry";
 import type { ReadingPositionEntry } from "./bindings/ReadingPositionEntry";
 import type { ReadingPositions } from "./bindings/ReadingPositions";
 import type { ScrollPosition } from "./scroll-position";
+import { logEvent } from "./diagnostics";
 import { errorMessage } from "./ipc";
 import { viewportTransitionInFlight } from "./viewport-transition";
 
@@ -64,8 +66,9 @@ export interface ReadingPositionStoreDeps {
    *  挡住的惰性条目（在文件树里可见、可打开）永不进枚举，它们的阅读位置 MUST NOT 每次装载
    *  都被剪掉（change vault-open-ignore-set 的 spec「按 vault 持久化阅读位置」第 4 条）。
    *  **批量**：候选数上界是镜像的键数（`READING_POSITION_MAX_ENTRIES`），逐键走 IPC 会把
-   *  N 次往返叠在装载路径上。MUST NOT 逐条发起。探测失败按「都不存在」处置（与只看枚举
-   *  集合的旧行为一致）。 */
+   *  N 次往返叠在装载路径上。MUST NOT 逐条发起。探测失败仍按「都不存在」处置（与只看枚举
+   *  集合的旧行为一致），但 M546 起先在调用方**重试一次**再降级，并留一条诊断读数
+   *  （见 [`onVaultLoaded`] 的探测段）。 */
   pathsExist(paths: string[]): Promise<string[]>;
   /** 位置读写失败的人话提示（只降级，不拦停打开 / 切换 / 退出）。 */
   warn(text: string): void;
@@ -151,6 +154,29 @@ export function mergePending(
 // 存储（无 DOM，可脱离浏览器单测）
 // ---------------------------------------------------------------------------
 
+/** 本模块的诊断读数出口（M546）。事件名与字段白名单的唯一来源是 `src-tauri/src/logging.rs`；
+ *  读数的现成通道是它给读数留的那条 `slow_callback`（白名单就是 name / ms，与前端 `phaseMs`
+ *  以及 M515 落在 `src/vault-switcher.ts` 的 `vault_restore_*` 同款）——本模块沿用同一条通道、
+ *  同一种行形，两处孪生读数因此用同一种读法（`grep reading_position_ <config>/lumir/logs/*.jsonl`）。
+ *  下面这三个小函数与探测段口径**改动须两侧同步**（收敛成一个共享模块见 finding
+ *  `20261016-worker-readpos-improve-reading-position-vault-switcher.md`，尚未立项）。
+ *  读数名与它的负载编在同一个 `name` 里：`<读数名> <key=value>…`，`ms` 是这段动作的真实耗时。
+ *  负载 MUST NOT 带路径或文件名原文（隐私边界与 logging.rs 同口径：只记计数与**分类后**的错误码）。 */
+function diagnostics(name: string, startedAt: number): void {
+  logEvent("slow_callback", { name, ms: (performance.now() - startedAt).toFixed(1) });
+}
+
+/** 探测失败的**分类**错误码（不记原文：后端错误文本可能带上路径）。截断只为保证整条读数
+ *  不因超长的值被白名单拒掉——被拒掉又是一次静默丢失，而这条读数的存在理由正是「不再静默」。 */
+function probeErrorCode(e: unknown): string {
+  const code = typeof e === "object" && e !== null ? (e as { code?: unknown }).code : undefined;
+  return typeof code === "string" ? code.slice(0, 64) : "unknown";
+}
+
+/** 批量存在探测的一次尝试：成功给「确实存在」的那些路径，失败给分类后的错误码。
+ *  失败不抛——重试与降级的处置归调用方（[`onVaultLoaded`] 的探测段）。 */
+type ProbeAttempt = { ok: true; paths: string[] } | { ok: false; code: string };
+
 export function createReadingPositionStore(
   deps: ReadingPositionStoreDeps,
 ): ReadingPositionStore {
@@ -188,6 +214,16 @@ export function createReadingPositionStore(
       // 写失败只降级（与 last_vault、标签会话写失败同口径）：位置只影响「下次打开从哪里开始」，
       // 不值得拦停用户的一次打开、切换或退出。
       deps.warn(errorMessage(e));
+    }
+  }
+
+  /** 批量存在探测的一次尝试（M546，与 M515 的 `vault-switcher.ts` 同形）：失败不抛，转成
+   *  分类错误码交给调用方处置（重试 / 降级）。 */
+  async function probePaths(paths: readonly string[]): Promise<ProbeAttempt> {
+    try {
+      return { ok: true, paths: await deps.pathsExist([...paths]) };
+    } catch (e) {
+      return { ok: false, code: probeErrorCode(e) };
     }
   }
 
@@ -259,6 +295,7 @@ export function createReadingPositionStore(
     cancelTimer();
     // 上一次装载留下的待写内容属于上一个 vault：键还没换，直接丢弃（它已由那次切换前的 flush 写走）。
     pending.clear();
+    const loadStartedAt = performance.now();
     const gen = ++loadGen;
     let file: ReadingPositions | null = null;
     try {
@@ -275,24 +312,58 @@ export function createReadingPositionStore(
     const stored = file?.entries ?? {};
     // 判据 MUST NOT 只看本次枚举结果：惰性条目（`.local/教程.md`）在文件树里可见、可打开，
     // 却永不进枚举——只看 `available` 会让它的阅读位置**每次装载都被剪掉**（读了也白读），
-    // 那正是 Alex 裁决原话里的场景。存在即保留，探测失败才剪。
+    // 那正是 Alex 裁决原话里的场景。存在即保留，探测失败（重试一次之后仍失败）才剪。
     const missing = Object.keys(stored).filter((key) => !available.has(key));
     let present = new Set<string>();
     if (missing.length > 0) {
       // 探测面上界与镜像同一处上限：手改过的超限文件也不放大探测面（`capEntries` 的淘汰
       // 口径与镜像一致——被它淘汰的候选本来就等于「不存在」，结果与不裁剪时相同）。
-      const bounded = capEntries(
-        Object.fromEntries(missing.map((key) => [key, stored[key] ?? { pos: 0, y: 0, x: 0, at: 0 }])),
+      const candidates = Object.keys(
+        capEntries(
+          Object.fromEntries(missing.map((key) => [key, stored[key] ?? { pos: 0, y: 0, x: 0, at: 0 }])),
+        ),
       );
-      try {
-        present = new Set(await deps.pathsExist(Object.keys(bounded)));
-      } catch {
-        present = new Set(); // 探测失败等价于「都不在 vault 内」（与只看枚举集合时同结果）
+      const probeStartedAt = performance.now();
+      // 探测失败**重试一次**再降级（M546，与 M515 对会话恢复的加固同口径）：旧行为把一次失败
+      // 静默当成「都不在 vault 内」——后端在这一段里抖一下（短暂不可用）就无声剪掉这些键的阅读
+      // 位置，无重试、无告警、无日志；用户切回去才发现回到顶部，而下一次 flush 就把被剪的镜像
+      // 落盘，不可自愈。重试同批同参、不放大探测面（仍是一次批量 IPC），只在失败路径上多一次往返。
+      let attempt = await probePaths(candidates);
+      if (!attempt.ok) {
+        // 世代复查：重试是又一个新的 await，用户可能已经切走——让位时不再发第二次探测。
+        if (gen !== loadGen) return;
+        // 首次失败**留痕**：重试成功时，这一行正是「这一段里探测会抖」的唯一现场证据。
+        diagnostics(
+          `reading_position_probe_retry count=${candidates.length} err=${attempt.code}`,
+          probeStartedAt,
+        );
+        attempt = await probePaths(candidates);
+      }
+      if (attempt.ok) {
+        present = new Set(attempt.paths);
+      } else {
+        // 两次都失败：降级口径与旧行为逐字一致（按「都不在 vault 内」处置，剪哪些键不变），但
+        // 这一次留下读数——「这次失败牵连了几条、什么错」不再只能靠猜。`dropped` 是这次失败
+        // 牵连的候选数（候选之外本就被上限淘汰，与探测成败无关）。
+        diagnostics(
+          `reading_position_probe_failed dropped=${candidates.length} err=${attempt.code}`,
+          probeStartedAt,
+        );
       }
       if (gen !== loadGen) return; // 探测是新的 await：再查一次世代（同上面那一次）
     }
     // 上限在镜像上就收口：手改过的文件可能带来超限内容，下一次落盘（乃至内存镜像）都不许超过它。
     mirror = capEntries(pruneEntries(stored, new Set([...available, ...present])));
+    // 装载对账读数（M546，与 M515 的 `vault_restore_reconcile` 同口径）：`stored` 是本次读回的
+    // 条目数、`kept` 是清理后镜像里的条数——两者不等就是「盘上有 N 条、这次装载后只剩 M 条」，
+    // 正是「切回去发现回到顶部」那一刻要回答的问题（是被这次装载剪掉的，还是别处）。不设阈值：
+    // 装载是低频动作，而「日志里没有这一行」与「这一段没跑」事后不可区分。
+    const storedCount = Object.keys(stored).length;
+    const keptCount = Object.keys(mirror).length;
+    diagnostics(
+      `reading_position_reconcile stored=${storedCount} kept=${keptCount} dropped=${storedCount - keptCount}`,
+      loadStartedAt,
+    );
     // **这是防线，不是冗余**（reviewer r2 实测：单删这一行，「窗口期的捕获不许落进新 vault」那条
     // 单测即如实变红）。窗口期的捕获**会照常落进 pending**——那一刻键还是旧键、`scrolled()` 不区分
     // 键的新旧，照旧捕获（这正是「窗口期内的捕获仍归旧键」那条单测的前提）。危险在于它的防抖触发

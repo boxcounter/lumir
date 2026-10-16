@@ -1,6 +1,6 @@
 // src/reading-position.ts 的单测（M194，change remember-reading-position 的 3.x / 4.x / 5.x）：
 // 防抖与「内容未变不排期」、flush 的时点与内容、按枚举清理、上限淘汰、四种降级、
-// 装载途中换 vault 的让位、恢复只施加于前台文档。
+// 装载途中换 vault 的让位、恢复只施加于前台文档、装载探测失败的重试与诊断读数（M546）。
 //
 // 这一层不 import 编辑器内核（真 EditorView 需要 DOM，见 tests/unit/README.md）：位形态的两个
 // 口径是纯代数、另测（tests/unit/scroll-position.test.ts），这里用假 deps 只测「哪个键、什么时候
@@ -25,6 +25,8 @@ import {
   beginViewportTransition,
   endViewportTransition,
 } from "../../src/viewport-transition.ts";
+import { commandError, installBackend } from "./harness.ts";
+import type { FakeBackend } from "./harness.ts";
 import type { ReadingPositionMap, ReadingPositionStore } from "../../src/reading-position.ts";
 
 /** 让 await 链跑完（mock timers 只接管 setTimeout，setImmediate 仍是真家伙）。 */
@@ -658,20 +660,6 @@ test("装载清理：不在枚举集里但探测存在的键保留（惰性文�
   );
 });
 
-test("装载清理：探测失败等价于「都不在 vault 内」（与只看枚举集合的旧行为一致）", async () => {
-  const rig = createRig();
-  rig.activePath = "a.md";
-  rig.files["vault-a"] = file({ "a.md": at(10), ".local/tutorial.md": at(20) });
-  rig.pathsExistImpl = async () => {
-    throw { code: "io", message: "后端不可用" };
-  };
-  await load(rig, "vault-a", [fileEntry("a.md")]);
-  rig.view = position(500);
-  rig.store.scrolled();
-  await rig.store.flush();
-  assert.deepEqual(Object.keys(rig.writes[0].entries), ["a.md"]);
-});
-
 test("装载清理：条目全在枚举集里时不发存在探测（零新增 IPC）", async () => {
   const rig = createRig();
   rig.files["vault-a"] = file({ "a.md": at(10) });
@@ -690,3 +678,160 @@ test("装载清理：探测的候选数受镜像上限约束（手改过的超�
   assert.equal(rig.probes.length, 1, "仍然是一次批量调用");
   assert.equal(rig.probes[0].length, READING_POSITION_MAX_ENTRIES, "候选数被同一处上限收口");
 });
+
+// ---------------------------------------------------------------------------
+// M546：装载探测失败的加固面——失败重试一次、降级留痕、装载对账读数
+//
+// 缺陷形态（finding `20261014-agent-m515-bug-reading-position-ts-288-m515.md`）：一次瞬态探测
+// 失败被静默当成「这些键都不在 vault 内」，随后 `pruneEntries` 把它们从镜像里剪掉；用户切回去
+// 才发现回到顶部，而下一次 flush 就把被剪的镜像落盘，不可自愈。判据与会话恢复侧（M515，
+// src/vault-switcher.ts）同形：重试同批同参一次、降级口径不变、失败路径留读数。
+// ---------------------------------------------------------------------------
+
+/** 假后端记下的诊断读数：`slow_callback` 且读数名以 `prefix `（带空格）开头的那些，返回 name
+ *  原文供逐字断言。本模块的读数一律带负载（`<读数名> <key=value>…`），带空格的精确前缀才不会被
+ *  相邻读数名互吞（`reading_position_probe` 与 `reading_position_probe_retry`）。 */
+function readings(backend: FakeBackend, prefix: string): string[] {
+  return backend.logEvents
+    .filter(
+      (record) => record.event === "slow_callback" && record.fields.name.startsWith(`${prefix} `),
+    )
+    .map((record) => record.fields.name);
+}
+
+test("装载探测：首次失败重试一次，重试成功则该键照常保留（M546）", async () => {
+  const backend = installBackend();
+  const rig = createRig();
+  rig.activePath = "a.md";
+  rig.files["vault-a"] = file({ "a.md": at(10), ".local/tutorial.md": at(20) });
+  let attempts = 0;
+  rig.pathsExistImpl = async (paths) => {
+    attempts += 1;
+    if (attempts === 1) throw commandError("ipc_io", "后端不可用");
+    return paths.filter((path) => path === ".local/tutorial.md");
+  };
+  await load(rig, "vault-a", [fileEntry("a.md")]);
+
+  assert.deepEqual(
+    rig.probes,
+    [[".local/tutorial.md"], [".local/tutorial.md"]],
+    "同批同参重试一次（仍是一次批量 IPC）",
+  );
+  rig.view = position(500);
+  rig.store.scrolled();
+  await rig.store.flush();
+  assert.deepEqual(
+    Object.keys(rig.writes[0].entries).sort(),
+    [".local/tutorial.md", "a.md"],
+    "探测回来的键照常保留——一次瞬态失败不再无声丢掉阅读位置",
+  );
+  assert.deepEqual(
+    readings(backend, "reading_position_probe_retry"),
+    ["reading_position_probe_retry count=1 err=ipc_io"],
+    "首次失败留痕：重试成功时，这一行正是「这一段里探测会抖」的唯一现场证据",
+  );
+  assert.deepEqual(readings(backend, "reading_position_probe_failed"), [], "重试成功即不记降级");
+});
+
+test("装载探测：两次都失败 → 仍按「都不在 vault 内」降级（口径与旧行为一致）并留痕（M546）", async () => {
+  const backend = installBackend();
+  const rig = createRig();
+  rig.activePath = "a.md";
+  rig.files["vault-a"] = file({ "a.md": at(10), ".local/tutorial.md": at(20) });
+  rig.pathsExistImpl = async () => {
+    throw commandError("ipc_io", "后端不可用");
+  };
+  await load(rig, "vault-a", [fileEntry("a.md")]);
+
+  assert.equal(rig.probes.length, 2, "失败只重试一次，不无限重试");
+  rig.view = position(500);
+  rig.store.scrolled();
+  await rig.store.flush();
+  assert.deepEqual(
+    Object.keys(rig.writes[0].entries),
+    ["a.md"],
+    "降级口径与旧行为逐字一致：探测失败的键照旧被剪",
+  );
+  assert.deepEqual(readings(backend, "reading_position_probe_retry"), [
+    "reading_position_probe_retry count=1 err=ipc_io",
+  ]);
+  assert.deepEqual(readings(backend, "reading_position_probe_failed"), [
+    "reading_position_probe_failed dropped=1 err=ipc_io",
+  ]);
+  // 隐私边界（与 logging.rs 同口径）：读数里 MUST NOT 出现路径或文件名原文
+  for (const name of [
+    ...readings(backend, "reading_position_probe_retry"),
+    ...readings(backend, "reading_position_probe_failed"),
+  ]) {
+    assert.ok(!name.includes(".local") && !name.includes(".md"), `读数不得带路径原文：${name}`);
+  }
+});
+
+test("装载探测：一次就成功时不留任何探测读数（读数只在失败路径上开口，M546）", async () => {
+  const backend = installBackend();
+  const rig = createRig();
+  rig.activePath = "a.md";
+  rig.files["vault-a"] = file({ "a.md": at(10), ".local/tutorial.md": at(20) });
+  rig.pathsExistImpl = async (paths) => paths;
+  await load(rig, "vault-a", [fileEntry("a.md")]);
+
+  assert.deepEqual(rig.probes, [[".local/tutorial.md"]], "零失败即零重试");
+  assert.deepEqual(readings(backend, "reading_position_probe_retry"), []);
+  assert.deepEqual(readings(backend, "reading_position_probe_failed"), []);
+});
+
+test("装载探测：首次失败且世代已翻 → 不再发第二次探测（让位优先，M546）", async () => {
+  const backend = installBackend();
+  const rig = createRig();
+  rig.activePath = "a.md";
+  rig.files["vault-a"] = file({ "a.md": at(10), "gone.md": at(20) });
+  // 闸门：**只**把第一次探测挂在在途态（好让测试在它返回之前切走 vault）。第二次探测立刻失败
+  // ——让位守卫若被删掉，本例是干净地断言失败（attempts=2），不是挂死在这里。
+  const gate: { open: () => void } = { open: () => {} };
+  let attempts = 0;
+  rig.pathsExistImpl = async () => {
+    attempts += 1;
+    if (attempts === 1) {
+      await new Promise<void>((resolve) => {
+        gate.open = () => resolve();
+      });
+    }
+    throw commandError("ipc_io");
+  };
+  const first = rig.store.onVaultLoaded("vault-a", [fileEntry("a.md")]);
+  await flush(); // 第一次探测在途
+  await rig.store.onVaultLoaded("vault-b", [fileEntry("b.md")]); // 用户已抢到别的 vault
+  gate.open();
+  await first;
+
+  assert.equal(attempts, 1, "让位的那次不再发第二次探测");
+  assert.deepEqual(readings(backend, "reading_position_probe_retry"), []);
+  assert.deepEqual(readings(backend, "reading_position_probe_failed"), []);
+  // 非空性对照（上两条「没有读数」不许是空转）：同一套失败探测，不被让位时照旧出读数。
+  rig.files["vault-a"] = file({ "a.md": at(10), "gone.md": at(20) });
+  await load(rig, "vault-a", [fileEntry("a.md")]);
+  assert.equal(attempts, 3, "失败即重试一次（探测面是真的）");
+  assert.deepEqual(readings(backend, "reading_position_probe_failed"), [
+    "reading_position_probe_failed dropped=1 err=ipc_io",
+  ]);
+});
+
+test("装载对账读数：每次装载一条（有剪除与稳态各一条，M546）", async () => {
+  const backend = installBackend();
+  const rig = createRig();
+  rig.activePath = "a.md";
+  rig.files["vault-a"] = file({ "a.md": at(10), "gone.md": at(20) });
+  await load(rig, "vault-a", [fileEntry("a.md"), fileEntry("b.md")]);
+  rig.files["vault-b"] = file({ "b.md": at(30) });
+  await load(rig, "vault-b", [fileEntry("b.md")]);
+
+  assert.deepEqual(
+    readings(backend, "reading_position_reconcile"),
+    [
+      "reading_position_reconcile stored=2 kept=1 dropped=1",
+      "reading_position_reconcile stored=1 kept=1 dropped=0",
+    ],
+    "稳态也留一条：『日志里没有这一行』与『这一段没跑』事后不可区分",
+  );
+});
+
