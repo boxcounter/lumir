@@ -13,6 +13,12 @@ import { readDocument } from "./parity-checks";
 // 跨布局」）——两条都断言，缺一不可：
 //   P1 同一屏幕坐标的文档落点映射（pos + assoc）在按下前与按压期间**逐值不变**；
 //   P2 结果选区恒落在「按下点与松手点各自的落点」之间（选区 MUST NOT 被布局位移撑大）。
+//
+// M539 修订（2026-10-16，Alex 裁决：点击粗体末字之后光标落在闭合 `**` 之后）：P2 的「落点
+// 之间」以**修正后的落点**为准——按下点映射进隐藏收尾 run（末字之后、闭合标记之前的零宽
+// 歧义区）的纯点击，空光标会被推到收尾标记之后（语义真源 src/preview/hidden-tail-caret.ts，
+// 逐值语义由 tests/unit/hidden-tail-caret.test.ts 钉住）。映射本身不变（P1 不动），动的只有
+// 结果选区；矩阵 frac=0.85 那一列（最后一个字形的右半）就是 M539 的正向用例。
 // fixture 是 范围类型 × 横向落点 × 抖动幅度 的矩阵；反向对照（真实拖拽必须出选区 / 双击仍
 // 选整词 / 键盘落点仍显露 / 按压全程文档不变）保证上面的断言不是在空输入上空转。
 //
@@ -140,13 +146,23 @@ test("按压期间的落点判定不跨布局：同坐标映射逐值不变，�
         await page.mouse.up();
         await page.waitForTimeout(60);
 
-        // P2：选区恒落在「按下点落点」与「松手点落点」之间（按下前那份布局里算出来的）
+        // P2：选区恒落在「按下点落点」与「松手点落点」之间（按下前那份布局里算出来的）。
+        // M539 只修正「指针产生的空光标」：同坐标（纯点击，含同位抖动）且落点进隐藏收尾
+        // run（末字之后的零宽歧义区）时，期望落点修正到收尾标记之后；跨字符边界的抖动
+        // 是微拖拽（非空选区不经过滤器），保持 CM 内建行为，期望维持原口径。
         const sel = await selection(page);
         const actual = sorted(sel.anchor, sel.head);
-        const expected = sorted(atPress.pos, atRelease.pos);
+        const rawFrom = DOC.indexOf(span.raw);
+        const rawTo = rawFrom + span.raw.length;
+        const tailLen = span.raw.length - span.raw.replace(/[*_~]+$/, "").length;
+        const inTail = (p: number) => p >= rawTo - tailLen && p < rawTo;
+        const m539 = atPress.pos === atRelease.pos && inTail(atPress.pos);
+        const expected = atPress.pos === atRelease.pos
+          ? sorted(m539 ? rawTo : atPress.pos, m539 ? rawTo : atPress.pos)
+          : sorted(atPress.pos, atRelease.pos);
         expect(
           actual,
-          `${label}：选区应落在指针自身覆盖的两个落点之间（按下前映射 ${JSON.stringify(atPress)}/${JSON.stringify(atRelease)}，结果 ${JSON.stringify(sel)}）`,
+          `${label}：选区应落在修正后的落点上（M539 修正=${m539}，按下前映射 ${JSON.stringify(atPress)}/${JSON.stringify(atRelease)}，结果 ${JSON.stringify(sel)}）`,
         ).toEqual(expected);
 
         // 抬起后显露照常跟随（M168 不回归）：光标落在范围内 ⇒ 该范围显露为原文
