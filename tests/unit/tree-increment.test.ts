@@ -192,6 +192,7 @@ function noopCallbacks(): FileTreeCallbacks {
     onOpenVaultSwitcher: () => {},
     onContextMenu: () => {},
     onInlineEditSubmit: () => {},
+    onMoveEntry: () => {},
     onExpandLazyDir: () => Promise.resolve([]),
   };
 }

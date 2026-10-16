@@ -1422,6 +1422,14 @@ const COPY_TABLE = {
     zh: "窗口底色设置失败：{reason}",
     en: "Couldn't set the window background: {reason}",
   },
+  // 拖拽移动（M530，file-tree「拖拽移动条目」）：目录移入自身/后代、或移回原位
+  // （to == from）的显式前置拒绝（fs_io::fs_move_entry 的 fs_move_into_self）。前端拖拽
+  // 落点判定（tree.ts 的 canMoveEntry）先行拒绝，这条是命令层兜底——harness 的 vault_move
+  // 等不经树的调用方直接命中它。{rel} = 源条目路径，与后端 .param("rel", …) 逐字对应。
+  D467: {
+    zh: "不能移动到自身或其子目录：{rel}",
+    en: "Can't move an entry into itself or its own subdirectory: {rel}",
+  },
 } satisfies Record<string, CopyEntry>;
 
 /** 文案表的键（D 编号，多串格带 `.N` 后缀）——由表数据推导，加一条即多一个键。 */
@@ -1475,6 +1483,9 @@ export const ERROR_COPY: Record<string, CopyKey> = {
   fs_reveal_failed: "D186",
   // vault_move 跨目录移动（M407，tower 委托代加；占位键 rel/newPath/reason 与后端逐字对应）。
   fs_move_failed: "D422",
+  // 拖拽移动（M530）：目录移入自身/后代 / 移回原位的显式前置拒绝（占位键 rel 与后端逐字
+  // 对应；前端拖拽判定先行，这条主要兜 harness 等不经树的调用方）。
+  fs_move_into_self: "D467",
   // 剪贴板图片落盘（change paste-clipboard-image）：六个 code 都由 fs_io::write_attachment 一族
   // 构造，占位键与后端逐字对应（type / mb+limit / reason）。
   attachment_type_unsupported: "D436",

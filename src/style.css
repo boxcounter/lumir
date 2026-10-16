@@ -997,6 +997,19 @@ body {
 .ft-row.is-menu-target {
   background: var(--sel);
 }
+/* 拖拽落点行（M530）：文件/目录行拖入目录行，dragover 期间目标行带这个 class，在场期 ≤ 一次
+   拖拽（装卸的唯一真源是 src/tree.ts 的拖拽监听，与 is-menu-target 同形态）。底色与菜单作用行
+   同档（--sel、不加字重）——两种「这一行被点中了」的信号强度一致；**必须排在 :hover 之后**
+   （同特异性、后声明者胜）：落点行在指针下本来就是 hover 态，让 hover 盖过它等于没有反馈。 */
+.ft-row.is-drop-target {
+  background: var(--sel);
+}
+/* eink：拖拽落点行的前景取 --sel-text（与 is-menu-target 同一条理由）。 */
+:root[data-theme="eink"] .ft-row.is-drop-target,
+:root[data-theme="eink"] .ft-row.is-drop-target .ft-name,
+:root[data-theme="eink"] .ft-row.is-drop-target .ft-caret {
+  color: var(--sel-text);
+}
 /* eink：菜单作用行的前景取 `--sel-text`（次级元素手工带上，行内没有现成的颜色继承链）。
    M291 起 eink 的 `--sel-text` = 正文黑字、`--sel` = 明度带 ⇒ 这条只是把「选中底色上的前景」
    说清楚，悬停组合同样可读（不必再逐表面排除 `:hover`）。 */

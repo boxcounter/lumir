@@ -1341,6 +1341,20 @@ pub fn fs_rename_entry(
     fs_io::rename_entry(&root, &rel, &new_name)
 }
 
+/// 跨目录移动（M530，文件树拖拽移入目录的后端）：委托 `fs_io::fs_move_entry`——两端
+/// 都在 vault 内约束里，撞名 MUST NOT 覆盖，目标父目录必须已存在，跨卷如实报错。
+/// 改名是它的同目录特例（rename 是移动的一种），session 路径 remap 与改名同一装配口径。
+/// 目录移入自身/后代经 `fs_move_into_self` 显式拒绝（fs_io 层的前置判定）。
+#[tauri::command(rename_all = "snake_case")]
+pub fn fs_move_entry(
+    state: tauri::State<'_, VaultState>,
+    from_rel: String,
+    to_rel: String,
+) -> Result<String, CommandError> {
+    let root = state.root()?;
+    fs_io::fs_move_entry(&root, &from_rel, &to_rel)
+}
+
 /// 在目录下新建空文件（§3.5）。`create_new` 原子语义：撞名即 `fs_already_exists`，
 /// 不覆盖。自动打开由前端在**成功路径**上做（不等 watcher 回响，design §3.5）。
 #[tauri::command(rename_all = "snake_case")]

@@ -1045,7 +1045,17 @@ pub fn rename_entry(root: &Path, rel: &str, new_name: &str) -> Result<String, Co
 ///   cli_run 的 mkdir 写命令逐个问）。
 /// - **跨卷**：`std::fs::rename` 跨卷直接失败 ⇒ 如实报 `fs_move_failed`，**不做**静默
 ///   copy+delete（半失败状态——源已删、目标只写了一半——比报错糟得多）。
+/// - **移入自身/后代**：显式前置拒绝（`fs_move_into_self`）。内核 rename 本来就拒绝这种
+///   形态（EINVAL），但给的是「移动失败」的泛化措辞——这里提前挡，信息更人话，也不依赖
+///   内核行为。`to_rel == from_rel`（移回原位，rename 会是静默 no-op）一并拒绝。
 pub fn fs_move_entry(root: &Path, from_rel: &str, to_rel: &str) -> Result<String, CommandError> {
+    if from_rel == to_rel || to_rel.starts_with(&format!("{from_rel}/")) {
+        return Err(CommandError::new(
+            "fs_move_into_self",
+            format!("不能移动到自身或其子目录：{from_rel}"),
+        )
+        .param("rel", from_rel));
+    }
     let from = resolve_in_vault(root, from_rel)?;
     let to_name = match to_rel.rsplit('/').next() {
         Some(name) if !name.is_empty() => name,
@@ -3450,6 +3460,9 @@ mod tests {
     /// `fs_move_entry`（change add-harness-permission-modes，design §5.2）四例：
     /// 跨目录移动成立；撞名不覆盖（源与既有目标都逐字节不变）；`..` 逃逸拒绝；目标父目录
     /// 不存在拒绝；rename 失败（目录移进自己内部）如实报错、**不留半态**（源仍在、目标不存在）。
+    /// 移入自身/后代（M530 起）走显式前置判定 `fs_move_into_self`——不再落到内核 EINVAL，
+    /// 信息更人话；`to == from`（移回原位）一并拒绝（rename 对它是静默 no-op，不拒绝就
+    /// 等于一条什么都不做的「成功」）。
     #[test]
     fn fs_move_entry_moves_within_vault_and_refuses_unsafe_forms() {
         let v = TempVault::with_fixture();
@@ -3477,12 +3490,16 @@ mod tests {
         assert_eq!(err.code, "fs_not_found");
         assert!(v.0.join("note.md").exists());
 
-        // rename 失败（把目录移进它自己内部 = 内核拒绝）如实报错、不静默 copy+delete：
-        // 源目录与内容仍在，目标位置不存在（跨卷失败走同一条错误路径）。
+        // 移入自身/后代：显式前置拒绝（专属错误码），源目录与内容原样、目标不存在。
         let err = fs_move_entry(&v.0, "sub", "sub/deep/inner").unwrap_err();
-        assert_eq!(err.code, "fs_move_failed");
+        assert_eq!(err.code, "fs_move_into_self");
         assert!(v.0.join("sub/deep").is_dir());
         assert!(!v.0.join("sub/deep/inner").exists());
+
+        // 移回原位（to == from）：拒绝，不当作静默成功的 no-op。
+        let err = fs_move_entry(&v.0, "note.md", "note.md").unwrap_err();
+        assert_eq!(err.code, "fs_move_into_self");
+        assert_eq!(read_text_file(&v.0, "note.md").unwrap(), "# hello");
     }
 
     #[test]

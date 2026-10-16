@@ -187,6 +187,56 @@ Finder）。目标不存在或调用失败 SHALL 给人话错误提示。本操�
 - **WHEN** 新名称与既有条目同名
 - **THEN** 创建被拒绝并给出原因，既有条目逐字节不变
 
+### Requirement: 拖拽移动条目
+
+文件树的条目行（文件与目录）SHALL 支持拖拽移动（HTML5 DnD）：dragstart 起拖，悬停在
+**目录行**上时 dragover SHALL 给出落点高亮（目标行 `is-drop-target`）并允许 drop，drop
+把该条目**移入**目标目录。本能力只有「移入目录」这一种落点：MUST NOT 支持排序，MUST NOT
+支持落到文件行——文件行上的 dragover MUST NOT 允许 drop（浏览器「禁放」语义）。
+
+落点判定 SHALL 是纯函数（`canMoveEntry`，与目标路径拼接 `moveTargetPath` 同一处公式），
+并拒绝两类移动：目标路径 == 源路径（拖回原位；rename 语义下这是静默 no-op，MUST NOT
+被当成一次成功）与目标路径落在源的子树内（目录拖入自身/后代）。后端 `fs_move_entry`
+对这两类形态 SHALL 以专属错误码 `fs_move_into_self` 显式拒绝（显式前置判定，不靠内核
+rename 的 EINVAL），拒绝时源 MUST 原样留在磁盘上。
+
+移动 SHALL 经后端命令 `fs_move_entry` 完成（webview MUST NOT 直接触文件系统，ADR 0002
+§3）：目标撞名 MUST NOT 覆盖既有条目（reject `fs_already_exists`），目标父目录 MUST 已存在
+（不隐式建目录），跨卷如实报错、MUST NOT 静默 copy+delete。失败 SHALL 给人话提示（toast，
+与右键菜单动作同一错误呈现通道），树与磁盘都不变。
+
+移动成功后的树刷新 SHALL 与改名同一纪律（唯一收敛通道）：MUST NOT 自绘补丁，树的增删改
+一律等 watcher 回响（deleted:from + created:to，后端补出子孙条目把子树建全）；树自己发起
+的那次移动 SHALL 在回响批次里把目录的展开态（含子孙前缀）迁移到新路径——改名是移动的
+同目录特例，两者共用同一登记与迁移机制。app 内移动命中打开中的文档时，打开 session 的
+路径联动 SHALL 走与改名相同的 remap 口径（编辑器 session remap + 保存链路换键），watcher
+回响对 dirty 会话的「外部修改」误报 SHALL 被改名回响抑制机制吞掉。
+
+#### Scenario: 拖文件入目录
+
+- **WHEN** 用户把文件 `a.md` 行拖到目录 `sub` 行上松手
+- **THEN** 磁盘上 `a.md` 移到 `sub/a.md`（内容逐字节不变），树经 watcher 回响出现 `sub/a.md` 行、旧行消失；拖拽期间 `sub` 行有落点高亮，松手即清
+
+#### Scenario: 拖目录入目录保持展开
+
+- **WHEN** 用户把处于展开状态的目录 `inbox`（含 `inbox/deep/b.txt`，`deep` 也展开）拖入 `notes`
+- **THEN** 回响后 `notes/inbox` 行在场且仍展开、整棵子树齐全，`notes/inbox/deep` 的展开态随迁；旧路径的行一条不留
+
+#### Scenario: 撞名拒绝
+
+- **WHEN** 目标目录已有同名条目，用户把同名文件拖入该目录
+- **THEN** 移动被拒绝并给人话提示（目标已存在），源文件与既有同名条目都逐字节不变
+
+#### Scenario: 拒绝拖入自身与子树
+
+- **WHEN** 用户把目录 `inbox` 拖向它自己那一行或它的后代目录行
+- **THEN** dragover 不给落点（无高亮、禁放光标），drop 不触发移动；后端命令层对同一形态的调用也显式拒绝（`fs_move_into_self`），`inbox` 原样不动
+
+#### Scenario: 文件行不是落点
+
+- **WHEN** 拖拽悬停在文件行上
+- **THEN** 该行不获得落点高亮，drop 不允许（禁放语义），不发生任何移动
+
 ### Requirement: 在树中定位路径
 
 系统 SHALL 提供「把一个 vault 相对路径在树里显现出来」这条能力（`FileTree` 的 `revealPath`）。

@@ -19,6 +19,7 @@ import {
   errorMessage,
   fsCreateDir,
   fsCreateFile,
+  fsMoveEntry,
   fsReadAttachment,
   fsReadSnapshot,
   fsRenameEntry,
@@ -1631,11 +1632,12 @@ const switcher: VaultSwitcherHandle = createVaultSwitcher({
 });
 
 // ---------------------------------------------------------------------------
-// 文件树条目操作（M244，change file-tree-context-menu）：右键菜单、内联编辑提交、删除确认
+// 文件树条目操作（M244，change file-tree-context-menu；M530 起含拖拽移动）：右键菜单、内联
+// 编辑提交、删除确认、拖拽移动
 //
 // 分工：菜单浮层 / 确认框 / 改名回响抑制在 src/tree-menu.ts（无 ipc 依赖、可单测），内联
-// 编辑的行 DOM 在 src/tree.ts，**动作**在这里——只有装配层同时拿着 vault 根、编辑器会话与
-// 保存链路。三个共同点：
+// 编辑与拖拽的行 DOM 在 src/tree.ts，**动作**在这里——只有装配层同时拿着 vault 根、编辑器
+// 会话与保存链路。四个共同点：
 //   1. 全部经后端 command 落地（ADR 0002 §3：webview 不直接触文件系统），唯一例外是
 //      「复制完整路径」（纯剪贴板，spec 明确零新命令）；
 //   2. 成功后的**树**一律等 watcher 回响收敛（唯一收敛通道，不自绘补丁——design §4.7），
@@ -1742,6 +1744,33 @@ async function trashEntry(rel: string): Promise<void> {
   } catch (e) {
     toast(errorMessage(e));
   }
+}
+
+/**
+ * 拖拽移动（M530）：文件/目录行 drop 到目录行的落点动作。与 submitInlineEdit 的 rename
+ * 分支同一套装配口径——改名是同目录移动的特例：
+ *   - 回响抑制登记在 **invoke 发起时**（移动对打开中 dirty 文档同样产生 deleted:from +
+ *     created:to 的 watcher 批次，不登记会被误报成「检测到外部修改」）；
+ *   - 失败 toast 人话（沿用 tree-menu 动作的错误呈现：toast(errorMessage(e))），并经
+ *     tree.endMoveEntry(false) 撤销树侧的登记；
+ *   - 成功不做树的自绘补丁（唯一收敛通道是 watcher 回响），只联动打开中的 session：
+ *     remap 路径 + 保存链路换键（M244 裁决点 5 的同一理由）+ 表现层一次对齐。
+ */
+async function moveTreeEntry(from: string, to: string): Promise<void> {
+  const cancelEcho = renameEcho.register(from, to);
+  let moved: string;
+  try {
+    moved = await fsMoveEntry(from, to);
+  } catch (e) {
+    cancelEcho();
+    tree.endMoveEntry(false);
+    toast(errorMessage(e));
+    return;
+  }
+  for (const remap of editor.remapSessionPaths(from, moved)) {
+    save.noteRenamed(remap.from, remap.to);
+  }
+  syncActiveDocument();
 }
 
 /**
@@ -2777,6 +2806,9 @@ tree = createFileTree(shell.treeMount, {
   onContextMenu: (target, at) => treeMenu.open(target, at),
   // 内联编辑提交（重命名 / 新建共用）。
   onInlineEditSubmit: (request) => void submitInlineEdit(request),
+  // 拖拽移动提交（M530）：动作在 moveTreeEntry；树只报 from → to（目标路径由树侧
+  // moveTargetPath 一处拼接），成功的树收敛交给 watcher 回响。
+  onMoveEntry: (from, to) => void moveTreeEntry(from, to),
   // 惰性目录展开取数（design §4.3）：一次一层。失败**必须**透出去（提示 + reject），
   // 树据此不把它标记成「已取回」——吞成空数组会把一次失败渲染成「空目录」。
   onExpandLazyDir: async (path) => {

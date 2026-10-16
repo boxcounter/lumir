@@ -452,10 +452,11 @@
 | D464 | harness ctx 气泡第一行（无上限降级） | 作者 | 上下文：已用 {used} tokens（窗口上限未知，无百分比读数） | Context: {used} tokens used (window limit unknown — no percentage) | M526：`context_window` 为 0（无上限值）时的降级文案——只说已用 tokens，不编造上限、不显示百分比（无上界分母时 `ctx_pct` 无意义）。消费点 src/harness-panel.ts 的 ctxPopRows。 |
 | D465 | harness ctx 气泡第二行（tokens 形态） | 作者 | 缓存命中：本会话 {cached} tokens · 累计命中率 {cache}% | Cache hits: {cached} tokens this session · cumulative hit rate {cache}% | M526：会话累计命中绝对值（`cached_tokens_session`）+ 累计命中率同句；绝对值缺键（旧载荷）时回落百分比形态 D401。消费点 src/harness-panel.ts 的 ctxPopRows。 |
 | D466 | harness ctx 气泡第三行（tokens 形态） | 作者 | 本回合缓存命中：{cached} tokens · 命中率 {turn}% | Cache hits this turn: {cached} tokens · hit rate {turn}% | M526：本回合命中绝对值（`cached_tokens`）+ 命中率同句，成因句（D453/D454）照旧追加其后；绝对值缺键（旧载荷）时回落百分比形态 D452。消费点 src/harness-panel.ts 的 ctxPopRows。 |
+| D467 | 后端错误信封（按 code 渲染） | 作者 | 不能移动到自身或其子目录：{rel} | Can't move an entry into itself or its own subdirectory: {rel} | M530（file-tree「拖拽移动条目」）：`fs_move_entry` 对「目录移入自身/后代」与「移回原位（to == from，rename 语义是静默 no-op）」的显式前置拒绝（`fs_move_into_self`）。内核 rename 本来就拒绝前者（EINVAL），显式判定给出人话与专属错误码、不依赖内核行为。前端拖拽落点判定（src/tree.ts 的 `canMoveEntry`）先行拒绝，这条是命令层兜底——harness 的 `vault_move` 等不经树的调用方直接命中它。占位键 `{rel}` 与后端 `.param("rel", …)` 逐字对应。消费点 src/copy-data.ts 的 ERROR_COPY。 |
 
 ## 编号沿革
 
-**编号规则**：D1 起连续编号；新增条目只追加，不复用已删除编号。动工取号前先核当前末位（本 deck 表里最大的 D 号）——沿革只登记「取到哪一段」，末位以表为准。**当前末位：D466**（M526 的 ctx 气泡 tokens 行 D463–D466；前一位 D462 是 M525 的窗口底色错误信封文案）。
+**编号规则**：D1 起连续编号；新增条目只追加，不复用已删除编号。动工取号前先核当前末位（本 deck 表里最大的 D 号）——沿革只登记「取到哪一段」，末位以表为准。**当前末位：D467**（M530 的拖拽移动错误信封文案；前四位 D463–D466 是 M526 的 ctx 气泡 tokens 行，再前一位 D462 是 M525 的窗口底色错误信封文案）。
 
 **不复用编号（停用 / 保留 / 退场）**：D2–D3、D4、D8–D18、D23–D24、D27–D30、D55–D56、D326、D331、D377。D152 是**保留空号**（归 M261 的实现期，非停用）。D100 之余的相对时间档与 `{n}` 一类复数档由 `Intl.RelativeTimeFormat` / `Intl.PluralRules` 产出，不占编号。
 
@@ -516,6 +517,7 @@
 - M474 D461 横滚代码块容器内缩 + ⌃⌥S 焦点入口（键位来由条目）
 - M525 D462 窗口底色跟随主题错误信封（永不上屏，只满足机械门禁）
 - M526 D463–D466 harness ctx/cache 气泡 tokens 读数（含无上限降级形态）
+- M530 D467 拖拽移动：移入自身/后代错误信封（fs_move_into_self；D463–D466 由 M526 ctxcache 气泡批先占，本条取 D467）
 
 各批的取号过程、改号经过与被推翻的旧预计由 git history 承担（历次改写见 `git log -p -- 文案-Copy.md`）。
 
