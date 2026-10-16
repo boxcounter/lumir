@@ -10,10 +10,16 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { EditorState } from "@codemirror/state";
 import {
+  GESTURE_SETTLE_MS,
+  caretButtonAnchor,
+  clampGestureButton,
+  gestureTimingVisible,
+  idleGestureTiming,
   parseQuoteLines,
   quoteContextOf,
   quoteLinesOf,
   quotePrefixMatched,
+  reduceGestureTiming,
   resolveQuoteAnchor,
 } from "../../src/quote-gesture.ts";
 
@@ -108,4 +114,77 @@ test("resolveQuoteAnchor：摘录原文可含换行，整串命中（层一截�
   assert.deepEqual(anchor, { from: start, to: end });
   // 层一的前缀校验对跨行原文同样成立：摘录被截短（层一仍按行号命中，不走层二）。
   assert.deepEqual(resolveQuoteAnchor(doc, { lines: "2-3", text: "alpha\nbe" }), { from: start, to: end });
+});
+
+// --- 浮动钮时机门（M541：选区完成后才出现；编辑器手势与 transcript 手势共用的纯状态机） --------
+
+test("时机门：拖拽中不出现（选区变化不排期），mouseup 后立刻出现", () => {
+  let s = idleGestureTiming;
+  // 鼠标按下进入拖拽；期间的选区变化只记录有效性、不排期——任意时刻都不可见。
+  s = reduceGestureTiming(s, { kind: "mouse-down" }, 1000);
+  s = reduceGestureTiming(s, { kind: "selection-change", valid: true }, 1010);
+  assert.equal(s.revealAt, null);
+  assert.equal(gestureTimingVisible(s, 10_000), false);
+  assert.equal(gestureTimingVisible(s, 1_000_000), false);
+  // 反向验证：松开即出（revealAt=mouseup 时刻，不附加 SETTLE 延迟）。
+  s = reduceGestureTiming(s, { kind: "mouse-up" }, 1020);
+  assert.equal(gestureTimingVisible(s, 1020), true);
+});
+
+test("时机门：键盘选区静默 GESTURE_SETTLE_MS 后才出现，连续变化把揭示时刻推后", () => {
+  let s = idleGestureTiming;
+  s = reduceGestureTiming(s, { kind: "selection-change", valid: true }, 5000);
+  assert.equal(gestureTimingVisible(s, 5000 + GESTURE_SETTLE_MS - 1), false, "落定窗口内不出现");
+  assert.equal(gestureTimingVisible(s, 5000 + GESTURE_SETTLE_MS), true, "静默满窗口即出现");
+  // shift+方向键连续扩展：revealAt 被推到最后一次变化 + 窗口。
+  s = reduceGestureTiming(s, { kind: "selection-change", valid: true }, 5000 + 100);
+  assert.equal(gestureTimingVisible(s, 5000 + GESTURE_SETTLE_MS), false, "变化后旧时刻不再到期");
+  assert.equal(gestureTimingVisible(s, 5000 + 100 + GESTURE_SETTLE_MS), true);
+});
+
+test("时机门：选区清空 / 移出即消失，且不排期", () => {
+  let s = idleGestureTiming;
+  s = reduceGestureTiming(s, { kind: "selection-change", valid: true }, 0);
+  s = reduceGestureTiming(s, { kind: "selection-change", valid: false }, 100);
+  assert.equal(s.revealAt, null);
+  assert.equal(s.selectionValid, false);
+  assert.equal(gestureTimingVisible(s, 1_000_000), false);
+});
+
+test("时机门：鼠标按下会掐掉既有的待浮现；松开时选区已无效则不出", () => {
+  // 键盘选区已落定、钮已在场（或排期中）：重新按下拖拽立即隐藏。
+  let s = idleGestureTiming;
+  s = reduceGestureTiming(s, { kind: "selection-change", valid: true }, 0);
+  s = reduceGestureTiming(s, { kind: "mouse-down" }, GESTURE_SETTLE_MS);
+  assert.equal(gestureTimingVisible(s, GESTURE_SETTLE_MS), false, "按下瞬间即藏，不等到抬起");
+  // 反向验证：拖拽落空（抬起时无有效选区）不出现。
+  s = reduceGestureTiming(s, { kind: "selection-change", valid: false }, GESTURE_SETTLE_MS + 50);
+  s = reduceGestureTiming(s, { kind: "mouse-up" }, GESTURE_SETTLE_MS + 100);
+  assert.equal(s.revealAt, null);
+  assert.equal(gestureTimingVisible(s, GESTURE_SETTLE_MS + 100), false);
+});
+
+// --- 浮动钮落点（M541：光标侧锚点 + M531 钳制） ------------------------------------------------
+
+test("caretButtonAnchor：光标矩形右下 + 边距为候选落点（就近光标旁边）", () => {
+  // 零宽光标矩形（right 即光标 x）。
+  assert.deepEqual(caretButtonAnchor({ left: 100, right: 100, top: 40, bottom: 56 }), { left: 104, top: 60 });
+  assert.deepEqual(caretButtonAnchor({ left: 30, right: 57, top: 8, bottom: 24 }), { left: 61, top: 28 });
+});
+
+test("clampGestureButton：越界钳进可视带、带内不动、容器比钮窄时下界优先", () => {
+  const band = { left: 0, top: 0, width: 400, height: 300 };
+  const size = { width: 80, height: 20 };
+  // 右 / 下越界：钳到 带缘 - 钮宽(高) - 边距。
+  assert.deepEqual(clampGestureButton({ left: 390, top: 295 }, size, band), {
+    left: 400 - 80 - 4,
+    top: 300 - 20 - 4,
+  });
+  // 左 / 上越界：抬到下界（带缘 + 边距）。
+  assert.deepEqual(clampGestureButton({ left: -50, top: -10 }, size, band), { left: 4, top: 4 });
+  // 带内不动。
+  assert.deepEqual(clampGestureButton({ left: 100, top: 100 }, size, band), { left: 100, top: 100 });
+  // 容器比钮窄：maxLeft 塌缩回 minLeft（贴左缘，宁可溢出也不反向越界）。
+  const narrow = { left: 0, top: 0, width: 30, height: 300 };
+  assert.deepEqual(clampGestureButton({ left: 500, top: 10 }, size, narrow), { left: 4, top: 10 });
 });

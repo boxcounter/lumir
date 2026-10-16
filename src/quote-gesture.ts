@@ -9,7 +9,7 @@
 //      （composer / transcript 卡片点击都经 harness 面板转进来，见 setQuoteJumpHandler）。
 //
 // 行为合同（design §5）：
-//   - 编辑器侧零常驻装饰——只存在两种瞬态：进行中的选区（含浮动钮）与跳回高亮（~1.4s 消退）。
+//   - 编辑器侧零常驻装饰——只存在两种瞬态：存在的选区（含浮动钮）与跳回高亮（~1.4s 消退）。
 //   - 摘录来源恒为「最近活跃编辑器 pane」的选区（ADR 0008 Decision 3 语义）：harness 面板持焦
 //     不改变 pane 归属（活跃指针只在焦点进入 pane contentDOM 时翻转，面板持焦不动它）。
 //   - 点击浮动钮不依赖焦点保持：平时记录编辑器内最后选区，点击时先恢复选区再捕获卡片数据。
@@ -188,6 +188,95 @@ export function clampGestureButton(
 }
 
 // ---------------------------------------------------------------------------
+// 浮动钮时机门（编辑器手势与 transcript 消息手势共用同一份口径，M541）
+// ---------------------------------------------------------------------------
+
+/**
+ * 键盘选区的落定窗口（ms）：selectionchange 静默这么久才算「选区稳定」、钮才浮现。
+ * 鼠标路径无此延迟——mouseup 即浮现。取值短于双击间隔、长于连续 shift+方向键的按键节奏；
+ * 手感归 Alex dogfood 复验。
+ */
+export const GESTURE_SETTLE_MS = 350;
+
+/** 时机门事件：指针按下 / 抬起与选区变化（valid = 选区非空且落在本手势的 containment 门槛内）。 */
+export type GestureTimingEvent =
+  | { kind: "mouse-down" }
+  | { kind: "mouse-up" }
+  | { kind: "selection-change"; valid: boolean };
+
+/**
+ * 时机门状态（纯值，now 由调用方注入同一时钟——单测直接驱动）：
+ *  - dragging：指针按住未抬（拖拽选区进行中，钮 MUST NOT 出现）；
+ *  - selectionValid：最近一次选区变化后的选区是否有效；
+ *  - revealAt：下次允许浮现的时刻；null = 无待浮现（拖拽中 / 选区无效）。
+ */
+export interface GestureTimingState {
+  dragging: boolean;
+  selectionValid: boolean;
+  revealAt: number | null;
+}
+
+export const idleGestureTiming: GestureTimingState = { dragging: false, selectionValid: false, revealAt: null };
+
+/**
+ * 时机门状态迁移（M541：选区完成后才出现）：
+ *  - mouse-down → 进入拖拽：立即掐掉任何待浮现（拖拽过程中不出现）；
+ *  - mouse-up → 拖拽结束：选区仍有效则立刻浮现（revealAt=now），否则保持隐藏；
+ *  - selection-change(valid) → 拖拽中只记录选区、不排期；键盘路径排期 now+SETTLE_MS
+ *    （选区稳定后才出现，连续变化会把 revealAt 一再推后）；
+ *  - selection-change(invalid) → 选区清空 / 移出：掐掉排期（钮消失）。
+ */
+export function reduceGestureTiming(
+  state: GestureTimingState,
+  event: GestureTimingEvent,
+  now: number,
+): GestureTimingState {
+  switch (event.kind) {
+    case "mouse-down":
+      return { ...state, dragging: true, revealAt: null };
+    case "mouse-up":
+      return { ...state, dragging: false, revealAt: state.selectionValid ? now : null };
+    case "selection-change":
+      if (!event.valid) return { ...state, selectionValid: false, revealAt: null };
+      return { ...state, selectionValid: true, revealAt: state.dragging ? null : now + GESTURE_SETTLE_MS };
+  }
+}
+
+/** 时机门判定：选区有效、非拖拽、且已过揭示时刻——三者同时满足钮才可浮现。 */
+export function gestureTimingVisible(state: GestureTimingState, now: number): boolean {
+  return state.selectionValid && !state.dragging && state.revealAt !== null && now >= state.revealAt;
+}
+
+/**
+ * 光标侧矩形 → 浮动钮候选落点（矩形右下 + 边距；与 clampGestureButton 的 desired 同坐标空间，
+ * 客户端坐标）。多行选区的并集盒右缘是最宽行的右缘、离光标可能很远——调用方须先折叠到
+ * focus 端取光标矩形（caretRectOf），保证钮就近出现在光标旁边（M541）。
+ */
+export function caretButtonAnchor(caret: { left: number; right: number; top: number; bottom: number }): {
+  left: number;
+  top: number;
+} {
+  return { left: caret.right + GESTURE_BUTTON_MARGIN, top: caret.bottom + GESTURE_BUTTON_MARGIN };
+}
+
+/**
+ * 选区末端（focus 侧）的光标矩形：把 range 折叠到 focus 端后取矩形（折叠矩形宽恒为 0，
+ * right 即光标 x、bottom 即所在行底）。折叠矩形退化（个别元素边界形态量不到尺寸）时退回
+ * 整段并集盒。编辑器手势与消息手势共用。
+ */
+export function caretRectOf(selection: Selection): DOMRect | null {
+  if (selection.rangeCount === 0 || selection.focusNode === null) return null;
+  const range = selection.getRangeAt(0);
+  const collapsed = range.cloneRange();
+  const focusAtStart =
+    selection.focusNode === collapsed.startContainer && selection.focusOffset === collapsed.startOffset;
+  collapsed.collapse(focusAtStart);
+  const rect = collapsed.getBoundingClientRect();
+  if (rect.width !== 0 || rect.height !== 0) return rect;
+  return range.getBoundingClientRect();
+}
+
+// ---------------------------------------------------------------------------
 // 跳回高亮的 CM6 扩展（零常驻装饰纪律的「跳回高亮」瞬态）
 // ---------------------------------------------------------------------------
 
@@ -261,9 +350,12 @@ export interface QuoteGesture {
  * 摘录手势 + 跳回的总装配。返回的 jump 交给 harness 面板的 setQuoteJumpHandler；
  * dispose 摘监听与浮动钮（vault 卸载 / 测试用）。
  *
- * 浮动钮的瞬态口径（design §5）：选区存在且在最近活跃编辑器 pane 内时浮现于选区右下，
- * 选区坍缩 / 移出编辑器即消失；平时记录编辑器内最后选区（点击时恢复，点击本身不依赖焦点保持
- * ——mousedown 上 preventDefault 防止选区被钮抢掉，这与「记录最后选区」是双保险）。
+ * 浮动钮的瞬态口径（design §5 + M541）：
+ *  - 时机：选区**完成后**才浮现——鼠标拖拽在 mouseup 后、键盘选区在稳定（静默
+ *    GESTURE_SETTLE_MS）后；拖拽 / 选区变化进行中不出现，选区坍缩 / 移出编辑器即消失。
+ *  - 落点：选区末端（光标侧）矩形右下 +4px，钳进挂载容器可视区（M531 钳制不变量原样保留）。
+ *  - 平时记录编辑器内最后选区（点击时恢复，点击本身不依赖焦点保持——mousedown 上
+ *    preventDefault 防止选区被钮抢掉，这与「记录最后选区」是双保险）。
  */
 export function createQuoteGesture(deps: QuoteGestureDeps): QuoteGesture {
   const button = document.createElement("button");
@@ -288,14 +380,15 @@ export function createQuoteGesture(deps: QuoteGestureDeps): QuoteGesture {
   }
 
   /**
-   * 浮动钮定位：选区包围盒右下、相对活跃 pane 挂载元素（.editor-pane 是定位基准），并按
-   * `clampGestureButton` 钳进挂载容器的可视区（M531——细则与现场见该函数的注释）。
+   * 浮动钮定位：候选落点（光标侧锚点，客户端坐标）相对活跃 pane 挂载元素（.editor-pane 是
+   * 定位基准），并按 `clampGestureButton` 钳进挂载容器的可视区（M531——细则与现场见该函数的
+   * 注释）。
    *
    * 「自然内容宽」要先量：abspos 收缩盒的可用宽 = 「left 到容器右缘」，直接落位再读宽会量到
    * 被压窄后的逐字换行宽。故先把 left 归零量一次自然尺寸，再按钳制结果落位——两次写在同一
    * 同步块内，中间不绘制，屏幕上看不到中间态。
    */
-  function placeButton(rect: DOMRect): void {
+  function placeButton(anchor: { left: number; top: number }): void {
     const mount = deps.activeMount();
     if (mount === undefined) return;
     if (button.parentElement !== mount) mount.append(button);
@@ -304,10 +397,7 @@ export function createQuoteGesture(deps: QuoteGestureDeps): QuoteGesture {
     button.style.left = "0px";
     const natural = button.getBoundingClientRect();
     const placed = clampGestureButton(
-      {
-        left: rect.right - mountRect.left + GESTURE_BUTTON_MARGIN,
-        top: rect.bottom - mountRect.top + GESTURE_BUTTON_MARGIN,
-      },
+      { left: anchor.left - mountRect.left, top: anchor.top - mountRect.top },
       { width: natural.width, height: natural.height },
       { left: 0, top: 0, width: mount.clientWidth, height: mount.clientHeight },
     );
@@ -315,7 +405,14 @@ export function createQuoteGesture(deps: QuoteGestureDeps): QuoteGesture {
     button.style.top = `${placed.top}px`;
   }
 
-  function onSelectionChange(): void {
+  // --- 时机门（M541：选区完成后才浮现） ------------------------------------------------
+  //
+  // 状态机是 quote-gesture.ts 导出的纯函数（与 transcript 消息手势共用同一份口径）：拖拽中
+  // 不出现、mouseup 即出、键盘选区静默 GESTURE_SETTLE_MS 后出、选区清空即消失。状态只控时机；
+  // 浮现前一律现读选区（currentSelectionRect），卡片数据与落点不取自事件时刻的缓存。
+
+  /** 现读编辑器选区：有效返回选区末端（光标侧）矩形并记录 last；无效返回 null。 */
+  function currentSelectionRect(): DOMRect | null {
     const view = deps.activeView();
     const selection = document.getSelection();
     if (
@@ -326,8 +423,7 @@ export function createQuoteGesture(deps: QuoteGestureDeps): QuoteGesture {
       !view.contentDOM.contains(selection.anchorNode) ||
       deps.activePath() === undefined
     ) {
-      hideButton();
-      return;
+      return null;
     }
     let from: number;
     let to: number;
@@ -338,11 +434,64 @@ export function createQuoteGesture(deps: QuoteGestureDeps): QuoteGesture {
       from = Math.min(anchor, head);
       to = Math.max(anchor, head);
     } catch {
+      return null;
+    }
+    last = { path: deps.activePath()!, from, to };
+    return caretRectOf(selection);
+  }
+
+  /** 时机门状态与键盘落定计时器（dispose 须清计时器）。 */
+  let timing = idleGestureTiming;
+  let revealTimer: ReturnType<typeof setTimeout> | null = null;
+
+  /** 到点浮现：时机门 + 现读选区双判，任一不过即隐藏（数据一律取当前帧）。 */
+  function revealNow(): void {
+    revealTimer = null;
+    if (!gestureTimingVisible(timing, Date.now())) {
       hideButton();
       return;
     }
-    last = { path: deps.activePath()!, from, to };
-    placeButton(selection.getRangeAt(0).getBoundingClientRect());
+    const rect = currentSelectionRect();
+    if (rect === null) {
+      hideButton();
+      return;
+    }
+    placeButton(caretButtonAnchor(rect));
+  }
+
+  /** 每次时机状态变化后的统一收口：已到期直接浮现，否则藏钮并按 revealAt 排期。 */
+  function afterTimingChange(): void {
+    if (revealTimer !== null) {
+      clearTimeout(revealTimer);
+      revealTimer = null;
+    }
+    if (gestureTimingVisible(timing, Date.now())) {
+      revealNow();
+      return;
+    }
+    hideButton();
+    if (timing.revealAt !== null) {
+      revealTimer = setTimeout(revealNow, Math.max(0, timing.revealAt - Date.now()));
+    }
+  }
+
+  function onSelectionChange(): void {
+    const valid = currentSelectionRect() !== null;
+    timing = reduceGestureTiming(timing, { kind: "selection-change", valid }, Date.now());
+    afterTimingChange();
+  }
+
+  function onMouseDown(event: MouseEvent): void {
+    // 钮自己的 mousedown（preventDefault 保选区）不进入拖拽口径——否则点钮先把钮藏掉再重排。
+    if (button.contains(event.target as Node)) return;
+    timing = reduceGestureTiming(timing, { kind: "mouse-down" }, Date.now());
+    afterTimingChange();
+  }
+
+  // 松开即浮现；blur 兜底拖拽出窗口外松开（document 可能收不到 mouseup）。
+  function onMouseUp(): void {
+    timing = reduceGestureTiming(timing, { kind: "mouse-up" }, Date.now());
+    afterTimingChange();
   }
 
   // 钮本身不抢选区（mousedown 防默认）：否则点击先把编辑器选区坍缩掉，「恢复最后选区」
@@ -372,6 +521,9 @@ export function createQuoteGesture(deps: QuoteGestureDeps): QuoteGesture {
   });
 
   document.addEventListener("selectionchange", onSelectionChange);
+  document.addEventListener("mousedown", onMouseDown);
+  document.addEventListener("mouseup", onMouseUp);
+  window.addEventListener("blur", onMouseUp);
 
   async function jump(card: QuoteCard): Promise<void> {
     let session = deps.sessionForPath(card.file);
@@ -417,6 +569,10 @@ export function createQuoteGesture(deps: QuoteGestureDeps): QuoteGesture {
     jump,
     dispose() {
       document.removeEventListener("selectionchange", onSelectionChange);
+      document.removeEventListener("mousedown", onMouseDown);
+      document.removeEventListener("mouseup", onMouseUp);
+      window.removeEventListener("blur", onMouseUp);
+      if (revealTimer !== null) clearTimeout(revealTimer);
       hideButton();
     },
   };
