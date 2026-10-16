@@ -25,7 +25,7 @@
 
 ## 已裁已立项（落地由 tower 派发的 mission 承担）
 
-- **左栏文件拖拽移动 = 产品缺陷，已修复**（2026-10-16 Alex 手拖定性 → M537 合并 `448e3e3`）：根因 = Tauri v2 默认 `dragDropEnabled=true`，wry 的 WKWebView 子类把窗口注册为 OS 拖放目标且 handler 无条件吞拖（返回 Copy 不调 super），页内 dragover/drop 整轮不运行——与 Alex 手拖症状逐点吻合（浮像 ✓、绿色加号 = Copy、无高亮、不落盘）。修复 = `tauri.conf.json` 窗口级 `dragDropEnabled: false`（tower 裁决取 A 不取 pointer 重写；代价 = Finder 拖入关闭，全仓证零消费者）。场景 159 修复后**全自动 56/56 PASS**（M530 功能史上首次端到端成功；合成 drag 通道在 WKWebView 可走的更正一并落实）。**尾巴：待 Alex 手拖复验手感**。原 finding 指针 `.tower/comms/findings/20261016-worker-scenfix-bug-html5-dnd-dragover-vs.md`。
+- **左栏文件拖拽移动 = 产品缺陷，已修复**（2026-10-16 Alex 手拖定性 → M537 合并 `448e3e3`）：根因 = Tauri v2 默认 `dragDropEnabled=true`，wry 的 WKWebView 子类把窗口注册为 OS 拖放目标且 handler 无条件吞拖（返回 Copy 不调 super），页内 dragover/drop 整轮不运行——与 Alex 手拖症状逐点吻合（浮像 ✓、绿色加号 = Copy、无高亮、不落盘）。修复 = `tauri.conf.json` 窗口级 `dragDropEnabled: false`（tower 裁决取 A 不取 pointer 重写；代价 = Finder 拖入关闭，全仓证零消费者）。场景 159 修复后**全自动 56/56 PASS**（M530 功能史上首次端到端成功；合成 drag 通道在 WKWebView 可走的更正一并落实）。**尾巴：主路径 Alex 手拖复验通过（2026-10-16）；根落点（M538 合并 `0db3dc9`：vault 名行 + 列表尾部空白两处落根，159 新增三档全自动）待 Alex 手拖复验**。原 finding 指针 `.tower/comms/findings/20261016-worker-scenfix-bug-html5-dnd-dragover-vs.md`。
 - **验收套件 harness 透传面缺 `permission_mode` 键 + 72/73/74 场景期望过期**（agent-m480，2026-10-13）→ 由 M481 落地：app.mjs 透传面加 `permission_mode`、72/73/74 走 `read_only` 档复活批准流断言。归因：M407 权限模式（默认 vault_write 档库内写免闸，2026-10-09 Alex 裁决）合入后场景未回扫。指针 `.tower/comms/findings/20261013-agent-m480-improve-harness-permission-mode.md`。
 
 ## 承接残项（仍在生效的长期口径 + 未闭合尾巴）
