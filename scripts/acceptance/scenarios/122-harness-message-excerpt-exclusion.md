@@ -140,3 +140,14 @@ transcript 里并非所有文字都能摘：思考块、工具行、批准卡、
   `tests/visual/scenes/m423-message-excerpt.spec.ts` 的「钳制」用例判（选区贴 transcript 可视区底缘）。
 - 工具行 / 批准卡 / 卡片内部三条排除分支的 DOM 判据在 chromium 视觉场景
   `tests/visual/scenes/m423-message-excerpt.spec.ts`（程序化选区，稳定可判）。
+- **末步 `do: click` 的 AXPress 通道在 M541 之后对本钮失效（M549 定位，2026-10-17）**：现象是
+  该步读完断言时 AX 里钮已消失、composer 仍空（KimiCU 只在返回值里自报 `suspected_noop`，
+  套件照判 FAIL 不静默）。真机四跑的分离证据（现场 `test-results/acceptance/m549-122/`）：
+  ① 只把 `src/message-quote-gesture.ts` 与 `src/quote-gesture.ts` 退回 M541（`f9be8e1a`）之前的
+  版本、其余全部为当前 master ⇒ 本场景 12/12 PASS（`run5-prev541-frontend`）；② 同样两文件为
+  M541 版本时，本步换 `clickInNode`（KimiCU 坐标通道）仍 FAIL（`run6-clickinnode`），换
+  `doubleClick` + `mode: 1`（swift 真实指针单击，同一坐标）则 12/12 PASS（`run7-realclick`）。
+  ⇒ 两个 KimiCU 通道都无效、真实指针点击有效；缺口是「该钮经辅助功能 press 不再可按下」
+  （**候选机制**：M541 新加的 document 级 pointer 监听把这次按下当成新拖拽、`hideButton()`
+  把钮摘出 DOM；未最终坐实，详见 finding），
+  **产品侧修复前本步会一直红**，换 KimiCU 通道绕不过去（详情与复现见 M549 的 finding）。

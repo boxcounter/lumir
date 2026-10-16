@@ -1843,6 +1843,13 @@ async function doAction(step, { ctx, cu, scenario, vars, pid, evidence }) {
     }
     case "click": {
       const t = step.target ?? {};
+      // **AXPress 通道的静默失效边界（M549，2026-10-17）**：索引路径在 KimiCU 侧发的是 AXPress
+      // （「按下这个元素」）。页面新加的 **document 级 pointer 监听**可以把这次按下当成「新拖拽
+      // 开始」，目标自摘 DOM、随后的 click 因此落不到它身上——读数是「元素消失 + 前端零后果」，
+      // KimiCU 只在返回值里自报 `suspected_noop`（`ok:true`，判红仍由场景断言给出，不静默）。
+      // 分离口径：同一坐标上真实 CGEvent 单击（`doubleClick` + `mode: 1`；`drag` / `modifiers`
+      // 同一条 swift 通道）有效 ⇒ 先按**通道差异**复跑一次再归因，别急着记成产品缺陷。现场与
+      // 四跑对照见 `test-results/acceptance/m549-122/` 与 M549 的 finding。
       // 修饰键点击（M379，backlog「`click` 不支持修饰键」）：KimiCU 的 click **没有修饰键参数**（工具 schema 实测
       // 只有 button / mouse_button / count / hold_ms），因此 ⌘-Click 这类路径（跟随链接）在真机上
       // 原本无法触发。这里走 doubleClick 同一条 swift + CGEvent 通道，把修饰键作为**鼠标事件的
