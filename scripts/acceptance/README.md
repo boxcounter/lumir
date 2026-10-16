@@ -236,6 +236,13 @@ steps:
 ---
 ```
 
+**步骤表必须写在 front-matter 内**（M543）：`loadScenario` 只解析**第一段** front-matter（首个闭合
+`---` 之前），写到闭合 `---` 之后的 `steps:` 整表会被丢进正文、**完全不生效**——旧实现下这种场景
+零断言判 PASS（158 的实证，M535 才补上场景本体）。三道防线现在都在：`--check` 挡「缺少 steps
+（步骤表必须写在 front-matter 内）」，并在正文里出现顶层 `steps:` / `teardown:` 行时直接点出
+「整表写在闭合 `---` 之外了」这一形态（比只说缺 steps 好排查）；真机跑批里同样的形态还会落一条
+「场景零断言」FAIL（`runScenario` 的运行期兜底，与 `do: waitFor` 双空清单同一惯例），不再静默假绿。
+
 ### front-matter 的 `config:`（起 app 之前写）
 
 `config` 里的键**在 `launchApp()` 之前**折进隔离 `config.json`（M284 起；早先它由场景执行期的
@@ -427,7 +434,7 @@ not: ["AXProgressIndicator"] }`）；`settle` 只在「判据明确不依赖任�
 |---|---|---|
 | `ax` | `has` / `not` / `count:{pattern,exact,min,max}` / `focused` | `has`/`not`/`count` 在 AX 树**文本**上匹配；`focused: "AXTextArea"` 走**解析结果**——要求 AX 里恰有一个 focused 节点且其 role 命中（键盘落点类断言用这个，别用跨节点的正则，见「已知边界」） |
 | `editor` | `has` / `not` / `unchangedSince` / `changedSince` | 在编辑器文档文本（AXTextArea.value）上匹配；`*Since` 引用 `recordEditor` 记的基线，做逐字节比较 |
-| `file` | `path`、`exists`、`has`、`not`、`changedSince`、`unchangedSince`、`mtimeUnchangedSince`、`mtimeNewerThan` | `path` 相对验收 vault；`env:` 前缀指隔离配置目录；`xxxSince` 引用 `record` 记下的基线。`unchangedSince` 只比 sha256，`mtimeUnchangedSince` 比 mtime 精确相等——「不落盘」这类判据两个一起用（写了同一份内容时 sha256 相同而 mtime 会推进）。`path` 含 `*` 时按 glob 在父目录里取**匹配文件里 mtime 最新的那一份**再断言（诊断日志按 UTC 日期命名、`env/` 目录跨天复用，写死日期的断言会在之后每天读到上次 run 的旧文件而永久空过——这条是给那类「按日期滚动、目录不重置」的产物用的）。**目录**（M324）：`exists` 对目录成立（只有它读得到目录——`fileInfo` 走 `stat` 的目录旁路，只回 mtime/size、**不读 sha256**）；目录上的 `has` / `not` 与 sha256 类判据（`changedSince` / `unchangedSince`）**一律判 FAIL**，那几项对目录没有可观测量（改动前它们分别抛 EISDIR 与在 `undefined === undefined` 上恒真） |
+| `file` | `path`、`exists`、`has`、`not`、`changedSince`、`unchangedSince`、`mtimeUnchangedSince`、`mtimeNewerThan` | `path` 相对验收 vault；`env:` 前缀指隔离配置目录；`xxxSince` 引用 `record` 记下的基线。`unchangedSince` 只比 sha256，`mtimeUnchangedSince` 比 mtime 精确相等——「不落盘」这类判据两个一起用（写了同一份内容时 sha256 相同而 mtime 会推进）。**一条断言里写多个判据键时逐键判、逐键落一条记录**（M543 起；此前是一条 `if` 链按优先级只判第一个命中的键、其余静默失效——照上面这句成对写 `unchangedSince` + `mtimeUnchangedSince` 时，mtime 那半从未执行。多键时每条记录的 label 冠 `［键名］`，steps.md 里一条判据一行）。`path` 含 `*` 时按 glob 在父目录里取**匹配文件里 mtime 最新的那一份**再断言（诊断日志按 UTC 日期命名、`env/` 目录跨天复用，写死日期的断言会在之后每天读到上次 run 的旧文件而永久空过——这条是给那类「按日期滚动、目录不重置」的产物用的）。**目录**（M324）：`exists` 对目录成立（只有它读得到目录——`fileInfo` 走 `stat` 的目录旁路，只回 mtime/size、**不读 sha256**）；目录上的 `has` / `not` 与 sha256 类判据（`changedSince` / `unchangedSince`）**一律判 FAIL**，那几项对目录没有可观测量（改动前它们分别抛 EISDIR 与在 `undefined === undefined` 上恒真） |
 | `glob` | `dir`、`pattern`、`min`/`exact` | 文件名由 app 决定的产物（崩溃备份、另存副本）用 glob 断言。`pattern` 用 `new RegExp(pattern)` 在**全路径**上匹配——**别写 `^` 锚**（它锚的是绝对路径的开头，永远不命中；要锚开头写成 `"/pasted-…"` 这类不含 `^` 的片段） |
 | `bytes` | `path`（支持 glob）、`magic`（十六进制前缀）、`nameHash`（布尔） | **二进制文件的字节级断言**（M416，change paste-clipboard-image）：`file` 的 `has`/`not` 读的是 UTF-8 文本，对 WebP 这类二进制没有可观测量。`magic` 判文件首字节的十六进制前缀（WebP 容器取 `52494646` = `RIFF`）；`nameHash` 判**内容寻址命名一致性**——文件名 `pasted-<hex16>.<ext>` 里的 `<hex16>` 必须等于落盘字节 SHA-256 的前 16 位 |
 | `window` | `moved: true/false`、`width` / `height`（数值或 `{ ofWork: 比例 }`）、`tol` | 窗口几何（M236；相对判据 M437）：`moved` 对比**动作前**的 window_bounds 基线（步骤须有 `do`，位移 ≥8pt 才算动——标题栏拖拽移动窗口的判据）；`width` / `height` 各是**数值**（绝对，容差 `tol`，缺省 8pt，对窗口管理器钳制后的真实值）或 **`{ ofWork: <比例> }`**（工作区 × 比例——工作区由 `lib/ax-screen.swift` 现场读 `NSScreen.visibleFrame`，逻辑点，与 AX 的 `window_bounds` 同一空间；M437 的首启 90% / 越界钳制两条相对判据走它，不把某台机器的像素写死进场景）。一维一条读数，两维同写并成一条记录 |
@@ -934,5 +941,20 @@ Alex 抽审路径：先看 `summary.md`，再进 FAIL 场景看 `steps.md` + `sh
 2. 在 `scenarios/` 建 `<项号>-<短名>.md`，front-matter 里写清 `item` / `fixtures` / `open`。
 3. 断言优先选**稳定子串**（文案单一来源是 `文案-Copy.md`）与**磁盘事实**（sha256/mtime），少依赖
    toast 停留时长。
-4. `node scripts/acceptance/run.mjs --check` 过静态校验，再 `node scripts/acceptance/run.mjs <id>` 跑通
-   （FAIL 为零，失败项如实记录不硬凑）。
+4. `node scripts/acceptance/run.mjs --check` 过静态校验（含「步骤表写在 front-matter 内」这条结构
+   校验），再 `node scripts/acceptance/run.mjs <id>` 跑通（FAIL 为零，失败项如实记录不硬凑）。
+
+## 改套件实现时的自测
+
+动过 `lib/` 的 loader / 静态校验 / 断言判定之后，除 `--check` 外另跑一次套件自测：
+
+```bash
+node --test scripts/acceptance/lib/execute.test.mjs
+```
+
+纯 `node:test`、零新增依赖、不起真机（file 类断言与零断言兜底都不读 app / KimiCU，ctx 桩化即可）。
+它钉的是这一层最容易重犯的两条**静默**缺陷——「步骤表写在闭合 `---` 之外 ⇒ 整表被丢弃、零断言
+判绿」与「一条 `file` 断言只判优先级最高的键 ⇒ 多写的键静默失效（README 要求的
+`unchangedSince` + `mtimeUnchangedSince` 成对写法正好命中）」——用「必须红的输入」证明判据真的
+成立（零步骤场景被 `--check` 挡；同一份内容重写时 sha256 那条绿、mtime 那条必红）。它**不进 gate**，
+与 `scripts/migrate-harness-sessions.test.mjs` 同例（跑法写在文件头）。
