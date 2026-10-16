@@ -1,11 +1,14 @@
 // harness hint 文案与 pane 字号步进的单测（M378，harness panel hint fix and Cmd zoom）：
-//   - hint 两行带值形态的文案插值（D395 第一行 context window usage、D401 第二行
-//     cache hit rate，zh/en 双档，{ctx} / {cache} 取当时实际读数——Alex 2026-10-07
-//     「比如 context window usage: 12%. cache hit rate: 54%……按照这个『清晰简洁』的思路」）；
+//   - hint 带值形态的文案插值（第一行 context window usage = D395、第二行 cache hit rate =
+//     D465，zh/en 双档，{ctx} / {cache} 取当时实际读数——Alex 2026-10-07「比如 context window
+//     usage: 12%. cache hit rate: 54%……按照这个『清晰简洁』的思路来设计」）；
 //   - harness pane 内容字号步进状态机（nextHarnessFontSize：与内容 pane 的 textScale
 //     同语义——up/down 复用 nextFontSize 的 ×1.1 取整、钳 [12,32]，reset 回基线，
 //     到界返回原值 = 「无变化、无提示、不报错」）。
 // 合同：mission M378 任务 3 / 4 与 src/harness-panel.ts 的对应注释判词。
+// M533：命中率行只出百分比（D465 精简）、D401 / D452 / D453 / D454 / D455 / D466 六条随行
+// 退场——退场条目的串留在 deck 与文案表里（漂移门禁照管），不再有各自的插值用例（同 D376 /
+// D389 / D391 的退场口径）；本回合值 / 成因 / 缓存写入三组读数不再是任何上屏串。
 // 这一层是零 DOM 环境（tests/unit/README.md）：t() 传显式 lang，不触 document。
 
 import { test } from "node:test";
@@ -14,7 +17,7 @@ import { t } from "../../src/copy.ts";
 import { FONT_SIZE_MAX, FONT_SIZE_MIN, nextFontSize } from "../../src/typography.ts";
 import { nextHarnessFontSize } from "../../src/harness-panel.ts";
 
-// ── hint 两行带值文案（M378 任务 3：第一行 ctx、第二行 cache，带当时实际值） ──
+// ── hint 带值文案（M378 任务 3：第一行 ctx、第二行 cache，带当时实际值） ──
 
 test("D395：第一行 context window usage 带 {ctx} 当时值（zh/en 双档）", () => {
   assert.equal(t("D395", { ctx: 12 }, "zh"), "上下文窗口占用：12%");
@@ -23,60 +26,29 @@ test("D395：第一行 context window usage 带 {ctx} 当时值（zh/en 双档�
   assert.equal(t("D395", { ctx: 86 }, "en"), "Context window usage: 86%");
 });
 
-test("D401：第二行缓存命中率（会话累计）带 {cache} 当时值（zh/en 双档）", () => {
-  assert.equal(t("D401", { cache: 54 }, "zh"), "缓存命中率（会话累计）：54%");
-  assert.equal(t("D401", { cache: 54 }, "en"), "Cache hit rate (session cumulative): 54%");
-  assert.equal(t("D401", { cache: 0 }, "en"), "Cache hit rate (session cumulative): 0%");
+test("D465：第二行会话缓存命中率只带 {cache} 百分比（zh/en 双档）", () => {
+  assert.equal(t("D465", { cache: 54 }, "zh"), "缓存命中率（会话）：54%");
+  assert.equal(t("D465", { cache: 54 }, "en"), "Cache hit rate (session): 54%");
+  assert.equal(t("D465", { cache: 0 }, "en"), "Cache hit rate (session): 0%");
 });
 
-test("D395 / D401：缺占位参数抛错（插值面不允许裸上屏）", () => {
+test("D335：越线警示句只带 {warn}（M533 起不再复述 {ctx}，zh/en 双档）", () => {
+  assert.equal(t("D335", { warn: 85 }, "zh"), "越过 85% 警示线——下一轮对话将自动压缩");
+  assert.equal(
+    t("D335", { warn: 85 }, "en"),
+    "Context usage is past the 85% warning line — the next turn will be auto-compacted",
+  );
+  // 缺占位参数抛错（插值面不允许裸上屏）；旧口径的 {ctx} 已不在占位符表里——多传不报错、
+  // 也不再上屏（区分度：旧模板会把 90 插进句首，本模板两处都不出现它）。
+  assert.throws(() => t("D335", undefined, "zh"), /缺少占位参数 \{warn\}/);
+  const withStaleCtx = t("D335", { warn: 85, ctx: 90 }, "zh");
+  assert.equal(withStaleCtx, "越过 85% 警示线——下一轮对话将自动压缩");
+  assert.equal(withStaleCtx.includes("上下文已用"), false);
+});
+
+test("D395 / D465：缺占位参数抛错（插值面不允许裸上屏）", () => {
   assert.throws(() => t("D395", undefined, "zh"), /缺少占位参数 \{ctx\}/);
-  assert.throws(() => t("D401", undefined, "en"), /缺少占位参数 \{cache\}/);
-});
-
-// ── M443 新增四条的文案（本回合行 / 两句成因 / 缓存写入行）────────────────────
-// 完整规格见 change harness-cache-metrics design §5.2 与 tasks §3.5；本 change 的
-// 行序与判定键在 m347 视觉场景里断言，这里只钉串与插值。
-
-test("D452：本回合缓存命中行带 {turn}（zh/en 双档）", () => {
-  assert.equal(t("D452", { turn: 50 }, "zh"), "本回合缓存命中：50%");
-  assert.equal(t("D452", { turn: 50 }, "en"), "Cache hit this turn: 50%");
-  assert.equal(t("D452", { turn: 0 }, "zh"), "本回合缓存命中：0%");
-});
-
-test("D453 / D454：两句成因句（zh/en 双档，均点破非缓存失效）", () => {
-  assert.equal(
-    t("D453", undefined, "zh"),
-    "本回合未命中缓存（会话首个请求，或前缀缓存已过期）——非异常。",
-  );
-  assert.equal(
-    t("D453", undefined, "en"),
-    "No cache hit this turn (first request of the session, or the prefix cache has expired) — not an anomaly.",
-  );
-  assert.equal(
-    t("D454", undefined, "zh"),
-    "本回合新增内容已超过已缓存前缀的一半，命中率被摊薄——非缓存失效。",
-  );
-  assert.equal(
-    t("D454", undefined, "en"),
-    "New content this turn exceeds half of the cached prefix; the hit rate is diluted — not a cache failure.",
-  );
-});
-
-test("D455：缓存写入行两个数（本回合 / 本会话累计，zh/en 双档）", () => {
-  assert.equal(
-    t("D455", { write: 6174, total: 12044 }, "zh"),
-    "缓存写入：本回合 6174 tokens · 本会话累计 12044 tokens",
-  );
-  assert.equal(
-    t("D455", { write: 6174, total: 12044 }, "en"),
-    "Cache writes: 6174 tokens this turn · 12044 tokens this session",
-  );
-});
-
-test("D452 / D455：缺占位参数抛错", () => {
-  assert.throws(() => t("D452", undefined, "zh"), /缺少占位参数 \{turn\}/);
-  assert.throws(() => t("D455", { write: 1 }, "en"), /缺少占位参数 \{total\}/);
+  assert.throws(() => t("D465", undefined, "en"), /缺少占位参数 \{cache\}/);
 });
 
 // ── harness pane 字号步进状态（M378 任务 4：与内容 pane 同语义） ──

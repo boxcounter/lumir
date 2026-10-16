@@ -738,10 +738,14 @@ const COPY_TABLE = {
   // 2026-10-06 裁决「（常驻句）一直显示在那里很抢注意力」）→ ⓘ 钮移除、改越线时 hover
   // 读数才浮出（Alex 2026-10-07 裁决）；内容不变——越过警示阈值（[harness].warn_ctx_pct，
   // 缺省 85）时如实说后果（自动压缩），不提供「清理」动作（design §11）。
-  // M378 起它是 hover 泡的第三行：前两行改带值含义句（D395 / D401），越线时本句追加其下。
+  // M378 起它是 hover 泡的追加行：含义句在前（D395 / D465），越线时本句追加在最后。
+  // M533 两处改准（Alex 2026-10-16 原话「如果 ≥85 使用率，提示下一轮对话将自动压缩」，
+  // tower 同日裁决）：尾句换为「下一轮对话将自动压缩」（「继续对话将自动压缩续聊」退场）；
+  // 句首的「上下文已用 {ctx}%」整段去掉——usage 行（D463 / D464 / D395）刚显示过同一个
+  // 百分比，紧跟着重复一遍正是本 mission 要消的冗余。{warn} 保留（阈值是用户可行动的信息）。
   D335: {
-    zh: "上下文已用 {ctx}%，越过 {warn}% 警示线——继续对话将自动压缩续聊",
-    en: "Context usage {ctx}% is past the {warn}% warning line — further turns will be auto-compacted",
+    zh: "越过 {warn}% 警示线——下一轮对话将自动压缩",
+    en: "Context usage is past the {warn}% warning line — the next turn will be auto-compacted",
   },
   D336: {
     zh: "采纳",
@@ -1039,15 +1043,19 @@ const COPY_TABLE = {
   // 改带当时实际值的多行——本句 = 第一行（上下文窗口占用，{ctx} 取当时读数），第二行
   // 缓存命中率（会话累计）为 D401；cache 缺失（旧事件 / 桩）时第二行整行不渲染。
   // **M443 补两行**：第三行本回合缓存命中（D452，带 D453/D454 成因句）、第四行缓存写入
-  // （D455，本回合值为 0 时整行不渲染）。越过警示阈值时警示句（D335）追加在最后
-  // （追加行为保留，行序在前的含义句不动）。
+  // （D455，本回合值为 0 时整行不渲染）——**M533 三行一并退场**（Alex 2026-10-16：「气泡内容
+  // 太冗余了。只需要这些信息：1. 当前上下文使用量和百分比…2. 会话的缓存命中率」）：气泡只剩
+  // 本句（usage 行）+ D465（命中率行）+ 越线时的 D335。越过警示阈值时警示句（D335）追加在
+  // 最后（追加行为保留，行序在前的含义句不动）。
   D395: {
     zh: "上下文窗口占用：{ctx}%",
     en: "Context window usage: {ctx}%",
   },
   // hover hint 第二行：**缓存命中率（会话累计）**带当时实际值（M378 起为第二行，M443 改形——
   // 补「（会话累计）」限定词：cache 主读数改口径后，气泡里必须说清这一行是哪个口径的值）。
-  // cache 读数缺失（旧事件 / 桩）时本行不渲染——读数回落单读数「{ctx}%」（D334）同口径。
+  // **M533 退场（编号停用、不复用）**：M526 起这一行改走 tokens 形态（D465），M533 起命中率行
+  // 回到只出百分比、口径限定词按 Alex 原话收敛为「（会话）」⇒ 本串失去唯一消费点，文本随行
+  // 留档（与 D376 / D389 / D391 同一条退场口径）。
   D401: {
     zh: "缓存命中率（会话累计）：{cache}%",
     en: "Cache hit rate (session cumulative): {cache}%",
@@ -1055,6 +1063,8 @@ const COPY_TABLE = {
   // hover hint 第三行：**本回合**缓存命中率（M443 新增，change harness-cache-metrics §5.2）。
   // 主读数（D334 / D401）是会话累计——一次大块新增只压低本行这个单回合值，控制行不跳崖；
   // 这正是「50% 低谷被误读成缓存坏了」的修法。本回合值缺失（旧事件 / 桩）时整行不渲染。
+  // **M533 退场（编号停用、不复用）**：本回合行整行退场——本回合值仍随 `llm_response.usage`
+  // 进 wire 留存，只是不再上屏。
   D452: {
     zh: "本回合缓存命中：{turn}%",
     en: "Cache hit this turn: {turn}%",
@@ -1063,6 +1073,8 @@ const COPY_TABLE = {
   // ——与 modeline / D334 同款的排版分隔符）。两句都点破「非缓存失效」：冷启动是本回合
   // cached_tokens 为 0（会话首个请求的典型，或前缀缓存过期），大块摊薄是新增内容超过已缓存
   // 前缀的一半。判定算法在后端一处产出，前端 MUST NOT 自行猜成因。
+  // **M533 退场（编号停用、不复用）**：两句都挂在 D452 行尾，本回合行退场后无处可挂；
+  // Rust 侧 `cache_note` 判定与载荷字段保留不动，前端不再有取句点。
   D453: {
     zh: "本回合未命中缓存（会话首个请求，或前缀缓存已过期）——非异常。",
     en: "No cache hit this turn (first request of the session, or the prefix cache has expired) — not an anomaly.",
@@ -1074,6 +1086,8 @@ const COPY_TABLE = {
   // hover hint 第四行：缓存写入 tokens（M443，本回合 + 本逻辑会话累计）。判定键是**本回合值**：
   // 为 0（provider 不提供该字段，或确实没写）时整行不渲染——与 D401 的缺失回落同口径
   // （deepseek 无该字段；Kimi Code 端点实测恒 0，见 design §6）。
+  // **M533 退场（编号停用、不复用）**：写入行退场；两个数仍随 `llm_response.usage` 进 wire
+  // 留存（诊断面不减，只是不再上屏）。
   D455: {
     zh: "缓存写入：本回合 {write} tokens · 本会话累计 {total} tokens",
     en: "Cache writes: {write} tokens this turn · {total} tokens this session",
@@ -1082,6 +1096,8 @@ const COPY_TABLE = {
   // tokens 使用量」）：绝对值（`input_tokens` / `context_window`）在场时取代百分比形态 D395——
   // 已用/上限 tokens 与百分比同句。窗口上限不可得（`context_window` 为 0）时走 D464 降级：
   // 只说已用 tokens，不编造上限、不显示百分比（ctx_pct 在无上界的分母下无意义）。
+  // **M533 起本行是气泡里唯一的 tokens 行**（命中行与写入行退场、D465 只出百分比），M532 的
+  // k/m 单位规则因此只作用于本行与它的降级行 D464（规则本体见 formatTokenCount）。
   D463: {
     zh: "上下文：已用 {used} / {limit} tokens（{ctx}%）",
     en: "Context: {used} / {limit} tokens used ({ctx}%)",
@@ -1090,14 +1106,19 @@ const COPY_TABLE = {
     zh: "上下文：已用 {used} tokens（窗口上限未知，无百分比读数）",
     en: "Context: {used} tokens used (window limit unknown — no percentage)",
   },
-  // hover hint 第二行的 tokens 形态（M526）：会话累计命中绝对值（`cached_tokens_session`）+
-  // 累计命中率同句；绝对值缺键（旧载荷）时回落百分比形态 D401。
+  // hover hint 第二行：**会话缓存命中率**，只出百分比（M533 精简，Alex 2026-10-16 原话列的
+  // 两项信息之一是「会话的缓存命中率」；口径限定词随原话收敛为「（会话）」）。M526 的
+  // tokens 形态（`cached_tokens_session` 计数同句）随本句改写退场——那是对 M526 需求 2 里
+  // cache tokens 读数的显式 supersede；M378 的百分比形态 D401 并入本条退场（同一口径一条串）。
+  // 读数缺失（旧事件 / 桩）时整行不渲染——与控制行回落单读数「{ctx}%」（D334）同口径。
   D465: {
-    zh: "缓存命中：本会话 {cached} tokens · 累计命中率 {cache}%",
-    en: "Cache hits: {cached} tokens this session · cumulative hit rate {cache}%",
+    zh: "缓存命中率（会话）：{cache}%",
+    en: "Cache hit rate (session): {cache}%",
   },
   // hover hint 第三行的 tokens 形态（M526）：本回合命中绝对值（`cached_tokens`）+ 命中率同句，
   // 成因句（D453/D454）照旧追加其后；绝对值缺键（旧载荷）时回落百分比形态 D452。
+  // **M533 退场（编号停用、不复用）**：本回合行整行退场，`cached_tokens` 绝对值与两句成因句
+  // 随之失去上屏面（留存面不动）。
   D466: {
     zh: "本回合缓存命中：{cached} tokens · 命中率 {turn}%",
     en: "Cache hits this turn: {cached} tokens · hit rate {turn}%",

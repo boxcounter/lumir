@@ -4,6 +4,8 @@
 // 这一层守的是**键名与缺省口径**：事件载荷与快照 `usage` 字段走同一个 `usageReadings`
 // （REVIEW.md 第 8 条：跨层同一条语义只应有一处产出），缺键 / 非数值一律落 null——
 // 「读不到」不等于「为 0」（REVIEW.md 第 2 条：不许把「读不到」当「为空」下结论）。
+// M533 起气泡只剩 usage 行与命中率行（本回合值 / 成因 / 写入三组读数没有上屏面），读数映射
+// 照旧完整——投影不跟着行集裁，跨层收口另立（见 src/harness-panel.ts 的读数状态注释）。
 // 零 DOM 环境（tests/unit/README.md）：只调纯函数。
 
 import { test } from "node:test";
@@ -128,9 +130,10 @@ test("usageReadings：非对象载荷（缺 usage / 非法 JSON 形态）全落 
   }
 });
 
-test("usageReadings：写入为 0 时照读 0（0 是「不提供 / 确实没写」的同一读数，渲染判定在消费方）", () => {
-  // 判定「整行不渲染」的键是本回合值 == 0（design §5.2 第 4 行）——映射层必须如实给出 0，
-  // 不能因为「0 即不展示」就把 0 折叠成 null（那样消费方分不出「没读到」与「读到 0」）。
+test("usageReadings：写入为 0 时照读 0（0 是「不提供 / 确实没写」的同一读数，不折叠成 null）", () => {
+  // 映射层只做「读到了什么」——如实给出 0，不能因为某个消费方「0 就不展示」就把 0 折叠成
+  // null（那样消费方分不出「没读到」与「读到 0」）。M533 起气泡不再渲染缓存写入行，这条口径
+  // 仍然成立：投影保持载荷的完整一份，跨层收口另立（见 src/harness-panel.ts 的读数状态注释）。
   const readings = usageReadings({
     cache_write_tokens: 0,
     cache_write_tokens_session: 12044,
@@ -182,7 +185,11 @@ test("formatTokenCount：非读数原样透传（不编造、也不吞掉）", (
   assert.equal(formatTokenCount(Number.POSITIVE_INFINITY), "Infinity");
 });
 
-// ── ctxPopRows：气泡行文本（M526 抽纯；渲染面 buildCtxPop 与单测同一处产出） ──
+// ── ctxPopRows：气泡行文本（M526 抽纯；渲染面 buildCtxPop 与单测同一处产出）
+//    M533 行集精简为「usage 行 + 命中率行 + 越线警示行」——本回合命中行 / 缓存写入行 /
+//    成因句退场。退场行留下的绝对读数（cachedTokens / cacheTurn / cacheNote / cacheWrite…）
+//    仍喂进 `UsageReadings`（载荷投影不裁），因此下面的 readings 样本照旧带全键：行集断言
+//    对新旧实现有区分度——旧实现会多出三行。 ──
 
 const FULL_READINGS = {
   ctx: 9.8,
@@ -198,17 +205,16 @@ const FULL_READINGS = {
   hasUsage: true,
 } as const;
 
-test("ctxPopRows：绝对值在场 ⇒ 四行全 tokens 形态且数字走 k/m 单位（D463 / D465 / D466 / D455）", () => {
+test("ctxPopRows：绝对值在场 ⇒ 两行（usage tokens 形态 + 命中率只百分比），数字走 k/m 单位", () => {
   const rows = ctxPopRows(FULL_READINGS, 85);
   assert.deepEqual(rows, [
     { cls: "lumir-hp-ctxpop-meaning", text: "上下文：已用 12.7k / 131k tokens（10%）" },
-    { cls: "lumir-hp-ctxpop-cache", text: "缓存命中：本会话 10.3k tokens · 累计命中率 89%" },
-    { cls: "lumir-hp-ctxpop-cache-turn", text: "本回合缓存命中：6.4k tokens · 命中率 50%" },
-    { cls: "lumir-hp-ctxpop-cache-write", text: "缓存写入：本回合 6.1k tokens · 本会话累计 12k tokens" },
+    // 命中率行**不带** tokens 计数（M533 的显式 supersede：读数在场也不进这一行）。
+    { cls: "lumir-hp-ctxpop-cache", text: "缓存命中率（会话）：89%" },
   ]);
 });
 
-test("ctxPopRows：m 档样本（≥1,000,000 tokens 的气泡全行）", () => {
+test("ctxPopRows：m 档样本（≥1,000,000 tokens 的 usage 行）", () => {
   // 现役 fixture 够不到百万级：m 档在真机与视觉场景里都不出现，这条用例是它唯一的行级判据。
   const rows = ctxPopRows(
     {
@@ -225,9 +231,7 @@ test("ctxPopRows：m 档样本（≥1,000,000 tokens 的气泡全行）", () => 
   );
   assert.deepEqual(rows, [
     { cls: "lumir-hp-ctxpop-meaning", text: "上下文：已用 1.2m / 2m tokens（60%）" },
-    { cls: "lumir-hp-ctxpop-cache", text: "缓存命中：本会话 1.2m tokens · 累计命中率 89%" },
-    { cls: "lumir-hp-ctxpop-cache-turn", text: "本回合缓存命中：1.1m tokens · 命中率 50%" },
-    { cls: "lumir-hp-ctxpop-cache-write", text: "缓存写入：本回合 1m tokens · 本会话累计 1.5m tokens" },
+    { cls: "lumir-hp-ctxpop-cache", text: "缓存命中率（会话）：89%" },
   ]);
 });
 
@@ -235,13 +239,12 @@ test("ctxPopRows：无上限值（context_window 为 0）⇒ 第一行降级 D46
   const rows = ctxPopRows({ ...FULL_READINGS, contextWindow: 0 }, 85);
   assert.equal(rows[0].text, "上下文：已用 12.7k tokens（窗口上限未知，无百分比读数）");
   // 其余行不受影响。
-  assert.equal(rows.length, 4);
-  assert.match(rows[1].text, /10.3k tokens/);
+  assert.equal(rows.length, 2);
+  assert.equal(rows[1].text, "缓存命中率（会话）：89%");
 });
 
-test("ctxPopRows：绝对值缺键（旧载荷）⇒ 各行降级回百分比形态（D395 / D401 / D452）", () => {
-  // 降级只针对「绝对值缺键」的行：写入行（D455）两值来自载荷、与绝对值键无关，照旧在场——
-  // 它的数字同样过 k/m 单位（M532）。
+test("ctxPopRows：绝对值缺键（旧载荷）⇒ usage 行降级回百分比形态（D395），命中率行不变", () => {
+  // 降级只针对 usage 行：命中率行本就只出百分比，与绝对值键无关（M533 起无 tokens 形态）。
   const rows = ctxPopRows(
     {
       ctx: 15.2,
@@ -260,9 +263,7 @@ test("ctxPopRows：绝对值缺键（旧载荷）⇒ 各行降级回百分比形
   );
   assert.deepEqual(rows, [
     { cls: "lumir-hp-ctxpop-meaning", text: "上下文窗口占用：15%" },
-    { cls: "lumir-hp-ctxpop-cache", text: "缓存命中率（会话累计）：20%" },
-    { cls: "lumir-hp-ctxpop-cache-turn", text: "本回合缓存命中：20%" },
-    { cls: "lumir-hp-ctxpop-cache-write", text: "缓存写入：本回合 16k tokens · 本会话累计 16k tokens" },
+    { cls: "lumir-hp-ctxpop-cache", text: "缓存命中率（会话）：20%" },
   ]);
 });
 
@@ -286,26 +287,30 @@ test("ctxPopRows：has_usage=false（从未发过请求）⇒ 空行集——不
   assert.deepEqual(rows, []);
 });
 
-test("ctxPopRows：成因句照旧追加在第三行（tokens 形态后半句），越线时警示句追加最后", () => {
-  const noted = ctxPopRows(
+test("ctxPopRows：本回合的成因标注不再上屏（行集里没有它的落点）", () => {
+  // 退场判据（区分度）：旧实现把成因句追加在「本回合缓存命中」行尾，本用例与下面那条
+  // 断言整个行集里都不出现两句成因文本。
+  const rows = ctxPopRows(
     { ...FULL_READINGS, cacheNote: "cold_start" as const, cacheTurn: 0, cachedTokens: 0 },
     85,
   );
-  assert.match(
-    noted[2].text,
-    /^本回合缓存命中：0 tokens · 命中率 0% · /, // 千位以下原值直出：0 不写「0k」
-  );
-  assert.ok(noted[2].text.includes("非异常"));
-  // 越线：ctx 86% > 85% ⇒ D335 追加在最后（M443 追加行为保留）。
-  const over = ctxPopRows({ ...FULL_READINGS, ctx: 86 }, 85);
-  assert.equal(over.length, 5);
-  assert.match(over[4].text, /^上下文已用 86%，越过 85% 警示线/);
-  // 反向：未越线时没有警示行（区分度——不是恒真追加）。
-  assert.equal(ctxPopRows(FULL_READINGS, 85).length, 4);
+  assert.equal(rows.length, 2);
+  assert.equal(rows.some((row) => row.text.includes("非异常")), false);
+  const diluted = ctxPopRows({ ...FULL_READINGS, cacheNote: "block_dilution" as const }, 85);
+  assert.equal(diluted.some((row) => row.text.includes("摊薄")), false);
 });
 
-test("ctxPopRows：本回合写入为 0 ⇒ 写入行不渲染（判定键是本回合值）", () => {
-  const rows = ctxPopRows({ ...FULL_READINGS, cacheWrite: 0 }, 85);
-  assert.equal(rows.some((row) => row.cls === "lumir-hp-ctxpop-cache-write"), false);
-  assert.equal(rows.length, 3);
+test("ctxPopRows：命中率行不渲染的判定不变（cacheSession 缺键），越线时警示句追加最后", () => {
+  const noCache = ctxPopRows({ ...FULL_READINGS, cacheSession: null }, 85);
+  assert.deepEqual(noCache, [
+    { cls: "lumir-hp-ctxpop-meaning", text: "上下文：已用 12.7k / 131k tokens（10%）" },
+  ]);
+  // 越线：ctx 86% > 85% ⇒ D335 追加在最后（M378 起的追加行为与行序保留）。
+  const over = ctxPopRows({ ...FULL_READINGS, ctx: 86 }, 85);
+  assert.equal(over.length, 3);
+  assert.equal(over[2].cls, "lumir-hp-ctxpop-warn");
+  // M533 起警示句不再复述百分比（usage 行刚显示过同一个数）：只留阈值与后果。
+  assert.equal(over[2].text, "越过 85% 警示线——下一轮对话将自动压缩");
+  // 反向：未越线时没有警示行（区分度——不是恒真追加）。
+  assert.equal(ctxPopRows(FULL_READINGS, 85).length, 2);
 });
