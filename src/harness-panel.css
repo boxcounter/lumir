@@ -731,7 +731,8 @@
   font-size: calc(var(--fs-ui) * var(--lumir-hp-scale, 1));
   font-weight: var(--fw-semibold);
 }
-/* 问句副句（M406，原型 .ap-sub：「批准后才会落盘 / 运行」的轻量说明，问句正下方次级灰）。 */
+/* 问句副句（M406，原型 .ap-sub：「批准后才会落盘」的轻量说明，问句正下方次级灰；M540 起
+   命令类副句删除，只剩写类卡片用它）。 */
 .lumir-hp-approval-sub {
   display: block;
   margin-top: 1px;

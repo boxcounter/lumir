@@ -761,7 +761,8 @@ const COPY_TABLE = {
   },
   // 批准卡问句（M406 收敛单行生命周期，原型 harness-tool-card-merge）：工具名不再进问句
   // ——卡挂在工具行下方，行里的工具名徽章已承担身份；问句只说动作。D339 = vault_patch、
-  // D340 = cli_run、D412 = vault_create；其它工具回落 D415。副句 D413（写类）/ D414（命令）。
+  // D340 = cli_run、D412 = vault_create；其它工具回落 D415。副句只剩写类 D413
+  //（命令类 D414 随 M540 删除，命令类卡片因此无副句）。
   D339: {
     zh: "要修改这个文件吗？",
     en: "Modify this file?",
@@ -1209,9 +1210,12 @@ const COPY_TABLE = {
     en: "This session recording belongs to a different vault ({vault_root}) and cannot be resumed here",
   },
   // M406（harness 面板改进批次）：批准卡收敛单行生命周期 + 会话删除。
-  // D412/D413/D414/D415 是批准卡问句与副句（问句分工见 D339 上方注释）；D416 是 gated
+  // D412/D413/D415 是批准卡问句与副句（问句分工见 D339 上方注释）；D416 是 gated
   // 工具行待决态的尾注；D417–D419 是会话删除（行内删除钮读屏名 / 行内确认句 / 确认钮）；
   // D420/D421 是 harness_delete_session 的两条错误（活跃会话拒删 / 删除 IO 失败）。
+  // **M540 退场（编号停用、不复用，不随行留档）**：D414（命令类批准卡副句「批准后才会在
+  // 终端运行，输出回到对话里」）整条删除——Alex 原话「去掉 ask for approve 的文案……
+  // 因为不提供有价值的信息」；命令类批准卡因此无副句，写类副句 D413 不受影响。
   D412: {
     zh: "要新建这个文件吗？",
     en: "Create this file?",
@@ -1219,10 +1223,6 @@ const COPY_TABLE = {
   D413: {
     zh: "批准后才会落盘",
     en: "Nothing is written until approved",
-  },
-  D414: {
-    zh: "批准后才会在终端运行，输出回到对话里",
-    en: "Nothing runs until approved; output comes back into the chat",
   },
   D415: {
     zh: "要执行这次 {tool} 调用吗？",

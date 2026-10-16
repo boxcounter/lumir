@@ -41,8 +41,6 @@ steps:
         ax: { has: "chmod 700 /tmp/lumir-m414-seg-a" }
       - label: 组合命令按连接符拆段——第二段以 && 起首（拆段是排版，连接符仍逐字可见）
         ax: { has: "&& chmod 700 /tmp/lumir-m414-seg-b" }
-      - label: 闸语义副句在场（D414，命令类）
-        ax: { has: "批准后才会在终端运行，输出回到对话里" }
       - label: 次级动作在场（D434）
         ax: { has: "采纳且本会话不再问" }
       - shot: 01-批准卡-用途句与拆段

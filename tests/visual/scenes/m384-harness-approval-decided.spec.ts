@@ -261,6 +261,10 @@ test("判定依据行：危险黑名单·shell 包装器点名包装器名，位
     "lumir-hp-approval-purpose",
     "lumir-hp-argv",
   ]);
+  // 命令类卡片**无副句**（M540：D414 删除）——标题文本只有问句一句；写类副句 D413 的
+  // 在场守卫在同文件的待决态用例里（`.lumir-hp-approval-sub` 有值时照样被判出来）。
+  await expect(card.locator(".lumir-hp-approval-title")).toHaveText("要运行这条命令吗？");
+  await expect(card.locator(".lumir-hp-approval-sub")).toHaveCount(0);
   // 决策后依据行随卡退场（与待决副句 / 按钮同一生命周期，零残留）。
   await page.locator('button[data-act="reject"]').click();
   await expect(page.locator(".lumir-hp-approval")).toHaveCount(0);

@@ -55,7 +55,8 @@
 //（浮层模型段占位句 + chip 读屏名空态——不伪造模型条目）；D405–D408 为批准终态行
 //（结果词 / 详情入口 / 原因句——M406 起挂在收敛后的同一工具行上）；D412–D416 为 M406
 // 批准卡问句分工与副句、待决行尾注（D343/D344 的工具行整句模板随人话化三段式退场，
-// 编号停用）；D417–D419 为 M406 会话删除（行内删除钮读屏名 / 确认句 / 确认钮）；D409–D411 为 M391 登记的会话恢复
+// 编号停用；D414 的命令类副句随 M540 删除，命令类卡片无副句）；
+// D417–D419 为 M406 会话删除（行内删除钮读屏名 / 确认句 / 确认钮）；D409–D411 为 M391 登记的会话恢复
 // 三错误码（harness_session_unreadable / _invalid / _vault_mismatch）——M392 恢复选择器的
 // 消费点：恢复失败经 src/copy.ts 的 errorText 按 code 渲染上错误行（D348 的 {message}）；
 // 选择器行本身不新造文案（无历史会话 = 不渲染清单容器，会话名缺原文回落 D330「新会话」））；
@@ -5381,9 +5382,9 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
 
   // ── 批准闸 ───────────────────────────────────────────────────────────────
   /** 批准卡问句与副句（M406 收敛版，文案分工见 copy-data D339 上方注释）：问句按工具名
-   *  分发（cli_run / vault_create / vault_patch 各有专句，其它工具回落 D415）；副句按
-   *  载荷形状（命令类 = argv → D414，写类 = diff → D413，都无则无副句）。 */
-  function approvalAskOf(tool: string, hasDiff: boolean, hasArgv: boolean): { ask: string; sub: string | null } {
+   *  分发（cli_run / vault_create / vault_patch 各有专句，其它工具回落 D415）；副句只剩
+   *  写类（diff → D413）——命令类副句 D414 随 M540 删除，命令类卡片因此无副句。 */
+  function approvalAskOf(tool: string, hasDiff: boolean): { ask: string; sub: string | null } {
     const ask =
       tool === "cli_run"
         ? t("D340")
@@ -5392,12 +5393,12 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
           : tool === "vault_patch"
             ? t("D339")
             : t("D415", { tool });
-    const sub = hasArgv ? t("D414") : hasDiff ? t("D413") : null;
+    const sub = hasDiff ? t("D413") : null;
     return { ask, sub };
   }
 
   function relabelApproval(pending: PendingApproval): void {
-    const { ask, sub } = approvalAskOf(pending.tool, pending.diff !== undefined, pending.argv !== undefined);
+    const { ask, sub } = approvalAskOf(pending.tool, pending.diff !== undefined);
     const titleEl = pending.element.querySelector(".lumir-hp-approval-title");
     if (titleEl !== null) {
       const nodes: Node[] = [document.createTextNode(ask)];

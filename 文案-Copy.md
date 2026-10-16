@@ -364,7 +364,7 @@
 | D337 | 批准闸拒绝钮 | 作者 | 拒绝 | Reject | 拒绝待决的工具调用，harness_approve(approved=false)，可附原因回送模型。**M384 起仅待决态在场**：同 D336，决策后随卡片收敛退场。 |
 | D338 | 批准闸拒绝原因输入占位 | 作者 | 拒绝原因（可选，会随拒绝回给 Agent） | Reason for rejection (optional, sent back to the agent with the rejection) | 占位如实说去处（随拒绝回给 Agent），让人知道这句话不是批注。**M384 起仅待决态在场**：决策后输入框退场；已填的原因改由终态记录直接展示（D408）。**M406 起多行**：输入框改 textarea，Enter 换行、⌘/Ctrl+Enter 提交拒绝。 |
 | D339 | 批准闸问句（改文件） | 作者 | 要修改这个文件吗？ | Modify this file? | 待决项带 diff 的形态（vault_patch）。**M406 收敛单行生命周期**：问句不再带工具名（卡挂在工具行下方，行里的工具名徽章已承担身份，问句只说动作）；「采纳后才落盘」的闸语义改由副句 D413 承载；决策后卡片整体退场，问句不再出现在终态行上。 |
-| D340 | 批准闸问句（执行命令） | 作者 | 要运行这条命令吗？ | Run this command? | 待决项带 argv 的形态（cli_run），同 D339 的收敛分工；闸语义副句 = D414。 |
+| D340 | 批准闸问句（执行命令） | 作者 | 要运行这条命令吗？ | Run this command? | 待决项带 argv 的形态（cli_run），同 D339 的收敛分工。**M540 起命令类卡片无副句**：原副句 D414（「批准后才会在终端运行，输出回到对话里」）不提供有价值的信息，整条删除；写类副句 D413 除外的照旧。 |
 | D341 | 压缩标记行 | 作者 | 会话已自动压缩（上下文触顶）——以下为摘要，完整历史仍在本地留存 | Conversation auto-compacted (context limit hit) — summary below; the full history is kept locally | compact 事件 / 快照里 role=compact 条目的标记行。如实交代两点：发生了什么（自动压缩）与历史没丢（本地留存）。 |
 | D342 | 压缩摘要标题 | 作者 | 压缩摘要 | Compaction summary | 压缩标记之下摘要正文的引导词。 |
 | D343 | 工具调用行（进行中） | 作者 | 调用工具：{name} | Calling tool: {name} | tool_call 事件 status=started 的形态。 |
@@ -405,7 +405,6 @@
 | D411 | 后端错误信封（按 code 渲染） | 作者 | 该会话留存属于另一个 vault（{vault_root}），不能恢复到当前 vault | This session recording belongs to a different vault ({vault_root}) and cannot be resumed here | M391：恢复入口的 vault 归属校验（`harness_session_vault_mismatch`）——会话留存绑定 vault（session_open.vault_root），恢复到别的 vault 会被拒，防止跨 vault 灌错历史；{vault_root} = 源留存声明的 vault 根路径（Rust `CommandError.params` 提供，不译文）。消费点 src/copy-data.ts 的 ERROR_COPY。 |
 | D412 | 批准闸问句（新建文件） | 作者 | 要新建这个文件吗？ | Create this file? | M406：vault_create 的批准卡问句（写工具三句分工：D412 新建 / D339 修改 / D415 回落）。问句不带工具名，理由同 D339。消费点 src/harness-panel.ts 的 approvalAskOf。 |
 | D413 | 批准卡副句（写类） | 作者 | 批准后才会落盘 | Nothing is written until approved | M406：写类待决卡（diff 载荷）的次级灰副句，承载 M384 前标题里的闸语义（采纳前不落盘）。消费点 src/harness-panel.ts 的 approvalAskOf。 |
-| D414 | 批准卡副句（命令类） | 作者 | 批准后才会在终端运行，输出回到对话里 | Nothing runs until approved; output comes back into the chat | M406：命令类待决卡（argv 载荷）的副句，同 D413 分工，并如实说输出去处（回到对话）。消费点 src/harness-panel.ts 的 approvalAskOf。 |
 | D415 | 批准闸问句（回落） | 作者 | 要执行这次 {tool} 调用吗？ | Run this {tool} call? | M406：写工具三句之外的待决卡回落问句（将来的 gated 工具直接落这里，不静默掉成空白卡）；工具名进问句是因为回落路径没有行徽章以外的身份线索可省。消费点 src/harness-panel.ts 的 approvalAskOf。 |
 | D416 | gated 工具行待决尾注 | 作者 | 等待批准 | Awaiting approval | M406：批准卡挂到工具行下方后，待决行尾注（`· 等待批准`）承担「这一轮在等人」的读数；决策后随行收敛退场。消费点 src/harness-panel.ts 的 appendApproval / relabelApproval。 |
 | D417 | 会话浮层删除钮读屏名 | 作者 | 删除该会话 | Delete this session | M406：会话浮层每行末尾的 × 删除钮（aria-label / title）。消费点 src/harness-panel.ts 的 buildSessList。 |
@@ -519,6 +518,7 @@
 - M526 D463–D466 harness ctx/cache 气泡 tokens 读数（含无上限降级形态）
 - M530 D467 拖拽移动：移入自身/后代错误信封（fs_move_into_self；D463–D466 由 M526 ctxcache 气泡批先占，本条取 D467）
 - M533 气泡行集精简（**未取新号**）：D465 改形为只出百分比（编号沿用）、D335 改准尾句并去掉 `{ctx}`（编号沿用）；D401、D452–D455、D466 停用
+- M540 D414 批准卡命令类副句删除（**未取新号**）：编号停用、不复用、不随行留档——Alex 原话「去掉 ask for approve 的文案……因为不提供有价值的信息」；命令类批准卡不再有副句，写类副句 D413 不变
 
 各批的取号过程、改号经过与被推翻的旧预计由 git history 承担（历次改写见 `git log -p -- 文案-Copy.md`）。
 
@@ -568,7 +568,7 @@
 - **D400–D401** — `src/harness-panel.ts`（`applyStage` / `buildCtxPop`；D401 于 M533 退场）
 - **D402–D404** — `src/harness-panel.ts`（`buildSelPop` / `applySelChip`）+ `src/copy-data.ts` + `src-tauri/src/harness/llm.rs`
 - **D405–D411** — `src/harness-panel.ts` / `src/copy-data.ts` `ERROR_COPY`（D409–D411 = 会话恢复三错误码）
-- **D412–D422** — `src/harness-panel.ts`（D412–D416 批准闸问句与副句、gated 工具行待决尾注 `approvalAskOf` / `appendApproval` / `relabelApproval`；D417–D419 会话浮层删除钮与行内两步确认 `buildSessList`）+ `src/copy-data.ts` `ERROR_COPY`（D420–D422 = 会话删除两错误码 + `fs_move_failed`）
+- **D412–D422** — `src/harness-panel.ts`（D412–D416 批准闸问句与副句（D414 于 M540 删除）、gated 工具行待决尾注 `approvalAskOf` / `appendApproval` / `relabelApproval`；D417–D419 会话浮层删除钮与行内两步确认 `buildSessList`）+ `src/copy-data.ts` `ERROR_COPY`（D420–D422 = 会话删除两错误码 + `fs_move_failed`）
 - **D423–D434** — `src/harness-panel.ts`（`applyPermChip` / `buildPermPop` / `appendApproval`）+ `src/copy-data.ts`
 - **D435** — `src/harness-panel.ts`（vault_delete 批准卡的后果说明句，按 design §5.1 归面板侧；后端 `approval_preview` 只给路径参数）
 - **D436–D451** — vault 附件与 composer 贴图共用 fs_io 原语（错误 code 族不另立）；消费点 `src/harness-panel.ts`（`send` / `loadImageThumb` / `createImageCardEl`）+ `src/copy-data.ts` `ERROR_COPY`（D447 是 aria 名，不经 ERROR_COPY）
@@ -597,3 +597,4 @@
 - 「预览标签不入盘」的表述（D99）——`src/vault-switcher.ts` 入盘过滤与 `EditorSession.preview` 随 change preview-tab-removal 删除，摘要数字 = 全部有路径的标签数。
 - D55–D56 / D326 / D331 / D377 等已退场条目：缘由（失去唯一消费点 / 能力退场）由 git history 与该条目行承担。
 - **D401 / D452–D455 / D466（M533，ctx 气泡行集精简）**——Alex 2026-10-16 裁决气泡只留「当前上下文使用量和百分比」与「会话的缓存命中率」两项：本回合命中行（D452 + 它的 tokens 形态 D466 + 两句成因句 D453 / D454）与缓存写入行（D455）整批退场，百分比形态的会话命中行 D401 被改形后的 D465 吸收。**退场的只是上屏面**：本回合命中率、成因判定（`cache_note`）与缓存写入 tokens 仍随 `llm_response.usage` 进 wire 留存，Rust 侧字段与判定一律不动。
+- **D414（M540，批准卡命令类副句删除）**——Alex 2026-10-16 裁决：命令类批准卡副句「批准后才会在终端运行，输出回到对话里」不提供有价值的信息，整条删除（编号停用、不复用、不随行留档）。命令类批准卡因此只剩问句 D340；写类副句 D413 不受影响，argv 预览（`.lumir-hp-argv`）与用途句照旧在卡上。被删串的历史由本行与 git history 承担。
