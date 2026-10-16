@@ -414,6 +414,14 @@ pub trait LlmClient: Send {
         None
     }
 
+    /// 本轮请求是否会带 `include:["reasoning.encrypted_content"]`（M464 密文回放模式的
+    /// 前提）：留存 `llm_response.reasoning_encrypted.requested` 用——与 `wire_body` 里
+    /// 实际写 `include` 的条件同一份布尔（client 构建时冻结），MUST NOT 在记录侧按 config
+    /// 重算一套（REVIEW.md 第 8 条）。缺省 false = 该实现不发（mock）。
+    fn requests_encrypted_reasoning(&self) -> bool {
+        false
+    }
+
     /// mock：脚本原始条数（会话级游标的模；M456）。真 provider 无此概念，缺省 None ⇒
     /// 调用方对游标推进一步不落（[`super::turn`] 的 `run_turn` 据此只对 mock 生效）。
     fn mock_script_len(&self) -> Option<usize> {
@@ -557,6 +565,11 @@ struct ResponsesClient {
 }
 
 impl LlmClient for ResponsesClient {
+    /// 与 `wire_body` 写 `include:["reasoning.encrypted_content"]` 同一份条件布尔。
+    fn requests_encrypted_reasoning(&self) -> bool {
+        self.effort_supported
+    }
+
     fn complete(&mut self, request: &Request, sink: &dyn StreamSink) -> TurnOutput {
         match self.complete_inner(request, sink) {
             Ok(output) => output,

@@ -356,7 +356,13 @@ pub fn run_turn_for(
         // 响应同样即刻落盘（与上面的 llm_request 严格成对，含失败与在途停止的半截响应——
         // 「模型当时回的是什么」是留存事实的一部分）。放在停止检查点之前：
         // 中断轮产出的半截文本同样如实记录。
-        record_llm_response(runtime, scope, &output, client.fixture_source());
+        record_llm_response(
+            runtime,
+            scope,
+            &output,
+            client.fixture_source(),
+            client.requests_encrypted_reasoning(),
+        );
 
         // —— 思考兜底（M369）——
         // 流式路径已在解析层即时转发；这里只补「没有流式分片、但回放项可提取明文」的老形态
@@ -657,19 +663,12 @@ fn record_llm_request(
     let _ = runtime.with_session(scope, |s| s.jsonl().record(&payload));
 }
 
-/// `llm_error` sidecar 记录的载荷（M463 起带 wire 面诊断字段）：`code` / `message` 恒在，
-/// 其余**按在场与否**追加——非 2xx 的 HTTP 错误带 `http_status` / `raw_body`（已截断，
-/// 见 `llm::ERROR_BODY_MAX_CHARS`）/ 可选 `request_id`；网络层失败、mock 脚本化错误、流内
-/// 错误只落 `code`+`message`（新键缺席 = 该错误没有 HTTP 面，**不是**空值）。
-///
-/// 抽成纯函数：① 单测不必起 HTTP 服务就能钉记录形状；② 记录形状只有这一处产出（免得
-/// 记录点与测试各拼一份，REVIEW.md 第 8 条）。
-fn llm_error_payload(error: &llm::TurnError) -> serde_json::Value {
-    let mut payload = serde_json::json!({
-        "kind": "llm_error",
-        "code": error.code,
-        "message": error.message,
-    });
+/// HTTP 面诊断字段的追加（M463 起）：`http_status` / `raw_body`（已截断，见
+/// `llm::ERROR_BODY_MAX_CHARS`）/ `body_truncated` / `request_id` 按在场与否追加——
+/// `llm_error` sidecar 与 `llm_response` 的错误分支**共用这一处**（记录形状单一真源，
+/// REVIEW.md 第 8 条）；网络层失败、mock 脚本化错误、流内错误没有 HTTP 面，什么都不会
+/// 追加（新键缺席 = 该错误没有 HTTP 面，**不是**空值）。
+fn append_error_diagnostics(payload: &mut serde_json::Value, error: &llm::TurnError) {
     if let Some(status) = error.http_status {
         payload["http_status"] = serde_json::json!(status);
     }
@@ -682,6 +681,20 @@ fn llm_error_payload(error: &llm::TurnError) -> serde_json::Value {
     if let Some(id) = &error.request_id {
         payload["request_id"] = serde_json::json!(id);
     }
+}
+
+/// `llm_error` sidecar 记录的载荷（M463 起带 wire 面诊断字段）：`code` / `message` 恒在，
+/// 其余按在场与否由 [`append_error_diagnostics`] 追加。
+///
+/// 抽成纯函数：① 单测不必起 HTTP 服务就能钉记录形状；② 记录形状只有这一处产出（免得
+/// 记录点与测试各拼一份，REVIEW.md 第 8 条）。
+fn llm_error_payload(error: &llm::TurnError) -> serde_json::Value {
+    let mut payload = serde_json::json!({
+        "kind": "llm_error",
+        "code": error.code,
+        "message": error.message,
+    });
+    append_error_diagnostics(&mut payload, error);
     payload
 }
 
@@ -697,11 +710,18 @@ fn llm_error_payload(error: &llm::TurnError) -> serde_json::Value {
 /// 的恢复算法从本键取回放项）；`thinking` = **展示文本**（展示通道分片汇总）——分片缺席
 /// （老 fixture / 只发 `output_item.done` 的 provider）时退回从回放项提取明文，与面板所见
 /// 同源；密文永不进 thinking（`thinking::reasoning_text` 只返明文）。
+///
+/// `encrypted_reasoning_requested` = client 本轮是否发了 `include:["reasoning.encrypted_content"]`
+/// （与 `wire_body` 同一份布尔，经 [`llm::LlmClient::requests_encrypted_reasoning`] 传入）。
+/// 为真时落 `reasoning_encrypted: {requested, received}`——M464 密文回放路径是否生效的
+/// 留存读数（2026-10-14 真机溢出复盘只能事后从 reasoning 项数出 29/29 缺席，「没请求」与
+/// 「请求了没回」分不开；键缺席 = 未请求，与错误诊断键同口径）。
 fn record_llm_response(
     runtime: &Runtime,
     scope: &VaultScope,
     output: &llm::TurnOutput,
     fixture_source: Option<&str>,
+    encrypted_reasoning_requested: bool,
 ) {
     let mut payload = serde_json::json!({
         "kind": "llm_response",
@@ -709,6 +729,15 @@ fn record_llm_response(
     });
     if let Some(reasoning) = &output.reasoning {
         payload["reasoning"] = reasoning.clone();
+    }
+    if encrypted_reasoning_requested {
+        payload["reasoning_encrypted"] = serde_json::json!({
+            "requested": true,
+            "received": output
+                .reasoning
+                .as_ref()
+                .is_some_and(reasoning_has_encrypted_content),
+        });
     }
     // thinking = 展示文本（裁决点 1 的展示半边落盘）：分片非空即拼接；缺席时退回
     // 从回放项提取明文（与 turn 的 reasoning_fallback 展示兜底同源）。
@@ -745,11 +774,29 @@ fn record_llm_response(
     }
     if let Some(error) = &output.error {
         payload["error"] = serde_json::json!(format!("{}: {}", error.code, error.message));
+        // 超限时压缩重试成功即续跑，永远到不了下面的 `llm_error` sidecar——HTTP 面
+        // 诊断字段必须在这里一并落盘（2026-10-14 真机溢出的 kimi request_id 因此
+        // 不可考，见 backlog『错误响应落盘丢失』条；与 sidecar 共用同一追加函数）。
+        append_error_diagnostics(&mut payload, error);
     }
     if let Some(source) = fixture_source {
         payload["mock_fixture"] = serde_json::json!(source);
     }
     let _ = runtime.with_session(scope, |s| s.jsonl().record(&payload));
+}
+
+/// reasoning 回放项里是否带非空 `encrypted_content`（密文回放路径是否生效的事实判定）：
+/// 递归扫键、不按 provider 方言分支——只认「键在场且值为非空字符串」这一事实（kimi 的
+/// 密文在 reasoning 项顶层；将来方言变体落在嵌套层也算收到）。
+fn reasoning_has_encrypted_content(value: &serde_json::Value) -> bool {
+    match value {
+        serde_json::Value::Object(map) => map.iter().any(|(key, v)| {
+            (key == "encrypted_content" && v.as_str().is_some_and(|s| !s.is_empty()))
+                || reasoning_has_encrypted_content(v)
+        }),
+        serde_json::Value::Array(items) => items.iter().any(reasoning_has_encrypted_content),
+        _ => false,
+    }
 }
 
 /// 未流式产出时的思考兜底分片（M369，输出侧只读）：`reasoning_deltas` 非空 = 解析层已即时
@@ -1116,7 +1163,13 @@ fn compact_now(
     let compact_bytes = client.wire_body_bytes(&compact_request);
     record_llm_request(runtime, scope, config, &compact_request, compact_bytes);
     let output = client.complete(&compact_request, &llm::DiscardStreamSink);
-    record_llm_response(runtime, scope, &output, client.fixture_source());
+    record_llm_response(
+        runtime,
+        scope,
+        &output,
+        client.fixture_source(),
+        client.requests_encrypted_reasoning(),
+    );
     let summary = match output {
         llm::TurnOutput { error: Some(e), .. } => {
             return Err(CommandError::new(
@@ -1747,5 +1800,34 @@ mod tests {
         assert!(payload["raw_body"].is_string());
         // 未截断时不留 body_truncated 键（缺席 = 未截断）。
         assert!(payload.get("body_truncated").is_none());
+    }
+
+    /// `reasoning_encrypted.received` 的事实判定：只认「键在场且值为非空字符串」，
+    /// 空串 / 非字符串 / 嵌套缺席一律 false；嵌套层在场也算收到（方言变体不分支）。
+    #[test]
+    fn reasoning_encrypted_content_detection() {
+        let kimi_with = serde_json::json!({
+            "type": "reasoning",
+            "summary": [{"type": "summary_text", "text": "…"}],
+            "encrypted_content": "enc-abc",
+        });
+        assert!(reasoning_has_encrypted_content(&kimi_with));
+
+        let kimi_without = serde_json::json!({
+            "type": "reasoning",
+            "summary": [{"type": "summary_text", "text": "…"}],
+        });
+        assert!(!reasoning_has_encrypted_content(&kimi_without));
+
+        // 空串不算收到（键在场但无密文可还）。
+        let empty = serde_json::json!({"type": "reasoning", "encrypted_content": ""});
+        assert!(!reasoning_has_encrypted_content(&empty));
+
+        // 嵌套层在场也算（将来方言变体落嵌套不漏判）。
+        let nested = serde_json::json!({
+            "type": "reasoning",
+            "content": [{"encrypted_content": "enc-deep"}],
+        });
+        assert!(reasoning_has_encrypted_content(&nested));
     }
 }
