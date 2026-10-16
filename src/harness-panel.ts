@@ -2178,8 +2178,14 @@ export function restoredReasoningText(record: unknown): string | null {
 
 // ---------------------------------------------------------------------------
 // 工具行摘要人话化 + argv 拼接 + 拒绝原因提取的纯函数层（M406，harness 面板改进批次）。
-// 数据口径：`started` 事件的 summary 是工具参数 JSON 原文（core 侧 `summarize_args`，
-// 80 字截断——单一真源在 src-tauri/src/harness/turn.rs，MUST NOT 前端另算一份参数）；
+// 数据口径：`started` 事件的 summary 来自 core 的 `summarize_args`
+// （src-tauri/src/harness/turn.rs 是单一真源，MUST NOT 前端另算一份参数）。它**不是**
+// 「参数 JSON 原文」一种形态——M528 起非 cli 工具与解析失败仍回落原文截断，而 cli_run
+// 的摘要是 core 拼好的**成品人话文本**（`command + args`，命令恒在最前、超长只截拼接串），
+// 因为 arguments 的键序由模型现写、原文截断会把排在 `args` 后面的 `command` 切掉。
+// 故这一层是**双形态消费方**：先按工具名做展示层提取（JSON 路径，见下），取不到就按原文
+// 上屏（正好是 core 那份成品）——两种形态都可能在，判据见 [`humanizeToolArgs`] 与
+// [`toolArgsText`]（后者是「参数格取哪一份」的取值口径）。
 // 人话化是**展示层提取**（按工具名取关键参数：cli_run=完整命令、vault_*=路径、
 // vault_search=查询词、skill_load=技能名），截断 / 非 JSON / 未知工具一律回落原文，
 // 不伪造。gated 调用的完整参数在 approval_request 载荷里（argv 数组 / diff 头文件名），
@@ -2238,9 +2244,13 @@ export function humanizeToolArgs(name: string, summary: string): string {
   return strict !== "" ? strict : summary;
 }
 
-/** 严格版人话化：只在 JSON 完整且关键参数取得到时返回值，否则 ""（调用方据此判
- *  「这份 summary 根本不是参数 JSON」——如持久化失败摘要走原文上屏、恢复路径拒绝行
- *  的 args 格留空）。 */
+/** 严格版人话化：只在 JSON 完整且关键参数取得到时返回值，否则 ""（调用方据此判「这份 summary
+ *  里取不出关键参数」——如持久化失败摘要、恢复路径拒绝行的 args 格留空）。
+ *
+ *  **`""` 不等于「它不是参数摘要」（M528 r1）**：core 的成品人话摘要（cli_run = `command + args`）
+ *  也不是 JSON，严格版照旧取空。凡「这份 summary 就是参数那一份、要把该显示的取出来」的地方，
+ *  走 [`toolArgsText`]（判据是「不是失败形状」，不是「是 JSON」）——改用严格版会让成品摘要
+ *  那一格整格空掉（r1 P1-1 的现场）。 */
 export function humanizeToolArgsStrict(name: string, summary: string): string {
   let parsed: unknown;
   try {
@@ -5297,13 +5307,12 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
       row.classList.replace("is-running", failed ? "is-fail" : "is-done");
       row.replaceChildren(
         createToolIcon(failed ? "fail" : "done"),
-        // 成功：宽松人话化（截断 JSON 回落原文，有信息量）；失败：严格版（失败摘要不是
-        // 参数 JSON，严格版取空 → 参数格留空，失败全文走尾注）。
-        createToolText(
-          name,
-          failed ? humanizeToolArgsStrict(name, args) : humanizeToolArgs(name, args),
-          failed ? summary : undefined,
-        ),
+        // 参数格恒取 `started` 那份**参数摘要**（M528 r1）：`args` 与行的成败无关——失败文本
+        // 走第三参（尾注），故两侧同走参数格口径（`toolArgsText`）。旧写法在失败侧用严格版
+        // （判据「是 JSON 才取参数」），而 M528 起 core 的成品摘要不是 JSON ⇒ 失败行的参数格
+        // 整格空掉、命令本体消失（修前的可见性本来就分两半：arguments ≤80 字的调用严格版能
+        // 解析出命令、看得见；>80 字的调用原文截断后照样看不见——M528 与这处一并收口）。
+        createToolText(name, toolArgsText(name, args), failed ? summary : undefined),
       );
     } else {
       // 无 running 行（乱序 done / 桩环境）：没有更早的那份摘要可用，done 原文按形状判定。
@@ -6224,8 +6233,8 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
    *    **无详情**——留存里没有原 diff/argv，不伪造展开件。
    *  - denied / error（或缺 status 但摘要命中失败形状的旧快照）→ 失败行：尾注 = 失败
    *    全文（输出 JSON 的 code+message，summary 兜底）。
-   *  - 其余 → 成功行：参数摘要人话化（持久化 / 重建两份 summary 都是参数 JSON 时才有
-   *    参数格；失败摘要不冒充参数）。 */
+   *  - 其余 → 成功行：参数摘要人话化（`humanizeToolArgs`——持久化 / 重建两份 summary 是参数
+   *    JSON 时按工具名提取，M528 起是 core 的成品文本时原样上屏；失败摘要不冒充参数）。 */
   function appendRestoredToolRow(record: Record<string, unknown> & { name: string }): void {
     const name = record.name;
     const summary = typeof record.summary === "string" ? record.summary : "";

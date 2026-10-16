@@ -137,6 +137,26 @@ test("toolArgsText（M528）：core 的成品摘要（非 JSON）照原样上屏
   assert.equal(toolArgsText("cli_run", ""), "");
 });
 
+test("失败行的参数格仍取 started 摘要（M528 r1 P1-1）：行的成败不改变参数格的数据源", () => {
+  // live 路径工具行翻终态时（`appendToolCall` 的 done 翻 running 行分支）传进参数格的是
+  // **started 那份参数摘要**，done 自带的失败摘要只走第三参（尾注）。故两态都必须走参数格
+  // 口径 `toolArgsText`——M528 起 core 的成品摘要不是 JSON，而严格版的判据是「是 JSON 才取
+  // 参数」：用它会让**执行失败的 cli_run 行**参数格整格空掉、命令本体消失（r1 P1-1 的现场；
+  // 修前该处是命令可见）。
+  const started = "rg --flag-0 --flag-1";
+  assert.equal(toolArgsText("cli_run", started), started, "失败行参数格 = started 摘要全文");
+  // 两个候选对同一个成品摘要给出不同答案 ⇒「参数格取哪个候选」是可判的，且严格版是错的那个。
+  assert.notEqual(humanizeToolArgsStrict("cli_run", started), started);
+  assert.equal(humanizeToolArgsStrict("cli_run", started), "");
+  // done 那份（失败摘要）不是参数：误喂进参数格会被判空 ⇒ 两个 datum 可区分。
+  const done = "error · exit_code: 1: 命令以非零状态退出";
+  assert.equal(toolArgsText("cli_run", done), "");
+  // 旧快照（started 摘要仍是参数 JSON）失败行的参数格照旧人话化（修前行为的兼容面）。
+  assert.equal(toolArgsText("cli_run", '{"command":"rg","args":["--flag-0"]}'), "rg --flag-0");
+  // 覆盖边界：「哪个分支传哪个 datum」是 DOM 接线，纯函数层验不到（tests/unit 零 DOM）——
+  // 本用例钉的是取值口径与两个 datum 的可区分性；接线面靠调用点注释 + 真机/视觉批次。
+});
+
 // ── diff 头文件名（批准载荷写工具的关键参数全文） ──
 
 test("diffPathOf：取 `+++ b/{path}` 头的文件名；无该头 → null", () => {
