@@ -399,9 +399,11 @@ steps:
     expect:
       - label: 第二个 vault 里有了 shortbox/keep.md（第二个 vault 的绝对路径写法是 `$vault-b`，与 secondVaultDir() 同址）
         file: { path: $vault-b/shortbox/keep.md, exists: true }
-  - name: 等 watcher 把 shortbox 收敛进 B 的树
-    do: sleep
-    ms: 1500
+  - name: ⑧ 等 watcher 把 shortbox 收敛进 B 的树（状态驱动：下一步要点击这一行）
+    do: waitFor
+    waitFor:
+      has: ['/AXButton \(shortbox\)/']
+    timeoutMs: 30000
   - name: ⑧ 展开 shortbox（嵌套行只在展开后才是树里的行）
     do: click
     target: { role: AXButton, name: "^shortbox$" }

@@ -420,7 +420,8 @@ test("高亮不残留：从头部挪到禁放处（文件行 / 已在根下的�
 
   r.dragOverHeader();
   assert.equal(r.vaultHighlighted(), true);
-  r.dragStart("root.md"); // 换一个已经在根下的源：同一个指针位置从「可放」变「禁放」
+  r.dragEnd("sub/a.md"); // 一次拖拽结束（无 drop），换一个已经在根下的源再起拖
+  r.dragStart("root.md"); // 同一个指针位置上的源从「可放」变「禁放」
   assert.equal(r.dragOverHeader(), false, "已在根下的源在头部是禁放");
   assert.equal(r.vaultHighlighted(), false, "禁放即清高亮");
   assert.deepEqual(r.moves, [], "全程没有 drop，没有移动");
