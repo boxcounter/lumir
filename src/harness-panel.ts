@@ -10,7 +10,7 @@
 // 超阈值读数高亮 + 警示说明浮层；M370 起读数 = 「XX% · YY%」（+cache hit rate，分隔符小圆点
 // 按 Alex 复裁决改 U+00B7、与 modeline 同款——原话写作 •，以复裁决为准）、ⓘ 钮移除
 // 改 hover 浮层（Alex 2026-10-07），常驻警示句按 Alex 2026-10-06 裁决移除；M378 起浮层改
-// 两行带当时实际值（第一行 context window usage 走 D395、第二行 cache hit rate 走 D401）
+// 带当时实际值的多行（第一行 context window usage 走 D395）
 // 并按面板边界收编（窄 pane 左缘被 overflow:hidden 裁掉是「显示不全」的根因）；发送钮两态
 // idle=发送 / 处理中=停止，停止钩子为 M348 对接面的明确桩）。标题栏 toggle 钮仍由本模块自建，
 // 钉标题栏右端（产品标识块已移位 traffic 灯区）；双 pane 时隐藏（退让条款），⌘⇧A 照走。
@@ -51,7 +51,7 @@
 // D392 复用为合并浮层 effort 段标签）、D393–D399 为 M373 合并选择器（chip 读屏名支持态 /
 // effort 不支持 hover hint / ctx 读数含义 hint / 浮层段标签 ×2 / 浮层读屏名 / chip 读屏名
 // 未知态降级 D399）、D400 为 M374 停止中阶段行（stopping 相位即时反馈）、D401 为 M378
-// hover hint 第二行（cache hit rate 带值）、D402 / D403 为 M381 config-only 空清单提示态
+// hover hint 第二行（cache hit rate 带值；M533 起并入 D465 退场）、D402 / D403 为 M381 config-only 空清单提示态
 //（浮层模型段占位句 + chip 读屏名空态——不伪造模型条目）；D405–D408 为批准终态行
 //（结果词 / 详情入口 / 原因句——M406 起挂在收敛后的同一工具行上）；D412–D416 为 M406
 // 批准卡问句分工与副句、待决行尾注（D343/D344 的工具行整句模板随人话化三段式退场，
@@ -1656,19 +1656,19 @@ export interface UsageReadings {
   ctx: number | null;
   /** 会话累计命中率（控制行主读数）。 */
   cacheSession: number | null;
-  /** 本回合单回合命中率（气泡辅读数）。 */
+  /** 本回合单回合命中率（M443；**M533 起无气泡消费点**——载荷投影保留）。 */
   cacheTurn: number | null;
-  /** 本回合成因标注（后端判定值，前端只按值取文案）。 */
+  /** 本回合成因标注（后端判定值，前端只按值取文案；**M533 起无气泡消费点**）。 */
   cacheNote: "cold_start" | "block_dilution" | null;
-  /** 本回合缓存写入 tokens。 */
+  /** 本回合缓存写入 tokens（**M533 起无气泡消费点**）。 */
   cacheWrite: number | null;
-  /** 本逻辑会话累计缓存写入 tokens。 */
+  /** 本逻辑会话累计缓存写入 tokens（**M533 起无气泡消费点**）。 */
   cacheWriteSession: number | null;
   /** 最近一次请求的 input tokens（M526，气泡「上下文已用」绝对值）。 */
   inputTokens: number | null;
-  /** 最近一次请求的 cached tokens（M526，气泡「本回合缓存命中」绝对值）。 */
+  /** 最近一次请求的 cached tokens（M526；**M533 起无气泡消费点**）。 */
   cachedTokens: number | null;
-  /** 本逻辑会话累计 cached tokens（M526，气泡「会话累计」绝对值）。 */
+  /** 本逻辑会话累计 cached tokens（M526；**M533 起无气泡消费点**——命中率行只出百分比）。 */
   cachedTokensSession: number | null;
   /** ctx% 的分母（模型窗口；0 = 无上限值，气泡降级不显示百分比与上限）。 */
   contextWindow: number | null;
@@ -1737,13 +1737,16 @@ export interface CtxPopRow {
   text: string;
 }
 
-/** ctx hover 气泡行文本（M526 抽纯）：绝对值在场时用 tokens 形态（D463/D465/D466），
- *  缺键（旧载荷）降级回百分比形态（D395/D401/D452），上限值缺失（context_window 为 0）
- *  走无上限文案（D464）——MUST NOT 编造数据。`hasUsage === false`（从未发过请求）返回空行集
- *  （读数区整体隐藏是 applyUsage 的判定，这里是第二道防线）。越线时警示句（D335）追加在最后。
- *  M532：气泡内**全部** tokens 数字（D463 已用/上限、D464 已用、D465 会话累计命中、D466 本回合
- *  命中、D455 缓存写入的两个数）过 `formatTokenCount`（k/m 单位）——只换数字形态，句法、降级
- *  判定与整行不渲染的判定口径一行不动。 */
+/** ctx hover 气泡行文本（M526 抽纯）：**行集 M533 精简为两行含义句 + 越线警示行**——
+ *  ①usage 行（绝对值与上限在场 ⇒ tokens 形态 D463；上限为 0 ⇒ 无上限降级 D464；绝对值缺键
+ *  （旧载荷）⇒ 百分比形态 D395）②会话缓存命中率行（只百分比，D465）③越线时警示句（D335）
+ *  追加在最后（M378 起的追加行为与恒在末尾的行序不变）。本回合命中行 / 缓存写入行 / 成因句
+ *  随 M533 退场（Alex 2026-10-16：「气泡内容太冗余了。只需要这些信息」）——本回合值与缓存写入
+ *  仍进 wire 留存（`llm_response.usage`），只是不再上屏。
+ *  M532：气泡内的 tokens 数字（只存在于 usage 行的已用 / 上限）过 `formatTokenCount`（k/m
+ *  单位）——只换数字形态，在场 / 降级判定一行不动。
+ *  数据纪律不变：MUST NOT 编造读数；`hasUsage === false`（从未发过请求）返回空行集
+ *  （读数区整体隐藏是 applyUsage 的判定，这里是第二道防线）。 */
 export function ctxPopRows(r: UsageReadings, warnPct: number): CtxPopRow[] {
   if (r.hasUsage === false || r.ctx === null) return [];
   const rows: CtxPopRow[] = [];
@@ -1769,46 +1772,18 @@ export function ctxPopRows(r: UsageReadings, warnPct: number): CtxPopRow[] {
       text: t("D395", { ctx: Math.round(r.ctx) }),
     });
   }
-  // 第二行：会话累计命中率（控制行主读数的含义句），绝对值在场 ⇒ tokens 形态。
+  // 第二行：会话缓存命中率（控制行主读数的含义句）。M533 起只出百分比——M526 的 tokens
+  // 形态退场，D401 的百分比回落形态随之并入本条（一个口径一条串）。
   if (r.cacheSession !== null) {
     rows.push({
       cls: "lumir-hp-ctxpop-cache",
-      text:
-        r.cachedTokensSession !== null
-          ? t("D465", {
-              cached: formatTokenCount(r.cachedTokensSession),
-              cache: Math.round(r.cacheSession),
-            })
-          : t("D401", { cache: Math.round(r.cacheSession) }),
-    });
-  }
-  // 第三行：本回合命中率（带成因句——成因由后端标注，前端只按值取句）。
-  if (r.cacheTurn !== null) {
-    // 成因句是「同一行的追加半句」：无标注时只出前半句，有标注时用 U+00B7 接上成因句
-    // （分隔符是排版、与句内措辞无关，同 modeline 的小圆点口径）。
-    const note =
-      r.cacheNote === null ? "" : ` · ${t(r.cacheNote === "cold_start" ? "D453" : "D454")}`;
-    const base =
-      r.cachedTokens !== null
-        ? t("D466", { cached: formatTokenCount(r.cachedTokens), turn: Math.round(r.cacheTurn) })
-        : t("D452", { turn: Math.round(r.cacheTurn) });
-    rows.push({ cls: "lumir-hp-ctxpop-cache-turn", text: `${base}${note}` });
-  }
-  // 第四行：缓存写入（判定键是本回合值——为 0 或会话累计键缺失时整行不渲染；两个数都必须
-  // 来自载荷，不拿本回合值冒充累计值）。
-  if (r.cacheWrite !== null && r.cacheWrite !== 0 && r.cacheWriteSession !== null) {
-    rows.push({
-      cls: "lumir-hp-ctxpop-cache-write",
-      text: t("D455", {
-        write: formatTokenCount(r.cacheWrite),
-        total: formatTokenCount(r.cacheWriteSession),
-      }),
+      text: t("D465", { cache: Math.round(r.cacheSession) }),
     });
   }
   if (usageOverWarn(r.ctx, warnPct)) {
     rows.push({
       cls: "lumir-hp-ctxpop-warn",
-      text: t("D335", { ctx: Math.round(r.ctx), warn: Math.round(warnPct) }),
+      text: t("D335", { warn: Math.round(warnPct) }),
     });
   }
   return rows;
@@ -3077,22 +3052,22 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
    *  快照的 `cache_pct_session` 字段消费；null = 读数缺失（旧事件 / 桩）——回落单读数
    *  「{ctx}%」，不伪造 cache 值）。 */
   let lastCache: number | null = null;
-  /** 本回合单回合命中率（M443，hover 气泡辅读数；缺失 → 该行不渲染）。 */
+  /** 本回合单回合命中率（M443；**M533 起无上屏消费点**——降级到只随 wire 留存可查，
+   *  控制行与气泡都不显示；读数映射保留原位，前端投影仍是载荷的完整一份）。 */
   let lastCacheTurn: number | null = null;
-  /** 本回合成因标注（M443，后端判定的值：`cold_start` / `block_dilution`；null = 无标注——
-   *  气泡只出「本回合缓存命中」前半句。前端 MUST NOT 自行猜成因：判定算法在后端一处）。 */
+  /** 本回合成因标注（M443，后端判定的值：`cold_start` / `block_dilution`；M533 起无上屏
+   *  消费点——成因句随本回合行一并退场）。 */
   let lastCacheNote: "cold_start" | "block_dilution" | null = null;
-  /** 本回合缓存写入 tokens 与本文逻辑会话累计（M443，气泡第四行的两个数）。判定键是本回合值：
-   *  为 0（provider 不提供该字段，deepseek / Kimi Code 端点即此）⇒ 整行不渲染。 */
+  /** 本回合缓存写入 tokens 与本文逻辑会话累计（M443；**M533 起无上屏消费点**——缓存写入行
+   *  退场，两个数仍随 `llm_response.usage` 进 wire 留存）。 */
   let lastCacheWrite: number | null = null;
   let lastCacheWriteSession: number | null = null;
   /** 最近一次往返的 input tokens（M526，气泡「上下文已用」绝对值；null = 旧载荷缺键，气泡
    *  降级回百分比形态 D395，不编造 tokens）。 */
   let lastInputTokens: number | null = null;
-  /** 最近一次往返的 cached tokens（M526，气泡「本回合缓存命中」绝对值；null = 旧载荷缺键，
-   *  降级回百分比形态 D452）。 */
+  /** 最近一次往返的 cached tokens（M526；**M533 起无上屏消费点**——本回合命中行退场）。 */
   let lastCachedTokens: number | null = null;
-  /** 本逻辑会话累计 cached tokens（M526，气泡「会话累计」绝对值；null = 旧载荷缺键，降级 D401）。 */
+  /** 本逻辑会话累计 cached tokens（M526；**M533 起无上屏消费点**——命中率行只出百分比）。 */
   let lastCachedTokensSession: number | null = null;
   /** ctx% 的分母（M526：当时算读数用的模型上下文窗口；null = 旧载荷缺键；0 = 无上限值——
    *  气泡不显示百分比与上限，走降级文案）。 */
@@ -4905,7 +4880,9 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
    *  M373：hover 浮层常驻含义句；M378 改两行带值形态（D395 第一行 + D401 第二行，
    *  越线时 D335 警示句追加其下）并按面板边界收编（clampCtxPop）。浮层内容在 hover 时现建。
    *  **M443：D334 的 `{cache}` 口径改为会话累计命中率**（`lastCache` 语义随之改准）——
-   *  形态与回落口径、越线高亮（usageOverWarn）一律不变；单回合值降为气泡里的辅值。
+   *  形态与回落口径、越线高亮（usageOverWarn）一律不变。
+   *  **M533：气泡行集精简为「usage 行 + 会话命中率行 + 越线警示行」**——本回合值不再有任何
+   *  上屏面（控制行与气泡都不显示），只留在 wire 留存里。
    *  **M526：`has_usage === false`（从未发过请求的会话）读数区整体隐藏**——六键零值是缺省
    *  不是读数，渲染即成「0% · 0%」虚报；`has_usage` 缺键（旧载荷）维持旧行为。 */
   function applyUsage(): void {
@@ -4930,9 +4907,9 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
 
   /** ctx hover 浮层内容现建（行文本在纯模型层 [`ctxPopRows`] 产出，此处只落 DOM）：
    *  第一行上下文窗口占用（绝对值 tokens 形态 D463 / 无上限降级 D464 / 旧载荷百分比形态
-   *  D395）、第二行会话累计命中率（D465 / D401）、第三行本回合命中率（D466 / D452，带成因句
-   *  D453/D454）、第四行缓存写入（D455，本回合值为 0 或会话累计键缺失时整行不渲染）；越线时
-   *  警示句（D335）追加在最后（追加行为保留）。 */
+   *  D395）、第二行会话缓存命中率（D465，只百分比）；越线时警示句（D335）追加在最后
+   *  （追加行为保留）。M533 起本回合命中行 / 缓存写入行 / 成因句已退场——本回合值与缓存写入
+   *  仍进 wire 留存，只是不再上屏。 */
   function buildCtxPop(): void {
     ctxPop.replaceChildren();
     for (const row of ctxPopRows(currentUsageReadings(), warnCtxPct)) {
@@ -6099,7 +6076,8 @@ export function createHarnessPanel(deps: HarnessPanelDeps): HarnessPanelHandle {
         // 一直在发（头部栏已移除、事件未断），这里直接消费，不新造通道。
         // M370：cache 读数一并消费（同一事件里已带，纯前端读取）——「{ctx}% · {cache}%」。
         // M443：cache 侧换键——`cache_pct_session`（控制行主读数，会话累计）取代退役的
-        // `cache_pct`；单回合值 / 缓存写入两值 / 成因标注供 hover 气泡。键名映射与缺省口径
+        // `cache_pct`；`cache_pct_turn` / 缓存写入两值 / 成因标注由**读数映射**照旧落进状态
+        // （M533 起气泡不再渲染这三组，投影不随行集裁）。键名映射与缺省口径
         // 走 usageReadings 一处（快照路径同一份），缺键一律落 null：读数回落单读数、气泡
         // 对应行不渲染——不伪造、不用 0 冒充实测值。
         applyUsageReadings(usageReadings(event));

@@ -239,7 +239,7 @@ composer（输入区）与控制行 SHALL 收进同一个圆角卡片容器（�
 - **THEN** 终态记录里不出现判定依据行（与待决副句、决策按钮一同退场），界面零残留
 
 ### Requirement: 上下文用量显示与触顶处理
-composer 控制行 SHALL 常驻显示上下文用量读数（位于模型 chip 之后、发送钮之前）：context window 已用 %（最近一次请求的 input tokens ÷ 模型上下文窗口）与 cache hit %（Responses 形态下两 provider 统一走 `usage.input_tokens_details.cached_tokens`；映射表留在 provider 预设内防字段方言）。cache hit % SHALL 以**本逻辑会话累计命中率**（`Σcached_tokens ÷ Σinput_tokens`；会话建立、「新会话」重置、自动压缩开新逻辑会话各起一段、累计随之归零；**从历史恢复 SHALL 以源会话留存的读数为基底继续累计**——恢复时由留存重算：`session_open` 读数种子 + 其后会话轮次 usage 扫描，压缩调用是内部汇总调用、不计入）作为控制行**主读数**，MUST NOT 以最近一次请求的单回合命中率作为控制行主读数。最近一次请求的**单回合命中率**（`cached_tokens ÷ input_tokens`）SHALL 在 hover 气泡内与主读数并列呈现；该回合处于**冷启动**（`cached_tokens` 为零）或**大块摊薄**（该回合新增 tokens 超过已缓存前缀的一半）时，气泡 SHALL 附带一句成因说明，点明两种情形均非缓存失效。缓存写入 tokens（provider usage 的 `cache_write_tokens`）SHALL 在 hover 气泡内呈现本回合与本会话累计值，字段缺失且为零时该行 SHALL NOT 渲染。**hover 气泡 SHALL 随百分比一并呈现绝对 tokens 用量**（M526）：上下文已用 tokens / 模型窗口上限 tokens 与百分比同句，缓存命中（本回合与会话累计）的 tokens 与命中率同句；数据不可得时 SHALL 降级（绝对值缺键回落百分比形态、窗口上限值为零时不显示上限与百分比），MUST NOT 编造读数。**气泡内的 tokens 数字 SHALL 以 k / m 为单位呈现**（M532，Alex 2026-10-16：「token 的最小单位是 k，如果超过 1000k，就升级成 m。让数字更加人可读 好理解」）：≥1,000,000 → `m` 档、≥1,000 → `k` 档、不足 1,000 原值直出（不带单位）；小数 SHALL 截断到 0.1 档（MUST NOT 四舍五入）、末尾 `.0` SHALL 省略（`1k` 而非 `1.0k`）。格式化 SHALL 由单一纯函数（`formatTokenCount`，`src/harness-panel.ts`）产出——气泡内**全部** tokens 数字（D463 已用/上限、D464 降级行的已用、D465 / D466 的命中、D455 缓存写入的两个数）共此一份，MUST NOT 各行自行拼装；数字形态的替换 MUST NOT 改变各行的在场 / 降级判定（绝对值缺键回落百分比形态、窗口上限为零降级、本回合写入为零整行不渲染三条判定与单位无关）。控制行的百分比读数（ctx% / cache%）不是 tokens 数字，不受本规则约束。**从未发过请求的会话（快照 `has_usage=false`）读数区 SHALL NOT 渲染**（六键零值是缺省不是读数，渲染即成「0% · 0%」虚报）。用量超过警示阈值（默认 85%，可配）时读数 SHALL 高亮，指针悬停读数 SHALL 浮出说明气泡（向上展开、右缘对齐读数右缘）、移开即收起；SHALL NOT 常驻显示警示句，也 SHALL NOT 另挂 ⓘ 类可点入口（2026-10-07 去感叹号改 hover 形态，读数高亮已承担警示语义）。系统 SHALL 默认自动压缩（`auto_compact = true`）：每轮响应完成后检查，越阈值即自动把会话历史压缩为摘要、开新逻辑会话并注入摘要 + 当前编辑器上下文 + 系统上下文；自动压缩 MUST NOT 静默——面板插入可见压缩标记（摘要可展开），压缩前历史 SHALL 完整留存在旧会话 JSONL 文件（封闭不再追加），压缩摘要 SHALL 随新会话 `session_open` 留存。API 返回上下文超限错误时 SHALL 自动压缩后重试该轮一次。系统 MUST NOT 静默截断会话历史。
+composer 控制行 SHALL 常驻显示上下文用量读数（位于模型 chip 之后、发送钮之前）：context window 已用 %（最近一次请求的 input tokens ÷ 模型上下文窗口）与 cache hit %（Responses 形态下两 provider 统一走 `usage.input_tokens_details.cached_tokens`；映射表留在 provider 预设内防字段方言）。cache hit % SHALL 以**本逻辑会话累计命中率**（`Σcached_tokens ÷ Σinput_tokens`；会话建立、「新会话」重置、自动压缩开新逻辑会话各起一段、累计随之归零；**从历史恢复 SHALL 以源会话留存的读数为基底继续累计**——恢复时由留存重算：`session_open` 读数种子 + 其后会话轮次 usage 扫描，压缩调用是内部汇总调用、不计入）作为控制行**主读数**，MUST NOT 以最近一次请求的单回合命中率作为控制行主读数。**hover 气泡 SHALL 只呈现两项读数**（M533，Alex 2026-10-16：「气泡内容太冗余了。只需要这些信息：1. 当前上下文使用量和百分比。如果 ≥85 使用率，提示下一轮对话将自动压缩。2. 会话的缓存命中率」）：①上下文用量行——百分比 + 绝对 tokens 用量（M526；上下文已用 tokens / 模型窗口上限 tokens 与百分比同句），数据不可得时 SHALL 降级（绝对值缺键回落百分比形态、窗口上限值为零时不显示上限与百分比），MUST NOT 编造读数；②会话缓存命中率行——**只呈现百分比**（M533 是对 M526 需求 2 里 cache tokens 读数的显式 supersede，写法取 Alex 原话「缓存命中率（会话）：60%」；该行的百分比口径 SHALL 是会话累计，与控制行同一份读数）。**最近一次请求的单回合命中率、成因说明（冷启动 / 大块摊薄）与缓存写入 tokens SHALL NOT 出现在气泡里**（M533 移除这三项的上屏面）——三者 SHALL 仍随 `llm_response.usage` 进会话留存（见「会话本地留存」条），只是不再有上屏面。**气泡内的 tokens 数字 SHALL 以 k / m 为单位呈现**（M532，Alex 2026-10-16：「token 的最小单位是 k，如果超过 1000k，就升级成 m。让数字更加人可读 好理解」）：≥1,000,000 → `m` 档、≥1,000 → `k` 档、不足 1,000 原值直出（不带单位）；小数 SHALL 截断到 0.1 档（MUST NOT 四舍五入）、末尾 `.0` SHALL 省略（`1k` 而非 `1.0k`）。格式化 SHALL 由单一纯函数（`formatTokenCount`，`src/harness-panel.ts`）产出——M533 起气泡里只剩上下文用量行含 tokens 数字（D463 已用/上限、D464 降级行的已用）共此一份，MUST NOT 自行拼装；数字形态 MUST NOT 改变各行的在场 / 降级判定（绝对值缺键回落百分比形态、窗口上限为零时降级两条判定与单位无关）。控制行的百分比读数（ctx% / cache%）不是 tokens 数字，不受本规则约束。**从未发过请求的会话（快照 `has_usage=false`）读数区 SHALL NOT 渲染**（六键零值是缺省不是读数，渲染即成「0% · 0%」虚报）。用量超过警示阈值（默认 85%，可配）时读数 SHALL 高亮，指针悬停读数 SHALL 浮出说明气泡（向上展开、右缘对齐读数右缘）、移开即收起；越线时气泡 SHALL 追加一行警示说明、点明**下一轮对话将自动压缩**（M533 措辞改准；该行恒在含义句之后）且 MUST NOT 复述同一行的百分比——用量行已显示过它，MUST NOT 常驻显示警示句，也 SHALL NOT 另挂 ⓘ 类可点入口（2026-10-07 去感叹号改 hover 形态，读数高亮已承担警示语义）。系统 SHALL 默认自动压缩（`auto_compact = true`）：每轮响应完成后检查，越阈值即自动把会话历史压缩为摘要、开新逻辑会话并注入摘要 + 当前编辑器上下文 + 系统上下文；自动压缩 MUST NOT 静默——面板插入可见压缩标记（摘要可展开），压缩前历史 SHALL 完整留存在旧会话 JSONL 文件（封闭不再追加），压缩摘要 SHALL 随新会话 `session_open` 留存。API 返回上下文超限错误时 SHALL 自动压缩后重试该轮一次。系统 MUST NOT 静默截断会话历史。
 
 > **已知边界（现象记录 + 根因调查进行中，非规格变更；2026-10-12 起）**：在 k3-256k 的 coding 端点（`api.kimi.com/coding/v1`，走 Responses 形状）上，Lumir 的真实会话里出现过「回报 `input_tokens` 尚不足名义窗口一半、紧接着的一次请求却被端点以 400 拒」（`Your request exceeded k3-256k model token limit: 262144`）——该会话成功的最大回报值 99,399，下一发即被拒；30 万字符的纯合成输入（剔除 reasoning 重放与 tools）同样被拒。另两点已坐实：端点**忽略**客户端 `max_output_tokens`（照收、响应回显 `null`），改 thinking 档位也不改变结论；该变体的报错**不带** `(requested: N)`，服务端算出的那个数拿不到。
 >
@@ -258,33 +258,35 @@ composer 控制行 SHALL 常驻显示上下文用量读数（位于模型 chip �
 - **THEN** 控制行 cache 读数 SHALL 等于该会话至今的 `Σcached_tokens ÷ Σinput_tokens`（MUST NOT 只反映
   最近一回合的单回合值）；开启新逻辑会话（「新会话」重置 / 自动压缩）后累计 SHALL 重新起算
 
-#### Scenario: 单回合低谷带成因标注
+#### Scenario: 气泡的行集（用量 + 命中率）
 
-- **WHEN** 某一回合 `cached_tokens` 为零（会话首个请求的典型冷启动，或前缀缓存过期），或该回合新增
-  tokens 超过已缓存前缀的一半（大块内容摊薄）
-- **THEN** 控制行主读数仍显示会话累计值；hover 气泡内该回合的单回合命中率旁 SHALL 出现对应成因说明句，
-  说明该情形非缓存失效
-
-#### Scenario: 缓存写入遥测在气泡内呈现
-
-- **WHEN** provider 的 usage 带回 `cache_write_tokens`（kimi），完成一轮对话后悬停读数
-- **THEN** 气泡内显示本回合与本会话累计的缓存写入 tokens；若 `cache_write_tokens` 为零（provider 不提供
-  该字段时按 0），该行 SHALL NOT 渲染
+- **WHEN** 完成一轮带 usage 的对话后悬停读数
+- **THEN** 气泡只呈现两行含义句：上下文用量行（百分比 + 绝对 tokens 用量）与会话缓存命中率行；
+  该回合的单回合命中率、成因说明、缓存写入 tokens 三行 SHALL NOT 出现（M533 行集精简，三者在
+  留存里仍可查）；越线时在其后追加警示行
 
 #### Scenario: 气泡呈现绝对 tokens 用量
 
-- **WHEN** 完成一轮对话后悬停读数（usage 快照带绝对值字段：input / cached tokens 与模型窗口）
-- **THEN** 气泡第一行 SHALL 同句呈现上下文已用 tokens、模型窗口上限 tokens 与百分比；第二 / 第三行
-  SHALL 同句呈现本会话累计与本回合命中的 tokens 及命中率；绝对值缺键（旧后端载荷）时各行回落百分比形态；
-  窗口上限值为零（无上限值）时第一行 SHALL NOT 显示上限与百分比、走降级文案（MUST NOT 编造读数）
+- **WHEN** 完成一轮对话后悬停读数（usage 快照带绝对值字段：input tokens 与模型窗口）
+- **THEN** 气泡的上下文用量行 SHALL 同句呈现上下文已用 tokens、模型窗口上限 tokens 与百分比；
+  绝对值缺键（旧后端载荷）时该行回落百分比形态；窗口上限值为零（无上限值）时该行 SHALL NOT 显示
+  上限与百分比、走降级文案（MUST NOT 编造读数）。命中率行 SHALL 只呈现百分比，MUST NOT 带 tokens 计数
+  （M533 的显式 supersede），其口径 SHALL 与控制行同为会话累计
+
+#### Scenario: 单个回合的命中低谷不产生气泡行
+
+- **WHEN** 某一回合 `cached_tokens` 为零（会话首个请求的典型冷启动，或前缀缓存过期），或该回合新增
+  tokens 超过已缓存前缀的一半（大块内容摊薄）
+- **THEN** 控制行主读数仍显示会话累计值；气泡里 MUST NOT 出现该回合的单回合值，也 MUST NOT 出现
+  任何成因说明句（两种情形仍随 `llm_response.usage` 落留存，供事后排查）
 
 #### Scenario: 气泡 tokens 数字走 k / m 单位
 
-- **WHEN** 气泡呈现任一 tokens 数字（上下文已用 / 模型窗口上限、本会话累计命中、本回合命中、缓存写入的本回合与会话累计值）
+- **WHEN** 气泡的上下文用量行呈现 tokens 数字（上下文已用 / 模型窗口上限，含无上限降级行的已用值）
 - **THEN** ≥1,000,000 的读数 SHALL 以 `m` 为单位、≥1,000 的读数 SHALL 以 `k` 为单位、不足 1,000 的读数
   SHALL 以原值直出（`0` 呈 `0`、不呈 `0k`）；小数 SHALL 截断到 0.1 档（MUST NOT 四舍五入）且末尾 `.0`
   省略。边界以四条定档：`999` → `999`、`1000` → `1k`、`999999` → `999.9k`（k 档 MUST NOT 出现 `1000k`）、
-  `1000000` → `1m`；同一规则 SHALL 同时适用于缓存写入行与无上限降级行
+  `1000000` → `1m`；同一规则 SHALL 同时适用于无上限降级行
 
 #### Scenario: 空会话不假读数
 
@@ -301,7 +303,9 @@ composer 控制行 SHALL 常驻显示上下文用量读数（位于模型 chip �
 #### Scenario: 超阈值警示收敛为悬停气泡
 
 - **WHEN** ctx% 越过警示阈值
-- **THEN** 读数高亮；指针悬停读数时浮出说明气泡、移开即收起；界面不出现常驻警示句、无 ⓘ 入口
+- **THEN** 读数高亮；指针悬停读数时浮出说明气泡、移开即收起；越线时气泡在含义句之后追加一行警示说明，
+  点明下一轮对话将自动压缩（M533 措辞），且 MUST NOT 复述用量行刚显示过的百分比；界面不出现常驻警示句、
+  无 ⓘ 入口
 
 #### Scenario: 自动压缩
 
