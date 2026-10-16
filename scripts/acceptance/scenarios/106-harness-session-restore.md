@@ -111,10 +111,8 @@ steps:
     expect:
       - label: 恢复后控制行显示源会话最近一次真实读数（读数区在场、且是真值不是「0% · 0%」虚报）
         ax: { has: "1% · 10%" }
-      - label: 新会话首行落读数种子（session_open 带 usage + cache_totals——链式恢复从种子起算）
-        # 键序：serde_json 落盘按字典序（BTreeMap、无 preserve_order）——cache_totals 在 kind 之前、
-        # has_usage 在 input_tokens 之前；正则键序必须与落盘序一致（场景 76 同纪律），否则真机必 FAIL。
-        file: { path: "env:harness/sessions/*/*.jsonl", has: '/^.*"cache_totals".*"kind":"session_open".*"has_usage":true.*$/' }
+      # 读数种子的**落盘**判据不在这里：JsonlWriter 惰性落盘，新会话文件要到第一次发送才诞生
+      # （见正文「断言口径」的落盘时机条），它的断言挂在恢复后首次发送那一步上。
       - shot: 02b-恢复-读数
 
   - name: 点 composer 建立输入焦点（选择器/恢复的点击把 DOM 焦点移走，续打字前须重新聚焦——场景 100 同法）
@@ -139,6 +137,14 @@ steps:
         ax: { has: "验收回答：上下文已收到。" }
       - label: 新会话文件首行标 opened_from=restore（恢复谱系）
         file: { path: "env:harness/sessions/*/*.jsonl", has: '"opened_from":"restore"' }
+      - label: 新会话首行落读数种子（session_open 带 usage + cache_totals——链式恢复从种子起算）
+        # **断言时机（M535）**：JsonlWriter 惰性落盘，新会话的文件在**第一次发送**时才诞生——所以
+        # 这一条挂在发送之后（2026-10-16 真机现场：挂在「恢复后读数上屏」那一步时，新文件尚不存在，
+        # glob 只能命中源会话文件，`cache_totals` 必然不在 ⇒ 如实 FAIL）。同一步的 opened_from /
+        # restored_from 两条断言证明 glob 命中的是**新**会话文件，这条因此不会在源文件上空转。
+        # 键序：serde_json 落盘按字典序（BTreeMap、无 preserve_order）——cache_totals 在 kind 之前、
+        # has_usage 在 input_tokens 之前；正则键序必须与落盘序一致（场景 76 同纪律），否则真机必 FAIL。
+        file: { path: "env:harness/sessions/*/*.jsonl", has: '/^.*"cache_totals".*"kind":"session_open".*"has_usage":true.*$/' }
       - label: 新会话文件记 restored_from = 源会话 id（s<millis>-<base36>）
         file: { path: "env:harness/sessions/*/*.jsonl", has: '/^.*"restored_from":"s[0-9a-z-]+".*$/' }
       - label: 恢复充分性——新一轮 llm_request 的历史里同时带源会话的 user 消息（zqxalpha）与恢复后的新消息（vwbmore）
@@ -200,6 +206,13 @@ design §6。
   本场景独有**的串（不取 `more` 这类常见英文词，避免被 system 里的普通英文命中）。
 - **`restored_from` 不写死源 id**：源 session id 是运行期生成的 `s<millis>-<base36>`，断言用形态
   正则（`"restored_from":"s[0-9a-z-]+"`），不硬编码一份副本（真源唯一，REVIEW.md 第 8 条）。
+- **落盘类断言的时机（M535）**：harness 会话的 `JsonlWriter` 是**惰性落盘**——`session_open` 只在
+  **第一条记录**写盘时才产出（`src-tauri/src/harness/jsonl.rs`），因此恢复之后、还没发新消息时，
+  **新会话文件根本不存在**。这种时刻断言 `env:harness/sessions/*/*.jsonl` 上的内容，glob 会取到
+  mtime 最新的**源会话**文件：断言在错误的文件上判红（2026-10-16 现场：`cache_totals` 那条 FAIL，
+  而同一步的读数断言 PASS——读数种子是内存态、落盘要等到第一次发送）。⇒ 该场景的落盘断言一律
+  挂在「恢复后首次发送」那一步；判断「glob 命中的是哪份文件」靠同一步里带唯一标记的断言
+  （`opened_from` / `restored_from` / `zqxalpha`+`vwbmore` 同条 `llm_request`）。
 - **system 沿用源（不重新装配）**：design §6.2 第 2 步——恢复旧会话沿用旧会话当时的 system。本场景
   断言新一轮请求带 `system` 全文；「逐字节等于源」的严格比较由 Rust 单测（3.3 恢复路径测试）钉住
   （本套件 DSL 无跨文件逐字节比较）。
