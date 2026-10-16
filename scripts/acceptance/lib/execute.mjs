@@ -54,6 +54,13 @@ function isPlainTable(v) {
   return typeof v === "object" && v !== null && !Array.isArray(v);
 }
 
+/** `file` 断言的判据键（M543）：一条断言里写了几个就**逐条判几条**、每条落一条结果记录
+ *  （删掉了旧的「按优先级只判第一个命中键」的 `if` 链——多写的键在旧实现里静默失效）。顺序只
+ *  决定 steps.md 里记录的先后，不再决定「谁生效」。 */
+const FILE_JUDGE_KEYS = [
+  "exists", "changedSince", "unchangedSince", "mtimeUnchangedSince", "mtimeNewerThan", "has", "not",
+];
+
 /** 静态校验一个场景，返回问题列表（空 = 通过）。 */
 export function checkScenario(scenario) {
   const problems = [];
@@ -61,6 +68,23 @@ export function checkScenario(scenario) {
   if (!scenario.id) push("缺少 id");
   if (scenario.item === undefined) push("缺少 item");
   if (scenario.open && !scenario.marker) push(`open=${scenario.open} 但没写 marker（无法判断是否打开成功）`);
+  // 空步骤表（M543）：`steps:` 写到 front-matter 的闭合 `---` 之后时，`loadScenario` 只解析第一段
+  // front-matter、整份步骤表落进 body 被丢掉；而本函数遍历的是 `(scenario.steps ?? [])`——空数组
+  // 时循环体一次都不进、零问题返回，于是 `run.mjs --check` 报 PASS，真机跑批里该场景**零断言判
+  // PASS**（场景 158 的实证，M535 才补上场景本体）。「零断言假绿」是本套件最该挡的形态，因此在
+  // 静态校验的第一屏就挡：场景必须有非空步骤表。
+  if (!Array.isArray(scenario.steps) || scenario.steps.length === 0) {
+    push("缺少 steps（步骤表必须写在 front-matter 内）");
+    // 精确定位（M543，finding 20261016-worker-scenfix-bug-pass-loader-check-0）：front-matter 里
+    // 没有步骤表、而正文里出现了顶层 `steps:` / `teardown:` 行 ⇒ 整表写在了闭合 `---` 之外。直接
+    // 点出这个形态，比只说「缺少 steps」好排查。只在步骤表确实为空时报——正文里的 YAML 示例
+    //（围栏代码块）不该把一份正常场景判红。
+    for (const key of scenario.bodyStepKeys ?? [])
+      push(
+        `正文里出现了顶层 \`${key}:\` 行——整表写在 front-matter 的闭合 \`---\` 之外了` +
+          "（loadScenario 只解析第一段 front-matter，写在外面的整表被丢弃）",
+      );
+  }
   for (const [i, e] of (scenario.seed?.registry ?? []).entries()) {
     if (!e?.id || !e?.path) push(`seed.registry[${i}] 需要 id 与 path`);
   }
@@ -457,12 +481,20 @@ function substituteTokens(value, tokens) {
 
 export async function loadScenario(file) {
   const raw = await readText(file);
+  // **只取第一段 front-matter**（非贪婪：首个闭合 `---` 之前的内容）：这是本函数的既有口径，
+  // 也是 M543 那条假绿的来源——`steps:` 写到闭合 `---` 之后时整表落进 body 被丢弃。此处不改成
+  // 「多段合并」（正文里合法地出现 `---` 分隔线是常态），而是把命中的形态**报给静态校验**：
+  // 见下面的 bodyStepKeys。
   const m = /^---\n([\s\S]*?)\n---\n?([\s\S]*)$/.exec(raw);
   if (!m) throw new Error(`场景文件缺少 YAML front-matter：${file}`);
   const meta = substituteTokens(yaml.load(m[1]), await appMetaTokens());
   const body = m[2];
+  // 正文里出现**顶层** `steps:` / `teardown:` 行（M543）：这正是「整表写到了 front-matter 的
+  // 闭合 `---` 之外」的形态。这里只做定位、不直接报错——报错口径归 checkScenario（`--check` 的
+  // 唯一出口），只在 front-matter 里确实没有步骤表时报出（正文里的 YAML 示例不该误伤）。
+  const bodyStepKeys = [...new Set([...body.matchAll(/^(steps|teardown):/gm)].map((mm) => mm[1]))];
   const id = meta.id ?? path.basename(file, ".md");
-  return { ...meta, id, body, file };
+  return { ...meta, id, body, bodyStepKeys, file };
 }
 
 /** 断言里的匹配：字符串按子串；/.../ 包起来按正则。 */
@@ -850,6 +882,19 @@ export async function runScenario(ctx, scenario) {
   };
   const pass = (label, detail) => evidence.record({ kind: "assert", label, ok: true, detail });
 
+  // 运行期兜底（M543）：`--check` 会挡空步骤表，但真机跑批**不复跑** `checkScenario`（run.mjs 的
+  // 正常路径只 `loadScenario`）——只靠静态校验时，一份「步骤表写到 front-matter 之外」的场景仍会
+  // **零断言判 PASS**（场景 158 的实证）。与 `do: waitFor` 双空清单同一惯例（M296 r2）：静态与
+  // 运行期同口径 fail-loud，不把「一条判据都没跑」记成绿。teardown-only 的场景仍有断言可跑，
+  // 不在此列。
+  if ((scenario.steps ?? []).length === 0 && (scenario.teardown ?? []).length === 0) {
+    await fail(
+      `${scenario.id} 场景零断言`,
+      "steps 为空（步骤表必须写在 front-matter 内；写在闭合 `---` 之外会被 loadScenario 丢弃）" +
+        "——零断言的场景一律判 FAIL，不记 PASS",
+    );
+  }
+
   async function check(expect, state) {
     const label = expect.label ?? describeExpect(expect);
     if (typeof expect.shot === "string" || expect.shot === true) {
@@ -1087,64 +1132,104 @@ export async function runScenario(ctx, scenario) {
       return fail(`${label}（editor 断言缺少 has/not）`, "", state.ax);
     }
     if (expect.file) {
+      // 一条 `file` 断言里写了几个判据键，就**逐键判几条、逐键落一条记录**（M543）。
+      //
+      // 旧实现是一条 `if` 链、命中优先级最高的键就 `return`：同一个 `file` 对象里多写的键被
+      // **静默忽略**。而 README 的「file 断言」条恰恰要求「不落盘」这类判据把 `unchangedSince`
+      //（sha256）与 `mtimeUnchangedSince`（mtime）**成对用**——照 README 直写也只判了 sha256
+      // 那一半，「mtime 未推进」看着写了、实际没判（REVIEW.md 第 2 条：断言看着有覆盖、实际不判；
+      // finding 20261016-worker-scenfix-bug-file-readme-sha256-mtime）。修法取该 finding 的路线
+      // ①（逐键判、删优先级链），不是路线②（静态只许写一个键）——README 已写下的判据口径本来
+      // 就是「两个一起用」，限制写法会把口径改窄。
       const spec = expect.file;
       const file = await resolveSpecFile(spec.path);
       const info = await fileInfo(file);
       const label2 = spec.label ?? label;
-      if (spec.exists !== undefined) {
-        return spec.exists === Boolean(info)
-          ? pass(label2, info ? `${spec.path} ${info.isDir ? "（目录）" : ""}存在` : `${spec.path} 不存在`)
-          : fail(`${label2}（期望 exists=${spec.exists}，实际 ${Boolean(info)}）`);
-      }
-      if (!info && (spec.has !== undefined || spec.not !== undefined || spec.changedSince !== undefined || spec.unchangedSince !== undefined)) {
-        return fail(`${label2}（文件不存在：${spec.path}）`);
-      }
-      if (spec.changedSince !== undefined) {
-        const before = vars[spec.changedSince];
-        if (!before) return fail(`${label2}（未记录基线 ${spec.changedSince}）`);
-        if (info?.isDir || before.isDir) return fail(`${label2}（${spec.path} ${DIR_SHA256_HINT}）`);
-        const ok = !info ? false : before.sha256 !== info.sha256;
-        return ok ? pass(label2, `${before.sha256} -> ${info.sha256}`) : fail(`${label2}（sha256 未变：${before.sha256}）`, `mtime=${info?.mtimeMs}`);
-      }
-      if (spec.unchangedSince !== undefined) {
-        const before = vars[spec.unchangedSince];
-        if (info?.isDir || before?.isDir) return fail(`${label2}（${spec.path} ${DIR_SHA256_HINT}）`);
-        const ok = Boolean(info) && before && before.sha256 === info.sha256;
-        return ok ? pass(label2, `仍为 ${info.sha256}`) : fail(`${label2}（内容已变：${before?.sha256} -> ${info?.sha256}）`);
-      }
-      if (spec.mtimeUnchangedSince !== undefined) {
-        // mtime 逐字节口径的「没写过」判据（M195）：sha256 相同只说明内容没变，还可能存在
-        // 「写了同一份内容」（内容不变而 mtime 推进）。D5 的「不落盘」要同时排掉这两种，
-        // 因此保留一个与 unchangedSince 成对的 mtime 判据；精确相等（不是 +1 容差）——
-        // 两次 stat 之间没有写入时 mtimeMs 完全相同。
-        const before = vars[spec.mtimeUnchangedSince];
-        if (!before) return fail(`${label2}（未记录基线 ${spec.mtimeUnchangedSince}）`);
-        const ok = Boolean(info) && before.mtimeMs === info.mtimeMs;
-        return ok
-          ? pass(label2, `mtime 仍为 ${info.mtimeMs}`)
-          : fail(`${label2}（mtime 已推进：${before.mtimeMs} -> ${info?.mtimeMs}）`);
-      }
-      if (spec.mtimeNewerThan !== undefined) {
-        const base = vars[spec.mtimeNewerThan]?.mtimeMs ?? 0;
-        const ok = Boolean(info) && info.mtimeMs > base + 1;
-        return ok ? pass(label2, `mtime ${info?.mtimeMs} > ${base}`) : fail(`${label2}（mtime 未推进：${info?.mtimeMs} vs ${base}）`);
-      }
-      if (spec.has !== undefined) {
-        const m = matcher(spec.has);
-        if (!info) return fail(`${label2}（文件不存在：${spec.path}）`);
+      const keys = FILE_JUDGE_KEYS.filter((k) => spec[k] !== undefined);
+      if (keys.length === 0) return fail(`${label2}（file 断言无法识别）`);
+      // 多键时给每条记录冠上键名，好在 steps.md 里一眼分出「哪一条判败」；单键的 label 逐字不变
+      //（既有单键断言的证据形状不因此变化）。
+      const tag = keys.length > 1 ? (k) => `［${k}］` : () => "";
+      // has / not 的内容读数：整个 expect 读一次缓存起来；读不出来一律判 FAIL，不把「读不到」
+      // 当「为空」（REVIEW.md 第 2 条）。
+      let content;
+      let contentErr;
+      const readContent = async () => {
+        if (!info) contentErr = `（文件不存在：${spec.path}）`;
         // 目录没有内容这一说：读了会抛 EISDIR（M324 起路径读数认得目录，这里必须自己挡）。
-        if (info.isDir) return fail(`${label2}（${spec.path} 是目录：内容类判据 has/not 只对文件成立）`);
-        const text = await readText(file);
-        return m.test(text) ? pass(label2) : fail(`${label2}（期望含 ${m.show}）`, JSON.stringify(text.slice(0, 300)));
+        else if (info.isDir) contentErr = `（${spec.path} 是目录：内容类判据 has/not 只对文件成立）`;
+        else content = await readText(file);
+      };
+      /** 单键判定：成立 → `{ok:true, detail?}`；不成立 → `{ok:false, reason, detail?}`。
+       *  `reason` 拼进 label 的括注、`detail` 是记录末尾的读数——与旧实现逐条对齐，单键场景的
+       *  steps.md 因此逐字不变。 */
+      const judge = async (key) => {
+        const missingFile = () => ({ ok: false, reason: `（文件不存在：${spec.path}）` });
+        switch (key) {
+          case "exists": {
+            const exists = Boolean(info);
+            return spec.exists === exists
+              ? { ok: true, detail: info ? `${spec.path} ${info.isDir ? "（目录）" : ""}存在` : `${spec.path} 不存在` }
+              : { ok: false, reason: `（期望 exists=${spec.exists}，实际 ${exists}）` };
+          }
+          case "changedSince":
+          case "unchangedSince": {
+            const base = spec[key];
+            const before = vars[base];
+            if (info?.isDir || before?.isDir) return { ok: false, reason: `（${spec.path} ${DIR_SHA256_HINT}）` };
+            if (!before) return { ok: false, reason: `（未记录基线 ${base}）` };
+            if (!info) return missingFile();
+            if (key === "changedSince") {
+              return before.sha256 !== info.sha256
+                ? { ok: true, detail: `${before.sha256} -> ${info.sha256}` }
+                : { ok: false, reason: `（sha256 未变：${before.sha256}）`, detail: `mtime=${info.mtimeMs}` };
+            }
+            return before.sha256 === info.sha256
+              ? { ok: true, detail: `仍为 ${info.sha256}` }
+              : { ok: false, reason: `（内容已变：${before.sha256} -> ${info.sha256}）` };
+          }
+          case "mtimeUnchangedSince": {
+            // mtime 逐字节口径的「没写过」判据（M195）：sha256 相同只说明内容没变，还可能存在
+            // 「写了同一份内容」（内容不变而 mtime 推进）。D5 的「不落盘」要同时排掉这两种，
+            // 因此保留一个与 unchangedSince 成对的 mtime 判据；精确相等（不是 +1 容差）——
+            // 两次 stat 之间没有写入时 mtimeMs 完全相同。它与 `unchangedSince` 同写时才真正判到
+            // 两半——这正是 M543 修掉的那条静默少判（26 条现存断言用这个配对写法）。
+            const base = spec.mtimeUnchangedSince;
+            const before = vars[base];
+            if (!before) return { ok: false, reason: `（未记录基线 ${base}）` };
+            if (!info) return missingFile();
+            return before.mtimeMs === info.mtimeMs
+              ? { ok: true, detail: `mtime 仍为 ${info.mtimeMs}` }
+              : { ok: false, reason: `（mtime 已推进：${before.mtimeMs} -> ${info.mtimeMs}）` };
+          }
+          case "mtimeNewerThan": {
+            const base = vars[spec.mtimeNewerThan]?.mtimeMs ?? 0;
+            if (!info) return missingFile();
+            return info.mtimeMs > base + 1
+              ? { ok: true, detail: `mtime ${info.mtimeMs} > ${base}` }
+              : { ok: false, reason: `（mtime 未推进：${info.mtimeMs} vs ${base}）` };
+          }
+          default: {
+            // has / not
+            if (content === undefined && contentErr === undefined) await readContent();
+            if (contentErr) return { ok: false, reason: contentErr };
+            const m = matcher(spec[key]);
+            if (key === "has")
+              return m.test(content)
+                ? { ok: true }
+                : { ok: false, reason: `（期望含 ${m.show}）`, detail: JSON.stringify(content.slice(0, 300)) };
+            return m.test(content) ? { ok: false, reason: `（期望不含 ${m.show}）` } : { ok: true };
+          }
+        }
+      };
+      // 逐键落记录。返回值无人消费（调用方只 `await check(...)`），多键时也没有「唯一一条记录」
+      // 可言——这里只负责把每条判据都落成记录，不再让任何一条静默缺席。
+      for (const key of keys) {
+        const r = await judge(key);
+        if (r.ok) pass(`${label2}${tag(key)}`, r.detail);
+        else fail(`${label2}${tag(key)}${r.reason}`, r.detail);
       }
-      if (spec.not !== undefined) {
-        const m = matcher(spec.not);
-        if (!info) return fail(`${label2}（文件不存在：${spec.path}）`);
-        if (info.isDir) return fail(`${label2}（${spec.path} 是目录：内容类判据 has/not 只对文件成立）`);
-        const text = await readText(file);
-        return !m.test(text) ? pass(label2) : fail(`${label2}（期望不含 ${m.show}）`);
-      }
-      return fail(`${label2}（file 断言无法识别）`);
+      return;
     }
     // 二进制文件的字节级断言（M416，change paste-clipboard-image）：`file` 的 has/not 读的是
     // UTF-8 文本，对 WebP 这类二进制没有可观测量。两种判据都在这里：
