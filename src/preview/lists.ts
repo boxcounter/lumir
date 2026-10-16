@@ -95,6 +95,17 @@ export interface BareMarkerLine {
 
 const BARE_MARKER_RE = /^((?:>[ \t]*)*)([ \t]*)((\d{1,9})([.)])|([-+*]))([ \t]+)(.*)$/;
 
+/** 裸 marker 文本判定（M529）：整串是「可选引用前缀 + 行首缩进 + marker + 尾随空白」、
+ *  无任何内容（正则内容组为空串）——与 `bareListMarkerLine` 同一份 BARE_MARKER_RE，
+ *  同语义不得两处真源（REVIEW.md 第 8 条）。用途：判定 WebKit 裸 DOM 变更重复插入的
+ *  marker 文本（逃逸形态，探针证据 test-results/m529-probe/readings.md）。纯文本形态级
+ *  判定，不读语法树：围栏代码块内「整串 marker 的 DOM 插入」没有合法产生通道（键入是
+ *  逐字符 insertText），不参与本判定。 */
+export function isBareMarkerText(text: string): boolean {
+  const m = BARE_MARKER_RE.exec(text);
+  return m !== null && m[8] === "";
+}
+
 /** 裸 marker 行判定：null = 不是（含语法树已接管的全部形态）。纯函数，只读树与行文本。 */
 export function bareListMarkerLine(tree: Tree, doc: Text, line: Line): BareMarkerLine | null {
   const m = BARE_MARKER_RE.exec(line.text);

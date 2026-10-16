@@ -39,7 +39,8 @@ import type { EditorView } from "@codemirror/view";
 import { insertNewlineAndIndent } from "@codemirror/commands";
 import { insertNewlineContinueMarkupCommand } from "@codemirror/lang-markdown";
 import { syntaxTree } from "@codemirror/language";
-import { bareListMarkerLine } from "./preview/lists";
+import type { Text } from "@codemirror/state";
+import { bareListMarkerLine, isBareMarkerText } from "./preview/lists";
 import type { EditorMode } from "./bindings/EditorMode";
 
 /**
@@ -154,4 +155,48 @@ export function swallowNativeListBeforeInput(event: {
   if (event.inputType === undefined || !NATIVE_LIST_INPUT_TYPES.has(event.inputType)) return false;
   event.preventDefault?.();
   return true;
+}
+
+// ---------------------------------------------------------------------------
+// M529②：DOM 读回入口拦 WebKit 裸 DOM 变更的重复 marker（inputHandler 层）
+// ---------------------------------------------------------------------------
+//
+// 背景（探针证据 test-results/m529-probe/readings.md）：M461② 的 beforeinput 拒收名单
+// 只覆盖 insertOrderedList / insertUnorderedList 两个 inputType；Alex 2026-10-15 dogfood
+// 踩到的逃逸形态是 WebKit smart-list 在 CM 已消费 Enter、续行「2. 」已渲染后，又把下一
+// 序号「3. 」作为**裸 DOM 文本**插进 contenteditable（无上述 inputType）——CM 的
+// MutationObserver 把它读回成文档变更，与 CM 自己的续行叠加成「2. 3.」。本机合成键盘
+// 进不了组合态（M461 探针已登记），M529 探针以等价注入（probe-hook F11）复现其落点
+// 形状：读回变更 = 纯插入，插入文本恰为裸 marker，落点行首至光标恰为裸 marker。
+//
+// 修复落在 CM 的 EditorView.inputHandler 扩展点：浏览器发起的 DOM 变更在读回成文档
+// 变更之前先过 inputHandler（@codemirror/view applyDOMChangeInner），返回 true = 已
+// 处理、不再 dispatch 默认插入；flush 随后发现 state 未变 + domChanged 在场会
+// view.update([]) 把 DOM 自愈回 state（DOMObserver.flush 的既有行为）——因此吞掉是
+// 自愈的：脏 DOM 被重置、无文档变更、无撤销步。键位层（Enter 续行）仍是唯一合法的
+// 列表续行来源，本层 MUST NOT 产生任何文档变更。
+//
+// 判定（纯函数，可单测）：读回变更为纯插入（from === to）、插入文本恰是一个裸 marker
+//（isBareMarkerText，与 lists.ts 的 BARE_MARKER_RE 同源）、且行首至光标恰是一个裸
+// marker（该行是空列表项、光标在 marker 之后）——三条件同时成立 = WebKit 重复续行。
+// 放行面逐条核过：普通键入是逐字符 insertText（单字符不匹配裸 marker 整串）；粘贴走
+// 剪贴板事件不经 DOM 读回；IME 组合提交是 CJK 文本；「\n + marker」的整段续行插入
+//（纯 IME 路径下光标在内容行尾，行首至光标含内容，不命中）——MUST NOT 被误吞。
+
+/** M529② 重复 marker 插入判定：DOM 读回变更是否为 WebKit 裸插入的重复列表 marker。 */
+export function isDuplicateMarkerInsertion(doc: Text, from: number, to: number, text: string): boolean {
+  if (from !== to) return false;
+  if (!isBareMarkerText(text)) return false;
+  return isBareMarkerText(doc.sliceString(doc.lineAt(from).from, from));
+}
+
+/** inputHandler 入口：命中重复 marker 插入时返回 true 吞掉（不 dispatch，DOM 由 CM
+ *  自愈回 state）；其余读回变更返回 false 走默认插入。 */
+export function swallowDuplicateMarkerInput(
+  view: EditorView,
+  from: number,
+  to: number,
+  text: string,
+): boolean {
+  return isDuplicateMarkerInsertion(view.state.doc, from, to, text);
 }
