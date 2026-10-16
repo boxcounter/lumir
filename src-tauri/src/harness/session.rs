@@ -82,6 +82,11 @@ pub enum CacheNote {
 
 /// 面板用量读数（常驻控制行 ctx% / cache% 与其 hover 气泡的数据源）。
 ///
+/// 本结构的**序列化**就是两条载体的读数键集合（M534）：`harness_state` 快照的 `usage` 与
+/// `harness:event` 的 `usage` 事件同吃这一份 `Serialize`（[`super::events::usage`] 另加一个
+/// 判别键 `type`）——加字段即两端同改，MUST NOT 让任一侧另列一份键清单（REVIEW.md 第 8 条；
+/// 事件侧曾手列键、漏掉 M526 的绝对值键，live 气泡因此静默回落百分比形态）。
+///
 /// M443 起口径拆开：`ctx_pct` 仍是最近一次请求的值，cache 侧分**会话累计**（控制行主读数）
 /// 与**单回合**（气泡辅读数）两个投影——两者是同一批计数器的两个投影，MUST NOT 各算各的
 /// （design §2 的一致性原则）。

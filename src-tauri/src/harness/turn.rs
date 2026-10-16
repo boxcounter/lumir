@@ -1433,6 +1433,16 @@ mod tests {
         fn emit(&self, _payload: serde_json::Value) {}
     }
 
+    /// 收集事件的 sink（live 事件载荷的断言数据源；照 `events.rs` 测试里的同名收集器）。
+    #[derive(Default)]
+    struct Collect(std::sync::Arc<std::sync::Mutex<Vec<serde_json::Value>>>);
+
+    impl EventSink for Collect {
+        fn emit(&self, payload: serde_json::Value) {
+            self.0.lock().unwrap().push(payload);
+        }
+    }
+
     /// 恢复 `XDG_CONFIG_HOME`（断言失败 panic 也要复原，别把临时目录留给同进程的别的用例）。
     struct XdgGuard(Option<std::ffi::OsString>);
 
@@ -1530,6 +1540,96 @@ mod tests {
                 "ts 必须单调不减：{ts} < {previous}：{message}"
             );
             previous = ts;
+        }
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// M534 回归：live 路径（真 turn 循环发出的 `usage` 事件）与 `harness_state` 快照携带
+    /// **同一组读数键与同一个值**——含 M526 的绝对值键。
+    ///
+    /// 区分度（REVIEW.md 第 1 条）：修前 `events::usage` 手列七个键（`type` + M443 的六个），
+    /// 绝对值键整体缺席；前端 `usageReadings` 读不到 `input_tokens` / `context_window`，live
+    /// 会话的 tokens 气泡按 D395 回落百分比形态（M534 现场：同一会话切 vault 回来走快照路径
+    /// 却显示「已用 65.5k / 131k tokens」）。把 `events::usage` 换回手列清单时本用例即红。
+    #[test]
+    fn live_usage_event_carries_snapshot_readings() {
+        let root = std::env::temp_dir().join(format!("lumir-harness-usage-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        // JSONL 落点走 XDG_CONFIG_HOME（REVIEW.md 第 13 条：测试绝不写真实的 ~/.config/lumir）。
+        let _env = XdgGuard(std::env::var_os("XDG_CONFIG_HOME"));
+        std::env::set_var("XDG_CONFIG_HOME", root.join("xdg"));
+
+        let vault = root.join("vault");
+        std::fs::create_dir_all(&vault).unwrap();
+        std::fs::write(vault.join("a.md"), "正文\n").unwrap();
+        let scope = VaultScope {
+            root: vault.clone(),
+            policy: IgnorePolicy::load(&vault, &[".gitignore".to_string()]),
+            vault_id: "vault-test-1".to_string(),
+        };
+        let config = HarnessConfig {
+            provider: HarnessProvider::Mock,
+            ..Default::default()
+        };
+
+        let runtime = Runtime::default();
+        runtime.acquire_turn(&scope, &config).unwrap();
+        let sink = Collect::default();
+        let seen = sink.0.clone();
+        // usage 不是整千数：取整 / 换序 / 读错键都会露馅（判定值与本轮 mock 回包逐字对应）。
+        let script = r#"{"responses": [
+            {"text": "读完了。",
+             "usage": {"input_tokens": 1399, "cached_tokens": 1000, "output_tokens": 25}}
+        ]}"#;
+        let mut client = llm::MockClient::from_str(script, "live-usage").unwrap();
+        run_turn_for(
+            &sink,
+            &runtime,
+            &scope,
+            &config,
+            "这段讲了什么".to_string(),
+            None,
+            &mut client,
+        );
+        runtime.release_turn(&scope);
+
+        // 事件取自 live 路径（turn 循环 emit 的那一条），不是直接调 `events::usage`。
+        let events = seen.lock().unwrap();
+        let event = events
+            .iter()
+            .rfind(|e| e.get("type").and_then(|t| t.as_str()) == Some("usage"))
+            .expect("live 会话应发出 usage 事件");
+        // 快照路径：面板重载 / 切 vault 回来重渲染读的就是这份 JSON。
+        let snapshot = runtime.snapshot(&scope, &config);
+        let snapshot_json = serde_json::to_value(snapshot.usage).unwrap();
+
+        // ① 绝对值键在事件里在场、且是本次往返的真读数（缺键即 M534 现场：气泡回落百分比形态）。
+        assert_eq!(event["input_tokens"], serde_json::json!(1399), "{event}");
+        assert_eq!(event["cached_tokens"], serde_json::json!(1000), "{event}");
+        assert_eq!(
+            event["cached_tokens_session"],
+            serde_json::json!(1000),
+            "{event}"
+        );
+        assert_eq!(
+            event["context_window"],
+            serde_json::json!(crate::config::FALLBACK_CONTEXT_WINDOW),
+            "{event}"
+        );
+        assert_eq!(event["has_usage"], serde_json::json!(true), "{event}");
+
+        // ② 同键同值：事件读数键集合 = 快照键集合 + 判别键 `type`（事件/快照一致性不变量）。
+        let readings = event.as_object().unwrap();
+        let expected = snapshot_json.as_object().unwrap();
+        assert_eq!(readings.len(), expected.len() + 1, "键集合不等：{event}");
+        for (key, value) in expected {
+            assert_eq!(
+                readings.get(key),
+                Some(value),
+                "事件与快照不一致（缺键或异值）：{key}：{event}"
+            );
         }
 
         let _ = std::fs::remove_dir_all(&root);
